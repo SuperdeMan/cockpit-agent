@@ -1,0 +1,150 @@
+# PoC 全栈一键起。生产部署见 deploy/helm/。
+# 服务端口规划见各服务 README；gRPC 服务间通过容器 DNS 互通。
+name: car-agent
+
+x-python-env: &python-env
+  REGISTRY_ADDR: registry:50051
+  LLM_GATEWAY_ADDR: llm-gateway:50052
+  MEMORY_ADDR: memory:50053
+  CLOUD_PLANNER_ADDR: cloud-planner:50054
+  NATS_URL: nats://nats:4222
+  REDIS_URL: redis://redis:6379/0
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+  # ── 基础设施 ──
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  nats:
+    image: nats:2-alpine
+    command: ["-js"]            # 开启 JetStream
+    ports: ["4222:4222"]
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: cockpit
+      POSTGRES_PASSWORD: cockpit
+      POSTGRES_DB: cockpit
+    ports: ["5432:5432"]
+
+  # ── 云侧核心 ──
+  registry:
+    build: { context: .., dockerfile: registry/Dockerfile }
+    environment: { LOG_LEVEL: "${LOG_LEVEL:-info}" }
+    ports: ["50051:50051"]
+
+  llm-gateway:
+    build: { context: .., dockerfile: llm-gateway/Dockerfile }
+    environment:
+      <<: *python-env
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY:-claude-opus-4-8}
+      LLM_MODEL_FALLBACK: ${LLM_MODEL_FALLBACK:-claude-haiku-4-5-20251001}
+    ports: ["50052:50052"]
+    depends_on: [redis]
+
+  memory:
+    build: { context: .., dockerfile: memory/Dockerfile }
+    environment:
+      <<: *python-env
+      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+    ports: ["50053:50053"]
+    depends_on: [redis, postgres]
+
+  cloud-planner:
+    build: { context: .., dockerfile: orchestrator/cloud/Dockerfile }
+    environment: *python-env
+    ports: ["50054:50054"]
+    depends_on: [registry, llm-gateway, memory]
+
+  payment-gateway:
+    build: { context: .., dockerfile: payment-gateway/Dockerfile }
+    environment:
+      <<: *python-env
+      PAYMENT_PORT: "50071"
+    ports: ["50071:50071"]
+    depends_on: [redis]
+
+  # ── Agents ──
+  navigation-agent:
+    build: { context: .., dockerfile: agents/navigation/Dockerfile }
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50061"
+    depends_on: [registry, llm-gateway]
+
+  chitchat-agent:
+    build: { context: .., dockerfile: agents/chitchat/Dockerfile }
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50062"
+    depends_on: [registry, llm-gateway]
+
+  food-ordering-agent:
+    build: { context: .., dockerfile: agents/food_ordering/Dockerfile }
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50063"
+    depends_on: [registry, llm-gateway, memory]
+
+  parking-payment-agent:
+    build: { context: .., dockerfile: agents/parking_payment/Dockerfile }
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50064"
+    depends_on: [registry, llm-gateway, memory]
+
+  manual-rag-agent:
+    build: { context: .., dockerfile: agents/manual_rag/Dockerfile }
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50065"
+    depends_on: [registry, llm-gateway]
+
+  trip-planner-agent:
+    build: { context: .., dockerfile: agents/trip_planner/Dockerfile }
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50066"
+    depends_on: [registry, llm-gateway]
+
+  # ── 接入层 ──
+  cloud-gateway:
+    build: { context: .., dockerfile: gateway/cloud/Dockerfile }
+    environment:
+      CLOUD_PLANNER_ADDR: cloud-planner:50054
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports: ["8080:8080"]
+    depends_on: [cloud-planner]
+
+  edge-gateway:
+    build: { context: .., dockerfile: gateway/edge/Dockerfile }
+    environment:
+      EDGE_GATEWAY_PORT: "8090"
+      EDGE_ORCHESTRATOR_ADDR: edge-orchestrator:50070
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports: ["8090:8090"]
+    depends_on: [edge-orchestrator]
+
+  edge-orchestrator:
+    # 端侧编排器：内含 Fast Intent + 端侧车控/媒体 Agent + 模拟 VAL（PoC 简化为单进程）
+    build: { context: .., dockerfile: orchestrator/edge/Dockerfile }
+    environment:
+      CLOUD_GATEWAY_ADDR: cloud-gateway:8080
+      FAST_INTENT_THRESHOLD_HIGH: ${FAST_INTENT_THRESHOLD_HIGH:-0.85}
+      FAST_INTENT_THRESHOLD_LOW: ${FAST_INTENT_THRESHOLD_LOW:-0.5}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports: ["50070:50070"]
+    depends_on: [cloud-gateway]
+
+  # ── 前端 ──
+  hmi:
+    build: { context: ../hmi, dockerfile: Dockerfile }
+    environment:
+      VITE_EDGE_GATEWAY_URL: http://localhost:8090
+    ports: ["5173:5173"]
+    depends_on: [edge-gateway]

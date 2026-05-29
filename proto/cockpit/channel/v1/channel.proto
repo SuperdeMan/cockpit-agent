@@ -1,0 +1,53 @@
+syntax = "proto3";
+package cockpit.channel.v1;
+import "cockpit/orchestrator/v1/orchestrator.proto";
+
+// 端云持久双向流。Edge 作为客户端发起并保持，所有请求/响应/主动事件多路复用。
+service EdgeCloudChannel {
+  rpc Connect (stream UpFrame) returns (stream DownFrame);
+}
+
+// 上行帧（Edge -> Cloud）
+message UpFrame {
+  string correlation_id = 1;            // 关联一次请求-响应
+  oneof body {
+    Hello hello = 2;                    // 握手（首帧）
+    cockpit.orchestrator.v1.HandleRequest request = 3;
+    Ack ack = 4;                        // 对 down 帧的确认（幂等/可靠性）
+    Ping ping = 5;
+  }
+}
+
+// 下行帧（Cloud -> Edge）
+message DownFrame {
+  string correlation_id = 1;
+  oneof body {
+    HelloAck hello_ack = 2;
+    cockpit.orchestrator.v1.HandleEvent event = 3;
+    Proactive proactive = 4;            // 主动下发（如低电量提醒）
+    Pong pong = 5;
+  }
+}
+
+message Hello {
+  string vehicle_id = 1;
+  string session_resume_token = 2;     // 断线重连：恢复会话
+  string device_cert_fingerprint = 3;  // 设备证书指纹
+  string session_token = 4;            // JWT 会话 token
+  map<string, string> meta = 5;
+}
+
+message HelloAck {
+  bool ok = 1;
+  string reason = 2;
+  uint32 heartbeat_sec = 3;            // 建议心跳间隔
+}
+
+message Ack { string frame_id = 1; uint64 seq = 2; }
+message Ping { int64 ts = 1; }
+message Pong { int64 ts = 1; }
+
+message Proactive {
+  string type = 1;                     // "low_battery" | "charging_reminder" | ...
+  string speech = 2;
+}

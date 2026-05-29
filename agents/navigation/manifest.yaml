@@ -1,0 +1,23 @@
+agent_id: navigation
+version: 0.1.0
+display_name: 导航助手
+category: core
+trust_level: first_party
+deployment: cloud
+latency_budget_ms: 1500
+fallback: chitchat
+
+capabilities:
+  - intent: navigation.search_poi
+    description: 按关键词/类别/位置搜索 POI（餐厅、充电站、加油站、停车场等）
+    slots: [keyword, category, near, rating_min]
+    examples: ["附近的充电站", "找个评分高的川菜馆", "最近的加油站在哪"]
+  - intent: navigation.navigate_to
+    description: 导航到指定目的地
+    slots: [destination]
+    examples: ["导航去公司", "带我去首都机场", "回家"]
+
+requires_permissions:
+  - location.read
+  - navigation.control
+edge_intents: []

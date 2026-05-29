@@ -1,0 +1,17 @@
+agent_id: manual-rag
+version: 0.1.0
+display_name: 车书助手
+category: ecosystem
+trust_level: first_party
+deployment: cloud
+latency_budget_ms: 2500
+fallback: chitchat
+
+capabilities:
+  - intent: manual.query
+    description: 车型使用手册问答（胎压、保养、充电、功能操作等），基于车型知识库检索作答
+    slots: [question]
+    examples: ["胎压多少正常", "怎么开启自动泊车", "多久保养一次", "怎么连CarPlay"]
+
+requires_permissions: []
+edge_intents: []

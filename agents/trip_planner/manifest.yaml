@@ -1,0 +1,19 @@
+agent_id: trip-planner
+version: 0.1.0
+display_name: 行程规划
+category: ecosystem
+trust_level: first_party
+deployment: cloud
+latency_budget_ms: 3000
+fallback: chitchat
+
+capabilities:
+  - intent: trip.plan
+    description: 规划多日自驾行程（目的地、天数、偏好），输出每日要点
+    slots: [destination, days, preferences]
+    examples: ["规划周末去杭州两日游", "帮我安排去三亚的行程", "周末带娃去近郊玩"]
+
+requires_permissions:
+  - location.read
+  - network.external
+edge_intents: []

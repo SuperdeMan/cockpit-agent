@@ -1,0 +1,13 @@
+# build context 为项目根。需先 `make proto`。
+FROM python:3.11-slim
+WORKDIR /app/registry
+
+COPY registry/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY gen/python /app/gen/python
+COPY registry /app/registry
+
+ENV PYTHONPATH=/app/gen/python
+ENV REGISTRY_PORT=50051
+CMD ["python", "main.py"]

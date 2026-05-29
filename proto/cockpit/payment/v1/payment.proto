@@ -1,0 +1,54 @@
+syntax = "proto3";
+package cockpit.payment.v1;
+
+// 统一支付网关。Agent 不持支付凭证，所有支付经此服务。
+service PaymentGateway {
+  rpc Authorize (AuthorizeRequest) returns (AuthorizeResponse);  // 预授权(创建待确认单)
+  rpc Capture   (CaptureRequest)   returns (CaptureResponse);    // 用户确认后扣款
+  rpc Cancel    (CancelRequest)    returns (CancelResponse);
+  rpc GetStatus (GetStatusRequest) returns (GetStatusResponse);
+}
+
+message AuthorizeRequest {
+  string agent_id = 1;
+  string user_id = 2;
+  string vehicle_id = 3;
+  string scene = 4;            // "food.reserve" | "parking.pay"
+  int64 amount_cents = 5;
+  string currency = 6;         // "CNY"
+  string description = 7;
+  string idempotency_key = 8;  // 幂等：同 key 不重复创建
+}
+
+message AuthorizeResponse {
+  string payment_id = 1;
+  bool require_confirm = 2;
+  string confirm_prompt = 3;
+}
+
+message CaptureRequest {
+  string payment_id = 1;
+  string confirm_token = 2;    // 用户确认态的 token
+}
+
+message CaptureResponse {
+  bool ok = 1;
+  string receipt_id = 2;
+  string error = 3;
+}
+
+message CancelRequest {
+  string payment_id = 1;
+  string reason = 2;
+}
+
+message CancelResponse { bool ok = 1; }
+
+message GetStatusRequest { string payment_id = 1; }
+message GetStatusResponse {
+  enum Status { PENDING = 0; AUTHORIZED = 1; CAPTURED = 2; CANCELLED = 3; FAILED = 4; }
+  Status status = 1;
+  string payment_id = 2;
+  int64 amount_cents = 3;
+  string scene = 4;
+}

@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package cockpit.memory.v1;
+
+// 上下文的唯一真相源：短期会话、车辆上下文、长期画像。
+service Memory {
+  rpc GetContext (GetContextRequest) returns (GetContextResponse); // 按 scopes 取上下文
+  rpc AppendTurn (AppendTurnRequest) returns (AppendTurnResponse); // 写入一轮对话
+  rpc GetSession (GetSessionRequest) returns (GetSessionResponse); // 取最近 N 轮
+}
+
+message GetContextRequest {
+  string session_id = 1;
+  string user_id = 2;
+  string vehicle_id = 3;
+  repeated string scopes = 4;       // e.g. "vehicle.location","profile.taste"
+}
+message GetContextResponse {
+  map<string, string> values = 1;   // scope -> JSON 字符串
+}
+
+message AppendTurnRequest {
+  string session_id = 1;
+  string role = 2;                  // user | assistant
+  string text = 3;
+}
+message AppendTurnResponse { bool ok = 1; }
+
+message GetSessionRequest {
+  string session_id = 1;
+  uint32 last_n = 2;
+}
+message Turn {
+  string role = 1;
+  string text = 2;
+  int64 ts = 3;
+}
+message GetSessionResponse { repeated Turn turns = 1; }

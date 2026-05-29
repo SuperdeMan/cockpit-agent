@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package cockpit.orchestrator.v1;
+
+import "google/protobuf/struct.proto";
+import "cockpit/common/v1/common.proto";
+
+// 云端 Planner 对 Cloud Gateway 暴露的入口。流式返回话术/动作/终态。
+service CloudPlanner {
+  rpc Handle (HandleRequest) returns (stream HandleEvent);
+}
+
+// 端侧编排器对 Edge Gateway 暴露的入口。快意图本地秒回，慢意图转发云端。
+// 复用 HandleRequest/HandleEvent，保证端云链路同构。
+service EdgeOrchestrator {
+  rpc Handle (HandleRequest) returns (stream HandleEvent);
+}
+
+message HandleRequest {
+  string request_id = 1;
+  string session_id = 2;
+  string text = 3;                  // 用户话术（已 ASR）
+  cockpit.common.v1.ContextRef context = 4;
+  repeated cockpit.common.v1.ModalityRef modalities = 5;
+  map<string, string> meta = 6;
+  bool is_confirmation = 7;         // 是否为多轮确认/补槽回复
+}
+
+message HandleEvent {
+  oneof event {
+    string speech_delta = 1;        // 流式话术增量
+    cockpit.common.v1.AgentAction action = 2;
+    FinalResult final = 3;
+  }
+}
+
+message FinalResult {
+  string speech = 1;
+  google.protobuf.Struct ui_card = 2;
+  repeated cockpit.common.v1.AgentAction actions = 3;
+  string follow_up = 4;
+  bool need_confirm = 5;
+}

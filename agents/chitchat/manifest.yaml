@@ -1,0 +1,17 @@
+agent_id: chitchat
+version: 0.1.0
+display_name: 闲聊
+category: ecosystem
+trust_level: first_party
+deployment: cloud
+latency_budget_ms: 2500
+fallback: ""
+
+capabilities:
+  - intent: chitchat.talk
+    description: 开放域闲聊、情感陪伴、简单常识问答（其他 Agent 无法处理时的兜底）
+    slots: []
+    examples: ["讲个笑话", "陪我聊聊", "你叫什么名字", "好无聊啊"]
+
+requires_permissions: []
+edge_intents: []

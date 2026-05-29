@@ -1,0 +1,186 @@
+# WS6 · 真实能力对接 & Agent 协作 — 实现级细化
+
+> 依据：`phase1-implementation-plan.md` WS6、`cockpit-agent-architecture.md` §4、§11
+> 目标：把 mock 能力换成真实/沙箱能力（统一适配层范式 + 支付网关），并打通 multi-agent 协作（trip-planner 子规划者）。读者：各 Agent 开发、平台开发。
+> 现状基线：各 Agent 的能力为内置 mock（如 navigation `_mock_search`、food `_mock`）；Agent 之间无相互调用能力。
+
+---
+
+## 1. 外部适配层范式（统一所有"接真实"的方式）
+
+**问题**：直接在 Agent 里写死某家厂商 SDK → 难替换、难测试、难灰度。
+**范式**：Agent 只依赖**领域 Provider 接口**，厂商实现作为可插拔适配器；mock/real 经配置切换。
+
+```
+agents/<name>/
+├─ src/agent.py            # 业务逻辑，只调 Provider 接口
+├─ src/providers/
+│   ├─ base.py             # 领域接口，如 POIProvider
+│   ├─ mock.py             # MockPOIProvider（PoC / 离线 / 单测）
+│   └─ amap.py             # AmapPOIProvider（真实厂商适配，凭证经 env/secret）
+└─ src/providers/__init__.py  # build_provider()：按 env 选择 real/mock
+```
+
+```python
+# base.py
+class POIProvider:
+    async def search(self, keyword: str, near: GeoPoint, rating_min: float) -> list[POI]: ...
+    async def route(self, dest: str, origin: GeoPoint) -> Route: ...
+
+# __init__.py
+def build_poi_provider() -> POIProvider:
+    vendor = os.getenv("POI_VENDOR", "mock")
+    if vendor == "amap" and os.getenv("AMAP_KEY"):
+        return AmapPOIProvider(os.getenv("AMAP_KEY"))
+    return MockPOIProvider()
+```
+
+`agent.py` 改造：`self.poi = build_poi_provider()`，`_search` 调 `self.poi.search(...)`。**业务逻辑零改动即可切换厂商或回退 mock**（也保证无 key 时 PoC 仍可跑）。
+
+### 各 Agent 对接清单
+| Agent | Provider 接口 | 真实适配（示例） | 备注 |
+|---|---|---|---|
+| navigation | `POIProvider` | 高德/百度/HERE | 路况、充电桩同一接口扩展 |
+| media | `MediaProvider` | 内容平台 | 播放/搜索/收藏 |
+| info | `WeatherProvider`/`NewsProvider` | 气象/资讯源 | 多源聚合 |
+| food-ordering | `RestaurantProvider` + `PaymentGateway` | 到店点评/预订平台 | 支付走网关，见 §2 |
+| parking-payment | `ParkingProvider` + `PaymentGateway` | 停车平台 | 无感支付走网关 |
+| manual-rag | `KnowledgeRetriever` | 车型向量库 | 见 §3 |
+| trip-planner | （无外部，靠协作） | — | 见 §4 |
+
+---
+
+## 2. 统一支付网关（Agent 不持凭证）
+
+**红线**：任何 Agent（尤其 third_party）都不接触支付密钥/账户凭证。支付经独立 `payment-gateway` 服务，Agent 只发起"支付请求"。
+
+### proto（`proto/cockpit/payment/v1/payment.proto`）
+```proto
+service PaymentGateway {
+  rpc Authorize (AuthorizeRequest) returns (AuthorizeResponse);  // 预授权(创建待确认单)
+  rpc Capture   (CaptureRequest)   returns (CaptureResponse);    // 用户确认后扣款
+  rpc Cancel    (CancelRequest)    returns (CancelResponse);
+}
+message AuthorizeRequest {
+  string agent_id = 1; string user_id = 2; string vehicle_id = 3;
+  string scene = 4;            // "food.reserve" | "parking.pay"
+  int64 amount_cents = 5; string currency = 6; string description = 7;
+  string idempotency_key = 8;  // 幂等：同 key 不重复创建
+}
+message AuthorizeResponse { string payment_id = 1; bool require_confirm = 2; string confirm_prompt = 3; }
+message CaptureRequest { string payment_id = 1; string confirm_token = 2; }
+```
+
+### 支付时序（与 WS3 二次确认、WS8 权限联动）
+```
+Agent.reserve/pay
+   └─► PaymentGateway.Authorize(idempotency_key)   # 创建待确认单，不扣款
+        └─► 返回 payment_id + require_confirm
+   Agent 返回 NEED_CONFIRM + action(require_confirm=true, payload{payment_id})
+   ── 用户确认（HMI/语音）──► Planner 续接确认态
+   └─► PaymentGateway.Capture(payment_id, confirm_token)  # 真正扣款
+```
+- 幂等：`idempotency_key`（含 user+scene+订单要素），重连/重试不重复创建或扣款（与 WS4 幂等呼应）。
+- 权限：`payment.invoke` 经 WS8 校验；third_party 必须经网关且强制确认。
+- 凭证：支付渠道密钥只在 `payment-gateway` 服务（Secret 注入），Agent 侧无。
+
+---
+
+## 3. manual-rag 接车型向量库
+
+把 mock KB 换为真实检索：
+```python
+class KnowledgeRetriever:
+    async def retrieve(self, query: str, vehicle_model: str, top_k: int = 4) -> list[Chunk]: ...
+```
+- 离线建库：车型手册分章节切块 → embedding → 写 pgvector/Milvus，按 `vehicle_model` 分区隔离。
+- 在线：query embedding → 向量召回 top_k → （可选）重排 → 拼 prompt（沿用 Phase 0 的"仅依据资料作答"）。
+- 出处：`Chunk` 带来源（章节/页），随 `ui_card.sources` 返回，前端可展示引用。
+
+---
+
+## 4. Multi-Agent 协作（trip-planner 子规划者）
+
+trip-planner 需要导航(POI)、天气、充电、(可选)酒店等能力——这是典型的 Agent 间协作。
+
+### 4.1 协作模式决策
+| 模式 | 机制 | 取舍 |
+|---|---|---|
+| A. **Agent 经 SDK 直接调用其他 Agent** ⭐ | SDK 提供 `AgentClient`：经 Registry 解析 → `Agent.Execute` | 直接、低时延；需防环、防越权、限深度 |
+| B. Agent 把子任务交回 Planner 再编排 | Agent 返回"需协作"信号，Planner 展开 | 集中可控，但多一跳、Planner 复杂度上升 |
+
+**决策：A 为主**（SDK 内置受控 `AgentClient`），并施加护栏；超出护栏（如需要复杂再规划）才回退 B。
+
+### 4.2 SDK 受控 AgentClient（`agents/_sdk/agent_client.py`）
+```python
+class AgentClient:
+    """供 Agent 在 handle() 内调用其他 Agent。带护栏，防滥用。"""
+    def __init__(self, caller_manifest, auth, call_depth: int, registry):
+        ...
+    async def call(self, intent: str, slots: dict, ctx) -> AgentResult:
+        # 护栏 1：调用深度上限（防无限链），depth > MAX_DEPTH(=2) -> 拒绝
+        # 护栏 2：环检测（caller 在调用栈中再次出现 -> 拒绝）
+        # 护栏 3：权限不放大——被调 Agent 的有效权限 ≤ 调用方（WS8 引擎复核）
+        # 护栏 4：超时（取被调 manifest.latency_budget_ms）
+        target = await self.registry.resolve(intent=intent, top_k=1)
+        return await self._execute(target, intent, slots, ctx, depth=self.call_depth + 1)
+```
+- `BaseAgent` 注入 `self.agents: AgentClient`（带当前调用上下文：auth、call_depth、调用栈）。
+- 调用栈与 depth 通过 `ExecuteRequest.meta`（`call_stack`、`call_depth`）透传，跨进程可见。
+
+### 4.3 trip-planner 改造（示例）
+```python
+async def handle(self, intent, ctx, meta):
+    dest = intent.slots.get("destination")
+    if not dest: return need_slot(...)
+    # 并行协作：导航取景点/充电、信息取天气
+    pois, weather = await asyncio.gather(
+        self.agents.call("navigation.search_poi", {"keyword": f"{dest} 景点"}, ctx),
+        self.agents.call("info.weather", {"city": dest}, ctx),
+    )
+    plan = await self.llm.complete(self._compose_prompt(dest, pois, weather, intent))
+    return AgentResult(speech=plan, ui_card={"type": "trip_plan", "pois": pois.ui_card})
+```
+> 与 WS3 关系：当 Planner 把请求路由到 trip-planner，trip-planner 内部再协作下层 Agent——形成"Planner→子规划者→工具 Agent"的层级，护栏确保不失控。
+
+---
+
+## 5. 边界与失败处理
+
+| 情况 | 处理 |
+|---|---|
+| 厂商 API 失败/超时 | Provider 内重试/降级；Agent 返回部分结果或 fallback 话术 |
+| 无厂商 key | `build_provider` 回退 mock，PoC 不阻断 |
+| Agent 协作成环 | AgentClient 环检测 + 深度上限，拒绝并记审计 |
+| 协作权限放大 | 被调权限 ≤ 调用方（WS8 复核） |
+| 支付重复 | `idempotency_key` 去重 + 确认态保护（WS4/WS3） |
+| 协作部分失败 | `asyncio.gather(return_exceptions=True)`，缺项降级（如无天气仍给行程） |
+
+---
+
+## 6. 测试点（DoD）
+
+**单元**：
+- `build_provider` 按 env 选择 real/mock；无 key 回退 mock。
+- AgentClient 护栏：深度超限拒绝、环检测拒绝、权限放大拒绝。
+- 支付幂等：同 idempotency_key 不重复创建/扣款。
+
+**集成（需 registry+agents 起）**：
+- navigation 切到真实/沙箱 POI，黄金用例通过；回退 mock 也通过。
+- food/parking：Authorize→NEED_CONFIRM→Capture 全流程；未确认不扣款。
+- manual-rag：向量检索命中相关章节并带出处。
+- trip-planner：联动 navigation+info（≥2 Agent），部分失败仍产出行程。
+
+**契约不回归**：新增/切换 Provider 不改 Agent 对外契约；新增协作不改编排核心。
+
+---
+
+## 7. 任务清单（建议拆 PR）
+
+1. Provider 范式落地：navigation 先行（`POIProvider` + mock/amap + `build_provider`）作为模板。
+2. 其余 core/eco Agent 按模板接 Provider（可并行多人）。
+3. `payment-gateway` 服务 + `payment.proto`；food/parking 接入（Authorize/Capture + 幂等）。
+4. manual-rag 接车型向量库（离线建库脚本 + 在线检索 + 出处）。
+5. SDK `AgentClient` + 护栏（深度/环/权限/超时）+ meta 透传调用栈。
+6. trip-planner 改造为子规划者（并行协作 + 降级）。
+7. 各 Agent 黄金用例（real + mock 双跑）+ 协作集成测试。

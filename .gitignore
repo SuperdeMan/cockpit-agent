@@ -1,0 +1,37 @@
+# Secrets
+.env
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Generated gRPC code (regenerate via `make proto`)
+**/gen/
+*_pb2.py
+*_pb2_grpc.py
+*.pb.go
+
+# Go
+bin/
+*.test
+vendor/
+
+# Node / HMI
+node_modules/
+dist/
+.vite/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

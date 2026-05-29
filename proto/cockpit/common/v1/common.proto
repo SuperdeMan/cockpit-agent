@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package cockpit.common.v1;
+
+import "google/protobuf/struct.proto";
+
+// 已识别的意图与槽位（由 Fast Intent 或 Planner NLU 产出）
+message Intent {
+  string name = 1;                  // 命名空间化: "navigation.search_poi"
+  map<string, string> slots = 2;    // 槽位 key->value
+  float confidence = 3;             // 置信度 [0,1]
+  string raw_text = 4;              // 原始用户文本
+}
+
+// 上下文引用：不全量传上下文，Agent 按需向 Memory 服务拉取声明的 scopes（隐私最小化）
+message ContextRef {
+  string session_id = 1;
+  string vehicle_id = 2;
+  string user_id = 3;
+  repeated string scopes = 4;       // 需要的上下文范围, e.g. "vehicle.location","profile.taste"
+}
+
+// 多模态输入引用（音视频原始数据托管在对象存储，仅传引用）
+message ModalityRef {
+  string type = 1;                  // audio | image | video
+  string uri = 2;
+  map<string, string> meta = 3;
+}
+
+// Agent 产出的待执行动作。注意：vehicle.control 类动作不在此直接执行，
+// 须由确定性 Executor 经 VAL 权限校验后下发（见架构文档 §9）。
+message AgentAction {
+  string type = 1;                  // vehicle.control | navigate | play | open_app ...
+  google.protobuf.Struct payload = 2;
+  bool require_confirm = 3;         // 危险动作需用户二次确认
+}
+
+message ErrorInfo {
+  string code = 1;
+  string message = 2;
+}

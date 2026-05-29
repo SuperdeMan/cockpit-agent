@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package cockpit.llm.v1;
+
+import "google/protobuf/struct.proto";
+
+// 所有 LLM 调用的唯一出口：多模型路由、降级、限流、缓存、成本统计。
+service LLMGateway {
+  rpc Complete       (CompleteRequest) returns (CompleteResponse);
+  rpc CompleteStream (CompleteRequest) returns (stream CompleteChunk);
+}
+
+message Message {
+  string role = 1;                  // system | user | assistant | tool
+  string content = 2;
+}
+
+message CompleteRequest {
+  repeated Message messages = 1;
+  string model = 2;                 // 空则用网关默认（含降级链）
+  float temperature = 3;
+  uint32 max_tokens = 4;
+  google.protobuf.Struct tools = 5; // 可选：工具/函数定义（Planner 规划用）
+  map<string, string> meta = 6;     // trace_id, session_id ...
+}
+
+message CompleteResponse {
+  string content = 1;
+  string model_used = 2;            // 实际命中的模型（可能是降级后的）
+  string finish_reason = 3;
+  uint32 prompt_tokens = 4;
+  uint32 completion_tokens = 5;
+  google.protobuf.Struct tool_calls = 6; // 若模型请求调用工具
+}
+
+message CompleteChunk {
+  string delta = 1;
+  bool done = 2;
+}

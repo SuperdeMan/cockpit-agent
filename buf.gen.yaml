@@ -1,0 +1,18 @@
+# buf code generation. Run via `make proto` (buf generate proto).
+# Generated code lands in gen/python and gen/go (both gitignored, regenerate on demand).
+version: v1
+managed:
+  enabled: true
+  go_package_prefix:
+    default: github.com/cockpit/car-agent/gen/go
+plugins:
+  - plugin: buf.build/protocolbuffers/python
+    out: gen/python
+  - plugin: buf.build/grpc/python
+    out: gen/python
+  - plugin: buf.build/protocolbuffers/go
+    out: gen/go
+    opt: paths=source_relative
+  - plugin: buf.build/grpc/go
+    out: gen/go
+    opt: paths=source_relative

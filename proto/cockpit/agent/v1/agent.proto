@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package cockpit.agent.v1;
+
+import "google/protobuf/struct.proto";
+import "cockpit/common/v1/common.proto";
+
+// 所有 Agent（core/ecosystem，端/云）必须实现的统一契约。即插即用的前提。
+service Agent {
+  rpc Describe      (DescribeRequest) returns (AgentManifest);          // 上报能力清单
+  rpc Execute       (ExecuteRequest)  returns (ExecuteResponse);        // 同步执行
+  rpc ExecuteStream (ExecuteRequest)  returns (stream ExecuteEvent);    // 流式执行（长任务/流式话术）
+  rpc Health        (HealthRequest)   returns (HealthResponse);
+}
+
+message DescribeRequest {}
+
+// 能力声明（运行时版本，对应 manifest.yaml）
+message AgentManifest {
+  string agent_id = 1;
+  string version = 2;
+  string display_name = 3;
+  string category = 4;              // core | ecosystem
+  string trust_level = 5;           // system | first_party | third_party
+  string deployment = 6;            // edge | cloud
+  uint32 latency_budget_ms = 7;
+  string fallback = 8;              // 失败/拒绝降级到的 agent_id
+  repeated Capability capabilities = 9;
+  repeated string requires_permissions = 10;
+  repeated string edge_intents = 11; // 端侧本地意图白名单（供 Fast Intent）
+}
+
+message Capability {
+  string intent = 1;
+  string description = 2;
+  repeated string slots = 3;
+  repeated string examples = 4;     // 供语义路由的示例话术
+  bool require_confirm = 5;
+}
+
+message ExecuteRequest {
+  string request_id = 1;
+  string session_id = 2;
+  cockpit.common.v1.Intent intent = 3;
+  cockpit.common.v1.ContextRef context = 4;
+  repeated cockpit.common.v1.ModalityRef modalities = 5;
+  map<string, string> meta = 6;     // trace_id, locale, vehicle_id ...
+}
+
+message ExecuteResponse {
+  enum Status {
+    OK = 0;
+    NEED_CONFIRM = 1;               // 需用户二次确认
+    NEED_SLOT = 2;                  // 缺槽位，需追问
+    FAILED = 3;
+    REJECTED = 4;                   // 权限/安全拒绝
+  }
+  Status status = 1;
+  string speech = 2;                // 给 TTS 的播报话术
+  google.protobuf.Struct ui_card = 3; // 给 HMI 的结构化卡片（可选）
+  repeated cockpit.common.v1.AgentAction actions = 4;
+  string follow_up = 5;             // 追问/澄清提示
+  cockpit.common.v1.ErrorInfo error = 6;
+}
+
+// 流式：边想边说边做
+message ExecuteEvent {
+  oneof event {
+    string speech_delta = 1;        // 流式话术增量
+    cockpit.common.v1.AgentAction action = 2;
+    ExecuteResponse final = 3;      // 终态
+  }
+}
+
+message HealthRequest {}
+message HealthResponse {
+  enum Serving { UNKNOWN = 0; SERVING = 1; NOT_SERVING = 2; }
+  Serving status = 1;
+}

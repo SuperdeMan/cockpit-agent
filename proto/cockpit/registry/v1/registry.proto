@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package cockpit.registry.v1;
+
+import "cockpit/agent/v1/agent.proto";
+
+// Agent 注册中心：注册/发现/能力索引。Agent 新增即可被路由，编排核心无感。
+service Registry {
+  rpc Register      (RegisterRequest)   returns (RegisterResponse);
+  rpc Deregister    (DeregisterRequest) returns (DeregisterResponse);
+  rpc ResolveAgents (ResolveRequest)    returns (ResolveResponse);   // 供 Planner 路由
+  rpc ListAgents    (ListRequest)       returns (ListResponse);
+}
+
+message RegisterRequest {
+  cockpit.agent.v1.AgentManifest manifest = 1;
+  string endpoint = 2;              // host:port
+}
+message RegisterResponse {
+  bool ok = 1;
+  string lease_id = 2;              // 心跳续租用
+}
+
+message DeregisterRequest {
+  string agent_id = 1;
+  string lease_id = 2;
+}
+message DeregisterResponse { bool ok = 1; }
+
+message ResolveRequest {
+  string intent = 1;                // 精确意图匹配（优先）
+  string query = 2;                 // 语义查询（按 capabilities/examples 检索）
+  uint32 top_k = 3;
+  repeated string granted_permissions = 4; // 调用方已授予权限，用于过滤
+}
+
+message ResolvedAgent {
+  cockpit.agent.v1.AgentManifest manifest = 1;
+  string endpoint = 2;
+  float score = 3;                  // 路由匹配分
+}
+message ResolveResponse { repeated ResolvedAgent agents = 1; }
+
+message ListRequest { string category = 1; } // core | ecosystem | "" 全部
+message ListResponse { repeated ResolvedAgent agents = 1; }

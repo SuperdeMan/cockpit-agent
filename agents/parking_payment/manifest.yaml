@@ -1,0 +1,25 @@
+agent_id: parking-payment
+version: 0.1.0
+display_name: 停车缴费助手
+category: ecosystem
+trust_level: third_party
+deployment: cloud
+latency_budget_ms: 2000
+fallback: chitchat
+
+capabilities:
+  - intent: parking.find
+    description: 查找附近停车场（含空位/价格）
+    slots: [location, near]
+    examples: ["附近哪里能停车", "找个停车场", "这附近停车贵吗"]
+  - intent: parking.pay
+    description: 停车缴费（涉及支付，需二次确认）
+    slots: [order_id, plate, amount]
+    examples: ["交停车费", "缴费", "把停车费付了"]
+    require_confirm: true
+
+requires_permissions:
+  - location.read
+  - payment.invoke
+  - network.external
+edge_intents: []
