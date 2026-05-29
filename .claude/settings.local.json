@@ -28,7 +28,11 @@
       "Bash(mv agents/parking_payment/tests/test_agent.py test/test_parking_payment.py)",
       "Bash(rm agents/parking_payment/tests/__init__.py)",
       "Bash(rmdir agents/parking_payment/tests)",
-      "Bash(python -X utf8 -m pytest test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ -q)"
+      "Bash(python -X utf8 -m pytest test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ -q)",
+      "Bash(git commit -m '@ *)",
+      "Bash(git branch *)",
+      "Bash(git remote *)",
+      "Bash(git push *)"
     ]
   }
 }

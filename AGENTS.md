@@ -9,7 +9,7 @@
 
 云边协同的智能座舱 multi-agent 系统。**分层混合编排**：端侧"快系统"秒回高频/安全敏感指令（车控/媒体）并离线兜底；云侧"慢系统"用 LLM Planner 编排复杂/跨域/多轮意图。所有 Agent 实现统一 gRPC 契约 + Manifest，经注册中心即插即用。
 
-阶段：**Phase 0（PoC）骨架已搭好**，正准备进入 Phase 1（工程化）。
+阶段：**Phase 1 工程化代码已落地**（87/87 测试通过，MiMo API 已验证）。待完成：`make proto` + docker 整栈联调。
 
 ---
 
@@ -52,9 +52,9 @@
 | Go 网关 | ✅ bidi 双向流已实现（未本地 build） |
 | Agent Provider 适配 | ✅ 6/6 Agent 全部接入 |
 | 安全/权限/编排/协作/支付/可观测 | ✅ 全部落地 |
-| LLM 调用 | 🟡 未配 `LLM_API_KEY` 时走 MockProvider |
+| LLM 调用 | ✅ MiMo API 已验证连通（同步+流式）；未配 key 时走 MockProvider |
 
-**结论**：Phase 1 全部 Python + Go 代码已落地。剩余：`make proto` 生成 gen/ → docker 整栈联调 → 接真实外部 API。
+**结论**：Phase 1 全部 Python + Go 代码已落地，MiMo API 连通确认。剩余：`make proto` 生成 gen/ → docker 整栈联调。
 
 ---
 

@@ -16,6 +16,7 @@
 | grpcurl | 最新（可选）| 手测 gRPC | github.com/fullstorydev/grpcurl |
 
 > 只想跑端侧逻辑测试（`test/smoke_edge.py`）的话，只需 Python，无需其它。
+> LLM Gateway 需要 `httpx`（MiMo Provider 用）：`pip install httpx[socks]`。
 
 ---
 
@@ -118,7 +119,7 @@ go run ./gateway/edge          # 或 ./gateway/cloud
 | Agent 日志 `registry register failed (continuing)` | registry 没起；SDK 设计为不阻塞，起 registry 后重启 Agent 即注册 |
 | LLM 回复以 `[mock]` 开头 | 未配 `LLM_API_KEY`，走 MockProvider；填 key 后重启 llm-gateway |
 | 端口被占用 | 改 `.env` 端口或停占用进程；端口表见 `docs/conventions.md` |
-| `make up` 首次失败 | Phase 0 整栈未在本环境验证过，按报错逐服务排查（多为 codegen 未跑或端口冲突）|
+| `make up` 首次失败 | 整栈首次联调，按报错逐服务排查（多为 codegen 未跑或端口冲突）|
 | 复杂意图总是"无法处理" | mock LLM 不会抽槽/规划；配 `LLM_API_KEY` 后体验完整 |
 
 ---

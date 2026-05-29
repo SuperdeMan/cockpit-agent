@@ -8,8 +8,12 @@
 | `food.reserve` | 预订（`require_confirm`，涉及费用必须二次确认） |
 
 ## 安全要点
-- `trust_level: third_party` → 默认禁用车控、网络出口白名单、沙箱（Phase 2 强制）。
+- `trust_level: third_party` → 默认禁用车控、精确位置、摄像头/麦克风。
 - 预订不直接下单，返回 `NEED_CONFIRM` + `require_confirm` 动作，由上层确认后执行。
+- 支付经统一 `payment-gateway` 服务（Agent 不持凭证）。
+
+## Provider
+`providers/` 目录：`RestaurantProvider` 接口 + `MockRestaurantProvider`。切换：`RESTAURANT_VENDOR=dianping`。
 
 ## 待办
-- TODO(Phase1): 接真实到店点评/预订平台；支付经统一支付网关（不在 Agent 内持有凭证）。
+- TODO(Phase1): 实现 DianpingProvider（接真实到店点评/预订平台）。

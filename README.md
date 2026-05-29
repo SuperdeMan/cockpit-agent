@@ -19,12 +19,12 @@ HMI ─► Edge Gateway ─► Edge Orchestrator ─► Fast Intent
                                                             └─► core/eco Agents(gRPC)
 ```
 
-## 快速开始（PoC）
+## 快速开始
 
-前置：Docker、Docker Compose；本地开发另需 Go 1.22+、Python 3.11+、Node 20+、protoc/buf。
+前置：Docker、Docker Compose；本地开发另需 Go 1.22+、Python 3.11+、Node 20+、buf。
 
 ```bash
-cp .env.example .env          # 填入 LLM_API_KEY 等
+cp .env.example .env          # 填入 LLM_API_KEY（MiMo/Anthropic）
 make proto                    # 生成 gRPC 代码
 make up                       # 起全栈
 # 打开 http://localhost:5173  访问座舱 HMI
@@ -39,6 +39,8 @@ Copy-Item .env.example .env
 docker compose -f deploy/docker-compose.yaml up --build
 ```
 
+LLM 默认使用小米 MiMo API（`LLM_PROVIDER=xiaomimimo`），也支持 Anthropic。不配 key 自动走 MockProvider。
+
 ## 验证三条 PoC 链路
 1. **车控快路径**：说/输入"打开空调26度" → 端侧秒回（断网也可用）。
 2. **云端组合意图**：说"找家顺路评分高的川菜馆订今晚的位" → 云端 Planner 编排导航+点餐。
@@ -48,4 +50,4 @@ docker compose -f deploy/docker-compose.yaml up --build
 见 `CLAUDE.md` §3。每个服务子目录都有自己的 README，说明职责、接口、依赖。
 
 ## 状态
-Phase 0（PoC）。各服务当前为**可运行骨架**，标注 `TODO(PhaseN)` 的为后续阶段实现点。
+Phase 1 工程化代码已落地（87/87 测试通过，MiMo API 已验证）。详见 [`AGENTS.md`](AGENTS.md) §4。

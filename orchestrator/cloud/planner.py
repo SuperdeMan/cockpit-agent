@@ -1,9 +1,12 @@
-"""Cloud Planner 核心：规划 → 执行 → 聚合（规划/执行分离）。
+"""Cloud Planner 旧版实现（Phase 0 PoC）。
 
-规划：把已注册 Agent 的能力作为"工具"喂给 LLM，让其输出调用计划(JSON DAG)。
-执行：由确定性代码顺序/并行调用 Agent（带超时/中断），LLM 不直接产生副作用。
-降级：LLM 不可用/mock/解析失败 → 退化为 Registry 语义路由 top1。
-TODO(Phase1): 并行 DAG、缺槽多轮、LLM 聚合改写话术、权限强校验、超时熔断。
+Phase 1 新版已在以下模块实现，本文件保留供参考：
+- engine.py：编排主循环
+- planning.py：LLM DAG 规划 + schema 校验 + 降级
+- executor.py：拓扑分层并行 + 超时 + 部分失败
+- aggregator.py：结果聚合
+- session.py：多轮状态机
+- circuit.py：熔断器
 """
 from __future__ import annotations
 import json

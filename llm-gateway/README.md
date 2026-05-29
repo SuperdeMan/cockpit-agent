@@ -6,12 +6,20 @@
 - `Complete` 同步补全
 - `CompleteStream` 流式补全
 
+## 支持的 Provider
+- `xiaomimimo` — 小米 MiMo API（OpenAI 兼容格式）。已验证连通。
+- `anthropic` — Anthropic Claude API
+- `mock` — 无 key 时的回显兜底
+
 ## 路由与降级
 - 请求未指定 model → 依次尝试 `LLM_MODEL_PRIMARY`、`LLM_MODEL_FALLBACK`，前者失败降级到后者。
-- 未配置 `LLM_API_KEY` → 自动用 `MockProvider`，保证 PoC 可离线跑通。
+- 未配置 `LLM_API_KEY` → 自动用 `MockProvider`，保证可离线跑通。
 
-## 扩展厂商
-在 `providers.py` 新增 `BaseProvider` 子类并在 `build_provider()` 注册即可。
+## Phase 1 已落地
+- `cache.py` — LRU 缓存（messages 哈希，TTL 5min）
+- `ratelimit.py` — 令牌桶限流（全局 + 每 key）
+- `metrics.py` — 按模型统计 calls/tokens/latency/cost
 
 ## 待办
-- TODO(Phase1): 缓存 / 限流 / 配额与成本统计 / 内容审核 / 工具调用(tools) 透传。
+- TODO: 内容审核钩子接入。
+- TODO: 工具调用(tools) 透传。
