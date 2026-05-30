@@ -45,7 +45,8 @@ class PlannerEngine:
         if not pending or not getattr(request, "is_confirmation", False):
             # B. 新规划
             agents = await self.clients.list_agents()
-            plan = await self.planner.build(request.text, agents, ctx)
+            plan = await self.planner.build(request.text, agents, ctx,
+                                            granted_permissions=ctx.granted_permissions)
 
             if not plan.steps:
                 yield {"kind": "final", "speech": "抱歉，我暂时无法处理这个请求。"}

@@ -32,7 +32,9 @@
       "Bash(git commit -m '@ *)",
       "Bash(git branch *)",
       "Bash(git remote *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(python -X utf8 -m pytest test/scenarios/ -v)",
+      "Bash(git add *)"
     ]
   }
 }

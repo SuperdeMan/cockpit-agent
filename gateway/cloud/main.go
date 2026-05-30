@@ -12,9 +12,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/status"
 
 	channelpb "github.com/cockpit/car-agent/gen/go/cockpit/channel/v1"
 	orchpb "github.com/cockpit/car-agent/gen/go/cockpit/orchestrator/v1"
@@ -26,6 +24,7 @@ type channelServer struct {
 	channelpb.UnimplementedEdgeCloudChannelServer
 	planner orchpb.CloudPlannerClient
 	sessions sync.Map // vehicle_id -> *sessionState
+	idem     IdempotencyStore
 }
 
 type sessionState struct {
@@ -98,9 +97,15 @@ func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer)
 func (s *channelServer) handleRequest(stream channelpb.EdgeCloudChannel_ConnectServer,
 	corrID string, req *orchpb.HandleRequest, vehicleID string) {
 
-	// 幂等检查（TODO: Redis 持久化）
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// 幂等检查：重复 correlation_id 直接跳过
+	if s.idem.Seen(ctx, corrID) {
+		log.Printf("[cloud-gateway] duplicate corrID %s from %s, skipping", corrID, vehicleID)
+		return
+	}
+	s.idem.Mark(ctx, corrID, 10*time.Minute)
 
 	plannerStream, err := s.planner.Handle(ctx, req)
 	if err != nil {
@@ -168,6 +173,7 @@ func main() {
 	)
 	channelpb.RegisterEdgeCloudChannelServer(s, &channelServer{
 		planner: orchpb.NewCloudPlannerClient(conn),
+		idem:    buildIdempotencyStore(),
 	})
 
 	log.Printf("[cloud-gateway] EdgeCloudChannel serving on :%s -> %s", port, plannerAddr)

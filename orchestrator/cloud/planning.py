@@ -31,8 +31,17 @@ class PlanBuilder:
         self._llm = llm_fn
         self._resolve = registry_fn
 
-    async def build(self, text: str, agents: list, ctx: PlanContext) -> Plan:
-        """构建执行计划。最多重试 1 次，失败降级到语义路由。"""
+    async def build(self, text: str, agents: list, ctx: PlanContext,
+                    granted_permissions: list[str] = None) -> Plan:
+        """构建执行计划。最多重试 1 次，失败降级到语义路由。
+
+        granted_permissions: 用户已授予的权限列表。规划时过滤掉越权能力，
+        LLM 看不到用户无权调用的 Agent/意图（越权能力不暴露给 LLM）。
+        """
+        # 权限过滤：只保留用户有权调用的 Agent
+        if granted_permissions is not None:
+            agents = self._filter_by_permission(agents, granted_permissions)
+
         agent_map = {a.manifest.agent_id: a for a in agents}
         valid_intents = self._build_intent_set(agents)
 
@@ -143,3 +152,33 @@ class PlanBuilder:
             for c in a.manifest.capabilities:
                 intents.add(c.intent)
         return intents
+
+    @staticmethod
+    def _filter_by_permission(agents: list, granted: list[str]) -> list:
+        """过滤掉用户无权调用的 Agent。
+
+        规则：
+        - granted 为空列表 → 不过滤（兼容旧调用）
+        - Agent 的 requires_permissions 全部在 granted 中 → 保留
+        - third_party Agent 的 vehicle.control scope 被拒绝（与 security 模块一致）
+        """
+        if not granted:
+            return agents
+        granted_set = set(granted)
+        filtered = []
+        for a in agents:
+            manifest = a.manifest
+            required = set(manifest.requires_permissions)
+            # third_party 禁止 vehicle.control
+            if manifest.trust_level == "third_party":
+                if any(r.startswith("vehicle.control") for r in required):
+                    logger.debug("Filtered %s: third_party cannot access vehicle.control",
+                                 manifest.agent_id)
+                    continue
+            # 检查权限覆盖
+            if required and not required.issubset(granted_set):
+                missing = required - granted_set
+                logger.debug("Filtered %s: missing permissions %s", manifest.agent_id, missing)
+                continue
+            filtered.append(a)
+        return filtered

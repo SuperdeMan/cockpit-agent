@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install grpcio protobuf pyyaml pytest pytest-asyncio httpx
+
+      - name: Syntax check (py_compile)
+        run: |
+          python -m py_compile $(find . -name "*.py" -not -path "*/__pycache__/*" -not -path "*/gen/*" | tr "\n" " ")
+
+      - name: Smoke tests (edge logic)
+        run: |
+          PYTHONPATH=$PWD python test/smoke_edge.py
+
+      - name: Unit tests
+        run: |
+          PYTHONPATH=$PWD python -m pytest test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ -v --tb=short
