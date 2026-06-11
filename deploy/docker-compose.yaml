@@ -40,10 +40,10 @@ services:
     build: { context: .., dockerfile: llm-gateway/Dockerfile }
     environment:
       <<: *python-env
-      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_PROVIDER: ${LLM_PROVIDER:-xiaomimimo}
       LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY:-claude-opus-4-8}
-      LLM_MODEL_FALLBACK: ${LLM_MODEL_FALLBACK:-claude-haiku-4-5-20251001}
+      LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY:-mimo-v2.5-pro}
+      LLM_MODEL_FALLBACK: ${LLM_MODEL_FALLBACK:-mimo-v2.5}
     ports: ["50052:50052"]
     depends_on: [redis]
 

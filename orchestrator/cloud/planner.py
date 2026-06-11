@@ -1,12 +1,17 @@
 """Cloud Planner 旧版实现（Phase 0 PoC）。
 
-Phase 1 新版已在以下模块实现，本文件保留供参考：
+⚠️ 不可运行：本文件的 call_agent 调用签名与当前 clients.py 不匹配（5参 vs 4参），
+一跑就 TypeError。仅供历史参考，不要 import。
+
+Phase 1 新版已在以下模块实现：
 - engine.py：编排主循环
 - planning.py：LLM DAG 规划 + schema 校验 + 降级
 - executor.py：拓扑分层并行 + 超时 + 部分失败
 - aggregator.py：结果聚合
 - session.py：多轮状态机
 - circuit.py：熔断器
+
+TODO：确认后删除本文件（需经用户确认）。
 """
 from __future__ import annotations
 import json

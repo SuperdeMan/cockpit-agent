@@ -135,3 +135,57 @@ def test_to_result_failed():
     resp = MockResponse(status=3, speech="出错了")
     result = DagExecutor._to_result("s1", resp)
     assert result.status == StepStatus.FAILED
+
+
+# ─── 确认续接：done 种子 + step.meta 透传（F1）───
+
+def test_run_skips_seeded_done_steps_and_passes_meta():
+    """种子结果不重跑；挂起步骤的 meta（confirmed）随调用下发。"""
+    import asyncio
+
+    calls = []
+
+    async def call(endpoint, intent, slots, ctx, meta):
+        calls.append((intent, dict(meta or {})))
+        return MockResponse(status=0, speech="done")
+
+    ex = DagExecutor(call_agent_fn=call)
+    steps = [
+        Step(id="s1", agent_id="a", intent="food.search_restaurant"),
+        Step(id="s2", agent_id="a", intent="food.reserve",
+             depends_on=["s1"], meta={"confirmed": "true"}),
+    ]
+    seed = {"s1": StepResult(step_id="s1", status=StepStatus.OK, speech="earlier")}
+
+    async def run():
+        return [r async for r in ex.run(Plan(steps=steps), None, done=seed)]
+
+    results = asyncio.run(run())
+    # 只 yield 新执行的步骤；s1 未被重跑
+    assert [r.step_id for r in results] == ["s2"]
+    assert calls == [("food.reserve", {"confirmed": "true"})]
+
+
+def test_run_seeded_failed_dep_skips_children():
+    """种子里的失败步骤同样阻断后继。"""
+    import asyncio
+
+    calls = []
+
+    async def call(endpoint, intent, slots, ctx, meta):
+        calls.append(intent)
+        return MockResponse(status=0, speech="done")
+
+    ex = DagExecutor(call_agent_fn=call)
+    steps = [
+        Step(id="s1", agent_id="a", intent="i1"),
+        Step(id="s2", agent_id="a", intent="i2", depends_on=["s1"]),
+    ]
+    seed = {"s1": StepResult(step_id="s1", status=StepStatus.FAILED, error="boom")}
+
+    async def run():
+        return [r async for r in ex.run(Plan(steps=steps), None, done=seed)]
+
+    results = asyncio.run(run())
+    assert calls == []
+    assert results == []

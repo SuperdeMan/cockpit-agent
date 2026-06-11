@@ -20,8 +20,13 @@ class DagExecutor:
         """
         self._call = call_agent_fn
 
-    async def run(self, plan: Plan, ctx: PlanContext) -> AsyncIterator[StepResult]:
-        """执行 DAG 计划，yield 每个 step 的结果。遇到 NEED_CONFIRM/NEED_SLOT 立即停止。"""
+    async def run(self, plan: Plan, ctx: PlanContext,
+                  done: dict[str, StepResult] | None = None) -> AsyncIterator[StepResult]:
+        """执行 DAG 计划，yield 每个 step 的结果。遇到 NEED_CONFIRM/NEED_SLOT 立即停止。
+
+        done: 已完成步骤的种子结果（多轮确认续接时由 engine 传入），
+        这些步骤不再执行，但其结果可被后继步骤的依赖判定与 slot_refs 使用。
+        """
         try:
             layers = self._topo_layers(plan.steps)
         except CyclicPlan as e:
@@ -29,11 +34,11 @@ class DagExecutor:
             yield StepResult(step_id="plan", status=StepStatus.FAILED, error=str(e))
             return
 
-        done: dict[str, StepResult] = {}
+        done = dict(done) if done else {}
 
         for layer in layers:
-            # 过滤掉被依赖 step 失败而跳过的
-            runnable = [s for s in layer if self._should_run(s, done)]
+            # 跳过已有结果（确认续接的种子）和依赖未就绪/已失败的
+            runnable = [s for s in layer if s.id not in done and self._should_run(s, done)]
             if not runnable:
                 continue
 
@@ -41,12 +46,13 @@ class DagExecutor:
             coros = [self._exec_step(s, done, ctx) for s in runnable]
             results = await asyncio.gather(*coros, return_exceptions=True)
 
-            for res in results:
+            # F17：用 zip(runnable, results) 还原 step_id，防止异常分支丢 step
+            for step, res in zip(runnable, results):
                 if isinstance(res, Exception):
-                    res = StepResult(step_id="unknown", status=StepStatus.FAILED,
+                    res = StepResult(step_id=step.id, status=StepStatus.FAILED,
                                      error=str(res))
                 elif not isinstance(res, StepResult):
-                    res = StepResult(step_id="unknown", status=StepStatus.FAILED,
+                    res = StepResult(step_id=step.id, status=StepStatus.FAILED,
                                      error=f"unexpected result: {res}")
 
                 done[res.step_id] = res
@@ -67,7 +73,7 @@ class DagExecutor:
         timeout = step.latency_budget_ms / 1000.0
         try:
             resp = await asyncio.wait_for(
-                self._call(step.endpoint, step.intent, step.slots, ctx),
+                self._call(step.endpoint, step.intent, step.slots, ctx, step.meta),
                 timeout=timeout,
             )
         except asyncio.TimeoutError:

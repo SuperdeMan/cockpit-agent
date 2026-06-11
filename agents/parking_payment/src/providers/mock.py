@@ -13,3 +13,6 @@ class MockParkingProvider(ParkingProvider):
 
     async def get_fee(self, lot_id: str, plate: str) -> tuple[int, str]:
         return 1500, ""  # 15元
+
+    async def pay(self, order_id: str, plate: str, amount_cents: int) -> tuple[bool, str]:
+        return True, f"rcpt_mock_{order_id or 'current'}"

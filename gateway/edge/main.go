@@ -76,7 +76,7 @@ func (c *ChannelClient) State() channelState {
 	return channelState(c.state.Load())
 }
 
-func (c *ChannelClient) Request(ctx context.Context, text, sessionID string) (<-chan *orchpb.HandleEvent, error) {
+func (c *ChannelClient) Request(ctx context.Context, text, sessionID string, isConfirmation bool) (<-chan *orchpb.HandleEvent, error) {
 	if c.State() != stateConnected {
 		return nil, fmt.Errorf("not connected to cloud")
 	}
@@ -89,8 +89,9 @@ func (c *ChannelClient) Request(ctx context.Context, text, sessionID string) (<-
 		CorrelationId: corrID,
 		Body: &channelpb.UpFrame_Request{
 			Request: &orchpb.HandleRequest{
-				Text:      text,
-				SessionId: sessionID,
+				Text:           text,
+				SessionId:      sessionID,
+				IsConfirmation: isConfirmation,
 				Context: &commonpb.ContextRef{
 					SessionId: sessionID,
 					VehicleId: c.vehicleID,
@@ -263,11 +264,12 @@ func (c *ChannelClient) recvLoop(ctx context.Context) {
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
 type wsRequest struct {
-	Text      string `json:"text"`
-	SessionID string `json:"session_id"`
+	Text           string `json:"text"`
+	SessionID      string `json:"session_id"`
+	IsConfirmation bool   `json:"is_confirmation"` // HMI 确认/取消按钮回应多轮确认时置 true
 }
 
-func handleWS(w http.ResponseWriter, r *http.Request, cc *ChannelClient) {
+func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestratorClient, vehicleID string) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -287,20 +289,30 @@ func handleWS(w http.ResponseWriter, r *http.Request, cc *ChannelClient) {
 			req.SessionID = "default"
 		}
 
-		if cc.State() != stateConnected {
-			writeJSON(conn, map[string]any{
-				"type": "error", "message": "云端不可用，车内控制仍可正常使用。",
-			})
-			continue
-		}
-
-		ch, err := cc.Request(r.Context(), req.Text, req.SessionID)
+		// 调端侧编排器（架构 §2.2：快意图本地秒回 / 慢意图上云）
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		stream, err := orch.Handle(ctx, &orchpb.HandleRequest{
+			Text:           req.Text,
+			SessionId:      req.SessionID,
+			IsConfirmation: req.IsConfirmation,
+			Context: &commonpb.ContextRef{
+				SessionId: req.SessionID,
+				VehicleId: vehicleID,
+				UserId:    "u1",
+			},
+		})
 		if err != nil {
+			cancel()
 			writeJSON(conn, map[string]any{"type": "error", "message": err.Error()})
 			continue
 		}
 
-		for ev := range ch {
+		for {
+			ev, err := stream.Recv()
+			if err != nil {
+				cancel()
+				break
+			}
 			writeJSON(conn, eventToMap(ev))
 		}
 	}
@@ -349,36 +361,25 @@ func getenv(k, def string) string {
 // ─── 入口 ───
 
 func main() {
-	cloudAddr := getenv("CLOUD_GATEWAY_ADDR", "cloud-gateway:8080")
+	orchAddr := getenv("EDGE_ORCHESTRATOR_ADDR", "edge-orchestrator:50070")
 	port := getenv("EDGE_GATEWAY_PORT", "8090")
 	vehicleID := getenv("VEHICLE_ID", "v1")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	cc := NewChannelClient(cloudAddr, vehicleID)
-	cc.Start(ctx)
-
-	// 等待连接就绪（最多 5s）
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if cc.State() == stateConnected {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
+	// 连接端侧编排器（架构 §2.2：HMI → Edge Gateway → Edge Orchestrator）
+	orchConn, err := grpc.NewClient(orchAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("[edge-gateway] dial orchestrator %s: %v", orchAddr, err)
 	}
+	defer orchConn.Close()
+	orchStub := orchpb.NewEdgeOrchestratorClient(orchConn)
 
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		state := "disconnected"
-		if cc.State() == stateConnected {
-			state = "connected"
-		}
-		fmt.Fprintf(w, `{"status":"ok","cloud":"%s"}`, state)
+		fmt.Fprintf(w, `{"status":"ok","orchestrator":"%s"}`, orchAddr)
 	})
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		handleWS(w, r, cc)
+		handleWS(w, r, orchStub, vehicleID)
 	})
 
-	log.Printf("[edge-gateway] HTTP/WS serving on :%s -> %s (vehicle=%s)", port, cloudAddr, vehicleID)
+	log.Printf("[edge-gateway] HTTP/WS serving on :%s -> %s (vehicle=%s)", port, orchAddr, vehicleID)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }

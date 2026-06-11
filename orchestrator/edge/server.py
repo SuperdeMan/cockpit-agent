@@ -33,7 +33,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         self.cloud_connected = False  # 连接状态追踪
 
     async def Handle(self, request, context):
-        intent = classify(request.text)
+        # 确认/补槽续接必须回到挂起会话所在的云端，不走本地快路径
+        intent = None if request.is_confirmation else classify(request.text)
 
         # 快路径：高置信本地意图，端侧秒回（离线可用，不依赖网络）
         if intent and intent["confidence"] >= _HIGH and is_local(intent["name"]):
@@ -80,19 +81,21 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             return event
 
         final = event.final
-        dispatched_actions = []
+        new_speech = final.speech
         for action in final.actions:
-            if action.type.startswith("vehicle.control"):
-                # 车控 action：交 VAL 执行
-                cmd = action.payload.fields.get("command", "").string_value or action.type
-                args = dict(action.payload.fields) if action.payload else {}
-                ok, msg = self.val.execute(cmd, args)
-                if ok:
-                    logger.info("VAL executed: %s -> %s", cmd, msg)
-                    # 用 VAL 的执行结果替换原始 speech
-                else:
-                    logger.warning("VAL rejected: %s -> %s", cmd, msg)
-                    # 安全门控拒绝：替换 speech
-            dispatched_actions.append(action)
+            if not action.type.startswith("vehicle.control"):
+                continue
+            # F14：payload 用 AsMap()（原生类型），避免 protobuf Value 类型错误
+            payload = action.payload.AsMap() if action.payload else {}
+            cmd = payload.get("command", action.type)
+            ok, msg = self.val.execute(cmd, payload)
+            if ok:
+                logger.info("VAL executed: %s -> %s", cmd, msg)
+                new_speech = msg  # 用 VAL 执行结果替换 speech
+            else:
+                logger.warning("VAL rejected: %s -> %s", cmd, msg)
+                new_speech = msg  # 安全门控拒绝：替换为拒绝原因
 
+        # F14：真正替换 speech（之前构建了 dispatched_actions 但丢弃了）
+        final.speech = new_speech
         return event

@@ -28,6 +28,9 @@ class Step:
     require_confirm: bool = False
     status: StepStatus = StepStatus.PENDING
     latency_budget_ms: int = 5000
+    meta: dict[str, str] = field(default_factory=dict)
+    # 运行期注入、随 ExecuteRequest.meta 下发给 Agent（如确认续接的 {"confirmed":"true"}）。
+    # 不持久化进 SessionState——confirmed 只在确认那一轮由 engine 注入，防止陈旧确认被重放。
 
 
 @dataclass

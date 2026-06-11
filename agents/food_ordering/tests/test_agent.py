@@ -26,3 +26,14 @@ def test_reserve_missing_restaurant_asks():
     res = asyncio.run(run_handle(
         FoodOrderingAgent(), "food.reserve", slots={}, raw_text="订位"))
     assert res.status == "need_slot"
+
+
+def test_reserve_confirmed_books():
+    """F1 确认闭环：带 confirmed 标记时真正下单，不再追问。"""
+    res = asyncio.run(run_handle(
+        FoodOrderingAgent(), "food.reserve",
+        slots={"restaurant_name": "川菜·名店1", "datetime": "今晚19:00", "party_size": "2"},
+        raw_text="确认", meta={"confirmed": "true"}))
+    assert res.status == "ok"
+    assert "订好" in res.speech
+    assert res.ui_card["type"] == "reservation"

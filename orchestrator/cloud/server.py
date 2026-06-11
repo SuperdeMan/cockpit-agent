@@ -8,7 +8,7 @@ from cockpit.orchestrator.v1 import orchestrator_pb2, orchestrator_pb2_grpc
 from cockpit.common.v1 import common_pb2
 from google.protobuf import struct_pb2
 
-from engine import PlannerEngine
+from .engine import PlannerEngine
 
 
 def _to_struct(d: dict) -> struct_pb2.Struct:

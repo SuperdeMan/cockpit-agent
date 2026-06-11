@@ -20,7 +20,7 @@ class ParkingPaymentAgent(BaseAgent):
         if intent.name == "parking.find":
             return await self._find(ctx)
         if intent.name == "parking.pay":
-            return await self._pay(intent)
+            return await self._pay(intent, meta)
         return AgentResult(status=FAILED, speech="停车助手暂不支持该请求。")
 
     async def _find(self, ctx) -> AgentResult:
@@ -35,18 +35,32 @@ class ParkingPaymentAgent(BaseAgent):
             ui_card={"type": "parking_list", "items": items},
         )
 
-    async def _pay(self, intent) -> AgentResult:
+    async def _pay(self, intent, meta: dict) -> AgentResult:
         amount = intent.slots.get("amount", "")
         plate = intent.slots.get("plate", "")
+        order_id = intent.slots.get("order_id", "current")
+        fee_cents = 0
         if not amount and plate:
             fee_cents, err = await self.parking.get_fee("current", plate)
             if err:
                 return AgentResult(status=FAILED, speech=f"查询费用失败：{err}")
             amount = f"{fee_cents / 100:.0f}元"
         detail = f"停车费{amount}" if amount else "当前停车订单费用"
+
+        # 用户已二次确认（编排器只对挂起那一步注入 confirmed）→ 真正支付
+        if meta.get("confirmed") == "true":
+            ok, receipt = await self.parking.pay(order_id, plate, fee_cents)
+            if not ok:
+                return AgentResult(status=FAILED, speech=f"支付没有成功：{receipt}")
+            return AgentResult(
+                speech=f"已为您支付{detail}，祝您一路顺利。",
+                ui_card={"type": "payment_receipt", "receipt_id": receipt,
+                         "order_id": order_id, "amount": amount},
+            )
+
         return AgentResult(
             status=NEED_CONFIRM,
             speech=f"确认支付 {detail} 吗？",
             follow_up="说『确认』完成支付",
-        ).action("parking.pay", {"order_id": intent.slots.get("order_id", "current"), "amount": amount},
+        ).action("parking.pay", {"order_id": order_id, "amount": amount},
                  require_confirm=True)

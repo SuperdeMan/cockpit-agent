@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 
 type Action = { type: string; payload?: Record<string, unknown>; require_confirm?: boolean }
-type Msg = { role: 'user' | 'assistant'; text: string; actions?: Action[] }
+type Msg = {
+  role: 'user' | 'assistant'
+  text: string
+  actions?: Action[]
+  needConfirm?: boolean
+  followUp?: string
+}
 
 const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://localhost:8090'
 const WS_URL = GATEWAY.replace(/^http/, 'ws') + '/ws'
@@ -13,6 +19,7 @@ export default function App() {
   const [messages, setMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [connected, setConnected] = useState(false)
+  const [awaitConfirm, setAwaitConfirm] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -23,9 +30,14 @@ export default function App() {
     ws.onmessage = (ev) => {
       const data = JSON.parse(ev.data)
       if (data.type === 'final') {
-        setMessages((m) => [...m, { role: 'assistant', text: data.speech || '', actions: data.actions }])
+        setMessages((m) => [...m, {
+          role: 'assistant', text: data.speech || '', actions: data.actions,
+          needConfirm: !!data.need_confirm, followUp: data.follow_up,
+        }])
+        setAwaitConfirm(!!data.need_confirm)
       } else if (data.type === 'error') {
         setMessages((m) => [...m, { role: 'assistant', text: '出错了：' + data.message }])
+        setAwaitConfirm(false)
       }
     }
     wsRef.current = ws
@@ -41,7 +53,16 @@ export default function App() {
     if (!t || wsRef.current?.readyState !== WebSocket.OPEN) return
     setMessages((m) => [...m, { role: 'user', text: t }])
     wsRef.current.send(JSON.stringify({ text: t, session_id: SESSION }))
+    setAwaitConfirm(false)
     setInput('')
+  }
+
+  // 回应待确认任务：带 is_confirmation 标记，云端编排器据此续接挂起计划
+  const replyConfirm = (text: '确认' | '取消') => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return
+    setMessages((m) => [...m, { role: 'user', text }])
+    wsRef.current.send(JSON.stringify({ text, session_id: SESSION, is_confirmation: true }))
+    setAwaitConfirm(false)
   }
 
   return (
@@ -68,6 +89,13 @@ export default function App() {
                   {a.require_confirm && <span className="confirm">需确认</span>}
                 </div>
               ))}
+              {m.followUp && <div className="followup">{m.followUp}</div>}
+              {m.needConfirm && awaitConfirm && i === messages.length - 1 && (
+                <div className="confirm-bar">
+                  <button className="yes" onClick={() => replyConfirm('确认')}>确认</button>
+                  <button className="no" onClick={() => replyConfirm('取消')}>取消</button>
+                </div>
+              )}
             </div>
           </div>
         ))}

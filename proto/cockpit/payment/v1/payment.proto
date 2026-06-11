@@ -24,6 +24,7 @@ message AuthorizeResponse {
   string payment_id = 1;
   bool require_confirm = 2;
   string confirm_prompt = 3;
+  string confirm_token = 4;    // F23：客户端确认后带此 token 调 Capture
 }
 
 message CaptureRequest {

@@ -31,8 +31,8 @@ jobs:
 
       - name: Smoke tests (edge logic)
         run: |
-          PYTHONPATH=$PWD python test/smoke_edge.py
+          python test/smoke_edge.py
 
       - name: Unit tests
         run: |
-          PYTHONPATH=$PWD python -m pytest test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ -v --tb=short
+          python -m pytest test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ agents/ --import-mode=importlib -v --tb=short

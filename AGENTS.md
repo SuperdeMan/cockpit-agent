@@ -44,17 +44,17 @@
 
 | 项 | 状态 |
 |---|---|
-| 全部 Python 文件语法（py_compile，97 文件）| ✅ 通过 |
+| 全量测试 `python -m pytest ... --import-mode=importlib` | ✅ 全绿（含 Agent 契约测试、确认闭环回归） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
-| Pytest 全量（安全/Planner/可观测/AgentClient/Session/LLM缓存/熔断器/parking） | ✅ 74/74 通过 |
-| **总计 87 项测试** | ✅ **87/87 通过，0 失败** |
-| `gen/`（gRPC 生成代码）| ❌ **尚未生成** —— 跑任何服务前**必须先 `make proto`** |
+| `gen/`（gRPC 生成代码）| ✅ 已生成（`buf generate proto`） |
 | Go 网关 | ✅ bidi 双向流已实现（未本地 build） |
 | Agent Provider 适配 | ✅ 6/6 Agent 全部接入 |
 | 安全/权限/编排/协作/支付/可观测 | ✅ 全部落地 |
 | LLM 调用 | ✅ MiMo API 已验证连通（同步+流式）；未配 key 时走 MockProvider |
+| 确认闭环（F1） | ✅ 端到端打通（HMI→网关→编排器→Agent） |
+| 验证体系（F6-F9） | ✅ `make test` 一条命令全绿 |
 
-**结论**：Phase 1 全部 Python + Go 代码已落地，MiMo API 连通确认。剩余：`make proto` 生成 gen/ → docker 整栈联调。
+**结论**：Phase 1 代码 + 测试 + proto codegen 已落地。剩余：Go 本地编译验证、docker 整栈联调、F3 SDK data 接线。详见 `docs/reviews/2026-06-11-review-fixes.md`。
 
 ---
 

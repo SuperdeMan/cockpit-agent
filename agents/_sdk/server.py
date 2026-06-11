@@ -15,6 +15,7 @@ from .clients import RegistryClient
 from .result import AgentResult
 
 _STATUS = {"ok": 0, "need_confirm": 1, "need_slot": 2, "failed": 3, "rejected": 4}
+_STATUS_DEFAULT = 3  # F16：未知 status 默认 FAILED（不是 OK），fail-closed
 
 
 def _to_struct(d: dict | None) -> struct_pb2.Struct:
@@ -34,7 +35,7 @@ def _result_to_proto(res: AgentResult) -> agent_pb2.ExecuteResponse:
         for a in res.actions
     ]
     return agent_pb2.ExecuteResponse(
-        status=_STATUS.get(res.status, 0),
+        status=_STATUS.get(res.status, _STATUS_DEFAULT),
         speech=res.speech,
         ui_card=_to_struct(res.ui_card),
         actions=actions,

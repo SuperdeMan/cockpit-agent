@@ -79,6 +79,22 @@ body {
 .action .tag { background: var(--accent-2); color: #06231a; padding: 1px 8px; border-radius: 6px; font-weight: 700; }
 .action .confirm { color: #e0a43b; }
 
+.followup { margin-top: 6px; font-size: 13px; color: var(--muted); }
+
+.confirm-bar { margin-top: 10px; display: flex; gap: 10px; }
+.confirm-bar button {
+  border: none;
+  border-radius: 12px;
+  padding: 8px 22px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.confirm-bar .yes { background: linear-gradient(135deg, var(--accent-2), #5fe0b7); color: #06231a; }
+.confirm-bar .no { background: var(--panel); color: var(--muted); border: 1px solid #2a3458; }
+.confirm-bar .no:hover { color: var(--text); border-color: var(--accent); }
+
 .quick { display: flex; flex-wrap: wrap; gap: 8px; }
 .quick button {
   background: var(--panel-2);

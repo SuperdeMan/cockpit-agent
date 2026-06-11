@@ -31,13 +31,18 @@ llm-gateway/    LLM 多模型网关（所有 LLM 调用的唯一出口）
 registry/       Agent 注册中心
 memory/         记忆/画像服务
 agents/         所有 Agent；_sdk/ 是公共 SDK，每个 Agent 一个子目录
-vehicle-abstraction/  VAL 车控抽象层（PoC 为模拟实现）
+security/       权限引擎、scope 定义、内容审核、注入防护
+payment-gateway/  统一支付网关（Agent 不持支付凭证）
+observability/  可观测模块：trace 贯穿 + 结构化日志 + 核心指标
 hmi/            React 座舱前端
 deploy/         docker-compose / helm / k8s
 scripts/        codegen、构建辅助
 docs/           架构与设计文档
 test/           端到端场景测试
+gen/            codegen 产出（gitignore，不要手动编辑）
 ```
+
+> 注：`vehicle-abstraction/` 在架构文档中规划，当前 PoC 阶段 VAL 实现位于 `orchestrator/edge/val.py`（Python 模拟）。
 
 ### 新增一个 Agent 的标准流程（必须遵守）
 1. 在 `agents/<name>/` 下按模板建目录（参考 `agents/navigation/`）。
@@ -76,4 +81,4 @@ Windows 无 make 时用 `scripts/gen-proto.ps1` 等价替代（见 README）。
 **工程纪律**：改完主动跑 `make test`；不要注释报错或加绕过标记来"让它跑起来"，找根因；大改动先在设计文档对齐再动手。
 
 ## 7. 当前阶段
-Phase 1 全量代码已落地（97+ Python + 2 Go + 8 proto，87/87 测试通过）。剩余：`make proto` 生成 gen/ → docker 整栈联调 → MiMo API key 验证。路线见 `docs/architecture/phase1-implementation-plan.md`。
+Phase 1 代码已落地，但 2026-06-11 全量 review 发现多处核心链路断点与验证体系缺陷，**当前以修复清单为准：`docs/reviews/2026-06-11-review-fixes.md`**（接手人从该文档继续，修一项更新一项状态）。注意：`make test` 在 F6 修复前结果不可信，正确跑法见该文档开头。原路线见 `docs/architecture/phase1-implementation-plan.md`。

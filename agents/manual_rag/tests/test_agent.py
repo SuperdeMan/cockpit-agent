@@ -12,8 +12,12 @@ def test_query_retrieves_and_answers():
     res = asyncio.run(run_handle(agent, "manual.query", raw_text="胎压多少正常"))
     assert res.status == "ok"
     assert res.ui_card["type"] == "manual"
-    # 检索应命中"胎压"条目
-    assert any("胎压" in s for s in res.ui_card["sources"])
+    # 检索应命中"胎压"相关内容（source 是章节名，chunks 内容含关键词）
+    sources = res.ui_card.get("sources", [])
+    chunks = res.ui_card.get("chunks", [])
+    assert len(sources) > 0, "sources 不应为空"
+    assert any("胎压" in c.get("content", "") for c in chunks), \
+        "chunks 内容应含「胎压」关键词"
 
 
 def test_query_missing_question_asks():

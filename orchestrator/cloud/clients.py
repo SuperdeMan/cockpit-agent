@@ -19,6 +19,7 @@ class Clients:
         self.llm_addr = os.getenv("LLM_GATEWAY_ADDR", "llm-gateway:50052")
         self._ch_registry: grpc.aio.Channel | None = None
         self._ch_llm: grpc.aio.Channel | None = None
+        self._ch_agents: dict[str, grpc.aio.Channel] = {}  # F15：按 endpoint 复用 channel
 
     def _registry_stub(self):
         if self._ch_registry is None:
@@ -50,9 +51,12 @@ class Clients:
         return resp.content
 
     async def call_agent(self, endpoint: str, intent: str, slots: dict,
-                         ctx=None) -> agent_pb2.ExecuteResponse:
-        ch = grpc.aio.insecure_channel(endpoint)
-        stub = agent_pb2_grpc.AgentStub(ch)
+                         ctx=None, meta: dict | None = None) -> agent_pb2.ExecuteResponse:
+        """meta 随 ExecuteRequest.meta 下发给 Agent（确认续接标记、trace 等）。"""
+        # F15：按 endpoint 复用 channel（之前每次新建泄漏）
+        if endpoint not in self._ch_agents:
+            self._ch_agents[endpoint] = grpc.aio.insecure_channel(endpoint)
+        stub = agent_pb2_grpc.AgentStub(self._ch_agents[endpoint])
         req = agent_pb2.ExecuteRequest(
             session_id=ctx.session_id if ctx else "",
             intent=common_pb2.Intent(name=intent, slots=slots, raw_text="", confidence=0.9),
@@ -61,5 +65,6 @@ class Clients:
                 user_id=ctx.user_id if ctx else "",
                 vehicle_id=ctx.vehicle_id if ctx else "",
             ),
+            meta=meta or {},
         )
         return await stub.Execute(req, timeout=_DEFAULT_TIMEOUT)

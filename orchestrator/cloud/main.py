@@ -1,17 +1,21 @@
-"""Cloud Planner 启动入口。Phase 1：使用 PlannerEngine。"""
+"""Cloud Planner 启动入口。Phase 1：使用 PlannerEngine。
+
+以包模块方式启动：`python -m orchestrator.cloud.main`（仓库根或 /app 为工作目录）。
+不要 `python main.py` 平铺启动——本包内部统一相对 import。
+"""
 import asyncio
 import os
 
 import grpc
 from cockpit.orchestrator.v1 import orchestrator_pb2_grpc
 
-from clients import Clients
-from planning import PlanBuilder
-from executor import DagExecutor
-from aggregator import Aggregator
-from session import SessionStore
-from engine import PlannerEngine
-from server import CloudPlannerServicer
+from .clients import Clients
+from .planning import PlanBuilder
+from .executor import DagExecutor
+from .aggregator import Aggregator
+from .session import SessionStore
+from .engine import PlannerEngine
+from .server import CloudPlannerServicer
 from security.permission import PermissionEngine
 
 

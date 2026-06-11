@@ -61,6 +61,8 @@ message ExecuteResponse {
   repeated cockpit.common.v1.AgentAction actions = 4;
   string follow_up = 5;             // 追问/澄清提示
   cockpit.common.v1.ErrorInfo error = 6;
+  google.protobuf.Struct data = 7;  // 结构化结果（供编排 slot_refs 取值，不面向 HMI）
+  repeated string missing_slots = 8; // NEED_SLOT 时声明缺失的槽位名（F12）
 }
 
 // 流式：边想边说边做

@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package cockpit.llm.v1;
+
+// 语音服务：ASR（语音转文字）+ TTS（文字转语音）。
+// 统一由 LLM Gateway 暴露，底层经 MiMo ASR/TTS API 或其他厂商实现。
+service AudioService {
+  rpc Transcribe (TranscribeRequest) returns (TranscribeResponse);  // ASR：音频→文字
+  rpc Synthesize (SynthesizeRequest) returns (SynthesizeResponse);  // TTS：文字→音频
+  rpc ListVoices (ListVoicesRequest) returns (ListVoicesResponse);  // 查询可用音色
+}
+
+// ─── ASR：语音识别 ───
+
+message TranscribeRequest {
+  bytes audio = 1;              // 音频原始字节（PCM/WAV/MP3/OGG）
+  string format = 2;            // 音频格式：pcm | wav | mp3 | ogg
+  string language = 3;          // 语言代码，默认 "zh"（中文）
+  string model = 4;             // ASR 模型，空则用网关默认
+  map<string, string> meta = 5; // trace_id, session_id ...
+}
+
+message TranscribeResponse {
+  string text = 1;              // 识别出的文本
+  float confidence = 2;         // 整体置信度
+  string language = 3;          // 检测到的语言
+  string model_used = 4;        // 实际使用的模型
+  uint32 duration_ms = 5;       // 音频时长（毫秒）
+}
+
+// ─── TTS：语音合成 ───
+
+message SynthesizeRequest {
+  string text = 1;              // 要合成的文本
+  string voice_id = 2;          // 音色 ID（空则用默认音色）
+  string model = 3;             // TTS 模型，空则用网关默认
+  float speed = 4;              // 语速：0.5-2.0，默认 1.0
+  string format = 5;            // 输出格式：mp3 | wav | pcm，默认 mp3
+  map<string, string> meta = 6; // trace_id, session_id ...
+}
+
+message SynthesizeResponse {
+  bytes audio = 1;              // 合成的音频字节
+  string format = 2;            // 音频格式
+  uint32 duration_ms = 3;       // 音频时长（毫秒）
+  string model_used = 4;        // 实际使用的模型
+  string voice_id = 5;          // 实际使用的音色
+}
+
+// ─── 音色查询 ───
+
+message ListVoicesRequest {
+  string language = 1;          // 按语言筛选，空则返回全部
+  string gender = 2;            // 按性别筛选：male | female | neutral，空则返回全部
+}
+
+message ListVoicesResponse {
+  repeated VoiceInfo voices = 1;
+}
+
+message VoiceInfo {
+  string voice_id = 1;          // 音色 ID（如 "zhifeng_emo"）
+  string name = 2;              // 音色名称（如 "知枫"）
+  string language = 3;          // 支持的语言
+  string gender = 4;            // male | female | neutral
+  string description = 5;       // 音色描述
+  repeated string tags = 6;     // 标签（如 "温暖", "磁性", "新闻"）
+}

@@ -21,7 +21,7 @@ class FoodOrderingAgent(BaseAgent):
         if intent.name == "food.search_restaurant":
             return await self._search(intent, ctx)
         if intent.name == "food.reserve":
-            return await self._reserve(intent)
+            return await self._reserve(intent, meta)
         return AgentResult(status=FAILED, speech="点餐助手暂不支持该请求。")
 
     async def _search(self, intent, ctx) -> AgentResult:
@@ -38,13 +38,26 @@ class FoodOrderingAgent(BaseAgent):
             follow_up="可以说『订第一家今晚7点两位』",
         )
 
-    async def _reserve(self, intent) -> AgentResult:
+    async def _reserve(self, intent, meta: dict) -> AgentResult:
         name = intent.slots.get("restaurant_name") or intent.slots.get("restaurant_id")
         if not name:
             return AgentResult(status=NEED_SLOT, speech="您想订哪一家？", follow_up="请告诉我餐厅")
         when = intent.slots.get("datetime", "")
         party = intent.slots.get("party_size", "")
         detail = " ".join(x for x in [name, when, f"{party}位" if party else ""] if x)
+
+        # 用户已二次确认（编排器只对挂起那一步注入 confirmed）→ 真正下单
+        if meta.get("confirmed") == "true":
+            party_n = int(party) if str(party).isdigit() else 2
+            ok, info = await self.restaurant.reserve(name, when, party_n)
+            if not ok:
+                return AgentResult(status=FAILED, speech=f"预订没有成功：{info}")
+            return AgentResult(
+                speech=f"已为您订好：{detail}。",
+                ui_card={"type": "reservation", "detail": info,
+                         "restaurant": name, "datetime": when, "party_size": party},
+            )
+
         return AgentResult(
             status=NEED_CONFIRM,
             speech=f"确认为您预订 {detail} 吗？",

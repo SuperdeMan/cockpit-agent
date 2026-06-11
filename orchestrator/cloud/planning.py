@@ -43,11 +43,10 @@ class PlanBuilder:
             agents = self._filter_by_permission(agents, granted_permissions)
 
         agent_map = {a.manifest.agent_id: a for a in agents}
-        valid_intents = self._build_intent_set(agents)
 
         for _ in range(2):
             raw = await self._llm_plan(text, agents)
-            plan = self._parse_and_validate(raw, agent_map, valid_intents, text)
+            plan = self._parse_and_validate(raw, agent_map, text)
             if plan and plan.steps:
                 return plan
 
@@ -67,7 +66,7 @@ class PlanBuilder:
             return ""
 
     def _parse_and_validate(self, raw: str, agent_map: dict,
-                            valid_intents: set, fallback_text: str) -> Plan | None:
+                            fallback_text: str) -> Plan | None:
         if not raw:
             return None
         try:
@@ -75,6 +74,12 @@ class PlanBuilder:
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning("Plan JSON parse failed: %s", e)
             return None
+
+        # F4：按 agent 校验 intent（不是全局集合），防止 LLM 错配 agent/intent
+        agent_intents: dict[str, set[str]] = {
+            aid: {c.intent for c in a.manifest.capabilities}
+            for aid, a in agent_map.items()
+        }
 
         steps = []
         for s in data.get("steps", []):
@@ -86,13 +91,11 @@ class PlanBuilder:
                 logger.warning("Unknown agent_id in plan: %s, skipping", aid)
                 continue
 
-            # 校验 intent
-            if intent not in valid_intents:
-                # 用该 agent 首个 capability 兜底
-                caps = agent_map[aid].manifest.capabilities
-                intent = caps[0].intent if caps else ""
-                if not intent:
-                    continue
+            # F4：intent 必须属于该 agent 的能力集，否则丢弃该 step（不替换）
+            if intent not in agent_intents.get(aid, set()):
+                logger.warning("Intent %s not in agent %s capabilities, dropping step",
+                               intent, aid)
+                continue
 
             step = Step(
                 id=s.get("id", f"s{len(steps)+1}"),
@@ -157,25 +160,26 @@ class PlanBuilder:
     def _filter_by_permission(agents: list, granted: list[str]) -> list:
         """过滤掉用户无权调用的 Agent。
 
-        规则：
-        - granted 为空列表 → 不过滤（兼容旧调用）
+        规则（fail-closed）：
+        - granted 为 None → 不过滤（权限系统未启用，PoC 兼容）
+        - granted 为空列表 → 只放行无权限要求的 Agent（零授权 = 最小权限）
         - Agent 的 requires_permissions 全部在 granted 中 → 保留
-        - third_party Agent 的 vehicle.control scope 被拒绝（与 security 模块一致）
+        - third_party Agent 的 vehicle.control scope 无论 granted 都被拒绝
         """
-        if not granted:
+        if granted is None:
             return agents
         granted_set = set(granted)
         filtered = []
         for a in agents:
             manifest = a.manifest
             required = set(manifest.requires_permissions)
-            # third_party 禁止 vehicle.control
+            # third_party 禁止 vehicle.control（硬禁令，无论授权）
             if manifest.trust_level == "third_party":
                 if any(r.startswith("vehicle.control") for r in required):
                     logger.debug("Filtered %s: third_party cannot access vehicle.control",
                                  manifest.agent_id)
                     continue
-            # 检查权限覆盖
+            # 检查权限覆盖：无权限要求的 Agent（如 chitchat）始终放行
             if required and not required.issubset(granted_set):
                 missing = required - granted_set
                 logger.debug("Filtered %s: missing permissions %s", manifest.agent_id, missing)

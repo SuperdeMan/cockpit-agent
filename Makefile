@@ -23,8 +23,7 @@ logs:
 	$(COMPOSE) logs -f
 
 test:
-	cd agents && python -m pytest -q || true
-	cd orchestrator && python -m pytest -q || true
+	python -m pytest test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ agents/ --import-mode=importlib -q
 
 e2e:
 	cd test && python -m pytest -q

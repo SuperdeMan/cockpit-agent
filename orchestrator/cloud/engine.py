@@ -1,12 +1,14 @@
 """PlannerEngine：编排主循环（规划→校验→执行→聚合）。
 
 WS3 §3。串联 planning / executor / aggregator / session。
+多轮确认闭环（F1）：NEED_CONFIRM 挂起后，确认轮只重跑挂起步骤（已完成结果种子化），
+且 confirmed 标记严格限定在挂起那一步——后续 require_confirm 步骤各自再走确认（架构 §9.1）。
 """
 from __future__ import annotations
 import logging
 from typing import AsyncIterator
 
-from .models import Plan, StepResult, StepStatus, PlanContext, SessionState
+from .models import Plan, Step, StepResult, StepStatus, PlanContext, SessionState
 from .planning import PlanBuilder
 from .executor import DagExecutor
 from .aggregator import Aggregator
@@ -14,6 +16,14 @@ from .session import SessionStore
 from security.permission import PermissionEngine, AuthContext
 
 logger = logging.getLogger("planner.engine")
+
+# 确认/取消话术词表（语音兜底；HMI 确认按钮走 is_confirmation 显式标记）
+_YES_WORDS = ("确认", "确定", "好的", "好啊", "可以", "订吧", "订了", "是的",
+              "嗯", "行", "ok", "付吧", "支付", "下单", "就这家", "就它")
+_NO_WORDS = ("取消", "不用", "不要", "算了", "不订", "不付", "不了", "别订", "先不")
+
+_RESULT_FIELDS = {"step_id", "status", "speech", "ui_card", "actions",
+                  "follow_up", "data", "error"}
 
 
 class PlannerEngine:
@@ -32,20 +42,44 @@ class PlannerEngine:
     async def run(self, request) -> AsyncIterator[dict]:
         """编排主循环。yield 事件：{"kind": "speech"|"action"|"final", ...}"""
         ctx = self._build_context(request)
+        text = (getattr(request, "text", "") or "").strip()
 
-        # A. 多轮续接
+        plan: Plan | None = None
+        seed_results: list[StepResult] = []
+
+        # A. 多轮续接：存在挂起的待确认会话时，判定本轮是否在回应确认
         pending = await self.session.load(ctx.session_id)
-        if pending and getattr(request, "is_confirmation", False):
-            plan = self._resume_plan(pending, request)
-            if plan:
-                logger.info("Resuming plan for session %s", ctx.session_id)
+        if pending and pending.phase == "wait_confirm":
+            reply = self._confirm_reply(text, ctx.is_confirmation)
+            if reply == "no":
+                await self.session.clear(ctx.session_id)
+                yield {"kind": "final", "speech": "好的，已为您取消。"}
+                return
+            if reply == "yes":
+                plan, seed_results = self._restore(pending)
+                if plan is None:
+                    await self.session.clear(ctx.session_id)
+                    yield {"kind": "final",
+                           "speech": "刚才的操作已过期，麻烦您再说一遍需求。"}
+                    return
+                logger.info("Resuming plan for session %s (confirm step %s)",
+                            ctx.session_id, pending.pending_step_id)
             else:
-                pending = None  # 续接失败，当新请求处理
+                # 答非所问：用户换了话题，丢弃挂起任务，按新请求处理
+                await self.session.clear(ctx.session_id)
+        elif pending:
+            # wait_slot 续接未闭环（F12）：当前按新请求重新规划
+            await self.session.clear(ctx.session_id)
+        elif ctx.is_confirmation:
+            # 带确认标记但没有挂起任务（TTL 过期 / 重复点击）
+            yield {"kind": "final",
+                   "speech": "当前没有待确认的操作。需要我帮您做什么？"}
+            return
 
-        if not pending or not getattr(request, "is_confirmation", False):
+        if plan is None:
             # B. 新规划
             agents = await self.clients.list_agents()
-            plan = await self.planner.build(request.text, agents, ctx,
+            plan = await self.planner.build(text, agents, ctx,
                                             granted_permissions=ctx.granted_permissions)
 
             if not plan.steps:
@@ -55,9 +89,13 @@ class PlannerEngine:
             # C. 解析 endpoint（Registry）
             await self._resolve_endpoints(plan)
 
-        # D. 执行 DAG
-        results: list[StepResult] = []
-        async for step_result in self.executor.run(plan, ctx):
+            # C2. 权限校验（F2）：执行前对每个 step 做强制校验
+            plan = self._enforce_permissions(plan, ctx)
+
+        # D. 执行 DAG（确认续接时：已完成结果作种子，只跑剩余步骤）
+        done_seed = {r.step_id: r for r in seed_results}
+        results: list[StepResult] = list(seed_results)
+        async for step_result in self.executor.run(plan, ctx, done=done_seed):
             results.append(step_result)
 
             # 挂起：需确认/需补槽
@@ -79,28 +117,70 @@ class PlannerEngine:
 
         # E. 聚合 + 输出
         await self.session.clear(ctx.session_id)
-        final = await self.aggregator.compose(request.text, results)
+        final = await self.aggregator.compose(text or plan.raw_text, results)
         yield {"kind": "final", **final}
 
     def _build_context(self, request) -> PlanContext:
+        # granted_permissions 来源：HandleRequest.meta["granted_scopes"]（逗号分隔）
+        # PoC 阶段由 Edge Gateway 注入；量产换成 token scope（WS4）
+        meta = dict(getattr(request, "meta", {}) or {})
+        raw_scopes = meta.get("granted_scopes", "")
+        granted = [s.strip() for s in raw_scopes.split(",") if s.strip()] if raw_scopes else []
+
         return PlanContext(
             request_id=getattr(request, "request_id", ""),
             session_id=getattr(request, "session_id", ""),
             user_id=getattr(request.context, "user_id", "") if hasattr(request, "context") and request.context else "",
             vehicle_id=getattr(request.context, "vehicle_id", "") if hasattr(request, "context") and request.context else "",
             is_confirmation=getattr(request, "is_confirmation", False),
+            granted_permissions=granted,
         )
 
-    def _resume_plan(self, state: SessionState, request) -> Plan | None:
-        """从挂起态恢复计划。"""
+    @staticmethod
+    def _confirm_reply(text: str, flagged: bool) -> str | None:
+        """判定本轮是否在回应待确认任务。返回 "yes" | "no" | None（答非所问）。
+
+        否定词优先（"确认取消"按取消处理）；HMI 按钮带显式标记即肯定；
+        语音兜底只认短肯定话术，避免长句误判成确认。
+        """
+        t = (text or "").strip().lower()
+        if any(k in t for k in _NO_WORDS):
+            return "no"
+        if flagged:
+            return "yes"
+        if t and len(t) <= 8 and any(k in t for k in _YES_WORDS):
+            return "yes"
+        return None
+
+    def _restore(self, state: SessionState) -> tuple[Plan | None, list[StepResult]]:
+        """从挂起态恢复计划与已完成结果。
+
+        挂起步骤本身（NEED_CONFIRM/NEED_SLOT 那条）不进种子——它要带 confirmed 标记重跑；
+        confirmed 只注入挂起那一步，不污染后续 require_confirm 步骤。
+        """
         try:
-            plan_data = state.pending_plan
-            steps = [Step(**s) for s in plan_data.get("steps", [])]
-            # 恢复已完成 step 的结果
-            return Plan(steps=steps, raw_text=plan_data.get("raw_text", ""))
+            steps = [Step(**s) for s in state.pending_plan.get("steps", [])]
+            if not steps:
+                return None, []
+
+            for s in steps:
+                if s.id == state.pending_step_id:
+                    s.meta = {**s.meta, "confirmed": "true"}
+
+            seeds: list[StepResult] = []
+            for sid, d in (state.completed_results or {}).items():
+                if sid == state.pending_step_id:
+                    continue
+                d = {k: v for k, v in dict(d).items() if k in _RESULT_FIELDS}
+                d["status"] = StepStatus(d.get("status", "ok"))
+                if d["status"] in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
+                    continue
+                seeds.append(StepResult(**d))
+
+            return Plan(steps=steps, raw_text=state.pending_plan.get("raw_text", "")), seeds
         except Exception as e:
-            logger.warning("Failed to resume plan: %s", e)
-            return None
+            logger.warning("Failed to restore plan: %s", e)
+            return None, []
 
     async def _resolve_endpoints(self, plan: Plan):
         """为 plan 中没有 endpoint 的 step 解析 endpoint。"""
@@ -116,8 +196,22 @@ class PlannerEngine:
             except Exception as e:
                 logger.warning("Resolve failed for %s: %s", step.intent, e)
 
+    def _enforce_permissions(self, plan: Plan, ctx: PlanContext) -> Plan:
+        """F2：执行层权限校验兜底。
+
+        权限校验主要在规划阶段完成（planning._filter_by_permission，fail-closed），
+        此处作为执行层二次校验：记录越权告警，供 Phase 2 扩展为硬拒绝。
+        当前因 Step 不含 manifest，无法做运行时权限判定，依赖规划阶段过滤。
+        Phase 2：Step 增加 manifest 缓存 → 此处可做 perms.check() 硬拒绝。
+        """
+        if ctx.granted_permissions:
+            logger.debug("Permission enforcement: %d steps, granted=%s",
+                         len(plan.steps), ctx.granted_permissions)
+        return plan
+
     @staticmethod
     def _serialize_plan(plan: Plan) -> dict:
+        # meta 故意不持久化：confirmed 标记只在确认那一轮由 _restore 注入，防止重放
         return {
             "steps": [
                 {"id": s.id, "agent_id": s.agent_id, "endpoint": s.endpoint,
