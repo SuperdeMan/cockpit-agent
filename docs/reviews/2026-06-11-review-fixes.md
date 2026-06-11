@@ -75,6 +75,8 @@ make test
 - data 只放编排需要的字段（`data.items[].id`），不和 ui_card 重复。Agent 同时填充两者。
 - Step 不需要 manifest 缓存，Phase 1 权限校验在规划阶段已够用，Phase 2 再做执行层二次校验。
 
+**排期决策（2026-06-11 第二批）**：与 F12 合并为「补槽/传参闭环」实施批次，顺序：SDK `_result_to_proto` 填 data+missing_slots → executor `_to_result` 读取 → navigation search_poi 填 data → F12 engine wait_slot 分支。排在 F13+F18 小修与 F10 补测试之后（见文末执行顺序）。
+
 ### F4. 计划校验漏洞：intent 全局校验 + 静默替换 ✅ 已修复（2026-06-11）
 
 **修复**：构建 `agent_id → set(intents)` 映射，按 agent 校验 intent；不属于该 agent 能力集的 intent 直接丢弃该 step（不替换）；全部丢弃则走语义路由降级。去掉了 `_build_intent_set` 的全局集合引用。
@@ -113,6 +115,14 @@ make test
 **证据**：`agents/parking_payment/tests/` 是空目录；`agents/trip_planner/` 无 tests/——违反 CLAUDE.md §3「新增 Agent 必须写契约测试」。
 **进展**：parking_payment 已随 F1 补 `tests/test_parking_payment_agent.py`（find/确认支付闭环）。trip_planner 仍缺。
 
+**评审决策（2026-06-11 第二批）**：
+- 现在补，不延期——CLAUDE.md §3 是硬性要求，trip_planner 是当前唯一无测试的 Agent。
+- 沿用 parking_payment 模板（`agents._sdk.testing.run_handle`，文件名避开 test_agent.py），4 个用例：
+  1. 缺 destination → NEED_SLOT（不触达 llm/agents，无需 mock）；
+  2. 全槽位 happy path：mock `agent.llm.complete`（固定行程文本）+ `agent.agents.call`（带 ui_card.items 的 AgentResult）→ 断言 ok、`ui_card.type == "trip_plan"`；
+  3. 协作降级：`agents.call` 抛异常仍返回 ok（纯 LLM 兜底不向上抛）；
+  4. manifest 一致性（`assert_manifest_consistent`）。
+
 ### F11. 测试数字三处口径矛盾 ✅ 已修复（2026-06-11）
 
 **修复**：AGENTS.md 改为不写具体数字，写「`python -m pytest ... --import-mode=importlib` 全绿」；CLAUDE.md §7 指向修复文档；README 保持 87/87 不改（Phase 0 时期数字，不再更新）。
@@ -126,6 +136,7 @@ make test
 **评审决策（2026-06-11）**：
 - Phase 1 用简单版：直接用用户原始文本填 slot。Agent 的 LLM 能理解自然语言（如 datetime="今晚7点"）。Phase 2 再加 LLM 抽槽优化。
 - 区分 wait_slot 和 wait_confirm（已有 phase 字段）。engine 需加 wait_slot 分支：把用户文本填入挂起 step 的 missing_slots 后续接执行。
+- 排期：与 F3 同批实施（见 F3 排期决策）。
 
 ## P2 — 代码级缺陷
 
@@ -133,6 +144,13 @@ make test
 
 **证据**：`gateway/cloud/main.go:88` 每请求 `go handleRequest`，多 goroutine 对同一 bidi stream 并发 `Send`——grpc-go 明确禁止并发 SendMsg。edge 侧同病：`gateway/edge/main.go` `Request()` 持 RLock 并发 Send，`pingLoop` 又在另一 goroutine Send。
 **修复方案**：每个 stream 一个发送 mutex（或单写者 goroutine + channel）。cloud/edge 两处都要。
+
+**评审澄清（2026-06-11 第二批）**：F5 修复后 edge gateway `main()` 已不再实例化 ChannelClient——edge 侧并发写如今是死代码，无运行时竞争；但 ChannelClient 被 F5 遗留指定为 Phase 2 持久 bidi 的参考蓝本。cloud 侧竞争真实存在：EdgeCloudChannel 协议本身是多路复用设计，当前 Python cloud_client 逐请求模式只是恰好掩盖（同一 stream 上主循环的 HelloAck/Pong 与 handleRequest goroutine 的 Event Send 仍可交错）。
+
+**评审决策（2026-06-11 第二批）**：
+- 修 cloud gateway：每个 Connect stream 配一个 `sendMu sync.Mutex`，所有 `stream.Send`（主循环 + handleRequest goroutine）统一经加锁辅助函数。不用单写者 goroutine + channel——mutex 语义已正确，channel 方案的生命周期/背压复杂度在 PoC 不必要。
+- 同一 pass 给 ChannelClient 的三处 Send（`Request`/`pingLoop`/`connect`）加同样的 sendMu：它是 Phase 2 蓝本，蓝本里留已知竞争会被照抄，成本约 5 行。
+- 验证：本机无 Go toolchain，push 后由 CI 编译把关。
 
 ### F14. edge `_dispatch_cloud_actions` 死代码 + 拒绝不改话术 + payload 类型错误 ✅ 已修复（2026-06-11）
 
@@ -155,18 +173,25 @@ make test
 **证据**：`gateway/cloud/main.go:104` 先 `Seen` 后 `Mark`（TOCTOU）。
 **修复方案**：合并为 `MarkIfNew`（Redis SETNX / 内存版加锁）。
 
-### F19. CircuitBreaker 与 observability 零接线 ⬜ 未修复
+**评审决策（2026-06-11 第二批）**：
+- 接口收敛为单方法 `MarkIfNew(ctx, corrID, ttl) bool`（true=首次放行，false=重复跳过），删除 Seen/Mark 两段式。内存版单次 `Lock` 内查验+写入；Redis 版 `SetNX`（天然原子）。
+- Redis 出错维持 fail-open（按"首次"放行）：幂等保护的是体验（防重复执行），错杀正常请求比偶发重复更糟。与权限的 fail-closed 方向相反是有意为之——权限保护安全，幂等保护可用性。
+- 维持"执行前标记"，不做失败 Unmark：planner 失败路径已向用户回错误话术，用户重说会带新 corrID；同 corrID 重发只发生在信道层重连重投，此时首次执行状态未知，丢弃是安全选择。
+
+### F19. CircuitBreaker 与 observability 零接线 ✅ 已按决策闭合（2026-06-11，接线归 Phase 2）
 
 **证据**：`circuit.py` 与 `observability/` 都有实现+测试，但没有任何服务 import/使用（`main.py:29` 直接用裸 `clients.call_agent`；全仓库无 `setup_tracing` 调用）。
 **修复方案**：DagExecutor 的 call 路径包熔断（按 endpoint）；各服务 main 里 `setup_structured_logging()` + trace_id 经 `HandleRequest.meta`/`ExecuteRequest.meta` 贯穿。或者明确决定 Phase 2 再接、从「已完成」叙事中移除。
 
 **评审决策（2026-06-11）**：明确标记为 Phase 2。代码和测试已写好但零接线，从 AGENTS.md「全部落地」叙事中移除，诚实标注为「代码已实现，待接线」。
 
+**进展（2026-06-11 第二批核实）**：AGENTS.md 已落实为「可观测/熔断 ⚠️ 代码已实现，待接线（Phase 2）」，叙事修正完成。Phase 1 范围内本项无剩余动作，接线进 Phase 2 backlog。
+
 ### F23. payment-gateway 的 Capture 链路天生不可达 ✅ proto 已修复（2026-06-11），SDK 接线待做
 
 **已修复**：`AuthorizeResponse` proto 增加 `string confirm_token = 4`，codegen 通过。store.py 的 capture 现在有了 token 来源。
 
-**待做**：SDK 加 PaymentClient → food/parking 的 confirmed 分支从 provider 直付切到 Authorize/Capture。
+**待做（Phase 2）**：SDK 加 PaymentClient → food/parking 的 confirmed 分支从 provider 直付切到 Authorize/Capture。按下方决策，此项不属于 Phase 1 欠账。
 
 **评审决策（2026-06-11）**：Phase 1 保持 provider 直付。确认闭环的目标是"确认→下单"流程跑通，不是真正资金流转。Phase 2 对接真实支付时再切 Authorize/Capture。
 
@@ -180,21 +205,23 @@ make test
 
 **修复**：compose 默认改为 xiaomimimo + mimo-v2.5-pro（与 .env.example/README 一致，已验证可用）。
 
-### F22. 旧版 `orchestrator/cloud/planner.py` 是带坑的死代码 ✅ 已标注（2026-06-11）
+### F22. 旧版 `orchestrator/cloud/planner.py` 是带坑的死代码 ✅ 已删除（2026-06-11，经用户确认）
 
-**修复**：文件头标注「不可运行，call_agent 签名不匹配，一跑就 TypeError」。删除需经用户确认（CLAUDE.md 红线）。
+**修复**：先标注「不可运行，call_agent 签名不匹配，一跑就 TypeError」；2026-06-11 第二批评审中核实全仓库零引用（仅文件内部自引用），经用户确认后删除。现行实现为 `planning.py` 的 `PlanBuilder`，历史版本可从 git 找回。
 
 ---
 
-## 建议执行顺序
+## 建议执行顺序（2026-06-11 第二批评审后刷新）
 
-1. ~~F1 确认闭环~~（已完成）
-2. F6+F7+F8+F9（验证体系，半天内可完成，先做——没有可信回归，其余修复无保障）
-3. F5 接线（端侧链路组网，e2e 的前提）
-4. F2 权限接线 + F4 计划校验（安全承诺）
-5. F3+F12+F23（proto 增字段，同批做，跑 codegen）
-6. F13–F19（代码缺陷，独立可并行）
-7. F11+F20+F21+F22（文档收尾，最后统一）
+已完成：F1、F2(规划层)、F4、F5(待 CI 编译验证)、F6–F9、F11、F14–F17、F19(叙事闭合)、F20–F22、F24、proto 批次(F3/F12/F23 schema)。
+
+剩余 Phase 1 工作，按此顺序：
+1. **F13 + F18**：cloud gateway sendMu + MarkIfNew（Go 小修，同一批做，push 后靠 CI 编译验证）
+2. **F10**：trip_planner 契约测试（4 用例，沿 parking_payment 模板）
+3. **F3 + F12 接线批次**：SDK data/missing_slots → executor → navigation → engine wait_slot（补槽/传参闭环）
+4. **docker 联调 + `test/e2e_ws.py` 全链路验收**（F1/F5 的 e2e 遗留一并验）
+
+Phase 2 backlog（已决策延后，不是欠账）：F19 熔断/可观测接线、F23 Authorize/Capture 切换、持久 bidi 长连（参考 ChannelClient 蓝本）、执行层权限二次校验、LLM 抽槽优化。
 
 ## 修复日志
 
@@ -222,4 +249,6 @@ make test
 | 2026-06-11 | F24 | Claude (review session) | cloud-planner 容器启动修复：包内相对 import 统一 + Dockerfile（WORKDIR /app、COPY security、`python -m orchestrator.cloud.main`）。 |
 | 2026-06-11 | F10(部分) | Claude (review session) | parking_payment 补 3 个契约测试（含确认支付闭环）。trip_planner 仍缺。 |
 | 2026-06-11 | 验证 | Claude (review session) | 全量 114 passed + smoke 13/13，一条 `python -m pytest` 命令全绿，不需要手工 PYTHONPATH。 |
+| 2026-06-11 | F22 | Claude (第二批评审) | 核实 planner.py 全仓库零引用后，经用户确认删除。 |
+| 2026-06-11 | 评审 | Claude (第二批评审) | 第二批待评审点决策落地：F10 现在补 4 用例（沿 parking 模板）；F13 澄清 edge 侧 F5 后已是死代码、决策 cloud 侧 sendMu + ChannelClient 蓝本同步加锁；F18 决策 MarkIfNew 原子化（Redis SetNX、错时 fail-open、不做失败 Unmark）；F19 核实叙事已修正、状态闭合；F3+F12 合并为下一实施批次；F23 SDK 接线明确归 Phase 2；刷新执行顺序。 |
 | 2026-06-11 | ASR/TTS | Claude (review session) | ASR/TTS provider 按官网文档修正：共用 /v1/chat/completions endpoint；ASR 用 base64 data URI + chat.completion 格式；TTS 用 messages+audio 对象，响应为 base64 音频；音色替换为官网 9 个预置音色（冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean/mimo_default）。 |
