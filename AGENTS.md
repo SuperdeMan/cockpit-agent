@@ -49,7 +49,8 @@
 | `gen/`（gRPC 生成代码）| ✅ 已生成（`buf generate proto`） |
 | Go 网关 | ✅ bidi 双向流已实现（未本地 build） |
 | Agent Provider 适配 | ✅ 6/6 Agent 全部接入 |
-| 安全/权限/编排/协作/支付/可观测 | ✅ 全部落地 |
+| 安全/权限/编排/协作/支付 | ✅ 全部落地 |
+| 可观测/熔断 | ⚠️ 代码已实现，待接线（Phase 2） |
 | LLM 调用 | ✅ MiMo API 已验证连通（同步+流式）；未配 key 时走 MockProvider |
 | 确认闭环（F1） | ✅ 端到端打通（HMI→网关→编排器→Agent） |
 | 验证体系（F6-F9） | ✅ `make test` 一条命令全绿 |

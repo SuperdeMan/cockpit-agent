@@ -70,10 +70,10 @@ make test
 
 **待做**：SDK `_result_to_proto` 填充 data；executor `_to_result` 读取 data；Agent 改造（navigation search_poi 放 data）。这部分改动涉及 SDK 和所有 Agent，单独排期。
 
-**阻塞/疑问（需评审）**：
-- 哪些 Agent 需要返回 data？只有 navigation search_poi，还是所有 Agent 都应返回结构化结果？
-- data 的结构约定是什么？是和 ui_card 重复，还是只放编排需要的字段（如 items[].id）？
-- 是否需要 Step 增加 manifest 缓存（用于 F2 执行层权限二次校验）？
+**评审决策（2026-06-11）**：
+- 只有参与 DAG 参数传递的 Agent 需要返回 data，当前只有 navigation `search_poi`。
+- data 只放编排需要的字段（`data.items[].id`），不和 ui_card 重复。Agent 同时填充两者。
+- Step 不需要 manifest 缓存，Phase 1 权限校验在规划阶段已够用，Phase 2 再做执行层二次校验。
 
 ### F4. 计划校验漏洞：intent 全局校验 + 静默替换 ✅ 已修复（2026-06-11）
 
@@ -123,9 +123,9 @@ make test
 
 **待做**：engine wait_slot 分支把用户文本（或经 LLM 抽槽）填入挂起 step 的对应槽位后续跑。依赖 F3 的 SDK data 接线。
 
-**阻塞/疑问（需评审）**：
-- 补槽策略：直接用用户原始文本填 slot，还是经 LLM 抽槽？简单版（直接填）能覆盖大多数场景，但"订今晚7点"需要解析出 datetime。
-- wait_slot 和 wait_confirm 是否共用同一个 SessionState.phase，还是需要区分？当前 engine 对 wait_slot 按新请求处理（清会话重新规划），需要改成续接。
+**评审决策（2026-06-11）**：
+- Phase 1 用简单版：直接用用户原始文本填 slot。Agent 的 LLM 能理解自然语言（如 datetime="今晚7点"）。Phase 2 再加 LLM 抽槽优化。
+- 区分 wait_slot 和 wait_confirm（已有 phase 字段）。engine 需加 wait_slot 分支：把用户文本填入挂起 step 的 missing_slots 后续接执行。
 
 ## P2 — 代码级缺陷
 
@@ -160,8 +160,7 @@ make test
 **证据**：`circuit.py` 与 `observability/` 都有实现+测试，但没有任何服务 import/使用（`main.py:29` 直接用裸 `clients.call_agent`；全仓库无 `setup_tracing` 调用）。
 **修复方案**：DagExecutor 的 call 路径包熔断（按 endpoint）；各服务 main 里 `setup_structured_logging()` + trace_id 经 `HandleRequest.meta`/`ExecuteRequest.meta` 贯穿。或者明确决定 Phase 2 再接、从「已完成」叙事中移除。
 
-**阻塞/疑问（需评审）**：
-- Phase 1 是否需要接线？还是明确标记为 Phase 2，从 AGENTS.md「全部落地」叙事中移除？
+**评审决策（2026-06-11）**：明确标记为 Phase 2。代码和测试已写好但零接线，从 AGENTS.md「全部落地」叙事中移除，诚实标注为「代码已实现，待接线」。
 
 ### F23. payment-gateway 的 Capture 链路天生不可达 ✅ proto 已修复（2026-06-11），SDK 接线待做
 
@@ -169,8 +168,7 @@ make test
 
 **待做**：SDK 加 PaymentClient → food/parking 的 confirmed 分支从 provider 直付切到 Authorize/Capture。
 
-**阻塞/疑问（需评审）**：
-- 当前 food/parking 的 confirmed 分支走 provider 直付（mock reserve/pay），是否需要现在切到 Authorize/Capture？还是保持 provider 直付作为 Phase 1 的简化实现？
+**评审决策（2026-06-11）**：Phase 1 保持 provider 直付。确认闭环的目标是"确认→下单"流程跑通，不是真正资金流转。Phase 2 对接真实支付时再切 Authorize/Capture。
 
 ## P3 — 文档/配置漂移
 
