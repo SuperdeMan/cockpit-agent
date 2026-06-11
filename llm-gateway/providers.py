@@ -147,6 +147,7 @@ def build_provider() -> BaseProvider:
 
 
 # ─── ASR Provider（语音识别）───
+# 官方文档：https://platform.xiaomimimo.com/docs/zh-CN/api/audio/Speech-Recognition
 
 class BaseASRProvider:
     async def transcribe(self, audio: bytes, fmt: str, language: str, model: str):
@@ -161,34 +162,48 @@ class MockASRProvider(BaseASRProvider):
 
 
 class MiMoASRProvider(BaseASRProvider):
-    """小米 MiMo ASR API（OpenAI Whisper 兼容格式）。
+    """小米 MiMo ASR API。
 
-    endpoint: https://token-plan-cn.xiaomimimo.com/v1/audio/transcriptions
-    auth: api-key header
+    与 LLM 共用同一 endpoint（/v1/chat/completions），音频通过 base64 data URI 传入。
+    响应格式为 OpenAI chat.completion，识别文本在 choices[0].message.content。
     """
-    BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1/audio/transcriptions"
+    BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
 
     def __init__(self, api_key: str):
         self.api_key = api_key
 
     async def transcribe(self, audio: bytes, fmt: str, language: str, model: str):
+        import base64
         import httpx
-        headers = {"api-key": self.api_key}
-        # multipart/form-data 上传音频
-        files = {"file": (f"audio.{fmt or 'wav'}", audio, f"audio/{fmt or 'wav'}")}
-        data = {
+
+        # 音频编码为 base64 data URI
+        mime = f"audio/{fmt or 'wav'}"
+        b64 = base64.b64encode(audio).decode("ascii")
+        data_uri = f"data:{mime};base64,{b64}"
+
+        headers = {"api-key": self.api_key, "Content-Type": "application/json"}
+        body = {
             "model": model or "mimo-v2.5-asr",
-            "language": language or "zh",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_audio", "input_audio": {"data": data_uri}},
+                    ],
+                }
+            ],
+            "asr_options": {"language": language or "auto"},
         }
+
         async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(self.BASE_URL, headers=headers, files=files, data=data)
+            resp = await client.post(self.BASE_URL, headers=headers, json=body)
             resp.raise_for_status()
             result = resp.json()
 
-        text = result.get("text", "")
-        language_detected = result.get("language", language or "zh")
-        duration = result.get("duration", 0)
-        return text, 0.9, language_detected, model or "mimo-v2.5-asr", int(duration * 1000)
+        # 响应：choices[0].message.content = 识别文本，usage.seconds = 音频秒数
+        text = result["choices"][0]["message"]["content"]
+        duration_sec = result.get("usage", {}).get("seconds", 0)
+        return text, 0.9, language or "zh", model or "mimo-v2.5-asr", int(duration_sec * 1000)
 
 
 def build_asr_provider() -> BaseASRProvider:
@@ -200,6 +215,7 @@ def build_asr_provider() -> BaseASRProvider:
 
 
 # ─── TTS Provider（语音合成）───
+# 官方文档：https://platform.xiaomimimo.com/docs/zh-CN/usage-guide/speech-synthesis-v2.5
 
 class BaseTTSProvider:
     async def synthesize(self, text: str, voice_id: str, model: str,
@@ -216,8 +232,7 @@ class MockTTSProvider(BaseTTSProvider):
     """无 API key 时的 TTS 兜底。"""
     async def synthesize(self, text: str, voice_id: str, model: str,
                          speed: float, fmt: str):
-        # 返回空音频（实际场景应返回静音 PCM）
-        return b"", fmt or "mp3", 0, "mock", voice_id or "default"
+        return b"", fmt or "wav", 0, "mock", voice_id or "mimo_default"
 
     async def list_voices(self, language: str, gender: str):
         return [
@@ -227,28 +242,34 @@ class MockTTSProvider(BaseTTSProvider):
 
 
 class MiMoTTSProvider(BaseTTSProvider):
-    """小米 MiMo TTS API（OpenAI 兼容格式）。
+    """小米 MiMo TTS API。
 
-    endpoint: https://token-plan-cn.xiaomimimo.com/v1/audio/speech
-    auth: api-key header
-    音色参考：https://platform.xiaomimimo.com/docs/zh-CN/usage-guide/speech-synthesis-v2.5
+    与 LLM 共用同一 endpoint（/v1/chat/completions）。
+    目标文本放在 role=assistant 的 content 中，可选 role=user 传风格控制。
+    响应：choices[0].message.audio.data 为 Base64 编码音频（wav/pcm16）。
     """
-    BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1/audio/speech"
+    BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
 
-    # MiMo TTS 支持的音色列表（2.5 版本）
+    # 官方预置音色（mimo-v2.5-tts）
     VOICES = [
-        {"voice_id": "zhifeng_emo", "name": "知枫", "language": "zh",
-         "gender": "male", "description": "温暖磁性，适合对话", "tags": ["温暖", "磁性", "对话"]},
-        {"voice_id": "zhixiaomo_emo", "name": "知小墨", "language": "zh",
-         "gender": "female", "description": "活泼可爱，适合闲聊", "tags": ["活泼", "可爱", "闲聊"]},
-        {"voice_id": "zhishu_emo", "name": "知树", "language": "zh",
-         "gender": "male", "description": "沉稳大气，适合播报", "tags": ["沉稳", "大气", "播报"]},
-        {"voice_id": "zhimei_emo", "name": "知美", "language": "zh",
-         "gender": "female", "description": "温柔优雅，适合服务", "tags": ["温柔", "优雅", "服务"]},
-        {"voice_id": "zhiyun_emo", "name": "知云", "language": "zh",
-         "gender": "female", "description": "清新自然，适合导航", "tags": ["清新", "自然", "导航"]},
-        {"voice_id": "zhigang_emo", "name": "知刚", "language": "zh",
-         "gender": "male", "description": "浑厚有力，适合车控", "tags": ["浑厚", "有力", "车控"]},
+        {"voice_id": "mimo_default", "name": "MiMo-默认", "language": "zh",
+         "gender": "neutral", "description": "中国集群默认冰糖", "tags": ["默认"]},
+        {"voice_id": "冰糖", "name": "冰糖", "language": "zh",
+         "gender": "female", "description": "中文女声", "tags": ["中文", "女声"]},
+        {"voice_id": "茉莉", "name": "茉莉", "language": "zh",
+         "gender": "female", "description": "中文女声", "tags": ["中文", "女声"]},
+        {"voice_id": "苏打", "name": "苏打", "language": "zh",
+         "gender": "male", "description": "中文男声", "tags": ["中文", "男声"]},
+        {"voice_id": "白桦", "name": "白桦", "language": "zh",
+         "gender": "male", "description": "中文男声", "tags": ["中文", "男声"]},
+        {"voice_id": "Mia", "name": "Mia", "language": "en",
+         "gender": "female", "description": "英文女声", "tags": ["英文", "女声"]},
+        {"voice_id": "Chloe", "name": "Chloe", "language": "en",
+         "gender": "female", "description": "英文女声", "tags": ["英文", "女声"]},
+        {"voice_id": "Milo", "name": "Milo", "language": "en",
+         "gender": "male", "description": "英文男声", "tags": ["英文", "男声"]},
+        {"voice_id": "Dean", "name": "Dean", "language": "en",
+         "gender": "male", "description": "英文男声", "tags": ["英文", "男声"]},
     ]
 
     def __init__(self, api_key: str):
@@ -256,32 +277,42 @@ class MiMoTTSProvider(BaseTTSProvider):
 
     async def synthesize(self, text: str, voice_id: str, model: str,
                          speed: float, fmt: str):
+        import base64
         import httpx
-        headers = {
-            "api-key": self.api_key,
-            "Content-Type": "application/json",
-        }
+
+        headers = {"api-key": self.api_key, "Content-Type": "application/json"}
+        out_fmt = "pcm16" if fmt == "pcm16" else "wav"
         body = {
             "model": model or "mimo-v2.5-tts",
-            "input": text,
-            "voice": voice_id or "zhifeng_emo",
-            "speed": speed or 1.0,
-            "response_format": fmt or "mp3",
+            "messages": [
+                {"role": "assistant", "content": text},
+            ],
+            "audio": {
+                "format": out_fmt,
+                "voice": voice_id or "mimo_default",
+            },
         }
+        # speed 参数：通过 role=user 的风格指令传入（如"语速稍快"）
+        # 当前不注入 speed 到请求体，保持简洁；需要时可加 role=user content
+
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(self.BASE_URL, headers=headers, json=body)
             resp.raise_for_status()
-            audio = resp.read()
+            result = resp.json()
 
-        # 估算时长（粗略：MP3 约 16kbps）
-        bitrate = 16000 if (fmt or "mp3") == "mp3" else 128000
-        duration_ms = int(len(audio) * 8 / bitrate * 1000) if audio else 0
-        return audio, fmt or "mp3", duration_ms, model or "mimo-v2.5-tts", voice_id or "zhifeng_emo"
+        # 响应：choices[0].message.audio.data = Base64 编码音频
+        audio_b64 = result["choices"][0]["message"]["audio"]["data"]
+        audio_bytes = base64.b64decode(audio_b64)
+        # 估算时长：PCM16 24kHz mono = 48000 bytes/sec
+        bytes_per_sec = 48000 if out_fmt == "pcm16" else 48000  # WAV 头忽略
+        duration_ms = int(len(audio_bytes) / bytes_per_sec * 1000) if audio_bytes else 0
+        return audio_bytes, out_fmt, duration_ms, model or "mimo-v2.5-tts", voice_id or "mimo_default"
 
     async def list_voices(self, language: str, gender: str):
         voices = self.VOICES
         if language:
-            voices = [v for v in voices if v["language"] == language]
+            lang_short = language[:2].lower()
+            voices = [v for v in voices if v["language"] == lang_short or v["language"] == "neutral"]
         if gender:
             voices = [v for v in voices if v["gender"] == gender]
         return voices

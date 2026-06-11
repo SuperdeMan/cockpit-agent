@@ -70,6 +70,11 @@ make test
 
 **待做**：SDK `_result_to_proto` 填充 data；executor `_to_result` 读取 data；Agent 改造（navigation search_poi 放 data）。这部分改动涉及 SDK 和所有 Agent，单独排期。
 
+**阻塞/疑问（需评审）**：
+- 哪些 Agent 需要返回 data？只有 navigation search_poi，还是所有 Agent 都应返回结构化结果？
+- data 的结构约定是什么？是和 ui_card 重复，还是只放编排需要的字段（如 items[].id）？
+- 是否需要 Step 增加 manifest 缓存（用于 F2 执行层权限二次校验）？
+
 ### F4. 计划校验漏洞：intent 全局校验 + 静默替换 ✅ 已修复（2026-06-11）
 
 **修复**：构建 `agent_id → set(intents)` 映射，按 agent 校验 intent；不属于该 agent 能力集的 intent 直接丢弃该 step（不替换）；全部丢弃则走语义路由降级。去掉了 `_build_intent_set` 的全局集合引用。
@@ -118,6 +123,10 @@ make test
 
 **待做**：engine wait_slot 分支把用户文本（或经 LLM 抽槽）填入挂起 step 的对应槽位后续跑。依赖 F3 的 SDK data 接线。
 
+**阻塞/疑问（需评审）**：
+- 补槽策略：直接用用户原始文本填 slot，还是经 LLM 抽槽？简单版（直接填）能覆盖大多数场景，但"订今晚7点"需要解析出 datetime。
+- wait_slot 和 wait_confirm 是否共用同一个 SessionState.phase，还是需要区分？当前 engine 对 wait_slot 按新请求处理（清会话重新规划），需要改成续接。
+
 ## P2 — 代码级缺陷
 
 ### F13. Go 网关并发写同一 gRPC stream（数据竞争）⬜ 未修复
@@ -151,11 +160,17 @@ make test
 **证据**：`circuit.py` 与 `observability/` 都有实现+测试，但没有任何服务 import/使用（`main.py:29` 直接用裸 `clients.call_agent`；全仓库无 `setup_tracing` 调用）。
 **修复方案**：DagExecutor 的 call 路径包熔断（按 endpoint）；各服务 main 里 `setup_structured_logging()` + trace_id 经 `HandleRequest.meta`/`ExecuteRequest.meta` 贯穿。或者明确决定 Phase 2 再接、从「已完成」叙事中移除。
 
+**阻塞/疑问（需评审）**：
+- Phase 1 是否需要接线？还是明确标记为 Phase 2，从 AGENTS.md「全部落地」叙事中移除？
+
 ### F23. payment-gateway 的 Capture 链路天生不可达 ✅ proto 已修复（2026-06-11），SDK 接线待做
 
 **已修复**：`AuthorizeResponse` proto 增加 `string confirm_token = 4`，codegen 通过。store.py 的 capture 现在有了 token 来源。
 
 **待做**：SDK 加 PaymentClient → food/parking 的 confirmed 分支从 provider 直付切到 Authorize/Capture。
+
+**阻塞/疑问（需评审）**：
+- 当前 food/parking 的 confirmed 分支走 provider 直付（mock reserve/pay），是否需要现在切到 Authorize/Capture？还是保持 provider 直付作为 Phase 1 的简化实现？
 
 ## P3 — 文档/配置漂移
 
@@ -209,3 +224,4 @@ make test
 | 2026-06-11 | F24 | Claude (review session) | cloud-planner 容器启动修复：包内相对 import 统一 + Dockerfile（WORKDIR /app、COPY security、`python -m orchestrator.cloud.main`）。 |
 | 2026-06-11 | F10(部分) | Claude (review session) | parking_payment 补 3 个契约测试（含确认支付闭环）。trip_planner 仍缺。 |
 | 2026-06-11 | 验证 | Claude (review session) | 全量 114 passed + smoke 13/13，一条 `python -m pytest` 命令全绿，不需要手工 PYTHONPATH。 |
+| 2026-06-11 | ASR/TTS | Claude (review session) | ASR/TTS provider 按官网文档修正：共用 /v1/chat/completions endpoint；ASR 用 base64 data URI + chat.completion 格式；TTS 用 messages+audio 对象，响应为 base64 音频；音色替换为官网 9 个预置音色（冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean/mimo_default）。 |
