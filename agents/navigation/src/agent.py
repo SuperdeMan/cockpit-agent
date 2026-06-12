@@ -48,6 +48,7 @@ class NavigationAgent(BaseAgent):
         return AgentResult(
             speech=f"为您找到 {len(results)} 个{keyword}，推荐前三个：{names}。需要导航过去吗？",
             ui_card=card,
+            data={"items": items},  # F3：结构化结果供编排 slot_refs 取值（如 s1.data.items.0.id）
             follow_up="可以说『导航去第一个』",
         )
 

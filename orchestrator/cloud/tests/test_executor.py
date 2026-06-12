@@ -119,6 +119,8 @@ class MockResponse:
         self.actions = actions or []
         self.ui_card = None
         self.follow_up = follow_up
+        self.data = None           # F3
+        self.missing_slots = []    # F12
 
 def test_to_result_ok():
     resp = MockResponse(status=0, speech="已为您找到3家餐厅")

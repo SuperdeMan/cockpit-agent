@@ -142,7 +142,8 @@ class DagExecutor:
             ui_card=dict(resp.ui_card.fields) if resp.ui_card else None,
             actions=actions,
             follow_up=resp.follow_up,
-            data={},  # Agent 可通过 meta 传结构化结果
+            data=dict(resp.data.fields) if resp.data else {},   # F3：从 proto 读取结构化结果
+            missing_slots=list(resp.missing_slots),              # F12：缺失槽位名
         )
 
     @staticmethod

@@ -55,6 +55,8 @@ class _Resp:
         self.follow_up = follow_up
         self.actions = []
         self.ui_card = None
+        self.data = None           # F3
+        self.missing_slots = []    # F12
 
 
 class _Spy:

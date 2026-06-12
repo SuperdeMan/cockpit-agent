@@ -32,9 +32,23 @@ type sessionState struct {
 	lastSeen  time.Time
 }
 
+// sendMu 保护 stream.Send（F13）：gRPC bidi stream 不支持并发 SendMsg，
+// 主循环的 HelloAck/Pong 与 handleRequest goroutine 的 Event Send 可能交错。
+type sendMu struct {
+	mu     sync.Mutex
+	stream channelpb.EdgeCloudChannel_ConnectServer
+}
+
+func (s *sendMu) Send(f *channelpb.DownFrame) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stream.Send(f)
+}
+
 func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer) error {
 	var vehicleID string
 	ctx := stream.Context()
+	sm := &sendMu{stream: stream}
 
 	for {
 		up, err := stream.Recv()
@@ -53,7 +67,7 @@ func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer)
 			// 握手：校验 token（PoC 阶段简单通过）
 			vehicleID = body.Hello.VehicleId
 			if vehicleID == "" {
-				return stream.Send(&channelpb.DownFrame{
+				return sm.Send(&channelpb.DownFrame{
 					CorrelationId: corrID,
 					Body: &channelpb.DownFrame_HelloAck{
 						HelloAck: &channelpb.HelloAck{Ok: false, Reason: "missing vehicle_id"},
@@ -62,7 +76,7 @@ func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer)
 			}
 			s.sessions.Store(vehicleID, &sessionState{vehicleID: vehicleID, lastSeen: time.Now()})
 			log.Printf("[cloud-gateway] hello from %s", vehicleID)
-			if err := stream.Send(&channelpb.DownFrame{
+			if err := sm.Send(&channelpb.DownFrame{
 				CorrelationId: corrID,
 				Body: &channelpb.DownFrame_HelloAck{
 					HelloAck: &channelpb.HelloAck{Ok: true, HeartbeatSec: 15},
@@ -76,7 +90,7 @@ func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer)
 			if state, ok := s.sessions.Load(vehicleID); ok {
 				state.(*sessionState).lastSeen = time.Now()
 			}
-			if err := stream.Send(&channelpb.DownFrame{
+			if err := sm.Send(&channelpb.DownFrame{
 				CorrelationId: corrID,
 				Body:          &channelpb.DownFrame_Pong{Pong: &channelpb.Pong{Ts: time.Now().UnixMilli()}},
 			}); err != nil {
@@ -85,7 +99,7 @@ func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer)
 
 		case *channelpb.UpFrame_Request:
 			// 请求：解复用 → 转发 Planner → 回填 correlation_id
-			go s.handleRequest(stream, corrID, body.Request, vehicleID)
+			go s.handleRequest(sm, corrID, body.Request, vehicleID)
 
 		case *channelpb.UpFrame_Ack:
 			// 客户端确认（幂等/可靠投递），当前 PoC 仅记录
@@ -94,23 +108,22 @@ func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer)
 	}
 }
 
-func (s *channelServer) handleRequest(stream channelpb.EdgeCloudChannel_ConnectServer,
+func (s *channelServer) handleRequest(sm *sendMu,
 	corrID string, req *orchpb.HandleRequest, vehicleID string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// 幂等检查：重复 correlation_id 直接跳过
-	if s.idem.Seen(ctx, corrID) {
+	// F18：MarkIfNew 原子化幂等检查（消除 Seen+Mark TOCTOU）
+	if !s.idem.MarkIfNew(ctx, corrID, 10*time.Minute) {
 		log.Printf("[cloud-gateway] duplicate corrID %s from %s, skipping", corrID, vehicleID)
 		return
 	}
-	s.idem.Mark(ctx, corrID, 10*time.Minute)
 
 	plannerStream, err := s.planner.Handle(ctx, req)
 	if err != nil {
 		log.Printf("[cloud-gateway] planner error for %s: %v", vehicleID, err)
-		stream.Send(&channelpb.DownFrame{
+		sm.Send(&channelpb.DownFrame{
 			CorrelationId: corrID,
 			Body: &channelpb.DownFrame_Event{
 				Event: &orchpb.HandleEvent{
@@ -132,7 +145,8 @@ func (s *channelServer) handleRequest(stream channelpb.EdgeCloudChannel_ConnectS
 			log.Printf("[cloud-gateway] planner stream error: %v", err)
 			return
 		}
-		if err := stream.Send(&channelpb.DownFrame{
+		// F13：经 sendMu 加锁发送（主循环的 Pong 与此处的 Event 不再交错）
+		if err := sm.Send(&channelpb.DownFrame{
 			CorrelationId: corrID,
 			Body:          &channelpb.DownFrame_Event{Event: ev},
 		}); err != nil {

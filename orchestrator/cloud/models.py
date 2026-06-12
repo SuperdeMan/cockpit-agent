@@ -42,7 +42,8 @@ class StepResult:
     ui_card: dict | None = None
     actions: list[dict] = field(default_factory=list)
     follow_up: str = ""
-    data: dict = field(default_factory=dict)   # 结构化结果，供后续 step 的 slot_refs 取值
+    data: dict = field(default_factory=dict)   # F3：结构化结果，供后续 step 的 slot_refs 取值
+    missing_slots: list[str] = field(default_factory=list)  # F12：NEED_SLOT 时声明缺失的槽位名
     error: str = ""
 
 

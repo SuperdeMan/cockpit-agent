@@ -49,10 +49,11 @@ type ChannelClient struct {
 	cloudAddr string
 	vehicleID string
 
-	conn    *grpc.ClientConn
-	stream  channelpb.EdgeCloudChannel_ConnectClient
-	state   atomic.Int32
-	mu      sync.RWMutex
+	conn     *grpc.ClientConn
+	stream   channelpb.EdgeCloudChannel_ConnectClient
+	state    atomic.Int32
+	mu       sync.RWMutex
+	sendLock sync.Mutex // F13：保护 stream.Send（Request/pingLoop/connect 三处）
 
 	pending    sync.Map // correlation_id -> *pendingRequest
 	corrSeq    atomic.Int64
@@ -110,7 +111,10 @@ func (c *ChannelClient) Request(ctx context.Context, text, sessionID string, isC
 		return nil, fmt.Errorf("stream not ready")
 	}
 
-	if err := stream.Send(req); err != nil {
+	c.sendLock.Lock()
+	err := stream.Send(req)
+	c.sendLock.Unlock()
+	if err != nil {
 		c.pending.Delete(corrID)
 		return nil, fmt.Errorf("send failed: %w", err)
 	}
@@ -165,16 +169,19 @@ func (c *ChannelClient) connect(ctx context.Context) error {
 		return fmt.Errorf("connect stream: %w", err)
 	}
 
-	// 握手
+	// 握手（F13：经 sendLock 保护）
 	helloCorrID := fmt.Sprintf("%s-hello", c.vehicleID)
-	if err := c.stream.Send(&channelpb.UpFrame{
+	c.sendLock.Lock()
+	helloErr := c.stream.Send(&channelpb.UpFrame{
 		CorrelationId: helloCorrID,
 		Body: &channelpb.UpFrame_Hello{
 			Hello: &channelpb.Hello{VehicleId: c.vehicleID},
 		},
-	}); err != nil {
+	})
+	c.sendLock.Unlock()
+	if helloErr != nil {
 		c.conn.Close()
-		return fmt.Errorf("hello send: %w", err)
+		return fmt.Errorf("hello send: %w", helloErr)
 	}
 
 	// 等 HelloAck
@@ -206,10 +213,15 @@ func (c *ChannelClient) pingLoop(ctx context.Context) {
 				return
 			}
 			corrID := fmt.Sprintf("%s-ping-%d", c.vehicleID, time.Now().UnixMilli())
-			c.stream.Send(&channelpb.UpFrame{
+			c.sendLock.Lock()
+			pingErr := c.stream.Send(&channelpb.UpFrame{
 				CorrelationId: corrID,
 				Body:          &channelpb.UpFrame_Ping{Ping: &channelpb.Ping{Ts: time.Now().UnixMilli()}},
 			})
+			c.sendLock.Unlock()
+			if pingErr != nil {
+				log.Printf("[edge-gateway] ping send error: %v", pingErr)
+			}
 			if c.missedPong.Add(1) > missedPongLimit {
 				log.Printf("[edge-gateway] missed too many pongs, reconnecting")
 				c.stream.CloseSend()

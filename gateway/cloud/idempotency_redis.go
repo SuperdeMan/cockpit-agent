@@ -28,17 +28,12 @@ func newRedisIdempotency(addr string) (*redisIdempotency, error) {
 	return &redisIdempotency{client: client}, nil
 }
 
-func (r *redisIdempotency) Seen(ctx context.Context, corrID string) bool {
-	exists, err := r.client.Exists(ctx, "idem:"+corrID).Result()
+func (r *redisIdempotency) MarkIfNew(ctx context.Context, corrID string, ttl time.Duration) bool {
+	// SetNX 天然原子：key 不存在时写入并返回 true，已存在返回 false。
+	ok, err := r.client.SetNX(ctx, "idem:"+corrID, "1", ttl).Result()
 	if err != nil {
-		log.Printf("[idempotency] redis EXISTS error: %v", err)
-		return false // 出错时放行（fail-open）
+		log.Printf("[idempotency] redis SetNX error: %v (fail-open)", err)
+		return true // 出错时放行（fail-open）
 	}
-	return exists > 0
-}
-
-func (r *redisIdempotency) Mark(ctx context.Context, corrID string, ttl time.Duration) {
-	if err := r.client.Set(ctx, "idem:"+corrID, "1", ttl).Err(); err != nil {
-		log.Printf("[idempotency] redis SET error: %v", err)
-	}
+	return ok
 }

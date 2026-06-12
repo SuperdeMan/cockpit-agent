@@ -17,6 +17,8 @@ class AgentResult:
     actions: list[dict] = field(default_factory=list)
     # action: {"type": "navigate"|"vehicle.control"|..., "payload": {...}, "require_confirm": bool}
     follow_up: str = ""                    # 多轮追问/澄清
+    data: dict | None = None               # F3：结构化结果（供编排 slot_refs 取值，不面向 HMI）
+    missing_slots: list[str] = field(default_factory=list)  # F12：NEED_SLOT 时声明缺失的槽位名
 
     def action(self, type_: str, payload: dict, require_confirm: bool = False) -> "AgentResult":
         """链式添加一个动作。注意: vehicle.control 仅产出意图，真正下发由端侧 Executor 经 VAL 校验。"""

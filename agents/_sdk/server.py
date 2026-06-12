@@ -40,6 +40,8 @@ def _result_to_proto(res: AgentResult) -> agent_pb2.ExecuteResponse:
         ui_card=_to_struct(res.ui_card),
         actions=actions,
         follow_up=res.follow_up,
+        data=_to_struct(res.data),                  # F3：结构化结果供编排 slot_refs
+        missing_slots=list(res.missing_slots),       # F12：缺失槽位名
     )
 
 

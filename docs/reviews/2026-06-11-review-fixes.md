@@ -64,7 +64,7 @@ make test
 
 **遗留**：执行层二次校验（perms.check 硬拒绝）需 Step 增加 manifest 缓存，归入 F3 proto 批次。
 
-### F3. 跨步参数传递 slot_refs 结构性断裂 ✅ proto 已修复（2026-06-11），代码接线待做
+### F3. 跨步参数传递 slot_refs 结构性断裂 ✅ 已修复（2026-06-11）
 
 **已修复**：`ExecuteResponse` proto 增加 `google.protobuf.Struct data = 7` + `repeated string missing_slots = 8`（F12），codegen 通过。
 
@@ -110,10 +110,9 @@ make test
 
 **修复**：CI Unit tests 步骤改为单条 `python -m pytest ... agents/ --import-mode=importlib`，去掉手工 PYTHONPATH。
 
-### F10. 缺失的契约测试 ⬜ 部分修复
+### F10. 缺失的契约测试 ✅ 已修复（2026-06-11）
 
-**证据**：`agents/parking_payment/tests/` 是空目录；`agents/trip_planner/` 无 tests/——违反 CLAUDE.md §3「新增 Agent 必须写契约测试」。
-**进展**：parking_payment 已随 F1 补 `tests/test_parking_payment_agent.py`（find/确认支付闭环）。trip_planner 仍缺。
+**修复**：parking_payment 已随 F1 补 `tests/test_parking_payment_agent.py`（find/确认支付闭环）。trip_planner 补 `tests/test_trip_planner_agent.py`（4 用例：缺 destination→NEED_SLOT、happy path、协作降级、manifest 一致性）。
 
 **评审决策（2026-06-11 第二批）**：
 - 现在补，不延期——CLAUDE.md §3 是硬性要求，trip_planner 是当前唯一无测试的 Agent。
@@ -127,7 +126,7 @@ make test
 
 **修复**：AGENTS.md 改为不写具体数字，写「`python -m pytest ... --import-mode=importlib` 全绿」；CLAUDE.md §7 指向修复文档；README 保持 87/87 不改（Phase 0 时期数字，不再更新）。
 
-### F12. NEED_SLOT 补槽续接未闭环 ✅ proto 已修复（2026-06-11），engine 分支待做
+### F12. NEED_SLOT 补槽续接未闭环 ✅ 已修复（2026-06-11）
 
 **已修复**：`ExecuteResponse` proto 增加 `repeated string missing_slots = 8`，codegen 通过。
 
@@ -136,11 +135,20 @@ make test
 **评审决策（2026-06-11）**：
 - Phase 1 用简单版：直接用用户原始文本填 slot。Agent 的 LLM 能理解自然语言（如 datetime="今晚7点"）。Phase 2 再加 LLM 抽槽优化。
 - 区分 wait_slot 和 wait_confirm（已有 phase 字段）。engine 需加 wait_slot 分支：把用户文本填入挂起 step 的 missing_slots 后续接执行。
+
+**已修复（2026-06-11）**：
+- `AgentResult` 增加 `data` 和 `missing_slots` 字段
+- SDK `_result_to_proto` 填充 data + missing_slots
+- executor `_to_result` 从 proto 读取 data + missing_slots
+- `StepResult` 增加 `missing_slots` 字段
+- engine wait_slot 分支：恢复计划 + 用户文本填入 missing_slots 对应 slot + 续接执行
+- engine NEED_SLOT 挂起时保存 missing_slots 到 SessionState
+- navigation search_poi 填充 `data={"items": items}` 供 slot_refs 取值
 - 排期：与 F3 同批实施（见 F3 排期决策）。
 
 ## P2 — 代码级缺陷
 
-### F13. Go 网关并发写同一 gRPC stream（数据竞争）⬜ 未修复
+### F13. Go 网关并发写同一 gRPC stream（数据竞争）✅ 已修复（2026-06-11）
 
 **证据**：`gateway/cloud/main.go:88` 每请求 `go handleRequest`，多 goroutine 对同一 bidi stream 并发 `Send`——grpc-go 明确禁止并发 SendMsg。edge 侧同病：`gateway/edge/main.go` `Request()` 持 RLock 并发 Send，`pingLoop` 又在另一 goroutine Send。
 **修复方案**：每个 stream 一个发送 mutex（或单写者 goroutine + channel）。cloud/edge 两处都要。
@@ -168,7 +176,7 @@ make test
 
 **修复**：用 `zip(runnable, results)` 还原 step_id，异常/非 StepResult 结果都能关联到正确的步骤。
 
-### F18. 幂等 Seen/Mark 非原子 ⬜ 未修复
+### F18. 幂等 Seen/Mark 非原子 ✅ 已修复（2026-06-11）
 
 **证据**：`gateway/cloud/main.go:104` 先 `Seen` 后 `Mark`（TOCTOU）。
 **修复方案**：合并为 `MarkIfNew`（Redis SETNX / 内存版加锁）。
@@ -211,15 +219,12 @@ make test
 
 ---
 
-## 建议执行顺序（2026-06-11 第二批评审后刷新）
+## 建议执行顺序（2026-06-11 评审结论实施后刷新）
 
-已完成：F1、F2(规划层)、F4、F5(待 CI 编译验证)、F6–F9、F11、F14–F17、F19(叙事闭合)、F20–F22、F24、proto 批次(F3/F12/F23 schema)。
+已完成：F1–F12、F13–F22、F24、ASR/TTS。全部 24 项 + ASR/TTS 已闭合。
 
-剩余 Phase 1 工作，按此顺序：
-1. **F13 + F18**：cloud gateway sendMu + MarkIfNew（Go 小修，同一批做，push 后靠 CI 编译验证）
-2. **F10**：trip_planner 契约测试（4 用例，沿 parking_payment 模板）
-3. **F3 + F12 接线批次**：SDK data/missing_slots → executor → navigation → engine wait_slot（补槽/传参闭环）
-4. **docker 联调 + `test/e2e_ws.py` 全链路验收**（F1/F5 的 e2e 遗留一并验）
+剩余 Phase 1 工作：
+1. **docker 联调 + `test/e2e_ws.py` 全链路验收**（F1/F5 的 e2e 遗留，需要 Docker Desktop 启动后跑 `docker compose up`）
 
 Phase 2 backlog（已决策延后，不是欠账）：F19 熔断/可观测接线、F23 Authorize/Capture 切换、持久 bidi 长连（参考 ChannelClient 蓝本）、执行层权限二次校验、LLM 抽槽优化。
 
@@ -252,3 +257,8 @@ Phase 2 backlog（已决策延后，不是欠账）：F19 熔断/可观测接线
 | 2026-06-11 | F22 | Claude (第二批评审) | 核实 planner.py 全仓库零引用后，经用户确认删除。 |
 | 2026-06-11 | 评审 | Claude (第二批评审) | 第二批待评审点决策落地：F10 现在补 4 用例（沿 parking 模板）；F13 澄清 edge 侧 F5 后已是死代码、决策 cloud 侧 sendMu + ChannelClient 蓝本同步加锁；F18 决策 MarkIfNew 原子化（Redis SetNX、错时 fail-open、不做失败 Unmark）；F19 核实叙事已修正、状态闭合；F3+F12 合并为下一实施批次；F23 SDK 接线明确归 Phase 2；刷新执行顺序。 |
 | 2026-06-11 | ASR/TTS | Claude (review session) | ASR/TTS provider 按官网文档修正：共用 /v1/chat/completions endpoint；ASR 用 base64 data URI + chat.completion 格式；TTS 用 messages+audio 对象，响应为 base64 音频；音色替换为官网 9 个预置音色（冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean/mimo_default）。 |
+| 2026-06-11 | F13 | Claude (评审结论实施) | cloud gateway 加 sendMu 保护 stream.Send（主循环 Pong + handleRequest goroutine Event 不再交错）；ChannelClient 蓝本同步加 sendLock（Request/pingLoop/connect 三处）。 |
+| 2026-06-11 | F18 | Claude (评审结论实施) | 接口收敛为 MarkIfNew（原子化）：内存版单次 Lock 内查验+写入；Redis 版 SetNX 天然原子；删除 Seen/Mark 两段式；Redis 出错 fail-open。 |
+| 2026-06-11 | F10 | Claude (评审结论实施) | trip_planner 补 4 个契约测试（缺 destination→NEED_SLOT、happy path mock agents+llm、协作降级、manifest 一致性）。118 passed。 |
+| 2026-06-11 | F3+F12 | Claude (评审结论实施) | 接线批次：AgentResult 增 data+missing_slots → SDK _result_to_proto 填充 → executor _to_result 读取 → navigation search_poi 填 data → engine wait_slot 分支（用户文本填 slot 续接）→ SessionState 保存 missing_slots。 |
+| 2026-06-11 | F22 | Claude (评审结论实施) | 核实零引用后删除 planner.py（经用户确认）。 |
