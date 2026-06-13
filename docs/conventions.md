@@ -98,6 +98,7 @@
 | postgres | 5432 | — |
 | registry | 50051 | gRPC |
 | llm-gateway | 50052 | gRPC |
+| llm-gateway (Audio HTTP) | 50059 | HTTP（ASR/TTS/音色查询） |
 | memory | 50053 | gRPC |
 | cloud-planner | 50054 | gRPC |
 | **Agent 段** | **50061–50069** | gRPC |
@@ -115,9 +116,13 @@
 
 | 变量 | 含义 | 必填 |
 |---|---|---|
-| `LLM_PROVIDER` | LLM 厂商（anthropic/openai/…）| 否（默认 anthropic）|
-| `LLM_API_KEY` | LLM 密钥 | 否（不填走 mock）|
+| `LLM_PROVIDER` | LLM 厂商（xiaomimimo/anthropic/openai）| 否（默认 xiaomimimo）|
+| `LLM_API_KEY` | LLM 密钥（MiMo/Anthropic 通用）| 否（不填走 mock）|
 | `LLM_MODEL_PRIMARY` / `LLM_MODEL_FALLBACK` | 主/降级模型 | 否 |
+| `ASR_MODEL` | ASR 模型（MiMo mimo-v2.5-asr）| 否 |
+| `TTS_MODEL` | TTS 模型（MiMo mimo-v2.5-tts）| 否 |
+| `TTS_VOICE_ID` | 默认音色（冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean）| 否（默认冰糖）|
+| `AUDIO_HTTP_PORT` | ASR/TTS HTTP 代理端口 | 否（默认 50059）|
 | `REDIS_URL` / `NATS_URL` / `POSTGRES_DSN` | 基础设施地址 | 容器内有默认 |
 | `REGISTRY_ADDR` / `LLM_GATEWAY_ADDR` / `MEMORY_ADDR` / `CLOUD_PLANNER_ADDR` / `CLOUD_GATEWAY_ADDR` | 服务发现地址（容器 DNS）| 容器内有默认 |
 | `EDGE_GATEWAY_PORT` | 端网关端口 | 否（默认 8090）|

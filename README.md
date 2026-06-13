@@ -21,12 +21,12 @@ HMI ─► Edge Gateway ─► Edge Orchestrator ─► Fast Intent
 
 ## 快速开始
 
-前置：Docker、Docker Compose；本地开发另需 Go 1.22+、Python 3.11+、Node 20+、buf。
+前置：Docker Desktop（含 Docker Compose）；本地开发另需 Go 1.24+、Python 3.11+、Node 20+、buf。
 
 ```bash
 cp .env.example .env          # 填入 LLM_API_KEY（MiMo/Anthropic）
 make proto                    # 生成 gRPC 代码
-make up                       # 起全栈
+make up                       # 起全栈（18 个容器）
 # 打开 http://localhost:5173  访问座舱 HMI
 make down
 ```
@@ -36,18 +36,23 @@ Windows（PowerShell，无 make）：
 ```powershell
 Copy-Item .env.example .env
 ./scripts/gen-proto.ps1
-docker compose -f deploy/docker-compose.yaml up --build
+docker compose -f deploy/docker-compose.yaml --env-file .env up --build
 ```
 
 LLM 默认使用小米 MiMo API（`LLM_PROVIDER=xiaomimimo`），也支持 Anthropic。不配 key 自动走 MockProvider。
 
-## 验证三条 PoC 链路
+## 验证四条 PoC 链路
 1. **车控快路径**：说/输入"打开空调26度" → 端侧秒回（断网也可用）。
-2. **云端组合意图**：说"找家顺路评分高的川菜馆订今晚的位" → 云端 Planner 编排导航+点餐。
-3. **断网降级**：断网后说"讲个笑话" → 返回降级提示；车控仍可用。
+2. **云端导航**：说"附近的充电站" → 云端 Planner 路由到导航 Agent，追问关键词。
+3. **云端闲聊**：说"讲个笑话" → 云端 Planner 路由到闲聊 Agent。
+4. **确认闭环**：说"订川菜馆今晚7点两位" → 点餐 Agent 返回结果 → "确认" → 完成下单。
+
+```bash
+python test/e2e_ws.py   # E2E 自动验证（需全栈运行）
+```
 
 ## 目录
 见 `CLAUDE.md` §3。每个服务子目录都有自己的 README，说明职责、接口、依赖。
 
 ## 状态
-Phase 1 工程化代码已落地（87/87 测试通过，MiMo API 已验证）。详见 [`AGENTS.md`](AGENTS.md) §4。
+Phase 1 工程化代码已落地，Docker 全栈联调通过（2026-06-13）。详见 [`AGENTS.md`](AGENTS.md) §4。

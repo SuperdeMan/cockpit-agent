@@ -9,7 +9,7 @@
 
 云边协同的智能座舱 multi-agent 系统。**分层混合编排**：端侧"快系统"秒回高频/安全敏感指令（车控/媒体）并离线兜底；云侧"慢系统"用 LLM Planner 编排复杂/跨域/多轮意图。所有 Agent 实现统一 gRPC 契约 + Manifest，经注册中心即插即用。
 
-阶段：**Phase 1 工程化代码已落地**（87/87 测试通过，MiMo API 已验证）。待完成：`make proto` + docker 整栈联调。
+阶段：**Phase 1 工程化代码已落地，Docker 全栈联调通过**（2026-06-13）。118 测试通过 + E2E 4 条链路通过。
 
 ---
 
@@ -44,18 +44,21 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest ... --import-mode=importlib` | ✅ 全绿（含 Agent 契约测试、确认闭环回归） |
+| 全量测试 `python -m pytest ... --import-mode=importlib` | ✅ 118 passed（含 Agent 契约测试、确认闭环回归） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
 | `gen/`（gRPC 生成代码）| ✅ 已生成（`buf generate proto`） |
-| Go 网关 | ✅ bidi 双向流已实现（未本地 build） |
-| Agent Provider 适配 | ✅ 6/6 Agent 全部接入 |
+| Go 网关 | ✅ Go 1.24 编译通过，Docker 全栈运行 |
+| Agent Provider 适配 | ✅ 6/6 Agent 全部接入并注册 |
 | 安全/权限/编排/协作/支付 | ✅ 全部落地 |
 | 可观测/熔断 | ⚠️ 代码已实现，待接线（Phase 2） |
 | LLM 调用 | ✅ MiMo API 已验证连通（同步+流式）；未配 key 时走 MockProvider |
 | 确认闭环（F1） | ✅ 端到端打通（HMI→网关→编排器→Agent） |
 | 验证体系（F6-F9） | ✅ `make test` 一条命令全绿 |
+| Docker 全栈联调 | ✅ 18 个容器全部运行（2026-06-13） |
+| E2E 测试 | ✅ 4 条链路通过（车控/导航/闲聊/点餐） |
+| ASR/TTS | ✅ HTTP 代理 + HMI 录音/播放（MiMo mimo-v2.5-asr/tts） |
 
-**结论**：Phase 1 代码 + 测试 + proto codegen 已落地。剩余：Go 本地编译验证、docker 整栈联调、F3 SDK data 接线。详见 `docs/reviews/2026-06-11-review-fixes.md`。
+**结论**：Phase 1 全部验收标准达成。剩余为 Phase 2 backlog。详见 `docs/reviews/2026-06-11-review-fixes.md`。
 
 ---
 

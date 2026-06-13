@@ -9,14 +9,14 @@
 | 工具 | 版本 | 用途 | 安装 |
 |---|---|---|---|
 | Python | 3.11+ | 编排/Agent/AI 服务 | python.org / pyenv |
-| Go | 1.22+ | 网关 | go.dev |
+| Go | 1.24+ | 网关（go-redis/v9 需要 1.24+）| go.dev |
 | Node | 20+ | HMI | nodejs.org |
 | buf | 最新 | proto codegen | https://buf.build/docs/installation（Win: `scoop install buf` / `choco install buf`）|
 | Docker + Compose | 最新 | 整栈运行 | Docker Desktop |
 | grpcurl | 最新（可选）| 手测 gRPC | github.com/fullstorydev/grpcurl |
 
 > 只想跑端侧逻辑测试（`test/smoke_edge.py`）的话，只需 Python，无需其它。
-> LLM Gateway 需要 `httpx`（MiMo Provider 用）：`pip install httpx[socks]`。
+> LLM Gateway 需要 `httpx`（MiMo Provider 用）+ `aiohttp`（ASR/TTS HTTP 代理用）：`pip install httpx aiohttp`。
 
 ---
 
@@ -121,6 +121,9 @@ go run ./gateway/edge          # 或 ./gateway/cloud
 | 端口被占用 | 改 `.env` 端口或停占用进程；端口表见 `docs/conventions.md` |
 | `make up` 首次失败 | 整栈首次联调，按报错逐服务排查（多为 codegen 未跑或端口冲突）|
 | 复杂意图总是"无法处理" | mock LLM 不会抽槽/规划；配 `LLM_API_KEY` 后体验完整 |
+| Agent 重启后 Planner 返回空计划 | Registry 内存丢失，重启 Agent 让它们重新注册 |
+| TTS 返回错误 | MiMo TTS 偶尔返回非 JSON 响应，已加 fallback 处理 |
+| `docker compose` 需要 `--env-file .env` | compose 文件在 `deploy/` 子目录，根目录 `.env` 需显式指定 |
 
 ---
 
