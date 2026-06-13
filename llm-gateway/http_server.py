@@ -11,11 +11,26 @@ import json
 import logging
 import os
 
+import grpc
 from aiohttp import web
+
+from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
 from providers import build_asr_provider, build_tts_provider
 
 logger = logging.getLogger("llm.http")
+
+MEMORY_ADDR = os.getenv("MEMORY_ADDR", "memory:50053")
+_mem_channel = None
+
+
+def _memory_stub():
+    """memory gRPC 客户端（懒连接、复用）。HMI 是浏览器、不能直连 gRPC，
+    经本 HTTP 代理读记忆内容（只读）。"""
+    global _mem_channel
+    if _mem_channel is None:
+        _mem_channel = grpc.aio.insecure_channel(MEMORY_ADDR)
+    return memory_pb2_grpc.MemoryStub(_mem_channel)
 
 # 从环境变量读音色配置
 DEFAULT_VOICE = os.getenv("TTS_VOICE_ID", "冰糖")
@@ -96,6 +111,38 @@ def create_http_app() -> web.Application:
         gender = request.query.get("gender", "")
         voices = await tts.list_voices(language=lang, gender=gender)
         return web.json_response({"voices": voices})
+
+    @routes.get("/api/memory/session")
+    async def handle_mem_session(request: web.Request):
+        """读会话对话记忆（HMI 记忆视图）。?session_id=&last_n=20"""
+        sid = request.query.get("session_id", "")
+        last_n = int(request.query.get("last_n", "20") or 20)
+        if not sid:
+            return web.json_response({"turns": []})
+        try:
+            resp = await _memory_stub().GetSession(
+                memory_pb2.GetSessionRequest(session_id=sid, last_n=last_n), timeout=5)
+            turns = [{"role": t.role, "text": t.text, "ts": t.ts} for t in resp.turns]
+            return web.json_response({"turns": turns})
+        except Exception as e:
+            logger.warning("memory session read error: %s", e)
+            return web.json_response({"turns": [], "error": str(e)})
+
+    @routes.get("/api/memory/context")
+    async def handle_mem_context(request: web.Request):
+        """读上下文/画像（偏好、车辆状态等）。?session_id=&user_id=&vehicle_id=&scopes=a,b"""
+        sid = request.query.get("session_id", "")
+        uid = request.query.get("user_id", "")
+        vid = request.query.get("vehicle_id", "")
+        scopes = [s for s in request.query.get("scopes", "").split(",") if s] or \
+            ["profile.taste", "vehicle.state", "vehicle.location"]
+        try:
+            resp = await _memory_stub().GetContext(memory_pb2.GetContextRequest(
+                session_id=sid, user_id=uid, vehicle_id=vid, scopes=scopes), timeout=5)
+            return web.json_response({"values": dict(resp.values)})
+        except Exception as e:
+            logger.warning("memory context read error: %s", e)
+            return web.json_response({"values": {}, "error": str(e)})
 
     @routes.get("/api/health")
     async def handle_health(request: web.Request):

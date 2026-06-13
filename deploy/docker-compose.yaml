@@ -10,6 +10,9 @@ x-python-env: &python-env
   NATS_URL: nats://nats:4222
   REDIS_URL: redis://redis:6379/0
   LOG_LEVEL: ${LOG_LEVEL:-info}
+  # 开放域模型分层（task 4）：Agent（如 chitchat）据此选快/重模型
+  LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY:-mimo-v2.5-pro}
+  LLM_MODEL_FAST: ${LLM_MODEL_FAST:-mimo-v2.5}
 
 services:
   # ── 基础设施 ──

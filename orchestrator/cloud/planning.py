@@ -17,6 +17,8 @@ _PLANNER_SYSTEM = (
     "- 单意图只输出一个 step\n"
     "- 组合意图拆成多步，用 depends_on 表示依赖\n"
     "- 用 slot_refs 引用前序 step 结果，如 {\"restaurant_id\":\"s1.data.items.0.id\"}\n"
+    "- 若用户话术含指代（如『再调高一点』『还是刚才那家』『换个颜色』），"
+    "结合下方『最近对话』补全对象/槽位后再规划\n"
     "- 只输出 JSON，不要任何解释\n"
     "- 无法匹配时输出 {\"steps\":[]}"
 )
@@ -32,11 +34,13 @@ class PlanBuilder:
         self._resolve = registry_fn
 
     async def build(self, text: str, agents: list, ctx: PlanContext,
-                    granted_permissions: list[str] = None) -> Plan:
+                    granted_permissions: list[str] = None,
+                    history: list[dict] = None) -> Plan:
         """构建执行计划。最多重试 1 次，失败降级到语义路由。
 
         granted_permissions: 用户已授予的权限列表。规划时过滤掉越权能力，
         LLM 看不到用户无权调用的 Agent/意图（越权能力不暴露给 LLM）。
+        history: 最近对话（task 2），注入 prompt 供指代消解。
         """
         # 权限过滤：只保留用户有权调用的 Agent
         if granted_permissions is not None:
@@ -45,17 +49,18 @@ class PlanBuilder:
         agent_map = {a.manifest.agent_id: a for a in agents}
 
         for _ in range(2):
-            raw = await self._llm_plan(text, agents)
+            raw = await self._llm_plan(text, agents, history)
             plan = self._parse_and_validate(raw, agent_map, text)
             if plan and plan.steps:
                 return plan
 
-        # 降级：Registry 语义路由 top-1
-        return await self._fallback(text)
+        # 降级：chitchat 全局兜底 / Registry 语义路由 top-1
+        return await self._fallback(text, agents)
 
-    async def _llm_plan(self, text: str, agents: list) -> str:
+    async def _llm_plan(self, text: str, agents: list, history: list[dict] = None) -> str:
         catalog = self._build_catalog(agents)
-        user_msg = f"可用能力:\n{catalog}\n\n用户说: {text}"
+        ctx_block = self._format_history(history)
+        user_msg = f"可用能力:\n{catalog}\n\n{ctx_block}用户说: {text}"
         try:
             return await self._llm([
                 {"role": "system", "content": _PLANNER_SYSTEM},
@@ -118,13 +123,24 @@ class PlanBuilder:
 
         return Plan(steps=steps, raw_text=fallback_text)
 
-    async def _fallback(self, text: str) -> Plan:
-        """Registry 语义路由降级。"""
+    async def _fallback(self, text: str, agents: list = None) -> Plan:
+        """规划失败的降级。优先兜底到 chitchat（系统全局 fallback，开放域/LLM 抽风时
+        仍有回应），其次 Registry 语义路由 top-1。"""
+        # 1) chitchat 全局兜底：把原话交给闲聊 Agent（已在权限过滤后的 agents 里）
+        for a in (agents or []):
+            if a.manifest.agent_id == "chitchat":
+                intent = a.manifest.capabilities[0].intent if a.manifest.capabilities else "chitchat.talk"
+                return Plan(steps=[Step(
+                    id="s1", agent_id="chitchat", endpoint=a.endpoint,
+                    intent=intent, slots={"text": text},
+                )], raw_text=text)
+
+        # 2) Registry 语义路由 top-1
         try:
-            agents = await self._resolve(text, top_k=1)
-            if not agents:
+            resolved = await self._resolve(text, top_k=1)
+            if not resolved:
                 return Plan(steps=[])
-            a = agents[0]
+            a = resolved[0]
             intent = a.manifest.capabilities[0].intent if a.manifest.capabilities else ""
             return Plan(steps=[Step(
                 id="s1", agent_id=a.manifest.agent_id, endpoint=a.endpoint,
@@ -147,6 +163,21 @@ class PlanBuilder:
                     for c in a.manifest.capabilities]
             items.append({"agent_id": a.manifest.agent_id, "capabilities": caps})
         return json.dumps(items, ensure_ascii=False)
+
+    @staticmethod
+    def _format_history(history: list[dict] | None) -> str:
+        """把最近对话格式化为 prompt 片段（最多 4 轮），供指代消解。"""
+        if not history:
+            return ""
+        lines = []
+        for t in history[-4:]:
+            txt = (t.get("text") or "").strip()
+            if txt:
+                who = "用户" if t.get("role") == "user" else "助手"
+                lines.append(f"{who}：{txt}")
+        if not lines:
+            return ""
+        return "最近对话（用于指代消解）：\n" + "\n".join(lines) + "\n\n"
 
     @staticmethod
     def _build_intent_set(agents: list) -> set:

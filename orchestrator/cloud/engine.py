@@ -40,10 +40,29 @@ class PlannerEngine:
         self.perms = perms
 
     async def run(self, request) -> AsyncIterator[dict]:
-        """编排主循环。yield 事件：{"kind": "speech"|"action"|"final", ...}"""
+        """编排主循环（外层）：委托 _orchestrate，并把本轮对话落库到 memory。
+
+        对话记忆在本轮结束后按 用户→助手 顺序写入——规划阶段读到的是"此前"历史，
+        当前这句不污染指代消解（task 2）。memory_enabled=false 时整轮不读写。
+        """
         ctx = self._build_context(request)
         text = (getattr(request, "text", "") or "").strip()
+        mem_on = ctx.prefs.get("memory_enabled", "true") != "false"
 
+        assistant_speech = ""
+        async for ev in self._orchestrate(request, ctx, text, mem_on):
+            if ev.get("kind") == "final" and ev.get("speech"):
+                assistant_speech = ev["speech"]
+            yield ev
+
+        if mem_on and text:
+            await self._append_turn(ctx.session_id, "user", text)
+            if assistant_speech:
+                await self._append_turn(ctx.session_id, "assistant", assistant_speech)
+
+    async def _orchestrate(self, request, ctx: PlanContext, text: str,
+                           mem_on: bool) -> AsyncIterator[dict]:
+        """规划→校验→执行→聚合。yield 事件：{"kind": "speech"|"action"|"final", ...}"""
         plan: Plan | None = None
         seed_results: list[StepResult] = []
 
@@ -89,11 +108,14 @@ class PlannerEngine:
                    "speech": "当前没有待确认的操作。需要我帮您做什么？"}
             return
 
+        new_plan = plan is None
         if plan is None:
-            # B. 新规划
+            # B. 新规划（注入此前对话历史，支持指代消解；task 2）
             agents = await self.clients.list_agents()
+            history = await self._history(ctx.session_id) if mem_on else []
             plan = await self.planner.build(text, agents, ctx,
-                                            granted_permissions=ctx.granted_permissions)
+                                            granted_permissions=ctx.granted_permissions,
+                                            history=history)
 
             if not plan.steps:
                 yield {"kind": "final", "speech": "抱歉，我暂时无法处理这个请求。"}
@@ -105,34 +127,96 @@ class PlannerEngine:
             # C2. 权限校验（F2）：执行前对每个 step 做强制校验
             plan = self._enforce_permissions(plan, ctx)
 
+        # D0. 单步新规划走流式直通（task 4：开放域"边想边说"，秒级反馈）。
+        # 仅对全新单步计划开启；确认续接/多步计划保持 executor 路径，不动 F1 闭环。
+        if new_plan and len(plan.steps) == 1 and not ctx.is_confirmation:
+            step = plan.steps[0]
+            streamed = False
+            final_sr: StepResult | None = None
+            try:
+                async for kind, payload in self.clients.call_agent_stream(
+                        step.endpoint, step.intent, step.slots, ctx, step.meta):
+                    if kind == "speech":
+                        streamed = True
+                        yield {"kind": "speech", "delta": payload}
+                    elif kind == "action":
+                        streamed = True
+                        yield {"kind": "action", "action": payload}
+                    elif kind == "final":
+                        final_sr = DagExecutor._to_result(step.id, payload)
+            except Exception as e:
+                logger.warning("Single-step stream failed (%s); falling back to unary", e)
+
+            if final_sr is not None:
+                results = [final_sr]
+                if final_sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
+                    yield await self._suspend(final_sr, results, plan, ctx)
+                    return
+                await self.session.clear(ctx.session_id)
+                final = await self.aggregator.compose(text or plan.raw_text, results)
+                yield {"kind": "final", **final}
+                return
+            if streamed:
+                # 流了话术却没收到 final：不回退重跑，避免重复播报
+                yield {"kind": "final", "speech": "抱歉，刚才没说完，请再试一次。"}
+                return
+            # 无任何流式事件（不支持/连接失败）→ 安全回退到下面的 executor 路径
+
         # D. 执行 DAG（确认续接时：已完成结果作种子，只跑剩余步骤）
         done_seed = {r.step_id: r for r in seed_results}
-        results: list[StepResult] = list(seed_results)
+        results = list(seed_results)
         async for step_result in self.executor.run(plan, ctx, done=done_seed):
             results.append(step_result)
 
             # 挂起：需确认/需补槽
             if step_result.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
-                await self.session.save(ctx.session_id, SessionState(
-                    phase="wait_confirm" if step_result.status == StepStatus.NEED_CONFIRM else "wait_slot",
-                    pending_step_id=step_result.step_id,
-                    missing_slots=list(step_result.missing_slots),  # F12：保存缺失槽位名
-                    completed_results={r.step_id: r.__dict__ for r in results},
-                    pending_plan=self._serialize_plan(plan),
-                ))
-                yield {
-                    "kind": "final",
-                    "speech": step_result.speech,
-                    "follow_up": step_result.follow_up,
-                    "actions": step_result.actions,
-                    "need_confirm": step_result.status == StepStatus.NEED_CONFIRM,
-                }
+                yield await self._suspend(step_result, results, plan, ctx)
                 return
 
         # E. 聚合 + 输出
         await self.session.clear(ctx.session_id)
         final = await self.aggregator.compose(text or plan.raw_text, results)
         yield {"kind": "final", **final}
+
+    async def _suspend(self, step_result: StepResult, results: list[StepResult],
+                       plan: Plan, ctx: PlanContext) -> dict:
+        """挂起待确认/待补槽：保存会话态并构造 final 事件。executor 与流式两路共用，
+        保证 F1 多轮确认闭环行为一致。"""
+        await self.session.save(ctx.session_id, SessionState(
+            phase="wait_confirm" if step_result.status == StepStatus.NEED_CONFIRM else "wait_slot",
+            pending_step_id=step_result.step_id,
+            missing_slots=list(step_result.missing_slots),  # F12：保存缺失槽位名
+            completed_results={r.step_id: r.__dict__ for r in results},
+            pending_plan=self._serialize_plan(plan),
+        ))
+        return {
+            "kind": "final",
+            "speech": step_result.speech,
+            "follow_up": step_result.follow_up,
+            "actions": step_result.actions,
+            "need_confirm": step_result.status == StepStatus.NEED_CONFIRM,
+        }
+
+    async def _append_turn(self, session_id: str, role: str, text: str):
+        """写入对话记忆。memory 不可用或 clients 未提供该能力时静默跳过（不阻塞主链路）。"""
+        fn = getattr(self.clients, "append_turn", None)
+        if not fn:
+            return
+        try:
+            await fn(session_id, role, text)
+        except Exception as e:
+            logger.debug("append_turn failed: %s", e)
+
+    async def _history(self, session_id: str, last_n: int = 6) -> list[dict]:
+        """取最近对话历史（供 planner 指代消解）。失败返回空列表，不阻塞规划。"""
+        fn = getattr(self.clients, "get_session", None)
+        if not fn:
+            return []
+        try:
+            return await fn(session_id, last_n)
+        except Exception as e:
+            logger.debug("get_session failed: %s", e)
+            return []
 
     def _build_context(self, request) -> PlanContext:
         # granted_permissions 来源：HandleRequest.meta["granted_scopes"]（逗号分隔）
@@ -141,6 +225,11 @@ class PlannerEngine:
         raw_scopes = meta.get("granted_scopes", "")
         granted = [s.strip() for s in raw_scopes.split(",") if s.strip()] if raw_scopes else []
 
+        # HMI 会话级偏好（透传给 Agent，见 hmi/src/settings.tsx buildMeta）
+        prefs = {k: meta[k] for k in
+                 ("model_pref", "answer_length", "assistant_name", "memory_enabled")
+                 if meta.get(k)}
+
         return PlanContext(
             request_id=getattr(request, "request_id", ""),
             session_id=getattr(request, "session_id", ""),
@@ -148,6 +237,7 @@ class PlannerEngine:
             vehicle_id=getattr(request.context, "vehicle_id", "") if hasattr(request, "context") and request.context else "",
             is_confirmation=getattr(request, "is_confirmation", False),
             granted_permissions=granted,
+            prefs=prefs,
         )
 
     @staticmethod
