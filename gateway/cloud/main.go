@@ -13,6 +13,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 
 	channelpb "github.com/cockpit/car-agent/gen/go/cockpit/channel/v1"
 	orchpb "github.com/cockpit/car-agent/gen/go/cockpit/orchestrator/v1"
@@ -47,7 +48,6 @@ func (s *sendMu) Send(f *channelpb.DownFrame) error {
 
 func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer) error {
 	var vehicleID string
-	ctx := stream.Context()
 	sm := &sendMu{stream: stream}
 
 	for {
@@ -183,7 +183,7 @@ func main() {
 	}
 
 	s := grpc.NewServer(
-		grpc.KeepaliveEnforcementPolicy(keepalivePolicy()),
+		keepalivePolicy(),
 	)
 	channelpb.RegisterEdgeCloudChannelServer(s, &channelServer{
 		planner: orchpb.NewCloudPlannerClient(conn),
@@ -196,9 +196,9 @@ func main() {
 	}
 }
 
-func keepalivePolicy() grpc.KeepaliveEnforcementPolicy {
-	return grpc.KeepaliveEnforcementPolicy{
+func keepalivePolicy() grpc.ServerOption {
+	return grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 		MinTime:             5 * time.Second,
 		PermitWithoutStream: true,
-	}
+	})
 }

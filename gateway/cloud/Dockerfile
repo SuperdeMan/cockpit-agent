@@ -1,5 +1,5 @@
 # build context 为项目根。需先 `make proto` 生成 gen/go。
-FROM golang:1.22 AS build
+FROM golang:1.24 AS build
 WORKDIR /src
 COPY go.mod ./
 COPY gen/go ./gen/go

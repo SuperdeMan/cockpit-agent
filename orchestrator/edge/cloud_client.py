@@ -34,14 +34,14 @@ class CloudClient:
             # 建立 bidi 流
             stream = stub.Connect()
             # 发握手
-            await stream.send(channel_pb2.UpFrame(
+            await stream.write(channel_pb2.UpFrame(
                 correlation_id=f"{request.session_id}-hello",
                 hello=channel_pb2.Hello(
                     vehicle_id=getattr(request.context, "vehicle_id", "v1") if hasattr(request, "context") and request.context else "v1",
                 ),
             ))
             # 等 HelloAck
-            ack = await stream.recv()
+            ack = await stream.read()
             ha = ack.hello_ack
             if ha and not ha.ok:
                 logger.warning("Cloud hello rejected: %s", ha.reason)
@@ -49,14 +49,14 @@ class CloudClient:
 
             # 发请求
             corr_id = f"{request.session_id}-{id(request)}"
-            await stream.send(channel_pb2.UpFrame(
+            await stream.write(channel_pb2.UpFrame(
                 correlation_id=corr_id,
                 request=request,
             ))
 
             # 收事件直到 final
             while True:
-                down = await stream.recv()
+                down = await stream.read()
                 if down.correlation_id != corr_id:
                     continue
                 evt = down.event
