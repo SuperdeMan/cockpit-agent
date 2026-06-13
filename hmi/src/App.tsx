@@ -1,222 +1,153 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
-
-type Action = { type: string; payload?: Record<string, unknown>; require_confirm?: boolean }
-type Msg = {
-  role: 'user' | 'assistant'
-  text: string
-  actions?: Action[]
-  needConfirm?: boolean
-  followUp?: string
-}
+// 座舱 HMI 外壳：WebSocket 连接（带重连）+ 视图路由（对话/设置）+ 消息状态机。
+// 消息流：用户发送 → 立刻插入助手"思考中"占位 → final 替换 / speech_delta 流式填充。
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSettings, buildMeta } from './settings'
+import { StatusBar } from './components/StatusBar'
+import { ChatView } from './components/ChatView'
+import { Composer } from './components/Composer'
+import { SettingsPanel } from './components/SettingsPanel'
+import { playTTS } from './audio'
+import type { Msg, Settings } from './types'
 
 const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://localhost:8090'
 const WS_URL = GATEWAY.replace(/^http/, 'ws') + '/ws'
 const AUDIO_API = (import.meta.env.VITE_AUDIO_API_URL as string) || 'http://localhost:50059'
 const SESSION = 'demo-' + Math.random().toString(36).slice(2, 8)
 
-const QUICK = ['打开空调26度', '关闭空调', '播放音乐', '附近的充电站', '讲个笑话', '导航去首都机场']
+const uid = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2)
 
 export default function App() {
+  const { settings } = useSettings()
   const [messages, setMessages] = useState<Msg[]>([])
-  const [input, setInput] = useState('')
   const [connected, setConnected] = useState(false)
   const [awaitConfirm, setAwaitConfirm] = useState(false)
-  const [recording, setRecording] = useState(false)
-  const [audioEnabled, setAudioEnabled] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+
   const wsRef = useRef<WebSocket | null>(null)
-  const listRef = useRef<HTMLDivElement>(null)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
+  const pendingIdRef = useRef<string | null>(null)
+  const settingsRef = useRef<Settings>(settings)
+  settingsRef.current = settings // 始终保留最新设置，避免 ws 回调读到陈旧闭包
 
+  // ─── WebSocket 连接 + 自动重连 ───
   useEffect(() => {
-    const ws = new WebSocket(WS_URL)
-    ws.onopen = () => setConnected(true)
-    ws.onclose = () => setConnected(false)
-    ws.onmessage = (ev) => {
-      const data = JSON.parse(ev.data)
-      if (data.type === 'final') {
-        const msg: Msg = {
-          role: 'assistant', text: data.speech || '', actions: data.actions,
-          needConfirm: !!data.need_confirm, followUp: data.follow_up,
-        }
-        setMessages((m) => [...m, msg])
-        setAwaitConfirm(!!data.need_confirm)
-        // TTS 播放
-        if (audioEnabled && data.speech) {
-          playTTS(data.speech)
-        }
-      } else if (data.type === 'error') {
-        setMessages((m) => [...m, { role: 'assistant', text: '出错了：' + data.message }])
-        setAwaitConfirm(false)
+    let closed = false
+    let retry: number | undefined
+
+    const connect = () => {
+      const ws = new WebSocket(WS_URL)
+      wsRef.current = ws
+      ws.onopen = () => setConnected(true)
+      ws.onclose = () => {
+        setConnected(false)
+        if (!closed) retry = window.setTimeout(connect, 1500)
       }
+      ws.onerror = () => ws.close()
+      ws.onmessage = (ev) => handleEvent(JSON.parse(ev.data))
     }
-    wsRef.current = ws
-    return () => ws.close()
-  }, [audioEnabled])
+    connect()
 
-  useEffect(() => {
-    listRef.current?.scrollTo(0, listRef.current.scrollHeight)
-  }, [messages])
+    return () => {
+      closed = true
+      if (retry) clearTimeout(retry)
+      wsRef.current?.close()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleEvent = useCallback((data: any) => {
+    const s = settingsRef.current
+    if (data.type === 'speech_delta') {
+      // 流式逐字：把 pending 占位转为 streaming，并追加 delta
+      const id = pendingIdRef.current
+      setMessages((m) =>
+        m.map((msg) =>
+          msg.id === id
+            ? { ...msg, pending: false, streaming: true, text: msg.text + (data.delta || '') }
+            : msg,
+        ),
+      )
+      return
+    }
+    if (data.type === 'final') {
+      const id = pendingIdRef.current
+      pendingIdRef.current = null
+      const final: Partial<Msg> = {
+        pending: false,
+        streaming: false,
+        text: data.speech || '',
+        actions: data.actions,
+        needConfirm: !!data.need_confirm,
+        followUp: data.follow_up,
+      }
+      setMessages((m) =>
+        id && m.some((x) => x.id === id)
+          ? m.map((msg) => (msg.id === id ? { ...msg, ...final } : msg))
+          : [...m, { id: uid(), role: 'assistant', ...final } as Msg],
+      )
+      setAwaitConfirm(!!data.need_confirm)
+      if (s.ttsEnabled && s.autoplay && data.speech) {
+        playTTS(AUDIO_API, data.speech, s.voiceId).catch(() => {/* 播放失败静默 */})
+      }
+      return
+    }
+    if (data.type === 'error') {
+      pendingIdRef.current = null
+      setMessages((m) => [
+        ...m.filter((x) => !x.pending),
+        { id: uid(), role: 'assistant', text: '出错了：' + data.message, error: true },
+      ])
+      setAwaitConfirm(false)
+    }
+  }, [])
+
+  const dispatch = (text: string, isConfirmation: boolean) => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    const s = settingsRef.current
+    ws.send(
+      JSON.stringify({
+        text,
+        session_id: SESSION,
+        is_confirmation: isConfirmation,
+        meta: buildMeta(s), // 会话级偏好透传（后端忽略未知字段，向前兼容）
+      }),
+    )
+    // 立刻插入"思考中"占位 —— 开放域慢响应也有即时反馈
+    const pendingId = uid()
+    pendingIdRef.current = pendingId
+    setMessages((m) => [...m, { id: pendingId, role: 'assistant', text: '', pending: true }])
+  }
 
   const send = (text: string) => {
-    const t = text.trim()
-    if (!t || wsRef.current?.readyState !== WebSocket.OPEN) return
-    setMessages((m) => [...m, { role: 'user', text: t }])
-    wsRef.current.send(JSON.stringify({ text: t, session_id: SESSION }))
+    setMessages((m) => [...m, { id: uid(), role: 'user', text }])
     setAwaitConfirm(false)
-    setInput('')
+    dispatch(text, false)
   }
 
-  const replyConfirm = (text: '确认' | '取消') => {
-    if (wsRef.current?.readyState !== WebSocket.OPEN) return
-    setMessages((m) => [...m, { role: 'user', text }])
-    wsRef.current.send(JSON.stringify({ text, session_id: SESSION, is_confirmation: true }))
+  const confirm = (reply: '确认' | '取消') => {
+    setMessages((m) => [...m, { id: uid(), role: 'user', text: reply }])
     setAwaitConfirm(false)
-  }
-
-  // ─── ASR：录音 → 识别 ───
-
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' })
-      chunksRef.current = []
-      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
-      recorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop())
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        await recognizeAudio(blob)
-      }
-      recorder.start()
-      mediaRecorderRef.current = recorder
-      setRecording(true)
-    } catch (e) {
-      console.error('录音失败:', e)
-      alert('无法访问麦克风，请检查浏览器权限。')
-    }
-  }
-
-  const stopRecording = () => {
-    mediaRecorderRef.current?.stop()
-    setRecording(false)
-  }
-
-  const recognizeAudio = async (blob: Blob) => {
-    const reader = new FileReader()
-    reader.onloadend = async () => {
-      const base64 = (reader.result as string).split(',')[1]
-      try {
-        const resp = await fetch(`${AUDIO_API}/api/asr`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ audio: base64, format: 'webm', language: 'zh' }),
-        })
-        const data = await resp.json()
-        if (data.text) {
-          send(data.text)
-        } else {
-          console.error('ASR 无结果:', data)
-        }
-      } catch (e) {
-        console.error('ASR 请求失败:', e)
-      }
-    }
-    reader.readAsDataURL(blob)
-  }
-
-  // ─── TTS：文本 → 播放 ───
-
-  const playTTS = async (text: string) => {
-    try {
-      const resp = await fetch(`${AUDIO_API}/api/tts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice_id: '冰糖', format: 'wav' }),
-      })
-      const data = await resp.json()
-      if (data.audio) {
-        const audioBytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0))
-        const audioBlob = new Blob([audioBytes], { type: `audio/${data.format || 'wav'}` })
-        const url = URL.createObjectURL(audioBlob)
-        const audio = new Audio(url)
-        audio.onended = () => URL.revokeObjectURL(url)
-        audio.play()
-      }
-    } catch (e) {
-      console.error('TTS 请求失败:', e)
-    }
+    dispatch(reply, true)
   }
 
   return (
     <div className="app">
-      <header className="bar">
-        <div className="logo">🚗 座舱助手 · 小舟</div>
-        <div className="controls">
-          <button
-            className={'audio-toggle ' + (audioEnabled ? 'on' : 'off')}
-            onClick={() => setAudioEnabled(!audioEnabled)}
-            title={audioEnabled ? '关闭语音播报' : '开启语音播报'}
-          >
-            {audioEnabled ? '🔊' : '🔇'}
-          </button>
-          <div className={'status ' + (connected ? 'on' : 'off')}>
-            <span className="dot" /> {connected ? '已连接' : '连接中…'}
-          </div>
-        </div>
-      </header>
-
-      <div className="chat" ref={listRef}>
-        {messages.length === 0 && (
-          <div className="hint">说点什么，或点下方快捷指令试试 👇</div>
-        )}
-        {messages.map((m, i) => (
-          <div key={i} className={'row ' + m.role}>
-            <div className={'bubble ' + m.role}>
-              <div className="text">{m.text}</div>
-              {m.actions?.map((a, j) => (
-                <div key={j} className="action">
-                  <span className="tag">{a.type}</span>
-                  <span>{(a.payload?.command as string) ?? JSON.stringify(a.payload)}</span>
-                  {a.require_confirm && <span className="confirm">需确认</span>}
-                </div>
-              ))}
-              {m.followUp && <div className="followup">{m.followUp}</div>}
-              {m.needConfirm && awaitConfirm && i === messages.length - 1 && (
-                <div className="confirm-bar">
-                  <button className="yes" onClick={() => replyConfirm('确认')}>确认</button>
-                  <button className="no" onClick={() => replyConfirm('取消')}>取消</button>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
+      <div className="aurora" aria-hidden>
+        <span className="a1" />
+        <span className="a2" />
+        <span className="grid-lines" />
       </div>
 
-      <div className="quick">
-        {QUICK.map((q) => (
-          <button key={q} onClick={() => send(q)}>{q}</button>
-        ))}
-      </div>
+      <StatusBar connected={connected} onOpenSettings={() => setShowSettings(true)} />
+      <ChatView messages={messages} awaitConfirm={awaitConfirm} onConfirm={confirm} onQuick={send} />
+      <Composer audioApi={AUDIO_API} onSend={send} hint={connected ? undefined : '正在连接座舱服务…'} />
 
-      <div className="composer">
-        <button
-          className={'mic ' + (recording ? 'recording' : '')}
-          onMouseDown={startRecording}
-          onMouseUp={stopRecording}
-          onTouchStart={startRecording}
-          onTouchEnd={stopRecording}
-          title="按住说话"
-        >
-          {recording ? '🔴' : '🎤'}
-        </button>
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && send(input)}
-          placeholder="输入指令或按住麦克风说话…"
-        />
-        <button className="send" onClick={() => send(input)}>发送</button>
-      </div>
+      {showSettings && (
+        <SettingsPanel audioApi={AUDIO_API} sessionId={SESSION} onClose={() => setShowSettings(false)} />
+      )}
     </div>
   )
 }

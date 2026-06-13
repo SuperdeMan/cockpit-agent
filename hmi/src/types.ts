@@ -1,0 +1,121 @@
+// 共享类型与能力目录。HMI 的"单一事实源"：消息结构、设置模型、Agent 清单、默认值。
+
+export type Action = {
+  type: string
+  payload?: Record<string, unknown>
+  require_confirm?: boolean
+}
+
+export type Msg = {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  actions?: Action[]
+  needConfirm?: boolean
+  followUp?: string
+  pending?: boolean // 助手"思考中"占位（开放域慢响应时立刻给反馈）
+  streaming?: boolean // 正在流式接收 speech_delta
+  error?: boolean
+}
+
+export type Voice = {
+  voice_id: string
+  name: string
+  language: string
+  gender: string
+  description?: string
+  tags?: string[]
+}
+
+// ─── 设置模型 ───
+// 端到端已接通的：voiceId / ttsEnabled / autoplay / asrLanguage / micMode /
+//   listenSeconds / theme / fontScale / largeTouch / quickCommands / assistantName。
+// 预留（UI+持久化已就绪，经 WS meta 透传，待后端 honor）：
+//   answerLength / model / agents / memoryEnabled。详见 docs/design 任务文档。
+
+export type Theme = 'dark' | 'light'
+export type FontScale = 'normal' | 'large'
+export type AsrLanguage = 'zh' | 'en' | 'auto'
+export type MicMode = 'hold' | 'toggle'
+export type AnswerLength = 'short' | 'standard' | 'detailed'
+export type ModelPref = 'fast' | 'deep' | 'auto'
+export type ListenSeconds = 10 | 15 | 30 | 60
+
+export type Settings = {
+  // 语音播报 TTS
+  ttsEnabled: boolean
+  autoplay: boolean
+  voiceId: string
+  // 语音输入 ASR
+  asrLanguage: AsrLanguage
+  micMode: MicMode
+  listenSeconds: ListenSeconds
+  // 显示与主题
+  theme: Theme
+  fontScale: FontScale
+  largeTouch: boolean
+  quickCommands: string[]
+  // 助手
+  assistantName: string
+  answerLength: AnswerLength
+  model: ModelPref
+  // Agent 开关
+  agents: Record<string, boolean>
+  // 记忆
+  memoryEnabled: boolean
+}
+
+// 用户可见的能力开关（对应 agents/ 与端侧快/慢系统）
+export type AgentMeta = { id: string; label: string; desc: string; icon: string; core?: boolean }
+
+export const AGENT_CATALOG: AgentMeta[] = [
+  { id: 'vehicle', label: '车辆控制', desc: '空调、车窗、座椅、灯光等车身控制（端侧秒回）', icon: '🚘', core: true },
+  { id: 'media', label: '媒体音乐', desc: '播放、暂停、切歌（端侧秒回）', icon: '🎵', core: true },
+  { id: 'navigation', label: '导航出行', desc: '搜索 POI、导航、充电站', icon: '🧭' },
+  { id: 'trip-planner', label: '行程规划', desc: '多日自驾行程编排', icon: '🗺️' },
+  { id: 'food-ordering', label: '餐饮点单', desc: '找餐厅、订位、点餐', icon: '🍜' },
+  { id: 'parking-payment', label: '停车缴费', desc: '找车位、停车缴费', icon: '🅿️' },
+  { id: 'manual-rag', label: '用车手册', desc: '车辆说明书问答（RAG）', icon: '📖' },
+  { id: 'chitchat', label: '闲聊兜底', desc: '开放域对话与情绪陪伴（系统兜底）', icon: '💬', core: true },
+]
+
+export const VOICE_FALLBACK: Voice[] = [
+  { voice_id: '冰糖', name: '冰糖', language: 'zh', gender: 'female', description: '中文女声', tags: ['中文', '女声'] },
+  { voice_id: '茉莉', name: '茉莉', language: 'zh', gender: 'female', description: '中文女声', tags: ['中文', '女声'] },
+  { voice_id: '苏打', name: '苏打', language: 'zh', gender: 'male', description: '中文男声', tags: ['中文', '男声'] },
+  { voice_id: '白桦', name: '白桦', language: 'zh', gender: 'male', description: '中文男声', tags: ['中文', '男声'] },
+  { voice_id: 'Mia', name: 'Mia', language: 'en', gender: 'female', description: '英文女声', tags: ['英文', '女声'] },
+  { voice_id: 'Chloe', name: 'Chloe', language: 'en', gender: 'female', description: '英文女声', tags: ['英文', '女声'] },
+  { voice_id: 'Milo', name: 'Milo', language: 'en', gender: 'male', description: '英文男声', tags: ['英文', '男声'] },
+  { voice_id: 'Dean', name: 'Dean', language: 'en', gender: 'male', description: '英文男声', tags: ['英文', '男声'] },
+  { voice_id: 'mimo_default', name: 'MiMo 默认', language: 'zh', gender: 'neutral', description: '中国集群默认', tags: ['默认'] },
+]
+
+export const DEFAULT_QUICK_COMMANDS = [
+  '打开空调26度',
+  '打开主驾座椅加热',
+  '播放音乐',
+  '附近的充电站',
+  '导航去首都机场',
+  '今天天气怎么样',
+  '讲个笑话',
+  '我今天有点不开心',
+]
+
+export const DEFAULT_SETTINGS: Settings = {
+  ttsEnabled: true,
+  autoplay: true,
+  voiceId: '冰糖',
+  asrLanguage: 'zh',
+  micMode: 'hold',
+  listenSeconds: 15,
+  theme: 'dark',
+  fontScale: 'normal',
+  largeTouch: false,
+  quickCommands: DEFAULT_QUICK_COMMANDS,
+  assistantName: '小舟',
+  answerLength: 'standard',
+  model: 'auto',
+  agents: Object.fromEntries(AGENT_CATALOG.map((a) => [a.id, true])),
+  memoryEnabled: true,
+}
