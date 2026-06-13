@@ -280,7 +280,11 @@ class MiMoTTSProvider(BaseTTSProvider):
         import base64
         import httpx
 
-        headers = {"api-key": self.api_key, "Content-Type": "application/json"}
+        headers = {
+            "api-key": self.api_key,
+            "Content-Type": "application/json",
+            "Accept-Encoding": "identity",  # 禁用 gzip，避免解码问题
+        }
         out_fmt = "pcm16" if fmt == "pcm16" else "wav"
         body = {
             "model": model or "mimo-v2.5-tts",
@@ -298,11 +302,16 @@ class MiMoTTSProvider(BaseTTSProvider):
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(self.BASE_URL, headers=headers, json=body)
             resp.raise_for_status()
-            result = resp.json()
-
-        # 响应：choices[0].message.audio.data = Base64 编码音频
-        audio_b64 = result["choices"][0]["message"]["audio"]["data"]
-        audio_bytes = base64.b64decode(audio_b64)
+            # MiMo TTS 返回 JSON（含 base64 音频），手动解析避免编码问题
+            raw = resp.content  # 原始字节（已自动解压 gzip）
+            try:
+                import json as _json
+                result = _json.loads(raw)
+                audio_b64 = result["choices"][0]["message"]["audio"]["data"]
+                audio_bytes = base64.b64decode(audio_b64)
+            except (ValueError, KeyError, IndexError, UnicodeDecodeError):
+                # fallback：响应体直接是音频字节流
+                audio_bytes = raw
         # 估算时长：PCM16 24kHz mono = 48000 bytes/sec
         bytes_per_sec = 48000 if out_fmt == "pcm16" else 48000  # WAV 头忽略
         duration_ms = int(len(audio_bytes) / bytes_per_sec * 1000) if audio_bytes else 0

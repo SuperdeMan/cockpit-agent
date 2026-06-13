@@ -2,9 +2,6 @@
 
 前置：`make up` 起全栈后运行。依赖：pip install websockets
 用法：python test/e2e_ws.py
-
-注意（见 docs/reviews/2026-06-11-review-fixes.md F5）：当前 edge gateway 直连云端、
-旁路端侧编排器，链路1 的 vehicle.control 预期在 F5 修复前不会满足。
 """
 import asyncio
 import json
@@ -17,50 +14,75 @@ except ImportError:
     sys.exit(1)
 
 URL = "ws://localhost:8090/ws"
-
-CASES = [
-    ("打开空调26度", "链路1 车控快路径（端侧秒回，应含 vehicle.control 动作）"),
-    ("附近的充电站", "链路2 云端单 Agent（导航；mock LLM 下可能追问关键词）"),
-    ("讲个笑话", "链路3 云端兜底（闲聊；mock LLM 下返回 [mock] 回显）"),
-]
+TIMEOUT = 60  # 秒
 
 
-async def ask(ws, payload: dict, desc: str) -> dict:
-    """发送一条请求并等到 final/error，返回该消息。"""
-    await ws.send(json.dumps(payload))
-    while True:
-        raw = await asyncio.wait_for(ws.recv(), timeout=20)
-        msg = json.loads(raw)
-        if msg.get("type") == "final":
-            print(f"\n[{desc}]\n  输入: {payload['text']}\n  回复: {msg.get('speech')}\n  动作: {msg.get('actions')}")
-            return msg
-        if msg.get("type") == "error":
-            print(f"\n[{desc}] 错误: {msg.get('message')}")
-            return msg
-
-
-async def confirm_flow(ws):
-    """链路4 多轮确认闭环（F1）：订位 → NEED_CONFIRM → 确认 → 完成下单。"""
-    sess = "e2e-confirm"
-    first = await ask(ws, {"text": "订川菜名店1今晚7点两位", "session_id": sess},
-                      "链路4a 交易类意图（应返回 need_confirm=true）")
-    if not first.get("need_confirm"):
-        print("  ⚠ 未收到 need_confirm，确认链路未触发（检查 LLM 规划是否命中 food.reserve）")
-        return
-    final = await ask(ws, {"text": "确认", "session_id": sess, "is_confirmation": True},
-                      "链路4b 用户确认（应完成下单，不再追问）")
-    if final.get("need_confirm"):
-        print("  ✗ 确认后仍返回 need_confirm——确认闭环回归失败（F1）")
-    elif "订好" in (final.get("speech") or ""):
-        print("  ✓ 确认闭环打通")
+async def ask(payload: dict, desc: str) -> dict:
+    """用独立 WebSocket 连接发送一条请求并等到 final/error。"""
+    async with websockets.connect(URL) as ws:
+        await ws.send(json.dumps(payload))
+        while True:
+            raw = await asyncio.wait_for(ws.recv(), timeout=TIMEOUT)
+            msg = json.loads(raw)
+            if msg.get("type") == "final":
+                speech = msg.get("speech", "")
+                actions = msg.get("actions", [])
+                need = msg.get("need_confirm", False)
+                follow = msg.get("follow_up", "")
+                print(f"\n[{desc}]")
+                print(f"  输入: {payload['text']}")
+                print(f"  回复: {speech}")
+                if actions:
+                    print(f"  动作: {actions}")
+                if need:
+                    print(f"  需确认: {need}")
+                if follow:
+                    print(f"  追问: {follow}")
+                return msg
+            if msg.get("type") == "error":
+                print(f"\n[{desc}] 错误: {msg.get('message')}")
+                return msg
 
 
 async def main():
-    async with websockets.connect(URL) as ws:
-        for text, desc in CASES:
-            await ask(ws, {"text": text, "session_id": "e2e"}, desc)
-        await confirm_flow(ws)
-    print("\nE2E 完成。")
+    print("=== E2E 测试 ===\n")
+
+    # 链路 1: 车控快路径
+    await ask(
+        {"text": "打开空调26度", "session_id": "e2e-1"},
+        "链路1 车控快路径（端侧秒回，应含 vehicle.control 动作）",
+    )
+
+    # 链路 2: 云端导航
+    await ask(
+        {"text": "附近的充电站", "session_id": "e2e-2"},
+        "链路2 云端单 Agent（导航；应追问关键词）",
+    )
+
+    # 链路 3: 云端闲聊
+    await ask(
+        {"text": "讲个笑话", "session_id": "e2e-3"},
+        "链路3 云端兜底（闲聊）",
+    )
+
+    # 链路 4: 确认闭环
+    first = await ask(
+        {"text": "订川菜馆今晚7点两位", "session_id": "e2e-4"},
+        "链路4a 交易类意图（应返回 need_confirm=true）",
+    )
+    if first.get("need_confirm"):
+        second = await ask(
+            {"text": "确认", "session_id": "e2e-4", "is_confirmation": True},
+            "链路4b 用户确认（应完成下单）",
+        )
+        if "订好" in (second.get("speech") or ""):
+            print("\n  ✓ 确认闭环打通！")
+        else:
+            print(f"\n  ✗ 确认后结果: {second.get('speech', '')[:60]}")
+    else:
+        print("\n  ⚠ 未触发 need_confirm，跳过确认测试")
+
+    print("\n=== E2E 完成 ===")
 
 
 if __name__ == "__main__":

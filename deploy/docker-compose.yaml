@@ -44,7 +44,9 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY:-mimo-v2.5-pro}
       LLM_MODEL_FALLBACK: ${LLM_MODEL_FALLBACK:-mimo-v2.5}
-    ports: ["50052:50052"]
+      AUDIO_HTTP_PORT: "50059"
+      TTS_VOICE_ID: ${TTS_VOICE_ID:-冰糖}
+    ports: ["50052:50052", "50059:50059"]
     depends_on: [redis]
 
   memory:
@@ -146,5 +148,6 @@ services:
     build: { context: ../hmi, dockerfile: Dockerfile }
     environment:
       VITE_EDGE_GATEWAY_URL: http://localhost:8090
+      VITE_AUDIO_API_URL: http://localhost:50059
     ports: ["5173:5173"]
     depends_on: [edge-gateway]

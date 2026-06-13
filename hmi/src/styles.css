@@ -130,3 +130,42 @@ body {
   font-weight: 600;
   cursor: pointer;
 }
+
+.controls { display: flex; align-items: center; gap: 10px; }
+
+.audio-toggle {
+  background: var(--panel-2);
+  border: 1px solid #2a3458;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 18px;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.audio-toggle.on { border-color: var(--accent-2); }
+
+.mic {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--panel-2);
+  border: 2px solid #2a3458;
+  font-size: 22px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.mic:hover { border-color: var(--accent); }
+.mic.recording {
+  background: linear-gradient(135deg, #ff4757, #ff6b81);
+  border-color: #ff4757;
+  animation: pulse 1s infinite;
+}
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
