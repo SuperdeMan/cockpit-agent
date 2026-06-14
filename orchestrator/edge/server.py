@@ -104,6 +104,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
 
         # 慢路径：上云编排
         logger.info("CLOUD route: %s", request.text)
+        cloud_speech = ""
+        cloud_has_actions = False
         try:
             got = False
             async for event in self.cloud.handle(request):
@@ -111,16 +113,40 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 self.cloud_connected = True
                 # 云端回流 action 分发：车控类走 VAL
                 event = self._dispatch_cloud_actions(event, answer_length)
+                which = event.WhichOneof("event")
+                if which == "final":
+                    cloud_speech = event.final.speech
+                    cloud_has_actions = len(event.final.actions) > 0
                 yield event
             if not got:
                 yield orchestrator_pb2.HandleEvent(
                     final=orchestrator_pb2.FinalResult(speech="抱歉，我没能理解这个请求。"))
+                return
         except Exception as e:
             self.cloud_connected = False
             logger.warning("Cloud unavailable, degrade: %s", e)
-            # 降级：尝试端侧 SLM（如有）或返回降级话术
             yield orchestrator_pb2.HandleEvent(final=orchestrator_pb2.FinalResult(
                 speech="网络不太好，复杂请求暂时无法处理，不过车内控制依然可以正常使用。"))
+            return
+
+        # 兜底：云端返回空 speech 且无 actions → 尝试端侧 VAL 本地执行
+        # 场景：LLM 规划失败 → chitchat 兜底但无实质回复 → 但原意可能是车控
+        if not cloud_speech and not cloud_has_actions:
+            local_structured = classify_structured(request.text)
+            if local_structured:
+                ok, speech = self.val.execute(local_structured, answer_length=answer_length)
+                if ok and speech:
+                    obj = local_structured.get("data", {}).get("object", "")
+                    action_type = "media.control" if obj in ("media", "music", "radio") else "vehicle.control"
+                    action = common_pb2.AgentAction(
+                        type=action_type,
+                        payload=_struct({"command": f"{obj}.{local_structured['data'].get('operate', '')}"}),
+                        require_confirm=False,
+                    )
+                    final = orchestrator_pb2.FinalResult(speech=speech)
+                    final.actions.append(action)
+                    logger.info("CLOUD-DEGRADED-LOCAL %s -> %s", obj, speech)
+                    yield orchestrator_pb2.HandleEvent(final=final)
 
     def _dispatch_cloud_actions(self, event, answer_length="short"):
         """云端回流 action 分发：车控类交 VAL 执行，落实规划/执行分离。

@@ -334,6 +334,26 @@ def classify_structured(text: str) -> dict | None:
         return _s("setting", "control", "open", "sunshade",
                   positions=pos, conf=0.9)
 
+    # ── 位置+功能简写（后排通风/前排加热/后排灯 等，省略"座椅"/"灯"）──
+    _pos_func = _extract_position(t)
+    if _pos_func:
+        # 位置 + 加热/通风/按摩 → 座椅
+        for func_word, mode in [("加热", "heating"), ("通风", "ventilation"), ("按摩", "massage")]:
+            if func_word in t:
+                m = re.search(r"(\d)\s*挡", t)
+                if m:
+                    return _s("setting", "control", "set", "seat",
+                              mode=mode, value=m.group(1), unit="level", positions=_pos_func, conf=0.88)
+                operate = "close" if "关" in t else "open"
+                return _s("setting", "control", operate, "seat",
+                          mode=mode, positions=_pos_func, conf=0.88)
+        # 位置 + 灯 → 车内灯/氛围灯
+        if "灯" in t:
+            operate = "close" if "关" in t else "open"
+            if "氛围" in t or "彩色" in t:
+                return _s("setting", "control", operate, "ambient_light", positions=_pos_func, conf=0.85)
+            return _s("setting", "control", operate, "ambient_light", positions=_pos_func, conf=0.85)
+
     # ── 座椅 ──────────────────────────────────────────────
     if "座椅" in t or "座位" in t or "腰托" in t or "腰部支撑" in t:
         pos = _extract_position(t)
