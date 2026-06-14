@@ -123,5 +123,5 @@
 - [ ] Record landed scope, verification evidence, and remaining production boundaries in the design document.
 # 状态更新（2026-06-14）
 
-P0-P3 主体代码已落地；最终验证按用户指令暂缓。权威交接状态、已有证据和剩余待办见
-`docs/design/2026-06-14-cloud-central-orchestrator.md` 的“落地记录”。
+P0-P3 全部验收通过。权威交接状态、已有证据和剩余待办见
+`docs/design/2026-06-14-cloud-central-orchestrator.md` 的”落地记录”。

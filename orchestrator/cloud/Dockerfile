@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY gen/python /app/gen/python
 COPY orchestrator/cloud /app/orchestrator/cloud
 COPY security /app/security
+COPY observability /app/observability
 
 # /app 进 PYTHONPATH：orchestrator.cloud 包内相对 import + security 依赖都从这里解析
 ENV PYTHONPATH=/app:/app/gen/python

@@ -147,12 +147,14 @@ def test_stream_unavailable_falls_back_to_unary():
 
 
 def test_multi_step_plan_does_not_stream():
-    """多步计划保持 executor 路径，不走流式直通。"""
+    """多步计划保持 executor 路径，不走流式直通，但有进度反馈。"""
     spy = _StreamSpy(plan_json=_TWO_STEP_PLAN)
     engine, _ = _make_engine(spy)
     events = _run(engine, _req("先聊一句再聊一句"))
 
     assert not spy.stream_calls                            # 没有流式调用
     assert len(spy.unary_calls) == 2                       # 两步都走 unary
-    assert not any(e["kind"] == "speech" for e in events)  # 无流式增量
+    # 多步计划现在会 yield 进度 speech（"正在处理" + 每步结果）
+    speech_events = [e for e in events if e["kind"] == "speech"]
+    assert any("正在" in e.get("delta", "") for e in speech_events)  # 规划完成反馈
     assert events[-1]["kind"] == "final"

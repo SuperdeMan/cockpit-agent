@@ -1239,6 +1239,44 @@ def split_and_classify(text: str) -> list[dict] | None:
     return intents
 
 
+def split_and_classify_any(text: str) -> list[dict] | None:
+    """Split multi-intent and classify ALL sub-intents regardless of locality.
+
+    Unlike split_and_classify (all-or-nothing), this returns all classified
+    intents even when some are non-local or unclassifiable.  Unclassifiable
+    sub-clauses are marked with `_needs_cloud=True` so callers can route
+    them to the cloud planner.
+
+    Each returned dict has an extra `_raw_text` field with the original
+    sub-clause text, so callers can extract non-local sub-clauses for cloud.
+
+    Returns:
+        list[dict]: 2+ structured intents (may be mixed local/non-local/unclassified).
+        None: single intent only.
+    """
+    t = text.strip()
+    parts = _SPLIT_MARKERS.split(t)
+    if len(parts) < 2:
+        return None
+
+    intents = []
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        result = classify_structured(part)
+        if result is None:
+            # Can't classify locally → mark for cloud dispatch
+            result = {"_raw_text": part, "_needs_cloud": True,
+                      "data": {"object": "unknown", "operate": "unknown"}}
+        else:
+            result["_raw_text"] = part
+            result["_needs_cloud"] = False
+        intents.append(result)
+
+    return intents if len(intents) >= 2 else None
+
+
 def _to_legacy_name(intent: dict) -> str | None:
     """Convert structured intent to legacy name for is_local() check."""
     data = intent.get("data", {})

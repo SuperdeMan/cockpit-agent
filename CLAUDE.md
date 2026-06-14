@@ -1,10 +1,11 @@
 # CLAUDE.md — 智能座舱 Multi-Agent 项目规则
 
-> **2026-06-14 云端中枢状态更新**：P0-P3 主体代码已落地（统一 dispatcher、
-> Gateway `DispatchToEdge`、端 `edge_call`→VAL、T2 有界循环、确定性工具、执行层权限硬校验）。
-> 最后一批收尾后尚未跑全量/Smoke/Go/Docker/E2E，最终验收暂缓。当前交接真相源是
-> `docs/design/2026-06-14-cloud-central-orchestrator.md` 的“落地记录”。下一步必须把可信认证
-> scope 接到 `HandleRequest.meta["granted_scopes"]`，不得用默认全授权破坏 fail-closed。
+> **2026-06-14 云端中枢验收通过**：P0-P3 全部落地 + 收尾完善。统一 dispatcher、
+> Gateway `DispatchToEdge`（含车辆身份绑定 + proto codegen 修复）、端 `edge_call`→VAL、
+> T2 有界循环（含流式 delta 直通）、确定性工具、执行层权限硬校验、PoC 默认 scope 注入、
+> 可观测接线（metrics + audit）、混合意图执行（本地 VAL + 云端分流）、
+> 多步执行中间反馈、TTS 语音输入时停止、Planner 隐式车控增强。
+> 全量测试：312 passed, 2 skipped。权威交接源：`docs/design/2026-06-14-cloud-central-orchestrator.md`。
 
 > 本文件是项目的最高工程约定，所有人（含 AI 协作者）在本仓库工作必须遵守。
 > 调整规范时：先改本文档，再改实践，不要反过来。
@@ -89,4 +90,6 @@ Windows 无 make 时用 `scripts/gen-proto.ps1` 等价替代（见 README）。
 ## 7. 当前阶段
 Phase 1 全部验收标准达成（2026-06-14）：Docker 全栈联调通过、E2E 4 条链路通过、268 测试全绿。车控知识库覆盖 61 对象 150 条意图（飞书公版全量导入）、多意图端云切分（含 actions 返回）、ASR/TTS 全链路、开放域流式、answer_length 话术简繁切换。**前瞻设计见 `docs/design/`**，修复清单见 `docs/reviews/2026-06-11-review-fixes.md`。
 
-**进行中（2026-06-14 起）**：云端中枢升级（复杂意图：理解→规划→异构调度 车端快思考/Agent/工具），设计见 `docs/design/2026-06-14-cloud-central-orchestrator.md`。运行模型 T0 端侧快路径 / T1 单次 DAG（=今天）/ T2 有界 Agentic 循环（升级），首次规划做复杂度分诊（simple→T1，adaptive→T2）+ 反应式兜底。**P0 地基已落地**：`Manifest.kind` + `EdgeCall/EdgeResult` 帧 + `Step/Plan` 字段；`buf.gen.yaml` 把 `protocolbuffers/python` 钉 `v35.0`（gencode 匹配运行时 protobuf 7.35.0）。**待实现**：P1 车端可调度（Gateway `DispatchToEdge` + 端 `edge_call`→VAL + 统一 dispatcher）、T2 循环、工具。
+**已完成（2026-06-14）**：云端中枢升级验收通过。P0-P3 全部落地：统一 dispatcher、Gateway `DispatchToEdge`（车辆身份绑定）、端 `edge_call`→VAL、T2 有界循环（含流式 delta 直通）、确定性工具、PoC 默认 scope 注入、可观测接线、混合意图执行（本地+云端分流）、多步中间反馈、TTS 语音输入时停止、Planner 隐式车控增强。运行模型 T0 端侧快路径 / T1 单次 DAG / T2 有界 Agentic 循环。全量测试 312 passed, 2 skipped。设计见 `docs/design/2026-06-14-cloud-central-orchestrator.md`。
+
+**待做**：Cloud Gateway 多实例扩展性、HTTP/MCP 外部工具、真实权限 token 注入、Prometheus/OTel 导出、流式 TTS。

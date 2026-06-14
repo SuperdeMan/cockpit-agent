@@ -9,7 +9,7 @@
 
 云边协同的智能座舱 multi-agent 系统。**分层混合编排**：端侧"快系统"秒回高频/安全敏感指令（车控/媒体）并离线兜底；云侧"慢系统"用 LLM Planner 编排复杂/跨域/多轮意图。所有 Agent 实现统一 gRPC 契约 + Manifest，经注册中心即插即用。
 
-阶段：**Phase 1 工程化代码已落地，Docker 全栈联调通过**（2026-06-13）。268 测试通过 + E2E 4 条链路通过。
+阶段：**Phase 1 工程化代码已落地，Docker 全栈联调通过**（2026-06-14）。312 测试通过 + E2E 4 条链路通过。
 
 ---
 
@@ -45,7 +45,7 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 268 passed, 2 skipped |
+| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 312 passed, 2 skipped |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
 | `gen/`（gRPC 生成代码）| ✅ 已生成（`buf generate proto`） |
 | Go 网关 | ✅ Go 1.24 编译通过，Docker 全栈运行 |
@@ -65,9 +65,11 @@
 | 对话上下文/指代 | ✅ engine 写对话记忆 + 规划注入历史（仅云侧链路；端侧快意图未入记忆） |
 | 飞书数据全量导入 | ✅ lark-cli 拉取 5 张公版表（意图 1465 条 + 分类 400 + 词库 5185 + 响应 3000 + 兜底 34）；3 个生成脚本可重跑（`scripts/gen_commands_yaml.py` / `generate_entities.py` / `generate_responses.py`） |
 
-**结论**：Phase 1 全部验收标准达成 + 飞书公版全量导入（61 对象/150 意图）+ 多意图拆分 + ASR 转码 + answer_length 话术简繁（2026-06-14）。前瞻设计见 `docs/design/`，Phase 2 backlog 见 `docs/reviews/2026-06-11-review-fixes.md`。
+**结论**：Phase 1 全部验收标准达成 + 云端中枢升级验收通过（2026-06-14）。飞书公版全量导入（61 对象/150 意图）+ 多意图拆分 + ASR/TTS 全链路 + 云端 P0-P3 全部落地。前瞻设计见 `docs/design/`，Phase 2 backlog 见 `docs/reviews/2026-06-11-review-fixes.md`。
 
-**进行中（2026-06-14 起）**：云端中枢升级（复杂意图：理解→规划→异构调度 车端快思考/Agent/工具），设计见 `docs/design/2026-06-14-cloud-central-orchestrator.md`。P0-P3 主体代码已落地：统一 dispatcher、Gateway `DispatchToEdge`、端 `edge_call`→VAL、端侧能力注册、T2 有界循环、内置工具与执行层权限硬校验。**最终验收暂缓**：最后一批收尾改动后尚未跑全量/Smoke/Go/Docker/E2E；准确证据、未验证范围和后续 P0 待办见设计文档“落地记录”。当前最重要的未完成项是从可信 token/设备身份向 `granted_scopes` 接线，禁止用默认全授权绕过 fail-closed。
+**已完成（2026-06-14）**：云端中枢升级验收通过。P0-P3 全部落地：统一 dispatcher、Gateway `DispatchToEdge`（含 proto codegen 修复）、端 `edge_call`→VAL、T2 有界循环（含流式 delta）、确定性工具、PoC 默认 scope 注入、可观测接线、混合意图执行（本地+云端分流）、多步中间反馈、TTS 语音输入时停止、Planner 隐式车控增强。全量测试 312 passed, 2 skipped。详见 `docs/design/2026-06-14-cloud-central-orchestrator.md` 落地记录。
+
+**待做**：Cloud Gateway 多实例扩展性、HTTP/MCP 外部工具、真实权限 token 注入、Prometheus/OTel 导出、流式 TTS。
 
 ---
 

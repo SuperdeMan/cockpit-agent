@@ -2,7 +2,7 @@
 // 麦克风支持"按住说话/点按切换"两种模式，复用 MicController 消除收音竞态。
 import { useEffect, useRef, useState } from 'react'
 import { useSettings } from '../settings'
-import { MicController, micSupported, secureContextOk, recognize, type RecordResult } from '../audio'
+import { MicController, micSupported, secureContextOk, recognize, stopTTS, type RecordResult } from '../audio'
 
 type MicState = 'idle' | 'recording' | 'transcribing'
 
@@ -55,6 +55,7 @@ export function Composer({
 
   const beginRecord = async () => {
     if (!supported || mic !== 'idle') return
+    stopTTS()
     setNotice('')
     try {
       setMic('recording')

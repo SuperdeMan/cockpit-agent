@@ -192,3 +192,70 @@ class TestEdgeCases:
         result = split_and_classify("打开空调，播放音乐，并且把音量调大")
         assert result is not None
         assert len(result) == 3
+
+
+# ═══════════════════════════════════════════════════
+# 5. split_and_classify_any — 混合本地+非本地
+# ═══════════════════════════════════════════════════
+
+class TestSplitAndClassifyAny:
+    def test_mixed_local_and_cloud_returns_all(self):
+        """空调(本地) + 导航(可分类但非本地) → 返回全部，导航 _needs_cloud=False"""
+        from fast_intent import split_and_classify_any
+        result = split_and_classify_any("打开空调然后导航去深圳世界之窗")
+        assert result is not None
+        assert len(result) == 2
+        # 空调是本地
+        assert result[0]["_needs_cloud"] is False
+        assert result[0]["data"]["object"] == "aircon"
+        # 导航可被 classify_structured 分类为 navi，但 is_local 为 False
+        assert result[1]["_needs_cloud"] is False
+        assert result[1]["data"]["object"] in ("navi", "navigation")
+        # 每个结果都有 _raw_text
+        assert "_raw_text" in result[0]
+        assert "_raw_text" in result[1]
+
+    def test_all_local_still_returns(self):
+        """全部本地 → 同样返回（与 split_and_classify 行为一致）"""
+        from fast_intent import split_and_classify_any
+        result = split_and_classify_any("打开空调并播放音乐")
+        assert result is not None
+        assert len(result) == 2
+
+    def test_single_intent_returns_none(self):
+        """单意图 → None"""
+        from fast_intent import split_and_classify_any
+        result = split_and_classify_any("打开空调")
+        assert result is None
+
+    def test_three_mixed_intents(self):
+        """空调(本地) + 音乐(本地) + 导航(可分类但非本地) → 3 个全部返回"""
+        from fast_intent import split_and_classify_any, structured_to_legacy, is_local
+        result = split_and_classify_any(
+            "打开空调，播放音乐，然后导航去深圳世界之窗")
+        assert result is not None
+        assert len(result) == 3
+        # 区分本地 vs 非本地（通过 legacy name 判定）
+        local_count = 0
+        cloud_count = 0
+        for r in result:
+            legacy = structured_to_legacy(r)
+            if legacy and is_local(legacy["name"]):
+                local_count += 1
+            else:
+                cloud_count += 1
+        assert local_count == 2  # 空调 + 音乐
+        assert cloud_count == 1  # 导航
+
+    def test_unclassifiable_marked_for_cloud(self):
+        """无法分类的子句 → 标记 _needs_cloud=True，不丢弃整个结果"""
+        from fast_intent import split_and_classify_any
+        result = split_and_classify_any("打开空调，blah blah blah")
+        assert result is not None
+        assert len(result) == 2
+        # 空调可分类
+        assert result[0]["_needs_cloud"] is False
+        assert result[0]["data"]["object"] == "aircon"
+        # blah blah blah 不可分类，标记上云
+        assert result[1]["_needs_cloud"] is True
+        assert result[1]["_raw_text"] == "blah blah blah"

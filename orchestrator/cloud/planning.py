@@ -59,6 +59,9 @@ _PLANNER_SYSTEM = (
     "- 用 slot_refs 引用前序 step 结果，如 {\"restaurant_id\":\"s1.data.items.0.id\"}\n"
     "- 若用户话术含指代（如『再调高一点』『还是刚才那家』『换个颜色』），"
     "结合下方『最近对话』补全对象/槽位后再规划\n"
+    "- **隐式车控必须识别**：若最近对话含车控操作（如 hvac.set、window.open），"
+    "用户说『再高/低一点』『打开/关掉』『我冷/热』等，必须映射为对应车控 step（如 hvac.inc/hvac.dec/hvac.set），"
+    "不得输出空 steps 或当作闲聊。不确定具体值时用合理的默认值（如温度调高/低 1 度）。\n"
     "- 只输出 JSON，不要任何解释\n"
     "- 无法匹配时输出 {\"steps\":[]}"
 )
@@ -100,8 +103,11 @@ class PlanBuilder:
             raw = await self._llm_plan(text, agents, history)
             plan = self._parse_and_validate(raw, agent_map, text)
             if plan and plan.steps:
+                step_summary = [(s.id, s.agent_id, s.intent) for s in plan.steps]
+                logger.info("Plan parsed: complexity=%s steps=%s", plan.complexity, step_summary)
                 return plan
 
+        logger.warning("Plan parse failed twice, falling back to chitchat/routing")
         # 降级：chitchat 全局兜底 / Registry 语义路由 top-1
         return await self._fallback(text, agents)
 
@@ -110,12 +116,14 @@ class PlanBuilder:
         ctx_block = self._format_history(history)
         user_msg = f"可用能力:\n{catalog}\n\n{ctx_block}用户说: {text}"
         try:
-            return await self._llm([
+            raw = await self._llm([
                 {"role": "system", "content": _PLANNER_SYSTEM},
                 {"role": "user", "content": user_msg},
             ])
+            logger.info("LLM plan raw: %s", (raw or "")[:500])
+            return raw
         except Exception as e:
-            logger.warning("LLM plan failed: %s", e)
+            logger.warning("LLM plan exception: %s", e)
             return ""
 
     async def replan(self, goal: str, observations: list[dict], agents: list,

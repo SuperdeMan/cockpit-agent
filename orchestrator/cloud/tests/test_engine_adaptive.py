@@ -152,3 +152,78 @@ def test_simple_plan_reactively_upgrades_when_result_requests_replan():
     assert len(loop.calls) == 1
     assert loop.calls[0]["initial_plan"] is None
     assert len(loop.calls[0]["seed_results"]) == 2
+
+
+def test_poc_default_scopes_used_when_granted_scopes_missing():
+    """When HandleRequest.meta has no granted_scopes, PoC defaults are injected."""
+    plan = Plan(
+        steps=[Step(id="s1", agent_id="navigation", endpoint="nav:1",
+                    intent="navigation.search_poi",
+                    required_permissions=["navigation"])],
+        complexity="simple",
+    )
+    clients = _Clients([_response("found")])
+    engine = PlannerEngine(
+        clients=clients,
+        planner=_Planner(plan),
+        executor=DagExecutor(call_agent_fn=clients.call_agent),
+        aggregator=Aggregator(_aggregate),
+        session=SessionStore(redis_url=""),
+        perms=PermissionEngine(),
+    )
+
+    # Request with no granted_scopes in meta
+    req = SimpleNamespace(
+        text="找充电站", session_id="s1", request_id="r1",
+        is_confirmation=False, meta={},
+        context=SimpleNamespace(user_id="u1", vehicle_id="v1"),
+    )
+
+    async def collect():
+        return [event async for event in engine.run(req)]
+    events = asyncio.run(collect())
+
+    # Should succeed — PoC defaults include "navigation"
+    assert events[-1]["speech"] == "found"
+
+
+def test_explicit_granted_scopes_passed_to_planner():
+    """When granted_scopes is explicitly provided, it flows to the planner."""
+    captured_permissions = []
+
+    class _CapturingPlanner:
+        def __init__(self, plan):
+            self.plan = plan
+
+        async def build(self, text, agents, ctx, granted_permissions=None,
+                        history=None):
+            captured_permissions.append(list(granted_permissions or []))
+            return self.plan
+
+    plan = Plan(
+        steps=[Step(id="s1", agent_id="navigation", endpoint="nav:1",
+                    intent="navigation.search_poi")],
+        complexity="simple",
+    )
+    clients = _Clients([_response("found")])
+    engine = PlannerEngine(
+        clients=clients,
+        planner=_CapturingPlanner(plan),
+        executor=DagExecutor(call_agent_fn=clients.call_agent),
+        aggregator=Aggregator(_aggregate),
+        session=SessionStore(redis_url=""),
+        perms=PermissionEngine(),
+    )
+
+    req = SimpleNamespace(
+        text="找充电站", session_id="s1", request_id="r1",
+        is_confirmation=False, meta={"granted_scopes": "vehicle.control"},
+        context=SimpleNamespace(user_id="u1", vehicle_id="v1"),
+    )
+
+    async def collect():
+        return [event async for event in engine.run(req)]
+    asyncio.run(collect())
+
+    # Explicit scopes should be passed through, not replaced with PoC defaults
+    assert captured_permissions[0] == ["vehicle.control"]

@@ -1,11 +1,16 @@
 """Bounded adaptive planning loop for T2 requests."""
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import AsyncIterator
 
+from .executor import DagExecutor
 from .models import Plan, PlanContext, StepResult, StepStatus
+from observability.metrics import metrics
+
+logger = logging.getLogger("planner.loop")
 
 THINKING_FILLER = "我正在根据当前结果继续处理。"
 
@@ -27,7 +32,7 @@ def summarize(result: StepResult) -> dict:
 class LoopController:
     def __init__(self, planner, executor, aggregator, suspend_fn,
                  max_iters: int | None = None, budget_ms: int | None = None,
-                 observation_limit: int = 6, clock=None):
+                 observation_limit: int = 6, clock=None, stream_fn=None):
         self.planner = planner
         self.executor = executor
         self.aggregator = aggregator
@@ -38,6 +43,7 @@ class LoopController:
             os.getenv("PLANNER_LOOP_BUDGET_MS", "5000"))
         self.observation_limit = observation_limit
         self.clock = clock or time.monotonic
+        self._stream = stream_fn
 
     async def run(self, goal: str, initial_plan: Plan | None, agents: list,
                   ctx: PlanContext, user_text: str,
@@ -74,23 +80,77 @@ class LoopController:
                 current = decision.to_plan(goal)
 
             done_seed = {result.step_id: result for result in results}
-            async for step_result in self.executor.run(
-                    current, ctx, done=done_seed):
-                results.append(step_result)
-                observations.append(summarize(step_result))
-                observations = observations[-self.observation_limit:]
-                if step_result.status in (
-                        StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
-                    yield await self.suspend(
-                        step_result, results, current, ctx)
-                    return
+
+            # T2 流式直通：单步 cloud agent 尝试流式，yield speech delta。
+            # 与 engine.py T1 快路径同模式：流式成功则 yield delta 并收集结果，
+            # 失败回退到 executor unary 路径。
+            streamed = False
+            if (self._stream and len(current.steps) == 1
+                    and current.steps[0].kind == "agent"
+                    and current.steps[0].deployment == "cloud"):
+                step = current.steps[0]
+                if hasattr(self.executor, '_resolve_slot_refs'):
+                    self.executor._resolve_slot_refs(step, done_seed)
+                timeout = step.latency_budget_ms / 1000.0
+                final_sr = None
+                try:
+                    async for kind, payload in self._stream(
+                            step.endpoint, step.intent, step.slots,
+                            ctx, step.meta, timeout=timeout):
+                        if kind == "speech":
+                            yield {"kind": "speech", "delta": payload}
+                        elif kind == "action":
+                            yield {"kind": "action", "action": payload}
+                        elif kind == "final":
+                            final_sr = DagExecutor._to_result(step.id, payload)
+                except Exception as exc:
+                    logger.warning(
+                        "T2 stream failed for %s, falling back: %s",
+                        step.id, exc)
+                    final_sr = None
+
+                if final_sr is not None:
+                    streamed = True
+                    results.append(final_sr)
+                    observations.append(summarize(final_sr))
+                    observations = observations[-self.observation_limit:]
+                    if final_sr.status in (
+                            StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
+                        yield await self.suspend(
+                            final_sr, results, current, ctx)
+                        return
+                elif streamed:
+                    # Streamed speech but no final — best-effort, avoid re-run.
+                    streamed = True
+                    empty_sr = StepResult(
+                        step_id=step.id, status=StepStatus.OK, speech="")
+                    results.append(empty_sr)
+                    observations.append(summarize(empty_sr))
+
+            if not streamed:
+                async for step_result in self.executor.run(
+                        current, ctx, done=done_seed):
+                    results.append(step_result)
+                    observations.append(summarize(step_result))
+                    observations = observations[-self.observation_limit:]
+                    if step_result.status in (
+                            StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
+                        yield await self.suspend(
+                            step_result, results, current, ctx)
+                        return
 
             current = None
             if self.clock() >= deadline:
                 exhausted = True
                 break
 
+        elapsed_ms = (self.clock() - (deadline - self.budget_ms / 1000.0)) * 1000
+        metrics.record_intent("t2_loop", elapsed_ms, not exhausted)
+        logger.info("T2 loop done: replans=%d exhausted=%s elapsed=%.0fms",
+                     replans, exhausted, elapsed_ms)
+
         final = await self.aggregator.compose(user_text or goal, results)
         if exhausted and not final.get("follow_up"):
             final["follow_up"] = "要我继续吗？"
         yield {"kind": "final", **final}
+

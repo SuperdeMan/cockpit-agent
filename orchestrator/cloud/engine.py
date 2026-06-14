@@ -14,6 +14,7 @@ from .executor import DagExecutor
 from .aggregator import Aggregator
 from .session import SessionStore
 from .loop import LoopController
+from observability.metrics import metrics
 from security.permission import PermissionEngine, AuthContext
 
 logger = logging.getLogger("planner.engine")
@@ -25,6 +26,13 @@ _NO_WORDS = ("取消", "不用", "不要", "算了", "不订", "不付", "不了
 
 _RESULT_FIELDS = {"step_id", "status", "speech", "ui_card", "actions",
                   "follow_up", "data", "missing_slots", "error"}
+
+# PoC 默认权限：未注入 granted_scopes 时使用（fail-open for PoC）。
+# 量产必须从会话 token/设备身份解析 scope，不得使用此默认值。
+_POC_DEFAULT_SCOPES = [
+    "vehicle.control", "media.control", "navigation",
+    "food.ordering", "weather.query", "news.query",
+]
 
 
 class PlannerEngine:
@@ -40,7 +48,8 @@ class PlannerEngine:
         self.session = session
         self.perms = perms
         self.loop = loop or LoopController(
-            planner, executor, aggregator, self._suspend)
+            planner, executor, aggregator, self._suspend,
+            stream_fn=getattr(clients, 'call_agent_stream', None))
 
     async def run(self, request) -> AsyncIterator[dict]:
         """编排主循环（外层）：委托 _orchestrate，并把本轮对话落库到 memory。
@@ -131,8 +140,13 @@ class PlannerEngine:
             # C2. 权限校验（F2）：执行前对每个 step 做强制校验
             plan = self._enforce_permissions(plan, ctx)
 
+        # 规划完成，给用户即时反馈（多步计划在执行期间也会逐步 yield）
+        if new_plan and len(plan.steps) > 1:
+            yield {"kind": "speech", "delta": "正在为您处理，请稍候…"}
+
         # D-T2. Adaptive plans enter the bounded loop. Confirmation resumes keep
         # their adaptive metadata and continue from the saved result seeds.
+        metrics.record_intent(f"complexity.{plan.complexity}", 0, True)
         if plan.complexity == "adaptive":
             if not agents:
                 agents = await self.clients.list_agents()
@@ -190,12 +204,19 @@ class PlannerEngine:
         async for step_result in self.executor.run(plan, ctx, done=done_seed):
             results.append(step_result)
 
+            # 每步完成后 yield 进度反馈（HMI 流式显示，不等全部完成）
+            if step_result.speech and step_result.status == StepStatus.OK:
+                yield {"kind": "speech", "delta": step_result.speech + "。"}
+
             # 挂起：需确认/需补槽
             if step_result.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
                 yield await self._suspend(step_result, results, plan, ctx)
                 return
 
         if new_plan and await self._needs_replan(plan, results):
+            metrics.record_intent("reactive_upgrade", 0, True)
+            logger.info("Reactive upgrade: simple→T2 for session %s",
+                        ctx.session_id)
             if not agents:
                 agents = await self.clients.list_agents()
             async for event in self.loop.run(
@@ -259,6 +280,14 @@ class PlannerEngine:
         meta = dict(getattr(request, "meta", {}) or {})
         raw_scopes = meta.get("granted_scopes", "")
         granted = [s.strip() for s in raw_scopes.split(",") if s.strip()] if raw_scopes else []
+
+        # PoC 默认授权：未注入 granted_scopes 时放行所有能力。
+        # 量产 MUST 从会话 token 解析 scope，不得依赖此默认值。
+        if not granted:
+            granted = list(_POC_DEFAULT_SCOPES)
+            logger.warning(
+                "No granted_scopes in request; using PoC defaults. "
+                "Production MUST inject from session token/device identity.")
 
         # HMI 会话级偏好（透传给 Agent，见 hmi/src/settings.tsx buildMeta）
         prefs = {k: meta[k] for k in

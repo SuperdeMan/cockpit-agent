@@ -3,8 +3,11 @@
 Phase 1 改进：连接复用、统一超时。
 """
 from __future__ import annotations
+import logging
 import os
 import grpc
+
+logger = logging.getLogger("planner.clients")
 from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
 from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
@@ -138,6 +141,8 @@ class Clients:
 
     async def dispatch_to_edge(self, vehicle_id: str, step, ctx):
         """Call the requesting vehicle's edge executor through Cloud Gateway."""
+        logger.info("DispatchToEdge: vehicle=%s step=%s intent=%s",
+                    vehicle_id, step.id, step.intent)
         meta = self._merge_meta(ctx, step.meta)
         if getattr(ctx, "trace_id", ""):
             meta.setdefault("trace_id", ctx.trace_id)
@@ -157,4 +162,6 @@ class Clients:
             envelope, timeout=step.latency_budget_ms / 1000.0)
         if not result.HasField("result"):
             raise RuntimeError("edge result missing execute response")
+        logger.info("DispatchToEdge result: status=%s speech=%s",
+                    result.result.status, result.result.speech[:80])
         return result.result

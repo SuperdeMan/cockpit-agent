@@ -62,10 +62,11 @@ export default function App() {
     if (data.type === 'speech_delta') {
       // 流式逐字：把 pending 占位转为 streaming，并追加 delta
       const id = pendingIdRef.current
+      const delta = data.delta || ''
       setMessages((m) =>
         m.map((msg) =>
           msg.id === id
-            ? { ...msg, pending: false, streaming: true, text: msg.text + (data.delta || '') }
+            ? { ...msg, pending: false, streaming: true, text: msg.text + delta }
             : msg,
         ),
       )

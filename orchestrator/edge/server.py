@@ -11,7 +11,7 @@ from google.protobuf.json_format import MessageToDict
 from cockpit.orchestrator.v1 import orchestrator_pb2, orchestrator_pb2_grpc
 from cockpit.common.v1 import common_pb2
 
-from fast_intent import classify, classify_structured, is_local, split_and_classify, structured_to_legacy
+from fast_intent import classify, classify_structured, is_local, split_and_classify, split_and_classify_any, structured_to_legacy
 from val import VAL
 from edge_agents import edge_execute
 from cloud_client import CloudClient
@@ -43,9 +43,16 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         if request.is_confirmation:
             intent = None
             multi = None
+            mixed_intents = None
         else:
             multi = split_and_classify(request.text)
-            intent = None if multi else classify(request.text)
+            mixed_intents = None
+            if multi:
+                intent = None
+            else:
+                # 全有全无失败 → 尝试混合拆分（本地+非本地）
+                mixed_intents = split_and_classify_any(request.text)
+                intent = None if mixed_intents else classify(request.text)
 
         # 快路径 A：多意图全部本地，并行执行聚合语音
         if multi:
@@ -78,6 +85,82 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 final = orchestrator_pb2.FinalResult(speech=combined)
                 final.actions.extend(actions)
                 yield orchestrator_pb2.HandleEvent(final=final)
+                return
+
+        # 快路径 A2：混合意图（部分本地 + 部分非本地）。
+        # 本地意图立即经 VAL 执行，非本地意图上云编排。
+        if mixed_intents:
+            local_speeches = []
+            local_actions = []
+            cloud_parts = []  # 非本地意图的原始文本片段
+            for m_intent in mixed_intents:
+                legacy = structured_to_legacy(m_intent)
+                if legacy and legacy["confidence"] >= _HIGH and is_local(legacy["name"]):
+                    ok, speech = self.val.execute(m_intent, answer_length=answer_length)
+                    if not ok:
+                        speech = speech or "操作失败"
+                    local_speeches.append(speech)
+                    obj = m_intent.get("data", {}).get("object", "")
+                    action_type = "media.control" if obj in ("media", "music", "radio", "online_radio", "audiobook", "opera", "news", "video", "TV") else "vehicle.control"
+                    local_actions.append(common_pb2.AgentAction(
+                        type=action_type,
+                        payload=_struct({"command": legacy["name"], **legacy.get("slots", {})}),
+                        require_confirm=False,
+                    ))
+                    logger.info("MIXED-LOCAL %s -> %s", legacy["name"], speech)
+                else:
+                    # 非本地意图：从原始文本中提取对应片段
+                    raw = m_intent.get("_raw_text", "")
+                    if raw:
+                        cloud_parts.append(raw)
+                    logger.info("MIXED-CLOUD %s (non-local)",
+                                m_intent.get("data", {}).get("object", ""))
+
+            if cloud_parts:
+                # 有非本地意图：先返回本地结果，再把非本地片段上云
+                if local_speeches:
+                    combined = "，".join(local_speeches)
+                    final = orchestrator_pb2.FinalResult(speech=combined)
+                    final.actions.extend(local_actions)
+                    yield orchestrator_pb2.HandleEvent(final=final)
+
+                # 把非本地子句拼接后上云
+                cloud_text = "，".join(cloud_parts)
+                logger.info("MIXED: local done, sending to cloud: %s", cloud_text[:60])
+                try:
+                    got = False
+                    # 构造只含非本地子句的请求副本
+                    cloud_req = orchestrator_pb2.HandleRequest(
+                        text=cloud_text,
+                        session_id=request.session_id,
+                        request_id=request.request_id,
+                        is_confirmation=False,
+                        meta=request.meta,
+                        context=request.context,
+                    )
+                    async for event in self.cloud.handle(cloud_req):
+                        got = True
+                        self.cloud_connected = True
+                        event = self._dispatch_cloud_actions(event, answer_length)
+                        yield event
+                    if not got:
+                        yield orchestrator_pb2.HandleEvent(
+                            final=orchestrator_pb2.FinalResult(
+                                speech="非本地请求处理失败，请稍后重试。"))
+                except Exception as e:
+                    self.cloud_connected = False
+                    logger.warning("MIXED cloud unavailable: %s", e)
+                    yield orchestrator_pb2.HandleEvent(
+                        final=orchestrator_pb2.FinalResult(
+                            speech="网络不太好，部分请求暂时无法处理。"))
+                return
+            else:
+                # 全部本地（不应该到这里，multi 应该已经捕获）
+                if local_speeches:
+                    combined = "，".join(local_speeches)
+                    final = orchestrator_pb2.FinalResult(speech=combined)
+                    final.actions.extend(local_actions)
+                    yield orchestrator_pb2.HandleEvent(final=final)
                 return
 
         # 快路径 B：高置信本地意图，端侧秒回（离线可用，不依赖网络）

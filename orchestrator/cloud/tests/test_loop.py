@@ -150,3 +150,147 @@ def test_budget_exhaustion_returns_best_effort_and_continue_prompt():
     assert executor.runs == [["s1"]]
     assert planner.observations == []
     assert events[-1]["follow_up"] == "要我继续吗？"
+
+
+# ─── T2 streaming tests ───
+
+def test_stream_yields_speech_deltas_for_single_cloud_step():
+    """Single-step cloud agent in T2 loop should stream speech deltas."""
+    planner = _Planner([ReplanDecision(done=True)])
+    executor = _Executor({})
+    aggregator = _Aggregator()
+
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        yield ("speech", "正在搜索")
+        yield ("speech", "附近的充电站")
+        from cockpit.agent.v1 import agent_pb2
+        yield ("final", agent_pb2.ExecuteResponse(
+            status=0, speech="找到3个充电站"))
+
+    controller = LoopController(
+        planner, executor, aggregator, None,
+        max_iters=2, budget_ms=5000, stream_fn=stream_fn,
+    )
+    events = _collect(
+        controller,
+        goal="找充电站",
+        initial_plan=Plan(
+            steps=[Step(id="s1", agent_id="nav", kind="agent",
+                        deployment="cloud", intent="nav.search",
+                        latency_budget_ms=5000)],
+            complexity="adaptive",
+        ),
+        agents=[],
+        ctx=PlanContext(),
+        user_text="找充电站",
+    )
+
+    speech_events = [e for e in events if e.get("kind") == "speech"]
+    # First is the THINKING_FILLER, then the two streamed deltas
+    assert any("搜索" in e.get("delta", "") for e in speech_events)
+    assert any("充电站" in e.get("delta", "") for e in speech_events)
+    # Executor should NOT have been called (streaming succeeded)
+    assert executor.runs == []
+
+
+def test_stream_failure_falls_back_to_executor():
+    """When streaming fails, the loop should fall back to the unary executor."""
+    planner = _Planner([ReplanDecision(done=True)])
+    executor = _Executor({
+        "s1": StepResult("s1", StepStatus.OK, speech="executor result"),
+    })
+    aggregator = _Aggregator()
+
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        raise RuntimeError("agent does not support streaming")
+        yield  # make it an async generator
+
+    controller = LoopController(
+        planner, executor, aggregator, None,
+        max_iters=2, budget_ms=5000, stream_fn=stream_fn,
+    )
+    events = _collect(
+        controller,
+        goal="test",
+        initial_plan=Plan(
+            steps=[Step(id="s1", agent_id="a", kind="agent",
+                        deployment="cloud", intent="test.do",
+                        latency_budget_ms=5000)],
+            complexity="adaptive",
+        ),
+        agents=[],
+        ctx=PlanContext(),
+        user_text="test",
+    )
+
+    assert executor.runs == [["s1"]]
+    assert events[-1]["speech"] == "best effort"
+
+
+def test_stream_need_confirm_suspends_in_loop():
+    """Streaming a NEED_CONFIRM response should suspend inside the loop."""
+    planner = _Planner([])
+    executor = _Executor({})
+    aggregator = _Aggregator()
+    suspend_calls = []
+
+    async def suspend(step_result, results, plan, ctx):
+        suspend_calls.append(step_result)
+        return {"kind": "final", "speech": step_result.speech, "need_confirm": True}
+
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        from cockpit.agent.v1 import agent_pb2
+        yield ("speech", "确认")
+        yield ("final", agent_pb2.ExecuteResponse(
+            status=1, speech="确认开后备箱？"))
+
+    controller = LoopController(
+        planner, executor, aggregator, suspend,
+        max_iters=2, budget_ms=5000, stream_fn=stream_fn,
+    )
+    events = _collect(
+        controller,
+        goal="open trunk",
+        initial_plan=Plan(
+            steps=[Step(id="s1", agent_id="edge-vehicle", kind="agent",
+                        deployment="cloud", intent="trunk.open",
+                        latency_budget_ms=5000)],
+            complexity="adaptive",
+        ),
+        agents=[],
+        ctx=PlanContext(),
+        user_text="打开后备箱",
+    )
+
+    assert events[-1]["need_confirm"] is True
+    assert len(suspend_calls) == 1
+    assert executor.runs == []
+
+
+def test_no_stream_fn_keeps_existing_behavior():
+    """Without stream_fn, the loop uses the executor as before."""
+    planner = _Planner([ReplanDecision(done=True)])
+    executor = _Executor({
+        "s1": StepResult("s1", StepStatus.OK, speech="done"),
+    })
+    aggregator = _Aggregator()
+
+    controller = LoopController(
+        planner, executor, aggregator, None,
+        max_iters=2, budget_ms=5000, stream_fn=None,
+    )
+    events = _collect(
+        controller,
+        goal="test",
+        initial_plan=Plan(
+            steps=[Step(id="s1", agent_id="a", kind="agent",
+                        deployment="cloud", intent="test.do")],
+            complexity="adaptive",
+        ),
+        agents=[],
+        ctx=PlanContext(),
+        user_text="test",
+    )
+
+    assert executor.runs == [["s1"]]
+    assert events[-1]["speech"] == "best effort"
