@@ -35,7 +35,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
     async def Handle(self, request, context):
         # 从 request.meta 读取 HMI 设置
         meta = dict(request.meta) if request.meta else {}
-        answer_length = meta.get("answer_length", "brief")
+        answer_length = meta.get("answer_length", "short")
 
         # 确认/补槽续接必须回到挂起会话所在的云端，不走本地快路径
         if request.is_confirmation:
@@ -112,7 +112,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             yield orchestrator_pb2.HandleEvent(final=orchestrator_pb2.FinalResult(
                 speech="网络不太好，复杂请求暂时无法处理，不过车内控制依然可以正常使用。"))
 
-    def _dispatch_cloud_actions(self, event, answer_length="brief"):
+    def _dispatch_cloud_actions(self, event, answer_length="short"):
         """云端回流 action 分发：车控类交 VAL 执行，落实规划/执行分离。
 
         LLM/Planner 只产出 vehicle.control 意图，真正下发由端侧 VAL 做：

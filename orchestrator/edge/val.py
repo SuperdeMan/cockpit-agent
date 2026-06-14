@@ -49,10 +49,10 @@ class VAL:
 
     # ── 统一入口 ──────────────────────────────────────────────
 
-    def execute(self, cmd: Any, args: dict | None = None, answer_length: str = "brief") -> tuple[bool, str]:
+    def execute(self, cmd: Any, args: dict | None = None, answer_length: str = "short") -> tuple[bool, str]:
         """兼容旧接口 (str, dict) 和新接口 (dict)。
 
-        answer_length: "brief"（默认，行车简短）或 "full"（详细）。
+        answer_length: "short"/"standard"（默认，行车简短）或 "detailed"（详细）。
         """
         self._answer_length = answer_length
         if isinstance(cmd, str):
@@ -581,8 +581,9 @@ class VAL:
             return key  # 无模板时返回 key 本身作为 fallback
 
         # 根据 answer_length 设置选择话术列表
-        length = getattr(self, '_answer_length', 'brief')
-        if length == 'full':
+        # HMI 发 short/standard/detailed；detailed 用 full，其余用 brief
+        length = getattr(self, '_answer_length', 'short')
+        if length == 'detailed':
             speeches = resp.get("speech_full") or resp.get("speech_brief") or []
         else:
             speeches = resp.get("speech_brief") or resp.get("speech_full") or []

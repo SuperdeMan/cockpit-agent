@@ -276,9 +276,10 @@ func (c *ChannelClient) recvLoop(ctx context.Context) {
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
 type wsRequest struct {
-	Text           string `json:"text"`
-	SessionID      string `json:"session_id"`
-	IsConfirmation bool   `json:"is_confirmation"` // HMI 确认/取消按钮回应多轮确认时置 true
+	Text           string            `json:"text"`
+	SessionID      string            `json:"session_id"`
+	IsConfirmation bool              `json:"is_confirmation"` // HMI 确认/取消按钮回应多轮确认时置 true
+	Meta           map[string]string `json:"meta"`            // HMI 设置透传（answer_length/model_pref 等）
 }
 
 func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestratorClient, vehicleID string) {
@@ -307,6 +308,7 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 			Text:           req.Text,
 			SessionId:      req.SessionID,
 			IsConfirmation: req.IsConfirmation,
+			Meta:           req.Meta,
 			Context: &commonpb.ContextRef{
 				SessionId: req.SessionID,
 				VehicleId: vehicleID,
