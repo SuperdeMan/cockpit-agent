@@ -1,6 +1,8 @@
 syntax = "proto3";
 package cockpit.channel.v1;
 import "cockpit/orchestrator/v1/orchestrator.proto";
+import "cockpit/common/v1/common.proto";
+import "cockpit/agent/v1/agent.proto";
 
 // 端云持久双向流。Edge 作为客户端发起并保持，所有请求/响应/主动事件多路复用。
 service EdgeCloudChannel {
@@ -15,6 +17,7 @@ message UpFrame {
     cockpit.orchestrator.v1.HandleRequest request = 3;
     Ack ack = 4;                        // 对 down 帧的确认（幂等/可靠性）
     Ping ping = 5;
+    EdgeResult edge_result = 6;         // 端→云：中枢调度的车端步骤执行结果
   }
 }
 
@@ -26,6 +29,7 @@ message DownFrame {
     cockpit.orchestrator.v1.HandleEvent event = 3;
     Proactive proactive = 4;            // 主动下发（如低电量提醒）
     Pong pong = 5;
+    EdgeCall edge_call = 6;             // 云→端：中枢调度的车端步骤（车控/媒体/状态查询）
   }
 }
 
@@ -50,4 +54,17 @@ message Pong { int64 ts = 1; }
 message Proactive {
   string type = 1;                     // "low_battery" | "charging_reminder" | ...
   string speech = 2;
+}
+
+// 中枢调度车端快思考：云→端下发意图，端经 VAL 执行后回 EdgeResult。
+// 车控只产 intent，执行权在 VAL（架构 §9.1）；EdgeResult 复用 Agent 执行语义，
+// 回到编排层直接走 executor._to_result，与云 Agent 结果同构。
+message EdgeCall {
+  string step_id = 1;
+  cockpit.common.v1.Intent intent = 2;          // name + slots（车控/媒体/状态查询）
+  map<string, string> meta = 3;                 // trace_id, answer_length, confirmed ...
+}
+message EdgeResult {
+  string step_id = 1;
+  cockpit.agent.v1.ExecuteResponse result = 2;  // status/speech/data/actions（复用 Agent 执行结果）
 }

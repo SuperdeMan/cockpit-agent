@@ -20,6 +20,8 @@ class Step:
     id: str                       # 计划内唯一，如 "s1"
     agent_id: str
     endpoint: str = ""            # 由 Registry 解析填充
+    kind: str = "agent"           # agent | tool | edge_fast：调度语义（UnifiedDispatcher 路由依据）
+    deployment: str = "cloud"     # cloud | edge：传输路由依据（edge→经该车 bidi 通道下发）
     intent: str = ""
     slots: dict[str, str] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)   # 依赖的 step id
@@ -52,6 +54,8 @@ class Plan:
     """LLM 产出的 DAG 执行计划。"""
     steps: list[Step]
     raw_text: str = ""
+    complexity: str = "simple"    # simple | adaptive：复杂度分诊（simple→T1 直执行, adaptive→T2 循环）
+    goal: str = ""                # T2 再规划的锚点（一句话用户目标）；simple 时可空
 
 
 @dataclass

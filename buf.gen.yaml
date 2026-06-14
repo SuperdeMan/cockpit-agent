@@ -6,7 +6,7 @@ managed:
   go_package_prefix:
     default: github.com/cockpit/car-agent/gen/go
 plugins:
-  - plugin: buf.build/protocolbuffers/python
+  - plugin: buf.build/protocolbuffers/python:v35.0  # 钉到 v35.0→gencode 7.35.0，匹配运行时 protobuf 7.35.0（防 gencode>runtime；插件号 vX.Y→gencode 7.X.Y）
     out: gen/python
   - plugin: buf.build/grpc/python
     out: gen/python

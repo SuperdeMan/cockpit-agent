@@ -28,6 +28,7 @@ message AgentManifest {
   repeated Capability capabilities = 9;
   repeated string requires_permissions = 10;
   repeated string edge_intents = 11; // 端侧本地意图白名单（供 Fast Intent）
+  string kind = 12;                 // agent（默认）| tool | edge_fast：调度语义/治理，区别于 deployment（传输）
 }
 
 message Capability {
