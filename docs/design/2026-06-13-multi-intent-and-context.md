@@ -1,6 +1,6 @@
 # 多意图拆分 + 对话上下文/指代消解
 
-- **状态**：草案（架构设计）
+- **状态**：部分落地（2026-06-14）：**上下文**（对话记忆 + 历史注入指代消解）后端已实现并实测；**多意图**拆分待做（见文末落地记录）
 - **交付对象**：后续开发者 / Agent
 - **关联代码**：`orchestrator/edge/fast_intent.py`、`orchestrator/cloud/planning.py`、`orchestrator/cloud/engine.py`、`orchestrator/cloud/session.py`、`orchestrator/cloud/executor.py`、`agents/chitchat/src/agent.py`、`memory/`
 - **关联文档**：`docs/architecture/detailed/ws3-planner-engine.md`、本目录车控指令架构文档
@@ -95,3 +95,19 @@
 - **历史注入膨胀 token**：N 轮窗口 + 摘要，不要灌全量历史；focus 比全文更省更准。
 - **指代歧义**：LLM 消解有上限，Phase 2 的确定性 carryover 才是兜底；歧义时应反问而非乱猜（命中确认红线）。
 - **隐私**：长期画像受 `memory_enabled` 控制，敏感数据默认不出车（架构 §安全红线）。
+
+---
+
+## 落地记录（2026-06-14）
+
+**已实现（上下文半部）**：
+- engine 每轮按 **用户→助手顺序写入 memory**（`engine.run` 外层包装；规划阶段只读到此前历史，当前句不污染指代）。
+- 规划注入：`PlanBuilder.build(history=...)` 把最近 4 轮拼入 prompt + 新增指代消解规则；planner 据此解析"再调高点/还是刚才那家"。
+- `memory_enabled` 透传开关控制整轮读写；会话偏好（`prefs`）经 `ExecuteRequest.meta` 下发 Agent。
+- chitchat 经自身 `ctx.history(4)` 自动获得对话记忆（同一 session_id）。
+- 记忆可视：HMI 记忆视图读 `/api/memory/session|context`（见 hmi）。
+- 测试：`test_engine_context.py`（写入顺序/历史注入/开关）。
+
+**已知边界**：端侧快意图直接处理的车控（如"打开空调"）**不经云引擎、不入对话记忆**——记忆当前只覆盖云侧链路。补全需在 edge orchestrator 也写 `AppendTurn`。
+
+**待做（多意图半部）**：端侧切分层 + 云侧 DAG 多意图强化 + 黄金用例评测集（见 §3.1）。

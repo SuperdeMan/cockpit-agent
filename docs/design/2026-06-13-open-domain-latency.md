@@ -1,6 +1,6 @@
 # 开放域响应慢：模型分层 + 流式贯通 + 即时反馈
 
-- **状态**：草案（前端"即时反馈/流式渲染"已在本轮 HMI 重构中落地；模型分层 + 后端流式贯通待办）
+- **状态**：已落地并实测（2026-06-14）：流式贯通 + 模型分层 + chitchat 兜底 + 空响应重试 + 即时反馈全部上线；剩"降规划延迟快路径"待做（见文末落地记录）
 - **交付对象**：后续开发者 / Agent
 - **关联代码**：`llm-gateway/providers.py`、`.env.example`、`deploy/docker-compose.yaml`、`orchestrator/cloud/engine.py`、`orchestrator/cloud/executor.py`、`agents/chitchat/src/agent.py`、`hmi/src/App.tsx`、`hmi/src/components/ChatView.tsx`
 - **现象**：开放域请求（"讲个笑话"、"我今天有点不开心"）响应慢、体验"卡死"。
@@ -66,3 +66,23 @@
 - **流式直通的边界**：只对**单 step 可流式 agent** 开；多 step DAG 不流式（先聚合再播报），避免乱序。
 - **fast 档质量**：低延迟模型可能牺牲质量；auto 档要保证规划/工具类仍走 deep。
 - **TTS 与流式**：当前 TTS 是整段合成（`hmi/src/audio.ts: playTTS`），与文本流式不同步；如需"边说边播"需分句增量 TTS，列入 Phase 3，不在本轮范围。
+
+---
+
+## 落地记录（2026-06-14）
+
+**已实现并实测**：
+- engine 单步计划**流式直通**（`Agent.ExecuteStream`，`engine._orchestrate`），逐段下发 `speech_delta`；多步/确认续接保持 executor，F1 闭环零改动；流式不可用回退 unary。
+- chitchat **模型分层**：开放域默认 `LLM_MODEL_FAST`，`model_pref=deep` 才用 primary；`answer_length`/`assistant_name` 经 meta 生效。
+- `_fallback` **兜底到 chitchat**（系统全局 fallback），规划 LLM 抽风时仍有回应。
+- chitchat **空响应兜底重试**（MiMo 偶发空 `content`）。
+- HMI 即时反馈 + 流式渲染（已随前端重构上线）。
+- 实测：开放域连续多次均正常流式（10–16 段增量，非空）。
+
+**关键新发现（本轮最重要的延迟结论）**：
+> 首 token 实测 **5–12s，几乎全部耗在 Planner**——它对**每个云侧请求**都先用 `mimo-v2.5-pro`（推理模型）做规划，chitchat 流式本身很快（增量 <1s 出完）。即"开放域慢"的真正瓶颈不是回复模型，而是**规划器用了重推理模型且对所有请求一视同仁**。`mimo-v2.5-pro` 还会间歇性返回空 `content`，触发重试/兜底，进一步拖慢。
+
+**下一步（降规划延迟，未做）**：
+1. **开放域快路径**：在 Planner 前用廉价分类（端侧/关键词/小模型）识别"纯闲聊/情绪"，直接路由 chitchat，跳过 LLM 规划。
+2. **规划器换快模型**：给 Planner 用 `LLM_MODEL_FAST`——但实测 `mimo-v2.5` 对严格 JSON 规划提示会返回空，需要先调 prompt（更强约束 + 更大 token 预算）后再切。
+3. 首 token 延迟纳入可观测指标。

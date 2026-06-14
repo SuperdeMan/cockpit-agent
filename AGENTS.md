@@ -20,6 +20,7 @@
 | 为什么这么设计（全局）| `docs/architecture/cockpit-agent-architecture.md` |
 | 接下来分几步做、怎么验收 | `docs/architecture/phase1-implementation-plan.md` |
 | 核心模块怎么编码 | `docs/architecture/detailed/ws{3,4,6,8}-*.md` |
+| 前瞻设计 / 问题分析（多意图、上下文、ASR、开放域延迟、车控指令）| `docs/design/` |
 | 工程规则与铁律 | `CLAUDE.md` |
 | 怎么搭环境、codegen、单服务调试 | `docs/dev-guide.md` |
 | intent/scope/端口/错误码/env 速查 | `docs/conventions.md` |
@@ -44,7 +45,7 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest ... --import-mode=importlib` | ✅ 118 passed（含 Agent 契约测试、确认闭环回归） |
+| 全量测试 `python -m pytest ... --import-mode=importlib` | ✅ 128 passed（+ 单步流式、对话上下文新增用例） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
 | `gen/`（gRPC 生成代码）| ✅ 已生成（`buf generate proto`） |
 | Go 网关 | ✅ Go 1.24 编译通过，Docker 全栈运行 |
@@ -57,8 +58,12 @@
 | Docker 全栈联调 | ✅ 18 个容器全部运行（2026-06-13） |
 | E2E 测试 | ✅ 4 条链路通过（车控/导航/闲聊/点餐） |
 | ASR/TTS | ✅ HTTP 代理 + HMI 录音/播放（MiMo mimo-v2.5-asr/tts） |
+| HMI（前端） | ✅ 重构为「深空座舱 HUD」：组件化 + 设置页 + 流式渲染 + 记忆视图 |
+| 开放域流式 + 模型分层 | ✅ engine 单步 ExecuteStream 直通 + chitchat 快模型/兜底（2026-06-14 实测）；首 token 仍受规划器重模型拖累，降延迟待做 |
+| 对话上下文/指代 | ✅ engine 写对话记忆 + 规划注入历史（仅云侧链路；端侧快意图未入记忆） |
+| 记忆视图 | ✅ llm-gateway `/api/memory/session\|context` 只读端点 + HMI 展示 |
 
-**结论**：Phase 1 全部验收标准达成。剩余为 Phase 2 backlog。详见 `docs/reviews/2026-06-11-review-fixes.md`。
+**结论**：Phase 1 全部验收标准达成；其上叠加了 HMI 重构、开放域流式/分层、对话记忆（云侧）三项增强（2026-06-14）。前瞻设计与未竟项见 `docs/design/`，Phase 2 backlog 见 `docs/reviews/2026-06-11-review-fixes.md`。
 
 ---
 
