@@ -49,6 +49,24 @@ window_close_success:
   speech_full: ["{position}车窗已关闭", "已为您关闭{position}车窗"]
   speech_brief: ["关了", "好的"]
 
+window_set_success:
+  scene: 车窗开度已设定
+  status: 成功
+  speech_full: ["{position}车窗已开至{value}%", "{position}车窗开度已设为{value}%"]
+  speech_brief: ["调好了", "好的"]
+
+window_inc_success:
+  scene: 车窗已增大开度
+  status: 成功
+  speech_full: ["{position}车窗开度已增大"]
+  speech_brief: ["开了"]
+
+window_dec_success:
+  scene: 车窗已减小开度
+  status: 成功
+  speech_full: ["{position}车窗开度已减小"]
+  speech_brief: ["关小了"]
+
 window_already_open:
   scene: 车窗已处于打开状态
   status: 已是该态
@@ -76,6 +94,24 @@ sunroof_close_success:
   speech_full: ["天窗已关闭", "已为您关闭天窗"]
   speech_brief: ["关了", "好的"]
 
+sunroof_set_success:
+  scene: 天窗开度已设定
+  status: 成功
+  speech_full: ["天窗已开至{value}%", "天窗开度已设为{value}%"]
+  speech_brief: ["调好了", "好的"]
+
+sunroof_inc_success:
+  scene: 天窗已增大开度
+  status: 成功
+  speech_full: ["天窗开度已增大"]
+  speech_brief: ["开了"]
+
+sunroof_dec_success:
+  scene: 天窗已减小开度
+  status: 成功
+  speech_full: ["天窗开度已减小"]
+  speech_brief: ["关小了"]
+
 # ═══════════════════════════════════════════════════
 # 遮阳帘
 # ═══════════════════════════════════════════════════
@@ -90,6 +126,24 @@ sunshade_close_success:
   status: 成功
   speech_full: ["{position}遮阳帘已关闭"]
   speech_brief: ["关了"]
+
+sunshade_set_success:
+  scene: 遮阳帘开度已设定
+  status: 成功
+  speech_full: ["{position}遮阳帘已开至{value}%", "{position}遮阳帘开度已设为{value}%"]
+  speech_brief: ["调好了", "好的"]
+
+sunshade_inc_success:
+  scene: 遮阳帘已增大开度
+  status: 成功
+  speech_full: ["{position}遮阳帘开度已增大"]
+  speech_brief: ["开了"]
+
+sunshade_dec_success:
+  scene: 遮阳帘已减小开度
+  status: 成功
+  speech_full: ["{position}遮阳帘开度已减小"]
+  speech_brief: ["关小了"]
 
 # ═══════════════════════════════════════════════════
 # 座椅
@@ -135,6 +189,30 @@ seat_set_success:
   status: 成功
   speech_full: ["{position}座椅{mode}已调至{value}挡"]
   speech_brief: ["调好了", "好的"]
+
+seat_lumbar_support_on_success:
+  scene: 座椅腰托已打开
+  status: 成功
+  speech_full: ["{position}座椅腰托已打开", "已为您开启{position}腰部支撑"]
+  speech_brief: ["开了", "好的"]
+
+seat_lumbar_support_off_success:
+  scene: 座椅腰托已关闭
+  status: 成功
+  speech_full: ["{position}座椅腰托已关闭"]
+  speech_brief: ["关了"]
+
+seat_inc_success:
+  scene: 座椅设定已调高
+  status: 成功
+  speech_full: ["{position}座椅{mode}已调高"]
+  speech_brief: ["调好了"]
+
+seat_dec_success:
+  scene: 座椅设定已调低
+  status: 成功
+  speech_full: ["{position}座椅{mode}已调低"]
+  speech_brief: ["调好了"]
 
 # ═══════════════════════════════════════════════════
 # 氛围灯
@@ -259,6 +337,18 @@ wiper_set_success:
   speech_full: ["雨刷速度已调至{value}挡"]
   speech_brief: ["调好了"]
 
+wiper_speed_inc_success:
+  scene: 雨刷速度已加快
+  status: 成功
+  speech_full: ["雨刷速度已加快"]
+  speech_brief: ["调快了"]
+
+wiper_speed_dec_success:
+  scene: 雨刷速度已减慢
+  status: 成功
+  speech_full: ["雨刷速度已减慢"]
+  speech_brief: ["调慢了"]
+
 # ═══════════════════════════════════════════════════
 # 大灯
 # ═══════════════════════════════════════════════════
@@ -288,6 +378,12 @@ fragrance_off_success:
   status: 成功
   speech_full: ["香氛已关闭"]
   speech_brief: ["关了"]
+
+fragrance_set_success:
+  scene: 香氛等级已设定
+  status: 成功
+  speech_full: ["香氛已调至{value}挡"]
+  speech_brief: ["调好了"]
 
 # ═══════════════════════════════════════════════════
 # 驾驶模式
@@ -328,6 +424,24 @@ steering_wheel_heating_off_success:
   speech_full: ["方向盘加热已关闭"]
   speech_brief: ["关了"]
 
+steering_wheel_height_set_success:
+  scene: 方向盘高度已设定
+  status: 成功
+  speech_full: ["方向盘高度已调至{value}挡"]
+  speech_brief: ["调好了"]
+
+steering_wheel_height_inc_success:
+  scene: 方向盘已升高
+  status: 成功
+  speech_full: ["方向盘已升高"]
+  speech_brief: ["调好了"]
+
+steering_wheel_height_dec_success:
+  scene: 方向盘已降低
+  status: 成功
+  speech_full: ["方向盘已降低"]
+  speech_brief: ["调好了"]
+
 # ═══════════════════════════════════════════════════
 # 音量
 # ═══════════════════════════════════════════════════
@@ -358,6 +472,30 @@ screen_brightness_success:
   speech_full: ["屏幕亮度已调至{value}"]
   speech_brief: ["调好了"]
 
+screen_open_success:
+  scene: 屏幕已打开
+  status: 成功
+  speech_full: ["屏幕已打开"]
+  speech_brief: ["开了"]
+
+screen_close_success:
+  scene: 屏幕已关闭
+  status: 成功
+  speech_full: ["屏幕已关闭"]
+  speech_brief: ["关了"]
+
+screen_brightness_inc_success:
+  scene: 屏幕已调亮
+  status: 成功
+  speech_full: ["屏幕亮度已调高"]
+  speech_brief: ["调亮了"]
+
+screen_brightness_dec_success:
+  scene: 屏幕已调暗
+  status: 成功
+  speech_full: ["屏幕亮度已调低"]
+  speech_brief: ["调暗了"]
+
 # ═══════════════════════════════════════════════════
 # 伴我回家
 # ═══════════════════════════════════════════════════
@@ -381,6 +519,120 @@ energy_recovery_set_success:
   status: 成功
   speech_full: ["能量回收已调至{value}挡"]
   speech_brief: ["调好了"]
+
+energy_recovery_inc_success:
+  scene: 能量回收已增大
+  status: 成功
+  speech_full: ["能量回收等级已调高"]
+  speech_brief: ["调好了"]
+
+energy_recovery_dec_success:
+  scene: 能量回收已减小
+  status: 成功
+  speech_full: ["能量回收等级已调低"]
+  speech_brief: ["调好了"]
+
+# ═══════════════════════════════════════════════════
+# 空调风速
+# ═══════════════════════════════════════════════════
+aircon_wind_speed_set_success:
+  scene: 空调风速已设定
+  status: 成功
+  speech_full: ["空调风速已调至{value}挡"]
+  speech_brief: ["调好了"]
+
+aircon_wind_speed_inc_success:
+  scene: 空调风速已增大
+  status: 成功
+  speech_full: ["空调风速已增大"]
+  speech_brief: ["调大了"]
+
+aircon_wind_speed_dec_success:
+  scene: 空调风速已减小
+  status: 成功
+  speech_full: ["空调风速已减小"]
+  speech_brief: ["调小了"]
+
+aircon_inc_success:
+  scene: 空调温度已调高
+  status: 成功
+  speech_full: ["空调温度已调高"]
+  speech_brief: ["调高了"]
+
+aircon_dec_success:
+  scene: 空调温度已调低
+  status: 成功
+  speech_full: ["空调温度已调低"]
+  speech_brief: ["调低了"]
+
+# ═══════════════════════════════════════════════════
+# 车道辅助
+# ═══════════════════════════════════════════════════
+lane_departure_assistance_open_success:
+  scene: 车道偏离预警已开启
+  status: 成功
+  speech_full: ["车道偏离预警已开启"]
+  speech_brief: ["开了"]
+
+lane_departure_assistance_close_success:
+  scene: 车道偏离预警已关闭
+  status: 成功
+  speech_full: ["车道偏离预警已关闭"]
+  speech_brief: ["关了"]
+
+lane_assistance_open_success:
+  scene: 车道保持已开启
+  status: 成功
+  speech_full: ["车道保持已开启"]
+  speech_brief: ["开了"]
+
+lane_assistance_close_success:
+  scene: 车道保持已关闭
+  status: 成功
+  speech_full: ["车道保持已关闭"]
+  speech_brief: ["关了"]
+
+# ═══════════════════════════════════════════════════
+# 电源模式
+# ═══════════════════════════════════════════════════
+power_mode_set_success:
+  scene: 电源模式已切换
+  status: 成功
+  speech_full: ["已切换至{mode}电源模式"]
+  speech_brief: ["已切换"]
+
+# ═══════════════════════════════════════════════════
+# 页面引导
+# ═══════════════════════════════════════════════════
+page_open_success:
+  scene: 页面已打开
+  status: 成功
+  speech_full: ["已为您打开{tag}页面"]
+  speech_brief: ["好的"]
+
+# ═══════════════════════════════════════════════════
+# 应用
+# ═══════════════════════════════════════════════════
+app_open_success:
+  scene: 应用已打开
+  status: 成功
+  speech_full: ["已为您打开{tag}"]
+  speech_brief: ["好的"]
+
+app_close_success:
+  scene: 应用已关闭
+  status: 成功
+  speech_full: ["已为您关闭{tag}"]
+  speech_brief: ["关了"]
+
+# ═══════════════════════════════════════════════════
+# 天气查询
+# ═══════════════════════════════════════════════════
+weather_query_success:
+  scene: 天气信息
+  status: 成功
+  speech_full: ["今天天气晴朗，气温适宜", "当前天气良好，适合出行"]
+  speech_brief: ["天气不错"]
 
 # ═══════════════════════════════════════════════════
 # 胎压监测

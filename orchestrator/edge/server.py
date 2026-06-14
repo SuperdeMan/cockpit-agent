@@ -10,7 +10,7 @@ from google.protobuf import struct_pb2
 from cockpit.orchestrator.v1 import orchestrator_pb2, orchestrator_pb2_grpc
 from cockpit.common.v1 import common_pb2
 
-from fast_intent import classify, is_local
+from fast_intent import classify, is_local, split_and_classify, structured_to_legacy
 from val import VAL
 from edge_agents import edge_execute
 from cloud_client import CloudClient
@@ -34,9 +34,34 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
 
     async def Handle(self, request, context):
         # 确认/补槽续接必须回到挂起会话所在的云端，不走本地快路径
-        intent = None if request.is_confirmation else classify(request.text)
+        if request.is_confirmation:
+            intent = None
+            multi = None
+        else:
+            multi = split_and_classify(request.text)
+            intent = None if multi else classify(request.text)
 
-        # 快路径：高置信本地意图，端侧秒回（离线可用，不依赖网络）
+        # 快路径 A：多意图全部本地，并行执行聚合语音
+        if multi:
+            speeches = []
+            for m_intent in multi:
+                legacy = structured_to_legacy(m_intent)
+                if legacy and legacy["confidence"] >= _HIGH and is_local(legacy["name"]):
+                    speech, action = edge_execute(legacy, self.val)
+                    speeches.append(speech)
+                    logger.info("MULTI-LOCAL %s -> %s", legacy["name"], speech)
+                else:
+                    # 单个子意图无法本地处理，走云（保守策略）
+                    logger.info("MULTI sub-intent needs cloud, falling through")
+                    speeches = []
+                    break
+            if speeches:
+                combined = "，".join(speeches)
+                final = orchestrator_pb2.FinalResult(speech=combined)
+                yield orchestrator_pb2.HandleEvent(final=final)
+                return
+
+        # 快路径 B：高置信本地意图，端侧秒回（离线可用，不依赖网络）
         if intent and intent["confidence"] >= _HIGH and is_local(intent["name"]):
             speech, action = edge_execute(intent, self.val)
             final = orchestrator_pb2.FinalResult(speech=speech)

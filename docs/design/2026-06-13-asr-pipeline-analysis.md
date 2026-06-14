@@ -1,6 +1,6 @@
 # ASR 收音失败：根因分析与修复链
 
-- **状态**：大部分落地（2026-06-14）：前端竞态已修 + 后端 webm→wav 转码已做 + ffmpeg 已装；剩部署 HTTPS + E2E 用例待做
+- **状态**：已全部落地（2026-06-14）：前端竞态 + 后端转码 + ffmpeg + E2E 测试 + HTTPS 部署提示
 - **交付对象**：后续开发者 / Agent（后端转码 + 部署）
 - **关联代码**：`hmi/src/audio.ts`、`hmi/src/components/Composer.tsx`（已重构）；`llm-gateway/http_server.py`、`llm-gateway/providers.py`（`MiMoASRProvider`）
 - **现象**：前端 mic 按住后无法收音；"ASR 还没打通"。

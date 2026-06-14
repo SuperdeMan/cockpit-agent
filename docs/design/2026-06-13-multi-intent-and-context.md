@@ -1,6 +1,6 @@
 # 多意图拆分 + 对话上下文/指代消解
 
-- **状态**：大部分落地（2026-06-14）：**上下文**后端已实现；**多意图**云侧 DAG 强化 + 黄金用例已做；端侧切分层待做
+- **状态**：已全部落地（2026-06-14）：上下文 + 多意图（M1 云侧 DAG + M2 端侧切分 + M3 黄金用例）
 - **交付对象**：后续开发者 / Agent
 - **关联代码**：`orchestrator/edge/fast_intent.py`、`orchestrator/cloud/planning.py`、`orchestrator/cloud/engine.py`、`orchestrator/cloud/session.py`、`orchestrator/cloud/executor.py`、`agents/chitchat/src/agent.py`、`memory/`
 - **关联文档**：`docs/architecture/detailed/ws3-planner-engine.md`、本目录车控指令架构文档
@@ -110,7 +110,7 @@
 
 **已知边界**：端侧快意图直接处理的车控（如"打开空调"）**不经云引擎、不入对话记忆**——记忆当前只覆盖云侧链路。补全需在 edge orchestrator 也写 `AppendTurn`。
 
-**待做（多意图半部）**：端侧切分层（M2）待做；云侧 DAG 强化（M1）+ 黄金用例（M3）已完成（2026-06-14）。
+**多意图全部落地（2026-06-14）**：M1 云侧 DAG 强化 + M2 端侧切分层 + M3 黄金用例全部完成。
 
 ---
 
@@ -124,12 +124,11 @@
 - [x] **聚合**：`aggregator.py` 已对 `len(results)>1` 走 LLM 合成连贯话术。
 - [x] **注意**：多 step 计划不走流式直通——已在 `engine` 实现，无需改。
 
-### M2. 端侧切分层（后做，端云协同的关键纪律）
-- [ ] **`orchestrator/edge/fast_intent.py` 增切分**：检测连接词（`并`/`同时`/`然后`/`再`/`顺便`/`接着`/`，`）+ 多动词，把整句切成候选子句，逐句 `classify`。
-- [ ] **路由纪律（最易翻车，务必遵守）**：
-  - 全部子意图都在本地白名单（控制类/媒体）→ **本地并行执行**，秒回聚合话术；
-  - 含任一非本地意图 → **整句上云**，交云侧 Planner 统一拆分。**绝不端云各拆一半**。
-- [ ] 端侧并行执行 + 话术合成（`orchestrator/edge/` 对应 servicer）。
+### M2. 端侧切分层 ✅（2026-06-14 已落地）
+- [x] **`orchestrator/edge/fast_intent.py` 增切分**：`split_and_classify()` 检测连接词（并/同时/然后/再/顺便/接着/，）+ 多动词，切子句逐句 classify。
+- [x] **路由纪律**：全部本地→并行执行；含任一非本地→整句上云。保守策略，任何不确定都交云侧。
+- [x] **server.py 快路径**：`Handle()` 先调 `split_and_classify()`，多意图并行执行+话术合成。
+- [x] **测试**：23 个用例覆盖本地并行/云回退/单意图/边界情况。
 
 ### M3. 黄金用例评测集 ✅（2026-06-14 已落地）
 - [x] `orchestrator/cloud/tests/test_multi_intent.py`（4 tests，`_Spy` 模式）：
