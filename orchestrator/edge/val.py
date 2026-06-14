@@ -563,6 +563,11 @@ class VAL:
         if obj == "dashcam":
             return "dashcam_on_success" if operate == "open" else "dashcam_off_success"
 
+        if obj == "media":
+            op_map = {"start": "media_start_success", "pause": "media_pause_success",
+                      "stop": "media_stop_success", "switch": "media_switch_success"}
+            return op_map.get(operate, "media_start_success")
+
         return "generic_success"
 
     def _pick_response(self, key: str, data: dict | None = None) -> str:

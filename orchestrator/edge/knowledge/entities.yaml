@@ -128,68 +128,6 @@ units:
   "%": percent
   秒: second
 
-# ── 油箱盖 ──
-fuel_tank_cover_aliases:
-  油箱盖: fuel_tank_cover
-  加油口: fuel_tank_cover
-  油箱口: fuel_tank_cover
-
-# ── 充电口盖 ──
-charging_port_aliases:
-  充电口: charging_port
-  充电盖: charging_port
-  充电口盖: charging_port
-
-# ── 胎压监测 ──
-tire_pressure_aliases:
-  胎压: tire_pressure
-  轮胎气压: tire_pressure
-
-# ── 行车记录仪 ──
-dashcam_aliases:
-  行车记录仪: dashcam
-  记录仪: dashcam
-
-# ── 车道辅助 ──
-lane_departure_aliases:
-  车道偏离: lane_departure
-  偏离预警: lane_departure
-  车道偏离预警: lane_departure
-
-lane_assistance_aliases:
-  车道保持: lane_assistance
-  车道辅助: lane_assistance
-
-# ── 电源模式 ──
-power_modes:
-  运动: sport
-  运动模式: sport
-  节能: eco
-  节能模式: eco
-  经济: eco
-  经济模式: eco
-  标准: normal
-  标准模式: normal
-
-# ── 页面名称 ──
-page_names:
-  设置: settings
-  导航: navigation
-  导航页面: navigation
-  导航界面: navigation
-  空调界面: aircon
-  空调页面: aircon
-  主页: home
-  首页: home
-
-# ── 应用名称 ──
-app_names:
-  音乐: music
-  导航: navigation
-  电台: radio
-  电话: phone
-  蓝牙: bluetooth
-
 # ── 操作 ──
 operations:
   打开: open

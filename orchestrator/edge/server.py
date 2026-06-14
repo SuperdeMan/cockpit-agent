@@ -10,7 +10,7 @@ from google.protobuf import struct_pb2
 from cockpit.orchestrator.v1 import orchestrator_pb2, orchestrator_pb2_grpc
 from cockpit.common.v1 import common_pb2
 
-from fast_intent import classify, is_local, split_and_classify, structured_to_legacy
+from fast_intent import classify, classify_structured, is_local, split_and_classify, structured_to_legacy
 from val import VAL
 from edge_agents import edge_execute
 from cloud_client import CloudClient
@@ -47,7 +47,10 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             for m_intent in multi:
                 legacy = structured_to_legacy(m_intent)
                 if legacy and legacy["confidence"] >= _HIGH and is_local(legacy["name"]):
-                    speech, action = edge_execute(legacy, self.val)
+                    # 结构化命令直通 VAL
+                    ok, speech = self.val.execute(m_intent)
+                    if not ok:
+                        speech = speech or "操作失败"
                     speeches.append(speech)
                     logger.info("MULTI-LOCAL %s -> %s", legacy["name"], speech)
                 else:
@@ -63,7 +66,19 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
 
         # 快路径 B：高置信本地意图，端侧秒回（离线可用，不依赖网络）
         if intent and intent["confidence"] >= _HIGH and is_local(intent["name"]):
-            speech, action = edge_execute(intent, self.val)
+            # 尝试结构化命令直通 VAL（覆盖新意图：trunk/door_lock/seat/ambient_light 等）
+            structured = classify_structured(request.text)
+            if structured:
+                ok, speech = self.val.execute(structured)
+                action_type = "vehicle.control" if structured.get("data", {}).get("object") not in ("media",) else "media.control"
+                action = {
+                    "type": action_type,
+                    "payload": {"command": intent["name"], **intent.get("slots", {})},
+                    "require_confirm": False,
+                } if ok else None
+            else:
+                # 回退旧路径
+                speech, action = edge_execute(intent, self.val)
             final = orchestrator_pb2.FinalResult(speech=speech)
             if action:
                 final.actions.append(common_pb2.AgentAction(
