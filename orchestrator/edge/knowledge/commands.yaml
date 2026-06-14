@@ -1,89 +1,172 @@
-# commands.yaml — 车控命令 schema（来源：同行者公版语音指令表 6.1 分类表+意图表）
+# commands.yaml — 车控命令 schema（来源：同行者公版语音指令表 6.1）
 # 每个 object 声明：operates/attrs/modes/positions/units/online/drive_restricted/require_confirm/voice_forbidden
-# positions=true 表示支持位置选择（主驾/副驾/前排/后排/全车）
 
 objects:
-  # ── 座椅 ──
   seat:
-    operates: [open, close, set, inc, dec]
-    attrs: [temperature, speed]
-    modes: [heating, ventilation, massage, lumbar_support, 加热, 通风, 按摩, 腰托]
+    operates:
+    - open
+    - close
+    - set
+    - inc
+    - dec
+    attrs:
+    - temperature
+    - speed
+    modes:
+    - heating
+    - ventilation
+    - massage
+    - lumbar_support
+    - 加热
+    - 通风
+    - 按摩
+    - 腰托
     positions: true
-    units: [degree, level, percent]
+    units:
+    - degree
+    - level
+    - percent
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 车窗 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   window:
-    operates: [open, close, set, inc, dec]
-    attrs: [height]
+    operates:
+    - open
+    - close
+    - set
+    - inc
+    - dec
+    attrs:
+    - height
     modes: []
     positions: true
-    units: [percent]
+    units:
+    - percent
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 天窗 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   sunroof:
-    operates: [open, close, set, inc, dec]
-    attrs: [height]
+    operates:
+    - open
+    - close
+    - set
+    - inc
+    - dec
+    attrs:
+    - height
     modes: []
     positions: false
-    units: [percent]
+    units:
+    - percent
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 遮阳帘 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   sunshade:
-    operates: [open, close, set, inc, dec]
-    attrs: [height]
+    operates:
+    - open
+    - close
+    - set
+    - inc
+    - dec
+    attrs:
+    - height
     modes: []
     positions: true
-    units: [percent]
+    units:
+    - percent
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 空调（含子对象：circulation/wind/cooling/heating）──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   aircon:
-    operates: [open, close, set, inc, dec]
-    attrs: [temperature, speed]
-    modes: [internal, external, 除雾, 除霜, 制冷, 制热, 吹脚, 吹人, 吹面, 内循环, 外循环, 前除雾, 后除雾, 制冷模式, 制热模式, 暖风, 冷风, 吹脚模式, 吹脸]
+    operates:
+    - open
+    - close
+    - set
+    - inc
+    - dec
+    attrs:
+    - temperature
+    - speed
+    modes:
+    - internal
+    - external
+    - 除雾
+    - 除霜
+    - 制冷
+    - 制热
+    - 吹脚
+    - 吹人
+    - 吹面
+    - 内循环
+    - 外循环
+    - 前除雾
+    - 后除雾
+    - 制冷模式
+    - 制热模式
+    - 暖风
+    - 冷风
+    - 吹脚模式
+    - 吹脸
     positions: true
-    units: [degree, level, percent]
+    units:
+    - degree
+    - level
+    - percent
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 氛围灯 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   ambient_light:
-    operates: [open, close, set, inc, dec]
-    attrs: [brightness, color]
+    operates:
+    - open
+    - close
+    - set
+    - inc
+    - dec
+    attrs:
+    - brightness
+    - color
     modes: []
     positions: false
-    units: [level, percent]
+    units:
+    - level
+    - percent
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 近光灯 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   low_beam:
-    operates: [open, close]
+    operates:
+    - open
+    - close
     attrs: []
     modes: []
     positions: false
@@ -92,11 +175,14 @@ objects:
     drive_restricted: false
     require_confirm: false
     voice_forbidden: true
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 大灯（远光灯）──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   headlight:
-    operates: [open, close]
+    operates:
+    - open
+    - close
     attrs: []
     modes: []
     positions: false
@@ -105,11 +191,14 @@ objects:
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 后备箱 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   trunk:
-    operates: [open, close]
+    operates:
+    - open
+    - close
     attrs: []
     modes: []
     positions: false
@@ -118,11 +207,14 @@ objects:
     drive_restricted: false
     require_confirm: true
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 车门锁 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   door_lock:
-    operates: [open, close]
+    operates:
+    - open
+    - close
     attrs: []
     modes: []
     positions: true
@@ -131,11 +223,14 @@ objects:
     drive_restricted: false
     require_confirm: true
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 油箱盖 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   fuel_tank_cover:
-    operates: [open, close]
+    operates:
+    - open
+    - close
     attrs: []
     modes: []
     positions: false
@@ -144,11 +239,14 @@ objects:
     drive_restricted: false
     require_confirm: true
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 充电口盖 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   charging_port:
-    operates: [open, close]
+    operates:
+    - open
+    - close
     attrs: []
     modes: []
     positions: false
@@ -157,63 +255,95 @@ objects:
     drive_restricted: false
     require_confirm: true
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 后视镜 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   rear_view_mirror:
-    operates: [open, close, set, inc, dec]
+    operates:
+    - open
+    - close
+    - set
+    - inc
+    - dec
     attrs: []
-    modes: [fold, unfold, heating, 折叠, 展开]
+    modes:
+    - fold
+    - unfold
+    - heating
+    - 折叠
+    - 展开
     positions: true
     units: []
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 方向盘 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   steering_wheel:
-    operates: [set, inc, dec]
-    attrs: [height]
-    modes: [heating]
+    operates:
+    - set
+    - inc
+    - dec
+    attrs:
+    - height
+    modes:
+    - heating
     positions: false
-    units: [level]
+    units:
+    - level
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 雨刷 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   wiper:
-    operates: [open, close, set, inc, dec]
-    attrs: [speed]
+    operates:
+    - open
+    - close
+    - set
+    - inc
+    - dec
+    attrs:
+    - speed
     modes: []
     positions: false
-    units: [level]
+    units:
+    - level
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 香氛 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   fragrance:
-    operates: [open, close, set]
+    operates:
+    - open
+    - close
+    - set
     attrs: []
     modes: []
     positions: false
-    units: [level]
+    units:
+    - level
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91]
-
-  # ── 胎压监测 ──
+    projects:
+    - DeepWay
+    - G91
   tire_pressure_monitoring:
-    operates: [query]
+    operates:
+    - query
     attrs: []
     modes: []
     positions: false
@@ -222,11 +352,15 @@ objects:
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 行车记录仪 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   dashcam:
-    operates: [open, close, query]
+    operates:
+    - open
+    - close
+    - query
     attrs: []
     modes: []
     positions: false
@@ -235,63 +369,110 @@ objects:
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 场景模式 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   scene_mode:
-    operates: [set, switch]
+    operates:
+    - set
+    - switch
     attrs: []
-    modes: [nap, camping, movie, romantic, meditation, 小憩, 露营, 观影, 浪漫, 冥想]
+    modes:
+    - nap
+    - camping
+    - movie
+    - romantic
+    - meditation
+    - 小憩
+    - 露营
+    - 观影
+    - 浪漫
+    - 冥想
     positions: false
     units: []
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 驾驶模式 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   driving_mode:
-    operates: [set, close, switch]
+    operates:
+    - set
+    - close
+    - switch
     attrs: []
-    modes: [eco, sport, comfort, snow, offroad, normal, 节能, 运动, 舒适, 雪地, 越野, 标准]
+    modes:
+    - eco
+    - sport
+    - comfort
+    - snow
+    - offroad
+    - normal
+    - 节能
+    - 运动
+    - 舒适
+    - 雪地
+    - 越野
+    - 标准
     positions: false
     units: []
     online: offline_ok
     drive_restricted: true
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 电源模式 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   power_mode:
-    operates: [set, switch]
+    operates:
+    - set
+    - switch
     attrs: []
-    modes: [normal, sport, eco, 标准, 运动, 节能]
+    modes:
+    - normal
+    - sport
+    - eco
+    - 标准
+    - 运动
+    - 节能
     positions: false
     units: []
     online: offline_ok
     drive_restricted: true
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 动能回收 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   energy_recovery:
-    operates: [set, inc, dec]
-    attrs: [level]
+    operates:
+    - set
+    - inc
+    - dec
+    attrs:
+    - level
     modes: []
     positions: false
-    units: [level]
+    units:
+    - level
     online: offline_ok
     drive_restricted: true
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 车道偏离辅助 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   lane_departure_assistance:
-    operates: [open, close]
+    operates:
+    - open
+    - close
     attrs: []
     modes: []
     positions: false
@@ -300,11 +481,14 @@ objects:
     drive_restricted: true
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 车道保持辅助 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   lane_assistance:
-    operates: [open, close]
+    operates:
+    - open
+    - close
     attrs: []
     modes: []
     positions: false
@@ -313,37 +497,52 @@ objects:
     drive_restricted: true
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 伴我回家（大灯延时关闭）──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   accompany_home:
-    operates: [open, close, set]
-    attrs: [second]
+    operates:
+    - open
+    - close
+    - set
+    attrs:
+    - second
     modes: []
     positions: false
-    units: [second]
+    units:
+    - second
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 音量 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   volume:
-    operates: [set, inc, dec]
+    operates:
+    - set
+    - inc
+    - dec
     attrs: []
     modes: []
     positions: false
-    units: [level, percent]
+    units:
+    - level
+    - percent
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 页面/界面（引导类）──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   page:
-    operates: [open, close]
+    operates:
+    - open
+    - close
     attrs: []
     modes: []
     positions: false
@@ -352,24 +551,35 @@ objects:
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 屏幕 ──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   screen:
-    operates: [open, close, set]
-    attrs: [brightness]
+    operates:
+    - open
+    - close
+    - set
+    attrs:
+    - brightness
     modes: []
     positions: false
-    units: [level, percent]
+    units:
+    - level
+    - percent
     online: offline_ok
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 应用（播报/引导类）──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   app:
-    operates: [open, close, query]
+    operates:
+    - open
+    - close
+    - query
     attrs: []
     modes: []
     positions: false
@@ -378,11 +588,13 @@ objects:
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 天气（播报类）──
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
   weather:
-    operates: [query]
+    operates:
+    - query
     attrs: []
     modes: []
     positions: false
@@ -391,11 +603,17 @@ objects:
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
-
-  # ── 媒体 ──
-  media:
-    operates: [start, pause, stop, switch]
+    projects:
+    - DeepWay
+    - G91
+    - 重汽航天
+  bluetooth:
+    operates:
+    - open
+    - close
+    - connect
+    - disconnect
+    - query
     attrs: []
     modes: []
     positions: false
@@ -404,4 +622,446 @@ objects:
     drive_restricted: false
     require_confirm: false
     voice_forbidden: false
-    projects: [DeepWay, G91, 重汽航天]
+    projects: []
+  wifi:
+    operates:
+    - open
+    - close
+    - connect
+    - disconnect
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  hotspot:
+    operates:
+    - open
+    - close
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  phone:
+    operates:
+    - open
+    - close
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  contacts:
+    operates:
+    - open
+    - close
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  call_log:
+    operates:
+    - open
+    - close
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  radio:
+    operates:
+    - open
+    - close
+    - play
+    - set
+    attrs: []
+    modes:
+    - FM
+    - AM
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  online_radio:
+    operates:
+    - open
+    - close
+    - play
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  music:
+    operates:
+    - play
+    - pause
+    - stop
+    - switch
+    - resume
+    - close
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  audiobook:
+    operates:
+    - play
+    - pause
+    - stop
+    - switch
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  opera:
+    operates:
+    - play
+    - stop
+    - switch
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  news:
+    operates:
+    - play
+    - stop
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  video:
+    operates:
+    - play
+    - pause
+    - stop
+    - resume
+    - close
+    - set
+    attrs: []
+    modes:
+    - full_screen
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  TV:
+    operates:
+    - open
+    - close
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  equalizer:
+    operates:
+    - set
+    - switch
+    - open
+    - close
+    attrs: []
+    modes:
+    - rock
+    - pop
+    - classical
+    - jazz
+    - country
+    - custom
+    - standard
+    - original
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  voice_assistant:
+    operates:
+    - open
+    - close
+    - stop
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  system:
+    operates:
+    - open
+    - close
+    - set
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  surround_view:
+    operates:
+    - open
+    - close
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  dashboard:
+    operates:
+    - open
+    - close
+    - set
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  auto_hold:
+    operates:
+    - open
+    - close
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: true
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  epb:
+    operates:
+    - open
+    - close
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: true
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  frunk:
+    operates:
+    - open
+    - close
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: true
+    voice_forbidden: false
+    projects: []
+  interaction:
+    operates:
+    - confirm
+    - cancel
+    - select
+    - prev
+    - next
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  navigation:
+    operates:
+    - plan
+    - cancel
+    - start
+    - resume
+    - locate
+    - query
+    - open
+    - close
+    - set
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  map:
+    operates:
+    - open
+    - close
+    - set
+    attrs: []
+    modes:
+    - 2D
+    - 3D
+    - satellite
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  food:
+    operates:
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  hotel:
+    operates:
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  flight:
+    operates:
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  train:
+    operates:
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  stock:
+    operates:
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  media:
+    operates:
+    - start
+    - pause
+    - stop
+    - switch
+    - play
+    - close
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []

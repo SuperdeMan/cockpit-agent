@@ -51,6 +51,39 @@ LOCAL_INTENTS = {
     # 空调风速 / 温度增减
     "aircon.wind_speed.set", "aircon.wind_speed.inc", "aircon.wind_speed.dec",
     "aircon.inc", "aircon.dec",
+    # ── 新增：蓝牙 ──
+    "bluetooth.on", "bluetooth.off", "bluetooth.open", "bluetooth.close",
+    "bluetooth.connect", "bluetooth.disconnect",
+    # ── 新增：WiFi ──
+    "wifi.on", "wifi.off", "wifi.open", "wifi.close",
+    "wifi.connect", "wifi.disconnect",
+    # ── 新增：个人热点 ──
+    "hotspot.on", "hotspot.off", "hotspot.open", "hotspot.close",
+    # ── 新增：自动驻车/制动 ──
+    "auto_hold.on", "auto_hold.off", "auto_hold.open", "auto_hold.close",
+    # ── 新增：主菜单/桌面 ──
+    "launcher.return",
+    # ── 新增：均衡器/音效 ──
+    "equalizer.on", "equalizer.off", "equalizer.open", "equalizer.close", "equalizer.set",
+    "sound_effect.set", "sound_effect.open", "sound_effect.close",
+    # ── 新增：语音助手 ──
+    "voice_assistant.on", "voice_assistant.off", "voice_assistant.open", "voice_assistant.close",
+    "voice_assistant.set", "voice_assistant.wakeup", "voice_assistant.stop",
+    # ── 新增：系统设置 ──
+    "system.restore", "system.update", "system.clean",
+    "factory_settings.restore",
+    # ── 新增：360环视/倒车影像 ──
+    "surround_view.on", "surround_view.off", "surround_view.open", "surround_view.close",
+    # ── 新增：仪表设置 ──
+    "dashboard.open", "dashboard.close",
+    # ── 新增：电话 ──
+    "phone.call", "phone.answer", "phone.hangup",
+    # ── 新增：通讯录 ──
+    "contacts.open", "contacts.close",
+    # ── 新增：通话记录 ──
+    "call_log.open", "call_log.close",
+    # ── 新增：近光灯 ──
+    "low_beam.on", "low_beam.off", "low_beam.open", "low_beam.close",
 }
 
 
@@ -65,6 +98,7 @@ def classify(text: str) -> dict | None:
         return None
 
     # 从结构化结果映射回旧 name/slots 格式
+    _on_off_map = {"open": "on", "close": "off"}
     data = result.get("data", {})
     obj = data.get("object", "")
     operate = data.get("operate", "")
@@ -123,6 +157,77 @@ def classify(text: str) -> dict | None:
         else:
             media_map = {"start": "play", "pause": "pause", "stop": "pause"}
             name = f"media.{media_map.get(operate, operate)}"
+    elif obj == "bluetooth":
+        name = f"bluetooth.{operate}"
+    elif obj == "wifi":
+        name = f"wifi.{operate}"
+    elif obj == "hotspot":
+        name = f"hotspot.{_on_off_map.get(operate, operate)}"
+    elif obj == "auto_hold":
+        name = f"auto_hold.{_on_off_map.get(operate, operate)}"
+    elif obj == "epb":
+        name = f"epb.{_on_off_map.get(operate, operate)}"
+    elif obj == "launcher":
+        name = "launcher.return"
+    elif obj in ("equalizer", "sound_effect"):
+        name = f"{obj}.{operate}"
+    elif obj == "voice_assistant":
+        name = f"voice_assistant.{operate}"
+    elif obj == "factory_settings":
+        name = "factory_settings.restore"
+    elif obj == "memory":
+        name = "system.clean"
+    elif obj == "language":
+        name = "language.set"
+    elif obj == "time_format":
+        name = "time_format.set"
+    elif obj == "surround_view":
+        name = f"surround_view.{_on_off_map.get(operate, operate)}"
+    elif obj == "dashboard":
+        name = f"dashboard.{_on_off_map.get(operate, operate)}"
+    elif obj == "phone":
+        name = f"phone.{operate}"
+    elif obj == "contacts":
+        name = f"contacts.{operate}"
+    elif obj == "call_log":
+        name = f"call_log.{_on_off_map.get(operate, operate)}"
+    elif obj in ("radio", "online_radio", "opera", "news", "audiobook"):
+        name = f"{obj}.{operate}"
+    elif obj in ("music", "video"):
+        name = f"{obj}.{operate}"
+    elif obj == "TV":
+        name = f"TV.{_on_off_map.get(operate, operate)}"
+    elif obj == "frunk":
+        name = f"frunk.{operate}"
+    elif obj == "map":
+        name = f"map.{operate}"
+    elif obj in ("food", "hotel", "flight", "train", "stock",
+                 "temperature", "humidity", "wind_force", "air_quality"):
+        name = f"{obj}.query"
+    elif obj == "navi":
+        name = f"navi.{operate}"
+    elif obj in ("high_beam", "low_beam", "fog_light", "warning_light"):
+        name = f"{obj}.{operate}"
+    elif obj in ("cruise_following", "blind_spot_warning", "body_stability",
+                 "hill_descent", "creep_mode", "forward_collision_warning",
+                 "fatigue_detection", "speed_limit_assistance"):
+        name = f"{obj}.{_on_off_map.get(operate, operate)}"
+    elif obj in ("v2v_charging", "battery_preheat", "scheduled_charging"):
+        name = f"{obj}.{_on_off_map.get(operate, operate)}"
+    elif obj == "energy_consumption":
+        name = "energy_consumption.query"
+    elif obj == "fan":
+        name = f"fan.{_on_off_map.get(operate, operate)}"
+    elif obj == "step_heating":
+        name = f"step_heating.{_on_off_map.get(operate, operate)}"
+    elif obj == "camera":
+        name = f"camera.{_on_off_map.get(operate, operate)}"
+    elif obj == "car_link":
+        name = f"car_link.{_on_off_map.get(operate, operate)}"
+    elif obj == "team":
+        name = f"team.{operate}"
+    elif obj == "tire_temperature":
+        name = f"tire_temperature.{_on_off_map.get(operate, operate)}"
     else:
         name = f"{obj}.{operate}"
 
@@ -149,7 +254,8 @@ def classify_structured(text: str) -> dict | None:
 
     # ── 空调 ──────────────────────────────────────────────
     if ("空调" in t and "界面" not in t and "页面" not in t) or \
-            "温度" in t or "风速" in t or "风量" in t or \
+            ("温度" in t and "查" not in t and "几度" not in t and "多少" not in t) or \
+            "风速" in t or "风量" in t or \
             (("热" in t or "冷" in t) and ("度" in t or "一点" in t or "再" in t)):
         if "关" in t:
             return _s("setting", "control", "close", "aircon", conf=0.93)
@@ -281,6 +387,18 @@ def classify_structured(text: str) -> dict | None:
 
     # ── 氛围灯 ────────────────────────────────────────────
     if "氛围灯" in t or "氛围" in t:
+        # 亮度调节（优先于开/关）
+        if "亮度" in t or "亮" in t or "暗" in t:
+            if "高" in t or "亮" in t or "大" in t:
+                return _s("setting", "control", "inc", "ambient_light",
+                          mode="brightness", conf=0.9)
+            if "低" in t or "暗" in t or "小" in t:
+                return _s("setting", "control", "dec", "ambient_light",
+                          mode="brightness", conf=0.9)
+            m = re.search(r"(\d)\s*挡", t)
+            if m:
+                return _s("setting", "control", "set", "ambient_light",
+                          mode="brightness", value=m.group(1), unit="level", conf=0.9)
         if "关" in t:
             return _s("setting", "control", "close", "ambient_light", conf=0.9)
         # 颜色
@@ -290,8 +408,20 @@ def classify_structured(text: str) -> dict | None:
                       tag=color, conf=0.9)
         return _s("setting", "control", "open", "ambient_light", conf=0.9)
 
-    # ── 大灯 ──────────────────────────────────────────────
+    # ── 大灯 / 远光灯 ────────────────────────────────────
     if "大灯" in t or "远光" in t:
+        # 远光灯高度调节（优先于开/关）
+        if ("远光" in t or "大灯" in t) and ("高度" in t or "调高" in t or "调低" in t):
+            if "高" in t or "升" in t:
+                return _s("setting", "control", "inc", "high_beam",
+                          mode="height", conf=0.9)
+            if "低" in t or "降" in t:
+                return _s("setting", "control", "dec", "high_beam",
+                          mode="height", conf=0.9)
+            m = re.search(r"(\d)\s*挡", t)
+            if m:
+                return _s("setting", "control", "set", "high_beam",
+                          mode="height", value=m.group(1), unit="level", conf=0.9)
         if "关" in t:
             return _s("setting", "control", "close", "headlight", conf=0.9)
         return _s("setting", "control", "open", "headlight", conf=0.9)
@@ -302,19 +432,31 @@ def classify_structured(text: str) -> dict | None:
             return _s("setting", "control", "close", "low_beam", conf=0.9)
         return _s("setting", "control", "open", "low_beam", conf=0.9)
 
-    # ── 雨刷 ──────────────────────────────────────────────
+    # ── 雨刷 / 雨刮 ─────────────────────────────────────
     if "雨刷" in t or "雨刮" in t:
         if "关" in t:
             return _s("setting", "control", "close", "wiper", conf=0.9)
+        # 灵敏度调节（优先于速度）
+        if "灵敏" in t:
+            if "高" in t or "大" in t:
+                return _s("setting", "control", "inc", "wiper",
+                          mode="sensitivity", conf=0.9)
+            if "低" in t or "小" in t:
+                return _s("setting", "control", "dec", "wiper",
+                          mode="sensitivity", conf=0.9)
+            lv = _extract_level(t)
+            if lv:
+                return _s("setting", "control", "set", "wiper",
+                          mode="sensitivity", value=lv, unit="level", conf=0.9)
         # 速度挡位
         if "快" in t or "大" in t:
             return _s("setting", "control", "inc", "wiper", mode="speed", conf=0.9)
         if "慢" in t or "小" in t:
             return _s("setting", "control", "dec", "wiper", mode="speed", conf=0.9)
-        m = re.search(r"(\d)\s*挡", t)
-        if m:
+        lv = _extract_level(t)
+        if lv:
             return _s("setting", "control", "set", "wiper", mode="speed",
-                      value=m.group(1), unit="level", conf=0.9)
+                      value=lv, unit="level", conf=0.9)
         return _s("setting", "control", "open", "wiper", conf=0.9)
 
     # ── 后视镜 ────────────────────────────────────────────
@@ -464,32 +606,487 @@ def classify_structured(text: str) -> dict | None:
     if "屏幕" in t:
         if "关" in t or "息屏" in t:
             return _s("setting", "control", "close", "screen", conf=0.9)
-        if "亮" in t or "调亮" in t:
-            return _s("setting", "control", "inc", "screen",
-                      mode="brightness", conf=0.9)
-        if "暗" in t or "调暗" in t:
+        # 具体数值设定（优先于相对增减，因为 "亮度调到50" 含 "亮" 但意图是 set）
+        m = re.search(r"(\d+)", t)
+        if m and ("调到" in t or "设为" in t or "设到" in t):
+            return _s("setting", "control", "set", "screen",
+                      mode="brightness", value=m.group(1), unit="percent", conf=0.9)
+        # 调低/低 必须在 亮 之前检查，因为 "亮度调低" 同时含 "亮" 和 "低"
+        if "调低" in t or "低" in t or "暗" in t or "调暗" in t:
             return _s("setting", "control", "dec", "screen",
                       mode="brightness", conf=0.9)
-        m = re.search(r"(\d+)", t)
+        if "调高" in t or "高" in t or "亮" in t or "调亮" in t:
+            return _s("setting", "control", "inc", "screen",
+                      mode="brightness", conf=0.9)
         if m:
             return _s("setting", "control", "set", "screen",
                       mode="brightness", value=m.group(1), unit="percent", conf=0.9)
         return _s("setting", "control", "open", "screen", conf=0.85)
 
-    # ── 页面引导 ──────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════
+    # 飞书意图表新增对象（2026-06 扩展）
+    # 注意：这些必须在页面/应用泛化匹配之前，避免被 catch-all 截获
+    # ══════════════════════════════════════════════════════════
+
+    # ── 蓝牙 ──────────────────────────────────────────────
+    if "蓝牙" in t:
+        if "断" in t or "断开" in t:
+            return _s("setting", "control", "disconnect", "bluetooth", conf=0.9)
+        if "连" in t and "断" not in t:
+            return _s("setting", "control", "connect", "bluetooth", conf=0.9)
+        if "关" in t:
+            return _s("setting", "control", "close", "bluetooth", conf=0.9)
+        if "打开" in t or "开" in t or "开启" in t:
+            return _s("setting", "control", "open", "bluetooth", conf=0.9)
+        return _s("setting", "control", "open", "bluetooth", conf=0.85)
+
+    # ── WiFi ─────────────────────────────────────────────
+    if "wifi" in t.lower() or "wi-fi" in t.lower() or "无线网" in t:
+        if "断" in t or "断开" in t:
+            return _s("setting", "control", "disconnect", "wifi", conf=0.9)
+        if "连" in t and "断" not in t:
+            return _s("setting", "control", "connect", "wifi", conf=0.9)
+        if "关" in t:
+            return _s("setting", "control", "close", "wifi", conf=0.9)
+        if "打开" in t or "开" in t or "开启" in t:
+            return _s("setting", "control", "open", "wifi", conf=0.9)
+        return _s("setting", "control", "open", "wifi", conf=0.85)
+
+    # ── 个人热点 ──────────────────────────────────────────
+    if "热点" in t and "列表" not in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "hotspot", conf=0.9)
+        return _s("setting", "control", "open", "hotspot", conf=0.9)
+
+    # ── 自动驻车 / 制动 ──────────────────────────────────
+    if "自动驻车" in t or "AHV" in t.upper():
+        if "关" in t:
+            return _s("setting", "control", "close", "auto_hold", conf=0.9)
+        return _s("setting", "control", "open", "auto_hold", conf=0.9)
+
+    # ── 电子手刹 ──────────────────────────────────────────
+    if "电子手刹" in t or "手刹" in t:
+        if "关" in t or "松" in t or "解" in t:
+            return _s("setting", "control", "close", "epb", conf=0.9)
+        return _s("setting", "control", "open", "epb", conf=0.9)
+
+    # ── 主菜单 / 桌面 ─────────────────────────────────────
+    if "桌面" in t or "主菜单" in t or "回主页" in t:
+        if "返回" in t or "回" in t:
+            return _s("setting", "control", "return", "launcher", conf=0.9)
+        return _s("hmi", "navigate", "open", "page", tag="home", conf=0.88)
+
+    # ── 均衡器 / 音效 ────────────────────────────────────
+    if "音效" in t or "均衡器" in t or "EQ" in t.upper() or "DTS" in t.upper():
+        if "关" in t:
+            return _s("setting", "control", "close", "equalizer", conf=0.9)
+        _eq_modes = {
+            "摇滚": "rock", "流行": "pop", "古典": "classical",
+            "爵士": "jazz", "乡村": "country", "自定义": "custom",
+            "标准": "standard", "原声": "original",
+        }
+        for kw, mode in _eq_modes.items():
+            if kw in t:
+                return _s("setting", "control", "set", "sound_effect",
+                          mode=mode, conf=0.9)
+        if "切换" in t or "模式" in t:
+            return _s("setting", "control", "switch", "sound_effect", conf=0.85)
+        return _s("setting", "control", "open", "equalizer", conf=0.88)
+
+    # ── 语音助手 ──────────────────────────────────────────
+    if "语音助手" in t or "语音设置" in t or "语音唤醒" in t \
+            or "一语直达" in t or "全时对话" in t or "连续对话" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "voice_assistant", conf=0.9)
+        if "开" in t or "打开" in t:
+            return _s("setting", "control", "open", "voice_assistant", conf=0.9)
+        return _s("setting", "control", "open", "voice_assistant", conf=0.85)
+    if "停止播报" in t or "停语音播报" in t or "停播报" in t:
+        return _s("setting", "control", "stop", "voice_assistant", conf=0.9)
+
+    # ── 系统 ─────────────────────────────────────────────
+    if "恢复出厂" in t or "出厂设置" in t or "复出厂" in t:
+        return _s("setting", "control", "restore", "factory_settings", conf=0.92)
+    if "系统更新" in t or "系统升级" in t:
+        return _s("setting", "control", "update", "system", conf=0.9)
+    if "内存清理" in t or "清理内存" in t:
+        return _s("setting", "control", "clean", "memory", conf=0.9)
+    if "剩余流量" in t or "可用流量" in t or "查流量" in t:
+        return _s("query", "query", "query", "remaining_network_data", conf=0.9)
+    if "买流量" in t or "购买流量" in t:
+        return _s("setting", "control", "buy", "network_data", conf=0.9)
+    if "系统语言" in t or "语言切换" in t:
+        return _s("setting", "control", "set", "language", conf=0.9)
+    if "时间格式" in t or "时间设置" in t:
+        return _s("setting", "control", "set", "time_format", conf=0.9)
+
+    # ── 360环视 / 倒车影像 ────────────────────────────────
+    if "360" in t or "全景影像" in t or "环视" in t or "倒车影像" in t:
+        if "关" in t:
+            return _s("app", "control", "close", "surround_view", conf=0.9)
+        return _s("app", "control", "open", "surround_view", conf=0.9)
+
+    # ── 仪表设置 ──────────────────────────────────────────
+    if "仪表" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "dashboard", conf=0.9)
+        return _s("setting", "control", "open", "dashboard", conf=0.9)
+
+    # ── 电话 ─────────────────────────────────────────────
+    if "接听" in t or "接电话" in t:
+        return _s("phone", "control", "answer", "phone", conf=0.95)
+    if "挂断" in t or "挂电话" in t or "挂一挂" in t:
+        return _s("phone", "control", "hangup", "phone", conf=0.95)
+    if "回拨" in t or "重拨" in t:
+        return _s("phone", "control", "callback", "phone", conf=0.9)
+    if "打电话" in t or "拨打" in t or "拨电话" in t or "拨给" in t:
+        return _s("phone", "control", "call", "phone", conf=0.9)
+
+    # ── 通讯录 ────────────────────────────────────────────
+    if "通讯录" in t or "联系人" in t:
+        if "关" in t or "退" in t:
+            return _s("phone", "control", "close", "contacts", conf=0.9)
+        if "查" in t or "找" in t or "搜" in t:
+            return _s("query", "query", "query", "contacts", conf=0.9)
+        return _s("phone", "control", "open", "contacts", conf=0.9)
+
+    # ── 通话记录 ──────────────────────────────────────────
+    if "通话记录" in t or "未接来电" in t or "已接电话" in t or "已拨电话" in t:
+        if "关" in t:
+            return _s("phone", "control", "close", "call_log", conf=0.9)
+        return _s("phone", "control", "open", "call_log", conf=0.9)
+
+    # ── 广播 / 收音机 / 电台 ─────────────────────────────
+    if "广播" in t or "收音机" in t or ("电台" in t and "网络" not in t):
+        if "关" in t:
+            return _s("media", "control", "close", "radio", conf=0.9)
+        if "打开" in t or "开" in t:
+            return _s("media", "control", "open", "radio", conf=0.9)
+        m = re.search(r"(\d+\.?\d*)\s*(?:MHz|兆赫|mhz)", t, re.IGNORECASE)
+        if m:
+            return _s("media", "control", "play", "radio",
+                      tag=f"FM{m.group(1)}", conf=0.92)
+        m = re.search(r"(\d+\.?\d*)\s*(?:KHz|千赫|khz)", t, re.IGNORECASE)
+        if m:
+            return _s("media", "control", "play", "radio",
+                      tag=f"AM{m.group(1)}", conf=0.92)
+        if "播" in t or "放" in t or "听" in t:
+            return _s("media", "control", "play", "radio", conf=0.88)
+        return _s("media", "control", "open", "radio", conf=0.85)
+
+    # ── 网络电台 ──────────────────────────────────────────
+    if "网络电台" in t:
+        if "关" in t:
+            return _s("media", "control", "close", "online_radio", conf=0.9)
+        if "播" in t or "放" in t or "听" in t:
+            return _s("media", "control", "play", "online_radio", conf=0.88)
+        return _s("media", "control", "open", "online_radio", conf=0.85)
+
+    # ── 音乐 ─────────────────────────────────────────────
+    if "音乐" in t or "歌曲" in t or ("歌" in t and "鸽" not in t) \
+            or "放首" in t or "来首" in t:
+        if "关" in t:
+            return _s("app", "control", "close", "music", conf=0.9)
+        if "暂停" in t or "停" in t:
+            return _s("app", "control", "pause", "music", conf=0.9)
+        if "下一首" in t or "下一曲" in t or "切歌" in t:
+            return _s("app", "control", "switch", "music", conf=0.9)
+        if "上一首" in t or "上一曲" in t:
+            return _s("app", "control", "switch", "music", conf=0.9)
+        if "继续" in t:
+            return _s("app", "control", "resume", "music", conf=0.9)
+        if "播" in t or "放" in t or "听" in t or "推荐" in t:
+            return _s("app", "control", "play", "music", conf=0.88)
+        return _s("app", "control", "open", "music", conf=0.85)
+
+    # ── 有声书 ────────────────────────────────────────────
+    if "有声书" in t or "听书" in t:
+        if "关" in t or "停" in t:
+            return _s("media", "control", "stop", "audiobook", conf=0.9)
+        if "上一章" in t or "上一集" in t:
+            return _s("media", "control", "prev", "audiobook", conf=0.9)
+        if "下一章" in t or "下一集" in t:
+            return _s("media", "control", "next", "audiobook", conf=0.9)
+        if "暂停" in t:
+            return _s("media", "control", "pause", "audiobook", conf=0.9)
+        if "播" in t or "放" in t or "听" in t or "打开" in t or "开" in t:
+            return _s("media", "control", "play", "audiobook", conf=0.88)
+        return _s("media", "control", "open", "audiobook", conf=0.85)
+
+    # ── 曲艺（戏曲/相声/评书）────────────────────────────
+    if "戏曲" in t or "相声" in t or "评书" in t or "曲艺" in t:
+        if "关" in t or "停" in t:
+            return _s("media", "control", "stop", "opera", conf=0.9)
+        if "上一个" in t:
+            return _s("media", "control", "prev", "opera", conf=0.9)
+        if "下一个" in t:
+            return _s("media", "control", "next", "opera", conf=0.9)
+        if "播" in t or "放" in t or "听" in t:
+            return _s("media", "control", "play", "opera", conf=0.88)
+        return _s("media", "control", "open", "opera", conf=0.85)
+
+    # ── 新闻 ─────────────────────────────────────────────
+    if "新闻" in t or "头条" in t:
+        if "播" in t or "放" in t or "听" in t:
+            return _s("media", "control", "play", "news", conf=0.88)
+        if "关" in t or "停" in t:
+            return _s("media", "control", "stop", "news", conf=0.9)
+        return _s("media", "control", "play", "news", conf=0.85)
+
+    # ── 视频 ─────────────────────────────────────────────
+    if "视频" in t or "电影" in t or "电视剧" in t or "脱口秀" in t:
+        if "退出全屏" in t:
+            return _s("app", "control", "close", "video", mode="full_screen", conf=0.9)
+        if "全屏" in t:
+            return _s("app", "control", "open", "video", mode="full_screen", conf=0.9)
+        if "倍速" in t:
+            return _s("app", "control", "set", "video", attr="playback_speed", conf=0.9)
+        if "快进" in t:
+            return _s("app", "control", "forward", "video", conf=0.9)
+        if "快退" in t or "后退" in t:
+            return _s("app", "control", "backward", "video", conf=0.9)
+        if "关" in t:
+            return _s("app", "control", "close", "video", conf=0.9)
+        if "暂停" in t or "停" in t:
+            return _s("app", "control", "pause", "video", conf=0.9)
+        if "继续" in t:
+            return _s("app", "control", "resume", "video", conf=0.9)
+        if "播" in t or "放" in t or "看" in t:
+            return _s("app", "control", "play", "video", conf=0.88)
+        return _s("app", "control", "open", "video", conf=0.85)
+
+    # ── 电视 ─────────────────────────────────────────────
+    if "电视" in t:
+        if "关" in t:
+            return _s("app", "control", "close", "TV", conf=0.9)
+        return _s("app", "control", "open", "TV", conf=0.9)
+
+    # ── 前备箱 ────────────────────────────────────────────
+    if "前备箱" in t or "前行李箱" in t or "前行李舱" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "frunk", conf=0.9)
+        return _s("setting", "control", "open", "frunk", conf=0.9)
+
+    # ── 导航（导航到/去/怎么走 等意图短语）────────────────
+    if ("导航" in t or "去" in t or "到" in t) and \
+            ("怎么走" in t or "多远" in t or "多久" in t or "路线" in t):
+        if "多远" in t or "距离" in t:
+            return _s("navi", "query", "query", "remaining_distance", conf=0.85)
+        if "多久" in t or "时间" in t:
+            return _s("navi", "query", "query", "remaining_time", conf=0.85)
+        if "路线" in t:
+            return _s("navi", "query", "query", "navigation_route", conf=0.85)
+        return _s("navi", "plan", "plan", "navi", conf=0.8)
+    if "导航" in t and ("到" in t or "去" in t or "目的地" in t):
+        return _s("navi", "plan", "plan", "navi", conf=0.85)
+    if "取消导航" in t or "退出导航" in t or "结束导航" in t:
+        return _s("navi", "control", "cancel", "navi", conf=0.9)
+    if "开始导航" in t or "发起导航" in t:
+        return _s("navi", "control", "start", "navi", conf=0.9)
+    if "继续导航" in t or "恢复导航" in t:
+        return _s("navi", "control", "resume", "navi", conf=0.9)
+    if "当前位置" in t or "我在哪" in t:
+        return _s("navi", "query", "locate", "current_position", conf=0.9)
+    if "实时路况" in t or "前方路况" in t:
+        if "关" in t:
+            return _s("navi", "control", "close", "road_condition", conf=0.9)
+        return _s("navi", "query", "query", "road_condition", conf=0.9)
+
+    # ── 地图（放大/缩小/视图切换）────────────────────────
+    if "地图" in t:
+        if "放大" in t or "大一点" in t:
+            return _s("app", "control", "zoom_in", "map", conf=0.9)
+        if "缩小" in t or "小一点" in t:
+            return _s("app", "control", "zoom_out", "map", conf=0.9)
+        if "最大" in t:
+            return _s("app", "control", "zoom_in", "map", limit="max", conf=0.9)
+        if "最小" in t:
+            return _s("app", "control", "zoom_out", "map", limit="min", conf=0.9)
+        if "3D" in t.upper() or "三维" in t:
+            return _s("app", "control", "set", "map", mode="3d", conf=0.9)
+        if "关" in t:
+            return _s("app", "control", "close", "map", conf=0.9)
+        if "收藏" in t:
+            return _s("app", "control", "open", "map", tag="favorites", conf=0.88)
+        return _s("app", "control", "open", "map", conf=0.85)
+
+    # ── 天气 / 温度 / 湿度 / 风况 / 空气质量 ─────────────
+    if "天气" in t:
+        return _s("query", "query", "query", "weather", conf=0.9)
+    if "温度" in t and ("查" in t or "多少" in t or "几度" in t):
+        return _s("query", "query", "query", "temperature", conf=0.9)
+    if "湿度" in t and ("查" in t or "多少" in t):
+        return _s("query", "query", "query", "humidity", conf=0.9)
+    if "风力" in t or "风况" in t or "几级风" in t:
+        return _s("query", "query", "query", "wind_force", conf=0.9)
+    if "空气质量" in t or "PM2.5" in t or "空气指数" in t:
+        return _s("query", "query", "query", "air_quality", conf=0.9)
+
+    # ── 美食 ─────────────────────────────────────────────
+    if "美食" in t or "餐厅" in t or "找吃的" in t or "有什么吃的" in t:
+        return _s("navi", "query", "query", "food", conf=0.85)
+    _cuisines = ["川菜", "湘菜", "粤菜", "火锅", "烧烤", "日料",
+                 "西餐", "意大利菜", "韩餐", "自助餐", "外卖", "奶茶"]
+    for cuisine in _cuisines:
+        if cuisine in t and ("附近" in t or "找" in t or "查" in t
+                             or "哪有" in t or "店" in t):
+            return _s("navi", "query", "query", "food", tag=cuisine, conf=0.85)
+
+    # ── 酒店 ─────────────────────────────────────────────
+    if "酒店" in t or "住宿" in t or "度假村" in t or "民宿" in t:
+        if "查" in t or "找" in t or "附近" in t or "订" in t:
+            return _s("navi", "query", "query", "hotel", conf=0.85)
+        return _s("navi", "query", "query", "hotel", conf=0.8)
+
+    # ── 航班 ─────────────────────────────────────────────
+    if "航班" in t or "机票" in t or "飞机" in t:
+        return _s("information", "query", "query", "flight", conf=0.88)
+
+    # ── 火车票 ───────────────────────────────────────────
+    if "火车票" in t or "火车" in t or "高铁" in t or "动车" in t:
+        return _s("information", "query", "query", "train", conf=0.88)
+
+    # ── 股票 ─────────────────────────────────────────────
+    if "股票" in t or "股价" in t or "大盘" in t or "指数" in t:
+        return _s("information", "query", "query", "stock", conf=0.88)
+
+    # ── 车内灯（阅读灯/化妆灯/脚窝灯/动态氛围灯等）──────
+    if "阅读灯" in t or "化妆灯" in t or "脚窝灯" in t or "门灯" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "ambient_light", conf=0.9)
+        return _s("setting", "control", "open", "ambient_light", conf=0.9)
+    if "动态氛围灯" in t or "律动" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "ambient_light",
+                      mode="dynamic", conf=0.9)
+        return _s("setting", "control", "open", "ambient_light",
+                  mode="dynamic", conf=0.9)
+
+    # ── 车外灯（雾灯、双闪等）────────────────────────────
+    if "雾灯" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "fog_light", conf=0.9)
+        return _s("setting", "control", "open", "fog_light", conf=0.9)
+    if "双闪" in t or "警示灯" in t or "危险灯" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "warning_light", conf=0.9)
+        return _s("setting", "control", "open", "warning_light", conf=0.9)
+
+    # ── 轮胎（胎温监测等扩展）────────────────────────────
+    if "胎温" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "tire_temperature", conf=0.9)
+        return _s("setting", "control", "open", "tire_temperature", conf=0.9)
+
+    # ── 辅助驾驶（扩展：ACC/盲区/车身稳定等）─────────────
+    if "自适应巡航" in t or "ACC" in t.upper():
+        if "关" in t:
+            return _s("setting", "control", "close", "cruise_following", conf=0.9)
+        return _s("setting", "control", "open", "cruise_following", conf=0.9)
+    if "盲区" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "blind_spot_warning", conf=0.9)
+        return _s("setting", "control", "open", "blind_spot_warning", conf=0.9)
+    if "车身稳定" in t or "ESP" in t.upper() or "ESC" in t.upper():
+        if "关" in t:
+            return _s("setting", "control", "close", "body_stability", conf=0.9)
+        return _s("setting", "control", "open", "body_stability", conf=0.9)
+    if "陡坡缓降" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "hill_descent", conf=0.9)
+        return _s("setting", "control", "open", "hill_descent", conf=0.9)
+    if "蠕行模式" in t or "蠕行" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "creep_mode", conf=0.9)
+        return _s("setting", "control", "open", "creep_mode", conf=0.9)
+    if "前碰撞预警" in t or "前向碰撞" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "forward_collision_warning", conf=0.9)
+        return _s("setting", "control", "open", "forward_collision_warning", conf=0.9)
+    if "疲劳驾驶" in t or "疲劳检测" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "fatigue_detection", conf=0.9)
+        return _s("setting", "control", "open", "fatigue_detection", conf=0.9)
+    if "限速" in t and ("辅助" in t or "提醒" in t or "控制" in t):
+        if "关" in t:
+            return _s("setting", "control", "close", "speed_limit_assistance", conf=0.9)
+        return _s("setting", "control", "open", "speed_limit_assistance", conf=0.9)
+
+    # ── 能源（扩展：V2V充电/电池预热/定时充电）──────────
+    if "车对车充电" in t or "V2V" in t.upper():
+        if "关" in t:
+            return _s("setting", "control", "close", "v2v_charging", conf=0.9)
+        return _s("setting", "control", "open", "v2v_charging", conf=0.9)
+    if "电池预热" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "battery_preheat", conf=0.9)
+        return _s("setting", "control", "open", "battery_preheat", conf=0.9)
+    if "定时充电" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "scheduled_charging", conf=0.9)
+        return _s("setting", "control", "open", "scheduled_charging", conf=0.9)
+    if "能耗" in t or "电量" in t or "续航" in t:
+        return _s("query", "query", "query", "energy_consumption", conf=0.88)
+    if "熄火" in t or "关电源" in t or "断电" in t:
+        return _s("setting", "control", "power_off", "vehicle", conf=0.85)
+
+    # ── 风扇 ─────────────────────────────────────────────
+    if "风扇" in t and "空调" not in t:
+        pos = _extract_position(t)
+        if "关" in t:
+            return _s("setting", "control", "close", "fan",
+                      positions=pos, conf=0.9)
+        return _s("setting", "control", "open", "fan",
+                  positions=pos, conf=0.9)
+
+    # ── 采暖（踏步取暖等）────────────────────────────────
+    if "踏步取暖" in t or "踏步加热" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "step_heating", conf=0.9)
+        return _s("setting", "control", "open", "step_heating", conf=0.9)
+
+    # ── 摄像头 ───────────────────────────────────────────
+    if "摄像头" in t:
+        if "关" in t:
+            return _s("setting", "control", "close", "camera", conf=0.9)
+        return _s("setting", "control", "open", "camera", conf=0.9)
+
+    # ── 车机互联 ──────────────────────────────────────────
+    if "车机互联" in t or "CarPlay" in t or "CarLife" in t:
+        if "关" in t:
+            return _s("app", "control", "close", "car_link", conf=0.9)
+        return _s("app", "control", "open", "car_link", conf=0.9)
+
+    # ── 队列 ─────────────────────────────────────────────
+    if "队列" in t:
+        if "创建" in t or "建" in t:
+            return _s("setting", "control", "create", "team", conf=0.9)
+        if "加入" in t or "进" in t:
+            return _s("setting", "control", "join", "team", conf=0.9)
+        if "离开" in t or "退出" in t:
+            return _s("setting", "control", "leave", "team", conf=0.9)
+        if "删除" in t or "解散" in t:
+            return _s("setting", "control", "delete", "team", conf=0.9)
+
+    # ══════════════════════════════════════════════════════════
+    # 泛化匹配（页面引导 / 通用应用 / 通用媒体）
+    # 仅处理上面专项规则未覆盖的残余关键词
+    # ══════════════════════════════════════════════════════════
+
+    # ── 页面引导（设置页面等专项未覆盖的）────────────────
     _page_names = {
-        "设置": "settings", "导航页面": "navigation", "导航界面": "navigation",
-        "空调界面": "aircon", "空调页面": "aircon", "主页": "home", "首页": "home",
+        "设置": "settings",
+        "空调界面": "aircon", "空调页面": "aircon",
+        "主页": "home", "首页": "home",
     }
     if "打开" in t or "进入" in t or "切换到" in t:
         for kw, pn in _page_names.items():
             if kw in t:
                 return _s("hmi", "navigate", "open", "page", tag=pn, conf=0.88)
 
-    # ── 应用 ──────────────────────────────────────────────
+    # ── 应用（专项未覆盖的通用 app 开关）──────────────────
     _app_names = {
-        "音乐": "music", "电台": "radio", "电话": "phone",
-        "蓝牙": "bluetooth", "导航": "navigation",
+        # 注意：蓝牙/电话/音乐/导航/电台 已由上面专项处理，不再列于此
     }
     if "打开" in t or "关闭" in t or "退出" in t:
         for kw, an in _app_names.items():
@@ -497,11 +1094,7 @@ def classify_structured(text: str) -> dict | None:
                 operate = "close" if ("关" in t or "退出" in t) else "open"
                 return _s("app", "control", operate, "app", tag=an, conf=0.88)
 
-    # ── 天气查询 ──────────────────────────────────────────
-    if "天气" in t:
-        return _s("query", "query", "query", "weather", conf=0.9)
-
-    # ── 媒体（旧保留）─────────────────────────────────────
+    # ── 通用媒体播放（旧保留，兜底）──────────────────────
     if "暂停" in t or "停一下" in t:
         return _s("app", "control", "pause", "media", conf=0.93)
     if "下一首" in t or "换一首" in t or "切歌" in t:
@@ -544,6 +1137,17 @@ def _extract_color(t: str) -> str | None:
     for c in colors:
         if c in t:
             return c
+    return None
+
+
+def _extract_level(t: str) -> str | None:
+    """从文本中提取挡位数字，支持阿拉伯数字和中文数字。"""
+    _cn_digit_map = {"一": "1", "二": "2", "三": "3", "四": "4", "五": "5",
+                     "六": "6", "七": "7", "八": "8", "九": "9", "零": "0"}
+    m = re.search(r"([一二三四五六七八九零\d])\s*挡", t)
+    if m:
+        d = m.group(1)
+        return _cn_digit_map.get(d, d)
     return None
 
 
@@ -638,6 +1242,18 @@ def _to_legacy_name(intent: dict) -> str | None:
     if obj == "media":
         media_map = {"start": "play", "pause": "pause", "stop": "pause"}
         return f"media.{media_map.get(operate, operate)}"
+    # 媒体子类统一映射到 media.*
+    if obj in ("music", "radio", "online_radio", "audiobook", "opera", "news", "video", "TV"):
+        media_map = {"play": "play", "start": "play", "open": "play", "pause": "pause",
+                     "stop": "pause", "close": "pause", "switch": "next", "resume": "play",
+                     "query": "query"}
+        return f"media.{media_map.get(operate, operate)}"
+    if obj in ("navigation", "navi", "map", "food", "hotel", "flight", "train", "stock", "weather"):
+        return None  # online_only, not local
+    if obj == "interaction":
+        return f"interaction.{operate}"
+    if obj == "frunk":
+        return f"frunk.{operate}"
     if obj == "rear_view_mirror":
         mirror_map = {"fold": "fold", "unfold": "unfold"}
         op = mirror_map.get(operate, operate)
@@ -685,6 +1301,43 @@ def _to_legacy_name(intent: dict) -> str | None:
         return f"app.{operate}"
     if obj == "weather":
         return "weather.query"
+    # ── 新增对象映射 ──
+    if obj == "bluetooth":
+        return f"bluetooth.{operate}"
+    if obj == "wifi":
+        return f"wifi.{operate}"
+    if obj == "hotspot":
+        return f"hotspot.{_on_off_map.get(operate, operate)}"
+    if obj == "auto_hold":
+        return f"auto_hold.{_on_off_map.get(operate, operate)}"
+    if obj == "epb":
+        return f"epb.{_on_off_map.get(operate, operate)}"
+    if obj == "launcher":
+        return "launcher.return"
+    if obj in ("equalizer", "sound_effect"):
+        return f"{obj}.{operate}"
+    if obj == "voice_assistant":
+        return f"voice_assistant.{operate}"
+    if obj == "factory_settings":
+        return "factory_settings.restore"
+    if obj == "memory":
+        return "system.clean"
+    if obj == "language":
+        return "language.set"
+    if obj == "time_format":
+        return "time_format.set"
+    if obj == "surround_view":
+        return f"surround_view.{_on_off_map.get(operate, operate)}"
+    if obj == "dashboard":
+        return f"dashboard.{_on_off_map.get(operate, operate)}"
+    if obj == "phone":
+        return f"phone.{operate}"
+    if obj == "contacts":
+        return f"contacts.{operate}"
+    if obj == "call_log":
+        return f"call_log.{_on_off_map.get(operate, operate)}"
+    if obj == "low_beam":
+        return f"low_beam.{_on_off_map.get(operate, operate)}"
     return None  # Unknown object -> not local
 
 
