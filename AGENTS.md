@@ -9,7 +9,7 @@
 
 云边协同的智能座舱 multi-agent 系统。**分层混合编排**：端侧"快系统"秒回高频/安全敏感指令（车控/媒体）并离线兜底；云侧"慢系统"用 LLM Planner 编排复杂/跨域/多轮意图。所有 Agent 实现统一 gRPC 契约 + Manifest，经注册中心即插即用。
 
-阶段：**Phase 1 工程化代码已落地，Docker 全栈联调通过**（2026-06-13）。118 测试通过 + E2E 4 条链路通过。
+阶段：**Phase 1 工程化代码已落地，Docker 全栈联调通过**（2026-06-13）。268 测试通过 + E2E 4 条链路通过。
 
 ---
 
@@ -20,7 +20,7 @@
 | 为什么这么设计（全局）| `docs/architecture/cockpit-agent-architecture.md` |
 | 接下来分几步做、怎么验收 | `docs/architecture/phase1-implementation-plan.md` |
 | 核心模块怎么编码 | `docs/architecture/detailed/ws{3,4,6,8}-*.md` |
-| 前瞻设计 / 问题分析（多意图、上下文、ASR、开放域延迟、车控指令）| `docs/design/` |
+| 前瞻设计 / 问题分析（多意图、上下文、ASR、开放域延迟、车控指令、云端中枢）| `docs/design/` |
 | 工程规则与铁律 | `CLAUDE.md` |
 | 怎么搭环境、codegen、单服务调试 | `docs/dev-guide.md` |
 | intent/scope/端口/错误码/env 速查 | `docs/conventions.md` |
@@ -66,6 +66,8 @@
 | 飞书数据全量导入 | ✅ lark-cli 拉取 5 张公版表（意图 1465 条 + 分类 400 + 词库 5185 + 响应 3000 + 兜底 34）；3 个生成脚本可重跑（`scripts/gen_commands_yaml.py` / `generate_entities.py` / `generate_responses.py`） |
 
 **结论**：Phase 1 全部验收标准达成 + 飞书公版全量导入（61 对象/150 意图）+ 多意图拆分 + ASR 转码 + answer_length 话术简繁（2026-06-14）。前瞻设计见 `docs/design/`，Phase 2 backlog 见 `docs/reviews/2026-06-11-review-fixes.md`。
+
+**进行中（2026-06-14 起）**：云端中枢升级（复杂意图：理解→规划→异构调度 车端快思考/Agent/工具），设计见 `docs/design/2026-06-14-cloud-central-orchestrator.md`。运行模型 T0/T1/T2 分级 + 首次规划复杂度分诊。**P0 地基已落地**（`Manifest.kind` + `EdgeCall/EdgeResult` 帧 + `Step/Plan` 字段；`buf` 插件钉 `v35.0`）；**待实现** P1 车端可调度（Gateway `DispatchToEdge` + 端 `edge_call`→VAL + 统一 dispatcher）/ T2 循环 / 工具。
 
 ---
 

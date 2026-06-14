@@ -127,6 +127,7 @@ go run ./gateway/edge          # 或 ./gateway/cloud
 | edge-orchestrator 报 `No module named 'yaml'` | `orchestrator/edge/requirements.txt` 缺 PyYAML；已加，rebuild 即可 |
 | ASR webm 格式返回 500 | Docker 镜像需含 ffmpeg（`llm-gateway/Dockerfile` 已加 `apt-get install ffmpeg`）；需 `docker compose build --no-cache llm-gateway` |
 | 新车控指令返回"暂不支持该端侧指令" | 检查 `orchestrator/edge/knowledge/commands.yaml` 是否含该 object；`fast_intent.py` 的 `LOCAL_INTENTS` 是否含该 intent name |
+| `make proto` 后报 `Detected incompatible Protobuf Gencode/Runtime versions`（gencode 新于 runtime）| buf 默认拉最新 python 插件，可能比运行时 protobuf 新。已在 `buf.gen.yaml` 把 `protocolbuffers/python` 钉到 `v35.0`（gencode 7.35.0 = 运行时 protobuf 7.35.0）；升级运行时 protobuf 时需同步该 pin（插件号 `vX.Y` → gencode `7.X.Y`）|
 
 ---
 

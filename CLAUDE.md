@@ -82,3 +82,5 @@ Windows 无 make 时用 `scripts/gen-proto.ps1` 等价替代（见 README）。
 
 ## 7. 当前阶段
 Phase 1 全部验收标准达成（2026-06-14）：Docker 全栈联调通过、E2E 4 条链路通过、268 测试全绿。车控知识库覆盖 61 对象 150 条意图（飞书公版全量导入）、多意图端云切分（含 actions 返回）、ASR/TTS 全链路、开放域流式、answer_length 话术简繁切换。**前瞻设计见 `docs/design/`**，修复清单见 `docs/reviews/2026-06-11-review-fixes.md`。
+
+**进行中（2026-06-14 起）**：云端中枢升级（复杂意图：理解→规划→异构调度 车端快思考/Agent/工具），设计见 `docs/design/2026-06-14-cloud-central-orchestrator.md`。运行模型 T0 端侧快路径 / T1 单次 DAG（=今天）/ T2 有界 Agentic 循环（升级），首次规划做复杂度分诊（simple→T1，adaptive→T2）+ 反应式兜底。**P0 地基已落地**：`Manifest.kind` + `EdgeCall/EdgeResult` 帧 + `Step/Plan` 字段；`buf.gen.yaml` 把 `protocolbuffers/python` 钉 `v35.0`（gencode 匹配运行时 protobuf 7.35.0）。**待实现**：P1 车端可调度（Gateway `DispatchToEdge` + 端 `edge_call`→VAL + 统一 dispatcher）、T2 循环、工具。
