@@ -48,6 +48,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         # 快路径 A：多意图全部本地，并行执行聚合语音
         if multi:
             speeches = []
+            actions = []
             for m_intent in multi:
                 legacy = structured_to_legacy(m_intent)
                 if legacy and legacy["confidence"] >= _HIGH and is_local(legacy["name"]):
@@ -56,6 +57,14 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     if not ok:
                         speech = speech or "操作失败"
                     speeches.append(speech)
+                    # 构造 action
+                    obj = m_intent.get("data", {}).get("object", "")
+                    action_type = "media.control" if obj in ("media", "music", "radio", "online_radio", "audiobook", "opera", "news", "video", "TV") else "vehicle.control"
+                    actions.append(common_pb2.AgentAction(
+                        type=action_type,
+                        payload=_struct({"command": legacy["name"], **legacy.get("slots", {})}),
+                        require_confirm=False,
+                    ))
                     logger.info("MULTI-LOCAL %s -> %s", legacy["name"], speech)
                 else:
                     # 单个子意图无法本地处理，走云（保守策略）
@@ -65,6 +74,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             if speeches:
                 combined = "，".join(speeches)
                 final = orchestrator_pb2.FinalResult(speech=combined)
+                final.actions.extend(actions)
                 yield orchestrator_pb2.HandleEvent(final=final)
                 return
 
