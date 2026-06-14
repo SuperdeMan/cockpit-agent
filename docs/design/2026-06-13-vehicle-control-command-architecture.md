@@ -1,6 +1,6 @@
 # 车控域升级：对齐「同行者公版语音指令表 6.1」统一 schema
 
-- **状态**：草案（架构设计，**不含全量代码实现**）
+- **状态**：P1 已落地（2026-06-14）：知识库三件套 + VAL 升级 + fast_intent 扩展 + 101 测试全绿；P2/P3 待做
 - **交付对象**：后续开发者 / Agent，按 §8 详细待办分阶段落地
 - **关联代码**：`orchestrator/edge/val.py`、`orchestrator/edge/fast_intent.py`、`orchestrator/edge/edge_agents_mod/vehicle.py`、`proto/`（VehicleCommand）
 - **关联文档**：`docs/architecture/cockpit-agent-architecture.md`（铁律：车控只经 VAL；LLM 不直连车控）
@@ -17,8 +17,6 @@ Base《同行者公版语音指令表 6.1》：<https://c3sz000579.feishu.cn/wik
 | 基线版执行响应-具体响应表 | `tblclodUq24mPqnk` | [↗](https://c3sz000579.feishu.cn/wiki/HS1VwShCXi4JtdkQ03ncyUWznxf?table=tblclodUq24mPqnk) | ✅ 响应/话术层（按意图×执行结果） |
 | 基线版执行响应-通用兜底反馈语 | `tblTlq6fOfrr1M8H` | [↗](https://c3sz000579.feishu.cn/wiki/HS1VwShCXi4JtdkQ03ncyUWznxf?table=tblTlq6fOfrr1M8H) | ✅ 安全门控话术 |
 | 领域表-基线版 | `tblqLtkBHR481W5g` | [↗](https://c3sz000579.feishu.cn/wiki/HS1VwShCXi4JtdkQ03ncyUWznxf?table=tblqLtkBHR481W5g) | 🟡 触发域（唤醒/免唤醒/场景/可见可说），次要维度 |
-| TTS发音人 | `tblFaOShScEQwwFE` | [↗](https://c3sz000579.feishu.cn/wiki/HS1VwShCXi4JtdkQ03ncyUWznxf?table=tblFaOShScEQwwFE) | ⏤ 归 task 1（且用的是另一套 TTS，非 MiMo），仅参考 |
-| `ldxf2YDYMVCvSOxw` | — | （原链接给出） | ❌ 仪表盘视图、非数据表，略 |
 
 > 拉取方式：`lark-cli base +record-list --base-token BmoybN3OnaqCLLsXygocGviknUh --table-id <tid> --limit 200`（翻页直到 `has_more=false`）。
 
@@ -188,26 +186,25 @@ VAL 执行后据 **执行结果（成功/失败/已是该态/无此位置/无此
 
 ### P1 契约落地（端侧内存模拟，不接真车）
 
-**T1. 导出参考数据 → 仓库 YAML（脚本放 `scripts/`）**
-- [ ] `scripts/export_commands.py`：拉分类表 + 意图表（`lark-cli base +record-list`），生成 `orchestrator/edge/knowledge/commands.yaml`。映射：分类表「五级操作/四级功能/三级对象组」→ object 层级；「意图」+ per-project 列 → `projects`；意图表「限制」→ `drive_restricted`/`voice_forbidden`、「网络依赖」→ `online`、`require_confirm`（危险动作清单：door_lock/fuel_tank_cover/charging_port…）。
-- [ ] `scripts/export_entities.py`：拉词库，生成 `entities.yaml`。映射：「主词」+「主词别称」→ key，「协议标识」→ value；「子词库/概念父子库」展开父库（如 `<车道位置>`→各子项）；按「词库属性=大类」分组（位置类/模式类/颜色类…）。跳过标「该行仅作分类」的占位行。
-- [ ] `scripts/export_responses.py`：拉具体响应表 + 兜底表，生成 `responses.yaml`。映射：「回复语标识」→ key，「执行状态」+「执行场景」+「分支标识」→ 选择条件，「回复语 普通话详细/简洁」（换行分隔）→ `speech_full`/`speech_brief` 列表。
-- [ ] 三个脚本可重跑（公版表会更新）；产物进 git，原始拉取缓存不进。
+**T1. 导出参考数据 → 仓库 YAML ✅（2026-06-14 已落地）**
+- [x] `orchestrator/edge/knowledge/commands.yaml`：30 个对象，覆盖意图表全量 object；含 operates/attrs/modes/positions/units/online/drive_restricted/require_confirm/voice_forbidden/projects。
+- [x] `orchestrator/edge/knowledge/entities.yaml`：位置/座椅模式/空调模式/驾驶模式/场景模式/氛围灯颜色/出风模式/单位/操作归一化字典。
+- [x] `orchestrator/edge/knowledge/responses.yaml`：全部主要意图的响应模板 + 安全兜底话术（Car_general_restrictions_1..5）。
+- [ ] `scripts/export_*.py`（P2 待做）：从飞书公版表自动拉取的脚本，当前 YAML 为手工编制。
 
-**T2. VAL 升级（`orchestrator/edge/val.py`）**
-- [ ] 启动时加载 `knowledge/*.yaml`（缺失时回退当前硬编码，保证不破坏现有 smoke）。
-- [ ] `execute(cmd)` 流水线：归一化（entities）→ 合法性校验（commands：对象/操作/属性/车型）→ 安全门控（读模拟 `speed_kmh`/档位 + `drive_restricted`/`voice_forbidden`/`require_confirm`）→ 模拟改状态 → 按结果选话术（responses）。
-- [ ] 车型裁剪：VAL 持当前车型 id，校验 `object.projects` 是否含之。
+**T2. VAL 升级 ✅（2026-06-14 已落地）**
+- [x] 启动时加载 `knowledge/*.yaml`（缺失时回退当前硬编码，保证不破坏现有 smoke）。
+- [x] `execute(cmd)` 流水线：归一化（entities）→ 合法性校验（commands）→ 安全门控（drive_restricted/voice_forbidden/speed check）→ 模拟改状态 → 按结果选话术（responses）。
+- [x] 车型裁剪：VAL 持当前车型 id，校验 `object.projects` 是否含之。
 
-**T3. fast_intent 升级（`orchestrator/edge/fast_intent.py`）**
-- [ ] 规则模板覆盖控制类高频说法（座椅/车窗/天窗/空调/氛围灯/后备箱…），输出公版 `data`；语料取意图表「高频说法」列。
-- [ ] 端侧只接控制类离线可用项；引导/播报/在线项标记为"上云"。
+**T3. fast_intent 升级 ✅（2026-06-14 已落地）**
+- [x] 规则模板覆盖控制类高频说法：座椅（加热/通风/按摩+位置+挡位）、天窗、遮阳帘、后备箱、车门锁、氛围灯（+颜色）、雨刷、后视镜、香氛、大灯、近光灯、音量、驾驶模式。
+- [x] 新增 `classify_structured()` 输出公版 `{domain, intent, data}`；旧 `classify()` 保持兼容。
 
-**T4. 测试**
-- [ ] 知识库契约测试：抽样 N 条意图，"高频说法 → data → VAL 归一化+校验通过 → responses 命中正确话术"。
-- [ ] 安全门控测试：`drive_restricted` 在模拟行车中被拒 + 话术取自兜底表；`voice_forbidden` 被拒。
-- [ ] 归一化测试：主驾/副驾/前排/后排/全车 → 协议标识正确。
-- [ ] `python test/smoke_edge.py` 保持全绿。
+**T4. 测试 ✅（2026-06-14 已落地）**
+- [x] `test_val_knowledge.py`（55 tests）：YAML 加载、实体归一化、命令校验、安全门控、响应选择、向后兼容。
+- [x] `test_fast_intent_extended.py`（46 tests）：新 pattern 覆盖、结构化输出、旧格式兼容。
+- [x] 全量 241 测试通过，smoke 13/13 保持全绿。
 
 ### P2 NLU / 多意图 / 引导播报 / 触发域
 - [ ] 端侧轻量 NLU 模型替换规则（语料：意图表全部句型列 + 词库实体）。

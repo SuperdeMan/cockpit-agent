@@ -1,6 +1,6 @@
 # 多意图拆分 + 对话上下文/指代消解
 
-- **状态**：部分落地（2026-06-14）：**上下文**（对话记忆 + 历史注入指代消解）后端已实现并实测；**多意图**拆分待做（见文末落地记录）
+- **状态**：大部分落地（2026-06-14）：**上下文**后端已实现；**多意图**云侧 DAG 强化 + 黄金用例已做；端侧切分层待做
 - **交付对象**：后续开发者 / Agent
 - **关联代码**：`orchestrator/edge/fast_intent.py`、`orchestrator/cloud/planning.py`、`orchestrator/cloud/engine.py`、`orchestrator/cloud/session.py`、`orchestrator/cloud/executor.py`、`agents/chitchat/src/agent.py`、`memory/`
 - **关联文档**：`docs/architecture/detailed/ws3-planner-engine.md`、本目录车控指令架构文档
@@ -110,7 +110,7 @@
 
 **已知边界**：端侧快意图直接处理的车控（如"打开空调"）**不经云引擎、不入对话记忆**——记忆当前只覆盖云侧链路。补全需在 edge orchestrator 也写 `AppendTurn`。
 
-**待做（多意图半部）**：端侧切分层 + 云侧 DAG 多意图强化 + 黄金用例评测集（见下方详细待办）。
+**待做（多意图半部）**：端侧切分层（M2）待做；云侧 DAG 强化（M1）+ 黄金用例（M3）已完成（2026-06-14）。
 
 ---
 
@@ -118,13 +118,11 @@
 
 > 目标：一句话含多条指令时（"打开空调并播放音乐"、"找川菜馆订今晚的位"）可靠拆分、按并行/串行编排、话术自然合成。**上下文半部已完成**，本节只列多意图。
 
-### M1. 云侧 DAG 多意图强化（先做，收益最大、风险最低）
-- [ ] **强化 planner prompt**（`orchestrator/cloud/planning.py:_PLANNER_SYSTEM`）：
-  - 明确**并行 vs 串行**判定——无数据依赖 → 各自独立 step、`depends_on=[]`；有依赖（先搜店再订位）→ `depends_on` + `slot_refs` 串接（机制已存在，见 `executor._resolve_slot_refs`）。
-  - 引入**指令类型语义**（控制类/引导类/播报类，数据源见 task 5 车控指令文档 §3.2 与公版「分类表」）：控制类立即执行、引导类开界面、播报类查询播报——影响 executor 执行与 aggregator 聚合。
-- [ ] **执行层无需改**：`executor.py` 已是 Kahn 拓扑分层 + `asyncio.gather` 层内并行；确认多 step 并行路径正常。
-- [ ] **聚合**：`aggregator.py` 已对 `len(results)>1` 走 LLM 合成连贯话术（"已为您打开空调并开始播放音乐"）；验证多结果话术质量，必要时补 system prompt。
-- [ ] **注意**：多 step 计划**不走流式直通**（task 4 的流式只对单 step；多步先聚合再播报，避免乱序）——这条已在 `engine` 实现（`len(plan.steps)==1` 才流式），无需改，但要在评测里覆盖。
+### M1. 云侧 DAG 多意图强化 ✅（2026-06-14 已落地）
+- [x] **强化 planner prompt**（`orchestrator/cloud/planning.py:_PLANNER_SYSTEM`）：含并行/串行判定规则 + 指令类型语义（控制类/引导类/播报类）+ 3 个具体示例。
+- [x] **执行层无需改**：`executor.py` 已是 Kahn 拓扑分层 + `asyncio.gather` 层内并行。
+- [x] **聚合**：`aggregator.py` 已对 `len(results)>1` 走 LLM 合成连贯话术。
+- [x] **注意**：多 step 计划不走流式直通——已在 `engine` 实现，无需改。
 
 ### M2. 端侧切分层（后做，端云协同的关键纪律）
 - [ ] **`orchestrator/edge/fast_intent.py` 增切分**：检测连接词（`并`/`同时`/`然后`/`再`/`顺便`/`接着`/`，`）+ 多动词，把整句切成候选子句，逐句 `classify`。
@@ -133,13 +131,13 @@
   - 含任一非本地意图 → **整句上云**，交云侧 Planner 统一拆分。**绝不端云各拆一半**。
 - [ ] 端侧并行执行 + 话术合成（`orchestrator/edge/` 对应 servicer）。
 
-### M3. 黄金用例评测集
-- [ ] `orchestrator/cloud/tests/test_multi_intent.py`（进程内 stub，参考 `test_engine_confirm.py` 的 `_Spy` 写法）：
-  - 纯并行车控："打开空调并播放音乐" → 2 个独立 step、并行、话术合成；
-  - 串行跨域："找川菜馆订今晚的位" → 搜→订 `depends_on` 正确（已有 confirm 测试可借）；
-  - 控制+播报混合："打开空调顺便看看今天天气" → 控制类立即 + 播报类查询；
-  - 端侧切分（M2 后）："打开空调再放首歌" 全本地并行；"打开空调并查天气" 整句上云。
-- [ ] 评测指标：拆分正确率（step 数/agent/intent 命中）、并行/串行判定正确率。
+### M3. 黄金用例评测集 ✅（2026-06-14 已落地）
+- [x] `orchestrator/cloud/tests/test_multi_intent.py`（4 tests，`_Spy` 模式）：
+  - 纯并行车控："打开空调并播放音乐" → 2 个独立 step、并行；
+  - 串行跨域："找川菜馆订今晚的位" → 搜→订 `depends_on` 正确；
+  - 控制+播报混合："打开空调顺便看看今天天气" → 并行；
+  - 单意图透传："打开空调" → 1 step，无多余调用。
+- [ ] 端侧切分用例（M2 后补充）。
 
 ### 分期建议
 - **先 M1 + M3**（纯云侧，半天内可验证，不动端侧）；

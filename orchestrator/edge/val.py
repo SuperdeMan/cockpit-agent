@@ -2,19 +2,65 @@
 
 架构约束：VAL 是唯一能"碰车"的组件。所有车控只经此下发，做指令合法性、权限、安全态门控、状态机。
 PoC 为内存模拟；真实实现对接 SOME-IP / AUTOSAR AP / VSOA / CAN。
+
+知识库驱动：启动时加载 knowledge/*.yaml，缺失时回退硬编码（保证 smoke 不破坏）。
 """
 from __future__ import annotations
 
+import os
+import random
+import yaml
+from typing import Any
+
+
+def _load_yaml(path: str) -> dict:
+    """加载 YAML 文件，不存在则返回空 dict。"""
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
 
 class VAL:
-    def __init__(self):
+    def __init__(self, knowledge_dir: str | None = None, vehicle_model: str | None = None):
         self.state = {
             "hvac_on": False, "hvac_temp": 24,
             "window": "closed", "media": "stopped", "speed_kmh": 60,
+            "gear": "P",
         }
+        self.vehicle_model = vehicle_model
+        self.commands: dict = {}
+        self.entities: dict = {}
+        self.responses: dict = {}
 
-    def execute(self, command: str, args: dict) -> tuple[bool, str]:
-        # 安全态门控示例（示意）：高速行驶中不完全打开车窗
+        if knowledge_dir is None:
+            knowledge_dir = os.path.join(os.path.dirname(__file__), "knowledge")
+        self._load_knowledge(knowledge_dir)
+
+    # ── 知识库加载 ──────────────────────────────────────────────
+
+    def _load_knowledge(self, knowledge_dir: str):
+        """加载三件套 YAML；目录不存在或文件缺失时静默跳过（回退硬编码）。"""
+        if not os.path.isdir(knowledge_dir):
+            return
+        self.commands = _load_yaml(os.path.join(knowledge_dir, "commands.yaml"))
+        self.entities = _load_yaml(os.path.join(knowledge_dir, "entities.yaml"))
+        self.responses = _load_yaml(os.path.join(knowledge_dir, "responses.yaml"))
+
+    # ── 统一入口 ──────────────────────────────────────────────
+
+    def execute(self, cmd: Any, args: dict | None = None) -> tuple[bool, str]:
+        """兼容旧接口 (str, dict) 和新接口 (dict)。"""
+        if isinstance(cmd, str):
+            return self._legacy_execute(cmd, args or {})
+        if isinstance(cmd, dict):
+            return self._structured_execute(cmd)
+        return False, "暂不支持该控制指令"
+
+    # ── 旧接口（向后兼容）──────────────────────────────────────
+
+    def _legacy_execute(self, command: str, args: dict) -> tuple[bool, str]:
+        # 安全态门控示例：高速行驶中不完全打开车窗
         if command == "window.open" and self.state["speed_kmh"] > 120:
             return False, "高速行驶中为安全起见暂不打开车窗"
         return self._apply(command, args)
@@ -47,3 +93,507 @@ class VAL:
         if command == "media.prev":
             return True, "已切换到上一首"
         return False, "暂不支持该控制指令"
+
+    # ── 新接口（结构化命令）──────────────────────────────────
+
+    def _structured_execute(self, cmd: dict) -> tuple[bool, str]:
+        """结构化命令执行流水线。
+
+        cmd = {domain, intent, data: {operate, object, attr, positions, value, unit, ...}}
+        流水线：归一化 → 校验 → 安全门控 → 模拟 → 选话术
+        """
+        data = cmd.get("data", {})
+        obj = data.get("object")
+        operate = data.get("operate")
+
+        if not obj or not operate:
+            return False, self._pick_response("unsupported_command")
+
+        # 1. 归一化实体
+        normalized = self._normalize_entities(data)
+
+        # 2. 校验：对象/操作/属性是否合法
+        ok, err = self._validate_command(obj, operate, normalized)
+        if not ok:
+            return False, err
+
+        # 3. 安全门控
+        ok, err = self._safety_gate(obj, operate, normalized)
+        if not ok:
+            return False, err
+
+        # 4. 需要二次确认（返回提示，由调用方决定是否继续）
+        if self._need_confirm(obj):
+            confirm_msg = self._pick_response("Car_general_restrictions_5")
+            # PoC：直接执行；真实场景返回 (False, confirm_msg) 让上层处理
+            # 这里简化为标记后继续
+
+        # 5. 模拟状态变更
+        state_key, new_value = self._simulate(obj, operate, normalized)
+
+        # 6. 选话术
+        response_key = self._build_response_key(obj, operate, normalized)
+        speech = self._pick_response(response_key, normalized)
+
+        return True, speech
+
+    # ── 归一化 ──────────────────────────────────────────────
+
+    def _normalize_entities(self, data: dict) -> dict:
+        """把 data 中的中文实体映射为协议标识。"""
+        normalized = dict(data)
+
+        # 位置归一化
+        if "positions" in data and data["positions"]:
+            pos_map = self.entities.get("positions", {})
+            raw_positions = data["positions"]
+            if isinstance(raw_positions, str):
+                raw_positions = [raw_positions]
+            resolved = []
+            for p in raw_positions:
+                if p in pos_map:
+                    val = pos_map[p]
+                    if isinstance(val, list):
+                        resolved.extend(val)
+                    else:
+                        resolved.append(val)
+                else:
+                    resolved.append(p)
+            normalized["positions"] = resolved
+
+        # 模式归一化（seat_modes / aircon_modes / driving_modes 等）
+        if "mode" in data and data["mode"]:
+            mode = data["mode"]
+            for category in ("seat_modes", "aircon_modes", "driving_modes",
+                             "scene_modes", "wind_modes"):
+                cat_map = self.entities.get(category, {})
+                if mode in cat_map:
+                    normalized["mode"] = cat_map[mode]
+                    break
+
+        # 颜色归一化
+        if "tag" in data and data["tag"]:
+            color_map = self.entities.get("light_colors", {})
+            if data["tag"] in color_map:
+                normalized["tag"] = color_map[data["tag"]]
+
+        # 单位归一化
+        if "unit" in data and data["unit"]:
+            unit_map = self.entities.get("units", {})
+            if data["unit"] in unit_map:
+                normalized["unit"] = unit_map[data["unit"]]
+
+        return normalized
+
+    # ── 校验 ──────────────────────────────────────────────
+
+    def _validate_command(self, obj: str, operate: str, data: dict) -> tuple[bool, str]:
+        """校验对象、操作、属性是否在 commands.yaml 中合法。"""
+        objects = self.commands.get("objects", {})
+        if not objects:
+            # 无知识库时跳过校验（兼容旧模式）
+            return True, ""
+
+        obj_def = objects.get(obj)
+        if obj_def is None:
+            return False, self._pick_response("unsupported_command")
+
+        # 操作校验
+        valid_operates = obj_def.get("operates", [])
+        if operate not in valid_operates:
+            return False, self._pick_response("unsupported_command")
+
+        # 属性校验
+        attr = data.get("attr")
+        if attr:
+            valid_attrs = obj_def.get("attrs", [])
+            if valid_attrs and attr not in valid_attrs:
+                return False, self._pick_response("unsupported_command")
+
+        # 模式校验
+        mode = data.get("mode")
+        if mode:
+            valid_modes = obj_def.get("modes", [])
+            if valid_modes and mode not in valid_modes:
+                return False, self._pick_response("unsupported_command")
+
+        # 车型裁剪
+        if self.vehicle_model:
+            projects = obj_def.get("projects", [])
+            if projects and self.vehicle_model not in projects:
+                return False, self._pick_response("model_not_supported")
+
+        return True, ""
+
+    # ── 安全门控 ──────────────────────────────────────────
+
+    def _safety_gate(self, obj: str, operate: str, data: dict) -> tuple[bool, str]:
+        """安全态门控：voice_forbidden / drive_restricted / speed check。"""
+        objects = self.commands.get("objects", {})
+        obj_def = objects.get(obj, {}) if objects else {}
+
+        # voice_forbidden：不支持语音操作
+        if obj_def.get("voice_forbidden", False):
+            return False, self._pick_response("Car_general_restrictions_4")
+
+        # drive_restricted：行车中不允许操控
+        if obj_def.get("drive_restricted", False):
+            if self._is_driving():
+                if operate in ("open", "set", "switch", "start"):
+                    return False, self._pick_response("Car_general_restrictions_2")
+                if operate in ("close", "stop"):
+                    return False, self._pick_response("Car_general_restrictions_3")
+
+        # 通用速度门控（高速行车中限制某些操作）
+        if self._is_driving():
+            # 高速行驶中不完全打开车窗
+            if obj == "window" and operate == "open":
+                if self.state.get("speed_kmh", 0) > 120:
+                    return False, "高速行驶中为安全起见暂不打开车窗"
+
+        return True, ""
+
+    def _is_driving(self) -> bool:
+        """判断是否处于行车状态（speed>0 或档位非 P）。"""
+        speed = self.state.get("speed_kmh", 0)
+        gear = self.state.get("gear", "P")
+        return speed > 0 or gear not in ("P", "N")
+
+    def _need_confirm(self, obj: str) -> bool:
+        """检查是否为危险动作（需要二次确认）。"""
+        objects = self.commands.get("objects", {})
+        obj_def = objects.get(obj, {}) if objects else {}
+        return obj_def.get("require_confirm", False)
+
+    # ── 状态模拟 ──────────────────────────────────────────
+
+    def _simulate(self, obj: str, operate: str, data: dict) -> tuple[str | None, Any]:
+        """模拟状态变更；返回 (state_key, new_value)。"""
+        value = data.get("value")
+        mode = data.get("mode")
+
+        if obj == "aircon":
+            if operate in ("open", "set"):
+                self.state["hvac_on"] = True
+                if value:
+                    self.state["hvac_temp"] = int(value)
+                return "hvac_on", True
+            if operate == "close":
+                self.state["hvac_on"] = False
+                return "hvac_on", False
+
+        elif obj == "window":
+            if operate == "open":
+                self.state["window"] = "open"
+                return "window", "open"
+            if operate == "close":
+                self.state["window"] = "closed"
+                return "window", "closed"
+
+        elif obj == "seat":
+            key = f"seat_{mode or 'heating'}"
+            if operate in ("open", "set"):
+                self.state[key] = True
+                return key, True
+            if operate == "close":
+                self.state[key] = False
+                return key, False
+
+        elif obj == "sunroof":
+            if operate == "open":
+                self.state["sunroof"] = "open"
+                return "sunroof", "open"
+            if operate == "close":
+                self.state["sunroof"] = "closed"
+                return "sunroof", "closed"
+
+        elif obj == "sunshade":
+            if operate == "open":
+                self.state["sunshade"] = "open"
+                return "sunshade", "open"
+            if operate == "close":
+                self.state["sunshade"] = "closed"
+                return "sunshade", "closed"
+
+        elif obj == "ambient_light":
+            if operate == "open":
+                self.state["ambient_light"] = True
+                return "ambient_light", True
+            if operate == "close":
+                self.state["ambient_light"] = False
+                return "ambient_light", False
+            if operate == "set":
+                if data.get("tag"):
+                    self.state["ambient_light_color"] = data["tag"]
+                    return "ambient_light_color", data["tag"]
+                if value:
+                    self.state["ambient_light_brightness"] = int(value)
+                    return "ambient_light_brightness", int(value)
+
+        elif obj == "headlight":
+            if operate == "open":
+                self.state["headlight"] = True
+                return "headlight", True
+            if operate == "close":
+                self.state["headlight"] = False
+                return "headlight", False
+
+        elif obj == "trunk":
+            if operate == "open":
+                self.state["trunk"] = "open"
+                return "trunk", "open"
+            if operate == "close":
+                self.state["trunk"] = "closed"
+                return "trunk", "closed"
+
+        elif obj == "door_lock":
+            if operate == "open":
+                self.state["door_lock"] = "unlocked"
+                return "door_lock", "unlocked"
+            if operate == "close":
+                self.state["door_lock"] = "locked"
+                return "door_lock", "locked"
+
+        elif obj == "fuel_tank_cover":
+            if operate == "open":
+                self.state["fuel_tank_cover"] = "open"
+                return "fuel_tank_cover", "open"
+            if operate == "close":
+                self.state["fuel_tank_cover"] = "closed"
+                return "fuel_tank_cover", "closed"
+
+        elif obj == "charging_port":
+            if operate == "open":
+                self.state["charging_port"] = "open"
+                return "charging_port", "open"
+            if operate == "close":
+                self.state["charging_port"] = "closed"
+                return "charging_port", "closed"
+
+        elif obj == "rear_view_mirror":
+            if operate == "open" or (operate == "set" and mode == "unfold"):
+                self.state["rear_view_mirror"] = "unfolded"
+                return "rear_view_mirror", "unfolded"
+            if operate == "close" or (operate == "set" and mode == "fold"):
+                self.state["rear_view_mirror"] = "folded"
+                return "rear_view_mirror", "folded"
+
+        elif obj == "wiper":
+            if operate == "open":
+                self.state["wiper"] = True
+                return "wiper", True
+            if operate == "close":
+                self.state["wiper"] = False
+                return "wiper", False
+            if operate == "set" and value:
+                self.state["wiper_speed"] = int(value)
+                return "wiper_speed", int(value)
+
+        elif obj == "fragrance":
+            if operate == "open":
+                self.state["fragrance"] = True
+                return "fragrance", True
+            if operate == "close":
+                self.state["fragrance"] = False
+                return "fragrance", False
+
+        elif obj == "steering_wheel":
+            if operate == "set" and mode == "heating":
+                self.state["steering_wheel_heating"] = True
+                return "steering_wheel_heating", True
+            if operate == "close" and mode == "heating":
+                self.state["steering_wheel_heating"] = False
+                return "steering_wheel_heating", False
+
+        elif obj == "driving_mode":
+            if operate in ("set", "switch") and mode:
+                self.state["driving_mode"] = mode
+                return "driving_mode", mode
+
+        elif obj == "scene_mode":
+            if operate in ("set", "switch") and mode:
+                self.state["scene_mode"] = mode
+                return "scene_mode", mode
+
+        elif obj == "volume":
+            if operate == "set" and value:
+                self.state["volume"] = int(value)
+                return "volume", int(value)
+            if operate == "inc":
+                self.state["volume"] = min(self.state.get("volume", 50) + 10, 100)
+                return "volume", self.state["volume"]
+            if operate == "dec":
+                self.state["volume"] = max(self.state.get("volume", 50) - 10, 0)
+                return "volume", self.state["volume"]
+
+        elif obj == "screen":
+            if operate == "set" and value:
+                self.state["screen_brightness"] = int(value)
+                return "screen_brightness", int(value)
+
+        elif obj == "energy_recovery":
+            if operate == "set" and value:
+                self.state["energy_recovery"] = int(value)
+                return "energy_recovery", int(value)
+
+        elif obj == "accompany_home":
+            if operate == "open":
+                self.state["accompany_home"] = True
+                return "accompany_home", True
+            if operate == "close":
+                self.state["accompany_home"] = False
+                return "accompany_home", False
+
+        elif obj in ("tire_pressure_monitoring", "dashcam"):
+            # 查询类 / 开关类
+            if operate == "open":
+                self.state[obj] = True
+                return obj, True
+            if operate == "close":
+                self.state[obj] = False
+                return obj, False
+
+        # 兜底：标记状态
+        key = f"{obj}_{operate}"
+        self.state[key] = True
+        return key, True
+
+    # ── 话术选择 ──────────────────────────────────────────
+
+    def _build_response_key(self, obj: str, operate: str, data: dict) -> str:
+        """根据对象+操作构建 responses.yaml 的 key。"""
+        mode = data.get("mode")
+
+        # 特殊映射
+        if obj == "aircon":
+            if operate == "open":
+                return "hvac_on_success"
+            if operate == "close":
+                return "hvac_off_success"
+            if operate == "set":
+                return "hvac_set_success"
+
+        if obj == "window":
+            op_map = {"open": "window_open_success", "close": "window_close_success"}
+            return op_map.get(operate, "generic_success")
+
+        if obj == "sunroof":
+            op_map = {"open": "sunroof_open_success", "close": "sunroof_close_success"}
+            return op_map.get(operate, "generic_success")
+
+        if obj == "sunshade":
+            op_map = {"open": "sunshade_open_success", "close": "sunshade_close_success"}
+            return op_map.get(operate, "generic_success")
+
+        if obj == "seat":
+            if mode == "heating":
+                return "seat_heating_on_success" if operate in ("open", "set") else "seat_heating_off_success"
+            if mode == "ventilation":
+                return "seat_ventilation_on_success" if operate in ("open", "set") else "seat_ventilation_off_success"
+            if mode == "massage":
+                return "seat_massage_on_success" if operate in ("open", "set") else "seat_massage_off_success"
+            return "seat_set_success"
+
+        if obj == "ambient_light":
+            if operate in ("open", "close"):
+                return "ambient_light_on_success" if operate == "open" else "ambient_light_off_success"
+            if data.get("tag"):
+                return "ambient_light_color_success"
+            return "ambient_light_brightness_success"
+
+        if obj == "headlight":
+            return "headlight_on_success" if operate == "open" else "headlight_off_success"
+
+        if obj == "trunk":
+            return "trunk_open_success" if operate == "open" else "trunk_close_success"
+
+        if obj == "door_lock":
+            return "door_lock_open_success" if operate == "open" else "door_lock_close_success"
+
+        if obj == "fuel_tank_cover":
+            return "fuel_tank_cover_open_success" if operate == "open" else "fuel_tank_cover_close_success"
+
+        if obj == "charging_port":
+            return "charging_port_open_success" if operate == "open" else "charging_port_close_success"
+
+        if obj == "rear_view_mirror":
+            if operate == "open" or (operate == "set" and mode == "unfold"):
+                return "rear_view_mirror_unfold_success"
+            return "rear_view_mirror_fold_success"
+
+        if obj == "wiper":
+            if operate == "open":
+                return "wiper_on_success"
+            if operate == "close":
+                return "wiper_off_success"
+            return "wiper_set_success"
+
+        if obj == "fragrance":
+            return "fragrance_on_success" if operate == "open" else "fragrance_off_success"
+
+        if obj == "steering_wheel":
+            return "steering_wheel_heating_on_success" if operate in ("open", "set") else "steering_wheel_heating_off_success"
+
+        if obj == "driving_mode":
+            return "driving_mode_set_success"
+
+        if obj == "scene_mode":
+            return "scene_mode_set_success"
+
+        if obj == "volume":
+            if operate == "set":
+                return "volume_set_success"
+            if operate == "inc":
+                return "volume_inc_success"
+            if operate == "dec":
+                return "volume_dec_success"
+
+        if obj == "screen":
+            return "screen_brightness_success"
+
+        if obj == "energy_recovery":
+            return "energy_recovery_set_success"
+
+        if obj == "accompany_home":
+            return "accompany_home_on_success" if operate in ("open", "set") else "accompany_home_off_success"
+
+        if obj == "tire_pressure_monitoring":
+            return "tire_pressure_query_success"
+
+        if obj == "dashcam":
+            return "dashcam_on_success" if operate == "open" else "dashcam_off_success"
+
+        return "generic_success"
+
+    def _pick_response(self, key: str, data: dict | None = None) -> str:
+        """从 responses.yaml 选话术。有模板数据时优先选含占位符的话术。"""
+        resp = self.responses.get(key)
+        if not resp:
+            return key  # 无模板时返回 key 本身作为 fallback
+
+        speeches = resp.get("speech_brief") or resp.get("speech_full") or []
+        if not speeches:
+            return resp.get("scene", key)
+
+        # 有数据时优先选含占位符的模板
+        if data:
+            placeholder_speeches = [s for s in speeches if "{" in s]
+            if placeholder_speeches:
+                speeches = placeholder_speeches
+
+        template = random.choice(speeches)
+
+        # 替换占位符
+        if data:
+            template = template.replace("{value}", str(data.get("value", "")))
+            template = template.replace("{mode}", str(data.get("mode", "")))
+            template = template.replace("{tag}", str(data.get("tag", "")))
+            # 位置：取第一个
+            positions = data.get("positions", [])
+            if positions:
+                pos_display = positions[0] if isinstance(positions, list) else str(positions)
+            else:
+                pos_display = ""
+            template = template.replace("{position}", pos_display)
+
+        return template

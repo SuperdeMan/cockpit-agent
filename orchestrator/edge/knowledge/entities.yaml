@@ -1,0 +1,157 @@
+# entities.yaml — 实体归一化字典（来源：同行者公版语音指令表 6.1 词库）
+# 自然语言 → 协议标识；主词 + 别称均映射到同一标识
+
+# ── 位置 ──
+positions:
+  主驾: front_left
+  主驾位: front_left
+  驾驶位: front_left
+  左前: front_left
+  副驾: front_right
+  副驾位: front_right
+  副驾驶: front_right
+  副驾驶位: front_right
+  右前: front_right
+  前排: [front_left, front_right]
+  前排左: front_left
+  前排右: front_right
+  后排: [rear_left, rear_right]
+  后排左: rear_left
+  后排右: rear_right
+  左后: rear_left
+  右后: rear_right
+  后排中间: rear_center
+  全车: all
+  所有位置: all
+  左侧: left
+  右侧: right
+
+# ── 座椅模式 ──
+seat_modes:
+  加热: heating
+  座椅加热: heating
+  通风: ventilation
+  座椅通风: ventilation
+  按摩: massage
+  座椅按摩: massage
+  腰托: lumbar_support
+  腰部支撑: lumbar_support
+
+# ── 空调模式 ──
+aircon_modes:
+  内循环: internal
+  外循环: external
+  除雾: 除雾
+  前除雾: 除雾
+  后除雾: 除雾
+  除霜: 除霜
+  制冷: 制冷
+  制冷模式: 制冷
+  制热: 制热
+  制热模式: 制热
+  暖风: 制热
+  冷风: 制冷
+  吹脚: 吹脚
+  吹脚模式: 吹脚
+  吹人: 吹人
+  吹面: 吹面
+  吹脸: 吹面
+
+# ── 驾驶模式 ──
+driving_modes:
+  节能: eco
+  节能模式: eco
+  经济: eco
+  经济模式: eco
+  运动: sport
+  运动模式: sport
+  舒适: comfort
+  舒适模式: comfort
+  雪地: snow
+  雪地模式: snow
+  越野: offroad
+  越野模式: offroad
+  标准: normal
+  标准模式: normal
+
+# ── 场景模式 ──
+scene_modes:
+  小憩: nap
+  小睡: nap
+  露营: camping
+  观影: movie
+  看电影: movie
+  浪漫: romantic
+  冥想: meditation
+
+# ── 氛围灯颜色 ──
+light_colors:
+  红色: red
+  红: red
+  蓝色: blue
+  蓝: blue
+  绿色: green
+  绿: green
+  白色: white
+  白: white
+  紫色: purple
+  紫: purple
+  黄色: yellow
+  黄: yellow
+  橙色: orange
+  橙: orange
+  粉色: pink
+  粉: pink
+  暖白: warm_white
+  冷白: cool_white
+  冰蓝: ice_blue
+  星空: starry
+
+# ── 出风模式 ──
+wind_modes:
+  吹脚: blow_feet
+  吹人: blow_body
+  吹面: blow_face
+  吹脸: blow_face
+  吹脚吹面: blow_feet_face
+  吹脚吹人: blow_feet_body
+
+# ── 单位 ──
+units:
+  度: degree
+  摄氏度: degree
+  °: degree
+  挡: level
+  档: level
+  级: level
+  百分比: percent
+  "%": percent
+  秒: second
+
+# ── 操作 ──
+operations:
+  打开: open
+  开启: open
+  开: open
+  关闭: close
+  关: close
+  关上: close
+  设定: set
+  设置: set
+  设为: set
+  调到: set
+  调至: set
+  调: set
+  调高: inc
+  调大: inc
+  增大: inc
+  加大: inc
+  调低: dec
+  调小: dec
+  减小: dec
+  降低: dec
+  切换: switch
+  查询: query
+  暂停: pause
+  停止: stop
+  开始: start

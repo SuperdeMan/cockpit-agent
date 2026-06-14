@@ -1,0 +1,394 @@
+# commands.yaml — 车控命令 schema（来源：同行者公版语音指令表 6.1 分类表+意图表）
+# 每个 object 声明：operates/attrs/modes/positions/units/online/drive_restricted/require_confirm/voice_forbidden
+# positions=true 表示支持位置选择（主驾/副驾/前排/后排/全车）
+
+objects:
+  # ── 座椅 ──
+  seat:
+    operates: [open, close, set, inc, dec]
+    attrs: [temperature, speed]
+    modes: [heating, ventilation, massage, lumbar_support, 加热, 通风, 按摩, 腰托]
+    positions: true
+    units: [degree, level, percent]
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 车窗 ──
+  window:
+    operates: [open, close, set, inc, dec]
+    attrs: [height]
+    modes: []
+    positions: true
+    units: [percent]
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 天窗 ──
+  sunroof:
+    operates: [open, close, set, inc, dec]
+    attrs: [height]
+    modes: []
+    positions: false
+    units: [percent]
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 遮阳帘 ──
+  sunshade:
+    operates: [open, close, set, inc, dec]
+    attrs: [height]
+    modes: []
+    positions: true
+    units: [percent]
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 空调（含子对象：circulation/wind/cooling/heating）──
+  aircon:
+    operates: [open, close, set, inc, dec]
+    attrs: [temperature, speed]
+    modes: [internal, external, 除雾, 除霜, 制冷, 制热, 吹脚, 吹人, 吹面, 内循环, 外循环, 前除雾, 后除雾, 制冷模式, 制热模式, 暖风, 冷风, 吹脚模式, 吹脸]
+    positions: true
+    units: [degree, level, percent]
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 氛围灯 ──
+  ambient_light:
+    operates: [open, close, set, inc, dec]
+    attrs: [brightness, color]
+    modes: []
+    positions: false
+    units: [level, percent]
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 近光灯 ──
+  low_beam:
+    operates: [open, close]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: true
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 大灯（远光灯）──
+  headlight:
+    operates: [open, close]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 后备箱 ──
+  trunk:
+    operates: [open, close]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: true
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 车门锁 ──
+  door_lock:
+    operates: [open, close]
+    attrs: []
+    modes: []
+    positions: true
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: true
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 油箱盖 ──
+  fuel_tank_cover:
+    operates: [open, close]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: true
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 充电口盖 ──
+  charging_port:
+    operates: [open, close]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: true
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 后视镜 ──
+  rear_view_mirror:
+    operates: [open, close, set, inc, dec]
+    attrs: []
+    modes: [fold, unfold, heating, 折叠, 展开]
+    positions: true
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 方向盘 ──
+  steering_wheel:
+    operates: [set, inc, dec]
+    attrs: [height]
+    modes: [heating]
+    positions: false
+    units: [level]
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 雨刷 ──
+  wiper:
+    operates: [open, close, set, inc, dec]
+    attrs: [speed]
+    modes: []
+    positions: false
+    units: [level]
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 香氛 ──
+  fragrance:
+    operates: [open, close, set]
+    attrs: []
+    modes: []
+    positions: false
+    units: [level]
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91]
+
+  # ── 胎压监测 ──
+  tire_pressure_monitoring:
+    operates: [query]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 行车记录仪 ──
+  dashcam:
+    operates: [open, close, query]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 场景模式 ──
+  scene_mode:
+    operates: [set, switch]
+    attrs: []
+    modes: [nap, camping, movie, romantic, meditation, 小憩, 露营, 观影, 浪漫, 冥想]
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 驾驶模式 ──
+  driving_mode:
+    operates: [set, close, switch]
+    attrs: []
+    modes: [eco, sport, comfort, snow, offroad, normal, 节能, 运动, 舒适, 雪地, 越野, 标准]
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: true
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 电源模式 ──
+  power_mode:
+    operates: [set, switch]
+    attrs: []
+    modes: [normal, sport, eco, 标准, 运动, 节能]
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: true
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 动能回收 ──
+  energy_recovery:
+    operates: [set, inc, dec]
+    attrs: [level]
+    modes: []
+    positions: false
+    units: [level]
+    online: offline_ok
+    drive_restricted: true
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 车道偏离辅助 ──
+  lane_departure_assistance:
+    operates: [open, close]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: true
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 车道保持辅助 ──
+  lane_assistance:
+    operates: [open, close]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: true
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 伴我回家（大灯延时关闭）──
+  accompany_home:
+    operates: [open, close, set]
+    attrs: [second]
+    modes: []
+    positions: false
+    units: [second]
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 音量 ──
+  volume:
+    operates: [set, inc, dec]
+    attrs: []
+    modes: []
+    positions: false
+    units: [level, percent]
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 页面/界面（引导类）──
+  page:
+    operates: [open, close]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 屏幕 ──
+  screen:
+    operates: [open, close, set]
+    attrs: [brightness]
+    modes: []
+    positions: false
+    units: [level, percent]
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 应用（播报/引导类）──
+  app:
+    operates: [open, close, query]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]
+
+  # ── 天气（播报类）──
+  weather:
+    operates: [query]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: online_only
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: [DeepWay, G91, 重汽航天]

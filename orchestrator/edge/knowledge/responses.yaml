@@ -1,0 +1,470 @@
+# responses.yaml — 响应话术模板（来源：同行者公版语音指令表 6.1 具体响应表+兜底表）
+# 按 object → operate → 执行结果组织；每条含 scene/status/speech_full/speech_brief
+
+# ═══════════════════════════════════════════════════
+# 空调
+# ═══════════════════════════════════════════════════
+hvac_on_success:
+  scene: 空调已打开
+  status: 成功
+  speech_full: ["已为您打开空调", "空调已开启"]
+  speech_brief: ["开了", "好的"]
+
+hvac_off_success:
+  scene: 空调已关闭
+  status: 成功
+  speech_full: ["已为您关闭空调", "空调已关闭"]
+  speech_brief: ["关了", "好的"]
+
+hvac_set_success:
+  scene: 空调温度已设定
+  status: 成功
+  speech_full: ["已将空调温度设定为{value}度", "空调温度已调至{value}度"]
+  speech_brief: ["{value}度", "好的"]
+
+hvac_already_on:
+  scene: 空调已处于开启状态
+  status: 已是该态
+  speech_full: ["空调已经是打开状态了"]
+  speech_brief: ["开着呢"]
+
+hvac_already_off:
+  scene: 空调已处于关闭状态
+  status: 已是该态
+  speech_full: ["空调已经是关闭状态了"]
+  speech_brief: ["关着呢"]
+
+# ═══════════════════════════════════════════════════
+# 车窗
+# ═══════════════════════════════════════════════════
+window_open_success:
+  scene: 车窗已打开
+  status: 成功
+  speech_full: ["{position}车窗已打开", "已为您打开{position}车窗"]
+  speech_brief: ["开了", "好的"]
+
+window_close_success:
+  scene: 车窗已关闭
+  status: 成功
+  speech_full: ["{position}车窗已关闭", "已为您关闭{position}车窗"]
+  speech_brief: ["关了", "好的"]
+
+window_already_open:
+  scene: 车窗已处于打开状态
+  status: 已是该态
+  speech_full: ["{position}车窗已经是打开状态了"]
+  speech_brief: ["开着呢"]
+
+window_already_closed:
+  scene: 车窗已处于关闭状态
+  status: 已是该态
+  speech_full: ["{position}车窗已经是关闭状态了"]
+  speech_brief: ["关着呢"]
+
+# ═══════════════════════════════════════════════════
+# 天窗
+# ═══════════════════════════════════════════════════
+sunroof_open_success:
+  scene: 天窗已打开
+  status: 成功
+  speech_full: ["天窗已打开", "已为您打开天窗"]
+  speech_brief: ["开了", "好的"]
+
+sunroof_close_success:
+  scene: 天窗已关闭
+  status: 成功
+  speech_full: ["天窗已关闭", "已为您关闭天窗"]
+  speech_brief: ["关了", "好的"]
+
+# ═══════════════════════════════════════════════════
+# 遮阳帘
+# ═══════════════════════════════════════════════════
+sunshade_open_success:
+  scene: 遮阳帘已打开
+  status: 成功
+  speech_full: ["{position}遮阳帘已打开"]
+  speech_brief: ["开了"]
+
+sunshade_close_success:
+  scene: 遮阳帘已关闭
+  status: 成功
+  speech_full: ["{position}遮阳帘已关闭"]
+  speech_brief: ["关了"]
+
+# ═══════════════════════════════════════════════════
+# 座椅
+# ═══════════════════════════════════════════════════
+seat_heating_on_success:
+  scene: 座椅加热已打开
+  status: 成功
+  speech_full: ["{position}座椅加热已打开", "已为您开启{position}座椅加热"]
+  speech_brief: ["开了", "好的"]
+
+seat_heating_off_success:
+  scene: 座椅加热已关闭
+  status: 成功
+  speech_full: ["{position}座椅加热已关闭"]
+  speech_brief: ["关了"]
+
+seat_ventilation_on_success:
+  scene: 座椅通风已打开
+  status: 成功
+  speech_full: ["{position}座椅通风已打开", "已为您开启{position}座椅通风"]
+  speech_brief: ["开了", "好的"]
+
+seat_ventilation_off_success:
+  scene: 座椅通风已关闭
+  status: 成功
+  speech_full: ["{position}座椅通风已关闭"]
+  speech_brief: ["关了"]
+
+seat_massage_on_success:
+  scene: 座椅按摩已打开
+  status: 成功
+  speech_full: ["{position}座椅按摩已打开"]
+  speech_brief: ["开了"]
+
+seat_massage_off_success:
+  scene: 座椅按摩已关闭
+  status: 成功
+  speech_full: ["{position}座椅按摩已关闭"]
+  speech_brief: ["关了"]
+
+seat_set_success:
+  scene: 座椅设定已调整
+  status: 成功
+  speech_full: ["{position}座椅{mode}已调至{value}挡"]
+  speech_brief: ["调好了", "好的"]
+
+# ═══════════════════════════════════════════════════
+# 氛围灯
+# ═══════════════════════════════════════════════════
+ambient_light_on_success:
+  scene: 氛围灯已打开
+  status: 成功
+  speech_full: ["氛围灯已打开", "已为您打开氛围灯"]
+  speech_brief: ["开了", "好的"]
+
+ambient_light_off_success:
+  scene: 氛围灯已关闭
+  status: 成功
+  speech_full: ["氛围灯已关闭"]
+  speech_brief: ["关了"]
+
+ambient_light_color_success:
+  scene: 氛围灯颜色已设定
+  status: 成功
+  speech_full: ["氛围灯已设为{tag}", "已将氛围灯颜色设为{tag}"]
+  speech_brief: ["设好了", "好的"]
+
+ambient_light_brightness_success:
+  scene: 氛围灯亮度已调整
+  status: 成功
+  speech_full: ["氛围灯亮度已调至{value}"]
+  speech_brief: ["调好了"]
+
+# ═══════════════════════════════════════════════════
+# 后备箱
+# ═══════════════════════════════════════════════════
+trunk_open_success:
+  scene: 后备箱已打开
+  status: 成功
+  speech_full: ["后备箱已打开", "已为您打开后备箱"]
+  speech_brief: ["开了"]
+
+trunk_close_success:
+  scene: 后备箱已关闭
+  status: 成功
+  speech_full: ["后备箱已关闭", "已为您关闭后备箱"]
+  speech_brief: ["关了"]
+
+# ═══════════════════════════════════════════════════
+# 车门锁
+# ═══════════════════════════════════════════════════
+door_lock_open_success:
+  scene: 车门已解锁
+  status: 成功
+  speech_full: ["{position}车门已解锁", "已为您解锁{position}车门"]
+  speech_brief: ["已解锁"]
+
+door_lock_close_success:
+  scene: 车门已上锁
+  status: 成功
+  speech_full: ["{position}车门已上锁", "已为您锁上{position}车门"]
+  speech_brief: ["已上锁"]
+
+# ═══════════════════════════════════════════════════
+# 油箱盖
+# ═══════════════════════════════════════════════════
+fuel_tank_cover_open_success:
+  scene: 油箱盖已打开
+  status: 成功
+  speech_full: ["油箱盖已打开"]
+  speech_brief: ["开了"]
+
+fuel_tank_cover_close_success:
+  scene: 油箱盖已关闭
+  status: 成功
+  speech_full: ["油箱盖已关闭"]
+  speech_brief: ["关了"]
+
+# ═══════════════════════════════════════════════════
+# 充电口盖
+# ═══════════════════════════════════════════════════
+charging_port_open_success:
+  scene: 充电口盖已打开
+  status: 成功
+  speech_full: ["充电口盖已打开"]
+  speech_brief: ["开了"]
+
+charging_port_close_success:
+  scene: 充电口盖已关闭
+  status: 成功
+  speech_full: ["充电口盖已关闭"]
+  speech_brief: ["关了"]
+
+# ═══════════════════════════════════════════════════
+# 后视镜
+# ═══════════════════════════════════════════════════
+rear_view_mirror_fold_success:
+  scene: 后视镜已折叠
+  status: 成功
+  speech_full: ["{position}后视镜已折叠"]
+  speech_brief: ["收好了"]
+
+rear_view_mirror_unfold_success:
+  scene: 后视镜已展开
+  status: 成功
+  speech_full: ["{position}后视镜已展开"]
+  speech_brief: ["展开了"]
+
+# ═══════════════════════════════════════════════════
+# 雨刷
+# ═══════════════════════════════════════════════════
+wiper_on_success:
+  scene: 雨刷已开启
+  status: 成功
+  speech_full: ["雨刷已开启"]
+  speech_brief: ["开了"]
+
+wiper_off_success:
+  scene: 雨刷已关闭
+  status: 成功
+  speech_full: ["雨刷已关闭"]
+  speech_brief: ["关了"]
+
+wiper_set_success:
+  scene: 雨刷速度已调整
+  status: 成功
+  speech_full: ["雨刷速度已调至{value}挡"]
+  speech_brief: ["调好了"]
+
+# ═══════════════════════════════════════════════════
+# 大灯
+# ═══════════════════════════════════════════════════
+headlight_on_success:
+  scene: 大灯已打开
+  status: 成功
+  speech_full: ["大灯已打开"]
+  speech_brief: ["开了"]
+
+headlight_off_success:
+  scene: 大灯已关闭
+  status: 成功
+  speech_full: ["大灯已关闭"]
+  speech_brief: ["关了"]
+
+# ═══════════════════════════════════════════════════
+# 香氛
+# ═══════════════════════════════════════════════════
+fragrance_on_success:
+  scene: 香氛已开启
+  status: 成功
+  speech_full: ["香氛已开启"]
+  speech_brief: ["开了"]
+
+fragrance_off_success:
+  scene: 香氛已关闭
+  status: 成功
+  speech_full: ["香氛已关闭"]
+  speech_brief: ["关了"]
+
+# ═══════════════════════════════════════════════════
+# 驾驶模式
+# ═══════════════════════════════════════════════════
+driving_mode_set_success:
+  scene: 驾驶模式已切换
+  status: 成功
+  speech_full: ["已切换至{mode}模式"]
+  speech_brief: ["已切换"]
+
+driving_mode_already:
+  scene: 已处于该驾驶模式
+  status: 已是该态
+  speech_full: ["当前已是{mode}模式了"]
+  speech_brief: ["已经是了"]
+
+# ═══════════════════════════════════════════════════
+# 场景模式
+# ═══════════════════════════════════════════════════
+scene_mode_set_success:
+  scene: 场景模式已开启
+  status: 成功
+  speech_full: ["已为您开启{mode}模式"]
+  speech_brief: ["好的", "已开启"]
+
+# ═══════════════════════════════════════════════════
+# 方向盘
+# ═══════════════════════════════════════════════════
+steering_wheel_heating_on_success:
+  scene: 方向盘加热已开启
+  status: 成功
+  speech_full: ["方向盘加热已开启"]
+  speech_brief: ["开了"]
+
+steering_wheel_heating_off_success:
+  scene: 方向盘加热已关闭
+  status: 成功
+  speech_full: ["方向盘加热已关闭"]
+  speech_brief: ["关了"]
+
+# ═══════════════════════════════════════════════════
+# 音量
+# ═══════════════════════════════════════════════════
+volume_set_success:
+  scene: 音量已设定
+  status: 成功
+  speech_full: ["音量已调至{value}"]
+  speech_brief: ["调好了"]
+
+volume_inc_success:
+  scene: 音量已增大
+  status: 成功
+  speech_full: ["音量已增大"]
+  speech_brief: ["调大了"]
+
+volume_dec_success:
+  scene: 音量已减小
+  status: 成功
+  speech_full: ["音量已减小"]
+  speech_brief: ["调小了"]
+
+# ═══════════════════════════════════════════════════
+# 屏幕
+# ═══════════════════════════════════════════════════
+screen_brightness_success:
+  scene: 屏幕亮度已调整
+  status: 成功
+  speech_full: ["屏幕亮度已调至{value}"]
+  speech_brief: ["调好了"]
+
+# ═══════════════════════════════════════════════════
+# 伴我回家
+# ═══════════════════════════════════════════════════
+accompany_home_on_success:
+  scene: 伴我回家已开启
+  status: 成功
+  speech_full: ["伴我回家功能已开启"]
+  speech_brief: ["开了"]
+
+accompany_home_off_success:
+  scene: 伴我回家已关闭
+  status: 成功
+  speech_full: ["伴我回家功能已关闭"]
+  speech_brief: ["关了"]
+
+# ═══════════════════════════════════════════════════
+# 能量回收
+# ═══════════════════════════════════════════════════
+energy_recovery_set_success:
+  scene: 能量回收已调整
+  status: 成功
+  speech_full: ["能量回收已调至{value}挡"]
+  speech_brief: ["调好了"]
+
+# ═══════════════════════════════════════════════════
+# 胎压监测
+# ═══════════════════════════════════════════════════
+tire_pressure_query_success:
+  scene: 胎压信息
+  status: 成功
+  speech_full: ["当前四轮胎压正常", "胎压监测结果：各轮胎压均在正常范围内"]
+  speech_brief: ["胎压正常"]
+
+# ═══════════════════════════════════════════════════
+# 行车记录仪
+# ═══════════════════════════════════════════════════
+dashcam_on_success:
+  scene: 行车记录仪已开启
+  status: 成功
+  speech_full: ["行车记录仪已开启"]
+  speech_brief: ["开了"]
+
+dashcam_off_success:
+  scene: 行车记录仪已关闭
+  status: 成功
+  speech_full: ["行车记录仪已关闭"]
+  speech_brief: ["关了"]
+
+# ═══════════════════════════════════════════════════
+# 通用成功（兜底）
+# ═══════════════════════════════════════════════════
+generic_success:
+  scene: 操作成功
+  status: 成功
+  speech_full: ["已为您完成操作"]
+  speech_brief: ["好的"]
+
+# ═══════════════════════════════════════════════════
+# 通用失败
+# ═══════════════════════════════════════════════════
+generic_fail:
+  scene: 操作失败
+  status: 失败
+  speech_full: ["抱歉，该操作暂时无法完成"]
+  speech_brief: ["操作失败了"]
+
+unsupported_command:
+  scene: 不支持的指令
+  status: 不支持
+  speech_full: ["暂不支持该控制指令"]
+  speech_brief: ["暂不支持哦"]
+
+# ═══════════════════════════════════════════════════
+# 安全兜底话术（来源：通用兜底反馈语表）
+# ═══════════════════════════════════════════════════
+Car_general_restrictions_1:
+  scene: 车辆未启动
+  status: 安全限制
+  speech_full: ["车辆尚未启动，该功能暂时不可用"]
+  speech_brief: ["车辆未启动哦"]
+
+Car_general_restrictions_2:
+  scene: 行车过程中限制开启
+  status: 安全限制
+  speech_full: ["抱歉，行驶过程中不支持开启该功能", "为确保行车安全，不支持开启哦"]
+  speech_brief: ["行车中暂时无法开启哦", "行车中不支持哦"]
+
+Car_general_restrictions_3:
+  scene: 行车过程中限制关闭
+  status: 安全限制
+  speech_full: ["行驶过程中不支持关闭该功能"]
+  speech_brief: ["行车中不支持关闭哦"]
+
+Car_general_restrictions_4:
+  scene: 不支持语音操作
+  status: 安全限制
+  speech_full: ["该功能不支持语音操作，请手动完成"]
+  speech_brief: ["这个需要手动操作哦"]
+
+Car_general_restrictions_5:
+  scene: 需要二次确认
+  status: 需确认
+  speech_full: ["该操作需要确认，请确认是否执行"]
+  speech_brief: ["请确认一下"]
+
+model_not_supported:
+  scene: 当前车型不支持
+  status: 不支持
+  speech_full: ["当前车型不支持该功能"]
+  speech_brief: ["当前车型不支持哦"]

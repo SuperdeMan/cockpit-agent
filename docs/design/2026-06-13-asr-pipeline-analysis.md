@@ -1,6 +1,6 @@
 # ASR 收音失败：根因分析与修复链
 
-- **状态**：草案（前端侧根因已在本轮 HMI 重构中修复，后端/部署侧待办）
+- **状态**：大部分落地（2026-06-14）：前端竞态已修 + 后端 webm→wav 转码已做 + ffmpeg 已装；剩部署 HTTPS + E2E 用例待做
 - **交付对象**：后续开发者 / Agent（后端转码 + 部署）
 - **关联代码**：`hmi/src/audio.ts`、`hmi/src/components/Composer.tsx`（已重构）；`llm-gateway/http_server.py`、`llm-gateway/providers.py`（`MiMoASRProvider`）
 - **现象**：前端 mic 按住后无法收音；"ASR 还没打通"。
@@ -42,7 +42,7 @@
 |---|---|---|
 | ① 前端录音竞态 | ✅ 已修 | `MicController` 状态机 + 最短时长门槛（`hmi/src/audio.ts`） |
 | ② 安全上下文 | ✅ 检测/提示已加 | 部署侧改 HTTPS 或 localhost 访问 |
-| ③ 格式链路 | ⬜ 待办 | 实测 MiMo 接受的容器；**优先后端 webm→wav 转码** |
+| ③ 格式链路 | ✅ 已修 | 后端 webm→wav 转码（ffmpeg，`http_server.py:_transcode_to_wav`），Dockerfile 已装 ffmpeg |
 | ④ Provider 兜底 | ⚠️ 配置坑已修 | key 在仓库根 `.env`，但 compose 从 `deploy/` 找 `.env` → 未加载 → `MockASRProvider`。已给 Makefile 加条件式 `--env-file .env`（2026-06-14）；裸 `docker compose` 仍需自带该参数 |
 | ⑤ CORS/端口 | ✅ 正常 | 部署时确认浏览器可达 50059 |
 
@@ -75,12 +75,10 @@
 - [ ] 同一段音频分别转 **wav / webm(opus) / mp4 / ogg**，逐个打 `/api/asr`（`format` 对应改），记录哪些成功、哪些报错或空。
 - [ ] 若 **webm/opus 失败而 wav 成功** → 坐实"前端产 webm、后端没转码"是断点，走 A3。
 
-### A3. 后端转码 webm→wav（推荐方案，对前端透明）
-- [ ] `llm-gateway/http_server.py:handle_asr`：收到非 wav 容器时，先转 16k mono wav 再送 ASR。实现二选一：
-  - **ffmpeg 子进程**（`ffmpeg -i pipe:0 -ar 16000 -ac 1 -f wav pipe:1`，stdin/stdout 走管道）——需镜像装 ffmpeg（改 `llm-gateway/Dockerfile` 加 `apt-get install -y ffmpeg`）。
-  - **pydub**（`AudioSegment.from_file(io.BytesIO(raw), format=fmt).set_frame_rate(16000).set_channels(1).export(fmt='wav')`）——同样依赖 ffmpeg 后端。
-- [ ] 转码后调 `asr.transcribe(audio=wav_bytes, fmt='wav', ...)`；失败回退原始字节 + 记日志。
-- [ ] 备选（不想后端转码）：前端改 `AudioWorklet` 直采 16k PCM 封 wav 头——改动大、耗设备性能，仅当后端不能装 ffmpeg 时用。
+### A3. 后端转码 webm→wav ✅（2026-06-14 已落地）
+- [x] `llm-gateway/http_server.py`：新增 `_transcode_to_wav()` 异步函数，用 ffmpeg 子进程（stdin→stdout pipe）转 16kHz mono wav；wav/pcm/pcm16 直接透传；ffmpeg 缺失或失败时回退原始字节。
+- [x] `llm-gateway/Dockerfile`：加 `apt-get install -y ffmpeg`。
+- [x] `llm-gateway/tests/test_transcode.py`：8 个测试全绿（透传/转码/回退）。
 
 ### A4. 部署安全上下文
 - [ ] 车机 webview / 演示环境用 **HTTPS** 或经 `localhost` 访问（否则浏览器禁用 `getUserMedia`，前端已检测并提示）。
