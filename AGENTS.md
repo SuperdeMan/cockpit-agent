@@ -56,16 +56,16 @@
 | 确认闭环（F1） | ✅ 端到端打通（HMI→网关→编排器→Agent） |
 | Docker 全栈联调 | ✅ 18 个容器全部运行 |
 | E2E 测试 | ✅ 4 条链路通过（车控/导航/闲聊/点餐） |
-| 车控知识库 | ✅ commands.yaml 30 对象 + entities.yaml 归一化 + responses.yaml 话术；VAL 结构化执行流水线（归一化→校验→安全门控→模拟→选话术） |
-| 端侧意图覆盖 | ✅ 90 条意图 pattern（fast_intent），覆盖全部 30 对象（座椅/天窗/后备箱/门锁/氛围灯/雨刷/后视镜/香氛/车道辅助/动能回收等） |
-| 多意图拆分 | ✅ 端侧 split_and_classify（连接词切分+保守路由）+ 云侧 Planner DAG 强化（并行/串行判定） |
+| 车控知识库 | ✅ commands.yaml 61 对象 + entities.yaml 532 实体 + responses.yaml 74 条话术；VAL 结构化执行流水线（归一化→校验→安全门控→模拟→选话术）+ answer_length 简繁切换 |
+| 端侧意图覆盖 | ✅ 150 条意图 pattern（fast_intent），覆盖 61 对象（车控/媒体/蓝牙/WiFi/电话/广播/音乐/视频/导航/360环视等）；飞书公版数据全量导入（1465 意图） |
+| 多意图拆分 | ✅ 端侧 split_and_classify（连接词切分+保守路由+actions 返回）+ 云侧 Planner DAG 强化（并行/串行判定） |
 | ASR/TTS | ✅ HTTP 代理 + MiMo ASR/TTS + webm→wav 后端转码（ffmpeg）+ 9 音色 |
 | HMI（前端） | ✅ 「深空座舱 HUD」组件化 + 设置页 + 流式渲染 + 记忆视图 + 语音按钮 |
 | 开放域流式 + 模型分层 | ✅ engine 单步 ExecuteStream 直通 + chitchat 快模型/兜底；降规划延迟待做 |
 | 对话上下文/指代 | ✅ engine 写对话记忆 + 规划注入历史（仅云侧链路；端侧快意图未入记忆） |
-| 飞书数据拉取 | ✅ lark-cli 验证可拉取 5 张公版表（意图表 200+/分类表 200+/词库 200+/响应表 200+/兜底表 34）；export 脚本骨架就绪 |
+| 飞书数据全量导入 | ✅ lark-cli 拉取 5 张公版表（意图 1465 条 + 分类 400 + 词库 5185 + 响应 3000 + 兜底 34）；3 个生成脚本可重跑（`scripts/gen_commands_yaml.py` / `generate_entities.py` / `generate_responses.py`） |
 
-**结论**：Phase 1 全部验收标准达成 + 车控知识库全量覆盖 + 多意图拆分 + ASR 转码（2026-06-14）。前瞻设计见 `docs/design/`，Phase 2 backlog 见 `docs/reviews/2026-06-11-review-fixes.md`。
+**结论**：Phase 1 全部验收标准达成 + 飞书公版全量导入（61 对象/150 意图）+ 多意图拆分 + ASR 转码 + answer_length 话术简繁（2026-06-14）。前瞻设计见 `docs/design/`，Phase 2 backlog 见 `docs/reviews/2026-06-11-review-fixes.md`。
 
 ---
 

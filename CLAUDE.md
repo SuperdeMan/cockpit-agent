@@ -81,4 +81,4 @@ Windows 无 make 时用 `scripts/gen-proto.ps1` 等价替代（见 README）。
 **工程纪律**：改完主动跑 `make test`；不要注释报错或加绕过标记来"让它跑起来"，找根因；大改动先在设计文档对齐再动手。
 
 ## 7. 当前阶段
-Phase 1 全部验收标准达成（2026-06-14）：Docker 全栈联调通过、E2E 4 条链路通过、268 测试全绿。车控知识库覆盖 90 条意图（30 对象）、多意图端云切分、ASR/TTS 全链路、开放域流式。**前瞻设计见 `docs/design/`**，修复清单见 `docs/reviews/2026-06-11-review-fixes.md`。
+Phase 1 全部验收标准达成（2026-06-14）：Docker 全栈联调通过、E2E 4 条链路通过、268 测试全绿。车控知识库覆盖 61 对象 150 条意图（飞书公版全量导入）、多意图端云切分（含 actions 返回）、ASR/TTS 全链路、开放域流式、answer_length 话术简繁切换。**前瞻设计见 `docs/design/`**，修复清单见 `docs/reviews/2026-06-11-review-fixes.md`。
