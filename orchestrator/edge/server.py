@@ -7,6 +7,7 @@ import os
 import logging
 
 from google.protobuf import struct_pb2
+from google.protobuf.json_format import MessageToDict
 from cockpit.orchestrator.v1 import orchestrator_pb2, orchestrator_pb2_grpc
 from cockpit.common.v1 import common_pb2
 
@@ -14,6 +15,7 @@ from fast_intent import classify, classify_structured, is_local, split_and_class
 from val import VAL
 from edge_agents import edge_execute
 from cloud_client import CloudClient
+from edge_call import EdgeCallExecutor
 
 logger = logging.getLogger("edge.orchestrator")
 
@@ -29,7 +31,7 @@ def _struct(d: dict) -> struct_pb2.Struct:
 class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
     def __init__(self):
         self.val = VAL()
-        self.cloud = CloudClient()
+        self.cloud = CloudClient(edge_call_executor=EdgeCallExecutor(self.val))
         self.cloud_connected = False  # 连接状态追踪
 
     async def Handle(self, request, context):
@@ -165,8 +167,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         for action in final.actions:
             if not action.type.startswith("vehicle.control"):
                 continue
-            # F14：payload 用 AsMap()（原生类型），避免 protobuf Value 类型错误
-            payload = action.payload.AsMap() if action.payload else {}
+            payload = MessageToDict(
+                action.payload, preserving_proto_field_name=True
+            ) if action.payload else {}
             cmd = payload.get("command", action.type)
             ok, msg = self.val.execute(cmd, payload, answer_length=answer_length)
             if ok:

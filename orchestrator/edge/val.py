@@ -204,7 +204,8 @@ class VAL:
 
         # 操作校验
         valid_operates = obj_def.get("operates", [])
-        if operate not in valid_operates:
+        relative_set = operate in ("inc", "dec") and "set" in valid_operates
+        if operate not in valid_operates and not relative_set:
             return False, self._pick_response("unsupported_command")
 
         # 属性校验
@@ -277,6 +278,16 @@ class VAL:
         mode = data.get("mode")
 
         if obj == "aircon":
+            attr = data.get("attr")
+            if attr == "speed":
+                current = self.state.get("hvac_wind_speed", 1)
+                if operate == "set" and value is not None:
+                    self.state["hvac_wind_speed"] = int(value)
+                elif operate == "inc":
+                    self.state["hvac_wind_speed"] = min(current + 1, 10)
+                elif operate == "dec":
+                    self.state["hvac_wind_speed"] = max(current - 1, 0)
+                return "hvac_wind_speed", self.state["hvac_wind_speed"]
             if operate in ("open", "set"):
                 self.state["hvac_on"] = True
                 if value:
@@ -402,12 +413,25 @@ class VAL:
                 return "fragrance", False
 
         elif obj == "steering_wheel":
+            attr = data.get("attr")
             if operate == "set" and mode == "heating":
-                self.state["steering_wheel_heating"] = True
-                return "steering_wheel_heating", True
-            if operate == "close" and mode == "heating":
-                self.state["steering_wheel_heating"] = False
-                return "steering_wheel_heating", False
+                enabled = data.get("enabled", True)
+                if isinstance(enabled, str):
+                    enabled = enabled.lower() == "true"
+                self.state["steering_wheel_heating"] = bool(enabled)
+                return "steering_wheel_heating", bool(enabled)
+            if attr == "height":
+                current = self.state.get("steering_wheel_height", 0)
+                if operate == "set" and value is not None:
+                    self.state["steering_wheel_height"] = int(value)
+                elif operate == "inc":
+                    self.state["steering_wheel_height"] = current + 1
+                elif operate == "dec":
+                    self.state["steering_wheel_height"] = current - 1
+                return (
+                    "steering_wheel_height",
+                    self.state["steering_wheel_height"],
+                )
 
         elif obj == "driving_mode":
             if operate in ("set", "switch") and mode:
@@ -431,9 +455,17 @@ class VAL:
                 return "volume", self.state["volume"]
 
         elif obj == "screen":
-            if operate == "set" and value:
+            if operate == "set" and value is not None:
                 self.state["screen_brightness"] = int(value)
                 return "screen_brightness", int(value)
+            if operate == "inc":
+                self.state["screen_brightness"] = min(
+                    self.state.get("screen_brightness", 50) + 10, 100)
+                return "screen_brightness", self.state["screen_brightness"]
+            if operate == "dec":
+                self.state["screen_brightness"] = max(
+                    self.state.get("screen_brightness", 50) - 10, 0)
+                return "screen_brightness", self.state["screen_brightness"]
 
         elif obj == "energy_recovery":
             if operate == "set" and value:

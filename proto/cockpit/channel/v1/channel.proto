@@ -7,6 +7,8 @@ import "cockpit/agent/v1/agent.proto";
 // 端云持久双向流。Edge 作为客户端发起并保持，所有请求/响应/主动事件多路复用。
 service EdgeCloudChannel {
   rpc Connect (stream UpFrame) returns (stream DownFrame);
+  // 云端编排器调用指定车辆的端侧快执行器。Gateway 将该调用复用到车辆活跃 bidi 流。
+  rpc DispatchToEdge (EdgeCallEnvelope) returns (EdgeResult);
 }
 
 // 上行帧（Edge -> Cloud）
@@ -63,6 +65,10 @@ message EdgeCall {
   string step_id = 1;
   cockpit.common.v1.Intent intent = 2;          // name + slots（车控/媒体/状态查询）
   map<string, string> meta = 3;                 // trace_id, answer_length, confirmed ...
+}
+message EdgeCallEnvelope {
+  string vehicle_id = 1;
+  EdgeCall call = 2;
 }
 message EdgeResult {
   string step_id = 1;

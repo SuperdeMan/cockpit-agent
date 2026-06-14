@@ -7,18 +7,30 @@ import asyncio
 import logging
 from typing import AsyncIterator
 from collections import defaultdict, deque
+from google.protobuf.json_format import MessageToDict
 
 from .models import Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan
 
 logger = logging.getLogger("planner.executor")
 
 
+def _struct_dict(value) -> dict:
+    if value is None:
+        return {}
+    return MessageToDict(value, preserving_proto_field_name=True)
+
+
 class DagExecutor:
-    def __init__(self, call_agent_fn):
+    def __init__(self, dispatcher=None, call_agent_fn=None):
         """
-        call_agent_fn: async (endpoint, intent, slots, context_ref) -> ExecuteResponse
+        dispatcher: UnifiedDispatcher-compatible object with dispatch(step, ctx).
+        call_agent_fn: legacy async callable kept for existing embedders/tests.
         """
-        self._call = call_agent_fn
+        if dispatcher is None:
+            if call_agent_fn is None:
+                raise ValueError("dispatcher or call_agent_fn is required")
+            dispatcher = _LegacyDispatcher(call_agent_fn)
+        self._dispatcher = dispatcher
 
     async def run(self, plan: Plan, ctx: PlanContext,
                   done: dict[str, StepResult] | None = None) -> AsyncIterator[StepResult]:
@@ -27,14 +39,13 @@ class DagExecutor:
         done: 已完成步骤的种子结果（多轮确认续接时由 engine 传入），
         这些步骤不再执行，但其结果可被后继步骤的依赖判定与 slot_refs 使用。
         """
+        done = dict(done) if done else {}
         try:
-            layers = self._topo_layers(plan.steps)
+            layers = self._topo_layers(plan.steps, completed_ids=set(done))
         except CyclicPlan as e:
             logger.error("Cyclic plan detected: %s", e)
             yield StepResult(step_id="plan", status=StepStatus.FAILED, error=str(e))
             return
-
-        done = dict(done) if done else {}
 
         for layer in layers:
             # 跳过已有结果（确认续接的种子）和依赖未就绪/已失败的
@@ -73,7 +84,7 @@ class DagExecutor:
         timeout = step.latency_budget_ms / 1000.0
         try:
             resp = await asyncio.wait_for(
-                self._call(step.endpoint, step.intent, step.slots, ctx, step.meta),
+                self._dispatcher.dispatch(step, ctx),
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
@@ -131,7 +142,7 @@ class DagExecutor:
         }
         status = status_map.get(resp.status, StepStatus.FAILED)
         actions = [
-            {"type": a.type, "payload": dict(a.payload.fields) if a.payload else {},
+            {"type": a.type, "payload": _struct_dict(a.payload),
              "require_confirm": a.require_confirm}
             for a in resp.actions
         ]
@@ -139,10 +150,10 @@ class DagExecutor:
             step_id=step_id,
             status=status,
             speech=resp.speech,
-            ui_card=dict(resp.ui_card.fields) if resp.ui_card else None,
+            ui_card=_struct_dict(resp.ui_card) or None,
             actions=actions,
             follow_up=resp.follow_up,
-            data=dict(resp.data.fields) if resp.data else {},   # F3：从 proto 读取结构化结果
+            data=_struct_dict(resp.data),                       # F3：从 proto 读取结构化结果
             missing_slots=list(resp.missing_slots),              # F12：缺失槽位名
         )
 
@@ -169,15 +180,21 @@ class DagExecutor:
                     break
 
     @staticmethod
-    def _topo_layers(steps: list[Step]) -> list[list[Step]]:
+    def _topo_layers(steps: list[Step],
+                     completed_ids: set[str] | None = None) -> list[list[Step]]:
         """Kahn 拓扑排序分层。环检测：剩余节点>0 但无入度0 → raise CyclicPlan。"""
         by_id = {s.id: s for s in steps}
+        completed_ids = completed_ids or set()
         in_degree = defaultdict(int)
         children = defaultdict(list)
         for s in steps:
-            in_degree[s.id] = len(s.depends_on)
             for dep in s.depends_on:
-                children[dep].append(s.id)
+                if dep in by_id:
+                    in_degree[s.id] += 1
+                    children[dep].append(s.id)
+                elif dep not in completed_ids:
+                    # Unknown dependencies remain blocked and fail closed.
+                    in_degree[s.id] += 1
 
         layers = []
         remaining = set(by_id.keys())
@@ -195,3 +212,14 @@ class DagExecutor:
                     in_degree[child] -= 1
 
         return layers
+
+
+class _LegacyDispatcher:
+    """Adapter for the pre-UnifiedDispatcher call signature."""
+
+    def __init__(self, call_agent_fn):
+        self._call = call_agent_fn
+
+    async def dispatch(self, step: Step, ctx: PlanContext):
+        return await self._call(
+            step.endpoint, step.intent, step.slots, ctx, step.meta)

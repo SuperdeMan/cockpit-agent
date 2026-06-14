@@ -20,6 +20,6 @@
 - `Handle(HandleRequest) returns (stream HandleEvent)` — 流式返回话术/动作/终态。
 
 ## 待办
-- TODO(Phase1): 车控 action 端云回流端侧 VAL（Edge server 已加分发器，Planner→Cloud→Edge 链路待联调验证）。
+- 车控 action 与云端中枢 edge step 均回流端侧 VAL；`DispatchToEdge` 跨进程 E2E 仍待验证。
 - TODO(Phase1): 熔断 circuit.py（压测后按需）。
 - TODO(Phase1): 场景测试集并入 CI 门禁。

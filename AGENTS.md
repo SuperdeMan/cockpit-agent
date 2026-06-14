@@ -67,7 +67,7 @@
 
 **结论**：Phase 1 全部验收标准达成 + 飞书公版全量导入（61 对象/150 意图）+ 多意图拆分 + ASR 转码 + answer_length 话术简繁（2026-06-14）。前瞻设计见 `docs/design/`，Phase 2 backlog 见 `docs/reviews/2026-06-11-review-fixes.md`。
 
-**进行中（2026-06-14 起）**：云端中枢升级（复杂意图：理解→规划→异构调度 车端快思考/Agent/工具），设计见 `docs/design/2026-06-14-cloud-central-orchestrator.md`。运行模型 T0/T1/T2 分级 + 首次规划复杂度分诊。**P0 地基已落地**（`Manifest.kind` + `EdgeCall/EdgeResult` 帧 + `Step/Plan` 字段；`buf` 插件钉 `v35.0`）；**待实现** P1 车端可调度（Gateway `DispatchToEdge` + 端 `edge_call`→VAL + 统一 dispatcher）/ T2 循环 / 工具。
+**进行中（2026-06-14 起）**：云端中枢升级（复杂意图：理解→规划→异构调度 车端快思考/Agent/工具），设计见 `docs/design/2026-06-14-cloud-central-orchestrator.md`。P0-P3 主体代码已落地：统一 dispatcher、Gateway `DispatchToEdge`、端 `edge_call`→VAL、端侧能力注册、T2 有界循环、内置工具与执行层权限硬校验。**最终验收暂缓**：最后一批收尾改动后尚未跑全量/Smoke/Go/Docker/E2E；准确证据、未验证范围和后续 P0 待办见设计文档“落地记录”。当前最重要的未完成项是从可信 token/设备身份向 `granted_scopes` 接线，禁止用默认全授权绕过 fail-closed。
 
 ---
 

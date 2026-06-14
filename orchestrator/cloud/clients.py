@@ -9,6 +9,7 @@ from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
 from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
+from cockpit.channel.v1 import channel_pb2, channel_pb2_grpc
 from cockpit.common.v1 import common_pb2
 
 _DEFAULT_TIMEOUT = 10
@@ -19,9 +20,11 @@ class Clients:
         self.registry_addr = os.getenv("REGISTRY_ADDR", "registry:50051")
         self.llm_addr = os.getenv("LLM_GATEWAY_ADDR", "llm-gateway:50052")
         self.memory_addr = os.getenv("MEMORY_ADDR", "memory:50053")
+        self.cloud_gateway_addr = os.getenv("CLOUD_GATEWAY_ADDR", "cloud-gateway:8080")
         self._ch_registry: grpc.aio.Channel | None = None
         self._ch_llm: grpc.aio.Channel | None = None
         self._ch_memory: grpc.aio.Channel | None = None
+        self._ch_edge: grpc.aio.Channel | None = None
         self._ch_agents: dict[str, grpc.aio.Channel] = {}  # F15：按 endpoint 复用 channel
 
     def _registry_stub(self):
@@ -38,6 +41,11 @@ class Clients:
         if self._ch_memory is None:
             self._ch_memory = grpc.aio.insecure_channel(self.memory_addr)
         return memory_pb2_grpc.MemoryStub(self._ch_memory)
+
+    def _edge_stub(self):
+        if self._ch_edge is None:
+            self._ch_edge = grpc.aio.insecure_channel(self.cloud_gateway_addr)
+        return channel_pb2_grpc.EdgeCloudChannelStub(self._ch_edge)
 
     async def append_turn(self, session_id: str, role: str, text: str):
         """写入一轮对话到 memory（task 2：对话记忆 + 指代消解的数据来源）。"""
@@ -56,6 +64,15 @@ class Clients:
         resp = await self._registry_stub().ListAgents(
             registry_pb2.ListRequest(category=""), timeout=_DEFAULT_TIMEOUT)
         return list(resp.agents)
+
+    async def register_manifest(self, manifest, endpoint: str):
+        return await self._registry_stub().Register(
+            registry_pb2.RegisterRequest(
+                manifest=manifest,
+                endpoint=endpoint,
+            ),
+            timeout=_DEFAULT_TIMEOUT,
+        )
 
     async def resolve(self, query: str = "", intent: str = "", top_k: int = 1):
         resp = await self._registry_stub().ResolveAgents(
@@ -118,3 +135,26 @@ class Clients:
                 yield ("action", ev.action)
             elif which == "final":
                 yield ("final", ev.final)
+
+    async def dispatch_to_edge(self, vehicle_id: str, step, ctx):
+        """Call the requesting vehicle's edge executor through Cloud Gateway."""
+        meta = self._merge_meta(ctx, step.meta)
+        if getattr(ctx, "trace_id", ""):
+            meta.setdefault("trace_id", ctx.trace_id)
+        envelope = channel_pb2.EdgeCallEnvelope(
+            vehicle_id=vehicle_id,
+            call=channel_pb2.EdgeCall(
+                step_id=step.id,
+                intent=common_pb2.Intent(
+                    name=step.intent,
+                    slots=step.slots,
+                    confidence=0.9,
+                ),
+                meta=meta,
+            ),
+        )
+        result = await self._edge_stub().DispatchToEdge(
+            envelope, timeout=step.latency_budget_ms / 1000.0)
+        if not result.HasField("result"):
+            raise RuntimeError("edge result missing execute response")
+        return result.result

@@ -5,14 +5,18 @@ WS3 §4。LLM 把已注册 Agent 能力当工具，输出 JSON DAG 计划。
 from __future__ import annotations
 import json
 import logging
-from .models import Plan, Step, PlanContext, StepStatus
+from security.scopes import is_scope_covered
+from .models import Plan, Step, PlanContext, ReplanDecision
 
 logger = logging.getLogger("planner.planning")
 
 _PLANNER_SYSTEM = (
     "你是智能座舱的任务编排器。根据用户话术和可用 agent 能力清单，输出 JSON 调用计划。\n"
-    "格式严格为：{\"steps\":[{\"id\":\"s1\",\"agent_id\":\"..\",\"intent\":\"..\","
+    "格式严格为：{\"complexity\":\"simple|adaptive\",\"goal\":\"一句话目标\","
+    "\"steps\":[{\"id\":\"s1\",\"agent_id\":\"..\",\"intent\":\"..\","
     "\"slots\":{..},\"depends_on\":[],\"slot_refs\":{}}]}\n"
+    "simple 表示一次可确定全部步骤；adaptive 表示必须根据运行结果决定下一步"
+    "（例如满了换次近、失败换一家、探索式查询）。普通单域、多意图并行、固定串行都选 simple。\n"
     "\n"
     "== 意图拆分 ==\n"
     "- 用户一句话包含多个意图时（如『打开空调并播放音乐』），必须拆成多个 step\n"
@@ -57,6 +61,14 @@ _PLANNER_SYSTEM = (
     "结合下方『最近对话』补全对象/槽位后再规划\n"
     "- 只输出 JSON，不要任何解释\n"
     "- 无法匹配时输出 {\"steps\":[]}"
+)
+
+_REPLAN_SYSTEM = (
+    "你是智能座舱有界任务循环的再规划器。根据用户目标、最近观察和可用能力，"
+    "一次性判断任务是否完成，并在未完成时给出下一批 JSON DAG。\n"
+    "严格输出 JSON：{\"done\":true|false,\"steps\":[{\"id\":\"r1\","
+    "\"agent_id\":\"..\",\"intent\":\"..\",\"slots\":{},\"depends_on\":[],"
+    "\"slot_refs\":{}}]}。仅在必要时改变计划；不得输出解释。"
 )
 
 
@@ -106,6 +118,33 @@ class PlanBuilder:
             logger.warning("LLM plan failed: %s", e)
             return ""
 
+    async def replan(self, goal: str, observations: list[dict], agents: list,
+                     ctx: PlanContext, granted_permissions: list[str] = None
+                     ) -> ReplanDecision:
+        """Decide completion and optionally produce the next validated batch."""
+        if granted_permissions is not None:
+            agents = self._filter_by_permission(agents, granted_permissions)
+        agent_map = {a.manifest.agent_id: a for a in agents}
+        prompt = (
+            f"目标：{goal}\n"
+            f"最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
+            f"可用能力：{self._build_catalog(agents)}"
+        )
+        try:
+            raw = await self._llm([
+                {"role": "system", "content": _REPLAN_SYSTEM},
+                {"role": "user", "content": prompt},
+            ])
+            data = json.loads(self._extract_json(raw))
+        except Exception as exc:
+            logger.warning("Replan failed: %s", exc)
+            return ReplanDecision(done=True)
+
+        if bool(data.get("done")):
+            return ReplanDecision(done=True)
+        steps = self._validated_steps(data.get("steps", []), agent_map)
+        return ReplanDecision(done=not bool(steps), steps=steps)
+
     def _parse_and_validate(self, raw: str, agent_map: dict,
                             fallback_text: str) -> Plan | None:
         if not raw:
@@ -116,6 +155,29 @@ class PlanBuilder:
             logger.warning("Plan JSON parse failed: %s", e)
             return None
 
+        steps = self._validated_steps(data.get("steps", []), agent_map)
+        if not steps:
+            return None
+
+        complexity = data.get("complexity", "simple")
+        if complexity not in ("simple", "adaptive"):
+            complexity = "simple"
+        goal = str(data.get("goal", "") or "")
+
+        # 校验 depends_on 引用
+        valid_ids = {s.id for s in steps}
+        for s in steps:
+            s.depends_on = [d for d in s.depends_on if d in valid_ids]
+
+        return Plan(
+            steps=steps,
+            raw_text=fallback_text,
+            complexity=complexity,
+            goal=goal,
+        )
+
+    @staticmethod
+    def _validated_steps(raw_steps: list, agent_map: dict) -> list[Step]:
         # F4：按 agent 校验 intent（不是全局集合），防止 LLM 错配 agent/intent
         agent_intents: dict[str, set[str]] = {
             aid: {c.intent for c in a.manifest.capabilities}
@@ -123,7 +185,7 @@ class PlanBuilder:
         }
 
         steps = []
-        for s in data.get("steps", []):
+        for s in raw_steps:
             aid = s.get("agent_id", "")
             intent = s.get("intent", "")
 
@@ -138,26 +200,27 @@ class PlanBuilder:
                                intent, aid)
                 continue
 
+            manifest = agent_map[aid].manifest
             step = Step(
                 id=s.get("id", f"s{len(steps)+1}"),
                 agent_id=aid,
+                endpoint=agent_map[aid].endpoint,
+                kind=getattr(manifest, "kind", "") or "agent",
+                deployment=getattr(manifest, "deployment", "") or "cloud",
                 intent=intent,
                 slots={k: str(v) for k, v in (s.get("slots") or {}).items()},
                 depends_on=s.get("depends_on") or [],
                 slot_refs=s.get("slot_refs") or {},
-                latency_budget_ms=int(agent_map[aid].manifest.latency_budget_ms or 5000),
+                latency_budget_ms=int(manifest.latency_budget_ms or 5000),
+                required_permissions=list(
+                    getattr(manifest, "requires_permissions", []) or []),
+                trust_level=getattr(manifest, "trust_level", "") or "",
             )
             steps.append(step)
-
-        if not steps:
-            return None
-
-        # 校验 depends_on 引用
-        valid_ids = {s.id for s in steps}
-        for s in steps:
-            s.depends_on = [d for d in s.depends_on if d in valid_ids]
-
-        return Plan(steps=steps, raw_text=fallback_text)
+        valid_ids = {step.id for step in steps}
+        for step in steps:
+            step.depends_on = [dep for dep in step.depends_on if dep in valid_ids]
+        return steps
 
     async def _fallback(self, text: str, agents: list = None) -> Plan:
         """规划失败的降级。优先兜底到 chitchat（系统全局 fallback，开放域/LLM 抽风时
@@ -168,7 +231,12 @@ class PlanBuilder:
                 intent = a.manifest.capabilities[0].intent if a.manifest.capabilities else "chitchat.talk"
                 return Plan(steps=[Step(
                     id="s1", agent_id="chitchat", endpoint=a.endpoint,
+                    kind=getattr(a.manifest, "kind", "") or "agent",
+                    deployment=getattr(a.manifest, "deployment", "") or "cloud",
                     intent=intent, slots={"text": text},
+                    required_permissions=list(
+                        getattr(a.manifest, "requires_permissions", []) or []),
+                    trust_level=getattr(a.manifest, "trust_level", "") or "",
                 )], raw_text=text)
 
         # 2) Registry 语义路由 top-1
@@ -180,7 +248,12 @@ class PlanBuilder:
             intent = a.manifest.capabilities[0].intent if a.manifest.capabilities else ""
             return Plan(steps=[Step(
                 id="s1", agent_id=a.manifest.agent_id, endpoint=a.endpoint,
+                kind=getattr(a.manifest, "kind", "") or "agent",
+                deployment=getattr(a.manifest, "deployment", "") or "cloud",
                 intent=intent, slots={},
+                required_permissions=list(
+                    getattr(a.manifest, "requires_permissions", []) or []),
+                trust_level=getattr(a.manifest, "trust_level", "") or "",
             )])
         except Exception as e:
             logger.error("Fallback routing failed: %s", e)
@@ -197,7 +270,12 @@ class PlanBuilder:
         for a in agents:
             caps = [{"intent": c.intent, "slots": list(c.slots), "desc": c.description}
                     for c in a.manifest.capabilities]
-            items.append({"agent_id": a.manifest.agent_id, "capabilities": caps})
+            items.append({
+                "agent_id": a.manifest.agent_id,
+                "kind": getattr(a.manifest, "kind", "") or "agent",
+                "deployment": getattr(a.manifest, "deployment", "") or "cloud",
+                "capabilities": caps,
+            })
         return json.dumps(items, ensure_ascii=False)
 
     @staticmethod
@@ -247,8 +325,11 @@ class PlanBuilder:
                                  manifest.agent_id)
                     continue
             # 检查权限覆盖：无权限要求的 Agent（如 chitchat）始终放行
-            if required and not required.issubset(granted_set):
-                missing = required - granted_set
+            missing = {
+                scope for scope in required
+                if not is_scope_covered(scope, granted_set)
+            }
+            if missing:
                 logger.debug("Filtered %s: missing permissions %s", manifest.agent_id, missing)
                 continue
             filtered.append(a)

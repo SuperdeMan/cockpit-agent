@@ -18,9 +18,11 @@ logger = logging.getLogger("edge.cloud_client")
 
 
 class CloudClient:
-    def __init__(self):
+    def __init__(self, edge_call_executor=None, stub_factory=None):
         self.addr = os.getenv("CLOUD_GATEWAY_ADDR", "cloud-gateway:8080")
         self._ch: grpc.aio.Channel | None = None
+        self._edge_calls = edge_call_executor
+        self._stub_factory = stub_factory or channel_pb2_grpc.EdgeCloudChannelStub
 
     def _channel(self) -> grpc.aio.Channel:
         if self._ch is None:
@@ -29,7 +31,8 @@ class CloudClient:
 
     async def handle(self, request):
         """通过 EdgeCloudChannel bidi 协议转发请求到云端，yield HandleEvent。"""
-        stub = channel_pb2_grpc.EdgeCloudChannelStub(self._channel())
+        stub = self._stub_factory(self._channel())
+        stream = None
         try:
             # 建立 bidi 流
             stream = stub.Connect()
@@ -57,7 +60,27 @@ class CloudClient:
             # 收事件直到 final
             while True:
                 down = await stream.read()
+                which = down.WhichOneof("body")
+                if which == "edge_call":
+                    if self._edge_calls is None:
+                        logger.warning("Received edge_call without executor")
+                        result = channel_pb2.EdgeResult(
+                            step_id=down.edge_call.step_id,
+                        )
+                        result.result.status = 3  # FAILED
+                    else:
+                        result = channel_pb2.EdgeResult(
+                            step_id=down.edge_call.step_id,
+                            result=self._edge_calls.execute(down.edge_call),
+                        )
+                    await stream.write(channel_pb2.UpFrame(
+                        correlation_id=down.correlation_id,
+                        edge_result=result,
+                    ))
+                    continue
                 if down.correlation_id != corr_id:
+                    continue
+                if which != "event":
                     continue
                 evt = down.event
                 if evt is None:
@@ -70,3 +93,9 @@ class CloudClient:
         except grpc.aio.AioRpcError as e:
             logger.warning("Cloud channel error: %s", e)
             raise
+        finally:
+            if stream is not None and hasattr(stream, "done_writing"):
+                try:
+                    await stream.done_writing()
+                except (grpc.aio.AioRpcError, RuntimeError):
+                    logger.debug("Cloud stream already closed", exc_info=True)

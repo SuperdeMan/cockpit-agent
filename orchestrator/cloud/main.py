@@ -12,6 +12,8 @@ from cockpit.orchestrator.v1 import orchestrator_pb2_grpc
 from .clients import Clients
 from .planning import PlanBuilder
 from .executor import DagExecutor
+from .dispatch import UnifiedDispatcher
+from .tools import ToolRegistry
 from .aggregator import Aggregator
 from .session import SessionStore
 from .engine import PlannerEngine
@@ -30,7 +32,13 @@ async def serve():
         llm_fn=clients.llm_complete,
         registry_fn=clients.resolve,
     )
-    executor = DagExecutor(call_agent_fn=clients.call_agent)
+    tools = ToolRegistry()
+    dispatcher = UnifiedDispatcher(
+        cloud_call=clients.call_agent,
+        edge_call=clients.dispatch_to_edge,
+        tools=tools,
+    )
+    executor = DagExecutor(dispatcher=dispatcher)
     aggregator = Aggregator(llm_fn=clients.llm_complete)
 
     engine = PlannerEngine(
@@ -44,6 +52,10 @@ async def serve():
     server.add_insecure_port(f"[::]:{port}")
     await server.start()
     print(f"[cloud-planner] serving on :{port}", flush=True)
+    try:
+        await tools.register(clients)
+    except Exception as exc:
+        print(f"[cloud-planner] tool registry register failed (continuing): {exc}", flush=True)
     await server.wait_for_termination()
 
 

@@ -4,18 +4,23 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 
 	channelpb "github.com/cockpit/car-agent/gen/go/cockpit/channel/v1"
+	commonpb "github.com/cockpit/car-agent/gen/go/cockpit/common/v1"
 	orchpb "github.com/cockpit/car-agent/gen/go/cockpit/orchestrator/v1"
 )
 
@@ -25,19 +30,26 @@ type channelServer struct {
 	channelpb.UnimplementedEdgeCloudChannelServer
 	planner orchpb.CloudPlannerClient
 	sessions sync.Map // vehicle_id -> *sessionState
+	pending  sync.Map // correlation_id -> chan *EdgeResult
+	edgeSeq  atomic.Uint64
 	idem     IdempotencyStore
 }
 
 type sessionState struct {
 	vehicleID string
 	lastSeen  time.Time
+	sender    *sendMu
 }
 
 // sendMu 保护 stream.Send（F13）：gRPC bidi stream 不支持并发 SendMsg，
 // 主循环的 HelloAck/Pong 与 handleRequest goroutine 的 Event Send 可能交错。
+type downFrameSender interface {
+	Send(*channelpb.DownFrame) error
+}
+
 type sendMu struct {
 	mu     sync.Mutex
-	stream channelpb.EdgeCloudChannel_ConnectServer
+	stream downFrameSender
 }
 
 func (s *sendMu) Send(f *channelpb.DownFrame) error {
@@ -48,7 +60,13 @@ func (s *sendMu) Send(f *channelpb.DownFrame) error {
 
 func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer) error {
 	var vehicleID string
+	var activeSession *sessionState
 	sm := &sendMu{stream: stream}
+	defer func() {
+		if vehicleID != "" && activeSession != nil {
+			s.sessions.CompareAndDelete(vehicleID, activeSession)
+		}
+	}()
 
 	for {
 		up, err := stream.Recv()
@@ -74,7 +92,12 @@ func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer)
 					},
 				})
 			}
-			s.sessions.Store(vehicleID, &sessionState{vehicleID: vehicleID, lastSeen: time.Now()})
+			activeSession = &sessionState{
+				vehicleID: vehicleID,
+				lastSeen:  time.Now(),
+				sender:    sm,
+			}
+			s.sessions.Store(vehicleID, activeSession)
 			log.Printf("[cloud-gateway] hello from %s", vehicleID)
 			if err := sm.Send(&channelpb.DownFrame{
 				CorrelationId: corrID,
@@ -99,12 +122,102 @@ func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer)
 
 		case *channelpb.UpFrame_Request:
 			// 请求：解复用 → 转发 Planner → 回填 correlation_id
+			if err := bindRequestVehicle(body.Request, vehicleID); err != nil {
+				return err
+			}
 			go s.handleRequest(sm, corrID, body.Request, vehicleID)
 
 		case *channelpb.UpFrame_Ack:
 			// 客户端确认（幂等/可靠投递），当前 PoC 仅记录
 			log.Printf("[cloud-gateway] ack from %s: seq=%d", vehicleID, body.Ack.Seq)
+
+		case *channelpb.UpFrame_EdgeResult:
+			s.deliverEdgeResult(corrID, body.EdgeResult)
 		}
+	}
+}
+
+func bindRequestVehicle(req *orchpb.HandleRequest, vehicleID string) error {
+	if vehicleID == "" {
+		return status.Error(codes.Unauthenticated, "hello required before request")
+	}
+	if req == nil {
+		return status.Error(codes.InvalidArgument, "missing request")
+	}
+	if req.Context == nil {
+		req.Context = &commonpb.ContextRef{}
+	}
+	if claimed := req.Context.GetVehicleId(); claimed != "" && claimed != vehicleID {
+		return status.Errorf(
+			codes.PermissionDenied,
+			"request vehicle %s does not match stream vehicle %s",
+			claimed,
+			vehicleID,
+		)
+	}
+	req.Context.VehicleId = vehicleID
+	return nil
+}
+
+// DispatchToEdge implements the internal unary API used by Cloud Planner.
+func (s *channelServer) DispatchToEdge(
+	ctx context.Context, envelope *channelpb.EdgeCallEnvelope,
+) (*channelpb.EdgeResult, error) {
+	if envelope == nil || envelope.GetCall() == nil {
+		return nil, status.Error(codes.InvalidArgument, "missing edge call")
+	}
+	return s.dispatchEdgeCall(ctx, envelope.GetVehicleId(), envelope.GetCall())
+}
+
+func (s *channelServer) dispatchEdgeCall(
+	ctx context.Context, vehicleID string, call *channelpb.EdgeCall,
+) (*channelpb.EdgeResult, error) {
+	value, ok := s.sessions.Load(vehicleID)
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "no active stream for vehicle %s", vehicleID)
+	}
+	session := value.(*sessionState)
+	if session.sender == nil {
+		return nil, status.Errorf(codes.NotFound, "no active sender for vehicle %s", vehicleID)
+	}
+
+	corrID := fmt.Sprintf("edge-%s-%d-%s", vehicleID, s.edgeSeq.Add(1), call.GetStepId())
+	resultCh := make(chan *channelpb.EdgeResult, 1)
+	s.pending.Store(corrID, resultCh)
+	defer s.pending.Delete(corrID)
+
+	if err := session.sender.Send(&channelpb.DownFrame{
+		CorrelationId: corrID,
+		Body:          &channelpb.DownFrame_EdgeCall{EdgeCall: call},
+	}); err != nil {
+		return nil, status.Errorf(codes.Unavailable, "send edge call: %v", err)
+	}
+
+	select {
+	case result := <-resultCh:
+		if result.GetStepId() != call.GetStepId() {
+			return nil, status.Errorf(
+				codes.Internal, "edge result step mismatch: want %s got %s",
+				call.GetStepId(), result.GetStepId())
+		}
+		return result, nil
+	case <-ctx.Done():
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+}
+
+func (s *channelServer) deliverEdgeResult(
+	corrID string, result *channelpb.EdgeResult,
+) {
+	value, ok := s.pending.Load(corrID)
+	if !ok {
+		log.Printf("[cloud-gateway] late/unknown edge result corrID=%s", corrID)
+		return
+	}
+	select {
+	case value.(chan *channelpb.EdgeResult) <- result:
+	default:
+		log.Printf("[cloud-gateway] duplicate edge result corrID=%s", corrID)
 	}
 }
 

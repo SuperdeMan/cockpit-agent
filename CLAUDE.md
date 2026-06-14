@@ -1,5 +1,11 @@
 # CLAUDE.md — 智能座舱 Multi-Agent 项目规则
 
+> **2026-06-14 云端中枢状态更新**：P0-P3 主体代码已落地（统一 dispatcher、
+> Gateway `DispatchToEdge`、端 `edge_call`→VAL、T2 有界循环、确定性工具、执行层权限硬校验）。
+> 最后一批收尾后尚未跑全量/Smoke/Go/Docker/E2E，最终验收暂缓。当前交接真相源是
+> `docs/design/2026-06-14-cloud-central-orchestrator.md` 的“落地记录”。下一步必须把可信认证
+> scope 接到 `HandleRequest.meta["granted_scopes"]`，不得用默认全授权破坏 fail-closed。
+
 > 本文件是项目的最高工程约定，所有人（含 AI 协作者）在本仓库工作必须遵守。
 > 调整规范时：先改本文档，再改实践，不要反过来。
 

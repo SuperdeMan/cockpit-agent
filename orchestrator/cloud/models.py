@@ -31,6 +31,8 @@ class Step:
     status: StepStatus = StepStatus.PENDING
     latency_budget_ms: int = 5000
     meta: dict[str, str] = field(default_factory=dict)
+    required_permissions: list[str] = field(default_factory=list)
+    trust_level: str = ""
     # 运行期注入、随 ExecuteRequest.meta 下发给 Agent（如确认续接的 {"confirmed":"true"}）。
     # 不持久化进 SessionState——confirmed 只在确认那一轮由 engine 注入，防止陈旧确认被重放。
 
@@ -56,6 +58,16 @@ class Plan:
     raw_text: str = ""
     complexity: str = "simple"    # simple | adaptive：复杂度分诊（simple→T1 直执行, adaptive→T2 循环）
     goal: str = ""                # T2 再规划的锚点（一句话用户目标）；simple 时可空
+
+
+@dataclass
+class ReplanDecision:
+    """One bounded-loop decision: stop, or execute the next validated batch."""
+    done: bool
+    steps: list[Step] = field(default_factory=list)
+
+    def to_plan(self, goal: str = "") -> Plan:
+        return Plan(steps=self.steps, complexity="adaptive", goal=goal)
 
 
 @dataclass

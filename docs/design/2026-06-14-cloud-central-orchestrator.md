@@ -350,3 +350,39 @@ message EdgeResult {
 ## 落地记录
 
 （按阶段在此追加：日期、范围、验证结果、已知边界。）
+
+### 2026-06-14 代码落地（待最终验收）
+
+**已实现**
+
+- P0：`AgentManifest.kind`、`Step.kind/deployment/required_permissions/trust_level`、`Plan.complexity/goal`、统一 `UnifiedDispatcher`。
+- P1：`EdgeCall/EdgeResult/EdgeCallEnvelope` 与 `DispatchToEdge`；Cloud Gateway 按 `vehicle_id + correlation_id` 配对；请求车辆与握手车辆强绑定；Edge 在同一 bidi 流处理 `edge_call`，经 VAL 返回结果；端侧车控/媒体 manifest 注册；危险动作沿用 `NEED_CONFIRM` 闭环。
+- P2：首次规划输出 `simple/adaptive`；新增有界 `LoopController`、观察压缩、迭代/时间双预算、反应式升级、跨批次结果依赖与确认/补槽挂起恢复。
+- P3：进程内 `datetime.parse`、`unit.convert`、`math.eval` 工具及 manifest 注册；工具禁止声明/执行 `vehicle.control`。
+- 安全补强：规划与执行双层 permission scope 校验，支持父 scope 覆盖子 scope；third-party 车控硬拒绝；Edge 畸形回包拒绝；所有云调度车控仍只发送 intent，执行只经过 VAL。
+
+**本轮已有测试证据**
+
+- 在最后一批收尾改动前，云/端/SDK 相关回归曾达到 `202 passed`。
+- 聚焦权限与流生命周期测试曾达到 `18 passed`。
+- 聚焦 T2 跨批次依赖测试曾达到 `22 passed`。
+- Gateway `DispatchToEdge` 的配对/超时测试、proto codegen、Go 单测曾在较早实现节点通过。
+
+**重要：尚未完成最终验证**
+
+按本轮指令，最后一批修改后未再运行相关测试、全量测试、Smoke、Go test、Docker 构建或 E2E。上述“已实现”表示代码已经落地，不表示最终验收通过。最后未验证的收尾包括：
+
+- Cloud Gateway 握手车辆身份绑定。
+- 10 个层级端侧意图的映射/VAL 状态机修正（空调风速、屏幕亮度、方向盘高度/加热）。
+- 环境变量与文档接线。
+
+### 后续接手清单（按优先级）
+
+1. **P0 权限入口接线**：HMI/Edge Gateway 当前没有可信地注入 `HandleRequest.meta["granted_scopes"]`。权限系统会 fail-closed，因此需要从会话 token/设备身份解析 scope 后由网关注入；不要用默认全授权绕过。
+2. **完成验证**：先跑聚焦测试与 Go test，再跑 `python -m pytest --import-mode=importlib`、`python test/smoke_edge.py`、proto codegen、Docker build/up、`python test/e2e_ws.py`。补一条真实 `[edge step] -> [cloud step slot_ref]` 的跨进程 E2E。
+3. **检查最后收尾改动**：重点验证所有 `VEHICLE_INTENTS | MEDIA_INTENTS` 均能经 `EdgeCallExecutor -> VAL` 成功或正确进入确认，不允许静默旁路。
+4. **T2 流式完善**：当前循环进入时会立即输出占位话术，但循环内部 Agent 的 speech delta 尚未直通。
+5. **可观测接线**：增加 complexity、迭代次数、预算耗时、reactive upgrade、edge/tool 调用耗时与失败率指标/trace。
+6. **Cloud Gateway 扩展性**：当前车流状态在单实例内存中；多实例需 vehicle_id 会话亲和或一致性路由，并处理旧流替换与心跳过期。
+7. **工具后续**：HTTP/MCP 外部工具仍未实现；落地时必须要求 `network.external` 并使用出口白名单/超时/响应大小限制。
+8. **文档状态回写**：只有上述验证通过后，才把本节“待最终验收”改为“验收通过”，并更新 AGENTS.md/CLAUDE.md 中的测试数字。

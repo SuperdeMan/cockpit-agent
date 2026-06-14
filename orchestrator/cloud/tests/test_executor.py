@@ -59,6 +59,40 @@ def test_topo_cycle_raises():
 
 # ─── 部分失败测试 ───
 
+def test_run_accepts_dependency_from_external_seed():
+    import asyncio
+
+    calls = []
+
+    async def call(endpoint, intent, slots, ctx, meta):
+        calls.append((intent, dict(slots)))
+        return MockResponse(status=0, speech="done")
+
+    ex = DagExecutor(call_agent_fn=call)
+    step = Step(
+        id="r1",
+        agent_id="a",
+        intent="follow_up",
+        depends_on=["s1"],
+        slot_refs={"token": "s1.data.token"},
+    )
+    seed = {
+        "s1": StepResult(
+            step_id="s1",
+            status=StepStatus.OK,
+            data={"token": "abc"},
+        ),
+    }
+
+    async def run():
+        return [r async for r in ex.run(Plan(steps=[step]), None, done=seed)]
+
+    results = asyncio.run(run())
+
+    assert [r.step_id for r in results] == ["r1"]
+    assert calls == [("follow_up", {"token": "abc"})]
+
+
 def test_mark_skipped():
     steps = [
         Step(id="s1", agent_id="a"),

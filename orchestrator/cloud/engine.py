@@ -13,6 +13,7 @@ from .planning import PlanBuilder
 from .executor import DagExecutor
 from .aggregator import Aggregator
 from .session import SessionStore
+from .loop import LoopController
 from security.permission import PermissionEngine, AuthContext
 
 logger = logging.getLogger("planner.engine")
@@ -31,13 +32,15 @@ class PlannerEngine:
 
     def __init__(self, clients, planner: PlanBuilder, executor: DagExecutor,
                  aggregator: Aggregator, session: SessionStore,
-                 perms: PermissionEngine):
+                 perms: PermissionEngine, loop=None):
         self.clients = clients
         self.planner = planner
         self.executor = executor
         self.aggregator = aggregator
         self.session = session
         self.perms = perms
+        self.loop = loop or LoopController(
+            planner, executor, aggregator, self._suspend)
 
     async def run(self, request) -> AsyncIterator[dict]:
         """编排主循环（外层）：委托 _orchestrate，并把本轮对话落库到 memory。
@@ -65,6 +68,7 @@ class PlannerEngine:
         """规划→校验→执行→聚合。yield 事件：{"kind": "speech"|"action"|"final", ...}"""
         plan: Plan | None = None
         seed_results: list[StepResult] = []
+        agents = []
 
         # A. 多轮续接：存在挂起的待确认会话时，判定本轮是否在回应确认
         pending = await self.session.load(ctx.session_id)
@@ -127,9 +131,27 @@ class PlannerEngine:
             # C2. 权限校验（F2）：执行前对每个 step 做强制校验
             plan = self._enforce_permissions(plan, ctx)
 
+        # D-T2. Adaptive plans enter the bounded loop. Confirmation resumes keep
+        # their adaptive metadata and continue from the saved result seeds.
+        if plan.complexity == "adaptive":
+            if not agents:
+                agents = await self.clients.list_agents()
+            async for event in self.loop.run(
+                    goal=plan.goal or text or plan.raw_text,
+                    initial_plan=plan,
+                    agents=agents,
+                    ctx=ctx,
+                    user_text=text or plan.raw_text,
+                    seed_results=seed_results):
+                yield event
+            return
+
         # D0. 单步新规划走流式直通（task 4：开放域"边想边说"，秒级反馈）。
         # 仅对全新单步计划开启；确认续接/多步计划保持 executor 路径，不动 F1 闭环。
-        if new_plan and len(plan.steps) == 1 and not ctx.is_confirmation:
+        if (new_plan and plan.complexity == "simple" and len(plan.steps) == 1
+                and not ctx.is_confirmation
+                and plan.steps[0].kind == "agent"
+                and plan.steps[0].deployment == "cloud"):
             step = plan.steps[0]
             streamed = False
             final_sr: StepResult | None = None
@@ -172,6 +194,19 @@ class PlannerEngine:
             if step_result.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
                 yield await self._suspend(step_result, results, plan, ctx)
                 return
+
+        if new_plan and await self._needs_replan(plan, results):
+            if not agents:
+                agents = await self.clients.list_agents()
+            async for event in self.loop.run(
+                    goal=plan.goal or text or plan.raw_text,
+                    initial_plan=None,
+                    agents=agents,
+                    ctx=ctx,
+                    user_text=text or plan.raw_text,
+                    seed_results=results):
+                yield event
+            return
 
         # E. 聚合 + 输出
         await self.session.clear(ctx.session_id)
@@ -281,7 +316,12 @@ class PlannerEngine:
                     continue
                 seeds.append(StepResult(**d))
 
-            return Plan(steps=steps, raw_text=state.pending_plan.get("raw_text", "")), seeds
+            return Plan(
+                steps=steps,
+                raw_text=state.pending_plan.get("raw_text", ""),
+                complexity=state.pending_plan.get("complexity", "simple"),
+                goal=state.pending_plan.get("goal", ""),
+            ), seeds
         except Exception as e:
             logger.warning("Failed to restore plan: %s", e)
             return None, []
@@ -294,7 +334,17 @@ class PlannerEngine:
             try:
                 agents = await self.clients.resolve(query=step.intent, top_k=1)
                 if agents:
-                    step.endpoint = agents[0].endpoint
+                    resolved = agents[0]
+                    step.endpoint = resolved.endpoint
+                    manifest = resolved.manifest
+                    step.kind = getattr(manifest, "kind", "") or step.kind
+                    step.deployment = (
+                        getattr(manifest, "deployment", "") or step.deployment)
+                    step.required_permissions = list(
+                        getattr(manifest, "requires_permissions", []) or
+                        step.required_permissions)
+                    step.trust_level = (
+                        getattr(manifest, "trust_level", "") or step.trust_level)
                 else:
                     logger.warning("No agent found for intent %s", step.intent)
             except Exception as e:
@@ -319,10 +369,34 @@ class PlannerEngine:
         return {
             "steps": [
                 {"id": s.id, "agent_id": s.agent_id, "endpoint": s.endpoint,
+                 "kind": s.kind, "deployment": s.deployment,
                  "intent": s.intent, "slots": s.slots, "depends_on": s.depends_on,
                  "slot_refs": s.slot_refs, "require_confirm": s.require_confirm,
-                 "latency_budget_ms": s.latency_budget_ms}
+                 "latency_budget_ms": s.latency_budget_ms,
+                 "required_permissions": s.required_permissions,
+                 "trust_level": s.trust_level}
                 for s in plan.steps
             ],
             "raw_text": plan.raw_text,
+            "complexity": plan.complexity,
+            "goal": plan.goal,
         }
+
+    async def _needs_replan(self, plan: Plan, results: list[StepResult]) -> bool:
+        if any(result.data.get("replan") is True for result in results):
+            return True
+        steps = {step.id: step for step in plan.steps}
+        for result in results:
+            if result.status != StepStatus.FAILED:
+                continue
+            step = steps.get(result.step_id)
+            if not step:
+                continue
+            try:
+                alternatives = await self.clients.resolve(
+                    intent=step.intent, top_k=2)
+            except Exception:
+                continue
+            if len(alternatives) > 1:
+                return True
+        return False
