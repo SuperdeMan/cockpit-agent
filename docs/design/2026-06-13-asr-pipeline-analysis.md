@@ -43,7 +43,7 @@
 | ① 前端录音竞态 | ✅ 已修 | `MicController` 状态机 + 最短时长门槛（`hmi/src/audio.ts`） |
 | ② 安全上下文 | ✅ 检测/提示已加 | 部署侧改 HTTPS 或 localhost 访问 |
 | ③ 格式链路 | ⬜ 待办 | 实测 MiMo 接受的容器；**优先后端 webm→wav 转码** |
-| ④ Provider 兜底 | ⬜ 排查 | 确认 `LLM_API_KEY` 已配（否则是 mock） |
+| ④ Provider 兜底 | ⚠️ 配置坑已修 | key 在仓库根 `.env`，但 compose 从 `deploy/` 找 `.env` → 未加载 → `MockASRProvider`。已给 Makefile 加条件式 `--env-file .env`（2026-06-14）；裸 `docker compose` 仍需自带该参数 |
 | ⑤ CORS/端口 | ✅ 正常 | 部署时确认浏览器可达 50059 |
 
 ---
@@ -60,3 +60,33 @@
 ## 4. 结论
 
 "按住无法收音"的**主因是前端录音竞态**（本轮已修）；"ASR 没打通"的**最可能后端原因是 webm/opus 容器不被 MiMo ASR 接受**（建议后端转码）。叠加安全上下文与 mock 兜底两个易踩坑点。按上表逐环验证即可闭环。
+
+---
+
+## 5. 详细待办（后端打通 ASR，按此执行）
+
+> 前端侧（竞态、安全上下文检测）本轮已修，无需再动。剩余全在后端/部署。
+
+### A1. 先确认走的是真实 ASR（10 分钟）
+- [ ] 起栈时确保 key 加载：`make up`（已带 `--env-file .env`）或裸 compose 手加 `--env-file .env`；`docker logs car-agent-llm-gateway-1` **不应**出现 `no API key -> MockProvider`。
+- [ ] 录一段真音频转 wav，`curl -X POST localhost:50059/api/asr -d '{"audio":"<wav base64>","format":"wav","language":"zh"}'` → 返回真实文本即 ④/⑤ 通。
+
+### A2. 实测 MiMo ASR 接受的容器（坐实环节③，半小时）
+- [ ] 同一段音频分别转 **wav / webm(opus) / mp4 / ogg**，逐个打 `/api/asr`（`format` 对应改），记录哪些成功、哪些报错或空。
+- [ ] 若 **webm/opus 失败而 wav 成功** → 坐实"前端产 webm、后端没转码"是断点，走 A3。
+
+### A3. 后端转码 webm→wav（推荐方案，对前端透明）
+- [ ] `llm-gateway/http_server.py:handle_asr`：收到非 wav 容器时，先转 16k mono wav 再送 ASR。实现二选一：
+  - **ffmpeg 子进程**（`ffmpeg -i pipe:0 -ar 16000 -ac 1 -f wav pipe:1`，stdin/stdout 走管道）——需镜像装 ffmpeg（改 `llm-gateway/Dockerfile` 加 `apt-get install -y ffmpeg`）。
+  - **pydub**（`AudioSegment.from_file(io.BytesIO(raw), format=fmt).set_frame_rate(16000).set_channels(1).export(fmt='wav')`）——同样依赖 ffmpeg 后端。
+- [ ] 转码后调 `asr.transcribe(audio=wav_bytes, fmt='wav', ...)`；失败回退原始字节 + 记日志。
+- [ ] 备选（不想后端转码）：前端改 `AudioWorklet` 直采 16k PCM 封 wav 头——改动大、耗设备性能，仅当后端不能装 ffmpeg 时用。
+
+### A4. 部署安全上下文
+- [ ] 车机 webview / 演示环境用 **HTTPS** 或经 `localhost` 访问（否则浏览器禁用 `getUserMedia`，前端已检测并提示）。
+
+### A5. 端到端用例
+- [ ] `test/` 加一条 "音频 → /api/asr → 文本 → WS 编排 → 回复" 的 e2e（可用一段固定 wav 样本，断言识别文本非空且后续有 final）。
+
+### 验收
+- 真实 MiMo ASR 对前端实际产出的容器（webm/opus）能稳定返回文本；A5 e2e 通过；浏览器在 localhost/HTTPS 下录音→识别全链路可用。
