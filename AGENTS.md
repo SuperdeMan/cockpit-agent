@@ -45,7 +45,7 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest ... --import-mode=importlib` | ✅ 128 passed（+ 单步流式、对话上下文新增用例） |
+| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 268 passed, 2 skipped |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
 | `gen/`（gRPC 生成代码）| ✅ 已生成（`buf generate proto`） |
 | Go 网关 | ✅ Go 1.24 编译通过，Docker 全栈运行 |
@@ -54,16 +54,18 @@
 | 可观测/熔断 | ⚠️ 代码已实现，待接线（Phase 2） |
 | LLM 调用 | ✅ MiMo API 已验证连通（同步+流式）；未配 key 时走 MockProvider |
 | 确认闭环（F1） | ✅ 端到端打通（HMI→网关→编排器→Agent） |
-| 验证体系（F6-F9） | ✅ `make test` 一条命令全绿 |
-| Docker 全栈联调 | ✅ 18 个容器全部运行（2026-06-13） |
+| Docker 全栈联调 | ✅ 18 个容器全部运行 |
 | E2E 测试 | ✅ 4 条链路通过（车控/导航/闲聊/点餐） |
-| ASR/TTS | ✅ HTTP 代理 + HMI 录音/播放（MiMo mimo-v2.5-asr/tts） |
-| HMI（前端） | ✅ 重构为「深空座舱 HUD」：组件化 + 设置页 + 流式渲染 + 记忆视图 |
-| 开放域流式 + 模型分层 | ✅ engine 单步 ExecuteStream 直通 + chitchat 快模型/兜底（2026-06-14 实测）；首 token 仍受规划器重模型拖累，降延迟待做 |
+| 车控知识库 | ✅ commands.yaml 30 对象 + entities.yaml 归一化 + responses.yaml 话术；VAL 结构化执行流水线（归一化→校验→安全门控→模拟→选话术） |
+| 端侧意图覆盖 | ✅ 90 条意图 pattern（fast_intent），覆盖全部 30 对象（座椅/天窗/后备箱/门锁/氛围灯/雨刷/后视镜/香氛/车道辅助/动能回收等） |
+| 多意图拆分 | ✅ 端侧 split_and_classify（连接词切分+保守路由）+ 云侧 Planner DAG 强化（并行/串行判定） |
+| ASR/TTS | ✅ HTTP 代理 + MiMo ASR/TTS + webm→wav 后端转码（ffmpeg）+ 9 音色 |
+| HMI（前端） | ✅ 「深空座舱 HUD」组件化 + 设置页 + 流式渲染 + 记忆视图 + 语音按钮 |
+| 开放域流式 + 模型分层 | ✅ engine 单步 ExecuteStream 直通 + chitchat 快模型/兜底；降规划延迟待做 |
 | 对话上下文/指代 | ✅ engine 写对话记忆 + 规划注入历史（仅云侧链路；端侧快意图未入记忆） |
-| 记忆视图 | ✅ llm-gateway `/api/memory/session\|context` 只读端点 + HMI 展示 |
+| 飞书数据拉取 | ✅ lark-cli 验证可拉取 5 张公版表（意图表 200+/分类表 200+/词库 200+/响应表 200+/兜底表 34）；export 脚本骨架就绪 |
 
-**结论**：Phase 1 全部验收标准达成；其上叠加了 HMI 重构、开放域流式/分层、对话记忆（云侧）三项增强（2026-06-14）。前瞻设计与未竟项见 `docs/design/`，Phase 2 backlog 见 `docs/reviews/2026-06-11-review-fixes.md`。
+**结论**：Phase 1 全部验收标准达成 + 车控知识库全量覆盖 + 多意图拆分 + ASR 转码（2026-06-14）。前瞻设计见 `docs/design/`，Phase 2 backlog 见 `docs/reviews/2026-06-11-review-fixes.md`。
 
 ---
 

@@ -42,10 +42,12 @@ docker compose -f deploy/docker-compose.yaml --env-file .env up --build
 LLM 默认使用小米 MiMo API（`LLM_PROVIDER=xiaomimimo`），也支持 Anthropic。不配 key 自动走 MockProvider。
 
 ## 验证四条 PoC 链路
-1. **车控快路径**：说/输入"打开空调26度" → 端侧秒回（断网也可用）。
+1. **车控快路径**：说"打开空调26度"、"打开座椅加热"、"解锁车门"、"氛围灯设为蓝色" → 端侧秒回（断网也可用）。
 2. **云端导航**：说"附近的充电站" → 云端 Planner 路由到导航 Agent，追问关键词。
-3. **云端闲聊**：说"讲个笑话" → 云端 Planner 路由到闲聊 Agent。
+3. **云端闲聊**：说"讲个笑话" → 云端 Planner 路由到闲聊 Agent，流式回复。
 4. **确认闭环**：说"订川菜馆今晚7点两位" → 点餐 Agent 返回结果 → "确认" → 完成下单。
+
+**多意图**：说"打开空调并播放音乐" → 端侧拆分两个意图并行执行。
 
 ```bash
 python test/e2e_ws.py   # E2E 自动验证（需全栈运行）
@@ -55,4 +57,4 @@ python test/e2e_ws.py   # E2E 自动验证（需全栈运行）
 见 `CLAUDE.md` §3。每个服务子目录都有自己的 README，说明职责、接口、依赖。
 
 ## 状态
-Phase 1 工程化代码已落地，Docker 全栈联调通过（2026-06-13）。详见 [`AGENTS.md`](AGENTS.md) §4。
+Phase 1 全部验收标准达成（2026-06-14）：268 测试全绿、E2E 4 链路通过、车控 90 意图、多意图切分、ASR/TTS 全链路。详见 [`AGENTS.md`](AGENTS.md) §4。
