@@ -33,6 +33,10 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         self.cloud_connected = False  # 连接状态追踪
 
     async def Handle(self, request, context):
+        # 从 request.meta 读取 HMI 设置
+        meta = dict(request.meta) if request.meta else {}
+        answer_length = meta.get("answer_length", "brief")
+
         # 确认/补槽续接必须回到挂起会话所在的云端，不走本地快路径
         if request.is_confirmation:
             intent = None
@@ -48,7 +52,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 legacy = structured_to_legacy(m_intent)
                 if legacy and legacy["confidence"] >= _HIGH and is_local(legacy["name"]):
                     # 结构化命令直通 VAL
-                    ok, speech = self.val.execute(m_intent)
+                    ok, speech = self.val.execute(m_intent, answer_length=answer_length)
                     if not ok:
                         speech = speech or "操作失败"
                     speeches.append(speech)
@@ -69,7 +73,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             # 尝试结构化命令直通 VAL（覆盖新意图：trunk/door_lock/seat/ambient_light 等）
             structured = classify_structured(request.text)
             if structured:
-                ok, speech = self.val.execute(structured)
+                ok, speech = self.val.execute(structured, answer_length=answer_length)
                 action_type = "vehicle.control" if structured.get("data", {}).get("object") not in ("media",) else "media.control"
                 action = {
                     "type": action_type,
@@ -96,7 +100,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 got = True
                 self.cloud_connected = True
                 # 云端回流 action 分发：车控类走 VAL
-                event = self._dispatch_cloud_actions(event)
+                event = self._dispatch_cloud_actions(event, answer_length)
                 yield event
             if not got:
                 yield orchestrator_pb2.HandleEvent(
@@ -108,7 +112,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             yield orchestrator_pb2.HandleEvent(final=orchestrator_pb2.FinalResult(
                 speech="网络不太好，复杂请求暂时无法处理，不过车内控制依然可以正常使用。"))
 
-    def _dispatch_cloud_actions(self, event):
+    def _dispatch_cloud_actions(self, event, answer_length="brief"):
         """云端回流 action 分发：车控类交 VAL 执行，落实规划/执行分离。
 
         LLM/Planner 只产出 vehicle.control 意图，真正下发由端侧 VAL 做：
@@ -128,7 +132,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             # F14：payload 用 AsMap()（原生类型），避免 protobuf Value 类型错误
             payload = action.payload.AsMap() if action.payload else {}
             cmd = payload.get("command", action.type)
-            ok, msg = self.val.execute(cmd, payload)
+            ok, msg = self.val.execute(cmd, payload, answer_length=answer_length)
             if ok:
                 logger.info("VAL executed: %s -> %s", cmd, msg)
                 new_speech = msg  # 用 VAL 执行结果替换 speech
