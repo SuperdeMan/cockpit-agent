@@ -1,6 +1,9 @@
 .PHONY: proto up down logs test e2e clean help
 
-COMPOSE := docker compose -f deploy/docker-compose.yaml
+# compose 文件在 deploy/，Compose 默认不读仓库根的 .env；根 .env 存在时显式加载
+# （条件式：缺 .env 的新 clone 不传 --env-file，避免 compose 报"文件不存在"）
+ENV_FILE := $(wildcard .env)
+COMPOSE := docker compose $(if $(ENV_FILE),--env-file .env,) -f deploy/docker-compose.yaml
 
 help:
 	@echo "proto  - 由 proto/ 生成 Go/Python gRPC 代码 (需 buf)"

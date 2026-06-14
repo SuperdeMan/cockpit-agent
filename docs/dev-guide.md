@@ -123,7 +123,7 @@ go run ./gateway/edge          # 或 ./gateway/cloud
 | 复杂意图总是"无法处理" | mock LLM 不会抽槽/规划；配 `LLM_API_KEY` 后体验完整 |
 | Agent 重启后 Planner 返回空计划 | Registry 内存丢失，重启 Agent 让它们重新注册 |
 | TTS 返回错误 | MiMo TTS 偶尔返回非 JSON 响应，已加 fallback 处理 |
-| `docker compose` 需要 `--env-file .env` | compose 文件在 `deploy/` 子目录，根目录 `.env` 需显式指定 |
+| 裸 `docker compose` 没加载到根 `.env`（如 key 不生效、走了 mock）| compose 文件在 `deploy/` 子目录，需 `--env-file .env`；**`make` 目标已自动带上**（根 `.env` 存在时），手敲 compose 命令才需自己加 |
 
 ---
 
