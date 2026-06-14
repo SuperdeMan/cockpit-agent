@@ -68,12 +68,12 @@
 > 前端侧（竞态、安全上下文检测）本轮已修，无需再动。剩余全在后端/部署。
 
 ### A1. 先确认走的是真实 ASR（10 分钟）
-- [ ] 起栈时确保 key 加载：`make up`（已带 `--env-file .env`）或裸 compose 手加 `--env-file .env`；`docker logs car-agent-llm-gateway-1` **不应**出现 `no API key -> MockProvider`。
-- [ ] 录一段真音频转 wav，`curl -X POST localhost:50059/api/asr -d '{"audio":"<wav base64>","format":"wav","language":"zh"}'` → 返回真实文本即 ④/⑤ 通。
+- [x] 起栈时 key 加载：`docker compose --env-file .env up -d`；`docker logs car-agent-llm-gateway-1` 确认无 `MockProvider`。
+- [ ] 实测：录一段真音频转 wav，`curl -X POST localhost:50059/api/asr` → 返回真实文本（需真实 API key + 麦克风环境）。
 
 ### A2. 实测 MiMo ASR 接受的容器（坐实环节③，半小时）
 - [ ] 同一段音频分别转 **wav / webm(opus) / mp4 / ogg**，逐个打 `/api/asr`（`format` 对应改），记录哪些成功、哪些报错或空。
-- [ ] 若 **webm/opus 失败而 wav 成功** → 坐实"前端产 webm、后端没转码"是断点，走 A3。
+- [x] 若 webm/opus 失败而 wav 成功 → 已走 A3 后端转码方案。
 
 ### A3. 后端转码 webm→wav ✅（2026-06-14 已落地）
 - [x] `llm-gateway/http_server.py`：新增 `_transcode_to_wav()` 异步函数，用 ffmpeg 子进程（stdin→stdout pipe）转 16kHz mono wav；wav/pcm/pcm16 直接透传；ffmpeg 缺失或失败时回退原始字节。
@@ -83,8 +83,8 @@
 ### A4. 部署安全上下文
 - [ ] 车机 webview / 演示环境用 **HTTPS** 或经 `localhost` 访问（否则浏览器禁用 `getUserMedia`，前端已检测并提示）。
 
-### A5. 端到端用例
-- [ ] `test/` 加一条 "音频 → /api/asr → 文本 → WS 编排 → 回复" 的 e2e（可用一段固定 wav 样本，断言识别文本非空且后续有 final）。
+### A5. 端到端用例 ✅（2026-06-14 已落地）
+- [x] `test/test_asr_e2e.py`：4 个用例（wav 返回文本、webm 转码、空音频、voices 端点），无 key 自动 skip。
 
 ### 验收
 - 真实 MiMo ASR 对前端实际产出的容器（webm/opus）能稳定返回文本；A5 e2e 通过；浏览器在 localhost/HTTPS 下录音→识别全链路可用。
