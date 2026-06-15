@@ -22,12 +22,18 @@ def _load_yaml(path: str) -> dict:
 
 
 class VAL:
-    def __init__(self, knowledge_dir: str | None = None, vehicle_model: str | None = None):
+    def __init__(
+        self,
+        knowledge_dir: str | None = None,
+        vehicle_model: str | None = None,
+        on_change=None,
+    ):
         self.state = {
             "hvac_on": False, "hvac_temp": 24,
             "window": "closed", "media": "stopped", "speed_kmh": 60,
-            "gear": "P",
+            "gear": "P", "battery": 72, "location": None,
         }
+        self._on_change = on_change
         self.vehicle_model = vehicle_model
         self.commands: dict = {}
         self.entities: dict = {}
@@ -49,7 +55,23 @@ class VAL:
 
     # ── 统一入口 ──────────────────────────────────────────────
 
-    def execute(self, cmd: Any, args: dict | None = None, answer_length: str = "short") -> tuple[bool, str]:
+    def execute(
+        self,
+        cmd: Any,
+        args: dict | None = None,
+        answer_length: str = "short",
+    ) -> tuple[bool, str]:
+        before = dict(self.state)
+        result = self._run(cmd, args, answer_length)
+        self._notify(before)
+        return result
+
+    def _run(
+        self,
+        cmd: Any,
+        args: dict | None,
+        answer_length: str,
+    ) -> tuple[bool, str]:
         """兼容旧接口 (str, dict) 和新接口 (dict)。
 
         answer_length: "short"/"standard"（默认，行车简短）或 "detailed"（详细）。
@@ -62,6 +84,29 @@ class VAL:
         return False, "暂不支持该控制指令"
 
     # ── 旧接口（向后兼容）──────────────────────────────────────
+
+    def _notify(self, before: dict) -> None:
+        if not self._on_change:
+            return
+        changes = [
+            {"key": key, "old": before.get(key), "new": value}
+            for key, value in self.state.items()
+            if before.get(key) != value
+        ]
+        if not changes:
+            return
+        try:
+            self._on_change(changes)
+        except Exception:
+            pass
+
+    def set_env(self, key: str, value: Any) -> None:
+        """Set a simulated sensor value and publish the resulting state diff."""
+        before = dict(self.state)
+        if before.get(key) == value:
+            return
+        self.state[key] = value
+        self._notify(before)
 
     def _legacy_execute(self, command: str, args: dict) -> tuple[bool, str]:
         # 安全态门控示例：高速行驶中不完全打开车窗
