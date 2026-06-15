@@ -119,6 +119,16 @@ services:
       AGENT_PORT: "50066"
     depends_on: [registry, llm-gateway]
 
+  observability-collector:
+    build: { context: .., dockerfile: observability/collector/Dockerfile }
+    environment:
+      NATS_URL: nats://nats:4222
+      OBS_COLLECTOR_PORT: "8092"
+      DEBUG_VEHICLE_CONTROL: ${DEBUG_VEHICLE_CONTROL:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports: ["8092:8092"]
+    depends_on: [nats]
+
   # ── 接入层 ──
   cloud-gateway:
     build: { context: .., dockerfile: gateway/cloud/Dockerfile }
