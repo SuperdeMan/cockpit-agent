@@ -11,7 +11,7 @@
 
 阶段：**Phase 1 工程化 PoC 主干、云端中枢 P0-P3 与轻量可观测台已落地**（2026-06-15）。
 原始 Phase 1 计划中的真实外部能力、持久化/多实例、mTLS/沙箱、完整 OTel 等仍是
-后续工作。当前全量测试 360 passed, 2 skipped；Docker 20 个容器运行正常。
+后续工作。当前全量测试 365 passed, 2 skipped；Docker 20 个容器运行正常。
 
 ---
 
@@ -47,7 +47,7 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 360 passed, 2 skipped（2026-06-15 实测） |
+| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 365 passed, 2 skipped（2026-06-15 实测） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
 | HMI TTS 单测 / 构建 | ✅ Node 5/5；`npm run build` 通过 |
 | Dashboard 单测 / 构建 | ✅ Node 4/4；`npm run build` 通过 |
@@ -55,7 +55,7 @@
 | Go 网关 | ✅ Go 1.24 编译通过，Docker 全栈运行 |
 | Agent Provider 适配 | ✅ 6/6 Agent 接入统一工厂并注册；真实厂商能力仍需按环境验收 |
 | 安全/权限/编排/协作/支付 | ✅ PoC 链路落地；真实 token、正式沙箱与真实支付仍待接入 |
-| 可观测 | ✅ NATS 事件、collector REST/WS、车辆 diff、端云 span、Agent 健康/指标与独立 Dashboard；Prometheus/OTel 导出仍待做 |
+| 可观测 | ✅ NATS 事件、collector REST/WS、车辆 diff、端云 span、Agent 健康/指标与独立 Dashboard；collector/registry 重启经周期快照与周期重注册自愈；Prometheus/OTel 导出仍待做 |
 | 熔断 | ⚠️ 基础实现存在，生产化接线与演练待做 |
 | LLM 调用 | ✅ MiMo API 已验证连通（同步+流式）；未配 key 时走 MockProvider |
 | 确认闭环（F1） | ✅ 端到端打通（HMI→网关→编排器→Agent） |
@@ -78,8 +78,9 @@
 `DispatchToEdge`、端 `edge_call`→VAL、T2 有界循环、确定性工具、PoC 默认 scope、
 可观测接线、混合意图语义分组、多步反馈、端侧轮记忆、危险动作确认、句子级增量
 TTS、慢意图计划完整性与复杂混合意图回归；另已落地 NATS 可观测出口、collector、
-车辆状态/动态、分布式链路、Agent 健康/指标与独立 Dashboard。详见 `docs/design/`
-两份 2026-06-14/15 落地记录。
+车辆状态/动态、分布式链路、Agent 健康/指标与独立 Dashboard，以及实时流修复、
+车速/档位自洽联动、collector 周期快照自愈、registry 重启后能力周期重注册自愈。
+详见 `docs/design/` 两份 2026-06-14/15 落地记录。
 
 **待做**：Registry/Cloud Gateway 持久化与多实例扩展、真实 Provider/支付/权限
 token、正式 third-party 沙箱与网络白名单、Prometheus/OTel 导出与完整熔断、

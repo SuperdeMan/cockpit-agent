@@ -292,10 +292,32 @@ edge-gateway(WS,已有) ─gRPC→ edge-orchestrator ──┐           │ obs
 - 降级实验：停止 NATS 后本地 `关闭空调` 仍在 **13ms** 返回；NATS 恢复后
   新请求的 trace 自动恢复采集。
 
+### 2026-06-15（续）：实时流修复与健壮性加固
+
+在上述初版基础上，修复联调暴露的问题并补齐健壮性：
+
+- **实时流**：collector 缺 WebSocket 运行时库导致 `/stream` 404、Dashboard 收不到推送；
+  `observability/collector/requirements.txt` 补 `websockets`，重建后 `/stream [accepted]`、实时推送恢复。
+- **车速/档位自洽**：VAL 初始车速改 0（消除"P 挡却 60km/h"的矛盾）；`set_env` 加联动——
+  挂 P/N → 车速归 0，车速 >0 → 自动挂 D。
+- **车辆状态补全**：VAL 初始状态从 8 项基础值补到 19 项常见车身默认态，edge 重启后
+  Dashboard 车辆状态区不再变空（15 张卡片）。
+- **collector 自愈**：edge 周期广播全量快照（`OBS_SNAPSHOT_INTERVAL`，默认 30s），
+  collector 重启后一个周期内自愈恢复车辆状态镜像。
+- **注册自愈（根治）**：`agents/_sdk/server.py`、`orchestrator/edge/main.py`、
+  `orchestrator/cloud/main.py` 三处注册都加周期重注册（`AGENT_REREGISTER_INTERVAL`，
+  默认 10s，幂等 upsert）；registry 重启后 9 项能力（6 cloud agent + builtin-tools +
+  edge-vehicle/media）全部自动补注册。
+
+**验证**：全量 **365 passed, 2 skipped**；smoke 13/13；Dashboard 4 passed + 构建通过。
+全栈实测：registry+collector 重启清空（agents=0）后 ~15s 自愈回 9；collector 单独重启
+车辆状态 ~30s 自愈；debug 设车速 80→自动挂 D、挂 P→车速归 0。
+
 ### 已知边界 / 后续
 
-- collector 为单实例内存聚合，重启会丢历史；尚无多车隔离、持久化、告警与鉴权。
+- collector 为单实例内存聚合；重启会丢 trace 历史，但车辆状态镜像与 Agent 健康会分别由
+  edge 周期快照、各服务周期重注册自愈。尚无多车隔离、持久化、告警与鉴权。
 - `DEBUG_VEHICLE_CONTROL` 默认仅服务本地演示；非开发环境必须关闭。
 - 当前是轻量 NATS 可观测层，不替代 Prometheus/OTel/Tempo/Grafana 目标态。
-- Registry 仍是内存注册表，重启后需要各 Agent、cloud-planner 与
-  edge-orchestrator 重新注册。
+- Registry 仍是内存注册表；重启后各 Agent、cloud-planner 与 edge-orchestrator 已能经
+  周期重注册自动补注册（≤`AGENT_REREGISTER_INTERVAL`），无需人工干预。多实例扩展仍待做。

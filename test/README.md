@@ -11,7 +11,7 @@ python test/smoke_edge.py
 python -m pytest --import-mode=importlib -q
 ```
 `conftest.py` 已配好 PYTHONPATH，`--import-mode=importlib` 解决 test_agent.py 重名。
-**当前结果：360 passed, 2 skipped（2026-06-15 实测）。**
+**当前结果：365 passed, 2 skipped（2026-06-15 实测）。**
 
 ### 测试分布
 | 模块 | 文件 | 覆盖 |
@@ -27,6 +27,7 @@ python -m pytest --import-mode=importlib -q
 | 可观测 | `observability/tests/` | emitter 断线恢复、collector 聚合、REST/WS、debug 校验 |
 | ASR 转码 | `llm-gateway/tests/test_transcode.py` | wav 透传、webm 转码、回退 |
 | Agent | `agents/*/tests/` | 各 Agent 契约测试 |
+| Agent SDK | `test/sdk/` | 跨 Agent 协作、周期重注册（registry 重启后自愈补注册）|
 | ASR E2E | `test/test_asr_e2e.py` (4) | wav/webm/空音频/voices（需 API key，无 key 跳过） |
 
 ## 3. HMI 单测与构建

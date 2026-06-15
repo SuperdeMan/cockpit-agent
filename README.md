@@ -18,7 +18,7 @@
 - `DispatchToEdge`、T2 有界循环、确定性工具和权限双层校验已实现。
 - 端侧混合意图支持按语义组分流，本地动作与导航/媒体慢意图可在同一请求中协同执行。
 - HMI 支持文字流式渲染和句子级增量 TTS：首个完整短句即可开始合成、后续音频顺序播放。
-- 全量 pytest：**360 passed, 2 skipped**。
+- 全量 pytest：**365 passed, 2 skipped**。
 - 端侧 smoke：**13 passed, 0 failed**。
 - HMI TTS 单测：**5 passed**；Vite 生产构建通过。
 - 可观测 Dashboard：**4 passed**；Vite 生产构建通过。
@@ -121,7 +121,7 @@ python test/e2e_ws.py
 ## 已知边界
 
 - Cloud Gateway 的车辆长连接状态仍在单实例内存中，多实例需会话亲和或一致性路由。
-- Registry 仍是内存注册表，重启后需重启 Agent 完成重新注册。
+- Registry 仍是内存注册表，但各 Agent / edge / cloud-planner 已周期重注册，重启后自动补注册（无需人工）；多实例扩展仍待做。
 - 地图/餐饮/停车/手册等 Provider 已统一适配并默认可回退 mock，真实厂商能力仍需
   按环境配置和验收。
 - HTTP/MCP 外部工具及网络出口白名单尚未实现。
