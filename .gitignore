@@ -36,3 +36,6 @@ Thumbs.db
 # Logs
 *.log
 feishu_*.json
+
+# Brainstorm visual companion (ephemeral mockups)
+.superpowers/
