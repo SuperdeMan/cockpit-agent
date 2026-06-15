@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -9,6 +10,11 @@ import time
 import uuid
 
 logger = logging.getLogger("obs.events")
+
+change_source: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "change_source",
+    default="vehicle",
+)
 
 
 def _now_ms() -> int:

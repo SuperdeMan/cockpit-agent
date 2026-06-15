@@ -119,6 +119,9 @@ class EdgeCallExecutor:
         return set(objects) if objects else None
 
     def execute(self, call) -> agent_pb2.ExecuteResponse:
+        from observability.events import change_source
+
+        change_source.set("edge_call")
         intent_name = call.intent.name
         slots = dict(call.intent.slots)
         structured = _to_structured(

@@ -19,6 +19,8 @@ from val import VAL
 from edge_agents import edge_execute
 from cloud_client import CloudClient
 from edge_call import EdgeCallExecutor
+from observability.events import EventEmitter, change_source
+from observability.tracing import get_trace_id
 
 logger = logging.getLogger("edge.orchestrator")
 
@@ -81,11 +83,49 @@ class _MemoryClient:
 
 class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
     def __init__(self):
-        self.val = VAL()
+        self.obs = EventEmitter("edge")
+        self._state_q: asyncio.Queue = asyncio.Queue()
+        self._change_source = change_source
+        self._get_trace_id = get_trace_id
+
+        def _on_change(changes):
+            try:
+                self._state_q.put_nowait(
+                    (
+                        changes,
+                        self._change_source.get(),
+                        self._get_trace_id(),
+                    )
+                )
+            except Exception:
+                pass
+
+        self.val = VAL(on_change=_on_change)
         self.cloud = CloudClient(edge_call_executor=EdgeCallExecutor(self.val))
         self.cloud_connected = False  # 连接状态追踪
         self.memory = _MemoryClient()
         self._bg: set[asyncio.Task] = set()  # 持有 fire-and-forget 任务引用，防 GC
+
+    async def drain_state(self):
+        """Publish queued state changes without blocking vehicle control."""
+        while True:
+            changes, source, trace_id = await self._state_q.get()
+            try:
+                await self.obs.emit_state(
+                    changes,
+                    source=source,
+                    trace_id=trace_id,
+                )
+            finally:
+                self._state_q.task_done()
+
+    async def emit_snapshot(self):
+        """Publish the complete initial vehicle-state mirror."""
+        changes = [
+            {"key": key, "old": None, "new": value}
+            for key, value in self.val.state.items()
+        ]
+        await self.obs.emit_state(changes, source="snapshot")
 
     def _confirm_required(self, structured: dict | None) -> bool:
         """该结构化指令的对象是否需要二次确认（trunk/door_lock/油箱盖/充电口盖）。
@@ -113,6 +153,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         task.add_done_callback(self._bg.discard)
 
     async def Handle(self, request, context):
+        self._change_source.set("T0")
         # 从 request.meta 读取 HMI 设置
         meta = dict(request.meta) if request.meta else {}
         answer_length = meta.get("answer_length", "short")
