@@ -105,3 +105,7 @@ class Store:
     def list(self, category: str):
         return [r for r in self._agents.values()
                 if r.healthy and (not category or r.manifest.category == category)]
+
+    def all(self) -> list[Record]:
+        """Return every record, including agents currently marked unhealthy."""
+        return list(self._agents.values())
