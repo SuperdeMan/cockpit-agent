@@ -1,3 +1,4 @@
 grpcio==1.66.2
 protobuf==7.35.0
 PyYAML>=6.0
+nats-py>=2.6.0
