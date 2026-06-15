@@ -75,7 +75,10 @@ export async function setVehicleEnv(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ key, value }),
   })
-  if (!response.ok) {
-    throw new Error(`vehicle debug update failed: ${response.status}`)
+  const result = await response.json().catch(() => null)
+  if (!response.ok || result?.ok === false) {
+    throw new Error(
+      result?.error || `vehicle debug update failed: ${response.status}`,
+    )
   }
 }

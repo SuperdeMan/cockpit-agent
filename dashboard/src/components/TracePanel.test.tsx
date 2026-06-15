@@ -24,7 +24,12 @@ test('renders spans of a trace in order', () => {
         node: 'val.execute',
         status: 'ok',
         duration_ms: 8,
-        attrs: {},
+        attrs: {
+          changes: [
+            { key: 'hvac_on', old: false, new: true },
+            { key: 'hvac_temp', old: 24, new: 26 },
+          ],
+        },
       },
     ],
   }
@@ -36,4 +41,6 @@ test('renders spans of a trace in order', () => {
   expect(
     document.querySelector('[data-node="val.execute"]')?.className,
   ).toContain('trace-node--val')
+  expect(screen.getByText('hvac_on: false → true')).toBeTruthy()
+  expect(screen.getByText('hvac_temp: 24 → 26')).toBeTruthy()
 })

@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { connectObs } from './api'
+import { AgentList } from './components/AgentList'
+import { CommandBar } from './components/CommandBar'
+import { Dynamics } from './components/Dynamics'
 import { TracePanel } from './components/TracePanel'
 import { VehicleState } from './components/VehicleState'
 import type {
+  AgentInfo,
   Span,
   Trace,
   VehicleState as VehicleStateMap,
@@ -24,6 +28,7 @@ export default function App() {
   const [vehicle, setVehicle] = useState<VehicleStateMap>({})
   const [changed, setChanged] = useState<Set<string>>(new Set())
   const [traces, setTraces] = useState<Trace[]>([])
+  const [agents, setAgents] = useState<Record<string, AgentInfo>>({})
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   useEffect(() => {
@@ -50,6 +55,7 @@ export default function App() {
       onSnapshot: (snapshot) => {
         setVehicle(snapshot.vehicle_state || {})
         setTraces((snapshot.traces || []).slice(0, 30))
+        setAgents(snapshot.agents || {})
       },
       onStateChange: (event) => {
         setVehicle((previous) => {
@@ -91,6 +97,60 @@ export default function App() {
             ...previous,
           ].slice(0, 30)
         })
+      },
+      onHealth: (event) => {
+        const agentId =
+          typeof event.agent_id === 'string' ? event.agent_id : ''
+        if (!agentId) return
+        setAgents((previous) => ({
+          ...previous,
+          [agentId]: {
+            ...previous[agentId],
+            healthy:
+              typeof event.healthy === 'boolean'
+                ? event.healthy
+                : previous[agentId]?.healthy,
+            fail_count:
+              typeof event.fail_count === 'number'
+                ? event.fail_count
+                : previous[agentId]?.fail_count,
+            last_seen:
+              typeof event.last_seen === 'number'
+                ? event.last_seen
+                : previous[agentId]?.last_seen,
+            deployment:
+              typeof event.deployment === 'string'
+                ? event.deployment
+                : previous[agentId]?.deployment,
+            kind:
+              typeof event.kind === 'string'
+                ? event.kind
+                : previous[agentId]?.kind,
+          },
+        }))
+      },
+      onMetric: (event) => {
+        const agentId =
+          typeof event.agent_id === 'string' ? event.agent_id : ''
+        if (!agentId) return
+        setAgents((previous) => ({
+          ...previous,
+          [agentId]: {
+            ...previous[agentId],
+            count:
+              typeof event.count === 'number'
+                ? event.count
+                : previous[agentId]?.count,
+            avg_ms:
+              typeof event.avg_ms === 'number'
+                ? event.avg_ms
+                : previous[agentId]?.avg_ms,
+            error_rate:
+              typeof event.error_rate === 'number'
+                ? event.error_rate
+                : previous[agentId]?.error_rate,
+          },
+        }))
       },
     })
 
@@ -158,26 +218,10 @@ export default function App() {
             <VehicleState state={vehicle} changed={changed} />
             <TracePanel traces={traces} />
           </div>
-          <aside className="panel mission-panel">
-            <p className="eyebrow">MISSION STATUS</p>
-            <h2>观测通道</h2>
-            <div className="mission-line">
-              <span>状态镜像</span>
-              <b className={connected ? 'ok' : 'warn'}>
-                {connected ? 'STREAMING' : 'WAITING'}
-              </b>
-            </div>
-            <div className="mission-line">
-              <span>请求链路</span>
-              <b>P2 RESERVED</b>
-            </div>
-            <div className="mission-line">
-              <span>Agent 健康</span>
-              <b>P3 RESERVED</b>
-            </div>
-            <p className="mission-note">
-              车辆控制仍只经 VAL。当前页面只消费旁路观测事件，不进入执行主链。
-            </p>
+          <aside className="side-stack">
+            <CommandBar />
+            <Dynamics state={vehicle} />
+            <AgentList agents={agents} />
           </aside>
         </div>
       </main>

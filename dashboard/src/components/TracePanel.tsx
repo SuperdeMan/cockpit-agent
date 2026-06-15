@@ -24,6 +24,14 @@ function nodeClass(node: string): string {
 
 function SpanRow({ span }: { span: Span }) {
   const intent = span.attrs?.intent
+  const changes = Array.isArray(span.attrs?.changes)
+    ? span.attrs.changes.filter(
+        (change): change is { key: string; old: unknown; new: unknown } =>
+          typeof change === 'object' &&
+          change !== null &&
+          typeof (change as { key?: unknown }).key === 'string',
+      )
+    : []
   return (
     <div
       className={`trace-node ${nodeClass(span.node)}`}
@@ -42,6 +50,15 @@ function SpanRow({ span }: { span: Span }) {
           {intent !== undefined && <span>{String(intent)}</span>}
           {span.duration_ms > 0 && <span>{span.duration_ms} ms</span>}
         </div>
+        {changes.length > 0 && (
+          <div className="trace-node__changes">
+            {changes.map((change) => (
+              <span key={change.key}>
+                {change.key}: {String(change.old)} → {String(change.new)}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
