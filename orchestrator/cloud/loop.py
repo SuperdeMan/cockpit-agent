@@ -8,6 +8,7 @@ from typing import AsyncIterator
 
 from .executor import DagExecutor
 from .models import Plan, PlanContext, StepResult, StepStatus
+from observability import events as obs_events
 from observability.metrics import metrics
 
 logger = logging.getLogger("planner.loop")
@@ -139,6 +140,17 @@ class LoopController:
                             step_result, results, current, ctx)
                         return
 
+            try:
+                await obs_events.get_emitter("cloud").emit_span(
+                    ctx.trace_id,
+                    "t2.iter",
+                    attrs={
+                        "replans": replans,
+                        "results": len(results),
+                    },
+                )
+            except Exception:
+                pass
             current = None
             if self.clock() >= deadline:
                 exhausted = True

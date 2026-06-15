@@ -14,7 +14,9 @@ from .executor import DagExecutor
 from .aggregator import Aggregator
 from .session import SessionStore
 from .loop import LoopController
+from observability import events as obs_events
 from observability.metrics import metrics
+from observability.tracing import set_trace_id
 from security.permission import PermissionEngine, AuthContext
 
 logger = logging.getLogger("planner.engine")
@@ -60,6 +62,7 @@ class PlannerEngine:
         当前这句不污染指代消解（task 2）。memory_enabled=false 时整轮不读写。
         """
         ctx = self._build_context(request)
+        set_trace_id(ctx.trace_id)
         text = (getattr(request, "text", "") or "").strip()
         mem_on = ctx.prefs.get("memory_enabled", "true") != "false"
 
@@ -137,6 +140,14 @@ class PlannerEngine:
                 return
 
             # C. 解析 endpoint（Registry）
+            await obs_events.get_emitter("cloud").emit_span(
+                ctx.trace_id,
+                "cloud.planning",
+                attrs={
+                    "complexity": plan.complexity,
+                    "steps": len(plan.steps),
+                },
+            )
             await self._resolve_endpoints(plan)
 
             # C2. 权限校验（F2）：执行前对每个 step 做强制校验
@@ -161,6 +172,12 @@ class PlannerEngine:
                     ctx=ctx,
                     user_text=text or plan.raw_text,
                     seed_results=seed_results):
+                if event.get("kind") == "final":
+                    await obs_events.get_emitter("cloud").emit_span(
+                        ctx.trace_id,
+                        "aggregate",
+                        attrs={"path": "adaptive"},
+                    )
                 yield event
             return
 
@@ -194,6 +211,11 @@ class PlannerEngine:
                     return
                 await self.session.clear(ctx.session_id)
                 final = await self.aggregator.compose(text or plan.raw_text, results)
+                await obs_events.get_emitter("cloud").emit_span(
+                    ctx.trace_id,
+                    "aggregate",
+                    attrs={"path": "stream"},
+                )
                 yield {"kind": "final", **final}
                 return
             if streamed:
@@ -230,12 +252,22 @@ class PlannerEngine:
                     ctx=ctx,
                     user_text=text or plan.raw_text,
                     seed_results=results):
+                if event.get("kind") == "final":
+                    await obs_events.get_emitter("cloud").emit_span(
+                        ctx.trace_id,
+                        "aggregate",
+                        attrs={"path": "reactive"},
+                    )
                 yield event
             return
 
         # E. 聚合 + 输出
         await self.session.clear(ctx.session_id)
         final = await self.aggregator.compose(text or plan.raw_text, results)
+        await obs_events.get_emitter("cloud").emit_span(
+            ctx.trace_id,
+            "aggregate",
+        )
         yield {"kind": "final", **final}
 
     async def _suspend(self, step_result: StepResult, results: list[StepResult],
@@ -249,6 +281,12 @@ class PlannerEngine:
             completed_results={r.step_id: r.__dict__ for r in results},
             pending_plan=self._serialize_plan(plan),
         ))
+        await obs_events.get_emitter("cloud").emit_span(
+            ctx.trace_id,
+            "suspended",
+            status=step_result.status.value,
+            attrs={"step_id": step_result.step_id},
+        )
         return {
             "kind": "final",
             "speech": step_result.speech,
@@ -305,6 +343,7 @@ class PlannerEngine:
             vehicle_id=getattr(request.context, "vehicle_id", "") if hasattr(request, "context") and request.context else "",
             is_confirmation=getattr(request, "is_confirmation", False),
             granted_permissions=granted,
+            trace_id=meta.get("trace_id", ""),
             prefs=prefs,
         )
 

@@ -154,3 +154,15 @@ class EventEmitter:
             await self._nc.drain()
         except Exception:
             pass
+
+
+_default_emitters: dict[str, EventEmitter] = {}
+
+
+def get_emitter(service: str = "cloud") -> EventEmitter:
+    """Return one best-effort emitter per service in the current process."""
+    emitter = _default_emitters.get(service)
+    if emitter is None:
+        emitter = EventEmitter(service)
+        _default_emitters[service] = emitter
+    return emitter

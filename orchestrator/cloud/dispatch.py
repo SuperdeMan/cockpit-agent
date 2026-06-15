@@ -7,6 +7,7 @@ import time
 from cockpit.agent.v1 import agent_pb2
 from cockpit.common.v1 import common_pb2
 
+from observability import events as obs_events
 from observability.metrics import metrics
 from security.audit import AuditLogger
 from security.scopes import is_scope_covered
@@ -34,6 +35,52 @@ class UnifiedDispatcher:
         self._edge_call = edge_call
         self._tools = tools
 
+    @staticmethod
+    def _step_node(step: Step) -> str:
+        if step.kind == "tool":
+            return f"step.tool:{step.intent}"
+        if step.deployment == "edge":
+            return f"step.edge:{step.intent}"
+        return f"step.agent:{step.agent_id}"
+
+    async def _emit_step(
+        self,
+        step: Step,
+        ctx: PlanContext,
+        ok: bool,
+        elapsed_ms: float,
+    ) -> None:
+        try:
+            await obs_events.get_emitter("cloud").emit_span(
+                getattr(ctx, "trace_id", ""),
+                self._step_node(step),
+                status="ok" if ok else "err",
+                duration_ms=elapsed_ms,
+                attrs={
+                    "intent": step.intent,
+                    "agent_id": step.agent_id,
+                    "kind": step.kind,
+                    "deployment": step.deployment,
+                },
+            )
+        except Exception:
+            pass
+
+    async def _finish(
+        self,
+        step: Step,
+        ctx: PlanContext,
+        response: agent_pb2.ExecuteResponse,
+        elapsed_ms: float = 0,
+    ) -> agent_pb2.ExecuteResponse:
+        await self._emit_step(
+            step,
+            ctx,
+            response.status == agent_pb2.ExecuteResponse.OK,
+            elapsed_ms,
+        )
+        return response
+
     async def dispatch(self, step: Step, ctx: PlanContext):
         required = list(step.required_permissions or [])
         if step.trust_level == "third_party" and any(
@@ -43,10 +90,14 @@ class UnifiedDispatcher:
             _audit.permission_denied(
                 step.agent_id, required, trace_id=getattr(ctx, 'trace_id', ''))
             metrics.record_agent_call(step.agent_id, 0, False)
-            return _failure(
-                agent_pb2.ExecuteResponse.REJECTED,
-                "permission_denied",
-                "third_party agents cannot request vehicle.control",
+            return await self._finish(
+                step,
+                ctx,
+                _failure(
+                    agent_pb2.ExecuteResponse.REJECTED,
+                    "permission_denied",
+                    "third_party agents cannot request vehicle.control",
+                ),
             )
         missing = [
             permission for permission in required
@@ -57,10 +108,14 @@ class UnifiedDispatcher:
             _audit.permission_denied(
                 step.agent_id, missing, trace_id=getattr(ctx, 'trace_id', ''))
             metrics.record_agent_call(step.agent_id, 0, False)
-            return _failure(
-                agent_pb2.ExecuteResponse.REJECTED,
-                "permission_denied",
-                f"missing permissions: {', '.join(missing)}",
+            return await self._finish(
+                step,
+                ctx,
+                _failure(
+                    agent_pb2.ExecuteResponse.REJECTED,
+                    "permission_denied",
+                    f"missing permissions: {', '.join(missing)}",
+                ),
             )
 
         if step.kind == "tool":
@@ -69,16 +124,24 @@ class UnifiedDispatcher:
                 _audit.permission_denied(
                     step.agent_id, required,
                     trace_id=getattr(ctx, 'trace_id', ''))
-                return _failure(
-                    agent_pb2.ExecuteResponse.REJECTED,
-                    "permission_denied",
-                    "tools cannot request vehicle.control",
+                return await self._finish(
+                    step,
+                    ctx,
+                    _failure(
+                        agent_pb2.ExecuteResponse.REJECTED,
+                        "permission_denied",
+                        "tools cannot request vehicle.control",
+                    ),
                 )
             if self._tools is None:
-                return _failure(
-                    agent_pb2.ExecuteResponse.FAILED,
-                    "tool_unavailable",
-                    f"tool registry unavailable for {step.intent}",
+                return await self._finish(
+                    step,
+                    ctx,
+                    _failure(
+                        agent_pb2.ExecuteResponse.FAILED,
+                        "tool_unavailable",
+                        f"tool registry unavailable for {step.intent}",
+                    ),
                 )
             start = time.monotonic()
             try:
@@ -87,24 +150,33 @@ class UnifiedDispatcher:
                 metrics.record_agent_call(
                     step.agent_id, elapsed,
                     resp.status == agent_pb2.ExecuteResponse.OK)
-                return resp
+                return await self._finish(step, ctx, resp, elapsed)
             except Exception as exc:
                 elapsed = (time.monotonic() - start) * 1000
                 metrics.record_agent_call(step.agent_id, elapsed, False)
                 logger.warning("Tool %s failed: %s", step.intent, exc)
-                return _failure(
-                    agent_pb2.ExecuteResponse.FAILED,
-                    "tool_error",
-                    str(exc),
+                return await self._finish(
+                    step,
+                    ctx,
+                    _failure(
+                        agent_pb2.ExecuteResponse.FAILED,
+                        "tool_error",
+                        str(exc),
+                    ),
+                    elapsed,
                 )
 
         if step.deployment == "edge":
             if not ctx.vehicle_id:
                 metrics.record_agent_call(step.agent_id, 0, False)
-                return _failure(
-                    agent_pb2.ExecuteResponse.FAILED,
-                    "edge_unreachable",
-                    "missing vehicle_id",
+                return await self._finish(
+                    step,
+                    ctx,
+                    _failure(
+                        agent_pb2.ExecuteResponse.FAILED,
+                        "edge_unreachable",
+                        "missing vehicle_id",
+                    ),
                 )
             start = time.monotonic()
             try:
@@ -113,15 +185,20 @@ class UnifiedDispatcher:
                 metrics.record_agent_call(
                     step.agent_id, elapsed,
                     resp.status == agent_pb2.ExecuteResponse.OK)
-                return resp
+                return await self._finish(step, ctx, resp, elapsed)
             except Exception as exc:
                 elapsed = (time.monotonic() - start) * 1000
                 metrics.record_agent_call(step.agent_id, elapsed, False)
                 logger.warning("Edge step %s failed: %s", step.id, exc)
-                return _failure(
-                    agent_pb2.ExecuteResponse.FAILED,
-                    "edge_unreachable",
-                    str(exc),
+                return await self._finish(
+                    step,
+                    ctx,
+                    _failure(
+                        agent_pb2.ExecuteResponse.FAILED,
+                        "edge_unreachable",
+                        str(exc),
+                    ),
+                    elapsed,
                 )
 
         start = time.monotonic()
@@ -132,8 +209,9 @@ class UnifiedDispatcher:
             metrics.record_agent_call(
                 step.agent_id, elapsed,
                 resp.status == agent_pb2.ExecuteResponse.OK)
-            return resp
+            return await self._finish(step, ctx, resp, elapsed)
         except Exception as exc:
             elapsed = (time.monotonic() - start) * 1000
             metrics.record_agent_call(step.agent_id, elapsed, False)
+            await self._emit_step(step, ctx, False, elapsed)
             raise
