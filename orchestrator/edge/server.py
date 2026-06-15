@@ -20,11 +20,21 @@ from edge_agents import edge_execute
 from cloud_client import CloudClient
 from edge_call import EdgeCallExecutor
 from observability.events import EventEmitter, change_source
-from observability.tracing import get_trace_id
+from observability.tracing import get_trace_id, new_trace_id, set_trace_id
 
 logger = logging.getLogger("edge.orchestrator")
 
 _HIGH = float(os.getenv("FAST_INTENT_THRESHOLD_HIGH", "0.85"))
+
+
+def _ensure_trace_id(request) -> str:
+    """Preserve a caller trace ID or create one and forward it in request meta."""
+    trace_id = request.meta.get("trace_id") if request.meta else ""
+    if not trace_id:
+        trace_id = new_trace_id()
+    request.meta["trace_id"] = trace_id
+    set_trace_id(trace_id)
+    return trace_id
 
 
 def _struct(d: dict) -> struct_pb2.Struct:
@@ -153,6 +163,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         task.add_done_callback(self._bg.discard)
 
     async def Handle(self, request, context):
+        trace_id = _ensure_trace_id(request)
         self._change_source.set("T0")
         # 从 request.meta 读取 HMI 设置
         meta = dict(request.meta) if request.meta else {}

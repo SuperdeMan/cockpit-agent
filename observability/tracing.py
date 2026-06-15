@@ -4,6 +4,7 @@ WS9 核心：每个请求带 trace_id，所有服务透传。
 有 OTEL_EXPORTER_OTLP_ENDPOINT 时接真实 OTel SDK；否则用简化版。
 """
 from __future__ import annotations
+import contextvars
 import os
 import uuid
 import logging
@@ -11,7 +12,10 @@ import logging
 logger = logging.getLogger("otel.tracing")
 
 # 全局 trace 上下文（简化版，OTel SDK 未就绪时使用）
-_current_trace: dict[str, str] = {}
+_current_trace: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "current_trace_id",
+    default="",
+)
 
 # OTel SDK 句柄（延迟初始化）
 _tracer = None
@@ -60,11 +64,11 @@ def get_trace_id() -> str:
         ctx = span.get_span_context()
         if ctx.is_valid:
             return format(ctx.trace_id, '032x')
-    return _current_trace.get("trace_id", "")
+    return _current_trace.get()
 
 
 def set_trace_id(trace_id: str):
-    _current_trace["trace_id"] = trace_id
+    _current_trace.set(trace_id)
 
 
 def trace_context_from_meta(meta: dict) -> str:

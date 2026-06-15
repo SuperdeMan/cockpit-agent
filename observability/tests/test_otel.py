@@ -1,4 +1,6 @@
 """可观测模块测试。"""
+import asyncio
+
 from observability.tracing import new_trace_id, set_trace_id, get_trace_id, inject_trace_meta
 from observability.metrics import MetricsCollector
 
@@ -15,6 +17,18 @@ def test_inject_trace_meta():
     meta = {}
     inject_trace_meta(meta)
     assert meta["trace_id"] == "abc123"
+
+
+def test_trace_id_is_isolated_between_async_tasks():
+    async def worker(trace_id):
+        set_trace_id(trace_id)
+        await asyncio.sleep(0)
+        return get_trace_id()
+
+    async def run():
+        return await asyncio.gather(worker("trace-a"), worker("trace-b"))
+
+    assert asyncio.run(run()) == ["trace-a", "trace-b"]
 
 
 def test_metrics_intent():
