@@ -45,3 +45,32 @@ def test_battery_location_defaults_present():
 
     assert val.state["battery"] == 72
     assert val.state["location"] is None
+
+
+def test_initial_speed_gear_self_consistent():
+    val = VAL()
+
+    # 初始停车：P 挡且车速 0（消除 P 挡 60km/h 的矛盾）
+    assert val.state["gear"] == "P"
+    assert val.state["speed_kmh"] == 0
+
+
+def test_speeding_up_engages_drive():
+    val = VAL()
+
+    val.set_env("speed_kmh", 50)         # P 挡起步 → 自动挂 D
+    assert val.state["gear"] == "D"
+    assert val.state["speed_kmh"] == 50
+
+
+def test_park_zeroes_speed():
+    captured = []
+    val = VAL(on_change=lambda changes: captured.append(changes))
+
+    val.set_env("speed_kmh", 60)         # 先动起来（gear→D）
+    assert val.state["gear"] == "D" and val.state["speed_kmh"] == 60
+
+    val.set_env("gear", "P")             # 挂 P → 车速归 0，同一轮回调
+    assert val.state["speed_kmh"] == 0
+    last = {change["key"]: change["new"] for change in captured[-1]}
+    assert last["gear"] == "P" and last["speed_kmh"] == 0

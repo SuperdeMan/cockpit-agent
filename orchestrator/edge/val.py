@@ -30,7 +30,7 @@ class VAL:
     ):
         self.state = {
             "hvac_on": False, "hvac_temp": 24,
-            "window": "closed", "media": "stopped", "speed_kmh": 60,
+            "window": "closed", "media": "stopped", "speed_kmh": 0,
             "gear": "P", "battery": 72, "location": None,
         }
         self._on_change = on_change
@@ -101,11 +101,25 @@ class VAL:
             pass
 
     def set_env(self, key: str, value: Any) -> None:
-        """Set a simulated sensor value and publish the resulting state diff."""
+        """Set a simulated sensor value and publish the resulting state diff.
+
+        车速与档位保持物理自洽（避免 P 挡却 60km/h 这类矛盾）：
+        - 挂入 P/N 挡 → 车速归 0；
+        - 车速 >0 而当前处于 P/N → 自动挂入 D（要动得先挂前进挡）。
+        """
         before = dict(self.state)
         if before.get(key) == value:
             return
         self.state[key] = value
+        if key == "gear" and value in ("P", "N"):
+            self.state["speed_kmh"] = 0
+        elif key == "speed_kmh":
+            try:
+                moving = float(value) > 0
+            except (TypeError, ValueError):
+                moving = False
+            if moving and self.state.get("gear") in ("P", "N"):
+                self.state["gear"] = "D"
         self._notify(before)
 
     def _legacy_execute(self, command: str, args: dict) -> tuple[bool, str]:
