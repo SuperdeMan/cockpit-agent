@@ -39,3 +39,6 @@ feishu_*.json
 
 # Brainstorm visual companion (ephemeral mockups)
 .superpowers/
+
+# Isolated feature worktrees
+.worktrees/
