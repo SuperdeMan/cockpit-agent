@@ -29,9 +29,21 @@ class VAL:
         on_change=None,
     ):
         self.state = {
+            # 空调
             "hvac_on": False, "hvac_temp": 24,
-            "window": "closed", "media": "stopped", "speed_kmh": 0,
-            "gear": "P", "battery": 72, "location": None,
+            # 门窗 / 车身开闭
+            "window": "closed", "sunroof": "closed",
+            "door_lock": "locked", "trunk": "closed",
+            # 座椅
+            "seat_heating": False, "seat_ventilation": False,
+            # 灯光
+            "ambient_light": False, "headlight": False,
+            # 媒体
+            "media": "stopped", "volume": 30,
+            # 其他车身
+            "wiper": False, "fragrance": False, "steering_wheel_heating": False,
+            # 动态量（在「车辆动态」面板呈现）
+            "speed_kmh": 0, "gear": "P", "battery": 72, "location": None,
         }
         self._on_change = on_change
         self.vehicle_model = vehicle_model
