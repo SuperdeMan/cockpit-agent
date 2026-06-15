@@ -34,6 +34,11 @@ def test_local_path_emits_route_and_val_spans(monkeypatch):
     assert "route.local" in node_names
     assert "val.execute" in node_names
     assert all(trace_id == "trace-edge-1" for trace_id, _, _ in nodes)
+    val_span = next(kwargs for _, node, kwargs in nodes if node == "val.execute")
+    assert val_span["attrs"]["changes"] == [
+        {"key": "hvac_on", "old": False, "new": True},
+        {"key": "hvac_temp", "old": 24, "new": 26},
+    ]
 
 
 def test_cloud_path_emits_route_cloud_span(monkeypatch):

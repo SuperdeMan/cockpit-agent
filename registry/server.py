@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
 
-from store import Store
+from registry.store import Store
 
 
 class RegistryServicer(registry_pb2_grpc.RegistryServicer):

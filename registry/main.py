@@ -7,7 +7,8 @@ import grpc
 from cockpit.registry.v1 import registry_pb2_grpc
 
 from observability.events import EventEmitter
-from server import RegistryServicer
+from registry.health import probe_all
+from registry.server import RegistryServicer
 
 
 async def emit_all_health(store, emitter):
@@ -29,6 +30,7 @@ async def emit_all_health(store, emitter):
 
 async def _health_loop(store, emitter, interval: float = 5):
     while True:
+        await probe_all(store)
         await emit_all_health(store, emitter)
         await asyncio.sleep(interval)
 

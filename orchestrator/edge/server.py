@@ -44,6 +44,14 @@ def _struct(d: dict) -> struct_pb2.Struct:
     return s
 
 
+def _state_changes(before: dict, after: dict) -> list[dict]:
+    return [
+        {"key": key, "old": before.get(key), "new": value}
+        for key, value in after.items()
+        if before.get(key) != value
+    ]
+
+
 def _group_mixed_intents(intents: list[dict]) -> list[list[dict]]:
     """把无法独立分类的续接片段附着到前一个主意图，避免丢失上下文。"""
     groups: list[list[dict]] = []
@@ -182,17 +190,22 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         intent: str = "",
     ):
         started = time.perf_counter()
+        before = dict(self.val.state)
         ok, speech = self.val.execute(
             command,
             args,
             answer_length=answer_length,
         )
+        changes = _state_changes(before, self.val.state)
         await self._emit_span(
             trace_id,
             "val.execute",
             status="ok" if ok else "err",
             duration_ms=(time.perf_counter() - started) * 1000,
-            attrs={"intent": intent} if intent else {},
+            attrs={
+                **({"intent": intent} if intent else {}),
+                "changes": changes,
+            },
         )
         return ok, speech
 
@@ -424,13 +437,17 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 else:
                     # 回退旧路径
                     started = time.perf_counter()
+                    before = dict(self.val.state)
                     speech, action = edge_execute(intent, self.val)
                     await self._emit_span(
                         trace_id,
                         "val.execute",
                         status="ok" if action else "err",
                         duration_ms=(time.perf_counter() - started) * 1000,
-                        attrs={"intent": intent["name"]},
+                        attrs={
+                            "intent": intent["name"],
+                            "changes": _state_changes(before, self.val.state),
+                        },
                     )
                 final = orchestrator_pb2.FinalResult(speech=speech)
                 if action:

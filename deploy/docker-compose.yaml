@@ -24,8 +24,13 @@ services:
 
   nats:
     image: nats:2-alpine
-    command: ["-js"]            # 开启 JetStream
+    command: ["-js", "-m", "8222"]
     ports: ["4222:4222"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 2s
+      timeout: 1s
+      retries: 10
 
   postgres:
     image: pgvector/pgvector:pg16
@@ -38,8 +43,13 @@ services:
   # ── 云侧核心 ──
   registry:
     build: { context: .., dockerfile: registry/Dockerfile }
-    environment: { LOG_LEVEL: "${LOG_LEVEL:-info}" }
+    environment:
+      NATS_URL: nats://nats:4222
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports: ["50051:50051"]
+    depends_on:
+      nats:
+        condition: service_healthy
 
   llm-gateway:
     build: { context: .., dockerfile: llm-gateway/Dockerfile }
@@ -127,7 +137,9 @@ services:
       DEBUG_VEHICLE_CONTROL: ${DEBUG_VEHICLE_CONTROL:-true}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports: ["8092:8092"]
-    depends_on: [nats]
+    depends_on:
+      nats:
+        condition: service_healthy
 
   # ── 接入层 ──
   cloud-gateway:
@@ -152,11 +164,16 @@ services:
     build: { context: .., dockerfile: orchestrator/edge/Dockerfile }
     environment:
       CLOUD_GATEWAY_ADDR: cloud-gateway:8080
+      NATS_URL: nats://nats:4222
       FAST_INTENT_THRESHOLD_HIGH: ${FAST_INTENT_THRESHOLD_HIGH:-0.85}
       FAST_INTENT_THRESHOLD_LOW: ${FAST_INTENT_THRESHOLD_LOW:-0.5}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports: ["50070:50070"]
-    depends_on: [cloud-gateway]
+    depends_on:
+      cloud-gateway:
+        condition: service_started
+      nats:
+        condition: service_healthy
 
   # ── 前端 ──
   hmi:
@@ -166,3 +183,11 @@ services:
       VITE_AUDIO_API_URL: http://localhost:50059
     ports: ["5173:5173"]
     depends_on: [edge-gateway]
+
+  dashboard:
+    build: { context: .., dockerfile: dashboard/Dockerfile }
+    environment:
+      VITE_COLLECTOR_URL: http://localhost:8092
+      VITE_EDGE_GATEWAY_URL: http://localhost:8090
+    ports: ["5174:5174"]
+    depends_on: [observability-collector, edge-gateway]

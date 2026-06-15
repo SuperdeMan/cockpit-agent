@@ -7,7 +7,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY gen/python /app/gen/python
 COPY registry /app/registry
+COPY observability /app/observability
 
-ENV PYTHONPATH=/app/gen/python
+ENV PYTHONPATH=/app:/app/gen/python
 ENV REGISTRY_PORT=50051
-CMD ["python", "main.py"]
+CMD ["python", "-m", "registry.main"]

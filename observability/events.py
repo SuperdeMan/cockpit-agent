@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import json
 import logging
@@ -10,6 +11,9 @@ import time
 import uuid
 
 logger = logging.getLogger("obs.events")
+_INITIAL_CONNECT_TIMEOUT = 0.25
+_CONNECT_RETRY_DELAY = 1.0
+_QUEUE_LIMIT = 1000
 
 change_source: contextvars.ContextVar[str] = contextvars.ContextVar(
     "change_source",
@@ -32,47 +36,84 @@ class EventEmitter:
         self._nc = None
         self._lock = asyncio.Lock()
         self._disabled = not self.nats_url
+        self._next_connect_at = 0.0
+        self._queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue(
+            maxsize=_QUEUE_LIMIT
+        )
+        self._worker_task: asyncio.Task | None = None
 
     async def _conn(self):
         if self._disabled:
             return None
         if self._nc is not None:
             return self._nc
+        if time.monotonic() < self._next_connect_at:
+            return None
 
         async with self._lock:
             if self._nc is not None or self._disabled:
                 return self._nc
+            if time.monotonic() < self._next_connect_at:
+                return None
             try:
                 import nats
 
-                self._nc = await nats.connect(
-                    self.nats_url,
-                    connect_timeout=2,
-                    max_reconnect_attempts=3,
-                    allow_reconnect=True,
+                self._nc = await asyncio.wait_for(
+                    nats.connect(
+                        self.nats_url,
+                        connect_timeout=_INITIAL_CONNECT_TIMEOUT,
+                        max_reconnect_attempts=0,
+                        allow_reconnect=True,
+                    ),
+                    timeout=_INITIAL_CONNECT_TIMEOUT,
                 )
                 logger.info(
                     "observability events connected to NATS (service=%s)",
                     self.service,
                 )
             except Exception as exc:
-                self._disabled = True
-                logger.debug("NATS unavailable, observability disabled: %s", exc)
+                self._next_connect_at = time.monotonic() + _CONNECT_RETRY_DELAY
+                logger.debug("NATS unavailable, observability retry delayed: %s", exc)
         return self._nc
 
-    async def _emit(self, subject: str, payload: dict) -> None:
+    async def _publish(self, subject: str, payload: dict) -> None:
         try:
             nc = await self._conn()
             if nc is None:
                 return
-            payload.setdefault("ts", _now_ms())
-            payload.setdefault("service", self.service)
             await nc.publish(
                 subject,
                 json.dumps(payload, ensure_ascii=False).encode(),
             )
         except Exception as exc:
             logger.debug("emit %s failed: %s", subject, exc)
+
+    async def _run_worker(self) -> None:
+        while True:
+            subject, payload = await self._queue.get()
+            try:
+                await self._publish(subject, payload)
+            finally:
+                self._queue.task_done()
+
+    def _ensure_worker(self) -> None:
+        if self._worker_task is None or self._worker_task.done():
+            self._worker_task = asyncio.create_task(
+                self._run_worker(),
+                name=f"obs-events-{self.service}",
+            )
+
+    async def _emit(self, subject: str, payload: dict) -> None:
+        if self._disabled:
+            return
+        payload.setdefault("ts", _now_ms())
+        payload.setdefault("service", self.service)
+        try:
+            self._queue.put_nowait((subject, payload))
+        except asyncio.QueueFull:
+            logger.debug("observability queue full; dropped %s", subject)
+            return
+        self._ensure_worker()
 
     async def emit_span(
         self,
@@ -148,12 +189,23 @@ class EventEmitter:
         )
 
     async def close(self) -> None:
+        if self._worker_task is not None:
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self.flush(), timeout=1)
+            self._worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._worker_task
+            self._worker_task = None
         if self._nc is None:
             return
         try:
             await self._nc.drain()
         except Exception:
             pass
+
+    async def flush(self) -> None:
+        """Wait until queued events have been published or dropped."""
+        await self._queue.join()
 
 
 _default_emitters: dict[str, EventEmitter] = {}

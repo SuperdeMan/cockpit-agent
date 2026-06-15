@@ -1,0 +1,1 @@
+"""Agent registry service package."""
