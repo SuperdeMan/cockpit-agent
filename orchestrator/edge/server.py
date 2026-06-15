@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import asyncio
 import logging
+import time
 
 import grpc
 from google.protobuf import struct_pb2
@@ -137,6 +138,35 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         ]
         await self.obs.emit_state(changes, source="snapshot")
 
+    async def _emit_span(self, trace_id: str, node: str, **kwargs):
+        try:
+            await self.obs.emit_span(trace_id, node, **kwargs)
+        except Exception:
+            pass
+
+    async def _execute_val_observed(
+        self,
+        trace_id: str,
+        command,
+        args: dict | None = None,
+        answer_length: str = "short",
+        intent: str = "",
+    ):
+        started = time.perf_counter()
+        ok, speech = self.val.execute(
+            command,
+            args,
+            answer_length=answer_length,
+        )
+        await self._emit_span(
+            trace_id,
+            "val.execute",
+            status="ok" if ok else "err",
+            duration_ms=(time.perf_counter() - started) * 1000,
+            attrs={"intent": intent} if intent else {},
+        )
+        return ok, speech
+
     def _confirm_required(self, structured: dict | None) -> bool:
         """该结构化指令的对象是否需要二次确认（trunk/door_lock/油箱盖/充电口盖）。
         危险动作不走本地秒回——落到云端经 edge_call→NEED_CONFIRM 闭环（CLAUDE.md 安全红线）。"""
@@ -193,7 +223,12 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 if (legacy and legacy["confidence"] >= _HIGH and is_local(legacy["name"])
                         and not self._confirm_required(m_intent)):
                     # 结构化命令直通 VAL
-                    ok, speech = self.val.execute(m_intent, answer_length=answer_length)
+                    ok, speech = await self._execute_val_observed(
+                        trace_id,
+                        m_intent,
+                        answer_length=answer_length,
+                        intent=legacy["name"],
+                    )
                     if not ok:
                         speech = speech or "操作失败"
                     speeches.append(speech)
@@ -212,6 +247,11 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     speeches = []
                     break
             if speeches:
+                await self._emit_span(
+                    trace_id,
+                    "route.multi",
+                    attrs={"count": len(actions)},
+                )
                 combined = "，".join(speeches)
                 final = orchestrator_pb2.FinalResult(speech=combined)
                 final.actions.extend(actions)
@@ -241,7 +281,12 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
 
                 if local_group:
                     for m_intent, legacy in local_group:
-                        ok, speech = self.val.execute(m_intent, answer_length=answer_length)
+                        ok, speech = await self._execute_val_observed(
+                            trace_id,
+                            m_intent,
+                            answer_length=answer_length,
+                            intent=legacy["name"],
+                        )
                         if not ok:
                             speech = speech or "操作失败"
                         local_speeches.append(speech)
@@ -266,6 +311,14 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     )
 
             if cloud_parts:
+                await self._emit_span(
+                    trace_id,
+                    "route.mixed",
+                    attrs={
+                        "local_actions": len(local_actions),
+                        "cloud_parts": len(cloud_parts),
+                    },
+                )
                 # 有非本地意图：先返回本地结果，再把非本地片段上云
                 if local_speeches:
                     combined = "，".join(local_speeches)
@@ -327,7 +380,12 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             # 危险动作（trunk/door_lock/油箱盖/充电口盖）不秒回，落云端走二次确认闭环
             if not self._confirm_required(structured):
                 if structured:
-                    ok, speech = self.val.execute(structured, answer_length=answer_length)
+                    ok, speech = await self._execute_val_observed(
+                        trace_id,
+                        structured,
+                        answer_length=answer_length,
+                        intent=intent["name"],
+                    )
                     action_type = "vehicle.control" if structured.get("data", {}).get("object") not in ("media",) else "media.control"
                     action = {
                         "type": action_type,
@@ -336,13 +394,29 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     } if ok else None
                 else:
                     # 回退旧路径
+                    started = time.perf_counter()
                     speech, action = edge_execute(intent, self.val)
+                    await self._emit_span(
+                        trace_id,
+                        "val.execute",
+                        status="ok" if action else "err",
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                        attrs={"intent": intent["name"]},
+                    )
                 final = orchestrator_pb2.FinalResult(speech=speech)
                 if action:
                     final.actions.append(common_pb2.AgentAction(
                         type=action["type"], payload=_struct(action["payload"]),
                         require_confirm=action["require_confirm"]))
                 logger.info("LOCAL %s -> %s", intent["name"], speech)
+                await self._emit_span(
+                    trace_id,
+                    "route.local",
+                    attrs={
+                        "intent": intent["name"],
+                        "confidence": intent["confidence"],
+                    },
+                )
                 yield orchestrator_pb2.HandleEvent(final=final)
                 self._record_local_turn(request, request.text, speech)
                 return
@@ -350,6 +424,11 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
 
         # 慢路径：上云编排
         logger.info("CLOUD route: %s", request.text)
+        await self._emit_span(
+            trace_id,
+            "route.cloud",
+            attrs={"text": request.text[:40]},
+        )
         cloud_speech = ""
         cloud_has_actions = False
         try:
@@ -380,7 +459,12 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         if not cloud_speech and not cloud_has_actions:
             local_structured = classify_structured(request.text)
             if local_structured:
-                ok, speech = self.val.execute(local_structured, answer_length=answer_length)
+                ok, speech = await self._execute_val_observed(
+                    trace_id,
+                    local_structured,
+                    answer_length=answer_length,
+                    intent=local_structured.get("intent", ""),
+                )
                 if ok and speech:
                     obj = local_structured.get("data", {}).get("object", "")
                     action_type = "media.control" if obj in ("media", "music", "radio") else "vehicle.control"
