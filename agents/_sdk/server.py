@@ -1,6 +1,7 @@
 """把 BaseAgent 包装成 gRPC Agent 服务并自注册到 Registry。"""
 from __future__ import annotations
 import asyncio
+import contextlib
 import os
 import socket
 
@@ -99,6 +100,20 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
             ))
 
 
+async def _reregister_loop(registry, manifest, endpoint: str, interval: float):
+    """周期重注册：registry 重启/暂不可达后，agent 在一个周期内自动补注册。
+
+    Register 是幂等 upsert，重复调用安全；失败静默、下个周期重试，不影响 Agent
+    自身服务（守住"registry 重启不应让运行中的 agent 永久失联"）。
+    """
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await registry.register(manifest, endpoint)
+        except Exception:
+            pass
+
+
 async def serve(agent: BaseAgent):
     port = int(os.getenv("AGENT_PORT", "50060"))
     server = grpc.aio.server()
@@ -107,14 +122,25 @@ async def serve(agent: BaseAgent):
     await server.start()
 
     endpoint = f"{socket.gethostname()}:{port}"
+    registry = RegistryClient()
     try:
-        lease = await RegistryClient().register(agent.manifest, endpoint)
+        lease = await registry.register(agent.manifest, endpoint)
         print(f"[sdk] registered {agent.manifest.agent_id} lease={lease}", flush=True)
     except Exception as e:  # 注册失败不阻塞服务启动，便于本地单测
         print(f"[sdk] registry register failed (continuing): {e}", flush=True)
 
+    # 周期重注册：registry 重启后自动补注册（默认 10s，可经 env 调）
+    interval = float(os.getenv("AGENT_REREGISTER_INTERVAL", "10"))
+    reregister_task = asyncio.create_task(
+        _reregister_loop(registry, agent.manifest, endpoint, interval))
+
     print(f"[sdk] {agent.manifest.agent_id} serving on :{port}", flush=True)
-    await server.wait_for_termination()
+    try:
+        await server.wait_for_termination()
+    finally:
+        reregister_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reregister_task
 
 
 def run(agent: BaseAgent):
