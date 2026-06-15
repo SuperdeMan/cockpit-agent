@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { connectObs } from './api'
+import { TracePanel } from './components/TracePanel'
 import { VehicleState } from './components/VehicleState'
-import type { VehicleState as VehicleStateMap } from './types'
+import type {
+  Span,
+  Trace,
+  VehicleState as VehicleStateMap,
+} from './types'
 
 function telemetryValue(
   state: VehicleStateMap,
@@ -18,6 +23,7 @@ export default function App() {
   const [connected, setConnected] = useState(false)
   const [vehicle, setVehicle] = useState<VehicleStateMap>({})
   const [changed, setChanged] = useState<Set<string>>(new Set())
+  const [traces, setTraces] = useState<Trace[]>([])
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   useEffect(() => {
@@ -41,8 +47,10 @@ export default function App() {
 
     const disconnect = connectObs({
       onConn: setConnected,
-      onSnapshot: (snapshot) =>
-        setVehicle(snapshot.vehicle_state || {}),
+      onSnapshot: (snapshot) => {
+        setVehicle(snapshot.vehicle_state || {})
+        setTraces((snapshot.traces || []).slice(0, 30))
+      },
       onStateChange: (event) => {
         setVehicle((previous) => {
           const next = { ...previous }
@@ -52,6 +60,37 @@ export default function App() {
           return next
         })
         flash(event.changes.map((change) => change.key))
+      },
+      onSpan: (span: Span) => {
+        setTraces((previous) => {
+          const traceIndex = previous.findIndex(
+            (trace) => trace.trace_id === span.trace_id,
+          )
+          if (traceIndex >= 0) {
+            const current = previous[traceIndex]
+            if (current.spans.some((item) => item.span_id === span.span_id)) {
+              return previous
+            }
+            const updated = {
+              ...current,
+              spans: [...current.spans, span],
+              updated: span.ts,
+            }
+            return [
+              updated,
+              ...previous.filter((_, index) => index !== traceIndex),
+            ].slice(0, 30)
+          }
+          return [
+            {
+              trace_id: span.trace_id,
+              spans: [span],
+              started: span.ts,
+              updated: span.ts,
+            },
+            ...previous,
+          ].slice(0, 30)
+        })
       },
     })
 
@@ -115,7 +154,10 @@ export default function App() {
         </section>
 
         <div className="dashboard-grid">
-          <VehicleState state={vehicle} changed={changed} />
+          <div className="primary-stack">
+            <VehicleState state={vehicle} changed={changed} />
+            <TracePanel traces={traces} />
+          </div>
           <aside className="panel mission-panel">
             <p className="eyebrow">MISSION STATUS</p>
             <h2>观测通道</h2>
