@@ -10,6 +10,6 @@
 ## Provider
 `providers/` 目录：`ParkingProvider` 接口 + `MockParkingProvider`。切换：`PARKING_VENDOR=etcp`。
 
-## 待办
-- TODO(Phase1): 实现 EtcpProvider（接真实停车/无感支付平台）。
-- TODO(Phase1): 车牌识别绑定。
+## 后续量产项
+- 实现 EtcpProvider（当前默认 MockParkingProvider）。
+- 接入车牌识别与真实车辆绑定。

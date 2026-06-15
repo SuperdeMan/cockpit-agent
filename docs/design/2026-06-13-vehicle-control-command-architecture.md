@@ -1,6 +1,7 @@
 # 车控域升级：对齐「同行者公版语音指令表 6.1」统一 schema
 
-- **状态**：P1 已落地（2026-06-14）：知识库三件套 + VAL 升级 + fast_intent 扩展（90 意图 pattern）+ export 脚本骨架；P2/P3 待做
+- **状态**：P1 已落地（2026-06-14）：知识库三件套（61 对象）+ VAL 升级 +
+  fast_intent 150 条 pattern + 飞书五表全量导入脚本；P2/P3 待做
 - **交付对象**：后续开发者 / Agent，按 §8 详细待办分阶段落地
 - **关联代码**：`orchestrator/edge/val.py`、`orchestrator/edge/fast_intent.py`、`orchestrator/edge/edge_agents_mod/vehicle.py`、`proto/`（VehicleCommand）
 - **关联文档**：`docs/architecture/cockpit-agent-architecture.md`（铁律：车控只经 VAL；LLM 不直连车控）
@@ -22,7 +23,7 @@ Base《同行者公版语音指令表 6.1》：<https://c3sz000579.feishu.cn/wik
 
 ---
 
-## 1. 现状与问题
+## 1. 设计时现状与问题（历史）
 
 当前车控是 **PoC 级扁平指令**，远小于真实车机覆盖面：
 
@@ -187,10 +188,13 @@ VAL 执行后据 **执行结果（成功/失败/已是该态/无此位置/无此
 ### P1 契约落地（端侧内存模拟，不接真车）
 
 **T1. 导出参考数据 → 仓库 YAML ✅（2026-06-14 已落地）**
-- [x] `orchestrator/edge/knowledge/commands.yaml`：30 个对象，覆盖意图表全量 object；含 operates/attrs/modes/positions/units/online/drive_restricted/require_confirm/voice_forbidden/projects。
-- [x] `orchestrator/edge/knowledge/entities.yaml`：位置/座椅模式/空调模式/驾驶模式/场景模式/氛围灯颜色/出风模式/单位/操作归一化字典。
-- [x] `orchestrator/edge/knowledge/responses.yaml`：全部主要意图的响应模板 + 安全兜底话术（Car_general_restrictions_1..5）。
-- [x] `scripts/export_*.py` 骨架已建：CLI 参数齐全、分页拉取、输出路径就绪；字段映射为 TODO 占位，待接入飞书 API 后填充。
+- [x] `orchestrator/edge/knowledge/commands.yaml`：61 个对象，覆盖控制、媒体、连接、
+  导航等公版对象；含 operates/attrs/modes/positions/units/安全和车型裁剪字段。
+- [x] `orchestrator/edge/knowledge/entities.yaml`：532 个实体及位置、模式、颜色、单位、
+  操作等归一化字典。
+- [x] `orchestrator/edge/knowledge/responses.yaml`：主要意图响应模板 + 安全兜底话术。
+- [x] `scripts/gen_commands_yaml.py`、`generate_entities.py`、`generate_responses.py`：
+  已从飞书五张公版表完成全量导入，可重复生成知识库。
 
 **T2. VAL 升级 ✅（2026-06-14 已落地）**
 - [x] 启动时加载 `knowledge/*.yaml`（缺失时回退当前硬编码，保证不破坏现有 smoke）。

@@ -16,5 +16,12 @@
 ## 构建
 依赖 `gen/go`（先 `make proto`）。`go build ./gateway/...` 或经各自 Dockerfile。
 
+## 已落地
+- Edge Gateway：HMI WebSocket 接入、事件流转发、端云长连接复用、心跳与重连。
+- Cloud Gateway：按 `vehicle_id + correlation_id` 配对 `DispatchToEdge`，并校验请求车辆与握手车辆绑定。
+- 云端中枢可将计划中的 edge step 下发到指定车辆，结果回流后继续后续 DAG/T2 步骤。
+
 ## 待办
-- TODO(Phase1): Edge—语音流接入、会话保持、本地限流；Cloud—设备证书+token 鉴权、会话路由、限流、审计。
+- Cloud Gateway 多实例下的车辆会话亲和/一致性路由。
+- 量产设备证书与 token 鉴权、本地/云端限流和网关审计持久化。
+- 当前 ASR/TTS 通过独立 HTTP 音频代理接入，不在 WebSocket 中传输原始音频流。

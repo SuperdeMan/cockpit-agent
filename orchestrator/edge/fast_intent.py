@@ -270,18 +270,18 @@ def classify_structured(text: str) -> dict | None:
                 return _s("setting", "control", "set", "aircon", mode="wind_speed",
                           value=m.group(1), unit="level", conf=0.9)
             return _s("setting", "control", "set", "aircon", mode="wind_speed", conf=0.85)
+        temperature = _extract_temperature(t)
         # 温度增减（相对，无具体度数）
         if ("调高" in t or "高一点" in t or "热一点" in t or "再热" in t) \
-                and not re.search(r"\d+\s*度", t):
+                and temperature is None:
             return _s("setting", "control", "inc", "aircon", conf=0.88)
         if ("调低" in t or "低一点" in t or "冷一点" in t or "再冷" in t) \
-                and not re.search(r"\d+\s*度", t):
+                and temperature is None:
             return _s("setting", "control", "dec", "aircon", conf=0.88)
         # 温度设定（绝对）
-        m = re.search(r"(\d{2})\s*度", t)
-        if m:
+        if temperature is not None:
             return _s("setting", "control", "set", "aircon",
-                      value=m.group(1), unit="degree", conf=0.95)
+                      value=str(temperature), unit="degree", conf=0.95)
         if "热" in t or "高" in t:
             return _s("setting", "control", "set", "aircon",
                       value="26", unit="degree", conf=0.88)
@@ -1169,6 +1169,33 @@ def _extract_level(t: str) -> str | None:
         d = m.group(1)
         return _cn_digit_map.get(d, d)
     return None
+
+
+def _extract_temperature(t: str) -> int | None:
+    """Extract a realistic cabin temperature from Arabic or Chinese numerals."""
+    match = re.search(r"(\d{1,2})\s*度", t)
+    if match:
+        value = int(match.group(1))
+        return value if 16 <= value <= 32 else None
+
+    match = re.search(r"([零〇一二两三四五六七八九十]{1,3})\s*度", t)
+    if not match:
+        return None
+
+    numeral = match.group(1)
+    digits = {
+        "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3,
+        "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+    }
+    if "十" in numeral:
+        tens, ones = numeral.split("十", 1)
+        value = (digits.get(tens, 1) * 10) + (digits.get(ones, 0) if ones else 0)
+    else:
+        value = 0
+        for char in numeral:
+            value = value * 10 + digits[char]
+
+    return value if 16 <= value <= 32 else None
 
 
 def _extract_percentage(t: str) -> int | None:

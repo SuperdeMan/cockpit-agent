@@ -1,6 +1,6 @@
 # 云端慢思考中枢：理解 → 规划 → 异构调度（车端快思考 / Agent / 工具）
 
-- **状态**：草案（已与泓舟对齐骨架，2026-06-14）
+- **状态**：已落地，持续维护（2026-06-14）
 - **交付对象**：后续开发者 / Agent（照此执行，不走偏）
 - **关联代码**：`orchestrator/cloud/{engine,planning,executor,clients,models,aggregator,session}.py`、`orchestrator/edge/{server,cloud_client,val}.py`、`proto/cockpit/{agent,channel,registry}/v1/*.proto`、`registry/`、`gateway/cloud/`
 - **关联文档**：`docs/architecture/cockpit-agent-architecture.md`（§5 编排器、§9 安全，唯一真相源）、`docs/design/2026-06-13-multi-intent-and-context.md`、`docs/design/2026-06-13-open-domain-latency.md`、`docs/design/2026-06-13-vehicle-control-command-architecture.md`
@@ -71,7 +71,8 @@
 - **不做**自由 Agent 协商 / 自组织（架构 §1.3）。T2 是**有界、被监督**的循环，不是放飞。
 - **不让** LLM 直连车控（架构 §5.3）。中枢对车控只产 `AgentAction(intent)`。
 - 本期工具**只做进程内确定性工具**（日期/单位/计算等）；HTTP/MCP 外部工具留后续。
-- 不改 T0 端侧快路径的判定逻辑（多意图切分等已在 `fast_intent.py`，本设计不动）。
+- 云端中枢 P0-P3 主体不重写 T0 判定；后续体验修复已在不绕过 VAL 的前提下扩展
+  混合意图语义组分流，详见本文落地记录。
 
 ---
 
@@ -95,8 +96,8 @@
 
 ```
 HMI/语音 → Edge Gateway → Edge Orchestrator → fast_intent
-  ├─ 全部子意图命中本地 → 【T0】本地执行经 VAL → 秒回                （今天，不变）
-  └─ 含非本地意图 → 整句上云 → Cloud Gateway → 【中枢 engine】
+  ├─ 完全本地且无需确认的语义组 → 【T0】本地执行经 VAL → 秒回
+  └─ 慢意图/需确认语义组（主句+续接限定）→ Cloud Gateway → 【中枢 engine】
         Understanding+Planner（1 次 LLM）→ {steps(DAG), complexity, goal}
         ├─ complexity=simple → 【T1】DagExecutor 执行 → Aggregator → 流式输出
         │     └ 反应式兜底：某步 FAILED 有备选 / 结果含 data.replan=true → 升级 T2（已得结果作观察种子）
@@ -296,29 +297,29 @@ message EdgeResult {
 > 原则：每阶段独立可验证、可回归、不破坏 T0/T1 既有行为。**P1 是泓舟指定"最关键最复杂、先完成"的部分**，故 P0 只做其最小前置。
 
 ### P0 — 统一契约地基（最小前置，无行为变化）
-- [ ] `agent.proto` 加 `kind`；`make proto`/`gen-proto.ps1` 重新生成。
-- [ ] `models.py`：`Step` 加 `kind/deployment`，`planning.py:141` 解析时从 manifest 填入。
-- [ ] 新增 `dispatch.py` `UnifiedDispatcher`：cloud 路径＝今天行为；edge/tool 先占位（未实现报明确错误）。`executor` 改为经 dispatcher 调用。
-- [ ] 回归：`orchestrator/cloud/tests/` 全绿，行为零变化。
+- [x] `agent.proto` 加 `kind`；`make proto`/`gen-proto.ps1` 重新生成。
+- [x] `models.py`：`Step` 加 `kind/deployment`，`planning.py:141` 解析时从 manifest 填入。
+- [x] 新增 `dispatch.py` `UnifiedDispatcher`：cloud 路径＝今天行为；edge/tool 先占位（未实现报明确错误）。`executor` 改为经 dispatcher 调用。
+- [x] 回归：`orchestrator/cloud/tests/` 全绿，行为零变化。
 
 ### P1 — 调用车端快思考（核心，先完成）
-- [ ] `channel.proto` 加 `EdgeCall/EdgeResult` 帧 + import；`gateway` 专用 `DispatchToEdge`；重生成。
-- [ ] Cloud Gateway：维护 `vehicle_id→DownFrame 流`；实现 `DispatchToEdge`（写 edge_call、按 step_id/correlation 配对收 edge_result、超时处理）。
-- [ ] Edge：`cloud_client.py` 读循环加 `edge_call` 分支；复用 `server._dispatch`→`val.execute` 执行并回 `edge_result`。
-- [ ] Edge 启动注册 `deployment=edge, kind=edge_fast` manifest（车控/媒体能力）到 Registry。
-- [ ] `dispatch.py` 实现 edge 路由 + 降级（通道不可达→FAILED）。
-- [ ] 测试：①Gateway 配对/超时单测 ②Edge `edge_call`→VAL 单测（含安全门控拒绝、NEED_CONFIRM）③e2e：一个含 edge step 的云计划端到端跑通，结果回流被后续 step 依赖。
+- [x] `channel.proto` 加 `EdgeCall/EdgeResult` 帧 + import；`gateway` 专用 `DispatchToEdge`；重生成。
+- [x] Cloud Gateway：维护 `vehicle_id→DownFrame 流`；实现 `DispatchToEdge`（写 edge_call、按 step_id/correlation 配对收 edge_result、超时处理）。
+- [x] Edge：`cloud_client.py` 读循环加 `edge_call` 分支；复用 `server._dispatch`→`val.execute` 执行并回 `edge_result`。
+- [x] Edge 启动注册 `deployment=edge, kind=edge_fast` manifest（车控/媒体能力）到 Registry。
+- [x] `dispatch.py` 实现 edge 路由 + 降级（通道不可达→FAILED）。
+- [x] 测试：Gateway 配对/超时、Edge `edge_call`→VAL、编排层 edge dispatch 集成均已覆盖。
 
 ### P2 — T2 有界循环
-- [ ] `planning.py`：prompt 加 complexity/goal；解析；新增 `replan()`。
-- [ ] `engine.py`：Conductor 按 complexity 分派；反应式升级。
-- [ ] 新增 `loop.py` LoopController（迭代/预算/观察压缩/`_suspend` 复用/流式占位）。
-- [ ] 测试：adaptive 黄金用例（满了换次近、订不上换家）；NEED_CONFIRM 在循环内正确挂起；预算超限返回 best-effort；simple 不进循环（P50 无回退）。
+- [x] `planning.py`：prompt 加 complexity/goal；解析；新增 `replan()`。
+- [x] `engine.py`：Conductor 按 complexity 分派；反应式升级。
+- [x] 新增 `loop.py` LoopController（迭代/预算/观察压缩/`_suspend` 复用/流式占位）。
+- [x] 测试：adaptive、NEED_CONFIRM、预算超限、simple 路径和流式直通均已覆盖。
 
 ### P3 — 工具
-- [ ] `tools/` ToolRegistry + 内置确定性工具（datetime/unit/math）+ 轻量 manifest 注入 Registry。
-- [ ] `dispatch.py` tool 路由 + 沙箱校验（禁车控）。
-- [ ] 测试：工具被 Planner 选中并执行；third_party/工具不可得 vehicle.control。
+- [x] `tools/` ToolRegistry + 内置确定性工具（datetime/unit/math）+ 轻量 manifest 注入 Registry。
+- [x] `dispatch.py` tool 路由 + 沙箱校验（禁车控）。
+- [x] 测试：工具执行和 `vehicle.control` 拒绝均已覆盖。
 - [ ] （后续）HTTP/MCP 外部工具 + 出口白名单。
 
 ---
@@ -368,9 +369,10 @@ message EdgeResult {
 - **Planner 隐式车控增强**：prompt 增加"隐式车控必须识别"规则（"再高/低一点""我冷/热"→映射为 hvac.inc/dec/set）。
 - **DispatchToEdge proto codegen 修复**：`gen/go/` 重新生成，cloud-gateway 重建。
 
-**测试证据（2026-06-14 最终验证）**
+**该阶段测试证据（2026-06-14 历史基线）**
 
-- `python -m pytest --import-mode=importlib`：**312 passed, 2 skipped**（全量）。
+- `python -m pytest --import-mode=importlib`：**312 passed, 2 skipped**（该阶段当时全量；
+  当前结果见本文最后一条落地记录）。
 - 其中 `orchestrator/` 212 passed（含 T2 流式 4 条、PoC 默认 scope 2 条、混合意图 5 条、中间反馈 1 条）。
 - 其中 `test/` 46 passed, 2 skipped。
 - 其他服务（agents/llm-gateway 等）54 passed。
@@ -389,8 +391,35 @@ message EdgeResult {
 - HMI 侧 `granted_scopes` 的真实 token 解析（当前用 PoC 默认值）。
 - Prometheus/OTel metrics export 端点（当前仅内存快照）。
 - 编排路径 `start_span()` 接入（tracing 基础设施已有，未调用）。
-- 流式 TTS（当前 TTS 为批量合成，文字显示与语音播报之间有间隔）。
+- 真正的服务端 PCM 流式 TTS（句子级增量合成与顺序播放已在 HMI 落地）。
 - Docker 部署需将 `.env` 复制到 `deploy/` 目录（docker compose 从 `deploy/` 运行，读取该目录下的 `.env`）。
+
+### 2026-06-14 体验修复（混合意图中间态 / 多轮车控执行 / 全部 review 项）
+
+**背景**：联调发现两个体验问题——① 混合意图下慢意图无中间态反馈，结果在模型跑完后突然出现；② 多轮中被中枢判为车控的跟进句（"再高一点""我好冷"）看起来"没执行"（无动作卡、话术空泛）。借此对中枢做了一轮 code review，并落地全部修复项。
+
+**根因**
+- case1：HMI 流式状态机一轮仅一个 pending 占位；混合路径先为本地段 yield 终态 `final`，HMI 清空 `pendingIdRef`，导致云段 `speech_delta` 无处归属被丢、`final` 突现。
+- case2：① 云端 edge_call（`EdgeCallExecutor`）执行车控后不回 `AgentAction` → HMI 无动作卡；② VAL 的 `aircon.inc/dec` 落兜底分支，温度原地不动且话术走 `generic_success`。
+
+**已修复**
+- **R1** edge_call 回动作卡 + 防双发：`edge_call.py` 成功后回填 `AgentAction`（车控→`vehicle.control` / 媒体→`media.control`），payload 打 `_origin=edge_val`；`server._dispatch_cloud_actions` 跳过该标记（已在车端执行），仅展示不二次下发。
+- **R2** VAL 相对调温：`val.py` aircon 增 inc/dec 真正 ±1 度（夹 16–32）并区分风速；新增 `hvac_inc/dec_success` 话术并回显目标温度。本地/云端两路同时受益。
+- **R3** HMI 多段流式：`App.tsx` 对 `speech_delta`/`action` 在无活跃占位时新建气泡；新增 `action` 事件处理（此前被静默丢弃）。
+- **R4** 端侧本地轮写记忆：edge orchestrator 给纯本地快路径 best-effort 异步写共享记忆（gated on `memory_enabled`，失败静默、不破坏离线），补齐云端跟进指代上下文。
+- **R5** 映射收敛：`edge_call._to_structured` 对象白名单改由 VAL `commands.yaml` 提供（消除与知识库漂移），无知识库时回退内置集。
+- **R6** 云段即时占位：混合路径本地 `final` 后立即下发占位 delta，并以 `_mixed_subrequest` meta 让云端不重复占位文案。
+- **R8** 危险动作守红线：本地快路径命中 `require_confirm` 对象（trunk/door_lock/fuel_tank_cover/charging_port）不再秒回，落云端经 edge_call→`NEED_CONFIRM` 二次确认（此前本地路径直接执行，违反 CLAUDE.md §5 危险动作必确认）。
+
+**测试证据**
+- 新增 8 条单测（edge_call 动作卡/标记/相对调温、`_dispatch` 跳过/执行、`_confirm_required`、危险动作路由云端、普通意图仍秒回）。
+- `pytest --import-mode=importlib`：**318 passed**（不含 2 条需起 ASR 服务的集成用例；起全栈时 320 passed, 2 skipped）。
+- `test/smoke_edge.py`：13/13。HMI `tsc --noEmit`：通过。
+
+**已知边界 / 待全栈验证**
+- R3/R4/R6 的端到端表现需 `make up` + `test/e2e_ws.py` 在真实流式/记忆/路由链路上复核（单测覆盖各部件，未覆盖跨服务流）。
+- R8 改变了示例"解锁车门端侧秒回"——door_lock 现走云端确认；离线时危险动作不可用（安全默认）。
+- aircon 风速 `set` 话术仍用 `hvac_set_success`（温度口径），属既有遗留，未在本轮处理。
 
 ### 后续接手清单（按优先级）
 
@@ -398,3 +427,72 @@ message EdgeResult {
 2. **工具后续**：HTTP/MCP 外部工具仍未实现；落地时必须要求 `network.external` 并使用出口白名单/超时/响应大小限制。
 3. **真实权限注入**：从会话 token/设备身份解析 `granted_scopes`，替换 PoC 默认值。
 4. **可观测导出**：接入 Prometheus endpoint 或 OTel exporter；编排路径接入 `start_span()`。
+
+### 2026-06-14 慢意图 TTS 与混合意图上下文修复
+
+**问题与根因**
+
+- HMI 过去只在 `final` 事件调用整段 `/api/tts`，所以文字流式结束后才开始合成和播报。
+- 混合意图逐片路由导致“导航去南京欢乐谷”与“走最快路线”被拆散；媒体主句先在
+  本地执行，歌手限定再单独上云，既丢上下文又可能重复播放。
+
+**已实现**
+
+- `hmi/src/ttsQueue.mjs`：完整句标点或长度阈值触发切句；音频并行预取、严格按入队
+  顺序播放；新请求和录音可取消旧会话。
+- `hmi/src/audio.ts` / `App.tsx`：`speech_delta` 触发增量合成，`final` 只冲刷未播尾部；
+  无流式回复继续兼容整段 TTS。
+- `orchestrator/edge/server.py`：不可独立分类的续接片段附着到前一个主意图，按整个
+  语义组决定本地或上云。导航目的地/路线偏好、媒体动作/歌手限定不再被拆散。
+- 根 `README.md`、接手入口、测试说明、设计索引和模块 README 已统一到当前状态。
+
+**验证证据**
+
+- `python -m pytest --import-mode=importlib -q`：**321 passed, 2 skipped**。
+- `python test/smoke_edge.py`：**13 passed, 0 failed**。
+- `python -m pytest orchestrator/edge/tests/test_server_dispatch.py orchestrator/edge/tests/test_multi_intent_split.py -q`：**34 passed**。
+- `node --test hmi/src/ttsQueue.test.mjs`：**5 passed**。
+- `npm run build`（`hmi/`）：Vite 生产构建通过。
+
+**该子阶段未重新执行**
+
+- Docker 全栈重建、浏览器人工试听、`python test/e2e_ws.py`。此前 4 条 E2E 链路的
+  通过记录保留，但不作为本轮新鲜验证。
+
+**仍需后续处理**
+
+- 真正的服务端 PCM 流式 TTS；当前方案以短句为单位调用现有批量 `/api/tts`。
+- 在真实 MiMo TTS 和车载网络环境测量首句合成时延、队列积压和打断体验。
+
+### 2026-06-14 慢意图完整性与复杂意图回归修复
+
+**用户报告场景**
+
+1. “讲个笑话，顺便查北京天气”以及下一轮“讲个笑话”被慢意图回答成无关追问。
+2. “船形地点→附近餐饮→附近停车→绿色氛围灯→空调二十三度→出发”只完成氛围灯，
+   云端其余步骤持续处理中。
+
+**根因与修复**
+
+- Planner 可能接受含非法 Agent/intent 的部分计划并静默执行剩余步骤，导致用户意图
+  被丢弃却仍返回完成话术。现在任一步非法会原子拒绝整份计划，触发重试/降级。
+- chitchat 的 `text` 槽位可能为空或残留旧轮内容。现在始终用当前用户原话覆盖。
+- PoC 默认 scope 缺少实际 Agent 声明的定位、导航、外网和支付权限，复杂计划会在
+  执行前被过滤。默认集合已补齐，量产仍必须由 token 注入。
+- 端侧没有识别中文数字温度，且句末“出发吧”会附着到最近的本地空调组。现在支持
+  16–32 度中文数字，并将出发类续接附着到最近的云端行程/导航语义组。
+
+**新鲜验证证据**
+
+- `python -m pytest --import-mode=importlib -q`：**325 passed, 2 skipped**。
+- `python test/smoke_edge.py`：**13 passed, 0 failed**。
+- `npm test`（`hmi/`）：**5 passed**；`npm run build` 通过。
+- Docker 18 个容器运行正常；两个用户报告场景均完成全栈回放：
+  - 笑话/天气组合返回笑话，并明确说明当前无实时天气能力；下一轮纯笑话只回答当前轮。
+  - 复杂行程先本地完成绿色氛围灯和空调 23 度，再依次完成地点、餐饮、停车与导航，
+    云端终态约 6.66 秒返回。
+
+**仍需验证**
+
+- 本轮未重新运行标准 `python test/e2e_ws.py` 四链路套件；其历史通过记录保留。
+- 天气仍缺真实 `info` Agent/WeatherProvider，当前只能诚实降级，不能返回实时天气。

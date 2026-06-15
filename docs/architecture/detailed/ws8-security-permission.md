@@ -2,7 +2,11 @@
 
 > 依据：`phase1-implementation-plan.md` WS8、`cockpit-agent-architecture.md` §9
 > 目标：把"车控只经 VAL / LLM 不直连车控 / 危险动作二次确认 / 最小权限 / 第三方沙箱"落到可编码。读者：安全/编排/端侧/平台开发。
-> 现状基线：proto 有 `requires_permissions`/`trust_level`/`require_confirm` 字段；VAL 有一处安全态门控示例；尚无统一权限引擎、沙箱、注入防护、审核。
+> 设计时基线：proto 只有权限字段，缺少统一引擎、沙箱、注入防护与审核。
+>
+> **当前实现（2026-06-14）**：统一 PermissionEngine、规划/执行双层校验、VAL 安全
+> 门控、危险动作确认、审计和基础注入/内容钩子已落地。真实 token 授权、正式
+> third-party 沙箱/网络出口白名单、审核服务和完整审计后端仍待接入。
 
 ---
 

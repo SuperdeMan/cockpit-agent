@@ -1,10 +1,12 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.0（设计稿，待评审）
-> 日期：2026-05-29
+> 版本：v1.1（当前架构基线）
+> 日期：2026-06-14
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
-> 配套文档：本文档定稿后，将据此产出《工程代码骨架》与《分阶段实施计划》
+> 实现说明：当前仓库完成的是该架构的工程化 PoC 主干；文中的 K8s、持久化注册、
+> 真实 Provider、mTLS、正式沙箱、完整 OTel 与真实 VAL 等仍是目标态。实现现状和
+> 差距以 `AGENTS.md` 与 `phase1-implementation-plan.md` 顶部说明为准。
 
 ---
 
@@ -532,7 +534,7 @@ proactive.trigger           # 主动服务触发(如低电量提醒充电)
 
 ---
 
-## 13. 工程目录结构（Monorepo 建议）
+## 13. 工程目录结构（目标态与当前映射）
 
 ```
 car-agent/
@@ -572,6 +574,10 @@ car-agent/
 ├─ scripts/                       # 构建/codegen/proto 生成
 └─ test/                          # 端到端场景测试集
 ```
+
+当前 PoC 将车控/媒体端侧能力与 Python 模拟 VAL 放在 `orchestrator/edge/`；
+尚未创建目标态的 `agents/vehicle/`、`agents/media/`、`agents/info/` 和
+`vehicle-abstraction/`。不要因目录示意图而误判这些独立模块已经存在。
 
 **每个 Agent 的内部结构（统一模板）**：
 ```

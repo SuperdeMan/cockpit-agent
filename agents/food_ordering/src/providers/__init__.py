@@ -7,6 +7,6 @@ from .mock import MockRestaurantProvider
 def build_restaurant_provider() -> RestaurantProvider:
     vendor = os.getenv("RESTAURANT_VENDOR", "mock")
     if vendor == "dianping" and os.getenv("DIANPING_KEY"):
-        # TODO(Phase1): from .dianping import DianpingProvider; return DianpingProvider(...)
+        # TODO(Production): 接入 DianpingProvider。
         pass
     return MockRestaurantProvider()

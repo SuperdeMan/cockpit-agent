@@ -2,7 +2,11 @@
 
 > 依据：`phase1-implementation-plan.md` WS6、`cockpit-agent-architecture.md` §4、§11
 > 目标：把 mock 能力换成真实/沙箱能力（统一适配层范式 + 支付网关），并打通 multi-agent 协作（trip-planner 子规划者）。读者：各 Agent 开发、平台开发。
-> 现状基线：各 Agent 的能力为内置 mock（如 navigation `_mock_search`、food `_mock`）；Agent 之间无相互调用能力。
+> 设计时基线：各 Agent 仅有内置 mock，且不能互调。
+>
+> **当前实现（2026-06-14）**：6 个 Agent 已接统一 Provider 工厂，无凭证时回退
+> mock；trip-planner 已通过受控 AgentClient 协作。真实厂商 Provider、车型向量库和
+> PaymentGateway Authorize/Capture 仍需按部署环境接入与验收。
 
 ---
 

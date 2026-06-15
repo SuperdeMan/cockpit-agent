@@ -9,5 +9,6 @@
 ## RAG 流程
 `_retrieve(question)` 取相关片段 → 拼入 prompt → LLM 仅依据资料作答（资料无则明确告知）。
 
-## 待办
-- TODO(Phase1): mock 知识库替换为车型手册向量库（pgvector/Milvus）+ embedding + 重排；多车型隔离；引用出处展示。
+## 后续量产项
+- 将 MockKnowledgeRetriever 替换为车型手册向量库（pgvector/Milvus）+ embedding +
+  重排，并补多车型隔离与引用出处展示。

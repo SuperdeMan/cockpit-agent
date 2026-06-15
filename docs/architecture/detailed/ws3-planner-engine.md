@@ -154,10 +154,12 @@ LLM 把已注册 Agent 能力当工具，输出 DAG 计划。
 ```
 
 **校验规则**（解析后逐条）：
-1. `agent_id` 必须在已注册集合内（否则丢弃该 step，全丢则重试/降级）。
-2. `intent` 必须属于该 agent 的 capabilities（否则用该 agent 首个 capability 兜底或丢弃）。
-3. `depends_on` 引用的 id 必须存在且无环（拓扑检测，见 §5）。
-4. `slot_refs` 路径语法校验（`<step_id>.data.<path>`）。
+1. `agent_id` 必须在已注册集合内。
+2. `intent` 必须属于该 agent 的 capabilities。
+3. 任一步的 agent/intent 非法时，**整份计划原子拒绝**并重试/降级，禁止只执行合法
+   残片后向用户误报“已完成”。
+4. `depends_on` 引用的 id 必须存在且无环（拓扑检测，见 §5）。
+5. `slot_refs` 路径语法校验（`<step_id>.data.<path>`）。
 
 **降级链**：LLM 不可用/mock/解析失败 → 退化为 Registry 语义路由 top-1 单步计划（保留 Phase 0 行为）。
 
@@ -309,7 +311,7 @@ class SessionStore:
 - 拓扑分层：链式/并行/菱形依赖；成环检测抛错。
 - slot_refs 解析：正常路径、缺失路径、数组下标。
 - 部分失败：被依赖 step 失败 → 下游 SKIPPED。
-- 计划校验：非法 agent_id/intent 被剔除；全非法 → 降级。
+- 计划校验：任一非法 agent_id/intent → 整份计划拒绝并重试/降级。
 - 状态机：confirm 续接、slot 续接、TTL 过期作废。
 
 **契约/集成**（需 registry+agents 起）：

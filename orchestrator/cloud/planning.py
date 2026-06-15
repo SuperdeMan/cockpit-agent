@@ -167,6 +167,13 @@ class PlanBuilder:
         if not steps:
             return None
 
+        # Chitchat is the open-domain fallback. Never trust an LLM-generated
+        # text slot here: it can be missing or stale, which makes the agent
+        # answer an empty/previous request instead of the current utterance.
+        for step in steps:
+            if step.agent_id == "chitchat":
+                step.slots["text"] = fallback_text
+
         complexity = data.get("complexity", "simple")
         if complexity not in ("simple", "adaptive"):
             complexity = "simple"
@@ -193,6 +200,7 @@ class PlanBuilder:
         }
 
         steps = []
+        invalid = False
         for s in raw_steps:
             aid = s.get("agent_id", "")
             intent = s.get("intent", "")
@@ -200,12 +208,14 @@ class PlanBuilder:
             # 校验 agent_id
             if aid not in agent_map:
                 logger.warning("Unknown agent_id in plan: %s, skipping", aid)
+                invalid = True
                 continue
 
             # F4：intent 必须属于该 agent 的能力集，否则丢弃该 step（不替换）
             if intent not in agent_intents.get(aid, set()):
                 logger.warning("Intent %s not in agent %s capabilities, dropping step",
                                intent, aid)
+                invalid = True
                 continue
 
             manifest = agent_map[aid].manifest
@@ -225,6 +235,13 @@ class PlanBuilder:
                 trust_level=getattr(manifest, "trust_level", "") or "",
             )
             steps.append(step)
+
+        # Plans are atomic: executing only the valid remainder silently drops
+        # user intents and can falsely report completion. Reject the whole plan
+        # so the caller retries or falls back with the original utterance.
+        if invalid:
+            return []
+
         valid_ids = {step.id for step in steps}
         for step in steps:
             step.depends_on = [dep for dep in step.depends_on if dep in valid_ids]

@@ -6,7 +6,12 @@ import { StatusBar } from './components/StatusBar'
 import { ChatView } from './components/ChatView'
 import { Composer } from './components/Composer'
 import { SettingsPanel } from './components/SettingsPanel'
-import { playTTS } from './audio'
+import {
+  appendTTSDelta,
+  finishTTSReply,
+  startTTSReply,
+  stopTTS,
+} from './audio'
 import type { Msg, Settings } from './types'
 
 const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://localhost:8090'
@@ -31,6 +36,10 @@ export default function App() {
   const settingsRef = useRef<Settings>(settings)
   settingsRef.current = settings // 始终保留最新设置，避免 ws 回调读到陈旧闭包
 
+  useEffect(() => {
+    if (!settings.ttsEnabled || !settings.autoplay) stopTTS()
+  }, [settings.ttsEnabled, settings.autoplay])
+
   // ─── WebSocket 连接 + 自动重连 ───
   useEffect(() => {
     let closed = false
@@ -53,6 +62,7 @@ export default function App() {
       closed = true
       if (retry) clearTimeout(retry)
       wsRef.current?.close()
+      stopTTS()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -60,15 +70,48 @@ export default function App() {
   const handleEvent = useCallback((data: any) => {
     const s = settingsRef.current
     if (data.type === 'speech_delta') {
-      // 流式逐字：把 pending 占位转为 streaming，并追加 delta
-      const id = pendingIdRef.current
+      // 流式逐字：把 pending 占位转为 streaming，并追加 delta。
+      // 若当前没有活跃占位（如混合意图里本地已 final、云端流式刚开始），
+      // 新开一个助手气泡——否则这段 delta 会无处归属被丢弃。
       const delta = data.delta || ''
+      if (s.ttsEnabled && s.autoplay && delta) {
+        appendTTSDelta(delta).catch(() => {/* 播放失败静默 */})
+      }
+      let id = pendingIdRef.current
+      if (!id) {
+        id = uid()
+        pendingIdRef.current = id
+      }
+      const targetId = id
       setMessages((m) =>
-        m.map((msg) =>
-          msg.id === id
-            ? { ...msg, pending: false, streaming: true, text: msg.text + delta }
-            : msg,
-        ),
+        m.some((x) => x.id === targetId)
+          ? m.map((msg) =>
+              msg.id === targetId
+                ? { ...msg, pending: false, streaming: true, text: msg.text + delta }
+                : msg,
+            )
+          : [...m, { id: targetId, role: 'assistant', text: delta, streaming: true } as Msg],
+      )
+      return
+    }
+    if (data.type === 'action') {
+      // 流式期间单独下发的动作卡（如 T2 循环中间步骤）：附到当前气泡；
+      // 没有活跃气泡则新开一个，避免动作被静默丢弃。
+      const action = data.action
+      let id = pendingIdRef.current
+      if (!id) {
+        id = uid()
+        pendingIdRef.current = id
+      }
+      const targetId = id
+      setMessages((m) =>
+        m.some((x) => x.id === targetId)
+          ? m.map((msg) =>
+              msg.id === targetId
+                ? { ...msg, pending: false, actions: [...(msg.actions || []), action] }
+                : msg,
+            )
+          : [...m, { id: targetId, role: 'assistant', text: '', streaming: true, actions: [action] } as Msg],
       )
       return
     }
@@ -90,7 +133,7 @@ export default function App() {
       )
       setAwaitConfirm(!!data.need_confirm)
       if (s.ttsEnabled && s.autoplay && data.speech) {
-        playTTS(AUDIO_API, data.speech, s.voiceId).catch(() => {/* 播放失败静默 */})
+        finishTTSReply(data.speech).catch(() => {/* 播放失败静默 */})
       }
       return
     }
@@ -108,6 +151,8 @@ export default function App() {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
     const s = settingsRef.current
+    if (s.ttsEnabled && s.autoplay) startTTSReply(AUDIO_API, s.voiceId)
+    else stopTTS()
     ws.send(
       JSON.stringify({
         text,

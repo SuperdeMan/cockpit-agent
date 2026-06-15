@@ -1,60 +1,132 @@
 # 智能座舱 Multi-Agent 系统
 
-云边协同的智能座舱 AI Agent 系统：端侧"快系统"秒回车控/媒体类确定指令并离线兜底，云侧"慢系统"用 LLM Planner 编排复杂、跨域、多轮意图；所有 Agent 经统一契约 + 注册中心即插即用。
+云边协同的智能座舱 AI Agent 工程。系统采用分层混合编排：
 
-- 架构设计（唯一真相源）：[`docs/architecture/cockpit-agent-architecture.md`](docs/architecture/cockpit-agent-architecture.md)
-- 工程规则：[`CLAUDE.md`](CLAUDE.md)
+- **T0 端侧快路径**：车控、媒体等高频确定性指令本地执行，离线可用。
+- **T1 云端 DAG**：复杂、跨域、多意图请求由 LLM Planner 一次规划后确定性执行。
+- **T2 有界循环**：需要根据中间结果调整计划的请求进入有迭代和时间预算的循环。
 
-## 架构一览
+所有 Agent 使用统一 gRPC 契约和 Manifest，经注册中心发现。云端只生成意图与计划，
+所有车控最终都必须经过端侧 VAL 校验和执行。
 
+## 当前状态
+
+截至 **2026-06-14**：
+
+- Phase 1 的工程化 PoC 主干与云端中枢 P0-P3 已落地；原始 Phase 1
+  计划中的量产级能力仍有明确 backlog。
+- `DispatchToEdge`、T2 有界循环、确定性工具和权限双层校验已实现。
+- 端侧混合意图支持按语义组分流，本地动作与导航/媒体慢意图可在同一请求中协同执行。
+- HMI 支持文字流式渲染和句子级增量 TTS：首个完整短句即可开始合成、后续音频顺序播放。
+- 全量 pytest：**325 passed, 2 skipped**。
+- 端侧 smoke：**13 passed, 0 failed**。
+- HMI TTS 单测：**5 passed**；Vite 生产构建通过。
+- Docker 18 个容器运行正常；4 条标准 E2E 链路有历史通过记录，本轮额外完成了
+  2 条用户报告场景的全栈回放。
+
+详细交接状态见 [`AGENTS.md`](AGENTS.md)，工程约束见 [`CLAUDE.md`](CLAUDE.md)。
+
+## 架构
+
+```text
+HMI
+  │ WebSocket / ASR / TTS
+  ▼
+Edge Gateway ── Edge Orchestrator ── Fast Intent
+                         │                │
+                         │                └─ T0: VAL → 本地车控/媒体
+                         │
+                         └─ Cloud Gateway ── Cloud Planner
+                                                ├─ T1 DAG Executor
+                                                ├─ T2 LoopController
+                                                ├─ Cloud Agents
+                                                ├─ Deterministic Tools
+                                                └─ DispatchToEdge → VAL
 ```
-HMI ─► Edge Gateway ─► Edge Orchestrator ─► Fast Intent
-                                   │
-              ┌────快意图(本地秒回)─┤
-              ▼                    └──慢意图(上云)──► Cloud Gateway ─► Cloud Planner
-        车控/媒体 Agent ─► VAL ─► 车                         │
-                                                            ├─► Agent Registry(发现)
-                                                            ├─► LLM Gateway(多模型)
-                                                            ├─► Memory(上下文/画像)
-                                                            └─► core/eco Agents(gRPC)
-```
+
+架构唯一真相源：
+[`docs/architecture/cockpit-agent-architecture.md`](docs/architecture/cockpit-agent-architecture.md)。
+
+## 安全铁律
+
+1. 车控只能经 VAL 下发，LLM、Agent 和工具不得直接操作 CAN/SOME-IP。
+2. LLM 只负责理解与规划，确定性 Executor/Dispatcher 负责执行。
+3. 危险动作必须二次确认。
+4. 新增 Agent 通过注册中心接入，不修改编排核心。
+5. 密钥和 token 只放 `.env`，不得进入代码、日志或提交。
+6. 修改协议先改 `proto/`，再重新 codegen；不要手改 `gen/`。
 
 ## 快速开始
 
-前置：Docker Desktop（含 Docker Compose）；本地开发另需 Go 1.24+、Python 3.11+、Node 20+、buf。
+依赖：Docker Desktop、Python 3.11+；本地开发另需 Go 1.24+、Node 20+、buf。
+
+Linux/macOS：
 
 ```bash
-cp .env.example .env          # 填入 LLM_API_KEY（MiMo/Anthropic）
-make proto                    # 生成 gRPC 代码
-make up                       # 起全栈（18 个容器）
-# 打开 http://localhost:5173  访问座舱 HMI
-make down
+cp .env.example .env
+make proto
+python test/smoke_edge.py
+make up
 ```
 
-Windows（PowerShell，无 make）：
+Windows PowerShell：
 
 ```powershell
 Copy-Item .env.example .env
 ./scripts/gen-proto.ps1
+python test/smoke_edge.py
 docker compose -f deploy/docker-compose.yaml --env-file .env up --build
 ```
 
-LLM 默认使用小米 MiMo API（`LLM_PROVIDER=xiaomimimo`），也支持 Anthropic。不配 key 自动走 MockProvider。
+打开 [http://localhost:5173](http://localhost:5173) 使用 HMI。未配置 `LLM_API_KEY`
+时自动使用 MockProvider，基础链路仍可运行。
 
-## 验证四条 PoC 链路
-1. **车控快路径**：说"打开空调26度"、"打开座椅加热"、"解锁车门"、"氛围灯设为蓝色" → 端侧秒回（断网也可用）。
-2. **云端导航**：说"附近的充电站" → 云端 Planner 路由到导航 Agent，追问关键词。
-3. **云端闲聊**：说"讲个笑话" → 云端 Planner 路由到闲聊 Agent，流式回复。
-4. **确认闭环**：说"订川菜馆今晚7点两位" → 点餐 Agent 返回结果 → "确认" → 完成下单。
+## 主要能力
 
-**多意图**：说"打开空调并播放音乐" → 端侧拆分两个意图并行执行。
+- 61 个车控对象、150 条端侧意图 pattern，知识库驱动归一化、校验、安全门控和话术。
+- 本地、云端混合多意图拆分，支持导航偏好、歌手等续接片段与主意图成组路由。
+- 六个云 Agent：导航、闲聊、点餐、停车支付、手册问答、行程规划。
+- 对话记忆、确认/补槽续接、跨 Agent DAG、T2 自适应再规划。
+- MiMo/Mock LLM Provider，MiMo ASR/TTS，webm 到 wav 后端转码。
+- HMI 流式文字、动作卡、记忆视图、语音输入、九种音色和句子级增量播报。
+- 指标、审计和 trace 基础设施；车端快能力和内置工具统一注册与调度。
+
+## 验证
 
 ```bash
-python test/e2e_ws.py   # E2E 自动验证（需全栈运行）
+python -m pytest --import-mode=importlib -q
+python test/smoke_edge.py
+
+cd hmi
+npm test
+npm run build
 ```
 
-## 目录
-见 `CLAUDE.md` §3。每个服务子目录都有自己的 README，说明职责、接口、依赖。
+全栈运行后：
 
-## 状态
-Phase 1 全部验收标准达成 + 云端中枢升级验收通过（2026-06-14）：312 测试全绿、E2E 4 链路通过、车控 150 意图、多意图切分（含混合意图本地+云端分流）、ASR/TTS 全链路、云端 P0-P3 全部落地。详见 [`AGENTS.md`](AGENTS.md) §4。
+```bash
+python test/e2e_ws.py
+```
+
+测试分布和环境说明见 [`test/README.md`](test/README.md)。
+
+## 已知边界
+
+- Cloud Gateway 的车辆长连接状态仍在单实例内存中，多实例需会话亲和或一致性路由。
+- Registry 仍是内存注册表，重启后需重启 Agent 完成重新注册。
+- 地图/餐饮/停车/手册等 Provider 已统一适配并默认可回退 mock，真实厂商能力仍需
+  按环境配置和验收。
+- HTTP/MCP 外部工具及网络出口白名单尚未实现。
+- HMI 的权限 scope 仍使用 PoC 默认注入，量产需从设备身份和会话 token 解析。
+- 指标尚未导出到 Prometheus/OTel，编排链路的 span 接入仍需补齐。
+- 当前 TTS 是“文本短句增量合成 + 顺序播放”，不是真正的服务端 PCM 音频流。
+- VAL 仍为 Python 模拟，真实 SOME-IP/CAN、车规资源约束和 OTA 属于后续量产阶段。
+
+## 接手阅读顺序
+
+1. [`AGENTS.md`](AGENTS.md)：当前进度、第一步和自检入口。
+2. [`CLAUDE.md`](CLAUDE.md)：目录约定、安全红线和工程纪律。
+3. [`docs/architecture/cockpit-agent-architecture.md`](docs/architecture/cockpit-agent-architecture.md)：架构唯一真相源。
+4. [`docs/design/2026-06-14-cloud-central-orchestrator.md`](docs/design/2026-06-14-cloud-central-orchestrator.md)：云端中枢落地记录和后续清单。
+5. [`docs/dev-guide.md`](docs/dev-guide.md) 与 [`docs/conventions.md`](docs/conventions.md)：环境、端口、命名和调试。
+6. 对应服务目录下的 README 和测试。

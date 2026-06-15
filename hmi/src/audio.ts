@@ -1,4 +1,5 @@
-// 音频层：录音控制器（修掉 ASR 收音竞态）+ TTS 播放队列 + 音色查询。
+// 音频层：录音控制器（修掉 ASR 收音竞态）+ 增量 TTS 播放队列 + 音色查询。
+import { OrderedPlaybackQueue, TtsTextBuffer } from './ttsQueue.mjs'
 //
 // 旧实现的收音失败根因（task 3 前端侧）：
 //  1. startRecording 是 async，快按快松时 MediaRecorder 还没 start()，
@@ -134,11 +135,116 @@ export class MicController {
   }
 }
 
-// ─── TTS 播放队列：避免多段 final 叠音；用完即释放 objectURL ───
+// ─── TTS：短句增量合成、并行预取、严格顺序播放 ───
+
+type TtsRequest = { apiBase: string; text: string; voiceId: string }
+type PreparedAudio = { url: string; dispose: () => void }
+type TtsReply = { apiBase: string; voiceId: string; buffer: TtsTextBuffer }
 
 let ttsAudio: HTMLAudioElement | null = null
+let finishCurrentPlayback: (() => void) | null = null
+let activeReply: TtsReply | null = null
+
+async function prepareTTS(request: TtsRequest, signal: AbortSignal): Promise<PreparedAudio> {
+  const { apiBase, text, voiceId } = request
+  const resp = await fetch(`${apiBase}/api/tts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, voice_id: voiceId, format: 'wav' }),
+    signal,
+  })
+  if (!resp.ok) throw new Error(`TTS request failed: ${resp.status}`)
+  const data = await resp.json()
+  if (!data.audio) throw new Error('TTS response has no audio')
+  const bytes = Uint8Array.from(atob(data.audio), (c) => c.charCodeAt(0))
+  const blob = new Blob([bytes], { type: `audio/${data.format || 'wav'}` })
+  const url = URL.createObjectURL(blob)
+  let disposed = false
+  return {
+    url,
+    dispose: () => {
+      if (!disposed) {
+        URL.revokeObjectURL(url)
+        disposed = true
+      }
+    },
+  }
+}
+
+async function playPreparedTTS(item: PreparedAudio, signal: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const audio = new Audio(item.url)
+    let finished = false
+
+    const finish = () => {
+      if (finished) return
+      finished = true
+      signal.removeEventListener('abort', abort)
+      audio.pause()
+      audio.src = ''
+      item.dispose()
+      if (ttsAudio === audio) ttsAudio = null
+      if (finishCurrentPlayback === finish) finishCurrentPlayback = null
+      resolve()
+    }
+    const abort = () => finish()
+
+    ttsAudio = audio
+    finishCurrentPlayback = finish
+    audio.onended = finish
+    audio.onerror = finish
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) {
+      finish()
+      return
+    }
+    audio.play().catch(finish)
+  })
+}
+
+const ttsQueue = new OrderedPlaybackQueue<TtsRequest, PreparedAudio>(
+  prepareTTS,
+  playPreparedTTS,
+  (item) => item.dispose(),
+)
+
+function enqueueChunks(chunks: string[]): Promise<void[]> {
+  const reply = activeReply
+  if (!reply) return Promise.resolve([])
+  return Promise.all(
+    chunks
+      .filter((text) => text.trim())
+      .map((text) => ttsQueue.enqueue({
+        apiBase: reply.apiBase,
+        text,
+        voiceId: reply.voiceId,
+      })),
+  )
+}
+
+export function startTTSReply(apiBase: string, voiceId: string): void {
+  stopTTS()
+  activeReply = { apiBase, voiceId, buffer: new TtsTextBuffer() }
+}
+
+export function appendTTSDelta(delta: string): Promise<void[]> {
+  if (!activeReply || !delta) return Promise.resolve([])
+  return enqueueChunks(activeReply.buffer.push(delta))
+}
+
+export function finishTTSReply(finalText: string): Promise<void[]> {
+  if (!activeReply) return Promise.resolve([])
+  const chunks = activeReply.buffer.finish(finalText)
+  activeReply.buffer = new TtsTextBuffer()
+  return enqueueChunks(chunks)
+}
 
 export function stopTTS(): void {
+  activeReply?.buffer.reset()
+  activeReply = null
+  ttsQueue.cancel()
+  finishCurrentPlayback?.()
+  finishCurrentPlayback = null
   if (ttsAudio) {
     ttsAudio.pause()
     ttsAudio.src = ''
@@ -148,24 +254,8 @@ export function stopTTS(): void {
 
 export async function playTTS(apiBase: string, text: string, voiceId: string): Promise<void> {
   if (!text.trim()) return
-  const resp = await fetch(`${apiBase}/api/tts`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voice_id: voiceId, format: 'wav' }),
-  })
-  const data = await resp.json()
-  if (!data.audio) return
-  const bytes = Uint8Array.from(atob(data.audio), (c) => c.charCodeAt(0))
-  const blob = new Blob([bytes], { type: `audio/${data.format || 'wav'}` })
-  const url = URL.createObjectURL(blob)
-  stopTTS()
-  const audio = new Audio(url)
-  ttsAudio = audio
-  audio.onended = () => {
-    URL.revokeObjectURL(url)
-    if (ttsAudio === audio) ttsAudio = null
-  }
-  await audio.play().catch(() => URL.revokeObjectURL(url))
+  startTTSReply(apiBase, voiceId)
+  await finishTTSReply(text)
 }
 
 // ASR：上传录音，返回识别文本

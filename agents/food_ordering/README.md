@@ -15,5 +15,5 @@
 ## Provider
 `providers/` 目录：`RestaurantProvider` 接口 + `MockRestaurantProvider`。切换：`RESTAURANT_VENDOR=dianping`。
 
-## 待办
-- TODO(Phase1): 实现 DianpingProvider（接真实到店点评/预订平台）。
+## 后续量产项
+- 实现 DianpingProvider（当前默认 MockRestaurantProvider）。

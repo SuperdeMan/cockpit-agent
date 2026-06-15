@@ -6,6 +6,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from google.protobuf.json_format import MessageToDict
+
 from cockpit.agent.v1 import agent_pb2
 from cockpit.channel.v1 import channel_pb2
 from cockpit.common.v1 import common_pb2
@@ -33,6 +35,45 @@ def test_hvac_edge_call_executes_through_val():
     assert response.status == agent_pb2.ExecuteResponse.OK
     assert val.state["hvac_on"] is True
     assert val.state["hvac_temp"] == 25
+
+
+def test_edge_call_returns_action_card_for_display():
+    """case2: 云端调度的车控也要回动作卡（与本地快路径口径一致），
+    且打 _origin=edge_val 标记，供 server 跳过二次下发。"""
+    val = VAL()
+    response = EdgeCallExecutor(val).execute(_call("hvac.on"))
+
+    assert response.status == agent_pb2.ExecuteResponse.OK
+    assert len(response.actions) == 1
+    action = response.actions[0]
+    assert action.type == "vehicle.control"
+    payload = MessageToDict(action.payload, preserving_proto_field_name=True)
+    assert payload["command"] == "hvac.on"
+    assert payload["_origin"] == "edge_val"
+
+
+def test_edge_call_media_intent_uses_media_action_type():
+    response = EdgeCallExecutor(VAL()).execute(_call("media.play"))
+
+    assert response.status == agent_pb2.ExecuteResponse.OK
+    assert [a.type for a in response.actions] == ["media.control"]
+
+
+def test_relative_temperature_actually_changes_state():
+    """case2: aircon.inc/dec 必须真正调温（之前落兜底分支，温度原地不动）。"""
+    val = VAL()
+    val.state["hvac_temp"] = 24
+    executor = EdgeCallExecutor(val)
+
+    up = executor.execute(_call("aircon.inc"))
+    assert up.status == agent_pb2.ExecuteResponse.OK
+    assert val.state["hvac_temp"] == 25
+    assert val.state["hvac_on"] is True
+    assert "完成操作" not in up.speech  # 不再是空泛的 generic_success 话术
+
+    down = executor.execute(_call("aircon.dec"))
+    assert down.status == agent_pb2.ExecuteResponse.OK
+    assert val.state["hvac_temp"] == 24
 
 
 def test_safety_gate_rejection_is_not_reported_as_success():

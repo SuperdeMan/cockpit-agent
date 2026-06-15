@@ -14,7 +14,7 @@
 ## scope 约定
 `vehicle.location` `vehicle.state` `profile.taste` …
 
-## 待办
-- TODO(Phase1): vehicle.* 接真实车辆状态服务（当前 mock）。
-- TODO(Phase1): profile.* 接画像库（结构化 + 向量，当前内存）。
-- TODO(Phase1): PostgreSQL + pgvector 持久化。
+## 后续量产项
+- `vehicle.*` 接真实车辆状态服务（当前 mock）。
+- `profile.*` 接画像库（结构化 + 向量，当前内存）。
+- PostgreSQL + pgvector 持久化。

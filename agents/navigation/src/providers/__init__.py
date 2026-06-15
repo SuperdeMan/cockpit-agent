@@ -7,9 +7,9 @@ from .mock import MockPOIProvider
 def build_poi_provider() -> POIProvider:
     vendor = os.getenv("POI_VENDOR", "mock")
     if vendor == "amap" and os.getenv("AMAP_KEY"):
-        # TODO(Phase1): from .amap import AmapPOIProvider; return AmapPOIProvider(os.getenv("AMAP_KEY"))
+        # TODO(Production): 接入 AmapPOIProvider。
         pass
     if vendor == "baidu" and os.getenv("BAIDU_MAP_KEY"):
-        # TODO(Phase1): from .baidu import BaiduPOIProvider; ...
+        # TODO(Production): 接入 BaiduPOIProvider。
         pass
     return MockPOIProvider()

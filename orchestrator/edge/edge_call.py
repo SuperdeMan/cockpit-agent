@@ -27,7 +27,30 @@ def _normalize_operation(operation: str) -> str:
     }.get(operation, operation)
 
 
-def _to_structured(intent_name: str, slots: dict[str, str]) -> dict | None:
+# 媒体类对象 → action.type 用 media.control（与 server.py 本地路径口径一致）
+_MEDIA_OBJECTS = {
+    "media", "music", "radio", "online_radio", "audiobook",
+    "opera", "news", "video", "TV",
+}
+
+# 知识库缺失（离线/无 commands.yaml）时的兜底对象集；
+# 有知识库时由 VAL commands.yaml 的 objects 作为单一真相源（见 EdgeCallExecutor._known_objects）。
+_FALLBACK_KNOWN_OBJECTS = {
+    "aircon", "window", "seat", "sunroof", "sunshade", "trunk",
+    "door_lock", "ambient_light", "headlight", "wiper",
+    "rear_view_mirror", "fragrance", "volume", "fuel_tank_cover",
+    "charging_port", "steering_wheel", "energy_recovery",
+    "lane_departure_assistance", "lane_assistance", "scene_mode",
+    "power_mode", "screen", "tire_pressure_monitoring", "dashcam",
+    "accompany_home", "media", "bluetooth", "wifi", "hotspot",
+    "auto_hold", "equalizer", "sound_effect", "voice_assistant",
+    "surround_view", "dashboard", "phone", "contacts", "call_log",
+    "low_beam",
+}
+
+
+def _to_structured(intent_name: str, slots: dict[str, str],
+                   known_objects: set[str] | None = None) -> dict | None:
     parts = [p for p in intent_name.split(".") if p]
     if len(parts) < 2:
         return None
@@ -47,20 +70,10 @@ def _to_structured(intent_name: str, slots: dict[str, str]) -> dict | None:
     }.get((object_name, path))
     mode = "" if attribute else path
 
-    # Only expose objects present in the VAL knowledge base.
-    known_aliases = {
-        "aircon", "window", "seat", "sunroof", "sunshade", "trunk",
-        "door_lock", "ambient_light", "headlight", "wiper",
-        "rear_view_mirror", "fragrance", "volume", "fuel_tank_cover",
-        "charging_port", "steering_wheel", "energy_recovery",
-        "lane_departure_assistance", "lane_assistance", "scene_mode",
-        "power_mode", "screen", "tire_pressure_monitoring", "dashcam",
-        "accompany_home", "media", "bluetooth", "wifi", "hotspot",
-        "auto_hold", "equalizer", "sound_effect", "voice_assistant",
-        "surround_view", "dashboard", "phone", "contacts", "call_log",
-        "low_beam",
-    }
-    if object_name not in known_aliases:
+    # 只放行 VAL 知识库已声明的对象（R5：对象集来自 commands.yaml，避免与知识库漂移）。
+    if known_objects is None:
+        known_objects = _FALLBACK_KNOWN_OBJECTS
+    if object_name not in known_objects:
         return None
 
     data = dict(slots)
@@ -100,9 +113,16 @@ class EdgeCallExecutor:
     def __init__(self, val: VAL):
         self.val = val
 
+    def _known_objects(self) -> set[str] | None:
+        """VAL 知识库声明的对象集（单一真相源）；无知识库时返回 None 走兜底集。"""
+        objects = (self.val.commands or {}).get("objects") or {}
+        return set(objects) if objects else None
+
     def execute(self, call) -> agent_pb2.ExecuteResponse:
         intent_name = call.intent.name
-        structured = _to_structured(intent_name, dict(call.intent.slots))
+        slots = dict(call.intent.slots)
+        structured = _to_structured(
+            intent_name, slots, known_objects=self._known_objects())
         if structured is None:
             return agent_pb2.ExecuteResponse(
                 status=agent_pb2.ExecuteResponse.FAILED,
@@ -134,8 +154,22 @@ class EdgeCallExecutor:
                 ),
             )
 
+        # 回填动作卡用于 HMI 展示，与本地快路径口径一致。
+        # _origin=edge_val 标记“已在车端 VAL 执行”，供 server._dispatch_cloud_actions
+        # 跳过二次下发（避免双发）；车控类用 vehicle.control，媒体类用 media.control。
+        action_type = "media.control" if obj in _MEDIA_OBJECTS else "vehicle.control"
+        action = common_pb2.AgentAction(
+            type=action_type,
+            payload=_struct({
+                "command": intent_name,
+                **{k: str(v) for k, v in slots.items()},
+                "_origin": "edge_val",
+            }),
+            require_confirm=False,
+        )
         return agent_pb2.ExecuteResponse(
             status=agent_pb2.ExecuteResponse.OK,
             speech=speech,
             data=_struct({"intent": intent_name, "executed": True}),
+            actions=[action],
         )

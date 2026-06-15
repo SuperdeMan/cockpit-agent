@@ -28,6 +28,24 @@ hvac_set_success:
   speech_brief:
   - '{value}度'
   - 好的
+hvac_inc_success:
+  scene: 空调温度已调高
+  status: 成功
+  speech_full:
+  - 已为您调高空调温度，当前{value}度
+  - 空调温度调高了，现在{value}度
+  speech_brief:
+  - 已调到{value}度
+  - 调高了
+hvac_dec_success:
+  scene: 空调温度已调低
+  status: 成功
+  speech_full:
+  - 已为您调低空调温度，当前{value}度
+  - 空调温度调低了，现在{value}度
+  speech_brief:
+  - 已调到{value}度
+  - 调低了
 hvac_already_on:
   scene: 空调已处于开启状态
   status: 已是该态

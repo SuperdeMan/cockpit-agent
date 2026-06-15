@@ -7,6 +7,6 @@ from .mock import MockKnowledgeRetriever
 def build_knowledge_retriever() -> KnowledgeRetriever:
     vendor = os.getenv("KNOWLEDGE_VENDOR", "mock")
     if vendor == "pgvector" and os.getenv("PGVECTOR_DSN"):
-        # TODO(Phase1): from .pgvector import PgVectorRetriever; return PgVectorRetriever(...)
+        # TODO(Production): 接入 PgVectorRetriever。
         pass
     return MockKnowledgeRetriever()

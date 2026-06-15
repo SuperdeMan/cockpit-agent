@@ -7,6 +7,6 @@ from .mock import MockParkingProvider
 def build_parking_provider() -> ParkingProvider:
     vendor = os.getenv("PARKING_VENDOR", "mock")
     if vendor == "etcp" and os.getenv("ETCP_KEY"):
-        # TODO(Phase1): from .etcp import EtcpProvider; ...
+        # TODO(Production): 接入 EtcpProvider。
         pass
     return MockParkingProvider()

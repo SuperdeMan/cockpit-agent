@@ -36,6 +36,6 @@ PYTHONPATH=$(git rev-parse --show-toplevel):$(git rev-parse --show-toplevel)/gen
   python -m pytest agents/navigation/tests -q
 ```
 
-## 待办
-- TODO(Phase1): 实现 AmapPOIProvider / BaiduPOIProvider（接真实地图 API）。
-- TODO(Phase1): `navigate_to` 的 action 由 Planner/端侧下发到导航 App。
+## 后续量产项
+- 实现 AmapPOIProvider / BaiduPOIProvider（当前默认 MockPOIProvider）。
+- 将 `navigate_to` action 接入真实导航 App。

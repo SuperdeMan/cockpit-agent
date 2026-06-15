@@ -86,13 +86,18 @@ class MiMoProvider(BaseProvider):
             "temperature": temperature,
             "max_completion_tokens": max_tokens or 512,
             "stream": False,
+            # MiMo 是推理模型：默认会把 token 预算几乎全花在 reasoning_content 上，
+            # 导致结构化任务（Planner JSON、聚合改写）的 content 被饿成空/截断
+            # （finish_reason=length）。非流式 complete 都是结构化短任务，关闭思考即可
+            # 拿到干净、确定、低延迟的 content。开放域走 stream 路径，不受此影响。
+            "thinking": {"type": "disabled"},
         }
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(self.BASE_URL, headers=headers, json=body)
             resp.raise_for_status()
             data = resp.json()
 
-        content = data["choices"][0]["message"]["content"]
+        content = data["choices"][0]["message"]["content"] or ""
         usage = data.get("usage", {})
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)

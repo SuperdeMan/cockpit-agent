@@ -6,8 +6,11 @@
 |---|---|
 | `trip.plan` | 按目的地/天数/偏好生成行程（LLM 生成） |
 
-## 演进方向（重要）
-PoC 为单 Agent LLM 生成。Phase 1 升级为**跨 Agent 协作**：行程规划需要导航(POI)、天气、充电/酒店等能力——届时本 Agent 作为"子规划者"，通过统一契约调用其他 Agent，是 multi-agent 协作的典型场景。
+## 当前实现
+- 作为“子规划者”并行调用 navigation Agent 搜索景点和充电桩。
+- 将 POI 结果交给 LLM 组织按天行程和结构化 `trip_plan` 卡片。
+- navigation 调用失败时降级为纯 LLM 生成，不阻断主请求。
+- 契约测试覆盖缺槽、协作成功、协作失败降级和 manifest 一致性。
 
-## 待办
-- TODO(Phase1): 接入导航/天气/酒店 Agent 协作；结构化行程卡片；补契约测试。
+## 后续
+- 接入天气、酒店和真实充电设施 Provider，扩展跨 Agent 依赖与预订闭环。

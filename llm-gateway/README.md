@@ -27,6 +27,7 @@ HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 H
 - `ratelimit.py` — 令牌桶限流（全局 + 每 key）
 - `metrics.py` — 按模型统计 calls/tokens/latency/cost
 
-## 待办
-- TODO: 内容审核钩子接入。
-- TODO: 工具调用(tools) 透传。
+## 后续
+- 将 `security/` 内容审核/注入防护钩子接入统一网关请求链。
+- proto 已预留 `tools/tool_calls`，Provider 的原生工具调用透传尚未实现；当前确定性工具
+  由 Cloud Planner 的 `ToolRegistry` 调度。

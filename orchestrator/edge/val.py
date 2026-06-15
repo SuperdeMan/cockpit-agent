@@ -135,9 +135,12 @@ class VAL:
         # 5. 模拟状态变更
         state_key, new_value = self._simulate(obj, operate, normalized)
 
-        # 6. 选话术
+        # 6. 选话术（相对调温把模拟后的目标温度并入，便于话术回显"当前26度"）
         response_key = self._build_response_key(obj, operate, normalized)
-        speech = self._pick_response(response_key, normalized)
+        resp_data = normalized
+        if state_key == "hvac_temp" and operate in ("inc", "dec"):
+            resp_data = {**normalized, "value": new_value}
+        speech = self._pick_response(response_key, resp_data)
 
         return True, speech
 
@@ -278,8 +281,9 @@ class VAL:
         mode = data.get("mode")
 
         if obj == "aircon":
-            attr = data.get("attr")
-            if attr == "speed":
+            # 风速：attr=="speed"（edge_call 路径）或 mode=="wind_speed"（fast_intent 路径）
+            is_wind = data.get("attr") == "speed" or data.get("mode") == "wind_speed"
+            if is_wind:
                 current = self.state.get("hvac_wind_speed", 1)
                 if operate == "set" and value is not None:
                     self.state["hvac_wind_speed"] = int(value)
@@ -288,6 +292,15 @@ class VAL:
                 elif operate == "dec":
                     self.state["hvac_wind_speed"] = max(current - 1, 0)
                 return "hvac_wind_speed", self.state["hvac_wind_speed"]
+            # 相对调温（"再高一点/我冷了"→inc，"低一点"→dec），实际 ±1 度并夹在 16~32
+            if operate == "inc":
+                self.state["hvac_on"] = True
+                self.state["hvac_temp"] = min(int(self.state.get("hvac_temp", 24)) + 1, 32)
+                return "hvac_temp", self.state["hvac_temp"]
+            if operate == "dec":
+                self.state["hvac_on"] = True
+                self.state["hvac_temp"] = max(int(self.state.get("hvac_temp", 24)) - 1, 16)
+                return "hvac_temp", self.state["hvac_temp"]
             if operate in ("open", "set"):
                 self.state["hvac_on"] = True
                 if value:
@@ -502,12 +515,18 @@ class VAL:
 
         # 特殊映射
         if obj == "aircon":
+            is_wind = data.get("attr") == "speed" or data.get("mode") == "wind_speed"
             if operate == "open":
                 return "hvac_on_success"
             if operate == "close":
                 return "hvac_off_success"
             if operate == "set":
                 return "hvac_set_success"
+            # 相对调温话术（风速 inc/dec 不在此，沿用 generic_success 不回归）
+            if not is_wind and operate == "inc":
+                return "hvac_inc_success"
+            if not is_wind and operate == "dec":
+                return "hvac_dec_success"
 
         if obj == "window":
             op_map = {"open": "window_open_success", "close": "window_close_success"}

@@ -32,6 +32,8 @@ _RESULT_FIELDS = {"step_id", "status", "speech", "ui_card", "actions",
 _POC_DEFAULT_SCOPES = [
     "vehicle.control", "media.control", "navigation",
     "food.ordering", "weather.query", "news.query",
+    "location.read", "navigation.control",
+    "network.external", "payment.invoke",
 ]
 
 
@@ -140,8 +142,10 @@ class PlannerEngine:
             # C2. 权限校验（F2）：执行前对每个 step 做强制校验
             plan = self._enforce_permissions(plan, ctx)
 
-        # 规划完成，给用户即时反馈（多步计划在执行期间也会逐步 yield）
-        if new_plan and len(plan.steps) > 1:
+        # 规划完成，给用户即时反馈（多步计划在执行期间也会逐步 yield）。
+        # 混合意图子请求（端侧已给过云段占位）不再重复，避免双占位文案。
+        mixed_sub = dict(getattr(request, "meta", {}) or {}).get("_mixed_subrequest") == "1"
+        if new_plan and len(plan.steps) > 1 and not mixed_sub:
             yield {"kind": "speech", "delta": "正在为您处理，请稍候…"}
 
         # D-T2. Adaptive plans enter the bounded loop. Confirmation resumes keep

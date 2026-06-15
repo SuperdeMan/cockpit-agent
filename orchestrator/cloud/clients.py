@@ -83,7 +83,7 @@ class Clients:
             timeout=_DEFAULT_TIMEOUT)
         return list(resp.agents)
 
-    async def llm_complete(self, messages: list[dict], max_tokens: int = 400) -> str:
+    async def llm_complete(self, messages: list[dict], max_tokens: int = 800) -> str:
         resp = await self._llm_stub().Complete(
             llm_pb2.CompleteRequest(
                 messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],

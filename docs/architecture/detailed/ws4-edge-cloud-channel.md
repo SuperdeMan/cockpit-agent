@@ -4,7 +4,11 @@
 > 目标：把端↔云通道做到弱网可用、可鉴权、可降级，细化到可编码。读者：网关/端侧开发。
 > 现状基线：Edge Orchestrator 每次请求新建 channel 调 Cloud Gateway（`server-streaming`，无连接复用/重连/鉴权）。
 >
-> **扩展中（2026-06-14）**：为支持中枢"调用车端快思考"，`channel.proto` 已新增 `EdgeCall`/`EdgeResult` 两类帧（云→端下发意图、端经 VAL 执行回流）+ 规划 Cloud Gateway `DispatchToEdge`。本篇 §1 帧清单尚未含这两帧，以 [`../../design/2026-06-14-cloud-central-orchestrator.md`](../../design/2026-06-14-cloud-central-orchestrator.md) §4.5 为准。
+> **实现补充（2026-06-14）**：中枢调用车端快能力已落地。`channel.proto` 包含
+> `EdgeCall`/`EdgeResult`，Cloud Gateway 已实现 `DispatchToEdge`，端侧在同一 bidi
+> 流中经 VAL 执行并回传。本文 §1 帧清单是原始设计快照，新增帧以
+> [`../../design/2026-06-14-cloud-central-orchestrator.md`](../../design/2026-06-14-cloud-central-orchestrator.md)
+> §4.5 和代码为准。
 
 ---
 
