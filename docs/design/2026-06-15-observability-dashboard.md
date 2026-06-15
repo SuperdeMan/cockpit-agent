@@ -1,6 +1,6 @@
 # 座舱 Agent 可观测仪表盘：车辆状态 · 请求链路 · Agent 运行态
 
-- **状态**：设计已评审对齐，待落地（2026-06-15）
+- **状态**：已归档（P0-P3 已落地并验收，2026-06-15）
 - **交付对象**：后续开发者 / AI（照此执行，不走偏）
 - **关联代码**：`observability/{__init__,metrics,tracing,logging}.py`、`orchestrator/edge/{server,val,edge_call,main}.py`、`orchestrator/cloud/{engine,dispatch,loop}.py`、`registry/{store,server,main}.py`、`gateway/edge/main.go`、`deploy/docker-compose.yaml`；新增 `observability/events.py`、`observability/collector/`、`dashboard/`
 - **关联文档**：`docs/architecture/cockpit-agent-architecture.md`（§8 通信与 NATS 事件总线、§10 可观测性，唯一真相源）、`docs/design/2026-06-14-cloud-central-orchestrator.md`（可观测待办：start_span 接入 + Prometheus/OTel 导出）
@@ -172,10 +172,10 @@ edge-gateway(WS,已有) ─gRPC→ edge-orchestrator ──┐           │ obs
 | `orchestrator/edge/val.py` | `__init__(on_change=None)` + state 写入处回调 | 端侧；向后兼容（默认无回调） |
 | `orchestrator/edge/{server,main,edge_call}.py` | trace 贯穿、route/val span、注入 publisher、订阅 debug | 端侧 |
 | `orchestrator/cloud/{engine,dispatch,loop}.py` | planning/step/iter/aggregate span | 云端 |
-| `registry/{store,main}.py` | 健康 emit | 注册 |
+| `registry/{store,health,main}.py` | 主动健康探测 + 健康 emit；虚拟端点不做 gRPC 探测 | 注册 |
 | `deploy/docker-compose.yaml` | 加 `observability-collector`、`dashboard` 服务 | 部署 |
 | 相关 `requirements.txt` | 加 `nats-py`（edge/cloud/registry/collector） | 依赖 |
-| 新增 env | `OBS_COLLECTOR_ADDR`、`DEBUG_VEHICLE_CONTROL`（`NATS_URL` 已有） | 配置 |
+| 新增 env | `OBS_COLLECTOR_PORT`、`DEBUG_VEHICLE_CONTROL`（`NATS_URL` 已有） | 配置 |
 
 > **不改任何 `.proto`**：可观测事件走 NATS JSON，registry 健康亦走 NATS，不动 gRPC 契约。
 
@@ -187,7 +187,8 @@ edge-gateway(WS,已有) ─gRPC→ edge-orchestrator ──┐           │ obs
 - 车控只经 VAL：仪表盘发指令复用 edge-gateway 入口；debug 仅设环境量白名单，不碰车控输出。
 - 埋点 best-effort：emit 异常静默、不阻塞、NATS 不可用不破坏离线。
 - 脱敏：复用 `observability/logging.py` 规则；span `attrs` 与 state 中位置/支付字段脱敏；trace 仅内存、不落盘。
-- collector 绑 `localhost`；debug 由 `DEBUG_VEHICLE_CONTROL` 开关（生产关），UI 标注调试用途。
+- Compose 将 collector 暴露到宿主机 `8092` 供本地开发；debug 由
+  `DEBUG_VEHICLE_CONTROL` 开关控制，非开发环境必须关闭并置于正式鉴权边界之后。
 
 ### 6.2 降级矩阵
 | 故障 | 降级 |
@@ -202,34 +203,34 @@ edge-gateway(WS,已有) ─gRPC→ edge-orchestrator ──┐           │ obs
 - **埋点契约**：NATS 不可用时 `emit_*` 不抛错不阻塞；VAL `on_change` 被正确触发（T0 + edge_call 两路）。
 - **trace 贯穿**：端到端验证 `trace_id` 从前端 meta → edge → cloud 一致。
 - **前端**：组件渲染 + `tsc --noEmit` + `npm run build`（沿用 hmi）。
-- **回归**：现有 `python -m pytest --import-mode=importlib` 325 passed 保持全绿（埋点叠加、不改逻辑）。
+- **回归**：`python -m pytest --import-mode=importlib` 保持全绿（埋点叠加、不改业务逻辑）。
 
 ---
 
 ## 7. 分阶段落地（按序，每阶段独立可验、不破坏既有行为）
 
 ### P0 — 可观测地基（无行为变化）
-- [ ] `observability/events.py`：`EventEmitter` + emit helpers（懒连 NATS、best-effort、失败静默）+ 单测（NATS 不可用不抛错）。
-- [ ] `observability/collector/` 骨架：FastAPI + NATS 订阅 + 内存 store + REST/WS（先空数据跑通）。
-- [ ] 相关 `requirements.txt` 加 `nats-py`；`docker-compose` 加 collector 服务。
+- [x] `observability/events.py`：后台队列 + emit helpers（懒连 NATS、best-effort、失败静默）+ 单测。
+- [x] `observability/collector/`：FastAPI + NATS 订阅 + 内存 store + REST/WS。
+- [x] 相关 `requirements.txt` 加 `nats-py`；`docker-compose` 加 collector 服务。
 
 ### P1 — 车辆状态可视化（需求 1）
-- [ ] `val.py` 加 `on_change`；edge `main.py` 注入 publisher（队列→后台 task→`vehicle.state.changed`）+ 启动全量 snapshot。
-- [ ] collector 维护 `vehicle_state` 镜像；REST `/api/vehicle/state` + WS `state_change`。
-- [ ] dashboard 车辆状态区 + 变更高亮/diff。
-- [ ] 测试：on_change 覆盖 T0/edge_call；collector 镜像正确。
+- [x] `val.py` 加 `on_change`；edge 注入 publisher + 启动全量 snapshot。
+- [x] collector 维护 `vehicle_state` 镜像；REST `/api/vehicle/state` + WS `state_change`。
+- [x] dashboard 车辆状态区 + 变更高亮/diff。
+- [x] 测试：on_change 覆盖 T0/edge_call；collector 镜像正确。
 
 ### P2 — 请求链路可视化（需求 3）
-- [ ] trace 贯穿（前端生成 → edge → cloud）。
-- [ ] 端/云埋 span（server/engine/dispatch/loop）。
-- [ ] collector 按 trace_id 聚合 + REST/WS；dashboard 链路时间线。
-- [ ] 测试：trace 一致性；span 聚合。
+- [x] trace 贯穿（前端生成 → edge → cloud）。
+- [x] 端/云埋 span（server/engine/dispatch/loop）。
+- [x] collector 按 trace_id 聚合 + REST/WS；dashboard 链路时间线。
+- [x] 测试：trace 一致性；span 聚合；`val.execute` 展示状态 diff。
 
 ### P3 — Agent 运行态 + 车辆动态 + 对照实验（需求 2、4）
-- [ ] registry health emit + cloud metric emit；collector `/api/agents`；dashboard agent 区。
-- [ ] debug 控制：collector `POST /api/debug/vehicle` + edge 订阅执行；dashboard 滑块。
-- [ ] dashboard 发指令复用 edge-gateway WS，串起对照实验。
-- [ ] 测试：debug 白名单；端到端对照（发指令→链路→状态 diff）。
+- [x] registry 主动 health probe/emit + cloud metric emit；collector `/api/agents`；dashboard agent 区。
+- [x] debug 控制：collector `POST /api/debug/vehicle` + edge 订阅执行；dashboard 滑块。
+- [x] dashboard 发指令复用 edge-gateway WS，串起对照实验。
+- [x] 测试：debug 双层白名单；端到端对照（发指令→链路→状态 diff）。
 
 > 前端各区可与对应后端阶段并行开发；视觉打磨统一交 frontend-design。
 
@@ -242,7 +243,7 @@ edge-gateway(WS,已有) ─gRPC→ edge-orchestrator ──┐           │ obs
 - **agent 态**：健康/调用/时延/错误率实时；离线 agent 正确显示摘除。
 - **车辆动态**：拖车速 >120 后发"开窗"，链路显示 `val.execute` 被安全门控拒绝，状态不变。
 - **安全**：debug 写车控字段被拒；仪表盘发指令全程经 VAL（无旁路）。
-- **不破坏**：现有 325 passed 全绿；NATS 停掉时主链路与离线快路径行为不变。
+- **不破坏**：全量测试全绿；NATS 停掉时主链路与离线快路径行为不变。
 
 ---
 
@@ -261,4 +262,40 @@ edge-gateway(WS,已有) ─gRPC→ edge-orchestrator ──┐           │ obs
 
 ## 落地记录
 
-（按阶段在此追加：日期、范围、验证结果、已知边界。）
+### 2026-06-15：P0-P3 全部落地
+
+- **代码范围**：新增 `observability/events.py`、`observability/collector/`、
+  `dashboard/`；接线 edge/cloud/registry；Compose 从 18 扩到 20 个服务。
+- **车辆状态**：VAL 同步 `on_change` 只入队，后台发布状态事件；启动 snapshot、
+  T0 与 edge_call 共用同一状态镜像。`val.execute` span 同时携带 `changes`。
+- **链路**：Dashboard 生成 `trace_id`，贯穿 edge/cloud；已覆盖
+  `route.* / val.execute / cloud.planning / step.* / t2.iter / aggregate`。
+- **Agent 态**：Registry 每 5 秒并发探测真实 gRPC Agent，连续 3 次失败摘除；
+  `tool://` / `edge://` 虚拟端点按注册态展示，不误做 gRPC 探测。
+- **延迟与降级**：EventEmitter 使用进程内有界队列和后台 worker；首次 NATS 连接
+  最多等待 250ms 但不阻塞调用方，失败后按冷却时间重试。队列满时丢观测事件，
+  不影响业务。
+
+### 验证证据
+
+- `python -m pytest --import-mode=importlib -q`：**360 passed, 2 skipped**。
+- `python test/smoke_edge.py`：**13 passed, 0 failed**。
+- `dashboard`: **4 passed**；`npm run build` 通过。
+- 相关新增/改造镜像构建通过；Compose **20 个容器全部运行**，NATS healthcheck
+  为 `healthy`，collector `/healthz` 返回 `{"status":"ok","nats":true}`。
+- 对照实验：`空调调到25度` 得到同一 trace 下
+  `route.local → val.execute`，span 与状态镜像均显示 `24→25`。
+- 安全实验：debug 设 `speed_kmh=130` 后发 `打开车窗`，`val.execute=err`，
+  车窗保持 `closed`；debug 直接写 `window` 被拒。
+- Agent 实验：停止 `manual-rag` 后观测到 `healthy=false, fail_count=3`；
+  恢复后回到 `healthy=true, fail_count=0`。
+- 降级实验：停止 NATS 后本地 `关闭空调` 仍在 **13ms** 返回；NATS 恢复后
+  新请求的 trace 自动恢复采集。
+
+### 已知边界 / 后续
+
+- collector 为单实例内存聚合，重启会丢历史；尚无多车隔离、持久化、告警与鉴权。
+- `DEBUG_VEHICLE_CONTROL` 默认仅服务本地演示；非开发环境必须关闭。
+- 当前是轻量 NATS 可观测层，不替代 Prometheus/OTel/Tempo/Grafana 目标态。
+- Registry 仍是内存注册表，重启后需要各 Agent、cloud-planner 与
+  edge-orchestrator 重新注册。

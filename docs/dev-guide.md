@@ -10,7 +10,7 @@
 |---|---|---|---|
 | Python | 3.11+ | 编排/Agent/AI 服务 | python.org / pyenv |
 | Go | 1.24+ | 网关（go-redis/v9 需要 1.24+）| go.dev |
-| Node | 20+ | HMI | nodejs.org |
+| Node | 20+（Dashboard 推荐 22） | HMI / 可观测 Dashboard | nodejs.org |
 | buf | 最新 | proto codegen | https://buf.build/docs/installation（Win: `scoop install buf` / `choco install buf`）|
 | Docker + Compose | 最新 | 整栈运行 | Docker Desktop |
 | grpcurl | 最新（可选）| 手测 gRPC | github.com/fullstorydev/grpcurl |
@@ -50,7 +50,10 @@ cp .env.example .env
 make proto
 make up            # docker compose up --build -d
 make logs          # 跟日志
-# HMI: http://localhost:5173 ；Edge Gateway WS: ws://localhost:8090/ws
+# HMI: http://localhost:5173
+# Dashboard: http://localhost:5174
+# Collector: http://localhost:8092/healthz
+# Edge Gateway WS: ws://localhost:8090/ws
 make down
 ```
 Windows（Docker Desktop，无 make）：
@@ -73,7 +76,7 @@ export PYTHONPATH=$PWD:$PWD/gen/python
 $env:PYTHONPATH = "$PWD;$PWD/gen/python"
 
 # 起最小依赖（Agent 启动会向 registry 注册；注册失败不阻塞，仅告警）
-python registry/main.py        # 终端1 (:50051)
+python -m registry.main        # 终端1 (:50051)
 python llm-gateway/main.py     # 终端2 (:50052, 无 key 走 mock)
 python agents/navigation/main.py   # 终端3 (:50061)
 ```
@@ -97,6 +100,32 @@ make proto                     # 生成 gen/go
 go mod tidy
 go run ./gateway/edge          # 或 ./gateway/cloud
 ```
+
+调可观测服务与前端：
+
+```bash
+export PYTHONPATH=$PWD:$PWD/gen/python
+export NATS_URL=nats://localhost:4222
+python -m observability.collector.main
+
+cd dashboard
+npm ci
+npm run dev
+```
+
+常用冒烟：
+
+```bash
+curl http://localhost:8092/healthz
+curl http://localhost:8092/api/vehicle/state
+curl http://localhost:8092/api/agents
+curl -X POST http://localhost:8092/api/debug/vehicle \
+  -H 'content-type: application/json' \
+  -d '{"key":"speed_kmh","value":130}'
+```
+
+`POST /api/debug/vehicle` 仅用于本地模拟安全门控；非开发环境设置
+`DEBUG_VEHICLE_CONTROL=false`。
 
 ---
 
@@ -122,6 +151,8 @@ go run ./gateway/edge          # 或 ./gateway/cloud
 | `make up` 首次失败 | 整栈首次联调，按报错逐服务排查（多为 codegen 未跑或端口冲突）|
 | 复杂意图总是"无法处理" | mock LLM 不会抽槽/规划；配 `LLM_API_KEY` 后体验完整 |
 | Registry 重启后 Planner 返回空计划 | Registry 当前是内存注册表；重启各 Agent 让它们重新注册 |
+| Dashboard 显示断开或无新事件 | 先查 `http://localhost:8092/healthz` 的 `nats`；再查 NATS、collector、edge/registry 的 `NATS_URL` |
+| Dashboard 能打开但没有 Agent | Registry 重启后需重启各 Agent、cloud-planner（内置工具）和 edge-orchestrator（端能力）完成重新注册 |
 | TTS 返回错误 | MiMo TTS 偶尔返回非 JSON 响应，已加 fallback 处理 |
 | 裸 `docker compose` 没加载到根 `.env`（如 key 不生效、走了 mock）| compose 文件在 `deploy/` 子目录，需 `--env-file .env`；**`make` 目标已自动带上**（根 `.env` 存在时），手敲 compose 命令才需自己加 |
 | edge-orchestrator 报 `No module named 'yaml'` | `orchestrator/edge/requirements.txt` 缺 PyYAML；已加，rebuild 即可 |

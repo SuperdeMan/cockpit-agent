@@ -94,6 +94,7 @@
 |---|---|---|
 | redis | 6379 | — |
 | nats | 4222 | — |
+| nats monitor | 8222 | HTTP（容器内 healthcheck，不映射宿主机） |
 | postgres | 5432 | — |
 | registry | 50051 | gRPC |
 | llm-gateway | 50052 | gRPC |
@@ -105,7 +106,9 @@
 | payment-gateway | 50071 | gRPC |
 | cloud-gateway | 8080 | gRPC (EdgeCloudChannel bidi) |
 | edge-gateway | 8090 | HTTP/WS |
+| observability-collector | 8092 | HTTP/WS |
 | hmi | 5173 | HTTP |
+| dashboard | 5174 | HTTP |
 
 > Agent 端口段已用到 50066，新 Agent 从 **50067** 起。端口在 `deploy/docker-compose.yaml` 与各 Agent `Dockerfile` 的 `AGENT_PORT` 两处，保持一致。
 
@@ -127,6 +130,8 @@
 | `REDIS_URL` / `NATS_URL` / `POSTGRES_DSN` | 基础设施地址 | 容器内有默认 |
 | `REGISTRY_ADDR` / `LLM_GATEWAY_ADDR` / `MEMORY_ADDR` / `CLOUD_PLANNER_ADDR` / `CLOUD_GATEWAY_ADDR` | 服务发现地址（容器 DNS）| 容器内有默认 |
 | `EDGE_GATEWAY_PORT` | 端网关端口 | 否（默认 8090）|
+| `OBS_COLLECTOR_PORT` | 可观测 collector HTTP/WS 端口 | 否（默认 8092） |
+| `DEBUG_VEHICLE_CONTROL` | 是否允许仪表盘设置车速/电量/挡位/位置等模拟环境量 | 否（本地默认 true；非开发环境必须 false） |
 | `FAST_INTENT_THRESHOLD_HIGH` / `_LOW` | 快意图路由阈值 | 否（0.85 / 0.5）|
 | `AGENT_PORT` | 单个 Agent 端口（各 Dockerfile 设）| — |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `LOG_LEVEL` | 可观测 | 否 |
@@ -149,3 +154,19 @@
 - Agent ID：kebab-case；Python 包目录：snake_case；proto package：`cockpit.<svc>.v<n>`。
 - Python 模块 snake_case，Go 包小写，TS 组件 PascalCase。
 - gRPC 生成代码在 `gen/`，不手改、不进 git。
+
+---
+
+## 8. 可观测接口速查
+
+| 接口 | 用途 |
+|---|---|
+| `GET http://localhost:8092/healthz` | collector 与 NATS 连接状态 |
+| `GET /api/vehicle/state` | 当前车辆状态镜像 |
+| `GET /api/traces?limit=50` / `GET /api/traces/{trace_id}` | 最近链路与单链路详情 |
+| `GET /api/agents` | Agent 健康与累计调用指标 |
+| `WS /stream` | `snapshot/state_change/span/metric/health` 实时事件 |
+| `POST /api/debug/vehicle` | 仅设置 `speed_kmh/battery/gear/location`；受 `DEBUG_VEHICLE_CONTROL` 控制 |
+
+Dashboard 使用 `VITE_COLLECTOR_URL` 与 `VITE_EDGE_GATEWAY_URL`，Compose 已分别配置为
+`http://localhost:8092` 和 `http://localhost:8090`。

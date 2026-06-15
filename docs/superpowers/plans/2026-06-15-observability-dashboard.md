@@ -1,5 +1,10 @@
 # 座舱 Agent 可观测仪表盘 Implementation Plan
 
+> **执行状态（2026-06-15）**：17 个任务已全部落地并完成全栈验收。
+> 实际验证结果、实现偏差与剩余边界统一见
+> `docs/design/2026-06-15-observability-dashboard.md` 的“落地记录”；本文件保留为
+> TDD 实施过程参考，不再作为当前状态清单。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 给 car-agent 补一层可观测层并新增独立仪表盘前端，实时看车辆状态（含变更 diff）、车辆动态、请求链路走向、各 Agent 运行态，并支持"发指令→看链路→看状态变化"的对照实验。

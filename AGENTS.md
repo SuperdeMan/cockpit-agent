@@ -9,10 +9,9 @@
 
 云边协同的智能座舱 multi-agent 系统。**分层混合编排**：端侧"快系统"秒回高频/安全敏感指令（车控/媒体）并离线兜底；云侧"慢系统"用 LLM Planner 编排复杂/跨域/多轮意图。所有 Agent 实现统一 gRPC 契约 + Manifest，经注册中心即插即用。
 
-阶段：**Phase 1 工程化 PoC 主干与云端中枢 P0-P3 已落地**（2026-06-14）。
+阶段：**Phase 1 工程化 PoC 主干、云端中枢 P0-P3 与轻量可观测台已落地**（2026-06-15）。
 原始 Phase 1 计划中的真实外部能力、持久化/多实例、mTLS/沙箱、完整 OTel 等仍是
-后续工作。当前全量测试 325 passed, 2 skipped；Docker 18 个容器运行正常，
-4 条标准 E2E 链路有历史通过记录，本轮另完成 2 条用户报告场景的全栈回放。
+后续工作。当前全量测试 360 passed, 2 skipped；Docker 20 个容器运行正常。
 
 ---
 
@@ -23,7 +22,7 @@
 | 为什么这么设计（全局）| `docs/architecture/cockpit-agent-architecture.md` |
 | 接下来分几步做、怎么验收 | `docs/architecture/phase1-implementation-plan.md` |
 | 核心模块怎么编码 | `docs/architecture/detailed/ws{3,4,6,8}-*.md` |
-| 前瞻设计 / 问题分析（多意图、上下文、ASR、开放域延迟、车控指令、云端中枢）| `docs/design/` |
+| 前瞻设计 / 问题分析（多意图、ASR、车控、云端中枢、可观测）| `docs/design/` |
 | 工程规则与铁律 | `CLAUDE.md` |
 | 怎么搭环境、codegen、单服务调试 | `docs/dev-guide.md` |
 | intent/scope/端口/错误码/env 速查 | `docs/conventions.md` |
@@ -48,17 +47,19 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 325 passed, 2 skipped（2026-06-14 本轮实测） |
+| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 360 passed, 2 skipped（2026-06-15 实测） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
 | HMI TTS 单测 / 构建 | ✅ Node 5/5；`npm run build` 通过 |
+| Dashboard 单测 / 构建 | ✅ Node 4/4；`npm run build` 通过 |
 | `gen/`（gRPC 生成代码）| ✅ 已生成（`buf generate proto`） |
 | Go 网关 | ✅ Go 1.24 编译通过，Docker 全栈运行 |
 | Agent Provider 适配 | ✅ 6/6 Agent 接入统一工厂并注册；真实厂商能力仍需按环境验收 |
 | 安全/权限/编排/协作/支付 | ✅ PoC 链路落地；真实 token、正式沙箱与真实支付仍待接入 |
-| 可观测/熔断 | ⚠️ 调用指标与审计已接线；Prometheus/OTel 导出、完整 span 与熔断接线待做 |
+| 可观测 | ✅ NATS 事件、collector REST/WS、车辆 diff、端云 span、Agent 健康/指标与独立 Dashboard；Prometheus/OTel 导出仍待做 |
+| 熔断 | ⚠️ 基础实现存在，生产化接线与演练待做 |
 | LLM 调用 | ✅ MiMo API 已验证连通（同步+流式）；未配 key 时走 MockProvider |
 | 确认闭环（F1） | ✅ 端到端打通（HMI→网关→编排器→Agent） |
-| Docker 全栈联调 | ✅ 18 个容器全部运行 |
+| Docker 全栈联调 | ✅ 20 个容器全部运行；NATS healthcheck、collector、dashboard 通过 |
 | E2E 测试 | ✅ 4 条标准链路有历史通过记录；本轮 2 条慢意图/复杂意图场景全栈回放通过 |
 | 车控知识库 | ✅ commands.yaml 61 对象 + entities.yaml 532 实体 + responses.yaml 74 条话术；VAL 结构化执行流水线（归一化→校验→安全门控→模拟→选话术）+ answer_length 简繁切换 |
 | 端侧意图覆盖 | ✅ 150 条意图 pattern（fast_intent），覆盖 61 对象（车控/媒体/蓝牙/WiFi/电话/广播/音乐/视频/导航/360环视等）；飞书公版数据全量导入（1465 意图） |
@@ -69,16 +70,16 @@
 | 对话上下文/指代 | ✅ engine 写对话记忆 + 规划注入历史；端侧本地轮 best-effort 写共享记忆 |
 | 飞书数据全量导入 | ✅ lark-cli 拉取 5 张公版表（意图 1465 条 + 分类 400 + 词库 5185 + 响应 3000 + 兜底 34）；3 个生成脚本可重跑（`scripts/gen_commands_yaml.py` / `generate_entities.py` / `generate_responses.py`） |
 
-**结论**：Phase 1 工程化 PoC 主干与云端中枢 P0-P3 已通过当前仓库验收
-（2026-06-14）。这不等同于原始 Phase 1 量产级 DoD 全部完成；差距以
+**结论**：Phase 1 工程化 PoC 主干、云端中枢 P0-P3 与轻量可观测台已通过当前仓库验收
+（2026-06-15）。这不等同于原始 Phase 1 量产级 DoD 全部完成；差距以
 `docs/architecture/phase1-implementation-plan.md` 顶部状态说明和本节待办为准。
 
-**已完成（2026-06-14）**：云端中枢 P0-P3、统一 dispatcher、Gateway
+**已完成**：云端中枢 P0-P3、统一 dispatcher、Gateway
 `DispatchToEdge`、端 `edge_call`→VAL、T2 有界循环、确定性工具、PoC 默认 scope、
 可观测接线、混合意图语义分组、多步反馈、端侧轮记忆、危险动作确认、句子级增量
-TTS；慢意图计划完整性与复杂混合意图回归也已补齐。全量测试
-325 passed, 2 skipped。详见
-`docs/design/2026-06-14-cloud-central-orchestrator.md` 落地记录。
+TTS、慢意图计划完整性与复杂混合意图回归；另已落地 NATS 可观测出口、collector、
+车辆状态/动态、分布式链路、Agent 健康/指标与独立 Dashboard。详见 `docs/design/`
+两份 2026-06-14/15 落地记录。
 
 **待做**：Registry/Cloud Gateway 持久化与多实例扩展、真实 Provider/支付/权限
 token、正式 third-party 沙箱与网络白名单、Prometheus/OTel 导出与完整熔断、
@@ -105,6 +106,7 @@ make up                     # 起全栈（首次需调试，见 docs/dev-guide.m
 | 任何 Python | `python -m py_compile <改动文件>`；相关 `python -m pytest <agent>/tests` |
 | 端侧逻辑（fast_intent/val/edge_agents）| `python test/smoke_edge.py` |
 | HMI / TTS | `cd hmi && npm test && npm run build` |
+| Dashboard / 可观测 | `cd dashboard && npm test && npm run build`；全栈后查 `http://localhost:8092/healthz` 与 `http://localhost:5174` |
 | proto | `make proto` 重新生成，确认 codegen 无错 |
 | 端到端链路 | `make up` 后 `python test/e2e_ws.py` |
 | 新增 Agent | 契约测试（参考 `agents/navigation/tests`）+ 在 compose 注册 |

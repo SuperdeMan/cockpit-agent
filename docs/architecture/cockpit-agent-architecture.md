@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
 > 版本：v1.1（当前架构基线）
-> 日期：2026-06-14
+> 日期：2026-06-15
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明：当前仓库完成的是该架构的工程化 PoC 主干；文中的 K8s、持久化注册、
@@ -447,15 +447,18 @@ sequenceDiagram
 | 异步事件 / 车控状态广播 / 主动服务触发 | **事件总线（NATS（推荐，轻量） 或 Kafka）** | 解耦、广播、削峰、主动场景 |
 | HMI↔Edge Gateway | **WebSocket（语音流/事件）+ REST（控制）** | 前端友好、实时 |
 
-事件总线 Topic 设计（示例）：
+当前 PoC 已用 NATS 接通轻量可观测旁路，Topic 如下：
 ```
-vehicle.state.changed       # 车辆状态变化(车速/电量/挡位...)广播
-agent.lifecycle.registered  # Agent 注册/下线
-session.event               # 会话事件
-proactive.trigger           # 主动服务触发(如低电量提醒充电)
+vehicle.state.changed       # VAL 状态 diff / 启动快照
+obs.span                    # 端云路由、规划、执行、聚合 span
+obs.metric                  # Agent 调用数、时延、错误率
+obs.agent.health            # Registry 主动健康探测结果
+obs.debug.vehicle.set       # 仅开发环境量：车速/电量/挡位/位置
 ```
 
-> proto 文件组织见 §13 目录结构；完整 proto 在代码骨架阶段产出。
+`observability-collector` 订阅并内存聚合这些事件，通过 REST/WS 提供给独立
+`dashboard`。事件不改 gRPC 契约；完整 payload 与安全边界见
+`docs/design/2026-06-15-observability-dashboard.md`。
 
 ---
 
@@ -488,6 +491,11 @@ proactive.trigger           # 主动服务触发(如低电量提醒充电)
 - **链路追踪**：`trace_id` 从 HMI → Edge → Cloud → Agent 全链路贯穿（OpenTelemetry）。
 - **指标**：意图识别准确率、路由命中率（本地/云）、各 Agent 时延/成功率、LLM token/成本、降级触发率。
 - **日志**：结构化日志，敏感字段脱敏。
+- **当前 PoC 实现**：端/云关键节点把 span、指标、健康和车辆状态 diff
+  best-effort 发布到 NATS；collector 内存聚合最近链路，Dashboard 实时展示。
+  NATS 不可用时主链路不受影响。
+- **目标态差距**：Prometheus/OTel 导出、持久化 trace、告警、多车/多租户与正式鉴权
+  仍属于后续量产工作。
 - **评测体系**：
   - 意图分类：标注集 + 离线准确率/召回。
   - 端到端：场景化测试集（车控/导航/组合意图/降级）回归。
@@ -555,6 +563,7 @@ car-agent/
 ├─ llm-gateway/                   # LLM 多模型网关
 ├─ registry/                      # Agent 注册中心
 ├─ memory/                        # 记忆/画像服务
+├─ observability/                 # NATS 事件出口 + collector
 ├─ agents/                        # 所有 Agent(统一脚手架)
 │  ├─ _sdk/                       # Agent SDK(Base 类/契约实现/测试夹具)
 │  ├─ vehicle/                    # 车控(core)
@@ -568,6 +577,7 @@ car-agent/
 │  └─ parking-payment/            # 停车缴费(eco)
 ├─ vehicle-abstraction/           # C++: VAL 车控抽象层
 ├─ hmi/                           # React 座舱前端
+├─ dashboard/                     # React 可观测仪表盘
 ├─ deploy/                        # Helm/compose/k8s 清单
 │  ├─ docker-compose.yaml         # 本地一键起(PoC)
 │  └─ helm/

@@ -33,8 +33,9 @@ memory/         记忆/画像服务
 agents/         所有 Agent；_sdk/ 是公共 SDK，每个 Agent 一个子目录
 security/       权限引擎、scope 定义、内容审核、注入防护
 payment-gateway/  统一支付网关（Agent 不持支付凭证）
-observability/  可观测模块：trace 贯穿 + 结构化日志 + 核心指标
+observability/  可观测模块：NATS 事件出口、collector、trace/日志/指标
 hmi/            React 座舱前端
+dashboard/      React 开发/演示可观测台（不进入车控执行主链）
 deploy/         docker-compose / helm / k8s
 scripts/        codegen、构建辅助
 docs/           架构与设计文档
@@ -81,9 +82,9 @@ Windows 无 make 时用 `scripts/gen-proto.ps1` 等价替代（见 README）。
 **工程纪律**：改完主动跑 `make test`；不要注释报错或加绕过标记来"让它跑起来"，找根因；大改动先在设计文档对齐再动手。
 
 ## 7. 当前阶段
-截至 2026-06-14，Phase 1 工程化 PoC 主干与云端中枢 P0-P3 已落地，运行模型为
+截至 2026-06-15，Phase 1 工程化 PoC 主干、云端中枢 P0-P3 与轻量可观测台已落地，运行模型为
 T0 端侧快路径 / T1 单次 DAG / T2 有界 Agentic 循环。当前事实、测试证据和待办统一
 维护在 `AGENTS.md`；设计与落地记录见
-`docs/design/2026-06-14-cloud-central-orchestrator.md`。原始量产级目标和未完成项见
+`docs/design/`。原始量产级目标和未完成项见
 `docs/architecture/phase1-implementation-plan.md`，不要把当前 PoC 验收等同于该计划
 全部 DoD 已完成。
