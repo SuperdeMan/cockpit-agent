@@ -93,6 +93,8 @@ class _MemoryClient:
 
 
 class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
+    _DEBUG_KEYS = {"speed_kmh", "battery", "gear", "location"}
+
     def __init__(self):
         self.obs = EventEmitter("edge")
         self._state_q: asyncio.Queue = asyncio.Queue()
@@ -137,6 +139,33 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             for key, value in self.val.state.items()
         ]
         await self.obs.emit_state(changes, source="snapshot")
+
+    def apply_debug(self, key: str, value) -> bool:
+        """Update a simulated environment value through a strict whitelist."""
+        if key not in self._DEBUG_KEYS:
+            return False
+        if key in {"speed_kmh", "battery"}:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return False
+            upper = 300 if key == "speed_kmh" else 100
+            if value < 0 or value > upper:
+                return False
+        elif key == "gear":
+            if not isinstance(value, str) or value.upper() not in {
+                "P",
+                "R",
+                "N",
+                "D",
+                "S",
+            }:
+                return False
+            value = value.upper()
+        elif value is not None and not isinstance(value, (str, dict)):
+            return False
+
+        self._change_source.set("debug")
+        self.val.set_env(key, value)
+        return True
 
     async def _emit_span(self, trace_id: str, node: str, **kwargs):
         try:
