@@ -1,14 +1,15 @@
-# 2026-06-11 全项目 Review 修复清单
+# 2026-06-11 全项目 Review 修复记录
 
-> 本文档是 2026-06-11 全量代码 review 的修复交接清单。**接手人（人或 Agent）从这里继续工作。**
-> 规则：每修完一项，更新该项的「状态」并在末尾「修复日志」补一行；发现新问题按同样格式追加条目。
+> 本文档保留 2026-06-11 全量代码 review 的历史修复记录，**不再是当前接手入口**。
+> 当前状态与接手顺序以仓库根目录 `AGENTS.md` 为准；其中 F19 的可观测接线已于
+> 2026-06-15 落地，剩余边界见文末 Phase 2 backlog。
 > 修复优先级：P0 = 核心链路跑不通 / 安全承诺未兑现；P1 = 验证体系失效；P2 = 代码级缺陷；P3 = 文档漂移。
 
 ## 如何验证
 
 ```bash
 # 一条命令全量测试（conftest.py 已配好 PYTHONPATH，--import-mode=importlib 解决重名）
-python -m pytest test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ agents/ --import-mode=importlib -q
+python -m pytest --import-mode=importlib -q
 python test/smoke_edge.py
 # 或
 make test
@@ -195,6 +196,9 @@ make test
 
 **进展（2026-06-11 第二批核实）**：AGENTS.md 已落实为「可观测/熔断 ⚠️ 代码已实现，待接线（Phase 2）」，叙事修正完成。Phase 1 范围内本项无剩余动作，接线进 Phase 2 backlog。
 
+**后续状态（2026-06-15）**：NATS 事件、端云 span/指标、Registry 主动健康探测、
+collector REST/WS 与独立 Dashboard 已接线；CircuitBreaker 的生产化接线与演练仍待做。
+
 ### F23. payment-gateway 的 Capture 链路天生不可达 ✅ proto 已修复（2026-06-11），SDK 接线待做
 
 **已修复**：`AuthorizeResponse` proto 增加 `string confirm_token = 4`，codegen 通过。store.py 的 capture 现在有了 token 来源。
@@ -219,14 +223,15 @@ make test
 
 ---
 
-## 建议执行顺序（2026-06-11 评审结论实施后刷新）
+## 历史执行结论（2026-06-15 状态回填）
 
 已完成：F1–F12、F13–F22、F24、ASR/TTS。全部 24 项 + ASR/TTS 已闭合。
 
-剩余 Phase 1 工作：
-1. **docker 联调 + `test/e2e_ws.py` 全链路验收**（F1/F5 的 e2e 遗留，需要 Docker Desktop 启动后跑 `docker compose up`）
+2026-06-11 记录中的 Docker/E2E 遗留已在后续实施中完成并留下通过记录；当前验证基线见
+`AGENTS.md` 与 `test/README.md`。
 
-Phase 2 backlog（已决策延后，不是欠账）：F19 熔断/可观测接线、F23 Authorize/Capture 切换、持久 bidi 长连（参考 ChannelClient 蓝本）、执行层权限二次校验、LLM 抽槽优化。
+Phase 2 backlog：CircuitBreaker 生产化接线与演练、F23 Authorize/Capture 切换、
+持久 bidi 长连、真实权限 token、LLM 抽槽优化，以及 Prometheus/OTel 导出。
 
 ## 修复日志
 

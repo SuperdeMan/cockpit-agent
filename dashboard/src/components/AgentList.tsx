@@ -1,85 +1,68 @@
 import type { AgentInfo } from '../types'
 
-function healthLabel(agent: AgentInfo): string {
-  if (agent.healthy === false) return '离线'
-  if (agent.healthy === true) return '健康'
-  return '待上报'
+function toPercent(value?: number): number | null {
+  return value === undefined ? null : Math.round(value * 100)
 }
 
-function lastSeen(value?: number): string {
-  if (!value) return '--'
-  const milliseconds = value < 10_000_000_000 ? value * 1000 : value
-  return new Date(milliseconds).toLocaleTimeString('zh-CN', {
-    hour12: false,
-  })
-}
-
-export function AgentList({
-  agents,
-}: {
-  agents: Record<string, AgentInfo>
-}) {
-  const ids = Object.keys(agents).sort((left, right) => {
-    const healthDelta =
-      Number(agents[left].healthy !== false) -
-      Number(agents[right].healthy !== false)
-    return healthDelta || left.localeCompare(right)
-  })
-
+export function AgentList({ agents }: { agents: Record<string, AgentInfo> }) {
+  const ids = Object.keys(agents).sort()
   return (
-    <section className="panel agent-panel" aria-labelledby="agent-panel-title">
-      <div className="panel-heading">
-        <div>
-          <p className="eyebrow">SERVICE RUNTIME</p>
-          <h2 id="agent-panel-title">Agent 运行状态</h2>
+    <section className="panel">
+      <div className="panel__head">
+        <div className="panel__title">
+          <h2>Agent 运行状态</h2>
+          <span className="en">Agents</span>
         </div>
-        <span className="panel-count">{ids.length} agents</span>
+        <span className="panel__tag">{ids.length} 个</span>
       </div>
-
-      {ids.length === 0 ? (
-        <p className="agent-empty">等待 Registry 与 Cloud 指标上报</p>
-      ) : (
-        <div className="agent-list">
+      <div className="panel__body">
+        {ids.length === 0 && <p className="empty">等待 agent 上报…</p>}
+        <div className="agents">
           {ids.map((id) => {
             const agent = agents[id]
-            const state =
-              agent.healthy === false
-                ? 'down'
-                : agent.healthy === true
-                  ? 'healthy'
-                  : 'unknown'
+            const down = agent.healthy === false
+            const errorPct = toPercent(agent.error_rate)
             return (
-              <article
+              <div
                 key={id}
-                className={`agent-row agent-row--${state}`}
                 data-agent={id}
+                className={'arow' + (down ? ' arow--down' : '')}
               >
-                <span className="agent-row__signal" />
-                <div className="agent-row__identity">
-                  <strong>{id}</strong>
-                  <span>
-                    {agent.kind || 'agent'} / {agent.deployment || '--'}
+                <span className="arow__name">{id}</span>
+                {agent.kind && (
+                  <span
+                    className={'kind' + (agent.kind.includes('edge') ? ' edge' : '')}
+                  >
+                    {agent.kind}
                   </span>
-                </div>
-                <div className="agent-row__health">
-                  <strong>{healthLabel(agent)}</strong>
-                  <span>last {lastSeen(agent.last_seen)}</span>
-                </div>
-                <div className="agent-row__metrics">
-                  <span>{agent.count ?? 0} calls</span>
-                  <span>{agent.avg_ms ?? 0} ms</span>
-                  <span>
-                    {Math.round((agent.error_rate ?? 0) * 100)}% err
-                  </span>
-                  {agent.fail_count ? (
-                    <span>{agent.fail_count} health fails</span>
+                )}
+                <span className="arow__health">
+                  <i />
+                  {down ? '离线' : '健康'}
+                </span>
+                <span className="arow__metrics">
+                  {agent.count !== undefined && (
+                    <span>
+                      <b>{agent.count}</b> 调用
+                    </span>
+                  )}
+                  {agent.avg_ms !== undefined && (
+                    <span>
+                      <b>{agent.avg_ms}</b>ms
+                    </span>
+                  )}
+                  {errorPct !== null && (
+                    <span className={errorPct > 0 ? 'warn' : ''}>{errorPct}%</span>
+                  )}
+                  {down && agent.fail_count ? (
+                    <span className="err">fail×{agent.fail_count}</span>
                   ) : null}
-                </div>
-              </article>
+                </span>
+              </div>
             )
           })}
         </div>
-      )}
+      </div>
     </section>
   )
 }

@@ -18,6 +18,8 @@
 - `edge_call`→VAL、动作卡回传与防双发
 - 混合意图语义分组、本地/云端分流、危险动作确认
 - 连接状态追踪、端侧轮记忆与降级增强
+- VAL 状态 diff/启动快照、route/VAL span 经 NATS best-effort 发出
+- collector debug 仅允许 `speed_kmh/battery/gear/location` 四类模拟环境量
 
 ## 待办
 - Fast Intent 接端侧小模型、规则/阈值 OTA。

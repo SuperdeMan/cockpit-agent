@@ -29,3 +29,6 @@ npm run build
 
 Dashboard 不直接写空调、车窗等车控状态。命令复用 Edge Gateway，车控仍只经 VAL；
 动态滑块只调用 collector 的环境量 debug 接口。
+
+`DEBUG_VEHICLE_CONTROL` 仅用于本地演示；非开发环境必须设为 `false`，并把 collector
+置于正式鉴权边界之后。

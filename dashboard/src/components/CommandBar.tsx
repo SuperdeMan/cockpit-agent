@@ -7,6 +7,14 @@ const WS_URL = EDGE.replace(/^http/, 'ws') + '/ws'
 
 type CommandState = 'idle' | 'connecting' | 'running' | 'done' | 'error'
 
+const QUICK = [
+  '空调调到26度',
+  '打开主驾座椅加热',
+  '氛围灯调成绿色',
+  '导航去机场顺便订今晚的餐',
+  '打开后备箱',
+]
+
 export function genTraceId(): string {
   const bytes = new Uint8Array(8)
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
@@ -21,11 +29,7 @@ export function genTraceId(): string {
   )
 }
 
-export function CommandBar({
-  onTrace,
-}: {
-  onTrace?: (traceId: string) => void
-}) {
+export function CommandBar({ onTrace }: { onTrace?: (traceId: string) => void }) {
   const [text, setText] = useState('空调调到26度')
   const [state, setState] = useState<CommandState>('idle')
   const [traceId, setTraceId] = useState('')
@@ -41,9 +45,10 @@ export function CommandBar({
 
   useEffect(() => close, [])
 
-  const send = () => {
-    const command = text.trim()
+  const send = (override?: string) => {
+    const command = (override ?? text).trim()
     if (!command || state === 'connecting' || state === 'running') return
+    if (override !== undefined) setText(override)
 
     close()
     const nextTraceId = genTraceId()
@@ -98,37 +103,56 @@ export function CommandBar({
     }
   }
 
+  const busy = state === 'connecting' || state === 'running'
+
   return (
-    <section className="panel command-panel" aria-labelledby="command-title">
-      <div className="panel-heading">
-        <div>
-          <p className="eyebrow">CONTROLLED EXPERIMENT</p>
-          <h2 id="command-title">对照实验命令</h2>
+    <section className="panel">
+      <div className="panel__head">
+        <div className="panel__title">
+          <h2>对照实验</h2>
+          <span className="en">Command</span>
         </div>
-        <span className={`command-state command-state--${state}`}>
-          {state.toUpperCase()}
-        </span>
+        <span className="panel__tag">发指令 → 看链路</span>
       </div>
-      <div className="command-form">
-        <input
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') send()
-          }}
-          placeholder="发一条指令观察链路与状态"
-        />
-        <button
-          type="button"
-          onClick={send}
-          disabled={!text.trim() || state === 'connecting' || state === 'running'}
-        >
-          发射
-        </button>
-      </div>
-      <div className="command-output">
-        <span>TRACE {traceId ? `#${traceId}` : '--'}</span>
-        <p>{reply || '等待指令'}</p>
+
+      <div className="cmd">
+        <div className="cmd__row">
+          <input
+            className="cmd__input"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') send()
+            }}
+            placeholder="发一条指令，观察链路与状态变化"
+          />
+          <button
+            className="cmd__send"
+            type="button"
+            onClick={() => send()}
+            disabled={!text.trim() || busy}
+          >
+            发射
+          </button>
+        </div>
+
+        <div className="cmd__chips">
+          {QUICK.map((item) => (
+            <span key={item} className="chip" onClick={() => send(item)}>
+              {item}
+            </span>
+          ))}
+        </div>
+
+        <div className="cmd__out">
+          <div className="cmd__trace">
+            TRACE {traceId ? `#${traceId.slice(0, 12)}` : '--'}
+            <span className={`cmd__state cmd__state--${state}`}>
+              {state.toUpperCase()}
+            </span>
+          </div>
+          <div className="cmd__reply">{reply || '等待指令…'}</div>
+        </div>
       </div>
     </section>
   )

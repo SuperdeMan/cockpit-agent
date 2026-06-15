@@ -1,5 +1,9 @@
 # Cloud Central Orchestrator Implementation Plan
 
+> **执行状态（2026-06-14）**：P0-P3 已全部落地。本文件保留为历史 TDD 实施过程；
+> 当前事实、验证证据和剩余边界见
+> [`../../design/2026-06-14-cloud-central-orchestrator.md`](../../design/2026-06-14-cloud-central-orchestrator.md)。
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement the remaining P1, P2, and P3 work from `docs/design/2026-06-14-cloud-central-orchestrator.md`: edge dispatch, bounded adaptive planning, and deterministic in-process tools.

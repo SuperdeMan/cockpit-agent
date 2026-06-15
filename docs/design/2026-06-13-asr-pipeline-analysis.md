@@ -10,12 +10,12 @@
 
 ## 1. 根因链（端到端逐环排查）
 
-### ① 前端录音竞态（主因）✅ 本轮已修
+### ① 前端录音竞态（主因）✅ 2026-06-13 已修
 - 旧 `App.tsx`：`startRecording` 是 `async`（`await getUserMedia`）。用户快按快松时，`onMouseUp` 触发 `stopRecording` 时 `mediaRecorderRef.current` 仍是 `null`/旧值，`?.stop()` **空操作** → recorder 还没 `start()` 就被"停"，**整段无音频**。
 - 旧实现也无**最短录音时长**保护，误触产生空 blob。
 - **已修**：`hmi/src/audio.ts` 的 `MicController` 用 `starting`/`pendingStop` 状态机——松手发生在初始化期间时，待 recorder 就绪**立即 stop**；并加 320ms 最短时长门槛过滤误触。
 
-### ② 安全上下文限制 ✅ 本轮已加检测/提示，⚠️ 部署待办
+### ② 安全上下文限制 ✅ 2026-06-13 已加检测/提示，⚠️ 部署待办
 - 浏览器**仅在安全上下文**（HTTPS 或 `localhost`/`127.0.0.1`）暴露 `getUserMedia`。经局域网 IP + http 访问（如 `http://192.168.x.x:5173`）时 `navigator.mediaDevices` 直接 `undefined`，旧实现只 `alert("无法访问麦克风")` 不解释。
 - **已修（前端）**：`audio.ts: secureContextOk()` 检测 + `Composer` 明确提示"麦克风需在 localhost 或 HTTPS 下使用"。
 - **待办（部署）**：车机 webview / 演示环境需 **HTTPS** 或经 `localhost` 访问。
@@ -60,13 +60,13 @@
 
 ## 4. 结论
 
-"按住无法收音"的**主因是前端录音竞态**（本轮已修）；"ASR 没打通"的**最可能后端原因是 webm/opus 容器不被 MiMo ASR 接受**（建议后端转码）。叠加安全上下文与 mock 兜底两个易踩坑点。按上表逐环验证即可闭环。
+"按住无法收音"的**主因是前端录音竞态**（2026-06-13 已修）；"ASR 没打通"的**最可能后端原因是 webm/opus 容器不被 MiMo ASR 接受**（建议后端转码）。叠加安全上下文与 mock 兜底两个易踩坑点。按上表逐环验证即可闭环。
 
 ---
 
 ## 5. 详细待办（后端打通 ASR，按此执行）
 
-> 前端侧（竞态、安全上下文检测）本轮已修，无需再动。剩余全在后端/部署。
+> 前端侧（竞态、安全上下文检测）已于 2026-06-13 修复，无需再动。剩余全在后端/部署。
 
 ### A1. 先确认走的是真实 ASR（10 分钟）
 - [x] 起栈时 key 加载：`docker compose --env-file .env up -d`；`docker logs car-agent-llm-gateway-1` 确认无 `MockProvider`。

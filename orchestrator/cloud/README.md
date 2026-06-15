@@ -19,6 +19,7 @@
 - `session.py` — 多轮状态机（confirm/slot 续接，Redis+内存兜底，TTL 90s）
 - `engine.py` — 编排主循环（串联上述模块）
 - `clients.py` — 连接复用 + 统一超时
+- `observability` — planning/step/T2/aggregate span 与 Agent 调用指标经 NATS best-effort 发出
 
 ## 接口（见 proto/cockpit/orchestrator/v1/orchestrator.proto）
 - `Handle(HandleRequest) returns (stream HandleEvent)` — 流式返回话术/动作/终态。
@@ -26,5 +27,5 @@
 ## 待办
 - Cloud Gateway 多实例时的 edge stream 路由。
 - HTTP/MCP 外部工具及网络出口白名单。
-- 真实 token scope 注入、Prometheus/OTel 导出和编排 span 接线。
+- 真实 token scope 注入、Prometheus/OTel 导出、持久化 trace 与告警。
 - 压测后确定熔断参数，并把关键场景集并入 CI 门禁。

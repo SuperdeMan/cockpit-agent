@@ -1,85 +1,75 @@
-import { useEffect, useState } from 'react'
-
 import { setVehicleEnv } from '../api'
-import type { VehicleState } from '../types'
+import type { VehicleState as VehicleStateMap } from '../types'
 
-type UpdateState = 'idle' | 'sending' | 'ok' | 'error'
+const GEARS = ['P', 'R', 'N', 'D', 'S']
 
-export function Dynamics({ state }: { state: VehicleState }) {
+function setEnv(key: string, value: unknown) {
+  setVehicleEnv(key, value).catch(() => {
+    /* debug 设置失败静默：collector 不可用不影响观测 */
+  })
+}
+
+export function Dynamics({ state }: { state: VehicleStateMap }) {
   const speed = Number(state.speed_kmh ?? 0)
   const battery = Number(state.battery ?? 0)
-  const [speedDraft, setSpeedDraft] = useState(speed)
-  const [batteryDraft, setBatteryDraft] = useState(battery)
-  const [updateState, setUpdateState] = useState<UpdateState>('idle')
-
-  useEffect(() => setSpeedDraft(speed), [speed])
-  useEffect(() => setBatteryDraft(battery), [battery])
-
-  const update = async (key: string, value: number) => {
-    setUpdateState('sending')
-    try {
-      await setVehicleEnv(key, value)
-      setUpdateState('ok')
-    } catch {
-      setUpdateState('error')
-    }
-  }
+  const gear = typeof state.gear === 'string' ? state.gear : 'P'
+  const armed = speed > 120
 
   return (
-    <section className="panel dynamics-panel" aria-labelledby="dynamics-title">
-      <div className="panel-heading">
-        <div>
-          <p className="eyebrow">SIMULATED ENVIRONMENT</p>
-          <h2 id="dynamics-title">车辆动态</h2>
+    <section className="panel">
+      <div className="panel__head">
+        <div className="panel__title">
+          <h2>车辆动态</h2>
+          <span className="en">Dynamics</span>
         </div>
-        <span className={`debug-state debug-state--${updateState}`}>
-          {updateState === 'sending'
-            ? 'APPLYING'
-            : updateState === 'error'
-              ? 'REJECTED'
-              : 'DEBUG'}
-        </span>
+        <span className="panel__tag">可手动设</span>
       </div>
 
-      <label className="dynamics-control">
-        <span>{`车速 ${speedDraft} km/h`}</span>
-        <input
-          aria-label="车速"
-          type="range"
-          min={0}
-          max={180}
-          value={speedDraft}
-          onChange={(event) => {
-            const value = Number(event.target.value)
-            setSpeedDraft(value)
-            void update('speed_kmh', value)
-          }}
-        />
-        <small>0</small>
-        <small>180</small>
-      </label>
+      <div className="dyn">
+        <div className="dyn__row">
+          <div className="dyn__label">🏎 车速 {speed} km/h</div>
+          <input
+            type="range"
+            min={0}
+            max={180}
+            value={speed}
+            onChange={(event) => setEnv('speed_kmh', Number(event.target.value))}
+          />
+        </div>
 
-      <label className="dynamics-control">
-        <span>{`电量 ${batteryDraft}%`}</span>
-        <input
-          aria-label="电量"
-          type="range"
-          min={0}
-          max={100}
-          value={batteryDraft}
-          onChange={(event) => {
-            const value = Number(event.target.value)
-            setBatteryDraft(value)
-            void update('battery', value)
-          }}
-        />
-        <small>0</small>
-        <small>100</small>
-      </label>
+        <div className="dyn__row">
+          <div className="dyn__label">🔋 电量 {battery}%</div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={battery}
+            onChange={(event) => setEnv('battery', Number(event.target.value))}
+          />
+        </div>
 
-      <p className="dynamics-warning">
-        车速超过 120 km/h 后发送“打开车窗”，可观察 VAL 安全门控拒绝且状态不变。
-      </p>
+        <div className="dyn__gear">
+          <span>⚙️ 挡位</span>
+          <div className="gearbox">
+            {GEARS.map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={'gear' + (gear === value ? ' on' : '')}
+                onClick={() => setEnv('gear', value)}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className={'dyn__safety' + (armed ? ' armed' : '')}>
+          {armed
+            ? '⚠ 高速行驶中：开窗等指令会被 VAL 安全门控拦截'
+            : '⚠ 车速 > 120 km/h 时，开窗等指令将被 VAL 拦截 — 拖动车速即可复现'}
+        </div>
+      </div>
     </section>
   )
 }

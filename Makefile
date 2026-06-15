@@ -26,7 +26,7 @@ logs:
 	$(COMPOSE) logs -f
 
 test:
-	python -m pytest test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ agents/ --import-mode=importlib -q
+	python -m pytest --import-mode=importlib -q
 
 e2e:
 	cd test && python -m pytest -q

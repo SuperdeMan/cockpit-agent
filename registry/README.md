@@ -8,7 +8,9 @@ Agent 的黄页：注册、发现、能力路由。新增 Agent 注册即可被 
 - `ListAgents` — 列举（供 Planner 把全部能力作为"工具"喂给 LLM）
 
 ## Phase 1 已落地
-- `store.py` — 健康探测（`mark_healthy`/`mark_unhealthy`）+ 自动摘除（连续 3 次失败标记不健康，不再被路由）+ 路由过滤不健康 Agent
+- 每 5 秒主动探测 Agent gRPC endpoint；连续 3 次失败自动摘除，恢复后重新参与路由。
+- `tool://`、`edge://` 虚拟端点不做 gRPC 探测，避免误判。
+- 健康快照经 NATS `obs.agent.health` best-effort 发出，供 collector/Dashboard 展示。
 
 ## 后续量产项
 - PostgreSQL 持久化（当前内存版，重启丢失）。

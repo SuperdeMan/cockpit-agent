@@ -16,7 +16,7 @@
 | 档 | 处理 | LLM 往返 | 延迟 | 触发 |
 |---|---|---|---|---|
 | **T0 端侧快路径**（已有）| 简单车控/查询 | 0 | <500ms | `fast_intent` 命中本地白名单 |
-| **T1 单次 DAG**（默认云路径＝今天）| 单域复杂 / 多意图 / 简单跨域 | 1 | ~1–1.5s | 上云的绝大多数 |
+| **T1 单次 DAG**（默认云路径＝2026-06-14 设计基线）| 单域复杂 / 多意图 / 简单跨域 | 1 | ~1–1.5s | 上云的绝大多数 |
 | **T2 有界 Agentic 循环**（新增）| 自适应 / 看结果再决策 / 失败需备选 | 2~N（有界）| 有界，流式首响<1s | 复杂度分诊判为 adaptive，或 T1 反应式升级 |
 
 三块增量：
@@ -24,21 +24,21 @@
 2. **意图理解 + 复杂度分诊**：首次 planning call 同时产出 `{plan, complexity, goal}`；simple→T1、adaptive→T2；保留**反应式兜底**（simple 计划执行失败/标 `replan` 时升级 T2）。
 3. **调用车端快思考**：`channel.proto` 加 `EdgeCall/EdgeResult` 两类帧，中枢可把计划里某步下发到**该车**的快执行器，经 **VAL** 执行并把结果回流供后续步骤依赖。车控仍只产 intent，执行权牢牢在车端 VAL（守 §9.1 P0 红线）。
 
-**不变量（任何实现违反即视为 bug）**：T0/T1 路径与行为与今天完全一致；车控只经 VAL；危险动作二次确认；循环有界可审计；新增任何调度目标不改编排核心。
+**不变量（任何实现违反即视为 bug）**：T0/T1 路径与行为与 2026-06-14 设计基线一致；车控只经 VAL；危险动作二次确认；循环有界可审计；新增任何调度目标不改编排核心。
 
 ---
 
 ## 1. 现状与证据
 
-### 1.1 云端"慢思考"今天是什么
+### 1.1 云端"慢思考"的 2026-06-14 设计基线
 - **单次 LLM → 静态 DAG → 执行 → 聚合**：`planning.py:72` `PlanBuilder.build()` 一次 LLM 调用（最多重试 1 次，`planning.py:87`）把 Agent 能力当工具，产出 `{steps:[…]}` JSON DAG；解析校验在 `planning.py:109`。
 - **执行**：`executor.py:16` `DagExecutor` 做 Kahn 拓扑分层（`executor.py:171`）+ 层内 `asyncio.gather` 并行（`executor.py:46`）+ 超时/部分失败（`executor.py:79`、`_mark_skipped` `executor.py:158`）。
 - **主循环**：`engine.py:63` `_orchestrate` 串规划→解析 endpoint→权限→执行→聚合；多轮确认/补槽挂起在 `engine.py:181` `_suspend`；单步开放域**流式直通**在 `engine.py:132`（D0 段，已实现"边想边说"）。
 - **聚合**：`aggregator.py` 对多 step 用 LLM 合成连贯话术。
 
-### 1.2 调度目标今天只有"云 Agent"
+### 1.2 设计基线中的调度目标只有"云 Agent"
 - Planner 只从 Registry 拿到的 Agent 里选（`engine.py:114` `list_agents`）；`clients.py:98` `call_agent` 直连 Agent gRPC endpoint。
-- **车端不是可调度目标**：今天是单向的——端侧先判本地/上云（`edge/server.py:35` `Handle`），云端产出的 `vehicle.control` action 作为**终态结果**回流，由 `edge/server.py:151` `_dispatch_cloud_actions` 交 VAL 执行。云端**不能在计划中途调用车端并拿回结果**。
+- **车端不是可调度目标**：设计基线是单向的——端侧先判本地/上云（`edge/server.py:35` `Handle`），云端产出的 `vehicle.control` action 作为**终态结果**回流，由 `edge/server.py:151` `_dispatch_cloud_actions` 交 VAL 执行。云端**不能在计划中途调用车端并拿回结果**。
 - **没有"工具"概念**：一切皆 Agent（完整 gRPC 契约 `agent.proto:9`）。轻量函数/外部 API 也得做成重型 Agent。
 
 ### 1.3 已具备、可直接复用的地基
@@ -53,7 +53,7 @@
 ## 2. 问题
 
 1. **复杂自适应意图处理不了**：静态 DAG 一次成型，无法"看上一步结果再决定下一步"（如：查到充电站满了→自动找次近的；订位失败→换一家）。
-2. **车端快思考不可被中枢编排**：跨域计划里若含车端步骤（且后续步骤依赖其结果），今天做不到；车控 action 只能当终态返回。
+2. **车端快思考不可被中枢编排**：跨域计划里若含车端步骤（且后续步骤依赖其结果），设计基线做不到；车控 action 只能当终态返回。
 3. **无工具抽象**：轻量能力被迫做成 Agent，或干脆缺失。
 4. **意图理解隐式**：复杂度不被显式评估，无法据此分级投入算力/时延。
 
@@ -110,14 +110,14 @@ HMI/语音 → Edge Gateway → Edge Orchestrator → fast_intent
               Aggregator → 流式输出
 
   每个 step 经 UnifiedDispatcher：
-    deployment=cloud → 直连 Agent gRPC（今天 clients.call_agent）
+    deployment=cloud → 直连 Agent gRPC（设计基线为 clients.call_agent）
     deployment=edge  → Cloud Gateway.DispatchToEdge(vehicle_id, EdgeCall) → 该车 → VAL → EdgeResult 回流
     kind=tool        → ToolRegistry 进程内调用
   车控类 step：中枢只产 intent → 车端 VAL 权限+安全态+二次确认 → 执行
 ```
 
 **延迟可控三招**（落地必须实现，否则等于 loop-at-top）：
-1. **分诊折叠进首个 planning call，零额外往返**：simple 直接执行＝今天的延迟。
+1. **分诊折叠进首个 planning call，零额外往返**：simple 直接执行＝设计基线延迟。
 2. **循环是例外路径**：常见请求根本不进 T2，P50 不变。
 3. **流式首响 + 硬上限/预算**：复用 `engine.py:132` 流式直通能力，T2 进入即吐占位话术；`MAX_ITERS`/`BUDGET_MS` 到点返回 best-effort + "要我继续吗"。
 
@@ -133,12 +133,12 @@ string kind = 12;   // "agent"（默认）| "tool" | "edge_fast"
 - `kind` 决定**调度语义/治理**：`tool` 走 ToolRegistry、不可碰车控；`edge_fast` 是车端快执行器暴露的能力（车控/媒体），结果经 VAL。
 - Planner 侧**完全无感**：`planning.py:195` `_build_catalog` 照旧把所有能力当工具列给 LLM。差异只在 UnifiedDispatcher。
 
-**UnifiedDispatcher**（新增 `dispatch.py`，executor 通过它发起每个 step 的调用，替换今天 `executor.__init__` 注入的 `call_agent_fn`）：
+**UnifiedDispatcher**（新增 `dispatch.py`，executor 通过它发起每个 step 的调用，替换设计基线中 `executor.__init__` 注入的 `call_agent_fn`）：
 ```python
 async def dispatch(step, ctx) -> ExecuteResponse:
     if step.kind == "tool":            return await tool_registry.call(step.intent, step.slots, ctx)
     if step.deployment == "edge":      return await edge_dispatch(ctx.vehicle_id, step, ctx)   # §4.5
-    return await clients.call_agent(step.endpoint, step.intent, step.slots, ctx, step.meta)    # 今天
+    return await clients.call_agent(step.endpoint, step.intent, step.slots, ctx, step.meta)    # 设计基线
 ```
 - `Step`（`models.py:18`）增加 `kind: str = "agent"`、`deployment: str = "cloud"`（解析时从 manifest 带入，`planning.py:141` 处填充）。
 - **关键复用**：三条路径都返回 `ExecuteResponse` 语义，`executor.py:122` `_to_result` 不改即可统一转 `StepResult`。
@@ -147,7 +147,7 @@ async def dispatch(step, ctx) -> ExecuteResponse:
 
 **planner prompt 扩展**（`planning.py:12` `_PLANNER_SYSTEM`）：在现有 DAG 输出上加顶层字段——
 ```json
-{"complexity":"simple|adaptive","goal":"<一句话用户目标>","steps":[ … 同今天 … ]}
+{"complexity":"simple|adaptive","goal":"<一句话用户目标>","steps":[ … 同设计基线 … ]}
 ```
 判定规则写进 prompt：
 - **simple**：一次就能把步骤定全（单域、多意图并行、固定串行如搜→订），后续步骤不依赖"运行时才知道的结果分支"。
@@ -299,7 +299,7 @@ message EdgeResult {
 ### P0 — 统一契约地基（最小前置，无行为变化）
 - [x] `agent.proto` 加 `kind`；`make proto`/`gen-proto.ps1` 重新生成。
 - [x] `models.py`：`Step` 加 `kind/deployment`，`planning.py:141` 解析时从 manifest 填入。
-- [x] 新增 `dispatch.py` `UnifiedDispatcher`：cloud 路径＝今天行为；edge/tool 先占位（未实现报明确错误）。`executor` 改为经 dispatcher 调用。
+- [x] 新增 `dispatch.py` `UnifiedDispatcher`：cloud 路径保持设计基线行为；edge/tool 先占位（未实现报明确错误）。`executor` 改为经 dispatcher 调用。
 - [x] 回归：`orchestrator/cloud/tests/` 全绿，行为零变化。
 
 ### P1 — 调用车端快思考（核心，先完成）
@@ -419,7 +419,7 @@ message EdgeResult {
 **已知边界 / 待全栈验证**
 - R3/R4/R6 的端到端表现需 `make up` + `test/e2e_ws.py` 在真实流式/记忆/路由链路上复核（单测覆盖各部件，未覆盖跨服务流）。
 - R8 改变了示例"解锁车门端侧秒回"——door_lock 现走云端确认；离线时危险动作不可用（安全默认）。
-- aircon 风速 `set` 话术仍用 `hvac_set_success`（温度口径），属既有遗留，未在本轮处理。
+- aircon 风速 `set` 话术仍用 `hvac_set_success`（温度口径），属既有遗留，未在 2026-06-14 实施批处理。
 
 ### 后续接手清单（按优先级）
 
@@ -457,7 +457,7 @@ message EdgeResult {
 **该子阶段未重新执行**
 
 - Docker 全栈重建、浏览器人工试听、`python test/e2e_ws.py`。此前 4 条 E2E 链路的
-  通过记录保留，但不作为本轮新鲜验证。
+  通过记录保留，但不作为 2026-06-14 实施批的新鲜验证。
 
 **仍需后续处理**
 
@@ -494,5 +494,5 @@ message EdgeResult {
 
 **仍需验证**
 
-- 本轮未重新运行标准 `python test/e2e_ws.py` 四链路套件；其历史通过记录保留。
+- 2026-06-14 实施批未重新运行标准 `python test/e2e_ws.py` 四链路套件；其历史通过记录保留。
 - 天气仍缺真实 `info` Agent/WeatherProvider，当前只能诚实降级，不能返回实时天气。

@@ -4,7 +4,11 @@
 > 目标：把"规划/执行分离"的编排核心细化到可直接编码。读者：编排/后端开发。
 > 现状基线：`orchestrator/cloud/`（Phase 0 骨架——单步顺序执行 + fallback 路由）。
 >
-> **扩展中（2026-06-14）**：云端中枢升级（复杂度分诊 simple/adaptive + T2 有界 Agentic 循环 + 统一调度 cloud/edge/tool）见 [`../../design/2026-06-14-cloud-central-orchestrator.md`](../../design/2026-06-14-cloud-central-orchestrator.md)。地基已落地：`Step` 加 `kind`/`deployment`、`Plan` 加 `complexity`/`goal`。本篇 §2 数据结构为设计时快照（未含这些新增字段，也未含已实现的 `latency_budget_ms`/`meta`/`missing_slots`），以代码 `orchestrator/cloud/models.py` 为准。
+> **实现补充（2026-06-15）**：复杂度分诊、T2 有界循环和 cloud/edge/tool
+> 统一调度均已落地，详见
+> [`../../design/2026-06-14-cloud-central-orchestrator.md`](../../design/2026-06-14-cloud-central-orchestrator.md)。
+> 本篇 §2 数据结构保留为设计时快照；当前字段与行为以
+> `orchestrator/cloud/models.py` 和对应测试为准。
 
 ---
 

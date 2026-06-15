@@ -34,7 +34,7 @@
 - 链路下游**已就绪**：cloud-gateway/channel 透传 `Event`，edge-gateway `eventToMap` 已映射 `speech_delta`（`gateway/edge/main.go`），**HMI 新版已消费**（`ChatView` 流式 caret 渲染，`App.tsx: handleEvent` 处理 `speech_delta`）。
 - **唯一缺口在 engine**：`engine.run()` 经 executor 只走非流式 `handle`。需新增"流式直通"路径——当 plan 为单 chitchat step（或 agent 声明可流式）时，直接驱动 `handle_stream`，把 delta 以 `{"kind":"speech"}` yield，最后再 `final`。
 
-### C. 即时反馈 ✅ 本轮已落地（纯前端）
+### C. 即时反馈 ✅ 2026-06-13 已落地（纯前端）
 - HMI 发送后**立刻插入"思考中"占位**（EQ 动画 + "正在思考…"，`ChatView: ThinkingDots`），慢响应不再是死寂空白；若后端流式下发则占位转为逐字流式。**这部分已交付，无需后端配合即生效**。
 
 ### D. 情绪场景专门优化
@@ -80,7 +80,7 @@
 - HMI 即时反馈 + 流式渲染（已随前端重构上线）。
 - 实测：开放域连续多次均正常流式（10–16 段增量，非空）。
 
-**关键新发现（本轮最重要的延迟结论）**：
+**关键新发现（2026-06-13 验证的延迟结论）**：
 > 首 token 实测 **5–12s，几乎全部耗在 Planner**——它对**每个云侧请求**都先用 `mimo-v2.5-pro`（推理模型）做规划，chitchat 流式本身很快（增量 <1s 出完）。即"开放域慢"的真正瓶颈不是回复模型，而是**规划器用了重推理模型且对所有请求一视同仁**。`mimo-v2.5-pro` 还会间歇性返回空 `content`，触发重试/兜底，进一步拖慢。
 
 **下一步（降规划延迟，未做）**：
