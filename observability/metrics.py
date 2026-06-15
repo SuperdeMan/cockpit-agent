@@ -75,6 +75,17 @@ class MetricsCollector:
             "llm_tokens_total": self._llm_tokens,
         }
 
+    def agent_snapshot(self, agent_id: str) -> dict | None:
+        """Return cumulative metrics for one agent, if it has been called."""
+        metric = self._agent.get(agent_id)
+        if metric is None:
+            return None
+        return {
+            "count": metric.count,
+            "avg_ms": round(metric.avg_ms, 1),
+            "error_rate": round(metric.error_rate, 3),
+        }
+
     def log_summary(self):
         """输出指标摘要。"""
         snap = self.snapshot()

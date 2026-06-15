@@ -51,7 +51,8 @@ class UnifiedDispatcher:
         elapsed_ms: float,
     ) -> None:
         try:
-            await obs_events.get_emitter("cloud").emit_span(
+            emitter = obs_events.get_emitter("cloud")
+            await emitter.emit_span(
                 getattr(ctx, "trace_id", ""),
                 self._step_node(step),
                 status="ok" if ok else "err",
@@ -63,6 +64,9 @@ class UnifiedDispatcher:
                     "deployment": step.deployment,
                 },
             )
+            snapshot = metrics.agent_snapshot(step.agent_id)
+            if snapshot:
+                await emitter.emit_metric(step.agent_id, **snapshot)
         except Exception:
             pass
 
