@@ -23,7 +23,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install grpcio protobuf pyyaml pytest pytest-asyncio httpx
+          pip install grpcio==1.66.2 protobuf==7.35.0 pyyaml pytest pytest-asyncio httpx aiohttp
+
+      - name: Set up buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate gRPC code (buf)
+        run: buf generate proto
 
       - name: Syntax check (py_compile)
         run: |
