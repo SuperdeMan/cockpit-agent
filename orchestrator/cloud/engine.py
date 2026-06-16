@@ -6,6 +6,7 @@ WS3 §3。串联 planning / executor / aggregator / session。
 """
 from __future__ import annotations
 import logging
+import time
 from typing import AsyncIterator
 
 from .models import Plan, Step, StepResult, StepStatus, PlanContext, SessionState
@@ -188,6 +189,7 @@ class PlannerEngine:
                 and plan.steps[0].kind == "agent"
                 and plan.steps[0].deployment == "cloud"):
             step = plan.steps[0]
+            _d0_start = time.monotonic()
             streamed = False
             final_sr: StepResult | None = None
             try:
@@ -205,6 +207,15 @@ class PlannerEngine:
                 logger.warning("Single-step stream failed (%s); falling back to unary", e)
 
             if final_sr is not None:
+                # 流式直通也补 step.agent span（否则单步云端 agent 链路缺这一跳）
+                _pending = final_sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT)
+                await obs_events.get_emitter("cloud").emit_span(
+                    ctx.trace_id, f"step.agent:{step.agent_id}",
+                    status="wait" if _pending else (
+                        "ok" if final_sr.status == StepStatus.OK else "err"),
+                    duration_ms=(time.monotonic() - _d0_start) * 1000,
+                    attrs={"intent": step.intent, "agent_id": step.agent_id,
+                           "kind": "agent", "deployment": "cloud", "via": "stream"})
                 results = [final_sr]
                 if final_sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
                     yield await self._suspend(final_sr, results, plan, ctx)

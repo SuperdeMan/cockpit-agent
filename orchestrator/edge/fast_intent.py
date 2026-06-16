@@ -1227,6 +1227,34 @@ _SPLIT_MARKERS = re.compile(
 )
 
 
+def _resplit_on_he(part: str) -> list[str]:
+    """对含“和”的片段做安全二次拆分：仅当按“和”拆开后每段都是 local 车控时才拆，
+    否则原样返回。解决“座椅加热和座椅通风”“空调和氛围灯”这类并列；同时避免误拆
+    人名/词组（如“周华健”“天气和路况”——任一段非 local 即不拆，整段交后续/上云）。"""
+    if "和" not in part:
+        return [part]
+    subs = [s.strip() for s in part.split("和") if s.strip()]
+    if len(subs) < 2:
+        return [part]
+    for s in subs:
+        r = classify_structured(s)
+        if r is None:
+            return [part]
+        name = _to_legacy_name(r)
+        if name is None or not is_local(name):
+            return [part]
+    return subs
+
+
+def _split_parts(text: str) -> list[str]:
+    """按 _SPLIT_MARKERS 拆分，再对每段做“和”的安全二次拆分；返回 strip 后的非空段。"""
+    parts: list[str] = []
+    for p in _SPLIT_MARKERS.split(text):
+        if p and p.strip():
+            parts.extend(_resplit_on_he(p.strip()))
+    return parts
+
+
 def split_and_classify(text: str) -> list[dict] | None:
     """Multi-intent splitting. Returns list of structured intents if all local, None otherwise.
 
@@ -1237,8 +1265,8 @@ def split_and_classify(text: str) -> list[dict] | None:
     """
     t = text.strip()
 
-    # Split on conjunction markers (includes plain comma as final fallback)
-    parts = _SPLIT_MARKERS.split(t)
+    # 按连词/逗号拆分 + “和”的安全二次拆分
+    parts = _split_parts(t)
 
     if len(parts) < 2:
         return None  # Single intent, no split needed
@@ -1282,7 +1310,7 @@ def split_and_classify_any(text: str) -> list[dict] | None:
         None: single intent only.
     """
     t = text.strip()
-    parts = _SPLIT_MARKERS.split(t)
+    parts = _split_parts(t)
     if len(parts) < 2:
         return None
 

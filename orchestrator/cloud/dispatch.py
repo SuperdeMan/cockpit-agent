@@ -49,13 +49,14 @@ class UnifiedDispatcher:
         ctx: PlanContext,
         ok: bool,
         elapsed_ms: float,
+        pending: bool = False,
     ) -> None:
         try:
             emitter = obs_events.get_emitter("cloud")
             await emitter.emit_span(
                 getattr(ctx, "trace_id", ""),
                 self._step_node(step),
-                status="ok" if ok else "err",
+                status="wait" if pending else ("ok" if ok else "err"),
                 duration_ms=elapsed_ms,
                 attrs={
                     "intent": step.intent,
@@ -77,11 +78,16 @@ class UnifiedDispatcher:
         response: agent_pb2.ExecuteResponse,
         elapsed_ms: float = 0,
     ) -> agent_pb2.ExecuteResponse:
+        st = response.status
+        pending = st in (
+            agent_pb2.ExecuteResponse.NEED_CONFIRM,
+            agent_pb2.ExecuteResponse.NEED_SLOT,
+        )
         await self._emit_step(
-            step,
-            ctx,
-            response.status == agent_pb2.ExecuteResponse.OK,
+            step, ctx,
+            st == agent_pb2.ExecuteResponse.OK,
             elapsed_ms,
+            pending=pending,
         )
         return response
 

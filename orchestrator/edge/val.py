@@ -399,9 +399,11 @@ class VAL:
                 return key, False
 
         elif obj == "sunroof":
-            if operate == "open":
-                self.state["sunroof"] = "open"
-                return "sunroof", "open"
+            if operate in ("open", "set"):
+                # "开一半/开到 X" 等带程度的指令：有 value 记百分比，否则视为打开
+                pos = data.get("value")
+                self.state["sunroof"] = f"{int(pos)}%" if pos else "open"
+                return "sunroof", self.state["sunroof"]
             if operate == "close":
                 self.state["sunroof"] = "closed"
                 return "sunroof", "closed"
@@ -422,12 +424,29 @@ class VAL:
                 self.state["ambient_light"] = False
                 return "ambient_light", False
             if operate == "set":
+                self.state["ambient_light"] = True  # 设色/亮度隐含开灯
                 if data.get("tag"):
                     self.state["ambient_light_color"] = data["tag"]
                     return "ambient_light_color", data["tag"]
                 if value:
                     self.state["ambient_light_brightness"] = int(value)
                     return "ambient_light_brightness", int(value)
+                return "ambient_light", True
+
+        elif obj in ("media", "music", "radio", "online_radio", "audiobook",
+                     "opera", "news", "video", "TV"):
+            if operate in ("open", "start", "play"):
+                self.state["media"] = "playing"
+                return "media", "playing"
+            if operate == "pause":
+                self.state["media"] = "paused"
+                return "media", "paused"
+            if operate in ("close", "stop"):
+                self.state["media"] = "stopped"
+                return "media", "stopped"
+            if operate in ("switch", "next", "prev"):
+                self.state["media"] = "playing"
+                return "media", "playing"
 
         elif obj == "headlight":
             if operate == "open":

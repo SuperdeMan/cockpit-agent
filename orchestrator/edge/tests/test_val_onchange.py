@@ -74,3 +74,27 @@ def test_park_zeroes_speed():
     assert val.state["speed_kmh"] == 0
     last = {change["key"]: change["new"] for change in captured[-1]}
     assert last["gear"] == "P" and last["speed_kmh"] == 0
+
+
+def test_sunroof_set_opens_not_fallback():
+    v = VAL()
+    v.execute({"domain": "car_control", "intent": "sunroof.set",
+               "data": {"object": "sunroof", "operate": "set"}})
+    assert v.state["sunroof"] != "closed"     # 真打开
+    assert "sunroof_set" not in v.state        # 不再落兜底键
+
+
+def test_media_play_sets_playing_not_fallback():
+    v = VAL()
+    v.execute({"domain": "media", "intent": "music.play",
+               "data": {"object": "music", "operate": "play"}})
+    assert v.state["media"] == "playing"
+    assert "music_play" not in v.state         # 不再落兜底键
+
+
+def test_ambient_set_color_turns_light_on():
+    v = VAL()
+    v.execute({"domain": "car_control", "intent": "ambient_light.set",
+               "data": {"object": "ambient_light", "operate": "set", "tag": "orange"}})
+    assert v.state["ambient_light_color"] == "orange"
+    assert v.state["ambient_light"] is True    # 设色隐含开灯
