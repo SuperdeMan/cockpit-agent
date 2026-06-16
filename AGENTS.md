@@ -11,7 +11,7 @@
 
 阶段：**Phase 1 工程化 PoC 主干、云端中枢 P0-P3 与轻量可观测台已落地**（2026-06-15）。
 原始 Phase 1 计划中的真实外部能力、持久化/多实例、mTLS/沙箱、完整 OTel 等仍是
-后续工作。当前全量测试 372 passed, 2 skipped；Docker 20 个容器运行正常。
+后续工作。当前全量测试 380 passed, 2 skipped；Docker 20 个容器运行正常。
 
 ---
 
@@ -47,7 +47,7 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 372 passed, 2 skipped（2026-06-16 实测） |
+| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 380 passed, 2 skipped（2026-06-16 实测） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
 | HMI TTS 单测 / 构建 | ✅ Node 5/5；`npm run build` 通过 |
 | Dashboard 单测 / 构建 | ✅ Node 4/4；`npm run build` 通过 |
@@ -79,7 +79,7 @@
 可观测接线、混合意图语义分组、多步反馈、端侧轮记忆、危险动作确认、句子级增量
 TTS、慢意图计划完整性与复杂混合意图回归；另已落地 NATS 可观测出口、collector、
 车辆状态/动态、分布式链路、Agent 健康/指标与独立 Dashboard，以及实时流修复、
-车速/档位自洽联动、collector 周期快照自愈、registry 重启后能力周期重注册自愈；并经专项 E2E 可观测验证（`test/e2e_observability.py`）修复一批末端执行缺陷（天窗程度/媒体播放/座椅并列拆分/流式直通 step span 等）。
+车速/档位自洽联动、collector 周期快照自愈、registry 重启后能力周期重注册自愈；并经专项 E2E 可观测验证（`test/e2e_observability.py`）修复一批末端执行缺陷（天窗程度/媒体播放/座椅并列拆分/流式直通 step span 等）；并补齐中枢 P0 测试覆盖：多轮上下文/等待态 span 进程内单测 + 全栈断言脚本 `test/e2e_central_hub_assertions.py`（P0-1~5）。
 详见 `docs/design/` 两份 2026-06-14/15 落地记录。
 
 **待做**：Registry/Cloud Gateway 持久化与多实例扩展、真实 Provider/支付/权限

@@ -11,7 +11,7 @@ python test/smoke_edge.py
 python -m pytest --import-mode=importlib -q
 ```
 `conftest.py` 已配好 PYTHONPATH，`--import-mode=importlib` 解决 test_agent.py 重名。
-**当前结果：372 passed, 2 skipped（2026-06-16 实测）。**
+**当前结果：380 passed, 2 skipped（2026-06-16 实测）。**
 
 ### 测试分布
 | 模块 | 文件 | 覆盖 |
@@ -55,8 +55,9 @@ Vite 生产构建通过。**
 ## 5. 端到端测试（需 docker compose 起全栈）
 ```bash
 pip install websockets
-python test/e2e_ws.py            # 4 条标准链路（车控/导航/闲聊/确认）
-python test/e2e_observability.py # 专项：中枢分发→VAL/agent/tool 执行→仪表盘状态（经 collector 三维观测）
+python test/e2e_ws.py                     # 4 条标准链路（车控/导航/闲聊/确认）
+python test/e2e_observability.py          # 人工巡检：中枢分发→执行→仪表盘（collector 三维观测）
+python test/e2e_central_hub_assertions.py # 断言型：P0-1~5 中枢链路/状态/确认自动断言
 ```
 
 ## PoC 验收清单

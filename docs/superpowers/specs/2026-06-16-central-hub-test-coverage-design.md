@@ -1,5 +1,6 @@
 # 中枢测试覆盖设计
 
+> 状态：P0 已落地（L0 进程内单测 + L1 全栈断言 5/5，2026-06-16）
 > 日期：2026-06-16
 > 范围：Cloud Planner / Unified Dispatcher / Edge 回流 / VAL / 可观测 collector / Dashboard 观测链路
 > 参考提交：`c4b4097a4d851cae8bc81b0513bf02082e971f58`

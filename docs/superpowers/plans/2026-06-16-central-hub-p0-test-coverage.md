@@ -1,5 +1,9 @@
 # Central Hub P0 Test Coverage Implementation Plan
 
+> **执行状态（2026-06-16）**：P0 已全部落地——多轮上下文/等待态 span 进程内单测 +
+> L1 全栈断言脚本（`test/e2e_central_hub_assertions.py` + fixtures，5/5 通过）；
+> P0-6/8/9/11 由既有单测覆盖。全量 380 passed，已合并 main。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add P0 regression coverage for central hub dispatch, execution, confirmation, multi-turn context, and observability assertions.
