@@ -1,8 +1,10 @@
 # 中枢测试覆盖设计
 
-> 状态：P0 已落地（L0 单测 + L1 全栈断言 5/5）；P1 进程内缺口已补——collector 重启
-> 快照自愈、端侧本地轮记忆 best-effort 回归，L1 增 trace 全链贯穿断言（P1-8）；P1 其余
-> （真实 LLM 指代理解等）按设计留 nightly/人工巡检，P2 语料持续扩展。2026-06-16
+> 状态：P0 已落地（L0 单测 + L1 全栈断言 7/7）；P1 进程内缺口已补——collector 重启
+> 快照自愈、端侧本地轮记忆 best-effort 回归，L1 增 trace 全链贯穿断言（P1-8）；P2 已落地
+> 首批——L0 数据驱动语料 88 条（安全门控/车控对象矩阵/多意图边界）+ L1 媒体/开放域流式
+> 2 条 + nightly 真实 LLM 4 条（跨 Agent 组合/多轮指代，默认 skip）；真实 LLM 指代理解等
+> 深场景持续在 nightly 扩展。2026-06-16
 > 日期：2026-06-16
 > 范围：Cloud Planner / Unified Dispatcher / Edge 回流 / VAL / 可观测 collector / Dashboard 观测链路
 > 参考提交：`c4b4097a4d851cae8bc81b0513bf02082e971f58`

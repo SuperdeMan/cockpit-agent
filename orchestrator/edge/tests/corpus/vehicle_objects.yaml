@@ -1,0 +1,59 @@
+# 车控对象矩阵语料（P2）。
+# intent_recognition：自然语句 → fast_intent 识别的 object（验识别广度，中文输入）。
+# val_execution：结构化协议指令 → VAL 执行后的状态（验状态机分支，对应仪表盘状态变更；
+#   停车默认态，mode/tag 用已归一化协议值，归一化本身由 test_val_knowledge / safety 语料覆盖）。
+
+intent_recognition:
+  - {text: 打开空调, object: aircon}
+  - {text: 空调调到26度, object: aircon}
+  - {text: 关闭空调, object: aircon}
+  - {text: 打开车窗, object: window}
+  - {text: 关闭车窗, object: window}
+  - {text: 把天窗打开, object: sunroof}
+  - {text: 打开遮阳帘, object: sunshade}
+  - {text: 打开座椅加热, object: seat}
+  - {text: 座椅通风打开, object: seat}
+  - {text: 氛围灯调成蓝色, object: ambient_light}
+  - {text: 播放音乐, object: [media, music]}
+  - {text: 把音量调大, object: volume}
+  - {text: 打开后备箱, object: trunk}
+  - {text: 打开雨刮, object: wiper}
+  - {text: 打开大灯, object: headlight}
+
+val_execution:
+  - {object: aircon, operate: set, value: "23", expect: {hvac_on: true, hvac_temp: 23}}
+  - {object: aircon, operate: close, expect: {hvac_on: false}}
+  - {object: aircon, operate: set, attr: speed, value: "3", expect: {hvac_wind_speed: 3}}
+  - {object: window, operate: open, expect: {window: open}}
+  - {object: window, operate: close, expect: {window: closed}}
+  - {object: seat, operate: open, mode: heating, expect: {seat_heating: true}}
+  - {object: seat, operate: open, mode: ventilation, expect: {seat_ventilation: true}}
+  - {object: seat, operate: close, mode: heating, expect: {seat_heating: false}}
+  - {object: sunroof, operate: set, value: "50", expect: {sunroof: "50%"}}
+  - {object: sunroof, operate: open, expect: {sunroof: open}}
+  - {object: sunroof, operate: close, expect: {sunroof: closed}}
+  - {object: sunshade, operate: open, expect: {sunshade: open}}
+  - {object: sunshade, operate: close, expect: {sunshade: closed}}
+  - {object: ambient_light, operate: open, expect: {ambient_light: true}}
+  - {object: ambient_light, operate: close, expect: {ambient_light: false}}
+  - {object: ambient_light, operate: set, tag: red, expect: {ambient_light: true, ambient_light_color: red}}
+  - {object: media, operate: play, expect: {media: playing}}
+  - {object: media, operate: pause, expect: {media: paused}}
+  - {object: media, operate: stop, expect: {media: stopped}}
+  - {object: music, operate: play, expect: {media: playing}}
+  - {object: headlight, operate: open, expect: {headlight: true}}
+  - {object: headlight, operate: close, expect: {headlight: false}}
+  - {object: trunk, operate: open, expect: {trunk: open}}
+  - {object: trunk, operate: close, expect: {trunk: closed}}
+  - {object: door_lock, operate: open, expect: {door_lock: unlocked}}
+  - {object: door_lock, operate: close, expect: {door_lock: locked}}
+  - {object: fuel_tank_cover, operate: open, expect: {fuel_tank_cover: open}}
+  - {object: charging_port, operate: open, expect: {charging_port: open}}
+  - {object: rear_view_mirror, operate: set, mode: fold, expect: {rear_view_mirror: folded}}
+  - {object: wiper, operate: open, expect: {wiper: true}}
+  - {object: wiper, operate: close, expect: {wiper: false}}
+  - {object: fragrance, operate: open, expect: {fragrance: true}}
+  - {object: steering_wheel, operate: set, mode: heating, expect: {steering_wheel_heating: true}}
+  - {object: driving_mode, operate: set, mode: sport, expect: {driving_mode: sport}}
+  - {object: scene_mode, operate: set, mode: camping, expect: {scene_mode: camping}}
+  - {object: volume, operate: set, value: "30", expect: {volume: 30}}

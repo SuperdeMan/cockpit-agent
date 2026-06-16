@@ -66,5 +66,29 @@
         "expect_state": {"trunk": "open"}
       }
     ]
+  },
+  {
+    "name": "cloud_media_to_edge",
+    "setup": {"speed_kmh": 0},
+    "turns": [
+      {
+        "text": "播放音乐",
+        "expect_spans": ["route.cloud", "cloud.planning", "step.edge:media.play"],
+        "expect_state": {"media": "playing"},
+        "expect_need_confirm": false
+      }
+    ]
+  },
+  {
+    "name": "cloud_chitchat_streaming",
+    "setup": {"speed_kmh": 0},
+    "turns": [
+      {
+        "text": "给我讲个笑话",
+        "expect_spans": ["route.cloud", "cloud.planning", "step.agent:chitchat"],
+        "forbid_spans": ["val.execute"],
+        "expect_need_confirm": false
+      }
+    ]
   }
 ]

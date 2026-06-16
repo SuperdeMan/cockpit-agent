@@ -1,0 +1,22 @@
+# 多意图拆分边界语料（P2）。验 fast_intent 的连接词/逗号/"和" 拆分与不拆边界。
+# split_and_classify_any：返回 list（2+ 段，含 _needs_cloud 标记）或 None（单意图不拆）。
+
+# 应拆成多段：连接词(并/然后/同时/再/逗号) 或 "和" 两侧都是 local 车控。
+split:
+  - {text: 座椅加热和座椅通风安排上, parts: 2}        # "和" 两侧本地 → 拆
+  - {text: 空调打开和氛围灯打开, parts: 2}            # "和" 两侧本地 → 拆
+  - {text: 打开天窗同时关上遮阳帘, parts: 2}          # 同时
+  - {text: 关闭空调然后打开车窗, parts: 2}            # 然后
+  - {text: 播放音乐并把音量调大, parts: 2}            # 并
+  - {text: 空调调到26度，再打开座椅加热, parts: 2}    # 逗号 + 再
+  - {text: 打开空调，播放音乐，然后把音量调大, parts: 3}  # 三意图
+  - {text: 打开空调然后导航去深圳, parts: 2}          # 本地+云混合也拆
+
+# 不应拆（None）：单意图，或 "和" 落在 non-local / 人名 / 歌手语境。
+no_split:
+  - {text: 打开空调, reason: 单意图}
+  - {text: 关闭车窗, reason: 单意图}
+  - {text: 给我讲个笑话, reason: 单意图闲聊}
+  - {text: 播周杰伦的歌, reason: 歌手限定不拆}
+  - {text: 导航去北京和上海, reason: 导航目的地并列不拆，整句上云}
+  - {text: 我和你聊天, reason: 人名/词组不误拆}

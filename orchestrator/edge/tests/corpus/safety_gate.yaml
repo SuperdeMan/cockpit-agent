@@ -1,0 +1,31 @@
+# 安全门控语料（P2）——逐对象验证 VAL 门控，补现有只测 low_beam/driving_mode/window 三类的盲区。
+# 数据源：orchestrator/edge/knowledge/commands.yaml 的 voice_forbidden / drive_restricted / require_confirm 标记。
+
+# voice_forbidden：禁止语音操作，停车也拒。
+voice_forbidden:
+  - {object: low_beam, operate: open}
+  - {object: low_beam, operate: close}
+
+# drive_restricted：行车中（speed>0 或 gear∉{P,N}）拒，停车（speed=0 且 gear=P）允许。
+# operate 取各对象一个合法操作（见 commands.yaml operates）。
+drive_restricted:
+  - {object: driving_mode, operate: set}
+  - {object: power_mode, operate: set}
+  - {object: energy_recovery, operate: set}
+  - {object: lane_departure_assistance, operate: open}
+  - {object: lane_assistance, operate: open}
+  - {object: auto_hold, operate: open}
+  - {object: epb, operate: open}
+
+# require_confirm：危险动作，本地不秒回，_need_confirm 必须为真。
+require_confirm:
+  - trunk
+  - door_lock
+  - fuel_tank_cover
+  - charging_port
+  - frunk
+
+# 高速车窗：行车且 speed>120 拒开窗，正常速度允许。
+high_speed_window:
+  blocked_speed: 130
+  allowed_speed: 30

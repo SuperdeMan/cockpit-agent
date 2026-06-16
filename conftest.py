@@ -13,3 +13,12 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 if _gen_py not in sys.path and os.path.isdir(_gen_py):
     sys.path.insert(0, _gen_py)
+
+
+def pytest_configure(config):
+    """注册自定义 marker，避免 PytestUnknownMarkWarning。"""
+    config.addinivalue_line(
+        "markers",
+        "nightly: 真实 LLM 全栈语料，默认 skip（需宿主 LLM_API_KEY + make up），"
+        "不进普通 PR 门禁",
+    )

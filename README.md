@@ -18,7 +18,7 @@
 - `DispatchToEdge`、T2 有界循环、确定性工具和权限双层校验已实现。
 - 端侧混合意图支持按语义组分流，本地动作与导航/媒体慢意图可在同一请求中协同执行。
 - HMI 支持文字流式渲染和句子级增量 TTS：首个完整短句即可开始合成、后续音频顺序播放。
-- 全量 pytest：**385 passed, 2 skipped**。
+- 全量 pytest：**473 passed, 6 skipped**（6 skip 含 4 条 nightly 真实 LLM 默认跳过）。
 - 端侧 smoke：**13 passed, 0 failed**。
 - HMI TTS 单测：**5 passed**；Vite 生产构建通过。
 - 可观测 Dashboard：**4 passed**；Vite 生产构建通过。

@@ -1,0 +1,44 @@
+# Nightly 真实 LLM 语料（P2 / spec 7.3 跨 Agent 组合 + 7.4 多轮指代）。
+# 这些场景依赖真实 LLM 规划，mock 跑没意义，因此只在 nightly 用真实 key 跑。
+# 断言原则（见设计 spec §11）：只绑定「必达节点 / 确定的本地状态 / 少量关键词」，
+# 不绑定完整自然语言话术，容忍真实 LLM 的合理波动。
+
+# 7.3 跨 Agent 组合：导航 + 途中 POI
+- name: nav_plus_poi_search
+  setup: {speed_kmh: 0}
+  turns:
+    - text: 导航去公司，途中帮我找个评分高的粤菜馆
+      # 真实 LLM 把"导航+途中找餐厅"规划成 navigation + food-ordering 两个 Agent（spec 7.3 核心）。
+      # route 形态（cloud/mixed）对带逗号的多意图句不稳定，只绑语义必达节点。
+      expect_spans: [cloud.planning, step.agent:navigation, step.agent:food-ordering]
+
+# 7.3 餐厅搜索 → 预订（可能进入确认）
+- name: restaurant_search_reserve
+  setup: {speed_kmh: 0}
+  turns:
+    - text: 找附近评分高的川菜馆，订今晚七点两位
+      # 走 food-ordering（搜索→预订），route 形态不稳，只绑语义必达节点。
+      expect_spans: [cloud.planning, step.agent:food-ordering]
+
+# 7.4 多轮指代：目的地续接（第二轮仍围绕首都机场，不当独立闲聊）
+- name: destination_coreference
+  setup: {speed_kmh: 0}
+  turns:
+    - text: 导航去首都机场
+      expect_spans: [route.cloud, step.agent:navigation]
+    - text: 换成最快路线
+      expect_spans: [route.cloud]
+      forbid_spans: [step.agent:chitchat]
+
+# 超复杂混合 + 出发（用户原始例子的可断言精简版）：本地车控状态确定，导航上云
+- name: complex_mixed_departure
+  setup: {speed_kmh: 0}
+  turns:
+    - text: 空调帮我开到23度，座椅加热和座椅通风安排上，氛围灯调成橙色，导航去最近的粤菜馆，出发吧
+      expect_spans: [route.mixed, val.execute, cloud.planning]
+      expect_state:
+        hvac_temp: 23
+        seat_heating: true
+        seat_ventilation: true
+        ambient_light_color: orange
+      expect_need_confirm: false
