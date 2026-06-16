@@ -313,6 +313,27 @@ edge-gateway(WS,已有) ─gRPC→ edge-orchestrator ──┐           │ obs
 全栈实测：registry+collector 重启清空（agents=0）后 ~15s 自愈回 9；collector 单独重启
 车辆状态 ~30s 自愈；debug 设车速 80→自动挂 D、挂 P→车速归 0。
 
+### 2026-06-16：专项 E2E 可观测验证与末端执行修复
+
+新增 `test/e2e_observability.py`：对每条指令经 collector 三维观测——分发链路（span）、
+VAL 状态 diff、agent/确认执行态；覆盖 T0 / 安全门控 / 云端单 Agent / 危险确认 / 混合 /
+复杂多意图。用复杂例句"空调23度…座椅加热和通风…粤菜馆…咖啡…氛围灯橙…音量…出发"实测：
+端侧拆 7 个本地车控 + 云端 `step.edge:volume.inc` + `step.agent:navigation ×3`，
+**14 span / 7 项状态变更全部真执行**。
+
+测试暴露并修复 6 处缺陷（复跑确认全部消失）：
+
+- VAL `sunroof` set（"开一半"记程度，不再落兜底键 `sunroof_set`）。
+- VAL 媒体/音乐播放分支（`media=playing`，不再落兜底键 `music_play`）。
+- VAL 氛围灯设色隐含开灯。
+- 端侧"X和Y"安全二次拆分（仅 local 车控并列才拆，"座椅加热和座椅通风"→两意图；
+  "导航去北京和上海""我和你"不误拆）。
+- engine 单步流式直通（D0）补 `step.agent` span（消除链路缺跳）。
+- dispatch `NEED_CONFIRM/NEED_SLOT` 的 step span 标 `wait`（不再误标 `err`）。
+
+**运维注意**：服务重建后有数秒 gRPC 重连窗口（上游 channel/bidi 重连期间首请求可能
+`Unavailable`，复测即恢复），生产需就绪探测/重试。全量 372 passed。
+
 ### 已知边界 / 后续
 
 - collector 为单实例内存聚合；重启会丢 trace 历史，但车辆状态镜像与 Agent 健康会分别由
