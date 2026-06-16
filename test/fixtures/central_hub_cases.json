@@ -1,0 +1,70 @@
+[
+  {
+    "name": "t0_hvac_local",
+    "setup": {"speed_kmh": 0},
+    "turns": [
+      {
+        "text": "打开空调26度",
+        "expect_spans": ["route.local", "val.execute"],
+        "forbid_spans": ["cloud.planning"],
+        "expect_state": {"hvac_on": true, "hvac_temp": 26},
+        "expect_need_confirm": false
+      }
+    ]
+  },
+  {
+    "name": "safety_window_speed_gate",
+    "setup": {"speed_kmh": 130},
+    "turns": [
+      {
+        "text": "打开车窗",
+        "expect_spans": ["route.local", "val.execute"],
+        "expect_span_status": {"val.execute": "err"},
+        "expect_state_unchanged": ["window"],
+        "expect_need_confirm": false,
+        "expect_speech_contains": ["高速", "安全"]
+      }
+    ]
+  },
+  {
+    "name": "cloud_navigation_single_agent",
+    "setup": {"speed_kmh": 0},
+    "turns": [
+      {
+        "text": "导航去北京南站",
+        "expect_spans": ["route.cloud", "cloud.planning", "step.agent:navigation"],
+        "expect_need_confirm": false
+      }
+    ]
+  },
+  {
+    "name": "mixed_local_and_cloud",
+    "setup": {"speed_kmh": 0},
+    "turns": [
+      {
+        "text": "打开主驾座椅加热，然后导航去首都机场",
+        "expect_spans": ["route.mixed", "val.execute", "cloud.planning"],
+        "expect_state": {"seat_heating": true},
+        "expect_need_confirm": false
+      }
+    ]
+  },
+  {
+    "name": "dangerous_trunk_confirm",
+    "setup": {"speed_kmh": 0},
+    "turns": [
+      {
+        "text": "打开后备箱",
+        "expect_spans": ["route.cloud", "cloud.planning"],
+        "expect_need_confirm": true,
+        "expect_state_unchanged": ["trunk"]
+      },
+      {
+        "text": "确认",
+        "is_confirmation": true,
+        "expect_need_confirm": false,
+        "expect_state": {"trunk": "open"}
+      }
+    ]
+  }
+]
