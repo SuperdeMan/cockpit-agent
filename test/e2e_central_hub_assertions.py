@@ -130,7 +130,7 @@ def _wait_trace(trace_id: str, required_nodes: list[str], timeout_s=12):
     return last_spans
 
 
-def _assert_turn(case_name, turn, before, after, spans, finals):
+def _assert_turn(case_name, turn, before, after, spans, finals, trace_id):
     nodes = _nodes(spans)
     diff = _state_diff(before, after)
     speech = _speech(finals)
@@ -176,6 +176,15 @@ def _assert_turn(case_name, turn, before, after, spans, finals):
             f"{case_name}: expected speech to contain {part!r}, got {speech!r}"
         )
 
+    # P1-8：前端 meta.trace_id 必须一路贯穿到 collector —— 同一 trace 下的每个 span
+    # （端侧 route.local/val.execute、云端 cloud.planning/step.* 等）都应挂在这个
+    # trace_id 上，证明 collector 按 trace_id 正确聚合、端云链路同 trace 未断。
+    for span in spans:
+        assert span.get("trace_id") == trace_id, (
+            f"{case_name}: span {span.get('node')!r} carries trace_id "
+            f"{span.get('trace_id')!r}, expected {trace_id!r}"
+        )
+
 
 async def _run_case(case):
     name = case["name"]
@@ -201,7 +210,7 @@ async def _run_case(case):
         spans = _wait_trace(trace_id, required_nodes)
         after = _get("/api/vehicle/state")
 
-        _assert_turn(name, turn, before, after, spans, finals)
+        _assert_turn(name, turn, before, after, spans, finals, trace_id)
         print(
             f"  turn {index}: ok "
             f"nodes={_nodes(spans)} diff={_state_diff(before, after)}"

@@ -64,3 +64,34 @@ def test_apply_health_and_metric_merge():
     assert agent["healthy"] is True
     assert agent["count"] == 12
     assert agent["avg_ms"] == 230.0
+
+
+def test_empty_store_recovers_full_state_from_snapshot():
+    # collector 重启后内存清空；edge 周期 snapshot（source="snapshot"、old=None 的全量
+    # changes）必须把车辆镜像从空恢复为全量，且恢复后仍能继续叠加增量。这是 P1-1 自愈路径。
+    store = CollectorStore()
+    assert store.vehicle_state == {}
+
+    snapshot = {
+        "source": "snapshot",
+        "changes": [
+            {"key": "hvac_on", "old": None, "new": True},
+            {"key": "hvac_temp", "old": None, "new": 26},
+            {"key": "window", "old": None, "new": "closed"},
+            {"key": "gear", "old": None, "new": "P"},
+        ],
+    }
+    store.apply_state(snapshot)
+
+    assert store.vehicle_state == {
+        "hvac_on": True,
+        "hvac_temp": 26,
+        "window": "closed",
+        "gear": "P",
+    }
+
+    # 恢复后增量仍正常叠加
+    store.apply_state(
+        {"source": "T0", "changes": [{"key": "hvac_temp", "old": 26, "new": 22}]}
+    )
+    assert store.vehicle_state["hvac_temp"] == 22
