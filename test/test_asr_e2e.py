@@ -17,6 +17,30 @@ AUDIO_API = os.getenv("VITE_AUDIO_API_URL", "http://localhost:50059")
 HAS_KEY = bool(os.getenv("LLM_API_KEY", os.getenv("LLM_GATEWAY_API_KEY", "")))
 
 
+def _service_reachable() -> bool:
+    """ASR/llm-gateway 服务是否可达——这是 E2E，需要全栈在跑（make up）。"""
+    import urllib.error
+    import urllib.request
+
+    try:
+        urllib.request.urlopen(f"{AUDIO_API}/api/voices", timeout=2)
+        return True
+    except urllib.error.HTTPError:
+        return True  # 服务在（返回了 HTTP 响应，即便非 200）
+    except Exception:
+        return False
+
+
+SERVICE_UP = _service_reachable()
+
+# 整个 ASR E2E 依赖 llm-gateway 服务；服务不可达（如未起全栈的 CI）时整体跳过，
+# 不在缺服务时误报失败。
+pytestmark = pytest.mark.skipif(
+    not SERVICE_UP,
+    reason=f"ASR service unreachable at {AUDIO_API}; run `make up` first",
+)
+
+
 def _make_wav_sample(duration_s: float = 1.0, freq: float = 440.0) -> bytes:
     """Generate a simple sine wave WAV file in memory."""
     sample_rate = 16000
