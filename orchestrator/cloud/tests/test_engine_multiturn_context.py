@@ -9,6 +9,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+from cockpit.agent.v1 import agent_pb2
 from orchestrator.cloud.aggregator import Aggregator
 from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.executor import DagExecutor
@@ -53,34 +54,53 @@ def _agent():
 
 
 class _Resp:
-    def __init__(self, status: int = 0, speech: str = _FINAL_SPEECH):
+    def __init__(
+        self,
+        status: int = agent_pb2.ExecuteResponse.OK,
+        speech: str = _FINAL_SPEECH,
+        follow_up: str = "",
+        missing_slots: list[str] | None = None,
+    ):
         self.status = status
         self.speech = speech
-        self.follow_up = ""
+        self.follow_up = follow_up
         self.actions = []
         self.ui_card = None
         self.data = None
-        self.missing_slots = []
+        self.missing_slots = list(missing_slots or [])
 
 
 class _MultiturnSpy:
-    def __init__(self, histories: dict[str, list[dict]] | None = None):
+    def __init__(
+        self,
+        histories: dict[str, list[dict]] | None = None,
+        need_datetime_slot: bool = False,
+    ):
         self.histories = {
             session_id: [dict(turn) for turn in turns]
             for session_id, turns in (histories or {}).items()
         }
+        self.need_datetime_slot = need_datetime_slot
         self.read_calls: list[tuple[str, int]] = []
         self.append_calls: list[tuple[str, str, str]] = []
         self.append_calls_at_reads: list[list[tuple[str, str, str]]] = []
         self.planner_prompts: list[str] = []
-        self.agent_calls: list[tuple[str, dict]] = []
+        self.agent_calls: list[tuple[str, dict, dict]] = []
 
     async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
         raise RuntimeError("stream disabled")
         yield  # pragma: no cover
 
     async def call_agent(self, endpoint, intent, slots, ctx=None, meta=None):
-        self.agent_calls.append((intent, dict(meta or {})))
+        slots_snapshot = dict(slots or {})
+        self.agent_calls.append((intent, slots_snapshot, dict(meta or {})))
+        if self.need_datetime_slot and not slots_snapshot.get("datetime"):
+            return _Resp(
+                status=agent_pb2.ExecuteResponse.NEED_SLOT,
+                speech="What time should I use?",
+                follow_up="Tell me a date and time.",
+                missing_slots=["datetime"],
+            )
         return _Resp()
 
     async def llm(self, messages):
@@ -106,15 +126,21 @@ class _MultiturnSpy:
         self.histories.setdefault(session_id, []).append({"role": role, "text": text})
 
 
-def _make_engine(spy: _MultiturnSpy) -> PlannerEngine:
-    return PlannerEngine(
+def _make_engine_with_session(spy: _MultiturnSpy) -> tuple[PlannerEngine, SessionStore]:
+    session = SessionStore(redis_url="")
+    engine = PlannerEngine(
         clients=spy,
         planner=PlanBuilder(llm_fn=spy.llm, registry_fn=spy.resolve),
         executor=DagExecutor(call_agent_fn=spy.call_agent),
         aggregator=Aggregator(llm_fn=spy.llm),
-        session=SessionStore(redis_url=""),
+        session=session,
         perms=PermissionEngine(),
     )
+    return engine, session
+
+
+def _make_engine(spy: _MultiturnSpy) -> PlannerEngine:
+    return _make_engine_with_session(spy)[0]
 
 
 def _req(text: str, session_id: str = "session-a", meta: dict | None = None):
@@ -220,3 +246,29 @@ def test_memory_disabled_skips_history_and_writes_but_still_returns_final_speech
     assert "Set passenger AC to 26" not in prompt
     assert "Raise it a little" in prompt
     assert _final_event(events)["speech"] == _FINAL_SPEECH
+
+
+def test_need_slot_resume_reuses_pending_plan_and_fills_missing_slot():
+    spy = _MultiturnSpy(need_datetime_slot=True)
+    engine, session = _make_engine_with_session(spy)
+
+    first_events = _run(engine, _req("Book dinner", session_id="slot-session"))
+
+    first_final = _final_event(first_events)
+    assert first_final["speech"] == "What time should I use?"
+    assert first_final["follow_up"] == "Tell me a date and time."
+    state = asyncio.run(session.load("slot-session"))
+    assert state is not None
+    assert state.phase == "wait_slot"
+    assert state.pending_step_id == "s1"
+    assert state.missing_slots == ["datetime"]
+    assert len(spy.planner_prompts) == 1
+
+    second_events = _run(engine, _req("Tonight at 7", session_id="slot-session"))
+
+    assert len(spy.planner_prompts) == 1
+    assert [call[0] for call in spy.agent_calls] == ["demo.do", "demo.do"]
+    assert spy.agent_calls[0][1] == {}
+    assert spy.agent_calls[1][1]["datetime"] == "Tonight at 7"
+    assert asyncio.run(session.load("slot-session")) is None
+    assert _final_event(second_events)["speech"] == _FINAL_SPEECH
