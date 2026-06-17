@@ -26,7 +26,7 @@
 
 | intent | 归属 | 处理位置 | 槽位 | 备注 |
 |---|---|---|---|---|
-| `hvac.*` / `window.*` / `seat.*` / `sunroof.*` / `sunshade.*` / `trunk.*` / `door_lock.*` / `ambient_light.*` / `headlight.*` / `wiper.*` / `rear_view_mirror.*` / `fragrance.*` / `volume.*` / `fuel_tank_cover.*` / `charging_port.*` / `steering_wheel.*` / `energy_recovery.*` / `lane_*` / `scene_mode.*` / `power_mode.*` / `driving_mode.*` / `screen.*` / `accompany_home.*` / `tire_pressure.*` / `dashcam.*` / `aircon.*` | 端侧车控 | edge | value/unit/positions/mode/tag | 经 VAL 知识库校验；150 条意图 pattern |
+| `hvac.*` / `window.*` / `seat.*` / `sunroof.*` / `sunshade.*` / `trunk.*` / `door_lock.*` / `ambient_light.*` / `headlight.*` / `wiper.*` / `rear_view_mirror.*` / `fragrance.*` / `volume.*` / `fuel_tank_cover.*` / `charging_port.*` / `steering_wheel.*` / `energy_recovery.*` / `lane_*` / `scene_mode.*` / `power_mode.*` / `driving_mode.*` / `screen.*` / `accompany_home.*` / `tire_pressure.*` / `battery.query` / `dashcam.*` / `aircon.*` | 端侧车控 | edge | value/unit/positions/mode/tag | 经 VAL 知识库校验；150 条意图 pattern |
 | `media.play` / `media.pause` / `media.next` / `media.prev` | 端侧媒体 | edge | — | 经 VAL |
 | `navigation.search_poi` | navigation | cloud | keyword, category, near, rating_min | |
 | `navigation.navigate_to` | navigation | cloud | destination | |

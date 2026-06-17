@@ -46,6 +46,15 @@ hvac_dec_success:
   speech_brief:
   - 已调到{value}度
   - 调低了
+hvac_wind_speed_set_success:
+  scene: 空调风速已设定
+  status: 成功
+  speech_full:
+  - 已将空调风速调到{value}档
+  - 空调风速已设为{value}档
+  speech_brief:
+  - 风速{value}档
+  - 好的
 hvac_already_on:
   scene: 空调已处于开启状态
   status: 已是该态
@@ -468,6 +477,15 @@ Car_general_restrictions_1:
   - 车辆尚未启动，该功能暂时不可用
   speech_brief:
   - 车辆未启动哦
+battery_query_success:
+  scene: 当前电量
+  status: 成功
+  speech_full:
+  - 当前电量还剩{value}%
+  - 电池电量还有{value}%
+  speech_brief:
+  - 电量{value}%
+  - 还剩{value}%
 Car_general_restrictions_2:
   scene: 行车过程中限制开启
   status: 安全限制

@@ -9,7 +9,7 @@ import re
 
 LOCAL_INTENTS = {
     "hvac.set", "hvac.on", "hvac.off",
-    "window.open", "window.close", "window.set",
+    "window.open", "window.close", "window.set", "window.inc", "window.dec",
     "media.play", "media.pause", "media.next", "media.prev",
     # 座椅（open/close 兼容 on/off）
     "seat.heating.on", "seat.heating.off", "seat.heating.open", "seat.heating.close",
@@ -31,10 +31,12 @@ LOCAL_INTENTS = {
     # 油箱盖 / 充电口盖
     "fuel_tank_cover.open", "fuel_tank_cover.close",
     "charging_port.open", "charging_port.close",
-    # 胎压 / 行车记录仪
+    # 电量查询 / 胎压 / 行车记录仪
+    "battery.query",
     "tire_pressure.query",
     "dashcam.open", "dashcam.close",
-    # 场景模式 / 电源模式
+    # 驾驶模式 / 场景模式 / 电源模式
+    "driving_mode.set",
     "scene_mode.set",
     "power_mode.set",
     # 动能回收
@@ -265,7 +267,7 @@ def classify_structured(text: str) -> dict | None:
                 return _s("setting", "control", "inc", "aircon", mode="wind_speed", conf=0.9)
             if "小" in t or "低" in t:
                 return _s("setting", "control", "dec", "aircon", mode="wind_speed", conf=0.9)
-            m = re.search(r"(\d)\s*挡", t)
+            m = re.search(r"(\d+)\s*[挡档级]", t)
             if m:
                 return _s("setting", "control", "set", "aircon", mode="wind_speed",
                           value=m.group(1), unit="level", conf=0.9)
@@ -299,6 +301,17 @@ def classify_structured(text: str) -> dict | None:
     # ── 车窗 ──────────────────────────────────────────────
     if "车窗" in t or "窗户" in t:
         pos = _extract_position(t)
+        # 相对调节（先于绝对开/关）：开大点/多开点 → inc；开小点/关小点 → dec
+        if ("大" in t or "多开" in t) and "关" not in t and "小" not in t:
+            return _s("setting", "control", "inc", "window",
+                      positions=pos, conf=0.9)
+        if "小" in t:
+            return _s("setting", "control", "dec", "window",
+                      positions=pos, conf=0.9)
+        # 模糊小开度：开条缝/开个缝/开一点 → 15%
+        if "缝" in t or ("开" in t and ("一点" in t or "一些" in t)):
+            return _s("setting", "control", "set", "window",
+                      value="15", unit="percent", positions=pos, conf=0.9)
         if "关" in t:
             return _s("setting", "control", "close", "window",
                       positions=pos, conf=0.92)
@@ -1045,7 +1058,9 @@ def classify_structured(text: str) -> dict | None:
         if "关" in t:
             return _s("setting", "control", "close", "scheduled_charging", conf=0.9)
         return _s("setting", "control", "open", "scheduled_charging", conf=0.9)
-    if "能耗" in t or "电量" in t or "续航" in t:
+    if "电量" in t or "电池" in t or ("剩" in t and "电" in t):
+        return _s("query", "query", "query", "battery", conf=0.9)
+    if "能耗" in t or "续航" in t:
         return _s("query", "query", "query", "energy_consumption", conf=0.88)
     if "熄火" in t or "关电源" in t or "断电" in t:
         return _s("setting", "control", "power_off", "vehicle", conf=0.85)
@@ -1219,8 +1234,9 @@ def is_local(name: str) -> bool:
 # "并" uses a lookbehind/lookahead to avoid splitting inside "合并" or "并且".
 # "再" is short and ambiguous, so it requires a preceding comma.
 # Plain comma is the final fallback (tried last, only when no keyword follows).
+# "还有"作连接词才拆；"还有多少/几/没"是问量短语（如"电量还有多少"），不拆。
 _SPLIT_MARKERS = re.compile(
-    r"[，,]?\s*(?:并且|同时|然后|接着|顺便|顺带|还有|另外)\s*|"
+    r"[，,]?\s*(?:并且|同时|然后|接着|顺便|顺带|还有(?!多少|几|没)|另外)\s*|"
     r"(?<![合])并(?![且])\s*|"
     r"[，,]\s*再\s*|"
     r"[，,]\s*"

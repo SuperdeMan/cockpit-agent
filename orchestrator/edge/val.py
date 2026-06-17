@@ -211,6 +211,8 @@ class VAL:
         resp_data = normalized
         if state_key == "hvac_temp" and operate in ("inc", "dec"):
             resp_data = {**normalized, "value": new_value}
+        elif obj == "battery":
+            resp_data = {**normalized, "value": new_value}
         speech = self._pick_response(response_key, resp_data)
 
         return True, speech
@@ -289,9 +291,9 @@ class VAL:
             if valid_attrs and attr not in valid_attrs:
                 return False, self._pick_response("unsupported_command")
 
-        # 模式校验
+        # 模式校验（aircon 风速 wind_speed 是 _simulate 处理的伪模式，等价 speed 属性，放行）
         mode = data.get("mode")
-        if mode:
+        if mode and not (obj == "aircon" and mode == "wind_speed"):
             valid_modes = obj_def.get("modes", [])
             if valid_modes and mode not in valid_modes:
                 return False, self._pick_response("unsupported_command")
@@ -323,6 +325,11 @@ class VAL:
                 if operate in ("close", "stop"):
                     return False, self._pick_response("Car_general_restrictions_3")
 
+        # drive_restricted_off：行车中只禁"关"（如大灯——夜间关灯致盲），开仍放行
+        if obj_def.get("drive_restricted_off", False) and self._is_driving():
+            if operate in ("close", "stop", "off"):
+                return False, self._pick_response("Car_general_restrictions_3")
+
         # 通用速度门控（高速行车中限制某些操作）
         if self._is_driving():
             # 高速行驶中不完全打开车窗
@@ -346,6 +353,21 @@ class VAL:
 
     # ── 状态模拟 ──────────────────────────────────────────
 
+    @staticmethod
+    def _window_pct(value: Any) -> int:
+        """把车窗状态值（open/closed/"70%"）归一成 0–100 整数。"""
+        if value == "open":
+            return 100
+        if value in ("closed", "close", None):
+            return 0
+        if isinstance(value, str):
+            digits = value.replace("%", "").strip()
+            if digits.isdigit():
+                return max(0, min(100, int(digits)))
+        if isinstance(value, (int, float)):
+            return max(0, min(100, int(value)))
+        return 0
+
     def _simulate(self, obj: str, operate: str, data: dict) -> tuple[str | None, Any]:
         """模拟状态变更；返回 (state_key, new_value)。"""
         value = data.get("value")
@@ -362,7 +384,8 @@ class VAL:
                     self.state["hvac_wind_speed"] = min(current + 1, 10)
                 elif operate == "dec":
                     self.state["hvac_wind_speed"] = max(current - 1, 0)
-                return "hvac_wind_speed", self.state["hvac_wind_speed"]
+                # set 无具体值时回退到当前档，避免未初始化 KeyError
+                return "hvac_wind_speed", self.state.setdefault("hvac_wind_speed", current)
             # 相对调温（"再高一点/我冷了"→inc，"低一点"→dec），实际 ±1 度并夹在 16~32
             if operate == "inc":
                 self.state["hvac_on"] = True
@@ -383,11 +406,26 @@ class VAL:
 
         elif obj == "window":
             if operate == "open":
-                self.state["window"] = "open"
-                return "window", "open"
+                # "开一半/开到 X" 带程度：有 value 记百分比，否则视为全开
+                pos = data.get("value")
+                self.state["window"] = f"{int(pos)}%" if pos else "open"
+                return "window", self.state["window"]
             if operate == "close":
                 self.state["window"] = "closed"
                 return "window", "closed"
+            if operate == "set":
+                pos = data.get("value")
+                self.state["window"] = f"{int(pos)}%" if pos is not None else "open"
+                return "window", self.state["window"]
+            if operate in ("inc", "dec"):
+                # "开大/小一点"：解析当前开度 ±step（默认 20%），夹在 0–100
+                cur = self._window_pct(self.state.get("window"))
+                step = int(data.get("value") or 20)
+                new = min(cur + step, 100) if operate == "inc" else max(cur - step, 0)
+                self.state["window"] = (
+                    "closed" if new == 0 else "open" if new >= 100 else f"{new}%"
+                )
+                return "window", self.state["window"]
 
         elif obj == "seat":
             key = f"seat_{mode or 'heating'}"
@@ -583,6 +621,10 @@ class VAL:
                 self.state["accompany_home"] = False
                 return "accompany_home", False
 
+        elif obj == "battery":
+            # 查询类：不改状态，回传当前电量供话术回显
+            return None, self.state.get("battery", 0)
+
         elif obj in ("tire_pressure_monitoring", "dashcam"):
             # 查询类 / 开关类
             if operate == "open":
@@ -611,7 +653,7 @@ class VAL:
             if operate == "close":
                 return "hvac_off_success"
             if operate == "set":
-                return "hvac_set_success"
+                return "hvac_wind_speed_set_success" if is_wind else "hvac_set_success"
             # 相对调温话术（风速 inc/dec 不在此，沿用 generic_success 不回归）
             if not is_wind and operate == "inc":
                 return "hvac_inc_success"
@@ -701,6 +743,9 @@ class VAL:
 
         if obj == "accompany_home":
             return "accompany_home_on_success" if operate in ("open", "set") else "accompany_home_off_success"
+
+        if obj == "battery":
+            return "battery_query_success"
 
         if obj == "tire_pressure_monitoring":
             return "tire_pressure_query_success"

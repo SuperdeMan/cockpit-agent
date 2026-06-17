@@ -11,7 +11,7 @@
 
 阶段：**Phase 1 工程化 PoC 主干、云端中枢 P0-P3 与轻量可观测台已落地**（2026-06-15）。
 原始 Phase 1 计划中的真实外部能力、持久化/多实例、mTLS/沙箱、完整 OTel 等仍是
-后续工作。当前全量测试 473 passed, 6 skipped；Docker 20 个容器运行正常。
+后续工作。当前全量测试 495 passed, 6 skipped；Docker 20 个容器运行正常。
 
 ---
 
@@ -47,10 +47,10 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 473 passed, 6 skipped（2026-06-16 实测） |
+| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 495 passed, 6 skipped（2026-06-17 实测） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
 | HMI TTS 单测 / 构建 | ✅ Node 5/5；`npm run build` 通过 |
-| Dashboard 单测 / 构建 | ✅ Node 4/4；`npm run build` 通过 |
+| Dashboard 单测 / 构建 | ✅ Node 10/10；`npm run build` 通过 |
 | `gen/`（gRPC 生成代码）| ✅ 已生成（`buf generate proto`） |
 | Go 网关 | ✅ Go 1.24 编译通过，Docker 全栈运行 |
 | Agent Provider 适配 | ✅ 6/6 Agent 接入统一工厂并注册；真实厂商能力仍需按环境验收 |
@@ -61,8 +61,8 @@
 | 确认闭环（F1） | ✅ 端到端打通（HMI→网关→编排器→Agent） |
 | Docker 全栈联调 | ✅ 20 个容器全部运行；NATS healthcheck、collector、dashboard 通过 |
 | E2E 测试 | ✅ 4 条标准链路有历史通过记录；2026-06-14 另完成 2 条慢意图/复杂意图场景全栈回放 |
-| 车控知识库 | ✅ commands.yaml 61 对象 + entities.yaml 532 实体 + responses.yaml 74 条话术；VAL 结构化执行流水线（归一化→校验→安全门控→模拟→选话术）+ answer_length 简繁切换 |
-| 端侧意图覆盖 | ✅ 150 条意图 pattern（fast_intent），覆盖 61 对象（车控/媒体/蓝牙/WiFi/电话/广播/音乐/视频/导航/360环视等）；飞书公版数据全量导入（1465 意图） |
+| 车控知识库 | ✅ commands.yaml 62 对象 + entities.yaml 532 实体 + responses.yaml 78 条话术；VAL 结构化执行流水线（归一化→校验→安全门控→模拟→选话术）+ answer_length 简繁切换；车窗开合度 inc/dec、大灯行驶中禁关（drive_restricted_off）、电量查询端侧确定性应答 |
+| 端侧意图覆盖 | ✅ 150 条意图 pattern（fast_intent），覆盖 62 对象（车控/媒体/蓝牙/WiFi/电话/广播/音乐/视频/导航/360环视等）；飞书公版数据全量导入（1465 意图） |
 | 多意图拆分 | ✅ 端侧按语义组分流：本地动作走 VAL，导航路线偏好、歌曲/歌手等续接片段与主意图完整上云；云侧 Planner DAG 强化 |
 | ASR/TTS | ✅ HTTP 代理 + MiMo ASR/TTS + webm→wav 转码 + 9 音色；HMI 句子级增量合成与顺序播放 |
 | HMI（前端） | ✅ 「深空座舱 HUD」组件化 + 设置页 + 流式渲染 + 记忆视图 + 语音按钮 |
@@ -79,8 +79,8 @@
 可观测接线、混合意图语义分组、多步反馈、端侧轮记忆、危险动作确认、句子级增量
 TTS、慢意图计划完整性与复杂混合意图回归；另已落地 NATS 可观测出口、collector、
 车辆状态/动态、分布式链路、Agent 健康/指标与独立 Dashboard，以及实时流修复、
-车速/档位自洽联动、collector 周期快照自愈、registry 重启后能力周期重注册自愈；并经专项 E2E 可观测验证（`test/e2e_observability.py`）修复一批末端执行缺陷（天窗程度/媒体播放/座椅并列拆分/流式直通 step span 等）；并补齐中枢 P0 测试覆盖：多轮上下文/等待态 span 进程内单测 + 全栈断言脚本 `test/e2e_central_hub_assertions.py`（P0-1~5）；P1 再补上 collector 重启快照自愈、端侧本地轮记忆 best-effort 的进程内回归，并在全栈断言加入 trace 全链贯穿校验（P1-8）；P2 再建数据驱动语料层——L0 安全门控/车控对象矩阵/多意图边界 88 条参数化 + L1 媒体/开放域流式 + nightly 真实 LLM 跨 Agent 组合/多轮指代 4 条（默认 skip，需 `make up` + 宿主 `LLM_API_KEY`）。
-详见 `docs/design/` 两份 2026-06-14/15 落地记录。
+车速/档位自洽联动、collector 周期快照自愈、registry 重启后能力周期重注册自愈；并经专项 E2E 可观测验证（`test/e2e_observability.py`）修复一批末端执行缺陷（天窗程度/媒体播放/座椅并列拆分/流式直通 step span 等）；并补齐中枢 P0 测试覆盖：多轮上下文/等待态 span 进程内单测 + 全栈断言脚本 `test/e2e_central_hub_assertions.py`（P0-1~5）；P1 再补上 collector 重启快照自愈、端侧本地轮记忆 best-effort 的进程内回归，并在全栈断言加入 trace 全链贯穿校验（P1-8）；P2 再建数据驱动语料层——L0 安全门控/车控对象矩阵/多意图边界 88 条参数化 + L1 媒体/开放域流式 + nightly 真实 LLM 跨 Agent 组合/多轮指代 4 条（默认 skip，需 `make up` + 宿主 `LLM_API_KEY`）。2026-06-17 另做仪表盘车辆状态面板重构（分组 + 按类型渲染 + 空调/氛围灯/媒体三合一聚合 + 氛围灯真实颜色修复 + 面板有界滚动不挤占 Agent 区）与一批车控细化（车窗相对开合度 inc/dec 与"开条缝"、大灯行驶中只禁关 drive_restricted_off、电量查询端侧确定性应答、风速档位话术、planner 禁止把未匹配的状态查询硬套成胎压）。
+详见 `docs/design/` 落地记录。
 
 **待做**：Registry/Cloud Gateway 持久化与多实例扩展、真实 Provider/支付/权限
 token、正式 third-party 沙箱与网络白名单、Prometheus/OTel 导出与完整熔断、

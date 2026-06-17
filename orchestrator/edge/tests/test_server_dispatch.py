@@ -137,4 +137,5 @@ def test_mixed_route_keeps_cloud_context_groups(monkeypatch):
 
     local_final = next(ev.final for ev in events if ev.WhichOneof("event") == "final")
     commands = [action.payload["command"] for action in local_final.actions]
-    assert commands == ["hvac.off", "ambient_light.set", "window.open"]
+    # "开条缝" → 小开度 set（旧实现误判为全开 open，已修正）
+    assert commands == ["hvac.off", "ambient_light.set", "window.set"]

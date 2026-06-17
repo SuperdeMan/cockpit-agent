@@ -1,6 +1,6 @@
 # 车控域升级：对齐「同行者公版语音指令表 6.1」统一 schema
 
-- **状态**：P1 已落地（2026-06-14）：知识库三件套（61 对象）+ VAL 升级 +
+- **状态**：P1 已落地（2026-06-14）：知识库三件套（62 对象）+ VAL 升级 +
   fast_intent 150 条 pattern + 飞书五表全量导入脚本；P2/P3 待做
 - **交付对象**：后续开发者 / Agent，按 §8 详细待办分阶段落地
 - **关联代码**：`orchestrator/edge/val.py`、`orchestrator/edge/fast_intent.py`、`orchestrator/edge/edge_agents_mod/vehicle.py`、`proto/`（VehicleCommand）
@@ -93,6 +93,7 @@ Base《同行者公版语音指令表 6.1》：<https://c3sz000579.feishu.cn/wik
 | 字段 | 取值 | 机制 |
 |---|---|---|
 | `限制` | `行车中不允许操控` | 安全态门控：行车中（speed>0 / 档位非 P）拒绝或转二次确认，话术取 ④b `Car_general_restrictions_2/3` |
+| `限制` | `行车中禁止关闭`（如大灯夜间致盲） | 字典标 `drive_restricted_off`：行驶中只拒 `close/off`、放行 `open`（开灯是安全正向动作），话术 ④b `Car_general_restrictions_3` |
 | `限制` | `不支持语音操作`（如近光灯） | 字典标 `voice_forbidden`，命中即拒绝，话术取 ④b `Car_general_restrictions_4` |
 | `网络依赖` | `离线/在线` / `在线` | 路由：纯在线（weather）必上云；离线可用控制类端侧兜底 |
 
@@ -209,6 +210,13 @@ VAL 执行后据 **执行结果（成功/失败/已是该态/无此位置/无此
 - [x] `test_val_knowledge.py`（55 tests）：YAML 加载、实体归一化、命令校验、安全门控、响应选择、向后兼容。
 - [x] `test_fast_intent_extended.py`（46 tests）：新 pattern 覆盖、结构化输出、旧格式兼容。
 - [x] 全量 241 测试通过，smoke 13/13 保持全绿。
+
+### P1 增补（2026-06-17，线上对照实验暴露的细化，均补单测 + 全栈实测）
+- [x] **车窗相对开合度**：`fast_intent` 车窗分支识别"开大/小一点"→`inc/dec`、"开条缝/开一点"→15%（先于绝对开/关判定）；VAL 补 window `inc/dec`（`_window_pct` 解析当前开度 ±20% 夹 0–100）；`LOCAL_INTENTS` 加 `window.inc/dec`。
+- [x] **大灯行驶中只禁关**：新增声明式标志 `drive_restricted_off`（见 §3.3），`_safety_gate` 行驶中拒 `close/off`、放行 `open`；headlight 启用。区别于 `drive_restricted`（开关都禁）。
+- [x] **电量查询端侧化**：新增 `battery` 对象 + `battery.query` 本地意图，VAL 读 `state.battery` 确定性回显（`battery_query_success` 话术），不再上云。
+- [x] **风速话术修正**：`aircon` wind_speed `set` 改用 `hvac_wind_speed_set_success`（"风速 N 档"），不再复用温度模板报"N 度"；档位正则 `(\d+)\s*[挡档级]` 兼容"档/级"。
+- [x] **根因（planner 张冠李戴）**：未匹配的状态查询（电量/续航/能耗）曾被 LLM planner 硬套成 `tire_pressure.query`→错答"胎压正常"。已在 planner system prompt 加硬规则：query 类意图必须语义精确匹配 capability，否则输出空 steps 交 chitchat 兜底。另修多意图分句器"还有"负向预查 `(?!多少|几|没)`，"电量还有多少"不再被误拆。
 
 ### P2 NLU / 多意图 / 引导播报 / 触发域
 - [ ] 端侧轻量 NLU 模型替换规则（语料：意图表全部句型列 + 词库实体）。

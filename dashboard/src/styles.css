@@ -118,7 +118,8 @@ body {
 /* ── 主网格 ── */
 .hud-main { flex: 1; display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); gap: 14px; min-height: 0; }
 .hud-col { min-height: 0; display: flex; flex-direction: column; gap: 14px; }
-.hud-col.right { display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
+/* 车辆状态卡多时只在自己面板内滚动，不挤占下方 Agent 面板 */
+.hud-col.right { display: grid; grid-template-rows: minmax(0, 1.25fr) auto minmax(0, 1fr); }
 
 /* ── 玻璃面板 + HUD 角饰 ── */
 .panel {
@@ -193,20 +194,61 @@ body {
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .legend i { width: 8px; height: 8px; border-radius: 50%; }
 
-/* ── 车辆状态网格 ── */
-.vstate-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
-.vcard { position: relative; overflow: hidden; background: var(--glass-2); border: 1px solid var(--stroke); border-radius: 12px; padding: 10px 11px; transition: border-color 0.3s, box-shadow 0.3s; }
-.vcard.changed { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal), 0 0 22px -4px rgba(47, 224, 200, 0.55); animation: pop 0.5s ease; }
-@keyframes pop { 0% { box-shadow: 0 0 0 1px var(--teal), 0 0 34px -2px rgba(47, 224, 200, 0.9); } }
-.vcard__ic { font-size: 16px; line-height: 1; }
-.vcard__nm { font-size: 11px; color: var(--ink-2); margin: 6px 0 4px; }
-.vcard__val { font-family: var(--hud); font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
-.vcard__pill { font-family: var(--mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.5px; padding: 1px 5px; border-radius: 5px; }
-.vcard__pill.on { color: var(--green); border: 1px solid rgba(52, 211, 153, 0.45); }
-.vcard__pill.off { color: var(--ink-3); border: 1px solid var(--stroke-2); }
-.vcard__chg { position: absolute; top: 8px; right: 8px; font-family: var(--mono); font-size: 8px; font-weight: 700; letter-spacing: 0.5px; color: #032420; background: var(--teal); border-radius: 5px; padding: 1px 5px; }
-.vcard__diff { font-family: var(--mono); font-size: 9.5px; color: var(--teal); margin-top: 5px; }
-.swatch { width: 13px; height: 13px; border-radius: 4px; box-shadow: 0 0 8px currentColor; display: inline-block; }
+/* ── 车辆状态：分组 ── */
+.vgroup { margin-bottom: 12px; }
+.vgroup:last-child { margin-bottom: 0; }
+.vgroup__head { display: flex; align-items: center; gap: 8px; margin: 2px 2px 7px; }
+.vgroup__head > span:first-child { font-family: var(--hud); font-size: 11px; font-weight: 600; letter-spacing: 0.5px; color: var(--ink-2); }
+.vgroup__head .en { font-family: var(--mono); font-size: 8px; letter-spacing: 1.5px; color: var(--ink-3); text-transform: uppercase; }
+.vgroup__head::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--stroke-2), transparent); margin-left: 2px; }
+.vgroup__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+
+/* ── 卡片基座 ── */
+.vcard { position: relative; overflow: hidden; background: var(--glass-2); border: 1px solid var(--stroke); border-radius: 11px; padding: 9px 11px; transition: border-color 0.3s, box-shadow 0.3s; }
+.vcard.changed { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal), 0 0 20px -5px rgba(47, 224, 200, 0.55); animation: pop 0.5s ease; }
+@keyframes pop { 0% { box-shadow: 0 0 0 1px var(--teal), 0 0 32px -2px rgba(47, 224, 200, 0.9); } }
+.vcard__ic { font-size: 15px; line-height: 1; flex: none; }
+.vcard__nm { font-size: 11px; color: var(--ink-2); }
+.vcard__chg { position: absolute; top: 6px; right: 7px; font-family: var(--mono); font-size: 7.5px; font-weight: 700; letter-spacing: 0.5px; color: #032420; background: var(--teal); border-radius: 5px; padding: 1px 5px; }
+
+/* 紧凑卡：图标 · 名称 ……… 值 */
+.vcard--compact { display: flex; align-items: center; gap: 8px; }
+.vcard--compact .vcard__nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vcard__slot { display: flex; align-items: center; gap: 7px; flex: none; }
+.vnum { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--ink); }
+
+/* 开关 pill */
+.vpill { font-family: var(--mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.5px; padding: 2px 7px; border-radius: 6px; }
+.vpill.on { color: var(--green); border: 1px solid rgba(52, 211, 153, 0.45); background: rgba(52, 211, 153, 0.08); }
+.vpill.off { color: var(--ink-3); border: 1px solid var(--stroke-2); }
+
+/* 开合状态字 / 模式 */
+.voc { font-family: var(--hud); font-size: 13px; font-weight: 600; color: var(--ink-3); }
+.voc.active { color: var(--amber); }
+.vmode { font-family: var(--hud); font-size: 13px; font-weight: 600; color: var(--cyan); }
+
+/* 进度条 */
+.vbar { height: 5px; border-radius: 4px; background: rgba(6, 11, 24, 0.8); border: 1px solid var(--stroke); overflow: hidden; min-width: 36px; }
+.vcard--compact .vbar { width: 46px; flex: none; }
+.vbar i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--cyan), var(--teal)); box-shadow: 0 0 8px -1px var(--teal); transition: width 0.4s ease; }
+
+/* 百分比卡（开合度）：上排信息 + 下方长条 */
+.vcard--pct { display: flex; flex-direction: column; gap: 7px; }
+.vcard--pct .vcard__top { display: flex; align-items: center; gap: 8px; }
+.vcard--pct .vcard__nm { flex: 1; }
+.vcard__pct { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--ink); }
+.vcard--pct .vbar { height: 6px; }
+
+/* 聚合卡：跨 2 列，图标 + 主信息 + 开关 */
+.vcard--agg { grid-column: 1 / -1; display: flex; align-items: center; gap: 11px; }
+.vagg__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.vagg__line { font-family: var(--hud); font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.vagg__line.muted { color: var(--ink-3); }
+.vagg__line b { font-weight: 700; }
+.vagg__sub { font-family: var(--mono); font-size: 10.5px; font-weight: 400; color: var(--ink-2); letter-spacing: 0.5px; }
+
+/* 颜色色块 */
+.swatch { width: 13px; height: 13px; border-radius: 4px; box-shadow: 0 0 8px currentColor; display: inline-block; flex: none; }
 
 /* ── 车辆动态 ── */
 .dyn { display: flex; flex-direction: column; gap: 14px; }

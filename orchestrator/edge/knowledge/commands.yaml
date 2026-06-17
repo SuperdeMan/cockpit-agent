@@ -189,6 +189,7 @@ objects:
     units: []
     online: offline_ok
     drive_restricted: false
+    drive_restricted_off: true
     require_confirm: false
     voice_forbidden: false
     projects:
@@ -1055,6 +1056,18 @@ objects:
     - switch
     - play
     - close
+    - query
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  battery:
+    operates:
     - query
     attrs: []
     modes: []

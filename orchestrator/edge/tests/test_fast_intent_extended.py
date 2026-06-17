@@ -319,3 +319,85 @@ class TestStructuredOutputFormat:
 
     def test_non_local_returns_none(self):
         assert classify_structured("讲个笑话") is None
+
+
+# ═══════════════════════════════════════════════════
+# 11. 回归：风速「档/级」字 + 驾驶模式本地路由
+# ═══════════════════════════════════════════════════
+
+class TestWindSpeedAndDrivingModeRouting:
+    def test_wind_speed_accepts_dang_and_ji(self):
+        # "档"(木) / "挡"(扌) / "级" 都应抽到档位值，不只认"挡"
+        for text in ("把空调风速调到3档", "把空调风速调到3挡", "风速调到3级"):
+            r = classify_structured(text)
+            assert r is not None, text
+            assert r["data"]["mode"] == "wind_speed"
+            assert r["data"]["value"] == "3", text
+
+    def test_driving_mode_set_routes_local(self):
+        # 驾驶模式应走端侧快路径，不再误上云
+        name = classify("切换到运动驾驶模式")["name"]
+        assert name == "driving_mode.set"
+        assert is_local(name)
+
+
+# ═══════════════════════════════════════════════════
+# 12. 车窗开度：相对调节 + 模糊小开度
+# ═══════════════════════════════════════════════════
+
+class TestWindowDegreePatterns:
+    def test_open_bigger_is_inc(self):
+        r = classify_structured("把车窗开大一点")
+        assert r is not None
+        assert r["data"]["object"] == "window"
+        assert r["data"]["operate"] == "inc"
+
+    def test_open_smaller_is_dec(self):
+        r = classify_structured("车窗开小一点")
+        assert r is not None
+        assert r["data"]["operate"] == "dec"
+
+    def test_close_a_bit_is_dec_not_full_close(self):
+        r = classify_structured("车窗关小一点")
+        assert r is not None
+        assert r["data"]["operate"] == "dec"
+
+    def test_crack_open_is_small_percent(self):
+        for text in ("车窗开条缝", "车窗开一点"):
+            r = classify_structured(text)
+            assert r is not None, text
+            assert r["data"]["operate"] == "set"
+            assert r["data"]["value"] == "15", text
+
+    def test_half_and_percent_still_work(self):
+        assert classify_structured("车窗开一半")["data"]["value"] == "50"
+        assert classify_structured("把车窗开到30%")["data"]["value"] == "30"
+
+    def test_relative_intents_are_local(self):
+        assert is_local(classify("把车窗开大一点")["name"])
+        assert is_local(classify("车窗开小一点")["name"])
+
+
+# ═══════════════════════════════════════════════════
+# 13. 电量查询：本地确定性应答，不误判为胎压
+# ═══════════════════════════════════════════════════
+
+class TestBatteryQuery:
+    def test_battery_query_classified_and_local(self):
+        for text in ("当前还剩多少电量", "电量还有多少", "还剩多少电"):
+            r = classify_structured(text)
+            assert r is not None, text
+            assert r["data"]["object"] == "battery", text
+            assert r["data"]["operate"] == "query"
+        assert is_local(classify("当前还剩多少电量")["name"])
+
+    def test_battery_not_misrouted_to_tire_pressure(self):
+        r = classify_structured("当前还剩多少电量")
+        assert r["data"]["object"] != "tire_pressure"
+
+    def test_remaining_phrase_not_split_but_conjunction_still_splits(self):
+        import fast_intent as fi
+        # "还有多少"是问量短语，不能被当连接词"还有"拆开（否则碎片上云乱答）
+        assert fi._SPLIT_MARKERS.split("电量还有多少") == ["电量还有多少"]
+        # 真正的连接词"还有"仍能拆分多意图
+        assert fi._SPLIT_MARKERS.split("开空调还有放音乐") == ["开空调", "放音乐"]

@@ -84,12 +84,116 @@ def test_sunroof_set_opens_not_fallback():
     assert "sunroof_set" not in v.state        # 不再落兜底键
 
 
+def test_window_set_records_percentage():
+    v = VAL()
+    v.execute({"domain": "car_control", "intent": "window.set",
+               "data": {"object": "window", "operate": "set", "value": 50}})
+    assert v.state["window"] == "50%"          # 记录开合度
+    assert "window_set" not in v.state          # 不再落兜底键
+
+
+def test_window_open_with_value_records_percentage():
+    v = VAL()
+    v.execute({"domain": "car_control", "intent": "window.open",
+               "data": {"object": "window", "operate": "open", "value": 30}})
+    assert v.state["window"] == "30%"
+
+
+def test_window_open_without_value_stays_fully_open():
+    v = VAL()
+    v.execute({"domain": "car_control", "intent": "window.open",
+               "data": {"object": "window", "operate": "open"}})
+    assert v.state["window"] == "open"          # 不带程度仍视为全开
+
+
 def test_media_play_sets_playing_not_fallback():
     v = VAL()
     v.execute({"domain": "media", "intent": "music.play",
                "data": {"object": "music", "operate": "play"}})
     assert v.state["media"] == "playing"
     assert "music_play" not in v.state         # 不再落兜底键
+
+
+def test_aircon_wind_speed_set_via_mode_not_rejected():
+    # fast_intent 本地路径用 mode=wind_speed（伪模式）；VAL 应接受而非判"暂不支持"，
+    # 且话术用"档"而非温度的"度"。
+    v = VAL()
+    ok, speech = v.execute({"domain": "setting", "intent": "control",
+                            "data": {"object": "aircon", "operate": "set",
+                                     "mode": "wind_speed", "value": "3"}})
+    assert ok is True
+    assert v.state["hvac_wind_speed"] == 3
+    assert "档" in speech and "度" not in speech
+
+
+def test_aircon_wind_speed_set_without_value_no_keyerror():
+    # set 无具体值不应抛 KeyError，回退到当前档
+    v = VAL()
+    ok, _ = v.execute({"domain": "setting", "intent": "control",
+                       "data": {"object": "aircon", "operate": "set", "mode": "wind_speed"}})
+    assert ok is True
+    assert v.state["hvac_wind_speed"] == 1
+
+
+def test_driving_mode_set_sport():
+    v = VAL()
+    ok, _ = v.execute({"domain": "setting", "intent": "control",
+                       "data": {"object": "driving_mode", "operate": "set", "mode": "sport"}})
+    assert ok is True
+    assert v.state["driving_mode"] == "sport"
+
+
+def test_window_inc_dec_steps_percentage():
+    v = VAL()
+    base = {"domain": "setting", "intent": "control"}
+    v.execute({**base, "data": {"object": "window", "operate": "inc"}})
+    assert v.state["window"] == "20%"            # 关→开大一点
+    v.execute({**base, "data": {"object": "window", "operate": "inc"}})
+    assert v.state["window"] == "40%"            # 再开大
+    v.execute({**base, "data": {"object": "window", "operate": "dec"}})
+    assert v.state["window"] == "20%"            # 关小一点
+
+
+def test_headlight_off_blocked_while_driving():
+    # 行驶中关大灯被安全门控拦截（夜间致盲），灯保持开
+    v = VAL()
+    v.set_env("speed_kmh", 60)
+    v.state["headlight"] = True
+    ok, _ = v.execute({"domain": "setting", "intent": "control",
+                       "data": {"object": "headlight", "operate": "close"}})
+    assert ok is False
+    assert v.state["headlight"] is True
+
+
+def test_headlight_on_allowed_while_driving():
+    # 行驶中开大灯是安全正向动作，应放行
+    v = VAL()
+    v.set_env("speed_kmh", 60)
+    ok, _ = v.execute({"domain": "setting", "intent": "control",
+                       "data": {"object": "headlight", "operate": "open"}})
+    assert ok is True
+    assert v.state["headlight"] is True
+
+
+def test_headlight_off_allowed_when_parked():
+    v = VAL()
+    v.state["headlight"] = True
+    ok, _ = v.execute({"domain": "setting", "intent": "control",
+                       "data": {"object": "headlight", "operate": "close"}})
+    assert ok is True
+    assert v.state["headlight"] is False
+
+
+def test_battery_query_reports_level_without_mutation():
+    # "还剩多少电量" → 本地回显真实电量，不改状态、不误答胎压
+    v = VAL()
+    before = dict(v.state)
+    ok, speech = v.execute({"domain": "query", "intent": "query",
+                            "data": {"object": "battery", "operate": "query"}})
+    assert ok is True
+    assert "72" in speech and "%" in speech
+    assert "胎压" not in speech
+    assert v.state == before
 
 
 def test_ambient_set_color_turns_light_on():
