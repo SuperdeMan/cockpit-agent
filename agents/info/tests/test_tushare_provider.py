@@ -33,6 +33,21 @@ _DAILY_OK = {
     },
 }
 
+_DAILY_WINDOW_OK = {
+    "code": 0,
+    "data": {
+        "fields": ["ts_code", "trade_date", "open", "high", "low", "close",
+                    "pre_close", "change", "pct_chg", "vol", "amount"],
+        # Tushare 日线默认倒序，Provider 必须输出正序给 K 线渲染。
+        "items": [
+            ["600519.SH", "20260620", "1875", "1900", "1870", "1888",
+             "1870", "18", "0.96", "12000", "222222"],
+            ["600519.SH", "20260619", "1860", "1880", "1850", "1870",
+             "1855", "15", "0.81", "11000", "211111"],
+        ],
+    },
+}
+
 _STOCK_BASIC_OK = {
     "code": 0,
     "data": {
@@ -76,3 +91,14 @@ def test_index_maps_chinese_name():
     p = _provider({"daily": _DAILY_OK, "stock_basic": _STOCK_BASIC_OK})
     q = asyncio.run(p.index("上证"))
     assert q.symbol == "000001.SH"  # 上证指数
+
+
+def test_history_parses_ohlc_in_chronological_order():
+    p = _provider({"daily": _DAILY_WINDOW_OK, "stock_basic": _STOCK_BASIC_OK})
+
+    candles = asyncio.run(p.history("600519.SH", limit=2))
+
+    assert [(c.date, c.open, c.high, c.low, c.close, c.volume) for c in candles] == [
+        ("20260619", "1860", "1880", "1850", "1870", "11000"),
+        ("20260620", "1875", "1900", "1870", "1888", "12000"),
+    ]

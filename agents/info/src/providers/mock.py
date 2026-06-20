@@ -8,7 +8,7 @@ from .base import (
     ForecastDay, WeatherAlert, LifeIndex, AirQuality, WeatherOverview,
     SearchProvider, SearchResult,
     NewsProvider, NewsItem,
-    StockProvider, Quote,
+    StockProvider, Quote, StockCandle,
 )
 
 
@@ -109,6 +109,22 @@ class MockStockProvider(StockProvider):
             price="15.88", change="+0.32", change_pct="+2.06",
             market_time="mock",
         )
+
+    async def history(self, symbol: str, limit: int = 20,
+                      meta: dict | None = None) -> list[StockCandle]:
+        count = max(2, min(limit, 20))
+        start = _dt.date.today() - _dt.timedelta(days=count - 1)
+        candles: list[StockCandle] = []
+        for index in range(count):
+            open_price = 15.20 + index * 0.03
+            close_price = open_price + (0.18 if index % 3 else -0.11)
+            candles.append(StockCandle(
+                date=str(start + _dt.timedelta(days=index)),
+                open=f"{open_price:.2f}", high=f"{max(open_price, close_price) + 0.16:.2f}",
+                low=f"{min(open_price, close_price) - 0.13:.2f}", close=f"{close_price:.2f}",
+                volume=str(8000 + index * 240),
+            ))
+        return candles
 
     async def index(self, name: str = "上证",
                     meta: dict | None = None) -> Quote:

@@ -31,6 +31,15 @@ _QUOTE_OK = {
     }
 }
 
+_HISTORY_OK = {
+    "Time Series (Daily)": {
+        "2026-06-20": {"1. open": "100", "2. high": "106", "3. low": "98",
+                       "4. close": "105", "5. volume": "2000"},
+        "2026-06-19": {"1. open": "101", "2. high": "103", "3. low": "99",
+                       "4. close": "100", "5. volume": "1800"},
+    }
+}
+
 
 def test_quote_parses():
     p = _provider({"/query": _QUOTE_OK})
@@ -65,3 +74,13 @@ def test_index_maps_name():
     p = _provider({"/query": _QUOTE_OK})
     q = asyncio.run(p.index("上证"))
     assert q.symbol == "600519.SH"  # 上证→000001.SS, 但 mock 直接返回
+
+
+def test_history_parses_daily_series_in_chronological_order():
+    p = _provider({"/query": _HISTORY_OK})
+
+    candles = asyncio.run(p.history("AAPL", limit=2))
+
+    assert [(c.date, c.close) for c in candles] == [
+        ("2026-06-19", "100"), ("2026-06-20", "105"),
+    ]

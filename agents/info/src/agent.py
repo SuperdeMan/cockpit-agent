@@ -304,11 +304,19 @@ class InfoAgent(BaseAgent):
         if not symbol:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪只股票或指数？",
                                follow_up="请告诉我股票名称或代码", missing_slots=["symbol"])
+        stock_provider = self.stock
         try:
             q = await self.stock.quote(symbol, meta=meta)
         except ProviderError as e:
             logger.warning("stock quote failed, fallback to mock: %s", e)
             q = await self._fallback_stock.quote(symbol, meta=meta)
+            stock_provider = self._fallback_stock
+        try:
+            candles = await stock_provider.history(symbol, limit=20, meta=meta)
+        except ProviderError as e:
+            # 报价仍然有价值；历史失败时不混用 mock K 线误导用户。
+            logger.warning("stock history unavailable, leaving chart empty: %s", e)
+            candles = []
 
         parts = [f"{q.name or symbol}"]
         if q.price:
@@ -320,5 +328,10 @@ class InfoAgent(BaseAgent):
 
         card = {"type": "stock_quote", "name": q.name, "symbol": q.symbol,
                 "price": q.price, "change": q.change, "change_pct": q.change_pct,
-                "market_time": q.market_time}
+                "market_time": q.market_time,
+                "candles": [
+                    {"date": candle.date, "open": candle.open, "high": candle.high,
+                     "low": candle.low, "close": candle.close, "volume": candle.volume}
+                    for candle in candles
+                ]}
         return AgentResult(speech=speech, ui_card=card, data={"quote": card})

@@ -139,6 +139,7 @@ def test_stock_returns_quote():
     assert res.status == "ok"
     assert res.ui_card and res.ui_card["type"] == "stock_quote"
     assert res.ui_card["price"]
+    assert len(res.ui_card["candles"]) >= 2
 
 
 def test_stock_missing_symbol_asks():

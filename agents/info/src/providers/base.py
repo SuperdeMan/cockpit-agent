@@ -174,11 +174,28 @@ class Quote:
     market_time: str = ""       # 行情时间
 
 
+@dataclass
+class StockCandle:
+    """一根日 K 线。数值保留字符串，避免服务端破坏厂商精度。"""
+    date: str = ""
+    open: str = ""
+    high: str = ""
+    low: str = ""
+    close: str = ""
+    volume: str = ""
+
+
 class StockProvider(ABC):
     @abstractmethod
     async def quote(self, symbol: str,
                     meta: dict | None = None) -> Quote:
         """查询股票/指数行情。symbol 可以是代码或名称。"""
+        ...
+
+    @abstractmethod
+    async def history(self, symbol: str, limit: int = 20,
+                      meta: dict | None = None) -> list[StockCandle]:
+        """查询近期日线，按日期从旧到新排列。"""
         ...
 
     @abstractmethod
