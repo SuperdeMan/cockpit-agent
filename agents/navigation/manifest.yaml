@@ -4,7 +4,7 @@ display_name: 导航助手
 category: core
 trust_level: first_party
 deployment: cloud
-latency_budget_ms: 3000
+latency_budget_ms: 5000
 fallback: chitchat
 
 capabilities:

@@ -362,7 +362,7 @@ class InfoAgent(BaseAgent):
             err_msg = str(e)
             logger.warning("stock quote failed: %s", e)
             # 区分"查不到代码"（未上市/名称不对）和"查询异常"（网络/服务错误）
-            if "no unambiguous" in err_msg or "no daily data" in err_msg:
+            if any(k in err_msg for k in ("no unambiguous", "no daily data", "invalid code")):
                 return AgentResult(
                     speech=f"没有找到「{symbol}」对应的 A 股股票。它可能未在国内上市，或名称不准确。"
                            f"您可以试试用股票代码查询，比如「600519 的股价」。",
