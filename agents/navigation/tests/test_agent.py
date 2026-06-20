@@ -123,3 +123,21 @@ def test_search_poi_prefers_validated_landmark_over_misparsed_keyword_result():
 def test_visual_landmark_detection_does_not_promote_ordinary_navigation():
     assert NavigationAgent._is_visual_landmark_description("导航到上海船型的建筑物")
     assert not NavigationAgent._is_visual_landmark_description("去深圳万象城")
+
+
+def test_landmark_resolution_passes_original_utterance_to_model():
+    """视觉比喻的细节不能被拼接提示词改写后丢失。"""
+    agent = NavigationAgent()
+    seen = {}
+
+    async def fake_complete(messages, **kwargs):
+        seen["messages"] = messages
+        return '["中国华润大厦"]'
+
+    agent.llm.complete = fake_complete
+    raw = "去深圳笋一样的建筑物"
+
+    candidates = asyncio.run(agent._landmark_candidates(raw))
+
+    assert candidates == ["中国华润大厦"]
+    assert seen["messages"][-1] == {"role": "user", "content": raw}

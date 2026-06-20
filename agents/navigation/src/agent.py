@@ -170,16 +170,17 @@ class NavigationAgent(BaseAgent):
 
     async def _landmark_candidates(self, description: str) -> list[str]:
         """把视觉化地标描述转换为少量正式 POI 候选，不接受模型直接导航。"""
-        prompt = (
-            "把用户的导航目的地描述转换为中国地图可检索的正式 POI 名称。\n"
-            f"用户描述：{description}\n\n"
-            "仅当你对真实地点有把握时给出候选；最多三个；不要解释、不要编造。"
-            "严格只输出 JSON 字符串数组，例如：[\"深圳华润大厦\"]。"
-        )
         try:
             raw = await self.llm.complete([
-                {"role": "system", "content": "你是中国地标名称归一化器，只输出 JSON 数组。"},
-                {"role": "user", "content": prompt},
+                {
+                    "role": "system",
+                    "content": (
+                        "你是车载导航语义解析器。根据用户原话，列出 1-3 个最可能的"
+                        "中国 POI/地标正式名称，用于地图 POI 搜索。只输出 JSON 字符串数组，"
+                        "不要解释。若无法判断，输出 []。"
+                    ),
+                },
+                {"role": "user", "content": description},
             ], temperature=0.0, max_tokens=120)
         except Exception as e:
             logger.warning("landmark resolution unavailable: %s", e)
