@@ -227,6 +227,35 @@ class InfoAgent(BaseAgent):
 
     # ── 联网搜索 ──────────────────────────────────────────────
 
+    async def _summarize_sources(self, subject: str, source_kind: str,
+                                 source_lines: list[str], fallback_points: list[str]) -> str:
+        """把新鲜来源压缩成可播报结论，模型失效时仍不退化为标题清单。"""
+        prompt = (
+            f"用户关心：{subject}\n\n"
+            f"以下是刚查询到的{source_kind}资料：\n" + "\n".join(source_lines[:5]) + "\n\n"
+            "请只依据这些资料，用中文给出结论式摘要。要求：\n"
+            "1. 先说最重要的结论或进展，不要说‘根据搜索结果’\n"
+            "2. 不罗列标题、链接、来源，也不要用编号或项目符号\n"
+            "3. 适合车内语音播报，最多四句；资料不足时明确说明不确定性\n"
+            "4. 不补充资料中没有的事实、数字、时间或因果关系"
+        )
+        try:
+            answer = await self.llm.complete([
+                {"role": "system", "content": "你是严谨的车载信息编辑，只能归纳提供的资料。"},
+                {"role": "user", "content": prompt},
+            ], temperature=0.2, max_tokens=260)
+            answer = (answer or "").strip()
+            if answer and not answer.startswith("[mock]"):
+                return answer
+        except Exception as e:
+            logger.warning("%s summary synthesis failed: %s", source_kind, e)
+
+        points = [point.strip().rstrip("。") for point in fallback_points if point and point.strip()]
+        lead = f"关于「{subject}」，" if subject else "当前热点主要是，"
+        if points:
+            return lead + "；".join(points[:2]) + "。"
+        return lead + "暂时没有足够资料形成可靠摘要。"
+
     async def _search(self, intent, ctx, meta) -> AgentResult:
         query = (intent.slots.get("query") or "").strip()
         if not query:
@@ -242,34 +271,14 @@ class InfoAgent(BaseAgent):
         if not results:
             return AgentResult(speech=f"没有找到关于「{query}」的搜索结果。")
 
-        # 用 LLM 从搜索结果合成直接回答（不是罗列链接）
-        snippets = "\n".join(
-            f"- {r.title}（{r.source}）：{r.snippet}" for r in results[:5]
+        speech = await self._summarize_sources(
+            query, "联网搜索", [f"{r.title}（{r.source}）：{r.snippet}" for r in results],
+            [r.snippet for r in results],
         )
-        synth_prompt = (
-            f"用户问：{query}\n\n"
-            f"以下是联网搜索到的参考资料：\n{snippets}\n\n"
-            "请根据以上资料，直接回答用户的问题。要求：\n"
-            "1. 给出直接的答案/结论，不要说'根据搜索结果'之类的废话\n"
-            "2. 简洁口语化，适合语音播报，不超过 5 句话\n"
-            "3. 如果是赛程/比分/行情等实时数据，直接列出关键数字\n"
-            "4. 如果资料不足以回答，诚实说明"
-        )
-        try:
-            speech = await self.llm.complete([
-                {"role": "system", "content": "你是一个信息助手，根据搜索结果直接回答用户问题。"},
-                {"role": "user", "content": synth_prompt},
-            ], temperature=0.3, max_tokens=300)
-        except Exception as e:
-            logger.warning("search synthesis LLM failed, using raw results: %s", e)
-            parts = [f"为您搜索到{len(results)}条结果："]
-            for i, r in enumerate(results[:3], 1):
-                parts.append(f"{i}. {r.title}——{r.snippet[:50]}")
-            speech = " ".join(parts)
 
         items = [{"title": r.title, "url": r.url, "snippet": r.snippet,
                   "source": r.source} for r in results]
-        card = {"type": "search_list", "query": query, "items": items}
+        card = {"type": "search_list", "query": query, "summary": speech, "items": items}
         return AgentResult(speech=speech, ui_card=card, data={"items": items})
 
     # ── 新闻 ─────────────────────────────────────────────────
@@ -286,15 +295,15 @@ class InfoAgent(BaseAgent):
         if not items_list:
             return AgentResult(speech="暂无新闻资讯。")
 
-        label = f"关于「{topic}」的" if topic else "今日"
-        parts = [f"{label}热点新闻："]
-        for i, n in enumerate(items_list[:3], 1):
-            parts.append(f"{i}. {n.title}")
-        speech = " ".join(parts)
+        subject = topic or "今日热点"
+        speech = await self._summarize_sources(
+            subject, "新闻", [f"{n.title}（{n.source}）：{n.summary}" for n in items_list],
+            [n.summary for n in items_list],
+        )
 
         items = [{"title": n.title, "summary": n.summary, "source": n.source,
                   "publish_time": n.publish_time} for n in items_list]
-        card = {"type": "news_list", "topic": topic, "items": items}
+        card = {"type": "news_list", "topic": topic, "summary": speech, "items": items}
         return AgentResult(speech=speech, ui_card=card, data={"items": items})
 
     # ── 股票 ─────────────────────────────────────────────────
