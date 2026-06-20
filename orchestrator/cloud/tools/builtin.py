@@ -124,6 +124,17 @@ def datetime_parse(slots: dict, now_fn=None) -> tuple[dict, str]:
     if now.tzinfo is None:
         now = now.replace(tzinfo=_shanghai_tz())
 
+    normalized = re.sub(r"\s+", "", text)
+    if normalized in {"今天", "今日", "本日", "今天是几号", "今天几号", "今日几号", "今天日期", "今日日期",
+                      "今天星期几", "今天周几", "今日星期几", "今日周几"}:
+        weekday = "一二三四五六日"[now.weekday()]
+        date = now.date()
+        return (
+            {"date": date.isoformat(), "weekday": f"星期{weekday}",
+             "timezone": str(now.tzinfo)},
+            f"今天是{date.year}年{date.month}月{date.day}日，星期{weekday}。",
+        )
+
     try:
         parsed = datetime.fromisoformat(text)
         if parsed.tzinfo is None:

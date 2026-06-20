@@ -55,3 +55,10 @@ def test_search_empty_returns_empty():
     p = _provider({"/v1/search": {"code": 0, "data": {"results": []}}})
     res = asyncio.run(p.search("不存在的内容"))
     assert res == []
+
+
+def test_search_allows_a_single_long_lived_request_for_live_results():
+    p = AnySearchProvider(key="test-key")
+
+    assert p._http.max_retries == 0
+    assert p._http._client.timeout.read == 10.0

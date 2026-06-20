@@ -1,5 +1,6 @@
 """TushareStockProvider 单测：mock 掉底层 HTTP，喂 Tushare 黄金响应。不发真实网络。"""
 import asyncio
+from types import SimpleNamespace
 import pytest
 
 from agents._sdk.http import ProviderError
@@ -8,8 +9,10 @@ from agents.info.src.providers.stock_tushare import TushareStockProvider
 
 def _provider(responses: dict):
     p = TushareStockProvider(token="test-token")
+    p.requests = []
 
     async def fake_post_json(url, json_body=None, op="post", headers=None, meta=None):
+        p.requests.append(json_body or {})
         api_name = (json_body or {}).get("api_name", "")
         for key, val in responses.items():
             if key == api_name:
@@ -73,6 +76,29 @@ def test_quote_resolves_short_code():
     p = _provider({"daily": _DAILY_OK, "stock_basic": _STOCK_BASIC_OK})
     q = asyncio.run(p.quote("600519"))
     assert q.symbol == "600519.SH"  # 6 开头 → SH
+
+
+def test_quote_resolves_chinese_stock_name_before_requesting_daily_data():
+    p = _provider({"daily": _DAILY_OK, "stock_basic": _STOCK_BASIC_OK})
+    lookup_requests = []
+
+    async def fake_lookup(url, params=None, op="get", headers=None, meta=None):
+        lookup_requests.append({"url": url, "params": params, "op": op})
+        return {
+            "QuotationCodeTable": {
+                "Data": [{"Code": "600519", "Name": "贵州茅台", "MktNum": "1"}],
+            },
+        }
+
+    p._lookup_http = SimpleNamespace(get_json=fake_lookup)
+
+    q = asyncio.run(p.quote("贵州茅台"))
+
+    assert q.symbol == "600519.SH"
+    daily_request = next(r for r in p.requests if r["api_name"] == "daily")
+    assert lookup_requests[0]["params"]["input"] == "贵州茅台"
+    assert not [r for r in p.requests if r["api_name"] == "stock_basic"]
+    assert daily_request["params"]["ts_code"] == "600519.SH"
 
 
 def test_quote_error_raises():

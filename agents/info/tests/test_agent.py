@@ -1,8 +1,11 @@
 """info 契约测试（黄金用例）。不起 gRPC server，直接驱动 handle（走 mock provider）。"""
 import asyncio
+from datetime import datetime
 
+from agents._sdk.http import ProviderError
 from agents._sdk.testing import run_handle, make_context, assert_manifest_consistent
 from agents.info.src.agent import InfoAgent
+from agents.info.src.providers.base import SearchResult
 
 
 async def _llm_unavailable(*args, **kwargs):
@@ -14,6 +17,28 @@ async def _llm_numbered_answer(*args, **kwargs):
 
 
 # ── 天气 ──────────────────────────────────────────────────
+
+class _SearchSpy:
+    def __init__(self):
+        self.queries = []
+
+    async def search(self, query, **kwargs):
+        self.queries.append(query)
+        return [SearchResult(title="赛程", snippet="6月20日有比赛", source="fixture")]
+
+
+class _UnavailableStockProvider:
+    async def quote(self, *args, **kwargs):
+        raise ProviderError("upstream unavailable")
+
+    async def history(self, *args, **kwargs):
+        raise AssertionError("history must not run after quote failure")
+
+
+class _UnavailableSearchProvider:
+    async def search(self, *args, **kwargs):
+        raise ProviderError("upstream unavailable")
+
 
 def test_weather_with_city_returns_card():
     res = asyncio.run(run_handle(
@@ -146,6 +171,53 @@ def test_search_missing_query_asks():
 
 # ── 新闻 ─────────────────────────────────────────────────
 
+def test_tonight_schedule_search_includes_current_date():
+    agent = InfoAgent()
+    search = _SearchSpy()
+    agent.search = search
+    agent.llm.complete = _llm_numbered_answer
+    query = "今晚世界杯有哪一些赛程"
+
+    res = asyncio.run(run_handle(
+        agent, "info.search", slots={"query": query}, raw_text=query))
+
+    today = datetime.now().strftime("%Y年%m月%d日")
+    assert search.queries == [f"{query} {today} 当日赛程"]
+    assert "第一条关键" in res.speech
+
+
+def test_live_search_failure_does_not_fall_back_to_fabricated_results():
+    agent = InfoAgent()
+    agent.search = _UnavailableSearchProvider()
+
+    res = asyncio.run(run_handle(
+        agent, "info.search", slots={"query": "今晚世界杯赛程"}, raw_text="今晚世界杯赛程"))
+
+    assert res.status == "failed"
+    assert res.ui_card is None
+    assert "联网检索暂时不可用" in res.speech
+
+
+def test_tonight_schedule_summary_receives_current_date_context():
+    agent = InfoAgent()
+    agent.search = _SearchSpy()
+    seen = {}
+
+    async def summary_llm(messages, **kwargs):
+        seen["prompt"] = messages[-1]["content"]
+        return "今晚有比赛。"
+
+    agent.llm.complete = summary_llm
+    query = "今晚世界杯赛程"
+    asyncio.run(run_handle(
+        agent, "info.search", slots={"query": query}, raw_text=query))
+
+    today = datetime.now().strftime("%Y年%m月%d日")
+    assert today in seen["prompt"]
+    assert "实时赛程" in seen["prompt"]
+    assert "按时间列出" in seen["prompt"]
+
+
 def test_news_returns_headlines():
     res = asyncio.run(run_handle(
         InfoAgent(), "info.news", slots={}, raw_text="今天有什么新闻"))
@@ -191,6 +263,18 @@ def test_stock_missing_symbol_asks():
 
 
 # ── 未知意图 ─────────────────────────────────────────────
+
+def test_stock_provider_failure_does_not_render_a_mock_kline():
+    agent = InfoAgent()
+    agent.stock = _UnavailableStockProvider()
+
+    res = asyncio.run(run_handle(
+        agent, "info.stock", slots={"symbol": "贵州茅台"}, raw_text="贵州茅台的股票"))
+
+    assert res.status == "failed"
+    assert res.ui_card is None
+    assert "暂时无法获取" in res.speech
+
 
 def test_unknown_intent_failed():
     res = asyncio.run(run_handle(

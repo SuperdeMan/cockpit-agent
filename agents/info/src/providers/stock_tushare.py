@@ -17,6 +17,7 @@ from .base import StockProvider, Quote, StockCandle
 logger = logging.getLogger("agent.info.stock_tushare")
 
 _API_URL = "https://api.tushare.pro"
+_EASTMONEY_SUGGEST_URL = "https://searchapi.eastmoney.com/api/suggest/get"
 _DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
 
 
@@ -32,6 +33,10 @@ class TushareStockProvider(StockProvider):
         self._url = api_url
         self._http = AsyncHttpClient(vendor="tushare", service="info",
                                      timeout_s=5.0)
+        self._lookup_http = AsyncHttpClient(vendor="eastmoney", service="info",
+                                            timeout_s=5.0)
+        self._name_to_code: dict[str, str] = {}
+        self._code_to_name: dict[str, str] = {}
 
     async def _post(self, api_name: str, params: dict,
                     fields: str = "", op: str = "tushare",
@@ -65,6 +70,8 @@ class TushareStockProvider(StockProvider):
 
     async def _get_stock_name(self, ts_code: str, meta) -> str:
         """通过 stock_basic 获取股票名称。"""
+        if ts_code in self._code_to_name:
+            return self._code_to_name[ts_code]
         try:
             data = await self._post("stock_basic",
                                     {"ts_code": ts_code},
@@ -73,13 +80,17 @@ class TushareStockProvider(StockProvider):
             items = (data.get("data") or {}).get("items") or []
             if items:
                 # fields: [ts_code, name]
-                return items[0][1] if len(items[0]) > 1 else ts_code
+                name = _s(items[0][1]) if len(items[0]) > 1 else ts_code
+                if name:
+                    self._code_to_name[ts_code] = name
+                    self._name_to_code.setdefault(name, ts_code)
+                return name or ts_code
         except Exception:
             pass
         return ts_code
 
-    def _resolve_ts_code(self, symbol: str) -> str:
-        """把中文名/简称映射到 ts_code。简单查表 + 格式补全。"""
+    def _normalize_ts_code(self, symbol: str) -> str:
+        """把指数名/证券代码归一为 ts_code；中文名称交给异步查表。"""
         # 常见指数映射
         _INDEX_MAP = {
             "上证": "000001.SH", "上证指数": "000001.SH",
@@ -92,10 +103,50 @@ class TushareStockProvider(StockProvider):
         # 已经是标准格式（如 000001.SZ / 600519.SH）
         if "." in symbol:
             return symbol
-        # 6 开头 → .SH，其他 → .SZ
-        if symbol.startswith("6"):
+        if symbol.isdigit() and len(symbol) == 6 and symbol.startswith("6"):
             return f"{symbol}.SH"
-        return f"{symbol}.SZ"
+        if symbol.isdigit() and len(symbol) == 6:
+            return f"{symbol}.SZ"
+        return ""
+
+    async def _resolve_ts_code(self, symbol: str, meta) -> str:
+        """把中文股票名解析成真实 ts_code，并在进程内缓存映射。"""
+        symbol = (symbol or "").strip()
+        direct = self._normalize_ts_code(symbol)
+        if direct:
+            return direct
+        if symbol in self._name_to_code:
+            return self._name_to_code[symbol]
+
+        data = await self._lookup_http.get_json(
+            _EASTMONEY_SUGGEST_URL,
+            params={"input": symbol, "type": "14", "count": "10"},
+            op="stock_lookup", meta=meta,
+        )
+        items = ((data.get("QuotationCodeTable") or {}).get("Data") or [])
+        matches = [item for item in items if _s(item.get("Name")) == symbol]
+        if not matches:
+            matches = [
+                item for item in items
+                if symbol in _s(item.get("Name")) and _s(item.get("Classify")) in ("", "AStock")
+            ]
+        if len(matches) != 1:
+            raise ProviderError(f"stock lookup: no unambiguous code found for {symbol}")
+
+        item = matches[0]
+        code = _s(item.get("Code"))
+        if not code.isdigit() or len(code) != 6:
+            raise ProviderError(f"stock lookup: invalid code for {symbol}")
+        if code.startswith(("6", "5", "9")):
+            ts_code = f"{code}.SH"
+        elif code.startswith(("4", "8")):
+            ts_code = f"{code}.BJ"
+        else:
+            ts_code = f"{code}.SZ"
+        name = _s(item.get("Name")) or symbol
+        self._name_to_code[symbol] = ts_code
+        self._code_to_name[ts_code] = name
+        return ts_code
 
     @staticmethod
     def _candle_from_row(row: list) -> StockCandle:
@@ -112,7 +163,7 @@ class TushareStockProvider(StockProvider):
     async def history(self, symbol: str, limit: int = 20,
                       meta: dict | None = None) -> list[StockCandle]:
         """拉取一个有限交易日窗口，规整为前端 K 线所需的正序 OHLC 数据。"""
-        ts_code = self._resolve_ts_code(symbol)
+        ts_code = await self._resolve_ts_code(symbol, meta)
         end_date = self._latest_trade_date()
         start_date = (datetime.strptime(end_date, "%Y%m%d")
                       - timedelta(days=max(14, min(limit, 60) * 3))).strftime("%Y%m%d")
@@ -129,7 +180,7 @@ class TushareStockProvider(StockProvider):
 
     async def quote(self, symbol: str,
                     meta: dict | None = None) -> Quote:
-        ts_code = self._resolve_ts_code(symbol)
+        ts_code = await self._resolve_ts_code(symbol, meta)
         trade_date = self._latest_trade_date()
         # 先取日线数据，再取公司名
         data = await self._post(

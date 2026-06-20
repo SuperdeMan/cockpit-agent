@@ -54,6 +54,30 @@ def test_datetime_parse_normalizes_relative_chinese_time():
     assert _data(response)["iso8601"] == "2026-06-15T19:30:00+08:00"
 
 
+def test_datetime_parse_answers_a_date_only_question():
+    tz = timezone(timedelta(hours=8), name="Asia/Shanghai")
+    registry = ToolRegistry(
+        now_fn=lambda: datetime(2026, 6, 20, 10, 0, tzinfo=tz))
+
+    response = _call(registry, "datetime.parse", {"text": "今天是几号"})
+
+    assert response.status == agent_pb2.ExecuteResponse.OK
+    assert _data(response)["date"] == "2026-06-20"
+    assert "2026年6月20日" in response.speech
+    assert "星期六" in response.speech
+
+
+def test_datetime_parse_accepts_a_planner_reduced_today_slot():
+    tz = timezone(timedelta(hours=8), name="Asia/Shanghai")
+    registry = ToolRegistry(
+        now_fn=lambda: datetime(2026, 6, 20, 10, 0, tzinfo=tz))
+
+    response = _call(registry, "datetime.parse", {"text": "今天"})
+
+    assert response.status == agent_pb2.ExecuteResponse.OK
+    assert _data(response)["date"] == "2026-06-20"
+
+
 def test_tool_manifest_is_discoverable_and_has_no_vehicle_permission():
     manifest = ToolRegistry().manifest
 

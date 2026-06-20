@@ -33,7 +33,10 @@ class AnySearchProvider(SearchProvider):
             raise ValueError("ANYSEARCH_API_KEY required for AnySearchProvider")
         self._key = key
         self._base = (base_url or _BASE).rstrip("/")
-        self._http = AsyncHttpClient(vendor="anysearch", service="info")
+        # 实时赛程等检索常在 3 秒后才返回；保留一条 10 秒请求，避免 3 秒超时后
+        # 立即重发相同查询并把短暂网络波动伪装成“没有结果”。
+        self._http = AsyncHttpClient(vendor="anysearch", service="info",
+                                     timeout_s=10.0, max_retries=0)
 
     async def search(self, query: str, limit: int = 5,
                      meta: dict | None = None) -> list[SearchResult]:
