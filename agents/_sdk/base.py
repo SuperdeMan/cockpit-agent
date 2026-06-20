@@ -1,14 +1,26 @@
 """BaseAgent: 业务 Agent 的基类。子类只需实现 handle()。
 
 Phase 1：注入 AgentClient（跨 Agent 协作）。
+护栏跨进程修复：server.Execute 在调 handle 前把 request.meta 中的
+call_depth/call_stack 写入 _current_meta contextvar，agents 属性读取
+它构造正确深度的 AgentClient，使 MAX_DEPTH/环检测跨进程生效。
 """
 from __future__ import annotations
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 from .clients import LLMClient, MemoryClient
 from .manifest import load_manifest
 from .result import AgentResult
+
+# server.Execute 在调 handle 前设置，agents 属性读取——跨进程 depth/stack 传递
+_current_meta: ContextVar[dict] = ContextVar("_current_meta", default=None)
+
+
+def _set_current_meta(meta: dict | None) -> None:
+    """server.py 调用：在 handle() 前设置当前请求的 meta。"""
+    _current_meta.set(meta)
 
 
 @dataclass
@@ -48,9 +60,16 @@ class BaseAgent(ABC):
 
     @property
     def agents(self):
-        """跨 Agent 协作客户端。Agent 内可通过 self.agents.call(...) 调用其他 Agent。"""
+        """跨 Agent 协作客户端。从当前请求 meta 读取 call_depth/call_stack，
+        使 MAX_DEPTH/环检测跨进程生效。"""
+        from .agent_client import AgentClient
+        meta = _current_meta.get()
+        if meta is not None:
+            depth = int(meta.get("call_depth", 0))
+            stack = [s for s in meta.get("call_stack", "").split(",") if s]
+            return AgentClient(caller=self, call_depth=depth, call_stack=stack)
+        # 无 meta（本地测试 / 非 gRPC 调用）→ 默认深度 0
         if self._agents is None:
-            from .agent_client import AgentClient
             self._agents = AgentClient(caller=self)
         return self._agents
 

@@ -1,6 +1,6 @@
 # info Agent 能力扩展：联网搜索 / 新闻 / 股票（只读聚合）+ 票务独立
 
-- **状态**：草案（2026-06-20）。`info.weather` 已落地并真实凭证冒烟通过；本文规划其余 info.* 与票务边界。
+- **状态**：P0+P1 已落地（2026-06-20）。`info.weather` + `info.forecast` + `info.alerts` + `info.indices` + `info.search`（Bing）+ `info.news`（NewsAPI）+ `info.stock`（Alpha Vantage）已落地；端侧意图已收敛（stock→info.stock、新闻消歧、搜索/预报 pattern）；本文规划的票务边界仍待实施。
 - **交付对象**：后续开发者 / Agent，按 §5 分阶段落地。每个能力接 provider 时**遵循** [`docs/guides/provider-integration.md`](../guides/provider-integration.md)。
 - **关联代码**：`agents/info/`（现有范本）、`orchestrator/edge/fast_intent.py`、`orchestrator/cloud/planning.py:119`（动态 catalog）、`payment-gateway/`、`proto/cockpit/payment/v1/payment.proto`
 - **关联文档**：`docs/architecture/detailed/ws6-real-capabilities-and-agent-collaboration.md`、`docs/conventions.md`、`CLAUDE.md` §5

@@ -22,6 +22,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("sdk.agent_client")
 
+# 可观测：护栏拒绝时发审计 span（复用 observability/events.py）
+try:
+    from observability.events import get_emitter
+except Exception:  # pragma: no cover
+    get_emitter = None
+
 MAX_DEPTH = 2
 
 
@@ -34,6 +40,26 @@ class AgentClient:
         self._depth = call_depth
         self._stack = call_stack or []
         self._timeout = timeout
+        self._emitter = get_emitter("agent_client") if get_emitter else None
+
+    async def _emit_guardrail_event(self, reason: str, target: str,
+                                    meta: dict | None = None) -> None:
+        """护栏拒绝时发审计 span，进 collector→Dashboard trace 视图。"""
+        if not self._emitter:
+            return
+        try:
+            await self._emitter.emit_span(
+                trace_id=(meta or {}).get("trace_id", ""),
+                node="agent_client.guardrail",
+                status="error",
+                duration_ms=0,
+                attrs={"reason": reason, "target": target,
+                       "caller": self._caller.manifest.agent_id,
+                       "depth": self._depth, "stack": ",".join(self._stack)},
+                parent_id=(meta or {}).get("span_id", ""),
+            )
+        except Exception as e:  # pragma: no cover
+            logger.debug("emit guardrail span failed: %s", e)
 
     async def call(self, agent_id: str, intent: str, slots: dict,
                    ctx=None, timeout: float = None) -> AgentResult:
@@ -53,6 +79,7 @@ class AgentClient:
         if self._depth >= MAX_DEPTH:
             logger.warning("Call depth exceeded (%d >= %d), rejecting call to %s",
                            self._depth, MAX_DEPTH, agent_id)
+            await self._emit_guardrail_event("depth_exceeded", agent_id)
             return AgentResult(status="failed", speech="调用深度超限，无法完成协作。")
 
         # 护栏 2：环检测
@@ -60,6 +87,7 @@ class AgentClient:
         if agent_id in self._stack or agent_id == caller_id:
             logger.warning("Circular call detected: %s -> %s (stack: %s)",
                            caller_id, agent_id, self._stack)
+            await self._emit_guardrail_event("circular_call", agent_id)
             return AgentResult(status="failed", speech="检测到循环调用，已中止。")
 
         # 解析目标 endpoint（通过环境变量或默认）

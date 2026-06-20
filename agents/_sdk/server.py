@@ -11,7 +11,7 @@ from google.protobuf import struct_pb2
 from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
 from cockpit.common.v1 import common_pb2
 
-from .base import BaseAgent, Context, IntentView
+from .base import BaseAgent, Context, IntentView, _set_current_meta
 from .clients import RegistryClient
 from .result import AgentResult
 
@@ -71,9 +71,11 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
         return agent_pb2.HealthResponse(status=agent_pb2.HealthResponse.SERVING)
 
     async def Execute(self, request, context):
+        meta = dict(request.meta)
+        _set_current_meta(meta)  # 护栏：使 AgentClient 读取跨进程 depth/stack
         try:
             res = await self.agent.handle(
-                _intent_view(request), _context(request, self.agent.memory), dict(request.meta))
+                _intent_view(request), _context(request, self.agent.memory), meta)
             return _result_to_proto(res)
         except Exception as e:
             return agent_pb2.ExecuteResponse(
@@ -84,8 +86,10 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
 
     async def ExecuteStream(self, request, context):
         iv, ctx = _intent_view(request), _context(request, self.agent.memory)
+        meta = dict(request.meta)
+        _set_current_meta(meta)  # 护栏：使 AgentClient 读取跨进程 depth/stack
         try:
-            async for kind, payload in self.agent.handle_stream(iv, ctx, dict(request.meta)):
+            async for kind, payload in self.agent.handle_stream(iv, ctx, meta):
                 if kind == "speech":
                     yield agent_pb2.ExecuteEvent(speech_delta=payload)
                 elif kind == "action":

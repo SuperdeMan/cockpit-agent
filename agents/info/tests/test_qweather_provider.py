@@ -123,3 +123,94 @@ def test_jwt_accepts_raw_seed_base64():
     signer = QWeatherJWT("proj", "kid", base64.b64encode(seed).decode())
     h, p, s = signer.token().split(".")
     key.public_key().verify(_b64d(s), f"{h}.{p}".encode("ascii"))
+
+
+# ── forecast 测试 ──────────────────────────────────────────
+
+_FORECAST_3D_OK = {
+    "code": "200",
+    "daily": [
+        {"fxDate": "2026-06-21", "textDay": "多云", "textNight": "晴",
+         "tempMax": "30", "tempMin": "22", "windDirDay": "东南风",
+         "windScaleDay": "2", "humidity": "55"},
+        {"fxDate": "2026-06-22", "textDay": "晴", "textNight": "多云",
+         "tempMax": "32", "tempMin": "23", "windDirDay": "南风",
+         "windScaleDay": "3", "humidity": "50"},
+        {"fxDate": "2026-06-23", "textDay": "小雨", "textNight": "阴",
+         "tempMax": "28", "tempMin": "21", "windDirDay": "北风",
+         "windScaleDay": "2", "humidity": "70"},
+    ],
+}
+
+
+def test_forecast_parses_3day():
+    p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK,
+                   "/v7/weather/3d": _FORECAST_3D_OK})
+    res = asyncio.run(p.forecast("北京", days=3))
+    assert len(res) == 3
+    assert res[0].date == "2026-06-21"
+    assert res[0].text_day == "多云" and res[0].text_night == "晴"
+    assert res[0].temp_high == "30" and res[0].temp_low == "22"
+    assert res[2].text_day == "小雨"
+
+
+def test_forecast_7d_uses_7d_endpoint():
+    """days > 3 时应走 /v7/weather/7d。"""
+    resp_7d = {"code": "200", "daily": _FORECAST_3D_OK["daily"] * 3}  # 凑 9 条
+    p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK,
+                   "/v7/weather/7d": resp_7d})
+    res = asyncio.run(p.forecast("北京", days=7))
+    assert len(res) == 7  # 取前 7 条
+
+
+# ── alerts 测试 ───────────────────────────────────────────
+
+_ALERTS_OK = {
+    "code": "200",
+    "warning": [
+        {"title": "北京市气象台发布暴雨蓝色预警", "level": "蓝",
+         "typeName": "暴雨", "text": "预计未来6小时有暴雨",
+         "pubTime": "2026-06-20T10:00+08:00"},
+        {"title": "测试海洋预警", "level": "黄",
+         "typeName": "海浪", "text": "应被过滤",
+         "pubTime": "2026-06-20T09:00+08:00"},
+    ],
+}
+
+
+def test_alerts_excludes_marine():
+    p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK,
+                   "/v7/warning/now": _ALERTS_OK})
+    res = asyncio.run(p.alerts("北京"))
+    assert len(res) == 1  # 海浪预警被过滤
+    assert res[0].title == "北京市气象台发布暴雨蓝色预警"
+    assert res[0].level == "蓝"
+    assert res[0].type_name == "暴雨"
+
+
+def test_alerts_empty_when_no_warning():
+    p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK,
+                   "/v7/warning/now": {"code": "200", "warning": []}})
+    res = asyncio.run(p.alerts("北京"))
+    assert res == []
+
+
+# ── indices 测试 ─────────────────────────────────────────
+
+_INDICES_OK = {
+    "code": "200",
+    "daily": [
+        {"type": "1", "name": "运动指数", "category": "适宜", "text": "天气较好"},
+        {"type": "3", "name": "洗车指数", "category": "较适宜", "text": "无雨"},
+        {"type": "5", "name": "紫外线指数", "category": "弱", "text": "辐射弱"},
+    ],
+}
+
+
+def test_indices_parses():
+    p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK,
+                   "/v7/indices/1d": _INDICES_OK})
+    res = asyncio.run(p.indices("北京"))
+    assert len(res) == 3
+    assert res[0].name == "运动指数" and res[0].level == "适宜"
+    assert res[2].name == "紫外线指数"

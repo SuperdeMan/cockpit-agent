@@ -2,8 +2,8 @@
 import logging
 import os
 
-from .base import WeatherProvider
-from .mock import MockWeatherProvider
+from .base import WeatherProvider, SearchProvider, NewsProvider, StockProvider
+from .mock import MockWeatherProvider, MockSearchProvider, MockNewsProvider, MockStockProvider
 
 logger = logging.getLogger("agent.info.providers")
 
@@ -46,3 +46,39 @@ def build_weather_provider() -> WeatherProvider:
         except Exception as e:  # 构造失败（缺包/密钥格式错）不阻断，回退 mock
             logger.warning("QWeatherProvider init failed, falling back to mock: %s", e)
     return MockWeatherProvider()
+
+
+def build_search_provider() -> SearchProvider:
+    """联网搜索 Provider 工厂。SEARCH_VENDOR=bing 且 BING_SEARCH_KEY 非空 → 真实，否则 mock。"""
+    vendor = os.getenv("SEARCH_VENDOR", "mock")
+    if vendor == "bing" and os.getenv("BING_SEARCH_KEY"):
+        try:
+            from .search_bing import BingSearchProvider
+            return BingSearchProvider(os.getenv("BING_SEARCH_KEY"))
+        except Exception as e:
+            logger.warning("BingSearchProvider init failed, falling back to mock: %s", e)
+    return MockSearchProvider()
+
+
+def build_news_provider() -> NewsProvider:
+    """新闻 Provider 工厂。NEWS_VENDOR=newsapi 且 NEWS_API_KEY 非空 → 真实，否则 mock。"""
+    vendor = os.getenv("NEWS_VENDOR", "mock")
+    if vendor == "newsapi" and os.getenv("NEWS_API_KEY"):
+        try:
+            from .news_api import NewsAPIProvider
+            return NewsAPIProvider(os.getenv("NEWS_API_KEY"))
+        except Exception as e:
+            logger.warning("NewsAPIProvider init failed, falling back to mock: %s", e)
+    return MockNewsProvider()
+
+
+def build_stock_provider() -> StockProvider:
+    """股票 Provider 工厂。STOCK_VENDOR=quote 且 STOCK_API_KEY 非空 → 真实，否则 mock。"""
+    vendor = os.getenv("STOCK_VENDOR", "mock")
+    if vendor == "quote" and os.getenv("STOCK_API_KEY"):
+        try:
+            from .stock_quote import QuoteStockProvider
+            return QuoteStockProvider(os.getenv("STOCK_API_KEY"))
+        except Exception as e:
+            logger.warning("QuoteStockProvider init failed, falling back to mock: %s", e)
+    return MockStockProvider()

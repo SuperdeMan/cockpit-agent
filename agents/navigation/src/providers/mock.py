@@ -30,3 +30,14 @@ class MockPOIProvider(POIProvider):
             "duration_min": 25,
             "steps": ["直行 2km", "右转进入示例路", "到达目的地"],
         }
+
+    async def reverse_geocode(self, lng: float, lat: float,
+                              meta: dict | None = None) -> GeoPoint:
+        return GeoPoint(lat=lat, lng=lng, address=f"示例市示例路1号({lng:.3f},{lat:.3f})")
+
+    async def poi_detail(self, poi_id: str,
+                         meta: dict | None = None) -> POI:
+        return POI(
+            id=poi_id, name=f"示例POI({poi_id})", address="示例路1号",
+            lat=31.23, lng=121.47, rating=4.5, category="餐饮服务",
+        )

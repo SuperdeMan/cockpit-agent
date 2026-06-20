@@ -1,5 +1,5 @@
 agent_id: info
-version: 0.1.0
+version: 0.2.0
 display_name: 信息助手
 category: core
 trust_level: first_party
@@ -12,6 +12,36 @@ capabilities:
     description: 查询指定城市或当前位置的实时天气
     slots: [city, date]
     examples: ["今天天气怎么样", "北京天气如何", "上海现在多少度"]
+
+  - intent: info.forecast
+    description: 查询指定城市未来几天天气预报
+    slots: [city, days]
+    examples: ["明天天气怎么样", "北京未来三天天气", "后天会下雨吗", "这周天气预报"]
+
+  - intent: info.alerts
+    description: 查询指定城市当前生效的天气预警
+    slots: [city]
+    examples: ["有没有天气预警", "北京有暴雨预警吗", "今天有极端天气吗"]
+
+  - intent: info.indices
+    description: 查询城市生活指数（运动/洗车/紫外线等）
+    slots: [city]
+    examples: ["今天适合运动吗", "明天可以洗车吗", "紫外线强不强", "生活指数"]
+
+  - intent: info.search
+    description: 联网搜索信息
+    slots: [query, limit]
+    examples: ["搜一下", "帮我查一下", "搜索", "帮我搜"]
+
+  - intent: info.news
+    description: 获取新闻头条和资讯摘要
+    slots: [topic, limit]
+    examples: ["今天有什么新闻", "科技新闻", "最新头条", "看看新闻"]
+
+  - intent: info.stock
+    description: 查询股票或指数实时行情
+    slots: [symbol]
+    examples: ["茅台股价", "上证指数多少", "今天大盘怎么样", "查一下苹果股票"]
 
 requires_permissions:
   - network.external

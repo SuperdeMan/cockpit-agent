@@ -132,3 +132,25 @@ class AmapPOIProvider(POIProvider):
             "steps": [_as_str(s.get("instruction"))
                       for s in (path.get("steps") or []) if s.get("instruction")],
         }
+
+    async def reverse_geocode(self, lng: float, lat: float,
+                              meta: dict | None = None) -> GeoPoint:
+        """逆地理编码：坐标 → 地址。高德 /v3/geocode/regeo。"""
+        location = f"{lng},{lat}"
+        data = await self._get("/v3/geocode/regeo",
+                               {"location": location, "extensions": "base"},
+                               "geocode_regeo", meta)
+        regeocode = data.get("regeocode") or {}
+        addr = _as_str(regeocode.get("formatted_address"))
+        return GeoPoint(lat=lat, lng=lng, address=addr)
+
+    async def poi_detail(self, poi_id: str,
+                         meta: dict | None = None) -> POI:
+        """查询 POI 详情。高德 /v5/place/detail。"""
+        data = await self._get("/v5/place/detail",
+                               {"id": poi_id, "show_fields": "business"},
+                               "place_detail", meta)
+        pois = data.get("pois") or []
+        if not pois:
+            raise ProviderError(f"amap poi_detail: no result for {poi_id}")
+        return self._poi_from(pois[0])

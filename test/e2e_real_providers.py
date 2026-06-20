@@ -16,8 +16,15 @@ import pytest
 
 from agents.navigation.src.providers.amap import AmapPOIProvider
 from agents.navigation.src.providers.base import GeoPoint
-from agents.info.src.providers import build_weather_provider, _load_qweather_private_key
-from agents.info.src.providers.mock import MockWeatherProvider
+from agents.info.src.providers import (
+    build_weather_provider, build_search_provider,
+    build_news_provider, build_stock_provider,
+    _load_qweather_private_key,
+)
+from agents.info.src.providers.mock import (
+    MockWeatherProvider, MockSearchProvider,
+    MockNewsProvider, MockStockProvider,
+)
 
 
 def _load_dotenv():
@@ -80,3 +87,76 @@ def test_qweather_now_returns_real_weather():
         "疑似回退 mock，检查 QWEATHER_HOST/鉴权配置"
     assert w.temp != "", "缺温度"
     assert w.text != "", "缺天气现象"
+
+
+@pytest.mark.skipif(not HAS_QWEATHER, reason="No QWeather JWT/API-Key configured")
+def test_qweather_forecast_returns_real_forecast():
+    os.environ["WEATHER_VENDOR"] = "qweather"
+    p = build_weather_provider()
+    assert not isinstance(p, MockWeatherProvider)
+    forecast = asyncio.run(p.forecast("北京", days=3))
+    print(f"\n[和风预报] {len(forecast)} 天：{[(d.date, d.text_day, d.temp_low+'~'+d.temp_high+'℃') for d in forecast]}")
+    assert len(forecast) > 0, "预报为空"
+    assert forecast[0].date, "缺日期"
+    assert forecast[0].text_day, "缺白天天气"
+
+
+@pytest.mark.skipif(not HAS_QWEATHER, reason="No QWeather JWT/API-Key configured")
+def test_qweather_indices_returns_real_indices():
+    os.environ["WEATHER_VENDOR"] = "qweather"
+    p = build_weather_provider()
+    assert not isinstance(p, MockWeatherProvider)
+    indices = asyncio.run(p.indices("北京"))
+    print(f"\n[和风指数] {[(i.name, i.level) for i in indices]}")
+    assert len(indices) > 0, "生活指数为空"
+
+
+# ── 联网搜索（Bing）──────────────────────────────────────
+
+BING_KEY = os.getenv("BING_SEARCH_KEY", "")
+
+
+@pytest.mark.skipif(not BING_KEY, reason="No BING_SEARCH_KEY configured")
+def test_bing_search_returns_real_results():
+    os.environ["SEARCH_VENDOR"] = "bing"
+    p = build_search_provider()
+    assert not isinstance(p, MockSearchProvider), \
+        "工厂回退到了 mock——检查 SEARCH_VENDOR/BING_SEARCH_KEY"
+    res = asyncio.run(p.search("人工智能 最新进展", limit=3))
+    print(f"\n[Bing] {len(res)} 条：{[r.title for r in res[:3]]}")
+    assert res, "搜索结果为空"
+    assert "示例" not in res[0].title, "疑似回退 mock"
+
+
+# ── 新闻（NewsAPI）──────────────────────────────────────
+
+NEWS_KEY = os.getenv("NEWS_API_KEY", "")
+
+
+@pytest.mark.skipif(not NEWS_KEY, reason="No NEWS_API_KEY configured")
+def test_newsapi_returns_real_headlines():
+    os.environ["NEWS_VENDOR"] = "newsapi"
+    p = build_news_provider()
+    assert not isinstance(p, MockNewsProvider), \
+        "工厂回退到了 mock——检查 NEWS_VENDOR/NEWS_API_KEY"
+    items = asyncio.run(p.headlines("", limit=3))
+    print(f"\n[NewsAPI] {len(items)} 条：{[n.title for n in items[:3]]}")
+    assert items, "新闻为空"
+    assert "示例" not in items[0].title, "疑似回退 mock"
+
+
+# ── 股票（Alpha Vantage）────────────────────────────────
+
+STOCK_KEY = os.getenv("STOCK_API_KEY", "")
+
+
+@pytest.mark.skipif(not STOCK_KEY, reason="No STOCK_API_KEY configured")
+def test_stock_returns_real_quote():
+    os.environ["STOCK_VENDOR"] = "quote"
+    p = build_stock_provider()
+    assert not isinstance(p, MockStockProvider), \
+        "工厂回退到了 mock——检查 STOCK_VENDOR/STOCK_API_KEY"
+    q = asyncio.run(p.quote("AAPL"))
+    print(f"\n[Stock] {q.name} {q.price} {q.change} ({q.change_pct}) @ {q.market_time}")
+    assert q.price, "缺价格"
+    assert q.market_time and q.market_time != "mock", "疑似回退 mock"

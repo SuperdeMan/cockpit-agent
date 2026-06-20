@@ -145,6 +145,12 @@ def classify(text: str) -> dict | None:
         name = f"{obj}.set"
     elif obj == "weather":
         name = "info.weather"
+    elif obj == "forecast":
+        name = "info.forecast"
+    elif obj == "stock":
+        name = "info.stock"
+    elif obj == "search":
+        name = "info.search"
     elif obj == "page":
         name = "page.open"
     elif obj == "app":
@@ -858,12 +864,16 @@ def classify_structured(text: str) -> dict | None:
             return _s("media", "control", "play", "opera", conf=0.88)
         return _s("media", "control", "open", "opera", conf=0.85)
 
-    # ── 新闻 ─────────────────────────────────────────────
+    # ── 新闻（消歧：播/听→媒体播放；看/摘要/头条→信息摘要）──
     if "新闻" in t or "头条" in t:
         if "播" in t or "放" in t or "听" in t:
             return _s("media", "control", "play", "news", conf=0.88)
         if "关" in t or "停" in t:
             return _s("media", "control", "stop", "news", conf=0.9)
+        # "看/摘要/今天发生了什么/有什么新闻" → info.news（文本摘要，online_only）
+        if "看" in t or "摘要" in t or "发生" in t or "有什么" in t:
+            return _s("info", "query", "query", "news", conf=0.88)
+        # 默认仍走媒体播放（兼容"来段新闻"等模糊表达）
         return _s("media", "control", "play", "news", conf=0.85)
 
     # ── 视频 ─────────────────────────────────────────────
@@ -955,6 +965,15 @@ def classify_structured(text: str) -> dict | None:
     if "空气质量" in t or "PM2.5" in t or "空气指数" in t:
         return _s("query", "query", "query", "air_quality", conf=0.9)
 
+    # ── 天气预报（online_only→info.forecast）──────────────────
+    if ("预报" in t or "未来几天" in t or "明天天气" in t
+            or "后天天气" in t or "这周天气" in t):
+        return _s("info", "query", "query", "forecast", conf=0.88)
+
+    # ── 联网搜索（online_only→info.search）────────────────────
+    if "搜一下" in t or "搜一搜" in t or "帮我搜" in t or "帮我查一下" in t:
+        return _s("info", "query", "query", "search", conf=0.85)
+
     # ── 美食 ─────────────────────────────────────────────
     if "美食" in t or "餐厅" in t or "找吃的" in t or "有什么吃的" in t:
         return _s("navi", "query", "query", "food", conf=0.85)
@@ -979,9 +998,9 @@ def classify_structured(text: str) -> dict | None:
     if "火车票" in t or "火车" in t or "高铁" in t or "动车" in t:
         return _s("information", "query", "query", "train", conf=0.88)
 
-    # ── 股票 ─────────────────────────────────────────────
+    # ── 股票（收敛到 info.stock，消除 information/stock 孤儿意图）──
     if "股票" in t or "股价" in t or "大盘" in t or "指数" in t:
-        return _s("information", "query", "query", "stock", conf=0.88)
+        return _s("info", "query", "query", "stock", conf=0.88)
 
     # ── 车内灯（阅读灯/化妆灯/脚窝灯/动态氛围灯等）──────
     if "阅读灯" in t or "化妆灯" in t or "脚窝灯" in t or "门灯" in t:
@@ -1377,7 +1396,8 @@ def _to_legacy_name(intent: dict) -> str | None:
                      "stop": "pause", "close": "pause", "switch": "next", "resume": "play",
                      "query": "query"}
         return f"media.{media_map.get(operate, operate)}"
-    if obj in ("navigation", "navi", "map", "food", "hotel", "flight", "train", "stock", "weather"):
+    if obj in ("navigation", "navi", "map", "food", "hotel", "flight", "train",
+               "stock", "weather", "forecast", "search"):
         return None  # online_only, not local
     if obj == "interaction":
         return f"interaction.{operate}"

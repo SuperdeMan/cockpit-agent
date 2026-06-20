@@ -37,3 +37,15 @@ class POIProvider(ABC):
                         meta: dict | None = None) -> dict:
         """获取路线规划。返回 {"distance_km": float, "duration_min": float, "steps": [...]}"""
         ...
+
+    @abstractmethod
+    async def reverse_geocode(self, lng: float, lat: float,
+                              meta: dict | None = None) -> GeoPoint:
+        """逆地理编码：坐标 → 地址。返回 GeoPoint（address 填充）。"""
+        ...
+
+    @abstractmethod
+    async def poi_detail(self, poi_id: str,
+                         meta: dict | None = None) -> POI:
+        """查询 POI 详情。"""
+        ...

@@ -16,7 +16,10 @@ import logging
 import time
 
 from agents._sdk.http import AsyncHttpClient, ProviderError
-from .base import WeatherProvider, Weather
+from .base import (
+    WeatherProvider, Weather,
+    ForecastDay, WeatherAlert, LifeIndex,
+)
 
 logger = logging.getLogger("agent.info.qweather")
 
@@ -133,3 +136,68 @@ class QWeatherProvider(WeatherProvider):
             wind_scale=_s(now.get("windScale")),
             update_time=_s(data.get("updateTime")),
         )
+
+    async def forecast(self, city: str, days: int = 3,
+                       meta: dict | None = None) -> list[ForecastDay]:
+        loc_id, _ = await self._lookup_city(city, meta)
+        # 和风 3天预报 / 7天预报；按 days 选 endpoint
+        path = "/v7/weather/7d" if days > 3 else "/v7/weather/3d"
+        data = await self._get(path, {"location": loc_id}, "weather_forecast", meta)
+        result: list[ForecastDay] = []
+        for d in (data.get("daily") or [])[:days]:
+            result.append(ForecastDay(
+                date=_s(d.get("fxDate")),
+                text_day=_s(d.get("textDay")),
+                text_night=_s(d.get("textNight")),
+                temp_high=_s(d.get("tempMax")),
+                temp_low=_s(d.get("tempMin")),
+                wind_dir=_s(d.get("windDirDay")),
+                wind_scale=_s(d.get("windScaleDay")),
+                humidity=_s(d.get("humidity")),
+            ))
+        return result
+
+    # 排除的预警类型（海洋/热带气旋/辐射，按用户要求不接入）
+    _EXCLUDED_ALERT_TYPES = {
+        "海洋", "海浪", "海啸", "风暴潮", "海冰", "海雾",  # 海洋类
+        "台风", "热带气旋",                                 # 热带气旋
+        "辐射", "核辐射",                                   # 辐射
+    }
+
+    async def alerts(self, city: str,
+                     meta: dict | None = None) -> list[WeatherAlert]:
+        """查询当前生效的天气预警。排除海洋/热带气旋/辐射类。"""
+        loc_id, _ = await self._lookup_city(city, meta)
+        data = await self._get("/v7/warning/now", {"location": loc_id},
+                               "warning_now", meta)
+        result: list[WeatherAlert] = []
+        for w in (data.get("warning") or []):
+            type_name = _s(w.get("typeName"))
+            # 排除海洋/热带气旋/辐射类预警
+            if any(ex in type_name for ex in self._EXCLUDED_ALERT_TYPES):
+                continue
+            result.append(WeatherAlert(
+                title=_s(w.get("title")),
+                level=_s(w.get("level")),
+                type_name=type_name,
+                text=_s(w.get("text")),
+                pub_time=_s(w.get("pubTime")),
+            ))
+        return result
+
+    async def indices(self, city: str,
+                      meta: dict | None = None) -> list[LifeIndex]:
+        """查询生活指数：运动(1)、洗车(3)、紫外线(5)。"""
+        loc_id, _ = await self._lookup_city(city, meta)
+        data = await self._get("/v7/indices/1d",
+                               {"location": loc_id, "type": "1,3,5"},
+                               "indices_1d", meta)
+        result: list[LifeIndex] = []
+        for d in (data.get("daily") or []):
+            result.append(LifeIndex(
+                category=_s(d.get("type")),
+                name=_s(d.get("name")),
+                level=_s(d.get("category")),
+                text=_s(d.get("text")),
+            ))
+        return result

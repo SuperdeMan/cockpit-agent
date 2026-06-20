@@ -8,16 +8,16 @@
 
 | agent_id (kebab) | 包目录 (snake) | 类别 | trust_level | 部署 | 端口 | 提供的 intent |
 |---|---|---|---|---|---|---|
-| navigation | navigation | core | first_party | cloud | 50061 | navigation.search_poi, navigation.navigate_to |
+| navigation | navigation | core | first_party | cloud | 50061 | navigation.search_poi, navigation.navigate_to, navigation.reverse_geocode, navigation.poi_detail |
 | chitchat | chitchat | ecosystem | first_party | cloud | 50062 | chitchat.talk |
 | food-ordering | food_ordering | ecosystem | third_party | cloud | 50063 | food.search_restaurant, food.reserve |
 | parking-payment | parking_payment | ecosystem | third_party | cloud | 50064 | parking.find, parking.pay |
 | manual-rag | manual_rag | ecosystem | first_party | cloud | 50065 | manual.query |
 | trip-planner | trip_planner | ecosystem | first_party | cloud | 50066 | trip.plan |
-| info | info | core | first_party | cloud | 50067 | info.weather |
+| info | info | core | first_party | cloud | 50067 | info.weather, info.forecast, info.alerts, info.indices, info.search, info.news, info.stock |
 | (车控/媒体) | orchestrator/edge | core | system | **edge** | 50070 | hvac.*, window.*, media.*（端侧 Fast Intent 直执行）|
 
-> 规划中（设计文档提及，PoC 未建独立服务）：`info` 的 news/calendar/reminder（`info` Agent 已建并实现 `info.weather`）、独立的云侧 `media` Agent。新增时按本表分配端口与 intent 命名空间。
+> 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent。新增时按本表分配端口与 intent 命名空间。
 
 ---
 
@@ -31,6 +31,8 @@
 | `media.play` / `media.pause` / `media.next` / `media.prev` | 端侧媒体 | edge | — | 经 VAL |
 | `navigation.search_poi` | navigation | cloud | keyword, category, near, rating_min | |
 | `navigation.navigate_to` | navigation | cloud | destination | |
+| `navigation.reverse_geocode` | navigation | cloud | lng, lat | 逆地理编码：坐标→地址 |
+| `navigation.poi_detail` | navigation | cloud | poi_id | POI 详情查询 |
 | `chitchat.talk` | chitchat | cloud | — | 系统兜底 fallback |
 | `food.search_restaurant` | food-ordering | cloud | cuisine, location, rating_min, price_level, party_size | |
 | `food.reserve` | food-ordering | cloud | restaurant_id, restaurant_name, datetime, party_size | require_confirm |
@@ -39,6 +41,12 @@
 | `manual.query` | manual-rag | cloud | question | RAG |
 | `trip.plan` | trip-planner | cloud | destination, days, preferences | 跨 Agent 协作(Phase1) |
 | `info.weather` | info | cloud | city, date | 实时天气（和风真实 provider，无 key/失败回退 mock）；端侧"天气"online_only 上云 |
+| `info.forecast` | info | cloud | city, days | 天气预报（和风 3/7 天预报）；端侧"预报/未来几天"online_only 上云 |
+| `info.alerts` | info | cloud | city | 天气预警（和风实时预警，排除海洋/热带气旋/辐射） |
+| `info.indices` | info | cloud | city | 生活指数（运动/洗车/紫外线） |
+| `info.search` | info | cloud | query, limit | 联网搜索（Bing 真实 provider）；端侧"搜一下"online_only 上云 |
+| `info.news` | info | cloud | topic, limit | 新闻摘要（NewsAPI 真实 provider）；端侧"看新闻/摘要"→info.news，"播新闻"→media.* |
+| `info.stock` | info | cloud | symbol | 股票行情（行情 API 真实 provider）；端侧"股票/大盘"收敛到 info.stock |
 
 新增 intent：先在对应 Agent 的 `manifest.yaml` 声明（含 examples，供语义路由），端侧意图额外进 `orchestrator/edge/fast_intent.py` 的 `LOCAL_INTENTS`。
 

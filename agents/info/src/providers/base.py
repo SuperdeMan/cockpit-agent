@@ -1,7 +1,7 @@
 """天气/信息 Provider 接口。所有气象厂商实现 WeatherProvider。"""
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -16,8 +16,123 @@ class Weather:
     update_time: str = ""   # 数据更新时间
 
 
+@dataclass
+class ForecastDay:
+    """单日天气预报。"""
+    date: str = ""              # 日期 YYYY-MM-DD
+    text_day: str = ""          # 白天天气现象
+    text_night: str = ""        # 夜间天气现象
+    temp_high: str = ""         # 最高温度 ℃
+    temp_low: str = ""          # 最低温度 ℃
+    wind_dir: str = ""          # 风向
+    wind_scale: str = ""        # 风力等级
+    humidity: str = ""          # 相对湿度 %
+
+
+@dataclass
+class WeatherAlert:
+    """天气预警/警报。"""
+    title: str = ""             # 预警标题（如 "北京市气象台发布暴雨蓝色预警"）
+    level: str = ""             # 预警等级（蓝/黄/橙/红）
+    type_name: str = ""         # 预警类型（暴雨/大风/高温…）
+    text: str = ""              # 预警详情
+    pub_time: str = ""          # 发布时间
+
+
+@dataclass
+class LifeIndex:
+    """生活指数。"""
+    category: str = ""          # 指数类别（运动/洗车/紫外线…）
+    name: str = ""              # 指数名称
+    level: str = ""             # 等级（适宜/较适宜/较不宜…）
+    text: str = ""              # 建议描述
+
+
 class WeatherProvider(ABC):
     @abstractmethod
     async def now(self, city: str, meta: dict | None = None) -> Weather:
         """查询城市实时天气。meta 透传 trace_id/span_id 供可观测（可选）。"""
+        ...
+
+    @abstractmethod
+    async def forecast(self, city: str, days: int = 3,
+                       meta: dict | None = None) -> list[ForecastDay]:
+        """查询城市未来 N 天天气预报。days 通常 3 或 7，由厂商能力决定。"""
+        ...
+
+    @abstractmethod
+    async def alerts(self, city: str,
+                     meta: dict | None = None) -> list[WeatherAlert]:
+        """查询城市当前生效的天气预警。无预警返回空列表。"""
+        ...
+
+    @abstractmethod
+    async def indices(self, city: str,
+                      meta: dict | None = None) -> list[LifeIndex]:
+        """查询城市生活指数（运动/洗车/紫外线等）。"""
+        ...
+
+
+# ── 联网搜索 Provider ──────────────────────────────────────────────
+
+@dataclass
+class SearchResult:
+    """搜索结果条目。"""
+    title: str = ""
+    url: str = ""
+    snippet: str = ""           # 摘要/描述
+    source: str = ""            # 来源域名
+
+
+class SearchProvider(ABC):
+    @abstractmethod
+    async def search(self, query: str, limit: int = 5,
+                     meta: dict | None = None) -> list[SearchResult]:
+        """联网搜索。meta 透传 trace_id/span_id 供可观测（可选）。"""
+        ...
+
+
+# ── 新闻 Provider ──────────────────────────────────────────────────
+
+@dataclass
+class NewsItem:
+    """新闻条目。"""
+    title: str = ""
+    summary: str = ""           # 摘要
+    source: str = ""            # 来源
+    publish_time: str = ""      # 发布时间
+
+
+class NewsProvider(ABC):
+    @abstractmethod
+    async def headlines(self, topic: str = "", limit: int = 5,
+                        meta: dict | None = None) -> list[NewsItem]:
+        """获取新闻头条/摘要。topic 可为空（综合热点）。"""
+        ...
+
+
+# ── 股票 Provider ──────────────────────────────────────────────────
+
+@dataclass
+class Quote:
+    """股票/指数行情。"""
+    name: str = ""              # 名称
+    symbol: str = ""            # 代码
+    price: str = ""             # 当前价
+    change: str = ""            # 涨跌额
+    change_pct: str = ""        # 涨跌幅 %
+    market_time: str = ""       # 行情时间
+
+
+class StockProvider(ABC):
+    @abstractmethod
+    async def quote(self, symbol: str,
+                    meta: dict | None = None) -> Quote:
+        """查询股票/指数行情。symbol 可以是代码或名称。"""
+        ...
+
+    @abstractmethod
+    async def index(self, name: str = "上证",
+                    meta: dict | None = None) -> Quote:
+        """查询大盘指数行情。"""
         ...

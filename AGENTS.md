@@ -50,13 +50,13 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 517 passed, 6 skipped（2026-06-20 实测；+22 provider/HTTP/JWT 单测） |
+| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 548 passed, 6 skipped（2026-06-20 实测；+31 info provider/搜索/新闻/股票/预报/预警/指数 单测） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
 | HMI TTS 单测 / 构建 | ✅ Node 5/5；`npm run build` 通过 |
 | Dashboard 单测 / 构建 | ✅ Node 10/10；`npm run build` 通过 |
 | `gen/`（gRPC 生成代码）| ✅ 已生成（`buf generate proto`） |
 | Go 网关 | ✅ Go 1.24 编译通过，Docker 全栈运行 |
-| Agent Provider 适配 | ✅ 7 Agent（新增 info 天气）接入统一工厂；导航=高德 / 天气=和风（JWT/EdDSA）真实适配已落地并**真实凭证冒烟通过**（`_sdk/http.py` 统一超时/重试/熔断 + provider 调用 span），无凭证/失败回退 mock；端到端见 `test/e2e_real_providers.py` |
+| Agent Provider 适配 | ✅ 7 Agent 接入统一工厂；导航=高德（POI/路线/逆地理/详情）/ 天气=和风（实时/预报/预警/指数，JWT/EdDSA）/ 联网搜索=Bing / 新闻=NewsAPI / 股票=Alpha Vantage 真实适配已落地，无凭证/失败回退 mock；端到端见 `test/e2e_real_providers.py`；AgentClient 护栏跨进程修复（depth/stack 经 meta→contextvar 传递） |
 | 安全/权限/编排/协作/支付 | ✅ PoC 链路落地；真实 token、正式沙箱与真实支付仍待接入 |
 | 可观测 | ✅ NATS 事件、collector REST/WS、车辆 diff、端云 span、Agent 健康/指标与独立 Dashboard；collector/registry 重启经周期快照与周期重注册自愈；Prometheus/OTel 导出仍待做 |
 | 熔断 | ⚠️ 基础实现存在，生产化接线与演练待做 |

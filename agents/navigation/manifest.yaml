@@ -16,6 +16,14 @@ capabilities:
     description: 导航到指定目的地
     slots: [destination]
     examples: ["导航去公司", "带我去首都机场", "回家"]
+  - intent: navigation.reverse_geocode
+    description: 逆地理编码，根据坐标获取地址信息
+    slots: [lng, lat]
+    examples: ["这是哪里", "当前在什么位置", "这个坐标是什么地方"]
+  - intent: navigation.poi_detail
+    description: 查询某个 POI 的详细信息
+    slots: [poi_id]
+    examples: ["这个地方的详细信息", "查一下这个地点"]
 
 requires_permissions:
   - location.read

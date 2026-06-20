@@ -89,3 +89,31 @@ def test_get_route_parses():
     assert out["distance_km"] == 12.5
     assert out["duration_min"] == 25.0
     assert out["steps"] == ["直行500米", "右转进入科苑路"]
+
+
+def test_reverse_geocode_parses():
+    regeo = {"status": "1", "info": "OK",
+             "regeocode": {"formatted_address": "上海市浦东新区张江高科技园区"}}
+    p = _provider({"/v3/geocode/regeo": regeo})
+    pt = asyncio.run(p.reverse_geocode(121.500, 31.230))
+    assert pt.address == "上海市浦东新区张江高科技园区"
+    assert pt.lng == 121.500 and pt.lat == 31.230
+
+
+def test_poi_detail_parses():
+    detail = {"status": "1", "info": "OK",
+              "pois": [{"id": "B1", "name": "特来电充电站", "address": "科苑路1号",
+                        "location": "121.500,31.230", "type": "汽车服务;充电站",
+                        "business": {"rating": "4.6"}}]}
+    p = _provider({"/v5/place/detail": detail})
+    poi = asyncio.run(p.poi_detail("B1"))
+    assert poi.name == "特来电充电站"
+    assert poi.rating == 4.6
+    assert poi.lng == 121.500
+
+
+def test_poi_detail_not_found_raises():
+    bad = {"status": "1", "info": "OK", "pois": []}
+    p = _provider({"/v5/place/detail": bad})
+    with pytest.raises(ProviderError):
+        asyncio.run(p.poi_detail("nonexistent"))

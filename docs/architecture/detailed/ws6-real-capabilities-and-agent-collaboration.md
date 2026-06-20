@@ -4,11 +4,12 @@
 > 目标：把 mock 能力换成真实/沙箱能力（统一适配层范式 + 支付网关），并打通 multi-agent 协作（trip-planner 子规划者）。读者：各 Agent 开发、平台开发。
 > 设计时基线：各 Agent 仅有内置 mock，且不能互调。
 >
-> **当前实现（2026-06-20 复核）**：7 个 Agent（含新增 `info` 天气）已接统一 Provider 工厂，
-> 无凭证回退 mock；**导航=高德 / 天气=和风（JWT）真实 Provider 已落地并真实凭证冒烟通过**
-> （见 `docs/guides/provider-integration.md`、`test/e2e_real_providers.py`）；trip-planner 经受控
-> AgentClient 协作跑通。车型向量库、PaymentGateway Authorize/Capture 仍待接入；
-> **§4 协作护栏存在跨进程缺口，落地前必读 §4.4。**
+> **当前实现（2026-06-20 复核）**：7 个 Agent（含 `info` 天气/预报/预警/指数/搜索/新闻/股票）
+> 已接统一 Provider 工厂，无凭证回退 mock；**导航=高德 / 天气=和风（JWT）/ 搜索=Bing /
+> 新闻=NewsAPI / 股票=Alpha Vantage 真实 Provider 已落地**（见 `docs/guides/provider-integration.md`、
+> `test/e2e_real_providers.py`）；trip-planner 经受控 AgentClient 协作跑通；
+> **§4 协作护栏已修复**（depth/stack 经 meta→contextvar 跨进程传递，护栏拒绝发审计 span）。
+> 车型向量库、PaymentGateway Authorize/Capture 仍待接入。
 
 ---
 
@@ -156,28 +157,25 @@ async def handle(self, intent, ctx, meta):
 > 与 WS3 关系：Planner 路由到 trip-planner，trip-planner 内部再协作下层 Agent——形成"Planner→子规划者→工具 Agent"层级，护栏确保不失控。
 > 注：当前 `trip_planner` 实调 `navigation`×2（景点+充电桩）；`info.weather` 协作现已可接（`info` 已建、`agent_client.py:port_map` 已含 info），是自然增量。
 
-### 4.4 落地现状与缺口（2026-06-20 复核，落地 sub-planner 前必读）
+### 4.4 落地现状与缺口（2026-06-20 复核 + 修复）
 
-trip-planner 协作链路**跑通**（并行 + `gather(return_exceptions=True)` 降级）。但本节护栏与设计有偏差、且**跨进程半成品**——照 §4 建更深的 sub-planner（如充能规划/路况安全）前必须补齐，否则建在"以为有护栏其实没有"的地基上。
+trip-planner 协作链路**跑通**（并行 + `gather(return_exceptions=True)` 降级）。
+
+**已修复项**（2026-06-20）：
+1. ✅ **跨进程深度/环护栏已生效**：`server.py:Execute` 从 `request.meta` 读 `call_depth/call_stack`，经 `_set_current_meta` contextvar 传入 `BaseAgent.agents` 属性，构造正确深度的 `AgentClient`。`MAX_DEPTH=2` 和环检测跨进程生效。
+2. ✅ **审计事件**：护栏拒绝（深度/环）发 `agent_client.guardrail` span，进 collector→Dashboard trace 视图。
+
+**剩余待做**：
+3. **权限不放大（护栏3）未实现**：`call()` 只有深度+环+超时，无权限校验（设计 §4.2 护栏3）。落地：被调有效权限 ≤ 调用方，granted_permissions 经 meta 透传，被调侧或 call 前经 `security/` 复核（呼应 WS8）。
+4. **超时按 manifest**：从目标 `manifest.latency_budget_ms` 取（依赖 registry 解析拿到 manifest）。当前仍为固定 10s。
+5. **endpoint 动态解析**：当前走硬编码 `port_map` / `<AGENT_ID>_ENDPOINT`（`_resolve_endpoint`），未经 registry 动态解析。多实例/容器内需配 ENDPOINT env。
 
 **实现与设计的偏差（以实现为准）**
 
-| 设计（§4.2/4.3） | 当前实现（`agents/_sdk/agent_client.py`） | 说明 |
+| 设计（§4.2/4.3） | 当前实现 | 说明 |
 |---|---|---|
-| `call(intent, slots, ctx)`，经 `registry.resolve` 找目标 | `call(agent_id, intent, slots, ctx, timeout)`，endpoint 走硬编码 `port_map`/`<AGENT_ID>_ENDPOINT`（`_resolve_endpoint` `:110-128`） | 需显式传 agent_id；未经 registry 动态解析（多实例/容器内要配 ENDPOINT） |
-| 注入 `auth`、`registry` | `AgentClient(caller, call_depth, call_stack, timeout)`，无 auth/registry | 见缺口②权限 |
-| 超时取被调 `manifest.latency_budget_ms` | 固定默认 10s 或显式传参 | 未按目标 manifest |
-
-**必须补齐才算落地（按现状护栏会失效）**
-
-1. **跨进程深度/环护栏未生效（安全关键）**：`agent_client.py:79-80` 把 `call_depth/call_stack` 写进 `ExecuteRequest.meta` 发出，但被调侧 `base.py:54` 用默认值 `AgentClient(caller=self)` 构造、`server.py:73-76` 未从 `request.meta` 还原 → **每个 Agent 进程都从 depth=0、空栈起算**；且 `fork()`（`agent_client.py:130`）是死代码无人调 → `MAX_DEPTH=2` 永不触发，环检测只拦"自己直接调自己"。**多跳成环（A→B→A）/超深度拦不住。** 落地：`server.Execute` 或 `BaseAgent.agents` 从 `meta` 读 `call_depth/call_stack` 构造 AgentClient（把 meta 传进 `agents` property）。
-2. **权限不放大（护栏3）未实现**：`call()` 只有深度+环+超时，无任何权限校验（设计 §4.2 护栏3、§5「协作权限放大」空悬）。落地：被调有效权限 ≤ 调用方，granted_permissions 经 meta 透传，被调侧/或 call 前经 `security/` 复核（呼应 WS8）。
-3. **超时按 manifest**：从目标 `manifest.latency_budget_ms` 取（依赖①的 registry 解析拿到 manifest）。
-4. **审计**：深度/环/越权拒绝应发结构化审计事件（复用 `observability/events.py`），当前仅 warning 日志（`agent_client.py:54/61`）。
-
-**落地顺序建议**：① 深度/环跨进程（安全关键，最小改动）→ ② 权限不放大 → registry 解析（解锁动态发现，顺带 ③④）。
-
-> ⚠️ **测试假信心**：`test/sdk/test_agent_client.py` 测的是**手写桩 `_AgentClientShim`（`:29-62`，复制了一份护栏逻辑，端口表还是旧的、无 info）**，并未触达真实 `AgentClient`——7 个绿测不代表真实类跨进程可靠。落地时必须改为**直接测真实 `AgentClient`**（含被调侧从 meta 还原 depth/stack 的跨进程用例），否则缺口会继续被掩盖。
+| `call(intent, slots, ctx)`，经 `registry.resolve` 找目标 | `call(agent_id, intent, slots, ctx, timeout)`，endpoint 走硬编码 port_map | 需显式传 agent_id；未经 registry 动态解析 |
+| 注入 `auth`、`registry` | `AgentClient(caller, call_depth, call_stack, timeout)`，无 auth | 见剩余待做③权限 |
 
 ---
 

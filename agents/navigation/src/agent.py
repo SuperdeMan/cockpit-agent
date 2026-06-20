@@ -26,10 +26,15 @@ class NavigationAgent(BaseAgent):
         self._fallback = MockPOIProvider()  # 真实 provider 抖动时的降级兜底
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
-        if intent.name == "navigation.search_poi":
-            return await self._search_poi(intent, ctx, meta)
-        if intent.name == "navigation.navigate_to":
-            return await self._navigate_to(intent)
+        handlers = {
+            "navigation.search_poi": self._search_poi,
+            "navigation.navigate_to": self._navigate_to,
+            "navigation.reverse_geocode": self._reverse_geocode,
+            "navigation.poi_detail": self._poi_detail,
+        }
+        handler = handlers.get(intent.name)
+        if handler:
+            return await handler(intent, ctx, meta)
         return AgentResult(status=FAILED, speech="抱歉，这个导航请求我还不会处理。")
 
     async def _search_poi(self, intent, ctx, meta) -> AgentResult:
@@ -64,9 +69,54 @@ class NavigationAgent(BaseAgent):
             follow_up="可以说『导航去第一个』",
         )
 
-    async def _navigate_to(self, intent) -> AgentResult:
+    async def _navigate_to(self, intent, ctx, meta) -> AgentResult:
         dest = intent.slots.get("destination", "").strip()
         if not dest:
             return AgentResult(status=NEED_SLOT, speech="您要去哪里？", follow_up="请告诉我目的地")
         return AgentResult(speech=f"好的，已为您规划到{dest}的路线。").action(
             "navigate", {"destination": dest})
+
+    async def _reverse_geocode(self, intent, ctx, meta) -> AgentResult:
+        """逆地理编码：坐标 → 地址。"""
+        lng_s = intent.slots.get("lng", "")
+        lat_s = intent.slots.get("lat", "")
+        if not lng_s or not lat_s:
+            # 尝试用车辆位置
+            ctx_values = await ctx.fetch("vehicle.location")
+            loc = ctx_values.get("vehicle.location", "")
+            if isinstance(loc, str) and loc:
+                return AgentResult(speech=f"当前位置：{loc}",
+                                   data={"address": loc})
+            return AgentResult(status=NEED_SLOT, speech="请提供坐标或位置信息。",
+                               missing_slots=["lng", "lat"])
+        try:
+            lng, lat = float(lng_s), float(lat_s)
+        except ValueError:
+            return AgentResult(status=FAILED, speech="坐标格式不正确。")
+        try:
+            pt = await self.poi.reverse_geocode(lng, lat, meta=meta)
+        except ProviderError as e:
+            logger.warning("reverse_geocode failed, fallback to mock: %s", e)
+            pt = await self._fallback.reverse_geocode(lng, lat, meta=meta)
+        speech = f"该位置位于{pt.address}。" if pt.address else "未能解析该位置的地址。"
+        return AgentResult(speech=speech,
+                           data={"address": pt.address, "lng": lng, "lat": lat})
+
+    async def _poi_detail(self, intent, ctx, meta) -> AgentResult:
+        """查询 POI 详情。"""
+        poi_id = (intent.slots.get("poi_id") or "").strip()
+        if not poi_id:
+            return AgentResult(status=NEED_SLOT, speech="请提供地点 ID。",
+                               missing_slots=["poi_id"])
+        try:
+            poi = await self.poi.poi_detail(poi_id, meta=meta)
+        except ProviderError as e:
+            logger.warning("poi_detail failed, fallback to mock: %s", e)
+            poi = await self._fallback.poi_detail(poi_id, meta=meta)
+        speech = f"{poi.name}，地址：{poi.address}。"
+        if poi.rating:
+            speech += f"评分{poi.rating}。"
+        card = {"type": "poi_detail", "id": poi.id, "name": poi.name,
+                "address": poi.address, "lat": poi.lat, "lng": poi.lng,
+                "rating": poi.rating, "category": poi.category}
+        return AgentResult(speech=speech, ui_card=card, data={"poi": card})
