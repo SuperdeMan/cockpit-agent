@@ -23,3 +23,7 @@
 | [2026-06-13-open-domain-latency.md](2026-06-13-open-domain-latency.md) | 开放域响应慢：模型分层 + 流式贯通 + 即时反馈 | 已落地：流式+模型分层+chitchat兜底+即时反馈；降规划延迟待做 |
 | [2026-06-14-cloud-central-orchestrator.md](2026-06-14-cloud-central-orchestrator.md) | 云端中枢：理解→规划→异构调度（车端快思考/Agent/工具）；T0/T1/T2 分级 + 有界 Agentic 循环 | 已落地：P0-P3、DispatchToEdge、T2、工具、权限/可观测；已补混合意图语义分组、句子级增量 TTS 与慢意图完整性回归 |
 | [2026-06-15-observability-dashboard.md](2026-06-15-observability-dashboard.md) | NATS 可观测出口 + collector + 独立 Dashboard：车辆 diff、端云链路、Agent 运行态与 debug 对照实验 | 已归档：P0-P3 全部落地并完成 20 服务全栈验收 |
+| [2026-06-20-info-agent-expansion.md](2026-06-20-info-agent-expansion.md) | info 扩展：联网搜索/新闻/股票（只读聚合）+ 票务独立成交易 Agent | 草案：`info.weather` 已落地，余下规划中 |
+| [2026-06-20-standalone-agents-roadmap.md](2026-06-20-standalone-agents-roadmap.md) | 新独立 Agent：充能规划/场景编排/天气路况安全 + 与现有架构的「打通契约」 | 草案 |
+
+> 接真实 provider 的标准流程见常青指南 [`docs/guides/provider-integration.md`](../guides/provider-integration.md)。

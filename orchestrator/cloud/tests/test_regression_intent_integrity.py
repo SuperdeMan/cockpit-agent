@@ -53,7 +53,7 @@ def test_partial_invalid_plan_is_retried_atomically():
         (
             '{"steps":['
             '{"id":"s1","agent_id":"chitchat","intent":"chitchat.talk","slots":{}},'
-            '{"id":"s2","agent_id":"weather","intent":"weather.current","slots":{}}'
+            '{"id":"s2","agent_id":"ghost","intent":"ghost.unknown","slots":{}}'
             ']}'
         ),
         (

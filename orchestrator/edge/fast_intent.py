@@ -144,7 +144,7 @@ def classify(text: str) -> dict | None:
     elif obj in ("scene_mode", "power_mode"):
         name = f"{obj}.set"
     elif obj == "weather":
-        name = "weather.query"
+        name = "info.weather"
     elif obj == "page":
         name = "page.open"
     elif obj == "app":
@@ -1429,7 +1429,7 @@ def _to_legacy_name(intent: dict) -> str | None:
     if obj == "app":
         return f"app.{operate}"
     if obj == "weather":
-        return "weather.query"
+        return "info.weather"
     # ── 新增对象映射 ──
     if obj == "bluetooth":
         return f"bluetooth.{operate}"

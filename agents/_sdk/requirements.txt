@@ -1,3 +1,8 @@
 grpcio==1.66.2
 protobuf==7.35.0
 pyyaml==6.0.2
+# 出站 HTTP（真实 provider，如高德/和风）+ provider 调用可观测（best-effort 发 NATS span）
+httpx>=0.27
+nats-py>=2.6.0
+# 和风天气 JWT（Ed25519/EdDSA 签名）；仅 JWT 鉴权路径需要
+cryptography>=42.0

@@ -60,18 +60,18 @@ def _food_agent():
     return SimpleNamespace(manifest=manifest, endpoint="stub:50063")
 
 
-def _weather_agent():
+def _info_agent():
     manifest = SimpleNamespace(
-        agent_id="weather",
+        agent_id="info",
         trust_level="oem",
         latency_budget_ms=3000,
         requires_permissions=[],
-        capabilities=[_Cap("weather.current", ["city"])],
+        capabilities=[_Cap("info.weather", ["city"])],
     )
     return SimpleNamespace(manifest=manifest, endpoint="stub:50072")
 
 
-_ALL_AGENTS = [_hvac_agent(), _media_agent(), _food_agent(), _weather_agent()]
+_ALL_AGENTS = [_hvac_agent(), _media_agent(), _food_agent(), _info_agent()]
 
 
 # ─── Stub 响应 ───
@@ -120,7 +120,7 @@ class _Spy:
                 status=1,  # NEED_CONFIRM
                 speech="确认为您预订川菜·名店1吗？",
             ),
-            "weather.current": _Resp(speech="今天晴，气温28度。"),
+            "info.weather": _Resp(speech="今天晴，气温28度。"),
         }
         return _RESPONSES.get(intent, _Resp(status=3, speech="未知意图"))
 
@@ -163,7 +163,7 @@ class _Spy:
                 "steps": [
                     {"id": "s1", "agent_id": "hvac", "intent": "hvac.set",
                      "slots": {"temperature": "24"}, "depends_on": [], "slot_refs": {}},
-                    {"id": "s2", "agent_id": "weather", "intent": "weather.current",
+                    {"id": "s2", "agent_id": "info", "intent": "info.weather",
                      "slots": {}, "depends_on": [], "slot_refs": {}},
                 ]
             })
@@ -274,7 +274,7 @@ def test_control_query_hybrid_parallel():
     """「打开空调顺便看看今天天气」→ 控制类 + 播报类，并行。
 
     验证点：
-    - 拆出 2 个 step（hvac.set + weather.current）
+    - 拆出 2 个 step（hvac.set + info.weather）
     - 两个 step 都被执行
     - 聚合结果包含天气播报
     """
@@ -283,7 +283,7 @@ def test_control_query_hybrid_parallel():
     final = events[-1]
 
     assert spy.count("hvac.set") == 1
-    assert spy.count("weather.current") == 1
+    assert spy.count("info.weather") == 1
     assert final["kind"] == "final"
     assert final.get("speech")  # 非空即可
 
@@ -302,6 +302,6 @@ def test_single_intent_passthrough():
 
     assert spy.count("hvac.set") == 1
     assert spy.count("media.play") == 0
-    assert spy.count("weather.current") == 0
+    assert spy.count("info.weather") == 0
     assert final["kind"] == "final"
     assert final.get("speech")  # 非空即可

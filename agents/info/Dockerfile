@@ -10,5 +10,5 @@ COPY agents /app/agents
 COPY observability /app/observability
 
 ENV PYTHONPATH=/app:/app/gen/python
-ENV AGENT_PORT=50061
-CMD ["python", "agents/navigation/main.py"]
+ENV AGENT_PORT=50067
+CMD ["python", "agents/info/main.py"]

@@ -41,7 +41,9 @@
       "Bash(\"C:/Users/Super/AppData/Roaming/npm/node_modules/@bufbuild/buf/node_modules/@bufbuild/buf-win32-x64/bin/buf.exe\" --version)",
       "Bash(cp \"C:/Users/Super/AppData/Roaming/npm/node_modules/@bufbuild/buf/node_modules/@bufbuild/buf-win32-x64/bin/buf.exe\" /tmp/buf.exe)",
       "Bash(/tmp/buf.exe --version)",
-      "Bash(winget list *)"
+      "Bash(winget list *)",
+      "Bash(python -m pytest orchestrator/cloud/tests/test_loop.py -v --import-mode=importlib)",
+      "Bash(python -m pytest orchestrator/ --import-mode=importlib -q)"
     ]
   }
 }

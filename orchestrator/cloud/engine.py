@@ -34,7 +34,7 @@ _RESULT_FIELDS = {"step_id", "status", "speech", "ui_card", "actions",
 # 量产必须从会话 token/设备身份解析 scope，不得使用此默认值。
 _POC_DEFAULT_SCOPES = [
     "vehicle.control", "media.control", "navigation",
-    "food.ordering", "weather.query", "news.query",
+    "food.ordering",
     "location.read", "navigation.control",
     "network.external", "payment.invoke",
 ]

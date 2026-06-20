@@ -6,7 +6,7 @@ from .base import POIProvider, POI, GeoPoint
 class MockPOIProvider(POIProvider):
     async def search(self, keyword: str, near: GeoPoint = None,
                      category: str = "", rating_min: float = 0,
-                     limit: int = 5) -> list[POI]:
+                     limit: int = 5, meta: dict | None = None) -> list[POI]:
         items = []
         for i in range(1, limit + 1):
             poi = POI(
@@ -23,7 +23,8 @@ class MockPOIProvider(POIProvider):
                 items.append(poi)
         return items
 
-    async def get_route(self, origin: GeoPoint, destination: GeoPoint) -> dict:
+    async def get_route(self, origin: GeoPoint, destination: GeoPoint,
+                        meta: dict | None = None) -> dict:
         return {
             "distance_km": 12.5,
             "duration_min": 25,

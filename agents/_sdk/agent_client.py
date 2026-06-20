@@ -120,7 +120,7 @@ class AgentClient:
         port_map = {
             "navigation": "50061", "chitchat": "50062",
             "food-ordering": "50063", "parking-payment": "50064",
-            "manual-rag": "50065", "trip-planner": "50066",
+            "manual-rag": "50065", "trip-planner": "50066", "info": "50067",
         }
         port = port_map.get(agent_id)
         if port:

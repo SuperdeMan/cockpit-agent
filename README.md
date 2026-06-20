@@ -11,18 +11,17 @@
 
 ## 当前状态
 
-截至 **2026-06-15**：
+截至 **2026-06-20**：
 
 - Phase 1 的工程化 PoC 主干与云端中枢 P0-P3 已落地；原始 Phase 1
   计划中的量产级能力仍有明确 backlog。
 - `DispatchToEdge`、T2 有界循环、确定性工具和权限双层校验已实现。
 - 端侧混合意图支持按语义组分流，本地动作与导航/媒体慢意图可在同一请求中协同执行。
 - HMI 支持文字流式渲染和句子级增量 TTS：首个完整短句即可开始合成、后续音频顺序播放。
-- 全量 pytest：**473 passed, 6 skipped**（6 skip 含 4 条 nightly 真实 LLM 默认跳过）。
+- **导航（高德）、天气（和风，JWT）已接真实 Provider 并经真实凭证冒烟通过**；无凭证回退 mock。
+- 全量 pytest：**517 passed, 6 skipped**（6 skip 含 4 条 nightly 真实 LLM 默认跳过）。
 - 端侧 smoke：**13 passed, 0 failed**。
-- HMI TTS 单测：**5 passed**；Vite 生产构建通过。
-- 可观测 Dashboard：**4 passed**；Vite 生产构建通过。
-- Docker **20 个容器**运行正常；新增 collector 与独立 Dashboard 已完成全栈验收。
+- Docker 全栈 **21 个服务**（新增 info 天气 Agent）；前 20 个已完成全栈验收，info 待 `make up` 联调。
 
 详细交接状态见 [`AGENTS.md`](AGENTS.md)，工程约束见 [`CLAUDE.md`](CLAUDE.md)。
 
@@ -86,9 +85,9 @@ Dashboard 的车辆动态接口仅供本地演示；非开发环境必须设置
 
 ## 主要能力
 
-- 61 个车控对象、150 条端侧意图 pattern，知识库驱动归一化、校验、安全门控和话术。
+- 62 个车控对象、150 条端侧意图 pattern，知识库驱动归一化、校验、安全门控和话术。
 - 本地、云端混合多意图拆分，支持导航偏好、歌手等续接片段与主意图成组路由。
-- 六个云 Agent：导航、闲聊、点餐、停车支付、手册问答、行程规划。
+- 七个云 Agent：导航、闲聊、点餐、停车支付、手册问答、行程规划、信息（天气）。
 - 对话记忆、确认/补槽续接、跨 Agent DAG、T2 自适应再规划。
 - MiMo/Mock LLM Provider，MiMo ASR/TTS，webm 到 wav 后端转码。
 - HMI 流式文字、动作卡、记忆视图、语音输入、九种音色和句子级增量播报。
@@ -122,8 +121,8 @@ python test/e2e_ws.py
 
 - Cloud Gateway 的车辆长连接状态仍在单实例内存中，多实例需会话亲和或一致性路由。
 - Registry 仍是内存注册表，但各 Agent / edge / cloud-planner 已周期重注册，重启后自动补注册（无需人工）；多实例扩展仍待做。
-- 地图/餐饮/停车/手册等 Provider 已统一适配并默认可回退 mock，真实厂商能力仍需
-  按环境配置和验收。
+- 导航（高德）、天气（和风 JWT）已接真实 Provider 并经真实凭证冒烟通过（接入规范见
+  [`docs/guides/provider-integration.md`](docs/guides/provider-integration.md)）；餐饮/停车/手册仍为 mock，按环境接入。
 - HTTP/MCP 外部工具及网络出口白名单尚未实现。
 - HMI 的权限 scope 仍使用 PoC 默认注入，量产需从设备身份和会话 token 解析。
 - 轻量 span/指标/健康已接入 NATS Dashboard；Prometheus/OTel 导出、持久化 trace、

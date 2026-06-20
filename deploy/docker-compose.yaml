@@ -92,6 +92,9 @@ services:
     environment:
       <<: *python-env
       AGENT_PORT: "50061"
+      # 真实 POI provider（高德）；不配 key 走 mock。key 只注入本服务（最小化）。
+      POI_VENDOR: ${POI_VENDOR:-mock}
+      AMAP_KEY: ${AMAP_KEY:-}
     depends_on: [registry, llm-gateway]
 
   chitchat-agent:
@@ -127,6 +130,24 @@ services:
     environment:
       <<: *python-env
       AGENT_PORT: "50066"
+    depends_on: [registry, llm-gateway]
+
+  info-agent:
+    build: { context: .., dockerfile: agents/info/Dockerfile }
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50067"
+      # 真实天气 provider（和风）；不配走 mock。鉴权 JWT 优先，否则 API Key。凭证只注入本服务。
+      WEATHER_VENDOR: ${WEATHER_VENDOR:-mock}
+      QWEATHER_HOST: ${QWEATHER_HOST:-devapi.qweather.com}
+      QWEATHER_PROJECT_ID: ${QWEATHER_PROJECT_ID:-}
+      QWEATHER_KEY_ID: ${QWEATHER_KEY_ID:-}
+      QWEATHER_PRIVATE_KEY: ${QWEATHER_PRIVATE_KEY:-}
+      QWEATHER_PRIVATE_KEY_PATH: ${QWEATHER_PRIVATE_KEY_PATH:-}
+      QWEATHER_KEY: ${QWEATHER_KEY:-}
+    # JWT 用文件私钥时取消下面注释，把宿主机 PEM 挂进容器（路径与 QWEATHER_PRIVATE_KEY_PATH 一致）：
+    # volumes:
+    #   - ${QWEATHER_PRIVATE_KEY_PATH}:${QWEATHER_PRIVATE_KEY_PATH}:ro
     depends_on: [registry, llm-gateway]
 
   observability-collector:

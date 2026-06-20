@@ -14,9 +14,10 @@
 | parking-payment | parking_payment | ecosystem | third_party | cloud | 50064 | parking.find, parking.pay |
 | manual-rag | manual_rag | ecosystem | first_party | cloud | 50065 | manual.query |
 | trip-planner | trip_planner | ecosystem | first_party | cloud | 50066 | trip.plan |
+| info | info | core | first_party | cloud | 50067 | info.weather |
 | (车控/媒体) | orchestrator/edge | core | system | **edge** | 50070 | hvac.*, window.*, media.*（端侧 Fast Intent 直执行）|
 
-> 规划中（设计文档提及，PoC 未建独立服务）：`info`（天气/新闻/日程/提醒）、独立的云侧 `media` Agent。新增时按本表分配端口与 intent 命名空间。
+> 规划中（设计文档提及，PoC 未建独立服务）：`info` 的 news/calendar/reminder（`info` Agent 已建并实现 `info.weather`）、独立的云侧 `media` Agent。新增时按本表分配端口与 intent 命名空间。
 
 ---
 
@@ -37,6 +38,7 @@
 | `parking.pay` | parking-payment | cloud | order_id, plate, amount | require_confirm |
 | `manual.query` | manual-rag | cloud | question | RAG |
 | `trip.plan` | trip-planner | cloud | destination, days, preferences | 跨 Agent 协作(Phase1) |
+| `info.weather` | info | cloud | city, date | 实时天气（和风真实 provider，无 key/失败回退 mock）；端侧"天气"online_only 上云 |
 
 新增 intent：先在对应 Agent 的 `manifest.yaml` 声明（含 examples，供语义路由），端侧意图额外进 `orchestrator/edge/fast_intent.py` 的 `LOCAL_INTENTS`。
 
@@ -110,7 +112,7 @@
 | hmi | 5173 | HTTP |
 | dashboard | 5174 | HTTP |
 
-> Agent 端口段已用到 50066，新 Agent 从 **50067** 起。端口在 `deploy/docker-compose.yaml` 与各 Agent `Dockerfile` 的 `AGENT_PORT` 两处，保持一致。
+> Agent 端口段已用到 50067（info），新 Agent 从 **50068** 起。端口在 `deploy/docker-compose.yaml` 与各 Agent `Dockerfile` 的 `AGENT_PORT` 两处，保持一致。
 
 ---
 

@@ -1,0 +1,19 @@
+agent_id: info
+version: 0.1.0
+display_name: 信息助手
+category: core
+trust_level: first_party
+deployment: cloud
+latency_budget_ms: 2000
+fallback: chitchat
+
+capabilities:
+  - intent: info.weather
+    description: 查询指定城市或当前位置的实时天气
+    slots: [city, date]
+    examples: ["今天天气怎么样", "北京天气如何", "上海现在多少度"]
+
+requires_permissions:
+  - network.external
+  - location.read
+edge_intents: []
