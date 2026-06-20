@@ -83,3 +83,21 @@ def test_navigate_to_reasks_when_no_landmark_candidate_is_validated():
 
     assert res.status == "need_slot"
     assert res.actions == []
+
+
+def test_search_poi_resolves_visual_landmark_from_raw_text_and_navigates():
+    """Planner 可能错误抽出普通关键词，导航 Agent 仍应使用原话解析地标。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider({
+        "笋岗": [],
+        "华润大厦": [_poi("华润大厦")],
+    })
+    agent.llm.complete = _async_return('["华润大厦"]')
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.search_poi", slots={"keyword": "笋岗"},
+        raw_text="去深圳笋一样的建筑物"))
+
+    assert agent.poi.queries == ["笋岗", "华润大厦"]
+    assert res.actions[0]["type"] == "navigate"
+    assert res.actions[0]["payload"]["destination"] == "华润大厦"

@@ -59,16 +59,45 @@ class NavigationAgent(BaseAgent):
         except ProviderError as e:
             logger.warning("poi search failed, fallback to mock: %s", e)
             results = await self._fallback.search(keyword, near=near, rating_min=rating_min, meta=meta)
-        names = "、".join(r.name for r in results[:3])
+        resolved_keyword = keyword
+
+        # Planner 有时会把“去深圳笋一样的建筑物”误抽成“笋岗”这类普通关键词。
+        # 常规 POI 检索为空时，使用保留的原话求正式地标名，再由地图 provider 验证。
+        raw_text = (intent.raw_text or "").strip()
+        if not results and raw_text:
+            for candidate in await self._landmark_candidates(raw_text):
+                try:
+                    candidate_results = await self.poi.search(
+                        candidate, near=near, rating_min=rating_min, meta=meta)
+                except ProviderError as e:
+                    logger.warning("semantic POI candidate search failed: %s", e)
+                    continue
+                if candidate_results:
+                    resolved_keyword, results = candidate, candidate_results
+                    break
+
         items = [{"id": r.id, "name": r.name, "rating": r.rating,
                   "distance_km": r.distance_km, "address": r.address} for r in results]
-        card = {"type": "poi_list", "keyword": keyword, "items": items}
+        card = {"type": "poi_list", "keyword": resolved_keyword, "items": items}
+
+        if results and self._is_navigation_phrase(raw_text):
+            first = results[0]
+            return AgentResult(
+                speech=f"识别到您说的是{first.name}（{first.address}）。已为您规划路线。",
+                ui_card=card, data={"items": items},
+            ).action("navigate", {"destination": first.name, "lat": first.lat, "lng": first.lng})
+
+        names = "、".join(r.name for r in results[:3])
         return AgentResult(
-            speech=f"为您找到 {len(results)} 个{keyword}，推荐前三个：{names}。需要导航过去吗？",
+            speech=f"为您找到 {len(results)} 个{resolved_keyword}，推荐前三个：{names}。需要导航过去吗？",
             ui_card=card,
             data={"items": items},  # F3：结构化结果供编排 slot_refs 取值（如 s1.data.items.0.id）
             follow_up="可以说『导航去第一个』",
         )
+
+    @staticmethod
+    def _is_navigation_phrase(text: str) -> bool:
+        return (text or "").strip().startswith(("导航", "去", "到", "带我去"))
 
     async def _navigate_to(self, intent, ctx, meta) -> AgentResult:
         dest = intent.slots.get("destination", "").strip()
