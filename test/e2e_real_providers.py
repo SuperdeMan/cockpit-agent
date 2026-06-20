@@ -142,7 +142,12 @@ def test_qweather_air_quality_returns_real_aqi():
     os.environ["WEATHER_VENDOR"] = "qweather"
     p = build_weather_provider()
     assert not isinstance(p, MockWeatherProvider)
-    aq = asyncio.run(p.air_quality("北京"))
+    try:
+        aq = asyncio.run(p.air_quality("北京"))
+    except Exception as e:
+        if "403" in str(e) or "Forbidden" in str(e):
+            pytest.skip(f"和风空气质量数据未开通权限（需在控制台申请）: {e}")
+        raise
     print(f"\n[和风空气质量] AQI {aq.aqi} {aq.category} PM2.5={aq.pm2p5} 首要{aq.primary_pollutant}")
     assert aq.aqi, "缺 AQI"
     assert aq.update_time and aq.update_time != "mock", "疑似回退 mock"

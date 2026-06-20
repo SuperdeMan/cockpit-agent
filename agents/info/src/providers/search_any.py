@@ -4,10 +4,11 @@
 Agent/工厂侧据此回退 mock，不击穿主链。
 
 AnySearch 定位：AI Search Infrastructure for Agents。
+API: POST https://api.anysearch.com/v1/search
+Body: {"query": "...", "limit": N}
+Auth: Bearer token
+Response: {"code": 0, "data": {"results": [{title, url, snippet, ...}]}}
 docs: https://anysearch.com/docs#search-api
-
-⚠️ 端点基于常见搜索 API 模式推断，用户需确认实际 endpoint 后按需调整。
-   若 endpoint 不同，改 _BASE 和 _SEARCH_PATH 即可。
 """
 from __future__ import annotations
 import logging
@@ -17,7 +18,6 @@ from .base import SearchProvider, SearchResult
 
 logger = logging.getLogger("agent.info.search_any")
 
-# AnySearch API 基础地址（用户需确认，可经 ANYSEARCH_BASE_URL env 覆盖）
 _BASE = "https://api.anysearch.com"
 
 
@@ -37,18 +37,19 @@ class AnySearchProvider(SearchProvider):
 
     async def search(self, query: str, limit: int = 5,
                      meta: dict | None = None) -> list[SearchResult]:
-        data = await self._http.get_json(
+        # AnySearch 用 POST，body 字段为 query（不是 q）
+        data = await self._http.post_json(
             f"{self._base}/v1/search",
-            params={"q": query, "limit": str(max(1, min(limit, 20)))},
+            json_body={"query": query, "limit": max(1, min(limit, 20))},
             headers={"Authorization": f"Bearer {self._key}"},
             op="web_search", meta=meta,
         )
-        # AnySearch 响应格式推断：{ results: [{ title, url, snippet, source }] }
-        # 若实际格式不同，调整下方解析逻辑即可
-        results_list = data.get("results") or data.get("data") or []
-        if isinstance(data, dict) and data.get("error"):
-            raise ProviderError(f"anysearch failed: {data['error']}")
+        # 响应格式：{"code": 0, "data": {"results": [...]}}
+        if data.get("code") != 0:
+            msg = data.get("message") or data.get("error") or "unknown error"
+            raise ProviderError(f"anysearch failed: {msg}")
 
+        results_list = (data.get("data") or {}).get("results") or []
         results: list[SearchResult] = []
         for item in results_list[:limit]:
             results.append(SearchResult(
