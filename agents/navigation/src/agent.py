@@ -72,7 +72,33 @@ class NavigationAgent(BaseAgent):
     async def _navigate_to(self, intent, ctx, meta) -> AgentResult:
         dest = intent.slots.get("destination", "").strip()
         if not dest:
+            # 槽位为空时，尝试用 raw_text 做模糊搜索（处理"导航到上海那个像船一样的建筑"）
+            raw = (intent.raw_text or "").strip()
+            # 去掉常见前缀动词，提取核心描述
+            for prefix in ("导航到", "导航去", "导航", "带我去", "去", "到"):
+                if raw.startswith(prefix):
+                    raw = raw[len(prefix):].strip()
+                    break
+            if raw:
+                dest = raw
+        if not dest:
             return AgentResult(status=NEED_SLOT, speech="您要去哪里？", follow_up="请告诉我目的地")
+
+        # 尝试 POI 搜索（模糊地名 → 精确 POI）
+        try:
+            results = await self.poi.search(dest, limit=3, meta=meta)
+        except ProviderError:
+            results = []
+        if results:
+            first = results[0]
+            items = [{"id": r.id, "name": r.name, "rating": r.rating,
+                      "distance_km": r.distance_km, "address": r.address} for r in results]
+            return AgentResult(
+                speech=f"为您找到 {dest}：{first.name}（{first.address}）。已为您规划路线。",
+                ui_card={"type": "poi_list", "keyword": dest, "items": items},
+                data={"items": items},
+            ).action("navigate", {"destination": first.name, "lat": first.lat, "lng": first.lng})
+
         return AgentResult(speech=f"好的，已为您规划到{dest}的路线。").action(
             "navigate", {"destination": dest})
 

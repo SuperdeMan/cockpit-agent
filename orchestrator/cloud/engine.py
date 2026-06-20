@@ -106,19 +106,24 @@ class PlannerEngine:
                 # 答非所问：用户换了话题，丢弃挂起任务，按新请求处理
                 await self.session.clear(ctx.session_id)
         elif pending and pending.phase == "wait_slot":
-            # F12：补槽续接——把用户文本填入挂起 step 的 missing_slots，然后恢复执行
-            plan, seed_results = self._restore(pending)
-            if plan is None:
+            # F12：补槽续接——判定用户是在回答追问还是换了话题
+            if self._is_topic_change(text):
+                # 答非所问：用户换了话题，丢弃挂起任务，按新请求处理
                 await self.session.clear(ctx.session_id)
-                yield {"kind": "final",
-                       "speech": "刚才的操作已过期，麻烦您再说一遍需求。"}
-                return
-            # Phase 1 简单版：直接用用户原始文本填 slot（Agent LLM 能理解自然语言）
-            for step in plan.steps:
-                if step.id == pending.pending_step_id:
-                    for slot_name in (pending.missing_slots or []):
-                        step.slots[slot_name] = text
-                    break
+                plan, seed_results = None, []
+            else:
+                plan, seed_results = self._restore(pending)
+                if plan is None:
+                    await self.session.clear(ctx.session_id)
+                    yield {"kind": "final",
+                           "speech": "刚才的操作已过期，麻烦您再说一遍需求。"}
+                    return
+                # Phase 1 简单版：直接用用户原始文本填 slot（Agent LLM 能理解自然语言）
+                for step in plan.steps:
+                    if step.id == pending.pending_step_id:
+                        for slot_name in (pending.missing_slots or []):
+                            step.slots[slot_name] = text
+                        break
             logger.info("Resuming plan for session %s (slot fill step %s, text=%s)",
                         ctx.session_id, pending.pending_step_id, text[:20])
         elif ctx.is_confirmation:
@@ -374,6 +379,27 @@ class PlannerEngine:
         if t and len(t) <= 8 and any(k in t for k in _YES_WORDS):
             return "yes"
         return None
+
+    @staticmethod
+    def _is_topic_change(text: str) -> bool:
+        """判定 wait_slot 状态下用户是否换了话题（答非所问）。
+
+        典型场景：Agent 追问"您要去哪里？"，用户回答"讲个笑话"——这不是在补槽。
+        短地名/人名（<10字）默认视为槽位补充；含明显非导航意图关键词则判为换题。
+        """
+        t = (text or "").strip()
+        if not t:
+            return False
+        # 短文本（<10字）大概率是在回答追问（如"首都机场"、"中关村"）
+        if len(t) < 10:
+            return False
+        # 含明显非位置类意图关键词 → 大概率换了话题
+        _topic_switch = (
+            "笑话", "播放", "暂停", "打开", "关闭", "调高", "调低",
+            "空调", "温度", "音乐", "新闻", "天气", "股票",
+            "帮我搜", "搜一下", "订餐", "预订",
+        )
+        return any(k in t for k in _topic_switch)
 
     def _restore(self, state: SessionState) -> tuple[Plan | None, list[StepResult]]:
         """从挂起态恢复计划与已完成结果。
