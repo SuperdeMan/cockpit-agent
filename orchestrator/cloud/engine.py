@@ -65,6 +65,7 @@ class PlannerEngine:
         ctx = self._build_context(request)
         set_trace_id(ctx.trace_id)
         text = (getattr(request, "text", "") or "").strip()
+        ctx.raw_text = text  # 透传给 Agent（供 navigate_to 等 fallback 槽位提取）
         mem_on = ctx.prefs.get("memory_enabled", "true") != "false"
 
         assistant_speech = ""
@@ -385,21 +386,18 @@ class PlannerEngine:
         """判定 wait_slot 状态下用户是否换了话题（答非所问）。
 
         典型场景：Agent 追问"您要去哪里？"，用户回答"讲个笑话"——这不是在补槽。
-        短地名/人名（<10字）默认视为槽位补充；含明显非导航意图关键词则判为换题。
+        判断方式：文本以"动作动词"开头（讲/播/打开/关闭/搜/查…）→ 新意图；否则视为槽位补充。
         """
         t = (text or "").strip()
         if not t:
             return False
-        # 短文本（<10字）大概率是在回答追问（如"首都机场"、"中关村"）
-        if len(t) < 10:
-            return False
-        # 含明显非位置类意图关键词 → 大概率换了话题
-        _topic_switch = (
-            "笑话", "播放", "暂停", "打开", "关闭", "调高", "调低",
-            "空调", "温度", "音乐", "新闻", "天气", "股票",
-            "帮我搜", "搜一下", "订餐", "预订",
+        # 以动作动词开头 → 大概率是新意图（不是在回答补槽追问）
+        _verbs = (
+            "讲", "说", "播放", "暂停", "打开", "关闭", "关掉",
+            "调高", "调低", "搜", "查", "订", "预订", "帮我",
+            "今天", "现在", "最近", "有没有", "怎么样", "多少",
         )
-        return any(k in t for k in _topic_switch)
+        return any(t.startswith(v) for v in _verbs)
 
     def _restore(self, state: SessionState) -> tuple[Plan | None, list[StepResult]]:
         """从挂起态恢复计划与已完成结果。

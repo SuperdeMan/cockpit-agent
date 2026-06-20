@@ -80,6 +80,7 @@ class PlanContext:
     granted_permissions: list[str] = field(default_factory=list)
     is_confirmation: bool = False
     trace_id: str = ""
+    raw_text: str = ""  # 用户原始话术，透传给 Agent（供 fallback 槽位提取）
     # HMI 会话级偏好（model_pref/answer_length/assistant_name/memory_enabled），
     # 来源 HandleRequest.meta，调用 Agent 时并入 ExecuteRequest.meta 透传。
     prefs: dict[str, str] = field(default_factory=dict)

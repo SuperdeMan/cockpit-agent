@@ -106,7 +106,10 @@ class Clients:
     def _exec_request(self, intent: str, slots: dict, ctx, meta: dict | None):
         return agent_pb2.ExecuteRequest(
             session_id=ctx.session_id if ctx else "",
-            intent=common_pb2.Intent(name=intent, slots=slots, raw_text="", confidence=0.9),
+            intent=common_pb2.Intent(
+                name=intent, slots=slots,
+                raw_text=getattr(ctx, "raw_text", "") or "",
+                confidence=0.9),
             context=common_pb2.ContextRef(
                 session_id=ctx.session_id if ctx else "",
                 user_id=ctx.user_id if ctx else "",
