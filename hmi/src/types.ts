@@ -39,7 +39,34 @@ export type WeatherCard = {
   humidity: string
   wind_dir: string
   wind_scale: string
+  precip?: string
+  pressure?: string
+  visibility?: string
+  cloud?: string
+  dew_point?: string
   update_time: string
+  forecast?: Array<{
+    date: string
+    text_day: string
+    text_night: string
+    temp_high: string
+    temp_low: string
+    wind_dir: string
+    wind_scale: string
+    humidity: string
+    precip: string
+    uv_index: string
+    sunrise: string
+    sunset: string
+  }>
+  air_quality?: {
+    aqi: string
+    category: string
+    pm2p5: string
+    primary_pollutant: string
+  }
+  indices?: Array<{ name: string; level: string; text: string }>
+  alerts?: Array<{ title: string; level: string; type: string; text: string; pub_time: string }>
 }
 
 export type ForecastCard = {
@@ -64,11 +91,22 @@ export type StockCard = {
   change: string
   change_pct: string
   market_time: string
+  candles?: StockCandle[]
+}
+
+export type StockCandle = {
+  date: string
+  open: string
+  high: string
+  low: string
+  close: string
+  volume: string
 }
 
 export type NewsCard = {
   type: 'news_list'
   topic: string
+  summary?: string
   items: Array<{
     title: string
     summary: string
@@ -80,6 +118,7 @@ export type NewsCard = {
 export type SearchCard = {
   type: 'search_list'
   query: string
+  summary?: string
   items: Array<{
     title: string
     url: string

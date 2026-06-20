@@ -4,6 +4,7 @@ import type {
   UiCard, WeatherCard, ForecastCard, StockCard,
   NewsCard, SearchCard, PoiListCard, PoiDetailCard,
 } from '../types'
+import { buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 
 // ─── 天气图标映射 ───
 const WEATHER_ICONS: Record<string, string> = {
@@ -37,24 +38,57 @@ export function CardRenderer({ card }: { card: UiCard }) {
 
 function WeatherCardView({ card }: { card: WeatherCard }) {
   const icon = weatherIcon(card.text)
+  const telemetry = [
+    card.feels_like && { label: '体感', value: `${card.feels_like}℃` },
+    card.humidity && { label: '湿度', value: `${card.humidity}%` },
+    card.wind_dir && { label: '风况', value: `${card.wind_dir}${card.wind_scale ? `${card.wind_scale}级` : ''}` },
+    card.visibility && { label: '能见度', value: `${card.visibility}km` },
+    card.precip && { label: '降水', value: `${card.precip}mm` },
+    card.pressure && { label: '气压', value: `${card.pressure}hPa` },
+  ].filter(Boolean) as Array<{ label: string; value: string }>
   return (
-    <div className="card card-weather">
-      <div className="card-weather-main">
-        <span className="card-weather-icon">{icon}</span>
-        <div className="card-weather-temp">
-          <span className="temp-value">{card.temp}</span>
-          <span className="temp-unit">℃</span>
+    <div className="card card-weather weather-overview">
+      <div className="weather-hero">
+        <div className="card-weather-main">
+          <span className="card-weather-icon">{icon}</span>
+          <div className="card-weather-temp">
+            <span className="temp-value">{card.temp}</span>
+            <span className="temp-unit">℃</span>
+          </div>
+        </div>
+        <div className="card-weather-info">
+          <div className="card-weather-city">{card.city}</div>
+          <div className="card-weather-text">{card.text || '天气数据更新中'}</div>
+          {card.cloud && <div className="weather-cloud">云量 {card.cloud}%</div>}
         </div>
       </div>
-      <div className="card-weather-info">
-        <div className="card-weather-city">{card.city}</div>
-        <div className="card-weather-text">{card.text}</div>
-        <div className="card-weather-detail">
-          {card.feels_like && <span>体感 {card.feels_like}℃</span>}
-          {card.humidity && <span>湿度 {card.humidity}%</span>}
-          {card.wind_dir && <span>{card.wind_dir}{card.wind_scale}级</span>}
+      {telemetry.length > 0 && (
+        <div className="weather-telemetry">
+          {telemetry.map((item) => <div className="weather-chip" key={item.label}>
+            <span>{item.label}</span><strong>{item.value}</strong>
+          </div>)}
         </div>
-      </div>
+      )}
+      {!!card.forecast?.length && <div className="weather-forecast-rail">
+        {card.forecast.slice(0, 3).map((day, index) => <div className="weather-mini-day" key={`${day.date}-${index}`}>
+          <span>{index === 0 ? '今天' : day.date.slice(5)}</span>
+          <i>{weatherIcon(day.text_day)}</i>
+          <strong>{day.temp_low}°<em> / </em>{day.temp_high}°</strong>
+          <small>{day.text_day}{day.precip && ` · ${day.precip}mm`}</small>
+        </div>)}
+      </div>}
+      {(card.air_quality?.aqi || card.indices?.length) && <div className="weather-brief-row">
+        {card.air_quality?.aqi && <div className="air-badge">
+          <span>空气</span><strong>AQI {card.air_quality.aqi}</strong>
+          <em>{card.air_quality.category || '—'}{card.air_quality.pm2p5 && ` · PM2.5 ${card.air_quality.pm2p5}`}</em>
+        </div>}
+        {!!card.indices?.length && <div className="weather-advice">
+          {card.indices.slice(0, 2).map((item) => <span key={item.name}>{item.name} <b>{item.level}</b></span>)}
+        </div>}
+      </div>}
+      {!!card.alerts?.length && <div className="weather-alert-callout">
+        <span>⚠</span><strong>{card.alerts[0].level}色预警</strong><p>{card.alerts[0].title}</p>
+      </div>}
       {card.update_time && card.update_time !== 'mock' && (
         <div className="card-meta">{card.update_time.replace('T', ' ').replace(/\+.*/, '')}</div>
       )}
@@ -88,22 +122,40 @@ function ForecastCardView({ card }: { card: ForecastCard }) {
 
 // ─── 股票卡片 ───
 
+function KlineChart({ card }: { card: StockCard }) {
+  const candles = buildKlineGeometry(card.candles || [], 320, 154)
+  if (!candles.length) return <div className="kline-empty">暂无可用日 K 数据</div>
+  return <div className="kline-panel">
+    <div className="kline-topline"><span>近 {candles.length} 日 K 线</span><span>{candles[candles.length - 1]?.date}</span></div>
+    <svg className="kline-chart" viewBox="0 0 320 154" role="img" aria-label={`${card.name}近期日K线`}>
+      {[0.2, 0.5, 0.8].map((ratio) => <line key={ratio} x1="16" x2="304" y1={12 + 130 * ratio} y2={12 + 130 * ratio} className="kline-grid" />)}
+      {candles.map((candle) => <g key={candle.date}>
+        <line x1={candle.x} x2={candle.x} y1={candle.highY} y2={candle.lowY} stroke={candle.color} strokeWidth="1.4" />
+        <rect x={candle.x - candle.bodyWidth / 2} y={candle.bodyY} width={candle.bodyWidth} height={candle.bodyHeight} rx="1" fill={candle.color} />
+      </g>)}
+    </svg>
+  </div>
+}
+
 function StockCardView({ card }: { card: StockCard }) {
-  const isUp = !card.change?.startsWith('-')
-  const colorClass = isUp ? 'stock-up' : 'stock-down'
-  const arrow = isUp ? '▲' : '▼'
+  const direction = priceDirection(card.change)
+  const colorClass = `stock-${direction}`
+  const arrow = direction === 'up' ? '▲' : direction === 'down' ? '▼' : '—'
+  const directionText = direction === 'up' ? '上涨' : direction === 'down' ? '下跌' : '平盘'
   return (
     <div className={`card card-stock ${colorClass}`}>
       <div className="card-stock-header">
         <span className="card-stock-name">{card.name}</span>
         <span className="card-stock-symbol">{card.symbol}</span>
+        <span className="stock-market-tag">日线</span>
       </div>
       <div className="card-stock-price">{card.price}</div>
       <div className="card-stock-change">
         <span className="stock-arrow">{arrow}</span>
-        <span>{card.change}</span>
+        <span>{directionText} {card.change}</span>
         <span className="stock-pct">（{card.change_pct}）</span>
       </div>
+      <KlineChart card={card} />
       {card.market_time && card.market_time !== 'mock' && (
         <div className="card-meta">{card.market_time}</div>
       )}
@@ -119,6 +171,7 @@ function NewsCardView({ card }: { card: NewsCard }) {
       <div className="card-header">
         {card.topic ? `「${card.topic}」新闻` : '今日热点'}
       </div>
+      {card.summary && <div className="summary-brief"><span>结论摘要</span><p>{card.summary}</p></div>}
       <div className="card-news-list">
         {card.items.map((item, i) => (
           <div key={i} className="news-item">
@@ -146,6 +199,7 @@ function SearchCardView({ card }: { card: SearchCard }) {
   return (
     <div className="card card-search">
       <div className="card-header">搜索「{card.query}」</div>
+      {card.summary && <div className="summary-brief"><span>结论摘要</span><p>{card.summary}</p></div>}
       <div className="card-search-list">
         {card.items.map((item, i) => (
           <div key={i} className="search-item">

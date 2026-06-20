@@ -7,7 +7,7 @@
     "dev": "vite --host --port 5173",
     "build": "vite build",
     "preview": "vite preview --host --port 5173",
-    "test": "node --test src/ttsQueue.test.mjs"
+    "test": "node --test src/*.test.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
