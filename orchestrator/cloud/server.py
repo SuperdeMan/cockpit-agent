@@ -46,4 +46,8 @@ class CloudPlannerServicer(orchestrator_pb2_grpc.CloudPlannerServicer):
                     need_confirm=event.get("need_confirm", False),
                     actions=actions,
                 )
+                # 透传 ui_card（Agent 返回的结构化卡片数据给 HMI）
+                ui_card = event.get("ui_card")
+                if ui_card and isinstance(ui_card, dict):
+                    final.ui_card.update(ui_card)
                 yield orchestrator_pb2.HandleEvent(final=final)

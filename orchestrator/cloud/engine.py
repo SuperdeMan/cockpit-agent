@@ -303,6 +303,7 @@ class PlannerEngine:
             "speech": step_result.speech,
             "follow_up": step_result.follow_up,
             "actions": step_result.actions,
+            "ui_card": step_result.ui_card,
             "need_confirm": step_result.status == StepStatus.NEED_CONFIRM,
         }
 

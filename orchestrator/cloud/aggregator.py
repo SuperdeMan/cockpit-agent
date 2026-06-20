@@ -24,18 +24,20 @@ class Aggregator:
         actions = [a for r in results for a in r.actions]
         cards = [r.ui_card for r in results if r.ui_card]
         follow_ups = [r.follow_up for r in results if r.follow_up]
+        # ui_card 取第一个（单 Agent 场景）；多 Agent 未来可聚合
+        ui_card = cards[0] if cards else None
 
         if not results:
-            return {"speech": "抱歉，我暂时无法处理这个请求。", "actions": [], "cards": []}
+            return {"speech": "抱歉，我暂时无法处理这个请求。", "actions": []}
 
         if len(results) == 1:
             r = results[0]
             if r.status == StepStatus.FAILED:
-                return {"speech": f"抱歉，{r.error or '处理失败'}。", "actions": [], "cards": []}
+                return {"speech": f"抱歉，{r.error or '处理失败'}。", "actions": []}
             return {
                 "speech": r.speech,
                 "actions": actions,
-                "cards": cards,
+                "ui_card": ui_card,
                 "follow_up": r.follow_up,
                 "need_confirm": r.status == StepStatus.NEED_CONFIRM,
             }
@@ -45,7 +47,7 @@ class Aggregator:
         return {
             "speech": speech,
             "actions": actions,
-            "cards": cards,
+            "ui_card": ui_card,
             "follow_up": follow_ups[0] if follow_ups else "",
         }
 
