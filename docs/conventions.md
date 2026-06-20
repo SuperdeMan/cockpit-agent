@@ -46,7 +46,7 @@
 | `info.indices` | info | cloud | city | 生活指数（运动/洗车/紫外线） |
 | `info.search` | info | cloud | query, limit | 联网搜索（AnySearch 优先/Bing 降级真实 provider）；端侧"搜一下"online_only 上云 |
 | `info.news` | info | cloud | topic, limit | 新闻摘要（SerpApi Google+Baidu News，AnySearch 兜底）；端侧"看新闻/摘要"→info.news，"播新闻"→media.* |
-| `info.stock` | info | cloud | symbol | 股票行情（Tushare 免费 API 真实 provider）；端侧"股票/大盘"收敛到 info.stock |
+| `info.stock` | info | cloud | symbol | 股票行情（Tushare A股 + 新浪行情港美股降级，免费）；端侧"股票/大盘"收敛到 info.stock |
 | `info.air_quality` | info | cloud | city | 实时空气质量（和风 AQI/PM2.5 真实 provider）；端侧"空气质量/PM2.5"online_only 上云 |
 
 新增 intent：先在对应 Agent 的 `manifest.yaml` 声明（含 examples，供语义路由），端侧意图额外进 `orchestrator/edge/fast_intent.py` 的 `LOCAL_INTENTS`。

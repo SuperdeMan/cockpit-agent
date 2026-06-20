@@ -20,7 +20,7 @@
 - HMI 支持文字流式渲染和句子级增量 TTS：首个完整短句即可开始合成、后续音频顺序播放。
 - **信息类 Provider 全面落地**：导航=高德 / 天气=和风(JWT) / 搜索=AnySearch+Bing / 新闻=SerpApi(Google+Baidu) / 股票=Tushare，真实凭证冒烟通过，无凭证回退 mock。
 - **HMI 信息类 UI 卡片**：天气/股票/新闻/搜索/POI 结构化卡片，全链路 ui_card 透传。
-- 全量 pytest：**564 passed, 6 skipped**。
+- 全量 pytest：**589 passed, 6 skipped**。
 - 端侧 smoke：**13 passed, 0 failed**。
 - Docker 全栈 **21 个服务**；info-agent 已集成并全栈联调通过。
 

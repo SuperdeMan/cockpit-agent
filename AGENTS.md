@@ -12,7 +12,7 @@
 阶段：**Phase 1 工程化 PoC 主干、云端中枢 P0-P3 与轻量可观测台已落地**（2026-06-15）。
 持久化/多实例、mTLS/沙箱、完整 OTel 等仍是后续工作；**真实外部能力已接入首批**
 （导航=高德、天气=和风含 JWT/EdDSA 鉴权，无凭证回退 mock；2026-06-20 已用真实凭证端到端
-冒烟通过）。当前全量单测 568 passed, 6 skipped；compose 新增 info-agent（全栈联调待 `make up`）。
+冒烟通过）。当前全量单测 589 passed, 6 skipped；compose 含 21 个服务（含 info-agent）。
 
 ---
 
@@ -50,13 +50,13 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 568 passed, 6 skipped（2026-06-20 实测；含 info/导航 provider 全能力 + AgentClient 跨进程护栏 + UI 卡片链路） |
+| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 589 passed, 6 skipped（2026-06-20 实测；含 info/导航 provider 全能力 + AgentClient 跨进程护栏 + UI 卡片链路 + 股票 A/港/美股） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
 | HMI TTS 单测 / 构建 | ✅ Node 5/5；`npm run build` 通过 |
 | Dashboard 单测 / 构建 | ✅ Node 10/10；`npm run build` 通过 |
 | `gen/`（gRPC 生成代码）| ✅ 已生成（`buf generate proto`） |
 | Go 网关 | ✅ Go 1.24 编译通过，Docker 全栈运行 |
-| Agent Provider 适配 | ✅ 7 Agent 接入统一工厂；导航=高德（POI/路线/逆地理/详情）/ 天气=和风（实时/预报/预警/指数/空气质量，JWT/EdDSA）/ 搜索=AnySearch(优先)+Bing(降级) / 新闻=SerpApi(Google+Baidu News，AnySearch兜底) / 股票=Tushare(免费API) 真实适配已落地，无凭证/失败回退 mock；端到端见 `test/e2e_real_providers.py`；AgentClient 护栏跨进程修复（depth/stack 经 meta→contextvar 传递） |
+| Agent Provider 适配 | ✅ 7 Agent 接入统一工厂；导航=高德（POI/路线/逆地理/详情+模糊地标LLM解析）/ 天气=和风（JWT/EdDSA）/ 搜索=AnySearch+LLM合成结论 / 新闻=SerpApi+LLM摘要 / 股票=Tushare(A股)+新浪行情(港美股降级)；错误话术用户友好化；AgentClient 护栏跨进程修复 |
 | 安全/权限/编排/协作/支付 | ✅ PoC 链路落地；真实 token、正式沙箱与真实支付仍待接入 |
 | 可观测 | ✅ NATS 事件、collector REST/WS、车辆 diff、端云 span、Agent 健康/指标与独立 Dashboard；collector/registry 重启经周期快照与周期重注册自愈；Prometheus/OTel 导出仍待做 |
 | 熔断 | ⚠️ 基础实现存在，生产化接线与演练待做 |
