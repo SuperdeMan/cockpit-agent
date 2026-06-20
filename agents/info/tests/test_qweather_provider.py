@@ -49,7 +49,9 @@ def _b64d(s: str) -> bytes:
 _LOOKUP_OK = {"code": "200", "location": [{"id": "101010100", "name": "北京"}]}
 _NOW_OK = {"code": "200", "updateTime": "2026-06-20T10:00+08:00",
            "now": {"temp": "28", "text": "晴", "feelsLike": "30",
-                   "humidity": "45", "windDir": "南风", "windScale": "3"}}
+                   "humidity": "45", "windDir": "南风", "windScale": "3",
+                   "precip": "0.2", "pressure": "1008", "vis": "10",
+                   "cloud": "15", "dew": "12"}}
 
 
 def test_now_parses_apikey_mode():
@@ -132,7 +134,8 @@ _FORECAST_3D_OK = {
     "daily": [
         {"fxDate": "2026-06-21", "textDay": "多云", "textNight": "晴",
          "tempMax": "30", "tempMin": "22", "windDirDay": "东南风",
-         "windScaleDay": "2", "humidity": "55"},
+         "windScaleDay": "2", "humidity": "55", "precip": "0.3",
+         "uvIndex": "6", "sunrise": "04:45", "sunset": "19:40"},
         {"fxDate": "2026-06-22", "textDay": "晴", "textNight": "多云",
          "tempMax": "32", "tempMin": "23", "windDirDay": "南风",
          "windScaleDay": "3", "humidity": "50"},
@@ -239,3 +242,25 @@ def test_air_quality_parses():
     assert aq.pm2p5 == "35"
     assert aq.pm10 == "52"
     assert aq.update_time.startswith("2026-06-20")
+
+
+def test_overview_parses_extra_data_and_keeps_optional_sections():
+    """一张天气卡只需一次城市解析，随后聚合所有和风天气信息。"""
+    p = _provider({
+        "/geo/v2/city/lookup": _LOOKUP_OK,
+        "/v7/weather/now": _NOW_OK,
+        "/v7/weather/3d": _FORECAST_3D_OK,
+        "/v7/air/now": _AIR_NOW_OK,
+        "/v7/indices/1d": _INDICES_OK,
+        "/v7/warning/now": {"code": "200", "warning": []},
+    })
+
+    overview = asyncio.run(p.overview("北京"))
+
+    assert overview.now.visibility == "10"
+    assert overview.now.pressure == "1008"
+    assert overview.forecast[0].uv_index == "6"
+    assert overview.forecast[0].sunrise == "04:45"
+    assert overview.air_quality.aqi == "52"
+    assert len(overview.indices) == 3
+    assert overview.alerts == []

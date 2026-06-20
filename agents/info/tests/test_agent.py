@@ -16,6 +16,16 @@ def test_weather_with_city_returns_card():
     assert res.speech
 
 
+def test_weather_card_contains_overview_sections():
+    res = asyncio.run(run_handle(
+        InfoAgent(), "info.weather", slots={"city": "北京"}, raw_text="北京天气"))
+
+    assert len(res.ui_card["forecast"]) == 3
+    assert res.ui_card["air_quality"]["aqi"]
+    assert res.ui_card["indices"]
+    assert "visibility" in res.ui_card
+
+
 def test_weather_uses_vehicle_location_when_no_city():
     ctx = make_context(context_values={"vehicle.location": "上海市"})
     res = asyncio.run(run_handle(

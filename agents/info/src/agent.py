@@ -69,10 +69,12 @@ class InfoAgent(BaseAgent):
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个城市的天气？",
                                follow_up="请告诉我城市名", missing_slots=["city"])
         try:
-            w = await self.weather.now(city, meta=meta)
+            overview = await self.weather.overview(city, meta=meta)
         except ProviderError as e:
             logger.warning("weather query failed, fallback to mock: %s", e)
-            w = await self._fallback_weather.now(city, meta=meta)
+            overview = await self._fallback_weather.overview(city, meta=meta)
+
+        w = overview.now
 
         name = w.city or city
         parts = [f"{name}当前{w.text or '天气'}"]
@@ -84,10 +86,38 @@ class InfoAgent(BaseAgent):
             parts.append(f"，{w.wind_dir}{w.wind_scale}级" if w.wind_scale else f"，{w.wind_dir}")
         speech = "".join(parts) + "。"
 
-        card = {"type": "weather", "city": name, "temp": w.temp, "text": w.text,
-                "feels_like": w.feels_like, "humidity": w.humidity,
-                "wind_dir": w.wind_dir, "wind_scale": w.wind_scale,
-                "update_time": w.update_time}
+        forecast = [
+            {"date": d.date, "text_day": d.text_day, "text_night": d.text_night,
+             "temp_high": d.temp_high, "temp_low": d.temp_low,
+             "wind_dir": d.wind_dir, "wind_scale": d.wind_scale,
+             "humidity": d.humidity, "precip": d.precip, "uv_index": d.uv_index,
+             "sunrise": d.sunrise, "sunset": d.sunset}
+            for d in overview.forecast
+        ]
+        air_quality = {
+            "aqi": overview.air_quality.aqi,
+            "category": overview.air_quality.category,
+            "pm2p5": overview.air_quality.pm2p5,
+            "primary_pollutant": overview.air_quality.primary_pollutant,
+        }
+        indices = [
+            {"name": idx.name, "level": idx.level, "text": idx.text}
+            for idx in overview.indices[:3]
+        ]
+        alerts = [
+            {"title": alert.title, "level": alert.level, "type": alert.type_name,
+             "text": alert.text, "pub_time": alert.pub_time}
+            for alert in overview.alerts
+        ]
+        card = {
+            "type": "weather", "city": name, "temp": w.temp, "text": w.text,
+            "feels_like": w.feels_like, "humidity": w.humidity,
+            "wind_dir": w.wind_dir, "wind_scale": w.wind_scale,
+            "precip": w.precip, "pressure": w.pressure, "visibility": w.visibility,
+            "cloud": w.cloud, "dew_point": w.dew_point, "update_time": w.update_time,
+            "forecast": forecast, "air_quality": air_quality,
+            "indices": indices, "alerts": alerts,
+        }
         return AgentResult(speech=speech, ui_card=card, data={"weather": card})
 
     async def _forecast(self, intent, ctx, meta) -> AgentResult:
