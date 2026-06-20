@@ -101,3 +101,25 @@ def test_search_poi_resolves_visual_landmark_from_raw_text_and_navigates():
     assert agent.poi.queries == ["笋岗", "华润大厦"]
     assert res.actions[0]["type"] == "navigate"
     assert res.actions[0]["payload"]["destination"] == "华润大厦"
+
+
+def test_search_poi_prefers_validated_landmark_over_misparsed_keyword_result():
+    """视觉地标描述不能被 Planner 抽出的同名普通 POI 抢占。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider({
+        "笋岗": [_poi("笋岗地铁站")],
+        "中国华润大厦": [_poi("中国华润大厦")],
+    })
+    agent.llm.complete = _async_return('["中国华润大厦"]')
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.search_poi", slots={"keyword": "笋岗"},
+        raw_text="去深圳笋一样的建筑物"))
+
+    assert agent.poi.queries == ["笋岗", "中国华润大厦"]
+    assert res.actions[0]["payload"]["destination"] == "中国华润大厦"
+
+
+def test_visual_landmark_detection_does_not_promote_ordinary_navigation():
+    assert NavigationAgent._is_visual_landmark_description("导航到上海船型的建筑物")
+    assert not NavigationAgent._is_visual_landmark_description("去深圳万象城")
