@@ -18,10 +18,11 @@
 - `DispatchToEdge`、T2 有界循环、确定性工具和权限双层校验已实现。
 - 端侧混合意图支持按语义组分流，本地动作与导航/媒体慢意图可在同一请求中协同执行。
 - HMI 支持文字流式渲染和句子级增量 TTS：首个完整短句即可开始合成、后续音频顺序播放。
-- **导航（高德）、天气（和风，JWT）已接真实 Provider 并经真实凭证冒烟通过**；无凭证回退 mock。
-- 全量 pytest：**517 passed, 6 skipped**（6 skip 含 4 条 nightly 真实 LLM 默认跳过）。
+- **信息类 Provider 全面落地**：导航=高德 / 天气=和风(JWT) / 搜索=AnySearch+Bing / 新闻=SerpApi(Google+Baidu) / 股票=Tushare，真实凭证冒烟通过，无凭证回退 mock。
+- **HMI 信息类 UI 卡片**：天气/股票/新闻/搜索/POI 结构化卡片，全链路 ui_card 透传。
+- 全量 pytest：**564 passed, 6 skipped**。
 - 端侧 smoke：**13 passed, 0 failed**。
-- Docker 全栈 **21 个服务**（新增 info 天气 Agent）；前 20 个已完成全栈验收，info 待 `make up` 联调。
+- Docker 全栈 **21 个服务**；info-agent 已集成并全栈联调通过。
 
 详细交接状态见 [`AGENTS.md`](AGENTS.md)，工程约束见 [`CLAUDE.md`](CLAUDE.md)。
 

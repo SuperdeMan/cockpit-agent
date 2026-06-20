@@ -2,7 +2,7 @@
 
 - **类型**：常青指南（evergreen guide）。这是「接真实 provider」的唯一标准流程，照此做不跑偏。
 - **适用对象**：任何要给某 Agent 接真实外部能力（地图/天气/搜索/股票/票务…）的开发者或 Agent。
-- **关联代码**：`agents/_sdk/http.py`、`agents/navigation/src/providers/*`（高德样板）、`agents/info/src/providers/*`（和风样板，含 JWT）、`observability/events.py`
+- **关联代码**：`agents/_sdk/http.py`、`agents/navigation/src/providers/*`（高德样板）、`agents/info/src/providers/*`（和风/搜索/新闻/股票样板）、`observability/events.py`
 - **关联文档**：`docs/architecture/detailed/ws6-real-capabilities-and-agent-collaboration.md`（范式来源）、`docs/conventions.md`、`CLAUDE.md` §5（安全红线）
 
 > **黄金法则**：Agent 业务逻辑**只依赖领域 Provider 接口**，永不直接 import 某厂商 SDK/写 `requests`。
@@ -34,7 +34,7 @@ agents/<name>/src/
 ### Step 1 — 定义或复用领域 Provider 接口（`base.py`）
 一个「领域」一个接口，方法是**业务语义**（不是厂商 endpoint）。所有方法带可选 `meta: dict | None = None`（透传 trace）。
 > 样板：`agents/navigation/src/providers/base.py`（`POIProvider.search/get_route` + `POI`/`GeoPoint`）、
-> `agents/info/src/providers/base.py`（`WeatherProvider.now` + `Weather`）。
+> `agents/info/src/providers/base.py`（`WeatherProvider` + `SearchProvider` + `NewsProvider` + `StockProvider` + 对应 dataclass）。
 > 新领域才新建接口；同领域换厂商**复用**现有接口。
 
 ### Step 2 — 读厂商 API 文档，先列「字段映射表」再写代码
