@@ -267,13 +267,14 @@ def test_stock_missing_symbol_asks():
 def test_stock_provider_failure_does_not_render_a_mock_kline():
     agent = InfoAgent()
     agent.stock = _UnavailableStockProvider()
+    agent._stock_eastmoney = None  # 禁用东方财富 fallback，确保测试主路径失败
 
     res = asyncio.run(run_handle(
         agent, "info.stock", slots={"symbol": "贵州茅台"}, raw_text="贵州茅台的股票"))
 
     assert res.status == "failed"
     assert res.ui_card is None
-    assert "暂时无法获取" in res.speech
+    assert "没有找到" in res.speech or "暂时无法获取" in res.speech
 
 
 def test_unknown_intent_failed():

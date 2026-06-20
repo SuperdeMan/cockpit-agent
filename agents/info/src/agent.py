@@ -51,6 +51,12 @@ class InfoAgent(BaseAgent):
         self.search = build_search_provider()
         self.news = build_news_provider()
         self.stock = build_stock_provider()
+        # 东方财富实时行情（免费无 key，全市场）：Tushare 无港美股权限时的降级
+        try:
+            from .providers.stock_eastmoney import EastMoneyStockProvider
+            self._stock_eastmoney = EastMoneyStockProvider()
+        except Exception:
+            self._stock_eastmoney = None
         self._fallback_weather = MockWeatherProvider()
         self._fallback_search = MockSearchProvider()
         self._fallback_news = MockNewsProvider()
@@ -359,19 +365,24 @@ class InfoAgent(BaseAgent):
         try:
             q = await self.stock.quote(symbol, meta=meta)
         except ProviderError as e:
-            err_msg = str(e)
-            logger.warning("stock quote failed: %s", e)
-            # 区分"查不到/不支持"和"服务异常"
-            if any(k in err_msg for k in ("no unambiguous", "no daily data", "invalid code",
-                                          "unsupported market", "no daily", "没有接口")):
+            logger.warning("tushare quote failed: %s", e)
+            # Tushare 失败（如无港美股权限）→ 降级到东方财富实时行情（免费，全市场）
+            if self._stock_eastmoney:
+                try:
+                    q = await self._stock_eastmoney.quote(symbol, meta=meta)
+                    stock_provider = self._stock_eastmoney  # history 也用东方财富
+                except ProviderError as e2:
+                    logger.warning("eastmoney quote also failed: %s", e2)
+                    return AgentResult(
+                        status=FAILED,
+                        speech=f"没有找到「{symbol}」的行情数据。可能未上市或名称不准确。"
+                               f"您可以试试用代码查询，如「600519」（A股）、「00700」（港股）。",
+                    )
+            else:
                 return AgentResult(
-                    speech=f"没有找到「{symbol}」的行情数据。可能未上市、名称不准确、或当前账户无该市场权限。"
-                           f"您可以试试用代码查询，如「600519」（A股）、「00700」（港股）。",
+                    status=FAILED,
+                    speech=f"没有找到「{symbol}」的行情数据。可能未上市或名称不准确。",
                 )
-            return AgentResult(
-                status=FAILED,
-                speech="股票行情服务暂时不可用，请稍后再试。",
-            )
         try:
             candles = await stock_provider.history(symbol, limit=20, meta=meta)
         except ProviderError as e:
