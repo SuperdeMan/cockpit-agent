@@ -4,7 +4,7 @@ import datetime as _dt
 
 from .base import (
     WeatherProvider, Weather,
-    ForecastDay, WeatherAlert, LifeIndex,
+    ForecastDay, WeatherAlert, LifeIndex, AirQuality,
     SearchProvider, SearchResult,
     NewsProvider, NewsItem,
     StockProvider, Quote,
@@ -45,6 +45,14 @@ class MockWeatherProvider(WeatherProvider):
             LifeIndex(category="洗车", name="洗车指数", level="较适宜", text="未来一天无雨，适合洗车。"),
             LifeIndex(category="紫外线", name="紫外线指数", level="弱", text="辐射较弱，涂擦SPF12-15护肤品。"),
         ]
+
+    async def air_quality(self, city: str,
+                          meta: dict | None = None) -> AirQuality:
+        return AirQuality(
+            aqi="52", category="良", primary_pollutant="PM2.5",
+            pm2p5="35", pm10="52", no2="20", o3="88", co="0.6", so2="5",
+            update_time="mock",
+        )
 
 
 class MockSearchProvider(SearchProvider):

@@ -156,5 +156,49 @@ class AsyncHttpClient:
         except Exception as e:  # pragma: no cover - 可观测绝不影响主链
             logger.debug("emit provider span failed: %s", e)
 
+    async def post_json(self, url: str, json_body: dict | None = None,
+                        op: str = "post", headers: dict | None = None,
+                        meta: dict | None = None) -> Any:
+        """POST JSON 并解析响应。带超时 / 重试 / 熔断，逻辑与 get_json 一致。"""
+        if not self._breaker.allow():
+            await self._emit_span(op, "error", 0.0, {"outcome": "circuit_open"}, meta)
+            raise ProviderUnavailable(f"{self.vendor} circuit open")
+
+        start = time.monotonic()
+        last_exc: ProviderError | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = await self._client.post(url, json=json_body, headers=headers)
+            except httpx.TimeoutException as e:
+                last_exc = ProviderTimeout(f"{self.vendor} timeout: {e}")
+            except httpx.HTTPError as e:
+                last_exc = ProviderUnavailable(f"{self.vendor} unavailable: {e}")
+            else:
+                if resp.status_code >= 500:
+                    last_exc = ProviderHTTPError(resp.status_code, resp.text[:200])
+                elif resp.status_code >= 400:
+                    self._breaker.record_failure()
+                    dur = (time.monotonic() - start) * 1000
+                    await self._emit_span(op, "error", dur,
+                                          {"http_status": resp.status_code,
+                                           "outcome": "http_error"}, meta)
+                    raise ProviderHTTPError(resp.status_code, resp.text[:200])
+                else:
+                    data = resp.json()
+                    self._breaker.record_success()
+                    dur = (time.monotonic() - start) * 1000
+                    await self._emit_span(op, "ok", dur,
+                                          {"http_status": resp.status_code,
+                                           "outcome": "ok"}, meta)
+                    return data
+            if attempt < self.max_retries:
+                await asyncio.sleep(0.15 * (2 ** attempt))
+
+        self._breaker.record_failure()
+        dur = (time.monotonic() - start) * 1000
+        outcome = "timeout" if isinstance(last_exc, ProviderTimeout) else "unavailable"
+        await self._emit_span(op, "error", dur, {"outcome": outcome}, meta)
+        raise last_exc or ProviderUnavailable(f"{self.vendor} failed")
+
     async def aclose(self) -> None:
         await self._client.aclose()

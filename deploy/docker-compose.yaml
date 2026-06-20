@@ -145,14 +145,15 @@ services:
       QWEATHER_PRIVATE_KEY: ${QWEATHER_PRIVATE_KEY:-}
       QWEATHER_PRIVATE_KEY_PATH: ${QWEATHER_PRIVATE_KEY_PATH:-}
       QWEATHER_KEY: ${QWEATHER_KEY:-}
-      # 联网搜索（Bing）；不配走 mock
-      SEARCH_VENDOR: ${SEARCH_VENDOR:-mock}
+      # 联网搜索（优先 AnySearch，降级 Bing）；不配走 mock
+      ANYSEARCH_API_KEY: ${ANYSEARCH_API_KEY:-}
+      ANYSEARCH_BASE_URL: ${ANYSEARCH_BASE_URL:-https://api.anysearch.com}
       BING_SEARCH_KEY: ${BING_SEARCH_KEY:-}
-      # 新闻（NewsAPI）；不配走 mock
-      NEWS_VENDOR: ${NEWS_VENDOR:-mock}
+      # 新闻（SerpApi: Google+Baidu News，AnySearch 兜底）；不配走 mock
+      SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
       NEWS_API_KEY: ${NEWS_API_KEY:-}
-      # 股票行情（Alpha Vantage）；不配走 mock
-      STOCK_VENDOR: ${STOCK_VENDOR:-mock}
+      # 股票行情（Tushare 免费 API）；不配走 mock
+      TUSHARE_TOKEN: ${TUSHARE_TOKEN:-}
       STOCK_API_KEY: ${STOCK_API_KEY:-}
     # JWT 用文件私钥时取消下面注释，把宿主机 PEM 挂进容器（路径与 QWEATHER_PRIVATE_KEY_PATH 一致）：
     # volumes:

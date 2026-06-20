@@ -28,6 +28,11 @@ capabilities:
     slots: [city]
     examples: ["今天适合运动吗", "明天可以洗车吗", "紫外线强不强", "生活指数"]
 
+  - intent: info.air_quality
+    description: 查询城市实时空气质量（AQI/PM2.5/PM10等）
+    slots: [city]
+    examples: ["空气质量怎么样", "PM2.5多少", "今天空气好吗", "空气质量"]
+
   - intent: info.search
     description: 联网搜索信息
     slots: [query, limit]

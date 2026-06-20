@@ -72,6 +72,27 @@ class WeatherProvider(ABC):
         """查询城市生活指数（运动/洗车/紫外线等）。"""
         ...
 
+    @abstractmethod
+    async def air_quality(self, city: str,
+                          meta: dict | None = None) -> AirQuality:
+        """查询城市实时空气质量（AQI/PM2.5/PM10 等）。"""
+        ...
+
+
+@dataclass
+class AirQuality:
+    """空气质量数据。"""
+    aqi: str = ""               # AQI 数值
+    category: str = ""          # 类别（优/良/轻度/中度/重度/严重）
+    primary_pollutant: str = "" # 首要污染物
+    pm2p5: str = ""             # PM2.5 浓度 μg/m³
+    pm10: str = ""              # PM10 浓度 μg/m³
+    no2: str = ""               # NO2 浓度
+    o3: str = ""                # O3 浓度
+    co: str = ""                # CO 浓度
+    so2: str = ""               # SO2 浓度
+    update_time: str = ""       # 更新时间
+
 
 # ── 联网搜索 Provider ──────────────────────────────────────────────
 

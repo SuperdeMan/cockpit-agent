@@ -14,7 +14,7 @@
 | parking-payment | parking_payment | ecosystem | third_party | cloud | 50064 | parking.find, parking.pay |
 | manual-rag | manual_rag | ecosystem | first_party | cloud | 50065 | manual.query |
 | trip-planner | trip_planner | ecosystem | first_party | cloud | 50066 | trip.plan |
-| info | info | core | first_party | cloud | 50067 | info.weather, info.forecast, info.alerts, info.indices, info.search, info.news, info.stock |
+| info | info | core | first_party | cloud | 50067 | info.weather, info.forecast, info.alerts, info.indices, info.air_quality, info.search, info.news, info.stock |
 | (车控/媒体) | orchestrator/edge | core | system | **edge** | 50070 | hvac.*, window.*, media.*（端侧 Fast Intent 直执行）|
 
 > 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent。新增时按本表分配端口与 intent 命名空间。
@@ -44,9 +44,10 @@
 | `info.forecast` | info | cloud | city, days | 天气预报（和风 3/7 天预报）；端侧"预报/未来几天"online_only 上云 |
 | `info.alerts` | info | cloud | city | 天气预警（和风实时预警，排除海洋/热带气旋/辐射） |
 | `info.indices` | info | cloud | city | 生活指数（运动/洗车/紫外线） |
-| `info.search` | info | cloud | query, limit | 联网搜索（Bing 真实 provider）；端侧"搜一下"online_only 上云 |
-| `info.news` | info | cloud | topic, limit | 新闻摘要（NewsAPI 真实 provider）；端侧"看新闻/摘要"→info.news，"播新闻"→media.* |
-| `info.stock` | info | cloud | symbol | 股票行情（行情 API 真实 provider）；端侧"股票/大盘"收敛到 info.stock |
+| `info.search` | info | cloud | query, limit | 联网搜索（AnySearch 优先/Bing 降级真实 provider）；端侧"搜一下"online_only 上云 |
+| `info.news` | info | cloud | topic, limit | 新闻摘要（SerpApi Google+Baidu News，AnySearch 兜底）；端侧"看新闻/摘要"→info.news，"播新闻"→media.* |
+| `info.stock` | info | cloud | symbol | 股票行情（Tushare 免费 API 真实 provider）；端侧"股票/大盘"收敛到 info.stock |
+| `info.air_quality` | info | cloud | city | 实时空气质量（和风 AQI/PM2.5 真实 provider）；端侧"空气质量/PM2.5"online_only 上云 |
 
 新增 intent：先在对应 Agent 的 `manifest.yaml` 声明（含 examples，供语义路由），端侧意图额外进 `orchestrator/edge/fast_intent.py` 的 `LOCAL_INTENTS`。
 

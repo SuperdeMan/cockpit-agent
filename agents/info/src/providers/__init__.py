@@ -49,21 +49,47 @@ def build_weather_provider() -> WeatherProvider:
 
 
 def build_search_provider() -> SearchProvider:
-    """联网搜索 Provider 工厂。SEARCH_VENDOR=bing 且 BING_SEARCH_KEY 非空 → 真实，否则 mock。"""
-    vendor = os.getenv("SEARCH_VENDOR", "mock")
-    if vendor == "bing" and os.getenv("BING_SEARCH_KEY"):
+    """联网搜索 Provider 工厂。优先 AnySearch，降级 Bing，最终 mock。"""
+    vendor = os.getenv("SEARCH_VENDOR", "anysearch")
+    # AnySearch（优先）
+    if os.getenv("ANYSEARCH_API_KEY"):
+        try:
+            from .search_any import AnySearchProvider
+            return AnySearchProvider(
+                os.getenv("ANYSEARCH_API_KEY"),
+                base_url=os.getenv("ANYSEARCH_BASE_URL", ""),
+            )
+        except Exception as e:
+            logger.warning("AnySearchProvider init failed: %s", e)
+    # Bing（降级）
+    if os.getenv("BING_SEARCH_KEY"):
         try:
             from .search_bing import BingSearchProvider
             return BingSearchProvider(os.getenv("BING_SEARCH_KEY"))
         except Exception as e:
-            logger.warning("BingSearchProvider init failed, falling back to mock: %s", e)
+            logger.warning("BingSearchProvider init failed: %s", e)
     return MockSearchProvider()
 
 
 def build_news_provider() -> NewsProvider:
-    """新闻 Provider 工厂。NEWS_VENDOR=newsapi 且 NEWS_API_KEY 非空 → 真实，否则 mock。"""
-    vendor = os.getenv("NEWS_VENDOR", "mock")
-    if vendor == "newsapi" and os.getenv("NEWS_API_KEY"):
+    """新闻 Provider 工厂。SerpApi（Google+Baidu News，AnySearch 兜底）→ mock。"""
+    serpapi_key = os.getenv("SERPAPI_API_KEY")
+    if serpapi_key:
+        try:
+            # AnySearch 兜底（可选）
+            anysearch = None
+            if os.getenv("ANYSEARCH_API_KEY"):
+                from .search_any import AnySearchProvider
+                anysearch = AnySearchProvider(
+                    os.getenv("ANYSEARCH_API_KEY"),
+                    base_url=os.getenv("ANYSEARCH_BASE_URL", ""),
+                )
+            from .news_serpapi import SerpApiNewsProvider
+            return SerpApiNewsProvider(serpapi_key, anysearch_provider=anysearch)
+        except Exception as e:
+            logger.warning("SerpApiNewsProvider init failed, falling back to mock: %s", e)
+    # 旧 NewsAPI 降级（向后兼容）
+    if os.getenv("NEWS_API_KEY"):
         try:
             from .news_api import NewsAPIProvider
             return NewsAPIProvider(os.getenv("NEWS_API_KEY"))
@@ -73,9 +99,16 @@ def build_news_provider() -> NewsProvider:
 
 
 def build_stock_provider() -> StockProvider:
-    """股票 Provider 工厂。STOCK_VENDOR=quote 且 STOCK_API_KEY 非空 → 真实，否则 mock。"""
-    vendor = os.getenv("STOCK_VENDOR", "mock")
-    if vendor == "quote" and os.getenv("STOCK_API_KEY"):
+    """股票 Provider 工厂。Tushare（免费 API）→ mock。"""
+    tushare_token = os.getenv("TUSHARE_TOKEN")
+    if tushare_token:
+        try:
+            from .stock_tushare import TushareStockProvider
+            return TushareStockProvider(tushare_token)
+        except Exception as e:
+            logger.warning("TushareStockProvider init failed, falling back to mock: %s", e)
+    # 旧 Alpha Vantage 降级（向后兼容）
+    if os.getenv("STOCK_API_KEY"):
         try:
             from .stock_quote import QuoteStockProvider
             return QuoteStockProvider(os.getenv("STOCK_API_KEY"))

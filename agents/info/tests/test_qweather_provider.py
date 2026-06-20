@@ -214,3 +214,28 @@ def test_indices_parses():
     assert len(res) == 3
     assert res[0].name == "运动指数" and res[0].level == "适宜"
     assert res[2].name == "紫外线指数"
+
+
+# ── air_quality 测试 ─────────────────────────────────────
+
+_AIR_NOW_OK = {
+    "code": "200",
+    "updateTime": "2026-06-20T10:00+08:00",
+    "now": {
+        "aqi": "52", "category": "良", "primary": "PM2.5",
+        "pm2p5": "35", "pm10": "52", "no2": "20", "o3": "88",
+        "co": "0.6", "so2": "5",
+    },
+}
+
+
+def test_air_quality_parses():
+    p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK,
+                   "/v7/air/now": _AIR_NOW_OK})
+    aq = asyncio.run(p.air_quality("北京"))
+    assert aq.aqi == "52"
+    assert aq.category == "良"
+    assert aq.primary_pollutant == "PM2.5"
+    assert aq.pm2p5 == "35"
+    assert aq.pm10 == "52"
+    assert aq.update_time.startswith("2026-06-20")

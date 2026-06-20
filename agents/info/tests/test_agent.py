@@ -69,6 +69,24 @@ def test_indices_returns_list():
     assert len(res.ui_card["items"]) > 0
 
 
+# ── 空气质量 ─────────────────────────────────────────────
+
+def test_air_quality_returns_card():
+    res = asyncio.run(run_handle(
+        InfoAgent(), "info.air_quality", slots={"city": "北京"}, raw_text="空气质量怎么样"))
+    assert res.status == "ok"
+    assert res.ui_card and res.ui_card["type"] == "air_quality"
+    assert res.ui_card["aqi"]
+    assert "PM" in res.speech or "空气" in res.speech
+
+
+def test_air_quality_missing_city_asks():
+    ctx = make_context(context_values={})
+    res = asyncio.run(run_handle(
+        InfoAgent(), "info.air_quality", slots={}, raw_text="空气好吗", ctx=ctx))
+    assert res.status == "need_slot"
+
+
 # ── 联网搜索 ─────────────────────────────────────────────
 
 def test_search_returns_results():

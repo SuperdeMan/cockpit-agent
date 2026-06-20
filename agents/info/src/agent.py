@@ -41,6 +41,7 @@ class InfoAgent(BaseAgent):
             "info.forecast": self._forecast,
             "info.alerts": self._alerts,
             "info.indices": self._indices,
+            "info.air_quality": self._air_quality,
             "info.search": self._search,
             "info.news": self._news,
             "info.stock": self._stock,
@@ -166,6 +167,33 @@ class InfoAgent(BaseAgent):
                   "level": idx.level, "text": idx.text} for idx in indices]
         card = {"type": "life_indices", "city": city, "items": items}
         return AgentResult(speech=speech, ui_card=card, data={"indices": items})
+
+    async def _air_quality(self, intent, ctx, meta) -> AgentResult:
+        city = await self._resolve_city(intent, ctx)
+        if not city:
+            return AgentResult(status=NEED_SLOT, speech="您想查询哪个城市的空气质量？",
+                               follow_up="请告诉我城市名", missing_slots=["city"])
+        try:
+            aq = await self.weather.air_quality(city, meta=meta)
+        except ProviderError as e:
+            logger.warning("air_quality failed, fallback to mock: %s", e)
+            aq = await self._fallback_weather.air_quality(city, meta=meta)
+
+        parts = [f"{city}空气质量{aq.category or '未知'}"]
+        if aq.aqi:
+            parts.append(f"，AQI {aq.aqi}")
+        if aq.pm2p5:
+            parts.append(f"，PM2.5 {aq.pm2p5}μg/m³")
+        if aq.primary_pollutant:
+            parts.append(f"，首要污染物{aq.primary_pollutant}")
+        speech = "".join(parts) + "。"
+
+        card = {"type": "air_quality", "city": city, "aqi": aq.aqi,
+                "category": aq.category, "pm2p5": aq.pm2p5, "pm10": aq.pm10,
+                "primary_pollutant": aq.primary_pollutant,
+                "no2": aq.no2, "o3": aq.o3, "co": aq.co, "so2": aq.so2,
+                "update_time": aq.update_time}
+        return AgentResult(speech=speech, ui_card=card, data={"air_quality": card})
 
     # ── 联网搜索 ──────────────────────────────────────────────
 

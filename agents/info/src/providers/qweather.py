@@ -18,7 +18,7 @@ import time
 from agents._sdk.http import AsyncHttpClient, ProviderError
 from .base import (
     WeatherProvider, Weather,
-    ForecastDay, WeatherAlert, LifeIndex,
+    ForecastDay, WeatherAlert, LifeIndex, AirQuality,
 )
 
 logger = logging.getLogger("agent.info.qweather")
@@ -201,3 +201,23 @@ class QWeatherProvider(WeatherProvider):
                 text=_s(d.get("text")),
             ))
         return result
+
+    async def air_quality(self, city: str,
+                          meta: dict | None = None) -> AirQuality:
+        """查询实时空气质量。和风 /v7/air/now（V7 API）。"""
+        loc_id, _ = await self._lookup_city(city, meta)
+        data = await self._get("/v7/air/now", {"location": loc_id},
+                               "air_now", meta)
+        now = data.get("now") or {}
+        return AirQuality(
+            aqi=_s(now.get("aqi")),
+            category=_s(now.get("category")),
+            primary_pollutant=_s(now.get("primary")),
+            pm2p5=_s(now.get("pm2p5")),
+            pm10=_s(now.get("pm10")),
+            no2=_s(now.get("no2")),
+            o3=_s(now.get("o3")),
+            co=_s(now.get("co")),
+            so2=_s(now.get("so2")),
+            update_time=_s(data.get("updateTime")),
+        )

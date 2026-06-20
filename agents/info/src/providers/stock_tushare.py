@@ -1,0 +1,149 @@
+"""Tushare 股票行情 Provider 适配。
+
+凭证经 env(TUSHARE_TOKEN) 注入，绝不进代码/日志。任一调用失败抛 ProviderError，
+Agent/工厂侧据此回退 mock，不击穿主链。
+
+Tushare 统一 POST 到 https://api.tushare.pro，body 含 api_name/token/params/fields。
+daily 接口获取日线行情（最近一个交易日）；stock_basic 获取公司名称。
+docs: https://tushare.pro/document/1?doc_id=5
+"""
+from __future__ import annotations
+import logging
+from datetime import datetime, timedelta
+
+from agents._sdk.http import AsyncHttpClient, ProviderError
+from .base import StockProvider, Quote
+
+logger = logging.getLogger("agent.info.stock_tushare")
+
+_API_URL = "https://api.tushare.pro"
+
+
+def _s(v) -> str:
+    return str(v) if v is not None else ""
+
+
+class TushareStockProvider(StockProvider):
+    def __init__(self, token: str, api_url: str = _API_URL):
+        if not token:
+            raise ValueError("TUSHARE_TOKEN required for TushareStockProvider")
+        self._token = token
+        self._url = api_url
+        self._http = AsyncHttpClient(vendor="tushare", service="info",
+                                     timeout_s=5.0)
+
+    async def _post(self, api_name: str, params: dict,
+                    fields: str = "", op: str = "tushare",
+                    meta: dict | None = None) -> dict:
+        body = {"api_name": api_name, "token": self._token, "params": params}
+        if fields:
+            body["fields"] = fields
+        data = await self._http.post_json(self._url, json_body=body,
+                                          op=op, meta=meta)
+        # Tushare 错误：code!=0 或 msg 非空
+        code = data.get("code", 0)
+        if code != 0:
+            msg = data.get("msg", "unknown error")
+            raise ProviderError(f"tushare {api_name} failed: {msg}")
+        return data
+
+    def _latest_trade_date(self) -> str:
+        """最近交易日（往前推 1 天，跳过周末）。格式 YYYYMMDD。"""
+        d = datetime.now()
+        # 如果当前时间是周末或当天还未收盘（15:00前），往前多推
+        if d.weekday() >= 5:  # 周六日
+            d -= timedelta(days=d.weekday() - 4)
+        elif d.hour < 15:  # 当天未收盘，用前一天
+            d -= timedelta(days=1)
+            if d.weekday() >= 5:
+                d -= timedelta(days=d.weekday() - 4)
+        else:
+            # 已收盘，用当天（但如果是周一到周五）
+            pass
+        return d.strftime("%Y%m%d")
+
+    async def _get_stock_name(self, ts_code: str, meta) -> str:
+        """通过 stock_basic 获取股票名称。"""
+        try:
+            data = await self._post("stock_basic",
+                                    {"ts_code": ts_code},
+                                    fields="ts_code,name",
+                                    op="stock_basic", meta=meta)
+            items = (data.get("data") or {}).get("items") or []
+            if items:
+                # fields: [ts_code, name]
+                return items[0][1] if len(items[0]) > 1 else ts_code
+        except Exception:
+            pass
+        return ts_code
+
+    def _resolve_ts_code(self, symbol: str) -> str:
+        """把中文名/简称映射到 ts_code。简单查表 + 格式补全。"""
+        # 常见指数映射
+        _INDEX_MAP = {
+            "上证": "000001.SH", "上证指数": "000001.SH",
+            "深证": "399001.SZ", "深证成指": "399001.SZ",
+            "沪深300": "000300.SH", "创业板": "399006.SZ",
+            "科创50": "000688.SH",
+        }
+        if symbol in _INDEX_MAP:
+            return _INDEX_MAP[symbol]
+        # 已经是标准格式（如 000001.SZ / 600519.SH）
+        if "." in symbol:
+            return symbol
+        # 6 开头 → .SH，其他 → .SZ
+        if symbol.startswith("6"):
+            return f"{symbol}.SH"
+        return f"{symbol}.SZ"
+
+    async def quote(self, symbol: str,
+                    meta: dict | None = None) -> Quote:
+        ts_code = self._resolve_ts_code(symbol)
+        trade_date = self._latest_trade_date()
+        # 先取日线数据，再取公司名
+        data = await self._post(
+            "daily",
+            {"ts_code": ts_code, "trade_date": trade_date},
+            fields="ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount",
+            op="daily", meta=meta,
+        )
+        items = (data.get("data") or {}).get("items") or []
+        if not items:
+            # 可能非交易日，尝试往前找
+            for offset in range(1, 5):
+                d = datetime.strptime(trade_date, "%Y%m%d") - timedelta(days=offset)
+                alt = await self._post(
+                    "daily",
+                    {"ts_code": ts_code, "trade_date": d.strftime("%Y%m%d")},
+                    fields="ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg",
+                    op="daily", meta=meta,
+                )
+                items = (alt.get("data") or {}).get("items") or []
+                if items:
+                    break
+        if not items:
+            raise ProviderError(f"tushare: no daily data for {ts_code}")
+
+        # fields 索引：ts_code=0, trade_date=1, open=2, high=3, low=4, close=5,
+        # pre_close=6, change=7, pct_chg=8, vol=9, amount=10
+        row = items[0]
+        close = _s(row[5]) if len(row) > 5 else ""
+        change = _s(row[7]) if len(row) > 7 else ""
+        pct_chg = _s(row[8]) if len(row) > 8 else ""
+        trade_dt = _s(row[1]) if len(row) > 1 else ""
+
+        # 获取股票名称
+        name = await self._get_stock_name(ts_code, meta)
+
+        return Quote(
+            name=name,
+            symbol=ts_code,
+            price=close,
+            change=change,
+            change_pct=f"{pct_chg}%" if pct_chg else "",
+            market_time=trade_dt,
+        )
+
+    async def index(self, name: str = "上证",
+                    meta: dict | None = None) -> Quote:
+        return await self.quote(name, meta=meta)
