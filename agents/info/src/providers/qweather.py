@@ -10,6 +10,7 @@
 QWEATHER_HOST 配置。docs: https://dev.qweather.com/docs/configuration/authentication/
 """
 from __future__ import annotations
+import asyncio
 import base64
 import json
 import logging
@@ -18,7 +19,7 @@ import time
 from agents._sdk.http import AsyncHttpClient, ProviderError
 from .base import (
     WeatherProvider, Weather,
-    ForecastDay, WeatherAlert, LifeIndex, AirQuality,
+    ForecastDay, WeatherAlert, LifeIndex, AirQuality, WeatherOverview,
 )
 
 logger = logging.getLogger("agent.info.qweather")
@@ -122,8 +123,7 @@ class QWeatherProvider(WeatherProvider):
         top = locs[0]
         return _s(top.get("id")), _s(top.get("name")) or city
 
-    async def now(self, city: str, meta: dict | None = None) -> Weather:
-        loc_id, city_name = await self._lookup_city(city, meta)
+    async def _now_for_location(self, loc_id: str, city_name: str, meta) -> Weather:
         data = await self._get("/v7/weather/now", {"location": loc_id}, "weather_now", meta)
         now = data.get("now") or {}
         return Weather(
@@ -134,12 +134,19 @@ class QWeatherProvider(WeatherProvider):
             humidity=_s(now.get("humidity")),
             wind_dir=_s(now.get("windDir")),
             wind_scale=_s(now.get("windScale")),
+            precip=_s(now.get("precip")),
+            pressure=_s(now.get("pressure")),
+            visibility=_s(now.get("vis")),
+            cloud=_s(now.get("cloud")),
+            dew_point=_s(now.get("dew")),
             update_time=_s(data.get("updateTime")),
         )
 
-    async def forecast(self, city: str, days: int = 3,
-                       meta: dict | None = None) -> list[ForecastDay]:
-        loc_id, _ = await self._lookup_city(city, meta)
+    async def now(self, city: str, meta: dict | None = None) -> Weather:
+        loc_id, city_name = await self._lookup_city(city, meta)
+        return await self._now_for_location(loc_id, city_name, meta)
+
+    async def _forecast_for_location(self, loc_id: str, days: int, meta) -> list[ForecastDay]:
         # 和风 3天预报 / 7天预报；按 days 选 endpoint
         path = "/v7/weather/7d" if days > 3 else "/v7/weather/3d"
         data = await self._get(path, {"location": loc_id}, "weather_forecast", meta)
@@ -154,8 +161,17 @@ class QWeatherProvider(WeatherProvider):
                 wind_dir=_s(d.get("windDirDay")),
                 wind_scale=_s(d.get("windScaleDay")),
                 humidity=_s(d.get("humidity")),
+                precip=_s(d.get("precip")),
+                uv_index=_s(d.get("uvIndex")),
+                sunrise=_s(d.get("sunrise")),
+                sunset=_s(d.get("sunset")),
             ))
         return result
+
+    async def forecast(self, city: str, days: int = 3,
+                       meta: dict | None = None) -> list[ForecastDay]:
+        loc_id, _ = await self._lookup_city(city, meta)
+        return await self._forecast_for_location(loc_id, days, meta)
 
     # 排除的预警类型（海洋/热带气旋/辐射，按用户要求不接入）
     _EXCLUDED_ALERT_TYPES = {
@@ -164,10 +180,8 @@ class QWeatherProvider(WeatherProvider):
         "辐射", "核辐射",                                   # 辐射
     }
 
-    async def alerts(self, city: str,
-                     meta: dict | None = None) -> list[WeatherAlert]:
+    async def _alerts_for_location(self, loc_id: str, meta) -> list[WeatherAlert]:
         """查询当前生效的天气预警。排除海洋/热带气旋/辐射类。"""
-        loc_id, _ = await self._lookup_city(city, meta)
         data = await self._get("/v7/warning/now", {"location": loc_id},
                                "warning_now", meta)
         result: list[WeatherAlert] = []
@@ -185,10 +199,13 @@ class QWeatherProvider(WeatherProvider):
             ))
         return result
 
-    async def indices(self, city: str,
-                      meta: dict | None = None) -> list[LifeIndex]:
-        """查询生活指数：运动(1)、洗车(3)、紫外线(5)。"""
+    async def alerts(self, city: str,
+                     meta: dict | None = None) -> list[WeatherAlert]:
         loc_id, _ = await self._lookup_city(city, meta)
+        return await self._alerts_for_location(loc_id, meta)
+
+    async def _indices_for_location(self, loc_id: str, meta) -> list[LifeIndex]:
+        """查询生活指数：运动(1)、洗车(3)、紫外线(5)。"""
         data = await self._get("/v7/indices/1d",
                                {"location": loc_id, "type": "1,3,5"},
                                "indices_1d", meta)
@@ -202,10 +219,13 @@ class QWeatherProvider(WeatherProvider):
             ))
         return result
 
-    async def air_quality(self, city: str,
-                          meta: dict | None = None) -> AirQuality:
-        """查询实时空气质量。和风 /v7/air/now（V7 API）。"""
+    async def indices(self, city: str,
+                      meta: dict | None = None) -> list[LifeIndex]:
         loc_id, _ = await self._lookup_city(city, meta)
+        return await self._indices_for_location(loc_id, meta)
+
+    async def _air_quality_for_location(self, loc_id: str, meta) -> AirQuality:
+        """查询实时空气质量。和风 /v7/air/now（V7 API）。"""
         data = await self._get("/v7/air/now", {"location": loc_id},
                                "air_now", meta)
         now = data.get("now") or {}
@@ -220,4 +240,43 @@ class QWeatherProvider(WeatherProvider):
             co=_s(now.get("co")),
             so2=_s(now.get("so2")),
             update_time=_s(data.get("updateTime")),
+        )
+
+    async def air_quality(self, city: str,
+                          meta: dict | None = None) -> AirQuality:
+        loc_id, _ = await self._lookup_city(city, meta)
+        return await self._air_quality_for_location(loc_id, meta)
+
+    async def overview(self, city: str,
+                       meta: dict | None = None) -> WeatherOverview:
+        """用一次城市 lookup 并发聚合天气卡所需的全部分区。"""
+        loc_id, city_name = await self._lookup_city(city, meta)
+        results = await asyncio.gather(
+            self._now_for_location(loc_id, city_name, meta),
+            self._forecast_for_location(loc_id, 3, meta),
+            self._air_quality_for_location(loc_id, meta),
+            self._indices_for_location(loc_id, meta),
+            self._alerts_for_location(loc_id, meta),
+            return_exceptions=True,
+        )
+        now, forecast, air_quality, indices, alerts = results
+        if isinstance(now, Exception):
+            raise now
+
+        optional = {
+            "forecast": forecast,
+            "air_quality": air_quality,
+            "indices": indices,
+            "alerts": alerts,
+        }
+        for section, value in optional.items():
+            if isinstance(value, Exception):
+                logger.warning("qweather overview %s unavailable: %s", section, value)
+
+        return WeatherOverview(
+            now=now,
+            forecast=[] if isinstance(forecast, Exception) else forecast,
+            air_quality=AirQuality() if isinstance(air_quality, Exception) else air_quality,
+            indices=[] if isinstance(indices, Exception) else indices,
+            alerts=[] if isinstance(alerts, Exception) else alerts,
         )

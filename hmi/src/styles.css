@@ -546,10 +546,13 @@ button { font-family: inherit; }
   font-family: var(--font-mono);
 }
 
-/* 天气卡片 */
+/* 天气卡片：像一块紧凑的座舱气象仪表 */
 .card-weather { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.weather-overview { display: block; padding: 15px; background:
+  linear-gradient(135deg, rgba(49, 97, 159, 0.24), rgba(20, 32, 57, 0.76) 58%, var(--surface-2)); }
+.weather-hero { display: flex; align-items: center; gap: 14px; }
 .card-weather-main { display: flex; align-items: center; gap: 8px; }
-.card-weather-icon { font-size: 36px; line-height: 1; }
+.card-weather-icon { font-size: 42px; line-height: 1; filter: drop-shadow(0 0 10px rgba(255, 211, 101, 0.25)); }
 .card-weather-temp { display: flex; align-items: flex-start; }
 .temp-value {
   font-family: var(--font-mono); font-size: 42px; font-weight: 700;
@@ -559,6 +562,7 @@ button { font-family: inherit; }
 .card-weather-info { flex: 1; min-width: 120px; }
 .card-weather-city { font-size: 15px; font-weight: 600; color: var(--text); }
 .card-weather-text { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.weather-cloud { margin-top: 5px; color: var(--faint); font-family: var(--font-mono); font-size: 11px; }
 .card-weather-detail {
   display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px;
   font-size: 12px; color: var(--faint);
@@ -567,6 +571,29 @@ button { font-family: inherit; }
   content: '·'; margin-right: 4px; color: var(--line-strong);
 }
 .card-weather-detail span:first-child::before { content: ''; margin: 0; }
+.weather-telemetry { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 13px; }
+.weather-chip { min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 9px; background: rgba(7, 15, 31, 0.22); }
+.weather-chip span { display: block; color: var(--faint); font-size: 10px; letter-spacing: 0.03em; }
+.weather-chip strong { display: block; margin-top: 2px; font: 600 11px var(--font-mono); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.weather-forecast-rail { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
+.weather-mini-day { min-width: 0; padding: 8px 7px; border-radius: 10px; background: rgba(7, 15, 31, 0.34); border: 1px solid var(--line); }
+.weather-mini-day > span { display: block; color: var(--muted); font: 10px var(--font-mono); }
+.weather-mini-day i { display: inline-block; margin: 3px 4px 1px 0; font-size: 17px; font-style: normal; vertical-align: middle; }
+.weather-mini-day strong { font: 600 11px var(--font-mono); color: var(--text); }
+.weather-mini-day strong em { color: var(--faint); font-style: normal; }
+.weather-mini-day small { display: block; margin-top: 3px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.weather-brief-row { display: flex; align-items: stretch; gap: 7px; margin-top: 10px; }
+.air-badge { flex: 0 0 auto; min-width: 96px; padding: 7px 9px; border-left: 2px solid var(--accent); border-radius: 8px; background: rgba(52, 225, 216, 0.08); }
+.air-badge span { display: block; color: var(--faint); font-size: 10px; }
+.air-badge strong { display: block; margin-top: 1px; font: 700 12px var(--font-mono); color: var(--accent); }
+.air-badge em { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; font-style: normal; }
+.weather-advice { display: flex; flex: 1; flex-wrap: wrap; align-content: center; gap: 5px; }
+.weather-advice span { padding: 4px 6px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); font-size: 10px; }
+.weather-advice b { color: var(--text); font-weight: 600; }
+.weather-alert-callout { display: flex; align-items: flex-start; gap: 7px; margin-top: 10px; padding: 8px 9px; color: #ffd0d5; background: rgba(255, 90, 120, 0.1); border: 1px solid rgba(255, 90, 120, 0.35); border-radius: 9px; }
+.weather-alert-callout > span { color: var(--danger); font-weight: 800; }
+.weather-alert-callout strong { flex: 0 0 auto; font-size: 11px; }
+.weather-alert-callout p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
 
 /* 天气预报卡片 */
 .card-forecast-days {
@@ -584,11 +611,12 @@ button { font-family: inherit; }
 .temp-sep { color: var(--faint); margin: 0 2px; }
 .temp-high { color: var(--warn); }
 
-/* 股票卡片 */
-.card-stock { text-align: center; }
+/* 股票卡片：红涨绿跌，符合 A 股交易习惯 */
+.card-stock { text-align: center; overflow: hidden; }
 .card-stock-header { display: flex; justify-content: center; align-items: baseline; gap: 8px; }
 .card-stock-name { font-size: 16px; font-weight: 700; color: var(--text); }
 .card-stock-symbol { font-size: 12px; color: var(--faint); font-family: var(--font-mono); }
+.stock-market-tag { padding: 2px 5px; border: 1px solid var(--line-strong); border-radius: 5px; color: var(--faint); font: 9px var(--font-mono); }
 .card-stock-price {
   font-family: var(--font-mono); font-size: 38px; font-weight: 700;
   margin: 6px 0 4px; line-height: 1;
@@ -598,14 +626,23 @@ button { font-family: inherit; }
 .stock-pct { color: var(--muted); }
 
 .stock-up .card-stock-price,
-.stock-up .card-stock-change { color: #22c55e; }
-.stock-up { border-color: rgba(34, 197, 94, 0.25); }
+.stock-up .card-stock-change { color: #ff5b55; }
+.stock-up { border-color: rgba(255, 91, 85, 0.36); }
 
 .stock-down .card-stock-price,
-.stock-down .card-stock-change { color: var(--danger); }
-.stock-down { border-color: rgba(255, 90, 120, 0.25); }
+.stock-down .card-stock-change { color: #2fb37b; }
+.stock-down { border-color: rgba(47, 179, 123, 0.36); }
+.stock-flat .card-stock-price, .stock-flat .card-stock-change { color: var(--muted); }
+.kline-panel { margin-top: 12px; padding: 8px 5px 3px; border-radius: 10px; background: rgba(6, 12, 25, 0.26); border: 1px solid var(--line); }
+.kline-topline { display: flex; justify-content: space-between; padding: 0 5px 2px; color: var(--faint); font: 10px var(--font-mono); }
+.kline-chart { display: block; width: 100%; height: auto; }
+.kline-grid { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 3; }
+.kline-empty { margin-top: 11px; padding: 10px; border: 1px dashed var(--line-strong); border-radius: 9px; color: var(--faint); font-size: 11px; }
 
 /* 新闻卡片 */
+.summary-brief { margin: 0 0 11px; padding: 9px 10px; text-align: left; border-left: 2px solid var(--accent); border-radius: 8px; background: rgba(52, 225, 216, 0.07); }
+.summary-brief span { display: block; color: var(--accent); font: 700 10px var(--font-mono); letter-spacing: 0.06em; }
+.summary-brief p { margin: 4px 0 0; color: var(--text); font-size: 12.5px; line-height: 1.55; }
 .card-news-list { display: flex; flex-direction: column; gap: 10px; }
 .news-item { display: flex; gap: 10px; }
 .news-index {
@@ -670,6 +707,9 @@ button { font-family: inherit; }
   .nav-spacer, .settings-nav .reset-confirm, .settings-nav .ghost-btn { display: none; }
   .voice-grid { grid-template-columns: repeat(2, 1fr); }
   .field { flex-wrap: wrap; }
+  .weather-telemetry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .weather-brief-row { align-items: flex-start; flex-direction: column; }
+  .air-badge { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

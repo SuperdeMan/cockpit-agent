@@ -12,11 +12,12 @@ import logging
 from datetime import datetime, timedelta
 
 from agents._sdk.http import AsyncHttpClient, ProviderError
-from .base import StockProvider, Quote
+from .base import StockProvider, Quote, StockCandle
 
 logger = logging.getLogger("agent.info.stock_tushare")
 
 _API_URL = "https://api.tushare.pro"
+_DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
 
 
 def _s(v) -> str:
@@ -96,6 +97,36 @@ class TushareStockProvider(StockProvider):
             return f"{symbol}.SH"
         return f"{symbol}.SZ"
 
+    @staticmethod
+    def _candle_from_row(row: list) -> StockCandle:
+        """Tushare daily fields: ts_code, date, open, high, low, close, ..., vol."""
+        return StockCandle(
+            date=_s(row[1]) if len(row) > 1 else "",
+            open=_s(row[2]) if len(row) > 2 else "",
+            high=_s(row[3]) if len(row) > 3 else "",
+            low=_s(row[4]) if len(row) > 4 else "",
+            close=_s(row[5]) if len(row) > 5 else "",
+            volume=_s(row[9]) if len(row) > 9 else "",
+        )
+
+    async def history(self, symbol: str, limit: int = 20,
+                      meta: dict | None = None) -> list[StockCandle]:
+        """拉取一个有限交易日窗口，规整为前端 K 线所需的正序 OHLC 数据。"""
+        ts_code = self._resolve_ts_code(symbol)
+        end_date = self._latest_trade_date()
+        start_date = (datetime.strptime(end_date, "%Y%m%d")
+                      - timedelta(days=max(14, min(limit, 60) * 3))).strftime("%Y%m%d")
+        data = await self._post(
+            "daily", {"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+            fields=_DAILY_FIELDS, op="daily_history", meta=meta,
+        )
+        rows = (data.get("data") or {}).get("items") or []
+        candles = [self._candle_from_row(row) for row in rows]
+        candles = [candle for candle in candles if candle.date and candle.close]
+        if not candles:
+            raise ProviderError(f"tushare: no daily history for {ts_code}")
+        return sorted(candles, key=lambda candle: candle.date)[-max(1, min(limit, 60)):]
+
     async def quote(self, symbol: str,
                     meta: dict | None = None) -> Quote:
         ts_code = self._resolve_ts_code(symbol)
@@ -104,7 +135,7 @@ class TushareStockProvider(StockProvider):
         data = await self._post(
             "daily",
             {"ts_code": ts_code, "trade_date": trade_date},
-            fields="ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount",
+            fields=_DAILY_FIELDS,
             op="daily", meta=meta,
         )
         items = (data.get("data") or {}).get("items") or []

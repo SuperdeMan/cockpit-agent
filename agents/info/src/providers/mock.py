@@ -1,22 +1,38 @@
 """Mock 天气/搜索/新闻/股票 Provider。PoC / 离线 / 单测用，返回确定性假数据。"""
 from __future__ import annotations
+import asyncio
 import datetime as _dt
 
 from .base import (
     WeatherProvider, Weather,
-    ForecastDay, WeatherAlert, LifeIndex, AirQuality,
+    ForecastDay, WeatherAlert, LifeIndex, AirQuality, WeatherOverview,
     SearchProvider, SearchResult,
     NewsProvider, NewsItem,
-    StockProvider, Quote,
+    StockProvider, Quote, StockCandle,
 )
 
 
 class MockWeatherProvider(WeatherProvider):
+    async def overview(self, city: str,
+                       meta: dict | None = None) -> WeatherOverview:
+        now, forecast, air_quality, indices, alerts = await asyncio.gather(
+            self.now(city, meta=meta),
+            self.forecast(city, days=3, meta=meta),
+            self.air_quality(city, meta=meta),
+            self.indices(city, meta=meta),
+            self.alerts(city, meta=meta),
+        )
+        return WeatherOverview(
+            now=now, forecast=forecast, air_quality=air_quality,
+            indices=indices, alerts=alerts,
+        )
+
     async def now(self, city: str, meta: dict | None = None) -> Weather:
         return Weather(
             city=city or "示例城市",
             temp="23", text="多云", feels_like="24",
             humidity="60", wind_dir="东南风", wind_scale="2",
+            precip="0", pressure="1012", visibility="18", cloud="45", dew_point="15",
             update_time="mock",
         )
 
@@ -30,6 +46,7 @@ class MockWeatherProvider(WeatherProvider):
                 text_day=patterns[i % 3][0], text_night=patterns[i % 3][1],
                 temp_high=str(26 + i), temp_low=str(18 + i),
                 wind_dir="东南风", wind_scale="2", humidity="55",
+                precip="0", uv_index="4", sunrise="05:20", sunset="18:45",
             )
             for i in range(min(days, 3))
         ]
@@ -92,6 +109,22 @@ class MockStockProvider(StockProvider):
             price="15.88", change="+0.32", change_pct="+2.06",
             market_time="mock",
         )
+
+    async def history(self, symbol: str, limit: int = 20,
+                      meta: dict | None = None) -> list[StockCandle]:
+        count = max(2, min(limit, 20))
+        start = _dt.date.today() - _dt.timedelta(days=count - 1)
+        candles: list[StockCandle] = []
+        for index in range(count):
+            open_price = 15.20 + index * 0.03
+            close_price = open_price + (0.18 if index % 3 else -0.11)
+            candles.append(StockCandle(
+                date=str(start + _dt.timedelta(days=index)),
+                open=f"{open_price:.2f}", high=f"{max(open_price, close_price) + 0.16:.2f}",
+                low=f"{min(open_price, close_price) - 0.13:.2f}", close=f"{close_price:.2f}",
+                volume=str(8000 + index * 240),
+            ))
+        return candles
 
     async def index(self, name: str = "上证",
                     meta: dict | None = None) -> Quote:

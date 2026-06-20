@@ -5,6 +5,14 @@ from agents._sdk.testing import run_handle, make_context, assert_manifest_consis
 from agents.info.src.agent import InfoAgent
 
 
+async def _llm_unavailable(*args, **kwargs):
+    raise RuntimeError("LLM gateway unavailable")
+
+
+async def _llm_numbered_answer(*args, **kwargs):
+    return "1. 第一条关键结论。\n2. 第二条补充结论。"
+
+
 # ── 天气 ──────────────────────────────────────────────────
 
 def test_weather_with_city_returns_card():
@@ -14,6 +22,16 @@ def test_weather_with_city_returns_card():
     assert res.ui_card and res.ui_card["type"] == "weather"
     assert res.ui_card["city"]
     assert res.speech
+
+
+def test_weather_card_contains_overview_sections():
+    res = asyncio.run(run_handle(
+        InfoAgent(), "info.weather", slots={"city": "北京"}, raw_text="北京天气"))
+
+    assert len(res.ui_card["forecast"]) == 3
+    assert res.ui_card["air_quality"]["aqi"]
+    assert res.ui_card["indices"]
+    assert "visibility" in res.ui_card
 
 
 def test_weather_uses_vehicle_location_when_no_city():
@@ -97,6 +115,28 @@ def test_search_returns_results():
     assert len(res.ui_card["items"]) > 0
 
 
+def test_search_fallback_returns_a_brief_not_a_numbered_result_dump():
+    agent = InfoAgent()
+    agent.llm.complete = _llm_unavailable
+    res = asyncio.run(run_handle(
+        agent, "info.search", slots={"query": "人工智能"}, raw_text="搜一下人工智能"))
+
+    assert res.ui_card["summary"] == res.speech
+    assert "为您搜索到" not in res.speech
+    assert "1." not in res.speech
+
+
+def test_search_flattens_numbered_llm_answer_into_a_spoken_brief():
+    agent = InfoAgent()
+    agent.llm.complete = _llm_numbered_answer
+    res = asyncio.run(run_handle(
+        agent, "info.search", slots={"query": "人工智能"}, raw_text="搜一下人工智能"))
+
+    assert "1." not in res.speech
+    assert "2." not in res.speech
+    assert "第一条关键结论" in res.speech
+
+
 def test_search_missing_query_asks():
     res = asyncio.run(run_handle(
         InfoAgent(), "info.search", slots={}, raw_text="搜一下"))
@@ -121,6 +161,17 @@ def test_news_with_topic():
     assert "科技" in res.speech
 
 
+def test_news_fallback_returns_summary_not_numbered_headlines():
+    agent = InfoAgent()
+    agent.llm.complete = _llm_unavailable
+    res = asyncio.run(run_handle(
+        agent, "info.news", slots={"topic": "科技"}, raw_text="科技新闻"))
+
+    assert res.ui_card["summary"] == res.speech
+    assert "1." not in res.speech
+    assert "热点新闻" not in res.speech
+
+
 # ── 股票 ─────────────────────────────────────────────────
 
 def test_stock_returns_quote():
@@ -129,6 +180,7 @@ def test_stock_returns_quote():
     assert res.status == "ok"
     assert res.ui_card and res.ui_card["type"] == "stock_quote"
     assert res.ui_card["price"]
+    assert len(res.ui_card["candles"]) >= 2
 
 
 def test_stock_missing_symbol_asks():

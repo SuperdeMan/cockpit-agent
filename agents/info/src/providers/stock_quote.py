@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 
 from agents._sdk.http import AsyncHttpClient, ProviderError
-from .base import StockProvider, Quote
+from .base import StockProvider, Quote, StockCandle
 
 logger = logging.getLogger("agent.info.stock")
 
@@ -60,6 +60,33 @@ class QuoteStockProvider(StockProvider):
             change_pct=_s(gq.get("10. change percent")),
             market_time=_s(gq.get("07. latest trading day")),
         )
+
+    async def history(self, symbol: str, limit: int = 20,
+                      meta: dict | None = None) -> list[StockCandle]:
+        """Alpha Vantage 的日线字段统一成从旧到新的 OHLC 数据。"""
+        data = await self._http.get_json(
+            f"{self._base}/query",
+            params={"function": "TIME_SERIES_DAILY", "symbol": symbol,
+                    "outputsize": "compact", "apikey": self._key},
+            op="stock_history", meta=meta,
+        )
+        if "Error Message" in data:
+            raise ProviderError(f"stock history failed: {data['Error Message']}")
+        if "Note" in data:
+            raise ProviderError(f"stock history rate limited: {data['Note'][:200]}")
+        series = data.get("Time Series (Daily)") or {}
+        candles = [
+            StockCandle(
+                date=_s(day), open=_s(values.get("1. open")),
+                high=_s(values.get("2. high")), low=_s(values.get("3. low")),
+                close=_s(values.get("4. close")), volume=_s(values.get("5. volume")),
+            )
+            for day, values in series.items()
+            if isinstance(values, dict)
+        ]
+        if not candles:
+            raise ProviderError(f"stock history: no data for {symbol}")
+        return sorted(candles, key=lambda candle: candle.date)[-max(1, min(limit, 100)):]
 
     async def index(self, name: str = "上证",
                     meta: dict | None = None) -> Quote:

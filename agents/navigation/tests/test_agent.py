@@ -3,6 +3,28 @@ import asyncio
 
 from agents._sdk.testing import run_handle, make_context
 from agents.navigation.src.agent import NavigationAgent
+from agents.navigation.src.providers.base import POI
+
+
+class _ScriptedPoiProvider:
+    def __init__(self, responses=None, default=None):
+        self.responses = responses or {}
+        self.default = [] if default is None else default
+        self.queries = []
+
+    async def search(self, keyword, **kwargs):
+        self.queries.append(keyword)
+        return self.responses.get(keyword, self.default)
+
+
+def _poi(name: str) -> POI:
+    return POI(id="landmark-1", name=name, address="深圳市南山区", lat=22.50, lng=113.94)
+
+
+def _async_return(value):
+    async def fake_complete(*args, **kwargs):
+        return value
+    return fake_complete
 
 
 def test_search_poi_returns_card():
@@ -32,3 +54,32 @@ def test_navigate_to_missing_dest_asks():
     res = asyncio.run(run_handle(
         NavigationAgent(), "navigation.navigate_to", slots={}, raw_text="导航"))
     assert res.status == "need_slot"
+
+
+def test_navigate_to_resolves_and_validates_visual_landmark():
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider({
+        "深圳笋一样的建筑物": [],
+        "华润大厦": [_poi("华润大厦")],
+    })
+    agent.llm.complete = _async_return('["华润大厦"]')
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "深圳笋一样的建筑物"}, raw_text="去深圳笋一样的建筑物"))
+
+    assert agent.poi.queries == ["深圳笋一样的建筑物", "华润大厦"]
+    assert res.actions[0]["payload"]["destination"] == "华润大厦"
+
+
+def test_navigate_to_reasks_when_no_landmark_candidate_is_validated():
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider(default=[])
+    agent.llm.complete = _async_return('["不存在的地标"]')
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "某个像飞船的建筑"}, raw_text="导航到某个像飞船的建筑"))
+
+    assert res.status == "need_slot"
+    assert res.actions == []

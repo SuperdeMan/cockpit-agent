@@ -13,6 +13,11 @@ class Weather:
     humidity: str = ""      # 相对湿度 %
     wind_dir: str = ""      # 风向
     wind_scale: str = ""    # 风力等级
+    precip: str = ""        # 过去 1 小时降水量 mm
+    pressure: str = ""      # 大气压 hPa
+    visibility: str = ""    # 能见度 km
+    cloud: str = ""         # 云量 %
+    dew_point: str = ""     # 露点温度 ℃
     update_time: str = ""   # 数据更新时间
 
 
@@ -27,6 +32,10 @@ class ForecastDay:
     wind_dir: str = ""          # 风向
     wind_scale: str = ""        # 风力等级
     humidity: str = ""          # 相对湿度 %
+    precip: str = ""            # 预计降水量 mm
+    uv_index: str = ""          # 紫外线指数
+    sunrise: str = ""           # 日出 HH:MM
+    sunset: str = ""            # 日落 HH:MM
 
 
 @dataclass
@@ -49,6 +58,16 @@ class LifeIndex:
 
 
 class WeatherProvider(ABC):
+    @abstractmethod
+    async def overview(self, city: str,
+                       meta: dict | None = None) -> WeatherOverview:
+        """聚合实时天气、预报、空气、生活指数和预警。
+
+        当前天气是必要数据；其他分区由实现方按能力尽力返回，失败时置空而不覆盖
+        已成功的真实数据。
+        """
+        ...
+
     @abstractmethod
     async def now(self, city: str, meta: dict | None = None) -> Weather:
         """查询城市实时天气。meta 透传 trace_id/span_id 供可观测（可选）。"""
@@ -92,6 +111,16 @@ class AirQuality:
     co: str = ""                # CO 浓度
     so2: str = ""               # SO2 浓度
     update_time: str = ""       # 更新时间
+
+
+@dataclass
+class WeatherOverview:
+    """一张综合天气卡需要的可选天气分区。"""
+    now: Weather = field(default_factory=Weather)
+    forecast: list[ForecastDay] = field(default_factory=list)
+    air_quality: AirQuality = field(default_factory=AirQuality)
+    indices: list[LifeIndex] = field(default_factory=list)
+    alerts: list[WeatherAlert] = field(default_factory=list)
 
 
 # ── 联网搜索 Provider ──────────────────────────────────────────────
@@ -145,11 +174,28 @@ class Quote:
     market_time: str = ""       # 行情时间
 
 
+@dataclass
+class StockCandle:
+    """一根日 K 线。数值保留字符串，避免服务端破坏厂商精度。"""
+    date: str = ""
+    open: str = ""
+    high: str = ""
+    low: str = ""
+    close: str = ""
+    volume: str = ""
+
+
 class StockProvider(ABC):
     @abstractmethod
     async def quote(self, symbol: str,
                     meta: dict | None = None) -> Quote:
         """查询股票/指数行情。symbol 可以是代码或名称。"""
+        ...
+
+    @abstractmethod
+    async def history(self, symbol: str, limit: int = 20,
+                      meta: dict | None = None) -> list[StockCandle]:
+        """查询近期日线，按日期从旧到新排列。"""
         ...
 
     @abstractmethod
