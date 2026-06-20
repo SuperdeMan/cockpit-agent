@@ -133,28 +133,36 @@ class TushareStockProvider(StockProvider):
             op="stock_lookup", meta=meta,
         )
         items = ((data.get("QuotationCodeTable") or {}).get("Data") or [])
+        # 匹配策略：精确名称 > 名称包含 > 代码精确 > 第一条
         matches = [item for item in items if _s(item.get("Name")) == symbol]
         if not matches:
-            matches = [
-                item for item in items
-                if symbol in _s(item.get("Name"))
-            ]
+            matches = [item for item in items if symbol in _s(item.get("Name"))]
         if not matches:
-            # 无名称匹配时，取第一条 A 股结果（如果有）
-            matches = [item for item in items
-                       if _s(item.get("Classify")) in ("", "AStock")]
-        if len(matches) != 1:
+            # 代码精确匹配（如用户输入 "AAPL" / "00700"）
+            matches = [item for item in items if _s(item.get("Code")) == symbol.upper()
+                       or _s(item.get("Code")) == symbol]
+        if not matches and items:
+            # 无匹配时取第一条结果（东方财富按相关度排序）
+            matches = [items[0]]
+        if not matches:
             raise ProviderError(f"stock lookup: no unambiguous code found for {symbol}")
 
+        # 多匹配时优先 A 股，其次港股，再次美股；同市场内按东方财富原始排序（相关度）
+        _MARKET_RANK = {"astock": 0, "": 0, "hkstock": 1, "hkindex": 1,
+                        "usstock": 2, "usindex": 2}
+
+        def _market_priority(item):
+            c = _s(item.get("Classify", "")).lower()
+            return _MARKET_RANK.get(c, 3)
+
+        matches.sort(key=_market_priority)
         item = matches[0]
         code = _s(item.get("Code"))
-        classify = _s(item.get("Classify", ""))
+        classify = _s(item.get("Classify", "")).lower()
         # 按市场归一化 ts_code（支持 A 股/港股/美股）
-        if classify in ("HKStock", "HKIndex", "HK"):
-            # 港股：5 位数字代码 → .HK（如 00700 → 00700.HK）
+        if classify in ("hkstock", "hkindex", "hk"):
             ts_code = f"{code}.HK"
-        elif classify in ("USStock", "USIndex", "US"):
-            # 美股：字母代码 → .US（如 AAPL → AAPL.US）
+        elif classify in ("usstock", "usindex", "us"):
             ts_code = f"{code.upper()}.US"
         elif code.isdigit() and len(code) == 6:
             # A 股：6 位数字

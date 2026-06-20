@@ -361,15 +361,16 @@ class InfoAgent(BaseAgent):
         except ProviderError as e:
             err_msg = str(e)
             logger.warning("stock quote failed: %s", e)
-            # 区分"查不到代码"（未上市/名称不对）和"查询异常"（网络/服务错误）
-            if any(k in err_msg for k in ("no unambiguous", "no daily data", "invalid code")):
+            # 区分"查不到/不支持"和"服务异常"
+            if any(k in err_msg for k in ("no unambiguous", "no daily data", "invalid code",
+                                          "unsupported market", "no daily", "没有接口")):
                 return AgentResult(
-                    speech=f"没有找到「{symbol}」对应的 A 股股票。它可能未在国内上市，或名称不准确。"
-                           f"您可以试试用股票代码查询，比如「600519 的股价」。",
+                    speech=f"没有找到「{symbol}」的行情数据。可能未上市、名称不准确、或当前账户无该市场权限。"
+                           f"您可以试试用代码查询，如「600519」（A股）、「00700」（港股）。",
                 )
             return AgentResult(
                 status=FAILED,
-                speech="暂时无法获取股票行情，请稍后再试。",
+                speech="股票行情服务暂时不可用，请稍后再试。",
             )
         try:
             candles = await stock_provider.history(symbol, limit=20, meta=meta)
