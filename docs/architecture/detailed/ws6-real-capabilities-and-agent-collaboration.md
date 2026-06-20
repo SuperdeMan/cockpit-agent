@@ -162,8 +162,9 @@ async def handle(self, intent, ctx, meta):
 trip-planner 协作链路**跑通**（并行 + `gather(return_exceptions=True)` 降级）。
 
 **已修复项**（2026-06-20）：
-1. ✅ **跨进程深度/环护栏已生效**：`server.py:Execute` 从 `request.meta` 读 `call_depth/call_stack`，经 `_set_current_meta` contextvar 传入 `BaseAgent.agents` 属性，构造正确深度的 `AgentClient`。`MAX_DEPTH=2` 和环检测跨进程生效。
+1. ✅ **跨进程深度/环护栏已生效**：`server.py:Execute` 从 `request.meta` 读 `call_depth/call_stack`，经 `_set_current_meta` contextvar 传入 `BaseAgent.agents` 属性，构造正确深度的 `AgentClient`。`MAX_DEPTH=2` 和环检测跨进程生效。`_set_current_meta` 在 `finally` 中重置（防泄漏）。
 2. ✅ **审计事件**：护栏拒绝（深度/环）发 `agent_client.guardrail` span，进 collector→Dashboard trace 视图。
+3. ✅ **测试已升级**：`test/sdk/test_agent_client.py` 从假桩 `_AgentClientShim` 升级为直接测真实 `AgentClient` + ContextVar 机制（11 条：深度/环/port_map/meta 透传/fork），修复了"绿测是假信心"的问题。
 
 **剩余待做**：
 3. **权限不放大（护栏3）未实现**：`call()` 只有深度+环+超时，无权限校验（设计 §4.2 护栏3）。落地：被调有效权限 ≤ 调用方，granted_permissions 经 meta 透传，被调侧或 call 前经 `security/` 复核（呼应 WS8）。

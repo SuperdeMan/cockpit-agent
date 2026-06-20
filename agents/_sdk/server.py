@@ -83,6 +83,8 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
                 speech=f"Agent 内部错误：{type(e).__name__}",
                 error=common_pb2.ErrorInfo(code="agent_error", message=str(e)),
             )
+        finally:
+            _set_current_meta(None)  # 防止意外泄漏到后续 request
 
     async def ExecuteStream(self, request, context):
         iv, ctx = _intent_view(request), _context(request, self.agent.memory)
@@ -102,6 +104,8 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
                 speech=f"Agent 内部错误：{type(e).__name__}",
                 error=common_pb2.ErrorInfo(code="agent_error", message=str(e)),
             ))
+        finally:
+            _set_current_meta(None)
 
 
 async def _reregister_loop(registry, manifest, endpoint: str, interval: float):

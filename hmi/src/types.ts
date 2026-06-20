@@ -164,7 +164,8 @@ export type AgentMeta = { id: string; label: string; desc: string; icon: string;
 export const AGENT_CATALOG: AgentMeta[] = [
   { id: 'vehicle', label: '车辆控制', desc: '空调、车窗、座椅、灯光等车身控制（端侧秒回）', icon: '🚘', core: true },
   { id: 'media', label: '媒体音乐', desc: '播放、暂停、切歌（端侧秒回）', icon: '🎵', core: true },
-  { id: 'navigation', label: '导航出行', desc: '搜索 POI、导航、充电站', icon: '🧭' },
+  { id: 'navigation', label: '导航出行', desc: '搜索 POI、导航、充电站、逆地理编码', icon: '🧭' },
+  { id: 'info', label: '信息助手', desc: '天气、预报、预警、空气质量、联网搜索、新闻、股票', icon: 'ℹ️' },
   { id: 'trip-planner', label: '行程规划', desc: '多日自驾行程编排', icon: '🗺️' },
   { id: 'food-ordering', label: '餐饮点单', desc: '找餐厅、订位、点餐', icon: '🍜' },
   { id: 'parking-payment', label: '停车缴费', desc: '找车位、停车缴费', icon: '🅿️' },

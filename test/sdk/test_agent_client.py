@@ -1,109 +1,160 @@
-"""AgentClient 护栏测试。独立于 proto 生成代码。
+"""AgentClient 跨进程护栏测试。
 
-直接测试 AgentClient 的护栏逻辑（深度/环/端口解析），不走 gRPC。
+直接测试真实 AgentClient + base.py ContextVar 机制：
+- 深度上限（MAX_DEPTH=2 跨进程生效）
+- 环检测（call_stack 跨进程透传）
+- port_map 含所有已注册 Agent（含 info=50067）
+- _set_current_meta / _current_meta ContextVar 传递
+
+不走 gRPC（mock 掉 channel），不依赖 proto 生成代码的运行时导入。
 """
+import asyncio
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
-# 直接导入 agent_client 模块，绕过 SDK __init__ 的 proto import 链
 import importlib
 import sys
 import os
 
-# 确保能导入 agent_client（它只依赖 base 的类型，运行时才需要 grpc）
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# 确保能导入 agent_client
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
-class MockAgent:
+# ─── 真实 AgentClient（通过 SDK 导入链）───
+
+# 绕过 SDK __init__ 的全量 proto 导入，直接导入底层模块
+from agents._sdk.agent_client import AgentClient, MAX_DEPTH
+from agents._sdk.base import _set_current_meta, _current_meta
+
+
+class _MockAgent:
+    """最小化 Agent mock：有 manifest 即可构造 AgentClient。"""
     def __init__(self, agent_id="test-agent"):
         self.manifest = MagicMock()
         self.manifest.agent_id = agent_id
         self.manifest.capabilities = []
 
 
-# AgentClient 的核心逻辑不依赖 grpc，只在 .call() 发请求时用
-# 我们直接实例化测试护栏逻辑
-from dataclasses import dataclass
+# ─── ContextVar 跨进程传递测试 ───
+
+def test_contextvar_set_and_read():
+    """_set_current_meta 写入 ContextVar，_current_meta.get() 读出——跨层生效。"""
+    _set_current_meta({"call_depth": "2", "call_stack": "a,b,c"})
+    try:
+        meta = _current_meta.get()
+        assert meta is not None
+        assert meta["call_depth"] == "2"
+        assert meta["call_stack"] == "a,b,c"
+    finally:
+        _set_current_meta(None)
 
 
-@dataclass
-class _AgentClientShim:
-    """AgentClient 护栏逻辑的独立测试桩。"""
-    caller_id: str = "test-agent"
-    call_depth: int = 0
-    call_stack: list = None
-    MAX_DEPTH: int = 2
-
-    def __post_init__(self):
-        if self.call_stack is None:
-            self.call_stack = []
-
-    def check_call(self, target_id: str) -> tuple[bool, str]:
-        """检查调用是否被护栏拒绝。返回 (allowed, reason)。"""
-        if self.call_depth >= self.MAX_DEPTH:
-            return False, f"深度超限 ({self.call_depth} >= {self.MAX_DEPTH})"
-        if target_id in self.call_stack or target_id == self.caller_id:
-            return False, f"循环调用: {self.caller_id} -> {target_id}"
-        return True, ""
-
-    def resolve_endpoint(self, agent_id: str) -> str:
-        port_map = {
-            "navigation": "50061", "chitchat": "50062",
-            "food-ordering": "50063", "parking-payment": "50064",
-            "manual-rag": "50065", "trip-planner": "50066",
-        }
-        return port_map.get(agent_id, "")
-
-    def fork(self, target_id: str) -> "_AgentClientShim":
-        return _AgentClientShim(
-            caller_id=target_id,
-            call_depth=self.call_depth + 1,
-            call_stack=self.call_stack + [self.caller_id],
-        )
+def test_contextvar_default_is_none():
+    """未设置时 ContextVar 默认 None。"""
+    _set_current_meta(None)
+    assert _current_meta.get() is None
 
 
-# ─── 测试 ───
+# ─── 深度上限（跨进程）───
 
-def test_depth_limit():
-    client = _AgentClientShim(call_depth=2, MAX_DEPTH=2)
-    ok, reason = client.check_call("other-agent")
-    assert not ok
-    assert "深度" in reason
-
-
-def test_cycle_detection():
-    client = _AgentClientShim(caller_id="agent-a", call_stack=["agent-b", "agent-c"])
-    ok, reason = client.check_call("agent-b")
-    assert not ok
-    assert "循环" in reason
+def test_depth_at_limit_rejects():
+    """AgentClient 在 call_depth >= MAX_DEPTH 时拒绝调用。"""
+    agent = _MockAgent()
+    client = AgentClient(caller=agent, call_depth=MAX_DEPTH, call_stack=[])
+    result = asyncio.run(client.call("other", "other.intent", {}, timeout=0.1))
+    assert result.status == "failed"
+    assert "深度" in result.speech or "depth" in result.speech.lower()
 
 
-def test_self_call_detection():
-    client = _AgentClientShim(caller_id="agent-a")
-    ok, reason = client.check_call("agent-a")
-    assert not ok
+def test_depth_below_limit_attempts():
+    """call_depth < MAX_DEPTH 时 AgentClient 尝试调用（endpoint 解析失败也会标记 failed）。"""
+    agent = _MockAgent()
+    client = AgentClient(caller=agent, call_depth=0, call_stack=[])
+    # 无 endpoint → resolve 返回 "" → "未找到 Agent"
+    result = asyncio.run(client.call("nonexistent", "nonexistent.intent", {}, timeout=0.1))
+    assert result.status == "failed"
+    assert "未找到" in result.speech
 
 
-def test_normal_call_allowed():
-    client = _AgentClientShim(caller_id="agent-a")
-    ok, reason = client.check_call("agent-b")
-    assert ok
+# ─── 环检测（跨进程 call_stack 透传）───
 
+def test_cycle_detected_from_stack():
+    """call_stack 中已有目标 agent → 拒绝（跨进程环检测生效）。"""
+    agent = _MockAgent(agent_id="planner")
+    client = AgentClient(caller=agent, call_depth=1, call_stack=["navigation", "info"])
+    result = asyncio.run(client.call("navigation", "navigation.search_poi", {}, timeout=0.1))
+    assert result.status == "failed"
+    assert "循环" in result.speech
+
+
+def test_self_call_detected():
+    """调用自己 → 拒绝。"""
+    agent = _MockAgent(agent_id="agent-a")
+    client = AgentClient(caller=agent, call_depth=0, call_stack=[])
+    result = asyncio.run(client.call("agent-a", "agent-a.intent", {}, timeout=0.1))
+    assert result.status == "failed"
+    assert "循环" in result.speech
+
+
+# ─── port_map 含已注册 Agent ───
+
+def test_port_map_has_info():
+    """port_map 必须含 info=50067（否则别的 agent 协作调不到天气/搜索等能力）。"""
+    agent = _MockAgent()
+    client = AgentClient(caller=agent)
+    # _resolve_endpoint 是实例方法，通过内部 port_map 解析
+    endpoint = client._resolve_endpoint("info")
+    assert endpoint == "localhost:50067"
+
+
+def test_port_map_has_navigation():
+    endpoint = AgentClient(caller=_MockAgent())._resolve_endpoint("navigation")
+    assert endpoint == "localhost:50061"
+
+
+def test_port_map_unknown_returns_empty():
+    endpoint = AgentClient(caller=_MockAgent())._resolve_endpoint("nonexistent")
+    assert endpoint == ""
+
+
+# ─── meta 透传 call_depth/call_stack ───
+
+def test_meta_contains_depth_and_stack():
+    """AgentClient.call() 构建的 ExecuteRequest.meta 应含 call_depth/call_stack。"""
+    agent = _MockAgent(agent_id="trip-planner")
+    client = AgentClient(caller=agent, call_depth=1, call_stack=["planner"])
+
+    captured_meta = {}
+
+    async def fake_call():
+        with patch("agents._sdk.agent_client.grpc") as mock_grpc:
+            mock_stub = MagicMock()
+            mock_stub.Execute = AsyncMock(side_effect=Exception("capture meta"))
+            mock_ch = MagicMock()
+            mock_grpc.aio.insecure_channel.return_value = mock_ch
+
+            with patch("agents._sdk.agent_client.agent_pb2_grpc.AgentStub", return_value=mock_stub):
+                try:
+                    await client.call("navigation", "navigation.search_poi", {}, timeout=0.1)
+                except Exception:
+                    pass
+            # 捕获发送的 meta
+            if mock_stub.Execute.called:
+                req = mock_stub.Execute.call_args[0][0]
+                captured_meta.update(dict(req.meta))
+
+    asyncio.run(fake_call())
+    assert captured_meta.get("call_depth") == "2"  # depth+1
+    stack = captured_meta.get("call_stack", "")
+    assert "planner" in stack
+    assert "trip-planner" in stack
+
+
+# ─── fork 增加深度 ───
 
 def test_fork_increments_depth():
-    client = _AgentClientShim(caller_id="agent-a", call_depth=1)
-    child = client.fork("agent-b")
-    assert child.call_depth == 2
-    assert "agent-a" in child.call_stack
-
-
-def test_resolve_endpoint_known():
-    client = _AgentClientShim()
-    assert "50061" == client.resolve_endpoint("navigation")
-    assert "50062" == client.resolve_endpoint("chitchat")
-    assert "50066" == client.resolve_endpoint("trip-planner")
-
-
-def test_resolve_endpoint_unknown():
-    client = _AgentClientShim()
-    assert client.resolve_endpoint("nonexistent") == ""
+    agent = _MockAgent(agent_id="a")
+    client = AgentClient(caller=agent, call_depth=0, call_stack=[])
+    child = client.fork("b")
+    assert child._depth == 1
+    assert "a" in child._stack

@@ -12,7 +12,7 @@
 阶段：**Phase 1 工程化 PoC 主干、云端中枢 P0-P3 与轻量可观测台已落地**（2026-06-15）。
 持久化/多实例、mTLS/沙箱、完整 OTel 等仍是后续工作；**真实外部能力已接入首批**
 （导航=高德、天气=和风含 JWT/EdDSA 鉴权，无凭证回退 mock；2026-06-20 已用真实凭证端到端
-冒烟通过）。当前全量单测 517 passed, 6 skipped；compose 新增 info-agent（全栈联调待 `make up`）。
+冒烟通过）。当前全量单测 568 passed, 6 skipped；compose 新增 info-agent（全栈联调待 `make up`）。
 
 ---
 
@@ -50,7 +50,7 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 564 passed, 6 skipped（2026-06-20 实测；含 info provider 全能力单测 + UI 卡片链路） |
+| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 568 passed, 6 skipped（2026-06-20 实测；含 info/导航 provider 全能力 + AgentClient 跨进程护栏 + UI 卡片链路） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
 | HMI TTS 单测 / 构建 | ✅ Node 5/5；`npm run build` 通过 |
 | Dashboard 单测 / 构建 | ✅ Node 10/10；`npm run build` 通过 |
