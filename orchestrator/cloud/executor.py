@@ -89,7 +89,8 @@ class DagExecutor:
             )
         except asyncio.TimeoutError:
             logger.warning("Step %s timed out (%.1fs)", step.id, timeout)
-            return StepResult(step_id=step.id, status=StepStatus.FAILED, error="timeout")
+            return StepResult(step_id=step.id, status=StepStatus.FAILED,
+                              error="step_timeout")
         except Exception as e:
             logger.warning("Step %s failed: %s", step.id, e)
             return StepResult(step_id=step.id, status=StepStatus.FAILED, error=str(e))

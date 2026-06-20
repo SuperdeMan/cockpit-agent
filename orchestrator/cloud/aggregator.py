@@ -19,6 +19,13 @@ class Aggregator:
         """llm_fn: async (messages: list[dict]) -> str"""
         self._llm = llm_fn
 
+    # 内部错误码 → 用户友好话术
+    _ERROR_FRIENDLY = {
+        "step_timeout": "处理超时了，请稍后再试",
+        "timeout": "处理超时了，请稍后再试",
+        "circuit_open": "该服务暂时不可用，请稍后再试",
+    }
+
     async def compose(self, user_text: str, results: list[StepResult]) -> dict:
         """聚合结果，返回 Final 事件结构。"""
         actions = [a for r in results for a in r.actions]
@@ -33,7 +40,8 @@ class Aggregator:
         if len(results) == 1:
             r = results[0]
             if r.status == StepStatus.FAILED:
-                return {"speech": f"抱歉，{r.error or '处理失败'}。", "actions": []}
+                friendly = self._ERROR_FRIENDLY.get(r.error or "", r.error or "处理失败")
+                return {"speech": f"抱歉，{friendly}。", "actions": []}
             return {
                 "speech": r.speech,
                 "actions": actions,
@@ -58,7 +66,8 @@ class Aggregator:
             if r.status == StepStatus.OK and r.speech:
                 summaries.append(r.speech)
             elif r.status == StepStatus.FAILED:
-                summaries.append(f"[{r.step_id} 失败: {r.error}]")
+                friendly = self._ERROR_FRIENDLY.get(r.error or "", r.error or "处理失败")
+                summaries.append(f"[{r.step_id} 失败: {friendly}]")
 
         prompt = (
             f"用户说：{user_text}\n\n"
