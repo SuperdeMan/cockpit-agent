@@ -106,3 +106,6 @@ class EastMoneyStockProvider(StockProvider):
 
     async def history(self, symbol: str, limit: int = 20, meta=None):
         raise ProviderError("eastmoney: history not supported, use tushare")
+
+    async def index(self, name: str = "上证", meta=None) -> Quote:
+        return await self.quote(name, meta=meta)
