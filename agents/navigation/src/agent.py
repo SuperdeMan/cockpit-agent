@@ -5,6 +5,7 @@
 Phase 1：使用 Provider 适配层（mock/real 可切换）。
 """
 from __future__ import annotations
+import json
 import logging
 import os
 
@@ -84,23 +85,82 @@ class NavigationAgent(BaseAgent):
         if not dest:
             return AgentResult(status=NEED_SLOT, speech="您要去哪里？", follow_up="请告诉我目的地")
 
-        # 尝试 POI 搜索（模糊地名 → 精确 POI）
-        try:
-            results = await self.poi.search(dest, limit=3, meta=meta)
-        except ProviderError:
-            results = []
+        resolved_name, results = await self._find_destination(dest, meta)
         if results:
             first = results[0]
             items = [{"id": r.id, "name": r.name, "rating": r.rating,
                       "distance_km": r.distance_km, "address": r.address} for r in results]
+            prefix = (f"识别到您说的是{first.name}。" if resolved_name != dest else "")
             return AgentResult(
-                speech=f"为您找到 {dest}：{first.name}（{first.address}）。已为您规划路线。",
-                ui_card={"type": "poi_list", "keyword": dest, "items": items},
+                speech=f"{prefix}为您找到{first.name}（{first.address}）。已为您规划路线。",
+                ui_card={"type": "poi_list", "keyword": resolved_name, "items": items},
                 data={"items": items},
             ).action("navigate", {"destination": first.name, "lat": first.lat, "lng": first.lng})
 
-        return AgentResult(speech=f"好的，已为您规划到{dest}的路线。").action(
-            "navigate", {"destination": dest})
+        return AgentResult(
+            status=NEED_SLOT,
+            speech=f"暂时无法确定「{dest}」对应的具体地点。",
+            follow_up="请补充城市、所在区域，或附近的地标，我再为您定位。",
+            missing_slots=["destination"],
+        )
+
+    async def _find_destination(self, description: str, meta) -> tuple[str, list]:
+        """先用原话检索，未命中时仅将经高德验证的语义候选作为目的地。"""
+        try:
+            results = await self.poi.search(description, limit=3, meta=meta)
+        except ProviderError as e:
+            logger.warning("destination POI search failed: %s", e)
+            results = []
+        if results:
+            return description, results
+
+        for candidate in await self._landmark_candidates(description):
+            try:
+                results = await self.poi.search(candidate, limit=3, meta=meta)
+            except ProviderError as e:
+                logger.warning("landmark candidate POI search failed: %s", e)
+                continue
+            if results:
+                return candidate, results
+        return "", []
+
+    async def _landmark_candidates(self, description: str) -> list[str]:
+        """把视觉化地标描述转换为少量正式 POI 候选，不接受模型直接导航。"""
+        prompt = (
+            "把用户的导航目的地描述转换为中国地图可检索的正式 POI 名称。\n"
+            f"用户描述：{description}\n\n"
+            "仅当你对真实地点有把握时给出候选；最多三个；不要解释、不要编造。"
+            "严格只输出 JSON 字符串数组，例如：[\"深圳华润大厦\"]。"
+        )
+        try:
+            raw = await self.llm.complete([
+                {"role": "system", "content": "你是中国地标名称归一化器，只输出 JSON 数组。"},
+                {"role": "user", "content": prompt},
+            ], temperature=0.0, max_tokens=120)
+        except Exception as e:
+            logger.warning("landmark resolution unavailable: %s", e)
+            return []
+
+        raw = (raw or "").strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1]
+            raw = raw.rsplit("```", 1)[0].strip()
+        start, end = raw.find("["), raw.rfind("]")
+        if start < 0 or end <= start:
+            return []
+        try:
+            values = json.loads(raw[start:end + 1])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        if not isinstance(values, list):
+            return []
+
+        candidates: list[str] = []
+        for value in values:
+            candidate = value.strip() if isinstance(value, str) else ""
+            if candidate and candidate not in candidates and len(candidate) <= 80:
+                candidates.append(candidate)
+        return candidates[:3]
 
     async def _reverse_geocode(self, intent, ctx, meta) -> AgentResult:
         """逆地理编码：坐标 → 地址。"""
