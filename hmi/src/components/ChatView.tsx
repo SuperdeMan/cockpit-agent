@@ -3,6 +3,7 @@
 // 不让用户面对"死寂"等待；若后端流式下发 speech_delta 则逐字显示。
 import { useEffect, useRef } from 'react'
 import { useSettings } from '../settings'
+import { CardRenderer } from './Cards'
 import type { Action, Msg } from '../types'
 
 export function ChatView({
@@ -88,6 +89,8 @@ function Bubble({
             {msg.streaming && <span className="caret" />}
           </div>
         )}
+
+        {msg.uiCard && <CardRenderer card={msg.uiCard} />}
 
         {msg.actions?.map((a, j) => (
           <ActionChip key={j} action={a} />

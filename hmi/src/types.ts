@@ -16,6 +16,99 @@ export type Msg = {
   pending?: boolean // 助手"思考中"占位（开放域慢响应时立刻给反馈）
   streaming?: boolean // 正在流式接收 speech_delta
   error?: boolean
+  uiCard?: UiCard
+}
+
+// ─── UI 卡片类型 ───
+
+export type UiCard =
+  | WeatherCard
+  | ForecastCard
+  | StockCard
+  | NewsCard
+  | SearchCard
+  | PoiListCard
+  | PoiDetailCard
+
+export type WeatherCard = {
+  type: 'weather'
+  city: string
+  temp: string
+  text: string
+  feels_like: string
+  humidity: string
+  wind_dir: string
+  wind_scale: string
+  update_time: string
+}
+
+export type ForecastCard = {
+  type: 'forecast'
+  city: string
+  days: Array<{
+    date: string
+    text_day: string
+    text_night: string
+    temp_high: string
+    temp_low: string
+    wind_dir: string
+    wind_scale: string
+  }>
+}
+
+export type StockCard = {
+  type: 'stock_quote'
+  name: string
+  symbol: string
+  price: string
+  change: string
+  change_pct: string
+  market_time: string
+}
+
+export type NewsCard = {
+  type: 'news_list'
+  topic: string
+  items: Array<{
+    title: string
+    summary: string
+    source: string
+    publish_time: string
+  }>
+}
+
+export type SearchCard = {
+  type: 'search_list'
+  query: string
+  items: Array<{
+    title: string
+    url: string
+    snippet: string
+    source: string
+  }>
+}
+
+export type PoiListCard = {
+  type: 'poi_list'
+  keyword: string
+  items: Array<{
+    id: string
+    name: string
+    rating: number
+    distance_km: number
+    address: string
+  }>
+}
+
+export type PoiDetailCard = {
+  type: 'poi_detail'
+  id: string
+  name: string
+  address: string
+  lat: number
+  lng: number
+  rating: number
+  category: string
 }
 
 export type Voice = {

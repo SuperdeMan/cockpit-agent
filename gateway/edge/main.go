@@ -344,10 +344,14 @@ func eventToMap(ev *orchpb.HandleEvent) map[string]any {
 		for _, a := range f.Actions {
 			actions = append(actions, actionToMap(a))
 		}
-		return map[string]any{
+		result := map[string]any{
 			"type": "final", "speech": f.Speech, "follow_up": f.FollowUp,
 			"need_confirm": f.NeedConfirm, "actions": actions,
 		}
+		if f.UiCard != nil {
+			result["ui_card"] = f.UiCard.AsMap()
+		}
+		return result
 	}
 	return map[string]any{"type": "unknown"}
 }

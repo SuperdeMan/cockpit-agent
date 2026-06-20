@@ -527,6 +527,135 @@ button { font-family: inherit; }
 }
 .reset-confirm { display: flex; gap: 8px; }
 
+/* ─── UI 卡片（天气/股票/新闻/搜索/POI）─── */
+
+.card {
+  margin-top: 10px; padding: 14px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+.card-header {
+  font-size: 13px; font-weight: 600; color: var(--accent);
+  margin-bottom: 10px; letter-spacing: 0.02em;
+}
+.card-meta {
+  margin-top: 8px; font-size: 11px; color: var(--faint);
+  font-family: var(--font-mono);
+}
+
+/* 天气卡片 */
+.card-weather { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.card-weather-main { display: flex; align-items: center; gap: 8px; }
+.card-weather-icon { font-size: 36px; line-height: 1; }
+.card-weather-temp { display: flex; align-items: flex-start; }
+.temp-value {
+  font-family: var(--font-mono); font-size: 42px; font-weight: 700;
+  color: var(--text); line-height: 1;
+}
+.temp-unit { font-size: 16px; color: var(--muted); margin-top: 6px; }
+.card-weather-info { flex: 1; min-width: 120px; }
+.card-weather-city { font-size: 15px; font-weight: 600; color: var(--text); }
+.card-weather-text { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.card-weather-detail {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px;
+  font-size: 12px; color: var(--faint);
+}
+.card-weather-detail span::before {
+  content: '·'; margin-right: 4px; color: var(--line-strong);
+}
+.card-weather-detail span:first-child::before { content: ''; margin: 0; }
+
+/* 天气预报卡片 */
+.card-forecast-days {
+  display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px;
+}
+.forecast-day {
+  flex: 1; min-width: 72px; text-align: center; padding: 8px 4px;
+  background: var(--surface); border-radius: var(--radius-sm);
+}
+.forecast-date { font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+.forecast-icon { font-size: 24px; margin: 4px 0; }
+.forecast-text { font-size: 11px; color: var(--faint); }
+.forecast-temp { font-size: 12px; margin-top: 4px; font-family: var(--font-mono); }
+.temp-low { color: var(--accent-2); }
+.temp-sep { color: var(--faint); margin: 0 2px; }
+.temp-high { color: var(--warn); }
+
+/* 股票卡片 */
+.card-stock { text-align: center; }
+.card-stock-header { display: flex; justify-content: center; align-items: baseline; gap: 8px; }
+.card-stock-name { font-size: 16px; font-weight: 700; color: var(--text); }
+.card-stock-symbol { font-size: 12px; color: var(--faint); font-family: var(--font-mono); }
+.card-stock-price {
+  font-family: var(--font-mono); font-size: 38px; font-weight: 700;
+  margin: 6px 0 4px; line-height: 1;
+}
+.card-stock-change { font-size: 14px; font-family: var(--font-mono); }
+.stock-arrow { margin-right: 4px; }
+.stock-pct { color: var(--muted); }
+
+.stock-up .card-stock-price,
+.stock-up .card-stock-change { color: #22c55e; }
+.stock-up { border-color: rgba(34, 197, 94, 0.25); }
+
+.stock-down .card-stock-price,
+.stock-down .card-stock-change { color: var(--danger); }
+.stock-down { border-color: rgba(255, 90, 120, 0.25); }
+
+/* 新闻卡片 */
+.card-news-list { display: flex; flex-direction: column; gap: 10px; }
+.news-item { display: flex; gap: 10px; }
+.news-index {
+  flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink);
+  font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+}
+.news-content { flex: 1; min-width: 0; }
+.news-title { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.4; }
+.news-summary {
+  font-size: 12px; color: var(--muted); margin-top: 3px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.news-meta { font-size: 11px; color: var(--faint); margin-top: 3px; }
+.news-source { margin-right: 8px; }
+.news-time { font-family: var(--font-mono); }
+
+/* 搜索卡片 */
+.card-search-list { display: flex; flex-direction: column; gap: 10px; }
+.search-item { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.search-item:last-child { border-bottom: none; }
+.search-title {
+  font-size: 13.5px; font-weight: 600; color: var(--accent-2);
+  text-decoration: none; line-height: 1.4;
+}
+.search-title:hover { text-decoration: underline; }
+.search-snippet {
+  font-size: 12px; color: var(--muted); margin-top: 3px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.search-source { font-size: 11px; color: var(--faint); margin-top: 3px; }
+
+/* POI 卡片 */
+.card-poi-list { display: flex; flex-direction: column; gap: 8px; }
+.poi-item {
+  padding: 8px 10px; background: var(--surface); border-radius: var(--radius-sm);
+}
+.poi-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.poi-info { display: flex; gap: 10px; margin-top: 3px; font-size: 12px; }
+.poi-rating { color: var(--warn); }
+.poi-dist { color: var(--muted); font-family: var(--font-mono); }
+.poi-addr { font-size: 11.5px; color: var(--faint); margin-top: 2px; }
+
+/* POI 详情卡片 */
+.poi-detail-name { font-size: 16px; font-weight: 700; color: var(--text); }
+.poi-detail-addr { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.poi-detail-row {
+  display: flex; gap: 12px; margin-top: 6px; font-size: 12px; color: var(--faint);
+}
+
 /* ─── 响应式 ─── */
 @media (max-width: 640px) {
   .app { padding: 10px 12px 14px; }

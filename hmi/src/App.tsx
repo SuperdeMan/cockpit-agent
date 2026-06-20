@@ -125,6 +125,7 @@ export default function App() {
         actions: data.actions,
         needConfirm: !!data.need_confirm,
         followUp: data.follow_up,
+        uiCard: data.ui_card,
       }
       setMessages((m) =>
         id && m.some((x) => x.id === id)
