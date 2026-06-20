@@ -62,13 +62,19 @@ class NavigationAgent(BaseAgent):
         resolved_keyword = keyword
 
         # Planner 有时会把“去深圳笋一样的建筑物”误抽成“笋岗”这类普通关键词。
-        # 常规 POI 检索为空时，使用保留的原话求正式地标名，再由地图 provider 验证。
+        # 视觉地标描述即使碰巧命中一个同名普通 POI，也要优先由地图验证语义候选；
+        # 候选名已含城市/正式名称，不能受车辆当前城市的周边检索范围限制。
         raw_text = (intent.raw_text or "").strip()
-        if not results and raw_text:
+        is_visual_landmark = self._is_visual_landmark_description(raw_text)
+        if raw_text and (not results or is_visual_landmark):
             for candidate in await self._landmark_candidates(raw_text):
                 try:
                     candidate_results = await self.poi.search(
-                        candidate, near=near, rating_min=rating_min, meta=meta)
+                        candidate,
+                        near=None if is_visual_landmark else near,
+                        rating_min=rating_min,
+                        meta=meta,
+                    )
                 except ProviderError as e:
                     logger.warning("semantic POI candidate search failed: %s", e)
                     continue
@@ -98,6 +104,15 @@ class NavigationAgent(BaseAgent):
     @staticmethod
     def _is_navigation_phrase(text: str) -> bool:
         return (text or "").strip().startswith(("导航", "去", "到", "带我去"))
+
+    @classmethod
+    def _is_visual_landmark_description(cls, text: str) -> bool:
+        """仅将带明显视觉/地标描述的导航请求提升为语义候选优先。"""
+        normalized = (text or "").strip()
+        if not cls._is_navigation_phrase(normalized):
+            return False
+        markers = ("像", "一样", "造型", "船型", "笋", "建筑", "地标")
+        return any(marker in normalized for marker in markers)
 
     async def _navigate_to(self, intent, ctx, meta) -> AgentResult:
         dest = intent.slots.get("destination", "").strip()
