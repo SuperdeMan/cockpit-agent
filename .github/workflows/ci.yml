@@ -23,7 +23,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install grpcio==1.66.2 protobuf==7.35.0 pyyaml pytest pytest-asyncio httpx aiohttp
+          pip install grpcio==1.66.2 protobuf==7.35.0 pyyaml pytest pytest-asyncio httpx aiohttp fastapi cryptography nats-py
 
       - name: Set up buf
         uses: bufbuild/buf-setup-action@v1
