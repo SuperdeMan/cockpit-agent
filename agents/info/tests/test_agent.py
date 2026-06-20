@@ -9,6 +9,10 @@ async def _llm_unavailable(*args, **kwargs):
     raise RuntimeError("LLM gateway unavailable")
 
 
+async def _llm_numbered_answer(*args, **kwargs):
+    return "1. 第一条关键结论。\n2. 第二条补充结论。"
+
+
 # ── 天气 ──────────────────────────────────────────────────
 
 def test_weather_with_city_returns_card():
@@ -120,6 +124,17 @@ def test_search_fallback_returns_a_brief_not_a_numbered_result_dump():
     assert res.ui_card["summary"] == res.speech
     assert "为您搜索到" not in res.speech
     assert "1." not in res.speech
+
+
+def test_search_flattens_numbered_llm_answer_into_a_spoken_brief():
+    agent = InfoAgent()
+    agent.llm.complete = _llm_numbered_answer
+    res = asyncio.run(run_handle(
+        agent, "info.search", slots={"query": "人工智能"}, raw_text="搜一下人工智能"))
+
+    assert "1." not in res.speech
+    assert "2." not in res.speech
+    assert "第一条关键结论" in res.speech
 
 
 def test_search_missing_query_asks():
