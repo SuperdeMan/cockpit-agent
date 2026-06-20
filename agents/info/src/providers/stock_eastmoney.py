@@ -1,21 +1,23 @@
-"""东方财富实时行情 Provider（免费无 key，支持 A 股/港股/美股）。
+"""新浪实时行情 Provider（免费无 key，支持 A 股/港股/美股）。
 
 作为 Tushare 的降级方案：当 Tushare 免费 token 无港美股权限时自动使用。
-东方财富行情 API 无需 key，通过 secid 参数指定市场：
-  A 股: secid=1.600519(沪) / 0.000001(深)
-  港股: secid=116.00700
-  美股: secid=105.AAPL
-docs: https://push2.eastmoney.com/api/qt/stock/get
+东方财富 suggest API 做名称→代码解析，新浪行情 API 取实时数据。
+  A 股: sh600519 / sz000001
+  港股: hk00700
+  美股: gb_aapl
+docs: https://finance.sina.com.cn/realstock/company
 """
 from __future__ import annotations
 import logging
+import re
 
 from agents._sdk.http import AsyncHttpClient, ProviderError
 from .base import StockProvider, Quote
 
-logger = logging.getLogger("agent.info.stock_eastmoney")
+logger = logging.getLogger("agent.info.stock_sina")
 
-_QUOTE_URL = "https://push2.eastmoney.com/api/qt/stock/get"
+_SINA_QUOTE_URL = "https://hq.sinajs.cn/list="
+_EASTMONEY_SUGGEST_URL = "https://searchapi.eastmoney.com/api/suggest/get"
 
 
 def _s(v) -> str:
@@ -23,90 +25,143 @@ def _s(v) -> str:
 
 
 class EastMoneyStockProvider(StockProvider):
-    """东方财富实时行情（免费，全市场）。"""
+    """新浪实时行情 + 东方财富名称解析（免费，全市场）。"""
 
     def __init__(self):
-        self._http = AsyncHttpClient(vendor="eastmoney", service="info", timeout_s=5.0)
-        # 东方财富 suggest API 用于名称→代码解析
-        self._suggest_url = "https://searchapi.eastmoney.com/api/suggest/get"
+        self._http = AsyncHttpClient(vendor="sina", service="info", timeout_s=5.0)
+        self._suggest_http = AsyncHttpClient(vendor="eastmoney_suggest", service="info", timeout_s=5.0)
 
-    async def _resolve_secid(self, symbol: str, meta) -> tuple[str, str]:
-        """symbol → (secid, display_name)。secid 用于东方财富行情 API。"""
+    async def _resolve_sina_code(self, symbol: str, meta) -> tuple[str, str]:
+        """symbol → (sina_code, display_name)。sina_code 用于新浪行情 API。"""
         symbol = (symbol or "").strip()
+
         # 已是代码格式
         if symbol.isdigit():
             if len(symbol) == 6:
-                prefix = "1" if symbol.startswith(("6", "5", "9")) else "0"
-                return f"{prefix}.{symbol}", symbol
+                prefix = "sh" if symbol.startswith(("6", "5", "9")) else "sz"
+                return f"{prefix}{symbol}", symbol
             if len(symbol) == 5:
-                return f"116.{symbol}", symbol  # 港股
+                return f"hk{symbol}", symbol  # 港股
         if "." in symbol:
             return symbol, symbol
 
-        # 名称搜索
-        data = await self._http.get_json(
-            self._suggest_url,
+        # 名称搜索（东方财富 suggest API）
+        data = await self._suggest_http.get_json(
+            _EASTMONEY_SUGGEST_URL,
             params={"input": symbol, "type": "14", "count": "5"},
             op="stock_suggest", meta=meta,
         )
         items = ((data.get("QuotationCodeTable") or {}).get("Data") or [])
         if not items:
-            raise ProviderError(f"eastmoney: no stock found for {symbol}")
+            raise ProviderError(f"sina: no stock found for {symbol}")
 
-        # 按市场优先：A股 > 港股 > 美股（classify 大小写不一致，统一 lowercase）
+        # 按市场优先：A股 > 港股 > 美股
         _RANK = {"astock": 0, "": 0, "hk": 1, "hkstock": 1, "hkindex": 1,
                  "usstock": 2, "usindex": 2}
         items.sort(key=lambda x: _RANK.get(_s(x.get("Classify", "")).lower(), 3))
+
         item = items[0]
         code = _s(item.get("Code"))
         name = _s(item.get("Name")) or symbol
         classify = _s(item.get("Classify", "")).lower()
 
         if classify in ("hkstock", "hkindex", "hk"):
-            secid = f"116.{code}"
+            sina_code = f"hk{code}"
         elif classify in ("usstock", "usindex", "us"):
-            secid = f"105.{code}"
+            sina_code = f"gb_{code.lower()}"
         elif code.isdigit() and len(code) == 6:
-            prefix = "1" if code.startswith(("6", "5", "9")) else "0"
-            secid = f"{prefix}.{code}"
+            prefix = "sh" if code.startswith(("6", "5", "9")) else "sz"
+            sina_code = f"{prefix}{code}"
         else:
-            raise ProviderError(f"eastmoney: unsupported market for {symbol}")
+            raise ProviderError(f"sina: unsupported market for {symbol}")
 
-        return secid, name
+        return sina_code, name
 
     async def quote(self, symbol: str, meta=None) -> Quote:
-        secid, name = await self._resolve_secid(symbol, meta)
-        data = await self._http.get_json(
-            _QUOTE_URL,
-            params={"secid": secid, "fields": "f43,f44,f45,f46,f47,f48,f57,f58,f169,f170"},
-            op="quote", meta=meta,
+        sina_code, name = await self._resolve_sina_code(symbol, meta)
+
+        # 新浪行情 API 返回格式：var hq_str_xxx="字段1,字段2,..."
+        raw = await self._http.get_json(
+            f"{_SINA_QUOTE_URL}{sina_code}",
+            op="sina_quote", meta=meta,
+            headers={"Referer": "https://finance.sina.com.cn"},
         )
-        d = data.get("data") or {}
-        if not d:
-            raise ProviderError(f"eastmoney: no quote data for {secid}")
+        # raw 是 JSON 但实际是 JS 变量赋值字符串
+        # httpx 会把它当 JSON 解析失败——改用纯文本请求
+        # 实际上 get_json 期望 JSON，但新浪返回 JS。需要直接用 get_text。
+        raise ProviderError("sina: use quote_text instead")
 
-        # 东方财富行情字段：f43=最新价(×100), f44=最高, f45=最低, f46=开盘
-        # f169=涨跌额(×100), f170=涨跌幅(×100), f57=代码, f58=名称
-        def _price(field):
-            v = d.get(field)
-            if v is None or v == "-":
-                return ""
-            try:
-                return str(round(int(v) / 100, 2))
-            except (ValueError, TypeError):
-                return _s(v)
+    async def quote_text(self, symbol: str, meta=None) -> Quote:
+        """用纯文本方式调新浪 API 并解析。"""
+        sina_code, name = await self._resolve_sina_code(symbol, meta)
 
+        # 直接 HTTP GET 拿文本
+        resp = await self._http._client.get(
+            f"{_SINA_QUOTE_URL}{sina_code}",
+            headers={"Referer": "https://finance.sina.com.cn"},
+        )
+        text = resp.text
+
+        # 解析：var hq_str_xxx="字段1,字段2,..."
+        m = re.search(r'"([^"]*)"', text)
+        if not m or not m.group(1):
+            raise ProviderError(f"sina: empty response for {sina_code}")
+        fields = m.group(1).split(",")
+
+        # 根据 sina_code 前缀判断格式
+        if sina_code.startswith("hk"):
+            return self._parse_hk(fields, name, sina_code)
+        elif sina_code.startswith("gb_"):
+            return self._parse_us(fields, name, sina_code)
+        else:
+            return self._parse_a(fields, name, sina_code)
+
+    @staticmethod
+    def _parse_a(fields: list, name: str, code: str) -> Quote:
+        # A股: 名称,昨收,今开,最新价,...（字段0=名称, 1=昨收, 2=今开, 3=最新价）
+        if len(fields) < 4:
+            raise ProviderError("sina: insufficient A-share data")
+        price = _s(fields[3])
+        prev_close = float(fields[1]) if fields[1] else 0
+        cur = float(fields[3]) if fields[3] else 0
+        change = round(cur - prev_close, 2) if prev_close else 0
+        pct = round(change / prev_close * 100, 2) if prev_close else 0
         return Quote(
-            name=_s(d.get("f58")) or name,
-            symbol=_s(d.get("f57")) or secid.split(".")[-1],
-            price=_price("f43"),
-            change=_price("f169"),
-            change_pct=f"{_price('f170')}%" if _price("f170") else "",
-            market_time="",
+            name=_s(fields[0]) or name,
+            symbol=code.replace("sh", "").replace("sz", ""),
+            price=price,
+            change=f"{change:+.2f}",
+            change_pct=f"{pct:+.2f}%",
+        )
+
+    @staticmethod
+    def _parse_hk(fields: list, name: str, code: str) -> Quote:
+        # 港股: 英文名,中文名,昨收,今开,最高,最低,最新价,涨跌额,涨跌幅,...
+        if len(fields) < 9:
+            raise ProviderError("sina: insufficient HK data")
+        return Quote(
+            name=_s(fields[1]) or name,
+            symbol=code.replace("hk", ""),
+            price=_s(fields[6]),
+            change=_s(fields[7]),
+            change_pct=f"{_s(fields[8])}%" if fields[8] else "",
+        )
+
+    @staticmethod
+    def _parse_us(fields: list, name: str, code: str) -> Quote:
+        # 美股: 中文名,最新价,涨跌幅,时间,涨跌额,...
+        if len(fields) < 5:
+            raise ProviderError("sina: insufficient US data")
+        return Quote(
+            name=_s(fields[0]) or name,
+            symbol=code.replace("gb_", "").upper(),
+            price=_s(fields[1]),
+            change=_s(fields[4]),
+            change_pct=f"{_s(fields[2])}%" if fields[2] else "",
         )
 
     async def history(self, symbol: str, limit: int = 20, meta=None):
-        raise ProviderError("eastmoney: history not supported, use tushare")
+        raise ProviderError("sina: history not supported, use tushare")
 
     async def index(self, name: str = "上证", meta=None) -> Quote:
-        return await self.quote(name, meta=meta)
+        return await self.quote_text(name, meta=meta)

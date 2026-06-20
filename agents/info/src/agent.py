@@ -369,7 +369,7 @@ class InfoAgent(BaseAgent):
             # Tushare 失败（如无港美股权限）→ 降级到东方财富实时行情（免费，全市场）
             if self._stock_eastmoney:
                 try:
-                    q = await self._stock_eastmoney.quote(symbol, meta=meta)
+                    q = await self._stock_eastmoney.quote_text(symbol, meta=meta)
                     stock_provider = self._stock_eastmoney  # history 也用东方财富
                 except ProviderError as e2:
                     logger.warning("eastmoney quote also failed: %s", e2)
