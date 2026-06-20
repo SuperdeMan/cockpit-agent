@@ -68,6 +68,15 @@ class TushareStockProvider(StockProvider):
             pass
         return d.strftime("%Y%m%d")
 
+    @staticmethod
+    def _daily_api(ts_code: str) -> str:
+        """按 ts_code 后缀返回对应的 Tushare 日线 API 名。"""
+        if ts_code.endswith(".HK"):
+            return "hk_daily"
+        if ts_code.endswith(".US"):
+            return "us_daily"
+        return "daily"
+
     async def _get_stock_name(self, ts_code: str, meta) -> str:
         """通过 stock_basic 获取股票名称。"""
         if ts_code in self._code_to_name:
@@ -128,21 +137,35 @@ class TushareStockProvider(StockProvider):
         if not matches:
             matches = [
                 item for item in items
-                if symbol in _s(item.get("Name")) and _s(item.get("Classify")) in ("", "AStock")
+                if symbol in _s(item.get("Name"))
             ]
+        if not matches:
+            # 无名称匹配时，取第一条 A 股结果（如果有）
+            matches = [item for item in items
+                       if _s(item.get("Classify")) in ("", "AStock")]
         if len(matches) != 1:
             raise ProviderError(f"stock lookup: no unambiguous code found for {symbol}")
 
         item = matches[0]
         code = _s(item.get("Code"))
-        if not code.isdigit() or len(code) != 6:
-            raise ProviderError(f"stock lookup: invalid code for {symbol}")
-        if code.startswith(("6", "5", "9")):
-            ts_code = f"{code}.SH"
-        elif code.startswith(("4", "8")):
-            ts_code = f"{code}.BJ"
+        classify = _s(item.get("Classify", ""))
+        # 按市场归一化 ts_code（支持 A 股/港股/美股）
+        if classify in ("HKStock", "HKIndex", "HK"):
+            # 港股：5 位数字代码 → .HK（如 00700 → 00700.HK）
+            ts_code = f"{code}.HK"
+        elif classify in ("USStock", "USIndex", "US"):
+            # 美股：字母代码 → .US（如 AAPL → AAPL.US）
+            ts_code = f"{code.upper()}.US"
+        elif code.isdigit() and len(code) == 6:
+            # A 股：6 位数字
+            if code.startswith(("6", "5", "9")):
+                ts_code = f"{code}.SH"
+            elif code.startswith(("4", "8")):
+                ts_code = f"{code}.BJ"
+            else:
+                ts_code = f"{code}.SZ"
         else:
-            ts_code = f"{code}.SZ"
+            raise ProviderError(f"stock lookup: unsupported market for {symbol} (code={code}, classify={classify})")
         name = _s(item.get("Name")) or symbol
         self._name_to_code[symbol] = ts_code
         self._code_to_name[ts_code] = name
@@ -164,11 +187,12 @@ class TushareStockProvider(StockProvider):
                       meta: dict | None = None) -> list[StockCandle]:
         """拉取一个有限交易日窗口，规整为前端 K 线所需的正序 OHLC 数据。"""
         ts_code = await self._resolve_ts_code(symbol, meta)
+        api_name = self._daily_api(ts_code)
         end_date = self._latest_trade_date()
         start_date = (datetime.strptime(end_date, "%Y%m%d")
                       - timedelta(days=max(14, min(limit, 60) * 3))).strftime("%Y%m%d")
         data = await self._post(
-            "daily", {"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+            api_name, {"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
             fields=_DAILY_FIELDS, op="daily_history", meta=meta,
         )
         rows = (data.get("data") or {}).get("items") or []
@@ -181,10 +205,11 @@ class TushareStockProvider(StockProvider):
     async def quote(self, symbol: str,
                     meta: dict | None = None) -> Quote:
         ts_code = await self._resolve_ts_code(symbol, meta)
+        api_name = self._daily_api(ts_code)
         trade_date = self._latest_trade_date()
         # 先取日线数据，再取公司名
         data = await self._post(
-            "daily",
+            api_name,
             {"ts_code": ts_code, "trade_date": trade_date},
             fields=_DAILY_FIELDS,
             op="daily", meta=meta,
@@ -195,7 +220,7 @@ class TushareStockProvider(StockProvider):
             for offset in range(1, 5):
                 d = datetime.strptime(trade_date, "%Y%m%d") - timedelta(days=offset)
                 alt = await self._post(
-                    "daily",
+                    api_name,
                     {"ts_code": ts_code, "trade_date": d.strftime("%Y%m%d")},
                     fields="ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg",
                     op="daily", meta=meta,
