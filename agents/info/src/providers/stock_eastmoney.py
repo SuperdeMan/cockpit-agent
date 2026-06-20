@@ -53,17 +53,18 @@ class EastMoneyStockProvider(StockProvider):
         if not items:
             raise ProviderError(f"eastmoney: no stock found for {symbol}")
 
-        # 按市场优先：A股 > 港股 > 美股
-        _RANK = {"AStock": 0, "": 0, "HKStock": 1, "HKIndex": 1, "USStock": 2, "USIndex": 2}
-        items.sort(key=lambda x: _RANK.get(_s(x.get("Classify", "")), 3))
+        # 按市场优先：A股 > 港股 > 美股（classify 大小写不一致，统一 lowercase）
+        _RANK = {"astock": 0, "": 0, "hk": 1, "hkstock": 1, "hkindex": 1,
+                 "usstock": 2, "usindex": 2}
+        items.sort(key=lambda x: _RANK.get(_s(x.get("Classify", "")).lower(), 3))
         item = items[0]
         code = _s(item.get("Code"))
         name = _s(item.get("Name")) or symbol
         classify = _s(item.get("Classify", "")).lower()
 
-        if classify in ("hkstock", "hkindex"):
+        if classify in ("hkstock", "hkindex", "hk"):
             secid = f"116.{code}"
-        elif classify in ("usstock", "usindex"):
+        elif classify in ("usstock", "usindex", "us"):
             secid = f"105.{code}"
         elif code.isdigit() and len(code) == 6:
             prefix = "1" if code.startswith(("6", "5", "9")) else "0"
