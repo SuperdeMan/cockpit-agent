@@ -212,10 +212,30 @@ class InfoAgent(BaseAgent):
         if not results:
             return AgentResult(speech=f"没有找到关于「{query}」的搜索结果。")
 
-        parts = [f"为您搜索到{len(results)}条结果："]
-        for i, r in enumerate(results[:3], 1):
-            parts.append(f"{i}. {r.title}——{r.snippet[:50]}")
-        speech = " ".join(parts)
+        # 用 LLM 从搜索结果合成直接回答（不是罗列链接）
+        snippets = "\n".join(
+            f"- {r.title}（{r.source}）：{r.snippet}" for r in results[:5]
+        )
+        synth_prompt = (
+            f"用户问：{query}\n\n"
+            f"以下是联网搜索到的参考资料：\n{snippets}\n\n"
+            "请根据以上资料，直接回答用户的问题。要求：\n"
+            "1. 给出直接的答案/结论，不要说'根据搜索结果'之类的废话\n"
+            "2. 简洁口语化，适合语音播报，不超过 5 句话\n"
+            "3. 如果是赛程/比分/行情等实时数据，直接列出关键数字\n"
+            "4. 如果资料不足以回答，诚实说明"
+        )
+        try:
+            speech = await self.llm.complete([
+                {"role": "system", "content": "你是一个信息助手，根据搜索结果直接回答用户问题。"},
+                {"role": "user", "content": synth_prompt},
+            ], temperature=0.3, max_tokens=300)
+        except Exception as e:
+            logger.warning("search synthesis LLM failed, using raw results: %s", e)
+            parts = [f"为您搜索到{len(results)}条结果："]
+            for i, r in enumerate(results[:3], 1):
+                parts.append(f"{i}. {r.title}——{r.snippet[:50]}")
+            speech = " ".join(parts)
 
         items = [{"title": r.title, "url": r.url, "snippet": r.snippet,
                   "source": r.source} for r in results]

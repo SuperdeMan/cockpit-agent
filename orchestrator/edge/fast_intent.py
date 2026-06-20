@@ -692,7 +692,9 @@ def classify_structured(text: str) -> dict | None:
         return _s("setting", "control", "open", "wifi", conf=0.85)
 
     # ── 个人热点 ──────────────────────────────────────────
-    if "热点" in t and "列表" not in t:
+    # "热点"在新闻上下文中（新闻/资讯/头条/今日/今天/播报/发生）不判为车载热点
+    _news_ctx = any(w in t for w in ("新闻", "资讯", "头条", "今日", "今天", "播报", "发生"))
+    if "热点" in t and "列表" not in t and not _news_ctx:
         if "关" in t:
             return _s("setting", "control", "close", "hotspot", conf=0.9)
         return _s("setting", "control", "open", "hotspot", conf=0.9)
