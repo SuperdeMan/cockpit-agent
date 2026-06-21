@@ -2,11 +2,19 @@
 
 综合天气 + 路况 + 车辆状态 → 安全建议。
 只建议，不自动控车；如需控车必须 NEED_CONFIRM。
+
+响应式主动播报（设计 §3.3 场景2）：on_start() 订阅 NATS vehicle.state.changed，
+车辆进入新区域（location 变更）时查天气预警，命中危险天气则节流（默认 30 分钟，
+夜间降频 60 分钟）后向 NATS 发主动播报事件 agent.proactive。
+交付边界：Proactive 通道帧已在 channel.proto/网关定义，但 NATS→Proactive→HMI 的
+投递桥接尚未实现（网关当前仅日志）；本 Agent 负责"产出并发布主动播报"，HMI 投递为后续一跳。
 """
 from __future__ import annotations
 import asyncio
+import json
 import logging
 import os
+import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
 
@@ -14,10 +22,123 @@ logger = logging.getLogger("agent.road_safety")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 
+# NATS 主题：订阅车辆状态变更，发布主动播报
+_STATE_SUBJECT = "vehicle.state.changed"
+_PROACTIVE_SUBJECT = "agent.proactive"
+
 
 class RoadSafetyAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
+        # 主动播报：NATS 连接 + 同类提示节流时间戳
+        self._nc = None
+        self._last_broadcast: dict[str, float] = {}
+        # 节流窗口：同类提示默认 30 分钟不重复；夜间（22:00–06:00）降频到 60 分钟
+        self._throttle_sec = float(os.getenv("ROAD_SAFETY_THROTTLE_SEC", "1800"))
+        self._night_throttle_sec = float(
+            os.getenv("ROAD_SAFETY_NIGHT_THROTTLE_SEC", "3600"))
+
+    # ── 响应式主动播报（设计 §3.3 场景2）────────────────────────
+
+    async def on_start(self) -> None:
+        """serve() 启动后订阅 NATS；无 NATS_URL 或连接失败 → 静默禁用，不影响请求-响应服务。"""
+        nats_url = os.getenv("NATS_URL", "")
+        if not nats_url:
+            logger.info("road-safety: NATS_URL 未设置，主动播报禁用")
+            return
+        try:
+            import nats
+            self._nc = await nats.connect(nats_url, max_reconnect_attempts=-1)
+        except Exception as e:
+            logger.warning("road-safety: NATS 连接失败，主动播报禁用：%s", e)
+            return
+        await self._nc.subscribe(_STATE_SUBJECT, cb=self._on_state_event)
+        logger.info("road-safety: 已订阅 %s，开启主动播报", _STATE_SUBJECT)
+
+    async def _on_state_event(self, msg) -> None:
+        """车辆状态变更回调：location 变更视为进入新区域 → 查预警 → 节流后主动播报。"""
+        try:
+            event = json.loads(msg.data.decode())
+        except Exception:
+            return
+        city = self._location_from_changes(event.get("changes") or [])
+        if not city:
+            return
+        advisory = await self._evaluate_hazard(city)
+        if advisory:
+            await self._maybe_broadcast("weather_safety", "weather_safety", advisory)
+
+    @staticmethod
+    def _location_from_changes(changes: list) -> str:
+        """从 vehicle.state.changed 的 changes 里取新位置（dict 取 city/name，否则原值）。"""
+        for c in changes:
+            if c.get("key") == "location" and c.get("new"):
+                loc = c["new"]
+                if isinstance(loc, dict):
+                    return loc.get("city") or loc.get("name") or ""
+                return str(loc)
+        return ""
+
+    async def _evaluate_hazard(self, city: str) -> str | None:
+        """查 info.alerts；有生效预警 → 返回主动播报话术，否则 None。
+
+        PoC 判据：info.alerts 有预警时话术含「N 条天气预警」，无预警话术不含——
+        以此区分，避免依赖跨进程结构化 data（AgentClient 当前不透传 data 字段）。
+        """
+        if not city:
+            return None
+        try:
+            res = await self.agents.call("info", "info.alerts", {"city": city}, ctx=None)
+        except Exception as e:
+            logger.debug("road-safety: 预警查询失败：%s", e)
+            return None
+        if not res or res.status != "ok" or not res.speech:
+            return None
+        if "条天气预警" not in res.speech:
+            return None
+        return f"{res.speech}建议降低车速、保持车距，必要时就近选择服务区休息。"
+
+    def _is_night(self, now: float) -> bool:
+        hour = time.localtime(now).tm_hour
+        return hour >= 22 or hour < 6
+
+    def _should_broadcast(self, category: str, now: float) -> bool:
+        """同类提示节流：距上次播报不足窗口（夜间用更长窗口）→ 抑制。"""
+        window = self._night_throttle_sec if self._is_night(now) else self._throttle_sec
+        last = self._last_broadcast.get(category)
+        return last is None or (now - last) >= window
+
+    async def _maybe_broadcast(
+            self, category: str, advisory_type: str, speech: str) -> bool:
+        """节流通过则记录时间戳并发布主动播报事件；被节流返回 False。"""
+        now = time.time()
+        if not self._should_broadcast(category, now):
+            logger.debug("road-safety: 「%s」处于节流窗口内，跳过", category)
+            return False
+        self._last_broadcast[category] = now
+        await self._publish_proactive(advisory_type, speech)
+        return True
+
+    async def _publish_proactive(self, advisory_type: str, speech: str) -> None:
+        """向 NATS 发主动播报事件（best-effort）。HMI 投递桥接为后续一跳。"""
+        if not self._nc:
+            return
+        payload = {
+            "type": advisory_type,
+            "speech": speech,
+            "agent_id": self.manifest.agent_id,
+            "ts": int(time.time() * 1000),
+        }
+        try:
+            await self._nc.publish(
+                _PROACTIVE_SUBJECT,
+                json.dumps(payload, ensure_ascii=False).encode(),
+            )
+            logger.info("road-safety: 主动播报 %s", speech[:40])
+        except Exception as e:
+            logger.debug("road-safety: 主动播报发布失败：%s", e)
+
+    # ── 请求-响应意图 ────────────────────────────────────────
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         handlers = {

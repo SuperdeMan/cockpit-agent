@@ -17,10 +17,12 @@ objects:
     - ventilation
     - massage
     - lumbar_support
+    - recline
     - 加热
     - 通风
     - 按摩
     - 腰托
+    - 放平
     positions: true
     units:
     - degree

@@ -463,6 +463,10 @@ class VAL:
 
         elif obj == "seat":
             key = f"seat_{mode or 'heating'}"
+            # 座椅放平：带角度时记角度（供仪表盘/话术回显），否则记 True
+            if mode == "recline" and operate in ("open", "set"):
+                self.state["seat_recline"] = int(value) if value else True
+                return "seat_recline", self.state["seat_recline"]
             if operate in ("open", "set"):
                 self.state[key] = True
                 return key, True
@@ -713,6 +717,8 @@ class VAL:
                 return "seat_ventilation_on_success" if operate in ("open", "set") else "seat_ventilation_off_success"
             if mode == "massage":
                 return "seat_massage_on_success" if operate in ("open", "set") else "seat_massage_off_success"
+            if mode == "recline":
+                return "seat_recline_success"
             return "seat_set_success"
 
         if obj == "ambient_light":

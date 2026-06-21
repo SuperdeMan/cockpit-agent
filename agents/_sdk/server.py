@@ -142,13 +142,24 @@ async def serve(agent: BaseAgent):
     reregister_task = asyncio.create_task(
         _reregister_loop(registry, agent.manifest, endpoint, interval))
 
+    # 可选生命周期钩子：响应式 Agent（订阅 NATS 主动播报等）在此启动后台循环。
+    # 失败不阻塞服务（fail-open），异常被吞掉避免 "Task exception never retrieved"。
+    async def _run_on_start():
+        try:
+            await agent.on_start()
+        except Exception as e:
+            print(f"[sdk] on_start failed (continuing): {e}", flush=True)
+
+    on_start_task = asyncio.create_task(_run_on_start())
+
     print(f"[sdk] {agent.manifest.agent_id} serving on :{port}", flush=True)
     try:
         await server.wait_for_termination()
     finally:
-        reregister_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await reregister_task
+        for task in (reregister_task, on_start_task):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 def run(agent: BaseAgent):

@@ -187,6 +187,15 @@ seat_set_success:
   speech_brief:
   - 调好了
   - 好的
+seat_recline_success:
+  scene: 座椅已放平
+  status: 成功
+  speech_full:
+  - 座椅已为您放平
+  - 已将座椅放平
+  speech_brief:
+  - 座椅已放平
+  - 好的
 ambient_light_on_success:
   scene: 氛围灯已打开
   status: 成功

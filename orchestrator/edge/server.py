@@ -19,7 +19,7 @@ from fast_intent import classify, classify_structured, is_local, split_and_class
 from val import VAL
 from edge_agents import edge_execute
 from cloud_client import CloudClient
-from edge_call import EdgeCallExecutor
+from edge_call import EdgeCallExecutor, action_to_structured
 from observability.events import EventEmitter, change_source
 from observability.tracing import get_trace_id, new_trace_id, set_trace_id
 
@@ -548,7 +548,18 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             if payload.get("_origin") == "edge_val":
                 continue
             cmd = payload.get("command", action.type)
-            ok, msg = self.val.execute(cmd, payload, answer_length=answer_length)
+            # 先翻译成 VAL 结构化命令（场景/计划层的 ambient_light/seat/volume/fragrance
+            # 等命令只在结构化路径受支持，且结构化路径才过安全门控）；翻译失败再回退 legacy 串。
+            objects = (self.val.commands or {}).get("objects") or {}
+            structured = action_to_structured(
+                cmd, payload,
+                known_objects=set(objects) if objects else None,
+                object_defs=objects or None,
+            )
+            if structured is not None:
+                ok, msg = self.val.execute(structured, answer_length=answer_length)
+            else:
+                ok, msg = self.val.execute(cmd, payload, answer_length=answer_length)
             if ok:
                 logger.info("VAL executed: %s -> %s", cmd, msg)
                 new_speech = msg  # 用 VAL 执行结果替换 speech

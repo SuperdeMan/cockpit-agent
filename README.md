@@ -20,7 +20,7 @@
 - HMI 支持文字流式渲染和句子级增量 TTS：首个完整短句即可开始合成、后续音频顺序播放。
 - **信息类 Provider 全面落地**：导航=高德 / 天气=和风(JWT) / 搜索=AnySearch+Bing / 新闻=SerpApi(Google+Baidu) / 股票=Tushare，真实凭证冒烟通过，无凭证回退 mock。
 - **HMI 信息类 UI 卡片**：天气/股票/新闻/搜索/POI 结构化卡片，全链路 ui_card 透传。
-- 全量 pytest：**640 passed, 6 skipped**。
+- 全量 pytest：**653 passed, 6 skipped**。
 - 端侧 smoke：**13 passed, 0 failed**。
 - Docker 全栈 **21 个服务**；info-agent 已集成并全栈联调通过。
 
@@ -88,7 +88,7 @@ Dashboard 的车辆动态接口仅供本地演示；非开发环境必须设置
 
 - 62 个车控对象、150 条端侧意图 pattern，知识库驱动归一化、校验、安全门控和话术。
 - 本地、云端混合多意图拆分，支持导航偏好、歌手等续接片段与主意图成组路由。
-- 七个云 Agent：导航、闲聊、点餐、停车支付、手册问答、行程规划、信息（天气）。
+- 十个云 Agent：导航、闲聊、点餐、停车支付、手册问答、行程规划、信息（天气/搜索/新闻/股票）、充能规划、场景编排、路况安全（含响应式主动播报）。
 - 对话记忆、确认/补槽续接、跨 Agent DAG、T2 自适应再规划。
 - MiMo/Mock LLM Provider，MiMo ASR/TTS，webm 到 wav 后端转码。
 - HMI 流式文字、动作卡、记忆视图、语音输入、九种音色和句子级增量播报。

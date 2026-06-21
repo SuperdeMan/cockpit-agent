@@ -12,7 +12,7 @@ from cockpit.agent.v1 import agent_pb2
 from cockpit.channel.v1 import channel_pb2
 from cockpit.common.v1 import common_pb2
 
-from edge_call import EdgeCallExecutor
+from edge_call import EdgeCallExecutor, action_to_structured
 from edge_agents_mod.media import MEDIA_INTENTS
 from edge_agents_mod.vehicle import VEHICLE_INTENTS
 from val import VAL
@@ -102,6 +102,58 @@ def test_dangerous_edge_call_requires_confirmation_before_state_change():
 
     assert completed.status == agent_pb2.ExecuteResponse.OK
     assert val.state["trunk"] == "open"
+
+
+# ── action_to_structured：云端/场景动作（command 串 + 友好 params）→ VAL 结构化 ──
+
+def _objects():
+    objs = (VAL().commands or {}).get("objects") or {}
+    return objs
+
+
+def test_action_to_structured_aliases_friendly_params():
+    """友好参数名归一：color→tag、position→positions、angle→value。"""
+    objs = _objects()
+    st = action_to_structured(
+        "ambient_light.set", {"command": "ambient_light.set", "color": "warm_white"},
+        known_objects=set(objs), object_defs=objs)
+    assert st["data"]["object"] == "ambient_light"
+    assert st["data"]["operate"] == "set"
+    assert st["data"]["tag"] == "warm_white"
+    # command/_origin 不应混入 data
+    assert "command" not in st["data"] and "_origin" not in st["data"]
+
+
+def test_action_to_structured_drops_unsupported_mode():
+    """场景 hvac 的 auto/quiet/external_circulation 是 VAL 不认的舒适标签，应被丢弃，
+    否则 _validate_command 因 mode 非法整条拒绝。"""
+    objs = _objects()
+    st = action_to_structured(
+        "hvac.set", {"command": "hvac.set", "temperature": "22", "mode": "auto"},
+        known_objects=set(objs), object_defs=objs)
+    assert st["data"]["object"] == "aircon"
+    assert st["data"].get("value") == "22"
+    assert "mode" not in st["data"]  # auto 被丢弃
+
+
+def test_action_to_structured_seat_recline_override():
+    """seat.recline 无法由 <obj>.<operate> 直接拆出，显式映射为 seat/set/mode=recline。"""
+    objs = _objects()
+    st = action_to_structured(
+        "seat.recline", {"command": "seat.recline", "position": "front_left", "angle": "160"},
+        known_objects=set(objs), object_defs=objs)
+    assert st["data"]["object"] == "seat"
+    assert st["data"]["operate"] == "set"
+    assert st["data"]["mode"] == "recline"
+    assert st["data"]["positions"] == "front_left"
+    assert st["data"]["value"] == "160"
+
+
+def test_action_to_structured_returns_none_for_unknown_object():
+    """无法翻译（对象不在知识库）→ None，调用方回退 legacy 串执行。"""
+    objs = _objects()
+    assert action_to_structured(
+        "vehicle.control", {}, known_objects=set(objs), object_defs=objs) is None
 
 
 def test_unsupported_edge_intent_fails_closed():

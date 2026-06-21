@@ -635,18 +635,38 @@ Agent.reserve()
 | 协作风暴 | MAX_DEPTH=2 + 环检测（已生效），勿自造绕过 |
 | Endpoint 解析 | 当前 port_map PoC，生产化走 Registry（见 ws2 设计） |
 
-## 8. 落地后未闭环项（2026-06-21 评审追加）
+## 8. 落地后缺口与闭环记录（2026-06-21 评审追加并修复）
 
-照本文落地后实测发现的端到端缺口，登记在此，勿当已完成：
+照本文落地后实测发现的两处端到端缺口，已修复，记录在此：
 
-1. **scene-orchestrator 的 vehicle.control 命令词表未对齐 VAL**（重要）。
-   `scenes.yaml` 的 command（`ambient_light.set`/`seat.recline`/`fragrance.on`/`volume.set`…）
-   是本文 §3.2 自拟的，未对齐端侧 VAL 的 object/operate 词表。边缘 VAL 注入路径
-   （`orchestrator/edge/server.py` → `VAL.execute(cmd_str, payload)` → `_legacy_execute`）
-   只认 `hvac.*`/`window.*`/`media.*`，其余一律「暂不支持该控制指令」。其中 `seat.recline`
-   （座椅放平）在 VAL 里**根本没有对应处理**。结果：场景除空调外的动作目前无法真正执行。
-   **闭环方案**：要么把 command 改成 VAL structured 词表（object+operate），要么在边缘注入处
-   把 command 串翻译成 `_structured_execute` 的 `{data:{object,operate,...}}`，并给 VAL 补
-   座椅放平。须配端到端测试。已先修：scene 动作 payload 现正确携带 command（此前被丢弃）。
-2. **road-safety 主动播报（NATS）未实现**。§3.3 场景 2 的「NATS 事件订阅 + 30 分钟节流主动
-   播报」尚未落地，当前只有请求-响应三意图。属 P3 增量，非已完成。
+1. **scene-orchestrator 的 vehicle.control 命令词表未对齐 VAL** —— ✅ **已闭环**。
+   现象：`scenes.yaml` 的 command（`ambient_light.set`/`seat.recline`/`fragrance.on`/`volume.set`…）
+   是本文 §3.2 自拟的，未对齐端侧 VAL 的 object/operate 词表；边缘注入路径
+   （`server.py::_dispatch_cloud_actions` → `VAL.execute(cmd_str, payload)` → `_legacy_execute`）
+   只认 `hvac.*`/`window.*`/`media.*`，其余一律「暂不支持该控制指令」，且 `seat.recline`
+   在 VAL 里根本无处理。VAL 的**结构化**路径其实已支持 ambient_light/seat/volume/fragrance，
+   只是场景动作从未走到那里。
+   **修复**：
+   - `edge_call.py` 新增 `action_to_structured(command, params, …)`：把云端/场景动作的 command
+     串 + 友好参数翻译成 VAL 结构化命令（复用 `_to_structured`）。友好参数归一
+     `color→tag`/`position→positions`/`angle→value`；显式覆盖 `seat.recline → seat/set/mode=recline`；
+     丢弃对象不支持的 mode（场景 hvac 的 `auto`/`quiet`/`external_circulation` 舒适标签，
+     否则 `_validate_command` 会整条拒绝）。
+   - `server.py::_dispatch_cloud_actions`：车控动作先翻译走 VAL **结构化流水线**
+     （归一→校验→**安全门控**→模拟），翻译失败再回退 legacy 串。**附带修复**：云端车控此前走
+     legacy 串路径会**绕过** `_safety_gate`，现已统一过安全门控。
+   - VAL 新增座椅放平：`commands.yaml` seat 增 `recline` mode、`_simulate`/`_build_response_key`
+     处理、`responses.yaml` 增 `seat_recline_success`。
+   - 测试：`test_server_dispatch.py`（场景动作经结构化真正生效 + hvac 采纳 temperature + 低电量门控）、
+     `test_edge_call.py`（translator 友好参数/丢 mode/recline 覆盖/未知对象回退）。
+2. **road-safety 主动播报（NATS）** —— ✅ **Agent 侧已闭环**；HMI 投递为后续一跳。
+   §3.3 场景 2 的「NATS 事件订阅 + 30 分钟节流主动播报」已实现：
+   - `_sdk` 新增可选生命周期钩子 `BaseAgent.on_start()`，`serve()` 以后台任务启动（fail-open）。
+   - `road_safety` 的 `on_start()` 订阅 NATS `vehicle.state.changed`；location 变更视为进入新区域 →
+     查 `info.alerts`，命中预警则节流（默认 30 分钟，夜间 22:00–06:00 降频 60 分钟）后向
+     NATS `agent.proactive` 发主动播报事件。
+   - 测试：节流/夜间降频/单次播报后被节流/非 location 变更不触发/无 NATS 静默禁用。
+   **未闭环的一跳**：`Proactive` 通道帧已在 `channel.proto` 定义、网关已能收（当前仅日志），但
+   `agent.proactive`（NATS）→ 端侧/网关 → HMI `Proactive` 帧 的投递桥接尚未实现。即本 Agent
+   已「产出并发布」主动播报，**送达 HMI 的最后一跳待接**（需端侧或网关订阅 `agent.proactive`
+   并下发 Proactive 帧）。

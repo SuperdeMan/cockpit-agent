@@ -54,6 +54,46 @@ def test_dispatch_still_executes_unmarked_cloud_action():
     assert out.final.speech != "placeholder"          # speech 被 VAL 结果替换
 
 
+def test_dispatch_scene_actions_execute_via_structured():
+    """场景动作（ambient_light/volume/fragrance/seat.recline）经结构化路径真正执行，
+    不再落只认 hvac/window/media 的 legacy 串路径返回'暂不支持'。复刻评审实测的端到端缺口修复。"""
+    srv = EdgeOrchestratorServicer()
+    cases = [
+        ({"command": "ambient_light.set", "color": "warm_white", "brightness": "60"},
+         "ambient_light", True),
+        ({"command": "volume.set", "level": "0"}, "volume", 0),
+        ({"command": "fragrance.on"}, "fragrance", True),
+        ({"command": "seat.recline", "position": "front_left", "angle": "160"},
+         "seat_recline", 160),
+    ]
+    for payload, state_key, expected in cases:
+        out = srv._dispatch_cloud_actions(_final_with_action("placeholder", payload))
+        assert srv.val.state.get(state_key) == expected, f"{payload['command']} 未生效"
+        assert "暂不支持" not in out.final.speech, f"{payload['command']} 仍落 legacy 串路径"
+
+
+def test_dispatch_scene_hvac_respects_temperature():
+    """场景 hvac.set 经结构化路径采纳 temperature；VAL 不认的 mode(auto) 被丢弃，不致整条拒绝。
+    （legacy 串路径读 args['temp']，会把场景的 temperature 丢掉。）"""
+    srv = EdgeOrchestratorServicer()
+    out = srv._dispatch_cloud_actions(_final_with_action(
+        "placeholder", {"command": "hvac.set", "temperature": "22", "mode": "auto"}))
+    assert srv.val.state["hvac_on"] is True
+    assert srv.val.state["hvac_temp"] == 22
+    assert "暂不支持" not in out.final.speech
+
+
+def test_dispatch_cloud_action_now_passes_safety_gate():
+    """云端车控经结构化路径后会过安全门控（legacy 串路径此前绕过）。
+    低电量(<10%)下氛围灯属高耗电功能，应被门控拒绝、不点亮。"""
+    srv = EdgeOrchestratorServicer()
+    srv.val.state["battery"] = 5
+    out = srv._dispatch_cloud_actions(
+        _final_with_action("placeholder", {"command": "ambient_light.set", "color": "red"}))
+    assert srv.val.state.get("ambient_light") is not True
+    assert "电量过低" in out.final.speech
+
+
 def test_confirm_required_helper_flags_dangerous_objects():
     """R8：危险对象需二次确认（不走本地秒回）。"""
     srv = EdgeOrchestratorServicer()

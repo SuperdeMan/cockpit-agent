@@ -107,6 +107,68 @@ def _to_structured(intent_name: str, slots: dict[str, str],
     }
 
 
+# 云端 Agent / 场景知识库产出的 vehicle.control 动作用「友好参数名」，这里映射到 VAL
+# data 字段；temperature/temp/level/brightness → value 由 _to_structured 兜底归一。
+_ACTION_PARAM_ALIASES = {
+    "color": "tag",
+    "position": "positions",
+    "angle": "value",
+}
+
+# 少数命令无法由 <object>.<operate> 直接拆出，显式声明 object/operate/mode。
+# seat.recline（座椅放平）：VAL 用 seat + set + mode=recline 建模（recline 非通用 operate）。
+_COMMAND_OVERRIDES = {
+    "seat.recline": {"object": "seat", "operate": "set", "mode": "recline"},
+}
+
+
+def action_to_structured(
+    command: str,
+    params: dict | None,
+    known_objects: set[str] | None = None,
+    object_defs: dict | None = None,
+) -> dict | None:
+    """把云端 Agent 的 vehicle.control 动作（command 串 + 友好 params）翻译成 VAL 结构化命令。
+
+    场景/计划层只声明意图（command + 友好参数）；车控的 object/operate/data 由端侧在此翻译，
+    再走 VAL 完整结构化流水线（归一 → 校验 → 安全门控 → 模拟）。这样场景动作不再落到只认
+    hvac/window/media 的 legacy 串路径，也让云端车控统一经安全门控（legacy 路径此前会绕过）。
+
+    返回结构化 dict，或 None（无法翻译 → 调用方回退 legacy 串执行）。
+    """
+    aliased: dict = {}
+    for k, v in (params or {}).items():
+        if k in ("command", "_origin"):
+            continue
+        aliased[_ACTION_PARAM_ALIASES.get(k, k)] = v
+
+    override = _COMMAND_OVERRIDES.get(command)
+    if override:
+        obj = override["object"]
+        if known_objects is not None and obj not in known_objects:
+            return None
+        data = dict(aliased)
+        data["object"] = obj
+        data["operate"] = override["operate"]
+        if override.get("mode"):
+            data["mode"] = override["mode"]
+        return {"domain": "car_control", "intent": command, "data": data}
+
+    structured = _to_structured(command, aliased, known_objects=known_objects)
+    if structured is None:
+        return None
+
+    # 丢弃该对象不支持的 mode（如场景 hvac 的 auto/quiet/external_circulation 舒适标签），
+    # 否则 _validate_command 会因 mode 非法整条拒绝、动作不可执行。
+    data = structured["data"]
+    mode = data.get("mode")
+    if mode and object_defs is not None:
+        modes = (object_defs.get(data.get("object")) or {}).get("modes") or []
+        if modes and mode not in modes:
+            data.pop("mode", None)
+    return structured
+
+
 class EdgeCallExecutor:
     """Translate an EdgeCall to a VAL command and return Agent response semantics."""
 

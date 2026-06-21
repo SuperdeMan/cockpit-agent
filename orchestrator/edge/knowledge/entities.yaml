@@ -36,6 +36,8 @@ seat_modes:
   座椅按摩: massage
   腰托: lumbar_support
   腰部支撑: lumbar_support
+  放平: recline
+  座椅放平: recline
 
 # ── 空调模式 ──
 aircon_modes:

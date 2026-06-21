@@ -45,5 +45,10 @@ class MyAgent(BaseAgent):
 - **不要**在 Agent 内直接操作车控；产出 `action("vehicle.control", ...)` 意图，由端侧 Executor 经 VAL 校验执行。
 - `handle_stream` 默认把 handle 结果包成单事件；要流式话术（如闲聊）就重写它。
 
+## 响应式 Agent：`on_start()` 生命周期钩子（可选）
+需要后台循环的 Agent（如订阅 NATS 做主动播报的 `road-safety`）重写 `async def on_start(self)`：
+`serve()` 起完 gRPC server 后以后台任务调用一次（fail-open，异常被吞不影响请求-响应服务）。
+范本见 `agents/road_safety/src/agent.py`。默认无操作，普通请求-响应 Agent 无需关心。
+
 ## 测试
 用 `agents/_sdk/testing.py` 的 `run_handle` 直接驱动 `handle`，无需起 server。见各 Agent 的 `tests/`。

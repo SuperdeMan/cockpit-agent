@@ -88,3 +88,11 @@ class BaseAgent(ABC):
         """
         res = await self.handle(intent, ctx, meta)
         yield ("final", res)
+
+    async def on_start(self) -> None:
+        """可选生命周期钩子：serve() 启动 gRPC 服务后调用一次（后台任务）。
+
+        响应式 Agent（如订阅 NATS 做主动播报的 road-safety）在此启动后台循环；
+        默认无操作。失败由 serve() 静默吞掉，不影响 Agent 正常请求-响应服务。
+        """
+        return None
