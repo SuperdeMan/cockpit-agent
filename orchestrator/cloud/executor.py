@@ -133,7 +133,7 @@ class DagExecutor:
 
     @staticmethod
     def _to_result(step_id: str, resp) -> StepResult:
-        """将 ExecuteResponse 转为 StepResult。"""
+        """将 ExecuteResponse 转为 StepResult。ws8 P1: 校验 action payload。"""
         status_map = {
             0: StepStatus.OK,
             1: StepStatus.NEED_CONFIRM,
@@ -142,11 +142,22 @@ class DagExecutor:
             4: StepStatus.FAILED,
         }
         status = status_map.get(resp.status, StepStatus.FAILED)
-        actions = [
-            {"type": a.type, "payload": _struct_dict(a.payload),
-             "require_confirm": a.require_confirm}
-            for a in resp.actions
-        ]
+        actions = []
+        for a in resp.actions:
+            # ws8 P1: action payload 校验——type 非空，payload 必须是 dict
+            if not a.type or not a.type.strip():
+                logger.warning("Step %s: action with empty type, dropping", step_id)
+                continue
+            payload = _struct_dict(a.payload)
+            if a.type.startswith("vehicle.control") and not payload:
+                logger.warning("Step %s: vehicle.control action with empty payload, dropping",
+                               step_id)
+                continue
+            actions.append({
+                "type": a.type,
+                "payload": payload,
+                "require_confirm": a.require_confirm,
+            })
         return StepResult(
             step_id=step_id,
             status=status,

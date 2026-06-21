@@ -4,13 +4,15 @@ Phase 1：注入 AgentClient（跨 Agent 协作）。
 护栏跨进程修复：server.Execute 在调 handle 前把 request.meta 中的
 call_depth/call_stack 写入 _current_meta contextvar，agents 属性读取
 它构造正确深度的 AgentClient，使 MAX_DEPTH/环检测跨进程生效。
+
+ws2 P0：注入 RegistryClient，AgentClient 经 Registry 动态解析 endpoint。
 """
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from .clients import LLMClient, MemoryClient
+from .clients import LLMClient, MemoryClient, RegistryClient
 from .manifest import load_manifest
 from .result import AgentResult
 
@@ -55,22 +57,24 @@ class BaseAgent(ABC):
         self.manifest = load_manifest(manifest_path)
         self.llm = LLMClient()
         self.memory = MemoryClient()
+        self.registry = RegistryClient()  # ws2: 供 AgentClient 动态解析 endpoint
         # 跨 Agent 协作客户端（延迟初始化，避免循环依赖）
         self._agents = None
 
     @property
     def agents(self):
         """跨 Agent 协作客户端。从当前请求 meta 读取 call_depth/call_stack，
-        使 MAX_DEPTH/环检测跨进程生效。"""
+        使 MAX_DEPTH/环检测跨进程生效。ws2: 注入 RegistryClient。"""
         from .agent_client import AgentClient
         meta = _current_meta.get()
         if meta is not None:
             depth = int(meta.get("call_depth", 0))
             stack = [s for s in meta.get("call_stack", "").split(",") if s]
-            return AgentClient(caller=self, call_depth=depth, call_stack=stack)
+            return AgentClient(caller=self, call_depth=depth, call_stack=stack,
+                               registry=self.registry)
         # 无 meta（本地测试 / 非 gRPC 调用）→ 默认深度 0
         if self._agents is None:
-            self._agents = AgentClient(caller=self)
+            self._agents = AgentClient(caller=self, registry=self.registry)
         return self._agents
 
     @abstractmethod

@@ -1,10 +1,12 @@
 // 信息类 UI 卡片组件：天气 / 股票 / 新闻 / 搜索 / POI。
 // 设计风格：深空座舱 HUD——半透明玻璃态 + 微光边框 + 渐变高光。
+import { useState } from 'react'
 import type {
   UiCard, WeatherCard, ForecastCard, StockCard,
-  NewsCard, SearchCard, PoiListCard, PoiDetailCard,
+  NewsCard, SearchCard, SearchAnswerCard, NewsDigestCard,
+  PoiListCard, PoiDetailCard,
 } from '../types'
-import { buildKlineGeometry, priceDirection } from '../cardMath.mjs'
+import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 
 // ─── 天气图标映射 ───
 const WEATHER_ICONS: Record<string, string> = {
@@ -27,7 +29,9 @@ export function CardRenderer({ card }: { card: UiCard }) {
     case 'forecast': return <ForecastCardView card={card} />
     case 'stock_quote': return <StockCardView card={card} />
     case 'news_list': return <NewsCardView card={card} />
+    case 'news_digest': return <NewsDigestCardView card={card} />
     case 'search_list': return <SearchCardView card={card} />
+    case 'search_answer': return <SearchAnswerCardView card={card} />
     case 'poi_list': return <PoiListCardView card={card} />
     case 'poi_detail': return <PoiDetailCardView card={card} />
     default: return null
@@ -38,6 +42,15 @@ export function CardRenderer({ card }: { card: UiCard }) {
 
 function WeatherCardView({ card }: { card: WeatherCard }) {
   const icon = weatherIcon(card.text)
+  const airQuality = card.air_quality
+    ? airQualityBadge(card.air_quality.aqi, card.air_quality.category)
+    : null
+  const airDetails = card.air_quality
+    ? [
+      card.air_quality.pm2p5 && `PM2.5 ${card.air_quality.pm2p5}`,
+      card.air_quality.primary_pollutant && `首要 ${card.air_quality.primary_pollutant}`,
+    ].filter(Boolean).join(' · ')
+    : ''
   const telemetry = [
     card.feels_like && { label: '体感', value: `${card.feels_like}℃` },
     card.humidity && { label: '湿度', value: `${card.humidity}%` },
@@ -77,10 +90,14 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
           <small>{day.text_day}{day.precip && ` · ${day.precip}mm`}</small>
         </div>)}
       </div>}
-      {(card.air_quality?.aqi || card.indices?.length) && <div className="weather-brief-row">
-        {card.air_quality?.aqi && <div className="air-badge">
-          <span>空气</span><strong>AQI {card.air_quality.aqi}</strong>
-          <em>{card.air_quality.category || '—'}{card.air_quality.pm2p5 && ` · PM2.5 ${card.air_quality.pm2p5}`}</em>
+      {(airQuality || card.indices?.length) && <div className="weather-brief-row">
+        {airQuality && <div
+          className={`air-badge air-badge-${airQuality.tone}`}
+          aria-label={`空气质量${airQuality.label}${card.air_quality?.aqi ? `，AQI ${card.air_quality.aqi}` : ''}`}
+        >
+          <div className="air-badge-top"><span>空气质量</span><b>{airQuality.label}</b></div>
+          <strong>{card.air_quality?.aqi ? `AQI ${card.air_quality.aqi}` : 'AQI —'}</strong>
+          {airDetails && <em>{airDetails}</em>}
         </div>}
         {!!card.indices?.length && <div className="weather-advice">
           {card.indices.slice(0, 2).map((item) => <span key={item.name}>{item.name} <b>{item.level}</b></span>)}
@@ -163,7 +180,7 @@ function StockCardView({ card }: { card: StockCard }) {
   )
 }
 
-// ─── 新闻卡片 ───
+// ─── 新闻卡片（旧列表式，保留向后兼容）───
 
 function NewsCardView({ card }: { card: NewsCard }) {
   return (
@@ -193,7 +210,29 @@ function NewsCardView({ card }: { card: NewsCard }) {
   )
 }
 
-// ─── 搜索卡片 ───
+// ─── 新闻摘要卡片（ws2 摘要式）───
+
+function NewsDigestCardView({ card }: { card: NewsDigestCard }) {
+  return (
+    <div className="card card-news-digest">
+      <div className="card-header">📰 {card.topic || '今日热点'}</div>
+      <div className="news-digest-summary">{card.summary}</div>
+      {card.headlines.length > 0 && (
+        <div className="news-digest-headlines">
+          {card.headlines.map((h, i) => (
+            <div key={i} className="headline-item">
+              <span className="headline-dot">·</span>
+              <span className="headline-title">{h.title}</span>
+              {h.source && <span className="headline-source">{h.source}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── 搜索卡片（旧列表式，保留向后兼容）───
 
 function SearchCardView({ card }: { card: SearchCard }) {
   return (
@@ -211,6 +250,37 @@ function SearchCardView({ card }: { card: SearchCard }) {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ─── 搜索答案卡片（ws2 结论式）───
+
+function SearchAnswerCardView({ card }: { card: SearchAnswerCard }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div className="card card-search-answer">
+      <div className="card-header">🔍 {card.query}</div>
+      <div className="search-answer-text">{card.answer}</div>
+      {card.sources.length > 0 && (
+        <div className="search-answer-sources">
+          <button className="sources-toggle" onClick={() => setExpanded(!expanded)}>
+            ▸ {card.sources.length} 条来源
+          </button>
+          {expanded && (
+            <div className="sources-list">
+              {card.sources.map((s, i) => (
+                <div key={i} className="source-item">
+                  <a href={s.url} target="_blank" rel="noopener noreferrer">
+                    {i + 1}. {s.title}
+                  </a>
+                  {s.source && <span className="source-domain">{s.source}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

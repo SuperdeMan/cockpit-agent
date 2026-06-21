@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 
 from registry.store import HEALTH_TIMEOUT
 
@@ -37,8 +38,11 @@ async def probe_all(store, probe=None) -> None:
         except Exception:
             healthy = False
         if healthy:
-            store.mark_healthy(agent_id)
+            result = store.mark_healthy(agent_id)
         else:
-            store.mark_unhealthy(agent_id)
+            result = store.mark_unhealthy(agent_id)
+        # PgStore mark methods are async; await if needed
+        if inspect.isawaitable(result):
+            await result
 
     await asyncio.gather(*(check(record) for record in records))

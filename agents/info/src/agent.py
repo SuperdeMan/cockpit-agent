@@ -255,8 +255,11 @@ class InfoAgent(BaseAgent):
     # ── 联网搜索 ──────────────────────────────────────────────
 
     async def _summarize_sources(self, subject: str, source_kind: str,
-                                 source_lines: list[str], fallback_points: list[str]) -> str:
-        """把新鲜来源压缩成可播报结论，模型失效时仍不退化为标题清单。"""
+                                 source_lines: list[str], fallback_points: list[str]) -> tuple[str, bool]:
+        """把新鲜来源压缩成可播报结论，模型失效时仍不退化为标题清单。
+
+        Returns: (speech_text, llm_used) — llm_used=False 表示走了 fallback。
+        """
         time_context = ""
         is_live_request = any(word in subject for word in ("今晚", "今天", "今日"))
         is_schedule_request = any(word in subject for word in ("赛程", "赛程表", "比赛安排"))
@@ -290,15 +293,15 @@ class InfoAgent(BaseAgent):
                 answer = _LIST_MARKER.sub("", answer)
                 answer = " ".join(line.strip() for line in answer.splitlines() if line.strip())
                 if answer:
-                    return answer
+                    return answer, True  # LLM 成功
         except Exception as e:
             logger.warning("%s summary synthesis failed: %s", source_kind, e)
 
         points = [point.strip().rstrip("。") for point in fallback_points if point and point.strip()]
         lead = f"关于「{subject}」，" if subject else "当前热点主要是，"
         if points:
-            return lead + "；".join(points[:2]) + "。"
-        return lead + "暂时没有足够资料形成可靠摘要。"
+            return lead + "；".join(points[:2]) + "。", False  # LLM 失败，走 fallback
+        return lead + "暂时没有足够资料形成可靠摘要。", False
 
     async def _search(self, intent, ctx, meta) -> AgentResult:
         query = (intent.slots.get("query") or "").strip()
@@ -319,14 +322,24 @@ class InfoAgent(BaseAgent):
         if not results:
             return AgentResult(speech=f"没有找到关于「{query}」的搜索结果。")
 
-        speech = await self._summarize_sources(
+        speech, llm_used = await self._summarize_sources(
             query, "联网搜索", [f"{r.title}（{r.source}）：{r.snippet}" for r in results],
             [r.snippet for r in results],
         )
 
         items = [{"title": r.title, "url": r.url, "snippet": r.snippet,
                   "source": r.source} for r in results]
-        card = {"type": "search_list", "query": query, "summary": speech, "items": items}
+        # ws2 search-news-redesign：LLM 成功用结论式 search_answer，失败退化为旧 search_list
+        if llm_used:
+            card = {
+                "type": "search_answer",
+                "query": query,
+                "answer": speech,
+                "sources": [{"title": r.title, "url": r.url, "source": r.source} for r in results],
+                "items": items,
+            }
+        else:
+            card = {"type": "search_list", "query": query, "summary": speech, "items": items}
         return AgentResult(speech=speech, ui_card=card, data={"items": items})
 
     # ── 新闻 ─────────────────────────────────────────────────
@@ -344,14 +357,24 @@ class InfoAgent(BaseAgent):
             return AgentResult(speech="暂无新闻资讯。")
 
         subject = topic or "今日热点"
-        speech = await self._summarize_sources(
+        speech, llm_used = await self._summarize_sources(
             subject, "新闻", [f"{n.title}（{n.source}）：{n.summary}" for n in items_list],
             [n.summary for n in items_list],
         )
 
         items = [{"title": n.title, "summary": n.summary, "source": n.source,
                   "publish_time": n.publish_time} for n in items_list]
-        card = {"type": "news_list", "topic": topic, "summary": speech, "items": items}
+        # ws2 search-news-redesign：LLM 成功用摘要式 news_digest，失败退化为旧 news_list
+        if llm_used:
+            card = {
+                "type": "news_digest",
+                "topic": topic,
+                "summary": speech,
+                "headlines": [{"title": n.title, "source": n.source} for n in items_list[:3]],
+                "items": items,
+            }
+        else:
+            card = {"type": "news_list", "topic": topic, "summary": speech, "items": items}
         return AgentResult(speech=speech, ui_card=card, data={"items": items})
 
     # ── 股票 ─────────────────────────────────────────────────

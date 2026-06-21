@@ -40,16 +40,29 @@ services:
       POSTGRES_DB: cockpit
     ports: ["5432:5432"]
 
+  # ws8 P1: HTTP 代理（网络白名单）——third-party Agent 出站 HTTP 经此代理
+  http-proxy:
+    image: envoyproxy/envoy:v1.29
+    volumes:
+      - ./envoy-proxy.yaml:/etc/envoy.yaml
+    ports: ["8082:8080"]
+
   # ── 云侧核心 ──
   registry:
     build: { context: .., dockerfile: registry/Dockerfile }
     environment:
       NATS_URL: nats://nats:4222
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
     ports: ["50051:50051"]
     depends_on:
       nats:
         condition: service_healthy
+      postgres:
+        condition: service_started
+    # P1 多实例：replicas: 2（PostgreSQL UPSERT 天然幂等，多实例写同一行安全）
+    deploy:
+      replicas: ${REGISTRY_REPLICAS:-1}
 
   llm-gateway:
     build: { context: .., dockerfile: llm-gateway/Dockerfile }
@@ -109,14 +122,28 @@ services:
     environment:
       <<: *python-env
       AGENT_PORT: "50063"
-    depends_on: [registry, llm-gateway, memory]
+      HTTP_PROXY: http://http-proxy:8080
+      HTTPS_PROXY: http://http-proxy:8080
+    depends_on: [registry, llm-gateway, memory, http-proxy]
+    # ws8 P1: third-party Agent 沙箱（资源限制 + 只读文件系统 + 代理出站）
+    read_only: true
+    security_opt: [no-new-privileges]
+    mem_limit: 256m
+    cpus: 0.5
 
   parking-payment-agent:
     build: { context: .., dockerfile: agents/parking_payment/Dockerfile }
     environment:
       <<: *python-env
       AGENT_PORT: "50064"
-    depends_on: [registry, llm-gateway, memory]
+      HTTP_PROXY: http://http-proxy:8080
+      HTTPS_PROXY: http://http-proxy:8080
+    depends_on: [registry, llm-gateway, memory, http-proxy]
+    # ws8 P1: third-party Agent 沙箱
+    read_only: true
+    security_opt: [no-new-privileges]
+    mem_limit: 256m
+    cpus: 0.5
 
   manual-rag-agent:
     build: { context: .., dockerfile: agents/manual_rag/Dockerfile }
@@ -158,6 +185,27 @@ services:
     # JWT 用文件私钥时取消下面注释，把宿主机 PEM 挂进容器（路径与 QWEATHER_PRIVATE_KEY_PATH 一致）：
     # volumes:
     #   - ${QWEATHER_PRIVATE_KEY_PATH}:${QWEATHER_PRIVATE_KEY_PATH}:ro
+    depends_on: [registry, llm-gateway]
+
+  charging-planner-agent:
+    build: { context: .., dockerfile: agents/charging_planner/Dockerfile }
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50068"
+    depends_on: [registry, llm-gateway, memory]
+
+  scene-orchestrator-agent:
+    build: { context: .., dockerfile: agents/scene_orchestrator/Dockerfile }
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50069"
+    depends_on: [registry, llm-gateway]
+
+  road-safety-agent:
+    build: { context: .., dockerfile: agents/road_safety/Dockerfile }
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50072"
     depends_on: [registry, llm-gateway]
 
   observability-collector:

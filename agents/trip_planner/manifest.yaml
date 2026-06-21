@@ -12,6 +12,10 @@ capabilities:
     description: 规划多日自驾行程（目的地、天数、偏好），输出每日要点
     slots: [destination, days, preferences]
     examples: ["规划周末去杭州两日游", "帮我安排去三亚的行程", "周末带娃去近郊玩"]
+  - intent: trip.modify
+    description: 修改已有行程（局部重规划）
+    slots: [modification]
+    examples: ["第二天换成宋城", "不去千岛湖了", "加一个西湖"]
 
 requires_permissions:
   - location.read

@@ -27,6 +27,8 @@ export type UiCard =
   | StockCard
   | NewsCard
   | SearchCard
+  | SearchAnswerCard
+  | NewsDigestCard
   | PoiListCard
   | PoiDetailCard
 
@@ -125,6 +127,24 @@ export type SearchCard = {
     snippet: string
     source: string
   }>
+}
+
+// ws2 search-news-redesign：结论式搜索卡片
+export type SearchAnswerCard = {
+  type: 'search_answer'
+  query: string
+  answer: string
+  sources: Array<{ title: string; url: string; source: string }>
+  items?: SearchCard['items']  // 向后兼容
+}
+
+// ws2 search-news-redesign：摘要式新闻卡片
+export type NewsDigestCard = {
+  type: 'news_digest'
+  topic: string
+  summary: string
+  headlines: Array<{ title: string; source: string }>
+  items?: NewsCard['items']  // 向后兼容
 }
 
 export type PoiListCard = {

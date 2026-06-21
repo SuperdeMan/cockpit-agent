@@ -1,0 +1,24 @@
+agent_id: charging-planner
+version: 0.1.0
+display_name: 充能助手
+category: core
+trust_level: first_party
+deployment: cloud
+latency_budget_ms: 2000
+fallback: chitchat
+
+capabilities:
+  - intent: charging.find
+    description: 找附近的充电站，根据电量推荐
+    slots: [destination, soc, prefer]
+    examples: ["找个充电站", "附近有充电桩吗", "快充在哪"]
+  - intent: charging.plan
+    description: 规划长途充能策略（沿途分段充电）
+    slots: [destination, soc, departure_time]
+    examples: ["去杭州怎么充电", "帮我规划充电"]
+  - intent: charging.status
+    description: 查询当前充电状态
+    slots: []
+    examples: ["现在电量多少", "还能跑多远"]
+
+requires_permissions: [location.read, navigation.control, network.external]

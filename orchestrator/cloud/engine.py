@@ -135,6 +135,14 @@ class PlannerEngine:
 
         new_plan = plan is None
         if plan is None:
+            # ws8 P1: 注入检测——疑似 prompt injection 时拦截，不进 Planner
+            from security.injection import detect_injection
+            if detect_injection(text):
+                logger.warning("Prompt injection detected, rejecting: %s", text[:80])
+                yield {"kind": "final",
+                       "speech": "抱歉，您的请求包含异常内容，无法处理。"}
+                return
+
             # B. 新规划（注入此前对话历史，支持指代消解；task 2）
             agents = await self.clients.list_agents()
             history = await self._history(ctx.session_id) if mem_on else []
@@ -341,8 +349,7 @@ class PlannerEngine:
         raw_scopes = meta.get("granted_scopes", "")
         granted = [s.strip() for s in raw_scopes.split(",") if s.strip()] if raw_scopes else []
 
-        # PoC 默认授权：未注入 granted_scopes 时放行所有能力。
-        # 量产 MUST 从会话 token 解析 scope，不得依赖此默认值。
+        # ws8 P0: 权限动态解析——有 granted_scopes 时用真实权限，无时 PoC 全开 fallback
         if not granted:
             granted = list(_POC_DEFAULT_SCOPES)
             logger.warning(

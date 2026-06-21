@@ -136,7 +136,8 @@ def test_search_returns_results():
     res = asyncio.run(run_handle(
         InfoAgent(), "info.search", slots={"query": "人工智能"}, raw_text="搜一下人工智能"))
     assert res.status == "ok"
-    assert res.ui_card and res.ui_card["type"] == "search_list"
+    # ws2: LLM 成功用 search_answer，失败退化为 search_list（两种都接受）
+    assert res.ui_card and res.ui_card["type"] in ("search_answer", "search_list")
     assert len(res.ui_card["items"]) > 0
 
 
@@ -146,6 +147,8 @@ def test_search_fallback_returns_a_brief_not_a_numbered_result_dump():
     res = asyncio.run(run_handle(
         agent, "info.search", slots={"query": "人工智能"}, raw_text="搜一下人工智能"))
 
+    # ws2 search-news-redesign: LLM 失败时退化为 search_list（用 "summary" 字段）
+    assert res.ui_card["type"] == "search_list"
     assert res.ui_card["summary"] == res.speech
     assert "为您搜索到" not in res.speech
     assert "1." not in res.speech
@@ -222,7 +225,8 @@ def test_news_returns_headlines():
     res = asyncio.run(run_handle(
         InfoAgent(), "info.news", slots={}, raw_text="今天有什么新闻"))
     assert res.status == "ok"
-    assert res.ui_card and res.ui_card["type"] == "news_list"
+    # ws2: LLM 成功用 news_digest，失败退化为 news_list（两种都接受）
+    assert res.ui_card and res.ui_card["type"] in ("news_digest", "news_list")
     assert len(res.ui_card["items"]) > 0
 
 

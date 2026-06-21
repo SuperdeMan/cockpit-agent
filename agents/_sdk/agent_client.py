@@ -35,12 +35,14 @@ class AgentClient:
     """受控的跨 Agent 调用客户端。"""
 
     def __init__(self, caller: "BaseAgent", call_depth: int = 0,
-                 call_stack: list[str] = None, timeout: float = 10):
+                 call_stack: list[str] = None, timeout: float = 10,
+                 registry=None):
         self._caller = caller
         self._depth = call_depth
         self._stack = call_stack or []
         self._timeout = timeout
         self._emitter = get_emitter("agent_client") if get_emitter else None
+        self._registry = registry  # RegistryClient for dynamic endpoint resolution
 
     async def _emit_guardrail_event(self, reason: str, target: str,
                                     meta: dict | None = None) -> None:
@@ -90,8 +92,8 @@ class AgentClient:
             await self._emit_guardrail_event("circular_call", agent_id)
             return AgentResult(status="failed", speech="检测到循环调用，已中止。")
 
-        # 解析目标 endpoint（通过环境变量或默认）
-        endpoint = self._resolve_endpoint(agent_id)
+        # 解析目标 endpoint（通过环境变量、Registry 或默认）
+        endpoint = await self._resolve_endpoint(agent_id)
         if not endpoint:
             return AgentResult(status="failed", speech=f"未找到 Agent: {agent_id}")
 
@@ -135,20 +137,40 @@ class AgentClient:
             follow_up=resp.follow_up,
         )
 
-    def _resolve_endpoint(self, agent_id: str) -> str:
-        """解析目标 Agent 的 endpoint。优先从环境变量找，否则用默认端口映射。"""
+    async def _resolve_endpoint(self, agent_id: str) -> str:
+        """解析目标 Agent 的 endpoint（ws2 三级优先级）。
+
+        1. <AGENT_ID>_ENDPOINT env（本地调试）
+        2. RegistryClient 动态解析
+        3. port_map 硬编码 fallback（PoC 兜底）
+        """
         import os
-        # 格式：<AGENT_ID_UPPER>_ENDPOINT，如 NAVIGATION_ENDPOINT
+        # 1. 环境变量优先
         env_key = f"{agent_id.upper().replace('-', '_')}_ENDPOINT"
         endpoint = os.getenv(env_key)
         if endpoint:
             return endpoint
 
-        # 默认端口映射（与 conventions.md 一致）
+        # 2. 经 Registry 动态解析
+        if self._registry:
+            try:
+                resp = await self._registry.resolve(intent="", query="", top_k=20)
+                for a in resp:
+                    if hasattr(a, "manifest") and a.manifest.agent_id == agent_id:
+                        return a.endpoint
+                    # dict 格式（fallback）
+                    if isinstance(a, dict) and a.get("agent_id") == agent_id:
+                        return a.get("endpoint", "")
+            except Exception as e:
+                logger.debug("Registry resolve failed for %s: %s", agent_id, e)
+
+        # 3. 硬编码 port_map fallback（PoC 兜底）
         port_map = {
             "navigation": "50061", "chitchat": "50062",
             "food-ordering": "50063", "parking-payment": "50064",
             "manual-rag": "50065", "trip-planner": "50066", "info": "50067",
+            "charging-planner": "50068", "scene-orchestrator": "50069",
+            "road-safety": "50072", "ticketing": "50073",
         }
         port = port_map.get(agent_id)
         if port:

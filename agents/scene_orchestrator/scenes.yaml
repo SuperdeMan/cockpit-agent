@@ -1,0 +1,77 @@
+# 场景知识库：预定义命名场景模式
+# 每个场景包含一组动作，按顺序执行
+scenes:
+  go_home:
+    name: "回家模式"
+    description: "自动导航回家 + 舒适车内环境"
+    aliases: ["回家", "回去", "回家模式"]
+    actions:
+      - type: "vehicle.control"
+        command: "hvac.set"
+        params: { temperature: "24", mode: "auto" }
+        require_confirm: false
+      - type: "vehicle.control"
+        command: "ambient_light.set"
+        params: { color: "warm_white", brightness: "60" }
+        require_confirm: false
+      - type: "navigate"
+        payload: { destination: "家" }
+        require_confirm: false
+
+  camping:
+    name: "露营模式"
+    description: "车外照明 + 座椅放平 + 空调恒温"
+    aliases: ["露营", "露营模式", "户外"]
+    actions:
+      - type: "vehicle.control"
+        command: "seat.recline"
+        params: { position: "front_left", angle: "180" }
+        require_confirm: true
+      - type: "vehicle.control"
+        command: "hvac.set"
+        params: { temperature: "22", mode: "external_circulation" }
+        require_confirm: false
+      - type: "vehicle.control"
+        command: "ambient_light.set"
+        params: { color: "warm_orange", brightness: "30" }
+        require_confirm: false
+
+  nap:
+    name: "午休模式"
+    description: "座椅放平 + 静音 + 氛围灯调暗"
+    aliases: ["午休", "午睡", "休息", "午休模式"]
+    actions:
+      - type: "vehicle.control"
+        command: "seat.recline"
+        params: { position: "front_left", angle: "160" }
+        require_confirm: true
+      - type: "vehicle.control"
+        command: "volume.set"
+        params: { level: "0" }
+        require_confirm: false
+      - type: "vehicle.control"
+        command: "ambient_light.set"
+        params: { color: "warm_orange", brightness: "10" }
+        require_confirm: false
+      - type: "vehicle.control"
+        command: "hvac.set"
+        params: { temperature: "24", mode: "quiet" }
+        require_confirm: false
+
+  romance:
+    name: "浪漫模式"
+    description: "氛围灯暖色 + 舒缓音乐 + 适宜温度"
+    aliases: ["浪漫", "约会", "浪漫模式"]
+    actions:
+      - type: "vehicle.control"
+        command: "ambient_light.set"
+        params: { color: "pink", brightness: "40" }
+        require_confirm: false
+      - type: "vehicle.control"
+        command: "hvac.set"
+        params: { temperature: "23", mode: "auto" }
+        require_confirm: false
+      - type: "vehicle.control"
+        command: "fragrance.on"
+        params: {}
+        require_confirm: false

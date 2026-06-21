@@ -1,6 +1,11 @@
-"""Agent Registry 启动入口。"""
+"""Agent Registry 启动入口。
+
+ws2 P0：有 POSTGRES_DSN 时用 PgStore（持久化），否则回退内存 Store。
+"""
 import asyncio
 import contextlib
+import inspect
+import logging
 import os
 
 import grpc
@@ -9,6 +14,8 @@ from cockpit.registry.v1 import registry_pb2_grpc
 from observability.events import EventEmitter
 from registry.health import probe_all
 from registry.server import RegistryServicer
+
+logger = logging.getLogger("registry.main")
 
 
 async def emit_all_health(store, emitter):
@@ -35,16 +42,35 @@ async def _health_loop(store, emitter, interval: float = 5):
         await asyncio.sleep(interval)
 
 
+async def _create_store():
+    """根据环境变量创建 Store：有 POSTGRES_DSN 用 PgStore，否则内存 Store。"""
+    dsn = os.getenv("POSTGRES_DSN")
+    if dsn:
+        try:
+            from registry.store import PgStore
+            pg_store = PgStore(dsn)
+            ok = await pg_store.init()
+            if ok:
+                return pg_store
+            logger.warning("PgStore init failed, falling back to memory Store")
+        except Exception as e:
+            logger.warning("PgStore import/init error: %s, falling back to memory Store", e)
+    from registry.store import Store
+    return Store()
+
+
 async def serve():
     port = int(os.getenv("REGISTRY_PORT", "50051"))
+    store = await _create_store()
     server = grpc.aio.server()
-    servicer = RegistryServicer()
+    servicer = RegistryServicer(store=store)
     registry_pb2_grpc.add_RegistryServicer_to_server(servicer, server)
     server.add_insecure_port(f"[::]:{port}")
     await server.start()
     emitter = EventEmitter("registry")
     health_task = asyncio.create_task(_health_loop(servicer.store, emitter))
-    print(f"[registry] serving on :{port}", flush=True)
+    store_type = "PgStore" if hasattr(store, "_pg_ok") and store._pg_ok else "memory"
+    print(f"[registry] serving on :{port} (store={store_type})", flush=True)
     try:
         await server.wait_for_termination()
     finally:

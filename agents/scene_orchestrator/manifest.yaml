@@ -1,0 +1,24 @@
+agent_id: scene-orchestrator
+version: 0.1.0
+display_name: 场景助手
+category: core
+trust_level: first_party
+deployment: cloud
+latency_budget_ms: 1500
+fallback: chitchat
+
+capabilities:
+  - intent: scene.activate
+    description: 激活预定义场景模式
+    slots: [scene, custom_params]
+    examples: ["开启回家模式", "露营模式", "午休模式", "打开浪漫模式"]
+  - intent: scene.deactivate
+    description: 退出当前场景模式
+    slots: [scene]
+    examples: ["关闭回家模式", "退出露营"]
+  - intent: scene.list
+    description: 列出可用场景
+    slots: []
+    examples: ["有哪些场景模式", "我能用什么模式"]
+
+requires_permissions: [vehicle.control, media.control, navigation.control]

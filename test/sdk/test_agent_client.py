@@ -102,18 +102,18 @@ def test_port_map_has_info():
     """port_map 必须含 info=50067（否则别的 agent 协作调不到天气/搜索等能力）。"""
     agent = _MockAgent()
     client = AgentClient(caller=agent)
-    # _resolve_endpoint 是实例方法，通过内部 port_map 解析
-    endpoint = client._resolve_endpoint("info")
+    # _resolve_endpoint 是 async 方法（ws2 动态解析），通过内部 port_map 解析
+    endpoint = asyncio.run(client._resolve_endpoint("info"))
     assert endpoint == "localhost:50067"
 
 
 def test_port_map_has_navigation():
-    endpoint = AgentClient(caller=_MockAgent())._resolve_endpoint("navigation")
+    endpoint = asyncio.run(AgentClient(caller=_MockAgent())._resolve_endpoint("navigation"))
     assert endpoint == "localhost:50061"
 
 
 def test_port_map_unknown_returns_empty():
-    endpoint = AgentClient(caller=_MockAgent())._resolve_endpoint("nonexistent")
+    endpoint = asyncio.run(AgentClient(caller=_MockAgent())._resolve_endpoint("nonexistent"))
     assert endpoint == ""
 
 

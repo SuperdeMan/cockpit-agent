@@ -42,6 +42,8 @@ class VAL:
             "media": "stopped", "volume": 30,
             # 其他车身
             "wiper": False, "fragrance": False, "steering_wheel_heating": False,
+            # ws8: 安全相关
+            "child_lock": False,
             # 动态量（在「车辆动态」面板呈现）
             "speed_kmh": 0, "gear": "P", "battery": 72, "location": None,
         }
@@ -309,7 +311,7 @@ class VAL:
     # ── 安全门控 ──────────────────────────────────────────
 
     def _safety_gate(self, obj: str, operate: str, data: dict) -> tuple[bool, str]:
-        """安全态门控：voice_forbidden / drive_restricted / speed check。"""
+        """安全态门控：voice_forbidden / drive_restricted / speed / battery / gear / child_lock。"""
         objects = self.commands.get("objects", {})
         obj_def = objects.get(obj, {}) if objects else {}
 
@@ -331,11 +333,36 @@ class VAL:
                 return False, self._pick_response("Car_general_restrictions_3")
 
         # 通用速度门控（高速行车中限制某些操作）
+        speed = self.state.get("speed_kmh", 0)
         if self._is_driving():
-            # 高速行驶中不完全打开车窗
+            # 高速行驶中不完全打开车窗（>120km/h）
             if obj == "window" and operate == "open":
-                if self.state.get("speed_kmh", 0) > 120:
+                if speed > 120:
                     return False, "高速行驶中为安全起见暂不打开车窗"
+            # ws8 P0: 高速行驶中禁开车窗/天窗（>80km/h）
+            if obj in ("window", "sunroof") and operate == "open" and speed > 80:
+                return False, "高速行驶中请勿打开车窗/天窗"
+
+        # ws8 P0: 低电量（<10%）禁用高耗电功能
+        battery = self.state.get("battery", 100)
+        if battery < 10 and obj in ("seat_heating", "seat_ventilation",
+                                     "ambient_light", "fragrance",
+                                     "steering_wheel_heating"):
+            return False, "电量过低，已禁用高耗电功能"
+
+        # ws8 P0: 倒车中禁用非安全相关车控
+        gear = self.state.get("gear", "P")
+        if gear == "R" and obj not in ("rear_view_mirror", "wiper", "headlight"):
+            return False, "倒车中请专注驾驶"
+
+        # ws8 P0: 儿童锁激活时禁用后排车窗/车门
+        if self.state.get("child_lock", False):
+            if obj in ("window", "door_lock"):
+                positions = data.get("positions", [])
+                # 后排位置：rear / rear_left / rear_right / rear_center
+                rear_positions = {"rear", "rear_left", "rear_right", "rear_center"}
+                if any(p in rear_positions for p in positions):
+                    return False, "儿童锁已激活，后排车窗/车门已锁定"
 
         return True, ""
 

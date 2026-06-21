@@ -1,10 +1,42 @@
-const UP_COLOR = '#ff5b55'
-const DOWN_COLOR = '#2fb37b'
+const UP_COLOR = 'var(--stock-up)'
+const DOWN_COLOR = 'var(--stock-down)'
 const FLAT_COLOR = '#94a3b8'
 
 function toNumber(value) {
-  const number = Number(String(value ?? '').replace(/[% ,]/g, ''))
+  const text = String(value ?? '').trim()
+  if (!text) return NaN
+  const number = Number(text.replace(/[% ,]/g, ''))
   return Number.isFinite(number) ? number : NaN
+}
+
+const AIR_QUALITY_LEVELS = [
+  { max: 50, tone: 'excellent', label: '优' },
+  { max: 100, tone: 'good', label: '良' },
+  { max: 150, tone: 'light', label: '轻度污染' },
+  { max: 200, tone: 'moderate', label: '中度污染' },
+  { max: 300, tone: 'heavy', label: '重度污染' },
+  { max: Infinity, tone: 'severe', label: '严重污染' },
+]
+
+const AIR_QUALITY_CATEGORY_LEVELS = [
+  { pattern: /严重/, tone: 'severe' },
+  { pattern: /重度/, tone: 'heavy' },
+  { pattern: /中度/, tone: 'moderate' },
+  { pattern: /轻度/, tone: 'light' },
+  { pattern: /良/, tone: 'good' },
+  { pattern: /优/, tone: 'excellent' },
+]
+
+export function airQualityBadge(aqi, category = '') {
+  const value = toNumber(aqi)
+  if (Number.isFinite(value)) {
+    const level = AIR_QUALITY_LEVELS.find(({ max }) => value <= max)
+    return { tone: level.tone, label: String(category).trim() || level.label }
+  }
+
+  const label = String(category).trim()
+  const level = AIR_QUALITY_CATEGORY_LEVELS.find(({ pattern }) => pattern.test(label))
+  return { tone: level?.tone || 'unknown', label: label || '暂无分级' }
 }
 
 export function priceDirection(change) {

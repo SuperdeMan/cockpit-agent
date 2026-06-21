@@ -13,11 +13,15 @@
 | food-ordering | food_ordering | ecosystem | third_party | cloud | 50063 | food.search_restaurant, food.reserve |
 | parking-payment | parking_payment | ecosystem | third_party | cloud | 50064 | parking.find, parking.pay |
 | manual-rag | manual_rag | ecosystem | first_party | cloud | 50065 | manual.query |
-| trip-planner | trip_planner | ecosystem | first_party | cloud | 50066 | trip.plan |
+| trip-planner | trip_planner | ecosystem | first_party | cloud | 50066 | trip.plan, trip.modify |
 | info | info | core | first_party | cloud | 50067 | info.weather, info.forecast, info.alerts, info.indices, info.air_quality, info.search, info.news, info.stock |
+| charging-planner | charging_planner | core | first_party | cloud | 50068 | charging.find, charging.plan, charging.status |
+| scene-orchestrator | scene_orchestrator | core | first_party | cloud | 50069 | scene.activate, scene.deactivate, scene.list |
 | (车控/媒体) | orchestrator/edge | core | system | **edge** | 50070 | hvac.*, window.*, media.*（端侧 Fast Intent 直执行）|
+| payment-gateway | payment-gateway | core | system | cloud | 50071 | 支付网关（非 Agent，统一支付出口） |
+| road-safety | road_safety | core | first_party | cloud | 50072 | safety.driving_advice, safety.weather_alert, safety.road_condition |
 
-> 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent。新增时按本表分配端口与 intent 命名空间。
+> 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent（50073）。新增时按本表分配端口与 intent 命名空间。
 
 ---
 
@@ -39,7 +43,17 @@
 | `parking.find` | parking-payment | cloud | location, near | |
 | `parking.pay` | parking-payment | cloud | order_id, plate, amount | require_confirm |
 | `manual.query` | manual-rag | cloud | question | RAG |
-| `trip.plan` | trip-planner | cloud | destination, days, preferences | 跨 Agent 协作(Phase1) |
+| `trip.plan` | trip-planner | cloud | destination, days, preferences | 跨 Agent 协作(Phase1)；NEED_CONFIRM 确认方案 |
+| `trip.modify` | trip-planner | cloud | modification | 修改已有行程（局部重规划）；NEED_CONFIRM |
+| `charging.find` | charging-planner | cloud | destination, soc, prefer | 找附近的充电站；NEED_CONFIRM 导航 |
+| `charging.plan` | charging-planner | cloud | destination, soc, departure_time | 规划长途充能策略；NEED_CONFIRM |
+| `charging.status` | charging-planner | cloud | — | 查询当前充电状态 |
+| `scene.activate` | scene-orchestrator | cloud | scene, custom_params | 激活预定义场景模式；有危险动作时 NEED_CONFIRM |
+| `scene.deactivate` | scene-orchestrator | cloud | scene | 退出当前场景模式 |
+| `scene.list` | scene-orchestrator | cloud | — | 列出可用场景 |
+| `safety.driving_advice` | road-safety | cloud | destination | 综合天气+路况给出驾驶安全建议 |
+| `safety.weather_alert` | road-safety | cloud | city | 查询天气预警对驾驶的影响 |
+| `safety.road_condition` | road-safety | cloud | route | 查询路况（拥堵/事故/施工） |
 | `info.weather` | info | cloud | city, date | 实时天气（和风真实 provider，无 key/失败回退 mock）；端侧"天气"online_only 上云 |
 | `info.forecast` | info | cloud | city, days | 天气预报（和风 3/7 天预报）；端侧"预报/未来几天"online_only 上云 |
 | `info.alerts` | info | cloud | city | 天气预警（和风实时预警，排除海洋/热带气旋/辐射） |

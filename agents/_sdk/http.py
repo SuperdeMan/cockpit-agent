@@ -71,6 +71,8 @@ class _CircuitBreaker:
 class AsyncHttpClient:
     """provider 共享的 async HTTP 客户端。每个 provider 实例持有一个，复用连接池。
 
+    ws8 P1: 支持 HTTP_PROXY 环境变量——Agent 出站 HTTP 经代理（网络白名单）。
+
     用法::
 
         self._http = AsyncHttpClient(vendor="amap", service="navigation")
@@ -80,11 +82,16 @@ class AsyncHttpClient:
     def __init__(self, vendor: str, service: str = "agent",
                  timeout_s: float = 3.0, max_retries: int = 1,
                  fail_threshold: int = 5, cooldown_s: float = 30.0):
+        import os
         self.vendor = vendor
         self.service = service
         self.max_retries = max_retries
+        # ws8 P1: 检测 HTTP_PROXY 环境变量，自动走代理
+        proxy = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout_s, connect=min(timeout_s, 2.0)))
+            timeout=httpx.Timeout(timeout_s, connect=min(timeout_s, 2.0)),
+            proxy=proxy if proxy else None,
+        )
         self._breaker = _CircuitBreaker(fail_threshold, cooldown_s)
         self._emitter = get_emitter(service) if get_emitter else None
 

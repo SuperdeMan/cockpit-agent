@@ -6,9 +6,11 @@
 
 4 用例（评审决策 2026-06-11）：
 1. 缺 destination → NEED_SLOT
-2. happy path：mock agents.call + llm.complete → ok + ui_card
+2. happy path：mock agents.call + llm.complete → NEED_CONFIRM（Phase E 增强）
 3. 协作降级：agents.call 抛异常仍返回 ok（纯 LLM 兜底）
 4. manifest 一致性
+
+Phase E 增强：trip.plan 现在返回 NEED_CONFIRM（确认方案）。
 """
 import asyncio
 from unittest.mock import AsyncMock
@@ -34,34 +36,42 @@ def _mock_nav_result(names: list[str]) -> AgentResult:
 def test_missing_destination_returns_need_slot():
     """缺 destination → NEED_SLOT，不触达 llm/agents。"""
     res = asyncio.run(run_handle(
-        TripPlannerAgent(), "trip.plan_trip", slots={}, raw_text="帮我规划行程"))
+        TripPlannerAgent(), "trip.plan", slots={}, raw_text="帮我规划行程"))
     assert res.status == "need_slot"
     assert "目的地" in res.speech or "去哪里" in res.speech
 
 
 def test_happy_path_returns_trip_plan():
-    """全槽位 happy path：mock agents.call + llm.complete。"""
+    """全槽位 happy path：mock agents.call + llm.complete。
+
+    Phase E 增强：trip.plan 现在返回 NEED_CONFIRM（确认方案）。
+    """
     agent = TripPlannerAgent()
 
     # mock agents.call：返回带 ui_card.items 的 AgentResult
     async def mock_call(agent_id, intent, slots, ctx):
+        if intent == "info.weather":
+            return AgentResult(speech="杭州当前晴，气温25℃")
+        if intent == "info.forecast":
+            return AgentResult(speech="未来3天多云转晴")
+        if intent == "charging.plan":
+            return AgentResult(speech="无需中途充电")
         return _mock_nav_result(["西湖", "灵隐寺", "千岛湖"])
 
     agent._agents = type("MockAgents", (), {"call": mock_call})()
     agent.llm.complete = AsyncMock(return_value="第一天：西湖漫步，第二天：灵隐寺祈福。")
 
     res = asyncio.run(run_handle(
-        agent, "trip.plan_trip",
+        agent, "trip.plan",
         slots={"destination": "杭州", "days": "2天"},
         raw_text="杭州两天自驾游"))
-    assert res.status == "ok"
-    assert res.ui_card["type"] == "trip_plan"
-    assert res.ui_card["destination"] == "杭州"
-    assert "西湖" in res.ui_card.get("pois", "") or "第一天" in res.speech
+    # Phase E：trip.plan 返回 NEED_CONFIRM（确认方案）
+    assert res.status == "need_confirm"
+    assert "第一天" in res.speech or "杭州" in res.speech
 
 
 def test_agents_call_failure_falls_back_to_llm():
-    """协作降级：agents.call 抛异常，仍返回 ok（纯 LLM 兜底不向上抛）。"""
+    """协作降级：agents.call 抛异常，仍返回 NEED_CONFIRM（纯 LLM 兜底不向上抛）。"""
     agent = TripPlannerAgent()
 
     async def mock_call_fail(*args, **kwargs):
@@ -71,10 +81,11 @@ def test_agents_call_failure_falls_back_to_llm():
     agent.llm.complete = AsyncMock(return_value="第一天：自由活动，第二天：返程。")
 
     res = asyncio.run(run_handle(
-        agent, "trip.plan_trip",
+        agent, "trip.plan",
         slots={"destination": "三亚", "days": "3天"},
         raw_text="三亚三天"))
-    assert res.status == "ok"
+    # Phase E：trip.plan 返回 NEED_CONFIRM
+    assert res.status == "need_confirm"
     assert "第一天" in res.speech
 
 
