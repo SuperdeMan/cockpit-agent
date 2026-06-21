@@ -177,6 +177,7 @@ class InfoAgent(BaseAgent):
             "cloud": w.cloud, "dew_point": w.dew_point, "update_time": w.update_time,
             "forecast": forecast, "air_quality": air_quality,
             "indices": indices, "alerts": alerts,
+            "alerts_available": overview.alerts_available,
         }
         return AgentResult(speech=speech, ui_card=card, data={"weather": card})
 

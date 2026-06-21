@@ -184,25 +184,41 @@ class QWeatherProvider(WeatherProvider):
         loc_id, _ = await self._lookup_city(city, meta)
         return await self._forecast_for_location(loc_id, days, meta)
 
-    async def _alerts_for_location(self, loc_id: str, meta) -> list[WeatherAlert]:
-        """查询当前生效的天气预警，保留厂商返回的全部陆地/沿海预警。"""
-        data = await self._get("/v7/warning/now", {"location": loc_id},
-                               "warning_now", meta)
+    async def _alerts_for_coordinates(self, lat: float, lng: float, meta) -> list[WeatherAlert]:
+        """查询当前生效的天气预警。
+
+        和风的 V1 预警接口以 ``latitude/longitude`` 为路径参数，返回体使用
+        ``alerts`` 而非旧 V7 的 ``warning``。该接口仅使用 JWT 鉴权。
+        """
+        if self._jwt is None:
+            raise ProviderError("qweather weather_alert_current requires JWT authentication")
+        path = f"/weatheralert/v1/current/{lat:.2f}/{lng:.2f}"
+        data = await self._get(path, {}, "weather_alert_current", meta,
+                               require_code=False)
+        color_levels = {
+            "blue": "蓝",
+            "yellow": "黄",
+            "orange": "橙",
+            "red": "红",
+        }
         result: list[WeatherAlert] = []
-        for w in (data.get("warning") or []):
+        for w in (data.get("alerts") or []):
+            event_type = w.get("eventType") or {}
+            color = w.get("color") or {}
+            level_code = _s(color.get("code")).lower()
             result.append(WeatherAlert(
-                title=_s(w.get("title")),
-                level=_s(w.get("level")),
-                type_name=_s(w.get("typeName")),
-                text=_s(w.get("text")),
-                pub_time=_s(w.get("pubTime")),
+                title=_s(w.get("headline")),
+                level=color_levels.get(level_code, _s(color.get("name"))),
+                type_name=_s(event_type.get("name")),
+                text=_s(w.get("description") or w.get("instruction")),
+                pub_time=_s(w.get("issuedTime")),
             ))
         return result
 
     async def alerts(self, city: str,
                      meta: dict | None = None) -> list[WeatherAlert]:
-        loc_id, _ = await self._lookup_city(city, meta)
-        return await self._alerts_for_location(loc_id, meta)
+        _, _, lat, lng = await self._lookup_location(city, meta)
+        return await self._alerts_for_coordinates(lat, lng, meta)
 
     async def _indices_for_location(self, loc_id: str, meta) -> list[LifeIndex]:
         """查询生活指数：运动(1)、洗车(3)、紫外线(5)。"""
@@ -282,7 +298,7 @@ class QWeatherProvider(WeatherProvider):
             self._forecast_for_location(loc_id, 3, meta),
             self._air_quality_for_coordinates(lat, lng, meta),
             self._indices_for_location(loc_id, meta),
-            self._alerts_for_location(loc_id, meta),
+            self._alerts_for_coordinates(lat, lng, meta),
             return_exceptions=True,
         )
         now, forecast, air_quality, indices, alerts = results
@@ -305,4 +321,5 @@ class QWeatherProvider(WeatherProvider):
             air_quality=AirQuality() if isinstance(air_quality, Exception) else air_quality,
             indices=[] if isinstance(indices, Exception) else indices,
             alerts=[] if isinstance(alerts, Exception) else alerts,
+            alerts_available=not isinstance(alerts, Exception),
         )

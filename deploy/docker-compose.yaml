@@ -2,6 +2,9 @@
 # 服务端口规划见各服务 README；gRPC 服务间通过容器 DNS 互通。
 name: car-agent
 
+# This file is included by ../compose.yaml.  Do not invoke it as the first
+# Compose file: that would make deploy/ the project directory and bypass root .env.
+
 x-python-env: &python-env
   REGISTRY_ADDR: registry:50051
   LLM_GATEWAY_ADDR: llm-gateway:50052

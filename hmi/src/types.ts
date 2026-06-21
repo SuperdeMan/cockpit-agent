@@ -69,6 +69,7 @@ export type WeatherCard = {
   }
   indices?: Array<{ name: string; level: string; text: string }>
   alerts?: Array<{ title: string; level: string; type: string; text: string; pub_time: string }>
+  alerts_available?: boolean
 }
 
 export type ForecastCard = {

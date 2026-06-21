@@ -612,18 +612,25 @@ button { font-family: inherit; }
 .weather-mini-day strong { font: 600 11px var(--font-mono); color: var(--text); }
 .weather-mini-day strong em { color: var(--faint); font-style: normal; }
 .weather-mini-day small { display: block; margin-top: 3px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
-.weather-brief-row { display: flex; align-items: stretch; gap: 7px; margin-top: 10px; }
+.weather-alert-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--card-inset-surface); font-size: 11px; }
+.weather-alert-status span { color: var(--faint); }
+.weather-alert-status strong { font-weight: 600; color: var(--muted); }
+.weather-alert-status.clear strong::before { content: '✓ '; color: var(--air-color, var(--accent)); }
+.weather-alert-status.unavailable strong { color: var(--warn); }
+.weather-alert-status.unavailable strong::before { content: '! '; }
+.weather-brief-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 10px; }
 .air-badge {
   --air-color: var(--accent); --air-bg: var(--summary-surface); --air-line: rgba(52, 225, 216, 0.26);
-  flex: 0 0 auto; min-width: 116px; padding: 7px 9px; border: 1px solid var(--air-line);
-  border-left: 3px solid var(--air-color); border-radius: 8px; background: var(--air-bg);
+  display: grid; grid-template-columns: minmax(90px, 1fr) auto; column-gap: 12px; align-items: center;
+  width: 100%; padding: 9px 11px; border: 1px solid var(--air-line);
+  border-left: 3px solid var(--air-color); border-radius: 10px; background: var(--air-bg);
   box-shadow: inset 0 1px 0 var(--card-inset-highlight);
 }
-.air-badge-top { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+.air-badge-top { display: flex; align-items: center; gap: 7px; }
 .air-badge-top span { color: var(--faint); font-size: 10px; }
 .air-badge-top b { padding: 1px 5px; border-radius: 999px; color: var(--air-color); background: var(--air-tag-surface); font-size: 10px; font-weight: 700; white-space: nowrap; }
-.air-badge strong { display: block; margin-top: 3px; font: 700 12px var(--font-mono); color: var(--air-color); }
-.air-badge em { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; font-style: normal; }
+.air-badge strong { grid-row: span 2; align-self: center; font: 700 17px var(--font-mono); color: var(--air-color); white-space: nowrap; }
+.air-badge em { display: block; color: var(--muted); font-size: 11px; font-style: normal; }
 .air-badge-excellent { --air-color: #2bd8c0; --air-bg: rgba(43, 216, 192, 0.12); --air-line: rgba(43, 216, 192, 0.32); }
 .air-badge-good { --air-color: #9adf6b; --air-bg: rgba(154, 223, 107, 0.12); --air-line: rgba(154, 223, 107, 0.32); }
 .air-badge-light { --air-color: #ffd166; --air-bg: rgba(255, 209, 102, 0.12); --air-line: rgba(255, 209, 102, 0.32); }
@@ -638,9 +645,10 @@ button { font-family: inherit; }
 :root[data-theme='light'] .air-badge-heavy { --air-color: #b4314b; --air-bg: rgba(180, 49, 75, 0.1); --air-line: rgba(180, 49, 75, 0.3); }
 :root[data-theme='light'] .air-badge-severe { --air-color: #7d3ca8; --air-bg: rgba(125, 60, 168, 0.1); --air-line: rgba(125, 60, 168, 0.3); }
 :root[data-theme='light'] .air-badge-unknown { --air-color: #58677e; --air-bg: rgba(88, 103, 126, 0.1); --air-line: rgba(88, 103, 126, 0.28); }
-.weather-advice { display: flex; flex: 1; flex-wrap: wrap; align-content: center; gap: 5px; }
-.weather-advice span { padding: 4px 6px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); font-size: 10px; }
-.weather-advice b { color: var(--text); font-weight: 600; }
+.weather-advice { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; width: 100%; }
+.weather-advice::before { content: '出行建议'; grid-column: 1 / -1; color: var(--faint); font-size: 10px; letter-spacing: .05em; }
+.weather-advice span { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: var(--card-inset-surface); font-size: 11px; }
+.weather-advice b { flex: 0 0 auto; color: var(--text); font-weight: 700; }
 .weather-alert-callout { display: flex; align-items: flex-start; gap: 9px; margin: 0 0 12px; padding: 9px 10px; color: var(--weather-alert-text); background: var(--weather-alert-surface); border: 1px solid var(--weather-alert-line); border-left: 3px solid var(--danger); border-radius: 10px; }
 .weather-alert-icon { display: grid; place-items: center; flex: 0 0 auto; width: 17px; height: 17px; border-radius: 50%; color: var(--danger); border: 1px solid currentColor; font: 800 11px var(--font-mono); }
 .weather-alert-copy { min-width: 0; flex: 1; }

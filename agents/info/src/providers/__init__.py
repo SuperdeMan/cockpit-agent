@@ -29,18 +29,23 @@ def _load_qweather_private_key():
 
 
 def build_weather_provider() -> WeatherProvider:
-    vendor = os.getenv("WEATHER_VENDOR", "mock")
-    if vendor == "qweather":
-        host = os.getenv("QWEATHER_HOST", "devapi.qweather.com")
-        project_id = os.getenv("QWEATHER_PROJECT_ID")
-        key_id = os.getenv("QWEATHER_KEY_ID")
-        private_key = _load_qweather_private_key()
+    vendor = os.getenv("WEATHER_VENDOR", "mock").strip().lower()
+    host = os.getenv("QWEATHER_HOST", "devapi.qweather.com")
+    project_id = os.getenv("QWEATHER_PROJECT_ID")
+    key_id = os.getenv("QWEATHER_KEY_ID")
+    private_key = _load_qweather_private_key()
+    # Compose historically defaults WEATHER_VENDOR to mock.  If a complete
+    # QWeather credential set is present, that implicit default must not hide
+    # the real provider; absent/invalid credentials still fall back to mock.
+    has_jwt = bool(project_id and key_id and private_key)
+    has_legacy_key = bool(os.getenv("QWEATHER_KEY"))
+    if vendor == "qweather" or has_jwt or has_legacy_key:
         try:
-            if project_id and key_id and private_key:  # JWT（和风新版，优先）
+            if has_jwt:  # JWT（和风新版，优先）
                 from .qweather import QWeatherProvider, QWeatherJWT
                 return QWeatherProvider(
                     jwt_auth=QWeatherJWT(project_id, key_id, private_key), host=host)
-            if os.getenv("QWEATHER_KEY"):               # API Key（旧版）
+            if has_legacy_key:                           # API Key（旧版）
                 from .qweather import QWeatherProvider
                 return QWeatherProvider(api_key=os.getenv("QWEATHER_KEY"), host=host)
         except Exception as e:  # 构造失败（缺包/密钥格式错）不阻断，回退 mock

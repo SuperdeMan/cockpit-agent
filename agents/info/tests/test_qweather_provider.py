@@ -171,35 +171,46 @@ def test_forecast_7d_uses_7d_endpoint():
 
 # ── alerts 测试 ───────────────────────────────────────────
 
-_ALERTS_OK = {
-    "code": "200",
-    "warning": [
-        {"title": "北京市气象台发布暴雨蓝色预警", "level": "蓝",
-         "typeName": "暴雨", "text": "预计未来6小时有暴雨",
-         "pubTime": "2026-06-20T10:00+08:00"},
-        {"title": "沿海台风黄色预警", "level": "黄",
-         "typeName": "台风", "text": "请做好防风防雨准备",
-         "pubTime": "2026-06-20T09:00+08:00"},
+_ALERTS_CURRENT_OK = {
+    "metadata": {"tag": "202606201000", "zeroResult": False},
+    "alerts": [
+        {"senderName": "北京市气象台", "issuedTime": "2026-06-20T10:00+08:00",
+         "eventType": {"name": "暴雨", "code": "1005"},
+         "severity": "minor", "color": {"code": "blue", "name": "蓝色"},
+         "headline": "北京市气象台发布暴雨蓝色预警", "description": "预计未来6小时有暴雨"},
+        {"senderName": "沿海气象台", "issuedTime": "2026-06-20T09:00+08:00",
+         "eventType": {"name": "台风", "code": "1001"},
+         "severity": "moderate", "color": {"code": "yellow", "name": "黄色"},
+         "headline": "沿海台风黄色预警", "description": "请做好防风防雨准备"},
     ],
 }
 
 
 def test_alerts_keeps_all_current_weather_warnings():
     p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK,
-                   "/v7/warning/now": _ALERTS_OK})
+                   "/weatheralert/v1/current/39.90/116.40": _ALERTS_CURRENT_OK},
+                  jwt_auth=QWeatherJWT("proj", "kid", _ed25519_pem()))
     res = asyncio.run(p.alerts("北京"))
     assert len(res) == 2
     assert res[0].title == "北京市气象台发布暴雨蓝色预警"
     assert res[0].level == "蓝"
     assert res[0].type_name == "暴雨"
     assert res[1].type_name == "台风"
+    assert p._spy.last["url"].endswith("/weatheralert/v1/current/39.90/116.40")
 
 
 def test_alerts_empty_when_no_warning():
     p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK,
-                   "/v7/warning/now": {"code": "200", "warning": []}})
+                   "/weatheralert/v1/current/39.90/116.40": {"metadata": {}, "alerts": []}},
+                  jwt_auth=QWeatherJWT("proj", "kid", _ed25519_pem()))
     res = asyncio.run(p.alerts("北京"))
     assert res == []
+
+
+def test_current_weather_alert_requires_jwt_authentication():
+    p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK})
+    with pytest.raises(ProviderError, match="JWT"):
+        asyncio.run(p.alerts("北京"))
 
 
 # ── indices 测试 ─────────────────────────────────────────
@@ -269,7 +280,7 @@ def test_overview_parses_extra_data_and_keeps_optional_sections():
         "/v7/weather/3d": _FORECAST_3D_OK,
         "/airquality/v1/current/39.90/116.40": _AIR_CURRENT_OK,
         "/v7/indices/1d": _INDICES_OK,
-        "/v7/warning/now": {"code": "200", "warning": []},
+        "/weatheralert/v1/current/39.90/116.40": {"metadata": {}, "alerts": []},
     }, jwt_auth=QWeatherJWT("proj", "kid", _ed25519_pem()))
 
     overview = asyncio.run(p.overview("北京"))
@@ -281,3 +292,19 @@ def test_overview_parses_extra_data_and_keeps_optional_sections():
     assert overview.air_quality.aqi == "52"
     assert len(overview.indices) == 3
     assert overview.alerts == []
+
+
+def test_overview_marks_alerts_unavailable_when_warning_provider_is_forbidden():
+    p = _provider({
+        "/geo/v2/city/lookup": _LOOKUP_OK,
+        "/v7/weather/now": _NOW_OK,
+        "/v7/weather/3d": _FORECAST_3D_OK,
+        "/airquality/v1/current/39.90/116.40": _AIR_CURRENT_OK,
+        "/v7/indices/1d": _INDICES_OK,
+        "/weatheralert/v1/current/39.90/116.40": ProviderError("HTTP 403 forbidden"),
+    }, jwt_auth=QWeatherJWT("proj", "kid", _ed25519_pem()))
+
+    overview = asyncio.run(p.overview("北京"))
+
+    assert overview.alerts == []
+    assert overview.alerts_available is False

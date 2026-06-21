@@ -121,6 +121,7 @@ class WeatherOverview:
     air_quality: AirQuality = field(default_factory=AirQuality)
     indices: list[LifeIndex] = field(default_factory=list)
     alerts: list[WeatherAlert] = field(default_factory=list)
+    alerts_available: bool = True
 
 
 # ── 联网搜索 Provider ──────────────────────────────────────────────

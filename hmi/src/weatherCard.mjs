@@ -8,3 +8,11 @@ export function weatherAlertSummary(alerts) {
     publishedAt: String(first.pub_time || '').replace('T', ' ').replace(/\+.*/, ''),
   }
 }
+
+export function weatherAlertStatus(alerts, available = true) {
+  if (!available) return { tone: 'unavailable', label: '预警服务暂不可用' }
+  const summary = weatherAlertSummary(alerts)
+  return summary
+    ? { tone: 'warning', label: summary.headline }
+    : { tone: 'clear', label: '暂无天气预警' }
+}

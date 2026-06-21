@@ -75,7 +75,7 @@ Windows PowerShell：
 Copy-Item .env.example .env
 ./scripts/gen-proto.ps1
 python test/smoke_edge.py
-docker compose -f deploy/docker-compose.yaml --env-file .env up --build
+docker compose -f compose.yaml up --build
 ```
 
 打开 [http://localhost:5173](http://localhost:5173) 使用 HMI；

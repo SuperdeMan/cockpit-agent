@@ -18,3 +18,16 @@ test('turns the active weather warning into a compact card callout', () => {
 test('returns no callout when there is no active warning', () => {
   assert.equal(weatherAlertSummary([]), null)
 })
+
+test('keeps weather-alert status visible even when there is no active warning', async () => {
+  const { weatherAlertStatus } = await import('./weatherCard.mjs')
+  assert.deepEqual(weatherAlertStatus([]), { tone: 'clear', label: '暂无天气预警' })
+  assert.deepEqual(weatherAlertStatus([
+    { type: '暴雨', level: '蓝', title: '暴雨蓝色预警' },
+  ]), { tone: 'warning', label: '暴雨蓝色预警' })
+})
+
+test('does not label denied weather warnings as no warning', async () => {
+  const { weatherAlertStatus } = await import('./weatherCard.mjs')
+  assert.deepEqual(weatherAlertStatus([], false), { tone: 'unavailable', label: '预警服务暂不可用' })
+})

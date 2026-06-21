@@ -60,7 +60,7 @@ Windows（Docker Desktop，无 make）：
 ```powershell
 Copy-Item .env.example .env
 ./scripts/gen-proto.ps1
-docker compose -f deploy/docker-compose.yaml up --build
+docker compose -f compose.yaml up --build
 ```
 
 ---
@@ -154,7 +154,7 @@ curl -X POST http://localhost:8092/api/debug/vehicle \
 | Dashboard 显示断开或无新事件 | 先查 `http://localhost:8092/healthz` 的 `nats`；再查 NATS、collector、edge/registry 的 `NATS_URL` |
 | Dashboard 能打开但没有 Agent | Registry 重启后需重启各 Agent、cloud-planner（内置工具）和 edge-orchestrator（端能力）完成重新注册 |
 | TTS 返回错误 | MiMo TTS 偶尔返回非 JSON 响应，已加 fallback 处理 |
-| 裸 `docker compose` 没加载到根 `.env`（如 key 不生效、走了 mock）| compose 文件在 `deploy/` 子目录，需 `--env-file .env`；**`make` 目标已自动带上**（根 `.env` 存在时），手敲 compose 命令才需自己加 |
+| key 不生效、服务回退 mock | 只使用 `make up` 或 `docker compose -f compose.yaml up --build`。根目录 `.env` 是唯一运行时环境来源；不要直接把 `deploy/docker-compose.yaml` 当 Compose 入口 |
 | edge-orchestrator 报 `No module named 'yaml'` | `orchestrator/edge/requirements.txt` 缺 PyYAML；已加，rebuild 即可 |
 | ASR webm 格式返回 500 | Docker 镜像需含 ffmpeg（`llm-gateway/Dockerfile` 已加 `apt-get install ffmpeg`）；需 `docker compose build --no-cache llm-gateway` |
 | 新车控指令返回"暂不支持该端侧指令" | 检查 `orchestrator/edge/knowledge/commands.yaml` 是否含该 object；`fast_intent.py` 的 `LOCAL_INTENTS` 是否含该 intent name |

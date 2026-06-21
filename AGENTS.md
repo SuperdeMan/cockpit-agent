@@ -37,6 +37,12 @@
 
 ## 3. 铁律（违反即视为 bug，详见 CLAUDE.md §5）
 
+### 唯一运行环境
+
+- 根目录 `.env` 是唯一的运行时环境与密钥来源；不得复制、维护或依赖 `deploy/.env`。
+- 全栈只允许用 `make up` 或 `docker compose -f compose.yaml ...` 启动；根 `compose.yaml` 已锁定项目目录为仓库根。
+- 不得直接以 `deploy/docker-compose.yaml` 为首个 Compose 文件启动，否则真实 Provider 可能静默回退 mock。
+
 1. **车控只经 VAL**。任何组件（含 LLM/Agent）不得直接碰 CAN/SOME-IP。
 2. **LLM 不直连车控**：LLM 只产"意图/计划"，车控由确定性 Executor 经 VAL 权限校验后执行（规划/执行分离）。
 3. **危险动作二次确认**（`require_confirm=true`）。

@@ -45,7 +45,7 @@ agents/<name>/src/
 | `search` | `/v5/place/around` | `pois[].name→name`、`location("lng,lat")→lng,lat` | 高德坐标是 **lng,lat**（经度在前） |
 | `now` | `/v7/weather/now` | `now.temp→temp`、`now.feelsLike→feels_like` | 响应 `code=="200"` 才成功 |
 | `air_quality` | `/airquality/v1/current/{latitude}/{longitude}` | `indexes[code=cn-mep].aqiDisplay→aqi`、`pollutants[].concentration.value→PM2.5/PM10` | 纬度在前、最多两位小数；该现行接口仅支持 JWT，响应不含 V7 的 `code/now` |
-| `alerts` | `/v7/warning/now` | `warning[].title/level/typeName/text/pubTime→WeatherAlert` | `location` 为和风 GeoAPI LocationID；保留所有当前生效预警（含台风等高风险天气） |
+| `alerts` | `/weatheralert/v1/current/{latitude}/{longitude}` | `alerts[].headline/color.code/eventType.name/description/issuedTime→WeatherAlert` | 纬度在前、最多两位小数；仅支持 JWT，响应不含 V7 的 `code/warning`；保留所有当前生效预警（含台风等高风险天气） |
 | `reverse_geocode` | 高德 `/v3/geocode/regeo` | `regeocode.formatted_address→天气卡地点` | 高德坐标顺序为 **lng,lat**；仅处理已经授权的坐标 |
 
 ### Step 3 — 写真实适配（`<vendor>.py`），HTTP 一律走 `_sdk/http.py`

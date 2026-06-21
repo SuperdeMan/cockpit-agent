@@ -7,7 +7,7 @@ import type {
   PoiListCard, PoiDetailCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
-import { weatherAlertSummary } from '../weatherCard.mjs'
+import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
 
 // ─── 天气图标映射 ───
 const WEATHER_ICONS: Record<string, string> = {
@@ -44,6 +44,7 @@ export function CardRenderer({ card }: { card: UiCard }) {
 function WeatherCardView({ card }: { card: WeatherCard }) {
   const icon = weatherIcon(card.text)
   const alert = weatherAlertSummary(card.alerts)
+  const alertStatus = weatherAlertStatus(card.alerts, card.alerts_available !== false)
   const airQuality = card.air_quality
     ? airQualityBadge(card.air_quality.aqi, card.air_quality.category)
     : null
@@ -100,6 +101,9 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
           <strong>{day.temp_low}°<em> / </em>{day.temp_high}°</strong>
           <small>{day.text_day}{day.precip && ` · ${day.precip}mm`}</small>
         </div>)}
+      </div>}
+      {!alert && <div className={`weather-alert-status ${alertStatus.tone}`}>
+        <span>预警状态</span><strong>{alertStatus.label}</strong>
       </div>}
       {(airQuality || card.indices?.length) && <div className="weather-brief-row">
         {airQuality && <div
