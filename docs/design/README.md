@@ -24,7 +24,7 @@
 | [2026-06-14-cloud-central-orchestrator.md](2026-06-14-cloud-central-orchestrator.md) | 云端中枢：理解→规划→异构调度（车端快思考/Agent/工具）；T0/T1/T2 分级 + 有界 Agentic 循环 | 已落地：P0-P3、DispatchToEdge、T2、工具、权限/可观测；已补混合意图语义分组、句子级增量 TTS 与慢意图完整性回归 |
 | [2026-06-15-observability-dashboard.md](2026-06-15-observability-dashboard.md) | NATS 可观测出口 + collector + 独立 Dashboard：车辆 diff、端云链路、Agent 运行态与 debug 对照实验 | 已归档：P0-P3 全部落地并完成 20 服务全栈验收 |
 | [2026-06-20-info-agent-expansion.md](2026-06-20-info-agent-expansion.md) | info 扩展：联网搜索/新闻/股票（只读聚合）+ 票务独立成交易 Agent | 草案：`info.weather` 已落地，余下规划中 |
-| [2026-06-20-standalone-agents-roadmap.md](2026-06-20-standalone-agents-roadmap.md) | 独立 Agent 扩展路线完整设计：充能规划/场景编排/路况安全/行程增强/交易类——含 manifest、Provider 接口、交互流程、代码骨架、打通契约 | 已落地（P0-P3：charging-planner/scene-orchestrator/road-safety + trip-planner 增强） |
+| [2026-06-20-standalone-agents-roadmap.md](2026-06-20-standalone-agents-roadmap.md) | 独立 Agent 扩展路线完整设计：充能规划/场景编排/路况安全/行程增强/交易类——含 manifest、Provider 接口、交互流程、代码骨架、打通契约 | 已落地（P0-P3：charging-planner/scene-orchestrator/road-safety + trip-planner 增强）；**未闭环项见该文 §8**（scene 命令未对齐 VAL、road-safety 主动播报未做）|
 | [2026-06-20-new-agents-detailed-design.md](2026-06-20-new-agents-detailed-design.md) | （已被 standalone-agents-roadmap.md 合并，保留作为历史参考） | 已合并 |
 | [2026-06-20-search-news-redesign.md](2026-06-20-search-news-redesign.md) | WS6 补充：搜索/新闻从"罗列链接"重设计为"LLM 结论+摘要卡片"——Agent/HMI/Provider 三层方案 | 已落地（search_answer/news_digest 新卡片 + LLM 失败退化旧列表） |
 | [2026-06-20-ws2-registry-production.md](2026-06-20-ws2-registry-production.md) | WS2 Registry 生产化：PostgreSQL 持久化/多实例/语义路由/AgentClient 动态解析 | 已落地（P0+P1：PgStore/pgvector/AgentClient 动态解析/多实例） |

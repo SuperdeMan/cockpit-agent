@@ -343,12 +343,19 @@ class VAL:
             if obj in ("window", "sunroof") and operate == "open" and speed > 80:
                 return False, "高速行驶中请勿打开车窗/天窗"
 
-        # ws8 P0: 低电量（<10%）禁用高耗电功能
+        # ws8 P0: 低电量（<10%）禁用高耗电功能（座椅加热/通风、方向盘加热、氛围灯、香氛）
+        # 用指令对象名（seat/steering_wheel）+ mode 判断；座椅加热/通风是 object=seat、
+        # mode=heating/ventilation，不能写成状态键名 seat_heating（那样永不命中）。
         battery = self.state.get("battery", 100)
-        if battery < 10 and obj in ("seat_heating", "seat_ventilation",
-                                     "ambient_light", "fragrance",
-                                     "steering_wheel_heating"):
-            return False, "电量过低，已禁用高耗电功能"
+        if battery < 10:
+            mode = data.get("mode")
+            high_power = (
+                obj in ("ambient_light", "fragrance")
+                or (obj == "seat" and mode in ("heating", "ventilation"))
+                or (obj == "steering_wheel" and mode == "heating")
+            )
+            if high_power:
+                return False, "电量过低，已禁用高耗电功能"
 
         # ws8 P0: 倒车中禁用非安全相关车控
         gear = self.state.get("gear", "P")

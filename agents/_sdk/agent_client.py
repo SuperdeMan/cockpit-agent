@@ -1,11 +1,16 @@
 """AgentClient：供 Agent 在 handle() 内调用其他 Agent。
 
 WS6 协作模式：Agent 经 SDK 直接调用其他 Agent，带护栏防滥用。
-护栏：
+本客户端强制的护栏：
   1. 调用深度上限（防无限链），MAX_DEPTH=2
   2. 环检测（caller 在调用栈中再次出现 → 拒绝）
-  3. 权限不放大（被调权限 ≤ 调用方）
-  4. 超时（取被调 manifest.latency_budget_ms）
+  3. 超时（取被调 manifest.latency_budget_ms）
+
+权限**不**在此层做「被调权限 ≤ 调用方」的子集校验——sub-planner（如 trip-planner，
+权限仅 location.read/network.external）本就要编排权限更高的叶子 Agent（navigation 需
+navigation.control），子集校验会误杀正常协作。权限按「用户 granted_scopes」在编排层强制：
+orchestrator/cloud/dispatch.py 校验 step.required_permissions ⊆ granted 并禁 third_party
+请求 vehicle.control；车控最终由端侧 VAL 安全门控兜底。
 """
 from __future__ import annotations
 import asyncio
@@ -184,4 +189,5 @@ class AgentClient:
             call_depth=self._depth + 1,
             call_stack=self._stack + [self._caller.manifest.agent_id],
             timeout=self._timeout,
+            registry=self._registry,
         )

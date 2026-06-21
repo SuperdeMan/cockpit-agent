@@ -70,3 +70,63 @@ def test_normal_speed_window_allowed(val):
     val.state["gear"] = "D"
     ok, _ = val._safety_gate("window", "open", {})
     assert ok
+
+
+# ── ws8 P0 安全门控：高速车窗/天窗、低电量、倒车、儿童锁（新增，此前无覆盖）──
+
+@pytest.mark.parametrize("obj", ["window", "sunroof"])
+def test_high_speed_80_blocks_window_and_sunroof(val, obj):
+    val.state["speed_kmh"] = 100  # >80
+    val.state["gear"] = "D"
+    ok, msg = val._safety_gate(obj, "open", {})
+    assert not ok
+    assert "高速" in msg
+
+
+@pytest.mark.parametrize("obj,data", [
+    ("seat", {"mode": "heating"}),         # 座椅加热（设计点名的高耗电功能）
+    ("seat", {"mode": "ventilation"}),     # 座椅通风
+    ("steering_wheel", {"mode": "heating"}),  # 方向盘加热
+    ("ambient_light", {}),                 # 氛围灯
+    ("fragrance", {}),                     # 香氛
+])
+def test_low_battery_blocks_high_power(val, obj, data):
+    val.state["battery"] = 5  # <10%
+    ok, msg = val._safety_gate(obj, "set", data)
+    assert not ok, f"低电量应禁用 {obj}/{data}"
+    assert "电量" in msg
+
+
+def test_low_battery_allows_seat_heating_when_charged(val):
+    """回归：电量正常时座椅加热不应被低电量门控误拦。"""
+    val.state["battery"] = 60
+    ok, _ = val._safety_gate("seat", "set", {"mode": "heating"})
+    assert ok
+
+
+def test_reversing_blocks_non_safety_control(val):
+    val.state["gear"] = "R"
+    ok, msg = val._safety_gate("ambient_light", "open", {})
+    assert not ok
+    assert "倒车" in msg
+
+
+def test_reversing_allows_safety_control(val):
+    """倒车中仍允许安全相关车控（雨刷/后视镜/大灯）。"""
+    val.state["gear"] = "R"
+    ok, _ = val._safety_gate("wiper", "open", {})
+    assert ok
+
+
+def test_child_lock_blocks_rear_window(val):
+    val.state["child_lock"] = True
+    ok, msg = val._safety_gate("window", "open", {"positions": ["rear_left"]})
+    assert not ok
+    assert "儿童锁" in msg
+
+
+def test_child_lock_allows_front_window(val):
+    """儿童锁只锁后排，前排车窗仍可控。"""
+    val.state["child_lock"] = True
+    ok, _ = val._safety_gate("window", "open", {"positions": ["front_left"]})
+    assert ok

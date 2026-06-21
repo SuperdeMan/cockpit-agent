@@ -94,12 +94,7 @@ class SceneOrchestratorAgent(BaseAgent):
         actions = []
         needs_confirm = False
         for a in scene.get("actions", []):
-            action = {
-                "type": a["type"],
-                "payload": a.get("params") or a.get("payload", {}),
-                "require_confirm": a.get("require_confirm", False),
-            }
-            actions.append(action)
+            actions.append(self._build_action(a))
             if a.get("require_confirm"):
                 needs_confirm = True
 
@@ -139,6 +134,24 @@ class SceneOrchestratorAgent(BaseAgent):
             speech=f"可用场景：{names}。说『开启』加场景名即可激活。",
             data={"scenes": list(self._scenes.keys())},
         )
+
+    @staticmethod
+    def _build_action(a: dict) -> dict:
+        """把场景定义里的一条动作转成可下发的 action。
+
+        vehicle.control 的指令名（scenes.yaml 的 command，如 hvac.set）必须并入 payload——
+        VAL 经 payload["command"] 取指令（见 orchestrator/edge/server.py），丢掉它动作即不可
+        执行；且空 payload 的 vehicle.control（如 fragrance.on params 为空）会被 Executor 的
+        action 校验直接丢弃。navigate 等无 command 的动作沿用 payload 不变。
+        """
+        payload = dict(a.get("params") or a.get("payload") or {})
+        if a.get("command"):
+            payload = {"command": a["command"], **payload}
+        return {
+            "type": a["type"],
+            "payload": payload,
+            "require_confirm": a.get("require_confirm", False),
+        }
 
     @staticmethod
     def _action_desc(action: dict) -> str:

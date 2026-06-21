@@ -215,7 +215,6 @@ class PgStore(Store):
         """从 PostgreSQL 加载全量注册表到内存。"""
         async with self._pool.acquire() as conn:
             rows = await conn.fetch("SELECT * FROM agents")
-        from types import SimpleNamespace
         for row in rows:
             manifest_dict = json.loads(row["manifest"]) if isinstance(row["manifest"], str) else row["manifest"]
             # 构造一个轻量 manifest 对象，兼容 Store 的属性访问
@@ -318,7 +317,6 @@ class PgStore(Store):
                 """, str(query_embedding), top_k)
 
             results = []
-            from types import SimpleNamespace
             for row in rows:
                 manifest_dict = json.loads(row["manifest"]) if isinstance(row["manifest"], str) else row["manifest"]
                 manifest = _dict_to_manifest(manifest_dict)
@@ -364,26 +362,35 @@ def _manifest_to_dict(manifest) -> dict:
 
 
 def _dict_to_manifest(d: dict):
-    """将 dict 还原为轻量 manifest 对象（SimpleNamespace），兼容 Store 属性访问。"""
-    from types import SimpleNamespace
-    m = SimpleNamespace(
+    """将 dict 还原为 AgentManifest proto。
+
+    必须是 proto（不能是 SimpleNamespace）：registry server 会把它塞进
+    `ResolvedAgent.manifest`（proto 字段），SimpleNamespace 赋值会抛 TypeError，
+    使「重启恢复 / 语义路由」在序列化时失败。proto 同样支持 Store 的属性访问
+    （manifest.requires_permissions / cap.intent 等），不影响打分与过滤。
+    """
+    from cockpit.agent.v1 import agent_pb2
+    caps = [
+        agent_pb2.Capability(
+            intent=c.get("intent", ""),
+            description=c.get("description", ""),
+            slots=list(c.get("slots") or []),
+            examples=list(c.get("examples") or []),
+            require_confirm=bool(c.get("require_confirm", False)),
+        )
+        for c in d.get("capabilities", [])
+    ]
+    return agent_pb2.AgentManifest(
         agent_id=d.get("agent_id", ""),
         version=d.get("version", ""),
         display_name=d.get("display_name", ""),
         category=d.get("category", ""),
         trust_level=d.get("trust_level", "first_party"),
         deployment=d.get("deployment", "cloud"),
-        latency_budget_ms=d.get("latency_budget_ms", 5000),
+        latency_budget_ms=int(d.get("latency_budget_ms") or 0),
         fallback=d.get("fallback", ""),
-        requires_permissions=d.get("requires_permissions", []),
-        capabilities=[],
+        capabilities=caps,
+        requires_permissions=list(d.get("requires_permissions") or []),
+        edge_intents=list(d.get("edge_intents") or []),
+        kind=d.get("kind", ""),
     )
-    for c in d.get("capabilities", []):
-        m.capabilities.append(SimpleNamespace(
-            intent=c.get("intent", ""),
-            description=c.get("description", ""),
-            slots=c.get("slots", []),
-            examples=c.get("examples", []),
-            require_confirm=c.get("require_confirm", False),
-        ))
-    return m

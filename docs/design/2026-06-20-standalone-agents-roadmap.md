@@ -80,9 +80,9 @@ CMD ["python", "agents/<snake>/main.py"]
 
 ### 协作护栏现状（⚠️ 必读）
 
-`AgentClient` 跨进程深度/环护栏已通过 ContextVar 修复生效（`server.py` + `base.py`）。但：
-- **权限不放大**（护栏3）**未实现**——落地需要被调权限 ≤ 调用方的校验（见 [ws8 设计](2026-06-20-ws8-security-permissions.md)）。
-- **Endpoint 解析**：当前走硬编码 port_map（PoC），生产化需经 Registry 动态解析（见 [ws2 设计](2026-06-20-ws2-registry-production.md) §4.4）。
+`AgentClient` 跨进程深度/环护栏已通过 ContextVar 修复生效（`server.py` + `base.py`）。另：
+- **Endpoint 解析已落地**：`agent_client.py:_resolve_endpoint` 三级优先级（env → Registry 动态解析 → port_map fallback），`base.py` 注入 `RegistryClient`（见 [ws2 设计](2026-06-20-ws2-registry-production.md) §4.4）。
+- **「权限不放大」不按子集校验**：初版设想「被调权限 ≤ 调用方」，但与 sub-planner 拓扑冲突——trip-planner（仅 `location.read`/`network.external`）本就要编排 navigation（需 `navigation.control`），子集校验会误杀正常协作。权限改在编排层按**用户 granted_scopes** 强制：`orchestrator/cloud/dispatch.py` 校验 `step.required_permissions ⊆ granted` 并禁 third_party 请求 `vehicle.control`，车控由端侧 VAL 安全门控兜底。AgentClient 层不再宣称该护栏。
 
 ---
 
@@ -433,7 +433,9 @@ class SceneOrchestratorAgent(BaseAgent):
 
 ---
 
-### 3.3 天气路况安全助手 `road-safety`（Sub-planner + 响应式，端口 50070）
+### 3.3 天气路况安全助手 `road-safety`（Sub-planner + 响应式，端口 50072）
+
+> 端口订正：本文初稿写 50070，但 50070 已被端侧 edge-orchestrator、50071 被 payment-gateway 占用（见 `docs/conventions.md` §5）。落地按 conventions 真相源分配 **road-safety=50072、ticketing=50073**。
 
 #### 定位
 综合天气 + 路况 + 车辆状态 → 安全建议。**只建议，不自动控车**；如需控车必须 NEED_CONFIRM。
@@ -595,9 +597,9 @@ Agent.reserve()
 |---|---|---|---|---|---|
 | charging-planner | 50068 | Leaf | registry, llm-gateway | navigation, info | 待建 |
 | scene-orchestrator | 50069 | Leaf | registry, llm-gateway | —（读知识库） | 待建 |
-| road-safety | 50070 | Sub-planner | registry, llm-gateway, nats | info, navigation | 待建 |
+| road-safety | 50072 | Sub-planner | registry, llm-gateway, nats | info, navigation | 待建 |
 | trip-planner（增强）| 50066 | Sub-planner | registry, llm-gateway | navigation, info, charging-planner | 待升级 |
-| ticketing | 50071 | Leaf+交易 | registry, llm-gateway, payment-gateway | — | 待建 |
+| ticketing | 50073 | Leaf+交易 | registry, llm-gateway, payment-gateway | — | 待建 |
 
 > `agent_client.py:port_map` 需同步新增。
 > `conventions.md` 三表需同步更新。
@@ -632,3 +634,19 @@ Agent.reserve()
 | 主动播报打扰 | road-safety 节流 30 分钟 + 夜间降频 |
 | 协作风暴 | MAX_DEPTH=2 + 环检测（已生效），勿自造绕过 |
 | Endpoint 解析 | 当前 port_map PoC，生产化走 Registry（见 ws2 设计） |
+
+## 8. 落地后未闭环项（2026-06-21 评审追加）
+
+照本文落地后实测发现的端到端缺口，登记在此，勿当已完成：
+
+1. **scene-orchestrator 的 vehicle.control 命令词表未对齐 VAL**（重要）。
+   `scenes.yaml` 的 command（`ambient_light.set`/`seat.recline`/`fragrance.on`/`volume.set`…）
+   是本文 §3.2 自拟的，未对齐端侧 VAL 的 object/operate 词表。边缘 VAL 注入路径
+   （`orchestrator/edge/server.py` → `VAL.execute(cmd_str, payload)` → `_legacy_execute`）
+   只认 `hvac.*`/`window.*`/`media.*`，其余一律「暂不支持该控制指令」。其中 `seat.recline`
+   （座椅放平）在 VAL 里**根本没有对应处理**。结果：场景除空调外的动作目前无法真正执行。
+   **闭环方案**：要么把 command 改成 VAL structured 词表（object+operate），要么在边缘注入处
+   把 command 串翻译成 `_structured_execute` 的 `{data:{object,operate,...}}`，并给 VAL 补
+   座椅放平。须配端到端测试。已先修：scene 动作 payload 现正确携带 command（此前被丢弃）。
+2. **road-safety 主动播报（NATS）未实现**。§3.3 场景 2 的「NATS 事件订阅 + 30 分钟节流主动
+   播报」尚未落地，当前只有请求-响应三意图。属 P3 增量，非已完成。
