@@ -12,7 +12,7 @@
 阶段：**Phase 1 工程化 PoC 主干、云端中枢 P0-P3 与轻量可观测台已落地**（2026-06-15）。
 持久化/多实例、mTLS/沙箱、完整 OTel 等仍是后续工作；**真实外部能力已接入首批**
 （导航=高德、天气=和风含 JWT/EdDSA 鉴权，无凭证回退 mock；2026-06-20 已用真实凭证端到端
-冒烟通过）。当前全量单测 589 passed, 6 skipped；compose 含 21 个服务（含 info-agent）。
+冒烟通过）。当前全量单测 640 passed, 6 skipped（2026-06-21）；compose 含 info-agent。
 
 ---
 
@@ -40,7 +40,7 @@
 ### 唯一运行环境
 
 - 根目录 `.env` 是唯一的运行时环境与密钥来源；不得复制、维护或依赖 `deploy/.env`。
-- 全栈只允许用 `make up` 或 `docker compose -f compose.yaml ...` 启动；根 `compose.yaml` 已锁定项目目录为仓库根。
+- 全栈只允许用 `make up` 或 `docker compose -f compose.yaml ...` 启动；根 `compose.yaml` 显式加载根 `.env`，并以 `deploy/` 为 included Compose 的项目目录以保持构建路径不变。
 - 不得直接以 `deploy/docker-compose.yaml` 为首个 Compose 文件启动，否则真实 Provider 可能静默回退 mock。
 
 1. **车控只经 VAL**。任何组件（含 LLM/Agent）不得直接碰 CAN/SOME-IP。
@@ -56,9 +56,9 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 608 passed, 6 skipped（2026-06-20 实测；含 info/导航 provider 全能力 + AgentClient 跨进程护栏 + UI 卡片链路 + 股票 A/港/美股 + 新增 charging-planner/scene-orchestrator/road-safety 契约测试 + search-news-redesign 改造 + trip-planner 增强 + ws2 语义路由 + ws8 注入防护） |
+| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 640 passed, 6 skipped（2026-06-21 实测；含 info/导航 provider、位置授权与反地理、天气预警/空气质量、UI 卡片链路、股票 A/港/美股、搜索新闻总结、独立 Agent、ws2/ws8 回归） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
-| HMI TTS 单测 / 构建 | ✅ Node 5/5；`npm run build` 通过（含 search_answer/news_digest 新卡片类型） |
+| HMI 单测 / 构建 | ✅ Node 19/19；`npm run build` 通过（含天气预警、空气质量与 search_answer/news_digest 卡片） |
 | Dashboard 单测 / 构建 | ✅ Node 10/10；`npm run build` 通过 |
 | `gen/`（gRPC 生成代码）| ✅ 已生成（`buf generate proto`） |
 | Go 网关 | ✅ Go 1.24 编译通过，Docker 全栈运行 |

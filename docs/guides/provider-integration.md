@@ -74,6 +74,7 @@ def build_x_provider():
 - `.env.example` 补变量、**值留空、注释单独成行**（行内注释会被解析进值）。
 - **JWT 类**（如和风）：私钥走 `*_PRIVATE_KEY_PATH`（文件路径，docker 挂载）或 `*_PRIVATE_KEY`（注入）；签发逻辑见 `qweather.py:QWeatherJWT`（Ed25519/EdDSA，token 本地缓存重签）。私钥不落盘日志、不进 commit。
   - 和风空气质量已不使用废弃的 `/v7/air/now`；必须请求 `/airquality/v1/current/{latitude}/{longitude}`，并使用 JWT `Authorization: Bearer <token>`。若项目仍仅配置旧 API Key，Provider 应明确报出 JWT 配置错误，Agent 仅降级空气质量区块，不影响天气主体。
+  - 和风当前天气预警同样不走 V7：必须请求 `/weatheralert/v1/current/{latitude}/{longitude}` 并使用 JWT。返回体是 `alerts`，不是 V7 的 `warning`；预警请求失败时，卡片必须标明预警服务不可用，不能当作“暂无预警”。
 
 ### Step 6 — Agent 侧降级（真实失败不阻断主链）
 Agent 持一个 `self._fallback = MockXProvider()`；调用真实 provider 时 `try ... except ProviderError → 用 fallback`。

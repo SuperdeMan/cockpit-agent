@@ -161,6 +161,10 @@
 | `AGENT_REREGISTER_INTERVAL` | Agent/edge/cloud-planner 周期重注册间隔（秒），供 registry 重启后能力自愈补注册 | 否（默认 10）|
 | `FAST_INTENT_THRESHOLD_HIGH` / `_LOW` | 快意图路由阈值 | 否（0.85 / 0.5）|
 | `AGENT_PORT` | 单个 Agent 端口（各 Dockerfile 设）| — |
+| `POI_VENDOR` / `AMAP_KEY` | 高德 POI 与已授权坐标的逆地理编码；仅导航、info-agent 注入 | 否（不配走 mock / “当前位置”） |
+| `WEATHER_VENDOR` / `QWEATHER_HOST` | 和风天气 provider 与 API Host | 否（无凭证走 mock） |
+| `QWEATHER_PROJECT_ID` / `QWEATHER_KEY_ID` / `QWEATHER_PRIVATE_KEY` | 和风 JWT；私钥优先用单行 PEM 或裸 base64 | 空气质量、天气预警必填 |
+| `QWEATHER_PRIVATE_KEY_PATH` / `QWEATHER_KEY` | 和风 JWT 私钥文件路径（容器内需挂载）/ 旧 V7 API Key | 否 |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `LOG_LEVEL` | 可观测 | 否 |
 
 > 密钥只进 `.env`（已 gitignore），不进代码/commit/日志。
