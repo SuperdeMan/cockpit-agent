@@ -360,6 +360,12 @@ class PlannerEngine:
         prefs = {k: meta[k] for k in
                  ("model_pref", "answer_length", "assistant_name", "memory_enabled")
                  if meta.get(k)}
+        # 精确位置只在本轮请求携带；需同时满足浏览器已授权并拥有 location.read scope。
+        if "location.read" in granted:
+            prefs.update({k: meta[k] for k in
+                          ("current_lat", "current_lng", "current_accuracy_m",
+                           "current_location_at", "current_location_source")
+                          if meta.get(k)})
 
         return PlanContext(
             request_id=getattr(request, "request_id", ""),

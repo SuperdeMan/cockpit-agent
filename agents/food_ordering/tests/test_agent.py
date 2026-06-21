@@ -13,6 +13,22 @@ def test_search_returns_card():
     assert res.ui_card["type"] == "restaurant_list"
 
 
+def test_search_uses_session_location_when_user_did_not_name_an_area():
+    agent = FoodOrderingAgent()
+    seen = {}
+
+    async def search(**kwargs):
+        seen.update(kwargs)
+        return []
+
+    agent.restaurant.search = search
+    asyncio.run(run_handle(
+        agent, "food.search_restaurant", slots={"cuisine": "川菜"}, raw_text="附近川菜",
+        meta={"current_lat": "39.92", "current_lng": "116.41"}))
+
+    assert seen["location"] == "116.410000,39.920000"
+
+
 def test_reserve_requires_confirm():
     res = asyncio.run(run_handle(
         FoodOrderingAgent(), "food.reserve",

@@ -172,6 +172,8 @@ services:
       QWEATHER_PRIVATE_KEY: ${QWEATHER_PRIVATE_KEY:-}
       QWEATHER_PRIVATE_KEY_PATH: ${QWEATHER_PRIVATE_KEY_PATH:-}
       QWEATHER_KEY: ${QWEATHER_KEY:-}
+      # 仅用于把已授权定位坐标反查为天气卡可读地点；未配置时展示“当前位置”。
+      AMAP_KEY: ${AMAP_KEY:-}
       # 联网搜索（优先 AnySearch，降级 Bing）；不配走 mock
       ANYSEARCH_API_KEY: ${ANYSEARCH_API_KEY:-}
       ANYSEARCH_BASE_URL: ${ANYSEARCH_BASE_URL:-https://api.anysearch.com}

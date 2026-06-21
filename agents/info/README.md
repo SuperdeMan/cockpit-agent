@@ -26,9 +26,11 @@ QWEATHER_HOST=<你的 API Host>
 QWEATHER_PROJECT_ID=<项目ID(sub)>
 QWEATHER_KEY_ID=<凭据ID(kid)>
 QWEATHER_PRIVATE_KEY_PATH=<Ed25519 私钥 PEM 路径>   # 或 QWEATHER_PRIVATE_KEY 单行 PEM(换行用 \n)
-# (B) API Key（旧版，与 JWT 二选一）
+# (B) API Key（旧版，与 JWT 二选一；仅适用于仍支持 API Key 的 V7 天气接口）
 # QWEATHER_KEY=<你的 key>
 ```
+
+空气质量使用和风现行接口 `GET /airquality/v1/current/{latitude}/{longitude}`，需要 JWT；若仅配置旧 API Key，天气主体仍可用，空气质量会按可选区块降级为 mock/空数据。接口文档：[实时空气质量](https://dev.qweather.com/docs/api/air-quality/air-current/)。
 
 未配凭证或调用失败时自动回退 mock，PoC 不阻断。provider 调用经 `_sdk/http.py` 统一
 超时/重试/熔断，并 best-effort 发 `provider.qweather.*` span 到 Dashboard。

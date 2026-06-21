@@ -207,6 +207,8 @@ export type Settings = {
   fontScale: FontScale
   largeTouch: boolean
   quickCommands: string[]
+  // 定位：仅记住是否允许本应用使用；精确坐标不持久化
+  locationEnabled: boolean
   // 助手
   assistantName: string
   answerLength: AnswerLength
@@ -266,6 +268,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fontScale: 'normal',
   largeTouch: false,
   quickCommands: DEFAULT_QUICK_COMMANDS,
+  locationEnabled: false,
   assistantName: '小舟',
   answerLength: 'standard',
   model: 'auto',

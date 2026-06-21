@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
+from agents._sdk.location import current_location_from_meta
 from .providers import (
     build_weather_provider, build_search_provider,
     build_news_provider, build_stock_provider,
@@ -20,6 +21,7 @@ from .providers.mock import (
     MockWeatherProvider, MockSearchProvider,
     MockNewsProvider, MockStockProvider,
 )
+from .providers.amap_geocoder import build_location_resolver
 
 logger = logging.getLogger("agent.info")
 
@@ -44,6 +46,17 @@ def _fresh_search_query(query: str) -> str:
     return query
 
 
+def _is_coordinate_label(value: str) -> bool:
+    """防止 mock/异常上游把 ``lng,lat`` 直接展示给用户。"""
+    try:
+        lng, lat = str(value).split(",", 1)
+        float(lng)
+        float(lat)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 class InfoAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
@@ -51,6 +64,7 @@ class InfoAgent(BaseAgent):
         self.search = build_search_provider()
         self.news = build_news_provider()
         self.stock = build_stock_provider()
+        self.location_resolver = build_location_resolver()
         # 东方财富实时行情（免费无 key，全市场）：Tushare 无港美股权限时的降级
         try:
             from .providers.stock_eastmoney import EastMoneyStockProvider
@@ -80,9 +94,13 @@ class InfoAgent(BaseAgent):
 
     # ── 天气相关 ──────────────────────────────────────────────
 
-    async def _resolve_city(self, intent, ctx) -> str:
+    async def _resolve_city(self, intent, ctx, meta: dict | None = None) -> str:
         """从 intent slots 或车辆位置解析城市名。空串表示无法解析。"""
         city = (intent.slots.get("city") or "").strip()
+        current = current_location_from_meta(meta)
+        if not city and current:
+            # 和风 GeoAPI 接受 ``lng,lat``，再由 Provider 解析为规范城市与空气接口坐标。
+            city = f"{current.lng:.6f},{current.lat:.6f}"
         if not city:
             ctx_values = await ctx.fetch("vehicle.location")
             loc = ctx_values.get("vehicle.location", "")
@@ -90,8 +108,22 @@ class InfoAgent(BaseAgent):
                 city = loc.strip()
         return city
 
+    async def _display_city(self, intent, city: str, meta: dict | None = None) -> str:
+        """坐标仅用于请求上游；展示时优先用高德反查出的可读地址。"""
+        explicit_city = (intent.slots.get("city") or "").strip()
+        if explicit_city:
+            return explicit_city
+        current = current_location_from_meta(meta)
+        if current:
+            try:
+                return await self.location_resolver.reverse(current.lng, current.lat, meta)
+            except ProviderError as e:
+                logger.warning("weather reverse geocode unavailable: %s", e)
+                return ""
+        return city
+
     async def _weather(self, intent, ctx, meta) -> AgentResult:
-        city = await self._resolve_city(intent, ctx)
+        city = await self._resolve_city(intent, ctx, meta)
         if not city:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个城市的天气？",
                                follow_up="请告诉我城市名", missing_slots=["city"])
@@ -102,8 +134,9 @@ class InfoAgent(BaseAgent):
             overview = await self._fallback_weather.overview(city, meta=meta)
 
         w = overview.now
-
-        name = w.city or city
+        display_city = await self._display_city(intent, city, meta)
+        provider_city = "" if _is_coordinate_label(w.city) else w.city
+        name = display_city or provider_city or "当前位置"
         parts = [f"{name}当前{w.text or '天气'}"]
         if w.temp:
             parts.append(f"，气温{w.temp}℃")
@@ -148,10 +181,12 @@ class InfoAgent(BaseAgent):
         return AgentResult(speech=speech, ui_card=card, data={"weather": card})
 
     async def _forecast(self, intent, ctx, meta) -> AgentResult:
-        city = await self._resolve_city(intent, ctx)
+        city = await self._resolve_city(intent, ctx, meta)
         if not city:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个城市的天气预报？",
                                follow_up="请告诉我城市名", missing_slots=["city"])
+        display_city = await self._display_city(intent, city, meta)
+        name = display_city or ("当前位置" if current_location_from_meta(meta) else city)
         days = int(intent.slots.get("days", 3) or 3)
         try:
             forecast = await self.weather.forecast(city, days=days, meta=meta)
@@ -160,9 +195,9 @@ class InfoAgent(BaseAgent):
             forecast = await self._fallback_weather.forecast(city, days=days, meta=meta)
 
         if not forecast:
-            return AgentResult(speech=f"暂无{city}的天气预报数据。")
+            return AgentResult(speech=f"暂无{name}的天气预报数据。")
 
-        parts = [f"{city}未来{len(forecast)}天天气预报："]
+        parts = [f"{name}未来{len(forecast)}天天气预报："]
         for d in forecast:
             day_str = d.date[-5:] if len(d.date) >= 5 else d.date  # MM-DD
             parts.append(f"{day_str} {d.text_day}转{d.text_night}，"
@@ -173,14 +208,15 @@ class InfoAgent(BaseAgent):
                   "temp_high": d.temp_high, "temp_low": d.temp_low,
                   "wind_dir": d.wind_dir, "wind_scale": d.wind_scale}
                  for d in forecast]
-        card = {"type": "forecast", "city": city, "days": items}
+        card = {"type": "forecast", "city": name, "days": items}
         return AgentResult(speech=speech, ui_card=card, data={"forecast": items})
 
     async def _alerts(self, intent, ctx, meta) -> AgentResult:
-        city = await self._resolve_city(intent, ctx)
+        city = await self._resolve_city(intent, ctx, meta)
         if not city:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个城市的天气预警？",
                                follow_up="请告诉我城市名", missing_slots=["city"])
+        name = await self._display_city(intent, city, meta) or ("当前位置" if current_location_from_meta(meta) else city)
         try:
             alerts = await self.weather.alerts(city, meta=meta)
         except ProviderError as e:
@@ -188,21 +224,21 @@ class InfoAgent(BaseAgent):
             alerts = await self._fallback_weather.alerts(city, meta=meta)
 
         if not alerts:
-            return AgentResult(speech=f"{city}当前没有生效的天气预警。",
+            return AgentResult(speech=f"{name}当前没有生效的天气预警。",
                                data={"alerts": []})
 
-        parts = [f"{city}当前有{len(alerts)}条天气预警："]
+        parts = [f"{name}当前有{len(alerts)}条天气预警："]
         for a in alerts:
             parts.append(f"{a.title}（{a.level}级）")
         speech = "；".join(parts) + "。请注意防范。"
 
         items = [{"title": a.title, "level": a.level, "type": a.type_name,
                   "text": a.text, "pub_time": a.pub_time} for a in alerts]
-        card = {"type": "weather_alerts", "city": city, "items": items}
+        card = {"type": "weather_alerts", "city": name, "items": items}
         return AgentResult(speech=speech, ui_card=card, data={"alerts": items})
 
     async def _indices(self, intent, ctx, meta) -> AgentResult:
-        city = await self._resolve_city(intent, ctx)
+        city = await self._resolve_city(intent, ctx, meta)
         if not city:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个城市的生活指数？",
                                follow_up="请告诉我城市名", missing_slots=["city"])
@@ -226,7 +262,7 @@ class InfoAgent(BaseAgent):
         return AgentResult(speech=speech, ui_card=card, data={"indices": items})
 
     async def _air_quality(self, intent, ctx, meta) -> AgentResult:
-        city = await self._resolve_city(intent, ctx)
+        city = await self._resolve_city(intent, ctx, meta)
         if not city:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个城市的空气质量？",
                                follow_up="请告诉我城市名", missing_slots=["city"])

@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 
 from agents._sdk import BaseAgent, AgentResult, NEED_CONFIRM, FAILED
+from agents._sdk.location import current_location_from_meta
 from .providers import build_parking_provider
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
@@ -18,14 +19,19 @@ class ParkingPaymentAgent(BaseAgent):
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         if intent.name == "parking.find":
-            return await self._find(ctx)
+            return await self._find(ctx, meta)
         if intent.name == "parking.pay":
             return await self._pay(intent, meta)
         return AgentResult(status=FAILED, speech="停车助手暂不支持该请求。")
 
-    async def _find(self, ctx) -> AgentResult:
-        await ctx.fetch("vehicle.location")
-        lots = await self.parking.find()
+    async def _find(self, ctx, meta: dict) -> AgentResult:
+        current = current_location_from_meta(meta)
+        if current:
+            location = f"{current.lng:.6f},{current.lat:.6f}"
+        else:
+            values = await ctx.fetch("vehicle.location")
+            location = values.get("vehicle.location", "")
+        lots = await self.parking.find(location=location)
         items = [{"name": l.name, "available": l.available,
                   "price": f"{l.price_per_hour}元/小时", "distance_m": l.distance_m}
                  for l in lots]

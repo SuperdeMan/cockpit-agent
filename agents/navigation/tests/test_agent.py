@@ -1,10 +1,25 @@
 """navigation 契约测试（黄金用例）。不起 gRPC server，直接驱动 handle。"""
 import asyncio
-
-from agents._sdk.testing import run_handle, make_context
+from agents._sdk.testing import make_context, run_handle
 from agents.navigation.src.agent import NavigationAgent
 from agents.navigation.src.providers.base import POI
 
+
+def test_nearby_search_uses_session_location_coordinates():
+    agent = NavigationAgent()
+    seen = {}
+
+    async def search(keyword, near=None, **kwargs):
+        seen["near"] = near
+        return [POI(id="poi-1", name="附近咖啡", lat=39.93, lng=116.42)]
+
+    agent.poi.search = search
+    res = asyncio.run(run_handle(
+        agent, "navigation.search_poi", slots={"keyword": "咖啡"}, raw_text="附近咖啡",
+        ctx=make_context(), meta={"current_lat": "39.92", "current_lng": "116.41"}))
+
+    assert res.status == "ok"
+    assert seen["near"].lat == 39.92 and seen["near"].lng == 116.41
 
 class _ScriptedPoiProvider:
     def __init__(self, responses=None, default=None):
@@ -48,6 +63,17 @@ def test_navigate_to_emits_action():
         slots={"destination": "首都机场"}, raw_text="导航去首都机场"))
     assert res.status == "ok"
     assert any(a["type"] == "navigate" for a in res.actions)
+
+
+def test_navigate_to_attaches_granted_current_location_as_origin():
+    res = asyncio.run(run_handle(
+        NavigationAgent(), "navigation.navigate_to",
+        slots={"destination": "\u9996\u90fd\u673a\u573a"}, raw_text="\u5bfc\u822a\u53bb\u9996\u90fd\u673a\u573a",
+        meta={"current_lat": "39.92", "current_lng": "116.41"}))
+
+    payload = res.actions[0]["payload"]
+    assert payload["origin_lat"] == 39.92
+    assert payload["origin_lng"] == 116.41
 
 
 def test_navigate_to_missing_dest_asks():

@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, NEED_CONFIRM, FAILED
+from agents._sdk.location import current_location_from_meta
 from .providers import build_restaurant_provider
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
@@ -19,16 +20,21 @@ class FoodOrderingAgent(BaseAgent):
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         if intent.name == "food.search_restaurant":
-            return await self._search(intent, ctx)
+            return await self._search(intent, ctx, meta)
         if intent.name == "food.reserve":
             return await self._reserve(intent, meta)
         return AgentResult(status=FAILED, speech="点餐助手暂不支持该请求。")
 
-    async def _search(self, intent, ctx) -> AgentResult:
+    async def _search(self, intent, ctx, meta: dict) -> AgentResult:
         cuisine = intent.slots.get("cuisine") or intent.slots.get("keyword") or "美食"
         await ctx.fetch("profile.taste")  # 按引用取口味画像
         rating_min = float(intent.slots.get("rating_min", 0) or 0)
-        results = await self.restaurant.search(cuisine=cuisine, rating_min=rating_min)
+        location = (intent.slots.get("location") or "").strip()
+        current = current_location_from_meta(meta)
+        if not location and current:
+            location = f"{current.lng:.6f},{current.lat:.6f}"
+        results = await self.restaurant.search(
+            cuisine=cuisine, location=location, rating_min=rating_min)
         names = "、".join(r.name for r in results[:3])
         items = [{"id": r.id, "name": r.name, "rating": r.rating,
                   "price_per_person": r.price_per_person} for r in results]

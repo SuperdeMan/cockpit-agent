@@ -9,6 +9,7 @@ import os
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
 from agents._sdk.http import ProviderError
+from agents._sdk.location import current_location_from_meta
 from .providers import build_charging_provider
 from .providers.mock import MockChargingProvider
 from .providers.base import GeoPoint
@@ -42,9 +43,13 @@ class ChargingPlannerAgent(BaseAgent):
         soc = ctx_values.get("vehicle.battery", "")
 
         # 获取位置
-        loc_values = await ctx.fetch("vehicle.location")
-        location = loc_values.get("vehicle.location", "")
-        near = GeoPoint(address=location) if location else GeoPoint()
+        current = current_location_from_meta(meta)
+        if current:
+            near = GeoPoint(lat=current.lat, lng=current.lng)
+        else:
+            loc_values = await ctx.fetch("vehicle.location")
+            location = loc_values.get("vehicle.location", "")
+            near = GeoPoint(address=location) if location else GeoPoint()
 
         # 搜充电站
         prefer = (intent.slots.get("prefer") or "").strip()

@@ -6,6 +6,7 @@ from agents._sdk.http import ProviderError
 from agents._sdk.testing import run_handle, make_context, assert_manifest_consistent
 from agents.info.src.agent import InfoAgent
 from agents.info.src.providers.base import SearchResult
+from agents.info.src.providers.mock import MockWeatherProvider
 
 
 async def _llm_unavailable(*args, **kwargs):
@@ -40,6 +41,12 @@ class _UnavailableSearchProvider:
         raise ProviderError("upstream unavailable")
 
 
+class _LocationResolver:
+    async def reverse(self, lng, lat, meta=None):
+        assert (lng, lat) == (116.41, 39.92)
+        return "北京市朝阳区"
+
+
 def test_weather_with_city_returns_card():
     res = asyncio.run(run_handle(
         InfoAgent(), "info.weather", slots={"city": "北京"}, raw_text="北京天气"))
@@ -65,6 +72,35 @@ def test_weather_uses_vehicle_location_when_no_city():
         InfoAgent(), "info.weather", slots={}, raw_text="天气怎么样", ctx=ctx))
     assert res.status == "ok"
     assert "上海" in res.ui_card["city"]
+
+
+def test_weather_uses_session_location_coordinates_before_vehicle_city():
+    agent = InfoAgent()
+    agent.location_resolver = _LocationResolver()
+    res = asyncio.run(run_handle(
+        agent, "info.weather", slots={}, raw_text="今天天气怎么样",
+        meta={"current_lat": "39.92", "current_lng": "116.41"}))
+    assert res.status == "ok"
+    assert res.ui_card["city"] == "北京市朝阳区"
+    assert "116.410000" not in res.speech
+
+
+def test_weather_never_shows_raw_coordinates_when_reverse_geocoding_is_unavailable():
+    res = asyncio.run(run_handle(
+        InfoAgent(), "info.weather", slots={}, raw_text="这里天气怎么样",
+        meta={"current_lat": "39.92", "current_lng": "116.41"}))
+
+    assert res.ui_card["city"] == "当前位置"
+    assert "116.410000" not in res.speech
+
+
+def test_mock_weather_varies_by_requested_city():
+    provider = MockWeatherProvider()
+    beijing = asyncio.run(provider.overview("北京"))
+    shenzhen = asyncio.run(provider.overview("深圳"))
+
+    assert (beijing.now.temp, beijing.now.text, beijing.now.humidity) != (
+        shenzhen.now.temp, shenzhen.now.text, shenzhen.now.humidity)
 
 
 def test_weather_missing_city_asks():

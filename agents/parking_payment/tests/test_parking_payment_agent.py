@@ -17,6 +17,23 @@ def test_find_returns_lots():
     assert len(res.ui_card["items"]) > 0
 
 
+def test_find_uses_session_location():
+    agent = ParkingPaymentAgent()
+    seen = {}
+
+    async def find(location="", limit=3):
+        seen["location"] = location
+        return []
+
+    agent.parking.find = find
+    res = asyncio.run(run_handle(
+        agent, "parking.find", raw_text="附近停车场",
+        meta={"current_lat": "39.92", "current_lng": "116.41"}))
+
+    assert seen["location"] == "116.410000,39.920000"
+    assert res.status == "ok"
+
+
 def test_pay_requires_confirm():
     res = asyncio.run(run_handle(
         ParkingPaymentAgent(), "parking.pay",

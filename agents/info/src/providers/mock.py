@@ -13,6 +13,12 @@ from .base import (
 
 
 class MockWeatherProvider(WeatherProvider):
+    @staticmethod
+    def _profile(city: str) -> tuple[int, int, str]:
+        """按地点稳定生成不同的离线样例，避免误导为各城市天气一致。"""
+        seed = sum((index + 1) * ord(char) for index, char in enumerate(city or "当前位置"))
+        return seed % 5, 16 + seed % 17, 42 + seed % 43
+
     async def overview(self, city: str,
                        meta: dict | None = None) -> WeatherOverview:
         now, forecast, air_quality, indices, alerts = await asyncio.gather(
@@ -28,25 +34,32 @@ class MockWeatherProvider(WeatherProvider):
         )
 
     async def now(self, city: str, meta: dict | None = None) -> Weather:
+        condition_index, temp, humidity = self._profile(city)
+        conditions = ["晴", "多云", "阴", "小雨", "雷阵雨"]
+        winds = ["东风", "东南风", "南风", "西南风", "北风"]
         return Weather(
-            city=city or "示例城市",
-            temp="23", text="多云", feels_like="24",
-            humidity="60", wind_dir="东南风", wind_scale="2",
-            precip="0", pressure="1012", visibility="18", cloud="45", dew_point="15",
+            city=city or "当前位置",
+            temp=str(temp), text=conditions[condition_index], feels_like=str(temp + 1),
+            humidity=str(humidity), wind_dir=winds[condition_index], wind_scale=str(1 + condition_index % 4),
+            precip="0" if condition_index < 3 else str(condition_index - 2),
+            pressure=str(1004 + condition_index * 2), visibility=str(10 + condition_index * 2),
+            cloud=str(20 + condition_index * 15), dew_point=str(temp - 7),
             update_time="mock",
         )
 
     async def forecast(self, city: str, days: int = 3,
                        meta: dict | None = None) -> list[ForecastDay]:
         today = _dt.date.today()
+        condition_index, temp, humidity = self._profile(city)
         patterns = [("多云", "晴"), ("晴", "多云"), ("小雨", "阴")]
         return [
             ForecastDay(
                 date=str(today + _dt.timedelta(days=i)),
-                text_day=patterns[i % 3][0], text_night=patterns[i % 3][1],
-                temp_high=str(26 + i), temp_low=str(18 + i),
-                wind_dir="东南风", wind_scale="2", humidity="55",
-                precip="0", uv_index="4", sunrise="05:20", sunset="18:45",
+                text_day=patterns[(condition_index + i) % 3][0], text_night=patterns[(condition_index + i) % 3][1],
+                temp_high=str(temp + 3 + i), temp_low=str(temp - 5 + i),
+                wind_dir=["东风", "东南风", "南风", "西南风", "北风"][condition_index],
+                wind_scale=str(1 + condition_index % 4), humidity=str(humidity),
+                precip="0" if condition_index < 3 else str(condition_index - 2), uv_index=str(2 + condition_index), sunrise="05:20", sunset="18:45",
             )
             for i in range(min(days, 3))
         ]
@@ -65,9 +78,13 @@ class MockWeatherProvider(WeatherProvider):
 
     async def air_quality(self, city: str,
                           meta: dict | None = None) -> AirQuality:
+        _, _, humidity = self._profile(city)
+        aqi = max(25, humidity + 4)
+        category = "优" if aqi <= 50 else "良" if aqi <= 100 else "轻度污染"
         return AirQuality(
-            aqi="52", category="良", primary_pollutant="PM2.5",
-            pm2p5="35", pm10="52", no2="20", o3="88", co="0.6", so2="5",
+            aqi=str(aqi), category=category, primary_pollutant="PM2.5",
+            pm2p5=str(max(12, aqi - 18)), pm10=str(aqi + 4), no2=str(12 + aqi % 16),
+            o3=str(55 + aqi % 35), co="0.6", so2="5",
             update_time="mock",
         )
 

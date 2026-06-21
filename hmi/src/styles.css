@@ -524,6 +524,9 @@ button { font-family: inherit; }
 .ghost-btn:hover { border-color: var(--accent); }
 .ghost-btn.reset { width: 100%; justify-content: center; text-align: center; color: var(--muted); }
 .ghost-btn.sm { padding: 5px 11px; font-size: 12px; }
+.location-actions { display: flex; align-items: center; gap: 7px; }
+.location-status { padding: 9px 11px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; font-size: 12px; line-height: 1.45; }
+.location-status.active { color: var(--accent); border-color: var(--line-strong); }
 
 /* 记忆视图 */
 .mem-block { padding: 15px 0; border-bottom: 1px solid var(--line); }
@@ -638,10 +641,14 @@ button { font-family: inherit; }
 .weather-advice { display: flex; flex: 1; flex-wrap: wrap; align-content: center; gap: 5px; }
 .weather-advice span { padding: 4px 6px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); font-size: 10px; }
 .weather-advice b { color: var(--text); font-weight: 600; }
-.weather-alert-callout { display: flex; align-items: flex-start; gap: 7px; margin-top: 10px; padding: 8px 9px; color: var(--weather-alert-text); background: var(--weather-alert-surface); border: 1px solid var(--weather-alert-line); border-radius: 9px; }
-.weather-alert-callout > span { color: var(--danger); font-weight: 800; }
-.weather-alert-callout strong { flex: 0 0 auto; font-size: 11px; }
-.weather-alert-callout p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.weather-alert-callout { display: flex; align-items: flex-start; gap: 9px; margin: 0 0 12px; padding: 9px 10px; color: var(--weather-alert-text); background: var(--weather-alert-surface); border: 1px solid var(--weather-alert-line); border-left: 3px solid var(--danger); border-radius: 10px; }
+.weather-alert-icon { display: grid; place-items: center; flex: 0 0 auto; width: 17px; height: 17px; border-radius: 50%; color: var(--danger); border: 1px solid currentColor; font: 800 11px var(--font-mono); }
+.weather-alert-copy { min-width: 0; flex: 1; }
+.weather-alert-callout strong { display: block; font-size: 11px; letter-spacing: .02em; }
+.weather-alert-callout p { margin: 2px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.weather-alert-callout small { display: block; margin-top: 3px; color: var(--faint); font: 10px var(--font-mono); }
+.weather-alert-more { flex: 0 0 auto; padding: 2px 5px; border: 1px solid var(--weather-alert-line); border-radius: 999px; color: var(--weather-alert-text); font: 700 10px var(--font-mono); }
+.weather-alert-legacy { display: none; }
 
 /* 天气预报卡片 */
 .card-forecast-days {

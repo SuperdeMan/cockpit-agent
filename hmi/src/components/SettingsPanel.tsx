@@ -6,12 +6,13 @@ import { AGENT_CATALOG, VOICE_FALLBACK, type Voice } from '../types'
 import { fetchVoices, fetchMemory, playTTS, type MemoryView } from '../audio'
 import { Field, Toggle, Segmented, TextInput } from './controls'
 
-type Section = 'tts' | 'asr' | 'display' | 'assistant' | 'agents' | 'memory'
+type Section = 'tts' | 'asr' | 'display' | 'location' | 'assistant' | 'agents' | 'memory'
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: 'tts', label: '语音播报', icon: '🔊' },
   { id: 'asr', label: '语音输入', icon: '🎤' },
   { id: 'display', label: '显示主题', icon: '🎨' },
+  { id: 'location', label: '当前位置', icon: '📍' },
   { id: 'assistant', label: '助手', icon: '✨' },
   { id: 'agents', label: '能力开关', icon: '🧩' },
   { id: 'memory', label: '记忆', icon: '🧠' },
@@ -20,10 +21,20 @@ const SECTIONS: { id: Section; label: string; icon: string }[] = [
 export function SettingsPanel({
   audioApi,
   sessionId,
+  location,
+  locationEnabled,
+  locationStatus,
+  onRequestLocation,
+  onLocationEnabledChange,
   onClose,
 }: {
   audioApi: string
   sessionId: string
+  location: { lat: number; lng: number; accuracyM: number; capturedAt: number } | null
+  locationEnabled: boolean
+  locationStatus: string
+  onRequestLocation: () => void
+  onLocationEnabledChange: (enabled: boolean) => void
   onClose: () => void
 }) {
   const [section, setSection] = useState<Section>('tts')
@@ -58,6 +69,13 @@ export function SettingsPanel({
             {section === 'tts' && <TtsSection audioApi={audioApi} />}
             {section === 'asr' && <AsrSection />}
             {section === 'display' && <DisplaySection />}
+            {section === 'location' && <LocationSection
+              location={location}
+              enabled={locationEnabled}
+              status={locationStatus}
+              onRequest={onRequestLocation}
+              onEnabledChange={onLocationEnabledChange}
+            />}
             {section === 'assistant' && <AssistantSection />}
             {section === 'agents' && <AgentsSection />}
             {section === 'memory' && <MemorySection audioApi={audioApi} sessionId={sessionId} />}
@@ -65,6 +83,35 @@ export function SettingsPanel({
         </div>
       </div>
     </div>
+  )
+}
+
+function LocationSection({
+  location,
+  enabled,
+  status,
+  onRequest,
+  onEnabledChange,
+}: {
+  location: { lat: number; lng: number; accuracyM: number } | null
+  enabled: boolean
+  status: string
+  onRequest: () => void
+  onEnabledChange: (enabled: boolean) => void
+}) {
+  return (
+    <SectionCard title="定位权限" desc="启用后，座舱助手会在后续使用时刷新当前位置，用于天气、导航和周边推荐。精确坐标不写入记忆或设置。">
+      <Field label="允许使用当前位置" hint="关闭后立即停止发送位置并清除本地坐标">
+        <Toggle on={enabled} onChange={onEnabledChange} />
+      </Field>
+      <Field label="定位状态" hint={location ? `坐标：${location.lat.toFixed(5)}, ${location.lng.toFixed(5)}` : '未获取'}>
+        <div className="location-actions">
+          <button className="ghost-btn" onClick={onRequest}>{enabled ? '更新当前位置' : '申请并启用'}</button>
+        </div>
+      </Field>
+      <div className={'location-status' + (location ? ' active' : '')}>{status}</div>
+      <p className="setting-note">关闭的是座舱助手对位置的使用；如需撤销浏览器级授权，请在浏览器的站点权限中操作。</p>
+    </SectionCard>
   )
 }
 

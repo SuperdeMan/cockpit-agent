@@ -46,7 +46,10 @@ def _b64d(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-_LOOKUP_OK = {"code": "200", "location": [{"id": "101010100", "name": "北京"}]}
+_LOOKUP_OK = {
+    "code": "200",
+    "location": [{"id": "101010100", "name": "北京", "lat": "39.90", "lon": "116.40"}],
+}
 _NOW_OK = {"code": "200", "updateTime": "2026-06-20T10:00+08:00",
            "now": {"temp": "28", "text": "晴", "feelsLike": "30",
                    "humidity": "45", "windDir": "南风", "windScale": "3",
@@ -174,21 +177,22 @@ _ALERTS_OK = {
         {"title": "北京市气象台发布暴雨蓝色预警", "level": "蓝",
          "typeName": "暴雨", "text": "预计未来6小时有暴雨",
          "pubTime": "2026-06-20T10:00+08:00"},
-        {"title": "测试海洋预警", "level": "黄",
-         "typeName": "海浪", "text": "应被过滤",
+        {"title": "沿海台风黄色预警", "level": "黄",
+         "typeName": "台风", "text": "请做好防风防雨准备",
          "pubTime": "2026-06-20T09:00+08:00"},
     ],
 }
 
 
-def test_alerts_excludes_marine():
+def test_alerts_keeps_all_current_weather_warnings():
     p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK,
                    "/v7/warning/now": _ALERTS_OK})
     res = asyncio.run(p.alerts("北京"))
-    assert len(res) == 1  # 海浪预警被过滤
+    assert len(res) == 2
     assert res[0].title == "北京市气象台发布暴雨蓝色预警"
     assert res[0].level == "蓝"
     assert res[0].type_name == "暴雨"
+    assert res[1].type_name == "台风"
 
 
 def test_alerts_empty_when_no_warning():
@@ -221,27 +225,40 @@ def test_indices_parses():
 
 # ── air_quality 测试 ─────────────────────────────────────
 
-_AIR_NOW_OK = {
-    "code": "200",
-    "updateTime": "2026-06-20T10:00+08:00",
-    "now": {
-        "aqi": "52", "category": "良", "primary": "PM2.5",
-        "pm2p5": "35", "pm10": "52", "no2": "20", "o3": "88",
-        "co": "0.6", "so2": "5",
-    },
+_AIR_CURRENT_OK = {
+    "metadata": {"tag": "202606201000"},
+    "indexes": [{
+        "code": "cn-mep", "aqi": 52, "aqiDisplay": "52", "category": "良",
+        "primaryPollutant": {"code": "pm2p5", "name": "PM2.5"},
+    }],
+    "pollutants": [
+        {"code": "pm2p5", "concentration": {"value": 35, "unit": "μg/m³"}},
+        {"code": "pm10", "concentration": {"value": 52, "unit": "μg/m³"}},
+        {"code": "no2", "concentration": {"value": 20, "unit": "μg/m³"}},
+        {"code": "o3", "concentration": {"value": 88, "unit": "μg/m³"}},
+        {"code": "co", "concentration": {"value": 0.6, "unit": "mg/m³"}},
+        {"code": "so2", "concentration": {"value": 5, "unit": "μg/m³"}},
+    ],
 }
 
 
-def test_air_quality_parses():
+def test_air_quality_uses_current_air_endpoint_and_parses_cn_index():
     p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK,
-                   "/v7/air/now": _AIR_NOW_OK})
+                   "/airquality/v1/current/39.90/116.40": _AIR_CURRENT_OK},
+                  jwt_auth=QWeatherJWT("proj", "kid", _ed25519_pem()))
     aq = asyncio.run(p.air_quality("北京"))
     assert aq.aqi == "52"
     assert aq.category == "良"
     assert aq.primary_pollutant == "PM2.5"
     assert aq.pm2p5 == "35"
     assert aq.pm10 == "52"
-    assert aq.update_time.startswith("2026-06-20")
+    assert p._spy.last["url"].endswith("/airquality/v1/current/39.90/116.40")
+
+
+def test_current_air_quality_requires_jwt_authentication():
+    p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK})
+    with pytest.raises(ProviderError, match="JWT"):
+        asyncio.run(p.air_quality("北京"))
 
 
 def test_overview_parses_extra_data_and_keeps_optional_sections():
@@ -250,10 +267,10 @@ def test_overview_parses_extra_data_and_keeps_optional_sections():
         "/geo/v2/city/lookup": _LOOKUP_OK,
         "/v7/weather/now": _NOW_OK,
         "/v7/weather/3d": _FORECAST_3D_OK,
-        "/v7/air/now": _AIR_NOW_OK,
+        "/airquality/v1/current/39.90/116.40": _AIR_CURRENT_OK,
         "/v7/indices/1d": _INDICES_OK,
         "/v7/warning/now": {"code": "200", "warning": []},
-    })
+    }, jwt_auth=QWeatherJWT("proj", "kid", _ed25519_pem()))
 
     overview = asyncio.run(p.overview("北京"))
 

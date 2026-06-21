@@ -44,6 +44,9 @@ agents/<name>/src/
 |---|---|---|---|
 | `search` | `/v5/place/around` | `pois[].name→name`、`location("lng,lat")→lng,lat` | 高德坐标是 **lng,lat**（经度在前） |
 | `now` | `/v7/weather/now` | `now.temp→temp`、`now.feelsLike→feels_like` | 响应 `code=="200"` 才成功 |
+| `air_quality` | `/airquality/v1/current/{latitude}/{longitude}` | `indexes[code=cn-mep].aqiDisplay→aqi`、`pollutants[].concentration.value→PM2.5/PM10` | 纬度在前、最多两位小数；该现行接口仅支持 JWT，响应不含 V7 的 `code/now` |
+| `alerts` | `/v7/warning/now` | `warning[].title/level/typeName/text/pubTime→WeatherAlert` | `location` 为和风 GeoAPI LocationID；保留所有当前生效预警（含台风等高风险天气） |
+| `reverse_geocode` | 高德 `/v3/geocode/regeo` | `regeocode.formatted_address→天气卡地点` | 高德坐标顺序为 **lng,lat**；仅处理已经授权的坐标 |
 
 ### Step 3 — 写真实适配（`<vendor>.py`），HTTP 一律走 `_sdk/http.py`
 - 构造 `self._http = AsyncHttpClient(vendor="<vendor>", service="<agent>")`。
@@ -70,6 +73,7 @@ def build_x_provider():
 - 普通 key：`<VENDOR>_KEY` env，compose 里**只注入需要它的那个 Agent**（最小化，见 `deploy/docker-compose.yaml` navigation-agent / info-agent）。
 - `.env.example` 补变量、**值留空、注释单独成行**（行内注释会被解析进值）。
 - **JWT 类**（如和风）：私钥走 `*_PRIVATE_KEY_PATH`（文件路径，docker 挂载）或 `*_PRIVATE_KEY`（注入）；签发逻辑见 `qweather.py:QWeatherJWT`（Ed25519/EdDSA，token 本地缓存重签）。私钥不落盘日志、不进 commit。
+  - 和风空气质量已不使用废弃的 `/v7/air/now`；必须请求 `/airquality/v1/current/{latitude}/{longitude}`，并使用 JWT `Authorization: Bearer <token>`。若项目仍仅配置旧 API Key，Provider 应明确报出 JWT 配置错误，Agent 仅降级空气质量区块，不影响天气主体。
 
 ### Step 6 — Agent 侧降级（真实失败不阻断主链）
 Agent 持一个 `self._fallback = MockXProvider()`；调用真实 provider 时 `try ... except ProviderError → 用 fallback`。

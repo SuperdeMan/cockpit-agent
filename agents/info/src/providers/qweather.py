@@ -100,7 +100,8 @@ class QWeatherProvider(WeatherProvider):
         self._base = f"https://{host.strip().rstrip('/')}"
         self._http = AsyncHttpClient(vendor="qweather", service="info")
 
-    async def _get(self, path: str, params: dict, op: str, meta) -> dict:
+    async def _get(self, path: str, params: dict, op: str, meta,
+                   require_code: bool = True) -> dict:
         q = dict(params)
         headers = None
         if self._jwt is not None:
@@ -110,18 +111,28 @@ class QWeatherProvider(WeatherProvider):
         data = await self._http.get_json(
             f"{self._base}{path}", params=q, op=op, headers=headers, meta=meta)
         code = str(data.get("code"))
-        if code != "200":
+        if require_code and code != "200":
             raise ProviderError(f"qweather {op} failed: code={code}")
         return data
 
-    async def _lookup_city(self, city: str, meta) -> tuple[str, str]:
-        """城市名 → (location_id, 规范城市名)。无结果抛 ProviderError。"""
+    async def _lookup_location(self, city: str, meta) -> tuple[str, str, float, float]:
+        """城市名或 ``lng,lat`` → Location ID、城市名和空气质量接口所需坐标。"""
         data = await self._get("/geo/v2/city/lookup", {"location": city}, "city_lookup", meta)
         locs = data.get("location") or []
         if not locs:
             raise ProviderError(f"qweather city not found: {city}")
         top = locs[0]
-        return _s(top.get("id")), _s(top.get("name")) or city
+        try:
+            lat = float(top.get("lat"))
+            lng = float(top.get("lon"))
+        except (TypeError, ValueError):
+            raise ProviderError(f"qweather city has no coordinates: {city}")
+        return _s(top.get("id")), _s(top.get("name")) or city, lat, lng
+
+    async def _lookup_city(self, city: str, meta) -> tuple[str, str]:
+        """兼容现有天气接口：城市名 → (location_id, 规范城市名)。"""
+        loc_id, city_name, _, _ = await self._lookup_location(city, meta)
+        return loc_id, city_name
 
     async def _now_for_location(self, loc_id: str, city_name: str, meta) -> Weather:
         data = await self._get("/v7/weather/now", {"location": loc_id}, "weather_now", meta)
@@ -173,27 +184,16 @@ class QWeatherProvider(WeatherProvider):
         loc_id, _ = await self._lookup_city(city, meta)
         return await self._forecast_for_location(loc_id, days, meta)
 
-    # 排除的预警类型（海洋/热带气旋/辐射，按用户要求不接入）
-    _EXCLUDED_ALERT_TYPES = {
-        "海洋", "海浪", "海啸", "风暴潮", "海冰", "海雾",  # 海洋类
-        "台风", "热带气旋",                                 # 热带气旋
-        "辐射", "核辐射",                                   # 辐射
-    }
-
     async def _alerts_for_location(self, loc_id: str, meta) -> list[WeatherAlert]:
-        """查询当前生效的天气预警。排除海洋/热带气旋/辐射类。"""
+        """查询当前生效的天气预警，保留厂商返回的全部陆地/沿海预警。"""
         data = await self._get("/v7/warning/now", {"location": loc_id},
                                "warning_now", meta)
         result: list[WeatherAlert] = []
         for w in (data.get("warning") or []):
-            type_name = _s(w.get("typeName"))
-            # 排除海洋/热带气旋/辐射类预警
-            if any(ex in type_name for ex in self._EXCLUDED_ALERT_TYPES):
-                continue
             result.append(WeatherAlert(
                 title=_s(w.get("title")),
                 level=_s(w.get("level")),
-                type_name=type_name,
+                type_name=_s(w.get("typeName")),
                 text=_s(w.get("text")),
                 pub_time=_s(w.get("pubTime")),
             ))
@@ -224,37 +224,63 @@ class QWeatherProvider(WeatherProvider):
         loc_id, _ = await self._lookup_city(city, meta)
         return await self._indices_for_location(loc_id, meta)
 
-    async def _air_quality_for_location(self, loc_id: str, meta) -> AirQuality:
-        """查询实时空气质量。和风 /v7/air/now（V7 API）。"""
-        data = await self._get("/v7/air/now", {"location": loc_id},
-                               "air_now", meta)
-        now = data.get("now") or {}
+    @staticmethod
+    def _air_index(indexes: list[dict]) -> dict:
+        """优先中国国标指数；其它地区回退厂商返回的首个本地指数。"""
+        for index in indexes:
+            if str(index.get("code", "")).lower() == "cn-mep":
+                return index
+        return indexes[0] if indexes else {}
+
+    async def _air_quality_for_coordinates(self, lat: float, lng: float, meta) -> AirQuality:
+        """查询新版实时空气质量。
+
+        文档：GET /airquality/v1/current/{latitude}/{longitude}；新版仅依赖 HTTP
+        状态码，响应体不再使用 V7 的 ``code`` / ``now`` 结构。
+        """
+        # ``/airquality/v1`` is a new-generation endpoint and, unlike the
+        # legacy V7 APIs, accepts JWT authentication only.  Failing here gives
+        # callers a useful configuration error instead of an opaque 401/403.
+        if self._jwt is None:
+            raise ProviderError("qweather air_current requires JWT authentication")
+        path = f"/airquality/v1/current/{lat:.2f}/{lng:.2f}"
+        data = await self._get(path, {}, "air_current", meta, require_code=False)
+        index = self._air_index(data.get("indexes") or [])
+        concentrations: dict[str, str] = {}
+        for pollutant in data.get("pollutants") or []:
+            code = _s(pollutant.get("code")).lower()
+            concentration = pollutant.get("concentration") or {}
+            value = concentration.get("value") if isinstance(concentration, dict) else concentration
+            if code:
+                concentrations[code] = _s(value)
+        primary = index.get("primaryPollutant") or {}
+        metadata = data.get("metadata") or {}
         return AirQuality(
-            aqi=_s(now.get("aqi")),
-            category=_s(now.get("category")),
-            primary_pollutant=_s(now.get("primary")),
-            pm2p5=_s(now.get("pm2p5")),
-            pm10=_s(now.get("pm10")),
-            no2=_s(now.get("no2")),
-            o3=_s(now.get("o3")),
-            co=_s(now.get("co")),
-            so2=_s(now.get("so2")),
-            update_time=_s(data.get("updateTime")),
+            aqi=_s(index.get("aqiDisplay") or index.get("aqi")),
+            category=_s(index.get("category")),
+            primary_pollutant=_s(primary.get("name") or primary.get("code")),
+            pm2p5=concentrations.get("pm2p5", ""),
+            pm10=concentrations.get("pm10", ""),
+            no2=concentrations.get("no2", ""),
+            o3=concentrations.get("o3", ""),
+            co=concentrations.get("co", ""),
+            so2=concentrations.get("so2", ""),
+            update_time=_s(metadata.get("updateTime") or metadata.get("tag")),
         )
 
     async def air_quality(self, city: str,
                           meta: dict | None = None) -> AirQuality:
-        loc_id, _ = await self._lookup_city(city, meta)
-        return await self._air_quality_for_location(loc_id, meta)
+        _, _, lat, lng = await self._lookup_location(city, meta)
+        return await self._air_quality_for_coordinates(lat, lng, meta)
 
     async def overview(self, city: str,
                        meta: dict | None = None) -> WeatherOverview:
         """用一次城市 lookup 并发聚合天气卡所需的全部分区。"""
-        loc_id, city_name = await self._lookup_city(city, meta)
+        loc_id, city_name, lat, lng = await self._lookup_location(city, meta)
         results = await asyncio.gather(
             self._now_for_location(loc_id, city_name, meta),
             self._forecast_for_location(loc_id, 3, meta),
-            self._air_quality_for_location(loc_id, meta),
+            self._air_quality_for_coordinates(lat, lng, meta),
             self._indices_for_location(loc_id, meta),
             self._alerts_for_location(loc_id, meta),
             return_exceptions=True,

@@ -7,6 +7,7 @@ import type {
   PoiListCard, PoiDetailCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
+import { weatherAlertSummary } from '../weatherCard.mjs'
 
 // ─── 天气图标映射 ───
 const WEATHER_ICONS: Record<string, string> = {
@@ -42,6 +43,7 @@ export function CardRenderer({ card }: { card: UiCard }) {
 
 function WeatherCardView({ card }: { card: WeatherCard }) {
   const icon = weatherIcon(card.text)
+  const alert = weatherAlertSummary(card.alerts)
   const airQuality = card.air_quality
     ? airQualityBadge(card.air_quality.aqi, card.air_quality.category)
     : null
@@ -61,6 +63,15 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
   ].filter(Boolean) as Array<{ label: string; value: string }>
   return (
     <div className="card card-weather weather-overview">
+      {alert && <div className="weather-alert-callout" role="status">
+        <span className="weather-alert-icon">!</span>
+        <div className="weather-alert-copy">
+          <strong>{alert.headline}</strong>
+          <p>{alert.detail}</p>
+          {alert.publishedAt && <small>{alert.publishedAt}</small>}
+        </div>
+        {alert.extraCount > 0 && <b className="weather-alert-more">+{alert.extraCount}</b>}
+      </div>}
       <div className="weather-hero">
         <div className="card-weather-main">
           <span className="card-weather-icon">{icon}</span>
@@ -103,7 +114,7 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
           {card.indices.slice(0, 2).map((item) => <span key={item.name}>{item.name} <b>{item.level}</b></span>)}
         </div>}
       </div>}
-      {!!card.alerts?.length && <div className="weather-alert-callout">
+      {!!card.alerts?.length && <div className="weather-alert-legacy">
         <span>⚠</span><strong>{card.alerts[0].level}色预警</strong><p>{card.alerts[0].title}</p>
       </div>}
       {card.update_time && card.update_time !== 'mock' && (

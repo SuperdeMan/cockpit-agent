@@ -11,6 +11,7 @@ import os
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
+from agents._sdk.location import current_location_from_meta
 from .providers import build_poi_provider
 from .providers.base import GeoPoint
 from .providers.mock import MockPOIProvider
@@ -38,6 +39,24 @@ class NavigationAgent(BaseAgent):
             return await handler(intent, ctx, meta)
         return AgentResult(status=FAILED, speech="抱歉，这个导航请求我还不会处理。")
 
+    async def _current_position(self, ctx, meta) -> GeoPoint | None:
+        """优先使用本轮已授权的精确位置；未授权时才回退车辆上下文地址。"""
+        current = current_location_from_meta(meta)
+        if current:
+            return GeoPoint(lat=current.lat, lng=current.lng)
+        ctx_values = await ctx.fetch("vehicle.location")
+        location_data = ctx_values.get("vehicle.location", "")
+        return GeoPoint(address=location_data) if isinstance(location_data, str) and location_data else None
+
+    @staticmethod
+    def _navigate_payload(destination: str, lat: float, lng: float, meta: dict | None) -> dict:
+        """构建导航动作；仅携带本轮已授权的精确起点。"""
+        payload = {"destination": destination, "lat": lat, "lng": lng}
+        current = current_location_from_meta(meta)
+        if current:
+            payload.update({"origin_lat": current.lat, "origin_lng": current.lng})
+        return payload
+
     async def _search_poi(self, intent, ctx, meta) -> AgentResult:
         keyword = intent.slots.get("keyword") or intent.slots.get("category")
         if not keyword:
@@ -45,11 +64,7 @@ class NavigationAgent(BaseAgent):
                                follow_up="请提供搜索关键词，如『充电站』『川菜馆』")
 
         # 按引用取车辆当前位置（隐私最小化：只取需要的 scope）
-        ctx_values = await ctx.fetch("vehicle.location")
-        location_data = ctx_values.get("vehicle.location", "")
-        near = None
-        if isinstance(location_data, str) and location_data:
-            near = GeoPoint(address=location_data)
+        near = await self._current_position(ctx, meta)
 
         rating_min = float(intent.slots.get("rating_min", 0) or 0)
         # 真实 provider 失败（超时/熔断/厂商错误）降级到 mock，保证链路不阻断；
@@ -91,7 +106,7 @@ class NavigationAgent(BaseAgent):
             return AgentResult(
                 speech=f"识别到您说的是{first.name}（{first.address}）。已为您规划路线。",
                 ui_card=card, data={"items": items},
-            ).action("navigate", {"destination": first.name, "lat": first.lat, "lng": first.lng})
+            ).action("navigate", self._navigate_payload(first.name, first.lat, first.lng, meta))
 
         names = "、".join(r.name for r in results[:3])
         return AgentResult(
@@ -139,7 +154,7 @@ class NavigationAgent(BaseAgent):
                 speech=f"{prefix}为您找到{first.name}（{first.address}）。已为您规划路线。",
                 ui_card={"type": "poi_list", "keyword": resolved_name, "items": items},
                 data={"items": items},
-            ).action("navigate", {"destination": first.name, "lat": first.lat, "lng": first.lng})
+            ).action("navigate", self._navigate_payload(first.name, first.lat, first.lng, meta))
 
         return AgentResult(
             status=NEED_SLOT,
@@ -223,13 +238,15 @@ class NavigationAgent(BaseAgent):
         lat_s = intent.slots.get("lat", "")
         if not lng_s or not lat_s:
             # 尝试用车辆位置
-            ctx_values = await ctx.fetch("vehicle.location")
-            loc = ctx_values.get("vehicle.location", "")
-            if isinstance(loc, str) and loc:
-                return AgentResult(speech=f"当前位置：{loc}",
-                                   data={"address": loc})
-            return AgentResult(status=NEED_SLOT, speech="请提供坐标或位置信息。",
-                               missing_slots=["lng", "lat"])
+            current = await self._current_position(ctx, meta)
+            if current and current.lng and current.lat:
+                lng_s, lat_s = str(current.lng), str(current.lat)
+            elif current and current.address:
+                return AgentResult(speech=f"当前位置：{current.address}",
+                                   data={"address": current.address})
+            else:
+                return AgentResult(status=NEED_SLOT, speech="请提供坐标或位置信息。",
+                                   missing_slots=["lng", "lat"])
         try:
             lng, lat = float(lng_s), float(lat_s)
         except ValueError:
