@@ -114,24 +114,43 @@ class AmapPOIProvider(POIProvider):
         return results
 
     async def get_route(self, origin: GeoPoint, destination: GeoPoint,
-                        meta: dict | None = None) -> dict:
+                        meta: dict | None = None, with_polyline: bool = False) -> dict:
         o = await self._resolve_location(origin, meta)
         d = await self._resolve_location(destination, meta)
         if not o or not d:
             raise ProviderError("amap route: cannot resolve origin/destination")
+        # with_polyline=True → extensions=all 返回逐步几何，供沿途取点（如充电途经点）；
+        # 默认 base 更轻，不影响既有调用。
+        ext = "all" if with_polyline else "base"
         data = await self._get("/v3/direction/driving",
-                               {"origin": o, "destination": d, "extensions": "base"},
+                               {"origin": o, "destination": d, "extensions": ext},
                                "direction_driving", meta)
         paths = (data.get("route") or {}).get("paths") or []
         if not paths:
             raise ProviderError("amap route: no path")
         path = paths[0]
-        return {
+        result = {
             "distance_km": round(float(path.get("distance") or 0) / 1000, 1),
             "duration_min": round(float(path.get("duration") or 0) / 60, 1),
             "steps": [_as_str(s.get("instruction"))
                       for s in (path.get("steps") or []) if s.get("instruction")],
         }
+        if with_polyline:
+            # 逐步累计里程，记录每步终点坐标——用于按"沿途第 N 公里"取一个途经坐标
+            points, cum_m = [], 0.0
+            for s in (path.get("steps") or []):
+                cum_m += float(s.get("distance") or 0)
+                poly = _as_str(s.get("polyline"))
+                last = poly.split(";")[-1] if poly else ""
+                if "," in last:
+                    try:
+                        lng_s, lat_s = last.split(",")[:2]
+                        points.append({"lng": float(lng_s), "lat": float(lat_s),
+                                       "cum_km": round(cum_m / 1000, 1)})
+                    except ValueError:
+                        pass
+            result["points"] = points
+        return result
 
     async def reverse_geocode(self, lng: float, lat: float,
                               meta: dict | None = None) -> GeoPoint:

@@ -4,7 +4,7 @@ import { useState } from 'react'
 import type {
   UiCard, WeatherCard, ForecastCard, StockCard,
   NewsCard, SearchCard, SearchAnswerCard, NewsDigestCard,
-  SearchResultCard, NewsBriefCard, SportsScoresCard,
+  SearchResultCard, NewsBriefCard, SportsScoresCard, ChargingRouteCard,
   PoiListCard, PoiDetailCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
@@ -37,6 +37,7 @@ export function CardRenderer({ card }: { card: UiCard }) {
     case 'search_result': return <SearchResultCardView card={card} />
     case 'news_brief': return <NewsBriefCardView card={card} />
     case 'sports_scores': return <SportsScoresCardView card={card} />
+    case 'charging_route': return <ChargingRouteCardView card={card} />
     case 'poi_list': return <PoiListCardView card={card} />
     case 'poi_detail': return <PoiDetailCardView card={card} />
     default: return null
@@ -453,19 +454,60 @@ function SportsScoresCardView({ card }: { card: SportsScoresCard }) {
   )
 }
 
+// ─── 充能路线卡：出发地 → 沿途途经充电点 → 目的地 ───
+
+function ChargingRouteCardView({ card }: { card: ChargingRouteCard }) {
+  const dur = card.duration_min
+    ? `${Math.floor(card.duration_min / 60) ? `${Math.floor(card.duration_min / 60)}小时` : ''}${card.duration_min % 60 ? `${card.duration_min % 60}分钟` : ''}`
+    : ''
+  return (
+    <div className="card card-evidence card-charge-route">
+      <div className="ev-head">
+        <span className="ev-head-title">🔋 充能路线</span>
+        {card.distance_km ? (
+          <span className="ev-fresh">{card.distance_km}km{dur ? ` · ${dur}` : ''}</span>
+        ) : null}
+      </div>
+      <ul className="cr-line">
+        <li className="cr-node cr-start">
+          <span className="cr-dot" />
+          <span className="cr-text">出发地{card.soc ? `（电量 ${card.soc}）` : ''}</span>
+        </li>
+        {card.stops.map((s, i) => (
+          <li key={i} className="cr-node cr-stop">
+            <span className="cr-dot" />
+            <span className="cr-text">
+              <b>⚡ {s.name}</b>
+              {s.at_km != null && <em className="cr-km">约 {s.at_km} km 处补电</em>}
+            </span>
+          </li>
+        ))}
+        <li className="cr-node cr-end">
+          <span className="cr-dot" />
+          <span className="cr-text">{card.destination}</span>
+        </li>
+      </ul>
+      {card.stops.length === 0 && (
+        <div className="cr-direct">电量充足，全程无需途中补电</div>
+      )}
+    </div>
+  )
+}
+
 // ─── POI 列表卡片 ───
 
 function PoiListCardView({ card }: { card: PoiListCard }) {
+  const isChoice = card.purpose === 'dest_choice'  // 充电目的地候选：编号展示，便于「第N个」
   return (
     <div className="card card-poi">
-      <div className="card-header">附近{card.keyword}</div>
+      <div className="card-header">{isChoice ? (card.title || '选择目的地') : `附近${card.keyword || ''}`}</div>
       <div className="card-poi-list">
         {card.items.map((item, i) => (
           <div key={i} className="poi-item">
-            <div className="poi-name">{item.name}</div>
+            <div className="poi-name">{isChoice && <span className="poi-idx">{i + 1}.</span>}{item.name}</div>
             <div className="poi-info">
-              {item.rating > 0 && <span className="poi-rating">★ {item.rating}</span>}
-              {item.distance_km > 0 && <span className="poi-dist">{item.distance_km}km</span>}
+              {(item.rating ?? 0) > 0 && <span className="poi-rating">★ {item.rating}</span>}
+              {(item.distance_km ?? 0) > 0 && <span className="poi-dist">{item.distance_km}km</span>}
             </div>
             {item.address && <div className="poi-addr">{item.address}</div>}
           </div>

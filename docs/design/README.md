@@ -28,6 +28,7 @@
 | [2026-06-20-new-agents-detailed-design.md](2026-06-20-new-agents-detailed-design.md) | （已被 standalone-agents-roadmap.md 合并，保留作为历史参考） | 已合并 |
 | [2026-06-20-search-news-redesign.md](2026-06-20-search-news-redesign.md) | WS6 补充：搜索/新闻从"罗列链接"重设计为"LLM 结论+摘要卡片"——Agent/HMI/Provider 三层方案 | 已落地但**卡片方案被 2026-06-22 取代**（search_answer 复读结论问题） |
 | [2026-06-22-search-quality-and-card-redesign.md](2026-06-22-search-quality-and-card-redesign.md) | 联网搜索质量重构（Exa 正文级检索 + 接地合成/引用/诚实弃权 + api-football 赛事 + 新闻 TTS 播报式速览）+ 信息卡片重设计（气泡给结论、卡片给证据，消除重复） | 已落地（P1-P5 + 二/三/四轮修复，真实 API 端到端验证） |
+| [2026-06-22-charging-route-planning.md](2026-06-22-charging-route-planning.md) | 充电规划：高德沿真实路线取途经充电点（出发地→途经点→目的地）+ 泛地点高德候选二次确认（dest_choice）+ charging_route 时间线卡 + 聚合器卡片择优 + advisory（不车控/不发导航） | 已落地（多轮迭代，真实高德端到端验证） |
 | [2026-06-20-ws2-registry-production.md](2026-06-20-ws2-registry-production.md) | WS2 Registry 生产化：PostgreSQL 持久化/多实例/语义路由/AgentClient 动态解析 | 已落地（P0+P1：PgStore/pgvector/AgentClient 动态解析/多实例） |
 | [2026-06-20-ws8-security-permissions.md](2026-06-20-ws8-security-permissions.md) | WS8 安全与权限：权限动态解析/third-party 沙箱/LLM 注入防护/网络白名单/车控安全门控 | 已落地（P0+P1：注入检测集成/VAL 4 项门控/third-party 沙箱/HTTP_PROXY） |
 

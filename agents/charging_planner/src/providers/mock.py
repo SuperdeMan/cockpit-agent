@@ -45,7 +45,13 @@ class MockChargingProvider(ChargingProvider):
 
     async def plan_route(self, destination: str, soc: str = "",
                          meta=None) -> ChargingPlan:
-        # 解析 SOC 百分比
+        """基于电量给**诚实**的充能策略。
+
+        无真实路线/充电站数据源（mock）时，绝不编造具体服务区名、里程、总时长
+        （旧实现对任意目的地都硬编码"嘉兴/杭州东服务区、145分钟"，明显失真）。
+        只给电量相关的策略建议，具体站点交由到达沿途时的 charging.find 实时推荐。
+        接入真实 EV 路线/充电 Provider 后，可在此返回精确站点与时间。
+        """
         soc_pct = 50
         if soc:
             try:
@@ -53,29 +59,18 @@ class MockChargingProvider(ChargingProvider):
             except ValueError:
                 soc_pct = 50
 
-        # 模拟长途充能方案
-        stops = []
-        if soc_pct < 80:
-            stops.append({
-                "name": "嘉兴服务区·国网快充站",
-                "km": 85,
-                "charge_to": "80%",
-                "duration_min": 25,
-            })
-        if soc_pct < 50:
-            stops.append({
-                "name": "杭州东服务区·特来电快充站",
-                "km": 170,
-                "charge_to": "70%",
-                "duration_min": 20,
-            })
-
-        total_min = sum(s["duration_min"] for s in stops) + 120  # 行驶时间
-        summary = f"从当前位置到{destination}约170km"
-        if stops:
-            stop_names = "、".join(s["name"] for s in stops)
-            summary += f"，建议在{stop_names}充电，预计总行程{total_min}分钟（含充电）"
+        if soc_pct >= 80:
+            stops: list[dict] = []
+            advice = f"当前电量{soc_pct}%较充足，中短途可直达；若为长途，建议出发前补满"
+        elif soc_pct >= 50:
+            stops = [{"note": "长途中段补电", "charge_to": "80%"}]
+            advice = (f"当前电量{soc_pct}%，中短途够用；长途建议中途补电约 1 次，"
+                      f"到达沿途时我再为你推荐附近的快充站")
         else:
-            summary += f"，当前电量{soc_pct}%足够直达，无需中途充电"
+            stops = [{"note": "尽快就近补电", "charge_to": "80%"},
+                     {"note": "长途中段补电", "charge_to": "80%"}]
+            advice = (f"当前电量{soc_pct}%偏低，建议先就近补电；长途约需中途补电 1~2 次，"
+                      f"沿途我会为你推荐附近快充站")
 
-        return ChargingPlan(summary=summary, stops=stops, total_duration_min=total_min)
+        summary = f"前往{destination}：{advice}"
+        return ChargingPlan(summary=summary, stops=stops, total_duration_min=0)

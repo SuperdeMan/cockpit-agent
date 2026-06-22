@@ -31,8 +31,11 @@ class Aggregator:
         actions = [a for r in results for a in r.actions]
         cards = [r.ui_card for r in results if r.ui_card]
         follow_ups = [r.follow_up for r in results if r.follow_up]
-        # ui_card 取第一个（单 Agent 场景）；多 Agent 未来可聚合
-        ui_card = cards[0] if cards else None
+        # 多卡时择一展示：优先信息密度高、与"规划"诉求最相关的卡（如充电路线途经点），
+        # 否则取第一个。（多卡同屏渲染待 HMI/协议支持后再做。）
+        _PRIORITY = ("charging_route",)
+        ui_card = (next((c for c in cards if c.get("type") in _PRIORITY), None)
+                   or (cards[0] if cards else None))
 
         if not results:
             return {"speech": "抱歉，我暂时无法处理这个请求。", "actions": []}

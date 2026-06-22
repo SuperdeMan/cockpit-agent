@@ -46,7 +46,7 @@
 | `trip.plan` | trip-planner | cloud | destination, days, preferences | 跨 Agent 协作(Phase1)；NEED_CONFIRM 确认方案 |
 | `trip.modify` | trip-planner | cloud | modification | 修改已有行程（局部重规划）；NEED_CONFIRM |
 | `charging.find` | charging-planner | cloud | destination, soc, prefer | 找附近的充电站；NEED_CONFIRM 导航 |
-| `charging.plan` | charging-planner | cloud | destination, soc, departure_time | 规划长途充能策略；NEED_CONFIRM |
+| `charging.plan` | charging-planner | cloud | destination, soc | 规划长途充能（出发地→沿途途经充电点→目的地）；信息建议 advisory（不发导航/不二次确认导航）；目的地过泛→NEED_SLOT 高德候选二次确认 |
 | `charging.status` | charging-planner | cloud | — | 查询当前充电状态 |
 | `scene.activate` | scene-orchestrator | cloud | scene, custom_params | 激活预定义场景模式；有危险动作时 NEED_CONFIRM |
 | `scene.deactivate` | scene-orchestrator | cloud | scene | 退出当前场景模式 |
@@ -164,7 +164,8 @@
 | `AGENT_REREGISTER_INTERVAL` | Agent/edge/cloud-planner 周期重注册间隔（秒），供 registry 重启后能力自愈补注册 | 否（默认 10）|
 | `FAST_INTENT_THRESHOLD_HIGH` / `_LOW` | 快意图路由阈值 | 否（0.85 / 0.5）|
 | `AGENT_PORT` | 单个 Agent 端口（各 Dockerfile 设）| — |
-| `POI_VENDOR` / `AMAP_KEY` | 高德 POI 与已授权坐标的逆地理编码；仅导航、info-agent 注入 | 否（不配走 mock / “当前位置”） |
+| `POI_VENDOR` / `AMAP_KEY` | 高德 POI / 逆地理编码 / 路线距离时长；注入导航、info、charging-planner（充电站搜索+路线规划+泛目的地候选）| 否（不配走 mock / “当前位置”） |
+| `CHARGING_FULL_RANGE_KM` | 充电规划满电续航假设（按电量估可行驶里程与补电点位置）| 否（默认 500）|
 | `WEATHER_VENDOR` / `QWEATHER_HOST` | 和风天气 provider 与 API Host | 否（无凭证走 mock） |
 | `QWEATHER_PROJECT_ID` / `QWEATHER_KEY_ID` / `QWEATHER_PRIVATE_KEY` | 和风 JWT；私钥优先用单行 PEM 或裸 base64 | 空气质量、天气预警必填 |
 | `QWEATHER_PRIVATE_KEY_PATH` / `QWEATHER_KEY` | 和风 JWT 私钥文件路径（容器内需挂载）/ 旧 V7 API Key | 否 |

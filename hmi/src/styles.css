@@ -816,8 +816,23 @@ a.ev-news-h:hover { color: var(--accent-2); text-decoration: underline; }
 .fx-status-live { color: var(--warn); font-weight: 700; }
 .fx-status-finished { color: var(--muted); }
 
+/* 充能路线：时间线式 出发地 → 途经补电点 → 目的地 */
+.cr-line { list-style: none; margin: 4px 0 0; padding: 0; }
+.cr-node { position: relative; display: flex; gap: 10px; padding: 0 0 14px 2px; }
+.cr-node:last-child { padding-bottom: 0; }
+.cr-node::before { content: ''; position: absolute; left: 5px; top: 15px; bottom: -2px; width: 2px; background: var(--line-strong); }
+.cr-node:last-child::before { display: none; }
+.cr-dot { flex: 0 0 auto; width: 12px; height: 12px; margin-top: 3px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--summary-surface); }
+.cr-stop .cr-dot { background: var(--warn); }
+.cr-text { font-size: 13px; color: var(--text); line-height: 1.5; min-width: 0; }
+.cr-stop .cr-text b { font-weight: 600; }
+.cr-km { display: block; margin-top: 1px; color: var(--faint); font: 10px var(--font-mono); font-style: normal; }
+.cr-start .cr-text, .cr-end .cr-text { font-weight: 600; }
+.cr-direct { margin-top: 8px; color: var(--muted); font-size: 12px; }
+
 /* POI 卡片 */
 .card-poi-list { display: flex; flex-direction: column; gap: 8px; }
+.poi-idx { color: var(--accent); font-weight: 700; margin-right: 6px; }
 .poi-item {
   padding: 8px 10px; background: var(--surface); border-radius: var(--radius-sm);
 }

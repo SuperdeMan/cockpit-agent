@@ -33,8 +33,9 @@ class ChargingStation:
 class ChargingPlan:
     """长途充能方案。"""
     summary: str = ""
-    stops: list[dict] = field(default_factory=list)  # [{name, km, charge_to, duration_min}]
+    stops: list[dict] = field(default_factory=list)  # [{name, address, at_km, charge_to}]
     total_duration_min: int = 0
+    distance_km: float = 0.0          # 全程里程（供卡片展示出发地→途经点→目的地）
 
 
 class ChargingProvider(ABC):
@@ -56,3 +57,10 @@ class ChargingProvider(ABC):
                          meta=None) -> ChargingPlan:
         """规划长途充能方案。"""
         ...
+
+    async def suggest_destinations(self, query: str, meta=None) -> list[dict]:
+        """目的地过泛（行政区划级）时给出候选具体地点 [{id,name,address}]。
+
+        默认无候选（mock 等不联网 Provider）；真实 Provider（高德）覆写为 POI 搜索结果。
+        """
+        return []

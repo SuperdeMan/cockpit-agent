@@ -32,8 +32,19 @@ export type UiCard =
   | SearchResultCard
   | NewsBriefCard
   | SportsScoresCard
+  | ChargingRouteCard
   | PoiListCard
   | PoiDetailCard
+
+// 充能路线卡：出发地 → 沿途途经充电点 → 目的地
+export type ChargingRouteCard = {
+  type: 'charging_route'
+  destination: string
+  distance_km?: number
+  duration_min?: number
+  stops: Array<{ name: string; address?: string; at_km?: number }>
+  soc?: string
+}
 
 // ── 2026-06-22 信息卡重设计：卡片只给证据（来源/要点/时效/置信度），气泡给结论，不复读 ──
 export type Confidence = 'high' | 'medium' | 'low'
@@ -195,12 +206,14 @@ export type NewsDigestCard = {
 
 export type PoiListCard = {
   type: 'poi_list'
-  keyword: string
+  keyword?: string
+  purpose?: string   // 'dest_choice' = 充电目的地候选：「第N个」回填目的地槽位，而非发起导航
+  title?: string
   items: Array<{
     id: string
     name: string
-    rating: number
-    distance_km: number
+    rating?: number
+    distance_km?: number
     address: string
   }>
 }

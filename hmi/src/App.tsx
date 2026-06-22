@@ -18,6 +18,7 @@ import {
   stopTTS,
 } from './audio'
 import type { Msg, Settings } from './types'
+import { poiSelectionIndex } from './nav.mjs'
 
 const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://localhost:8090'
 const WS_URL = GATEWAY.replace(/^http/, 'ws') + '/ws'
@@ -42,6 +43,10 @@ export default function App() {
   const wsRef = useRef<WebSocket | null>(null)
   const locationRefreshRequestedRef = useRef(false)
   const pendingIdRef = useRef<string | null>(null)
+  // 上一条 poi_list 的候选名（供「第一个/第二个」语音选择就近导航；见 resolvePoiSelection）
+  const lastPoiNamesRef = useRef<string[] | null>(null)
+  // 充电目的地候选（dest_choice）名：「第N个」回填目的地槽位续接规划，而非发起导航
+  const lastDestChoiceRef = useRef<string[] | null>(null)
   const settingsRef = useRef<Settings>(settings)
   settingsRef.current = settings // 始终保留最新设置，避免 ws 回调读到陈旧闭包
 
@@ -169,6 +174,20 @@ export default function App() {
           : [...m, { id: uid(), role: 'assistant', ...final } as Msg],
       )
       setAwaitConfirm(!!data.need_confirm)
+      // 记录候选名供下一轮「第N个」选择：充电目的地候选(dest_choice)→回填目的地槽位；
+      // 普通导航 poi_list→就近导航（见 send）
+      {
+        const c: any = data.ui_card
+        const names = c?.type === 'poi_list'
+          ? (c.items || []).map((it: any) => it.name).filter(Boolean) : null
+        if (c?.type === 'poi_list' && c.purpose === 'dest_choice') {
+          lastDestChoiceRef.current = names
+          lastPoiNamesRef.current = null
+        } else {
+          lastPoiNamesRef.current = names
+          lastDestChoiceRef.current = null
+        }
+      }
       if (s.ttsEnabled && s.autoplay && data.speech) {
         finishTTSReply(data.speech).catch(() => {/* 播放失败静默 */})
       }
@@ -213,6 +232,26 @@ export default function App() {
   const send = (text: string) => {
     setMessages((m) => [...m, { id: uid(), role: 'user', text }])
     setAwaitConfirm(false)
+    // 充电目的地候选「第N个」：派发候选名本身 → 编排器回填目的地槽位续接规划（不改写为导航）
+    const choices = lastDestChoiceRef.current
+    if (choices && choices.length) {
+      const idx = poiSelectionIndex(text)
+      if (idx >= 0 && idx < choices.length) {
+        lastDestChoiceRef.current = null
+        dispatch(choices[idx], false)
+        return
+      }
+    }
+    // 「第一个/第二个」：对照上一条 poi_list 候选 → 改写为「导航去{名称}」，修「第一个→处理失败」
+    const names = lastPoiNamesRef.current
+    if (names && names.length) {
+      const idx = poiSelectionIndex(text)
+      if (idx >= 0 && idx < names.length) {
+        lastPoiNamesRef.current = null
+        dispatch(`导航去${names[idx]}`, false)
+        return
+      }
+    }
     if (shouldRequestLocationConsent(text, settingsRef.current.locationEnabled)) {
       setPendingLocationText(text)
       setMessages((m) => [...m, {

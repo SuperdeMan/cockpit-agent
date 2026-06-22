@@ -206,6 +206,8 @@ services:
     environment:
       <<: *python-env
       AGENT_PORT: "50068"
+      # 高德：充电站 POI 搜索 + 路线距离/时长（真实充能规划）；不配走 mock
+      AMAP_KEY: ${AMAP_KEY:-}
     depends_on: [registry, llm-gateway, memory]
 
   scene-orchestrator-agent:
