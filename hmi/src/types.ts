@@ -29,8 +29,53 @@ export type UiCard =
   | SearchCard
   | SearchAnswerCard
   | NewsDigestCard
+  | SearchResultCard
+  | NewsBriefCard
+  | SportsScoresCard
   | PoiListCard
   | PoiDetailCard
+
+// ── 2026-06-22 信息卡重设计：卡片只给证据（来源/要点/时效/置信度），气泡给结论，不复读 ──
+export type Confidence = 'high' | 'medium' | 'low'
+
+export type SearchResultCard = {
+  type: 'search_result'
+  query: string
+  sources: Array<{ title: string; url: string; source: string; published?: string }>
+  freshness?: string
+  confidence?: Confidence
+}
+
+export type NewsBriefCard = {
+  type: 'news_brief'
+  topic: string
+  items: Array<{ title: string; url?: string; source: string; publish_time?: string; summary?: string }>
+  freshness?: string
+}
+
+export type SportsFixture = {
+  league: string
+  round: string
+  home: string
+  away: string
+  home_logo?: string
+  away_logo?: string
+  score: string
+  home_goals: string
+  away_goals: string
+  status: 'finished' | 'live' | 'scheduled' | 'other'
+  status_text: string
+  elapsed?: string
+  kickoff?: string
+}
+
+export type SportsScoresCard = {
+  type: 'sports_scores'
+  title: string
+  fixtures: SportsFixture[]
+  freshness?: string
+  source?: string
+}
 
 export type WeatherCard = {
   type: 'weather'

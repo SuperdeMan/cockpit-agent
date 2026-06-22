@@ -9,6 +9,7 @@ from .base import (
     SearchProvider, SearchResult,
     NewsProvider, NewsItem,
     StockProvider, Quote, StockCandle,
+    SportsProvider, SportsFixture,
 )
 
 
@@ -91,7 +92,7 @@ class MockWeatherProvider(WeatherProvider):
 
 class MockSearchProvider(SearchProvider):
     async def search(self, query: str, limit: int = 5,
-                     meta: dict | None = None) -> list[SearchResult]:
+                     meta: dict | None = None, **kwargs) -> list[SearchResult]:
         return [
             SearchResult(
                 title=f"{query} - 示例结果{i}",
@@ -115,6 +116,19 @@ class MockNewsProvider(NewsProvider):
                 publish_time="mock",
             )
             for i in range(1, min(limit, 4) + 1)
+        ]
+
+
+class MockSportsProvider(SportsProvider):
+    async def fixtures(self, date: str = "", league: int = 0, season: int = 0,
+                       live: bool = False, timezone: str = "Asia/Shanghai",
+                       meta: dict | None = None) -> list[SportsFixture]:
+        return [
+            SportsFixture(league="示例联赛", round="第1轮", home="甲队", away="乙队",
+                          home_goals="2", away_goals="1", status="finished",
+                          status_text="已结束", kickoff="mock"),
+            SportsFixture(league="示例联赛", round="第1轮", home="丙队", away="丁队",
+                          status="scheduled", status_text="未开赛", kickoff="mock"),
         ]
 
 

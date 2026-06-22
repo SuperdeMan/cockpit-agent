@@ -38,6 +38,11 @@ capabilities:
     slots: [query, limit]
     examples: ["搜一下", "帮我查一下", "搜索", "帮我搜"]
 
+  - intent: info.sports
+    description: 查询赛事实时比分与赛程（足球，结构化真实数据）
+    slots: [query, league]
+    examples: ["今天世界杯赛程", "世界杯比分", "英超赛果", "欧冠今晚有哪些比赛", "西甲对阵"]
+
   - intent: info.news
     description: 获取新闻头条和资讯摘要
     slots: [topic, limit]

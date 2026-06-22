@@ -31,7 +31,7 @@ class BingSearchProvider(SearchProvider):
         self._http = AsyncHttpClient(vendor="bing", service="info")
 
     async def search(self, query: str, limit: int = 5,
-                     meta: dict | None = None) -> list[SearchResult]:
+                     meta: dict | None = None, **kwargs) -> list[SearchResult]:
         data = await self._http.get_json(
             f"{self._base}/v7.0/search",
             params={"q": query, "count": str(max(1, min(limit, 20))),

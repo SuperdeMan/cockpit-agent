@@ -62,3 +62,17 @@ def test_search_allows_a_single_long_lived_request_for_live_results():
 
     assert p._http.max_retries == 0
     assert p._http._client.timeout.read == 10.0
+
+
+def test_extract_parses_mcp_text_content():
+    resp = {"jsonrpc": "2.0", "id": 1,
+            "result": {"content": [{"type": "text", "text": "# 标题\n正文内容"}]}}
+    p = _provider({"/mcp": resp})
+    out = asyncio.run(p.extract("https://example.com/a"))
+    assert "正文内容" in out
+
+
+def test_extract_error_raises():
+    p = _provider({"/mcp": {"error": {"code": -32000, "message": "bad url"}}})
+    with pytest.raises(ProviderError):
+        asyncio.run(p.extract("https://example.com/a"))

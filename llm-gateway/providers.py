@@ -1,9 +1,11 @@
-"""LLM Provider 抽象与实现。新增厂商在此扩展，对上层透明。
+"""LLM Provider 抽象与实现。**更换服务商优先改 env，无需改代码**。
 
-支持的 provider：
-- anthropic: Anthropic Claude API
-- xiaomimimo: 小米 MiMo API（OpenAI 兼容格式）
-- mock: 无 key 时的回显兜底
+- anthropic：Anthropic Claude API（独立 SDK）
+- 其余（xiaomimimo/openai/deepseek/qwen/自建 vLLM…）：统一走 OpenAI 兼容 HTTP provider，
+  端点 `LLM_BASE_URL`、鉴权 `LLM_AUTH_STYLE`、思考开关 `LLM_DISABLE_THINKING` 全经 env 注入。
+- mock：无 `LLM_API_KEY` 时的回显兜底（PoC 可离线端到端）。
+
+仅当需要一种全新的非 OpenAI 兼容协议时，才在此新增 Provider 类。
 """
 from __future__ import annotations
 import json
@@ -62,38 +64,49 @@ class AnthropicProvider(BaseProvider):
                 yield text
 
 
-class MiMoProvider(BaseProvider):
-    """小米 MiMo API（OpenAI 兼容格式）。
+class OpenAICompatibleProvider(BaseProvider):
+    """OpenAI 兼容 Chat Completions 提供商（MiMo / OpenAI / DeepSeek / Qwen / 本地 vLLM 等）。
 
-    endpoint: https://api.xiaomimimo.com/v1/chat/completions
-    auth: api-key header
-    docs: https://platform.xiaomimimo.com/docs/zh-CN/quick-start/first-api-call
+    端点、鉴权、思考开关全部经配置注入——**更换 LLM 服务商只改 env、不动代码**：
+    - LLM_BASE_URL：chat/completions 完整 URL（默认小米 MiMo）
+    - LLM_AUTH_STYLE：``api-key``（默认，MiMo）| ``bearer``（多数 OpenAI 兼容服务）
+    - LLM_DISABLE_THINKING：``true``（默认，MiMo 推理模型须关思考保结构化输出）| ``false``
+
+    MiMo docs: https://platform.xiaomimimo.com/docs/zh-CN/quick-start/first-api-call
     """
-    BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
+    _DEFAULT_BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, base_url: str = "",
+                 auth_style: str = "api-key", disable_thinking: bool = True):
         self.api_key = api_key
+        self.base_url = base_url or self._DEFAULT_BASE_URL
+        self.auth_style = (auth_style or "api-key").lower()
+        self.disable_thinking = disable_thinking
+
+    def _headers(self) -> dict:
+        h = {"Content-Type": "application/json"}
+        if self.auth_style == "bearer":
+            h["Authorization"] = f"Bearer {self.api_key}"
+        else:  # 默认 MiMo 风格
+            h["api-key"] = self.api_key
+        return h
 
     async def complete(self, messages, model, temperature, max_tokens):
         import httpx
-        headers = {
-            "api-key": self.api_key,
-            "Content-Type": "application/json",
-        }
         body = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_completion_tokens": max_tokens or 512,
             "stream": False,
-            # MiMo 是推理模型：默认会把 token 预算几乎全花在 reasoning_content 上，
-            # 导致结构化任务（Planner JSON、聚合改写）的 content 被饿成空/截断
-            # （finish_reason=length）。非流式 complete 都是结构化短任务，关闭思考即可
-            # 拿到干净、确定、低延迟的 content。开放域走 stream 路径，不受此影响。
-            "thinking": {"type": "disabled"},
         }
+        if self.disable_thinking:
+            # MiMo 等推理模型：默认把 token 预算几乎全花在 reasoning_content 上，
+            # 导致结构化任务（Planner JSON、聚合改写、接地合成）的 content 被饿成空/截断。
+            # 关闭思考即可拿到干净、确定、低延迟的 content。非推理服务商可经 env 关掉本项。
+            body["thinking"] = {"type": "disabled"}
         async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(self.BASE_URL, headers=headers, json=body)
+            resp = await client.post(self.base_url, headers=self._headers(), json=body)
             resp.raise_for_status()
             data = resp.json()
 
@@ -105,10 +118,6 @@ class MiMoProvider(BaseProvider):
 
     async def stream(self, messages, model, temperature, max_tokens):
         import httpx
-        headers = {
-            "api-key": self.api_key,
-            "Content-Type": "application/json",
-        }
         body = {
             "model": model,
             "messages": messages,
@@ -117,7 +126,7 @@ class MiMoProvider(BaseProvider):
             "stream": True,
         }
         async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream("POST", self.BASE_URL, headers=headers, json=body) as resp:
+            async with client.stream("POST", self.base_url, headers=self._headers(), json=body) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):
@@ -135,20 +144,35 @@ class MiMoProvider(BaseProvider):
                         continue
 
 
+# 向后兼容别名（历史代码/测试可能引用 MiMoProvider）
+MiMoProvider = OpenAICompatibleProvider
+
+
 def build_provider() -> BaseProvider:
-    provider = os.getenv("LLM_PROVIDER", "anthropic").lower()
+    """按 env 装配 LLM provider。换服务商只改 env：
+
+    - LLM_PROVIDER：``anthropic`` 走 Claude SDK；其余（xiaomimimo/mimo/openai/deepseek/
+      qwen/自建…）一律走 OpenAI 兼容 HTTP provider，端点/鉴权/思考开关见下。
+    - LLM_API_KEY / LLM_BASE_URL / LLM_AUTH_STYLE / LLM_DISABLE_THINKING
+    无 key → MockProvider（PoC 可离线跑通）。
+    """
+    provider = os.getenv("LLM_PROVIDER", "xiaomimimo").lower()
     api_key = os.getenv("LLM_API_KEY", "")
 
-    if provider in ("anthropic",) and api_key:
-        return AnthropicProvider(api_key)
-    if provider in ("xiaomimimo", "mimo") and api_key:
-        return MiMoProvider(api_key)
-    if api_key and provider == "openai":
-        # OpenAI 兼容（未来扩展）
-        return MiMoProvider(api_key)  # MiMo 兼容 OpenAI 格式，可复用
+    if not api_key:
+        print(f"[llm-gateway] provider={provider}, no API key -> MockProvider", flush=True)
+        return MockProvider()
 
-    print(f"[llm-gateway] provider={provider}, no API key -> MockProvider", flush=True)
-    return MockProvider()
+    if provider == "anthropic":
+        return AnthropicProvider(api_key)
+
+    # 其余一律 OpenAI 兼容：端点/鉴权/思考开关经 env 注入，新增服务商无需改代码
+    return OpenAICompatibleProvider(
+        api_key,
+        base_url=os.getenv("LLM_BASE_URL", ""),
+        auth_style=os.getenv("LLM_AUTH_STYLE", "api-key"),
+        disable_thinking=os.getenv("LLM_DISABLE_THINKING", "true").lower() != "false",
+    )
 
 
 # ─── ASR Provider（语音识别）───
@@ -212,7 +236,7 @@ class MiMoASRProvider(BaseASRProvider):
 
 
 def build_asr_provider() -> BaseASRProvider:
-    provider = os.getenv("LLM_PROVIDER", "anthropic").lower()
+    provider = os.getenv("LLM_PROVIDER", "xiaomimimo").lower()
     api_key = os.getenv("LLM_API_KEY", "")
     if provider in ("xiaomimimo", "mimo") and api_key:
         return MiMoASRProvider(api_key)
@@ -333,7 +357,7 @@ class MiMoTTSProvider(BaseTTSProvider):
 
 
 def build_tts_provider() -> BaseTTSProvider:
-    provider = os.getenv("LLM_PROVIDER", "anthropic").lower()
+    provider = os.getenv("LLM_PROVIDER", "xiaomimimo").lower()
     api_key = os.getenv("LLM_API_KEY", "")
     if provider in ("xiaomimimo", "mimo") and api_key:
         return MiMoTTSProvider(api_key)

@@ -128,18 +128,28 @@ class WeatherOverview:
 
 @dataclass
 class SearchResult:
-    """搜索结果条目。"""
+    """搜索结果条目。
+
+    ``snippet`` 是搜索引擎给的短摘要（1~2 句）；``content`` 是正文级原料
+    （如 Exa ``contents.text``）。接地合成优先用 ``content``，缺失才退回 ``snippet``。
+    """
     title: str = ""
     url: str = ""
-    snippet: str = ""           # 摘要/描述
+    snippet: str = ""           # 摘要/描述（短）
     source: str = ""            # 来源域名
+    published: str = ""         # 发布时间 ISO（用于时效展示/排序，可为空）
+    content: str = ""           # 正文（长，可为空）
 
 
 class SearchProvider(ABC):
     @abstractmethod
     async def search(self, query: str, limit: int = 5,
-                     meta: dict | None = None) -> list[SearchResult]:
-        """联网搜索。meta 透传 trace_id/span_id 供可观测（可选）。"""
+                     meta: dict | None = None, **kwargs) -> list[SearchResult]:
+        """联网搜索。meta 透传 trace_id/span_id 供可观测（可选）。
+
+        ``**kwargs`` 容纳 provider 特有的可选项（如 Exa 的 ``recency_days``/``category``）；
+        不支持的 provider 忽略即可，保证降级链上各实现签名兼容。
+        """
         ...
 
 
@@ -184,6 +194,35 @@ class StockCandle:
     low: str = ""
     close: str = ""
     volume: str = ""
+
+
+# ── 赛事 Provider ──────────────────────────────────────────────────
+
+@dataclass
+class SportsFixture:
+    """单场赛事。结构化真实数据，不经 LLM，杜绝比分/对阵编造。"""
+    league: str = ""            # 赛事名（如 FIFA 世界杯）
+    league_id: int = 0          # api-football league id（用于按日期查后客户端精确过滤）
+    round: str = ""             # 轮次（如 小组赛-第2轮）
+    home: str = ""              # 主队
+    away: str = ""              # 客队
+    home_logo: str = ""         # 主队队徽 URL（可空）
+    away_logo: str = ""         # 客队队徽 URL（可空）
+    home_goals: str = ""        # 主队进球（未开赛为空）
+    away_goals: str = ""        # 客队进球
+    status: str = ""            # 归一化状态：finished/live/scheduled/other
+    status_text: str = ""       # 状态中文（已结束/进行中/未开赛/推迟…）
+    elapsed: str = ""           # 进行中的比赛分钟数（可空）
+    kickoff: str = ""           # 开赛时间 ISO（带 timezone）
+
+
+class SportsProvider(ABC):
+    @abstractmethod
+    async def fixtures(self, date: str = "", league: int = 0, season: int = 0,
+                       live: bool = False, timezone: str = "Asia/Shanghai",
+                       meta: dict | None = None) -> list[SportsFixture]:
+        """查询赛事。date=YYYY-MM-DD（空=不限）；league/season 过滤；live=仅进行中。"""
+        ...
 
 
 class StockProvider(ABC):

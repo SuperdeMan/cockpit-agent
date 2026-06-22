@@ -23,7 +23,9 @@ logger = logging.getLogger("llm.server")
 class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
     def __init__(self):
         self.provider = build_provider()
-        self.primary = os.getenv("LLM_MODEL_PRIMARY", "claude-opus-4-8")
+        # 默认对齐项目约定（.env.example/compose/conventions.md 均为 MiMo）；部署经 env 覆盖。
+        # 不再默认 claude——避免漏配 env 时把 claude 模型名发给已配置的 MiMo provider 而报错。
+        self.primary = os.getenv("LLM_MODEL_PRIMARY", "mimo-v2.5-pro")
         self.fallback = os.getenv("LLM_MODEL_FALLBACK", "")
         self.cache = LLMCache(max_size=256, ttl_seconds=300)
         self.limiter = RateLimiter(global_rate=20, global_capacity=50)

@@ -26,7 +26,8 @@
 | [2026-06-20-info-agent-expansion.md](2026-06-20-info-agent-expansion.md) | info 扩展：联网搜索/新闻/股票（只读聚合）+ 票务独立成交易 Agent | 草案：`info.weather` 已落地，余下规划中 |
 | [2026-06-20-standalone-agents-roadmap.md](2026-06-20-standalone-agents-roadmap.md) | 独立 Agent 扩展路线完整设计：充能规划/场景编排/路况安全/行程增强/交易类——含 manifest、Provider 接口、交互流程、代码骨架、打通契约 | 已落地（P0-P3：charging-planner/scene-orchestrator/road-safety + trip-planner 增强）；§8 两处缺口已闭环（scene 命令对齐 VAL；road-safety 主动播报 Agent 侧已实现，**仅余 HMI 投递一跳**）|
 | [2026-06-20-new-agents-detailed-design.md](2026-06-20-new-agents-detailed-design.md) | （已被 standalone-agents-roadmap.md 合并，保留作为历史参考） | 已合并 |
-| [2026-06-20-search-news-redesign.md](2026-06-20-search-news-redesign.md) | WS6 补充：搜索/新闻从"罗列链接"重设计为"LLM 结论+摘要卡片"——Agent/HMI/Provider 三层方案 | 已落地（search_answer/news_digest 新卡片 + LLM 失败退化旧列表） |
+| [2026-06-20-search-news-redesign.md](2026-06-20-search-news-redesign.md) | WS6 补充：搜索/新闻从"罗列链接"重设计为"LLM 结论+摘要卡片"——Agent/HMI/Provider 三层方案 | 已落地但**卡片方案被 2026-06-22 取代**（search_answer 复读结论问题） |
+| [2026-06-22-search-quality-and-card-redesign.md](2026-06-22-search-quality-and-card-redesign.md) | 联网搜索质量重构（Exa 正文级检索 + 接地合成/引用/诚实弃权 + api-football 赛事 + 新闻 TTS 播报式速览）+ 信息卡片重设计（气泡给结论、卡片给证据，消除重复） | 已落地（P1-P5 + 二/三/四轮修复，真实 API 端到端验证） |
 | [2026-06-20-ws2-registry-production.md](2026-06-20-ws2-registry-production.md) | WS2 Registry 生产化：PostgreSQL 持久化/多实例/语义路由/AgentClient 动态解析 | 已落地（P0+P1：PgStore/pgvector/AgentClient 动态解析/多实例） |
 | [2026-06-20-ws8-security-permissions.md](2026-06-20-ws8-security-permissions.md) | WS8 安全与权限：权限动态解析/third-party 沙箱/LLM 注入防护/网络白名单/车控安全门控 | 已落地（P0+P1：注入检测集成/VAL 4 项门控/third-party 沙箱/HTTP_PROXY） |
 

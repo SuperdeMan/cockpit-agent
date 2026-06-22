@@ -143,9 +143,12 @@
 
 | 变量 | 含义 | 必填 |
 |---|---|---|
-| `LLM_PROVIDER` | LLM 厂商（xiaomimimo/anthropic/openai）| 否（默认 xiaomimimo）|
-| `LLM_API_KEY` | LLM 密钥（MiMo/Anthropic 通用）| 否（不填走 mock）|
-| `LLM_MODEL_PRIMARY` / `LLM_MODEL_FALLBACK` | 主/降级模型 | 否 |
+| `LLM_PROVIDER` | LLM 厂商：`anthropic` 走 Claude SDK；其余（xiaomimimo/openai/deepseek/qwen/自建）一律走 OpenAI 兼容 HTTP | 否（默认 xiaomimimo）|
+| `LLM_API_KEY` | LLM 密钥 | 否（不填走 mock）|
+| `LLM_BASE_URL` | OpenAI 兼容服务商的 chat/completions 端点；换服务商只改它 | 否（默认 MiMo 端点）|
+| `LLM_AUTH_STYLE` | 鉴权头：`api-key`（MiMo）/ `bearer`（多数 OpenAI 兼容服务）| 否（默认 api-key）|
+| `LLM_DISABLE_THINKING` | 关闭推理模型 thinking 以保结构化输出（MiMo 须 true）| 否（默认 true）|
+| `LLM_MODEL_PRIMARY` / `LLM_MODEL_FALLBACK` | 主/降级模型 | 否（默认 mimo-v2.5-pro / mimo-v2.5）|
 | `LLM_MODEL_FAST` | 开放域"快"模型（闲聊默认走它降延迟，model_pref=deep 时用 primary）| 否（默认 mimo-v2.5）|
 | `ASR_MODEL` / `ASR_LANGUAGE` | ASR 模型 / 默认语言（zh）| 否 |
 | `TTS_MODEL` | TTS 模型（MiMo mimo-v2.5-tts）| 否 |
@@ -165,6 +168,12 @@
 | `WEATHER_VENDOR` / `QWEATHER_HOST` | 和风天气 provider 与 API Host | 否（无凭证走 mock） |
 | `QWEATHER_PROJECT_ID` / `QWEATHER_KEY_ID` / `QWEATHER_PRIVATE_KEY` | 和风 JWT；私钥优先用单行 PEM 或裸 base64 | 空气质量、天气预警必填 |
 | `QWEATHER_PRIVATE_KEY_PATH` / `QWEATHER_KEY` | 和风 JWT 私钥文件路径（容器内需挂载）/ 旧 V7 API Key | 否 |
+| `EXA_API_KEY` / `EXA_BASE_URL` | Exa 联网搜索（info 主搜索，返回正文级内容）| 否（无 key 降级 AnySearch/Bing/mock）|
+| `ANYSEARCH_API_KEY` / `ANYSEARCH_BASE_URL` | AnySearch 搜索兜底 + extract 正文补抓（MCP）| 否 |
+| `BING_SEARCH_KEY` | Bing 搜索再降级 | 否 |
+| `SERPAPI_API_KEY` | 新闻兜底（Google/Baidu News，Exa 失败才用）| 否 |
+| `API_FOOTBALL_KEY` / `API_FOOTBALL_HOST` | api-football 赛事比分/赛程（info.sports）| 否（无 key 走 mock）|
+| `TUSHARE_TOKEN` | Tushare 股票行情（info.stock）| 否（无 key 走 mock）|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `LOG_LEVEL` | 可观测 | 否 |
 
 > 密钥只进 `.env`（已 gitignore），不进代码/commit/日志。

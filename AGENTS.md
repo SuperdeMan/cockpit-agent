@@ -12,7 +12,7 @@
 阶段：**Phase 1 工程化 PoC 主干、云端中枢 P0-P3 与轻量可观测台已落地**（2026-06-15）。
 持久化/多实例、mTLS/沙箱、完整 OTel 等仍是后续工作；**真实外部能力已接入首批**
 （导航=高德、天气=和风含 JWT/EdDSA 鉴权，无凭证回退 mock；2026-06-20 已用真实凭证端到端
-冒烟通过）。当前全量单测 653 passed, 6 skipped（2026-06-21）；compose 含 info-agent。
+冒烟通过）。当前全量单测 680 passed, 6 skipped（2026-06-22）；compose 含 info-agent。
 
 ---
 
@@ -56,18 +56,18 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 653 passed, 6 skipped（2026-06-21 实测；含 info/导航 provider、位置授权与反地理、天气预警/空气质量、UI 卡片链路、股票 A/港/美股、搜索新闻总结、独立 Agent、ws2/ws8、场景动作经 VAL 执行、road-safety 主动播报节流回归） |
+| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 680 passed, 6 skipped（2026-06-22 实测；含 info/导航 provider、位置授权与反地理、天气预警/空气质量、UI 卡片链路、股票 A/港/美股、Exa 正文级检索+接地合成诚实弃权、api-football 赛事路由（按日期查+中文队名）、新闻 Exa 优先+去重、AnySearch extract、搜索/新闻/赛事证据卡、独立 Agent、ws2/ws8、场景动作经 VAL 执行、road-safety 主动播报节流回归） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
-| HMI 单测 / 构建 | ✅ Node 19/19；`npm run build` 通过（含天气预警、空气质量与 search_answer/news_digest 卡片） |
+| HMI 单测 / 构建 | ✅ Node 19/19；`npm run build` 通过（含天气预警、空气质量与信息证据卡 search_result/news_brief/sports_scores） |
 | Dashboard 单测 / 构建 | ✅ Node 10/10；`npm run build` 通过 |
 | `gen/`（gRPC 生成代码）| ✅ 已生成（`buf generate proto`） |
 | Go 网关 | ✅ Go 1.24 编译通过，Docker 全栈运行 |
-| Agent Provider 适配 | ✅ 10 Agent 接入统一工厂；导航=高德（POI/路线/逆地理/详情+模糊地标LLM解析）/ 天气=和风（JWT/EdDSA）/ 搜索=AnySearch+LLM合成结论 / 新闻=SerpApi+LLM摘要 / 股票=Tushare(A股)+新浪行情(港美股降级) / 充电=Mock；错误话术用户友好化；AgentClient 护栏跨进程修复 |
+| Agent Provider 适配 | ✅ 10 Agent 接入统一工厂；导航=高德（POI/路线/逆地理/详情+模糊地标LLM解析）/ 天气=和风（JWT/EdDSA）/ 搜索=Exa正文级检索（AnySearch→Bing→mock 降级）+接地合成 / 新闻=SerpApi+接地合成 / 赛事=api-football（实时比分/赛程，league=1 世界杯）/ 股票=Tushare(A股)+新浪行情(港美股降级) / 充电=Mock；错误话术用户友好化；AgentClient 护栏跨进程修复 |
 | 新增 Agent（ws2 P0 + standalone-agents） | ✅ charging-planner（50068）/ scene-orchestrator（50069）/ road-safety（50072）已建，含 manifest/providers/tests/Dockerfile |
 | trip-planner 增强 | ✅ 新增 trip.modify 意图 + 并行调 info/charging + NEED_CONFIRM |
 | Registry 持久化（ws2 P0） | ✅ PgStore 实现（PostgreSQL），内存 fallback 保留；AgentClient 经 Registry 动态解析 endpoint |
 | 安全门控增强（ws8 P0） | ✅ VAL 补充：高速禁开车窗/天窗、低电量禁高耗电、倒车禁非安全车控、儿童锁后排锁定 |
-| 搜索/新闻卡片重设计 | ✅ Agent ui_card 改为 search_answer/news_digest（结论式）；HMI 新增 SearchAnswerCard/NewsDigestCard 组件 |
+| 搜索质量重构 + 卡片重设计（2026-06-22） | ✅ Exa 正文级检索 + 接地合成（强制引用、无依据诚实弃权，删除旧「逼答」prompt）；新增 info.sports 经 api-football 给真实比分/赛程（按日期查+客户端过滤，免费档可用；队名英→中映射+国旗）；新闻改 Exa 优先+去重；卡片范式改为「气泡给结论、卡片只给证据」——search_result/news_brief/sports_scores（来源前3+更多、时效+置信度），消除结论复读。二轮修复合成超时/「明天」日期/卡片要点重复/AnySearch extract(MCP)。详见 `docs/design/2026-06-22-search-quality-and-card-redesign.md` |
 | conventions.md 同步 | ✅ Agent 清单表 + Intent 全集 + 端口表已更新（含 4 个新 Agent + trip.modify + charging.* + scene.* + safety.*） |
 | 安全/权限/编排/协作/支付 | ✅ PoC 链路落地；真实 token、正式沙箱与真实支付仍待接入 |
 | 可观测 | ✅ NATS 事件、collector REST/WS、车辆 diff、端云 span、Agent 健康/指标与独立 Dashboard；collector/registry 重启经周期快照与周期重注册自愈；Prometheus/OTel 导出仍待做 |

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type {
   UiCard, WeatherCard, ForecastCard, StockCard,
   NewsCard, SearchCard, SearchAnswerCard, NewsDigestCard,
+  SearchResultCard, NewsBriefCard, SportsScoresCard,
   PoiListCard, PoiDetailCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
@@ -33,6 +34,9 @@ export function CardRenderer({ card }: { card: UiCard }) {
     case 'news_digest': return <NewsDigestCardView card={card} />
     case 'search_list': return <SearchCardView card={card} />
     case 'search_answer': return <SearchAnswerCardView card={card} />
+    case 'search_result': return <SearchResultCardView card={card} />
+    case 'news_brief': return <NewsBriefCardView card={card} />
+    case 'sports_scores': return <SportsScoresCardView card={card} />
     case 'poi_list': return <PoiListCardView card={card} />
     case 'poi_detail': return <PoiDetailCardView card={card} />
     default: return null
@@ -296,6 +300,155 @@ function SearchAnswerCardView({ card }: { card: SearchAnswerCard }) {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── 信息证据卡（2026-06-22 重设计）───
+// 范式：气泡给结论（语音同步），卡片只承载证据——来源 / 关键数据 / 时效 / 置信度，
+// 绝不复读结论文本。来源呈现全局统一：默认前 N 条，多余「更多」展开。
+
+function relativeTime(iso?: string): string {
+  if (!iso || iso === 'mock') return ''
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ''
+  const diff = Date.now() - t
+  if (diff < 60000) return '刚刚'
+  const min = Math.floor(diff / 60000)
+  if (min < 60) return `${min}分钟前`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}小时前`
+  const day = Math.floor(hr / 24)
+  if (day < 30) return `${day}天前`
+  return new Date(t).toLocaleDateString('zh-CN')
+}
+
+function CardHead({ icon, title, freshness }: { icon: string; title: string; freshness?: string }) {
+  const rel = relativeTime(freshness)
+  return (
+    <div className="ev-head">
+      <span className="ev-head-title">{icon} {title}</span>
+      {rel && <span className="ev-fresh">⏱ {rel}</span>}
+    </div>
+  )
+}
+
+function ConfidenceBadge({ level }: { level?: string }) {
+  if (!level) return null
+  const map: Record<string, { label: string; tone: string }> = {
+    high: { label: '高', tone: 'ok' },
+    medium: { label: '中', tone: 'mid' },
+    low: { label: '未充分核实', tone: 'low' },
+  }
+  const c = map[level] ?? map.medium
+  return <div className={`ev-confidence ev-confidence-${c.tone}`}>置信度 <b>{c.label}</b></div>
+}
+
+function SourceList({ sources }: {
+  sources: Array<{ title: string; url?: string; source?: string }>
+}) {
+  const [open, setOpen] = useState(false)
+  if (!sources.length) return null
+  const shown = open ? sources : sources.slice(0, 3)
+  return (
+    <div className="ev-sources">
+      <div className="ev-sources-label">来源</div>
+      <div className="ev-source-list">
+        {shown.map((s, i) => (
+          <div key={i} className="ev-source-item">
+            <span className="ev-source-idx">{i + 1}</span>
+            {s.url
+              ? <a className="ev-source-title" href={s.url} target="_blank" rel="noopener noreferrer">{s.title}</a>
+              : <span className="ev-source-title">{s.title}</span>}
+            {s.source && <span className="ev-source-domain">{s.source}</span>}
+          </div>
+        ))}
+      </div>
+      {sources.length > 3 && (
+        <button className="ev-more" onClick={() => setOpen(!open)}>
+          {open ? '收起' : `更多 ${sources.length - 3} 条`}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function SearchResultCardView({ card }: { card: SearchResultCard }) {
+  return (
+    <div className="card card-evidence">
+      <CardHead icon="🔍" title={card.query} freshness={card.freshness} />
+      <SourceList sources={card.sources} />
+      <ConfidenceBadge level={card.confidence} />
+    </div>
+  )
+}
+
+function NewsBriefCardView({ card }: { card: NewsBriefCard }) {
+  const [open, setOpen] = useState(false)
+  const shown = open ? card.items : card.items.slice(0, 10)
+  return (
+    <div className="card card-evidence">
+      <CardHead icon="📰" title={card.topic || '今日值得关注'} freshness={card.freshness} />
+      <ol className="ev-news-ol">
+        {shown.map((n, i) => (
+          <li key={i} className="ev-news-li">
+            {n.url
+              ? <a className="ev-news-h" href={n.url} target="_blank" rel="noopener noreferrer">{n.title}</a>
+              : <span className="ev-news-h">{n.title}</span>}
+            {n.summary && <div className="ev-news-sum">{n.summary}</div>}
+            {n.source && (
+              <span className="ev-news-src">
+                {n.source}{relativeTime(n.publish_time) ? ` · ${relativeTime(n.publish_time)}` : ''}
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+      {card.items.length > 10 && (
+        <button className="ev-more" onClick={() => setOpen(!open)}>
+          {open ? '收起' : `更多 ${card.items.length - 10} 条`}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function FixtureRow({ f }: { f: SportsScoresCard['fixtures'][number] }) {
+  const scored = (f.status === 'live' || f.status === 'finished') &&
+    (f.home_goals !== '' || f.away_goals !== '')
+  const kickoff = f.kickoff && f.kickoff.includes('T') ? f.kickoff.slice(11, 16) : ''
+  return (
+    <div className={`fx-row fx-${f.status}`}>
+      <span className="fx-team fx-home">
+        <span className="fx-name">{f.home}</span>
+        {f.home_logo && <img className="fx-flag" src={f.home_logo} alt="" loading="lazy" />}
+      </span>
+      <span className="fx-mid">
+        {scored
+          ? <b className="fx-score">{f.home_goals}-{f.away_goals}</b>
+          : <span className="fx-vs">{kickoff || 'vs'}</span>}
+        <span className={`fx-status fx-status-${f.status}`}>
+          {f.status === 'live' && f.elapsed ? `${f.status_text} ${f.elapsed}'` : f.status_text}
+        </span>
+      </span>
+      <span className="fx-team fx-away">
+        {f.away_logo && <img className="fx-flag" src={f.away_logo} alt="" loading="lazy" />}
+        <span className="fx-name">{f.away}</span>
+      </span>
+    </div>
+  )
+}
+
+function SportsScoresCardView({ card }: { card: SportsScoresCard }) {
+  return (
+    <div className="card card-evidence card-sports">
+      <CardHead icon="⚽" title={card.title} freshness={card.freshness} />
+      {card.fixtures.length === 0
+        ? <div className="ev-empty">暂无比赛安排</div>
+        : <div className="ev-fixtures">
+            {card.fixtures.map((f, i) => <FixtureRow key={i} f={f} />)}
+          </div>}
+      {card.source && <div className="ev-card-foot">数据来源 {card.source}</div>}
     </div>
   )
 }

@@ -39,7 +39,7 @@ class AnySearchProvider(SearchProvider):
                                      timeout_s=10.0, max_retries=0)
 
     async def search(self, query: str, limit: int = 5,
-                     meta: dict | None = None) -> list[SearchResult]:
+                     meta: dict | None = None, **kwargs) -> list[SearchResult]:
         # AnySearch 用 POST，body 字段为 query（不是 q）
         data = await self._http.post_json(
             f"{self._base}/v1/search",
@@ -62,3 +62,27 @@ class AnySearchProvider(SearchProvider):
                 source=_s(item.get("source") or item.get("domain", "")),
             ))
         return results
+
+    async def extract(self, url: str, meta: dict | None = None) -> str:
+        """抓取网页正文（Markdown），经 AnySearch MCP ``tools/call``。失败抛 ProviderError。
+
+        MCP: ``POST {base}/mcp``，JSON-RPC 2.0，``method=tools/call``、``name=extract``、
+        ``arguments.url``。解析 ``result.content[]`` 中 ``type==text`` 的文本拼接
+        （上游截断约 50k 字符）。docs: github.com/anysearch-ai/anysearch-mcp-server
+        """
+        if not url:
+            return ""
+        body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "extract", "arguments": {"url": url}}}
+        data = await self._http.post_json(
+            f"{self._base}/mcp", json_body=body,
+            headers={"Authorization": f"Bearer {self._key}",
+                     "Accept": "application/json, text/event-stream"},
+            op="extract", meta=meta,
+        )
+        if data.get("error"):
+            raise ProviderError(f"anysearch extract failed: {data['error']}")
+        result = data.get("result") or {}
+        parts = [c.get("text", "") for c in (result.get("content") or [])
+                 if isinstance(c, dict) and c.get("type") == "text"]
+        return "\n".join(p for p in parts if p).strip()

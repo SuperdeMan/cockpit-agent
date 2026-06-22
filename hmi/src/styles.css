@@ -757,6 +757,65 @@ button { font-family: inherit; }
 .sources-toggle { padding: 5px 8px; cursor: pointer; color: var(--accent); background: transparent; border: 1px solid var(--line-strong); border-radius: 7px; font: 600 11px var(--font-mono); }
 .sources-toggle:hover { background: var(--summary-surface); border-color: var(--accent); }
 
+/* 信息证据卡（2026-06-22 重设计）：卡片只给证据，结论在气泡，不复读 */
+.card-evidence { background: var(--surface-2); }
+.ev-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.ev-head-title { min-width: 0; font-size: 13.5px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-fresh { flex: 0 0 auto; color: var(--faint); font: 10px var(--font-mono); }
+.ev-points { margin: 0 0 11px; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.ev-points li { color: var(--text); font-size: 12.5px; line-height: 1.5; }
+.ev-sources { margin-top: 6px; }
+.ev-sources-label { color: var(--accent); font: 700 10px var(--font-mono); letter-spacing: 0.06em; margin-bottom: 6px; }
+.ev-source-list { display: flex; flex-direction: column; gap: 7px; }
+.ev-source-item { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; }
+.ev-source-idx {
+  flex: 0 0 auto; width: 17px; height: 17px; border-radius: 50%;
+  background: var(--summary-surface); color: var(--accent);
+  font: 700 10px var(--font-mono); display: flex; align-items: center; justify-content: center;
+}
+.ev-source-title { min-width: 0; flex: 1; color: var(--text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.ev-source-title:hover { color: var(--accent-2); text-decoration: underline; }
+.ev-source-domain { flex: 0 0 auto; color: var(--faint); font: 10px var(--font-mono); }
+.ev-more { margin-top: 9px; padding: 4px 9px; cursor: pointer; color: var(--accent); background: transparent; border: 1px solid var(--line-strong); border-radius: 7px; font: 600 11px var(--font-mono); }
+.ev-more:hover { background: var(--summary-surface); border-color: var(--accent); }
+.ev-confidence { margin-top: 11px; color: var(--muted); font-size: 11px; }
+.ev-confidence b { font-weight: 700; }
+.ev-confidence-ok b { color: var(--accent); }
+.ev-confidence-low { color: var(--warn); }
+.ev-confidence-low b { color: var(--warn); }
+.ev-empty { padding: 14px; text-align: center; color: var(--faint); font-size: 12px; border: 1px dashed var(--line-strong); border-radius: 9px; }
+.ev-card-foot { margin-top: 10px; color: var(--faint); font: 10px var(--font-mono); }
+
+/* 新闻：编号列表，每条标题 + 一句话摘要（直接可见，点标题开原文） */
+.ev-news-ol { margin: 0; padding: 0; list-style: none; counter-reset: news; display: flex; flex-direction: column; gap: 11px; }
+.ev-news-li { counter-increment: news; position: relative; padding-left: 27px; }
+.ev-news-li::before {
+  content: counter(news); position: absolute; left: 0; top: 1px;
+  width: 19px; height: 19px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink);
+  font: 700 11px var(--font-mono); display: flex; align-items: center; justify-content: center;
+}
+.ev-news-h { display: block; font-size: 13px; font-weight: 600; color: var(--text); text-decoration: none; line-height: 1.42; }
+a.ev-news-h:hover { color: var(--accent-2); text-decoration: underline; }
+.ev-news-sum { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
+.ev-news-src { display: inline-block; margin-top: 3px; color: var(--faint); font: 10px var(--font-mono); }
+
+/* 赛事比分 */
+.ev-fixtures { display: flex; flex-direction: column; gap: 8px; }
+.fx-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface); border-radius: var(--radius-sm); }
+.fx-live { border: 1px solid var(--warn); }
+.fx-team { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.fx-home { justify-content: flex-end; }
+.fx-away { justify-content: flex-start; }
+.fx-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-flag { width: 20px; height: 20px; border-radius: 3px; object-fit: cover; flex: 0 0 auto; background: var(--line); }
+.fx-mid { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 56px; }
+.fx-score { font: 700 15px var(--font-mono); color: var(--text); }
+.fx-vs { color: var(--faint); font: 11px var(--font-mono); }
+.fx-status { font-size: 10px; color: var(--faint); }
+.fx-status-live { color: var(--warn); font-weight: 700; }
+.fx-status-finished { color: var(--muted); }
+
 /* POI 卡片 */
 .card-poi-list { display: flex; flex-direction: column; gap: 8px; }
 .poi-item {

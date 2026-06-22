@@ -2,8 +2,10 @@
 import logging
 import os
 
-from .base import WeatherProvider, SearchProvider, NewsProvider, StockProvider
-from .mock import MockWeatherProvider, MockSearchProvider, MockNewsProvider, MockStockProvider
+from .base import (WeatherProvider, SearchProvider, NewsProvider, StockProvider,
+                   SportsProvider)
+from .mock import (MockWeatherProvider, MockSearchProvider, MockNewsProvider,
+                   MockStockProvider, MockSportsProvider)
 
 logger = logging.getLogger("agent.info.providers")
 
@@ -54,9 +56,18 @@ def build_weather_provider() -> WeatherProvider:
 
 
 def build_search_provider() -> SearchProvider:
-    """联网搜索 Provider 工厂。优先 AnySearch，降级 Bing，最终 mock。"""
-    vendor = os.getenv("SEARCH_VENDOR", "anysearch")
-    # AnySearch（优先）
+    """联网搜索 Provider 工厂。优先 Exa（返回正文级内容），降级 AnySearch → Bing → mock。"""
+    # Exa（优先，正文级检索）
+    if os.getenv("EXA_API_KEY"):
+        try:
+            from .search_exa import ExaSearchProvider
+            return ExaSearchProvider(
+                os.getenv("EXA_API_KEY"),
+                base_url=os.getenv("EXA_BASE_URL", ""),
+            )
+        except Exception as e:
+            logger.warning("ExaSearchProvider init failed: %s", e)
+    # AnySearch（兜底搜索）
     if os.getenv("ANYSEARCH_API_KEY"):
         try:
             from .search_any import AnySearchProvider
@@ -66,7 +77,7 @@ def build_search_provider() -> SearchProvider:
             )
         except Exception as e:
             logger.warning("AnySearchProvider init failed: %s", e)
-    # Bing（降级）
+    # Bing（再降级）
     if os.getenv("BING_SEARCH_KEY"):
         try:
             from .search_bing import BingSearchProvider
@@ -101,6 +112,35 @@ def build_news_provider() -> NewsProvider:
         except Exception as e:
             logger.warning("NewsAPIProvider init failed, falling back to mock: %s", e)
     return MockNewsProvider()
+
+
+def build_extractor():
+    """正文补抓 Provider（AnySearch extract，MCP）。无 ANYSEARCH_API_KEY 返回 None。
+
+    用于 Exa 结果正文为空时的 best-effort 补抓；不配置则跳过（不影响主链）。
+    """
+    if os.getenv("ANYSEARCH_API_KEY"):
+        try:
+            from .search_any import AnySearchProvider
+            return AnySearchProvider(
+                os.getenv("ANYSEARCH_API_KEY"),
+                base_url=os.getenv("ANYSEARCH_BASE_URL", ""),
+            )
+        except Exception as e:
+            logger.warning("extractor init failed: %s", e)
+    return None
+
+
+def build_sports_provider() -> SportsProvider:
+    """赛事 Provider 工厂。api-football（实时比分/赛程）→ mock。"""
+    key = os.getenv("API_FOOTBALL_KEY")
+    if key:
+        try:
+            from .sports_apifootball import ApiFootballProvider
+            return ApiFootballProvider(key, host=os.getenv("API_FOOTBALL_HOST", ""))
+        except Exception as e:
+            logger.warning("ApiFootballProvider init failed, falling back to mock: %s", e)
+    return MockSportsProvider()
 
 
 def build_stock_provider() -> StockProvider:
