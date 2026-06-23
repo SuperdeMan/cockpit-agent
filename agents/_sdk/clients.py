@@ -25,6 +25,16 @@ class LLMClient:
             self._ch = grpc.aio.insecure_channel(self.addr)
         return self._ch
 
+    async def _reset_channel(self):
+        """连接失效（如 llm-gateway 重启换 IP，旧 channel 卡在旧地址）→ 关旧 channel，
+        下次重建并重新解析 DNS。否则依赖一重启，agent 的缓存 channel 永久失联到 agent 重启。"""
+        ch, self._ch = self._ch, None
+        if ch is not None:
+            try:
+                await ch.close()
+            except Exception:
+                pass
+
     def _stub(self):
         return llm_pb2_grpc.LLMGatewayStub(self._channel())
 
@@ -35,11 +45,16 @@ class LLMClient:
             messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],
             model=model, temperature=temperature, max_tokens=max_tokens,
         )
-        try:
-            resp = await self._stub().Complete(req, timeout=timeout)
-            return resp.content
-        except grpc.aio.AioRpcError as e:
-            raise RuntimeError(f"LLM Gateway error: {e.code().name}: {e.details()}") from e
+        for attempt in (1, 2):
+            try:
+                resp = await self._stub().Complete(req, timeout=timeout)
+                return resp.content
+            except grpc.aio.AioRpcError as e:
+                # 依赖重启换 IP → 旧 channel UNAVAILABLE：重建 channel 重新解析 DNS，重试一次。
+                if attempt == 1 and e.code() == grpc.StatusCode.UNAVAILABLE:
+                    await self._reset_channel()
+                    continue
+                raise RuntimeError(f"LLM Gateway error: {e.code().name}: {e.details()}") from e
 
     async def stream(self, messages: list[dict], model: str = "",
                      temperature: float = 0.7, max_tokens: int = 512,
@@ -53,6 +68,8 @@ class LLMClient:
                 if chunk.delta:
                     yield chunk.delta
         except grpc.aio.AioRpcError as e:
+            if e.code() == grpc.StatusCode.UNAVAILABLE:
+                await self._reset_channel()  # 让后续调用重建 channel 自愈
             raise RuntimeError(f"LLM Gateway stream error: {e.code().name}: {e.details()}") from e
 
 
@@ -66,20 +83,33 @@ class MemoryClient:
             self._ch = grpc.aio.insecure_channel(self.addr)
         return self._ch
 
+    async def _reset_channel(self):
+        """memory 重启换 IP 后旧 channel 失联 → 关旧 channel，下次重建重新解析 DNS。"""
+        ch, self._ch = self._ch, None
+        if ch is not None:
+            try:
+                await ch.close()
+            except Exception:
+                pass
+
     def _stub(self):
         return memory_pb2_grpc.MemoryStub(self._channel())
 
     async def get_context(self, session_id: str, user_id: str, vehicle_id: str,
                           scopes: list[str]) -> dict:
-        try:
-            resp = await self._stub().GetContext(
-                memory_pb2.GetContextRequest(
-                    session_id=session_id, user_id=user_id,
-                    vehicle_id=vehicle_id, scopes=scopes),
-                timeout=DEFAULT_TIMEOUT)
-            return dict(resp.values)
-        except grpc.aio.AioRpcError as e:
-            raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
+        for attempt in (1, 2):
+            try:
+                resp = await self._stub().GetContext(
+                    memory_pb2.GetContextRequest(
+                        session_id=session_id, user_id=user_id,
+                        vehicle_id=vehicle_id, scopes=scopes),
+                    timeout=DEFAULT_TIMEOUT)
+                return dict(resp.values)
+            except grpc.aio.AioRpcError as e:
+                if attempt == 1 and e.code() == grpc.StatusCode.UNAVAILABLE:
+                    await self._reset_channel()
+                    continue
+                raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
 
     async def get_session(self, session_id: str, last_n: int = 6) -> list[dict]:
         try:
@@ -87,6 +117,17 @@ class MemoryClient:
                 memory_pb2.GetSessionRequest(session_id=session_id, last_n=last_n),
                 timeout=DEFAULT_TIMEOUT)
             return [{"role": t.role, "text": t.text, "ts": t.ts} for t in resp.turns]
+        except grpc.aio.AioRpcError as e:
+            raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
+
+    async def upsert_profile(self, user_id: str, key: str, value_json: str) -> bool:
+        """写用户画像字段（如常用地点 places）。失败抛 RuntimeError，调用方决定容错。"""
+        try:
+            resp = await self._stub().UpsertProfile(
+                memory_pb2.UpsertProfileRequest(
+                    user_id=user_id, key=key, value_json=value_json),
+                timeout=DEFAULT_TIMEOUT)
+            return resp.ok
         except grpc.aio.AioRpcError as e:
             raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
 

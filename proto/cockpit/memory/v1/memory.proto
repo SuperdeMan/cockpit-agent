@@ -7,6 +7,7 @@ service Memory {
   rpc GetContext (GetContextRequest) returns (GetContextResponse); // 按 scopes 取上下文
   rpc AppendTurn (AppendTurnRequest) returns (AppendTurnResponse); // 写入一轮对话
   rpc GetSession (GetSessionRequest) returns (GetSessionResponse); // 取最近 N 轮
+  rpc UpsertProfile (UpsertProfileRequest) returns (UpsertProfileResponse); // 写用户画像（如常用地点 places）
 }
 
 message GetContextRequest {
@@ -36,3 +37,10 @@ message Turn {
   int64 ts = 3;
 }
 message GetSessionResponse { repeated Turn turns = 1; }
+
+message UpsertProfileRequest {
+  string user_id = 1;
+  string key = 2;          // 画像字段名，如 "places"
+  string value_json = 3;   // 该字段的完整 JSON 值（如 places map 全量）
+}
+message UpsertProfileResponse { bool ok = 1; }

@@ -1,9 +1,14 @@
 """Memory gRPC 服务。"""
 from __future__ import annotations
 
+import json
+import logging
+
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
 from store import MemoryStore
+
+logger = logging.getLogger("memory.server")
 
 
 class MemoryServicer(memory_pb2_grpc.MemoryServicer):
@@ -24,3 +29,16 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         return memory_pb2.GetSessionResponse(turns=[
             memory_pb2.Turn(role=t["role"], text=t["text"], ts=t["ts"]) for t in turns
         ])
+
+    async def UpsertProfile(self, request, context):
+        """写用户画像字段（如常用地点 places）。value_json 非法则拒绝，不写脏数据。"""
+        if not request.user_id or not request.key:
+            return memory_pb2.UpsertProfileResponse(ok=False)
+        try:
+            value = json.loads(request.value_json) if request.value_json else None
+        except json.JSONDecodeError as e:
+            logger.warning("UpsertProfile bad json (%s/%s): %s",
+                           request.user_id, request.key, e)
+            return memory_pb2.UpsertProfileResponse(ok=False)
+        await self.store.upsert_profile(request.user_id, request.key, value)
+        return memory_pb2.UpsertProfileResponse(ok=True)

@@ -51,6 +51,15 @@ class Context:
     async def history(self, last_n: int = 6) -> list[dict]:
         return await self._memory.get_session(self.session_id, last_n)
 
+    async def save_profile(self, key: str, value) -> bool:
+        """写用户画像字段（如常用地点 places）。value 为可 JSON 序列化对象。
+        无 user_id 时静默跳过（PoC 单用户由网关注入 user_id）。"""
+        if not self.user_id:
+            return False
+        import json
+        return await self._memory.upsert_profile(
+            self.user_id, key, json.dumps(value, ensure_ascii=False))
+
 
 class BaseAgent(ABC):
     def __init__(self, manifest_path: str):
