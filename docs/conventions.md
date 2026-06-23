@@ -14,7 +14,7 @@
 | parking-payment | parking_payment | ecosystem | third_party | cloud | 50064 | parking.find, parking.pay |
 | manual-rag | manual_rag | ecosystem | first_party | cloud | 50065 | manual.query |
 | trip-planner | trip_planner | ecosystem | first_party | cloud | 50066 | trip.plan, trip.modify |
-| info | info | core | first_party | cloud | 50067 | info.weather, info.forecast, info.alerts, info.indices, info.air_quality, info.search, info.news, info.stock |
+| info | info | core | first_party | cloud | 50067 | info.weather, info.forecast, info.alerts, info.indices, info.air_quality, info.search, info.sports, info.news, info.stock |
 | charging-planner | charging_planner | core | first_party | cloud | 50068 | charging.find, charging.plan, charging.status |
 | scene-orchestrator | scene_orchestrator | core | first_party | cloud | 50069 | scene.activate, scene.deactivate, scene.list |
 | (车控/媒体) | orchestrator/edge | core | system | **edge** | 50070 | hvac.*, window.*, media.*（端侧 Fast Intent 直执行）|
@@ -34,7 +34,7 @@
 | `hvac.*` / `window.*` / `seat.*` / `sunroof.*` / `sunshade.*` / `trunk.*` / `door_lock.*` / `ambient_light.*` / `headlight.*` / `wiper.*` / `rear_view_mirror.*` / `fragrance.*` / `volume.*` / `fuel_tank_cover.*` / `charging_port.*` / `steering_wheel.*` / `energy_recovery.*` / `lane_*` / `scene_mode.*` / `power_mode.*` / `driving_mode.*` / `screen.*` / `accompany_home.*` / `tire_pressure.*` / `battery.query` / `dashcam.*` / `aircon.*` | 端侧车控 | edge | value/unit/positions/mode/tag | 经 VAL 知识库校验；150 条意图 pattern |
 | `media.play` / `media.pause` / `media.next` / `media.prev` | 端侧媒体 | edge | — | 经 VAL |
 | `navigation.search_poi` | navigation | cloud | keyword, category, near, rating_min | |
-| `navigation.navigate_to` | navigation | cloud | destination | |
+| `navigation.navigate_to` | navigation | cloud | destination, stop_category, waypoint | 视觉地标描述（“像笋的建筑”）优先经 LLM 解析正式名称再由地图验证，不盲信高德模糊匹配；多 agent「导航+充电」时途经充电站经聚合器并入 navigate.payload.waypoints。顺路用餐：`stop_category`（吃饭/咖啡…）→ 导航到目的地+给该类目真实候选(waypoint_choice 卡)让用户二次选；`waypoint`（已选停靠点名/raw_text『途经X』）→ 该点 near 目的地解析坐标并入 navigate.waypoints，并出 **route_plan 路线规划卡**（出发地→途经点→目的地，best-effort 经 get_route(waypoints) 给全程距离/时长） |
 | `navigation.reverse_geocode` | navigation | cloud | lng, lat | 逆地理编码：坐标→地址 |
 | `navigation.poi_detail` | navigation | cloud | poi_id | POI 详情查询 |
 | `chitchat.talk` | chitchat | cloud | — | 系统兜底 fallback |
@@ -45,7 +45,7 @@
 | `manual.query` | manual-rag | cloud | question | RAG |
 | `trip.plan` | trip-planner | cloud | destination, days, preferences | 跨 Agent 协作(Phase1)；NEED_CONFIRM 确认方案 |
 | `trip.modify` | trip-planner | cloud | modification | 修改已有行程（局部重规划）；NEED_CONFIRM |
-| `charging.find` | charging-planner | cloud | destination, soc, prefer | 找附近的充电站；NEED_CONFIRM 导航 |
+| `charging.find` | charging-planner | cloud | destination, soc, prefer | 找充电站。带 destination → 按目的地搜、最优站作为导航途经点（出 charging_route 卡 + data.waypoint，聚合器并入 navigate）；无 destination → 按当前位置出附近列表 |
 | `charging.plan` | charging-planner | cloud | destination, soc | 规划长途充能（出发地→沿途途经充电点→目的地）；信息建议 advisory（不发导航/不二次确认导航）；目的地过泛→NEED_SLOT 高德候选二次确认 |
 | `charging.status` | charging-planner | cloud | — | 查询当前充电状态 |
 | `scene.activate` | scene-orchestrator | cloud | scene, custom_params | 激活预定义场景模式；有危险动作时 NEED_CONFIRM |
@@ -62,6 +62,7 @@
 | `info.news` | info | cloud | topic, limit | 新闻摘要（SerpApi Google+Baidu News，AnySearch 兜底）；端侧"看新闻/摘要"→info.news，"播新闻"→media.* |
 | `info.stock` | info | cloud | symbol | 股票行情（Tushare A股 + 新浪行情港美股降级，免费）；端侧"股票/大盘"收敛到 info.stock |
 | `info.air_quality` | info | cloud | city | 实时空气质量（和风 AQI/PM2.5 真实 provider）；端侧"空气质量/PM2.5"online_only 上云 |
+| `info.sports` | info | cloud | query, league | 赛事比分/赛程（api-football，league=世界杯/欧冠/五大联赛，按日期查+客户端过滤）。追问"第N场/某队 + 谁进的球/详细赛况"→定位该场并拉**进球事件**（射手+分钟，剔除罚丢点球等非进球）；"**射手榜/金靴/得分王**"→`/players/topscorers`（免费档仅 2022-2024 赛季，试本届→拿不到回退最近可用并标注「{season}赛季」）；"**总/历史射手榜**"（累计历史榜，赛季 API 给不了）→改写 query 走通用搜索接地合成；联赛上下文可从多轮 `ctx.history()` 回填 |
 
 新增 intent：先在对应 Agent 的 `manifest.yaml` 声明（含 examples，供语义路由），端侧意图额外进 `orchestrator/edge/fast_intent.py` 的 `LOCAL_INTENTS`。
 

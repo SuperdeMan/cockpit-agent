@@ -47,6 +47,8 @@ export default function App() {
   const lastPoiNamesRef = useRef<string[] | null>(null)
   // 充电目的地候选（dest_choice）名：「第N个」回填目的地槽位续接规划，而非发起导航
   const lastDestChoiceRef = useRef<string[] | null>(null)
+  // 顺路停靠候选（waypoint_choice）：「第N个」派发「导航去{目的地}途经{名称}」→ 落途经点
+  const lastWaypointChoiceRef = useRef<{ destination: string; names: string[] } | null>(null)
   const settingsRef = useRef<Settings>(settings)
   settingsRef.current = settings // 始终保留最新设置，避免 ws 回调读到陈旧闭包
 
@@ -180,12 +182,15 @@ export default function App() {
         const c: any = data.ui_card
         const names = c?.type === 'poi_list'
           ? (c.items || []).map((it: any) => it.name).filter(Boolean) : null
+        lastDestChoiceRef.current = null
+        lastWaypointChoiceRef.current = null
+        lastPoiNamesRef.current = null
         if (c?.type === 'poi_list' && c.purpose === 'dest_choice') {
           lastDestChoiceRef.current = names
-          lastPoiNamesRef.current = null
+        } else if (c?.type === 'poi_list' && c.purpose === 'waypoint_choice') {
+          lastWaypointChoiceRef.current = { destination: c.destination || '', names: names || [] }
         } else {
           lastPoiNamesRef.current = names
-          lastDestChoiceRef.current = null
         }
       }
       if (s.ttsEnabled && s.autoplay && data.speech) {
@@ -232,6 +237,16 @@ export default function App() {
   const send = (text: string) => {
     setMessages((m) => [...m, { id: uid(), role: 'user', text }])
     setAwaitConfirm(false)
+    // 顺路停靠途经点候选「第N个」：派发「导航去{目的地}途经{名称}」→ navigate.waypoints
+    const wp = lastWaypointChoiceRef.current
+    if (wp && wp.names.length && wp.destination) {
+      const idx = poiSelectionIndex(text)
+      if (idx >= 0 && idx < wp.names.length) {
+        lastWaypointChoiceRef.current = null
+        dispatch(`导航去${wp.destination}途经${wp.names[idx]}`, false)
+        return
+      }
+    }
     // 充电目的地候选「第N个」：派发候选名本身 → 编排器回填目的地槽位续接规划（不改写为导航）
     const choices = lastDestChoiceRef.current
     if (choices && choices.length) {

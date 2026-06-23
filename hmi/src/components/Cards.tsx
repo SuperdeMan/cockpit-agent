@@ -4,8 +4,8 @@ import { useState } from 'react'
 import type {
   UiCard, WeatherCard, ForecastCard, StockCard,
   NewsCard, SearchCard, SearchAnswerCard, NewsDigestCard,
-  SearchResultCard, NewsBriefCard, SportsScoresCard, ChargingRouteCard,
-  PoiListCard, PoiDetailCard,
+  SearchResultCard, NewsBriefCard, SportsScoresCard, SportsScorersCard,
+  RoutePlanCard, ChargingRouteCard, PoiListCard, PoiDetailCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
@@ -37,6 +37,8 @@ export function CardRenderer({ card }: { card: UiCard }) {
     case 'search_result': return <SearchResultCardView card={card} />
     case 'news_brief': return <NewsBriefCardView card={card} />
     case 'sports_scores': return <SportsScoresCardView card={card} />
+    case 'sports_scorers': return <SportsScorersCardView card={card} />
+    case 'route_plan': return <RoutePlanCardView card={card} />
     case 'charging_route': return <ChargingRouteCardView card={card} />
     case 'poi_list': return <PoiListCardView card={card} />
     case 'poi_detail': return <PoiDetailCardView card={card} />
@@ -419,23 +421,37 @@ function FixtureRow({ f }: { f: SportsScoresCard['fixtures'][number] }) {
     (f.home_goals !== '' || f.away_goals !== '')
   const kickoff = f.kickoff && f.kickoff.includes('T') ? f.kickoff.slice(11, 16) : ''
   return (
-    <div className={`fx-row fx-${f.status}`}>
-      <span className="fx-team fx-home">
-        <span className="fx-name">{f.home}</span>
-        {f.home_logo && <img className="fx-flag" src={f.home_logo} alt="" loading="lazy" />}
-      </span>
-      <span className="fx-mid">
-        {scored
-          ? <b className="fx-score">{f.home_goals}-{f.away_goals}</b>
-          : <span className="fx-vs">{kickoff || 'vs'}</span>}
-        <span className={`fx-status fx-status-${f.status}`}>
-          {f.status === 'live' && f.elapsed ? `${f.status_text} ${f.elapsed}'` : f.status_text}
+    <div className="fx-item">
+      <div className={`fx-row fx-${f.status}`}>
+        <span className="fx-team fx-home">
+          <span className="fx-name">{f.home}</span>
+          {f.home_logo && <img className="fx-flag" src={f.home_logo} alt="" loading="lazy" />}
         </span>
-      </span>
-      <span className="fx-team fx-away">
-        {f.away_logo && <img className="fx-flag" src={f.away_logo} alt="" loading="lazy" />}
-        <span className="fx-name">{f.away}</span>
-      </span>
+        <span className="fx-mid">
+          {scored
+            ? <b className="fx-score">{f.home_goals}-{f.away_goals}</b>
+            : <span className="fx-vs">{kickoff || 'vs'}</span>}
+          <span className={`fx-status fx-status-${f.status}`}>
+            {f.status === 'live' && f.elapsed ? `${f.status_text} ${f.elapsed}'` : f.status_text}
+          </span>
+        </span>
+        <span className="fx-team fx-away">
+          {f.away_logo && <img className="fx-flag" src={f.away_logo} alt="" loading="lazy" />}
+          <span className="fx-name">{f.away}</span>
+        </span>
+      </div>
+      {!!f.goals?.length && (
+        <ul className="fx-goals">
+          {f.goals.map((g, i) => (
+            <li key={i} className={`fx-goal fx-goal-${g.team || 'na'}`}>
+              <span className="fx-goal-min">{g.minute}&apos;</span>
+              <span className="fx-goal-icon">⚽</span>
+              <span className="fx-goal-player">{g.player || '球员'}</span>
+              {g.detail && g.detail !== '进球' && <em className="fx-goal-tag">{g.detail}</em>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -450,6 +466,67 @@ function SportsScoresCardView({ card }: { card: SportsScoresCard }) {
             {card.fixtures.map((f, i) => <FixtureRow key={i} f={f} />)}
           </div>}
       {card.source && <div className="ev-card-foot">数据来源 {card.source}</div>}
+    </div>
+  )
+}
+
+function SportsScorersCardView({ card }: { card: SportsScorersCard }) {
+  return (
+    <div className="card card-evidence card-sports">
+      <div className="ev-head">
+        <span className="ev-head-title">👟 {card.title}</span>
+        {card.season && <span className="ev-fresh">{card.season}</span>}
+      </div>
+      {card.scorers.length === 0
+        ? <div className="ev-empty">暂无射手榜数据</div>
+        : <ol className="sc-list">
+            {card.scorers.map((s, i) => (
+              <li key={i} className="sc-row">
+                <span className="sc-rank">{s.rank}</span>
+                <span className="sc-player">{s.player}</span>
+                <span className="sc-team">{s.team}</span>
+                <span className="sc-goals">{s.goals}<em>球</em></span>
+              </li>
+            ))}
+          </ol>}
+      {card.source && <div className="ev-card-foot">数据来源 {card.source}</div>}
+    </div>
+  )
+}
+
+// ─── 路线规划卡：出发地 → 途经点 → 目的地（导航确认途经点后，复用充电时间线样式）───
+
+function RoutePlanCardView({ card }: { card: RoutePlanCard }) {
+  const dur = card.duration_min
+    ? `${Math.floor(card.duration_min / 60) ? `${Math.floor(card.duration_min / 60)}小时` : ''}${card.duration_min % 60 ? `${card.duration_min % 60}分钟` : ''}`
+    : ''
+  return (
+    <div className="card card-evidence card-charge-route">
+      <div className="ev-head">
+        <span className="ev-head-title">🧭 路线规划</span>
+        {card.distance_km ? (
+          <span className="ev-fresh">{card.distance_km}km{dur ? ` · ${dur}` : ''}</span>
+        ) : null}
+      </div>
+      <ul className="cr-line">
+        <li className="cr-node cr-start">
+          <span className="cr-dot" />
+          <span className="cr-text">{card.origin || '当前位置'}</span>
+        </li>
+        {card.waypoints.map((w, i) => (
+          <li key={i} className="cr-node cr-stop">
+            <span className="cr-dot" />
+            <span className="cr-text">
+              <b>📍 {w.name}</b>
+              {w.address && <em className="cr-km">{w.address}</em>}
+            </span>
+          </li>
+        ))}
+        <li className="cr-node cr-end">
+          <span className="cr-dot" />
+          <span className="cr-text">{card.destination}</span>
+        </li>
+      </ul>
     </div>
   )
 }
@@ -497,10 +574,11 @@ function ChargingRouteCardView({ card }: { card: ChargingRouteCard }) {
 // ─── POI 列表卡片 ───
 
 function PoiListCardView({ card }: { card: PoiListCard }) {
-  const isChoice = card.purpose === 'dest_choice'  // 充电目的地候选：编号展示，便于「第N个」
+  // 编号展示（便于「第N个」）：充电目的地候选 dest_choice / 顺路停靠途经点候选 waypoint_choice
+  const isChoice = card.purpose === 'dest_choice' || card.purpose === 'waypoint_choice'
   return (
     <div className="card card-poi">
-      <div className="card-header">{isChoice ? (card.title || '选择目的地') : `附近${card.keyword || ''}`}</div>
+      <div className="card-header">{isChoice ? (card.title || '请选择') : `附近${card.keyword || ''}`}</div>
       <div className="card-poi-list">
         {card.items.map((item, i) => (
           <div key={i} className="poi-item">

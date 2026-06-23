@@ -816,6 +816,26 @@ a.ev-news-h:hover { color: var(--accent-2); text-decoration: underline; }
 .fx-status-live { color: var(--warn); font-weight: 700; }
 .fx-status-finished { color: var(--muted); }
 
+/* 进球时间线（某场详情追问时）：射手 + 分钟，主队左对齐、客队右对齐镜像 */
+.fx-item { display: flex; flex-direction: column; gap: 4px; }
+.fx-goals { list-style: none; margin: 0 4px 2px; padding: 6px 8px 2px; border-top: 1px dashed var(--line); display: flex; flex-direction: column; gap: 3px; }
+.fx-goal { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.fx-goal-away { flex-direction: row-reverse; }
+.fx-goal-min { font: 700 11px var(--font-mono); color: var(--warn); flex: 0 0 auto; }
+.fx-goal-icon { flex: 0 0 auto; font-size: 11px; }
+.fx-goal-player { color: var(--text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-goal-tag { flex: 0 0 auto; font-style: normal; font-size: 10px; color: var(--faint); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+
+/* 射手榜 */
+.sc-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sc-row { display: grid; grid-template-columns: 22px 1fr auto auto; align-items: center; gap: 8px; padding: 5px 8px; background: var(--surface); border-radius: var(--radius-sm); }
+.sc-rank { font: 700 12px var(--font-mono); color: var(--faint); text-align: center; }
+.sc-row:nth-child(1) .sc-rank { color: var(--warn); }
+.sc-player { font-size: 13px; font-weight: 600; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-team { font-size: 11px; color: var(--muted); }
+.sc-goals { font: 700 15px var(--font-mono); color: var(--text); }
+.sc-goals em { font-style: normal; font-size: 10px; color: var(--faint); margin-left: 1px; }
+
 /* 充能路线：时间线式 出发地 → 途经补电点 → 目的地 */
 .cr-line { list-style: none; margin: 4px 0 0; padding: 0; }
 .cr-node { position: relative; display: flex; gap: 10px; padding: 0 0 14px 2px; }

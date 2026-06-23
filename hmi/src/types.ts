@@ -32,9 +32,21 @@ export type UiCard =
   | SearchResultCard
   | NewsBriefCard
   | SportsScoresCard
+  | SportsScorersCard
+  | RoutePlanCard
   | ChargingRouteCard
   | PoiListCard
   | PoiDetailCard
+
+// 路线规划卡：出发地 → 途经点（餐厅等）→ 目的地（导航确认途经点后）
+export type RoutePlanCard = {
+  type: 'route_plan'
+  origin?: string
+  destination: string
+  waypoints: Array<{ name: string; address?: string }>
+  distance_km?: number
+  duration_min?: number
+}
 
 // 充能路线卡：出发地 → 沿途途经充电点 → 目的地
 export type ChargingRouteCard = {
@@ -78,12 +90,23 @@ export type SportsFixture = {
   status_text: string
   elapsed?: string
   kickoff?: string
+  // 进球时间线（仅"某场详情"追问时带）：射手 + 分钟 + 主客侧 + 进球/点球/乌龙球
+  goals?: Array<{ minute: string; team: 'home' | 'away' | ''; player: string; detail: string }>
 }
 
 export type SportsScoresCard = {
   type: 'sports_scores'
   title: string
   fixtures: SportsFixture[]
+  freshness?: string
+  source?: string
+}
+
+export type SportsScorersCard = {
+  type: 'sports_scorers'
+  title: string
+  season: string
+  scorers: Array<{ rank: number; player: string; team: string; goals: number }>
   freshness?: string
   source?: string
 }
@@ -207,8 +230,10 @@ export type NewsDigestCard = {
 export type PoiListCard = {
   type: 'poi_list'
   keyword?: string
-  purpose?: string   // 'dest_choice' = 充电目的地候选：「第N个」回填目的地槽位，而非发起导航
+  // 'dest_choice' = 充电目的地候选（回填目的地槽位）；'waypoint_choice' = 顺路停靠候选（落途经点）
+  purpose?: string
   title?: string
+  destination?: string   // waypoint_choice：导航目的地，供「第N个」拼「导航去{destination}途经{name}」
   items: Array<{
     id: string
     name: string
