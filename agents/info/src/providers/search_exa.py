@@ -45,25 +45,31 @@ def _domain(url: str) -> str:
 
 
 class ExaSearchProvider(SearchProvider):
-    def __init__(self, key: str, base_url: str = "", max_chars: int = 1800):
+    def __init__(self, key: str, base_url: str = "", max_chars: int = 2500):
         if not key:
             raise ValueError("EXA_API_KEY required for ExaSearchProvider")
         self._key = key
         self._base = (base_url or _BASE).rstrip("/")
         self._max_chars = max_chars
-        # 取正文比纯搜索慢，给 12s；不重试，避免把网络波动当“没有结果”重发同一查询。
+        # 取正文比纯搜索慢，给 18s（livecrawl 抓实时页更慢）；不重试，避免把网络波动
+        # 当“没有结果”重发同一查询。
         self._http = AsyncHttpClient(vendor="exa", service="info",
-                                     timeout_s=12.0, max_retries=0)
+                                     timeout_s=18.0, max_retries=0)
 
     async def search(self, query: str, limit: int = 5,
                      meta: dict | None = None, *,
                      recency_days: int = 0, category: str = "",
-                     **kwargs) -> list[SearchResult]:
+                     livecrawl: str = "", **kwargs) -> list[SearchResult]:
+        contents: dict = {"text": {"maxCharacters": self._max_chars}}
+        # livecrawl=preferred/always：抓**实时**网页正文而非 Exa 缓存快照（修『数据非最新』）；
+        # preferred 抓不到时回落缓存，不至于失败。仅时效敏感查询启用（更慢）。
+        if livecrawl in ("always", "preferred", "fallback"):
+            contents["livecrawl"] = livecrawl
         body: dict = {
             "query": query,
             "type": "auto",
             "numResults": max(1, min(limit, 15)),
-            "contents": {"text": {"maxCharacters": self._max_chars}},
+            "contents": contents,
         }
         if recency_days and recency_days > 0:
             start = datetime.now(timezone.utc) - timedelta(days=recency_days)

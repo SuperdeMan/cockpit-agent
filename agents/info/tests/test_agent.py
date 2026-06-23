@@ -302,13 +302,33 @@ def test_grounded_synthesis_demands_abstention_not_fabrication():
 # ── 赛事 ─────────────────────────────────────────────────
 
 class _SportsStub:
-    def __init__(self, fixtures):
-        self._fixtures = fixtures
+    def __init__(self, fixtures=None, events=None, scorers=None):
+        self._fixtures = fixtures or []
+        self._events = events or []
+        self._scorers = scorers          # list | dict{season: list|Exception} | None
         self.calls = []
+        self.events_calls = []
+        self.scorers_calls = []
 
     async def fixtures(self, **kwargs):
         self.calls.append(kwargs)
         return self._fixtures
+
+    async def events(self, fixture_id, meta=None):
+        self.events_calls.append(fixture_id)
+        return self._events
+
+    async def top_scorers(self, league, season, meta=None):
+        self.scorers_calls.append((league, season))
+        s = self._scorers
+        if isinstance(s, dict):
+            v = s.get(season)
+            if v is None:
+                return []                # 未脚本赛季 → 空（触发继续回退）
+            if isinstance(v, Exception):
+                raise v
+            return v
+        return s or []
 
 
 class _FailSports:
@@ -319,6 +339,16 @@ class _FailSports:
 def _fx(**kw):
     from agents.info.src.providers.base import SportsFixture
     return SportsFixture(**kw)
+
+
+def _goal(**kw):
+    from agents.info.src.providers.base import GoalEvent
+    return GoalEvent(**kw)
+
+
+def _scorer(**kw):
+    from agents.info.src.providers.base import TopScorer
+    return TopScorer(**kw)
 
 
 def test_sports_query_routes_to_structured_data_not_search():
@@ -406,6 +436,172 @@ def test_sports_followup_combines_query_slot_and_raw_text():
     assert res.ui_card["type"] == "sports_scores"
     tomorrow = (_shanghai_now() + timedelta(days=1)).strftime("%Y-%m-%d")
     assert spy.calls[-1].get("date") == tomorrow
+
+
+def test_pick_fixture_ordinal_and_team():
+    """『第N场/首场/最后一场/队名』→ 定位具体某场；纯比分查询不定位。"""
+    fxs = [_fx(home="阿根廷", away="奥地利"), _fx(home="法国", away="伊拉克"),
+           _fx(home="挪威", away="塞内加尔")]
+    assert InfoAgent._pick_fixture("第一场", fxs).home == "阿根廷"
+    assert InfoAgent._pick_fixture("第二场怎么样", fxs).home == "法国"
+    assert InfoAgent._pick_fixture("最后一场", fxs).home == "挪威"
+    assert InfoAgent._pick_fixture("伊拉克那场谁赢了", fxs).away == "伊拉克"
+    assert InfoAgent._pick_fixture("世界杯比分", fxs) is None
+
+
+def test_sports_match_detail_by_ordinal_reports_scorer():
+    """『第一场是谁进的球』→ 定位首场、拉进球事件、语音报射手与分钟、卡片只剩该场带进球。"""
+    agent = InfoAgent()
+    agent.sports = _SportsStub(
+        [_fx(league="FIFA 世界杯", league_id=1, home="阿根廷", away="奥地利",
+             home_goals="1", away_goals="0", status="live", status_text="中场",
+             elapsed="45", fixture_id=1489399, home_id=26, away_id=775),
+         _fx(league="FIFA 世界杯", league_id=1, home="法国", away="伊拉克",
+             status="scheduled", status_text="未开赛", fixture_id=2)],
+        events=[_goal(minute="38", team_id=26, player="L. Messi", detail="进球")])
+    res = asyncio.run(run_handle(
+        agent, "info.sports", slots={"query": "世界杯"},
+        raw_text="第一场比赛是谁进的球"))
+
+    assert res.status == "ok"
+    assert res.ui_card["type"] == "sports_scores"
+    assert len(res.ui_card["fixtures"]) == 1                     # 只剩被选中的那场
+    assert res.ui_card["fixtures"][0]["home"] == "阿根廷"
+    goals = res.ui_card["fixtures"][0]["goals"]
+    assert goals[0]["player"] == "L. Messi" and goals[0]["team"] == "home"
+    assert "L. Messi" in res.speech and "38" in res.speech       # 语音含射手与分钟
+    assert agent.sports.events_calls == [1489399]               # 用 fixture_id 查事件
+
+
+def test_sports_followup_resolves_league_from_history():
+    """跟进句不带联赛名（『第一场是谁进的球』）→ 从对话历史回填『世界杯』再定位。"""
+    agent = InfoAgent()
+    agent.sports = _SportsStub(
+        [_fx(league="FIFA 世界杯", league_id=1, home="阿根廷", away="奥地利",
+             home_goals="1", away_goals="0", status="live", status_text="中场",
+             fixture_id=100, home_id=26, away_id=775)],
+        events=[_goal(minute="38", team_id=26, player="L. Messi", detail="进球")])
+    ctx = make_context(history=[
+        {"role": "user", "text": "帮我查一下当前世界杯的赛况"},
+        {"role": "assistant", "text": "今天FIFA世界杯共4场比赛…"},
+    ])
+    res = asyncio.run(run_handle(
+        agent, "info.sports", slots={}, raw_text="第一场是谁进的球", ctx=ctx))
+
+    assert res.status == "ok"
+    assert res.ui_card["fixtures"][0]["home"] == "阿根廷"
+    assert "L. Messi" in res.speech
+
+
+def test_sports_list_request_with_team_stays_list():
+    """带队名但属『列全部』诉求（有哪些/还有）→ 仍列表，不误入单场进球详情。"""
+    agent = InfoAgent()
+    agent.sports = _SportsStub([
+        _fx(league="FIFA 世界杯", league_id=1, home="阿根廷", away="奥地利",
+            home_goals="1", away_goals="0", status="live", status_text="中场", fixture_id=1),
+        _fx(league="FIFA 世界杯", league_id=1, home="法国", away="伊拉克",
+            status="scheduled", status_text="未开赛", fixture_id=2)])
+    res = asyncio.run(run_handle(
+        agent, "info.sports", slots={"query": "世界杯"},
+        raw_text="世界杯今天除了阿根廷还有哪些场"))
+
+    assert len(res.ui_card["fixtures"]) == 2     # 列表
+    assert agent.sports.events_calls == []        # 没去查进球
+
+
+def test_sports_match_detail_no_goal_yet_is_honest():
+    """选中的比赛 0-0 进行中 → 诚实『目前还没有进球』，不编造。"""
+    agent = InfoAgent()
+    agent.sports = _SportsStub(
+        [_fx(league="FIFA 世界杯", league_id=1, home="德国", away="日本",
+             home_goals="0", away_goals="0", status="live", status_text="上半场",
+             elapsed="20", fixture_id=5, home_id=1, away_id=2)],
+        events=[])
+    res = asyncio.run(run_handle(
+        agent, "info.sports", slots={"query": "世界杯"},
+        raw_text="第一场进球了吗"))
+    assert "还没有进球" in res.speech
+    assert res.ui_card["fixtures"][0]["goals"] == []
+
+
+def test_season_candidates_world_cup_and_league():
+    from datetime import datetime
+    from agents.info.src.agent import _season_candidates
+    assert _season_candidates(1, datetime(2026, 6, 23)) == [2026, 2022]   # 世界杯每4年
+    assert _season_candidates(39, datetime(2026, 6, 23))[0] == 2025       # 上半年→上一年
+
+
+def test_scorers_request_routes_to_topscorers_not_fixtures():
+    """『世界杯射手榜』→ 走射手榜（sports_scorers 卡），不取赛程、不答非所问。"""
+    agent = InfoAgent()
+    agent.sports = _SportsStub(
+        fixtures=[_fx(league="FIFA 世界杯", league_id=1, home="阿根廷", away="奥地利")],
+        scorers={2022: [_scorer(rank=1, player="Kylian Mbappé", team="法国", goals=8),
+                        _scorer(rank=2, player="L. Messi", team="阿根廷", goals=7)]})
+    res = asyncio.run(run_handle(
+        agent, "info.sports", slots={"query": "世界杯"}, raw_text="世界杯射手榜"))
+
+    assert res.status == "ok"
+    assert res.ui_card["type"] == "sports_scorers"
+    assert agent.sports.calls == []                       # 没取赛程
+    assert res.ui_card["scorers"][0]["player"] == "Kylian Mbappé"
+    assert "Kylian Mbappé" in res.speech and "8球" in res.speech
+
+
+def test_scorers_falls_back_to_accessible_season_with_label():
+    """本届赛季被免费档挡 → 回退最近可用赛季(2022)并明确标注。"""
+    agent = InfoAgent()
+    agent.sports = _SportsStub(scorers={
+        2026: ProviderError("Free plans do not have access to this season"),
+        2022: [_scorer(rank=1, player="Kylian Mbappé", team="法国", goals=8)]})
+    res = asyncio.run(run_handle(
+        agent, "info.sports", slots={"query": "世界杯"}, raw_text="世界杯射手榜"))
+
+    assert res.status == "ok"
+    assert "2022赛季" in res.speech and res.ui_card["season"] == "2022赛季"
+    assert (1, 2026) in agent.sports.scorers_calls and (1, 2022) in agent.sports.scorers_calls
+
+
+def test_scorers_all_unavailable_is_honest():
+    """所有可用赛季都取不到 → 诚实说获取不到，不编造、不退化成赛程。"""
+    agent = InfoAgent()
+    agent.sports = _SportsStub(scorers={})   # 任何赛季都空
+    res = asyncio.run(run_handle(
+        agent, "info.sports", slots={"query": "世界杯"}, raw_text="世界杯射手榜"))
+    assert res.status == "failed"
+    assert "射手榜" in res.speech
+
+
+def test_is_fresh_sensitive_marks_rankings():
+    from agents.info.src.agent import _is_fresh_sensitive
+    assert _is_fresh_sensitive("世界杯历史总射手榜")
+    assert _is_fresh_sensitive("英超积分榜排名")
+    assert not _is_fresh_sensitive("讲个笑话")
+
+
+def test_alltime_scorers_routes_to_search_not_season_topscorers():
+    """『世界杯总射手榜』(历史/累计)→ 通用搜索接地合成真实历史榜，不调按赛季的 topscorers。"""
+    from agents.info.src.providers.base import SearchResult
+    agent = InfoAgent()
+    agent.sports = _SportsStub(scorers={2022: [_scorer(rank=1, player="X", team="Y", goals=9)]})
+    captured = {}
+
+    class _Search:
+        async def search(self, query, **kw):
+            captured["query"] = query
+            return [SearchResult(title="世界杯历史射手榜", url="http://x",
+                                 snippet="克洛泽16球居首", source="x",
+                                 content="克洛泽16球、罗纳尔多15球、盖德穆勒14球")]
+
+    agent.search = _Search()
+    res = asyncio.run(run_handle(
+        agent, "info.sports", slots={"query": "世界杯"},
+        raw_text="世界杯的总射手榜帮我查下"))
+
+    assert res.status == "ok"
+    assert agent.sports.scorers_calls == []                 # 没调按赛季的 topscorers
+    assert "历史" in captured.get("query", "")              # 改写成历史总射手榜再搜
+    assert "射手" in captured.get("query", "")
 
 
 # ── 新闻 ─────────────────────────────────────────────────

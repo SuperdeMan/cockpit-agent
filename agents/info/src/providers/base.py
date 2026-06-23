@@ -214,6 +214,27 @@ class SportsFixture:
     status_text: str = ""       # 状态中文（已结束/进行中/未开赛/推迟…）
     elapsed: str = ""           # 进行中的比赛分钟数（可空）
     kickoff: str = ""           # 开赛时间 ISO（带 timezone）
+    fixture_id: int = 0         # api-football fixture id（拉某场进球事件用）
+    home_id: int = 0            # 主队 id（与进球事件 team_id 比对定主客，跨语言可靠）
+    away_id: int = 0            # 客队 id
+
+
+@dataclass
+class GoalEvent:
+    """单粒进球（射手详情）。仅真实进球，已剔除罚丢点球等非进球事件。"""
+    minute: str = ""            # 进球分钟（含补时，如 45+2）
+    team_id: int = 0            # 进球方 team id（由 Agent 比 fixture home_id/away_id 定主客）
+    player: str = ""            # 射手名（api-football 原名，可能英文）
+    detail: str = ""            # 归一化中文：进球/点球/乌龙球
+
+
+@dataclass
+class TopScorer:
+    """射手榜一行。"""
+    rank: int = 0               # 名次（从 1 起）
+    player: str = ""            # 球员名（api-football 原名，可能英文）
+    team: str = ""              # 所属球队
+    goals: int = 0              # 进球数
 
 
 class SportsProvider(ABC):
@@ -223,6 +244,16 @@ class SportsProvider(ABC):
                        meta: dict | None = None) -> list[SportsFixture]:
         """查询赛事。date=YYYY-MM-DD（空=不限）；league/season 过滤；live=仅进行中。"""
         ...
+
+    async def events(self, fixture_id: int,
+                     meta: dict | None = None) -> list[GoalEvent]:
+        """查询某场比赛的进球事件（射手/分钟）。默认空——不支持的 Provider（mock）返回 []。"""
+        return []
+
+    async def top_scorers(self, league: int, season: int,
+                          meta: dict | None = None) -> list[TopScorer]:
+        """查询联赛射手榜。默认空——不支持的 Provider（mock）返回 []。"""
+        return []
 
 
 class StockProvider(ABC):

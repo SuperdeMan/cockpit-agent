@@ -40,6 +40,13 @@ def _shanghai_now() -> datetime:
 _RECENCY_NOW = ("今天", "今日", "今晚", "现在", "此刻", "实时", "刚刚", "最新", "目前", "当前")
 _RECENCY_WEEK = ("本周", "这周", "近期", "最近", "这几天", "这两天", "近几天")
 _NEWS_WORDS = ("新闻", "资讯", "头条", "热点")
+# 时效敏感（榜单/排名/统计/最新…）：对支持的源启用实时抓取(livecrawl)，避免缓存快照给旧数据
+_FRESH_MARKERS = ("榜", "排行", "排名", "纪录", "记录", "统计", "最新", "目前",
+                  "现在", "截至", "实时", "今年", "本赛季", "射手", "积分")
+
+
+def _is_fresh_sensitive(query: str) -> bool:
+    return any(m in (query or "") for m in _FRESH_MARKERS)
 
 
 def _plan_search(query: str) -> tuple[int, str]:
@@ -73,6 +80,21 @@ _LEAGUES: dict[str, tuple[int, str]] = {
 }
 _SPORTS_HINT = ("赛程", "赛果", "比分", "比赛", "战报", "对阵", "结果", "踢")
 
+# 追问某具体场次的进球/详情（→ 进球详情）；与"列全部"的列表诉求区分
+_DETAIL_HINT = ("进球", "谁进", "射手", "得分", "详细", "赛况", "详情", "战报",
+                "经过", "具体", "怎么样", "怎样", "集锦", "介绍", "讲讲", "说说")
+_LIST_HINT = ("全部", "所有", "有哪些", "哪些比赛", "哪些场", "赛程", "列表",
+              "几场", "都有", "还有")
+# 射手榜（联赛级排行，非某场）—— 独立于赛程列表与单场进球详情
+_SCORERS_HINT = ("射手榜", "射手", "金靴", "得分王", "进球榜", "神射手",
+                 "谁进球最多", "谁球最多", "topscorer", "top scorer")
+# 历史/累计「总」射手榜：按赛季的 topscorers API 给不了 → 走通用搜索（接地合成历史榜）
+_ALLTIME_HINT = ("总射手", "历史射手", "历届", "历史总", "累计", "史上",
+                 "历史最佳", "历史进球", "all-time", "总进球", "历史榜")
+_CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+           "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+_ORDINAL_RE = re.compile(r"第\s*(\d+|[一二两三四五六七八九十]+)\s*场")
+
 
 def _detect_league(query: str) -> tuple[int, str]:
     """识别查询中的赛事；返回 (league_id, 中文名)，未命中返回 (0, "")。"""
@@ -82,6 +104,22 @@ def _detect_league(query: str) -> tuple[int, str]:
     return 0, ""
 
 
+def _ordinal_index(text: str, n: int) -> int | None:
+    """从『第N场/首场/最后一场』解析 0-based 索引（按列表顺序）。无序号返回 None。"""
+    t = text or ""
+    if any(w in t for w in ("最后一场", "末场", "最后那场", "最后一个")):
+        return n - 1
+    if any(w in t for w in ("首场", "头一场", "头场")):
+        return 0
+    m = _ORDINAL_RE.search(t)
+    if m:
+        s = m.group(1)
+        num = int(s) if s.isdigit() else _CN_NUM.get(s, 0)
+        if num >= 1:
+            return num - 1
+    return None
+
+
 def _sports_date(query: str, now: datetime) -> str:
     """从查询推断目标日期，默认今天（YYYY-MM-DD，上海时区）。"""
     if "明天" in query:
@@ -89,6 +127,28 @@ def _sports_date(query: str, now: datetime) -> str:
     if "昨天" in query:
         return (now - timedelta(days=1)).strftime("%Y-%m-%d")
     return now.strftime("%Y-%m-%d")
+
+
+def _season_candidates(league_id: int, now: datetime) -> list[int]:
+    """射手榜按赛季优先级试取（首个有数据的赛季胜出）。
+
+    免费档常挡当前赛季 → 回退到最近可用赛季并标注。世界杯每 4 年（2022/2026…），
+    其它联赛按足球赛季年（下半年开赛算当年）。
+    """
+    y = now.year
+    if league_id == 1:                      # 世界杯：year ≡ 2 (mod 4)
+        m = y % 4
+        nearest = y - (m - 2 if m >= 2 else m + 2)
+        cands = [nearest, 2022]
+    else:
+        primary = y if now.month >= 7 else y - 1
+        cands = [primary, primary - 1, 2024, 2022]
+    seen, out = set(), []
+    for s in cands:
+        if s >= 2018 and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out[:4]
 
 
 def _is_coordinate_label(value: str) -> bool:
@@ -453,8 +513,10 @@ class InfoAgent(BaseAgent):
         # LLM 推理超时（实测 5×1800 字符触发 DEADLINE_EXCEEDED 退化为 snippet 拼接）。
         used = sources[:5]
         blocks = []
-        for s in used:
-            body = (s.get("content") or s.get("snippet") or "").strip()[:1000]
+        for i, s in enumerate(used):
+            # 榜单/表格常在正文较深处：给最权威的首条更多正文配额，其余收紧，控总量防超时
+            cap = 2400 if i == 0 else 900
+            body = (s.get("content") or s.get("snippet") or "").strip()[:cap]
             head = f"[{s['idx']}] {s['title']}（来源：{s['source']}"
             if s.get("published"):
                 head += f"，发布：{s['published']}"
@@ -470,7 +532,11 @@ class InfoAgent(BaseAgent):
             "1. 先给核心结论，再按需展开；不要说「根据搜索结果/资料显示」这类废话。\n"
             "2. 资料未覆盖的内容，明确说明「未能从检索到的资料中确认」，"
             "禁止编造对阵、比分、时间、数字、人名或因果关系。\n"
-            "3. 只输出一个 JSON 对象，不要额外文字，格式：\n"
+            "3. **排行榜/榜单/数据类**：以**最权威且最新**的那一条资料为准、照它的数据呈现，"
+            "不要用你自己的记忆补全或改写名次/数字；不同资料数字冲突或时效不同时，取最新权威者"
+            "并给出**前后一致**的结论、注明依据时间，**绝不**把互相矛盾的数字混进同一答案"
+            "（例如说榜首16球却又称另一人也16球并列，自相矛盾）。\n"
+            "4. 只输出一个 JSON 对象，不要额外文字，格式：\n"
             '{"answer": "给用户的结论文本", "key_points": ["要点1", "要点2"], '
             '"confidence": "high|medium|low", "used_sources": [1, 2]}\n'
             "answer 的可读性很重要：若有多个要点/条目/步骤，**每条单独成行**"
@@ -506,10 +572,12 @@ class InfoAgent(BaseAgent):
         _broad = any(w in query for w in ("全部", "所有", "每场", "比分", "赛果", "结果"))
         limit = int(intent.slots.get("limit", 6 if _broad else 5) or (6 if _broad else 5))
         recency_days, category = _plan_search(query)
+        # 时效敏感（榜单/排名/统计…）→ 让 Exa 抓实时页面，避免缓存快照给旧数据
+        livecrawl = "preferred" if _is_fresh_sensitive(query) else ""
         try:
             results = await self.search.search(
                 query, limit=limit, meta=meta,
-                recency_days=recency_days, category=category)
+                recency_days=recency_days, category=category, livecrawl=livecrawl)
         except ProviderError as e:
             logger.warning("search failed: %s", e)
             return AgentResult(
@@ -575,6 +643,10 @@ class InfoAgent(BaseAgent):
     async def _do_sports(self, query: str, league_id: int, league_name: str,
                          meta) -> AgentResult | None:
         """拉取并组织赛事。Provider 报错返回 None（回落通用搜索/诚实弃权）。"""
+        # 射手榜是联赛级排行（非某场/赛程）→ 优先于赛程列表，避免"问射手榜答赛程"
+        if self._is_scorers_request(query):
+            return await self._top_scorers(league_id, league_name, meta)
+
         now = _shanghai_now()
         date = _sports_date(query, now)
         try:
@@ -596,6 +668,11 @@ class InfoAgent(BaseAgent):
                 ui_card={"type": "sports_scores", "title": title, "fixtures": [],
                          "freshness": freshness, "source": "api-football"},
                 data={"fixtures": []})
+
+        # 追问某具体场次（第N场/队名）且非"列全部"诉求 → 进球详情（射手/分钟）
+        picked = self._pick_fixture(query, fixtures)
+        if picked is not None and not self._is_list_request(query):
+            return await self._match_detail(picked, league_name, meta)
 
         finished = [f for f in fixtures if f.status == "finished"]
         live = [f for f in fixtures if f.status == "live"]
@@ -621,6 +698,125 @@ class InfoAgent(BaseAgent):
         return AgentResult(speech=speech, ui_card=card,
                            data={"fixtures": card["fixtures"]})
 
+    @staticmethod
+    def _is_detail_request(text: str) -> bool:
+        return any(w in (text or "") for w in _DETAIL_HINT)
+
+    @staticmethod
+    def _is_list_request(text: str) -> bool:
+        return any(w in (text or "") for w in _LIST_HINT)
+
+    @staticmethod
+    def _is_scorers_request(text: str) -> bool:
+        return any(w in (text or "") for w in _SCORERS_HINT)
+
+    @staticmethod
+    def _is_alltime_scorers(text: str) -> bool:
+        """是否问的是「历史/累计总射手榜」（赛季 API 给不了，走通用搜索）。"""
+        return any(w in (text or "") for w in _ALLTIME_HINT)
+
+    @staticmethod
+    def _pick_fixture(text: str, fixtures: list):
+        """把『第N场/某队』指代解析到具体某场。无法定位返回 None。"""
+        if not fixtures:
+            return None
+        idx = _ordinal_index(text, len(fixtures))
+        if idx is not None and 0 <= idx < len(fixtures):
+            return fixtures[idx]
+        for f in fixtures:                       # 队名（中文）命中
+            if (f.home and f.home in text) or (f.away and f.away in text):
+                return f
+        return None
+
+    async def _league_from_history(self, ctx) -> tuple[int, str]:
+        """赛事追问槽位常不带联赛名 → 从最近对话回填（最近一轮优先）。"""
+        try:
+            turns = await ctx.history(6)
+        except Exception as e:
+            logger.debug("sports history fetch failed: %s", e)
+            return 0, ""
+        for t in reversed(turns or []):
+            lid, name = _detect_league(t.get("text") or "")
+            if lid:
+                return lid, name
+        return 0, ""
+
+    async def _match_detail(self, f, league_name: str, meta) -> AgentResult:
+        """某场进球详情：射手 + 分钟（结构化真实数据，不编造）。"""
+        try:
+            events = await self.sports.events(f.fixture_id, meta=meta)
+        except ProviderError as e:
+            logger.warning("sports events failed: %s", e)
+            events = []
+        goals = []
+        for e in events:
+            side = ("home" if e.team_id == f.home_id
+                    else "away" if e.team_id == f.away_id else "")
+            goals.append({"minute": e.minute, "team": side,
+                          "player": e.player, "detail": e.detail})
+
+        scored = f.home_goals != "" and f.away_goals != ""
+        head = (f"{league_name}，{f.home} {f.home_goals}-{f.away_goals} {f.away}"
+                if scored else f"{league_name}，{f.home} 对阵 {f.away}")
+        status = f.status_text + (f"{f.elapsed}′" if f.status == "live" and f.elapsed else "")
+        if status:
+            head += f"（{status}）"
+
+        if goals:
+            segs = []
+            for g in goals:
+                team = (f.home if g["team"] == "home"
+                        else f.away if g["team"] == "away" else "")
+                who = g["player"] or "球员"
+                tag = "" if g["detail"] == "进球" else g["detail"]
+                note = "".join(x for x in (team, tag) if x)
+                segs.append(f"第{g['minute']}分钟{who}" + (f"（{note}）" if note else ""))
+            speech = head + "。进球：" + "；".join(segs) + "。"
+        elif not scored:
+            speech = head + "，比赛尚未开始。"
+        elif f.home_goals == "0" and f.away_goals == "0":
+            speech = head + "，目前还没有进球。"
+        else:
+            speech = head + "。暂未获取到进球详情。"
+
+        fd = self._fixture_dict(f)
+        fd["goals"] = goals
+        card = {"type": "sports_scores",
+                "title": f"{league_name} · {f.home} vs {f.away}",
+                "fixtures": [fd],
+                "freshness": _shanghai_now().isoformat(timespec="minutes"),
+                "source": "api-football"}
+        return AgentResult(speech=speech, ui_card=card,
+                           data={"fixtures": [fd], "goals": goals})
+
+    async def _top_scorers(self, league_id: int, league_name: str, meta) -> AgentResult:
+        """联赛射手榜。按赛季优先级试取，首个有数据的赛季胜出并标注（免费档常挡本届）。"""
+        scorers, used_season = [], 0
+        for season in _season_candidates(league_id, _shanghai_now()):
+            try:
+                scorers = await self.sports.top_scorers(league_id, season, meta=meta)
+            except ProviderError as e:
+                logger.warning("topscorers season %s failed: %s", season, e)
+                continue
+            if scorers:
+                used_season = season
+                break
+        if not scorers:
+            return AgentResult(
+                status=FAILED,
+                speech=f"暂时获取不到{league_name}的射手榜，可能是数据源限制，请稍后再试。")
+
+        label = f"{used_season}赛季"
+        top3 = "、".join(f"{s.player} {s.goals}球（{s.team}）" for s in scorers[:3])
+        speech = f"{league_name}（{label}）射手榜：{top3}。"
+        card = {"type": "sports_scorers",
+                "title": f"{league_name} 射手榜", "season": label,
+                "scorers": [{"rank": s.rank, "player": s.player,
+                             "team": s.team, "goals": s.goals} for s in scorers[:10]],
+                "freshness": _shanghai_now().isoformat(timespec="minutes"),
+                "source": "api-football"}
+        return AgentResult(speech=speech, ui_card=card, data={"scorers": card["scorers"]})
+
     async def _sports(self, intent, ctx, meta) -> AgentResult:
         """info.sports 意图入口。识别赛事后取结构化数据；未识别则回落通用搜索。"""
         query = (intent.slots.get("query") or intent.slots.get("league")
@@ -631,7 +827,22 @@ class InfoAgent(BaseAgent):
                                follow_up="请告诉我赛事名称", missing_slots=["query"])
         league_id, name = _detect_league(text)
         if not league_id:
+            # 赛事追问（如"第一场谁进球"）槽位常不带联赛名 → 从对话历史回填联赛上下文
+            follow_up = (self._is_detail_request(text)
+                         or self._is_scorers_request(text)
+                         or _ordinal_index(text, 1) is not None
+                         or any(h in text for h in _SPORTS_HINT))
+            if follow_up:
+                league_id, name = await self._league_from_history(ctx)
+            if league_id:
+                text = f"{name} {text}"   # 并入联赛名，供 _pick_fixture/日期识别
+        if not league_id:
             # 未识别赛事 → 用通用搜索兜底（接地合成，仍不会编造）
+            return await self._search(intent, ctx, meta)
+        # 历史/总射手榜：按赛季的 topscorers 给不了累计历史榜 → 通用搜索（接地合成真实历史榜）。
+        # 改写 query 为明确的「历史总射手榜」，否则 _search 只拿 query 槽位（可能仅"世界杯"）搜不准。
+        if self._is_scorers_request(text) and self._is_alltime_scorers(text):
+            intent.slots["query"] = f"{name}历史总射手榜"
             return await self._search(intent, ctx, meta)
         res = await self._do_sports(text, league_id, name, meta)
         if res is None:

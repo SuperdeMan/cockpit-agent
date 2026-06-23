@@ -14,11 +14,15 @@ from __future__ import annotations
 import logging
 
 from agents._sdk.http import AsyncHttpClient, ProviderError
-from .base import SportsProvider, SportsFixture
+from .base import SportsProvider, SportsFixture, GoalEvent, TopScorer
 
 logger = logging.getLogger("agent.info.sports_apifootball")
 
 _BASE = "https://v3.football.api-sports.io"
+
+# 进球事件 detail → 中文。只收录"真实进球"，故意不含 "Missed Penalty"（罚丢点球，
+# api-football 仍标 type=Goal，但不计进球）——据此过滤，避免谎报射手/比分。
+_GOAL_DETAIL = {"Normal Goal": "进球", "Penalty": "点球", "Own Goal": "乌龙球"}
 
 # api-football status.short → (归一化组, 中文)
 _FINISHED = {"FT": "已结束", "AET": "加时赛结束", "PEN": "点球结束"}
@@ -73,6 +77,13 @@ def _g(v) -> str:
     return "" if v is None else str(v)
 
 
+def _int(v) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
 class ApiFootballProvider(SportsProvider):
     def __init__(self, key: str, host: str = ""):
         if not key:
@@ -114,16 +125,65 @@ class ApiFootballProvider(SportsProvider):
             home, away = teams.get("home") or {}, teams.get("away") or {}
             st = fx.get("status") or {}
             group, text = _status(_g(st.get("short")), _g(st.get("long")))
-            try:
-                league_id = int(lg.get("id") or 0)
-            except (TypeError, ValueError):
-                league_id = 0
             out.append(SportsFixture(
-                league=_g(lg.get("name")), league_id=league_id, round=_g(lg.get("round")),
+                league=_g(lg.get("name")), league_id=_int(lg.get("id")),
+                round=_g(lg.get("round")),
                 home=_zh(_g(home.get("name"))), away=_zh(_g(away.get("name"))),
                 home_logo=_g(home.get("logo")), away_logo=_g(away.get("logo")),
                 home_goals=_g(goals.get("home")), away_goals=_g(goals.get("away")),
                 status=group, status_text=text,
                 elapsed=_g(st.get("elapsed")), kickoff=_g(fx.get("date")),
+                fixture_id=_int(fx.get("id")),
+                home_id=_int(home.get("id")), away_id=_int(away.get("id")),
             ))
+        return out
+
+    async def events(self, fixture_id: int,
+                     meta: dict | None = None) -> list[GoalEvent]:
+        """拉某场进球事件。只取真实进球（Normal Goal/Penalty/Own Goal），剔除罚丢点球等。"""
+        if not fixture_id:
+            return []
+        data = await self._http.get_json(
+            f"{self._base}/fixtures/events", params={"fixture": str(fixture_id)},
+            headers={"x-apisports-key": self._key}, op="fixture_events", meta=meta)
+        if data.get("errors"):
+            raise ProviderError(f"api-football events error: {data.get('errors')}")
+
+        out: list[GoalEvent] = []
+        for e in (data.get("response") or []):
+            if _g(e.get("type")) != "Goal":
+                continue
+            detail = _g(e.get("detail"))
+            zh = _GOAL_DETAIL.get(detail)
+            if not zh:           # Missed Penalty 等非进球事件 → 跳过
+                continue
+            t = e.get("time") or {}
+            elapsed, extra = _g(t.get("elapsed")), _g(t.get("extra"))
+            minute = f"{elapsed}+{extra}" if extra else elapsed
+            team = e.get("team") or {}
+            player = e.get("player") or {}
+            out.append(GoalEvent(
+                minute=minute, team_id=_int(team.get("id")),
+                player=_g(player.get("name")), detail=zh))
+        return out
+
+    async def top_scorers(self, league: int, season: int,
+                          meta: dict | None = None) -> list[TopScorer]:
+        """联赛射手榜。/players/topscorers?league&season（免费档仅 2022-2024 赛季放行）。"""
+        data = await self._http.get_json(
+            f"{self._base}/players/topscorers",
+            params={"league": str(league), "season": str(season)},
+            headers={"x-apisports-key": self._key}, op="topscorers", meta=meta)
+        if data.get("errors"):
+            raise ProviderError(f"api-football topscorers error: {data.get('errors')}")
+
+        out: list[TopScorer] = []
+        for i, item in enumerate(data.get("response") or [], 1):
+            player = item.get("player") or {}
+            stats = (item.get("statistics") or [{}])[0] or {}
+            goals = ((stats.get("goals") or {}).get("total"))
+            team = (stats.get("team") or {}).get("name")
+            out.append(TopScorer(
+                rank=i, player=_g(player.get("name")),
+                team=_zh(_g(team)), goals=_int(goals)))
         return out

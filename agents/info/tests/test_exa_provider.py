@@ -58,6 +58,15 @@ def test_search_sends_content_recency_and_category():
     assert p._http.post_json.last_headers["x-api-key"] == "test-key"
 
 
+def test_livecrawl_sent_only_when_requested():
+    p = _provider({"/search": _SEARCH_OK})
+    asyncio.run(p.search("世界杯射手榜", livecrawl="preferred"))
+    assert p._http.post_json.last_body["contents"]["livecrawl"] == "preferred"
+    p2 = _provider({"/search": _SEARCH_OK})
+    asyncio.run(p2.search("普通查询"))
+    assert "livecrawl" not in p2._http.post_json.last_body["contents"]
+
+
 def test_invalid_category_is_dropped():
     p = _provider({"/search": _SEARCH_OK})
     asyncio.run(p.search("x", category="not-a-category"))
