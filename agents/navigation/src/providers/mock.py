@@ -24,7 +24,8 @@ class MockPOIProvider(POIProvider):
         return items
 
     async def get_route(self, origin: GeoPoint, destination: GeoPoint,
-                        meta: dict | None = None) -> dict:
+                        meta: dict | None = None, with_polyline: bool = False,
+                        waypoints: list[GeoPoint] | None = None) -> dict:
         return {
             "distance_km": 12.5,
             "duration_min": 25,

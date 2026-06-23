@@ -25,6 +25,53 @@ def test_find_returns_list():
     assert len(res.ui_card["items"]) > 0
 
 
+def test_find_near_destination_resolves_landmark_and_emits_waypoint():
+    """charging.find 带视觉地标目的地 → 先解析成官方名再按目的地搜，出途经点契约+charging_route 卡。
+
+    支撑「导航去[地标] + 在附近找充电桩」：地标"像笋的建筑"经共享解析器→"中国华润大厦"（高德可检索），
+    聚合器据 data.waypoint 把站并入导航 navigate 动作。
+    """
+    from agents.charging_planner.src.providers.base import ChargingStation
+    agent = ChargingPlannerAgent()
+    seen = {}
+
+    async def fake_find(location, charger_type="", meta=None):
+        seen["address"] = location.address
+        return [ChargingStation(id="c1", name="逸安启超级充电站", address="深圳湾万象城",
+                                lat=22.516, lng=113.9473, distance_km=0.2,
+                                available=3, total=8)]
+
+    async def fake_llm(messages, **kwargs):
+        return '["中国华润大厦"]'
+
+    agent.charging.find_nearby = fake_find
+    agent.llm.complete = fake_llm
+    ctx = make_context(context_values={"vehicle.battery": "60%"})
+    res = asyncio.run(run_handle(
+        agent, "charging.find", slots={"destination": "深圳外形像笋一样的建筑物"},
+        raw_text="导航去深圳外形像笋的建筑物，附近找个充电桩", ctx=ctx))
+
+    assert res.status == "ok"
+    assert seen["address"] == "中国华润大厦"               # 地标解析为官方名再搜（非原描述/当前位置）
+    assert res.ui_card["type"] == "charging_route"
+    assert res.ui_card["destination"] == "中国华润大厦"
+    assert res.ui_card["stops"][0]["name"] == "逸安启超级充电站"
+    wp = res.data["waypoint"]
+    assert wp["name"] == "逸安启超级充电站" and wp["lat"] == 22.516 and wp["lng"] == 113.9473
+    assert "途经充电站" in res.speech
+
+
+def test_find_without_destination_unchanged():
+    """charging.find 无 destination → 仍按当前位置搜、出 charging_list（行为不变）。"""
+    ctx = make_context(context_values={"vehicle.battery": "72%", "vehicle.location": "科技园"})
+    res = asyncio.run(run_handle(
+        ChargingPlannerAgent(), "charging.find",
+        slots={"prefer": "快充"}, raw_text="找个充电站", ctx=ctx))
+    assert res.status == "ok"
+    assert res.ui_card["type"] == "charging_list"
+    assert "waypoint" not in (res.data or {})
+
+
 def test_plan_is_advisory_no_confirm_no_navigate():
     """charging.plan 改信息建议：OK、不二次确认、不发导航动作（导航交给导航步），
     消除多意图『导航+充电』里的双确认/双 navigate。"""

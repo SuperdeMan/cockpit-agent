@@ -13,9 +13,9 @@ capabilities:
     slots: [keyword, category, near, rating_min]
     examples: ["附近的充电站", "找个评分高的川菜馆", "最近的加油站在哪"]
   - intent: navigation.navigate_to
-    description: 导航到指定目的地
-    slots: [destination]
-    examples: ["导航去公司", "带我去首都机场", "回家"]
+    description: 导航到指定目的地；可顺路停靠（stop_category=吃饭/咖啡…→给候选让用户选）或带途经点（waypoint=已选停靠点名）
+    slots: [destination, stop_category, waypoint]
+    examples: ["导航去公司", "带我去首都机场", "回家", "导航去东方之门，附近找个吃饭的地方", "导航去东方之门途经肯德基"]
   - intent: navigation.reverse_geocode
     description: 逆地理编码，根据坐标获取地址信息
     slots: [lng, lat]

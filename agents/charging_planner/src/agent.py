@@ -10,6 +10,7 @@ import os
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
+from agents._sdk.landmark import is_landmark_description, landmark_candidates
 from .providers import build_charging_provider
 from .providers.mock import MockChargingProvider
 from .providers.base import GeoPoint
@@ -37,10 +38,18 @@ class ChargingPlannerAgent(BaseAgent):
         return AgentResult(status=FAILED, speech="充能助手暂不支持该请求。")
 
     async def _find(self, intent, ctx, meta) -> AgentResult:
-        """找附近的充电站。"""
+        """找附近的充电站。带 destination 槽位时按目的地搜，最优站作为导航途经点。"""
         # 读电量
         ctx_values = await ctx.fetch("vehicle.battery")
         soc = ctx_values.get("vehicle.battery", "")
+
+        prefer = (intent.slots.get("prefer") or "").strip()
+        charger_type = "快充" if "快" in prefer else ""
+
+        # 「导航去X + 在附近找充电桩」：按目的地搜，最优站经聚合器并入导航路线作为途经点
+        destination = (intent.slots.get("destination") or "").strip()
+        if destination:
+            return await self._find_near_destination(destination, charger_type, soc, meta)
 
         # 获取位置
         current = current_location_from_meta(meta)
@@ -52,8 +61,6 @@ class ChargingPlannerAgent(BaseAgent):
             near = GeoPoint(address=location) if location else GeoPoint()
 
         # 搜充电站
-        prefer = (intent.slots.get("prefer") or "").strip()
-        charger_type = "快充" if "快" in prefer else ""
         try:
             stations = await self.charging.find_nearby(
                 near, charger_type=charger_type, meta=meta)
@@ -90,6 +97,71 @@ class ChargingPlannerAgent(BaseAgent):
             data={"items": items},
             follow_up="说『导航去第一个』或告诉我你的偏好",
         )
+
+    async def _find_near_destination(self, destination: str, charger_type: str,
+                                     soc: str, meta) -> AgentResult:
+        """按目的地搜充电站，把最优站作为导航途经点（出 charging_route 卡 + data.waypoint）。
+
+        聚合器据 data.waypoint 把该站并入导航步的 navigate 动作（payload.waypoints），
+        让“导航去X + 附近充电”产出带途经充电点的单条路线，而非孤立的充电列表。
+        """
+        # 视觉地标目的地（“像笋的建筑”）先解析成地图可检索的正式名再搜——否则高德 geocode
+        # 不到原描述、会失败/限流回退假数据。候选优先，原描述兜底（与导航步同一共享解析器）。
+        targets = [destination]
+        if is_landmark_description(destination):
+            cands = await landmark_candidates(self.llm, destination, logger=logger)
+            if cands:
+                targets = cands + [destination]
+
+        resolved, stations = destination, []
+        for target in targets:
+            try:
+                stations = await self.charging.find_nearby(
+                    GeoPoint(address=target), charger_type=charger_type, meta=meta)
+            except ProviderError as e:
+                logger.warning("charging find near %s failed: %s", target, e)
+                stations = []
+            if stations:
+                resolved = target
+                break
+
+        if not stations:   # 真实 provider 全失败 → mock 兜底，不阻断链路
+            try:
+                stations = await self._fallback.find_nearby(
+                    GeoPoint(address=destination), meta=meta)
+            except ProviderError:
+                stations = []
+
+        if not stations:
+            return AgentResult(
+                speech=f"{destination}附近暂未找到充电站，到达后我再帮您找。")
+
+        stations.sort(key=lambda s: (-s.available, s.distance_km))
+        top = stations[0]
+
+        # 途经点契约：聚合器据此把该站并入导航 navigate 动作（payload.waypoints）
+        waypoint = {"name": top.name, "address": top.address,
+                    "lat": top.lat, "lng": top.lng}
+        extra = (f"，{top.available}/{top.total}空闲" if top.total > 0
+                 else (f"，评分{top.rating}" if top.rating else ""))
+        dist = f"{top.distance_km}km" if top.distance_km else "目的地附近"
+        speech = (f"已为前往{resolved}的路线加入途经充电站：{top.name}"
+                  f"（{dist}{extra}）。")
+        # 复用 charging_route 卡：出发地 → ⚡该站 → 目的地
+        card = {"type": "charging_route", "destination": resolved,
+                "stops": [{"name": top.name, "address": top.address}],
+                "soc": soc}
+        items = [
+            {"id": s.id, "name": s.name, "available": s.available,
+             "total": s.total, "price": s.price_per_kwh,
+             "distance_km": s.distance_km, "operator": s.operator,
+             "lat": s.lat, "lng": s.lng}
+            for s in stations
+        ]
+        return AgentResult(
+            speech=speech, ui_card=card,
+            data={"waypoint": waypoint, "items": items},
+            follow_up="想换一个充电站可以说『换一个』")
 
     # 行政区划级后缀——以此结尾的目的地视为"过泛"，先确认具体地点再规划途经点
     _ADMIN_SUFFIX = ("市", "省", "区", "县", "自治区", "自治州", "地区")

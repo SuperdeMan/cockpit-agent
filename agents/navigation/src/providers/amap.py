@@ -114,7 +114,8 @@ class AmapPOIProvider(POIProvider):
         return results
 
     async def get_route(self, origin: GeoPoint, destination: GeoPoint,
-                        meta: dict | None = None, with_polyline: bool = False) -> dict:
+                        meta: dict | None = None, with_polyline: bool = False,
+                        waypoints: list[GeoPoint] | None = None) -> dict:
         o = await self._resolve_location(origin, meta)
         d = await self._resolve_location(destination, meta)
         if not o or not d:
@@ -122,8 +123,17 @@ class AmapPOIProvider(POIProvider):
         # with_polyline=True → extensions=all 返回逐步几何，供沿途取点（如充电途经点）；
         # 默认 base 更轻，不影响既有调用。
         ext = "all" if with_polyline else "base"
-        data = await self._get("/v3/direction/driving",
-                               {"origin": o, "destination": d, "extensions": ext},
+        params = {"origin": o, "destination": d, "extensions": ext}
+        # waypoints：途经点（出发地→途经点→目的地），供路线规划卡算真实全程距离/时长
+        if waypoints:
+            wlocs = []
+            for w in waypoints:
+                wl = await self._resolve_location(w, meta)
+                if wl:
+                    wlocs.append(wl)
+            if wlocs:
+                params["waypoints"] = ";".join(wlocs)
+        data = await self._get("/v3/direction/driving", params,
                                "direction_driving", meta)
         paths = (data.get("route") or {}).get("paths") or []
         if not paths:

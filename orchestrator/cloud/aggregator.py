@@ -28,14 +28,19 @@ class Aggregator:
 
     async def compose(self, user_text: str, results: list[StepResult]) -> dict:
         """聚合结果，返回 Final 事件结构。"""
-        actions = [a for r in results for a in r.actions]
+        actions = self._compose_actions(results)
         cards = [r.ui_card for r in results if r.ui_card]
         follow_ups = [r.follow_up for r in results if r.follow_up]
-        # 多卡时择一展示：优先信息密度高、与"规划"诉求最相关的卡（如充电路线途经点），
-        # 否则取第一个。（多卡同屏渲染待 HMI/协议支持后再做。）
-        _PRIORITY = ("charging_route",)
-        ui_card = (next((c for c in cards if c.get("type") in _PRIORITY), None)
-                   or (cards[0] if cards else None))
+        # 多卡时择一展示：优先信息密度高/需用户操作的卡（充电路线途经点、顺路停靠/目的地
+        # 候选选择卡），否则取第一个。（多卡同屏渲染待 HMI/协议支持后再做。）
+        def _card_priority(c: dict) -> int:
+            if c.get("type") == "charging_route":
+                return 0
+            if (c.get("type") == "poi_list"
+                    and c.get("purpose") in ("waypoint_choice", "dest_choice")):
+                return 1
+            return 2
+        ui_card = min(cards, key=_card_priority) if cards else None
 
         if not results:
             return {"speech": "抱歉，我暂时无法处理这个请求。", "actions": []}
@@ -61,6 +66,42 @@ class Aggregator:
             "ui_card": ui_card,
             "follow_up": follow_ups[0] if follow_ups else "",
         }
+
+    @staticmethod
+    def _compose_actions(results: list[StepResult]) -> list[dict]:
+        """汇总各步动作，并把充电途经点并入导航 navigate 动作。
+
+        - 收集途经点：充电步用 data.waypoint / data.waypoints 暴露最优充电站坐标；
+        - navigate 去重：同目的地的重复 navigate 只保留首个（防御多意图重复导航）；
+        - 注入 waypoints：让“导航去X + 附近充电”产出带途经充电点的单条路线，而非
+          孤立的充电列表 + 直达导航。
+        """
+        actions = [a for r in results for a in r.actions]
+
+        waypoints: list[dict] = []
+        for r in results:
+            data = r.data or {}
+            wp = data.get("waypoint")
+            if isinstance(wp, dict) and wp.get("name"):
+                waypoints.append(wp)
+            for wp in (data.get("waypoints") or []):
+                if isinstance(wp, dict) and wp.get("name"):
+                    waypoints.append(wp)
+
+        composed, seen_nav = [], set()
+        for a in actions:
+            if a.get("type") == "navigate":
+                payload = dict(a.get("payload") or {})
+                key = (payload.get("destination"),
+                       payload.get("lat"), payload.get("lng"))
+                if key in seen_nav:
+                    continue          # 去重：同目的地的重复导航丢弃
+                seen_nav.add(key)
+                if waypoints:
+                    payload["waypoints"] = waypoints
+                    a = {**a, "payload": payload}
+            composed.append(a)
+        return composed
 
     async def _aggregate_speech(self, user_text: str, results: list[StepResult]) -> str:
         """用 LLM 把多步结果改写为连贯口语。"""

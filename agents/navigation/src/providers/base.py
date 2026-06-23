@@ -34,8 +34,9 @@ class POIProvider(ABC):
 
     @abstractmethod
     async def get_route(self, origin: GeoPoint, destination: GeoPoint,
-                        meta: dict | None = None) -> dict:
-        """获取路线规划。返回 {"distance_km": float, "duration_min": float, "steps": [...]}"""
+                        meta: dict | None = None, with_polyline: bool = False,
+                        waypoints: list[GeoPoint] | None = None) -> dict:
+        """获取路线规划（可带途经点 waypoints）。返回 {"distance_km", "duration_min", "steps", ...}"""
         ...
 
     @abstractmethod
