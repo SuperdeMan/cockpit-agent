@@ -75,3 +75,45 @@ def test_dedupes_duplicate_navigate_actions():
     out = asyncio.run(agg.compose("导航去V东滨店", [a, b]))
     navs = [x for x in out["actions"] if x["type"] == "navigate"]
     assert len(navs) == 1
+
+
+def test_multiple_info_cards_grouped_for_same_screen():
+    """股票卡+新闻卡（纯信息、无交互）→ 合成 card_group 同屏并存，不再丢其一。"""
+    agg = Aggregator(_fake_llm)
+    stock = StepResult(step_id="s1", status=StepStatus.OK, speech="英伟达208.65",
+                       ui_card={"type": "stock_quote", "symbol": "NVDA"})
+    news = StepResult(step_id="s2", status=StepStatus.OK, speech="新闻",
+                      ui_card={"type": "news_brief", "items": []})
+    out = asyncio.run(agg.compose("查英伟达股价和新闻", [stock, news]))
+    assert out["ui_card"]["type"] == "card_group"
+    types = [c["type"] for c in out["ui_card"]["items"]]
+    assert "stock_quote" in types and "news_brief" in types
+
+
+def test_interactive_card_shown_alone_not_grouped():
+    """有交互卡（充电路线/候选选择）时单独展示，不与信息卡混排（避免干扰选择）。"""
+    agg = Aggregator(_fake_llm)
+    stock = StepResult(step_id="s1", status=StepStatus.OK, speech="x",
+                       ui_card={"type": "stock_quote"})
+    charge = StepResult(step_id="s2", status=StepStatus.OK, speech="y",
+                        ui_card={"type": "charging_route", "stops": []})
+    out = asyncio.run(agg.compose("q", [stock, charge]))
+    assert out["ui_card"]["type"] == "charging_route"
+
+
+def test_aggregate_honors_user_count_format_request():
+    """用户要求『三条结论』→ 聚合提示词带上该意图，system 指示按分点输出（不再压成一段）。"""
+    captured = {}
+
+    async def _capture_llm(messages):
+        captured["system"], captured["user"] = messages[0]["content"], messages[1]["content"]
+        return "1. 结论一 2. 结论二 3. 结论三"
+
+    agg = Aggregator(_capture_llm)
+    r1 = StepResult(step_id="s1", status=StepStatus.OK, speech="英伟达新闻……")
+    r2 = StepResult(step_id="s2", status=StepStatus.OK, speech="股价208.65美元")
+    out = asyncio.run(agg.compose("查英伟达消息股价，对智能座舱影响给我三条结论", [r1, r2]))
+
+    assert "三条结论" in captured["user"]                       # 用户原话进了 prompt
+    assert ("分点" in captured["system"]) or ("条数" in captured["system"])  # system 指示分点
+    assert "1." in out["speech"]

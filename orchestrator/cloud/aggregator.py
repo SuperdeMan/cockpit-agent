@@ -9,8 +9,10 @@ from .models import StepResult, StepStatus
 logger = logging.getLogger("planner.aggregator")
 
 _AGGREGATE_SYSTEM = (
-    "你是座舱助手的回复组织者。把多个步骤的结果改写为一段连贯口语，适合语音播报。\n"
-    "要求：不超过 3 句话，不罗列 JSON，语气自然口语化。"
+    "你是座舱助手的回复组织者。把多个步骤的结果改写为自然口语回复，不罗列 JSON。\n"
+    "默认连贯口语、不超过 3 句话；\n"
+    "但若用户明确要求了条数或分点格式（如『三条结论』『列出几点』『分点说』『总结要点』），"
+    "必须按要求分点输出（如 1. 2. 3.，条数与用户要求一致），不要强行压成一段、也不要漏掉这层意图。"
 )
 
 
@@ -31,8 +33,9 @@ class Aggregator:
         actions = self._compose_actions(results)
         cards = [r.ui_card for r in results if r.ui_card]
         follow_ups = [r.follow_up for r in results if r.follow_up]
-        # 多卡时择一展示：优先信息密度高/需用户操作的卡（充电路线途经点、顺路停靠/目的地
-        # 候选选择卡），否则取第一个。（多卡同屏渲染待 HMI/协议支持后再做。）
+        # 交互卡（需用户选择/操作：充电路线、顺路停靠/目的地候选）单独展示——同屏多卡会干扰选择；
+        # 纯信息卡（股票/新闻/天气/搜索）可多卡同屏：合成 card_group 让 HMI 逐张渲染
+        # （ui_card 是自由 Struct，不必改 proto/网关）。这样"查英伟达股价+新闻"能股票卡+新闻卡并存。
         def _card_priority(c: dict) -> int:
             if c.get("type") == "charging_route":
                 return 0
@@ -40,7 +43,15 @@ class Aggregator:
                     and c.get("purpose") in ("waypoint_choice", "dest_choice")):
                 return 1
             return 2
-        ui_card = min(cards, key=_card_priority) if cards else None
+        interactive = [c for c in cards if _card_priority(c) < 2]
+        if interactive:
+            ui_card = min(interactive, key=_card_priority)
+        elif len(cards) > 1:
+            ui_card = {"type": "card_group", "items": cards}
+        elif cards:
+            ui_card = cards[0]
+        else:
+            ui_card = None
 
         if not results:
             return {"speech": "抱歉，我暂时无法处理这个请求。", "actions": []}
@@ -116,7 +127,8 @@ class Aggregator:
         prompt = (
             f"用户说：{user_text}\n\n"
             f"各步骤结果：\n" + "\n".join(f"- {s}" for s in summaries) + "\n\n"
-            "请把上述结果组织为一段连贯的口语回复。"
+            "请把上述结果组织为口语回复；若用户要求了条数或分点（如『三条结论』），"
+            "严格按该格式分点输出、不要漏掉该意图。"
         )
         try:
             return await self._llm([

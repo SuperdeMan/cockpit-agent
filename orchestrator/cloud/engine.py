@@ -358,7 +358,8 @@ class PlannerEngine:
 
         # HMI 会话级偏好（透传给 Agent，见 hmi/src/settings.tsx buildMeta）
         prefs = {k: meta[k] for k in
-                 ("model_pref", "answer_length", "assistant_name", "memory_enabled")
+                 ("model_pref", "answer_length", "assistant_name", "memory_enabled",
+                  "poi_page")  # poi_page: "换一批"翻页页码，透传给 navigation 取下一批候选
                  if meta.get(k)}
         # 精确位置只在本轮请求携带；需同时满足浏览器已授权并拥有 location.read scope。
         if "location.read" in granted:

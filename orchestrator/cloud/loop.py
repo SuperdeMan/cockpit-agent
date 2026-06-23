@@ -94,6 +94,7 @@ class LoopController:
                     self.executor._resolve_slot_refs(step, done_seed)
                 timeout = step.latency_budget_ms / 1000.0
                 final_sr = None
+                stream_start = self.clock()
                 try:
                     async for kind, payload in self._stream(
                             step.endpoint, step.intent, step.slots,
@@ -112,6 +113,22 @@ class LoopController:
 
                 if final_sr is not None:
                     streamed = True
+                    # T2 流式直通也补 step.agent span（与 engine.py D0 一致，否则
+                    # 单步 cloud agent 在 T2 循环里缺这一跳——trace 丢失该 Agent 身份，
+                    # NEED_CONFIRM/NEED_SLOT 挂起时尤其明显）。
+                    _pending = final_sr.status in (
+                        StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT)
+                    try:
+                        await obs_events.get_emitter("cloud").emit_span(
+                            ctx.trace_id, f"step.agent:{step.agent_id}",
+                            status="wait" if _pending else (
+                                "ok" if final_sr.status == StepStatus.OK else "err"),
+                            duration_ms=(self.clock() - stream_start) * 1000,
+                            attrs={"intent": step.intent, "agent_id": step.agent_id,
+                                   "kind": "agent", "deployment": "cloud",
+                                   "via": "stream"})
+                    except Exception:
+                        pass
                     results.append(final_sr)
                     observations.append(summarize(final_sr))
                     observations = observations[-self.observation_limit:]

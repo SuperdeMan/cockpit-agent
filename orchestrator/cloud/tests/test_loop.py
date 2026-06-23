@@ -267,6 +267,66 @@ def test_stream_need_confirm_suspends_in_loop():
     assert executor.runs == []
 
 
+def test_stream_emits_step_agent_span(monkeypatch):
+    """T2 streaming direct path must emit a step.agent span (parity with engine D0).
+
+    Regression: a single-step adaptive plan that streams used to append results
+    without emitting step.agent:<id>, so the trace lost the agent identity —
+    most visible on NEED_CONFIRM/NEED_SLOT suspends (e.g. parking.pay).
+    """
+    from observability import events
+
+    spans = []
+
+    class FakeEmitter:
+        async def emit_span(self, trace_id, node, **kwargs):
+            spans.append((node, kwargs.get("status")))
+
+        async def emit_metric(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(
+        events, "get_emitter",
+        lambda service="cloud": FakeEmitter(), raising=False,
+    )
+
+    planner = _Planner([])
+    executor = _Executor({})
+    aggregator = _Aggregator()
+    suspend_calls = []
+
+    async def suspend(step_result, results, plan, ctx):
+        suspend_calls.append(step_result)
+        return {"kind": "final", "speech": step_result.speech, "need_confirm": True}
+
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        from cockpit.agent.v1 import agent_pb2
+        yield ("speech", "确认")
+        yield ("final", agent_pb2.ExecuteResponse(
+            status=1, speech="确认支付吗？"))
+
+    controller = LoopController(
+        planner, executor, aggregator, suspend,
+        max_iters=2, budget_ms=5000, stream_fn=stream_fn,
+    )
+    _collect(
+        controller,
+        goal="pay",
+        initial_plan=Plan(
+            steps=[Step(id="s1", agent_id="parking-payment", kind="agent",
+                        deployment="cloud", intent="parking.pay",
+                        latency_budget_ms=5000)],
+            complexity="adaptive",
+        ),
+        agents=[],
+        ctx=PlanContext(trace_id="t-loop-1"),
+        user_text="把停车费付了",
+    )
+
+    assert ("step.agent:parking-payment", "wait") in spans
+    assert len(suspend_calls) == 1
+
+
 def test_no_stream_fn_keeps_existing_behavior():
     """Without stream_fn, the loop uses the executor as before."""
     planner = _Planner([ReplanDecision(done=True)])
