@@ -179,3 +179,66 @@ def test_mixed_route_keeps_cloud_context_groups(monkeypatch):
     commands = [action.payload["command"] for action in local_final.actions]
     # "开条缝" → 小开度 set（旧实现误判为全开 open，已修正）
     assert commands == ["hvac.off", "ambient_light.set", "window.set"]
+
+
+def test_gated_action_not_emitted_in_multi_intent():
+    """安全门控拒绝的动作不下发到 final.actions，且门控话术只播报一次。
+
+    回归用户反馈：低电量下"氛围灯/座椅通风"被门控，却仍把 vehicle.control 动作回传，
+    HMI 显示成"已执行"，与"已禁用"自相矛盾；多个被拦动作还各报一次"电量过低"。
+    """
+    srv = EdgeOrchestratorServicer()
+    srv.val.state["battery"] = 5  # 低电量：氛围灯/座椅通风将被门控
+
+    events = _drive(srv, "氛围灯调成橙色，座椅通风打开")
+    final = next(ev.final for ev in events if ev.WhichOneof("event") == "final")
+
+    # 播报门控原因，但不下发任何车控动作
+    assert "电量" in final.speech
+    assert all(not a.type.startswith("vehicle.control") for a in final.actions), \
+        f"被门控的动作不应下发: {[a.type for a in final.actions]}"
+    # 相邻重复的门控话术已去重，只出现一次
+    assert final.speech.count("电量过低") == 1
+
+
+def test_aircon_not_gated_at_low_battery_in_multi_intent():
+    """空调不再被低电量门控：低电量下"空调调到23度"应正常执行并下发动作。"""
+    srv = EdgeOrchestratorServicer()
+    srv.val.state["battery"] = 5
+
+    events = _drive(srv, "空调调到23度，座椅通风打开")
+    final = next(ev.final for ev in events if ev.WhichOneof("event") == "final")
+
+    assert srv.val.state.get("hvac_temp") == 23                 # 空调真的设了
+    cmds = [a.payload["command"] for a in final.actions]
+    assert "hvac.set" in cmds                                    # 空调动作下发
+    assert all("seat" not in c for c in cmds)                   # 座椅通风仍被门控、不下发
+
+
+def test_climate_feeling_cold_raises_temp_lowers_wind():
+    """『感觉冷，把空调温度和风速都调一下』→ 温度+1、风速-1（暖一点）。"""
+    srv = EdgeOrchestratorServicer()
+    srv.val.state["hvac_temp"] = 22
+    srv.val.state["hvac_wind_speed"] = 5
+
+    events = _drive(srv, "我感觉有点冷帮我把空调温度和风速都调一下")
+    final = next(ev.final for ev in events if ev.WhichOneof("event") == "final")
+
+    assert srv.val.state["hvac_temp"] == 23           # 温度调高一点
+    assert srv.val.state["hvac_wind_speed"] == 4       # 风速调小一点
+    cmds = [a.payload["command"] for a in final.actions]
+    assert "aircon.inc" in cmds and "aircon.wind_speed.dec" in cmds
+    # 话术要明确反馈温度+风速都调了（不再是模糊的"好的"）
+    assert "度" in final.speech and "风速" in final.speech
+
+
+def test_climate_feeling_hot_lowers_temp_raises_wind():
+    """『有点热，空调温度和风速都调一下』→ 温度-1、风速+1（凉一点）。"""
+    srv = EdgeOrchestratorServicer()
+    srv.val.state["hvac_temp"] = 26
+    srv.val.state["hvac_wind_speed"] = 3
+
+    _drive(srv, "有点热，空调温度和风速都调一下")
+
+    assert srv.val.state["hvac_temp"] == 25
+    assert srv.val.state["hvac_wind_speed"] == 4

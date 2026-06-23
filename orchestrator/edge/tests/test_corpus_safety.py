@@ -104,6 +104,17 @@ def test_low_battery_allows_seat_heating_when_charged(val):
     assert ok
 
 
+@pytest.mark.parametrize("operate,data", [
+    ("open", {}), ("set", {"value": "23"}), ("inc", {}), ("close", {}), ("set", {"mode": "除雾"}),
+])
+def test_low_battery_does_not_block_aircon(val, operate, data):
+    """空调不在低电量门控之列：AC 关系行车舒适与除雾安全，低电量也放行
+    （仅由场景/建议层做"影响续航"的降级提示，不端侧硬禁）。"""
+    val.state["battery"] = 5
+    ok, _ = val._safety_gate("aircon", operate, data)
+    assert ok, f"低电量不应拦截空调 {operate}/{data}"
+
+
 def test_reversing_blocks_non_safety_control(val):
     val.state["gear"] = "R"
     ok, msg = val._safety_gate("ambient_light", "open", {})

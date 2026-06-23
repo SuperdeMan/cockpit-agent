@@ -15,7 +15,7 @@ from cockpit.orchestrator.v1 import orchestrator_pb2, orchestrator_pb2_grpc
 from cockpit.common.v1 import common_pb2
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
-from fast_intent import classify, classify_structured, is_local, split_and_classify, split_and_classify_any, structured_to_legacy
+from fast_intent import classify, classify_structured, climate_feeling_intents, is_local, split_and_classify, split_and_classify_any, structured_to_legacy
 from val import VAL
 from edge_agents import edge_execute
 from cloud_client import CloudClient
@@ -50,6 +50,17 @@ def _state_changes(before: dict, after: dict) -> list[dict]:
         for key, value in after.items()
         if before.get(key) != value
     ]
+
+
+def _join_speeches(speeches: list[str]) -> str:
+    """聚合多条本地播报：去掉空串与相邻重复（如多个高耗电动作各报一次"电量过低"，
+    只保留一次），用顿号连接。"""
+    out: list[str] = []
+    for s in speeches:
+        s = (s or "").strip()
+        if s and (not out or out[-1] != s):
+            out.append(s)
+    return "，".join(out)
 
 
 def _group_mixed_intents(intents: list[dict]) -> list[list[dict]]:
@@ -247,7 +258,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             multi = None
             mixed_intents = None
         else:
-            multi = split_and_classify(request.text)
+            # 体感冷热→空调温度/风速方向推断（"感觉冷，温度和风速都调一下"→温度↑风速↓）优先，
+            # 命中则当多意图并行执行；否则常规多意图拆分。
+            multi = climate_feeling_intents(request.text) or split_and_classify(request.text)
             mixed_intents = None
             if multi:
                 intent = None
@@ -274,15 +287,17 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     if not ok:
                         speech = speech or "操作失败"
                     speeches.append(speech)
-                    # 构造 action
-                    obj = m_intent.get("data", {}).get("object", "")
-                    action_type = "media.control" if obj in ("media", "music", "radio", "online_radio", "audiobook", "opera", "news", "video", "TV") else "vehicle.control"
-                    actions.append(common_pb2.AgentAction(
-                        type=action_type,
-                        payload=_struct({"command": legacy["name"], **legacy.get("slots", {})}),
-                        require_confirm=False,
-                    ))
-                    logger.info("MULTI-LOCAL %s -> %s", legacy["name"], speech)
+                    # 仅在 VAL 真正执行成功(ok)时回传 action。被安全门控拒绝时只播报原因、
+                    # 不下发动作——否则 HMI 会把被拒动作显示成"已执行"，与"已禁用"自相矛盾。
+                    if ok:
+                        obj = m_intent.get("data", {}).get("object", "")
+                        action_type = "media.control" if obj in ("media", "music", "radio", "online_radio", "audiobook", "opera", "news", "video", "TV") else "vehicle.control"
+                        actions.append(common_pb2.AgentAction(
+                            type=action_type,
+                            payload=_struct({"command": legacy["name"], **legacy.get("slots", {})}),
+                            require_confirm=False,
+                        ))
+                    logger.info("MULTI-LOCAL %s -> %s (ok=%s)", legacy["name"], speech, ok)
                 else:
                     # 子意图无法本地处理 / 需二次确认 → 整句走云（保守策略）
                     logger.info("MULTI sub-intent needs cloud, falling through")
@@ -294,7 +309,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     "route.multi",
                     attrs={"count": len(actions)},
                 )
-                combined = "，".join(speeches)
+                combined = _join_speeches(speeches)
                 final = orchestrator_pb2.FinalResult(speech=combined)
                 final.actions.extend(actions)
                 yield orchestrator_pb2.HandleEvent(final=final)
@@ -332,14 +347,16 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         if not ok:
                             speech = speech or "操作失败"
                         local_speeches.append(speech)
-                        obj = m_intent.get("data", {}).get("object", "")
-                        action_type = "media.control" if obj in ("media", "music", "radio", "online_radio", "audiobook", "opera", "news", "video", "TV") else "vehicle.control"
-                        local_actions.append(common_pb2.AgentAction(
-                            type=action_type,
-                            payload=_struct({"command": legacy["name"], **legacy.get("slots", {})}),
-                            require_confirm=False,
-                        ))
-                        logger.info("MIXED-LOCAL %s -> %s", legacy["name"], speech)
+                        # 同快路径 A：门控拒绝(ok=False)只播报、不下发 action。
+                        if ok:
+                            obj = m_intent.get("data", {}).get("object", "")
+                            action_type = "media.control" if obj in ("media", "music", "radio", "online_radio", "audiobook", "opera", "news", "video", "TV") else "vehicle.control"
+                            local_actions.append(common_pb2.AgentAction(
+                                type=action_type,
+                                payload=_struct({"command": legacy["name"], **legacy.get("slots", {})}),
+                                require_confirm=False,
+                            ))
+                        logger.info("MIXED-LOCAL %s -> %s (ok=%s)", legacy["name"], speech, ok)
                 else:
                     # 组内任一片段需上云时，整组上云，保留目的地/路线偏好、
                     # 媒体动作/歌手等相邻片段之间的语义上下文。
@@ -363,7 +380,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 )
                 # 有非本地意图：先返回本地结果，再把非本地片段上云
                 if local_speeches:
-                    combined = "，".join(local_speeches)
+                    combined = _join_speeches(local_speeches)
                     final = orchestrator_pb2.FinalResult(speech=combined)
                     final.actions.extend(local_actions)
                     yield orchestrator_pb2.HandleEvent(final=final)
@@ -409,7 +426,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             else:
                 # 全部本地（不应该到这里，multi 应该已经捕获）
                 if local_speeches:
-                    combined = "，".join(local_speeches)
+                    combined = _join_speeches(local_speeches)
                     final = orchestrator_pb2.FinalResult(speech=combined)
                     final.actions.extend(local_actions)
                     yield orchestrator_pb2.HandleEvent(final=final)

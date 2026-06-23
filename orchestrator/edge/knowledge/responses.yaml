@@ -55,6 +55,22 @@ hvac_wind_speed_set_success:
   speech_brief:
   - 风速{value}档
   - 好的
+hvac_wind_speed_inc_success:
+  scene: 空调风速已调大
+  status: 成功
+  speech_full:
+  - 已为您调大空调风速，当前{value}档
+  speech_brief:
+  - 风速调大到{value}档
+  - 风速大了点，现在{value}档
+hvac_wind_speed_dec_success:
+  scene: 空调风速已调小
+  status: 成功
+  speech_full:
+  - 已为您调小空调风速，当前{value}档
+  speech_brief:
+  - 风速调小到{value}档
+  - 风速小了点，现在{value}档
 hvac_already_on:
   scene: 空调已处于开启状态
   status: 已是该态

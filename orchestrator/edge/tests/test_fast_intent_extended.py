@@ -62,6 +62,17 @@ class TestClassifyBackwardCompat:
         assert is_local("hvac.set")
         assert not is_local("chitchat.talk")
 
+    def test_scene_mode_recognized_but_not_local(self):
+        """命名场景（露营/小憩/观影…）仍被结构化识别（保留 VAL 知识/语料），
+        但刻意不是 LOCAL_INTENTS——由云端 scene-orchestrator 编排，不在端侧截留。"""
+        structured = classify_structured("开启露营模式")
+        assert structured is not None
+        assert structured["data"]["object"] == "scene_mode"
+        assert structured["data"]["mode"] == "camping"
+        # 关键：不是本地意图 → is_local 为 False → 路由上云 scene.activate
+        assert not is_local(classify("开启露营模式")["name"])
+        assert not is_local("scene_mode.set")
+
 
 # ═══════════════════════════════════════════════════
 # 2. 新接口 classify_structured() — 座椅
@@ -401,3 +412,13 @@ class TestBatteryQuery:
         assert fi._SPLIT_MARKERS.split("电量还有多少") == ["电量还有多少"]
         # 真正的连接词"还有"仍能拆分多意图
         assert fi._SPLIT_MARKERS.split("开空调还有放音乐") == ["开空调", "放音乐"]
+
+
+def test_climate_feeling_guard_requires_temp_wind_and_direction():
+    """体感冷热推断只在【同时点名温度+风速】且【明确冷/热】时触发，否则交常规分类。"""
+    from fast_intent import climate_feeling_intents
+    assert climate_feeling_intents("我感觉有点冷帮我把空调温度和风速都调一下") is not None
+    assert climate_feeling_intents("把空调温度调一下") is None       # 只温度
+    assert climate_feeling_intents("把空调风速调一下") is None       # 只风速
+    assert climate_feeling_intents("空调温度和风速调一下") is None    # 无冷热方向
+    assert climate_feeling_intents("导航去公司") is None             # 与空调无关

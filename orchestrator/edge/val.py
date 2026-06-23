@@ -211,7 +211,7 @@ class VAL:
         # 6. 选话术（相对调温把模拟后的目标温度并入，便于话术回显"当前26度"）
         response_key = self._build_response_key(obj, operate, normalized)
         resp_data = normalized
-        if state_key == "hvac_temp" and operate in ("inc", "dec"):
+        if state_key in ("hvac_temp", "hvac_wind_speed") and operate in ("inc", "dec"):
             resp_data = {**normalized, "value": new_value}
         elif obj == "battery":
             resp_data = {**normalized, "value": new_value}
@@ -343,9 +343,12 @@ class VAL:
             if obj in ("window", "sunroof") and operate == "open" and speed > 80:
                 return False, "高速行驶中请勿打开车窗/天窗"
 
-        # ws8 P0: 低电量（<10%）禁用高耗电功能（座椅加热/通风、方向盘加热、氛围灯、香氛）
+        # ws8 P0: 低电量（<10%）禁用非必要高耗电功能（座椅加热/通风、方向盘加热、氛围灯、香氛）。
         # 用指令对象名（seat/steering_wheel）+ mode 判断；座椅加热/通风是 object=seat、
         # mode=heating/ventilation，不能写成状态键名 seat_heating（那样永不命中）。
+        # 注意：空调(aircon)不在此列——AC 关系到行车舒适与除雾安全，真实车低电量也只提示影响
+        # 续航、不硬禁；硬禁 AC 反而违和（见 2026-06-23 用户反馈）。低电量对 AC 的处理留给
+        # 场景编排/建议层做"降级提示"，而非端侧门控直接拒绝。
         battery = self.state.get("battery", 100)
         if battery < 10:
             mode = data.get("mode")
@@ -692,10 +695,14 @@ class VAL:
                 return "hvac_off_success"
             if operate == "set":
                 return "hvac_wind_speed_set_success" if is_wind else "hvac_set_success"
-            # 相对调温话术（风速 inc/dec 不在此，沿用 generic_success 不回归）
-            if not is_wind and operate == "inc":
+            # 风速相对调（"风速调小一点"）也给明确话术，别落到 generic "好的"
+            if is_wind and operate == "inc":
+                return "hvac_wind_speed_inc_success"
+            if is_wind and operate == "dec":
+                return "hvac_wind_speed_dec_success"
+            if operate == "inc":
                 return "hvac_inc_success"
-            if not is_wind and operate == "dec":
+            if operate == "dec":
                 return "hvac_dec_success"
 
         if obj == "window":

@@ -35,10 +35,13 @@ LOCAL_INTENTS = {
     "battery.query",
     "tire_pressure.query",
     "dashcam.open", "dashcam.close",
-    # 驾驶模式 / 场景模式 / 电源模式
+    # 驾驶模式 / 电源模式
     "driving_mode.set",
-    "scene_mode.set",
     "power_mode.set",
+    # 注意：scene_mode.set（露营/小憩/观影/浪漫/冥想 等命名场景）刻意不入 LOCAL_INTENTS——
+    # 这些命名场景由云端 scene-orchestrator 编排（展开为多动作 + 危险确认 + 低电量门控），
+    # 端侧 scene_mode 仅设状态位、无编排能力。classify_structured 仍识别 scene_mode（保留
+    # VAL 知识与语料），但 is_local=False 使其路由上云交 scene.activate。
     # 动能回收
     "energy_recovery.set", "energy_recovery.inc", "energy_recovery.dec",
     # 车道辅助
@@ -1290,6 +1293,34 @@ def _split_parts(text: str) -> list[str]:
         if p and p.strip():
             parts.extend(_resplit_on_he(p.strip()))
     return parts
+
+
+def climate_feeling_intents(text: str) -> list[dict] | None:
+    """从"体感冷热"推断空调调节方向：用户说「感觉冷，把空调温度和风速都调一下」时，
+    意图是【暖一点】= 温度调高 + 风速调小；说「热」则【凉一点】= 温度调低 + 风速调大。
+
+    仅在同时点名了温度和风速（"都调"那种）且明确冷/热时触发，产出两条本地结构化指令
+    供端侧多意图并行执行；其余空调表达交常规分类，零回归。
+    """
+    t = (text or "").strip()
+    if "空调" not in t and "冷气" not in t and "暖风" not in t:
+        return None
+    if not (("温度" in t) and ("风速" in t or "风量" in t)):
+        return None
+    cold = any(w in t for w in ("冷", "凉"))
+    hot = any(w in t for w in ("热", "闷", "燥", "烫"))
+    if cold == hot:  # 既无冷热、或冷热都提了 → 方向不明，不擅自处理
+        return None
+    if cold:  # 冷 → 暖一点：温度↑、风速↓
+        return [
+            _s("setting", "control", "inc", "aircon", conf=0.9),
+            _s("setting", "control", "dec", "aircon", mode="wind_speed", conf=0.9),
+        ]
+    # 热 → 凉一点：温度↓、风速↑
+    return [
+        _s("setting", "control", "dec", "aircon", conf=0.9),
+        _s("setting", "control", "inc", "aircon", mode="wind_speed", conf=0.9),
+    ]
 
 
 def split_and_classify(text: str) -> list[dict] | None:
