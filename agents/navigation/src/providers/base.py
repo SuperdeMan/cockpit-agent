@@ -28,8 +28,10 @@ class POIProvider(ABC):
     @abstractmethod
     async def search(self, keyword: str, near: GeoPoint = None,
                      category: str = "", rating_min: float = 0,
-                     limit: int = 5, meta: dict | None = None) -> list[POI]:
-        """搜索 POI。meta 透传 trace_id/span_id 供 provider 调用可观测（可选）。"""
+                     limit: int = 5, page: int = 1,
+                     meta: dict | None = None) -> list[POI]:
+        """搜索 POI。page 支持翻页（"换一批"取下一页不同结果）。
+        meta 透传 trace_id/span_id 供 provider 调用可观测（可选）。"""
         ...
 
     @abstractmethod

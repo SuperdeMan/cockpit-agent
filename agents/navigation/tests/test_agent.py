@@ -1,8 +1,9 @@
 """navigation 契约测试（黄金用例）。不起 gRPC server，直接驱动 handle。"""
 import asyncio
+import json
 from agents._sdk.testing import make_context, run_handle
 from agents.navigation.src.agent import NavigationAgent
-from agents.navigation.src.providers.base import POI
+from agents.navigation.src.providers.base import POI, GeoPoint
 
 
 def test_nearby_search_uses_session_location_coordinates():
@@ -324,3 +325,267 @@ def test_landmark_resolution_passes_original_utterance_to_model():
 
     assert candidates == ["中国华润大厦"]
     assert seen["messages"][-1] == {"role": "user", "content": raw}
+
+
+# ── 常用地点（家/公司）──────────────────────────────────────
+
+def test_navigate_to_home_uses_stored_place_without_searching():
+    """命中『家』别名且已设置 → 用画像坐标直达，不再搜 POI。"""
+    agent = NavigationAgent()
+    searched = {"hit": False}
+
+    async def search(*a, **k):
+        searched["hit"] = True
+        return []
+
+    agent.poi.search = search
+    ctx = make_context(context_values={"profile.places": json.dumps({
+        "home": {"name": "阳光小区", "address": "上海长宁区某路1号",
+                 "lat": 31.21, "lng": 121.40}})})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "家"}, raw_text="导航回家", ctx=ctx))
+
+    assert res.status == "ok"
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert nav["payload"]["lat"] == 31.21 and nav["payload"]["lng"] == 121.40
+    assert searched["hit"] is False
+    assert "家" in res.speech
+
+
+def test_navigate_home_with_stop_category_keeps_coffee_intent():
+    """『导航回家，途中找个咖啡店』：到家途中仍给咖啡顺路停靠候选，不丢这层意图。"""
+    agent = NavigationAgent()
+
+    async def search(keyword, near=None, **kwargs):
+        return [POI(id="c1", name="星巴克", address="x", lat=22.5, lng=113.9),
+                POI(id="c2", name="瑞幸咖啡", address="y", lat=22.51, lng=113.91)]
+
+    agent.poi.search = search
+    ctx = make_context(context_values={"profile.places": json.dumps({
+        "home": {"name": "家小区", "address": "宝安", "lat": 22.57, "lng": 113.85}})})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "家"}, raw_text="导航回家，途中找个咖啡店", ctx=ctx,
+        meta={"current_lat": "22.53", "current_lng": "113.94"}))
+
+    assert res.status == "ok"
+    assert res.ui_card and res.ui_card.get("purpose") == "waypoint_choice"  # 顺路停靠候选卡
+    assert res.ui_card.get("destination") == "家小区"                       # 目的地仍是家
+    assert any("咖啡" in it.get("name", "") or "星巴克" in it.get("name", "")
+               for it in res.ui_card.get("items", []))
+    assert any(a["type"] == "navigate" for a in res.actions)                # 仍导航到家
+
+
+def test_navigate_to_company_unset_asks_to_set_address():
+    """命中『公司』别名但未设置 → NEED_SLOT 二次交互要地址（独立槽 place_address）。"""
+    res = asyncio.run(run_handle(
+        NavigationAgent(), "navigation.navigate_to",
+        slots={"destination": "公司"}, raw_text="导航去公司",
+        ctx=make_context(context_values={})))
+
+    assert res.status == "need_slot"
+    assert res.missing_slots == ["place_address"]
+    assert "公司" in res.speech
+
+
+def test_navigate_to_resume_sets_company_then_navigates():
+    """二次交互续接：destination=公司 + place_address=地址 → 存为公司并导航。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider(default=[_poi("腾讯滨海大厦")])
+    ctx = make_context(context_values={})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "公司", "place_address": "深圳南山腾讯滨海大厦"},
+        raw_text="深圳南山腾讯滨海大厦", ctx=ctx))
+
+    assert res.status == "ok"
+    assert any(a["type"] == "navigate" for a in res.actions)
+    ctx._memory.upsert_profile.assert_awaited()
+    saved = json.loads(ctx._memory.upsert_profile.await_args.args[2])
+    assert "company" in saved and saved["company"]["name"] == "腾讯滨海大厦"
+    assert "公司" in res.speech
+
+
+def test_set_place_stores_without_navigating():
+    """显式设置：navigation.set_place 只记录、不产出导航动作。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider(default=[_poi("阳光小区")])
+    ctx = make_context(context_values={})
+    res = asyncio.run(run_handle(
+        agent, "navigation.set_place",
+        slots={"place": "家", "address": "上海长宁阳光小区"},
+        raw_text="把家设成上海长宁阳光小区", ctx=ctx))
+
+    assert res.status == "ok"
+    assert not any(a["type"] == "navigate" for a in res.actions)
+    ctx._memory.upsert_profile.assert_awaited()
+    assert "家" in res.speech
+
+
+def test_set_place_parses_alias_and_address_from_raw_text():
+    """槽位缺失时从原话『我家在XX』兜底解析别名+地址。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider(default=[_poi("科技园")])
+    ctx = make_context(context_values={})
+    res = asyncio.run(run_handle(
+        agent, "navigation.set_place",
+        slots={}, raw_text="我家在深圳南山科技园", ctx=ctx))
+
+    assert res.status == "ok"
+    saved = json.loads(ctx._memory.upsert_profile.await_args.args[2])
+    assert "home" in saved
+
+
+def test_locate_with_gps_reverse_geocodes_current_position():
+    """『我现在在哪里』+ GPS → 逆地理编码当前坐标，给出当前所在地址。"""
+    agent = NavigationAgent()
+
+    async def rg(lng, lat, **kwargs):
+        return GeoPoint(address="广东省深圳市南山区科技园", lat=lat, lng=lng)
+
+    agent.poi.reverse_geocode = rg
+    res = asyncio.run(run_handle(
+        agent, "navigation.locate", slots={}, raw_text="我现在在哪里",
+        meta={"current_lat": "22.54", "current_lng": "113.95"}))
+
+    assert res.status == "ok"
+    assert "科技园" in res.speech and "当前" in res.speech
+
+
+def test_locate_without_gps_is_honest_not_shanghai_mock():
+    """无 GPS 时 locate 诚实提示开启定位，绝不回退编造车机 mock（上海）——与天气一致。"""
+    ctx = make_context(context_values={"vehicle.location": '{"city": "上海"}'})
+    res = asyncio.run(run_handle(
+        NavigationAgent(), "navigation.locate", slots={}, raw_text="我在哪", ctx=ctx))
+
+    assert res.status == "ok"
+    assert "上海" not in res.speech     # 不再编造车机 mock 位置
+    assert "定位" in res.speech         # 诚实提示开启定位授权
+
+
+def test_current_position_is_gps_only_no_vehicle_location_fallback():
+    """统一定位源：有 GPS 用 GPS；无 GPS 返回 None（不回退 vehicle.location mock）。"""
+    agent = NavigationAgent()
+    ctx = make_context(context_values={"vehicle.location": '{"city": "上海"}'})
+    with_gps = asyncio.run(agent._current_position(
+        ctx, {"current_lat": "22.54", "current_lng": "113.95"}))
+    assert with_gps is not None and abs(with_gps.lat - 22.54) < 1e-6
+    without_gps = asyncio.run(agent._current_position(ctx, {}))
+    assert without_gps is None
+
+
+def test_navigate_to_passes_current_location_as_near():
+    """『最近的/附近的粤菜馆』应带当前位置 near，按距离就近解析（issue: 没用当前位置）。"""
+    agent = NavigationAgent()
+    seen = {}
+
+    async def search(keyword, near=None, **kwargs):
+        seen['near'] = near
+        return [POI(id='p1', name='粤小馆', address='科技园', lat=22.5, lng=113.9)]
+
+    agent.poi.search = search
+    res = asyncio.run(run_handle(
+        agent, 'navigation.navigate_to',
+        slots={'destination': '最近的粤菜馆'}, raw_text='导航去最近的粤菜馆',
+        meta={'current_lat': '22.54', 'current_lng': '113.95'}))
+
+    assert res.status == 'ok'
+    assert seen['near'] is not None, 'navigate_to 应把当前位置作为 near 传给 POI 搜索'
+    assert abs(seen['near'].lat - 22.54) < 1e-6 and abs(seen['near'].lng - 113.95) < 1e-6
+
+
+def test_nearest_without_location_asks_to_enable_not_arbitrary_city():
+    """『最近的粤菜馆』无定位 → 诚实提示开启定位，不拿任意城市冒充"最近"、不导航。"""
+    res = asyncio.run(run_handle(
+        NavigationAgent(), "navigation.navigate_to",
+        slots={"destination": "最近的粤菜馆"}, raw_text="导航去最近的粤菜馆",
+        ctx=make_context(context_values={})))  # 无 GPS
+
+    assert res.status == "ok"
+    assert not any(a["type"] == "navigate" for a in res.actions)
+    assert "定位" in res.speech
+
+
+def test_nearest_with_location_strips_proximity_and_searches_keyword_near():
+    """有定位时『附近的粤菜馆』剥掉就近词、按当前位置周边搜类目（而非整句当 POI 名搜空）。"""
+    agent = NavigationAgent()
+    seen = {}
+
+    async def search(keyword, near=None, **kwargs):
+        seen["keyword"] = keyword
+        seen["near"] = near
+        return [POI(id="p1", name="粤小馆", address="南山", lat=22.54, lng=113.94)]
+
+    agent.poi.search = search
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "附近的粤菜馆"}, raw_text="导航去附近的粤菜馆",
+        meta={"current_lat": "22.5447", "current_lng": "113.9447"}))
+
+    assert res.status == "ok"
+    assert seen["keyword"] == "粤菜馆", f"应剥掉就近前缀，实际搜的是 {seen['keyword']!r}"
+    assert seen["near"] is not None and abs(seen["near"].lat - 22.5447) < 1e-6
+
+
+def test_nearest_returns_destination_choices_not_waypoints():
+    """『附近的粤菜馆』给目的地候选(plain poi_list)，不自动导航、不当顺路途经点。
+    回归：之前会自动选一家作目的地、把其余当『途经点』，用户『第N个』落成 waypoint。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider(default=[_poi("粤菜A"), _poi("粤菜B"), _poi("粤菜C")])
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "附近的粤菜馆"}, raw_text="导航去附近的粤菜馆",
+        meta={"current_lat": "22.54", "current_lng": "113.95"}))
+
+    assert res.status == "ok"
+    assert res.ui_card and res.ui_card["type"] == "poi_list"
+    assert res.ui_card.get("purpose") is None         # 不是 waypoint_choice/dest_choice
+    assert not res.actions                              # 不自动导航
+    assert "第几个" in res.speech or "哪一家" in res.speech
+
+
+def test_nearest_huanyipi_passes_next_page():
+    """『换一批』：续问带 meta.poi_page → 翻页取下一批不同候选（不再返回原结果）。"""
+    agent = NavigationAgent()
+    seen = {}
+
+    async def search(keyword, near=None, page=1, **kwargs):
+        seen["page"] = page
+        return [POI(id=f"p{page}", name=f"粤菜店{page}", address="x", lat=22.5, lng=113.9)]
+
+    agent.poi.search = search
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "附近的粤菜馆"}, raw_text="导航去附近的粤菜馆",
+        meta={"current_lat": "22.54", "current_lng": "113.95", "poi_page": "2"}))
+
+    assert res.status == "ok"
+    assert seen["page"] == 2
+
+
+def test_specific_destination_without_location_still_navigates():
+    """非就近的具体目的地无定位仍正常导航（不被就近门槛误伤）。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider(default=[_poi("北京南站")])
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "北京南站"}, raw_text="导航去北京南站",
+        ctx=make_context(context_values={})))
+
+    assert res.status == "ok"
+    assert any(a["type"] == "navigate" for a in res.actions)
+
+
+def test_non_alias_destination_unaffected_by_places():
+    """非别名目的地零回归：不读画像、走常规 POI 解析。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider(default=[_poi("首都机场")])
+    ctx = make_context(context_values={})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "首都机场"}, raw_text="导航去首都机场", ctx=ctx))
+
+    assert res.status == "ok"
+    assert any(a["type"] == "navigate" for a in res.actions)
+    ctx._memory.upsert_profile.assert_not_awaited()

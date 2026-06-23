@@ -13,13 +13,21 @@ capabilities:
     slots: [keyword, category, near, rating_min]
     examples: ["附近的充电站", "找个评分高的川菜馆", "最近的加油站在哪"]
   - intent: navigation.navigate_to
-    description: 导航到指定目的地；可顺路停靠（stop_category=吃饭/咖啡…→给候选让用户选）或带途经点（waypoint=已选停靠点名）
-    slots: [destination, stop_category, waypoint]
+    description: 导航到指定目的地；支持常用地点别名（家/公司/学校，未设置会反问地址并记住）、顺路停靠（stop_category=吃饭/咖啡…→给候选让用户选）、带途经点（waypoint=已选停靠点名）
+    slots: [destination, stop_category, waypoint, place_address]
     examples: ["导航去公司", "带我去首都机场", "回家", "导航去东方之门，附近找个吃饭的地方", "导航去东方之门途经肯德基"]
+  - intent: navigation.set_place
+    description: 设置常用地点（家/公司/学校）的地址，记住后可直接『导航去家/公司』。只记录不导航。
+    slots: [place, address]
+    examples: ["把家设成上海长宁区某某小区", "我家在深圳南山区科技园", "设置公司地址为北京国贸三期", "公司在杭州西湖区某某大厦"]
   - intent: navigation.reverse_geocode
-    description: 逆地理编码，根据坐标获取地址信息
+    description: 逆地理编码，根据给定坐标(lng/lat)获取地址信息
     slots: [lng, lat]
-    examples: ["这是哪里", "当前在什么位置", "这个坐标是什么地方"]
+    examples: ["这个坐标是什么地方", "121.47,31.23是哪里"]
+  - intent: navigation.locate
+    description: 回答用户"我在哪/我现在在哪里/当前位置"，对当前已授权定位做逆地理编码给出当前所在地址。无具体坐标，用当前位置。
+    slots: []
+    examples: ["我在哪", "我现在在哪里", "我现在在哪", "当前位置", "我在什么地方", "这是哪里"]
   - intent: navigation.poi_detail
     description: 查询某个 POI 的详细信息
     slots: [poi_id]

@@ -5,6 +5,7 @@
 Phase 1：使用 Provider 适配层（mock/real 可切换）。
 """
 from __future__ import annotations
+import json
 import logging
 import os
 import re
@@ -15,12 +16,40 @@ from agents._sdk.location import current_location_from_meta
 from agents._sdk.landmark import (
     is_landmark_description, landmark_candidates, name_matches)
 from .providers import build_poi_provider
-from .providers.base import GeoPoint
+from .providers.base import GeoPoint, POI
 from .providers.mock import MockPOIProvider
 
 logger = logging.getLogger("agent.navigation")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
+
+# 常用地点别名 → (画像 key, 中文标签)。精确匹配整段目的地，避免误伤含字地名。
+_PLACE_ALIASES: dict[str, tuple[list[str], str]] = {
+    "home": (["家", "我家", "回家", "家里"], "家"),
+    "company": (["公司", "单位", "我公司", "我单位"], "公司"),
+    "school": (["学校", "我的学校"], "学校"),
+}
+
+
+def _match_place_alias(text: str) -> tuple[str | None, str]:
+    """目的地是否是常用地点别名。精确匹配 → (key, 标签)，否则 (None, '')。"""
+    t = (text or "").strip().rstrip("。，,. ")
+    for key, (aliases, label) in _PLACE_ALIASES.items():
+        if t in aliases:
+            return key, label
+    return None, ""
+
+
+# "最近的/附近的X" 这类就近查询依赖当前位置；无定位时不应拿任意城市冒充"最近"。
+_PROXIMITY_RE = re.compile(r"最近|附近|周边|就近|离我")
+# 剥掉就近前缀，留类目关键词（"附近的粤菜馆"→"粤菜馆"）。否则高德按整句"附近的粤菜馆"
+# 找同名 POI 必然落空（"暂时无法确定"），或匹配到远处无关结果。
+_PROXIMITY_PREFIX_RE = re.compile(r"^(离我)?\s*(最近|附近|周边|就近)的?\s*")
+
+
+def _strip_proximity(dest: str) -> str:
+    stripped = _PROXIMITY_PREFIX_RE.sub("", dest or "").strip()
+    return stripped or dest
 
 
 class NavigationAgent(BaseAgent):
@@ -35,6 +64,8 @@ class NavigationAgent(BaseAgent):
             "navigation.navigate_to": self._navigate_to,
             "navigation.reverse_geocode": self._reverse_geocode,
             "navigation.poi_detail": self._poi_detail,
+            "navigation.set_place": self._set_place,
+            "navigation.locate": self._locate,
         }
         handler = handlers.get(intent.name)
         if handler:
@@ -42,13 +73,13 @@ class NavigationAgent(BaseAgent):
         return AgentResult(status=FAILED, speech="抱歉，这个导航请求我还不会处理。")
 
     async def _current_position(self, ctx, meta) -> GeoPoint | None:
-        """优先使用本轮已授权的精确位置；未授权时才回退车辆上下文地址。"""
+        """当前位置统一只取本轮已授权的浏览器 GPS——与天气、「我在哪」一致，避免三处定位打架。
+        PoC 没有真实车机 GPS（memory 的 vehicle.location 是 mock 上海），回退它会给出误导结果
+        且与天气不一致；故不再回退，无授权返回 None，由调用方诚实提示开启定位。"""
         current = current_location_from_meta(meta)
         if current:
             return GeoPoint(lat=current.lat, lng=current.lng)
-        ctx_values = await ctx.fetch("vehicle.location")
-        location_data = ctx_values.get("vehicle.location", "")
-        return GeoPoint(address=location_data) if isinstance(location_data, str) and location_data else None
+        return None
 
     @staticmethod
     def _navigate_payload(destination: str, lat: float, lng: float, meta: dict | None) -> dict:
@@ -165,8 +196,8 @@ class NavigationAgent(BaseAgent):
     _WAYPOINT_RE = re.compile(r"(?:途经|途径|经过|顺路去|顺道去|路过)\s*([^，。,、\s]+)")
     # raw_text 里的"顺路停靠"兜底识别（planner 未填 stop_category，或误拆出 food 步时）
     _STOP_RAW_RE = re.compile(
-        r"(?:附近|周边|顺路|顺道|沿途|中途|那边|那儿|路过)[^，。,、]{0,8}?"
-        r"(餐厅|饭店|吃饭|吃的|美食|川菜|火锅|咖啡|奶茶|小吃)")
+        r"(?:附近|周边|顺路|顺道|沿途|中途|途中|路上|那边|那儿|路过)[^，。,、]{0,8}?"
+        r"(餐厅|饭店|吃饭|吃的|美食|川菜|火锅|咖啡|奶茶|小吃|加油|充电)")
 
     @classmethod
     def _stop_keyword(cls, category: str) -> str:
@@ -192,8 +223,72 @@ class NavigationAgent(BaseAgent):
         if not dest:
             return AgentResult(status=NEED_SLOT, speech="您要去哪里？", follow_up="请告诉我目的地")
 
-        resolved_name, results = await self._find_destination(dest, meta)
+        # 常用地点（家/公司/学校）：命中别名先走画像，未设置则二次交互让用户设置。
+        place_key, place_label = _match_place_alias(dest)
+        if place_key:
+            place_address = (intent.slots.get("place_address") or "").strip()
+            if place_address:
+                # 二次交互续接：用户给了地址 → 设为该常用地点并直接导航过去。
+                return await self._set_place_and_go(
+                    place_key, place_label, place_address, ctx, meta, navigate=True)
+            stored = await self._get_place(ctx, place_key)
+            if stored:
+                # "导航回家，途中找个咖啡店"：常用地点同样支持途经点/顺路停靠，别丢这层意图。
+                stored_poi = POI(
+                    id=f"place_{place_key}", name=stored.get("name") or place_label,
+                    address=stored.get("address") or "",
+                    lat=stored.get("lat"), lng=stored.get("lng"))
+                items = [stored]
+                waypoint = (intent.slots.get("waypoint") or "").strip()
+                if not waypoint:
+                    m = self._WAYPOINT_RE.search(raw_text)
+                    if m:
+                        waypoint = m.group(1).strip()
+                if waypoint:
+                    return await self._navigate_via_waypoint(
+                        stored_poi, place_label, waypoint, items, meta)
+                stop_category = (intent.slots.get("stop_category") or "").strip()
+                if not stop_category:
+                    m = self._STOP_RAW_RE.search(raw_text)
+                    if m:
+                        stop_category = m.group(1)
+                if stop_category:
+                    return await self._navigate_with_stop_choice(
+                        stored_poi, place_label, stop_category, items, meta)
+                return await self._navigate_to_stored(place_label, stored, meta)
+            example = "深圳科技园" if place_key == "company" else "上海长宁区某某小区"
+            return AgentResult(
+                status=NEED_SLOT,
+                speech=f"您还没有设置「{place_label}」的位置，请告诉我{place_label}的地址。",
+                follow_up=f"比如说『{example}』，我记住后直接带您过去。",
+                missing_slots=["place_address"],
+            )
+
+        # 带当前位置就近解析目的地（"最近的/附近的粤菜馆"按距离排序）；无定位则 near=None。
+        near = await self._current_position(ctx, meta)
+        # 就近查询("最近的/附近的X")：X 是【目的地类目】——无定位→诚实提示开启定位（不拿任意城市
+        # 冒充"最近"）；有定位→剥掉就近前缀按当前位置周边搜。只看 dest——「东方之门，附近找吃饭」
+        # 里的"附近"指目的地周边停靠(顺路用餐流程)，dest 是"东方之门"，不该误触。
+        is_proximity = bool(_PROXIMITY_RE.search(dest))
+        if is_proximity:
+            if near is None:
+                return AgentResult(
+                    speech="找最近的地点要先知道您在哪。请在设置里开启定位授权，我就按当前位置帮您就近找。",
+                    follow_up="开启定位后再说一次『最近的…』")
+            dest = _strip_proximity(dest)  # "附近的粤菜馆" → "粤菜馆"，按当前位置周边搜
+        # "换一批"翻页：HMI 在续问时带上 meta.poi_page，取下一页不同候选。
+        try:
+            page = max(1, int((meta or {}).get("poi_page", 1)))
+        except (TypeError, ValueError):
+            page = 1
+        resolved_name, results = await self._find_destination(
+            dest, meta, near=near, limit=5 if is_proximity else 3, page=page)
         if not results:
+            if is_proximity:
+                if page > 1:  # "换一批"翻到底了
+                    return AgentResult(
+                        speech=f"附近没有更多{dest}了，从前面给您的几家里挑一个吧。")
+                return AgentResult(speech=f"附近暂时没找到{dest}，换个类型试试？")
             return AgentResult(
                 status=NEED_SLOT,
                 speech=f"暂时无法确定「{dest}」对应的具体地点。",
@@ -205,6 +300,19 @@ class NavigationAgent(BaseAgent):
         items = [{"id": r.id, "name": r.name, "rating": r.rating,
                   "distance_km": r.distance_km, "address": r.address,
                   "lat": r.lat, "lng": r.lng} for r in results]
+
+        # 类目目的地（"最近的/附近的粤菜馆"）：附近这几家是【可选目的地】，不是顺路途经点。
+        # 列出来让用户选哪家作目的地（plain poi_list，无 purpose → HMI「第N个」改写成
+        # 「导航去{名称}」直接设为目的地），不走顺路停靠/途经点流程（那是"导航去X，途中找Y"语义）。
+        if is_proximity:
+            names = "、".join(r.name for r in results[:3])
+            more = f" 等{len(results)}家" if len(results) > 3 else ""
+            return AgentResult(
+                speech=f"附近为您找到这些{dest}：{names}{more}。想去哪一家？说『第几个』即可。",
+                ui_card={"type": "poi_list", "keyword": dest, "items": items},
+                data={"items": items},
+                follow_up="说『第一个』『第二个』选择目的地",
+            )
 
         # 轮2：已选途经点（slot 或 raw_text 的"途经X"）→ 解析坐标并入 navigate
         waypoint = (intent.slots.get("waypoint") or "").strip()
@@ -228,13 +336,108 @@ class NavigationAgent(BaseAgent):
             return await self._navigate_with_stop_choice(
                 first, resolved_name, stop_category, items, meta)
 
-        # 普通导航
+        # 普通导航：出路线规划卡（当前位置 → 目的地，起终点 + best-effort 距离/时长）
         prefix = (f"识别到您说的是{first.name}。" if resolved_name != dest else "")
+        return await self._route_plan_to(
+            first.name, first.address, first.lat, first.lng, meta, resolved_prefix=prefix)
+
+    # ── 常用地点（家/公司/学校）──────────────────────────────
+    async def _get_places(self, ctx) -> dict:
+        """从用户画像读常用地点 map。失败/未设置返回空 dict。"""
+        try:
+            vals = await ctx.fetch("profile.places")
+        except Exception as e:  # 画像不可用不应阻断导航
+            logger.warning("fetch profile.places failed: %s", e)
+            return {}
+        raw = vals.get("profile.places")
+        if not raw:
+            return {}
+        if isinstance(raw, dict):
+            return raw
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    async def _get_place(self, ctx, place_key: str) -> dict | None:
+        place = (await self._get_places(ctx)).get(place_key)
+        return place if isinstance(place, dict) and place.get("lat") is not None else None
+
+    async def _navigate_to_stored(self, label: str, stored: dict, meta) -> AgentResult:
+        """已设置的常用地点 → 直接导航（出路线规划卡 起点→终点）。"""
+        name = stored.get("name") or label
+        addr = stored.get("address") or name
+        return await self._route_plan_to(
+            name, addr, stored.get("lat"), stored.get("lng"), meta,
+            resolved_prefix=f"正在前往{label}：")
+
+    async def _set_place_and_go(self, place_key: str, label: str, address: str,
+                                ctx, meta, navigate: bool) -> AgentResult:
+        """地理编码地址 → 存为常用地点（best-effort）→ 按需导航。"""
+        near = await self._current_position(ctx, meta)
+        _resolved, results = await self._find_destination(address, meta, near=near)
+        if not results:
+            return AgentResult(
+                status=NEED_SLOT,
+                speech=f"没找到「{address}」，请补充城市/区域或换个说法。",
+                follow_up=f"再说一次{label}的地址即可",
+                missing_slots=["place_address" if navigate else "address"],
+            )
+        first = results[0]
+        record = {"name": first.name, "address": first.address,
+                  "lat": first.lat, "lng": first.lng}
+        places = await self._get_places(ctx)
+        places[place_key] = record
+        try:
+            await ctx.save_profile("places", places)  # 存画像失败不挡导航
+        except Exception as e:
+            logger.warning("save_profile places failed: %s", e)
+        if navigate:
+            return AgentResult(
+                speech=f"已把{label}设为{first.name}，正在为您导航过去。",
+                ui_card={"type": "poi_list", "keyword": label, "items": [record]},
+                data={"place": label, "item": record},
+            ).action("navigate", self._navigate_payload(
+                first.name, first.lat, first.lng, meta))
         return AgentResult(
-            speech=f"{prefix}为您找到{first.name}（{first.address}）。已为您规划路线。",
-            ui_card={"type": "poi_list", "keyword": resolved_name, "items": items},
-            data={"items": items},
-        ).action("navigate", self._navigate_payload(first.name, first.lat, first.lng, meta))
+            speech=f"已把{label}设为{first.name}（{first.address}）。"
+                   f"以后说『导航去{label}』就能直接出发。",
+            data={"place": label, "item": record},
+        )
+
+    async def _set_place(self, intent, ctx, meta) -> AgentResult:
+        """显式设置常用地点：『把家设成XX』『我家在XX』『设置公司地址为XX』。不导航。"""
+        place_key, label = _match_place_alias(intent.slots.get("place", ""))
+        address = (intent.slots.get("address") or "").strip()
+        if not place_key or not address:
+            pk, lb, addr = self._parse_set_place(getattr(intent, "raw_text", "") or "")
+            place_key, label = (place_key or pk), (label or lb)
+            address = address or addr
+        if not place_key:
+            return AgentResult(
+                status=NEED_SLOT, speech="您想设置哪个常用地点？比如家或公司。",
+                follow_up="可以说『把家设成XX地址』")
+        if not address:
+            return AgentResult(
+                status=NEED_SLOT, speech=f"请告诉我{label}的具体地址。",
+                missing_slots=["address"])
+        return await self._set_place_and_go(
+            place_key, label, address, ctx, meta, navigate=False)
+
+    @staticmethod
+    def _parse_set_place(raw: str) -> tuple[str | None, str, str]:
+        """从原话兜底解析『把X设成Y/X在Y/X地址是Y』。返回 (key, 标签, 地址)。"""
+        t = (raw or "").strip()
+        m = re.search(
+            r"(?:把|将)?\s*(家|我家|公司|单位|学校)(?:的)?(?:位置|地址)?\s*"
+            r"(?:设成|设为|设置成|设置为|改成|改为|定为|定在)\s*(.+)", t)
+        if not m:
+            m = re.search(
+                r"(我家|家|公司|单位|学校)(?:的)?(?:位置|地址)?\s*(?:在|是|为)\s*(.+)", t)
+        if m:
+            pk, lb = _match_place_alias(m.group(1))
+            return pk, lb, m.group(2).strip(" 。，,.")
+        return None, "", ""
 
     async def _navigate_with_stop_choice(self, dest_poi, resolved_name, stop_category,
                                          items, meta) -> AgentResult:
@@ -321,16 +524,49 @@ class NavigationAgent(BaseAgent):
             data={"waypoints": payload["waypoints"]},
         ).action("navigate", payload)
 
-    async def _find_destination(self, description: str, meta) -> tuple[str, list]:
+    async def _route_plan_to(self, name: str, address: str, lat, lng, meta,
+                             *, resolved_prefix: str = "") -> AgentResult:
+        """导航到具体目的地：出路线规划卡（当前位置 → 目的地，best-effort 距离/时长）+ navigate。
+        与顺路途经点的 route_plan 卡同一范式，让用户直观看到"已规划好路线（起点→终点）"。"""
+        payload = self._navigate_payload(name, lat, lng, meta)
+        distance_km = duration_min = 0
+        current = current_location_from_meta(meta)
+        if current:
+            try:
+                route = await self.poi.get_route(
+                    GeoPoint(lat=current.lat, lng=current.lng),
+                    GeoPoint(lat=lat, lng=lng), meta=meta)
+                distance_km = route.get("distance_km") or 0
+                duration_min = route.get("duration_min") or 0
+            except Exception as e:                       # best-effort：算不出就只给起终点
+                logger.debug("route plan distance unavailable: %s", e)
+        speech = f"{resolved_prefix}为您导航到{name}（{address}）。"
+        if distance_km:
+            dur = self._fmt_dur(duration_min)
+            speech += f"全程约{distance_km}公里" + (f"、约{dur}" if dur else "") + "，已规划好路线。"
+        else:
+            speech += "已规划好路线。"
+        card = {"type": "route_plan", "origin": "当前位置", "destination": name,
+                "waypoints": [], "distance_km": distance_km, "duration_min": duration_min}
+        return AgentResult(
+            speech=speech, ui_card=card,
+            data={"destination": name, "lat": lat, "lng": lng},
+        ).action("navigate", payload)
+
+    async def _find_destination(self, description: str, meta, near=None,
+                                limit: int = 3, page: int = 1) -> tuple[str, list]:
         """解析目的地 POI。
 
         视觉地标描述（“像笋的建筑”）：高德直接搜常返回勉强的模糊匹配，必须先经 LLM
         解析正式名称再由地图验证，避免被垃圾匹配抢占（否则导航到错误 POI）。
-        普通目的地：原话直搜优先，未命中再尝试地标解析兜底。
+        普通目的地：原话直搜优先（带当前位置 near，使“最近的/附近的粤菜馆”按距离就近），
+        未命中再尝试地标解析兜底。地标候选按官方名搜，不受当前位置范围限制（near=None）。
+        limit：类目就近查询给更多候选（5）供用户选目的地；具体地点解析用默认（3）。
         """
         async def _direct() -> list:
             try:
-                return await self.poi.search(description, limit=3, meta=meta)
+                return await self.poi.search(description, near=near, limit=limit,
+                                             page=page, meta=meta)
             except ProviderError as e:
                 logger.warning("destination POI search failed: %s", e)
                 return []
@@ -338,7 +574,7 @@ class NavigationAgent(BaseAgent):
         async def _via_landmark() -> tuple[str, list]:
             for candidate in await self._landmark_candidates(description):
                 try:
-                    results = await self.poi.search(candidate, limit=3, meta=meta)
+                    results = await self.poi.search(candidate, limit=limit, meta=meta)
                 except ProviderError as e:
                     logger.warning("landmark candidate POI search failed: %s", e)
                     continue
@@ -391,6 +627,25 @@ class NavigationAgent(BaseAgent):
         speech = f"该位置位于{pt.address}。" if pt.address else "未能解析该位置的地址。"
         return AgentResult(speech=speech,
                            data={"address": pt.address, "lng": lng, "lat": lat})
+
+    async def _locate(self, intent, ctx, meta) -> AgentResult:
+        """『我在哪 / 我现在在哪里 / 当前位置』：逆地理编码当前已授权位置 → 当前地址。
+        与就近导航、天气统一只用浏览器 GPS；未授权时诚实提示开启定位，绝不回退编造 上海。"""
+        current = await self._current_position(ctx, meta)
+        if not current or current.lat is None or current.lng is None:
+            return AgentResult(
+                speech="还没获取到您的位置。在设置里开启定位授权后，我就能告诉您当前在哪，"
+                       "也能帮您找最近的地点、导航回家或去公司。",
+                follow_up="开启定位后再问我『我在哪』")
+        try:
+            pt = await self.poi.reverse_geocode(current.lng, current.lat, meta=meta)
+        except ProviderError as e:
+            logger.warning("locate reverse_geocode failed, fallback to mock: %s", e)
+            pt = await self._fallback.reverse_geocode(current.lng, current.lat, meta=meta)
+        addr = pt.address or "当前位置"
+        return AgentResult(
+            speech=f"您当前位于{addr}。",
+            data={"address": pt.address, "lat": current.lat, "lng": current.lng})
 
     async def _poi_detail(self, intent, ctx, meta) -> AgentResult:
         """查询 POI 详情。"""

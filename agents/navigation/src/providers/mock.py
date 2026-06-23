@@ -6,16 +6,18 @@ from .base import POIProvider, POI, GeoPoint
 class MockPOIProvider(POIProvider):
     async def search(self, keyword: str, near: GeoPoint = None,
                      category: str = "", rating_min: float = 0,
-                     limit: int = 5, meta: dict | None = None) -> list[POI]:
+                     limit: int = 5, page: int = 1,
+                     meta: dict | None = None) -> list[POI]:
         items = []
-        for i in range(1, limit + 1):
+        start = (max(1, page) - 1) * limit  # 翻页：不同 page 给不同示例，便于"换一批"
+        for i in range(start + 1, start + limit + 1):
             poi = POI(
                 id=f"mock_{keyword}_{i}",
                 name=f"{keyword}·示例{i}",
                 address=f"示例路{i}号",
                 lat=31.23 + 0.01 * i,
                 lng=121.47 + 0.01 * i,
-                rating=round(4.0 + 0.2 * i, 1),
+                rating=round(4.0 + 0.2 * (i % 5), 1),
                 distance_km=round(0.5 * i, 1),
                 category=category or keyword,
             )

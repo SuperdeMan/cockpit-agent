@@ -92,11 +92,12 @@ class AmapPOIProvider(POIProvider):
         )
 
     async def search(self, keyword: str, near: GeoPoint = None, category: str = "",
-                     rating_min: float = 0, limit: int = 5,
+                     rating_min: float = 0, limit: int = 5, page: int = 1,
                      meta: dict | None = None) -> list[POI]:
         loc = await self._resolve_location(near, meta)
         common = {"keywords": keyword,
                   "page_size": str(max(1, min(limit, 25))),
+                  "page_num": str(max(1, page)),  # 翻页："换一批"取下一页不同结果
                   "show_fields": "business"}
         if loc:  # 有位置 → 周边搜索（带 distance）
             data = await self._get("/v5/place/around", {**common, "location": loc},
