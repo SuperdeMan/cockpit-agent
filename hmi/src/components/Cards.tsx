@@ -27,6 +27,10 @@ function weatherIcon(text: string): string {
 
 export function CardRenderer({ card }: { card: UiCard }) {
   switch (card.type) {
+    case 'card_group':
+      // 多卡同屏：逐张渲染（如"查股价+新闻"→股票卡 + 新闻卡并存）
+      return <>{((card as any).items || []).map((c: UiCard, i: number) =>
+        <CardRenderer key={i} card={c} />)}</>
     case 'weather': return <WeatherCardView card={card} />
     case 'forecast': return <ForecastCardView card={card} />
     case 'stock_quote': return <StockCardView card={card} />

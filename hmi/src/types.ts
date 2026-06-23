@@ -21,7 +21,10 @@ export type Msg = {
 
 // ─── UI 卡片类型 ───
 
+export type CardGroup = { type: 'card_group'; items: UiCard[] }
+
 export type UiCard =
+  | CardGroup
   | WeatherCard
   | ForecastCard
   | StockCard

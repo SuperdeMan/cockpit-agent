@@ -1,6 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { poiSelectionIndex } from './nav.mjs'
+import { poiSelectionIndex, isRefreshRequest } from './nav.mjs'
+
+test('isRefreshRequest flags 换一批 / 换一个 / 还有别的, not normal queries', () => {
+  for (const t of ['换一批', '换一个', '换一换', '下一批', '还有别的吗', '都不满意']) {
+    assert.equal(isRefreshRequest(t), true, t)
+  }
+  for (const t of ['导航去最近的粤菜馆', '第二个', '今天天气怎么样']) {
+    assert.equal(isRefreshRequest(t), false, t)
+  }
+})
 
 test('parses Chinese ordinals to 0-based index', () => {
   assert.equal(poiSelectionIndex('第一个'), 0)

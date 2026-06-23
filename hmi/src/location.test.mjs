@@ -5,7 +5,18 @@ import {
   buildLocationMeta,
   buildRequestLocationMeta,
   shouldRequestLocationConsent,
+  isLocationDependent,
 } from './location.mjs'
+
+test('isLocationDependent flags navigation / nearest / where-am-i / unscoped weather', () => {
+  assert.equal(isLocationDependent('导航去最近的粤菜馆'), true)
+  assert.equal(isLocationDependent('附近的充电站'), true)
+  assert.equal(isLocationDependent('我现在在哪里'), true)
+  assert.equal(isLocationDependent('今天天气怎么样'), true)
+  // 已含明确城市的天气不需要当前定位；纯闲聊也不需要
+  assert.equal(isLocationDependent('深圳天气怎么样'), false)
+  assert.equal(isLocationDependent('讲个笑话'), false)
+})
 
 test('serializes one browser-approved position into request-only location meta', () => {
   assert.deepEqual(buildLocationMeta({ lat: 39.92, lng: 116.41, accuracyM: 12, capturedAt: 123 }), {

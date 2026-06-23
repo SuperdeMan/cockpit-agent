@@ -304,6 +304,24 @@ export async function fetchMemory(
   }
 }
 
+// ─── 常用地点（家/公司）回显：读 memory 画像 profile.places ───
+
+import { parsePlacesValue } from './places.mjs'
+
+export type NamedPlace = { name?: string; address?: string; lat?: number; lng?: number }
+export type NamedPlaces = Record<string, NamedPlace>
+
+export async function fetchPlaces(apiBase: string, userId = 'u1'): Promise<NamedPlaces> {
+  const q = new URLSearchParams({ user_id: userId, scopes: 'profile.places' }).toString()
+  try {
+    const r = await fetch(`${apiBase}/api/memory/context?${q}`)
+    const j = await r.json()
+    return parsePlacesValue(j?.values?.['profile.places'])
+  } catch {
+    return {}
+  }
+}
+
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()

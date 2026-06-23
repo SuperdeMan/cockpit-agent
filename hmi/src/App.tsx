@@ -6,6 +6,7 @@ import {
   buildRequestLocationMeta,
   requestCurrentLocation,
   shouldRequestLocationConsent,
+  isLocationDependent,
 } from './location.mjs'
 import { StatusBar } from './components/StatusBar'
 import { ChatView } from './components/ChatView'
@@ -18,7 +19,7 @@ import {
   stopTTS,
 } from './audio'
 import type { Msg, Settings } from './types'
-import { poiSelectionIndex } from './nav.mjs'
+import { poiSelectionIndex, isRefreshRequest } from './nav.mjs'
 
 const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://localhost:8090'
 const WS_URL = GATEWAY.replace(/^http/, 'ws') + '/ws'
@@ -49,6 +50,10 @@ export default function App() {
   const lastDestChoiceRef = useRef<string[] | null>(null)
   // 顺路停靠候选（waypoint_choice）：「第N个」派发「导航去{目的地}途经{名称}」→ 落途经点
   const lastWaypointChoiceRef = useRef<{ destination: string; names: string[] } | null>(null)
+  // 就近类目候选（plain poi_list）上下文：供「换一批/换一个」翻页取下一批不同结果。
+  // 只存类目关键词（如"粤菜馆"），换一批时重发干净的「导航去附近的{关键词}」——
+  // 复杂指令下不会把原句里的车控（空调/座椅/氛围灯）又执行一遍。
+  const categoryRef = useRef<{ keyword: string; page: number } | null>(null)
   const settingsRef = useRef<Settings>(settings)
   settingsRef.current = settings // 始终保留最新设置，避免 ws 回调读到陈旧闭包
 
@@ -189,8 +194,13 @@ export default function App() {
           lastDestChoiceRef.current = names
         } else if (c?.type === 'poi_list' && c.purpose === 'waypoint_choice') {
           lastWaypointChoiceRef.current = { destination: c.destination || '', names: names || [] }
-        } else {
+        } else if (c?.type === 'poi_list') {
           lastPoiNamesRef.current = names
+          // 就近类目候选：记关键词供「换一批」翻页。同一关键词的翻页保留页码，换类目则从第 1 页起。
+          const kw = c.keyword || ''
+          categoryRef.current = kw
+            ? (categoryRef.current?.keyword === kw ? categoryRef.current : { keyword: kw, page: 1 })
+            : null
         }
       }
       if (s.ttsEnabled && s.autoplay && data.speech) {
@@ -208,7 +218,8 @@ export default function App() {
     }
   }, [])
 
-  const dispatch = (text: string, isConfirmation: boolean, locationOverride?: any) => {
+  const dispatch = (text: string, isConfirmation: boolean, locationOverride?: any,
+                    metaExtra?: Record<string, string>) => {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
     const s = settingsRef.current
@@ -225,6 +236,7 @@ export default function App() {
             locationOverride !== undefined || s.locationEnabled,
             locationOverride !== undefined ? locationOverride : currentLocation,
           ),
+          ...(metaExtra || {}),
         },
       }),
     )
@@ -237,6 +249,16 @@ export default function App() {
   const send = (text: string) => {
     setMessages((m) => [...m, { id: uid(), role: 'user', text }])
     setAwaitConfirm(false)
+    // 「换一批/换一个」：对上一条就近类目候选翻页，重发干净的「导航去附近的{关键词}」+ 下一页
+    // （只重搜 POI，不会把复杂原句里的车控空调/座椅/氛围灯又执行一遍），并带最新定位。
+    if (isRefreshRequest(text) && categoryRef.current) {
+      const page = categoryRef.current.page + 1
+      categoryRef.current = { ...categoryRef.current, page }
+      const kw = categoryRef.current.keyword
+      void refreshCurrentLocation().then((position) =>
+        dispatch(`导航去附近的${kw}`, false, position, { poi_page: String(page) }))
+      return
+    }
     // 顺路停靠途经点候选「第N个」：派发「导航去{目的地}途经{名称}」→ navigate.waypoints
     const wp = lastWaypointChoiceRef.current
     if (wp && wp.names.length && wp.destination) {
@@ -276,6 +298,12 @@ export default function App() {
         needConfirm: true,
       } as Msg])
       setAwaitConfirm(true)
+      return
+    }
+    // 定位已开启 + 位置相关查询（导航/就近/我在哪/天气）：先实时刷新一次定位再发，
+    // 用最新坐标而非可能为空/陈旧的缓存——否则"导航去最近的粤菜馆"会误报"先开定位"。
+    if (settingsRef.current.locationEnabled && isLocationDependent(text)) {
+      void refreshCurrentLocation().then((position) => dispatch(text, false, position))
       return
     }
     dispatch(text, false)

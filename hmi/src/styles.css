@@ -552,6 +552,19 @@ button { font-family: inherit; }
   flex-shrink: 0; min-width: 76px; font-size: 12px; font-weight: 600; color: var(--accent);
 }
 .mem-val { color: var(--text); font-family: var(--font-mono); font-size: 12.5px; word-break: break-word; }
+
+/* 常用地点回显 */
+.places-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.place-row {
+  display: flex; gap: 12px; align-items: center; padding: 12px 14px;
+  background: var(--panel-2, rgba(255, 255, 255, 0.03)); border: 1px solid var(--line); border-radius: 12px;
+}
+.place-row.unset { opacity: 0.72; }
+.place-icon { font-size: 20px; flex-shrink: 0; }
+.place-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.place-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.place-addr { font-size: 12.5px; color: var(--muted); word-break: break-word; }
+.place-unset { font-size: 12px; color: var(--muted); font-style: italic; }
 .danger-btn {
   padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff;
   background: var(--danger); border: none; border-radius: 11px;

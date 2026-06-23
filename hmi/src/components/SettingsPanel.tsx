@@ -3,16 +3,18 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSettings } from '../settings'
 import { AGENT_CATALOG, VOICE_FALLBACK, type Voice } from '../types'
-import { fetchVoices, fetchMemory, playTTS, type MemoryView } from '../audio'
+import { fetchVoices, fetchMemory, fetchPlaces, playTTS, type MemoryView, type NamedPlaces } from '../audio'
+import { PLACE_DEFS, isPlaceSet, formatPlace } from '../places.mjs'
 import { Field, Toggle, Segmented, TextInput } from './controls'
 
-type Section = 'tts' | 'asr' | 'display' | 'location' | 'assistant' | 'agents' | 'memory'
+type Section = 'tts' | 'asr' | 'display' | 'location' | 'places' | 'assistant' | 'agents' | 'memory'
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: 'tts', label: '语音播报', icon: '🔊' },
   { id: 'asr', label: '语音输入', icon: '🎤' },
   { id: 'display', label: '显示主题', icon: '🎨' },
   { id: 'location', label: '当前位置', icon: '📍' },
+  { id: 'places', label: '常用地点', icon: '🏠' },
   { id: 'assistant', label: '助手', icon: '✨' },
   { id: 'agents', label: '能力开关', icon: '🧩' },
   { id: 'memory', label: '记忆', icon: '🧠' },
@@ -76,6 +78,7 @@ export function SettingsPanel({
               onRequest={onRequestLocation}
               onEnabledChange={onLocationEnabledChange}
             />}
+            {section === 'places' && <PlacesSection audioApi={audioApi} />}
             {section === 'assistant' && <AssistantSection />}
             {section === 'agents' && <AgentsSection />}
             {section === 'memory' && <MemorySection audioApi={audioApi} sessionId={sessionId} />}
@@ -335,6 +338,52 @@ function AgentsSection() {
           </div>
         ))}
       </div>
+    </SectionCard>
+  )
+}
+
+function PlacesSection({ audioApi }: { audioApi: string }) {
+  const [places, setPlaces] = useState<NamedPlaces>({})
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    fetchPlaces(audioApi)
+      .then(setPlaces)
+      .catch(() => {/* 服务未起/离线 */})
+      .finally(() => setLoading(false))
+  }, [audioApi])
+
+  useEffect(() => { load() }, [load])
+
+  return (
+    <SectionCard
+      title="常用地点"
+      desc="家、公司等常用目的地。说『我家在XX』『把公司设成XX』即可设置或修改，导航说『回家』『导航去公司』直达；这里实时回显。"
+    >
+      <div className="mem-head">
+        <span className="field-label">已保存地点</span>
+        <button className="ghost-btn sm" onClick={load}>{loading ? '刷新中…' : '刷新'}</button>
+      </div>
+      <ul className="places-list">
+        {PLACE_DEFS.map(({ key, label, icon, hint }) => {
+          const place = places[key]
+          const set = isPlaceSet(place)
+          return (
+            <li key={key} className={'place-row' + (set ? '' : ' unset')}>
+              <span className="place-icon" aria-hidden>{icon}</span>
+              <div className="place-main">
+                <div className="place-label">{label}</div>
+                {set ? (
+                  <div className="place-addr">{formatPlace(place)}</div>
+                ) : (
+                  <div className="place-unset">未设置 · 说『{hint}』即可设置</div>
+                )}
+              </div>
+            </li>
+          )
+        })}
+      </ul>
     </SectionCard>
   )
 }

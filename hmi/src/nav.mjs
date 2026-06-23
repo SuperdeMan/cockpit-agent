@@ -21,3 +21,10 @@ export function poiSelectionIndex(text) {
   }
   return -1
 }
+
+// 「换一批/换一个/还有别的」类表达：对上一条就近候选翻页换结果（需有活跃候选上下文才生效）。
+const _REFRESH_RE = /^(换一?批|换一个|换一换|换批|再换一?|下一批|还有(别的|其他|没|吗)|有没有别的|换别的|都不满意)/
+
+export function isRefreshRequest(text) {
+  return _REFRESH_RE.test(String(text || '').trim())
+}
