@@ -49,6 +49,32 @@ def _is_fresh_sensitive(query: str) -> bool:
     return any(m in (query or "") for m in _FRESH_MARKERS)
 
 
+_NEWS_SUBJECT_RE = re.compile(
+    r"([一-鿿A-Za-z0-9·&]{2,15}?)(?:的)?(?:最新)?(?:消息|新闻|资讯|动态|头条|进展)")
+_NEWS_SUBJECT_STRIP = ("查一下", "查查", "看一下", "看一看", "看看", "帮我查", "帮我看",
+                       "帮我", "今天", "今日", "最近", "现在", "查", "看", "、", "，", ",")
+# 提取到这些（疑问/泛指词）说明不是具体主体，回落泛新闻
+_NEWS_NON_SUBJECT = {"有什么", "有啥", "什么", "啥", "哪些", "最新", "今天", "今日",
+                     "一些", "些", "看看", "有没有"}
+
+
+def _extract_news_subject(raw: str) -> str:
+    """从原句兜底提取新闻主体："查一下今天英伟达最新消息"→"英伟达"。
+    剥掉前导动词/时间词；疑问/泛指或提取不到返回空串（交泛新闻默认）。"""
+    m = _NEWS_SUBJECT_RE.search(raw or "")
+    if not m:
+        return ""
+    s = m.group(1).strip()
+    changed = True
+    while changed and s:
+        changed = False
+        for pre in _NEWS_SUBJECT_STRIP:
+            if s.startswith(pre) and len(s) > len(pre):
+                s, changed = s[len(pre):], True
+    s = s.strip()
+    return "" if s in _NEWS_NON_SUBJECT else s
+
+
 def _plan_search(query: str) -> tuple[int, str]:
     """规划检索参数：返回 (recency_days, category)。
 
@@ -980,6 +1006,10 @@ class InfoAgent(BaseAgent):
 
     async def _news(self, intent, ctx, meta) -> AgentResult:
         topic = (intent.slots.get("topic") or "").strip()
+        # planner 在复杂多意图句里常漏抽 topic（"查英伟达最新消息、股价…"）→ 从原句兜底提取
+        # "X最新消息/X新闻"的主体，否则会拿"今日值得关注"的泛新闻（与"英伟达消息"不符）。
+        if not topic:
+            topic = _extract_news_subject(intent.raw_text or "")
         # 座舱看新闻 = 一屏扫到约 10 条带一句话摘要的列表
         limit = int(intent.slots.get("limit", 10 if not topic else 8) or (10 if not topic else 8))
         subject = topic or "今日值得关注的新闻"

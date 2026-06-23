@@ -750,3 +750,14 @@ def test_unknown_intent_failed():
 
 def test_manifest_consistent():
     assert assert_manifest_consistent(InfoAgent()) is True
+
+
+def test_extract_news_subject_from_complex_query():
+    """复杂多意图句里漏抽 topic 时，从原句兜底提取新闻主体。"""
+    from agents.info.src.agent import _extract_news_subject
+    assert _extract_news_subject("查一下今天英伟达最新消息、股价，以及对汽车智能座舱行业有没有影响") == "英伟达"
+    assert _extract_news_subject("帮我看看苹果的新闻") == "苹果"
+    assert _extract_news_subject("看看小米最新动态") == "小米"
+    # 泛新闻/疑问句不强行提主体 → 空（交"今日值得关注"默认）
+    assert _extract_news_subject("今天有什么新闻") == ""
+    assert _extract_news_subject("讲个笑话") == ""
