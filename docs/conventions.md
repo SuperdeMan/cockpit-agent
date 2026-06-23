@@ -8,7 +8,7 @@
 
 | agent_id (kebab) | 包目录 (snake) | 类别 | trust_level | 部署 | 端口 | 提供的 intent |
 |---|---|---|---|---|---|---|
-| navigation | navigation | core | first_party | cloud | 50061 | navigation.search_poi, navigation.navigate_to, navigation.reverse_geocode, navigation.poi_detail |
+| navigation | navigation | core | first_party | cloud | 50061 | navigation.search_poi, navigation.navigate_to, navigation.reverse_geocode, navigation.poi_detail, navigation.set_place, navigation.locate |
 | chitchat | chitchat | ecosystem | first_party | cloud | 50062 | chitchat.talk |
 | food-ordering | food_ordering | ecosystem | third_party | cloud | 50063 | food.search_restaurant, food.reserve |
 | parking-payment | parking_payment | ecosystem | third_party | cloud | 50064 | parking.find, parking.pay |
@@ -35,8 +35,10 @@
 | `media.play` / `media.pause` / `media.next` / `media.prev` | 端侧媒体 | edge | — | 经 VAL |
 | `navigation.search_poi` | navigation | cloud | keyword, category, near, rating_min | |
 | `navigation.navigate_to` | navigation | cloud | destination, stop_category, waypoint | 视觉地标描述（“像笋的建筑”）优先经 LLM 解析正式名称再由地图验证，不盲信高德模糊匹配；多 agent「导航+充电」时途经充电站经聚合器并入 navigate.payload.waypoints。顺路用餐：`stop_category`（吃饭/咖啡…）→ 导航到目的地+给该类目真实候选(waypoint_choice 卡)让用户二次选；`waypoint`（已选停靠点名/raw_text『途经X』）→ 该点 near 目的地解析坐标并入 navigate.waypoints，并出 **route_plan 路线规划卡**（出发地→途经点→目的地，best-effort 经 get_route(waypoints) 给全程距离/时长） |
-| `navigation.reverse_geocode` | navigation | cloud | lng, lat | 逆地理编码：坐标→地址 |
+| `navigation.reverse_geocode` | navigation | cloud | lng, lat | 逆地理编码：给定坐标→地址 |
 | `navigation.poi_detail` | navigation | cloud | poi_id | POI 详情查询 |
+| `navigation.set_place` | navigation | cloud | place, address | 设置常用地点（家/公司/学校）地址，存入 `profile.places`（经 memory `UpsertProfile`）；只记不导航 |
+| `navigation.locate` | navigation | cloud | — | 「我在哪/当前位置」：对当前已授权 GPS 逆地理编码给出所在地址；无授权诚实提示开启定位（不回退 mock）。当前位置统一只用浏览器 GPS，与导航就近、`info.weather` 一致 |
 | `chitchat.talk` | chitchat | cloud | — | 系统兜底 fallback |
 | `food.search_restaurant` | food-ordering | cloud | cuisine, location, rating_min, price_level, party_size | |
 | `food.reserve` | food-ordering | cloud | restaurant_id, restaurant_name, datetime, party_size | require_confirm |
