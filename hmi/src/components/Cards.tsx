@@ -392,6 +392,10 @@ function SearchResultCardView({ card }: { card: SearchResultCard }) {
 
 function NewsBriefCardView({ card }: { card: NewsBriefCard }) {
   const [open, setOpen] = useState(false)
+  // 来源/原文链接默认全部折叠：第一性原理——车上用户扫标题+摘要即可，基本不会点原文链接，
+  // 来源域名一行会喧宾夺主。折叠态只用「参考来源 N 个」简单标记数量，点击才展开。
+  const [showSrc, setShowSrc] = useState(false)
+  const srcCount = new Set(card.items.map((n) => n.source).filter(Boolean)).size
   const shown = open ? card.items : card.items.slice(0, 10)
   return (
     <div className="card card-evidence">
@@ -399,23 +403,31 @@ function NewsBriefCardView({ card }: { card: NewsBriefCard }) {
       <ol className="ev-news-ol">
         {shown.map((n, i) => (
           <li key={i} className="ev-news-li">
-            {n.url
-              ? <a className="ev-news-h" href={n.url} target="_blank" rel="noopener noreferrer">{n.title}</a>
-              : <span className="ev-news-h">{n.title}</span>}
+            <span className="ev-news-h">{n.title}</span>
             {n.summary && <div className="ev-news-sum">{n.summary}</div>}
-            {n.source && (
+            {showSrc && n.source && (
               <span className="ev-news-src">
-                {n.source}{relativeTime(n.publish_time) ? ` · ${relativeTime(n.publish_time)}` : ''}
+                {n.url
+                  ? <a href={n.url} target="_blank" rel="noopener noreferrer">{n.source}</a>
+                  : n.source}
+                {relativeTime(n.publish_time) ? ` · ${relativeTime(n.publish_time)}` : ''}
               </span>
             )}
           </li>
         ))}
       </ol>
-      {card.items.length > 10 && (
-        <button className="ev-more" onClick={() => setOpen(!open)}>
-          {open ? '收起' : `更多 ${card.items.length - 10} 条`}
-        </button>
-      )}
+      <div className="ev-news-actions">
+        {srcCount > 0 && (
+          <button className="ev-more ev-src-toggle" onClick={() => setShowSrc(!showSrc)}>
+            {showSrc ? '收起来源' : `参考来源 ${srcCount} 个`}
+          </button>
+        )}
+        {card.items.length > 10 && (
+          <button className="ev-more" onClick={() => setOpen(!open)}>
+            {open ? '收起' : `更多 ${card.items.length - 10} 条`}
+          </button>
+        )}
+      </div>
     </div>
   )
 }

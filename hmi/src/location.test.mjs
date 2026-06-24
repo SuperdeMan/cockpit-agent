@@ -45,3 +45,9 @@ test('asks for consent for weather without a named place and for navigation orig
   assert.equal(shouldRequestLocationConsent('深圳天气怎么样', false), false)
   assert.equal(shouldRequestLocationConsent('今天天气怎么样', true), false)
 })
+
+test('isLocationDependent flags charging / trip-planning queries', () => {
+  assert.equal(isLocationDependent('是否需要中途充电'), true)
+  assert.equal(isLocationDependent('周末去杭州两天，带老人，顺便看看是否需要中途充电'), true)
+  assert.equal(isLocationDependent('帮我规划行程'), true)
+})

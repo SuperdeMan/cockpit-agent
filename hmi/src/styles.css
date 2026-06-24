@@ -812,6 +812,9 @@ a.ev-source-title:hover { color: var(--accent-2); text-decoration: underline; }
 a.ev-news-h:hover { color: var(--accent-2); text-decoration: underline; }
 .ev-news-sum { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
 .ev-news-src { display: inline-block; margin-top: 3px; color: var(--faint); font: 10px var(--font-mono); }
+.ev-news-src a { color: var(--faint); text-decoration: none; }
+.ev-news-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.ev-src-toggle { color: var(--faint); border-color: var(--line); font-weight: 500; }
 
 /* 赛事比分 */
 .ev-fixtures { display: flex; flex-direction: column; gap: 8px; }
