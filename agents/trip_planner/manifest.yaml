@@ -4,14 +4,17 @@ display_name: 行程规划
 category: ecosystem
 trust_level: first_party
 deployment: cloud
-latency_budget_ms: 3000
+latency_budget_ms: 20000   # 多日行程是 LLM 重生成（慢系统），与 info 同量级；3s 会超时
 fallback: chitchat
 
 capabilities:
   - intent: trip.plan
-    description: 规划多日自驾行程（目的地、天数、偏好），输出每日要点
+    description: 规划多日自驾行程（目的地、天数、偏好），输出每日要点。凡"去X玩N天/N日游"
+      并带出行偏好(带老人/带娃/轻松/不要太累/悠闲)，即便同句还问天气/充电，行程规划也应单独成步。
     slots: [destination, days, preferences]
-    examples: ["规划周末去杭州两日游", "帮我安排去三亚的行程", "周末带娃去近郊玩"]
+    examples: ["规划周末去杭州两日游", "帮我安排去三亚的行程", "周末带娃去近郊玩",
+               "周末去杭州两天带老人不要太累", "去成都玩三天轻松点",
+               "周末去杭州两天带老人，顺便看看天气和是否需要中途充电"]
   - intent: trip.modify
     description: 修改已有行程（局部重规划）
     slots: [modification]

@@ -5,10 +5,36 @@ WS3 §4。LLM 把已注册 Agent 能力当工具，输出 JSON DAG 计划。
 from __future__ import annotations
 import json
 import logging
+import re
 from security.scopes import is_scope_covered
 from .models import Plan, Step, PlanContext, ReplanDecision
 
 logger = logging.getLogger("planner.planning")
+
+# ── 多日出行确定性兜底（弱 LLM 常漏行程规划，命中下列模式必补 trip.plan 步）──
+# 目的地：取『去/到/赴X』中的 X（懒匹配到 玩/住/游/标点/N天 前），通勤/固定点不算出行
+_TRIP_DEST_RE = re.compile(
+    r"(?:去|到|赴|游)\s*([一-鿿]{2,6}?)"
+    r"(?=玩|住|待|游|逛|的|附近|边|，|,|。|！|!|、|\s|[一二两三四五六七八九十0-9]+\s*[天日]|$)")
+# 退路：『杭州三日游』这类无『去』前缀、地名直接接 N日游
+_TRIP_DEST_BEFORE_DAYS_RE = re.compile(
+    r"([一-鿿]{2,6}?)(?=[一二两三四五六七八九十0-9]+\s*[天日]游)")
+_TRIP_DAYS_RE = re.compile(r"([一二两三四五六七八九十0-9]+)\s*[天日]")
+_TRIP_PREF_WORDS = ("带老人", "带娃", "带孩子", "带小孩", "不要太累", "不累",
+                    "轻松", "悠闲", "慢一点", "慢点", "休闲")
+_TRIP_PREF_RE = re.compile("|".join(_TRIP_PREF_WORDS))
+# 强出行信号：与目的地同现即判为行程规划（即便没说天数）
+_TRIP_TRIGGER_RE = re.compile("行程|自驾游|度假")
+# 行程修改信号：『第N天…换/改/调整』或『行程/景点…换/改』——弱 LLM 常把它误路由成
+# 天气/充电（借历史里的目的地上下文），故确定性识别并改走 trip.modify。
+_TRIP_MODIFY_RE = re.compile(
+    r"第\s*[一二两三四五六七八九十\d]+\s*天[^，。！？]*?(换|改|调整|替换|更换|删|加|重新|别去|不去)"
+    r"|(行程|景点|目的地|这天|那天)[^，。！？]*?(换|改|调整|替换|更换|重新规划)"
+    r"|(换|改|调整|更换)[^，。！？]{0,4}(行程|景点|目的地|第\s*[一二两三四五六七八九十\d]+\s*天)")
+# 通勤/固定地点：是导航日常目的地，不是多日出行，命中则不触发行程规划
+_TRIP_DEST_BLOCK = {"公司", "家", "单位", "学校", "上班", "这里", "那里", "机场", "车站"}
+_CN_NUM = {"一": "1", "两": "2", "二": "2", "三": "3", "四": "4", "五": "5",
+           "六": "6", "七": "7", "八": "8", "九": "9", "十": "10"}
 
 _PLANNER_SYSTEM = (
     "你是智能座舱的任务编排器。根据用户话术和可用 agent 能力清单，输出 JSON 调用计划。\n"
@@ -74,7 +100,20 @@ _PLANNER_SYSTEM = (
     "{\"id\":\"s1\",\"agent_id\":\"navigation\",\"intent\":\"navigation.navigate_to\",\"slots\":{\"destination\":\"东方之门\",\"waypoint\":\"肯德基\"},\"depends_on\":[],\"slot_refs\":{}}"
     "]}\n"
     "\n"
+    "用户：『周末去杭州两天，带老人，不要太累，顺便看看天气和是否需要中途充电』\n"
+    "→ 3 个 step，无依赖并行：『去X玩N天』+出行偏好(带老人/轻松)本身就是行程规划意图，必须"
+    "单独成 trip.plan 步，别只把它当成天气/充电的目的地上下文而漏掉：\n"
+    "{\"steps\":["
+    "{\"id\":\"s1\",\"agent_id\":\"trip-planner\",\"intent\":\"trip.plan\",\"slots\":{\"destination\":\"杭州\",\"days\":\"2\",\"preferences\":\"带老人,轻松不累\"},\"depends_on\":[],\"slot_refs\":{}},"
+    "{\"id\":\"s2\",\"agent_id\":\"info\",\"intent\":\"info.forecast\",\"slots\":{\"city\":\"杭州\"},\"depends_on\":[],\"slot_refs\":{}},"
+    "{\"id\":\"s3\",\"agent_id\":\"charging-planner\",\"intent\":\"charging.plan\",\"slots\":{\"destination\":\"杭州\"},\"depends_on\":[],\"slot_refs\":{}}"
+    "]}\n"
+    "\n"
     "== 通用规则 ==\n"
+    "- **多日出行必出行程规划**：用户话术含『去X玩/住N天』『N日游/两日游』或带出行偏好"
+    "（带老人/带娃/轻松/不要太累/悠闲/慢一点），即是行程规划意图，**必须**出一个 trip-planner 的"
+    " trip.plan 步——即便同句还顺便问天气/路况/充电，trip.plan 也要与它们**并列成独立 step**，"
+    "**绝不能**只把『去X几天』当成天气/充电的目的地上下文而漏掉行程规划。\n"
     "- **导航去X + 顺路/在附近 找吃饭/餐厅/咖啡** → 用**单个** navigation.navigate_to"
     "（带 stop_category，它会导航并给真实候选让用户选途经点），**不要**再拆出"
     " food.search_restaurant（food 仅用于纯找店/订位，不带导航途经点；拆了会出假数据）。\n"
@@ -125,17 +164,27 @@ class PlanBuilder:
 
         agent_map = {a.manifest.agent_id: a for a in agents}
 
+        plan = None
         for _ in range(2):
             raw = await self._llm_plan(text, agents, history)
-            plan = self._parse_and_validate(raw, agent_map, text)
-            if plan and plan.steps:
-                step_summary = [(s.id, s.agent_id, s.intent) for s in plan.steps]
-                logger.info("Plan parsed: complexity=%s steps=%s", plan.complexity, step_summary)
-                return plan
+            parsed = self._parse_and_validate(raw, agent_map, text)
+            if parsed and parsed.steps:
+                plan = parsed
+                break
 
-        logger.warning("Plan parse failed twice, falling back to chitchat/routing")
-        # 降级：chitchat 全局兜底 / Registry 语义路由 top-1
-        return await self._fallback(text, agents)
+        if plan is None:
+            logger.warning("Plan parse failed twice, falling back to chitchat/routing")
+            # 降级：chitchat 全局兜底 / Registry 语义路由 top-1
+            plan = await self._fallback(text, agents)
+
+        # 确定性兜底（覆盖 LLM 解析成功 + 降级语义路由两条路径）：
+        # 先判修改意图（『第N天换一个』走 trip.modify，与新规划互斥）；非修改再判新出行
+        # （『去X几天』补 trip.plan）。否则弱 LLM 会把这两类都误回天气/充电、漏掉行程。
+        if not self._ensure_trip_modify(plan, text, agent_map):
+            self._ensure_trip_step(plan, text, agent_map)
+        step_summary = [(s.id, s.agent_id, s.intent) for s in plan.steps]
+        logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
+        return plan
 
     async def _llm_plan(self, text: str, agents: list, history: list[dict] = None) -> str:
         catalog = self._build_catalog(agents)
@@ -189,7 +238,7 @@ class PlanBuilder:
             logger.warning("Plan JSON parse failed: %s", e)
             return None
 
-        steps = self._validated_steps(data.get("steps", []), agent_map)
+        steps = self._validated_steps(data.get("steps", []) or [], agent_map)
         if not steps:
             return None
 
@@ -216,6 +265,82 @@ class PlanBuilder:
             complexity=complexity,
             goal=goal,
         )
+
+    def _ensure_trip_step(self, plan: "Plan", text: str, agent_map: dict) -> None:
+        """确定性兜底：多日出行必出行程规划（对最终 Plan 生效，覆盖解析/降级两条路径）。
+
+        弱 LLM（如 MiMo）常把『去X玩两天/带老人』只当成天气/充电的目的地上下文，
+        或干脆把整句规划失败 → 降级语义路由只命中天气/充电，漏掉 trip.plan。
+        命中出行模式且 trip-planner 可用、计划里又没有 trip.plan 时，追加一个并列步
+        （depends_on=[]，与天气/充电并行），交聚合器统一合成。trip-planner 内部还会
+        自取天气/充电，故只补这一步即可得到完整行程卡。"""
+        if not plan or "trip-planner" not in agent_map:
+            return
+        if any(s.intent == "trip.plan" for s in plan.steps):
+            return
+        dest, days, prefs = self._extract_trip(text or "")
+        if not dest:
+            return
+        slots = {"destination": dest}
+        if days:
+            slots["days"] = days
+        if prefs:
+            slots["preferences"] = prefs
+        # 复用 _validated_steps 装配 endpoint/权限/budget（与正常步骤同一路径）
+        trip_steps = self._validated_steps([{
+            "id": f"s_trip{len(plan.steps) + 1}",
+            "agent_id": "trip-planner",
+            "intent": "trip.plan",
+            "slots": slots,
+            "depends_on": [],
+            "slot_refs": {},
+        }], agent_map)
+        if trip_steps:
+            plan.steps.extend(trip_steps)
+            logger.info("Ensured trip.plan step (safety net): dest=%s days=%s prefs=%s",
+                        dest, days, prefs)
+
+    def _ensure_trip_modify(self, plan: "Plan", text: str, agent_map: dict) -> bool:
+        """确定性兜底：『第N天换一个/改行程』必走 trip.modify。返回是否命中修改意图。
+
+        弱 LLM 常借历史里的目的地把『第二天换一个』误规划成天气/充电（甚至直接出充电路线），
+        漏掉行程修改。命中修改模式时用单步 trip.modify 取代误规划的计划（修改不需要重跑
+        天气/充电）。命中即返回 True，调用方据此跳过 trip.plan 兜底（二者互斥）。"""
+        if "trip-planner" not in agent_map:
+            return False
+        if not _TRIP_MODIFY_RE.search(text or ""):
+            return False
+        if any(s.intent == "trip.modify" for s in plan.steps):
+            return True                       # LLM 已正确路由，保持
+        steps = self._validated_steps([{
+            "id": "s_trip_mod", "agent_id": "trip-planner", "intent": "trip.modify",
+            "slots": {"modification": text}, "depends_on": [], "slot_refs": {},
+        }], agent_map)
+        if steps:
+            replaced = len(plan.steps)
+            plan.steps = steps                # 取代误规划（如天气/充电）
+            logger.info("Ensured trip.modify step (safety net), replaced %d steps", replaced)
+        return True
+
+    @staticmethod
+    def _extract_trip(text: str) -> tuple[str, str, str]:
+        """从话术解析 (destination, days, preferences)；非出行/无目的地返回空。"""
+        m_dest = _TRIP_DEST_RE.search(text) or _TRIP_DEST_BEFORE_DAYS_RE.search(text)
+        dest = (m_dest.group(1) if m_dest else "").strip()
+        # 通勤/固定点用前缀判定（"公司开"仍算公司；"张家界"不会被单字"家"误杀）
+        if not dest or any(dest.startswith(b) for b in _TRIP_DEST_BLOCK):
+            return "", "", ""
+        m_days = _TRIP_DAYS_RE.search(text)
+        # 出行判定：有目的地，且（N天/N日 或 出行偏好词 或 N日游 或 行程/自驾游/度假）
+        if not (m_days or _TRIP_PREF_RE.search(text) or "日游" in text
+                or _TRIP_TRIGGER_RE.search(text)):
+            return "", "", ""
+        days = ""
+        if m_days:
+            d = m_days.group(1)
+            days = _CN_NUM.get(d, d)
+        prefs = "、".join(w for w in _TRIP_PREF_WORDS if w in text)
+        return dest, days, prefs
 
     @staticmethod
     def _validated_steps(raw_steps: list, agent_map: dict) -> list[Step]:

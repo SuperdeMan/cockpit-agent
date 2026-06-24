@@ -191,3 +191,159 @@ def test_replan_returns_done_or_a_validated_next_batch():
         "找到可用充电站", [{"status": "ok"}], agents, PlanContext()))
     assert completed.done is True
     assert completed.steps == []
+
+
+# ── 多日出行确定性兜底：弱 LLM 漏掉行程规划时补 trip.plan 步 ──
+
+def _trip_agents():
+    return [
+        MockAgent("info-agent", ["info.weather"]),
+        MockAgent("charging-planner", ["charging.plan"]),
+        MockAgent("trip-planner", ["trip.plan"]),
+    ]
+
+
+def test_injects_trip_plan_when_llm_misses_it():
+    """『周末去杭州两天带老人…顺便看天气/充电』——LLM 只出了天气+充电，
+    兜底必须补一个并列 trip.plan 步（destination/days/preferences 已解析）。"""
+    agents = _trip_agents()
+
+    async def mock_llm(messages):
+        return ('{"steps":['
+                '{"id":"s1","agent_id":"info-agent","intent":"info.weather","slots":{}},'
+                '{"id":"s2","agent_id":"charging-planner","intent":"charging.plan",'
+                '"slots":{"destination":"杭州"}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(mock_llm, mock_resolve)
+    plan = asyncio.run(builder.build(
+        "周末去杭州两天，带老人，不要太累，顺便看看天气和是否需要中途充电",
+        agents, PlanContext()))
+    trip = [s for s in plan.steps if s.intent == "trip.plan"]
+    assert len(trip) == 1, "应注入一个 trip.plan 步"
+    assert trip[0].agent_id == "trip-planner"
+    assert trip[0].slots.get("destination") == "杭州"
+    assert trip[0].slots.get("days") == "2"
+    assert "带老人" in trip[0].slots.get("preferences", "")
+    assert trip[0].depends_on == []  # 与天气/充电并列
+
+
+def test_does_not_inject_trip_when_llm_already_planned_it():
+    """LLM 自己出了 trip.plan，不重复注入。"""
+    agents = _trip_agents()
+
+    async def mock_llm(messages):
+        return ('{"steps":[{"id":"s1","agent_id":"trip-planner","intent":"trip.plan",'
+                '"slots":{"destination":"杭州","days":"2"}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(mock_llm, mock_resolve)
+    plan = asyncio.run(builder.build("去杭州玩两天", agents, PlanContext()))
+    assert len([s for s in plan.steps if s.intent == "trip.plan"]) == 1
+
+
+def test_does_not_inject_trip_for_plain_navigation():
+    """『导航去北京南站』是通勤/单点导航，不是多日出行，不得注入 trip.plan。"""
+    agents = _trip_agents() + [MockAgent("navigation", ["navigation.navigate"])]
+
+    async def mock_llm(messages):
+        return ('{"steps":[{"id":"s1","agent_id":"navigation","intent":"navigation.navigate",'
+                '"slots":{"destination":"北京南站"}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(mock_llm, mock_resolve)
+    plan = asyncio.run(builder.build("导航去北京南站", agents, PlanContext()))
+    assert [s for s in plan.steps if s.intent == "trip.plan"] == []
+
+
+def test_ensures_trip_step_even_when_plan_falls_back():
+    """LLM 计划解析失败 → 降级语义路由（top-1=info）时，行程兜底仍要补 trip.plan。
+
+    回归：『去北京三天带老人…看天气』偶发只回天气/充电、漏掉行程，根因是降级路径
+    绕过了行程注入（注入原本只在 _parse_and_validate 内，降级不经过它）。"""
+    agents = [
+        MockAgent("info-agent", ["info.weather"]),
+        MockAgent("trip-planner", ["trip.plan"]),
+    ]
+
+    async def mock_llm(messages):
+        return "我不会规划这个"          # 非法 JSON → 解析失败两次 → 降级
+
+    resolved = [MagicMock()]
+    resolved[0].manifest = agents[0].manifest    # 语义 top-1 命中 info（天气）
+    resolved[0].endpoint = "localhost:50067"
+
+    async def mock_resolve(query, top_k=1):
+        return resolved
+
+    builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
+    plan = asyncio.run(builder.build(
+        "周末去北京三天，带老人，不要太累，顺便看看天气", agents, PlanContext()))
+    intents = [s.intent for s in plan.steps]
+    assert "trip.plan" in intents, f"降级路径也应补行程，实际 steps={intents}"
+    trip = [s for s in plan.steps if s.intent == "trip.plan"][0]
+    assert trip.slots.get("destination") == "北京"
+    assert trip.agent_id == "trip-planner"
+
+
+def test_modify_pattern_routed_to_trip_modify_replacing_misplan():
+    """『第二天换一个』被弱 LLM 误规划成天气/充电时，确定性兜底改走单步 trip.modify。
+
+    回归：用户报告"第二天换一个"没识别成修改、直接进了充电导航路线。"""
+    agents = [
+        MockAgent("info-agent", ["info.weather"]),
+        MockAgent("charging-planner", ["charging.plan"]),
+        MockAgent("trip-planner", ["trip.plan", "trip.modify"]),
+    ]
+
+    async def mock_llm(messages):
+        return ('{"steps":['
+                '{"id":"s1","agent_id":"info-agent","intent":"info.weather","slots":{}},'
+                '{"id":"s2","agent_id":"charging-planner","intent":"charging.plan",'
+                '"slots":{"destination":"北京"}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(mock_llm, mock_resolve)
+    plan = asyncio.run(builder.build("第二天换一个", agents, PlanContext()))
+    intents = [s.intent for s in plan.steps]
+    assert intents == ["trip.modify"], f"应单步 trip.modify，实际 {intents}"
+    assert plan.steps[0].slots.get("modification") == "第二天换一个"
+
+
+def test_modify_pattern_keeps_llm_trip_modify():
+    """LLM 已正确路由 trip.modify 时保持不变，不重复/不替换。"""
+    agents = [MockAgent("trip-planner", ["trip.plan", "trip.modify"])]
+
+    async def mock_llm(messages):
+        return ('{"steps":[{"id":"s1","agent_id":"trip-planner","intent":"trip.modify",'
+                '"slots":{"modification":"第二天换成宋城"}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(mock_llm, mock_resolve)
+    plan = asyncio.run(builder.build("第二天换成宋城", agents, PlanContext()))
+    assert [s.intent for s in plan.steps] == ["trip.modify"]
+
+
+def test_does_not_inject_trip_when_planner_unavailable():
+    """trip-planner 没注册（无权限/未上线）时不注入，避免产出 Unknown agent 计划。"""
+    agents = [MockAgent("info-agent", ["info.weather"])]
+
+    async def mock_llm(messages):
+        return '{"steps":[{"id":"s1","agent_id":"info-agent","intent":"info.weather","slots":{}}]}'
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(mock_llm, mock_resolve)
+    plan = asyncio.run(builder.build("周末去杭州两天带老人看看天气", agents, PlanContext()))
+    assert [s for s in plan.steps if s.intent == "trip.plan"] == []
