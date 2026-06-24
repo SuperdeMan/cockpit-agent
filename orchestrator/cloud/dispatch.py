@@ -213,8 +213,12 @@ class UnifiedDispatcher:
 
         start = time.monotonic()
         try:
+            # 用 step 自己的 latency_budget 作 Execute 超时（原固定 10s 会卡死慢 Agent，
+            # 尤其开思考后）。下限兜底，缺省/异常仍走默认。
+            budget_ms = getattr(step, "latency_budget_ms", 0) or 0
+            timeout = max(budget_ms / 1000.0, 10.0) if budget_ms else 10.0
             resp = await self._cloud_call(
-                step.endpoint, step.intent, step.slots, ctx, step.meta)
+                step.endpoint, step.intent, step.slots, ctx, step.meta, timeout=timeout)
             elapsed = (time.monotonic() - start) * 1000
             metrics.record_agent_call(
                 step.agent_id, elapsed,

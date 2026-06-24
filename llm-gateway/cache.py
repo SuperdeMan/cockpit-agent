@@ -19,13 +19,16 @@ class LLMCache:
         self._hits = 0
         self._misses = 0
 
-    def _hash(self, messages: list[dict], model: str, temperature: float) -> str:
-        key_data = json.dumps({"m": messages, "model": model, "t": temperature},
-                              sort_keys=True, ensure_ascii=False)
+    def _hash(self, messages: list[dict], model: str, temperature: float,
+              thinking=None) -> str:
+        key_data = json.dumps(
+            {"m": messages, "model": model, "t": temperature, "think": thinking},
+            sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(key_data.encode()).hexdigest()[:16]
 
-    def get(self, messages: list[dict], model: str, temperature: float) -> tuple | None:
-        h = self._hash(messages, model, temperature)
+    def get(self, messages: list[dict], model: str, temperature: float,
+            thinking=None) -> tuple | None:
+        h = self._hash(messages, model, temperature, thinking)
         entry = self._cache.get(h)
         if entry is None:
             self._misses += 1
@@ -41,8 +44,8 @@ class LLMCache:
         return content, model_used, "stop", (0, 0)
 
     def put(self, messages: list[dict], model: str, temperature: float,
-            content: str, model_used: str):
-        h = self._hash(messages, model, temperature)
+            content: str, model_used: str, thinking=None):
+        h = self._hash(messages, model, temperature, thinking)
         self._cache[h] = (content, model_used, time.time())
         self._cache.move_to_end(h)
         if len(self._cache) > self._max_size:

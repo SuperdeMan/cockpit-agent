@@ -36,5 +36,6 @@
 | [2026-06-23-restaurant-waypoint-and-topscorers.md](2026-06-23-restaurant-waypoint-and-topscorers.md) | 顺路用餐途经点（navigate_to.stop_category→waypoint_choice 候选二次选择→route_plan 路线卡，navigation 接管因 food 恒 mock）+ 赛事射手榜 | 已落地 |
 | [2026-06-23-sports-match-detail.md](2026-06-23-sports-match-detail.md) | 赛事进球详情/射手榜：api-football /fixtures/events（进球射手与分钟，剔除罚丢点球）+ topscorers 赛季回退标注 + 历史总榜走搜索接地合成 | 已落地 |
 | [2026-06-24-trip-planner-multiturn-and-confirm-robustness.md](2026-06-24-trip-planner-multiturn-and-confirm-robustness.md) | 行程规划多轮闭环（规划→改某天→确认→第一站导航）：确定性 trip.plan/trip.modify 兜底（覆盖降级路径）+ trip-planner 有状态多轮 + 确认收尾取行程首日景点搜 POI + 确认词「占据整句」修复（行/可以/不要不误判）+ 孤儿确认护栏 + 跨 Agent meta 透传与 Struct→dict 修复 + 电量一致性 | 已落地（783 passed 实测 + 端到端验证） |
+| [2026-06-24-complex-task-thinking-and-process-region.md](2026-06-24-complex-task-thinking-and-process-region.md) | 复杂任务动态思考（按统一 is_complex 判据对 LLM 开 thinking，Planner JSON 恒关，reasoning 不下发）+ 可折叠过程区（ProcessUpdate 事件 → 气泡内嵌折叠条「步骤+思考摘要」，行车/泊车双态门控；普通车控/闲聊零过程零延迟） | 落地中 |
 
 > 接真实 provider 的标准流程见常青指南 [`docs/guides/provider-integration.md`](../guides/provider-integration.md)。

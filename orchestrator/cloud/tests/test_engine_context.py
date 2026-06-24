@@ -53,7 +53,7 @@ class _CtxSpy:
     async def call_agent(self, endpoint, intent, slots, ctx=None, meta=None):
         return _Resp()
 
-    async def llm(self, messages):
+    async def llm(self, messages, **kwargs):
         if "任务编排器" in messages[0]["content"]:
             self.planner_prompts.append(messages[1]["content"])
             return _PLAN_JSON

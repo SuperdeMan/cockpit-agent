@@ -83,7 +83,7 @@ class _Spy:
                          follow_up="说『确认』即可下单")
         return _Resp(status=3, speech="未知意图")
 
-    async def llm(self, messages):
+    async def llm(self, messages, **kwargs):
         system = messages[0]["content"]
         if "任务编排器" in system:
             self.llm_plan_calls += 1

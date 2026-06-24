@@ -417,6 +417,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         got = True
                         self.cloud_connected = True
                         event = self._dispatch_cloud_actions(event, answer_length)
+                        event = self._stamp_progress(event)  # 过程区事件标注行车态
                         yield event
                     if not got:
                         yield orchestrator_pb2.HandleEvent(
@@ -507,6 +508,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 self.cloud_connected = True
                 # 云端回流 action 分发：车控类走 VAL
                 event = self._dispatch_cloud_actions(event, answer_length)
+                event = self._stamp_progress(event)  # 过程区事件标注行车态
                 which = event.WhichOneof("event")
                 if which == "final":
                     cloud_speech = event.final.speech
@@ -546,6 +548,23 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     final.actions.append(action)
                     logger.info("CLOUD-DEGRADED-LOCAL %s -> %s", obj, speech)
                     yield orchestrator_pb2.HandleEvent(final=final)
+
+    def _is_driving(self) -> bool:
+        """按端侧 VAL 真实车速/档位判定是否行驶中——供过程区行车/泊车双态门控。
+        状态缺失时默认非行驶（泊车，可展开），不强制限制（避免演示/单测下永不可展开）。"""
+        st = self.val.state
+        try:
+            speed = float(st.get("speed_kmh", 0) or 0)
+        except (TypeError, ValueError):
+            speed = 0.0
+        gear = str(st.get("gear", "") or "").upper()
+        return speed > 0 or gear in ("D", "R", "S")
+
+    def _stamp_progress(self, event):
+        """给过程区事件标注行车态（Edge 是车辆状态真相源）。非 progress 事件原样返回。"""
+        if event.WhichOneof("event") == "progress":
+            event.progress.driving = self._is_driving()
+        return event
 
     def _dispatch_cloud_actions(self, event, answer_length="short"):
         """云端回流 action 分发：车控类交 VAL 执行，落实规划/执行分离。

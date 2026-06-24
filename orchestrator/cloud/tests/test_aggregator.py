@@ -5,7 +5,7 @@ from orchestrator.cloud.aggregator import Aggregator
 from orchestrator.cloud.models import StepResult, StepStatus
 
 
-async def _fake_llm(messages):
+async def _fake_llm(messages, **kwargs):
     return "已为您规划好路线并安排了途中补电。"
 
 
@@ -105,7 +105,7 @@ def test_aggregate_honors_user_count_format_request():
     """用户要求『三条结论』→ 聚合提示词带上该意图，system 指示按分点输出（不再压成一段）。"""
     captured = {}
 
-    async def _capture_llm(messages):
+    async def _capture_llm(messages, **kwargs):
         captured["system"], captured["user"] = messages[0]["content"], messages[1]["content"]
         return "1. 结论一 2. 结论二 3. 结论三"
 

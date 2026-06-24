@@ -13,23 +13,27 @@ import os
 
 
 class BaseProvider:
-    async def complete(self, messages, model, temperature, max_tokens):
-        """returns (content, model_used, finish_reason, (prompt_tokens, completion_tokens))"""
+    async def complete(self, messages, model, temperature, max_tokens, thinking=None):
+        """returns (content, model_used, finish_reason, (prompt_tokens, completion_tokens)).
+
+        thinking: None=用服务商默认（env LLM_DISABLE_THINKING）；True=本次开思考；
+        False=本次关思考。复杂任务（行程/调研）由编排层经 meta 动态传 True。
+        """
         raise NotImplementedError
 
-    async def stream(self, messages, model, temperature, max_tokens):
+    async def stream(self, messages, model, temperature, max_tokens, thinking=None):
         raise NotImplementedError
         yield  # pragma: no cover
 
 
 class MockProvider(BaseProvider):
     """无 API key 时的兜底，保证 PoC 可离线端到端跑通。"""
-    async def complete(self, messages, model, temperature, max_tokens):
+    async def complete(self, messages, model, temperature, max_tokens, thinking=None):
         user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
         text = f"[mock] 我听到你说「{user}」。配置 LLM_API_KEY 后即可接入真实模型。"
         return text, "mock", "stop", (0, 0)
 
-    async def stream(self, messages, model, temperature, max_tokens):
+    async def stream(self, messages, model, temperature, max_tokens, thinking=None):
         content, *_ = await self.complete(messages, model, temperature, max_tokens)
         for ch in content:
             yield ch
@@ -47,7 +51,8 @@ class AnthropicProvider(BaseProvider):
                 for m in messages if m["role"] in ("user", "assistant")]
         return system or None, msgs
 
-    async def complete(self, messages, model, temperature, max_tokens):
+    async def complete(self, messages, model, temperature, max_tokens, thinking=None):
+        # thinking 形参保持签名一致；Anthropic extended thinking 暂未接线（目标服务商是 MiMo）。
         system, msgs = self._split(messages)
         resp = await self.client.messages.create(
             model=model, system=system, messages=msgs,
@@ -55,7 +60,7 @@ class AnthropicProvider(BaseProvider):
         text = "".join(b.text for b in resp.content if b.type == "text")
         return text, model, resp.stop_reason, (resp.usage.input_tokens, resp.usage.output_tokens)
 
-    async def stream(self, messages, model, temperature, max_tokens):
+    async def stream(self, messages, model, temperature, max_tokens, thinking=None):
         system, msgs = self._split(messages)
         async with self.client.messages.stream(
                 model=model, system=system, messages=msgs,
@@ -91,21 +96,29 @@ class OpenAICompatibleProvider(BaseProvider):
             h["api-key"] = self.api_key
         return h
 
-    async def complete(self, messages, model, temperature, max_tokens):
+    def _resolve_thinking(self, thinking) -> bool:
+        """本次调用是否关思考：thinking=None 用构造默认；True/False 覆盖本次。"""
+        return self.disable_thinking if thinking is None else (not thinking)
+
+    async def complete(self, messages, model, temperature, max_tokens, thinking=None):
         import httpx
+        disable = self._resolve_thinking(thinking)
+        # 开思考时给足 token：reasoning 占预算，content 容易被饿空/截断；下限抬到 2048。
+        max_out = (max_tokens or 512) if disable else max((max_tokens or 512), 2048)
         body = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "max_completion_tokens": max_tokens or 512,
+            "max_completion_tokens": max_out,
             "stream": False,
         }
-        if self.disable_thinking:
+        if disable:
             # MiMo 等推理模型：默认把 token 预算几乎全花在 reasoning_content 上，
             # 导致结构化任务（Planner JSON、聚合改写、接地合成）的 content 被饿成空/截断。
             # 关闭思考即可拿到干净、确定、低延迟的 content。非推理服务商可经 env 关掉本项。
+            # 开思考时不发本键（回 MiMo 原生思考态），reasoning_content 留服务端、不取不下发。
             body["thinking"] = {"type": "disabled"}
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=120 if not disable else 60) as client:
             resp = await client.post(self.base_url, headers=self._headers(), json=body)
             resp.raise_for_status()
             data = resp.json()
@@ -116,15 +129,19 @@ class OpenAICompatibleProvider(BaseProvider):
         completion_tokens = usage.get("completion_tokens", 0)
         return content, model, "stop", (prompt_tokens, completion_tokens)
 
-    async def stream(self, messages, model, temperature, max_tokens):
+    async def stream(self, messages, model, temperature, max_tokens, thinking=None):
         import httpx
+        disable = self._resolve_thinking(thinking)
+        max_out = (max_tokens or 512) if disable else max((max_tokens or 512), 2048)
         body = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "max_completion_tokens": max_tokens or 512,
+            "max_completion_tokens": max_out,
             "stream": True,
         }
+        if disable:
+            body["thinking"] = {"type": "disabled"}
         async with httpx.AsyncClient(timeout=120) as client:
             async with client.stream("POST", self.base_url, headers=self._headers(), json=body) as resp:
                 resp.raise_for_status()
@@ -137,6 +154,7 @@ class OpenAICompatibleProvider(BaseProvider):
                     try:
                         chunk = json.loads(payload)
                         delta = chunk["choices"][0].get("delta", {})
+                        # 只取 content；reasoning_content（思考增量）刻意丢弃，不下发给用户。
                         text = delta.get("content", "")
                         if text:
                             yield text

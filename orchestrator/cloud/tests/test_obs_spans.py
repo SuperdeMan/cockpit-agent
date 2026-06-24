@@ -79,7 +79,7 @@ def _statuses_for(spans, node):
 def test_dispatch_emits_step_span(monkeypatch):
     spans = _capture_spans(monkeypatch)
 
-    async def fake_cloud(endpoint, intent, slots, context, meta):
+    async def fake_cloud(endpoint, intent, slots, context, meta, **kwargs):
         return agent_pb2.ExecuteResponse(
             status=agent_pb2.ExecuteResponse.OK,
             speech="ok",
@@ -125,7 +125,7 @@ def test_finish_emits_wait_step_span_for_pending_response(monkeypatch, status):
 def test_dispatch_emits_wait_step_span_for_pending_response(monkeypatch, status):
     spans = _capture_spans(monkeypatch)
 
-    async def fake_cloud(endpoint, intent, slots, context, meta):
+    async def fake_cloud(endpoint, intent, slots, context, meta, **kwargs):
         return agent_pb2.ExecuteResponse(status=status)
 
     dispatcher = UnifiedDispatcher(cloud_call=fake_cloud, edge_call=None)

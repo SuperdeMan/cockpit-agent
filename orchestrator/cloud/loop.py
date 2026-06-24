@@ -8,6 +8,7 @@ from typing import AsyncIterator
 
 from .executor import DagExecutor
 from .models import Plan, PlanContext, StepResult, StepStatus
+from .progress import make_progress, phase_label, step_summary
 from observability import events as obs_events
 from observability.metrics import metrics
 
@@ -48,7 +49,8 @@ class LoopController:
 
     async def run(self, goal: str, initial_plan: Plan | None, agents: list,
                   ctx: PlanContext, user_text: str,
-                  seed_results: list[StepResult] | None = None
+                  seed_results: list[StepResult] | None = None,
+                  show_process: bool = False, thinking: bool = False
                   ) -> AsyncIterator[dict]:
         results = list(seed_results or [])
         observations = [summarize(r) for r in results][-self.observation_limit:]
@@ -57,8 +59,10 @@ class LoopController:
         replans = 0
         exhausted = False
 
-        # Adaptive requests always provide immediate user-visible progress.
-        yield {"kind": "speech", "delta": THINKING_FILLER}
+        # 即时反馈：复杂任务由过程区承载（不再用 filler speech，避免气泡刷屏 + 被 TTS 念出）；
+        # 非过程区路径（如 reactive 非复杂）保留原 filler 话术。
+        if not show_process:
+            yield {"kind": "speech", "delta": THINKING_FILLER}
 
         while True:
             if current is None:
@@ -132,6 +136,11 @@ class LoopController:
                     results.append(final_sr)
                     observations.append(summarize(final_sr))
                     observations = observations[-self.observation_limit:]
+                    if show_process and final_sr.status == StepStatus.OK:
+                        yield make_progress(
+                            "execute", phase_label(step.intent),
+                            summary=step_summary(step, final_sr),
+                            status="done", step_id=step.id)
                     if final_sr.status in (
                             StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
                         yield await self.suspend(
@@ -151,6 +160,14 @@ class LoopController:
                     results.append(step_result)
                     observations.append(summarize(step_result))
                     observations = observations[-self.observation_limit:]
+                    if show_process and step_result.status == StepStatus.OK:
+                        step = next((s for s in current.steps
+                                     if s.id == step_result.step_id), None)
+                        if step is not None:
+                            yield make_progress(
+                                "execute", phase_label(step.intent),
+                                summary=step_summary(step, step_result),
+                                status="done", step_id=step.id)
                     if step_result.status in (
                             StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
                         yield await self.suspend(
@@ -178,7 +195,11 @@ class LoopController:
         logger.info("T2 loop done: replans=%d exhausted=%s elapsed=%.0fms",
                      replans, exhausted, elapsed_ms)
 
-        final = await self.aggregator.compose(user_text or goal, results)
+        if show_process:
+            yield make_progress("synthesize", "整理结果",
+                                summary="合并各步结果生成回复", status="start")
+        final = await self.aggregator.compose(
+            user_text or goal, results, thinking=thinking)
         if exhausted and not final.get("follow_up"):
             final["follow_up"] = "要我继续吗？"
         yield {"kind": "final", **final}

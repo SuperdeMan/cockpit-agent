@@ -36,7 +36,7 @@ class _Aggregator:
     def __init__(self):
         self.calls = []
 
-    async def compose(self, text, results):
+    async def compose(self, text, results, **kwargs):
         self.calls.append((text, list(results)))
         return {"speech": "best effort", "actions": [], "cards": []}
 

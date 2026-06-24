@@ -142,6 +142,52 @@ export default function App() {
       )
       return
     }
+    if (data.type === 'process') {
+      // 复杂任务过程区增量：挂到当前 pending 气泡（无则新建），累积步骤，转为进行中。
+      // 内容已在后端脱敏（步骤标签 + 思考摘要），前端只渲染、不接 TTS。
+      const step = {
+        phase: data.phase || '',
+        label: data.label || '',
+        summary: data.summary || '',
+        status: data.status || '',
+        step_id: data.step_id || '',
+      }
+      // execute 步骤按 step_id 合并（running 占位 → done 结果）；其他阶段直接追加。
+      const mergeStep = (prev: any[]) => {
+        if (step.phase === 'execute' && step.step_id) {
+          const i = prev.findIndex((p) => p.phase === 'execute' && p.step_id === step.step_id)
+          if (i >= 0) {
+            const next = prev.slice()
+            next[i] = step
+            return next
+          }
+        }
+        return [...prev, step]
+      }
+      const driving = !!data.driving
+      let id = pendingIdRef.current
+      if (!id) {
+        id = uid()
+        pendingIdRef.current = id
+      }
+      const targetId = id
+      setMessages((m) =>
+        m.some((x) => x.id === targetId)
+          ? m.map((msg) =>
+              msg.id === targetId
+                ? {
+                    ...msg,
+                    pending: false,
+                    processActive: true,
+                    driving,
+                    process: mergeStep(msg.process || []),
+                  }
+                : msg,
+            )
+          : [...m, { id: targetId, role: 'assistant', text: '', processActive: true, driving, process: [step] } as Msg],
+      )
+      return
+    }
     if (data.type === 'action') {
       // 流式期间单独下发的动作卡（如 T2 循环中间步骤）：附到当前气泡；
       // 没有活跃气泡则新开一个，避免动作被静默丢弃。
@@ -169,6 +215,7 @@ export default function App() {
       const final: Partial<Msg> = {
         pending: false,
         streaming: false,
+        processActive: false, // 最终答案出来 → 过程区收尾折叠（process 数组保留供展开）
         text: data.speech || '',
         actions: data.actions,
         needConfirm: !!data.need_confirm,

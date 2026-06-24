@@ -31,7 +31,19 @@ message HandleEvent {
     string speech_delta = 1;        // 流式话术增量
     cockpit.common.v1.AgentAction action = 2;
     FinalResult final = 3;
+    ProcessUpdate progress = 4;     // 复杂任务过程区：脱敏进度（步骤+思考摘要），非 final
   }
+}
+
+// 复杂任务「过程区」增量。仅复杂任务（is_complex）发；普通车控/闲聊不发。
+// 内容由编排层按步骤语义/结果合成，**绝不**携带 prompt / 模型 raw reasoning / 内部参数。
+message ProcessUpdate {
+  string phase = 1;     // analyze | execute | synthesize
+  string label = 2;     // 步骤标签（脱敏短语，如「规划路线」）
+  string summary = 3;   // 思考摘要（后端按步骤结果合成，脱敏，如「3 个景点 + 1 个充电站」）
+  string status = 4;    // start | done
+  string step_id = 5;
+  bool   driving = 6;   // 由 Edge 按 VAL 实时车速/档位标注，供 HMI 行车/泊车双态门控
 }
 
 message FinalResult {

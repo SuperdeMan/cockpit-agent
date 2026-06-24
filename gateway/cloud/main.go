@@ -224,7 +224,8 @@ func (s *channelServer) deliverEdgeResult(
 func (s *channelServer) handleRequest(sm *sendMu,
 	corrID string, req *orchpb.HandleRequest, vehicleID string) {
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// 90s：复杂任务动态开思考（行程/深度调研）端到端更慢，过程区覆盖等待；普通请求仍秒回。
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	// F18：MarkIfNew 原子化幂等检查（消除 Seen+Mark TOCTOU）

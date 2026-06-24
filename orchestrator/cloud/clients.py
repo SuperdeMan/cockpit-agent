@@ -83,12 +83,17 @@ class Clients:
             timeout=_DEFAULT_TIMEOUT)
         return list(resp.agents)
 
-    async def llm_complete(self, messages: list[dict], max_tokens: int = 800) -> str:
-        resp = await self._llm_stub().Complete(
-            llm_pb2.CompleteRequest(
-                messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],
-                temperature=0.3, max_tokens=max_tokens),
-            timeout=30)
+    async def llm_complete(self, messages: list[dict], max_tokens: int = 800,
+                           thinking: bool = False) -> str:
+        """thinking=True 时本次开思考（meta 透传给网关）并抬 token/超时。
+        **Planner 调用恒 False**（结构化 JSON 不能被 reasoning 吃空）；Aggregator 由
+        engine 对复杂任务传 True。"""
+        req = llm_pb2.CompleteRequest(
+            messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],
+            temperature=0.3, max_tokens=max(max_tokens, 2048) if thinking else max_tokens)
+        if thinking:
+            req.meta["thinking"] = "on"
+        resp = await self._llm_stub().Complete(req, timeout=60 if thinking else 30)
         return resp.content
 
     def _agent_stub(self, endpoint: str):
@@ -119,11 +124,15 @@ class Clients:
         )
 
     async def call_agent(self, endpoint: str, intent: str, slots: dict,
-                         ctx=None, meta: dict | None = None) -> agent_pb2.ExecuteResponse:
-        """meta 随 ExecuteRequest.meta 下发给 Agent（确认续接标记、trace、会话偏好等）。"""
+                         ctx=None, meta: dict | None = None,
+                         timeout: float = _DEFAULT_TIMEOUT) -> agent_pb2.ExecuteResponse:
+        """meta 随 ExecuteRequest.meta 下发给 Agent（确认续接标记、trace、会话偏好等）。
+
+        timeout 由 dispatcher 传 step.latency_budget_ms/1000——慢 Agent（trip-planner 20s+、
+        info 调研）需大于默认 10s，否则开思考后会被 10s 卡死。"""
         stub = self._agent_stub(endpoint)
         req = self._exec_request(intent, slots, ctx, meta)
-        return await stub.Execute(req, timeout=_DEFAULT_TIMEOUT)
+        return await stub.Execute(req, timeout=timeout)
 
     async def call_agent_stream(self, endpoint: str, intent: str, slots: dict,
                                 ctx=None, meta: dict | None = None, timeout: float = 30):

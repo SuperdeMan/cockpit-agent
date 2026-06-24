@@ -297,6 +297,44 @@ button { font-family: inherit; }
 
 .followup { margin-top: 7px; font-size: 13px; color: var(--muted); }
 
+/* 复杂任务过程区（气泡内嵌折叠条）：进行中一行摘要，完成后默认折叠可展开；行车态不可展开 */
+.process { margin: 0 0 9px; }
+.process-bar {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  background: rgba(124, 160, 255, 0.06); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 7px 11px; color: var(--muted);
+  font-size: 12.5px; font-family: var(--font-mono); letter-spacing: 0.2px;
+  text-align: left; cursor: default;
+}
+.process-bar:not(:disabled) { cursor: pointer; }
+.process-bar:not(:disabled):hover { border-color: rgba(124, 160, 255, 0.4); color: var(--text); }
+.process.is-active .process-bar { border-color: rgba(52, 225, 216, 0.3); }
+.process-spin {
+  width: 12px; height: 12px; border-radius: 50%; flex: none;
+  border: 2px solid rgba(52, 225, 216, 0.25); border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+.process-caret { color: var(--accent-2); width: 12px; flex: none; text-align: center; }
+.process-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.process-hint { color: var(--muted); font-size: 11px; opacity: 0.8; }
+/* 进行中：折叠条下方的实时概要（已完成阶段 + 进行中步骤） */
+.process-live { margin-top: 6px; padding-left: 4px; display: flex; flex-direction: column; gap: 3px; }
+.process-live-row { font-size: 12.5px; word-break: break-word; }
+.process-live-row.done { color: var(--muted); }
+.process-live-row.run { color: var(--accent); }
+
+/* 完成后展开：四阶段编号时间线 */
+.process-stages { margin: 6px 0 0; padding: 4px 0 2px 18px; display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+.process-stages > li { color: var(--muted); word-break: break-word; }
+.process-stages > li b { color: var(--text); font-weight: 600; }
+.process-exec { list-style: none; margin: 4px 0 0; padding: 0 0 0 4px; border-left: 2px solid var(--line); display: flex; flex-direction: column; gap: 3px; }
+.process-exec > li { position: relative; padding-left: 10px; }
+.process-exec > li::before {
+  content: ''; position: absolute; left: -5px; top: 7px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent-2);
+}
+.exec-label { color: var(--text); font-family: var(--font-mono); }
+
 /* 确认条 */
 .confirm-bar { margin-top: 12px; display: flex; gap: 10px; }
 .confirm-bar button {
