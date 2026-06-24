@@ -18,6 +18,7 @@ import logging
 from typing import TYPE_CHECKING
 
 import grpc
+from google.protobuf.json_format import MessageToDict
 from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
 from cockpit.common.v1 import common_pb2
 from .result import AgentResult
@@ -26,6 +27,14 @@ if TYPE_CHECKING:
     from .base import BaseAgent
 
 logger = logging.getLogger("sdk.agent_client")
+
+
+def _struct_to_dict(value) -> dict:
+    """protobuf Struct → 原生 dict。dict(struct.fields) 会留下 Value 对象（不可比较/取值），
+    必须用 MessageToDict 递归转换，否则 r.ui_card.get('type') 永远 != 'poi_list'。"""
+    if value is None:
+        return {}
+    return MessageToDict(value, preserving_proto_field_name=True)
 
 # 可观测：护栏拒绝时发审计 span（复用 observability/events.py）
 try:
@@ -41,13 +50,16 @@ class AgentClient:
 
     def __init__(self, caller: "BaseAgent", call_depth: int = 0,
                  call_stack: list[str] = None, timeout: float = 10,
-                 registry=None):
+                 registry=None, parent_meta: dict = None):
         self._caller = caller
         self._depth = call_depth
         self._stack = call_stack or []
         self._timeout = timeout
         self._emitter = get_emitter("agent_client") if get_emitter else None
         self._registry = registry  # RegistryClient for dynamic endpoint resolution
+        # 父请求 meta：转发会话上下文（定位/电量/trace 等）给子 Agent，
+        # 否则复合 Agent（如 trip-planner 内部调 charging）的子调用拿不到当前定位/真实电量。
+        self._parent_meta = parent_meta or {}
 
     async def _emit_guardrail_event(self, reason: str, target: str,
                                     meta: dict | None = None) -> None:
@@ -102,6 +114,14 @@ class AgentClient:
         if not endpoint:
             return AgentResult(status="failed", speech=f"未找到 Agent: {agent_id}")
 
+        # 转发父请求会话上下文（定位/真实电量/trace 等）给子 Agent；call_depth/call_stack
+        # 由本层权威覆盖（护栏跨进程生效）。否则复合 Agent 的子调用会丢定位/电量，
+        # 例如 trip-planner 内部调 charging.plan 拿不到当前位置 → 误报"请开启定位"。
+        sub_meta = {k: str(v) for k, v in self._parent_meta.items()
+                    if k not in ("call_depth", "call_stack")}
+        sub_meta["call_depth"] = str(self._depth + 1)
+        sub_meta["call_stack"] = ",".join(self._stack + [caller_id])
+
         # 构建请求
         req = agent_pb2.ExecuteRequest(
             session_id=ctx.session_id if ctx else "",
@@ -111,8 +131,7 @@ class AgentClient:
                 user_id=ctx.user_id if ctx else "",
                 vehicle_id=ctx.vehicle_id if ctx else "",
             ),
-            meta={"call_depth": str(self._depth + 1),
-                  "call_stack": ",".join(self._stack + [caller_id])},
+            meta=sub_meta,
         )
 
         # 调用（带超时）
@@ -130,14 +149,14 @@ class AgentClient:
         # 转换响应
         status_map = {0: "ok", 1: "need_confirm", 2: "need_slot", 3: "failed", 4: "rejected"}
         actions = [
-            {"type": a.type, "payload": dict(a.payload.fields) if a.payload else {},
+            {"type": a.type, "payload": _struct_to_dict(a.payload),
              "require_confirm": a.require_confirm}
             for a in resp.actions
         ]
         return AgentResult(
             status=status_map.get(resp.status, "failed"),
             speech=resp.speech,
-            ui_card=dict(resp.ui_card.fields) if resp.ui_card else None,
+            ui_card=_struct_to_dict(resp.ui_card) or None,
             actions=actions,
             follow_up=resp.follow_up,
         )

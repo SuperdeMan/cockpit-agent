@@ -80,7 +80,7 @@ class BaseAgent(ABC):
             depth = int(meta.get("call_depth", 0))
             stack = [s for s in meta.get("call_stack", "").split(",") if s]
             return AgentClient(caller=self, call_depth=depth, call_stack=stack,
-                               registry=self.registry)
+                               registry=self.registry, parent_meta=meta)
         # 无 meta（本地测试 / 非 gRPC 调用）→ 默认深度 0
         if self._agents is None:
             self._agents = AgentClient(caller=self, registry=self.registry)

@@ -150,6 +150,57 @@ def test_meta_contains_depth_and_stack():
     assert "trip-planner" in stack
 
 
+def test_meta_forwards_parent_session_context():
+    """父请求会话上下文（定位/真实电量）必须转发给子 Agent；call_depth/call_stack
+    由本层权威覆盖父值。否则复合 Agent（trip-planner 内部调 charging）丢定位/电量。"""
+    agent = _MockAgent(agent_id="trip-planner")
+    parent_meta = {
+        "current_lat": "30.2741", "current_lng": "120.1551",
+        "vehicle_battery": "72%",
+        "call_depth": "0", "call_stack": "stale",  # 应被本层覆盖，不沿用父值
+    }
+    client = AgentClient(caller=agent, call_depth=1, call_stack=["planner"],
+                         parent_meta=parent_meta)
+
+    captured_meta = {}
+
+    async def fake_call():
+        with patch("agents._sdk.agent_client.grpc") as mock_grpc:
+            mock_stub = MagicMock()
+            mock_stub.Execute = AsyncMock(side_effect=Exception("capture meta"))
+            mock_grpc.aio.insecure_channel.return_value = MagicMock()
+            with patch("agents._sdk.agent_client.agent_pb2_grpc.AgentStub", return_value=mock_stub):
+                try:
+                    await client.call("charging-planner", "charging.plan",
+                                      {"destination": "杭州"}, timeout=0.1)
+                except Exception:
+                    pass
+            if mock_stub.Execute.called:
+                captured_meta.update(dict(mock_stub.Execute.call_args[0][0].meta))
+
+    asyncio.run(fake_call())
+    # 会话上下文转发
+    assert captured_meta.get("current_lat") == "30.2741"
+    assert captured_meta.get("current_lng") == "120.1551"
+    assert captured_meta.get("vehicle_battery") == "72%"
+    # 护栏键由本层覆盖，不沿用父请求的过期值
+    assert captured_meta.get("call_depth") == "2"
+    assert captured_meta.get("call_stack") == "planner,trip-planner"
+
+
+# ─── 响应 Struct → 原生 dict（跨 Agent 卡片可用）───
+
+def test_response_ui_card_is_native_dict():
+    """call() 返回的 ui_card 必须是原生 dict（可 .get('type')=='poi_list'），
+    而非 protobuf Value。回归：dict(struct.fields) 留 Value → 复合 Agent 取不到子卡片 POI。"""
+    from agents._sdk.agent_client import _struct_to_dict
+    from agents._sdk.server import _to_struct
+    card = {"type": "poi_list", "items": [{"name": "天安门广场", "rating": 4.8}]}
+    native = _struct_to_dict(_to_struct(card))
+    assert native.get("type") == "poi_list"          # 字符串可直接比较
+    assert native["items"][0]["name"] == "天安门广场"   # 嵌套也是原生类型
+
+
 # ─── fork 增加深度 ───
 
 def test_fork_increments_depth():
