@@ -17,6 +17,19 @@ export type Msg = {
   streaming?: boolean // 正在流式接收 speech_delta
   error?: boolean
   uiCard?: UiCard
+  // 复杂任务过程区（脱敏「步骤+思考摘要」）：进行中默认简短摘要，完成后默认折叠可展开。
+  process?: ProcessStep[]
+  processActive?: boolean // 过程进行中（未出最终答案）
+  driving?: boolean // 行车态（由 Edge 按 VAL 标注）：行车极简、不可展开
+}
+
+// 过程区单步：phase=understand|plan|execute|synthesize；summary 为后端按步骤结果合成的脱敏摘要。
+export type ProcessStep = {
+  phase: string
+  label: string
+  summary?: string
+  status?: string // running | done | start
+  step_id?: string // execute 步骤：按它合并 running→done
 }
 
 // ─── UI 卡片类型 ───

@@ -10,9 +10,22 @@ import grpc
 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
+from ._ctx import get_current_meta
 
 # 默认超时（秒）
 DEFAULT_TIMEOUT = 10
+# 开思考时给足预算：reasoning 占 token、且更慢，故抬高 token 下限与超时。
+_THINK_MAX_TOKENS = 2048
+_THINK_TIMEOUT = 30
+
+
+def _resolve_thinking(thinking) -> bool:
+    """thinking=None 时从当前请求 meta 自动判定（编排层对复杂任务下发 meta["thinking"]="on"）。
+    这样所有 Agent 的 LLM 调用据此自动覆盖，无需逐个改业务码。"""
+    if thinking is not None:
+        return bool(thinking)
+    meta = get_current_meta() or {}
+    return str(meta.get("thinking", "")).lower() in ("on", "true", "1", "enabled")
 
 
 class LLMClient:
@@ -40,11 +53,17 @@ class LLMClient:
 
     async def complete(self, messages: list[dict], model: str = "",
                        temperature: float = 0.7, max_tokens: int = 512,
-                       timeout: float = DEFAULT_TIMEOUT) -> str:
+                       timeout: float = DEFAULT_TIMEOUT, thinking=None) -> str:
+        think = _resolve_thinking(thinking)
+        if think:
+            max_tokens = max(max_tokens, _THINK_MAX_TOKENS)
+            timeout = max(timeout, _THINK_TIMEOUT)
         req = llm_pb2.CompleteRequest(
             messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],
             model=model, temperature=temperature, max_tokens=max_tokens,
         )
+        if think:
+            req.meta["thinking"] = "on"
         for attempt in (1, 2):
             try:
                 resp = await self._stub().Complete(req, timeout=timeout)
@@ -58,11 +77,17 @@ class LLMClient:
 
     async def stream(self, messages: list[dict], model: str = "",
                      temperature: float = 0.7, max_tokens: int = 512,
-                     timeout: float = 30):
+                     timeout: float = 30, thinking=None):
+        think = _resolve_thinking(thinking)
+        if think:
+            max_tokens = max(max_tokens, _THINK_MAX_TOKENS)
+            timeout = max(timeout, _THINK_TIMEOUT)
         req = llm_pb2.CompleteRequest(
             messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],
             model=model, temperature=temperature, max_tokens=max_tokens,
         )
+        if think:
+            req.meta["thinking"] = "on"
         try:
             async for chunk in self._stub().CompleteStream(req, timeout=timeout):
                 if chunk.delta:

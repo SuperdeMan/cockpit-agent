@@ -103,7 +103,7 @@ class _MultiturnSpy:
             )
         return _Resp()
 
-    async def llm(self, messages):
+    async def llm(self, messages, **kwargs):
         system = messages[0]["content"]
         if "simple|adaptive" in system:
             self.planner_prompts.append(messages[1]["content"])

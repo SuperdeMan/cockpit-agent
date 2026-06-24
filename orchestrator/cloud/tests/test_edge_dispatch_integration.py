@@ -29,7 +29,7 @@ def test_edge_result_can_supply_slot_to_following_cloud_step():
         assert step.intent == "vehicle.read_state"
         return _response("当前电量35%", {"battery_percent": 35})
 
-    async def cloud(endpoint, intent, slots, ctx, meta):
+    async def cloud(endpoint, intent, slots, ctx, meta, **kwargs):
         cloud_calls.append((endpoint, intent, dict(slots)))
         return _response("已找到适合当前电量的充电站")
 

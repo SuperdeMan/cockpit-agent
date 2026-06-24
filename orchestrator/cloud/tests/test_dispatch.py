@@ -25,7 +25,7 @@ def _run(coro):
 def test_dispatches_cloud_agent_with_existing_call_shape():
     calls = []
 
-    async def cloud(endpoint, intent, slots, ctx, meta):
+    async def cloud(endpoint, intent, slots, ctx, meta, **kwargs):
         calls.append((endpoint, intent, slots, ctx.vehicle_id, meta))
         return agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK, speech="cloud")
 
@@ -51,7 +51,7 @@ def test_dispatches_cloud_agent_with_existing_call_shape():
 def test_missing_permission_is_rejected_before_cloud_transport():
     calls = []
 
-    async def cloud(*args):
+    async def cloud(*args, **kwargs):
         calls.append(args)
         return agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK)
 
@@ -71,7 +71,7 @@ def test_missing_permission_is_rejected_before_cloud_transport():
 def test_parent_permission_covers_child_scope():
     calls = []
 
-    async def cloud(*args):
+    async def cloud(*args, **kwargs):
         calls.append(args)
         return agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK)
 
@@ -93,7 +93,7 @@ def test_parent_permission_covers_child_scope():
 def test_third_party_vehicle_control_is_always_rejected():
     calls = []
 
-    async def cloud(*args):
+    async def cloud(*args, **kwargs):
         calls.append(args)
         return agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK)
 

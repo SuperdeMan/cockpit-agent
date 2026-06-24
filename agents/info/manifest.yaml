@@ -4,8 +4,9 @@ display_name: 信息助手
 category: core
 trust_level: first_party
 deployment: cloud
-# 信息类要联网搜索(Exa 18s)+LLM 接地合成(~10-20s)，2s 的旧预算会把新闻/搜索步直接超时砍掉。
-latency_budget_ms: 25000
+# 信息类要联网搜索(Exa 18s)+LLM 接地合成(~10-20s)；深度调研动态开思考后合成更慢，给足 Execute 超时。
+# 这是超时上限（ceiling），天气/股票等快查询仍秒回，不增加其延迟。
+latency_budget_ms: 50000
 fallback: chitchat
 
 capabilities:

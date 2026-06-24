@@ -29,6 +29,16 @@ class CloudPlannerServicer(orchestrator_pb2_grpc.CloudPlannerServicer):
                 yield orchestrator_pb2.HandleEvent(speech_delta=event["delta"])
             elif kind == "action":
                 yield orchestrator_pb2.HandleEvent(action=event["action"])
+            elif kind == "progress":
+                # 复杂任务过程区增量（脱敏）。driving 由 Edge 按 VAL 实时标注，此处恒 False。
+                yield orchestrator_pb2.HandleEvent(
+                    progress=orchestrator_pb2.ProcessUpdate(
+                        phase=event.get("phase", ""),
+                        label=event.get("label", ""),
+                        summary=event.get("summary", ""),
+                        status=event.get("status", ""),
+                        step_id=event.get("step_id", ""),
+                    ))
             elif kind == "final":
                 actions = []
                 for a in event.get("actions", []):

@@ -55,7 +55,7 @@ class _LoopSpy:
         yield {"kind": "final", "speech": "adaptive done"}
 
 
-async def _aggregate(_messages):
+async def _aggregate(_messages, **kwargs):
     return "simple done"
 
 

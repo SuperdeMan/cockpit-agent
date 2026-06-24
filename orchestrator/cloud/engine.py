@@ -15,6 +15,8 @@ from .executor import DagExecutor
 from .aggregator import Aggregator
 from .session import SessionStore
 from .loop import LoopController
+from .progress import (is_complex, phase_label, step_summary,
+                       task_summary, plan_steps_summary)
 from observability import events as obs_events
 from observability.metrics import metrics
 from observability.tracing import set_trace_id
@@ -170,11 +172,22 @@ class PlannerEngine:
             # C2. 权限校验（F2）：执行前对每个 step 做强制校验
             plan = self._enforce_permissions(plan, ctx)
 
-        # 规划完成，给用户即时反馈（多步计划在执行期间也会逐步 yield）。
-        # 混合意图子请求（端侧已给过云段占位）不再重复，避免双占位文案。
-        mixed_sub = dict(getattr(request, "meta", {}) or {}).get("_mixed_subrequest") == "1"
-        if new_plan and len(plan.steps) > 1 and not mixed_sub:
-            yield {"kind": "speech", "delta": "正在为您处理，请稍候…"}
+        # 统一「复杂任务」判据，驱动①动态开思考②过程区。普通车控/闲聊/单条轻查询
+        # 不命中——零过程、零额外延迟（需求第 6 条）。
+        complex_task = is_complex(plan)
+        if complex_task:
+            # 给每个 step 打 thinking=on：经 ExecuteRequest.meta → agent _current_meta →
+            # SDK LLMClient 自动开思考，无需改各 Agent 业务码。确认续接的重跑步骤也受益。
+            for s in plan.steps:
+                s.meta = {**s.meta, "thinking": "on"}
+        # 过程区只对「全新复杂任务」展示；确认/补槽续接是快速收尾，不再起一段过程区。
+        # 四阶段：理解需求 → 规划步骤 →（执行任务）→ 整理结果。前两段在此发。
+        show_process = complex_task and new_plan
+        if show_process:
+            yield self._progress("understand", "理解需求",
+                                 summary=task_summary(plan), status="done")
+            yield self._progress("plan", "规划步骤",
+                                 summary=plan_steps_summary(plan), status="done")
 
         # D-T2. Adaptive plans enter the bounded loop. Confirmation resumes keep
         # their adaptive metadata and continue from the saved result seeds.
@@ -188,7 +201,8 @@ class PlannerEngine:
                     agents=agents,
                     ctx=ctx,
                     user_text=text or plan.raw_text,
-                    seed_results=seed_results):
+                    seed_results=seed_results,
+                    show_process=show_process, thinking=complex_task):
                 if event.get("kind") == "final":
                     await obs_events.get_emitter("cloud").emit_span(
                         ctx.trace_id,
@@ -200,8 +214,9 @@ class PlannerEngine:
 
         # D0. 单步新规划走流式直通（task 4：开放域"边想边说"，秒级反馈）。
         # 仅对全新单步计划开启；确认续接/多步计划保持 executor 路径，不动 F1 闭环。
+        # 复杂单步（如独立的 trip.plan / info.search）排除在外——走 executor 才能发过程区。
         if (new_plan and plan.complexity == "simple" and len(plan.steps) == 1
-                and not ctx.is_confirmation
+                and not ctx.is_confirmation and not complex_task
                 and plan.steps[0].kind == "agent"
                 and plan.steps[0].deployment == "cloud"):
             step = plan.steps[0]
@@ -254,11 +269,29 @@ class PlannerEngine:
         # D. 执行 DAG（确认续接时：已完成结果作种子，只跑剩余步骤）
         done_seed = {r.step_id: r for r in seed_results}
         results = list(seed_results)
+        # 执行任务阶段：先为每个待执行步骤发「进行中」占位（HMI 折叠态显示「正在查询天气…」），
+        # 各步完成后再发同 step_id 的「完成」事件（HMI 按 step_id 合并 running→done）。
+        if show_process:
+            for s in plan.steps:
+                if s.id not in done_seed:
+                    yield self._progress("execute", phase_label(s.intent),
+                                         status="running", step_id=s.id)
         async for step_result in self.executor.run(plan, ctx, done=done_seed):
             results.append(step_result)
 
-            # 每步完成后 yield 进度反馈（HMI 流式显示，不等全部完成）
-            if step_result.speech and step_result.status == StepStatus.OK:
+            # 过程区：每步完成发一条脱敏「完成」进度（仅复杂任务）。
+            if show_process and step_result.status == StepStatus.OK:
+                step = next((s for s in plan.steps if s.id == step_result.step_id), None)
+                if step is not None:
+                    yield self._progress(
+                        "execute", phase_label(step.intent),
+                        summary=step_summary(step, step_result),
+                        status="done", step_id=step.id)
+
+            # 非复杂任务每步完成后 yield 话术（HMI 流式显示）；复杂任务逐步信息走过程区，
+            # 气泡只留最终答案，避免与过程区重复刷屏。
+            if (step_result.speech and step_result.status == StepStatus.OK
+                    and not complex_task):
                 yield {"kind": "speech", "delta": step_result.speech + "。"}
 
             # 挂起：需确认/需补槽
@@ -278,7 +311,8 @@ class PlannerEngine:
                     agents=agents,
                     ctx=ctx,
                     user_text=text or plan.raw_text,
-                    seed_results=results):
+                    seed_results=results,
+                    show_process=show_process, thinking=complex_task):
                 if event.get("kind") == "final":
                     await obs_events.get_emitter("cloud").emit_span(
                         ctx.trace_id,
@@ -290,12 +324,23 @@ class PlannerEngine:
 
         # E. 聚合 + 输出
         await self.session.clear(ctx.session_id)
-        final = await self.aggregator.compose(text or plan.raw_text, results)
+        if show_process:
+            yield self._progress("synthesize", "整理结果",
+                                 summary="合并各步结果生成回复", status="start")
+        final = await self.aggregator.compose(
+            text or plan.raw_text, results, thinking=complex_task)
         await obs_events.get_emitter("cloud").emit_span(
             ctx.trace_id,
             "aggregate",
         )
         yield {"kind": "final", **final}
+
+    @staticmethod
+    def _progress(phase: str, label: str, summary: str = "",
+                  status: str = "done", step_id: str = "") -> dict:
+        """构造过程区事件。内容仅来自脱敏的步骤语义/结果，绝不含 prompt/reasoning/参数。"""
+        return {"kind": "progress", "phase": phase, "label": label,
+                "summary": summary, "status": status, "step_id": step_id}
 
     async def _suspend(self, step_result: StepResult, results: list[StepResult],
                        plan: Plan, ctx: PlanContext) -> dict:

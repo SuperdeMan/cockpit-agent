@@ -4,7 +4,7 @@ display_name: 行程规划
 category: ecosystem
 trust_level: first_party
 deployment: cloud
-latency_budget_ms: 20000   # 多日行程是 LLM 重生成（慢系统），与 info 同量级；3s 会超时
+latency_budget_ms: 40000   # 多日行程是 LLM 重生成（慢系统）；复杂任务动态开思考后更慢，给足 Execute 超时
 fallback: chitchat
 
 capabilities:

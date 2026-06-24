@@ -31,8 +31,9 @@ class Aggregator:
         "circuit_open": "该服务暂时不可用，请稍后再试",
     }
 
-    async def compose(self, user_text: str, results: list[StepResult]) -> dict:
-        """聚合结果，返回 Final 事件结构。"""
+    async def compose(self, user_text: str, results: list[StepResult],
+                      thinking: bool = False) -> dict:
+        """聚合结果，返回 Final 事件结构。thinking=True 时多步合成开思考（复杂任务）。"""
         actions = self._compose_actions(results)
         cards = [r.ui_card for r in results if r.ui_card]
         follow_ups = [r.follow_up for r in results if r.follow_up]
@@ -73,7 +74,7 @@ class Aggregator:
             }
 
         # 多步：LLM 聚合
-        speech = await self._aggregate_speech(user_text, results)
+        speech = await self._aggregate_speech(user_text, results, thinking)
         return {
             "speech": speech,
             "actions": actions,
@@ -117,8 +118,9 @@ class Aggregator:
             composed.append(a)
         return composed
 
-    async def _aggregate_speech(self, user_text: str, results: list[StepResult]) -> str:
-        """用 LLM 把多步结果改写为连贯口语。"""
+    async def _aggregate_speech(self, user_text: str, results: list[StepResult],
+                                thinking: bool = False) -> str:
+        """用 LLM 把多步结果改写为连贯口语。thinking=True 时开思考（复杂跨域合成）。"""
         summaries = []
         for r in results:
             if r.status == StepStatus.OK and r.speech:
@@ -137,7 +139,7 @@ class Aggregator:
             return await self._llm([
                 {"role": "system", "content": _AGGREGATE_SYSTEM},
                 {"role": "user", "content": prompt},
-            ])
+            ], thinking=thinking)
         except Exception as e:
             logger.warning("Aggregation LLM failed, using raw: %s", e)
             return " ".join(r.speech for r in results if r.speech)

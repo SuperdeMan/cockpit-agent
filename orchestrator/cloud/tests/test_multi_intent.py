@@ -124,7 +124,7 @@ class _Spy:
         }
         return _RESPONSES.get(intent, _Resp(status=3, speech="未知意图"))
 
-    async def llm(self, messages):
+    async def llm(self, messages, **kwargs):
         system = messages[0]["content"]
         if "任务编排器" in system:
             # 根据 user message 中的关键词返回不同计划

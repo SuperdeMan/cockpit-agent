@@ -39,18 +39,30 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
     def _msgs(request):
         return [{"role": m.role, "content": m.content} for m in request.messages]
 
+    @staticmethod
+    def _thinking(request):
+        """从 meta 读本次思考开关：``on``=开、``off``=关、缺省=None（用 provider 默认）。
+        复杂任务（行程/调研）由编排层传 ``on``，结构化 JSON（Planner）不传/传 ``off``。"""
+        v = dict(request.meta).get("thinking", "").lower() if request.meta else ""
+        if v in ("on", "true", "1", "enabled"):
+            return True
+        if v in ("off", "false", "0", "disabled"):
+            return False
+        return None
+
     async def Complete(self, request, context):
         msgs = self._msgs(request)
         temp = request.temperature or 0.7
         max_tokens = request.max_tokens or 512
+        thinking = self._thinking(request)
 
         # 限流
         caller = dict(request.meta).get("caller", "default")
         if not self.limiter.allow(caller):
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, "rate limited")
 
-        # 缓存查找
-        cached = self.cache.get(msgs, request.model or self.primary, temp)
+        # 缓存查找（thinking 并入 key，避免开/关思考结果串味）
+        cached = self.cache.get(msgs, request.model or self.primary, temp, thinking)
         if cached:
             content, used, finish, usage = cached
             logger.debug("Cache hit")
@@ -64,11 +76,11 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             t0 = time.monotonic()
             try:
                 content, used, finish, usage = await self.provider.complete(
-                    msgs, model, temp, max_tokens)
+                    msgs, model, temp, max_tokens, thinking=thinking)
                 latency_ms = (time.monotonic() - t0) * 1000
 
                 # 写缓存
-                self.cache.put(msgs, model, temp, content, used)
+                self.cache.put(msgs, model, temp, content, used, thinking)
 
                 # 记录成本
                 cost_tracker.record(used, usage[0], usage[1], latency_ms)
@@ -87,12 +99,14 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
     async def CompleteStream(self, request, context):
         msgs = self._msgs(request)
         model = self._models(request.model)[0]
+        thinking = self._thinking(request)
 
         # 流式不走缓存
         t0 = time.monotonic()
         try:
             async for delta in self.provider.stream(
-                    msgs, model, request.temperature or 0.7, request.max_tokens or 512):
+                    msgs, model, request.temperature or 0.7, request.max_tokens or 512,
+                    thinking=thinking):
                 yield llm_pb2.CompleteChunk(delta=delta, done=False)
             yield llm_pb2.CompleteChunk(delta="", done=True)
             latency_ms = (time.monotonic() - t0) * 1000

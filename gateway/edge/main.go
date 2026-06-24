@@ -303,7 +303,8 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 		}
 
 		// 调端侧编排器（架构 §2.2：快意图本地秒回 / 慢意图上云）
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		// 90s：复杂任务动态开思考端到端更慢，过程区覆盖等待；快意图仍毫秒级返回。
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		stream, err := orch.Handle(ctx, &orchpb.HandleRequest{
 			Text:           req.Text,
 			SessionId:      req.SessionID,
@@ -338,6 +339,14 @@ func eventToMap(ev *orchpb.HandleEvent) map[string]any {
 		return map[string]any{"type": "speech_delta", "delta": e.SpeechDelta}
 	case *orchpb.HandleEvent_Action:
 		return map[string]any{"type": "action", "action": actionToMap(e.Action)}
+	case *orchpb.HandleEvent_Progress:
+		// 复杂任务过程区增量（脱敏）：步骤标签 + 思考摘要 + 行车态门控标记。
+		p := e.Progress
+		return map[string]any{
+			"type": "process", "phase": p.Phase, "label": p.Label,
+			"summary": p.Summary, "status": p.Status, "step_id": p.StepId,
+			"driving": p.Driving,
+		}
 	case *orchpb.HandleEvent_Final:
 		f := e.Final
 		actions := make([]any, 0, len(f.Actions))
