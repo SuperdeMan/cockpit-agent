@@ -127,10 +127,12 @@ class PlannerEngine:
                         break
             logger.info("Resuming plan for session %s (slot fill step %s, text=%s)",
                         ctx.session_id, pending.pending_step_id, text[:20])
-        elif ctx.is_confirmation:
-            # 带确认标记但没有挂起任务（TTL 过期 / 重复点击）
+        elif ctx.is_confirmation or self._is_bare_confirm_word(text):
+            # 带确认标记，或裸"确认/取消"，但没有挂起任务（TTL 过期/上一步异常/重复点击）。
+            # 关键：裸确认词绝不下交 Planner——否则会借历史把"确认"重规划成上一意图的重复
+            # 执行（反复 trip.modify），即用户报告的"确认后又改一遍并再次要确认"死循环。
             yield {"kind": "final",
-                   "speech": "当前没有待确认的操作。需要我帮您做什么？"}
+                   "speech": "当前没有待确认的操作。您可以重新告诉我需求。"}
             return
 
         new_plan = plan is None
@@ -359,7 +361,8 @@ class PlannerEngine:
         # HMI 会话级偏好（透传给 Agent，见 hmi/src/settings.tsx buildMeta）
         prefs = {k: meta[k] for k in
                  ("model_pref", "answer_length", "assistant_name", "memory_enabled",
-                  "poi_page")  # poi_page: "换一批"翻页页码，透传给 navigation 取下一批候选
+                  "poi_page",          # "换一批"翻页页码，透传给 navigation
+                  "vehicle_battery")   # 端侧真实电量，透传给 charging（与可观测台一致）
                  if meta.get(k)}
         # 精确位置只在本轮请求携带；需同时满足浏览器已授权并拥有 location.read scope。
         if "location.read" in granted:
@@ -387,13 +390,24 @@ class PlannerEngine:
         语音兜底只认短肯定话术，避免长句误判成确认。
         """
         t = (text or "").strip().lower()
-        if any(k in t for k in _NO_WORDS):
+        # "词占据整句"判定：肯定/否定词须近似为全句（len(t) ≤ 词长+slack），不做宽松子串包含。
+        # 否则"第二天行程换一个"含"行"、"可以换X"含"可以"、"第二天不要去长城"含"不要"会被误判。
+        if any(k in t and len(t) <= len(k) + 3 for k in _NO_WORDS):
             return "no"
         if flagged:
             return "yes"
-        if t and len(t) <= 8 and any(k in t for k in _YES_WORDS):
+        if any(k in t and len(t) <= len(k) + 2 for k in _YES_WORDS):
             return "yes"
         return None
+
+    @staticmethod
+    def _is_bare_confirm_word(text: str) -> bool:
+        """文本是否就是一句裸"确认/取消"（判定与语音兜底 _confirm_reply 完全一致）。
+
+        无挂起任务时用于拦截：绝不能把裸"确认"交给 Planner——否则它会借对话历史把
+        "确认"重规划成上一意图的重复执行（如反复 trip.modify），表现为"确认后又改一遍
+        并再次要确认"的死循环。挂起任务丢失（TTL 过期/上一步异常/重复点击）时优雅兜底。"""
+        return PlannerEngine._confirm_reply(text, False) is not None
 
     @staticmethod
     def _is_topic_change(text: str) -> bool:

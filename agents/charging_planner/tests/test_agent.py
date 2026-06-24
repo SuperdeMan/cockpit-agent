@@ -288,3 +288,13 @@ def test_unsupported_intent():
         ChargingPlannerAgent(), "charging.unknown",
         slots={}, raw_text="xxx", ctx=ctx))
     assert res.status == "failed"
+
+
+def test_resolve_soc_prefers_meta_battery_over_memory():
+    """充电规划优先用边端注入的真实电量(meta.vehicle_battery)，不用 memory 默认/陈旧值。"""
+    agent = ChargingPlannerAgent()
+    ctx = make_context(context_values={"vehicle.battery": "50%"})  # memory 旧/默认
+    soc = asyncio.run(agent._resolve_soc(ctx, {"vehicle_battery": "72"}))
+    assert soc == "72"                                              # 取边端真实电量
+    soc2 = asyncio.run(agent._resolve_soc(ctx, {}))
+    assert soc2 == "50%"                                           # 无 meta 时回退 memory

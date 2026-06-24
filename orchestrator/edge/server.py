@@ -248,6 +248,12 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
     async def Handle(self, request, context):
         trace_id = _ensure_trace_id(request)
         self._change_source.set("T0")
+        # 把端侧真实车辆电量注入 meta，透传给云端 Agent（充电规划等），避免云端读 memory
+        # 默认值(50%)与可观测台/仪表实际电量(如72%)不一致。
+        try:
+            request.meta["vehicle_battery"] = str(self.val.state.get("battery", ""))
+        except Exception:
+            pass
         # 从 request.meta 读取 HMI 设置
         meta = dict(request.meta) if request.meta else {}
         answer_length = meta.get("answer_length", "short")

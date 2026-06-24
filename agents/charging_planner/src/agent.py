@@ -37,11 +37,19 @@ class ChargingPlannerAgent(BaseAgent):
             return await handler(intent, ctx, meta)
         return AgentResult(status=FAILED, speech="充能助手暂不支持该请求。")
 
+    async def _resolve_soc(self, ctx, meta) -> str:
+        """当前电量：优先取边端注入的真实车辆电量(meta.vehicle_battery，与可观测台/仪表一致)，
+        回退 memory 的 vehicle.battery。避免规划用了默认 50%、与用户实际电量(如72%)不符。"""
+        soc = str((meta or {}).get("vehicle_battery", "") or "").strip()
+        if soc:
+            return soc
+        ctx_values = await ctx.fetch("vehicle.battery")
+        return ctx_values.get("vehicle.battery", "")
+
     async def _find(self, intent, ctx, meta) -> AgentResult:
         """找附近的充电站。带 destination 槽位时按目的地搜，最优站作为导航途经点。"""
-        # 读电量
-        ctx_values = await ctx.fetch("vehicle.battery")
-        soc = ctx_values.get("vehicle.battery", "")
+        # 读电量（真实车辆电量优先，回退 memory）
+        soc = await self._resolve_soc(ctx, meta)
 
         prefer = (intent.slots.get("prefer") or "").strip()
         charger_type = "快充" if "快" in prefer else ""
@@ -210,8 +218,7 @@ class ChargingPlannerAgent(BaseAgent):
                        f"或告诉我详细地址，我再为您规划沿途充电。",
                 follow_up="告诉我具体地点")
 
-        ctx_values = await ctx.fetch("vehicle.battery")
-        soc = ctx_values.get("vehicle.battery", "")
+        soc = await self._resolve_soc(ctx, meta)
 
         # 调充电 Provider 规划（高德：真实路线距离/时长 + 目的地附近真实充电站）
         try:
@@ -243,8 +250,7 @@ class ChargingPlannerAgent(BaseAgent):
 
     async def _status(self, intent, ctx, meta) -> AgentResult:
         """查询当前充电状态。"""
-        ctx_values = await ctx.fetch("vehicle.battery")
-        battery = ctx_values.get("vehicle.battery", "未知")
+        battery = await self._resolve_soc(ctx, meta) or "未知"
         return AgentResult(
             speech=f"当前电量：{battery}。",
             data={"battery": battery},

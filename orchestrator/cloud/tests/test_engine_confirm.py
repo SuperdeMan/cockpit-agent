@@ -172,6 +172,21 @@ def test_confirm_flag_without_pending_session():
     assert spy.llm_plan_calls == 0                  # 不会拿"确认"二字去规划
 
 
+def test_bare_confirm_word_without_flag_or_pending_not_replanned():
+    """裸"确认"（无 is_confirmation 标记，也无挂起任务）绝不下交 Planner。
+
+    回归：挂起任务丢失（TTL/上一步异常）后，"确认"曾被借历史重规划成上一意图的重复执行
+    （反复 trip.modify），表现为"确认后又改一遍并再次要确认"死循环。"""
+    engine, spy, _ = _make_engine()
+    events = _run(engine, _req("确认", is_confirmation=False))
+    assert "没有待确认" in events[-1]["speech"]
+    assert spy.llm_plan_calls == 0                  # 关键：不重规划
+    # "取消"同样兜底
+    events = _run(engine, _req("取消", is_confirmation=False))
+    assert "没有待确认" in events[-1]["speech"]
+    assert spy.llm_plan_calls == 0
+
+
 def test_voice_short_yes_resumes_without_flag():
     """语音说"订吧"（无 is_confirmation 标记）也应续接挂起任务。"""
     engine, spy, session = _make_engine()
@@ -206,5 +221,25 @@ def test_confirm_reply_rules():
     assert f("确认", True) == "yes"
     assert f("订吧", False) == "yes"                # 语音短肯定
     assert f("好的", False) == "yes"
+    assert f("行", False) == "yes"                  # 单字肯定（占据整句）
     assert f("帮我看看附近有什么充电站好吗", False) is None   # 长句不误判
     assert f("", False) is None
+    # 回归：肯定/否定词作子串出现在更长的指令里，绝不能误判成确认/取消
+    assert f("第二天行程换一个", False) is None      # 含"行"(行程)，是修改不是确认
+    assert f("可以换第二天的安排吗", False) is None   # 含"可以"，是请求不是确认
+    assert f("第二天不要去长城了", False) is None     # 含"不要"，是修改不是取消
+
+
+def test_modify_phrase_with_xing_not_mistaken_for_confirm():
+    """『第二天行程换一个』含"行"字，不得被当成确认而恢复上一行程并收尾。
+
+    回归：用户报告改第二天没被识别、直接进了最终导航——根因是"行程"里的"行"误命中肯定词。"""
+    engine, spy, session = _make_engine()
+    _run(engine, _req("找家川菜馆订今晚7点两位"))      # 制造一个待确认任务
+    assert asyncio.run(session.load("sess-1")) is not None
+
+    _run(engine, _req("第二天行程换一个"))            # 不是确认 → 应换新规划
+    assert spy.llm_plan_calls == 2                   # 走了新规划（而非恢复挂起收尾）
+    assert spy.count("food.search_restaurant") == 2  # 新规划重跑了搜索（确认续接则不会）
+    # 若被误判成确认，会用 confirmed 续接挂起的订餐那一步
+    assert all(m.get("confirmed") != "true" for m in spy.metas("food.reserve"))
