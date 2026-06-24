@@ -31,5 +31,10 @@
 | [2026-06-22-charging-route-planning.md](2026-06-22-charging-route-planning.md) | 充电规划：高德沿真实路线取途经充电点（出发地→途经点→目的地）+ 泛地点高德候选二次确认（dest_choice）+ charging_route 时间线卡 + 聚合器卡片择优 + advisory（不车控/不发导航） | 已落地（多轮迭代，真实高德端到端验证） |
 | [2026-06-20-ws2-registry-production.md](2026-06-20-ws2-registry-production.md) | WS2 Registry 生产化：PostgreSQL 持久化/多实例/语义路由/AgentClient 动态解析 | 已落地（P0+P1：PgStore/pgvector/AgentClient 动态解析/多实例） |
 | [2026-06-20-ws8-security-permissions.md](2026-06-20-ws8-security-permissions.md) | WS8 安全与权限：权限动态解析/third-party 沙箱/LLM 注入防护/网络白名单/车控安全门控 | 已落地（P0+P1：注入检测集成/VAL 4 项门控/third-party 沙箱/HTTP_PROXY） |
+| [2026-06-23-named-places.md](2026-06-23-named-places.md) | 常用地点（家/公司）：导航别名解析 + 未设置时二次交互引导设置 + Redis 持久化（memory 服务 profile.places）+ HMI 回显/修改 | 已落地 |
+| [2026-06-23-navigate-landmark-and-charging-waypoint.md](2026-06-23-navigate-landmark-and-charging-waypoint.md) | 视觉地标经共享件解析地图官方名（name_matches 校验拒邻近无关 POI）+「导航去地标附近充电」按目的地搜站、聚合器并入 navigate.waypoints + 类目搜索不被整句多意图劫持 | 已落地（真实高德验证） |
+| [2026-06-23-restaurant-waypoint-and-topscorers.md](2026-06-23-restaurant-waypoint-and-topscorers.md) | 顺路用餐途经点（navigate_to.stop_category→waypoint_choice 候选二次选择→route_plan 路线卡，navigation 接管因 food 恒 mock）+ 赛事射手榜 | 已落地 |
+| [2026-06-23-sports-match-detail.md](2026-06-23-sports-match-detail.md) | 赛事进球详情/射手榜：api-football /fixtures/events（进球射手与分钟，剔除罚丢点球）+ topscorers 赛季回退标注 + 历史总榜走搜索接地合成 | 已落地 |
+| [2026-06-24-trip-planner-multiturn-and-confirm-robustness.md](2026-06-24-trip-planner-multiturn-and-confirm-robustness.md) | 行程规划多轮闭环（规划→改某天→确认→第一站导航）：确定性 trip.plan/trip.modify 兜底（覆盖降级路径）+ trip-planner 有状态多轮 + 确认收尾取行程首日景点搜 POI + 确认词「占据整句」修复（行/可以/不要不误判）+ 孤儿确认护栏 + 跨 Agent meta 透传与 Struct→dict 修复 + 电量一致性 | 已落地（783 passed 实测 + 端到端验证） |
 
 > 接真实 provider 的标准流程见常青指南 [`docs/guides/provider-integration.md`](../guides/provider-integration.md)。
