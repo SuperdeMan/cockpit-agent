@@ -11,7 +11,7 @@ python test/smoke_edge.py
 python -m pytest --import-mode=importlib -q
 ```
 `conftest.py` 已配好 PYTHONPATH，`--import-mode=importlib` 解决 test_agent.py 重名。
-**当前结果：473 passed, 6 skipped（2026-06-16 实测；6 skip 含 4 条 nightly 真实 LLM 默认跳过）。**
+**当前结果：854 passed, 6 skipped（2026-06-25 实测；6 skip 含 4 条 nightly 真实 LLM 默认跳过）。**
 
 ### 测试分布
 | 模块 | 文件 | 覆盖 |
@@ -28,6 +28,8 @@ python -m pytest --import-mode=importlib -q
 | 可观测 | `observability/tests/`、`observability/collector/tests/` | emitter 断线恢复、collector 聚合与重启快照自愈恢复、REST/WS、debug 校验 |
 | ASR 转码 | `llm-gateway/tests/test_transcode.py` | wav 透传、webm 转码、回退 |
 | Agent | `agents/*/tests/` | 各 Agent 契约测试 |
+| 分层记忆（单点） | `memory/tests/test_pg_store.py`、`test_store.py`、`test_extract.py`、`test_server_rpc.py`、`test_routine.py` | 写读/过滤/时序-lite、画像与 places 收敛、四分类抽取治理+PII黑名单、RPC 映射、routine 聚合 |
+| 分层记忆（复杂场景） | `memory/tests/test_scenarios.py` (8) | 多轮偏好演化、多乘员隔离、隐私三档、临时偏好过期、routine 阈值、抽取纵深防御、合规导出/被遗忘权、planner 召回契约 |
 | Agent SDK | `test/sdk/` | 跨 Agent 协作、周期重注册（registry 重启后自愈补注册）|
 | ASR E2E | `test/test_asr_e2e.py` (4) | wav/webm/空音频/voices（需 API key，无 key 跳过） |
 
@@ -59,6 +61,7 @@ pip install websockets
 python test/e2e_ws.py                     # 4 条标准链路（车控/导航/闲聊/确认）
 python test/e2e_observability.py          # 人工巡检：中枢分发→执行→仪表盘（collector 三维观测）
 python test/e2e_central_hub_assertions.py # 断言型：P0-1~5 中枢链路/状态/确认 + trace 全链贯穿(P1-8)自动断言
+python test/e2e_memory.py                 # 断言型：记忆 6 链路（真 embedding 语义/planner 召回注入/chitchat 宠物/隐私定向/合规/主动 routine→NATS），自清理可重入
 ```
 
 ## 6. Nightly 真实 LLM 语料（默认 skip）

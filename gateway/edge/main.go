@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	natsgo "github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -265,8 +266,13 @@ func (c *ChannelClient) recvLoop(ctx context.Context) {
 			}
 
 		case *channelpb.DownFrame_Proactive:
-			// 主动推送（如低电量提醒），当前仅日志
-			log.Printf("[edge-gateway] proactive: %s - %s", body.Proactive.Type, body.Proactive.Speech)
+			// 主动推送（如低电量提醒）：经云端 channel 下来 → 广播给已连 HMI
+			n := hub.broadcast(map[string]any{
+				"type": "proactive", "speech": body.Proactive.Speech,
+				"advisory": body.Proactive.Type, "source": "cloud",
+			})
+			log.Printf("[edge-gateway] proactive(channel) -> %d HMI: %s",
+				n, body.Proactive.Speech)
 		}
 	}
 }
@@ -274,6 +280,46 @@ func (c *ChannelClient) recvLoop(ctx context.Context) {
 // ─── WebSocket 处理 ───
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+
+// ─── WS Hub：主动建议异步广播给已连 HMI ───
+// gorilla/websocket 不允许并发写同一连接，故每连一把写锁，请求-响应与广播都经它序列化。
+
+type wsClient struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+func (c *wsClient) send(v any) {
+	b, _ := json.Marshal(v)
+	c.mu.Lock()
+	_ = c.conn.WriteMessage(websocket.TextMessage, b)
+	c.mu.Unlock()
+}
+
+type wsHub struct {
+	mu      sync.Mutex
+	clients map[*wsClient]bool
+}
+
+func newHub() *wsHub { return &wsHub{clients: map[*wsClient]bool{}} }
+
+func (h *wsHub) register(c *wsClient)   { h.mu.Lock(); h.clients[c] = true; h.mu.Unlock() }
+func (h *wsHub) unregister(c *wsClient) { h.mu.Lock(); delete(h.clients, c); h.mu.Unlock() }
+
+func (h *wsHub) broadcast(v any) int {
+	h.mu.Lock()
+	cs := make([]*wsClient, 0, len(h.clients))
+	for c := range h.clients {
+		cs = append(cs, c)
+	}
+	h.mu.Unlock()
+	for _, c := range cs {
+		c.send(v)
+	}
+	return len(cs)
+}
+
+var hub = newHub()
 
 type wsRequest struct {
 	Text           string            `json:"text"`
@@ -288,6 +334,10 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 		return
 	}
 	defer conn.Close()
+
+	client := &wsClient{conn: conn}
+	hub.register(client)
+	defer hub.unregister(client)
 
 	for {
 		_, msg, err := conn.ReadMessage()
@@ -318,7 +368,7 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 		})
 		if err != nil {
 			cancel()
-			writeJSON(conn, map[string]any{"type": "error", "message": err.Error()})
+			client.send(map[string]any{"type": "error", "message": err.Error()})
 			continue
 		}
 
@@ -328,7 +378,7 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 				cancel()
 				break
 			}
-			writeJSON(conn, eventToMap(ev))
+			client.send(eventToMap(ev))
 		}
 	}
 }
@@ -399,6 +449,30 @@ func main() {
 	}
 	defer orchConn.Close()
 	orchStub := orchpb.NewEdgeOrchestratorClient(orchConn)
+
+	// 主动建议投递：订阅 NATS agent.proactive（agents/memory 发布）→ 广播给已连 HMI。
+	// 这是「NATS→HMI 投递一跳」；无 NATS_URL 时静默禁用，不影响请求-响应。
+	if natsURL := os.Getenv("NATS_URL"); natsURL != "" {
+		if nc, err := natsgo.Connect(natsURL, natsgo.MaxReconnects(-1)); err != nil {
+			log.Printf("[edge-gateway] NATS connect failed, proactive disabled: %v", err)
+		} else {
+			if _, err := nc.Subscribe("agent.proactive", func(m *natsgo.Msg) {
+				var p map[string]any
+				if json.Unmarshal(m.Data, &p) != nil {
+					return
+				}
+				n := hub.broadcast(map[string]any{
+					"type": "proactive", "speech": p["speech"],
+					"advisory": p["type"], "source": p["agent_id"],
+				})
+				log.Printf("[edge-gateway] proactive(nats) -> %d HMI: %v", n, p["speech"])
+			}); err != nil {
+				log.Printf("[edge-gateway] NATS subscribe failed: %v", err)
+			} else {
+				log.Printf("[edge-gateway] NATS proactive bridge active (%s)", natsURL)
+			}
+		}
+	}
 
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"status":"ok","orchestrator":"%s"}`, orchAddr)

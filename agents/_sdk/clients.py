@@ -156,6 +156,71 @@ class MemoryClient:
         except grpc.aio.AioRpcError as e:
             raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
 
+    async def remember(self, items: list[dict]) -> list[str]:
+        """写语义/情景记忆。items 为 dict 列表（字段见 MemoryItem）。失败抛 RuntimeError。"""
+        req = memory_pb2.RememberRequest(items=[_to_memory_item(it) for it in items])
+        try:
+            resp = await self._stub().Remember(req, timeout=DEFAULT_TIMEOUT)
+            return list(resp.ids)
+        except grpc.aio.AioRpcError as e:
+            raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
+
+    async def recall(self, user_id: str, query: str = "", *, occupant_id: str = "",
+                     scopes: list[str] | None = None, kinds: list[str] | None = None,
+                     top_k: int = 5, include_superseded: bool = False,
+                     predicate_prefix: str = "", min_score: float = 0.0,
+                     min_confidence: float = 0.0, max_age_days: int = 0) -> list[dict]:
+        """语义召回。返回 dict 列表（含 score）。memory 重启 UNAVAILABLE 自动重连重试一次。"""
+        req = memory_pb2.RecallRequest(
+            user_id=user_id, occupant_id=occupant_id, query=query,
+            scopes=scopes or [], kinds=kinds or [], top_k=top_k,
+            include_superseded=include_superseded, predicate_prefix=predicate_prefix,
+            min_score=min_score, min_confidence=min_confidence, max_age_days=max_age_days)
+        for attempt in (1, 2):
+            try:
+                resp = await self._stub().Recall(req, timeout=DEFAULT_TIMEOUT)
+                out = []
+                for it, score in zip(resp.items, resp.scores):
+                    d = _from_memory_item(it)
+                    d["score"] = score
+                    out.append(d)
+                return out
+            except grpc.aio.AioRpcError as e:
+                if attempt == 1 and e.code() == grpc.StatusCode.UNAVAILABLE:
+                    await self._reset_channel()
+                    continue
+                raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
+
+
+def _to_memory_item(d: dict):
+    return memory_pb2.MemoryItem(
+        id=d.get("id", "") or "", kind=d.get("kind", "semantic") or "semantic",
+        tenant_id=d.get("tenant_id", "") or "", user_id=d.get("user_id", "") or "",
+        occupant_id=d.get("occupant_id", "") or "", vehicle_id=d.get("vehicle_id", "") or "",
+        memory_level=d.get("memory_level", "") or "", predicate=d.get("predicate", "") or "",
+        text=d.get("text", "") or "", value_json=d.get("value_json", "") or "",
+        provenance=d.get("provenance", "user_stated") or "user_stated",
+        confidence=float(d.get("confidence", 1.0) or 0),
+        review_status=d.get("review_status", "") or "", scope=d.get("scope", "") or "",
+        privacy_level=d.get("privacy_level", "") or "",
+        valid_from=int(d.get("valid_from", 0) or 0), valid_to=int(d.get("valid_to", 0) or 0),
+        expires_at=int(d.get("expires_at", 0) or 0),
+        superseded_by=d.get("superseded_by", "") or "",
+        source_turn_ids=d.get("source_turn_ids", "") or "",
+        source_ts=int(d.get("source_ts", 0) or 0),
+        source_session=d.get("source_session", "") or "")
+
+
+def _from_memory_item(m) -> dict:
+    return {"id": m.id, "kind": m.kind, "tenant_id": m.tenant_id, "user_id": m.user_id,
+            "occupant_id": m.occupant_id, "vehicle_id": m.vehicle_id,
+            "memory_level": m.memory_level, "predicate": m.predicate, "text": m.text,
+            "value_json": m.value_json, "provenance": m.provenance, "confidence": m.confidence,
+            "review_status": m.review_status, "scope": m.scope, "privacy_level": m.privacy_level,
+            "valid_from": m.valid_from, "valid_to": m.valid_to, "expires_at": m.expires_at,
+            "superseded_by": m.superseded_by, "source_turn_ids": m.source_turn_ids,
+            "source_ts": m.source_ts, "source_session": m.source_session}
+
 
 class RegistryClient:
     """注册中心客户端。连接复用，支持 register + resolve。"""

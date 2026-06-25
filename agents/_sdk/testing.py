@@ -31,6 +31,7 @@ def make_context(session_id: str = "test-sess", user_id: str = "u1",
     mem = AsyncMock()
     mem.get_context.return_value = context_values or {}
     mem.get_session.return_value = history or []
+    mem.recall.return_value = []  # 默认无语义记忆；用 ctx.recall 的 Agent 测试可覆盖
     return Context(session_id, user_id, vehicle_id, mem)
 
 

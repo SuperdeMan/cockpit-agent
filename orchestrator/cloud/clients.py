@@ -50,10 +50,12 @@ class Clients:
             self._ch_edge = grpc.aio.insecure_channel(self.cloud_gateway_addr)
         return channel_pb2_grpc.EdgeCloudChannelStub(self._ch_edge)
 
-    async def append_turn(self, session_id: str, role: str, text: str):
-        """写入一轮对话到 memory（task 2：对话记忆 + 指代消解的数据来源）。"""
+    async def append_turn(self, session_id: str, role: str, text: str,
+                          user_id: str = "", vehicle_id: str = ""):
+        """写入一轮对话到 memory（指代消解的数据来源）。带 user_id 时 memory 侧据此触发异步抽取。"""
         await self._memory_stub().AppendTurn(
-            memory_pb2.AppendTurnRequest(session_id=session_id, role=role, text=text),
+            memory_pb2.AppendTurnRequest(session_id=session_id, role=role, text=text,
+                                         user_id=user_id, vehicle_id=vehicle_id),
             timeout=_DEFAULT_TIMEOUT)
 
     async def get_session(self, session_id: str, last_n: int = 6) -> list[dict]:
@@ -62,6 +64,20 @@ class Clients:
             memory_pb2.GetSessionRequest(session_id=session_id, last_n=last_n),
             timeout=_DEFAULT_TIMEOUT)
         return [{"role": t.role, "text": t.text, "ts": t.ts} for t in resp.turns]
+
+    async def recall(self, user_id: str, query: str = "", *, occupant_id: str = "",
+                     scopes: list[str] | None = None, kinds: list[str] | None = None,
+                     top_k: int = 3, min_confidence: float = 0.0) -> list[dict]:
+        """语义召回用户偏好（供 planner 注入）。返回 dict 列表（含 score）。"""
+        resp = await self._memory_stub().Recall(
+            memory_pb2.RecallRequest(
+                user_id=user_id, occupant_id=occupant_id, query=query,
+                scopes=scopes or [], kinds=kinds or [], top_k=top_k,
+                min_confidence=min_confidence),
+            timeout=_DEFAULT_TIMEOUT)
+        return [{"text": it.text, "scope": it.scope, "predicate": it.predicate,
+                 "provenance": it.provenance, "confidence": it.confidence}
+                for it in resp.items]
 
     async def list_agents(self):
         resp = await self._registry_stub().ListAgents(

@@ -77,9 +77,10 @@ class PlannerEngine:
             yield ev
 
         if mem_on and text:
-            await self._append_turn(ctx.session_id, "user", text)
+            await self._append_turn(ctx.session_id, "user", text, ctx.user_id, ctx.vehicle_id)
             if assistant_speech:
-                await self._append_turn(ctx.session_id, "assistant", assistant_speech)
+                await self._append_turn(ctx.session_id, "assistant", assistant_speech,
+                                        ctx.user_id, ctx.vehicle_id)
 
     async def _orchestrate(self, request, ctx: PlanContext, text: str,
                            mem_on: bool) -> AsyncIterator[dict]:
@@ -147,12 +148,13 @@ class PlannerEngine:
                        "speech": "抱歉，您的请求包含异常内容，无法处理。"}
                 return
 
-            # B. 新规划（注入此前对话历史，支持指代消解；task 2）
+            # B. 新规划（注入此前对话历史 + 长期偏好记忆；task 2 + 记忆重构 P2）
             agents = await self.clients.list_agents()
             history = await self._history(ctx.session_id) if mem_on else []
+            memories = await self._recall(text, ctx) if mem_on else []
             plan = await self.planner.build(text, agents, ctx,
                                             granted_permissions=ctx.granted_permissions,
-                                            history=history)
+                                            history=history, memory=memories)
 
             if not plan.steps:
                 yield {"kind": "final", "speech": "抱歉，我暂时无法处理这个请求。"}
@@ -368,13 +370,17 @@ class PlannerEngine:
             "need_confirm": step_result.status == StepStatus.NEED_CONFIRM,
         }
 
-    async def _append_turn(self, session_id: str, role: str, text: str):
-        """写入对话记忆。memory 不可用或 clients 未提供该能力时静默跳过（不阻塞主链路）。"""
+    async def _append_turn(self, session_id: str, role: str, text: str,
+                           user_id: str = "", vehicle_id: str = ""):
+        """写入对话记忆。memory 不可用或 clients 未提供该能力时静默跳过（不阻塞主链路）。
+        user_id 透传给 memory 触发异步偏好抽取（无则不触发）。"""
         fn = getattr(self.clients, "append_turn", None)
         if not fn:
             return
         try:
-            await fn(session_id, role, text)
+            await fn(session_id, role, text, user_id=user_id, vehicle_id=vehicle_id)
+        except TypeError:
+            await fn(session_id, role, text)  # 兼容只接受 3 参的旧 stub
         except Exception as e:
             logger.debug("append_turn failed: %s", e)
 
@@ -387,6 +393,23 @@ class PlannerEngine:
             return await fn(session_id, last_n)
         except Exception as e:
             logger.debug("get_session failed: %s", e)
+            return []
+
+    async def _recall(self, text: str, ctx) -> list[dict]:
+        """召回与本轮相关的长期偏好（供 planner）。只取现行高置信语义偏好，
+        阈值过滤避免污染；失败/无能力返回空，不阻塞规划。"""
+        fn = getattr(self.clients, "recall", None)
+        if not fn or not getattr(ctx, "user_id", ""):
+            return []
+        try:
+            mems = await fn(ctx.user_id, text, kinds=["semantic"],
+                            top_k=3, min_confidence=0.5)
+            if mems:
+                logger.info("memory recall for %s: %d items %s", ctx.user_id,
+                            len(mems), [m.get("predicate") for m in mems])
+            return mems
+        except Exception as e:
+            logger.debug("recall failed: %s", e)
             return []
 
     def _build_context(self, request) -> PlanContext:

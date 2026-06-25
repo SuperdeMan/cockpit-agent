@@ -126,7 +126,7 @@
 | postgres | 5432 | — |
 | registry | 50051 | gRPC |
 | llm-gateway | 50052 | gRPC |
-| llm-gateway (HMI HTTP 代理) | 50059 | HTTP（`/api/asr` `/api/tts` `/api/voices` `/api/memory/session` `/api/memory/context`，CORS 放开供 HMI 浏览器调用） |
+| llm-gateway (HMI HTTP 代理) | 50059 | HTTP（`/api/asr` `/api/tts` `/api/voices` `/api/memory/session` `/api/memory/context` `/api/memory/profile`(真实分层记忆:偏好/地点/经历) `/api/memory/forget`(按 scope 删)，CORS 放开供 HMI 浏览器调用） |
 | memory | 50053 | gRPC |
 | cloud-planner | 50054 | gRPC |
 | **Agent 段** | **50061–50069** | gRPC |

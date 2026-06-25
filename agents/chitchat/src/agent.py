@@ -51,8 +51,28 @@ class ChitchatAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
 
+    async def _memory_context(self, intent, ctx) -> str:
+        """召回与本问相关的个人信息/偏好（如宠物名、口味），注入 system 供自然作答。
+        失败/无 user_id 返回空，不阻塞。"""
+        query = intent.raw_text or intent.slots.get("text", "")
+        if not query:
+            return ""
+        try:
+            mems = await ctx.recall(query, kinds=["semantic"], top_k=4, min_confidence=0.5)
+        except Exception:
+            return ""
+        lines = [f"- {m.get('text', '')}" for m in mems if m.get("text")]
+        if not lines:
+            return ""
+        return ("已知用户信息（仅在与问题相关时自然引用，勿生硬复述、勿暴露这是系统记忆）：\n"
+                + "\n".join(lines))
+
     async def _build_messages(self, intent, ctx, meta) -> list[dict]:
-        msgs = [{"role": "system", "content": _system(meta)}]
+        sys = _system(meta)
+        mem_ctx = await self._memory_context(intent, ctx)
+        if mem_ctx:
+            sys = f"{sys}\n\n{mem_ctx}"
+        msgs = [{"role": "system", "content": sys}]
         for turn in await ctx.history(4):
             msgs.append({"role": turn["role"], "content": turn["text"]})
         msgs.append({"role": "user", "content": intent.raw_text or intent.slots.get("text", "")})

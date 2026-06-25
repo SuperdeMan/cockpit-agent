@@ -196,7 +196,7 @@ def test_explicit_granted_scopes_passed_to_planner():
             self.plan = plan
 
         async def build(self, text, agents, ctx, granted_permissions=None,
-                        history=None):
+                        history=None, memory=None):
             captured_permissions.append(list(granted_permissions or []))
             return self.plan
 

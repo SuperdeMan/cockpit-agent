@@ -67,3 +67,38 @@ def test_delete_profile_removes_places():
     existed, after = asyncio.run(go())
     assert existed is True
     assert "profile.places" not in after
+
+
+def test_places_mirrored_highly_sensitive_and_not_generalized():
+    """P1 收敛：places 镜像为 highly_sensitive memory_item；get_context 直读取回，
+    但泛化召回不带出（隐私）。"""
+    store = _store()
+
+    async def go():
+        await store.upsert_profile("u1", "places", {
+            "home": {"name": "阳光小区", "address": "上海长宁", "lat": 31.2, "lng": 121.4}})
+        vals = await store.get_context("s", "u1", "v", ["profile.places"])
+        general = await store.recall(user_id="u1", query="阳光小区")  # 泛化召回
+        exported = await store.export_user("u1")
+        return vals, general, exported
+
+    vals, general, exported = asyncio.run(go())
+    assert json.loads(vals["profile.places"])["home"]["name"] == "阳光小区"  # 直读拿到
+    assert general == []                                                    # 高敏不泛化
+    places_mem = [m for m in exported["memories"] if m["predicate"].startswith("place.")]
+    assert places_mem and places_mem[0]["privacy_level"] == "highly_sensitive"
+
+
+def test_migrate_places_from_legacy_kv():
+    """P1.5：既有 KV places 一次性迁入 memory_item，get_context 收敛到新表。"""
+    store = _store()
+
+    async def go():
+        store._profiles["u2"] = {"places": {"company": {"name": "华润大厦", "lat": 1, "lng": 2}}}
+        n = await store.migrate_places("u2")
+        got = await store.get_context("s", "u2", "v", ["profile.places"])
+        return n, got
+
+    n, got = asyncio.run(go())
+    assert n == 1
+    assert json.loads(got["profile.places"])["company"]["name"] == "华润大厦"

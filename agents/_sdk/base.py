@@ -53,6 +53,40 @@ class Context:
         return await self._memory.upsert_profile(
             self.user_id, key, json.dumps(value, ensure_ascii=False))
 
+    async def recall(self, query: str = "", *, scopes: list[str] | None = None,
+                     kinds: list[str] | None = None, top_k: int = 5,
+                     predicate_prefix: str = "", min_score: float = 0.0,
+                     min_confidence: float = 0.0, max_age_days: int = 0) -> list[dict]:
+        """语义召回与当前问题相关的偏好/事件（如点餐前取口味）。无 user_id 返回空。
+        精确画像读取传 predicate_prefix（如 "place." "taste."）走谓词精确而非向量。"""
+        if not self.user_id:
+            return []
+        return await self._memory.recall(
+            self.user_id, query, scopes=scopes, kinds=kinds, top_k=top_k,
+            predicate_prefix=predicate_prefix, min_score=min_score,
+            min_confidence=min_confidence, max_age_days=max_age_days)
+
+    async def remember(self, text: str, *, predicate: str = "", kind: str = "semantic",
+                       scope: str = "", value=None, provenance: str = "user_stated",
+                       confidence: float = 1.0, privacy_level: str = "normal",
+                       vehicle_id: str = "", memory_level: str = "user",
+                       expires_at: int = 0, review_status: str = "user_confirmed",
+                       source_turn_ids: str = "") -> bool:
+        """显式写一条记忆。无 user_id 或空文本时静默跳过。
+        家/公司等高敏地点用 privacy_level="highly_sensitive"；车级偏好传 vehicle_id+memory_level。"""
+        if not self.user_id or not text:
+            return False
+        import json
+        item = {"user_id": self.user_id, "kind": kind, "predicate": predicate,
+                "text": text, "scope": scope, "provenance": provenance,
+                "confidence": confidence, "privacy_level": privacy_level,
+                "vehicle_id": vehicle_id, "memory_level": memory_level,
+                "expires_at": expires_at, "review_status": review_status,
+                "source_turn_ids": source_turn_ids,
+                "value_json": json.dumps(value, ensure_ascii=False) if value is not None else ""}
+        ids = await self._memory.remember([item])
+        return bool(ids)
+
 
 class BaseAgent(ABC):
     def __init__(self, manifest_path: str):
