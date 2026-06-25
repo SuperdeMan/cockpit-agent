@@ -12,7 +12,17 @@
 > 3. **proactive 投递 ✅**：memory 在 consolidate 后 `derive_routines` 对新 routine 发 `agent.proactive`（复用 road-safety payload，`nats-py`，best-effort）。HMI 投递一跳仍是项目既有待办。
 > 4. **places 收敛 ✅**：**memory 侧镜像**（UpsertProfile 写 places → 镜像 `memory_item` 高敏；GetContext 优先新表回退旧 KV；delete 一并清；`migrate_places` 一次性迁移）——**navigation 零触碰，named-places 零回归**。
 >
-> **仍待接**：① 真实 bge 语义召回需 embedding 模型（建议走 llm-gateway embedding API，对齐 registry 注释，未装时诚实降级 lexical）；② proactive→HMI 投递一跳（全项目既有待办）；③ 全栈 E2E（重建 cloud-planner/navigation 后跑跨轮偏好召回）。评审采纳变更见设计稿 §0。
+> **A/B/C 三笔提交（2026-06-25，分支 feature/memory-system-redesign）**：
+> - **A** `c4d4771`：P0-P3 + 评审 + 4 项后续（28 文件）。
+> - **B** `3503a44`：**embedding API 一跳**——llm.proto 加 Embed RPC、memory `_embed` 改 async 经 llm-gateway 取向量（维度校验，无源 lexical 降级）。实测 MiMo 不提供 `/v1/embeddings`（404）→ live 暂 lexical；配 `LLM_EMBED_URL` 指向 embeddings 端点即真语义，无需改码。
+> - **C** `2564cb1`：**proactive→HMI 投递一跳**——edge-gateway 订 NATS `agent.proactive`→WS hub 广播（每连写锁）；HMI 出 💡 通知气泡。**端到端实测通过**（发 agent.proactive → HMI WS 收到）。
+>
+> **embedding + 全栈 E2E 已闭环（2026-06-25）**：
+> - **embedding provider 落地**：接入阿里云百炼 `text-embedding-v4`（1024 维，独立 key/bearer，与 MiMo chat 分离；维度 384→1024 自动 ALTER）。实测 llm-gateway Embed 返回 1024 维真实向量；语义召回「饮食偏好」(与「用户不吃辣」字面零重叠)→ taste.spicy 排第一、「音乐风格」→ music.genre 排第一，**真语义生效**。
+> - **全栈跨轮 E2E 通过**：种「用户不吃辣」→ edge WS 发「找家川菜馆」→ cloud-planner 日志 `memory recall for u1: 1 items ['taste.spicy']` → 注入 planner。**跨轮偏好经真实语义召回影响规划，全链路确证**。
+> - 顺带修了观测性 gap：cloud-planner 此前 `LOG_LEVEL` 未生效（root logger 未配，INFO 全压制）。
+>
+> 评审采纳变更见设计稿 §0；接入与 E2E 细节见 §0.1。
 >
 > **状态**：分期执行中（2026-06-25）。设计依据见 [`docs/design/2026-06-25-memory-system-redesign.md`](../../design/2026-06-25-memory-system-redesign.md)，调研依据见 [`docs/research/2026-06-25-cockpit-and-agent-memory-systems.md`](../../research/2026-06-25-cockpit-and-agent-memory-systems.md)。
 >

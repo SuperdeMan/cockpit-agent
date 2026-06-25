@@ -30,7 +30,9 @@
 
 ### 0.1 后续四项落地（2026-06-25，全量 839 passed/6 skipped）
 
-1. **live-PG 验证 ✅**（已授权建表）：`asyncpg` 补依赖、重建 memory 容器连真实 cockpit 库；`memory_item` 29 列（含 `vector(384)` + 治理字段）建表成功，gRPC Remember/Recall/Export/Forget + scope 过滤端到端验证、行落 PG/删后清零。**真实 bge 语义召回仍需 embedding 模型**（未装→诚实降级 lexical，与 registry 现状一致；建议走 llm-gateway embedding API）。
+1. **live-PG 验证 ✅**（已授权建表）：`asyncpg` 补依赖、重建 memory 容器连真实 cockpit 库；`memory_item` 建表成功（治理字段齐全），gRPC Remember/Recall/Export/Forget + scope 过滤端到端验证、行落 PG/删后清零。
+5. **真实语义召回 ✅（embedding provider 落地）**：接入阿里云百炼 `text-embedding-v4`（1024 维；embedding 用独立 key/bearer/端点，与 MiMo chat 分离；维度 384→1024，memory 启动自动 ALTER 空列）。实测：llm-gateway Embed 返回 1024 维真实向量；「饮食偏好」（与「用户不吃辣」**字面零重叠**）语义召回 → taste.spicy 排第一，「音乐风格」→ music.genre 排第一。lexical 做不到，**真语义确证**。
+6. **全栈跨轮 E2E ✅**：种「用户不吃辣」(u1) → edge WS 发「找家川菜馆」→ cloud-planner 日志 `memory recall for u1: 1 items ['taste.spicy']` → 注入 planner。跨轮偏好经真实语义召回影响规划，**全链路打通**。（顺带修 cloud-planner `LOG_LEVEL` 未生效的观测性 gap。）
 2. **per-Agent `ctx.recall` ✅**：food 点餐前精确召回口味（`predicate_prefix="taste."`）入话术。
 3. **proactive 投递 ✅**：memory 在 consolidate 后派生 routine 并发 `agent.proactive`（复用 road-safety payload）。HMI 投递一跳为项目既有待办。
 4. **places 收敛 ✅（关键设计决策）**：采用 **memory 侧镜像**——`UpsertProfile` 写 places 时镜像为 `memory_item`（`place.*`，`highly_sensitive`，supersede-or-insert）；`GetContext("profile.places")` 优先读新表、回退旧 KV；`delete_profile` 一并清镜像；`migrate_places` 一次性迁移。**navigation 一行未改 → named-places 零回归**。这比"改 navigation 双写"更安全，是对评审 Issue 1"零回归"诉求的最优解。
