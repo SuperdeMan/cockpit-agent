@@ -151,7 +151,7 @@ class PlanBuilder:
 
     async def build(self, text: str, agents: list, ctx: PlanContext,
                     granted_permissions: list[str] = None,
-                    history: list[dict] = None) -> Plan:
+                    history: list[dict] = None, memory: list[dict] = None) -> Plan:
         """构建执行计划。最多重试 1 次，失败降级到语义路由。
 
         granted_permissions: 用户已授予的权限列表。规划时过滤掉越权能力，
@@ -166,7 +166,7 @@ class PlanBuilder:
 
         plan = None
         for _ in range(2):
-            raw = await self._llm_plan(text, agents, history)
+            raw = await self._llm_plan(text, agents, history, memory)
             parsed = self._parse_and_validate(raw, agent_map, text)
             if parsed and parsed.steps:
                 plan = parsed
@@ -186,10 +186,12 @@ class PlanBuilder:
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan
 
-    async def _llm_plan(self, text: str, agents: list, history: list[dict] = None) -> str:
+    async def _llm_plan(self, text: str, agents: list, history: list[dict] = None,
+                        memory: list[dict] = None) -> str:
         catalog = self._build_catalog(agents)
         ctx_block = self._format_history(history)
-        user_msg = f"可用能力:\n{catalog}\n\n{ctx_block}用户说: {text}"
+        mem_block = self._format_memory(memory)
+        user_msg = f"可用能力:\n{catalog}\n\n{mem_block}{ctx_block}用户说: {text}"
         try:
             raw = await self._llm([
                 {"role": "system", "content": _PLANNER_SYSTEM},
@@ -453,6 +455,30 @@ class PlanBuilder:
                 "capabilities": caps,
             })
         return json.dumps(items, ensure_ascii=False)
+
+    @staticmethod
+    def _format_memory(memory: list[dict] | None) -> str:
+        """把长期偏好记忆格式化为结构化 prompt 片段（评审 §8 模板，最多 3 条、有上限）。
+        勿向用户暴露置信度；高风险动作仍需确认（由执行层保证）。"""
+        if not memory:
+            return ""
+        lines = []
+        for m in memory[:3]:
+            txt = (m.get("text") or "").strip()
+            if not txt:
+                continue
+            tag = m.get("scope") or m.get("predicate") or ""
+            prov = m.get("provenance") or ""
+            try:
+                conf = float(m.get("confidence") or 0)
+            except (TypeError, ValueError):
+                conf = 0.0
+            lines.append(f"- [{tag} | {conf:.2f} | {prov}] {txt}")
+        if not lines:
+            return ""
+        block = ("已知用户记忆（仅在与当前任务相关时参考，勿向用户暴露置信度）：\n"
+                 + "\n".join(lines))
+        return block[:400] + "\n\n"
 
     @staticmethod
     def _format_history(history: list[dict] | None) -> str:

@@ -8,6 +8,13 @@ service Memory {
   rpc AppendTurn (AppendTurnRequest) returns (AppendTurnResponse); // 写入一轮对话
   rpc GetSession (GetSessionRequest) returns (GetSessionResponse); // 取最近 N 轮
   rpc UpsertProfile (UpsertProfileRequest) returns (UpsertProfileResponse); // 写用户画像（如常用地点 places）
+
+  // 分层记忆重构（2026-06-25，向后兼容追加）：语义画像 + 情景记忆。
+  // 设计见 docs/design/2026-06-25-memory-system-redesign.md
+  rpc Remember (RememberRequest) returns (RememberResponse);   // 写语义/情景记忆（抽取管线或 Agent 显式）
+  rpc Recall (RecallRequest) returns (RecallResponse);         // 语义召回（向量 + scope/occupant + 时序融合）
+  rpc ForgetUser (ForgetUserRequest) returns (ForgetUserResponse); // 合规：删除用户全量记忆
+  rpc ExportUser (ExportUserRequest) returns (ExportUserResponse); // 合规：导出用户全量记忆
 }
 
 message GetContextRequest {
@@ -24,6 +31,10 @@ message AppendTurnRequest {
   string session_id = 1;
   string role = 2;                  // user | assistant
   string text = 3;
+  // 评审后补：供异步抽取管线知道把记忆写给谁（向后兼容，旧调用方不传=不触发抽取）
+  string user_id = 4;
+  string vehicle_id = 5;
+  string occupant_id = 6;
 }
 message AppendTurnResponse { bool ok = 1; }
 
@@ -44,3 +55,64 @@ message UpsertProfileRequest {
   string value_json = 3;   // 该字段的完整 JSON 值（如 places map 全量）
 }
 message UpsertProfileResponse { bool ok = 1; }
+
+// ── 分层记忆（语义画像 / 情景记忆）──────────────────────────────
+// 一条可独立失效的记忆。语义=偏好/事实（带 predicate），情景=事件（summary 进 text）。
+message MemoryItem {
+  string id = 1;            // uuid；写入留空由服务端生成
+  string kind = 2;         // "semantic" | "episodic" | "procedural"
+  string user_id = 3;
+  string occupant_id = 4;  // 多用户维度，默认 "primary"
+  string predicate = 5;    // 语义谓词/键，如 "taste.spicy" "place.home"；情景留空
+  string text = 6;         // 自然语言陈述/事件摘要（向量化源）
+  string value_json = 7;   // 结构化值（可空）
+  string provenance = 8;   // "user_stated" | "agent_inferred"
+  float confidence = 9;
+  string scope = 10;       // 隐私/权限 scope，如 "profile.taste"
+  int64 valid_from = 11;   // epoch 秒
+  string superseded_by = 12; // 被哪条记忆取代（时序-lite，空=现行）
+  int64 source_ts = 13;
+  string source_session = 14;
+  // 评审后补：量产治理字段（多数 P0 仅存储，level/vehicle 感知召回留后期）
+  string tenant_id = 15;       // 多车企/多环境隔离（空=default）
+  string vehicle_id = 16;      // 车级偏好用；用户级留空
+  string memory_level = 17;    // user | vehicle | occupant | session
+  string embedding_model = 18; // 向量来源模型（换模型重算依据）
+  string privacy_level = 19;   // normal | sensitive | highly_sensitive
+  int64 valid_to = 20;         // 0=至今
+  int64 expires_at = 21;       // 0=不过期；临时偏好设此
+  string review_status = 22;   // auto_extracted | user_confirmed | rejected | corrected
+  string source_turn_ids = 23; // 抽取证据轮次（逗号分隔）
+}
+
+message RememberRequest { repeated MemoryItem items = 1; }
+message RememberResponse { repeated string ids = 1; bool ok = 2; }
+
+message RecallRequest {
+  string user_id = 1;
+  string occupant_id = 2;          // 空=默认 "primary"
+  string query = 3;                // 自然语言查询，向量召回
+  repeated string scopes = 4;      // 限定 scope（权限/隐私），空=不限
+  repeated string kinds = 5;       // 限定 semantic/episodic/...，空=不限
+  uint32 top_k = 6;                // 0=默认 5
+  bool include_superseded = 7;     // 默认 false：只取现行
+  // 评审后补：精确优先 + 阈值（避免低相关记忆污染 planner）
+  string predicate_prefix = 8;     // 精确画像读取：按谓词前缀过滤（如 "place." "taste."）
+  float min_score = 9;             // 相关性下限（0=不限）
+  float min_confidence = 10;       // 置信度下限（0=不限）
+  uint32 max_age_days = 11;        // 最大年龄天数（0=不限）
+}
+message RecallResponse {
+  repeated MemoryItem items = 1;
+  repeated float scores = 2;       // 与 items 一一对应的相似度
+}
+
+message ForgetUserRequest {
+  string user_id = 1;
+  string occupant_id = 2;          // 空=该 user 全部乘员
+  repeated string scopes = 3;      // 空=全部 scope
+}
+message ForgetUserResponse { bool ok = 1; uint32 deleted = 2; }
+
+message ExportUserRequest { string user_id = 1; }
+message ExportUserResponse { string json = 1; } // 全量记忆 + 画像的 JSON

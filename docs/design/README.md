@@ -37,5 +37,6 @@
 | [2026-06-23-sports-match-detail.md](2026-06-23-sports-match-detail.md) | 赛事进球详情/射手榜：api-football /fixtures/events（进球射手与分钟，剔除罚丢点球）+ topscorers 赛季回退标注 + 历史总榜走搜索接地合成 | 已落地 |
 | [2026-06-24-trip-planner-multiturn-and-confirm-robustness.md](2026-06-24-trip-planner-multiturn-and-confirm-robustness.md) | 行程规划多轮闭环（规划→改某天→确认→第一站导航）：确定性 trip.plan/trip.modify 兜底（覆盖降级路径）+ trip-planner 有状态多轮 + 确认收尾取行程首日景点搜 POI + 确认词「占据整句」修复（行/可以/不要不误判）+ 孤儿确认护栏 + 跨 Agent meta 透传与 Struct→dict 修复 + 电量一致性 | 已落地（783 passed 实测 + 端到端验证） |
 | [2026-06-24-complex-task-thinking-and-process-region.md](2026-06-24-complex-task-thinking-and-process-region.md) | 复杂任务动态思考（按统一 is_complex 判据对 LLM 开 thinking，Planner JSON 恒关，reasoning 不下发）+ 可折叠过程区（ProcessUpdate 事件 → 气泡内嵌折叠条「步骤+思考摘要」，行车/泊车双态门控；普通车控/闲聊零过程零延迟） | 落地中 |
+| [2026-06-25-memory-system-redesign.md](2026-06-25-memory-system-redesign.md) | 记忆系统分层重构：L0 会话 + L1 车辆 + L2 语义画像(pgvector,自动抽取偏好) + L3 情景 + L4 主动雏形；多用户就绪(occupant)/时序-lite(superseded_by 不覆盖)/provenance+置信度/隐私端云分割/导出遗忘；复用 registry 的 bge-small-zh+pgvector，proto 向后兼容加 Remember/Recall/ForgetUser/ExportUser。配套 [research 调研](../research/2026-06-25-cockpit-and-agent-memory-systems.md) + [实施计划](../superpowers/plans/2026-06-25-memory-system-redesign-implementation.md) | 草案待评审 |
 
 > 接真实 provider 的标准流程见常青指南 [`docs/guides/provider-integration.md`](../guides/provider-integration.md)。

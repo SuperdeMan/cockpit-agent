@@ -1,3 +1,7 @@
 grpcio==1.66.2
 protobuf==7.35.0
 redis==5.0.8
+asyncpg>=0.29.0
+nats-py>=2.6.0
+# 分层记忆 pgvector：asyncpg 连 PostgreSQL；embedding 模型可选（与 registry 一致，
+# 未装 sentence-transformers 时语义召回降级 lexical，不做哈希伪语义）。

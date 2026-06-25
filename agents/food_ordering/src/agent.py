@@ -27,7 +27,7 @@ class FoodOrderingAgent(BaseAgent):
 
     async def _search(self, intent, ctx, meta: dict) -> AgentResult:
         cuisine = intent.slots.get("cuisine") or intent.slots.get("keyword") or "美食"
-        await ctx.fetch("profile.taste")  # 按引用取口味画像
+        taste = await self._taste_prefs(ctx)  # 结构化画像 + 学到的口味偏好（记忆重构 P2-2）
         rating_min = float(intent.slots.get("rating_min", 0) or 0)
         location = (intent.slots.get("location") or "").strip()
         current = current_location_from_meta(meta)
@@ -38,11 +38,23 @@ class FoodOrderingAgent(BaseAgent):
         names = "、".join(r.name for r in results[:3])
         items = [{"id": r.id, "name": r.name, "rating": r.rating,
                   "price_per_person": r.price_per_person} for r in results]
+        pref_note = f"（已参考您的口味：{taste}）" if taste else ""
         return AgentResult(
-            speech=f"为您找到 {len(results)} 家{cuisine}，推荐：{names}。需要订位吗？",
+            speech=f"为您找到 {len(results)} 家{cuisine}{pref_note}，推荐：{names}。需要订位吗？",
             ui_card={"type": "restaurant_list", "cuisine": cuisine, "items": items},
             follow_up="可以说『订第一家今晚7点两位』",
         )
+
+    async def _taste_prefs(self, ctx) -> str:
+        """口味偏好：结构化画像(profile.taste) + 语义记忆召回(学到的，如『不吃辣』)。
+        精确读取走 predicate_prefix，不做模糊向量；失败不挡主流程。"""
+        await ctx.fetch("profile.taste")  # 结构化画像（按引用，存在性参考）
+        try:
+            mems = await ctx.recall("口味偏好", scopes=["profile.taste"],
+                                    predicate_prefix="taste.", top_k=3)
+        except Exception:
+            mems = []
+        return "、".join(m.get("text", "") for m in mems if m.get("text"))[:60]
 
     async def _reserve(self, intent, meta: dict) -> AgentResult:
         name = intent.slots.get("restaurant_name") or intent.slots.get("restaurant_id")

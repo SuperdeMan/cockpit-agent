@@ -1,8 +1,22 @@
 """food-ordering 契约测试。"""
 import asyncio
 
-from agents._sdk.testing import run_handle
+from agents._sdk.testing import make_context, run_handle
 from agents.food_ordering.src.agent import FoodOrderingAgent
+
+
+def test_search_incorporates_recalled_taste_preference():
+    """记忆重构 P2-2：点餐前 ctx.recall 取学到的口味偏好并体现在话术（精确读取走 predicate_prefix）。"""
+    agent = FoodOrderingAgent()
+    ctx = make_context()
+    ctx._memory.recall.return_value = [
+        {"text": "用户不吃辣", "scope": "profile.taste",
+         "predicate": "taste.spicy", "confidence": 0.9}]
+    res = asyncio.run(run_handle(agent, "food.search_restaurant",
+                                 slots={"cuisine": "川菜"}, raw_text="找家川菜馆", ctx=ctx))
+    assert res.status == "ok"
+    assert "不吃辣" in res.speech                       # 召回偏好进了话术
+    assert ctx._memory.recall.call_args.kwargs.get("predicate_prefix") == "taste."  # 精确读取
 
 
 def test_search_returns_card():

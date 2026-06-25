@@ -39,11 +39,17 @@ class _Resp:
 
 
 class _CtxSpy:
-    def __init__(self, history=None):
+    def __init__(self, history=None, memories=None):
         self._history = history or []
+        self._memories = memories or []
         self.appended: list[tuple[str, str]] = []
         self.session_reads = 0
+        self.recall_calls = 0
         self.planner_prompts: list[str] = []
+
+    async def recall(self, user_id, query="", **kw):
+        self.recall_calls += 1
+        return self._memories
 
     # 单步计划会先尝试流式；spy 不支持 → 抛错 → engine 回退 unary（覆盖回退路径）
     async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
@@ -120,10 +126,28 @@ def test_history_injected_into_planner_prompt():
     assert "再调高一点" in prompt        # 当前话术也在
 
 
+def test_memory_injected_into_planner_prompt():
+    spy = _CtxSpy(memories=[
+        {"text": "用户不吃辣", "scope": "profile.taste",
+         "provenance": "user_stated", "confidence": 0.92},
+    ])
+    engine = _make_engine(spy)
+    _run(engine, _req("找家餐馆"))
+    assert spy.recall_calls == 1
+    prompt = spy.planner_prompts[0]
+    assert "已知用户记忆" in prompt        # 注入了结构化记忆块
+    assert "用户不吃辣" in prompt          # 偏好进了 prompt
+    assert "0.92" in prompt               # 结构化置信度（仅给 LLM，话术层不暴露）
+
+
 def test_memory_disabled_skips_read_and_write():
-    spy = _CtxSpy(history=[{"role": "user", "text": "之前说过的"}])
+    spy = _CtxSpy(history=[{"role": "user", "text": "之前说过的"}],
+                  memories=[{"text": "用户不吃辣", "scope": "profile.taste",
+                             "provenance": "user_stated", "confidence": 0.9}])
     engine = _make_engine(spy)
     _run(engine, _req("打开空调", meta={"memory_enabled": "false"}))
     assert spy.appended == []            # 不写
-    assert spy.session_reads == 0        # 不读
+    assert spy.session_reads == 0        # 不读历史
+    assert spy.recall_calls == 0         # 不召回记忆
     assert "最近对话" not in spy.planner_prompts[0]
+    assert "已知用户记忆" not in spy.planner_prompts[0]
