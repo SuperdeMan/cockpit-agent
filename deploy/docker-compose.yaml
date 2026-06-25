@@ -250,9 +250,10 @@ services:
     environment:
       EDGE_GATEWAY_PORT: "8090"
       EDGE_ORCHESTRATOR_ADDR: edge-orchestrator:50070
+      NATS_URL: nats://nats:4222   # 主动建议（agent.proactive）→ HMI WS 投递
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports: ["8090:8090"]
-    depends_on: [edge-orchestrator]
+    depends_on: [edge-orchestrator, nats]
 
   edge-orchestrator:
     # 端侧编排器：内含 Fast Intent + 端侧车控/媒体 Agent + 模拟 VAL（PoC 简化为单进程）

@@ -255,6 +255,14 @@ export default function App() {
       }
       return
     }
+    if (data.type === 'proactive') {
+      // 主动建议（记忆 routine / 路况安全等经 NATS→edge 投递）：独立通知气泡，不占用 pending。
+      const text = (data.speech || '').toString().trim()
+      if (text) {
+        setMessages((m) => [...m, { id: uid(), role: 'assistant', text: '💡 ' + text } as Msg])
+      }
+      return
+    }
     if (data.type === 'error') {
       pendingIdRef.current = null
       setMessages((m) => [
