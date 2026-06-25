@@ -402,8 +402,12 @@ class PlannerEngine:
         if not fn or not getattr(ctx, "user_id", ""):
             return []
         try:
-            return await fn(ctx.user_id, text, kinds=["semantic"],
+            mems = await fn(ctx.user_id, text, kinds=["semantic"],
                             top_k=3, min_confidence=0.5)
+            if mems:
+                logger.info("memory recall for %s: %d items %s", ctx.user_id,
+                            len(mems), [m.get("predicate") for m in mems])
+            return mems
         except Exception as e:
             logger.debug("recall failed: %s", e)
             return []

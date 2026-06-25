@@ -5,6 +5,7 @@
 """
 import asyncio
 import contextlib
+import logging
 import os
 
 import grpc
@@ -20,6 +21,13 @@ from .session import SessionStore
 from .engine import PlannerEngine
 from .server import CloudPlannerServicer
 from security.permission import PermissionEngine
+
+# 让 compose 的 LOG_LEVEL 生效——此前未配置 root logger，INFO 全被压制
+# （Plan ready、memory recall 等不可见）。配置后这些观测日志可见。
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "info").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 
 async def _reregister_tools(tools, clients, interval: float = 10):
