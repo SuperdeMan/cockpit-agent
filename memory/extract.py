@@ -22,15 +22,21 @@ _INFERRED_MAX_CONF = 0.5          # 推断类置信上限
 # 精确坐标启发式：4+ 位小数的十进制数（地理坐标特征），或显式经纬度词
 _COORD_RE = re.compile(r"\d{1,3}\.\d{4,}")
 _COORD_WORDS = ("经度", "纬度", "lat", "lng", "latitude", "longitude", "坐标")
+# 7+ 连续数字 ≈ 电话/证件号等可识别隐私（年份仅 4 位，不误伤）
+_PII_RE = re.compile(r"\d{7,}")
 
 _SYSTEM = (
-    "你是车载助手的记忆抽取器。只从对话中抽取【稳定的用户偏好】或【显著事件】，"
+    "你是车载助手的记忆抽取器。从对话中抽取三类：【稳定的用户偏好】、【显著事件】，"
+    "以及【用户主动告知、希望被记住的个人实体】（本人称呼/昵称、宠物名、家人成员的称呼）。"
     "输出 JSON 数组，无可抽取则输出 []。每个元素字段："
-    '{"category":"explicit_preference|temporary_preference|inferred_preference|sensitive_fact|episodic",'
-    '"kind":"semantic|episodic","predicate":"如 taste.spicy/route.avoid_highway（情景留空）",'
-    '"text":"自然语言陈述","scope":"如 profile.taste","confidence":0.0~1.0}。'
-    "严禁抽取：一次性指令、未确认的地址、精确坐标/经纬度、车内音视频内容、"
-    "第三方隐私、可能引发歧视的敏感画像。只输出 JSON，不要解释。"
+    '{"category":"explicit_preference|temporary_preference|inferred_preference|personal_fact|sensitive_fact|episodic",'
+    '"kind":"semantic|episodic","predicate":"如 taste.spicy/route.avoid_highway/person.pet（情景留空）",'
+    '"text":"自然语言陈述","scope":"如 profile.taste / profile.person","confidence":0.0~1.0}。'
+    "personal_fact：用户**主动告知**的个人称呼/宠物/家人实体（如『我的宠物叫旺财』『我儿子叫小明』），"
+    "predicate 用 person.pet/person.child/person.self 等，scope=profile.person。"
+    "归为 sensitive_fact（将被丢弃）或干脆不抽：健康/种族/宗教/政治等特殊敏感画像、"
+    "电话/证件号/精确住址等可识别隐私、第三方隐私、Agent 推断而非用户明说的敏感信息。"
+    "另严禁抽取：一次性指令、未确认的地址、精确坐标/经纬度、车内音视频内容。只输出 JSON，不要解释。"
 )
 
 
@@ -66,11 +72,12 @@ def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
     text = (c.get("text") or "").strip()
     if not text:
         return None
-    # 黑名单：精确坐标 → 丢弃（任何类别）
-    if _has_coords(text):
-        logger.debug("extract drop (coords): %s", text[:40])
+    # 黑名单：精确坐标 / 电话证件号等可识别隐私 → 丢弃（任何类别）
+    if _has_coords(text) or _PII_RE.search(text):
+        logger.debug("extract drop (coords/pii): %s", text[:40])
         return None
-    # 敏感事实默认不自动写（家/公司/孩子姓名/联系人等须用户显式设置）
+    # 真正敏感画像（健康/种族/宗教/电话证件/Agent 推断的隐私）→ 丢弃。
+    # 注：用户主动告知、想被记住的个人实体（宠物/家人称呼）走 personal_fact 而非 sensitive_fact。
     if category == "sensitive_fact":
         logger.debug("extract drop (sensitive_fact): %s", text[:40])
         return None
@@ -91,6 +98,11 @@ def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
     }
     if category == "explicit_preference":
         item.update(provenance="user_stated", confidence=max(conf, 0.7))
+    elif category == "personal_fact":
+        # 用户主动告知的个人实体（宠物/家人称呼）：存为 profile.person，标 sensitive。
+        # sensitive（非 highly_sensitive）→ 可被泛化召回（"我宠物叫啥"答得上），但记忆页可删。
+        item.update(provenance="user_stated", confidence=max(conf, 0.8),
+                    scope=scope or "profile.person", privacy_level="sensitive")
     elif category == "temporary_preference":
         item.update(provenance="user_stated", confidence=max(conf, 0.6),
                     expires_at=_now() + _TEMP_TTL)

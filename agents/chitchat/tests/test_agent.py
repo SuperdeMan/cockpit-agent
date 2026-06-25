@@ -3,8 +3,28 @@ import asyncio
 import os
 from unittest.mock import AsyncMock
 
-from agents._sdk.testing import run_handle
+from agents._sdk.testing import make_context, run_handle
 from agents.chitchat.src.agent import ChitchatAgent, _resolve_model, _length, _system
+
+
+def test_chitchat_injects_recalled_personal_memory():
+    """记住宠物名：召回到的个人信息注入 chitchat system prompt，使其答得上。"""
+    agent = ChitchatAgent()
+    captured = {}
+
+    async def fake_complete(messages, **kw):
+        captured["messages"] = messages
+        return "您的宠物叫旺财呀～"
+
+    agent.llm.complete = fake_complete
+    ctx = make_context()
+    ctx._memory.recall.return_value = [
+        {"text": "用户的宠物叫旺财", "scope": "profile.person",
+         "predicate": "person.pet", "confidence": 0.9}]
+    res = asyncio.run(run_handle(agent, "chitchat.talk",
+                                 raw_text="我的宠物叫什么名字", ctx=ctx))
+    assert res.status == "ok"
+    assert "旺财" in captured["messages"][0]["content"]  # 召回的宠物名进了 system
 
 
 def test_talk_returns_speech():

@@ -45,6 +45,23 @@ def test_extract_governs_four_classes_and_blacklist():
     assert all(o["review_status"] == "auto_extracted" for o in out)
 
 
+def test_extract_personal_fact_stored_and_pii_dropped():
+    """用户主动告知的个人实体（宠物名）→ 存 profile.person/sensitive；电话等 PII → 丢。"""
+    cands = json.dumps([
+        {"category": "personal_fact", "kind": "semantic", "predicate": "person.pet",
+         "text": "用户的宠物叫旺财", "scope": "profile.person", "confidence": 0.9},
+        {"category": "personal_fact", "kind": "semantic", "predicate": "person.phone",
+         "text": "用户电话13800001111", "confidence": 0.9},  # 11 位数字 → PII 丢弃
+    ])
+    out = asyncio.run(extract([{"role": "user", "text": "x"}], user_id="u1",
+                              complete_fn=_mock(cands)))
+    preds = {o["predicate"]: o for o in out}
+    assert "person.pet" in preds and "person.phone" not in preds
+    pet = preds["person.pet"]
+    assert pet["scope"] == "profile.person"
+    assert pet["privacy_level"] == "sensitive" and pet["provenance"] == "user_stated"
+
+
 def test_extract_empty_on_llm_error():
     async def boom(messages):
         raise RuntimeError("llm down")
