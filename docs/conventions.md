@@ -182,12 +182,15 @@
 
 > 密钥只进 `.env`（已 gitignore），不进代码/commit/日志。
 
-### 云端中枢循环参数
+### 云端中枢规划 / 循环 / 上下文参数
 
 | 变量 | 含义 | 必填 |
 |---|---|---|
 | `PLANNER_LOOP_MAX_ITERS` | T2 自适应循环最多再规划次数 | 否（默认 2） |
 | `PLANNER_LOOP_BUDGET_MS` | T2 自适应循环总时间预算（毫秒） | 否（默认 5000） |
+| `PLANNER_CATALOG_TOP_K` | 规划时 catalog 语义预筛上限；agent 数 ≤ 此值不预筛（始终保留 chitchat/trip-planner/edge 车控）| 否（默认 20） |
+| `PLANNER_CTX_BUDGET_CHARS` | 上下文块（焦点+记忆+历史）字符预算 | 否（默认 1400） |
+| `PLANNER_CATALOG_BUDGET_CHARS` | catalog JSON 字符预算（超则丢尾部 agent）| 否（默认 8000） |
 
 ---
 

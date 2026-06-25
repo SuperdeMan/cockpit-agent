@@ -15,6 +15,7 @@ from .executor import DagExecutor
 from .aggregator import Aggregator
 from .session import SessionStore
 from .loop import LoopController
+from .context import ContextManager, build_context, _POC_DEFAULT_SCOPES
 from .progress import (is_complex, phase_label, step_summary,
                        task_summary, plan_steps_summary)
 from observability import events as obs_events
@@ -32,14 +33,8 @@ _NO_WORDS = ("取消", "不用", "不要", "算了", "不订", "不付", "不了
 _RESULT_FIELDS = {"step_id", "status", "speech", "ui_card", "actions",
                   "follow_up", "data", "missing_slots", "error"}
 
-# PoC 默认权限：未注入 granted_scopes 时使用（fail-open for PoC）。
-# 量产必须从会话 token/设备身份解析 scope，不得使用此默认值。
-_POC_DEFAULT_SCOPES = [
-    "vehicle.control", "media.control", "navigation",
-    "food.ordering",
-    "location.read", "navigation.control",
-    "network.external", "payment.invoke",
-]
+# _POC_DEFAULT_SCOPES 已迁入 context.py（此处 re-export 兼容既有 `from ...engine import _POC_DEFAULT_SCOPES`）。
+__all__ = ["PlannerEngine", "_POC_DEFAULT_SCOPES"]
 
 
 class PlannerEngine:
@@ -54,6 +49,7 @@ class PlannerEngine:
         self.aggregator = aggregator
         self.session = session
         self.perms = perms
+        self.context = ContextManager(clients, session)  # 上下文统一门面（装配+焦点态）
         self.loop = loop or LoopController(
             planner, executor, aggregator, self._suspend,
             stream_fn=getattr(clients, 'call_agent_stream', None))
@@ -77,10 +73,11 @@ class PlannerEngine:
             yield ev
 
         if mem_on and text:
-            await self._append_turn(ctx.session_id, "user", text, ctx.user_id, ctx.vehicle_id)
+            await self.context.append_turn(ctx.session_id, "user", text,
+                                           ctx.user_id, ctx.vehicle_id)
             if assistant_speech:
-                await self._append_turn(ctx.session_id, "assistant", assistant_speech,
-                                        ctx.user_id, ctx.vehicle_id)
+                await self.context.append_turn(ctx.session_id, "assistant", assistant_speech,
+                                               ctx.user_id, ctx.vehicle_id)
 
     async def _orchestrate(self, request, ctx: PlanContext, text: str,
                            mem_on: bool) -> AsyncIterator[dict]:
@@ -88,6 +85,7 @@ class PlannerEngine:
         plan: Plan | None = None
         seed_results: list[StepResult] = []
         agents = []
+        working_set = None  # 新规划轮由 ContextManager 装配；确认/补槽续接保持 None
 
         # A. 多轮续接：存在挂起的待确认会话时，判定本轮是否在回应确认
         pending = await self.session.load(ctx.session_id)
@@ -148,13 +146,15 @@ class PlannerEngine:
                        "speech": "抱歉，您的请求包含异常内容，无法处理。"}
                 return
 
-            # B. 新规划（注入此前对话历史 + 长期偏好记忆；task 2 + 记忆重构 P2）
-            agents = await self.clients.list_agents()
-            history = await self._history(ctx.session_id) if mem_on else []
-            memories = await self._recall(text, ctx) if mem_on else []
-            plan = await self.planner.build(text, agents, ctx,
-                                            granted_permissions=ctx.granted_permissions,
-                                            history=history, memory=memories)
+            # B. 新规划：经 ContextManager 统一装配（catalog 语义预筛 + 此前对话历史
+            # + 长期偏好记忆，统一字符预算渲染）。失败子项各自降级，不阻塞规划。
+            working_set = await self.context.assemble(
+                text, ctx, mem_on=mem_on,
+                granted_permissions=ctx.granted_permissions)
+            agents = working_set.catalog
+            plan = await self.planner.build(
+                text, working_set, ctx,
+                granted_permissions=ctx.granted_permissions)
 
             if not plan.steps:
                 yield {"kind": "final", "speech": "抱歉，我暂时无法处理这个请求。"}
@@ -204,6 +204,7 @@ class PlannerEngine:
                     ctx=ctx,
                     user_text=text or plan.raw_text,
                     seed_results=seed_results,
+                    working_set=working_set,
                     show_process=show_process, thinking=complex_task):
                 if event.get("kind") == "final":
                     await obs_events.get_emitter("cloud").emit_span(
@@ -254,6 +255,8 @@ class PlannerEngine:
                     yield await self._suspend(final_sr, results, plan, ctx)
                     return
                 await self.session.clear(ctx.session_id)
+                if mem_on:
+                    await self.context.update_focus(ctx.session_id, plan, results)
                 final = await self.aggregator.compose(text or plan.raw_text, results)
                 await obs_events.get_emitter("cloud").emit_span(
                     ctx.trace_id,
@@ -314,6 +317,7 @@ class PlannerEngine:
                     ctx=ctx,
                     user_text=text or plan.raw_text,
                     seed_results=results,
+                    working_set=working_set,
                     show_process=show_process, thinking=complex_task):
                 if event.get("kind") == "final":
                     await obs_events.get_emitter("cloud").emit_span(
@@ -326,6 +330,8 @@ class PlannerEngine:
 
         # E. 聚合 + 输出
         await self.session.clear(ctx.session_id)
+        if mem_on:
+            await self.context.update_focus(ctx.session_id, plan, results)  # 焦点态供下轮指代
         if show_process:
             yield self._progress("synthesize", "整理结果",
                                  summary="合并各步结果生成回复", status="start")
@@ -370,85 +376,13 @@ class PlannerEngine:
             "need_confirm": step_result.status == StepStatus.NEED_CONFIRM,
         }
 
-    async def _append_turn(self, session_id: str, role: str, text: str,
-                           user_id: str = "", vehicle_id: str = ""):
-        """写入对话记忆。memory 不可用或 clients 未提供该能力时静默跳过（不阻塞主链路）。
-        user_id 透传给 memory 触发异步偏好抽取（无则不触发）。"""
-        fn = getattr(self.clients, "append_turn", None)
-        if not fn:
-            return
-        try:
-            await fn(session_id, role, text, user_id=user_id, vehicle_id=vehicle_id)
-        except TypeError:
-            await fn(session_id, role, text)  # 兼容只接受 3 参的旧 stub
-        except Exception as e:
-            logger.debug("append_turn failed: %s", e)
+    # 对话落库(append_turn)/历史·记忆召回(_history/_recall)/上下文构建(build_context)
+    # 均已迁入 context.py（ContextManager + 模块级 build_context），统一上下文生命周期。
 
-    async def _history(self, session_id: str, last_n: int = 6) -> list[dict]:
-        """取最近对话历史（供 planner 指代消解）。失败返回空列表，不阻塞规划。"""
-        fn = getattr(self.clients, "get_session", None)
-        if not fn:
-            return []
-        try:
-            return await fn(session_id, last_n)
-        except Exception as e:
-            logger.debug("get_session failed: %s", e)
-            return []
-
-    async def _recall(self, text: str, ctx) -> list[dict]:
-        """召回与本轮相关的长期偏好（供 planner）。只取现行高置信语义偏好，
-        阈值过滤避免污染；失败/无能力返回空，不阻塞规划。"""
-        fn = getattr(self.clients, "recall", None)
-        if not fn or not getattr(ctx, "user_id", ""):
-            return []
-        try:
-            mems = await fn(ctx.user_id, text, kinds=["semantic"],
-                            top_k=3, min_confidence=0.5)
-            if mems:
-                logger.info("memory recall for %s: %d items %s", ctx.user_id,
-                            len(mems), [m.get("predicate") for m in mems])
-            return mems
-        except Exception as e:
-            logger.debug("recall failed: %s", e)
-            return []
-
-    def _build_context(self, request) -> PlanContext:
-        # granted_permissions 来源：HandleRequest.meta["granted_scopes"]（逗号分隔）
-        # PoC 阶段由 Edge Gateway 注入；量产换成 token scope（WS4）
-        meta = dict(getattr(request, "meta", {}) or {})
-        raw_scopes = meta.get("granted_scopes", "")
-        granted = [s.strip() for s in raw_scopes.split(",") if s.strip()] if raw_scopes else []
-
-        # ws8 P0: 权限动态解析——有 granted_scopes 时用真实权限，无时 PoC 全开 fallback
-        if not granted:
-            granted = list(_POC_DEFAULT_SCOPES)
-            logger.warning(
-                "No granted_scopes in request; using PoC defaults. "
-                "Production MUST inject from session token/device identity.")
-
-        # HMI 会话级偏好（透传给 Agent，见 hmi/src/settings.tsx buildMeta）
-        prefs = {k: meta[k] for k in
-                 ("model_pref", "answer_length", "assistant_name", "memory_enabled",
-                  "poi_page",          # "换一批"翻页页码，透传给 navigation
-                  "vehicle_battery")   # 端侧真实电量，透传给 charging（与可观测台一致）
-                 if meta.get(k)}
-        # 精确位置只在本轮请求携带；需同时满足浏览器已授权并拥有 location.read scope。
-        if "location.read" in granted:
-            prefs.update({k: meta[k] for k in
-                          ("current_lat", "current_lng", "current_accuracy_m",
-                           "current_location_at", "current_location_source")
-                          if meta.get(k)})
-
-        return PlanContext(
-            request_id=getattr(request, "request_id", ""),
-            session_id=getattr(request, "session_id", ""),
-            user_id=getattr(request.context, "user_id", "") if hasattr(request, "context") and request.context else "",
-            vehicle_id=getattr(request.context, "vehicle_id", "") if hasattr(request, "context") and request.context else "",
-            is_confirmation=getattr(request, "is_confirmation", False),
-            granted_permissions=granted,
-            trace_id=meta.get("trace_id", ""),
-            prefs=prefs,
-        )
+    @staticmethod
+    def _build_context(request) -> PlanContext:
+        """委托 context.build_context（保留方法名供既有测试 engine._build_context 直接调用）。"""
+        return build_context(request)
 
     @staticmethod
     def _confirm_reply(text: str, flagged: bool) -> str | None:
@@ -549,6 +483,8 @@ class PlannerEngine:
                         step.required_permissions)
                     step.trust_level = (
                         getattr(manifest, "trust_level", "") or step.trust_level)
+                    step.context_scopes = list(
+                        getattr(manifest, "context_scopes", []) or step.context_scopes)
                 else:
                     logger.warning("No agent found for intent %s", step.intent)
             except Exception as e:
@@ -578,7 +514,8 @@ class PlannerEngine:
                  "slot_refs": s.slot_refs, "require_confirm": s.require_confirm,
                  "latency_budget_ms": s.latency_budget_ms,
                  "required_permissions": s.required_permissions,
-                 "trust_level": s.trust_level}
+                 "trust_level": s.trust_level,
+                 "context_scopes": s.context_scopes}
                 for s in plan.steps
             ],
             "raw_text": plan.raw_text,

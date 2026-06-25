@@ -3,6 +3,7 @@ import pytest
 import asyncio
 from orchestrator.cloud.planning import PlanBuilder
 from orchestrator.cloud.models import PlanContext
+from orchestrator.cloud.context import WorkingSet
 from unittest.mock import MagicMock
 
 
@@ -42,7 +43,7 @@ def test_build_with_valid_json():
 
     builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
     ctx = PlanContext(session_id="test")
-    plan = asyncio.run(builder.build("找家川菜馆", agents, ctx))
+    plan = asyncio.run(builder.build("找家川菜馆", WorkingSet(catalog=agents), ctx))
     assert len(plan.steps) == 1
     assert plan.steps[0].agent_id == "navigation"
     assert plan.steps[0].slots["keyword"] == "川菜"
@@ -64,7 +65,7 @@ def test_build_with_invalid_json_falls_back():
 
     builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
     ctx = PlanContext(session_id="test")
-    plan = asyncio.run(builder.build("找家川菜馆", agents, ctx))
+    plan = asyncio.run(builder.build("找家川菜馆", WorkingSet(catalog=agents), ctx))
     assert len(plan.steps) == 1
     assert plan.steps[0].agent_id == "navigation"
 
@@ -80,7 +81,7 @@ def test_build_with_unknown_agent_filtered():
         return []
 
     builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
-    plan = asyncio.run(builder.build("test", agents, PlanContext()))
+    plan = asyncio.run(builder.build("test", WorkingSet(catalog=agents), PlanContext()))
     # 全部被过滤 → fallback
     assert plan.steps is not None  # fallback 可能返回空或单步
 
@@ -109,7 +110,7 @@ def test_build_parses_complexity_goal_and_manifest_dispatch_metadata():
         return []
 
     plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
-        "先调空调再看结果", agents, PlanContext(),
+        "先调空调再看结果", WorkingSet(catalog=agents), PlanContext(),
         granted_permissions=["vehicle.control"],
     ))
 
@@ -137,7 +138,7 @@ def test_invalid_complexity_defaults_to_simple():
         return []
 
     plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
-        "找充电站", agents, PlanContext()))
+        "找充电站", WorkingSet(catalog=agents), PlanContext()))
 
     assert plan.complexity == "simple"
 
@@ -159,7 +160,7 @@ def test_parent_permission_covers_child_scope_during_planning():
         return []
 
     plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
-        "set temperature", agents, PlanContext(),
+        "set temperature", WorkingSet(catalog=agents), PlanContext(),
         granted_permissions=["vehicle.control"],
     ))
 
@@ -220,7 +221,7 @@ def test_injects_trip_plan_when_llm_misses_it():
     builder = PlanBuilder(mock_llm, mock_resolve)
     plan = asyncio.run(builder.build(
         "周末去杭州两天，带老人，不要太累，顺便看看天气和是否需要中途充电",
-        agents, PlanContext()))
+        WorkingSet(catalog=agents), PlanContext()))
     trip = [s for s in plan.steps if s.intent == "trip.plan"]
     assert len(trip) == 1, "应注入一个 trip.plan 步"
     assert trip[0].agent_id == "trip-planner"
@@ -242,7 +243,7 @@ def test_does_not_inject_trip_when_llm_already_planned_it():
         return []
 
     builder = PlanBuilder(mock_llm, mock_resolve)
-    plan = asyncio.run(builder.build("去杭州玩两天", agents, PlanContext()))
+    plan = asyncio.run(builder.build("去杭州玩两天", WorkingSet(catalog=agents), PlanContext()))
     assert len([s for s in plan.steps if s.intent == "trip.plan"]) == 1
 
 
@@ -258,7 +259,7 @@ def test_does_not_inject_trip_for_plain_navigation():
         return []
 
     builder = PlanBuilder(mock_llm, mock_resolve)
-    plan = asyncio.run(builder.build("导航去北京南站", agents, PlanContext()))
+    plan = asyncio.run(builder.build("导航去北京南站", WorkingSet(catalog=agents), PlanContext()))
     assert [s for s in plan.steps if s.intent == "trip.plan"] == []
 
 
@@ -284,7 +285,7 @@ def test_ensures_trip_step_even_when_plan_falls_back():
 
     builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
     plan = asyncio.run(builder.build(
-        "周末去北京三天，带老人，不要太累，顺便看看天气", agents, PlanContext()))
+        "周末去北京三天，带老人，不要太累，顺便看看天气", WorkingSet(catalog=agents), PlanContext()))
     intents = [s.intent for s in plan.steps]
     assert "trip.plan" in intents, f"降级路径也应补行程，实际 steps={intents}"
     trip = [s for s in plan.steps if s.intent == "trip.plan"][0]
@@ -312,7 +313,7 @@ def test_modify_pattern_routed_to_trip_modify_replacing_misplan():
         return []
 
     builder = PlanBuilder(mock_llm, mock_resolve)
-    plan = asyncio.run(builder.build("第二天换一个", agents, PlanContext()))
+    plan = asyncio.run(builder.build("第二天换一个", WorkingSet(catalog=agents), PlanContext()))
     intents = [s.intent for s in plan.steps]
     assert intents == ["trip.modify"], f"应单步 trip.modify，实际 {intents}"
     assert plan.steps[0].slots.get("modification") == "第二天换一个"
@@ -330,7 +331,7 @@ def test_modify_pattern_keeps_llm_trip_modify():
         return []
 
     builder = PlanBuilder(mock_llm, mock_resolve)
-    plan = asyncio.run(builder.build("第二天换成宋城", agents, PlanContext()))
+    plan = asyncio.run(builder.build("第二天换成宋城", WorkingSet(catalog=agents), PlanContext()))
     assert [s.intent for s in plan.steps] == ["trip.modify"]
 
 
@@ -345,5 +346,5 @@ def test_does_not_inject_trip_when_planner_unavailable():
         return []
 
     builder = PlanBuilder(mock_llm, mock_resolve)
-    plan = asyncio.run(builder.build("周末去杭州两天带老人看看天气", agents, PlanContext()))
+    plan = asyncio.run(builder.build("周末去杭州两天带老人看看天气", WorkingSet(catalog=agents), PlanContext()))
     assert [s for s in plan.steps if s.intent == "trip.plan"] == []

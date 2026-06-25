@@ -22,3 +22,4 @@ capabilities:
     examples: ["路况怎么样", "高速堵车吗"]
 
 requires_permissions: [location.read, network.external]
+context_scopes: [location]   # 透传给子 agent（navigation）

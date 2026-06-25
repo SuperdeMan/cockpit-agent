@@ -218,7 +218,8 @@ class UnifiedDispatcher:
             budget_ms = getattr(step, "latency_budget_ms", 0) or 0
             timeout = max(budget_ms / 1000.0, 10.0) if budget_ms else 10.0
             resp = await self._cloud_call(
-                step.endpoint, step.intent, step.slots, ctx, step.meta, timeout=timeout)
+                step.endpoint, step.intent, step.slots, ctx, step.meta,
+                timeout=timeout, context_scopes=step.context_scopes)
             elapsed = (time.monotonic() - start) * 1000
             metrics.record_agent_call(
                 step.agent_id, elapsed,

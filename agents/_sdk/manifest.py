@@ -31,4 +31,5 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
         requires_permissions=data.get("requires_permissions", []),
         edge_intents=data.get("edge_intents", []),
         kind=data.get("kind", "agent"),
+        context_scopes=data.get("context_scopes", []),
     )

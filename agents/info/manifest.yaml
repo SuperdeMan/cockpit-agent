@@ -59,3 +59,4 @@ requires_permissions:
   - network.external
   - location.read
 edge_intents: []
+context_scopes: [location]   # 天气/本地搜索按当前位置反查城市

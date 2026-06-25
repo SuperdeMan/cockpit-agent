@@ -37,3 +37,4 @@ requires_permissions:
   - location.read
   - navigation.control
 edge_intents: []
+context_scopes: [location]   # 按需下发精确位置（最小化）

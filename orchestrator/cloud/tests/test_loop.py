@@ -14,7 +14,8 @@ class _Planner:
         self.decisions = list(decisions)
         self.observations = []
 
-    async def replan(self, goal, observations, agents, ctx, granted_permissions=None):
+    async def replan(self, goal, observations, agents, ctx, granted_permissions=None,
+                     working_set=None):
         self.observations.append(list(observations))
         return self.decisions.pop(0)
 

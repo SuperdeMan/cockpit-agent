@@ -33,6 +33,9 @@ class Step:
     meta: dict[str, str] = field(default_factory=dict)
     required_permissions: list[str] = field(default_factory=list)
     trust_level: str = ""
+    context_scopes: list[str] = field(default_factory=list)
+    # Agent manifest 声明需要的敏感上下文片段（location | vehicle_state）；
+    # 编排下发时按此最小化（未声明则不下发精确位置/电量）。
     # 运行期注入、随 ExecuteRequest.meta 下发给 Agent（如确认续接的 {"confirmed":"true"}）。
     # 不持久化进 SessionState——confirmed 只在确认那一轮由 engine 注入，防止陈旧确认被重放。
 

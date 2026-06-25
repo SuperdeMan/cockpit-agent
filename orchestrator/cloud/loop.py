@@ -50,6 +50,7 @@ class LoopController:
     async def run(self, goal: str, initial_plan: Plan | None, agents: list,
                   ctx: PlanContext, user_text: str,
                   seed_results: list[StepResult] | None = None,
+                  working_set=None,
                   show_process: bool = False, thinking: bool = False
                   ) -> AsyncIterator[dict]:
         results = list(seed_results or [])
@@ -76,6 +77,7 @@ class LoopController:
                         agents,
                         ctx,
                         granted_permissions=ctx.granted_permissions,
+                        working_set=working_set,
                     )
                 except Exception:
                     break
