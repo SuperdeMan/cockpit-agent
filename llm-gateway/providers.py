@@ -100,14 +100,27 @@ class OpenAICompatibleProvider(BaseProvider):
 
     def __init__(self, api_key: str, base_url: str = "",
                  auth_style: str = "api-key", disable_thinking: bool = True,
-                 embed_url: str = "", embed_model: str = ""):
+                 embed_url: str = "", embed_model: str = "", embed_api_key: str = "",
+                 embed_auth_style: str = "bearer", embed_dimensions: int = 0):
         self.api_key = api_key
         self.base_url = base_url or self._DEFAULT_BASE_URL
         self.auth_style = (auth_style or "api-key").lower()
         self.disable_thinking = disable_thinking
-        # 向量化端点：默认从 chat 端点推导（/chat/completions → /embeddings）
+        # 向量化（embedding）端点/鉴权/维度独立于 chat——embedding 常用另一服务商（如百炼）。
+        # 默认从 chat 端点推导；embed_api_key 缺省回退 chat key；auth 默认 bearer（OpenAI 风格）。
         self.embed_url = embed_url or self.base_url.replace("/chat/completions", "/embeddings")
         self.embed_model = embed_model
+        self.embed_api_key = embed_api_key or api_key
+        self.embed_auth_style = (embed_auth_style or "bearer").lower()
+        self.embed_dimensions = int(embed_dimensions or 0)
+
+    def _embed_headers(self) -> dict:
+        h = {"Content-Type": "application/json"}
+        if self.embed_auth_style == "api-key":
+            h["api-key"] = self.embed_api_key
+        else:
+            h["Authorization"] = f"Bearer {self.embed_api_key}"
+        return h
 
     def _headers(self) -> dict:
         h = {"Content-Type": "application/json"}
@@ -184,12 +197,15 @@ class OpenAICompatibleProvider(BaseProvider):
 
 
     async def embed(self, texts, model=""):
-        """OpenAI 兼容 /embeddings。返回 list[list[float]]。"""
+        """OpenAI 兼容 /embeddings（百炼 text-embedding-v4 等）。返回 list[list[float]]。"""
         import httpx
-        body = {"model": model or self.embed_model or "text-embedding-3-small",
+        body = {"model": model or self.embed_model or "text-embedding-v4",
                 "input": list(texts)}
+        if self.embed_dimensions:  # v3/v4 支持指定输出维度（须与 memory EMBED_DIM 一致）
+            body["dimensions"] = self.embed_dimensions
+            body["encoding_format"] = "float"
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(self.embed_url, headers=self._headers(), json=body)
+            resp = await client.post(self.embed_url, headers=self._embed_headers(), json=body)
             resp.raise_for_status()
             data = resp.json()
         items = sorted(data.get("data", []), key=lambda d: d.get("index", 0))
@@ -226,6 +242,9 @@ def build_provider() -> BaseProvider:
         disable_thinking=os.getenv("LLM_DISABLE_THINKING", "true").lower() != "false",
         embed_url=os.getenv("LLM_EMBED_URL", ""),
         embed_model=os.getenv("LLM_EMBED_MODEL", ""),
+        embed_api_key=os.getenv("LLM_EMBED_API_KEY", ""),
+        embed_auth_style=os.getenv("LLM_EMBED_AUTH_STYLE", "bearer"),
+        embed_dimensions=int(os.getenv("LLM_EMBED_DIMENSIONS", "0") or 0),
     )
 
 

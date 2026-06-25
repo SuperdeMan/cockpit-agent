@@ -21,7 +21,9 @@ import uuid
 
 logger = logging.getLogger("memory.pg_store")
 
-EMBED_DIM = 384
+# 向量维度：须与 embedding 源一致。百炼 text-embedding-v4 默认 1024（不支持 384）。
+# 经 EMBED_DIM env 配置；schema 的 vector(384) 会被替换为本值，并 ALTER 既有空列。
+EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))
 DEFAULT_TOP_K = 5
 _EMBED_MODEL = "BAAI/bge-small-zh-v1.5"
 _SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
@@ -210,13 +212,19 @@ class MemoryVectorStore:
 
     async def _ensure_schema(self):
         with open(_SCHEMA_PATH, encoding="utf-8") as f:
-            ddl = f.read()
+            ddl = f.read().replace("vector(384)", f"vector({EMBED_DIM})")
         async with self._pool.acquire() as conn:
             try:
                 await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
             except Exception as e:
                 logger.debug("vector ext: %s", e)
             await conn.execute(ddl)
+            # 既有表（如原 vector(384)）改到目标维度——空列可直接 ALTER；非空且不兼容则忽略。
+            try:
+                await conn.execute(
+                    f"ALTER TABLE memory_item ALTER COLUMN embedding TYPE vector({EMBED_DIM})")
+            except Exception as e:
+                logger.debug("embedding dim alter skipped: %s", e)
 
     # ── 写 ─────────────────────────────────────────────────
     async def remember(self, items: list[dict]) -> list[str]:

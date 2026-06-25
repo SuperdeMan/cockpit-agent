@@ -79,6 +79,13 @@ services:
       LLM_DISABLE_THINKING: ${LLM_DISABLE_THINKING:-true}
       LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY:-mimo-v2.5-pro}
       LLM_MODEL_FALLBACK: ${LLM_MODEL_FALLBACK:-mimo-v2.5}
+      # Embedding（记忆语义检索）：默认阿里云百炼 text-embedding-v4（1024 维）。
+      # 仅需在根 .env 填 LLM_EMBED_API_KEY=<百炼 key>；其余有默认值。
+      LLM_EMBED_URL: ${LLM_EMBED_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings}
+      LLM_EMBED_MODEL: ${LLM_EMBED_MODEL:-text-embedding-v4}
+      LLM_EMBED_API_KEY: ${LLM_EMBED_API_KEY:-}
+      LLM_EMBED_AUTH_STYLE: ${LLM_EMBED_AUTH_STYLE:-bearer}
+      LLM_EMBED_DIMENSIONS: ${LLM_EMBED_DIMENSIONS:-1024}
       AUDIO_HTTP_PORT: "50059"
       TTS_VOICE_ID: ${TTS_VOICE_ID:-冰糖}
     ports: ["50052:50052", "50059:50059"]
@@ -89,6 +96,7 @@ services:
     environment:
       <<: *python-env
       POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+      EMBED_DIM: ${EMBED_DIM:-1024}   # 须与 LLM_EMBED_DIMENSIONS 一致（百炼 v4 默认 1024）
     ports: ["50053:50053"]
     depends_on: [redis, postgres]
 

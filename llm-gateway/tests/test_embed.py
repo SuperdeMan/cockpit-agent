@@ -26,6 +26,21 @@ def test_openai_embed_url_derivation():
     assert p2.embed_url == "https://y/custom/embed"  # 显式覆盖
 
 
+def test_embed_config_separate_key_and_auth():
+    """embedding 用独立 key + bearer + 维度（百炼场景：chat=MiMo, embed=百炼）。"""
+    p = OpenAICompatibleProvider(
+        "mimo-key", base_url="https://mimo/v1/chat/completions",
+        embed_url="https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
+        embed_model="text-embedding-v4", embed_api_key="bailian-key",
+        embed_auth_style="bearer", embed_dimensions=1024)
+    assert p.embed_api_key == "bailian-key"      # 独立于 chat key
+    assert p._embed_headers()["Authorization"] == "Bearer bailian-key"
+    assert p.embed_dimensions == 1024
+    # 缺省 embed key 回退 chat key
+    p2 = OpenAICompatibleProvider("only-chat", base_url="https://x/v1/chat/completions")
+    assert p2.embed_api_key == "only-chat"
+
+
 def _servicer():
     spec = importlib.util.spec_from_file_location(
         "llm_server_under_test", os.path.join(_DIR, "server.py"))
