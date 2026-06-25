@@ -1,6 +1,6 @@
 # 设计：记忆系统分层重构（语义画像 + 情景 + 多用户 + 时序-lite）
 
-> **状态**：评审修订 v2 + P0-P3 + 后续四项全落地（2026-06-25，839 passed/6 skipped，零回归；live-PG 已验证，详见 §0.1）
+> **状态**：评审修订 v2 + P0-P3 + 后续四项 + 百炼 embedding 真语义 live + 个人实体(宠物/家人) + HMI 记忆页 + 专属测试集全落地（2026-06-25，**854 passed/6 skipped**，零回归；live-PG 与全栈 E2E 6/6 已验证，详见 §0.1 与 §12）
 > **交付对象**：后续执行者（人或 AI），按 [`docs/superpowers/plans/2026-06-25-memory-system-redesign-implementation.md`](../superpowers/plans/2026-06-25-memory-system-redesign-implementation.md) 的 checklist 落地。
 > **关联**：
 > - 调研依据：[`docs/research/2026-06-25-cockpit-and-agent-memory-systems.md`](../research/2026-06-25-cockpit-and-agent-memory-systems.md)
@@ -304,9 +304,10 @@ AppendTurn 累积 → 达阈值(每 N=4 轮或会话结束) → 触发异步 con
 
 ## 12. 验收
 
-- **单测**：pgvector store 写/召回/supersede/forget（Postgres + 内存兜底两条路径）；抽取管线（mock LLM 返回候选→去重/冲突 supersede）；SDK remember/recall；engine 注入不破坏既有慢意图回归。全量 `pytest` 不回归（当前 798 passed 基线）。
-- **端到端**（重建后人工）：①"我不吃辣"→隔轮点餐 Agent 召回到口味；②"把家设成X"→走新表→"导航回家"直达（零回归 named-places）；③ 改偏好→旧条目 superseded、召回只给现行；④ `ForgetUser` 后召回为空、导出可见。
-- **隐私**：抽取产物不含精确坐标；召回不跨 occupant。
+- **单测**：pgvector store 写/召回/supersede/forget（Postgres + 内存兜底两条路径）；抽取管线（mock LLM 返回候选→去重/冲突 supersede）；SDK remember/recall；engine 注入不破坏既有慢意图回归。全量 `pytest` 不回归（当前 **854 passed / 6 skipped** 基线）。
+- **复杂场景集**（确定性，已落地 `memory/tests/test_scenarios.py`，8 例）：偏好多轮演化+时序-lite、多乘员同谓词隔离、隐私三档同场、临时偏好过期、routine 阈值判别、抽取纵深防御、GDPR 导出/被遗忘权+跨用户隔离、planner 召回契约（锁 `kinds=semantic·top_k3·min_conf0.5` 形状）。
+- **端到端**（断言型全栈，已落地 `test/e2e_memory.py`，6 链路，真栈实测 6/6、自清理可重入）：①真 embedding 语义桥接（零字面重叠 query 命中）；②WS"吃饭"→cloud-planner 召回注入日志；③chitchat 召回宠物名；④高敏地址泛化挡掉/定向取回；⑤`ForgetUser` 删净、`ExportUser` 全在；⑥高频情景→`agent.proactive` 主动建议。
+- **隐私**：抽取产物不含精确坐标/PII；召回不跨 occupant；highly_sensitive 不参与泛化召回。
 
 ---
 

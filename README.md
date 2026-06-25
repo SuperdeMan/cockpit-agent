@@ -24,7 +24,7 @@
   开思考提质，HMI 气泡内嵌四阶段可折叠「过程区」（理解需求→规划步骤→执行任务→整理结果，
   行车/泊车双态、脱敏不露 reasoning）；普通车控/闲聊零过程零额外延迟。
 - **记忆系统分层重构**：从 mock KV 升级为 pgvector 语义记忆——自动从对话抽取偏好/个人实体（宠物·家人称呼也能记），语义召回注入规划、闲聊记忆感知作答，主动 routine 建议经 NATS→HMI，常去地点收敛、隐私分级+一键删除；embedding 走 llm-gateway→阿里云百炼 text-embedding-v4（真语义实测，无 key 降级 lexical）。详见 `docs/design/2026-06-25-memory-system-redesign.md`。
-- 全量 pytest：**846 passed, 6 skipped**。
+- 全量 pytest：**854 passed, 6 skipped**（含记忆系统复杂场景集 8 例）。
 - 端侧 smoke：**13 passed, 0 failed**。
 - Docker 全栈 **24 个服务**（含充能规划/场景编排/路况安全等 Agent），全栈联调通过。
 
