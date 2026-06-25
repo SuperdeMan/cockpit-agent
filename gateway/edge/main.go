@@ -339,6 +339,25 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 	hub.register(client)
 	defer hub.unregister(client)
 
+	// WS 保活：复杂任务开思考时执行期可能 30s+ 无应用层流量，期间不读 WS 控制帧
+	// （主循环阻塞在 stream.Recv）。服务端周期 Ping 维持连接，避免浏览器/代理 idle 掐断
+	// 导致过程区与最终答案丢失。WriteControl 可与 WriteMessage 并发（gorilla 明确允许）。
+	stopPing := make(chan struct{})
+	defer close(stopPing)
+	go func() {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stopPing:
+				return
+			case <-t.C:
+				_ = conn.WriteControl(websocket.PingMessage, nil,
+					time.Now().Add(5*time.Second))
+			}
+		}
+	}()
+
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {

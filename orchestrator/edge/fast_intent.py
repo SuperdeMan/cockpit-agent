@@ -1082,9 +1082,15 @@ def classify_structured(text: str) -> dict | None:
         if "关" in t:
             return _s("setting", "control", "close", "scheduled_charging", conf=0.9)
         return _s("setting", "control", "open", "scheduled_charging", conf=0.9)
-    if "电量" in t or "电池" in t or ("剩" in t and "电" in t):
+    # 电量/剩余续航查询：归 battery.query（在 LOCAL_INTENTS、端侧确定性应答）。
+    # "还能跑/能跑多/还能开多/跑多少公里/续航"等剩余里程问法也归此，否则漏到云端被弱 LLM
+    # 误判成闲聊（energy_consumption.query 不在 LOCAL_INTENTS，会继续上云）。
+    # 注意"开车去X多远"是距离非续航，不含"还能跑/能跑多"等前缀，不会误命中。
+    if ("电量" in t or "电池" in t or ("剩" in t and "电" in t)
+            or "续航" in t or "还能跑" in t or "能跑多" in t
+            or "还能开多" in t or "跑多少公里" in t or "开多少公里" in t):
         return _s("query", "query", "query", "battery", conf=0.9)
-    if "能耗" in t or "续航" in t:
+    if "能耗" in t:
         return _s("query", "query", "query", "energy_consumption", conf=0.88)
     if "熄火" in t or "关电源" in t or "断电" in t:
         return _s("setting", "control", "power_off", "vehicle", conf=0.85)

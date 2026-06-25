@@ -24,7 +24,8 @@
   开思考提质，HMI 气泡内嵌四阶段可折叠「过程区」（理解需求→规划步骤→执行任务→整理结果，
   行车/泊车双态、脱敏不露 reasoning）；普通车控/闲聊零过程零额外延迟。
 - **记忆系统分层重构**：从 mock KV 升级为 pgvector 语义记忆——自动从对话抽取偏好/个人实体（宠物·家人称呼也能记），语义召回注入规划、闲聊记忆感知作答，主动 routine 建议经 NATS→HMI，常去地点收敛、隐私分级+一键删除；embedding 走 llm-gateway→阿里云百炼 text-embedding-v4（真语义实测，无 key 降级 lexical）。详见 `docs/design/2026-06-25-memory-system-redesign.md`。
-- 全量 pytest：**854 passed, 6 skipped**（含记忆系统复杂场景集 8 例）。
+- **上下文系统重构**：承接记忆重构后裸着的 working/core 层——统一 `ContextManager` 把 catalog（registry 语义预筛）、对话历史、长期记忆召回、结构化焦点态装配于统一 token 预算；跨轮指代靠结构化焦点态而非啃原文；敏感上下文（精确位置/电量）按 Agent manifest `context_scopes` 最小化下发。详见 `docs/design/2026-06-25-context-system-redesign.md`。
+- 全量 pytest：**884 passed, 6 skipped**（含记忆系统 8 例 + 上下文系统 30 例：复杂场景/装配预算/焦点态/scope 下发）。
 - 端侧 smoke：**13 passed, 0 failed**。
 - Docker 全栈 **24 个服务**（含充能规划/场景编排/路况安全等 Agent），全栈联调通过。
 
@@ -93,7 +94,7 @@ Dashboard 的车辆动态接口仅供本地演示；非开发环境必须设置
 - 62 个车控对象、150 条端侧意图 pattern，知识库驱动归一化、校验、安全门控和话术。
 - 本地、云端混合多意图拆分，支持导航偏好、歌手等续接片段与主意图成组路由。
 - 十个云 Agent：导航、闲聊、点餐、停车支付、手册问答、行程规划、信息（天气/搜索/新闻/股票）、充能规划、场景编排、路况安全（含响应式主动播报）。
-- 对话记忆 + 长期语义记忆（自动学偏好/个人实体、pgvector 语义召回、可查可删）、确认/补槽续接、跨 Agent DAG、T2 自适应再规划。
+- 统一上下文装配（`ContextManager`：catalog 语义预筛 + 对话历史 + 长期语义记忆 + 结构化焦点态，统一 token 预算；敏感上下文按 manifest `context_scopes` 最小化下发）、对话记忆 + 长期语义记忆（自动学偏好/个人实体、pgvector 语义召回、可查可删）、确认/补槽续接、跨 Agent DAG、T2 自适应再规划。
 - MiMo/Mock LLM Provider，MiMo ASR/TTS，webm 到 wav 后端转码。
 - 复杂任务（行程/深度调研/多步）按统一 `is_complex` 判据**动态开思考**提质 + 气泡内嵌
   「过程区」四阶段折叠展示（理解需求→规划步骤→执行任务→整理结果，行车/泊车双态、脱敏不露 reasoning）；普通车控/闲聊零过程零额外延迟。

@@ -45,7 +45,7 @@ services:
 
   # ws8 P1: HTTP 代理（网络白名单）——third-party Agent 出站 HTTP 经此代理
   http-proxy:
-    image: envoyproxy/envoy:v1.29
+    image: envoyproxy/envoy:v1.29-latest   # envoy 不发布无 patch 号的 v1.29；用 1.29 线滚动 tag
     volumes:
       - ./envoy-proxy.yaml:/etc/envoy.yaml
     ports: ["8082:8080"]

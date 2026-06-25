@@ -36,7 +36,9 @@ _FORBIDDEN = ("reasoning", "system_prompt", "你是", "thinking", "max_tokens",
 async def collect(payload: dict, desc: str) -> list[dict]:
     """连一个独立 WS，发一条请求，收集所有事件直到 final/error。"""
     events: list[dict] = []
-    async with websockets.connect(URL) as ws:
+    # ping_interval=None 模拟浏览器（浏览器不主动发 WS ping）；长任务静默期连接由
+    # 服务端保活 ping 维持，不依赖客户端 ping/pong。
+    async with websockets.connect(URL, ping_interval=None) as ws:
         await ws.send(json.dumps(payload))
         while True:
             raw = await asyncio.wait_for(ws.recv(), timeout=TIMEOUT)

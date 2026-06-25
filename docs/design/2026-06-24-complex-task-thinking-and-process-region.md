@@ -130,8 +130,16 @@ yield）、`channel.proto`、edge `_dispatch_cloud_actions`（只碰 final）。
     + done 带完整结果「杭州未来2天…21~25℃」不截断）（脱敏断言无泄漏、`driving=false`），最终
     给出**针对带老人/轻松/防雨的西溪湿地两天行程** `need_confirm`——开思考后方案质量明显更用心。
 
+### 后续修复（2026-06-25）：WS 长任务保活——过程区"看不到"根因
+复杂任务执行期（heavy Agent 开思考）可能 **30s+ 无任何 WS 流量**，而 `gateway/edge/main.go` 的
+`handleWS` 在 `stream.Recv` 流式循环里**不读 WS 控制帧** → gorilla 不自动 pong → 连接被 idle 掐断，
+过程区与最终答案一起丢（这是"看不到流程"的根因，**后端/网关本身投递正常**）。修：edge-gateway 对每条
+HMI WS 连接加**服务端周期 Ping(15s，`WriteControl`，可与写并发)**。注意浏览器不主动发 WS ping（靠服务端
+保活/TCP），故 `test/e2e_process_region.py` 用 `ping_interval=None` 忠实模拟浏览器——修后全绿。
+（HMI 端若仍看不到：重建过 edge-gateway，需**刷新页面重连**；若刷新后仍无，再查 HMI 过程区渲染组件。）
+
 > 构建环境适配（国内网络，与本特性逻辑无关，但为可复现构建一并修）：
-> ① `deploy/docker-compose.yaml` 的 `http-proxy` 用了失效 tag `envoyproxy/envoy:v1.29`（**未改**，
-> E2E 时排除该服务及其仅有的依赖方 food-ordering/parking-payment，均非本特性所需）；
+> ① `deploy/docker-compose.yaml` 的 `http-proxy` 失效 tag **已修为 `envoyproxy/envoy:v1.29-latest`**
+> （2026-06-25；原 `v1.29` 无 patch 号拉不到，envoy 只发 vX.Y.N 与 vX.Y-latest）；
 > ② 两个 Go 网关 Dockerfile 加 `GOPROXY=goproxy.cn,direct` + `GOSUMDB=off`；
 > ③ `llm-gateway` Dockerfile 把 apt 源换阿里云镜像（装 ffmpeg）。
