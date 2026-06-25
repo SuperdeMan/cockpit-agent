@@ -11,7 +11,7 @@
 
 ## 当前状态
 
-截至 **2026-06-21**：
+截至 **2026-06-24**：
 
 - Phase 1 的工程化 PoC 主干与云端中枢 P0-P3 已落地；原始 Phase 1
   计划中的量产级能力仍有明确 backlog。
@@ -20,9 +20,12 @@
 - HMI 支持文字流式渲染和句子级增量 TTS：首个完整短句即可开始合成、后续音频顺序播放。
 - **信息类 Provider 全面落地**：导航=高德 / 天气=和风(JWT) / 搜索=Exa 正文级检索(AnySearch→Bing 降级) / 新闻=Exa 优先(SerpApi 兜底) / 赛事=api-football / 股票=Tushare，真实凭证冒烟通过，无凭证回退 mock。搜索经接地合成（强制引用、无依据诚实弃权），新闻以 TTS 播报式编号速览呈现。
 - **HMI 信息类 UI 卡片**：天气/股票/新闻/搜索/赛事/POI 结构化卡片（搜索/新闻为「气泡给结论、卡片给证据」），全链路 ui_card 透传。
-- 全量 pytest：**680 passed, 6 skipped**。
+- **复杂任务动态思考 + 过程区**：行程/深度调研/多步等按统一 `is_complex` 判据动态对 LLM
+  开思考提质，HMI 气泡内嵌四阶段可折叠「过程区」（理解需求→规划步骤→执行任务→整理结果，
+  行车/泊车双态、脱敏不露 reasoning）；普通车控/闲聊零过程零额外延迟。
+- 全量 pytest：**798 passed, 6 skipped**。
 - 端侧 smoke：**13 passed, 0 failed**。
-- Docker 全栈 **21 个服务**；info-agent 已集成并全栈联调通过。
+- Docker 全栈 **24 个服务**（含充能规划/场景编排/路况安全等 Agent），全栈联调通过。
 
 详细交接状态见 [`AGENTS.md`](AGENTS.md)，工程约束见 [`CLAUDE.md`](CLAUDE.md)。
 
@@ -123,7 +126,7 @@ python test/e2e_ws.py
 ## 已知边界
 
 - Cloud Gateway 的车辆长连接状态仍在单实例内存中，多实例需会话亲和或一致性路由。
-- Registry 仍是内存注册表，但各 Agent / edge / cloud-planner 已周期重注册，重启后自动补注册（无需人工）；多实例扩展仍待做。
+- Registry 已实现 PgStore（PostgreSQL）持久化，内存 fallback 保留；各 Agent / edge / cloud-planner 周期重注册自愈，重启后自动补注册（无需人工）；多实例扩展仍待做。
 - 导航（高德）、天气（和风 JWT）已接真实 Provider 并经真实凭证冒烟通过（接入规范见
   [`docs/guides/provider-integration.md`](docs/guides/provider-integration.md)）；餐饮/停车/手册仍为 mock，按环境接入。
 - HTTP/MCP 外部工具及网络出口白名单尚未实现。
