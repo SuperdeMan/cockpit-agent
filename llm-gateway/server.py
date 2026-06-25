@@ -116,6 +116,26 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             cost_tracker.record(model, 0, 0, latency_ms, error=True)
             await context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
 
+    async def Embed(self, request, context):
+        """文本向量化（记忆语义检索）。provider 不支持/失败 → UNAVAILABLE，调用方降级。"""
+        texts = list(request.texts)
+        if not texts:
+            return llm_pb2.EmbedResponse(embeddings=[], dim=0)
+        model = request.model or os.getenv("LLM_EMBED_MODEL", "")
+        try:
+            vecs = await self.provider.embed(texts, model)
+        except NotImplementedError:
+            await context.abort(grpc.StatusCode.UNIMPLEMENTED, "provider 不支持 embedding")
+            return
+        except Exception as e:
+            logger.warning("Embed failed: %s", e)
+            await context.abort(grpc.StatusCode.UNAVAILABLE, f"embed: {e}")
+            return
+        dim = len(vecs[0]) if vecs and vecs[0] else 0
+        return llm_pb2.EmbedResponse(
+            embeddings=[llm_pb2.Embedding(values=v) for v in vecs],
+            model_used=model or "default", dim=dim)
+
 
 class AudioServiceServicer(audio_pb2_grpc.AudioServiceServicer):
     """ASR + TTS 服务：语音识别与合成，支持音色选择。"""

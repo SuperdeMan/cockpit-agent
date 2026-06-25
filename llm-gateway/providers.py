@@ -25,6 +25,20 @@ class BaseProvider:
         raise NotImplementedError
         yield  # pragma: no cover
 
+    async def embed(self, texts, model=""):
+        """returns list[list[float]]（与 texts 一一对应）。默认未实现，由子类提供。"""
+        raise NotImplementedError
+
+
+_EMBED_DIM = 384  # 与 memory.memory_item.embedding vector(384) 对齐
+
+
+def _mock_embed_one(text: str) -> list[float]:
+    """确定性伪向量（非语义，仅供无 key/降级时打通 pgvector 链路与测试）。"""
+    import hashlib
+    h = hashlib.sha256((text or "").encode()).digest()
+    return [(h[i % len(h)] / 128.0) - 1.0 for i in range(_EMBED_DIM)]
+
 
 class MockProvider(BaseProvider):
     """无 API key 时的兜底，保证 PoC 可离线端到端跑通。"""
@@ -37,6 +51,9 @@ class MockProvider(BaseProvider):
         content, *_ = await self.complete(messages, model, temperature, max_tokens)
         for ch in content:
             yield ch
+
+    async def embed(self, texts, model=""):
+        return [_mock_embed_one(t) for t in texts]
 
 
 class AnthropicProvider(BaseProvider):
@@ -82,11 +99,15 @@ class OpenAICompatibleProvider(BaseProvider):
     _DEFAULT_BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
 
     def __init__(self, api_key: str, base_url: str = "",
-                 auth_style: str = "api-key", disable_thinking: bool = True):
+                 auth_style: str = "api-key", disable_thinking: bool = True,
+                 embed_url: str = "", embed_model: str = ""):
         self.api_key = api_key
         self.base_url = base_url or self._DEFAULT_BASE_URL
         self.auth_style = (auth_style or "api-key").lower()
         self.disable_thinking = disable_thinking
+        # 向量化端点：默认从 chat 端点推导（/chat/completions → /embeddings）
+        self.embed_url = embed_url or self.base_url.replace("/chat/completions", "/embeddings")
+        self.embed_model = embed_model
 
     def _headers(self) -> dict:
         h = {"Content-Type": "application/json"}
@@ -162,6 +183,19 @@ class OpenAICompatibleProvider(BaseProvider):
                         continue
 
 
+    async def embed(self, texts, model=""):
+        """OpenAI 兼容 /embeddings。返回 list[list[float]]。"""
+        import httpx
+        body = {"model": model or self.embed_model or "text-embedding-3-small",
+                "input": list(texts)}
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(self.embed_url, headers=self._headers(), json=body)
+            resp.raise_for_status()
+            data = resp.json()
+        items = sorted(data.get("data", []), key=lambda d: d.get("index", 0))
+        return [list(d["embedding"]) for d in items]
+
+
 # 向后兼容别名（历史代码/测试可能引用 MiMoProvider）
 MiMoProvider = OpenAICompatibleProvider
 
@@ -190,6 +224,8 @@ def build_provider() -> BaseProvider:
         base_url=os.getenv("LLM_BASE_URL", ""),
         auth_style=os.getenv("LLM_AUTH_STYLE", "api-key"),
         disable_thinking=os.getenv("LLM_DISABLE_THINKING", "true").lower() != "false",
+        embed_url=os.getenv("LLM_EMBED_URL", ""),
+        embed_model=os.getenv("LLM_EMBED_MODEL", ""),
     )
 
 

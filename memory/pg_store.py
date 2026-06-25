@@ -126,6 +126,8 @@ class MemoryVectorStore:
         self._pool = None
         self._pg_ok = False
         self._embedder = None
+        self._llm_addr = os.getenv("LLM_GATEWAY_ADDR", "")
+        self._embed_source = None  # "llm" | "local" | None（决定能否真实语义召回）
         self._mem: dict[str, dict] = {}  # id -> item（PG 不可用时兜底）
 
     @property
@@ -134,8 +136,9 @@ class MemoryVectorStore:
 
     @property
     def semantic_available(self) -> bool:
-        """是否有真实 embedding 模型——决定能否做向量语义召回（哈希不算）。"""
-        return self._embedder is not None
+        """是否有真实 embedding 源（llm-gateway 或本地模型）——决定能否向量语义召回。
+        无源时降级 lexical，绝不哈希伪语义。"""
+        return self._embed_source is not None
 
     async def init(self) -> bool:
         if not self._dsn:
@@ -146,32 +149,64 @@ class MemoryVectorStore:
             self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
             await self._ensure_schema()
             self._pg_ok = True
-            self._init_embedder()  # eager：让 semantic_available 提前可知
-            logger.info("MemoryVectorStore: PostgreSQL connected (semantic=%s)",
-                        self.semantic_available)
+            await self._probe_embedder()  # 探测 embedding 源（llm-gateway 优先）
+            logger.info("MemoryVectorStore: PostgreSQL connected (embed=%s)",
+                        self._embed_source)
             return True
         except Exception as e:
             logger.warning("MemoryVectorStore: PG unavailable, in-memory fallback: %s", e)
             self._pg_ok = False
             return False
 
-    def _init_embedder(self):
+    async def _probe_embedder(self):
+        """探测可用 embedding 源：llm-gateway 优先（项目推荐），本地模型次之，皆无→lexical。
+        维度须等于 EMBED_DIM（与 vector(384) 列对齐），否则忽略该源。"""
+        if self._llm_addr:
+            v = await self._llm_embed(["探测"])
+            if v and len(v[0]) == EMBED_DIM:
+                self._embed_source = "llm"
+                logger.info("MemoryVectorStore: embedding via llm-gateway (dim=%d)", EMBED_DIM)
+                return
+            if v and v[0] and len(v[0]) != EMBED_DIM:
+                logger.warning("MemoryVectorStore: llm-gateway embedding dim=%d != %d，忽略该源",
+                               len(v[0]), EMBED_DIM)
         try:
             from sentence_transformers import SentenceTransformer
             self._embedder = SentenceTransformer(_EMBED_MODEL)
-            logger.info("MemoryVectorStore: loaded %s", _EMBED_MODEL)
+            self._embed_source = "local"
+            logger.info("MemoryVectorStore: embedding via local %s", _EMBED_MODEL)
+            return
         except Exception:
             self._embedder = None
-            logger.info("MemoryVectorStore: no embedding model → 语义召回降级 lexical")
+        self._embed_source = None
+        logger.info("MemoryVectorStore: 无 embedding 源 → 语义召回降级 lexical")
 
-    def _embed(self, text: str) -> list[float] | None:
-        """仅在有真实模型时返回向量；否则 None（不做哈希伪语义）。"""
-        if not text or self._embedder is None:
-            return None
+    async def _llm_embed(self, texts: list[str]) -> list[list[float]] | None:
+        """经 llm-gateway Embed RPC 向量化（唯一 embedding 出口）。失败返回 None。"""
         try:
-            return self._embedder.encode(text, normalize_embeddings=True).tolist()
-        except Exception:
+            import grpc
+            from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
+            async with grpc.aio.insecure_channel(self._llm_addr) as ch:
+                stub = llm_pb2_grpc.LLMGatewayStub(ch)
+                resp = await stub.Embed(llm_pb2.EmbedRequest(texts=list(texts)), timeout=20)
+                return [list(e.values) for e in resp.embeddings]
+        except Exception as e:
+            logger.debug("llm-gateway embed failed: %s", e)
             return None
+
+    async def _embed(self, text: str) -> list[float] | None:
+        """文本向量化：llm-gateway 优先，本地模型次之；无源/维度不符返回 None（→lexical）。"""
+        if not text or self._embed_source is None:
+            return None
+        if self._embed_source == "llm":
+            v = await self._llm_embed([text])
+            return v[0] if v and len(v[0]) == EMBED_DIM else None
+        if self._embed_source == "local" and self._embedder is not None:
+            try:
+                return self._embedder.encode(text, normalize_embeddings=True).tolist()
+            except Exception:
+                return None
+        return None
 
     async def _ensure_schema(self):
         with open(_SCHEMA_PATH, encoding="utf-8") as f:
@@ -187,10 +222,11 @@ class MemoryVectorStore:
     async def remember(self, items: list[dict]) -> list[str]:
         norm = [_normalize_item(it) for it in (items or [])]
         if self._pg_ok:
-            model_name = _EMBED_MODEL if self.semantic_available else ""
+            model_name = (_EMBED_MODEL if self._embed_source == "local"
+                          else "llm-gateway" if self._embed_source == "llm" else "")
             async with self._pool.acquire() as conn:
                 for it in norm:
-                    emb = self._embed(it["text"])
+                    emb = await self._embed(it["text"])
                     it["embedding_model"] = model_name if emb else ""
                     await conn.execute("""
                         INSERT INTO memory_item
@@ -330,7 +366,7 @@ class MemoryVectorStore:
 
     async def _fetch_pg_semantic(self, user_id, occ, query, scopes, kinds,
                                  predicate_prefix, include_superseded, top_k):
-        emb = self._embed(query)
+        emb = await self._embed(query)
         async with self._pool.acquire() as conn:
             return await conn.fetch("""
                 SELECT *, (1 - (embedding <=> $1::vector)) AS sim FROM memory_item

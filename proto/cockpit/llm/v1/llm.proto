@@ -8,6 +8,18 @@ import "google/protobuf/struct.proto";
 service LLMGateway {
   rpc Complete       (CompleteRequest) returns (CompleteResponse);
   rpc CompleteStream (CompleteRequest) returns (stream CompleteChunk);
+  rpc Embed          (EmbedRequest)    returns (EmbedResponse); // 文本向量化（记忆语义检索；唯一 embedding 出口）
+}
+
+message EmbedRequest {
+  repeated string texts = 1;
+  string model = 2;                 // 空则用网关默认 embedding 模型
+}
+message Embedding { repeated float values = 1; }
+message EmbedResponse {
+  repeated Embedding embeddings = 1; // 与 texts 一一对应
+  string model_used = 2;
+  uint32 dim = 3;                   // 向量维度
 }
 
 message Message {
