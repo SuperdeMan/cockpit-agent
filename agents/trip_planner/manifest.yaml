@@ -24,3 +24,4 @@ requires_permissions:
   - location.read
   - network.external
 edge_intents: []
+context_scopes: [location, vehicle_state]   # 透传给子 agent（navigation/charging）

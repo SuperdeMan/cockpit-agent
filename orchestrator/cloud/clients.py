@@ -118,13 +118,30 @@ class Clients:
             self._ch_agents[endpoint] = grpc.aio.insecure_channel(endpoint)
         return agent_pb2_grpc.AgentStub(self._ch_agents[endpoint])
 
-    @staticmethod
-    def _merge_meta(ctx, meta: dict | None) -> dict:
-        """会话级偏好（ctx.prefs）作底，step.meta 覆盖——后者携带 confirmed 等运行期标记。"""
-        prefs = getattr(ctx, "prefs", None) or {}
+    # 敏感上下文键 → 所需 scope。Agent 经 manifest context_scopes 声明后才下发（最小化）。
+    _SENSITIVE_SCOPE = {
+        "current_lat": "location", "current_lng": "location",
+        "current_accuracy_m": "location", "current_location_at": "location",
+        "current_location_source": "location", "vehicle_battery": "vehicle_state",
+    }
+
+    @classmethod
+    def _merge_meta(cls, ctx, meta: dict | None, context_scopes=None) -> dict:
+        """会话级偏好（ctx.prefs）作底，step.meta 覆盖——后者携带 confirmed 等运行期标记。
+
+        context_scopes 非 None（cloud unary 下发）时按声明最小化敏感键：未声明 location/
+        vehicle_state 的 Agent 收不到精确位置/电量；非敏感偏好（answer_length 等）始终下发。
+        None（edge/stream/legacy 路径）= 不过滤，保持既有行为（电量供端侧安全门控）。"""
+        prefs = dict(getattr(ctx, "prefs", None) or {})
+        if context_scopes is not None:
+            allowed = set(context_scopes or [])
+            prefs = {k: v for k, v in prefs.items()
+                     if cls._SENSITIVE_SCOPE.get(k) is None
+                     or cls._SENSITIVE_SCOPE.get(k) in allowed}
         return {**prefs, **(meta or {})}
 
-    def _exec_request(self, intent: str, slots: dict, ctx, meta: dict | None):
+    def _exec_request(self, intent: str, slots: dict, ctx, meta: dict | None,
+                      context_scopes=None):
         return agent_pb2.ExecuteRequest(
             session_id=ctx.session_id if ctx else "",
             intent=common_pb2.Intent(
@@ -136,18 +153,21 @@ class Clients:
                 user_id=ctx.user_id if ctx else "",
                 vehicle_id=ctx.vehicle_id if ctx else "",
             ),
-            meta=self._merge_meta(ctx, meta),
+            meta=self._merge_meta(ctx, meta, context_scopes),
         )
 
     async def call_agent(self, endpoint: str, intent: str, slots: dict,
                          ctx=None, meta: dict | None = None,
-                         timeout: float = _DEFAULT_TIMEOUT) -> agent_pb2.ExecuteResponse:
+                         timeout: float = _DEFAULT_TIMEOUT,
+                         context_scopes=None) -> agent_pb2.ExecuteResponse:
         """meta 随 ExecuteRequest.meta 下发给 Agent（确认续接标记、trace、会话偏好等）。
 
+        context_scopes：Agent manifest 声明需要的敏感上下文（location|vehicle_state），
+        由 dispatcher 传 step.context_scopes，据此最小化下发精确位置/电量。
         timeout 由 dispatcher 传 step.latency_budget_ms/1000——慢 Agent（trip-planner 20s+、
         info 调研）需大于默认 10s，否则开思考后会被 10s 卡死。"""
         stub = self._agent_stub(endpoint)
-        req = self._exec_request(intent, slots, ctx, meta)
+        req = self._exec_request(intent, slots, ctx, meta, context_scopes)
         return await stub.Execute(req, timeout=timeout)
 
     async def call_agent_stream(self, endpoint: str, intent: str, slots: dict,

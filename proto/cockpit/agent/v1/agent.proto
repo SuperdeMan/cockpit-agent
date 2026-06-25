@@ -29,6 +29,7 @@ message AgentManifest {
   repeated string requires_permissions = 10;
   repeated string edge_intents = 11; // 端侧本地意图白名单（供 Fast Intent）
   string kind = 12;                 // agent（默认）| tool | edge_fast：调度语义/治理，区别于 deployment（传输）
+  repeated string context_scopes = 13; // Agent 声明需要的敏感上下文片段（如 location | vehicle_state）；编排按此最小化下发
 }
 
 message Capability {

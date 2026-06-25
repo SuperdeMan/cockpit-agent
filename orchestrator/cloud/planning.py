@@ -8,6 +8,7 @@ import logging
 import re
 from security.scopes import is_scope_covered
 from .models import Plan, Step, PlanContext, ReplanDecision
+from .context import WorkingSet
 
 logger = logging.getLogger("planner.planning")
 
@@ -119,7 +120,8 @@ _PLANNER_SYSTEM = (
     " food.search_restaurant（food 仅用于纯找店/订位，不带导航途经点；拆了会出假数据）。\n"
     "- 用 slot_refs 引用前序 step 结果，如 {\"restaurant_id\":\"s1.data.items.0.id\"}\n"
     "- 若用户话术含指代（如『再调高一点』『还是刚才那家』『换个颜色』），"
-    "结合下方『最近对话』补全对象/槽位后再规划\n"
+    "优先结合下方『当前对话焦点』（对象/位置/属性/上个地点）、再参考『最近对话』"
+    "补全对象/槽位后再规划\n"
     "- **隐式车控必须识别**：若最近对话含车控操作（如 hvac.set、window.open），"
     "用户说『再高/低一点』『打开/关掉』『我冷/热』等，必须映射为对应车控 step（如 hvac.inc/hvac.dec/hvac.set），"
     "不得输出空 steps 或当作闲聊。不确定具体值时用合理的默认值（如温度调高/低 1 度）。\n"
@@ -149,15 +151,16 @@ class PlanBuilder:
         self._llm = llm_fn
         self._resolve = registry_fn
 
-    async def build(self, text: str, agents: list, ctx: PlanContext,
-                    granted_permissions: list[str] = None,
-                    history: list[dict] = None, memory: list[dict] = None) -> Plan:
+    async def build(self, text: str, working_set: WorkingSet, ctx: PlanContext,
+                    granted_permissions: list[str] = None) -> Plan:
         """构建执行计划。最多重试 1 次，失败降级到语义路由。
 
+        working_set: 由 ContextManager 装配的工作上下文——已语义预筛的 catalog +
+        最近对话历史 + 长期记忆召回，统一字符预算渲染（见 context.py）。
         granted_permissions: 用户已授予的权限列表。规划时过滤掉越权能力，
         LLM 看不到用户无权调用的 Agent/意图（越权能力不暴露给 LLM）。
-        history: 最近对话（task 2），注入 prompt 供指代消解。
         """
+        agents = list(working_set.catalog)
         # 权限过滤：只保留用户有权调用的 Agent
         if granted_permissions is not None:
             agents = self._filter_by_permission(agents, granted_permissions)
@@ -166,7 +169,7 @@ class PlanBuilder:
 
         plan = None
         for _ in range(2):
-            raw = await self._llm_plan(text, agents, history, memory)
+            raw = await self._llm_plan(text, agents, working_set)
             parsed = self._parse_and_validate(raw, agent_map, text)
             if parsed and parsed.steps:
                 plan = parsed
@@ -186,12 +189,10 @@ class PlanBuilder:
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan
 
-    async def _llm_plan(self, text: str, agents: list, history: list[dict] = None,
-                        memory: list[dict] = None) -> str:
-        catalog = self._build_catalog(agents)
-        ctx_block = self._format_history(history)
-        mem_block = self._format_memory(memory)
-        user_msg = f"可用能力:\n{catalog}\n\n{mem_block}{ctx_block}用户说: {text}"
+    async def _llm_plan(self, text: str, agents: list, working_set: WorkingSet) -> str:
+        catalog = WorkingSet.render_catalog(agents)
+        ctx_block = working_set.render_context()  # 记忆 +（焦点）+ 历史，统一预算
+        user_msg = f"可用能力:\n{catalog}\n\n{ctx_block}用户说: {text}"
         try:
             raw = await self._llm([
                 {"role": "system", "content": _PLANNER_SYSTEM},
@@ -204,16 +205,21 @@ class PlanBuilder:
             return ""
 
     async def replan(self, goal: str, observations: list[dict], agents: list,
-                     ctx: PlanContext, granted_permissions: list[str] = None
-                     ) -> ReplanDecision:
-        """Decide completion and optionally produce the next validated batch."""
+                     ctx: PlanContext, granted_permissions: list[str] = None,
+                     working_set: WorkingSet = None) -> ReplanDecision:
+        """Decide completion and optionally produce the next validated batch.
+
+        working_set: 复用初规划的同一装配——再规划也注入历史(+焦点)，消除初规划与
+        再规划上下文不一致（见 docs/design/2026-06-25-context-system-redesign.md P3）。
+        """
         if granted_permissions is not None:
             agents = self._filter_by_permission(agents, granted_permissions)
         agent_map = {a.manifest.agent_id: a for a in agents}
+        ctx_block = working_set.render_context() if working_set is not None else ""
         prompt = (
             f"目标：{goal}\n"
-            f"最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
-            f"可用能力：{self._build_catalog(agents)}"
+            f"{ctx_block}最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
+            f"可用能力：{WorkingSet.render_catalog(agents)}"
         )
         try:
             raw = await self._llm([
@@ -386,6 +392,7 @@ class PlanBuilder:
                 required_permissions=list(
                     getattr(manifest, "requires_permissions", []) or []),
                 trust_level=getattr(manifest, "trust_level", "") or "",
+                context_scopes=list(getattr(manifest, "context_scopes", []) or []),
             )
             steps.append(step)
 
@@ -442,58 +449,7 @@ class PlanBuilder:
         i, j = s.find("{"), s.rfind("}")
         return s[i:j + 1] if i >= 0 and j > i else s
 
-    @staticmethod
-    def _build_catalog(agents: list) -> str:
-        items = []
-        for a in agents:
-            caps = [{"intent": c.intent, "slots": list(c.slots), "desc": c.description}
-                    for c in a.manifest.capabilities]
-            items.append({
-                "agent_id": a.manifest.agent_id,
-                "kind": getattr(a.manifest, "kind", "") or "agent",
-                "deployment": getattr(a.manifest, "deployment", "") or "cloud",
-                "capabilities": caps,
-            })
-        return json.dumps(items, ensure_ascii=False)
-
-    @staticmethod
-    def _format_memory(memory: list[dict] | None) -> str:
-        """把长期偏好记忆格式化为结构化 prompt 片段（评审 §8 模板，最多 3 条、有上限）。
-        勿向用户暴露置信度；高风险动作仍需确认（由执行层保证）。"""
-        if not memory:
-            return ""
-        lines = []
-        for m in memory[:3]:
-            txt = (m.get("text") or "").strip()
-            if not txt:
-                continue
-            tag = m.get("scope") or m.get("predicate") or ""
-            prov = m.get("provenance") or ""
-            try:
-                conf = float(m.get("confidence") or 0)
-            except (TypeError, ValueError):
-                conf = 0.0
-            lines.append(f"- [{tag} | {conf:.2f} | {prov}] {txt}")
-        if not lines:
-            return ""
-        block = ("已知用户记忆（仅在与当前任务相关时参考，勿向用户暴露置信度）：\n"
-                 + "\n".join(lines))
-        return block[:400] + "\n\n"
-
-    @staticmethod
-    def _format_history(history: list[dict] | None) -> str:
-        """把最近对话格式化为 prompt 片段（最多 4 轮），供指代消解。"""
-        if not history:
-            return ""
-        lines = []
-        for t in history[-4:]:
-            txt = (t.get("text") or "").strip()
-            if txt:
-                who = "用户" if t.get("role") == "user" else "助手"
-                lines.append(f"{who}：{txt}")
-        if not lines:
-            return ""
-        return "最近对话（用于指代消解）：\n" + "\n".join(lines) + "\n\n"
+    # 上下文/能力清单渲染已迁入 context.py 的 WorkingSet（统一字符预算）。
 
     @staticmethod
     def _build_intent_set(agents: list) -> set:

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from orchestrator.cloud.engine import _POC_DEFAULT_SCOPES
 from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.planning import PlanBuilder
+from orchestrator.cloud.context import WorkingSet
 
 
 def _agent(agent_id: str, intents: list[str], permissions: list[str] | None = None):
@@ -41,7 +42,7 @@ def test_chitchat_step_always_receives_current_user_text():
 
     text = "给我讲个笑话。"
     plan = asyncio.run(PlanBuilder(llm, _no_resolve).build(
-        text, agents, PlanContext()))
+        text, WorkingSet(catalog=agents), PlanContext()))
 
     assert len(plan.steps) == 1
     assert plan.steps[0].slots["text"] == text
@@ -70,7 +71,7 @@ def test_partial_invalid_plan_is_retried_atomically():
 
     text = "给我讲个笑话吧，顺便说说北京那边天气怎么样。"
     plan = asyncio.run(PlanBuilder(llm, _no_resolve).build(
-        text, agents, PlanContext()))
+        text, WorkingSet(catalog=agents), PlanContext()))
 
     assert calls == 2
     assert len(plan.steps) == 1

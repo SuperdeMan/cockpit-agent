@@ -47,7 +47,7 @@ gen/            codegen 产出（gitignore，不要手动编辑）
 
 ### 新增一个 Agent 的标准流程（必须遵守）
 1. 在 `agents/<name>/` 下按模板建目录（参考 `agents/navigation/`）。
-2. 写 `manifest.yaml` 声明能力、权限、trust_level、deployment。
+2. 写 `manifest.yaml` 声明能力、权限、trust_level、deployment；需要精确位置/电量等敏感上下文的 Agent 还要声明 `context_scopes`（`location`/`vehicle_state`），否则编排最小化下发会剥掉这些键。
 3. 继承 `agents/_sdk` 的 `BaseAgent` 实现业务逻辑，**不要重新实现 gRPC 契约**。
 4. 写 `tests/` 契约测试 + 黄金用例。
 5. 在 `deploy/docker-compose.yaml` 注册服务。

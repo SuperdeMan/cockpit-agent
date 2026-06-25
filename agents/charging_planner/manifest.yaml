@@ -22,3 +22,4 @@ capabilities:
     examples: ["现在电量多少", "还能跑多远"]
 
 requires_permissions: [location.read, navigation.control, network.external]
+context_scopes: [location, vehicle_state]   # 按位置找站 + 按真实电量规划
