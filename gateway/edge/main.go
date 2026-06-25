@@ -11,14 +11,17 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
 	natsgo "github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 
 	channelpb "github.com/cockpit/car-agent/gen/go/cockpit/channel/v1"
 	commonpb "github.com/cockpit/car-agent/gen/go/cockpit/common/v1"
@@ -158,7 +161,9 @@ func (c *ChannelClient) connectLoop(ctx context.Context) {
 
 func (c *ChannelClient) connect(ctx context.Context) error {
 	var err error
-	c.conn, err = grpc.NewClient(c.cloudAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	c.conn, err = grpc.NewClient(c.cloudAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		clientKeepalive())
 	if err != nil {
 		return fmt.Errorf("dial cloud: %w", err)
 	}
@@ -454,6 +459,16 @@ func getenv(k, def string) string {
 	return def
 }
 
+// clientKeepalive 给出站 gRPC 连接加 keepalive：容器/NAT 掐断空闲连接后能在一个
+// 周期内探测到并重连重解析 DNS（修复"依赖重启换 IP 后需重启本服务"，亦防长任务静默断流）。
+func clientKeepalive() grpc.DialOption {
+	return grpc.WithKeepaliveParams(keepalive.ClientParameters{
+		Time:                20 * time.Second,
+		Timeout:             10 * time.Second,
+		PermitWithoutStream: true,
+	})
+}
+
 // ─── 入口 ───
 
 func main() {
@@ -462,7 +477,9 @@ func main() {
 	vehicleID := getenv("VEHICLE_ID", "v1")
 
 	// 连接端侧编排器（架构 §2.2：HMI → Edge Gateway → Edge Orchestrator）
-	orchConn, err := grpc.NewClient(orchAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	orchConn, err := grpc.NewClient(orchAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		clientKeepalive())
 	if err != nil {
 		log.Fatalf("[edge-gateway] dial orchestrator %s: %v", orchAddr, err)
 	}
@@ -500,6 +517,21 @@ func main() {
 		handleWS(w, r, orchStub, vehicleID)
 	})
 
-	log.Printf("[edge-gateway] HTTP/WS serving on :%s -> %s (vehicle=%s)", port, orchAddr, vehicleID)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	srv := &http.Server{Addr: ":" + port}
+	go func() {
+		log.Printf("[edge-gateway] HTTP/WS serving on :%s -> %s (vehicle=%s)", port, orchAddr, vehicleID)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+
+	// 优雅停机：SIGTERM/SIGINT 时停止接收新连接并给在连 HMI 留出收尾窗口，
+	// 不再硬断 WebSocket（减少重建容器期间过程区/最终答案丢失）。
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	log.Printf("[edge-gateway] shutting down gracefully")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
 }

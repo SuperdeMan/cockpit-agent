@@ -96,6 +96,9 @@ class BaseAgent(ABC):
         self.registry = RegistryClient()  # ws2: 供 AgentClient 动态解析 endpoint
         # 跨 Agent 协作客户端（延迟初始化，避免循环依赖）
         self._agents = None
+        # 跨 Agent 调用的 channel 缓存：按 endpoint 复用 keepalive 连接，
+        # 避免每次协作调用新建且不关闭导致的连接泄漏（AgentClient 每请求新建，故缓存在此长生命周期对象上）
+        self._agent_channels: dict = {}
 
     @property
     def agents(self):

@@ -15,6 +15,8 @@ from cockpit.orchestrator.v1 import orchestrator_pb2, orchestrator_pb2_grpc
 from cockpit.common.v1 import common_pb2
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
+from runtime.grpcio import aio_channel
+
 from fast_intent import classify, classify_structured, climate_feeling_intents, is_local, split_and_classify, split_and_classify_any, structured_to_legacy
 from val import VAL
 from edge_agents import edge_execute
@@ -98,7 +100,7 @@ class _MemoryClient:
 
     def _stub(self):
         if self._ch is None:
-            self._ch = grpc.aio.insecure_channel(self.addr)
+            self._ch = aio_channel(self.addr)
         return memory_pb2_grpc.MemoryStub(self._ch)
 
     async def append(self, session_id: str, role: str, text: str):

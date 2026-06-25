@@ -20,11 +20,15 @@ import {
 } from './audio'
 import type { Msg, Settings } from './types'
 import { poiSelectionIndex, isRefreshRequest } from './nav.mjs'
+import { ResilientWebSocket } from './ws.mjs'
 
 const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://localhost:8090'
 const WS_URL = GATEWAY.replace(/^http/, 'ws') + '/ws'
 const AUDIO_API = (import.meta.env.VITE_AUDIO_API_URL as string) || 'http://localhost:50059'
 const SESSION = 'demo-' + Math.random().toString(36).slice(2, 8)
+// 请求看门狗：插入"思考中"占位后，若此时长内仍无 final/error 抵达，转超时提示，
+// 杜绝后端真卡死时气泡永久转圈。略高于两网关 90s 端到端窗口。
+const REQUEST_TIMEOUT_MS = 95000
 
 const uid = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -41,7 +45,9 @@ export default function App() {
   const [locationStatus, setLocationStatus] = useState('未使用当前位置')
   const [pendingLocationText, setPendingLocationText] = useState<string | null>(null)
 
-  const wsRef = useRef<WebSocket | null>(null)
+  const wsRef = useRef<any>(null) // ResilientWebSocket（见 ws.mjs，untyped 边界）
+  // 请求看门狗计时器：后端真卡死时兜底，杜绝气泡永久"思考中"
+  const watchdogRef = useRef<number | undefined>(undefined)
   const locationRefreshRequestedRef = useRef(false)
   const pendingIdRef = useRef<string | null>(null)
   // 上一条 poi_list 的候选名（供「第一个/第二个」语音选择就近导航；见 resolvePoiSelection）
@@ -88,28 +94,18 @@ export default function App() {
     }
   }, [settings.locationEnabled, refreshCurrentLocation])
 
-  // ─── WebSocket 连接 + 自动重连 ───
+  // ─── WebSocket 连接：指数退避重连 + 断线发送队列（见 ws.mjs）───
   useEffect(() => {
-    let closed = false
-    let retry: number | undefined
-
-    const connect = () => {
-      const ws = new WebSocket(WS_URL)
-      wsRef.current = ws
-      ws.onopen = () => setConnected(true)
-      ws.onclose = () => {
-        setConnected(false)
-        if (!closed) retry = window.setTimeout(connect, 1500)
-      }
-      ws.onerror = () => ws.close()
-      ws.onmessage = (ev) => handleEvent(JSON.parse(ev.data))
-    }
-    connect()
-
+    const rws = new ResilientWebSocket(WS_URL, {
+      onMessage: (data: any) => handleEvent(data),
+      onStatus: (s: string) => setConnected(s === 'open'),
+    })
+    wsRef.current = rws
+    rws.start()
     return () => {
-      closed = true
-      if (retry) clearTimeout(retry)
-      wsRef.current?.close()
+      rws.close()
+      wsRef.current = null
+      if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
       stopTTS()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -210,6 +206,7 @@ export default function App() {
       return
     }
     if (data.type === 'final') {
+      if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
       const id = pendingIdRef.current
       pendingIdRef.current = null
       const final: Partial<Msg> = {
@@ -264,6 +261,7 @@ export default function App() {
       return
     }
     if (data.type === 'error') {
+      if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
       pendingIdRef.current = null
       setMessages((m) => [
         ...m.filter((x) => !x.pending),
@@ -273,32 +271,52 @@ export default function App() {
     }
   }, [])
 
+  // 请求看门狗：占位后 REQUEST_TIMEOUT_MS 内无 final/error → 转超时提示、停止转圈。
+  // 正常 final/error 抵达即清除（见 handleEvent）。不强制关 WS（长任务靠服务端 Ping 保活）。
+  const armWatchdog = useCallback((id: string) => {
+    if (watchdogRef.current) clearTimeout(watchdogRef.current)
+    watchdogRef.current = window.setTimeout(() => {
+      watchdogRef.current = undefined
+      if (pendingIdRef.current === id) pendingIdRef.current = null
+      setMessages((m) =>
+        m.map((msg) =>
+          msg.id === id && (msg.pending || msg.streaming || msg.processActive)
+            ? { ...msg, pending: false, streaming: false, processActive: false,
+                text: msg.text || '响应超时了，请稍后重试。', error: true }
+            : msg,
+        ),
+      )
+      setAwaitConfirm(false)
+      stopTTS()
+    }, REQUEST_TIMEOUT_MS)
+  }, [])
+
   const dispatch = (text: string, isConfirmation: boolean, locationOverride?: any,
                     metaExtra?: Record<string, string>) => {
     const ws = wsRef.current
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    if (!ws) return
     const s = settingsRef.current
     if (s.ttsEnabled && s.autoplay) startTTSReply(AUDIO_API, s.voiceId)
     else stopTTS()
-    ws.send(
-      JSON.stringify({
-        text,
-        session_id: SESSION,
-        is_confirmation: isConfirmation,
-        meta: {
-          ...buildMeta(s),
-          ...buildRequestLocationMeta(
-            locationOverride !== undefined || s.locationEnabled,
-            locationOverride !== undefined ? locationOverride : currentLocation,
-          ),
-          ...(metaExtra || {}),
-        },
-      }),
-    )
+    // 断线时入有界队列、重连后自动 flush——不再静默丢消息（旧逻辑 readyState!==OPEN 直接 return）
+    ws.send({
+      text,
+      session_id: SESSION,
+      is_confirmation: isConfirmation,
+      meta: {
+        ...buildMeta(s),
+        ...buildRequestLocationMeta(
+          locationOverride !== undefined || s.locationEnabled,
+          locationOverride !== undefined ? locationOverride : currentLocation,
+        ),
+        ...(metaExtra || {}),
+      },
+    })
     // 立刻插入"思考中"占位 —— 开放域慢响应也有即时反馈
     const pendingId = uid()
     pendingIdRef.current = pendingId
     setMessages((m) => [...m, { id: pendingId, role: 'assistant', text: '', pending: true }])
+    armWatchdog(pendingId)
   }
 
   const send = (text: string) => {

@@ -127,11 +127,9 @@ def test_meta_contains_depth_and_stack():
     captured_meta = {}
 
     async def fake_call():
-        with patch("agents._sdk.agent_client.grpc") as mock_grpc:
+        with patch("agents._sdk.agent_client.aio_channel", return_value=MagicMock()):
             mock_stub = MagicMock()
             mock_stub.Execute = AsyncMock(side_effect=Exception("capture meta"))
-            mock_ch = MagicMock()
-            mock_grpc.aio.insecure_channel.return_value = mock_ch
 
             with patch("agents._sdk.agent_client.agent_pb2_grpc.AgentStub", return_value=mock_stub):
                 try:
@@ -165,10 +163,9 @@ def test_meta_forwards_parent_session_context():
     captured_meta = {}
 
     async def fake_call():
-        with patch("agents._sdk.agent_client.grpc") as mock_grpc:
+        with patch("agents._sdk.agent_client.aio_channel", return_value=MagicMock()):
             mock_stub = MagicMock()
             mock_stub.Execute = AsyncMock(side_effect=Exception("capture meta"))
-            mock_grpc.aio.insecure_channel.return_value = MagicMock()
             with patch("agents._sdk.agent_client.agent_pb2_grpc.AgentStub", return_value=mock_stub):
                 try:
                     await client.call("charging-planner", "charging.plan",
@@ -209,3 +206,12 @@ def test_fork_increments_depth():
     child = client.fork("b")
     assert child._depth == 1
     assert "a" in child._stack
+
+
+def test_fork_propagates_parent_meta():
+    """fork 出的子客户端必须保留 parent_meta（定位/电量/trace），否则二级子调用丢会话上下文。"""
+    agent = _MockAgent(agent_id="a")
+    parent_meta = {"current_lat": "30.27", "vehicle_battery": "72%", "trace_id": "t1"}
+    client = AgentClient(caller=agent, call_depth=0, call_stack=[], parent_meta=parent_meta)
+    child = client.fork("b")
+    assert child._parent_meta == parent_meta

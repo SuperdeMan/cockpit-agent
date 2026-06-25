@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r /tmp/req.txt
 
 COPY gen/python /app/gen/python
 COPY agents /app/agents
+COPY runtime /app/runtime
 COPY observability /app/observability
 
 ENV PYTHONPATH=/app:/app/gen/python

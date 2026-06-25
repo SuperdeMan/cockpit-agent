@@ -9,6 +9,7 @@ import grpc
 from cockpit.agent.v1 import agent_pb2
 from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
 
+from runtime.grpcio import aio_channel
 from edge_agents_mod.media import MEDIA_INTENTS
 from edge_agents_mod.vehicle import VEHICLE_INTENTS
 
@@ -62,7 +63,7 @@ def build_edge_manifests() -> list[agent_pb2.AgentManifest]:
 async def register_edge_capabilities():
     """Best-effort capability registration; execution still requires an active vehicle stream."""
     addr = os.getenv("REGISTRY_ADDR", "registry:50051")
-    channel = grpc.aio.insecure_channel(addr)
+    channel = aio_channel(addr)
     stub = registry_pb2_grpc.RegistryStub(channel)
     try:
         for manifest in build_edge_manifests():

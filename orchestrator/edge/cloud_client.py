@@ -14,6 +14,8 @@ import grpc
 from cockpit.channel.v1 import channel_pb2, channel_pb2_grpc
 from cockpit.orchestrator.v1 import orchestrator_pb2
 
+from runtime.grpcio import aio_channel
+
 logger = logging.getLogger("edge.cloud_client")
 
 
@@ -26,7 +28,7 @@ class CloudClient:
 
     def _channel(self) -> grpc.aio.Channel:
         if self._ch is None:
-            self._ch = grpc.aio.insecure_channel(self.addr)
+            self._ch = aio_channel(self.addr)
         return self._ch
 
     async def handle(self, request):

@@ -8,10 +8,10 @@ from registry.store import HEALTH_TIMEOUT
 
 
 async def probe_endpoint(endpoint: str, timeout: float = HEALTH_TIMEOUT) -> bool:
-    import grpc
     from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
+    from runtime.grpcio import aio_channel
 
-    channel = grpc.aio.insecure_channel(endpoint)
+    channel = aio_channel(endpoint)
     try:
         response = await agent_pb2_grpc.AgentStub(channel).Health(
             agent_pb2.HealthRequest(),
