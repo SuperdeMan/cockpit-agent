@@ -62,7 +62,8 @@ class EventEmitter:
                     nats.connect(
                         self.nats_url,
                         connect_timeout=_INITIAL_CONNECT_TIMEOUT,
-                        max_reconnect_attempts=0,
+                        max_reconnect_attempts=-1,  # 断后无限自动重连（对齐 collector）
+                        reconnect_time_wait=2,
                         allow_reconnect=True,
                     ),
                     timeout=_INITIAL_CONNECT_TIMEOUT,

@@ -137,7 +137,9 @@ class PgStore(Store):
         """初始化 PostgreSQL 连接池并加载全量注册表。返回是否成功。"""
         try:
             import asyncpg
-            self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
+            self._pool = await asyncpg.create_pool(
+                self._dsn, min_size=1, max_size=5,
+                command_timeout=10, max_inactive_connection_lifetime=300)
             await self._ensure_schema()
             await self._load_all()
             self._pg_ok = True

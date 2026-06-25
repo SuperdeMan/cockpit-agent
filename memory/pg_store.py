@@ -148,7 +148,9 @@ class MemoryVectorStore:
             return False
         try:
             import asyncpg
-            self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
+            self._pool = await asyncpg.create_pool(
+                self._dsn, min_size=1, max_size=5,
+                command_timeout=10, max_inactive_connection_lifetime=300)
             await self._ensure_schema()
             self._pg_ok = True
             await self._probe_embedder()  # 探测 embedding 源（llm-gateway 优先）
