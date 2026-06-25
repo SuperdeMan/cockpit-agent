@@ -76,7 +76,8 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             t0 = time.monotonic()
             try:
                 content, used, finish, usage = await self.provider.complete(
-                    msgs, model, temp, max_tokens, thinking=thinking)
+                    msgs, model, temp, max_tokens, thinking=thinking,
+                    timeout_s=context.time_remaining() if context is not None else None)
                 latency_ms = (time.monotonic() - t0) * 1000
 
                 # 写缓存
@@ -106,7 +107,8 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         try:
             async for delta in self.provider.stream(
                     msgs, model, request.temperature or 0.7, request.max_tokens or 512,
-                    thinking=thinking):
+                    thinking=thinking,
+                    timeout_s=context.time_remaining() if context is not None else None):
                 yield llm_pb2.CompleteChunk(delta=delta, done=False)
             yield llm_pb2.CompleteChunk(delta="", done=True)
             latency_ms = (time.monotonic() - t0) * 1000
@@ -123,7 +125,9 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             return llm_pb2.EmbedResponse(embeddings=[], dim=0)
         model = request.model or os.getenv("LLM_EMBED_MODEL", "")
         try:
-            vecs = await self.provider.embed(texts, model)
+            vecs = await self.provider.embed(
+                texts, model,
+                timeout_s=context.time_remaining() if context is not None else None)
         except NotImplementedError:
             await context.abort(grpc.StatusCode.UNIMPLEMENTED, "provider 不支持 embedding")
             return
