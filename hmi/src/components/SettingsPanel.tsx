@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSettings } from '../settings'
 import { AGENT_CATALOG, VOICE_FALLBACK, type Voice } from '../types'
-import { fetchVoices, fetchMemory, fetchPlaces, playTTS, type MemoryView, type NamedPlaces } from '../audio'
+import {
+  fetchVoices, fetchMemory, fetchMemoryProfile, forgetMemory, fetchPlaces, playTTS,
+  type MemoryView, type MemoryProfile, type NamedPlaces,
+} from '../audio'
 import { PLACE_DEFS, isPlaceSet, formatPlace } from '../places.mjs'
 import { Field, Toggle, Segmented, TextInput } from './controls'
 
@@ -388,38 +391,30 @@ function PlacesSection({ audioApi }: { audioApi: string }) {
   )
 }
 
-const _SCOPE_LABEL: Record<string, string> = {
-  'profile.taste': '口味偏好',
-  'vehicle.state': '车辆状态',
-  'vehicle.location': '位置',
-}
-
-function _prettyVal(json: string): string {
-  try {
-    const o = JSON.parse(json)
-    if (o && typeof o === 'object') {
-      return Object.entries(o).map(([k, v]) => `${k}：${v}`).join('，')
-    }
-    return String(o)
-  } catch {
-    return json
-  }
-}
+const _PLACE_LABEL: Record<string, string> = { home: '家', company: '公司', school: '学校' }
+const _PROV_LABEL: Record<string, string> = { user_stated: '你说的', agent_inferred: '推断' }
+const _EMPTY_PROFILE: MemoryProfile = { preferences: [], places: [], episodes: [] }
 
 function MemorySection({ audioApi, sessionId }: { audioApi: string; sessionId: string }) {
   const { settings, update } = useSettings()
-  const [mem, setMem] = useState<MemoryView>({ turns: [], context: {} })
+  const [mem, setMem] = useState<MemoryView>({ turns: [] })
+  const [profile, setProfile] = useState<MemoryProfile>(_EMPTY_PROFILE)
   const [loading, setLoading] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
-    fetchMemory(audioApi, sessionId)
-      .then(setMem)
+    Promise.all([fetchMemory(audioApi, sessionId), fetchMemoryProfile(audioApi)])
+      .then(([m, p]) => { setMem(m); setProfile(p) })
       .catch(() => {/* 服务未起/离线 */})
       .finally(() => setLoading(false))
   }, [audioApi, sessionId])
 
   useEffect(() => { load() }, [load])
+
+  const forget = useCallback(async (scope: string) => {
+    await forgetMemory(audioApi, 'u1', scope)
+    load()
+  }, [audioApi, load])
 
   const clearLocal = () => {
     try {
@@ -429,10 +424,12 @@ function MemorySection({ audioApi, sessionId }: { audioApi: string; sessionId: s
     } catch {/* ignore */}
   }
 
+  const hasProfile = profile.preferences.length + profile.places.length + profile.episodes.length > 0
+
   return (
     <SectionCard
       title="记忆"
-      desc="助手记住的会话对话与偏好画像。长期画像由云端 memory 服务管理。"
+      desc="助手记住的会话对话，与从交流中学到的偏好/常去地点/经历。可随时删除（云端硬删，不可恢复）。"
     >
       <Field label="启用个性化记忆" hint="记住偏好与历史，提供更贴合的回复（关闭后本轮不读写记忆）">
         <Toggle on={settings.memoryEnabled} onChange={(v) => update({ memoryEnabled: v })} />
@@ -458,22 +455,46 @@ function MemorySection({ audioApi, sessionId }: { audioApi: string; sessionId: s
       </div>
 
       <div className="mem-block">
-        <div className="field-label">偏好与画像</div>
-        {Object.keys(mem.context).length === 0 ? (
-          <div className="mem-empty">暂无画像数据。</div>
+        <div className="mem-head">
+          <span className="field-label">助手学到的记忆</span>
+          {hasProfile && (
+            <button className="ghost-btn sm" onClick={() => forget('')}>清空全部</button>
+          )}
+        </div>
+        {!hasProfile ? (
+          <div className="mem-empty">还没记住什么。多聊聊偏好（如「我不吃辣」），助手会慢慢学到。</div>
         ) : (
-          <ul className="mem-context">
-            {Object.entries(mem.context).map(([scope, val]) => (
-              <li key={scope} className="mem-ctx">
-                <span className="mem-scope">{_SCOPE_LABEL[scope] || scope}</span>
-                <span className="mem-val">{_prettyVal(val)}</span>
+          <ul className="mem-profile">
+            {profile.preferences.map((p, i) => (
+              <li key={'pref' + i} className="mem-item">
+                <span className="mem-item-text">{p.text}</span>
+                <span className="mem-item-meta">{_PROV_LABEL[p.provenance] || p.provenance}</span>
+                <button className="mem-del" title="删除这条偏好" onClick={() => forget(p.scope)}>✕</button>
+              </li>
+            ))}
+            {profile.places.map((pl, i) => (
+              <li key={'place' + i} className="mem-item">
+                <span className="mem-item-text">
+                  常去地点 · {_PLACE_LABEL[pl.key] || pl.key}：{pl.name}
+                </span>
+                <span className="mem-item-meta">高敏</span>
+                <button className="mem-del" title="清除常去地点"
+                        onClick={() => forget(pl.scope || 'profile.places')}>✕</button>
+              </li>
+            ))}
+            {profile.episodes.map((ep, i) => (
+              <li key={'epi' + i} className="mem-item">
+                <span className="mem-item-text">📍 {ep.text}</span>
+                <span className="mem-item-meta">经历</span>
+                <button className="mem-del" title="清除经历"
+                        onClick={() => forget('episodic.general')}>✕</button>
               </li>
             ))}
           </ul>
         )}
       </div>
 
-      <Field label="清除本机缓存" hint="清空本地缓存（不含设置项）">
+      <Field label="清除本机缓存" hint="清空本地缓存（不含设置项与服务端记忆）">
         <button className="ghost-btn" onClick={clearLocal}>清除本机缓存</button>
       </Field>
     </SectionCard>

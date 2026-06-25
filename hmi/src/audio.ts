@@ -282,25 +282,56 @@ export async function fetchVoices(apiBase: string): Promise<import('./types').Vo
   return Array.isArray(data.voices) ? data.voices : []
 }
 
-// ─── 记忆视图：会话对话 + 偏好画像（只读）───
+// ─── 记忆视图：会话对话 + 真实学到的记忆（偏好/常去地点/情景）───
 
 export type MemoryTurn = { role: string; text: string; ts: number }
-export type MemoryView = { turns: MemoryTurn[]; context: Record<string, string> }
+export type MemoryView = { turns: MemoryTurn[] }
+export type MemoryPref = {
+  predicate: string; text: string; scope: string; provenance: string; confidence: number
+}
+export type MemoryPlace = { key: string; name: string; address: string; scope: string }
+export type MemoryEpisode = { text: string; ts: number }
+export type MemoryProfile = {
+  preferences: MemoryPref[]; places: MemoryPlace[]; episodes: MemoryEpisode[]
+}
 
-export async function fetchMemory(
-  apiBase: string, sessionId: string, userId = 'u1', vehicleId = 'v1',
-): Promise<MemoryView> {
-  const q = (p: Record<string, string>) =>
-    Object.entries(p).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')
-  const [s, c] = await Promise.all([
-    fetch(`${apiBase}/api/memory/session?${q({ session_id: sessionId, last_n: '30' })}`)
-      .then((r) => r.json()).catch(() => ({ turns: [] })),
-    fetch(`${apiBase}/api/memory/context?${q({ session_id: sessionId, user_id: userId, vehicle_id: vehicleId })}`)
-      .then((r) => r.json()).catch(() => ({ values: {} })),
-  ])
-  return {
-    turns: Array.isArray(s.turns) ? s.turns : [],
-    context: c.values && typeof c.values === 'object' ? c.values : {},
+export async function fetchMemory(apiBase: string, sessionId: string): Promise<MemoryView> {
+  const q = new URLSearchParams({ session_id: sessionId, last_n: '30' }).toString()
+  try {
+    const s = await fetch(`${apiBase}/api/memory/session?${q}`).then((r) => r.json())
+    return { turns: Array.isArray(s.turns) ? s.turns : [] }
+  } catch {
+    return { turns: [] }
+  }
+}
+
+// 真实学到的记忆：走分层记忆 ExportUser（非 mock 上下文）。
+export async function fetchMemoryProfile(apiBase: string, userId = 'u1'): Promise<MemoryProfile> {
+  const empty: MemoryProfile = { preferences: [], places: [], episodes: [] }
+  const q = new URLSearchParams({ user_id: userId }).toString()
+  try {
+    const j = await fetch(`${apiBase}/api/memory/profile?${q}`).then((r) => r.json())
+    return {
+      preferences: Array.isArray(j.preferences) ? j.preferences : [],
+      places: Array.isArray(j.places) ? j.places : [],
+      episodes: Array.isArray(j.episodes) ? j.episodes : [],
+    }
+  } catch {
+    return empty
+  }
+}
+
+// 删除某类记忆（scope 空=清空全部）。
+export async function forgetMemory(apiBase: string, userId: string, scope = ''): Promise<boolean> {
+  try {
+    const r = await fetch(`${apiBase}/api/memory/forget`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, scope }),
+    }).then((x) => x.json())
+    return !!r.ok
+  } catch {
+    return false
   }
 }
 

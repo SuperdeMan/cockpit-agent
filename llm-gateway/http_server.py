@@ -182,6 +182,63 @@ def create_http_app() -> web.Application:
             logger.warning("memory context read error: %s", e)
             return web.json_response({"values": {}, "error": str(e)})
 
+    @routes.get("/api/memory/profile")
+    async def handle_mem_profile(request: web.Request):
+        """读用户**真实学到的**记忆（HMI 记忆视图）：偏好/常去地点/情景。
+        走分层记忆 ExportUser（非 mock context），只取现行（未被取代）。?user_id="""
+        uid = request.query.get("user_id", "")
+        empty = {"preferences": [], "places": [], "episodes": []}
+        if not uid:
+            return web.json_response(empty)
+        try:
+            resp = await _memory_stub().ExportUser(
+                memory_pb2.ExportUserRequest(user_id=uid), timeout=5)
+            data = json.loads(resp.json) if resp.json else {}
+        except Exception as e:
+            logger.warning("memory profile read error: %s", e)
+            return web.json_response({**empty, "error": str(e)})
+        prefs, places, episodes = [], [], []
+        for m in data.get("memories", []):
+            if m.get("superseded_by"):
+                continue  # 只展示现行
+            pred = m.get("predicate") or ""
+            if m.get("kind") == "episodic":
+                episodes.append({"text": m.get("text", ""),
+                                 "ts": m.get("source_ts") or m.get("created_at") or 0})
+            elif pred.startswith("place."):
+                try:
+                    v = json.loads(m.get("value_json") or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    v = {}
+                places.append({"key": pred.split(".", 1)[1],
+                               "name": v.get("name") or v.get("address") or m.get("text", ""),
+                               "address": v.get("address", ""), "scope": m.get("scope", "")})
+            elif m.get("kind") == "semantic":
+                prefs.append({"predicate": pred, "text": m.get("text", ""),
+                              "scope": m.get("scope", ""),
+                              "provenance": m.get("provenance", ""),
+                              "confidence": m.get("confidence", 0)})
+        return web.json_response({"preferences": prefs, "places": places, "episodes": episodes})
+
+    @routes.post("/api/memory/forget")
+    async def handle_mem_forget(request: web.Request):
+        """删除用户记忆（HMI 管理）。body: {user_id, scope?}。scope 空=清空全部（GDPR 硬删）。"""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        uid = (body.get("user_id") or "").strip()
+        scope = (body.get("scope") or "").strip()
+        if not uid:
+            return web.json_response({"ok": False}, status=400)
+        try:
+            resp = await _memory_stub().ForgetUser(memory_pb2.ForgetUserRequest(
+                user_id=uid, scopes=[scope] if scope else []), timeout=5)
+            return web.json_response({"ok": resp.ok, "deleted": resp.deleted})
+        except Exception as e:
+            logger.warning("memory forget error: %s", e)
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+
     @routes.get("/api/health")
     async def handle_health(request: web.Request):
         return web.json_response({"status": "ok", "service": "audio-http"})
