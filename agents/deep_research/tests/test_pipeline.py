@@ -167,6 +167,47 @@ def test_synthesize_fallback_on_bad_llm_output():
     assert report.sources and report.sources[0]["idx"] == 1
 
 
+# ── deep（异步分钟级深调研）模式：放开覆盖面+合成预算，不受 90s 上限 ────────
+
+def test_plan_deep_allows_more_subquestions():
+    items = ",".join('{"text":"q%d","perspective":"背景"}' % i for i in range(12))
+    body = '{"subquestions":[' + items + ']}'
+    subqs = asyncio.run(pipeline.plan(FakeLLM(lambda m, **k: body), "X"))
+    assert len(subqs) == pipeline.MAX_SUBQ            # 同步封顶 6（压 90s 上限）
+    deep = asyncio.run(pipeline.plan(FakeLLM(lambda m, **k: body), "X", deep=True))
+    assert len(deep) == pipeline.MAX_SUBQ_DEEP        # 深度放开到 9
+
+
+def test_plan_deep_prompt_asks_more_angles():
+    cap = {}
+
+    def responder(messages, **k):
+        cap["sys"] = messages[0]["content"]
+        return '{"subquestions":[{"text":"a","perspective":"背景"},{"text":"b","perspective":"对比"}]}'
+
+    asyncio.run(pipeline.plan(FakeLLM(responder), "X", deep=True))
+    assert "8-11" in cap["sys"]
+    asyncio.run(pipeline.plan(FakeLLM(responder), "X"))
+    assert "5-7" in cap["sys"]
+
+
+def test_synthesize_deep_uses_larger_budget_and_prompt():
+    subqs = _subqs_with_evidence()
+    good = ('{"summary":"s","sections":[{"heading":"h","body":"b[1]","citations":[1],'
+            '"confidence":"high"}],"overall_confidence":"medium","gaps":[]}')
+    dllm = FakeLLM(lambda m, **k: good)
+    asyncio.run(pipeline.synthesize(dllm, "q", subqs, deep=True))
+    msgs, kw = dllm.calls[0]
+    # 深度：合成预算翻倍、超时放宽，仍恒不开思考（大材料开思考会 DEADLINE 退化）
+    assert kw["max_tokens"] == 4000 and kw["timeout"] == 150 and kw["thinking"] is False
+    assert "8-12" in msgs[1]["content"]
+    sllm = FakeLLM(lambda m, **k: good)
+    asyncio.run(pipeline.synthesize(sllm, "q", subqs))
+    _, kw2 = sllm.calls[0]
+    assert kw2["max_tokens"] == 2400 and kw2["timeout"] == 55    # 同步预算不变
+    assert "5-7" in sllm.calls[0][0][1]["content"]
+
+
 # ── brief ─────────────────────────────────────────────────
 
 def test_brief_produces_speech_and_card():

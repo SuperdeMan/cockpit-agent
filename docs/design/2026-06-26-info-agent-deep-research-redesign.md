@@ -235,8 +235,21 @@ deep_research `_resolve_news_deepen` 取第N条标题做小型调研(`{title}（
 *验收*：泛新闻按画像置顶；「详细讲讲第2条」对该新闻做调研；晨间起步播报早报。
 *注*：早报个性化受限于 proactive 广播无 user 上下文(暂用泛 top 新闻)；时间门控(6-10点)难单测，逻辑拆 `_has_drive_start` 单测。
 
-> 备注：① **info god-file 全面 handlers 化**作为可选清理项（非阻塞 P0）；② **异步深调研**（真·分钟级 →
-> 立即返回「在查了，查完通知你」+ `agent.proactive` 推送）超出本期，P0–P2 先做**同步有界**（≤~70s + 渐进简报）。
+**增量 —— 异步分钟级深调研（✅ 已落地 2026-06-26，解同步 ~90s 上限封顶的报告深度）**
+用户明示延后/报告类信号（不急/慢慢查/查完告诉我/要详细完整报告，`_ASYNC_MARK`，仅认显式延后措辞、
+不认「彻底/认真」以免改变即时预期）→ `_kickoff_async` **立即返回受理 ack（不带报告卡）** + spawn 后台
+`asyncio` task（`_bg_tasks` 持引用防 GC、完成自动 discard）；后台跑 `deep=True` 更深流水线（子问题 6→9、
+合成 `max_tokens` 2400→4000 / `timeout` 55→150 / 小节 5-7→8-12 / 每节证据 3→4，**不在请求路径故不受
+90s 网关上限**）→ 落 memory（后台用 Agent 级持久 `self.memory` 重建 `Context`）→ 经 NATS `agent.proactive`
+发**带 `card` 的报告**；edge 网关 NATS 桥透传 `p["card"]`（纯 JSON 加一字段，**无需改 proto**）→ HMI
+`proactive` 分支渲染报告卡 + 朗读结论。Agent 补 `on_start` 连 NATS（**只发布不订阅**）；尾部延后语
+`_ASYNC_NOISE_RE` 清理，防噪声污染子问题与报告卡 `question`。
+*验收*：真栈 e2e（`test/e2e_research_async.py`）「深入调研固态电池…不急慢慢查查完告诉我」→ **秒级受理 ack**
+→ ~分钟后主动推送 **8 节 / 33 源 / ~2820 字 / 置信度 high** 报告卡（深于同步 6 节/2153 字，且越过 90s 封顶）。
+
+> 备注：① **info god-file 全面 handlers 化**作为可选清理项（非阻塞）；② **逐子问题渐进语音简报**需扩展
+> agent→engine 流式契约（现过程区由编排层发、agent 仅 speech/final），留后续批次；③ 报告「推手机」无真实
+> 手机通道，留 stub。
 
 ---
 
@@ -296,7 +309,12 @@ deep_research `_resolve_news_deepen` 取第N条标题做小型调研(`{title}（
 > 教训：①「接地我」要**按相关性注入**，绝不无条件把车辆状态塞进所有研究（电量与 99% 的研究主题无关）；
 > ②深度调研的「深」在**多轮迭代检索**，合成步该快（thinking 关），开思考反而触发超时退化；
 > ③LLM 生成的研究问题 ≠ 好搜索词，要约束简短；④报告深度 = `max_tokens` × 材料丰度共同决定（喂料不足则空泛），
-> 且**同步路径受 ~90s 网关上限封顶**（sync realistic max ≈ 2000-2200 字/6 节），真·分钟级超深报告须走异步（P2）。
+> 且**同步路径受 ~90s 网关上限封顶**（sync realistic max ≈ 2000-2200 字/6 节）——**已落地异步分钟级深调研**
+> 越过此封顶（见上「增量」：受理即返回 + 后台 `deep=True` + `agent.proactive` 推报告卡，真栈 8 节/33 源/~2820 字）。
+
+> ⑤异步后台任务可安全长跑：Agent gRPC 服务进程常驻，`asyncio.create_task` + 集合持引用即可（不依赖请求级
+> contextvar/ctx——后台显式传 meta、用持久 `self.memory` 重建 `Context`）；proactive 的 NATS JSON 桥**天然可
+> 透传卡片**（加键即可、无需动 proto），是异步「推可读产物」的低成本通道。
 
 ## 10. 来源（市场调研）
 

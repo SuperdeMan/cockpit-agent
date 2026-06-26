@@ -253,10 +253,19 @@ export default function App() {
       return
     }
     if (data.type === 'proactive') {
-      // 主动建议（记忆 routine / 路况安全等经 NATS→edge 投递）：独立通知气泡，不占用 pending。
+      // 主动建议（记忆 routine / 路况安全 / 异步深调研完成等经 NATS→edge 投递）：独立通知气泡，不占用 pending。
+      // 异步深调研完成会带 card（可读分节报告卡）→ 一并挂到该消息上渲染；其余主动播报无 card。
       const text = (data.speech || '').toString().trim()
-      if (text) {
-        setMessages((m) => [...m, { id: uid(), role: 'assistant', text: '💡 ' + text } as Msg])
+      const card = data.card || undefined
+      if (text || card) {
+        setMessages((m) => [...m, {
+          id: uid(), role: 'assistant',
+          text: text ? '💡 ' + text : '', uiCard: card,
+        } as Msg])
+        // 仅异步深调研完成（带报告卡）时朗读结论——兑现「查完语音通知你」；其余主动播报维持气泡（不改既有行为）。
+        if (s.ttsEnabled && s.autoplay && text && card) {
+          finishTTSReply(text).catch(() => {/* 播放失败静默 */})
+        }
       }
       return
     }

@@ -7,7 +7,8 @@
   investigate: 确定性**有界并行**迭代检索——每子问题经 _sdk/retrieval 检索正文级资料；
                空结果再换更宽 query 追一轮（max_rounds 有界）。子问题间 asyncio.gather 并行压延迟。
   synthesize : 复用 _sdk/grounding 的「强制引用 + 无依据弃权」内核，升级为**分节报告**
-               （每子问题/视角一节，结论+引用+置信度，跨节诚实标 gaps）。thinking 自动开（深合成）。
+               （每子问题/视角一节，结论+引用+置信度，跨节诚实标 gaps）。thinking 关（大材料下
+               开思考会 DEADLINE 退化，深度来自多轮检索而非此步）。
   brief      : 确定性渲染——一段式 TTS 简报 + research_report 卡。LLM 不再产事实。
 
 注入式：llm/search_provider/extractor 由调用方传入，本模块不依赖具体 Agent。
@@ -26,15 +27,19 @@ from .models import SubQuestion, Evidence, Section, Report, PERSPECTIVES
 
 logger = logging.getLogger("agent.deep_research.pipeline")
 
-# 子问题数量边界（深度调研要覆盖面，5-6 个角度；子问题间并行检索不显著增延迟；
+# 子问题数量边界（同步深度调研要覆盖面，5-6 个角度；子问题间并行检索不显著增延迟；
 # 上限 6 是为把 plan+investigate+synthesize 总时长压在 agent 85s 预算/网关 90s 上限内）。
 MIN_SUBQ, MAX_SUBQ = 2, 6
+# 异步「分钟级」深调研（deep=True）：不在请求路径、不受 90s 网关上限约束，放开覆盖面到 9 个角度、
+# 合成预算翻倍（见 synthesize），换取真·深报告。同步路径默认 deep=False，行为不变。
+MAX_SUBQ_DEEP = 9
 # 每子问题检索条数 + 检索轮上限（空结果换宽 query 再来一轮）。
 PER_Q_LIMIT = 5
 MAX_ROUNDS = 2
 # 合成材料每条证据正文配额 + 每子问题入材料的证据条数：喂足料才出得了深报告；thinking 关后大材料不易超时。
 _EXCERPT_CAP = 1000
 _EV_PER_SUBQ_IN_MATERIALS = 3
+_EV_PER_SUBQ_DEEP = 4
 # 网页页眉/导航噪声行（Exa 正文偶含登录/搜索/栏目导航）→ 清理出证据正文，不喂合成、不污染兜底。
 _CHROME_LINE = ("登录", "注册", "搜索", "首页", "菜单", "导航", "媒体品牌", "企业服务",
                 "政府服务", "投资人服务", "创业者服务", "创投平台", "我要入驻", "下载App",
@@ -67,18 +72,21 @@ def _extract_json_block(text: str) -> str:
 
 # ──────────────────────────── plan ────────────────────────────
 
-_PLAN_SYSTEM = (
-    "你是严谨的调研规划助手。把用户的研究问题拆成 5-7 个**简短、可直接搜索**的子问题，"
-    "从不同角度（背景/定义、原理/机制、对比、优劣/风险、最新进展、应用/案例）充分覆盖，"
-    "合起来能支撑一份**有深度、成体系**的调研报告。\n"
-    "硬要求：①每个子问题**像搜索查询一样简短（≤25字）**，聚焦一个角度；"
-    "②**不要写成长句、不要加括号举例、不要堆砌限定词**；"
-    "③**紧扣研究主题本身的字面，绝不引入主题之外的领域/场景/数字**"
-    "（例如研究『loop engineering』就只查它本身，不要扯到汽车、电池、电量等无关领域）。\n"
-    "只输出 JSON（无多余文字）：\n"
-    '{"subquestions":[{"text":"简短子问题","perspective":"背景|对比|风险|最新进展|应用"}]}\n'
-    "**只产问题，不要产结论、不要编造事实**。"
-)
+def _plan_system(deep: bool = False) -> str:
+    """规划 system prompt。deep（异步分钟级深调研）时要求更多角度（8-11），覆盖更广。"""
+    count = "8-11" if deep else "5-7"
+    return (
+        f"你是严谨的调研规划助手。把用户的研究问题拆成 {count} 个**简短、可直接搜索**的子问题，"
+        "从不同角度（背景/定义、原理/机制、对比、优劣/风险、最新进展、应用/案例）充分覆盖，"
+        "合起来能支撑一份**有深度、成体系**的调研报告。\n"
+        "硬要求：①每个子问题**像搜索查询一样简短（≤25字）**，聚焦一个角度；"
+        "②**不要写成长句、不要加括号举例、不要堆砌限定词**；"
+        "③**紧扣研究主题本身的字面，绝不引入主题之外的领域/场景/数字**"
+        "（例如研究『loop engineering』就只查它本身，不要扯到汽车、电池、电量等无关领域）。\n"
+        "只输出 JSON（无多余文字）：\n"
+        '{"subquestions":[{"text":"简短子问题","perspective":"背景|对比|风险|最新进展|应用"}]}\n'
+        "**只产问题，不要产结论、不要编造事实**。"
+    )
 
 
 def _constraints_note(constraints: dict | None) -> str:
@@ -107,7 +115,7 @@ def _coerce_perspective(p: str, i: int) -> str:
     return PERSPECTIVES[i % len(PERSPECTIVES)]
 
 
-def _parse_plan(text: str, question: str) -> list[SubQuestion]:
+def _parse_plan(text: str, question: str, cap: int = MAX_SUBQ) -> list[SubQuestion]:
     block = _extract_json_block(text)
     if not block:
         return []
@@ -126,27 +134,30 @@ def _parse_plan(text: str, question: str) -> list[SubQuestion]:
         seen.add(t)
         out.append(SubQuestion(sq_id=f"sq{len(out) + 1}", text=t,
                                perspective=_coerce_perspective(sq.get("perspective"), i)))
-        if len(out) >= MAX_SUBQ:
+        if len(out) >= cap:
             break
     return out
 
 
-async def plan(llm, question: str, constraints: dict | None = None) -> list[SubQuestion]:
-    """LLM 拆带视角子问题；解析失败/过少 → 确定性兜底（至少含原问题）。"""
+async def plan(llm, question: str, constraints: dict | None = None,
+               *, deep: bool = False) -> list[SubQuestion]:
+    """LLM 拆带视角子问题；解析失败/过少 → 确定性兜底（至少含原问题）。
+    deep=True（异步分钟级深调研）放开到 MAX_SUBQ_DEEP 个角度，覆盖更广、报告更深。"""
+    cap = MAX_SUBQ_DEEP if deep else MAX_SUBQ
     user = f"研究问题：{question}\n{_constraints_note(constraints)}".strip()
     try:
         out = await llm.complete(
-            [{"role": "system", "content": _PLAN_SYSTEM},
+            [{"role": "system", "content": _plan_system(deep)},
              {"role": "user", "content": user}],
-            temperature=0.4, max_tokens=500, thinking=False)
+            temperature=0.4, max_tokens=700 if deep else 500, thinking=False)
     except Exception as e:
         logger.warning("plan LLM failed, deterministic fallback: %s", e)
         out = ""
-    subqs = _parse_plan(out, question)
+    subqs = _parse_plan(out, question, cap)
     if len(subqs) < MIN_SUBQ:
         # 兜底：至少把原问题作为一个子问题，保证 investigate 仍能跑（诚实降级，不臆造拆分）
         subqs = [SubQuestion(sq_id="sq1", text=question, perspective="背景")]
-    return subqs[:MAX_SUBQ]
+    return subqs[:cap]
 
 
 # ─────────────────────────── investigate ───────────────────────────
@@ -220,14 +231,15 @@ def _assign_global_sources(subqs: list[SubQuestion]) -> list[dict]:
     return sources
 
 
-def _build_grouped_materials(subqs: list[SubQuestion]) -> str:
+def _build_grouped_materials(subqs: list[SubQuestion],
+                             ev_per_subq: int = _EV_PER_SUBQ_IN_MATERIALS) -> str:
     """按子问题分组拼材料块（带全局来源编号），供 LLM 分节合成。"""
     groups = []
     for sq in subqs:
         if not sq.evidence:
             continue
         lines = [f"【{sq.perspective}】{sq.text}"]
-        for ev in sq.evidence[:_EV_PER_SUBQ_IN_MATERIALS]:
+        for ev in sq.evidence[:ev_per_subq]:
             head = f"[{ev.idx}] {ev.title}（来源：{ev.source}"
             if ev.published:
                 head += f"，发布：{ev.published}"
@@ -297,13 +309,20 @@ def _empty_report(question: str, subqs: list[SubQuestion]) -> Report:
 
 
 async def synthesize(llm, question: str, subqs: list[SubQuestion],
-                     constraints: dict | None = None) -> Report:
-    """复用接地内核出**分节报告**：每子问题一节、强制引用、诚实标 gaps。失败诚实兜底。"""
+                     constraints: dict | None = None, *, deep: bool = False) -> Report:
+    """复用接地内核出**分节报告**：每子问题一节、强制引用、诚实标 gaps。失败诚实兜底。
+
+    deep=True（异步分钟级深调研）：不受 90s 网关上限约束，合成预算翻倍（max_tokens 2400→4000、
+    timeout 55→150）、要求更多小节（8-12）与更长正文、每节喂更多证据，换取真·深报告。
+    """
     sources = _assign_global_sources(subqs)
     if not sources:
         return _empty_report(question, subqs)
-    materials = _build_grouped_materials(subqs)
+    ev_per = _EV_PER_SUBQ_DEEP if deep else _EV_PER_SUBQ_IN_MATERIALS
+    materials = _build_grouped_materials(subqs, ev_per)
     note = _constraints_note(constraints)
+    sec_count = "8-12" if deep else "5-7"
+    body_len = "300-550 字" if deep else "250-450 字"
     user = (
         f"研究问题：{question}\n"
         f"当前时间：{shanghai_now():%Y年%m月%d日 %H:%M}（Asia/Shanghai）\n"
@@ -314,8 +333,8 @@ async def synthesize(llm, question: str, subqs: list[SubQuestion],
         '"sections":[{"heading":"小节标题","body":"该节详实正文，关键陈述标注来源编号如[1][2]",'
         '"citations":[1,2],"confidence":"high|medium|low"}],'
         '"overall_confidence":"high|medium|low","gaps":["未能从资料中确认的方面"]}\n'
-        "要求：①**报告要充分展开**——按上面资料的角度组织 **5-7 个小节**，"
-        "**每节 body 详实（250-450 字）**，写出具体机制/定义/数据/案例/对比，**充分利用提供的多条资料**、"
+        f"要求：①**报告要充分展开**——按上面资料的角度组织 **{sec_count} 个小节**，"
+        f"**每节 body 详实（{body_len}）**，写出具体机制/定义/数据/案例/对比，**充分利用提供的多条资料**、"
         "不要泛泛几句带过；②先结论后展开，不说「根据资料显示」这类废话；③每条关键陈述带[编号]，"
         "尽量综合**多条**来源（别每节只引一条）、无对应来源的陈述不要写；④资料没覆盖的写进 gaps，"
         "**禁止编造**数字/时间/人名/因果；⑤body 多要点时每条单独成行（\\n 分隔）；"
@@ -329,7 +348,8 @@ async def synthesize(llm, question: str, subqs: list[SubQuestion],
         raw = await llm.complete(
             [{"role": "system", "content": _SYNTH_SYSTEM},
              {"role": "user", "content": user}],
-            temperature=0.3, max_tokens=2400, timeout=55, thinking=False)
+            temperature=0.3, max_tokens=4000 if deep else 2400,
+            timeout=150 if deep else 55, thinking=False)
     except Exception as e:
         logger.warning("synthesis failed, fallback report: %s", e)
         return _fallback_report(question, subqs, sources)

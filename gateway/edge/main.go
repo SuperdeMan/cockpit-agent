@@ -508,9 +508,12 @@ func main() {
 				if json.Unmarshal(m.Data, &p) != nil {
 					return
 				}
+				// card 透传：异步深调研完成时带可读分节报告卡（p["card"]）；
+				// 普通主动播报（路况/早报）无该键 → nil → HMI 端忽略，不影响既有行为。
 				n := hub.broadcast(map[string]any{
 					"type": "proactive", "speech": p["speech"],
 					"advisory": p["type"], "source": p["agent_id"],
+					"card": p["card"],
 				})
 				log.Printf("[edge-gateway] proactive(nats) -> %d HMI: %v", n, p["speech"])
 			}); err != nil {
