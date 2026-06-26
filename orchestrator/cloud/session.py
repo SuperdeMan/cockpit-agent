@@ -19,7 +19,7 @@ except ImportError:
     aioredis = None
 
 _KEY_PREFIX = "planner:sess:"
-_DEFAULT_TTL = 90  # 秒
+_DEFAULT_TTL = 300  # 秒（确认/补槽挂起态；行程等慢流程每轮数十秒+用户阅读，90s 太短致确认过期）
 # 焦点态：与挂起态分开存（每轮持久、完成不清，供跨轮指代消解）。TTL 比挂起态长。
 _FOCUS_PREFIX = "planner:focus:"
 _FOCUS_TTL = 300  # 秒

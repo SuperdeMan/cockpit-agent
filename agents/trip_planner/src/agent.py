@@ -30,7 +30,9 @@ _PROFILE_KEY = "trip_active"
 _CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 _MOD_DAY_RE = re.compile(r"第\s*([一二两三四五六七八九十0-9]+)\s*天")
-_ORDINAL_RE = re.compile(r"第\s*([一二两三四五六七八九十0-9]+)\s*个")
+_ORDINAL_RE = re.compile(r"第\s*([一二两三四五六七八九十0-9]+)\s*[个站]")
+# 换/调整某站时若指定了换成什么（『第二站换成西湖』），取目标名
+_REPLACE_TARGET_RE = re.compile(r"(?:换成|改成|换为|改为|换到)\s*([^，。,、\s]{2,12})")
 _DAY_PREFIX_RE = re.compile(r"^第\s*[一二两三四五六七八九十0-9]+\s*天的?")
 # 结构化编辑：删/加某个具体停靠点（『换』走整天重规划，不在此匹配）
 _REMOVE_RE = re.compile(r"(?:删掉|删除|去掉|不去|不想去|不要去|去不了|取消)\s*([^，。,、\s了]{2,12})")
@@ -208,6 +210,9 @@ class TripPlannerAgent(BaseAgent):
             name = _DAY_PREFIX_RE.sub("", m.group(1)).strip("的了 ")
             if name and await self._add_stop(trip, name, day_n, meta):
                 return True
+        # 换/调整第N天第M站 → 替换那个具体停靠点（根治"调整某站却返回原样"的 no-op）
+        if await self._replace_stop(trip, modification, meta):
+            return True
         return False
 
     @staticmethod
@@ -240,6 +245,33 @@ class TripPlannerAgent(BaseAgent):
         target = trip.day(day_n) if day_n else min(
             trip.itinerary, key=lambda d: len(d.stops))
         (target or trip.itinerary[0]).stops.append(stop)
+        return True
+
+    async def _replace_stop(self, trip: Trip, modification: str, meta) -> bool:
+        """换/调整「第N天第M站」：替换那个具体停靠点。指定『换成X』用 X，否则从池里挑一个
+        行程没用过的不同景点（根治『调整第N站』整天重规划又挑回原样的 no-op）。"""
+        if not any(k in modification for k in ("调整", "换", "改", "替换")):
+            return False
+        n = self._modify_day(modification)
+        m = self._parse_ordinal(modification)
+        day = trip.day(n) if n else None
+        if not (n and m and day and m <= len(day.stops)):
+            return False
+        used = {s.name for d in trip.itinerary for s in d.stops}
+        tm = _REPLACE_TARGET_RE.search(modification)
+        if tm:                                   # 指定换成 X → 接地 X
+            poi = await _ground_one(self.poi, self._fallback,
+                                    tm.group(1).strip(), None, meta, self.llm)
+        else:                                    # 没指定 → 池里挑一个没用过的不同景点
+            pool = await build_poi_pool(self.poi, self._fallback, trip.destination,
+                                        "、".join(trip.preferences), None, meta)
+            poi = next((p for p in pool if p.name not in used and p.lat and p.lng), None)
+        if not (poi and poi.lat and poi.lng):
+            return False
+        old = day.stops[m - 1]
+        day.stops[m - 1] = Stop(stop_id=old.stop_id, name=poi.name, type=old.type,
+                                dwell_min=old.dwell_min, source="user",
+                                poi=_poi_to_dict(poi), grounded=True)
         return True
 
     async def _finalize(self, ctx, meta) -> AgentResult:

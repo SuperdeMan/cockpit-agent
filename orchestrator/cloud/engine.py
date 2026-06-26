@@ -285,13 +285,20 @@ class PlannerEngine:
             results.append(step_result)
 
             # 过程区：每步完成发一条脱敏「完成」进度（仅复杂任务）。
-            if show_process and step_result.status == StepStatus.OK:
+            # 完成事件：OK 正常完成；NEED_CONFIRM/NEED_SLOT 也算"本轮已产出方案"（待确认/补槽），
+            # 否则过程区永远停在"未完成"（此步不会再有 done 事件，如行程规划/调整）。
+            if show_process and step_result.status in (
+                    StepStatus.OK, StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
                 step = next((s for s in plan.steps if s.id == step_result.step_id), None)
                 if step is not None:
+                    summary = step_summary(step, step_result)
+                    if step_result.status == StepStatus.NEED_CONFIRM:
+                        summary = (summary or "已生成方案") + "（待确认）"
+                    elif step_result.status == StepStatus.NEED_SLOT:
+                        summary = summary or "需要补充信息"
                     yield self._progress(
                         "execute", phase_label(step.intent),
-                        summary=step_summary(step, step_result),
-                        status="done", step_id=step.id)
+                        summary=summary, status="done", step_id=step.id)
 
             # 非复杂任务每步完成后 yield 话术（HMI 流式显示）；复杂任务逐步信息走过程区，
             # 气泡只留最终答案，避免与过程区重复刷屏。
