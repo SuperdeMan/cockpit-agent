@@ -168,5 +168,111 @@ def test_modify_without_prior_trip_asks_to_plan():
     assert res.status == "need_slot"
 
 
+# ─── P1: trip.navigate 每stop可导航 + 下一站 ───
+
+def _trip_2days() -> Trip:
+    trip = Trip(destination="杭州", days=2)
+    trip.itinerary = [
+        Day(day_index=1, stops=[Stop(stop_id="s1", name="西湖", grounded=True,
+            poi={"name": "西湖", "address": "西湖区", "lat": 30.25, "lng": 120.15})]),
+        Day(day_index=2, stops=[Stop(stop_id="s2", name="灵隐寺", grounded=True,
+            poi={"name": "灵隐寺", "address": "灵隐", "lat": 30.24, "lng": 120.10})]),
+    ]
+    return trip
+
+
+def test_navigate_to_day_stop_by_name():
+    """『导航去第二天的灵隐寺』→ 取行程里那一站发 navigate 动作。"""
+    agent = TripPlannerAgent()
+    ctx = _persisted_ctx(_trip_2days())
+    res = asyncio.run(run_handle(
+        agent, "trip.navigate", slots={}, raw_text="导航去第二天的灵隐寺", ctx=ctx))
+    assert res.status == "ok"
+    navs = [a for a in res.actions if a["type"] == "navigate"]
+    assert navs and navs[0]["payload"]["destination"] == "灵隐寺"
+    assert navs[0]["payload"]["lat"] == 30.24
+
+
+def test_navigate_next_from_start():
+    """『下一站』初始游标 → 行程第一站。"""
+    agent = TripPlannerAgent()
+    res = asyncio.run(run_handle(
+        agent, "trip.navigate", slots={}, raw_text="下一站", ctx=_persisted_ctx(_trip_2days())))
+    navs = [a for a in res.actions if a["type"] == "navigate"]
+    assert navs and navs[0]["payload"]["destination"] == "西湖"
+
+
+def test_navigate_next_advances_by_cursor():
+    """游标在第一天第一站 → 『下一站』给第二天的灵隐寺。"""
+    agent = TripPlannerAgent()
+    trip = _trip_2days()
+    trip.cursor = {"day_index": 1, "stop_index": 0}
+    res = asyncio.run(run_handle(
+        agent, "trip.navigate", slots={}, raw_text="下一站", ctx=_persisted_ctx(trip)))
+    navs = [a for a in res.actions if a["type"] == "navigate"]
+    assert navs and navs[0]["payload"]["destination"] == "灵隐寺"
+
+
+def test_navigate_next_at_end():
+    """游标在末站 → 『下一站』提示没有下一站、不发导航。"""
+    agent = TripPlannerAgent()
+    trip = _trip_2days()
+    trip.cursor = {"day_index": 2, "stop_index": 0}
+    res = asyncio.run(run_handle(
+        agent, "trip.navigate", slots={}, raw_text="下一站", ctx=_persisted_ctx(trip)))
+    assert "最后一站" in res.speech
+    assert not [a for a in res.actions if a["type"] == "navigate"]
+
+
+def test_navigate_without_trip_asks_to_plan():
+    agent = TripPlannerAgent()
+    res = asyncio.run(run_handle(
+        agent, "trip.navigate", slots={}, raw_text="下一站"))
+    assert res.status == "need_slot"
+
+
+# ─── P1: trip.modify 结构化 edit-op（加/删具体停靠点）───
+
+def _trip_3days_beijing() -> Trip:
+    trip = Trip(destination="北京", days=3)
+    for i, nm in enumerate(["颐和园", "故宫", "奥林匹克公园"], start=1):
+        trip.itinerary.append(Day(day_index=i, stops=[Stop(
+            stop_id=f"s{i}", name=nm, grounded=True,
+            poi={"name": nm, "address": "addr", "lat": 39.9 + i * 0.01, "lng": 116.3})]))
+    return trip
+
+
+def test_modify_remove_stop_keeps_others():
+    """『删掉第三天的奥林匹克公园』→ 结构化删除该站、不调 LLM、其余保留。"""
+    agent = TripPlannerAgent()
+    fake = FakePOI()
+    agent.poi = fake
+    agent._fallback = fake
+    agent.llm.complete = AsyncMock(side_effect=AssertionError("结构化删除不应调 LLM"))
+    res = asyncio.run(run_handle(
+        agent, "trip.modify", slots={"modification": "删掉第三天的奥林匹克公园"},
+        raw_text="删掉第三天的奥林匹克公园", ctx=_persisted_ctx(_trip_3days_beijing())))
+    assert res.status == "need_confirm"
+    names = [s["name"] for d in res.ui_card["itinerary"] for s in d["stops"]]
+    assert "奥林匹克公园" not in names
+    assert "颐和园" in names and "故宫" in names
+
+
+def test_modify_add_stop_grounds_and_appends():
+    """『加一个宋城』→ 接地真实 POI 并加入行程、不整程重规划、原有保留。"""
+    agent = TripPlannerAgent()
+    fake = FakePOI(default=lambda kw: [_poi("宋城", 30.18, 120.10)])
+    agent.poi = fake
+    agent._fallback = fake
+    agent.llm.complete = AsyncMock(side_effect=AssertionError("结构化加站不应调 LLM"))
+    res = asyncio.run(run_handle(
+        agent, "trip.modify", slots={"modification": "加一个宋城"},
+        raw_text="加一个宋城", ctx=_persisted_ctx(_trip_2days())))
+    assert res.status == "need_confirm"
+    names = [s["name"] for d in res.ui_card["itinerary"] for s in d["stops"]]
+    assert "宋城" in names
+    assert "西湖" in names and "灵隐寺" in names
+
+
 def test_manifest_consistency():
     assert assert_manifest_consistent(TripPlannerAgent()) is True

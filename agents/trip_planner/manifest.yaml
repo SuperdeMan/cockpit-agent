@@ -16,9 +16,14 @@ capabilities:
                "周末去杭州两天带老人不要太累", "去成都玩三天轻松点",
                "周末去杭州两天带老人，顺便看看天气和是否需要中途充电"]
   - intent: trip.modify
-    description: 修改已有行程（局部重规划）
+    description: 修改已有行程（结构化局部编辑：换/加/删某个停靠点，只动受影响的天）
     slots: [modification]
-    examples: ["第二天换成宋城", "不去千岛湖了", "加一个西湖"]
+    examples: ["第二天换成宋城", "不去千岛湖了", "加一个西湖", "删掉第三天的奥林匹克公园"]
+  - intent: trip.navigate
+    description: 导航到当前行程里的某个停靠点（『下一站』『导航去第二天的西湖』『第三天第一个』）。
+      仅在已有规划好的行程时由确定性路由命中，普通导航仍走 navigation。
+    slots: [day, stop, target]
+    examples: ["下一站", "导航去第二天的西湖", "第三天第一个", "去行程里的故宫"]
 
 requires_permissions:
   - location.read

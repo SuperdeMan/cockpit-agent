@@ -919,6 +919,10 @@ a.ev-news-h:hover { color: var(--accent-2); text-decoration: underline; }
 .trip-charge-hint { margin: 6px 0 0 14px; color: var(--warn); font-size: 11px; line-height: 1.4; }
 .trip-ungrounded .cr-dot { background: var(--faint); }
 .trip-ungrounded .cr-text b { color: var(--muted); font-weight: 500; }
+.trip-stop-go { cursor: pointer; }
+.trip-stop-go:hover .trip-go-hint, .trip-stop-go:focus .trip-go-hint { opacity: 1; }
+.trip-go-hint { margin-left: 6px; color: var(--accent); font-size: 10px; opacity: .6; }
+.trip-voice-hint { margin-top: 12px; color: var(--muted); font-size: 11px; }
 
 /* POI 卡片 */
 .card-poi-list { display: flex; flex-direction: column; gap: 8px; }

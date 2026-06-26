@@ -34,6 +34,7 @@ export function ChatView({
           isLast={i === messages.length - 1}
           awaitConfirm={awaitConfirm}
           onConfirm={onConfirm}
+          onAction={onQuick}
         />
       ))}
     </div>
@@ -66,11 +67,13 @@ function Bubble({
   isLast,
   awaitConfirm,
   onConfirm,
+  onAction,
 }: {
   msg: Msg
   isLast: boolean
   awaitConfirm: boolean
   onConfirm: (reply: '确认' | '取消') => void
+  onAction?: (text: string) => void
 }) {
   const cls = ['row', msg.role, msg.error ? 'is-error' : ''].join(' ').trim()
   return (
@@ -94,7 +97,7 @@ function Bubble({
           </div>
         ) : null}
 
-        {msg.uiCard && <CardRenderer card={msg.uiCard} />}
+        {msg.uiCard && <CardRenderer card={msg.uiCard} onAction={onAction} />}
 
         {msg.actions?.map((a, j) => (
           <ActionChip key={j} action={a} />

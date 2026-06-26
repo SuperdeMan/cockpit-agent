@@ -93,6 +93,14 @@ async def main() -> int:
     else:
         print("  ✓ 确认收尾正常")
 
+    # 轮2.5：在途导航——『下一站』应路由到 trip.navigate 并发 navigate 动作（P1）
+    m_nav = await ask({"text": "下一站", "session_id": sid},
+                      "轮2.5 下一站（应路由 trip.navigate 并发 navigate 动作）")
+    if not any(a.get("type") == "navigate" for a in (m_nav.get("actions") or [])):
+        failures.append("轮2.5 『下一站』未产出 navigate 动作")
+    else:
+        print("  ✓ 下一站发起导航")
+
     # 轮3：改某天（重新规划一份行程后改第二天）
     m3a = await ask({"text": "周末去成都三天轻松点", "session_id": "e2e-trip-mod"},
                     "轮3a 先规划成都三天")

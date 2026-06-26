@@ -15,10 +15,12 @@ import os
 import re
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, NEED_CONFIRM
+from agents._sdk.location import current_location_from_meta
 from agents.navigation.src.providers import build_poi_provider
 from agents.navigation.src.providers.mock import MockPOIProvider
-from .models import Trip
-from .pipeline import build_poi_pool, propose, ground, solve, narrate
+from .models import Trip, Stop
+from .pipeline import (build_poi_pool, propose, ground, solve, narrate,
+                       _ground_one, _poi_to_dict)
 
 logger = logging.getLogger("agent.trip_planner")
 
@@ -28,6 +30,11 @@ _PROFILE_KEY = "trip_active"
 _CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 _MOD_DAY_RE = re.compile(r"第\s*([一二两三四五六七八九十0-9]+)\s*天")
+_ORDINAL_RE = re.compile(r"第\s*([一二两三四五六七八九十0-9]+)\s*个")
+_DAY_PREFIX_RE = re.compile(r"^第\s*[一二两三四五六七八九十0-9]+\s*天的?")
+# 结构化编辑：删/加某个具体停靠点（『换』走整天重规划，不在此匹配）
+_REMOVE_RE = re.compile(r"(?:删掉|删除|去掉|不去|不想去|不要去|去不了|取消)\s*([^，。,、\s了]{2,12})")
+_ADD_RE = re.compile(r"(?:加一个|加个|再加|增加|多加|加上|想去|顺便去|顺路去)\s*([^，。,、\s]{2,12})")
 
 
 class TripPlannerAgent(BaseAgent):
@@ -39,7 +46,8 @@ class TripPlannerAgent(BaseAgent):
         self._fallback = MockPOIProvider()
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
-        handlers = {"trip.plan": self._plan, "trip.modify": self._modify}
+        handlers = {"trip.plan": self._plan, "trip.modify": self._modify,
+                    "trip.navigate": self._navigate}
         handler = handlers.get(intent.name)
         if handler:
             return await handler(intent, ctx, meta)
@@ -146,29 +154,34 @@ class TripPlannerAgent(BaseAgent):
 
         dest = trip.destination
         prefs = "、".join(trip.preferences)
-        n = self._modify_day(modification)
-        if n and trip.day(n):
-            # 只重规划第 n 天：其余 Day 对象原样保留（结构化天然不漂移）。
-            pool = await build_poi_pool(self.poi, self._fallback, dest, prefs, None, meta)
-            sk = await propose(self.llm, dest, "1", prefs,
-                               [p.name for p in pool], modification)
-            oneday = await ground(self.poi, self._fallback, sk, pool, meta,
-                                  dest=dest, prefs=prefs, raw_text=modification,
-                                  llm=self.llm)
-            if oneday.itinerary and oneday.itinerary[0].stops:
-                newday = oneday.itinerary[0]
-                newday.day_index = n
-                for idx, d in enumerate(trip.itinerary):
-                    if d.day_index == n:
-                        trip.itinerary[idx] = newday
-                        break
-            soc = await self._soc_pct(ctx, meta)
+        soc = await self._soc_pct(ctx, meta)
+
+        # ① 结构化编辑优先：加/删某个具体停靠点（只动受影响项，跨天去重）。
+        if await self._apply_structural_edit(trip, modification, meta):
             trip = await solve(self.poi, self._fallback, trip, soc, meta)
         else:
-            # 定位不到具体天 → 整程重规划（把修改并入偏好上下文）。
-            trip = await self._run_pipeline(
-                ctx, meta, dest, str(trip.days or ""),
-                f"{prefs} {modification}".strip(), modification)
+            n = self._modify_day(modification)
+            if n and trip.day(n):
+                # ② 只重规划第 n 天：其余 Day 原样保留（结构化天然不漂移）。
+                pool = await build_poi_pool(self.poi, self._fallback, dest, prefs, None, meta)
+                sk = await propose(self.llm, dest, "1", prefs,
+                                   [p.name for p in pool], modification)
+                oneday = await ground(self.poi, self._fallback, sk, pool, meta,
+                                      dest=dest, prefs=prefs, raw_text=modification,
+                                      llm=self.llm)
+                if oneday.itinerary and oneday.itinerary[0].stops:
+                    newday = oneday.itinerary[0]
+                    newday.day_index = n
+                    for idx, d in enumerate(trip.itinerary):
+                        if d.day_index == n:
+                            trip.itinerary[idx] = newday
+                            break
+                trip = await solve(self.poi, self._fallback, trip, soc, meta)
+            else:
+                # ③ 定位不到具体天 → 整程重规划（把修改并入偏好上下文）。
+                trip = await self._run_pipeline(
+                    ctx, meta, dest, str(trip.days or ""),
+                    f"{prefs} {modification}".strip(), modification)
 
         await self._save_trip(ctx, trip)
         speech, card = narrate(trip)
@@ -178,6 +191,53 @@ class TripPlannerAgent(BaseAgent):
             ui_card=card,
             follow_up="说『确认』即可",
         ).action("trip.modify", {"modification": modification}, require_confirm=True)
+
+    async def _apply_structural_edit(self, trip: Trip, modification: str, meta) -> bool:
+        """结构化编辑：删/加某个具体停靠点。命中并改动返回 True；否则 False（交给重规划）。"""
+        day_n = self._modify_day(modification)
+        m = _REMOVE_RE.search(modification)
+        if m:
+            name = _DAY_PREFIX_RE.sub("", m.group(1)).strip("的了 ")
+            if name and self._remove_stop(trip, name, day_n):
+                return True
+        m = _ADD_RE.search(modification)
+        if m:
+            name = _DAY_PREFIX_RE.sub("", m.group(1)).strip("的了 ")
+            if name and await self._add_stop(trip, name, day_n, meta):
+                return True
+        return False
+
+    @staticmethod
+    def _remove_stop(trip: Trip, name: str, day_n: int = 0) -> bool:
+        name = (name or "").strip()
+        for dy in trip.itinerary:
+            if day_n and dy.day_index != day_n:
+                continue
+            for k, s in enumerate(dy.stops):
+                nm = s.name or ""
+                if nm and (name in nm or nm in name):
+                    dy.stops.pop(k)
+                    return True
+        return False
+
+    async def _add_stop(self, trip: Trip, name: str, day_n: int, meta) -> bool:
+        # 跨天去重：已在行程里就视为已满足，不重复加、也不触发重规划。
+        for dy in trip.itinerary:
+            for s in dy.stops:
+                nm = s.name or ""
+                if nm and (name in nm or nm in name):
+                    return True
+        poi = await _ground_one(self.poi, self._fallback, name, None, meta, self.llm)
+        if not (poi and poi.lat and poi.lng):
+            return False
+        nstops = sum(len(d.stops) for d in trip.itinerary)
+        stop = Stop(stop_id=f"s_add{nstops + 1}", name=poi.name or name,
+                    type="attraction", dwell_min=120, source="user",
+                    poi=_poi_to_dict(poi), grounded=True)
+        target = trip.day(day_n) if day_n else min(
+            trip.itinerary, key=lambda d: len(d.stops))
+        (target or trip.itinerary[0]).stops.append(stop)
+        return True
 
     async def _finalize(self, ctx, meta) -> AgentResult:
         """确认收尾：把行程第一个已接地停靠点作导航第一站，给候选 POI 让用户选『第几个』。
@@ -217,6 +277,125 @@ class TripPlannerAgent(BaseAgent):
         return AgentResult(
             speech=f"好的，{dest}{day_txt}的行程已确认，祝您和家人旅途愉快！"
                    f"出发时说『导航去{label}』我就为您开始导航。")
+
+    # ── 在途导航：把行程里任意停靠点变成一句话可导航（P1）──────────
+    async def _navigate(self, intent, ctx, meta) -> AgentResult:
+        """导航到当前行程里的某个停靠点：『下一站』/『第N天的X』/『第N天第M个』/『行程里的X』。
+
+        从持久化 Trip 取已接地停靠点，按指代定位后发 navigate 动作，并推进 cursor。
+        无行程 → 引导先规划（普通导航仍由 navigation 处理，本意图只在确定性路由命中行程指代时触发）。
+        """
+        trip = await self._load_trip(ctx)
+        if not trip or not trip.itinerary:
+            return AgentResult(
+                status=NEED_SLOT,
+                speech="还没有规划好的行程，先告诉我去哪里玩几天，我规划好就能带您一站站去。",
+                follow_up="例如：周末去杭州两天", missing_slots=["destination"])
+
+        flat = self._flatten_grounded(trip)
+        if not flat:
+            return AgentResult(speech="行程里还没有可导航的具体地点。")
+
+        raw = intent.raw_text or ""
+        target_slot = (intent.slots.get("target") or "").strip()
+        day_n = self._modify_day(intent.slots.get("day") or raw)
+        ordinal = self._parse_ordinal(intent.slots.get("stop") or raw)
+        is_next = (target_slot == "next" or "下一站" in raw or "下个" in raw
+                   or "继续导航" in raw)
+
+        picked = None
+        if is_next:
+            picked = self._next_after_cursor(trip, flat)
+            if picked is None:
+                return AgentResult(speech="行程已经到最后一站啦，没有下一站了。")
+        else:
+            name = target_slot or self._strip_nav_prefix(raw)
+            if name:
+                picked = self._find_by_name(flat, name, day_n)
+            if picked is None and day_n:
+                picked = self._find_by_day_ordinal(flat, day_n, ordinal or 1)
+
+        if picked is None:
+            return AgentResult(
+                speech="没找到您说的那一站，可以说『下一站』，或『第二天的西湖』。",
+                follow_up="说『下一站』或『第N天的某地点』")
+
+        dy, gi, stop = picked
+        trip.cursor = {"day_index": dy, "stop_index": gi}
+        await self._save_trip(ctx, trip)
+        poi = stop.poi or {}
+        payload = {"destination": stop.name, "lat": poi.get("lat"), "lng": poi.get("lng")}
+        cur = current_location_from_meta(meta)
+        if cur:
+            payload.update(origin_lat=cur.lat, origin_lng=cur.lng)
+        return AgentResult(
+            speech=f"好的，为您导航到第{dy}天的{stop.name}。",
+            data={"destination": stop.name, "lat": poi.get("lat"), "lng": poi.get("lng")},
+        ).action("navigate", payload)
+
+    @staticmethod
+    def _flatten_grounded(trip: Trip) -> list:
+        """按天序展开所有已接地停靠点：[(day_index, grounded_idx_in_day, Stop)]。"""
+        out = []
+        for dy in trip.itinerary:
+            gi = 0
+            for s in dy.stops:
+                if getattr(s, "grounded", False) and (s.poi or {}).get("lat"):
+                    out.append((dy.day_index, gi, s))
+                    gi += 1
+        return out
+
+    @staticmethod
+    def _next_after_cursor(trip: Trip, flat: list):
+        """cursor 之后的下一站；cursor 未命中（初始 0,0）→ 首站；已是末站 → None。"""
+        cur = trip.cursor or {}
+        cd, ci = cur.get("day_index", 0), cur.get("stop_index", 0)
+        for k, (d, i, _s) in enumerate(flat):
+            if d == cd and i == ci:
+                return flat[k + 1] if k + 1 < len(flat) else None
+        return flat[0] if flat else None
+
+    @staticmethod
+    def _find_by_day_ordinal(flat: list, day_n: int, m: int):
+        inday = [t for t in flat if t[0] == day_n]
+        if not inday:
+            return None
+        idx = max(1, m) - 1
+        return inday[idx] if idx < len(inday) else inday[-1]
+
+    @staticmethod
+    def _find_by_name(flat: list, name: str, day_n: int = 0):
+        name = (name or "").strip()
+        if not name:
+            return None
+        scoped = [t for t in flat if (not day_n or t[0] == day_n)]
+        for pool in (scoped, flat):           # 先按指定天找，再跨天兜底
+            for t in pool:
+                nm = t[2].name or ""
+                if name in nm or nm in name:
+                    return t
+        return None
+
+    @staticmethod
+    def _parse_ordinal(text: str) -> int:
+        m = _ORDINAL_RE.search(text or "")
+        if not m:
+            return 0
+        tok = m.group(1)
+        return int(tok) if tok.isdigit() else _CN_NUM.get(tok, 0)
+
+    @staticmethod
+    def _strip_nav_prefix(raw: str) -> str:
+        """从『导航去第二天的西湖』剥成『西湖』；非具体地点指代返回空。"""
+        t = (raw or "").strip()
+        for p in ("导航去", "导航到", "导航", "带我去", "去", "到"):
+            if t.startswith(p):
+                t = t[len(p):]
+                break
+        t = re.sub(r"^第\s*[一二两三四五六七八九十0-9]+\s*天的?", "", t)
+        t = re.sub(r"^第\s*[一二两三四五六七八九十0-9]+\s*个", "", t)
+        t = re.sub(r"^行程(里|中)?的?", "", t).strip("的里中 ，。")
+        return "" if t in ("下一站", "下个", "行程", "") else t
 
     @staticmethod
     def _modify_day(text: str) -> int:

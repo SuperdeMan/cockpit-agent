@@ -25,12 +25,12 @@ function weatherIcon(text: string): string {
 
 // ─── 卡片渲染入口 ───
 
-export function CardRenderer({ card }: { card: UiCard }) {
+export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (text: string) => void }) {
   switch (card.type) {
     case 'card_group':
       // 多卡同屏：逐张渲染（如"查股价+新闻"→股票卡 + 新闻卡并存）
       return <>{((card as any).items || []).map((c: UiCard, i: number) =>
-        <CardRenderer key={i} card={c} />)}</>
+        <CardRenderer key={i} card={c} onAction={onAction} />)}</>
     case 'weather': return <WeatherCardView card={card} />
     case 'forecast': return <ForecastCardView card={card} />
     case 'stock_quote': return <StockCardView card={card} />
@@ -44,7 +44,7 @@ export function CardRenderer({ card }: { card: UiCard }) {
     case 'sports_scorers': return <SportsScorersCardView card={card} />
     case 'route_plan': return <RoutePlanCardView card={card} />
     case 'charging_route': return <ChargingRouteCardView card={card} />
-    case 'trip_itinerary': return <TripItineraryCardView card={card} />
+    case 'trip_itinerary': return <TripItineraryCardView card={card} onAction={onAction} />
     case 'poi_list': return <PoiListCardView card={card} />
     case 'poi_detail': return <PoiDetailCardView card={card} />
     default: return null
@@ -594,7 +594,8 @@ const TRIP_STOP_ICON: Record<string, string> = {
   attraction: '📍', meal: '🍜', hotel: '🏨', charging: '⚡', custom: '📌',
 }
 
-function TripItineraryCardView({ card }: { card: TripItineraryCard }) {
+function TripItineraryCardView({ card, onAction }:
+  { card: TripItineraryCard; onAction?: (text: string) => void }) {
   return (
     <div className="card card-evidence card-charge-route card-trip">
       <div className="ev-head">
@@ -609,17 +610,31 @@ function TripItineraryCardView({ card }: { card: TripItineraryCard }) {
               第{day.day_index}天{day.theme ? ` · ${day.theme}` : ''}
             </div>
             <ul className="cr-line">
-              {day.stops.map((s, i) => (
-                <li key={i} className={`cr-node cr-stop${s.grounded ? '' : ' trip-ungrounded'}`}>
-                  <span className="cr-dot" />
-                  <span className="cr-text">
-                    <b>{TRIP_STOP_ICON[s.type] || '📍'} {s.name}</b>
-                    {!s.grounded
-                      ? <em className="cr-km">待确认地点</em>
-                      : (s.poi?.address && <em className="cr-km">{s.poi.address}</em>)}
-                  </span>
-                </li>
-              ))}
+              {day.stops.map((s, i) => {
+                // 已接地的停靠点可点导航：派发整句『导航去第N天的X』→ 编排器路由 trip.navigate
+                const go = s.grounded && onAction
+                  ? () => onAction(`导航去第${day.day_index}天的${s.name}`)
+                  : undefined
+                return (
+                  <li key={i} className={`cr-node cr-stop${s.grounded ? '' : ' trip-ungrounded'}`}>
+                    <span className="cr-dot" />
+                    <span className="cr-text">
+                      {go ? (
+                        <b className="trip-stop-go" role="button" tabIndex={0} onClick={go}
+                           onKeyDown={(e) => { if (e.key === 'Enter') go() }}>
+                          {TRIP_STOP_ICON[s.type] || '📍'} {s.name}
+                          <span className="trip-go-hint">› 导航</span>
+                        </b>
+                      ) : (
+                        <b>{TRIP_STOP_ICON[s.type] || '📍'} {s.name}</b>
+                      )}
+                      {!s.grounded
+                        ? <em className="cr-km">待确认地点</em>
+                        : (s.poi?.address && <em className="cr-km">{s.poi.address}</em>)}
+                    </span>
+                  </li>
+                )
+              })}
             </ul>
             {charges.length > 0 && (
               <div className="trip-charge-hint">
@@ -629,6 +644,7 @@ function TripItineraryCardView({ card }: { card: TripItineraryCard }) {
           </div>
         )
       })}
+      <div className="trip-voice-hint">🎙 点停靠点或说『下一站』『导航去第N天的某地点』即可导航</div>
     </div>
   )
 }
