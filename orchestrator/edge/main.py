@@ -7,6 +7,7 @@ import os
 import grpc
 from cockpit.orchestrator.v1 import orchestrator_pb2_grpc
 
+from runtime.grpcio import aio_server, run_aio_server
 from server import EdgeOrchestratorServicer
 from capabilities import register_edge_capabilities
 
@@ -81,7 +82,7 @@ async def _reregister_capabilities(interval: float = 10):
 
 async def serve():
     port = int(os.getenv("EDGE_ORCHESTRATOR_PORT", "50070"))
-    server = grpc.aio.server()
+    server = aio_server()
     servicer = EdgeOrchestratorServicer()
     orchestrator_pb2_grpc.add_EdgeOrchestratorServicer_to_server(servicer, server)
     server.add_insecure_port(f"[::]:{port}")
@@ -99,7 +100,7 @@ async def serve():
     reregister_task = asyncio.create_task(_reregister_capabilities(reregister_interval))
     print(f"[edge-orchestrator] serving on :{port}", flush=True)
     try:
-        await server.wait_for_termination()
+        await run_aio_server(server, name="edge-orchestrator")
     finally:
         tasks = (state_task, debug_task, snapshot_task, reregister_task)
         for task in tasks:

@@ -42,7 +42,7 @@ def _patch_httpx(monkeypatch, captured):
         async def __aexit__(self, *a):
             return False
 
-        async def post(self, url, headers=None, json=None):
+        async def post(self, url, headers=None, json=None, timeout=None):
             captured.update(json or {})
             return _Resp()
 

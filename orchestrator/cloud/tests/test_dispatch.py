@@ -177,6 +177,54 @@ def test_dispatches_tool_in_process():
     assert tools.calls == [("math.eval", {"expression": "1+2"}, "v1")]
 
 
+def test_cloud_transport_failure_becomes_failed_response():
+    """云 Agent 超时/不可达不再 re-raise 炸整条 DAG，降级为 FAILED step。"""
+    async def cloud(*_args, **_kwargs):
+        raise RuntimeError("agent unreachable")
+
+    async def edge(*_args):
+        raise AssertionError("edge route should not be used")
+
+    dispatcher = UnifiedDispatcher(cloud_call=cloud, edge_call=edge, tools=None)
+    step = Step(id="s1", agent_id="info", endpoint="info:50067", intent="info.search")
+
+    response = _run(dispatcher.dispatch(step, PlanContext(vehicle_id="v1")))
+
+    assert response.status == agent_pb2.ExecuteResponse.FAILED
+    assert response.error.code == "agent_unreachable"
+
+
+def test_circuit_opens_after_repeated_cloud_failures():
+    """连续失败达阈值后熔断打开：后续调用快速失败（REJECTED/circuit_open），不再实际拨号。"""
+    from orchestrator.cloud.circuit import CircuitBreakerManager
+
+    calls = []
+
+    async def cloud(*args, **_kwargs):
+        calls.append(args)
+        raise RuntimeError("agent down")
+
+    async def edge(*_args):
+        raise AssertionError("edge route should not be used")
+
+    breakers = CircuitBreakerManager(failure_threshold=2, recovery_timeout=60)
+    dispatcher = UnifiedDispatcher(cloud_call=cloud, edge_call=edge, tools=None,
+                                   breakers=breakers)
+    step = Step(id="s1", agent_id="info", endpoint="info:50067", intent="info.search")
+    ctx = PlanContext(vehicle_id="v1")
+
+    r1 = _run(dispatcher.dispatch(step, ctx))
+    r2 = _run(dispatcher.dispatch(step, ctx))
+    assert r1.status == agent_pb2.ExecuteResponse.FAILED
+    assert r2.status == agent_pb2.ExecuteResponse.FAILED
+    assert len(calls) == 2  # 前两次真正拨号并失败
+
+    r3 = _run(dispatcher.dispatch(step, ctx))
+    assert r3.status == agent_pb2.ExecuteResponse.REJECTED
+    assert r3.error.code == "circuit_open"
+    assert len(calls) == 2  # 熔断打开后不再拨号
+
+
 def test_tool_cannot_request_vehicle_control():
     tools = _Tools()
 

@@ -148,7 +148,9 @@ class MemoryVectorStore:
             return False
         try:
             import asyncpg
-            self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
+            self._pool = await asyncpg.create_pool(
+                self._dsn, min_size=1, max_size=5,
+                command_timeout=10, max_inactive_connection_lifetime=300)
             await self._ensure_schema()
             self._pg_ok = True
             await self._probe_embedder()  # 探测 embedding 源（llm-gateway 优先）
@@ -186,9 +188,9 @@ class MemoryVectorStore:
     async def _llm_embed(self, texts: list[str]) -> list[list[float]] | None:
         """经 llm-gateway Embed RPC 向量化（唯一 embedding 出口）。失败返回 None。"""
         try:
-            import grpc
             from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
-            async with grpc.aio.insecure_channel(self._llm_addr) as ch:
+            from runtime.grpcio import aio_channel
+            async with aio_channel(self._llm_addr) as ch:
                 stub = llm_pb2_grpc.LLMGatewayStub(ch)
                 resp = await stub.Embed(llm_pb2.EmbedRequest(texts=list(texts)), timeout=20)
                 return [list(e.values) for e in resp.embeddings]

@@ -11,7 +11,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY gen/python /app/gen/python
 COPY llm-gateway /app/llm-gateway
+COPY runtime /app/runtime
 
-ENV PYTHONPATH=/app/gen/python
+ENV PYTHONPATH=/app:/app/gen/python
 ENV LLM_GATEWAY_PORT=50052
 CMD ["python", "main.py"]

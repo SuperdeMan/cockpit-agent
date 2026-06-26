@@ -8,6 +8,7 @@ import socket
 import grpc
 from google.protobuf import struct_pb2
 
+from runtime.grpcio import aio_server, run_aio_server
 from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
 from cockpit.common.v1 import common_pb2
 
@@ -124,7 +125,7 @@ async def _reregister_loop(registry, manifest, endpoint: str, interval: float):
 
 async def serve(agent: BaseAgent):
     port = int(os.getenv("AGENT_PORT", "50060"))
-    server = grpc.aio.server()
+    server = aio_server()
     agent_pb2_grpc.add_AgentServicer_to_server(_Servicer(agent), server)
     server.add_insecure_port(f"[::]:{port}")
     await server.start()
@@ -154,7 +155,7 @@ async def serve(agent: BaseAgent):
 
     print(f"[sdk] {agent.manifest.agent_id} serving on :{port}", flush=True)
     try:
-        await server.wait_for_termination()
+        await run_aio_server(server, name=agent.manifest.agent_id)
     finally:
         for task in (reregister_task, on_start_task):
             task.cancel()

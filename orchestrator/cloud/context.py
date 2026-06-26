@@ -93,18 +93,44 @@ class WorkingSet:
 
     @staticmethod
     def render_catalog(agents: list) -> str:
-        """能力清单 JSON（与旧 _build_catalog 逐字一致）；超 catalog 预算时丢弃尾部 agent。"""
+        """能力清单 JSON；超 catalog 预算时优先丢相关性最低的**非受保护** agent（从尾部找）。
+
+        受保护 = edge 车控核心（edge-vehicle/edge-media）∪ always-include（chitchat/trip-planner）。
+        根因修复：edge-vehicle 有几十个 caps、渲染体积大，旧逻辑无差别 pop 尾部会把它或
+        chitchat 丢掉——丢 edge 车控→危险动作规划空计划退化（dangerous_trunk_confirm）；丢
+        chitchat→开放域兜底缺席、误路由到 info（cloud_chitchat_streaming）。叠加 edge 紧凑
+        渲染（见 _catalog_item），正常情况下根本不触发裁剪。"""
         items = [_catalog_item(a) for a in agents]
+        protected = [_is_edge_core(a) or a.manifest.agent_id in _ALWAYS_INCLUDE
+                     for a in agents]
         out = json.dumps(items, ensure_ascii=False)
         while len(out) > _CATALOG_BUDGET and len(items) > 1:
-            items.pop()  # 预筛已按相关性排序，尾部相关性最低，优先丢
+            idx = next((i for i in range(len(items) - 1, -1, -1) if not protected[i]), None)
+            if idx is None:
+                break  # 只剩受保护项 → 宁可略超预算也不丢
+            items.pop(idx)
+            protected.pop(idx)
             out = json.dumps(items, ensure_ascii=False)
         return out
 
 
+def _is_edge_core(a) -> bool:
+    """安全核心：edge/edge_fast 车控 Agent。catalog 预筛与渲染都须保它不被丢，
+    否则危险车控的二次确认会退化成 chitchat 兜底。与 ContextManager 预筛判据一致。"""
+    m = a.manifest
+    return (getattr(m, "deployment", "") == "edge"
+            or getattr(m, "kind", "") == "edge_fast")
+
+
 def _catalog_item(a) -> dict:
-    caps = [{"intent": c.intent, "slots": list(c.slots), "desc": c.description}
-            for c in a.manifest.capabilities]
+    if _is_edge_core(a):
+        # edge 车控核心 caps 多（几十个）；只渲染意图名（trunk.open 等），不带 slots/desc——
+        # 否则其体积（数千字符）撑爆 catalog 预算、挤掉 chitchat 等 → 路由退化/偏置。
+        # slot 由 planner 从用户原话推断（如"26度"→temp），无需 catalog 提示。
+        caps = [{"intent": c.intent} for c in a.manifest.capabilities]
+    else:
+        caps = [{"intent": c.intent, "slots": list(c.slots), "desc": c.description}
+                for c in a.manifest.capabilities]
     return {
         "agent_id": a.manifest.agent_id,
         "kind": getattr(a.manifest, "kind", "") or "agent",
@@ -321,11 +347,10 @@ class ContextManager:
         # 安全核心：edge/edge_fast 车控 agent（edge-vehicle/edge-media）始终保留——
         # 它们少、core、require_confirm 安全敏感，绝不能被相关性预筛丢掉，否则车控/
         # 危险动作二次确认会退化成 chitchat 兜底（dangerous_trunk_confirm 回归根因）。
+        # 渲染层 render_catalog 同样保它不被预算裁剪丢掉（用同一 _is_edge_core 判据）。
         for a in full:
-            m = a.manifest
-            if (getattr(m, "deployment", "") == "edge"
-                    or getattr(m, "kind", "") == "edge_fast"):
-                picked.setdefault(m.agent_id, a)
+            if _is_edge_core(a):
+                picked.setdefault(a.manifest.agent_id, a)
         logger.info("catalog pre-filtered: %d/%d agents (top_k=%d)",
                     len(picked), len(full), self.top_k)
         return list(picked.values())

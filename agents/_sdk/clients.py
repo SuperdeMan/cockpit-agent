@@ -7,6 +7,8 @@ from __future__ import annotations
 import os
 import grpc
 
+from runtime.grpcio import aio_channel
+
 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
@@ -35,7 +37,7 @@ class LLMClient:
 
     def _channel(self) -> grpc.aio.Channel:
         if self._ch is None:
-            self._ch = grpc.aio.insecure_channel(self.addr)
+            self._ch = aio_channel(self.addr)
         return self._ch
 
     async def _reset_channel(self):
@@ -105,7 +107,7 @@ class MemoryClient:
 
     def _channel(self) -> grpc.aio.Channel:
         if self._ch is None:
-            self._ch = grpc.aio.insecure_channel(self.addr)
+            self._ch = aio_channel(self.addr)
         return self._ch
 
     async def _reset_channel(self):
@@ -231,7 +233,7 @@ class RegistryClient:
 
     def _channel(self) -> grpc.aio.Channel:
         if self._ch is None:
-            self._ch = grpc.aio.insecure_channel(self.addr)
+            self._ch = aio_channel(self.addr)
         return self._ch
 
     def _stub(self):

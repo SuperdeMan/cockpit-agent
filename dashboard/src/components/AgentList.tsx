@@ -57,6 +57,9 @@ export function AgentList({ agents }: { agents: Record<string, AgentInfo> }) {
                   {down && agent.fail_count ? (
                     <span className="err">fail×{agent.fail_count}</span>
                   ) : null}
+                  {agent.circuit && agent.circuit !== 'closed' ? (
+                    <span className="err">熔断{agent.circuit === 'open' ? '开' : '半开'}</span>
+                  ) : null}
                 </span>
               </div>
             )

@@ -11,6 +11,8 @@ import os
 import grpc
 from cockpit.registry.v1 import registry_pb2_grpc
 
+from runtime.grpcio import aio_server, run_aio_server
+
 from observability.events import EventEmitter
 from registry.health import probe_all
 from registry.server import RegistryServicer
@@ -62,7 +64,7 @@ async def _create_store():
 async def serve():
     port = int(os.getenv("REGISTRY_PORT", "50051"))
     store = await _create_store()
-    server = grpc.aio.server()
+    server = aio_server()
     servicer = RegistryServicer(store=store)
     registry_pb2_grpc.add_RegistryServicer_to_server(servicer, server)
     server.add_insecure_port(f"[::]:{port}")
@@ -72,7 +74,7 @@ async def serve():
     store_type = "PgStore" if hasattr(store, "_pg_ok") and store._pg_ok else "memory"
     print(f"[registry] serving on :{port} (store={store_type})", flush=True)
     try:
-        await server.wait_for_termination()
+        await run_aio_server(server, name="registry")
     finally:
         health_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):

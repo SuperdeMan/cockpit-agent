@@ -9,8 +9,10 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
@@ -285,7 +287,9 @@ func main() {
 	plannerAddr := getenv("CLOUD_PLANNER_ADDR", "cloud-planner:50054")
 	port := getenv("CLOUD_GATEWAY_PORT", "8080")
 
-	conn, err := grpc.NewClient(plannerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(plannerAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		clientKeepalive())
 	if err != nil {
 		log.Fatalf("dial planner: %v", err)
 	}
@@ -297,6 +301,7 @@ func main() {
 	}
 
 	s := grpc.NewServer(
+		keepaliveServerParams(),
 		keepalivePolicy(),
 	)
 	channelpb.RegisterEdgeCloudChannelServer(s, &channelServer{
@@ -304,15 +309,44 @@ func main() {
 		idem:    buildIdempotencyStore(),
 	})
 
-	log.Printf("[cloud-gateway] EdgeCloudChannel serving on :%s -> %s", port, plannerAddr)
-	if err := s.Serve(lis); err != nil {
-		log.Fatal(err)
-	}
+	go func() {
+		log.Printf("[cloud-gateway] EdgeCloudChannel serving on :%s -> %s", port, plannerAddr)
+		if err := s.Serve(lis); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	// 优雅停机：收到 SIGTERM/SIGINT（docker compose 重建/停止）时排空在途 RPC 再退出，
+	// 不再硬杀正在处理的请求（减少重建容器期间的报错/无响应）。
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	log.Printf("[cloud-gateway] shutting down gracefully")
+	s.GracefulStop()
 }
 
 func keepalivePolicy() grpc.ServerOption {
 	return grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 		MinTime:             5 * time.Second,
+		PermitWithoutStream: true,
+	})
+}
+
+// keepaliveServerParams 让服务端也主动发 keepalive ping，及时发现死连接
+// （断连/无响应根因），与客户端 keepalive 对称。
+func keepaliveServerParams() grpc.ServerOption {
+	return grpc.KeepaliveParams(keepalive.ServerParameters{
+		Time:    20 * time.Second,
+		Timeout: 10 * time.Second,
+	})
+}
+
+// clientKeepalive 给出站 gRPC 连接加 keepalive：容器/NAT 掐断空闲连接后能在一个
+// 周期内探测到并重连重解析 DNS（修复"依赖重启换 IP 后需重启本服务"）。
+func clientKeepalive() grpc.DialOption {
+	return grpc.WithKeepaliveParams(keepalive.ClientParameters{
+		Time:                20 * time.Second,
+		Timeout:             10 * time.Second,
 		PermitWithoutStream: true,
 	})
 }

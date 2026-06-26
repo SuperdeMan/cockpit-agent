@@ -40,7 +40,10 @@ class MemoryStore:
     async def _redis(self):
         if aioredis and self.url and self._r is None:
             try:
-                self._r = aioredis.from_url(self.url, decode_responses=True)
+                self._r = aioredis.from_url(
+                    self.url, decode_responses=True, socket_timeout=3,
+                    socket_connect_timeout=3, socket_keepalive=True,
+                    health_check_interval=30, retry_on_timeout=True)
                 await self._r.ping()
             except Exception as e:
                 logger.warning("Redis unavailable, using in-memory: %s", e)

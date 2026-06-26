@@ -46,10 +46,10 @@ def _now() -> int:
 
 async def _default_complete(messages: list[dict]) -> str:
     """默认经 gRPC 调 llm-gateway。失败抛异常由上层吞。"""
-    import grpc
     from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
+    from runtime.grpcio import aio_channel
     addr = os.getenv("LLM_GATEWAY_ADDR", "llm-gateway:50052")
-    async with grpc.aio.insecure_channel(addr) as ch:
+    async with aio_channel(addr) as ch:
         stub = llm_pb2_grpc.LLMGatewayStub(ch)
         req = llm_pb2.CompleteRequest(
             messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],

@@ -48,7 +48,9 @@ async def _send(text, session_id, trace_id, *, is_confirmation=False, meta=None)
         "is_confirmation": is_confirmation,
         "meta": {"trace_id": trace_id, **(meta or {})},
     }
-    async with websockets.connect(EDGE_WS, max_size=None) as ws:
+    # ping_interval=None 模拟浏览器（浏览器不主动发 WS ping，靠服务端 15s ping 保活）；
+    # 否则慢 Agent（trip-planner 多日重生成 >20s）期间客户端 ping 等不到 pong 会误判超时断连。
+    async with websockets.connect(EDGE_WS, max_size=None, ping_interval=None) as ws:
         await ws.send(json.dumps(payload, ensure_ascii=False))
         finals, started, got_final = [], time.time(), False
         while time.time() - started < 130:

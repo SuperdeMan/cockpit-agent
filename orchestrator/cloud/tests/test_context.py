@@ -271,3 +271,47 @@ def test_focus_not_loaded_when_mem_off():
     ctx = SimpleNamespace(session_id="sess-f", user_id="u1")
     ws = asyncio.run(cm.assemble("再调高一点", ctx, mem_on=False))
     assert ws.focus is None
+
+
+def _agent_dep(agent_id, n_caps, deployment="cloud", kind="agent"):
+    caps = [SimpleNamespace(intent=f"{agent_id}.act{i}", slots=[], description="x" * 20)
+            for i in range(n_caps)]
+    manifest = SimpleNamespace(agent_id=agent_id, capabilities=caps,
+                               kind=kind, deployment=deployment)
+    return SimpleNamespace(manifest=manifest, endpoint=f"{agent_id}:50000")
+
+
+def test_render_catalog_keeps_edge_core_over_budget():
+    """超 catalog 预算时，edge 车控核心（caps 多、体积大、常在尾部）绝不被裁剪——否则 LLM
+    看不到 trunk 等危险动作 → 规划退化成 chitchat 兜底（dangerous_trunk_confirm 根因）。"""
+    agents = ([_agent_dep(f"cloud-{i}", 8) for i in range(40)]
+              + [_agent_dep("edge-vehicle", 74, deployment="edge", kind="edge_fast")])
+    cat = WorkingSet.render_catalog(agents)
+    assert "edge-vehicle" in cat          # 安全核心保住
+    assert "edge-vehicle.act0" in cat     # 其能力（trunk 类比）随之可见
+    assert "cloud-0" not in cat or len(cat) <= 8000  # 非核心被从尾部裁剪以让位
+
+
+def test_render_catalog_no_trim_under_budget():
+    """未超预算时不丢任何 agent（行为同改造前）。"""
+    cat = WorkingSet.render_catalog([_agent_dep("a", 2), _agent_dep("b", 2)])
+    assert "\"a\"" in cat and "\"b\"" in cat
+
+
+def test_render_catalog_keeps_always_include_over_budget():
+    """always-include（chitchat 全局兜底）超预算时也不被裁——否则开放域请求因 catalog 无
+    chitchat 而误路由到 info（cloud_chitchat_streaming 根因）。"""
+    agents = ([_agent_dep(f"cloud-{i}", 8) for i in range(40)]
+              + [_agent_dep("edge-vehicle", 74, deployment="edge", kind="edge_fast"),
+                 _agent_dep("chitchat", 1)])
+    cat = WorkingSet.render_catalog(agents)
+    assert "edge-vehicle" in cat       # 安全核心保住
+    assert "\"chitchat\"" in cat       # always-include 保住
+
+
+def test_render_catalog_edge_core_compact():
+    """edge 车控核心紧凑渲染（仅意图名，不带 slots/desc），避免体积撑爆预算偏置路由。"""
+    item = WorkingSet.render_catalog(
+        [_agent_dep("edge-vehicle", 3, deployment="edge", kind="edge_fast")])
+    assert "edge-vehicle.act0" in item   # 意图名在
+    assert "slots" not in item and "desc" not in item  # 不带 slots/desc

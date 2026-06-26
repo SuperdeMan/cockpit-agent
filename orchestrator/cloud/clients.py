@@ -7,6 +7,8 @@ import logging
 import os
 import grpc
 
+from runtime.grpcio import aio_channel
+
 logger = logging.getLogger("planner.clients")
 from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
@@ -32,22 +34,22 @@ class Clients:
 
     def _registry_stub(self):
         if self._ch_registry is None:
-            self._ch_registry = grpc.aio.insecure_channel(self.registry_addr)
+            self._ch_registry = aio_channel(self.registry_addr)
         return registry_pb2_grpc.RegistryStub(self._ch_registry)
 
     def _llm_stub(self):
         if self._ch_llm is None:
-            self._ch_llm = grpc.aio.insecure_channel(self.llm_addr)
+            self._ch_llm = aio_channel(self.llm_addr)
         return llm_pb2_grpc.LLMGatewayStub(self._ch_llm)
 
     def _memory_stub(self):
         if self._ch_memory is None:
-            self._ch_memory = grpc.aio.insecure_channel(self.memory_addr)
+            self._ch_memory = aio_channel(self.memory_addr)
         return memory_pb2_grpc.MemoryStub(self._ch_memory)
 
     def _edge_stub(self):
         if self._ch_edge is None:
-            self._ch_edge = grpc.aio.insecure_channel(self.cloud_gateway_addr)
+            self._ch_edge = aio_channel(self.cloud_gateway_addr)
         return channel_pb2_grpc.EdgeCloudChannelStub(self._ch_edge)
 
     async def append_turn(self, session_id: str, role: str, text: str,
@@ -115,7 +117,7 @@ class Clients:
     def _agent_stub(self, endpoint: str):
         # F15：按 endpoint 复用 channel（之前每次新建泄漏）
         if endpoint not in self._ch_agents:
-            self._ch_agents[endpoint] = grpc.aio.insecure_channel(endpoint)
+            self._ch_agents[endpoint] = aio_channel(endpoint)
         return agent_pb2_grpc.AgentStub(self._ch_agents[endpoint])
 
     # 敏感上下文键 → 所需 scope。Agent 经 manifest context_scopes 声明后才下发（最小化）。

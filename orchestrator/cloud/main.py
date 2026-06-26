@@ -11,6 +11,7 @@ import os
 import grpc
 from cockpit.orchestrator.v1 import orchestrator_pb2_grpc
 
+from runtime.grpcio import aio_server, run_aio_server
 from .clients import Clients
 from .planning import PlanBuilder
 from .executor import DagExecutor
@@ -66,7 +67,7 @@ async def serve():
         aggregator=aggregator, session=session, perms=perms,
     )
 
-    server = grpc.aio.server()
+    server = aio_server()
     orchestrator_pb2_grpc.add_CloudPlannerServicer_to_server(
         CloudPlannerServicer(engine), server)
     server.add_insecure_port(f"[::]:{port}")
@@ -79,7 +80,7 @@ async def serve():
     interval = float(os.getenv("AGENT_REREGISTER_INTERVAL", "10"))
     tools_task = asyncio.create_task(_reregister_tools(tools, clients, interval))
     try:
-        await server.wait_for_termination()
+        await run_aio_server(server, name="cloud-planner")
     finally:
         tools_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):

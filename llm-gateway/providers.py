@@ -11,9 +11,37 @@ from __future__ import annotations
 import json
 import os
 
+import httpx
+
+# ── 出站 HTTP 连接池 + 超时（复用连接，免去每调用新建 client 的 TLS 握手开销）──
+_HTTP_LIMITS = httpx.Limits(max_connections=32, max_keepalive_connections=16,
+                            keepalive_expiry=30.0)
+_HTTP_CONNECT_S = float(os.getenv("LLM_HTTP_CONNECT_S", "5") or 5)
+_HTTP_READ_CAP_S = float(os.getenv("LLM_HTTP_READ_CAP_S", "75") or 75)   # complete 兜底上限
+_STREAM_STALL_S = float(os.getenv("LLM_STREAM_STALL_S", "30") or 30)     # 流式 per-chunk 静默上限
+_EMBED_READ_CAP_S = float(os.getenv("LLM_EMBED_READ_CAP_S", "25") or 25)
+
+
+def _read_budget(budget_s, cap_s: float) -> float:
+    """上游 read 超时：有调用方 deadline（gRPC context.time_remaining）时取其 90% 收进
+    窗口内——网关先于调用方失败、返回干净错误，而非被调用方中途取消（"无响应"）；
+    无 deadline 时用 cap 兜底。"""
+    try:
+        b = float(budget_s) if budget_s is not None else 0.0
+    except (TypeError, ValueError):
+        b = 0.0
+    if b > 0:
+        return max(1.0, min(cap_s, b * 0.9))
+    return cap_s
+
+
+def _http_timeout(budget_s, read_cap: float) -> httpx.Timeout:
+    return httpx.Timeout(_read_budget(budget_s, read_cap),
+                         connect=min(_HTTP_CONNECT_S, read_cap), pool=5.0)
+
 
 class BaseProvider:
-    async def complete(self, messages, model, temperature, max_tokens, thinking=None):
+    async def complete(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         """returns (content, model_used, finish_reason, (prompt_tokens, completion_tokens)).
 
         thinking: None=用服务商默认（env LLM_DISABLE_THINKING）；True=本次开思考；
@@ -21,11 +49,11 @@ class BaseProvider:
         """
         raise NotImplementedError
 
-    async def stream(self, messages, model, temperature, max_tokens, thinking=None):
+    async def stream(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         raise NotImplementedError
         yield  # pragma: no cover
 
-    async def embed(self, texts, model=""):
+    async def embed(self, texts, model="", timeout_s=None):
         """returns list[list[float]]（与 texts 一一对应）。默认未实现，由子类提供。"""
         raise NotImplementedError
 
@@ -42,17 +70,17 @@ def _mock_embed_one(text: str) -> list[float]:
 
 class MockProvider(BaseProvider):
     """无 API key 时的兜底，保证 PoC 可离线端到端跑通。"""
-    async def complete(self, messages, model, temperature, max_tokens, thinking=None):
+    async def complete(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
         text = f"[mock] 我听到你说「{user}」。配置 LLM_API_KEY 后即可接入真实模型。"
         return text, "mock", "stop", (0, 0)
 
-    async def stream(self, messages, model, temperature, max_tokens, thinking=None):
+    async def stream(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         content, *_ = await self.complete(messages, model, temperature, max_tokens)
         for ch in content:
             yield ch
 
-    async def embed(self, texts, model=""):
+    async def embed(self, texts, model="", timeout_s=None):
         return [_mock_embed_one(t) for t in texts]
 
 
@@ -68,7 +96,7 @@ class AnthropicProvider(BaseProvider):
                 for m in messages if m["role"] in ("user", "assistant")]
         return system or None, msgs
 
-    async def complete(self, messages, model, temperature, max_tokens, thinking=None):
+    async def complete(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         # thinking 形参保持签名一致；Anthropic extended thinking 暂未接线（目标服务商是 MiMo）。
         system, msgs = self._split(messages)
         resp = await self.client.messages.create(
@@ -77,7 +105,7 @@ class AnthropicProvider(BaseProvider):
         text = "".join(b.text for b in resp.content if b.type == "text")
         return text, model, resp.stop_reason, (resp.usage.input_tokens, resp.usage.output_tokens)
 
-    async def stream(self, messages, model, temperature, max_tokens, thinking=None):
+    async def stream(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         system, msgs = self._split(messages)
         async with self.client.messages.stream(
                 model=model, system=system, messages=msgs,
@@ -113,6 +141,12 @@ class OpenAICompatibleProvider(BaseProvider):
         self.embed_api_key = embed_api_key or api_key
         self.embed_auth_style = (embed_auth_style or "bearer").lower()
         self.embed_dimensions = int(embed_dimensions or 0)
+        self._client: httpx.AsyncClient | None = None  # 复用的出站连接池（懒建，绑定运行 loop）
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(limits=_HTTP_LIMITS)
+        return self._client
 
     def _embed_headers(self) -> dict:
         h = {"Content-Type": "application/json"}
@@ -134,8 +168,7 @@ class OpenAICompatibleProvider(BaseProvider):
         """本次调用是否关思考：thinking=None 用构造默认；True/False 覆盖本次。"""
         return self.disable_thinking if thinking is None else (not thinking)
 
-    async def complete(self, messages, model, temperature, max_tokens, thinking=None):
-        import httpx
+    async def complete(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         disable = self._resolve_thinking(thinking)
         # 开思考时给足 token：reasoning 占预算，content 容易被饿空/截断；下限抬到 2048。
         max_out = (max_tokens or 512) if disable else max((max_tokens or 512), 2048)
@@ -152,10 +185,11 @@ class OpenAICompatibleProvider(BaseProvider):
             # 关闭思考即可拿到干净、确定、低延迟的 content。非推理服务商可经 env 关掉本项。
             # 开思考时不发本键（回 MiMo 原生思考态），reasoning_content 留服务端、不取不下发。
             body["thinking"] = {"type": "disabled"}
-        async with httpx.AsyncClient(timeout=120 if not disable else 60) as client:
-            resp = await client.post(self.base_url, headers=self._headers(), json=body)
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await self._get_client().post(
+            self.base_url, headers=self._headers(), json=body,
+            timeout=_http_timeout(timeout_s, _HTTP_READ_CAP_S))
+        resp.raise_for_status()
+        data = resp.json()
 
         content = data["choices"][0]["message"]["content"] or ""
         usage = data.get("usage", {})
@@ -163,8 +197,7 @@ class OpenAICompatibleProvider(BaseProvider):
         completion_tokens = usage.get("completion_tokens", 0)
         return content, model, "stop", (prompt_tokens, completion_tokens)
 
-    async def stream(self, messages, model, temperature, max_tokens, thinking=None):
-        import httpx
+    async def stream(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         disable = self._resolve_thinking(thinking)
         max_out = (max_tokens or 512) if disable else max((max_tokens or 512), 2048)
         body = {
@@ -176,38 +209,41 @@ class OpenAICompatibleProvider(BaseProvider):
         }
         if disable:
             body["thinking"] = {"type": "disabled"}
-        async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream("POST", self.base_url, headers=self._headers(), json=body) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    payload = line[6:]
-                    if payload.strip() == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(payload)
-                        delta = chunk["choices"][0].get("delta", {})
-                        # 只取 content；reasoning_content（思考增量）刻意丢弃，不下发给用户。
-                        text = delta.get("content", "")
-                        if text:
-                            yield text
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
+        # 流式：read 超时作 per-chunk stall 检测（无新 chunk 超时即中止），不让上游卡死吊死整链。
+        stall = _read_budget(timeout_s, _STREAM_STALL_S)
+        async with self._get_client().stream(
+                "POST", self.base_url, headers=self._headers(), json=body,
+                timeout=httpx.Timeout(stall, connect=_HTTP_CONNECT_S, pool=5.0)) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:]
+                if payload.strip() == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                    delta = chunk["choices"][0].get("delta", {})
+                    # 只取 content；reasoning_content（思考增量）刻意丢弃，不下发给用户。
+                    text = delta.get("content", "")
+                    if text:
+                        yield text
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue
 
 
-    async def embed(self, texts, model=""):
+    async def embed(self, texts, model="", timeout_s=None):
         """OpenAI 兼容 /embeddings（百炼 text-embedding-v4 等）。返回 list[list[float]]。"""
-        import httpx
         body = {"model": model or self.embed_model or "text-embedding-v4",
                 "input": list(texts)}
         if self.embed_dimensions:  # v3/v4 支持指定输出维度（须与 memory EMBED_DIM 一致）
             body["dimensions"] = self.embed_dimensions
             body["encoding_format"] = "float"
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(self.embed_url, headers=self._embed_headers(), json=body)
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await self._get_client().post(
+            self.embed_url, headers=self._embed_headers(), json=body,
+            timeout=_http_timeout(timeout_s, _EMBED_READ_CAP_S))
+        resp.raise_for_status()
+        data = resp.json()
         items = sorted(data.get("data", []), key=lambda d: d.get("index", 0))
         return [list(d["embedding"]) for d in items]
 
@@ -273,10 +309,10 @@ class MiMoASRProvider(BaseASRProvider):
 
     def __init__(self, api_key: str):
         self.api_key = api_key
+        self._client: httpx.AsyncClient | None = None
 
     async def transcribe(self, audio: bytes, fmt: str, language: str, model: str):
         import base64
-        import httpx
 
         # 音频编码为 base64 data URI
         mime = f"audio/{fmt or 'wav'}"
@@ -297,10 +333,11 @@ class MiMoASRProvider(BaseASRProvider):
             "asr_options": {"language": language or "auto"},
         }
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(self.BASE_URL, headers=headers, json=body)
-            resp.raise_for_status()
-            result = resp.json()
+        if self._client is None:
+            self._client = httpx.AsyncClient(limits=_HTTP_LIMITS)
+        resp = await self._client.post(self.BASE_URL, headers=headers, json=body, timeout=60)
+        resp.raise_for_status()
+        result = resp.json()
 
         # 响应：choices[0].message.content = 识别文本，usage.seconds = 音频秒数
         text = result["choices"][0]["message"]["content"]
@@ -376,11 +413,11 @@ class MiMoTTSProvider(BaseTTSProvider):
 
     def __init__(self, api_key: str):
         self.api_key = api_key
+        self._client: httpx.AsyncClient | None = None
 
     async def synthesize(self, text: str, voice_id: str, model: str,
                          speed: float, fmt: str):
         import base64
-        import httpx
 
         headers = {
             "api-key": self.api_key,
@@ -401,19 +438,20 @@ class MiMoTTSProvider(BaseTTSProvider):
         # speed 参数：通过 role=user 的风格指令传入（如"语速稍快"）
         # 当前不注入 speed 到请求体，保持简洁；需要时可加 role=user content
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(self.BASE_URL, headers=headers, json=body)
-            resp.raise_for_status()
-            # MiMo TTS 返回 JSON（含 base64 音频），手动解析避免编码问题
-            raw = resp.content  # 原始字节（已自动解压 gzip）
-            try:
-                import json as _json
-                result = _json.loads(raw)
-                audio_b64 = result["choices"][0]["message"]["audio"]["data"]
-                audio_bytes = base64.b64decode(audio_b64)
-            except (ValueError, KeyError, IndexError, UnicodeDecodeError):
-                # fallback：响应体直接是音频字节流
-                audio_bytes = raw
+        if self._client is None:
+            self._client = httpx.AsyncClient(limits=_HTTP_LIMITS)
+        resp = await self._client.post(self.BASE_URL, headers=headers, json=body, timeout=60)
+        resp.raise_for_status()
+        # MiMo TTS 返回 JSON（含 base64 音频），手动解析避免编码问题
+        raw = resp.content  # 原始字节（已自动解压 gzip）
+        try:
+            import json as _json
+            result = _json.loads(raw)
+            audio_b64 = result["choices"][0]["message"]["audio"]["data"]
+            audio_bytes = base64.b64decode(audio_b64)
+        except (ValueError, KeyError, IndexError, UnicodeDecodeError):
+            # fallback：响应体直接是音频字节流
+            audio_bytes = raw
         # 估算时长：PCM16 24kHz mono = 48000 bytes/sec
         bytes_per_sec = 48000 if out_fmt == "pcm16" else 48000  # WAV 头忽略
         duration_ms = int(len(audio_bytes) / bytes_per_sec * 1000) if audio_bytes else 0
