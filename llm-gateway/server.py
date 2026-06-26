@@ -9,6 +9,7 @@ import time
 import logging
 
 import grpc
+import httpx
 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
 from cockpit.llm.v1 import audio_pb2, audio_pb2_grpc
 
@@ -76,8 +77,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             t0 = time.monotonic()
             try:
                 content, used, finish, usage = await self.provider.complete(
-                    msgs, model, temp, max_tokens, thinking=thinking,
-                    timeout_s=context.time_remaining() if context is not None else None)
+                    msgs, model, temp, max_tokens, thinking=thinking)
                 latency_ms = (time.monotonic() - t0) * 1000
 
                 # 写缓存
@@ -95,6 +95,10 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 last_err = e
                 logger.warning("Model %s failed: %s; trying next", model, e)
 
+        # 上游超时 → DEADLINE_EXCEEDED（非 UNAVAILABLE），避免调用方 SDK 把它当瞬时错误重试
+        # 一次致延迟翻倍（曾因此 info/trip 接地合成爆 step 预算）。连接级失败仍 UNAVAILABLE 供重试。
+        if isinstance(last_err, httpx.TimeoutException):
+            await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "llm upstream timeout")
         await context.abort(grpc.StatusCode.UNAVAILABLE, f"all models failed: {last_err}")
 
     async def CompleteStream(self, request, context):
@@ -107,8 +111,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         try:
             async for delta in self.provider.stream(
                     msgs, model, request.temperature or 0.7, request.max_tokens or 512,
-                    thinking=thinking,
-                    timeout_s=context.time_remaining() if context is not None else None):
+                    thinking=thinking):
                 yield llm_pb2.CompleteChunk(delta=delta, done=False)
             yield llm_pb2.CompleteChunk(delta="", done=True)
             latency_ms = (time.monotonic() - t0) * 1000
@@ -116,7 +119,9 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         except Exception as e:
             latency_ms = (time.monotonic() - t0) * 1000
             cost_tracker.record(model, 0, 0, latency_ms, error=True)
-            await context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
+            code = (grpc.StatusCode.DEADLINE_EXCEEDED if isinstance(e, httpx.TimeoutException)
+                    else grpc.StatusCode.UNAVAILABLE)
+            await context.abort(code, str(e))
 
     async def Embed(self, request, context):
         """文本向量化（记忆语义检索）。provider 不支持/失败 → UNAVAILABLE，调用方降级。"""
@@ -125,9 +130,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             return llm_pb2.EmbedResponse(embeddings=[], dim=0)
         model = request.model or os.getenv("LLM_EMBED_MODEL", "")
         try:
-            vecs = await self.provider.embed(
-                texts, model,
-                timeout_s=context.time_remaining() if context is not None else None)
+            vecs = await self.provider.embed(texts, model)
         except NotImplementedError:
             await context.abort(grpc.StatusCode.UNIMPLEMENTED, "provider 不支持 embedding")
             return
