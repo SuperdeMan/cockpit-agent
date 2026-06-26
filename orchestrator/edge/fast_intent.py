@@ -1086,9 +1086,14 @@ def classify_structured(text: str) -> dict | None:
     # "还能跑/能跑多/还能开多/跑多少公里/续航"等剩余里程问法也归此，否则漏到云端被弱 LLM
     # 误判成闲聊（energy_consumption.query 不在 LOCAL_INTENTS，会继续上云）。
     # 注意"开车去X多远"是距离非续航，不含"还能跑/能跑多"等前缀，不会误命中。
-    if ("电量" in t or "电池" in t or ("剩" in t and "电" in t)
-            or "续航" in t or "还能跑" in t or "能跑多" in t
-            or "还能开多" in t or "跑多少公里" in t or "开多少公里" in t):
+    # "电池"单独出现太宽（"固态电池/电池技术/电池行业"是话题，"深入调研固态电池"曾被劫持成
+    # 电量查询）→ 必须与电量级/状态词（多少/还有/剩/几成/百分/状态/健康/够不够/满电）同现才判电量查询。
+    if ("电量" in t or "续航" in t or "还能跑" in t or "能跑多" in t
+            or "还能开多" in t or "跑多少公里" in t or "开多少公里" in t
+            or ("剩" in t and "电" in t)
+            or ("电池" in t and any(w in t for w in
+                                    ("多少", "还有", "几成", "百分", "状态", "健康",
+                                     "够不够", "够用", "满电")))):
         return _s("query", "query", "query", "battery", conf=0.9)
     if "能耗" in t:
         return _s("query", "query", "query", "energy_consumption", conf=0.88)

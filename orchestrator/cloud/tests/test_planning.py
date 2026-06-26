@@ -207,6 +207,24 @@ def test_plain_search_not_hijacked_by_research_net():
     assert plan.steps[0].intent == "info.search"
 
 
+def test_ensure_research_followup_routes_deepen():
+    """『展开第2点』等深挖追问也路由 research.run（Agent 取上次报告对应节深挖）。"""
+    agents = [MockAgent("deep-research", ["research.run"]),
+              MockAgent("info", ["info.search"])]
+
+    async def mock_llm(messages):
+        return ('{"steps":[{"id":"s1","agent_id":"info","intent":"info.search",'
+                '"slots":{"query":"x"}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    for text in ("展开第2点", "再深入第二节", "这部分详细讲讲"):
+        plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+            text, WorkingSet(catalog=agents), PlanContext()))
+        assert any(s.intent == "research.run" for s in plan.steps), text
+
+
 def test_replan_returns_done_or_a_validated_next_batch():
     agents = [MockAgent("navigation", ["navigation.search_poi"])]
     replies = iter([

@@ -406,6 +406,22 @@ class TestBatteryQuery:
         r = classify_structured("当前还剩多少电量")
         assert r["data"]["object"] != "tire_pressure"
 
+    def test_battery_topic_not_hijacked_as_battery_query(self):
+        # "固态电池/电池技术/电池行业"是话题（深度调研主题），不应被端侧判成电量查询，
+        # 否则"深入调研固态电池"被劫持成"电量72%"（裸"电池"过宽，已收窄）。
+        for text in ("深入调研一下固态电池的现状和量产前景",
+                     "固态电池技术", "研究下电池行业的发展"):
+            r = classify_structured(text)
+            if r is not None:
+                assert r["data"].get("object") != "battery", f"{text} 误判成 battery: {r}"
+
+    def test_battery_with_level_or_status_word_still_local(self):
+        # 带电量级/状态词的"电池"查询仍判 battery（不误伤真实电量查询）。
+        for text in ("电池还有多少", "电池剩多少电", "看下电池状态", "电池健康吗"):
+            r = classify_structured(text)
+            assert r is not None, text
+            assert r["data"]["object"] == "battery", text
+
     def test_remaining_phrase_not_split_but_conjunction_still_splits(self):
         import fast_intent as fi
         # "还有多少"是问量短语，不能被当连接词"还有"拆开（否则碎片上云乱答）

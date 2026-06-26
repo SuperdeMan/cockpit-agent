@@ -54,6 +54,12 @@ _TRIP_RESCHEDULE_RE = re.compile(
 _RESEARCH_RE = re.compile(
     r"深入(调研|研究|分析|了解)|深度(调研|研究|分析)|全面(对比|了解|分析|梳理)"
     r"|系统(地)?(了解|梳理|学习|分析)|调研一下|彻底(研究|搞懂|弄懂|了解)|好好(研究|调研)")
+# 调研追问深挖（『展开第N点/再深入第2节/这部分详细讲讲』）→ 也路由 research.run，由 Agent 取上次
+# 报告对应小节深挖（无上次报告则当普通调研）。序号/指代 + 展开/深入/详细，较特异，不劫持普通对话。
+_RESEARCH_FOLLOWUP_RE = re.compile(
+    r"(展开|深入|详细|细说|细讲|多讲|多说)[^，。！？]{0,4}第\s*[一二两三四五六七八九十\d]+\s*[点节部条]"
+    r"|第\s*[一二两三四五六七八九十\d]+\s*[点节部条][^，。！？]{0,4}(展开|详细|深入|细说|细讲)"
+    r"|(这部分|那部分|这一?节|这点|上面那?[点段节])[^，。！？]{0,4}(展开|详细|深入|再说|再讲|讲讲)")
 # 通勤/固定地点：是导航日常目的地，不是多日出行，命中则不触发行程规划
 _TRIP_DEST_BLOCK = {"公司", "家", "单位", "学校", "上班", "这里", "那里", "机场", "车站"}
 _CN_NUM = {"一": "1", "两": "2", "二": "2", "三": "3", "四": "4", "五": "5",
@@ -312,7 +318,8 @@ class PlanBuilder:
         措辞已收窄（深入/深度/全面/系统 + 调研/研究/分析等），不劫持普通『搜一下/查一下』。"""
         if "deep-research" not in agent_map:
             return False
-        if not _RESEARCH_RE.search(text or ""):
+        if not (_RESEARCH_RE.search(text or "")
+                or _RESEARCH_FOLLOWUP_RE.search(text or "")):
             return False
         if not any(s.intent == "research.run" for s in plan.steps):
             steps = self._validated_steps([{

@@ -43,5 +43,7 @@ python -m pytest agents/deep_research/tests --import-mode=importlib -q
 synthesize 分节引用/全局来源/诚实 gaps/兜底、brief 双态产物、agent 端到端 + manifest 一致性。
 
 ## 阶段
-P0 已落地（四段流水线 MVP + 分层路由 + 报告卡）。P1（接地画像/多轮研究上下文/推手机）、
-P2（新闻深挖桥接/异步分钟级深调研）见 `docs/design/2026-06-26-info-agent-deep-research-redesign.md`。
+P0+P1 已落地（真栈 e2e 验证）。P0=四段流水线 MVP + 分层路由 + 报告卡；P1=接地「我」（位置反查 +
+画像语义召回注入子问题）+ 多轮研究上下文（落 memory，「展开第 N 点」聚焦上轮对应小节深挖、不重跑整份调研）+
+报告「记一下」存记忆。P2（新闻个性化/「深挖某条」桥接/异步分钟级深调研/报告推手机/逐子问题渐进简报）
+见 `docs/design/2026-06-26-info-agent-deep-research-redesign.md`。
