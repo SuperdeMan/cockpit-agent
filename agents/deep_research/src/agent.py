@@ -27,12 +27,17 @@ logger = logging.getLogger("agent.deep_research")
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 # 当前活动调研落 memory（多轮深挖复用）；Agent 无状态化，与 trip-planner trip_active 同范式。
 _PROFILE_KEY = "research_active"
-# 追问深挖标记 + 「第N点/节/部分」序号解析（把"再深入第2点"解析到上次报告的第2节）。
+# 追问深挖标记 + 「第N点/节/部」序号解析（把"再深入第2点"解析到上次报告的第2节）。
+# 字符集刻意**不含「条」**——「第N条」专属新闻深挖（_NEWS_ORD_RE），否则会把「详细讲讲第2条新闻」
+# 劫持去解析上次研究报告的第2节（实测踩到）。
 _DEEPEN_MARK = ("深入", "展开", "详细", "细说", "再讲", "讲讲", "多说", "继续讲", "深挖", "细讲")
 _DEEPEN_THIS = ("这部分", "这点", "这块", "这一节", "那部分", "那点", "上面", "刚才", "最后那")
-_ORDINAL_RE = re.compile(r"第\s*(\d+|[一二两三四五六七八九十]+)\s*[点节部条]")
+_ORDINAL_RE = re.compile(r"第\s*(\d+|[一二两三四五六七八九十]+)\s*[点节部]")
 _CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+# 新闻深挖桥接（P2）：『详细讲讲第N条/这条新闻』→ 取上次新闻列表（info 落的 news_active）第N条做小型调研。
+_NEWS_ORD_RE = re.compile(r"第\s*(\d+|[一二两三四五六七八九十]+)\s*条")
+_NEWS_THIS = ("这条新闻", "这条", "那条", "这则", "那则", "上面那条", "刚才那条", "这个新闻")
 # 把研究结论摘要存为长期记忆（"帮我记下/存一下/收藏"）。
 _REMEMBER_MARK = ("记下", "记一下", "存下", "存一下", "收藏", "保存", "记住这", "存到记忆")
 # 地理相关研究：仅这类问题才把当前城市作约束（否则反查城市会把无关主题带偏）。
@@ -68,6 +73,11 @@ class DeepResearchAgent(BaseAgent):
         focus = self._resolve_deepen(raw, prior)
         if focus:
             question = f"{focus}——在前述调研基础上深入展开"
+        else:
+            # 新闻深挖桥接（P2）：『详细讲讲第N条/这条新闻』→ 取上次新闻列表第N条标题做小型调研。
+            news_focus = await self._resolve_news_deepen(ctx, raw)
+            if news_focus:
+                question = f"{news_focus}（事件来龙去脉、背景与影响）"
         if not question:
             return AgentResult(
                 status=NEED_SLOT, speech="您想深入调研什么？",
@@ -177,6 +187,39 @@ class DeepResearchAgent(BaseAgent):
         if idx is None or not (0 <= idx < len(secs)):
             return ""
         return (secs[idx].get("heading") or "").strip()
+
+    async def _resolve_news_deepen(self, ctx, text: str) -> str:
+        """『详细讲讲第N条/这条新闻』→ 取 info 落的 news_active 第N条标题作聚焦调研问题。无法解析返回空。"""
+        t = text or ""
+        if not (any(m in t for m in _DEEPEN_MARK) or "新闻" in t
+                or any(w in t for w in _NEWS_THIS)):
+            return ""
+        try:
+            vals = await ctx.fetch("profile.news_active")
+        except Exception as e:
+            logger.debug("load news_active skipped: %s", e)
+            return ""
+        rawv = vals.get("profile.news_active")
+        if isinstance(rawv, str):
+            try:
+                rawv = json.loads(rawv)
+            except (json.JSONDecodeError, TypeError):
+                return ""
+        items = (rawv or {}).get("items") if isinstance(rawv, dict) else None
+        if not items:
+            return ""
+        idx = None
+        m = _NEWS_ORD_RE.search(t)
+        if m:
+            tok = m.group(1)
+            n = int(tok) if tok.isdigit() else _CN_NUM.get(tok, 0)
+            if n >= 1:
+                idx = n - 1
+        elif any(w in t for w in _NEWS_THIS):
+            idx = 0
+        if idx is None or not (0 <= idx < len(items)):
+            return ""
+        return (items[idx].get("title") or "").strip()
 
     async def _remember_report(self, ctx, prior: dict) -> AgentResult:
         """把上次调研结论存为长期记忆（情景），供以后直接召回。"""

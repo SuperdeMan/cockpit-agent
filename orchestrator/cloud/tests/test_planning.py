@@ -219,7 +219,9 @@ def test_ensure_research_followup_routes_deepen():
     async def mock_resolve(query, top_k=1):
         return []
 
-    for text in ("展开第2点", "再深入第二节", "这部分详细讲讲"):
+    # 含报告小节深挖 + 新闻深挖（第N条/这条新闻）两类，都应路由 research.run
+    for text in ("展开第2点", "再深入第二节", "这部分详细讲讲",
+                 "详细讲讲第2条", "这条新闻详细讲讲"):
         plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
             text, WorkingSet(catalog=agents), PlanContext()))
         assert any(s.intent == "research.run" for s in plan.steps), text

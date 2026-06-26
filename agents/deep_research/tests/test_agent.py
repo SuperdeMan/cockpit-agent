@@ -83,6 +83,16 @@ def test_resolve_deepen_maps_ordinal_to_section():
     assert f("展开", None) == ""                        # 无 prior
 
 
+def test_resolve_news_deepen_maps_ordinal_to_news_title():
+    news = {"items": [{"title": "英伟达发布新GPU"}, {"title": "央行降准"},
+                      {"title": "世界杯开赛"}]}
+    ctx = make_context(context_values={"profile.news_active": json.dumps(news)})
+    agent = DeepResearchAgent()
+    assert asyncio.run(agent._resolve_news_deepen(ctx, "详细讲讲第2条")) == "央行降准"
+    assert asyncio.run(agent._resolve_news_deepen(ctx, "这条新闻讲讲")) == "英伟达发布新GPU"
+    assert asyncio.run(agent._resolve_news_deepen(ctx, "今天天气")) == ""   # 无深挖/新闻词
+
+
 def test_research_deepen_focuses_prior_section():
     prior = {"question": "固态电池", "summary": "...",
              "sections": [{"heading": "技术原理"}, {"heading": "量产风险"}]}

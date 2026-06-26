@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import time
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -74,6 +75,50 @@ def _extract_news_subject(raw: str) -> str:
                 s, changed = s[len(pre):], True
     s = s.strip()
     return "" if s in _NEWS_NON_SUBJECT else s
+
+
+# ── 新闻个性化：从画像兴趣给泛新闻排序（P2）─────────────────────────
+_INTEREST_STRIP = ("用户", "我", "他", "她", "经常", "比较", "特别", "平时", "喜欢",
+                   "关注", "感兴趣", "对", "想看", "想了解", "希望", "看", "爱看", "在意")
+_INTEREST_STOP = {"新闻", "资讯", "领域", "方面", "内容", "信息", "话题", "东西", "这些",
+                  "一些", "相关", "等等", "之类"}
+
+
+def _news_interest_keywords(texts: list[str]) -> list[str]:
+    """从召回的画像兴趣文本里抽兴趣关键词（剥『用户关注/喜欢…』前缀、去停用词、去尾缀『新闻/资讯』）。"""
+    kws, seen = [], set()
+    for t in texts:
+        s = (t or "").strip()
+        changed = True
+        while changed and s:                       # 循环剥前缀（用户关注/我喜欢/对…）
+            changed = False
+            for p in _INTEREST_STRIP:
+                if s.startswith(p):
+                    s, changed = s[len(p):], True
+        for tok in re.split(r"[、,，。;；和及与以及/\s（）()]+", s):
+            tok = re.sub(r"(新闻|资讯|领域|方面|动态|消息|感兴趣|有兴趣|话题)$", "",
+                         tok.strip("的等之类 ")).strip()
+            if (2 <= len(tok) <= 8 and tok not in _INTEREST_STOP
+                    and re.search(r"[一-鿿A-Za-z]", tok) and tok not in seen):
+                seen.add(tok)
+                kws.append(tok)
+    return kws[:8]
+
+
+def _rank_news_by_interest(raw: list[dict], kws: list[str]) -> tuple[list[dict], list[str]]:
+    """命中兴趣关键词的新闻置顶（稳定排序，同分保持原序）。返回 (排序后, 实际命中的关键词)。"""
+    if not kws:
+        return raw, []
+    hit: list[str] = []
+
+    def score(n: dict) -> int:
+        text = (n.get("title") or "") + (n.get("snippet") or "")
+        ks = [k for k in kws if k in text]
+        hit.extend(ks)
+        return len(ks)
+
+    ranked = sorted(raw, key=lambda n: -score(n))
+    return ranked, sorted(set(hit))
 
 
 def _plan_search(query: str) -> tuple[int, str]:
@@ -206,6 +251,81 @@ class InfoAgent(BaseAgent):
         except Exception:
             self._stock_eastmoney = None
         self._fallback_news = MockNewsProvider()  # 新闻 provider 失败时的离线兜底
+        # 主动早报（P2 雏形）：NATS 连接 + 每日一次去重
+        self._nc = None
+        self._last_briefing_date = ""
+
+    # ── 主动早报（P2 雏形，响应式；复用 road-safety on_start→agent.proactive 范式）──
+    async def on_start(self) -> None:
+        """serve() 启动后订阅 NATS vehicle.state.changed；无 NATS_URL/连接失败 → 静默禁用。"""
+        nats_url = os.getenv("NATS_URL", "")
+        if not nats_url:
+            return
+        try:
+            import nats
+            self._nc = await nats.connect(nats_url, max_reconnect_attempts=-1)
+        except Exception as e:
+            logger.warning("info: NATS 连接失败，主动早报禁用：%s", e)
+            return
+        await self._nc.subscribe("vehicle.state.changed", cb=self._on_state_event)
+        logger.info("info: 已订阅 vehicle.state.changed，开启主动早报雏形")
+
+    async def _on_state_event(self, msg) -> None:
+        """晨间（6-10 点）首次行驶（挂挡/起步）→ 每日一次主动播报新闻速览（best-effort）。"""
+        try:
+            event = json.loads(msg.data.decode())
+        except Exception:
+            return
+        if not self._is_morning_drive(event):
+            return
+        today = _shanghai_now().strftime("%Y-%m-%d")
+        if self._last_briefing_date == today:        # 每日一次
+            return
+        self._last_briefing_date = today
+        await self._publish_morning_briefing()
+
+    @staticmethod
+    def _has_drive_start(changes) -> bool:
+        """changes 里是否出现「起步」信号（挂挡 D/R/S 或车速>0）。"""
+        for c in (changes or []):
+            if c.get("key") == "gear" and str(c.get("new")) in ("D", "R", "S"):
+                return True
+            if c.get("key") in ("speed", "speed_kmh"):
+                try:
+                    if float(c.get("new") or 0) > 0:
+                        return True
+                except (TypeError, ValueError):
+                    pass
+        return False
+
+    @staticmethod
+    def _is_morning_drive(event: dict) -> bool:
+        return (6 <= _shanghai_now().hour < 10
+                and InfoAgent._has_drive_start(event.get("changes")))
+
+    async def _publish_morning_briefing(self) -> None:
+        """聚合 top 新闻 → 发 agent.proactive（edge 网关订阅后广播给 HMI）。"""
+        if not self._nc:
+            return
+        try:
+            raw = self._dedup_news(await self._gather_news("", 6, None))[:3]
+        except Exception as e:
+            logger.debug("info: 早报聚合失败：%s", e)
+            return
+        if not raw:
+            return
+        heads = "；".join(f"{i}. {self._clean_title(n['title'])}"
+                         for i, n in enumerate(raw, 1))
+        speech = f"早安！今天有几条值得关注的新闻——{heads}。说『看新闻』我给你逐条讲。"
+        payload = {"type": "morning_news", "speech": speech,
+                   "agent_id": self.manifest.agent_id, "ts": int(time.time() * 1000)}
+        try:
+            await self._nc.publish(
+                "agent.proactive",
+                json.dumps(payload, ensure_ascii=False).encode())
+            logger.info("info: 主动早报 %s", speech[:40])
+        except Exception as e:
+            logger.debug("info: 主动早报发布失败：%s", e)
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         handlers = {
@@ -876,6 +996,13 @@ class InfoAgent(BaseAgent):
         if not raw:
             return AgentResult(speech="暂无新闻资讯。")
 
+        # 个性化（P2）：泛新闻（无指定 topic）时按画像兴趣置顶；有明确 topic 不重排（用户已指定）。
+        hit: list[str] = []
+        if not topic:
+            interests = await self._recall_interests(ctx)
+            if interests:
+                raw, hit = _rank_news_by_interest(raw, interests)
+
         overview, summaries = await self._summarize_news_list(subject, raw)
         lines, items = [], []
         for i, n in enumerate(raw, 1):
@@ -889,12 +1016,37 @@ class InfoAgent(BaseAgent):
         # 卡片 = 可点开的来源清单（想看原文才点）。
         head = overview or (f"关于{topic}的新闻有 {len(raw)} 条：" if topic
                             else f"今天值得关注的新闻有 {len(raw)} 条：")
+        if hit:                                    # 个性化命中 → 告知优先了哪些关注点
+            head = f"（已为你优先放了关注的{'、'.join(hit[:3])}）" + head
         speech = head + "\n" + "\n".join(lines)
+        await self._save_news_active(ctx, items)   # 持久化供「深挖第N条」桥接 research.run（P2）
         fresh = [n["publish_time"] for n in raw
                  if n["publish_time"] and n["publish_time"] != "mock"]
         card = {"type": "news_brief", "topic": topic, "items": items,
                 "freshness": max(fresh) if fresh else ""}
-        return AgentResult(speech=speech, ui_card=card, data={"items": items})
+        return AgentResult(speech=speech, ui_card=card,
+                           follow_up="想深入某条说『详细讲讲第N条』。",
+                           data={"items": items})
+
+    async def _recall_interests(self, ctx) -> list[str]:
+        """召回用户兴趣画像 → 兴趣关键词（供泛新闻个性化排序）。无 user_id/无记忆 → []。"""
+        try:
+            hits = await ctx.recall(query="关注 兴趣 喜欢 领域 行业 话题",
+                                    top_k=8, min_score=0.15)
+        except Exception as e:
+            logger.debug("news interest recall skipped: %s", e)
+            return []
+        return _news_interest_keywords([str(h.get("text", "")) for h in hits if h.get("text")])
+
+    async def _save_news_active(self, ctx, items: list[dict]) -> None:
+        """持久化当前新闻列表（标题/来源），供深调研「深挖第N条」桥接定位（best-effort）。"""
+        try:
+            await ctx.save_profile("news_active", {
+                "items": [{"title": it.get("title", ""), "source": it.get("source", "")}
+                          for it in items[:12]],
+            })
+        except Exception as e:
+            logger.debug("save news_active skipped: %s", e)
 
     # ── 股票 ─────────────────────────────────────────────────
 
