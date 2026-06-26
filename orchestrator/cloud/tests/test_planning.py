@@ -168,6 +168,45 @@ def test_parent_permission_covers_child_scope_during_planning():
     assert plan.steps[0].required_permissions == ["vehicle.control.hvac"]
 
 
+def test_ensure_research_step_routes_deep_research():
+    """弱 LLM 把『深入调研 X』误路由成 info.search → 确定性兜底纠偏到 research.run。"""
+    agents = [MockAgent("deep-research", ["research.run"]),
+              MockAgent("info", ["info.search"])]
+
+    async def mock_llm(messages):
+        return ('{"steps":[{"id":"s1","agent_id":"info","intent":"info.search",'
+                '"slots":{"query":"固态电池"}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        "深入调研一下固态电池现状", WorkingSet(catalog=agents), PlanContext()))
+
+    assert len(plan.steps) == 1
+    assert plan.steps[0].intent == "research.run"
+    assert plan.steps[0].agent_id == "deep-research"
+
+
+def test_plain_search_not_hijacked_by_research_net():
+    """普通『搜一下 X』不被深调研兜底劫持，仍走 info.search 单轮快查。"""
+    agents = [MockAgent("deep-research", ["research.run"]),
+              MockAgent("info", ["info.search"])]
+
+    async def mock_llm(messages):
+        return ('{"steps":[{"id":"s1","agent_id":"info","intent":"info.search",'
+                '"slots":{"query":"固态电池"}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        "搜一下固态电池", WorkingSet(catalog=agents), PlanContext()))
+
+    assert all(s.intent != "research.run" for s in plan.steps)
+    assert plan.steps[0].intent == "info.search"
+
+
 def test_replan_returns_done_or_a_validated_next_batch():
     agents = [MockAgent("navigation", ["navigation.search_poi"])]
     replies = iter([

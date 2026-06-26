@@ -15,6 +15,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
+from agents._sdk.grounding import (clean_snippet, fallback_brief,
+                                   grounded_synthesis, latest_published)
+from agents._sdk.retrieval import retrieve
 from .providers import (
     build_weather_provider, build_search_provider,
     build_news_provider, build_stock_provider, build_sports_provider,
@@ -24,8 +27,6 @@ from .providers.mock import MockNewsProvider
 from .providers.amap_geocoder import build_location_resolver
 
 logger = logging.getLogger("agent.info")
-
-_LIST_MARKER = re.compile(r"(?m)^\s*(?:[-*•]|(?:\d+|[一二三四五六七八九十]+)[.、)）])\s*")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 
@@ -446,146 +447,6 @@ class InfoAgent(BaseAgent):
 
     # ── 联网搜索 ──────────────────────────────────────────────
 
-    @staticmethod
-    def _clean_snippet(text: str) -> str:
-        """清理搜索结果的 snippet，去掉省略号和多余空白。"""
-        if not text:
-            return ""
-        # 去掉末尾的省略号
-        text = re.sub(r'[.。…]{2,}$', '', text.strip())
-        # 去掉中间的省略号（保留语义）
-        text = text.replace(' ... ', '，').replace('…', '，')
-        return text.strip()
-
-    @staticmethod
-    def _latest_published(results) -> str:
-        """取最新发布时间（ISO 字符串可按字典序比较），供卡片时效展示。"""
-        dates = [r.published for r in results if getattr(r, "published", "")]
-        return max(dates) if dates else ""
-
-    @staticmethod
-    def _fallback_brief(query: str, sources: list[dict]) -> str:
-        """LLM 不可用时的诚实兜底：用清理后的 snippet 拼一句简述，不编造、不罗列编号。"""
-        points = []
-        for s in sources[:2]:
-            t = (s.get("snippet") or "").strip().rstrip("。")
-            if t:
-                points.append(t)
-        lead = f"关于「{query}」，" if query else ""
-        if points:
-            return lead + "；".join(points) + "。"
-        return lead + "暂时没有足够资料形成可靠结论，建议稍后再查。"
-
-    @staticmethod
-    def _parse_synth(raw: str) -> dict | None:
-        """解析接地合成的结构化输出。JSON 解析失败则把整段当作答案文本（去列表编号）。"""
-        text = (raw or "").strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            nl = text.find("\n")
-            if nl != -1 and text[:nl].strip().lower() in ("json", ""):
-                text = text[nl + 1:]
-        start, end = text.find("{"), text.rfind("}")
-        if start != -1 and end > start:
-            try:
-                obj = json.loads(text[start:end + 1])
-                answer = str(obj.get("answer") or "").strip()
-                if answer:
-                    kp = [str(p).strip() for p in (obj.get("key_points") or [])
-                          if str(p).strip()]
-                    conf = str(obj.get("confidence") or "medium").lower()
-                    if conf not in ("high", "medium", "low"):
-                        conf = "medium"
-                    used = [int(i) for i in (obj.get("used_sources") or [])
-                            if str(i).isdigit()]
-                    return {"answer": answer, "key_points": kp[:8],
-                            "confidence": conf, "used_sources": used}
-            except (ValueError, TypeError):
-                pass
-        # 非 JSON：剥离列表编号，合并为连续文本作为答案
-        flat = _LIST_MARKER.sub("", text)
-        flat = " ".join(line.strip() for line in flat.splitlines() if line.strip())
-        if flat:
-            return {"answer": flat, "key_points": [], "confidence": "medium",
-                    "used_sources": []}
-        return None
-
-    async def _enrich_empty_content(self, sources: list[dict], meta) -> None:
-        """Exa 偶有结果正文为空时，用 AnySearch extract 补抓正文（best-effort）。
-
-        仅补前 3 条且原正文为空者，单条失败静默跳过——绝不阻断主链/不引入编造。
-        """
-        if not self.extractor:
-            return
-        for s in sources[:3]:
-            if s.get("content") or not s.get("url"):
-                continue
-            try:
-                text = await self.extractor.extract(s["url"], meta=meta)
-                if text:
-                    s["content"] = text[:1500]
-            except (ProviderError, Exception) as e:
-                logger.debug("extract enrich skipped: %s", e)
-
-    async def _synthesize_grounded(self, subject: str,
-                                   sources: list[dict]) -> dict | None:
-        """基于正文级资料接地合成。返回 {answer,key_points,confidence,used_sources}
-        或 None（LLM 不可用，调用方走诚实兜底）。
-
-        与旧 ``_summarize_sources`` 的本质区别：喂正文而非 snippet；要求**无依据即弃权**
-        而不是「先把已知信息告诉用户」，从根上消除编造（修 R1/R2）。
-        """
-        # 控制 prompt 体量：限 5 源、每源正文截 1000 字符——过大 prompt 会使上游
-        # LLM 推理超时（实测 5×1800 字符触发 DEADLINE_EXCEEDED 退化为 snippet 拼接）。
-        used = sources[:5]
-        blocks = []
-        for i, s in enumerate(used):
-            # 榜单/表格常在正文较深处：给最权威的首条更多正文配额，其余收紧，控总量防超时
-            cap = 2400 if i == 0 else 900
-            body = (s.get("content") or s.get("snippet") or "").strip()[:cap]
-            head = f"[{s['idx']}] {s['title']}（来源：{s['source']}"
-            if s.get("published"):
-                head += f"，发布：{s['published']}"
-            head += "）"
-            blocks.append(f"{head}\n{body}")
-        materials = "\n\n".join(blocks)
-        prompt = (
-            f"用户问题：{subject}\n"
-            f"当前时间：{_shanghai_now():%Y年%m月%d日 %H:%M}（Asia/Shanghai）\n\n"
-            f"以下是检索到的资料（共{len(used)}条，方括号内为编号）：\n"
-            f"{materials}\n\n"
-            "请只依据上述资料用中文作答，并严格遵守：\n"
-            "1. 先给核心结论，再按需展开；不要说「根据搜索结果/资料显示」这类废话。\n"
-            "2. 资料未覆盖的内容，明确说明「未能从检索到的资料中确认」，"
-            "禁止编造对阵、比分、时间、数字、人名或因果关系。\n"
-            "3. **排行榜/榜单/数据类**：以**最权威且最新**的那一条资料为准、照它的数据呈现，"
-            "不要用你自己的记忆补全或改写名次/数字；不同资料数字冲突或时效不同时，取最新权威者"
-            "并给出**前后一致**的结论、注明依据时间，**绝不**把互相矛盾的数字混进同一答案"
-            "（例如说榜首16球却又称另一人也16球并列，自相矛盾）。\n"
-            "4. 只输出一个 JSON 对象，不要额外文字，格式：\n"
-            '{"answer": "给用户的结论文本", "key_points": ["要点1", "要点2"], '
-            '"confidence": "high|medium|low", "used_sources": [1, 2]}\n'
-            "answer 的可读性很重要：若有多个要点/条目/步骤，**每条单独成行**"
-            "（用真实换行符 \\n 分隔，可带序号），不要把多条挤在一行；"
-            "解释类问题用连贯段落、先结论后展开。"
-            "key_points 是卡片用精简要点（每条≤30字，可为空）；"
-            "confidence 反映资料对问题的覆盖程度；used_sources 是真正支撑结论的资料编号。"
-        )
-        try:
-            # timeout 20s：比默认 10s 宽（大 prompt 需要），又收敛体感卡顿；裁剪后通常 5~10s 完成。
-            raw = await self.llm.complete([
-                {"role": "system", "content":
-                 "你是严谨的车载信息编辑，只能依据提供的资料作答，宁可说没有也绝不编造。"},
-                {"role": "user", "content": prompt},
-            ], temperature=0.2, max_tokens=600, timeout=20)
-        except Exception as e:
-            logger.warning("grounded synthesis failed: %s", e)
-            return None
-        raw = (raw or "").strip()
-        if not raw or raw.startswith("[mock]"):
-            return None
-        return self._parse_synth(raw)
-
     async def _search(self, intent, ctx, meta) -> AgentResult:
         query = (intent.slots.get("query") or "").strip()
         if not query:
@@ -601,9 +462,10 @@ class InfoAgent(BaseAgent):
         # 时效敏感（榜单/排名/统计…）→ 让 Exa 抓实时页面，避免缓存快照给旧数据
         livecrawl = "preferred" if _is_fresh_sensitive(query) else ""
         try:
-            results = await self.search.search(
-                query, limit=limit, meta=meta,
-                recency_days=recency_days, category=category, livecrawl=livecrawl)
+            # 检索 + 正文补抓走 _sdk 共享内核（与 deep-research 同源，改一处全覆盖）
+            sources = await retrieve(
+                self.search, query, limit=limit, recency_days=recency_days,
+                category=category, livecrawl=livecrawl, extractor=self.extractor, meta=meta)
         except ProviderError as e:
             logger.warning("search failed: %s", e)
             return AgentResult(
@@ -611,28 +473,24 @@ class InfoAgent(BaseAgent):
                 speech="联网检索暂时不可用，无法确认最新结果，请稍后再试。",
             )
 
-        if not results:
+        if not sources:
             return AgentResult(speech=f"没有找到关于「{query}」的搜索结果。")
 
-        sources = [{"idx": i + 1, "title": r.title, "url": r.url, "source": r.source,
-                    "published": r.published, "content": r.content,
-                    "snippet": self._clean_snippet(r.snippet)}
-                   for i, r in enumerate(results)]
-        await self._enrich_empty_content(sources, meta)
-        synth = await self._synthesize_grounded(query, sources)
+        # 接地合成走 _sdk 共享内核（强制引用 + 无依据弃权）；失败诚实兜底
+        synth = await grounded_synthesis(self.llm, query, sources)
         if synth:
             speech, confidence = synth["answer"], synth["confidence"]
         else:
-            speech, confidence = self._fallback_brief(query, sources), "low"
+            speech, confidence = fallback_brief(query, sources), "low"
 
         # search_result：气泡给结论，卡片只给证据（来源/时效/置信度）——不放结论文本，
         # 也不放 key_points（要点与气泡结论重复，用户反馈像"又一个总结"）。
         card = {
             "type": "search_result",
             "query": query,
-            "sources": [{"title": r.title, "url": r.url, "source": r.source,
-                         "published": r.published} for r in results],
-            "freshness": self._latest_published(results),
+            "sources": [{"title": s["title"], "url": s["url"], "source": s["source"],
+                         "published": s["published"]} for s in sources],
+            "freshness": latest_published(sources),
             "confidence": confidence,
         }
         return AgentResult(speech=speech, ui_card=card,
@@ -907,7 +765,7 @@ class InfoAgent(BaseAgent):
                 query, limit=limit + 5, meta=meta, recency_days=2, category="news")
             exa = [{"title": r.title, "url": r.url, "source": r.source,
                     "publish_time": r.published,
-                    "snippet": self._clean_snippet(r.snippet or (r.content[:160] if r.content else ""))}
+                    "snippet": clean_snippet(r.snippet or (r.content[:160] if r.content else ""))}
                    for r in results
                    if r.title and not self._is_junk_news(r.title, r.url, r.content)]
             if exa:
@@ -920,7 +778,7 @@ class InfoAgent(BaseAgent):
             logger.warning("news failed, fallback to mock: %s", e)
             items = await self._fallback_news.headlines(topic=topic, limit=limit, meta=meta)
         return [{"title": n.title, "url": "", "source": n.source,
-                 "publish_time": n.publish_time, "snippet": self._clean_snippet(n.summary)}
+                 "publish_time": n.publish_time, "snippet": clean_snippet(n.summary)}
                 for n in items if not self._is_junk_news(n.title, "", n.summary)]
 
     @staticmethod

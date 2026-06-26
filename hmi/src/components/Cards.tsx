@@ -4,7 +4,7 @@ import { useState } from 'react'
 import type {
   UiCard, WeatherCard, ForecastCard, StockCard,
   NewsCard, SearchCard, SearchAnswerCard, NewsDigestCard,
-  SearchResultCard, NewsBriefCard, SportsScoresCard, SportsScorersCard,
+  SearchResultCard, NewsBriefCard, ResearchReportCard, SportsScoresCard, SportsScorersCard,
   RoutePlanCard, ChargingRouteCard, TripItineraryCard, PoiListCard, PoiDetailCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
@@ -40,6 +40,7 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
     case 'search_answer': return <SearchAnswerCardView card={card} />
     case 'search_result': return <SearchResultCardView card={card} />
     case 'news_brief': return <NewsBriefCardView card={card} />
+    case 'research_report': return <ResearchReportCardView card={card} />
     case 'sports_scores': return <SportsScoresCardView card={card} />
     case 'sports_scorers': return <SportsScorersCardView card={card} />
     case 'route_plan': return <RoutePlanCardView card={card} />
@@ -387,6 +388,55 @@ function SearchResultCardView({ card }: { card: SearchResultCard }) {
       <CardHead icon="🔍" title={card.query} freshness={card.freshness} />
       <SourceList sources={card.sources} />
       <ConfidenceBadge level={card.confidence} />
+    </div>
+  )
+}
+
+// 深度调研报告卡：气泡播一段式语音简报、卡片给可读分节报告（每节结论+引用+置信度）+ 未覆盖 gaps。
+// 行车听简报、泊车展开读报告——首节默认展开，其余折叠（避免行车态一屏长文）。
+const _CONF_CN: Record<string, string> = { high: '高', medium: '中', low: '低' }
+
+function ResearchReportCardView({ card }: { card: ResearchReportCard }) {
+  const [open, setOpen] = useState(false)
+  const sections = card.sections || []
+  const shown = open ? sections : sections.slice(0, 1)
+  return (
+    <div className="card card-evidence">
+      <CardHead icon="📑" title={card.question || '深度调研'} freshness={card.freshness} />
+      <ConfidenceBadge level={card.overall_confidence} />
+      <div style={{ marginTop: 6 }}>
+        {shown.map((s, i) => (
+          <div key={i} style={{ marginBottom: 10 }}>
+            {s.heading && (
+              <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                {s.heading}
+                {s.confidence && (
+                  <span style={{ opacity: 0.6, fontWeight: 400, fontSize: '0.85em' }}>
+                    {' '}· 置信度{_CONF_CN[s.confidence] ?? s.confidence}
+                  </span>
+                )}
+              </div>
+            )}
+            <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{s.body}</div>
+            {!!(s.citations && s.citations.length) && (
+              <div style={{ marginTop: 3, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {s.citations.map((c) => <span key={c} className="ev-source-idx">{c}</span>)}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {sections.length > 1 && (
+        <button className="ev-more" onClick={() => setOpen(!open)}>
+          {open ? '收起报告' : `展开完整报告（共 ${sections.length} 节）`}
+        </button>
+      )}
+      {!!(card.gaps && card.gaps.length) && (
+        <div style={{ marginTop: 8, opacity: 0.75, fontSize: '0.9em' }}>
+          ⚠ 资料未充分覆盖：{card.gaps.join('；')}
+        </div>
+      )}
+      <SourceList sources={card.sources} />
     </div>
   )
 }

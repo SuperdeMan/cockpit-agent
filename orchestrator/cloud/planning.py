@@ -48,6 +48,12 @@ _TRIP_STATUS_RE = re.compile(
 _TRIP_RESCHEDULE_RE = re.compile(
     r"时间不够|来不及|赶不及|太累了|好累|累坏|累死|提前回|早点回|早些回|提前结束"
     r"|精简.{0,2}行程|简化行程|行程太满|玩不完|少玩|少去")
+# 深度调研确定性兜底：弱 LLM 易把『深入调研 X』误路由成 info.search/chitchat（给一段浅答）→
+# 确定性改走 research.run。措辞要明确（深入/深度/全面/系统 + 调研/研究/分析/对比/了解），
+# 避免劫持普通『搜一下/查一下』（那仍走 info.search 单轮快查）。
+_RESEARCH_RE = re.compile(
+    r"深入(调研|研究|分析|了解)|深度(调研|研究|分析)|全面(对比|了解|分析|梳理)"
+    r"|系统(地)?(了解|梳理|学习|分析)|调研一下|彻底(研究|搞懂|弄懂|了解)|好好(研究|调研)")
 # 通勤/固定地点：是导航日常目的地，不是多日出行，命中则不触发行程规划
 _TRIP_DEST_BLOCK = {"公司", "家", "单位", "学校", "上班", "这里", "那里", "机场", "车站"}
 _CN_NUM = {"一": "1", "两": "2", "二": "2", "三": "3", "四": "4", "五": "5",
@@ -197,15 +203,17 @@ class PlanBuilder:
             plan = await self._fallback(text, agents)
 
         # 确定性兜底（覆盖 LLM 解析成功 + 降级语义路由两条路径）：
-        # 先判修改意图（『第N天换一个』走 trip.modify，与新规划互斥）；非修改再判新出行
-        # （『去X几天』补 trip.plan）。否则弱 LLM 会把这两类都误回天气/充电、漏掉行程。
-        # 行程类确定性兜底（互斥，按特异性排序）：导航 > 重排 > 状态 > 修改 > 新规划。
-        for ensure in (self._ensure_trip_navigate, self._ensure_trip_reschedule,
-                       self._ensure_trip_status, self._ensure_trip_modify):
-            if ensure(plan, text, agent_map):
-                break
-        else:
-            self._ensure_trip_step(plan, text, agent_map)
+        # 深度调研最具体，先判（『深入调研 X』→ research.run，与行程互斥）；
+        # 非调研再判行程：先修改意图（『第N天换一个』走 trip.modify），非修改再判新出行
+        # （『去X几天』补 trip.plan）。否则弱 LLM 会把这些误回天气/充电/搜索、漏掉重意图。
+        if not self._ensure_research_step(plan, text, agent_map):
+            # 行程类确定性兜底（互斥，按特异性排序）：导航 > 重排 > 状态 > 修改 > 新规划。
+            for ensure in (self._ensure_trip_navigate, self._ensure_trip_reschedule,
+                           self._ensure_trip_status, self._ensure_trip_modify):
+                if ensure(plan, text, agent_map):
+                    break
+            else:
+                self._ensure_trip_step(plan, text, agent_map)
         step_summary = [(s.id, s.agent_id, s.intent) for s in plan.steps]
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan
@@ -294,6 +302,27 @@ class PlanBuilder:
             complexity=complexity,
             goal=goal,
         )
+
+    def _ensure_research_step(self, plan: "Plan", text: str, agent_map: dict) -> bool:
+        """确定性兜底：『深入调研/深度分析/全面对比 X』→ 单步 research.run（替换计划）。
+
+        弱 LLM 常把深度调研误路由成 info.search/chitchat（给一段浅答）。命中明确的深调研措辞且
+        deep-research 可用时，把计划替换为单步 research.run；question 经 slots.query 传原话，
+        由 Agent 拆成多视角子问题。命中即返回 True，调用方据此跳过行程兜底（二者互斥）。
+        措辞已收窄（深入/深度/全面/系统 + 调研/研究/分析等），不劫持普通『搜一下/查一下』。"""
+        if "deep-research" not in agent_map:
+            return False
+        if not _RESEARCH_RE.search(text or ""):
+            return False
+        if not any(s.intent == "research.run" for s in plan.steps):
+            steps = self._validated_steps([{
+                "id": "s_research", "agent_id": "deep-research", "intent": "research.run",
+                "slots": {"query": text or ""}, "depends_on": [], "slot_refs": {},
+            }], agent_map)
+            if steps:
+                plan.steps = steps
+                logger.info("Ensured research.run step (safety net)")
+        return True
 
     def _ensure_trip_step(self, plan: "Plan", text: str, agent_map: dict) -> None:
         """确定性兜底：多日出行必出行程规划（对最终 Plan 生效，覆盖解析/降级两条路径）。

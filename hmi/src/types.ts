@@ -47,6 +47,7 @@ export type UiCard =
   | NewsDigestCard
   | SearchResultCard
   | NewsBriefCard
+  | ResearchReportCard
   | SportsScoresCard
   | SportsScorersCard
   | RoutePlanCard
@@ -126,6 +127,19 @@ export type NewsBriefCard = {
   type: 'news_brief'
   topic: string
   items: Array<{ title: string; url?: string; source: string; publish_time?: string; summary?: string }>
+  freshness?: string
+}
+
+// 深度调研报告卡（独立 deep-research Agent 产出）：分节可读报告——气泡给一段式语音简报，
+// 卡片给分节结论 + 引用 + 置信度 + 未覆盖 gaps（泊车/手机可读）。
+export type ResearchReportCard = {
+  type: 'research_report'
+  question: string
+  summary?: string
+  sections: Array<{ heading: string; body: string; citations?: number[]; confidence?: Confidence }>
+  sources: Array<{ idx?: number; title: string; url?: string; source?: string; published?: string }>
+  overall_confidence?: Confidence
+  gaps?: string[]
   freshness?: string
 }
 
@@ -365,6 +379,7 @@ export const AGENT_CATALOG: AgentMeta[] = [
   { id: 'navigation', label: '导航出行', desc: '搜索 POI、导航、充电站、逆地理编码', icon: '🧭' },
   { id: 'info', label: '信息助手', desc: '天气、预报、预警、空气质量、联网搜索、新闻、股票', icon: 'ℹ️' },
   { id: 'trip-planner', label: '行程规划', desc: '多日自驾行程编排', icon: '🗺️' },
+  { id: 'deep-research', label: '深度调研', desc: '多视角联网深调研，出带引用的分节报告', icon: '🔬' },
   { id: 'food-ordering', label: '餐饮点单', desc: '找餐厅、订位、点餐', icon: '🍜' },
   { id: 'parking-payment', label: '停车缴费', desc: '找车位、停车缴费', icon: '🅿️' },
   { id: 'manual-rag', label: '用车手册', desc: '车辆说明书问答（RAG）', icon: '📖' },

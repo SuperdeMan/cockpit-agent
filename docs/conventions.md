@@ -20,6 +20,7 @@
 | (车控/媒体) | orchestrator/edge | core | system | **edge** | 50070 | hvac.*, window.*, media.*（端侧 Fast Intent 直执行）|
 | payment-gateway | payment-gateway | core | system | cloud | 50071 | 支付网关（非 Agent，统一支付出口） |
 | road-safety | road_safety | core | first_party | cloud | 50072 | safety.driving_advice, safety.weather_alert, safety.road_condition |
+| deep-research | deep_research | ecosystem | first_party | cloud | 50073 | research.run |
 
 > 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent（50073）。新增时按本表分配端口与 intent 命名空间。
 
@@ -47,6 +48,7 @@
 | `manual.query` | manual-rag | cloud | question | RAG |
 | `trip.plan` | trip-planner | cloud | destination, days, preferences | 跨 Agent 协作(Phase1)；NEED_CONFIRM 确认方案 |
 | `trip.modify` | trip-planner | cloud | modification | 修改已有行程（局部重规划）；NEED_CONFIRM |
+| `research.run` | deep-research | cloud | query, topic, question | 深度调研：LLM 拆多视角子问题→有界并行迭代检索→分节接地报告 + 一段式语音简报；HEAVY_INTENT（动态开思考+过程区）；出 research_report 卡；「深入调研/全面对比 X」编排层 `_ensure_research_step` 兜底纠偏（不劫持普通搜索）|
 | `charging.find` | charging-planner | cloud | destination, soc, prefer | 找充电站。带 destination → 按目的地搜、最优站作为导航途经点（出 charging_route 卡 + data.waypoint，聚合器并入 navigate）；无 destination → 按当前位置出附近列表 |
 | `charging.plan` | charging-planner | cloud | destination, soc | 规划长途充能（出发地→沿途途经充电点→目的地）；信息建议 advisory（不发导航/不二次确认导航）；目的地过泛→NEED_SLOT 高德候选二次确认 |
 | `charging.status` | charging-planner | cloud | — | 查询当前充电状态 |
@@ -129,7 +131,7 @@
 | llm-gateway (HMI HTTP 代理) | 50059 | HTTP（`/api/asr` `/api/tts` `/api/voices` `/api/memory/session` `/api/memory/context` `/api/memory/profile`(真实分层记忆:偏好/地点/经历) `/api/memory/forget`(按 scope 删)，CORS 放开供 HMI 浏览器调用） |
 | memory | 50053 | gRPC |
 | cloud-planner | 50054 | gRPC |
-| **Agent 段** | **50061–50069** | gRPC |
+| **Agent 段** | **50061–50069, 50072–50073** | gRPC |
 | edge-orchestrator | 50070 | gRPC |
 | payment-gateway | 50071 | gRPC |
 | cloud-gateway | 8080 | gRPC (EdgeCloudChannel bidi) |
@@ -138,7 +140,7 @@
 | hmi | 5173 | HTTP |
 | dashboard | 5174 | HTTP |
 
-> Agent 端口段已用到 50067（info），新 Agent 从 **50068** 起。端口在 `deploy/docker-compose.yaml` 与各 Agent `Dockerfile` 的 `AGENT_PORT` 两处，保持一致。
+> Agent 端口段已用到 50073（deep-research；50068 charging/50069 scene/50072 road-safety 已用，50070/50071 为 edge-orchestrator/payment-gateway），新 Agent 从 **50074** 起。端口在 `deploy/docker-compose.yaml` 与各 Agent `Dockerfile` 的 `AGENT_PORT` 两处，保持一致。
 
 ---
 

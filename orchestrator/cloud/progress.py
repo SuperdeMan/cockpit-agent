@@ -14,6 +14,7 @@ from .models import Plan, Step, StepResult, StepStatus
 HEAVY_INTENTS = {
     "trip.plan", "trip.modify",
     "info.search", "info.news",
+    "research.run",
     "charging.plan",
 }
 
@@ -21,6 +22,7 @@ HEAVY_INTENTS = {
 _DOMAINS = [
     (("trip.plan", "trip.modify"), "出行规划"),
     (("charging.plan", "charging.find"), "充能规划"),
+    (("research.run",), "深度调研"),
     (("info.search", "info.news"), "信息调研"),
     (("info.stock",), "股价查询"),
     (("info.sports",), "赛事查询"),
@@ -37,6 +39,7 @@ _CAP_EXACT = {
     "info.alerts": "预警查询", "info.air_quality": "空气质量", "info.indices": "生活指数",
     "info.search": "联网搜索", "info.news": "新闻汇总",
     "info.stock": "股价查询", "info.sports": "赛事查询",
+    "research.run": "深度调研",
     "charging.plan": "充电规划", "charging.find": "充电站查询",
 }
 _CAP_PREFIX = {
@@ -52,6 +55,7 @@ _ACT_EXACT = {
     "info.indices": "查询生活指数",
     "info.search": "联网检索", "info.news": "汇总新闻",
     "info.stock": "查询股价", "info.sports": "查询赛事",
+    "research.run": "深度调研",
     "charging.plan": "规划充电", "charging.find": "查找充电站",
 }
 _ACT_PREFIX = {

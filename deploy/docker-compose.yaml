@@ -212,6 +212,19 @@ services:
     #   - ${QWEATHER_PRIVATE_KEY_PATH}:${QWEATHER_PRIVATE_KEY_PATH}:ro
     depends_on: [registry, llm-gateway]
 
+  deep-research-agent:
+    build: { context: .., dockerfile: agents/deep_research/Dockerfile }
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50073"
+      # 进程内复用 info 的搜索 provider（Exa 正文级→AnySearch→Bing→mock）做有界迭代检索；不配走 mock
+      EXA_API_KEY: ${EXA_API_KEY:-}
+      EXA_BASE_URL: ${EXA_BASE_URL:-https://api.exa.ai}
+      ANYSEARCH_API_KEY: ${ANYSEARCH_API_KEY:-}
+      ANYSEARCH_BASE_URL: ${ANYSEARCH_BASE_URL:-https://api.anysearch.com}
+      BING_SEARCH_KEY: ${BING_SEARCH_KEY:-}
+    depends_on: [registry, llm-gateway]
+
   charging-planner-agent:
     build: { context: .., dockerfile: agents/charging_planner/Dockerfile }
     environment:

@@ -1,0 +1,25 @@
+agent_id: deep-research
+version: 0.1.0
+display_name: 深度调研
+category: ecosystem
+trust_level: first_party
+deployment: cloud
+# 多视角子问题 + 有界并行迭代检索（Exa 18s）+ 分节接地合成（动态开思考更慢），给足 Execute 超时；
+# < 90s 端到端窗口。这是超时上限（ceiling），不影响 info.search 单轮快查。
+latency_budget_ms: 85000
+fallback: chitchat
+
+capabilities:
+  - intent: research.run
+    description: 对一个主题做深度调研——拆成多视角子问题、并行联网检索正文级资料、产出带引用的分节报告
+      与一段式语音简报。用户说「深入调研/研究一下/全面对比/系统了解/深度分析 X」时走本能力；
+      单轮快查仍走 info.search。
+    slots: [query, topic, question]
+    examples: ["深入调研一下固态电池现状", "帮我研究下理想i8的智驾方案", "全面对比一下增程和纯电",
+               "系统了解下港股打新规则", "深度调研这家公司的基本面", "研究一下这个城市值不值得定居"]
+
+requires_permissions:
+  - network.external
+  - location.read
+edge_intents: []
+context_scopes: [location, vehicle_state]   # 调研接地「我」：位置/电量作研究约束（P1 注入子问题）

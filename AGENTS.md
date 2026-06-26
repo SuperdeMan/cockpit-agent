@@ -12,7 +12,7 @@
 阶段：**Phase 1 工程化 PoC 主干、云端中枢 P0-P3 与轻量可观测台已落地**（2026-06-15）。
 持久化/多实例、mTLS/沙箱、完整 OTel 等仍是后续工作；**真实外部能力已接入首批**
 （导航=高德、天气=和风含 JWT/EdDSA 鉴权，无凭证回退 mock；2026-06-20 已用真实凭证端到端
-冒烟通过）。当前全量单测 917 passed, 6 skipped（2026-06-26，含 trip-planner 结构化重构 P0/P1/P2 +34 测试、corr_id uuid4 与单站换站回归 +2）；compose 含 info-agent。
+冒烟通过）。当前全量单测 934 passed, 6 skipped（2026-06-26，含 trip-planner 结构化重构 P0/P1/P2 +34 测试、corr_id uuid4 与单站换站回归 +2、信息域深调研 P0 +17[deep_research 15/编排路由 2]）；compose 含 info-agent、deep-research-agent。
 **记忆系统已分层重构**（从 mock KV → pgvector 语义记忆 + 自动抽取 + 真实语义召回，详见 §4 与
 `docs/design/2026-06-25-memory-system-redesign.md`）。
 
@@ -58,7 +58,7 @@
 
 | 项 | 状态 |
 |---|---|
-| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 917 passed, 6 skipped（2026-06-26 实测；含 trip-planner 结构化重构 P0/P1/P2；早前复杂任务 thinking 透传/过程区 is_complex 与摘要脱敏单测；含 info/导航 provider、位置授权与反地理、天气预警/空气质量、UI 卡片链路、股票 A/港/美股、Exa 正文级检索+接地合成诚实弃权、api-football 赛事路由（按日期查+中文队名）+「第N场/队名→进球详情」（射手/分钟，剔除罚丢点球）+「射手榜」（topscorers 赛季回退标注）+「总/历史射手榜」改写 query 走搜索+多轮联赛 history 回填、导航顺路用餐 stop_category→waypoint_choice 候选选择→navigate.waypoints+route_plan 路线卡、新闻 Exa 优先+去重、AnySearch extract、搜索/新闻/赛事证据卡、充电高德沿途途经点规划+charging_route 卡、泛地点高德候选二次确认（dest_choice）、导航视觉地标经共享件解析地图官方名+name_matches 校验（拒高德对俗称返回的邻近无关 POI）、类目搜索不被整句多意图劫持、充电按目的地（地标先解析官方名）搜途经点+聚合器并入 navigate.waypoints/去重、聚合器卡片择优、独立 Agent、ws2/ws8、场景动作经 VAL 执行、road-safety 主动播报节流回归、行程规划结构化重构 P0/P1（LLM 提议骨架→确定性接地/求解四段流水线、每停靠点可导航 trip.navigate/下一站、结构化 edit-op 加删站、落 memory，见下方 trip-planner 行）、确认词「占据整句」判定（"行程"含"行"等子串不再误判成确认）、孤儿确认不重规划、跨 Agent meta 透传（定位/电量）+ 子 Agent ui_card Struct→dict 修复） |
+| 全量测试 `python -m pytest --import-mode=importlib` | ✅ 934 passed, 6 skipped（2026-06-26 实测；含信息域深调研 P0[独立 deep-research Agent 四段流水线 deep_research 15 + 编排 research.run 路由 2，info 切 _sdk 共享内核零回归]；含 trip-planner 结构化重构 P0/P1/P2；早前复杂任务 thinking 透传/过程区 is_complex 与摘要脱敏单测；含 info/导航 provider、位置授权与反地理、天气预警/空气质量、UI 卡片链路、股票 A/港/美股、Exa 正文级检索+接地合成诚实弃权、api-football 赛事路由（按日期查+中文队名）+「第N场/队名→进球详情」（射手/分钟，剔除罚丢点球）+「射手榜」（topscorers 赛季回退标注）+「总/历史射手榜」改写 query 走搜索+多轮联赛 history 回填、导航顺路用餐 stop_category→waypoint_choice 候选选择→navigate.waypoints+route_plan 路线卡、新闻 Exa 优先+去重、AnySearch extract、搜索/新闻/赛事证据卡、充电高德沿途途经点规划+charging_route 卡、泛地点高德候选二次确认（dest_choice）、导航视觉地标经共享件解析地图官方名+name_matches 校验（拒高德对俗称返回的邻近无关 POI）、类目搜索不被整句多意图劫持、充电按目的地（地标先解析官方名）搜途经点+聚合器并入 navigate.waypoints/去重、聚合器卡片择优、独立 Agent、ws2/ws8、场景动作经 VAL 执行、road-safety 主动播报节流回归、行程规划结构化重构 P0/P1（LLM 提议骨架→确定性接地/求解四段流水线、每停靠点可导航 trip.navigate/下一站、结构化 edit-op 加删站、落 memory，见下方 trip-planner 行）、确认词「占据整句」判定（"行程"含"行"等子串不再误判成确认）、孤儿确认不重规划、跨 Agent meta 透传（定位/电量）+ 子 Agent ui_card Struct→dict 修复） |
 | 端侧 Smoke 测试 `test/smoke_edge.py` | ✅ 13/13 通过 |
 | HMI 单测 / 构建 | ✅ Node 22/22（含 poi_list 序号「第N个」选择解析）；`npm run build` 通过（含天气预警、空气质量与信息证据卡 search_result/news_brief/sports_scores） |
 | Dashboard 单测 / 构建 | ✅ Node 10/10；`npm run build` 通过 |
@@ -70,6 +70,7 @@
 | Registry 持久化（ws2 P0） | ✅ PgStore 实现（PostgreSQL），内存 fallback 保留；AgentClient 经 Registry 动态解析 endpoint |
 | 安全门控增强（ws8 P0） | ✅ VAL 补充：高速禁开车窗/天窗、低电量禁高耗电、倒车禁非安全车控、儿童锁后排锁定 |
 | 搜索质量重构 + 卡片重设计（2026-06-22） | ✅ Exa 正文级检索 + 接地合成（强制引用、无依据诚实弃权，删除旧「逼答」prompt）；新增 info.sports 经 api-football 给真实比分/赛程（按日期查+客户端过滤，免费档可用；队名英→中映射+国旗）；新闻改 Exa 优先+去重；卡片范式改为「气泡给结论、卡片只给证据」——search_result/news_brief/sports_scores（来源前3+更多、时效+置信度），消除结论复读。二轮修复合成超时/「明天」日期/卡片要点重复/AnySearch extract(MCP)。详见 `docs/design/2026-06-22-search-quality-and-card-redesign.md` |
+| 信息域深调研重构（独立 deep-research Agent，2026-06-26）| ✅ **P0 已落地**：新建独立 `deep-research` Agent（`agents/deep_research/`，端口 50073，intent `research.run`，latency 85000）——四段流水线（LLM 提议 3-5 个 STORM 多视角子问题→确定性有界并行迭代检索 asyncio.gather+空结果换宽 query 再追一轮→分节接地报告(全局来源去重编号/无依据标 gaps)→一段式语音简报 + `research_report` 卡），对症「单轮检索多跳天花板」。检索/接地合成内核抽到 `agents/_sdk/{grounding,retrieval}.py` 注入式共享（info `_search` 切到共享内核、**零回归 122 passed**；搜索 provider 仍归 info、deep-research 进程内复用，避免 `_sdk→agent` 反向依赖）。`progress.py` HEAVY_INTENTS + `aggregator._card_priority` 给 research_report 独显槽 + `planning._ensure_research_step` 确定性兜底（触发词收窄=深入/深度/全面/系统+调研/研究/分析/对比，**不劫持普通"搜一下/查一下"**）。护城河=接地「我」(位置/电量/行程/画像)+渐进语音+可落地产物，非「车机版 Perplexity」。测试：deep_research 15 + 编排路由 2 新增。**P1（接地画像/多轮研究上下文/推手机）、P2（新闻个性化/「深挖某条」桥接/异步深调研）待做**。详见 `docs/design/2026-06-26-info-agent-deep-research-redesign.md` |
 | conventions.md 同步 | ✅ Agent 清单表 + Intent 全集 + 端口表已更新（含 4 个新 Agent + trip.modify + charging.* + scene.* + safety.*） |
 | 安全/权限/编排/协作/支付 | ✅ PoC 链路落地；真实 token、正式沙箱与真实支付仍待接入 |
 | 可观测 | ✅ NATS 事件、collector REST/WS、车辆 diff、端云 span、Agent 健康/指标与独立 Dashboard；collector/registry 重启经周期快照与周期重注册自愈；Prometheus/OTel 导出仍待做 |

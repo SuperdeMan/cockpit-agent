@@ -42,5 +42,6 @@
 | [2026-06-25-comms-link-hardening.md](2026-06-25-comms-link-hardening.md) | 通讯链路量产级加固：全链路 gRPC keepalive(共享 `runtime/grpcio.py` 工厂) + 优雅停机 + HMI 韧性(退避重连/断线发送队列/看门狗) + 熔断接线 + LLM 网关连接池/流式 stall + 依赖连接加固(Redis/PG/NATS)；含一处危险车控确认退化修复 + Go 网关换 IP 显式重连补强(dns:/// 单独不可靠) | 已落地（P0-P2，真栈自愈 2/2，不重启依赖方即恢复） |
 | [2026-06-26-trip-planner-redesign.md](2026-06-26-trip-planner-redesign.md) | 行程规划结构化重构：LLM 提议骨架→确定性接地真实 POI/求解每日车程+按真实 SoC 沿路线编织充电点/出话术四段流水线(对症 TravelPlanner 纯 LLM 0.6% 通过率) + 每停靠点可导航 + 在途状态查询/「时间不够」自动精简 + 状态落 memory；护城河=车辆接地+在途编排 | 已落地（P0/P1/P2 全合并 main，真栈 e2e 6/6 真实 POI） |
 | [2026-06-26-trip-planner-p0-implementation-plan.md](2026-06-26-trip-planner-p0-implementation-plan.md) | 行程规划重构 P0 实施计划：结构化模型 + 四段流水线 + 充电编织纯函数 + `trip_itinerary` 卡 + 落 memory 的逐项落地清单与验收标准 | 已落地（见 redesign 设计文档） |
+| [2026-06-26-info-agent-deep-research-redesign.md](2026-06-26-info-agent-deep-research-redesign.md) | 信息域重构：新建**独立 `deep-research` Agent**（四段流水线：LLM 提议多视角子问题→确定性有界并行迭代检索→分节接地报告→渐进语音简报+可读报告卡，对症单轮检索多跳天花板）+ 检索/接地内核抽到 `_sdk` 共享（化解独立 Agent 的 provider 重复）+ info 联网查询编排层分层（quick/deep 路由）+ 接地「我」（位置/电量/行程/画像）+ 新闻个性化/深挖桥接；护城河=接地车辆+渐进语音+可落地产物，非「车机版 Perplexity」。用户拍板：独立 Agent / 语音简报+报告双态 / 先 P0 评审 | P0 已落地（2026-06-26，deep_research 15 + 编排路由 2 测试，info 切共享内核零回归 122 passed；P1/P2 待做）|
 
 > 接真实 provider 的标准流程见常青指南 [`docs/guides/provider-integration.md`](../guides/provider-integration.md)。

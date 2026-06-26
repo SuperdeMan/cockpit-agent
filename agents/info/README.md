@@ -23,6 +23,11 @@
 「座舱 AI 的本质是提炼内容 + TTS 播报」，不是给一堆要点开的链接。详见
 [`docs/design/2026-06-22-search-quality-and-card-redesign.md`](../../docs/design/2026-06-22-search-quality-and-card-redesign.md)。
 
+> 2026-06-26：接地合成 + 检索编排内核已抽到 `agents/_sdk/{grounding,retrieval}.py` 注入式共享
+> （与独立 `deep-research` Agent 共用，改一处全覆盖）；`info.search` 行为不变（单轮快查）。
+> **深度调研（多轮迭代、分节报告）是独立 Agent `deep-research`**（`research.run`），编排层按措辞分层路由，
+> 见 [`docs/design/2026-06-26-info-agent-deep-research-redesign.md`](../../docs/design/2026-06-26-info-agent-deep-research-redesign.md)。
+
 - **搜索**：Exa 正文级检索（→AnySearch→Bing→mock 降级）→ **接地合成**（喂正文、强制来源引用、
   **无依据即诚实弃权，不编造**）。气泡给结论、`search_result` 卡只给证据（来源/时效/置信度），不复读。
 - **赛事**：命中已知赛事 + 意图词 → api-football **结构化真实比分**（按日期查+客户端按 league_id 过滤，
