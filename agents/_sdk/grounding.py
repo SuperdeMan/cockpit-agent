@@ -110,13 +110,16 @@ def build_materials(sources: list[dict], *, first_cap: int = 2400,
 
 
 async def grounded_synthesis(llm, subject: str, sources: list[dict], *,
-                             timeout: float = 20, max_tokens: int = 600,
-                             thinking=None) -> dict | None:
+                             timeout: float = 25, max_tokens: int = 600,
+                             thinking: bool = False) -> dict | None:
     """基于正文级资料接地合成。返回 {answer,key_points,confidence,used_sources} 或 None
-    （LLM 不可用，调用方走诚实兜底 fallback_brief）。
-
-    要求**无依据即弃权**而非「先把已知信息告诉用户」，从根上消除编造。
+    （LLM 不可用，调用方走诚实兜底 fallback_brief）。要求**无依据即弃权**，从根上消除编造。
     限 5 源、首源截 2400 字其余 900 字——过大 prompt 会令上游 LLM 推理超时退化。
+
+    **thinking 默认 False**：接地合成是「依据资料抽取/组织」的结构化任务，不需深推理；
+    开思考(HEAVY_INTENT 经 meta 自动开)会让大正文(如整页 wiki)在 deadline 内推理超时
+    DEADLINE_EXCEEDED → 退化兜底堆原文（实测 info.search「什么是固态电池」踩到，与深调研同源）。
+    timeout 20→25 给大页面留余量。
     """
     used = sources[:5]
     materials = build_materials(used)

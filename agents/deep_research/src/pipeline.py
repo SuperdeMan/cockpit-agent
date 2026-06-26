@@ -26,14 +26,15 @@ from .models import SubQuestion, Evidence, Section, Report, PERSPECTIVES
 
 logger = logging.getLogger("agent.deep_research.pipeline")
 
-# 子问题数量边界（太少覆盖不足、太多超延迟预算）。
-MIN_SUBQ, MAX_SUBQ = 2, 5
+# 子问题数量边界（深度调研要覆盖面，5-6 个角度；子问题间并行检索不显著增延迟；
+# 上限 6 是为把 plan+investigate+synthesize 总时长压在 agent 85s 预算/网关 90s 上限内）。
+MIN_SUBQ, MAX_SUBQ = 2, 6
 # 每子问题检索条数 + 检索轮上限（空结果换宽 query 再来一轮）。
-PER_Q_LIMIT = 4
+PER_Q_LIMIT = 5
 MAX_ROUNDS = 2
-# 合成材料每条证据正文配额 + 每子问题入材料的证据条数（控 prompt 体量防上游合成超时）。
-_EXCERPT_CAP = 600
-_EV_PER_SUBQ_IN_MATERIALS = 2
+# 合成材料每条证据正文配额 + 每子问题入材料的证据条数：喂足料才出得了深报告；thinking 关后大材料不易超时。
+_EXCERPT_CAP = 1000
+_EV_PER_SUBQ_IN_MATERIALS = 3
 # 网页页眉/导航噪声行（Exa 正文偶含登录/搜索/栏目导航）→ 清理出证据正文，不喂合成、不污染兜底。
 _CHROME_LINE = ("登录", "注册", "搜索", "首页", "菜单", "导航", "媒体品牌", "企业服务",
                 "政府服务", "投资人服务", "创业者服务", "创投平台", "我要入驻", "下载App",
@@ -67,8 +68,9 @@ def _extract_json_block(text: str) -> str:
 # ──────────────────────────── plan ────────────────────────────
 
 _PLAN_SYSTEM = (
-    "你是严谨的调研规划助手。把用户的研究问题拆成 3-5 个**简短、可直接搜索**的子问题，"
-    "从不同角度（背景/定义、对比、优劣/风险、最新进展、应用）覆盖，合起来能完整回答原问题。\n"
+    "你是严谨的调研规划助手。把用户的研究问题拆成 5-7 个**简短、可直接搜索**的子问题，"
+    "从不同角度（背景/定义、原理/机制、对比、优劣/风险、最新进展、应用/案例）充分覆盖，"
+    "合起来能支撑一份**有深度、成体系**的调研报告。\n"
     "硬要求：①每个子问题**像搜索查询一样简短（≤25字）**，聚焦一个角度；"
     "②**不要写成长句、不要加括号举例、不要堆砌限定词**；"
     "③**紧扣研究主题本身的字面，绝不引入主题之外的领域/场景/数字**"
@@ -307,15 +309,18 @@ async def synthesize(llm, question: str, subqs: list[SubQuestion],
         f"当前时间：{shanghai_now():%Y年%m月%d日 %H:%M}（Asia/Shanghai）\n"
         + (note + "\n" if note else "") +
         f"\n以下是按子问题分组的检索资料（方括号内为来源编号）：\n{materials}\n\n"
-        "请只依据上述资料，输出一个 JSON 对象（不要额外文字）：\n"
+        "请只依据上述资料，写一份**有深度、成体系**的调研报告，输出一个 JSON 对象（不要额外文字）：\n"
         '{"summary":"一段式总体结论（≤3句，先结论，面向语音播报）",'
-        '"sections":[{"heading":"小节标题","body":"该节正文，关键陈述标注来源编号如[1][2]",'
+        '"sections":[{"heading":"小节标题","body":"该节详实正文，关键陈述标注来源编号如[1][2]",'
         '"citations":[1,2],"confidence":"high|medium|low"}],'
         '"overall_confidence":"high|medium|low","gaps":["未能从资料中确认的方面"]}\n'
-        "要求：①先结论后展开，不说「根据资料显示」这类废话；②每条关键陈述带[编号]，"
-        "无对应来源的陈述不要写；③资料没覆盖的写进 gaps，**禁止编造**数字/时间/人名/因果；"
-        "④body 多要点时每条单独成行（\\n 分隔）；⑤不同资料数字冲突时取最权威最新者、给前后一致结论；"
-        "⑥**body 用纯文本中文，不要任何 markdown 标记（#、**、- 、> 等），不要在正文里贴网址**"
+        "要求：①**报告要充分展开**——按上面资料的角度组织 **5-7 个小节**，"
+        "**每节 body 详实（250-450 字）**，写出具体机制/定义/数据/案例/对比，**充分利用提供的多条资料**、"
+        "不要泛泛几句带过；②先结论后展开，不说「根据资料显示」这类废话；③每条关键陈述带[编号]，"
+        "尽量综合**多条**来源（别每节只引一条）、无对应来源的陈述不要写；④资料没覆盖的写进 gaps，"
+        "**禁止编造**数字/时间/人名/因果；⑤body 多要点时每条单独成行（\\n 分隔）；"
+        "⑥不同资料数字冲突时取最权威最新者、给前后一致结论；"
+        "⑦**body 用纯文本中文，不要任何 markdown 标记（#、**、- 、> 等），不要在正文里贴网址**"
         "（来源由编号引用，链接另在来源区）。"
     )
     try:
@@ -324,7 +329,7 @@ async def synthesize(llm, question: str, subqs: list[SubQuestion],
         raw = await llm.complete(
             [{"role": "system", "content": _SYNTH_SYSTEM},
              {"role": "user", "content": user}],
-            temperature=0.3, max_tokens=1400, timeout=50, thinking=False)
+            temperature=0.3, max_tokens=2400, timeout=55, thinking=False)
     except Exception as e:
         logger.warning("synthesis failed, fallback report: %s", e)
         return _fallback_report(question, subqs, sources)
