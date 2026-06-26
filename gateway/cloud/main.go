@@ -31,11 +31,43 @@ import (
 
 type channelServer struct {
 	channelpb.UnimplementedEdgeCloudChannelServer
-	planner orchpb.CloudPlannerClient
+	plannerMu   sync.Mutex // 保护 planner/plannerConn 重建
+	plannerAddr string
+	plannerConn *grpc.ClientConn
+	planner     orchpb.CloudPlannerClient
 	sessions sync.Map // vehicle_id -> *sessionState
 	pending  sync.Map // correlation_id -> chan *EdgeResult
 	edgeSeq  atomic.Uint64
 	idem     IdempotencyStore
+}
+
+// plannerClient 取当前 planner 存根（重建期受锁保护）。
+func (s *channelServer) plannerClient() orchpb.CloudPlannerClient {
+	s.plannerMu.Lock()
+	defer s.plannerMu.Unlock()
+	return s.planner
+}
+
+// reconnectPlanner 显式重建到 cloud-planner 的连接：依赖容器重建换 IP 后，grpc-go 的
+// dns 自动重解析并不可靠（实测换 IP 后长时间不自愈），故仿 Python 侧 _reset_channel——
+// 关旧 conn + 新建强制重解析 DNS。重建幂等（受 plannerMu 保护，并发只建一次有效）。
+func (s *channelServer) reconnectPlanner() {
+	s.plannerMu.Lock()
+	defer s.plannerMu.Unlock()
+	conn, err := grpc.NewClient(dnsTarget(s.plannerAddr),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		clientKeepalive())
+	if err != nil {
+		log.Printf("[cloud-gateway] reconnect planner failed: %v", err)
+		return
+	}
+	old := s.plannerConn
+	s.plannerConn = conn
+	s.planner = orchpb.NewCloudPlannerClient(conn)
+	if old != nil {
+		go func() { _ = old.Close() }()
+	}
+	log.Printf("[cloud-gateway] planner connection rebuilt -> %s", s.plannerAddr)
 }
 
 type sessionState struct {
@@ -237,7 +269,13 @@ func (s *channelServer) handleRequest(sm *sendMu,
 		return
 	}
 
-	plannerStream, err := s.planner.Handle(ctx, req)
+	plannerStream, err := s.plannerClient().Handle(ctx, req)
+	if err != nil && status.Code(err) == codes.Unavailable {
+		// 依赖换 IP/重启 → 显式重建连接后重试一次（grpc-go dns 自动重解析不可靠）。
+		log.Printf("[cloud-gateway] planner unavailable, reconnecting and retrying: %v", err)
+		s.reconnectPlanner()
+		plannerStream, err = s.plannerClient().Handle(ctx, req)
+	}
 	if err != nil {
 		log.Printf("[cloud-gateway] planner error for %s: %v", vehicleID, err)
 		sm.Send(&channelpb.DownFrame{
@@ -260,6 +298,9 @@ func (s *channelServer) handleRequest(sm *sendMu,
 		}
 		if err != nil {
 			log.Printf("[cloud-gateway] planner stream error: %v", err)
+			if status.Code(err) == codes.Unavailable {
+				s.reconnectPlanner() // 依赖换 IP → 重建连接，下个请求自愈
+			}
 			return
 		}
 		// F13：经 sendMu 加锁发送（主循环的 Pong 与此处的 Event 不再交错）
@@ -306,8 +347,10 @@ func main() {
 		keepalivePolicy(),
 	)
 	channelpb.RegisterEdgeCloudChannelServer(s, &channelServer{
-		planner: orchpb.NewCloudPlannerClient(conn),
-		idem:    buildIdempotencyStore(),
+		plannerAddr: plannerAddr,
+		plannerConn: conn,
+		planner:     orchpb.NewCloudPlannerClient(conn),
+		idem:        buildIdempotencyStore(),
 	})
 
 	go func() {
