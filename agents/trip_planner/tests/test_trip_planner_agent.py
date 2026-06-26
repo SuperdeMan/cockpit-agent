@@ -360,5 +360,29 @@ def test_modify_day_dedup_excludes_other_days():
     assert "西湖" not in day2_names                            # 第二天不再撞第一天的西湖
 
 
+def test_modify_replace_specific_stop_changes_it():
+    """『第一天第二站调整下』→ 换掉那个具体停靠点（挑池里没用过的），根治整天重规划又挑回原样的 no-op。"""
+    agent = TripPlannerAgent()
+    trip = Trip(destination="杭州", days=1)
+    trip.itinerary = [Day(day_index=1, stops=[
+        Stop(stop_id="s1", name="西湖", grounded=True,
+             poi={"name": "西湖", "lat": 30.25, "lng": 120.15}),
+        Stop(stop_id="s2", name="灵隐寺", grounded=True,
+             poi={"name": "灵隐寺", "lat": 30.24, "lng": 120.10})])]
+    fake = FakePOI(search_map={"景点": [
+        _poi("西湖", 30.25, 120.15), _poi("灵隐寺", 30.24, 120.10),
+        _poi("宋城", 30.18, 120.10)]})
+    agent.poi = fake
+    agent._fallback = fake
+    agent.llm.complete = AsyncMock(side_effect=AssertionError("替换具体站不应整天重规划调 LLM"))
+    res = asyncio.run(run_handle(
+        agent, "trip.modify", slots={"modification": "第一天第二站调整下"},
+        raw_text="第一天第二站调整下", ctx=_persisted_ctx(trip)))
+    assert res.status == "need_confirm"
+    stops = [s["name"] for s in res.ui_card["itinerary"][0]["stops"]]
+    assert stops[0] == "西湖"                       # 第一站不变
+    assert stops[1] != "灵隐寺" and stops[1] == "宋城"  # 第二站换成池里没用过的
+
+
 def test_manifest_consistency():
     assert assert_manifest_consistent(TripPlannerAgent()) is True

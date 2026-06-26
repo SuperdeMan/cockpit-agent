@@ -40,6 +40,8 @@ except ValueError:
 _PREF_RELAXED = ("带老人", "老人", "轻松", "不累", "不要太累", "悠闲", "慢", "带娃", "带孩子", "亲子")
 _DWELL_BY_TYPE = {"attraction": 120, "meal": 60, "hotel": 0, "charging": 30, "custom": 60}
 _MAX_DAYS = 10
+# 住宿类标记：泛地点（如"惠州海边"）搜"景点"常返回一堆民宿/酒店，剔除出景点候选池。
+_LODGING_MARKERS = ("民宿", "酒店", "公寓", "别墅", "客栈", "宾馆", "旅馆", "旅店")
 
 
 def per_day_count(prefs: str) -> int:
@@ -65,8 +67,12 @@ async def build_poi_pool(poi_provider, fallback, dest: str, prefs: str,
                 results = await fallback.search(kw, near=near, limit=8, meta=meta)
             except ProviderError:
                 results = []
+        is_attraction = "景点" in kw or "乐园" in kw
         for p in results:
             nm = (p.name or "").strip()
+            # 景点候选剔除住宿类（泛地点搜"景点"易把民宿/酒店当景点）
+            if is_attraction and any(m in nm for m in _LODGING_MARKERS):
+                continue
             if nm and nm not in seen:
                 seen.add(nm)
                 pool.append(p)
@@ -230,6 +236,10 @@ async def ground(poi_provider, fallback, skeleton: dict, pool: list[POI],
             poi = pool_by_name.get(nm)
             if poi is None:
                 poi = await _ground_one(poi_provider, fallback, nm, center, meta, llm)
+            # 景点接地到住宿类（泛地点经 ground 新搜索易把民宿/别墅当景点）→ 整条丢弃，不进行程
+            if (stype == "attraction" and poi is not None
+                    and any(m in (poi.name or "") for m in _LODGING_MARKERS)):
+                continue
             if poi is not None and poi.lat and poi.lng:
                 stop.poi = _poi_to_dict(poi)
                 stop.name = poi.name or nm

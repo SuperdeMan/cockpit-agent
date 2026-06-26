@@ -90,3 +90,28 @@ def test_edge_call_is_executed_and_result_written_on_same_stream():
     assert result_frames[0].edge_result.step_id == "s-edge"
     assert result_frames[0].edge_result.result.speech == "executed hvac.on"
     assert stream.closed is True
+
+
+def test_request_corr_id_is_unique_per_call():
+    """请求 corr_id 必须每次唯一：曾用 id(request)(内存地址)会被 GC 回收复用→不同请求
+    拿到相同 corr_id→cloud-gateway 幂等(10min TTL)误判重复静默丢弃→客户端挂起。改 uuid4 根治。"""
+    def _corr_of():
+        stream = _Stream()
+        client = CloudClient(
+            edge_call_executor=_Executor(),
+            stub_factory=lambda _channel: _Stub(stream),
+        )
+        client._ch = object()
+        request = orchestrator_pb2.HandleRequest(
+            session_id="sess-1", context=common_pb2.ContextRef(vehicle_id="v1"))
+
+        async def collect():
+            return [event async for event in client.handle(request)]
+
+        asyncio.run(collect())
+        reqs = [f for f in stream.writes if f.HasField("request")]
+        return reqs[0].correlation_id
+
+    c1, c2 = _corr_of(), _corr_of()
+    assert c1 != c2, f"corr_id 撞车: {c1} == {c2}"
+    assert c1.startswith("sess-1-")

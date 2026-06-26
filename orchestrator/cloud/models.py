@@ -97,7 +97,7 @@ class SessionState:
     pending_step_id: str = ""
     missing_slots: list[str] = field(default_factory=list)
     completed_results: dict = field(default_factory=dict)  # step_id -> StepResult dict
-    ttl_seconds: int = 90
+    ttl_seconds: int = 300   # 确认/补槽挂起 TTL：行程等慢流程每轮数十秒+用户阅读，90s 太短致确认过期
 
 
 class CyclicPlan(Exception):
