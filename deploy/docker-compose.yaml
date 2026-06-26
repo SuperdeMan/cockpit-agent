@@ -172,6 +172,9 @@ services:
     environment:
       <<: *python-env
       AGENT_PORT: "50066"
+      # 进程内复用导航高德 provider：接地景点 POI、算 leg 路线、按 SoC 搜沿途充电站；不配走 mock。
+      POI_VENDOR: ${POI_VENDOR:-mock}
+      AMAP_KEY: ${AMAP_KEY:-}
     depends_on: [registry, llm-gateway]
 
   info-agent:
