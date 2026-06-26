@@ -12,6 +12,7 @@
 import asyncio
 import json
 import sys
+import time
 
 try:                                   # Windows 控制台默认 GBK，强制 UTF-8 输出避免 ✓/中文崩
     sys.stdout.reconfigure(encoding="utf-8")
@@ -64,7 +65,11 @@ def _grounded_stop(card: dict):
 async def main() -> int:
     print("=== trip-planner P0 E2E ===")
     failures = []
-    sid = "e2e-trip"
+    # 唯一 session 前缀：corrID = vehicleID-corrSeq，cloud-gateway 按 corrID 幂等去重；
+    # 复用固定 session + edge-gateway 重启重置 corrSeq 会撞历史 corrID 致请求被丢→挂起。
+    run = int(time.time())
+    sid = f"e2e-trip-{run}"
+    mod_sid = f"e2e-trip-mod-{run}"
 
     # 轮1：多日行程规划
     m1 = await ask({"text": "周末去杭州两天带老人不要太累", "session_id": sid},
@@ -121,7 +126,7 @@ async def main() -> int:
         print("  ✓ 在途精简行程")
 
     # 轮3：改某天（重新规划一份行程后改第二天）
-    m3a = await ask({"text": "周末去成都三天轻松点", "session_id": "e2e-trip-mod"},
+    m3a = await ask({"text": "周末去成都三天轻松点", "session_id": mod_sid},
                     "轮3a 先规划成都三天")
     card3a = m3a.get("ui_card") or {}
     day1_name = None
@@ -129,7 +134,7 @@ async def main() -> int:
         days = card3a.get("itinerary") or []
         if days and days[0].get("stops"):
             day1_name = days[0]["stops"][0].get("name")
-    m3b = await ask({"text": "第二天换一个景点", "session_id": "e2e-trip-mod"},
+    m3b = await ask({"text": "第二天换一个景点", "session_id": mod_sid},
                     "轮3b 改第二天（应仍 trip_itinerary，第一天不变）")
     card3b = m3b.get("ui_card") or {}
     if card3b.get("type") != "trip_itinerary":
