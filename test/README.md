@@ -65,6 +65,8 @@ python test/e2e_memory.py                 # 断言型：记忆 6 链路（真 em
 python test/e2e_context.py                # 断言型：上下文 6 链路（注入拦截/裸确认兜底/危险确认闭环+catalog保edge车控/续航查询不跌闲聊/trip.plan兜底/trip.modify兜底）
 python test/e2e_process_region.py         # 复杂任务过程区四阶段+脱敏、普通任务零过程；浏览器式连接（验证 WS 长任务保活）
 python test/e2e_resilience.py             # 断言型：依赖服务 --force-recreate 换 IP 后系统自愈（不重启依赖方），验证全链路 gRPC keepalive
+python test/e2e_trip.py                    # 断言型：行程规划 6 轮（结构化卡+真实 POI 接地+跨轮持久化+确认收尾+改某天不漂移+下一站导航+在途状态/精简）
+python test/e2e_research.py                # 断言型：深度调研（research_report 分节报告+真实来源、多轮「展开第N点」聚焦深挖、普通搜索不被劫持、新闻「详细讲讲第N条」深挖桥接）
 ```
 
 ## 6. Nightly 真实 LLM 语料（默认 skip）
