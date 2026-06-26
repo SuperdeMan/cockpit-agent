@@ -5,7 +5,7 @@ import type {
   UiCard, WeatherCard, ForecastCard, StockCard,
   NewsCard, SearchCard, SearchAnswerCard, NewsDigestCard,
   SearchResultCard, NewsBriefCard, SportsScoresCard, SportsScorersCard,
-  RoutePlanCard, ChargingRouteCard, PoiListCard, PoiDetailCard,
+  RoutePlanCard, ChargingRouteCard, TripItineraryCard, PoiListCard, PoiDetailCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
@@ -44,6 +44,7 @@ export function CardRenderer({ card }: { card: UiCard }) {
     case 'sports_scorers': return <SportsScorersCardView card={card} />
     case 'route_plan': return <RoutePlanCardView card={card} />
     case 'charging_route': return <ChargingRouteCardView card={card} />
+    case 'trip_itinerary': return <TripItineraryCardView card={card} />
     case 'poi_list': return <PoiListCardView card={card} />
     case 'poi_detail': return <PoiDetailCardView card={card} />
     default: return null
@@ -583,6 +584,51 @@ function ChargingRouteCardView({ card }: { card: ChargingRouteCard }) {
       {card.stops.length === 0 && (
         <div className="cr-direct">电量充足，全程无需途中补电</div>
       )}
+    </div>
+  )
+}
+
+// ─── 行程卡：结构化多日行程（按天列停靠点 + 段间充电），复用充电时间线样式 ───
+
+const TRIP_STOP_ICON: Record<string, string> = {
+  attraction: '📍', meal: '🍜', hotel: '🏨', charging: '⚡', custom: '📌',
+}
+
+function TripItineraryCardView({ card }: { card: TripItineraryCard }) {
+  return (
+    <div className="card card-evidence card-charge-route card-trip">
+      <div className="ev-head">
+        <span className="ev-head-title">🧭 {card.destination} · {card.days}天行程</span>
+        {card.status === 'confirmed' && <span className="ev-fresh">已确认</span>}
+      </div>
+      {(card.itinerary || []).map((day, di) => {
+        const charges = (day.legs || []).flatMap((l) => l.charging_stops || [])
+        return (
+          <div key={di} className="trip-day">
+            <div className="trip-day-head">
+              第{day.day_index}天{day.theme ? ` · ${day.theme}` : ''}
+            </div>
+            <ul className="cr-line">
+              {day.stops.map((s, i) => (
+                <li key={i} className={`cr-node cr-stop${s.grounded ? '' : ' trip-ungrounded'}`}>
+                  <span className="cr-dot" />
+                  <span className="cr-text">
+                    <b>{TRIP_STOP_ICON[s.type] || '📍'} {s.name}</b>
+                    {!s.grounded
+                      ? <em className="cr-km">待确认地点</em>
+                      : (s.poi?.address && <em className="cr-km">{s.poi.address}</em>)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {charges.length > 0 && (
+              <div className="trip-charge-hint">
+                ⚡ 途中补电 {charges.length} 次：{charges.map((c) => c.name).join('、')}
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

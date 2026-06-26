@@ -41,7 +41,8 @@ class Aggregator:
         # 纯信息卡（股票/新闻/天气/搜索）可多卡同屏：合成 card_group 让 HMI 逐张渲染
         # （ui_card 是自由 Struct，不必改 proto/网关）。这样"查英伟达股价+新闻"能股票卡+新闻卡并存。
         def _card_priority(c: dict) -> int:
-            if c.get("type") == "charging_route":
+            # 行程卡/充能路线卡是行程类请求的主卡，多意图下须独显、不被 card_group 吞。
+            if c.get("type") in ("charging_route", "trip_itinerary"):
                 return 0
             if (c.get("type") == "poi_list"
                     and c.get("purpose") in ("waypoint_choice", "dest_choice")):
