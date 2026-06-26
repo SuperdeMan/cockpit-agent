@@ -31,17 +31,26 @@ MIN_SUBQ, MAX_SUBQ = 2, 5
 # 每子问题检索条数 + 检索轮上限（空结果换宽 query 再来一轮）。
 PER_Q_LIMIT = 4
 MAX_ROUNDS = 2
-# 合成材料每条证据正文配额 + 每子问题入材料的证据条数（控 prompt 体量防上游超时）。
+# 合成材料每条证据正文配额 + 每子问题入材料的证据条数（控 prompt 体量防上游合成超时）。
 _EXCERPT_CAP = 600
-_EV_PER_SUBQ_IN_MATERIALS = 3
-# 时效敏感词：命中则检索开 livecrawl 抓实时页 + 收窄时效窗口。
-_FRESH_MARKERS = ("最新", "今年", "现在", "目前", "近期", "实时", "榜", "排行", "排名",
-                  "趋势", "进展", "动态", "新款", "新车", "财报", "股价", "价格")
-_RECENCY_MARKERS = ("最新", "今天", "今日", "现在", "目前", "近期", "实时", "动态")
+_EV_PER_SUBQ_IN_MATERIALS = 2
+# 网页页眉/导航噪声行（Exa 正文偶含登录/搜索/栏目导航）→ 清理出证据正文，不喂合成、不污染兜底。
+_CHROME_LINE = ("登录", "注册", "搜索", "首页", "菜单", "导航", "媒体品牌", "企业服务",
+                "政府服务", "投资人服务", "创业者服务", "创投平台", "我要入驻", "下载App",
+                "扫码", "关注我们", "版权所有", "Copyright", "意见反馈", "联系我们")
 
 
-def _is_fresh(text: str) -> bool:
-    return any(m in (text or "") for m in _FRESH_MARKERS)
+def _clean_excerpt(text: str) -> str:
+    """剔除网页页眉/导航噪声行（登录/搜索/栏目名），保留正文。"""
+    out = []
+    for ln in (text or "").splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if s in _CHROME_LINE or (len(s) <= 8 and any(c in s for c in _CHROME_LINE)):
+            continue
+        out.append(s)
+    return "\n".join(out)
 
 
 def _extract_json_block(text: str) -> str:
@@ -58,30 +67,35 @@ def _extract_json_block(text: str) -> str:
 # ──────────────────────────── plan ────────────────────────────
 
 _PLAN_SYSTEM = (
-    "你是严谨的车载深度调研规划助手。把用户的研究问题拆成 3-5 个**带视角**的子问题，"
-    "覆盖不同角度（背景/对比/风险/最新进展/与用户处境的相关性），合在一起能完整回答原问题。\n"
+    "你是严谨的调研规划助手。把用户的研究问题拆成 3-5 个**简短、可直接搜索**的子问题，"
+    "从不同角度（背景/定义、对比、优劣/风险、最新进展、应用）覆盖，合起来能完整回答原问题。\n"
+    "硬要求：①每个子问题**像搜索查询一样简短（≤25字）**，聚焦一个角度；"
+    "②**不要写成长句、不要加括号举例、不要堆砌限定词**；"
+    "③**紧扣研究主题本身的字面，绝不引入主题之外的领域/场景/数字**"
+    "（例如研究『loop engineering』就只查它本身，不要扯到汽车、电池、电量等无关领域）。\n"
     "只输出 JSON（无多余文字）：\n"
-    '{"subquestions":[{"text":"具体、可检索的子问题","perspective":"背景|对比|风险|最新进展|适配用户"}]}\n'
-    "子问题要具体、彼此不重复；**只产问题，不要产结论、不要编造事实**。"
+    '{"subquestions":[{"text":"简短子问题","perspective":"背景|对比|风险|最新进展|应用"}]}\n'
+    "**只产问题，不要产结论、不要编造事实**。"
 )
 
 
 def _constraints_note(constraints: dict | None) -> str:
-    """把车辆/画像处境拼成一句提示，让子问题贴合「我」（座舱差异化）。"""
+    """把（与主题相关的）用户处境拼成**可选**提示。绝不强制贴合——否则会把无关主题带偏。
+
+    刻意**不注入车辆电量**（与绝大多数研究主题无关，实测会把『loop engineering』带成『电量72%
+    自适应控制』）；位置/画像仅作可选背景，由 LLM 自行判断是否相关。
+    """
     c = constraints or {}
     bits = []
     if c.get("location"):
-        bits.append(f"当前位置{c['location']}")
-    if c.get("vehicle_state"):
-        bits.append(f"车辆状态{c['vehicle_state']}")
+        bits.append(f"用户当前在{c['location']}")
     prefs = c.get("profile_prefs") or []
     if prefs:
-        bits.append("偏好" + "、".join(prefs[:5]))
-    if c.get("time_now"):
-        bits.append(f"当前时间{c['time_now']}")
+        bits.append("用户偏好：" + "、".join(prefs[:3]))
     if not bits:
         return ""
-    return "用户处境：" + "；".join(bits) + "。请让子问题尽量贴合该处境。"
+    return ("（可选背景，仅当与研究问题直接相关时才结合，否则请完全忽略、不要为贴合而改变子问题方向）"
+            + "；".join(bits) + "。")
 
 
 def _coerce_perspective(p: str, i: int) -> str:
@@ -136,19 +150,20 @@ async def plan(llm, question: str, constraints: dict | None = None) -> list[SubQ
 # ─────────────────────────── investigate ───────────────────────────
 
 async def _retrieve_for(search_provider, extractor, query: str, meta) -> list[Evidence]:
-    """单子问题检索 → Evidence 列表。ProviderError/空 → []（诚实降级，不臆造）。"""
-    recency_days = 2 if any(m in query for m in _RECENCY_MARKERS) else 0
-    livecrawl = "preferred" if _is_fresh(query) else ""
+    """单子问题检索 → Evidence 列表。ProviderError/空 → []（诚实降级，不臆造）。
+
+    研究检索**不开 livecrawl、不收窄时效窗口**：livecrawl×多子问题并发会让 Exa 频繁 18s 超时；
+    过窄 recency 又会把结果过滤空。要的是相关正文，时效由合成按来源 published 如实呈现。
+    """
     try:
         sources = await retrieve(
-            search_provider, query, limit=PER_Q_LIMIT, recency_days=recency_days,
-            livecrawl=livecrawl, extractor=extractor, meta=meta)
+            search_provider, query, limit=PER_Q_LIMIT, extractor=extractor, meta=meta)
     except ProviderError as e:
         logger.warning("investigate retrieve '%s' failed: %s", query, e)
         return []
     out = []
     for s in sources:
-        excerpt = (s.get("content") or s.get("snippet") or "").strip()[:_EXCERPT_CAP]
+        excerpt = _clean_excerpt(s.get("content") or s.get("snippet") or "")[:_EXCERPT_CAP]
         if not excerpt:
             continue
         out.append(Evidence(title=s.get("title", ""), url=s.get("url", ""),
@@ -299,13 +314,17 @@ async def synthesize(llm, question: str, subqs: list[SubQuestion],
         '"overall_confidence":"high|medium|low","gaps":["未能从资料中确认的方面"]}\n'
         "要求：①先结论后展开，不说「根据资料显示」这类废话；②每条关键陈述带[编号]，"
         "无对应来源的陈述不要写；③资料没覆盖的写进 gaps，**禁止编造**数字/时间/人名/因果；"
-        "④body 多要点时每条单独成行（\\n 分隔）；⑤不同资料数字冲突时取最权威最新者、给前后一致结论。"
+        "④body 多要点时每条单独成行（\\n 分隔）；⑤不同资料数字冲突时取最权威最新者、给前后一致结论；"
+        "⑥**body 用纯文本中文，不要任何 markdown 标记（#、**、- 、> 等），不要在正文里贴网址**"
+        "（来源由编号引用，链接另在来源区）。"
     )
     try:
+        # thinking=False：分节合成是「组织已检索证据」的结构化任务，不需深推理；开思考(MiMo 2048
+        # reasoning tokens)在大材料下频繁 DEADLINE_EXCEEDED 退化兜底（实测）。深度来自多轮检索而非此步。
         raw = await llm.complete(
             [{"role": "system", "content": _SYNTH_SYSTEM},
              {"role": "user", "content": user}],
-            temperature=0.3, max_tokens=1400, timeout=40)
+            temperature=0.3, max_tokens=1400, timeout=50, thinking=False)
     except Exception as e:
         logger.warning("synthesis failed, fallback report: %s", e)
         return _fallback_report(question, subqs, sources)

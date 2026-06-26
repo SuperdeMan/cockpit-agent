@@ -15,7 +15,8 @@ from dataclasses import dataclass, field, asdict
 
 
 # STORM 式多视角：调研子问题从这些视角展开，提升覆盖与结构。
-PERSPECTIVES = ("背景", "对比", "风险", "最新进展", "适配用户")
+# 注：刻意不含「适配用户」——它会诱导 LLM 把无关研究主题往用户处境（车/电量）带偏（实测踩到）。
+PERSPECTIVES = ("背景", "对比", "风险", "最新进展", "应用")
 
 
 @dataclass

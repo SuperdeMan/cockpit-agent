@@ -64,6 +64,22 @@ def test_plan_caps_at_max_subq():
     assert len(subqs) == pipeline.MAX_SUBQ
 
 
+def test_clean_excerpt_strips_webpage_chrome():
+    raw = "登录\n搜索\n媒体品牌\n企业服务\n我要入驻\n# 一文看懂BEVFormer技术\n这是正文内容。"
+    cleaned = pipeline._clean_excerpt(raw)
+    for chrome in ("登录", "媒体品牌", "企业服务", "我要入驻"):
+        assert chrome not in cleaned
+    assert "一文看懂BEVFormer技术" in cleaned and "这是正文内容。" in cleaned
+
+
+def test_constraints_note_excludes_battery():
+    # 电量与研究主题无关、会带偏（loop engineering→电量72%自适应控制）→ 绝不进研究约束。
+    note = pipeline._constraints_note({"vehicle_state": "电量72%", "location": "杭州",
+                                       "profile_prefs": ["带老人"]})
+    assert "电量" not in note and "72" not in note
+    assert "杭州" in note and "带老人" in note
+
+
 def test_plan_injects_constraints():
     seen = {}
 

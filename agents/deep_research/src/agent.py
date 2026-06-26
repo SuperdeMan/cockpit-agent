@@ -35,6 +35,9 @@ _CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 # 把研究结论摘要存为长期记忆（"帮我记下/存一下/收藏"）。
 _REMEMBER_MARK = ("记下", "记一下", "存下", "存一下", "收藏", "保存", "记住这", "存到记忆")
+# 地理相关研究：仅这类问题才把当前城市作约束（否则反查城市会把无关主题带偏）。
+_GEO_MARK = ("本地", "当地", "附近", "周边", "这边", "这里", "哪个城市", "哪里", "哪座城",
+             "定居", "落户", "搬到", "搬去", "买房", "租房", "移居", "宜居", "适合居住")
 
 
 class DeepResearchAgent(BaseAgent):
@@ -94,30 +97,29 @@ class DeepResearchAgent(BaseAgent):
                   "gaps": report.gaps})
 
     async def _constraints(self, question: str, ctx, meta) -> dict:
-        """收集把「我」接地进调研的处境：时间 + 电量 + 当前城市（坐标反查）+ 画像偏好（语义召回）。
+        """收集与研究**相关**的处境（接地「我」）。
 
-        位置/画像让子问题贴合「我」（手机版 Deep Research 给不了的差异化）；任一步失败静默跳过，
-        不阻断调研。画像走语义召回（query=研究问题），高分项才注入——与主题无关的偏好自然不命中。
+        **刻意不注入电量**（与研究主题几乎无关、会把无关问题带偏——实测「loop engineering」被带成
+        「电量72%自适应控制」）；位置仅在问题涉及本地/选城等地理相关时反查注入；画像走语义召回且
+        **高分才注入**。任一步失败静默跳过，不阻断调研。
         """
         c = {"time_now": f"{shanghai_now():%Y年%m月%d日}"}
-        battery = str((meta or {}).get("vehicle_battery", "") or "").strip()
-        if battery:
-            c["vehicle_state"] = f"电量{battery.rstrip('%')}%"
-        # 当前城市：坐标反查（"本地/这附近/周边"类调研贴合所在城市）
-        cur = current_location_from_meta(meta)
-        if cur:
-            try:
-                city = await self.location_resolver.reverse(cur.lng, cur.lat, meta)
-                if city:
-                    c["location"] = city
-            except Exception as e:
-                logger.debug("research reverse geocode skipped: %s", e)
-        # 画像偏好：按研究问题语义召回（带老人/预算/口味/关注领域…），高分才注入
+        # 位置：仅当问题地理相关（本地/选城/宜居…）才反查当前城市，否则不注入（防带偏）
+        if any(m in question for m in _GEO_MARK):
+            cur = current_location_from_meta(meta)
+            if cur:
+                try:
+                    city = await self.location_resolver.reverse(cur.lng, cur.lat, meta)
+                    if city:
+                        c["location"] = city
+                except Exception as e:
+                    logger.debug("research reverse geocode skipped: %s", e)
+        # 画像偏好：按研究问题语义召回，min_score 收紧到 0.35（只让确有相关性的偏好注入）
         try:
-            hits = await ctx.recall(query=question, top_k=4, min_score=0.25)
+            hits = await ctx.recall(query=question, top_k=3, min_score=0.35)
             prefs = [str(h.get("text", "")).strip() for h in hits if h.get("text")]
             if prefs:
-                c["profile_prefs"] = prefs[:4]
+                c["profile_prefs"] = prefs[:3]
         except Exception as e:
             logger.debug("research recall skipped: %s", e)
         return c
