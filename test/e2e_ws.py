@@ -7,6 +7,11 @@ import asyncio
 import json
 import sys
 
+try:                                   # Windows 控制台默认 GBK，强制 UTF-8 输出（否则打印 ⚠ 等字符崩溃）
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 try:
     import websockets
 except ImportError:
