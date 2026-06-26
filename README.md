@@ -25,9 +25,10 @@
   行车/泊车双态、脱敏不露 reasoning）；普通车控/闲聊零过程零额外延迟。
 - **记忆系统分层重构**：从 mock KV 升级为 pgvector 语义记忆——自动从对话抽取偏好/个人实体（宠物·家人称呼也能记），语义召回注入规划、闲聊记忆感知作答，主动 routine 建议经 NATS→HMI，常去地点收敛、隐私分级+一键删除；embedding 走 llm-gateway→阿里云百炼 text-embedding-v4（真语义实测，无 key 降级 lexical）。详见 `docs/design/2026-06-25-memory-system-redesign.md`。
 - **上下文系统重构**：承接记忆重构后裸着的 working/core 层——统一 `ContextManager` 把 catalog（registry 语义预筛）、对话历史、长期记忆召回、结构化焦点态装配于统一 token 预算；跨轮指代靠结构化焦点态而非啃原文；敏感上下文（精确位置/电量）按 Agent manifest `context_scopes` 最小化下发。详见 `docs/design/2026-06-25-context-system-redesign.md`。
-- **通讯链路量产级加固**：全链路 gRPC keepalive（共享 `runtime/grpcio.py` 工厂，空闲也 ping，根治依赖重启换 IP 后的断连/无响应）+ 全服务优雅停机 + HMI 韧性（指数退避重连/断线有界发送队列不丢消息/请求看门狗）+ 熔断接线（开路快速失败 + Dashboard 可视化）+ LLM 网关连接池/流式 stall + 依赖连接加固（Redis/PG/NATS）；并修复一处危险车控确认退化（catalog 预算裁剪误丢 edge 车控核心）。真栈韧性自愈验证：依赖换 IP 不重启依赖方即恢复。详见 `docs/design/2026-06-25-comms-link-hardening.md`。
-- 全量 pytest：**891 passed, 6 skipped**（含记忆 8 + 上下文 30 + 通讯加固：grpcio 工厂/熔断接线/agent_client 复用/render_catalog 保护）。
-- 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2。
+- **通讯链路量产级加固**：全链路 gRPC keepalive（共享 `runtime/grpcio.py` 工厂，空闲也 ping，根治依赖重启换 IP 后的断连/无响应）+ 全服务优雅停机 + HMI 韧性（指数退避重连/断线有界发送队列不丢消息/请求看门狗）+ 熔断接线（开路快速失败 + Dashboard 可视化）+ LLM 网关连接池/流式 stall + 依赖连接加固（Redis/PG/NATS）；并修复一处危险车控确认退化（catalog 预算裁剪误丢 edge 车控核心）。真栈韧性自愈验证：依赖换 IP 不重启依赖方即恢复（Python 侧 `_reset_channel` + Go 网关显式重连，dns:/// 自动重解析单独不可靠）。详见 `docs/design/2026-06-25-comms-link-hardening.md`。
+- **行程规划结构化重构**：从「LLM 自由文本行程」升级为**结构化可执行行程对象**——LLM 只提议骨架、确定性流水线接地真实 POI + 按真实电量沿路线编织充电点 + 校验每日车程，消灭幻觉景点（对症 TravelPlanner 基准纯 LLM 规划 0.6% 通过率）；每个停靠点可一句话导航（「下一站」「导航去第二天的 X」）、支持局部改某天不漂移、在途状态查询与「时间不够」自动精简，行程状态落记忆服务跨轮存续。护城河是车辆接地 + 在途编排（而非行前研究）。详见 `docs/design/2026-06-26-trip-planner-redesign.md`。
+- 全量 pytest：**917 passed, 6 skipped**（含记忆 8 + 上下文 30 + 通讯加固 + 行程规划结构化重构 P0/P1/P2 +36）。
+- 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6。
 - Docker 全栈 **24 个服务**（含充能规划/场景编排/路况安全等 Agent），全栈联调通过。
 
 详细交接状态见 [`AGENTS.md`](AGENTS.md)，工程约束见 [`CLAUDE.md`](CLAUDE.md)。
