@@ -62,6 +62,8 @@ def test_research_end_to_end_produces_report_card():
     assert len(res.ui_card["sections"]) == 1
     assert res.ui_card["sources"] and res.ui_card["sources"][0]["idx"] == 1
     assert res.data["confidence"] == "medium"
+    # 同步出报告后 follow_up 教异步触发词（可发现性：否则用户猜不到「查完告诉我」会转异步）
+    assert "查完告诉我" in (res.follow_up or "")
 
 
 def test_research_unknown_intent_fails_gracefully():

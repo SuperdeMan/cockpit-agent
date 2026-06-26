@@ -145,8 +145,10 @@ class DeepResearchAgent(BaseAgent):
 
         speech, card = brief(report, question)
         await self._save_task(ctx, question, report)   # 落 memory，供下一轮深挖
-        # 落地产物提示（座舱差异化=可继续的产物）：可深挖某节 / 可存记忆。
-        follow = "想深入某部分说『展开第N点』；想存下结论说『记一下』。" if report.sections else ""
+        # 落地产物提示（座舱差异化=可继续的产物）：可深挖某节 / 转异步更深版 / 可存记忆。
+        # 异步引导刻意放进同步 follow_up——异步是「显式延后语」触发，否则用户猜不到，可发现性差。
+        follow = ("想深入某部分说『展开第N点』；想要更深更完整的报告，说『慢慢查、查完告诉我』，"
+                  "我后台慢慢查完主动推给你；想存下结论说『记一下』。") if report.sections else ""
         return AgentResult(
             speech=speech, ui_card=card, follow_up=follow,
             data={"question": question, "sections": len(report.sections),
