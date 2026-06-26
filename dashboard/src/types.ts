@@ -28,6 +28,7 @@ export type AgentInfo = {
   error_rate?: number
   deployment?: string
   kind?: string
+  circuit?: string
 }
 
 export type StateChange = {

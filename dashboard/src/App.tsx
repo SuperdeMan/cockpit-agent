@@ -143,6 +143,10 @@ export default function App() {
               typeof event.error_rate === 'number'
                 ? event.error_rate
                 : previous[agentId]?.error_rate,
+            circuit:
+              typeof event.circuit === 'string'
+                ? event.circuit
+                : previous[agentId]?.circuit,
           },
         }))
       },

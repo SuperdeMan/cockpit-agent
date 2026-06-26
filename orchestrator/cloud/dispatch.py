@@ -75,6 +75,9 @@ class UnifiedDispatcher:
             )
             snapshot = metrics.agent_snapshot(step.agent_id)
             if snapshot:
+                # 熔断状态并入 Agent 指标供 Dashboard 展示（peek snapshot 不创建新 breaker）
+                cb = self._breakers.snapshot().get(step.endpoint or step.agent_id)
+                snapshot["circuit"] = cb["state"] if cb else "closed"
                 await emitter.emit_metric(step.agent_id, **snapshot)
         except Exception:
             pass

@@ -43,6 +43,7 @@ class CollectorStore:
             "route_hits",
             "degrade",
             "llm_tokens",
+            "circuit",
         ):
             if key in event:
                 agent[key] = event[key]
