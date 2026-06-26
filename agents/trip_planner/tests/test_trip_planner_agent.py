@@ -274,5 +274,91 @@ def test_modify_add_stop_grounds_and_appends():
     assert "西湖" in names and "灵隐寺" in names
 
 
+# ─── P2: trip.status / trip.reschedule（在途编排）───
+
+def test_status_reports_progress():
+    """『行程到哪了』→ 报当前站/下一站/剩余站数（只读，不改行程）。"""
+    agent = TripPlannerAgent()
+    trip = _trip_2days()
+    trip.cursor = {"day_index": 1, "stop_index": 0}     # 已到第一站
+    res = asyncio.run(run_handle(
+        agent, "trip.status", slots={}, raw_text="行程到哪了", ctx=_persisted_ctx(trip)))
+    assert res.status == "ok"
+    assert "灵隐寺" in res.speech and "1站" in res.speech       # 下一站 + 还剩1站
+    assert res.ui_card["type"] == "trip_itinerary"
+
+
+def test_status_without_trip():
+    agent = TripPlannerAgent()
+    res = asyncio.run(run_handle(agent, "trip.status", slots={}, raw_text="行程到哪了"))
+    assert res.status == "ok"
+    assert "还没有规划" in res.speech
+
+
+def test_reschedule_trims_trailing_stops():
+    """『时间不够了』→ 每个剩余天砍掉尾部一站，NEED_CONFIRM。"""
+    agent = TripPlannerAgent()
+    fake = FakePOI()
+    agent.poi = fake
+    agent._fallback = fake
+    agent.llm.complete = AsyncMock(side_effect=AssertionError("精简不应调 LLM"))
+    trip = Trip(destination="北京", days=2)
+    trip.itinerary = [
+        Day(day_index=1, stops=[Stop(stop_id=f"a{i}", name=n, grounded=True,
+            poi={"name": n, "lat": 39.9 + i * 0.01, "lng": 116.3})
+            for i, n in enumerate(["颐和园", "故宫", "天坛"])]),
+        Day(day_index=2, stops=[Stop(stop_id=f"b{i}", name=n, grounded=True,
+            poi={"name": n, "lat": 40.0 + i * 0.01, "lng": 116.4})
+            for i, n in enumerate(["长城", "明十三陵"])]),
+    ]
+    res = asyncio.run(run_handle(
+        agent, "trip.reschedule", slots={"hint": "时间不够了"},
+        raw_text="时间不够了", ctx=_persisted_ctx(trip)))
+    assert res.status == "need_confirm"
+    names = [s["name"] for d in res.ui_card["itinerary"] for s in d["stops"]]
+    assert "天坛" not in names and "明十三陵" not in names      # 各天尾站被砍
+    assert "颐和园" in names and "长城" in names
+
+
+def test_reschedule_early_return_drops_last_day():
+    """『想提前回家』→ 删掉最后一天。"""
+    agent = TripPlannerAgent()
+    fake = FakePOI()
+    agent.poi = fake
+    agent._fallback = fake
+    res = asyncio.run(run_handle(
+        agent, "trip.reschedule", slots={"hint": "想提前回家"},
+        raw_text="想提前回家", ctx=_persisted_ctx(_trip_3days_beijing())))
+    assert res.status == "need_confirm"
+    assert len(res.ui_card["itinerary"]) == 2                  # 三天 → 两天
+
+
+def test_modify_day_dedup_excludes_other_days():
+    """改某天时排除其它天已用景点：LLM 想把第二天又选成第一天的西湖 → 被去重排除。"""
+    agent = TripPlannerAgent()
+    trip = Trip(destination="杭州", days=2)
+    trip.itinerary = [
+        Day(day_index=1, stops=[Stop(stop_id="s1", name="西湖", grounded=True,
+            poi={"name": "西湖", "lat": 30.25, "lng": 120.15})]),
+        Day(day_index=2, stops=[Stop(stop_id="s2", name="灵隐寺", grounded=True,
+            poi={"name": "灵隐寺", "lat": 30.24, "lng": 120.10})]),
+    ]
+    fake = FakePOI(search_map={"景点": [
+        _poi("西湖", 30.25, 120.15), _poi("灵隐寺", 30.24, 120.10), _poi("宋城", 30.18, 120.10)]})
+    agent.poi = fake
+    agent._fallback = fake
+    # LLM 偏要选第一天已有的「西湖」，应被跨天去重挡掉
+    agent.llm.complete = AsyncMock(return_value=(
+        '{"days":[{"day_index":1,"stops":[{"name":"西湖","type":"attraction"}]}]}'))
+    res = asyncio.run(run_handle(
+        agent, "trip.modify", slots={"modification": "第二天换一个"},
+        raw_text="第二天换一个", ctx=_persisted_ctx(trip)))
+    assert res.status == "need_confirm"
+    days = res.ui_card["itinerary"]
+    assert days[0]["stops"][0]["name"] == "西湖"               # 第一天不变
+    day2_names = [s["name"] for s in days[1]["stops"]]
+    assert "西湖" not in day2_names                            # 第二天不再撞第一天的西湖
+
+
 def test_manifest_consistency():
     assert assert_manifest_consistent(TripPlannerAgent()) is True

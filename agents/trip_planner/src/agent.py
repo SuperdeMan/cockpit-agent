@@ -47,7 +47,8 @@ class TripPlannerAgent(BaseAgent):
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         handlers = {"trip.plan": self._plan, "trip.modify": self._modify,
-                    "trip.navigate": self._navigate}
+                    "trip.navigate": self._navigate, "trip.status": self._status,
+                    "trip.reschedule": self._reschedule}
         handler = handlers.get(intent.name)
         if handler:
             return await handler(intent, ctx, meta)
@@ -164,8 +165,10 @@ class TripPlannerAgent(BaseAgent):
             if n and trip.day(n):
                 # ② 只重规划第 n 天：其余 Day 原样保留（结构化天然不漂移）。
                 pool = await build_poi_pool(self.poi, self._fallback, dest, prefs, None, meta)
-                sk = await propose(self.llm, dest, "1", prefs,
-                                   [p.name for p in pool], modification)
+                # 跨天去重：重规划某天时排除其它天已用景点，避免改完与别天撞车。
+                used = {s.name for d in trip.itinerary if d.day_index != n for s in d.stops}
+                names = [p.name for p in pool if p.name not in used]
+                sk = await propose(self.llm, dest, "1", prefs, names, modification)
                 oneday = await ground(self.poi, self._fallback, sk, pool, meta,
                                       dest=dest, prefs=prefs, raw_text=modification,
                                       llm=self.llm)
@@ -332,6 +335,76 @@ class TripPlannerAgent(BaseAgent):
             speech=f"好的，为您导航到第{dy}天的{stop.name}。",
             data={"destination": stop.name, "lat": poi.get("lat"), "lng": poi.get("lng")},
         ).action("navigate", payload)
+
+    # ── 在途状态查询（P2，只读）─────────────────────────────────
+    async def _status(self, intent, ctx, meta) -> AgentResult:
+        """在途进度：在第几站/下一站/还剩几站/全程补电几次。不改行程。"""
+        trip = await self._load_trip(ctx)
+        if not trip or not trip.itinerary:
+            return AgentResult(speech="您还没有规划行程。说『去某地玩几天』我就帮您安排。")
+        flat = self._flatten_grounded(trip)
+        total = len(flat)
+        cur = trip.cursor or {}
+        cd, ci = cur.get("day_index", 0), cur.get("stop_index", 0)
+        pos = next((k for k, (d, i, _s) in enumerate(flat) if d == cd and i == ci), -1)
+        remaining = flat[pos + 1:] if pos >= 0 else flat
+        charge_total = sum(len(leg.charging_stops)
+                           for dy in trip.itinerary for leg in dy.legs)
+        parts = [f"您正在{trip.destination}{trip.days}天行程（共{total}站）"]
+        if pos >= 0:
+            parts.append(f"已到第{pos + 1}站「{flat[pos][2].name}」")
+        if remaining:
+            parts.append(f"下一站是「{remaining[0][2].name}」，后面还有{len(remaining)}站")
+        else:
+            parts.append("行程已全部走完")
+        if charge_total:
+            parts.append(f"全程需补电{charge_total}次")
+        return AgentResult(
+            speech="，".join(parts) + "。", ui_card=trip.card_dict(),
+            data={"total": total, "remaining": len(remaining), "charging": charge_total})
+
+    # ── 在途重排：确定性精简剩余行程（P2）──────────────────────
+    async def _reschedule(self, intent, ctx, meta) -> AgentResult:
+        """时间不够/太累/想提前回 → 确定性砍尾部停靠点或最后一天，二次确认。"""
+        if meta.get("confirmed") == "true":
+            return await self._finalize(ctx, meta)
+        trip = await self._load_trip(ctx)
+        if not trip or not trip.itinerary:
+            return AgentResult(
+                status=NEED_SLOT, speech="还没有规划好的行程，您想去哪里玩几天？",
+                follow_up="例如：周末去杭州两天", missing_slots=["destination"])
+        hint = (intent.slots.get("hint") or intent.raw_text or "")
+        if not self._trim_itinerary(trip, hint):
+            return AgentResult(
+                speech="行程已经很精简了，没有可再删减的安排啦。",
+                ui_card=trip.card_dict())
+        soc = await self._soc_pct(ctx, meta)
+        trip = await solve(self.poi, self._fallback, trip, soc, meta)
+        await self._save_trip(ctx, trip)
+        speech, card = narrate(trip)
+        return AgentResult(
+            status=NEED_CONFIRM,
+            speech=f"已为您精简行程：{speech}\n\n确认按此调整吗？",
+            ui_card=card, follow_up="说『确认』即可",
+        ).action("trip.reschedule", {"hint": hint}, require_confirm=True)
+
+    @staticmethod
+    def _trim_itinerary(trip: Trip, hint: str) -> bool:
+        """确定性精简：想提前回→删最后一天；时间不够/太累→每个剩余天删尾部一站。返回是否改动。"""
+        h = hint or ""
+        if (any(k in h for k in ("提前回", "早点回", "早些回", "少一天", "回家"))
+                and len(trip.itinerary) > 1):
+            trip.itinerary.pop()
+            return True
+        cd = (trip.cursor or {}).get("day_index", 0)
+        changed = False
+        for dy in trip.itinerary:
+            if dy.day_index < cd:               # 已过的天不动
+                continue
+            if len(dy.stops) > 1:
+                dy.stops.pop()
+                changed = True
+        return changed
 
     @staticmethod
     def _flatten_grounded(trip: Trip) -> list:

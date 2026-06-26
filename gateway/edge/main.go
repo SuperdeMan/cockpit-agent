@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -161,7 +162,7 @@ func (c *ChannelClient) connectLoop(ctx context.Context) {
 
 func (c *ChannelClient) connect(ctx context.Context) error {
 	var err error
-	c.conn, err = grpc.NewClient(c.cloudAddr,
+	c.conn, err = grpc.NewClient(dnsTarget(c.cloudAddr),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		clientKeepalive())
 	if err != nil {
@@ -469,6 +470,16 @@ func clientKeepalive() grpc.DialOption {
 	})
 }
 
+// dnsTarget 强制 dns resolver：裸 host:port 默认走 passthrough（只解析一次、永不重解析），
+// 依赖容器重建换 IP 后会一直连旧 IP 报错，直到本服务重启。dns scheme 在连接 TRANSIENT_FAILURE
+// 时重解析 DNS → 自动重连（配合 keepalive 探活），无需重启本服务。已带 scheme 的原样返回。
+func dnsTarget(addr string) string {
+	if strings.Contains(addr, "://") {
+		return addr
+	}
+	return "dns:///" + addr
+}
+
 // ─── 入口 ───
 
 func main() {
@@ -477,7 +488,7 @@ func main() {
 	vehicleID := getenv("VEHICLE_ID", "v1")
 
 	// 连接端侧编排器（架构 §2.2：HMI → Edge Gateway → Edge Orchestrator）
-	orchConn, err := grpc.NewClient(orchAddr,
+	orchConn, err := grpc.NewClient(dnsTarget(orchAddr),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		clientKeepalive())
 	if err != nil {
