@@ -40,6 +40,14 @@ _TRIP_NAV_RE = re.compile(
     r"|(?:导航|带我去|去|到)[^，。！？]{0,6}第\s*[一二两三四五六七八九十\d]+\s*天"
     r"|第\s*[一二两三四五六七八九十\d]+\s*天[^，。！？]{0,4}第\s*[一二两三四五六七八九十\d]+\s*个")
 _TRIP_NAV_BLOCK_RE = re.compile(r"换|改|调整|删|加|不去|不要|重新|规划")
+# 在途状态查询（只读）→ trip.status
+_TRIP_STATUS_RE = re.compile(
+    r"行程(到哪|进度|还剩|还有|怎么样)|还剩几[站个]|我在第几[站天]|到第几站|今晚住哪|行程.{0,3}充几次")
+# 在途精简/重排剩余行程 → trip.reschedule。注意：要求「太累了/好累」present 完成态，
+# 不能命中规划偏好「(带老人)不要太累」（那是慢节奏 plan 约束，不是在途精简）。
+_TRIP_RESCHEDULE_RE = re.compile(
+    r"时间不够|来不及|赶不及|太累了|好累|累坏|累死|提前回|早点回|早些回|提前结束"
+    r"|精简.{0,2}行程|简化行程|行程太满|玩不完|少玩|少去")
 # 通勤/固定地点：是导航日常目的地，不是多日出行，命中则不触发行程规划
 _TRIP_DEST_BLOCK = {"公司", "家", "单位", "学校", "上班", "这里", "那里", "机场", "车站"}
 _CN_NUM = {"一": "1", "两": "2", "二": "2", "三": "3", "四": "4", "五": "5",
@@ -191,9 +199,13 @@ class PlanBuilder:
         # 确定性兜底（覆盖 LLM 解析成功 + 降级语义路由两条路径）：
         # 先判修改意图（『第N天换一个』走 trip.modify，与新规划互斥）；非修改再判新出行
         # （『去X几天』补 trip.plan）。否则弱 LLM 会把这两类都误回天气/充电、漏掉行程。
-        if not self._ensure_trip_navigate(plan, text, agent_map):
-            if not self._ensure_trip_modify(plan, text, agent_map):
-                self._ensure_trip_step(plan, text, agent_map)
+        # 行程类确定性兜底（互斥，按特异性排序）：导航 > 重排 > 状态 > 修改 > 新规划。
+        for ensure in (self._ensure_trip_navigate, self._ensure_trip_reschedule,
+                       self._ensure_trip_status, self._ensure_trip_modify):
+            if ensure(plan, text, agent_map):
+                break
+        else:
+            self._ensure_trip_step(plan, text, agent_map)
         step_summary = [(s.id, s.agent_id, s.intent) for s in plan.steps]
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan
@@ -335,6 +347,38 @@ class PlanBuilder:
             if steps:
                 plan.steps = steps
                 logger.info("Ensured trip.navigate step (safety net)")
+        return True
+
+    def _ensure_trip_status(self, plan: "Plan", text: str, agent_map: dict) -> bool:
+        """『行程到哪了/还剩几站』→ 单步 trip.status（只读在途状态）。"""
+        if "trip-planner" not in agent_map:
+            return False
+        if not _TRIP_STATUS_RE.search(text or ""):
+            return False
+        if not any(s.intent == "trip.status" for s in plan.steps):
+            steps = self._validated_steps([{
+                "id": "s_trip_status", "agent_id": "trip-planner", "intent": "trip.status",
+                "slots": {}, "depends_on": [], "slot_refs": {},
+            }], agent_map)
+            if steps:
+                plan.steps = steps
+        return True
+
+    def _ensure_trip_reschedule(self, plan: "Plan", text: str, agent_map: dict) -> bool:
+        """『时间不够/太累/想提前回』→ 单步 trip.reschedule（确定性精简剩余行程）。hint 传整句。"""
+        if "trip-planner" not in agent_map:
+            return False
+        if not _TRIP_RESCHEDULE_RE.search(text or ""):
+            return False
+        if not any(s.intent == "trip.reschedule" for s in plan.steps):
+            steps = self._validated_steps([{
+                "id": "s_trip_resched", "agent_id": "trip-planner",
+                "intent": "trip.reschedule",
+                "slots": {"hint": text}, "depends_on": [], "slot_refs": {},
+            }], agent_map)
+            if steps:
+                plan.steps = steps
+                logger.info("Ensured trip.reschedule step (safety net)")
         return True
 
     def _ensure_trip_modify(self, plan: "Plan", text: str, agent_map: dict) -> bool:

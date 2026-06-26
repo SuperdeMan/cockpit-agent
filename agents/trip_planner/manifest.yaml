@@ -24,6 +24,14 @@ capabilities:
       仅在已有规划好的行程时由确定性路由命中，普通导航仍走 navigation。
     slots: [day, stop, target]
     examples: ["下一站", "导航去第二天的西湖", "第三天第一个", "去行程里的故宫"]
+  - intent: trip.status
+    description: 查询当前行程在途进度（在第几站/下一站/还剩几站/全程需补电几次）。只读，不改行程。
+    slots: []
+    examples: ["行程到哪了", "还剩几站", "我在第几站", "还要充几次电"]
+  - intent: trip.reschedule
+    description: 在途精简剩余行程（时间不够/太累/想提前回）——确定性砍掉靠后的停靠点或最后一天，需二次确认。
+    slots: [hint]
+    examples: ["时间不够了", "太累了精简一下", "想提前回家", "今天少玩一个"]
 
 requires_permissions:
   - location.read
