@@ -322,6 +322,15 @@ export default function App() {
   const send = (text: string) => {
     setMessages((m) => [...m, { id: uid(), role: 'user', text }])
     setAwaitConfirm(false)
+    // 行程内导航/修改整句（含『下一站』或『第N天…』）：整句交编排器路由到 trip.navigate/modify，
+    // 不被上一条 poi_list 候选的「第N个」就近选择劫持（如「第二天第一个」≠ 上一条候选第1个）。
+    if (/下一站|下个景点|继续导航|第\s*[一二两三四五六七八九十\d]+\s*天/.test(text)) {
+      lastPoiNamesRef.current = null
+      lastDestChoiceRef.current = null
+      lastWaypointChoiceRef.current = null
+      dispatch(text, false)
+      return
+    }
     // 「换一批/换一个」：对上一条就近类目候选翻页，重发干净的「导航去附近的{关键词}」+ 下一页
     // （只重搜 POI，不会把复杂原句里的车控空调/座椅/氛围灯又执行一遍），并带最新定位。
     if (isRefreshRequest(text) && categoryRef.current) {

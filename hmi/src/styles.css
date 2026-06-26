@@ -912,6 +912,18 @@ a.ev-news-h:hover { color: var(--accent-2); text-decoration: underline; }
 .cr-start .cr-text, .cr-end .cr-text { font-weight: 600; }
 .cr-direct { margin-top: 8px; color: var(--muted); font-size: 12px; }
 
+/* 行程卡：按天分组（复用 .cr-* 时间线） */
+.card-trip .trip-day { margin-top: 12px; }
+.card-trip .trip-day:first-of-type { margin-top: 6px; }
+.trip-day-head { margin: 0 0 6px; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .3px; }
+.trip-charge-hint { margin: 6px 0 0 14px; color: var(--warn); font-size: 11px; line-height: 1.4; }
+.trip-ungrounded .cr-dot { background: var(--faint); }
+.trip-ungrounded .cr-text b { color: var(--muted); font-weight: 500; }
+.trip-stop-go { cursor: pointer; }
+.trip-stop-go:hover .trip-go-hint, .trip-stop-go:focus .trip-go-hint { opacity: 1; }
+.trip-go-hint { margin-left: 6px; color: var(--accent); font-size: 10px; opacity: .6; }
+.trip-voice-hint { margin-top: 12px; color: var(--muted); font-size: 11px; }
+
 /* POI 卡片 */
 .card-poi-list { display: flex; flex-direction: column; gap: 8px; }
 .poi-idx { color: var(--accent); font-weight: 700; margin-right: 6px; }

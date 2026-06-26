@@ -1,259 +1,407 @@
-"""行程规划 Agent —— 子规划者范本（WS6）。
+"""行程规划 Agent（P0 重构）—— 结构化可执行行程 + 充电感知 + 落 memory。
 
-Phase 1：经 AgentClient 调用导航 Agent 搜 POI，再用 LLM 组织行程。
-演示跨 Agent 协作：Planner → trip-planner（子规划者）→ navigation（工具 Agent）。
+把项目铁律「规划/执行分离、LLM 提议、确定性 Executor 落地」下沉到 trip-planner 内部：
+`_plan` 不再让 LLM 自由文本直出整份行程，而是驱动 `pipeline` 四段
+（propose 提议骨架 → ground 接地真实 POI → solve 算车程/编织充电 → narrate 出话术+卡），
+产出结构化 `Trip`（`models.Trip`）。状态落 memory（profile KV `trip_active`），Agent 无状态化。
 
-Phase E 增强：
-- 并行调用 info.weather + charging-planner
-- NEED_SLOT 追问偏好 + NEED_CONFIRM 确认方案
-- trip.modify 意图：LLM 理解 diff → 局部重规划
+provider 在进程内复用 navigation 的 `POIProvider`（跟随 charging_planner 先例）。
+确认轮（`meta.confirmed=="true"`）→ `_finalize` 直接收尾、绝不再 NEED_CONFIRM（防死循环）。
 """
 from __future__ import annotations
-import asyncio
+import json
+import logging
 import os
 import re
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, NEED_CONFIRM
+from agents._sdk.location import current_location_from_meta
+from agents.navigation.src.providers import build_poi_provider
+from agents.navigation.src.providers.mock import MockPOIProvider
+from .models import Trip, Stop
+from .pipeline import (build_poi_pool, propose, ground, solve, narrate,
+                       _ground_one, _poi_to_dict)
 
-# 从行程文本里提取「第一天」的主要景点，作为确认后的导航第一站。
-_DAY1_POI_RE = re.compile(
-    r"第\s*[一1]\s*天[^第]{0,100}?"
-    r"([一-鿿]{2,10}?(?:公园|长城|故宫|寺|塔|宫|山|湖|园|广场|博物馆|大街|"
-    r"古镇|海洋馆|动物园|步行街|景区|村))")
-# 去掉景点名前误粘的时间/动词（"下午可前往天坛公园" → "天坛公园"）
-_DAY1_LEAD_RE = re.compile(
-    r"^(上午|下午|傍晚|晚上|中午|早上|清晨|可|先|再|然后|接着|建议|前往|游览|参观|游玩|"
-    r"散步|漫步|逛|去|到达|抵达|乘车|入住|后|的)+")
-
-
-def _first_stop_from_itinerary(itinerary: str) -> str:
-    """解析行程第一天的主要景点名（确认后据此搜 POI、设为导航第一站）。解析不到返回空。"""
-    m = _DAY1_POI_RE.search(itinerary or "")
-    if not m:
-        return ""
-    name = _DAY1_LEAD_RE.sub("", m.group(1))
-    return name if len(name) >= 2 else m.group(1)
+logger = logging.getLogger("agent.trip_planner")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
+_PROFILE_KEY = "trip_active"
 
-_SYSTEM = (
-    "你是自驾行程规划助手。根据目的地、天数、偏好，以及搜索到的景点信息，"
-    "给出简洁的行程建议，按天列要点（每天1-2句），适合语音播报，避免冗长。"
-)
-
-_MODIFY_SYSTEM = (
-    "你是自驾行程修改助手。根据用户的修改要求和已有行程，给出修改后的行程要点。"
-    "只修改用户提到的部分，其他保持不变。适合语音播报。"
-)
+_CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+           "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+_MOD_DAY_RE = re.compile(r"第\s*([一二两三四五六七八九十0-9]+)\s*天")
+_ORDINAL_RE = re.compile(r"第\s*([一二两三四五六七八九十0-9]+)\s*个")
+_DAY_PREFIX_RE = re.compile(r"^第\s*[一二两三四五六七八九十0-9]+\s*天的?")
+# 结构化编辑：删/加某个具体停靠点（『换』走整天重规划，不在此匹配）
+_REMOVE_RE = re.compile(r"(?:删掉|删除|去掉|不去|不想去|不要去|去不了|取消)\s*([^，。,、\s了]{2,12})")
+_ADD_RE = re.compile(r"(?:加一个|加个|再加|增加|多加|加上|想去|顺便去|顺路去)\s*([^，。,、\s]{2,12})")
 
 
 class TripPlannerAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
-        # PoC：会话级行程缓存（session_id -> {destination,days,itinerary,pois}）。
-        # 支撑「改第N天」局部重规划（需原行程上下文）与确认后取第一站候选 POI。
-        # 单实例内存态，重启即失；量产应落到 memory 服务而非 Agent 本地。
-        self._sessions: dict[str, dict] = {}
+        # 进程内复用 navigation 的 POI provider（接地景点/充电站 + 算 leg 路线），
+        # 跟随 charging_planner 先例，避免每 leg 跨 gRPC。真实 provider 抖动降级 mock。
+        self.poi = build_poi_provider()
+        self._fallback = MockPOIProvider()
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
-        handlers = {
-            "trip.plan": self._plan,
-            "trip.modify": self._modify,
-        }
+        handlers = {"trip.plan": self._plan, "trip.modify": self._modify,
+                    "trip.navigate": self._navigate}
         handler = handlers.get(intent.name)
         if handler:
             return await handler(intent, ctx, meta)
         return AgentResult(status="failed", speech="行程助手暂不支持该请求。")
 
-    def _remember(self, sid: str, *, destination: str, days: str, itinerary: str,
-                  pois: list | None = None, first_stop: str | None = None) -> None:
-        """缓存本会话最近一次行程上下文。pois/first_stop 缺省时沿用旧值。"""
-        if not sid:
-            return
-        if len(self._sessions) > 200:        # 轻量上限，避免无界增长
-            self._sessions.clear()
-        prev = self._sessions.get(sid, {})
-        self._sessions[sid] = {
-            "destination": destination or prev.get("destination", ""),
-            "days": days or prev.get("days", ""),
-            "itinerary": itinerary,
-            "pois": pois if pois is not None else prev.get("pois", []),
-            "first_stop": first_stop if first_stop is not None else prev.get("first_stop", ""),
-        }
-
-    async def _finalize(self, ctx, sid: str, dest: str, days: str) -> AgentResult:
-        """确认后收尾：把行程「第一天」的景点设为导航第一站，给候选 POI 让用户选『第几个』。
-
-        优先按第一天景点名（如天坛公园）实时搜 POI——这才是用户要去的第一站；
-        搜不到再退化到规划时缓存的热门景点；再不行直接确认+导航目的地。
-        plain poi_list（无 purpose）→ HMI 把『第N个』改写成就近导航。绝不 NEED_CONFIRM。"""
-        st = self._sessions.get(sid or "", {})
-        dest = dest or st.get("destination", "")
-        days = days or st.get("days", "")
-        day_txt = f"{days}天" if days else ""
-        first_stop = st.get("first_stop", "")
-
-        # 1) 第一天景点 → 实时搜 POI（确认后才搜，避免规划期多一次往返）
-        items, label = [], first_stop or dest
-        if first_stop:
+    # ── 电量 ───────────────────────────────────────────────────
+    async def _soc_pct(self, ctx, meta) -> float:
+        """当前电量百分比：优先边端注入的真实车辆电量，回退 memory，再回退 50%。
+        与 charging_planner._resolve_soc 同源，保证多日行程起点 SoC 与仪表一致。"""
+        soc = str((meta or {}).get("vehicle_battery", "") or "").strip()
+        if not soc:
             try:
-                r = await self.agents.call("navigation", "navigation.search_poi",
-                                           {"keyword": first_stop}, ctx)
-                if isinstance(r, AgentResult) and r.ui_card:
-                    items = (r.ui_card.get("items") or [])[:5]
+                vals = await ctx.fetch("vehicle.battery")
+                soc = vals.get("vehicle.battery", "")
             except Exception:
-                items = []
-        # 2) 退化到规划期缓存的热门景点
-        if not items:
-            items, label = (st.get("pois") or [])[:5], dest
+                soc = ""
+        try:
+            return float(str(soc).replace("%", "").strip()) or 50.0
+        except ValueError:
+            return 50.0
 
-        items = [{"id": p.get("id", ""), "name": p.get("name", ""),
-                  "address": p.get("address", ""), "rating": p.get("rating"),
-                  "lat": p.get("lat"), "lng": p.get("lng")}
-                 for p in items if p.get("name")]
+    # ── 持久化（memory profile KV；Agent 无状态化）───────────────
+    async def _load_trip(self, ctx) -> Trip | None:
+        """从 memory 读当前活动行程。失败/无 → None。"""
+        try:
+            vals = await ctx.fetch(f"profile.{_PROFILE_KEY}")
+        except Exception as e:
+            logger.warning("load trip failed: %s", e)
+            return None
+        raw = vals.get(f"profile.{_PROFILE_KEY}")
+        if not raw:
+            return None
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        return Trip.from_dict(raw) if isinstance(raw, dict) else None
+
+    async def _save_trip(self, ctx, trip: Trip) -> None:
+        """写当前活动行程到 memory（best-effort，失败不阻断规划）。"""
+        try:
+            await ctx.save_profile(_PROFILE_KEY, trip.to_dict())
+        except Exception as e:
+            logger.warning("save trip failed: %s", e)
+
+    # ── 规划流水线 ─────────────────────────────────────────────
+    async def _run_pipeline(self, ctx, meta, dest: str, days: str, prefs: str,
+                            raw_text: str) -> Trip:
+        """propose → ground → solve，产出结构化 Trip。"""
+        # 目的地是行程城市（非当前位置）→ pool 搜索 near=None，靠关键词「{dest} 景点」定位。
+        pool = await build_poi_pool(self.poi, self._fallback, dest, prefs, None, meta)
+        skeleton = await propose(self.llm, dest, days, prefs,
+                                 [p.name for p in pool], raw_text)
+        trip = await ground(self.poi, self._fallback, skeleton, pool, meta,
+                            dest=dest, days=days, prefs=prefs, raw_text=raw_text,
+                            llm=self.llm)
+        soc = await self._soc_pct(ctx, meta)
+        trip = await solve(self.poi, self._fallback, trip, soc, meta)
+        trip.session_id = ctx.session_id or ""
+        trip.user_id = ctx.user_id or ""
+        return trip
+
+    async def _plan(self, intent, ctx, meta) -> AgentResult:
+        if meta.get("confirmed") == "true":
+            return await self._finalize(ctx, meta)
+
+        dest = (intent.slots.get("destination") or "").strip()
+        if not dest:
+            return AgentResult(
+                status=NEED_SLOT, speech="您想去哪里玩？",
+                follow_up="请告诉我目的地", missing_slots=["destination"])
+        days = (intent.slots.get("days") or "").strip()
+        prefs = (intent.slots.get("preferences") or "").strip()
+
+        trip = await self._run_pipeline(ctx, meta, dest, days, prefs, intent.raw_text)
+        await self._save_trip(ctx, trip)
+        speech, card = narrate(trip)
+        return AgentResult(
+            status=NEED_CONFIRM,
+            speech=f"{speech}\n\n确认按此方案出行吗？",
+            ui_card=card,
+            follow_up="说『确认』即可，或告诉我需要调整的地方",
+        ).action("trip.plan", {"destination": dest, "days": str(trip.days)},
+                 require_confirm=True)
+
+    async def _modify(self, intent, ctx, meta) -> AgentResult:
+        if meta.get("confirmed") == "true":
+            return await self._finalize(ctx, meta)
+
+        modification = (intent.slots.get("modification") or "").strip() \
+            or (intent.raw_text or "").strip()
+        if not modification:
+            return AgentResult(
+                status=NEED_SLOT, speech="您想怎么调整行程？",
+                follow_up="例如：第二天换成宋城", missing_slots=["modification"])
+
+        trip = await self._load_trip(ctx)
+        if not trip or not trip.itinerary:
+            return AgentResult(
+                status=NEED_SLOT,
+                speech="还没有正在规划的行程，您想去哪里玩几天？",
+                follow_up="例如：周末去杭州两天", missing_slots=["destination"])
+
+        dest = trip.destination
+        prefs = "、".join(trip.preferences)
+        soc = await self._soc_pct(ctx, meta)
+
+        # ① 结构化编辑优先：加/删某个具体停靠点（只动受影响项，跨天去重）。
+        if await self._apply_structural_edit(trip, modification, meta):
+            trip = await solve(self.poi, self._fallback, trip, soc, meta)
+        else:
+            n = self._modify_day(modification)
+            if n and trip.day(n):
+                # ② 只重规划第 n 天：其余 Day 原样保留（结构化天然不漂移）。
+                pool = await build_poi_pool(self.poi, self._fallback, dest, prefs, None, meta)
+                sk = await propose(self.llm, dest, "1", prefs,
+                                   [p.name for p in pool], modification)
+                oneday = await ground(self.poi, self._fallback, sk, pool, meta,
+                                      dest=dest, prefs=prefs, raw_text=modification,
+                                      llm=self.llm)
+                if oneday.itinerary and oneday.itinerary[0].stops:
+                    newday = oneday.itinerary[0]
+                    newday.day_index = n
+                    for idx, d in enumerate(trip.itinerary):
+                        if d.day_index == n:
+                            trip.itinerary[idx] = newday
+                            break
+                trip = await solve(self.poi, self._fallback, trip, soc, meta)
+            else:
+                # ③ 定位不到具体天 → 整程重规划（把修改并入偏好上下文）。
+                trip = await self._run_pipeline(
+                    ctx, meta, dest, str(trip.days or ""),
+                    f"{prefs} {modification}".strip(), modification)
+
+        await self._save_trip(ctx, trip)
+        speech, card = narrate(trip)
+        return AgentResult(
+            status=NEED_CONFIRM,
+            speech=f"{speech}\n\n确认按此调整吗？",
+            ui_card=card,
+            follow_up="说『确认』即可",
+        ).action("trip.modify", {"modification": modification}, require_confirm=True)
+
+    async def _apply_structural_edit(self, trip: Trip, modification: str, meta) -> bool:
+        """结构化编辑：删/加某个具体停靠点。命中并改动返回 True；否则 False（交给重规划）。"""
+        day_n = self._modify_day(modification)
+        m = _REMOVE_RE.search(modification)
+        if m:
+            name = _DAY_PREFIX_RE.sub("", m.group(1)).strip("的了 ")
+            if name and self._remove_stop(trip, name, day_n):
+                return True
+        m = _ADD_RE.search(modification)
+        if m:
+            name = _DAY_PREFIX_RE.sub("", m.group(1)).strip("的了 ")
+            if name and await self._add_stop(trip, name, day_n, meta):
+                return True
+        return False
+
+    @staticmethod
+    def _remove_stop(trip: Trip, name: str, day_n: int = 0) -> bool:
+        name = (name or "").strip()
+        for dy in trip.itinerary:
+            if day_n and dy.day_index != day_n:
+                continue
+            for k, s in enumerate(dy.stops):
+                nm = s.name or ""
+                if nm and (name in nm or nm in name):
+                    dy.stops.pop(k)
+                    return True
+        return False
+
+    async def _add_stop(self, trip: Trip, name: str, day_n: int, meta) -> bool:
+        # 跨天去重：已在行程里就视为已满足，不重复加、也不触发重规划。
+        for dy in trip.itinerary:
+            for s in dy.stops:
+                nm = s.name or ""
+                if nm and (name in nm or nm in name):
+                    return True
+        poi = await _ground_one(self.poi, self._fallback, name, None, meta, self.llm)
+        if not (poi and poi.lat and poi.lng):
+            return False
+        nstops = sum(len(d.stops) for d in trip.itinerary)
+        stop = Stop(stop_id=f"s_add{nstops + 1}", name=poi.name or name,
+                    type="attraction", dwell_min=120, source="user",
+                    poi=_poi_to_dict(poi), grounded=True)
+        target = trip.day(day_n) if day_n else min(
+            trip.itinerary, key=lambda d: len(d.stops))
+        (target or trip.itinerary[0]).stops.append(stop)
+        return True
+
+    async def _finalize(self, ctx, meta) -> AgentResult:
+        """确认收尾：把行程第一个已接地停靠点作导航第一站，给候选 POI 让用户选『第几个』。
+        绝不再 NEED_CONFIRM。状态置 confirmed 并持久化。"""
+        trip = await self._load_trip(ctx)
+        if not trip:
+            return AgentResult(speech="好的，行程已确认，祝您旅途愉快！")
+
+        dest = trip.destination
+        day_txt = f"{trip.days}天" if trip.days else ""
+        first = trip.first_stop()
+        items, label = [], dest
+
+        if first:
+            label = first.name
+            try:    # 实时搜第一站候选（如「天坛公园」多个门）供「第N个」就近导航
+                results = await self.poi.search(first.name, limit=5, meta=meta)
+                items = [{"id": r.id, "name": r.name, "address": r.address,
+                          "rating": r.rating, "lat": r.lat, "lng": r.lng}
+                         for r in results if r.name]
+            except Exception as e:
+                logger.warning("finalize first-stop search failed: %s", e)
+            if not items and first.poi:     # 搜不到退化到接地时的 POI
+                items = [first.poi]
+
+        trip.status = "confirmed"
+        await self._save_trip(ctx, trip)
+
         if items:
             names = "、".join(i["name"] for i in items[:3])
-            lead = (f"第一站为您安排在「{first_stop}」" if first_stop
-                    else "第一站可以从这些热门景点开始")
             return AgentResult(
-                speech=f"好的，{dest}{day_txt}的行程已确认！{lead}："
+                speech=f"好的，{dest}{day_txt}的行程已确认！第一站为您安排在「{label}」："
                        f"{names}。说『第几个』我就为您导航过去。",
                 ui_card={"type": "poi_list", "title": f"{label} · 选择第一站",
                          "items": items},
                 follow_up="说『第一个』即可开始导航")
         return AgentResult(
             speech=f"好的，{dest}{day_txt}的行程已确认，祝您和家人旅途愉快！"
-                   f"出发时说『导航去{first_stop or dest}』我就为您开始导航。")
+                   f"出发时说『导航去{label}』我就为您开始导航。")
 
-    async def _plan(self, intent, ctx, meta) -> AgentResult:
-        """规划行程。"""
-        dest = intent.slots.get("destination", "")
-        if not dest:
+    # ── 在途导航：把行程里任意停靠点变成一句话可导航（P1）──────────
+    async def _navigate(self, intent, ctx, meta) -> AgentResult:
+        """导航到当前行程里的某个停靠点：『下一站』/『第N天的X』/『第N天第M个』/『行程里的X』。
+
+        从持久化 Trip 取已接地停靠点，按指代定位后发 navigate 动作，并推进 cursor。
+        无行程 → 引导先规划（普通导航仍由 navigation 处理，本意图只在确定性路由命中行程指代时触发）。
+        """
+        trip = await self._load_trip(ctx)
+        if not trip or not trip.itinerary:
             return AgentResult(
-                status=NEED_SLOT, speech="您想去哪里玩？",
-                follow_up="请告诉我目的地", missing_slots=["destination"])
+                status=NEED_SLOT,
+                speech="还没有规划好的行程，先告诉我去哪里玩几天，我规划好就能带您一站站去。",
+                follow_up="例如：周末去杭州两天", missing_slots=["destination"])
 
-        days = intent.slots.get("days", "")
-        prefs = intent.slots.get("preferences", "")
+        flat = self._flatten_grounded(trip)
+        if not flat:
+            return AgentResult(speech="行程里还没有可导航的具体地点。")
 
-        # 用户已二次确认（编排器只对挂起那一步注入 confirmed）→ 收尾，不再重规划。
-        # 否则确认轮会重跑 _plan 又返回 NEED_CONFIRM，陷入"确认→再规划→再确认"死循环。
-        if meta.get("confirmed") == "true":
-            return await self._finalize(ctx, ctx.session_id, dest, days)
+        raw = intent.raw_text or ""
+        target_slot = (intent.slots.get("target") or "").strip()
+        day_n = self._modify_day(intent.slots.get("day") or raw)
+        ordinal = self._parse_ordinal(intent.slots.get("stop") or raw)
+        is_next = (target_slot == "next" or "下一站" in raw or "下个" in raw
+                   or "继续导航" in raw)
 
-        # 跨 Agent 协作：并行调用导航 + 天气 + 充电
-        pois_info = ""
-        weather_info = ""
-        charging_info = ""
-        first_pois: list = []          # Day1 候选景点（确认后作第一站供用户选）
-        try:
-            results = await asyncio.gather(
-                # 不加 rating_min：高德基础 POI 多无评分(=0)，过滤会把景点全删光，
-                # 导致确认后取不到第一站候选。质量由关键词「景点」本身保证。
-                self.agents.call("navigation", "navigation.search_poi",
-                                 {"keyword": f"{dest} 景点"}, ctx),
-                self.agents.call("navigation", "navigation.search_poi",
-                                 {"keyword": f"{dest} 充电桩"}, ctx),
-                self.agents.call("info", "info.weather", {"city": dest}, ctx),
-                self.agents.call("info", "info.forecast", {"city": dest}, ctx),
-                self.agents.call("charging-planner", "charging.plan",
-                                 {"destination": dest}, ctx),
-                return_exceptions=True,
-            )
-            # 第 0 个调用即"{dest} 景点"——其 POI 即第一站候选（区别于第 1 个"充电桩"）
-            attractions = results[0] if results else None
-            if (isinstance(attractions, AgentResult) and attractions.ui_card
-                    and attractions.ui_card.get("type") == "poi_list"):
-                first_pois = attractions.ui_card.get("items", []) or []
-            for r in results:
-                if isinstance(r, Exception) or r is None:
-                    continue
-                if not isinstance(r, AgentResult):
-                    continue
-                if r.ui_card and r.ui_card.get("type") == "poi_list":
-                    items = r.ui_card.get("items", [])
-                    names = "、".join(i.get("name", "") for i in items[:3])
-                    if names:
-                        pois_info += f"- {names}\n"
-                elif "天气" in (r.speech or "") or "气温" in (r.speech or ""):
-                    weather_info = r.speech
-                elif "充能" in (r.speech or "") or "充电" in (r.speech or ""):
-                    charging_info = r.speech
-        except Exception:
-            pass  # 协作失败不阻塞，降级为纯 LLM 生成
+        picked = None
+        if is_next:
+            picked = self._next_after_cursor(trip, flat)
+            if picked is None:
+                return AgentResult(speech="行程已经到最后一站啦，没有下一站了。")
+        else:
+            name = target_slot or self._strip_nav_prefix(raw)
+            if name:
+                picked = self._find_by_name(flat, name, day_n)
+            if picked is None and day_n:
+                picked = self._find_by_day_ordinal(flat, day_n, ordinal or 1)
 
-        # LLM 组织行程
-        prompt = (
-            f"目的地：{dest}；天数：{days or '不限'}；偏好：{prefs or '无特别要求'}。\n"
-            f"原始需求：{intent.raw_text}\n"
-        )
-        if pois_info:
-            prompt += f"\n参考景点/充电信息：\n{pois_info}"
-        if weather_info:
-            prompt += f"\n天气信息：{weather_info}\n"
-        if charging_info:
-            prompt += f"\n充能建议：{charging_info}\n"
-
-        plan = await self.llm.complete([
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": prompt},
-        ], temperature=0.7, max_tokens=400)
-
-        # 缓存行程上下文：供「改第N天」局部重规划与确认后取第一站候选。
-        # first_stop = 行程第一天的主要景点（如天坛公园），确认后据此搜 POI 设为导航第一站。
-        self._remember(ctx.session_id, destination=dest, days=days, itinerary=plan,
-                       pois=first_pois, first_stop=_first_stop_from_itinerary(plan))
-
-        # NEED_CONFIRM 确认方案
-        return AgentResult(
-            status=NEED_CONFIRM,
-            speech=f"{plan}\n\n确认按此方案出行吗？",
-            ui_card={"type": "trip_plan", "destination": dest, "days": days,
-                     "pois": pois_info.strip(), "weather": weather_info,
-                     "charging": charging_info},
-            follow_up="说『确认』即可，或告诉我需要调整的地方",
-        ).action("trip.plan", {"destination": dest, "days": days}, require_confirm=True)
-
-    async def _modify(self, intent, ctx, meta) -> AgentResult:
-        """修改已有行程（局部重规划，保留未提及的天数）。"""
-        sid = ctx.session_id
-        st = self._sessions.get(sid or "", {})
-
-        # 确认轮 → 收尾（同 _plan，避免"确认→再改→再确认"死循环）
-        if meta.get("confirmed") == "true":
-            return await self._finalize(ctx, sid, st.get("destination", ""), st.get("days", ""))
-
-        modification = intent.slots.get("modification", "").strip()
-        if not modification:
+        if picked is None:
             return AgentResult(
-                status=NEED_SLOT, speech="您想怎么调整行程？",
-                follow_up="例如：第二天换成宋城", missing_slots=["modification"])
+                speech="没找到您说的那一站，可以说『下一站』，或『第二天的西湖』。",
+                follow_up="说『下一站』或『第N天的某地点』")
 
-        # LLM 局部重规划：带上原行程，只改用户提到的部分，未提及的天数原样保留。
-        # 缺原行程上下文（如跨重启）才退化为仅按修改要求生成。
-        prior = st.get("itinerary", "")
-        prompt = (
-            (f"原始行程：\n{prior}\n\n" if prior else "")
-            + f"用户想修改：{modification}\n"
-            + ("请在原始行程基础上，只改动用户明确提到的天/景点，未提及的部分必须原样保留，"
-               "输出完整的修改后行程（按天列要点）。" if prior
-               else f"原始需求：{intent.raw_text}\n请根据修改要求给出修改后的行程要点（只改提到的部分）。")
-        )
-        try:
-            modified = await self.llm.complete([
-                {"role": "system", "content": _MODIFY_SYSTEM},
-                {"role": "user", "content": prompt},
-            ], temperature=0.7, max_tokens=400)
-        except Exception:
-            modified = f"已记录您的修改要求：{modification}。请稍后确认。"
-
-        # 更新缓存行程 + 第一站（改后第一天可能变了，重新解析；保留 destination/days/pois）
-        self._remember(sid, destination=st.get("destination", ""),
-                       days=st.get("days", ""), itinerary=modified,
-                       first_stop=_first_stop_from_itinerary(modified))
-
+        dy, gi, stop = picked
+        trip.cursor = {"day_index": dy, "stop_index": gi}
+        await self._save_trip(ctx, trip)
+        poi = stop.poi or {}
+        payload = {"destination": stop.name, "lat": poi.get("lat"), "lng": poi.get("lng")}
+        cur = current_location_from_meta(meta)
+        if cur:
+            payload.update(origin_lat=cur.lat, origin_lng=cur.lng)
         return AgentResult(
-            status=NEED_CONFIRM,
-            speech=f"{modified}\n\n确认按此调整吗？",
-            follow_up="说『确认』即可",
-        ).action("trip.modify", {"modification": modification}, require_confirm=True)
+            speech=f"好的，为您导航到第{dy}天的{stop.name}。",
+            data={"destination": stop.name, "lat": poi.get("lat"), "lng": poi.get("lng")},
+        ).action("navigate", payload)
+
+    @staticmethod
+    def _flatten_grounded(trip: Trip) -> list:
+        """按天序展开所有已接地停靠点：[(day_index, grounded_idx_in_day, Stop)]。"""
+        out = []
+        for dy in trip.itinerary:
+            gi = 0
+            for s in dy.stops:
+                if getattr(s, "grounded", False) and (s.poi or {}).get("lat"):
+                    out.append((dy.day_index, gi, s))
+                    gi += 1
+        return out
+
+    @staticmethod
+    def _next_after_cursor(trip: Trip, flat: list):
+        """cursor 之后的下一站；cursor 未命中（初始 0,0）→ 首站；已是末站 → None。"""
+        cur = trip.cursor or {}
+        cd, ci = cur.get("day_index", 0), cur.get("stop_index", 0)
+        for k, (d, i, _s) in enumerate(flat):
+            if d == cd and i == ci:
+                return flat[k + 1] if k + 1 < len(flat) else None
+        return flat[0] if flat else None
+
+    @staticmethod
+    def _find_by_day_ordinal(flat: list, day_n: int, m: int):
+        inday = [t for t in flat if t[0] == day_n]
+        if not inday:
+            return None
+        idx = max(1, m) - 1
+        return inday[idx] if idx < len(inday) else inday[-1]
+
+    @staticmethod
+    def _find_by_name(flat: list, name: str, day_n: int = 0):
+        name = (name or "").strip()
+        if not name:
+            return None
+        scoped = [t for t in flat if (not day_n or t[0] == day_n)]
+        for pool in (scoped, flat):           # 先按指定天找，再跨天兜底
+            for t in pool:
+                nm = t[2].name or ""
+                if name in nm or nm in name:
+                    return t
+        return None
+
+    @staticmethod
+    def _parse_ordinal(text: str) -> int:
+        m = _ORDINAL_RE.search(text or "")
+        if not m:
+            return 0
+        tok = m.group(1)
+        return int(tok) if tok.isdigit() else _CN_NUM.get(tok, 0)
+
+    @staticmethod
+    def _strip_nav_prefix(raw: str) -> str:
+        """从『导航去第二天的西湖』剥成『西湖』；非具体地点指代返回空。"""
+        t = (raw or "").strip()
+        for p in ("导航去", "导航到", "导航", "带我去", "去", "到"):
+            if t.startswith(p):
+                t = t[len(p):]
+                break
+        t = re.sub(r"^第\s*[一二两三四五六七八九十0-9]+\s*天的?", "", t)
+        t = re.sub(r"^第\s*[一二两三四五六七八九十0-9]+\s*个", "", t)
+        t = re.sub(r"^行程(里|中)?的?", "", t).strip("的里中 ，。")
+        return "" if t in ("下一站", "下个", "行程", "") else t
+
+    @staticmethod
+    def _modify_day(text: str) -> int:
+        """从修改话术解析「第N天」的天号；解析不到返回 0。"""
+        m = _MOD_DAY_RE.search(text or "")
+        if not m:
+            return 0
+        tok = m.group(1)
+        return int(tok) if tok.isdigit() else _CN_NUM.get(tok, 0)

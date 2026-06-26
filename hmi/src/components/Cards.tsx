@@ -5,7 +5,7 @@ import type {
   UiCard, WeatherCard, ForecastCard, StockCard,
   NewsCard, SearchCard, SearchAnswerCard, NewsDigestCard,
   SearchResultCard, NewsBriefCard, SportsScoresCard, SportsScorersCard,
-  RoutePlanCard, ChargingRouteCard, PoiListCard, PoiDetailCard,
+  RoutePlanCard, ChargingRouteCard, TripItineraryCard, PoiListCard, PoiDetailCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
@@ -25,12 +25,12 @@ function weatherIcon(text: string): string {
 
 // ─── 卡片渲染入口 ───
 
-export function CardRenderer({ card }: { card: UiCard }) {
+export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (text: string) => void }) {
   switch (card.type) {
     case 'card_group':
       // 多卡同屏：逐张渲染（如"查股价+新闻"→股票卡 + 新闻卡并存）
       return <>{((card as any).items || []).map((c: UiCard, i: number) =>
-        <CardRenderer key={i} card={c} />)}</>
+        <CardRenderer key={i} card={c} onAction={onAction} />)}</>
     case 'weather': return <WeatherCardView card={card} />
     case 'forecast': return <ForecastCardView card={card} />
     case 'stock_quote': return <StockCardView card={card} />
@@ -44,6 +44,7 @@ export function CardRenderer({ card }: { card: UiCard }) {
     case 'sports_scorers': return <SportsScorersCardView card={card} />
     case 'route_plan': return <RoutePlanCardView card={card} />
     case 'charging_route': return <ChargingRouteCardView card={card} />
+    case 'trip_itinerary': return <TripItineraryCardView card={card} onAction={onAction} />
     case 'poi_list': return <PoiListCardView card={card} />
     case 'poi_detail': return <PoiDetailCardView card={card} />
     default: return null
@@ -583,6 +584,67 @@ function ChargingRouteCardView({ card }: { card: ChargingRouteCard }) {
       {card.stops.length === 0 && (
         <div className="cr-direct">电量充足，全程无需途中补电</div>
       )}
+    </div>
+  )
+}
+
+// ─── 行程卡：结构化多日行程（按天列停靠点 + 段间充电），复用充电时间线样式 ───
+
+const TRIP_STOP_ICON: Record<string, string> = {
+  attraction: '📍', meal: '🍜', hotel: '🏨', charging: '⚡', custom: '📌',
+}
+
+function TripItineraryCardView({ card, onAction }:
+  { card: TripItineraryCard; onAction?: (text: string) => void }) {
+  return (
+    <div className="card card-evidence card-charge-route card-trip">
+      <div className="ev-head">
+        <span className="ev-head-title">🧭 {card.destination} · {card.days}天行程</span>
+        {card.status === 'confirmed' && <span className="ev-fresh">已确认</span>}
+      </div>
+      {(card.itinerary || []).map((day, di) => {
+        const charges = (day.legs || []).flatMap((l) => l.charging_stops || [])
+        return (
+          <div key={di} className="trip-day">
+            <div className="trip-day-head">
+              第{day.day_index}天{day.theme ? ` · ${day.theme}` : ''}
+            </div>
+            <ul className="cr-line">
+              {day.stops.map((s, i) => {
+                // 已接地的停靠点可点导航：派发整句『导航去第N天的X』→ 编排器路由 trip.navigate
+                const go = s.grounded && onAction
+                  ? () => onAction(`导航去第${day.day_index}天的${s.name}`)
+                  : undefined
+                return (
+                  <li key={i} className={`cr-node cr-stop${s.grounded ? '' : ' trip-ungrounded'}`}>
+                    <span className="cr-dot" />
+                    <span className="cr-text">
+                      {go ? (
+                        <b className="trip-stop-go" role="button" tabIndex={0} onClick={go}
+                           onKeyDown={(e) => { if (e.key === 'Enter') go() }}>
+                          {TRIP_STOP_ICON[s.type] || '📍'} {s.name}
+                          <span className="trip-go-hint">› 导航</span>
+                        </b>
+                      ) : (
+                        <b>{TRIP_STOP_ICON[s.type] || '📍'} {s.name}</b>
+                      )}
+                      {!s.grounded
+                        ? <em className="cr-km">待确认地点</em>
+                        : (s.poi?.address && <em className="cr-km">{s.poi.address}</em>)}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+            {charges.length > 0 && (
+              <div className="trip-charge-hint">
+                ⚡ 途中补电 {charges.length} 次：{charges.map((c) => c.name).join('、')}
+              </div>
+            )}
+          </div>
+        )
+      })}
+      <div className="trip-voice-hint">🎙 点停靠点或说『下一站』『导航去第N天的某地点』即可导航</div>
     </div>
   )
 }

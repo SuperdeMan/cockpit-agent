@@ -31,7 +31,15 @@ _TRIP_TRIGGER_RE = re.compile("行程|自驾游|度假")
 _TRIP_MODIFY_RE = re.compile(
     r"第\s*[一二两三四五六七八九十\d]+\s*天[^，。！？]*?(换|改|调整|替换|更换|删|加|重新|别去|不去)"
     r"|(行程|景点|目的地|这天|那天)[^，。！？]*?(换|改|调整|替换|更换|重新规划)"
-    r"|(换|改|调整|更换)[^，。！？]{0,4}(行程|景点|目的地|第\s*[一二两三四五六七八九十\d]+\s*天)")
+    r"|(换|改|调整|更换)[^，。！？]{0,4}(行程|景点|目的地|第\s*[一二两三四五六七八九十\d]+\s*天)"
+    r"|(删掉|删除|去掉|加一个|加个|增加|不去)[^，。！？]{0,8}第\s*[一二两三四五六七八九十\d]+\s*天")
+# 行程内导航：『下一站』『导航去第N天的X』『第N天第M个』→ trip.navigate（指当前行程里的停靠点，
+# 普通导航仍走 navigation）。弱 LLM 不知道该意图，确定性路由。
+_TRIP_NAV_RE = re.compile(
+    r"下一站|下个景点|继续导航"
+    r"|(?:导航|带我去|去|到)[^，。！？]{0,6}第\s*[一二两三四五六七八九十\d]+\s*天"
+    r"|第\s*[一二两三四五六七八九十\d]+\s*天[^，。！？]{0,4}第\s*[一二两三四五六七八九十\d]+\s*个")
+_TRIP_NAV_BLOCK_RE = re.compile(r"换|改|调整|删|加|不去|不要|重新|规划")
 # 通勤/固定地点：是导航日常目的地，不是多日出行，命中则不触发行程规划
 _TRIP_DEST_BLOCK = {"公司", "家", "单位", "学校", "上班", "这里", "那里", "机场", "车站"}
 _CN_NUM = {"一": "1", "两": "2", "二": "2", "三": "3", "四": "4", "五": "5",
@@ -183,8 +191,9 @@ class PlanBuilder:
         # 确定性兜底（覆盖 LLM 解析成功 + 降级语义路由两条路径）：
         # 先判修改意图（『第N天换一个』走 trip.modify，与新规划互斥）；非修改再判新出行
         # （『去X几天』补 trip.plan）。否则弱 LLM 会把这两类都误回天气/充电、漏掉行程。
-        if not self._ensure_trip_modify(plan, text, agent_map):
-            self._ensure_trip_step(plan, text, agent_map)
+        if not self._ensure_trip_navigate(plan, text, agent_map):
+            if not self._ensure_trip_modify(plan, text, agent_map):
+                self._ensure_trip_step(plan, text, agent_map)
         step_summary = [(s.id, s.agent_id, s.intent) for s in plan.steps]
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan
@@ -307,6 +316,26 @@ class PlanBuilder:
             plan.steps.extend(trip_steps)
             logger.info("Ensured trip.plan step (safety net): dest=%s days=%s prefs=%s",
                         dest, days, prefs)
+
+    def _ensure_trip_navigate(self, plan: "Plan", text: str, agent_map: dict) -> bool:
+        """确定性兜底：『下一站/导航去第N天的X/第N天第M个』→ 单步 trip.navigate。
+
+        指当前行程里的停靠点（普通导航仍走 navigation）。命中即返回 True，调用方据此跳过
+        modify/plan 兜底（三者互斥，navigate 最具体先判）。slots 留空，由 Agent 从 raw_text 解析指代。"""
+        if "trip-planner" not in agent_map:
+            return False
+        t = text or ""
+        if not (_TRIP_NAV_RE.search(t) and not _TRIP_NAV_BLOCK_RE.search(t)):
+            return False
+        if not any(s.intent == "trip.navigate" for s in plan.steps):
+            steps = self._validated_steps([{
+                "id": "s_trip_nav", "agent_id": "trip-planner", "intent": "trip.navigate",
+                "slots": {}, "depends_on": [], "slot_refs": {},
+            }], agent_map)
+            if steps:
+                plan.steps = steps
+                logger.info("Ensured trip.navigate step (safety net)")
+        return True
 
     def _ensure_trip_modify(self, plan: "Plan", text: str, agent_map: dict) -> bool:
         """确定性兜底：『第N天换一个/改行程』必走 trip.modify。返回是否命中修改意图。

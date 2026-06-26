@@ -51,6 +51,7 @@ export type UiCard =
   | SportsScorersCard
   | RoutePlanCard
   | ChargingRouteCard
+  | TripItineraryCard
   | PoiListCard
   | PoiDetailCard
 
@@ -72,6 +73,42 @@ export type ChargingRouteCard = {
   duration_min?: number
   stops: Array<{ name: string; address?: string; at_km?: number }>
   soc?: string
+}
+
+// 行程卡（P0 重构）：结构化多日行程——按天列停靠点（接地真实 POI）+ 段间驾驶/充电
+export type TripStop = {
+  stop_id: string
+  type: string                 // attraction|meal|hotel|charging|custom
+  name: string
+  poi?: { name?: string; address?: string; lat?: number; lng?: number; rating?: number } | null
+  dwell_min?: number
+  grounded: boolean
+}
+
+export type TripLeg = {
+  from_stop_id: string
+  to_stop_id: string
+  distance_km: number
+  drive_min: number
+  charging_stops: Array<{ name: string; address?: string; at_km?: number }>
+  soc_before?: number
+  soc_after?: number
+}
+
+export type TripDay = {
+  day_index: number
+  theme?: string
+  stops: TripStop[]
+  legs: TripLeg[]
+}
+
+export type TripItineraryCard = {
+  type: 'trip_itinerary'
+  destination: string
+  days: number
+  preferences?: string[]
+  status?: string
+  itinerary: TripDay[]
 }
 
 // ── 2026-06-22 信息卡重设计：卡片只给证据（来源/要点/时效/置信度），气泡给结论，不复读 ──
