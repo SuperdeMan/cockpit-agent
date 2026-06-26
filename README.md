@@ -11,7 +11,7 @@
 
 ## 当前状态
 
-截至 **2026-06-25**：
+截至 **2026-06-26**：
 
 - Phase 1 的工程化 PoC 主干与云端中枢 P0-P3 已落地；原始 Phase 1
   计划中的量产级能力仍有明确 backlog。
@@ -25,8 +25,9 @@
   行车/泊车双态、脱敏不露 reasoning）；普通车控/闲聊零过程零额外延迟。
 - **记忆系统分层重构**：从 mock KV 升级为 pgvector 语义记忆——自动从对话抽取偏好/个人实体（宠物·家人称呼也能记），语义召回注入规划、闲聊记忆感知作答，主动 routine 建议经 NATS→HMI，常去地点收敛、隐私分级+一键删除；embedding 走 llm-gateway→阿里云百炼 text-embedding-v4（真语义实测，无 key 降级 lexical）。详见 `docs/design/2026-06-25-memory-system-redesign.md`。
 - **上下文系统重构**：承接记忆重构后裸着的 working/core 层——统一 `ContextManager` 把 catalog（registry 语义预筛）、对话历史、长期记忆召回、结构化焦点态装配于统一 token 预算；跨轮指代靠结构化焦点态而非啃原文；敏感上下文（精确位置/电量）按 Agent manifest `context_scopes` 最小化下发。详见 `docs/design/2026-06-25-context-system-redesign.md`。
-- 全量 pytest：**884 passed, 6 skipped**（含记忆系统 8 例 + 上下文系统 30 例：复杂场景/装配预算/焦点态/scope 下发）。
-- 端侧 smoke：**13 passed, 0 failed**。
+- **通讯链路量产级加固**：全链路 gRPC keepalive（共享 `runtime/grpcio.py` 工厂，空闲也 ping，根治依赖重启换 IP 后的断连/无响应）+ 全服务优雅停机 + HMI 韧性（指数退避重连/断线有界发送队列不丢消息/请求看门狗）+ 熔断接线（开路快速失败 + Dashboard 可视化）+ LLM 网关连接池/流式 stall + 依赖连接加固（Redis/PG/NATS）；并修复一处危险车控确认退化（catalog 预算裁剪误丢 edge 车控核心）。真栈韧性自愈验证：依赖换 IP 不重启依赖方即恢复。详见 `docs/design/2026-06-25-comms-link-hardening.md`。
+- 全量 pytest：**891 passed, 6 skipped**（含记忆 8 + 上下文 30 + 通讯加固：grpcio 工厂/熔断接线/agent_client 复用/render_catalog 保护）。
+- 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2。
 - Docker 全栈 **24 个服务**（含充能规划/场景编排/路况安全等 Agent），全栈联调通过。
 
 详细交接状态见 [`AGENTS.md`](AGENTS.md)，工程约束见 [`CLAUDE.md`](CLAUDE.md)。
@@ -99,8 +100,10 @@ Dashboard 的车辆动态接口仅供本地演示；非开发环境必须设置
 - 复杂任务（行程/深度调研/多步）按统一 `is_complex` 判据**动态开思考**提质 + 气泡内嵌
   「过程区」四阶段折叠展示（理解需求→规划步骤→执行任务→整理结果，行车/泊车双态、脱敏不露 reasoning）；普通车控/闲聊零过程零额外延迟。
 - HMI 流式文字、动作卡、记忆视图、语音输入、九种音色和句子级增量播报。
-- NATS 可观测事件、collector REST/WS、车辆状态 diff、端云 trace、Agent 健康/指标、
+- NATS 可观测事件、collector REST/WS、车辆状态 diff、端云 trace、Agent 健康/指标/熔断状态、
   debug 车辆动态与对照实验 Dashboard。
+- 通讯链路韧性：全链路 gRPC keepalive + 优雅停机（依赖重启换 IP 自愈、不需重启依赖方）、
+  HMI 退避重连 + 断线发送队列 + 请求看门狗、云端 Agent 熔断快速失败。
 
 ## 验证
 
@@ -136,6 +139,8 @@ python test/e2e_ws.py
 - 轻量 span/指标/健康已接入 NATS Dashboard；Prometheus/OTel 导出、持久化 trace、
   告警、多车聚合与正式鉴权仍待实现。
 - 当前 TTS 是“文本短句增量合成 + 顺序播放”，不是真正的服务端 PCM 音频流。
+- 服务间 gRPC 仍为 insecure（无 mTLS/证书）；全链路已启用 keepalive + 优雅停机，
+  mTLS 是量产前唯一遗留的传输层缺口。
 - VAL 仍为 Python 模拟，真实 SOME-IP/CAN、车规资源约束和 OTA 属于后续量产阶段。
 
 ## 接手阅读顺序
