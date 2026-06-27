@@ -15,6 +15,13 @@ def test_domain_tier_academic_official_encyclopedia():
     assert domain_tier("https://www.mater-rep.com/x") == 3
     assert domain_tier("https://esst.cip.com.cn/article/1") == 3    # cip.com.cn 子域
     assert domain_tier("https://www.cas.org/x") == 3
+    # 研究文档采纳：官方数据/统计/学术元数据/标准/AI 官方文档/.gov.hk
+    assert domain_tier("https://api.worldbank.org/v2/x") == 3
+    assert domain_tier("https://api.crossref.org/works") == 3
+    assert domain_tier("https://api.openalex.org/works") == 3
+    assert domain_tier("https://www.3gpp.org/x") == 3
+    assert domain_tier("https://ai.google.dev/api") == 3
+    assert domain_tier("https://www.news.gov.hk/x") == 3           # .gov.hk TLD
 
 
 def test_domain_tier_reputable_media():
@@ -23,6 +30,9 @@ def test_domain_tier_reputable_media():
     assert domain_tier("https://www.jiqizhixin.com/articles/x") == 2
     assert domain_tier("https://www.eet-china.com/x") == 2          # 行业媒体
     assert domain_tier("https://www.ofweek.com/x") == 2
+    assert domain_tier("https://www.chinadaily.com.cn/x") == 2      # 研究文档采纳：权威媒体
+    assert domain_tier("https://www.scmp.com/news/x") == 2
+    assert domain_tier("https://cncf.io/blog/x") == 2
 
 
 def test_domain_tier_content_farm_and_default():

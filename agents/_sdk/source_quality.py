@@ -24,6 +24,8 @@ _TIER3 = {
     "mdpi.com", "frontiersin.org", "plos.org", "jstor.org", "biorxiv.org",
     "medrxiv.org", "cnki.net", "aclanthology.org", "openreview.net", "pnas.org",
     "cell.com", "wiley.com", "tandfonline.com",
+    # 学术元数据/开放知识基础设施（研究文档 A+：Crossref/OpenAlex/DOAJ/Semantic Scholar）
+    "crossref.org", "api.crossref.org", "openalex.org", "doaj.org",
     # 学术学会/出版社（化学/物理/光学/材料常见）
     "acs.org", "cas.org", "rsc.org", "aps.org", "aip.org", "iop.org",
     "optica.org", "osapublishing.org", "ametsoc.org",
@@ -32,12 +34,16 @@ _TIER3 = {
     "sciengine.com", "chinaxiv.org", "sciopen.com",
     # 标准/国际组织
     "who.int", "un.org", "iso.org", "ietf.org", "rfc-editor.org", "w3.org",
-    "nist.gov", "europa.eu",
-    # 官方技术文档/规范
+    "nist.gov", "europa.eu", "3gpp.org", "oasis-open.org",
+    # 官方/开放数据与统计（研究文档 A+：World Bank/IMF/FRED/Eurostat/UN）
+    "worldbank.org", "imf.org", "stlouisfed.org", "clinicaltrials.gov",
+    # 官方技术文档/规范（含 AI 厂商官方 API 文档）
     "learn.microsoft.com", "cloud.google.com", "kubernetes.io", "pytorch.org",
     "tensorflow.org", "developer.mozilla.org", "docs.python.org", "python.org",
-    # 百科
+    "ai.google.dev", "platform.openai.com",
+    # 百科 / 开放知识
     "wikipedia.org", "britannica.com", "scholarpedia.org",
+    "wikimedia.org", "wikidata.org",
 }
 
 # 权威媒体 / 老牌科技（次高）。
@@ -49,9 +55,13 @@ _TIER2 = {
     "caixin.com", "thepaper.cn", "36kr.com", "huxiu.com", "jiqizhixin.com",
     "leiphone.com", "infoq.cn", "infoq.com", "qbitai.com", "geekpark.net",
     "xinhuanet.com", "people.com.cn", "yicai.com", "cls.cn", "stcn.com",
+    "chinadaily.com.cn", "news.cn", "scmp.com", "dw.com",
     # 行业媒体 / 垂直科技 / 行业协会（优于内容农场，弱于学术/官方）
     "eet-china.com", "ofweek.com", "jiemian.com", "ithome.com", "gasgoo.com",
     "nbd.com.cn", "d1ev.com", "cnbeta.com.tw", "caev.org.cn",
+    # 厂商工程博客 / 开放知识与事件基础设施（研究文档 B：CNCF/GDELT/Common Crawl）
+    "developers.googleblog.com", "openai.com", "anthropic.com",
+    "cncf.io", "gdeltproject.org", "commoncrawl.org",
 }
 
 # 内容农场 / 低质聚合（最低；只下沉不丢弃）。保守，只列公认 SEO 农场/文库/问答垃圾。
@@ -63,7 +73,7 @@ _TIER0 = {
 
 # 顶级域级权威信号（教育/政府/国际域）。
 _TLD3 = (".edu", ".gov", ".int", ".edu.cn", ".gov.cn", ".ac.cn", ".edu.hk",
-         ".ac.uk", ".gov.uk", ".edu.au", ".gov.au")
+         ".gov.hk", ".ac.uk", ".gov.uk", ".edu.au", ".gov.au")
 
 
 def _domain(url: str) -> str:

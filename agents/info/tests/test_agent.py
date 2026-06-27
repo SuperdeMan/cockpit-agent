@@ -623,7 +623,7 @@ def test_news_with_topic():
     assert "科技" in res.speech
 
 
-def test_news_fallback_speaks_briefing_card_has_no_summary_dup():
+def test_news_fallback_card_includes_summary():
     agent = InfoAgent()
     agent.llm.complete = _llm_unavailable
     res = asyncio.run(run_handle(
@@ -631,12 +631,13 @@ def test_news_fallback_speaks_briefing_card_has_no_summary_dup():
 
     assert res.ui_card["type"] == "news_brief"
     assert "科技" in res.speech                                  # 兜底 head 含话题
-    # 卡片只放可点开来源、不复述摘要 → 不与 TTS 语音重复
-    assert all("summary" not in it for it in res.ui_card["items"])
+    # 卡片每条带一句话摘要（车机一屏可扫读，对症「卡片看不到摘要」）；LLM 兜底时用首句兜底
+    assert all("summary" in it for it in res.ui_card["items"])
+    assert "summary" not in res.ui_card                          # 仅 item 级摘要，卡片顶层不复读
 
 
 def test_news_speaks_distilled_briefing_with_clickable_source_card():
-    """座舱看新闻=TTS 播报：语音含总览+逐条一句话提炼；卡片只给可点开来源（不复述摘要）。"""
+    """座舱看新闻=TTS 播报总览+逐条提炼；卡片同样带标题+一句话摘要+可点开来源（车机一屏可读）。"""
     agent = InfoAgent()
 
     async def news_llm(messages, **kwargs):
@@ -662,11 +663,11 @@ def test_news_speaks_distilled_briefing_with_clickable_source_card():
     assert "今日多条要闻速览" in res.speech
     assert "甲事件的一句话" in res.speech and "乙事件的一句话" in res.speech
     assert "1." in res.speech and "2." in res.speech
-    # 卡片=可点开来源（标题清理掉栏目尾巴 + url），不含摘要 → 不与语音重复
+    # 卡片=标题(清理栏目尾巴)+url+一句话摘要（车机一屏可扫读，与语音一致）
     its = res.ui_card["items"]
     assert its[0]["url"] == "https://e.com/1"
     assert its[0]["title"] == "新闻一"
-    assert all("summary" not in it for it in its)
+    assert its[0]["summary"] == "甲事件的一句话" and its[1]["summary"] == "乙事件的一句话"
 
 
 def test_news_dedups_repeated_titles():

@@ -268,6 +268,18 @@ deep_research `_resolve_news_deepen` 取第N条标题做小型调研(`{title}（
 储能科学与技术/Nature，原本被内容农场与 tier1 淹没）。*局限*：tier 名单是常青清单、按观测持续扩，中文长尾
 行业源默认 tier1（不误伤、只是不加权）。
 
+**增量2 —— 名单扩展（采纳信源研究报告）+ 新闻质量/时效/展示（✅ 2026-06-27）**
+依据 `docs/research/2026-06-27-source.md` 扩 tier 名单：tier3 加官方数据/统计/标准/学术基础设施
+（World Bank/IMF/FRED/Crossref/OpenAlex/DOAJ/3GPP/OASIS/Wikimedia/Wikidata/AI 官方文档 + `.gov.hk` TLD）、
+tier2 加权威媒体/厂商博客（China Daily/news.cn/SCMP/DW/CNCF/GDELT/Common Crawl/Google Dev Blog 等）。
+**只采纳静态白名单**——研究报告的运行时动态评分（429/延迟/freshness 回灌）与 source_registry/DB 三表暂不落地
+（对当前「检索后重排」过重，留作未来）。**新闻三修**（`info._news`）：① 质量=`_gather_news` 结果按 `domain_tier`
+**权威重排**（抬权威媒体、沉内容农场，原本零重排农场可霸榜）；② 时效=`_normalize_publish_time` 把相对时间
+（「3小时前/昨天」）采集时即转**绝对 ISO**（研究报告明确建议；原样透传致 HMI `relativeTime` 解析不了、freshness
+字符串比较错）；③ 展示=卡片 items **补 `summary`**（车机一屏可扫读，原本只有光秃标题）+ HMI `NewsBriefCardView`
+默认常显来源名+相对时间（原藏在「参考来源」折叠里）。*验收*：真栈「看科技新闻」5 条平均档位 **2.00**、内容农场
+**0** 条、摘要/时间 **5/5**。
+
 ---
 
 ## 6. 易再踩约束（继承现有记忆，写进设计）

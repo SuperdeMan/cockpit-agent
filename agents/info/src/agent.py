@@ -19,6 +19,7 @@ from agents._sdk.location import current_location_from_meta
 from agents._sdk.grounding import (clean_snippet, fallback_brief,
                                    grounded_synthesis, latest_published)
 from agents._sdk.retrieval import retrieve
+from agents._sdk.source_quality import domain_tier
 from .providers import (
     build_weather_provider, build_search_provider,
     build_news_provider, build_stock_provider, build_sports_provider,
@@ -136,6 +137,68 @@ def _plan_search(query: str) -> tuple[int, str]:
         recency_days = 0
     category = "news" if any(w in query for w in _NEWS_WORDS) else ""
     return recency_days, category
+
+
+# 新闻发布时间归一：把相对时间("3小时前"/"昨天")在采集时即转绝对 ISO（研究文档明确建议），
+# 否则 HMI relativeTime 解析不了、freshness 字符串比较也错。无法解析返回 ""（不展示错误时间）。
+_REL_UNIT = (("分钟前", "minutes"), ("小时前", "hours"), ("天前", "days"))
+
+
+def _normalize_publish_time(raw: str, now: datetime | None = None) -> str:
+    """新闻发布时间 → 绝对 ISO(YYYY-MM-DDTHH:MM:SS)。相对/中文/英文日期均归一；无法解析→""。"""
+    s = (raw or "").strip()
+    if not s or s == "mock":
+        return ""
+    now = now or _shanghai_now()
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)", s)  # 已是 ISO
+    if m:
+        t = m.group(4)
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}T{t if len(t) == 8 else t + ':00'}"
+    if re.match(r"\d{4}-\d{2}-\d{2}$", s):
+        return s + "T00:00:00"
+    if "刚刚" in s:
+        return now.strftime("%Y-%m-%dT%H:%M:%S")
+    for kw, unit in _REL_UNIT:                       # X分钟前/X小时前/X天前
+        m = re.search(r"(\d+)\s*" + kw, s)
+        if m:
+            return (now - timedelta(**{unit: int(m.group(1))})).strftime("%Y-%m-%dT%H:%M:%S")
+    m = re.search(r"(\d+)\s*周前", s)
+    if m:
+        return (now - timedelta(weeks=int(m.group(1)))).strftime("%Y-%m-%dT00:00:00")
+    if "今天" in s:
+        return now.strftime("%Y-%m-%dT00:00:00")
+    if "昨天" in s:
+        return (now - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
+    if "前天" in s:
+        return (now - timedelta(days=2)).strftime("%Y-%m-%dT00:00:00")
+    m = re.search(r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})[日号]", s)   # 中文绝对日期
+    if m:
+        y = int(m.group(1)) if m.group(1) else now.year
+        return f"{y:04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}T00:00:00"
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})", s)            # SerpApi Google MM/DD/YYYY
+    if m:
+        return f"{int(m.group(3)):04d}-{int(m.group(1)):02d}-{int(m.group(2)):02d}T00:00:00"
+    return ""
+
+
+def _iso_sortkey(ts: str) -> float:
+    """ISO 时间 → 可比较排序键（无效→0=最旧）。"""
+    try:
+        return datetime.fromisoformat((ts or "").replace("Z", "")[:19]).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _rank_news_quality(items: list[dict]) -> list[dict]:
+    """新闻按「权威档位 + 时效」重排：domain_tier 抬权威媒体/沉内容农场，同档按发布时间新→旧。
+
+    稳定排序键 (tier, time) 降序。SerpApi 兜底无 url → tier1，仍按时间排。检索已限 2 天窗口，
+    故 tier 优先不会把过旧的拍到前面；权威优先正面对症「新闻质量差/内容农场霸榜」。
+    """
+    return sorted(
+        items,
+        key=lambda n: (domain_tier(n.get("url") or ""), _iso_sortkey(n.get("publish_time") or "")),
+        reverse=True)
 
 
 # 赛事联赛映射（api-football league id，已核验官方 ID 表；id=4 各源说法冲突故不收录）
@@ -884,12 +947,12 @@ class InfoAgent(BaseAgent):
             results = await self.search.search(
                 query, limit=limit + 5, meta=meta, recency_days=2, category="news")
             exa = [{"title": r.title, "url": r.url, "source": r.source,
-                    "publish_time": r.published,
+                    "publish_time": _normalize_publish_time(r.published),
                     "snippet": clean_snippet(r.snippet or (r.content[:160] if r.content else ""))}
                    for r in results
                    if r.title and not self._is_junk_news(r.title, r.url, r.content)]
             if exa:
-                return exa
+                return _rank_news_quality(exa)   # 权威重排：抬权威媒体、沉内容农场
         except ProviderError as e:
             logger.warning("exa news failed, falling back to news provider: %s", e)
         try:
@@ -897,9 +960,11 @@ class InfoAgent(BaseAgent):
         except ProviderError as e:
             logger.warning("news failed, fallback to mock: %s", e)
             items = await self._fallback_news.headlines(topic=topic, limit=limit, meta=meta)
-        return [{"title": n.title, "url": "", "source": n.source,
-                 "publish_time": n.publish_time, "snippet": clean_snippet(n.summary)}
-                for n in items if not self._is_junk_news(n.title, "", n.summary)]
+        fallback = [{"title": n.title, "url": "", "source": n.source,
+                     "publish_time": _normalize_publish_time(n.publish_time),
+                     "snippet": clean_snippet(n.summary)}
+                    for n in items if not self._is_junk_news(n.title, "", n.summary)]
+        return _rank_news_quality(fallback)
 
     @staticmethod
     def _dedup_news(items: list[dict]) -> list[dict]:
@@ -1008,9 +1073,10 @@ class InfoAgent(BaseAgent):
         for i, n in enumerate(raw, 1):
             one = summaries.get(i) or self._first_sentence(n.get("snippet", ""))
             lines.append(f"{i}. {one}")
-            # 卡片只放可点开的来源（正文已在语音里），不复述摘要 → 不与语音重复
-            items.append({"title": self._clean_title(n["title"]), "url": n.get("url", ""),
-                          "source": n["source"], "publish_time": n["publish_time"]})
+            # 卡片放标题+一句话摘要+来源+发布时间：车机一屏可扫读（不必听 TTS），摘要与语音一致。
+            items.append({"title": self._clean_title(n["title"]), "summary": one,
+                          "url": n.get("url", ""), "source": n["source"],
+                          "publish_time": n["publish_time"]})
 
         # 座舱以 TTS 播报为本：语音/气泡 = 总览 + 逐条一句话提炼（听完即可，无需点开）；
         # 卡片 = 可点开的来源清单（想看原文才点）。

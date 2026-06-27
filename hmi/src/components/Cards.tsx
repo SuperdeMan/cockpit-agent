@@ -452,20 +452,24 @@ function NewsBriefCardView({ card }: { card: NewsBriefCard }) {
     <div className="card card-evidence">
       <CardHead icon="📰" title={card.topic || '今日值得关注'} freshness={card.freshness} />
       <ol className="ev-news-ol">
-        {shown.map((n, i) => (
-          <li key={i} className="ev-news-li">
-            <span className="ev-news-h">{n.title}</span>
-            {n.summary && <div className="ev-news-sum">{n.summary}</div>}
-            {showSrc && n.source && (
-              <span className="ev-news-src">
-                {n.url
-                  ? <a href={n.url} target="_blank" rel="noopener noreferrer">{n.source}</a>
-                  : n.source}
-                {relativeTime(n.publish_time) ? ` · ${relativeTime(n.publish_time)}` : ''}
-              </span>
-            )}
-          </li>
-        ))}
+        {shown.map((n, i) => {
+          // 来源名 + 相对时间默认常显（对症「看不到摘要/时间」）；「参考来源」折叠只控制来源是否变可点链接。
+          const rel = relativeTime(n.publish_time)
+          return (
+            <li key={i} className="ev-news-li">
+              <span className="ev-news-h">{n.title}</span>
+              {n.summary && <div className="ev-news-sum">{n.summary}</div>}
+              {(n.source || rel) && (
+                <span className="ev-news-src">
+                  {showSrc && n.url
+                    ? <a href={n.url} target="_blank" rel="noopener noreferrer">{n.source}</a>
+                    : n.source}
+                  {rel ? (n.source ? ' · ' : '') + rel : ''}
+                </span>
+              )}
+            </li>
+          )
+        })}
       </ol>
       <div className="ev-news-actions">
         {srcCount > 0 && (
