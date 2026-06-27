@@ -63,7 +63,7 @@
 | `info.alerts` | info | cloud | city | 天气预警（和风实时预警，排除海洋/热带气旋/辐射） |
 | `info.indices` | info | cloud | city | 生活指数（运动/洗车/紫外线） |
 | `info.search` | info | cloud | query, limit | 联网搜索（AnySearch 优先/Bing 降级真实 provider）；端侧"搜一下"online_only 上云 |
-| `info.news` | info | cloud | topic, limit | 新闻摘要（SerpApi Google+Baidu News，AnySearch 兜底）；端侧"看新闻/摘要"→info.news，"播新闻"→media.* |
+| `info.news` | info | cloud | topic, limit | 新闻摘要（话题走 Exa 正文；综合要闻走 Google News 头条+Exa 合并；繁→简、沉农场、来源多样性、时效过滤）；端侧"看新闻/摘要"→info.news，"播新闻"→media.* |
 | `info.stock` | info | cloud | symbol | 股票行情（Tushare A股 + 新浪行情港美股降级，免费）；端侧"股票/大盘"收敛到 info.stock |
 | `info.air_quality` | info | cloud | city | 实时空气质量（和风 AQI/PM2.5 真实 provider）；端侧"空气质量/PM2.5"online_only 上云 |
 | `info.sports` | info | cloud | query, league | 赛事比分/赛程（api-football，league=世界杯/欧冠/五大联赛，按日期查+客户端过滤）。追问"第N场/某队 + 谁进的球/详细赛况"→定位该场并拉**进球事件**（射手+分钟，剔除罚丢点球等非进球）；"**射手榜/金靴/得分王**"→`/players/topscorers`（免费档仅 2022-2024 赛季，试本届→拿不到回退最近可用并标注「{season}赛季」）；"**总/历史射手榜**"（累计历史榜，赛季 API 给不了）→改写 query 走通用搜索接地合成；联赛上下文可从多轮 `ctx.history()` 回填 |
@@ -177,7 +177,7 @@
 | `EXA_API_KEY` / `EXA_BASE_URL` | Exa 联网搜索（info 主搜索，返回正文级内容）| 否（无 key 降级 AnySearch/Bing/mock）|
 | `ANYSEARCH_API_KEY` / `ANYSEARCH_BASE_URL` | AnySearch 搜索兜底 + extract 正文补抓（MCP）| 否 |
 | `BING_SEARCH_KEY` | Bing 搜索再降级 | 否 |
-| `SERPAPI_API_KEY` | 新闻兜底（Google/Baidu News，Exa 失败才用）| 否 |
+| `SERPAPI_API_KEY` | 新闻源（综合要闻 Google News 头条为主+Exa 合并；国内话题 Baidu News）| 否 |
 | `API_FOOTBALL_KEY` / `API_FOOTBALL_HOST` | api-football 赛事比分/赛程（info.sports）| 否（无 key 走 mock）|
 | `TUSHARE_TOKEN` | Tushare 股票行情（info.stock）| 否（无 key 走 mock）|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `LOG_LEVEL` | 可观测 | 否 |

@@ -32,8 +32,11 @@
   **无依据即诚实弃权，不编造**）。气泡给结论、`search_result` 卡只给证据（来源/时效/置信度），不复读。
 - **赛事**：命中已知赛事 + 意图词 → api-football **结构化真实比分**（按日期查+客户端按 league_id 过滤，
   免费档可用；队名英→中映射 + 国旗）。不经 LLM，杜绝比分编造；查不到诚实回落通用搜索。
-- **新闻**：Exa 优先（正文+时效，去重、过滤首页/错误页）→ serpapi(Google/Baidu)→AnySearch→mock。
-  **一次 LLM 调用**产「总览 + 逐条一句话」；语音/气泡播报编号 1~10 速览，卡片给可点开来源。
+- **新闻**：话题新闻 Exa 优先（正文级，利于逐条摘要）；**综合要闻 Google News 头条 + Exa 合并**
+  （Exa 语义检索对「今日头条」run-to-run 方差大且多返门户版块页，News API 补足广覆盖）。再统一
+  **沉内容农场 + 时效过滤（去 >3 天旧闻）+ 来源多样性上限（每源≤3）+ 滤门户版块名 + 相对时间归一绝对 ISO**；
+  台/港源标题 **繁→简（zhconv）**。一次 LLM 调用产「总览 + 逐条摘要（简体）」；卡片给标题+一句话摘要
+  （与标题近重复则去重）+ 来源 + 相对时间。*遗留*：稳定多源综合要闻需接策展级 News API/RSS（见 docs/research）。
 - LLM 合成经 llm-gateway，模型由 env 决定（项目默认 MiMo，换服务商见 `.env.example` 的 `LLM_*`）。
 
 ## Provider 适配
@@ -45,7 +48,7 @@ src/providers/
   search_exa.py       ExaSearchProvider（联网搜索主，contents.text 正文级）
   search_any.py       AnySearchProvider（搜索兜底 + MCP extract 正文补抓）
   search_bing.py      BingSearchProvider（搜索再降级）
-  news_serpapi.py     SerpApiNewsProvider（新闻兜底：Google/Baidu News → AnySearch）
+  news_serpapi.py     SerpApiNewsProvider（综合要闻走 Google News、国内具体话题走 Baidu News → AnySearch 兜底）
   sports_apifootball.py  ApiFootballProvider（赛事比分/赛程）
   stock_tushare.py / stock_eastmoney.py  股票（A股 / 港美股降级）
   amap_geocoder.py    坐标→可读地址逆地理编码
