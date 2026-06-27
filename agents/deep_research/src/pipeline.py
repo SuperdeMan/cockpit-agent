@@ -22,6 +22,7 @@ import re
 
 from agents._sdk.retrieval import retrieve
 from agents._sdk.grounding import shanghai_now, fallback_brief, latest_published
+from agents._sdk.source_quality import rerank_by_authority, domain_tier
 from agents._sdk.http import ProviderError
 from .models import SubQuestion, Evidence, Section, Report, PERSPECTIVES
 
@@ -36,6 +37,8 @@ MAX_SUBQ_DEEP = 9
 # 每子问题检索条数 + 检索轮上限（空结果换宽 query 再来一轮）。
 PER_Q_LIMIT = 5
 MAX_ROUNDS = 2
+# 证据「薄」阈值：深度模式下某子问题不足此数时，用 Exa research-paper 类目补权威学术文献（学术兜底）。
+_THIN_EVIDENCE = 2
 # 合成材料每条证据正文配额 + 每子问题入材料的证据条数：喂足料才出得了深报告；thinking 关后大材料不易超时。
 _EXCERPT_CAP = 1000
 _EV_PER_SUBQ_IN_MATERIALS = 3
@@ -162,15 +165,34 @@ async def plan(llm, question: str, constraints: dict | None = None,
 
 # ─────────────────────────── investigate ───────────────────────────
 
-async def _retrieve_for(search_provider, extractor, query: str, meta) -> list[Evidence]:
+def _ev_key(e: Evidence) -> str:
+    return e.url or f"{e.title}|{e.source}"
+
+
+def _merge_evidence(primary: list[Evidence], extra: list[Evidence]) -> list[Evidence]:
+    """合并两批证据，按 url（无则 标题|来源）去重，保序、primary 优先。"""
+    seen = {_ev_key(e) for e in primary}
+    out = list(primary)
+    for e in extra:
+        if _ev_key(e) in seen:
+            continue
+        seen.add(_ev_key(e))
+        out.append(e)
+    return out
+
+
+async def _retrieve_for(search_provider, extractor, query: str, meta,
+                        *, category: str = "") -> list[Evidence]:
     """单子问题检索 → Evidence 列表。ProviderError/空 → []（诚实降级，不臆造）。
 
     研究检索**不开 livecrawl、不收窄时效窗口**：livecrawl×多子问题并发会让 Exa 频繁 18s 超时；
     过窄 recency 又会把结果过滤空。要的是相关正文，时效由合成按来源 published 如实呈现。
+    `category`（如 "research paper"）透传给 Exa 做学术兜底定向，命中白名单才生效（见 search_exa）。
     """
     try:
         sources = await retrieve(
-            search_provider, query, limit=PER_Q_LIMIT, extractor=extractor, meta=meta)
+            search_provider, query, limit=PER_Q_LIMIT, extractor=extractor,
+            category=category, meta=meta)
     except ProviderError as e:
         logger.warning("investigate retrieve '%s' failed: %s", query, e)
         return []
@@ -186,8 +208,13 @@ async def _retrieve_for(search_provider, extractor, query: str, meta) -> list[Ev
 
 
 async def investigate(search_provider, extractor, subqs: list[SubQuestion],
-                      *, meta=None, max_rounds: int = MAX_ROUNDS) -> None:
-    """确定性有界并行检索：每子问题 1 轮；空结果换更宽 query 再追 1 轮（受 max_rounds 约束）。"""
+                      *, meta=None, max_rounds: int = MAX_ROUNDS,
+                      deep: bool = False) -> None:
+    """确定性有界并行检索：每子问题 1 轮；空结果换更宽 query 再追 1 轮（受 max_rounds 约束）。
+
+    deep=True（异步分钟级深调研）额外做**学术兜底**：某子问题证据「薄」(<_THIN_EVIDENCE)时，
+    用 Exa `research paper` 类目补权威学术文献，回填薄弱角度——不新增小节、不收窄整体（只救薄的）。
+    """
     async def one(sq: SubQuestion) -> None:
         sq.status = "searching"
         try:
@@ -196,6 +223,11 @@ async def investigate(search_provider, extractor, subqs: list[SubQuestion],
                 # gap 回溯/转向：换更宽 query 再来一轮（仿 Deep Research 的 backtrack）
                 evs = await _retrieve_for(search_provider, extractor,
                                           f"{sq.text} 详细介绍", meta)
+            if deep and len(evs) < _THIN_EVIDENCE:
+                # 学术兜底：薄结果子问题补权威学术文献（research paper 类目），不替换、只补充去重
+                papers = await _retrieve_for(search_provider, extractor, sq.text, meta,
+                                             category="research paper")
+                evs = _merge_evidence(evs, papers)
             sq.evidence = evs
             sq.status = "answered" if evs else "gap"
         except Exception as e:  # 单子问题失败不拖垮整批
@@ -214,20 +246,30 @@ _SYNTH_SYSTEM = (
 
 
 def _assign_global_sources(subqs: list[SubQuestion]) -> list[dict]:
-    """给所有证据分配全局来源编号（按 url 去重），回填 ev.idx，返回 sources 列表。"""
-    sources: list[dict] = []
-    by_key: dict[str, int] = {}
+    """全局去重(按 url) + **按域名权威排序**分配来源编号，回填 ev.idx，返回 sources 列表。
+
+    编号即权威序（[1]=最权威）：tier 降序、同档保留首现序（=检索相关性）。让报告的来源区与引用
+    都以学术/官方/百科打头、内容农场垫底；与 synthesize 里「每子问题证据按权威进 top-N 材料」呼应。
+    """
+    uniq: dict[str, dict] = {}
+    order = 0
     for sq in subqs:
         for ev in sq.evidence:
             key = ev.url or f"{ev.title}|{ev.source}"
-            if key in by_key:
-                ev.idx = by_key[key]
-                continue
-            idx = len(sources) + 1
-            by_key[key] = idx
+            if key not in uniq:
+                uniq[key] = {"first": order, "title": ev.title, "url": ev.url,
+                             "source": ev.source, "published": ev.published, "evs": [ev]}
+                order += 1
+            else:
+                uniq[key]["evs"].append(ev)
+    ordered = sorted(uniq.values(), key=lambda u: (-domain_tier(u["url"]), u["first"]))
+    sources: list[dict] = []
+    for i, u in enumerate(ordered):
+        idx = i + 1
+        for ev in u["evs"]:
             ev.idx = idx
-            sources.append({"idx": idx, "title": ev.title, "url": ev.url,
-                            "source": ev.source, "published": ev.published})
+        sources.append({"idx": idx, "title": u["title"], "url": u["url"],
+                        "source": u["source"], "published": u["published"]})
     return sources
 
 
@@ -315,6 +357,10 @@ async def synthesize(llm, question: str, subqs: list[SubQuestion],
     deep=True（异步分钟级深调研）：不受 90s 网关上限约束，合成预算翻倍（max_tokens 2400→4000、
     timeout 55→150）、要求更多小节（8-12）与更长正文、每节喂更多证据，换取真·深报告。
     """
+    # 源质量加权：合成前按域名权威重排每子问题证据 → 学术/官方/百科上移、内容农场下沉。
+    # 既决定来源编号(靠前=更权威)、也决定哪几条进 top-N 合成材料。稳定排序，同档保留检索相关性序。
+    for sq in subqs:
+        sq.evidence = rerank_by_authority(sq.evidence, key=lambda e: e.url)
     sources = _assign_global_sources(subqs)
     if not sources:
         return _empty_report(question, subqs)

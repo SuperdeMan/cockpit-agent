@@ -208,6 +208,58 @@ def test_synthesize_deep_uses_larger_budget_and_prompt():
     assert "5-7" in sllm.calls[0][0][1]["content"]
 
 
+# ── 源质量加权 + 学术兜底 ────────────────────────────────────
+
+def test_synthesize_reranks_evidence_by_authority():
+    sq = SubQuestion(sq_id="sq1", text="原理", perspective="背景", status="answered", evidence=[
+        Evidence(title="农场", url="https://blog.csdn.net/x", source="csdn.net", excerpt="农场正文"),
+        Evidence(title="论文", url="https://arxiv.org/abs/1", source="arxiv.org", excerpt="学术正文"),
+    ])
+    cap = {}
+
+    def responder(messages, **k):
+        cap["user"] = messages[1]["content"]
+        return ('{"summary":"s","sections":[{"heading":"h","body":"b[1]","citations":[1],'
+                '"confidence":"high"}],"overall_confidence":"medium","gaps":[]}')
+
+    report = asyncio.run(pipeline.synthesize(FakeLLM(responder), "固态电池", [sq]))
+    by_idx = {s["idx"]: s for s in report.sources}
+    assert by_idx[1]["source"] == "arxiv.org"      # tier3 学术重排到前 → idx 1
+    assert by_idx[2]["source"] == "csdn.net"       # tier0 内容农场沉到 idx 2
+    assert "[1] 论文" in cap["user"] and "学术正文" in cap["user"]
+
+
+class _ThinThenPapers:
+    """普通搜索每问回 1 条(薄)；research paper 类目回 1 条学术源。"""
+    def __init__(self):
+        self.categories = []
+
+    async def search(self, query, limit=5, meta=None, **kwargs):
+        self.categories.append(kwargs.get("category", ""))
+        if kwargs.get("category") == "research paper":
+            return [SearchResult(title="paper", url="https://arxiv.org/p", source="arxiv.org",
+                                 published="", content="学术正文")]
+        return [SearchResult(title="gen", url="https://x.com/1", source="x.com",
+                             published="", content="一般正文")]
+
+
+def test_investigate_deep_academic_backfill_for_thin():
+    s = _ThinThenPapers()
+    subqs = [SubQuestion(sq_id="sq1", text="原理")]
+    asyncio.run(pipeline.investigate(s, None, subqs, meta={}, deep=True))
+    assert "research paper" in s.categories               # 深度模式薄结果触发学术兜底
+    assert len(subqs[0].evidence) == 2                    # 一般1 + 学术1（去重合并）
+    assert any("arxiv" in e.url for e in subqs[0].evidence)
+
+
+def test_investigate_sync_no_academic_backfill():
+    s = _ThinThenPapers()
+    subqs = [SubQuestion(sq_id="sq1", text="原理")]
+    asyncio.run(pipeline.investigate(s, None, subqs, meta={}))   # deep=False
+    assert "research paper" not in s.categories           # 同步不做学术兜底（省延迟）
+    assert len(subqs[0].evidence) == 1
+
+
 # ── brief ─────────────────────────────────────────────────
 
 def test_brief_produces_speech_and_card():

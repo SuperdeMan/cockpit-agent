@@ -1,0 +1,60 @@
+"""信源权威分层 + 重排单测。"""
+from agents._sdk.source_quality import domain_tier, rerank_by_authority
+
+
+def test_domain_tier_academic_official_encyclopedia():
+    assert domain_tier("https://arxiv.org/abs/2401.001") == 3
+    assert domain_tier("https://en.wikipedia.org/wiki/Solid_state_battery") == 3
+    assert domain_tier("https://www.tsinghua.edu.cn/x") == 3        # .edu.cn TLD
+    assert domain_tier("https://www.nist.gov/x") == 3               # .gov TLD
+    assert domain_tier("https://learn.microsoft.com/zh-cn/azure") == 3
+    assert domain_tier("https://docs.anysite.com/guide") == 3       # docs.* 官方文档启发
+    assert domain_tier("https://foo.readthedocs.io/en/latest") == 3
+    # 中文学术：院刊/期刊/出版平台（含子域）
+    assert domain_tier("https://www.engineering.org.cn/x") == 3
+    assert domain_tier("https://www.mater-rep.com/x") == 3
+    assert domain_tier("https://esst.cip.com.cn/article/1") == 3    # cip.com.cn 子域
+    assert domain_tier("https://www.cas.org/x") == 3
+
+
+def test_domain_tier_reputable_media():
+    assert domain_tier("https://www.reuters.com/tech") == 2
+    assert domain_tier("https://36kr.com/p/123") == 2
+    assert domain_tier("https://www.jiqizhixin.com/articles/x") == 2
+    assert domain_tier("https://www.eet-china.com/x") == 2          # 行业媒体
+    assert domain_tier("https://www.ofweek.com/x") == 2
+
+
+def test_domain_tier_content_farm_and_default():
+    assert domain_tier("https://blog.csdn.net/u/article") == 0
+    assert domain_tier("https://baijiahao.baidu.com/s?id=1") == 0
+    assert domain_tier("https://wenku.baidu.com/view/x") == 0
+    assert domain_tier("https://some-random-blog.xyz/post") == 1   # 默认
+    assert domain_tier("https://baike.baidu.com/item/x") == 1      # 百度百科保持中立(不农场不权威)
+    assert domain_tier("") == 1
+    assert domain_tier("not a url") == 1
+
+
+def test_rerank_stable_within_tier():
+    items = [
+        {"url": "https://blog.csdn.net/a"},     # 0
+        {"url": "https://random1.com/b"},        # 1
+        {"url": "https://arxiv.org/c"},          # 3
+        {"url": "https://reuters.com/d"},        # 2
+        {"url": "https://random2.com/e"},        # 1
+    ]
+    out = [s["url"] for s in rerank_by_authority(items, key=lambda s: s["url"])]
+    assert out == [
+        "https://arxiv.org/c",       # 3
+        "https://reuters.com/d",     # 2
+        "https://random1.com/b",     # 1（同档保留原序：random1 在 random2 前）
+        "https://random2.com/e",     # 1
+        "https://blog.csdn.net/a",   # 0 沉底
+    ]
+
+
+def test_rerank_empty_and_plain_string_key():
+    assert rerank_by_authority([]) == []
+    # 默认 key：元素本身即 URL
+    out = rerank_by_authority(["https://x.com/1", "https://nature.com/2"])
+    assert out[0] == "https://nature.com/2"

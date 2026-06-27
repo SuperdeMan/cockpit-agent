@@ -15,6 +15,8 @@ import logging
 import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .source_quality import rerank_by_authority
+
 logger = logging.getLogger("agent.sdk.grounding")
 
 # 列表编号前缀（- * • 1. 一、 等），合成降级时剥离用。
@@ -121,7 +123,9 @@ async def grounded_synthesis(llm, subject: str, sources: list[dict], *,
     DEADLINE_EXCEEDED → 退化兜底堆原文（实测 info.search「什么是固态电池」踩到，与深调研同源）。
     timeout 20→25 给大页面留余量。
     """
-    used = sources[:5]
+    # 源质量加权：按域名权威重排 → 学术/官方/百科优先进 top-5（首源拿更多正文配额）；
+    # 稳定排序，同档保留检索相关性序（榜单/赛事类来源多为同档，顺序不变，不影响既有逻辑）。
+    used = rerank_by_authority(sources, key=lambda s: s.get("url", ""))[:5]
     materials = build_materials(used)
     prompt = (
         f"用户问题：{subject}\n"

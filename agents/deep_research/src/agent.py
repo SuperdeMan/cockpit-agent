@@ -204,7 +204,7 @@ class DeepResearchAgent(BaseAgent):
         """
         try:
             subqs = await plan(self.llm, question, constraints, deep=True)
-            await investigate(self.search, self.extractor, subqs, meta=meta)
+            await investigate(self.search, self.extractor, subqs, meta=meta, deep=True)
             report = await synthesize(self.llm, question, subqs, constraints, deep=True)
             speech, card = brief(report, question)
             # 落 memory（供后续「展开第N点」深挖）：后台用持久 self.memory 重建 Context。
