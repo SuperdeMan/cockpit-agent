@@ -6,3 +6,5 @@ httpx>=0.27
 nats-py>=2.6.0
 # 和风天气 JWT（Ed25519/EdDSA 签名）；仅 JWT 鉴权路径需要
 cryptography>=42.0
+# 繁→简转换（新闻台/港源标题归一为简体）；纯 Python 轻量、确定性、无 C 依赖
+zhconv>=1.4.3

@@ -162,6 +162,7 @@ class NewsItem:
     summary: str = ""           # 摘要
     source: str = ""            # 来源
     publish_time: str = ""      # 发布时间
+    url: str = ""               # 原文链接（可点 + 参与域名权威分层）
 
 
 class NewsProvider(ABC):

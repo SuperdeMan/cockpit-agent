@@ -32,11 +32,16 @@ def shanghai_now() -> datetime:
 
 
 def clean_snippet(text: str) -> str:
-    """清理搜索结果 snippet：去掉末尾省略号与中间省略号，保留语义。"""
+    """清理搜索结果 snippet：去 markdown 标记 + 末尾/中间省略号，保留语义。"""
     if not text:
         return ""
     text = re.sub(r'[.。…]{2,}$', '', text.strip())
     text = text.replace(' ... ', '，').replace('…', '，')
+    # 去 markdown：行首标题#/引用>/列表-* + 内联强调**/代码`（网页正文偶带，防摘要出现"# 标题"片段）
+    text = re.sub(r'(?m)^\s{0,3}#{1,6}\s+', '', text)
+    text = re.sub(r'(?m)^\s{0,3}>\s+', '', text)
+    text = re.sub(r'(?m)^\s{0,3}[-*]\s+', '', text)
+    text = text.replace('**', '').replace('`', '')
     return text.strip()
 
 

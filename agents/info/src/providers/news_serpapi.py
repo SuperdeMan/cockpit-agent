@@ -70,6 +70,7 @@ class SerpApiNewsProvider(NewsProvider):
                 summary=_s(a.get("snippet") or a.get("description", "")),
                 source=source_name,
                 publish_time=_s(a.get("iso_date") or a.get("date", "")),
+                url=_s(a.get("link") or a.get("url", "")),
             ))
         return items
 
@@ -82,24 +83,25 @@ class SerpApiNewsProvider(NewsProvider):
         results = await self._anysearch.search(f"{query} 最新新闻", limit=limit, meta=meta)
         return [
             NewsItem(title=r.title, summary=r.snippet, source=r.source,
-                     publish_time="")
+                     publish_time="", url=r.url)
             for r in results
         ]
 
     async def headlines(self, topic: str = "", limit: int = 5,
                         meta: dict | None = None) -> list[NewsItem]:
-        """获取新闻头条。国内新闻走 Baidu，国际/通用走 Google，失败走 AnySearch。"""
-        query = topic or "今日热点"
+        """获取新闻头条。**国内具体话题**走 Baidu；**综合要闻(空 topic)/国际话题**走 Google News
+        （返回文章级头条而非门户版块页，且更广覆盖）；均失败走 AnySearch。"""
+        query = topic or "今日要闻 头条"
         errors: list[str] = []
 
-        # 国内新闻优先 Baidu News
-        if not topic or _is_chinese_topic(topic):
+        # 国内具体话题优先 Baidu News（综合要闻不走 Baidu——其"今日热点"多旧闻/体育速递垃圾）
+        if topic and _is_chinese_topic(topic):
             try:
                 return await self._serpapi_search("baidu_news", query, limit, meta)
             except (ProviderError, Exception) as e:
                 errors.append(f"baidu: {e}")
 
-        # 国际/通用走 Google News
+        # 综合要闻 / 国际话题走 Google News
         try:
             return await self._serpapi_search("google_news", query, limit, meta)
         except (ProviderError, Exception) as e:

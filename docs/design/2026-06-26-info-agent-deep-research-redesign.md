@@ -273,12 +273,29 @@ deep_research `_resolve_news_deepen` 取第N条标题做小型调研(`{title}（
 （World Bank/IMF/FRED/Crossref/OpenAlex/DOAJ/3GPP/OASIS/Wikimedia/Wikidata/AI 官方文档 + `.gov.hk` TLD）、
 tier2 加权威媒体/厂商博客（China Daily/news.cn/SCMP/DW/CNCF/GDELT/Common Crawl/Google Dev Blog 等）。
 **只采纳静态白名单**——研究报告的运行时动态评分（429/延迟/freshness 回灌）与 source_registry/DB 三表暂不落地
-（对当前「检索后重排」过重，留作未来）。**新闻三修**（`info._news`）：① 质量=`_gather_news` 结果按 `domain_tier`
-**权威重排**（抬权威媒体、沉内容农场，原本零重排农场可霸榜）；② 时效=`_normalize_publish_time` 把相对时间
-（「3小时前/昨天」）采集时即转**绝对 ISO**（研究报告明确建议；原样透传致 HMI `relativeTime` 解析不了、freshness
-字符串比较错）；③ 展示=卡片 items **补 `summary`**（车机一屏可扫读，原本只有光秃标题）+ HMI `NewsBriefCardView`
-默认常显来源名+相对时间（原藏在「参考来源」折叠里）。*验收*：真栈「看科技新闻」5 条平均档位 **2.00**、内容农场
-**0** 条、摘要/时间 **5/5**。
+（对当前「检索后重排」过重，留作未来）。
+
+**新闻质量/时效/展示重修**（`info._news`，经真栈实测两轮收敛）：
+- **来源策略**：话题新闻 Exa 优先（全文利于逐条摘要）；**综合要闻（无 topic）走 Google News（SerpApi）头条 + Exa 合并**
+  ——关键教训：① Exa 是**语义检索**对「今日头条」run-to-run 方差大且多返**门户/版块落地页**（即時/最新消息/新闻联播），
+  非文章；② Baidu News「今日热点」多旧闻/体育速递垃圾；故综合头条改用 News API（Google News 返回文章级头条）。
+- **泛新闻路由修复**：`_extract_news_subject` 原用精确匹配判泛指词→「今天有哪些值得关注的新闻」被误抽伪 topic
+  「有哪些值得关注」→ 当话题走 Exa（偏科技）。改**子串包含**判（哪些/值得关注/热点/要闻…）→ 正确回落综合路径。
+- **质量**：`_rank_news_quality` = **沉内容农场（tier0）+ 时效新→旧 + 来源多样性上限（每源≤3）**——刻意不按 tier
+  优先（那会把同一权威源如 36 氪全顶到前、牺牲多样性，实测「8 条全 36 氪」）；权威性只用于沉农场。
+- **时效**：`_normalize_publish_time` 相对时间（「3小时前/昨天」）采集即转**绝对 ISO**（原样透传致 HMI `relativeTime`
+  解析不了、freshness 字符串比较错）+ `_recent_only` 丢 >3 天旧闻（兜底 provider 旧闻；全旧则退回不至于空）。
+- **去垃圾**：`_is_junk_news` 按**首段**判门户版块名（原始标题带来源尾巴「最新消息 | UN News」，版块名仅清理后精确匹配）。
+- **展示**：卡片 items 补 `summary`（与标题近重复时去重，**反转旧「卡片不复述摘要」设计**，对症标题渲染两遍）+
+  `_clean_title` 切尾部来源标签「-36氪」「｜公視新聞網 PNN」(兼容全角｜取首段) + `clean_snippet` 去 markdown(对症摘要出现「# 中东突变！」)
+  + HMI `NewsBriefCardView` 常显来源名+相对时间 + SerpApi 条目补 `url`（可点+参与分层）。
+- **繁→简**：台/港源标题繁体 → `_to_simplified`（**zhconv** 确定性库，加到 `_sdk/requirements`，守卫式导入未装则原样）归一简体，
+  应用于标题/摘要/概述。**教训**：先试「复用新闻 summarize LLM 顺带转标题」失败——10 条繁→简+摘要使输出变大、稳定
+  命中 `DEADLINE_EXCEEDED`（新闻请求预算比深调研紧、MiMo 慢）；确定性库才可靠（已删 LLM 转标题、summarize 仅留摘要更轻）。
+- *验收*：真栈「今天有哪些值得关注的新闻」最佳跑 **10 来源/今日 freshness/农场 0/时间 10-10/话题多样**（中东/医药/海事/台湾），
+  繁体标题转简体、版块页全滤。*已知遗留*：**Exa 综合查询 run-to-run 方差大**（有时 10 优质源、有时返门户/下载页垃圾），
+  Google News 合并补足但仍不稳——真·稳定多源综合要闻需接策展级 News API/RSS（见 `docs/research`）；综合头条摘要偏少、
+  同题多源近重复未按清理后标题去重——均后续。
 
 ---
 

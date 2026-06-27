@@ -32,6 +32,21 @@ logger = logging.getLogger("agent.info")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 
+try:                                   # 繁→简（台/港源新闻标题/摘要归一简体）；纯 Python 轻量
+    from zhconv import convert as _zhconv_convert
+except Exception:                      # 未装则降级原样返回，不阻断（守卫式）
+    _zhconv_convert = None
+
+
+def _to_simplified(text: str) -> str:
+    """繁体→简体中文。zhconv 未装/异常时原样返回（对已是简体的文本幂等无副作用）。"""
+    if not text or _zhconv_convert is None:
+        return text or ""
+    try:
+        return _zhconv_convert(text, "zh-cn")
+    except Exception:
+        return text
+
 
 def _shanghai_now() -> datetime:
     try:
@@ -56,9 +71,16 @@ _NEWS_SUBJECT_RE = re.compile(
     r"([一-鿿A-Za-z0-9·&]{2,15}?)(?:的)?(?:最新)?(?:消息|新闻|资讯|动态|头条|进展)")
 _NEWS_SUBJECT_STRIP = ("查一下", "查查", "看一下", "看一看", "看看", "帮我查", "帮我看",
                        "帮我", "今天", "今日", "最近", "现在", "查", "看", "、", "，", ",")
-# 提取到这些（疑问/泛指词）说明不是具体主体，回落泛新闻
-_NEWS_NON_SUBJECT = {"有什么", "有啥", "什么", "啥", "哪些", "最新", "今天", "今日",
-                     "一些", "些", "看看", "有没有"}
+# 提取到的"主体"含这些（疑问/泛指/泛新闻词）说明不是具体实体，回落泛新闻（含子串即判）
+_NEWS_NON_SUBJECT = ("有什么", "有啥", "什么", "啥", "哪些", "有没有", "最新", "今天",
+                     "今日", "一些", "值得关注", "值得", "重要", "热点", "要闻", "大事", "头条")
+# 标题恰为这些=门户版块/栏目落地页（非具体文章），综合新闻检索偶尔命中 → 剔除（精确匹配）
+_NEWS_SECTION_TITLES = {
+    "即时", "即時", "最新", "最新消息", "最新新闻", "最新新聞", "新闻联播", "今日要闻", "今日热点",
+    "最新国内新闻", "最新国际新闻", "国内新闻", "國內新聞", "国际新闻", "國際新聞", "今日新闻", "今日新聞",
+    "国际", "國際", "国内", "國內", "要闻", "要聞", "头条", "頭條", "热点", "熱點", "时事", "時事",
+    "财经", "財經", "科技", "体育", "體育", "社会", "社會", "军事", "軍事", "娱乐", "娛樂",
+    "时政", "時政", "推荐", "推薦", "视频", "視頻", "首页", "首頁", "新闻", "新聞", "资讯", "資訊"}
 
 
 def _extract_news_subject(raw: str) -> str:
@@ -75,7 +97,7 @@ def _extract_news_subject(raw: str) -> str:
             if s.startswith(pre) and len(s) > len(pre):
                 s, changed = s[len(pre):], True
     s = s.strip()
-    return "" if s in _NEWS_NON_SUBJECT else s
+    return "" if (not s or any(w in s for w in _NEWS_NON_SUBJECT)) else s
 
 
 # ── 新闻个性化：从画像兴趣给泛新闻排序（P2）─────────────────────────
@@ -189,16 +211,53 @@ def _iso_sortkey(ts: str) -> float:
         return 0.0
 
 
-def _rank_news_quality(items: list[dict]) -> list[dict]:
-    """新闻按「权威档位 + 时效」重排：domain_tier 抬权威媒体/沉内容农场，同档按发布时间新→旧。
+def _news_source_key(n: dict) -> str:
+    """新闻来源去重键：优先 url 域名，否则来源名。供来源多样性上限用。"""
+    u = n.get("url") or ""
+    if u:
+        try:
+            host = urlparse(u).netloc.lower()
+            return host[4:] if host.startswith("www.") else host
+        except Exception:
+            pass
+    return (n.get("source") or "").strip().lower()
 
-    稳定排序键 (tier, time) 降序。SerpApi 兜底无 url → tier1，仍按时间排。检索已限 2 天窗口，
-    故 tier 优先不会把过旧的拍到前面；权威优先正面对症「新闻质量差/内容农场霸榜」。
+
+def _rank_news_quality(items: list[dict], per_source_cap: int = 3) -> list[dict]:
+    """新闻重排：①沉内容农场(tier0)到末尾；②非农场按发布时间新→旧；③**来源多样性**——每来源
+    最多 per_source_cap 条进主区、超出降补充区，避免单一来源刷屏（实测「8 条全 36 氪」）。
+
+    返回 主区(多样·新→旧) + 补充区(同源溢出·新→旧) + 农场区。**刻意不按 tier 优先排序**——
+    那会把同一权威源(如 36 氪)全顶到前面、牺牲多样性；权威性只用于沉农场，正文质量靠多样+时效。
     """
-    return sorted(
-        items,
-        key=lambda n: (domain_tier(n.get("url") or ""), _iso_sortkey(n.get("publish_time") or "")),
-        reverse=True)
+    nonfarm = [n for n in items if domain_tier(n.get("url") or "") > 0]
+    farm = [n for n in items if domain_tier(n.get("url") or "") == 0]
+    nonfarm.sort(key=lambda n: _iso_sortkey(n.get("publish_time") or ""), reverse=True)
+    primary, overflow, seen = [], [], {}
+    for n in nonfarm:
+        k = _news_source_key(n)
+        seen[k] = seen.get(k, 0) + 1
+        (primary if seen[k] <= per_source_cap else overflow).append(n)
+    return primary + overflow + farm
+
+
+def _summary_adds_info(summary: str, title: str) -> bool:
+    """摘要是否比标题多信息：非空、且与标题不互相包含（信源正文太薄时摘要常只回显标题→去重）。"""
+    norm = lambda x: re.sub(r"[\s\-—｜|_]+", "", x or "")
+    s, t = norm(summary), norm(title)
+    return bool(s) and s not in t and t not in s
+
+
+def _recent_only(items: list[dict], days: int = 3) -> list[dict]:
+    """丢弃发布时间早于 days 天的陈旧新闻（对症 provider 兜底返回数天前旧闻）。
+
+    无发布时间的保留（可能是新的、不误杀）；若过滤后全空则退回原列表（有旧闻总好过无新闻）。
+    publish_time 已归一为 ISO，字典序可直接比较。
+    """
+    cutoff = (_shanghai_now() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
+    recent = [n for n in items
+              if not (n.get("publish_time") or "").strip() or n["publish_time"] >= cutoff]
+    return recent or items
 
 
 # 赛事联赛映射（api-football league id，已核验官方 ID 表；id=4 各源说法冲突故不收录）
@@ -922,7 +981,12 @@ class InfoAgent(BaseAgent):
     @staticmethod
     def _is_junk_news(title: str, url: str, content: str) -> bool:
         """剔除门户首页/栏目页/错误页等非新闻条目（宽泛新闻检索偶尔会命中）。"""
-        t, c = title or "", content or ""
+        t, c = (title or "").strip(), content or ""
+        # 栏目/版块名（即時/最新消息/新闻联播/國際…）= 门户版块页非文章 → 丢。
+        # 按**首段**判（原始标题常带来源尾巴如「最新消息 | UN News」「新闻联播_央视网」）。
+        head = re.split(r"[\s\-—_｜|]+", t, 1)[0].strip() if t else ""
+        if t in _NEWS_SECTION_TITLES or head in _NEWS_SECTION_TITLES:
+            return True
         if any(k in t for k in ("首页", "新闻中心", "频道首页", "新闻列表", "焦点图")):
             return True
         if any(k in c for k in ("浏览器版本", "版本过低", "请升级", "请使用最新",
@@ -936,35 +1000,56 @@ class InfoAgent(BaseAgent):
                 pass
         return False
 
-    async def _gather_news(self, topic: str, limit: int, meta) -> list[dict]:
-        """聚合新闻为归一化 dict 列表。链路：Exa 正文级（时效）→ serpapi(Google/Baidu)
-        → AnySearch → mock。Exa 优先因其返回**全文+发布时间**，远好于 serpapi 的聚合页标题。
-        多取几条以便过滤掉首页/错误页后仍够 ~10 条。
+    async def _news_from_exa(self, topic: str, limit: int, meta) -> list[dict]:
+        """Exa 正文级新闻：返回全文+发布时间，利于逐条摘要；recency 2 天。失败/空 → []。
+
+        综合新闻用**自然问句**作 query——Exa 是神经语义检索，吃自然语言、不吃「头条要闻」式关键词堆
+        （后者实测返回空 → 回落 provider 旧闻）。
         """
-        query = f"{topic} 最新进展" if topic else "今日重要新闻 头条 要闻"
+        query = f"{topic} 最新进展" if topic else "今天有哪些值得关注的重要新闻 最新"
         try:
-            # recency 2 天：兼顾"今天"时效与凑够覆盖面（条目带日期，用户可辨新旧）
             results = await self.search.search(
                 query, limit=limit + 5, meta=meta, recency_days=2, category="news")
-            exa = [{"title": r.title, "url": r.url, "source": r.source,
-                    "publish_time": _normalize_publish_time(r.published),
-                    "snippet": clean_snippet(r.snippet or (r.content[:160] if r.content else ""))}
-                   for r in results
-                   if r.title and not self._is_junk_news(r.title, r.url, r.content)]
-            if exa:
-                return _rank_news_quality(exa)   # 权威重排：抬权威媒体、沉内容农场
         except ProviderError as e:
-            logger.warning("exa news failed, falling back to news provider: %s", e)
+            logger.warning("exa news failed: %s", e)
+            return []
+        return [{"title": r.title, "url": r.url, "source": r.source,
+                 "publish_time": _normalize_publish_time(r.published),
+                 "snippet": clean_snippet(r.snippet or (r.content[:300] if r.content else ""))}
+                for r in results
+                if r.title and not self._is_junk_news(r.title, r.url, r.content)]
+
+    async def _news_from_provider(self, topic: str, limit: int, meta) -> list[dict]:
+        """SerpApi 新闻源（Google/Baidu News，多来源广覆盖头条）→ AnySearch → mock。失败/空 → []。"""
         try:
-            items = await self.news.headlines(topic=topic, limit=limit, meta=meta)
+            items = await self.news.headlines(topic=topic, limit=limit + 5, meta=meta)
         except ProviderError as e:
-            logger.warning("news failed, fallback to mock: %s", e)
-            items = await self._fallback_news.headlines(topic=topic, limit=limit, meta=meta)
-        fallback = [{"title": n.title, "url": "", "source": n.source,
-                     "publish_time": _normalize_publish_time(n.publish_time),
-                     "snippet": clean_snippet(n.summary)}
-                    for n in items if not self._is_junk_news(n.title, "", n.summary)]
-        return _rank_news_quality(fallback)
+            logger.warning("news provider failed, fallback to mock: %s", e)
+            try:
+                items = await self._fallback_news.headlines(topic=topic, limit=limit, meta=meta)
+            except ProviderError:
+                return []
+        return [{"title": n.title, "url": n.url, "source": n.source,
+                 "publish_time": _normalize_publish_time(n.publish_time),
+                 "snippet": clean_snippet(n.summary)}
+                for n in items if not self._is_junk_news(n.title, n.url, n.summary)]
+
+    async def _gather_news(self, topic: str, limit: int, meta) -> list[dict]:
+        """聚合新闻：Exa 优先（近期正文+发布时间，利于逐条摘要+时效），SerpApi 新闻源兜底；
+        再「时效过滤（去数天前旧闻）+沉内容农场+来源多样性上限」重排。
+
+        说明：综合要闻**合并 Exa + 新闻源**——Exa 语义检索对「今日头条」run-to-run 方差大（有时多源、
+        有时寥寥），合并新闻源补足材料、再统一时效过滤去旧闻+去重+沉农场+来源多样性，稳住覆盖面；
+        话题新闻仍 Exa 优先（全文利于逐条摘要）。真·策展级多源均衡仍需接 News API/RSS（见 docs/research）。
+        """
+        if topic:
+            items = (await self._news_from_exa(topic, limit, meta)
+                     or await self._news_from_provider(topic, limit, meta))
+        else:
+            exa_items = await self._news_from_exa("", limit, meta)
+            prov_items = await self._news_from_provider("", limit, meta)
+            items = exa_items + prov_items
+        return _rank_news_quality(_recent_only(items))
 
     @staticmethod
     def _dedup_news(items: list[dict]) -> list[dict]:
@@ -982,17 +1067,21 @@ class InfoAgent(BaseAgent):
     def _clean_title(title: str) -> str:
         """清理新闻标题里的栏目/来源尾巴（如「…|治疗|靶点」「…_新浪网」），用于卡片来源链接。"""
         t = (title or "").strip()
-        # 「|」在中文新闻标题里几乎总是栏目分隔符 → 取首段
-        if "|" in t:
-            head = t.split("|", 1)[0].strip()
-            if head:
-                t = head
+        # 「|」「｜」是栏目/来源分隔，中文新闻绝大多数为「标题 ｜ 来源」→ 取首段作正文标题
+        # （兼容全角｜+长来源名如「… ｜ 公視新聞網 PNN」；旧码只认半角|漏掉全角致台媒尾巴没切）
+        m = re.split(r"[|｜]", t, 1)
+        if len(m) > 1 and m[0].strip():
+            t = m[0].strip()
         # 「_」「 - 」常是来源尾巴；主标题足够长才切，避免误伤正文里的下划线/连字符
         for sep in ("_", " - ", " – "):
             idx = t.find(sep)
             if idx >= 4:
                 t = t[:idx].strip()
                 break
+        # 尾部来源标签：「-36氪」「-新浪科技」「｜界面」等（分隔符 + 含中文的短媒体名，无空格也切）
+        m = re.search(r"[\-—｜|]\s*([^\-—｜|]{1,8})$", t)
+        if m and re.search(r"[一-鿿]", m.group(1)) and len(t) - len(m.group(0)) >= 5:
+            t = t[:m.start()].strip()
         return t or (title or "").strip()
 
     @staticmethod
@@ -1005,47 +1094,54 @@ class InfoAgent(BaseAgent):
                 return t[:idx + 1]
         return t[:limit]
 
-    async def _summarize_news_list(self, subject: str,
-                                   items: list[dict]) -> tuple[str, dict[int, str]]:
-        """一次 LLM 调用产出：总体概述 + 逐条一句话摘要（按编号）。
-        返回 (overview, {idx: summary})；失败返回 ("", {}) 由调用方用首句兜底。
+    async def _summarize_news_list(
+            self, subject: str,
+            items: list[dict]) -> tuple[str, dict[int, str], dict[int, str]]:
+        """一次 LLM 调用产出：总体概述 + 逐条一句话摘要 + **逐条简体中文标题**（按编号）。
+        返回 (overview, {idx: summary}, {idx: 简体标题})；失败返回 ("", {}, {})。
+        标题转换只做繁→简（台/港源标题转简体），LLM 调用兜底失败时调用方退回原标题。
         """
-        blocks = [f"[{i}] {n['title']}\n{(n.get('snippet') or '')[:400]}"
+        # snippet 收到 120 字：标题繁→简不需长正文，缩输入降 MiMo 推理延迟（原 400 字 ×10 条致 20s DEADLINE）
+        blocks = [f"[{i}] {n['title']}\n{(n.get('snippet') or '')[:120]}"
                   for i, n in enumerate(items, 1)]
         prompt = (
             f"用户想看：{subject}（今日新闻速览）\n"
             f"当前时间：{_shanghai_now():%Y年%m月%d日}\n\n"
             f"以下是 {len(items)} 条新闻（方括号内为编号）：\n" + "\n\n".join(blocks) + "\n\n"
             "只依据各条内容输出一个 JSON：\n"
-            '{"overview": "一句话总体概述（≤40字）", '
-            '"summaries": {"1": "该条一句话摘要（≤30字）", "2": "…"}}\n'
-            "每条摘要必须只依据对应编号的内容，不得编造、不得张冠李戴；只输出 JSON。"
+            '{"overview": "一句话总体概述（≤40字，简体中文）", '
+            '"summaries": {"1": "该条一句话摘要（≤30字，简体中文，仅当比标题更有信息量才给、否则留空）", "2": "…"}}\n'
+            "全部用**简体中文**；摘要只依据对应编号内容、不得编造张冠李戴；只输出 JSON。"
         )
         try:
             raw = await self.llm.complete([
                 {"role": "system", "content": "你是严谨的车载新闻编辑，只归纳给定内容，绝不编造。"},
                 {"role": "user", "content": prompt},
-            ], temperature=0.2, max_tokens=700, timeout=20)
+            ], temperature=0.2, max_tokens=1200, timeout=30)
         except Exception as e:
             logger.warning("news list summarize failed: %s", e)
-            return "", {}
+            return "", {}, {}
         raw = (raw or "").strip()
         if not raw or raw.startswith("[mock]"):
-            return "", {}
+            return "", {}, {}
         text = raw.strip().strip("`")
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end <= start:
-            return "", {}
+            return "", {}, {}
         try:
             obj = json.loads(text[start:end + 1])
         except (ValueError, TypeError):
-            return "", {}
+            return "", {}, {}
         overview = str(obj.get("overview") or "").strip()
         summaries: dict[int, str] = {}
         for k, v in (obj.get("summaries") or {}).items():
             if str(k).isdigit() and str(v).strip():
                 summaries[int(k)] = str(v).strip()
-        return overview, summaries
+        titles: dict[int, str] = {}
+        for k, v in (obj.get("titles") or {}).items():
+            if str(k).isdigit() and str(v).strip():
+                titles[int(k)] = str(v).strip()
+        return overview, summaries, titles
 
     async def _news(self, intent, ctx, meta) -> AgentResult:
         topic = (intent.slots.get("topic") or "").strip()
@@ -1068,20 +1164,24 @@ class InfoAgent(BaseAgent):
             if interests:
                 raw, hit = _rank_news_by_interest(raw, interests)
 
-        overview, summaries = await self._summarize_news_list(subject, raw)
+        overview, summaries, titles = await self._summarize_news_list(subject, raw)
         lines, items = [], []
         for i, n in enumerate(raw, 1):
-            one = summaries.get(i) or self._first_sentence(n.get("snippet", ""))
-            lines.append(f"{i}. {one}")
-            # 卡片放标题+一句话摘要+来源+发布时间：车机一屏可扫读（不必听 TTS），摘要与语音一致。
-            items.append({"title": self._clean_title(n["title"]), "summary": one,
+            # 标题繁→简（zhconv 确定性，台/港源转简体）再清栏目/来源尾巴；摘要同样归一简体。
+            clean_t = self._clean_title(_to_simplified(titles.get(i) or n["title"]))
+            one = _to_simplified(summaries.get(i) or self._first_sentence(n.get("snippet", "")))
+            # 摘要与标题近重复（信源正文太薄→只能回显标题）就不放，避免卡片标题渲染两遍/语音复读。
+            card_sum = one if _summary_adds_info(one, clean_t) else ""
+            lines.append(f"{i}. {card_sum or clean_t}")   # 有真摘要播摘要，否则播干净标题
+            # 卡片：标题+（有信息量的）摘要+来源+发布时间，车机一屏可扫读。
+            items.append({"title": clean_t, "summary": card_sum,
                           "url": n.get("url", ""), "source": n["source"],
                           "publish_time": n["publish_time"]})
 
         # 座舱以 TTS 播报为本：语音/气泡 = 总览 + 逐条一句话提炼（听完即可，无需点开）；
         # 卡片 = 可点开的来源清单（想看原文才点）。
-        head = overview or (f"关于{topic}的新闻有 {len(raw)} 条：" if topic
-                            else f"今天值得关注的新闻有 {len(raw)} 条：")
+        head = _to_simplified(overview) or (f"关于{topic}的新闻有 {len(raw)} 条：" if topic
+                                            else f"今天值得关注的新闻有 {len(raw)} 条：")
         if hit:                                    # 个性化命中 → 告知优先了哪些关注点
             head = f"（已为你优先放了关注的{'、'.join(hit[:3])}）" + head
         speech = head + "\n" + "\n".join(lines)

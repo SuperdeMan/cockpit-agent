@@ -653,8 +653,13 @@ def test_news_speaks_distilled_briefing_with_clickable_source_card():
                              source="e.com", published="2026-06-22T07:00:00Z", content="正文二"),
             ]
 
+    class _NoProvider:                       # 新闻 provider 返回空 → 无 topic 时回落 Exa（本测专测 Exa 路）
+        async def headlines(self, **kwargs):
+            return []
+
     agent.llm.complete = news_llm
     agent.search = _ExaNews()
+    agent.news = _NoProvider()
     res = asyncio.run(run_handle(
         agent, "info.news", slots={}, raw_text="今天有哪些值得关注的新闻"))
 
@@ -678,25 +683,75 @@ def test_news_dedups_repeated_titles():
     assert [n["title"] for n in out] == ["今日热点", "另一条"]
 
 
-def test_news_prefers_exa_full_content_over_news_provider():
+def test_news_topic_prefers_exa_full_content():
+    """话题新闻优先 Exa（返回全文利于逐条摘要）；Exa 有结果不回落新闻 provider。"""
     agent = InfoAgent()
 
     class _ExaNews:
         async def search(self, query, **kwargs):
-            return [SearchResult(title="Exa新闻A", url="https://e.com/a", snippet="摘要A",
+            return [SearchResult(title="Exa新闻A", url="https://e.com/a", snippet="英伟达发布新品",
                                  source="e.com", published="2026-06-22T08:00:00Z",
                                  content="正文A")]
 
     class _NewsShouldNotRun:
         async def headlines(self, **kwargs):
-            raise AssertionError("Exa 有结果时不应回落新闻 provider")
+            raise AssertionError("话题新闻 Exa 有结果时不应回落新闻 provider")
 
     agent.search = _ExaNews()
     agent.news = _NewsShouldNotRun()
-    res = asyncio.run(run_handle(agent, "info.news", slots={}, raw_text="今天有什么新闻"))
+    res = asyncio.run(run_handle(agent, "info.news", slots={"topic": "英伟达"}, raw_text="英伟达新闻"))
     assert res.status == "ok"
     assert res.ui_card["type"] == "news_brief"
     assert res.ui_card["items"][0]["title"] == "Exa新闻A"
+
+
+def test_news_uses_llm_simplified_title():
+    """LLM 返回的简体标题（繁→简）用于卡片显示（台/港源转简体），无 LLM 标题则退回原标题。"""
+    agent = InfoAgent()
+
+    async def news_llm(messages, **kwargs):
+        return ('{"overview":"今日要闻","titles":{"1":"货轮遭袭 长荣海运：人员均安"},"summaries":{}}')
+
+    class _ExaNews:
+        async def search(self, query, **kwargs):
+            return [SearchResult(title="貨輪遭襲 長榮海運：人員均安 ｜ 公視新聞網 PNN",
+                                 url="https://e.com/1", snippet="正文", source="e.com",
+                                 published="", content="正文")]
+
+    class _NoProvider:
+        async def headlines(self, **kwargs):
+            return []
+
+    agent.llm.complete = news_llm
+    agent.search = _ExaNews()
+    agent.news = _NoProvider()
+    res = asyncio.run(run_handle(agent, "info.news", slots={}, raw_text="今天有哪些值得关注的新闻"))
+    assert res.ui_card["items"][0]["title"] == "货轮遭袭 长荣海运：人员均安"   # 简体、无繁体、无来源尾巴
+
+
+def test_news_general_falls_back_to_provider_when_exa_empty():
+    """综合要闻 Exa 空时回落 SerpApi 新闻源（多来源头条），时效过滤+去重后成卡。"""
+    agent = InfoAgent()
+
+    class _EmptyExa:
+        async def search(self, query, **kwargs):
+            return []
+
+    class _Provider:
+        async def headlines(self, topic="", limit=5, meta=None):
+            from agents.info.src.providers.base import NewsItem
+            return [NewsItem(title="头条一", summary="要闻一详情更具体", source="新华网",
+                             publish_time="", url="https://news.cn/1"),
+                    NewsItem(title="头条二", summary="要闻二详情更具体", source="人民网",
+                             publish_time="", url="https://people.com.cn/2")]
+
+    agent.search = _EmptyExa()
+    agent.news = _Provider()
+    res = asyncio.run(run_handle(agent, "info.news", slots={}, raw_text="今天有哪些值得关注的新闻"))
+    assert res.status == "ok" and res.ui_card["type"] == "news_brief"
+    titles = [it["title"] for it in res.ui_card["items"]]
+    assert "头条一" in titles and "头条二" in titles
+    assert len({it["source"] for it in res.ui_card["items"]}) >= 2   # 多来源
 
 
 def test_news_junk_filter_drops_index_and_error_pages():
@@ -706,6 +761,10 @@ def test_news_junk_filter_drops_index_and_error_pages():
     assert j("某媒体", "https://e.com/", "正文") is True                       # 纯域名根
     assert j("正常新闻标题", "https://e.com/a/123", "正文内容") is False        # 正常文章保留
     assert j("正常标题", "", "serpapi 摘要无 url") is False                    # 无 url 不误删
+    assert j("即時", "https://x.com/news", "") is True                       # 栏目/版块名=版块页
+    assert j("最新消息", "https://news.un.org/zh", "") is True
+    assert j("國際", "https://cna.com.tw/x", "") is True
+    assert j("头条一", "https://e.com/a/1", "正文") is False                  # 非精确栏目名的短标题保留
 
 
 # ── 股票 ─────────────────────────────────────────────────
@@ -759,6 +818,8 @@ def test_extract_news_subject_from_complex_query():
     assert _extract_news_subject("查一下今天英伟达最新消息、股价，以及对汽车智能座舱行业有没有影响") == "英伟达"
     assert _extract_news_subject("帮我看看苹果的新闻") == "苹果"
     assert _extract_news_subject("看看小米最新动态") == "小米"
-    # 泛新闻/疑问句不强行提主体 → 空（交"今日值得关注"默认）
+    # 泛新闻/疑问句不强行提主体 → 空（交"今日值得关注"默认 → 走综合新闻 provider 而非话题 Exa）
     assert _extract_news_subject("今天有什么新闻") == ""
+    assert _extract_news_subject("今天有哪些值得关注的新闻") == ""   # 子串含"哪些/值得关注"→泛新闻
+    assert _extract_news_subject("最近有什么热点") == ""
     assert _extract_news_subject("讲个笑话") == ""
