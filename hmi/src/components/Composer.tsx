@@ -1,8 +1,9 @@
-// 底部输入区：快捷指令轨 + 麦克风 + 文本输入。
-// 麦克风支持"按住说话/点按切换"两种模式，复用 MicController 消除收音竞态。
+// 底部输入区（Aurora Glass）：快捷指令轨 + 小舟光球 + 麦克风 + 文本输入 + 发送。
+// 麦克风"按住说话/点按切换"两种模式，复用 MicController 消除收音竞态——录音/识别逻辑不变。
 import { useEffect, useRef, useState } from 'react'
 import { useSettings } from '../settings'
 import { MicController, micSupported, secureContextOk, recognize, stopTTS, type RecordResult } from '../audio'
+import { AuroraOrb } from './aurora'
 
 type MicState = 'idle' | 'recording' | 'transcribing'
 
@@ -84,40 +85,44 @@ export function Composer({
           onClick: () => (mic === 'recording' ? endRecord() : beginRecord()),
         }
 
-  const micLabel =
-    mic === 'recording' ? '🔴' : mic === 'transcribing' ? '◌' : '🎤'
+  const micGlyph = mic === 'transcribing' ? '◌' : '🎤'
+  const orbState = mic === 'recording' ? 'speaking' : mic === 'transcribing' ? 'thinking' : 'idle'
 
   return (
-    <div className="composer-wrap">
-      <div className="quick-rail">
+    <div className="au-composer">
+      <div className="au-quick-rail">
         {settings.quickCommands.map((q) => (
-          <button key={q} className="quick-chip" onClick={() => send(q)}>
+          <button key={q} className="au-quick-chip" onClick={() => send(q)}>
             {q}
           </button>
         ))}
       </div>
 
-      {(notice || hint) && <div className="composer-notice">{notice || hint}</div>}
+      {(notice || hint) && <div className="au-composer-notice">{notice || hint}</div>}
 
-      <div className="composer">
+      <div className="au-composer-bar">
+        <AuroraOrb size={36} state={orbState} />
         <button
-          className={'mic' + (mic === 'recording' ? ' recording' : '') + (mic === 'transcribing' ? ' busy' : '')}
+          className={'au-mic' + (mic === 'recording' ? ' recording' : '') + (mic === 'transcribing' ? ' busy' : '')}
           disabled={!supported || mic === 'transcribing'}
           title={settings.micMode === 'hold' ? '按住说话' : '点按开始/结束'}
           aria-label="语音输入"
           {...holdHandlers}
         >
-          <span className="mic-glyph">{micLabel}</span>
-          {mic === 'recording' && <span className="mic-wave"><i /><i /><i /><i /><i /></span>}
+          {mic === 'recording' ? (
+            <span className="au-mic-wave"><i /><i /><i /><i /><i /></span>
+          ) : (
+            <span>{micGlyph}</span>
+          )}
         </button>
         <input
-          className="composer-input"
+          className="au-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && send(input)}
-          placeholder={mic === 'recording' ? '聆听中…' : '输入指令或按住麦克风说话…'}
+          placeholder={mic === 'recording' ? '聆听中…' : '发送消息，或说出你的需求…'}
         />
-        <button className="send-btn" onClick={() => send(input)} aria-label="发送">
+        <button className="au-send" onClick={() => send(input)} aria-label="发送">
           发送
         </button>
       </div>

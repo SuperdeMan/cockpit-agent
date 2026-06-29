@@ -1,0 +1,184 @@
+/* ───────────────────────────────────────────────────────────────────────────
+   Aurora Glass · P1 应用外壳——1920×1080 横屏两栏（左对话 / 右上下文舞台）
+   依赖 aurora.css 的 --au-* token 与 .au-glass / AuroraOrb。
+   与旧 styles.css 并存：旧 .chat/.bubble 仍由 ChatView 使用（P3 再重皮）；
+   本层只接管外壳（状态栏/布局/舞台/输入区/欢迎态）。
+   ─────────────────────────────────────────────────────────────────────────── */
+
+.au-app {
+  position: relative;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto; /* 状态栏 / 主区 / 输入区 */
+  background: var(--au-bg);
+  color: var(--au-text);
+  font-family: var(--au-font-ui);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* ── 活的场景做底（z-0）：深空渐变 + 极光氛围，玻璃面板悬浮折射其上 ── */
+.au-scene-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: linear-gradient(155deg, #06080f 0%, #0a0e1a 55%, #080d18 100%);
+}
+:root[data-theme='light'] .au-scene-bg {
+  background: linear-gradient(155deg, #edf1fa 0%, #e4ebf7 100%);
+}
+.au-scene-bg .blob { position: absolute; border-radius: 50%; }
+.au-scene-bg .b1 { top: -8%; left: 10%; width: 620px; height: 620px; background: radial-gradient(circle, rgba(91, 140, 255, 0.30), transparent 70%); filter: blur(70px); }
+.au-scene-bg .b2 { bottom: -12%; right: 6%; width: 680px; height: 680px; background: radial-gradient(circle, rgba(154, 107, 255, 0.24), transparent 70%); filter: blur(80px); }
+.au-scene-bg .b3 { top: 32%; right: 34%; width: 420px; height: 420px; background: radial-gradient(circle, rgba(91, 233, 255, 0.14), transparent 70%); filter: blur(70px); }
+:root[data-theme='light'] .au-scene-bg .blob { opacity: 0.5; }
+
+/* ── 状态栏 ── */
+.au-statusbar {
+  position: relative;
+  z-index: 20;
+  height: 64px;
+  padding: 0 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--au-line);
+  background: rgba(6, 8, 15, 0.55);
+  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(28px);
+}
+:root[data-theme='light'] .au-statusbar { background: rgba(237, 241, 250, 0.72); }
+.au-sb-brand { display: flex; align-items: center; gap: 14px; }
+.au-sb-name { font-size: 18px; font-weight: 600; letter-spacing: 0.01em; }
+.au-conn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 11px; border-radius: 999px;
+  font-size: 12.5px; color: var(--au-text-2);
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--au-line-2);
+}
+.au-conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--au-online); box-shadow: 0 0 8px var(--au-online); }
+.au-conn.offline .au-conn-dot { background: var(--au-warn); box-shadow: 0 0 8px var(--au-warn); animation: au-think 1.4s ease-in-out infinite; }
+.au-conn-sep { opacity: 0.4; }
+.au-pill {
+  padding: 4px 10px; border-radius: 999px; font-size: 12px;
+  color: var(--au-primary); background: rgba(70, 214, 224, 0.10);
+  border: 1px solid rgba(70, 214, 224, 0.28);
+}
+.au-sb-actions { display: flex; align-items: center; gap: 8px; }
+.au-icon-btn {
+  width: 40px; height: 40px; border-radius: 12px; cursor: pointer;
+  display: grid; place-items: center; font-size: 17px;
+  color: var(--au-text-2);
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--au-line-2);
+  font-family: inherit; transition: border-color 0.18s, color 0.18s, background 0.18s;
+}
+.au-icon-btn:hover { color: var(--au-text); border-color: rgba(70, 214, 224, 0.4); }
+.au-icon-btn.on { color: var(--au-primary); border-color: rgba(70, 214, 224, 0.4); background: rgba(70, 214, 224, 0.10); }
+
+/* ── 主区两栏 ── */
+.au-main {
+  position: relative;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: minmax(430px, 43%) 1fr;
+  gap: 20px;
+  padding: 20px 24px;
+  min-height: 0; /* 关键：让两栏在 1fr 行内各自滚动 */
+}
+/* 左对话列：直接复用 ChatView 的 .chat 玻璃面板，仅补高度约束 */
+.au-main > .chat {
+  min-height: 0;
+  height: 100%;
+  margin: 0;
+  max-width: none;
+}
+/* 右上下文舞台 */
+.au-stage {
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  border-radius: var(--au-r-3xl);
+  overflow: hidden;
+  border: 1px solid var(--au-line-2);
+  box-shadow: var(--au-shadow-lg);
+}
+
+/* ── 输入区 ── */
+.au-composer {
+  position: relative;
+  z-index: 20;
+  padding: 14px 24px 18px;
+  border-top: 1px solid var(--au-line);
+  background: rgba(6, 8, 15, 0.5);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+:root[data-theme='light'] .au-composer { background: rgba(237, 241, 250, 0.7); }
+.au-quick-rail { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; }
+.au-quick-rail::-webkit-scrollbar { display: none; }
+.au-quick-chip {
+  flex: none; padding: 9px 16px; border-radius: 999px; cursor: pointer;
+  font-size: 13px; color: var(--au-text-2); font-family: inherit; white-space: nowrap;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--au-line-2);
+  transition: border-color 0.16s, color 0.16s, transform 0.12s;
+}
+.au-quick-chip:hover { color: var(--au-text); border-color: rgba(70, 214, 224, 0.4); transform: translateY(-1px); }
+.au-composer-notice { font-size: 12.5px; color: var(--au-text-3); padding: 0 2px; }
+.au-composer-bar { display: flex; align-items: center; gap: 12px; }
+.au-mic {
+  position: relative; width: 48px; height: 48px; border-radius: 14px; flex: none; cursor: pointer;
+  display: grid; place-items: center; font-size: 19px; color: var(--au-text);
+  background: rgba(255, 255, 255, 0.06); border: 1px solid var(--au-line-2);
+  font-family: inherit; transition: border-color 0.18s, background 0.18s;
+}
+.au-mic:hover:not(:disabled) { border-color: rgba(70, 214, 224, 0.5); }
+.au-mic:disabled { opacity: 0.45; cursor: not-allowed; }
+.au-mic.recording { border-color: var(--au-primary); background: rgba(70, 214, 224, 0.14); box-shadow: 0 0 18px rgba(70, 214, 224, 0.3); }
+.au-mic.busy { animation: au-orb-spin 0.9s linear infinite; }
+.au-mic-wave { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 2px; pointer-events: none; }
+.au-mic-wave i { width: 2px; background: var(--au-primary); border-radius: 2px; }
+.au-mic-wave i:nth-child(1) { height: 8px; animation: au-eq 0.7s ease-in-out infinite 0s; }
+.au-mic-wave i:nth-child(2) { height: 16px; animation: au-eq 0.7s ease-in-out infinite 0.1s; }
+.au-mic-wave i:nth-child(3) { height: 22px; animation: au-eq 0.7s ease-in-out infinite 0.2s; }
+.au-mic-wave i:nth-child(4) { height: 14px; animation: au-eq 0.7s ease-in-out infinite 0.3s; }
+.au-mic-wave i:nth-child(5) { height: 9px; animation: au-eq 0.7s ease-in-out infinite 0.4s; }
+@keyframes au-eq { 0%, 100% { transform: scaleY(0.5); } 50% { transform: scaleY(1.1); } }
+.au-input {
+  flex: 1; height: 48px; padding: 0 18px; border-radius: 14px;
+  font-size: 15px; color: var(--au-text); font-family: inherit;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--au-line-2);
+  outline: none; transition: border-color 0.18s, box-shadow 0.18s;
+}
+.au-input::placeholder { color: var(--au-text-3); }
+.au-input:focus { border-color: rgba(70, 214, 224, 0.6); box-shadow: 0 0 0 3px rgba(70, 214, 224, 0.12); }
+.au-send {
+  height: 48px; padding: 0 24px; border-radius: 14px; flex: none; cursor: pointer;
+  font-size: 15px; font-weight: 600; font-family: inherit;
+  color: var(--au-primary-ink); background: var(--au-primary); border: none;
+  box-shadow: 0 4px 18px rgba(70, 214, 224, 0.35);
+  display: inline-flex; align-items: center; gap: 8px;
+  transition: transform 0.12s, box-shadow 0.18s;
+}
+.au-send:hover { transform: translateY(-1px); box-shadow: 0 6px 22px rgba(70, 214, 224, 0.45); }
+
+/* ── 欢迎态（空对话）── */
+.au-welcome {
+  margin: auto; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 24px;
+}
+.au-welcome-title { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; margin-top: 8px; }
+.au-welcome-sub { color: var(--au-text-2); font-size: 14.5px; }
+.au-welcome-chips { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 10px; }
+.au-welcome-chip {
+  padding: 10px 18px; border-radius: 999px; cursor: pointer; font-size: 13.5px;
+  color: var(--au-text); font-family: inherit;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--au-line-2);
+  transition: border-color 0.16s, transform 0.12s;
+}
+.au-welcome-chip:hover { border-color: rgba(70, 214, 224, 0.5); transform: translateY(-1px); }

@@ -12,6 +12,7 @@ import { StatusBar } from './components/StatusBar'
 import { ChatView } from './components/ChatView'
 import { Composer } from './components/Composer'
 import { SettingsPanel } from './components/SettingsPanel'
+import { ContextualStage } from './components/ContextualStage'
 import {
   appendTTSDelta,
   finishTTSReply,
@@ -35,9 +36,9 @@ const uid = () =>
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2)
 
-export default function App() {
+export default function App({ seedMessages }: { seedMessages?: Msg[] } = {}) {
   const { settings, update } = useSettings()
-  const [messages, setMessages] = useState<Msg[]>([])
+  const [messages, setMessages] = useState<Msg[]>(seedMessages ?? [])
   const [connected, setConnected] = useState(false)
   const [awaitConfirm, setAwaitConfirm] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -448,15 +449,20 @@ export default function App() {
   const requestLocation = () => setLocationEnabled(true)
 
   return (
-    <div className="app">
-      <div className="aurora" aria-hidden>
-        <span className="a1" />
-        <span className="a2" />
-        <span className="grid-lines" />
+    <div className="au-app">
+      <div className="au-scene-bg" aria-hidden>
+        <span className="blob b1" />
+        <span className="blob b2" />
+        <span className="blob b3" />
       </div>
 
       <StatusBar connected={connected} onOpenSettings={() => setShowSettings(true)} />
-      <ChatView messages={messages} awaitConfirm={awaitConfirm} onConfirm={confirm} onQuick={send} />
+      <main className="au-main">
+        <ChatView messages={messages} awaitConfirm={awaitConfirm} onConfirm={confirm} onQuick={send} />
+        <aside className="au-stage">
+          <ContextualStage messages={messages} />
+        </aside>
+      </main>
       <Composer audioApi={AUDIO_API} onSend={send} hint={connected ? undefined : '正在连接座舱服务…'} />
 
       {showSettings && (

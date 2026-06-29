@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSettings } from '../settings'
 import { CardRenderer } from './Cards'
+import { AuroraOrb } from './aurora'
 import type { Action, Msg, ProcessStep } from '../types'
 
 export function ChatView({
@@ -43,17 +44,13 @@ export function ChatView({
 
 function Welcome({ name, onQuick }: { name: string; onQuick: (t: string) => void }) {
   return (
-    <div className="welcome">
-      <div className="welcome-orb" aria-hidden>
-        <span className="o1" />
-        <span className="o2" />
-        <span className="o3" />
-      </div>
-      <div className="welcome-title">我是{name}</div>
-      <div className="welcome-sub">按住麦克风说话，或点下方指令试试</div>
-      <div className="welcome-chips">
+    <div className="au-welcome">
+      <AuroraOrb size={96} state="idle" />
+      <div className="au-welcome-title">我是{name}</div>
+      <div className="au-welcome-sub">按住麦克风说话，或点下方指令试试</div>
+      <div className="au-welcome-chips">
         {['打开空调26度', '附近的充电站', '讲个笑话'].map((q) => (
-          <button key={q} className="welcome-chip" onClick={() => onQuick(q)}>
+          <button key={q} className="au-welcome-chip" onClick={() => onQuick(q)}>
             {q}
           </button>
         ))}
