@@ -1,0 +1,216 @@
+/* ───────────────────────────────────────────────────────────────────────────
+   Aurora Glass · P2 卡片重皮——覆盖 Cards.tsx 既有语义类的"皮"（背景/边框/语义色），
+   保留其布局（flex/grid/间距）与全部字段逻辑。导入顺序在 styles.css 之后即生效。
+   不改 Cards.tsx（除给深调研卡加 .card-research 用于虹彩描边）。
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── 卡容器 → 液态玻璃（§6）── */
+.card {
+  background: var(--au-glass-bg);
+  -webkit-backdrop-filter: blur(var(--au-glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--au-glass-blur)) saturate(1.15);
+  border-top: 1px solid var(--au-glass-bd-top);
+  border-left: 1px solid var(--au-glass-bd-left);
+  border-right: 1px solid var(--au-glass-bd-right);
+  border-bottom: 1px solid var(--au-glass-bd-bottom);
+  border-radius: var(--au-r-xl);
+  box-shadow: var(--au-glass-shadow);
+}
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .card { background: var(--au-glass-fallback); }
+}
+.card-header { color: var(--au-primary); }
+.card-meta { color: var(--au-text-3); font-family: var(--au-font-mono); }
+
+/* ── 天气卡 ── */
+.weather-overview {
+  background:
+    radial-gradient(120% 90% at 80% 0%, rgba(91, 140, 255, 0.12), transparent 60%),
+    var(--au-glass-bg);
+}
+.temp-value { font-family: var(--au-font-mono); color: var(--au-text); }
+.temp-unit { color: var(--au-text-2); }
+.card-weather-city { color: var(--au-text); }
+.card-weather-text { color: var(--au-text-2); }
+.weather-cloud { color: var(--au-text-3); font-family: var(--au-font-mono); }
+.weather-chip { background: rgba(255, 255, 255, 0.04); border-color: var(--au-line-2); }
+.weather-chip span { color: var(--au-text-3); }
+.weather-chip strong { color: var(--au-text); font-family: var(--au-font-mono); }
+.weather-mini-day { background: rgba(255, 255, 255, 0.04); border-color: var(--au-line-2); }
+.weather-mini-day > span { color: var(--au-text-2); font-family: var(--au-font-mono); }
+.weather-mini-day strong { color: var(--au-text); font-family: var(--au-font-mono); }
+.weather-mini-day strong em { color: var(--au-text-3); }
+.weather-mini-day small { color: var(--au-text-3); }
+.weather-alert-status { background: rgba(255, 255, 255, 0.04); border-color: var(--au-line-2); }
+.weather-alert-status span { color: var(--au-text-3); }
+.weather-alert-status strong { color: var(--au-text-2); }
+.weather-alert-status.clear strong::before { color: var(--au-online); }
+.weather-alert-status.unavailable strong { color: var(--au-warn); }
+.weather-advice span { background: rgba(255, 255, 255, 0.04); border-color: var(--au-line-2); color: var(--au-text-2); }
+.weather-advice b { color: var(--au-text); }
+.weather-advice::before { color: var(--au-text-3); }
+.weather-alert-callout {
+  color: #ffd7c2;
+  background: rgba(245, 158, 11, 0.10);
+  border: 1px solid rgba(245, 158, 11, 0.30);
+  border-left: 3px solid var(--au-warn);
+}
+.weather-alert-callout p { color: var(--au-text-2); }
+.weather-alert-callout small { color: var(--au-text-3); }
+.weather-alert-icon { color: var(--au-warn); }
+
+/* AQI 7 档色阶 → Aurora（§3-A，深浅同实色）。优/良/轻/中/重/严/未知 */
+.air-badge-excellent { --air-color: #34D399; --air-bg: rgba(52, 211, 153, 0.12); --air-line: rgba(52, 211, 153, 0.30); }
+.air-badge-good      { --air-color: #A3E635; --air-bg: rgba(163, 230, 53, 0.12); --air-line: rgba(163, 230, 53, 0.30); }
+.air-badge-light     { --air-color: #FCD34D; --air-bg: rgba(252, 211, 77, 0.12); --air-line: rgba(252, 211, 77, 0.30); }
+.air-badge-moderate  { --air-color: #FB923C; --air-bg: rgba(251, 146, 60, 0.13); --air-line: rgba(251, 146, 60, 0.32); }
+.air-badge-heavy     { --air-color: #EF4444; --air-bg: rgba(239, 68, 68, 0.13);  --air-line: rgba(239, 68, 68, 0.32); }
+.air-badge-severe    { --air-color: #9333EA; --air-bg: rgba(147, 51, 234, 0.13); --air-line: rgba(147, 51, 234, 0.32); }
+.air-badge-unknown   { --air-color: #6B7280; --air-bg: rgba(107, 114, 128, 0.12); --air-line: rgba(107, 114, 128, 0.28); }
+:root[data-theme='light'] .air-badge-excellent { --air-color: #0f9d63; --air-bg: rgba(15, 157, 99, 0.10); --air-line: rgba(15, 157, 99, 0.30); }
+:root[data-theme='light'] .air-badge-good      { --air-color: #4d8b00; --air-bg: rgba(77, 139, 0, 0.10);  --air-line: rgba(77, 139, 0, 0.30); }
+:root[data-theme='light'] .air-badge-light     { --air-color: #9a7400; --air-bg: rgba(154, 116, 0, 0.10); --air-line: rgba(154, 116, 0, 0.30); }
+:root[data-theme='light'] .air-badge-moderate  { --air-color: #c2570a; --air-bg: rgba(194, 87, 10, 0.10); --air-line: rgba(194, 87, 10, 0.30); }
+:root[data-theme='light'] .air-badge-heavy     { --air-color: #dc2626; --air-bg: rgba(220, 38, 38, 0.10); --air-line: rgba(220, 38, 38, 0.30); }
+:root[data-theme='light'] .air-badge-severe    { --air-color: #7e22ce; --air-bg: rgba(126, 34, 206, 0.10); --air-line: rgba(126, 34, 206, 0.30); }
+:root[data-theme='light'] .air-badge-unknown   { --air-color: #6b7280; --air-bg: rgba(107, 114, 128, 0.10); --air-line: rgba(107, 114, 128, 0.28); }
+.air-badge strong { font-family: var(--au-font-mono); }
+
+/* ── 天气预报卡 ── */
+.forecast-day { background: rgba(255, 255, 255, 0.04); }
+.forecast-date { color: var(--au-text-2); font-family: var(--au-font-mono); }
+.forecast-text { color: var(--au-text-3); }
+.forecast-temp { font-family: var(--au-font-mono); }
+.temp-low { color: var(--au-blue); }
+.temp-sep { color: var(--au-text-3); }
+.temp-high { color: var(--au-warn); }
+
+/* ── 股票卡（A股红涨绿跌 → Aurora 实色）── */
+.card-stock-name { color: var(--au-text); }
+.card-stock-symbol { color: var(--au-text-3); font-family: var(--au-font-mono); }
+.stock-market-tag { color: var(--au-text-3); border-color: var(--au-line-2); font-family: var(--au-font-mono); }
+.card-stock-price { font-family: var(--au-font-mono); }
+.card-stock-change { font-family: var(--au-font-mono); }
+.stock-pct { color: var(--au-text-2); }
+.stock-up .card-stock-price, .stock-up .card-stock-change,
+:root[data-theme='light'] .stock-up .card-stock-price, :root[data-theme='light'] .stock-up .card-stock-change { color: var(--au-up); }
+.stock-up { border-color: rgba(239, 68, 68, 0.34); }
+.stock-down .card-stock-price, .stock-down .card-stock-change,
+:root[data-theme='light'] .stock-down .card-stock-price, :root[data-theme='light'] .stock-down .card-stock-change { color: var(--au-down); }
+.stock-down { border-color: rgba(34, 197, 94, 0.34); }
+.stock-flat .card-stock-price, .stock-flat .card-stock-change { color: var(--au-text-2); }
+.kline-panel { background: rgba(6, 12, 25, 0.30); border-color: var(--au-line-2); }
+.kline-topline { color: var(--au-text-3); font-family: var(--au-font-mono); }
+.kline-grid { stroke: var(--au-line-2); }
+.kline-empty { border-color: var(--au-line-2); color: var(--au-text-3); }
+
+/* ── 结论摘要 / 旧版新闻搜索 ── */
+.summary-brief, .news-digest-summary, .search-answer-text {
+  background: rgba(70, 214, 224, 0.07);
+  border-left: 2px solid var(--au-primary);
+  color: var(--au-text);
+}
+.summary-brief span { color: var(--au-primary); font-family: var(--au-font-mono); }
+.news-index {
+  background: var(--au-primary); color: var(--au-primary-ink); font-family: var(--au-font-mono);
+}
+.news-title { color: var(--au-text); }
+.news-summary { color: var(--au-text-2); }
+.news-meta { color: var(--au-text-3); }
+.news-time { font-family: var(--au-font-mono); }
+.search-title { color: var(--au-blue); }
+.search-snippet { color: var(--au-text-2); }
+.search-source { color: var(--au-text-3); }
+.headline-dot { color: var(--au-primary); }
+.headline-title, .source-item a { color: var(--au-text); }
+.headline-source, .source-domain { color: var(--au-text-3); font-family: var(--au-font-mono); }
+.sources-toggle { color: var(--au-primary); border-color: var(--au-line-2); font-family: var(--au-font-mono); }
+
+/* ── 信息证据卡（搜索/新闻/调研/赛事 共享原语）── */
+.ev-head-title { color: var(--au-text); }
+.ev-fresh { color: var(--au-text-3); font-family: var(--au-font-mono); }
+.ev-points li { color: var(--au-text); }
+.ev-sources-label { color: var(--au-primary); font-family: var(--au-font-mono); }
+.ev-source-idx {
+  background: rgba(70, 214, 224, 0.14); color: var(--au-primary); font-family: var(--au-font-mono);
+}
+.ev-source-title { color: var(--au-text); }
+a.ev-source-title:hover { color: var(--au-blue); }
+.ev-source-domain { color: var(--au-text-3); font-family: var(--au-font-mono); }
+.ev-more { color: var(--au-primary); border-color: var(--au-line-2); font-family: var(--au-font-mono); }
+.ev-more:hover { background: rgba(70, 214, 224, 0.08); border-color: rgba(70, 214, 224, 0.4); }
+.ev-confidence { color: var(--au-text-2); }
+.ev-confidence-ok b { color: var(--au-conf-high); }
+.ev-confidence-mid b { color: var(--au-conf-mid); }
+.ev-confidence-low, .ev-confidence-low b { color: var(--au-conf-mid); }
+.ev-empty { border-color: var(--au-line-2); color: var(--au-text-3); }
+.ev-card-foot { color: var(--au-text-3); font-family: var(--au-font-mono); }
+.ev-news-li::before { background: var(--au-primary); color: var(--au-primary-ink); font-family: var(--au-font-mono); }
+.ev-news-h { color: var(--au-text); }
+a.ev-news-h:hover { color: var(--au-blue); }
+.ev-news-sum { color: var(--au-text-2); }
+.ev-news-src, .ev-news-src a { color: var(--au-text-3); font-family: var(--au-font-mono); }
+
+/* 深度调研卡：AI 出品 → 虹彩细描边（mask 技法保留玻璃背景）+ 柔光（§4/§5）*/
+.card-research { position: relative; }
+.card-research::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: var(--au-aurora);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.card-research { box-shadow: var(--au-glass-shadow), 0 0 28px rgba(91, 140, 255, 0.16), 0 0 56px rgba(154, 107, 255, 0.09); }
+
+/* ── 赛事 ── */
+.fx-row { background: rgba(255, 255, 255, 0.04); }
+.fx-live { border-color: var(--au-warn); }
+.fx-team { color: var(--au-text); }
+.fx-flag { background: var(--au-line-2); }
+.fx-score { color: var(--au-text); font-family: var(--au-font-mono); }
+.fx-vs { color: var(--au-text-3); font-family: var(--au-font-mono); }
+.fx-status { color: var(--au-text-3); }
+.fx-status-live { color: var(--au-warn); }
+.fx-status-finished { color: var(--au-text-2); }
+.fx-goal { color: var(--au-text-2); }
+.fx-goal-min { color: var(--au-warn); font-family: var(--au-font-mono); }
+.fx-goal-player { color: var(--au-text); }
+.fx-goal-tag { color: var(--au-text-3); border-color: var(--au-line-2); }
+.sc-row { background: rgba(255, 255, 255, 0.04); }
+.sc-rank { color: var(--au-text-3); font-family: var(--au-font-mono); }
+.sc-row:nth-child(1) .sc-rank { color: var(--au-warn); }
+.sc-player { color: var(--au-text); }
+.sc-team { color: var(--au-text-2); }
+.sc-goals { color: var(--au-text); font-family: var(--au-font-mono); }
+.sc-goals em { color: var(--au-text-3); }
+
+/* ── 路线 / 充电 / 行程 时间线 ── */
+.cr-node::before { background: var(--au-line-2); }
+.cr-dot { background: var(--au-primary); box-shadow: 0 0 0 3px rgba(70, 214, 224, 0.16); }
+.cr-stop .cr-dot { background: var(--au-warn); box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16); }
+.cr-text { color: var(--au-text); }
+.cr-km { color: var(--au-text-3); font-family: var(--au-font-mono); }
+.cr-direct { color: var(--au-text-2); }
+.trip-day-head { color: var(--au-primary); }
+.trip-charge-hint { color: var(--au-warn); }
+.trip-ungrounded .cr-dot { background: var(--au-text-3); }
+.trip-ungrounded .cr-text b { color: var(--au-text-2); }
+.trip-go-hint { color: var(--au-primary); }
+.trip-voice-hint { color: var(--au-text-2); }
+
+/* ── POI ── */
+.poi-idx { color: var(--au-primary); }
+.poi-item { background: rgba(255, 255, 255, 0.04); }
+.poi-name { color: var(--au-text); }
+.poi-rating { color: var(--au-warn); }
+.poi-dist { color: var(--au-text-2); font-family: var(--au-font-mono); }
+.poi-addr { color: var(--au-text-3); }
+.poi-detail-name { color: var(--au-text); }
+.poi-detail-addr { color: var(--au-text-2); }
+.poi-detail-row { color: var(--au-text-3); }

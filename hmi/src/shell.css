@@ -87,13 +87,62 @@
   padding: 20px 24px;
   min-height: 0; /* 关键：让两栏在 1fr 行内各自滚动 */
 }
-/* 左对话列：直接复用 ChatView 的 .chat 玻璃面板，仅补高度约束 */
-.au-main > .chat {
-  min-height: 0;
-  height: 100%;
-  margin: 0;
-  max-width: none;
+/* 左对话列：玻璃面板（头部 + 滚动消息区），照 A-2 */
+.au-main > .au-conv-panel { min-height: 0; height: 100%; }
+.au-conv-panel {
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--au-glass-bg);
+  -webkit-backdrop-filter: blur(var(--au-glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--au-glass-blur)) saturate(1.15);
+  border-top: 1px solid var(--au-glass-bd-top);
+  border-left: 1px solid var(--au-glass-bd-left);
+  border-right: 1px solid var(--au-glass-bd-right);
+  border-bottom: 1px solid var(--au-glass-bd-bottom);
+  border-radius: var(--au-r-2xl);
+  box-shadow: var(--au-glass-shadow);
 }
+.au-conv-head {
+  display: flex; align-items: center; gap: 11px; flex: none;
+  padding: 14px 18px; border-bottom: 1px solid var(--au-line);
+}
+.au-conv-head-text { flex: 1; min-width: 0; }
+.au-conv-head-name { font-size: 14px; font-weight: 600; }
+.au-conv-head-sub { font-size: 11px; color: var(--au-text-3); margin-top: 1px; }
+.au-conv-head-time { font-size: 11px; color: var(--au-text-3); }
+/* 内部消息滚动区：剥掉旧 .chat 自带玻璃皮（改由面板提供）*/
+.au-conv-panel .chat {
+  flex: 1; min-height: 0; margin: 0; max-width: none;
+  background: transparent; border: none; box-shadow: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none; border-radius: 0;
+}
+.au-park-pill {
+  align-self: center; font-size: 11px; color: var(--au-text-3);
+  padding: 4px 12px; border-radius: 999px; background: rgba(255, 255, 255, 0.04);
+}
+
+/* ── 气泡重皮（照 A-2；思考/流式/过程区等动态态见 P3）── */
+.bubble.user {
+  background: rgba(70, 214, 224, 0.12);
+  border: 1px solid rgba(70, 214, 224, 0.22);
+  color: var(--au-text);
+  border-radius: 18px 18px 4px 18px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.24);
+}
+.bubble.assistant {
+  background: rgba(255, 255, 255, 0.062);
+  border: 1px solid var(--au-line-2);
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--au-text);
+  border-radius: 4px 18px 18px 18px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+.is-error .bubble.assistant { border-color: var(--au-danger); color: var(--au-danger); }
+.bubble .text { color: var(--au-text); }
+.caret { background: var(--au-primary); }
+.followup { color: var(--au-text-2); }
+/* 助手行：头像与气泡顶部对齐（长卡片时不让光球沉底）*/
+.row.assistant { align-items: flex-start; }
+.row.assistant .avatar { margin-top: 2px; }
 /* 右上下文舞台 */
 .au-stage {
   position: relative;
@@ -159,12 +208,12 @@
 .au-send {
   height: 48px; padding: 0 24px; border-radius: 14px; flex: none; cursor: pointer;
   font-size: 15px; font-weight: 600; font-family: inherit;
-  color: var(--au-primary-ink); background: var(--au-primary); border: none;
-  box-shadow: 0 4px 18px rgba(70, 214, 224, 0.35);
+  color: #fff; background: var(--au-aurora); border: none;          /* 主操作虹彩填充（§5 允许）*/
+  box-shadow: 0 4px 22px rgba(91, 140, 255, 0.45);
   display: inline-flex; align-items: center; gap: 8px;
   transition: transform 0.12s, box-shadow 0.18s;
 }
-.au-send:hover { transform: translateY(-1px); box-shadow: 0 6px 22px rgba(70, 214, 224, 0.45); }
+.au-send:hover { transform: translateY(-1px); box-shadow: 0 6px 26px rgba(91, 140, 255, 0.55); }
 
 /* ── 欢迎态（空对话）── */
 .au-welcome {

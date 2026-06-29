@@ -204,6 +204,9 @@
 @keyframes au-orb-pulse        { 0%, 100% { transform: scale(1); opacity: 0.86; } 25% { transform: scale(1.07); opacity: 1; } 75% { transform: scale(0.96); opacity: 0.80; } }
 @keyframes au-orb-ripple       { 0% { transform: translate(-50%, -50%) scale(0.85); opacity: 0.5; } 100% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; } }
 @keyframes au-shimmer          { 0% { transform: translateX(-120%); } 100% { transform: translateX(220%); } }
+@keyframes au-rain             { 0% { transform: translateY(-30px); opacity: 0; } 10% { opacity: 1; } 85% { opacity: 0.55; } 100% { transform: translateY(360px); opacity: 0; } }
+@keyframes au-temp-float       { 0%, 100% { transform: translate(-50%, -52%); } 50% { transform: translate(-50%, calc(-52% - 10px)); } }
+@keyframes au-edge-pulse       { 0%, 100% { opacity: 0.20; } 50% { opacity: 0.48; } }
 @keyframes au-stream-cursor    { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 @keyframes au-edge-aurora      { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.72; } }
 @keyframes au-flash            { 0% { background-color: rgba(70,214,224,0); } 15% { background-color: rgba(70,214,224,0.22); } 100% { background-color: rgba(70,214,224,0); } }

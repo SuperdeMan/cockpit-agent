@@ -26,18 +26,28 @@ export function ChatView({
   }, [messages])
 
   return (
-    <div className="chat" ref={listRef}>
-      {messages.length === 0 && <Welcome name={settings.assistantName} onQuick={onQuick} />}
-      {messages.map((m, i) => (
-        <Bubble
-          key={m.id}
-          msg={m}
-          isLast={i === messages.length - 1}
-          awaitConfirm={awaitConfirm}
-          onConfirm={onConfirm}
-          onAction={onQuick}
-        />
-      ))}
+    <div className="au-conv-panel">
+      <div className="au-conv-head">
+        <AuroraOrb size={36} state="idle" />
+        <div className="au-conv-head-text">
+          <div className="au-conv-head-name">{settings.assistantName}</div>
+          <div className="au-conv-head-sub">AI 智能助手 · 对话</div>
+        </div>
+      </div>
+      <div className="chat" ref={listRef}>
+        {messages.length === 0 && <Welcome name={settings.assistantName} onQuick={onQuick} />}
+        {messages.length > 0 && <div className="au-park-pill">泊车模式 · 已停车</div>}
+        {messages.map((m, i) => (
+          <Bubble
+            key={m.id}
+            msg={m}
+            isLast={i === messages.length - 1}
+            awaitConfirm={awaitConfirm}
+            onConfirm={onConfirm}
+            onAction={onQuick}
+          />
+        ))}
+      </div>
     </div>
   )
 }
@@ -77,7 +87,7 @@ function Bubble({
     <div className={cls}>
       {msg.role === 'assistant' && (
         <span className="avatar" aria-hidden>
-          <span className="avatar-core" />
+          <AuroraOrb size={26} state={msg.pending || msg.processActive ? 'thinking' : msg.streaming ? 'speaking' : 'idle'} />
         </span>
       )}
       <div className={'bubble ' + msg.role}>

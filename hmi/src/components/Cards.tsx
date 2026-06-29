@@ -401,7 +401,7 @@ function ResearchReportCardView({ card }: { card: ResearchReportCard }) {
   const sections = card.sections || []
   const shown = open ? sections : sections.slice(0, 1)
   return (
-    <div className="card card-evidence">
+    <div className="card card-evidence card-research">
       <CardHead icon="📑" title={card.question || '深度调研'} freshness={card.freshness} />
       <ConfidenceBadge level={card.overall_confidence} />
       <div style={{ marginTop: 6 }}>
