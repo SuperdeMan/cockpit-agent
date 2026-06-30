@@ -18,9 +18,18 @@
 
 ## HMI HTTP 代理（http_server.py，端口 50059）
 HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 HTTP 代理：
-- `POST /api/asr` 语音识别、`POST /api/tts` 语音合成、`GET /api/voices` 音色列表（经 ASR/TTS Provider）。
+- `POST /api/asr` 批处理语音识别、`POST /api/tts` 语音合成、`GET /api/voices` 音色列表（经 ASR/TTS Provider）。
+- `GET /api/asr/stream`（**WebSocket**）流式识别上屏 + `GET /api/asr/stream/info` 引擎能力探测（见下节）。
 - `GET /api/memory/session` / `GET /api/memory/context` 只读记忆（转发 memory gRPC，供 HMI 记忆视图）。
 - ASR/TTS Provider 同样在无 `LLM_API_KEY` 时走 mock。
+
+## 流式 ASR（实时识别上屏）
+设计见 `docs/design/2026-06-30-asr-streaming-design.md`。WS `/api/asr/stream`：HMI 推音频帧（webm/opus）→ 网关**流式 ffmpeg** 转 PCM16 16k → 引擎 → 回 `{type:partial/final}`。引擎经 `ASR_STREAM_PROVIDER`/请求级覆盖切换（`providers.py` 的 `build_streaming_asr_provider` 工厂**按模型名路由**）：
+- **DashScope qwen3**（默认，`qwen3-asr-flash-realtime-2026-02-10`，**id 须全小写**）：OpenAI 兼容 Realtime 协议（`/api-ws/v1/realtime`；base64 音频、`session.update`+`input_audio_buffer.append`、server_vad、`conversation.item.input_audio_transcription.text/.completed`）。
+- **DashScope fun-asr / paraformer**（`fun-asr-realtime`）：DashScope **run-task** 协议（`/api-ws/v1/inference`；**二进制音频帧**、`run-task`→`result-generated`→`task-finished`）。与 qwen3 端点/协议不同，工厂自动按 id 路由。
+- 两者复用百炼 `LLM_EMBED_API_KEY`（或独立 `DASHSCOPE_ASR_KEY`）。
+- **MiMo 分块**（`mimo-chunked` 回退）：累积 PCM 每 ~1.2s 封 WAV 打 MiMo 批 ASR 产伪 partial，无百炼 key 时可用。
+- 批处理 `/api/asr` 保留作回退；任一环失败 HMI 无感切回批处理。
 
 ## Phase 1 已落地
 - `cache.py` — LRU 缓存（messages 哈希，TTL 5min）

@@ -128,7 +128,7 @@
 | postgres | 5432 | — |
 | registry | 50051 | gRPC |
 | llm-gateway | 50052 | gRPC |
-| llm-gateway (HMI HTTP 代理) | 50059 | HTTP（`/api/asr` `/api/tts` `/api/voices` `/api/memory/session` `/api/memory/context` `/api/memory/profile`(真实分层记忆:偏好/地点/经历) `/api/memory/forget`(按 scope 删)，CORS 放开供 HMI 浏览器调用） |
+| llm-gateway (HMI HTTP 代理) | 50059 | HTTP（`/api/asr` 批处理识别、`/api/asr/stream` **WS 流式识别上屏**、`/api/asr/stream/info` 引擎能力探测、`/api/tts` `/api/voices` `/api/memory/session` `/api/memory/context` `/api/memory/profile`(真实分层记忆:偏好/地点/经历) `/api/memory/forget`(按 scope 删)，CORS 放开供 HMI 浏览器调用） |
 | memory | 50053 | gRPC |
 | cloud-planner | 50054 | gRPC |
 | **Agent 段** | **50061–50069, 50072–50073** | gRPC |
@@ -155,7 +155,11 @@
 | `LLM_DISABLE_THINKING` | 关闭推理模型 thinking 以保结构化输出（MiMo 须 true）| 否（默认 true）|
 | `LLM_MODEL_PRIMARY` / `LLM_MODEL_FALLBACK` | 主/降级模型 | 否（默认 mimo-v2.5-pro / mimo-v2.5）|
 | `LLM_MODEL_FAST` | 开放域"快"模型（闲聊默认走它降延迟，model_pref=deep 时用 primary）| 否（默认 mimo-v2.5）|
-| `ASR_MODEL` / `ASR_LANGUAGE` | ASR 模型 / 默认语言（zh）| 否 |
+| `ASR_MODEL` / `ASR_LANGUAGE` | 批处理 ASR 模型 / 默认语言（zh）| 否 |
+| `ASR_STREAM_PROVIDER` | 流式识别上屏引擎：`dashscope`(默认·DashScope 实时)/`mimo-chunked`(MiMo 分块回退)/`off`(降级批处理) | 否 |
+| `ASR_STREAM_MODEL` | DashScope 流式模型，**须全小写**：`qwen3-asr-flash-realtime-2026-02-10`(默认·realtime 协议)、`fun-asr-realtime`(inference run-task 协议) | 否 |
+| `DASHSCOPE_ASR_KEY` | DashScope(百炼) ASR key；留空复用 `LLM_EMBED_API_KEY`（同一把百炼 key）| 否 |
+| `DASHSCOPE_ASR_WS_URL` / `DASHSCOPE_ASR_INFERENCE_WS_URL` | DashScope 实时 ASR 端点：qwen3→`/api-ws/v1/realtime`、fun/paraformer→`/api-ws/v1/inference` | 否（有默认）|
 | `TTS_MODEL` | TTS 模型（MiMo mimo-v2.5-tts）| 否 |
 | `TTS_VOICE_ID` | 默认音色（冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean）| 否（默认冰糖）|
 | `TTS_FORMAT` | TTS 输出格式（wav/pcm16）| 否（默认 wav）|
