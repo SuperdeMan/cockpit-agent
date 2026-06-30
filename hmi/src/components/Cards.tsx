@@ -9,6 +9,33 @@ import type {
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
+import { AQISection } from './aurora'
+
+// AI 出品角标（照 A-4「AI · X」）：小极光点 + 虹彩文字，标识 AI 生成内容（§5）。
+function AIBadge({ label }: { label: string }) {
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '3px 11px 3px 5px', borderRadius: 999, background: 'rgba(91,140,255,0.10)', border: '1px solid rgba(91,140,255,0.20)' }}>
+      <span style={{ width: 13, height: 13, borderRadius: '50%', background: 'var(--au-aurora-conic)', boxShadow: '0 0 8px rgba(91,140,255,0.5)' }} />
+      <span className="au-aurora-text" style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.03em' }}>{label}</span>
+    </div>
+  )
+}
+
+// 当前电量进度条（照 A-5 充电路线卡）：soc 形如 "62%" → 解析为百分比 + 渐变填充。
+function SocBar({ soc, dest }: { soc: string; dest: string }) {
+  const pct = Math.max(0, Math.min(100, parseInt(soc, 10) || 0))
+  const ok = pct > 50
+  return (
+    <div className="cr-soc">
+      <div className="cr-soc-head"><span>当前电量</span><b className="au-num" style={{ color: ok ? 'var(--au-primary)' : 'var(--au-warn)' }}>{pct}%</b></div>
+      <div className="cr-soc-track"><div className="cr-soc-fill" style={{ width: `${pct}%`, background: ok ? 'linear-gradient(to right,#46D6E0,#34D399)' : 'linear-gradient(to right,#F59E0B,#EF4444)' }} /></div>
+      <div className="cr-soc-foot"><span>出发地</span><span>目的地 · {dest}</span></div>
+    </div>
+  )
+}
+
+// 卡内分节横线（照 A-3 HR）
+const CardHR = () => <div style={{ height: 1, background: 'var(--au-line)' }} />
 
 // ─── 天气图标映射 ───
 const WEATHER_ICONS: Record<string, string> = {
@@ -55,87 +82,101 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
 // ─── 天气卡片 ───
 
 function WeatherCardView({ card }: { card: WeatherCard }) {
-  const icon = weatherIcon(card.text)
   const alert = weatherAlertSummary(card.alerts)
-  const alertStatus = weatherAlertStatus(card.alerts, card.alerts_available !== false)
-  const airQuality = card.air_quality
-    ? airQualityBadge(card.air_quality.aqi, card.air_quality.category)
-    : null
-  const airDetails = card.air_quality
-    ? [
-      card.air_quality.pm2p5 && `PM2.5 ${card.air_quality.pm2p5}`,
-      card.air_quality.primary_pollutant && `首要 ${card.air_quality.primary_pollutant}`,
-    ].filter(Boolean).join(' · ')
-    : ''
-  const telemetry = [
-    card.feels_like && { label: '体感', value: `${card.feels_like}℃` },
-    card.humidity && { label: '湿度', value: `${card.humidity}%` },
-    card.wind_dir && { label: '风况', value: `${card.wind_dir}${card.wind_scale ? `${card.wind_scale}级` : ''}` },
-    card.visibility && { label: '能见度', value: `${card.visibility}km` },
-    card.precip && { label: '降水', value: `${card.precip}mm` },
-    card.pressure && { label: '气压', value: `${card.pressure}hPa` },
-  ].filter(Boolean) as Array<{ label: string; value: string }>
+  const upd = card.update_time && card.update_time !== 'mock'
+    ? card.update_time.replace('T', ' ').replace(/\+.*/, '') : ''
+  const tele: Array<{ icon: string; label: string; v: string | null; u: string }> = [
+    { icon: '🌡', label: '体感', v: card.feels_like || null, u: '°C' },
+    { icon: '💧', label: '湿度', v: card.humidity || null, u: '%' },
+    { icon: '🌬', label: '风向', v: card.wind_dir ? `${card.wind_dir}${card.wind_scale ? `${card.wind_scale}级` : ''}` : null, u: '' },
+    { icon: '👁', label: '能见度', v: card.visibility || null, u: 'km' },
+    { icon: '🌧', label: '降水', v: card.precip || null, u: 'mm' },
+    { icon: '📊', label: '气压', v: card.pressure || null, u: 'hPa' },
+  ]
   return (
-    <div className="card card-weather weather-overview">
-      {alert && <div className="weather-alert-callout" role="status">
-        <span className="weather-alert-icon">!</span>
-        <div className="weather-alert-copy">
-          <strong>{alert.headline}</strong>
-          <p>{alert.detail}</p>
-          {alert.publishedAt && <small>{alert.publishedAt}</small>}
-        </div>
-        {alert.extraCount > 0 && <b className="weather-alert-more">+{alert.extraCount}</b>}
-      </div>}
-      <div className="weather-hero">
-        <div className="card-weather-main">
-          <span className="card-weather-icon">{icon}</span>
-          <div className="card-weather-temp">
-            <span className="temp-value">{card.temp}</span>
-            <span className="temp-unit">℃</span>
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      {/* 预警 callout */}
+      {alert && (
+        <div style={{ padding: '10px 16px', background: 'rgba(245,158,11,0.11)', borderBottom: '1px solid rgba(245,158,11,0.20)', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+          <span style={{ color: 'var(--au-warn)', fontSize: 14, flexShrink: 0, lineHeight: 1.3 }}>⚠</span>
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--au-warn)' }}>{alert.headline}</div>
+            <div style={{ fontSize: 11, color: 'var(--au-text-2)', marginTop: 2, lineHeight: 1.55 }}>{alert.detail}</div>
           </div>
         </div>
-        <div className="card-weather-info">
-          <div className="card-weather-city">{card.city}</div>
-          <div className="card-weather-text">{card.text || '天气数据更新中'}</div>
-          {card.cloud && <div className="weather-cloud">云量 {card.cloud}%</div>}
+      )}
+      {/* 头部：城市 + 大温度 + 天气文案 | 图标 + 更新 */}
+      <div style={{ padding: '18px 18px 12px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>{card.city}</div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4, lineHeight: 1 }}>
+            <span className="au-num" style={{ fontSize: 68, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--au-text)' }}>{card.temp}</span>
+            <span className="au-num" style={{ fontSize: 24, fontWeight: 300, color: 'var(--au-text-2)', marginTop: 10 }}>°C</span>
+          </div>
+          <div style={{ fontSize: 13.5, color: 'var(--au-text-2)', marginTop: 5 }}>{card.text || '天气数据更新中'}</div>
+        </div>
+        <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 2 }}>
+          <span style={{ fontSize: 44, lineHeight: 1 }}>{weatherIcon(card.text)}</span>
+          {upd && <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>更新 {upd}</span>}
         </div>
       </div>
-      {telemetry.length > 0 && (
-        <div className="weather-telemetry">
-          {telemetry.map((item) => <div className="weather-chip" key={item.label}>
-            <span>{item.label}</span><strong>{item.value}</strong>
-          </div>)}
-        </div>
+      <CardHR />
+      {/* telemetry 3×2 */}
+      <div style={{ padding: '12px 13px', display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 7 }}>
+        {tele.map((t) => {
+          const miss = t.v == null
+          return (
+            <div key={t.label} style={{ padding: '9px 6px', borderRadius: 11, background: miss ? 'rgba(255,255,255,0.028)' : 'rgba(255,255,255,0.048)', border: '1px solid var(--au-line-2)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+              <span style={{ fontSize: 15 }}>{t.icon}</span>
+              <span className="au-num" style={{ fontSize: 11.5, fontWeight: miss ? 400 : 600, color: miss ? 'var(--au-text-3)' : 'var(--au-text)', textAlign: 'center', lineHeight: 1.2 }}>{miss ? '—' : `${t.v}${t.u}`}</span>
+              <span style={{ fontSize: 9.5, color: 'var(--au-text-3)' }}>{t.label}</span>
+            </div>
+          )
+        })}
+      </div>
+      {/* 3 日预报 */}
+      {!!card.forecast?.length && (
+        <>
+          <CardHR />
+          <div style={{ padding: '13px 12px', display: 'flex' }}>
+            {card.forecast.slice(0, 3).map((f, i) => (
+              <div key={i} style={{ flex: 1, textAlign: 'center', padding: '0 6px', borderRight: i < 2 ? '1px solid var(--au-line)' : 'none' }}>
+                <div style={{ fontSize: 11, color: 'var(--au-text-3)', marginBottom: 6 }}>{i === 0 ? '今天' : f.date.slice(5)}</div>
+                <div style={{ fontSize: 28, marginBottom: 4, lineHeight: 1 }}>{weatherIcon(f.text_day)}</div>
+                <div style={{ fontSize: 11, color: 'var(--au-text-2)', marginBottom: 8 }}>{f.text_day}</div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                  <span className="au-num" style={{ fontSize: 11, color: '#93C5FD' }}>{f.temp_low}°</span>
+                  <div style={{ flex: 1, height: 2.5, borderRadius: 2, background: 'linear-gradient(to right,rgba(91,140,255,.5),rgba(255,165,50,.5))' }} />
+                  <span className="au-num" style={{ fontSize: 11, color: '#FCA5A5' }}>{f.temp_high}°</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
-      {!!card.forecast?.length && <div className="weather-forecast-rail">
-        {card.forecast.slice(0, 3).map((day, index) => <div className="weather-mini-day" key={`${day.date}-${index}`}>
-          <span>{index === 0 ? '今天' : day.date.slice(5)}</span>
-          <i>{weatherIcon(day.text_day)}</i>
-          <strong>{day.temp_low}°<em> / </em>{day.temp_high}°</strong>
-          <small>{day.text_day}{day.precip && ` · ${day.precip}mm`}</small>
-        </div>)}
-      </div>}
-      {!alert && <div className={`weather-alert-status ${alertStatus.tone}`}>
-        <span>预警状态</span><strong>{alertStatus.label}</strong>
-      </div>}
-      {(airQuality || card.indices?.length) && <div className="weather-brief-row">
-        {airQuality && <div
-          className={`air-badge air-badge-${airQuality.tone}`}
-          aria-label={`空气质量${airQuality.label}${card.air_quality?.aqi ? `，AQI ${card.air_quality.aqi}` : ''}`}
-        >
-          <div className="air-badge-top"><span>空气质量</span><b>{airQuality.label}</b></div>
-          <strong>{card.air_quality?.aqi ? `AQI ${card.air_quality.aqi}` : 'AQI —'}</strong>
-          {airDetails && <em>{airDetails}</em>}
-        </div>}
-        {!!card.indices?.length && <div className="weather-advice">
-          {card.indices.slice(0, 2).map((item) => <span key={item.name}>{item.name} <b>{item.level}</b></span>)}
-        </div>}
-      </div>}
-      {!!card.alerts?.length && <div className="weather-alert-legacy">
-        <span>⚠</span><strong>{card.alerts[0].level}色预警</strong><p>{card.alerts[0].title}</p>
-      </div>}
-      {card.update_time && card.update_time !== 'mock' && (
-        <div className="card-meta">{card.update_time.replace('T', ' ').replace(/\+.*/, '')}</div>
+      {/* AQI 7 档 */}
+      {card.air_quality && (
+        <>
+          <CardHR />
+          <div style={{ padding: '6px 16px 14px' }}><AQISection aqi={card.air_quality.aqi} category={card.air_quality.category} /></div>
+        </>
+      )}
+      {/* 生活建议 2×2 */}
+      {!!card.indices?.length && (
+        <>
+          <CardHR />
+          <div style={{ padding: '13px 14px' }}>
+            <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', letterSpacing: '0.09em', fontWeight: 600, marginBottom: 10 }}>生活建议</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {card.indices.slice(0, 4).map((t) => (
+                <div key={t.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 9, padding: '8px 10px', borderRadius: 11, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--au-line-2)' }}>
+                  <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{t.name}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--au-text)' }}>{t.level}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
       )}
     </div>
   )
@@ -167,43 +208,104 @@ function ForecastCardView({ card }: { card: ForecastCard }) {
 
 // ─── 股票卡片 ───
 
+// 日K线（数据驱动 SVG，裸图——卡内自带标题/tabs）。红涨绿跌由 buildKlineGeometry 着色。
 function KlineChart({ card }: { card: StockCard }) {
-  const candles = buildKlineGeometry(card.candles || [], 320, 154)
-  if (!candles.length) return <div className="kline-empty">暂无可用日 K 数据</div>
-  return <div className="kline-panel">
-    <div className="kline-topline"><span>近 {candles.length} 日 K 线</span><span>{candles[candles.length - 1]?.date}</span></div>
-    <svg className="kline-chart" viewBox="0 0 320 154" role="img" aria-label={`${card.name}近期日K线`}>
-      {[0.2, 0.5, 0.8].map((ratio) => <line key={ratio} x1="16" x2="304" y1={12 + 130 * ratio} y2={12 + 130 * ratio} className="kline-grid" />)}
+  const candles = buildKlineGeometry(card.candles || [], 320, 150)
+  if (!candles.length) return null
+  return (
+    <svg style={{ display: 'block', width: '100%', height: 'auto' }} viewBox="0 0 320 150" role="img" aria-label={`${card.name}近期日K线`}>
+      {[0.2, 0.5, 0.8].map((ratio) => <line key={ratio} x1="16" x2="304" y1={12 + 126 * ratio} y2={12 + 126 * ratio} className="kline-grid" />)}
       {candles.map((candle) => <g key={candle.date}>
         <line x1={candle.x} x2={candle.x} y1={candle.highY} y2={candle.lowY} stroke={candle.color} strokeWidth="1.4" />
         <rect x={candle.x - candle.bodyWidth / 2} y={candle.bodyY} width={candle.bodyWidth} height={candle.bodyHeight} rx="1" fill={candle.color} />
       </g>)}
     </svg>
-  </div>
+  )
 }
 
 function StockCardView({ card }: { card: StockCard }) {
-  const direction = priceDirection(card.change)
-  const colorClass = `stock-${direction}`
-  const arrow = direction === 'up' ? '▲' : direction === 'down' ? '▼' : '—'
-  const directionText = direction === 'up' ? '上涨' : direction === 'down' ? '下跌' : '平盘'
+  const dir = priceDirection(card.change)
+  const cc = dir === 'down' ? 'var(--au-down)' : dir === 'up' ? 'var(--au-up)' : 'var(--au-text-2)'
+  const candles = card.candles || []
+  const last = candles[candles.length - 1]
+  const prev = candles[candles.length - 2]
+  // 今开/最高/最低/昨收：从最后一根 K 线 + 前一根收盘推导（StockCard 无独立 OHLC 字段）
+  const ohlc = last
+    ? [{ l: '今开', v: last.open }, { l: '最高', v: last.high }, { l: '最低', v: last.low }, { l: '昨收', v: prev?.close ?? last.open }]
+    : []
+  const exch = card.symbol?.startsWith('6') ? '上证' : '深证'
+  const stats = [
+    { l: '市值', v: null }, { l: '市盈率', v: null }, { l: '市净率', v: null },
+    { l: '成交量', v: last?.volume ?? null },
+  ]
   return (
-    <div className={`card card-stock ${colorClass}`}>
-      <div className="card-stock-header">
-        <span className="card-stock-name">{card.name}</span>
-        <span className="card-stock-symbol">{card.symbol}</span>
-        <span className="stock-market-tag">日线</span>
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      {/* 头部 */}
+      <div style={{ padding: '16px 18px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 5 }}>{card.name}</div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-3)' }}>{card.symbol}</span>
+            <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>· {exch} · A 股主板</span>
+          </div>
+        </div>
+        {card.market_time && card.market_time !== 'mock' && (
+          <div style={{ padding: '3px 9px', borderRadius: 20, background: 'rgba(107,114,128,0.10)', border: '1px solid rgba(107,114,128,0.20)' }}>
+            <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{card.market_time}</span>
+          </div>
+        )}
       </div>
-      <div className="card-stock-price">{card.price}</div>
-      <div className="card-stock-change">
-        <span className="stock-arrow">{arrow}</span>
-        <span>{directionText} {card.change}</span>
-        <span className="stock-pct">（{card.change_pct}）</span>
+      <CardHR />
+      {/* 价格 + OHLC */}
+      <div style={{ padding: '14px 18px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+            <span className="au-num" style={{ fontSize: 40, fontWeight: 700, letterSpacing: '-0.025em', lineHeight: 1, color: cc }}>{card.price}</span>
+            <span className="au-num" style={{ fontSize: 13, color: 'var(--au-text-3)' }}>CNY</span>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span className="au-num" style={{ padding: '3px 10px', borderRadius: 7, background: dir === 'down' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', border: `1px solid ${cc}`, fontSize: 13, fontWeight: 700, color: cc }}>{card.change}</span>
+            <span className="au-num" style={{ fontSize: 13, fontWeight: 600, color: cc }}>{card.change_pct}</span>
+          </div>
+        </div>
+        {ohlc.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {ohlc.map((s) => (
+              <div key={s.l} style={{ display: 'flex', gap: 14, justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>{s.l}</span>
+                <span className="au-num" style={{ fontSize: 11.5, color: 'var(--au-text)' }}>{s.v}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-      <KlineChart card={card} />
-      {card.market_time && card.market_time !== 'mock' && (
-        <div className="card-meta">{card.market_time}</div>
+      <CardHR />
+      {/* K 线 */}
+      {candles.length ? (
+        <div style={{ padding: '12px 4px 8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 14px', marginBottom: 8 }}>
+            <span style={{ fontSize: 10.5, color: 'var(--au-text-3)', letterSpacing: '0.09em', fontWeight: 600 }}>日K线 · {candles.length}日</span>
+            <div style={{ display: 'flex', gap: 10 }}>
+              {['1日', '5日', '1月', '3月'].map((t, i) => (
+                <span key={t} style={{ fontSize: 10.5, color: i === 1 ? 'var(--au-primary)' : 'var(--au-text-3)', fontWeight: i === 1 ? 600 : 400 }}>{t}</span>
+              ))}
+            </div>
+          </div>
+          <KlineChart card={card} />
+        </div>
+      ) : (
+        <div style={{ padding: '22px 18px', textAlign: 'center', fontSize: 12, color: 'var(--au-text-3)' }}>K 线数据暂不可用</div>
       )}
+      <CardHR />
+      {/* 指标 4 列 */}
+      <div style={{ padding: '13px 16px', display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '8px 6px' }}>
+        {stats.map((s, i) => (
+          <div key={i} style={{ textAlign: 'center' }}>
+            <div className="au-num" style={{ fontSize: 12.5, fontWeight: 600, color: s.v ? 'var(--au-text)' : 'var(--au-text-3)', marginBottom: 4 }}>{s.v ?? '—'}</div>
+            <div style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -385,6 +487,7 @@ function SourceList({ sources }: {
 function SearchResultCardView({ card }: { card: SearchResultCard }) {
   return (
     <div className="card card-evidence">
+      <AIBadge label="AI · 联网搜索" />
       <CardHead icon="🔍" title={card.query} freshness={card.freshness} />
       <SourceList sources={card.sources} />
       <ConfidenceBadge level={card.confidence} />
@@ -402,9 +505,18 @@ function ResearchReportCardView({ card }: { card: ResearchReportCard }) {
   const shown = open ? sections : sections.slice(0, 1)
   return (
     <div className="card card-evidence card-research">
+      <AIBadge label="AI · 深度调研报告" />
       <CardHead icon="📑" title={card.question || '深度调研'} freshness={card.freshness} />
-      <ConfidenceBadge level={card.overall_confidence} />
-      <div style={{ marginTop: 6 }}>
+      {card.summary && (
+        <div style={{ padding: '11px 14px', borderRadius: 12, background: 'rgba(70,214,224,0.07)', border: '1px solid rgba(70,214,224,0.16)', margin: '10px 0', fontSize: 13, lineHeight: 1.7, color: 'var(--au-text)' }}>
+          {card.summary}
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <ConfidenceBadge level={card.overall_confidence} />
+        {card.sources?.length ? <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>· 引用 {card.sources.length} 篇</span> : null}
+      </div>
+      <div style={{ marginTop: 10 }}>
         {shown.map((s, i) => (
           <div key={i} style={{ marginBottom: 10 }}>
             {s.heading && (
@@ -450,6 +562,7 @@ function NewsBriefCardView({ card }: { card: NewsBriefCard }) {
   const shown = open ? card.items : card.items.slice(0, 10)
   return (
     <div className="card card-evidence">
+      <AIBadge label="AI · 新闻速览" />
       <CardHead icon="📰" title={card.topic || '今日值得关注'} freshness={card.freshness} />
       <ol className="ev-news-ol">
         {shown.map((n, i) => {

@@ -58,6 +58,8 @@
 .weather-alert-callout p { color: var(--au-text-2); }
 .weather-alert-callout small { color: var(--au-text-3); }
 .weather-alert-icon { color: var(--au-warn); }
+.weather-aqi { margin-top: 10px; }
+.weather-advice { margin-top: 10px; }
 
 /* AQI 7 档色阶 → Aurora（§3-A，深浅同实色）。优/良/轻/中/重/严/未知 */
 .air-badge-excellent { --air-color: #34D399; --air-bg: rgba(52, 211, 153, 0.12); --air-line: rgba(52, 211, 153, 0.30); }
