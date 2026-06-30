@@ -200,6 +200,13 @@ const VOICE_ICON: Record<string, IconName> = {
   冰糖: 'voice-ice', 茉莉: 'voice-jasmine', 苏打: 'voice-soda', 白桦: 'voice-birch', Mia: 'voice-mia', Chloe: 'voice-chloe',
 }
 function voiceIcon(v: Voice): IconName { return VOICE_ICON[v.voice_id] ?? VOICE_ICON[v.name] ?? 'voice-soda' }
+// Agent → 图标（A-8 集未含，icons.custom 补；端侧快系统车控/媒体用 vehicle/media）
+const AGENT_ICON: Record<string, IconName> = {
+  vehicle: 'vehicle', media: 'media', navigation: 'compass', info: 'info', 'trip-planner': 'itinerary',
+  'deep-research': 'research', 'food-ordering': 'dining', 'parking-payment': 'parking', 'manual-rag': 'manual', chitchat: 'chat',
+}
+// 常用地点 → 图标（家=A-8 place-home；公司/学校 icons.custom 补）
+const PLACE_ICON: Record<string, IconName> = { home: 'place-home', company: 'building', school: 'school' }
 
 function TtsSection({ audioApi }: { audioApi: string }) {
   const { settings, update } = useSettings()
@@ -428,7 +435,7 @@ function PlacesSection({ audioApi }: { audioApi: string }) {
           return (
             <div key={key} style={{ padding: '16px 0', borderBottom: i < PLACE_DEFS.length - 1 ? `1px solid ${DIV}` : 'none' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: set ? 'rgba(70,214,224,.12)' : 'var(--au-fill)', border: `1px solid ${set ? 'rgba(70,214,224,.25)' : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', fontSize: 16, flexShrink: 0 }}>{icon}</div>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: set ? 'rgba(70,214,224,.12)' : 'var(--au-fill)', border: `1px solid ${set ? 'rgba(70,214,224,.25)' : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', flexShrink: 0 }}><Icon name={PLACE_ICON[key] ?? 'pin'} size={18} color={set ? 'var(--au-primary)' : 'var(--au-text-2)'} /></div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 600, color: FG1, marginBottom: 4 }}>{label}</div>
                   {set ? (
@@ -503,7 +510,7 @@ function AgentsSection() {
             const on = settings.agents[a.id] ?? true
             return (
               <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 0', borderBottom: i < AGENT_CATALOG.length - 1 ? `1px solid ${DIV}` : 'none' }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: on ? 'rgba(70,214,224,.10)' : 'var(--au-fill)', border: `1px solid ${on ? 'rgba(70,214,224,.22)' : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', fontSize: 16, flexShrink: 0, transition: 'all .2s' }}>{a.icon}</div>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: on ? 'rgba(70,214,224,.10)' : 'var(--au-fill)', border: `1px solid ${on ? 'rgba(70,214,224,.22)' : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', flexShrink: 0, transition: 'all .2s' }}><Icon name={AGENT_ICON[a.id] ?? 'info'} size={19} state={on ? 'active' : 'default'} /></div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 500, color: on ? FG1 : FG3, transition: 'color .2s' }}>{a.label}</div>
                   <div style={{ fontSize: 11.5, color: FG3, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.desc}</div>

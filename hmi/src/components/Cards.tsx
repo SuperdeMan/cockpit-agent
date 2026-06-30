@@ -905,15 +905,15 @@ function RoutePlanCardView({ card }: { card: RoutePlanCard }) {
       <CardHR />
       <div style={{ padding: '14px 20px' }}>
         {[
-          { type: 'origin', icon: '📍', label: card.origin || '当前位置', sub: '出发' },
-          ...card.waypoints.map((w) => ({ type: 'stop', icon: '🍽', label: w.name, sub: w.address || '途经点' })),
-          { type: 'dest', icon: '🏁', label: card.destination, sub: '目的地' },
+          { type: 'origin', icon: 'location' as IconName, label: card.origin || '当前位置', sub: '出发' },
+          ...card.waypoints.map((w) => ({ type: 'stop', icon: 'pin' as IconName, label: w.name, sub: w.address || '途经点' })),
+          { type: 'dest', icon: 'flag' as IconName, label: card.destination, sub: '目的地' },
         ].map((n, i, arr) => {
           const color = n.type === 'origin' ? 'var(--au-primary)' : n.type === 'dest' ? '#34D399' : '#F59E0B'
           return (
             <div key={i} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-                <span style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', background: `${n.type === 'stop' ? 'rgba(245,158,11,0.15)' : color}`, border: `2px solid ${color}`, fontSize: 13 }}>{n.icon}</span>
+                <span style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', background: `${n.type === 'stop' ? 'rgba(245,158,11,0.15)' : color}`, border: `2px solid ${color}` }}><Icon name={n.icon} size={15} color={n.type === 'stop' ? '#F59E0B' : '#06080F'} /></span>
                 {i < arr.length - 1 && <span style={{ width: 1, height: 26, background: 'var(--au-line-2)', margin: '4px 0' }} />}
               </div>
               <div style={{ paddingTop: 4, flex: 1, minWidth: 0 }}>
@@ -994,8 +994,8 @@ function ChargingRouteCardView({ card }: { card: ChargingRouteCard }) {
 
 // ─── 行程卡：结构化多日行程（按天列停靠点 + 段间充电），复用充电时间线样式 ───
 
-const TRIP_STOP_ICON: Record<string, string> = {
-  attraction: '📍', meal: '🍜', hotel: '🏨', charging: '⚡', custom: '📌',
+const TRIP_STOP_ICON: Record<string, IconName> = {
+  attraction: 'landmark', meal: 'dining', hotel: 'hotel', charging: 'charging-station', custom: 'pin',
 }
 
 const DAY_COLORS = ['#46D6E0', '#5B8CFF', '#9A6BFF', '#FF6BD6', '#34D399']
@@ -1045,7 +1045,7 @@ function TripItineraryCardView({ card, onAction }:
                   const go = s.grounded && onAction ? () => onAction(`导航去第${day.day_index}天的${s.name}`) : undefined
                   return (
                     <div key={i} style={{ padding: '7px 16px 7px 52px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontSize: 14, flexShrink: 0 }}>{TRIP_STOP_ICON[s.type] || '📍'}</span>
+                      <Icon name={TRIP_STOP_ICON[s.type] || 'pin'} size={15} color="var(--au-text-2)" style={{ marginTop: 1 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12.5, fontWeight: 500, color: s.grounded ? 'var(--au-text)' : 'var(--au-text-2)' }}>{s.name}</div>
                         <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.grounded ? (s.poi?.address || '') : '待确认地点'}</div>
