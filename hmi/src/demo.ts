@@ -136,6 +136,12 @@ const tripCard: import('./types').TripItineraryCard = {
   ],
 }
 
+const routeCard: import('./types').RoutePlanCard = {
+  type: 'route_plan', origin: '当前位置', destination: '首都机场 T3',
+  waypoints: [{ name: '京A · 望京小腰', address: '朝阳区望京街 9 号' }],
+  distance_km: 32, duration_min: 48,
+}
+
 export const DEMO_CARDS: Msg[] = [
   { id: 'c0', role: 'user', text: '查一下茅台股价' },
   { id: 'c1', role: 'assistant', text: '贵州茅台收报 1689.00 元，今日上涨 0.75%。', uiCard: stockCard },
@@ -149,4 +155,6 @@ export const DEMO_CARDS: Msg[] = [
   { id: 'c9', role: 'assistant', text: '已为你规划到都江堰的充电路线，途中在青城山服务区补电一次。', uiCard: chargeCard },
   { id: 'c10', role: 'user', text: '帮我规划成都 2 日自驾' },
   { id: 'c11', role: 'assistant', text: '已为你规划成都 2 日自驾行程，含都江堰一日。', uiCard: tripCard },
+  { id: 'c12', role: 'user', text: '导航去首都机场，顺路吃个饭' },
+  { id: 'c13', role: 'assistant', text: '已为你规划经望京小腰前往首都机场 T3 的路线。', uiCard: routeCard },
 ]

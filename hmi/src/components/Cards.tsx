@@ -611,35 +611,56 @@ function TeamSquare({ name, color }: { name: string; color: string }) {
   )
 }
 
-// 计分板（照 A-5 SportsCard）：主客队色块 + 大比分 + 进球时间线（主左客右镜像）
+// 计分板（照 A-5 SportsCard）：主客队色块 + 大比分(分色) + 进球时间线(90分钟轴 + 标点 + 事件)
+const HOME_C = '#5B8CFF'
+const AWAY_C = '#9A6BFF'
 function FixtureBoard({ f }: { f: SportsScoresCard['fixtures'][number] }) {
   const scored = (f.status === 'live' || f.status === 'finished') && (f.home_goals !== '' || f.away_goals !== '')
   const kickoff = f.kickoff && f.kickoff.includes('T') ? f.kickoff.slice(11, 16) : ''
+  const goals = f.goals || []
   return (
     <div style={{ padding: '6px 0 4px' }}>
+      {/* 计分板 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px 14px' }}>
-        <TeamSquare name={f.home} color="#5B8CFF" />
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, minWidth: 66 }}>
-          {scored
-            ? <span className="au-num" style={{ fontSize: 26, fontWeight: 700 }}>{f.home_goals}-{f.away_goals}</span>
-            : <span style={{ fontSize: 14, color: 'var(--au-text-3)' }}>{kickoff || 'VS'}</span>}
+        <TeamSquare name={f.home} color={HOME_C} />
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, minWidth: 80 }}>
+          {scored ? (
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="au-num" style={{ fontSize: 30, fontWeight: 700, color: HOME_C, lineHeight: 1 }}>{f.home_goals}</span>
+              <span className="au-num" style={{ fontSize: 18, fontWeight: 300, color: 'var(--au-text-3)' }}>–</span>
+              <span className="au-num" style={{ fontSize: 30, fontWeight: 700, color: AWAY_C, lineHeight: 1 }}>{f.away_goals}</span>
+            </span>
+          ) : <span style={{ fontSize: 14, color: 'var(--au-text-3)' }}>{kickoff || 'VS'}</span>}
           <span style={{ fontSize: 10.5, fontWeight: f.status === 'live' ? 700 : 400, color: f.status === 'live' ? 'var(--au-warn)' : 'var(--au-text-3)' }}>
             {f.status === 'live' && f.elapsed ? `${f.status_text} ${f.elapsed}'` : f.status_text}
           </span>
         </div>
-        <TeamSquare name={f.away} color="#9A6BFF" />
+        <TeamSquare name={f.away} color={AWAY_C} />
       </div>
-      {!!f.goals?.length && (
-        <ul style={{ listStyle: 'none', margin: '0 12px 2px', padding: '8px 0 0', borderTop: '1px dashed var(--au-line)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {f.goals.map((g, i) => (
-            <li key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--au-text-2)', flexDirection: g.team === 'away' ? 'row-reverse' : 'row' }}>
-              <span className="au-num" style={{ color: 'var(--au-warn)', fontWeight: 700, flexShrink: 0 }}>{g.minute}&apos;</span>
-              <span style={{ fontSize: 11 }}>⚽</span>
-              <span style={{ color: 'var(--au-text)', fontWeight: 600 }}>{g.player || '球员'}</span>
+      {/* 进球时间线 */}
+      {goals.length > 0 && (
+        <div style={{ padding: '13px 16px', borderTop: '1px solid var(--au-line)' }}>
+          <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', letterSpacing: '0.09em', fontWeight: 600, marginBottom: 12 }}>进球时间线</div>
+          {/* 90 分钟时间轴 + 进球标点 */}
+          <div style={{ position: 'relative', height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.06)', marginBottom: 14 }}>
+            <div style={{ position: 'absolute', inset: 0, borderRadius: 3, background: `linear-gradient(to right,${HOME_C}40,${AWAY_C}30)` }} />
+            {goals.map((g, i) => {
+              const m = Math.min(parseInt(g.minute, 10) || 0, 90)
+              const color = g.team === 'away' ? AWAY_C : HOME_C
+              return <span key={i} style={{ position: 'absolute', left: `${(m / 90) * 100}%`, top: -3, transform: 'translateX(-50%)', width: 12, height: 12, borderRadius: '50%', background: color, border: '2px solid rgba(6,8,15,0.8)', boxShadow: `0 0 8px ${color}80` }} />
+            })}
+          </div>
+          {/* 进球事件 */}
+          {goals.map((g, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <span className="au-num" style={{ fontSize: 11, fontWeight: 700, color: g.team === 'away' ? AWAY_C : HOME_C, width: 28, textAlign: 'right', flexShrink: 0 }}>{g.minute}&apos;</span>
+              <span style={{ fontSize: 13 }}>⚽</span>
+              <span style={{ fontSize: 12.5, color: 'var(--au-text)' }}>{g.player || '球员'}</span>
               {g.detail && g.detail !== '进球' && <span style={{ fontSize: 10, color: 'var(--au-text-3)', border: '1px solid var(--au-line-2)', borderRadius: 3, padding: '0 4px' }}>{g.detail}</span>}
-            </li>
+              <span style={{ fontSize: 11, color: 'var(--au-text-3)', marginLeft: 'auto' }}>{g.team === 'away' ? f.away : g.team === 'home' ? f.home : ''}</span>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
     </div>
   )
