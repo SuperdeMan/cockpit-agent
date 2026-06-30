@@ -169,9 +169,9 @@ function AIBubbleBase({
 }) {
   const toneStyle: CSSProperties =
     tone === 'confirm'
-      ? { border: '1px solid rgba(245,158,11,0.32)', borderTop: '1px solid rgba(245,158,11,0.45)', boxShadow: '0 4px 20px rgba(0,0,0,0.30),0 0 16px rgba(245,158,11,0.12),inset 0 1px 0 rgba(255,255,255,0.10)' }
+      ? { border: '1px solid rgba(245,158,11,0.32)', borderTop: '1px solid rgba(245,158,11,0.45)', boxShadow: '0 4px 20px rgba(0,0,0,0.30),0 0 16px rgba(245,158,11,0.12),inset 0 1px 0 var(--au-fill-2)' }
       : tone === 'error'
-        ? { border: '1px solid rgba(239,68,68,0.28)', borderTop: '1px solid rgba(239,68,68,0.40)', boxShadow: '0 4px 20px rgba(0,0,0,0.30),0 0 12px rgba(239,68,68,0.08),inset 0 1px 0 rgba(255,255,255,0.10)' }
+        ? { border: '1px solid rgba(239,68,68,0.28)', borderTop: '1px solid rgba(239,68,68,0.40)', boxShadow: '0 4px 20px rgba(0,0,0,0.30),0 0 12px rgba(239,68,68,0.08),inset 0 1px 0 var(--au-fill-2)' }
         : {}
   return (
     <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 14 }}>
@@ -180,10 +180,10 @@ function AIBubbleBase({
       </div>
       <div style={{
         flex: 1, minWidth: 0, padding: '13px 15px', borderRadius: '4px 18px 18px 18px',
-        background: 'rgba(255,255,255,0.062)', border: '1px solid rgba(255,255,255,0.09)',
-        borderTop: '1px solid rgba(255,255,255,0.16)',
+        background: 'var(--au-fill)', border: '1px solid var(--au-fill-2)',
+        borderTop: '1px solid var(--au-hi)',
         WebkitBackdropFilter: 'blur(20px)', backdropFilter: 'blur(20px)',
-        boxShadow: '0 4px 20px rgba(0,0,0,0.30),inset 0 1px 0 rgba(255,255,255,0.10)',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.30),inset 0 1px 0 var(--au-fill-2)',
         position: 'relative', overflow: 'hidden', ...toneStyle, ...style,
       }}>
         {/* 流式微光扫过（§5 允许的 AI 时刻）*/}
@@ -293,13 +293,13 @@ function deriveStages(steps: ProcessStep[], active: boolean): Stage[] {
 const SQUARE: Record<StageStatus, CSSProperties> = {
   done: { background: 'rgba(52,211,153,0.15)', border: '1px solid rgba(52,211,153,0.35)' },
   active: { background: 'rgba(70,214,224,0.15)', border: '1px solid rgba(70,214,224,0.30)' },
-  pending: { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' },
+  pending: { background: 'var(--au-fill)', border: '1px solid var(--au-fill-2)' },
 }
 const STAGE_COLOR: Record<StageStatus, string> = { done: GREEN, active: TEAL, pending: FG3 }
 function StageDot({ status, size = 8 }: { status: StageStatus; size?: number }) {
   if (status === 'done') return <IcCheck size={size + 2} color="#34D399" />
   if (status === 'active') return <div style={{ width: size, height: size, borderRadius: '50%', background: TEAL, animation: 'au-orb-breathe 1.2s ease-in-out infinite' }} />
-  return <div style={{ width: size, height: size, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.22)' }} />
+  return <div style={{ width: size, height: size, borderRadius: '50%', border: '1.5px solid var(--au-text-3)' }} />
 }
 const Spinner = ({ size = 12, color = TEAL }: { size?: number; color?: string }) => (
   <div style={{ width: size, height: size, border: `1.5px solid ${color}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'au-orb-spin 0.9s linear infinite', flexShrink: 0 }} />
@@ -376,7 +376,7 @@ function ProcessArea({ steps, active, driving }: { steps: ProcessStep[]; active?
         {driving ? (
           <span style={{ fontSize: 10.5, color: AMBER, padding: '2px 8px', borderRadius: 6, background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.20)' }}>行车态</span>
         ) : (
-          <IcChevron size={13} color={'rgba(255,255,255,0.32)'} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+          <IcChevron size={13} color={'var(--au-text-3)'} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
         )}
       </button>
 
@@ -424,7 +424,7 @@ function ConfirmBubble({ msg, onConfirm, onAction }: { msg: Msg; onConfirm: (r: 
       <div style={{ display: 'flex', gap: 10 }}>
         <button
           onClick={() => onConfirm('取消')}
-          style={{ flex: 1, height: 50, borderRadius: 14, cursor: 'pointer', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)', color: FG2, fontSize: 14, fontWeight: 500, fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}
+          style={{ flex: 1, height: 50, borderRadius: 14, cursor: 'pointer', background: 'var(--au-fill)', border: '1px solid var(--au-line-2)', color: FG2, fontSize: 14, fontWeight: 500, fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}
         >
           <IcX size={15} />取消
         </button>
@@ -516,7 +516,7 @@ function ActionChip({ action }: { action: Action }) {
     (action.payload?.name as string) ??
     (action.payload && Object.keys(action.payload).length ? JSON.stringify(action.payload) : '')
   return (
-    <div style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 11px', borderRadius: 10, background: 'rgba(255,255,255,0.05)', border: '1px solid var(--au-line-2)', maxWidth: '100%' }}>
+    <div style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 11px', borderRadius: 10, background: 'var(--au-fill)', border: '1px solid var(--au-line-2)', maxWidth: '100%' }}>
       <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.04em', color: TEAL }}>{action.type}</span>
       {summary && <span className="au-num" style={{ fontSize: 12, color: FG2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary}</span>}
       {action.require_confirm && <span style={{ fontSize: 10.5, color: AMBER }}>需确认</span>}

@@ -56,7 +56,7 @@
   display: inline-flex; align-items: center; gap: 7px;
   padding: 4px 11px; border-radius: 999px;
   font-size: 12.5px; color: var(--au-text-2);
-  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--au-line-2);
+  background: var(--au-fill); border: 1px solid var(--au-line-2);
 }
 .au-conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--au-online); box-shadow: 0 0 8px var(--au-online); }
 .au-conn.offline .au-conn-dot { background: var(--au-warn); box-shadow: 0 0 8px var(--au-warn); animation: au-think 1.4s ease-in-out infinite; }
@@ -71,7 +71,7 @@
   width: 40px; height: 40px; border-radius: 12px; cursor: pointer;
   display: grid; place-items: center; font-size: 17px;
   color: var(--au-text-2);
-  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--au-line-2);
+  background: var(--au-fill); border: 1px solid var(--au-line-2);
   font-family: inherit; transition: border-color 0.18s, color 0.18s, background 0.18s;
 }
 .au-icon-btn:hover { color: var(--au-text); border-color: rgba(70, 214, 224, 0.4); }
@@ -117,7 +117,7 @@
 }
 .au-park-pill {
   align-self: center; font-size: 11px; color: var(--au-text-3);
-  padding: 4px 12px; border-radius: 999px; background: rgba(255, 255, 255, 0.04);
+  padding: 4px 12px; border-radius: 999px; background: var(--au-fill);
 }
 
 /* 对话气泡与动态六态（思考/流式/过程区/确认/主动播报/错误）见 ChatView.tsx（P3，照 A-6）*/
@@ -152,7 +152,7 @@
 .au-quick-chip {
   flex: none; padding: 9px 16px; border-radius: 999px; cursor: pointer;
   font-size: 13px; color: var(--au-text-2); font-family: inherit; white-space: nowrap;
-  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--au-line-2);
+  background: var(--au-fill); border: 1px solid var(--au-line-2);
   transition: border-color 0.16s, color 0.16s, transform 0.12s;
 }
 .au-quick-chip:hover { color: var(--au-text); border-color: rgba(70, 214, 224, 0.4); transform: translateY(-1px); }
@@ -161,7 +161,7 @@
 .au-mic {
   position: relative; width: 48px; height: 48px; border-radius: 14px; flex: none; cursor: pointer;
   display: grid; place-items: center; font-size: 19px; color: var(--au-text);
-  background: rgba(255, 255, 255, 0.06); border: 1px solid var(--au-line-2);
+  background: var(--au-fill); border: 1px solid var(--au-line-2);
   font-family: inherit; transition: border-color 0.18s, background 0.18s;
 }
 .au-mic:hover:not(:disabled) { border-color: rgba(70, 214, 224, 0.5); }
@@ -179,7 +179,7 @@
 .au-input {
   flex: 1; height: 48px; padding: 0 18px; border-radius: 14px;
   font-size: 15px; color: var(--au-text); font-family: inherit;
-  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--au-line-2);
+  background: var(--au-fill); border: 1px solid var(--au-line-2);
   outline: none; transition: border-color 0.18s, box-shadow 0.18s;
 }
 .au-input::placeholder { color: var(--au-text-3); }
@@ -225,7 +225,7 @@
 .au-welcome-chip {
   padding: 10px 18px; border-radius: 999px; cursor: pointer; font-size: 13.5px;
   color: var(--au-text); font-family: inherit;
-  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--au-line-2);
+  background: var(--au-fill); border: 1px solid var(--au-line-2);
   transition: border-color 0.16s, transform 0.12s;
 }
 .au-welcome-chip:hover { border-color: rgba(70, 214, 224, 0.5); transform: translateY(-1px); }

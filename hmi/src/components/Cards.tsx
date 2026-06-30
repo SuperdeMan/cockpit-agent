@@ -160,7 +160,7 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
         {tele.map((t) => {
           const miss = t.v == null
           return (
-            <div key={t.label} style={{ padding: '9px 6px', borderRadius: 11, background: miss ? 'rgba(255,255,255,0.028)' : 'rgba(255,255,255,0.048)', border: '1px solid var(--au-line-2)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+            <div key={t.label} style={{ padding: '9px 6px', borderRadius: 11, background: miss ? 'var(--au-fill)' : 'var(--au-fill)', border: '1px solid var(--au-line-2)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
               <span style={{ fontSize: 15 }}>{t.icon}</span>
               <span className="au-num" style={{ fontSize: 11.5, fontWeight: miss ? 400 : 600, color: miss ? 'var(--au-text-3)' : 'var(--au-text)', textAlign: 'center', lineHeight: 1.2 }}>{miss ? '—' : `${t.v}${t.u}`}</span>
               <span style={{ fontSize: 9.5, color: 'var(--au-text-3)' }}>{t.label}</span>
@@ -203,7 +203,7 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
             <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', letterSpacing: '0.09em', fontWeight: 600, marginBottom: 10 }}>生活建议</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               {card.indices.slice(0, 4).map((t) => (
-                <div key={t.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 9, padding: '8px 10px', borderRadius: 11, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--au-line-2)' }}>
+                <div key={t.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 9, padding: '8px 10px', borderRadius: 11, background: 'var(--au-fill)', border: '1px solid var(--au-line-2)' }}>
                   <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{t.name}</span>
                   <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--au-text)' }}>{t.level}</span>
                 </div>
@@ -557,7 +557,7 @@ function SearchResultCardView({ card }: { card: SearchResultCard }) {
                 </div>
                 <p style={{ fontSize: 12, color: 'var(--au-text-2)', lineHeight: 1.6, margin: 0 }}>{s.title}</p>
               </div>
-              {s.url && <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0, marginTop: 2 }}><Ico d={IC_EXT} size={11} color="rgba(255,255,255,0.20)" /></a>}
+              {s.url && <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0, marginTop: 2 }}><Ico d={IC_EXT} size={11} color="var(--au-text-3)" /></a>}
             </div>
             {i < shown.length - 1 && <div style={{ height: 1, background: 'var(--au-line)', margin: '0 16px' }} />}
           </div>
@@ -582,7 +582,7 @@ function ResearchSection({ idx, heading, body, citations, confidence, open, onTo
   return (
     <div>
       <button onClick={onToggle} style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}>
-        <span style={{ width: 24, height: 24, borderRadius: 8, flexShrink: 0, background: open ? t.bg : 'rgba(255,255,255,0.06)', border: `1px solid ${open ? t.bd : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', transition: 'all .22s' }}>
+        <span style={{ width: 24, height: 24, borderRadius: 8, flexShrink: 0, background: open ? t.bg : 'var(--au-fill)', border: `1px solid ${open ? t.bd : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', transition: 'all .22s' }}>
           <span className="au-num" style={{ fontSize: 10, fontWeight: 700, color: open ? t.c : 'var(--au-text-3)' }}>{String(idx).padStart(2, '0')}</span>
         </span>
         <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: open ? 'var(--au-text)' : 'var(--au-text-2)', transition: 'color .2s' }}>{heading}</span>
@@ -804,7 +804,7 @@ function FixtureBoard({ f }: { f: SportsScoresCard['fixtures'][number] }) {
         <div style={{ padding: '13px 16px', borderTop: '1px solid var(--au-line)' }}>
           <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', letterSpacing: '0.09em', fontWeight: 600, marginBottom: 12 }}>进球时间线</div>
           {/* 90 分钟时间轴 + 进球标点 */}
-          <div style={{ position: 'relative', height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.06)', marginBottom: 14 }}>
+          <div style={{ position: 'relative', height: 6, borderRadius: 3, background: 'var(--au-fill)', marginBottom: 14 }}>
             <div style={{ position: 'absolute', inset: 0, borderRadius: 3, background: `linear-gradient(to right,${HOME_C}40,${AWAY_C}30)` }} />
             {goals.map((g, i) => {
               const m = Math.min(parseInt(g.minute, 10) || 0, 90)
@@ -1078,7 +1078,7 @@ function PoiListCardView({ card }: { card: PoiListCard }) {
       {card.items.map((item, i) => (
         <div key={item.id || i}>
           <div style={{ padding: '12px 16px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-            <span style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,0.07)', border: '1px solid var(--au-line-2)', fontFamily: 'var(--au-font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--au-text-2)' }}>{i + 1}</span>
+            <span style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'var(--au-line)', border: '1px solid var(--au-line-2)', fontFamily: 'var(--au-font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--au-text-2)' }}>{i + 1}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</span>

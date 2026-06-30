@@ -13,6 +13,14 @@ const DEMO_MAPS: Record<string, typeof DEMO_WEATHER> = { charge: DEMO_CHARGE, tr
 
 // ?aurora 进入 P0 设计系统预览；?demo / ?demo=map / =cards / =states 用 mock 对话验证；否则正式应用。
 const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+// `?theme=light|dark`：写入持久化设置后再渲染（本地验证浅色用；prod 即设置主题，无副作用）
+const themeParam = params.get('theme')
+if (themeParam === 'light' || themeParam === 'dark') {
+  try {
+    const raw = localStorage.getItem('cockpit.settings.v1')
+    localStorage.setItem('cockpit.settings.v1', JSON.stringify({ ...(raw ? JSON.parse(raw) : {}), theme: themeParam }))
+  } catch {/* ignore */}
+}
 const showAurora = params.has('aurora')
 const demoParam = params.get('demo')
 const seedMessages = params.has('demo')

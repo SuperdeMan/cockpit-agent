@@ -33,20 +33,20 @@
 .card-weather-city { color: var(--au-text); }
 .card-weather-text { color: var(--au-text-2); }
 .weather-cloud { color: var(--au-text-3); font-family: var(--au-font-mono); }
-.weather-chip { background: rgba(255, 255, 255, 0.04); border-color: var(--au-line-2); }
+.weather-chip { background: var(--au-fill); border-color: var(--au-line-2); }
 .weather-chip span { color: var(--au-text-3); }
 .weather-chip strong { color: var(--au-text); font-family: var(--au-font-mono); }
-.weather-mini-day { background: rgba(255, 255, 255, 0.04); border-color: var(--au-line-2); }
+.weather-mini-day { background: var(--au-fill); border-color: var(--au-line-2); }
 .weather-mini-day > span { color: var(--au-text-2); font-family: var(--au-font-mono); }
 .weather-mini-day strong { color: var(--au-text); font-family: var(--au-font-mono); }
 .weather-mini-day strong em { color: var(--au-text-3); }
 .weather-mini-day small { color: var(--au-text-3); }
-.weather-alert-status { background: rgba(255, 255, 255, 0.04); border-color: var(--au-line-2); }
+.weather-alert-status { background: var(--au-fill); border-color: var(--au-line-2); }
 .weather-alert-status span { color: var(--au-text-3); }
 .weather-alert-status strong { color: var(--au-text-2); }
 .weather-alert-status.clear strong::before { color: var(--au-online); }
 .weather-alert-status.unavailable strong { color: var(--au-warn); }
-.weather-advice span { background: rgba(255, 255, 255, 0.04); border-color: var(--au-line-2); color: var(--au-text-2); }
+.weather-advice span { background: var(--au-fill); border-color: var(--au-line-2); color: var(--au-text-2); }
 .weather-advice b { color: var(--au-text); }
 .weather-advice::before { color: var(--au-text-3); }
 .weather-alert-callout {
@@ -79,7 +79,7 @@
 .air-badge strong { font-family: var(--au-font-mono); }
 
 /* ── 天气预报卡 ── */
-.forecast-day { background: rgba(255, 255, 255, 0.04); }
+.forecast-day { background: var(--au-fill); }
 .forecast-date { color: var(--au-text-2); font-family: var(--au-font-mono); }
 .forecast-text { color: var(--au-text-3); }
 .forecast-temp { font-family: var(--au-font-mono); }
@@ -171,7 +171,7 @@ a.ev-news-h:hover { color: var(--au-blue); }
 .card-research { box-shadow: var(--au-glass-shadow), 0 0 28px rgba(91, 140, 255, 0.16), 0 0 56px rgba(154, 107, 255, 0.09); }
 
 /* ── 赛事 ── */
-.fx-row { background: rgba(255, 255, 255, 0.04); }
+.fx-row { background: var(--au-fill); }
 .fx-live { border-color: var(--au-warn); }
 .fx-team { color: var(--au-text); }
 .fx-flag { background: var(--au-line-2); }
@@ -184,7 +184,7 @@ a.ev-news-h:hover { color: var(--au-blue); }
 .fx-goal-min { color: var(--au-warn); font-family: var(--au-font-mono); }
 .fx-goal-player { color: var(--au-text); }
 .fx-goal-tag { color: var(--au-text-3); border-color: var(--au-line-2); }
-.sc-row { background: rgba(255, 255, 255, 0.04); }
+.sc-row { background: var(--au-fill); }
 .sc-rank { color: var(--au-text-3); font-family: var(--au-font-mono); }
 .sc-row:nth-child(1) .sc-rank { color: var(--au-warn); }
 .sc-player { color: var(--au-text); }
@@ -210,13 +210,13 @@ a.ev-news-h:hover { color: var(--au-blue); }
 .cr-soc { display: flex; flex-direction: column; gap: 7px; }
 .cr-soc-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--au-text-3); }
 .cr-soc-head b { font-size: 13px; font-weight: 700; }
-.cr-soc-track { height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.cr-soc-track { height: 8px; border-radius: 4px; background: var(--au-fill); overflow: hidden; }
 .cr-soc-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
 .cr-soc-foot { display: flex; justify-content: space-between; font-size: 10px; color: var(--au-text-3); }
 
 /* ── POI ── */
 .poi-idx { color: var(--au-primary); }
-.poi-item { background: rgba(255, 255, 255, 0.04); }
+.poi-item { background: var(--au-fill); }
 .poi-name { color: var(--au-text); }
 .poi-rating { color: var(--au-warn); }
 .poi-dist { color: var(--au-text-2); font-family: var(--au-font-mono); }

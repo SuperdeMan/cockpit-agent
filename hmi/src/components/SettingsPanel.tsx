@@ -48,7 +48,7 @@ function Glass({ children, style }: { children: ReactNode; style?: CSSProperties
     <div style={{
       borderRadius: 20, overflow: 'hidden', background: 'var(--au-glass-bg)',
       WebkitBackdropFilter: 'blur(var(--au-glass-blur)) saturate(1.15)', backdropFilter: 'blur(var(--au-glass-blur)) saturate(1.15)',
-      border: '1px solid rgba(255,255,255,.10)', borderTop: '1px solid var(--au-glass-bd-top)', borderLeft: '1px solid var(--au-glass-bd-left)',
+      border: '1px solid var(--au-fill-2)', borderTop: '1px solid var(--au-glass-bd-top)', borderLeft: '1px solid var(--au-glass-bd-left)',
       boxShadow: 'var(--au-glass-shadow)', ...style,
     }}>{children}</div>
   )
@@ -132,7 +132,7 @@ export function SettingsPanel({
           <span className="au-aurora-text" style={{ fontSize: 15, fontWeight: 600 }}>设置</span>
           <span style={{ fontSize: 13, color: FG3, fontWeight: 300 }}>· {settings.assistantName}助手 · 横屏侧栏</span>
         </div>
-        <button onClick={onClose} aria-label="关闭设置" style={{ width: 40, height: 40, borderRadius: 12, display: 'grid', placeItems: 'center', cursor: 'pointer', background: 'rgba(255,255,255,.05)', border: '1px solid var(--au-line-2)', color: FG2 }}>
+        <button onClick={onClose} aria-label="关闭设置" style={{ width: 40, height: 40, borderRadius: 12, display: 'grid', placeItems: 'center', cursor: 'pointer', background: 'var(--au-fill)', border: '1px solid var(--au-line-2)', color: FG2 }}>
           <IcX size={16} />
         </button>
       </header>
@@ -234,8 +234,8 @@ function TtsSection({ audioApi }: { audioApi: string }) {
               return (
                 <div key={v.voice_id} onClick={() => !disabled && update({ voiceId: v.voice_id })} style={{
                   padding: '14px 12px', borderRadius: 16, cursor: disabled ? 'default' : 'pointer',
-                  background: selected ? `${color}14` : 'rgba(255,255,255,.04)',
-                  border: `1px solid ${selected ? color + '50' : 'rgba(255,255,255,.08)'}`, borderTop: `1px solid ${selected ? color + '70' : 'rgba(255,255,255,.12)'}`,
+                  background: selected ? `${color}14` : 'var(--au-fill)',
+                  border: `1px solid ${selected ? color + '50' : 'var(--au-fill-2)'}`, borderTop: `1px solid ${selected ? color + '70' : 'var(--au-line-2)'}`,
                   transition: 'all .2s', opacity: disabled ? 0.45 : 1, boxShadow: selected ? `0 0 18px ${color}18` : 'none',
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -246,7 +246,7 @@ function TtsSection({ audioApi }: { audioApi: string }) {
                   <div style={{ fontSize: 11, color: FG3, marginBottom: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.description || (v.tags || [v.language, v.gender]).join(' · ')}</div>
                   <button onClick={(e) => { e.stopPropagation(); !disabled && preview(v.voice_id) }} aria-label={`试听 ${v.name}`} style={{
                     display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 8,
-                    background: isPlaying ? `${color}20` : 'rgba(255,255,255,.05)', border: `1px solid ${isPlaying ? color + '40' : 'rgba(255,255,255,.10)'}`,
+                    background: isPlaying ? `${color}20` : 'var(--au-fill)', border: `1px solid ${isPlaying ? color + '40' : 'var(--au-fill-2)'}`,
                     fontSize: 11.5, color: isPlaying ? color : FG3, cursor: disabled ? 'default' : 'pointer', fontFamily: 'inherit', transition: 'all .18s',
                   }}>
                     {isPlaying ? <span style={{ width: 10, height: 10, border: `1.5px solid ${color}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'au-orb-spin .9s linear infinite' }} /> : '▸'}
@@ -320,7 +320,7 @@ function DisplaySection() {
         <div style={{ paddingTop: 10, paddingBottom: 16 }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
             {settings.quickCommands.map((cmd, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, background: 'rgba(255,255,255,.06)', border: '1px solid var(--au-line-2)' }}>
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, background: 'var(--au-fill)', border: '1px solid var(--au-line-2)' }}>
                 <span style={{ fontSize: 12.5, color: FG2 }}>{cmd}</span>
                 <button onClick={() => removeCmd(i)} aria-label="删除指令" style={{ cursor: 'pointer', background: 'none', border: 'none', padding: 0, display: 'flex', lineHeight: 1 }}>
                   <IcX size={11} color={FG3} />
@@ -331,11 +331,11 @@ function DisplaySection() {
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addCmd(); if (e.key === 'Escape') { setDraft(''); setAdding(false) } }}
                   placeholder="新指令…" maxLength={16}
-                  style={{ width: 130, height: 30, padding: '0 10px', borderRadius: 20, background: 'rgba(255,255,255,.06)', border: `1px solid ${TEAL}`, color: FG1, fontSize: 12.5, fontFamily: 'inherit', outline: 'none', caretColor: TEAL }} />
+                  style={{ width: 130, height: 30, padding: '0 10px', borderRadius: 20, background: 'var(--au-fill)', border: `1px solid ${TEAL}`, color: FG1, fontSize: 12.5, fontFamily: 'inherit', outline: 'none', caretColor: TEAL }} />
                 <button onClick={addCmd} aria-label="确认添加" style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', cursor: 'pointer', background: 'rgba(70,214,224,.14)', border: `1px solid ${TEAL}`, color: TEAL }}><IcCheck size={13} color={TEAL} /></button>
               </span>
             ) : settings.quickCommands.length < 8 ? (
-              <button onClick={() => setAdding(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 20, border: '1px dashed rgba(255,255,255,.22)', background: 'transparent', color: FG3, fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit' }}>
+              <button onClick={() => setAdding(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 20, border: '1px dashed var(--au-text-3)', background: 'transparent', color: FG3, fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit' }}>
                 <IcPlus size={11} color={FG3} />添加
               </button>
             ) : null}
@@ -369,7 +369,7 @@ function LocationSection({ location, enabled, status, onRequest, onEnabledChange
       <SettingGroup title="当前位置">
         <div style={{ paddingTop: 10, paddingBottom: 16 }}>
           {enabled && location ? (
-            <div style={{ padding: '14px 16px', borderRadius: 14, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)' }}>
+            <div style={{ padding: '14px 16px', borderRadius: 14, background: 'var(--au-fill)', border: '1px solid var(--au-fill-2)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--au-online)', boxShadow: '0 0 6px var(--au-online)' }} />
                 <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--au-online)' }}>定位已开启</span>
@@ -423,7 +423,7 @@ function PlacesSection({ audioApi }: { audioApi: string }) {
           return (
             <div key={key} style={{ padding: '16px 0', borderBottom: i < PLACE_DEFS.length - 1 ? `1px solid ${DIV}` : 'none' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: set ? 'rgba(70,214,224,.12)' : 'rgba(255,255,255,.06)', border: `1px solid ${set ? 'rgba(70,214,224,.25)' : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', fontSize: 16, flexShrink: 0 }}>{icon}</div>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: set ? 'rgba(70,214,224,.12)' : 'var(--au-fill)', border: `1px solid ${set ? 'rgba(70,214,224,.25)' : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', fontSize: 16, flexShrink: 0 }}>{icon}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 600, color: FG1, marginBottom: 4 }}>{label}</div>
                   {set ? (
@@ -471,7 +471,7 @@ function AssistantSection() {
           {models.map((m) => {
             const on = settings.model === m.value
             return (
-              <div key={m.value} style={{ display: 'flex', gap: 12, padding: '10px 14px', borderRadius: 12, background: on ? 'rgba(70,214,224,.07)' : 'rgba(255,255,255,.03)', border: `1px solid ${on ? 'rgba(70,214,224,.20)' : 'rgba(255,255,255,.06)'}` }}>
+              <div key={m.value} style={{ display: 'flex', gap: 12, padding: '10px 14px', borderRadius: 12, background: on ? 'rgba(70,214,224,.07)' : 'var(--au-fill)', border: `1px solid ${on ? 'rgba(70,214,224,.20)' : 'var(--au-fill)'}` }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: on ? TEAL : FG2, marginBottom: 2 }}>{m.name}</div>
                   <div style={{ fontSize: 11.5, color: FG3 }}>{m.desc}</div>
@@ -498,7 +498,7 @@ function AgentsSection() {
             const on = settings.agents[a.id] ?? true
             return (
               <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 0', borderBottom: i < AGENT_CATALOG.length - 1 ? `1px solid ${DIV}` : 'none' }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: on ? 'rgba(70,214,224,.10)' : 'rgba(255,255,255,.05)', border: `1px solid ${on ? 'rgba(70,214,224,.22)' : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', fontSize: 16, flexShrink: 0, transition: 'all .2s' }}>{a.icon}</div>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: on ? 'rgba(70,214,224,.10)' : 'var(--au-fill)', border: `1px solid ${on ? 'rgba(70,214,224,.22)' : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', fontSize: 16, flexShrink: 0, transition: 'all .2s' }}>{a.icon}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 500, color: on ? FG1 : FG3, transition: 'color .2s' }}>{a.label}</div>
                   <div style={{ fontSize: 11.5, color: FG3, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.desc}</div>
@@ -558,7 +558,7 @@ function MemorySection({ audioApi, sessionId }: { audioApi: string; sessionId: s
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 4 }}>
               {mem.turns.map((t, i) => (
-                <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.06)' }}>
+                <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 12px', borderRadius: 10, background: 'var(--au-fill)', border: '1px solid var(--au-fill)' }}>
                   <span style={{ fontSize: 11, fontWeight: 600, color: t.role === 'user' ? FG2 : TEAL, flexShrink: 0, width: 32 }}>{t.role === 'user' ? '你' : settings.assistantName}</span>
                   <span style={{ flex: 1, fontSize: 12.5, color: FG2, lineHeight: 1.55 }}>{t.text}</span>
                 </div>
@@ -598,7 +598,7 @@ function MemCat({ title, items }: { title: string; items: { text: string; meta: 
     <div style={{ marginTop: 12 }}>
       <div style={{ fontSize: 11, color: FG3, letterSpacing: '.06em', marginBottom: 7 }}>{title}</div>
       {items.map((m, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.07)', marginBottom: 6 }}>
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 10, background: 'var(--au-fill)', border: '1px solid var(--au-line)', marginBottom: 6 }}>
           <span style={{ flex: 1, fontSize: 13, color: FG2, lineHeight: 1.5 }}>{m.text}</span>
           <span style={{ fontSize: 10.5, color: FG3, flexShrink: 0 }}>{m.meta}</span>
           <button onClick={m.onDel} aria-label="删除" title="删除" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', flexShrink: 0 }}><IcX size={12} color={FG3} /></button>

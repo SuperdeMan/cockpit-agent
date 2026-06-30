@@ -15,7 +15,7 @@ export function Toggle({ on, onChange, disabled = false }: { on: boolean; onChan
       onClick={() => !disabled && onChange(!on)}
       style={{
         width: 48, height: 28, borderRadius: 14, padding: 0, cursor: disabled ? 'default' : 'pointer',
-        background: on ? (disabled ? 'rgba(70,214,224,.35)' : TEAL) : 'rgba(255,255,255,.10)',
+        background: on ? (disabled ? 'rgba(70,214,224,.35)' : TEAL) : 'var(--au-fill-2)',
         border: `1px solid ${on ? (disabled ? 'rgba(70,214,224,.25)' : TEAL) : 'var(--au-line-2)'}`,
         position: 'relative', transition: 'all .25s ease', opacity: disabled ? 0.45 : 1, flexShrink: 0,
         boxShadow: on && !disabled ? '0 0 12px rgba(70,214,224,.40)' : 'none',
@@ -32,7 +32,7 @@ export function Segmented<T extends string | number>({
   value, options, onChange, sm = false,
 }: { value: T; options: Opt<T>[]; onChange: (v: T) => void; sm?: boolean }) {
   return (
-    <div role="tablist" style={{ display: 'flex', background: 'rgba(255,255,255,.04)', borderRadius: sm ? 10 : 12, padding: 3, gap: 2 }}>
+    <div role="tablist" style={{ display: 'flex', background: 'var(--au-fill)', borderRadius: sm ? 10 : 12, padding: 3, gap: 2 }}>
       {options.map((o) => {
         const active = o.value === value
         return (
@@ -41,8 +41,8 @@ export function Segmented<T extends string | number>({
             style={{
               padding: sm ? '5px 10px' : '7px 14px', borderRadius: sm ? 8 : 10, cursor: 'pointer',
               fontSize: sm ? 11.5 : 13, fontWeight: active ? 600 : 400,
-              background: active ? 'rgba(255,255,255,.10)' : 'transparent',
-              border: `1px solid ${active ? 'rgba(255,255,255,.18)' : 'transparent'}`,
+              background: active ? 'var(--au-fill-2)' : 'transparent',
+              border: `1px solid ${active ? 'var(--au-hi)' : 'transparent'}`,
               color: active ? FG1 : FG2, transition: 'all .18s', fontFamily: 'inherit', whiteSpace: 'nowrap',
             }}>
             {o.label}
@@ -62,7 +62,7 @@ export function TextInput({
       onChange={(e) => onChange(e.target.value)}
       style={{
         width, height: 38, padding: '0 14px', boxSizing: 'border-box', borderRadius: 10,
-        background: 'rgba(255,255,255,.058)', border: '1px solid var(--au-line-2)', borderTop: '1px solid rgba(255,255,255,.17)',
+        background: 'var(--au-fill)', border: '1px solid var(--au-line-2)', borderTop: '1px solid var(--au-hi)',
         color: FG1, fontSize: 13.5, fontFamily: 'inherit', outline: 'none', caretColor: TEAL,
         WebkitBackdropFilter: 'blur(12px)', backdropFilter: 'blur(12px)',
       }}
@@ -76,7 +76,7 @@ export function GhostBtn({ children, onClick, sm = false, style }: { children: R
       onClick={onClick}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 6, padding: sm ? '5px 12px' : '7px 14px',
-        borderRadius: 10, border: '1px solid var(--au-line-2)', background: 'rgba(255,255,255,.04)',
+        borderRadius: 10, border: '1px solid var(--au-line-2)', background: 'var(--au-fill)',
         color: FG2, fontSize: sm ? 12 : 13, cursor: 'pointer', fontFamily: 'inherit', transition: 'all .18s', ...style,
       }}>
       {children}
