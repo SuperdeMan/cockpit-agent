@@ -1,6 +1,6 @@
 // 信息类 UI 卡片组件：天气 / 股票 / 新闻 / 搜索 / POI。
-// 设计风格：深空座舱 HUD——半透明玻璃态 + 微光边框 + 渐变高光。
-import { useState } from 'react'
+// 视觉照 Figma Make A-3~A-5（inline 样式 + --au-* token，证据范式：卡只给来源/要点，不复读气泡结论）。
+import { useState, type CSSProperties } from 'react'
 import type {
   UiCard, WeatherCard, ForecastCard, StockCard,
   NewsCard, SearchCard, SearchAnswerCard, NewsDigestCard,
@@ -36,6 +36,40 @@ function SocBar({ soc, dest }: { soc: string; dest: string }) {
 
 // 卡内分节横线（照 A-3 HR）
 const CardHR = () => <div style={{ height: 1, background: 'var(--au-line)' }} />
+
+// ─── A-4 信息卡共享原语（照 A-4 源）───
+// 内联线性图标（lucide 风，避免第三方依赖）
+function Ico({ d, size = 12, color = 'currentColor', sw = 2, style }: { d: string | string[]; size?: number; color?: string; sw?: number; style?: CSSProperties }) {
+  const paths = Array.isArray(d) ? d : [d]
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, ...style }}>{paths.map((p, i) => <path key={i} d={p} />)}</svg>
+}
+const IC_CHEVRON = 'm6 9 6 6 6-6'
+const IC_EXT = ['M15 3h6v6', 'M10 14 21 3', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6']
+const IC_ALERT = ['m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z', 'M12 9v4', 'M12 17h.01']
+const IC_BOOK = ['M4 19.5A2.5 2.5 0 0 1 6.5 17H20', 'M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z']
+const IC_MAX = ['M15 3h6v6', 'M9 21H3v-6', 'M21 3l-7 7', 'M3 21l7-7']
+
+// 置信度徽章（A-4 ConfBadge；§3-A 语义色，绝不虹彩）
+const _CONF_TONE: Record<string, { c: string; bg: string; bd: string; label: string }> = {
+  high: { c: 'var(--au-conf-high)', bg: 'rgba(70,214,224,0.11)', bd: 'rgba(70,214,224,0.26)', label: '高' },
+  medium: { c: 'var(--au-conf-mid)', bg: 'rgba(245,158,11,0.11)', bd: 'rgba(245,158,11,0.26)', label: '中' },
+  low: { c: 'var(--au-conf-low)', bg: 'rgba(107,114,128,0.11)', bd: 'rgba(107,114,128,0.24)', label: '未充分核实' },
+}
+function ConfPill({ level, small }: { level?: string; small?: boolean }) {
+  if (!level) return null
+  const t = _CONF_TONE[level] ?? _CONF_TONE.medium
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: small ? '2px 7px' : '3px 9px', borderRadius: 20, background: t.bg, border: `1px solid ${t.bd}`, flexShrink: 0 }}>
+      <span style={{ width: small ? 5 : 6, height: small ? 5 : 6, borderRadius: '50%', background: t.c, flexShrink: 0 }} />
+      <span style={{ fontSize: small ? 10 : 11.5, fontWeight: 600, color: t.c, whiteSpace: 'nowrap' }}>置信度 {t.label}</span>
+    </span>
+  )
+}
+// 从 url 取裸域名（去 www.），取不到回退 source
+function domainOf(url?: string, fallback?: string): string {
+  if (url) { try { return new URL(url).hostname.replace(/^www\./, '') } catch { /* 非法 url */ } }
+  return fallback || ''
+}
 
 // ─── 天气图标映射 ───
 const WEATHER_ICONS: Record<string, string> = {
@@ -485,115 +519,243 @@ function SourceList({ sources }: {
 }
 
 function SearchResultCardView({ card }: { card: SearchResultCard }) {
+  const [open, setOpen] = useState(false)
+  const sources = card.sources || []
+  const shown = open ? sources : sources.slice(0, 3)
+  const extra = sources.length - 3
+  const fresh = relativeTime(card.freshness)
   return (
-    <div className="card card-evidence">
-      <AIBadge label="AI · 联网搜索" />
-      <CardHead icon="🔍" title={card.query} freshness={card.freshness} />
-      <SourceList sources={card.sources} />
-      <ConfidenceBadge level={card.confidence} />
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '15px 16px 12px' }}>
+        <AIBadge label="AI · 联网搜索" />
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
+              <Ico d={['m21 21-4.34-4.34', 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z']} size={13} color="var(--au-text-2)" />
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--au-text)' }}>{card.query}</span>
+            </div>
+            <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>找到 {sources.length} 条来源{fresh ? ` · 更新于${fresh}` : ''}</span>
+          </div>
+          <ConfPill level={card.confidence} />
+        </div>
+      </div>
+      <CardHR />
+      {shown.map((s, i) => {
+        const dom = domainOf(s.url)
+        return (
+          <div key={i}>
+            <div style={{ padding: '11px 16px', display: 'flex', gap: 11, alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flexShrink: 0, marginTop: 1 }}>
+                <span className="au-num" style={{ fontSize: 10, color: 'var(--au-text-3)', lineHeight: 1 }}>{i + 1}</span>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--au-primary)' }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--au-text)' }}>{s.source || dom || '来源'}</span>
+                  {dom && <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>{dom}</span>}
+                  <span style={{ fontSize: 10.5, color: 'var(--au-text-3)', marginLeft: 'auto' }}>{relativeTime(s.published) || s.published || ''}</span>
+                </div>
+                <p style={{ fontSize: 12, color: 'var(--au-text-2)', lineHeight: 1.6, margin: 0 }}>{s.title}</p>
+              </div>
+              {s.url && <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0, marginTop: 2 }}><Ico d={IC_EXT} size={11} color="rgba(255,255,255,0.20)" /></a>}
+            </div>
+            {i < shown.length - 1 && <div style={{ height: 1, background: 'var(--au-line)', margin: '0 16px' }} />}
+          </div>
+        )
+      })}
+      {extra > 0 && (
+        <div style={{ padding: '10px 16px 13px', borderTop: '1px solid var(--au-line)', display: 'flex', justifyContent: 'flex-end' }}>
+          <button className="ev-more" onClick={() => setOpen(!open)}>{open ? '收起' : `更多 ${extra} 条 ›`}</button>
+        </div>
+      )}
     </div>
   )
 }
 
-// 深度调研报告卡：气泡播一段式语音简报、卡片给可读分节报告（每节结论+引用+置信度）+ 未覆盖 gaps。
-// 行车听简报、泊车展开读报告——首节默认展开，其余折叠（避免行车态一屏长文）。
-const _CONF_CN: Record<string, string> = { high: '高', medium: '中', low: '低' }
+// 深度调研报告卡（旗舰，照 A-4.3 重建）：AI 角标 + 问句 + 一句结论 + 元信息(置信/时效/引用)，
+// 分节手风琴(编号方徽章+置信徽章+折叠体，首节默认展开) + 「展开完整报告」 + 未覆盖缺口(琥珀) + 全局参考来源。
+// 行车听气泡简报、泊车展开读报告。
+function ResearchSection({ idx, heading, body, citations, confidence, open, onToggle }: {
+  idx: number; heading: string; body: string; citations?: number[]; confidence?: string; open: boolean; onToggle: () => void
+}) {
+  const t = _CONF_TONE[confidence ?? ''] ?? _CONF_TONE.low
+  return (
+    <div>
+      <button onClick={onToggle} style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}>
+        <span style={{ width: 24, height: 24, borderRadius: 8, flexShrink: 0, background: open ? t.bg : 'rgba(255,255,255,0.06)', border: `1px solid ${open ? t.bd : 'var(--au-line-2)'}`, display: 'grid', placeItems: 'center', transition: 'all .22s' }}>
+          <span className="au-num" style={{ fontSize: 10, fontWeight: 700, color: open ? t.c : 'var(--au-text-3)' }}>{String(idx).padStart(2, '0')}</span>
+        </span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: open ? 'var(--au-text)' : 'var(--au-text-2)', transition: 'color .2s' }}>{heading}</span>
+        <ConfPill level={confidence} small />
+        <Ico d={IC_CHEVRON} size={14} color="var(--au-text-3)" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .22s' }} />
+      </button>
+      {open && (
+        <div style={{ padding: '2px 16px 14px 52px' }}>
+          <p style={{ fontSize: 13, color: 'var(--au-text-2)', lineHeight: 1.8, margin: 0 }}>
+            {body}
+            {!!citations?.length && citations.map((c) => (
+              <sup key={c} className="au-num" style={{ fontSize: '0.72em', fontWeight: 700, color: 'var(--au-primary)', marginLeft: 2 }}>[{c}]</sup>
+            ))}
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function ResearchReportCardView({ card }: { card: ResearchReportCard }) {
-  const [open, setOpen] = useState(false)
   const sections = card.sections || []
-  const shown = open ? sections : sections.slice(0, 1)
+  const [openSet, setOpenSet] = useState<Set<number>>(new Set([0]))
+  const allOpen = sections.length > 0 && openSet.size === sections.length
+  const toggle = (i: number) => setOpenSet((prev) => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s })
+  const fresh = relativeTime(card.freshness)
+  const sources = card.sources || []
+  const gaps = card.gaps || []
   return (
-    <div className="card card-evidence card-research">
-      <AIBadge label="AI · 深度调研报告" />
-      <CardHead icon="📑" title={card.question || '深度调研'} freshness={card.freshness} />
-      {card.summary && (
-        <div style={{ padding: '11px 14px', borderRadius: 12, background: 'rgba(70,214,224,0.07)', border: '1px solid rgba(70,214,224,0.16)', margin: '10px 0', fontSize: 13, lineHeight: 1.7, color: 'var(--au-text)' }}>
-          {card.summary}
+    <div className="card card-research" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '16px 18px 14px' }}>
+        <AIBadge label="AI · 深度调研报告" />
+        <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', margin: '11px 0 12px' }}>
+          <Ico d={IC_BOOK} size={14} color="var(--au-text-2)" style={{ marginTop: 2 }} />
+          <span style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.38, color: 'var(--au-text)' }}>{card.question || '深度调研'}</span>
         </div>
-      )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <ConfidenceBadge level={card.overall_confidence} />
-        {card.sources?.length ? <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>· 引用 {card.sources.length} 篇</span> : null}
-      </div>
-      <div style={{ marginTop: 10 }}>
-        {shown.map((s, i) => (
-          <div key={i} style={{ marginBottom: 10 }}>
-            {s.heading && (
-              <div style={{ fontWeight: 600, marginBottom: 2 }}>
-                {s.heading}
-                {s.confidence && (
-                  <span style={{ opacity: 0.6, fontWeight: 400, fontSize: '0.85em' }}>
-                    {' '}· 置信度{_CONF_CN[s.confidence] ?? s.confidence}
-                  </span>
-                )}
-              </div>
-            )}
-            <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{s.body}</div>
-            {!!(s.citations && s.citations.length) && (
-              <div style={{ marginTop: 3, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {s.citations.map((c) => <span key={c} className="ev-source-idx">{c}</span>)}
-              </div>
-            )}
+        {card.summary && (
+          <div style={{ padding: '11px 14px', borderRadius: 12, background: 'rgba(70,214,224,0.07)', border: '1px solid rgba(70,214,224,0.16)', marginBottom: 13 }}>
+            <p style={{ fontSize: 13, color: 'var(--au-text)', lineHeight: 1.72, margin: 0 }}>{card.summary}</p>
           </div>
-        ))}
-      </div>
-      {sections.length > 1 && (
-        <button className="ev-more" onClick={() => setOpen(!open)}>
-          {open ? '收起报告' : `展开完整报告（共 ${sections.length} 节）`}
-        </button>
-      )}
-      {!!(card.gaps && card.gaps.length) && (
-        <div style={{ marginTop: 8, opacity: 0.75, fontSize: '0.9em' }}>
-          ⚠ 资料未充分覆盖：{card.gaps.join('；')}
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <ConfPill level={card.overall_confidence} />
+          {fresh && <><span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>·</span><span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>时效 {fresh}</span></>}
+          {sources.length > 0 && <><span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>·</span><span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>引用 {sources.length} 篇</span></>}
         </div>
+      </div>
+      <CardHR />
+      {sections.map((sec, i) => (
+        <div key={i}>
+          <ResearchSection idx={i + 1} heading={sec.heading} body={sec.body} citations={sec.citations} confidence={sec.confidence} open={openSet.has(i)} onToggle={() => toggle(i)} />
+          {i < sections.length - 1 && <CardHR />}
+        </div>
+      ))}
+      {sections.length > 1 && !allOpen && (
+        <>
+          <CardHR />
+          <div style={{ padding: '12px 16px', textAlign: 'center' }}>
+            <button onClick={() => setOpenSet(new Set(sections.map((_, i) => i)))} style={{ padding: '8px 22px', borderRadius: 20, background: 'rgba(70,214,224,0.08)', border: '1px solid rgba(70,214,224,0.22)', color: 'var(--au-primary)', fontSize: 12.5, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>
+              展开完整报告（共 {sections.length} 节）
+            </button>
+          </div>
+        </>
       )}
-      <SourceList sources={card.sources} />
+      {gaps.length > 0 && (
+        <>
+          <CardHR />
+          <div style={{ padding: '13px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <Ico d={IC_ALERT} size={13} color="var(--au-warn)" />
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--au-warn)' }}>未覆盖数据缺口</span>
+            </div>
+            {gaps.map((g, i) => (
+              <div key={i} style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginBottom: i < gaps.length - 1 ? 7 : 0 }}>
+                <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'rgba(245,158,11,0.55)', flexShrink: 0, marginTop: 6 }} />
+                <span style={{ fontSize: 12, color: 'var(--au-text-2)', lineHeight: 1.65 }}>{g}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {sources.length > 0 && (
+        <>
+          <CardHR />
+          <div style={{ padding: '13px 16px' }}>
+            <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', letterSpacing: '0.09em', textTransform: 'uppercase', fontWeight: 600, marginBottom: 10 }}>参考来源</div>
+            {sources.map((r, i) => (
+              <div key={i} style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginBottom: 8 }}>
+                <sup className="au-num" style={{ fontSize: 9, fontWeight: 700, color: 'var(--au-primary)', flexShrink: 0, marginTop: 3.5, minWidth: 14 }}>[{r.idx ?? i + 1}]</sup>
+                <div>
+                  {r.url
+                    ? <a href={r.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: 'var(--au-text-2)', textDecoration: 'none' }}>{r.title}</a>
+                    : <span style={{ fontSize: 12, color: 'var(--au-text-2)' }}>{r.title}</span>}
+                  <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}> — {[r.source, r.published].filter(Boolean).join(' · ') || domainOf(r.url)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }
 
+// 新闻速览卡（照 A-4.2 重建）：AI 角标 + 「今日要闻 · 已摘要 N 条」+ 编号(02)+标题+摘要+来源·时间，
+// 折叠「参考来源 N 个」展开来源点列；默认 5 条，「更多 N 条」展开。
 function NewsBriefCardView({ card }: { card: NewsBriefCard }) {
   const [open, setOpen] = useState(false)
-  // 来源/原文链接默认全部折叠：第一性原理——车上用户扫标题+摘要即可，基本不会点原文链接，
-  // 来源域名一行会喧宾夺主。折叠态只用「参考来源 N 个」简单标记数量，点击才展开。
   const [showSrc, setShowSrc] = useState(false)
-  const srcCount = new Set(card.items.map((n) => n.source).filter(Boolean)).size
-  const shown = open ? card.items : card.items.slice(0, 10)
+  const items = card.items || []
+  const SHOW = 5
+  const shown = open ? items : items.slice(0, SHOW)
+  const extra = items.length - SHOW
+  const srcCount = new Set(items.map((n) => n.source).filter(Boolean)).size
   return (
-    <div className="card card-evidence">
-      <AIBadge label="AI · 新闻速览" />
-      <CardHead icon="📰" title={card.topic || '今日值得关注'} freshness={card.freshness} />
-      <ol className="ev-news-ol">
-        {shown.map((n, i) => {
-          // 来源名 + 相对时间默认常显（对症「看不到摘要/时间」）；「参考来源」折叠只控制来源是否变可点链接。
-          const rel = relativeTime(n.publish_time)
-          return (
-            <li key={i} className="ev-news-li">
-              <span className="ev-news-h">{n.title}</span>
-              {n.summary && <div className="ev-news-sum">{n.summary}</div>}
-              {(n.source || rel) && (
-                <span className="ev-news-src">
-                  {showSrc && n.url
-                    ? <a href={n.url} target="_blank" rel="noopener noreferrer">{n.source}</a>
-                    : n.source}
-                  {rel ? (n.source ? ' · ' : '') + rel : ''}
-                </span>
-              )}
-            </li>
-          )
-        })}
-      </ol>
-      <div className="ev-news-actions">
-        {srcCount > 0 && (
-          <button className="ev-more ev-src-toggle" onClick={() => setShowSrc(!showSrc)}>
-            {showSrc ? '收起来源' : `参考来源 ${srcCount} 个`}
-          </button>
-        )}
-        {card.items.length > 10 && (
-          <button className="ev-more" onClick={() => setOpen(!open)}>
-            {open ? '收起' : `更多 ${card.items.length - 10} 条`}
-          </button>
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '15px 16px 12px' }}>
+        <AIBadge label="AI · 新闻速览" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <Ico d={['M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2', 'M18 14h-8M15 18h-5M10 6h8v4h-8z']} size={13} color="var(--au-text-2)" />
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--au-text)' }}>{card.topic || '今日要闻'}</span>
+          </div>
+          <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>已摘要 {items.length} 条</span>
+        </div>
+      </div>
+      <CardHR />
+      {shown.map((n, i) => {
+        const rel = relativeTime(n.publish_time)
+        return (
+          <div key={i}>
+            <div style={{ padding: '11px 16px', display: 'flex', gap: 11, alignItems: 'flex-start' }}>
+              <span className="au-num" style={{ fontSize: 10.5, color: 'var(--au-text-3)', flexShrink: 0, marginTop: 1.5, minWidth: 16 }}>{String(i + 1).padStart(2, '0')}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {n.url
+                  ? <a href={n.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 600, color: 'var(--au-text)', lineHeight: 1.4, textDecoration: 'none' }}>{n.title}</a>
+                  : <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--au-text)', lineHeight: 1.4 }}>{n.title}</div>}
+                {n.summary && <p style={{ fontSize: 11.5, color: 'var(--au-text-2)', lineHeight: 1.68, margin: '5px 0' }}>{n.summary}</p>}
+                {(n.source || rel) && (
+                  <div style={{ display: 'flex', gap: 5, alignItems: 'center', marginTop: n.summary ? 0 : 5 }}>
+                    {n.source && <span style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--au-text-3)' }}>{n.source}</span>}
+                    {rel && <><span style={{ fontSize: 10, color: 'var(--au-text-3)' }}>·</span><span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>{rel}</span></>}
+                  </div>
+                )}
+              </div>
+            </div>
+            {i < shown.length - 1 && <div style={{ height: 1, background: 'var(--au-line)', margin: '0 16px' }} />}
+          </div>
+        )
+      })}
+      <div style={{ borderTop: '1px solid var(--au-line)', padding: '10px 16px 13px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {srcCount > 0 ? (
+            <button onClick={() => setShowSrc(!showSrc)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'var(--au-text-2)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}>
+              参考来源 {srcCount} 个
+              <Ico d={IC_CHEVRON} size={12} color="var(--au-text-3)" style={{ transform: showSrc ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+            </button>
+          ) : <span />}
+          {extra > 0 && <button className="ev-more" onClick={() => setOpen(!open)}>{open ? '收起' : `更多 ${extra} 条 ›`}</button>}
+        </div>
+        {showSrc && (
+          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {items.map((n, i) => {
+              const rel = relativeTime(n.publish_time)
+              return (
+                <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--au-primary)', flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, color: 'var(--au-text-2)' }}>{n.source}</span>
+                  {rel && <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>· {rel}</span>}
+                </div>
+              )
+            })}
+          </div>
         )}
       </div>
     </div>

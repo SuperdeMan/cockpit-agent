@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSettings } from '../settings'
 import { AuroraOrb } from './aurora'
-import type { Msg, UiCard, WeatherCard, PoiListCard } from '../types'
+import type { Msg, UiCard, WeatherCard, PoiListCard, PoiDetailCard, RoutePlanCard, ChargingRouteCard, TripItineraryCard } from '../types'
 
 type Scene =
   | { kind: 'idle' }
@@ -166,57 +166,191 @@ function WeatherStage({ card }: { card: WeatherCard }) {
   )
 }
 
-// ── 地图场景（呼应 A-5 右舞台）：玻璃网格 + 编号 POI 标点 + 当前位置 ──
-function MapStage({ card }: { card: UiCard }) {
-  const isPoi = card.type === 'poi_list'
-  const items = isPoi ? (card as PoiListCard).items.slice(0, 6) : []
-  const title = isPoi
-    ? (card as PoiListCard).title || (card as PoiListCard).keyword || '附近地点'
-    : card.type === 'charging_route' ? '充电路线'
-    : card.type === 'route_plan' ? '路线规划'
-    : card.type === 'trip_itinerary' ? '行程地图'
-    : '地点详情'
+// ── 地图场景（呼应 A-5 右舞台）：路网底纹 SVG + 按卡类型的数据驱动「示意图」可视化 ──
+// 真实卡多无经纬度，故用示意图语言（非真实地理）：POI 按距离环布 + 测距虚环；路线沿对角折线流动虚线；
+// 充电按 at_km 比例落补电站 + SoC 条；行程按天连点。坐标系 viewBox 600×480，slice 充满右栏（响应式）。
+// 真实地图 SDK 留实现期（见实施计划 §4 非目标）。
+const VB_W = 600
+const VB_H = 480
+const sx = (p: number) => (p / 100) * VB_W
+const sy = (p: number) => (p / 100) * VB_H
+const ROADS_H = [18, 32, 44, 56, 67, 78, 88]
+const ROADS_V = [15, 28, 42, 55, 68, 80, 91]
 
-  // poi_list 无坐标 → 围绕"当前位置"按序确定性散布标点（数据驱动绘制区占位）
-  const pin = (i: number, n: number) => {
-    const ang = (-90 + (360 / Math.max(n, 1)) * i) * (Math.PI / 180)
-    const r = 26 + (i % 2) * 8
-    return { left: `${50 + r * Math.cos(ang)}%`, top: `${50 + r * Math.sin(ang)}%` }
+function mapMeta(card: UiCard): { label: string; summary?: string[]; foot: string } {
+  switch (card.type) {
+    case 'poi_list': { const c = card as PoiListCard; return { label: c.title || c.keyword || '附近地点', foot: `${c.items.length} 个地点` } }
+    case 'poi_detail': { const c = card as PoiDetailCard; return { label: '地点详情', foot: c.category || '' } }
+    case 'route_plan': { const c = card as RoutePlanCard; const s: string[] = []; if (c.distance_km != null) s.push(`${c.distance_km}km`); if (c.duration_min != null) s.push(`${c.duration_min}分钟`); return { label: '行驶路线', summary: s.length ? s : undefined, foot: c.destination } }
+    case 'charging_route': { const c = card as ChargingRouteCard; const s: string[] = []; if (c.distance_km != null) s.push(`${c.distance_km}km`); if (c.duration_min != null) s.push(`${c.duration_min}分钟`); return { label: '充电路线', summary: s.length ? s : undefined, foot: `→ ${c.destination}` } }
+    case 'trip_itinerary': { const c = card as TripItineraryCard; return { label: '行程地图', summary: [`${c.days}天`, `${c.itinerary?.length || 0}段`], foot: c.destination } }
+    default: return { label: '地图', foot: '' }
   }
+}
 
+function MapStage({ card }: { card: UiCard }) {
+  const meta = mapMeta(card)
   return (
-    <div style={{ position: 'absolute', inset: 0, backgroundImage: 'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)', backgroundSize: '56px 56px' }}>
-      {/* 标题 chip */}
-      <div className="au-glass" style={{ position: 'absolute', top: 18, left: 18, padding: '8px 16px', fontSize: 13.5, fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--au-primary)', boxShadow: '0 0 8px var(--au-primary)' }} />
-        {title}
+    <div style={{ position: 'absolute', inset: 0, borderRadius: 'var(--au-r-3xl)', overflow: 'hidden', background: 'linear-gradient(158deg,#06080F 0%,#0B1020 60%,#080D18 100%)' }}>
+      <div aria-hidden style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+        <span style={{ position: 'absolute', top: '10%', left: '18%', width: 260, height: 220, borderRadius: '50%', background: 'radial-gradient(circle,rgba(91,140,255,0.15),transparent 70%)', filter: 'blur(44px)' }} />
+        <span style={{ position: 'absolute', bottom: '14%', right: '14%', width: 220, height: 180, borderRadius: '50%', background: 'radial-gradient(circle,rgba(91,233,255,0.10),transparent 70%)', filter: 'blur(50px)' }} />
       </div>
 
-      {/* 当前位置 */}
-      <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-        <span style={{ width: 16, height: 16, borderRadius: '50%', background: 'var(--au-primary)', boxShadow: '0 0 0 5px rgba(70,214,224,0.18), 0 0 18px var(--au-primary)' }} />
-        <span style={{ fontSize: 11, color: 'var(--au-text-2)' }}>当前位置</span>
+      <svg width="100%" height="100%" viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="xMidYMid slice" style={{ position: 'absolute', inset: 0, fontFamily: 'var(--au-font-ui)' }}>
+        {ROADS_H.map((y, i) => <line key={'h' + i} x1={0} y1={sy(y)} x2={VB_W} y2={sy(y)} stroke="rgba(91,140,255,0.055)" strokeWidth={1} />)}
+        {ROADS_V.map((x, i) => <line key={'v' + i} x1={sx(x)} y1={0} x2={sx(x)} y2={VB_H} stroke="rgba(91,140,255,0.055)" strokeWidth={1} />)}
+        <line x1={sx(15)} y1={sy(18)} x2={sx(42)} y2={sy(44)} stroke="rgba(91,140,255,0.05)" strokeWidth={1} />
+        <line x1={sx(55)} y1={sy(32)} x2={sx(80)} y2={sy(56)} stroke="rgba(91,140,255,0.05)" strokeWidth={1} />
+        <line x1={sx(68)} y1={sy(18)} x2={sx(91)} y2={sy(44)} stroke="rgba(91,140,255,0.05)" strokeWidth={1} />
+
+        {card.type === 'poi_list' && <PoiView card={card as PoiListCard} />}
+        {card.type === 'poi_detail' && <PoiDetailView card={card as PoiDetailCard} />}
+        {card.type === 'route_plan' && <PathView card={card as RoutePlanCard} />}
+        {card.type === 'charging_route' && <ChargeView card={card as ChargingRouteCard} />}
+        {card.type === 'trip_itinerary' && <ItineraryView card={card as TripItineraryCard} />}
+      </svg>
+
+      <div style={{ position: 'absolute', top: 18, left: 18, padding: '5px 13px', borderRadius: 20, background: 'rgba(70,214,224,0.10)', border: '1px solid rgba(70,214,224,0.22)', display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--au-primary)', boxShadow: '0 0 8px var(--au-primary)' }} />
+        <span style={{ fontSize: 12.5, color: 'var(--au-primary)', fontWeight: 500 }}>{meta.label}</span>
       </div>
-
-      {/* POI 标点（编号，呼应左侧卡「第N个」联动）*/}
-      {items.map((it, i) => {
-        const p = pin(i, items.length)
-        return (
-          <div key={it.id || i} style={{ position: 'absolute', left: p.left, top: p.top, transform: 'translate(-50%,-50%)', textAlign: 'center' }}>
-            <span style={{ display: 'grid', placeItems: 'center', width: 24, height: 24, borderRadius: '50%', margin: '0 auto', fontSize: 12, fontWeight: 700, color: 'var(--au-primary-ink)', background: 'var(--au-primary)', boxShadow: '0 0 14px rgba(70,214,224,0.5)' }}>{i + 1}</span>
-            {it.distance_km != null && <span className="au-num" style={{ fontSize: 10.5, color: 'var(--au-text-2)', marginTop: 2, display: 'block' }}>{it.distance_km}km</span>}
-          </div>
-        )
-      })}
-
-      {/* 非 POI 出行卡（路线/充电/行程）→ 简版占位提示 */}
-      {!isPoi && (
-        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 24, textAlign: 'center', fontSize: 12.5, color: 'var(--au-text-3)' }}>
-          路线与途经点见左侧卡片
+      {meta.summary && meta.summary.length > 0 && (
+        <div className="au-glass" style={{ position: 'absolute', top: 18, right: 18, padding: '7px 14px', display: 'inline-flex', gap: 10, alignItems: 'center' }}>
+          {meta.summary.map((s, i) => <span key={i} className="au-num" style={{ fontSize: 12.5, color: i === 0 ? 'var(--au-text)' : 'var(--au-text-2)' }}>{s}</span>)}
         </div>
       )}
-
-      <div style={{ position: 'absolute', right: 18, bottom: 16, fontSize: 12, color: 'var(--au-text-3)', letterSpacing: '0.04em' }}>地图占位 · 实现期接 SDK</div>
+      <div style={{ position: 'absolute', bottom: 16, right: 20, fontSize: 11, color: 'var(--au-text-3)', fontFamily: 'var(--au-font-mono)' }}>{meta.foot || '地图示意 · 实现期接 SDK'}</div>
     </div>
+  )
+}
+
+// POI：测距虚环 + 当前位置 + 编号标点（连线呼应左卡「第N个」）
+function PoiView({ card }: { card: PoiListCard }) {
+  const items = card.items.slice(0, 6)
+  const n = items.length
+  const cx = sx(50), cy = sy(50)
+  const pts = items.map((it, i) => {
+    const ang = (-90 + (360 / Math.max(n, 1)) * i) * (Math.PI / 180)
+    const dist = it.distance_km ?? 1.5 + i
+    const rr = 20 + Math.min(dist, 6) / 6 * 22
+    return { x: sx(50 + rr * Math.cos(ang)), y: sy(50 + rr * Math.sin(ang)), n: i + 1, dist: it.distance_km }
+  })
+  return (
+    <g>
+      {[70, 110, 150].map((r, i) => <circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={`rgba(70,214,224,${0.07 - i * 0.02})`} strokeWidth={1} strokeDasharray="4,8" />)}
+      {pts.map((p, i) => (
+        <g key={i}>
+          <line x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="rgba(70,214,224,0.12)" strokeWidth={1} strokeDasharray="3,5" />
+          <circle cx={p.x} cy={p.y} r={14} fill="rgba(70,214,224,0.08)" stroke="rgba(70,214,224,0.25)" strokeWidth={1} style={{ animation: 'au-map-glow 3s ease-in-out infinite' }} />
+          <circle cx={p.x} cy={p.y} r={8} fill="#46D6E0" />
+          <text x={p.x} y={p.y + 3.5} fontSize={10} fill="#06080F" textAnchor="middle" fontFamily="var(--au-font-mono)" fontWeight={700}>{p.n}</text>
+          {p.dist != null && <text x={p.x} y={p.y + 23} fontSize={9} fill="rgba(255,255,255,0.5)" textAnchor="middle" fontFamily="var(--au-font-mono)">{p.dist}km</text>}
+        </g>
+      ))}
+      <circle cx={cx} cy={cy} r={10} fill="rgba(70,214,224,0.15)" stroke="#46D6E0" strokeWidth={1.5} />
+      <circle cx={cx} cy={cy} r={5} fill="#46D6E0" />
+      <text x={cx} y={cy - 16} fontSize={10} fill="#46D6E0" textAnchor="middle">当前位置</text>
+    </g>
+  )
+}
+
+function PoiDetailView({ card }: { card: PoiDetailCard }) {
+  const cx = sx(50), cy = sy(48)
+  return (
+    <g>
+      {[60, 100].map((r, i) => <circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={`rgba(70,214,224,${0.08 - i * 0.03})`} strokeWidth={1} strokeDasharray="4,8" />)}
+      <circle cx={cx} cy={cy} r={16} fill="rgba(70,214,224,0.12)" stroke="#46D6E0" strokeWidth={1.5} style={{ animation: 'au-map-glow 3s ease-in-out infinite' }} />
+      <circle cx={cx} cy={cy} r={8} fill="#46D6E0" />
+      <text x={cx} y={cy - 24} fontSize={13} fill="rgba(255,255,255,0.92)" textAnchor="middle" fontWeight={600}>{card.name}</text>
+      {card.category && <text x={cx} y={cy + 32} fontSize={10} fill="rgba(255,255,255,0.5)" textAnchor="middle">{card.category}</text>}
+    </g>
+  )
+}
+
+// 路线：出发→途经(琥珀)→目的地(大) 折线流动虚线
+function PathView({ card }: { card: RoutePlanCard }) {
+  const labels = [card.origin || '当前位置', ...(card.waypoints || []).map((w) => w.name), card.destination]
+  const nodes = labels.map((label, i, a) => {
+    const t = a.length > 1 ? i / (a.length - 1) : 0
+    const zig = i > 0 && i < a.length - 1 ? (i % 2 ? -5 : 5) : 0
+    return { x: sx(22 + t * 56), y: sy(72 - t * 48 + zig), label, role: i === 0 ? 'origin' : i === a.length - 1 ? 'dest' : 'via' as const }
+  })
+  return (
+    <g>
+      <polyline points={nodes.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke="#46D6E0" strokeWidth={3} strokeLinecap="round" strokeDasharray="12,6" style={{ animation: 'au-route-dash 2s linear infinite' }} />
+      {nodes.map((p, i) => (
+        <g key={i}>
+          <circle cx={p.x} cy={p.y} r={p.role === 'dest' ? 10 : 7} fill={p.role === 'via' ? '#F59E0B' : '#46D6E0'} stroke="rgba(6,8,15,0.8)" strokeWidth={2} />
+          <text x={p.x} y={p.y - 14} fontSize={10} fill="rgba(255,255,255,0.7)" textAnchor="middle">{p.label}</text>
+        </g>
+      ))}
+    </g>
+  )
+}
+
+// 充电：出发→补电站(按 at_km 比例·琥珀⚡)→目的地 + 底部 SoC 条
+function ChargeView({ card }: { card: ChargingRouteCard }) {
+  const stops = card.stops || []
+  const total = card.distance_km || (stops.length ? (stops[stops.length - 1].at_km || 0) * 1.25 : 100) || 100
+  const ox = 8, dx = 92
+  type N = { x: number; y: number; label: string; role: 'origin' | 'charge' | 'dest'; at?: number }
+  const nodes: N[] = [
+    { x: ox, y: 54, label: '出发', role: 'origin' },
+    ...stops.map((s): N => ({ x: ox + (dx - ox) * Math.min((s.at_km || 0) / total, 0.9), y: 50, label: s.name, role: 'charge', at: s.at_km })),
+    { x: dx, y: 46, label: card.destination, role: 'dest' },
+  ]
+  const soc = parseInt(card.soc || '', 10)
+  return (
+    <g>
+      <polyline points={nodes.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')} fill="none" stroke="#46D6E0" strokeWidth={2.5} strokeLinecap="round" strokeDasharray="10,5" style={{ animation: 'au-route-dash 3s linear infinite' }} />
+      {nodes.map((p, i) => {
+        const X = sx(p.x), Y = sy(p.y)
+        if (p.role === 'charge') return (
+          <g key={i}>
+            <circle cx={X} cy={Y} r={13} fill="rgba(245,158,11,0.15)" stroke="#F59E0B" strokeWidth={1.5} />
+            <text x={X} y={Y + 4} fontSize={12} textAnchor="middle">⚡</text>
+            <text x={X} y={Y - 19} fontSize={9} fill="#F59E0B" textAnchor="middle">{p.label}</text>
+            {p.at != null && <text x={X} y={Y + 24} fontSize={8.5} fill="rgba(255,255,255,0.45)" textAnchor="middle" fontFamily="var(--au-font-mono)">{p.at}km</text>}
+          </g>
+        )
+        return (
+          <g key={i}>
+            <circle cx={X} cy={Y} r={8} fill={p.role === 'origin' ? '#46D6E0' : '#34D399'} stroke="rgba(6,8,15,0.8)" strokeWidth={2} />
+            <text x={X} y={Y - 14} fontSize={9.5} fill="rgba(255,255,255,0.7)" textAnchor="middle">{p.label}</text>
+          </g>
+        )
+      })}
+      {Number.isFinite(soc) && (
+        <g>
+          <rect x={20} y={VB_H - 46} width={170} height={15} rx={7.5} fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.10)" strokeWidth={1} />
+          <rect x={22} y={VB_H - 44} width={Math.max(0, Math.min(100, soc)) / 100 * 166} height={11} rx={5.5} fill={soc > 50 ? '#46D6E0' : '#F59E0B'} opacity={0.85} />
+          <text x={200} y={VB_H - 35} fontSize={10} fill={soc > 50 ? '#46D6E0' : '#F59E0B'} fontFamily="var(--au-font-mono)">{soc}% SoC</text>
+        </g>
+      )}
+    </g>
+  )
+}
+
+// 行程：按天连点 D1·D2·D3…（主题 + 停靠点数）
+function ItineraryView({ card }: { card: TripItineraryCard }) {
+  const days = card.itinerary || []
+  const n = days.length || card.days || 1
+  const nodes = days.map((d, i) => {
+    const t = n > 1 ? i / (n - 1) : 0
+    return { x: sx(18 + t * 60), y: sy(40 + (i % 2 ? 18 : -6) + i * 3), day: d.day_index ?? i + 1, theme: d.theme || `第${d.day_index ?? i + 1}天`, stops: d.stops?.length || 0 }
+  })
+  return (
+    <g>
+      {nodes.map((p, i) => i > 0 ? <line key={'l' + i} x1={nodes[i - 1].x} y1={nodes[i - 1].y} x2={p.x} y2={p.y} stroke="rgba(70,214,224,0.25)" strokeWidth={1.5} strokeDasharray="6,4" /> : null)}
+      {nodes.map((p, i) => (
+        <g key={'d' + i}>
+          <circle cx={p.x} cy={p.y} r={13} fill="rgba(70,214,224,0.12)" stroke="rgba(255,255,255,0.3)" strokeWidth={1.5} />
+          <text x={p.x} y={p.y + 4} fontSize={10} fill="rgba(255,255,255,0.9)" textAnchor="middle" fontFamily="var(--au-font-mono)" fontWeight={700}>D{p.day}</text>
+          <text x={p.x} y={p.y - 19} fontSize={9.5} fill="rgba(255,255,255,0.6)" textAnchor="middle">{p.theme}</text>
+          <text x={p.x} y={p.y + 25} fontSize={8.5} fill="rgba(255,255,255,0.4)" textAnchor="middle">{p.stops}个点</text>
+        </g>
+      ))}
+    </g>
   )
 }

@@ -83,6 +83,17 @@ const researchCard: import('./types').ResearchReportCard = {
   freshness: new Date(Date.now() - 12 * 60000).toISOString(),
 }
 
+const searchCard: import('./types').SearchResultCard = {
+  type: 'search_result', query: '固态电池量产时间', confidence: 'medium',
+  freshness: new Date(Date.now() - 2 * 60000).toISOString(),
+  sources: [
+    { title: '宁德时代透露全固态电池计划 2027 年实现小批量生产，初期年产能约 2GWh', url: 'https://www.gasgoo.com/news/70123', source: '盖世汽车', published: new Date(Date.now() - 2 * 3600000).toISOString() },
+    { title: '多家整车厂发布固态电池路线图，量产窗口集中在 2026—2030 年间', url: 'https://www.yicai.com/news/101.html', source: '第一财经', published: new Date(Date.now() - 5 * 3600000).toISOString() },
+    { title: 'Interface stability and manufacturing yield remain primary barriers to 2027 targets', url: 'https://spectrum.ieee.org/solid-state', source: 'IEEE Spectrum', published: new Date(Date.now() - 26 * 3600000).toISOString() },
+    { title: '丰田称将于 2026 年推出搭载全固态电池量产混动车，固态电解质良率突破 85%', url: 'https://www.cls.cn/detail/123', source: '财联社', published: new Date(Date.now() - 3 * 3600000).toISOString() },
+  ],
+}
+
 const newsCard: import('./types').NewsBriefCard = {
   type: 'news_brief', topic: '今日要闻',
   freshness: new Date(Date.now() - 2 * 3600000).toISOString(),
@@ -189,9 +200,21 @@ export const DEMO_STATES: Msg[] = [
   { id: 'st13', role: 'assistant', text: '即将打开后备箱，此操作将解锁并弹开后备箱盖。是否确认？', needConfirm: true },
 ]
 
+// ── A-4 信息卡专项验证（?demo=info）：搜索 / 深度调研 / 新闻速览 ──
+export const DEMO_INFO: Msg[] = [
+  { id: 'i0', role: 'user', text: '搜一下固态电池量产时间' },
+  { id: 'i1', role: 'assistant', text: '综合多源：2027 年小批量可行，规模化大概率推迟至 2030 年后。', uiCard: searchCard },
+  { id: 'i2', role: 'user', text: '帮我深入调研固态电池 2027 年量产可行性' },
+  { id: 'i3', role: 'assistant', text: '已为你完成固态电池量产可行性的分节调研，整体置信度中。', uiCard: researchCard },
+  { id: 'i4', role: 'user', text: '今天有什么要闻' },
+  { id: 'i5', role: 'assistant', text: '为你速览今日要闻。', uiCard: newsCard },
+]
+
 export const DEMO_CARDS: Msg[] = [
   { id: 'c0', role: 'user', text: '查一下茅台股价' },
   { id: 'c1', role: 'assistant', text: '贵州茅台收报 1689.00 元，今日上涨 0.75%。', uiCard: stockCard },
+  { id: 'cs0', role: 'user', text: '搜一下固态电池量产时间' },
+  { id: 'cs1', role: 'assistant', text: '综合多源：2027 年小批量可行，规模化大概率推迟至 2030 年后。', uiCard: searchCard },
   { id: 'c2', role: 'user', text: '帮我深入调研固态电池 2027 年量产可行性' },
   { id: 'c3', role: 'assistant', text: '已为你完成固态电池量产可行性的分节调研，整体置信度中。', uiCard: researchCard },
   { id: 'c4', role: 'user', text: '今天有什么要闻' },
@@ -204,4 +227,18 @@ export const DEMO_CARDS: Msg[] = [
   { id: 'c11', role: 'assistant', text: '已为你规划成都 2 日自驾行程，含都江堰一日。', uiCard: tripCard },
   { id: 'c12', role: 'user', text: '导航去首都机场，顺路吃个饭' },
   { id: 'c13', role: 'assistant', text: '已为你规划经望京小腰前往首都机场 T3 的路线。', uiCard: routeCard },
+]
+
+// ── 右舞台地图按卡类型专项验证（?demo=charge / =trip / =route）──
+export const DEMO_CHARGE: Msg[] = [
+  { id: 'g0', role: 'user', text: '导航去都江堰，沿途要充电' },
+  { id: 'g1', role: 'assistant', text: '已为你规划到都江堰的充电路线，途中在青城山服务区补电一次。', uiCard: chargeCard },
+]
+export const DEMO_TRIP: Msg[] = [
+  { id: 't0', role: 'user', text: '帮我规划成都 2 日自驾' },
+  { id: 't1', role: 'assistant', text: '已为你规划成都 2 日自驾行程，含都江堰一日。', uiCard: tripCard },
+]
+export const DEMO_ROUTE: Msg[] = [
+  { id: 'r0', role: 'user', text: '导航去首都机场，顺路吃个饭' },
+  { id: 'r1', role: 'assistant', text: '已为你规划经望京小腰前往首都机场 T3 的路线。', uiCard: routeCard },
 ]
