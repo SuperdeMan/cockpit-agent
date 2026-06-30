@@ -161,7 +161,7 @@ function WeatherStage({ card }: { card: WeatherCard }) {
         )}
         {card.precip && <><Sep /><StripItem label="降水" value={`${card.precip}mm`} color="var(--au-primary)" /></>}
         {card.air_quality && <><Sep /><StripItem label="空气质量" value={`${card.air_quality.category} ${card.air_quality.aqi}`} color="#A3E635" /></>}
-        {rainy && <><Sep /><span style={{ fontSize: 12, color: 'var(--au-text-2)' }}>☂️ 建议带伞</span></>}
+        {rainy && <><Sep /><span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--au-text-2)' }}><Icon name="umbrella" size={14} color="var(--au-text-2)" />建议带伞</span></>}
       </div>
     </div>
   )
@@ -310,7 +310,7 @@ function ChargeView({ card }: { card: ChargingRouteCard }) {
         if (p.role === 'charge') return (
           <g key={i}>
             <circle cx={X} cy={Y} r={13} fill="rgba(245,158,11,0.15)" stroke="#F59E0B" strokeWidth={1.5} />
-            <text x={X} y={Y + 4} fontSize={12} textAnchor="middle">⚡</text>
+            <g transform={`translate(${X} ${Y}) scale(0.46) translate(-12 -12)`}><path d="M13 2L3 14h9l-1 8 10-12h-9z" fill="#F59E0B" /></g>
             <text x={X} y={Y - 19} fontSize={9} fill="#F59E0B" textAnchor="middle">{p.label}</text>
             {p.at != null && <text x={X} y={Y + 24} fontSize={8.5} fill="rgba(255,255,255,0.45)" textAnchor="middle" fontFamily="var(--au-font-mono)">{p.at}km</text>}
           </g>

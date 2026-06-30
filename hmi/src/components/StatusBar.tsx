@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useSettings } from '../settings'
 import { AuroraOrb } from './aurora'
+import { Icon } from './Icon'
 
 const MODEL_LABEL: Record<string, string> = { fast: '快速', deep: '深度推理', auto: '自动' }
 const WEEK = '日一二三四五六'
@@ -45,10 +46,10 @@ export function StatusBar({
           title={settings.ttsEnabled ? '关闭语音播报' : '开启语音播报'}
           aria-label="语音播报开关"
         >
-          {settings.ttsEnabled ? '🔊' : '🔇'}
+          <Icon name="voice-output" size={18} state={settings.ttsEnabled ? 'active' : 'default'} />
         </button>
         <button className="au-icon-btn" onClick={onOpenSettings} title="设置" aria-label="打开设置">
-          ⚙
+          <Icon name="settings" size={18} />
         </button>
       </div>
     </header>

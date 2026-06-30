@@ -142,7 +142,7 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
       {/* 预警 callout */}
       {alert && (
         <div style={{ padding: '10px 16px', background: 'rgba(245,158,11,0.11)', borderBottom: '1px solid rgba(245,158,11,0.20)', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-          <span style={{ color: 'var(--au-warn)', fontSize: 14, flexShrink: 0, lineHeight: 1.3 }}>⚠</span>
+          <Icon name="warning" size={15} color="var(--au-warn)" style={{ flexShrink: 0, marginTop: 1 }} />
           <div>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--au-warn)' }}>{alert.headline}</div>
             <div style={{ fontSize: 11, color: 'var(--au-text-2)', marginTop: 2, lineHeight: 1.55 }}>{alert.detail}</div>
@@ -389,7 +389,7 @@ function NewsCardView({ card }: { card: NewsCard }) {
 function NewsDigestCardView({ card }: { card: NewsDigestCard }) {
   return (
     <div className="card card-news-digest">
-      <div className="card-header">📰 {card.topic || '今日热点'}</div>
+      <div className="card-header" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><Icon name="newspaper" size={16} color="var(--au-text)" />{card.topic || '今日热点'}</div>
       <div className="news-digest-summary">{card.summary}</div>
       {card.headlines.length > 0 && (
         <div className="news-digest-headlines">
@@ -434,7 +434,7 @@ function SearchAnswerCardView({ card }: { card: SearchAnswerCard }) {
   const [expanded, setExpanded] = useState(false)
   return (
     <div className="card card-search-answer">
-      <div className="card-header">🔍 {card.query}</div>
+      <div className="card-header" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><Icon name="search" size={16} color="var(--au-text)" />{card.query}</div>
       <div className="search-answer-text">{card.answer}</div>
       {card.sources.length > 0 && (
         <div className="search-answer-sources">
@@ -476,16 +476,6 @@ function relativeTime(iso?: string): string {
   const day = Math.floor(hr / 24)
   if (day < 30) return `${day}天前`
   return new Date(t).toLocaleDateString('zh-CN')
-}
-
-function CardHead({ icon, title, freshness }: { icon: string; title: string; freshness?: string }) {
-  const rel = relativeTime(freshness)
-  return (
-    <div className="ev-head">
-      <span className="ev-head-title">{icon} {title}</span>
-      {rel && <span className="ev-fresh">⏱ {rel}</span>}
-    </div>
-  )
 }
 
 function ConfidenceBadge({ level }: { level?: string }) {
@@ -826,7 +816,7 @@ function FixtureBoard({ f }: { f: SportsScoresCard['fixtures'][number] }) {
           {goals.map((g, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
               <span className="au-num" style={{ fontSize: 11, fontWeight: 700, color: g.team === 'away' ? AWAY_C : HOME_C, width: 28, textAlign: 'right', flexShrink: 0 }}>{g.minute}&apos;</span>
-              <span style={{ fontSize: 13 }}>⚽</span>
+              <Icon name="sports" size={14} color="var(--au-text-2)" />
               <span style={{ fontSize: 12.5, color: 'var(--au-text)' }}>{g.player || '球员'}</span>
               {g.detail && g.detail !== '进球' && <span style={{ fontSize: 10, color: 'var(--au-text-3)', border: '1px solid var(--au-line-2)', borderRadius: 3, padding: '0 4px' }}>{g.detail}</span>}
               <span style={{ fontSize: 11, color: 'var(--au-text-3)', marginLeft: 'auto' }}>{g.team === 'away' ? f.away : g.team === 'home' ? f.home : ''}</span>
@@ -844,7 +834,7 @@ function SportsScoresCardView({ card }: { card: SportsScoresCard }) {
       <div style={{ padding: '15px 16px 12px' }}>
         <AIBadge label="AI · 赛事信息" />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 14.5, fontWeight: 600 }}>🏆 {card.title}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600 }}><Icon name="sports" size={17} color="var(--au-text)" />{card.title}</span>
           {card.freshness && <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{relativeTime(card.freshness)}</span>}
         </div>
       </div>
@@ -867,7 +857,7 @@ function SportsScorersCardView({ card }: { card: SportsScorersCard }) {
     <div className="card card-evidence card-sports">
       <AIBadge label="AI · 射手榜" />
       <div className="ev-head">
-        <span className="ev-head-title">👟 {card.title}</span>
+        <span className="ev-head-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><Icon name="sports" size={16} color="var(--au-text)" />{card.title}</span>
         {card.season && <span className="ev-fresh">{card.season}</span>}
       </div>
       {card.scorers.length === 0
@@ -898,7 +888,7 @@ function RoutePlanCardView({ card }: { card: RoutePlanCard }) {
       <div style={{ padding: '15px 16px 12px' }}>
         <AIBadge label="AI · 路线规划" />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 14.5, fontWeight: 600 }}>🧭 规划路线</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600 }}><Icon name="route-map" size={17} color="var(--au-text)" />规划路线</span>
           {(card.distance_km || dur) && <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-2)' }}>{dur}{card.distance_km ? `${dur ? ' · ' : ''}${card.distance_km}km` : ''}</span>}
         </div>
       </div>
@@ -942,7 +932,7 @@ function ChargingRouteCardView({ card }: { card: ChargingRouteCard }) {
       <div style={{ padding: '15px 16px 12px' }}>
         <AIBadge label="AI · 充电路线" />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--au-warn)' }}>⚡ 充电路线规划</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600, color: 'var(--au-warn)' }}><Icon name="charging-station" size={17} color="var(--au-warn)" />充电路线规划</span>
           {card.distance_km ? <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-2)' }}>{card.distance_km}km{dur ? ` · ${dur}` : ''}</span> : null}
         </div>
       </div>
@@ -965,7 +955,7 @@ function ChargingRouteCardView({ card }: { card: ChargingRouteCard }) {
                 {s.at_km != null && <span className="au-num" style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>约 {s.at_km}km 处</span>}
               </div>
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 10, padding: '12px 14px', borderRadius: 14, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.20)' }}>
-                <span style={{ width: 28, height: 28, borderRadius: 8, display: 'grid', placeItems: 'center', background: 'rgba(245,158,11,0.18)', border: '1px solid rgba(245,158,11,0.30)', fontSize: 14, flexShrink: 0 }}>⚡</span>
+                <span style={{ width: 28, height: 28, borderRadius: 8, display: 'grid', placeItems: 'center', background: 'rgba(245,158,11,0.18)', border: '1px solid rgba(245,158,11,0.30)', flexShrink: 0 }}><Icon name="charging-station" size={15} color="#F59E0B" /></span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{s.name}</div>
                   {s.address && <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{s.address}</div>}
@@ -981,7 +971,7 @@ function ChargingRouteCardView({ card }: { card: ChargingRouteCard }) {
         </div>
       ) : (
         <div style={{ padding: '20px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ width: 36, height: 36, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.28)', fontSize: 18 }}>✅</span>
+          <span style={{ width: 36, height: 36, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.28)' }}><Icon name="check-circle" size={20} color="#34D399" /></span>
           <div>
             <div style={{ fontSize: 14, fontWeight: 600, color: '#34D399' }}>全程无需补电</div>
             <div style={{ fontSize: 11.5, color: 'var(--au-text-3)', marginTop: 2 }}>当前电量足以完成全程</div>
@@ -1015,7 +1005,7 @@ function TripItineraryCardView({ card, onAction }:
       <div style={{ padding: '15px 16px 12px' }}>
         <AIBadge label="AI · 行程规划" />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 14.5, fontWeight: 600 }}>🧭 {card.destination} · {card.days}日行程</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600 }}><Icon name="calendar-trip" size={17} color="var(--au-text)" />{card.destination} · {card.days}日行程</span>
           <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{card.status === 'confirmed' ? '已确认' : '自驾 · AI 规划'}</span>
         </div>
       </div>
@@ -1029,7 +1019,7 @@ function TripItineraryCardView({ card, onAction }:
             <div key={di}>
               {charges.length > 0 && (
                 <div style={{ margin: '0 16px 6px', padding: '6px 12px', borderRadius: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.18)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 11 }}>⚡</span>
+                  <Icon name="charging-station" size={13} color="var(--au-warn)" />
                   <span style={{ fontSize: 11, color: 'var(--au-warn)' }}>途中补电 {charges.length} 次：{charges.map((c) => c.name).join('、')}</span>
                 </div>
               )}
@@ -1063,7 +1053,7 @@ function TripItineraryCardView({ card, onAction }:
         })}
       </div>
       <div style={{ padding: '11px 16px 13px', borderTop: '1px solid var(--au-line)', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 12 }}>🎙</span>
+        <Icon name="voice-input" size={14} color="var(--au-text-3)" />
         <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>说「<span style={{ color: 'var(--au-text-2)' }}>下一站</span>」或「<span style={{ color: 'var(--au-text-2)' }}>导航去第 2 天的XX</span>」</span>
       </div>
     </div>
@@ -1080,7 +1070,7 @@ function PoiListCardView({ card }: { card: PoiListCard }) {
       <div style={{ padding: '15px 16px 12px' }}>
         <AIBadge label="AI · 位置搜索" />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 14.5, fontWeight: 600 }}>⚡ {title}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600 }}><Icon name="location" size={17} color="var(--au-text)" />{title}</span>
           <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>已更新 · 共 {card.items.length} 个</span>
         </div>
       </div>
@@ -1102,7 +1092,7 @@ function PoiListCardView({ card }: { card: PoiListCard }) {
         </div>
       ))}
       <div style={{ padding: '11px 16px 13px', borderTop: '1px solid var(--au-line)', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 12 }}>🎙</span>
+        <Icon name="voice-input" size={14} color="var(--au-text-3)" />
         <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>说「<span style={{ color: 'var(--au-text-2)' }}>导航去第 2 个</span>」或「<span style={{ color: 'var(--au-text-2)' }}>最近的{card.keyword || '地点'}</span>」</span>
       </div>
     </div>
@@ -1115,7 +1105,7 @@ function PoiDetailCardView({ card }: { card: PoiDetailCard }) {
   return (
     <div className="card card-poi-detail">
       <div className="poi-detail-name">{card.name}</div>
-      {card.address && <div className="poi-detail-addr">📍 {card.address}</div>}
+      {card.address && <div className="poi-detail-addr" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="pin" size={13} color="var(--au-text-3)" />{card.address}</div>}
       <div className="poi-detail-row">
         {card.rating > 0 && <span>★ {card.rating}</span>}
         {card.category && <span>{card.category}</span>}
