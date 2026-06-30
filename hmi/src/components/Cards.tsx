@@ -600,38 +600,43 @@ function NewsBriefCardView({ card }: { card: NewsBriefCard }) {
   )
 }
 
-function FixtureRow({ f }: { f: SportsScoresCard['fixtures'][number] }) {
-  const scored = (f.status === 'live' || f.status === 'finished') &&
-    (f.home_goals !== '' || f.away_goals !== '')
+function TeamSquare({ name, color }: { name: string; color: string }) {
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, minWidth: 0 }}>
+      <div style={{ width: 48, height: 48, borderRadius: 12, display: 'grid', placeItems: 'center', background: `${color}22`, border: `2px solid ${color}55` }}>
+        <span style={{ fontFamily: 'var(--au-font-mono)', fontSize: 14, fontWeight: 700, color }}>{name.slice(0, 2)}</span>
+      </div>
+      <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'center', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+    </div>
+  )
+}
+
+// 计分板（照 A-5 SportsCard）：主客队色块 + 大比分 + 进球时间线（主左客右镜像）
+function FixtureBoard({ f }: { f: SportsScoresCard['fixtures'][number] }) {
+  const scored = (f.status === 'live' || f.status === 'finished') && (f.home_goals !== '' || f.away_goals !== '')
   const kickoff = f.kickoff && f.kickoff.includes('T') ? f.kickoff.slice(11, 16) : ''
   return (
-    <div className="fx-item">
-      <div className={`fx-row fx-${f.status}`}>
-        <span className="fx-team fx-home">
-          <span className="fx-name">{f.home}</span>
-          {f.home_logo && <img className="fx-flag" src={f.home_logo} alt="" loading="lazy" />}
-        </span>
-        <span className="fx-mid">
+    <div style={{ padding: '6px 0 4px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px 14px' }}>
+        <TeamSquare name={f.home} color="#5B8CFF" />
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, minWidth: 66 }}>
           {scored
-            ? <b className="fx-score">{f.home_goals}-{f.away_goals}</b>
-            : <span className="fx-vs">{kickoff || 'vs'}</span>}
-          <span className={`fx-status fx-status-${f.status}`}>
+            ? <span className="au-num" style={{ fontSize: 26, fontWeight: 700 }}>{f.home_goals}-{f.away_goals}</span>
+            : <span style={{ fontSize: 14, color: 'var(--au-text-3)' }}>{kickoff || 'VS'}</span>}
+          <span style={{ fontSize: 10.5, fontWeight: f.status === 'live' ? 700 : 400, color: f.status === 'live' ? 'var(--au-warn)' : 'var(--au-text-3)' }}>
             {f.status === 'live' && f.elapsed ? `${f.status_text} ${f.elapsed}'` : f.status_text}
           </span>
-        </span>
-        <span className="fx-team fx-away">
-          {f.away_logo && <img className="fx-flag" src={f.away_logo} alt="" loading="lazy" />}
-          <span className="fx-name">{f.away}</span>
-        </span>
+        </div>
+        <TeamSquare name={f.away} color="#9A6BFF" />
       </div>
       {!!f.goals?.length && (
-        <ul className="fx-goals">
+        <ul style={{ listStyle: 'none', margin: '0 12px 2px', padding: '8px 0 0', borderTop: '1px dashed var(--au-line)', display: 'flex', flexDirection: 'column', gap: 4 }}>
           {f.goals.map((g, i) => (
-            <li key={i} className={`fx-goal fx-goal-${g.team || 'na'}`}>
-              <span className="fx-goal-min">{g.minute}&apos;</span>
-              <span className="fx-goal-icon">⚽</span>
-              <span className="fx-goal-player">{g.player || '球员'}</span>
-              {g.detail && g.detail !== '进球' && <em className="fx-goal-tag">{g.detail}</em>}
+            <li key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--au-text-2)', flexDirection: g.team === 'away' ? 'row-reverse' : 'row' }}>
+              <span className="au-num" style={{ color: 'var(--au-warn)', fontWeight: 700, flexShrink: 0 }}>{g.minute}&apos;</span>
+              <span style={{ fontSize: 11 }}>⚽</span>
+              <span style={{ color: 'var(--au-text)', fontWeight: 600 }}>{g.player || '球员'}</span>
+              {g.detail && g.detail !== '进球' && <span style={{ fontSize: 10, color: 'var(--au-text-3)', border: '1px solid var(--au-line-2)', borderRadius: 3, padding: '0 4px' }}>{g.detail}</span>}
             </li>
           ))}
         </ul>
@@ -642,15 +647,24 @@ function FixtureRow({ f }: { f: SportsScoresCard['fixtures'][number] }) {
 
 function SportsScoresCardView({ card }: { card: SportsScoresCard }) {
   return (
-    <div className="card card-evidence card-sports">
-      <AIBadge label="AI · 赛事信息" />
-      <CardHead icon="⚽" title={card.title} freshness={card.freshness} />
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '15px 16px 12px' }}>
+        <AIBadge label="AI · 赛事信息" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 14.5, fontWeight: 600 }}>🏆 {card.title}</span>
+          {card.freshness && <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{relativeTime(card.freshness)}</span>}
+        </div>
+      </div>
+      <CardHR />
       {card.fixtures.length === 0
-        ? <div className="ev-empty">暂无比赛安排</div>
-        : <div className="ev-fixtures">
-            {card.fixtures.map((f, i) => <FixtureRow key={i} f={f} />)}
-          </div>}
-      {card.source && <div className="ev-card-foot">数据来源 {card.source}</div>}
+        ? <div style={{ padding: 18, textAlign: 'center', fontSize: 12, color: 'var(--au-text-3)' }}>暂无比赛安排</div>
+        : card.fixtures.map((f, i) => (
+            <div key={i}>
+              {i > 0 && <CardHR />}
+              <FixtureBoard f={f} />
+            </div>
+          ))}
+      {card.source && <div style={{ padding: '8px 16px 12px', fontSize: 10, color: 'var(--au-text-3)', fontFamily: 'var(--au-font-mono)' }}>数据来源 {card.source}</div>}
     </div>
   )
 }
@@ -791,58 +805,74 @@ const TRIP_STOP_ICON: Record<string, string> = {
   attraction: '📍', meal: '🍜', hotel: '🏨', charging: '⚡', custom: '📌',
 }
 
+const DAY_COLORS = ['#46D6E0', '#5B8CFF', '#9A6BFF', '#FF6BD6', '#34D399']
+
 function TripItineraryCardView({ card, onAction }:
   { card: TripItineraryCard; onAction?: (text: string) => void }) {
+  const days = card.itinerary || []
+  const [open, setOpen] = useState<Set<number>>(() => new Set(days.map((d) => d.day_index)))
+  const toggle = (d: number) => setOpen((prev) => {
+    const s = new Set(prev)
+    if (s.has(d)) s.delete(d)
+    else s.add(d)
+    return s
+  })
   return (
-    <div className="card card-evidence card-charge-route card-trip">
-      <AIBadge label="AI · 行程规划" />
-      <div className="ev-head">
-        <span className="ev-head-title">🧭 {card.destination} · {card.days}天行程</span>
-        {card.status === 'confirmed' && <span className="ev-fresh">已确认</span>}
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '15px 16px 12px' }}>
+        <AIBadge label="AI · 行程规划" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 14.5, fontWeight: 600 }}>🧭 {card.destination} · {card.days}日行程</span>
+          <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{card.status === 'confirmed' ? '已确认' : '自驾 · AI 规划'}</span>
+        </div>
       </div>
-      {(card.itinerary || []).map((day, di) => {
-        const charges = (day.legs || []).flatMap((l) => l.charging_stops || [])
-        return (
-          <div key={di} className="trip-day">
-            <div className="trip-day-head">
-              第{day.day_index}天{day.theme ? ` · ${day.theme}` : ''}
-            </div>
-            <ul className="cr-line">
-              {day.stops.map((s, i) => {
-                // 已接地的停靠点可点导航：派发整句『导航去第N天的X』→ 编排器路由 trip.navigate
-                const go = s.grounded && onAction
-                  ? () => onAction(`导航去第${day.day_index}天的${s.name}`)
-                  : undefined
-                return (
-                  <li key={i} className={`cr-node cr-stop${s.grounded ? '' : ' trip-ungrounded'}`}>
-                    <span className="cr-dot" />
-                    <span className="cr-text">
-                      {go ? (
-                        <b className="trip-stop-go" role="button" tabIndex={0} onClick={go}
-                           onKeyDown={(e) => { if (e.key === 'Enter') go() }}>
-                          {TRIP_STOP_ICON[s.type] || '📍'} {s.name}
-                          <span className="trip-go-hint">› 导航</span>
-                        </b>
-                      ) : (
-                        <b>{TRIP_STOP_ICON[s.type] || '📍'} {s.name}</b>
+      <CardHR />
+      <div style={{ padding: '8px 0 4px' }}>
+        {days.map((day, di) => {
+          const color = DAY_COLORS[di % DAY_COLORS.length]
+          const charges = (day.legs || []).flatMap((l) => l.charging_stops || [])
+          const isOpen = open.has(day.day_index)
+          return (
+            <div key={di}>
+              {charges.length > 0 && (
+                <div style={{ margin: '0 16px 6px', padding: '6px 12px', borderRadius: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.18)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11 }}>⚡</span>
+                  <span style={{ fontSize: 11, color: 'var(--au-warn)' }}>途中补电 {charges.length} 次：{charges.map((c) => c.name).join('、')}</span>
+                </div>
+              )}
+              <button onClick={() => toggle(day.day_index)} style={{ width: '100%', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--au-text)', fontFamily: 'inherit' }}>
+                <span style={{ width: 28, height: 20, borderRadius: 6, display: 'grid', placeItems: 'center', background: `${color}20`, border: `1px solid ${color}40`, fontFamily: 'var(--au-font-mono)', fontSize: 9.5, fontWeight: 700, color }}>D{day.day_index}</span>
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, textAlign: 'left' }}>{day.theme || `第${day.day_index}天`}</span>
+                <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{day.stops.length}个点</span>
+                <span style={{ fontSize: 13, color: 'var(--au-text-3)', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s' }}>›</span>
+              </button>
+              <div style={{ maxHeight: isOpen ? 600 : 0, overflow: 'hidden', transition: 'max-height .3s ease' }}>
+                {day.stops.map((s, i) => {
+                  // 已接地的停靠点可点导航：派发整句『导航去第N天的X』→ 编排器路由 trip.navigate
+                  const go = s.grounded && onAction ? () => onAction(`导航去第${day.day_index}天的${s.name}`) : undefined
+                  return (
+                    <div key={i} style={{ padding: '7px 16px 7px 52px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 14, flexShrink: 0 }}>{TRIP_STOP_ICON[s.type] || '📍'}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 500, color: s.grounded ? 'var(--au-text)' : 'var(--au-text-2)' }}>{s.name}</div>
+                        <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.grounded ? (s.poi?.address || '') : '待确认地点'}</div>
+                      </div>
+                      {go && (
+                        <button onClick={go} style={{ padding: '3px 10px', borderRadius: 8, background: 'rgba(70,214,224,0.10)', border: '1px solid rgba(70,214,224,0.22)', fontSize: 10.5, color: 'var(--au-primary)', cursor: 'pointer', flexShrink: 0, fontFamily: 'inherit' }}>导航</button>
                       )}
-                      {!s.grounded
-                        ? <em className="cr-km">待确认地点</em>
-                        : (s.poi?.address && <em className="cr-km">{s.poi.address}</em>)}
-                    </span>
-                  </li>
-                )
-              })}
-            </ul>
-            {charges.length > 0 && (
-              <div className="trip-charge-hint">
-                ⚡ 途中补电 {charges.length} 次：{charges.map((c) => c.name).join('、')}
+                    </div>
+                  )
+                })}
               </div>
-            )}
-          </div>
-        )
-      })}
-      <div className="trip-voice-hint">🎙 点停靠点或说『下一站』『导航去第N天的某地点』即可导航</div>
+              {di < days.length - 1 && <CardHR />}
+            </div>
+          )
+        })}
+      </div>
+      <div style={{ padding: '11px 16px 13px', borderTop: '1px solid var(--au-line)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 12 }}>🎙</span>
+        <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>说「<span style={{ color: 'var(--au-text-2)' }}>下一站</span>」或「<span style={{ color: 'var(--au-text-2)' }}>导航去第 2 天的XX</span>」</span>
+      </div>
     </div>
   )
 }

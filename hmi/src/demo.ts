@@ -114,6 +114,28 @@ const chargeCard: import('./types').ChargingRouteCard = {
   stops: [{ name: '青城山服务区充电站', address: '成灌高速青城山段', at_km: 48 }],
 }
 
+const tripCard: import('./types').TripItineraryCard = {
+  type: 'trip_itinerary', destination: '成都', days: 2, status: 'confirmed',
+  itinerary: [
+    {
+      day_index: 1, theme: '市区人文', legs: [],
+      stops: [
+        { stop_id: 's1', type: 'attraction', name: '宽窄巷子', poi: { address: '青羊区同仁路' }, grounded: true },
+        { stop_id: 's2', type: 'meal', name: '陈麻婆豆腐(骡马市)', poi: { address: '青羊区西玉龙街' }, grounded: true },
+        { stop_id: 's3', type: 'hotel', name: '成都太古里酒店', poi: { address: '锦江区中纱帽街' }, grounded: true },
+      ],
+    },
+    {
+      day_index: 2, theme: '都江堰一日',
+      stops: [
+        { stop_id: 's4', type: 'attraction', name: '都江堰景区', poi: { address: '都江堰市公园路' }, grounded: true },
+        { stop_id: 's5', type: 'charging', name: '青城山服务区充电站', poi: { address: '成灌高速' }, grounded: true },
+      ],
+      legs: [{ from_stop_id: 's3', to_stop_id: 's4', distance_km: 60, drive_min: 70, charging_stops: [{ name: '青城山服务区' }] }],
+    },
+  ],
+}
+
 export const DEMO_CARDS: Msg[] = [
   { id: 'c0', role: 'user', text: '查一下茅台股价' },
   { id: 'c1', role: 'assistant', text: '贵州茅台收报 1689.00 元，今日上涨 0.75%。', uiCard: stockCard },
@@ -125,4 +147,6 @@ export const DEMO_CARDS: Msg[] = [
   { id: 'c7', role: 'assistant', text: '曼城主场 2-1 战胜阿森纳。', uiCard: sportsCard },
   { id: 'c8', role: 'user', text: '导航去都江堰，沿途要充电' },
   { id: 'c9', role: 'assistant', text: '已为你规划到都江堰的充电路线，途中在青城山服务区补电一次。', uiCard: chargeCard },
+  { id: 'c10', role: 'user', text: '帮我规划成都 2 日自驾' },
+  { id: 'c11', role: 'assistant', text: '已为你规划成都 2 日自驾行程，含都江堰一日。', uiCard: tripCard },
 ]
