@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSettings } from '../settings'
 import { AuroraOrb } from './aurora'
+import { Icon, type IconName } from './Icon'
 import type { Msg, UiCard, WeatherCard, PoiListCard, PoiDetailCard, RoutePlanCard, ChargingRouteCard, TripItineraryCard } from '../types'
 
 type Scene =
@@ -111,11 +112,11 @@ function WeatherStage({ card }: { card: WeatherCard }) {
     [],
   )
   const today = card.forecast?.[0]
-  const chips: Array<{ icon: string; label: string; value: string }> = []
-  if (card.humidity) chips.push({ icon: '💧', label: '湿度', value: `${card.humidity}%` })
-  if (card.wind_dir) chips.push({ icon: '🌬️', label: '风', value: `${card.wind_dir}${card.wind_scale ? ` ${card.wind_scale}级` : ''}` })
-  if (card.air_quality) chips.push({ icon: '🌿', label: '空气质量', value: `${card.air_quality.category} ${card.air_quality.aqi}` })
-  if (card.visibility) chips.push({ icon: '👁', label: '能见度', value: `${card.visibility}km` })
+  const chips: Array<{ icon: IconName; label: string; value: string }> = []
+  if (card.humidity) chips.push({ icon: 'humidity', label: '湿度', value: `${card.humidity}%` })
+  if (card.wind_dir) chips.push({ icon: 'wind', label: '风', value: `${card.wind_dir}${card.wind_scale ? ` ${card.wind_scale}级` : ''}` })
+  if (card.air_quality) chips.push({ icon: 'air-quality', label: '空气质量', value: `${card.air_quality.category} ${card.air_quality.aqi}` })
+  if (card.visibility) chips.push({ icon: 'visibility', label: '能见度', value: `${card.visibility}km` })
 
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
@@ -140,7 +141,7 @@ function WeatherStage({ card }: { card: WeatherCard }) {
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             {chips.map((s) => (
               <div key={s.label} className="au-glass" style={{ padding: '10px 16px', textAlign: 'center', minWidth: 86 }}>
-                <div style={{ fontSize: 18, marginBottom: 4 }}>{s.icon}</div>
+                <div style={{ marginBottom: 4, display: 'flex', justifyContent: 'center' }}><Icon name={s.icon} size={20} color="var(--au-text)" /></div>
                 <div className="au-num" style={{ fontSize: 13.5, fontWeight: 600 }}>{s.value}</div>
                 <div style={{ fontSize: 11, color: 'var(--au-text-3)', marginTop: 2 }}>{s.label}</div>
               </div>

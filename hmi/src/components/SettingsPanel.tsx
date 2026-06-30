@@ -11,6 +11,7 @@ import {
 } from '../audio'
 import { PLACE_DEFS, isPlaceSet, formatPlace } from '../places.mjs'
 import { AuroraOrb } from './aurora'
+import { Icon, type IconName } from './Icon'
 import { Toggle, Segmented, TextInput, GhostBtn, DangerBtn } from './controls'
 
 const TEAL = 'var(--au-primary)'
@@ -31,15 +32,15 @@ const IcCheck = (p: { size?: number; color?: string }) => <Svg {...p}><path d="M
 const IcPencil = (p: { size?: number; color?: string }) => <Svg {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></Svg>
 
 type Section = 'tts' | 'asr' | 'display' | 'location' | 'places' | 'assistant' | 'agents' | 'memory'
-const SECTIONS: { id: Section; label: string; icon: string }[] = [
-  { id: 'tts', label: '语音播报', icon: '🔊' },
-  { id: 'asr', label: '语音输入', icon: '🎤' },
-  { id: 'display', label: '显示主题', icon: '🎨' },
-  { id: 'location', label: '当前位置', icon: '📍' },
-  { id: 'places', label: '常用地点', icon: '🏠' },
-  { id: 'assistant', label: '助手设置', icon: '🤖' },
-  { id: 'agents', label: '能力开关', icon: '⚡' },
-  { id: 'memory', label: '记忆', icon: '💭' },
+const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
+  { id: 'tts', label: '语音播报', icon: 'voice-output' },
+  { id: 'asr', label: '语音输入', icon: 'voice-input' },
+  { id: 'display', label: '显示主题', icon: 'theme' },
+  { id: 'location', label: '当前位置', icon: 'location' },
+  { id: 'places', label: '常用地点', icon: 'place-home' },
+  { id: 'assistant', label: '助手设置', icon: 'assistant' },
+  { id: 'agents', label: '能力开关', icon: 'capability' },
+  { id: 'memory', label: '记忆', icon: 'memory' },
 ]
 
 // 玻璃容器（照 A-7 GlassCard，r=20）
@@ -56,24 +57,24 @@ function Glass({ children, style }: { children: ReactNode; style?: CSSProperties
 const HR = () => <div style={{ height: 1, background: DIV }} />
 
 // ─── 布局原语（照 A-7）───
-function NavItem({ icon, label, active, onClick }: { icon: string; label: string; active: boolean; onClick: () => void }) {
+function NavItem({ icon, label, active, onClick }: { icon: IconName; label: string; active: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} style={{
       width: '100%', padding: '10px 12px', borderRadius: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 2,
       background: active ? 'rgba(70,214,224,.10)' : 'transparent', border: `1px solid ${active ? 'rgba(70,214,224,.22)' : 'transparent'}`,
       color: active ? TEAL : FG2, textAlign: 'left', transition: 'all .18s', fontFamily: 'inherit',
     }}>
-      <span style={{ fontSize: 15, lineHeight: 1, flexShrink: 0 }}>{icon}</span>
+      <Icon name={icon} size={18} state={active ? 'active' : 'default'} />
       <span style={{ fontSize: 13, fontWeight: active ? 600 : 400, flex: 1 }}>{label}</span>
       {active && <IcChevR size={13} color={TEAL} />}
     </button>
   )
 }
-function SectionHdr({ icon, title, sub }: { icon: string; title: string; sub?: string }) {
+function SectionHdr({ icon, title, sub }: { icon: IconName; title: string; sub?: string }) {
   return (
     <div style={{ padding: '22px 28px 16px', borderBottom: `1px solid ${DIV}` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: sub ? 5 : 0 }}>
-        <span style={{ fontSize: 20 }}>{icon}</span>
+        <Icon name={icon} size={20} state="active" />
         <h2 style={{ fontSize: 17, fontWeight: 600, margin: 0 }}>{title}</h2>
       </div>
       {sub && <div style={{ fontSize: 12.5, color: FG3, paddingLeft: 30, lineHeight: 1.6 }}>{sub}</div>}
@@ -194,7 +195,11 @@ function ResetButton() {
 
 // ─── 1 · 语音播报 ───
 const VOICE_PALETTE = ['#5BE9FF', '#34D399', '#A3E635', '#9A6BFF', '#FF6BD6', '#5B8CFF', '#46D6E0', '#FCD34D', '#FB923C']
-function voiceEmoji(g: string): string { return g === 'female' ? '🌸' : g === 'male' ? '🌲' : '✨' }
+// 音色 → A-8 人格图标；非六大人格（Milo/Dean/MiMo 等）回落 voice-soda（气泡，中性）
+const VOICE_ICON: Record<string, IconName> = {
+  冰糖: 'voice-ice', 茉莉: 'voice-jasmine', 苏打: 'voice-soda', 白桦: 'voice-birch', Mia: 'voice-mia', Chloe: 'voice-chloe',
+}
+function voiceIcon(v: Voice): IconName { return VOICE_ICON[v.voice_id] ?? VOICE_ICON[v.name] ?? 'voice-soda' }
 
 function TtsSection({ audioApi }: { audioApi: string }) {
   const { settings, update } = useSettings()
@@ -213,7 +218,7 @@ function TtsSection({ audioApi }: { audioApi: string }) {
 
   return (
     <div>
-      <SectionHdr icon="🔊" title="语音播报" sub="控制助手的语音输出方式与音色偏好" />
+      <SectionHdr icon="voice-output" title="语音播报" sub="控制助手的语音输出方式与音色偏好" />
       <SettingGroup title="输出控制">
         <SettingRow label="启用语音播报" sub="关闭后助手仅显示文字，不朗读回答">
           <Toggle on={settings.ttsEnabled} onChange={(v) => update({ ttsEnabled: v })} />
@@ -239,7 +244,7 @@ function TtsSection({ audioApi }: { audioApi: string }) {
                   transition: 'all .2s', opacity: disabled ? 0.45 : 1, boxShadow: selected ? `0 0 18px ${color}18` : 'none',
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontSize: 20 }}>{voiceEmoji(v.gender)}</span>
+                    <Icon name={voiceIcon(v)} size={20} color={color} />
                     {selected && <div style={{ width: 16, height: 16, borderRadius: '50%', background: color, display: 'grid', placeItems: 'center' }}><IcCheck size={9} color="#06080F" /></div>}
                   </div>
                   <div style={{ fontSize: 13.5, fontWeight: 600, color: selected ? color : FG1, marginBottom: 2 }}>{v.name}</div>
@@ -249,7 +254,7 @@ function TtsSection({ audioApi }: { audioApi: string }) {
                     background: isPlaying ? `${color}20` : 'var(--au-fill)', border: `1px solid ${isPlaying ? color + '40' : 'var(--au-fill-2)'}`,
                     fontSize: 11.5, color: isPlaying ? color : FG3, cursor: disabled ? 'default' : 'pointer', fontFamily: 'inherit', transition: 'all .18s',
                   }}>
-                    {isPlaying ? <span style={{ width: 10, height: 10, border: `1.5px solid ${color}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'au-orb-spin .9s linear infinite' }} /> : '▸'}
+                    {isPlaying ? <span style={{ width: 10, height: 10, border: `1.5px solid ${color}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'au-orb-spin .9s linear infinite' }} /> : <Icon name="play" size={11} color={isPlaying || !disabled ? color : 'var(--au-text-3)'} />}
                     {isPlaying ? '播放中…' : '试听'}
                   </button>
                 </div>
@@ -267,7 +272,7 @@ function AsrSection() {
   const { settings, update } = useSettings()
   return (
     <div>
-      <SectionHdr icon="🎤" title="语音输入" sub="配置语音识别的语言、模式与时长" />
+      <SectionHdr icon="voice-input" title="语音输入" sub="配置语音识别的语言、模式与时长" />
       <SettingGroup title="识别设置">
         <SettingRow label="识别语言" sub="选择主要识别语言">
           <Segmented value={settings.asrLanguage} onChange={(v) => update({ asrLanguage: v })}
@@ -301,7 +306,7 @@ function DisplaySection() {
 
   return (
     <div>
-      <SectionHdr icon="🎨" title="显示主题" sub="界面外观、字号与快捷指令定制" />
+      <SectionHdr icon="theme" title="显示主题" sub="界面外观、字号与快捷指令定制" />
       <SettingGroup title="外观">
         <SettingRow label="主题" sub="深色适合夜间驾驶，浅色适合晴天">
           <Segmented value={settings.theme} onChange={(v) => update({ theme: v })}
@@ -359,7 +364,7 @@ function LocationSection({ location, enabled, status, onRequest, onEnabledChange
 }) {
   return (
     <div>
-      <SectionHdr icon="📍" title="当前位置" sub="位置权限与精度设置。精确坐标仅用于导航/就近/天气，不上传服务器、不写入记忆。" />
+      <SectionHdr icon="location" title="当前位置" sub="位置权限与精度设置。精确坐标仅用于导航/就近/天气，不上传服务器、不写入记忆。" />
       <SettingGroup title="权限">
         <SettingRow label="启用位置服务" sub="关闭后立即停止发送位置并清除本地坐标，导航/充电站等将不可用" noBorder>
           <Toggle on={enabled} onChange={onEnabledChange} />
@@ -412,7 +417,7 @@ function PlacesSection({ audioApi }: { audioApi: string }) {
 
   return (
     <div>
-      <SectionHdr icon="🏠" title="常用地点" sub="家、公司等常用目的地。说『我家在XX』『把公司设成XX』设置，导航说『回家』『导航去公司』直达。" />
+      <SectionHdr icon="place-home" title="常用地点" sub="家、公司等常用目的地。说『我家在XX』『把公司设成XX』设置，导航说『回家』『导航去公司』直达。" />
       <SettingGroup title="地点设置">
         <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 8 }}>
           <GhostBtn sm onClick={load}>{loading ? '刷新中…' : '刷新'}</GhostBtn>
@@ -451,7 +456,7 @@ function AssistantSection() {
   ]
   return (
     <div>
-      <SectionHdr icon="🤖" title="助手设置" sub={`个性化${settings.assistantName}的回答风格与底层模型（昵称即时生效，长度/模型经会话透传后端）`} />
+      <SectionHdr icon="assistant" title="助手设置" sub={`个性化${settings.assistantName}的回答风格与底层模型（昵称即时生效，长度/模型经会话透传后端）`} />
       <SettingGroup title="个性化">
         <SettingRow label="助手昵称" sub="你对助手的称呼，也是唤醒词前缀">
           <TextInput value={settings.assistantName} onChange={(v) => update({ assistantName: v })} placeholder="小舟" maxLength={8} width={180} />
@@ -491,7 +496,7 @@ function AgentsSection() {
   const { settings, toggleAgent } = useSettings()
   return (
     <div>
-      <SectionHdr icon="⚡" title="能力开关" sub="控制各 Agent 的启用状态。核心能力不可关闭（经会话透传，后端按 disabled_agents 过滤）。" />
+      <SectionHdr icon="capability" title="能力开关" sub="控制各 Agent 的启用状态。核心能力不可关闭（经会话透传，后端按 disabled_agents 过滤）。" />
       <SettingGroup title="Agent 列表">
         <div style={{ paddingBottom: 8 }}>
           {AGENT_CATALOG.map((a, i) => {
@@ -541,7 +546,7 @@ function MemorySection({ audioApi, sessionId }: { audioApi: string; sessionId: s
 
   return (
     <div>
-      <SectionHdr icon="💭" title="记忆" sub={`${settings.assistantName}记住的会话对话，与从交流中学到的偏好/常去地点/经历（云端硬删，不可恢复）`} />
+      <SectionHdr icon="memory" title="记忆" sub={`${settings.assistantName}记住的会话对话，与从交流中学到的偏好/常去地点/经历（云端硬删，不可恢复）`} />
       <SettingGroup title="记忆开关">
         <SettingRow label="启用个性化记忆" sub="记住偏好与历史以贴合回复；关闭后本轮不读写记忆，已有记忆保留" noBorder>
           <Toggle on={settings.memoryEnabled} onChange={(v) => update({ memoryEnabled: v })} />

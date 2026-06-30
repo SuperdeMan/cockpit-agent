@@ -10,6 +10,7 @@ import type {
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
 import { AQISection } from './aurora'
+import { Icon, type IconName } from './Icon'
 
 // AI 出品角标（照 A-4「AI · X」）：小极光点 + 虹彩文字，标识 AI 生成内容（§5）。
 function AIBadge({ label }: { label: string }) {
@@ -83,6 +84,15 @@ function weatherIcon(text: string): string {
   }
   return '🌤️'
 }
+// 天气现象 → A-8 线性图标（雪/雾/霾/沙尘等未出图标，回落 emoji）。判定顺序：雷>雨>晴>云。
+const WEATHER_GLYPH: Array<[string, IconName]> = [
+  ['雷', 'weather-thunder-alert'], ['雨', 'weather-rain'], ['晴', 'weather-sunny'],
+  ['多云', 'weather-cloudy'], ['阴', 'weather-cloudy'], ['云', 'weather-cloudy'],
+]
+function weatherGlyph(text: string, size: number, color = 'var(--au-text-2)') {
+  for (const [k, n] of WEATHER_GLYPH) if (text.includes(k)) return <Icon name={n} size={size} color={color} />
+  return <span style={{ fontSize: size * 0.92, lineHeight: 1 }}>{weatherIcon(text)}</span>
+}
 
 // ─── 卡片渲染入口 ───
 
@@ -119,13 +129,13 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
   const alert = weatherAlertSummary(card.alerts)
   const upd = card.update_time && card.update_time !== 'mock'
     ? card.update_time.replace('T', ' ').replace(/\+.*/, '') : ''
-  const tele: Array<{ icon: string; label: string; v: string | null; u: string }> = [
-    { icon: '🌡', label: '体感', v: card.feels_like || null, u: '°C' },
-    { icon: '💧', label: '湿度', v: card.humidity || null, u: '%' },
-    { icon: '🌬', label: '风向', v: card.wind_dir ? `${card.wind_dir}${card.wind_scale ? `${card.wind_scale}级` : ''}` : null, u: '' },
-    { icon: '👁', label: '能见度', v: card.visibility || null, u: 'km' },
-    { icon: '🌧', label: '降水', v: card.precip || null, u: 'mm' },
-    { icon: '📊', label: '气压', v: card.pressure || null, u: 'hPa' },
+  const tele: Array<{ icon: IconName; label: string; v: string | null; u: string }> = [
+    { icon: 'temperature', label: '体感', v: card.feels_like || null, u: '°C' },
+    { icon: 'humidity', label: '湿度', v: card.humidity || null, u: '%' },
+    { icon: 'wind', label: '风向', v: card.wind_dir ? `${card.wind_dir}${card.wind_scale ? `${card.wind_scale}级` : ''}` : null, u: '' },
+    { icon: 'visibility', label: '能见度', v: card.visibility || null, u: 'km' },
+    { icon: 'weather-rain', label: '降水', v: card.precip || null, u: 'mm' },
+    { icon: 'pressure', label: '气压', v: card.pressure || null, u: 'hPa' },
   ]
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -150,7 +160,7 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
           <div style={{ fontSize: 13.5, color: 'var(--au-text-2)', marginTop: 5 }}>{card.text || '天气数据更新中'}</div>
         </div>
         <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 2 }}>
-          <span style={{ fontSize: 44, lineHeight: 1 }}>{weatherIcon(card.text)}</span>
+          <span style={{ lineHeight: 1, display: 'inline-flex', justifyContent: 'flex-end' }}>{weatherGlyph(card.text, 40, 'var(--au-text)')}</span>
           {upd && <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>更新 {upd}</span>}
         </div>
       </div>
@@ -161,7 +171,7 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
           const miss = t.v == null
           return (
             <div key={t.label} style={{ padding: '9px 6px', borderRadius: 11, background: miss ? 'var(--au-fill)' : 'var(--au-fill)', border: '1px solid var(--au-line-2)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-              <span style={{ fontSize: 15 }}>{t.icon}</span>
+              <Icon name={t.icon} size={17} state={miss ? 'disabled' : 'default'} />
               <span className="au-num" style={{ fontSize: 11.5, fontWeight: miss ? 400 : 600, color: miss ? 'var(--au-text-3)' : 'var(--au-text)', textAlign: 'center', lineHeight: 1.2 }}>{miss ? '—' : `${t.v}${t.u}`}</span>
               <span style={{ fontSize: 9.5, color: 'var(--au-text-3)' }}>{t.label}</span>
             </div>
@@ -176,7 +186,7 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
             {card.forecast.slice(0, 3).map((f, i) => (
               <div key={i} style={{ flex: 1, textAlign: 'center', padding: '0 6px', borderRight: i < 2 ? '1px solid var(--au-line)' : 'none' }}>
                 <div style={{ fontSize: 11, color: 'var(--au-text-3)', marginBottom: 6 }}>{i === 0 ? '今天' : f.date.slice(5)}</div>
-                <div style={{ fontSize: 28, marginBottom: 4, lineHeight: 1 }}>{weatherIcon(f.text_day)}</div>
+                <div style={{ marginBottom: 4, lineHeight: 1, display: 'flex', justifyContent: 'center' }}>{weatherGlyph(f.text_day, 26)}</div>
                 <div style={{ fontSize: 11, color: 'var(--au-text-2)', marginBottom: 8 }}>{f.text_day}</div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                   <span className="au-num" style={{ fontSize: 11, color: '#93C5FD' }}>{f.temp_low}°</span>
@@ -226,7 +236,7 @@ function ForecastCardView({ card }: { card: ForecastCard }) {
         {card.days.map((d, i) => (
           <div key={i} className="forecast-day">
             <div className="forecast-date">{d.date.slice(5)}</div>
-            <div className="forecast-icon">{weatherIcon(d.text_day)}</div>
+            <div className="forecast-icon" style={{ display: 'flex', justifyContent: 'center' }}>{weatherGlyph(d.text_day, 22)}</div>
             <div className="forecast-text">{d.text_day}</div>
             <div className="forecast-temp">
               <span className="temp-low">{d.temp_low}°</span>
