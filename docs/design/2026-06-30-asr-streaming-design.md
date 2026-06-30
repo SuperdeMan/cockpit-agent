@@ -21,6 +21,20 @@
 - **保留 MiMo 批处理 ASR**，做可切换回退（无百炼 ASR 权限/断网时仍可用）。
 - 引擎经 **provider 工厂 + env** 选择，沿用本项目一贯做法（改 env 即切，不改业务码）。
 
+## 2.1 探针实测结论（2026-06-30，已用百炼 key 验证）
+
+逐端点/模型探针（脚本见交付时附，key 不入库/不打印）得到**确定结论**——纠正了最初按 paraformer 风格的设想：
+
+| 端点 | 结果 |
+|---|---|
+| `wss://dashscope.aliyuncs.com/api-ws/v1/inference`（paraformer task-group 协议） | ❌ `paraformer-realtime-v2`/`fun-asr-realtime` 一律 `InternalError`；`qwen3-asr-flash-realtime` `ModelNotFound`。**此端点/协议不适用本任务**。 |
+| **`wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=<id>`（OpenAI 兼容 Realtime 协议）** | ✅ **鉴权 `Authorization: Bearer <key>` 通过**；`Qwen3-ASR-Flash-Realtime-2026-02-10`、`qwen3-asr-flash-realtime`、`fun-asr-realtime` **均连通**（收到 `session.created`）。 |
+| `dashscope-intl…/realtime` | ❌ 非 101（区域不对，cn key 走主站） |
+
+- **正确协议=OpenAI Realtime 事件流**：连上收 `session.created` → 发 `session.update`（`input_audio_format: pcm16`、`input_audio_transcription`）→ `input_audio_buffer.append`（base64 PCM16 分帧）→ `input_audio_buffer.commit` → 收 `conversation.item.input_audio_transcription.delta`（**partial 上屏**）/`.completed`（定稿）。
+- **qwen3 正确 id（泓舟提供并验证）**：`Qwen3-ASR-Flash-Realtime-2026-02-10`（短名 `qwen3-asr-flash-realtime` 亦连通）。**默认引擎改用 qwen3**（既然连通），`fun-asr-realtime` 作备选。
+- **待 e2e 实测**：探针用正弦波（非语音）未触发 transcription 事件——属预期（服务端 VAD 对非语音不出字）；**真实语音的 transcription 事件流在前端 e2e（fake mic 喂真音频）确认**。
+
 ## 3. 架构（一次建好传输层，引擎可换）
 
 ```
@@ -75,11 +89,10 @@ async def handle_asr_stream(request):
 ### 4.3 env（`.env.example` + compose 注入 llm-gateway）
 | key | 默认 | 说明 |
 |---|---|---|
-| `ASR_STREAM_PROVIDER` | `dashscope-qwen3` | `dashscope-qwen3｜dashscope-fun｜mimo-chunked｜off` |
-| `DASHSCOPE_ASR_KEY` | `${LLM_EMBED_API_KEY}` | 百炼 key（复用 embedding 的） |
-| `DASHSCOPE_ASR_WS_URL` | `wss://dashscope.aliyuncs.com/api-ws/v1/inference` | 实时 ASR WS |
-| `ASR_STREAM_MODEL_QWEN3` | `qwen3-asr-flash-realtime` | |
-| `ASR_STREAM_MODEL_FUN` | `fun-asr-realtime` | |
+| `ASR_STREAM_PROVIDER` | `dashscope` | `dashscope｜mimo-chunked｜off`（dashscope 走 OpenAI Realtime 协议） |
+| `DASHSCOPE_ASR_KEY` | `${LLM_EMBED_API_KEY}` | 百炼 key（复用 embedding 的；已验证鉴权通过） |
+| `DASHSCOPE_ASR_WS_URL` | `wss://dashscope.aliyuncs.com/api-ws/v1/realtime` | **OpenAI 兼容 Realtime WS**（model 走 query 参数） |
+| `ASR_STREAM_MODEL` | `Qwen3-ASR-Flash-Realtime-2026-02-10` | 备选 `fun-asr-realtime`（同端点连通） |
 
 ## 5. 前端落地（`hmi`）
 
