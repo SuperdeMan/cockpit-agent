@@ -158,24 +158,19 @@
 .au-quick-chip:hover { color: var(--au-text); border-color: rgba(70, 214, 224, 0.4); transform: translateY(-1px); }
 .au-composer-notice { font-size: 12.5px; color: var(--au-text-3); padding: 0 2px; }
 .au-composer-bar { display: flex; align-items: center; gap: 12px; }
+/* 语音按钮 = 小舟光球本体（点按 / 按住说话）。圆形热区 ≥48px（车规触控），光球承载 idle/thinking/speaking 三态。*/
 .au-mic {
-  position: relative; width: 48px; height: 48px; border-radius: 14px; flex: none; cursor: pointer;
-  display: grid; place-items: center; font-size: 19px; color: var(--au-text);
-  background: var(--au-fill); border: 1px solid var(--au-line-2);
-  font-family: inherit; transition: border-color 0.18s, background 0.18s;
+  position: relative; width: 52px; height: 52px; border-radius: 50%; flex: none; cursor: pointer;
+  display: grid; place-items: center; padding: 0;
+  background: transparent; border: none; color: var(--au-text);
+  font-family: inherit; -webkit-tap-highlight-color: transparent;
+  transition: transform 0.14s ease, background 0.18s;
 }
-.au-mic:hover:not(:disabled) { border-color: rgba(70, 214, 224, 0.5); }
-.au-mic:disabled { opacity: 0.45; cursor: not-allowed; }
-.au-mic.recording { border-color: var(--au-primary); background: rgba(70, 214, 224, 0.14); box-shadow: 0 0 18px rgba(70, 214, 224, 0.3); }
-.au-mic.busy { animation: au-orb-spin 0.9s linear infinite; }
-.au-mic-wave { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 2px; pointer-events: none; }
-.au-mic-wave i { width: 2px; background: var(--au-primary); border-radius: 2px; }
-.au-mic-wave i:nth-child(1) { height: 8px; animation: au-eq 0.7s ease-in-out infinite 0s; }
-.au-mic-wave i:nth-child(2) { height: 16px; animation: au-eq 0.7s ease-in-out infinite 0.1s; }
-.au-mic-wave i:nth-child(3) { height: 22px; animation: au-eq 0.7s ease-in-out infinite 0.2s; }
-.au-mic-wave i:nth-child(4) { height: 14px; animation: au-eq 0.7s ease-in-out infinite 0.3s; }
-.au-mic-wave i:nth-child(5) { height: 9px; animation: au-eq 0.7s ease-in-out infinite 0.4s; }
-@keyframes au-eq { 0%, 100% { transform: scaleY(0.5); } 50% { transform: scaleY(1.1); } }
+.au-mic:hover:not(:disabled) { background: rgba(70, 214, 224, 0.08); transform: scale(1.05); }
+.au-mic:active:not(:disabled) { transform: scale(0.95); }
+.au-mic:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(70, 214, 224, 0.45); }
+.au-mic:disabled { opacity: 0.5; cursor: not-allowed; }
+.au-mic.recording { background: rgba(70, 214, 224, 0.12); }
 .au-input {
   flex: 1; height: 48px; padding: 0 18px; border-radius: 14px;
   font-size: 15px; color: var(--au-text); font-family: inherit;

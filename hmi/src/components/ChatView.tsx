@@ -107,7 +107,7 @@ function Welcome({ name, onQuick }: { name: string; onQuick: (t: string) => void
     <div className="au-welcome">
       <AuroraOrb size={96} state="idle" />
       <div className="au-welcome-title">我是{name}</div>
-      <div className="au-welcome-sub">按住麦克风说话，或点下方指令试试</div>
+      <div className="au-welcome-sub">按住下方光球说话，或点指令试试</div>
       <div className="au-welcome-chips">
         {['打开空调26度', '附近的充电站', '讲个笑话'].map((q) => (
           <button key={q} className="au-welcome-chip" onClick={() => onQuick(q)}>

@@ -85,7 +85,7 @@ export function Composer({
           onClick: () => (mic === 'recording' ? endRecord() : beginRecord()),
         }
 
-  const micGlyph = mic === 'transcribing' ? '◌' : '🎤'
+  // 语音按钮即小舟光球：录音→speaking（波纹）、识别中→thinking（律动）、空闲→idle（呼吸）
   const orbState = mic === 'recording' ? 'speaking' : mic === 'transcribing' ? 'thinking' : 'idle'
 
   return (
@@ -101,19 +101,14 @@ export function Composer({
       {(notice || hint) && <div className="au-composer-notice">{notice || hint}</div>}
 
       <div className="au-composer-bar">
-        <AuroraOrb size={36} state={orbState} />
         <button
-          className={'au-mic' + (mic === 'recording' ? ' recording' : '') + (mic === 'transcribing' ? ' busy' : '')}
+          className={'au-mic' + (mic === 'recording' ? ' recording' : '')}
           disabled={!supported || mic === 'transcribing'}
           title={settings.micMode === 'hold' ? '按住说话' : '点按开始/结束'}
           aria-label="语音输入"
           {...holdHandlers}
         >
-          {mic === 'recording' ? (
-            <span className="au-mic-wave"><i /><i /><i /><i /><i /></span>
-          ) : (
-            <span>{micGlyph}</span>
-          )}
+          <AuroraOrb size={40} state={orbState} />
         </button>
         <input
           className="au-input"
