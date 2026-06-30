@@ -643,6 +643,7 @@ function FixtureRow({ f }: { f: SportsScoresCard['fixtures'][number] }) {
 function SportsScoresCardView({ card }: { card: SportsScoresCard }) {
   return (
     <div className="card card-evidence card-sports">
+      <AIBadge label="AI · 赛事信息" />
       <CardHead icon="⚽" title={card.title} freshness={card.freshness} />
       {card.fixtures.length === 0
         ? <div className="ev-empty">暂无比赛安排</div>
@@ -657,6 +658,7 @@ function SportsScoresCardView({ card }: { card: SportsScoresCard }) {
 function SportsScorersCardView({ card }: { card: SportsScorersCard }) {
   return (
     <div className="card card-evidence card-sports">
+      <AIBadge label="AI · 射手榜" />
       <div className="ev-head">
         <span className="ev-head-title">👟 {card.title}</span>
         {card.season && <span className="ev-fresh">{card.season}</span>}
@@ -685,32 +687,39 @@ function RoutePlanCardView({ card }: { card: RoutePlanCard }) {
     ? `${Math.floor(card.duration_min / 60) ? `${Math.floor(card.duration_min / 60)}小时` : ''}${card.duration_min % 60 ? `${card.duration_min % 60}分钟` : ''}`
     : ''
   return (
-    <div className="card card-evidence card-charge-route">
-      <div className="ev-head">
-        <span className="ev-head-title">🧭 路线规划</span>
-        {card.distance_km ? (
-          <span className="ev-fresh">{card.distance_km}km{dur ? ` · ${dur}` : ''}</span>
-        ) : null}
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '15px 16px 12px' }}>
+        <AIBadge label="AI · 路线规划" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 14.5, fontWeight: 600 }}>🧭 规划路线</span>
+          {(card.distance_km || dur) && <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-2)' }}>{dur}{card.distance_km ? `${dur ? ' · ' : ''}${card.distance_km}km` : ''}</span>}
+        </div>
       </div>
-      <ul className="cr-line">
-        <li className="cr-node cr-start">
-          <span className="cr-dot" />
-          <span className="cr-text">{card.origin || '当前位置'}</span>
-        </li>
-        {card.waypoints.map((w, i) => (
-          <li key={i} className="cr-node cr-stop">
-            <span className="cr-dot" />
-            <span className="cr-text">
-              <b>📍 {w.name}</b>
-              {w.address && <em className="cr-km">{w.address}</em>}
-            </span>
-          </li>
-        ))}
-        <li className="cr-node cr-end">
-          <span className="cr-dot" />
-          <span className="cr-text">{card.destination}</span>
-        </li>
-      </ul>
+      <CardHR />
+      <div style={{ padding: '14px 20px' }}>
+        {[
+          { type: 'origin', icon: '📍', label: card.origin || '当前位置', sub: '出发' },
+          ...card.waypoints.map((w) => ({ type: 'stop', icon: '🍽', label: w.name, sub: w.address || '途经点' })),
+          { type: 'dest', icon: '🏁', label: card.destination, sub: '目的地' },
+        ].map((n, i, arr) => {
+          const color = n.type === 'origin' ? 'var(--au-primary)' : n.type === 'dest' ? '#34D399' : '#F59E0B'
+          return (
+            <div key={i} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                <span style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', background: `${n.type === 'stop' ? 'rgba(245,158,11,0.15)' : color}`, border: `2px solid ${color}`, fontSize: 13 }}>{n.icon}</span>
+                {i < arr.length - 1 && <span style={{ width: 1, height: 26, background: 'var(--au-line-2)', margin: '4px 0' }} />}
+              </div>
+              <div style={{ paddingTop: 4, flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 2 }}>{n.label}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--au-text-3)' }}>{n.sub}</div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div style={{ padding: '0 16px 14px' }}>
+        <button style={{ width: '100%', padding: '11px 0', borderRadius: 14, background: 'var(--au-aurora)', border: 'none', color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}>开始导航</button>
+      </div>
     </div>
   )
 }
@@ -722,34 +731,55 @@ function ChargingRouteCardView({ card }: { card: ChargingRouteCard }) {
     ? `${Math.floor(card.duration_min / 60) ? `${Math.floor(card.duration_min / 60)}小时` : ''}${card.duration_min % 60 ? `${card.duration_min % 60}分钟` : ''}`
     : ''
   return (
-    <div className="card card-evidence card-charge-route">
-      <div className="ev-head">
-        <span className="ev-head-title">🔋 充能路线</span>
-        {card.distance_km ? (
-          <span className="ev-fresh">{card.distance_km}km{dur ? ` · ${dur}` : ''}</span>
-        ) : null}
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '15px 16px 12px' }}>
+        <AIBadge label="AI · 充电路线" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--au-warn)' }}>⚡ 充电路线规划</span>
+          {card.distance_km ? <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-2)' }}>{card.distance_km}km{dur ? ` · ${dur}` : ''}</span> : null}
+        </div>
       </div>
-      <ul className="cr-line">
-        <li className="cr-node cr-start">
-          <span className="cr-dot" />
-          <span className="cr-text">出发地{card.soc ? `（电量 ${card.soc}）` : ''}</span>
-        </li>
-        {card.stops.map((s, i) => (
-          <li key={i} className="cr-node cr-stop">
-            <span className="cr-dot" />
-            <span className="cr-text">
-              <b>⚡ {s.name}</b>
-              {s.at_km != null && <em className="cr-km">约 {s.at_km} km 处补电</em>}
-            </span>
-          </li>
-        ))}
-        <li className="cr-node cr-end">
-          <span className="cr-dot" />
-          <span className="cr-text">{card.destination}</span>
-        </li>
-      </ul>
-      {card.stops.length === 0 && (
-        <div className="cr-direct">电量充足，全程无需途中补电</div>
+      <CardHR />
+      {card.soc && <div style={{ padding: '12px 16px 10px' }}><SocBar soc={card.soc} dest={card.destination} /></div>}
+      <CardHR />
+      {card.stops.length > 0 ? (
+        <div style={{ padding: '14px 18px' }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 10 }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--au-primary)', flexShrink: 0 }} />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>出发地</div>
+              {card.soc && <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>当前电量 {card.soc}</div>}
+            </div>
+          </div>
+          {card.stops.map((s, i) => (
+            <div key={i}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '2px 0 2px 4px' }}>
+                <span style={{ width: 1, height: 22, background: 'var(--au-line-2)' }} />
+                {s.at_km != null && <span className="au-num" style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>约 {s.at_km}km 处</span>}
+              </div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 10, padding: '12px 14px', borderRadius: 14, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.20)' }}>
+                <span style={{ width: 28, height: 28, borderRadius: 8, display: 'grid', placeItems: 'center', background: 'rgba(245,158,11,0.18)', border: '1px solid rgba(245,158,11,0.30)', fontSize: 14, flexShrink: 0 }}>⚡</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{s.name}</div>
+                  {s.address && <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{s.address}</div>}
+                </div>
+              </div>
+            </div>
+          ))}
+          <div style={{ display: 'flex', alignItems: 'center', padding: '0 0 0 4px' }}><span style={{ width: 1, height: 18, background: 'var(--au-line-2)' }} /></div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#34D399', flexShrink: 0 }} />
+            <div style={{ fontSize: 13, fontWeight: 600 }}>{card.destination}</div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ padding: '20px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ width: 36, height: 36, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.28)', fontSize: 18 }}>✅</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#34D399' }}>全程无需补电</div>
+            <div style={{ fontSize: 11.5, color: 'var(--au-text-3)', marginTop: 2 }}>当前电量足以完成全程</div>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -765,6 +795,7 @@ function TripItineraryCardView({ card, onAction }:
   { card: TripItineraryCard; onAction?: (text: string) => void }) {
   return (
     <div className="card card-evidence card-charge-route card-trip">
+      <AIBadge label="AI · 行程规划" />
       <div className="ev-head">
         <span className="ev-head-title">🧭 {card.destination} · {card.days}天行程</span>
         {card.status === 'confirmed' && <span className="ev-fresh">已确认</span>}
@@ -819,22 +850,37 @@ function TripItineraryCardView({ card, onAction }:
 // ─── POI 列表卡片 ───
 
 function PoiListCardView({ card }: { card: PoiListCard }) {
-  // 编号展示（便于「第N个」）：充电目的地候选 dest_choice / 顺路停靠途经点候选 waypoint_choice
   const isChoice = card.purpose === 'dest_choice' || card.purpose === 'waypoint_choice'
+  const title = isChoice ? (card.title || '请选择') : `附近${card.keyword || '地点'}`
   return (
-    <div className="card card-poi">
-      <div className="card-header">{isChoice ? (card.title || '请选择') : `附近${card.keyword || ''}`}</div>
-      <div className="card-poi-list">
-        {card.items.map((item, i) => (
-          <div key={i} className="poi-item">
-            <div className="poi-name">{isChoice && <span className="poi-idx">{i + 1}.</span>}{item.name}</div>
-            <div className="poi-info">
-              {(item.rating ?? 0) > 0 && <span className="poi-rating">★ {item.rating}</span>}
-              {(item.distance_km ?? 0) > 0 && <span className="poi-dist">{item.distance_km}km</span>}
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '15px 16px 12px' }}>
+        <AIBadge label="AI · 位置搜索" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 14.5, fontWeight: 600 }}>⚡ {title}</span>
+          <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>已更新 · 共 {card.items.length} 个</span>
+        </div>
+      </div>
+      <CardHR />
+      {card.items.map((item, i) => (
+        <div key={item.id || i}>
+          <div style={{ padding: '12px 16px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+            <span style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,0.07)', border: '1px solid var(--au-line-2)', fontFamily: 'var(--au-font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--au-text-2)' }}>{i + 1}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</span>
+                {(item.distance_km ?? 0) > 0 && <span className="au-num" style={{ fontSize: 12, color: 'var(--au-primary)', fontWeight: 600, flexShrink: 0 }}>{item.distance_km}km</span>}
+              </div>
+              {(item.rating ?? 0) > 0 && <div style={{ fontSize: 11, color: 'var(--au-warn)', marginBottom: 4 }}>★ {item.rating}</div>}
+              {item.address && <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{item.address}</div>}
             </div>
-            {item.address && <div className="poi-addr">{item.address}</div>}
           </div>
-        ))}
+          {i < card.items.length - 1 && <div style={{ height: 1, background: 'var(--au-line)', margin: '0 16px' }} />}
+        </div>
+      ))}
+      <div style={{ padding: '11px 16px 13px', borderTop: '1px solid var(--au-line)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 12 }}>🎙</span>
+        <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>说「<span style={{ color: 'var(--au-text-2)' }}>导航去第 2 个</span>」或「<span style={{ color: 'var(--au-text-2)' }}>最近的{card.keyword || '地点'}</span>」</span>
       </div>
     </div>
   )

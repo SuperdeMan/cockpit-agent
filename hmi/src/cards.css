@@ -206,6 +206,14 @@ a.ev-news-h:hover { color: var(--au-blue); }
 .trip-go-hint { color: var(--au-primary); }
 .trip-voice-hint { color: var(--au-text-2); }
 
+/* ── 充电路线 SoC 进度条（SocBar）── */
+.cr-soc { display: flex; flex-direction: column; gap: 7px; }
+.cr-soc-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--au-text-3); }
+.cr-soc-head b { font-size: 13px; font-weight: 700; }
+.cr-soc-track { height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.cr-soc-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+.cr-soc-foot { display: flex; justify-content: space-between; font-size: 10px; color: var(--au-text-3); }
+
 /* ── POI ── */
 .poi-idx { color: var(--au-primary); }
 .poi-item { background: rgba(255, 255, 255, 0.04); }
