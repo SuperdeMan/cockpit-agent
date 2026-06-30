@@ -12,12 +12,13 @@ import json
 import logging
 import os
 
+import aiohttp
 import grpc
 from aiohttp import web
 
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
-from providers import build_asr_provider, build_tts_provider
+from providers import build_asr_provider, build_streaming_asr_provider, build_tts_provider
 
 logger = logging.getLogger("llm.http")
 
@@ -149,6 +150,115 @@ def create_http_app() -> web.Application:
         gender = request.query.get("gender", "")
         voices = await tts.list_voices(language=lang, gender=gender)
         return web.json_response({"voices": voices})
+
+    @routes.get("/api/asr/stream/info")
+    async def handle_asr_stream_info(request: web.Request):
+        """流式 ASR 能力探测（HMI 设置页据此渲染引擎/模型选择 + 可用性）。"""
+        has_dashscope = bool(os.getenv("DASHSCOPE_ASR_KEY") or os.getenv("LLM_EMBED_API_KEY"))
+        has_mimo = bool(os.getenv("LLM_API_KEY"))
+        return web.json_response({
+            "streaming": has_dashscope or has_mimo,
+            "default": os.getenv("ASR_STREAM_PROVIDER", "dashscope"),
+            "providers": [
+                {"id": "dashscope", "label": "DashScope 实时", "available": has_dashscope,
+                 "models": ["Qwen3-ASR-Flash-Realtime-2026-02-10", "fun-asr-realtime"]},
+                {"id": "mimo", "label": "MiMo 分块", "available": has_mimo,
+                 "models": ["mimo-v2.5-asr"]},
+            ],
+        })
+
+    @routes.get("/api/asr/stream")
+    async def handle_asr_stream(request: web.Request):
+        """流式 ASR：HMI 经 WebSocket 推音频帧（webm/opus）+ start/stop 控制，
+        网关流式 ffmpeg 转 PCM16→流式引擎（DashScope 实时 / MiMo 分块）→回 partial/final。
+        见 docs/design/2026-06-30-asr-streaming-design.md。批处理 /api/asr 不受影响（回退路径）。"""
+        ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=8 * 1024 * 1024)
+        await ws.prepare(request)
+        ffmpeg = None
+        tasks: list = []
+        pcm_queue: asyncio.Queue = asyncio.Queue()
+
+        async def pcm_iter():
+            while True:
+                chunk = await pcm_queue.get()
+                if chunk is None:
+                    return
+                yield chunk
+
+        async def read_ffmpeg(proc):
+            try:
+                while True:
+                    data = await proc.stdout.read(3200)
+                    if not data:
+                        break
+                    await pcm_queue.put(data)
+            finally:
+                await pcm_queue.put(None)
+
+        async def run_provider(provider, language):
+            try:
+                async for r in provider.stream(pcm_iter(), language=language):
+                    if ws.closed:
+                        break
+                    await ws.send_json({"type": "final" if r.get("final") else "partial",
+                                        "text": r.get("text", "")})
+                if not ws.closed:
+                    await ws.send_json({"type": "done"})
+            except Exception as e:
+                logger.warning("ASR stream provider error: %s", e)
+                if not ws.closed:
+                    await ws.send_json({"type": "error", "message": str(e)})
+
+        def _close_stdin():
+            if ffmpeg and ffmpeg.stdin and not ffmpeg.stdin.is_closing():
+                try:
+                    ffmpeg.stdin.close()
+                except Exception:
+                    pass
+
+        try:
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    mtype = data.get("type")
+                    if mtype == "start":
+                        if ffmpeg is not None:
+                            continue
+                        provider = build_streaming_asr_provider(
+                            data.get("provider", ""), data.get("model", ""))
+                        if provider is None:
+                            await ws.send_json({"type": "unsupported"})
+                            continue
+                        ffmpeg = await asyncio.create_subprocess_exec(
+                            "ffmpeg", "-i", "pipe:0", "-ar", "16000", "-ac", "1",
+                            "-f", "s16le", "pipe:1",
+                            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.DEVNULL)
+                        tasks.append(asyncio.create_task(read_ffmpeg(ffmpeg)))
+                        tasks.append(asyncio.create_task(
+                            run_provider(provider, data.get("language", "zh"))))
+                    elif mtype == "stop":
+                        _close_stdin()  # flush ffmpeg → 流末 → 引擎定稿
+                elif msg.type == aiohttp.WSMsgType.BINARY:
+                    if ffmpeg and ffmpeg.stdin and not ffmpeg.stdin.is_closing():
+                        try:
+                            ffmpeg.stdin.write(msg.data)
+                            await ffmpeg.stdin.drain()
+                        except Exception:
+                            pass
+                elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE,
+                                  aiohttp.WSMsgType.CLOSING):
+                    break
+        finally:
+            _close_stdin()
+            if ffmpeg:
+                try:
+                    ffmpeg.kill()
+                except Exception:
+                    pass
+            for t in tasks:
+                t.cancel()
+        return ws
 
     @routes.get("/api/memory/session")
     async def handle_mem_session(request: web.Request):

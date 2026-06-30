@@ -276,6 +276,112 @@ export async function recognize(
   return (data.text || '').trim()
 }
 
+// ─── 流式 ASR：边录边推音频帧、partial 实时上屏（见 docs/design/2026-06-30-asr-streaming-design.md）───
+
+export function streamingAsrSupported(): boolean {
+  return micSupported() && secureContextOk() && typeof WebSocket !== 'undefined'
+}
+
+export function asrStreamUrl(apiBase: string): string {
+  return apiBase.replace(/^http/, 'ws') + '/api/asr/stream'
+}
+
+type StreamOpts = {
+  language: string
+  provider: string
+  model: string
+  onPartial?: (text: string) => void
+  onFinal?: (text: string) => void
+  onError?: (msg: string) => void // 触发批处理回退
+}
+
+/** 流式识别器：WS 连网关 /api/asr/stream，MediaRecorder 分帧推送，收 partial/final。
+ *  失败（WS 连不上 / unsupported / error）回调 onError，由调用方无感回退批处理 recognize()。*/
+export class StreamingRecognizer {
+  private ws: WebSocket | null = null
+  private rec: MediaRecorder | null = null
+  private stream: MediaStream | null = null
+  private finished = false
+  private opened = false
+
+  get active(): boolean {
+    return !!this.rec || !!this.ws
+  }
+
+  async start(wsUrl: string, opts: StreamOpts): Promise<void> {
+    if (this.active) return
+    this.finished = false
+    this.opened = false
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    this.stream = stream
+    const mime = pickMime() || ''
+    const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
+    this.rec = rec
+    const ws = new WebSocket(wsUrl)
+    ws.binaryType = 'arraybuffer'
+    this.ws = ws
+
+    ws.onopen = () => {
+      this.opened = true
+      ws.send(JSON.stringify({
+        type: 'start', format: containerOf(mime || 'audio/webm'),
+        language: opts.language, provider: opts.provider, model: opts.model,
+      }))
+      rec.start(250) // 250ms 分帧
+    }
+    ws.onmessage = (ev) => {
+      let m: any
+      try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : '{}') } catch { return }
+      if (m.type === 'partial') opts.onPartial?.(m.text || '')
+      else if (m.type === 'final') { this.finished = true; opts.onFinal?.(m.text || '') }
+      else if (m.type === 'done') this.cleanup()
+      else if (m.type === 'unsupported' || m.type === 'error') {
+        opts.onError?.(m.message || '流式识别不可用')
+        this.cleanup()
+      }
+    }
+    ws.onerror = () => { if (!this.opened) opts.onError?.('语音流连接失败') }
+    ws.onclose = () => { if (!this.opened && !this.finished) opts.onError?.('语音流已断开') }
+
+    rec.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+        e.data.arrayBuffer().then((buf) => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(buf)
+        }).catch(() => {/* 帧丢弃静默 */})
+      }
+    }
+    rec.onstop = () => {
+      // 最后一帧的 arrayBuffer 微任务先于本次发送完成 → {stop} 殿后，顺序不乱
+      if (ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ type: 'stop' })) } catch {/* ignore */}
+      }
+      this.stream?.getTracks().forEach((t) => t.stop())
+      this.stream = null
+      this.rec = null
+      // 等 final/done 收尾；兜底 6s 后强制清理
+      window.setTimeout(() => { if (!this.finished) this.cleanup() }, 6000)
+    }
+  }
+
+  /** 松手/点停：停录音并请求定稿（WS 待 final/done 后自清理）。 */
+  stop(): void {
+    if (this.rec && this.rec.state !== 'inactive') {
+      try { this.rec.stop() } catch { this.cleanup() }
+    } else {
+      this.cleanup()
+    }
+  }
+
+  private cleanup(): void {
+    try { if (this.rec && this.rec.state !== 'inactive') this.rec.stop() } catch {/* ignore */}
+    this.stream?.getTracks().forEach((t) => t.stop())
+    try { this.ws?.close() } catch {/* ignore */}
+    this.rec = null
+    this.stream = null
+    this.ws = null
+  }
+}
+
 export async function fetchVoices(apiBase: string): Promise<import('./types').Voice[]> {
   const resp = await fetch(`${apiBase}/api/voices`)
   const data = await resp.json()

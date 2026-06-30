@@ -8,6 +8,7 @@
 仅当需要一种全新的非 OpenAI 兼容协议时，才在此新增 Provider 类。
 """
 from __future__ import annotations
+import asyncio
 import json
 import os
 
@@ -351,6 +352,172 @@ def build_asr_provider() -> BaseASRProvider:
     if provider in ("xiaomimimo", "mimo") and api_key:
         return MiMoASRProvider(api_key)
     return MockASRProvider()
+
+
+# ─── 流式 ASR Provider（实时识别上屏）───
+# 设计见 docs/design/2026-06-30-asr-streaming-design.md。
+# 传输层（HMI↔网关 WS + 网关流式 ffmpeg）在 http_server.py；此处是
+# "16k mono PCM16 帧流 → {text, final} 文本流" 的引擎抽象，引擎经 env/请求可换。
+
+def _wav_header(pcm_len: int, sr: int = 16000) -> bytes:
+    """给裸 PCM16 mono 加 44 字节 WAV 头（供 MiMo 批 ASR 当 wav 用）。"""
+    import struct
+    return (b"RIFF" + struct.pack("<I", 36 + pcm_len) + b"WAVEfmt "
+            + struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16)
+            + b"data" + struct.pack("<I", pcm_len))
+
+
+class BaseStreamingASRProvider:
+    async def stream(self, pcm_chunks, *, language: str = "zh"):
+        """pcm_chunks: 16kHz mono s16le PCM 帧的异步迭代器；yield {'text': str, 'final': bool}。"""
+        raise NotImplementedError
+        yield  # noqa: 标记为 async generator（永不到达）
+
+
+class MiMoChunkedASRProvider(BaseStreamingASRProvider):
+    """回退引擎：累积 PCM、每 ~interval 秒封 WAV 打一次 MiMo 批 ASR 产伪 partial。
+    用已验证可用的 MiMo 批 ASR，保证上屏功能在 DashScope 不可用时也跑通。"""
+
+    def __init__(self, batch: "MiMoASRProvider", model: str = "", interval_s: float = 1.2):
+        self.batch = batch
+        self.model = model or os.getenv("ASR_MODEL", "mimo-v2.5-asr")
+        self.interval_s = interval_s
+
+    async def stream(self, pcm_chunks, *, language="zh"):
+        import time
+        buf = bytearray()
+        last_t = 0.0
+        last_text = ""
+
+        async def transcribe_now() -> str:
+            if len(buf) < 3200:  # <0.1s 不值得打
+                return last_text
+            wav = _wav_header(len(buf)) + bytes(buf)
+            text, *_ = await self.batch.transcribe(audio=wav, fmt="wav", language=language, model=self.model)
+            return (text or "").strip()
+
+        async for chunk in pcm_chunks:
+            buf.extend(chunk)
+            now = time.monotonic()
+            if now - last_t >= self.interval_s:
+                last_t = now
+                try:
+                    t = await transcribe_now()
+                    if t and t != last_text:
+                        last_text = t
+                        yield {"text": t, "final": False}
+                except Exception:
+                    pass  # 中途失败不影响整段定稿
+        try:
+            final = await transcribe_now()
+        except Exception:
+            final = last_text
+        yield {"text": (final or last_text), "final": True}
+
+
+class DashScopeRealtimeASRProvider(BaseStreamingASRProvider):
+    """DashScope（百炼）实时 ASR——OpenAI 兼容 Realtime 协议（实测见设计 §2.1）。
+    端点 wss://…/api-ws/v1/realtime?model=<id>，Bearer 鉴权。
+    session.created → session.update → input_audio_buffer.append(base64 PCM16) →
+    （流末）commit → conversation.item.input_audio_transcription.delta(partial)/.completed(final)。"""
+
+    def __init__(self, api_key: str, ws_url: str, model: str):
+        self.api_key = api_key
+        self.ws_url = ws_url
+        self.model = model
+
+    async def stream(self, pcm_chunks, *, language="zh"):
+        import base64
+        import aiohttp
+        url = f"{self.ws_url}?model={self.model}"
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                url, headers={"Authorization": f"Bearer {self.api_key}"}, heartbeat=20.0,
+            ) as ws:
+                # 等 session.created（容错读几条）
+                for _ in range(5):
+                    msg = await ws.receive(timeout=10)
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        if json.loads(msg.data).get("type") == "session.created":
+                            break
+                    elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSING):
+                        raise RuntimeError("dashscope ws closed before session.created")
+                _eid = [0]
+
+                def _ev(o):
+                    _eid[0] += 1
+                    return {"event_id": f"ev{_eid[0]}", **o}
+
+                # 实测协议（DashScope 文档）：format=pcm（非 pcm16）、transcription.language（非 model）、
+                # 手动模式（turn_detection=None）append→commit；中间结果 .text(text+stash)、定稿 .completed(transcript)。
+                await ws.send_json(_ev({"type": "session.update", "session": {
+                    "input_audio_format": "pcm", "sample_rate": 16000,
+                    "input_audio_transcription": {"language": language or "zh"},
+                    "turn_detection": None,
+                }}))
+
+                async def pump():
+                    try:
+                        async for chunk in pcm_chunks:
+                            await ws.send_json(_ev({"type": "input_audio_buffer.append",
+                                                    "audio": base64.b64encode(chunk).decode("ascii")}))
+                        await ws.send_json(_ev({"type": "input_audio_buffer.commit"}))
+                    except Exception:
+                        pass
+
+                pump_task = asyncio.create_task(pump())
+                acc = ""
+                final_sent = False
+                try:
+                    async for msg in ws:
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                                break
+                            continue
+                        m = json.loads(msg.data)
+                        t = m.get("type", "")
+                        if "input_audio_transcription" in t and t.endswith(".text"):
+                            acc = (m.get("text") or "") + (m.get("stash") or "")  # 已确认 + 草稿后缀
+                            if acc:
+                                yield {"text": acc, "final": False}
+                        elif "input_audio_transcription" in t and t.endswith("completed"):
+                            acc = (m.get("transcript") or acc)
+                            yield {"text": acc, "final": True}
+                            final_sent = True
+                            break
+                        elif t == "error":
+                            raise RuntimeError((m.get("error") or {}).get("message", "dashscope asr error"))
+                finally:
+                    pump_task.cancel()
+                if not final_sent:
+                    # 异常关闭/无转写（如服务端 1011 InternalError）→ 抛错让网关回 error、
+                    # HMI 无感回退批处理；有半截 partial 则当定稿用。
+                    if not acc:
+                        raise RuntimeError(f"dashscope 实时无转写 (close_code={ws.close_code})")
+                    yield {"text": acc, "final": True}
+
+
+def build_streaming_asr_provider(provider: str = "", model: str = "") -> "BaseStreamingASRProvider | None":
+    """按请求/env 选流式引擎。provider/model 为请求级覆盖（HMI 设置可切），空则用 env 默认。
+    无可用 key 或 off → None（HMI 探测到则无感回退批处理 /api/asr）。"""
+    provider = (provider or os.getenv("ASR_STREAM_PROVIDER", "mimo-chunked")).strip().lower()
+    if provider in ("", "off", "none"):
+        return None
+    if provider in ("dashscope", "dashscope-qwen3", "dashscope-fun", "qwen3", "fun"):
+        key = os.getenv("DASHSCOPE_ASR_KEY") or os.getenv("LLM_EMBED_API_KEY", "")
+        if not key:
+            return None
+        ws_url = os.getenv("DASHSCOPE_ASR_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
+        mdl = model or os.getenv("ASR_STREAM_MODEL", "Qwen3-ASR-Flash-Realtime-2026-02-10")
+        if provider in ("fun", "dashscope-fun") and not model:
+            mdl = "fun-asr-realtime"
+        return DashScopeRealtimeASRProvider(key, ws_url, mdl)
+    if provider in ("mimo", "mimo-chunked", "mimo-batch"):
+        api_key = os.getenv("LLM_API_KEY", "")
+        if not api_key:
+            return None
+        return MiMoChunkedASRProvider(MiMoASRProvider(api_key), model=model)
+    return None
 
 
 # ─── TTS Provider（语音合成）───

@@ -277,9 +277,24 @@ function TtsSection({ audioApi }: { audioApi: string }) {
 // ─── 2 · 语音输入 ───
 function AsrSection() {
   const { settings, update } = useSettings()
+  const isDash = settings.asrProvider === 'dashscope'
   return (
     <div>
-      <SectionHdr icon="voice-input" title="语音输入" sub="配置语音识别的语言、模式与时长" />
+      <SectionHdr icon="voice-input" title="语音输入" sub="配置识别引擎、语言、模式与时长" />
+      <SettingGroup title="实时识别引擎（流式上屏）">
+        <SettingRow label="识别服务商" sub="实时=边说边上屏（DashScope 百炼）；分块=经典 MiMo；关闭=录完再出">
+          <Segmented value={settings.asrProvider} onChange={(v) => update({ asrProvider: v })}
+            options={[{ value: 'dashscope', label: '实时' }, { value: 'mimo', label: '分块' }, { value: 'off', label: '关闭' }]} />
+        </SettingRow>
+        <SettingRow label="识别模型" sub={isDash ? '实时 ASR 模型（同一把百炼 key）' : '分块模式用 MiMo 批 ASR，无需选模型'} noBorder>
+          {isDash ? (
+            <Segmented sm value={settings.asrModel} onChange={(v) => update({ asrModel: v })}
+              options={[{ value: 'Qwen3-ASR-Flash-Realtime-2026-02-10', label: 'Qwen3-ASR' }, { value: 'fun-asr-realtime', label: 'Fun-ASR' }]} />
+          ) : (
+            <span style={{ fontSize: 13, color: 'var(--au-text-3)' }}>—</span>
+          )}
+        </SettingRow>
+      </SettingGroup>
       <SettingGroup title="识别设置">
         <SettingRow label="识别语言" sub="选择主要识别语言">
           <Segmented value={settings.asrLanguage} onChange={(v) => update({ asrLanguage: v })}

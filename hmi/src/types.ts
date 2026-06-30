@@ -339,6 +339,7 @@ export type Voice = {
 export type Theme = 'dark' | 'light'
 export type FontScale = 'normal' | 'large'
 export type AsrLanguage = 'zh' | 'en' | 'auto'
+export type AsrProvider = 'dashscope' | 'mimo' | 'off' // 流式识别引擎（off=走批处理）
 export type MicMode = 'hold' | 'toggle'
 export type AnswerLength = 'short' | 'standard' | 'detailed'
 export type ModelPref = 'fast' | 'deep' | 'auto'
@@ -351,6 +352,8 @@ export type Settings = {
   voiceId: string
   // 语音输入 ASR
   asrLanguage: AsrLanguage
+  asrProvider: AsrProvider // 流式识别引擎（dashscope 实时 / mimo 分块 / off 批处理）
+  asrModel: string // 引擎模型（dashscope: Qwen3-…/fun-asr-realtime）
   micMode: MicMode
   listenSeconds: ListenSeconds
   // 显示与主题
@@ -414,6 +417,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoplay: true,
   voiceId: '冰糖',
   asrLanguage: 'zh',
+  asrProvider: 'mimo', // 默认走已验证可用的 MiMo 分块上屏；dashscope 实时待百炼账号开通 realtime ASR
+  asrModel: 'Qwen3-ASR-Flash-Realtime-2026-02-10',
   micMode: 'hold',
   listenSeconds: 15,
   theme: 'dark',

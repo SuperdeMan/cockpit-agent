@@ -1,8 +1,12 @@
 // 底部输入区（Aurora Glass）：快捷指令轨 + 小舟光球 + 麦克风 + 文本输入 + 发送。
-// 麦克风"按住说话/点按切换"两种模式，复用 MicController 消除收音竞态——录音/识别逻辑不变。
+// 语音输入两条路：①流式实时上屏（StreamingRecognizer→WS，partial 写进输入框）；
+// ②批处理（MicController→recognize，录完再出）。流式失败本会话无感回退批处理。
 import { useEffect, useRef, useState } from 'react'
 import { useSettings } from '../settings'
-import { MicController, micSupported, secureContextOk, recognize, stopTTS, type RecordResult } from '../audio'
+import {
+  MicController, micSupported, secureContextOk, recognize, stopTTS,
+  StreamingRecognizer, streamingAsrSupported, asrStreamUrl, type RecordResult,
+} from '../audio'
 import { AuroraOrb } from './aurora'
 
 type MicState = 'idle' | 'recording' | 'transcribing'
@@ -22,6 +26,13 @@ export function Composer({
   const [notice, setNotice] = useState<string>('')
   const ctrlRef = useRef<MicController | null>(null)
   if (!ctrlRef.current) ctrlRef.current = new MicController()
+  const streamRef = useRef<StreamingRecognizer | null>(null)
+  if (!streamRef.current) streamRef.current = new StreamingRecognizer()
+  // 流式模式：能力支持 + 设置非 off；一旦流式失败则本会话回退批处理
+  const streamModeRef = useRef(streamingAsrSupported() && settings.asrProvider !== 'off')
+  useEffect(() => {
+    streamModeRef.current = streamingAsrSupported() && settings.asrProvider !== 'off'
+  }, [settings.asrProvider])
 
   const supported = micSupported() && secureContextOk()
 
@@ -54,13 +65,40 @@ export function Composer({
     }
   }
 
+  // 流式：partial 实时写进输入框，final 自动发送；出错回退批处理
+  const beginStream = async () => {
+    setMic('recording')
+    const model = settings.asrProvider === 'dashscope' ? settings.asrModel : ''
+    await streamRef.current!.start(asrStreamUrl(audioApi), {
+      language: settings.asrLanguage,
+      provider: settings.asrProvider,
+      model,
+      onPartial: (t) => setInput(t),
+      onFinal: (t) => {
+        setMic('idle')
+        if (t.trim()) send(t)
+        else setInput('')
+      },
+      onError: (msg) => {
+        streamModeRef.current = false // 本会话回退批处理
+        setMic('idle')
+        setInput('')
+        setNotice('实时识别暂不可用，已切换经典模式：' + msg)
+      },
+    })
+  }
+
   const beginRecord = async () => {
     if (!supported || mic !== 'idle') return
     stopTTS()
     setNotice('')
     try {
-      setMic('recording')
-      await ctrlRef.current!.start(settings.listenSeconds * 1000, onResult)
+      if (streamModeRef.current) {
+        await beginStream()
+      } else {
+        setMic('recording')
+        await ctrlRef.current!.start(settings.listenSeconds * 1000, onResult)
+      }
     } catch {
       setMic('idle')
       setNotice('无法访问麦克风，请检查权限')
@@ -68,7 +106,13 @@ export function Composer({
   }
 
   const endRecord = () => {
-    if (mic === 'recording') ctrlRef.current!.stop()
+    if (mic !== 'recording') return
+    if (streamModeRef.current) {
+      streamRef.current!.stop()
+      setMic('transcribing') // 等定稿（光球 thinking）
+    } else {
+      ctrlRef.current!.stop()
+    }
   }
 
   // 按住说话：press/release；点按切换：click 切换
