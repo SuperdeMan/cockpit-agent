@@ -2,7 +2,7 @@
 
 智能座舱演示前端：「**Aurora Glass · 极光液态座舱**」风格——横屏 1920×1080 两栏布局（左对话流 / 右「上下文舞台」随对话切换场景）。通过 WebSocket 连 Edge Gateway 收发指令（文字或语音），流式展示助手回复、车控动作卡片与多轮确认；通过 HTTP 代理（llm-gateway:50059）做 ASR/TTS 与记忆读取。
 
-> 视觉重构中：P0 设计系统 + P1 两栏外壳/舞台 + P2 ~20 张信息卡按 Figma 设计稿重建已落地；P3 对话动态态、P4 设置侧栏待做。见 `docs/design/2026-06-29-figma-hmi-implementation-plan.md`。
+> 视觉重构（2026-06-30 已落地，前端层）：P0 设计系统 / P1 两栏外壳·舞台 / P2 ~20 卡(A-3~A-5) / P3 对话动态六态(A-6) / P4 设置横屏侧栏(A-7) / P5 浅色主题 / A-4 信息卡按源重建 / A-5 右舞台数据驱动地图 / A-8 图标库（39 设计图标 + 16 补齐，`Icon.tsx`/`icons.gen.ts`/`icons.custom.ts`，emoji 全替换）。待做：P5 行车态、P6 Dashboard（均待 Figma 出帧）。本地预览参数：`?aurora` 设计系统沙盒、`?icons` 图标验证台、`?demo[=map|cards|info|states|charge|trip|route]` 卡片/对话态夹具、`?settings[=<分区>]` 设置面板、`?theme=light|dark`。见 `docs/design/2026-06-29-figma-hmi-implementation-plan.md`。
 
 ## 本地运行
 ```bash
