@@ -474,7 +474,11 @@ class DashScopeRealtimeASRProvider(BaseStreamingASRProvider):
                 acc = ""
                 final_sent = False
                 try:
-                    async for msg in ws:
+                    while True:
+                        try:
+                            msg = await ws.receive(timeout=15.0)
+                        except asyncio.TimeoutError:
+                            break  # 模型长时间无响应（如 fun-asr-realtime 不出转写）→ 退出，下面按无转写处理
                         if msg.type != aiohttp.WSMsgType.TEXT:
                             if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                                 break

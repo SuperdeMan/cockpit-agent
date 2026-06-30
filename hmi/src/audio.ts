@@ -358,8 +358,8 @@ export class StreamingRecognizer {
       this.stream?.getTracks().forEach((t) => t.stop())
       this.stream = null
       this.rec = null
-      // 等 final/done 收尾；兜底 6s 后强制清理
-      window.setTimeout(() => { if (!this.finished) this.cleanup() }, 6000)
+      // 等 final/done 收尾；兜底 7s 内无定稿 → 当失败回退批处理（如 fun 这类不出转写的对话模型）
+      window.setTimeout(() => { if (!this.finished) { opts.onError?.('识别超时，已回退'); this.cleanup() } }, 7000)
     }
   }
 
