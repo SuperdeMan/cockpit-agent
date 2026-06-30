@@ -1,6 +1,6 @@
 # ASR 流式识别上屏 · 设计与落地
 
-- **状态**：设计中（待泓舟确认架构后落地）。2026-06-30。
+- **状态**：**已落地（commit 184d48f，2026-06-30）**。MiMo 分块流式上屏真栈验证可用（默认引擎，fake-mic e2e：输入框实时上屏「今天杭州天气怎么?」→ 松手定稿自动发送）；DashScope 实时（qwen3/fun）连通+鉴权+协议均按官方文档实现，但实测**百炼账号 realtime 推理一送音频即服务端关连接 1007/1011 InternalError**（连 paraformer inference 端点同 InternalError）——判定为**账号侧 realtime ASR 未开通/未激活**，非客户端问题；HMI 选 dashscope 时 provider 抛错→网关回 error→无感回退批处理。**待泓舟在百炼控制台确认 Qwen3-ASR-Flash-Realtime 的 realtime 推理权限后，设置页一键切「实时」即用**。
 - **交付对象**：落地的 Claude Code / 后续开发者。
 - **目标**：说话过程中识别文本**实时增量上屏**（输入框 interim → 松手定稿发送），替换现有"录完整段才出文本"的批处理体验。
 - **关联代码**：`hmi/src/audio.ts`、`hmi/src/components/Composer.tsx`；`llm-gateway/http_server.py`、`llm-gateway/providers.py`。
