@@ -506,6 +506,82 @@ class DashScopeRealtimeASRProvider(BaseStreamingASRProvider):
                     yield {"text": acc, "final": True}
 
 
+class DashScopeInferenceASRProvider(BaseStreamingASRProvider):
+    """DashScope 实时 ASR——Fun-ASR / Paraformer 系，**run-task 协议**（端点 `/api-ws/v1/inference`，
+    与 qwen3 的 OpenAI-realtime 协议不同！实测见 docs/design §2.1）。
+    run-task(task_group=audio/task=asr/function=recognition/parameters{format,sample_rate}/input{}) →
+    task-started → **二进制音频帧** → result-generated(payload.output.sentence{text,sentence_end}) →
+    finish-task → task-finished。"""
+
+    def __init__(self, api_key: str, ws_url: str, model: str):
+        self.api_key = api_key
+        self.ws_url = ws_url
+        self.model = model
+
+    async def stream(self, pcm_chunks, *, language="zh"):
+        import uuid
+        import aiohttp
+        task_id = uuid.uuid4().hex
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                self.ws_url, headers={"Authorization": f"bearer {self.api_key}"}, heartbeat=20.0,
+            ) as ws:
+                await ws.send_json({"header": {"action": "run-task", "task_id": task_id, "streaming": "duplex"},
+                                    "payload": {"task_group": "audio", "task": "asr", "function": "recognition",
+                                                "model": self.model,
+                                                "parameters": {"format": "pcm", "sample_rate": 16000},
+                                                "input": {}}})
+                started = asyncio.Event()
+
+                async def pump():
+                    try:
+                        await started.wait()
+                        async for chunk in pcm_chunks:
+                            await ws.send_bytes(chunk)  # 二进制音频帧（非 base64）
+                        await ws.send_json({"header": {"action": "finish-task", "task_id": task_id,
+                                                       "streaming": "duplex"}, "payload": {"input": {}}})
+                    except Exception:
+                        pass
+
+                pump_task = asyncio.create_task(pump())
+                finalized = ""  # 已定稿句子前缀（多句时累积），current 句的 text 接其后
+                acc = ""
+                final_sent = False
+                try:
+                    while True:
+                        try:
+                            msg = await ws.receive(timeout=15.0)
+                        except asyncio.TimeoutError:
+                            break
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                                break
+                            continue
+                        m = json.loads(msg.data)
+                        evt = m.get("header", {}).get("event", "")
+                        if evt == "task-started":
+                            started.set()
+                        elif evt == "result-generated":
+                            sent = (m.get("payload", {}).get("output", {}) or {}).get("sentence", {}) or {}
+                            acc = finalized + (sent.get("text") or "")
+                            if acc:
+                                yield {"text": acc, "final": False}
+                            if sent.get("sentence_end"):
+                                finalized = acc
+                        elif evt == "task-finished":
+                            yield {"text": acc, "final": True}
+                            final_sent = True
+                            break
+                        elif evt == "task-failed":
+                            raise RuntimeError(m.get("header", {}).get("error_message", "dashscope asr failed"))
+                finally:
+                    pump_task.cancel()
+                if not final_sent:
+                    if not acc:
+                        raise RuntimeError("dashscope inference 无转写")
+                    yield {"text": acc, "final": True}
+
+
 def build_streaming_asr_provider(provider: str = "", model: str = "") -> "BaseStreamingASRProvider | None":
     """按请求/env 选流式引擎。provider/model 为请求级覆盖（HMI 设置可切），空则用 env 默认。
     无可用 key 或 off → None（HMI 探测到则无感回退批处理 /api/asr）。"""
@@ -516,11 +592,16 @@ def build_streaming_asr_provider(provider: str = "", model: str = "") -> "BaseSt
         key = os.getenv("DASHSCOPE_ASR_KEY") or os.getenv("LLM_EMBED_API_KEY", "")
         if not key:
             return None
-        ws_url = os.getenv("DASHSCOPE_ASR_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
         mdl = model or os.getenv("ASR_STREAM_MODEL", "qwen3-asr-flash-realtime-2026-02-10")
         if provider in ("fun", "dashscope-fun") and not model:
             mdl = "fun-asr-realtime"
-        return DashScopeRealtimeASRProvider(key, ws_url, mdl)
+        if "qwen" in mdl.lower():
+            # Qwen-ASR：OpenAI 兼容 Realtime 协议（/realtime，base64 音频，session.update）
+            ws_url = os.getenv("DASHSCOPE_ASR_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
+            return DashScopeRealtimeASRProvider(key, ws_url, mdl)
+        # Fun-ASR / Paraformer：run-task 协议（/inference，二进制音频帧）
+        inf_url = os.getenv("DASHSCOPE_ASR_INFERENCE_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/inference")
+        return DashScopeInferenceASRProvider(key, inf_url, mdl)
     if provider in ("mimo", "mimo-chunked", "mimo-batch"):
         api_key = os.getenv("LLM_API_KEY", "")
         if not api_key:

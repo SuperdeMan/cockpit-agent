@@ -90,6 +90,7 @@ services:
       ASR_STREAM_PROVIDER: ${ASR_STREAM_PROVIDER:-dashscope}
       DASHSCOPE_ASR_KEY: ${DASHSCOPE_ASR_KEY:-}
       DASHSCOPE_ASR_WS_URL: ${DASHSCOPE_ASR_WS_URL:-wss://dashscope.aliyuncs.com/api-ws/v1/realtime}
+      DASHSCOPE_ASR_INFERENCE_WS_URL: ${DASHSCOPE_ASR_INFERENCE_WS_URL:-wss://dashscope.aliyuncs.com/api-ws/v1/inference}
       ASR_STREAM_MODEL: ${ASR_STREAM_MODEL:-qwen3-asr-flash-realtime-2026-02-10}
       ASR_MODEL: ${ASR_MODEL:-mimo-v2.5-asr}
       AUDIO_HTTP_PORT: "50059"
