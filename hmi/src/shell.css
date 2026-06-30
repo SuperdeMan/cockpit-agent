@@ -1,8 +1,8 @@
 /* ───────────────────────────────────────────────────────────────────────────
    Aurora Glass · P1 应用外壳——1920×1080 横屏两栏（左对话 / 右上下文舞台）
    依赖 aurora.css 的 --au-* token 与 .au-glass / AuroraOrb。
-   与旧 styles.css 并存：旧 .chat/.bubble 仍由 ChatView 使用（P3 再重皮）；
-   本层只接管外壳（状态栏/布局/舞台/输入区/欢迎态）。
+   与旧 styles.css 并存（非破坏）：本层接管外壳（状态栏/布局/舞台/输入区/欢迎态）；
+   对话气泡/动态六态自 P3 起由 ChatView.tsx 内联样式 + --au-* 重建（见 A-6），不再用旧 .bubble 皮。
    ─────────────────────────────────────────────────────────────────────────── */
 
 .au-app {
@@ -120,29 +120,8 @@
   padding: 4px 12px; border-radius: 999px; background: rgba(255, 255, 255, 0.04);
 }
 
-/* ── 气泡重皮（照 A-2；思考/流式/过程区等动态态见 P3）── */
-.bubble.user {
-  background: rgba(70, 214, 224, 0.12);
-  border: 1px solid rgba(70, 214, 224, 0.22);
-  color: var(--au-text);
-  border-radius: 18px 18px 4px 18px;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.24);
-}
-.bubble.assistant {
-  background: rgba(255, 255, 255, 0.062);
-  border: 1px solid var(--au-line-2);
-  border-top: 1px solid rgba(255, 255, 255, 0.16);
-  color: var(--au-text);
-  border-radius: 4px 18px 18px 18px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.10);
-}
-.is-error .bubble.assistant { border-color: var(--au-danger); color: var(--au-danger); }
-.bubble .text { color: var(--au-text); }
-.caret { background: var(--au-primary); }
-.followup { color: var(--au-text-2); }
-/* 助手行：头像与气泡顶部对齐（长卡片时不让光球沉底）*/
-.row.assistant { align-items: flex-start; }
-.row.assistant .avatar { margin-top: 2px; }
+/* 对话气泡与动态六态（思考/流式/过程区/确认/主动播报/错误）见 ChatView.tsx（P3，照 A-6）*/
+
 /* 右上下文舞台 */
 .au-stage {
   position: relative;
@@ -214,6 +193,25 @@
   transition: transform 0.12s, box-shadow 0.18s;
 }
 .au-send:hover { transform: translateY(-1px); box-shadow: 0 6px 26px rgba(91, 140, 255, 0.55); }
+
+/* ── 设置覆盖层（P4 · A-7 横屏侧栏；全屏接管，内容/控件见 SettingsPanel.tsx 内联）── */
+.au-settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  color: var(--au-text);
+  font-family: var(--au-font-ui);
+  background: linear-gradient(155deg, #06080f 0%, #0a0e1a 52%, #080d18 100%);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  animation: au-settings-in 0.22s ease;
+}
+:root[data-theme='light'] .au-settings-overlay {
+  background: linear-gradient(155deg, #edf1fa 0%, #e4ebf7 100%);
+}
+@keyframes au-settings-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* ── 欢迎态（空对话）── */
 .au-welcome {

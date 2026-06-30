@@ -211,6 +211,12 @@
 @keyframes au-edge-aurora      { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.72; } }
 @keyframes au-flash            { 0% { background-color: rgba(70,214,224,0); } 15% { background-color: rgba(70,214,224,0.22); } 100% { background-color: rgba(70,214,224,0); } }
 @keyframes au-think            { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.35; } 40% { transform: scale(1); opacity: 1; } }
+/* 对话动态态（A-6，照 Make 源）：思考三点弹跳 / 完成勾弹入 / 子步骤滑入 / 主动播报呼吸环 */
+@keyframes au-dot-bounce       { 0%, 60%, 100% { transform: translateY(0); opacity: 0.55; } 30% { transform: translateY(-7px); opacity: 1; } }
+@keyframes au-check-pop        { 0% { transform: scale(0); } 70% { transform: scale(1.25); } 100% { transform: scale(1); } }
+@keyframes au-slide-up         { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes au-proactive-pulse  { 0%, 100% { box-shadow: 0 0 0 0 rgba(70,214,224,0.30); } 50% { box-shadow: 0 0 0 6px rgba(70,214,224,0); } }
+@keyframes au-proactive-pulse-amber { 0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.30); } 50% { box-shadow: 0 0 0 6px rgba(245,158,11,0); } }
 
 /* 流式虹彩光标 */
 .au-cursor {
@@ -248,7 +254,8 @@
    车规无障碍（§11）：尊重 prefers-reduced-motion——所有循环动效静态降级
    ═══════════════════════════════════════════════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
-  .au-orb, .au-orb *, .au-edge-glow, .au-cursor, .au-flash, .au-think-dots i {
+  .au-orb, .au-orb *, .au-edge-glow, .au-cursor, .au-flash, .au-think-dots i,
+  .chat *, .au-stage * {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }

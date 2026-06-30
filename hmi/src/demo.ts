@@ -142,6 +142,53 @@ const routeCard: import('./types').RoutePlanCard = {
   distance_km: 32, duration_min: 48,
 }
 
+// ── 对话动态六态验证（?demo=states，照 A-6）：思考/流式/过程区(进行中+完成)/确认/主动播报/错误 ──
+export const DEMO_STATES: Msg[] = [
+  // A-6.1 思考中
+  { id: 'st0', role: 'user', text: '固态电池 2027 年能量产吗？' },
+  { id: 'st1', role: 'assistant', text: '', pending: true },
+  // A-6.2 流式输出 + 虹彩光标
+  { id: 'st2', role: 'user', text: '固态电池的技术路线有哪些？' },
+  { id: 'st3', role: 'assistant', streaming: true, text: '固态电池的主要技术路线有三种：氧化物（LLZO）、硫化物与聚合物路线。目前宁德时代、丰田等主要厂商均已公开各自的技术路径选择，2027 年小批量量产技术上可行，但' },
+  // A-6.3 过程区·进行中（四阶段 + 子步骤）
+  { id: 'st4', role: 'user', text: '帮我深入分析一下固态电池量产前景' },
+  {
+    id: 'st5', role: 'assistant', text: '', processActive: true,
+    process: [
+      { phase: 'understand', label: '理解需求', summary: '"查询固态电池量产时间"', status: 'done' },
+      { phase: 'plan', label: '规划步骤', summary: '制定 3 个来源搜索方向', status: 'done' },
+      { phase: 'execute', label: '查询盖世汽车', summary: '已获取要点', status: 'done', step_id: 'e1' },
+      { phase: 'execute', label: '查询第一财经', summary: '已获取要点', status: 'done', step_id: 'e2' },
+      { phase: 'execute', label: '查询 IEEE Spectrum', status: 'running', step_id: 'e3' },
+      { phase: 'execute', label: '查询财联社', status: 'start', step_id: 'e4' },
+    ],
+  },
+  // A-6.3 过程区·已完成（折叠 + 最终结论）
+  { id: 'st6', role: 'user', text: '上一题的结论给我' },
+  {
+    id: 'st7', role: 'assistant',
+    text: '根据多来源分析，固态电池 2027 年量产技术上可行，但规模化大概率推迟至 2030 年后。',
+    process: [
+      { phase: 'understand', label: '理解需求', summary: '"查询固态电池量产时间"', status: 'done' },
+      { phase: 'plan', label: '规划步骤', summary: '制定 3 个来源搜索方向', status: 'done' },
+      { phase: 'execute', label: '查询盖世汽车', summary: '2027 小批量可行', status: 'done', step_id: 'e1' },
+      { phase: 'execute', label: '查询第一财经', summary: '良率仍是瓶颈', status: 'done', step_id: 'e2' },
+      { phase: 'execute', label: '查询 IEEE Spectrum', summary: '界面稳定性待解', status: 'done', step_id: 'e3' },
+      { phase: 'synthesize', label: '整理结果', summary: '综合多来源给出结论', status: 'done' },
+    ],
+  },
+  // A-6.5 主动播报·行程预警（琥珀）
+  { id: 'st8', role: 'assistant', text: '💡 前方 2km 处有交通事故，当前拥堵 +12 分钟。建议提前并线至左道，可绕行湖滨路节省约 8 分钟。' },
+  // A-6.5 主动播报·任务完成（冷蓝 + 报告卡）
+  { id: 'st9', role: 'assistant', text: '💡 你委托的固态电池深度调研完成了，共引用 5 篇来源，置信度「中」。', uiCard: researchCard },
+  // A-6.6 错误 / 超时（可重试上一条）
+  { id: 'st10', role: 'user', text: '帮我查一下今天的天气' },
+  { id: 'st11', role: 'assistant', text: '出错了：请求超时。当前网络连接不稳定，无法获取天气数据。已重试 2 次。', error: true },
+  // A-6.4 确认条·危险车控（置于末尾，配合 awaitConfirm 初始化显示琥珀确认条）
+  { id: 'st12', role: 'user', text: '打开后备箱' },
+  { id: 'st13', role: 'assistant', text: '即将打开后备箱，此操作将解锁并弹开后备箱盖。是否确认？', needConfirm: true },
+]
+
 export const DEMO_CARDS: Msg[] = [
   { id: 'c0', role: 'user', text: '查一下茅台股价' },
   { id: 'c1', role: 'assistant', text: '贵州茅台收报 1689.00 元，今日上涨 0.75%。', uiCard: stockCard },

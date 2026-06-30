@@ -1,6 +1,6 @@
 # 座舱 HMI Aurora Glass 重构 · 实施计划
 
-- **状态**：落地中（实施蓝图 / Implementation Plan）。**进度（2026-06-30）：P0 设计系统地基 + P1 两栏外壳/右上下文舞台 + P2 ~20 张卡片按 Figma A-2~A-5 源码逐张忠实重建，均已落地并合并 main（commit `2ad83e3`→`b28c292`，`npm run build` 绿、Edge headless 截图逐屏核对）。`types.ts` 数据契约未改。待做：P3 对话动态态(A-6)、P4 设置侧栏(A-7)、P5 行车态/浅色(A-8 未出 Figma)、P6 Dashboard(B 未出 Figma)；另余「A 类数据缺口」需扩 `types.ts`（POI 快充/空闲位、搜索/新闻类别芯片、股票市值/估值）。**
+- **状态**：落地中（实施蓝图 / Implementation Plan）。**进度（2026-06-30）：P0 设计系统地基 + P1 两栏外壳/右上下文舞台 + P2 ~20 张卡片（A-2~A-5）+ P3 对话动态六态（A-6）+ P4 设置横屏侧栏（A-7）均已按 Figma 源码逐张忠实重建并落地（`npm run build` 绿、`tsc` 无新增类型错、`node --test` 38/38 过、Edge headless 截图逐屏/逐分区核对）。`types.ts` 数据契约未改。A-6 源自下载 zip；A-7 源经 Figma MCP 读取 Make 文件最新版（`get_design_context`→`ReadMcpResourceTool`，确认最新 Make 版即 A-7 设置页）。待做：P5 行车态/浅色(A-8 未出 Figma)、P6 Dashboard(B 未出 Figma)；另余「A 类数据缺口」需扩 `types.ts`（POI 快充/空闲位、搜索/新闻类别芯片、股票市值/估值）。**
 - **交付对象**：按稿落地的 Claude Code（及人类协作者）
 - **关联设计**：`docs/design/2026-06-28-figma-hmi-dashboard-redesign-brief.md`（交接简报）、`docs/design/2026-06-29-figma-hmi-dashboard-prompt.md`（Figma Make 提示词 + 输出物索引）
 - **关联代码**：`hmi/src/**`（座舱前端，本次主战场）、`hmi/src/types.ts`（消息/卡片/设置契约，**不改字段**）、`dashboard/src/**`（可观测台，待 B 设计后做）
@@ -136,7 +136,7 @@ box-shadow:0 8px 40px rgba(0,0,0,.50),0 2px 12px rgba(0,0,0,.28),inset 0 1px 0 r
 **抽象**：卡通用原语（卡头图标+标题+时效徽章 / 置信度徽章 / 来源折叠展开 / 时间线 / 空态 / 来源脚注）做成共享件，优先于逐张画。
 **验收**：每张卡正常 + 空 + 缺字段三态对齐 A-3/A-4/A-5；证据范式（卡不复读气泡结论）保持。
 
-### P3 · 对话动态六态（"灵魂"，`ChatView.tsx`）
+### P3 · 对话动态六态（"灵魂"，`ChatView.tsx`）✅ 已落地（2026-06-30，照 A-6 源码重建 + `?demo=states` 截图核对六态及过程区展开/折叠）
 **改**：`ChatView.tsx` 渲染——映射现有消息字段，重皮 + 动效：
 1. 用户/助手气泡（玻璃，助手左 + 光球头像）。
 2. 思考中 `ThinkingDots`（律动，对应 `pending`）。
@@ -147,7 +147,7 @@ box-shadow:0 8px 40px rgba(0,0,0,.50),0 2px 12px rgba(0,0,0,.28),inset 0 1px 0 r
 7. 错误/超时气泡（红 X + 重试；对应 `error`/看门狗）。
 **验收**：对齐 A-6 六态；三段叙事连贯（思考中→过程区→流式/最终）；确认条车规可操作。
 
-### P4 · 设置横屏侧栏（`SettingsPanel.tsx` + `controls.tsx`）
+### P4 · 设置横屏侧栏（`SettingsPanel.tsx` + `controls.tsx`）✅ 已落地（2026-06-30，照 A-7 源经 Figma MCP 读取重建；八分区 + 控件库玻璃化，真实接线全保留，`?settings[=<id>]` 逐分区截图核对）
 **改**：`SettingsPanel.tsx` 全屏竖排 → 横屏左侧栏导航（8 分区）+ 右内容；`controls.tsx` 通用控件（Toggle/Segmented/TextInput/Select/Field/SectionCard/幽灵·危险按钮）重皮成玻璃组件库。
 **8 分区**：语音播报（音色网格 + 试听）/语音输入/显示主题/当前位置/常用地点/助手/能力开关（10 Agent）/记忆（会话列表 + 学到画像可删）。
 **验收**：对齐 A-7；所有控件可交互；设置仍经 `settings.tsx` 注入 `data-*`。

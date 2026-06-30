@@ -1,98 +1,98 @@
-// 设置页通用控件：开关、分段选择、文本输入、下拉。座舱仪表风格。
-import type { ReactNode } from 'react'
+// 设置页通用控件（P4 · A-7「横屏侧栏式」忠实重建）：液态玻璃控件库。
+// inline 样式 + --au-* token，照 Figma Make A-7 源；保留泛型化 API（值≠展示标签，
+// 因真实设置存的是枚举值而非中文标签）。复用于 SettingsPanel 八分区。
+import type { CSSProperties, ReactNode } from 'react'
 
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <div className="field">
-      <div className="field-text">
-        <div className="field-label">{label}</div>
-        {hint && <div className="field-hint">{hint}</div>}
-      </div>
-      <div className="field-control">{children}</div>
-    </div>
-  )
-}
+const TEAL = 'var(--au-primary)'
+const FG1 = 'var(--au-text)'
+const FG2 = 'var(--au-text-2)'
 
-export function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+// 开关：48×28 玻璃滑块，on=交互蓝 + 辉光（§5 非 AI 高亮用 #46D6E0）
+export function Toggle({ on, onChange, disabled = false }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      className={'toggle' + (on ? ' on' : '')}
-      onClick={() => onChange(!on)}
-    >
-      <span className="knob" />
+      type="button" role="switch" aria-checked={on} disabled={disabled}
+      onClick={() => !disabled && onChange(!on)}
+      style={{
+        width: 48, height: 28, borderRadius: 14, padding: 0, cursor: disabled ? 'default' : 'pointer',
+        background: on ? (disabled ? 'rgba(70,214,224,.35)' : TEAL) : 'rgba(255,255,255,.10)',
+        border: `1px solid ${on ? (disabled ? 'rgba(70,214,224,.25)' : TEAL) : 'var(--au-line-2)'}`,
+        position: 'relative', transition: 'all .25s ease', opacity: disabled ? 0.45 : 1, flexShrink: 0,
+        boxShadow: on && !disabled ? '0 0 12px rgba(70,214,224,.40)' : 'none',
+      }}>
+      <span style={{ position: 'absolute', top: 3, left: on ? 22 : 2, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left .25s ease', boxShadow: '0 1px 4px rgba(0,0,0,.35)' }} />
     </button>
   )
 }
 
 type Opt<T> = { value: T; label: string }
 
+// 分段选择：值为枚举（如 'zh'/'auto'），展示中文标签
 export function Segmented<T extends string | number>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T
-  options: Opt<T>[]
-  onChange: (v: T) => void
-}) {
+  value, options, onChange, sm = false,
+}: { value: T; options: Opt<T>[]; onChange: (v: T) => void; sm?: boolean }) {
   return (
-    <div className="segmented" role="tablist">
-      {options.map((o) => (
-        <button
-          key={String(o.value)}
-          role="tab"
-          aria-selected={o.value === value}
-          className={'seg' + (o.value === value ? ' active' : '')}
-          onClick={() => onChange(o.value)}
-        >
-          {o.label}
-        </button>
-      ))}
+    <div role="tablist" style={{ display: 'flex', background: 'rgba(255,255,255,.04)', borderRadius: sm ? 10 : 12, padding: 3, gap: 2 }}>
+      {options.map((o) => {
+        const active = o.value === value
+        return (
+          <button
+            key={String(o.value)} role="tab" aria-selected={active} onClick={() => onChange(o.value)}
+            style={{
+              padding: sm ? '5px 10px' : '7px 14px', borderRadius: sm ? 8 : 10, cursor: 'pointer',
+              fontSize: sm ? 11.5 : 13, fontWeight: active ? 600 : 400,
+              background: active ? 'rgba(255,255,255,.10)' : 'transparent',
+              border: `1px solid ${active ? 'rgba(255,255,255,.18)' : 'transparent'}`,
+              color: active ? FG1 : FG2, transition: 'all .18s', fontFamily: 'inherit', whiteSpace: 'nowrap',
+            }}>
+            {o.label}
+          </button>
+        )
+      })}
     </div>
   )
 }
 
 export function TextInput({
-  value,
-  onChange,
-  placeholder,
-  maxLength,
-}: {
-  value: string
-  onChange: (v: string) => void
-  placeholder?: string
-  maxLength?: number
-}) {
+  value, onChange, placeholder, maxLength, width = 200,
+}: { value: string; onChange: (v: string) => void; placeholder?: string; maxLength?: number; width?: number | string }) {
   return (
     <input
-      className="text-input"
-      value={value}
-      maxLength={maxLength}
-      placeholder={placeholder}
+      value={value} maxLength={maxLength} placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
+      style={{
+        width, height: 38, padding: '0 14px', boxSizing: 'border-box', borderRadius: 10,
+        background: 'rgba(255,255,255,.058)', border: '1px solid var(--au-line-2)', borderTop: '1px solid rgba(255,255,255,.17)',
+        color: FG1, fontSize: 13.5, fontFamily: 'inherit', outline: 'none', caretColor: TEAL,
+        WebkitBackdropFilter: 'blur(12px)', backdropFilter: 'blur(12px)',
+      }}
     />
   )
 }
 
-export function Select<T extends string>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T
-  options: Opt<T>[]
-  onChange: (v: T) => void
-}) {
+export function GhostBtn({ children, onClick, sm = false, style }: { children: ReactNode; onClick?: () => void; sm?: boolean; style?: CSSProperties }) {
   return (
-    <select className="select" value={value} onChange={(e) => onChange(e.target.value as T)}>
-      {options.map((o) => (
-        <option key={String(o.value)} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
+    <button
+      onClick={onClick}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6, padding: sm ? '5px 12px' : '7px 14px',
+        borderRadius: 10, border: '1px solid var(--au-line-2)', background: 'rgba(255,255,255,.04)',
+        color: FG2, fontSize: sm ? 12 : 13, cursor: 'pointer', fontFamily: 'inherit', transition: 'all .18s', ...style,
+      }}>
+      {children}
+    </button>
+  )
+}
+
+export function DangerBtn({ children, onClick }: { children: ReactNode; onClick?: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: '100%', padding: '9px 0', borderRadius: 12, border: '1px solid rgba(239,68,68,.28)',
+        background: 'rgba(239,68,68,.06)', color: 'var(--au-danger)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+      }}>
+      {children}
+    </button>
   )
 }

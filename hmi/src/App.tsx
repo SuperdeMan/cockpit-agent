@@ -36,12 +36,15 @@ const uid = () =>
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2)
 
-export default function App({ seedMessages }: { seedMessages?: Msg[] } = {}) {
+export default function App({ seedMessages, openSettings }: { seedMessages?: Msg[]; openSettings?: boolean } = {}) {
   const { settings, update } = useSettings()
   const [messages, setMessages] = useState<Msg[]>(seedMessages ?? [])
   const [connected, setConnected] = useState(false)
-  const [awaitConfirm, setAwaitConfirm] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
+  // 末条若是待确认问句（真实流程由 final 置位；seedMessages 演示态据此初始化以渲染确认条）
+  const [awaitConfirm, setAwaitConfirm] = useState(
+    !!(seedMessages && seedMessages.length && seedMessages[seedMessages.length - 1].needConfirm),
+  )
+  const [showSettings, setShowSettings] = useState(!!openSettings)
   const [currentLocation, setCurrentLocation] = useState<any>(null)
   const [locationStatus, setLocationStatus] = useState('未使用当前位置')
   const [pendingLocationText, setPendingLocationText] = useState<string | null>(null)
