@@ -417,8 +417,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoplay: true,
   voiceId: '冰糖',
   asrLanguage: 'zh',
-  asrProvider: 'mimo', // 默认走已验证可用的 MiMo 分块上屏；dashscope 实时待百炼账号开通 realtime ASR
-  asrModel: 'Qwen3-ASR-Flash-Realtime-2026-02-10',
+  asrProvider: 'dashscope', // DashScope 实时 qwen3 真栈验证可用（边说边上屏）；mimo 分块为回退
+  asrModel: 'qwen3-asr-flash-realtime-2026-02-10', // 注意全小写 id（CamelCase 会 1011）
   micMode: 'hold',
   listenSeconds: 15,
   theme: 'dark',

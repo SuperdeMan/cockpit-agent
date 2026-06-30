@@ -289,7 +289,7 @@ function AsrSection() {
         <SettingRow label="识别模型" sub={isDash ? '实时 ASR 模型（同一把百炼 key）' : '分块模式用 MiMo 批 ASR，无需选模型'} noBorder>
           {isDash ? (
             <Segmented sm value={settings.asrModel} onChange={(v) => update({ asrModel: v })}
-              options={[{ value: 'Qwen3-ASR-Flash-Realtime-2026-02-10', label: 'Qwen3-ASR' }, { value: 'fun-asr-realtime', label: 'Fun-ASR' }]} />
+              options={[{ value: 'qwen3-asr-flash-realtime-2026-02-10', label: 'Qwen3-ASR' }, { value: 'fun-asr-realtime', label: 'Fun-ASR' }]} />
           ) : (
             <span style={{ fontSize: 13, color: 'var(--au-text-3)' }}>—</span>
           )}

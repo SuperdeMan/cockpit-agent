@@ -87,10 +87,10 @@ services:
       LLM_EMBED_AUTH_STYLE: ${LLM_EMBED_AUTH_STYLE:-bearer}
       LLM_EMBED_DIMENSIONS: ${LLM_EMBED_DIMENSIONS:-1024}
       # 流式 ASR（实时识别上屏）：dashscope（OpenAI Realtime，默认，复用百炼 LLM_EMBED_API_KEY）| mimo-chunked | off
-      ASR_STREAM_PROVIDER: ${ASR_STREAM_PROVIDER:-mimo-chunked}
+      ASR_STREAM_PROVIDER: ${ASR_STREAM_PROVIDER:-dashscope}
       DASHSCOPE_ASR_KEY: ${DASHSCOPE_ASR_KEY:-}
       DASHSCOPE_ASR_WS_URL: ${DASHSCOPE_ASR_WS_URL:-wss://dashscope.aliyuncs.com/api-ws/v1/realtime}
-      ASR_STREAM_MODEL: ${ASR_STREAM_MODEL:-Qwen3-ASR-Flash-Realtime-2026-02-10}
+      ASR_STREAM_MODEL: ${ASR_STREAM_MODEL:-qwen3-asr-flash-realtime-2026-02-10}
       ASR_MODEL: ${ASR_MODEL:-mimo-v2.5-asr}
       AUDIO_HTTP_PORT: "50059"
       TTS_VOICE_ID: ${TTS_VOICE_ID:-冰糖}

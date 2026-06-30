@@ -448,12 +448,13 @@ class DashScopeRealtimeASRProvider(BaseStreamingASRProvider):
                     _eid[0] += 1
                     return {"event_id": f"ev{_eid[0]}", **o}
 
-                # 实测协议（DashScope 文档）：format=pcm（非 pcm16）、transcription.language（非 model）、
-                # 手动模式（turn_detection=None）append→commit；中间结果 .text(text+stash)、定稿 .completed(transcript)。
+                # 实测协议：format=pcm（非 pcm16）、transcription.language（非 model）、**server_vad**
+                # （turn_detection=None 手动模式在该模型上报 1011，server_vad 实测可用）；
+                # 中间结果 .text(text+stash)、定稿 .completed(transcript)。
                 await ws.send_json(_ev({"type": "session.update", "session": {
                     "input_audio_format": "pcm", "sample_rate": 16000,
                     "input_audio_transcription": {"language": language or "zh"},
-                    "turn_detection": None,
+                    "turn_detection": {"type": "server_vad", "threshold": 0.2, "silence_duration_ms": 800},
                 }}))
 
                 async def pump():
@@ -461,7 +462,11 @@ class DashScopeRealtimeASRProvider(BaseStreamingASRProvider):
                         async for chunk in pcm_chunks:
                             await ws.send_json(_ev({"type": "input_audio_buffer.append",
                                                     "audio": base64.b64encode(chunk).decode("ascii")}))
-                        await ws.send_json(_ev({"type": "input_audio_buffer.commit"}))
+                        # 流末（松手）追 ~0.8s 静音触发 server_vad 收尾定稿
+                        sil = base64.b64encode(b"\x00" * 3200).decode("ascii")
+                        for _ in range(13):
+                            await ws.send_json(_ev({"type": "input_audio_buffer.append", "audio": sil}))
+                            await asyncio.sleep(0.05)
                     except Exception:
                         pass
 
@@ -500,7 +505,7 @@ class DashScopeRealtimeASRProvider(BaseStreamingASRProvider):
 def build_streaming_asr_provider(provider: str = "", model: str = "") -> "BaseStreamingASRProvider | None":
     """按请求/env 选流式引擎。provider/model 为请求级覆盖（HMI 设置可切），空则用 env 默认。
     无可用 key 或 off → None（HMI 探测到则无感回退批处理 /api/asr）。"""
-    provider = (provider or os.getenv("ASR_STREAM_PROVIDER", "mimo-chunked")).strip().lower()
+    provider = (provider or os.getenv("ASR_STREAM_PROVIDER", "dashscope")).strip().lower()
     if provider in ("", "off", "none"):
         return None
     if provider in ("dashscope", "dashscope-qwen3", "dashscope-fun", "qwen3", "fun"):
@@ -508,7 +513,7 @@ def build_streaming_asr_provider(provider: str = "", model: str = "") -> "BaseSt
         if not key:
             return None
         ws_url = os.getenv("DASHSCOPE_ASR_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
-        mdl = model or os.getenv("ASR_STREAM_MODEL", "Qwen3-ASR-Flash-Realtime-2026-02-10")
+        mdl = model or os.getenv("ASR_STREAM_MODEL", "qwen3-asr-flash-realtime-2026-02-10")
         if provider in ("fun", "dashscope-fun") and not model:
             mdl = "fun-asr-realtime"
         return DashScopeRealtimeASRProvider(key, ws_url, mdl)
