@@ -1,6 +1,6 @@
 # ASR 流式识别上屏 · 设计与落地
 
-- **状态**：**已落地（commit 184d48f，2026-06-30）**。MiMo 分块流式上屏真栈验证可用（默认引擎，fake-mic e2e：输入框实时上屏「今天杭州天气怎么?」→ 松手定稿自动发送）；DashScope 实时（qwen3/fun）连通+鉴权+协议均按官方文档实现，但实测**百炼账号 realtime 推理一送音频即服务端关连接 1007/1011 InternalError**（连 paraformer inference 端点同 InternalError）——判定为**账号侧 realtime ASR 未开通/未激活**，非客户端问题；HMI 选 dashscope 时 provider 抛错→网关回 error→无感回退批处理。**待泓舟在百炼控制台确认 Qwen3-ASR-Flash-Realtime 的 realtime 推理权限后，设置页一键切「实时」即用**。
+- **状态**：**已落地+真打通（commit 525fbd8，2026-06-30）**。**DashScope 实时 qwen3 流式上屏真栈 e2e 验证可用（默认引擎）**——网关路径 6 个 partial→「今天杭州天气怎么样？」；fake-mic 浏览器：按住光球→qwen3 边说边上屏→松手自动发送→助手出真实天气卡。**关键坑（耗了很久）**：① model id 须**全小写** `qwen3-asr-flash-realtime-2026-02-10`（泓舟最初给的 CamelCase `Qwen3-ASR-Flash-Realtime-2026-02-10` 连得上 session.created 但一送音频服务端就 1011 InternalError）；② `turn_detection` 用 **server_vad**（手动 `None` 报 1011），流末追 ~0.8s 静音触发 VAD 收尾定稿；③ Node undici WebSocket send 不可靠（只收 session.created），调试须用 Python `websockets`/`aiohttp`。MiMo 分块为回退引擎（亦验证可用）。`fun-asr-realtime` 仍 1011、`fun-asr-realtime-2026-02-28` ModelNotFound（fun 暂不可用，UI 留选项但会优雅回退）。
 - **交付对象**：落地的 Claude Code / 后续开发者。
 - **目标**：说话过程中识别文本**实时增量上屏**（输入框 interim → 松手定稿发送），替换现有"录完整段才出文本"的批处理体验。
 - **关联代码**：`hmi/src/audio.ts`、`hmi/src/components/Composer.tsx`；`llm-gateway/http_server.py`、`llm-gateway/providers.py`。
