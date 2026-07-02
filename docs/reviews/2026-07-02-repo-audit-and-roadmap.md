@@ -42,8 +42,8 @@
   `agents/info/src/handlers/{weather,search,sports,news,stock,briefing}` mixin + 共享 `_util`；
   `agent.py` 只留意图分发 + 公共件（城市解析/定位标注）+ provider 装配（**1269 → 123 行**）。
   域方法经 `self` 相互调用靠 MRO **逻辑逐字不变**；文件尾向后兼容重导出历史 helper（`from
-  agents.info.src.agent import X` 路径不变、测试零改动）。manifest/端口/行为不变。**已合并 main
-  （本地），待 push。** 验证：`pytest agents/info` 136 passed + 全量 **1016 passed / 6 skipped** 零回归；
+  agents.info.src.agent import X` 路径不变、测试零改动）。manifest/端口/行为不变。commit
+  `def815a`(实现)/`18e6f73`(merge)。验证：`pytest agents/info` 136 passed + 全量 **1016 passed / 6 skipped** 零回归；
   落地记录 `docs/design/2026-07-02-r2.4-info-agent-split.md`。
 
 **⬜ 未完成（新会话可接续，按优先级）：**
@@ -176,7 +176,7 @@ CLAUDE.md §3 / 架构 §1.1-3：新增 Agent 只通过注册接入，**0 改编
 | # | 债 | 位置 | 说明 |
 |---|---|---|---|
 | D5 | 路由兜底正则堆积 | planning.py（603 行） | A1 同根。每个重域 Agent O(1) 项核心改动+正则互扰回归 |
-| D6 | info agent 巨类 — ✅ R2.4 已拆（待 push） | agents/info/src/agent.py（1269→123 行）+ handlers/ | 天气/搜索/新闻/赛事/股票五域 + 早报 + 画像排序 ~60 方法一个类。**R2.4 拆成 handlers/ mixin，域间隔离**，见执行进度 |
+| D6 | info agent 巨类 — ✅ R2.4 已拆 | agents/info/src/agent.py（1269→123 行）+ handlers/ | 天气/搜索/新闻/赛事/股票五域 + 早报 + 画像排序 ~60 方法一个类。**R2.4 拆成 handlers/ mixin，域间隔离**，见执行进度 |
 | D7 | fast_intent 单文件规则引擎 | orchestrator/edge/fast_intent.py（1558 行） | 规则数据与引擎逻辑未分离（VAL 侧已用 knowledge/*.yaml，fast_intent 仍代码内嵌）。量产要 OTA 下发白名单/阈值，代码内嵌无法 OTA |
 | D8 | media action_type 判定三处重复且清单不一致 | orchestrator/edge/server.py | 快路径 A/A2 用 9 对象清单（含 audiobook/opera/news/video/TV），CLOUD-DEGRADED 兜底只有 ("media","music","radio")，快路径 B 只有 ("media",)——同一意图不同路径打不同 action type，HMI 侧行为不一致是潜伏 bug |
 | D9 | 宽异常吞噬 | 全仓 | 非测试代码 177 处 `except Exception`（28 处直接 pass）。观测 best-effort 合理；但业务路径混用同一模式，故障静默化。缺「可吞/不可吞」的分类约定 |
@@ -290,7 +290,7 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
 - 任务：cloud_client.py 升级为持久 bidi + 多路复用 + 心跳 + 断线重连（逻辑可翻译自 T1.2 归档的 Go ChannelClient）：进程内单连接常驻，corr_id 复用 uuid4，请求映射 `corr_id → asyncio.Queue`；连接断开时在途请求快速失败并由上层降级话术兜底。
 - 验收：e2e_resilience 新增用例——请求进行中重启 cloud-gateway，连接自愈且后续请求 <1 次握手；e2e_ws 4 链路过；对比日志确认不再每请求 hello。
 
-**T2.4 info agent 拆域（M）** ✅ 已完成并合并 main（本地，待 push；见顶部执行进度。agent.py 1269→123 行，mixin 拆域零行为变化，落地记录 `docs/design/2026-07-02-r2.4-info-agent-split.md`）
+**T2.4 info agent 拆域（M）** ✅ 已完成并合并 main（`def815a`/`18e6f73`；见顶部执行进度。agent.py 1269→123 行，mixin 拆域零行为变化，落地记录 `docs/design/2026-07-02-r2.4-info-agent-split.md`）
 - 背景：D6。
 - 任务：`agents/info/src/` 拆 `handlers/{weather,search,news,sports,stock}.py` + `briefing.py`（早报/proactive），agent.py 只留意图分发与公共件（城市解析/定位标注）。对外 manifest/端口/行为不变。
 - 验收：info 全部既有测试零回归（`pytest agents/info`）；agent.py ≤300 行。
