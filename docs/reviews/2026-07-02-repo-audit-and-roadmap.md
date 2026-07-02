@@ -6,6 +6,36 @@
 
 ---
 
+## 执行进度（活文档 · 截至 2026-07-02 · 新会话先读这里）
+
+> 本节随执行更新。接手方法：读本节 → 看 §4 中**未打 ✅** 的任务卡 → `git log --oneline` 对照 commit。
+> 动编排核心前遵 `CLAUDE.md`「大改动先 Plan Mode」。现状另见 `AGENTS.md §4` 与记忆
+> `r2.1-route-hints-mechanization.md`（Claude Code memory）。
+
+**✅ 已完成并合并 main（已 push origin）：**
+
+- **R1 · 工程门禁与卫生（T1.1–T1.5 全 5 卡）** — 解决 D8/D4/D12/D16/A3/A8 + G1（CI 覆盖）。
+  T1.5 media 统一 `44d9608` · T1.3 compose 生存性 `c5d2e41` · T1.4 文档同步 `9939a92` · T1.1 CI 补全 `b63aa1b` · T1.2 清理 `a204257`。
+- **R2.1 = T2.1 · 路由兜底机制化（P0–P5，最高优先架构债）** — 解决最大风险 **A1/D5**（铁律「不改编排核心加 Agent」已恢复）+ D10 的 HEAVY/card 部分。
+  编排核心 `planning`/`context`/`aggregator`/`progress` 四处领域硬编码**全清**：路由兜底 → 各 Agent `manifest.route_hints` + 通用 `RouteHintEngine`；`HEAVY_INTENTS` → `capability.heavy`；卡片优先级 → card `display_priority`；`_ALWAYS_INCLUDE` → env `PLANNER_FALLBACK_AGENT` + 通用「有 route_hints 的 Agent 留 catalog」。
+  commit `63e1382`(proto)/`5600bc6`(引擎)/`541c941`(research+trip 路由)/`f48be86`(DoD#2 契约测试)/`cab4500`(trip.plan+抽取搬 Agent)/`2e6eeaa`(P3/P4/P5)/`737ddef`(registry round-trip 真栈修复)。
+  验证：全量 **998 passed / 6 skipped** + 真栈 `e2e_trip`/`e2e_research` 全过。
+
+**⬜ 未完成（新会话可接续，按优先级）：**
+
+| 任务 | 关联审计项 | 规模 | 备注 |
+|---|---|---|---|
+| **R2.2 权限单轨化** | A4/D3 | M | PermissionEngine 死代码 vs 单轨确定性校验，二选一收敛 |
+| **R2.3 端云持久长连** | A2/D2 | M/L | cloud_client 逐请求建流；gateway ChannelClient 死代码（T1.2 已保留未删，待此任务定去留） |
+| **R2.4 info agent 拆域** | D6 | M | 1269 行巨类拆 handlers/ |
+| **R2.5 跨 Agent 状态键契约化** | A5 | S | news_active/research_active/trip_active 隐性契约登记 |
+| **R3 量产硬化（T3.1–T3.6）** | D1/G2–G8 | 各 M | 会话鉴权 / mTLS / e2e 入门禁 / 路由评测基线 / 降级矩阵 / OTel |
+| **R4 能力演进** | — | 见 §4 | 按需排期 |
+
+**残留小尾**：`orchestrator/cloud/planning.py::_PLANNER_SYSTEM` 内一处 trip few-shot 示例属 **D10（Prompt 管理）**，非 D5 路由债、且不随 Agent 数增长——暂留，纳入未来 Prompt 资产化工作。
+
+---
+
 ## 0. 结论速读
 
 - **主干健康**：分层混合编排（T0/T1/T2）、统一契约+注册发现、规划/执行分离、危险动作确认、VAL 唯一车控路径——这五条架构承诺在代码层面成立，工程质量高于典型 PoC（keepalive/优雅停机/熔断/幂等都做了）。
@@ -33,7 +63,7 @@
 
 ### 1.2 架构偏差清单
 
-#### A1（最重要）「编排对 Agent 无感」铁律系统性侵蚀
+#### A1（最重要）「编排对 Agent 无感」铁律系统性侵蚀 — ✅ 已由 R2.1 恢复（见顶部「执行进度」）
 
 CLAUDE.md §3 / 架构 §1.1-3：新增 Agent 只通过注册接入，**0 改编排核心**（Phase 1 DoD #2）。现状编排核心至少 4 处硬编码特定 Agent/意图知识：
 
@@ -179,34 +209,34 @@ CLAUDE.md §3 / 架构 §1.1-3：新增 Agent 只通过注册接入，**0 改编
 
 ### R1 · 工程门禁与卫生（防守，全部 S/M，建议 1 周内清完）
 
-**T1.1 CI 补全到「CI 绿=本地全量绿」（M）**
+**T1.1 CI 补全到「CI 绿=本地全量绿」（M）** ✅ 已完成（`b63aa1b`）
 - 背景：G1/D12。
 - 任务：① pytest 目录对齐本地全量（加 orchestrator/edge/tests memory/tests registry/tests llm-gateway/tests）；② 依赖改为聚合安装各 requirements.txt；③ 加 `go build ./... && go test ./...`（gateway）；④ 加 hmi/dashboard 两个 job：`npm ci && npm test && npm run build`；⑤（可选渐进）ruff check 只对新改动文件。
 - 验收：GitHub Actions 一次运行覆盖 973 单测 + Go + 前端构建全绿；故意注释掉一个 edge 测试断言能让 CI 变红。
 
-**T1.2 死代码与杂物清理（S）**
+**T1.2 死代码与杂物清理（S）** ✅ 已完成（`a204257`，保守版：删空 providers/ + 孤儿脚本；gateway ChannelClient 保留待 R2.3 定去留）
 - 背景：A2/D16。
 - 任务：① 删除 `gateway/edge/main.go` 未实例化的 ChannelClient（整段挪入 `docs/design/` 附录留作 R2.3 参考）；② 删根目录空 `providers/`；③ 审计 debug-local.py / start-local.ps1 / start-local.sh：仍被 dev-guide 引用则入 CLAUDE.md §3 目录表，否则删。
 - 验收：`go build ./...` 通过；CLAUDE.md §3 与根目录实际内容一一对应。
 
-**T1.3 compose 生存性（S）**
+**T1.3 compose 生存性（S）** ✅ 已完成（`c5d2e41`）
 - 背景：D4。
 - 任务：全部长驻服务加 `restart: unless-stopped`；postgres/redis 加 healthcheck；（可选）关键服务加 mem 限额。
 - 验收：`docker kill` 任一 Agent 容器后自动拉起，e2e_ws 4 链路仍过。
 
-**T1.4 文档同步（S）**
+**T1.4 文档同步（S）** ✅ 已完成（`9939a92`）
 - 背景：A3/A8/D18。
 - 任务：① conventions.md 补 trip.navigate/status/reschedule、修 ticketing 端口；② 架构文档「实现说明」补记：端云通道现为逐请求流（目标态持久多路复用）、HMI 音频直连 llm-gateway、长连由 edge-orchestrator 持有；③ ws8 detailed 文档改为如实描述当前单轨校验。
 - 验收：文档检索上述关键词与代码一致；AGENTS.md §4 增补一行指向本审计。
 
-**T1.5 media action_type 判定统一（S）**
+**T1.5 media action_type 判定统一（S）** ✅ 已完成（`44d9608`）
 - 背景：D8。
 - 任务：orchestrator/edge/server.py 三处内联判定收敛为一个 `_action_type(obj)` 帮助函数，对象清单以 VAL knowledge/commands.yaml 的媒体类对象为准。
 - 验收：新增单测覆盖三条路径同一对象得同一 action_type；`python test/smoke_edge.py` 13/13。
 
 ### R2 · 架构还债（核心，恢复铁律）
 
-**T2.1 路由兜底机制化——恢复「编排对 Agent 无感」（L，最高优先）**
+**T2.1 路由兜底机制化——恢复「编排对 Agent 无感」（L，最高优先）** ✅ 已完成（P0–P5，含 card `display_priority`/`capability.heavy`/always-include→env；真栈 e2e 全过；见顶部「执行进度」）
 - 背景：A1/D5。这是本次审计唯一「不做会持续恶化」的架构任务。
 - 方案：manifest 增加声明式路由提示，编排核心只留通用引擎：
   ```yaml

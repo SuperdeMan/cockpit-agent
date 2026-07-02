@@ -48,10 +48,13 @@ gen/            codegen 产出（gitignore，不要手动编辑）
 ### 新增一个 Agent 的标准流程（必须遵守）
 1. 在 `agents/<name>/` 下按模板建目录（参考 `agents/navigation/`）。
 2. 写 `manifest.yaml` 声明能力、权限、trust_level、deployment；需要精确位置/电量等敏感上下文的 Agent 还要声明 `context_scopes`（`location`/`vehicle_state`），否则编排最小化下发会剥掉这些键。
+   - **确定性路由（R2.1）**：弱 LLM 会漏/误路由该 Agent 的重域意图时，用 `route_hints` 声明兜底（`pattern`/`intent`/`policy`=`replace`\|`append`/`priority`/`guard`/`slots`；`slots` 值支持 `$text`=原话、`$1..`=捕获组）——编排核心 `orchestrator/cloud/route_hints.py::RouteHintEngine` 通用消费，**取代**过去在 `planning.py` 加正则兜底的做法。
+   - **重域能力**（需开思考+过程区，如多轮检索/LLM 重生成）在该 capability 标 `heavy: true`（编排 `progress.is_complex` 据此判定）。
+   - 出**主卡**的 Agent 在 `ui_card` 加 `display_priority`（`0`=主卡多意图下独显 / `1`=交互候选 / 缺省 `2`=普通信息卡），聚合器据此择优。
 3. 继承 `agents/_sdk` 的 `BaseAgent` 实现业务逻辑，**不要重新实现 gRPC 契约**。
 4. 写 `tests/` 契约测试 + 黄金用例。
 5. 在 `deploy/docker-compose.yaml` 注册服务。
-6. **不要修改编排核心代码**——Agent 通过注册中心被发现，编排对 Agent 无感。
+6. **不要修改编排核心代码**——Agent 通过注册中心被发现，编排对 Agent 无感；确定性路由 / 重域标记 / 卡片优先级全由步骤 2 的 manifest 声明式字段表达，**不在 `planning`/`context`/`aggregator`/`progress` 加硬编码**（R2.1 已把历史硬编码全部机制化，铁律已由 `test_planning.py` 契约测试固化）。
 
 ## 4. 命名约定
 - Intent：`<domain>.<action>`，如 `hvac.set`、`navigation.search_poi`。
