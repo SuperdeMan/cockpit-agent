@@ -5,7 +5,7 @@ WS3 §4。LLM 把已注册 Agent 能力当工具，输出 JSON DAG 计划。
 from __future__ import annotations
 import json
 import logging
-from security.scopes import is_scope_covered
+from security.permission import check_permission
 from .models import Plan, Step, PlanContext, ReplanDecision
 from .context import WorkingSet, _FALLBACK_AGENT
 from .route_hints import RouteHintEngine
@@ -369,34 +369,24 @@ class PlanBuilder:
 
     @staticmethod
     def _filter_by_permission(agents: list, granted: list[str]) -> list:
-        """过滤掉用户无权调用的 Agent。
+        """过滤掉用户无权调用的 Agent（越权能力不暴露给 LLM）。
 
-        规则（fail-closed）：
+        判定委托运行时唯一决策 `security.permission.check_permission`（与 dispatch 执行期同源）：
         - granted 为 None → 不过滤（权限系统未启用，PoC 兼容）
         - granted 为空列表 → 只放行无权限要求的 Agent（零授权 = 最小权限）
-        - Agent 的 requires_permissions 全部在 granted 中 → 保留
-        - third_party Agent 的 vehicle.control scope 无论 granted 都被拒绝
+        - Agent 的 requires_permissions 被 granted（父子覆盖）全覆盖 → 保留
+        - third_party Agent 的 vehicle.control 无论 granted 都被拒绝
         """
         if granted is None:
             return agents
-        granted_set = set(granted)
         filtered = []
         for a in agents:
-            manifest = a.manifest
-            required = set(manifest.requires_permissions)
-            # third_party 禁止 vehicle.control（硬禁令，无论授权）
-            if manifest.trust_level == "third_party":
-                if any(r.startswith("vehicle.control") for r in required):
-                    logger.debug("Filtered %s: third_party cannot access vehicle.control",
-                                 manifest.agent_id)
-                    continue
-            # 检查权限覆盖：无权限要求的 Agent（如 chitchat）始终放行
-            missing = {
-                scope for scope in required
-                if not is_scope_covered(scope, granted_set)
-            }
-            if missing:
-                logger.debug("Filtered %s: missing permissions %s", manifest.agent_id, missing)
+            m = a.manifest
+            d = check_permission(
+                agent_id=m.agent_id, trust_level=m.trust_level,
+                required=list(m.requires_permissions), granted=granted, kind="agent")
+            if not d.allowed:
+                logger.debug("Filtered %s: %s", m.agent_id, d.reason)
                 continue
             filtered.append(a)
         return filtered

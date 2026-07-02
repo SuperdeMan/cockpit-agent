@@ -11,7 +11,7 @@ from cockpit.common.v1 import common_pb2
 from observability import events as obs_events
 from observability.metrics import metrics
 from security.audit import AuditLogger
-from security.scopes import is_scope_covered
+from security.permission import check_permission
 
 from .circuit import CircuitBreakerManager
 from .models import PlanContext, Step
@@ -103,13 +103,15 @@ class UnifiedDispatcher:
         return response
 
     async def dispatch(self, step: Step, ctx: PlanContext):
-        required = list(step.required_permissions or [])
-        if step.trust_level == "third_party" and any(
-                permission == "vehicle.control" or
-                permission.startswith("vehicle.control.")
-                for permission in required):
+        # 权限校验（执行期硬拒）：与规划期 catalog 过滤同源 check_permission——
+        # third_party/tool 车控硬禁令 + required 父子覆盖判定，越权步在传输前 REJECTED。
+        decision = check_permission(
+            agent_id=step.agent_id, trust_level=step.trust_level,
+            required=step.required_permissions,
+            granted=ctx.granted_permissions, kind=step.kind)
+        if not decision.allowed:
             _audit.permission_denied(
-                step.agent_id, required, trace_id=getattr(ctx, 'trace_id', ''))
+                step.agent_id, decision.missing, trace_id=getattr(ctx, 'trace_id', ''))
             metrics.record_agent_call(step.agent_id, 0, False)
             return await self._finish(
                 step,
@@ -117,43 +119,11 @@ class UnifiedDispatcher:
                 _failure(
                     agent_pb2.ExecuteResponse.REJECTED,
                     "permission_denied",
-                    "third_party agents cannot request vehicle.control",
-                ),
-            )
-        missing = [
-            permission for permission in required
-            if not is_scope_covered(
-                permission, set(ctx.granted_permissions or []))
-        ]
-        if missing:
-            _audit.permission_denied(
-                step.agent_id, missing, trace_id=getattr(ctx, 'trace_id', ''))
-            metrics.record_agent_call(step.agent_id, 0, False)
-            return await self._finish(
-                step,
-                ctx,
-                _failure(
-                    agent_pb2.ExecuteResponse.REJECTED,
-                    "permission_denied",
-                    f"missing permissions: {', '.join(missing)}",
+                    decision.reason,
                 ),
             )
 
         if step.kind == "tool":
-            if any(p == "vehicle.control" or p.startswith("vehicle.control.")
-                   for p in required):
-                _audit.permission_denied(
-                    step.agent_id, required,
-                    trace_id=getattr(ctx, 'trace_id', ''))
-                return await self._finish(
-                    step,
-                    ctx,
-                    _failure(
-                        agent_pb2.ExecuteResponse.REJECTED,
-                        "permission_denied",
-                        "tools cannot request vehicle.control",
-                    ),
-                )
             if self._tools is None:
                 return await self._finish(
                     step,

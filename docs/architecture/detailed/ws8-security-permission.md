@@ -4,16 +4,22 @@
 > 目标：把"车控只经 VAL / LLM 不直连车控 / 危险动作二次确认 / 最小权限 / 第三方沙箱"落到可编码。读者：安全/编排/端侧/平台开发。
 > 设计时基线：proto 只有权限字段，缺少统一引擎、沙箱、注入防护与审核。
 >
-> **当前实现（2026-07-02 修订）**：VAL 安全门控、危险动作确认、审计和基础注入/内容
-> 钩子已落地。**权限校验当前是「单轨确定性校验」，并非本文档设计的统一 PermissionEngine**——
-> 实际生效的是 ①规划期 `orchestrator/cloud/planning.py::_filter_by_permission`（fail-closed，
-> 越权 step 整计划拒绝）+ ②执行期 `orchestrator/cloud/dispatch.py::is_scope_covered` 散点校验
-> + ③`third_party` 硬禁令 + ④VAL 终校验。本文 §2 的 `security/permission.py::PermissionEngine`
-> （trust_level × 用户授权 × token scope 三源交集）虽已注入 `PlannerEngine`，但**生产代码从未
-> 调用（仅测试引用）**，`_enforce_permissions` 为空壳；且 `context._POC_DEFAULT_SCOPES` 在请求
-> 不带 granted_scopes 时 fail-open 授予常用权限。真实 token 授权、正式 third-party 沙箱/网络
-> 出口白名单、审核服务和完整审计后端仍待接入。**单轨化（接线 PermissionEngine 或复用确定性
-> 判定为唯一实现）的计划见 `docs/reviews/2026-07-02-repo-audit-and-roadmap.md` R2.2（A4/D3）。**
+> **当前实现（2026-07-02 · R2.2 权限单轨化后修订）**：VAL 安全门控、危险动作确认、审计和
+> 基础注入/内容钩子已落地。**权限决策已收敛为唯一实现 `security/permission.py::check_permission`**
+> ——规划期 `orchestrator/cloud/planning.py::_filter_by_permission`（fail-closed，越权 Agent 不进
+> catalog、不暴露给 LLM）与执行期 `orchestrator/cloud/dispatch.py`（每步硬拒，越权 `REJECTED`）
+> **同源复用**它；判定模型 = `scopes.is_scope_covered` 父子覆盖 + `third_party`/`tool` 车控硬禁令
+> + VAL 终校验。`PermissionEngine.check` 委托 check_permission；其 `effective_scopes`（trust_level
+> × 用户授权 × token scope 三源交集）**保留为目标态 scope 解析原语、当前不在决策主链**——它是
+> 扁平集合交集、不做父子覆盖（授予父 `vehicle.control` 会与只含子 scope 的 cap 交空），trust-cap
+> 强上限待 R3.1 真实 token scope 落地、并把 `TRUST_LEVEL_CAPS` 改父子感知后再接。原
+> `engine._enforce_permissions` 空壳已移除（dispatch 已按步真校验）。`context._POC_DEFAULT_SCOPES`
+> fail-open 现由 env `PERMISSIONS_FAIL_OPEN` 门控（默认 `on` 保持现状；量产翻 `false` 走
+> fail-closed：无 granted_scopes 时仅无权限 Agent 可达），并记结构化审计事件
+> `fail_open_default_scopes`。真实 token 授权、正式 third-party 沙箱/网络出口白名单、审核服务和
+> 完整审计后端仍待接入（R3.1/R3.2）。落地记录见
+> `docs/design/2026-07-02-r2.2-permission-single-track.md`；本文 §1.2/§1.3 的三源交集与双层校验
+> 为**目标态设计**，当前运行时按上述单轨实现。
 
 ---
 
@@ -45,7 +51,10 @@ profile.read              profile.write              microphone.read   camera.re
 
 ---
 
-## 2. PermissionEngine（`security/permission.py`，目标态——当前未接线，见顶部修订说明）
+## 2. PermissionEngine（`security/permission.py`）
+
+> R2.2 后：`check()` 已接线（委托运行时唯一决策 `check_permission`）；下方 `effective_scopes`
+> 的 trust-cap 三源交集为**目标态**、当前不在决策主链（见顶部修订说明）。
 
 ```python
 @dataclass

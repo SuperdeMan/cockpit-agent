@@ -60,6 +60,16 @@ class AuditLogger:
             trace_id=trace_id,
         ))
 
+    def fail_open_scopes(self, vehicle_id: str = "", user_id: str = "",
+                         trace_id: str = "", scopes: list[str] = None):
+        """fail-open 兜底：请求无 granted_scopes，PoC 默认全授。量产应关（PERMISSIONS_FAIL_OPEN=false）。"""
+        self.log(AuditEvent(
+            event="fail_open_default_scopes", decision="allowed",
+            reason="no granted_scopes in request; using PoC default scopes",
+            required=list(scopes or []),
+            vehicle_id=vehicle_id, user_id=user_id, trace_id=trace_id,
+        ))
+
 
 # 为类型提示延迟导入
 from .permission import AuthContext
