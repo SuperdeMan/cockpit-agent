@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ResilientWebSocket, nextBackoff } from './ws.mjs'
+import { ResilientWebSocket, nextBackoff, appendToken } from './ws.mjs'
 
 // ── 测试替身：可手动驱动的 WebSocket 与定时器（无需 DOM / 真实时钟）──
 
@@ -50,6 +50,25 @@ test('nextBackoff grows exponentially and caps (no jitter when rand=0)', () => {
 
 test('nextBackoff adds bounded jitter', () => {
   assert.equal(nextBackoff(0, 1000, 30000, () => 1), 1500) // 1000 + 1*(1000/2)
+})
+
+// ── appendToken：R3.1 会话鉴权 token 拼接 ──
+
+test('appendToken: empty token returns url unchanged', () => {
+  assert.equal(appendToken('ws://x/ws', ''), 'ws://x/ws')
+  assert.equal(appendToken('ws://x/ws', undefined), 'ws://x/ws')
+})
+
+test('appendToken: adds ?token= to plain url', () => {
+  assert.equal(appendToken('ws://x/ws', 'abc'), 'ws://x/ws?token=abc')
+})
+
+test('appendToken: uses & when url already has query', () => {
+  assert.equal(appendToken('ws://x/ws?a=1', 'abc'), 'ws://x/ws?a=1&token=abc')
+})
+
+test('appendToken: url-encodes token', () => {
+  assert.equal(appendToken('ws://x/ws', 'a b/c'), 'ws://x/ws?token=a%20b%2Fc')
 })
 
 // ── 发送队列：断线不丢消息 ──
