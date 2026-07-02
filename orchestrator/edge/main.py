@@ -100,7 +100,8 @@ async def serve():
     reregister_task = asyncio.create_task(_reregister_capabilities(reregister_interval))
     print(f"[edge-orchestrator] serving on :{port}", flush=True)
     try:
-        await run_aio_server(server, name="edge-orchestrator")
+        await run_aio_server(server, name="edge-orchestrator",
+                             on_shutdown=servicer.cloud.aclose)
     finally:
         tasks = (state_task, debug_task, snapshot_task, reregister_task)
         for task in tasks:
