@@ -413,6 +413,29 @@ def test_modify_pattern_keeps_llm_trip_modify():
     assert [s.intent for s in plan.steps] == ["trip.modify"]
 
 
+def test_fake_agent_gets_deterministic_routing_from_manifest_only():
+    """铁律契约（DoD#2）：一个全新 Agent 仅靠 manifest.route_hints 就能获得确定性路由，
+    编排核心零改动、planning.py 不含该 Agent 任何字面量。这固化「新增 Agent 不改编排核心」。"""
+    from cockpit.agent.v1 import agent_pb2
+    widget = MockAgent("widget-agent", ["widget.cast"])
+    widget.manifest.route_hints = [agent_pb2.RouteHint(
+        pattern="施展魔法|念咒语", intent="widget.cast", policy="replace",
+        priority=50, slots={"spell": "$text"})]
+    agents = [widget, MockAgent("chitchat", ["chitchat.talk"])]
+
+    async def mock_llm(messages):     # 弱 LLM 误判成闲聊
+        return '{"steps":[{"id":"s1","agent_id":"chitchat","intent":"chitchat.talk","slots":{}}]}'
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        "帮我施展魔法", WorkingSet(catalog=agents), PlanContext()))
+    assert [s.intent for s in plan.steps] == ["widget.cast"]
+    assert plan.steps[0].agent_id == "widget-agent"
+    assert plan.steps[0].slots["spell"] == "帮我施展魔法"
+
+
 def test_does_not_inject_trip_when_planner_unavailable():
     """trip-planner 没注册（无权限/未上线）时不注入，避免产出 Unknown agent 计划。"""
     agents = [MockAgent("info-agent", ["info.weather"])]
