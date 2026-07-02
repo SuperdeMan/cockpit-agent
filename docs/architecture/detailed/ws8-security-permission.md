@@ -4,9 +4,16 @@
 > 目标：把"车控只经 VAL / LLM 不直连车控 / 危险动作二次确认 / 最小权限 / 第三方沙箱"落到可编码。读者：安全/编排/端侧/平台开发。
 > 设计时基线：proto 只有权限字段，缺少统一引擎、沙箱、注入防护与审核。
 >
-> **当前实现（2026-06-14）**：统一 PermissionEngine、规划/执行双层校验、VAL 安全
-> 门控、危险动作确认、审计和基础注入/内容钩子已落地。真实 token 授权、正式
-> third-party 沙箱/网络出口白名单、审核服务和完整审计后端仍待接入。
+> **当前实现（2026-07-02 修订）**：VAL 安全门控、危险动作确认、审计和基础注入/内容
+> 钩子已落地。**权限校验当前是「单轨确定性校验」，并非本文档设计的统一 PermissionEngine**——
+> 实际生效的是 ①规划期 `orchestrator/cloud/planning.py::_filter_by_permission`（fail-closed，
+> 越权 step 整计划拒绝）+ ②执行期 `orchestrator/cloud/dispatch.py::is_scope_covered` 散点校验
+> + ③`third_party` 硬禁令 + ④VAL 终校验。本文 §2 的 `security/permission.py::PermissionEngine`
+> （trust_level × 用户授权 × token scope 三源交集）虽已注入 `PlannerEngine`，但**生产代码从未
+> 调用（仅测试引用）**，`_enforce_permissions` 为空壳；且 `context._POC_DEFAULT_SCOPES` 在请求
+> 不带 granted_scopes 时 fail-open 授予常用权限。真实 token 授权、正式 third-party 沙箱/网络
+> 出口白名单、审核服务和完整审计后端仍待接入。**单轨化（接线 PermissionEngine 或复用确定性
+> 判定为唯一实现）的计划见 `docs/reviews/2026-07-02-repo-audit-and-roadmap.md` R2.2（A4/D3）。**
 
 ---
 
@@ -38,7 +45,7 @@ profile.read              profile.write              microphone.read   camera.re
 
 ---
 
-## 2. PermissionEngine（`security/permission.py`，被 Planner 复用）
+## 2. PermissionEngine（`security/permission.py`，目标态——当前未接线，见顶部修订说明）
 
 ```python
 @dataclass

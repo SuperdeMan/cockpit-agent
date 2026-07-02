@@ -448,6 +448,16 @@ sequenceDiagram
 | 异步事件 / 车控状态广播 / 主动服务触发 | **事件总线（NATS（推荐，轻量） 或 Kafka）** | 解耦、广播、削峰、主动场景 |
 | HMI↔Edge Gateway | **WebSocket（语音流/事件）+ REST（控制）** | 前端友好、实时 |
 
+> **实现现状（2026-07-02，PoC，与上表目标态的已知偏差，接手者以此为准）**：
+> ① 端↔云当前是**逐请求建 gRPC 双向流**（每次上云 hello 握手→request→final 后关闭），
+>    非持久多路复用长连（`orchestrator/edge/cloud_client.py` 自注「Phase 2 持久长连+多路复用」；
+>    `gateway/edge/main.go` 内已写的持久 ChannelClient 尚未实例化）。
+> ② 端云长连由 **Edge Orchestrator（Python）** 持有，非架构图中的 Edge Gateway；
+>    HMI→编排为 WS→edge-orchestrator gRPC 直连。
+> ③ HMI 的 **ASR/TTS/流式识别直连 llm-gateway HTTP(50059)**（`VITE_AUDIO_API_URL`），
+>    绕过 Edge Gateway（「Edge Gateway 是所有交互入口」为目标态）。
+> 升级计划见 `docs/reviews/2026-07-02-repo-audit-and-roadmap.md` R2.3（A2/A3/D2）。
+
 当前 PoC 已用 NATS 接通轻量可观测旁路，Topic 如下：
 ```
 vehicle.state.changed       # VAL 状态 diff / 启动快照
@@ -540,6 +550,11 @@ obs.debug.vehicle.set       # 仅开发环境量：车速/电量/挡位/位置
 ### 12.3 端云通道
 - 双向流式长连接（心跳、断线重连、指令幂等）。
 - 鉴权：车辆设备证书 + 会话 token。
+
+> **实现现状（2026-07-02，PoC）**：当前为**逐请求建流**（非持久多路复用，见 §8 实现现状）；
+> 鉴权尚未落地——Hello 仅带 vehicle_id（`gateway/cloud/main.go` 注「PoC 简单通过」）、
+> WS `CheckOrigin` 全放行、`user_id="u1"` 硬编码。会话鉴权最小闭环见审计 R3.1，
+> 端云持久长连见 R2.3。
 
 ---
 

@@ -19,13 +19,25 @@ x-python-env: &python-env
   PLANNER_LOOP_MAX_ITERS: ${PLANNER_LOOP_MAX_ITERS:-2}
   PLANNER_LOOP_BUDGET_MS: ${PLANNER_LOOP_BUDGET_MS:-5000}
 
+# 生存性：所有长驻服务 crash/OOM 后自动拉起（演示/长跑不因单点退出而中断）。
+# unless-stopped = 除非人工 stop，否则始终重启（含 docker daemon 重启后）。
+x-restart: &restart
+  restart: unless-stopped
+
 services:
   # ── 基础设施 ──
   redis:
+    <<: *restart
     image: redis:7-alpine
     ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 10
 
   nats:
+    <<: *restart
     image: nats:2-alpine
     command: ["-js", "-m", "8222"]
     ports: ["4222:4222"]
@@ -36,15 +48,22 @@ services:
       retries: 10
 
   postgres:
+    <<: *restart
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: cockpit
       POSTGRES_PASSWORD: cockpit
       POSTGRES_DB: cockpit
     ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cockpit -d cockpit"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
 
   # ws8 P1: HTTP 代理（网络白名单）——third-party Agent 出站 HTTP 经此代理
   http-proxy:
+    <<: *restart
     image: envoyproxy/envoy:v1.29-latest   # envoy 不发布无 patch 号的 v1.29；用 1.29 线滚动 tag
     volumes:
       - ./envoy-proxy.yaml:/etc/envoy.yaml
@@ -52,6 +71,7 @@ services:
 
   # ── 云侧核心 ──
   registry:
+    <<: *restart
     build: { context: .., dockerfile: registry/Dockerfile }
     environment:
       NATS_URL: nats://nats:4222
@@ -62,12 +82,13 @@ services:
       nats:
         condition: service_healthy
       postgres:
-        condition: service_started
+        condition: service_healthy
     # P1 多实例：replicas: 2（PostgreSQL UPSERT 天然幂等，多实例写同一行安全）
     deploy:
       replicas: ${REGISTRY_REPLICAS:-1}
 
   llm-gateway:
+    <<: *restart
     build: { context: .., dockerfile: llm-gateway/Dockerfile }
     environment:
       <<: *python-env
@@ -99,21 +120,28 @@ services:
     depends_on: [redis]
 
   memory:
+    <<: *restart
     build: { context: .., dockerfile: memory/Dockerfile }
     environment:
       <<: *python-env
       POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
       EMBED_DIM: ${EMBED_DIM:-1024}   # 须与 LLM_EMBED_DIMENSIONS 一致（百炼 v4 默认 1024）
     ports: ["50053:50053"]
-    depends_on: [redis, postgres]
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   cloud-planner:
+    <<: *restart
     build: { context: .., dockerfile: orchestrator/cloud/Dockerfile }
     environment: *python-env
     ports: ["50054:50054"]
     depends_on: [registry, llm-gateway, memory]
 
   payment-gateway:
+    <<: *restart
     build: { context: .., dockerfile: payment-gateway/Dockerfile }
     environment:
       <<: *python-env
@@ -123,6 +151,7 @@ services:
 
   # ── Agents ──
   navigation-agent:
+    <<: *restart
     build: { context: .., dockerfile: agents/navigation/Dockerfile }
     environment:
       <<: *python-env
@@ -133,6 +162,7 @@ services:
     depends_on: [registry, llm-gateway]
 
   chitchat-agent:
+    <<: *restart
     build: { context: .., dockerfile: agents/chitchat/Dockerfile }
     environment:
       <<: *python-env
@@ -140,6 +170,7 @@ services:
     depends_on: [registry, llm-gateway]
 
   food-ordering-agent:
+    <<: *restart
     build: { context: .., dockerfile: agents/food_ordering/Dockerfile }
     environment:
       <<: *python-env
@@ -154,6 +185,7 @@ services:
     cpus: 0.5
 
   parking-payment-agent:
+    <<: *restart
     build: { context: .., dockerfile: agents/parking_payment/Dockerfile }
     environment:
       <<: *python-env
@@ -168,6 +200,7 @@ services:
     cpus: 0.5
 
   manual-rag-agent:
+    <<: *restart
     build: { context: .., dockerfile: agents/manual_rag/Dockerfile }
     environment:
       <<: *python-env
@@ -175,6 +208,7 @@ services:
     depends_on: [registry, llm-gateway]
 
   trip-planner-agent:
+    <<: *restart
     build: { context: .., dockerfile: agents/trip_planner/Dockerfile }
     environment:
       <<: *python-env
@@ -185,6 +219,7 @@ services:
     depends_on: [registry, llm-gateway]
 
   info-agent:
+    <<: *restart
     build: { context: .., dockerfile: agents/info/Dockerfile }
     environment:
       <<: *python-env
@@ -220,6 +255,7 @@ services:
     depends_on: [registry, llm-gateway]
 
   deep-research-agent:
+    <<: *restart
     build: { context: .., dockerfile: agents/deep_research/Dockerfile }
     environment:
       <<: *python-env
@@ -233,6 +269,7 @@ services:
     depends_on: [registry, llm-gateway]
 
   charging-planner-agent:
+    <<: *restart
     build: { context: .., dockerfile: agents/charging_planner/Dockerfile }
     environment:
       <<: *python-env
@@ -242,6 +279,7 @@ services:
     depends_on: [registry, llm-gateway, memory]
 
   scene-orchestrator-agent:
+    <<: *restart
     build: { context: .., dockerfile: agents/scene_orchestrator/Dockerfile }
     environment:
       <<: *python-env
@@ -249,6 +287,7 @@ services:
     depends_on: [registry, llm-gateway]
 
   road-safety-agent:
+    <<: *restart
     build: { context: .., dockerfile: agents/road_safety/Dockerfile }
     environment:
       <<: *python-env
@@ -256,6 +295,7 @@ services:
     depends_on: [registry, llm-gateway]
 
   observability-collector:
+    <<: *restart
     build: { context: .., dockerfile: observability/collector/Dockerfile }
     environment:
       NATS_URL: nats://nats:4222
@@ -269,6 +309,7 @@ services:
 
   # ── 接入层 ──
   cloud-gateway:
+    <<: *restart
     build: { context: .., dockerfile: gateway/cloud/Dockerfile }
     environment:
       CLOUD_PLANNER_ADDR: cloud-planner:50054
@@ -277,6 +318,7 @@ services:
     depends_on: [cloud-planner]
 
   edge-gateway:
+    <<: *restart
     build: { context: .., dockerfile: gateway/edge/Dockerfile }
     environment:
       EDGE_GATEWAY_PORT: "8090"
@@ -287,6 +329,7 @@ services:
     depends_on: [edge-orchestrator, nats]
 
   edge-orchestrator:
+    <<: *restart
     # 端侧编排器：内含 Fast Intent + 端侧车控/媒体 Agent + 模拟 VAL（PoC 简化为单进程）
     build: { context: .., dockerfile: orchestrator/edge/Dockerfile }
     environment:
@@ -304,6 +347,7 @@ services:
 
   # ── 前端 ──
   hmi:
+    <<: *restart
     build: { context: ../hmi, dockerfile: Dockerfile }
     environment:
       VITE_EDGE_GATEWAY_URL: http://localhost:8090
@@ -312,6 +356,7 @@ services:
     depends_on: [edge-gateway]
 
   dashboard:
+    <<: *restart
     build: { context: .., dockerfile: dashboard/Dockerfile }
     environment:
       VITE_COLLECTOR_URL: http://localhost:8092

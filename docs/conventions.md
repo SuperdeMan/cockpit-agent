@@ -13,7 +13,7 @@
 | food-ordering | food_ordering | ecosystem | third_party | cloud | 50063 | food.search_restaurant, food.reserve |
 | parking-payment | parking_payment | ecosystem | third_party | cloud | 50064 | parking.find, parking.pay |
 | manual-rag | manual_rag | ecosystem | first_party | cloud | 50065 | manual.query |
-| trip-planner | trip_planner | ecosystem | first_party | cloud | 50066 | trip.plan, trip.modify |
+| trip-planner | trip_planner | ecosystem | first_party | cloud | 50066 | trip.plan, trip.modify, trip.navigate, trip.status, trip.reschedule |
 | info | info | core | first_party | cloud | 50067 | info.weather, info.forecast, info.alerts, info.indices, info.air_quality, info.search, info.sports, info.news, info.stock |
 | charging-planner | charging_planner | core | first_party | cloud | 50068 | charging.find, charging.plan, charging.status |
 | scene-orchestrator | scene_orchestrator | core | first_party | cloud | 50069 | scene.activate, scene.deactivate, scene.list |
@@ -22,7 +22,7 @@
 | road-safety | road_safety | core | first_party | cloud | 50072 | safety.driving_advice, safety.weather_alert, safety.road_condition |
 | deep-research | deep_research | ecosystem | first_party | cloud | 50073 | research.run |
 
-> 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent（50073）。新增时按本表分配端口与 intent 命名空间。
+> 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent（**50074 起**，50073 已由 deep-research 实占）。新增时按本表分配端口与 intent 命名空间。
 
 ---
 
@@ -47,7 +47,10 @@
 | `parking.pay` | parking-payment | cloud | order_id, plate, amount | require_confirm |
 | `manual.query` | manual-rag | cloud | question | RAG |
 | `trip.plan` | trip-planner | cloud | destination, days, preferences | 跨 Agent 协作(Phase1)；NEED_CONFIRM 确认方案 |
-| `trip.modify` | trip-planner | cloud | modification | 修改已有行程（局部重规划）；NEED_CONFIRM |
+| `trip.modify` | trip-planner | cloud | modification | 修改已有行程（结构化 edit-op 加/删停靠点、只改受影响天、跨天去重）；NEED_CONFIRM |
+| `trip.navigate` | trip-planner | cloud | day, stop, target | 行程内逐停靠点导航：『下一站』按 cursor 推进 /『导航去第N天的X』/ HMI 行程卡停靠点可点 → 发 navigation.navigate_to |
+| `trip.status` | trip-planner | cloud | — | 在途进度只读：在第几站/下一站/还剩几站/全程补电几次 |
+| `trip.reschedule` | trip-planner | cloud | hint | 在途重排（时间不够/太累了/提前回）：确定性砍尾部停靠点或最后一天，NEED_CONFIRM（"不要太累"是慢节奏偏好，不触发） |
 | `research.run` | deep-research | cloud | query, topic, question | 深度调研：LLM 拆多视角子问题→有界并行迭代检索→分节接地报告 + 一段式语音简报；HEAVY_INTENT（动态开思考+过程区）；出 research_report 卡；「深入调研/全面对比 X」编排层 `_ensure_research_step` 兜底纠偏（不劫持普通搜索）|
 | `charging.find` | charging-planner | cloud | destination, soc, prefer | 找充电站。带 destination → 按目的地搜、最优站作为导航途经点（出 charging_route 卡 + data.waypoint，聚合器并入 navigate）；无 destination → 按当前位置出附近列表 |
 | `charging.plan` | charging-planner | cloud | destination, soc | 规划长途充能（出发地→沿途途经充电点→目的地）；信息建议 advisory（不发导航/不二次确认导航）；目的地过泛→NEED_SLOT 高德候选二次确认 |

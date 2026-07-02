@@ -22,8 +22,17 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
+        # 聚合安装各服务 requirements.txt（单一真相源，避免手写清单与 requirements 漂移，D12）
+        # + 仅测试用的 pytest/pytest-asyncio（不在运行时 requirements 内）。
         run: |
-          pip install grpcio==1.66.2 protobuf==7.35.0 pyyaml pytest pytest-asyncio httpx aiohttp fastapi cryptography nats-py
+          python -m pip install --upgrade pip
+          reqs=$(find . -name requirements.txt \
+                   -not -path './.worktrees/*' \
+                   -not -path './gen/*' \
+                   -not -path '*/node_modules/*' \
+                   -printf '-r %p ')
+          echo "aggregated requirements: $reqs"
+          pip install pytest pytest-asyncio $reqs
 
       - name: Set up buf
         uses: bufbuild/buf-setup-action@v1
@@ -35,12 +44,86 @@ jobs:
 
       - name: Syntax check (py_compile)
         run: |
-          python -m py_compile $(find . -name "*.py" -not -path "*/__pycache__/*" -not -path "*/gen/*" | tr "\n" " ")
+          python -m py_compile $(find . -name "*.py" -not -path "*/__pycache__/*" -not -path "*/gen/*" -not -path "*/.worktrees/*" | tr "\n" " ")
 
       - name: Smoke tests (edge logic)
-        run: |
-          python test/smoke_edge.py
+        run: python test/smoke_edge.py
 
-      - name: Unit tests
+      - name: Unit tests (full — CI 绿必须等价本地全量绿)
+        # 覆盖本地全量目录：编排 edge/cloud、全 Agent、memory、registry、llm-gateway、
+        # security、observability(含 collector)。断言型 e2e（test/e2e_*.py）需 live stack，
+        # 走 nightly（Roadmap T3.3），此处不收集。
+        #
+        # 分进程运行的原因：llm-gateway/edge/registry/memory 等服务用 sys.path.insert + 裸
+        # import，顶层模块名（providers/server/…）跨服务重名；放同一 pytest 进程会互相污染
+        # sys.modules 导致收集期 ImportError。故「包式 agents 绿组 + 各裸 import 服务各自
+        # 隔离」分组运行，任一组失败则整步失败（不 fail-fast，跑完所有组便于一次看全）。
         run: |
-          python -m pytest test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ agents/ --import-mode=importlib -v --tb=short
+          set +e
+          fail=0
+          run_group() {
+            echo "::group::pytest $*"
+            python -m pytest "$@" --import-mode=importlib -v --tb=short
+            rc=$?
+            echo "::endgroup::"
+            if [ $rc -ne 0 ]; then fail=1; echo "::error::pytest group FAILED: $*"; fi
+          }
+          run_group test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ agents/
+          run_group orchestrator/edge/tests/
+          run_group memory/tests/
+          run_group registry/tests/
+          run_group llm-gateway/tests/
+          run_group observability/collector/tests/
+          exit $fail
+
+  go-build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate gRPC code (buf)
+        # Go 网关依赖 gen/go（buf 生成，gitignored）；必须先于 go build。
+        run: buf generate proto
+
+      - name: Go build
+        run: go build ./...
+
+      - name: Go test
+        run: go test ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [hmi, dashboard]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
