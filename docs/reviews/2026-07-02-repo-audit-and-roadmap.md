@@ -29,12 +29,20 @@
   （first_party 需父 scope `vehicle.control`），故取**零行为变化单轨**、trust-cap 强上限推迟 R3.1。
   commit `8999cba`(实现)/`0be9991`(merge)。验证：全量 **1014 passed / 6 skipped**（+16 用例）
   + 真栈 `e2e_ws` 4/4；落地记录 `docs/design/2026-07-02-r2.2-permission-single-track.md`。
+- **R2.3 = T2.3 · 端云持久长连（A2/D2，含 A3 文档补记）** — Python `CloudClient`（edge-orchestrator）
+  从逐请求建流升级为**进程内单条持久 bidi + corr_id 多路复用 + 15s 心跳 + 指数退避重连**，每次重连
+  重建 channel 走 `dns:///` 重解析（换 IP 自愈），在途请求断连快速失败由上层降级；云侧
+  `channelServer.Connect` 本就支持多路复用故未改。删 Go 死代码 `gateway/edge/ChannelClient`
+  （~250 行，从未实例化）。**已合并 main（本地），待 push origin。** 验证：全量
+  **1016 passed / 6 skipped**（+2 用例）+ edge-gateway 镜像 `go build` 通过 + 真栈 `e2e_ws` 4/4 +
+  **持久性探针**（3 云请求 cloud-gateway 仅 1 次 hello）+ **换 IP 自愈探针**（force-recreate
+  cloud-gateway 新 IP → 未重启 edge 即自愈、新容器 1 次 hello）；落地记录
+  `docs/design/2026-07-02-r2.3-edge-cloud-persistent-channel.md`。
 
 **⬜ 未完成（新会话可接续，按优先级）：**
 
 | 任务 | 关联审计项 | 规模 | 备注 |
 |---|---|---|---|
-| **R2.3 端云持久长连** | A2/D2 | M/L | cloud_client 逐请求建流；gateway ChannelClient 死代码（T1.2 已保留未删，待此任务定去留） |
 | **R2.4 info agent 拆域** | D6 | M | 1269 行巨类拆 handlers/ |
 | **R2.5 跨 Agent 状态键契约化** | A5 | S | news_active/research_active/trip_active 隐性契约登记 |
 | **R3 量产硬化（T3.1–T3.6）** | D1/G2–G8 | 各 M | 会话鉴权 / mTLS / e2e 入门禁 / 路由评测基线 / 降级矩阵 / OTel |
@@ -86,7 +94,7 @@ CLAUDE.md §3 / 架构 §1.1-3：新增 Agent 只通过注册接入，**0 改编
 - **影响**：新增重域 Agent 的实际成本 = Agent 本体 + 编排核心改动 + 正则相互作用回归（已发生过：裸「电池」劫持调研、「行程」含「行」误判确认——每次都是正则打架）。Agent 数量增长后此文件将不可维护。
 - **建议**：把「确定性路由兜底」降为**通用机制**、把「领域知识」搬回 Agent 侧（manifest 声明式 route_hints / capability 属性），见任务 R2.1。
 
-#### A2 端云通道：架构要求持久多路复用长连，实现是逐请求建流
+#### A2 端云通道：架构要求持久多路复用长连，实现是逐请求建流 — ✅ 已由 R2.3 落地（见顶部执行进度）
 
 - 架构 §8/§12.3：「gRPC 双向流长连接（心跳、断线重连、多路复用）+ 设备证书/会话 token 鉴权」。
 - 现实：`orchestrator/edge/cloud_client.py` 每个上云请求新建 bidi 流（hello 握手 → request → final 后关闭），文件头注释自认「Phase 2：持久长连 + 多路复用」。
@@ -269,7 +277,9 @@ CLAUDE.md §3 / 架构 §1.1-3：新增 Agent 只通过注册接入，**0 改编
 - 任务：二选一并执行——推荐**接线 PermissionEngine**：① Step 已带 trust_level/required_permissions，dispatch 改调 `perms.check()`（AuthContext 由 PlanContext 构造）；② planning._filter_by_permission 复用同一 engine 的判定函数；③ 删 engine._enforce_permissions 空壳或使其真校验；④ _POC_DEFAULT_SCOPES 加 env 开关 `PERMISSIONS_FAIL_OPEN=true`（默认保持现状，量产翻转），warning 升级为结构化审计事件。
 - 验收：test_ws8_security 全过 + 新增「dispatch 层越权硬拒」用例；全仓只剩一处权限判定实现。
 
-**T2.3 端云持久长连（M/L）**
+**T2.3 端云持久长连（M/L）** ✅ 已完成并合并 main（本地，待 push；见顶部执行进度。持久客户端落在
+Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelClient 已删；换 IP 自愈 + 持久性
+真栈探针均过。落地记录 `docs/design/2026-07-02-r2.3-edge-cloud-persistent-channel.md`）
 - 背景：A2/D2。
 - 任务：cloud_client.py 升级为持久 bidi + 多路复用 + 心跳 + 断线重连（逻辑可翻译自 T1.2 归档的 Go ChannelClient）：进程内单连接常驻，corr_id 复用 uuid4，请求映射 `corr_id → asyncio.Queue`；连接断开时在途请求快速失败并由上层降级话术兜底。
 - 验收：e2e_resilience 新增用例——请求进行中重启 cloud-gateway，连接自愈且后续请求 <1 次握手；e2e_ws 4 链路过；对比日志确认不再每请求 hello。

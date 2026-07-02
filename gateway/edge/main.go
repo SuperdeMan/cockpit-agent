@@ -1,6 +1,6 @@
-// Edge Gateway Phase 1：WebSocket 接入 + ChannelClient bidi 长连到云。
-// 职责：HMI WebSocket → ChannelClient(多路复用) → Cloud Gateway → Planner。
-// 心跳、断线重连（指数退避）、降级。
+// Edge Gateway：HMI WebSocket 接入 → Edge Orchestrator（gRPC EdgeOrchestrator.Handle）。
+// 端云持久 bidi 长连由 Edge Orchestrator 持有（orchestrator/edge/cloud_client.py，R2.3）；
+// 本网关另订阅 NATS agent.proactive 把主动消息广播给已连 HMI。
 package main
 
 import (
@@ -8,13 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,264 +22,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
-	channelpb "github.com/cockpit/car-agent/gen/go/cockpit/channel/v1"
 	commonpb "github.com/cockpit/car-agent/gen/go/cockpit/common/v1"
 	orchpb "github.com/cockpit/car-agent/gen/go/cockpit/orchestrator/v1"
 )
-
-// ─── ChannelClient：bidi 长连 + 多路复用 + 重连 ───
-
-const (
-	maxReconnectDelay = 30 * time.Second
-	pingInterval      = 15 * time.Second
-	missedPongLimit   = 3
-)
-
-type channelState int32
-
-const (
-	stateDisconnected channelState = iota
-	stateConnecting
-	stateConnected
-)
-
-type pendingRequest struct {
-	ch  chan *orchpb.HandleEvent
-	ctx context.Context
-}
-
-type ChannelClient struct {
-	cloudAddr string
-	vehicleID string
-
-	conn     *grpc.ClientConn
-	stream   channelpb.EdgeCloudChannel_ConnectClient
-	state    atomic.Int32
-	mu       sync.RWMutex
-	sendLock sync.Mutex // F13：保护 stream.Send（Request/pingLoop/connect 三处）
-
-	pending    sync.Map // correlation_id -> *pendingRequest
-	corrSeq    atomic.Int64
-	missedPong atomic.Int32
-}
-
-func NewChannelClient(cloudAddr, vehicleID string) *ChannelClient {
-	c := &ChannelClient{
-		cloudAddr: cloudAddr,
-		vehicleID: vehicleID,
-	}
-	c.state.Store(int32(stateDisconnected))
-	return c
-}
-
-func (c *ChannelClient) Start(ctx context.Context) {
-	go c.connectLoop(ctx)
-}
-
-func (c *ChannelClient) State() channelState {
-	return channelState(c.state.Load())
-}
-
-func (c *ChannelClient) Request(ctx context.Context, text, sessionID string, isConfirmation bool) (<-chan *orchpb.HandleEvent, error) {
-	if c.State() != stateConnected {
-		return nil, fmt.Errorf("not connected to cloud")
-	}
-
-	corrID := fmt.Sprintf("%s-%d", c.vehicleID, c.corrSeq.Add(1))
-	ch := make(chan *orchpb.HandleEvent, 32)
-	c.pending.Store(corrID, &pendingRequest{ch: ch, ctx: ctx})
-
-	req := &channelpb.UpFrame{
-		CorrelationId: corrID,
-		Body: &channelpb.UpFrame_Request{
-			Request: &orchpb.HandleRequest{
-				Text:           text,
-				SessionId:      sessionID,
-				IsConfirmation: isConfirmation,
-				Context: &commonpb.ContextRef{
-					SessionId: sessionID,
-					VehicleId: c.vehicleID,
-					UserId:    "u1",
-				},
-			},
-		},
-	}
-
-	c.mu.RLock()
-	stream := c.stream
-	c.mu.RUnlock()
-
-	if stream == nil {
-		c.pending.Delete(corrID)
-		return nil, fmt.Errorf("stream not ready")
-	}
-
-	c.sendLock.Lock()
-	err := stream.Send(req)
-	c.sendLock.Unlock()
-	if err != nil {
-		c.pending.Delete(corrID)
-		return nil, fmt.Errorf("send failed: %w", err)
-	}
-
-	return ch, nil
-}
-
-func (c *ChannelClient) connectLoop(ctx context.Context) {
-	delay := 500 * time.Millisecond
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-
-		c.state.Store(int32(stateConnecting))
-		err := c.connect(ctx)
-		if err == nil {
-			delay = 500 * time.Millisecond // 成功后重置退避
-			c.state.Store(int32(stateConnected))
-			c.recvLoop(ctx)
-		} else {
-			log.Printf("[edge-gateway] connect failed: %v, retry in %v", err, delay)
-		}
-
-		c.state.Store(int32(stateDisconnected))
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(delay):
-		}
-
-		// 指数退避 + 抖动
-		delay = delay * 2
-		if delay > maxReconnectDelay {
-			delay = maxReconnectDelay
-		}
-		delay += time.Duration(rand.Int63n(int64(delay / 4)))
-	}
-}
-
-func (c *ChannelClient) connect(ctx context.Context) error {
-	var err error
-	c.conn, err = grpc.NewClient(dnsTarget(c.cloudAddr),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		clientKeepalive())
-	if err != nil {
-		return fmt.Errorf("dial cloud: %w", err)
-	}
-
-	client := channelpb.NewEdgeCloudChannelClient(c.conn)
-	c.stream, err = client.Connect(ctx)
-	if err != nil {
-		c.conn.Close()
-		return fmt.Errorf("connect stream: %w", err)
-	}
-
-	// 握手（F13：经 sendLock 保护）
-	helloCorrID := fmt.Sprintf("%s-hello", c.vehicleID)
-	c.sendLock.Lock()
-	helloErr := c.stream.Send(&channelpb.UpFrame{
-		CorrelationId: helloCorrID,
-		Body: &channelpb.UpFrame_Hello{
-			Hello: &channelpb.Hello{VehicleId: c.vehicleID},
-		},
-	})
-	c.sendLock.Unlock()
-	if helloErr != nil {
-		c.conn.Close()
-		return fmt.Errorf("hello send: %w", helloErr)
-	}
-
-	// 等 HelloAck
-	ack, err := c.stream.Recv()
-	if err != nil {
-		c.conn.Close()
-		return fmt.Errorf("hello ack recv: %w", err)
-	}
-	if ha := ack.GetHelloAck(); ha != nil && !ha.Ok {
-		c.conn.Close()
-		return fmt.Errorf("hello rejected: %s", ha.Reason)
-	}
-
-	log.Printf("[edge-gateway] connected to cloud as %s", c.vehicleID)
-	c.missedPong.Store(0)
-	go c.pingLoop(ctx)
-	return nil
-}
-
-func (c *ChannelClient) pingLoop(ctx context.Context) {
-	ticker := time.NewTicker(pingInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if c.State() != stateConnected {
-				return
-			}
-			corrID := fmt.Sprintf("%s-ping-%d", c.vehicleID, time.Now().UnixMilli())
-			c.sendLock.Lock()
-			pingErr := c.stream.Send(&channelpb.UpFrame{
-				CorrelationId: corrID,
-				Body:          &channelpb.UpFrame_Ping{Ping: &channelpb.Ping{Ts: time.Now().UnixMilli()}},
-			})
-			c.sendLock.Unlock()
-			if pingErr != nil {
-				log.Printf("[edge-gateway] ping send error: %v", pingErr)
-			}
-			if c.missedPong.Add(1) > missedPongLimit {
-				log.Printf("[edge-gateway] missed too many pongs, reconnecting")
-				c.stream.CloseSend()
-				return
-			}
-		}
-	}
-}
-
-func (c *ChannelClient) recvLoop(ctx context.Context) {
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		down, err := c.stream.Recv()
-		if err != nil {
-			log.Printf("[edge-gateway] recv error: %v", err)
-			return
-		}
-
-		switch body := down.Body.(type) {
-		case *channelpb.DownFrame_Pong:
-			c.missedPong.Store(0)
-
-		case *channelpb.DownFrame_HelloAck:
-			// 已在 connect() 处理
-
-		case *channelpb.DownFrame_Event:
-			if val, ok := c.pending.Load(down.CorrelationId); ok {
-				pr := val.(*pendingRequest)
-				select {
-				case pr.ch <- body.Event:
-					// 检查是否为 final
-					if _, ok := body.Event.Event.(*orchpb.HandleEvent_Final); ok {
-						close(pr.ch)
-						c.pending.Delete(down.CorrelationId)
-					}
-				default:
-					log.Printf("[edge-gateway] pending channel full for %s", down.CorrelationId)
-				}
-			}
-
-		case *channelpb.DownFrame_Proactive:
-			// 主动推送（如低电量提醒）：经云端 channel 下来 → 广播给已连 HMI
-			n := hub.broadcast(map[string]any{
-				"type": "proactive", "speech": body.Proactive.Speech,
-				"advisory": body.Proactive.Type, "source": "cloud",
-			})
-			log.Printf("[edge-gateway] proactive(channel) -> %d HMI: %s",
-				n, body.Proactive.Speech)
-		}
-	}
-}
 
 // ─── WebSocket 处理 ───
 

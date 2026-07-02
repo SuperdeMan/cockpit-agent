@@ -9,6 +9,15 @@
 > 流中经 VAL 执行并回传。本文 §1 帧清单是原始设计快照，新增帧以
 > [`../../design/2026-06-14-cloud-central-orchestrator.md`](../../design/2026-06-14-cloud-central-orchestrator.md)
 > §4.5 和代码为准。
+>
+> **实现补充（2026-07-02 · R2.3 持久长连）**：方案 B（持久多路复用）**已落地**——但持久
+> `ChannelClient` 位于 **Edge Orchestrator（Python `orchestrator/edge/cloud_client.py`）**，
+> 而非本文 §3 所画的 `gateway/edge/`（Go 网关那份 `ChannelClient` 从未接线，已作为死代码删除；
+> 真实链路 HMI—WS→ edge-gateway —gRPC `EdgeOrchestrator.Handle`→ edge-orchestrator —bidi→
+> cloud-gateway）。edge-orchestrator 维持**单条持久 bidi**：`corr_id` 多路复用、15s 心跳、
+> 指数退避重连、每次重连重建 channel 走 `dns:///` 重解析（换 IP 自愈）、在途请求断连快速失败由
+> 上层降级。**下方 §3「组件与职责」的 `gateway/edge/ChannelClient` 行为历史设计，以本注与代码为准。**
+> 落地记录见 [`../../design/2026-07-02-r2.3-edge-cloud-persistent-channel.md`](../../design/2026-07-02-r2.3-edge-cloud-persistent-channel.md)。
 
 ---
 
