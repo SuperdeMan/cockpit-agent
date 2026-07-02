@@ -49,7 +49,7 @@
   `trip_active`）**权威登记**入 `agents/_sdk/shared_state.py`（常量 + owner/reader/schema 表）+
   `docs/conventions.md §9`；`Context` 加 `save_shared_state`/`load_shared_state` 封装「写 `profile.<key>`、
   读 `profile.<key>` 命名空间」的前缀不对称；info/deep-research/trip-planner 全改用常量+helper。
-  **已合并 main（本地），待 push。** 验收：业务码零裸字面量（grep 仅 `shared_state.py`+文档）；
+  commit `9b1167c`(实现)/`0b390a6`(merge)。验收：业务码零裸字面量（grep 仅 `shared_state.py`+文档）；
   全量 **1016 passed / 6 skipped** 零回归。**至此 R2 架构还债（R2.1–R2.5）全部完成。**
 
 **⬜ 未完成（新会话可接续，按优先级）：**
@@ -127,7 +127,7 @@ CLAUDE.md §3 / 架构 §1.1-3：新增 Agent 只通过注册接入，**0 改编
 - `docs/architecture/detailed/ws8-security-permission.md` 声称「统一 PermissionEngine、规划/执行双层校验」→ **文档与实现不符**。
 - 建议：单轨化（见 R2.2）。
 
-#### A5 跨 Agent 隐式耦合通道（memory KV 私有契约）— ✅ 已由 R2.5 契约化（待 push，见顶部执行进度）
+#### A5 跨 Agent 隐式耦合通道（memory KV 私有契约）— ✅ 已由 R2.5 契约化（见顶部执行进度）
 
 - info 写 `profile.news_active` → deep_research 读之（「详细讲讲第 N 条」桥接）；`trip_active`、`research_active` 同模式。
 - 这些跨 Agent 状态键没有任何声明位置（manifest 不声明、conventions.md 不记录），属于隐性契约——改 key/换存储会静默断链。
@@ -300,7 +300,7 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
 - 任务：`agents/info/src/` 拆 `handlers/{weather,search,news,sports,stock}.py` + `briefing.py`（早报/proactive），agent.py 只留意图分发与公共件（城市解析/定位标注）。对外 manifest/端口/行为不变。
 - 验收：info 全部既有测试零回归（`pytest agents/info`）；agent.py ≤300 行。
 
-**T2.5 跨 Agent 状态键契约化（S）** ✅ 已完成并合并 main（本地，待 push；见顶部执行进度。`agents/_sdk/shared_state.py` 常量登记 + `Context.save/load_shared_state` 封装 + conventions §9；业务码零裸字面量）
+**T2.5 跨 Agent 状态键契约化（S）** ✅ 已完成并合并 main（`9b1167c`/`0b390a6`；见顶部执行进度。`agents/_sdk/shared_state.py` 常量登记 + `Context.save/load_shared_state` 封装 + conventions §9；业务码零裸字面量）
 - 背景：A5。
 - 任务：① conventions.md 新章节「跨 Agent 状态键」登记 news_active/research_active/trip_active（owner/reader/schema/TTL）；② `_sdk` 增 typed helper（如 `ctx.shared_state("news_active")`）封装 key 拼写。
 - 验收：grep 字面量 key 只出现在 helper 与文档。
