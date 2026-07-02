@@ -207,6 +207,21 @@
 | `PLANNER_FALLBACK_AGENT` | LLM 规划失败/抽风时的全局兜底 Agent（R2.1 P5，取代硬编码 chitchat）| 否（默认 `chitchat`） |
 | `PERMISSIONS_FAIL_OPEN` | 请求无 `granted_scopes` 时的权限兜底（R2.2）：`true`/默认=PoC 全开保持现状；`false`=fail-closed 仅无权限 Agent 可达 + 记结构化审计 | 否（默认 `true`） |
 
+### 会话鉴权（R3.1，最小闭环）
+
+> 静态 token 起步，全 env 门控、默认关（保持现状）。翻开演示：`AUTH_REQUIRED=true` +
+> 配好 token + `PERMISSIONS_FAIL_OPEN=false`。设计见 `docs/design/2026-07-02-r3.1-session-auth.md`。
+
+| 变量 | 含义 | 必填 |
+|---|---|---|
+| `AUTH_REQUIRED` | 层 1/2 鉴权总开关：`false`/默认=匿名放行保持现状；`true`=无/错 token 的 WS 回 401、无/错 channel token 的 Hello 拒 | 否（默认 `false`） |
+| `AUTH_TOKENS` | 层 1（HMI↔edge-gateway）静态 token 表：条目 `;` 分隔，每条 `token:user_id:vehicle_id:scope-csv`（scope-csv 直接注入 `meta.granted_scopes`）| 否（默认空） |
+| `AUTH_DEFAULT_USER_ID` | 匿名回退用户（`AUTH_REQUIRED=false` 且无有效 token 时）；去掉硬编码 `user_id="u1"` | 否（默认 `u1`） |
+| `VITE_WS_TOKEN` | HMI 连 WS 携带的 token（须与 `AUTH_TOKENS` 某条一致）；留空=不带 token | 否（默认空） |
+| `CLOUD_CHANNEL_TOKEN` | 层 2（edge-orchestrator↔cloud-gateway）Hello 携带的通道 token | 否（默认空） |
+| `CLOUD_CHANNEL_TOKENS` | cloud-gateway 接受的通道 token 集合（逗号分隔，须含 `CLOUD_CHANNEL_TOKEN`）| 否（默认空） |
+| `VEHICLE_ID` | 车辆标识（edge-gateway 匿名回退 + edge-orchestrator Hello 默认身份）| 否（默认 `v1`） |
+
 ---
 
 ## 7. 命名约定（汇总，详见 CLAUDE.md §4）

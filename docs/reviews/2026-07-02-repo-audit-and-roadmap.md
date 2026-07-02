@@ -51,12 +51,23 @@
   读 `profile.<key>` 命名空间」的前缀不对称；info/deep-research/trip-planner 全改用常量+helper。
   commit `9b1167c`(实现)/`0b390a6`(merge)。验收：业务码零裸字面量（grep 仅 `shared_state.py`+文档）；
   全量 **1016 passed / 6 skipped** 零回归。**至此 R2 架构还债（R2.1–R2.5）全部完成。**
+- **R3.1 = T3.1 · 会话鉴权最小闭环（D1，P0-#1）** — 静态 token 两层鉴权全 env 门控、默认关（`AUTH_REQUIRED`
+  默认 `false` 逐字保持现状）。层 1 `gateway/edge/auth.go`（`AUTH_TOKENS` 表→`Context.UserId/VehicleId`
+  + `meta.granted_scopes`，网关对该键唯一权威剔除客户端伪造值，**去 `user_id="u1"` 硬编码**）；层 2
+  cloud-gateway 校 Hello `session_token`∈`CLOUD_CHANNEL_TOKENS` + edge `cloud_client` Hello 带
+  `CLOUD_CHANNEL_TOKEN`；HMI `ws.mjs::appendToken` + `VITE_WS_TOKEN`。**未改编排核心/proto**——R2.2 已
+  备好 `context.py` 消费 `meta.granted_scopes` + `PERMISSIONS_FAIL_OPEN` 开关，本卡只把真实 scope 喂进去。
+  验证：全量 **1018 passed / 6 skipped**（+2）+ Go build+`go test ./gateway/...` + HMI 42/42 + build；
+  真栈默认模式 `e2e_ws` 4/4（非破坏）+ 秒模式 `test/e2e_auth.py` ALL PASS（无 token→401 / 带 token 车控
+  +云端 / token'd 请求 cloud-planner **无** `fail_open_default_scopes`=scope 来自 token / `memory recall for u1`）。
+  **仍 insecure gRPC（mTLS=R3.2）、静态 token 非量产 IdP。** 分支 `feat/r3.1-session-auth`（待 push/merge）；
+  落地记录 `docs/design/2026-07-02-r3.1-session-auth.md`。
 
 **⬜ 未完成（新会话可接续，按优先级）：**
 
 | 任务 | 关联审计项 | 规模 | 备注 |
 |---|---|---|---|
-| **R3 量产硬化（T3.1–T3.6）** | D1/G2–G8 | 各 M | 会话鉴权 / mTLS / e2e 入门禁 / 路由评测基线 / 降级矩阵 / OTel |
+| **R3.2–R3.6 量产硬化** | G2–G8 | 各 M | mTLS(T3.2) / e2e 入门禁(T3.3) / 路由评测基线(T3.4) / 降级矩阵(T3.5) / OTel(T3.6)；T3.1+T3.2 齐即「安全链路无已知缺口」 |
 | **R4 能力演进** | — | 见 §4 | 按需排期 |
 
 **残留小尾**：`orchestrator/cloud/planning.py::_PLANNER_SYSTEM` 内一处 trip few-shot 示例属 **D10（Prompt 管理）**，非 D5 路由债、且不随 Agent 数增长——暂留，纳入未来 Prompt 资产化工作。
@@ -171,7 +182,7 @@ CLAUDE.md §3 / 架构 §1.1-3：新增 Agent 只通过注册接入，**0 改编
 
 | # | 债 | 位置 | 说明 |
 |---|---|---|---|
-| D1 | 全链路零鉴权 | gateway/{edge,cloud}, context.py | WS 无鉴权、Hello 无 token、gRPC 全 insecure、user_id="u1"、_POC_DEFAULT_SCOPES fail-open。已知 PoC 状态，但应给出最小闭环路径（R3.1/R3.2） |
+| D1 | 全链路零鉴权 — ⚠️ 部分由 R3.1 收敛 | gateway/{edge,cloud}, context.py | **R3.1 已落地会话鉴权最小闭环**：WS/Hello 静态 token 校验（env 门控 `AUTH_REQUIRED`，默认关）、`granted_scopes` 由 token 注入、去 `user_id="u1"` 硬编码、fail-open 可 env 翻关。**剩余**：gRPC 全 insecure→mTLS（R3.2）；静态 token 非量产 IdP（真实 JWT 轮换/设备证书后续）|
 | D2 | 端云逐请求建流 + 死代码 | cloud_client.py / gateway/edge/main.go | 见 A2。死代码要么删要么用，不能两份并存 |
 | D3 | 权限双轨 | security/permission.py vs dispatch/planning | 见 A4。双轨=改一处漏一处 |
 | D4 | compose 无 restart 策略、无资源限制 | deploy/docker-compose.yaml | `restart:` 出现 0 次；服务 crash 后不自愈（演示中风险高，一行/服务即可修） |
@@ -307,10 +318,11 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
 
 ### R3 · 量产级硬化（Phase 2 前奏）
 
-**T3.1 会话鉴权最小闭环（M）**
+**T3.1 会话鉴权最小闭环（M）** ✅ 已完成（`feat/r3.1-session-auth`；真栈默认 `e2e_ws` 4/4 + 秒模式 `e2e_auth` ALL PASS；落地记录 `docs/design/2026-07-02-r3.1-session-auth.md`）
 - 背景：D1。
 - 任务：静态 token 起步：HMI WS 连接带 `?token=`（env 注入）→ edge-gateway 校验并注入 user_id/vehicle_id → Hello 带 token → cloud-gateway 校验 → granted_scopes 从 token 声明解析（PoC 用 env 配置的 scope 映射）。移除 user_id="u1" 硬编码。
 - 验收：无 token 的 WS/Hello 被拒；e2e 带 token 全过；granted_scopes 不再来自 _POC_DEFAULT_SCOPES（fail_open 开关默认关闭）。
+- 落地：两层鉴权全 env 门控、默认关（`AUTH_REQUIRED` 默认 `false` 逐字保持现状）。层 1 `gateway/edge/auth.go`（`AUTH_TOKENS` 表→身份+`meta.granted_scopes`，网关对该键唯一权威去客户端伪造，去 `user_id="u1"` 硬编码）；层 2 cloud-gateway 校 Hello `session_token`∈`CLOUD_CHANNEL_TOKENS`、edge cloud_client Hello 带 `CLOUD_CHANNEL_TOKEN`；HMI `appendToken`+`VITE_WS_TOKEN`。**未改编排核心/proto**（R2.2 已备好 `context.py` 消费 `meta.granted_scopes`+`PERMISSIONS_FAIL_OPEN`）。验收真栈：无 token→401 拒、带 token 车控+云端过、token'd 请求 cloud-planner **无** `fail_open_default_scopes`（scope 来自 token）。全量 1018 passed/6 skipped、Go build+test、HMI 42/42。**仍 insecure gRPC（mTLS=R3.2）、静态 token 非量产 IdP**。
 
 **T3.2 服务间 mTLS（M）**
 - 背景：AGENTS.md 自认「唯一遗留生产缺口」。
