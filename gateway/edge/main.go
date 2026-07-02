@@ -77,7 +77,19 @@ type wsRequest struct {
 	Meta           map[string]string `json:"meta"`            // HMI 设置透传（answer_length/model_pref 等）
 }
 
-func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestratorClient, vehicleID string) {
+func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestratorClient, auth authConfig) {
+	// 层 1 鉴权：解析 ?token=（命中即用其身份+scope；未命中看 AUTH_REQUIRED）。
+	// 校验须在 WS Upgrade 之前——拒绝时回 401，客户端握手即失败、连接不建立。
+	id, ok := auth.resolve(r.URL.Query().Get("token"))
+	if !ok {
+		if auth.required {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			log.Printf("[edge-gateway] WS rejected: missing/invalid token")
+			return
+		}
+		id = auth.anonymous() // 默认模式匿名放行（逐字保持现状）
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -127,11 +139,11 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 			Text:           req.Text,
 			SessionId:      req.SessionID,
 			IsConfirmation: req.IsConfirmation,
-			Meta:           req.Meta,
+			Meta:           stampScopes(req.Meta, id.scopes), // 网关权威注入 granted_scopes
 			Context: &commonpb.ContextRef{
 				SessionId: req.SessionID,
-				VehicleId: vehicleID,
-				UserId:    "u1",
+				VehicleId: id.vehicleID,
+				UserId:    id.userID, // 由 token 解析（匿名回退 AUTH_DEFAULT_USER_ID），去硬编码 "u1"
 			},
 		})
 		if err != nil {
@@ -228,7 +240,7 @@ func dnsTarget(addr string) string {
 func main() {
 	orchAddr := getenv("EDGE_ORCHESTRATOR_ADDR", "edge-orchestrator:50070")
 	port := getenv("EDGE_GATEWAY_PORT", "8090")
-	vehicleID := getenv("VEHICLE_ID", "v1")
+	auth := loadAuthConfig() // 层 1 会话鉴权（R3.1）；默认关，逐字保持现状
 
 	// 连接端侧编排器（架构 §2.2：HMI → Edge Gateway → Edge Orchestrator）
 	orchConn, err := grpc.NewClient(dnsTarget(orchAddr),
@@ -271,12 +283,13 @@ func main() {
 		fmt.Fprintf(w, `{"status":"ok","orchestrator":"%s"}`, orchAddr)
 	})
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		handleWS(w, r, orchStub, vehicleID)
+		handleWS(w, r, orchStub, auth)
 	})
 
 	srv := &http.Server{Addr: ":" + port}
 	go func() {
-		log.Printf("[edge-gateway] HTTP/WS serving on :%s -> %s (vehicle=%s)", port, orchAddr, vehicleID)
+		log.Printf("[edge-gateway] HTTP/WS serving on :%s -> %s (auth_required=%v, tokens=%d, default_vehicle=%s)",
+			port, orchAddr, auth.required, len(auth.tokens), auth.defaultVehicle)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}

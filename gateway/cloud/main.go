@@ -39,6 +39,30 @@ type channelServer struct {
 	pending  sync.Map // correlation_id -> chan *EdgeResult
 	edgeSeq  atomic.Uint64
 	idem     IdempotencyStore
+
+	// R3.1 层 2（通道/车辆鉴权）：Hello 的 session_token 须在允许集内。
+	authRequired  bool
+	channelTokens map[string]bool
+}
+
+// parseChannelTokens 解析允许的 channel token 集合（逗号分隔）。
+func parseChannelTokens(raw string) map[string]bool {
+	set := map[string]bool{}
+	for _, t := range strings.Split(raw, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			set[t] = true
+		}
+	}
+	return set
+}
+
+// channelTokenAllowed 判定 Hello 的 session_token 是否被接受（R3.1 层 2）。
+// AUTH_REQUIRED=false → 恒放行（保持现状）；true → token 非空且在允许集内。
+func (s *channelServer) channelTokenAllowed(token string) bool {
+	if !s.authRequired {
+		return true
+	}
+	return token != "" && s.channelTokens[token]
 }
 
 // plannerClient 取当前 planner 存根（重建期受锁保护）。
@@ -117,13 +141,22 @@ func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer)
 
 		switch body := up.Body.(type) {
 		case *channelpb.UpFrame_Hello:
-			// 握手：校验 token（PoC 阶段简单通过）
+			// 握手鉴权（R3.1 层 2）：先校 vehicle_id，再按 AUTH_REQUIRED 校 channel token。
 			vehicleID = body.Hello.VehicleId
 			if vehicleID == "" {
 				return sm.Send(&channelpb.DownFrame{
 					CorrelationId: corrID,
 					Body: &channelpb.DownFrame_HelloAck{
 						HelloAck: &channelpb.HelloAck{Ok: false, Reason: "missing vehicle_id"},
+					},
+				})
+			}
+			if !s.channelTokenAllowed(body.Hello.GetSessionToken()) {
+				log.Printf("[cloud-gateway] hello rejected: invalid channel token (vehicle=%s)", vehicleID)
+				return sm.Send(&channelpb.DownFrame{
+					CorrelationId: corrID,
+					Body: &channelpb.DownFrame_HelloAck{
+						HelloAck: &channelpb.HelloAck{Ok: false, Reason: "invalid session token"},
 					},
 				})
 			}
@@ -346,15 +379,20 @@ func main() {
 		keepaliveServerParams(),
 		keepalivePolicy(),
 	)
+	authRequired := strings.EqualFold(os.Getenv("AUTH_REQUIRED"), "true")
+	channelTokens := parseChannelTokens(os.Getenv("CLOUD_CHANNEL_TOKENS"))
 	channelpb.RegisterEdgeCloudChannelServer(s, &channelServer{
-		plannerAddr: plannerAddr,
-		plannerConn: conn,
-		planner:     orchpb.NewCloudPlannerClient(conn),
-		idem:        buildIdempotencyStore(),
+		plannerAddr:   plannerAddr,
+		plannerConn:   conn,
+		planner:       orchpb.NewCloudPlannerClient(conn),
+		idem:          buildIdempotencyStore(),
+		authRequired:  authRequired,
+		channelTokens: channelTokens,
 	})
 
 	go func() {
-		log.Printf("[cloud-gateway] EdgeCloudChannel serving on :%s -> %s", port, plannerAddr)
+		log.Printf("[cloud-gateway] EdgeCloudChannel serving on :%s -> %s (auth_required=%v, channel_tokens=%d)",
+			port, plannerAddr, authRequired, len(channelTokens))
 		if err := s.Serve(lis); err != nil {
 			log.Fatal(err)
 		}

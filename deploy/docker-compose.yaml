@@ -316,6 +316,9 @@ services:
     environment:
       CLOUD_PLANNER_ADDR: cloud-planner:50054
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # R3.1 层 2（通道鉴权）；默认关，逐字保持现状。
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-false}
+      CLOUD_CHANNEL_TOKENS: ${CLOUD_CHANNEL_TOKENS:-}
     ports: ["8080:8080"]
     depends_on: [cloud-planner]
 
@@ -327,6 +330,11 @@ services:
       EDGE_ORCHESTRATOR_ADDR: edge-orchestrator:50070
       NATS_URL: nats://nats:4222   # 主动建议（agent.proactive）→ HMI WS 投递
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # R3.1 层 1（用户/请求鉴权）；默认关，逐字保持现状。
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-false}
+      AUTH_TOKENS: ${AUTH_TOKENS:-}
+      AUTH_DEFAULT_USER_ID: ${AUTH_DEFAULT_USER_ID:-u1}
+      VEHICLE_ID: ${VEHICLE_ID:-v1}
     ports: ["8090:8090"]
     depends_on: [edge-orchestrator, nats]
 
@@ -340,6 +348,9 @@ services:
       FAST_INTENT_THRESHOLD_HIGH: ${FAST_INTENT_THRESHOLD_HIGH:-0.85}
       FAST_INTENT_THRESHOLD_LOW: ${FAST_INTENT_THRESHOLD_LOW:-0.5}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # R3.1 层 2（通道鉴权）：Hello 携带的 channel token；默认空 → 云侧默认放行。
+      VEHICLE_ID: ${VEHICLE_ID:-v1}
+      CLOUD_CHANNEL_TOKEN: ${CLOUD_CHANNEL_TOKEN:-}
     ports: ["50070:50070"]
     depends_on:
       cloud-gateway:
@@ -354,6 +365,8 @@ services:
     environment:
       VITE_EDGE_GATEWAY_URL: http://localhost:8090
       VITE_AUDIO_API_URL: http://localhost:50059
+      # R3.1 会话鉴权：带 token 连接 WS（默认空=不带 token，保持现状）。
+      VITE_WS_TOKEN: ${VITE_WS_TOKEN:-}
     ports: ["5173:5173"]
     depends_on: [edge-gateway]
 

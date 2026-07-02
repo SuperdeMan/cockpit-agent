@@ -16,10 +16,18 @@
 > `engine._enforce_permissions` 空壳已移除（dispatch 已按步真校验）。`context._POC_DEFAULT_SCOPES`
 > fail-open 现由 env `PERMISSIONS_FAIL_OPEN` 门控（默认 `on` 保持现状；量产翻 `false` 走
 > fail-closed：无 granted_scopes 时仅无权限 Agent 可达），并记结构化审计事件
-> `fail_open_default_scopes`。真实 token 授权、正式 third-party 沙箱/网络出口白名单、审核服务和
-> 完整审计后端仍待接入（R3.1/R3.2）。落地记录见
+> `fail_open_default_scopes`。落地记录见
 > `docs/design/2026-07-02-r2.2-permission-single-track.md`；本文 §1.2/§1.3 的三源交集与双层校验
 > 为**目标态设计**，当前运行时按上述单轨实现。
+>
+> **R3.1 会话鉴权最小闭环（2026-07-02）已落地**：`granted_scopes` 现可由**静态 token**在网关注入，
+> 不再只靠 fail-open。层 1（HMI↔edge-gateway）：WS `?token=` 查 `AUTH_TOKENS` 表 → 注入
+> `Context.UserId/VehicleId` + `meta.granted_scopes`（网关对该键唯一权威，剔除客户端伪造值）、去掉
+> 硬编码 `user_id="u1"`；层 2（edge-orchestrator↔cloud-gateway）：Hello 带 `CLOUD_CHANNEL_TOKEN`，
+> 云网关按 `CLOUD_CHANNEL_TOKENS` 校验。总开关 `AUTH_REQUIRED`（默认 `false` 保持现状；`true` 时
+> 无/错 token 的 WS 回 401、Hello 拒）。**仍是 insecure gRPC（mTLS=R3.2）、静态 token 非量产 IdP**
+> （真实 JWT 轮换/设备证书、third-party 沙箱/出口白名单、审核与审计后端仍待接入）。落地记录见
+> `docs/design/2026-07-02-r3.1-session-auth.md`。
 
 ---
 
