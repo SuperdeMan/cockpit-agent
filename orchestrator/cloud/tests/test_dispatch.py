@@ -114,6 +114,32 @@ def test_third_party_vehicle_control_is_always_rejected():
     assert calls == []
 
 
+def test_non_vehicle_missing_scope_is_rejected_before_transport():
+    """越权硬拒不止车控：缺任意非车控 scope（如 payment.invoke）也在传输前 REJECTED、不拨号。"""
+    calls = []
+
+    async def cloud(*args, **kwargs):
+        calls.append(args)
+        return agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK)
+
+    dispatcher = UnifiedDispatcher(cloud_call=cloud, edge_call=None, tools=None)
+    step = Step(
+        id="s1", agent_id="food-ordering", endpoint="food:50065",
+        intent="food.order", required_permissions=["payment.invoke"],
+        trust_level="first_party",
+    )
+
+    response = _run(dispatcher.dispatch(
+        step,
+        PlanContext(granted_permissions=["location.read"]),
+    ))
+
+    assert response.status == agent_pb2.ExecuteResponse.REJECTED
+    assert response.error.code == "permission_denied"
+    assert "payment.invoke" in response.error.message
+    assert calls == []
+
+
 def test_dispatches_edge_step_to_requesting_vehicle():
     calls = []
 

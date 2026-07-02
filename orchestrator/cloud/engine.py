@@ -21,7 +21,7 @@ from .progress import (is_complex, phase_label, step_summary,
 from observability import events as obs_events
 from observability.metrics import metrics
 from observability.tracing import set_trace_id
-from security.permission import PermissionEngine, AuthContext
+from security.permission import PermissionEngine
 
 logger = logging.getLogger("planner.engine")
 
@@ -170,9 +170,8 @@ class PlannerEngine:
                 },
             )
             await self._resolve_endpoints(plan)
-
-            # C2. 权限校验（F2）：执行前对每个 step 做强制校验
-            plan = self._enforce_permissions(plan, ctx)
+            # 权限校验按步在 dispatch 执行期硬拒（与规划期 catalog 过滤同源 check_permission），
+            # 此处不再做计划级兜底（原 _enforce_permissions 为空壳，已移除）。
 
         # 统一「复杂任务」判据，驱动①动态开思考②过程区。普通车控/闲聊/单条轻查询
         # 不命中——零过程、零额外延迟（需求第 6 条）。
@@ -496,19 +495,6 @@ class PlannerEngine:
                     logger.warning("No agent found for intent %s", step.intent)
             except Exception as e:
                 logger.warning("Resolve failed for %s: %s", step.intent, e)
-
-    def _enforce_permissions(self, plan: Plan, ctx: PlanContext) -> Plan:
-        """F2：执行层权限校验兜底。
-
-        权限校验主要在规划阶段完成（planning._filter_by_permission，fail-closed），
-        此处作为执行层二次校验：记录越权告警，供 Phase 2 扩展为硬拒绝。
-        当前因 Step 不含 manifest，无法做运行时权限判定，依赖规划阶段过滤。
-        Phase 2：Step 增加 manifest 缓存 → 此处可做 perms.check() 硬拒绝。
-        """
-        if ctx.granted_permissions:
-            logger.debug("Permission enforcement: %d steps, granted=%s",
-                         len(plan.steps), ctx.granted_permissions)
-        return plan
 
     @staticmethod
     def _serialize_plan(plan: Plan) -> dict:

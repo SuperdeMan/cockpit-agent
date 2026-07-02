@@ -20,8 +20,10 @@ import os
 from dataclasses import dataclass, field, fields, asdict
 
 from .models import PlanContext
+from security.audit import AuditLogger
 
 logger = logging.getLogger("planner.context")
+_audit = AuditLogger()
 
 # PoC 默认权限：未注入 granted_scopes 时使用（fail-open for PoC）。
 # 量产必须从会话 token/设备身份解析 scope，不得使用此默认值。
@@ -402,12 +404,23 @@ def build_context(request) -> PlanContext:
     raw_scopes = meta.get("granted_scopes", "")
     granted = [s.strip() for s in raw_scopes.split(",") if s.strip()] if raw_scopes else []
 
-    # ws8 P0: 有 granted_scopes 用真实权限，无时 PoC 全开 fallback
+    # ws8 P0: 有 granted_scopes 用真实权限；无时按 PERMISSIONS_FAIL_OPEN 决定——
+    # 默认 true = PoC 全开 fallback（保持现状）；量产翻 false = fail-closed（granted 留空，
+    # 仅无权限 Agent 如 chitchat 可达，与 planning._filter_by_permission 语义一致）。
     if not granted:
-        granted = list(_POC_DEFAULT_SCOPES)
-        logger.warning(
-            "No granted_scopes in request; using PoC defaults. "
-            "Production MUST inject from session token/device identity.")
+        vehicle_id = (getattr(request.context, "vehicle_id", "")
+                      if hasattr(request, "context") and request.context else "")
+        if os.getenv("PERMISSIONS_FAIL_OPEN", "true").lower() != "false":
+            granted = list(_POC_DEFAULT_SCOPES)
+            _audit.fail_open_scopes(vehicle_id=vehicle_id,
+                                    trace_id=meta.get("trace_id", ""), scopes=granted)
+            logger.warning(
+                "No granted_scopes in request; PERMISSIONS_FAIL_OPEN=on → using PoC defaults. "
+                "Production MUST inject from session token/device identity.")
+        else:
+            logger.warning(
+                "No granted_scopes in request; PERMISSIONS_FAIL_OPEN=off → fail-closed "
+                "(only no-permission agents reachable).")
 
     # HMI 会话级偏好（透传给 Agent，见 hmi/src/settings.tsx buildMeta）
     prefs = {k: meta[k] for k in
