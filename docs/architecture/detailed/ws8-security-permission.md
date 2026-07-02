@@ -25,9 +25,16 @@
 > `Context.UserId/VehicleId` + `meta.granted_scopes`（网关对该键唯一权威，剔除客户端伪造值）、去掉
 > 硬编码 `user_id="u1"`；层 2（edge-orchestrator↔cloud-gateway）：Hello 带 `CLOUD_CHANNEL_TOKEN`，
 > 云网关按 `CLOUD_CHANNEL_TOKENS` 校验。总开关 `AUTH_REQUIRED`（默认 `false` 保持现状；`true` 时
-> 无/错 token 的 WS 回 401、Hello 拒）。**仍是 insecure gRPC（mTLS=R3.2）、静态 token 非量产 IdP**
-> （真实 JWT 轮换/设备证书、third-party 沙箱/出口白名单、审核与审计后端仍待接入）。落地记录见
-> `docs/design/2026-07-02-r3.1-session-auth.md`。
+> 无/错 token 的 WS 回 401、Hello 拒）。落地记录见 `docs/design/2026-07-02-r3.1-session-auth.md`。
+>
+> **R3.2 服务间 mTLS（2026-07-02）已落地**：服务间 gRPC 支持双向 TLS，全 env 门控、默认关
+> （`GRPC_TLS` 未设/off = insecure 保持现状；`on` = server 强制并校验客户端证书）。Python 经共享工厂
+> `runtime/grpcio.py`（`aio_channel` secure + `bind_port` add_secure_port）、Go 经 `gateway/tlscfg`；
+> 单张共享 mesh 证书作双身份，客户端把校验名固定为 `GRPC_TLS_SERVER_NAME`（`ssl_target_name_override`/
+> `ServerName`）以适配 agent 动态容器 hostname。证书由 `scripts/gen-certs.*` 生成（gitignore）。真栈
+> `GRPC_TLS=on` 全栈起 + `e2e_ws` 走加密链路 + insecure 探针被拒（强制）。落地记录见
+> `docs/design/2026-07-02-r3.2-service-mtls.md`。**至此 T3.1（会话鉴权）+ T3.2（mTLS）齐，安全链路无已知缺口**；
+> 真实 IdP/JWT 轮换/设备证书、per-service 证书轮换、third-party 沙箱/出口白名单、审核与审计后端仍属后续。
 
 ---
 
