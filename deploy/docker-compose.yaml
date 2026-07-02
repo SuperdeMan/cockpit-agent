@@ -20,11 +20,22 @@ x-python-env: &python-env
   PLANNER_LOOP_BUDGET_MS: ${PLANNER_LOOP_BUDGET_MS:-5000}
   # 规划失败/预筛保护的全局兜底 Agent（R2.1 P5：去 planning/context 硬编码 chitchat）
   PLANNER_FALLBACK_AGENT: ${PLANNER_FALLBACK_AGENT:-chitchat}
+  # R3.2 服务间 mTLS：全 env 门控，默认关（GRPC_TLS 未设/off = insecure，逐字保持现状）。
+  GRPC_TLS: ${GRPC_TLS:-off}
+  GRPC_TLS_CA: /certs/ca.crt
+  GRPC_TLS_CERT: /certs/server.crt
+  GRPC_TLS_KEY: /certs/server.key
+  GRPC_TLS_SERVER_NAME: ${GRPC_TLS_SERVER_NAME:-cockpit-mesh}
 
 # 生存性：所有长驻服务 crash/OOM 后自动拉起（演示/长跑不因单点退出而中断）。
 # unless-stopped = 除非人工 stop，否则始终重启（含 docker daemon 重启后）。
 x-restart: &restart
   restart: unless-stopped
+
+# R3.2 mTLS 证书挂载：无条件挂到 gRPC mesh 服务（GRPC_TLS 关时代码不读、无害）。
+# 源 ../certs（相对 deploy/ 项目目录=仓库根 certs），由 scripts/gen-certs.* 生成、gitignore。
+x-certs-vol: &certs-vol
+  - ../certs:/certs:ro
 
 services:
   # ── 基础设施 ──
@@ -75,10 +86,17 @@ services:
   registry:
     <<: *restart
     build: { context: .., dockerfile: registry/Dockerfile }
+    volumes: *certs-vol
     environment:
       NATS_URL: nats://nats:4222
       LOG_LEVEL: ${LOG_LEVEL:-info}
       POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+      # R3.2 服务间 mTLS（默认关）
+      GRPC_TLS: ${GRPC_TLS:-off}
+      GRPC_TLS_CA: /certs/ca.crt
+      GRPC_TLS_CERT: /certs/server.crt
+      GRPC_TLS_KEY: /certs/server.key
+      GRPC_TLS_SERVER_NAME: ${GRPC_TLS_SERVER_NAME:-cockpit-mesh}
     ports: ["50051:50051"]
     depends_on:
       nats:
@@ -92,6 +110,7 @@ services:
   llm-gateway:
     <<: *restart
     build: { context: .., dockerfile: llm-gateway/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       LLM_PROVIDER: ${LLM_PROVIDER:-xiaomimimo}
@@ -124,6 +143,7 @@ services:
   memory:
     <<: *restart
     build: { context: .., dockerfile: memory/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
@@ -138,6 +158,7 @@ services:
   cloud-planner:
     <<: *restart
     build: { context: .., dockerfile: orchestrator/cloud/Dockerfile }
+    volumes: *certs-vol
     environment: *python-env
     ports: ["50054:50054"]
     depends_on: [registry, llm-gateway, memory]
@@ -145,6 +166,7 @@ services:
   payment-gateway:
     <<: *restart
     build: { context: .., dockerfile: payment-gateway/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       PAYMENT_PORT: "50071"
@@ -155,6 +177,7 @@ services:
   navigation-agent:
     <<: *restart
     build: { context: .., dockerfile: agents/navigation/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50061"
@@ -166,6 +189,7 @@ services:
   chitchat-agent:
     <<: *restart
     build: { context: .., dockerfile: agents/chitchat/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50062"
@@ -174,6 +198,7 @@ services:
   food-ordering-agent:
     <<: *restart
     build: { context: .., dockerfile: agents/food_ordering/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50063"
@@ -189,6 +214,7 @@ services:
   parking-payment-agent:
     <<: *restart
     build: { context: .., dockerfile: agents/parking_payment/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50064"
@@ -204,6 +230,7 @@ services:
   manual-rag-agent:
     <<: *restart
     build: { context: .., dockerfile: agents/manual_rag/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50065"
@@ -212,6 +239,7 @@ services:
   trip-planner-agent:
     <<: *restart
     build: { context: .., dockerfile: agents/trip_planner/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50066"
@@ -223,6 +251,7 @@ services:
   info-agent:
     <<: *restart
     build: { context: .., dockerfile: agents/info/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50067"
@@ -259,6 +288,7 @@ services:
   deep-research-agent:
     <<: *restart
     build: { context: .., dockerfile: agents/deep_research/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50073"
@@ -273,6 +303,7 @@ services:
   charging-planner-agent:
     <<: *restart
     build: { context: .., dockerfile: agents/charging_planner/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50068"
@@ -283,6 +314,7 @@ services:
   scene-orchestrator-agent:
     <<: *restart
     build: { context: .., dockerfile: agents/scene_orchestrator/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50069"
@@ -291,6 +323,7 @@ services:
   road-safety-agent:
     <<: *restart
     build: { context: .., dockerfile: agents/road_safety/Dockerfile }
+    volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50072"
@@ -313,18 +346,26 @@ services:
   cloud-gateway:
     <<: *restart
     build: { context: .., dockerfile: gateway/cloud/Dockerfile }
+    volumes: *certs-vol
     environment:
       CLOUD_PLANNER_ADDR: cloud-planner:50054
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # R3.1 层 2（通道鉴权）；默认关，逐字保持现状。
       AUTH_REQUIRED: ${AUTH_REQUIRED:-false}
       CLOUD_CHANNEL_TOKENS: ${CLOUD_CHANNEL_TOKENS:-}
+      # R3.2 服务间 mTLS（默认关；Go 侧经 gateway/tlscfg 读取）
+      GRPC_TLS: ${GRPC_TLS:-off}
+      GRPC_TLS_CA: /certs/ca.crt
+      GRPC_TLS_CERT: /certs/server.crt
+      GRPC_TLS_KEY: /certs/server.key
+      GRPC_TLS_SERVER_NAME: ${GRPC_TLS_SERVER_NAME:-cockpit-mesh}
     ports: ["8080:8080"]
     depends_on: [cloud-planner]
 
   edge-gateway:
     <<: *restart
     build: { context: .., dockerfile: gateway/edge/Dockerfile }
+    volumes: *certs-vol
     environment:
       EDGE_GATEWAY_PORT: "8090"
       EDGE_ORCHESTRATOR_ADDR: edge-orchestrator:50070
@@ -335,6 +376,12 @@ services:
       AUTH_TOKENS: ${AUTH_TOKENS:-}
       AUTH_DEFAULT_USER_ID: ${AUTH_DEFAULT_USER_ID:-u1}
       VEHICLE_ID: ${VEHICLE_ID:-v1}
+      # R3.2 服务间 mTLS（默认关；Go 侧经 gateway/tlscfg 读取）
+      GRPC_TLS: ${GRPC_TLS:-off}
+      GRPC_TLS_CA: /certs/ca.crt
+      GRPC_TLS_CERT: /certs/server.crt
+      GRPC_TLS_KEY: /certs/server.key
+      GRPC_TLS_SERVER_NAME: ${GRPC_TLS_SERVER_NAME:-cockpit-mesh}
     ports: ["8090:8090"]
     depends_on: [edge-orchestrator, nats]
 
@@ -342,6 +389,7 @@ services:
     <<: *restart
     # 端侧编排器：内含 Fast Intent + 端侧车控/媒体 Agent + 模拟 VAL（PoC 简化为单进程）
     build: { context: .., dockerfile: orchestrator/edge/Dockerfile }
+    volumes: *certs-vol
     environment:
       CLOUD_GATEWAY_ADDR: cloud-gateway:8080
       NATS_URL: nats://nats:4222
@@ -351,6 +399,12 @@ services:
       # R3.1 层 2（通道鉴权）：Hello 携带的 channel token；默认空 → 云侧默认放行。
       VEHICLE_ID: ${VEHICLE_ID:-v1}
       CLOUD_CHANNEL_TOKEN: ${CLOUD_CHANNEL_TOKEN:-}
+      # R3.2 服务间 mTLS（默认关）
+      GRPC_TLS: ${GRPC_TLS:-off}
+      GRPC_TLS_CA: /certs/ca.crt
+      GRPC_TLS_CERT: /certs/server.crt
+      GRPC_TLS_KEY: /certs/server.key
+      GRPC_TLS_SERVER_NAME: ${GRPC_TLS_SERVER_NAME:-cockpit-mesh}
     ports: ["50070:50070"]
     depends_on:
       cloud-gateway:

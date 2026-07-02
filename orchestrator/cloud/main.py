@@ -11,7 +11,7 @@ import os
 import grpc
 from cockpit.orchestrator.v1 import orchestrator_pb2_grpc
 
-from runtime.grpcio import aio_server, run_aio_server
+from runtime.grpcio import aio_server, bind_port, run_aio_server
 from .clients import Clients
 from .planning import PlanBuilder
 from .executor import DagExecutor
@@ -70,7 +70,7 @@ async def serve():
     server = aio_server()
     orchestrator_pb2_grpc.add_CloudPlannerServicer_to_server(
         CloudPlannerServicer(engine), server)
-    server.add_insecure_port(f"[::]:{port}")
+    bind_port(server, f"[::]:{port}")
     await server.start()
     print(f"[cloud-planner] serving on :{port}", flush=True)
     try:

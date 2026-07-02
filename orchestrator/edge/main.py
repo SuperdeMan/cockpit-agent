@@ -7,7 +7,7 @@ import os
 import grpc
 from cockpit.orchestrator.v1 import orchestrator_pb2_grpc
 
-from runtime.grpcio import aio_server, run_aio_server
+from runtime.grpcio import aio_server, bind_port, run_aio_server
 from server import EdgeOrchestratorServicer
 from capabilities import register_edge_capabilities
 
@@ -85,7 +85,7 @@ async def serve():
     server = aio_server()
     servicer = EdgeOrchestratorServicer()
     orchestrator_pb2_grpc.add_EdgeOrchestratorServicer_to_server(servicer, server)
-    server.add_insecure_port(f"[::]:{port}")
+    bind_port(server, f"[::]:{port}")
     await server.start()
     snapshot_interval = float(os.getenv("OBS_SNAPSHOT_INTERVAL", "30"))
     reregister_interval = float(os.getenv("AGENT_REREGISTER_INTERVAL", "10"))

@@ -12,14 +12,14 @@ async def serve():
     try:
         import grpc
         from cockpit.payment.v1 import payment_pb2_grpc
-        from runtime.grpcio import aio_server, run_aio_server
+        from runtime.grpcio import aio_server, bind_port, run_aio_server
         from server import PaymentGatewayServicer
 
         port = int(os.getenv("PAYMENT_PORT", "50071"))
         server = aio_server()
         payment_pb2_grpc.add_PaymentGatewayServicer_to_server(
             PaymentGatewayServicer(), server)
-        server.add_insecure_port(f"[::]:{port}")
+        bind_port(server, f"[::]:{port}")
         await server.start()
         print(f"[payment-gateway] serving on :{port}", flush=True)
         await run_aio_server(server, name="payment-gateway")

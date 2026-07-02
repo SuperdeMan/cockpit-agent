@@ -1,0 +1,2 @@
+# mTLS 证书目录（R3.2）。证书/私钥由 scripts/gen-certs.* 生成、gitignore、切勿提交。
+# 本 .gitkeep 保证目录存在，供 docker compose 无条件挂载 ../certs:/certs:ro（GRPC_TLS 关时无害）。

@@ -8,7 +8,7 @@ import socket
 import grpc
 from google.protobuf import struct_pb2
 
-from runtime.grpcio import aio_server, run_aio_server
+from runtime.grpcio import aio_server, bind_port, run_aio_server
 from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
 from cockpit.common.v1 import common_pb2
 
@@ -127,7 +127,7 @@ async def serve(agent: BaseAgent):
     port = int(os.getenv("AGENT_PORT", "50060"))
     server = aio_server()
     agent_pb2_grpc.add_AgentServicer_to_server(_Servicer(agent), server)
-    server.add_insecure_port(f"[::]:{port}")
+    bind_port(server, f"[::]:{port}")
     await server.start()
 
     endpoint = f"{socket.gethostname()}:{port}"
