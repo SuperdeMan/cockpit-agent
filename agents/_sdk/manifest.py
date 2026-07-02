@@ -15,8 +15,21 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
             slots=c.get("slots", []),
             examples=c.get("examples", []),
             require_confirm=c.get("require_confirm", False),
+            heavy=c.get("heavy", False),
         )
         for c in data.get("capabilities", [])
+    ]
+    # 确定性路由提示（R2.1）：Agent 声明式路由，编排核心 RouteHintEngine 通用消费。
+    route_hints = [
+        agent_pb2.RouteHint(
+            pattern=h["pattern"],
+            intent=h["intent"],
+            policy=h.get("policy", "replace"),
+            priority=int(h.get("priority", 0)),
+            guard=h.get("guard", ""),
+            slots={k: str(v) for k, v in (h.get("slots") or {}).items()},
+        )
+        for h in data.get("route_hints", [])
     ]
     return agent_pb2.AgentManifest(
         agent_id=data["agent_id"],
@@ -32,4 +45,5 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
         edge_intents=data.get("edge_intents", []),
         kind=data.get("kind", "agent"),
         context_scopes=data.get("context_scopes", []),
+        route_hints=route_hints,
     )
