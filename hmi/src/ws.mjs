@@ -20,6 +20,14 @@ export function nextBackoff(attempt, minMs = 1000, maxMs = 30000, rand = Math.ra
   return Math.min(maxMs, base + rand() * (base / 2))
 }
 
+// appendToken 把会话鉴权 token 拼到 WS URL 查询串（R3.1）。空 token 原样返回；
+// 已有 query 用 & 追加。edge-gateway 在 WS upgrade 前校验 ?token=。
+export function appendToken(url, token) {
+  if (!token) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}token=${encodeURIComponent(token)}`
+}
+
 const OPEN = 1
 
 export class ResilientWebSocket {

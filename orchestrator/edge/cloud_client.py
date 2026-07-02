@@ -53,6 +53,9 @@ class CloudClient:
     def __init__(self, edge_call_executor=None, stub_factory=None):
         self.addr = os.getenv("CLOUD_GATEWAY_ADDR", "cloud-gateway:8080")
         self.vehicle_id = os.getenv("VEHICLE_ID", "v1")
+        # R3.1 层 2（通道鉴权）：Hello 携带 channel session_token，云网关按 AUTH_REQUIRED 校验；
+        # 默认空 → 云侧默认放行（保持现状）。
+        self.channel_token = os.getenv("CLOUD_CHANNEL_TOKEN", "")
         self._edge_calls = edge_call_executor
         self._stub_factory = stub_factory or channel_pb2_grpc.EdgeCloudChannelStub
 
@@ -97,6 +100,16 @@ class CloudClient:
             await asyncio.sleep(self._backoff + (uuid.uuid4().int % 1000) / 1000.0 * jitter)
             self._backoff = min(self._backoff * 2, _MAX_RECONNECT_DELAY_S)
 
+    def _hello_frame(self) -> channel_pb2.UpFrame:
+        """构造 Hello 握手帧。R3.1 层 2：带 channel session_token（云网关按 AUTH_REQUIRED 校验）。"""
+        return channel_pb2.UpFrame(
+            correlation_id=f"{self.vehicle_id}-hello",
+            hello=channel_pb2.Hello(
+                vehicle_id=self.vehicle_id,
+                session_token=self.channel_token,
+            ),
+        )
+
     async def _open(self):
         """建流 + 发 Hello + 收 HelloAck（对标 Go connect()）。失败抛错由 _run 退避重连。
 
@@ -112,10 +125,7 @@ class CloudClient:
         stub = self._stub_factory(self._ch)
         self._stream = stub.Connect()
         async with self._send_lock:
-            await self._stream.write(channel_pb2.UpFrame(
-                correlation_id=f"{self.vehicle_id}-hello",
-                hello=channel_pb2.Hello(vehicle_id=self.vehicle_id),
-            ))
+            await self._stream.write(self._hello_frame())
         ack = await self._stream.read()
         if ack is grpc.aio.EOF:
             raise RuntimeError("stream closed during hello")

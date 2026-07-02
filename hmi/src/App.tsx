@@ -21,10 +21,12 @@ import {
 } from './audio'
 import type { Msg, Settings } from './types'
 import { poiSelectionIndex, isRefreshRequest } from './nav.mjs'
-import { ResilientWebSocket } from './ws.mjs'
+import { ResilientWebSocket, appendToken } from './ws.mjs'
 
 const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://localhost:8090'
-const WS_URL = GATEWAY.replace(/^http/, 'ws') + '/ws'
+// R3.1 会话鉴权：带 token 连接（env 注入，默认空=不带 token）。edge-gateway upgrade 前校验。
+const WS_TOKEN = (import.meta.env.VITE_WS_TOKEN as string) || ''
+const WS_URL = appendToken(GATEWAY.replace(/^http/, 'ws') + '/ws', WS_TOKEN)
 const AUDIO_API = (import.meta.env.VITE_AUDIO_API_URL as string) || 'http://localhost:50059'
 const SESSION = 'demo-' + Math.random().toString(36).slice(2, 8)
 // 请求看门狗：插入"思考中"占位后，若此时长内仍无 final/error 抵达，转超时提示，
