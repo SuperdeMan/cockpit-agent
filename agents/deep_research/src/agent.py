@@ -18,6 +18,7 @@ import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.base import Context
+from agents._sdk.shared_state import NEWS_ACTIVE, RESEARCH_ACTIVE
 from agents._sdk.grounding import shanghai_now
 from agents._sdk.location import current_location_from_meta
 from agents.info.src.providers import build_search_provider, build_extractor
@@ -28,8 +29,8 @@ from .models import ResearchTask
 logger = logging.getLogger("agent.deep_research")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
-# 当前活动调研落 memory（多轮深挖复用）；Agent 无状态化，与 trip-planner trip_active 同范式。
-_PROFILE_KEY = "research_active"
+# 跨 Agent 会话状态键（当前活动调研 / info 新闻列表）经 agents._sdk.shared_state 常量引用；
+# 权威登记见 docs/conventions.md「跨 Agent 状态键」。Agent 无状态化，落 profile KV 多轮复用。
 # 追问深挖标记 + 「第N点/节/部」序号解析（把"再深入第2点"解析到上次报告的第2节）。
 # 字符集刻意**不含「条」**——「第N条」专属新闻深挖（_NEWS_ORD_RE），否则会把「详细讲讲第2条新闻」
 # 劫持去解析上次研究报告的第2节（实测踩到）。
@@ -283,12 +284,7 @@ class DeepResearchAgent(BaseAgent):
     # ── 多轮研究上下文（落 memory，Agent 无状态化）──────────────────
     async def _load_prior(self, ctx) -> dict | None:
         """读上次活动调研（紧凑：question + summary + 各节标题/摘要）。失败/无 → None。"""
-        try:
-            vals = await ctx.fetch(f"profile.{_PROFILE_KEY}")
-        except Exception as e:
-            logger.debug("load prior research skipped: %s", e)
-            return None
-        raw = vals.get(f"profile.{_PROFILE_KEY}")
+        raw = await ctx.load_shared_state(RESEARCH_ACTIVE)
         if isinstance(raw, str):
             try:
                 raw = json.loads(raw)
@@ -299,7 +295,7 @@ class DeepResearchAgent(BaseAgent):
     async def _save_task(self, ctx, question: str, report) -> None:
         """紧凑落 memory：保存问题 + 各节标题/正文摘要，供下一轮『展开第N点』定位（best-effort）。"""
         try:
-            await ctx.save_profile(_PROFILE_KEY, {
+            await ctx.save_shared_state(RESEARCH_ACTIVE, {
                 "question": question,
                 "summary": (report.summary or "")[:300],
                 "sections": [{"heading": s.heading, "body": (s.body or "")[:400]}
@@ -340,12 +336,7 @@ class DeepResearchAgent(BaseAgent):
         if not (any(m in t for m in _DEEPEN_MARK) or "新闻" in t
                 or any(w in t for w in _NEWS_THIS)):
             return ""
-        try:
-            vals = await ctx.fetch("profile.news_active")
-        except Exception as e:
-            logger.debug("load news_active skipped: %s", e)
-            return ""
-        rawv = vals.get("profile.news_active")
+        rawv = await ctx.load_shared_state(NEWS_ACTIVE)
         if isinstance(rawv, str):
             try:
                 rawv = json.loads(rawv)

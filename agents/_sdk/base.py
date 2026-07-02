@@ -53,6 +53,26 @@ class Context:
         return await self._memory.upsert_profile(
             self.user_id, key, json.dumps(value, ensure_ascii=False))
 
+    async def save_shared_state(self, key: str, value) -> bool:
+        """写跨 Agent 会话状态（Agent 无状态化，临时会话态落 profile KV）。
+
+        key 用 `agents._sdk.shared_state` 常量（NEWS_ACTIVE/RESEARCH_ACTIVE/TRIP_ACTIVE），
+        权威登记见 `docs/conventions.md`「跨 Agent 状态键」。写走 profile；读经 load_shared_state。
+        """
+        return await self.save_profile(key, value)
+
+    async def load_shared_state(self, key: str):
+        """读跨 Agent 会话状态（写走 `save_profile(<key>)`、读经 `profile.<key>` 命名空间——
+        本封装消除该读写前缀不对称）。返回存储的原始值（可能是 JSON 字符串，调用方按需 json.loads）；
+        无 / 失败 → None。"""
+        try:
+            vals = await self.fetch(f"profile.{key}")
+        except Exception as e:
+            import logging
+            logging.getLogger("agent.sdk").debug("load_shared_state %s skipped: %s", key, e)
+            return None
+        return vals.get(f"profile.{key}") if vals else None
+
     async def recall(self, query: str = "", *, scopes: list[str] | None = None,
                      kinds: list[str] | None = None, top_k: int = 5,
                      predicate_prefix: str = "", min_score: float = 0.0,

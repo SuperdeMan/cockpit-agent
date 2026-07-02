@@ -15,6 +15,7 @@ import os
 import re
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, NEED_CONFIRM
+from agents._sdk.shared_state import TRIP_ACTIVE
 from agents._sdk.location import current_location_from_meta
 from agents.navigation.src.providers import build_poi_provider
 from agents.navigation.src.providers.mock import MockPOIProvider
@@ -26,7 +27,7 @@ from .extract import extract_trip
 logger = logging.getLogger("agent.trip_planner")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
-_PROFILE_KEY = "trip_active"
+# 当前活动行程键经 agents._sdk.shared_state.TRIP_ACTIVE 引用；登记见 docs/conventions.md「跨 Agent 状态键」。
 
 _CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
@@ -76,12 +77,7 @@ class TripPlannerAgent(BaseAgent):
     # ── 持久化（memory profile KV；Agent 无状态化）───────────────
     async def _load_trip(self, ctx) -> Trip | None:
         """从 memory 读当前活动行程。失败/无 → None。"""
-        try:
-            vals = await ctx.fetch(f"profile.{_PROFILE_KEY}")
-        except Exception as e:
-            logger.warning("load trip failed: %s", e)
-            return None
-        raw = vals.get(f"profile.{_PROFILE_KEY}")
+        raw = await ctx.load_shared_state(TRIP_ACTIVE)
         if not raw:
             return None
         if isinstance(raw, str):
@@ -94,7 +90,7 @@ class TripPlannerAgent(BaseAgent):
     async def _save_trip(self, ctx, trip: Trip) -> None:
         """写当前活动行程到 memory（best-effort，失败不阻断规划）。"""
         try:
-            await ctx.save_profile(_PROFILE_KEY, trip.to_dict())
+            await ctx.save_shared_state(TRIP_ACTIVE, trip.to_dict())
         except Exception as e:
             logger.warning("save trip failed: %s", e)
 

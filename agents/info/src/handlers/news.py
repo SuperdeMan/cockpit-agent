@@ -13,6 +13,7 @@ from agents._sdk import AgentResult
 from agents._sdk.http import ProviderError
 from agents._sdk.grounding import clean_snippet
 from agents._sdk.source_quality import domain_tier
+from agents._sdk.shared_state import NEWS_ACTIVE
 
 from ._util import _shanghai_now, _to_simplified
 
@@ -424,7 +425,7 @@ class NewsMixin:
     async def _save_news_active(self, ctx, items: list[dict]) -> None:
         """持久化当前新闻列表（标题/来源），供深调研「深挖第N条」桥接定位（best-effort）。"""
         try:
-            await ctx.save_profile("news_active", {
+            await ctx.save_shared_state(NEWS_ACTIVE, {
                 "items": [{"title": it.get("title", ""), "source": it.get("source", "")}
                           for it in items[:12]],
             })

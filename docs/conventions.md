@@ -230,3 +230,21 @@
 
 Dashboard 使用 `VITE_COLLECTOR_URL` 与 `VITE_EDGE_GATEWAY_URL`，Compose 已分别配置为
 `http://localhost:8092` 和 `http://localhost:8090`。
+
+---
+
+## 9. 跨 Agent 状态键（profile KV）
+
+Agent 无状态化：一次会话的临时状态落 **memory profile KV**，供跨轮或跨 Agent 复用。
+键的**权威登记**在 `agents/_sdk/shared_state.py`（常量），存取经 `Context.save_shared_state(key, v)` /
+`load_shared_state(key)`（封装「写 `profile.<key>`、读 `profile.<key>` 命名空间」的前缀不对称）。
+**业务码只用常量、不写裸字符串**；新增键先在此表 + `shared_state.py` 登记，再在 owner/reader 引用。
+
+| key（常量） | owner（写） | reader（读） | value schema | 生命周期 |
+|---|---|---|---|---|
+| `NEWS_ACTIVE`（`news_active`） | info（news 域）`_save_news_active` | deep-research `_resolve_news_deepen`（「详细讲讲第N条」桥接） | `{items:[{title,source}]}` | 会话内；被同 key 下次写覆盖 |
+| `RESEARCH_ACTIVE`（`research_active`） | deep-research `_save_task` | deep-research `_load_prior`（多轮「展开第N点」聚焦） | `{question,summary,sections:[{heading,body}],freshness}` | 会话内；被覆盖 |
+| `TRIP_ACTIVE`（`trip_active`） | trip-planner `_save_trip` | trip-planner `_load_trip`（有状态「改某天」） | `Trip.to_dict()` | 会话内；被覆盖 |
+
+> 底层 profile KV 无独立 TTL（随用户画像存储，无 user_id 时静默跳过）。改 key/换存储只需改
+> `shared_state.py` 与本表——不再散落字面量导致静默断链（审计 A5）。
