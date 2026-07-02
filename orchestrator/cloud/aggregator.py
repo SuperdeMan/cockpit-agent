@@ -41,13 +41,10 @@ class Aggregator:
         # 纯信息卡（股票/新闻/天气/搜索）可多卡同屏：合成 card_group 让 HMI 逐张渲染
         # （ui_card 是自由 Struct，不必改 proto/网关）。这样"查英伟达股价+新闻"能股票卡+新闻卡并存。
         def _card_priority(c: dict) -> int:
-            # 行程卡/充能路线卡/调研报告卡是各自请求的主卡，多意图下须独显、不被 card_group 吞。
-            if c.get("type") in ("charging_route", "trip_itinerary", "research_report"):
-                return 0
-            if (c.get("type") == "poi_list"
-                    and c.get("purpose") in ("waypoint_choice", "dest_choice")):
-                return 1
-            return 2
+            # 卡片展示优先级由出卡的 Agent 自带 display_priority 声明（R2.1 P4：聚合器不再硬编码
+            # 卡片类型）。0=主卡（行程/充能路线/调研报告等，多意图下须独显、不被 card_group 吞）；
+            # 1=交互候选（顺路停靠/目的地二次选择）；2=普通信息卡（缺省，可多卡同屏）。
+            return int(c.get("display_priority", 2))
         interactive = [c for c in cards if _card_priority(c) < 2]
         if interactive:
             ui_card = min(interactive, key=_card_priority)

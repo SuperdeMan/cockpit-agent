@@ -15,6 +15,7 @@ capabilities:
   - intent: charging.plan
     description: 规划长途充能策略（沿途分段充电）
     slots: [destination, soc, departure_time]
+    heavy: true    # 长途充能沿途分段规划 → 开思考+过程区
     examples: ["去杭州怎么充电", "帮我规划充电"]
   - intent: charging.status
     description: 查询当前充电状态

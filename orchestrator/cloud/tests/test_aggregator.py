@@ -14,7 +14,8 @@ def test_prefers_charging_route_card_over_first_card():
     nav = StepResult(step_id="s1", status=StepStatus.OK, speech="已规划路线",
                      ui_card={"type": "poi_list", "items": [{"name": "东车村委会"}]})
     charge = StepResult(step_id="s2", status=StepStatus.OK, speech="途中补电1次",
-                        ui_card={"type": "charging_route", "destination": "东车村",
+                        ui_card={"type": "charging_route", "display_priority": 0,
+                                 "destination": "东车村",
                                  "stops": [{"name": "南网充电站", "at_km": 212}]})
     out = asyncio.run(agg.compose("导航去东车村并规划途中充电", [nav, charge]))
     # 即便导航卡在前，也应展示充能路线卡（途经点对"规划充电"更相关）
@@ -40,7 +41,7 @@ def test_merges_charging_waypoint_into_navigate_action():
                   "require_confirm": False}])
     charge = StepResult(
         step_id="s2", status=StepStatus.OK, speech="已加入途经充电站",
-        ui_card={"type": "charging_route", "destination": "华润春笋大厦",
+        ui_card={"type": "charging_route", "display_priority": 0, "destination": "华润春笋大厦",
                  "stops": [{"name": "特来电·春笋站"}]},
         data={"waypoint": {"name": "特来电·春笋站", "lat": 22.4998, "lng": 113.9385,
                            "address": "深圳湾"}})
@@ -57,6 +58,7 @@ def test_prefers_waypoint_choice_card_over_other_cards():
     agg = Aggregator(_fake_llm)
     nav = StepResult(step_id="s1", status=StepStatus.OK, speech="规划路线",
                      ui_card={"type": "poi_list", "purpose": "waypoint_choice",
+                              "display_priority": 1,
                               "destination": "中国华润大厦", "items": [{"name": "餐厅A"}]})
     food = StepResult(step_id="s2", status=StepStatus.OK, speech="需要订位吗",
                       ui_card={"type": "restaurant_list", "items": [{"name": "美食·名店1"}]})
@@ -96,7 +98,7 @@ def test_interactive_card_shown_alone_not_grouped():
     stock = StepResult(step_id="s1", status=StepStatus.OK, speech="x",
                        ui_card={"type": "stock_quote"})
     charge = StepResult(step_id="s2", status=StepStatus.OK, speech="y",
-                        ui_card={"type": "charging_route", "stops": []})
+                        ui_card={"type": "charging_route", "display_priority": 0, "stops": []})
     out = asyncio.run(agg.compose("q", [stock, charge]))
     assert out["ui_card"]["type"] == "charging_route"
 

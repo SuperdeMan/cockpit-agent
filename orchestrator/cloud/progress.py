@@ -9,14 +9,9 @@ import re
 
 from .models import Plan, Step, StepResult, StepStatus
 
-# 自由文本 / 调研 / 合成型意图：单独出现也算复杂（多步聚合天然也算）。
-# 天气/股票/赛事等轻查询不在内——避免给秒回任务平添过程区与思考延迟（需求第 6 条）。
-HEAVY_INTENTS = {
-    "trip.plan", "trip.modify",
-    "info.search", "info.news",
-    "research.run",
-    "charging.plan",
-}
+# 重域能力（自由文本/调研/合成型，单步也算复杂 → 开思考+过程区）现由各 Agent manifest 的
+# capability.heavy 声明，经 planning._validated_steps 落到 Step.heavy（R2.1 P3：progress 不再
+# 硬编码 HEAVY_INTENTS 集合）。天气/股票/赛事等轻查询 heavy=false——秒回不平添过程区与思考延迟。
 
 # 任务领域（理解需求阶段的任务类型自然描述）。按序匹配；前缀项以 "." 结尾。
 _DOMAINS = [
@@ -79,7 +74,7 @@ def is_complex(plan: Plan | None) -> bool:
         return True
     if len(plan.steps) >= 2:
         return True
-    return any(s.intent in HEAVY_INTENTS for s in plan.steps)
+    return any(getattr(s, "heavy", False) for s in plan.steps)
 
 
 def _lookup(intent: str, exact: dict, prefix: dict, default: str) -> str:

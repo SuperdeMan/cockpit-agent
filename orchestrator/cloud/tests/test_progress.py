@@ -5,8 +5,14 @@ from orchestrator.cloud.progress import (
     plan_steps_summary, step_summary)
 
 
+# is_complex 现读 Step.heavy（P3：由 manifest capability.heavy 经 _validated_steps 落地），
+# 测试按此模拟：重域意图的步 heavy=True，轻查询/闲聊/车控 heavy=False。
+_HEAVY = {"trip.plan", "trip.modify", "info.search", "info.news", "research.run", "charging.plan"}
+
+
 def _plan(*intents, complexity="simple", slots=None):
-    steps = [Step(id=f"s{i}", agent_id="a", intent=it, slots=(slots or {}))
+    steps = [Step(id=f"s{i}", agent_id="a", intent=it, slots=(slots or {}),
+                  heavy=(it in _HEAVY))
              for i, it in enumerate(intents)]
     return Plan(steps=steps, complexity=complexity)
 

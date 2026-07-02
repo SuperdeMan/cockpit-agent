@@ -41,6 +41,7 @@ class MockAgent:
             cap.slots = []
             cap.description = ""
             cap.examples = []
+            cap.heavy = False          # 真 bool，避免 MagicMock 恒真误标 step.heavy
             self.manifest.capabilities.append(cap)
         # 真实 manifest 的确定性路由提示（R2.1）；未声明的 agent 为空列表。
         self.manifest.route_hints = _load_route_hints(agent_id)
@@ -431,6 +432,41 @@ def test_fake_agent_gets_deterministic_routing_from_manifest_only():
     assert [s.intent for s in plan.steps] == ["widget.cast"]
     assert plan.steps[0].agent_id == "widget-agent"
     assert plan.steps[0].slots["spell"] == "帮我施展魔法"
+
+
+def test_heavy_capability_marks_step_heavy_and_complex():
+    """P3：capability.heavy=true → step.heavy → is_complex（progress 不再硬编码 HEAVY_INTENTS）。"""
+    from orchestrator.cloud.progress import is_complex
+    agent = MockAgent("deep-research", ["research.run"])
+    agent.manifest.capabilities[0].heavy = True     # 模拟 manifest 声明 heavy
+
+    async def mock_llm(messages):
+        return '{"steps":[{"id":"s1","agent_id":"deep-research","intent":"research.run","slots":{}}]}'
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        "固态电池怎么样", WorkingSet(catalog=[agent]), PlanContext()))
+    assert plan.steps[0].heavy is True
+    assert is_complex(plan) is True
+
+
+def test_light_capability_step_not_heavy():
+    """轻查询能力（heavy 缺省 False）→ step.heavy False，单步不判复杂。"""
+    from orchestrator.cloud.progress import is_complex
+    agent = MockAgent("info", ["info.weather"])   # cap.heavy=False（MockAgent 默认）
+
+    async def mock_llm(messages):
+        return '{"steps":[{"id":"s1","agent_id":"info","intent":"info.weather","slots":{}}]}'
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        "今天天气", WorkingSet(catalog=[agent]), PlanContext()))
+    assert plan.steps[0].heavy is False
+    assert is_complex(plan) is False
 
 
 def test_does_not_inject_trip_when_planner_unavailable():

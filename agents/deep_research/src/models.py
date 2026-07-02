@@ -66,7 +66,7 @@ class Report:
 
     def card_dict(self, question: str = "") -> dict:
         """`research_report` 卡 = report + type + question（ui_card 自由 Struct，免改 proto）。"""
-        return {"type": "research_report", "question": question, **asdict(self)}
+        return {"type": "research_report", "display_priority": 0, "question": question, **asdict(self)}
 
 
 @dataclass

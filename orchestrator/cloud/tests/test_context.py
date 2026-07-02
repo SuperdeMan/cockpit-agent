@@ -81,11 +81,16 @@ def test_catalog_multi_intent_agents_preserved():
     assert {"hvac", "media", "info"}.issubset(_ids(ws))
 
 
-def test_catalog_always_includes_fallback_and_trip_planner():
-    """chitchat（兜底）与 trip-planner（确定性兜底目标）总在 catalog，即便 resolve 没选中。"""
+def test_catalog_always_includes_fallback_and_route_hint_agents():
+    """兜底 Agent（chitchat）与声明了 route_hints 的 Agent（如 trip-planner）总在 catalog，
+    即便 resolve 没选中——route_hint 的确定性路由依赖该 manifest 在 catalog 可见（R2.1 P5，
+    通用保护取代硬编码 _ALWAYS_INCLUDE）。"""
     agents = ([_agent(f"ag{i}", [f"ag{i}.x"]) for i in range(5)]
               + [_agent("chitchat", ["chitchat.talk"]),
                  _agent("trip-planner", ["trip.plan"])])
+    # trip-planner 靠「声明 route_hints」被通用保护（不再靠硬编码 agent_id）
+    agents[-1].manifest.route_hints = [SimpleNamespace(
+        pattern="去.+天", intent="trip.plan", policy="append", priority=50, guard="", slots={})]
     cm = ContextManager(_Clients(agents, resolve_result=[agents[0]]), top_k=3)
     ws = asyncio.run(cm.assemble("hi", _ctx()))
     assert _ids(ws) == {"ag0", "chitchat", "trip-planner"}

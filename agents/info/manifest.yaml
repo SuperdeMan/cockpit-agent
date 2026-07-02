@@ -38,6 +38,7 @@ capabilities:
   - intent: info.search
     description: 联网搜索信息
     slots: [query, limit]
+    heavy: true    # 联网搜索+接地合成 → 开思考+过程区
     examples: ["搜一下", "帮我查一下", "搜索", "帮我搜"]
 
   - intent: info.sports
@@ -48,6 +49,7 @@ capabilities:
   - intent: info.news
     description: 获取新闻头条和资讯摘要
     slots: [topic, limit]
+    heavy: true    # 新闻汇总+接地合成 → 开思考+过程区
     examples: ["今天有什么新闻", "科技新闻", "最新头条", "看看新闻"]
 
   - intent: info.stock

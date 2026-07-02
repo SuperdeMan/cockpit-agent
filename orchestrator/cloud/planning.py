@@ -7,7 +7,7 @@ import json
 import logging
 from security.scopes import is_scope_covered
 from .models import Plan, Step, PlanContext, ReplanDecision
-from .context import WorkingSet
+from .context import WorkingSet, _FALLBACK_AGENT
 from .route_hints import RouteHintEngine
 
 logger = logging.getLogger("planner.planning")
@@ -236,7 +236,7 @@ class PlanBuilder:
         # text slot here: it can be missing or stale, which makes the agent
         # answer an empty/previous request instead of the current utterance.
         for step in steps:
-            if step.agent_id == "chitchat":
+            if step.agent_id == _FALLBACK_AGENT:
                 step.slots["text"] = fallback_text
 
         complexity = data.get("complexity", "simple")
@@ -299,6 +299,8 @@ class PlanBuilder:
                     getattr(manifest, "requires_permissions", []) or []),
                 trust_level=getattr(manifest, "trust_level", "") or "",
                 context_scopes=list(getattr(manifest, "context_scopes", []) or []),
+                heavy=next((bool(getattr(c, "heavy", False))
+                            for c in manifest.capabilities if c.intent == intent), False),
             )
             steps.append(step)
 
@@ -314,14 +316,14 @@ class PlanBuilder:
         return steps
 
     async def _fallback(self, text: str, agents: list = None) -> Plan:
-        """规划失败的降级。优先兜底到 chitchat（系统全局 fallback，开放域/LLM 抽风时
-        仍有回应），其次 Registry 语义路由 top-1。"""
-        # 1) chitchat 全局兜底：把原话交给闲聊 Agent（已在权限过滤后的 agents 里）
+        """规划失败的降级。优先兜底到全局兜底 Agent（env PLANNER_FALLBACK_AGENT，默认
+        chitchat；开放域/LLM 抽风时仍有回应），其次 Registry 语义路由 top-1。"""
+        # 1) 全局兜底 Agent：把原话交给它（已在权限过滤后的 agents 里）
         for a in (agents or []):
-            if a.manifest.agent_id == "chitchat":
+            if a.manifest.agent_id == _FALLBACK_AGENT:
                 intent = a.manifest.capabilities[0].intent if a.manifest.capabilities else "chitchat.talk"
                 return Plan(steps=[Step(
-                    id="s1", agent_id="chitchat", endpoint=a.endpoint,
+                    id="s1", agent_id=a.manifest.agent_id, endpoint=a.endpoint,
                     kind=getattr(a.manifest, "kind", "") or "agent",
                     deployment=getattr(a.manifest, "deployment", "") or "cloud",
                     intent=intent, slots={"text": text},

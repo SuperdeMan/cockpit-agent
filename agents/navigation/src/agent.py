@@ -465,6 +465,7 @@ class NavigationAgent(BaseAgent):
             speech=f"已为您规划到{dest_poi.name}的路线。顺路的{keyword}有：{names}，"
                    f"想顺道去哪家？说『第几个』即可，不去也可以直接出发。",
             ui_card={"type": "poi_list", "purpose": "waypoint_choice",
+                     "display_priority": 1,
                      "title": f"顺路{keyword} · 选择途经点",
                      "destination": dest_poi.name, "items": choice_items},
             data={"destination": dest_poi.name, "stops": choice_items},

@@ -18,6 +18,8 @@ x-python-env: &python-env
   LLM_MODEL_FAST: ${LLM_MODEL_FAST:-mimo-v2.5}
   PLANNER_LOOP_MAX_ITERS: ${PLANNER_LOOP_MAX_ITERS:-2}
   PLANNER_LOOP_BUDGET_MS: ${PLANNER_LOOP_BUDGET_MS:-5000}
+  # 规划失败/预筛保护的全局兜底 Agent（R2.1 P5：去 planning/context 硬编码 chitchat）
+  PLANNER_FALLBACK_AGENT: ${PLANNER_FALLBACK_AGENT:-chitchat}
 
 # 生存性：所有长驻服务 crash/OOM 后自动拉起（演示/长跑不因单点退出而中断）。
 # unless-stopped = 除非人工 stop，否则始终重启（含 docker daemon 重启后）。

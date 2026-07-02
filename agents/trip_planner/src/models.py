@@ -82,7 +82,7 @@ class Trip:
 
     def card_dict(self) -> dict:
         """`trip_itinerary` 卡 = to_dict + type（ui_card 是自由 Struct，免改 proto）。"""
-        return {"type": "trip_itinerary", **self.to_dict()}
+        return {"type": "trip_itinerary", "display_priority": 0, **self.to_dict()}
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "Trip":

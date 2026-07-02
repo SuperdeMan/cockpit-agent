@@ -156,7 +156,7 @@ class ChargingPlannerAgent(BaseAgent):
         speech = (f"已为前往{resolved}的路线加入途经充电站：{top.name}"
                   f"（{dist}{extra}）。")
         # 复用 charging_route 卡：出发地 → ⚡该站 → 目的地
-        card = {"type": "charging_route", "destination": resolved,
+        card = {"type": "charging_route", "display_priority": 0, "destination": resolved,
                 "stops": [{"name": top.name, "address": top.address}],
                 "soc": soc}
         items = [
@@ -208,6 +208,7 @@ class ChargingPlannerAgent(BaseAgent):
                            f"说出名称或『第几个』，也可以直接告诉我详细地址。",
                     # purpose=dest_choice 让 HMI 把"第N个"回填为目的地槽位（而非发起导航）
                     ui_card={"type": "poi_list", "purpose": "dest_choice",
+                             "display_priority": 1,
                              "title": f"{dest} · 选择目的地",
                              "items": [{"id": c.get("id", ""), "name": c["name"],
                                         "address": c.get("address", "")} for c in candidates]},
@@ -235,6 +236,7 @@ class ChargingPlannerAgent(BaseAgent):
         # （否则只取首个卡=导航候选，充电途经点不可见）。
         card = {
             "type": "charging_route",
+            "display_priority": 0,
             "destination": dest,
             "distance_km": plan.distance_km,
             "duration_min": plan.total_duration_min,
