@@ -28,10 +28,22 @@ def _normalize_operation(operation: str) -> str:
 
 
 # 媒体类对象 → action.type 用 media.control（与 server.py 本地路径口径一致）
+# 对象清单对应 VAL commands.yaml 的媒体类 objects。
 _MEDIA_OBJECTS = {
     "media", "music", "radio", "online_radio", "audiobook",
     "opera", "news", "video", "TV",
 }
+
+
+def action_type_for(obj: str) -> str:
+    """媒体类对象 → ``media.control``，其余 → ``vehicle.control``。
+
+    端侧所有本地执行路径（server.py 快路径 A/A2/B、云端降级兜底、
+    以及本模块 action_to_structured）判定 AgentAction.type 的唯一入口，
+    保证同一对象在任何路径得到一致的 action_type（对象清单以
+    ``_MEDIA_OBJECTS`` 为准）。
+    """
+    return "media.control" if obj in _MEDIA_OBJECTS else "vehicle.control"
 
 # 知识库缺失（离线/无 commands.yaml）时的兜底对象集；
 # 有知识库时由 VAL commands.yaml 的 objects 作为单一真相源（见 EdgeCallExecutor._known_objects）。
@@ -222,7 +234,7 @@ class EdgeCallExecutor:
         # 回填动作卡用于 HMI 展示，与本地快路径口径一致。
         # _origin=edge_val 标记“已在车端 VAL 执行”，供 server._dispatch_cloud_actions
         # 跳过二次下发（避免双发）；车控类用 vehicle.control，媒体类用 media.control。
-        action_type = "media.control" if obj in _MEDIA_OBJECTS else "vehicle.control"
+        action_type = action_type_for(obj)
         action = common_pb2.AgentAction(
             type=action_type,
             payload=_struct({

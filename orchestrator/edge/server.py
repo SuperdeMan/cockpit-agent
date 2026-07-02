@@ -21,7 +21,7 @@ from fast_intent import classify, classify_structured, climate_feeling_intents, 
 from val import VAL
 from edge_agents import edge_execute
 from cloud_client import CloudClient
-from edge_call import EdgeCallExecutor, action_to_structured
+from edge_call import EdgeCallExecutor, action_to_structured, action_type_for
 from observability.events import EventEmitter, change_source
 from observability.tracing import get_trace_id, new_trace_id, set_trace_id
 
@@ -299,7 +299,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     # 不下发动作——否则 HMI 会把被拒动作显示成"已执行"，与"已禁用"自相矛盾。
                     if ok:
                         obj = m_intent.get("data", {}).get("object", "")
-                        action_type = "media.control" if obj in ("media", "music", "radio", "online_radio", "audiobook", "opera", "news", "video", "TV") else "vehicle.control"
+                        action_type = action_type_for(obj)
                         actions.append(common_pb2.AgentAction(
                             type=action_type,
                             payload=_struct({"command": legacy["name"], **legacy.get("slots", {})}),
@@ -358,7 +358,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         # 同快路径 A：门控拒绝(ok=False)只播报、不下发 action。
                         if ok:
                             obj = m_intent.get("data", {}).get("object", "")
-                            action_type = "media.control" if obj in ("media", "music", "radio", "online_radio", "audiobook", "opera", "news", "video", "TV") else "vehicle.control"
+                            action_type = action_type_for(obj)
                             local_actions.append(common_pb2.AgentAction(
                                 type=action_type,
                                 payload=_struct({"command": legacy["name"], **legacy.get("slots", {})}),
@@ -454,7 +454,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         answer_length=answer_length,
                         intent=intent["name"],
                     )
-                    action_type = "vehicle.control" if structured.get("data", {}).get("object") not in ("media",) else "media.control"
+                    action_type = action_type_for(structured.get("data", {}).get("object", ""))
                     action = {
                         "type": action_type,
                         "payload": {"command": intent["name"], **intent.get("slots", {})},
@@ -540,7 +540,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 )
                 if ok and speech:
                     obj = local_structured.get("data", {}).get("object", "")
-                    action_type = "media.control" if obj in ("media", "music", "radio") else "vehicle.control"
+                    action_type = action_type_for(obj)
                     action = common_pb2.AgentAction(
                         type=action_type,
                         payload=_struct({"command": f"{obj}.{local_structured['data'].get('operate', '')}"}),

@@ -12,7 +12,12 @@ from cockpit.agent.v1 import agent_pb2
 from cockpit.channel.v1 import channel_pb2
 from cockpit.common.v1 import common_pb2
 
-from edge_call import EdgeCallExecutor, action_to_structured
+from edge_call import (
+    EdgeCallExecutor,
+    action_to_structured,
+    action_type_for,
+    _MEDIA_OBJECTS,
+)
 from edge_agents_mod.media import MEDIA_INTENTS
 from edge_agents_mod.vehicle import VEHICLE_INTENTS
 from val import VAL
@@ -214,3 +219,30 @@ def test_hierarchical_edge_intents_update_the_expected_val_state():
     assert executor.execute(_call(
         "steering_wheel.heating.close")).status == agent_pb2.ExecuteResponse.OK
     assert val.state["steering_wheel_heating"] is False
+
+
+# ── action_type_for：媒体/车控 action.type 判定的唯一入口 ──
+# 回归 D8：修复前 server.py 四条本地路径各用不同对象清单——快路径 A/A2 认 9 个媒体对象、
+# 快路径 B 只认 "media"、云端降级兜底只认 media/music/radio——同一对象在不同路径被判成
+# 不同 action_type。收敛到单一 action_type_for 后，任何路径对同一对象口径一致。
+
+def test_action_type_for_media_objects_are_media_control():
+    # 覆盖此前会被快路径 B / 降级兜底漏判成 vehicle.control 的媒体对象
+    for obj in ("media", "music", "radio", "online_radio",
+                "audiobook", "opera", "news", "video", "TV"):
+        assert action_type_for(obj) == "media.control", obj
+
+
+def test_action_type_for_vehicle_and_unknown_objects_are_vehicle_control():
+    for obj in ("aircon", "window", "seat", "trunk", "navigation"):
+        assert action_type_for(obj) == "vehicle.control", obj
+    # 空/未知对象 fail-safe 到车控口径，不误标成媒体
+    assert action_type_for("") == "vehicle.control"
+    assert action_type_for("does_not_exist") == "vehicle.control"
+
+
+def test_media_object_list_matches_val_knowledge():
+    """helper 的媒体对象清单须以 VAL commands.yaml 的 objects 为准，防清单与知识库漂移。"""
+    known = set(_objects())
+    missing = _MEDIA_OBJECTS - known
+    assert missing == set(), f"media objects absent from commands.yaml: {missing}"
