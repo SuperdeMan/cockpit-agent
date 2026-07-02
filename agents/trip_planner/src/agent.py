@@ -21,6 +21,7 @@ from agents.navigation.src.providers.mock import MockPOIProvider
 from .models import Trip, Stop
 from .pipeline import (build_poi_pool, propose, ground, solve, narrate,
                        _ground_one, _poi_to_dict)
+from .extract import extract_trip
 
 logger = logging.getLogger("agent.trip_planner")
 
@@ -119,12 +120,17 @@ class TripPlannerAgent(BaseAgent):
             return await self._finalize(ctx, meta)
 
         dest = (intent.slots.get("destination") or "").strip()
+        days = (intent.slots.get("days") or "").strip()
+        prefs = (intent.slots.get("preferences") or "").strip()
+        if not dest:
+            # 确定性路由（manifest route_hints）注入的 trip.plan 步 slots 为空——
+            # 从原话抽取目的地/天数/偏好（原编排核心 _extract_trip 的领域逻辑，R2.1 搬回本 Agent）。
+            edest, edays, eprefs = extract_trip(intent.raw_text or "")
+            dest, days, prefs = dest or edest, days or edays, prefs or eprefs
         if not dest:
             return AgentResult(
                 status=NEED_SLOT, speech="您想去哪里玩？",
                 follow_up="请告诉我目的地", missing_slots=["destination"])
-        days = (intent.slots.get("days") or "").strip()
-        prefs = (intent.slots.get("preferences") or "").strip()
 
         trip = await self._run_pipeline(ctx, meta, dest, days, prefs, intent.raw_text)
         await self._save_trip(ctx, trip)

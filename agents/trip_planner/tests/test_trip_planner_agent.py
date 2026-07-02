@@ -75,6 +75,24 @@ def test_plan_happy_path_returns_trip_itinerary():
     assert any(s["name"] == "西湖" and s["grounded"] for s in stops)
 
 
+def test_plan_extracts_dest_from_raw_text_when_slots_empty():
+    """R2.1：route_hint(append) 注入的 trip.plan 步 slots 为空——Agent 从 raw_text 抽取
+    目的地/天数/偏好（extract.py），照常走流水线出 trip_itinerary，不再 NEED_SLOT。"""
+    agent = TripPlannerAgent()
+    fake = FakePOI(search_map={
+        "景点": [_poi("西湖", 30.25, 120.15), _poi("灵隐寺", 30.24, 120.10)]})
+    agent.poi = fake
+    agent._fallback = fake
+    agent.llm.complete = AsyncMock(return_value=(
+        '{"days":[{"day_index":1,"theme":"湖光","stops":[{"name":"西湖","type":"attraction"}]}]}'))
+
+    res = asyncio.run(run_handle(
+        agent, "trip.plan", slots={}, raw_text="周末去杭州两天，带老人，不要太累"))
+    assert res.status == "need_confirm"
+    assert res.ui_card and res.ui_card["type"] == "trip_itinerary"
+    assert "杭州" in res.speech
+
+
 def test_plan_llm_failure_falls_back_to_deterministic():
     """propose LLM 失败 → 确定性兜底分配池内景点，仍出 trip_itinerary + NEED_CONFIRM。"""
     agent = TripPlannerAgent()

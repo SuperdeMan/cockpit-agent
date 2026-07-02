@@ -60,6 +60,16 @@ route_hints:
     policy: replace
     priority: 60
     slots: {modification: "$text"}
+  # trip.plan（append，新出行兜底）：弱 LLM 常把「去X玩N天/带老人」只当天气/充电的目的地上下文而漏掉行程。
+  # 触发=DEST(去/到/赴/游+地名) 且 SIGNAL(天数/偏好/日游/行程/自驾游/度假)，或「地名+N日游」；
+  # guard 反例=通勤/固定点(去公司/到机场…)。此触发等价原编排核心 _extract_trip 的注入门控（逐字验证
+  # 12 例决策一致）；真正的 dest/days/prefs 抽取由 Agent 侧 extract_trip 从 raw_text 完成。
+  - pattern: '(?=.*(?:去|到|赴|游)[一-鿿]{2,6})(?=.*(?:[一二两三四五六七八九十0-9]+\s*[天日]|带老人|带娃|带孩子|带小孩|不要太累|不累|轻松|悠闲|慢一点|慢点|休闲|日游|行程|自驾游|度假))|[一-鿿]{2,6}[一二两三四五六七八九十0-9]+\s*[天日]游'
+    guard: '(?:去|到|赴|游)\s*(?:公司|家|单位|学校|上班|这里|那里|机场|车站)'
+    intent: trip.plan
+    policy: append
+    priority: 50
+    slots: {}
 
 requires_permissions:
   - location.read

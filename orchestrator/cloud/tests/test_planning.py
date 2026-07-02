@@ -284,7 +284,8 @@ def _trip_agents():
 
 def test_injects_trip_plan_when_llm_misses_it():
     """『周末去杭州两天带老人…顺便看天气/充电』——LLM 只出了天气+充电，
-    兜底必须补一个并列 trip.plan 步（destination/days/preferences 已解析）。"""
+    trip.plan route_hint(append)必须补一个并列 trip.plan 步。目的地/天数/偏好由 Agent 侧
+    extract.py 从原话抽取（见 agents/trip_planner/tests/test_extract），编排层步 slots 为空。"""
     agents = _trip_agents()
 
     async def mock_llm(messages):
@@ -303,9 +304,6 @@ def test_injects_trip_plan_when_llm_misses_it():
     trip = [s for s in plan.steps if s.intent == "trip.plan"]
     assert len(trip) == 1, "应注入一个 trip.plan 步"
     assert trip[0].agent_id == "trip-planner"
-    assert trip[0].slots.get("destination") == "杭州"
-    assert trip[0].slots.get("days") == "2"
-    assert "带老人" in trip[0].slots.get("preferences", "")
     assert trip[0].depends_on == []  # 与天气/充电并列
 
 
@@ -367,8 +365,7 @@ def test_ensures_trip_step_even_when_plan_falls_back():
     intents = [s.intent for s in plan.steps]
     assert "trip.plan" in intents, f"降级路径也应补行程，实际 steps={intents}"
     trip = [s for s in plan.steps if s.intent == "trip.plan"][0]
-    assert trip.slots.get("destination") == "北京"
-    assert trip.agent_id == "trip-planner"
+    assert trip.agent_id == "trip-planner"  # 目的地抽取移至 Agent 侧 extract.py
 
 
 def test_modify_pattern_routed_to_trip_modify_replacing_misplan():
