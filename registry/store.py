@@ -379,8 +379,23 @@ def _dict_to_manifest(d: dict):
             slots=list(c.get("slots") or []),
             examples=list(c.get("examples") or []),
             require_confirm=bool(c.get("require_confirm", False)),
+            heavy=bool(c.get("heavy", False)),
         )
         for c in d.get("capabilities", [])
+    ]
+    # R2.1：route_hints 必须随 PgStore round-trip 还原，否则 registry 重启恢复后
+    # RouteHintEngine 拿不到提示、确定性路由兜底静默失效。context_scopes 同理（此前遗漏，
+    # 会致重启后敏感上下文最小化下发口径丢失）。
+    route_hints = [
+        agent_pb2.RouteHint(
+            pattern=h.get("pattern", ""),
+            intent=h.get("intent", ""),
+            policy=h.get("policy", ""),
+            priority=int(h.get("priority") or 0),
+            guard=h.get("guard", ""),
+            slots={k: str(v) for k, v in (h.get("slots") or {}).items()},
+        )
+        for h in d.get("route_hints", [])
     ]
     return agent_pb2.AgentManifest(
         agent_id=d.get("agent_id", ""),
@@ -395,4 +410,6 @@ def _dict_to_manifest(d: dict):
         requires_permissions=list(d.get("requires_permissions") or []),
         edge_intents=list(d.get("edge_intents") or []),
         kind=d.get("kind", ""),
+        context_scopes=list(d.get("context_scopes") or []),
+        route_hints=route_hints,
     )
