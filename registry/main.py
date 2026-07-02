@@ -11,7 +11,7 @@ import os
 import grpc
 from cockpit.registry.v1 import registry_pb2_grpc
 
-from runtime.grpcio import aio_server, run_aio_server
+from runtime.grpcio import aio_server, bind_port, run_aio_server
 
 from observability.events import EventEmitter
 from registry.health import probe_all
@@ -67,7 +67,7 @@ async def serve():
     server = aio_server()
     servicer = RegistryServicer(store=store)
     registry_pb2_grpc.add_RegistryServicer_to_server(servicer, server)
-    server.add_insecure_port(f"[::]:{port}")
+    bind_port(server, f"[::]:{port}")
     await server.start()
     emitter = EventEmitter("registry")
     health_task = asyncio.create_task(_health_loop(servicer.store, emitter))

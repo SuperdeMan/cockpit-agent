@@ -163,14 +163,15 @@ python test/e2e_ws.py
 - 导航（高德）、天气（和风 JWT）已接真实 Provider 并经真实凭证冒烟通过（接入规范见
   [`docs/guides/provider-integration.md`](docs/guides/provider-integration.md)）；餐饮/停车/手册仍为 mock，按环境接入。
 - HTTP/MCP 外部工具及网络出口白名单尚未实现。
-- HMI 的权限 scope 仍使用 PoC 默认注入（R2.2 已加 `PERMISSIONS_FAIL_OPEN` env 开关，默认 `on`
-  保持现状、量产翻 `false` 走 fail-closed 并记结构化审计）；真实会话鉴权（从设备身份/会话 token 解析
-  scope、移除 `user_id="u1"` 硬编码）属 R3.1 待做。
+- 会话鉴权已由 **R3.1** 落地最小闭环：静态 token 两层校验（HMI WS `?token=` → edge-gateway 解析
+  身份+`granted_scopes`、去 `user_id="u1"` 硬编码；Hello channel token → cloud-gateway 校验），env 门控
+  `AUTH_REQUIRED` 默认关（配合 R2.2 `PERMISSIONS_FAIL_OPEN`）；真实 IdP/JWT 轮换/设备证书属后续。
 - 轻量 span/指标/健康已接入 NATS Dashboard；Prometheus/OTel 导出、持久化 trace、
   告警、多车聚合与正式鉴权仍待实现。
 - 当前 TTS 是“文本短句增量合成 + 顺序播放”，不是真正的服务端 PCM 音频流。
-- 服务间 gRPC 仍为 insecure（无 mTLS/证书）；全链路已启用 keepalive + 优雅停机，
-  mTLS 是量产前唯一遗留的传输层缺口。
+- 服务间 gRPC **已由 R3.2 支持双向 mTLS**（`GRPC_TLS` env 门控，默认关保持现状；`scripts/gen-certs.*`
+  生成共享 mesh 证书，`GRPC_TLS=on` 全栈加密）；配合 R3.1 会话鉴权，**T3.1+T3.2 齐即安全链路无已知缺口**。
+  证书轮换/per-service 证书/真实 IdP 属量产硬化后续。
 - VAL 仍为 Python 模拟，真实 SOME-IP/CAN、车规资源约束和 OTA 属于后续量产阶段。
 
 ## 接手阅读顺序

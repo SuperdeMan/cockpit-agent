@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/cockpit/car-agent/gateway/tlscfg"
 	commonpb "github.com/cockpit/car-agent/gen/go/cockpit/common/v1"
 	orchpb "github.com/cockpit/car-agent/gen/go/cockpit/orchestrator/v1"
 )
@@ -225,6 +226,18 @@ func clientKeepalive() grpc.DialOption {
 	})
 }
 
+// transportCreds 选择传输凭证：GRPC_TLS 开启走 mTLS 客户端凭证，否则 insecure（保持现状）。
+func transportCreds() grpc.DialOption {
+	if tlscfg.Enabled() {
+		c, err := tlscfg.ClientCreds()
+		if err != nil {
+			log.Fatalf("[edge-gateway] tls client creds: %v", err)
+		}
+		return grpc.WithTransportCredentials(c)
+	}
+	return grpc.WithTransportCredentials(insecure.NewCredentials())
+}
+
 // dnsTarget 强制 dns resolver：裸 host:port 默认走 passthrough（只解析一次、永不重解析），
 // 依赖容器重建换 IP 后会一直连旧 IP 报错，直到本服务重启。dns scheme 在连接 TRANSIENT_FAILURE
 // 时重解析 DNS → 自动重连（配合 keepalive 探活），无需重启本服务。已带 scheme 的原样返回。
@@ -244,7 +257,7 @@ func main() {
 
 	// 连接端侧编排器（架构 §2.2：HMI → Edge Gateway → Edge Orchestrator）
 	orchConn, err := grpc.NewClient(dnsTarget(orchAddr),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		transportCreds(),
 		clientKeepalive())
 	if err != nil {
 		log.Fatalf("[edge-gateway] dial orchestrator %s: %v", orchAddr, err)

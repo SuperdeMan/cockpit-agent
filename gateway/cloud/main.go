@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
+	"github.com/cockpit/car-agent/gateway/tlscfg"
 	channelpb "github.com/cockpit/car-agent/gen/go/cockpit/channel/v1"
 	commonpb "github.com/cockpit/car-agent/gen/go/cockpit/common/v1"
 	orchpb "github.com/cockpit/car-agent/gen/go/cockpit/orchestrator/v1"
@@ -79,7 +80,7 @@ func (s *channelServer) reconnectPlanner() {
 	s.plannerMu.Lock()
 	defer s.plannerMu.Unlock()
 	conn, err := grpc.NewClient(dnsTarget(s.plannerAddr),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		transportCreds(),
 		clientKeepalive())
 	if err != nil {
 		log.Printf("[cloud-gateway] reconnect planner failed: %v", err)
@@ -363,7 +364,7 @@ func main() {
 	port := getenv("CLOUD_GATEWAY_PORT", "8080")
 
 	conn, err := grpc.NewClient(dnsTarget(plannerAddr),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		transportCreds(),
 		clientKeepalive())
 	if err != nil {
 		log.Fatalf("dial planner: %v", err)
@@ -375,10 +376,15 @@ func main() {
 		log.Fatalf("listen: %v", err)
 	}
 
-	s := grpc.NewServer(
-		keepaliveServerParams(),
-		keepalivePolicy(),
-	)
+	serverOpts := []grpc.ServerOption{keepaliveServerParams(), keepalivePolicy()}
+	if tlscfg.Enabled() {
+		c, err := tlscfg.ServerCreds()
+		if err != nil {
+			log.Fatalf("[cloud-gateway] tls server creds: %v", err)
+		}
+		serverOpts = append(serverOpts, grpc.Creds(c)) // R3.2 mTLS
+	}
+	s := grpc.NewServer(serverOpts...)
 	authRequired := strings.EqualFold(os.Getenv("AUTH_REQUIRED"), "true")
 	channelTokens := parseChannelTokens(os.Getenv("CLOUD_CHANNEL_TOKENS"))
 	channelpb.RegisterEdgeCloudChannelServer(s, &channelServer{
@@ -431,6 +437,18 @@ func clientKeepalive() grpc.DialOption {
 		Timeout:             10 * time.Second,
 		PermitWithoutStream: true,
 	})
+}
+
+// transportCreds 选择传输凭证：GRPC_TLS 开启走 mTLS 客户端凭证，否则 insecure（保持现状）。
+func transportCreds() grpc.DialOption {
+	if tlscfg.Enabled() {
+		c, err := tlscfg.ClientCreds()
+		if err != nil {
+			log.Fatalf("[cloud-gateway] tls client creds: %v", err)
+		}
+		return grpc.WithTransportCredentials(c)
+	}
+	return grpc.WithTransportCredentials(insecure.NewCredentials())
 }
 
 // dnsTarget 强制 dns resolver：裸 host:port 默认走 passthrough（只解析一次、永不重解析），

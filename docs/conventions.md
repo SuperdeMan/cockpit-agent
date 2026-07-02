@@ -222,6 +222,18 @@
 | `CLOUD_CHANNEL_TOKENS` | cloud-gateway 接受的通道 token 集合（逗号分隔，须含 `CLOUD_CHANNEL_TOKEN`）| 否（默认空） |
 | `VEHICLE_ID` | 车辆标识（edge-gateway 匿名回退 + edge-orchestrator Hello 默认身份）| 否（默认 `v1`） |
 
+### 服务间 mTLS（R3.2，最小闭环）
+
+> 默认关（gRPC insecure，保持现状）。翻开：先 `scripts/gen-certs.ps1|sh` 生成 `certs/`，再
+> `GRPC_TLS=on` 起全栈。单张共享 mesh 证书作双身份、客户端校验名固定为 `GRPC_TLS_SERVER_NAME`。
+> 见 `docs/design/2026-07-02-r3.2-service-mtls.md`。
+
+| 变量 | 含义 | 必填 |
+|---|---|---|
+| `GRPC_TLS` | 服务间 gRPC mTLS 总开关：`off`/默认=insecure 保持现状；`on`=双向 TLS（server 强制校验客户端证书）| 否（默认 `off`） |
+| `GRPC_TLS_SERVER_NAME` | 客户端校验的证书目标名（`ssl_target_name_override`/`ServerName`），须与证书 CN/SAN 一致 | 否（默认 `cockpit-mesh`） |
+| `GRPC_TLS_CA` / `GRPC_TLS_CERT` / `GRPC_TLS_KEY` | 容器内 CA / 证书 / 私钥路径（compose 已挂 `../certs:/certs:ro` 并设默认）| 否（默认 `/certs/{ca,server}.{crt,crt,key}`） |
+
 ---
 
 ## 7. 命名约定（汇总，详见 CLAUDE.md §4）

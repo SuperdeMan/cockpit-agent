@@ -5,7 +5,7 @@ import os
 import grpc
 from cockpit.llm.v1 import llm_pb2_grpc, audio_pb2_grpc
 
-from runtime.grpcio import aio_server, run_aio_server
+from runtime.grpcio import aio_server, bind_port, run_aio_server
 from server import LLMGatewayServicer, AudioServiceServicer
 from http_server import start_http_server
 
@@ -17,7 +17,7 @@ async def serve():
     server = aio_server()
     llm_pb2_grpc.add_LLMGatewayServicer_to_server(LLMGatewayServicer(), server)
     audio_pb2_grpc.add_AudioServiceServicer_to_server(AudioServiceServicer(), server)
-    server.add_insecure_port(f"[::]:{port}")
+    bind_port(server, f"[::]:{port}")
     await server.start()
     print(f"[llm-gateway] LLM + Audio(ASR/TTS) gRPC on :{port}", flush=True)
 

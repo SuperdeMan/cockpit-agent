@@ -18,6 +18,8 @@ from aiohttp import web
 
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
+from runtime.grpcio import aio_channel
+
 from providers import build_asr_provider, build_streaming_asr_provider, build_tts_provider
 
 logger = logging.getLogger("llm.http")
@@ -63,7 +65,7 @@ def _memory_stub():
     经本 HTTP 代理读记忆内容（只读）。"""
     global _mem_channel
     if _mem_channel is None:
-        _mem_channel = grpc.aio.insecure_channel(MEMORY_ADDR)
+        _mem_channel = aio_channel(MEMORY_ADDR)
     return memory_pb2_grpc.MemoryStub(_mem_channel)
 
 # 从环境变量读音色配置

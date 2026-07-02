@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 import os
 import signal
@@ -75,9 +76,53 @@ def server_options() -> list[tuple]:
     ]
 
 
+# ─── mTLS（R3.2）：全 env 门控，默认关（GRPC_TLS 未设/off = insecure，逐字保持现状）───
+# 单张共享 mesh 证书（CN/SAN=cockpit-mesh）作 server+client 双身份；客户端经
+# ssl_target_name_override 把校验目标名固定为该名，无视拨号 authority（容器 ID / service 名 /
+# dns:/// 都行），解决 agent 用动态 hostname 注册 endpoint。见 docs/design/2026-07-02-r3.2-service-mtls.md。
+_TLS_SERVER_NAME = os.getenv("GRPC_TLS_SERVER_NAME", "cockpit-mesh")
+
+
+def _tls_enabled() -> bool:
+    return os.getenv("GRPC_TLS", "").lower() in ("on", "true", "1", "yes")
+
+
+def _tls_paths() -> tuple[str, str, str]:
+    return (os.getenv("GRPC_TLS_CA", "/certs/ca.crt"),
+            os.getenv("GRPC_TLS_CERT", "/certs/server.crt"),
+            os.getenv("GRPC_TLS_KEY", "/certs/server.key"))
+
+
+def _read(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+@functools.lru_cache(maxsize=1)
+def _channel_creds() -> grpc.ChannelCredentials:
+    ca, cert, key = _tls_paths()
+    return grpc.ssl_channel_credentials(
+        root_certificates=_read(ca), private_key=_read(key), certificate_chain=_read(cert))
+
+
+@functools.lru_cache(maxsize=1)
+def _server_creds() -> grpc.ServerCredentials:
+    ca, cert, key = _tls_paths()
+    return grpc.ssl_server_credentials(
+        [(_read(key), _read(cert))],
+        root_certificates=_read(ca),
+        require_client_auth=True,   # mTLS：强制并校验客户端证书
+    )
+
+
 def aio_channel(addr: str, *, extra_options: list[tuple] | None = None) -> grpc.aio.Channel:
-    """统一 keepalive 的 async insecure channel。替换裸 ``grpc.aio.insecure_channel``。"""
-    return grpc.aio.insecure_channel(addr, options=channel_options() + (extra_options or []))
+    """统一 keepalive 的 async channel。默认 insecure；``GRPC_TLS`` 开启走 mTLS secure_channel
+    （校验目标名固定为 ``GRPC_TLS_SERVER_NAME``）。替换裸 ``grpc.aio.insecure_channel``。"""
+    opts = channel_options() + (extra_options or [])
+    if _tls_enabled():
+        opts = opts + [("grpc.ssl_target_name_override", _TLS_SERVER_NAME)]
+        return grpc.aio.secure_channel(addr, _channel_creds(), options=opts)
+    return grpc.aio.insecure_channel(addr, options=opts)
 
 
 def aio_server(*, max_concurrent_rpcs: int | None = None,
@@ -88,6 +133,14 @@ def aio_server(*, max_concurrent_rpcs: int | None = None,
         options=server_options() + (extra_options or []),
         maximum_concurrent_rpcs=cap or None,
     )
+
+
+def bind_port(server: grpc.aio.Server, addr: str) -> int:
+    """绑定监听端口：``GRPC_TLS`` 开启走 mTLS ``add_secure_port``（强制校验客户端证书），
+    否则 ``add_insecure_port``（保持现状）。替换各 main.py 的 ``server.add_insecure_port(addr)``。"""
+    if _tls_enabled():
+        return server.add_secure_port(addr, _server_creds())
+    return server.add_insecure_port(addr)
 
 
 async def run_aio_server(server: grpc.aio.Server, *, name: str = "",

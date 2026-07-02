@@ -60,14 +60,23 @@
   验证：全量 **1018 passed / 6 skipped**（+2）+ Go build+`go test ./gateway/...` + HMI 42/42 + build；
   真栈默认模式 `e2e_ws` 4/4（非破坏）+ 秒模式 `test/e2e_auth.py` ALL PASS（无 token→401 / 带 token 车控
   +云端 / token'd 请求 cloud-planner **无** `fail_open_default_scopes`=scope 来自 token / `memory recall for u1`）。
-  **仍 insecure gRPC（mTLS=R3.2）、静态 token 非量产 IdP。** 分支 `feat/r3.1-session-auth`（待 push/merge）；
+  **仍 insecure gRPC（mTLS=R3.2）、静态 token 非量产 IdP。** 分支 `feat/r3.1-session-auth`（已 merge main `f38b4db` + push）；
   落地记录 `docs/design/2026-07-02-r3.1-session-auth.md`。
+- **R3.2 = T3.2 · 服务间 mTLS（D1 剩余项）** — 服务间 gRPC 双向 TLS，全 env 门控默认关（`GRPC_TLS` 未设=insecure
+  逐字保持现状）。**单张共享 mesh 证书 + name override**（`ssl_target_name_override`/`ServerName` 固定
+  `cockpit-mesh`）解决 agent 动态容器 hostname + 免枚举 SAN。Python 共享工厂 `runtime/grpcio.py`（`aio_channel`
+  secure + 新 `bind_port`，7 处 server 绑定切换 + 修 1 处 stray）；Go 新共享包 `gateway/tlscfg`（两网关 3 dial +
+  cloud server）；`scripts/gen-certs.{ps1,sh}`（证书 gitignore）；compose `x-certs-vol` 挂 19 mesh 服务 + `GRPC_TLS` env。
+  **未改 proto/编排核心逻辑**。验证：全量 **1030 passed/6 skipped**（+12）+ Go build+test（含 tlscfg）+ 默认模式
+  `e2e_ws` 4/4（非破坏）+ mTLS 模式全栈 26 起 + `e2e_ws` 4/4 加密链路 + `test/e2e_mtls.py` ALL PASS（云端 mTLS 通 +
+  insecure 探针被拒=强制）。分支 `feat/r3.2-service-mtls`；落地记录 `docs/design/2026-07-02-r3.2-service-mtls.md`。
+  **至此 T3.1+T3.2 齐，安全链路无已知缺口**（D1 收官；剩真实 IdP/JWT 轮换、per-service 证书轮换属后续硬化）。
 
 **⬜ 未完成（新会话可接续，按优先级）：**
 
 | 任务 | 关联审计项 | 规模 | 备注 |
 |---|---|---|---|
-| **R3.2–R3.6 量产硬化** | G2–G8 | 各 M | mTLS(T3.2) / e2e 入门禁(T3.3) / 路由评测基线(T3.4) / 降级矩阵(T3.5) / OTel(T3.6)；T3.1+T3.2 齐即「安全链路无已知缺口」 |
+| **R3.3–R3.6 量产硬化** | G2–G8 | 各 M | e2e 入门禁(T3.3) / 路由评测基线(T3.4) / 降级矩阵(T3.5) / Prometheus·OTel(T3.6) |
 | **R4 能力演进** | — | 见 §4 | 按需排期 |
 
 **残留小尾**：`orchestrator/cloud/planning.py::_PLANNER_SYSTEM` 内一处 trip few-shot 示例属 **D10（Prompt 管理）**，非 D5 路由债、且不随 Agent 数增长——暂留，纳入未来 Prompt 资产化工作。
@@ -182,7 +191,7 @@ CLAUDE.md §3 / 架构 §1.1-3：新增 Agent 只通过注册接入，**0 改编
 
 | # | 债 | 位置 | 说明 |
 |---|---|---|---|
-| D1 | 全链路零鉴权 — ⚠️ 部分由 R3.1 收敛 | gateway/{edge,cloud}, context.py | **R3.1 已落地会话鉴权最小闭环**：WS/Hello 静态 token 校验（env 门控 `AUTH_REQUIRED`，默认关）、`granted_scopes` 由 token 注入、去 `user_id="u1"` 硬编码、fail-open 可 env 翻关。**剩余**：gRPC 全 insecure→mTLS（R3.2）；静态 token 非量产 IdP（真实 JWT 轮换/设备证书后续）|
+| D1 | 全链路零鉴权 — ✅ 由 R3.1+R3.2 收官 | gateway/{edge,cloud}, context.py, runtime/grpcio.py | **R3.1** 会话鉴权最小闭环（WS/Hello 静态 token 校验、`granted_scopes` 由 token 注入、去 `user_id="u1"` 硬编码）+ **R3.2** 服务间 mTLS（gRPC 双向 TLS，`GRPC_TLS` 门控）——**T3.1+T3.2 齐即「安全链路无已知缺口」**。二者均 env 门控默认关、不破坏现有开发流。**后续硬化**（非阻断）：真实 IdP/JWT 轮换/设备证书、per-service 证书轮换 |
 | D2 | 端云逐请求建流 + 死代码 | cloud_client.py / gateway/edge/main.go | 见 A2。死代码要么删要么用，不能两份并存 |
 | D3 | 权限双轨 | security/permission.py vs dispatch/planning | 见 A4。双轨=改一处漏一处 |
 | D4 | compose 无 restart 策略、无资源限制 | deploy/docker-compose.yaml | `restart:` 出现 0 次；服务 crash 后不自愈（演示中风险高，一行/服务即可修） |
@@ -324,10 +333,11 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
 - 验收：无 token 的 WS/Hello 被拒；e2e 带 token 全过；granted_scopes 不再来自 _POC_DEFAULT_SCOPES（fail_open 开关默认关闭）。
 - 落地：两层鉴权全 env 门控、默认关（`AUTH_REQUIRED` 默认 `false` 逐字保持现状）。层 1 `gateway/edge/auth.go`（`AUTH_TOKENS` 表→身份+`meta.granted_scopes`，网关对该键唯一权威去客户端伪造，去 `user_id="u1"` 硬编码）；层 2 cloud-gateway 校 Hello `session_token`∈`CLOUD_CHANNEL_TOKENS`、edge cloud_client Hello 带 `CLOUD_CHANNEL_TOKEN`；HMI `appendToken`+`VITE_WS_TOKEN`。**未改编排核心/proto**（R2.2 已备好 `context.py` 消费 `meta.granted_scopes`+`PERMISSIONS_FAIL_OPEN`）。验收真栈：无 token→401 拒、带 token 车控+云端过、token'd 请求 cloud-planner **无** `fail_open_default_scopes`（scope 来自 token）。全量 1018 passed/6 skipped、Go build+test、HMI 42/42。**仍 insecure gRPC（mTLS=R3.2）、静态 token 非量产 IdP**。
 
-**T3.2 服务间 mTLS（M）**
+**T3.2 服务间 mTLS（M）** ✅ 已完成（`feat/r3.2-service-mtls`；真栈 `GRPC_TLS=on` 全栈 26 起 + `e2e_ws` 4/4 走加密链路 + `e2e_mtls` ALL PASS；落地记录 `docs/design/2026-07-02-r3.2-service-mtls.md`）
 - 背景：AGENTS.md 自认「唯一遗留生产缺口」。
 - 任务：脚本生成自签 CA+证书（scripts/gen-certs.*）；runtime/grpcio.py 增 `secure_channel/secure_port`（env `GRPC_TLS=on` 切换）；Go 侧对应。默认关（不破坏现有开发流），compose profile `tls` 演示开。
 - 验收：`GRPC_TLS=on` 下全栈起、smoke+e2e_ws 过；抓包确认加密。
+- 落地：服务间 gRPC 双向 TLS，全 env 门控默认关（`GRPC_TLS` 未设=insecure 逐字保持现状）。**单张共享 mesh 证书 + name override**（`ssl_target_name_override`/`ServerName` 固定 `cockpit-mesh`）解决 agent 用动态容器 hostname 注册 endpoint、免枚举 SAN。Python 经共享工厂 `runtime/grpcio.py`（`aio_channel` secure + 新 `bind_port`，7 处 server 绑定切换 + 修 1 处 stray channel）；Go 新共享包 `gateway/tlscfg`（两网关 3 dial + cloud server）；`scripts/gen-certs.{ps1,sh}` 生成证书（gitignore）；compose `x-certs-vol` 挂 19 个 mesh 服务 + `GRPC_TLS` env。**未改 proto/编排核心逻辑**。验证：全量 **1030 passed/6 skipped** + Go build+test（含 tlscfg）+ 默认模式 `e2e_ws` 4/4（非破坏）+ mTLS 模式 `e2e_ws` 4/4 加密链路 + `e2e_mtls`（云端 mTLS 通 + insecure 探针被拒=强制）。**取舍**：共享证书非量产（应 per-service+SPIFFE/轮换）；HMI WS 明文（范围外）。**至此 T3.1+T3.2 齐，安全链路无已知缺口。**
 
 **T3.3 e2e 入门禁（M）**
 - 背景：G2。
