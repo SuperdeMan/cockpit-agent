@@ -25,11 +25,12 @@
 
 ## 当前状态
 
-截至 **2026-06-30**：
+截至 **2026-07-02**：
 
 - Phase 1 的工程化 PoC 主干与云端中枢 P0-P3 已落地；原始 Phase 1
   计划中的量产级能力仍有明确 backlog。
-- `DispatchToEdge`、T2 有界循环、确定性工具和权限双层校验已实现。
+- `DispatchToEdge`、T2 有界循环、确定性工具已实现；权限为规划期（catalog 过滤）+ 执行期
+  （dispatch 硬拒）**同源单轨校验**（`security/permission.py::check_permission`，R2.2）。
 - 端侧混合意图支持按语义组分流，本地动作与导航/媒体慢意图可在同一请求中协同执行。
 - HMI 支持文字流式渲染和句子级增量 TTS：首个完整短句即可开始合成、后续音频顺序播放。
 - **信息类 Provider 全面落地**：导航=高德 / 天气=和风(JWT) / 搜索=Exa 正文级检索(AnySearch→Bing 降级) / 新闻=Exa 优先(SerpApi 兜底) / 赛事=api-football / 股票=Tushare，真实凭证冒烟通过，无凭证回退 mock。搜索经接地合成（强制引用、无依据诚实弃权），新闻以 TTS 播报式编号速览呈现。
@@ -43,7 +44,17 @@
 - **行程规划结构化重构**：从「LLM 自由文本行程」升级为**结构化可执行行程对象**——LLM 只提议骨架、确定性流水线接地真实 POI + 按真实电量沿路线编织充电点 + 校验每日车程，消灭幻觉景点（对症 TravelPlanner 基准纯 LLM 规划 0.6% 通过率）；每个停靠点可一句话导航（「下一站」「导航去第二天的 X」）、支持局部改某天不漂移、在途状态查询与「时间不够」自动精简，行程状态落记忆服务跨轮存续。护城河是车辆接地 + 在途编排（而非行前研究）。详见 `docs/design/2026-06-26-trip-planner-redesign.md`。
 - **信息域深度调研重构**：新建独立 `deep-research` Agent——把「LLM 提议/确定性落地」纪律下沉为四段流水线（LLM 拆多视角子问题→有界并行迭代检索→分节接地报告→渐进语音简报 + 可读报告卡），对症单轮检索的多跳天花板；联网查询分层（普通「搜一下」秒回、深问「深入调研 X」自动升档 research.run）；接地「我」（位置/画像作研究约束）、多轮深挖（「展开第 N 点」聚焦不重跑）、新闻（信源权威重排沉内容农场、相对时间归一为绝对、卡片一屏可扫读标题+摘要+来源时间）个性化与「详细讲讲第 N 条」深挖桥接、晨间主动早报雏形、**异步分钟级深调研**（明示「不急/查完告诉我」即秒级受理，后台跑更深报告越过 ~90s 同步上限，完成经 `agent.proactive` 把可读报告卡主动推回车机）、**信源质量加权**（域名权威分层：学术/官方/百科优先、权威媒体次之、内容农场下沉，报告来源与引用以最权威打头；深度异步对薄弱角度用 Exa 学术类目兜底）；检索/接地合成内核抽到 `_sdk` 与 info 共享。护城河是接地车辆 + 渐进语音 + 可落地产物（非「车机版 Perplexity」）。详见 `docs/design/2026-06-26-info-agent-deep-research-redesign.md`。
 - **HMI 极光液态座舱重构 + 语音流式上屏（2026-06-30）**：座舱前端重构为「Aurora Glass · 极光液态座舱」（横屏两栏 + 右上下文舞台 + 液态玻璃 + 小舟光球 + A-8 线性图标全替 emoji），~20 张信息卡按 Figma 源逐张重建并经真后端全栈 e2e 验证（8 卡族真数据 + 过程区 + 确认条）；**语音按钮即小舟光球**，ASR 支持**流式实时上屏**（边说边在输入框逐字显示、松手定稿自动发送，失败无感回退批处理），引擎可在设置切换——DashScope 实时（`qwen3-asr-flash-realtime`/`fun-asr-realtime`，分别走 OpenAI-realtime 与 run-task 两套协议）/ MiMo 分块。详见 `docs/design/2026-06-29-figma-hmi-implementation-plan.md`、`docs/design/2026-06-30-asr-streaming-design.md`。
-- 全量 pytest：**973 passed, 6 skipped**（含记忆 8 + 上下文 30 + 通讯加固 + 行程规划结构化重构 +36 + 信息域深调研 P0-P2 +30 + 异步分钟级深调研 +7 + 信源质量加权 +8 + 信源名单扩展与新闻质量/时效/展示/繁转简 +10）。
+- **审计驱动的工程门禁与架构还债（R1+R2，2026-07-02）**：按全仓审计
+  [`docs/reviews/2026-07-02-repo-audit-and-roadmap.md`](docs/reviews/2026-07-02-repo-audit-and-roadmap.md)
+  清完两阶段十卡。**R1 工程门禁与卫生**：CI「绿=本地全量绿」（补齐测试目录 + 聚合 requirements +
+  Go/前端构建 job）、compose `restart`+healthcheck、media action_type 判定统一、文档同步、死代码清理。
+  **R2 架构还债**恢复关键承诺：①**路由兜底机制化**——新增 Agent 只靠 manifest `route_hints` 声明式
+  路由、编排核心零领域 Agent/意图字面量，恢复「不改编排核心加 Agent」铁律；②**权限单轨化**——三处
+  权限实现收敛为唯一 `check_permission`；③**端云持久长连**——Python `CloudClient` 单条 bidi 多路复用
+  + 心跳 + 换 IP 自愈，删 Go 死代码；④**info agent 拆域**——1269 行巨类拆 `handlers/` mixin，
+  `agent.py` 123 行；⑤**跨 Agent 状态键契约化**——`_sdk/shared_state` 登记 + typed helper。
+  各卡零回归、真栈验证、落地记录见 `docs/design/2026-07-02-*`。
+- 全量 pytest：**1016 passed, 6 skipped**（含记忆 8 + 上下文 30 + 通讯加固 + 行程规划结构化重构 +36 + 信息域深调研 P0-P2 +30 + 异步分钟级深调研 +7 + 信源质量加权 +8 + 信源名单扩展与新闻质量/时效/展示/繁转简 +10；R2 架构还债：路由机制化 DoD 契约测试 + 权限单轨 +16 + 端云持久长连 +2）。
 - 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6 + 深度调研（深调研报告 + 多轮深挖 + 新闻深挖桥接 + 异步分钟级受理→主动推送报告卡）。
 - Docker 全栈 **25 个服务**（含充能规划/场景编排/路况安全/深度调研等 Agent），全栈联调通过。
 
@@ -152,7 +163,9 @@ python test/e2e_ws.py
 - 导航（高德）、天气（和风 JWT）已接真实 Provider 并经真实凭证冒烟通过（接入规范见
   [`docs/guides/provider-integration.md`](docs/guides/provider-integration.md)）；餐饮/停车/手册仍为 mock，按环境接入。
 - HTTP/MCP 外部工具及网络出口白名单尚未实现。
-- HMI 的权限 scope 仍使用 PoC 默认注入，量产需从设备身份和会话 token 解析。
+- HMI 的权限 scope 仍使用 PoC 默认注入（R2.2 已加 `PERMISSIONS_FAIL_OPEN` env 开关，默认 `on`
+  保持现状、量产翻 `false` 走 fail-closed 并记结构化审计）；真实会话鉴权（从设备身份/会话 token 解析
+  scope、移除 `user_id="u1"` 硬编码）属 R3.1 待做。
 - 轻量 span/指标/健康已接入 NATS Dashboard；Prometheus/OTel 导出、持久化 trace、
   告警、多车聚合与正式鉴权仍待实现。
 - 当前 TTS 是“文本短句增量合成 + 顺序播放”，不是真正的服务端 PCM 音频流。
