@@ -95,6 +95,12 @@ jobs:
         # Go 网关依赖 gen/go（buf 生成，gitignored）；必须先于 go build。
         run: buf generate proto
 
+      - name: Go mod tidy
+        # 与 Docker 构建一致（gateway/*/Dockerfile 均先 `go mod tidy`）：gen/go 每次新生成、
+        # 且提交的 go.sum 不覆盖其全部传递依赖，直接 `go build ./...` 会「missing go.sum entry」。
+        # 本机无 Go 工具链、无法预先 tidy 提交，故在 CI 内重算模块图（不改动仓库文件）。
+        run: go mod tidy
+
       - name: Go build
         run: go build ./...
 
