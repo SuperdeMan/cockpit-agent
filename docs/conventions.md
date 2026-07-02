@@ -201,9 +201,11 @@
 |---|---|---|
 | `PLANNER_LOOP_MAX_ITERS` | T2 自适应循环最多再规划次数 | 否（默认 2） |
 | `PLANNER_LOOP_BUDGET_MS` | T2 自适应循环总时间预算（毫秒） | 否（默认 5000） |
-| `PLANNER_CATALOG_TOP_K` | 规划时 catalog 语义预筛上限；agent 数 ≤ 此值不预筛（始终保留 chitchat/trip-planner/edge 车控）| 否（默认 20） |
+| `PLANNER_CATALOG_TOP_K` | 规划时 catalog 语义预筛上限；agent 数 ≤ 此值不预筛（始终保留有 `route_hints` 的 Agent、`PLANNER_FALLBACK_AGENT` 与 edge 车控）| 否（默认 20） |
 | `PLANNER_CTX_BUDGET_CHARS` | 上下文块（焦点+记忆+历史）字符预算 | 否（默认 1400） |
 | `PLANNER_CATALOG_BUDGET_CHARS` | catalog JSON 字符预算（超则丢尾部 agent）| 否（默认 8000） |
+| `PLANNER_FALLBACK_AGENT` | LLM 规划失败/抽风时的全局兜底 Agent（R2.1 P5，取代硬编码 chitchat）| 否（默认 `chitchat`） |
+| `PERMISSIONS_FAIL_OPEN` | 请求无 `granted_scopes` 时的权限兜底（R2.2）：`true`/默认=PoC 全开保持现状；`false`=fail-closed 仅无权限 Agent 可达 + 记结构化审计 | 否（默认 `true`） |
 
 ---
 
