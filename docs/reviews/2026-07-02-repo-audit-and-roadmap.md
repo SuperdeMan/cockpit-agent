@@ -20,18 +20,15 @@
   编排核心 `planning`/`context`/`aggregator`/`progress` 四处领域硬编码**全清**：路由兜底 → 各 Agent `manifest.route_hints` + 通用 `RouteHintEngine`；`HEAVY_INTENTS` → `capability.heavy`；卡片优先级 → card `display_priority`；`_ALWAYS_INCLUDE` → env `PLANNER_FALLBACK_AGENT` + 通用「有 route_hints 的 Agent 留 catalog」。
   commit `63e1382`(proto)/`5600bc6`(引擎)/`541c941`(research+trip 路由)/`f48be86`(DoD#2 契约测试)/`cab4500`(trip.plan+抽取搬 Agent)/`2e6eeaa`(P3/P4/P5)/`737ddef`(registry round-trip 真栈修复)。
   验证：全量 **998 passed / 6 skipped** + 真栈 `e2e_trip`/`e2e_research` 全过。
-
-**🟡 已实现 + 全量验证通过、待合并 main（分支 `r2.2-permission-single-track`）：**
-
-- **R2.2 · 权限单轨化（A4/D3）** — 三处权限实现（planning 内联过滤 / dispatch 内联校验 /
-  PermissionEngine 死壳）收敛为**唯一决策** `security/permission.py::check_permission`，规划期
-  `_filter_by_permission` 与执行期 `dispatch` 同源复用；删 `engine._enforce_permissions` 空壳；
-  fail-open 加 env `PERMISSIONS_FAIL_OPEN` 门控（默认 `on` 保持现状，量产翻 `false` fail-closed）
-  + 结构化审计 `fail_open_default_scopes`。**对审计原话的纠偏**：直接接线 `effective_scopes` 会因
-  `cap & granted` 扁平交集不做父子覆盖而误拒 `scene-orchestrator`（first_party 需父 scope
-  `vehicle.control`），故取**零行为变化单轨**、trust-cap 强上限推迟 R3.1（届时把 caps 改父子感知）。
-  验证：全量 **1014 passed / 6 skipped**（+16 用例，零回归）。落地记录
-  `docs/design/2026-07-02-r2.2-permission-single-track.md`。
+- **R2.2 = T2.2 · 权限单轨化（A4/D3）** — 权限双轨（实为三处实现：planning 内联过滤 / dispatch
+  内联校验 / PermissionEngine 死壳）收敛为**唯一决策** `security/permission.py::check_permission`，
+  规划期 `_filter_by_permission` 与执行期 `dispatch` 同源复用；删 `engine._enforce_permissions`
+  空壳；fail-open 加 env `PERMISSIONS_FAIL_OPEN` 门控（默认 `on` 保持现状，量产翻 `false`
+  fail-closed）+ 结构化审计 `fail_open_default_scopes`。**对审计原话的纠偏**：直接接线
+  `effective_scopes` 会因 `cap & granted` 扁平交集不做父子覆盖而误拒 `scene-orchestrator`
+  （first_party 需父 scope `vehicle.control`），故取**零行为变化单轨**、trust-cap 强上限推迟 R3.1。
+  commit `8999cba`(实现)/`0be9991`(merge)。验证：全量 **1014 passed / 6 skipped**（+16 用例）
+  + 真栈 `e2e_ws` 4/4；落地记录 `docs/design/2026-07-02-r2.2-permission-single-track.md`。
 
 **⬜ 未完成（新会话可接续，按优先级）：**
 
@@ -103,7 +100,7 @@ CLAUDE.md §3 / 架构 §1.1-3：新增 Agent 只通过注册接入，**0 改编
 - HMI 的 ASR/TTS/流式识别直连 llm-gateway HTTP(50059)（`VITE_AUDIO_API_URL`），绕过 Edge Gateway——架构说 Edge Gateway 是「所有交互的入口」。
 - 均属合理的 PoC 捷径，但应在架构文档「实现说明」里补记，避免接手者按图索骥。
 
-#### A4 权限模型双轨制，PermissionEngine 是死代码 — 🟡 已由 R2.2 收敛（待合并，见顶部执行进度）
+#### A4 权限模型双轨制，PermissionEngine 是死代码 — ✅ 已由 R2.2 收敛（见顶部执行进度）
 
 - `security/permission.py` 的 PermissionEngine（trust_level 上限 × 用户授权 × token scope 三源交集）被注入 `PlannerEngine.__init__`，但**生产代码从未调用**（仅测试引用）；`engine._enforce_permissions` 是空壳（自注 Phase 2）。
 - 实际生效的是另一轨：`planning._filter_by_permission`（规划期，fail-closed）+ `dispatch.py` 的 `is_scope_covered` 散点校验 + third_party 硬禁令。
@@ -267,7 +264,7 @@ CLAUDE.md §3 / 架构 §1.1-3：新增 Agent 只通过注册接入，**0 改编
 - 迁移纪律：正则**逐字搬运**不改语义；每搬一组跑对应回归（test_planning/test_regression_intent_integrity/trip/research 相关）。
 - 验收：① `grep -n "trip-planner\|deep-research\|research\.run\|trip\." orchestrator/cloud/planning.py` 无领域字面量（chitchat 仅存于 env 默认值）；② 973 全量零回归；③ 演练：新建一个假 Agent 仅靠 manifest route_hints 即可获得确定性路由（写成契约测试固化 DoD#2）。
 
-**T2.2 权限单轨化（M）** 🟡 已实现 + 全量 1014 验证、待合并（分支 `r2.2-permission-single-track`；落地记录 `docs/design/2026-07-02-r2.2-permission-single-track.md`。实施取**零行为变化单轨**——纠偏见该记录 §2）
+**T2.2 权限单轨化（M）** ✅ 已完成并合并 main（`8999cba`/`0be9991`；见顶部执行进度。实施取**零行为变化单轨**——纠偏见 `docs/design/2026-07-02-r2.2-permission-single-track.md` §2）
 - 背景：A4/D3。
 - 任务：二选一并执行——推荐**接线 PermissionEngine**：① Step 已带 trust_level/required_permissions，dispatch 改调 `perms.check()`（AuthContext 由 PlanContext 构造）；② planning._filter_by_permission 复用同一 engine 的判定函数；③ 删 engine._enforce_permissions 空壳或使其真校验；④ _POC_DEFAULT_SCOPES 加 env 开关 `PERMISSIONS_FAIL_OPEN=true`（默认保持现状，量产翻转），warning 升级为结构化审计事件。
 - 验收：test_ws8_security 全过 + 新增「dispatch 层越权硬拒」用例；全仓只剩一处权限判定实现。
