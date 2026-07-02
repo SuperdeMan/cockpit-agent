@@ -33,6 +33,34 @@ capabilities:
     slots: [hint]
     examples: ["时间不够了", "太累了精简一下", "想提前回家", "今天少玩一个"]
 
+# 确定性路由（R2.1）：弱 LLM 常漏/误路由行程内意图（借历史目的地误判成天气/充电）。
+# 逐字迁移自原 planning 的 _TRIP_NAV_RE/_TRIP_NAV_BLOCK_RE/_TRIP_RESCHEDULE_RE/
+# _TRIP_STATUS_RE/_TRIP_MODIFY_RE（_ensure_trip_navigate/reschedule/status/modify）。
+# 均 replace（互斥、取代误规划）；priority 复刻原判定顺序 navigate>reschedule>status>modify。
+# trip.plan（append，需目的地抽取）见 P2c。
+route_hints:
+  - pattern: '下一站|下个景点|继续导航|(?:导航|带我去|去|到)[^，。！？]{0,6}第\s*[一二两三四五六七八九十\d]+\s*天|第\s*[一二两三四五六七八九十\d]+\s*天[^，。！？]{0,4}第\s*[一二两三四五六七八九十\d]+\s*个'
+    guard: '换|改|调整|删|加|不去|不要|重新|规划'
+    intent: trip.navigate
+    policy: replace
+    priority: 90
+    slots: {}
+  - pattern: '时间不够|来不及|赶不及|太累了|好累|累坏|累死|提前回|早点回|早些回|提前结束|精简.{0,2}行程|简化行程|行程太满|玩不完|少玩|少去'
+    intent: trip.reschedule
+    policy: replace
+    priority: 80
+    slots: {hint: "$text"}
+  - pattern: '行程(到哪|进度|还剩|还有|怎么样)|还剩几[站个]|我在第几[站天]|到第几站|今晚住哪|行程.{0,3}充几次'
+    intent: trip.status
+    policy: replace
+    priority: 70
+    slots: {}
+  - pattern: '第\s*[一二两三四五六七八九十\d]+\s*天[^，。！？]*?(换|改|调整|替换|更换|删|加|重新|别去|不去)|(行程|景点|目的地|这天|那天)[^，。！？]*?(换|改|调整|替换|更换|重新规划)|(换|改|调整|更换)[^，。！？]{0,4}(行程|景点|目的地|第\s*[一二两三四五六七八九十\d]+\s*天)|(删掉|删除|去掉|加一个|加个|增加|不去)[^，。！？]{0,8}第\s*[一二两三四五六七八九十\d]+\s*天'
+    intent: trip.modify
+    policy: replace
+    priority: 60
+    slots: {modification: "$text"}
+
 requires_permissions:
   - location.read
   - network.external

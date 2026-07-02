@@ -5,6 +5,23 @@ from orchestrator.cloud.planning import PlanBuilder
 from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.context import WorkingSet
 from unittest.mock import MagicMock
+import os
+from agents._sdk.manifest import load_manifest
+
+# 路由知识已从 planning.py 迁到各 Agent manifest.route_hints（R2.1）。
+# 测试用真实 manifest 的 route_hints 驱动路由——既验证引擎接线，也验证迁移后的正则本身。
+_REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
+_ROUTE_HINT_MANIFESTS = {
+    "deep-research": "agents/deep_research/manifest.yaml",
+    "trip-planner": "agents/trip_planner/manifest.yaml",
+}
+
+
+def _load_route_hints(agent_id):
+    rel = _ROUTE_HINT_MANIFESTS.get(agent_id)
+    if not rel:
+        return []
+    return list(load_manifest(os.path.join(_REPO_ROOT, rel)).route_hints)
 
 
 class MockAgent:
@@ -25,6 +42,8 @@ class MockAgent:
             cap.description = ""
             cap.examples = []
             self.manifest.capabilities.append(cap)
+        # 真实 manifest 的确定性路由提示（R2.1）；未声明的 agent 为空列表。
+        self.manifest.route_hints = _load_route_hints(agent_id)
         self.endpoint = f"localhost:{hash(agent_id) % 1000 + 50060}"
 
 

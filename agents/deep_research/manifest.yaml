@@ -18,6 +18,21 @@ capabilities:
     examples: ["深入调研一下固态电池现状", "帮我研究下理想i8的智驾方案", "全面对比一下增程和纯电",
                "系统了解下港股打新规则", "深度调研这家公司的基本面", "研究一下这个城市值不值得定居"]
 
+# 确定性路由（R2.1）：弱 LLM 常把深度调研误路由成 info.search/chitchat（浅答）。
+# 逐字迁移自原 planning._RESEARCH_RE / _RESEARCH_FOLLOWUP_RE（_ensure_research_step）。
+# replace=命中即取代误规划为单步 research.run；query 传原话，Agent 拆多视角子问题。
+route_hints:
+  - pattern: '深入(调研|研究|分析|了解)|深度(调研|研究|分析)|全面(对比|了解|分析|梳理)|系统(地)?(了解|梳理|学习|分析)|调研一下|彻底(研究|搞懂|弄懂|了解)|好好(研究|调研)'
+    intent: research.run
+    policy: replace
+    priority: 100
+    slots: {query: "$text"}
+  - pattern: '(展开|深入|详细|细说|细讲|多讲|多说)[^，。！？]{0,4}第\s*[一二两三四五六七八九十\d]+\s*[点节部条]|第\s*[一二两三四五六七八九十\d]+\s*[点节部条][^，。！？]{0,4}(展开|详细|深入|细说|细讲)|(这部分|那部分|这一?节|这点|这条|那条|这则|上面那?[点段节])[^，。！？]{0,4}(展开|详细|深入|再说|再讲|讲讲)'
+    intent: research.run
+    policy: replace
+    priority: 100
+    slots: {query: "$text"}
+
 requires_permissions:
   - network.external
   - location.read
