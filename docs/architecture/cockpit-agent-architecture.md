@@ -169,6 +169,17 @@ flowchart TB
 | 某 Agent 故障 | 单领域不可用 | Planner 跳过该 Agent，降级到 `fallback`（如 chitchat）并告知用户 |
 | LLM 超时 | 首响超 budget | 流式占位 + 重试到备用模型（LLM Gateway 负责） |
 
+> **实现说明（R3.5，`test/e2e_degrade.py` 自动化验证后如实记录，非本表原意）**：
+> 实际降级话术与上表措辞有出入——断网是"网络不太好，复杂请求暂时无法处理，不过车内控制依然可以
+> 正常使用"（`orchestrator/edge/server.py`），云 Planner 故障是"云端处理异常，请稍后重试"
+> （`gateway/cloud/main.go`）。"LLM Gateway 直连单 Agent 兜底"未实现（纯 aspiration）。"某 Agent
+> 故障降级到 fallback" 仅适用于**规划期**（LLM 完全无法产出计划时的全局兜底），**执行期**单个
+> Agent 调用失败不会重路由到 chitchat，而是该步标 FAILED、DAG 其余步骤继续（`executor.py` 不因
+> 单步失败中断）。"LLM 超时" 的"重试到备用模型"仅对 `llm-gateway` 的非流式 `Complete()` 成立，
+> 流式 `CompleteStream()` 无此重试。这些差异属已知技术债（`docs/reviews/2026-07-02-repo-audit-and-roadmap.md`
+> 提及的 executor 错误信息丢失/CompleteStream 无重试等），详见
+> `docs/design/2026-07-03-r3.5-degrade-matrix-e2e.md` §6。
+
 ---
 
 ## 4. Agent 模型与契约（架构的可扩展性基石）

@@ -158,6 +158,7 @@
 | `LLM_DISABLE_THINKING` | 关闭推理模型 thinking 以保结构化输出（MiMo 须 true）| 否（默认 true）|
 | `LLM_MODEL_PRIMARY` / `LLM_MODEL_FALLBACK` | 主/降级模型 | 否（默认 mimo-v2.5-pro / mimo-v2.5）|
 | `LLM_MODEL_FAST` | 开放域"快"模型（闲聊默认走它降延迟，model_pref=deep 时用 primary）| 否（默认 mimo-v2.5）|
+| `LLM_MOCK_DELAY_MS` | 测试专用：`MockProvider` 人为延迟（毫秒），供 `test/e2e_degrade.py`「LLM 超时」用例注入慢响应（R3.5）| 否（默认 0，零行为变化）|
 | `ASR_MODEL` / `ASR_LANGUAGE` | 批处理 ASR 模型 / 默认语言（zh）| 否 |
 | `ASR_STREAM_PROVIDER` | 流式识别上屏引擎：`dashscope`(默认·DashScope 实时)/`mimo-chunked`(MiMo 分块回退)/`off`(降级批处理) | 否 |
 | `ASR_STREAM_MODEL` | DashScope 流式模型，**须全小写**：`qwen3-asr-flash-realtime-2026-02-10`(默认·realtime 协议)、`fun-asr-realtime`(inference run-task 协议) | 否 |
