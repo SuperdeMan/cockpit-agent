@@ -28,7 +28,7 @@ test:
 	python -m pytest --import-mode=importlib -q
 
 e2e:
-	cd test && python -m pytest -q
+	bash scripts/run_e2e.sh
 
 clean:
 	rm -rf gen/

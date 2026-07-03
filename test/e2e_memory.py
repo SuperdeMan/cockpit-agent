@@ -116,6 +116,10 @@ def planner_logs_since(seconds: int) -> str:
 async def check_semantic_bridge(stub) -> bool:
     """种『用户不吃辣』+ 干扰『喜欢摇滚乐』，用与种子**零字面重叠**的 query『饮食偏好』召回。
     lexical 对此 query 必返空；能命中且口味排在音乐之前，证明真向量语义生效。"""
+    if not os.getenv("LLM_EMBED_API_KEY"):
+        record("1.语义桥接(真embedding)", True,
+               "SKIP：未配置 LLM_EMBED_API_KEY（lexical 兜底对零字面重叠 query 必空，非缺陷）")
+        return True
     u = _EU + "_sem"
     await mem_forget(stub, u)
     await mem_remember(stub, [
@@ -163,6 +167,10 @@ async def check_planner_injection(stub) -> bool:
 # 链路 3：chitchat 个人实体召回（宠物名）
 # ════════════════════════════════════════════════════════════════════════
 async def check_chitchat_pet(stub) -> bool:
+    if not os.getenv("LLM_API_KEY"):
+        record("3.chitchat宠物召回", True,
+               "SKIP：未配置 LLM_API_KEY（MockProvider 只回显用户末句，无法验证记忆注入话术）")
+        return True
     await mem_forget(stub, WS_USER, scopes=["profile.person"])
     await mem_remember(stub, [
         _item(user_id=WS_USER, kind="semantic", text="用户的宠物叫旺财", predicate="person.pet",
