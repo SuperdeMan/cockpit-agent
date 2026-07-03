@@ -82,7 +82,7 @@ make down         # 停
 make test         # 运行各服务单测 + 契约测试
 make e2e          # 端到端场景测试
 ```
-Windows 无 make 时用 `scripts/gen-proto.ps1` 等价替代（见 README）。
+Windows 无 make 时用 `scripts/gen-proto.ps1`、`scripts/run_e2e.ps1` 等价替代（见 README）。
 
 **工程纪律**：改完主动跑 `make test`；不要注释报错或加绕过标记来"让它跑起来"，找根因；大改动先在设计文档对齐再动手。
 

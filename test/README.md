@@ -68,7 +68,16 @@ python test/e2e_resilience.py             # 断言型：依赖服务 --force-rec
 python test/e2e_trip.py                    # 断言型：行程规划 6 轮（结构化卡+真实 POI 接地+跨轮持久化+确认收尾+改某天不漂移+下一站导航+在途状态/精简）
 python test/e2e_research.py                # 断言型：深度调研（research_report 分节报告+真实来源、多轮「展开第N点」聚焦深挖、普通搜索不被劫持、新闻「详细讲讲第N条」深挖桥接）
 python test/e2e_research_async.py          # 断言型：异步分钟级深调研（明示「不急/查完告诉我」→秒级受理 ack→后台 deep 流水线越过 90s 上限→NATS agent.proactive 主动推送带 card 报告卡，真栈 9 节/36 源/~3031 字）
+python test/e2e_auth.py                    # 断言型：会话鉴权（需 AUTH_REQUIRED=true + token，非默认栈配置）
+python test/e2e_mtls.py                    # 断言型：服务间 mTLS（需 GRPC_TLS=on + scripts/gen-certs.*，非默认栈配置）
+python -m pytest test/e2e_real_providers.py -q -s   # 无需 docker：真实三方 provider 冒烟（按 key 自动 skip）
 ```
+
+一次跑全部脚本：`make e2e`（本地全量清单，`scripts/run_e2e.sh` / `run_e2e.ps1`；假定 `.env` 可能
+配了真实 key，未配置时部分用例按记忆系统既有 SKIP 约定优雅跳过或合理失败，非回归）。
+`.github/workflows/nightly-e2e.yml` 跑的是**裁剪、无需任何密钥即可确定性全绿**的子集（`--case`
+过滤掉依赖真实 LLM 路由/embedding 的用例）。两者刻意不同，脚本清单的单一真相源是文件本身，不在
+本 README 手工重复维护第二份列表；细节见 `docs/design/2026-07-03-r3.3-e2e-ci-gate.md`。
 
 ## 6. Nightly 真实 LLM 语料（默认 skip）
 
