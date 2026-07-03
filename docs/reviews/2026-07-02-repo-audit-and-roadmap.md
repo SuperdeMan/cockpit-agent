@@ -69,7 +69,7 @@
   cloud server）；`scripts/gen-certs.{ps1,sh}`（证书 gitignore）；compose `x-certs-vol` 挂 19 mesh 服务 + `GRPC_TLS` env。
   **未改 proto/编排核心逻辑**。验证：全量 **1030 passed/6 skipped**（+12）+ Go build+test（含 tlscfg）+ 默认模式
   `e2e_ws` 4/4（非破坏）+ mTLS 模式全栈 26 起 + `e2e_ws` 4/4 加密链路 + `test/e2e_mtls.py` ALL PASS（云端 mTLS 通 +
-  insecure 探针被拒=强制）。分支 `feat/r3.2-service-mtls`；落地记录 `docs/design/2026-07-02-r3.2-service-mtls.md`。
+  insecure 探针被拒=强制）。已合并 main（`37817c8`）；落地记录 `docs/design/2026-07-02-r3.2-service-mtls.md`。
   **至此 T3.1+T3.2 齐，安全链路无已知缺口**（D1 收官；剩真实 IdP/JWT 轮换、per-service 证书轮换属后续硬化）。
 
 **⬜ 未完成（新会话可接续，按优先级）：**
