@@ -100,12 +100,28 @@
   本地三轮验证收敛到 4/4 全过 + 全量 **1030 passed/6 skipped** 零回归 + **GitHub `workflow_dispatch`
   一次实跑即全绿**（run `28643924654`，9m17s，未像 T3.3 那样需要二次修复——本地已提前发现并修正两处
   问题）；落地记录 `docs/design/2026-07-03-r3.5-degrade-matrix-e2e.md`。
+- **R3.4 = T3.4 · 意图路由评测基线（G3）** — 新 `test/eval_fast_intent.py`（端侧 `fast_intent`）+
+  `test/eval_route_hints.py`（云侧 `RouteHintEngine`），直调既有函数产出准确率/召回率报告
+  （JSON+Markdown），基线入 `docs/reviews/eval/`；`.github/workflows/ci.yml` 新增非阻塞
+  `intent-eval-baseline` job（`::warning::` 告警、不拦 PR，对应 roadmap"不阻塞，先观测"）。
+  **对卡片原文的纠偏**：卡面写的"飞书 1465 意图库"标注语料实际不可得——原始表已 gitignore
+  且磁盘不存在，只一次性用于生成 `commands.yaml`/`entities.yaml`，未保留标注语料；改用现有可得
+  数据源（`orchestrator/edge/tests/corpus/` 29 条 + 新增 `test/eval_corpus/` 历史回归案例转录，
+  共 39 条 edge + 8 条 route_hints），"补全飞书全量语料"列为后续增强、不阻塞验收。**关键实现
+  发现**：`route_hints_cases.yaml` 的预期值不能照抄 `test_route_hints.py` 简化版单测 fixture——
+  对着真实 `agents/trip_planner/manifest.yaml` 用 `--dump` 核实后发现"导航去第2天换一个"在真实
+  manifest 下不是"guard 拦下=空路由"，而是被同一句话命中的 `trip.modify`（无 guard）接管，
+  已按实测结果钉入基线。两套逻辑都是纯规则引擎（不经 LLM），"跌破阈值"落地为逐例回归比对
+  （不是模糊统计阈值）；验收演练（临时改坏电池共现词检查 + `deep-research` route_hint pattern）
+  均精确触发 `::warning::` 后撤销。**未改 `fast_intent.py`/`route_hints.py`/编排核心任何业务
+  逻辑**。全量 **1037 passed/6 skipped**（+7，新增 `test/test_eval_common.py`）零回归；见
+  `docs/design/2026-07-03-r3.4-intent-eval-baseline.md`。
 
 **⬜ 未完成（新会话可接续，按优先级）：**
 
 | 任务 | 关联审计项 | 规模 | 备注 |
 |---|---|---|---|
-| **R3.4/R3.6 量产硬化** | G3/G5-G8 | 各 M | 路由评测基线(T3.4) / Prometheus·OTel(T3.6) |
+| **R3.6 量产硬化** | G5-G8 | M | Prometheus·OTel 导出(T3.6) |
 | **R4 能力演进** | — | 见 §4 | 按需排期 |
 
 **残留小尾**：`orchestrator/cloud/planning.py::_PLANNER_SYSTEM` 内一处 trip few-shot 示例属 **D10（Prompt 管理）**，非 D5 路由债、且不随 Agent 数增长——暂留，纳入未来 Prompt 资产化工作。
@@ -380,10 +396,17 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
   （弱字面重叠召回同样依赖真实 embedding，前期分析漏判为 mock-safe），修复后二次实跑全绿。`make e2e` 改用
   `scripts/run_e2e.{sh,ps1}` 本地全量清单执行器。**未改编排核心**。
 
-**T3.4 意图路由评测基线（M）**
+**T3.4 意图路由评测基线（M）** ✅ 已完成（`feat/r3.4-intent-eval-baseline`；见顶部「执行进度」；
+落地记录 `docs/design/2026-07-03-r3.4-intent-eval-baseline.md`）
 - 背景：G3。
 - 任务：① `test/eval_fast_intent.py`：以飞书 1465 意图库+88 corpus 为标注集，输出准确率/召回率报告（JSON+markdown），基线入库；② planner 确定性路由（route_hints 命中）准确率同法；③ CI 比对基线，跌破阈值告警（不阻塞，先观测）。
 - 验收：跑一次生成基线报告入 `docs/reviews/eval/`；故意改坏一条正则能被评测抓到。
+- 落地：飞书 1465 语料不可得（已 gitignore 且磁盘不存在），改用现有 `orchestrator/edge/tests/corpus/`
+  + 新增 `test/eval_corpus/` 历史回归转录（edge 39 条 / route_hints 8 条）；`test/eval_common.py`
+  报告基础设施 + `eval_fast_intent.py`/`eval_route_hints.py` 两个评测入口 + `ci.yml` 新增非阻塞
+  `intent-eval-baseline` job。`route_hints_cases.yaml` 预期值经 `--dump` 对真实 manifest 实测校验
+  （不照抄简化单测 fixture，发现并钉入一处真实交叉命中行为）。验收演练（改坏电池共现词检查/
+  `deep-research` pattern）均精确触发告警。未改任何业务逻辑；全量 1037 passed/6 skipped 零回归。
 
 **T3.5 降级矩阵自动化（M）** ✅ 已完成（`feat/r3.5-degrade-matrix` 已 merge main；GitHub
 `workflow_dispatch` 一次实跑全绿 run `28643924654`；落地记录

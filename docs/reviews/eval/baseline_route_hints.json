@@ -1,0 +1,184 @@
+{
+  "meta": {
+    "subject": "route_hints",
+    "generated_at": "2026-07-03T09:08:52.847631+00:00",
+    "commit": "f562ae3"
+  },
+  "corpus_sources": [
+    {
+      "path": "test/eval_corpus/route_hints_cases.yaml",
+      "count": 8
+    }
+  ],
+  "buckets": {
+    "route_recall": {
+      "total": 4,
+      "passed": 4,
+      "failures": [],
+      "pass_rate": 1.0
+    },
+    "route_guardrail": {
+      "total": 4,
+      "passed": 4,
+      "failures": [],
+      "pass_rate": 1.0
+    }
+  },
+  "overall": {
+    "total": 8,
+    "passed": 8,
+    "pass_rate": 1.0
+  },
+  "cases": {
+    "route::帮我深入调研一下固态电池": {
+      "id": "route::帮我深入调研一下固态电池",
+      "bucket": "route_recall",
+      "text": "帮我深入调研一下固态电池",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "replace",
+        "recall"
+      ],
+      "source": "orchestrator/cloud/tests/test_route_hints.py::test_replace_on_empty_plan_sets_single_step"
+    },
+    "route::深入研究一下这个": {
+      "id": "route::深入研究一下这个",
+      "bucket": "route_guardrail",
+      "text": "深入研究一下这个",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "replace",
+        "already_routed"
+      ],
+      "source": "orchestrator/cloud/tests/test_route_hints.py::test_replace_keeps_when_intent_already_present"
+    },
+    "route::导航去第2天换一个": {
+      "id": "route::导航去第2天换一个",
+      "bucket": "route_recall",
+      "text": "导航去第2天换一个",
+      "expected": [
+        "trip.modify"
+      ],
+      "actual": [
+        "trip.modify"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip",
+        "guard",
+        "cross_hint"
+      ],
+      "source": "orchestrator/cloud/tests/test_route_hints.py::test_guard_blocks_match（真实 manifest 下改判）"
+    },
+    "route::搜一下固态电池": {
+      "id": "route::搜一下固态电池",
+      "bucket": "route_guardrail",
+      "text": "搜一下固态电池",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "guardrail"
+      ],
+      "source": "orchestrator/cloud/tests/test_planning.py::test_plain_search_not_hijacked_by_research_net"
+    },
+    "route::导航去北京南站": {
+      "id": "route::导航去北京南站",
+      "bucket": "route_guardrail",
+      "text": "导航去北京南站",
+      "expected": [
+        "navigation.navigate_to"
+      ],
+      "actual": [
+        "navigation.navigate_to"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip",
+        "guardrail"
+      ],
+      "source": "orchestrator/cloud/tests/test_planning.py::test_does_not_inject_trip_for_plain_navigation"
+    },
+    "route::周末去杭州两天带老人看看天气": {
+      "id": "route::周末去杭州两天带老人看看天气",
+      "bucket": "route_guardrail",
+      "text": "周末去杭州两天带老人看看天气",
+      "expected": [
+        "info.weather"
+      ],
+      "actual": [
+        "info.weather"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip",
+        "guardrail",
+        "agent_absent"
+      ],
+      "source": "orchestrator/cloud/tests/test_planning.py::test_does_not_inject_trip_when_planner_unavailable"
+    },
+    "route::安排去杭州的行程": {
+      "id": "route::安排去杭州的行程",
+      "bucket": "route_recall",
+      "text": "安排去杭州的行程",
+      "expected": [
+        "info.weather",
+        "trip.plan"
+      ],
+      "actual": [
+        "info.weather",
+        "trip.plan"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip",
+        "append"
+      ],
+      "source": "orchestrator/cloud/tests/test_route_hints.py::test_append_adds_parallel_step_keeping_existing"
+    },
+    "route::导航第3天": {
+      "id": "route::导航第3天",
+      "bucket": "route_recall",
+      "text": "导航第3天",
+      "expected": [
+        "trip.navigate"
+      ],
+      "actual": [
+        "trip.navigate"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip",
+        "replace"
+      ],
+      "source": "orchestrator/cloud/tests/test_route_hints.py::test_slot_templating_text_and_capture_group"
+    }
+  }
+}

@@ -1,0 +1,527 @@
+{
+  "meta": {
+    "subject": "fast_intent",
+    "generated_at": "2026-07-03T09:08:52.180872+00:00",
+    "commit": "f562ae3"
+  },
+  "corpus_sources": [
+    {
+      "path": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition",
+      "count": 15
+    },
+    {
+      "path": "test/eval_corpus/edge_regressions.yaml::positive",
+      "count": 7
+    },
+    {
+      "path": "test/eval_corpus/edge_regressions.yaml::hijack_guard",
+      "count": 3
+    },
+    {
+      "path": "orchestrator/edge/tests/corpus/multi_intent.yaml::split",
+      "count": 8
+    },
+    {
+      "path": "orchestrator/edge/tests/corpus/multi_intent.yaml::no_split",
+      "count": 6
+    }
+  ],
+  "buckets": {
+    "object_recognition": {
+      "total": 22,
+      "passed": 22,
+      "failures": [],
+      "pass_rate": 1.0
+    },
+    "object_recognition_guardrail": {
+      "total": 3,
+      "passed": 3,
+      "failures": [],
+      "pass_rate": 1.0
+    },
+    "multi_intent_split": {
+      "total": 8,
+      "passed": 8,
+      "failures": [],
+      "pass_rate": 1.0
+    },
+    "multi_intent_no_split": {
+      "total": 6,
+      "passed": 6,
+      "failures": [],
+      "pass_rate": 1.0
+    }
+  },
+  "overall": {
+    "total": 39,
+    "passed": 39,
+    "pass_rate": 1.0
+  },
+  "cases": {
+    "object_recognition::打开空调": {
+      "id": "object_recognition::打开空调",
+      "bucket": "object_recognition",
+      "text": "打开空调",
+      "expected": "aircon",
+      "actual": "aircon",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::空调调到26度": {
+      "id": "object_recognition::空调调到26度",
+      "bucket": "object_recognition",
+      "text": "空调调到26度",
+      "expected": "aircon",
+      "actual": "aircon",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::关闭空调": {
+      "id": "object_recognition::关闭空调",
+      "bucket": "object_recognition",
+      "text": "关闭空调",
+      "expected": "aircon",
+      "actual": "aircon",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::打开车窗": {
+      "id": "object_recognition::打开车窗",
+      "bucket": "object_recognition",
+      "text": "打开车窗",
+      "expected": "window",
+      "actual": "window",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::关闭车窗": {
+      "id": "object_recognition::关闭车窗",
+      "bucket": "object_recognition",
+      "text": "关闭车窗",
+      "expected": "window",
+      "actual": "window",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::把天窗打开": {
+      "id": "object_recognition::把天窗打开",
+      "bucket": "object_recognition",
+      "text": "把天窗打开",
+      "expected": "sunroof",
+      "actual": "sunroof",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::打开遮阳帘": {
+      "id": "object_recognition::打开遮阳帘",
+      "bucket": "object_recognition",
+      "text": "打开遮阳帘",
+      "expected": "sunshade",
+      "actual": "sunshade",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::打开座椅加热": {
+      "id": "object_recognition::打开座椅加热",
+      "bucket": "object_recognition",
+      "text": "打开座椅加热",
+      "expected": "seat",
+      "actual": "seat",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::座椅通风打开": {
+      "id": "object_recognition::座椅通风打开",
+      "bucket": "object_recognition",
+      "text": "座椅通风打开",
+      "expected": "seat",
+      "actual": "seat",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::氛围灯调成蓝色": {
+      "id": "object_recognition::氛围灯调成蓝色",
+      "bucket": "object_recognition",
+      "text": "氛围灯调成蓝色",
+      "expected": "ambient_light",
+      "actual": "ambient_light",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::播放音乐": {
+      "id": "object_recognition::播放音乐",
+      "bucket": "object_recognition",
+      "text": "播放音乐",
+      "expected": [
+        "media",
+        "music"
+      ],
+      "actual": "music",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::把音量调大": {
+      "id": "object_recognition::把音量调大",
+      "bucket": "object_recognition",
+      "text": "把音量调大",
+      "expected": "volume",
+      "actual": "volume",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::打开后备箱": {
+      "id": "object_recognition::打开后备箱",
+      "bucket": "object_recognition",
+      "text": "打开后备箱",
+      "expected": "trunk",
+      "actual": "trunk",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::打开雨刮": {
+      "id": "object_recognition::打开雨刮",
+      "bucket": "object_recognition",
+      "text": "打开雨刮",
+      "expected": "wiper",
+      "actual": "wiper",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::打开大灯": {
+      "id": "object_recognition::打开大灯",
+      "bucket": "object_recognition",
+      "text": "打开大灯",
+      "expected": "headlight",
+      "actual": "headlight",
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/vehicle_objects.yaml::intent_recognition"
+    },
+    "object_recognition::当前还剩多少电量": {
+      "id": "object_recognition::当前还剩多少电量",
+      "bucket": "object_recognition",
+      "text": "当前还剩多少电量",
+      "expected": "battery",
+      "actual": "battery",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "battery",
+        "positive"
+      ],
+      "source": "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_query_classified_and_local"
+    },
+    "object_recognition::电量还有多少": {
+      "id": "object_recognition::电量还有多少",
+      "bucket": "object_recognition",
+      "text": "电量还有多少",
+      "expected": "battery",
+      "actual": "battery",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "battery",
+        "positive"
+      ],
+      "source": "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_query_classified_and_local"
+    },
+    "object_recognition::还剩多少电": {
+      "id": "object_recognition::还剩多少电",
+      "bucket": "object_recognition",
+      "text": "还剩多少电",
+      "expected": "battery",
+      "actual": "battery",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "battery",
+        "positive"
+      ],
+      "source": "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_query_classified_and_local"
+    },
+    "object_recognition::电池还有多少": {
+      "id": "object_recognition::电池还有多少",
+      "bucket": "object_recognition",
+      "text": "电池还有多少",
+      "expected": "battery",
+      "actual": "battery",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "battery",
+        "positive"
+      ],
+      "source": "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_with_level_or_status_word_still_local"
+    },
+    "object_recognition::电池剩多少电": {
+      "id": "object_recognition::电池剩多少电",
+      "bucket": "object_recognition",
+      "text": "电池剩多少电",
+      "expected": "battery",
+      "actual": "battery",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "battery",
+        "positive"
+      ],
+      "source": "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_with_level_or_status_word_still_local"
+    },
+    "object_recognition::看下电池状态": {
+      "id": "object_recognition::看下电池状态",
+      "bucket": "object_recognition",
+      "text": "看下电池状态",
+      "expected": "battery",
+      "actual": "battery",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "battery",
+        "positive"
+      ],
+      "source": "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_with_level_or_status_word_still_local"
+    },
+    "object_recognition::电池健康吗": {
+      "id": "object_recognition::电池健康吗",
+      "bucket": "object_recognition",
+      "text": "电池健康吗",
+      "expected": "battery",
+      "actual": "battery",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "battery",
+        "positive"
+      ],
+      "source": "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_with_level_or_status_word_still_local"
+    },
+    "object_recognition_guardrail::深入调研一下固态电池的现状和量产前景": {
+      "id": "object_recognition_guardrail::深入调研一下固态电池的现状和量产前景",
+      "bucket": "object_recognition_guardrail",
+      "text": "深入调研一下固态电池的现状和量产前景",
+      "expected": "!= battery",
+      "actual": null,
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "battery",
+        "hijack",
+        "research_topic"
+      ],
+      "source": "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_topic_not_hijacked_as_battery_query"
+    },
+    "object_recognition_guardrail::固态电池技术": {
+      "id": "object_recognition_guardrail::固态电池技术",
+      "bucket": "object_recognition_guardrail",
+      "text": "固态电池技术",
+      "expected": "!= battery",
+      "actual": null,
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "battery",
+        "hijack",
+        "research_topic"
+      ],
+      "source": "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_topic_not_hijacked_as_battery_query"
+    },
+    "object_recognition_guardrail::研究下电池行业的发展": {
+      "id": "object_recognition_guardrail::研究下电池行业的发展",
+      "bucket": "object_recognition_guardrail",
+      "text": "研究下电池行业的发展",
+      "expected": "!= battery",
+      "actual": null,
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "battery",
+        "hijack",
+        "research_topic"
+      ],
+      "source": "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_topic_not_hijacked_as_battery_query"
+    },
+    "multi_intent_split::座椅加热和座椅通风安排上": {
+      "id": "multi_intent_split::座椅加热和座椅通风安排上",
+      "bucket": "multi_intent_split",
+      "text": "座椅加热和座椅通风安排上",
+      "expected": 2,
+      "actual": 2,
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::split"
+    },
+    "multi_intent_split::空调打开和氛围灯打开": {
+      "id": "multi_intent_split::空调打开和氛围灯打开",
+      "bucket": "multi_intent_split",
+      "text": "空调打开和氛围灯打开",
+      "expected": 2,
+      "actual": 2,
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::split"
+    },
+    "multi_intent_split::打开天窗同时关上遮阳帘": {
+      "id": "multi_intent_split::打开天窗同时关上遮阳帘",
+      "bucket": "multi_intent_split",
+      "text": "打开天窗同时关上遮阳帘",
+      "expected": 2,
+      "actual": 2,
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::split"
+    },
+    "multi_intent_split::关闭空调然后打开车窗": {
+      "id": "multi_intent_split::关闭空调然后打开车窗",
+      "bucket": "multi_intent_split",
+      "text": "关闭空调然后打开车窗",
+      "expected": 2,
+      "actual": 2,
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::split"
+    },
+    "multi_intent_split::播放音乐并把音量调大": {
+      "id": "multi_intent_split::播放音乐并把音量调大",
+      "bucket": "multi_intent_split",
+      "text": "播放音乐并把音量调大",
+      "expected": 2,
+      "actual": 2,
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::split"
+    },
+    "multi_intent_split::空调调到26度，再打开座椅加热": {
+      "id": "multi_intent_split::空调调到26度，再打开座椅加热",
+      "bucket": "multi_intent_split",
+      "text": "空调调到26度，再打开座椅加热",
+      "expected": 2,
+      "actual": 2,
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::split"
+    },
+    "multi_intent_split::打开空调，播放音乐，然后把音量调大": {
+      "id": "multi_intent_split::打开空调，播放音乐，然后把音量调大",
+      "bucket": "multi_intent_split",
+      "text": "打开空调，播放音乐，然后把音量调大",
+      "expected": 3,
+      "actual": 3,
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::split"
+    },
+    "multi_intent_split::打开空调然后导航去深圳": {
+      "id": "multi_intent_split::打开空调然后导航去深圳",
+      "bucket": "multi_intent_split",
+      "text": "打开空调然后导航去深圳",
+      "expected": 2,
+      "actual": 2,
+      "passed": true,
+      "detail": "",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::split"
+    },
+    "multi_intent_no_split::打开空调": {
+      "id": "multi_intent_no_split::打开空调",
+      "bucket": "multi_intent_no_split",
+      "text": "打开空调",
+      "expected": null,
+      "actual": null,
+      "passed": true,
+      "detail": "单意图",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::no_split"
+    },
+    "multi_intent_no_split::关闭车窗": {
+      "id": "multi_intent_no_split::关闭车窗",
+      "bucket": "multi_intent_no_split",
+      "text": "关闭车窗",
+      "expected": null,
+      "actual": null,
+      "passed": true,
+      "detail": "单意图",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::no_split"
+    },
+    "multi_intent_no_split::给我讲个笑话": {
+      "id": "multi_intent_no_split::给我讲个笑话",
+      "bucket": "multi_intent_no_split",
+      "text": "给我讲个笑话",
+      "expected": null,
+      "actual": null,
+      "passed": true,
+      "detail": "单意图闲聊",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::no_split"
+    },
+    "multi_intent_no_split::播周杰伦的歌": {
+      "id": "multi_intent_no_split::播周杰伦的歌",
+      "bucket": "multi_intent_no_split",
+      "text": "播周杰伦的歌",
+      "expected": null,
+      "actual": null,
+      "passed": true,
+      "detail": "歌手限定不拆",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::no_split"
+    },
+    "multi_intent_no_split::导航去北京和上海": {
+      "id": "multi_intent_no_split::导航去北京和上海",
+      "bucket": "multi_intent_no_split",
+      "text": "导航去北京和上海",
+      "expected": null,
+      "actual": null,
+      "passed": true,
+      "detail": "导航目的地并列不拆，整句上云",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::no_split"
+    },
+    "multi_intent_no_split::我和你聊天": {
+      "id": "multi_intent_no_split::我和你聊天",
+      "bucket": "multi_intent_no_split",
+      "text": "我和你聊天",
+      "expected": null,
+      "actual": null,
+      "passed": true,
+      "detail": "人名/词组不误拆",
+      "tags": [],
+      "source": "orchestrator/edge/tests/corpus/multi_intent.yaml::no_split"
+    }
+  }
+}

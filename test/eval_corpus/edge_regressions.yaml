@@ -1,0 +1,59 @@
+# 端侧 fast_intent 历史缺陷回归语料（T3.4）。转录自
+# orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery 的内联 pytest 断言，
+# 供 test/eval_fast_intent.py 纳入评测基线做逐例回归比对；不替代原 pytest（继续独立运行，
+# 是第一道防线，本文件是把同一批案例也变成可聚合基线的第二道防线）。
+#
+# 背景：裸"电池"过宽匹配，曾把"深入调研固态电池"劫持成电量查询（"电量72%"），已收窄为
+# 须与电量级/状态词共现（见 fast_intent.py 电池共现词检查）。
+#
+# schema:
+#   text: 输入
+#   expect_object: 期望 classify_structured(text)["data"]["object"]（与 forbid_object 二选一）
+#   forbid_object: 期望"绝不能"被判成该 object（劫持检测专用；classify_structured 返回 None
+#                  也算通过——"别劫持成 battery"不代表"必须能分类成别的东西"）
+#   source: 溯源（原 pytest 文件:类:方法），供人工核对
+#   tags: 分桶/检索标签
+
+positive:
+  - text: 当前还剩多少电量
+    expect_object: battery
+    source: "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_query_classified_and_local"
+    tags: [battery, positive]
+  - text: 电量还有多少
+    expect_object: battery
+    source: "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_query_classified_and_local"
+    tags: [battery, positive]
+  - text: 还剩多少电
+    expect_object: battery
+    source: "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_query_classified_and_local"
+    tags: [battery, positive]
+  - text: 电池还有多少
+    expect_object: battery
+    source: "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_with_level_or_status_word_still_local"
+    tags: [battery, positive]
+  - text: 电池剩多少电
+    expect_object: battery
+    source: "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_with_level_or_status_word_still_local"
+    tags: [battery, positive]
+  - text: 看下电池状态
+    expect_object: battery
+    source: "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_with_level_or_status_word_still_local"
+    tags: [battery, positive]
+  - text: 电池健康吗
+    expect_object: battery
+    source: "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_with_level_or_status_word_still_local"
+    tags: [battery, positive]
+
+hijack_guard:
+  - text: 深入调研一下固态电池的现状和量产前景
+    forbid_object: battery
+    source: "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_topic_not_hijacked_as_battery_query"
+    tags: [battery, hijack, research_topic]
+  - text: 固态电池技术
+    forbid_object: battery
+    source: "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_topic_not_hijacked_as_battery_query"
+    tags: [battery, hijack, research_topic]
+  - text: 研究下电池行业的发展
+    forbid_object: battery
+    source: "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_topic_not_hijacked_as_battery_query"
+    tags: [battery, hijack, research_topic]
