@@ -71,12 +71,26 @@
   `e2e_ws` 4/4（非破坏）+ mTLS 模式全栈 26 起 + `e2e_ws` 4/4 加密链路 + `test/e2e_mtls.py` ALL PASS（云端 mTLS 通 +
   insecure 探针被拒=强制）。已合并 main（`37817c8`）；落地记录 `docs/design/2026-07-02-r3.2-service-mtls.md`。
   **至此 T3.1+T3.2 齐，安全链路无已知缺口**（D1 收官；剩真实 IdP/JWT 轮换、per-service 证书轮换属后续硬化）。
+- **R3.3 = T3.3 · e2e 入 CI 门禁（G2）** — 新 `.github/workflows/nightly-e2e.yml`（`schedule`+`workflow_dispatch`，
+  全 mock 模式零 secrets），跑裁剪过的确定性子集（`ws`/`central_hub_assertions`[3 case]/`context`[4 case]/
+  `memory`/`resilience`/`trip`/`research`/`research_async`，比卡片字面 5 个多纳入 trip/research/research_async——
+  三者因 `route_hints`+确定性 fallback 生成器在 mock 下同样可靠）。**对卡片原描述的纠偏**：卡片字面 5 个脚本
+  不能整份跑——MockProvider 非 JSON 输出下 planning 兜底路由到 chitchat（除非 Agent 声明 `route_hints`，全仓仅
+  trip_planner/deep_research 声明），导致 central_hub 的导航/媒体 case、context 的 battery_query case、
+  memory 链路 1/2/3（均依赖真实 embedding 或真实 chat）在纯 mock 下逻辑上必然失败；用 `--case` 过滤 + 给
+  `e2e_memory.py` 三条链路补 SKIP guard（复用其链路 6 已有惯例）解决。`make e2e` 同步从空跑的
+  `cd test && pytest -q`（收集不到任何 `e2e_*.py`）改为 `scripts/run_e2e.{sh,ps1}` 本地全量清单执行器。
+  **未改编排核心**。commit `e54a914`(实现)/`cb70239`(文档)/`25b85aa`(首跑发现链路2遗漏后修复)。验证：全量
+  **1030 passed/6 skipped** 零回归 + 本地 `run_e2e.sh` 对真实 key 栈 10/10（另发现 1 处与本卡无关的既有失败
+  `e2e_process_region.py` 默认泊车态断言，已记录不顺手修）+ **GitHub `workflow_dispatch` 二次实跑全绿**
+  （run `28639607108`，3m59s，含"断言型 e2e 套件"步骤本身 success）；落地记录
+  `docs/design/2026-07-03-r3.3-e2e-ci-gate.md`。
 
 **⬜ 未完成（新会话可接续，按优先级）：**
 
 | 任务 | 关联审计项 | 规模 | 备注 |
 |---|---|---|---|
-| **R3.3–R3.6 量产硬化** | G2–G8 | 各 M | e2e 入门禁(T3.3) / 路由评测基线(T3.4) / 降级矩阵(T3.5) / Prometheus·OTel(T3.6) |
+| **R3.4–R3.6 量产硬化** | G3–G8 | 各 M | 路由评测基线(T3.4) / 降级矩阵(T3.5) / Prometheus·OTel(T3.6) |
 | **R4 能力演进** | — | 见 §4 | 按需排期 |
 
 **残留小尾**：`orchestrator/cloud/planning.py::_PLANNER_SYSTEM` 内一处 trip few-shot 示例属 **D10（Prompt 管理）**，非 D5 路由债、且不随 Agent 数增长——暂留，纳入未来 Prompt 资产化工作。
@@ -339,10 +353,17 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
 - 验收：`GRPC_TLS=on` 下全栈起、smoke+e2e_ws 过；抓包确认加密。
 - 落地：服务间 gRPC 双向 TLS，全 env 门控默认关（`GRPC_TLS` 未设=insecure 逐字保持现状）。**单张共享 mesh 证书 + name override**（`ssl_target_name_override`/`ServerName` 固定 `cockpit-mesh`）解决 agent 用动态容器 hostname 注册 endpoint、免枚举 SAN。Python 经共享工厂 `runtime/grpcio.py`（`aio_channel` secure + 新 `bind_port`，7 处 server 绑定切换 + 修 1 处 stray channel）；Go 新共享包 `gateway/tlscfg`（两网关 3 dial + cloud server）；`scripts/gen-certs.{ps1,sh}` 生成证书（gitignore）；compose `x-certs-vol` 挂 19 个 mesh 服务 + `GRPC_TLS` env。**未改 proto/编排核心逻辑**。验证：全量 **1030 passed/6 skipped** + Go build+test（含 tlscfg）+ 默认模式 `e2e_ws` 4/4（非破坏）+ mTLS 模式 `e2e_ws` 4/4 加密链路 + `e2e_mtls`（云端 mTLS 通 + insecure 探针被拒=强制）。**取舍**：共享证书非量产（应 per-service+SPIFFE/轮换）；HMI WS 明文（范围外）。**至此 T3.1+T3.2 齐，安全链路无已知缺口。**
 
-**T3.3 e2e 入门禁（M）**
+**T3.3 e2e 入门禁（M）** ✅ 已完成（`feat/r3.3-e2e-ci-gate` 已 merge main；GitHub `workflow_dispatch`
+二次实跑全绿 run `28639607108`；落地记录 `docs/design/2026-07-03-r3.3-e2e-ci-gate.md`；见顶部「执行进度」）
 - 背景：G2。
 - 任务：① 新 GitHub Actions nightly workflow：compose up（无 LLM key 走 mock）→ 顺序跑断言型 e2e（central_hub/context/memory/ws/resilience）→ 产物上传日志；② `make e2e` 改为显式执行 e2e 脚本清单（修正「假 e2e」）；③ PR 门禁保留 smoke_edge。
 - 验收：nightly 在 GitHub 实际跑通一次全绿；本地 `make e2e` 输出与脚本清单一致。
+- 落地：卡片字面 5 个脚本经验证不能在纯 mock 下整份跑通（route_hints 只有 trip_planner/deep_research 声明，
+  其余 Agent 在 MockProvider 非 JSON 输出下兜底落 chitchat）——改为 `--case` 过滤 central_hub/context 的
+  mock-safe 子集 + `e2e_memory.py` 三条依赖真实 LLM/embedding 的链路补 SKIP guard，另纳入 mock 下同样可靠的
+  trip/research/research_async（route_hints+确定性 fallback）。首次实跑发现链路 2「planner召回注入」遗漏
+  （弱字面重叠召回同样依赖真实 embedding，前期分析漏判为 mock-safe），修复后二次实跑全绿。`make e2e` 改用
+  `scripts/run_e2e.{sh,ps1}` 本地全量清单执行器。**未改编排核心**。
 
 **T3.4 意图路由评测基线（M）**
 - 背景：G3。
