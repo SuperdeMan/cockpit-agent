@@ -85,12 +85,27 @@
   `e2e_process_region.py` 默认泊车态断言，已记录不顺手修）+ **GitHub `workflow_dispatch` 二次实跑全绿**
   （run `28639607108`，3m59s，含"断言型 e2e 套件"步骤本身 success）；落地记录
   `docs/design/2026-07-03-r3.3-e2e-ci-gate.md`。
+- **R3.5 = T3.5 · 降级矩阵自动化（G4）** — 新 `test/e2e_degrade.py` 刻画架构 §3.3 四行真实现状：
+  单 Agent 故障（`trip-planner-agent` stop/start，唯二 mock 下路由确定的 Agent 之一，断言可观测 span
+  status 而非聚合器话术原文）/ LLM 超时（`llm-gateway/providers.py::MockProvider` 新增
+  `LLM_MOCK_DELAY_MS` 测试钩子）/ 云 Planner 故障（`cloud-planner` stop/start，断言"云端处理异常"）/
+  断网（`cloud-gateway` pause/unpause，断言车控秒回+"网络不太好"降级话术）。**真实跑（非纸面设计）
+  暴露两处需要推翻重来**：① Row 4 原计划断言命中 `aggregator._ERROR_FRIENDLY["step_timeout"]` 固定
+  话术不成立——chitchat 走 `engine.py` D0 单步流式直通、不受 executor 层超时包装管辖，重域 Agent 的
+  "heavy"预算又被刻意放宽到 200s 都测不出来，改断言"LLM 变慢时系统仍优雅响应、不挂不崩"这一更朴素但
+  真实成立的性质；② **额外发现第 4 处真实缺口**（研究阶段 3 处之外）：`cloud-gateway` pause/unpause
+  后 `edge-orchestrator` 持久 channel 不会像"换 IP"场景那样自愈（日志反复 `Missed too many pongs` 后
+  仍 `cloud channel not connected`），恢复步骤加显式 `restart edge-orchestrator` 兜底（不修此缺口，
+  同前 3 处一视同仁记录留后续）。**未改编排核心**。commit `0355b1b`(实现)/`02a4896`(文档)。验证：
+  本地三轮验证收敛到 4/4 全过 + 全量 **1030 passed/6 skipped** 零回归 + **GitHub `workflow_dispatch`
+  一次实跑即全绿**（run `28643924654`，9m17s，未像 T3.3 那样需要二次修复——本地已提前发现并修正两处
+  问题）；落地记录 `docs/design/2026-07-03-r3.5-degrade-matrix-e2e.md`。
 
 **⬜ 未完成（新会话可接续，按优先级）：**
 
 | 任务 | 关联审计项 | 规模 | 备注 |
 |---|---|---|---|
-| **R3.4–R3.6 量产硬化** | G3–G8 | 各 M | 路由评测基线(T3.4) / 降级矩阵(T3.5) / Prometheus·OTel(T3.6) |
+| **R3.4/R3.6 量产硬化** | G3/G5-G8 | 各 M | 路由评测基线(T3.4) / Prometheus·OTel(T3.6) |
 | **R4 能力演进** | — | 见 §4 | 按需排期 |
 
 **残留小尾**：`orchestrator/cloud/planning.py::_PLANNER_SYSTEM` 内一处 trip few-shot 示例属 **D10（Prompt 管理）**，非 D5 路由债、且不随 Agent 数增长——暂留，纳入未来 Prompt 资产化工作。
@@ -370,10 +385,19 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
 - 任务：① `test/eval_fast_intent.py`：以飞书 1465 意图库+88 corpus 为标注集，输出准确率/召回率报告（JSON+markdown），基线入库；② planner 确定性路由（route_hints 命中）准确率同法；③ CI 比对基线，跌破阈值告警（不阻塞，先观测）。
 - 验收：跑一次生成基线报告入 `docs/reviews/eval/`；故意改坏一条正则能被评测抓到。
 
-**T3.5 降级矩阵自动化（M）**
+**T3.5 降级矩阵自动化（M）** ✅ 已完成（`feat/r3.5-degrade-matrix` 已 merge main；GitHub
+`workflow_dispatch` 一次实跑全绿 run `28643924654`；落地记录
+`docs/design/2026-07-03-r3.5-degrade-matrix-e2e.md`；见顶部「执行进度」）
 - 背景：G4。
 - 任务：e2e_degrade.py 覆盖 §3.3 四行：断网（pause cloud-gateway→车控仍本地秒回+降级话术）、云 Planner 故障、单 Agent 故障（FAILED step 不炸 DAG+fallback）、LLM 超时（mock 慢响应→占位+降级）。
 - 验收：4 用例断言型全过并纳入 nightly。
+- 落地：单 Agent 故障选 trip-planner（唯二 mock 下路由确定的 Agent，断言可观测 span status 而非
+  聚合器话术原文——executor.py 丢 error.message 导致快速失败话术是通用"处理失败"）；LLM 超时给
+  `MockProvider` 新增 `LLM_MOCK_DELAY_MS` 测试钩子，但真实跑发现原计划"命中固定超时话术"不成立
+  （chitchat 走 D0 流式直通不受 executor 超时管辖，heavy Agent 预算又放宽到测不出来），改断言
+  "系统变慢时仍优雅响应"这一更朴素但真实成立的性质；真实跑还额外发现一处非本卡引入的缺口——
+  `cloud-gateway` pause/unpause 后 `edge-orchestrator` 不像"换 IP"场景那样自愈，恢复步骤加显式
+  重启兜底（不修，记录留后续）。**未改编排核心**。
 
 **T3.6 Prometheus/OTel 导出（M）**
 - 背景：架构 §10 目标态。
