@@ -72,6 +72,12 @@ def _mock_embed_one(text: str) -> list[float]:
 class MockProvider(BaseProvider):
     """无 API key 时的兜底，保证 PoC 可离线端到端跑通。"""
     async def complete(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
+        # T3.5 e2e_degrade.py 测试钩子：LLM_MOCK_DELAY_MS（默认 "0"，零行为变化）。调用时
+        # （非构造时）读 env，供测试注入人为延迟，确定性触发 executor 层 step_timeout，
+        # 刻画"LLM 超时"降级行为。stream() 内部调用本方法，无需重复加。
+        delay_ms = int(os.getenv("LLM_MOCK_DELAY_MS", "0") or 0)
+        if delay_ms > 0:
+            await asyncio.sleep(delay_ms / 1000.0)
         user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
         text = f"[mock] 我听到你说「{user}」。配置 LLM_API_KEY 后即可接入真实模型。"
         return text, "mock", "stop", (0, 0)

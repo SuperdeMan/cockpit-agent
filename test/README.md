@@ -68,6 +68,7 @@ python test/e2e_resilience.py             # 断言型：依赖服务 --force-rec
 python test/e2e_trip.py                    # 断言型：行程规划 6 轮（结构化卡+真实 POI 接地+跨轮持久化+确认收尾+改某天不漂移+下一站导航+在途状态/精简）
 python test/e2e_research.py                # 断言型：深度调研（research_report 分节报告+真实来源、多轮「展开第N点」聚焦深挖、普通搜索不被劫持、新闻「详细讲讲第N条」深挖桥接）
 python test/e2e_research_async.py          # 断言型：异步分钟级深调研（明示「不急/查完告诉我」→秒级受理 ack→后台 deep 流水线越过 90s 上限→NATS agent.proactive 主动推送带 card 报告卡，真栈 9 节/36 源/~3031 字）
+python test/e2e_degrade.py                 # 断言型：架构 §3.3 降级矩阵四行（单 Agent 故障/LLM 超时/云 Planner 故障/断网）——docker 级故障注入 + 严格 try/finally 恢复，务必放在其它 e2e 脚本之后跑
 python test/e2e_auth.py                    # 断言型：会话鉴权（需 AUTH_REQUIRED=true + token，非默认栈配置）
 python test/e2e_mtls.py                    # 断言型：服务间 mTLS（需 GRPC_TLS=on + scripts/gen-certs.*，非默认栈配置）
 python -m pytest test/e2e_real_providers.py -q -s   # 无需 docker：真实三方 provider 冒烟（按 key 自动 skip）
