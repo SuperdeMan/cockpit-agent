@@ -1,0 +1,121 @@
+name: Nightly E2E (assertion suite, mock mode)
+
+# Roadmap T3.3（docs/reviews/2026-07-02-repo-audit-and-roadmap.md §4）。
+# 与 test/nightly/（pytest `nightly` marker、需真实 LLM_API_KEY 的语料回归，见
+# test/nightly/README.md）是两个不相关的概念，只是碰巧都叫 nightly——本 workflow
+# 跑的是 test/e2e_*.py 断言型脚本，全程 Mock 模式、零 GitHub secrets。
+#
+# 为什么是裁剪子集而不是 roadmap 卡片字面提到的 5 个脚本整份跑：MockProvider 返回
+# 非 JSON 文本，planning._parse_and_validate 解析必炸 → 兜底路由到 chitchat，除非
+# 目标 Agent 声明了 route_hints（全仓只有 trip_planner/deep_research 声明了）。所以
+# central_hub_assertions 的导航/媒体两个 case、context 的 battery_query 那个 case、
+# memory 的真 embedding/真 chat 两条链路在纯 Mock 下逻辑上必然失败——用 --case 过滤
+# 跳过前两者，用 e2e_memory.py 自身的 SKIP 惯例跳过后者。反过来 trip/research/
+# research_async 因为有 route_hints + 确定性 fallback 生成器，Mock 下稳定可靠，
+# 一并纳入。详见 docs/design/2026-07-03-r3.3-e2e-ci-gate.md。
+
+on:
+  schedule:
+    - cron: "0 18 * * *"   # UTC 18:00（≈次日 02:00 CST）；可按需调整
+  workflow_dispatch: {}
+
+concurrency:
+  group: nightly-e2e
+  cancel-in-progress: true
+
+jobs:
+  nightly-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60   # 26 服务全新 build（无层缓存）+ 8 个 e2e 脚本；首次实跑后按需调整
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install host-side Python dependencies
+        # 复用 ci.yml 的聚合安装模式（D12，单一真相源）：websockets/grpcio/nats-py 等均来自
+        # 各服务 requirements.txt。本 job 不跑 pytest（8 个 e2e 脚本都是独立 asyncio 脚本），
+        # 不装 pytest/pytest-asyncio。
+        run: |
+          python -m pip install --upgrade pip
+          reqs=$(find . -name requirements.txt \
+                   -not -path './.worktrees/*' \
+                   -not -path './gen/*' \
+                   -not -path '*/node_modules/*' \
+                   -printf '-r %p ')
+          echo "aggregated requirements: $reqs"
+          pip install $reqs
+
+      - name: Set up buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate gRPC code (buf)
+        # 必须先于 compose --build：Python 服务镜像 COPY gen/python（见 memory/Dockerfile、
+        # orchestrator/cloud/Dockerfile 头部注释）；e2e_memory.py 本身也在 host 侧直接
+        # import gen/python 生成的 memory_pb2*。
+        run: buf generate proto
+
+      - name: Prepare .env（不填 LLM_API_KEY/LLM_EMBED_API_KEY，全栈走 Mock）
+        run: cp .env.example .env
+
+      - name: Compose build + up（等容器级就绪）
+        run: docker compose -f compose.yaml up --build -d --wait --wait-timeout 300
+
+      - name: Poll observability-collector healthz（更深一层就绪信号）
+        # --wait 只保证「容器 running」+ redis/nats/postgres 三个 healthcheck 通过；
+        # 其余 ~23 个 app 服务无 healthcheck。collector /healthz 反映其 NATS 连通性，
+        # 是目前系统里仅有的两个真实健康端点之一（另一个 edge-gateway /healthz 是静态桩，
+        # 恒 ok，无参考价值）。这不是完美信号，残余风险见落地记录。
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8092/healthz >/dev/null 2>&1; then
+              echo "collector healthy after ${i}x5s"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::observability-collector 150s 内未就绪"
+          exit 1
+
+      - name: 断言型 e2e 套件（顺序跑，非 fail-fast，跑完全部再汇总退出码）
+        run: |
+          set +e
+          fail=0
+          run_e2e() {
+            echo "::group::$*"
+            python "$@"
+            rc=$?
+            echo "::endgroup::"
+            if [ $rc -ne 0 ]; then fail=1; echo "::error::e2e FAILED: $*"; fi
+          }
+          run_e2e test/e2e_ws.py
+          run_e2e test/e2e_central_hub_assertions.py --case t0_hvac_local --case safety_window_speed_gate --case cloud_chitchat_streaming
+          run_e2e test/e2e_context.py --case ctx_injection_blocked --case ctx_bare_confirm_no_pending --case ctx_trip_plan_fallback --case ctx_trip_modify_fallback
+          run_e2e test/e2e_memory.py
+          run_e2e test/e2e_resilience.py
+          run_e2e test/e2e_trip.py
+          run_e2e test/e2e_research.py
+          run_e2e test/e2e_research_async.py
+          exit $fail
+
+      - name: Dump compose logs（无论成败都留证据）
+        if: always()
+        run: docker compose -f compose.yaml logs --no-color --timestamps > compose-logs.txt 2>&1
+
+      - name: Upload logs artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-e2e-logs-${{ github.run_id }}
+          path: compose-logs.txt
+          retention-days: 14
+
+      - name: Compose down
+        if: always()
+        run: docker compose -f compose.yaml down -v
