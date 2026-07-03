@@ -126,7 +126,9 @@ fixture）后发现"导航去第2天换一个"真实行为是被同句命中的 
 不是简化单测暗示的"guard 拦下=空路由"，已按实测钉入基线。两套逻辑均不经 LLM，"跌破阈值"
 落地为逐例回归比对；验收演练（临时改坏电池共现词检查+`deep-research` pattern）均精确触发
 告警后撤销。**未改 `fast_intent.py`/`route_hints.py`/编排核心任何业务逻辑**；全量
-**1037 passed/6 skipped**（+7）零回归；见 `docs/design/2026-07-03-r3.4-intent-eval-baseline.md`。
+**1037 passed/6 skipped**（+7）零回归；已合并 main 并 push，GitHub Actions
+`intent-eval-baseline` job 随 push-to-main 实跑确认全绿；见
+`docs/design/2026-07-03-r3.4-intent-eval-baseline.md`。
 R3.6/R4 见审计。 |
 
 **结论**：Phase 1 工程化 PoC 主干、云端中枢 P0-P3 与轻量可观测台已通过当前仓库验收

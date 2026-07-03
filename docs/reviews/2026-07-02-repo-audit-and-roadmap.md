@@ -114,7 +114,8 @@
   已按实测结果钉入基线。两套逻辑都是纯规则引擎（不经 LLM），"跌破阈值"落地为逐例回归比对
   （不是模糊统计阈值）；验收演练（临时改坏电池共现词检查 + `deep-research` route_hint pattern）
   均精确触发 `::warning::` 后撤销。**未改 `fast_intent.py`/`route_hints.py`/编排核心任何业务
-  逻辑**。全量 **1037 passed/6 skipped**（+7，新增 `test/test_eval_common.py`）零回归；见
+  逻辑**。全量 **1037 passed/6 skipped**（+7，新增 `test/test_eval_common.py`）零回归；已合并
+  main 并 push，GitHub Actions `intent-eval-baseline` job 随 push-to-main 实跑确认全绿；见
   `docs/design/2026-07-03-r3.4-intent-eval-baseline.md`。
 
 **⬜ 未完成（新会话可接续，按优先级）：**
@@ -406,7 +407,8 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
   报告基础设施 + `eval_fast_intent.py`/`eval_route_hints.py` 两个评测入口 + `ci.yml` 新增非阻塞
   `intent-eval-baseline` job。`route_hints_cases.yaml` 预期值经 `--dump` 对真实 manifest 实测校验
   （不照抄简化单测 fixture，发现并钉入一处真实交叉命中行为）。验收演练（改坏电池共现词检查/
-  `deep-research` pattern）均精确触发告警。未改任何业务逻辑；全量 1037 passed/6 skipped 零回归。
+  `deep-research` pattern）均精确触发告警。未改任何业务逻辑；全量 1037 passed/6 skipped 零回归；
+  已合并 main 并 push，GitHub Actions `intent-eval-baseline` job 实跑确认全绿。
 
 **T3.5 降级矩阵自动化（M）** ✅ 已完成（`feat/r3.5-degrade-matrix` 已 merge main；GitHub
 `workflow_dispatch` 一次实跑全绿 run `28643924654`；落地记录
