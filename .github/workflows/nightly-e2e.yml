@@ -102,6 +102,7 @@ jobs:
           run_e2e test/e2e_trip.py
           run_e2e test/e2e_research.py
           run_e2e test/e2e_research_async.py
+          run_e2e test/e2e_degrade.py
           exit $fail
 
       - name: Dump compose logs（无论成败都留证据）

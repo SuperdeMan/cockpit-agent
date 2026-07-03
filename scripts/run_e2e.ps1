@@ -22,6 +22,7 @@ $steps = @(
     @{ Name = "e2e_trip";                   Cmd = { python test/e2e_trip.py } }
     @{ Name = "e2e_research";               Cmd = { python test/e2e_research.py } }
     @{ Name = "e2e_research_async";         Cmd = { python test/e2e_research_async.py } }
+    @{ Name = "e2e_degrade";                Cmd = { python test/e2e_degrade.py } }
     @{ Name = "e2e_real_providers";         Cmd = { python -m pytest test/e2e_real_providers.py -q -s } }
 )
 

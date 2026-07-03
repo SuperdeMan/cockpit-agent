@@ -121,6 +121,10 @@ services:
       LLM_DISABLE_THINKING: ${LLM_DISABLE_THINKING:-true}
       LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY:-mimo-v2.5-pro}
       LLM_MODEL_FALLBACK: ${LLM_MODEL_FALLBACK:-mimo-v2.5}
+      # T3.5 e2e_degrade.py 测试钩子：MockProvider 人为延迟（ms），默认 0=零行为变化；
+      # 仅该脚本「LLM 超时」用例会用 shell env 临时覆盖调大（不写入 .env，沿用
+      # e2e_auth.py 已确立的"临时 env 覆盖，不改 .env"惯例）。
+      LLM_MOCK_DELAY_MS: ${LLM_MOCK_DELAY_MS:-0}
       # Embedding（记忆语义检索）：默认阿里云百炼 text-embedding-v4（1024 维）。
       # 仅需在根 .env 填 LLM_EMBED_API_KEY=<百炼 key>；其余有默认值。
       LLM_EMBED_URL: ${LLM_EMBED_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings}
