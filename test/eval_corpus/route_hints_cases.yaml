@@ -1,0 +1,74 @@
+# Cloud 侧 RouteHintEngine 确定性路由评测语料（T3.4②）。直调 RouteHintEngine.apply +
+# 真实 agents/*/manifest.yaml（不经 LLM/PlanBuilder.build），聚焦"路由兜底规则本身"。
+#
+# 用"路由前后 plan 的 intent 列表"统一断言（不用 expect_intent/expect_no_route 两套字段）：
+# RouteHintEngine.apply() 的 hit 返回值有反直觉之处——"LLM 已经路由对了"和"guard 拦下/
+# pattern 不匹配"都会导致 plan.steps 不变，但前者 hit=True、后者 hit=False。直接比较最终
+# intent 列表能用同一断言口径覆盖 replace/append/guard 拦截/已正确路由/优先级冲突。
+#
+# 重要：expect_final_intents 已对着真实 agents/trip_planner/manifest.yaml 与
+# agents/deep_research/manifest.yaml 的当前 route_hints 用 --dump 逐条核实（而非照抄
+# test_route_hints.py 简化版 fixture 的预期）——真实 pattern/guard 用词比单测里的简化版更
+# 丰富，会产生单测里不会出现的跨 hint 交互（见下方"导航去第2天换一个"的注释）。
+#
+# schema:
+#   text: 输入
+#   initial_intents: 施加路由前 plan 里已有的 intent 列表（模拟"LLM 规划出了什么"；
+#                     []=模拟"LLM 完全没规划/降级"）
+#   expect_final_intents: 施加路由后期望的 plan intent 列表（顺序敏感）
+#   agents: 可选，限定参与评测的 agent_id 子集（默认=加载全部 agents/*/manifest.yaml）
+#   source: 溯源
+#   tags:
+
+- text: 帮我深入调研一下固态电池
+  initial_intents: []
+  expect_final_intents: [research.run]
+  source: "orchestrator/cloud/tests/test_route_hints.py::test_replace_on_empty_plan_sets_single_step"
+  tags: [research, replace, recall]
+
+- text: 深入研究一下这个
+  initial_intents: [research.run]
+  expect_final_intents: [research.run]
+  source: "orchestrator/cloud/tests/test_route_hints.py::test_replace_keeps_when_intent_already_present"
+  tags: [research, replace, already_routed]
+
+- text: 导航去第2天换一个
+  initial_intents: []
+  # 真实 manifest 下不是「guard 拦下=什么都不路由」：trip.navigate(90) 的 guard 命中
+  # "换"被拦下，但同一句话也命中 trip.modify(60，无 guard，"第N天...换"）——guard 的实际
+  # 效果是把编辑意图的话让位给 trip.modify，不是产生空结果。这是比简化单测更真实的行为，
+  # 值得钉进基线防回归。
+  expect_final_intents: [trip.modify]
+  source: "orchestrator/cloud/tests/test_route_hints.py::test_guard_blocks_match（真实 manifest 下改判）"
+  tags: [trip, guard, cross_hint]
+
+- text: 搜一下固态电池
+  initial_intents: [info.search]
+  expect_final_intents: [info.search]
+  source: "orchestrator/cloud/tests/test_planning.py::test_plain_search_not_hijacked_by_research_net"
+  tags: [research, guardrail]
+
+- text: 导航去北京南站
+  initial_intents: [navigation.navigate_to]
+  expect_final_intents: [navigation.navigate_to]
+  source: "orchestrator/cloud/tests/test_planning.py::test_does_not_inject_trip_for_plain_navigation"
+  tags: [trip, guardrail]
+
+- text: 周末去杭州两天带老人看看天气
+  initial_intents: [info.weather]
+  agents: [info]                          # trip-planner 故意不注册，验证「Agent 缺席不炸」
+  expect_final_intents: [info.weather]
+  source: "orchestrator/cloud/tests/test_planning.py::test_does_not_inject_trip_when_planner_unavailable"
+  tags: [trip, guardrail, agent_absent]
+
+- text: 安排去杭州的行程
+  initial_intents: [info.weather]
+  expect_final_intents: [info.weather, trip.plan]   # append：并列补步，顺序=先有后补
+  source: "orchestrator/cloud/tests/test_route_hints.py::test_append_adds_parallel_step_keeping_existing"
+  tags: [trip, append]
+
+- text: 导航第3天
+  initial_intents: []
+  expect_final_intents: [trip.navigate]
+  source: "orchestrator/cloud/tests/test_route_hints.py::test_slot_templating_text_and_capture_group"
+  tags: [trip, replace]

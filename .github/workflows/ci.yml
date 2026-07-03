@@ -76,6 +76,58 @@ jobs:
           run_group observability/collector/tests/
           exit $fail
 
+  intent-eval-baseline:
+    # T3.4：fast_intent/route_hints 都是纯规则引擎（零 LLM/docker 依赖），跑一次秒级，
+    # 不需要 3.11/3.12 matrix（评测脚本只调既有代码，不测 Python 版本兼容性）也不需要等
+    # nightly。"跌破基线告警但不阻塞"——脚本默认 exit 0 + 本步骤 continue-on-error 双保险，
+    # 只做观测，不拦 PR（roadmap 原话「不阻塞，先观测」）。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          reqs=$(find . -name requirements.txt \
+                   -not -path './.worktrees/*' \
+                   -not -path './gen/*' \
+                   -printf '-r %p ')
+          pip install pytest pytest-asyncio $reqs
+
+      - name: Set up buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate gRPC code (buf)
+        # eval_route_hints.py 经 agents._sdk.manifest 间接 import cockpit.agent.v1（proto 生成代码）。
+        run: buf generate proto
+
+      - name: Intent routing eval vs baseline
+        continue-on-error: true
+        run: |
+          python test/eval_fast_intent.py \
+            --baseline docs/reviews/eval/baseline_fast_intent.json \
+            --out-json docs/reviews/eval/_ci-run-fast_intent.json \
+            --out-md docs/reviews/eval/_ci-run-fast_intent.md
+          python test/eval_route_hints.py \
+            --baseline docs/reviews/eval/baseline_route_hints.json \
+            --out-json docs/reviews/eval/_ci-run-route_hints.json \
+            --out-md docs/reviews/eval/_ci-run-route_hints.md
+
+      - name: Upload fresh eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intent-eval-report-${{ github.run_id }}
+          path: docs/reviews/eval/_ci-run-*
+          retention-days: 14
+
   go-build-test:
     runs-on: ubuntu-latest
     steps:

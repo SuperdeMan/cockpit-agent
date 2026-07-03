@@ -50,3 +50,6 @@ certs/*.srl
 
 # Isolated feature worktrees
 .worktrees/
+
+# T3.4 意图路由评测：CI 每次跑产生的临时报告，与 docs/reviews/eval/baseline_* 已入库基线区分
+docs/reviews/eval/_ci-run-*
