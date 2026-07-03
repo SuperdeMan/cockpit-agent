@@ -189,7 +189,7 @@ VAL 执行后据 **执行结果（成功/失败/已是该态/无此位置/无此
 ### P1 契约落地（端侧内存模拟，不接真车）
 
 **T1. 导出参考数据 → 仓库 YAML ✅（2026-06-14 已落地）**
-- [x] `orchestrator/edge/knowledge/commands.yaml`：61 个对象，覆盖控制、媒体、连接、
+- [x] `orchestrator/edge/knowledge/commands.yaml`：62 个对象，覆盖控制、媒体、连接、
   导航等公版对象；含 operates/attrs/modes/positions/units/安全和车型裁剪字段。
 - [x] `orchestrator/edge/knowledge/entities.yaml`：532 个实体及位置、模式、颜色、单位、
   操作等归一化字典。
@@ -219,7 +219,10 @@ VAL 执行后据 **执行结果（成功/失败/已是该态/无此位置/无此
 - [x] **根因（planner 张冠李戴）**：未匹配的状态查询（电量/续航/能耗）曾被 LLM planner 硬套成 `tire_pressure.query`→错答"胎压正常"。已在 planner system prompt 加硬规则：query 类意图必须语义精确匹配 capability，否则输出空 steps 交 chitchat 兜底。另修多意图分句器"还有"负向预查 `(?!多少|几|没)`，"电量还有多少"不再被误拆。
 
 ### P2 NLU / 多意图 / 引导播报 / 触发域
-- [ ] 端侧轻量 NLU 模型替换规则（语料：意图表全部句型列 + 词库实体）。
+- [ ] 端侧轻量 NLU 模型替换规则（语料：意图表全部句型列 + 词库实体）。**缺口已量化
+  （2026-07-03）**：飞书全量 1465 条意图/8683 条真实例句实测 `classify_structured()`
+  整体识别率 72.0%，分域/分对象明细 + 三条可能路径（扩规则/上NLU模型/维持现状）见
+  `docs/design/2026-07-03-intent-coverage-gap-analysis.md`；本项方向未定，报告仅供决策参考。
 - [x] 多意图切分 → M2 已落地（split_and_classify + server.py 快路径 + 23 测试）。
 - [ ] 引导类（开界面）+ 播报类（weather 等）接云侧能力（当前 page/app/weather 已上云，需云侧 Agent 处理）。
 - [ ] **触发域（领域表）**：主唤醒/全局免唤醒/场景指令/可见可说 → 端侧唤醒与免唤醒策略。
