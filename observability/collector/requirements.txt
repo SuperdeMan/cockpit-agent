@@ -3,3 +3,11 @@ uvicorn>=0.29
 nats-py>=2.6.0
 httpx>=0.27
 websockets>=12.0
+# T3.6: OTLP span 导出桥接（otel_bridge.py），OTEL_EXPORTER_OTLP_ENDPOINT 未设置时完全不 import。
+opentelemetry-api==1.43.0
+opentelemetry-sdk==1.43.0
+opentelemetry-exporter-otlp-proto-grpc==1.43.0
+# 与全仓其余 requirements.txt 钉住的版本对齐，避免 collector 单独 build 时解析到不同的
+# transitive 版本（collector 本身不直接用 gRPC，纯为版本一致性）。
+grpcio==1.66.2
+protobuf==7.35.0

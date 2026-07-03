@@ -1,0 +1,13 @@
+# T3.6：抓取 observability-collector 的 /metrics 端点（Prometheus 文本暴露格式）。
+# 仅在 `docker compose --profile observability up` 时随 prometheus 服务一起启用。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "cockpit-observability-collector"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["observability-collector:8092"]
+        labels:
+          service: "observability-collector"

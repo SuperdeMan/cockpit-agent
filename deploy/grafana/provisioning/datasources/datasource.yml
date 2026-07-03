@@ -1,0 +1,14 @@
+# T3.6：自动配置 Prometheus 为 Grafana 默认数据源。固定 uid 供 dashboard JSON 直接引用，
+# 不依赖在 Grafana UI 里手工关联数据源。
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: cockpit-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "15s"

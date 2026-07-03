@@ -1,0 +1,14 @@
+# T3.6：自动加载 ../../dashboards/*.json 下的仪表盘，Grafana 启动即可见，不需要手工导入。
+apiVersion: 1
+
+providers:
+  - name: cockpit-dashboards
+    orgId: 1
+    folder: "Cockpit"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
