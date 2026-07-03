@@ -7,6 +7,7 @@ import os
 
 import uvicorn
 
+from observability.collector import otel_bridge
 from observability.collector.server import create_app, ingest_loop
 
 logging.basicConfig(
@@ -22,6 +23,7 @@ app = create_app()
 
 @app.on_event("startup")
 async def _startup() -> None:
+    otel_bridge.init_otel_bridge()  # T3.6: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set
     asyncio.create_task(ingest_loop(app))
 
 

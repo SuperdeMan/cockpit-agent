@@ -60,3 +60,17 @@ def test_agents_endpoint():
 
     assert response.status_code == 200
     assert "navigation" in response.json()
+
+
+def test_metrics_endpoint_returns_prometheus_text():
+    client = _client()
+    client.app.state.store.apply_metric(
+        {"agent_id": "navigation", "count": 5, "avg_ms": 120.0, "error_rate": 0.0, "circuit": "closed"}
+    )
+
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert "cockpit_agent_calls_total" in response.text
+    assert 'agent_id="navigation"' in response.text

@@ -17,7 +17,7 @@
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
-| [2026-06-13-vehicle-control-command-architecture.md](2026-06-13-vehicle-control-command-architecture.md) | 车控域升级到「公版语音指令表」统一 schema | P1 已落地：知识库三件套（61对象/150意图）+ VAL + fast_intent + 飞书全量导入脚本；P2/P3 待做 |
+| [2026-06-13-vehicle-control-command-architecture.md](2026-06-13-vehicle-control-command-architecture.md) | 车控域升级到「公版语音指令表」统一 schema | P1 已落地：知识库三件套（62对象/150意图）+ VAL + fast_intent + 飞书全量导入脚本；P2/P3 待做，P2 缺口已量化见下方 2026-07-03 意图覆盖分析 |
 | [2026-06-13-multi-intent-and-context.md](2026-06-13-multi-intent-and-context.md) | 多意图拆分 + 对话上下文/指代消解 | 已全部落地：上下文 + M1云侧DAG + M2端侧切分 + M3黄金用例 |
 | [2026-06-13-asr-pipeline-analysis.md](2026-06-13-asr-pipeline-analysis.md) | ASR 收音失败根因分析与修复链 | 已全部落地：前端竞态 + 后端转码 + E2E + HTTPS提示 |
 | [2026-06-13-open-domain-latency.md](2026-06-13-open-domain-latency.md) | 开放域响应慢：模型分层 + 流式贯通 + 即时反馈 | 已落地：流式+模型分层+chitchat兜底+即时反馈；降规划延迟待做 |
@@ -55,5 +55,8 @@
 | [2026-07-02-r3.2-service-mtls.md](2026-07-02-r3.2-service-mtls.md) | R3.2 服务间 mTLS：gRPC 双向 TLS，`GRPC_TLS` 门控默认关；单张共享 mesh 证书 + name override（`ssl_target_name_override`/`ServerName`）适配 agent 动态容器 hostname；Python `runtime/grpcio.py`（aio_channel secure + bind_port）+ Go `gateway/tlscfg`；`scripts/gen-certs.*` 生成证书（gitignore）| 已落地并合并 main（`37817c8`，全量 1030 passed + mTLS 模式 e2e_ws 加密链路 + insecure 探针被拒）。**至此 T3.1+T3.2 齐，安全链路无已知缺口** |
 | [2026-07-03-r3.3-e2e-ci-gate.md](2026-07-03-r3.3-e2e-ci-gate.md) | R3.3 e2e 入 CI 门禁：nightly workflow 跑裁剪过的确定性 mock-safe 子集（`--case` 过滤 + `e2e_memory.py` 三处 SKIP 补丁，绕开 Mock 模式下 route_hints 缺失导致的必挂用例）+ `make e2e` 改为本地全量清单执行器（`scripts/run_e2e.{sh,ps1}`），零 GitHub secrets | 已落地并合并 main（`e54a914`/`cb70239`/`25b85aa`）：GitHub `workflow_dispatch` 二次实跑全绿（run 28639607108） |
 | [2026-07-03-r3.5-degrade-matrix-e2e.md](2026-07-03-r3.5-degrade-matrix-e2e.md) | R3.5 降级矩阵自动化：新 `test/e2e_degrade.py` 刻画架构 §3.3 四行真实现状（断网/云Planner故障/单Agent故障/LLM超时，docker stop/pause 级故障注入 + `LLM_MOCK_DELAY_MS` 测试钩子），过程中发现 4 处真实缺口（研究阶段 3 处 executor 丢 error 信息/planner中途崩溃静默挂起/CompleteStream 无备用模型重试 + 真实跑又发现 1 处 edge-orchestrator pause/unpause 后不自愈）按用户决定只记录不修；Row 4 原设计经实测推翻重来 | 已落地并合并 main（`0355b1b`/`02a4896`）：GitHub `workflow_dispatch` 一次实跑全绿（run 28643924654） |
+| [2026-07-03-r3.4-intent-eval-baseline.md](2026-07-03-r3.4-intent-eval-baseline.md) | R3.4 意图路由评测基线：`test/eval_fast_intent.py`（端侧 `classify_structured`）+ `test/eval_route_hints.py`（云侧 `RouteHintEngine`，复用生产同款 `PlanBuilder._validated_steps` 装配路径）产出准确率/召回率报告，基线入 `docs/reviews/eval/`；`ci.yml` 新增非阻塞 `intent-eval-baseline` job。飞书 1465 意图库标注语料不可得，改用现有 corpus + 历史回归转录；`route_hints_cases.yaml` 经 `--dump` 对真实 manifest 实测发现一处跨 hint 交互（"导航去第2天换一个"实际被 `trip.modify` 接管） | 已落地并合并 main，GitHub Actions `intent-eval-baseline` job 实跑确认全绿 |
+| [2026-07-03-intent-coverage-gap-analysis.md](2026-07-03-intent-coverage-gap-analysis.md) | 意图覆盖缺口量化：飞书全量 1465 条意图/8683 条真实例句实测 `classify_structured()`，整体识别率 72.0%，给出分域/分对象明细与典型漏判样本，供「扩规则/上NLU模型/维持现状」三条后续路径决策参考 | 📋 纯调研，无代码改动；后续方向未定 |
+| [2026-07-03-r3.6-observability-prometheus-otel-export.md](2026-07-03-r3.6-observability-prometheus-otel-export.md) | R3.6 Prometheus/OTel 导出：collector `GET /metrics`（手写 Prometheus 文本格式，零新依赖）+ `otel_bridge.py`（复用此前从未调用的 `tracing.py::setup_tracing()` 桥接真实 OTel span）+ compose 首次引入 `profiles` 机制门控 prometheus/grafana + 三面板 dashboard JSON。真栈数据链路已验证；Grafana 可视化因本机网络环境限制未验证（镜像/大文件下载不稳定，交叉验证确认是环境问题非代码问题） | 🟡 代码+真栈数据链路已验证，Grafana 可视化待环境恢复后补验证；R3 量产硬化至此全部完成 |
 
 > 接真实 provider 的标准流程见常青指南 [`docs/guides/provider-integration.md`](../guides/provider-integration.md)。

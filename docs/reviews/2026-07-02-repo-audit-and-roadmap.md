@@ -117,12 +117,31 @@
   逻辑**。全量 **1037 passed/6 skipped**（+7，新增 `test/test_eval_common.py`）零回归；已合并
   main 并 push，GitHub Actions `intent-eval-baseline` job 随 push-to-main 实跑确认全绿；见
   `docs/design/2026-07-03-r3.4-intent-eval-baseline.md`。
+- **R3.6 = T3.6 · Prometheus/OTel 导出（G5-G8）** — collector 新增 `/metrics`（手写 Prometheus
+  文本暴露格式，零新依赖，`cockpit_agent_{calls_total,latency_seconds_avg,error_rate,
+  circuit_state,healthy,health_fail_count}` 六个指标）+ `otel_bridge.py`（复用 `observability/
+  tracing.py::setup_tracing()`——此前完整实现但从未被调用的死代码，桥接 NATS `obs.span` 事件为
+  真实 OTel span，trace_id 用 sha256 哈希成确定性 128-bit ID 保证同 trace 分组，不做字节级父子
+  SpanContext 链接因为现状 `parent_id` 几乎不被真实调用点填充）+ `deploy/docker-compose.yaml`
+  新增 `prometheus`/`grafana` 两服务（本仓首次引入 Compose `profiles: ["observability"]`
+  机制，默认 `make up` 不受影响）+ Grafana provisioning 与三面板 dashboard JSON（延迟/成功率/
+  熔断状态）。**真栈数据链路已验证**：对真实运行的 26 容器技术栈跑 `test/e2e_ws.py` 制造流量，
+  `/metrics` 正确输出真实 Agent 调用数/延迟（`food-ordering` 实测）；OTLP 三个新依赖经容器内
+  `pip install` 验证零版本冲突。**Grafana 可视化面板未在本次验证**——本机网络环境当前对大文件/
+  大数据块持续下载不稳定（pip 装 grpcio、docker 拉 prometheus/grafana 镜像层均卡死，换阿里云/
+  daocloud 镜像源验证过是环境问题非代码问题），经用户确认先按当前验证程度收尾，留待环境恢复后
+  补验证。**全量回归 897 passed/5 skipped 零失败**（排除 4 处与本卡无关的预先存在环境依赖测试：
+  `test/test_asr_e2e.py` 需真实 LLM API、`llm-gateway/tests/test_transcode.py` 需本机没装的
+  ffmpeg 二进制、`observability/tests/test_events.py`/`agents/info/` 疑似受真实 NATS/服务
+  可达性影响行为不同——均未修复，只是排除出本次验证范围）。**未改 `orchestrator/cloud/{engine,
+  dispatch,loop,circuit}.py`/`observability/metrics.py`/`agents/_sdk/*`/`observability/
+  collector/store.py` 任何现有逻辑**；见 `docs/design/2026-07-03-r3.6-observability-
+  prometheus-otel-export.md`。**至此 R3 量产硬化全部完成（T3.1-T3.6）。**
 
 **⬜ 未完成（新会话可接续，按优先级）：**
 
 | 任务 | 关联审计项 | 规模 | 备注 |
 |---|---|---|---|
-| **R3.6 量产硬化** | G5-G8 | M | Prometheus·OTel 导出(T3.6) |
 | **R4 能力演进** | — | 见 §4 | 按需排期 |
 
 **残留小尾**：`orchestrator/cloud/planning.py::_PLANNER_SYSTEM` 内一处 trip few-shot 示例属 **D10（Prompt 管理）**，非 D5 路由债、且不随 Agent 数增长——暂留，纳入未来 Prompt 资产化工作。
@@ -424,10 +443,18 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
   `cloud-gateway` pause/unpause 后 `edge-orchestrator` 不像"换 IP"场景那样自愈，恢复步骤加显式
   重启兜底（不修，记录留后续）。**未改编排核心**。
 
-**T3.6 Prometheus/OTel 导出（M）**
+**T3.6 Prometheus/OTel 导出（M）** ✅ 已完成（`feat/r3.6-observability-export`；见顶部「执行进度」；
+落地记录 `docs/design/2026-07-03-r3.6-observability-prometheus-otel-export.md`）
 - 背景：架构 §10 目标态。
 - 任务：collector 增 `/metrics`（Prometheus 格式，聚合现有 NATS 指标）；可选 OTLP span 导出开关；compose 加 prometheus+grafana profile 与最小 dashboard json。
 - 验收：Grafana 能看到 Agent 时延/成功率/熔断状态曲线。
+- 落地：`/metrics` 手写 Prometheus 文本格式（零新依赖）+ `otel_bridge.py`（复用此前从未调用的
+  `tracing.py::setup_tracing()` 死代码）+ compose 首次引入 `profiles` 机制门控 prometheus/
+  grafana + Grafana provisioning 与三面板 dashboard JSON。真栈数据链路（真实 Agent 调用→
+  `/metrics`）已验证；**Grafana 可视化面板因本机网络环境限制（大文件/镜像拉取不稳定，经
+  阿里云/daocloud 镜像源交叉验证确认是环境问题非代码问题）未在本次会话验证**，经用户确认
+  按当前程度收尾。全量回归 897 passed/5 skipped 零失败（排除 4 处与本卡无关的预先存在环境
+  依赖测试）。未改编排核心/`observability/metrics.py`/`agents/_sdk` 任何现有逻辑。
 
 ### R4 · 能力演进（产品向，按需排期）
 

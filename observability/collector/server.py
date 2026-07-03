@@ -7,7 +7,10 @@ import os
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
+from . import otel_bridge
+from .metrics_export import render_prometheus_metrics
 from .store import CollectorStore
 
 logger = logging.getLogger("obs.collector")
@@ -77,6 +80,13 @@ def create_app(
     @app.get("/api/agents")
     async def agents():
         return app.state.store.agents
+
+    @app.get("/metrics")
+    async def metrics():
+        return PlainTextResponse(
+            render_prometheus_metrics(app.state.store),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     @app.post("/api/debug/vehicle")
     async def debug_vehicle(body: dict):
@@ -157,6 +167,7 @@ async def ingest_loop(app: FastAPI) -> None:
             await hub.broadcast({"type": "state_change", **event})
         elif message.subject == "obs.span":
             store.apply_span(event)
+            otel_bridge.export_span(event)  # T3.6: best-effort tee, no-op unless bridge active
             await hub.broadcast({"type": "span", **event})
         elif message.subject == "obs.metric":
             store.apply_metric(event)

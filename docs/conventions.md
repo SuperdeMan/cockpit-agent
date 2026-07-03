@@ -140,6 +140,8 @@
 | cloud-gateway | 8080 | gRPC (EdgeCloudChannel bidi) |
 | edge-gateway | 8090 | HTTP/WS |
 | observability-collector | 8092 | HTTP/WS |
+| prometheus（T3.6，`--profile observability`）| 9090 | HTTP |
+| grafana（T3.6，`--profile observability`）| 3000 | HTTP |
 | hmi | 5173 | HTTP |
 | dashboard | 5174 | HTTP |
 
@@ -188,7 +190,8 @@
 | `SERPAPI_API_KEY` | 新闻源（综合要闻 Google News 头条为主+Exa 合并；国内话题 Baidu News）| 否 |
 | `API_FOOTBALL_KEY` / `API_FOOTBALL_HOST` | api-football 赛事比分/赛程（info.sports）| 否（无 key 走 mock）|
 | `TUSHARE_TOKEN` | Tushare 股票行情（info.stock）| 否（无 key 走 mock）|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` / `LOG_LEVEL` | 可观测 | 否 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `LOG_LEVEL` | 可观测；前者非空时 collector 桥接真实 OTel span 导出（T3.6，见 §8）| 否 |
+| `GRAFANA_ADMIN_PASSWORD` | Grafana admin 密码（T3.6，仅 `--profile observability` 生效）| 否（默认 `admin`，PoC 凭证）|
 | `GRPC_KEEPALIVE_TIME_MS` / `_TIMEOUT_MS` / `GRPC_MIN_PING_INTERVAL_MS` | gRPC keepalive：空闲也 ping、死连一周期内探测重连重解析 DNS（`runtime/grpcio.py`）| 否（默认 20000/10000/10000）|
 | `GRPC_MAX_MESSAGE_BYTES` / `GRPC_MAX_CONCURRENT_RPCS` / `GRPC_SHUTDOWN_GRACE_S` | gRPC 单消息上限 / 服务端并发上限(0=不限) / 优雅停机排空在途 RPC 宽限秒 | 否（默认 16MB / 0 / 10）|
 | `CIRCUIT_FAILURE_THRESHOLD` / `CIRCUIT_RECOVERY_TIMEOUT_S` | 云端 Agent dispatch 熔断：连续失败阈值 / 冷却恢复秒 | 否（默认 5 / 30）|
@@ -257,9 +260,13 @@
 | `GET /api/agents` | Agent 健康与累计调用指标 |
 | `WS /stream` | `snapshot/state_change/span/metric/health` 实时事件 |
 | `POST /api/debug/vehicle` | 仅设置 `speed_kmh/battery/gear/location`；受 `DEBUG_VEHICLE_CONTROL` 控制 |
+| `GET /metrics`（T3.6）| Prometheus 文本暴露格式（`cockpit_agent_{calls_total,latency_seconds_avg,error_rate,circuit_state,healthy,health_fail_count}`），供 `prometheus` 服务抓取（`--profile observability` 门控）|
 
 Dashboard 使用 `VITE_COLLECTOR_URL` 与 `VITE_EDGE_GATEWAY_URL`，Compose 已分别配置为
-`http://localhost:8092` 和 `http://localhost:8090`。
+`http://localhost:8092` 和 `http://localhost:8090`。**Prometheus/Grafana（T3.6）**：
+`docker compose --profile observability up -d prometheus grafana`，Grafana 匿名 Viewer 访问
+`http://localhost:3000`（`GRAFANA_ADMIN_PASSWORD` 控制 admin 密码，PoC 默认凭证）；预置仪表盘
+"Cockpit Agents"（Agent 时延/成功率/熔断状态）随 provisioning 自动加载，无需手工导入。
 
 ---
 
