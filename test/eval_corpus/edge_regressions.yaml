@@ -44,6 +44,20 @@ positive:
     source: "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_with_level_or_status_word_still_local"
     tags: [battery, positive]
 
+  # R4.1 P3 B1：气象并入天气类（气象 5.0%→天气类，纯命名遗漏）
+  - text: 长沙的气象怎么样
+    expect_object: weather
+    source: "R4.1 P3 B1 气象同义词"
+    tags: [weather, b1, synonym]
+  - text: 气象查询澳门台北
+    expect_object: weather
+    source: "R4.1 P3 B1 气象同义词"
+    tags: [weather, b1, synonym]
+  - text: 深圳今天气象怎么样
+    expect_object: weather
+    source: "R4.1 P3 B1 气象同义词"
+    tags: [weather, b1, synonym]
+
 hijack_guard:
   - text: 深入调研一下固态电池的现状和量产前景
     forbid_object: battery
@@ -57,3 +71,17 @@ hijack_guard:
     forbid_object: battery
     source: "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_topic_not_hijacked_as_battery_query"
     tags: [battery, hijack, research_topic]
+
+  # R4.1 P3 B1：气象反例——地点(导航)/云端预警(info.alerts)不得被端侧判成 weather
+  - text: 气象局怎么走
+    forbid_object: weather
+    source: "R4.1 P3 B1 气象反例（气象局=地点，走导航）"
+    tags: [weather, hijack, b1]
+  - text: 附近的气象局在哪
+    forbid_object: weather
+    source: "R4.1 P3 B1 气象反例（气象局=地点，走导航）"
+    tags: [weather, hijack, b1]
+  - text: 气象台发布了什么预警
+    forbid_object: weather
+    source: "R4.1 P3 B1 气象反例（预警=info.alerts 云端）"
+    tags: [weather, hijack, b1]
