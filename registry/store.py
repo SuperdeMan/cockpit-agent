@@ -155,6 +155,10 @@ class PgStore(Store):
         self._embed_probe_done = False       # 探测是否已定论（不可达时保持 False 以便重探）
         self._query_cache: dict[str, tuple] = {}   # query -> (embedding, expiry_ts)
         self._query_cache_order: list[str] = []     # FIFO 淘汰序
+        # capability 向量化后台任务（agent_id → Task）：register 只调度不等待
+        # （内联等待会被注册客户端 5s deadline 取消——2026-07-04 embed 泄漏根因），
+        # 兼作同 agent 在飞去重。
+        self._embed_tasks: dict[str, asyncio.Task] = {}
 
     async def init(self) -> bool:
         """初始化 PostgreSQL 连接池并加载全量注册表。返回是否成功。"""
@@ -327,7 +331,14 @@ class PgStore(Store):
             self._agents[row["agent_id"]] = rec
 
     async def register(self, manifest, endpoint: str) -> str:
-        """幂等注册：内存 + PostgreSQL 双写；capability 向量按需增量写入（text_hash 去重）。"""
+        """幂等注册：内存 + PostgreSQL 双写；capability 向量化**后台任务**增量写入。
+
+        向量化绝不能内联在 Register RPC 里等（2026-07-04 embed 泄漏事故根因）：
+        edge-vehicle 74 caps 串行 embed ~20s+，超过注册客户端 timeout(5s) → grpc.aio 取消
+        handler 协程 → CancelledError（BaseException）绕过 except Exception 静默逃逸 →
+        向量永远写不进 PG → 每 10s 周期重注册对同一批 cap 全量重 embed（上游已计费）→
+        无限烧 API（实测 ~1.5-2 次/秒、每小时数千次调用）。
+        """
         lease = super().register(manifest, endpoint)
         if self._pg_ok:
             try:
@@ -343,10 +354,39 @@ class PgStore(Store):
                             last_heartbeat = now(),
                             status = 'healthy'
                     """, manifest.agent_id, manifest_json, endpoint, lease)
-                await self._embed_capabilities(manifest)
             except Exception as e:
                 logger.warning("PgStore: register PG write failed: %s", e)
+            self._schedule_embed(manifest)
         return lease
+
+    def _schedule_embed(self, manifest):
+        """把 capability 向量化调度为 store 自有的后台任务（生命周期=进程，不随 RPC 取消）。
+
+        同 agent 在飞去重：上一轮任务未完成时跳过本轮（10s 重注册快于大 manifest 的
+        向量化时长，否则会堆叠重复任务重复计费）；已写入的 text_hash 让下一轮的缺口
+        单调收敛。"""
+        if self._embed_source != "llm" and self._embed_probe_done:
+            return  # 已定论无 embedding 源（如 nightly 纯 mock）：不起空转任务
+        agent_id = manifest.agent_id
+        old = self._embed_tasks.get(agent_id)
+        if old is not None and not old.done():
+            return
+        task = asyncio.create_task(self._embed_capabilities_safe(manifest))
+        self._embed_tasks[agent_id] = task
+
+        def _cleanup(t, aid=agent_id):
+            if self._embed_tasks.get(aid) is t:
+                self._embed_tasks.pop(aid, None)
+
+        task.add_done_callback(_cleanup)
+
+    async def _embed_capabilities_safe(self, manifest):
+        """后台任务包装：异常自吞并告警（任务无人 await，不能让异常变 'never retrieved'）。"""
+        try:
+            await self._embed_capabilities(manifest)
+        except Exception as e:
+            logger.warning("PgStore: background embed for %s failed: %s",
+                           manifest.agent_id, e)
 
     async def _embed_capabilities(self, manifest):
         """按 capability 粒度增量向量化写入 agent_capability_vec。
@@ -354,6 +394,8 @@ class PgStore(Store):
         text_hash（sha256）去重：Agent 每 ~10s 周期重注册，未变化的 capability 直接跳过，
         稳态 embed API 调用≈0（仅 manifest 变更时才打）。无 embedding 源时静默不写
         （语义路由缺席，行为回落关键词路径，nightly 纯 mock 零感知）。
+        每条 embed 成功即**写穿**入库（部分失败/进程中断也保住进度，缺口单调收敛，
+        绝不重演「全量成功才落库→一条失败全轮重烧」）。
         """
         # 启动时序兜底：llm-gateway 晚于 registry 就绪时 init 探测会失败，此处按需重探。
         if self._embed_source != "llm" and not self._embed_probe_done and self._llm_addr:
@@ -368,29 +410,34 @@ class PgStore(Store):
         existing_hash = {r["intent"]: r["text_hash"] for r in rows}
         want_intents = {getattr(c, "intent", "") for c in caps}
 
-        to_write = []  # (intent, text_hash, embedding_str)
-        for cap in caps:
+        pending = [c for c in caps
+                   if existing_hash.get(getattr(c, "intent", ""))
+                   != hashlib.sha256(self._capability_text(c).encode()).hexdigest()]
+        written = failed = 0
+        for cap in pending:
             intent = getattr(cap, "intent", "")
             text = self._capability_text(cap)
             th = hashlib.sha256(text.encode()).hexdigest()
-            if existing_hash.get(intent) == th:
-                continue  # 未变化，跳过 embed（周期重注册稳态零调用）
             emb = await self._embed(text, timeout=_EMBED_TIMEOUT_REGISTER)
-            if emb is not None:
-                to_write.append((intent, th, str(emb)))
-
-        stale = [i for i in existing_hash if i not in want_intents]
-        if not to_write and not stale:
-            return
-        async with self._pool.acquire() as conn:
-            for intent, th, emb in to_write:
+            if emb is None:
+                failed += 1
+                continue  # 本条失败：留待下轮（缺口单调收敛）
+            # 写穿：单条成功立刻落库，进程中断/后续失败不丢已花钱的进度
+            async with self._pool.acquire() as conn:
                 await conn.execute("""
                     INSERT INTO agent_capability_vec (agent_id, intent, text_hash, embedding)
                     VALUES ($1, $2, $3, $4::vector)
                     ON CONFLICT (agent_id, intent) DO UPDATE SET
                         text_hash = EXCLUDED.text_hash, embedding = EXCLUDED.embedding
-                """, agent_id, intent, th, emb)
-            if stale:  # manifest 删掉的 capability 级联清理
+                """, agent_id, intent, th, str(emb))
+            written += 1
+        if pending:
+            logger.info("PgStore: embedded %d/%d capabilities for %s (%d failed, retry next cycle)",
+                        written, len(pending), agent_id, failed)
+
+        stale = [i for i in existing_hash if i not in want_intents]
+        if stale:  # manifest 删掉的 capability 级联清理
+            async with self._pool.acquire() as conn:
                 await conn.execute(
                     "DELETE FROM agent_capability_vec WHERE agent_id = $1 AND intent = ANY($2::text[])",
                     agent_id, stale)
