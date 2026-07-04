@@ -1,8 +1,8 @@
 {
   "meta": {
     "subject": "fast_intent",
-    "generated_at": "2026-07-03T09:08:52.180872+00:00",
-    "commit": "f562ae3"
+    "generated_at": "2026-07-04T06:46:05.576807+00:00",
+    "commit": "0c92d6c"
   },
   "corpus_sources": [
     {
@@ -11,11 +11,11 @@
     },
     {
       "path": "test/eval_corpus/edge_regressions.yaml::positive",
-      "count": 7
+      "count": 10
     },
     {
       "path": "test/eval_corpus/edge_regressions.yaml::hijack_guard",
-      "count": 3
+      "count": 6
     },
     {
       "path": "orchestrator/edge/tests/corpus/multi_intent.yaml::split",
@@ -28,14 +28,14 @@
   ],
   "buckets": {
     "object_recognition": {
-      "total": 22,
-      "passed": 22,
+      "total": 25,
+      "passed": 25,
       "failures": [],
       "pass_rate": 1.0
     },
     "object_recognition_guardrail": {
-      "total": 3,
-      "passed": 3,
+      "total": 6,
+      "passed": 6,
       "failures": [],
       "pass_rate": 1.0
     },
@@ -53,8 +53,8 @@
     }
   },
   "overall": {
-    "total": 39,
-    "passed": 39,
+    "total": 45,
+    "passed": 45,
     "pass_rate": 1.0
   },
   "cases": {
@@ -324,6 +324,51 @@
       ],
       "source": "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_with_level_or_status_word_still_local"
     },
+    "object_recognition::长沙的气象怎么样": {
+      "id": "object_recognition::长沙的气象怎么样",
+      "bucket": "object_recognition",
+      "text": "长沙的气象怎么样",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "weather",
+        "b1",
+        "synonym"
+      ],
+      "source": "R4.1 P3 B1 气象同义词"
+    },
+    "object_recognition::气象查询澳门台北": {
+      "id": "object_recognition::气象查询澳门台北",
+      "bucket": "object_recognition",
+      "text": "气象查询澳门台北",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "weather",
+        "b1",
+        "synonym"
+      ],
+      "source": "R4.1 P3 B1 气象同义词"
+    },
+    "object_recognition::深圳今天气象怎么样": {
+      "id": "object_recognition::深圳今天气象怎么样",
+      "bucket": "object_recognition",
+      "text": "深圳今天气象怎么样",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "weather",
+        "b1",
+        "synonym"
+      ],
+      "source": "R4.1 P3 B1 气象同义词"
+    },
     "object_recognition_guardrail::深入调研一下固态电池的现状和量产前景": {
       "id": "object_recognition_guardrail::深入调研一下固态电池的现状和量产前景",
       "bucket": "object_recognition_guardrail",
@@ -368,6 +413,51 @@
         "research_topic"
       ],
       "source": "orchestrator/edge/tests/test_fast_intent_extended.py::TestBatteryQuery::test_battery_topic_not_hijacked_as_battery_query"
+    },
+    "object_recognition_guardrail::气象局怎么走": {
+      "id": "object_recognition_guardrail::气象局怎么走",
+      "bucket": "object_recognition_guardrail",
+      "text": "气象局怎么走",
+      "expected": "!= weather",
+      "actual": null,
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "weather",
+        "hijack",
+        "b1"
+      ],
+      "source": "R4.1 P3 B1 气象反例（气象局=地点，走导航）"
+    },
+    "object_recognition_guardrail::附近的气象局在哪": {
+      "id": "object_recognition_guardrail::附近的气象局在哪",
+      "bucket": "object_recognition_guardrail",
+      "text": "附近的气象局在哪",
+      "expected": "!= weather",
+      "actual": null,
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "weather",
+        "hijack",
+        "b1"
+      ],
+      "source": "R4.1 P3 B1 气象反例（气象局=地点，走导航）"
+    },
+    "object_recognition_guardrail::气象台发布了什么预警": {
+      "id": "object_recognition_guardrail::气象台发布了什么预警",
+      "bucket": "object_recognition_guardrail",
+      "text": "气象台发布了什么预警",
+      "expected": "!= weather",
+      "actual": null,
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "weather",
+        "hijack",
+        "b1"
+      ],
+      "source": "R4.1 P3 B1 气象反例（预警=info.alerts 云端）"
     },
     "multi_intent_split::座椅加热和座椅通风安排上": {
       "id": "multi_intent_split::座椅加热和座椅通风安排上",

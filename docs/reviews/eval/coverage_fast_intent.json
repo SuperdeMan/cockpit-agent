@@ -1,19 +1,19 @@
 {
   "meta": {
     "subject": "fast_intent_coverage",
-    "generated_at": "2026-07-04T05:48:05.872115+00:00",
-    "commit": "558dd47",
+    "generated_at": "2026-07-04T06:46:06.059373+00:00",
+    "commit": "0c92d6c",
     "corpus": "test/eval_corpus/feishu_intents_full.jsonl"
   },
   "total": {
     "count": 8590,
-    "recognized": 6188,
-    "rate": 0.7204
+    "recognized": 6362,
+    "rate": 0.7406
   },
   "edge_expected_subset": {
     "count": 7947,
-    "recognized": 6006,
-    "rate": 0.7558
+    "recognized": 6180,
+    "rate": 0.7777
   },
   "by_domain": {
     "setting": {
@@ -23,8 +23,8 @@
     },
     "weather": {
       "count": 1514,
-      "recognized": 1094,
-      "rate": 0.7226
+      "recognized": 1268,
+      "rate": 0.8375
     },
     "media": {
       "count": 1193,
@@ -110,8 +110,8 @@
     },
     "气象": {
       "count": 208,
-      "recognized": 11,
-      "rate": 0.0529
+      "recognized": 185,
+      "rate": 0.8894
     },
     "天气": {
       "count": 193,

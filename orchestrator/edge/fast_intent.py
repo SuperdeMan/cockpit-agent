@@ -958,8 +958,10 @@ def classify_structured(text: str) -> dict | None:
             return _s("app", "control", "open", "map", tag="favorites", conf=0.88)
         return _s("app", "control", "open", "map", conf=0.85)
 
-    # ── 天气 / 温度 / 湿度 / 风况 / 空气质量 ─────────────
-    if "天气" in t:
+    # ── 天气 / 气象 / 温度 / 湿度 / 风况 / 空气质量 ─────────────
+    # R4.1 P3 B1：「气象」与「天气」语义等价（气象 5.0%→并入天气类，纯命名遗漏），但排除
+    #   气象局=地点（走导航）/ 含「预警」=云端 info.alerts（非端侧天气查询），防劫持。
+    if "天气" in t or ("气象" in t and "气象局" not in t and "预警" not in t):
         return _s("query", "query", "query", "weather", conf=0.9)
     if "温度" in t and ("查" in t or "多少" in t or "几度" in t):
         return _s("query", "query", "query", "temperature", conf=0.9)
