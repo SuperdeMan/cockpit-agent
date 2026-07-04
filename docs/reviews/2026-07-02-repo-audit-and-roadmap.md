@@ -101,7 +101,9 @@
   真实成立的性质；② **额外发现第 4 处真实缺口**（研究阶段 3 处之外）：`cloud-gateway` pause/unpause
   后 `edge-orchestrator` 持久 channel 不会像"换 IP"场景那样自愈（日志反复 `Missed too many pongs` 后
   仍 `cloud channel not connected`），恢复步骤加显式 `restart edge-orchestrator` 兜底（不修此缺口，
-  同前 3 处一视同仁记录留后续）。**未改编排核心**。commit `0355b1b`(实现)/`02a4896`(文档)。验证：
+  同前 3 处一视同仁记录留后续）（**✅ 此缺口已由 R4.0/K1 于 2026-07-04 修复**——真根因=app 心跳强制重连时
+  `_cancel_stream()` 令 `read()` 抛 `CancelledError`、被 `_run` 当任务取消打死重连循环，真栈解冻后 ~2s 自愈,
+  e2e_degrade Row 4 已改回自愈断言）。**未改编排核心**。commit `0355b1b`(实现)/`02a4896`(文档)。验证：
   本地三轮验证收敛到 4/4 全过 + 全量 **1030 passed/6 skipped** 零回归 + **GitHub `workflow_dispatch`
   一次实跑即全绿**（run `28643924654`，9m17s，未像 T3.3 那样需要二次修复——本地已提前发现并修正两处
   问题）；落地记录 `docs/design/2026-07-03-r3.5-degrade-matrix-e2e.md`。
@@ -147,7 +149,7 @@
 
 | 任务 | 关联审计项 | 规模 | 备注 |
 |---|---|---|---|
-| **R4.0 收尾包** | K1/K2/N1（复审 §4） | S | pause 自愈 / process_region 既有失败 / PermissionEngine 死注入；建议先于 R4 主线 |
+| ✅ ~~**R4.0 收尾包**~~ | K1/K2/N1（复审 §4）+ K3 | S | **已完成（2026-07-04）**，见 `docs/design/2026-07-04-r4.0-residual-cleanup.md`：K1 通道 pause/unpause 自愈（真根因=app 心跳强制重连 CancelledError 打死 `_run`，真栈 ~2s 自愈）/ K2 过程区 e2e 复位车态自足 / N1 PermissionEngine 死注入删 / K3 Grafana 三面板经数据源代理验证；全量 1050 passed |
 | **R4.1 路由质量主题** | A6/D11/D7/K6 | L | ✍️ 设计已出：`docs/design/2026-07-04-r4.1-routing-quality.md` |
 | **R4.2 流式 TTS + barge-in** | T4.2 | L | ✍️ 设计已出：`docs/design/2026-07-04-r4.2-streaming-tts-bargein.md` |
 | R4 其余（T4.3/T4.4/T4.5/T4.6） | — | 见 §4 | 按需排期 |
