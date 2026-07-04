@@ -1,25 +1,25 @@
 {
   "meta": {
     "subject": "fast_intent_coverage",
-    "generated_at": "2026-07-04T06:46:06.059373+00:00",
-    "commit": "0c92d6c",
+    "generated_at": "2026-07-04T07:07:07.991409+00:00",
+    "commit": "333318d",
     "corpus": "test/eval_corpus/feishu_intents_full.jsonl"
   },
   "total": {
     "count": 8590,
-    "recognized": 6362,
-    "rate": 0.7406
+    "recognized": 6506,
+    "rate": 0.7574
   },
   "edge_expected_subset": {
     "count": 7947,
-    "recognized": 6180,
-    "rate": 0.7777
+    "recognized": 6324,
+    "rate": 0.7958
   },
   "by_domain": {
     "setting": {
       "count": 4087,
-      "recognized": 2873,
-      "rate": 0.703
+      "recognized": 3012,
+      "rate": 0.737
     },
     "weather": {
       "count": 1514,
@@ -48,8 +48,8 @@
     },
     "app": {
       "count": 126,
-      "recognized": 98,
-      "rate": 0.7778
+      "recognized": 103,
+      "rate": 0.8175
     },
     "base": {
       "count": 57,
@@ -75,8 +75,8 @@
     },
     "辅助驾驶": {
       "count": 482,
-      "recognized": 173,
-      "rate": 0.3589
+      "recognized": 178,
+      "rate": 0.3693
     },
     "座椅/儿童座椅": {
       "count": 371,
@@ -90,8 +90,8 @@
     },
     "车外灯": {
       "count": 339,
-      "recognized": 322,
-      "rate": 0.9499
+      "recognized": 328,
+      "rate": 0.9676
     },
     "车内灯": {
       "count": 293,
@@ -160,13 +160,13 @@
     },
     "界面": {
       "count": 150,
-      "recognized": 49,
-      "rate": 0.3267
+      "recognized": 127,
+      "rate": 0.8467
     },
     "语音助手": {
       "count": 150,
-      "recognized": 66,
-      "rate": 0.44
+      "recognized": 74,
+      "rate": 0.4933
     },
     "雨刮器": {
       "count": 133,
@@ -190,8 +190,8 @@
     },
     "声音": {
       "count": 125,
-      "recognized": 88,
-      "rate": 0.704
+      "recognized": 93,
+      "rate": 0.744
     },
     "音乐点播": {
       "count": 119,
@@ -215,8 +215,8 @@
     },
     "系统": {
       "count": 103,
-      "recognized": 57,
-      "rate": 0.5534
+      "recognized": 62,
+      "rate": 0.6019
     },
     "车窗": {
       "count": 95,
@@ -265,8 +265,8 @@
     },
     "车辆模式": {
       "count": 69,
-      "recognized": 21,
-      "rate": 0.3043
+      "recognized": 31,
+      "rate": 0.4493
     },
     "轮胎": {
       "count": 68,
@@ -275,8 +275,8 @@
     },
     "后视镜": {
       "count": 62,
-      "recognized": 15,
-      "rate": 0.2419
+      "recognized": 20,
+      "rate": 0.3226
     },
     "新闻控制": {
       "count": 62,
@@ -315,8 +315,8 @@
     },
     "空调开闭控制": {
       "count": 36,
-      "recognized": 22,
-      "rate": 0.6111
+      "recognized": 30,
+      "rate": 0.8333
     },
     "WiFi": {
       "count": 36,
@@ -350,8 +350,8 @@
     },
     "工具": {
       "count": 24,
-      "recognized": 0,
-      "rate": 0.0
+      "recognized": 9,
+      "rate": 0.375
     },
     "通讯录": {
       "count": 24,
@@ -395,8 +395,8 @@
     },
     "设置界面": {
       "count": 12,
-      "recognized": 5,
-      "rate": 0.4167
+      "recognized": 10,
+      "rate": 0.8333
     },
     "制动": {
       "count": 12,

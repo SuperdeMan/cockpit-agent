@@ -1146,15 +1146,25 @@ def classify_structured(text: str) -> dict | None:
     # ══════════════════════════════════════════════════════════
 
     # ── 页面引导（设置页面等专项未覆盖的）────────────────
+    # R4.1 P3 B2：设置页/界面开合族——补「关闭」方向 + 「界面/页面」通用兜底（负一屏/语音技能
+    # 界面/发音人列表等无「设置」字的 UI 页）。排除「给我读/念一下」= 读内容请求（云端，非开页面），
+    # 修既有「打开设置里的隐私协议给我读一下」被误接成 page/settings 的劫持。
     _page_names = {
         "设置": "settings",
         "空调界面": "aircon", "空调页面": "aircon",
         "主页": "home", "首页": "home",
     }
-    if "打开" in t or "进入" in t or "切换到" in t:
+    _page_open = "打开" in t or "进入" in t or "切换到" in t
+    _page_close = "关闭" in t or "关掉" in t
+    _read_content = any(w in t for w in ("给我读", "读一下", "念一下", "读给", "念给"))
+    if (_page_open or _page_close) and not _read_content:
+        _op = "close" if (_page_close and not _page_open) else "open"
         for kw, pn in _page_names.items():
             if kw in t:
-                return _s("hmi", "navigate", "open", "page", tag=pn, conf=0.88)
+                return _s("hmi", "navigate", _op, "page", tag=pn, conf=0.88)
+        # 「XX界面/页面」通用兜底：上面专项与 _page_names 都没接住的 UI 页开合
+        if "界面" in t or "页面" in t:
+            return _s("hmi", "navigate", _op, "page", conf=0.85)
 
     # ── 应用（专项未覆盖的通用 app 开关）──────────────────
     _app_names = {
