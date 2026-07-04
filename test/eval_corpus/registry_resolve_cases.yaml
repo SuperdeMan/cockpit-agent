@@ -3,7 +3,8 @@
 #   forbid_top1:   该 agent 不得为 top-1（反例桶 resolve_guardrail）。
 #   requires_embed: true = 关键词字符打分做不到、需 P0 真语义（离线跳过，`--semantic` 直连活栈跑）。
 # 离线关键词层（requires_embed 缺省/false）是 CI 可复现基线，已校准为全 PASS；
-# requires_embed:true 的 5 条正是「关键词遮蔽」的可见样本——语义层修好后会翻成 PASS。
+# requires_embed:true 的 5 条需活栈真语义（离线关键词做不到）——曾是「关键词遮蔽」的可见样本，
+# R4.1 语义重排（server.py SEMANTIC_PROMOTE_SIM）后 `--semantic` 完整路径已 15/20→20/20（含这 5 条）。
 
 # ── 召回：关键词字符打分即可路由到对的 Agent（离线基线，全 PASS）──
 - text: 今天天气怎么样

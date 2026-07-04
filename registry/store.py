@@ -29,6 +29,10 @@ MAX_FAIL_COUNT = 3          # 连续失败次数阈值
 EMBED_DIM = int(os.getenv("LLM_EMBED_DIMENSIONS", "1024"))
 # 语义相似度下限：低于此值的候选一律丢弃（防弱向量源把随机 Agent 追加进候选，见 §1.1 bug）。
 SEMANTIC_MIN_SIM = float(os.getenv("SEMANTIC_MIN_SIM", "0.35"))
+# 语义提升阈值（R4.1 语义重排）：语义 top-1 相似度 ≥ 此值时，语义排序在关键词之前——纠正
+# 关键词字符打分对中文的噪声 top-1（实测纯语义 20/20 全对、5 条 requires_embed 分 0.508~0.752）；
+# 低于此值则保守追加在关键词之后（关键词 top 不变）。精确 intent 命中（1.0）永不被语义覆盖。
+SEMANTIC_PROMOTE_SIM = float(os.getenv("SEMANTIC_PROMOTE_SIM", "0.5"))
 _EMBED_TIMEOUT_REGISTER = 5.0   # 注册路径 embed 超时（稳态因 text_hash 去重≈0 次调用）
 _EMBED_TIMEOUT_QUERY = 1.5      # 查询路径 embed 超时（失败即空，关键词结果原样生效）
 _QUERY_CACHE_MAX = 128
