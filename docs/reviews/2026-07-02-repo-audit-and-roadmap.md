@@ -6,11 +6,16 @@
 
 ---
 
-## 执行进度（活文档 · 截至 2026-07-02 · 新会话先读这里）
+## 执行进度（活文档 · 截至 2026-07-04 · 新会话先读这里）
 
 > 本节随执行更新。接手方法：读本节 → 看 §4 中**未打 ✅** 的任务卡 → `git log --oneline` 对照 commit。
 > 动编排核心前遵 `CLAUDE.md`「大改动先 Plan Mode」。现状另见 `AGENTS.md §4` 与记忆
 > `r2.1-route-hints-mechanization.md`（Claude Code memory）。
+>
+> **✅ 2026-07-04 验收复审通过（R1–R3 全部 16 卡）**：独立复审报告见
+> [`2026-07-04-acceptance-review-r1-r3.md`](2026-07-04-acceptance-review-r1-r3.md)（本地全量 1046 passed/0 failed
+> 实跑 + GitHub API 独立查证 CI/nightly 全绿；2 项轻微残留 N1/N2 + 6 项已知边界 K1–K6 汇总其 §3；
+> **R4 准入=通过**，建议先做 ≤1 天「R4.0 收尾包」（修 K1 pause 自愈 / K2 process_region / 清 N1 死注入）再进 R4 主线，优先级见其 §4）。
 
 **✅ 已完成并合并 main（已 push origin）：**
 
@@ -142,7 +147,10 @@
 
 | 任务 | 关联审计项 | 规模 | 备注 |
 |---|---|---|---|
-| **R4 能力演进** | — | 见 §4 | 按需排期 |
+| **R4.0 收尾包** | K1/K2/N1（复审 §4） | S | pause 自愈 / process_region 既有失败 / PermissionEngine 死注入；建议先于 R4 主线 |
+| **R4.1 路由质量主题** | A6/D11/D7/K6 | L | ✍️ 设计已出：`docs/design/2026-07-04-r4.1-routing-quality.md` |
+| **R4.2 流式 TTS + barge-in** | T4.2 | L | ✍️ 设计已出：`docs/design/2026-07-04-r4.2-streaming-tts-bargein.md` |
+| R4 其余（T4.3/T4.4/T4.5/T4.6） | — | 见 §4 | 按需排期 |
 
 **残留小尾**：`orchestrator/cloud/planning.py::_PLANNER_SYSTEM` 内一处 trip few-shot 示例属 **D10（Prompt 管理）**，非 D5 路由债、且不随 Agent 数增长——暂留，纳入未来 Prompt 资产化工作。
 
@@ -458,10 +466,15 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
 
 ### R4 · 能力演进（产品向，按需排期）
 
+> 2026-07-04 验收复审（见顶部执行进度指针）确认 R4 准入。**排序最高两项已出详细设计**（可直接接手执行）：
+> - **R4.1 路由质量主题**（= T4.1 + K6 意图覆盖 + D7-lite）→ [`docs/design/2026-07-04-r4.1-routing-quality.md`](../design/2026-07-04-r4.1-routing-quality.md)（P0 Registry 真向量·顺带修 hash 伪向量现存 bug / P1 resolve 评测 / P2 8683 语料资产化+覆盖率报告 / P3 quick-win 扩规则 72%→≥82%；裸「取消」不得端侧接住的坑已写死）
+> - **R4.2 流式 TTS + barge-in** → [`docs/design/2026-07-04-r4.2-streaming-tts-bargein.md`](../design/2026-07-04-r4.2-streaming-tts-bargein.md)（P0 CosyVoice 探针硬 gate / P1 WS 流式端点 / P2 HMI PCM 播放+无感回退 / P3 打断 v1 确定性+v2 语音实验性）
+> - 开工顺序建议：先做验收复审 §4 的「R4.0 收尾包」（K1 pause 自愈 / K2 process_region / N1 死注入，≤1 天），再进 R4.1 → R4.2。
+
 | 任务 | 内容 | 前置 |
 |---|---|---|
-| T4.1 Registry 语义路由向量化（M） | capabilities/examples 经 llm-gateway embed 建索引，ResolveAgents 向量检索+关键词混排；catalog 预筛质量随升 | 无（embedding 已就绪） |
-| T4.2 服务端流式 TTS + barge-in（L） | 真 PCM 分片流式下发；HMI 播放中可打断（AGENTS.md 待做项） | — |
+| **R4.1 = T4.1+K6+D7-lite 路由质量主题（L）✍️ 设计已出** | Registry 真语义路由（llm-gateway embed，删 hash 伪向量）+ 飞书 8683 语料资产化 + 覆盖率 72%→≥82% quick-win 扩规则；NLU 路径 defer 带触发条件 | 无（设计定稿） |
+| **R4.2 = T4.2 服务端流式 TTS + barge-in（L）✍️ 设计已出** | DashScope CosyVoice 流式（复用 fun-asr 已破解的 run-task 协议）+ WS /api/tts/stream + HMI PCM 调度播放 + 打断；探针硬 gate 先行 | 无（设计定稿） |
 | T4.3 端侧 SLM 离线兜底（L） | 断网简单问答（架构 §3.3 可选项）；先做端侧模型基准测试（风险 R1） | — |
 | T4.4 剩余 mock 真实化（M×3） | food/parking 真实平台或沙箱；manual-rag 换 pgvector 车书库（多车型隔离+出处） | — |
 | T4.5 HMI P5 行车态 / P6 Dashboard（M） | 等 Figma A-8 行车态帧 / B 帧 | 设计稿 |
