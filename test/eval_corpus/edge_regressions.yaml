@@ -58,6 +58,20 @@ positive:
     source: "R4.1 P3 B1 气象同义词"
     tags: [weather, b1, synonym]
 
+  # R4.1 P3 B2：设置页/界面开合族（补关闭方向 + 界面/页面通用）
+  - text: 关闭系统设置
+    expect_object: page
+    source: "R4.1 P3 B2 设置页开合（关闭方向）"
+    tags: [page, b2, settings_page]
+  - text: 打开语音技能界面
+    expect_object: page
+    source: "R4.1 P3 B2 设置页开合（界面通用，无「设置」字）"
+    tags: [page, b2, settings_page]
+  - text: 打开负一屏页面
+    expect_object: page
+    source: "R4.1 P3 B2 设置页开合（页面通用）"
+    tags: [page, b2, settings_page]
+
 hijack_guard:
   - text: 深入调研一下固态电池的现状和量产前景
     forbid_object: battery
@@ -85,3 +99,13 @@ hijack_guard:
     forbid_object: weather
     source: "R4.1 P3 B1 气象反例（预警=info.alerts 云端）"
     tags: [weather, hijack, b1]
+
+  # R4.1 P3 B2：设置页开合反例——读内容/manual 类不得被判成 page（须上云）
+  - text: 打开设置里的隐私协议给我读一下
+    forbid_object: page
+    source: "R4.1 P3 B2 反例（读内容请求=云端，非开设置页）"
+    tags: [page, hijack, b2]
+  - text: 辅助驾驶怎么用
+    forbid_object: page
+    source: "R4.1 P3 B2 反例（怎么用=manual.query 云端）"
+    tags: [page, hijack, b2]

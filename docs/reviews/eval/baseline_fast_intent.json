@@ -1,8 +1,8 @@
 {
   "meta": {
     "subject": "fast_intent",
-    "generated_at": "2026-07-04T06:46:05.576807+00:00",
-    "commit": "0c92d6c"
+    "generated_at": "2026-07-04T07:07:07.338421+00:00",
+    "commit": "333318d"
   },
   "corpus_sources": [
     {
@@ -11,11 +11,11 @@
     },
     {
       "path": "test/eval_corpus/edge_regressions.yaml::positive",
-      "count": 10
+      "count": 13
     },
     {
       "path": "test/eval_corpus/edge_regressions.yaml::hijack_guard",
-      "count": 6
+      "count": 8
     },
     {
       "path": "orchestrator/edge/tests/corpus/multi_intent.yaml::split",
@@ -28,14 +28,14 @@
   ],
   "buckets": {
     "object_recognition": {
-      "total": 25,
-      "passed": 25,
+      "total": 28,
+      "passed": 28,
       "failures": [],
       "pass_rate": 1.0
     },
     "object_recognition_guardrail": {
-      "total": 6,
-      "passed": 6,
+      "total": 8,
+      "passed": 8,
       "failures": [],
       "pass_rate": 1.0
     },
@@ -53,8 +53,8 @@
     }
   },
   "overall": {
-    "total": 45,
-    "passed": 45,
+    "total": 50,
+    "passed": 50,
     "pass_rate": 1.0
   },
   "cases": {
@@ -369,6 +369,51 @@
       ],
       "source": "R4.1 P3 B1 气象同义词"
     },
+    "object_recognition::关闭系统设置": {
+      "id": "object_recognition::关闭系统设置",
+      "bucket": "object_recognition",
+      "text": "关闭系统设置",
+      "expected": "page",
+      "actual": "page",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "page",
+        "b2",
+        "settings_page"
+      ],
+      "source": "R4.1 P3 B2 设置页开合（关闭方向）"
+    },
+    "object_recognition::打开语音技能界面": {
+      "id": "object_recognition::打开语音技能界面",
+      "bucket": "object_recognition",
+      "text": "打开语音技能界面",
+      "expected": "page",
+      "actual": "page",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "page",
+        "b2",
+        "settings_page"
+      ],
+      "source": "R4.1 P3 B2 设置页开合（界面通用，无「设置」字）"
+    },
+    "object_recognition::打开负一屏页面": {
+      "id": "object_recognition::打开负一屏页面",
+      "bucket": "object_recognition",
+      "text": "打开负一屏页面",
+      "expected": "page",
+      "actual": "page",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "page",
+        "b2",
+        "settings_page"
+      ],
+      "source": "R4.1 P3 B2 设置页开合（页面通用）"
+    },
     "object_recognition_guardrail::深入调研一下固态电池的现状和量产前景": {
       "id": "object_recognition_guardrail::深入调研一下固态电池的现状和量产前景",
       "bucket": "object_recognition_guardrail",
@@ -458,6 +503,36 @@
         "b1"
       ],
       "source": "R4.1 P3 B1 气象反例（预警=info.alerts 云端）"
+    },
+    "object_recognition_guardrail::打开设置里的隐私协议给我读一下": {
+      "id": "object_recognition_guardrail::打开设置里的隐私协议给我读一下",
+      "bucket": "object_recognition_guardrail",
+      "text": "打开设置里的隐私协议给我读一下",
+      "expected": "!= page",
+      "actual": null,
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "page",
+        "hijack",
+        "b2"
+      ],
+      "source": "R4.1 P3 B2 反例（读内容请求=云端，非开设置页）"
+    },
+    "object_recognition_guardrail::辅助驾驶怎么用": {
+      "id": "object_recognition_guardrail::辅助驾驶怎么用",
+      "bucket": "object_recognition_guardrail",
+      "text": "辅助驾驶怎么用",
+      "expected": "!= page",
+      "actual": null,
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "page",
+        "hijack",
+        "b2"
+      ],
+      "source": "R4.1 P3 B2 反例（怎么用=manual.query 云端）"
     },
     "multi_intent_split::座椅加热和座椅通风安排上": {
       "id": "multi_intent_split::座椅加热和座椅通风安排上",
