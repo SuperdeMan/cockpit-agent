@@ -13,7 +13,6 @@ from orchestrator.cloud.planning import PlanBuilder
 from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.aggregator import Aggregator
 from orchestrator.cloud.session import SessionStore
-from security.permission import PermissionEngine
 
 
 def _agent(agent_id, intents):
@@ -66,7 +65,6 @@ def _engine():
         executor=DagExecutor(call_agent_fn=spy.call_agent),
         aggregator=Aggregator(llm_fn=spy.llm),
         session=session,
-        perms=PermissionEngine(),
     )
     return engine, spy, session
 

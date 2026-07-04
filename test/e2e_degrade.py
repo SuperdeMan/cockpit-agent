@@ -279,44 +279,47 @@ async def case_network_outage() -> bool:
     local_text = "打开空调26度"     # 与 e2e_ws.py / PoC 验收清单同款车控探针
     cloud_text = "讲个笑话"
     target = "网络不太好，复杂请求暂时无法处理，不过车内控制依然可以正常使用。"
+    paused = False
     try:
-        try:
-            print("  → docker compose pause cloud-gateway")
-            _run(["pause", "cloud-gateway"])
+        print("  → docker compose pause cloud-gateway")
+        _run(["pause", "cloud-gateway"])
+        paused = True
 
-            t0 = time.monotonic()
-            local_msg = await ask(local_text, f"degrade-net-local-{uuid.uuid4().hex[:6]}")
-            local_elapsed = time.monotonic() - t0
-            local_ok = _is_healthy_reply(local_msg) and local_elapsed < 5.0
-            print(f"  {'✓' if local_ok else '✗'} 车控本地秒回：{local_elapsed:.1f}s "
-                  f"speech={_speech_of(local_msg)[:40]!r}")
+        t0 = time.monotonic()
+        local_msg = await ask(local_text, f"degrade-net-local-{uuid.uuid4().hex[:6]}")
+        local_elapsed = time.monotonic() - t0
+        local_ok = _is_healthy_reply(local_msg) and local_elapsed < 5.0
+        print(f"  {'✓' if local_ok else '✗'} 车控本地秒回：{local_elapsed:.1f}s "
+              f"speech={_speech_of(local_msg)[:40]!r}")
 
-            cloud_msg = await ask(cloud_text, f"degrade-net-cloud-{uuid.uuid4().hex[:6]}")
-            cloud_speech = _speech_of(cloud_msg)
-            cloud_ok = target in cloud_speech
-            print(f"  {'✓' if cloud_ok else '✗'} 云端请求降级话术：{cloud_speech!r}")
+        cloud_msg = await ask(cloud_text, f"degrade-net-cloud-{uuid.uuid4().hex[:6]}")
+        cloud_speech = _speech_of(cloud_msg)
+        cloud_ok = target in cloud_speech
+        print(f"  {'✓' if cloud_ok else '✗'} 云端请求降级话术：{cloud_speech!r}")
 
-            return local_ok and cloud_ok
-        except Exception as e:
-            print(f"  ✗ 用例执行异常: {type(e).__name__}: {e}")
-            return False
+        # 解冻并**断言自愈**（K1 已修，R4.0）：cloud-gateway pause→unpause（同 IP 冻结再解冻）后，
+        # edge-orchestrator 的持久 channel **不重启即自愈**。冻结靠 app 心跳检测缺 pong 触发
+        # _cancel_stream() 强制重连——修复前 read() 抛的 CancelledError 会把 _run 重连循环打死、
+        # 通道永不恢复（曾以显式重启 edge-orchestrator 兜底）；现 _run 用 _closing 区分「流被取消/
+        # 任务被取消」+ 每次 _open 有界超时，真栈实测解冻后 ~2s 自愈。见 docs/design/2026-07-04-*.md。
+        print("  → docker compose unpause cloud-gateway（解冻，断言自愈，不重启 edge-orchestrator）")
+        _run(["unpause", "cloud-gateway"])
+        paused = False
+        healed = await _poll_until(lambda: _quick_recovered(cloud_text), deadline=SHORT_RECOVER_DEADLINE)
+        print(f"  {'✓' if healed else '✗'} 持久通道 pause/unpause 后自愈（未重启 edge-orchestrator）")
+
+        return local_ok and cloud_ok and healed
+    except Exception as e:
+        print(f"  ✗ 用例执行异常: {type(e).__name__}: {e}")
+        return False
     finally:
-        try:
-            print("  → docker compose unpause cloud-gateway（恢复）")
-            _run(["unpause", "cloud-gateway"])
-            # 已知缺口（本次真实跑发现，非本卡改动引入）：edge-orchestrator 的持久 channel
-            # 在 cloud-gateway pause→unpause（冻结再解冻，同 IP）后不会像 e2e_resilience.py
-            # 测的"recreate 换 IP"场景那样可靠自愈——实测日志反复 "Missed too many pongs,
-            # forcing reconnect" 后仍 "cloud channel not connected"，需要重启 edge-orchestrator
-            # 才能恢复。详见 docs/design/2026-07-03-r3.5-degrade-matrix-e2e.md §6。不修这个
-            # 缺口（跟研究阶段发现的 3 处一视同仁），但本脚本的恢复步骤不能依赖不可靠的自愈
-            # ——显式重启 edge-orchestrator 兜底，确保测试结束时栈真的恢复干净。
-            print("  → 顺带重启 edge-orchestrator（pause/unpause 后已知不会自愈的兜底）")
-            _run(["restart", "edge-orchestrator"])
-            recovered = await _poll_until(lambda: _quick_recovered(cloud_text), deadline=SHORT_RECOVER_DEADLINE)
-            print("  ✓ 已确认 cloud-gateway 恢复" if recovered else "  ✗ 恢复轮询超时，需人工检查！")
-        except Exception as e:
-            print(f"  ✗ 恢复步骤异常: {type(e).__name__}: {e}——需人工检查！")
+        # 兜底：异常路径若还停着，务必解冻，避免把冻结态遗留给后续脚本或下次本地使用。
+        if paused:
+            try:
+                print("  → （异常兜底）docker compose unpause cloud-gateway")
+                _run(["unpause", "cloud-gateway"])
+            except Exception as e:
+                print(f"  ✗ 兜底解冻异常: {type(e).__name__}: {e}——需人工检查！")
 
 
 _CASES = [

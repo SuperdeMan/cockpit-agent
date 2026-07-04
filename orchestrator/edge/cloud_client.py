@@ -82,14 +82,28 @@ class CloudClient:
         """维护单条持久 bidi 流：连接 → 读循环（阻塞至流断）→ 退避重连。"""
         while not self._closing:
             try:
-                await self._open()
+                # 单次(重)连必须有界（K1）：cloud-gateway `pause/unpause`（同 IP 冻结再解冻）
+                # 时，冻结窗口内发起的连接会卡在半开的 HTTP/2 握手（服务端冻结不发 SETTINGS/
+                # HelloAck），无 deadline 的握手会永久挂起——且在部分 Docker/WSL2 环境下即便解冻
+                # 也不恢复，表现为通道永不自愈、只能重启 edge-orchestrator。加超时保证任何单次
+                # 尝试有界失败，_run 退避后丢弃这条卡死的 channel、用全新 channel 再试，解冻后的
+                # 干净连接即可自愈。见 docs/design/2026-07-04-r4.0-*。
+                await asyncio.wait_for(self._open(), timeout=_CONNECT_WAIT_S)
                 self._backoff = 0.5
                 self._missed_pong = 0
                 self._connected.set()
                 self._ping_task = asyncio.create_task(self._ping_loop())
                 await self._read_loop()          # 阻塞直到流结束/出错
             except asyncio.CancelledError:
-                raise
+                # 仅当真正在关闭时才让 _run 退出（aclose 先置 _closing=True 再 cancel 本任务）。
+                # 否则这条 CancelledError 来自 _ping_loop 的 _cancel_stream()——强制重连时 cancel 掉
+                # grpc 流，_read_loop 的 read() 随之抛 CancelledError；绝不能把它当任务取消 re-raise
+                # 掉整个 _run，否则 _run 任务死亡、通道永不重连。这正是 K1（pause/unpause 同 IP 冻结
+                # 不自愈）的真正根因：冻结场景靠 app-ping 检测缺 pong 触发 _cancel_stream()，而非
+                # 换 IP 场景那样由 grpc keepalive 抛 AioRpcError（走 except Exception 正常重连）。
+                if self._closing:
+                    raise
+                logger.warning("Cloud channel stream cancelled, reconnecting")
             except Exception as exc:
                 logger.warning("Cloud channel session ended: %s", exc)
             finally:

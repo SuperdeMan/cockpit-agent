@@ -14,7 +14,6 @@ from orchestrator.cloud.planning import PlanBuilder
 from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.aggregator import Aggregator
 from orchestrator.cloud.session import SessionStore
-from security.permission import PermissionEngine
 
 _SINGLE_PLAN = json.dumps({"steps": [
     {"id": "s1", "agent_id": "chitchat", "intent": "chitchat.talk", "slots": {}, "depends_on": []},
@@ -83,7 +82,6 @@ def _make_engine(spy):
         executor=DagExecutor(call_agent_fn=spy.call_agent),
         aggregator=Aggregator(llm_fn=spy.llm),
         session=session,
-        perms=PermissionEngine(),
     )
     return engine, session
 

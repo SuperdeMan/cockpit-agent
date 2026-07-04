@@ -2,6 +2,12 @@
 
 > 复审对象：`2026-07-02-repo-audit-and-roadmap.md` §4 的 R1（5 卡）+ R2（5 卡）+ R3（6 卡）共 16 张任务卡的执行结果（61 个 commit，e3eb162..c122527）。
 > 复审性质：只读验收，未改任何代码。证据分四级：文档对照 → 代码证据（grep/通读）→ 行为验证（本地实跑）→ 外部独立验证（GitHub API 查 workflow 结论）。
+>
+> **更新（2026-07-04，本报告之后的处理）**：§4「R4.0 收尾包」三项（K1/K2/N1）+ §3b 边界 K3（Grafana 面板）
+> **已全部处理并真栈验证**，落地记录 `docs/design/2026-07-04-r4.0-residual-cleanup.md`。要点：K1 真根因比本报告
+> 推测更深（app 心跳强制重连的 `CancelledError` 打死 `_run` 重连循环，非"重连挂起"那么简单），已修并真栈实测
+> 解冻后 ~2s 自愈；K2 让测试自足（断言前复位泊车态）；N1 死注入彻底删除；K3 网络恢复后 Grafana→Prometheus→
+> collector 三面板经数据源代理真实出数。全量 pytest 1050 passed。本报告正文保留原始只读复审结论不改。
 
 ---
 
@@ -105,16 +111,16 @@
 
 | # | 发现 | 位置 | 建议 |
 |---|---|---|---|
-| N1 | **PermissionEngine 死注入**：R2.2 单轨化后，`main.py:49` 仍构造 `PermissionEngine()` 注入 `PlannerEngine(perms=...)`，`engine.py:51` 存 `self.perms` 但全文无任何使用——权限双轨清了，注入残骸没清 | orchestrator/cloud/{main,engine}.py | 下次动编排时顺手删参数（或留作 trust-cap 接线点，但应加注释声明意图）；类本身被 test_ws8_security 使用，保留 |
+| N1 | **PermissionEngine 死注入**：R2.2 单轨化后，`main.py:49` 仍构造 `PermissionEngine()` 注入 `PlannerEngine(perms=...)`，`engine.py:51` 存 `self.perms` 但全文无任何使用——权限双轨清了，注入残骸没清 | orchestrator/cloud/{main,engine}.py | ✅ **已清（R4.0，2026-07-04）**——`perms` 注入彻底删除（含 8 测试文件构造点），`engine.py` 留注释声明 trust-cap 未来扩 `check_permission`；`PermissionEngine` 类保留供 `test_ws8_security` |
 | N2 | `_fallback` 里 `"chitchat.talk"` 字符串作 capabilities 为空时的兜底 intent 默认值 | planning.py:324 | 可忽略（防御分支，实际 chitchat manifest 恒有 capability） |
 
 ### 3b. 执行者已自记的边界（汇总，均有出处）
 
 | # | 边界 | 出处 | 性质 |
 |---|---|---|---|
-| K1 | **cloud-gateway pause/unpause 后 edge-orchestrator 持久通道不自愈**（换 IP 场景会自愈、同 IP 冻结不会），当前以 restart 兜底 | e2e_degrade.py / R3.5 落地记录 | 真实可靠性缺口，**建议 R4 前修** |
+| K1 | **cloud-gateway pause/unpause 后 edge-orchestrator 持久通道不自愈**（换 IP 场景会自愈、同 IP 冻结不会），当前以 restart 兜底 | e2e_degrade.py / R3.5 落地记录 | ✅ **已修（R4.0，2026-07-04）**——真根因=app 心跳强制重连的 `CancelledError` 打死 `_run`；真栈 ~2s 自愈，见 `docs/design/2026-07-04-r4.0-residual-cleanup.md` |
 | K2 | `e2e_process_region.py` 既有失败（默认泊车态断言），与 R3.3 无关 | R3.3 落地记录 | 待修的既有测试问题 |
-| K3 | Grafana 面板未验证（环境网络） | R3.6 落地记录 | 环境恢复后补验 |
+| K3 | Grafana 面板未验证（环境网络） | R3.6 落地记录 | ✅ **已验证（R4.0，2026-07-04）**——三面板经 Grafana 数据源代理真实出数 |
 | K4 | trust-cap（trust_level 上限强制）推迟 | R2.2 落地记录 | 等 scope 层次化/IdP 后接线；现 third_party 车控硬禁令仍在 |
 | K5 | 静态 token 非量产 IdP；`PERMISSIONS_FAIL_OPEN`/`AUTH_REQUIRED`/`GRPC_TLS` 默认均为开发友好态，量产需翻转三开关 | R3.1/R3.2 落地记录 | 部署清单项，非代码缺口 |
 | K6 | 端侧意图真实覆盖 72%（1465 语料），扩规则 vs 上 NLU 模型未定 | 2026-07-03-intent-coverage-gap-analysis.md | R4 路由质量主题的输入 |
@@ -130,10 +136,11 @@
 
 **判断：可以进入 R4。** R1–R3 无阻塞性残留；§3 各项均为小尾或已声明边界。唯一建议的次序调整：先花 ≤1 天清一个「R4.0 收尾包」，再进能力演进——三件小事都趁热：
 
-**R4.0 收尾包（S，先行）**
-1. 修 K1：pause/unpause 同 IP 冻结场景的通道自愈（`cloud_client._reader` 对心跳超时/长时间无 Pong 的主动断流重建——现在只对连接错误重建）；修好后把 e2e_degrade Row 4 的 restart 兜底改回自愈断言。
-2. 修 K2：`e2e_process_region.py` 既有断言失败。
-3. 清 N1：PermissionEngine 死注入。
+**R4.0 收尾包（S，先行）— ✅ 已全部完成（2026-07-04，见 `docs/design/2026-07-04-r4.0-residual-cleanup.md`）**
+1. ✅ **K1**：真根因是 app 心跳强制重连时 `_cancel_stream()` 令 `read()` 抛 `CancelledError`、被 `_run` 当任务取消 re-raise 打死重连循环（**不是**本报告推测的"`_reader` 对心跳超时主动断流"那么简单——`_reader` 本就会因流被 cancel 而断，问题在断之后 `_run` 被误杀不重连）。修法：`_run` 用 `_closing` 区分「流被取消/任务被取消」+ `_open()` 有界超时。真栈解冻后 ~2s 自愈，e2e_degrade Row 4 已由 restart 兜底改回自愈断言，+2 双向守护单测。
+2. ✅ **K2**：`e2e_process_region.py` 断言前经 collector `POST /api/debug/vehicle` 复位泊车态使测试自足（污染态 fail→复位 pass 双向验证）。
+3. ✅ **N1**：`PermissionEngine` 死注入彻底删除（编排层不再持权限引擎；trust-cap 未来扩 `check_permission` 而非复注入）。
+4. ✅ **K3**（原 §3b 边界）：Grafana 面板本次网络恢复完成验证——起 observability profile，Grafana→Prometheus→collector 三面板经数据源代理真实出数。
 
 **R4 主线（按 ROI 排序）**
 

@@ -21,7 +21,6 @@ from .progress import (is_complex, phase_label, step_summary,
 from observability import events as obs_events
 from observability.metrics import metrics
 from observability.tracing import set_trace_id
-from security.permission import PermissionEngine
 
 logger = logging.getLogger("planner.engine")
 
@@ -41,14 +40,15 @@ class PlannerEngine:
     """编排主循环。engine 是唯一持有全局状态的地方。"""
 
     def __init__(self, clients, planner: PlanBuilder, executor: DagExecutor,
-                 aggregator: Aggregator, session: SessionStore,
-                 perms: PermissionEngine, loop=None):
+                 aggregator: Aggregator, session: SessionStore, loop=None):
         self.clients = clients
         self.planner = planner
         self.executor = executor
         self.aggregator = aggregator
         self.session = session
-        self.perms = perms
+        # 权限决策单轨化（R2.2）：唯一决策点是 security.permission.check_permission
+        # （规划期 catalog 过滤 + dispatch 执行期硬拒同源复用），编排层不再持权限引擎。
+        # trust-cap 强上限（K4）待 scope 层次化/IdP 后接线，届时扩 check_permission，不在此处复注入。
         self.context = ContextManager(clients, session)  # 上下文统一门面（装配+焦点态）
         self.loop = loop or LoopController(
             planner, executor, aggregator, self._suspend,

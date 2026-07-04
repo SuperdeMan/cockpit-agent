@@ -12,6 +12,7 @@
 import asyncio
 import json
 import sys
+import urllib.request
 
 # Windows 控制台默认 GBK，放不下 ✓/✗ 等字符 → 统一切 UTF-8（失败则忽略）
 try:
@@ -26,11 +27,31 @@ except ImportError:
     sys.exit(1)
 
 URL = "ws://localhost:8090/ws"
+COLLECTOR = "http://localhost:8092"
 TIMEOUT = 90  # 复杂任务开思考更慢
 
 # 过程事件绝不允许出现的内部字段/词（脱敏断言）
 _FORBIDDEN = ("reasoning", "system_prompt", "你是", "thinking", "max_tokens",
               "endpoint", "api-key", "prompt")
+
+
+def _reset_vehicle_parked():
+    """把车辆置回默认泊车态（speed_kmh=0 / gear=P），供「默认泊车态 driving=false」断言确定性成立。
+
+    driving 由 Edge 按 VAL 实时 speed_kmh/gear 标注（`server.py::_is_driving`）。长期运行、被历次
+    会话反复调试过的**共享栈**里，VAL 内存态可能残留非泊车值——这正是本测试原「既有失败」（K2）
+    的根因：断言默认态却不先复位。经 collector `POST /api/debug/vehicle` → NATS `obs.debug.vehicle.set`
+    复位（与 `e2e_central_hub_assertions.py` 同款通道，stdlib urllib 无新依赖）。best-effort：调试
+    接口关（`DEBUG_VEHICLE_CONTROL`）或不可达时不硬失败——干净栈本就是泊车态。"""
+    for key, value in (("speed_kmh", 0), ("gear", "P")):
+        try:
+            data = json.dumps({"key": key, "value": value}).encode("utf-8")
+            req = urllib.request.Request(
+                COLLECTOR + "/api/debug/vehicle", data=data,
+                headers={"content-type": "application/json"}, method="POST")
+            urllib.request.urlopen(req, timeout=5).read()
+        except Exception as e:
+            print(f"  (车态复位 {key}={value} 跳过：{type(e).__name__}——干净栈本为泊车态)")
 
 
 async def collect(payload: dict, desc: str) -> list[dict]:
@@ -71,6 +92,10 @@ _assert.failed = False
 
 async def main():
     print("=== E2E：复杂任务过程区 + 动态思考 ===")
+
+    # 复位车辆到默认泊车态，隔离长期共享栈的调试态污染（K2）；给 NATS→VAL 传播留出时间。
+    _reset_vehicle_parked()
+    await asyncio.sleep(1.0)
 
     # 1) 普通闲聊：单步、不复杂 → 不应出过程区
     ev = await collect({"text": "讲个笑话", "session_id": "e2e-pr-chat"},
