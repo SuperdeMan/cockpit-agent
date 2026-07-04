@@ -3,6 +3,7 @@
 // （send/stopTTS/orb/notice）。App 只管开关它并喂 needConfirm/tts 生命周期，不碰 FSM 内部。
 import { VoiceLoop } from './voiceLoop.mjs'
 import { VadEngine } from './vadEngine'
+import { KwsEngine } from './kwsEngine'
 import { StreamingRecognizer, asrStreamUrl } from './audio'
 
 export type HandsFreeDeps = {
@@ -12,12 +13,14 @@ export type HandsFreeDeps = {
   onStopTts: () => void
   onOrbState: (orb: string | null) => void // null = FSM 回 IDLE，交还 mic 态
   onNotice?: (msg: string) => void
+  wakeWord?: () => boolean // 是否开唤醒词「小舟小舟」（KWS）
   config?: { followupWindowMs?: number; silenceTailMs?: number }
 }
 
 export class HandsFreeController {
   private vl: any // VoiceLoop（.mjs 无声明，as any 避免 TS7016 噪声）
   private vad: VadEngine
+  private kws: KwsEngine
   private asr: StreamingRecognizer | null = null
   private deps: HandsFreeDeps
   private on = false
@@ -25,6 +28,7 @@ export class HandsFreeController {
   constructor(deps: HandsFreeDeps) {
     this.deps = deps
     this.vad = new VadEngine(deps.config?.silenceTailMs ?? 800)
+    this.kws = new KwsEngine()
     this.vl = new VoiceLoop({
       config: {
         followupWindowMs: deps.config?.followupWindowMs ?? 8000,
@@ -68,6 +72,7 @@ export class HandsFreeController {
     }
     this.on = true
     this.vl.handsFreeOn()
+    if (this.deps.wakeWord?.()) this.startKws()
     return true
   }
 
@@ -76,8 +81,22 @@ export class HandsFreeController {
     this.on = false
     this.vl.handsFreeOff()
     this.vad.stop()
+    this.kws.stop()
     this.closeAsr()
     this.deps.onOrbState(null)
+  }
+
+  // 唤醒词开关（设置变化时 App 调用）：开则起 KWS 常开听「小舟小舟」，命中 → FSM wake()
+  setWakeWord(on: boolean): void {
+    if (!this.on) return
+    if (on && !this.kws.active) this.startKws()
+    else if (!on && this.kws.active) this.kws.stop()
+  }
+
+  private startKws(): void {
+    void this.kws
+      .start(() => this.vl.wake())
+      .catch((e) => this.deps.onNotice?.('唤醒词未就绪（' + (e instanceof Error ? e.message : String(e)) + '）：跑 scripts/build-kws-wasm.sh 生成 KWS 运行时'))
   }
 
   // 点光球开启聆听（VAD-only 无唤醒词时的「一次点击开启」，设计备选链②）；有 KWS 后由唤醒词代劳
