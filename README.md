@@ -65,10 +65,13 @@
   ⑥**Prometheus/OTel 导出**（R3.6）——collector 新增 `GET /metrics`（手写 Prometheus 文本格式）+
   桥接真实 OTel span 导出 + compose 首次引入 `profiles` 机制门控 Grafana 仪表盘（延迟/成功率/
   熔断状态）。各卡零回归、真栈/GitHub 实跑验证，落地记录见 `docs/design/2026-07-0{2,3,4}-*`。
-- 全量 pytest：**约 1048 passed, 7 skipped**（在 R3.4 实测 1037 passed/6 skipped 基础上，
-  R3.6 新增 collector 单测 +12[7 passed+3 passed+1 skipped+1 passed]；R3.6 验证时本机网络
-  环境对大文件下载不稳定，未能一次性跑出单一命令的全量数字，改用分目录验证累加确认零回归，
-  见 `docs/design/2026-07-03-r3.6-observability-prometheus-otel-export.md`）。
+- **R4.0 收尾包（2026-07-04）**：清验收复审 [`docs/reviews/2026-07-04-acceptance-review-r1-r3.md`](docs/reviews/2026-07-04-acceptance-review-r1-r3.md)
+  的残留——①端云持久通道 `pause/unpause`（同 IP 冻结再解冻）自愈修复（真根因=应用层心跳强制重连时
+  `_cancel_stream()` 令 `read()` 抛 `CancelledError`、被 `_run` 当任务取消打死重连循环；真栈解冻后 ~2s 自愈）；
+  ②过程区 e2e 断言前复位车态使测试自足；③R2.2 单轨化后 `PermissionEngine` 死注入清理；④Grafana 面板网络
+  恢复后补验（三面板经数据源代理真实出数）。详见 `docs/design/2026-07-04-r4.0-residual-cleanup.md`。
+- 全量 pytest：**1050 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
+  一次跑通，含 R4.0 收尾包 K1/K2/N1 与 +2 条端云通道自愈单测）。
 - 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6 + 深度调研（深调研报告 + 多轮深挖 + 新闻深挖桥接 + 异步分钟级受理→主动推送报告卡）+ nightly GitHub 断言型 e2e（含 R3.5 降级矩阵四行）全绿；R3.6 真实 Agent 调用→`/metrics` 端到端数据链路真栈验证通过。
 - Docker 全栈 **26 个服务**（含充能规划/场景编排/路况安全/深度调研等 Agent），全栈联调通过；
   另有 Prometheus/Grafana 两个可观测服务经 Compose `profiles: ["observability"]` 门控可选启用
@@ -185,7 +188,7 @@ python test/e2e_ws.py
   `AUTH_REQUIRED` 默认关（配合 R2.2 `PERMISSIONS_FAIL_OPEN`）；真实 IdP/JWT 轮换/设备证书属后续。
 - 轻量 span/指标/健康已接入 NATS Dashboard；**Prometheus/OTel 导出已由 R3.6 落地**（collector
   `GET /metrics` + 桥接真实 OTel span 导出 + Grafana 仪表盘，均经 `--profile observability`
-  门控可选启用；Grafana 可视化面板受限于验证时本机网络环境未能实际打开确认，功能代码已就绪）；
+  门控可选启用；Grafana 仪表盘已于 **R4.0**（2026-07-04）网络恢复后补验——三面板经数据源代理真实出数）；
   持久化 trace、告警规则、多车聚合与正式鉴权仍待实现。
 - 当前 TTS 是“文本短句增量合成 + 顺序播放”，不是真正的服务端 PCM 音频流。
 - 服务间 gRPC **已由 R3.2 支持双向 mTLS**（`GRPC_TLS` env 门控，默认关保持现状；`scripts/gen-certs.*`
