@@ -80,6 +80,9 @@ export class HandsFreeController {
     this.deps.onOrbState(null)
   }
 
+  // 点光球开启聆听（VAD-only 无唤醒词时的「一次点击开启」，设计备选链②）；有 KWS 后由唤醒词代劳
+  wake(): void { if (this.on) this.vl.wake() }
+
   // ─── App 侧状态/生命周期喂给 FSM ───
   setNeedConfirm(v: boolean): void { if (this.on) this.vl.setNeedConfirm(v) }
   setTtsText(t: string): void { if (this.on) this.vl.setTtsText(t) }

@@ -540,6 +540,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         onSend={send}
         hint={handsFreeNotice || (connected ? undefined : '正在连接座舱服务…')}
         handsFreeOrb={handsFreeOrb}
+        onWake={() => handsFreeRef.current?.wake()}
       />
 
       {showSettings && (

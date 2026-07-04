@@ -16,11 +16,13 @@ export function Composer({
   onSend,
   hint,
   handsFreeOrb,
+  onWake,
 }: {
   audioApi: string
   onSend: (text: string) => void
   hint?: string
   handsFreeOrb?: string | null // R4.3：hands-free 激活时 FSM 的 orb 态（armed/listening/…），覆盖空闲 mic 态
+  onWake?: () => void // R4.3：hands-free 激活时点光球=开启聆听（VAD-only 的「一次点击开启」）
 }) {
   const { settings } = useSettings()
   const [input, setInput] = useState('')
@@ -117,9 +119,12 @@ export function Composer({
     }
   }
 
+  // hands-free 激活时（无唤醒词的 VAD-only）：点光球=开启/续接聆听（vl.wake）；VAD 负责断句
+  const handsFreeActive = !!handsFreeOrb && handsFreeOrb !== 'idle'
   // 按住说话：press/release；点按切换：click 切换
-  const holdHandlers =
-    settings.micMode === 'hold'
+  const holdHandlers = handsFreeActive
+    ? { onClick: () => { if (mic === 'idle') onWake?.() } }
+    : settings.micMode === 'hold'
       ? {
           onMouseDown: beginRecord,
           onMouseUp: endRecord,
@@ -136,6 +141,15 @@ export function Composer({
   const orbState: OrbState =
     mic === 'recording' ? 'speaking' : mic === 'transcribing' ? 'thinking' : ((handsFreeOrb as OrbState) || 'idle')
 
+  // hands-free 状态提示（给用户明确指引）
+  const hfHint =
+    mic !== 'idle' ? ''
+    : handsFreeOrb === 'armed' ? '免唤醒已开 · 点小舟开始说话'
+    : handsFreeOrb === 'listening' ? '聆听中…（停顿即自动发送）'
+    : handsFreeOrb === 'thinking' ? '处理中…'
+    : handsFreeOrb === 'speaking' ? '播报中 · 可直接开口打断'
+    : ''
+
   return (
     <div className="au-composer">
       <div className="au-quick-rail">
@@ -146,7 +160,7 @@ export function Composer({
         ))}
       </div>
 
-      {(notice || hint) && <div className="au-composer-notice">{notice || hint}</div>}
+      {(notice || hfHint || hint) && <div className="au-composer-notice">{notice || hfHint || hint}</div>}
 
       <div className="au-composer-bar">
         <button
