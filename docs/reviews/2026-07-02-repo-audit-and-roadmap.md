@@ -150,7 +150,7 @@
 | 任务 | 关联审计项 | 规模 | 备注 |
 |---|---|---|---|
 | ✅ ~~**R4.0 收尾包**~~ | K1/K2/N1（复审 §4）+ K3 | S | **已完成（2026-07-04）**，见 `docs/design/2026-07-04-r4.0-residual-cleanup.md`：K1 通道 pause/unpause 自愈（真根因=app 心跳强制重连 CancelledError 打死 `_run`，真栈 ~2s 自愈）/ K2 过程区 e2e 复位车态自足 / N1 PermissionEngine 死注入删 / K3 Grafana 三面板经数据源代理验证；全量 1050 passed |
-| **R4.1 路由质量主题** | A6/D11/D7/K6 | L | 🚧 **P0（Registry 真语义路由，含修 §1.1 hash 伪向量 bug）+ P1（Resolve 评测基线）已落地**（本地合并 main、**未 push**；真栈 39 行/12 agent 全 1024 维真向量、直调 resolve_semantic 4/4）；P2 语料资产化 / P3 扩规则待做。**真栈发现**：语义被既有关键词打分遮蔽（完整路径 15/20）——已定按设计原样收尾、拿 P1 基线当护栏后续处理。见 `docs/design/2026-07-04-r4.1-routing-quality.md` §10 |
+| **R4.1 路由质量主题** | A6/D11/D7/K6 | L | 🚧 **P0（Registry 真语义路由，含修 §1.1 hash 伪向量 bug）+ P1（Resolve 评测基线）+ P2（语料资产化+覆盖率报告，总体 72.04% 复现自校验、端侧应接子集 75.6%）已落地**（本地合并 main、**未 push**；真栈 39 行/12 agent 全 1024 维真向量、直调 resolve_semantic 4/4）；P3 quick-win 扩规则（B1/B2/B3 分批，目标总体 ≥82%）待做。**真栈发现**：语义被既有关键词打分遮蔽（完整路径 15/20）——已定按设计原样收尾、拿 P1 基线当护栏后续处理。见 `docs/design/2026-07-04-r4.1-routing-quality.md` §10 |
 | **R4.2 流式 TTS + barge-in** | T4.2 | L | ✍️ 设计已出：`docs/design/2026-07-04-r4.2-streaming-tts-bargein.md` |
 | R4 其余（T4.3/T4.4/T4.5/T4.6） | — | 见 §4 | 按需排期 |
 
@@ -475,7 +475,7 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
 
 | 任务 | 内容 | 前置 |
 |---|---|---|
-| **R4.1 = T4.1+K6+D7-lite 路由质量主题（L）🚧 P0/P1 已落地** | Registry 真语义路由（llm-gateway embed，删 hash 伪向量）+ 飞书 8683 语料资产化 + 覆盖率 72%→≥82% quick-win 扩规则；NLU 路径 defer 带触发条件。**P0/P1 已落地**（本地合 main 未 push，见顶部执行进度 R4.1 行 + 设计 §10）；P2/P3 待做 | 无（设计定稿） |
+| **R4.1 = T4.1+K6+D7-lite 路由质量主题（L）🚧 P0/P1/P2 已落地** | Registry 真语义路由（llm-gateway embed，删 hash 伪向量）+ 飞书语料资产化 + 覆盖率 72%→≥82% quick-win 扩规则；NLU 路径 defer 带触发条件。**P0/P1/P2 已落地**（本地合 main 未 push，见顶部执行进度 R4.1 行 + 设计 §10）；P3 扩规则（分批）待做 | 无（设计定稿） |
 | **R4.2 = T4.2 服务端流式 TTS + barge-in（L）✍️ 设计已出** | DashScope CosyVoice 流式（复用 fun-asr 已破解的 run-task 协议）+ WS /api/tts/stream + HMI PCM 调度播放 + 打断；探针硬 gate 先行 | 无（设计定稿） |
 | T4.3 端侧 SLM 离线兜底（L） | 断网简单问答（架构 §3.3 可选项）；先做端侧模型基准测试（风险 R1） | — |
 | T4.4 剩余 mock 真实化（M×3） | food/parking 真实平台或沙箱；manual-rag 换 pgvector 车书库（多车型隔离+出处） | — |

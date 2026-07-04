@@ -124,6 +124,10 @@ jobs:
             --baseline docs/reviews/eval/baseline_registry_resolve.json \
             --out-json docs/reviews/eval/_ci-run-registry_resolve.json \
             --out-md docs/reviews/eval/_ci-run-registry_resolve.md
+          # R4.1 P2：全量飞书语料覆盖率报告（总体较快照下降 >1pt 则 ::warning::，报告型不阻塞）
+          python test/eval_fast_intent.py --corpus full \
+            --out-json docs/reviews/eval/_ci-run-coverage_fast_intent.json \
+            --out-md docs/reviews/eval/_ci-run-coverage_fast_intent.md
 
       - name: Upload fresh eval report
         if: always()
