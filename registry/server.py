@@ -5,7 +5,7 @@ import inspect
 
 from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
 
-from registry.store import Store
+from registry.store import Store, SEMANTIC_MIN_SIM
 
 
 class RegistryServicer(registry_pb2_grpc.RegistryServicer):
@@ -42,6 +42,11 @@ class RegistryServicer(registry_pb2_grpc.RegistryServicer):
                         # 合并结果，去重（语义结果追加到末尾）
                         seen = {r.manifest.agent_id for r, _ in recs}
                         for r, s in semantic_recs:
+                            # SEMANTIC_MIN_SIM 下限双保险：resolve_semantic 已过一次，此处再过
+                            # 一道，防未来任何弱向量源绕开 store 过滤（修 §1.1「无相似度下限地
+                            # 追加」bug 的另一半）。
+                            if s < SEMANTIC_MIN_SIM:
+                                continue
                             if r.manifest.agent_id not in seen:
                                 recs.append((r, s))
                                 seen.add(r.manifest.agent_id)

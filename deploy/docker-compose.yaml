@@ -91,6 +91,11 @@ services:
       NATS_URL: nats://nats:4222
       LOG_LEVEL: ${LOG_LEVEL:-info}
       POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+      # R4.1 P0 语义路由：capability 向量 embedding 经 llm-gateway（→百炼 text-embedding-v4，
+      # 与 memory 同源），维度须与 LLM_EMBED_DIMENSIONS 一致。不加 depends_on llm-gateway：
+      # 启动时序由 store 的按需重探兜底（无 embed 源时诚实降级关键词路径）。
+      LLM_GATEWAY_ADDR: llm-gateway:50052
+      LLM_EMBED_DIMENSIONS: ${LLM_EMBED_DIMENSIONS:-1024}
       # R3.2 服务间 mTLS（默认关）
       GRPC_TLS: ${GRPC_TLS:-off}
       GRPC_TLS_CA: /certs/ca.crt
