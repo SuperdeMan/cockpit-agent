@@ -469,15 +469,17 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
 
 ### R4 · 能力演进（产品向，按需排期）
 
-> 2026-07-04 验收复审（见顶部执行进度指针）确认 R4 准入。**排序最高两项已出详细设计**（可直接接手执行）：
+> 2026-07-04 验收复审（见顶部执行进度指针）确认 R4 准入。**三项已出详细设计**（可直接接手执行）：
 > - **R4.1 路由质量主题**（= T4.1 + K6 意图覆盖 + D7-lite）→ [`docs/design/2026-07-04-r4.1-routing-quality.md`](../design/2026-07-04-r4.1-routing-quality.md)（P0 Registry 真向量·顺带修 hash 伪向量现存 bug / P1 resolve 评测 / P2 8683 语料资产化+覆盖率报告 / P3 quick-win 扩规则 72%→≥82%；裸「取消」不得端侧接住的坑已写死）
 > - **R4.2 流式 TTS + barge-in** → [`docs/design/2026-07-04-r4.2-streaming-tts-bargein.md`](../design/2026-07-04-r4.2-streaming-tts-bargein.md)（P0 CosyVoice 探针硬 gate / P1 WS 流式端点 / P2 HMI PCM 播放+无感回退 / P3 打断 v1 确定性+v2 语音实验性）
-> - 开工顺序建议：先做验收复审 §4 的「R4.0 收尾包」（K1 pause 自愈 / K2 process_region / N1 死注入，≤1 天），再进 R4.1 → R4.2。
+> - **R4.3 语音交互前端：唤醒 + VAD + 全双工-lite** → [`docs/design/2026-07-04-r4.3-wake-vad-fullduplex.md`](../design/2026-07-04-r4.3-wake-vad-fullduplex.md)（补 Phase 1 WS7 遗留「唤醒与打断」；全双工拆级：L1 免唤醒连续对话 / L2 唤醒词 hands-free / L3 播报中打断，L4 真全双工=非目标并给出架构理由；sherpa-onnx WASM 浏览器本地 KWS+VAD，唤醒前音频零上传；FSM 纯逻辑 node 可测；**取代 R4.2 §3.4 v2 语音打断**；P0 探针硬 gate + 后端零改动）
+> - 开工顺序建议：R4.0 收尾包 ✅ → R4.1 🚧（R4.1b 在途）→ R4.2 → R4.3（推荐 R4.2 P0-P2 先行使打断后体验更佳；但 R4.3 无硬依赖，可独立开工）。
 
 | 任务 | 内容 | 前置 |
 |---|---|---|
 | **R4.1 = T4.1+K6+D7-lite 路由质量主题（L）🚧 P0-P3(pattern) 已落地** | Registry 真语义路由（llm-gateway embed，删 hash 伪向量）+ 飞书语料资产化 + quick-win 扩规则；NLU 路径 defer 带触发条件。**P0/P1/P2 + P3 纯 pattern 两批（气象/设置页）已落地**（本地合 main 未 push；覆盖率 72.04%→75.74%）。**82% 目标未达**：剩余缺口是 ADAS 长尾/导航播报/空气净化的「端侧对象化」（12+ VAL 对象，非 quick-win）→ 另立卡 + 触发 §7 K6 重评估。见顶部执行进度 R4.1 行 + 设计 §10 | 无（设计定稿） |
-| **R4.2 = T4.2 服务端流式 TTS + barge-in（L）✍️ 设计已出** | DashScope CosyVoice 流式（复用 fun-asr 已破解的 run-task 协议）+ WS /api/tts/stream + HMI PCM 调度播放 + 打断；探针硬 gate 先行 | 无（设计定稿） |
+| **R4.2 = T4.2 服务端流式 TTS + barge-in（L）✍️ 设计已出** | DashScope CosyVoice 流式（复用 fun-asr 已破解的 run-task 协议）+ WS /api/tts/stream + HMI PCM 调度播放 + 打断；探针硬 gate 先行。**§3.4 v2 语音打断已移交 R4.3**（执行时跳过 v2） | 无（设计定稿） |
+| **R4.3 语音交互前端：唤醒 + VAD + 全双工-lite（L）✍️ 设计已出** | 补 WS7 遗留「唤醒与打断」：sherpa-onnx WASM 浏览器本地 KWS（「小舟小舟」pinyin 运行时配置）+ silero-vad 端点检测 + `voiceLoop.mjs` 纯逻辑 FSM（免唤醒连续对话/播报中打断/误唤醒静默回收/dismiss 与云端 F1 取消的分界）；唤醒前音频零上传；后端零改动；全部默认关 | 无（设计定稿）；推荐 R4.2 P0-P2 先行（非硬依赖） |
 | T4.3 端侧 SLM 离线兜底（L） | 断网简单问答（架构 §3.3 可选项）；先做端侧模型基准测试（风险 R1） | — |
 | T4.4 剩余 mock 真实化（M×3） | food/parking 真实平台或沙箱；manual-rag 换 pgvector 车书库（多车型隔离+出处） | — |
 | T4.5 HMI P5 行车态 / P6 Dashboard（M） | 等 Figma A-8 行车态帧 / B 帧 | 设计稿 |
