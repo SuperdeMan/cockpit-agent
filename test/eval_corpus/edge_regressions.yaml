@@ -72,6 +72,28 @@ positive:
     source: "R4.1 P3 B2 设置页开合（页面通用）"
     tags: [page, b2, settings_page]
 
+  # R4.1b P0：端侧对象化（低成本非安全敏感）——空气净化 / 导航播报 / 按键音
+  - text: 打开空气净化
+    expect_object: air_purifier
+    source: "R4.1b P0 空气净化对象化"
+    tags: [air_purifier, r4.1b]
+  - text: 关闭空气净化
+    expect_object: air_purifier
+    source: "R4.1b P0 空气净化对象化"
+    tags: [air_purifier, r4.1b]
+  - text: 打开导航播报
+    expect_object: navi_broadcast
+    source: "R4.1b P0 导航播报对象化（edge_expected=true 子集）"
+    tags: [navi_broadcast, r4.1b]
+  - text: 关闭导航播报
+    expect_object: navi_broadcast
+    source: "R4.1b P0 导航播报对象化"
+    tags: [navi_broadcast, r4.1b]
+  - text: 打开按键音
+    expect_object: key_tone
+    source: "R4.1b P0 按键音对象化"
+    tags: [key_tone, r4.1b]
+
 hijack_guard:
   - text: 深入调研一下固态电池的现状和量产前景
     forbid_object: battery
@@ -109,3 +131,13 @@ hijack_guard:
     forbid_object: page
     source: "R4.1 P3 B2 反例（怎么用=manual.query 云端）"
     tags: [page, hijack, b2]
+
+  # R4.1b P0 反例：语义相邻对象不得被新对象误吸
+  - text: 查一下今天的空气质量
+    forbid_object: air_purifier
+    source: "R4.1b P0 反例（空气质量=air_quality 查询，非空气净化控制）"
+    tags: [air_purifier, hijack, r4.1b]
+  - text: 导航去公司
+    forbid_object: navi_broadcast
+    source: "R4.1b P0 反例（导航去X=navigation 路线，非导航播报开关）"
+    tags: [navi_broadcast, hijack, r4.1b]

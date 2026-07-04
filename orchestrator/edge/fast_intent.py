@@ -35,6 +35,10 @@ LOCAL_INTENTS = {
     "battery.query",
     "tire_pressure.query",
     "dashcam.open", "dashcam.close",
+    # ── R4.1b P0：端侧对象化（空气净化 / 导航播报 / 按键音；open/close 命名，与 classify() 快路径口径一致）──
+    "air_purifier.open", "air_purifier.close",
+    "navi_broadcast.open", "navi_broadcast.close", "navi_broadcast.set",
+    "key_tone.open", "key_tone.close",
     # 驾驶模式 / 电源模式
     "driving_mode.set",
     "power_mode.set",
@@ -262,6 +266,23 @@ def classify(text: str) -> dict | None:
 def classify_structured(text: str) -> dict | None:
     """新接口：返回公版 {domain, intent, data: {operate, object, ...}} 格式。"""
     t = text.strip()
+
+    # ── R4.1b P0：端侧对象化（空气净化 / 导航播报 / 按键音；短语明确、早置防被后续泛化截获）──
+    if "空气净化" in t:
+        return _s("setting", "control", "close" if "关" in t else "open", "air_purifier", conf=0.92)
+    if "导航" in t and "播报" in t:            # 导航播报开关/模式（导航+播报共现，不误吸「导航去X」）
+        if "关" in t:
+            return _s("setting", "control", "close", "navi_broadcast", conf=0.9)
+        _bc_modes = {"简洁": "concise", "简捷": "concise", "详细": "detailed",
+                     "周详": "detailed", "详尽": "detailed", "AI": "ai", "标准": "standard"}
+        for kw, m in _bc_modes.items():
+            if kw in t:
+                return _s("setting", "control", "set", "navi_broadcast", mode=m, conf=0.9)
+        if "切换" in t or "换" in t:
+            return _s("setting", "control", "set", "navi_broadcast", conf=0.88)
+        return _s("setting", "control", "open", "navi_broadcast", conf=0.9)
+    if "按键音" in t:
+        return _s("setting", "control", "close" if "关" in t else "open", "key_tone", conf=0.9)
 
     # ── 空调 ──────────────────────────────────────────────
     if ("空调" in t and "界面" not in t and "页面" not in t) or \
@@ -1469,6 +1490,10 @@ def _to_legacy_name(intent: dict) -> str | None:
         if mode:
             return f"{obj}.{mode}.{op}"
         return f"{obj}.{op}"
+    if obj in ("air_purifier", "key_tone"):   # R4.1b P0：open/close（与 LOCAL_INTENTS/classify 快路径一致）
+        return f"{obj}.{operate}"
+    if obj == "navi_broadcast":               # R4.1b P0：open/close + set（播报模式，mode 不入 name）
+        return "navi_broadcast.set" if operate == "set" else f"navi_broadcast.{operate}"
     if obj == "wiper":
         if mode == "speed":
             return f"wiper.speed.{operate}"

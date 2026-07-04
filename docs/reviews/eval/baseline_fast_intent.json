@@ -1,8 +1,8 @@
 {
   "meta": {
     "subject": "fast_intent",
-    "generated_at": "2026-07-04T07:07:07.338421+00:00",
-    "commit": "333318d"
+    "generated_at": "2026-07-04T08:12:42.068692+00:00",
+    "commit": "317af48"
   },
   "corpus_sources": [
     {
@@ -11,11 +11,11 @@
     },
     {
       "path": "test/eval_corpus/edge_regressions.yaml::positive",
-      "count": 13
+      "count": 18
     },
     {
       "path": "test/eval_corpus/edge_regressions.yaml::hijack_guard",
-      "count": 8
+      "count": 10
     },
     {
       "path": "orchestrator/edge/tests/corpus/multi_intent.yaml::split",
@@ -28,14 +28,14 @@
   ],
   "buckets": {
     "object_recognition": {
-      "total": 28,
-      "passed": 28,
+      "total": 33,
+      "passed": 33,
       "failures": [],
       "pass_rate": 1.0
     },
     "object_recognition_guardrail": {
-      "total": 8,
-      "passed": 8,
+      "total": 10,
+      "passed": 10,
       "failures": [],
       "pass_rate": 1.0
     },
@@ -53,8 +53,8 @@
     }
   },
   "overall": {
-    "total": 50,
-    "passed": 50,
+    "total": 57,
+    "passed": 57,
     "pass_rate": 1.0
   },
   "cases": {
@@ -414,6 +414,76 @@
       ],
       "source": "R4.1 P3 B2 设置页开合（页面通用）"
     },
+    "object_recognition::打开空气净化": {
+      "id": "object_recognition::打开空气净化",
+      "bucket": "object_recognition",
+      "text": "打开空气净化",
+      "expected": "air_purifier",
+      "actual": "air_purifier",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "air_purifier",
+        "r4.1b"
+      ],
+      "source": "R4.1b P0 空气净化对象化"
+    },
+    "object_recognition::关闭空气净化": {
+      "id": "object_recognition::关闭空气净化",
+      "bucket": "object_recognition",
+      "text": "关闭空气净化",
+      "expected": "air_purifier",
+      "actual": "air_purifier",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "air_purifier",
+        "r4.1b"
+      ],
+      "source": "R4.1b P0 空气净化对象化"
+    },
+    "object_recognition::打开导航播报": {
+      "id": "object_recognition::打开导航播报",
+      "bucket": "object_recognition",
+      "text": "打开导航播报",
+      "expected": "navi_broadcast",
+      "actual": "navi_broadcast",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "navi_broadcast",
+        "r4.1b"
+      ],
+      "source": "R4.1b P0 导航播报对象化（edge_expected=true 子集）"
+    },
+    "object_recognition::关闭导航播报": {
+      "id": "object_recognition::关闭导航播报",
+      "bucket": "object_recognition",
+      "text": "关闭导航播报",
+      "expected": "navi_broadcast",
+      "actual": "navi_broadcast",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "navi_broadcast",
+        "r4.1b"
+      ],
+      "source": "R4.1b P0 导航播报对象化"
+    },
+    "object_recognition::打开按键音": {
+      "id": "object_recognition::打开按键音",
+      "bucket": "object_recognition",
+      "text": "打开按键音",
+      "expected": "key_tone",
+      "actual": "key_tone",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "key_tone",
+        "r4.1b"
+      ],
+      "source": "R4.1b P0 按键音对象化"
+    },
     "object_recognition_guardrail::深入调研一下固态电池的现状和量产前景": {
       "id": "object_recognition_guardrail::深入调研一下固态电池的现状和量产前景",
       "bucket": "object_recognition_guardrail",
@@ -533,6 +603,36 @@
         "b2"
       ],
       "source": "R4.1 P3 B2 反例（怎么用=manual.query 云端）"
+    },
+    "object_recognition_guardrail::查一下今天的空气质量": {
+      "id": "object_recognition_guardrail::查一下今天的空气质量",
+      "bucket": "object_recognition_guardrail",
+      "text": "查一下今天的空气质量",
+      "expected": "!= air_purifier",
+      "actual": "air_quality",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "air_purifier",
+        "hijack",
+        "r4.1b"
+      ],
+      "source": "R4.1b P0 反例（空气质量=air_quality 查询，非空气净化控制）"
+    },
+    "object_recognition_guardrail::导航去公司": {
+      "id": "object_recognition_guardrail::导航去公司",
+      "bucket": "object_recognition_guardrail",
+      "text": "导航去公司",
+      "expected": "!= navi_broadcast",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "navi_broadcast",
+        "hijack",
+        "r4.1b"
+      ],
+      "source": "R4.1b P0 反例（导航去X=navigation 路线，非导航播报开关）"
     },
     "multi_intent_split::座椅加热和座椅通风安排上": {
       "id": "multi_intent_split::座椅加热和座椅通风安排上",

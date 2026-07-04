@@ -474,6 +474,56 @@ dashcam_off_success:
   - 行车记录仪已关闭
   speech_brief:
   - 关了
+# ── R4.1b P0：端侧对象化话术（空气净化 / 导航播报 / 按键音）──
+air_purifier_on_success:
+  scene: 空气净化已开启
+  status: 成功
+  speech_full:
+  - 已为您打开空气净化
+  speech_brief:
+  - 开了
+air_purifier_off_success:
+  scene: 空气净化已关闭
+  status: 成功
+  speech_full:
+  - 已为您关闭空气净化
+  speech_brief:
+  - 关了
+navi_broadcast_on_success:
+  scene: 导航播报已开启
+  status: 成功
+  speech_full:
+  - 已为您打开导航播报
+  speech_brief:
+  - 开了
+navi_broadcast_off_success:
+  scene: 导航播报已关闭
+  status: 成功
+  speech_full:
+  - 已为您关闭导航播报
+  speech_brief:
+  - 关了
+navi_broadcast_mode_success:
+  scene: 导航播报模式已切换
+  status: 成功
+  speech_full:
+  - 导航播报模式已切换
+  speech_brief:
+  - 好的
+key_tone_on_success:
+  scene: 按键音已开启
+  status: 成功
+  speech_full:
+  - 已为您打开按键音
+  speech_brief:
+  - 开了
+key_tone_off_success:
+  scene: 按键音已关闭
+  status: 成功
+  speech_full:
+  - 已为您关闭按键音
+  speech_brief:
+  - 关了
 generic_success:
   scene: 操作成功
   status: 成功
