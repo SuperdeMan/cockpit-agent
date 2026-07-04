@@ -31,6 +31,8 @@ dist/
 # R4.3 端侧语音模型（KWS/VAD）——scripts/fetch-voice-models.* 下载，切勿提交（体积 + 许可）
 hmi/public/models/*
 !hmi/public/models/.gitkeep
+# R4.3 P0 探针（sherpa-onnx WASM 11MB + 探针页）——本地临时、不合入（设计卡 §5.1）
+hmi/public/voice-probe/
 
 # IDE / OS
 .idea/
