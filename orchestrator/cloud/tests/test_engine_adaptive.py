@@ -12,7 +12,6 @@ from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.models import Plan, PlanContext, Step
 from orchestrator.cloud.session import SessionStore
-from security.permission import PermissionEngine
 
 
 class _Planner:
@@ -85,7 +84,6 @@ def _engine(plan, responses, loop):
         executor=DagExecutor(call_agent_fn=clients.call_agent),
         aggregator=Aggregator(_aggregate),
         session=SessionStore(redis_url=""),
-        perms=PermissionEngine(),
         loop=loop,
     ), clients
 
@@ -169,7 +167,6 @@ def test_poc_default_scopes_used_when_granted_scopes_missing():
         executor=DagExecutor(call_agent_fn=clients.call_agent),
         aggregator=Aggregator(_aggregate),
         session=SessionStore(redis_url=""),
-        perms=PermissionEngine(),
     )
 
     # Request with no granted_scopes in meta
@@ -212,7 +209,6 @@ def test_explicit_granted_scopes_passed_to_planner():
         executor=DagExecutor(call_agent_fn=clients.call_agent),
         aggregator=Aggregator(_aggregate),
         session=SessionStore(redis_url=""),
-        perms=PermissionEngine(),
     )
 
     req = SimpleNamespace(

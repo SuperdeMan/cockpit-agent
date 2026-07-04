@@ -15,7 +15,6 @@ from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.planning import PlanBuilder
 from orchestrator.cloud.session import SessionStore
-from security.permission import PermissionEngine
 
 
 _PLAN_JSON = json.dumps({
@@ -134,7 +133,6 @@ def _make_engine_with_session(spy: _MultiturnSpy) -> tuple[PlannerEngine, Sessio
         executor=DagExecutor(call_agent_fn=spy.call_agent),
         aggregator=Aggregator(llm_fn=spy.llm),
         session=session,
-        perms=PermissionEngine(),
     )
     return engine, session
 

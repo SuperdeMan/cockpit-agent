@@ -15,7 +15,6 @@ def test_build_context_reads_trace_id():
         executor=None,
         aggregator=None,
         session=None,
-        perms=None,
         loop=object(),
     )
 
