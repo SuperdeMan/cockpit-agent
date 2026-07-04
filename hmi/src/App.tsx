@@ -141,6 +141,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       onStopTts: () => stopTTS(),
       onOrbState: (orb) => setHandsFreeOrb(orb),
       onNotice: (m) => setHandsFreeNotice(m),
+      wakeWord: () => settingsRef.current.wakeWordEnabled,
       config: {
         followupWindowMs: settingsRef.current.followupWindowS * 1000,
         silenceTailMs: settingsRef.current.silenceTailMs,
@@ -175,6 +176,11 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     handsFreeRef.current?.setFollowupWindow(settings.followupWindowS * 1000)
     handsFreeRef.current?.setSilenceTail(settings.silenceTailMs)
   }, [settings.followupWindowS, settings.silenceTailMs])
+
+  // 唤醒词开关变化 → 起/停 KWS（hands-free 已开时即时生效）
+  useEffect(() => {
+    handsFreeRef.current?.setWakeWord(settings.wakeWordEnabled)
+  }, [settings.wakeWordEnabled])
 
   // HMI 是否有挂起确认条 → 喂给 FSM（D5-2：确认条可见时裸「取消」必上云，不本地 dismiss）
   useEffect(() => {

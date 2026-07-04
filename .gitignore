@@ -59,3 +59,5 @@ certs/*.srl
 
 # T3.4 意图路由评测：CI 每次跑产生的临时报告，与 docs/reviews/eval/baseline_* 已入库基线区分
 docs/reviews/eval/_ci-run-*
+# R4.3 KWS 唤醒词 WASM 运行时（~31MB，scripts/build-kws-wasm.sh 生成，勿提交）
+hmi/public/kws/
