@@ -70,8 +70,17 @@
   `_cancel_stream()` 令 `read()` 抛 `CancelledError`、被 `_run` 当任务取消打死重连循环；真栈解冻后 ~2s 自愈）；
   ②过程区 e2e 断言前复位车态使测试自足；③R2.2 单轨化后 `PermissionEngine` 死注入清理；④Grafana 面板网络
   恢复后补验（三面板经数据源代理真实出数）。详见 `docs/design/2026-07-04-r4.0-residual-cleanup.md`。
-- 全量 pytest：**1050 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
-  一次跑通，含 R4.0 收尾包 K1/K2/N1 与 +2 条端云通道自愈单测）。
+- **R4.1 路由质量主题（2026-07-04）**：产品本质是「听得懂」——① **Registry 真语义路由**：能力检索从
+  sha256 伪向量换为经 llm-gateway→百炼 text-embedding-v4 的真向量（按 capability 粒度、无源诚实降级
+  关键词），顺带修一处低频误路由 bug；② **语义重排**修复「语义被中文关键词打分遮蔽」——高置信语义越过
+  噪声关键词 top-1（完整 ResolveAgents 路径 15/20→20/20，真栈验证）；③ **意图路由评测资产化**——飞书全量
+  8590 条说法入库为 fast_intent 覆盖率评测集 + Registry Resolve 评测基线，CI 非阻塞门禁；④ **端侧扩规则 +
+  对象化**——气象并入天气类 + 设置页/界面开合族（修一处既有劫持）+ 空气净化/导航播报/按键音三个新端侧
+  对象（真栈 edge→VAL→action 6/6），fast_intent 覆盖率 **72.04%→76.17%**。剩余 82% 目标缺口（辅助驾驶
+  ADAS 功能长尾，需 ws8 安全门控甄别的对象化）另立 R4.1b 卡待做。详见 `docs/design/2026-07-04-r4.1-routing-quality.md`
+  与 `docs/design/2026-07-04-r4.1b-edge-objectification-and-nlu-decision.md`。
+- 全量 pytest：**1069 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
+  一次跑通；R4.1 较 R4.0 的 1050 +19：Registry 语义/重排单测 + 端侧扩规则/对象化用例）。
 - 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6 + 深度调研（深调研报告 + 多轮深挖 + 新闻深挖桥接 + 异步分钟级受理→主动推送报告卡）+ nightly GitHub 断言型 e2e（含 R3.5 降级矩阵四行）全绿；R3.6 真实 Agent 调用→`/metrics` 端到端数据链路真栈验证通过。
 - Docker 全栈 **26 个服务**（含充能规划/场景编排/路况安全/深度调研等 Agent），全栈联调通过；
   另有 Prometheus/Grafana 两个可观测服务经 Compose `profiles: ["observability"]` 门控可选启用
