@@ -376,6 +376,40 @@ objects:
     - DeepWay
     - G91
     - 重汽航天
+  # ── R4.1b P0：端侧对象化（空气净化 / 导航播报 / 按键音）──
+  air_purifier:
+    operates: [open, close]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  navi_broadcast:
+    operates: [open, close, set]
+    attrs: []
+    modes: [concise, detailed, ai, standard]
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
+  key_tone:
+    operates: [open, close]
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects: []
   scene_mode:
     operates:
     - set

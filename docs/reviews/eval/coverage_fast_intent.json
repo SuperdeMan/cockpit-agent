@@ -1,25 +1,25 @@
 {
   "meta": {
     "subject": "fast_intent_coverage",
-    "generated_at": "2026-07-04T07:07:07.991409+00:00",
-    "commit": "333318d",
+    "generated_at": "2026-07-04T08:12:42.387543+00:00",
+    "commit": "317af48",
     "corpus": "test/eval_corpus/feishu_intents_full.jsonl"
   },
   "total": {
     "count": 8590,
-    "recognized": 6506,
-    "rate": 0.7574
+    "recognized": 6543,
+    "rate": 0.7617
   },
   "edge_expected_subset": {
     "count": 7947,
-    "recognized": 6324,
-    "rate": 0.7958
+    "recognized": 6361,
+    "rate": 0.8004
   },
   "by_domain": {
     "setting": {
       "count": 4087,
-      "recognized": 3012,
-      "rate": 0.737
+      "recognized": 3026,
+      "rate": 0.7404
     },
     "weather": {
       "count": 1514,
@@ -33,8 +33,8 @@
     },
     "navi": {
       "count": 1176,
-      "recognized": 642,
-      "rate": 0.5459
+      "recognized": 665,
+      "rate": 0.5655
     },
     "information": {
       "count": 297,
@@ -65,8 +65,8 @@
   "by_object": {
     "导航": {
       "count": 643,
-      "recognized": 183,
-      "rate": 0.2846
+      "recognized": 206,
+      "rate": 0.3204
     },
     "空调模式/功能控制": {
       "count": 525,
@@ -190,8 +190,8 @@
     },
     "声音": {
       "count": 125,
-      "recognized": 93,
-      "rate": 0.744
+      "recognized": 105,
+      "rate": 0.84
     },
     "音乐点播": {
       "count": 119,
@@ -465,8 +465,8 @@
     },
     "空气净化": {
       "count": 2,
-      "recognized": 0,
-      "rate": 0.0
+      "recognized": 2,
+      "rate": 1.0
     },
     "前备箱": {
       "count": 2,

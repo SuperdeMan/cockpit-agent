@@ -800,6 +800,18 @@ class VAL:
         if obj == "dashcam":
             return "dashcam_on_success" if operate == "open" else "dashcam_off_success"
 
+        # ── R4.1b P0：端侧对象化话术 ──
+        if obj == "air_purifier":
+            return "air_purifier_on_success" if operate == "open" else "air_purifier_off_success"
+
+        if obj == "navi_broadcast":
+            if operate == "set":
+                return "navi_broadcast_mode_success"
+            return "navi_broadcast_on_success" if operate == "open" else "navi_broadcast_off_success"
+
+        if obj == "key_tone":
+            return "key_tone_on_success" if operate == "open" else "key_tone_off_success"
+
         if obj == "media":
             op_map = {"start": "media_start_success", "pause": "media_pause_success",
                       "stop": "media_stop_success", "switch": "media_switch_success"}
