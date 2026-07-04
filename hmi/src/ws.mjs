@@ -39,7 +39,9 @@ export class ResilientWebSocket {
     this._minBackoff = opts.minBackoffMs ?? 1000
     this._maxBackoff = opts.maxBackoffMs ?? 30000
     this._maxQueue = opts.maxQueue ?? 32
-    this._timers = opts.timers || { set: setTimeout, clear: clearTimeout }
+    // 注意：必须用箭头包一层——直接存 `{ set: setTimeout }` 后经 `this._timers.set(...)` 调用会
+    // 把 setTimeout 的 this 绑成该对象，浏览器抛 "TypeError: Illegal invocation"（重连时触发）。
+    this._timers = opts.timers || { set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h) }
     this._rand = opts.rand || Math.random
 
     this._ws = null
