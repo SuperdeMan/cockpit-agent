@@ -18,10 +18,12 @@ import {
   finishTTSReply,
   startTTSReply,
   stopTTS,
+  setTtsLifecycle,
 } from './audio'
 import type { Msg, Settings } from './types'
 import { poiSelectionIndex, isRefreshRequest } from './nav.mjs'
 import { ResilientWebSocket, appendToken } from './ws.mjs'
+import { HandsFreeController } from './handsFreeController'
 
 const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://localhost:8090'
 // R3.1 会话鉴权：带 token 连接（env 注入，默认空=不带 token）。edge-gateway upgrade 前校验。
@@ -68,6 +70,11 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const categoryRef = useRef<{ keyword: string; page: number } | null>(null)
   const settingsRef = useRef<Settings>(settings)
   settingsRef.current = settings // 始终保留最新设置，避免 ws 回调读到陈旧闭包
+  // R4.3 免唤醒回路控制器（VAD+FSM+ASR 编排）：默认关，settings.handsFree 开启才激活
+  const handsFreeRef = useRef<HandsFreeController | null>(null)
+  const sendRef = useRef<(text: string) => void>(() => {})
+  const [handsFreeOrb, setHandsFreeOrb] = useState<string | null>(null)
+  const [handsFreeNotice, setHandsFreeNotice] = useState<string>('')
 
   useEffect(() => {
     if (!settings.ttsEnabled || !settings.autoplay) stopTTS()
@@ -116,6 +123,63 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // ─── R4.3 免唤醒回路：控制器装配（一次）+ TTS 生命周期桥接 ───
+  useEffect(() => {
+    const ctrl = new HandsFreeController({
+      audioApi: AUDIO_API,
+      getAsrConfig: () => {
+        const s = settingsRef.current
+        return {
+          language: s.asrLanguage,
+          // off 时回落 dashscope（hands-free 必须走流式 ASR 才有 partial/final）
+          provider: s.asrProvider === 'off' ? 'dashscope' : s.asrProvider,
+          model: s.asrProvider === 'dashscope' ? s.asrModel : '',
+        }
+      },
+      onSend: (t) => sendRef.current(t),
+      onStopTts: () => stopTTS(),
+      onOrbState: (orb) => setHandsFreeOrb(orb),
+      onNotice: (m) => setHandsFreeNotice(m),
+      config: {
+        followupWindowMs: settingsRef.current.followupWindowS * 1000,
+        silenceTailMs: settingsRef.current.silenceTailMs,
+      },
+    })
+    handsFreeRef.current = ctrl
+    setTtsLifecycle({ onStart: () => ctrl.ttsStart(), onEnd: () => ctrl.ttsEnd() })
+    return () => {
+      setTtsLifecycle(null)
+      ctrl.disable()
+      handsFreeRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // hands-free 开关：开启启动 VAD 常开回路，关闭拆机（失败自动回落关闭态）
+  useEffect(() => {
+    const ctrl = handsFreeRef.current
+    if (!ctrl) return
+    if (settings.handsFree && !ctrl.enabled) {
+      setHandsFreeNotice('')
+      void ctrl.enable().then((ok) => { if (!ok) update({ handsFree: false }) })
+    } else if (!settings.handsFree && ctrl.enabled) {
+      ctrl.disable()
+      setHandsFreeOrb(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.handsFree])
+
+  // 聆听窗 / 静音尾设置变化 → 同步给回路
+  useEffect(() => {
+    handsFreeRef.current?.setFollowupWindow(settings.followupWindowS * 1000)
+    handsFreeRef.current?.setSilenceTail(settings.silenceTailMs)
+  }, [settings.followupWindowS, settings.silenceTailMs])
+
+  // HMI 是否有挂起确认条 → 喂给 FSM（D5-2：确认条可见时裸「取消」必上云，不本地 dismiss）
+  useEffect(() => {
+    handsFreeRef.current?.setNeedConfirm(awaitConfirm)
+  }, [awaitConfirm])
 
   const handleEvent = useCallback((data: any) => {
     const s = settingsRef.current
@@ -253,6 +317,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
             : null
         }
       }
+      // hands-free 回声指纹：把本轮播报文本喂给 FSM，供 SPEAKING 态 barge-in 时比对（D6）
+      handsFreeRef.current?.setTtsText(data.speech || '')
       if (s.ttsEnabled && s.autoplay && data.speech) {
         finishTTSReply(data.speech).catch(() => {/* 播放失败静默 */})
       }
@@ -405,6 +471,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     }
     dispatch(text, false)
   }
+  sendRef.current = send // hands-free 回路的 onSend 始终派发到最新 send 闭包
 
   const confirm = (reply: '确认' | '取消') => {
     setMessages((m) => [...m, { id: uid(), role: 'user', text: reply }])
@@ -468,7 +535,13 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           <ContextualStage messages={messages} />
         </aside>
       </main>
-      <Composer audioApi={AUDIO_API} onSend={send} hint={connected ? undefined : '正在连接座舱服务…'} />
+      <Composer
+        audioApi={AUDIO_API}
+        onSend={send}
+        hint={handsFreeNotice || (connected ? undefined : '正在连接座舱服务…')}
+        handsFreeOrb={handsFreeOrb}
+        onWake={() => handsFreeRef.current?.wake()}
+      />
 
       {showSettings && (
         <SettingsPanel

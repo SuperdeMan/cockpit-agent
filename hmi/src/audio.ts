@@ -145,6 +145,26 @@ let ttsAudio: HTMLAudioElement | null = null
 let finishCurrentPlayback: (() => void) | null = null
 let activeReply: TtsReply | null = null
 
+// ─── TTS 播放生命周期钩子（R4.3：驱动 hands-free FSM 的 SPEAKING↔FOLLOWUP 迁移）───
+// onStart：首个音频分片真正起播；onEnd：整段播完（句间预取空隙经 250ms 去抖，不误判）。
+let ttsLifecycle: { onStart: () => void; onEnd: () => void } | null = null
+let ttsActive = false
+let ttsEndTimer: number | null = null
+export function setTtsLifecycle(cb: { onStart: () => void; onEnd: () => void } | null): void {
+  ttsLifecycle = cb
+}
+function markTtsStart(): void {
+  if (ttsEndTimer !== null) { clearTimeout(ttsEndTimer); ttsEndTimer = null }
+  if (!ttsActive) { ttsActive = true; ttsLifecycle?.onStart() }
+}
+function markTtsMaybeEnd(): void {
+  if (ttsEndTimer !== null) clearTimeout(ttsEndTimer)
+  ttsEndTimer = window.setTimeout(() => {
+    ttsEndTimer = null
+    if (ttsActive) { ttsActive = false; ttsLifecycle?.onEnd() }
+  }, 250)
+}
+
 async function prepareTTS(request: TtsRequest, signal: AbortSignal): Promise<PreparedAudio> {
   const { apiBase, text, voiceId } = request
   const resp = await fetch(`${apiBase}/api/tts`, {
@@ -185,12 +205,14 @@ async function playPreparedTTS(item: PreparedAudio, signal: AbortSignal): Promis
       item.dispose()
       if (ttsAudio === audio) ttsAudio = null
       if (finishCurrentPlayback === finish) finishCurrentPlayback = null
+      markTtsMaybeEnd() // 本分片播完 → 去抖判整段结束
       resolve()
     }
     const abort = () => finish()
 
     ttsAudio = audio
     finishCurrentPlayback = finish
+    audio.onplay = markTtsStart // 真正起播 → SPEAKING
     audio.onended = finish
     audio.onerror = finish
     signal.addEventListener('abort', abort, { once: true })
@@ -250,6 +272,9 @@ export function stopTTS(): void {
     ttsAudio.src = ''
     ttsAudio = null
   }
+  // 停播是 FSM 主动发起（barge-in / 发新消息），FSM 已自行迁移 → 不再回放 onEnd
+  if (ttsEndTimer !== null) { clearTimeout(ttsEndTimer); ttsEndTimer = null }
+  ttsActive = false
 }
 
 export async function playTTS(apiBase: string, text: string, voiceId: string): Promise<void> {
