@@ -2,6 +2,5 @@ grpcio==1.66.2
 protobuf==7.35.0
 nats-py>=2.6.0
 asyncpg>=0.29.0
-# ws2 P1: 语义路由——embedding 模型可选（需单独安装 sentence-transformers + bge-small-zh）。
-# 未安装时自动用 hash-based fallback（384 维，适合 PoC 验证链路）。
-# 生产环境建议用 LLM Gateway 的 embedding API 替代本地模型。
+# R4.1 P0: 语义路由的 embedding 经 llm-gateway gRPC Embed（→百炼 text-embedding-v4，与 memory
+# 同源），registry 镜像不再打包本地 embedding 模型；无 embedding 源时诚实降级关键词打分。

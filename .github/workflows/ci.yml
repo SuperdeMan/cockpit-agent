@@ -119,6 +119,11 @@ jobs:
             --baseline docs/reviews/eval/baseline_route_hints.json \
             --out-json docs/reviews/eval/_ci-run-route_hints.json \
             --out-md docs/reviews/eval/_ci-run-route_hints.md
+          # R4.1 P1：Registry Resolve 路由（离线关键词层，requires_embed 用例需活栈另经 --semantic）
+          python test/eval_registry_resolve.py \
+            --baseline docs/reviews/eval/baseline_registry_resolve.json \
+            --out-json docs/reviews/eval/_ci-run-registry_resolve.json \
+            --out-md docs/reviews/eval/_ci-run-registry_resolve.md
 
       - name: Upload fresh eval report
         if: always()

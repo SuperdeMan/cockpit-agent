@@ -1,0 +1,211 @@
+{
+  "meta": {
+    "subject": "registry_resolve",
+    "generated_at": "2026-07-04T05:07:28.793653+00:00",
+    "commit": "d596da9"
+  },
+  "corpus_sources": [
+    {
+      "path": "test/eval_corpus/registry_resolve_cases.yaml (keyword layer)",
+      "count": 15
+    },
+    {
+      "path": "test/eval_corpus/registry_resolve_cases.yaml (requires_embed, 离线跳过→见 --semantic)",
+      "count": 5
+    }
+  ],
+  "buckets": {
+    "resolve_recall": {
+      "total": 11,
+      "passed": 11,
+      "failures": [],
+      "pass_rate": 1.0
+    },
+    "resolve_guardrail": {
+      "total": 4,
+      "passed": 4,
+      "failures": [],
+      "pass_rate": 1.0
+    }
+  },
+  "overall": {
+    "total": 15,
+    "passed": 15,
+    "pass_rate": 1.0
+  },
+  "cases": {
+    "resolve::今天天气怎么样": {
+      "id": "resolve::今天天气怎么样",
+      "bucket": "resolve_recall",
+      "text": "今天天气怎么样",
+      "expected": "info",
+      "actual": "info",
+      "passed": true,
+      "detail": "[('info', 0.6), ('road-safety', 0.6), ('charging-planner', 0.4)]",
+      "tags": [],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::查一下茅台的股价": {
+      "id": "resolve::查一下茅台的股价",
+      "bucket": "resolve_recall",
+      "text": "查一下茅台的股价",
+      "expected": "info",
+      "actual": "info",
+      "passed": true,
+      "detail": "[('info', 0.65), ('deep-research', 0.55), ('navigation', 0.5)]",
+      "tags": [],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::附近哪里有充电桩": {
+      "id": "resolve::附近哪里有充电桩",
+      "bucket": "resolve_recall",
+      "text": "附近哪里有充电桩",
+      "expected": "charging-planner",
+      "actual": "charging-planner",
+      "passed": true,
+      "detail": "[('charging-planner', 0.65), ('navigation', 0.55), ('parking-payment', 0.5)]",
+      "tags": [],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::帮我规划一个三天的旅行行程": {
+      "id": "resolve::帮我规划一个三天的旅行行程",
+      "bucket": "resolve_recall",
+      "text": "帮我规划一个三天的旅行行程",
+      "expected": "trip-planner",
+      "actual": "trip-planner",
+      "passed": true,
+      "detail": "[('trip-planner', 0.75), ('deep-research', 0.7), ('charging-planner', 0.5)]",
+      "tags": [],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::深入研究一下人工智能的发展趋势": {
+      "id": "resolve::深入研究一下人工智能的发展趋势",
+      "bucket": "resolve_recall",
+      "text": "深入研究一下人工智能的发展趋势",
+      "expected": "deep-research",
+      "actual": "deep-research",
+      "passed": true,
+      "detail": "[('deep-research', 0.75), ('food-ordering', 0.45), ('navigation', 0.45)]",
+      "tags": [],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::打开露营模式": {
+      "id": "resolve::打开露营模式",
+      "bucket": "resolve_recall",
+      "text": "打开露营模式",
+      "expected": "scene-orchestrator",
+      "actual": "scene-orchestrator",
+      "passed": true,
+      "detail": "[('scene-orchestrator', 0.6), ('deep-research', 0.4), ('chitchat', 0.35)]",
+      "tags": [],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::导航去北京南站": {
+      "id": "resolve::导航去北京南站",
+      "bucket": "resolve_recall",
+      "text": "导航去北京南站",
+      "expected": "navigation",
+      "actual": "navigation",
+      "passed": true,
+      "detail": "[('navigation', 0.6), ('trip-planner', 0.5), ('info', 0.4)]",
+      "tags": [],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::讲个笑话": {
+      "id": "resolve::讲个笑话",
+      "bucket": "resolve_recall",
+      "text": "讲个笑话",
+      "expected": "chitchat",
+      "actual": "chitchat",
+      "passed": true,
+      "detail": "[('chitchat', 0.5), ('charging-planner', 0.35), ('deep-research', 0.35)]",
+      "tags": [],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::帮我订一家川菜馆": {
+      "id": "resolve::帮我订一家川菜馆",
+      "bucket": "resolve_recall",
+      "text": "帮我订一家川菜馆",
+      "expected": "food-ordering",
+      "actual": "food-ordering",
+      "passed": true,
+      "detail": "[('food-ordering', 0.55), ('deep-research', 0.5), ('info', 0.45)]",
+      "tags": [],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::附近有什么好吃的餐厅": {
+      "id": "resolve::附近有什么好吃的餐厅",
+      "bucket": "resolve_recall",
+      "text": "附近有什么好吃的餐厅",
+      "expected": "food-ordering",
+      "actual": "food-ordering",
+      "passed": true,
+      "detail": "[('food-ordering', 0.8), ('navigation', 0.55), ('charging-planner', 0.5)]",
+      "tags": [],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::帮我把这次自驾游的路线安排一下": {
+      "id": "resolve::帮我把这次自驾游的路线安排一下",
+      "bucket": "resolve_recall",
+      "text": "帮我把这次自驾游的路线安排一下",
+      "expected": "trip-planner",
+      "actual": "trip-planner",
+      "passed": true,
+      "detail": "[('trip-planner', 0.7), ('deep-research', 0.65), ('food-ordering', 0.5)]",
+      "tags": [],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::打开空调": {
+      "id": "resolve::打开空调",
+      "bucket": "resolve_guardrail",
+      "text": "打开空调",
+      "expected": "!= parking-payment",
+      "actual": "deep-research",
+      "passed": true,
+      "detail": "[('deep-research', 0.4), ('scene-orchestrator', 0.4), ('chitchat', 0.35)]",
+      "tags": [
+        "vehicle_control"
+      ],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::把音量调大一点": {
+      "id": "resolve::把音量调大一点",
+      "bucket": "resolve_guardrail",
+      "text": "把音量调大一点",
+      "expected": "!= parking-payment",
+      "actual": "deep-research",
+      "passed": true,
+      "detail": "[('deep-research', 0.45), ('navigation', 0.45), ('info', 0.4)]",
+      "tags": [
+        "media"
+      ],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::你好呀最近怎么样": {
+      "id": "resolve::你好呀最近怎么样",
+      "bucket": "resolve_guardrail",
+      "text": "你好呀最近怎么样",
+      "expected": "!= parking-payment",
+      "actual": "info",
+      "passed": true,
+      "detail": "[('info', 0.5), ('chitchat', 0.45), ('food-ordering', 0.45)]",
+      "tags": [
+        "chitchat"
+      ],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    },
+    "resolve::随便跟我聊聊天": {
+      "id": "resolve::随便跟我聊聊天",
+      "bucket": "resolve_guardrail",
+      "text": "随便跟我聊聊天",
+      "expected": "!= parking-payment",
+      "actual": "trip-planner",
+      "passed": true,
+      "detail": "[('trip-planner', 0.45), ('chitchat', 0.4), ('charging-planner', 0.35)]",
+      "tags": [
+        "chitchat"
+      ],
+      "source": "test/eval_corpus/registry_resolve_cases.yaml"
+    }
+  }
+}
