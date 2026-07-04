@@ -261,6 +261,85 @@ def test_embed_capabilities_reprobes_when_source_pending():
     assert len(conn.inserts()) == 1
 
 
+# ── 2026-07-04 embed 泄漏回归：向量化后台化 + 写穿 + 在飞去重 ────────────────
+# 事故根因：register 内联 await 全量 embed，大 manifest（edge-vehicle 74 caps ~20s+）
+# 超过注册客户端 5s deadline → handler 被取消（CancelledError 绕过 except Exception）
+# → 向量永不落库 → 每 10s 重注册全量重 embed（上游已计费）无限循环。
+
+def test_register_offloads_embed_to_background():
+    """register 必须**立即返回**、不等向量化——RPC deadline 再短也取消不到 embed。"""
+    conn = FakeConn(cap_rows={})
+    store = _llm_store(conn)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_embed(text, timeout):
+        started.set()
+        await release.wait()                 # 模拟大 manifest 的长时向量化
+        return _vec()
+    store._embed = slow_embed
+
+    async def scenario():
+        await store.register(_manifest("edge-vehicle", [_cap("hvac.set", "空调")]), "edge:50070")
+        assert not conn.inserts()            # register 已返回，向量尚未写 → 已解耦
+        task = store._embed_tasks["edge-vehicle"]
+        await started.wait()
+        release.set()
+        await task                           # 后台任务独立完成
+    asyncio.run(scenario())
+    assert len(conn.inserts()) == 1
+
+
+def test_register_dedupes_inflight_embed_task():
+    """上一轮向量化未完成时，周期重注册不得叠加新任务（否则重复计费）。"""
+    conn = FakeConn(cap_rows={})
+    store = _llm_store(conn)
+    calls, release = [], asyncio.Event()
+
+    async def slow_embed(text, timeout):
+        calls.append(text)
+        await release.wait()
+        return _vec()
+    store._embed = slow_embed
+    m = _manifest("edge-vehicle", [_cap("hvac.set", "空调")])
+
+    async def scenario():
+        await store.register(m, "edge:50070")
+        t1 = store._embed_tasks["edge-vehicle"]
+        await asyncio.sleep(0)               # 让任务起跑
+        await store.register(m, "edge:50070")   # 10s 周期重注册叠上来
+        assert store._embed_tasks["edge-vehicle"] is t1   # 不叠新任务
+        release.set()
+        await t1
+    asyncio.run(scenario())
+    assert len(calls) == 1                   # 只 embed 了一次
+
+
+def test_register_no_embed_task_when_source_settled_none():
+    """已定论无 embedding 源（nightly 纯 mock）：不起空转后台任务。"""
+    conn = FakeConn(cap_rows={})
+    store = _llm_store(conn, source=None, probe_done=True)
+
+    async def scenario():
+        await store.register(_manifest("info", [_cap("info.weather", "查天气")]), "i:1")
+        assert "info" not in store._embed_tasks
+    asyncio.run(scenario())
+
+
+def test_embed_capabilities_write_through_keeps_partial_progress():
+    """写穿：单条 embed 失败不阻塞其余成功条落库（缺口下轮单调收敛，不整轮重烧）。"""
+    conn = FakeConn(cap_rows={})
+    store = _llm_store(conn)
+
+    async def flaky(text, timeout):
+        return _vec() if "weather" in text else None
+    store._embed = flaky
+
+    asyncio.run(store._embed_capabilities(
+        _manifest("info", [_cap("info.weather", "查天气"), _cap("info.stock", "查股价")])))
+    inserts = conn.inserts()
+    assert {args[1] for _sql, args in inserts} == {"info.weather"}
+
+
 # ── resolve_semantic 降级 ─────────────────────────────────────────────────
 
 def test_resolve_semantic_degrades_without_pg():
