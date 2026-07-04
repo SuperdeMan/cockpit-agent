@@ -7,7 +7,7 @@ import {
   MicController, micSupported, secureContextOk, recognize, stopTTS,
   StreamingRecognizer, streamingAsrSupported, asrStreamUrl, type RecordResult,
 } from '../audio'
-import { AuroraOrb } from './aurora'
+import { AuroraOrb, type OrbState } from './aurora'
 
 type MicState = 'idle' | 'recording' | 'transcribing'
 
@@ -15,10 +15,12 @@ export function Composer({
   audioApi,
   onSend,
   hint,
+  handsFreeOrb,
 }: {
   audioApi: string
   onSend: (text: string) => void
   hint?: string
+  handsFreeOrb?: string | null // R4.3：hands-free 激活时 FSM 的 orb 态（armed/listening/…），覆盖空闲 mic 态
 }) {
   const { settings } = useSettings()
   const [input, setInput] = useState('')
@@ -129,8 +131,10 @@ export function Composer({
           onClick: () => (mic === 'recording' ? endRecord() : beginRecord()),
         }
 
-  // 语音按钮即小舟光球：录音→speaking（波纹）、识别中→thinking（律动）、空闲→idle（呼吸）
-  const orbState = mic === 'recording' ? 'speaking' : mic === 'transcribing' ? 'thinking' : 'idle'
+  // 语音按钮即小舟光球：录音→speaking（波纹）、识别中→thinking（律动）；
+  // 空闲时若 hands-free 激活则显 FSM 态（armed 待机微光 / listening 聆听脉冲 / …），否则 idle 呼吸。
+  const orbState: OrbState =
+    mic === 'recording' ? 'speaking' : mic === 'transcribing' ? 'thinking' : ((handsFreeOrb as OrbState) || 'idle')
 
   return (
     <div className="au-composer">
