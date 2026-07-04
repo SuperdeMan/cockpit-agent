@@ -335,6 +335,8 @@ export type Voice = {
 //   listenSeconds / theme / fontScale / largeTouch / quickCommands / assistantName。
 // 预留（UI+持久化已就绪，经 WS meta 透传，待后端 honor）：
 //   answerLength / model / agents / memoryEnabled。详见 docs/design 任务文档。
+// R4.3 语音回路（UI+持久化就绪，驱动 voiceLoop.mjs FSM；真麦/Worker 集成待 P0 后接线）：
+//   handsFree / wakeWordEnabled / followupWindowS / silenceTailMs（全 opt-in 默认关）。
 
 export type Theme = 'dark' | 'light'
 export type FontScale = 'normal' | 'large'
@@ -344,6 +346,8 @@ export type MicMode = 'hold' | 'toggle'
 export type AnswerLength = 'short' | 'standard' | 'detailed'
 export type ModelPref = 'fast' | 'deep' | 'auto'
 export type ListenSeconds = 10 | 15 | 30 | 60
+export type FollowupWindowS = 5 | 8 | 15 // R4.3 免唤醒续问聆听窗（秒）
+export type SilenceTailMs = 500 | 800 | 1200 // R4.3 VAD 静音尾（端点判据，毫秒）
 
 export type Settings = {
   // 语音播报 TTS
@@ -356,6 +360,11 @@ export type Settings = {
   asrModel: string // 引擎模型（dashscope: Qwen3-…/fun-asr-realtime）
   micMode: MicMode
   listenSeconds: ListenSeconds
+  // 免唤醒连续对话 / 唤醒词（R4.3；全部 opt-in 默认关，唤醒前音频不离开浏览器）
+  handsFree: boolean            // L1 免唤醒连续对话：一轮回复后保持聆听窗，VAD 断句自动发送
+  wakeWordEnabled: boolean      // L2 唤醒词：待机说「小舟小舟」进入聆听
+  followupWindowS: FollowupWindowS // 续问聆听窗时长（秒）
+  silenceTailMs: SilenceTailMs  // VAD 静音尾（端点判据，毫秒）
   // 显示与主题
   theme: Theme
   fontScale: FontScale
@@ -421,6 +430,10 @@ export const DEFAULT_SETTINGS: Settings = {
   asrModel: 'qwen3-asr-flash-realtime-2026-02-10', // 注意全小写 id（CamelCase 会 1011）
   micMode: 'hold',
   listenSeconds: 15,
+  handsFree: false,       // R4.3 opt-in：默认关，行为与今天逐字一致
+  wakeWordEnabled: false, // R4.3 opt-in：默认关
+  followupWindowS: 8,
+  silenceTailMs: 800,
   theme: 'dark',
   fontScale: 'normal',
   largeTouch: false,

@@ -28,6 +28,10 @@ dist/
 .vite/
 *.tsbuildinfo
 
+# R4.3 端侧语音模型（KWS/VAD）——scripts/fetch-voice-models.* 下载，切勿提交（体积 + 许可）
+hmi/public/models/*
+!hmi/public/models/.gitkeep
+
 # IDE / OS
 .idea/
 .vscode/

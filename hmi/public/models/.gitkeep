@@ -1,0 +1,3 @@
+# R4.3 端侧语音模型目录（KWS 唤醒词 + silero VAD）。
+# 模型二进制经 scripts/fetch-voice-models.{sh,ps1} 下载到此，已 gitignore、切勿提交（体积 + 许可）。
+# 仅本 .gitkeep 入库以保留目录结构。设计见 docs/design/2026-07-04-r4.3-wake-vad-fullduplex.md §4 D7。

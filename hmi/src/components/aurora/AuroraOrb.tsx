@@ -1,9 +1,10 @@
 // 小舟 AuroraOrb 光球——液态玻璃球 + 内部极光流动，贯穿欢迎/思考/主动播报，是设计记忆点。
-// 七层结构与三态动效逐值照 Figma Make V7（src/app/App.tsx）；改用 size 相对尺寸，
+// 七层结构与动效逐值照 Figma Make V7（src/app/App.tsx）；改用 size 相对尺寸，
 // 故 24px 状态栏小球与 140px 欢迎大球都按比例正确缩放模糊/辉光。keyframes 见 aurora.css。
+// 态：idle/thinking/speaking + R4.3 armed（待机微光）/listening（聆听接收脉动），全复用既有 keyframes。
 import type { CSSProperties } from 'react'
 
-export type OrbState = 'idle' | 'thinking' | 'speaking'
+export type OrbState = 'idle' | 'thinking' | 'speaking' | 'armed' | 'listening'
 
 const AURORA_CONIC = 'conic-gradient(from 0deg, #5BE9FF, #5B8CFF, #9A6BFF, #FF6BD6, #5BE9FF)'
 const AURORA_CONIC_R = 'conic-gradient(from 180deg, #9A6BFF, #5B8CFF, #5BE9FF, #FF6BD6, #9A6BFF)'
@@ -23,17 +24,23 @@ export function AuroraOrb({
 }) {
   const thinking = state === 'thinking'
   const speaking = state === 'speaking'
-  const glow = speaking ? 1.35 : 1
+  const listening = state === 'listening' // R4.3：聆听（接收式脉动 + 交互蓝聆听环）
+  const armed = state === 'armed'         // R4.3：待机（比 idle 更缓的微光 + 暗聆听环）
+  const glow = speaking ? 1.35 : listening ? 1.15 : armed ? 0.8 : 1
   const dm = driving ? 2 : 1 // 行车态：动效频率 ×0.5（§10）
 
   const bodyAnim = thinking
     ? `au-orb-breathe-fast ${1.4 * dm}s ease-in-out infinite`
     : speaking
     ? `au-orb-pulse ${0.72 * dm}s ease-in-out infinite`
+    : listening
+    ? `au-orb-pulse ${1.15 * dm}s ease-in-out infinite`
+    : armed
+    ? `au-orb-breathe ${5 * dm}s ease-in-out infinite`
     : `au-orb-breathe ${4 * dm}s ease-in-out infinite`
-  const haloSpin = `au-orb-spin ${(thinking ? 1.6 : 8) * dm}s linear infinite`
-  const innerSpin = `au-orb-spin ${(thinking ? 1.1 : 5) * dm}s linear infinite`
-  const counterSpin = `au-orb-spin-r ${(thinking ? 0.8 : 3.8) * dm}s linear infinite`
+  const haloSpin = `au-orb-spin ${(thinking ? 1.6 : listening ? 4 : armed ? 10 : 8) * dm}s linear infinite`
+  const innerSpin = `au-orb-spin ${(thinking ? 1.1 : listening ? 3.2 : armed ? 6 : 5) * dm}s linear infinite`
+  const counterSpin = `au-orb-spin-r ${(thinking ? 0.8 : listening ? 2.6 : armed ? 4.6 : 3.8) * dm}s linear infinite`
 
   const layer: CSSProperties = { position: 'absolute', borderRadius: '50%', pointerEvents: 'none' }
 
@@ -142,6 +149,19 @@ export function AuroraOrb({
             }}
           />
         ))}
+      {/* 聆听/待机态：单圈交互蓝聆听环（接收式呼吸，区别于 speaking 的外扩波纹，§10 克制）*/}
+      {(listening || armed) && (
+        <span
+          style={{
+            position: 'absolute',
+            inset: -size * (listening ? 0.14 : 0.1),
+            borderRadius: '50%',
+            border: `1px solid rgba(70,214,224,${listening ? 0.4 : 0.18})`,
+            animation: `au-orb-breathe ${(listening ? 1.15 : 5) * dm}s ease-in-out infinite`,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
     </div>
   )
 }
