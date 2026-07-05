@@ -35,35 +35,37 @@ test('looksComplete：空串保守判完整（不进宽限）', () => {
 
 // ─── 语气词过滤（U5a）───
 
-test('isFiller：纯语气词/口头噪声命中', () => {
-  for (const s of ['嗯', '嗯嗯', '啊', '啊啊', '哈哈', '哦', '呃', '唔', '诶']) {
+test('isFiller：纯语气词/口头噪声命中（含尾标点、叠字）', () => {
+  for (const s of ['嗯', '嗯嗯', '啊', '啊啊', '哈哈', '哦', '呃', '唔', '诶', '嗯，', '啊。', '嗯嗯嗯嗯嗯']) {
     assert.equal(isFiller(s), true, `应命中 filler: ${s}`)
   }
 })
 
-test('isFiller：含实义字不命中（避免误杀请求）', () => {
-  for (const s of ['嗯好的', '啊对', '哈喽小舟', '导航', '5 个字以上语气词啊啊啊啊啊']) {
+test('isFiller：含实义字不命中（避免误杀请求/问候）', () => {
+  for (const s of ['嗯好的', '啊对', '哈喽小舟', '哈喽', '导航', '嗯嗯嗯嗯嗯嗯嗯']) {
     assert.equal(isFiller(s), false, `不应命中 filler: ${s}`)
   }
 })
 
 // ─── 退出/dismiss 词（U3）───
 
-test('matchExitWord：去尾语气词后精确匹配（修「没事了」「退下吧」）', () => {
+test('matchExitWord：占据整句 + 容忍尾语气/同音错字（修「没事了」「退下吧」「退下把」）', () => {
   const words = ['退下', '退下吧', '再见', '闭嘴', '别说了', '没事', '不用了']
   assert.equal(matchExitWord('退下吧', words), true)
   assert.equal(matchExitWord('退下', words), true)
+  assert.equal(matchExitWord('退下把', words), true)   // ASR 同音错字，slack 内命中
   assert.equal(matchExitWord('没事了', words), true)   // 去尾「了」→「没事」命中
   assert.equal(matchExitWord('再见啦', words), true)
-  assert.equal(matchExitWord('别说了', words), true)   // 整词带「了」也命中（raw 精确）
+  assert.equal(matchExitWord('别说了', words), true)
   assert.equal(matchExitWord('闭嘴', words), true)
 })
 
-test('matchExitWord：带宾语的真实命令不误命中（精确匹配的关键收益）', () => {
-  const words = ['退下', '退下吧', '退出', '再见', '闭嘴', '别说了', '没事']
-  assert.equal(matchExitWord('结束导航', words), false) // 词表刻意不含单独「结束」
-  assert.equal(matchExitWord('退出导航', words), false) // 「退出」在词表但「退出导航」是命令，精确匹配不吞
-  assert.equal(matchExitWord('没事我自己来', words), false) // 不是纯 dismiss，放行上云
+test('matchExitWord：带宾语的真实命令不误命中（占据整句 slack 的关键收益）', () => {
+  const words = ['退下', '退下吧', '退出', '再见', '闭嘴', '别说了', '没事', '结束对话']
+  assert.equal(matchExitWord('结束导航', words), false) // 词表不含单独「结束」，且超 slack
+  assert.equal(matchExitWord('退出导航', words), false) // 「退出」在词表但「退出导航」4>2+1，不吞
+  assert.equal(matchExitWord('没事我自己来', words), false) // 6 字远超 slack，放行上云
+  assert.equal(matchExitWord('结束对话', words), true)  // 整词命中
   assert.equal(matchExitWord('导航去西湖', words), false)
   assert.equal(matchExitWord('', words), false)
 })

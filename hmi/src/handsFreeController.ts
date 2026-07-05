@@ -6,10 +6,12 @@ import { VadEngine } from './vadEngine'
 import { KwsEngine, DEFAULT_KEYWORDS } from './kwsEngine'
 import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues } from './audio'
 import { PcmRing } from './pcmRing.mjs'
-import { stripLeadingWakeWord } from './utteranceHeuristics.mjs'
+import { stripLeadingWakeWord, isFiller } from './utteranceHeuristics.mjs'
 import { bumpVoiceMetric } from './voiceMetrics.mjs'
 
-const PRE_ROLL_MS = 800 // R4.3b P2（U4）：开 ASR 时注入的前滚缓冲时长——覆盖 KWS 检测窗 + wake→ASR 就绪 gap
+// R4.3b P4：续说（followup/barge-in/宽限续说）开 ASR 时注入的前滚缓冲——只补 VAD speech-start 判定
+// 延迟（去抖 64ms + 几帧）的首字；刻意短，不带回声/上轮 TTS 尾。唤醒进入注入 0（不带唤醒词，见 openAsr）。
+const RESUME_PRE_ROLL_MS = 200
 
 // 唤醒提示语候选（issue①）：短促，唤醒时随机播一条求变化；回声靠 getUserMedia 的 AEC 兜底（同 barge-in 前提）。
 const WAKE_CUE_TEXTS = ['在呢', '我在', '你说', '请讲', '我在听']
@@ -65,7 +67,7 @@ export class HandsFreeController {
         endpointGraceMs: deps.config?.endpointGraceMs ?? 700, // U5b 端点宽限合并窗
       },
       onState: (orb: string) => this.deps.onOrbState(orb),
-      onOpenAsr: () => this.openAsr(),
+      onOpenAsr: (o: { resume?: boolean }) => this.openAsr(o),
       onCloseAsr: () => this.closeAsr(),
       onEndpoint: () => { try { this.asr?.stop() } catch { /* ignore */ } },
       onSend: (t: string) => this.deps.onSend(t),
@@ -221,7 +223,9 @@ export class HandsFreeController {
 
   // ─── 内部 ───
   // P2 PCM 直传（U4 根治）：不用 MediaRecorder，用 vadEngine.onFrame 喂帧 + 前滚缓冲；partial/final 剥唤醒词残留。
-  private openAsr(): void {
+  // P4 真麦修复：仅续说路径（resume=true：续问/打断/宽限续说，无唤醒词）注入短 pre-roll 补 VAD 判定延迟首字；
+  // KWS 唤醒进入（resume=false）不注入——KWS 命中点往回取恰是唤醒词本身，会被识别成同音字残留上屏（「小周」）。
+  private openAsr(opts: { resume?: boolean } = {}): void {
     if (this.asr) return
     const cfg = this.deps.getAsrConfig()
     const gen = ++this.asrGen // 本条会话代号；下方回调只在代号仍为当前时才作数
@@ -229,15 +233,16 @@ export class HandsFreeController {
     const words = this.wakeStripWords()
     const strip = (t: string) => stripLeadingWakeWord(t, words)
     this.asr = new StreamingRecognizer()
-    const preRoll = this.pcmRing.takeLast(PRE_ROLL_MS) // 前滚缓冲（含 KWS 检测窗那段音频）
+    // 唤醒进入 pre-roll=0（唤醒词不进 ASR）；续说进入取 RESUME_PRE_ROLL_MS 补首字（无唤醒词，安全）
+    const preRoll = opts.resume ? this.pcmRing.takeLast(RESUME_PRE_ROLL_MS) : new Float32Array(0)
     void this.asr
       .startPcm(asrStreamUrl(this.deps.audioApi), {
         language: cfg.language,
         provider: cfg.provider,
         model: cfg.model,
         vadSilenceMs: this.vl.cfg.silenceTailMs, // B2：客户端静音尾透传 qwen3 server_vad
-        // partial 剥唤醒词残留后既喂 FSM（端点/回声判据）又上屏（issue②：hands-free 边说边出字）
-        onPartial: (t) => { if (!fresh()) return; const s = strip(t); this.vl.asrPartial(s); this.deps.onPartialText?.(s) },
+        // partial 剥唤醒词残留后喂 FSM（端点/回声判据）；上屏跳过纯语气词（P4：「嗯」不闪 ghost 气泡）
+        onPartial: (t) => { if (!fresh()) return; const s = strip(t); this.vl.asrPartial(s); if (!isFiller(s)) this.deps.onPartialText?.(s) },
         onFinal: (t) => { if (!fresh()) return; this.vl.asrFinal(strip(t)) },
         // A1：陈旧会话的兜底超时/断流 onError 到达时代号已变 → 丢弃，绝不用空 final 打回下一轮
         onError: (m) => { if (!fresh()) return; this.deps.onNotice?.('实时识别不可用：' + m); this.vl.asrFinal('') },
@@ -258,9 +263,9 @@ export class HandsFreeController {
   }
 
   // 唤醒音效：优先播预合成的人声提示（issue①）；未就绪回退短促上扬 beep（WebAudio，无需资源文件）。
-  // U4：唤醒瞬间用户已开口（VAD 判为 speech）→ 跳过提示音，避免「在呢」压住人声、少一路 AEC 自触发。
+  // R4.3b P4 真麦修复：删掉「inSpeech 则跳过」——唤醒词刚说完的瞬间 VAD 几乎必然还在 speech 段
+  // （静音尾未到），会导致提示音几乎总被跳过；唤醒必播是泓舟 P3-UX 验收过的正确行为，回声靠 AEC 兜。
   private chime(): void {
-    if (this.vad.inSpeech) return
     if (playCue('wake')) return
     try {
       const AC = window.AudioContext || (window as any).webkitAudioContext

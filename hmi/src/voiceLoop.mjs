@@ -189,7 +189,9 @@ export class VoiceLoop {
     this._speechStartAt = speechAlreadyStarted ? this.now() : 0
     if (!this._asrOpen) {
       this._asrOpen = true
-      this.onOpenAsr()
+      // resume=true（续问/打断/宽限续说）→ 控制器可注入短 pre-roll 补 VAD 判定延迟首字；
+      // resume=false（KWS 唤醒进入）→ 不注入 pre-roll，避免把唤醒词本身喂进 ASR（真麦「小周」误上屏根因）。
+      this.onOpenAsr({ resume: speechAlreadyStarted })
     }
     this._enter(VoiceState.LISTENING)
     // 唤醒进入且尚无 speech → 挂误唤醒回收窗；续问/打断进入时 speech 已起，不挂。
