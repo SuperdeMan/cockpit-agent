@@ -79,14 +79,17 @@
   对象（真栈 edge→VAL→action 6/6），fast_intent 覆盖率 **72.04%→76.17%**。剩余 82% 目标缺口（辅助驾驶
   ADAS 功能长尾，需 ws8 安全门控甄别的对象化）另立 R4.1b 卡待做。详见 `docs/design/2026-07-04-r4.1-routing-quality.md`
   与 `docs/design/2026-07-04-r4.1b-edge-objectification-and-nlu-decision.md`。
-- **R4.3 语音交互前端：唤醒词 + VAD + 全双工-lite（2026-07-04/05，分支 `feat/r4.3-p2-kws-in-app`）**：把语音从
+- **R4.3 语音交互前端：唤醒词 + VAD + 全双工-lite（2026-07-04/05，真栈 Docker 容器端到端验证）**：把语音从
   push-to-talk 升级为解放双手回路——`hmi/src/voiceLoop.mjs` **引擎无关状态机**（免唤醒连续对话 L1 / 播报中打断 L3 /
-  误唤醒静默回收 / 本地 dismiss 与云端 F1「取消」分界，20 例 node 测）；**VAD 用 onnxruntime-web 单线程**（silero，
-  无需跨源隔离）做端点检测 + 打断；**唤醒词「小舟小舟」自建 sherpa-onnx KWS WASM**——生态无预构建可得，遂用
-  emscripten 从源码编译（运行时 pinyin 关键词免训练，`scripts/build-kws-wasm.sh` 重现），接进座舱（主 app 开
-  `COOP:same-origin`+`COEP:credentialless` 让 pthread KWS 能跑又不破坏跨源资源）；全部 opt-in 默认关。
-  **唤醒词真麦验收通过**；「唤醒→ASR→应答」端到端待新会话复验（2026-07-04 验时 Docker Desktop 崩=环境问题、非代码；顺带修 `ws.mjs` 重连 `Illegal invocation` 真 bug）。
-  HMI node 测 42→72（+20 FSM +10 VAD 端点）。详见 `docs/design/2026-07-04-r4.3-wake-vad-fullduplex.md`。
+  误唤醒静默回收 / 本地 dismiss 与云端 F1「取消」分界，20 例 node 测）；**VAD 用 onnxruntime-web 单线程**（silero）做
+  端点检测 + 打断；**唤醒词自建 sherpa-onnx KWS WASM**（生态无预构建→emscripten 从源码编，运行时 pinyin 关键词免训练，
+  `scripts/build-kws-wasm.sh` 重现），接进座舱开 `COOP:same-origin`+`COEP:credentialless` 让 pthread KWS 能跑又不破坏
+  跨源资源；全部 opt-in 默认关。**收尾增强（2026-07-05）**：唤醒后**人声播报**（预合成「在呢/我在/你说…」随机播，
+  TTS 关回退 beep）、hands-free **识别文字实时上屏**（ghost 气泡边说边出、非说完整段）、**自定义唤醒词预设**（小舟小舟/
+  你好小舟/小舟你好/你好阿段，拼音 token 对模型词表逐一核验）、**三路 mic 收敛为单路共享流**（VAD/KWS/ASR 共用一次
+  getUserMedia，消除 AEC 互扰）、**KWS 播报态按 D6 抑制自触发**、**流式 ASR 失败批处理兜底**（兑现「失败回退批处理」）。
+  声学质量（命中率/误唤醒/回声打断）留真麦人工验收（设计卡 §9）。HMI node 测 72/72；后端契约护栏
+  `test/e2e_voice_loop.py`（ASR 流式 + TTS round-trip，真栈 PASS）。详见 `docs/design/2026-07-04-r4.3-wake-vad-fullduplex.md`。
 - 全量 pytest：**1069 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
   一次跑通；R4.1 较 R4.0 的 1050 +19：Registry 语义/重排单测 + 端侧扩规则/对象化用例。R4.3 为 HMI 前端，pytest 不变）。
 - 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6 + 深度调研（深调研报告 + 多轮深挖 + 新闻深挖桥接 + 异步分钟级受理→主动推送报告卡）+ nightly GitHub 断言型 e2e（含 R3.5 降级矩阵四行）全绿；R3.6 真实 Agent 调用→`/metrics` 端到端数据链路真栈验证通过。
@@ -164,7 +167,7 @@ Dashboard 的车辆动态接口仅供本地演示；非开发环境必须设置
 - 复杂任务（行程/深度调研/多步）按统一 `is_complex` 判据**动态开思考**提质 + 气泡内嵌
   「过程区」四阶段折叠展示（理解需求→规划步骤→执行任务→整理结果，行车/泊车双态、脱敏不露 reasoning）；普通车控/闲聊零过程零额外延迟。
 - HMI（Aurora Glass 极光液态座舱）流式文字、动作卡、记忆视图、**语音流式识别上屏**、九种音色和句子级增量播报；
-  **R4.3 免唤醒连续对话 + 播报中打断 + 唤醒词「小舟小舟」**（浏览器本地 KWS/VAD，唤醒前音频不出浏览器，opt-in 默认关）。
+  **R4.3 免唤醒连续对话 + 播报中打断 + 唤醒词（可选预设）+ 唤醒人声播报**（浏览器本地 KWS/VAD，唤醒前音频不出浏览器，opt-in 默认关）。
 - NATS 可观测事件、collector REST/WS、车辆状态 diff、端云 trace、Agent 健康/指标/熔断状态、
   debug 车辆动态与对照实验 Dashboard；collector `GET /metrics`（Prometheus 文本格式）+ 桥接
   真实 OTel span 导出，Grafana 仪表盘经 `--profile observability` 可选启用。

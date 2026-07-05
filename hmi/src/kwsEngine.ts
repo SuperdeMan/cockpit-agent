@@ -4,7 +4,8 @@
 // WASM 运行时在 /kws/（gitignore，scripts/build-kws-wasm.sh 生成）。
 //
 // 关键词 pinyin token 对模型 tokens.txt：小=x iǎo，舟=zh ōu（同 sherpa 默认「小爱同学=x iǎo ài t óng x ué」格式）。
-const KEYWORDS = 'x iǎo zh ōu x iǎo zh ōu @小舟小舟' // ǎ=U+01CE ō=U+014D
+// 关键词是 createKws 的运行时 config（非烤进模型），换词只需换本串——预设见 types.ts::WAKE_WORD_PRESETS。
+export const DEFAULT_KEYWORDS = 'x iǎo zh ōu x iǎo zh ōu @小舟小舟' // ǎ=U+01CE ō=U+014D
 const KWS_DIR = '/kws/'
 
 // sherpa emscripten Module 全局单例：一页只 init 一次（脚本注入 + window.Module），复用。
@@ -34,7 +35,7 @@ function loadKwsModule(): Promise<any> {
   return modulePromise
 }
 
-function kwsConfig(): any {
+function kwsConfig(keywords: string): any {
   return {
     featConfig: { samplingRate: 16000, featureDim: 80 },
     modelConfig: {
@@ -47,7 +48,7 @@ function kwsConfig(): any {
       modelingUnit: 'cjkchar', bpeVocab: '',
     },
     maxActivePaths: 4, numTrailingBlanks: 1, keywordsScore: 2.0, keywordsThreshold: 0.2,
-    keywords: KEYWORDS,
+    keywords,
   }
 }
 
@@ -72,21 +73,37 @@ export class KwsEngine {
   private recorder: ScriptProcessorNode | null = null
   private mediaStream: MediaStream | null = null
   private running = false
+  private ownsStream = true // false=用控制器传入的共享流（架构债 A），stop 时不停其 tracks
+  private keywords: string
+
+  constructor(keywords: string = DEFAULT_KEYWORDS) {
+    this.keywords = keywords
+  }
 
   /** 预载 WASM + createKws。失败即抛（调用方据此仅用 VAD 点击开启）。 */
   async load(): Promise<void> {
     const Module = await loadKwsModule()
-    if (!this.kws) this.kws = (window as any).createKws(Module, kwsConfig())
+    if (!this.kws) this.kws = (window as any).createKws(Module, kwsConfig(this.keywords))
   }
 
   get active(): boolean { return this.running }
 
-  async start(onWake: (keyword: string) => void): Promise<void> {
+  /** 换唤醒词：模型 WASM 单例复用，仅让下次 load() 用新关键词重建 kws 实例。运行中需 stop()+start() 才生效。 */
+  setKeywords(kw: string): void {
+    if (kw === this.keywords) return
+    this.keywords = kw
+    try { this.kws?.free?.() } catch { /* ignore */ }
+    this.kws = null
+  }
+
+  async start(onWake: (keyword: string) => void, externalStream?: MediaStream): Promise<void> {
     if (this.running) return
     await this.load()
     this.stream = this.kws.createStream()
     this.ctx = new AudioContext({ sampleRate: 16000 })
-    this.mediaStream = await navigator.mediaDevices.getUserMedia({
+    // 架构债 A：优先用控制器传入的共享 mic 流；无则自取
+    this.ownsStream = !externalStream
+    this.mediaStream = externalStream ?? await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     })
     this.mic = this.ctx.createMediaStreamSource(this.mediaStream)
@@ -113,7 +130,7 @@ export class KwsEngine {
     try {
       this.recorder?.disconnect()
       this.mic?.disconnect()
-      this.mediaStream?.getTracks().forEach((t) => t.stop())
+      if (this.ownsStream) this.mediaStream?.getTracks().forEach((t) => t.stop())
       void this.ctx?.close()
     } catch { /* ignore */ }
     try { this.stream?.free?.() } catch { /* ignore */ }

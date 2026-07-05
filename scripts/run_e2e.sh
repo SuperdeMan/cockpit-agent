@@ -48,6 +48,7 @@ run_step "e2e_trip"                   python test/e2e_trip.py
 run_step "e2e_research"               python test/e2e_research.py
 run_step "e2e_research_async"         python test/e2e_research_async.py
 run_step "e2e_degrade"                python test/e2e_degrade.py
+run_step "e2e_voice_loop"             python test/e2e_voice_loop.py
 run_step "e2e_real_providers"         python -m pytest test/e2e_real_providers.py -q -s
 
 echo ""

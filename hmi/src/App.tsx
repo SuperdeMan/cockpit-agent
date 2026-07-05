@@ -20,7 +20,7 @@ import {
   stopTTS,
   setTtsLifecycle,
 } from './audio'
-import type { Msg, Settings } from './types'
+import { wakeKeywordsFor, DEFAULT_SETTINGS, type Msg, type Settings } from './types'
 import { poiSelectionIndex, isRefreshRequest } from './nav.mjs'
 import { ResilientWebSocket, appendToken } from './ws.mjs'
 import { HandsFreeController } from './handsFreeController'
@@ -75,6 +75,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const sendRef = useRef<(text: string) => void>(() => {})
   const [handsFreeOrb, setHandsFreeOrb] = useState<string | null>(null)
   const [handsFreeNotice, setHandsFreeNotice] = useState<string>('')
+  // hands-free 聆听中的实时识别文字（issue②）：上屏成「用户正在说」ghost 气泡；离开聆听即清空
+  const [handsFreePartial, setHandsFreePartial] = useState('')
 
   useEffect(() => {
     if (!settings.ttsEnabled || !settings.autoplay) stopTTS()
@@ -130,18 +132,25 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       audioApi: AUDIO_API,
       getAsrConfig: () => {
         const s = settingsRef.current
+        // off 时回落 dashscope（hands-free 必须走流式 ASR 才有 partial/final）
+        const provider = s.asrProvider === 'off' ? 'dashscope' : s.asrProvider
         return {
           language: s.asrLanguage,
-          // off 时回落 dashscope（hands-free 必须走流式 ASR 才有 partial/final）
-          provider: s.asrProvider === 'off' ? 'dashscope' : s.asrProvider,
-          model: s.asrProvider === 'dashscope' ? s.asrModel : '',
+          provider,
+          // 按「生效」引擎给 model：dashscope 传选定/默认模型（fix D：修 off→dashscope 回退传空 model 触发 1011）
+          model: provider === 'dashscope' ? (s.asrModel || DEFAULT_SETTINGS.asrModel) : '',
         }
       },
       onSend: (t) => sendRef.current(t),
       onStopTts: () => stopTTS(),
-      onOrbState: (orb) => setHandsFreeOrb(orb),
+      // 离开 LISTENING（发送/静默回收/打断）即清 partial——真实用户气泡由 send 接管，避免重影
+      onOrbState: (orb) => { setHandsFreeOrb(orb); if (orb !== 'listening') setHandsFreePartial('') },
+      onPartialText: (t) => setHandsFreePartial(t),
       onNotice: (m) => setHandsFreeNotice(m),
       wakeWord: () => settingsRef.current.wakeWordEnabled,
+      getWakeKeywords: () => wakeKeywordsFor(settingsRef.current.wakeWord),
+      getAssistantName: () => settingsRef.current.assistantName,
+      getTts: () => ({ enabled: settingsRef.current.ttsEnabled, voiceId: settingsRef.current.voiceId }),
       config: {
         followupWindowMs: settingsRef.current.followupWindowS * 1000,
         silenceTailMs: settingsRef.current.silenceTailMs,
@@ -181,6 +190,16 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   useEffect(() => {
     handsFreeRef.current?.setWakeWord(settings.wakeWordEnabled)
   }, [settings.wakeWordEnabled])
+
+  // 选定唤醒词变化 → 按新关键词重建 KWS（换词即时生效）
+  useEffect(() => {
+    handsFreeRef.current?.updateWakeKeywords()
+  }, [settings.wakeWord])
+
+  // 音色 / TTS 开关变化 → 刷新唤醒提示音（issue①）
+  useEffect(() => {
+    handsFreeRef.current?.refreshWakeCue()
+  }, [settings.ttsEnabled, settings.voiceId])
 
   // HMI 是否有挂起确认条 → 喂给 FSM（D5-2：确认条可见时裸「取消」必上云，不本地 dismiss）
   useEffect(() => {
@@ -536,7 +555,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
 
       <StatusBar connected={connected} onOpenSettings={() => setShowSettings(true)} />
       <main className="au-main">
-        <ChatView messages={messages} awaitConfirm={awaitConfirm} onConfirm={confirm} onQuick={send} />
+        <ChatView messages={messages} awaitConfirm={awaitConfirm} onConfirm={confirm} onQuick={send} partialUser={handsFreePartial} />
         <aside className="au-stage">
           <ContextualStage messages={messages} />
         </aside>

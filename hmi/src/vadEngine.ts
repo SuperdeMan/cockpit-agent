@@ -33,6 +33,7 @@ export class VadEngine {
   private c = zeroState()
   private ep: InstanceType<typeof SileroEndpoint>
   private running = false
+  private ownsStream = true // false=用控制器传入的共享流（架构债 A），stop 时不停其 tracks
   private chain: Promise<void> = Promise.resolve()
 
   constructor(silenceTailMs = 800) {
@@ -53,12 +54,14 @@ export class VadEngine {
     this.ep.cfg.minSilenceMs = ms
   }
 
-  async start(cb: VadCallbacks): Promise<void> {
+  async start(cb: VadCallbacks, externalStream?: MediaStream): Promise<void> {
     if (this.running) return
     await this.load()
     this.ctx = new AudioContext({ sampleRate: 16000 })
     await this.ctx.audioWorklet.addModule(WORKLET_URL)
-    this.stream = await navigator.mediaDevices.getUserMedia({
+    // 架构债 A：优先用控制器传入的共享 mic 流；无则自取（独立测试/兜底路径）
+    this.ownsStream = !externalStream
+    this.stream = externalStream ?? await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     })
     this.src = this.ctx.createMediaStreamSource(this.stream)
@@ -93,7 +96,7 @@ export class VadEngine {
     try {
       this.node?.disconnect()
       this.src?.disconnect()
-      this.stream?.getTracks().forEach((t) => t.stop())
+      if (this.ownsStream) this.stream?.getTracks().forEach((t) => t.stop())
       void this.ctx?.close()
     } catch {
       /* ignore */
