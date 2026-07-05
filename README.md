@@ -89,13 +89,15 @@
   你好小舟/小舟你好/你好阿段，拼音 token 对模型词表逐一核验）、**三路 mic 收敛为单路共享流**（VAD/KWS/ASR 共用一次
   getUserMedia，消除 AEC 互扰）、**KWS 播报态按 D6 抑制自触发**、**流式 ASR 失败批处理兜底**（兑现「失败回退批处理」）。
   声学质量（命中率/误唤醒/回声打断）留真麦人工验收（设计卡 §9）。**R4.3b 体验硬化（2026-07-05，真麦反馈 5 问题
-  + 4 审计发现，P0-P3 真栈验证）**：首唤醒双份=StrictMode×enable 竞态孤儿控制器（epoch 代际护栏根治）、处理中不可
-  交互=THINKING 四死锁+网关串行（App 补 turnEnded 解死锁 + 网关并发读+`{type:cancel}` 真打断）、无「退下吧」退出
-  （退出词本地退场不上云）、语气词误收+半句截断（filler 双门槛 + 端点宽限合并「导航去…西溪湿地」+ qwen3 静音尾
-  透传治本）、唤醒即说漏字（recorder 先行 + PCM 直传前滚缓冲根治）。后端仅 3 处加法（PCM 直传/静音透传/网关 cancel）
-  真栈 e2e 通过。HMI node 测 108/108；后端契约护栏 `test/e2e_voice_loop.py`（ASR 流式/PCM 直传/vad_silence_ms + TTS
-  round-trip，真栈 PASS）+ `test/e2e_ws.py`（cancel 用例）。详见 `docs/design/2026-07-04-r4.3-wake-vad-fullduplex.md`
-  与 `docs/design/2026-07-05-r4.3b-voice-loop-hardening.md`。
+  + 4 审计发现，P0-P4 全落地真栈验证，已合并 main `17e388e`）**：首唤醒双份=StrictMode×enable 竞态孤儿控制器（epoch
+  代际护栏根治）、处理中不可交互=THINKING 四死锁+网关串行（App 补 turnEnded 解死锁 + 网关并发读+`{type:cancel}` 真打断）、
+  无「退下吧」退出（退出词本地退场不上云）、语气词误收+半句截断（filler 双门槛 + 端点宽限合并「导航去…西溪湿地」+
+  qwen3 静音尾透传治本）、唤醒即说漏字（recorder 先行 + PCM 直传前滚缓冲）。**P4 两轮真麦反馈修复**：wake 路径 pre-roll=0
+  治「唤醒词被识别成同音字（小舟→小周）误上屏」、恢复唤醒提示音（删掉过度激进的 inSpeech 跳过）、退出词/filler 匹配
+  鲁棒化（占据整句+去标点，容忍 ASR 噪声）、语气词/没说清不再退出聆听态（改进续问窗继续听）。后端仅 3 处加法（PCM
+  直传/静音透传/网关 cancel）真栈 e2e 通过。HMI node 测 110/110；后端契约护栏 `test/e2e_voice_loop.py`（ASR 流式/PCM
+  直传/vad_silence_ms + TTS round-trip，真栈 PASS）+ `test/e2e_ws.py`（cancel 用例）。详见
+  `docs/design/2026-07-04-r4.3-wake-vad-fullduplex.md` 与 `docs/design/2026-07-05-r4.3b-voice-loop-hardening.md`。
 - 全量 pytest：**1069 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
   一次跑通；R4.1 较 R4.0 的 1050 +19：Registry 语义/重排单测 + 端侧扩规则/对象化用例。R4.3 为 HMI 前端，pytest 不变）。
 - 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6 + 深度调研（深调研报告 + 多轮深挖 + 新闻深挖桥接 + 异步分钟级受理→主动推送报告卡）+ nightly GitHub 断言型 e2e（含 R3.5 降级矩阵四行）全绿；R3.6 真实 Agent 调用→`/metrics` 端到端数据链路真栈验证通过。
