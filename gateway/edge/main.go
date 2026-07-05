@@ -72,6 +72,7 @@ func (h *wsHub) broadcast(v any) int {
 var hub = newHub()
 
 type wsRequest struct {
+	Type           string            `json:"type"`            // R4.3b P2：="cancel" 时取消在飞请求（旧 HMI 不发此字段，向后兼容）
 	Text           string            `json:"text"`
 	SessionID      string            `json:"session_id"`
 	IsConfirmation bool              `json:"is_confirmation"` // HMI 确认/取消按钮回应多轮确认时置 true
@@ -120,47 +121,93 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 		}
 	}()
 
+	// R4.3b P2（U2 真打断）：读循环不再串行 drain 每条请求的事件流，改为「主循环只读消息、
+	// 请求在独立 goroutine 处理」——这样处理中（THINKING 90s）仍能读到 {type:"cancel"} 并即时取消。
+	// ctx cancel 沿 gRPC 天然传播到 edge-orchestrator→cloud→LLM（通讯加固卡已验证预算级联），零 proto 改动。
+	var mu sync.Mutex // 保护 currentCancel/reqGen
+	var currentCancel context.CancelFunc
+	var reqGen uint64
+
+	cancelCurrent := func() {
+		mu.Lock()
+		if currentCancel != nil {
+			currentCancel()
+			currentCancel = nil
+		}
+		mu.Unlock()
+	}
+	defer cancelCurrent() // 连接退出时取消在飞请求
+
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			return
 		}
 		var req wsRequest
-		if json.Unmarshal(msg, &req) != nil || req.Text == "" {
+		if json.Unmarshal(msg, &req) != nil {
 			continue
+		}
+		if req.Type == "cancel" {
+			// THINKING 期唤醒词打断：取消在飞请求，回确认（幂等；无在飞时也回，HMI 侧忽略）
+			cancelCurrent()
+			client.send(map[string]any{"type": "cancelled"})
+			continue
+		}
+		if req.Text == "" {
+			continue // 向后兼容：空 Text 的非 cancel 消息忽略（同旧行为）
 		}
 		if req.SessionID == "" {
 			req.SessionID = "default"
 		}
 
-		// 调端侧编排器（架构 §2.2：快意图本地秒回 / 慢意图上云）
+		// 起新请求：先 cancel 旧的在飞请求（防御，每连接同时至多一个在飞），登记自己的 cancel。
 		// 90s：复杂任务动态开思考端到端更慢，过程区覆盖等待；快意图仍毫秒级返回。
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
-		stream, err := orch.Handle(ctx, &orchpb.HandleRequest{
-			Text:           req.Text,
-			SessionId:      req.SessionID,
-			IsConfirmation: req.IsConfirmation,
-			Meta:           stampScopes(req.Meta, id.scopes), // 网关权威注入 granted_scopes
-			Context: &commonpb.ContextRef{
-				SessionId: req.SessionID,
-				VehicleId: id.vehicleID,
-				UserId:    id.userID, // 由 token 解析（匿名回退 AUTH_DEFAULT_USER_ID），去硬编码 "u1"
-			},
-		})
-		if err != nil {
-			cancel()
-			client.send(map[string]any{"type": "error", "message": err.Error()})
-			continue
+		mu.Lock()
+		if currentCancel != nil {
+			currentCancel()
 		}
+		currentCancel = cancel
+		reqGen++
+		myGen := reqGen
+		mu.Unlock()
 
-		for {
-			ev, err := stream.Recv()
-			if err != nil {
+		go func(req wsRequest, ctx context.Context, cancel context.CancelFunc, myGen uint64) {
+			defer func() {
 				cancel()
-				break
+				mu.Lock()
+				if reqGen == myGen { // 仅当仍是当前请求时清空（避免误清后来者）
+					currentCancel = nil
+				}
+				mu.Unlock()
+			}()
+			stream, err := orch.Handle(ctx, &orchpb.HandleRequest{
+				Text:           req.Text,
+				SessionId:      req.SessionID,
+				IsConfirmation: req.IsConfirmation,
+				Meta:           stampScopes(req.Meta, id.scopes), // 网关权威注入 granted_scopes
+				Context: &commonpb.ContextRef{
+					SessionId: req.SessionID,
+					VehicleId: id.vehicleID,
+					UserId:    id.userID, // 由 token 解析（匿名回退 AUTH_DEFAULT_USER_ID），去硬编码 "u1"
+				},
+			})
+			if err != nil {
+				// 取消导致的错误（context.Canceled）吞掉，不回发 error（HMI 已收 cancelled）
+				if ctx.Err() == nil {
+					client.send(map[string]any{"type": "error", "message": err.Error()})
+				}
+				return
 			}
-			client.send(eventToMap(ev))
-		}
+			for {
+				ev, err := stream.Recv()
+				if err != nil {
+					// 晚到的 grpc CANCELLED（ctx 已取消）不回发 error；正常 EOF/错误照旧收尾
+					return
+				}
+				client.send(eventToMap(ev))
+			}
+		}(req, ctx, cancel, myGen)
 	}
 }
 

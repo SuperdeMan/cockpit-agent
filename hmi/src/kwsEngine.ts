@@ -73,6 +73,7 @@ export class KwsEngine {
   private recorder: ScriptProcessorNode | null = null
   private mediaStream: MediaStream | null = null
   private running = false
+  private starting = false // A3：running 在若干 await 后才置位，同步 starting 标志堵并发 start 穿透
   private ownsStream = true // false=用控制器传入的共享流（架构债 A），stop 时不停其 tracks
   private keywords: string
 
@@ -97,32 +98,37 @@ export class KwsEngine {
   }
 
   async start(onWake: (keyword: string) => void, externalStream?: MediaStream): Promise<void> {
-    if (this.running) return
-    await this.load()
-    this.stream = this.kws.createStream()
-    this.ctx = new AudioContext({ sampleRate: 16000 })
-    // 架构债 A：优先用控制器传入的共享 mic 流；无则自取
-    this.ownsStream = !externalStream
-    this.mediaStream = externalStream ?? await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    })
-    this.mic = this.ctx.createMediaStreamSource(this.mediaStream)
-    // sherpa demo 同款 ScriptProcessor（已弃用但稳；KWS 内部缓冲，喂变长帧即可）
-    this.recorder = this.ctx.createScriptProcessor(4096, 1, 1)
-    this.recorder.onaudioprocess = (e) => {
-      if (!this.running || !this.stream) return
-      const samples = downsample(new Float32Array(e.inputBuffer.getChannelData(0)), this.ctx!.sampleRate)
-      this.stream.acceptWaveform(16000, samples)
-      while (this.kws.isReady(this.stream)) this.kws.decode(this.stream)
-      const r = this.kws.getResult(this.stream)
-      if (r && r.keyword && r.keyword.length > 0) {
-        this.kws.reset(this.stream)
-        onWake(r.keyword)
+    if (this.running || this.starting) return
+    this.starting = true
+    try {
+      await this.load()
+      this.stream = this.kws.createStream()
+      this.ctx = new AudioContext({ sampleRate: 16000 })
+      // 架构债 A：优先用控制器传入的共享 mic 流；无则自取
+      this.ownsStream = !externalStream
+      this.mediaStream = externalStream ?? await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      })
+      this.mic = this.ctx.createMediaStreamSource(this.mediaStream)
+      // sherpa demo 同款 ScriptProcessor（已弃用但稳；KWS 内部缓冲，喂变长帧即可）
+      this.recorder = this.ctx.createScriptProcessor(4096, 1, 1)
+      this.recorder.onaudioprocess = (e) => {
+        if (!this.running || !this.stream) return
+        const samples = downsample(new Float32Array(e.inputBuffer.getChannelData(0)), this.ctx!.sampleRate)
+        this.stream.acceptWaveform(16000, samples)
+        while (this.kws.isReady(this.stream)) this.kws.decode(this.stream)
+        const r = this.kws.getResult(this.stream)
+        if (r && r.keyword && r.keyword.length > 0) {
+          this.kws.reset(this.stream)
+          onWake(r.keyword)
+        }
       }
+      this.mic.connect(this.recorder)
+      this.recorder.connect(this.ctx.destination)
+      this.running = true
+    } finally {
+      this.starting = false
     }
-    this.mic.connect(this.recorder)
-    this.recorder.connect(this.ctx.destination)
-    this.running = true
   }
 
   stop(): void {

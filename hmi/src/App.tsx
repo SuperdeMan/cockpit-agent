@@ -57,7 +57,14 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   // 请求看门狗计时器：后端真卡死时兜底，杜绝气泡永久"思考中"
   const watchdogRef = useRef<number | undefined>(undefined)
   const locationRefreshRequestedRef = useRef(false)
-  const pendingIdRef = useRef<string | null>(null)
+  // R4.3b P0（A2 pendingId 单槽 → 归属错乱/旧轮复读）：在飞请求按 dispatch 顺序入 FIFO。
+  // 网关 WS 串行（一轮事件流 drain 到 EOF 才读下一条），故 fifo[0] 恒为当前正在收流的轮 → 正确归属。
+  const pendingIdsRef = useRef<string[]>([])
+  // 最新一次 dispatch 的轮 id：speech 喂 TTS / setTtsText / setAwaitConfirm / 候选记录只认最新轮，
+  // 旧轮（罕见双发或混合意图残留）的 final 只更新其气泡文本，静默不复读、不劫持确认条。
+  const lastDispatchIdRef = useRef<string | null>(null)
+  // U2/P2 THINKING 真打断：客户端主动取消时置位，网关回的 cancelled 视为确认（不重复标记气泡）
+  const justCancelledRef = useRef(false)
   // 上一条 poi_list 的候选名（供「第一个/第二个」语音选择就近导航；见 resolvePoiSelection）
   const lastPoiNamesRef = useRef<string[] | null>(null)
   // 充电目的地候选（dest_choice）名：「第N个」回填目的地槽位续接规划，而非发起导航
@@ -146,6 +153,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       // 离开 LISTENING（发送/静默回收/打断）即清 partial——真实用户气泡由 send 接管，避免重影
       onOrbState: (orb) => { setHandsFreeOrb(orb); if (orb !== 'listening') setHandsFreePartial('') },
       onPartialText: (t) => setHandsFreePartial(t),
+      onCancelTurn: () => cancelCurrentTurn(), // U2：THINKING 期唤醒词打断 → 发网关取消 + 本地标「已打断」
       onNotice: (m) => setHandsFreeNotice(m),
       wakeWord: () => settingsRef.current.wakeWordEnabled,
       getWakeKeywords: () => wakeKeywordsFor(settingsRef.current.wakeWord),
@@ -160,7 +168,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     setTtsLifecycle({ onStart: () => ctrl.ttsStart(), onEnd: () => ctrl.ttsEnd() })
     return () => {
       setTtsLifecycle(null)
-      ctrl.disable()
+      ctrl.dispose() // U1：卸载即永久退役——StrictMode remount 的 ctrl#1 在途 enable 经 epoch 作废，不诞生孤儿
       handsFreeRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -208,20 +216,26 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
 
   const handleEvent = useCallback((data: any) => {
     const s = settingsRef.current
+    // 取当前正在收流的轮 id（fifo[0]）；无在飞轮时新建并置队首（混合意图云端续流），
+    // 并把它认作最新轮（lastDispatch），使其 TTS/确认照常——旧轮不会走到此分支（网关串行）。
+    const headPendingId = (): string => {
+      const fifo = pendingIdsRef.current
+      if (fifo.length) return fifo[0]
+      const id = uid()
+      fifo.unshift(id)
+      lastDispatchIdRef.current = id
+      return id
+    }
     if (data.type === 'speech_delta') {
       // 流式逐字：把 pending 占位转为 streaming，并追加 delta。
       // 若当前没有活跃占位（如混合意图里本地已 final、云端流式刚开始），
       // 新开一个助手气泡——否则这段 delta 会无处归属被丢弃。
       const delta = data.delta || ''
-      if (s.ttsEnabled && s.autoplay && delta) {
+      const targetId = headPendingId()
+      // A2：只有最新轮的语音才喂 TTS 播放队列，旧轮 delta 不复读
+      if (s.ttsEnabled && s.autoplay && delta && targetId === lastDispatchIdRef.current) {
         appendTTSDelta(delta).catch(() => {/* 播放失败静默 */})
       }
-      let id = pendingIdRef.current
-      if (!id) {
-        id = uid()
-        pendingIdRef.current = id
-      }
-      const targetId = id
       setMessages((m) =>
         m.some((x) => x.id === targetId)
           ? m.map((msg) =>
@@ -256,12 +270,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         return [...prev, step]
       }
       const driving = !!data.driving
-      let id = pendingIdRef.current
-      if (!id) {
-        id = uid()
-        pendingIdRef.current = id
-      }
-      const targetId = id
+      const targetId = headPendingId()
       setMessages((m) =>
         m.some((x) => x.id === targetId)
           ? m.map((msg) =>
@@ -283,12 +292,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       // 流式期间单独下发的动作卡（如 T2 循环中间步骤）：附到当前气泡；
       // 没有活跃气泡则新开一个，避免动作被静默丢弃。
       const action = data.action
-      let id = pendingIdRef.current
-      if (!id) {
-        id = uid()
-        pendingIdRef.current = id
-      }
-      const targetId = id
+      const targetId = headPendingId()
       setMessages((m) =>
         m.some((x) => x.id === targetId)
           ? m.map((msg) =>
@@ -302,8 +306,9 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     }
     if (data.type === 'final') {
       if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
-      const id = pendingIdRef.current
-      pendingIdRef.current = null
+      const id = pendingIdsRef.current.shift() ?? null // 出队当前轮
+      // 最新轮（或无在飞轮的续流 final）才驱动确认条/候选/TTS；旧轮只更新气泡文本，静默（A2）
+      const isLatest = id === null || id === lastDispatchIdRef.current
       const final: Partial<Msg> = {
         pending: false,
         streaming: false,
@@ -319,33 +324,39 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           ? m.map((msg) => (msg.id === id ? { ...msg, ...final } : msg))
           : [...m, { id: uid(), role: 'assistant', ...final } as Msg],
       )
-      setAwaitConfirm(!!data.need_confirm)
-      // 记录候选名供下一轮「第N个」选择：充电目的地候选(dest_choice)→回填目的地槽位；
-      // 普通导航 poi_list→就近导航（见 send）
-      {
-        const c: any = data.ui_card
-        const names = c?.type === 'poi_list'
-          ? (c.items || []).map((it: any) => it.name).filter(Boolean) : null
-        lastDestChoiceRef.current = null
-        lastWaypointChoiceRef.current = null
-        lastPoiNamesRef.current = null
-        if (c?.type === 'poi_list' && c.purpose === 'dest_choice') {
-          lastDestChoiceRef.current = names
-        } else if (c?.type === 'poi_list' && c.purpose === 'waypoint_choice') {
-          lastWaypointChoiceRef.current = { destination: c.destination || '', names: names || [] }
-        } else if (c?.type === 'poi_list') {
-          lastPoiNamesRef.current = names
-          // 就近类目候选：记关键词供「换一批」翻页。同一关键词的翻页保留页码，换类目则从第 1 页起。
-          const kw = c.keyword || ''
-          categoryRef.current = kw
-            ? (categoryRef.current?.keyword === kw ? categoryRef.current : { keyword: kw, page: 1 })
-            : null
+      if (isLatest) {
+        setAwaitConfirm(!!data.need_confirm)
+        // 记录候选名供下一轮「第N个」选择：充电目的地候选(dest_choice)→回填目的地槽位；
+        // 普通导航 poi_list→就近导航（见 send）
+        {
+          const c: any = data.ui_card
+          const names = c?.type === 'poi_list'
+            ? (c.items || []).map((it: any) => it.name).filter(Boolean) : null
+          lastDestChoiceRef.current = null
+          lastWaypointChoiceRef.current = null
+          lastPoiNamesRef.current = null
+          if (c?.type === 'poi_list' && c.purpose === 'dest_choice') {
+            lastDestChoiceRef.current = names
+          } else if (c?.type === 'poi_list' && c.purpose === 'waypoint_choice') {
+            lastWaypointChoiceRef.current = { destination: c.destination || '', names: names || [] }
+          } else if (c?.type === 'poi_list') {
+            lastPoiNamesRef.current = names
+            // 就近类目候选：记关键词供「换一批」翻页。同一关键词的翻页保留页码，换类目则从第 1 页起。
+            const kw = c.keyword || ''
+            categoryRef.current = kw
+              ? (categoryRef.current?.keyword === kw ? categoryRef.current : { keyword: kw, page: 1 })
+              : null
+          }
         }
-      }
-      // hands-free 回声指纹：把本轮播报文本喂给 FSM，供 SPEAKING 态 barge-in 时比对（D6）
-      handsFreeRef.current?.setTtsText(data.speech || '')
-      if (s.ttsEnabled && s.autoplay && data.speech) {
-        finishTTSReply(data.speech).catch(() => {/* 播放失败静默 */})
+        // hands-free 回声指纹：把本轮播报文本喂给 FSM，供 SPEAKING 态 barge-in 时比对（D6）
+        handsFreeRef.current?.setTtsText(data.speech || '')
+        if (s.ttsEnabled && s.autoplay && data.speech) {
+          // 有语音播报：TTS 生命周期（onEnd）驱动 FSM 出 THINKING；合成全失败也补 turnEnded 兜底（U2 死锁）
+          finishTTSReply(data.speech).catch(() => handsFreeRef.current?.turnEnded())
+        } else {
+          // 无可播语音（TTS 关 / 纯卡片回复）：App 侧补调，放 FSM 出 THINKING，解 hands-free 一轮即废死锁
+          handsFreeRef.current?.turnEnded()
+        }
       }
       return
     }
@@ -368,12 +379,24 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     }
     if (data.type === 'error') {
       if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
-      pendingIdRef.current = null
+      pendingIdsRef.current = [] // 错误是硬终止：清空所有在飞轮
       setMessages((m) => [
         ...m.filter((x) => !x.pending),
         { id: uid(), role: 'assistant', text: '出错了：' + data.message, error: true },
       ])
       setAwaitConfirm(false)
+      handsFreeRef.current?.turnEnded() // U2：error 分支也放 FSM 出 THINKING，否则 hands-free 卡死
+    }
+    if (data.type === 'cancelled') {
+      // 网关确认已取消在飞请求（U2 真打断）。客户端主动打断时 cancelCurrentTurn 已本地标记 → 幂等忽略；
+      // 网关侧主动取消（新请求取消旧的，防御）时无本地标记 → 在此标 FIFO 头气泡为「已打断」。
+      if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
+      if (justCancelledRef.current) { justCancelledRef.current = false; return }
+      const id = pendingIdsRef.current.shift() ?? null
+      if (id) setMessages((m) => m.map((msg) =>
+        msg.id === id && (msg.pending || msg.streaming || msg.processActive)
+          ? { ...msg, pending: false, streaming: false, processActive: false, text: msg.text || '已打断', error: true }
+          : msg))
     }
   }, [])
 
@@ -383,7 +406,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     if (watchdogRef.current) clearTimeout(watchdogRef.current)
     watchdogRef.current = window.setTimeout(() => {
       watchdogRef.current = undefined
-      if (pendingIdRef.current === id) pendingIdRef.current = null
+      pendingIdsRef.current = pendingIdsRef.current.filter((x) => x !== id) // 从 FIFO 摘除超时轮
       setMessages((m) =>
         m.map((msg) =>
           msg.id === id && (msg.pending || msg.streaming || msg.processActive)
@@ -394,7 +417,23 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       )
       setAwaitConfirm(false)
       stopTTS()
+      handsFreeRef.current?.turnEnded() // U2：看门狗超时也放 FSM 出 THINKING
     }, REQUEST_TIMEOUT_MS)
+  }, [])
+
+  // U2/P2 THINKING 真打断：发网关取消在飞请求 + 本地把当前轮气泡标「已打断」。FSM 已并行进 LISTENING。
+  const cancelCurrentTurn = useCallback(() => {
+    const ws = wsRef.current
+    if (ws) ws.send({ type: 'cancel', session_id: SESSION })
+    justCancelledRef.current = true
+    if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
+    stopTTS()
+    setAwaitConfirm(false)
+    const id = pendingIdsRef.current.shift() ?? null
+    if (id) setMessages((m) => m.map((msg) =>
+      msg.id === id && (msg.pending || msg.streaming || msg.processActive)
+        ? { ...msg, pending: false, streaming: false, processActive: false, text: msg.text || '已打断', error: true }
+        : msg))
   }, [])
 
   const dispatch = (text: string, isConfirmation: boolean, locationOverride?: any,
@@ -420,7 +459,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     })
     // 立刻插入"思考中"占位 —— 开放域慢响应也有即时反馈
     const pendingId = uid()
-    pendingIdRef.current = pendingId
+    pendingIdsRef.current.push(pendingId) // 入 FIFO 队尾
+    lastDispatchIdRef.current = pendingId // 记为最新轮：只有它驱动 TTS/确认
     setMessages((m) => [...m, { id: pendingId, role: 'assistant', text: '', pending: true }])
     armWatchdog(pendingId)
   }

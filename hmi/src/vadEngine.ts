@@ -33,8 +33,11 @@ export class VadEngine {
   private c = zeroState()
   private ep: InstanceType<typeof SileroEndpoint>
   private running = false
+  private starting = false // A3：running 在若干 await 后才置位，同步 starting 标志堵并发 start 穿透
   private ownsStream = true // false=用控制器传入的共享流（架构债 A），stop 时不停其 tracks
   private chain: Promise<void> = Promise.resolve()
+  // R4.3b P2（U4 根治）：VAD 帧旁路 tap——控制器订阅它喂 PcmRing 前滚缓冲 + PCM 直传流。
+  onFrame: ((frame: Float32Array) => void) | null = null
 
   constructor(silenceTailMs = 800) {
     this.ep = new SileroEndpoint({ minSilenceMs: silenceTailMs })
@@ -50,32 +53,44 @@ export class VadEngine {
     return this.running
   }
 
+  // R4.3b P1（U4）：当前是否处于语音段（SileroEndpoint.triggered）。控制器据此在唤醒时
+  // 若用户已开口则跳过提示音，避免「在呢」压住人声、也少一次 AEC 自触发源。
+  get inSpeech(): boolean {
+    return !!this.ep?.triggered
+  }
+
   setSilenceTail(ms: number): void {
     this.ep.cfg.minSilenceMs = ms
   }
 
   async start(cb: VadCallbacks, externalStream?: MediaStream): Promise<void> {
-    if (this.running) return
-    await this.load()
-    this.ctx = new AudioContext({ sampleRate: 16000 })
-    await this.ctx.audioWorklet.addModule(WORKLET_URL)
-    // 架构债 A：优先用控制器传入的共享 mic 流；无则自取（独立测试/兜底路径）
-    this.ownsStream = !externalStream
-    this.stream = externalStream ?? await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    })
-    this.src = this.ctx.createMediaStreamSource(this.stream)
-    this.node = new AudioWorkletNode(this.ctx, 'vad-capture')
-    this.node.port.onmessage = (e: MessageEvent) => this.enqueue(e.data as Float32Array, cb)
-    this.src.connect(this.node) // 不连 destination：只采集不外放
-    this.ep.reset()
-    this.h = zeroState()
-    this.c = zeroState()
-    this.running = true
+    if (this.running || this.starting) return
+    this.starting = true
+    try {
+      await this.load()
+      this.ctx = new AudioContext({ sampleRate: 16000 })
+      await this.ctx.audioWorklet.addModule(WORKLET_URL)
+      // 架构债 A：优先用控制器传入的共享 mic 流；无则自取（独立测试/兜底路径）
+      this.ownsStream = !externalStream
+      this.stream = externalStream ?? await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      })
+      this.src = this.ctx.createMediaStreamSource(this.stream)
+      this.node = new AudioWorkletNode(this.ctx, 'vad-capture')
+      this.node.port.onmessage = (e: MessageEvent) => this.enqueue(e.data as Float32Array, cb)
+      this.src.connect(this.node) // 不连 destination：只采集不外放
+      this.ep.reset()
+      this.h = zeroState()
+      this.c = zeroState()
+      this.running = true
+    } finally {
+      this.starting = false
+    }
   }
 
   // 串行化推理，保证 h/c 状态连续、端点计时不乱（silero ~1-3ms << 32ms 帧间隔，不会积压）
   private enqueue(frame: Float32Array, cb: VadCallbacks): void {
+    this.onFrame?.(frame) // P2：同一帧旁路给 PcmRing/PCM 直传（同步、在推理入队前，保证帧序）
     this.chain = this.chain.then(() => this.infer(frame, cb)).catch((err) => cb.onError?.(String(err)))
   }
 

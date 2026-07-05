@@ -47,6 +47,9 @@ function makeHarness(config = {}) {
     onStopTts: rec('stopTts'),
     onWakeChime: rec('chime'),
     onDisableBargeIn: rec('disableBargeIn'),
+    onExitAck: rec('exitAck'),
+    onCancelTurn: rec('cancelTurn'),
+    onMetric: rec('metric'),
     config,
   })
 
@@ -138,14 +141,14 @@ test('误唤醒回收窗被真实开口撤销：5s 后仍在 LISTENING', () => {
   assert.equal(h.vl.state, VoiceState.LISTENING)
 })
 
-test('D5-2 dismiss：定稿不足 2 字 → 本地丢弃回 ARMED，不上云', () => {
+test('D5-2 dismiss：定稿不足 2 字 → 不上云，但继续聆听（FOLLOWUP，不踢回待机）', () => {
   const h = makeHarness()
   h.vl.handsFreeOn()
   h.vl.wake()
   h.vl.vadSpeechStart()
   h.vl.asrFinal('嗯')
   assert.equal(h.count('send'), 0)
-  assert.equal(h.vl.state, VoiceState.ARMED)
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP) // P4：语气词不退出聆听，进续问窗
 })
 
 test('D5-2 dismiss：命中词表「没事」→ 本地丢弃', () => {
@@ -177,8 +180,8 @@ test('D5-2 例外对照：无确认条时同样的短句「不」被本地 dismi
   h.vl.vadSpeechStart()
   h.vl.asrFinal('不') // 1 字，<dismissMinChars
   assert.equal(h.count('send'), 0)
-  assert.equal(h.vl.state, VoiceState.ARMED)
-  // 确认条可见时同一短句必须放行
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP) // P4：没说清不上云但继续聆听
+  // 确认条可见时同一短句必须放行（wake 从 FOLLOWUP 也进 LISTENING）
   h.vl.setNeedConfirm(true)
   h.vl.wake()
   h.vl.vadSpeechStart()
@@ -259,6 +262,31 @@ test('无音频回复（TTS 关/纯文本）：App 在 final 到达时调 ttsEnd
   assert.equal(h.vl.state, VoiceState.FOLLOWUP)
 })
 
+test('R4.3b P0：THINKING 安全超时兜底——App 未回调 ttsEnd 也不永久卡死，超时回 FOLLOWUP', () => {
+  const h = makeHarness({ thinkingMaxMs: 100000 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.vl.asrFinal('查一下明天的天气')
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  h.advance(99999)
+  assert.equal(h.vl.state, VoiceState.THINKING) // 未到点，仍在处理
+  h.advance(1)
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP) // 兜底触发，回可交互态（不永久全聋）
+})
+
+test('R4.3b P0：ttsStart 进 SPEAKING 清 THINKING 超时（正路播报不被兜底打回）', () => {
+  const h = makeHarness({ thinkingMaxMs: 5000 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.vl.asrFinal('讲个笑话')
+  h.vl.ttsStart() // 播报开始 → SPEAKING，超时定时器随 _clearAllTimers 清除
+  assert.equal(h.vl.state, VoiceState.SPEAKING)
+  h.advance(6000) // 超过 thinkingMaxMs
+  assert.equal(h.vl.state, VoiceState.SPEAKING) // 未被超时兜底打回 FOLLOWUP
+})
+
 test('hands-free 中途关闭（任意态）→ IDLE 拆机 + 关 ASR + 清定时器', () => {
   const h = makeHarness()
   h.vl.handsFreeOn()
@@ -298,6 +326,235 @@ test('唤醒词打断：SPEAKING 态喊唤醒词 → 停播报直接进 LISTENIN
   h.vl.wake()
   assert.equal(h.count('stopTts'), 1)
   assert.equal(h.vl.state, VoiceState.LISTENING)
+})
+
+// ─── R4.3b P1：退出词 / 语气词 / 短语音 / 端点宽限合并 ───
+
+test('U3 退出词：「退下吧」→ 退场应答 + 回 ARMED，不上云', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('退下吧')
+  assert.equal(h.count('send'), 0)
+  assert.equal(h.count('exitAck'), 1)
+  assert.equal(h.vl.state, VoiceState.ARMED)
+})
+
+test('U3 退出词并入 dismiss：「没事了」去尾「了」命中「没事」→ 退场，不上云', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('没事了')
+  assert.equal(h.count('send'), 0)
+  assert.equal(h.vl.state, VoiceState.ARMED)
+})
+
+test('U3 退出词例外：确认条可见时「退下」照发上云（走 F1，不本地退场）', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.setNeedConfirm(true)
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('退下')
+  assert.deepEqual(h.last('send'), ['send', '退下'])
+  assert.equal(h.count('exitAck'), 0)
+  assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+test('U5a 语气词：「嗯嗯」「哈哈」「啊」不上云，但继续聆听（P4 不退出聆听态）', () => {
+  for (const w of ['嗯嗯', '哈哈', '啊']) {
+    const h = makeHarness()
+    h.vl.handsFreeOn()
+    h.vl.wake()
+    h.vl.vadSpeechStart()
+    h.advance(200)
+    h.vl.vadSpeechEnd()
+    h.vl.asrFinal(w)
+    assert.equal(h.count('send'), 0, `${w} 不应上云`)
+    assert.equal(h.vl.state, VoiceState.FOLLOWUP, `${w} 应进续问窗继续聆听`)
+  }
+})
+
+test('P4：说语气词后可直接接着说正事，不需重新唤醒（filler→FOLLOWUP→接话→LISTENING→send）', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.vl.asrFinal('嗯') // 语气词 → 继续聆听
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP)
+  assert.equal(h.count('chime'), 1) // 未重新唤醒（唤醒音仍只 1 次）
+  h.vl.vadSpeechStart() // 直接接着说
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('帮我查明天的天气')
+  assert.deepEqual(h.last('send'), ['send', '帮我查明天的天气'])
+  assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+test('P4：退出词仍回待机（ARMED），与语气词的继续聆听区分', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('退下吧')
+  assert.equal(h.count('exitAck'), 1)
+  assert.equal(h.vl.state, VoiceState.ARMED) // 退出意图 → 回待机（区别于 filler）
+})
+
+test('U5b 完整句直发不进宽限（「打开空调26度」即刻发送）', () => {
+  const h = makeHarness({ endpointGraceMs: 700 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(500)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('打开空调26度')
+  assert.deepEqual(h.last('send'), ['send', '打开空调26度'])
+  assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+test('U5b 端点宽限合并：悬挂「导航去」停顿后续说「西溪湿地」→ 合并为一次请求', () => {
+  const h = makeHarness({ endpointGraceMs: 700 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(300)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('导航去') // 悬挂结尾 → 进宽限，不立即发
+  assert.equal(h.count('send'), 0)
+  assert.equal(h.vl.state, VoiceState.LISTENING) // 仍在聆听（宽限微态）
+  h.advance(300) // 宽限内续说
+  h.vl.vadSpeechStart()
+  assert.equal(h.count('openAsr'), 2) // 重开 ASR 接续
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('西溪湿地')
+  assert.deepEqual(h.last('send'), ['send', '导航去西溪湿地'])
+  assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+test('U5b 宽限满无续说 → 送出原文进 THINKING', () => {
+  const h = makeHarness({ endpointGraceMs: 700 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(300)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('导航去')
+  assert.equal(h.count('send'), 0)
+  h.advance(700) // 宽限满
+  assert.deepEqual(h.last('send'), ['send', '导航去'])
+  assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+test('U5b qwen3 提前定稿：悬挂结尾 + VAD 仍在 speech → 零等待续说拼接', () => {
+  const h = makeHarness({ endpointGraceMs: 700 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(300)
+  // 不 vadSpeechEnd（VAD 仍在 speech）→ qwen3 服务端 800ms 提前 final
+  h.vl.asrFinal('帮我导航去') // 悬挂 + speechActive → 立即续说
+  assert.equal(h.count('send'), 0)
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  assert.equal(h.count('openAsr'), 2)
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('西湖')
+  assert.deepEqual(h.last('send'), ['send', '帮我导航去西湖'])
+})
+
+test('U5b endpointGraceMs=0 关闭合并：悬挂结尾也即刻发送（不拖延）', () => {
+  const h = makeHarness({ endpointGraceMs: 0 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(300)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('导航去')
+  assert.deepEqual(h.last('send'), ['send', '导航去']) // 无宽限，直发
+  assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+test('U5b 宽限中拆机（handsFreeOff）→ 清待发前缀，grace 定时器不再触发', () => {
+  const h = makeHarness({ endpointGraceMs: 700 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(300)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('导航去') // 宽限
+  h.vl.handsFreeOff()
+  assert.equal(h.vl.state, VoiceState.IDLE)
+  h.advance(1000) // grace 已随拆机清除
+  assert.equal(h.count('send'), 0)
+})
+
+test('U2 THINKING 真打断：处理中喊唤醒词 → 取消在飞轮 + 提示音 + 重新聆听', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('帮我查一个很复杂的问题吗') // 完整句 → 送出进 THINKING
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  h.vl.wake() // 处理中喊「小舟小舟」
+  assert.equal(h.count('cancelTurn'), 1) // 请求取消在飞的云端处理
+  assert.equal(h.count('chime'), 2)      // 唤醒 + 打断各一次
+  assert.equal(h.vl.state, VoiceState.LISTENING) // 重新聆听
+})
+
+test('U2 THINKING 期 VAD speech 不打断（仅唤醒词可打断，防环境音误触）', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('讲个笑话')
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  h.vl.vadSpeechStart() // THINKING 期的 speech（环境音）
+  h.advance(500)
+  assert.equal(h.count('cancelTurn'), 0)
+  assert.equal(h.vl.state, VoiceState.THINKING) // 岿然不动
+})
+
+test('P3 obs 指标：wake/filler/exit/merge/barge_in/cancel 各在语义点发出', () => {
+  const metrics = (h) => h.events.filter((e) => e[0] === 'metric').map((e) => e[1])
+  // wake
+  let h = makeHarness()
+  h.vl.handsFreeOn(); h.vl.wake()
+  assert.ok(metrics(h).includes('wake'))
+  // filler_dismissed
+  h = makeHarness()
+  h.vl.handsFreeOn(); h.vl.wake(); h.vl.vadSpeechStart(); h.vl.vadSpeechEnd(); h.vl.asrFinal('嗯嗯')
+  assert.ok(metrics(h).includes('filler_dismissed'))
+  // exit_word
+  h = makeHarness()
+  h.vl.handsFreeOn(); h.vl.wake(); h.vl.vadSpeechStart(); h.advance(400); h.vl.vadSpeechEnd(); h.vl.asrFinal('退下吧')
+  assert.ok(metrics(h).includes('exit_word'))
+  // endpoint_merge（宽限续说）
+  h = makeHarness({ endpointGraceMs: 700 })
+  h.vl.handsFreeOn(); h.vl.wake(); h.vl.vadSpeechStart(); h.advance(300); h.vl.vadSpeechEnd(); h.vl.asrFinal('导航去')
+  h.advance(200); h.vl.vadSpeechStart()
+  assert.ok(metrics(h).includes('endpoint_merge'))
+  // turn_cancelled（THINKING 打断）
+  h = makeHarness()
+  h.vl.handsFreeOn(); h.vl.wake(); h.vl.vadSpeechStart(); h.advance(400); h.vl.vadSpeechEnd(); h.vl.asrFinal('讲个笑话')
+  h.vl.wake()
+  assert.ok(metrics(h).includes('turn_cancelled'))
 })
 
 test('orbState 映射：各态对应 AuroraOrb 视觉态', () => {

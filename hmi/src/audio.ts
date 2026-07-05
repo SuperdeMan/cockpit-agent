@@ -1,5 +1,6 @@
 // 音频层：录音控制器（修掉 ASR 收音竞态）+ 增量 TTS 播放队列 + 音色查询。
 import { OrderedPlaybackQueue, TtsTextBuffer } from './ttsQueue.mjs'
+import { float32ToInt16, int16ToWav } from './pcmRing.mjs'
 //
 // 旧实现的收音失败根因（task 3 前端侧）：
 //  1. startRecording 是 async，快按快松时 MediaRecorder 还没 start()，
@@ -283,32 +284,37 @@ export async function playTTS(apiBase: string, text: string, voiceId: string): P
   await finishTTSReply(text)
 }
 
-// ─── 唤醒提示音（R4.3 issue①）：hands-free 开启时预合成一句短语音（如「在」），
-// 唤醒瞬间本地零延迟播放，替代纯 beep（有回声担忧靠 getUserMedia 的 AEC 兜底，同 barge-in 前提）。
-// 走同一 /api/tts + 选定音色；TTS 关时不合成，调用方回退 beep。─────────────────────────────
-let wakeCues: PreparedAudio[] = []
-let wakeCuesKey = '' // voiceId|texts：变了才重合成，避免每次开启都打后端
+// ─── 语音提示音集（R4.3 issue① 唤醒 / R4.3b P1 U3 退场）：hands-free 开启时按类别预合成
+// 若干短语音（wake=「在呢」…、exit=「好的」…），触发瞬间本地零延迟随机播一条，替代纯 beep。
+// 走同一 /api/tts + 选定音色；TTS 关时不合成，wake 由调用方回退 beep、exit 静默（退场不该出声）。
+// 有回声担忧靠 getUserMedia 的 AEC 兜底（同 barge-in 前提）。────────────────────────────────
+const cueSets: Record<string, PreparedAudio[]> = {}
+let cueSetsKey = '' // voiceId|sets：变了才重合成，避免每次开启都打后端
 
-/** 预合成多条唤醒提示语并缓存（唤醒时随机播一条，避免每次都同一句）。
- *  部分失败保留成功的；全部失败才抛，调用方据此回退 beep。 */
-export async function prepareWakeCue(apiBase: string, voiceId: string, texts: string[]): Promise<void> {
-  const key = voiceId + '|' + texts.join('|')
-  if (wakeCues.length && wakeCuesKey === key) return
-  const results = await Promise.allSettled(
-    texts.map((text) => prepareTTS({ apiBase, text, voiceId }, new AbortController().signal)),
-  )
-  const prepared = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
-  if (!prepared.length) throw new Error('唤醒提示音合成全部失败')
-  clearWakeCue()
-  wakeCues = prepared
-  wakeCuesKey = key
+/** 按类别预合成提示语集（每类多条，触发时随机播一条避免每次同一句）。
+ *  部分失败保留成功的；wake 类全空才抛（调用方据此回退 beep）；exit 类可空（静默退场）。 */
+export async function prepareCueSet(apiBase: string, voiceId: string, sets: Record<string, string[]>): Promise<void> {
+  const key = voiceId + '|' + JSON.stringify(sets)
+  if (cueSetsKey === key && Object.keys(cueSets).length) return
+  const next: Record<string, PreparedAudio[]> = {}
+  for (const [kind, texts] of Object.entries(sets)) {
+    const results = await Promise.allSettled(
+      texts.map((text) => prepareTTS({ apiBase, text, voiceId }, new AbortController().signal)),
+    )
+    next[kind] = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+  }
+  if (!(next.wake && next.wake.length)) throw new Error('唤醒提示音合成全部失败') // wake 全失败才回退 beep
+  clearCues()
+  Object.assign(cueSets, next)
+  cueSetsKey = key
 }
 
-/** 随机播一条已缓存的唤醒提示音；未就绪返回 false（调用方回退 beep）。objectURL 复用不 dispose。 */
-export function playWakeCue(): boolean {
-  if (!wakeCues.length) return false
+/** 随机播一条某类已缓存提示音；未就绪返回 false（wake 由调用方回退 beep，exit 静默）。objectURL 复用不 dispose。 */
+export function playCue(kind: string): boolean {
+  const arr = cueSets[kind]
+  if (!arr || !arr.length) return false
   try {
-    const pick = wakeCues[Math.floor(Math.random() * wakeCues.length)]
+    const pick = arr[Math.floor(Math.random() * arr.length)]
     const a = new Audio(pick.url)
     void a.play().catch(() => {})
     return true
@@ -317,10 +323,10 @@ export function playWakeCue(): boolean {
   }
 }
 
-export function clearWakeCue(): void {
-  for (const c of wakeCues) c.dispose()
-  wakeCues = []
-  wakeCuesKey = ''
+export function clearCues(): void {
+  for (const arr of Object.values(cueSets)) for (const c of arr) c.dispose()
+  for (const k of Object.keys(cueSets)) delete cueSets[k]
+  cueSetsKey = ''
 }
 
 // ASR：上传录音，返回识别文本
@@ -355,6 +361,7 @@ type StreamOpts = {
   language: string
   provider: string
   model: string
+  vadSilenceMs?: number // R4.3b P2（U5b 治本）：客户端静音尾透传给 qwen3 server_vad（hands-free 传，push-to-talk 不传）
   onPartial?: (text: string) => void
   onFinal?: (text: string) => void
   onError?: (msg: string) => void // 触发批处理回退
@@ -368,20 +375,37 @@ export class StreamingRecognizer {
   private stream: MediaStream | null = null
   private finished = false
   private opened = false
+  private starting = false // A3：rec/ws 在 getUserMedia 之后才赋值，同步 starting 标志堵并发 start 双 recorder
   private ownsStream = true // false=用控制器传入的共享流（架构债 A），stop 时不停其 tracks
   private chunks: Blob[] = [] // 累积录音，供流式失败时批处理兜底（fix C）
   private mime = ''
   private apiBase = '' // 由 wsUrl 反推，供批处理兜底调 /api/asr
+  private fallbackTimer: number | null = null // rec.onstop 挂的 7s 兜底 timer 句柄（A1：cleanup 时清）
+  // R4.3b P2 PCM 直传（U4 根治）：VAD 帧喂入、无 MediaRecorder；pcmSendBuf 攒 ~100ms 聚包，pcmChunks 全量供 WAV 兜底
+  private pcmMode = false
+  private pcmSendBuf: Int16Array[] = []
+  private pcmChunks: Int16Array[] = []
+  private opts: StreamOpts | null = null // 供 stop() 的兜底 timer 取回调（webm 走闭包，PCM 走此）
 
   get active(): boolean {
     return !!this.rec || !!this.ws
   }
 
   async start(wsUrl: string, opts: StreamOpts, externalStream?: MediaStream): Promise<void> {
-    if (this.active) return
+    if (this.active || this.starting) return
+    this.starting = true
+    try {
+      await this._start(wsUrl, opts, externalStream)
+    } finally {
+      this.starting = false
+    }
+  }
+
+  private async _start(wsUrl: string, opts: StreamOpts, externalStream?: MediaStream): Promise<void> {
     this.finished = false
     this.opened = false
     this.chunks = []
+    if (this.fallbackTimer !== null) { clearTimeout(this.fallbackTimer); this.fallbackTimer = null }
     this.apiBase = wsUrl.replace(/\/api\/asr\/stream$/, '').replace(/^ws/, 'http') // 供批处理兜底（fix C）
     // 架构债 A：hands-free 传入共享 mic 流；push-to-talk 不传 → 自取（原路径不变）
     this.ownsStream = !externalStream
@@ -391,23 +415,35 @@ export class StreamingRecognizer {
     this.mime = mime
     const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
     this.rec = rec
+    const preOpenBuf: Blob[] = [] // U4 recorder 先行：ws 未 open 时先缓冲分片，onopen 后按序补发
+    let sendChain: Promise<void> = Promise.resolve() // 串行化 arrayBuffer→send，保证帧序（webm 头在最前）
     const ws = new WebSocket(wsUrl)
     ws.binaryType = 'arraybuffer'
     this.ws = ws
+
+    const sendBlob = (blob: Blob) => {
+      sendChain = sendChain.then(async () => {
+        if (ws.readyState !== WebSocket.OPEN) return
+        try { ws.send(await blob.arrayBuffer()) } catch { /* 帧丢弃静默 */ }
+      })
+    }
 
     ws.onopen = () => {
       this.opened = true
       ws.send(JSON.stringify({
         type: 'start', format: containerOf(mime || 'audio/webm'),
         language: opts.language, provider: opts.provider, model: opts.model,
+        ...(opts.vadSilenceMs ? { vad_silence_ms: opts.vadSilenceMs } : {}), // B2 静音尾透传
       }))
-      rec.start(250) // 250ms 分帧
+      for (const b of preOpenBuf) sendBlob(b) // 先行采集的分片按序补发（webm 头在 preOpenBuf[0]）
+      preOpenBuf.length = 0
     }
     ws.onmessage = (ev) => {
       let m: any
       try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : '{}') } catch { return }
-      if (m.type === 'partial') opts.onPartial?.(m.text || '')
-      else if (m.type === 'final') { this.finished = true; opts.onFinal?.(m.text || '') }
+      if (m.type === 'partial') { if (this.finished) return; opts.onPartial?.(m.text || '') }
+      // A1：单 final 契约守卫——qwen3 异常路径会补发 final、cleanup 后迟到 final 也在此被挡，避免双发
+      else if (m.type === 'final') { if (this.finished) return; this.finished = true; opts.onFinal?.(m.text || '') }
       else if (m.type === 'done') this.cleanup()
       else if (m.type === 'unsupported' || m.type === 'error') {
         this.tryBatchFallback(m.message || '流式识别不可用', opts)
@@ -419,27 +455,116 @@ export class StreamingRecognizer {
     rec.ondataavailable = (e) => {
       if (!e.data || e.data.size === 0) return
       this.chunks.push(e.data) // 累积供失败批处理兜底（fix C）
-      if (ws.readyState === WebSocket.OPEN) {
-        e.data.arrayBuffer().then((buf) => {
-          if (ws.readyState === WebSocket.OPEN) ws.send(buf)
-        }).catch(() => {/* 帧丢弃静默 */})
-      }
+      // ws 已 open 且预缓冲已 flush → 直接经 sendChain 发；否则先入 preOpenBuf 保序
+      if (ws.readyState === WebSocket.OPEN && preOpenBuf.length === 0) sendBlob(e.data)
+      else preOpenBuf.push(e.data)
     }
     rec.onstop = () => {
-      // 最后一帧的 arrayBuffer 微任务先于本次发送完成 → {stop} 殿后，顺序不乱
-      if (ws.readyState === WebSocket.OPEN) {
-        try { ws.send(JSON.stringify({ type: 'stop' })) } catch {/* ignore */}
-      }
+      // {stop} 经 sendChain 串在所有音频帧之后 → 流末顺序正确（含 preOpenBuf 补发的先行帧）
+      sendChain = sendChain.then(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({ type: 'stop' })) } catch {/* ignore */}
+        }
+      })
       if (this.ownsStream) this.stream?.getTracks().forEach((t) => t.stop())
       this.stream = null
       this.rec = null
-      // 等 final/done 收尾；兜底 7s 内无定稿 → 回退批处理（如 fun 这类不出转写的对话模型；fix C）
-      window.setTimeout(() => { if (!this.finished) this.tryBatchFallback('识别超时', opts) }, 7000)
+      // 等 final/done 收尾；兜底 7s 内无定稿 → 回退批处理（如 fun 这类不出转写的对话模型；fix C）。
+      // A1：句柄留存，cleanup（含被上层 closeAsr 静默回收）时清除，杜绝陈旧会话 7s 后劫杀下一轮。
+      this.fallbackTimer = window.setTimeout(() => {
+        this.fallbackTimer = null
+        if (!this.finished) this.tryBatchFallback('识别超时', opts)
+      }, 7000)
     }
+    // U4 recorder 先行：不等 ws.onopen，立即开始采集 → 覆盖 ws 握手窗（本地几十 ms、冷网关数百 ms），
+    // 减少「唤醒即说」的首字丢失（push-to-talk 同受益，只是提前采集，交互不变）。
+    rec.start(250) // 250ms 分帧
+  }
+
+  /** PCM 直传模式（R4.3b P2 U4 根治）：不用 MediaRecorder，改由控制器 pushFrame 喂 16k mono Float32 VAD 帧。
+   *  preRoll = PcmRing 取的前滚缓冲（KWS 检测窗那段没被 MediaRecorder 采到的音频），随 start 先发。 */
+  async startPcm(wsUrl: string, opts: StreamOpts, preRoll?: Float32Array): Promise<void> {
+    if (this.active || this.starting) return
+    this.starting = true
+    try {
+      this.finished = false
+      this.opened = false
+      this.pcmMode = true
+      this.opts = opts
+      this.pcmSendBuf = []
+      this.pcmChunks = []
+      if (this.fallbackTimer !== null) { clearTimeout(this.fallbackTimer); this.fallbackTimer = null }
+      this.apiBase = wsUrl.replace(/\/api\/asr\/stream$/, '').replace(/^ws/, 'http')
+      const ws = new WebSocket(wsUrl)
+      ws.binaryType = 'arraybuffer'
+      this.ws = ws
+      ws.onopen = () => {
+        this.opened = true
+        ws.send(JSON.stringify({
+          type: 'start', format: 'pcm16le', sample_rate: 16000,
+          language: opts.language, provider: opts.provider, model: opts.model,
+          ...(opts.vadSilenceMs ? { vad_silence_ms: opts.vadSilenceMs } : {}),
+        }))
+        if (preRoll && preRoll.length) {
+          const i16 = float32ToInt16(preRoll)
+          this.pcmSendBuf.unshift(i16) // 前滚缓冲在最前（早于握手期喂入的实时帧）
+          this.pcmChunks.unshift(i16)
+        }
+        this._pcmFlush(true)
+      }
+      ws.onmessage = (ev) => {
+        let m: any
+        try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : '{}') } catch { return }
+        if (m.type === 'partial') { if (this.finished) return; opts.onPartial?.(m.text || '') }
+        else if (m.type === 'final') { if (this.finished) return; this.finished = true; opts.onFinal?.(m.text || '') }
+        else if (m.type === 'done') this.cleanup()
+        else if (m.type === 'unsupported' || m.type === 'error') this.tryBatchFallback(m.message || '流式识别不可用', opts)
+      }
+      ws.onerror = () => { if (!this.opened) this.tryBatchFallback('语音流连接失败', opts) }
+      ws.onclose = () => { if (!this.opened && !this.finished) this.tryBatchFallback('语音流已断开', opts) }
+    } finally {
+      this.starting = false
+    }
+  }
+
+  /** 喂一帧 VAD 音频（Float32 16k mono）——PCM 模式下由控制器订阅 vadEngine.onFrame 调用。 */
+  pushFrame(frame: Float32Array): void {
+    if (!this.pcmMode || this.finished || !frame || !frame.length) return
+    const i16 = float32ToInt16(frame)
+    this.pcmChunks.push(i16) // 全量供 WAV 批处理兜底
+    this.pcmSendBuf.push(i16)
+    this._pcmFlush(false)
+  }
+
+  // 攒够 ~100ms（1600 samples @16k）或 force 时，合并 pcmSendBuf 成一个 Int16Array 发出（ws 未 open 则留存）。
+  private _pcmFlush(force: boolean): void {
+    const ws = this.ws
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    let total = 0
+    for (const a of this.pcmSendBuf) total += a.length
+    if (total === 0 || (!force && total < 1600)) return
+    const merged = new Int16Array(total)
+    let o = 0
+    for (const a of this.pcmSendBuf) { merged.set(a, o); o += a.length }
+    this.pcmSendBuf = []
+    try { ws.send(merged.buffer) } catch {/* 帧丢弃静默 */}
   }
 
   /** 松手/点停：停录音并请求定稿（WS 待 final/done 后自清理）。 */
   stop(): void {
+    if (this.pcmMode) {
+      this._pcmFlush(true) // flush 余帧
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try { this.ws.send(JSON.stringify({ type: 'stop' })) } catch {/* ignore */}
+      }
+      if (this.fallbackTimer === null) {
+        this.fallbackTimer = window.setTimeout(() => {
+          this.fallbackTimer = null
+          if (!this.finished && this.opts) this.tryBatchFallback('识别超时', this.opts)
+        }, 7000)
+      }
+      return
+    }
     if (this.rec && this.rec.state !== 'inactive') {
       try { this.rec.stop() } catch { this.cleanup() }
     } else {
@@ -452,6 +577,27 @@ export class StreamingRecognizer {
   private tryBatchFallback(msg: string, opts: StreamOpts): void {
     if (this.finished) return
     this.finished = true
+    if (this.pcmMode) {
+      // PCM 模式兜底：全量 Int16 加 WAV 头走 /api/asr（format:wav）
+      const chunks = this.pcmChunks
+      this.pcmChunks = []
+      let total = 0
+      for (const a of chunks) total += a.length
+      if (total && this.apiBase) {
+        const merged = new Int16Array(total)
+        let o = 0
+        for (const a of chunks) { merged.set(a, o); o += a.length }
+        const blob = new Blob([int16ToWav(merged, 16000)], { type: 'audio/wav' })
+        recognize(this.apiBase, blob, 'wav', opts.language)
+          .then((text) => (text ? opts.onFinal?.(text) : opts.onError?.(msg)))
+          .catch(() => opts.onError?.(msg))
+          .finally(() => this.cleanup())
+      } else {
+        opts.onError?.(msg)
+        this.cleanup()
+      }
+      return
+    }
     const chunks = this.chunks
     this.chunks = []
     if (chunks.length && this.apiBase && this.mime) {
@@ -467,6 +613,9 @@ export class StreamingRecognizer {
   }
 
   private cleanup(): void {
+    // A1：终态置位 + 清兜底 timer——使 7s 兜底与一切迟到回调（final/error）失效，绝不干扰下一轮
+    this.finished = true
+    if (this.fallbackTimer !== null) { clearTimeout(this.fallbackTimer); this.fallbackTimer = null }
     try { if (this.rec && this.rec.state !== 'inactive') this.rec.stop() } catch {/* ignore */}
     if (this.ownsStream) this.stream?.getTracks().forEach((t) => t.stop())
     try { this.ws?.close() } catch {/* ignore */}
@@ -474,6 +623,10 @@ export class StreamingRecognizer {
     this.stream = null
     this.ws = null
     this.chunks = []
+    this.pcmMode = false
+    this.pcmSendBuf = []
+    this.pcmChunks = []
+    this.opts = null
   }
 }
 

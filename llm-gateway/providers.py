@@ -427,10 +427,17 @@ class DashScopeRealtimeASRProvider(BaseStreamingASRProvider):
     session.created → session.update → input_audio_buffer.append(base64 PCM16) →
     （流末）commit → conversation.item.input_audio_transcription.delta(partial)/.completed(final)。"""
 
-    def __init__(self, api_key: str, ws_url: str, model: str):
+    def __init__(self, api_key: str, ws_url: str, model: str, vad_silence_ms: int = 800):
         self.api_key = api_key
         self.ws_url = ws_url
         self.model = model
+        # R4.3b P2（U5b 治本）：server_vad 静音尾由客户端透传（原硬编码 800ms 盖过客户端设置），
+        # 夹紧 [300, 2000]，异常/缺省回落 800（现状）。fun-asr 走客户端 stop 端点，不受此影响。
+        try:
+            self.vad_silence_ms = int(vad_silence_ms) if vad_silence_ms else 800
+        except (TypeError, ValueError):
+            self.vad_silence_ms = 800
+        self.vad_silence_ms = max(300, min(2000, self.vad_silence_ms))
 
     async def stream(self, pcm_chunks, *, language="zh"):
         import base64
@@ -460,7 +467,8 @@ class DashScopeRealtimeASRProvider(BaseStreamingASRProvider):
                 await ws.send_json(_ev({"type": "session.update", "session": {
                     "input_audio_format": "pcm", "sample_rate": 16000,
                     "input_audio_transcription": {"language": language or "zh"},
-                    "turn_detection": {"type": "server_vad", "threshold": 0.2, "silence_duration_ms": 800},
+                    "turn_detection": {"type": "server_vad", "threshold": 0.2,
+                                       "silence_duration_ms": self.vad_silence_ms},
                 }}))
 
                 async def pump():
@@ -468,9 +476,11 @@ class DashScopeRealtimeASRProvider(BaseStreamingASRProvider):
                         async for chunk in pcm_chunks:
                             await ws.send_json(_ev({"type": "input_audio_buffer.append",
                                                     "audio": base64.b64encode(chunk).decode("ascii")}))
-                        # 流末（松手）追 ~0.8s 静音触发 server_vad 收尾定稿
-                        sil = base64.b64encode(b"\x00" * 3200).decode("ascii")
-                        for _ in range(13):
+                        # 流末（松手）追静音触发 server_vad 收尾定稿——须 > silence_duration_ms 才生效，
+                        # 故按 vad_silence_ms 放大帧数（每帧 100ms 静音）：silence 越长、兜底静音越长。
+                        sil = base64.b64encode(b"\x00" * 3200).decode("ascii")  # 100ms @16k s16le
+                        tail_frames = max(13, self.vad_silence_ms // 100 + 4)
+                        for _ in range(tail_frames):
                             await ws.send_json(_ev({"type": "input_audio_buffer.append", "audio": sil}))
                             await asyncio.sleep(0.05)
                     except Exception:
@@ -588,8 +598,10 @@ class DashScopeInferenceASRProvider(BaseStreamingASRProvider):
                     yield {"text": acc, "final": True}
 
 
-def build_streaming_asr_provider(provider: str = "", model: str = "") -> "BaseStreamingASRProvider | None":
+def build_streaming_asr_provider(provider: str = "", model: str = "",
+                                 vad_silence_ms: int = 0) -> "BaseStreamingASRProvider | None":
     """按请求/env 选流式引擎。provider/model 为请求级覆盖（HMI 设置可切），空则用 env 默认。
+    vad_silence_ms：客户端静音尾（R4.3b P2），仅 qwen3 realtime 的 server_vad 消费；0=用 provider 缺省。
     无可用 key 或 off → None（HMI 探测到则无感回退批处理 /api/asr）。"""
     provider = (provider or os.getenv("ASR_STREAM_PROVIDER", "dashscope")).strip().lower()
     if provider in ("", "off", "none"):
@@ -604,7 +616,7 @@ def build_streaming_asr_provider(provider: str = "", model: str = "") -> "BaseSt
         if "qwen" in mdl.lower():
             # Qwen-ASR：OpenAI 兼容 Realtime 协议（/realtime，base64 音频，session.update）
             ws_url = os.getenv("DASHSCOPE_ASR_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
-            return DashScopeRealtimeASRProvider(key, ws_url, mdl)
+            return DashScopeRealtimeASRProvider(key, ws_url, mdl, vad_silence_ms=vad_silence_ms or 800)
         # Fun-ASR / Paraformer：run-task 协议（/inference，二进制音频帧）
         inf_url = os.getenv("DASHSCOPE_ASR_INFERENCE_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/inference")
         return DashScopeInferenceASRProvider(key, inf_url, mdl)

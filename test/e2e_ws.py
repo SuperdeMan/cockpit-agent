@@ -49,6 +49,44 @@ async def ask(payload: dict, desc: str) -> dict:
                 return msg
 
 
+async def cancel_case() -> bool:
+    """R4.3b P2 B3：同连接发请求 → {type:cancel} → 收 cancelled → 连接仍可用发新请求。
+    协议契约测试（不依赖任务真长——mock 快也应收到 cancelled）。返回是否通过。"""
+    print("\n[链路5 THINKING 真打断（P2 B3：并发读 + cancel）]")
+    ok = True
+    async with websockets.connect(URL) as ws:
+        await ws.send(json.dumps({"text": "讲个很长的故事", "session_id": "e2e-cancel"}))
+        await asyncio.sleep(0.15)
+        await ws.send(json.dumps({"type": "cancel", "session_id": "e2e-cancel"}))
+        got_cancelled = False
+        try:                       # 排空首个请求的事件，找 cancelled（可能夹在 speech_delta/final 之间）
+            for _ in range(200):
+                raw = await asyncio.wait_for(ws.recv(), timeout=10)
+                if json.loads(raw).get("type") == "cancelled":
+                    got_cancelled = True
+                    break
+        except asyncio.TimeoutError:
+            pass
+        if got_cancelled:
+            print("  ✓ 发 cancel 后收到 cancelled")
+        else:
+            print("  ✗ 未收到 cancelled（网关未支持并发读/cancel？）")
+            ok = False
+        # 连接仍可用：取消后立刻发新请求应正常响应
+        await ws.send(json.dumps({"text": "打开空调26度", "session_id": "e2e-cancel"}))
+        try:
+            for _ in range(200):
+                raw = await asyncio.wait_for(ws.recv(), timeout=30)
+                m = json.loads(raw)
+                if m.get("type") in ("final", "error"):
+                    print(f"  ✓ 取消后新请求正常响应: {(m.get('speech') or m.get('message') or '')[:40]}")
+                    return ok
+        except asyncio.TimeoutError:
+            print("  ✗ 取消后新请求无响应（连接被 cancel 误伤？）")
+            return False
+    return ok
+
+
 async def main():
     print("=== E2E 测试 ===\n")
 
@@ -86,6 +124,9 @@ async def main():
             print(f"\n  ✗ 确认后结果: {second.get('speech', '')[:60]}")
     else:
         print("\n  ⚠ 未触发 need_confirm，跳过确认测试")
+
+    # 链路 5: THINKING 真打断（R4.3b P2 B3）
+    await cancel_case()
 
     print("\n=== E2E 完成 ===")
 
