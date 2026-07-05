@@ -77,9 +77,16 @@ services:
   # ws8 P1: HTTP 代理（网络白名单）——third-party Agent 出站 HTTP 经此代理
   http-proxy:
     <<: *restart
-    image: envoyproxy/envoy:v1.29-latest   # envoy 不发布无 patch 号的 v1.29；用 1.29 线滚动 tag
+    # 第三方 Agent 出站正向代理（CONNECT 隧道 + 域名白名单默认拒绝）。原 envoy 配置是反向代理、
+    # 不支持 HTTPS CONNECT，作 HTTP_PROXY 用时全失败 → 改用 deploy/egress-proxy.py（纯 stdlib，
+    # 跑在已有 python:3.11-slim，不引新镜像）。envoy-proxy.yaml 留作历史参考。见设计文档 §11。
+    image: python:3.11-slim
     volumes:
-      - ./envoy-proxy.yaml:/etc/envoy.yaml
+      - ./egress-proxy.py:/app/egress-proxy.py:ro
+    environment:
+      # 出站白名单：仅已接入的可信厂商域名（新增真实 provider 时在此追加）
+      EGRESS_ALLOW: "restapi.amap.com,devapi.qweather.com,api.tushare.pro,serpapi.com,api.anysearch.com"
+    command: ["python", "/app/egress-proxy.py"]
     ports: ["8082:8080"]
 
   # ── 云侧核心 ──
@@ -204,17 +211,22 @@ services:
       AGENT_PORT: "50062"
     depends_on: [registry, llm-gateway]
 
-  food-ordering-agent:
+  nearby-agent:
     <<: *restart
-    build: { context: .., dockerfile: agents/food_ordering/Dockerfile }
+    build: { context: .., dockerfile: agents/nearby/Dockerfile }
     volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50063"
+      # 真实周边 provider（高德 POI 2.0）；不配 key 走 mock。key 只注入本服务（最小化）。
+      # 出站经 http-proxy 正向代理（CONNECT + 域名白名单，见 deploy/egress-proxy.py）：第三方
+      # Agent 只能访问白名单厂商域名（restapi.amap.com 已放行），越权域名被 403。
+      POI_VENDOR: ${POI_VENDOR:-mock}
+      AMAP_KEY: ${AMAP_KEY:-}
       HTTP_PROXY: http://http-proxy:8080
       HTTPS_PROXY: http://http-proxy:8080
     depends_on: [registry, llm-gateway, memory, http-proxy]
-    # ws8 P1: third-party Agent 沙箱（资源限制 + 只读文件系统 + 代理出站）
+    # ws8 P1: third-party Agent 沙箱（资源限制 + 只读文件系统 + no-new-privileges + 出站白名单代理）
     read_only: true
     security_opt: [no-new-privileges]
     mem_limit: 256m

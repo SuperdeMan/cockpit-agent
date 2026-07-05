@@ -101,6 +101,22 @@ def test_amap_poi_detail():
         assert poi.name, "POI 详情应有名称"
 
 
+@pytest.mark.skipif(not AMAP_KEY, reason="No AMAP_KEY configured")
+def test_amap_place_provider_returns_rich_fields():
+    """nearby 富数据 provider 真冒烟：搜真实餐厅，断言非 mock + 富字段落地（评分/人均/电话/营业时间至少其一）。"""
+    from agents.nearby.src.providers.amap import AmapPlaceProvider
+    from agents.nearby.src.providers.base import GeoPoint as PlaceGeo
+    p = AmapPlaceProvider(AMAP_KEY)
+    res = asyncio.run(p.search("美食", category="餐饮", near=PlaceGeo(lng=116.397, lat=39.908)))
+    assert res, "高德未返回结果"
+    first = res[0]
+    print(f"\n[高德周边] {first.name} 评分={first.rating} 人均={first.cost} 电话={first.tel}")
+    assert "示例" not in first.name, "疑似回退 mock（名称含『示例』），检查 AMAP_KEY/POI_VENDOR"
+    # 富字段至少命中一项（高德对部分 POI 缺 business，故 any 而非 all）
+    assert any([first.rating, first.cost, first.tel, first.open_today]), \
+        "富字段全空——检查 show_fields=business,photos 是否生效"
+
+
 # ── 和风（QWeather）────────────────────────────────────
 
 @pytest.mark.skipif(not HAS_QWEATHER, reason="No QWeather JWT/API-Key configured")

@@ -17,9 +17,9 @@ from orchestrator.cloud.session import SessionStore
 
 _PLAN_JSON = json.dumps({
     "steps": [
-        {"id": "s1", "agent_id": "food-ordering", "intent": "food.search_restaurant",
+        {"id": "s1", "agent_id": "nearby", "intent": "nearby.search",
          "slots": {"cuisine": "川菜"}, "depends_on": []},
-        {"id": "s2", "agent_id": "food-ordering", "intent": "food.reserve",
+        {"id": "s2", "agent_id": "nearby", "intent": "nearby.order",
          "slots": {"restaurant_name": "川菜·名店1", "datetime": "今晚7点", "party_size": "2"},
          "depends_on": ["s1"]},
     ]
@@ -35,13 +35,13 @@ class _Cap:
 
 def _food_agent():
     manifest = SimpleNamespace(
-        agent_id="food-ordering",
+        agent_id="nearby",
         trust_level="third_party",
         latency_budget_ms=2000,
         requires_permissions=[],
         capabilities=[
-            _Cap("food.search_restaurant", ["cuisine"]),
-            _Cap("food.reserve", ["restaurant_name", "datetime", "party_size"]),
+            _Cap("nearby.search", ["cuisine"]),
+            _Cap("nearby.order", ["restaurant_name", "datetime", "party_size"]),
         ],
     )
     return SimpleNamespace(manifest=manifest, endpoint="stub:50063")
@@ -73,9 +73,9 @@ class _Spy:
 
     async def call_agent(self, endpoint, intent, slots, ctx, meta):
         self.calls.append((intent, dict(meta or {})))
-        if intent == "food.search_restaurant":
+        if intent == "nearby.search":
             return _Resp(speech="为您找到 3 家川菜。")
-        if intent == "food.reserve":
+        if intent == "nearby.order":
             if (meta or {}).get("confirmed") == "true":
                 return _Resp(speech="已为您订好：川菜·名店1 今晚7点 2位。")
             return _Resp(status=1, speech="确认为您预订川菜·名店1 今晚7点 2位吗？",
@@ -132,8 +132,8 @@ def test_confirm_completes_reservation_without_rerunning_done_steps():
     events = _run(engine, _req("找家川菜馆订今晚7点两位"))
     final = events[-1]
     assert final["need_confirm"] is True
-    assert spy.count("food.search_restaurant") == 1
-    assert spy.count("food.reserve") == 1
+    assert spy.count("nearby.search") == 1
+    assert spy.count("nearby.order") == 1
     state = asyncio.run(session.load("sess-1"))
     assert state is not None and state.phase == "wait_confirm"
     assert state.pending_step_id == "s2"
@@ -143,9 +143,9 @@ def test_confirm_completes_reservation_without_rerunning_done_steps():
     final = events[-1]
 
     # 已完成的搜索步骤不重跑；挂起步骤带 confirmed 重跑并完成
-    assert spy.count("food.search_restaurant") == 1
-    assert spy.count("food.reserve") == 2
-    assert spy.metas("food.reserve")[-1].get("confirmed") == "true"
+    assert spy.count("nearby.search") == 1
+    assert spy.count("nearby.order") == 2
+    assert spy.metas("nearby.order")[-1].get("confirmed") == "true"
     assert not final.get("need_confirm")
     assert final["speech"] == _AGG_SPEECH
     # 会话清理，确认不可重放
@@ -159,7 +159,7 @@ def test_cancel_clears_pending_and_does_not_execute():
     events = _run(engine, _req("取消", is_confirmation=True))
     final = events[-1]
     assert "取消" in final["speech"]
-    assert spy.count("food.reserve") == 1          # 没有再执行
+    assert spy.count("nearby.order") == 1          # 没有再执行
     assert asyncio.run(session.load("sess-1")) is None
 
 
@@ -192,7 +192,7 @@ def test_voice_short_yes_resumes_without_flag():
 
     events = _run(engine, _req("订吧"))
     final = events[-1]
-    assert spy.metas("food.reserve")[-1].get("confirmed") == "true"
+    assert spy.metas("nearby.order")[-1].get("confirmed") == "true"
     assert not final.get("need_confirm")
     assert asyncio.run(session.load("sess-1")) is None
 
@@ -208,7 +208,7 @@ def test_unrelated_reply_treated_as_new_request():
     assert spy.llm_plan_calls == 2                  # 走了新规划
     assert "取消" not in final["speech"] and "过期" not in final["speech"]
     # 新规划重跑了搜索（确认续接则不会）
-    assert spy.count("food.search_restaurant") == 2
+    assert spy.count("nearby.search") == 2
 
 
 # ─── 确认话术判定 ───
@@ -238,6 +238,6 @@ def test_modify_phrase_with_xing_not_mistaken_for_confirm():
 
     _run(engine, _req("第二天行程换一个"))            # 不是确认 → 应换新规划
     assert spy.llm_plan_calls == 2                   # 走了新规划（而非恢复挂起收尾）
-    assert spy.count("food.search_restaurant") == 2  # 新规划重跑了搜索（确认续接则不会）
+    assert spy.count("nearby.search") == 2  # 新规划重跑了搜索（确认续接则不会）
     # 若被误判成确认，会用 confirmed 续接挂起的订餐那一步
-    assert all(m.get("confirmed") != "true" for m in spy.metas("food.reserve"))
+    assert all(m.get("confirmed") != "true" for m in spy.metas("nearby.order"))

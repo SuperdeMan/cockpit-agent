@@ -46,7 +46,7 @@ def test_scenario_combo_intent_dag():
     steps = [
         Step(id="s1", agent_id="navigation", intent="navigation.search_poi",
              slots={"keyword": "川菜"}),
-        Step(id="s2", agent_id="food-ordering", intent="food.reserve",
+        Step(id="s2", agent_id="nearby", intent="nearby.order",
              slots={"datetime": "今晚19:00", "party_size": "2"},
              depends_on=["s1"], slot_refs={"restaurant_id": "s1.data.items.0.id"}),
     ]
@@ -97,8 +97,8 @@ def test_scenario_need_confirm_then_resume():
              "intent": "navigation.search_poi", "slots": {"keyword": "川菜"},
              "depends_on": [], "slot_refs": {}, "require_confirm": False,
              "latency_budget_ms": 5000},
-            {"id": "s2", "agent_id": "food-ordering", "endpoint": "",
-             "intent": "food.reserve", "slots": {},
+            {"id": "s2", "agent_id": "nearby", "endpoint": "",
+             "intent": "nearby.order", "slots": {},
              "depends_on": ["s1"], "slot_refs": {}, "require_confirm": True,
              "latency_budget_ms": 5000},
         ], "raw_text": ""},

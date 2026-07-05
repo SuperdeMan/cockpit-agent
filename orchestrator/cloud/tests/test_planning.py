@@ -52,7 +52,7 @@ def test_build_with_valid_json():
     """LLM 返回合法 JSON 应解析为 Plan。"""
     agents = [
         MockAgent("navigation", ["navigation.search_poi"]),
-        MockAgent("food-ordering", ["food.reserve"]),
+        MockAgent("nearby", ["nearby.order"]),
     ]
 
     async def mock_llm(messages):

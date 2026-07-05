@@ -21,7 +21,7 @@ import {
   setTtsLifecycle,
 } from './audio'
 import { wakeKeywordsFor, DEFAULT_SETTINGS, type Msg, type Settings } from './types'
-import { poiSelectionIndex, isRefreshRequest } from './nav.mjs'
+import { poiSelectionIndex, ordinalSelectIn, isRefreshRequest } from './nav.mjs'
 import { ResilientWebSocket, appendToken } from './ws.mjs'
 import { HandsFreeController } from './handsFreeController'
 
@@ -67,6 +67,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const justCancelledRef = useRef(false)
   // 上一条 poi_list 的候选名（供「第一个/第二个」语音选择就近导航；见 resolvePoiSelection）
   const lastPoiNamesRef = useRef<string[] | null>(null)
+  // 周边发现 place_list 候选项（含高德 POI id）：「看第N个详情」透传 id 精确取详情，不按名重搜
+  const lastPlaceItemsRef = useRef<Array<{ id: string; name: string }> | null>(null)
   // 充电目的地候选（dest_choice）名：「第N个」回填目的地槽位续接规划，而非发起导航
   const lastDestChoiceRef = useRef<string[] | null>(null)
   // 顺路停靠候选（waypoint_choice）：「第N个」派发「导航去{目的地}途经{名称}」→ 落途经点
@@ -330,11 +332,12 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         // 普通导航 poi_list→就近导航（见 send）
         {
           const c: any = data.ui_card
-          const names = c?.type === 'poi_list'
+          const names = (c?.type === 'poi_list' || c?.type === 'place_list')
             ? (c.items || []).map((it: any) => it.name).filter(Boolean) : null
           lastDestChoiceRef.current = null
           lastWaypointChoiceRef.current = null
           lastPoiNamesRef.current = null
+          lastPlaceItemsRef.current = null
           if (c?.type === 'poi_list' && c.purpose === 'dest_choice') {
             lastDestChoiceRef.current = names
           } else if (c?.type === 'poi_list' && c.purpose === 'waypoint_choice') {
@@ -346,6 +349,11 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
             categoryRef.current = kw
               ? (categoryRef.current?.keyword === kw ? categoryRef.current : { keyword: kw, page: 1 })
               : null
+          } else if (c?.type === 'place_list') {
+            // 周边发现列表：复用「第N个」handoff（导航去/看详情）；不走 navigation 的「换一批」翻页
+            lastPoiNamesRef.current = names
+            lastPlaceItemsRef.current = (c.items || []).map((it: any) => ({ id: String(it.id || ''), name: it.name }))
+            categoryRef.current = null
           }
         }
         // hands-free 回声指纹：把本轮播报文本喂给 FSM，供 SPEAKING 态 barge-in 时比对（D6）
@@ -504,6 +512,22 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       if (idx >= 0 && idx < choices.length) {
         lastDestChoiceRef.current = null
         dispatch(choices[idx], false)
+        return
+      }
+    }
+    // 周边发现列表「第N个」选择：任何带「个/家」的序号选择（点一下第九个 / 看第八个 / 第9个，
+    // 裸选择也接住，不要求「详情」线索词——否则落到后端被 LLM 当新查询，返回列表外无关 POI）。
+    // 默认看详情、带导航词才导航；透传高德 POI id 精确取详情（不按名重搜取到别的分店）。
+    const placeItems = lastPlaceItemsRef.current
+    if (placeItems && placeItems.length) {
+      const idx = ordinalSelectIn(text)
+      if (idx >= 0 && idx < placeItems.length) {
+        const it = placeItems[idx]
+        if (/导航|带我去|开车去|送我|去第|到第/.test(text)) {
+          dispatch(`导航去${it.name}`, false)
+        } else {
+          dispatch(`看${it.name}的详情`, false, undefined, it.id ? { nearby_poi_id: it.id } : undefined)
+        }
         return
       }
     }

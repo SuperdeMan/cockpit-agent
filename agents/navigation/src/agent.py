@@ -325,7 +325,7 @@ class NavigationAgent(BaseAgent):
 
         # 轮1：顺路停靠类目（吃饭/咖啡…）→ 导航到目的地 + 给候选让用户二次选择。
         # planner 未填 stop_category 槽位时，从 raw_text"附近/顺路…餐厅/吃饭"兜底识别——
-        # 即便 planner 误把找餐厅拆成 food.search_restaurant(mock)，导航侧也能产出真实餐厅
+        # 即便 planner 误把找餐厅拆成 nearby.search，导航侧也能自己产出真实餐厅
         # 途经点候选（聚合器优先 waypoint_choice 卡）。
         stop_category = (intent.slots.get("stop_category") or "").strip()
         if not stop_category:

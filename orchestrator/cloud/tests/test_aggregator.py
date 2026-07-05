@@ -61,7 +61,7 @@ def test_prefers_waypoint_choice_card_over_other_cards():
                               "display_priority": 1,
                               "destination": "中国华润大厦", "items": [{"name": "餐厅A"}]})
     food = StepResult(step_id="s2", status=StepStatus.OK, speech="需要订位吗",
-                      ui_card={"type": "restaurant_list", "items": [{"name": "美食·名店1"}]})
+                      ui_card={"type": "place_list", "items": [{"name": "美食·名店1"}]})
     out = asyncio.run(agg.compose("导航去X在附近找餐厅", [nav, food]))
     assert out["ui_card"]["purpose"] == "waypoint_choice"
 

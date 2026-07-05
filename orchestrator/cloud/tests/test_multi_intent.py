@@ -47,13 +47,13 @@ def _media_agent():
 
 def _food_agent():
     manifest = SimpleNamespace(
-        agent_id="food-ordering",
+        agent_id="nearby",
         trust_level="third_party",
         latency_budget_ms=2000,
         requires_permissions=[],
         capabilities=[
-            _Cap("food.search_restaurant", ["cuisine"]),
-            _Cap("food.reserve", ["restaurant_name", "datetime", "party_size"]),
+            _Cap("nearby.search", ["cuisine"]),
+            _Cap("nearby.order", ["restaurant_name", "datetime", "party_size"]),
         ],
     )
     return SimpleNamespace(manifest=manifest, endpoint="stub:50063")
@@ -114,8 +114,8 @@ class _Spy:
         _RESPONSES = {
             "hvac.set": _Resp(speech="空调已设置为24度。"),
             "media.play": _Resp(speech="正在播放音乐。"),
-            "food.search_restaurant": _Resp(speech="为您找到3家川菜。"),
-            "food.reserve": _Resp(
+            "nearby.search": _Resp(speech="为您找到3家川菜。"),
+            "nearby.order": _Resp(
                 status=1,  # NEED_CONFIRM
                 speech="确认为您预订川菜·名店1吗？",
             ),
@@ -147,11 +147,11 @@ class _Spy:
             # 场景2: 串行跨域（搜索 → 预订）
             return json.dumps({
                 "steps": [
-                    {"id": "s1", "agent_id": "food-ordering",
-                     "intent": "food.search_restaurant",
+                    {"id": "s1", "agent_id": "nearby",
+                     "intent": "nearby.search",
                      "slots": {"cuisine": "川菜"}, "depends_on": [], "slot_refs": {}},
-                    {"id": "s2", "agent_id": "food-ordering",
-                     "intent": "food.reserve",
+                    {"id": "s2", "agent_id": "nearby",
+                     "intent": "nearby.order",
                      "slots": {}, "depends_on": ["s1"],
                      "slot_refs": {"restaurant_id": "s1.data.items.0.id"}},
                 ]
@@ -242,7 +242,7 @@ def test_serial_cross_domain_with_depends_on():
     """「找川菜馆订今晚的位」→ 搜索 → 预订，有 depends_on。
 
     验证点：
-    - 拆出 2 个 step（food.search_restaurant + food.reserve）
+    - 拆出 2 个 step（nearby.search + nearby.order）
     - search 先于 reserve 执行（execution_order 验证）
     - reserve 的 meta 包含搜索结果（slot_refs 解析）
     - reserve 返回 NEED_CONFIRM → 最终事件 need_confirm=True
@@ -251,12 +251,12 @@ def test_serial_cross_domain_with_depends_on():
     events = _run(engine, _req("找川菜馆订今晚的位"))
     final = events[-1]
 
-    assert spy.count("food.search_restaurant") == 1
-    assert spy.count("food.reserve") == 1
+    assert spy.count("nearby.search") == 1
+    assert spy.count("nearby.order") == 1
 
     # 验证执行顺序：search 在 reserve 之前
-    search_order = next(o for i, o in spy.execution_order if i == "food.search_restaurant")
-    reserve_order = next(o for i, o in spy.execution_order if i == "food.reserve")
+    search_order = next(o for i, o in spy.execution_order if i == "nearby.search")
+    reserve_order = next(o for i, o in spy.execution_order if i == "nearby.order")
     assert search_order < reserve_order
 
     # reserve 返回 NEED_CONFIRM

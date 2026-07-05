@@ -55,6 +55,8 @@ export type UiCard =
   | TripItineraryCard
   | PoiListCard
   | PoiDetailCard
+  | PlaceListCard
+  | PlaceDetailCard
 
 // 路线规划卡：出发地 → 途经点（餐厅等）→ 目的地（导航确认途经点后）
 export type RoutePlanCard = {
@@ -321,6 +323,44 @@ export type PoiDetailCard = {
   category: string
 }
 
+// 周边发现列表卡（nearby.search）：多类目富数据——评分/人均/距离/营业/特色芯片
+export type PlaceListCard = {
+  type: 'place_list'
+  category?: string            // 餐饮/酒店/景点/影院…（卡头与文案用）
+  keyword?: string
+  items: Array<{
+    id: string
+    name: string
+    category?: string
+    rating?: number
+    cost?: string              // 人均（字符串，可能空）
+    distance_km?: number
+    address: string
+    tags?: string              // 特色标签（逗号分隔）
+    open_today?: string
+    lat?: number               // 供「导航去第 N 个」handoff
+    lng?: number
+  }>
+}
+
+// 周边发现详情卡（nearby.detail）：评分/人均/电话/营业时间/特色/图片 + 导航·拨打
+export type PlaceDetailCard = {
+  type: 'place_detail'
+  id: string
+  name: string
+  category?: string
+  address: string
+  lat: number
+  lng: number
+  rating?: number
+  cost?: string
+  tel?: string
+  open_today?: string
+  open_week?: string
+  tags?: string
+  photos?: string[]
+}
+
 export type Voice = {
   voice_id: string
   name: string
@@ -393,7 +433,7 @@ export const AGENT_CATALOG: AgentMeta[] = [
   { id: 'info', label: '信息助手', desc: '天气、预报、预警、空气质量、联网搜索、新闻、股票', icon: 'ℹ️' },
   { id: 'trip-planner', label: '行程规划', desc: '多日自驾行程编排', icon: '🗺️' },
   { id: 'deep-research', label: '深度调研', desc: '多视角联网深调研，出带引用的分节报告', icon: '🔬' },
-  { id: 'food-ordering', label: '餐饮点单', desc: '找餐厅、订位、点餐', icon: '🍜' },
+  { id: 'nearby', label: '周边发现', desc: '找餐厅/酒店/景点/影院/停车/充电，看评分·人均·营业·电话', icon: '📍' },
   { id: 'parking-payment', label: '停车缴费', desc: '找车位、停车缴费', icon: '🅿️' },
   { id: 'manual-rag', label: '用车手册', desc: '车辆说明书问答（RAG）', icon: '📖' },
   { id: 'chitchat', label: '闲聊兜底', desc: '开放域对话与情绪陪伴（系统兜底）', icon: '💬', core: true },

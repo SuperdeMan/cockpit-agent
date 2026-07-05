@@ -6,6 +6,7 @@ import type {
   NewsCard, SearchCard, SearchAnswerCard, NewsDigestCard,
   SearchResultCard, NewsBriefCard, ResearchReportCard, SportsScoresCard, SportsScorersCard,
   RoutePlanCard, ChargingRouteCard, TripItineraryCard, PoiListCard, PoiDetailCard,
+  PlaceListCard, PlaceDetailCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
@@ -119,6 +120,8 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
     case 'trip_itinerary': return <TripItineraryCardView card={card} onAction={onAction} />
     case 'poi_list': return <PoiListCardView card={card} />
     case 'poi_detail': return <PoiDetailCardView card={card} />
+    case 'place_list': return <PlaceListCardView card={card} onAction={onAction} />
+    case 'place_detail': return <PlaceDetailCardView card={card} onAction={onAction} />
     default: return null
   }
 }
@@ -1109,6 +1112,111 @@ function PoiDetailCardView({ card }: { card: PoiDetailCard }) {
       <div className="poi-detail-row">
         {card.rating > 0 && <span>★ {card.rating}</span>}
         {card.category && <span>{card.category}</span>}
+      </div>
+    </div>
+  )
+}
+
+// ─── 周边发现列表卡（nearby.search）───
+function PlaceListCardView({ card, onAction }: { card: PlaceListCard; onAction?: (t: string) => void }) {
+  const title = `附近${card.keyword || card.category || '地点'}`
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '15px 16px 12px' }}>
+        <AIBadge label="AI · 周边发现" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600 }}><Icon name="location" size={17} color="var(--au-text)" />{title}</span>
+          <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>共 {card.items.length} 家</span>
+        </div>
+      </div>
+      <CardHR />
+      {card.items.map((item, i) => (
+        <div key={item.id || i}>
+          <div
+            onClick={onAction ? () => onAction(`看${item.name}的详情`) : undefined}
+            style={{ padding: '12px 16px', display: 'flex', gap: 12, alignItems: 'flex-start', cursor: onAction ? 'pointer' : 'default' }}
+          >
+            <span style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'var(--au-line)', border: '1px solid var(--au-line-2)', fontFamily: 'var(--au-font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--au-text-2)' }}>{i + 1}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</span>
+                {(item.distance_km ?? 0) > 0 && <span className="au-num" style={{ fontSize: 12, color: 'var(--au-primary)', fontWeight: 600, flexShrink: 0 }}>{item.distance_km}km</span>}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: item.address ? 4 : 0 }}>
+                {(item.rating ?? 0) > 0 && <span style={{ fontSize: 11, color: 'var(--au-warn)', fontWeight: 600 }}>★ {item.rating}</span>}
+                {item.cost && <span style={{ fontSize: 11, color: 'var(--au-text-2)' }}>人均 ¥{item.cost}</span>}
+                {item.open_today && <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{item.open_today}</span>}
+              </div>
+              {item.address && <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{item.address}</div>}
+              {item.tags && <div style={{ fontSize: 10.5, color: 'var(--au-text-3)', marginTop: 3 }}>{item.tags.split(/[,，]/).slice(0, 3).join(' · ')}</div>}
+            </div>
+          </div>
+          {i < card.items.length - 1 && <div style={{ height: 1, background: 'var(--au-line)', margin: '0 16px' }} />}
+        </div>
+      ))}
+      <div style={{ padding: '11px 16px 13px', borderTop: '1px solid var(--au-line)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Icon name="voice-input" size={14} color="var(--au-text-3)" />
+        <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>说「<span style={{ color: 'var(--au-text-2)' }}>看第 1 个详情</span>」或「<span style={{ color: 'var(--au-text-2)' }}>导航去第 2 个</span>」</span>
+      </div>
+    </div>
+  )
+}
+
+// ─── 周边发现详情卡（nearby.detail）───
+function PlaceDetailRow({ icon, label, text }: { icon?: IconName; label?: string; text: string }) {
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: 'var(--au-text-2)' }}>
+      {icon && <Icon name={icon} size={14} color="var(--au-text-3)" />}
+      {label && <span style={{ color: 'var(--au-text-3)', flexShrink: 0, minWidth: 30 }}>{label}</span>}
+      <span style={{ flex: 1, minWidth: 0 }}>{text}</span>
+    </div>
+  )
+}
+
+function PlaceDetailCardView({ card, onAction }: { card: PlaceDetailCard; onAction?: (t: string) => void }) {
+  const hours = card.open_today || card.open_week
+  const tel = (card.tel || '').split(/[;；/]/)[0].trim()
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '15px 16px 12px' }}>
+        <AIBadge label="AI · 商户详情" />
+        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{card.name}</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+          {(card.rating ?? 0) > 0 && <span style={{ fontSize: 12, color: 'var(--au-warn)', fontWeight: 700 }}>★ {card.rating}</span>}
+          {card.cost && <span style={{ fontSize: 12, color: 'var(--au-text-2)' }}>人均 ¥{card.cost}</span>}
+          {card.category && <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{card.category.split(/[;；]/)[0]}</span>}
+        </div>
+      </div>
+      {card.photos && card.photos.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, padding: '0 16px 12px', overflowX: 'auto' }}>
+          {card.photos.slice(0, 4).map((u, i) => (
+            <img key={i} src={u} alt="" loading="lazy"
+              onError={(e) => { e.currentTarget.style.display = 'none' }}
+              style={{ width: 100, height: 72, objectFit: 'cover', borderRadius: 8, flexShrink: 0, border: '1px solid var(--au-line)' }} />
+          ))}
+        </div>
+      )}
+      <CardHR />
+      <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {hours && <PlaceDetailRow icon="clock" text={hours} />}
+        {tel && <PlaceDetailRow label="电话" text={card.tel!} />}
+        {card.tags && <PlaceDetailRow label="特色" text={card.tags.split(/[,，]/).slice(0, 4).join(' · ')} />}
+        {card.address && <PlaceDetailRow icon="pin" text={card.address} />}
+      </div>
+      <div style={{ display: 'flex', gap: 8, padding: '2px 16px 14px' }}>
+        {onAction && (
+          <button
+            onClick={() => onAction(`导航去${card.name}`)}
+            style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#fff', background: 'var(--au-primary)' }}
+          >
+            <Icon name="compass" size={15} color="#fff" />导航
+          </button>
+        )}
+        {tel && (
+          <a href={`tel:${tel}`}
+            style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 12px', borderRadius: 10, textDecoration: 'none', fontSize: 13, fontWeight: 600, color: 'var(--au-text)', background: 'var(--au-line)', border: '1px solid var(--au-line-2)' }}
+          >拨打电话</a>
+        )}
       </div>
     </div>
   )

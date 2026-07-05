@@ -8,17 +8,17 @@
   setup: {speed_kmh: 0}
   turns:
     - text: 导航去公司，途中帮我找个评分高的粤菜馆
-      # 真实 LLM 把"导航+途中找餐厅"规划成 navigation + food-ordering 两个 Agent（spec 7.3 核心）。
+      # 真实 LLM 把"导航+途中找餐厅"规划成 navigation + nearby 两个 Agent（spec 7.3 核心）。
       # route 形态（cloud/mixed）对带逗号的多意图句不稳定，只绑语义必达节点。
-      expect_spans: [cloud.planning, step.agent:navigation, step.agent:food-ordering]
+      expect_spans: [cloud.planning, step.agent:navigation, step.agent:nearby]
 
 # 7.3 餐厅搜索 → 预订（可能进入确认）
 - name: restaurant_search_reserve
   setup: {speed_kmh: 0}
   turns:
     - text: 找附近评分高的川菜馆，订今晚七点两位
-      # 走 food-ordering（搜索→预订），route 形态不稳，只绑语义必达节点。
-      expect_spans: [cloud.planning, step.agent:food-ordering]
+      # 走 nearby（搜索→预订），route 形态不稳，只绑语义必达节点。
+      expect_spans: [cloud.planning, step.agent:nearby]
 
 # 7.4 多轮指代：目的地续接（第二轮仍围绕首都机场，不当独立闲聊）
 - name: destination_coreference

@@ -24,9 +24,9 @@
 - text: 讲个笑话
   expect_top1: chitchat
 - text: 帮我订一家川菜馆
-  expect_top1: food-ordering
+  expect_top1: nearby
 - text: 附近有什么好吃的餐厅
-  expect_top1: food-ordering
+  expect_top1: nearby
 - text: 帮我把这次自驾游的路线安排一下
   expect_top1: trip-planner
 
@@ -55,8 +55,8 @@
   expect_top1: charging-planner
   requires_embed: true
 - text: 帮我找个川菜馆订位子             # 关键词→navigation
-  expect_top1: food-ordering
+  expect_top1: nearby
   requires_embed: true
-- text: 有什么最近值得关注的大事         # 关键词→food-ordering
+- text: 有什么最近值得关注的大事         # 关键词→nearby
   expect_top1: info
   requires_embed: true
