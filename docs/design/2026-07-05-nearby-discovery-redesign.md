@@ -1,6 +1,6 @@
 # 周边发现 Agent 重构（food-ordering → nearby）：基于高德 POI 2.0 的富数据周边搜索 + 详情增强
 
-- **状态**：草案（待评审 → 落地）
+- **状态**：**P0 已落地并真栈验证（2026-07-05，真高德端到端）**；P1/P2 待做（见 §11）
 - **交付对象**：Claude Code（后续按分阶段清单执行落地）
 - **关联代码**：`agents/food_ordering/*`（现状 mock）、`agents/navigation/src/providers/amap.py`（高德 POI 2.0 样板）、`agents/_sdk/http.py`（出站 HTTP/熔断/可观测）、`hmi/src/types.ts` + `hmi/src/components/Cards.tsx`（卡片契约与渲染）、`orchestrator/cloud/route_hints.py`（确定性路由引擎）、`deploy/docker-compose.yaml`（服务/沙箱/密钥）、`deploy/envoy-proxy.yaml`（出站白名单）
 - **关联文档**：`docs/guides/provider-integration.md`（接 provider 唯一标准流程）、`CLAUDE.md` §3/§4/§5（新增 Agent 流程、命名、安全红线）、`docs/conventions.md`
@@ -338,3 +338,21 @@ export type PlaceDetailCard = {
 3. 起全栈（`nearby-agent` 注入 `AMAP_KEY`），CDP 驱动 headless 打真后端：`附近有什么好吃的`→`place_list` 真数据；`看第 1 个详情`→`place_detail` 含真实电话/营业时间；`附近的酒店/电影院`→多类目真数据；`导航去第 2 个`→handoff 到 navigate。
 4. 路由：`附近的川菜馆`归 nearby、`导航去 X`归 navigation（`eval_route_hints.py` 用例覆盖）。
 5. 降级：停 `AMAP_KEY` / 断网 → 优雅回退 mock，不 500。
+
+---
+
+## 11. P0 落地记录（2026-07-05，分支 `feat/nearby-discovery-redesign`）
+
+**已落地**：重命名 `food_ordering→nearby`（git mv 保留历史）+ 富数据 `AmapPlaceProvider`（`show_fields=business,photos`）+ `PlaceProvider`/`Place` + mock + 工厂；`nearby.search`/`nearby.detail`/`nearby.order` 三 intent（`_clean_name` 按名剥壳解析、诚实 order 桩）；manifest `route_hints`（发现说法接管、`guard` 让出行归 navigation）；HMI `place_list`/`place_detail` 卡 + `AGENT_CATALOG` + 「第N个」/「看第N个详情」handoff + 详情导航/拨打按钮；`food.*→nearby.*` 全仓迁移（编排 few-shot / `agent_client` 端口表 / eval 语料 / 单测）；registry resolve 基线重算 15/15（其间发现并修复「订一家川菜馆」关键词层回归——补回代表性食例）。
+
+**验证**：全量 `pytest` **1087 passed / 7 skipped**（零回归）；HMI `vite build` 通过（`tsc --noEmit` 仅余既有 `.mjs` 无声明噪声，无本次新错）；nearby 单测 20 例（agent + provider 黄金响应）。
+
+**真栈端到端（真高德，25 容器，`ws://…:8090/ws`）**：
+- 「附近有什么好吃的」→ `place_list`，真实天安门周边 POI（端门快餐 / 老北京炸酱面 / 程府宴…），rating/人均真数据；
+- 「附近的酒店」→ 人民大会堂宾馆(4.8)…（酒店无人均 → 话术**不编造**，正确留空）；
+- 「附近评分高的火锅」→ 温鼎府·海鲜火锅(4.8 / 人均449)…；
+- 「端门快餐怎么样」→ `place_detail`：评分3.7 / 人均47 / 营业08:00-16:30 / 地址故宫内 / 3 张图（无电话 → **不编造**）。
+
+**⚠ 真栈发现——第三方出站代理是空壳（P0 已绕过，待独立硬化）**：nearby 初配 `HTTP_PROXY=http-proxy:8080`（ws8 沙箱）时真调用全 `All connection attempts failed` → 降级 mock。根因=`deploy/envoy-proxy.yaml` 的 http-proxy **不是可用正向代理**：它是 `http_connection_manager` 把所有 `/` round-robin 混发到 amap/serpapi/qweather 等 5 个上游、且不支持 HTTPS 的 `CONNECT` 隧道——旧 food-ordering/parking 全 mock，**这条沙箱→代理→外网路径从未被真调用压过**，是 ws8 遗留空壳。**P0 处置**=nearby **直连高德**（与 navigation/info/charging/trip-planner 完全一致，均无代理；nearby 代码仅硬编码调 `restapi.amap.com`），保留其余沙箱（`read_only`/`mem_limit`/`no-new-privileges`）。**建议独立小卡**：若要恢复第三方 Agent 出站白名单，需把 envoy 改成真正的 forward-proxy（`dynamic_forward_proxy` + CONNECT + 按域 allowlist）或换支持 CONNECT 的轻量代理——这是 ws8 既有缺口，非本次重构引入。
+
+**P0 未覆盖（转 P1）**：HMI 浏览器像素级渲染 + 「第N个」handoff 的 CDP 实测（数据契约已验、组件已编译通过）；`open_now` 营业中过滤 / `sort=rating` 精修；详情卡图片 CSP 验证。
