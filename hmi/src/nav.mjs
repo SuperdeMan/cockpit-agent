@@ -32,6 +32,16 @@ export function ordinalIn(text) {
   return n > 0 ? n - 1 : -1
 }
 
+// 序号「选择」提取（必须带「个/家」，避免「第一次来」这类误判为选择）：
+// 用于 place_list 里「点一下第九个 / 看第八个 / 第9个」等裸选择（无「详情」线索词也要接住）。
+export function ordinalSelectIn(text) {
+  const m = String(text || '').match(/第\s*([0-9一二两三四五六七八九十]+)\s*[个家]/)
+  if (!m) return -1
+  const raw = m[1]
+  const n = /^[0-9]+$/.test(raw) ? parseInt(raw, 10) : (_CN_NUM[raw] || 0)
+  return n > 0 ? n - 1 : -1
+}
+
 // 「换一批/换一个/还有别的」类表达：对上一条就近候选翻页换结果（需有活跃候选上下文才生效）。
 const _REFRESH_RE = /^(换一?批|换一个|换一换|换批|再换一?|下一批|还有(别的|其他|没|吗)|有没有别的|换别的|都不满意)/
 

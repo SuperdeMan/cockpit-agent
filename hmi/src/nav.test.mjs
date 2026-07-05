@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { poiSelectionIndex, ordinalIn, isRefreshRequest } from './nav.mjs'
+import { poiSelectionIndex, ordinalIn, ordinalSelectIn, isRefreshRequest } from './nav.mjs'
 
 test('isRefreshRequest flags 换一批 / 换一个 / 还有别的, not normal queries', () => {
   for (const t of ['换一批', '换一个', '换一换', '下一批', '还有别的吗', '都不满意']) {
@@ -31,6 +31,15 @@ test('ordinalIn extracts 第N个 from within a longer phrase (看第八个详情
   assert.equal(ordinalIn('看第一个详情'), 0)
   assert.equal(ordinalIn('第十个的电话'), 9)
   assert.equal(ordinalIn('导航去厦门'), -1)          // 无序号
+})
+
+test('ordinalSelectIn catches bare/verb ordinal selections (点一下第九个), needs 个/家', () => {
+  assert.equal(ordinalSelectIn('点一下第九个'), 8)   // 之前无「详情」线索词 → 漏接 → 后端乱返回
+  assert.equal(ordinalSelectIn('第九个'), 8)
+  assert.equal(ordinalSelectIn('看第八个的详情'), 7)
+  assert.equal(ordinalSelectIn('导航去第2个'), 1)     // 命中；导航/详情由调用侧按导航词区分
+  assert.equal(ordinalSelectIn('第一次来'), -1)       // 「第一」后非「个/家」→ 不误判为选择
+  assert.equal(ordinalSelectIn('今天天气怎么样'), -1)
 })
 
 test('returns -1 for non-selection text (does not hijack normal queries)', () => {

@@ -21,7 +21,7 @@ import {
   setTtsLifecycle,
 } from './audio'
 import { wakeKeywordsFor, DEFAULT_SETTINGS, type Msg, type Settings } from './types'
-import { poiSelectionIndex, ordinalIn, isRefreshRequest } from './nav.mjs'
+import { poiSelectionIndex, ordinalSelectIn, isRefreshRequest } from './nav.mjs'
 import { ResilientWebSocket, appendToken } from './ws.mjs'
 import { HandsFreeController } from './handsFreeController'
 
@@ -515,16 +515,19 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         return
       }
     }
-    // 周边发现「看第N个详情/第N个怎么样」：对照上一条候选 → 改写为「看{名称}的详情」并透传高德
-    // POI id（精确取详情，不按名重搜，修「详情不在列表中」）。用非锚定 ordinalIn（poiSelectionIndex
-    // 整句锚定，抓不到「看第八个的详情」里的序号 → 之前总退化到第一个）。
+    // 周边发现列表「第N个」选择：任何带「个/家」的序号选择（点一下第九个 / 看第八个 / 第9个，
+    // 裸选择也接住，不要求「详情」线索词——否则落到后端被 LLM 当新查询，返回列表外无关 POI）。
+    // 默认看详情、带导航词才导航；透传高德 POI id 精确取详情（不按名重搜取到别的分店）。
     const placeItems = lastPlaceItemsRef.current
-    if (placeItems && placeItems.length &&
-        /详情|详细|怎么样|好不好|评分|人均|多少钱|电话|营业|几点[关开]/.test(text)) {
-      const idx = ordinalIn(text)
+    if (placeItems && placeItems.length) {
+      const idx = ordinalSelectIn(text)
       if (idx >= 0 && idx < placeItems.length) {
         const it = placeItems[idx]
-        dispatch(`看${it.name}的详情`, false, undefined, it.id ? { nearby_poi_id: it.id } : undefined)
+        if (/导航|带我去|开车去|送我|去第|到第/.test(text)) {
+          dispatch(`导航去${it.name}`, false)
+        } else {
+          dispatch(`看${it.name}的详情`, false, undefined, it.id ? { nearby_poi_id: it.id } : undefined)
+        }
         return
       }
     }
