@@ -51,6 +51,12 @@ export class VadEngine {
     return this.running
   }
 
+  // R4.3b P1（U4）：当前是否处于语音段（SileroEndpoint.triggered）。控制器据此在唤醒时
+  // 若用户已开口则跳过提示音，避免「在呢」压住人声、也少一次 AEC 自触发源。
+  get inSpeech(): boolean {
+    return !!this.ep?.triggered
+  }
+
   setSilenceTail(ms: number): void {
     this.ep.cfg.minSilenceMs = ms
   }

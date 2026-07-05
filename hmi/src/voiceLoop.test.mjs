@@ -47,6 +47,7 @@ function makeHarness(config = {}) {
     onStopTts: rec('stopTts'),
     onWakeChime: rec('chime'),
     onDisableBargeIn: rec('disableBargeIn'),
+    onExitAck: rec('exitAck'),
     config,
   })
 
@@ -323,6 +324,150 @@ test('唤醒词打断：SPEAKING 态喊唤醒词 → 停播报直接进 LISTENIN
   h.vl.wake()
   assert.equal(h.count('stopTts'), 1)
   assert.equal(h.vl.state, VoiceState.LISTENING)
+})
+
+// ─── R4.3b P1：退出词 / 语气词 / 短语音 / 端点宽限合并 ───
+
+test('U3 退出词：「退下吧」→ 退场应答 + 回 ARMED，不上云', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('退下吧')
+  assert.equal(h.count('send'), 0)
+  assert.equal(h.count('exitAck'), 1)
+  assert.equal(h.vl.state, VoiceState.ARMED)
+})
+
+test('U3 退出词并入 dismiss：「没事了」去尾「了」命中「没事」→ 退场，不上云', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('没事了')
+  assert.equal(h.count('send'), 0)
+  assert.equal(h.vl.state, VoiceState.ARMED)
+})
+
+test('U3 退出词例外：确认条可见时「退下」照发上云（走 F1，不本地退场）', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.setNeedConfirm(true)
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('退下')
+  assert.deepEqual(h.last('send'), ['send', '退下'])
+  assert.equal(h.count('exitAck'), 0)
+  assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+test('U5a 语气词：「嗯嗯」「哈哈」「啊」静默丢弃，零请求上云', () => {
+  for (const w of ['嗯嗯', '哈哈', '啊']) {
+    const h = makeHarness()
+    h.vl.handsFreeOn()
+    h.vl.wake()
+    h.vl.vadSpeechStart()
+    h.advance(200)
+    h.vl.vadSpeechEnd()
+    h.vl.asrFinal(w)
+    assert.equal(h.count('send'), 0, `${w} 不应上云`)
+    assert.equal(h.vl.state, VoiceState.ARMED)
+  }
+})
+
+test('U5b 完整句直发不进宽限（「打开空调26度」即刻发送）', () => {
+  const h = makeHarness({ endpointGraceMs: 700 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(500)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('打开空调26度')
+  assert.deepEqual(h.last('send'), ['send', '打开空调26度'])
+  assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+test('U5b 端点宽限合并：悬挂「导航去」停顿后续说「西溪湿地」→ 合并为一次请求', () => {
+  const h = makeHarness({ endpointGraceMs: 700 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(300)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('导航去') // 悬挂结尾 → 进宽限，不立即发
+  assert.equal(h.count('send'), 0)
+  assert.equal(h.vl.state, VoiceState.LISTENING) // 仍在聆听（宽限微态）
+  h.advance(300) // 宽限内续说
+  h.vl.vadSpeechStart()
+  assert.equal(h.count('openAsr'), 2) // 重开 ASR 接续
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('西溪湿地')
+  assert.deepEqual(h.last('send'), ['send', '导航去西溪湿地'])
+  assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+test('U5b 宽限满无续说 → 送出原文进 THINKING', () => {
+  const h = makeHarness({ endpointGraceMs: 700 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(300)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('导航去')
+  assert.equal(h.count('send'), 0)
+  h.advance(700) // 宽限满
+  assert.deepEqual(h.last('send'), ['send', '导航去'])
+  assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+test('U5b qwen3 提前定稿：悬挂结尾 + VAD 仍在 speech → 零等待续说拼接', () => {
+  const h = makeHarness({ endpointGraceMs: 700 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(300)
+  // 不 vadSpeechEnd（VAD 仍在 speech）→ qwen3 服务端 800ms 提前 final
+  h.vl.asrFinal('帮我导航去') // 悬挂 + speechActive → 立即续说
+  assert.equal(h.count('send'), 0)
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+  assert.equal(h.count('openAsr'), 2)
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('西湖')
+  assert.deepEqual(h.last('send'), ['send', '帮我导航去西湖'])
+})
+
+test('U5b endpointGraceMs=0 关闭合并：悬挂结尾也即刻发送（不拖延）', () => {
+  const h = makeHarness({ endpointGraceMs: 0 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(300)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('导航去')
+  assert.deepEqual(h.last('send'), ['send', '导航去']) // 无宽限，直发
+  assert.equal(h.vl.state, VoiceState.THINKING)
+})
+
+test('U5b 宽限中拆机（handsFreeOff）→ 清待发前缀，grace 定时器不再触发', () => {
+  const h = makeHarness({ endpointGraceMs: 700 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(300)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('导航去') // 宽限
+  h.vl.handsFreeOff()
+  assert.equal(h.vl.state, VoiceState.IDLE)
+  h.advance(1000) // grace 已随拆机清除
+  assert.equal(h.count('send'), 0)
 })
 
 test('orbState 映射：各态对应 AuroraOrb 视觉态', () => {

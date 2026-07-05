@@ -283,32 +283,37 @@ export async function playTTS(apiBase: string, text: string, voiceId: string): P
   await finishTTSReply(text)
 }
 
-// ─── 唤醒提示音（R4.3 issue①）：hands-free 开启时预合成一句短语音（如「在」），
-// 唤醒瞬间本地零延迟播放，替代纯 beep（有回声担忧靠 getUserMedia 的 AEC 兜底，同 barge-in 前提）。
-// 走同一 /api/tts + 选定音色；TTS 关时不合成，调用方回退 beep。─────────────────────────────
-let wakeCues: PreparedAudio[] = []
-let wakeCuesKey = '' // voiceId|texts：变了才重合成，避免每次开启都打后端
+// ─── 语音提示音集（R4.3 issue① 唤醒 / R4.3b P1 U3 退场）：hands-free 开启时按类别预合成
+// 若干短语音（wake=「在呢」…、exit=「好的」…），触发瞬间本地零延迟随机播一条，替代纯 beep。
+// 走同一 /api/tts + 选定音色；TTS 关时不合成，wake 由调用方回退 beep、exit 静默（退场不该出声）。
+// 有回声担忧靠 getUserMedia 的 AEC 兜底（同 barge-in 前提）。────────────────────────────────
+const cueSets: Record<string, PreparedAudio[]> = {}
+let cueSetsKey = '' // voiceId|sets：变了才重合成，避免每次开启都打后端
 
-/** 预合成多条唤醒提示语并缓存（唤醒时随机播一条，避免每次都同一句）。
- *  部分失败保留成功的；全部失败才抛，调用方据此回退 beep。 */
-export async function prepareWakeCue(apiBase: string, voiceId: string, texts: string[]): Promise<void> {
-  const key = voiceId + '|' + texts.join('|')
-  if (wakeCues.length && wakeCuesKey === key) return
-  const results = await Promise.allSettled(
-    texts.map((text) => prepareTTS({ apiBase, text, voiceId }, new AbortController().signal)),
-  )
-  const prepared = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
-  if (!prepared.length) throw new Error('唤醒提示音合成全部失败')
-  clearWakeCue()
-  wakeCues = prepared
-  wakeCuesKey = key
+/** 按类别预合成提示语集（每类多条，触发时随机播一条避免每次同一句）。
+ *  部分失败保留成功的；wake 类全空才抛（调用方据此回退 beep）；exit 类可空（静默退场）。 */
+export async function prepareCueSet(apiBase: string, voiceId: string, sets: Record<string, string[]>): Promise<void> {
+  const key = voiceId + '|' + JSON.stringify(sets)
+  if (cueSetsKey === key && Object.keys(cueSets).length) return
+  const next: Record<string, PreparedAudio[]> = {}
+  for (const [kind, texts] of Object.entries(sets)) {
+    const results = await Promise.allSettled(
+      texts.map((text) => prepareTTS({ apiBase, text, voiceId }, new AbortController().signal)),
+    )
+    next[kind] = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+  }
+  if (!(next.wake && next.wake.length)) throw new Error('唤醒提示音合成全部失败') // wake 全失败才回退 beep
+  clearCues()
+  Object.assign(cueSets, next)
+  cueSetsKey = key
 }
 
-/** 随机播一条已缓存的唤醒提示音；未就绪返回 false（调用方回退 beep）。objectURL 复用不 dispose。 */
-export function playWakeCue(): boolean {
-  if (!wakeCues.length) return false
+/** 随机播一条某类已缓存提示音；未就绪返回 false（wake 由调用方回退 beep，exit 静默）。objectURL 复用不 dispose。 */
+export function playCue(kind: string): boolean {
+  const arr = cueSets[kind]
+  if (!arr || !arr.length) return false
   try {
-    const pick = wakeCues[Math.floor(Math.random() * wakeCues.length)]
+    const pick = arr[Math.floor(Math.random() * arr.length)]
     const a = new Audio(pick.url)
     void a.play().catch(() => {})
     return true
@@ -317,10 +322,10 @@ export function playWakeCue(): boolean {
   }
 }
 
-export function clearWakeCue(): void {
-  for (const c of wakeCues) c.dispose()
-  wakeCues = []
-  wakeCuesKey = ''
+export function clearCues(): void {
+  for (const arr of Object.values(cueSets)) for (const c of arr) c.dispose()
+  for (const k of Object.keys(cueSets)) delete cueSets[k]
+  cueSetsKey = ''
 }
 
 // ASR：上传录音，返回识别文本
@@ -403,9 +408,18 @@ export class StreamingRecognizer {
     this.mime = mime
     const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
     this.rec = rec
+    const preOpenBuf: Blob[] = [] // U4 recorder 先行：ws 未 open 时先缓冲分片，onopen 后按序补发
+    let sendChain: Promise<void> = Promise.resolve() // 串行化 arrayBuffer→send，保证帧序（webm 头在最前）
     const ws = new WebSocket(wsUrl)
     ws.binaryType = 'arraybuffer'
     this.ws = ws
+
+    const sendBlob = (blob: Blob) => {
+      sendChain = sendChain.then(async () => {
+        if (ws.readyState !== WebSocket.OPEN) return
+        try { ws.send(await blob.arrayBuffer()) } catch { /* 帧丢弃静默 */ }
+      })
+    }
 
     ws.onopen = () => {
       this.opened = true
@@ -413,7 +427,8 @@ export class StreamingRecognizer {
         type: 'start', format: containerOf(mime || 'audio/webm'),
         language: opts.language, provider: opts.provider, model: opts.model,
       }))
-      rec.start(250) // 250ms 分帧
+      for (const b of preOpenBuf) sendBlob(b) // 先行采集的分片按序补发（webm 头在 preOpenBuf[0]）
+      preOpenBuf.length = 0
     }
     ws.onmessage = (ev) => {
       let m: any
@@ -432,17 +447,17 @@ export class StreamingRecognizer {
     rec.ondataavailable = (e) => {
       if (!e.data || e.data.size === 0) return
       this.chunks.push(e.data) // 累积供失败批处理兜底（fix C）
-      if (ws.readyState === WebSocket.OPEN) {
-        e.data.arrayBuffer().then((buf) => {
-          if (ws.readyState === WebSocket.OPEN) ws.send(buf)
-        }).catch(() => {/* 帧丢弃静默 */})
-      }
+      // ws 已 open 且预缓冲已 flush → 直接经 sendChain 发；否则先入 preOpenBuf 保序
+      if (ws.readyState === WebSocket.OPEN && preOpenBuf.length === 0) sendBlob(e.data)
+      else preOpenBuf.push(e.data)
     }
     rec.onstop = () => {
-      // 最后一帧的 arrayBuffer 微任务先于本次发送完成 → {stop} 殿后，顺序不乱
-      if (ws.readyState === WebSocket.OPEN) {
-        try { ws.send(JSON.stringify({ type: 'stop' })) } catch {/* ignore */}
-      }
+      // {stop} 经 sendChain 串在所有音频帧之后 → 流末顺序正确（含 preOpenBuf 补发的先行帧）
+      sendChain = sendChain.then(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({ type: 'stop' })) } catch {/* ignore */}
+        }
+      })
       if (this.ownsStream) this.stream?.getTracks().forEach((t) => t.stop())
       this.stream = null
       this.rec = null
@@ -453,6 +468,9 @@ export class StreamingRecognizer {
         if (!this.finished) this.tryBatchFallback('识别超时', opts)
       }, 7000)
     }
+    // U4 recorder 先行：不等 ws.onopen，立即开始采集 → 覆盖 ws 握手窗（本地几十 ms、冷网关数百 ms），
+    // 减少「唤醒即说」的首字丢失（push-to-talk 同受益，只是提前采集，交互不变）。
+    rec.start(250) // 250ms 分帧
   }
 
   /** 松手/点停：停录音并请求定稿（WS 待 final/done 后自清理）。 */

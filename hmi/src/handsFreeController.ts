@@ -4,10 +4,12 @@
 import { VoiceLoop } from './voiceLoop.mjs'
 import { VadEngine } from './vadEngine'
 import { KwsEngine, DEFAULT_KEYWORDS } from './kwsEngine'
-import { StreamingRecognizer, asrStreamUrl, prepareWakeCue, playWakeCue, clearWakeCue } from './audio'
+import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues } from './audio'
 
 // 唤醒提示语候选（issue①）：短促，唤醒时随机播一条求变化；回声靠 getUserMedia 的 AEC 兜底（同 barge-in 前提）。
 const WAKE_CUE_TEXTS = ['在呢', '我在', '你说', '请讲', '我在听']
+// 退场应答候选（R4.3b P1 U3）：说「退下吧」等退出词后短促回一句再闭麦回待机（TTS 关时静默）。
+const EXIT_CUE_TEXTS = ['好的', '好嘞', '我先退下了']
 
 export type HandsFreeDeps = {
   audioApi: string
@@ -21,7 +23,7 @@ export type HandsFreeDeps = {
   getWakeKeywords?: () => string             // 选定唤醒词的 KWS pinyin token 串
   getAssistantName?: () => string            // 助手名（D6：助手 TTS 念到它/唤醒词则抑制 KWS 自触发）
   getTts?: () => { enabled: boolean; voiceId: string } // 唤醒提示音是否合成 + 用哪个音色
-  config?: { followupWindowMs?: number; silenceTailMs?: number }
+  config?: { followupWindowMs?: number; silenceTailMs?: number; endpointGraceMs?: number }
 }
 
 export class HandsFreeController {
@@ -51,6 +53,7 @@ export class HandsFreeController {
       config: {
         followupWindowMs: deps.config?.followupWindowMs ?? 8000,
         silenceTailMs: deps.config?.silenceTailMs ?? 800,
+        endpointGraceMs: deps.config?.endpointGraceMs ?? 700, // U5b 端点宽限合并窗
       },
       onState: (orb: string) => this.deps.onOrbState(orb),
       onOpenAsr: () => this.openAsr(),
@@ -60,6 +63,7 @@ export class HandsFreeController {
       onStopTts: () => this.deps.onStopTts(),
       onWakeChime: () => this.chime(),
       onDisableBargeIn: (r: string) => this.deps.onNotice?.('已关闭语音打断（' + r + '）'),
+      onExitAck: () => this.exitAck(), // U3：退出词命中 → 播退场应答
     })
   }
 
@@ -128,7 +132,7 @@ export class HandsFreeController {
     this.closeAsr()
     this.sharedStream?.getTracks().forEach((t) => t.stop())
     this.sharedStream = null
-    clearWakeCue()
+    clearCues()
     this.deps.onOrbState(null)
   }
 
@@ -152,13 +156,14 @@ export class HandsFreeController {
     this.startKws()
   }
 
-  // 唤醒提示音：随音色/TTS 开关刷新（enable 时也调用一次）
+  // 语音提示音集：随音色/TTS 开关刷新（enable 时也调用一次）——唤醒 wake + 退场 exit 一并预合成
   refreshWakeCue(): void {
     const tts = this.deps.getTts?.()
     if (this.on && tts?.enabled) {
-      void prepareWakeCue(this.deps.audioApi, tts.voiceId, WAKE_CUE_TEXTS).catch(() => { /* 回退 beep */ })
+      void prepareCueSet(this.deps.audioApi, tts.voiceId, { wake: WAKE_CUE_TEXTS, exit: EXIT_CUE_TEXTS })
+        .catch(() => { /* wake 全失败 → 唤醒回退 beep；exit 无则静默退场 */ })
     } else {
-      clearWakeCue()
+      clearCues()
     }
   }
 
@@ -218,9 +223,17 @@ export class HandsFreeController {
     this.asr = null
   }
 
-  // 唤醒音效：优先播预合成的人声提示（issue①）；未就绪回退短促上扬 beep（WebAudio，无需资源文件）
+  // U3 退场应答：命中退出/dismiss 词 → 播一句「好的」再回待机；TTS 关（无 exit cue）时静默，
+  // 退场刻意不 beep（退下不该再发声）——playCue 未就绪返回 false 即静默。
+  private exitAck(): void {
+    playCue('exit')
+  }
+
+  // 唤醒音效：优先播预合成的人声提示（issue①）；未就绪回退短促上扬 beep（WebAudio，无需资源文件）。
+  // U4：唤醒瞬间用户已开口（VAD 判为 speech）→ 跳过提示音，避免「在呢」压住人声、少一路 AEC 自触发。
   private chime(): void {
-    if (playWakeCue()) return
+    if (this.vad.inSpeech) return
+    if (playCue('wake')) return
     try {
       const AC = window.AudioContext || (window as any).webkitAudioContext
       const ctx = new AC()

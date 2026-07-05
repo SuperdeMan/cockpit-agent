@@ -12,6 +12,8 @@
 //
 // push-to-talk 与文本输入不进本 FSM（原路径原样保留）；hands-free 关闭即整个 FSM 挂空。
 
+import { looksComplete, isFiller, matchExitWord, graphemeLen } from './utteranceHeuristics.mjs'
+
 export const VoiceState = {
   IDLE: 'IDLE',
   ARMED: 'ARMED',
@@ -38,14 +40,12 @@ export const DEFAULTS = {
   falseWakeMs: 5000,      // D5-1：唤醒后无 speech 的静默回收窗
   bargeInMinMs: 300,      // D6：SPEAKING 态判打断需 VAD speech 持续时长
   dismissMinChars: 2,     // D5-2：定稿字数下限，不足视为误唤醒噪声句
-  dismissWords: ['没事', '不是叫你', '别听了', '没叫你'], // D5-2 本地 dismiss 词表
+  dismissWords: ['没事', '不是叫你', '别听了', '没叫你'], // D5-2 本地 dismiss 词表（与 exitWords 并入同一匹配器）
   selfTriggerLimit: 2,    // D6：连续疑似自触发次数到此关闭 L3
   thinkingMaxMs: 100000,  // R4.3b P0：THINKING 安全超时兜底——App 四种终局未回调 ttsEnd 时防永久卡死
-}
-
-// 汉字按码点计数（'嗯'=1、'好的'=2），避免 UTF-16 代理对误判长度。
-function graphemeLen(s) {
-  return [...s].length
+  // R4.3b P1（U3 退出）：退下类指令本地消化（短应答 + 回待机），不上云。needConfirm 时照发走 F1（红线）。
+  exitWords: ['退下', '退下吧', '下去吧', '退出聆听', '再见', '拜拜', '闭嘴', '别说了', '先这样', '没事了', '不用了', '结束对话'],
+  endpointGraceMs: 700,   // R4.3b P1（U5b）：端点宽限合并窗——定稿疑似没说完时等续说的时长；0 即关
 }
 
 export class VoiceLoop {
@@ -63,6 +63,7 @@ export class VoiceLoop {
       onStopTts = () => {},        // barge-in：停播报（=audio.stopTTS）
       onWakeChime = () => {},      // 唤醒音效
       onDisableBargeIn = () => {}, // (reason) 连续自触发 → 本会话关 L3 + toast
+      onExitAck = () => {},        // U3：命中退出/dismiss 词 → 播退场应答（外设播「好的」短语音）
       config = {},
     } = opts
 
@@ -77,6 +78,7 @@ export class VoiceLoop {
     this.onStopTts = onStopTts
     this.onWakeChime = onWakeChime
     this.onDisableBargeIn = onDisableBargeIn
+    this.onExitAck = onExitAck
     this.cfg = { ...DEFAULTS, ...config }
 
     this.state = VoiceState.IDLE
@@ -89,6 +91,11 @@ export class VoiceLoop {
     this._cameFromBargeIn = false
     this._selfTriggerCount = 0
     this._bargeInDisabled = false
+    // R4.3b P1 端点宽限合并（U5b）：待发文本 + 续说前缀 + 本轮 speech 累计时长（短语音噪声判据）。
+    this._pendingText = ''    // 疑似没说完、正在宽限等续说的定稿文本
+    this._pendingPrefix = ''  // 续说重开 ASR 前的已定稿前缀（下次定稿拼在其后）
+    this._utteranceMs = 0     // 本轮已结束 speech 段的累计时长
+    this._speechStartAt = 0   // 当前 speech 段起点（now()）；0=当前无进行中 speech
   }
 
   // ─── 定时器封装（全部走注入，node 测试用 fake clock）───
@@ -105,6 +112,12 @@ export class VoiceLoop {
   _clearAllTimers() {
     for (const name of Object.keys(this._timers)) this._clearTimer(name)
   }
+  // 清端点宽限态（放弃续说合并）：被 wake/dismiss/send/拆机等中断路径调用，防前缀泄漏到下一轮。
+  _clearPending() {
+    this._clearTimer('grace')
+    this._pendingText = ''
+    this._pendingPrefix = ''
+  }
 
   // ─── 状态进入（集中触发 onState；ASR 开关与定时器由各 goto 显式管理）───
   _enter(state) {
@@ -120,6 +133,7 @@ export class VoiceLoop {
 
   _gotoIdle() {
     this._clearAllTimers()
+    this._clearPending()
     this._closeAsr()
     this._speechActive = false
     // 会话级护栏在拆机时复位：重新开 hands-free 视为新会话
@@ -130,12 +144,14 @@ export class VoiceLoop {
   }
   _gotoArmed() {
     this._clearAllTimers()
+    this._clearPending()
     this._closeAsr()
     this._speechActive = false
     this._enter(VoiceState.ARMED)
   }
   _gotoThinking() {
     this._clearAllTimers()
+    this._clearPending()
     this._closeAsr()
     this._speechActive = false
     this._enter(VoiceState.THINKING)
@@ -164,6 +180,9 @@ export class VoiceLoop {
     this._cameFromBargeIn = fromBargeIn
     this._echoSuspected = false
     this._speechActive = speechAlreadyStarted
+    // 新一段聆听重置本轮 speech 计时；续说/打断进入时 speech 已在进行，起点即此刻。
+    this._utteranceMs = 0
+    this._speechStartAt = speechAlreadyStarted ? this.now() : 0
     if (!this._asrOpen) {
       this._asrOpen = true
       this.onOpenAsr()
@@ -194,10 +213,12 @@ export class VoiceLoop {
   // KWS 唤醒词命中。ARMED/FOLLOWUP 待机中 → 进聆听；SPEAKING 中 → 唤醒词打断（KWS 在 D6 保持有效）。
   wake() {
     if (this.state === VoiceState.ARMED || this.state === VoiceState.FOLLOWUP) {
+      this._clearPending() // 唤醒是新意图 → 放弃任何在宽限中的续说残留
       this.onWakeChime()
       this._enterListening()
     } else if (this.state === VoiceState.SPEAKING) {
       // 唤醒词打断不受 300ms VAD 护栏约束（显式意图）；若唤醒词恰在播报文本内则由 Worker 抑制。
+      this._clearPending()
       this.onStopTts()
       this.onWakeChime()
       this._enterListening()
@@ -207,8 +228,17 @@ export class VoiceLoop {
   vadSpeechStart() {
     switch (this.state) {
       case VoiceState.LISTENING:
-        this._speechActive = true
-        this._clearTimer('falseWake') // 有真实开口 → 撤销误唤醒回收
+        if (this._pendingText) {
+          // U5b 宽限内续说：把待发文本作前缀，重开 ASR 接着收（「导航去」+「西溪湿地」拼一句）
+          this._pendingPrefix = this._pendingText
+          this._pendingText = ''
+          this._clearTimer('grace')
+          this._enterListening({ speechAlreadyStarted: true })
+        } else {
+          this._speechActive = true
+          this._speechStartAt = this.now() // 记 speech 段起点（短语音噪声判据）
+          this._clearTimer('falseWake') // 有真实开口 → 撤销误唤醒回收
+        }
         break
       case VoiceState.FOLLOWUP:
         this._enterListening({ speechAlreadyStarted: true }) // 免唤醒追问
@@ -228,6 +258,7 @@ export class VoiceLoop {
     if (this.state === VoiceState.LISTENING) {
       if (this._speechActive) {
         this._speechActive = false
+        if (this._speechStartAt) { this._utteranceMs += this.now() - this._speechStartAt; this._speechStartAt = 0 }
         this.onEndpoint() // 端点到达 → 请引擎定稿
       }
     } else if (this.state === VoiceState.SPEAKING) {
@@ -250,7 +281,10 @@ export class VoiceLoop {
 
   asrFinal(text) {
     if (this.state !== VoiceState.LISTENING) return
-    const t = (text || '').trim()
+    // 端点宽限合并：本轮若在续说前缀之后 → 拼接（「导航去」+「西溪湿地」）。前缀已消费即清。
+    const prefix = this._pendingPrefix
+    this._pendingPrefix = ''
+    const t = (prefix + (text || '')).trim()
 
     // 打断后回声自检（D6）：从 barge-in 进入的 LISTENING，定稿为空/高度重合播报文本 = 自触发
     if (this._cameFromBargeIn) {
@@ -269,18 +303,67 @@ export class VoiceLoop {
       return
     }
 
-    const isDismiss =
-      graphemeLen(t) < this.cfg.dismissMinChars || this.cfg.dismissWords.includes(t)
-    // D5-2 分界：本地 dismiss 仅在「无挂起确认」时生效；确认条可见时一切定稿照发
-    // （裸「取消/不要」必须到云端走 F1 确认闭环——承接 R4.1 §5.3 红线）。
-    if (isDismiss && !this._needConfirm) {
-      this._gotoArmed()
-      return
+    // D5-2 红线：确认条可见时一切定稿照发上云（裸「取消/不要」走 F1）——下列本地消化仅在无挂起确认时生效。
+    if (!this._needConfirm) {
+      // U5a 语气词：纯口头噪声（嗯嗯/哈哈/唔）静默丢弃，不换来 Planner 一轮
+      if (isFiller(t)) { this._gotoArmed(); return }
+      // U5a 短语音噪声：说话过短 + 字数极少（误触/杂音）
+      if (this._currentUtteranceMs() < 300 && graphemeLen(t) <= 2) { this._gotoArmed(); return }
+      // U3 退出/dismiss 词（并入同一匹配器，去尾语气词后精确匹配）→ 短应答后回待机，不上云
+      if (matchExitWord(t, this._exitDismissWords())) {
+        this.onExitAck()
+        this._gotoArmed()
+        return
+      }
+      // 旧 D5-2 dismissMinChars 短句兜底
+      if (graphemeLen(t) < this.cfg.dismissMinChars) { this._gotoArmed(); return }
     }
 
     this._selfTriggerCount = 0
-    this.onSend(t)
+
+    // U5b 端点宽限合并（完整度优先——完整句直发不拖慢；qwen3 提前定稿的完整句同样不必等）
+    if (looksComplete(t) || this.cfg.endpointGraceMs <= 0) {
+      this._finalizeSend(t)
+    } else if (this._speechActive) {
+      // 悬挂结尾且 VAD 仍在 speech（qwen3 服务端提前定稿、客户端静音尾更长）→ 零等待续说拼接
+      this._pendingPrefix = t
+      this._closeAsr()
+      this._enterListening({ speechAlreadyStarted: true })
+    } else {
+      // 悬挂结尾且已停 → 进宽限等续说；宽限满则发送
+      this._enterPendingSend(t)
+    }
+  }
+
+  _finalizeSend(text) {
+    this.onSend(text)
     this._gotoThinking()
+  }
+
+  // 退出/dismiss 合并词表（去尾语气词后精确匹配，见 utteranceHeuristics.matchExitWord）
+  _exitDismissWords() {
+    return [...(this.cfg.exitWords || []), ...(this.cfg.dismissWords || [])]
+  }
+
+  // 本轮已结束 speech 段累计 + 进行中段（用 _speechActive 作是否在段内的权威判据，避免 now()=0 歧义）
+  _currentUtteranceMs() {
+    return this._utteranceMs + (this._speechActive ? this.now() - this._speechStartAt : 0)
+  }
+
+  // 进宽限微态（仍是 LISTENING，orb 不变）：关掉刚定稿的会话，挂宽限定时器等续说
+  _enterPendingSend(text) {
+    this._closeAsr()
+    this._speechActive = false
+    this._pendingText = text
+    this._setTimer('grace', this.cfg.endpointGraceMs, () => this._flushPendingSend())
+  }
+
+  // 宽限满无续说：把待发文本送出
+  _flushPendingSend() {
+    const text = this._pendingText
+    this._clearPending()
+    if (text) this._finalizeSend(text)
+    else this._gotoArmed()
   }
 
   // 助手回复开始播报（TTS 首帧/首句起播）：THINKING → SPEAKING。
