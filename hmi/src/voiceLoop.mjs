@@ -175,6 +175,7 @@ export class VoiceLoop {
   }
   _gotoFollowup() {
     this._clearAllTimers()
+    this._closeAsr() // 从 LISTENING 进入（filler/没说清继续聆听）时 ASR 仍开着；正常 SPEAKING→FOLLOWUP 已关，幂等
     this._speechActive = false
     this._enter(VoiceState.FOLLOWUP)
     this._setTimer('followup', this.cfg.followupWindowMs, () => this._gotoArmed())
@@ -314,26 +315,29 @@ export class VoiceLoop {
     }
 
     if (!t) {
-      // 什么都没说清 → 静默回收，不上云
-      this._gotoArmed()
+      // 什么都没说清（ASR 空定稿）→ 不上云，但**继续聆听**（进续问窗），不踢回待机
+      this._gotoFollowup()
       return
     }
 
     // D5-2 红线：确认条可见时一切定稿照发上云（裸「取消/不要」走 F1）——下列本地消化仅在无挂起确认时生效。
+    // P4 真麦修复：区分「退出意图」与「没说清」——退出词回待机（ARMED），filler/短语音/没说清进续问窗
+    // （FOLLOWUP，orb 仍聆听态、可直接接着说、8s 无接话才回待机），不因一句语气词就把用户踢出聆听。
     if (!this._needConfirm) {
-      // U5a 语气词：纯口头噪声（嗯嗯/哈哈/唔）静默丢弃，不换来 Planner 一轮
-      if (isFiller(t)) { this.onMetric('filler_dismissed'); this._gotoArmed(); return }
-      // U5a 短语音噪声：说话过短 + 字数极少（误触/杂音）
-      if (this._currentUtteranceMs() < 300 && graphemeLen(t) <= 2) { this.onMetric('filler_dismissed'); this._gotoArmed(); return }
-      // U3 退出/dismiss 词（并入同一匹配器，去尾语气词后精确匹配）→ 短应答后回待机，不上云
+      // U3 退出/dismiss 词**优先**（明确退出意图，去尾语气词后占据整句匹配）→ 短应答后回待机，不上云。
+      // 优先于下面的 filler/短语音——否则「退下」这类退出词会因短而被当「继续聆听」，与用户意图相反。
       if (matchExitWord(t, this._exitDismissWords())) {
         this.onMetric('exit_word')
         this.onExitAck()
         this._gotoArmed()
         return
       }
-      // 旧 D5-2 dismissMinChars 短句兜底
-      if (graphemeLen(t) < this.cfg.dismissMinChars) { this._gotoArmed(); return }
+      // U5a 语气词：纯口头噪声（嗯嗯/哈哈/唔）不上云，但**继续聆听**（进续问窗，不踢回待机）
+      if (isFiller(t)) { this.onMetric('filler_dismissed'); this._gotoFollowup(); return }
+      // U5a 短语音噪声：说话过短 + 字数极少（误触/杂音）→ 继续聆听
+      if (this._currentUtteranceMs() < 300 && graphemeLen(t) <= 2) { this.onMetric('filler_dismissed'); this._gotoFollowup(); return }
+      // 旧 D5-2 dismissMinChars 短句兜底 → 继续聆听
+      if (graphemeLen(t) < this.cfg.dismissMinChars) { this._gotoFollowup(); return }
     }
 
     this._selfTriggerCount = 0
