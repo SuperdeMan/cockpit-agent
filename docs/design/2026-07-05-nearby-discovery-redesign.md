@@ -1,6 +1,6 @@
 # 周边发现 Agent 重构（food-ordering → nearby）：基于高德 POI 2.0 的富数据周边搜索 + 详情增强
 
-- **状态**：**P0 已落地并真栈验证（2026-07-05，真高德端到端）**；P1/P2 待做（见 §11）
+- **状态**：**已合并 main（merge `b0ffac9`，2026-07-05）——P0 + 两轮真机实测修复 + 第三方出站白名单代理，真高德端到端 + CDP 验证**；P2 真实点单适配器待做（见 §11）
 - **交付对象**：Claude Code（后续按分阶段清单执行落地）
 - **关联代码**：`agents/food_ordering/*`（现状 mock）、`agents/navigation/src/providers/amap.py`（高德 POI 2.0 样板）、`agents/_sdk/http.py`（出站 HTTP/熔断/可观测）、`hmi/src/types.ts` + `hmi/src/components/Cards.tsx`（卡片契约与渲染）、`orchestrator/cloud/route_hints.py`（确定性路由引擎）、`deploy/docker-compose.yaml`（服务/沙箱/密钥）、`deploy/envoy-proxy.yaml`（出站白名单）
 - **关联文档**：`docs/guides/provider-integration.md`（接 provider 唯一标准流程）、`CLAUDE.md` §3/§4/§5（新增 Agent 流程、命名、安全红线）、`docs/conventions.md`
@@ -341,7 +341,7 @@ export type PlaceDetailCard = {
 
 ---
 
-## 11. P0 落地记录（2026-07-05，分支 `feat/nearby-discovery-redesign`）
+## 11. 落地记录（2026-07-05，已合并 main merge `b0ffac9`）
 
 **已落地**：重命名 `food_ordering→nearby`（git mv 保留历史）+ 富数据 `AmapPlaceProvider`（`show_fields=business,photos`）+ `PlaceProvider`/`Place` + mock + 工厂；`nearby.search`/`nearby.detail`/`nearby.order` 三 intent（`_clean_name` 按名剥壳解析、诚实 order 桩）；manifest `route_hints`（发现说法接管、`guard` 让出行归 navigation）；HMI `place_list`/`place_detail` 卡 + `AGENT_CATALOG` + 「第N个」/「看第N个详情」handoff + 详情导航/拨打按钮；`food.*→nearby.*` 全仓迁移（编排 few-shot / `agent_client` 端口表 / eval 语料 / 单测）；registry resolve 基线重算 15/15（其间发现并修复「订一家川菜馆」关键词层回归——补回代表性食例）。
 
