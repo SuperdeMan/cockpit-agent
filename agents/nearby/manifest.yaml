@@ -1,0 +1,48 @@
+agent_id: nearby
+version: 0.2.0
+display_name: 周边发现
+category: ecosystem
+trust_level: third_party
+deployment: cloud
+latency_budget_ms: 4000
+fallback: chitchat
+
+capabilities:
+  - intent: nearby.search
+    description: 基于高德 POI 2.0 搜周边地点（餐饮/酒店/景点/影院/停车/充电/加油等），
+      支持菜系/品牌/评分/人均/排序过滤，返回评分·人均·距离·营业信息
+    slots: [category, keyword, cuisine, brand, rating_min, price_max, price_level, open_now, sort, location, radius]
+    examples: ["附近有什么好吃的", "找家川菜馆", "附近评分高的火锅", "人均一百以内的川菜",
+               "附近的餐厅", "附近的酒店", "附近的电影院", "找个停车场", "麦当劳在哪", "附近的景点"]
+  - intent: nearby.detail
+    description: 查看某个地点的详情——评分、人均、电话、营业时间、特色、图片、地址
+    slots: [poi_id, name]
+    examples: ["看第一个的详情", "这家怎么样", "它家电话多少", "几点关门", "人均多少"]
+  - intent: nearby.order
+    description: 在餐厅等商户点单/订位/预订座位（涉及费用/承诺，需二次确认；当前仅少数连锁接入，预留）
+    slots: [poi_id, name, datetime, party_size]
+    examples: ["在这家点单", "订个餐厅", "帮我订一家川菜馆", "订今晚7点两位", "帮我订位"]
+    require_confirm: true
+
+# 确定性路由（R2.1）：弱 LLM 常把「发现/详情」说法误路由到 navigation/chitchat。
+# 发现归 nearby、出行归 navigation：pattern 只认生活发现说法（不含充电/加油/停车等设施类目，
+# 避免抢 navigation 既有设施流程）；guard 命中导航动词则让给 navigation。经 RouteHintEngine 通用消费。
+route_hints:
+  - pattern: '附近(有|有没有|有什么|有啥|有点)?.{0,3}(好吃|好玩)|(附近|周边|就近|这边|旁边).{0,4}(餐厅|饭店|餐馆|菜馆|美食|馆子|火锅|川菜|粤菜|湘菜|日料|韩料|烧烤|小吃|快餐|咖啡|奶茶|甜品|面馆|酒店|宾馆|民宿|景点|景区|电影院|影院)|(推荐|找|来|想吃|想去).{0,3}(个|家|点|顿)?.{0,3}(餐厅|饭店|吃的|美食|馆子|火锅|川菜|日料|咖啡|奶茶|甜品|酒店|景点|电影)'
+    intent: nearby.search
+    policy: replace
+    priority: 55
+    guard: '导航|带我去|回家|回公司|回学校|去哪|路线|怎么走|途经|顺路|接我|送我|设成|设为'
+    slots: {keyword: "$text"}
+  - pattern: '(这家|那家|这个|这间|它家?)(怎么样|好不好|好吗|评分|人均|多少钱|电话|几点(关|开)|营业|地址)|看(看|下)?(它的?|这家的?)?详情|详细信息'
+    intent: nearby.detail
+    policy: replace
+    priority: 55
+    slots: {name: "$text"}
+
+requires_permissions:
+  - location.read
+  - network.external
+  - payment.invoke   # 仅 nearby.order 预留桩用；发现/详情只读
+edge_intents: []
+context_scopes: [location]   # 周边搜索按需下发精确位置（最小化）

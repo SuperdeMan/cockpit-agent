@@ -138,7 +138,7 @@ sha256 哈希成确定性 128-bit ID 保证同 trace 分组，不做字节级父
 `grafana` 两服务（**本仓首次引入 Compose `profiles` 机制**，`profiles: ["observability"]`
 门控，默认 `make up` 不受影响）+ Grafana provisioning 与三面板 dashboard JSON（延迟/成功率/
 熔断状态曲线）。**真栈数据链路已验证**：对真实运行的 26 容器技术栈跑 `test/e2e_ws.py`
-制造真实流量，`/metrics` 正确输出 `food-ordering` 等 Agent 的真实调用数/延迟；OTLP 三个新
+制造真实流量，`/metrics` 正确输出 `nearby` 等 Agent 的真实调用数/延迟；OTLP 三个新
 依赖（`opentelemetry-api/sdk/exporter-otlp-proto-grpc`）经容器内 `pip install` 验证零版本
 冲突。**Grafana 可视化面板未在本次会话验证**——本机网络环境当前对大文件/大数据块持续下载
 不稳定（pip 装 grpcio、docker 拉 prometheus/grafana 镜像层均卡死，交叉换阿里云 PyPI 镜像+

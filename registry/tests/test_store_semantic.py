@@ -405,46 +405,46 @@ def _rec(agent_id):
 
 def test_server_filters_below_semantic_min_sim():
     hi, lo = SEMANTIC_PROMOTE_SIM + 0.05, SEMANTIC_MIN_SIM - 0.1
-    servicer = RegistryServicer(store=_FakeStore([(_rec("food-ordering"), hi),
+    servicer = RegistryServicer(store=_FakeStore([(_rec("nearby"), hi),
                                                   (_rec("random-agent"), lo)]))
     req = SimpleNamespace(intent="", query="帮我找个川菜馆订位", top_k=1, granted_permissions=[])
     resp = asyncio.run(servicer.ResolveAgents(req, None))
 
     ids = [a.manifest.agent_id for a in resp.agents]
-    assert "food-ordering" in ids            # 高于下限：保留
+    assert "nearby" in ids            # 高于下限：保留
     assert "random-agent" not in ids         # 低于下限：被 server 二次过滤丢弃
 
 
 def test_server_promotes_confident_semantic():
-    """关键词把 navigation 排前（中文字符噪声），语义把 food-ordering 排前（sim≥提升阈值）
-    → 语义纠正、food-ordering 成 top-1（P0 遮蔽的修复核心）。"""
-    kw = [(_rec("navigation"), 0.6), (_rec("food-ordering"), 0.55)]
-    sem = [(_rec("food-ordering"), SEMANTIC_PROMOTE_SIM + 0.15)]
+    """关键词把 navigation 排前（中文字符噪声），语义把 nearby 排前（sim≥提升阈值）
+    → 语义纠正、nearby 成 top-1（P0 遮蔽的修复核心）。"""
+    kw = [(_rec("navigation"), 0.6), (_rec("nearby"), 0.55)]
+    sem = [(_rec("nearby"), SEMANTIC_PROMOTE_SIM + 0.15)]
     servicer = RegistryServicer(store=_FakeStore(sem, kw))
     req = SimpleNamespace(intent="", query="帮我找个川菜馆订位子", top_k=3, granted_permissions=[])
     resp = asyncio.run(servicer.ResolveAgents(req, None))
-    assert resp.agents[0].manifest.agent_id == "food-ordering"
+    assert resp.agents[0].manifest.agent_id == "nearby"
 
 
 def test_server_keeps_keyword_when_semantic_unconfident():
     """语义 top sim < 提升阈值（不自信）→ 关键词 top-1 保留、语义去重追加在后（保守）。"""
     kw = [(_rec("navigation"), 0.6)]
-    sem = [(_rec("food-ordering"), SEMANTIC_PROMOTE_SIM - 0.05)]
+    sem = [(_rec("nearby"), SEMANTIC_PROMOTE_SIM - 0.05)]
     servicer = RegistryServicer(store=_FakeStore(sem, kw))
     req = SimpleNamespace(intent="", query="x", top_k=3, granted_permissions=[])
     resp = asyncio.run(servicer.ResolveAgents(req, None))
     ids = [a.manifest.agent_id for a in resp.agents]
     assert ids[0] == "navigation"            # 关键词 top 不变
-    assert "food-ordering" in ids            # 语义追加在后
+    assert "nearby" in ids            # 语义追加在后
 
 
 def test_server_exact_intent_not_overridden_by_semantic():
     """精确 intent 命中（关键词 1.0）→ 语义即便自信也不覆盖、根本不跑（快路径保护）。"""
     kw = [(_rec("hvac-agent"), 1.0)]
-    sem = [(_rec("food-ordering"), 0.9)]
+    sem = [(_rec("nearby"), 0.9)]
     servicer = RegistryServicer(store=_FakeStore(sem, kw))
     req = SimpleNamespace(intent="hvac.set", query="把空调开到26度", top_k=3, granted_permissions=[])
     resp = asyncio.run(servicer.ResolveAgents(req, None))
     ids = [a.manifest.agent_id for a in resp.agents]
     assert ids[0] == "hvac-agent"            # 1.0 精确命中不被语义覆盖
-    assert "food-ordering" not in ids        # best_kw==1.0 → 语义分支根本没进
+    assert "nearby" not in ids        # best_kw==1.0 → 语义分支根本没进

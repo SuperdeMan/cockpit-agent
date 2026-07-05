@@ -330,7 +330,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         // 普通导航 poi_list→就近导航（见 send）
         {
           const c: any = data.ui_card
-          const names = c?.type === 'poi_list'
+          const names = (c?.type === 'poi_list' || c?.type === 'place_list')
             ? (c.items || []).map((it: any) => it.name).filter(Boolean) : null
           lastDestChoiceRef.current = null
           lastWaypointChoiceRef.current = null
@@ -346,6 +346,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
             categoryRef.current = kw
               ? (categoryRef.current?.keyword === kw ? categoryRef.current : { keyword: kw, page: 1 })
               : null
+          } else if (c?.type === 'place_list') {
+            // 周边发现列表：复用「第N个」handoff（导航去/看详情）；不走 navigation 的「换一批」翻页
+            lastPoiNamesRef.current = names
+            categoryRef.current = null
           }
         }
         // hands-free 回声指纹：把本轮播报文本喂给 FSM，供 SPEAKING 态 barge-in 时比对（D6）
@@ -504,6 +508,15 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       if (idx >= 0 && idx < choices.length) {
         lastDestChoiceRef.current = null
         dispatch(choices[idx], false)
+        return
+      }
+    }
+    // 周边发现「看第N个详情」：对照上一条候选 → 改写为「看{名称}的详情」→ nearby.detail
+    const detailNames = lastPoiNamesRef.current
+    if (detailNames && detailNames.length && /详情|详细/.test(text)) {
+      const idx = poiSelectionIndex(text)
+      if (idx >= 0 && idx < detailNames.length) {
+        dispatch(`看${detailNames[idx]}的详情`, false)
         return
       }
     }

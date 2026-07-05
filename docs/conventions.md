@@ -10,7 +10,7 @@
 |---|---|---|---|---|---|---|
 | navigation | navigation | core | first_party | cloud | 50061 | navigation.search_poi, navigation.navigate_to, navigation.reverse_geocode, navigation.poi_detail, navigation.set_place, navigation.locate |
 | chitchat | chitchat | ecosystem | first_party | cloud | 50062 | chitchat.talk |
-| food-ordering | food_ordering | ecosystem | third_party | cloud | 50063 | food.search_restaurant, food.reserve |
+| nearby | nearby | ecosystem | third_party | cloud | 50063 | nearby.search, nearby.detail, nearby.order |
 | parking-payment | parking_payment | ecosystem | third_party | cloud | 50064 | parking.find, parking.pay |
 | manual-rag | manual_rag | ecosystem | first_party | cloud | 50065 | manual.query |
 | trip-planner | trip_planner | ecosystem | first_party | cloud | 50066 | trip.plan, trip.modify, trip.navigate, trip.status, trip.reschedule |
@@ -41,8 +41,9 @@
 | `navigation.set_place` | navigation | cloud | place, address | 设置常用地点（家/公司/学校）地址，存入 `profile.places`（经 memory `UpsertProfile`）；只记不导航 |
 | `navigation.locate` | navigation | cloud | — | 「我在哪/当前位置」：对当前已授权 GPS 逆地理编码给出所在地址；无授权诚实提示开启定位（不回退 mock）。当前位置统一只用浏览器 GPS，与导航就近、`info.weather` 一致 |
 | `chitchat.talk` | chitchat | cloud | — | 系统兜底 fallback |
-| `food.search_restaurant` | food-ordering | cloud | cuisine, location, rating_min, price_level, party_size | |
-| `food.reserve` | food-ordering | cloud | restaurant_id, restaurant_name, datetime, party_size | require_confirm |
+| `nearby.search` | nearby | cloud | category, keyword, cuisine, brand, rating_min, price_max, sort, location | 高德 POI 2.0 富数据周边搜索（餐饮/酒店/景点/影院/停车/充电等多类目）；发现归 nearby、出行归 navigation |
+| `nearby.detail` | nearby | cloud | poi_id, name | 详情增强：评分/人均/电话/营业时间/特色/图片 |
+| `nearby.order` | nearby | cloud | poi_id, name, datetime, party_size | require_confirm；诚实预留桩（未接真实点单/订位，给电话+导航兜底） |
 | `parking.find` | parking-payment | cloud | location, near | |
 | `parking.pay` | parking-payment | cloud | order_id, plate, amount | require_confirm |
 | `manual.query` | manual-rag | cloud | question | RAG |

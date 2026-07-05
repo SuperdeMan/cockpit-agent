@@ -77,7 +77,7 @@
       {
         "text": "导航去深圳北站，途中找一家评分高的川菜馆",
         "must_spans": ["cloud.planning"],
-        "observe_agents": ["navigation", "food-ordering"],
+        "observe_agents": ["navigation", "nearby"],
         "note": "导航 + 途经餐厅（新版可能 navigation 自带 waypoint_choice）"
       }
     ]
@@ -167,7 +167,7 @@
         "must_spans": ["cloud.planning"],
         "need_confirm": false,
         "expect_follow_up": true,
-        "observe_agents": ["food-ordering", "navigation"],
+        "observe_agents": ["nearby", "navigation"],
         "note": "应追问（时间/人数/位置/菜系），不能直接预订"
       }
     ]
@@ -180,15 +180,15 @@
       {
         "text": "帮我订个附近的餐厅",
         "must_spans": ["cloud.planning"],
-        "observe_agents": ["food-ordering", "navigation"],
+        "observe_agents": ["nearby", "navigation"],
         "note": "第一轮：找附近餐厅 / 追问。need_confirm 不绑定——planner 对『订个餐厅』可能返回候选列表(OK)，也可能直接 reserve 某家→NEED_CONFIRM，两者都可接受，关键看第二轮能否继承"
       },
       {
         "text": "今晚六点，三大一小，评分高一点",
         "must_spans": ["cloud.planning"],
         "forbid_spans": ["step.agent:chitchat"],
-        "observe_agents": ["food-ordering", "navigation"],
-        "note": "继承第一轮目标；预订前 NEED_CONFIRM；设计上应 food-ordering（测试集写 navigation 存疑）。【已复核】首轮报告的『空话术』为重建前的瞬态；重建后连跑 3 次均稳定继承食订意图并 NEED_SLOT 反问『您想订哪一家？』（缺餐厅槽位）——非确定性边端 bug。step.agent:food-ordering span 也随 loop 修复恢复可见"
+        "observe_agents": ["nearby", "navigation"],
+        "note": "继承第一轮目标；预订前 NEED_CONFIRM；设计上应 nearby（测试集写 navigation 存疑）。【已复核】首轮报告的『空话术』为重建前的瞬态；重建后连跑 3 次均稳定继承食订意图并 NEED_SLOT 反问『您想订哪一家？』（缺餐厅槽位）——非确定性边端 bug。step.agent:nearby span 也随 loop 修复恢复可见"
       }
     ]
   },
@@ -242,7 +242,7 @@
         "text": "帮我找附近的川菜馆，到了以后自动打开后备箱",
         "must_spans": ["cloud.planning"],
         "state_unchanged": ["trunk"],
-        "observe_agents": ["food-ordering", "navigation"],
+        "observe_agents": ["nearby", "navigation"],
         "note": "找餐厅可走 food/navigation；后备箱不得由 Agent 直接生成车控，现在不应打开"
       }
     ]

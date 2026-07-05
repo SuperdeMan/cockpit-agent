@@ -1,8 +1,8 @@
 {
   "meta": {
     "subject": "registry_resolve",
-    "generated_at": "2026-07-04T05:07:28.793653+00:00",
-    "commit": "d596da9"
+    "generated_at": "2026-07-05T10:53:21.008855+00:00",
+    "commit": "7e3b175"
   },
   "corpus_sources": [
     {
@@ -41,7 +41,7 @@
       "expected": "info",
       "actual": "info",
       "passed": true,
-      "detail": "[('info', 0.6), ('road-safety', 0.6), ('charging-planner', 0.4)]",
+      "detail": "[('info', 0.6), ('road-safety', 0.6), ('nearby', 0.45)]",
       "tags": [],
       "source": "test/eval_corpus/registry_resolve_cases.yaml"
     },
@@ -63,7 +63,7 @@
       "expected": "charging-planner",
       "actual": "charging-planner",
       "passed": true,
-      "detail": "[('charging-planner', 0.65), ('navigation', 0.55), ('parking-payment', 0.5)]",
+      "detail": "[('charging-planner', 0.65), ('nearby', 0.6), ('navigation', 0.55)]",
       "tags": [],
       "source": "test/eval_corpus/registry_resolve_cases.yaml"
     },
@@ -85,7 +85,7 @@
       "expected": "deep-research",
       "actual": "deep-research",
       "passed": true,
-      "detail": "[('deep-research', 0.75), ('food-ordering', 0.45), ('navigation', 0.45)]",
+      "detail": "[('deep-research', 0.75), ('navigation', 0.45), ('nearby', 0.45)]",
       "tags": [],
       "source": "test/eval_corpus/registry_resolve_cases.yaml"
     },
@@ -118,7 +118,7 @@
       "expected": "chitchat",
       "actual": "chitchat",
       "passed": true,
-      "detail": "[('chitchat', 0.5), ('charging-planner', 0.35), ('deep-research', 0.35)]",
+      "detail": "[('chitchat', 0.5), ('nearby', 0.4), ('charging-planner', 0.35)]",
       "tags": [],
       "source": "test/eval_corpus/registry_resolve_cases.yaml"
     },
@@ -126,10 +126,10 @@
       "id": "resolve::帮我订一家川菜馆",
       "bucket": "resolve_recall",
       "text": "帮我订一家川菜馆",
-      "expected": "food-ordering",
-      "actual": "food-ordering",
+      "expected": "nearby",
+      "actual": "nearby",
       "passed": true,
-      "detail": "[('food-ordering', 0.55), ('deep-research', 0.5), ('info', 0.45)]",
+      "detail": "[('nearby', 0.7), ('deep-research', 0.5), ('info', 0.45)]",
       "tags": [],
       "source": "test/eval_corpus/registry_resolve_cases.yaml"
     },
@@ -137,10 +137,10 @@
       "id": "resolve::附近有什么好吃的餐厅",
       "bucket": "resolve_recall",
       "text": "附近有什么好吃的餐厅",
-      "expected": "food-ordering",
-      "actual": "food-ordering",
+      "expected": "nearby",
+      "actual": "nearby",
       "passed": true,
-      "detail": "[('food-ordering', 0.8), ('navigation', 0.55), ('charging-planner', 0.5)]",
+      "detail": "[('nearby', 0.8), ('navigation', 0.55), ('charging-planner', 0.5)]",
       "tags": [],
       "source": "test/eval_corpus/registry_resolve_cases.yaml"
     },
@@ -151,7 +151,7 @@
       "expected": "trip-planner",
       "actual": "trip-planner",
       "passed": true,
-      "detail": "[('trip-planner', 0.7), ('deep-research', 0.65), ('food-ordering', 0.5)]",
+      "detail": "[('trip-planner', 0.7), ('deep-research', 0.65), ('nearby', 0.55)]",
       "tags": [],
       "source": "test/eval_corpus/registry_resolve_cases.yaml"
     },
@@ -188,7 +188,7 @@
       "expected": "!= parking-payment",
       "actual": "info",
       "passed": true,
-      "detail": "[('info', 0.5), ('chitchat', 0.45), ('food-ordering', 0.45)]",
+      "detail": "[('info', 0.5), ('chitchat', 0.45), ('nearby', 0.45)]",
       "tags": [
         "chitchat"
       ],

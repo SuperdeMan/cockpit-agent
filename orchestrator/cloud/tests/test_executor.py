@@ -187,8 +187,8 @@ def test_run_skips_seeded_done_steps_and_passes_meta():
 
     ex = DagExecutor(call_agent_fn=call)
     steps = [
-        Step(id="s1", agent_id="a", intent="food.search_restaurant"),
-        Step(id="s2", agent_id="a", intent="food.reserve",
+        Step(id="s1", agent_id="a", intent="nearby.search"),
+        Step(id="s2", agent_id="a", intent="nearby.order",
              depends_on=["s1"], meta={"confirmed": "true"}),
     ]
     seed = {"s1": StepResult(step_id="s1", status=StepStatus.OK, speech="earlier")}
@@ -199,7 +199,7 @@ def test_run_skips_seeded_done_steps_and_passes_meta():
     results = asyncio.run(run())
     # 只 yield 新执行的步骤；s1 未被重跑
     assert [r.step_id for r in results] == ["s2"]
-    assert calls == [("food.reserve", {"confirmed": "true"})]
+    assert calls == [("nearby.order", {"confirmed": "true"})]
 
 
 def test_run_seeded_failed_dep_skips_children():

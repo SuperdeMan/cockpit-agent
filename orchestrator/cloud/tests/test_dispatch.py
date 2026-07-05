@@ -124,7 +124,7 @@ def test_non_vehicle_missing_scope_is_rejected_before_transport():
 
     dispatcher = UnifiedDispatcher(cloud_call=cloud, edge_call=None, tools=None)
     step = Step(
-        id="s1", agent_id="food-ordering", endpoint="food:50065",
+        id="s1", agent_id="nearby", endpoint="food:50065",
         intent="food.order", required_permissions=["payment.invoke"],
         trust_level="first_party",
     )

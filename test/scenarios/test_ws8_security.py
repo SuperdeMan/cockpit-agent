@@ -22,7 +22,7 @@ def test_scenario_third_party_no_vehicle_control():
     engine = PermissionEngine()
     # 模拟 manifest
     class M:
-        agent_id = "food-ordering"
+        agent_id = "nearby"
         trust_level = "third_party"
         requires_permissions = [VEHICLE_CONTROL_HVAC]
 
@@ -89,7 +89,7 @@ def test_scenario_content_moderation():
 def test_scenario_payment_requires_auth():
     engine = PermissionEngine()
     class M:
-        agent_id = "food-ordering"
+        agent_id = "nearby"
         trust_level = "third_party"
         requires_permissions = [PAYMENT_INVOKE]
 

@@ -203,7 +203,7 @@ function voiceIcon(v: Voice): IconName { return VOICE_ICON[v.voice_id] ?? VOICE_
 // Agent → 图标（A-8 集未含，icons.custom 补；端侧快系统车控/媒体用 vehicle/media）
 const AGENT_ICON: Record<string, IconName> = {
   vehicle: 'vehicle', media: 'media', navigation: 'compass', info: 'info', 'trip-planner': 'itinerary',
-  'deep-research': 'research', 'food-ordering': 'dining', 'parking-payment': 'parking', 'manual-rag': 'manual', chitchat: 'chat',
+  'deep-research': 'research', nearby: 'dining', 'parking-payment': 'parking', 'manual-rag': 'manual', chitchat: 'chat',
 }
 // 常用地点 → 图标（家=A-8 place-home；公司/学校 icons.custom 补）
 const PLACE_ICON: Record<string, IconName> = { home: 'place-home', company: 'building', school: 'school' }

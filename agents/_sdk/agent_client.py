@@ -217,7 +217,7 @@ class AgentClient:
         # 3. 硬编码 port_map fallback（PoC 兜底）
         port_map = {
             "navigation": "50061", "chitchat": "50062",
-            "food-ordering": "50063", "parking-payment": "50064",
+            "nearby": "50063", "parking-payment": "50064",
             "manual-rag": "50065", "trip-planner": "50066", "info": "50067",
             "charging-planner": "50068", "scene-orchestrator": "50069",
             "road-safety": "50072", "ticketing": "50073",

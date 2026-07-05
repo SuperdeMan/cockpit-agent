@@ -204,13 +204,17 @@ services:
       AGENT_PORT: "50062"
     depends_on: [registry, llm-gateway]
 
-  food-ordering-agent:
+  nearby-agent:
     <<: *restart
-    build: { context: .., dockerfile: agents/food_ordering/Dockerfile }
+    build: { context: .., dockerfile: agents/nearby/Dockerfile }
     volumes: *certs-vol
     environment:
       <<: *python-env
       AGENT_PORT: "50063"
+      # 真实周边 provider（高德 POI 2.0）；不配 key 走 mock。key 只注入本服务（最小化）。
+      # 出站经 http-proxy（envoy 白名单已放行 restapi.amap.com）。
+      POI_VENDOR: ${POI_VENDOR:-mock}
+      AMAP_KEY: ${AMAP_KEY:-}
       HTTP_PROXY: http://http-proxy:8080
       HTTPS_PROXY: http://http-proxy:8080
     depends_on: [registry, llm-gateway, memory, http-proxy]

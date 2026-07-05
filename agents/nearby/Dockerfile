@@ -11,4 +11,4 @@ COPY runtime /app/runtime
 
 ENV PYTHONPATH=/app:/app/gen/python
 ENV AGENT_PORT=50063
-CMD ["python", "agents/food_ordering/main.py"]
+CMD ["python", "agents/nearby/main.py"]
