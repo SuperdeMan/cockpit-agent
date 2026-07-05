@@ -49,6 +49,7 @@ function makeHarness(config = {}) {
     onDisableBargeIn: rec('disableBargeIn'),
     onExitAck: rec('exitAck'),
     onCancelTurn: rec('cancelTurn'),
+    onMetric: rec('metric'),
     config,
   })
 
@@ -499,6 +500,32 @@ test('U2 THINKING 期 VAD speech 不打断（仅唤醒词可打断，防环境�
   h.advance(500)
   assert.equal(h.count('cancelTurn'), 0)
   assert.equal(h.vl.state, VoiceState.THINKING) // 岿然不动
+})
+
+test('P3 obs 指标：wake/filler/exit/merge/barge_in/cancel 各在语义点发出', () => {
+  const metrics = (h) => h.events.filter((e) => e[0] === 'metric').map((e) => e[1])
+  // wake
+  let h = makeHarness()
+  h.vl.handsFreeOn(); h.vl.wake()
+  assert.ok(metrics(h).includes('wake'))
+  // filler_dismissed
+  h = makeHarness()
+  h.vl.handsFreeOn(); h.vl.wake(); h.vl.vadSpeechStart(); h.vl.vadSpeechEnd(); h.vl.asrFinal('嗯嗯')
+  assert.ok(metrics(h).includes('filler_dismissed'))
+  // exit_word
+  h = makeHarness()
+  h.vl.handsFreeOn(); h.vl.wake(); h.vl.vadSpeechStart(); h.advance(400); h.vl.vadSpeechEnd(); h.vl.asrFinal('退下吧')
+  assert.ok(metrics(h).includes('exit_word'))
+  // endpoint_merge（宽限续说）
+  h = makeHarness({ endpointGraceMs: 700 })
+  h.vl.handsFreeOn(); h.vl.wake(); h.vl.vadSpeechStart(); h.advance(300); h.vl.vadSpeechEnd(); h.vl.asrFinal('导航去')
+  h.advance(200); h.vl.vadSpeechStart()
+  assert.ok(metrics(h).includes('endpoint_merge'))
+  // turn_cancelled（THINKING 打断）
+  h = makeHarness()
+  h.vl.handsFreeOn(); h.vl.wake(); h.vl.vadSpeechStart(); h.advance(400); h.vl.vadSpeechEnd(); h.vl.asrFinal('讲个笑话')
+  h.vl.wake()
+  assert.ok(metrics(h).includes('turn_cancelled'))
 })
 
 test('orbState 映射：各态对应 AuroraOrb 视觉态', () => {

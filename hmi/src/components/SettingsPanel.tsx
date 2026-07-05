@@ -311,7 +311,7 @@ function AsrSection() {
       </SettingGroup>
       <HR />
       <SettingGroup title="语音唤醒 · 连续对话">
-        <SettingRow label="免唤醒连续对话" sub="回复播完后保持聆听窗，接着说即自动断句发送，无需再按光球。唤醒前音频仅在浏览器本地检测、不上传。默认关。">
+        <SettingRow label="免唤醒连续对话" sub="回复播完后保持聆听窗，接着说即自动断句发送，无需再按光球。说「退下吧 / 没事了」可随时退出聆听。唤醒前音频仅在浏览器本地检测、不上传。默认关。">
           <Toggle on={settings.handsFree} onChange={(v) => update({ handsFree: v })} />
         </SettingRow>
         <SettingRow label="唤醒词" sub="待机时说唤醒词进入聆听，全程免触屏。需先下载本地语音模型（见 README 的 fetch-voice-models）。" noBorder={!settings.handsFree}>
@@ -329,9 +329,9 @@ function AsrSection() {
               <Segmented sm value={settings.followupWindowS} onChange={(v) => update({ followupWindowS: v })}
                 options={[{ value: 5, label: '5s' }, { value: 8, label: '8s' }, { value: 15, label: '15s' }]} />
             </SettingRow>
-            <SettingRow label="静音断句" sub="停顿多久判定说完并发送（VAD 静音尾）" noBorder>
+            <SettingRow label="静音断句" sub="停顿多久判定说完并发送（VAD 静音尾）：0.5s 敏捷 / 0.8s 均衡 / 1.2s 从容。长句易停顿可调大。" noBorder>
               <Segmented sm value={settings.silenceTailMs} onChange={(v) => update({ silenceTailMs: v })}
-                options={[{ value: 500, label: '0.5s' }, { value: 800, label: '0.8s' }, { value: 1200, label: '1.2s' }]} />
+                options={[{ value: 500, label: '0.5s 敏捷' }, { value: 800, label: '0.8s 均衡' }, { value: 1200, label: '1.2s 从容' }]} />
             </SettingRow>
           </>
         )}

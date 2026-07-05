@@ -7,6 +7,7 @@ import { KwsEngine, DEFAULT_KEYWORDS } from './kwsEngine'
 import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues } from './audio'
 import { PcmRing } from './pcmRing.mjs'
 import { stripLeadingWakeWord } from './utteranceHeuristics.mjs'
+import { bumpVoiceMetric } from './voiceMetrics.mjs'
 
 const PRE_ROLL_MS = 800 // R4.3b P2（U4）：开 ASR 时注入的前滚缓冲时长——覆盖 KWS 检测窗 + wake→ASR 就绪 gap
 
@@ -73,6 +74,7 @@ export class HandsFreeController {
       onDisableBargeIn: (r: string) => this.deps.onNotice?.('已关闭语音打断（' + r + '）'),
       onExitAck: () => this.exitAck(), // U3：退出词命中 → 播退场应答
       onCancelTurn: () => this.deps.onCancelTurn?.(), // U2：THINKING 打断 → 透传 App 发网关取消
+      onMetric: (name: string) => bumpVoiceMetric(name), // P3 obs：语音事件计数（localStorage，供真麦验收）
     })
   }
 

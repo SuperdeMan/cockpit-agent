@@ -65,6 +65,7 @@ export class VoiceLoop {
       onDisableBargeIn = () => {}, // (reason) 连续自触发 → 本会话关 L3 + toast
       onExitAck = () => {},        // U3：命中退出/dismiss 词 → 播退场应答（外设播「好的」短语音）
       onCancelTurn = () => {},     // U2/P2：THINKING 期唤醒词打断 → 请求取消在飞的云端处理
+      onMetric = () => {},         // P3 obs：语义事件名（wake/filler_dismissed/endpoint_merge/…）→ 外设累计
       config = {},
     } = opts
 
@@ -81,6 +82,7 @@ export class VoiceLoop {
     this.onDisableBargeIn = onDisableBargeIn
     this.onExitAck = onExitAck
     this.onCancelTurn = onCancelTurn
+    this.onMetric = onMetric
     this.cfg = { ...DEFAULTS, ...config }
 
     this.state = VoiceState.IDLE
@@ -192,7 +194,7 @@ export class VoiceLoop {
     this._enter(VoiceState.LISTENING)
     // 唤醒进入且尚无 speech → 挂误唤醒回收窗；续问/打断进入时 speech 已起，不挂。
     if (!speechAlreadyStarted) {
-      this._setTimer('falseWake', this.cfg.falseWakeMs, () => this._gotoArmed())
+      this._setTimer('falseWake', this.cfg.falseWakeMs, () => { this.onMetric('false_wake_dismissed'); this._gotoArmed() })
     }
   }
 
@@ -216,6 +218,7 @@ export class VoiceLoop {
   wake() {
     if (this.state === VoiceState.ARMED || this.state === VoiceState.FOLLOWUP) {
       this._clearPending() // 唤醒是新意图 → 放弃任何在宽限中的续说残留
+      this.onMetric('wake')
       this.onWakeChime()
       this._enterListening()
     } else if (this.state === VoiceState.SPEAKING) {
@@ -228,6 +231,7 @@ export class VoiceLoop {
       // U2 真打断（P2）：处理中喊唤醒词 → 取消在飞的云端处理 + 提示音 + 重新聆听。
       // 仅 KWS 唤醒词可打断 THINKING（显式意图）；VAD speech 不行（THINKING 期环境音太易误触）。
       this._clearPending()
+      this.onMetric('turn_cancelled')
       this.onCancelTurn()
       this.onWakeChime()
       this._enterListening()
@@ -239,6 +243,7 @@ export class VoiceLoop {
       case VoiceState.LISTENING:
         if (this._pendingText) {
           // U5b 宽限内续说：把待发文本作前缀，重开 ASR 接着收（「导航去」+「西溪湿地」拼一句）
+          this.onMetric('endpoint_merge')
           this._pendingPrefix = this._pendingText
           this._pendingText = ''
           this._clearTimer('grace')
@@ -315,11 +320,12 @@ export class VoiceLoop {
     // D5-2 红线：确认条可见时一切定稿照发上云（裸「取消/不要」走 F1）——下列本地消化仅在无挂起确认时生效。
     if (!this._needConfirm) {
       // U5a 语气词：纯口头噪声（嗯嗯/哈哈/唔）静默丢弃，不换来 Planner 一轮
-      if (isFiller(t)) { this._gotoArmed(); return }
+      if (isFiller(t)) { this.onMetric('filler_dismissed'); this._gotoArmed(); return }
       // U5a 短语音噪声：说话过短 + 字数极少（误触/杂音）
-      if (this._currentUtteranceMs() < 300 && graphemeLen(t) <= 2) { this._gotoArmed(); return }
+      if (this._currentUtteranceMs() < 300 && graphemeLen(t) <= 2) { this.onMetric('filler_dismissed'); this._gotoArmed(); return }
       // U3 退出/dismiss 词（并入同一匹配器，去尾语气词后精确匹配）→ 短应答后回待机，不上云
       if (matchExitWord(t, this._exitDismissWords())) {
+        this.onMetric('exit_word')
         this.onExitAck()
         this._gotoArmed()
         return
@@ -335,6 +341,7 @@ export class VoiceLoop {
       this._finalizeSend(t)
     } else if (this._speechActive) {
       // 悬挂结尾且 VAD 仍在 speech（qwen3 服务端提前定稿、客户端静音尾更长）→ 零等待续说拼接
+      this.onMetric('endpoint_merge')
       this._pendingPrefix = t
       this._closeAsr()
       this._enterListening({ speechAlreadyStarted: true })
@@ -394,6 +401,7 @@ export class VoiceLoop {
       this._countSelfTrigger() // 疑似回声 → 计入自触发，不打断
       return
     }
+    this.onMetric('barge_in')
     this.onStopTts()
     this._enterListening({ speechAlreadyStarted: true, fromBargeIn: true })
   }
