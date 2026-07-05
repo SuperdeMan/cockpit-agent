@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { poiSelectionIndex, isRefreshRequest } from './nav.mjs'
+import { poiSelectionIndex, ordinalIn, isRefreshRequest } from './nav.mjs'
 
 test('isRefreshRequest flags 换一批 / 换一个 / 还有别的, not normal queries', () => {
   for (const t of ['换一批', '换一个', '换一换', '下一批', '还有别的吗', '都不满意']) {
@@ -23,6 +23,14 @@ test('parses digit ordinals', () => {
   assert.equal(poiSelectionIndex('第1个'), 0)
   assert.equal(poiSelectionIndex('2'), 1)
   assert.equal(poiSelectionIndex('第3'), 2)
+})
+
+test('ordinalIn extracts 第N个 from within a longer phrase (看第八个详情)', () => {
+  assert.equal(ordinalIn('看看第八个的详情'), 7)   // 之前 poiSelectionIndex 整句锚定 → -1 → 退化第一个
+  assert.equal(ordinalIn('第2个怎么样'), 1)
+  assert.equal(ordinalIn('看第一个详情'), 0)
+  assert.equal(ordinalIn('第十个的电话'), 9)
+  assert.equal(ordinalIn('导航去厦门'), -1)          // 无序号
 })
 
 test('returns -1 for non-selection text (does not hijack normal queries)', () => {

@@ -32,16 +32,6 @@ _CATEGORY_KEYWORD = {
     "超市": "超市", "便利店": "便利店", "咖啡": "咖啡厅", "奶茶": "奶茶饮品",
     "药店": "药店", "银行": "银行", "医院": "医院",
 }
-# 类目 → 话术显示名
-_CATEGORY_LABEL = {
-    "餐饮": "餐厅", "美食": "餐厅", "吃饭": "餐厅", "餐厅": "餐厅", "吃的": "餐厅",
-    "酒店": "酒店", "住宿": "酒店", "宾馆": "酒店", "民宿": "民宿",
-    "景点": "景点", "景区": "景点", "旅游": "景点",
-    "影院": "电影院", "电影院": "电影院", "电影": "电影院",
-    "停车": "停车场", "停车场": "停车场", "车位": "停车场",
-    "充电": "充电站", "充电站": "充电站", "充电桩": "充电站",
-    "加油": "加油站", "加油站": "加油站",
-}
 # 餐饮类目（口味画像仅此类生效）
 _FOOD_CATS = {"餐饮", "美食", "吃饭", "餐厅", "吃的"}
 
@@ -76,6 +66,50 @@ def _clean_name(raw: str) -> str:
             break
         s = s2
     return s or (raw or "").strip()
+
+
+# ── 发现说法解析（不依赖弱 LLM 填槽，从原话/关键词兜底）──
+_PROXIMITY_RE = re.compile(
+    r"附近的?|周边的?|就近的?|最近的?|旁边的?|这边的?|一带的?|附近有|"
+    r"哪儿?有|哪里有|有没有|有什么|有啥|找个?|找家|找点|来个?|来点|"
+    r"推荐个?|推荐家|推荐点|想吃个?|想去个?|什么|好吃的?|好玩的?")
+
+
+def _strip_proximity(text: str) -> str:
+    """剥掉「附近/周边/哪有/找个/有什么好吃的」等发现措辞，留核心类目词。"""
+    return _PROXIMITY_RE.sub("", text or "").strip(" 的，。、")
+
+
+_CN_NUM = {"十": 10, "二十": 20, "三十": 30, "四十": 40, "五十": 50, "六十": 60,
+           "七十": 70, "八十": 80, "九十": 90, "一百": 100, "两百": 200, "二百": 200,
+           "三百": 300, "四百": 400, "五百": 500, "百": 100}
+
+
+def _cn_to_int(s: str) -> int:
+    return int(s) if s.isdigit() else _CN_NUM.get(s, 0)
+
+
+_PRICE_RE = re.compile(
+    r"(?:人均|均价|价位|预算|不超过|不过)?\s*([0-9]{2,4}|[一二两三四五六七八九十百]+)\s*"
+    r"(?:元|块钱|块)?\s*(以内|以下|之内|左右|上下|封顶)")
+
+
+def _parse_price(text: str) -> float:
+    """从原话解析人均上限：『一百以内』→100、『80块以下』→80、『150左右』→约195。解析不出返回 0。"""
+    m = _PRICE_RE.search(text or "")
+    if not m:
+        return 0.0
+    n = _cn_to_int(m.group(1))
+    if n <= 0:
+        return 0.0
+    return float(round(n * 1.3)) if m.group(2) in ("左右", "上下") else float(n)
+
+
+_SORT_RATING_RE = re.compile(r"评分高|高分|口碑好?|好评|人气高?|评价高|最好的")
+
+
+def _parse_sort(text: str) -> str:
+    return "rating" if _SORT_RATING_RE.search(text or "") else ""
 
 
 class NearbyAgent(BaseAgent):
@@ -116,23 +150,24 @@ class NearbyAgent(BaseAgent):
 
     @staticmethod
     def _resolve_category(intent) -> str:
+        """类目：category 槽位优先；否则从原话+keyword 槽扫类目词（route_hint 把整句灌进 keyword）。"""
         raw = (intent.slots.get("category") or "").strip()
-        if raw:
-            return raw
-        text = intent.raw_text or ""
+        hay = raw or ((intent.raw_text or "") + " " + (intent.slots.get("keyword") or ""))
         for key in _CATEGORY_KEYWORD:
-            if key in text:
+            if key in hay:
                 return key
-        return "餐饮"
+        return raw or "餐饮"
 
     @staticmethod
-    def _build_keyword(category, cuisine, brand, keyword) -> str:
+    def _build_keyword(category, cuisine, brand, kw_slot) -> str:
+        """高德检索词：品牌/菜系优先；否则剥掉发现措辞后的关键词（『附近的火锅』→火锅）；再退类目词。"""
         if brand:
             return brand
-        if keyword:
-            return keyword
         if cuisine:
             return cuisine
+        cleaned = _strip_proximity(kw_slot)
+        if cleaned and cleaned not in ("地点", "的"):
+            return cleaned
         return _CATEGORY_KEYWORD.get(category, category or "美食")
 
     @staticmethod
@@ -156,11 +191,13 @@ class NearbyAgent(BaseAgent):
         category = self._resolve_category(intent)
         cuisine = (intent.slots.get("cuisine") or "").strip()
         brand = (intent.slots.get("brand") or "").strip()
-        keyword = self._build_keyword(
-            category, cuisine, brand, (intent.slots.get("keyword") or "").strip())
+        kw_slot = (intent.slots.get("keyword") or "").strip()
+        keyword = self._build_keyword(category, cuisine, brand, kw_slot)
+        raw = intent.raw_text or ""
         rating_min = _to_float(intent.slots.get("rating_min"))
-        price_max = _to_float(intent.slots.get("price_max"))
-        sort = (intent.slots.get("sort") or "").strip()
+        # 价位/排序：弱 LLM 常漏填槽位 → 从原话兜底解析（『一百以内』『评分高』）
+        price_max = _to_float(intent.slots.get("price_max")) or _parse_price(raw + " " + kw_slot)
+        sort = (intent.slots.get("sort") or "").strip() or _parse_sort(raw)
         near = self._near(intent, meta)
 
         try:
@@ -173,7 +210,7 @@ class NearbyAgent(BaseAgent):
                 keyword, category=category, near=near, rating_min=rating_min,
                 price_max=price_max, brand=brand, sort=sort, meta=meta)
 
-        label = cuisine or brand or _CATEGORY_LABEL.get(category, category)
+        label = cuisine or brand or keyword
         if not results:
             return AgentResult(
                 speech=f"附近暂时没找到{label}，换个说法或扩大范围再试试？",

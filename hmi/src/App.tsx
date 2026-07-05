@@ -21,7 +21,7 @@ import {
   setTtsLifecycle,
 } from './audio'
 import { wakeKeywordsFor, DEFAULT_SETTINGS, type Msg, type Settings } from './types'
-import { poiSelectionIndex, isRefreshRequest } from './nav.mjs'
+import { poiSelectionIndex, ordinalIn, isRefreshRequest } from './nav.mjs'
 import { ResilientWebSocket, appendToken } from './ws.mjs'
 import { HandsFreeController } from './handsFreeController'
 
@@ -511,10 +511,12 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         return
       }
     }
-    // 周边发现「看第N个详情」：对照上一条候选 → 改写为「看{名称}的详情」→ nearby.detail
+    // 周边发现「看第N个详情/第N个怎么样」：对照上一条候选 → 改写为「看{名称}的详情」→ nearby.detail。
+    // 用非锚定 ordinalIn（poiSelectionIndex 整句锚定，抓不到「看第八个的详情」里的序号 → 之前总退化到第一个）。
     const detailNames = lastPoiNamesRef.current
-    if (detailNames && detailNames.length && /详情|详细/.test(text)) {
-      const idx = poiSelectionIndex(text)
+    if (detailNames && detailNames.length &&
+        /详情|详细|怎么样|好不好|评分|人均|多少钱|电话|营业|几点[关开]/.test(text)) {
+      const idx = ordinalIn(text)
       if (idx >= 0 && idx < detailNames.length) {
         dispatch(`看${detailNames[idx]}的详情`, false)
         return

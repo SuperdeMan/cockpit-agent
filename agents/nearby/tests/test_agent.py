@@ -103,3 +103,48 @@ def test_order_confirmed_is_honest_not_fake_booking():
     assert res.status == "ok"
     assert "接入中" in res.speech
     assert "订好" not in res.speech and "已预订" not in res.speech
+
+
+def _capture_search():
+    """返回 (agent, seen)：monkeypatch place.search 捕获透传给 provider 的参数。"""
+    agent = NearbyAgent()
+    seen = {}
+
+    async def search(keyword, **kw):
+        seen["keyword"] = keyword
+        seen.update(kw)
+        return []
+
+    agent.place.search = search
+    return agent, seen
+
+
+def test_search_facility_keyword_stripped_from_whole_sentence():
+    """route_hint 把整句灌进 keyword（停车场）：agent 剥壳成干净类目词 + 认出类目。"""
+    agent, seen = _capture_search()
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={"keyword": "附近的停车场"}, raw_text="附近的停车场"))
+    assert seen["keyword"] == "停车场"
+    assert seen["category"] == "停车"
+
+
+def test_search_facility_charging_keyword():
+    agent, seen = _capture_search()
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={"keyword": "附近的充电站"}, raw_text="附近哪里有充电站"))
+    assert seen["keyword"] == "充电站"
+
+
+def test_search_price_parsed_from_raw_text_when_planner_missed_slot():
+    """价位兜底：planner 没填 price_max，agent 从原话『一百以内』解析出 100。"""
+    agent, seen = _capture_search()
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={"cuisine": "火锅"}, raw_text="人均一百以内的火锅"))
+    assert seen["price_max"] == 100.0
+
+
+def test_search_sort_parsed_from_raw_text():
+    agent, seen = _capture_search()
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={"cuisine": "火锅"}, raw_text="附近评分高的火锅"))
+    assert seen["sort"] == "rating"
