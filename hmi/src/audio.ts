@@ -283,6 +283,46 @@ export async function playTTS(apiBase: string, text: string, voiceId: string): P
   await finishTTSReply(text)
 }
 
+// ─── 唤醒提示音（R4.3 issue①）：hands-free 开启时预合成一句短语音（如「在」），
+// 唤醒瞬间本地零延迟播放，替代纯 beep（有回声担忧靠 getUserMedia 的 AEC 兜底，同 barge-in 前提）。
+// 走同一 /api/tts + 选定音色；TTS 关时不合成，调用方回退 beep。─────────────────────────────
+let wakeCues: PreparedAudio[] = []
+let wakeCuesKey = '' // voiceId|texts：变了才重合成，避免每次开启都打后端
+
+/** 预合成多条唤醒提示语并缓存（唤醒时随机播一条，避免每次都同一句）。
+ *  部分失败保留成功的；全部失败才抛，调用方据此回退 beep。 */
+export async function prepareWakeCue(apiBase: string, voiceId: string, texts: string[]): Promise<void> {
+  const key = voiceId + '|' + texts.join('|')
+  if (wakeCues.length && wakeCuesKey === key) return
+  const results = await Promise.allSettled(
+    texts.map((text) => prepareTTS({ apiBase, text, voiceId }, new AbortController().signal)),
+  )
+  const prepared = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+  if (!prepared.length) throw new Error('唤醒提示音合成全部失败')
+  clearWakeCue()
+  wakeCues = prepared
+  wakeCuesKey = key
+}
+
+/** 随机播一条已缓存的唤醒提示音；未就绪返回 false（调用方回退 beep）。objectURL 复用不 dispose。 */
+export function playWakeCue(): boolean {
+  if (!wakeCues.length) return false
+  try {
+    const pick = wakeCues[Math.floor(Math.random() * wakeCues.length)]
+    const a = new Audio(pick.url)
+    void a.play().catch(() => {})
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function clearWakeCue(): void {
+  for (const c of wakeCues) c.dispose()
+  wakeCues = []
+  wakeCuesKey = ''
+}
+
 // ASR：上传录音，返回识别文本
 export async function recognize(
   apiBase: string,
@@ -328,18 +368,27 @@ export class StreamingRecognizer {
   private stream: MediaStream | null = null
   private finished = false
   private opened = false
+  private ownsStream = true // false=用控制器传入的共享流（架构债 A），stop 时不停其 tracks
+  private chunks: Blob[] = [] // 累积录音，供流式失败时批处理兜底（fix C）
+  private mime = ''
+  private apiBase = '' // 由 wsUrl 反推，供批处理兜底调 /api/asr
 
   get active(): boolean {
     return !!this.rec || !!this.ws
   }
 
-  async start(wsUrl: string, opts: StreamOpts): Promise<void> {
+  async start(wsUrl: string, opts: StreamOpts, externalStream?: MediaStream): Promise<void> {
     if (this.active) return
     this.finished = false
     this.opened = false
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    this.chunks = []
+    this.apiBase = wsUrl.replace(/\/api\/asr\/stream$/, '').replace(/^ws/, 'http') // 供批处理兜底（fix C）
+    // 架构债 A：hands-free 传入共享 mic 流；push-to-talk 不传 → 自取（原路径不变）
+    this.ownsStream = !externalStream
+    const stream = externalStream ?? await navigator.mediaDevices.getUserMedia({ audio: true })
     this.stream = stream
     const mime = pickMime() || ''
+    this.mime = mime
     const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
     this.rec = rec
     const ws = new WebSocket(wsUrl)
@@ -361,15 +410,16 @@ export class StreamingRecognizer {
       else if (m.type === 'final') { this.finished = true; opts.onFinal?.(m.text || '') }
       else if (m.type === 'done') this.cleanup()
       else if (m.type === 'unsupported' || m.type === 'error') {
-        opts.onError?.(m.message || '流式识别不可用')
-        this.cleanup()
+        this.tryBatchFallback(m.message || '流式识别不可用', opts)
       }
     }
-    ws.onerror = () => { if (!this.opened) opts.onError?.('语音流连接失败') }
-    ws.onclose = () => { if (!this.opened && !this.finished) opts.onError?.('语音流已断开') }
+    ws.onerror = () => { if (!this.opened) this.tryBatchFallback('语音流连接失败', opts) }
+    ws.onclose = () => { if (!this.opened && !this.finished) this.tryBatchFallback('语音流已断开', opts) }
 
     rec.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+      if (!e.data || e.data.size === 0) return
+      this.chunks.push(e.data) // 累积供失败批处理兜底（fix C）
+      if (ws.readyState === WebSocket.OPEN) {
         e.data.arrayBuffer().then((buf) => {
           if (ws.readyState === WebSocket.OPEN) ws.send(buf)
         }).catch(() => {/* 帧丢弃静默 */})
@@ -380,11 +430,11 @@ export class StreamingRecognizer {
       if (ws.readyState === WebSocket.OPEN) {
         try { ws.send(JSON.stringify({ type: 'stop' })) } catch {/* ignore */}
       }
-      this.stream?.getTracks().forEach((t) => t.stop())
+      if (this.ownsStream) this.stream?.getTracks().forEach((t) => t.stop())
       this.stream = null
       this.rec = null
-      // 等 final/done 收尾；兜底 7s 内无定稿 → 当失败回退批处理（如 fun 这类不出转写的对话模型）
-      window.setTimeout(() => { if (!this.finished) { opts.onError?.('识别超时，已回退'); this.cleanup() } }, 7000)
+      // 等 final/done 收尾；兜底 7s 内无定稿 → 回退批处理（如 fun 这类不出转写的对话模型；fix C）
+      window.setTimeout(() => { if (!this.finished) this.tryBatchFallback('识别超时', opts) }, 7000)
     }
   }
 
@@ -397,13 +447,33 @@ export class StreamingRecognizer {
     }
   }
 
+  // fix C：流式失败但已录到音频 → 用批处理 recognize() 兜回本轮 utterance（兑现「失败回退批处理」）。
+  // 无音频（连接就没建起来）或批处理也失败 → 照旧上报 onError。只执行一次（finished 守卫）。
+  private tryBatchFallback(msg: string, opts: StreamOpts): void {
+    if (this.finished) return
+    this.finished = true
+    const chunks = this.chunks
+    this.chunks = []
+    if (chunks.length && this.apiBase && this.mime) {
+      const blob = new Blob(chunks, { type: this.mime })
+      recognize(this.apiBase, blob, containerOf(this.mime), opts.language)
+        .then((text) => (text ? opts.onFinal?.(text) : opts.onError?.(msg)))
+        .catch(() => opts.onError?.(msg))
+        .finally(() => this.cleanup())
+    } else {
+      opts.onError?.(msg)
+      this.cleanup()
+    }
+  }
+
   private cleanup(): void {
     try { if (this.rec && this.rec.state !== 'inactive') this.rec.stop() } catch {/* ignore */}
-    this.stream?.getTracks().forEach((t) => t.stop())
+    if (this.ownsStream) this.stream?.getTracks().forEach((t) => t.stop())
     try { this.ws?.close() } catch {/* ignore */}
     this.rec = null
     this.stream = null
     this.ws = null
+    this.chunks = []
   }
 }
 

@@ -4,7 +4,7 @@
 // 数据/交互一字不改地沿用既有真实接线（useSettings / 音色试听 / 地点 / 记忆 / 定位）。
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { useSettings } from '../settings'
-import { AGENT_CATALOG, VOICE_FALLBACK, type Voice } from '../types'
+import { AGENT_CATALOG, VOICE_FALLBACK, WAKE_WORD_PRESETS, type Voice } from '../types'
 import {
   fetchVoices, fetchMemory, fetchMemoryProfile, forgetMemory, fetchPlaces, playTTS,
   type MemoryView, type MemoryProfile, type NamedPlaces,
@@ -310,13 +310,19 @@ function AsrSection() {
         </SettingRow>
       </SettingGroup>
       <HR />
-      <SettingGroup title="免唤醒连续对话（R4.3 · 实验）">
+      <SettingGroup title="语音唤醒 · 连续对话">
         <SettingRow label="免唤醒连续对话" sub="回复播完后保持聆听窗，接着说即自动断句发送，无需再按光球。唤醒前音频仅在浏览器本地检测、不上传。默认关。">
           <Toggle on={settings.handsFree} onChange={(v) => update({ handsFree: v })} />
         </SettingRow>
-        <SettingRow label="唤醒词「小舟小舟」" sub="待机时说唤醒词进入聆听，全程免触屏。需先下载本地语音模型（见 README 的 fetch-voice-models）。" noBorder={!settings.handsFree}>
+        <SettingRow label="唤醒词" sub="待机时说唤醒词进入聆听，全程免触屏。需先下载本地语音模型（见 README 的 fetch-voice-models）。" noBorder={!settings.handsFree}>
           <Toggle on={settings.wakeWordEnabled} onChange={(v) => update({ wakeWordEnabled: v })} disabled={!settings.handsFree} />
         </SettingRow>
+        {settings.handsFree && settings.wakeWordEnabled && (
+          <SettingRow label="选择唤醒词" sub="换词后直接说新唤醒词即可生效；命中率以真机为准">
+            <Segmented sm value={settings.wakeWord} onChange={(v) => update({ wakeWord: v })}
+              options={WAKE_WORD_PRESETS.map((p) => ({ value: p.word, label: p.word }))} />
+          </SettingRow>
+        )}
         {settings.handsFree && (
           <>
             <SettingRow label="续问聆听窗" sub="回复播完后等待你接话的时长">
@@ -501,7 +507,7 @@ function AssistantSection() {
     <div>
       <SectionHdr icon="assistant" title="助手设置" sub={`个性化${settings.assistantName}的回答风格与底层模型（昵称即时生效，长度/模型经会话透传后端）`} />
       <SettingGroup title="个性化">
-        <SettingRow label="助手昵称" sub="你对助手的称呼，也是唤醒词前缀">
+        <SettingRow label="助手昵称" sub="你对助手的称呼（显示用；唤醒词在语音设置中单独选择）">
           <TextInput value={settings.assistantName} onChange={(v) => update({ assistantName: v })} placeholder="小舟" maxLength={8} width={180} />
         </SettingRow>
         <SettingRow label="回答长度" sub="简短适合行车；详细适合泊车深度调研">

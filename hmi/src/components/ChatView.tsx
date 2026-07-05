@@ -55,18 +55,20 @@ export function ChatView({
   awaitConfirm,
   onConfirm,
   onQuick,
+  partialUser,
 }: {
   messages: Msg[]
   awaitConfirm: boolean
   onConfirm: (reply: '确认' | '取消') => void
   onQuick: (text: string) => void
+  partialUser?: string // hands-free 聆听中的实时识别文字（issue②）
 }) {
   const { settings } = useSettings()
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages])
+  }, [messages, partialUser])
 
   // 错误气泡「重试」需要最近一条用户消息——预先按下标算好往回传。
   const lastUserText = (i: number): string | undefined => {
@@ -97,6 +99,7 @@ export function ChatView({
             retryText={lastUserText(i)}
           />
         ))}
+        {partialUser && <PartialUserBubble text={partialUser} />}
       </div>
     </div>
   )
@@ -155,6 +158,23 @@ function UserBubble({ text }: { text: string }) {
         boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
       }}>
         <div style={{ fontSize: 14.5, lineHeight: 1.65, color: FG1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</div>
+      </div>
+    </div>
+  )
+}
+
+// ─── 聆听中的实时识别（issue②）：右对齐 ghost 用户气泡，淡显虚线 + 流式光标；定稿后由真实 UserBubble 接管 ───
+function PartialUserBubble({ text }: { text: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+      <div style={{
+        maxWidth: '78%', padding: '11px 16px', borderRadius: '18px 18px 4px 18px',
+        background: 'rgba(70,214,224,0.06)', border: '1px dashed rgba(70,214,224,0.30)',
+        WebkitBackdropFilter: 'blur(16px)', backdropFilter: 'blur(16px)',
+      }}>
+        <div style={{ fontSize: 14.5, lineHeight: 1.65, color: FG2, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          {text}<span className="au-cursor" />
+        </div>
       </div>
     </div>
   )

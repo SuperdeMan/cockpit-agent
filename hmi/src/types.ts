@@ -362,7 +362,8 @@ export type Settings = {
   listenSeconds: ListenSeconds
   // 免唤醒连续对话 / 唤醒词（R4.3；全部 opt-in 默认关，唤醒前音频不离开浏览器）
   handsFree: boolean            // L1 免唤醒连续对话：一轮回复后保持聆听窗，VAD 断句自动发送
-  wakeWordEnabled: boolean      // L2 唤醒词：待机说「小舟小舟」进入聆听
+  wakeWordEnabled: boolean      // L2 唤醒词：待机说唤醒词进入聆听
+  wakeWord: string              // 选定的唤醒词（display 值，映射到 KWS pinyin token；见 WAKE_WORD_PRESETS）
   followupWindowS: FollowupWindowS // 续问聆听窗时长（秒）
   silenceTailMs: SilenceTailMs  // VAD 静音尾（端点判据，毫秒）
   // 显示与主题
@@ -421,6 +422,22 @@ export const DEFAULT_QUICK_COMMANDS = [
   '我今天有点不开心',
 ]
 
+// R4.3 唤醒词预设（issue③）：keywords 为 sherpa-onnx KWS 运行时 pinyin token 串——声母 + 带声调韵母，
+// 逐一对 wenetspeech tokens.txt 核对（换词无需重训模型，仅换本串）。刻意不开放自由输入：
+// 中文→带声调 token 的浏览器端转换不可靠（ü/零声母/y-w 边界易错→唤醒词静默失效，用户难自查）。
+// 真机命中率以泓舟验收为准（同「小舟小舟」的验收口径）。
+export const WAKE_WORD_PRESETS: Array<{ word: string; keywords: string }> = [
+  { word: '小舟小舟', keywords: 'x iǎo zh ōu x iǎo zh ōu @小舟小舟' }, // 小=x iǎo 舟=zh ōu
+  { word: '你好小舟', keywords: 'n ǐ h ǎo x iǎo zh ōu @你好小舟' },   // 你=n ǐ 好=h ǎo
+  { word: '小舟你好', keywords: 'x iǎo zh ōu n ǐ h ǎo @小舟你好' },
+  { word: '你好阿段', keywords: 'n ǐ h ǎo ā d uàn @你好阿段' },        // 阿=ā(零声母) 段=d uàn
+]
+
+/** 唤醒词 display 值 → KWS pinyin token 串；未命中预设回落默认「小舟小舟」。 */
+export function wakeKeywordsFor(word: string): string {
+  return WAKE_WORD_PRESETS.find((p) => p.word === word)?.keywords ?? WAKE_WORD_PRESETS[0].keywords
+}
+
 export const DEFAULT_SETTINGS: Settings = {
   ttsEnabled: true,
   autoplay: true,
@@ -432,6 +449,7 @@ export const DEFAULT_SETTINGS: Settings = {
   listenSeconds: 15,
   handsFree: false,       // R4.3 opt-in：默认关，行为与今天逐字一致
   wakeWordEnabled: false, // R4.3 opt-in：默认关
+  wakeWord: '小舟小舟',    // 默认唤醒词（真麦已验证命中）
   followupWindowS: 8,
   silenceTailMs: 800,
   theme: 'dark',
