@@ -169,7 +169,7 @@ Dashboard 的车辆动态接口仅供本地演示；非开发环境必须设置
 
 - 62 个车控对象、150 条端侧意图 pattern，知识库驱动归一化、校验、安全门控和话术。
 - 本地、云端混合多意图拆分，支持导航偏好、歌手等续接片段与主意图成组路由。
-- 十一个云 Agent：导航、闲聊、点餐、停车支付、手册问答、行程规划、信息（天气/搜索/新闻/股票）、深度调研（多视角联网调研出带引用分节报告 + 渐进语音简报）、充能规划、场景编排、路况安全（含响应式主动播报）。
+- 十一个云 Agent：导航、闲聊、周边发现（高德 POI 2.0 多类目搜索 + 详情增强）、停车支付、手册问答、行程规划、信息（天气/搜索/新闻/股票）、深度调研（多视角联网调研出带引用分节报告 + 渐进语音简报）、充能规划、场景编排、路况安全（含响应式主动播报）。
 - 统一上下文装配（`ContextManager`：catalog 语义预筛 + 对话历史 + 长期语义记忆 + 结构化焦点态，统一 token 预算；敏感上下文按 manifest `context_scopes` 最小化下发）、对话记忆 + 长期语义记忆（自动学偏好/个人实体、pgvector 语义召回、可查可删）、确认/补槽续接、跨 Agent DAG、T2 自适应再规划。
 - MiMo/Mock LLM Provider，MiMo ASR/TTS（批处理）+ **DashScope 实时流式 ASR**（qwen3/fun，识别上屏）+ MiMo 分块回退，webm→wav/PCM 后端流式转码。
 - 复杂任务（行程/深度调研/多步）按统一 `is_complex` 判据**动态开思考**提质 + 气泡内嵌
@@ -209,9 +209,9 @@ python test/e2e_ws.py
 
 - Cloud Gateway 的车辆长连接状态仍在单实例内存中，多实例需会话亲和或一致性路由。
 - Registry 已实现 PgStore（PostgreSQL）持久化，内存 fallback 保留；各 Agent / edge / cloud-planner 周期重注册自愈，重启后自动补注册（无需人工）；多实例扩展仍待做。
-- 导航（高德）、天气（和风 JWT）已接真实 Provider 并经真实凭证冒烟通过（接入规范见
-  [`docs/guides/provider-integration.md`](docs/guides/provider-integration.md)）；餐饮/停车/手册仍为 mock，按环境接入。
-- HTTP/MCP 外部工具及网络出口白名单尚未实现。
+- 导航（高德）、周边发现（高德 POI 2.0）、充电（高德）、天气（和风 JWT）已接真实 Provider 并经真实凭证冒烟通过（接入规范见
+  [`docs/guides/provider-integration.md`](docs/guides/provider-integration.md)）；停车/手册仍为 mock，按环境接入。
+- HTTP/MCP 外部工具尚未实现；第三方 Agent 出站白名单已由 `deploy/egress-proxy.py` 落地（CONNECT 正向代理 + 域名白名单，实测 amap 放行 / 越权域名 403）。
 - 会话鉴权已由 **R3.1** 落地最小闭环：静态 token 两层校验（HMI WS `?token=` → edge-gateway 解析
   身份+`granted_scopes`、去 `user_id="u1"` 硬编码；Hello channel token → cloud-gateway 校验），env 门控
   `AUTH_REQUIRED` 默认关（配合 R2.2 `PERMISSIONS_FAIL_OPEN`）；真实 IdP/JWT 轮换/设备证书属后续。
