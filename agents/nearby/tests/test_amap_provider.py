@@ -9,7 +9,7 @@ import pytest
 
 from agents._sdk.http import ProviderError
 from agents.nearby.src.providers.amap import AmapPlaceProvider
-from agents.nearby.src.providers.base import GeoPoint
+from agents.nearby.src.providers.base import GeoPoint, is_open_now
 
 
 def _provider(responses: dict):
@@ -130,3 +130,30 @@ def test_detail_not_found_raises():
     p = _provider({"/v5/place/detail": bad})
     with pytest.raises(ProviderError):
         asyncio.run(p.detail("nonexistent"))
+
+
+def test_is_open_now_ranges():
+    # now_min 注入避免依赖真实时钟
+    assert is_open_now("11:00-14:00 17:00-21:30", now_min=12 * 60) is True    # 12:00 在第一段
+    assert is_open_now("11:00-14:00 17:00-21:30", now_min=15 * 60) is False   # 15:00 两段之间
+    assert is_open_now("17:00-02:00", now_min=1 * 60) is True                 # 跨零点 01:00 营业
+    assert is_open_now("24小时营业", now_min=3 * 60) is True
+    assert is_open_now("", now_min=12 * 60) is None                           # 未知
+
+
+_PRICED = {
+    "status": "1", "info": "OK",
+    "pois": [
+        {"id": "A", "name": "贵店", "location": "1,1", "type": "餐饮", "business": {"cost": "120"}},
+        {"id": "B", "name": "中店", "location": "1,1", "type": "餐饮", "business": {"cost": "90"}},
+        {"id": "C", "name": "便宜店", "location": "1,1", "type": "餐饮", "business": {"cost": "20"}},
+        {"id": "D", "name": "无价店", "location": "1,1", "type": "餐饮", "business": {}},
+    ],
+}
+
+
+def test_search_price_band_drops_cheap_and_nocost():
+    """价位区间 [60,140]：便宜(20<60)与无人均 均剔除（修『左右返回18/30 与无人均』）。"""
+    p = _provider({"/v5/place/text": _PRICED})
+    res = asyncio.run(p.search("餐厅", price_min=60, price_max=140))
+    assert [r.name for r in res] == ["贵店", "中店"]

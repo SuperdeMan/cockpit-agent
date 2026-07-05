@@ -5,8 +5,10 @@
 评分/人均等字段厂商常缺，缺则留默认（0/空），Agent 话术按「是否已知」自适应，绝不编造。
 """
 from __future__ import annotations
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 
 
 @dataclass
@@ -36,14 +38,42 @@ class Place:
     photos: list[str] = field(default_factory=list)  # photos[].url
 
 
+_TIME_RANGE_RE = re.compile(r"(\d{1,2}):(\d{2})\s*[-~到至]\s*(\d{1,2}):(\d{2})")
+
+
+def is_open_now(open_today: str, now_min: int | None = None) -> bool | None:
+    """按今日营业时间判断此刻是否营业。返回 True/False；无法解析→None（未知）。
+    now_min: 当前「时:分」折算分钟（测试注入）；缺省取北京时间。"""
+    s = (open_today or "").strip()
+    if not s:
+        return None
+    if "24小时" in s or "00:00-24:00" in s or "全天" in s:
+        return True
+    if now_min is None:
+        n = datetime.now(timezone(timedelta(hours=8)))
+        now_min = n.hour * 60 + n.minute
+    ranges = _TIME_RANGE_RE.findall(s)
+    if not ranges:
+        return None
+    for h1, m1, h2, m2 in ranges:
+        start, end = int(h1) * 60 + int(m1), int(h2) * 60 + int(m2)
+        if end <= start:                       # 跨零点（如 17:00-02:00）
+            if now_min >= start or now_min <= end:
+                return True
+        elif start <= now_min <= end:
+            return True
+    return False
+
+
 class PlaceProvider(ABC):
     @abstractmethod
     async def search(self, keyword: str, *, category: str = "", near: GeoPoint | None = None,
-                     rating_min: float = 0, price_max: float = 0, brand: str = "",
-                     open_now: bool = False, sort: str = "", limit: int = 10, page: int = 1,
+                     rating_min: float = 0, price_min: float = 0, price_max: float = 0,
+                     brand: str = "", open_now: bool = False, sort: str = "",
+                     limit: int = 10, page: int = 1,
                      meta: dict | None = None) -> list[Place]:
-        """周边搜索。near 为空走关键字检索；page 支持翻页（「换一批」）。
-        rating_min/price_max/open_now/sort 由实现做客户端过滤/排序。meta 透传 trace（可选）。"""
+        """周边搜索。near 为空走关键字检索；page 支持翻页（「换一批」）。rating_min/price 区间
+        [price_min,price_max]（0=该端不限，价位查询丢无人均）/open_now/sort 由实现做客户端过滤。"""
         ...
 
     @abstractmethod

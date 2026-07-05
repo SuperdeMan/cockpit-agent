@@ -148,3 +148,42 @@ def test_search_sort_parsed_from_raw_text():
     asyncio.run(run_handle(agent, "nearby.search",
                            slots={"cuisine": "火锅"}, raw_text="附近评分高的火锅"))
     assert seen["sort"] == "rating"
+
+
+def test_search_facility_keyword_strips_query_verbs():
+    """『帮我查一查附近的停车场』→ 关键词剥成『停车场』（修『为您找到1家查查停车场』）。"""
+    agent, seen = _capture_search()
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={"keyword": "帮我查一查附近的停车场"},
+                           raw_text="帮我查一查附近的停车场"))
+    assert seen["keyword"] == "停车场"
+
+
+def test_search_price_band_from_left_right():
+    """『人均一百左右』→ 区间 [约60,约140]（下限剔掉太便宜的 18/30，修『左右只当上限』）。"""
+    agent, seen = _capture_search()
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={}, raw_text="附近人均一百左右的餐厅"))
+    assert seen["price_min"] == 60.0 and seen["price_max"] == 140.0
+
+
+def test_search_price_within_is_upper_bound_only():
+    agent, seen = _capture_search()
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={}, raw_text="人均一百以内的火锅"))
+    assert seen["price_min"] == 0.0 and seen["price_max"] == 100.0
+
+
+def test_search_open_now_parsed_from_raw_text():
+    agent, seen = _capture_search()
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={"cuisine": "火锅"}, raw_text="附近现在营业的火锅"))
+    assert seen["open_now"] is True
+
+
+def test_search_raw_price_band_overrides_llm_price_max_slot():
+    """LLM 把『一百』填进 price_max 槽，但原话是『左右』→ 用原话区间(带下限)，不被纯上限盖过。"""
+    agent, seen = _capture_search()
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={"price_max": "100"}, raw_text="附近人均一百左右的餐厅"))
+    assert seen["price_min"] == 60.0 and seen["price_max"] == 140.0

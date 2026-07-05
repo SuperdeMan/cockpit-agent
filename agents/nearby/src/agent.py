@@ -69,17 +69,6 @@ def _clean_name(raw: str) -> str:
 
 
 # ── 发现说法解析（不依赖弱 LLM 填槽，从原话/关键词兜底）──
-_PROXIMITY_RE = re.compile(
-    r"附近的?|周边的?|就近的?|最近的?|旁边的?|这边的?|一带的?|附近有|"
-    r"哪儿?有|哪里有|有没有|有什么|有啥|找个?|找家|找点|来个?|来点|"
-    r"推荐个?|推荐家|推荐点|想吃个?|想去个?|什么|好吃的?|好玩的?")
-
-
-def _strip_proximity(text: str) -> str:
-    """剥掉「附近/周边/哪有/找个/有什么好吃的」等发现措辞，留核心类目词。"""
-    return _PROXIMITY_RE.sub("", text or "").strip(" 的，。、")
-
-
 _CN_NUM = {"十": 10, "二十": 20, "三十": 30, "四十": 40, "五十": 50, "六十": 60,
            "七十": 70, "八十": 80, "九十": 90, "一百": 100, "两百": 200, "二百": 200,
            "三百": 300, "四百": 400, "五百": 500, "百": 100}
@@ -89,27 +78,55 @@ def _cn_to_int(s: str) -> int:
     return int(s) if s.isdigit() else _CN_NUM.get(s, 0)
 
 
+# 价位（区间）：『一百以内』→(0,100)、『二百以上』→(200,0)、『一百左右』→(60,140，约±40%）
 _PRICE_RE = re.compile(
-    r"(?:人均|均价|价位|预算|不超过|不过)?\s*([0-9]{2,4}|[一二两三四五六七八九十百]+)\s*"
-    r"(?:元|块钱|块)?\s*(以内|以下|之内|左右|上下|封顶)")
+    r"(?:人均|均价|价位|预算|不超过|不高于)?\s*([0-9]{2,4}|[一二两三四五六七八九十百]+)\s*"
+    r"(?:元|块钱|块)?\s*(以内|以下|之内|封顶|左右|上下|以上|起)")
+_SORT_RATING_RE = re.compile(r"评分高|高分|口碑好?|好评|人气高?|评价高|最好的")
+_OPEN_NOW_RE = re.compile(r"营业中|还(在)?营业|正在营业|现在营业|营业吗|还开(着|门)?|没(有)?关门|开着(吗|的)?")
+# 查询动词 + 发现措辞：route_hint 把整句灌进 keyword 时，须剥掉才能得干净类目/菜系词
+_PROXIMITY_RE = re.compile(
+    r"帮(我|忙)一?下?|给我|替我|我想|我要|想要|请问?|麻烦|帮忙|"
+    r"查一?查|查一下|查询|查找|查看|搜一?搜|搜一下|搜索|找一?找|看一?看|看下|瞧瞧|了解一?下?|"
+    r"附近的?|周边的?|就近的?|最近的?|旁边的?|这边的?|一带的?|附近有|"
+    r"哪儿?有|哪里有|有没有|有什么|有啥|找个?|找家|找点|来个?|来点|"
+    r"推荐个?|推荐家|推荐点|想吃个?|想去个?|什么|好吃的?|好玩的?")
 
 
-def _parse_price(text: str) -> float:
-    """从原话解析人均上限：『一百以内』→100、『80块以下』→80、『150左右』→约195。解析不出返回 0。"""
+def _strip_proximity(text: str) -> str:
+    return _PROXIMITY_RE.sub("", text or "").strip(" 的，。、")
+
+
+def _strip_qualifiers(text: str) -> str:
+    """从关键词里剥掉价位/评分/营业/查询措辞，留核心类目/菜系词（『人均一百左右的火锅』→火锅）。"""
+    s = _PRICE_RE.sub("", text or "")
+    s = _SORT_RATING_RE.sub("", s)
+    s = _OPEN_NOW_RE.sub("", s)
+    return _strip_proximity(s)
+
+
+def _parse_price(text: str) -> tuple[float, float]:
+    """从原话解析人均区间 (下限, 上限)，0=该端不限。解析不出→(0,0)。"""
     m = _PRICE_RE.search(text or "")
     if not m:
-        return 0.0
+        return (0.0, 0.0)
     n = _cn_to_int(m.group(1))
     if n <= 0:
-        return 0.0
-    return float(round(n * 1.3)) if m.group(2) in ("左右", "上下") else float(n)
-
-
-_SORT_RATING_RE = re.compile(r"评分高|高分|口碑好?|好评|人气高?|评价高|最好的")
+        return (0.0, 0.0)
+    q = m.group(2)
+    if q in ("左右", "上下"):
+        return (float(round(n * 0.6)), float(round(n * 1.4)))
+    if q in ("以上", "起"):
+        return (float(n), 0.0)
+    return (0.0, float(n))                          # 以内/以下/之内/封顶
 
 
 def _parse_sort(text: str) -> str:
     return "rating" if _SORT_RATING_RE.search(text or "") else ""
+
+
+def _parse_open_now(text: str) -> bool:
+    return bool(_OPEN_NOW_RE.search(text or ""))
 
 
 class NearbyAgent(BaseAgent):
@@ -160,15 +177,19 @@ class NearbyAgent(BaseAgent):
 
     @staticmethod
     def _build_keyword(category, cuisine, brand, kw_slot) -> str:
-        """高德检索词：品牌/菜系优先；否则剥掉发现措辞后的关键词（『附近的火锅』→火锅）；再退类目词。"""
+        """高德检索词：品牌/菜系优先；设施/类型类目（停车场/充电站/酒店…）直接用干净类目词，
+        避免把带动词/价位的整句（『帮我查一查人均百元的停车场』）当关键词；仅餐饮用剥壳后的具体词。"""
         if brand:
             return brand
         if cuisine:
             return cuisine
-        cleaned = _strip_proximity(kw_slot)
+        cat_kw = _CATEGORY_KEYWORD.get(category)
+        if cat_kw and category not in _FOOD_CATS:      # 设施/非餐饮类目 → 干净类目词
+            return cat_kw
+        cleaned = _strip_qualifiers(kw_slot)           # 餐饮：剥掉价位/评分/动词后的具体词（火锅/川菜）
         if cleaned and cleaned not in ("地点", "的"):
             return cleaned
-        return _CATEGORY_KEYWORD.get(category, category or "美食")
+        return cat_kw or "美食"
 
     @staticmethod
     def _item(p: Place) -> dict:
@@ -195,20 +216,24 @@ class NearbyAgent(BaseAgent):
         keyword = self._build_keyword(category, cuisine, brand, kw_slot)
         raw = intent.raw_text or ""
         rating_min = _to_float(intent.slots.get("rating_min"))
-        # 价位/排序：弱 LLM 常漏填槽位 → 从原话兜底解析（『一百以内』『评分高』）
-        price_max = _to_float(intent.slots.get("price_max")) or _parse_price(raw + " " + kw_slot)
+        # 价位/排序/营业中：原话解析优先（『一百左右』的区间语义只在原话里，LLM 填的 price_max
+        # 槽位会丢下限 → 之前『左右』返回太便宜的）；原话无价位再退回 LLM 槽位。
+        price_min, price_max = _parse_price(raw + " " + kw_slot)
+        if not (price_min or price_max):
+            price_max = _to_float(intent.slots.get("price_max"))
         sort = (intent.slots.get("sort") or "").strip() or _parse_sort(raw)
+        open_now = str(intent.slots.get("open_now") or "").lower() in ("1", "true", "yes") \
+            or _parse_open_now(raw)
         near = self._near(intent, meta)
 
+        skw = dict(category=category, near=near, rating_min=rating_min,
+                   price_min=price_min, price_max=price_max, brand=brand,
+                   sort=sort, open_now=open_now, meta=meta)
         try:
-            results = await self.place.search(
-                keyword, category=category, near=near, rating_min=rating_min,
-                price_max=price_max, brand=brand, sort=sort, meta=meta)
+            results = await self.place.search(keyword, **skw)
         except ProviderError as e:
             logger.warning("place search failed, fallback to mock: %s", e)
-            results = await self._fallback.search(
-                keyword, category=category, near=near, rating_min=rating_min,
-                price_max=price_max, brand=brand, sort=sort, meta=meta)
+            results = await self._fallback.search(keyword, **skw)
 
         label = cuisine or brand or keyword
         if not results:
@@ -246,7 +271,10 @@ class NearbyAgent(BaseAgent):
         return "、".join(m.get("text", "") for m in mems if m.get("text"))[:60]
 
     async def _detail(self, intent, ctx, meta) -> AgentResult:
-        place_id = (intent.slots.get("poi_id") or intent.slots.get("id") or "").strip()
+        # HMI「第N个详情」handoff 透传所选项的高德 POI id（meta.nearby_poi_id）→ 精确取详情，
+        # 不再按店名重搜（高德对店名可能返回别的分店 → 之前「详情不在列表中」）。
+        place_id = ((meta or {}).get("nearby_poi_id") or intent.slots.get("poi_id")
+                    or intent.slots.get("id") or "").strip()
         name = (intent.slots.get("name") or intent.slots.get("restaurant_name") or "").strip()
         if name:
             name = _clean_name(name)

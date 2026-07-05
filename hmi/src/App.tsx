@@ -67,6 +67,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const justCancelledRef = useRef(false)
   // 上一条 poi_list 的候选名（供「第一个/第二个」语音选择就近导航；见 resolvePoiSelection）
   const lastPoiNamesRef = useRef<string[] | null>(null)
+  // 周边发现 place_list 候选项（含高德 POI id）：「看第N个详情」透传 id 精确取详情，不按名重搜
+  const lastPlaceItemsRef = useRef<Array<{ id: string; name: string }> | null>(null)
   // 充电目的地候选（dest_choice）名：「第N个」回填目的地槽位续接规划，而非发起导航
   const lastDestChoiceRef = useRef<string[] | null>(null)
   // 顺路停靠候选（waypoint_choice）：「第N个」派发「导航去{目的地}途经{名称}」→ 落途经点
@@ -335,6 +337,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           lastDestChoiceRef.current = null
           lastWaypointChoiceRef.current = null
           lastPoiNamesRef.current = null
+          lastPlaceItemsRef.current = null
           if (c?.type === 'poi_list' && c.purpose === 'dest_choice') {
             lastDestChoiceRef.current = names
           } else if (c?.type === 'poi_list' && c.purpose === 'waypoint_choice') {
@@ -349,6 +352,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           } else if (c?.type === 'place_list') {
             // 周边发现列表：复用「第N个」handoff（导航去/看详情）；不走 navigation 的「换一批」翻页
             lastPoiNamesRef.current = names
+            lastPlaceItemsRef.current = (c.items || []).map((it: any) => ({ id: String(it.id || ''), name: it.name }))
             categoryRef.current = null
           }
         }
@@ -511,14 +515,16 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         return
       }
     }
-    // 周边发现「看第N个详情/第N个怎么样」：对照上一条候选 → 改写为「看{名称}的详情」→ nearby.detail。
-    // 用非锚定 ordinalIn（poiSelectionIndex 整句锚定，抓不到「看第八个的详情」里的序号 → 之前总退化到第一个）。
-    const detailNames = lastPoiNamesRef.current
-    if (detailNames && detailNames.length &&
+    // 周边发现「看第N个详情/第N个怎么样」：对照上一条候选 → 改写为「看{名称}的详情」并透传高德
+    // POI id（精确取详情，不按名重搜，修「详情不在列表中」）。用非锚定 ordinalIn（poiSelectionIndex
+    // 整句锚定，抓不到「看第八个的详情」里的序号 → 之前总退化到第一个）。
+    const placeItems = lastPlaceItemsRef.current
+    if (placeItems && placeItems.length &&
         /详情|详细|怎么样|好不好|评分|人均|多少钱|电话|营业|几点[关开]/.test(text)) {
       const idx = ordinalIn(text)
-      if (idx >= 0 && idx < detailNames.length) {
-        dispatch(`看${detailNames[idx]}的详情`, false)
+      if (idx >= 0 && idx < placeItems.length) {
+        const it = placeItems[idx]
+        dispatch(`看${it.name}的详情`, false, undefined, it.id ? { nearby_poi_id: it.id } : undefined)
         return
       }
     }

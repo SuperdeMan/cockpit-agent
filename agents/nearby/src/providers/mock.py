@@ -1,6 +1,6 @@
 """Mock 周边 Provider。PoC / 离线 / 单测 / 降级兜底用（确定性富假数据）。"""
 from __future__ import annotations
-from .base import PlaceProvider, Place
+from .base import PlaceProvider, Place, is_open_now
 
 # 类目 → 一批确定性示例名，让 mock 也能体现「多类目」
 _SAMPLE_NAMES = {
@@ -23,9 +23,10 @@ def _names_for(category: str, keyword: str) -> list[str] | None:
 
 class MockPlaceProvider(PlaceProvider):
     async def search(self, keyword, *, category="", near=None, rating_min=0,
-                     price_max=0, brand="", open_now=False, sort="", limit=10, page=1,
-                     meta=None) -> list[Place]:
+                     price_min=0, price_max=0, brand="", open_now=False, sort="",
+                     limit=10, page=1, meta=None) -> list[Place]:
         base_names = _names_for(category, keyword)
+        price_active = price_min > 0 or price_max > 0
         start = (max(1, page) - 1) * limit
         out: list[Place] = []
         for i in range(1, limit + 1):
@@ -46,7 +47,11 @@ class MockPlaceProvider(PlaceProvider):
             )
             if rating_min and p.rating < rating_min:
                 continue
-            if price_max and float(p.cost or 0) > price_max:
+            if price_active:
+                c = float(p.cost or 0)
+                if not p.cost or (price_min and c < price_min) or (price_max and c > price_max):
+                    continue
+            if open_now and is_open_now(p.open_today) is False:
                 continue
             out.append(p)
         if sort == "rating":

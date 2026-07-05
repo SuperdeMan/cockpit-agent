@@ -12,7 +12,7 @@ import logging
 import re
 
 from agents._sdk.http import AsyncHttpClient, ProviderError
-from .base import PlaceProvider, Place, GeoPoint
+from .base import PlaceProvider, Place, GeoPoint, is_open_now
 
 logger = logging.getLogger("agent.nearby.amap")
 
@@ -112,12 +112,11 @@ class AmapPlaceProvider(PlaceProvider):
         )
 
     async def search(self, keyword, *, category="", near=None, rating_min=0,
-                     price_max=0, brand="", open_now=False, sort="", limit=10, page=1,
-                     meta=None) -> list[Place]:
+                     price_min=0, price_max=0, brand="", open_now=False, sort="",
+                     limit=10, page=1, meta=None) -> list[Place]:
         loc = await self._resolve_location(near, meta)
         common = {"keywords": keyword,
-                  # 多取一些余量供客户端过滤（评分/人均）后仍够 limit
-                  "page_size": str(max(1, min(limit * 2, 25))),
+                  "page_size": "25",   # 多取候选供客户端过滤（价位区间/营业中）后仍够 limit
                   "page_num": str(max(1, page)),
                   "show_fields": _SHOW_FIELDS}
         if loc:  # 有位置 → 周边搜索（带 distance）
@@ -125,14 +124,22 @@ class AmapPlaceProvider(PlaceProvider):
                                    "place_around", meta)
         else:    # 无位置 → 关键字检索
             data = await self._get("/v5/place/text", common, "place_text", meta)
+        price_active = price_min > 0 or price_max > 0
         results: list[Place] = []
         for p in (data.get("pois") or []):
             place = self._place_from(p)
             if rating_min and place.rating < float(rating_min):
                 continue
-            if price_max and place.cost and self._parse_cost(place.cost) > float(price_max):
+            if price_active:
+                if not place.cost:                 # 价位查询丢无人均（用户问价，只给有价的）
+                    continue
+                c = self._parse_cost(place.cost)
+                if price_min and c < float(price_min):
+                    continue
+                if price_max and c > float(price_max):
+                    continue
+            if open_now and is_open_now(place.open_today) is False:  # 明确闭店才剔，未知保留
                 continue
-            # open_now 精确过滤（解析 opentime_today）留 P1；此处接受参数不过滤，避免误剔。
             results.append(place)
             if len(results) >= limit:
                 break
@@ -144,12 +151,16 @@ class AmapPlaceProvider(PlaceProvider):
         if not place_id:
             if not name:
                 raise ProviderError("amap detail: need place_id or name")
-            found = await self.search(name, near=near, limit=1, meta=meta)
+            found = await self.search(name, near=near, limit=5, meta=meta)
             if not found:
                 raise ProviderError(f"amap detail: no result for name={name}")
-            if not found[0].id:
-                return found[0]  # 无 id 直接返回搜索结果（已含富字段）
-            place_id = found[0].id
+            # 按名取详情：优先名称精确/包含匹配的那个，避免高德把别的分店排前（「详情不在列表中」）
+            best = (next((f for f in found if f.name == name), None)
+                    or next((f for f in found if name in f.name or f.name in name), None)
+                    or found[0])
+            if not best.id:
+                return best  # 无 id 直接返回搜索结果（已含富字段）
+            place_id = best.id
         data = await self._get("/v5/place/detail",
                                {"id": place_id, "show_fields": _SHOW_FIELDS},
                                "place_detail", meta)

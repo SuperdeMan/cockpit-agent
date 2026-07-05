@@ -355,4 +355,11 @@ export type PlaceDetailCard = {
 
 **真栈发现并修复——第三方出站代理原是空壳**：nearby 初配 `HTTP_PROXY=http-proxy:8080`（ws8 沙箱）时真调用全 `All connection attempts failed` → 降级 mock。根因=`deploy/envoy-proxy.yaml` 的 http-proxy **不是可用正向代理**：它是 `http_connection_manager` 把所有 `/` round-robin 混发到 amap/serpapi/qweather 等 5 个上游、且不支持 HTTPS 的 `CONNECT` 隧道——旧 food-ordering/parking 全 mock，**这条沙箱→代理→外网路径从未被真调用压过**，是 ws8 遗留空壳（非本次重构引入）。**修复**：http-proxy 换成 `deploy/egress-proxy.py`（约 90 行纯 stdlib 的 CONNECT 正向代理 + 域名白名单默认拒绝，跑在已有 `python:3.11-slim`、不引新镜像；先试 envoy `dynamic_forward_proxy`+CONNECT 实测隧道跑不通、终结 CONNECT 那套过于挑，遂放弃）。**真栈验证**：`curl -x proxy https://restapi.amap.com` = **200**（日志 ALLOW）、`https://www.google.com` = **403**（日志 DENY）；nearby 经代理取真高德数据 **0 降级**。至此 nearby（第三方）出站**真正受白名单约束**（仅可达 `restapi.amap.com` 等厂商域名，越权域名 403），既补上 ws8 空壳、也比其余直连 Agent 更严。envoy-proxy.yaml 留作历史参考。
 
-**P0 未覆盖（转 P1）**：HMI 浏览器像素级渲染 + 「第N个」handoff 的 CDP 实测（数据契约已验、组件已编译通过）；`open_now` 营业中过滤 / `sort=rating` 精修；详情卡图片 CSP 验证。
+**二轮真机实测修复（泓舟，2026-07-05）+ CDP 复验**：
+- ① 价位『左右』改**区间**过滤（`一百左右`→[60,140]，剔太便宜/太贵/无人均；**原话解析优先于 LLM 槽位**——LLM 把『一百』填进 price_max 会丢下限）；真栈实测 `一百左右`→全 [60,140]、`三十左右`→[18,42]。
+- ② 充电/停车关键词剥掉查询动词（`帮我查一查附近的停车场`→`停车场`；设施类目直接用干净类目词），修『为您找到 1 家查查停车场』。
+- ③ `open_now` 营业中过滤落地（`base.is_open_now` 解析营业时段判此刻，跨零点/多段/24 小时；北京时区）。
+- ④ 「第N个详情」handoff 透传高德 **POI id**（`meta.nearby_poi_id`）精确取详情 + provider 按名取详情优先精确匹配，修『返回第一个 / 不在列表中的分店』；**CDP 实测**「看第八个的详情」→ 列表第 8 项国家大剧院西餐厅精确命中。
+- 详情卡图片 URL 实测 `200 image/jpeg`（有效；无头截图早于外链大图加载完成故显占位，非 bug）。CDP 截图确认 place_list/place_detail 卡渲染 + 导航/拨打按钮。
+
+**P1 余项**：P2 真实点单适配器（麦当劳/瑞幸 pre-order）；可选 `_sdk/amap` 共享抽取。
