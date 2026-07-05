@@ -48,6 +48,7 @@ function makeHarness(config = {}) {
     onWakeChime: rec('chime'),
     onDisableBargeIn: rec('disableBargeIn'),
     onExitAck: rec('exitAck'),
+    onCancelTurn: rec('cancelTurn'),
     config,
   })
 
@@ -468,6 +469,36 @@ test('U5b 宽限中拆机（handsFreeOff）→ 清待发前缀，grace 定时器
   assert.equal(h.vl.state, VoiceState.IDLE)
   h.advance(1000) // grace 已随拆机清除
   assert.equal(h.count('send'), 0)
+})
+
+test('U2 THINKING 真打断：处理中喊唤醒词 → 取消在飞轮 + 提示音 + 重新聆听', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('帮我查一个很复杂的问题吗') // 完整句 → 送出进 THINKING
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  h.vl.wake() // 处理中喊「小舟小舟」
+  assert.equal(h.count('cancelTurn'), 1) // 请求取消在飞的云端处理
+  assert.equal(h.count('chime'), 2)      // 唤醒 + 打断各一次
+  assert.equal(h.vl.state, VoiceState.LISTENING) // 重新聆听
+})
+
+test('U2 THINKING 期 VAD speech 不打断（仅唤醒词可打断，防环境音误触）', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.advance(400)
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('讲个笑话')
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  h.vl.vadSpeechStart() // THINKING 期的 speech（环境音）
+  h.advance(500)
+  assert.equal(h.count('cancelTurn'), 0)
+  assert.equal(h.vl.state, VoiceState.THINKING) // 岿然不动
 })
 
 test('orbState 映射：各态对应 AuroraOrb 视觉态', () => {

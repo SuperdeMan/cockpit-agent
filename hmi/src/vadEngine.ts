@@ -36,6 +36,8 @@ export class VadEngine {
   private starting = false // A3：running 在若干 await 后才置位，同步 starting 标志堵并发 start 穿透
   private ownsStream = true // false=用控制器传入的共享流（架构债 A），stop 时不停其 tracks
   private chain: Promise<void> = Promise.resolve()
+  // R4.3b P2（U4 根治）：VAD 帧旁路 tap——控制器订阅它喂 PcmRing 前滚缓冲 + PCM 直传流。
+  onFrame: ((frame: Float32Array) => void) | null = null
 
   constructor(silenceTailMs = 800) {
     this.ep = new SileroEndpoint({ minSilenceMs: silenceTailMs })
@@ -88,6 +90,7 @@ export class VadEngine {
 
   // 串行化推理，保证 h/c 状态连续、端点计时不乱（silero ~1-3ms << 32ms 帧间隔，不会积压）
   private enqueue(frame: Float32Array, cb: VadCallbacks): void {
+    this.onFrame?.(frame) // P2：同一帧旁路给 PcmRing/PCM 直传（同步、在推理入队前，保证帧序）
     this.chain = this.chain.then(() => this.infer(frame, cb)).catch((err) => cb.onError?.(String(err)))
   }
 

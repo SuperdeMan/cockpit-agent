@@ -1,5 +1,6 @@
 // 音频层：录音控制器（修掉 ASR 收音竞态）+ 增量 TTS 播放队列 + 音色查询。
 import { OrderedPlaybackQueue, TtsTextBuffer } from './ttsQueue.mjs'
+import { float32ToInt16, int16ToWav } from './pcmRing.mjs'
 //
 // 旧实现的收音失败根因（task 3 前端侧）：
 //  1. startRecording 是 async，快按快松时 MediaRecorder 还没 start()，
@@ -360,6 +361,7 @@ type StreamOpts = {
   language: string
   provider: string
   model: string
+  vadSilenceMs?: number // R4.3b P2（U5b 治本）：客户端静音尾透传给 qwen3 server_vad（hands-free 传，push-to-talk 不传）
   onPartial?: (text: string) => void
   onFinal?: (text: string) => void
   onError?: (msg: string) => void // 触发批处理回退
@@ -379,6 +381,11 @@ export class StreamingRecognizer {
   private mime = ''
   private apiBase = '' // 由 wsUrl 反推，供批处理兜底调 /api/asr
   private fallbackTimer: number | null = null // rec.onstop 挂的 7s 兜底 timer 句柄（A1：cleanup 时清）
+  // R4.3b P2 PCM 直传（U4 根治）：VAD 帧喂入、无 MediaRecorder；pcmSendBuf 攒 ~100ms 聚包，pcmChunks 全量供 WAV 兜底
+  private pcmMode = false
+  private pcmSendBuf: Int16Array[] = []
+  private pcmChunks: Int16Array[] = []
+  private opts: StreamOpts | null = null // 供 stop() 的兜底 timer 取回调（webm 走闭包，PCM 走此）
 
   get active(): boolean {
     return !!this.rec || !!this.ws
@@ -426,6 +433,7 @@ export class StreamingRecognizer {
       ws.send(JSON.stringify({
         type: 'start', format: containerOf(mime || 'audio/webm'),
         language: opts.language, provider: opts.provider, model: opts.model,
+        ...(opts.vadSilenceMs ? { vad_silence_ms: opts.vadSilenceMs } : {}), // B2 静音尾透传
       }))
       for (const b of preOpenBuf) sendBlob(b) // 先行采集的分片按序补发（webm 头在 preOpenBuf[0]）
       preOpenBuf.length = 0
@@ -473,8 +481,90 @@ export class StreamingRecognizer {
     rec.start(250) // 250ms 分帧
   }
 
+  /** PCM 直传模式（R4.3b P2 U4 根治）：不用 MediaRecorder，改由控制器 pushFrame 喂 16k mono Float32 VAD 帧。
+   *  preRoll = PcmRing 取的前滚缓冲（KWS 检测窗那段没被 MediaRecorder 采到的音频），随 start 先发。 */
+  async startPcm(wsUrl: string, opts: StreamOpts, preRoll?: Float32Array): Promise<void> {
+    if (this.active || this.starting) return
+    this.starting = true
+    try {
+      this.finished = false
+      this.opened = false
+      this.pcmMode = true
+      this.opts = opts
+      this.pcmSendBuf = []
+      this.pcmChunks = []
+      if (this.fallbackTimer !== null) { clearTimeout(this.fallbackTimer); this.fallbackTimer = null }
+      this.apiBase = wsUrl.replace(/\/api\/asr\/stream$/, '').replace(/^ws/, 'http')
+      const ws = new WebSocket(wsUrl)
+      ws.binaryType = 'arraybuffer'
+      this.ws = ws
+      ws.onopen = () => {
+        this.opened = true
+        ws.send(JSON.stringify({
+          type: 'start', format: 'pcm16le', sample_rate: 16000,
+          language: opts.language, provider: opts.provider, model: opts.model,
+          ...(opts.vadSilenceMs ? { vad_silence_ms: opts.vadSilenceMs } : {}),
+        }))
+        if (preRoll && preRoll.length) {
+          const i16 = float32ToInt16(preRoll)
+          this.pcmSendBuf.unshift(i16) // 前滚缓冲在最前（早于握手期喂入的实时帧）
+          this.pcmChunks.unshift(i16)
+        }
+        this._pcmFlush(true)
+      }
+      ws.onmessage = (ev) => {
+        let m: any
+        try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : '{}') } catch { return }
+        if (m.type === 'partial') { if (this.finished) return; opts.onPartial?.(m.text || '') }
+        else if (m.type === 'final') { if (this.finished) return; this.finished = true; opts.onFinal?.(m.text || '') }
+        else if (m.type === 'done') this.cleanup()
+        else if (m.type === 'unsupported' || m.type === 'error') this.tryBatchFallback(m.message || '流式识别不可用', opts)
+      }
+      ws.onerror = () => { if (!this.opened) this.tryBatchFallback('语音流连接失败', opts) }
+      ws.onclose = () => { if (!this.opened && !this.finished) this.tryBatchFallback('语音流已断开', opts) }
+    } finally {
+      this.starting = false
+    }
+  }
+
+  /** 喂一帧 VAD 音频（Float32 16k mono）——PCM 模式下由控制器订阅 vadEngine.onFrame 调用。 */
+  pushFrame(frame: Float32Array): void {
+    if (!this.pcmMode || this.finished || !frame || !frame.length) return
+    const i16 = float32ToInt16(frame)
+    this.pcmChunks.push(i16) // 全量供 WAV 批处理兜底
+    this.pcmSendBuf.push(i16)
+    this._pcmFlush(false)
+  }
+
+  // 攒够 ~100ms（1600 samples @16k）或 force 时，合并 pcmSendBuf 成一个 Int16Array 发出（ws 未 open 则留存）。
+  private _pcmFlush(force: boolean): void {
+    const ws = this.ws
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    let total = 0
+    for (const a of this.pcmSendBuf) total += a.length
+    if (total === 0 || (!force && total < 1600)) return
+    const merged = new Int16Array(total)
+    let o = 0
+    for (const a of this.pcmSendBuf) { merged.set(a, o); o += a.length }
+    this.pcmSendBuf = []
+    try { ws.send(merged.buffer) } catch {/* 帧丢弃静默 */}
+  }
+
   /** 松手/点停：停录音并请求定稿（WS 待 final/done 后自清理）。 */
   stop(): void {
+    if (this.pcmMode) {
+      this._pcmFlush(true) // flush 余帧
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try { this.ws.send(JSON.stringify({ type: 'stop' })) } catch {/* ignore */}
+      }
+      if (this.fallbackTimer === null) {
+        this.fallbackTimer = window.setTimeout(() => {
+          this.fallbackTimer = null
+          if (!this.finished && this.opts) this.tryBatchFallback('识别超时', this.opts)
+        }, 7000)
+      }
+      return
+    }
     if (this.rec && this.rec.state !== 'inactive') {
       try { this.rec.stop() } catch { this.cleanup() }
     } else {
@@ -487,6 +577,27 @@ export class StreamingRecognizer {
   private tryBatchFallback(msg: string, opts: StreamOpts): void {
     if (this.finished) return
     this.finished = true
+    if (this.pcmMode) {
+      // PCM 模式兜底：全量 Int16 加 WAV 头走 /api/asr（format:wav）
+      const chunks = this.pcmChunks
+      this.pcmChunks = []
+      let total = 0
+      for (const a of chunks) total += a.length
+      if (total && this.apiBase) {
+        const merged = new Int16Array(total)
+        let o = 0
+        for (const a of chunks) { merged.set(a, o); o += a.length }
+        const blob = new Blob([int16ToWav(merged, 16000)], { type: 'audio/wav' })
+        recognize(this.apiBase, blob, 'wav', opts.language)
+          .then((text) => (text ? opts.onFinal?.(text) : opts.onError?.(msg)))
+          .catch(() => opts.onError?.(msg))
+          .finally(() => this.cleanup())
+      } else {
+        opts.onError?.(msg)
+        this.cleanup()
+      }
+      return
+    }
     const chunks = this.chunks
     this.chunks = []
     if (chunks.length && this.apiBase && this.mime) {
@@ -512,6 +623,10 @@ export class StreamingRecognizer {
     this.stream = null
     this.ws = null
     this.chunks = []
+    this.pcmMode = false
+    this.pcmSendBuf = []
+    this.pcmChunks = []
+    this.opts = null
   }
 }
 

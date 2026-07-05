@@ -73,18 +73,41 @@ def _synth_wav(text: str):
         return None
 
 
-async def _stream_asr(audio: bytes) -> dict:
-    """按前端协议驱动 /api/asr/stream，收集消息。
+def _wav_to_s16le_16k_mono(wav_bytes: bytes):
+    """把 TTS 的 wav 转成 16k mono s16le 裸 PCM（供 PCM 直传路径）；audioop 不可用则返回 None。"""
+    try:
+        import audioop
+        import io
+        import wave
+        with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+            ch, sw, fr, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+            pcm = w.readframes(n)
+        if sw != 2:
+            pcm = audioop.lin2lin(pcm, sw, 2)
+            sw = 2
+        if ch == 2:
+            pcm = audioop.tomono(pcm, sw, 0.5, 0.5)
+        if fr != 16000:
+            pcm, _ = audioop.ratecv(pcm, sw, 1, fr, 16000, None)
+        return pcm
+    except Exception as e:  # audioop 在 3.13 移除；非 wav 等
+        print(f"  wav→s16le 转换不可用（{e}）——跳过 PCM 直传校验")
+        return None
+
+
+async def _stream_asr(audio: bytes, fmt: str = "wav", vad_silence_ms=None) -> dict:
+    """按前端协议驱动 /api/asr/stream，收集消息。fmt=pcm16le 时走 PCM 直传（跳网关 ffmpeg）。
 
     返回 {terminal, partials, final_text, msgs}；terminal ∈ {done,error,unsupported,timeout,None}。
     """
     out = {"terminal": None, "partials": 0, "final_text": None, "msgs": []}
     async with websockets.connect(ASR_WS, max_size=8 * 1024 * 1024) as ws:
-        await ws.send(json.dumps({
-            "type": "start", "format": "wav", "language": "zh",
-            "provider": PROVIDER, "model": MODEL,
-        }))
-        chunk = 8192  # 分帧推，模拟前端 MediaRecorder 边录边推
+        start = {"type": "start", "format": fmt, "language": "zh",
+                 "provider": PROVIDER, "model": MODEL}
+        if vad_silence_ms is not None:
+            start["vad_silence_ms"] = vad_silence_ms
+        await ws.send(json.dumps(start))
+        chunk = 8192  # 分帧推，模拟前端 MediaRecorder / PCM 聚包边录边推
         for i in range(0, len(audio), chunk):
             await ws.send(audio[i:i + chunk])
             await asyncio.sleep(0.02)
@@ -152,6 +175,32 @@ async def main() -> int:
             print(f"  ✓ 流式识别产出文本（partial×{r['partials']}, final={r['final_text']!r}）——上屏/定稿通路通")
         else:
             print("  ⚠ provider 跑完但无 partial/final（合成音频未被识别）——协议正常")
+
+    # 3) R4.3b P2 B1：PCM 直传 round-trip（format:pcm16le 跳网关 ffmpeg）
+    print("\n--- P2 B1：PCM 直传（format:pcm16le，跳 ffmpeg）---")
+    pcm = _wav_to_s16le_16k_mono(audio)
+    if pcm:
+        try:
+            rp = await _stream_asr(pcm, fmt="pcm16le")
+            print(f"  PCM 消息序列：{rp['msgs'][:12]}  terminal：{rp['terminal']}")
+            if rp["terminal"] not in ("done", "error", "unsupported"):
+                fails.append(f"PCM 直传未收到终止消息（terminal={rp['terminal']}）——B1 路径挂起/断裂")
+            else:
+                print(f"  ✓ PCM 直传协议闭合（terminal={rp['terminal']}）——跳 ffmpeg 通路通")
+        except Exception as e:
+            fails.append(f"PCM 直传连接/协议异常：{e}")
+
+    # 4) R4.3b P2 B2：vad_silence_ms 透传后会话仍正常定稿（值被夹紧，qwen3 session.update 消费）
+    print("\n--- P2 B2：vad_silence_ms 透传 ---")
+    try:
+        rv = await _stream_asr(audio, fmt="wav", vad_silence_ms=1200)
+        print(f"  透传 vad_silence_ms=1200 → terminal：{rv['terminal']}")
+        if rv["terminal"] not in ("done", "error", "unsupported"):
+            fails.append(f"vad_silence_ms 透传后未收到终止消息（terminal={rv['terminal']}）")
+        else:
+            print(f"  ✓ 透传后会话仍正常闭合（terminal={rv['terminal']}）")
+    except Exception as e:
+        fails.append(f"vad_silence_ms 透传异常：{e}")
 
     if fails:
         print("\n=== 失败 ===")

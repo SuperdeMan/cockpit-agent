@@ -25,6 +25,8 @@ from providers import build_asr_provider, build_streaming_asr_provider, build_tt
 logger = logging.getLogger("llm.http")
 
 _WAV_FORMATS = frozenset({"wav", "pcm", "pcm16"})
+# R4.3b P2 B1：流式 ASR 的「前端直传 s16le PCM」格式（跳过 ffmpeg，支持前滚缓冲注入根治漏字 U4）
+_PCM_STREAM_FORMATS = frozenset({"pcm16le", "s16le", "pcm", "pcm16"})
 
 
 async def _transcode_to_wav(audio_bytes: bytes, src_format: str) -> bytes:
@@ -179,6 +181,8 @@ def create_http_app() -> web.Application:
         ffmpeg = None
         tasks: list = []
         pcm_queue: asyncio.Queue = asyncio.Queue()
+        pcm_direct = False  # True=前端直传 s16le PCM（跳 ffmpeg，B1）
+        started = False     # 已收到 start（防重复；PCM 模式无 ffmpeg 句柄可判）
 
         async def pcm_iter():
             while True:
@@ -224,25 +228,40 @@ def create_http_app() -> web.Application:
                     data = json.loads(msg.data)
                     mtype = data.get("type")
                     if mtype == "start":
-                        if ffmpeg is not None:
+                        if started:
                             continue
                         provider = build_streaming_asr_provider(
-                            data.get("provider", ""), data.get("model", ""))
+                            data.get("provider", ""), data.get("model", ""),
+                            vad_silence_ms=int(data.get("vad_silence_ms") or 0))  # B2 静音尾透传
                         if provider is None:
                             await ws.send_json({"type": "unsupported"})
                             continue
-                        ffmpeg = await asyncio.create_subprocess_exec(
-                            "ffmpeg", "-i", "pipe:0", "-ar", "16000", "-ac", "1",
-                            "-f", "s16le", "pipe:1",
-                            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.DEVNULL)
-                        tasks.append(asyncio.create_task(read_ffmpeg(ffmpeg)))
-                        tasks.append(asyncio.create_task(
-                            run_provider(provider, data.get("language", "zh"))))
+                        started = True
+                        fmt = (data.get("format", "") or "").lower()
+                        if fmt in _PCM_STREAM_FORMATS:
+                            # B1 PCM 直传：前端已转 16k mono s16le，BINARY 帧直入队列，跳 ffmpeg
+                            # （支持前滚缓冲注入根治 U4 漏字；webm 路径逐字不动）
+                            pcm_direct = True
+                            tasks.append(asyncio.create_task(
+                                run_provider(provider, data.get("language", "zh"))))
+                        else:
+                            ffmpeg = await asyncio.create_subprocess_exec(
+                                "ffmpeg", "-i", "pipe:0", "-ar", "16000", "-ac", "1",
+                                "-f", "s16le", "pipe:1",
+                                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.DEVNULL)
+                            tasks.append(asyncio.create_task(read_ffmpeg(ffmpeg)))
+                            tasks.append(asyncio.create_task(
+                                run_provider(provider, data.get("language", "zh"))))
                     elif mtype == "stop":
-                        _close_stdin()  # flush ffmpeg → 流末 → 引擎定稿
+                        if pcm_direct:
+                            await pcm_queue.put(None)  # 流末 → pcm_iter 收尾 → 引擎定稿
+                        else:
+                            _close_stdin()  # flush ffmpeg → 流末 → 引擎定稿
                 elif msg.type == aiohttp.WSMsgType.BINARY:
-                    if ffmpeg and ffmpeg.stdin and not ffmpeg.stdin.is_closing():
+                    if pcm_direct:
+                        await pcm_queue.put(bytes(msg.data))  # 已是 s16le，直接入队
+                    elif ffmpeg and ffmpeg.stdin and not ffmpeg.stdin.is_closing():
                         try:
                             ffmpeg.stdin.write(msg.data)
                             await ffmpeg.stdin.drain()
@@ -252,6 +271,8 @@ def create_http_app() -> web.Application:
                                   aiohttp.WSMsgType.CLOSING):
                     break
         finally:
+            if pcm_direct:
+                pcm_queue.put_nowait(None)  # 确保 pcm_iter 退出（重复 None 无害）
             _close_stdin()
             if ffmpeg:
                 try:

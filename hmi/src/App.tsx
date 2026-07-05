@@ -63,6 +63,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   // 最新一次 dispatch 的轮 id：speech 喂 TTS / setTtsText / setAwaitConfirm / 候选记录只认最新轮，
   // 旧轮（罕见双发或混合意图残留）的 final 只更新其气泡文本，静默不复读、不劫持确认条。
   const lastDispatchIdRef = useRef<string | null>(null)
+  // U2/P2 THINKING 真打断：客户端主动取消时置位，网关回的 cancelled 视为确认（不重复标记气泡）
+  const justCancelledRef = useRef(false)
   // 上一条 poi_list 的候选名（供「第一个/第二个」语音选择就近导航；见 resolvePoiSelection）
   const lastPoiNamesRef = useRef<string[] | null>(null)
   // 充电目的地候选（dest_choice）名：「第N个」回填目的地槽位续接规划，而非发起导航
@@ -151,6 +153,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       // 离开 LISTENING（发送/静默回收/打断）即清 partial——真实用户气泡由 send 接管，避免重影
       onOrbState: (orb) => { setHandsFreeOrb(orb); if (orb !== 'listening') setHandsFreePartial('') },
       onPartialText: (t) => setHandsFreePartial(t),
+      onCancelTurn: () => cancelCurrentTurn(), // U2：THINKING 期唤醒词打断 → 发网关取消 + 本地标「已打断」
       onNotice: (m) => setHandsFreeNotice(m),
       wakeWord: () => settingsRef.current.wakeWordEnabled,
       getWakeKeywords: () => wakeKeywordsFor(settingsRef.current.wakeWord),
@@ -384,6 +387,17 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       setAwaitConfirm(false)
       handsFreeRef.current?.turnEnded() // U2：error 分支也放 FSM 出 THINKING，否则 hands-free 卡死
     }
+    if (data.type === 'cancelled') {
+      // 网关确认已取消在飞请求（U2 真打断）。客户端主动打断时 cancelCurrentTurn 已本地标记 → 幂等忽略；
+      // 网关侧主动取消（新请求取消旧的，防御）时无本地标记 → 在此标 FIFO 头气泡为「已打断」。
+      if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
+      if (justCancelledRef.current) { justCancelledRef.current = false; return }
+      const id = pendingIdsRef.current.shift() ?? null
+      if (id) setMessages((m) => m.map((msg) =>
+        msg.id === id && (msg.pending || msg.streaming || msg.processActive)
+          ? { ...msg, pending: false, streaming: false, processActive: false, text: msg.text || '已打断', error: true }
+          : msg))
+    }
   }, [])
 
   // 请求看门狗：占位后 REQUEST_TIMEOUT_MS 内无 final/error → 转超时提示、停止转圈。
@@ -405,6 +419,21 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       stopTTS()
       handsFreeRef.current?.turnEnded() // U2：看门狗超时也放 FSM 出 THINKING
     }, REQUEST_TIMEOUT_MS)
+  }, [])
+
+  // U2/P2 THINKING 真打断：发网关取消在飞请求 + 本地把当前轮气泡标「已打断」。FSM 已并行进 LISTENING。
+  const cancelCurrentTurn = useCallback(() => {
+    const ws = wsRef.current
+    if (ws) ws.send({ type: 'cancel', session_id: SESSION })
+    justCancelledRef.current = true
+    if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
+    stopTTS()
+    setAwaitConfirm(false)
+    const id = pendingIdsRef.current.shift() ?? null
+    if (id) setMessages((m) => m.map((msg) =>
+      msg.id === id && (msg.pending || msg.streaming || msg.processActive)
+        ? { ...msg, pending: false, streaming: false, processActive: false, text: msg.text || '已打断', error: true }
+        : msg))
   }, [])
 
   const dispatch = (text: string, isConfirmation: boolean, locationOverride?: any,

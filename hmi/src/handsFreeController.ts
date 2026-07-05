@@ -5,6 +5,10 @@ import { VoiceLoop } from './voiceLoop.mjs'
 import { VadEngine } from './vadEngine'
 import { KwsEngine, DEFAULT_KEYWORDS } from './kwsEngine'
 import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues } from './audio'
+import { PcmRing } from './pcmRing.mjs'
+import { stripLeadingWakeWord } from './utteranceHeuristics.mjs'
+
+const PRE_ROLL_MS = 800 // R4.3b P2（U4）：开 ASR 时注入的前滚缓冲时长——覆盖 KWS 检测窗 + wake→ASR 就绪 gap
 
 // 唤醒提示语候选（issue①）：短促，唤醒时随机播一条求变化；回声靠 getUserMedia 的 AEC 兜底（同 barge-in 前提）。
 const WAKE_CUE_TEXTS = ['在呢', '我在', '你说', '请讲', '我在听']
@@ -18,6 +22,7 @@ export type HandsFreeDeps = {
   onStopTts: () => void
   onOrbState: (orb: string | null) => void // null = FSM 回 IDLE，交还 mic 态
   onPartialText?: (text: string) => void    // 聆听中的实时识别文字（issue②：hands-free 上屏）
+  onCancelTurn?: () => void                  // U2/P2：THINKING 期唤醒词打断 → App 发 {type:cancel} 给网关
   onNotice?: (msg: string) => void
   wakeWord?: () => boolean                   // 是否开唤醒词（KWS）
   getWakeKeywords?: () => string             // 选定唤醒词的 KWS pinyin token 串
@@ -44,6 +49,9 @@ export class HandsFreeController {
   // R4.3b P0（A1 陈旧 ASR 回调劫杀下一轮）：每条 ASR 会话一个代号，closeAsr 自增。
   // 陈旧会话（被静默回收/超时兜底）的 onPartial/onFinal/onError 代号不符即丢弃，绝不打扰下一轮 FSM。
   private asrGen = 0
+  // R4.3b P2（U4 根治）：前滚缓冲——VAD 帧持续入环，开 ASR 时取最近 PRE_ROLL_MS 注入 PCM 直传流，
+  // 补回 KWS 检测窗那段 MediaRecorder 采不到的音频。同一帧也喂当前 asr（PCM 模式）。
+  private pcmRing = new PcmRing(1500)
 
   constructor(deps: HandsFreeDeps) {
     this.deps = deps
@@ -64,6 +72,7 @@ export class HandsFreeController {
       onWakeChime: () => this.chime(),
       onDisableBargeIn: (r: string) => this.deps.onNotice?.('已关闭语音打断（' + r + '）'),
       onExitAck: () => this.exitAck(), // U3：退出词命中 → 播退场应答
+      onCancelTurn: () => this.deps.onCancelTurn?.(), // U2：THINKING 打断 → 透传 App 发网关取消
     })
   }
 
@@ -115,6 +124,9 @@ export class HandsFreeController {
       if (this.sharedStream === stream) { this.vad.stop(); this.sharedStream = null } // 已被更新 enable 接管则不动
       return false
     }
+    // P2：VAD 帧旁路——持续入前滚缓冲，且若 PCM 直传 ASR 已开则同帧喂入（保帧序）
+    this.pcmRing.clear()
+    this.vad.onFrame = (f) => { this.pcmRing.push(f); this.asr?.pushFrame(f) }
     this.on = true
     this.vl.handsFreeOn()
     this.refreshWakeCue() // 唤醒提示音预合成（best-effort，失败自动回退 beep）
@@ -127,9 +139,11 @@ export class HandsFreeController {
     if (!this.on) return
     this.on = false
     this.vl.handsFreeOff()
+    this.vad.onFrame = null // 停 VAD 帧旁路（前滚缓冲 + PCM 直传）
     this.vad.stop()
     this.kws.stop()
     this.closeAsr()
+    this.pcmRing.clear()
     this.sharedStream?.getTracks().forEach((t) => t.stop())
     this.sharedStream = null
     clearCues()
@@ -196,24 +210,36 @@ export class HandsFreeController {
   setSilenceTail(ms: number): void { this.vad.setSilenceTail(ms); this.vl.cfg.silenceTailMs = ms }
   setFollowupWindow(ms: number): void { this.vl.cfg.followupWindowMs = ms }
 
+  // 剥离前滚缓冲带入的唤醒词残留（「小舟小舟…」）——只用完整唤醒词 + 助手名，不用单字（避免「小明」被剥成「明」）。
+  private wakeStripWords(): string[] {
+    const display = (this.deps.getWakeKeywords?.() ?? DEFAULT_KEYWORDS).split('@')[1] || ''
+    const name = this.deps.getAssistantName?.() || ''
+    return [...new Set([display, name].filter(Boolean))]
+  }
+
   // ─── 内部 ───
+  // P2 PCM 直传（U4 根治）：不用 MediaRecorder，用 vadEngine.onFrame 喂帧 + 前滚缓冲；partial/final 剥唤醒词残留。
   private openAsr(): void {
     if (this.asr) return
     const cfg = this.deps.getAsrConfig()
     const gen = ++this.asrGen // 本条会话代号；下方回调只在代号仍为当前时才作数
     const fresh = () => gen === this.asrGen // 会话未被 closeAsr 取代
+    const words = this.wakeStripWords()
+    const strip = (t: string) => stripLeadingWakeWord(t, words)
     this.asr = new StreamingRecognizer()
+    const preRoll = this.pcmRing.takeLast(PRE_ROLL_MS) // 前滚缓冲（含 KWS 检测窗那段音频）
     void this.asr
-      .start(asrStreamUrl(this.deps.audioApi), {
+      .startPcm(asrStreamUrl(this.deps.audioApi), {
         language: cfg.language,
         provider: cfg.provider,
         model: cfg.model,
-        // partial 既喂 FSM（端点/回声判据）又上屏（issue②：hands-free 也边说边出字）
-        onPartial: (t) => { if (!fresh()) return; this.vl.asrPartial(t); this.deps.onPartialText?.(t) },
-        onFinal: (t) => { if (!fresh()) return; this.vl.asrFinal(t) },
+        vadSilenceMs: this.vl.cfg.silenceTailMs, // B2：客户端静音尾透传 qwen3 server_vad
+        // partial 剥唤醒词残留后既喂 FSM（端点/回声判据）又上屏（issue②：hands-free 边说边出字）
+        onPartial: (t) => { if (!fresh()) return; const s = strip(t); this.vl.asrPartial(s); this.deps.onPartialText?.(s) },
+        onFinal: (t) => { if (!fresh()) return; this.vl.asrFinal(strip(t)) },
         // A1：陈旧会话的兜底超时/断流 onError 到达时代号已变 → 丢弃，绝不用空 final 打回下一轮
         onError: (m) => { if (!fresh()) return; this.deps.onNotice?.('实时识别不可用：' + m); this.vl.asrFinal('') },
-      }, this.sharedStream ?? undefined)
+      }, preRoll)
       .catch((e) => { if (!fresh()) return; this.deps.onNotice?.('识别启动失败：' + e); this.vl.asrFinal('') })
   }
 

@@ -64,6 +64,7 @@ export class VoiceLoop {
       onWakeChime = () => {},      // 唤醒音效
       onDisableBargeIn = () => {}, // (reason) 连续自触发 → 本会话关 L3 + toast
       onExitAck = () => {},        // U3：命中退出/dismiss 词 → 播退场应答（外设播「好的」短语音）
+      onCancelTurn = () => {},     // U2/P2：THINKING 期唤醒词打断 → 请求取消在飞的云端处理
       config = {},
     } = opts
 
@@ -79,6 +80,7 @@ export class VoiceLoop {
     this.onWakeChime = onWakeChime
     this.onDisableBargeIn = onDisableBargeIn
     this.onExitAck = onExitAck
+    this.onCancelTurn = onCancelTurn
     this.cfg = { ...DEFAULTS, ...config }
 
     this.state = VoiceState.IDLE
@@ -220,6 +222,13 @@ export class VoiceLoop {
       // 唤醒词打断不受 300ms VAD 护栏约束（显式意图）；若唤醒词恰在播报文本内则由 Worker 抑制。
       this._clearPending()
       this.onStopTts()
+      this.onWakeChime()
+      this._enterListening()
+    } else if (this.state === VoiceState.THINKING) {
+      // U2 真打断（P2）：处理中喊唤醒词 → 取消在飞的云端处理 + 提示音 + 重新聆听。
+      // 仅 KWS 唤醒词可打断 THINKING（显式意图）；VAD speech 不行（THINKING 期环境音太易误触）。
+      this._clearPending()
+      this.onCancelTurn()
       this.onWakeChime()
       this._enterListening()
     }
