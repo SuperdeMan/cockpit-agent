@@ -259,6 +259,31 @@ test('无音频回复（TTS 关/纯文本）：App 在 final 到达时调 ttsEnd
   assert.equal(h.vl.state, VoiceState.FOLLOWUP)
 })
 
+test('R4.3b P0：THINKING 安全超时兜底——App 未回调 ttsEnd 也不永久卡死，超时回 FOLLOWUP', () => {
+  const h = makeHarness({ thinkingMaxMs: 100000 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.vl.asrFinal('查一下明天的天气')
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  h.advance(99999)
+  assert.equal(h.vl.state, VoiceState.THINKING) // 未到点，仍在处理
+  h.advance(1)
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP) // 兜底触发，回可交互态（不永久全聋）
+})
+
+test('R4.3b P0：ttsStart 进 SPEAKING 清 THINKING 超时（正路播报不被兜底打回）', () => {
+  const h = makeHarness({ thinkingMaxMs: 5000 })
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.vl.asrFinal('讲个笑话')
+  h.vl.ttsStart() // 播报开始 → SPEAKING，超时定时器随 _clearAllTimers 清除
+  assert.equal(h.vl.state, VoiceState.SPEAKING)
+  h.advance(6000) // 超过 thinkingMaxMs
+  assert.equal(h.vl.state, VoiceState.SPEAKING) // 未被超时兜底打回 FOLLOWUP
+})
+
 test('hands-free 中途关闭（任意态）→ IDLE 拆机 + 关 ASR + 清定时器', () => {
   const h = makeHarness()
   h.vl.handsFreeOn()

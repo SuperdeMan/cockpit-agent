@@ -368,20 +368,32 @@ export class StreamingRecognizer {
   private stream: MediaStream | null = null
   private finished = false
   private opened = false
+  private starting = false // A3：rec/ws 在 getUserMedia 之后才赋值，同步 starting 标志堵并发 start 双 recorder
   private ownsStream = true // false=用控制器传入的共享流（架构债 A），stop 时不停其 tracks
   private chunks: Blob[] = [] // 累积录音，供流式失败时批处理兜底（fix C）
   private mime = ''
   private apiBase = '' // 由 wsUrl 反推，供批处理兜底调 /api/asr
+  private fallbackTimer: number | null = null // rec.onstop 挂的 7s 兜底 timer 句柄（A1：cleanup 时清）
 
   get active(): boolean {
     return !!this.rec || !!this.ws
   }
 
   async start(wsUrl: string, opts: StreamOpts, externalStream?: MediaStream): Promise<void> {
-    if (this.active) return
+    if (this.active || this.starting) return
+    this.starting = true
+    try {
+      await this._start(wsUrl, opts, externalStream)
+    } finally {
+      this.starting = false
+    }
+  }
+
+  private async _start(wsUrl: string, opts: StreamOpts, externalStream?: MediaStream): Promise<void> {
     this.finished = false
     this.opened = false
     this.chunks = []
+    if (this.fallbackTimer !== null) { clearTimeout(this.fallbackTimer); this.fallbackTimer = null }
     this.apiBase = wsUrl.replace(/\/api\/asr\/stream$/, '').replace(/^ws/, 'http') // 供批处理兜底（fix C）
     // 架构债 A：hands-free 传入共享 mic 流；push-to-talk 不传 → 自取（原路径不变）
     this.ownsStream = !externalStream
@@ -406,8 +418,9 @@ export class StreamingRecognizer {
     ws.onmessage = (ev) => {
       let m: any
       try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : '{}') } catch { return }
-      if (m.type === 'partial') opts.onPartial?.(m.text || '')
-      else if (m.type === 'final') { this.finished = true; opts.onFinal?.(m.text || '') }
+      if (m.type === 'partial') { if (this.finished) return; opts.onPartial?.(m.text || '') }
+      // A1：单 final 契约守卫——qwen3 异常路径会补发 final、cleanup 后迟到 final 也在此被挡，避免双发
+      else if (m.type === 'final') { if (this.finished) return; this.finished = true; opts.onFinal?.(m.text || '') }
       else if (m.type === 'done') this.cleanup()
       else if (m.type === 'unsupported' || m.type === 'error') {
         this.tryBatchFallback(m.message || '流式识别不可用', opts)
@@ -433,8 +446,12 @@ export class StreamingRecognizer {
       if (this.ownsStream) this.stream?.getTracks().forEach((t) => t.stop())
       this.stream = null
       this.rec = null
-      // 等 final/done 收尾；兜底 7s 内无定稿 → 回退批处理（如 fun 这类不出转写的对话模型；fix C）
-      window.setTimeout(() => { if (!this.finished) this.tryBatchFallback('识别超时', opts) }, 7000)
+      // 等 final/done 收尾；兜底 7s 内无定稿 → 回退批处理（如 fun 这类不出转写的对话模型；fix C）。
+      // A1：句柄留存，cleanup（含被上层 closeAsr 静默回收）时清除，杜绝陈旧会话 7s 后劫杀下一轮。
+      this.fallbackTimer = window.setTimeout(() => {
+        this.fallbackTimer = null
+        if (!this.finished) this.tryBatchFallback('识别超时', opts)
+      }, 7000)
     }
   }
 
@@ -467,6 +484,9 @@ export class StreamingRecognizer {
   }
 
   private cleanup(): void {
+    // A1：终态置位 + 清兜底 timer——使 7s 兜底与一切迟到回调（final/error）失效，绝不干扰下一轮
+    this.finished = true
+    if (this.fallbackTimer !== null) { clearTimeout(this.fallbackTimer); this.fallbackTimer = null }
     try { if (this.rec && this.rec.state !== 'inactive') this.rec.stop() } catch {/* ignore */}
     if (this.ownsStream) this.stream?.getTracks().forEach((t) => t.stop())
     try { this.ws?.close() } catch {/* ignore */}

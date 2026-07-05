@@ -33,6 +33,7 @@ export class VadEngine {
   private c = zeroState()
   private ep: InstanceType<typeof SileroEndpoint>
   private running = false
+  private starting = false // A3：running 在若干 await 后才置位，同步 starting 标志堵并发 start 穿透
   private ownsStream = true // false=用控制器传入的共享流（架构债 A），stop 时不停其 tracks
   private chain: Promise<void> = Promise.resolve()
 
@@ -55,23 +56,28 @@ export class VadEngine {
   }
 
   async start(cb: VadCallbacks, externalStream?: MediaStream): Promise<void> {
-    if (this.running) return
-    await this.load()
-    this.ctx = new AudioContext({ sampleRate: 16000 })
-    await this.ctx.audioWorklet.addModule(WORKLET_URL)
-    // 架构债 A：优先用控制器传入的共享 mic 流；无则自取（独立测试/兜底路径）
-    this.ownsStream = !externalStream
-    this.stream = externalStream ?? await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    })
-    this.src = this.ctx.createMediaStreamSource(this.stream)
-    this.node = new AudioWorkletNode(this.ctx, 'vad-capture')
-    this.node.port.onmessage = (e: MessageEvent) => this.enqueue(e.data as Float32Array, cb)
-    this.src.connect(this.node) // 不连 destination：只采集不外放
-    this.ep.reset()
-    this.h = zeroState()
-    this.c = zeroState()
-    this.running = true
+    if (this.running || this.starting) return
+    this.starting = true
+    try {
+      await this.load()
+      this.ctx = new AudioContext({ sampleRate: 16000 })
+      await this.ctx.audioWorklet.addModule(WORKLET_URL)
+      // 架构债 A：优先用控制器传入的共享 mic 流；无则自取（独立测试/兜底路径）
+      this.ownsStream = !externalStream
+      this.stream = externalStream ?? await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      })
+      this.src = this.ctx.createMediaStreamSource(this.stream)
+      this.node = new AudioWorkletNode(this.ctx, 'vad-capture')
+      this.node.port.onmessage = (e: MessageEvent) => this.enqueue(e.data as Float32Array, cb)
+      this.src.connect(this.node) // 不连 destination：只采集不外放
+      this.ep.reset()
+      this.h = zeroState()
+      this.c = zeroState()
+      this.running = true
+    } finally {
+      this.starting = false
+    }
   }
 
   // 串行化推理，保证 h/c 状态连续、端点计时不乱（silero ~1-3ms << 32ms 帧间隔，不会积压）

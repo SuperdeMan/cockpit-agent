@@ -40,6 +40,7 @@ export const DEFAULTS = {
   dismissMinChars: 2,     // D5-2：定稿字数下限，不足视为误唤醒噪声句
   dismissWords: ['没事', '不是叫你', '别听了', '没叫你'], // D5-2 本地 dismiss 词表
   selfTriggerLimit: 2,    // D6：连续疑似自触发次数到此关闭 L3
+  thinkingMaxMs: 100000,  // R4.3b P0：THINKING 安全超时兜底——App 四种终局未回调 ttsEnd 时防永久卡死
 }
 
 // 汉字按码点计数（'嗯'=1、'好的'=2），避免 UTF-16 代理对误判长度。
@@ -138,6 +139,13 @@ export class VoiceLoop {
     this._closeAsr()
     this._speechActive = false
     this._enter(VoiceState.THINKING)
+    // R4.3b P0（U2/§2.2b 死锁兜底）：THINKING 离场仅靠 ttsStart/ttsEnd 两条腿，而 App 在
+    // 「TTS 关 / 纯卡片无语音 / error / 看门狗超时 / TTS 合成全失败」五种终局可能不回调 ttsEnd。
+    // 正路是 App 在这些分支补调 turnEnded()；本定时器只作最后防线，避免任一遗漏导致永久全聋。
+    // 迁出 THINKING 的各 goto 均 _clearAllTimers()，正常路径此定时器随即清除、永不触发。
+    this._setTimer('thinking', this.cfg.thinkingMaxMs, () => {
+      if (this.state === VoiceState.THINKING) this._gotoFollowup()
+    })
   }
   _gotoSpeaking() {
     this._clearAllTimers()
