@@ -153,6 +153,12 @@ services:
       ASR_MODEL: ${ASR_MODEL:-mimo-v2.5-asr}
       AUDIO_HTTP_PORT: "50059"
       TTS_VOICE_ID: ${TTS_VOICE_ID:-冰糖}
+      # 流式 TTS（服务端 PCM 流式合成，R4.2）：cosyvoice（run-task，默认，复用百炼 key）| qwen（realtime，含方言）| mock | off
+      TTS_STREAM_PROVIDER: ${TTS_STREAM_PROVIDER:-cosyvoice}
+      TTS_STREAM_MODEL: ${TTS_STREAM_MODEL:-}
+      TTS_STREAM_VOICE: ${TTS_STREAM_VOICE:-}
+      DASHSCOPE_TTS_INFERENCE_WS_URL: ${DASHSCOPE_TTS_INFERENCE_WS_URL:-wss://dashscope.aliyuncs.com/api-ws/v1/inference}
+      DASHSCOPE_TTS_REALTIME_WS_URL: ${DASHSCOPE_TTS_REALTIME_WS_URL:-wss://dashscope.aliyuncs.com/api-ws/v1/realtime}
     ports: ["50052:50052", "50059:50059"]
     depends_on: [redis]
 
