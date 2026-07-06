@@ -160,7 +160,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       wakeWord: () => settingsRef.current.wakeWordEnabled,
       getWakeKeywords: () => wakeKeywordsFor(settingsRef.current.wakeWord),
       getAssistantName: () => settingsRef.current.assistantName,
-      getTts: () => ({ enabled: settingsRef.current.ttsEnabled, voiceId: settingsRef.current.voiceId }),
+      getTts: () => ({ enabled: settingsRef.current.ttsEnabled, voiceId: settingsRef.current.voiceId, provider: settingsRef.current.ttsProvider }),
       config: {
         followupWindowMs: settingsRef.current.followupWindowS * 1000,
         silenceTailMs: settingsRef.current.silenceTailMs,
@@ -449,7 +449,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     const ws = wsRef.current
     if (!ws) return
     const s = settingsRef.current
-    if (s.ttsEnabled && s.autoplay) startTTSReply(AUDIO_API, s.voiceId)
+    if (s.ttsEnabled && s.autoplay) startTTSReply(AUDIO_API, s.voiceId, s.ttsProvider)
     else stopTTS()
     // 断线时入有界队列、重连后自动 flush——不再静默丢消息（旧逻辑 readyState!==OPEN 直接 return）
     ws.send({

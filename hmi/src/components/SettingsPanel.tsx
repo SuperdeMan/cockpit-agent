@@ -4,9 +4,12 @@
 // 数据/交互一字不改地沿用既有真实接线（useSettings / 音色试听 / 地点 / 记忆 / 定位）。
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { useSettings } from '../settings'
-import { AGENT_CATALOG, VOICE_FALLBACK, WAKE_WORD_PRESETS, type Voice } from '../types'
 import {
-  fetchVoices, fetchMemory, fetchMemoryProfile, forgetMemory, fetchPlaces, playTTS,
+  AGENT_CATALOG, VOICE_FALLBACK, WAKE_WORD_PRESETS, TTS_PROVIDER_FALLBACK,
+  type Voice, type TtsProviderInfo, type TtsProvider,
+} from '../types'
+import {
+  fetchVoices, fetchTtsProviders, fetchMemory, fetchMemoryProfile, forgetMemory, fetchPlaces, playTTS,
   type MemoryView, type MemoryProfile, type NamedPlaces,
 } from '../audio'
 import { PLACE_DEFS, isPlaceSet, formatPlace } from '../places.mjs'
@@ -199,7 +202,11 @@ const VOICE_PALETTE = ['#5BE9FF', '#34D399', '#A3E635', '#9A6BFF', '#FF6BD6', '#
 const VOICE_ICON: Record<string, IconName> = {
   冰糖: 'voice-ice', 茉莉: 'voice-jasmine', 苏打: 'voice-soda', 白桦: 'voice-birch', Mia: 'voice-mia', Chloe: 'voice-chloe',
 }
-function voiceIcon(v: Voice): IconName { return VOICE_ICON[v.voice_id] ?? VOICE_ICON[v.name] ?? 'voice-soda' }
+function voiceIcon(v: Voice): IconName {
+  // MiMo 六大人格有专属图标；cosyvoice/qwen 音色按性别回落（女=茉莉气泡、男=白桦、中性=苏打）
+  return VOICE_ICON[v.voice_id] ?? VOICE_ICON[v.name] ??
+    (v.gender === 'female' ? 'voice-jasmine' : v.gender === 'male' ? 'voice-birch' : 'voice-soda')
+}
 // Agent → 图标（A-8 集未含，icons.custom 补；端侧快系统车控/媒体用 vehicle/media）
 const AGENT_ICON: Record<string, IconName> = {
   vehicle: 'vehicle', media: 'media', navigation: 'compass', info: 'info', 'trip-planner': 'itinerary',
@@ -210,22 +217,36 @@ const PLACE_ICON: Record<string, IconName> = { home: 'place-home', company: 'bui
 
 function TtsSection({ audioApi }: { audioApi: string }) {
   const { settings, update } = useSettings()
-  const [voices, setVoices] = useState<Voice[]>(VOICE_FALLBACK)
+  const [providers, setProviders] = useState<TtsProviderInfo[]>(TTS_PROVIDER_FALLBACK)
   const [playing, setPlaying] = useState<string | null>(null)
 
+  // 探测后端引擎清单（含各引擎音色 + 可用性）；失败留离线兜底
   useEffect(() => {
-    fetchVoices(audioApi).then((v) => { if (v.length) setVoices(v) }).catch(() => {/* 离线兜底 */})
+    fetchTtsProviders(audioApi).then((ps) => { if (ps.length) setProviders(ps) }).catch(() => {/* 离线兜底 */})
   }, [audioApi])
+
+  const cur = providers.find((p) => p.id === settings.ttsProvider) ?? providers[0]
+  const voices = cur?.voices ?? VOICE_FALLBACK
+  const disabled = !settings.ttsEnabled
+
+  // 切引擎：换音色集，若当前音色不在新引擎里则回落该引擎默认（首个音色）
+  const selectProvider = (pid: string) => {
+    const p = providers.find((x) => x.id === pid)
+    if (!p) return
+    const patch: { ttsProvider: TtsProvider; voiceId?: string } = { ttsProvider: pid as TtsProvider }
+    if (!p.voices.some((v) => v.voice_id === settings.voiceId)) patch.voiceId = p.voices[0]?.voice_id
+    update(patch)
+  }
 
   const preview = async (voiceId: string) => {
     setPlaying(voiceId)
-    try { await playTTS(audioApi, `你好，我是${settings.assistantName}，这是${voiceId}的声音。`, voiceId) }
+    try { await playTTS(audioApi, `你好，我是${settings.assistantName}，这是我的声音。`, voiceId, settings.ttsProvider) }
     catch {/* ignore */} finally { setPlaying(null) }
   }
 
   return (
     <div>
-      <SectionHdr icon="voice-output" title="语音播报" sub="控制助手的语音输出方式与音色偏好" />
+      <SectionHdr icon="voice-output" title="语音播报" sub="控制助手的语音输出方式、引擎与音色偏好" />
       <SettingGroup title="输出控制">
         <SettingRow label="启用语音播报" sub="关闭后助手仅显示文字，不朗读回答">
           <Toggle on={settings.ttsEnabled} onChange={(v) => update({ ttsEnabled: v })} />
@@ -235,14 +256,28 @@ function TtsSection({ audioApi }: { audioApi: string }) {
         </SettingRow>
       </SettingGroup>
       <HR />
-      <SettingGroup title="音色选择">
+      <SettingGroup title="语音引擎">
+        <SettingRow label="播报引擎" sub="流式引擎边合成边出声、首音更快；经典引擎整句合成后播放" noBorder={!cur || cur.streaming}>
+          <Segmented value={settings.ttsProvider} onChange={selectProvider}
+            options={providers.map((p) => ({ value: p.id, label: p.label.split('·')[0] }))} />
+        </SettingRow>
+        {cur && (
+          <div style={{ padding: '2px 2px 14px', fontSize: 11.5, color: FG3, display: 'flex', gap: 6, alignItems: 'center' }}>
+            {cur.streaming
+              ? (cur.available
+                ? <><Icon name="check-circle" size={13} color="var(--au-primary)" /> 流式秒回首音 · {cur.model}{cur.sample_rate ? ` · ${(cur.sample_rate / 1000).toFixed(1)}kHz` : ''}</>
+                : <><Icon name="info" size={13} color="var(--au-warn, #FCD34D)" /> 未检测到该引擎凭据，将无感回退经典批处理</>)
+              : <>经典批处理引擎 · {cur.model || 'mimo-v2.5-tts'}</>}
+          </div>
+        )}
+      </SettingGroup>
+      <SettingGroup title={`音色选择（${cur?.label ?? ''}）`}>
         <div style={{ paddingBottom: 20 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, paddingTop: 10 }}>
             {voices.map((v, i) => {
               const color = VOICE_PALETTE[i % VOICE_PALETTE.length]
               const selected = settings.voiceId === v.voice_id
               const isPlaying = playing === v.voice_id
-              const disabled = !settings.ttsEnabled
               return (
                 <div key={v.voice_id} onClick={() => !disabled && update({ voiceId: v.voice_id })} style={{
                   padding: '14px 12px', borderRadius: 16, cursor: disabled ? 'default' : 'pointer',

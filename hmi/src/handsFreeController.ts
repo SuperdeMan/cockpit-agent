@@ -4,7 +4,10 @@
 import { VoiceLoop } from './voiceLoop.mjs'
 import { VadEngine } from './vadEngine'
 import { KwsEngine, DEFAULT_KEYWORDS } from './kwsEngine'
-import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues } from './audio'
+import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues, isStreamingTtsProvider } from './audio'
+
+// 流式引擎下唤醒/退场提示音的回落音色（MiMo 批处理，流式引擎音色 MiMo 无）
+const CUE_FALLBACK_VOICE = '冰糖'
 import { PcmRing } from './pcmRing.mjs'
 import { stripLeadingWakeWord, isFiller } from './utteranceHeuristics.mjs'
 import { bumpVoiceMetric } from './voiceMetrics.mjs'
@@ -30,7 +33,7 @@ export type HandsFreeDeps = {
   wakeWord?: () => boolean                   // 是否开唤醒词（KWS）
   getWakeKeywords?: () => string             // 选定唤醒词的 KWS pinyin token 串
   getAssistantName?: () => string            // 助手名（D6：助手 TTS 念到它/唤醒词则抑制 KWS 自触发）
-  getTts?: () => { enabled: boolean; voiceId: string } // 唤醒提示音是否合成 + 用哪个音色
+  getTts?: () => { enabled: boolean; voiceId: string; provider?: string } // 唤醒提示音是否合成 + 音色 + 引擎
   config?: { followupWindowMs?: number; silenceTailMs?: number; endpointGraceMs?: number }
 }
 
@@ -174,11 +177,14 @@ export class HandsFreeController {
     this.startKws()
   }
 
-  // 语音提示音集：随音色/TTS 开关刷新（enable 时也调用一次）——唤醒 wake + 退场 exit 一并预合成
+  // 语音提示音集：随音色/TTS 开关刷新（enable 时也调用一次）——唤醒 wake + 退场 exit 一并预合成。
+  // 提示音走批处理 /api/tts（短固定语，无需流式）；流式引擎（cosyvoice/qwen）的音色 MiMo 批处理无，
+  // 故回落 MiMo 音色合成（提示音是通用应答，音色一致性非关键），保证仍是真人声而非 beep。
   refreshWakeCue(): void {
     const tts = this.deps.getTts?.()
     if (this.on && tts?.enabled) {
-      void prepareCueSet(this.deps.audioApi, tts.voiceId, { wake: WAKE_CUE_TEXTS, exit: EXIT_CUE_TEXTS })
+      const cueVoice = isStreamingTtsProvider(tts.provider) ? CUE_FALLBACK_VOICE : tts.voiceId
+      void prepareCueSet(this.deps.audioApi, cueVoice, { wake: WAKE_CUE_TEXTS, exit: EXIT_CUE_TEXTS })
         .catch(() => { /* wake 全失败 → 唤醒回退 beep；exit 无则静默退场 */ })
     } else {
       clearCues()
