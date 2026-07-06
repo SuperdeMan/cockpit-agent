@@ -302,23 +302,30 @@ function ChargeView({ card }: { card: ChargingRouteCard }) {
     { x: dx, y: 46, label: card.destination, role: 'dest' },
   ]
   const soc = parseInt(card.soc || '', 10)
+  // 多充电站沿线横排、中心锚点名称易重叠（尤其 4+ 站或站距相近）：长名截断 + 相邻站名交错两级垂直排布
+  const chargeNodes = nodes.filter((n) => n.role === 'charge')
+  const trunc = (s: string, n = 6) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s || '')
   return (
     <g>
       <polyline points={nodes.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')} fill="none" stroke="#46D6E0" strokeWidth={2.5} strokeLinecap="round" strokeDasharray="10,5" style={{ animation: 'au-route-dash 3s linear infinite' }} />
       {nodes.map((p, i) => {
         const X = sx(p.x), Y = sy(p.y)
-        if (p.role === 'charge') return (
-          <g key={i}>
-            <circle cx={X} cy={Y} r={13} fill="rgba(245,158,11,0.15)" stroke="#F59E0B" strokeWidth={1.5} />
-            <g transform={`translate(${X} ${Y}) scale(0.46) translate(-12 -12)`}><path d="M13 2L3 14h9l-1 8 10-12h-9z" fill="#F59E0B" /></g>
-            <text x={X} y={Y - 19} fontSize={9} fill="#F59E0B" textAnchor="middle">{p.label}</text>
-            {p.at != null && <text x={X} y={Y + 24} fontSize={8.5} fill="rgba(255,255,255,0.45)" textAnchor="middle" fontFamily="var(--au-font-mono)">{p.at}km</text>}
-          </g>
-        )
+        if (p.role === 'charge') {
+          const ci = chargeNodes.indexOf(p)
+          const nameY = Y - (ci % 2 === 0 ? 19 : 31) // 交错两级：偶数站名近、奇数站名远，避免相邻横向重叠
+          return (
+            <g key={i}>
+              <circle cx={X} cy={Y} r={13} fill="rgba(245,158,11,0.15)" stroke="#F59E0B" strokeWidth={1.5} />
+              <g transform={`translate(${X} ${Y}) scale(0.46) translate(-12 -12)`}><path d="M13 2L3 14h9l-1 8 10-12h-9z" fill="#F59E0B" /></g>
+              <text x={X} y={nameY} fontSize={9} fill="#F59E0B" textAnchor="middle">{trunc(p.label)}</text>
+              {p.at != null && <text x={X} y={Y + 24} fontSize={8.5} fill="rgba(255,255,255,0.45)" textAnchor="middle" fontFamily="var(--au-font-mono)">{p.at}km</text>}
+            </g>
+          )
+        }
         return (
           <g key={i}>
             <circle cx={X} cy={Y} r={8} fill={p.role === 'origin' ? '#46D6E0' : '#34D399'} stroke="rgba(6,8,15,0.8)" strokeWidth={2} />
-            <text x={X} y={Y - 14} fontSize={9.5} fill="rgba(255,255,255,0.7)" textAnchor="middle">{p.label}</text>
+            <text x={X} y={Y - 14} fontSize={9.5} fill="rgba(255,255,255,0.7)" textAnchor={p.role === 'dest' ? 'end' : 'middle'}>{trunc(p.label, 8)}</text>
           </g>
         )
       })}

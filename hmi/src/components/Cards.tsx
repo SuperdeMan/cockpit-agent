@@ -280,7 +280,13 @@ function StockCardView({ card }: { card: StockCard }) {
   const ohlc = last
     ? [{ l: '今开', v: last.open }, { l: '最高', v: last.high }, { l: '最低', v: last.low }, { l: '昨收', v: prev?.close ?? last.open }]
     : []
-  const exch = card.symbol?.startsWith('6') ? '上证' : '深证'
+  // 市场标签优先用后端权威 market（腾讯 00700 是港股非 A 股）；缺失时按代码保守分类，不再硬编码 A股主板
+  const marketTag = card.market || (() => {
+    const d = (card.symbol || '').replace(/[^0-9]/g, '')
+    if (d.length === 5) return '港股'
+    if (d.length === 6) return d[0] === '6' ? '上证·A股' : (d[0] === '8' || d[0] === '4') ? '北证·A股' : '深证·A股'
+    return card.symbol && !d ? '美股' : ''
+  })()
   const stats = [
     { l: '市值', v: null }, { l: '市盈率', v: null }, { l: '市净率', v: null },
     { l: '成交量', v: last?.volume ?? null },
@@ -293,7 +299,7 @@ function StockCardView({ card }: { card: StockCard }) {
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 5 }}>{card.name}</div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-3)' }}>{card.symbol}</span>
-            <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>· {exch} · A 股主板</span>
+            {marketTag && <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>· {marketTag}</span>}
           </div>
         </div>
         {card.market_time && card.market_time !== 'mock' && (

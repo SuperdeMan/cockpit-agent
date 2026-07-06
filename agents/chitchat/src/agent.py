@@ -58,7 +58,9 @@ class ChitchatAgent(BaseAgent):
         if not query:
             return ""
         try:
-            mems = await ctx.recall(query, kinds=["semantic"], top_k=4, min_confidence=0.5)
+            # 含 episodic：个人事实（宠物/家人名）抽取时可能被归为 semantic 或 episodic（叙事式输入常落
+            # episodic），只召 semantic 会漏「我的猫叫什么」这类问题。语义排序 + top_k 保证不相关片段不被注入。
+            mems = await ctx.recall(query, kinds=["semantic", "episodic"], top_k=4, min_confidence=0.5)
         except Exception:
             return ""
         lines = [f"- {m.get('text', '')}" for m in mems if m.get("text")]

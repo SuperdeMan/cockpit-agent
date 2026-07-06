@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 
 from agents._sdk.http import AsyncHttpClient, ProviderError
-from .base import StockProvider, Quote, StockCandle
+from .base import StockProvider, Quote, StockCandle, market_label
 
 logger = logging.getLogger("agent.info.stock")
 
@@ -59,6 +59,7 @@ class QuoteStockProvider(StockProvider):
             change=_s(gq.get("09. change")),
             change_pct=_s(gq.get("10. change percent")),
             market_time=_s(gq.get("07. latest trading day")),
+            market=market_label(_s(gq.get("01. symbol"))),
         )
 
     async def history(self, symbol: str, limit: int = 20,

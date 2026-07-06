@@ -12,7 +12,7 @@ import logging
 import re
 
 from agents._sdk.http import AsyncHttpClient, ProviderError
-from .base import StockProvider, Quote
+from .base import StockProvider, Quote, market_label
 
 logger = logging.getLogger("agent.info.stock_sina")
 
@@ -132,6 +132,7 @@ class EastMoneyStockProvider(StockProvider):
             price=price,
             change=f"{change:+.2f}",
             change_pct=f"{pct:+.2f}%",
+            market=market_label(code),
         )
 
     @staticmethod
@@ -145,6 +146,7 @@ class EastMoneyStockProvider(StockProvider):
             price=_s(fields[6]),
             change=_s(fields[7]),
             change_pct=f"{_s(fields[8])}%" if fields[8] else "",
+            market="港股",
         )
 
     @staticmethod
@@ -158,6 +160,7 @@ class EastMoneyStockProvider(StockProvider):
             price=_s(fields[1]),
             change=_s(fields[4]),
             change_pct=f"{_s(fields[2])}%" if fields[2] else "",
+            market="美股",
         )
 
     async def history(self, symbol: str, limit: int = 20, meta=None):

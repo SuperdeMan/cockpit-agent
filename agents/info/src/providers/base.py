@@ -184,6 +184,40 @@ class Quote:
     change: str = ""            # 涨跌额
     change_pct: str = ""        # 涨跌幅 %
     market_time: str = ""       # 行情时间
+    market: str = ""            # 市场标签（上证·A股/深证·A股/北证·A股/港股/美股）——由 provider 权威定，HMI 不再按前缀猜
+
+
+def market_label(code: str) -> str:
+    """按代码/后缀权威判定市场标签（Tushare ts_code 后缀 或 新浪 sina_code 前缀 或裸代码）。
+    腾讯 00700 是港股而非 A 股——修 HMI 按前缀瞎猜的误标。"""
+    c = (code or "").strip()
+    u = c.upper()
+    if u.endswith(".SH") or c.startswith("sh"):
+        return "上证·A股"
+    if u.endswith(".SZ") or c.startswith("sz"):
+        return "深证·A股"
+    if u.endswith(".BJ") or c.startswith("bj"):
+        return "北证·A股"
+    if c.startswith("hk") or c.startswith("HK"):
+        return "港股"
+    if c.startswith("gb_") or c.startswith("us"):
+        return "美股"
+    # 裸数字兜底：5 位=港股（00700），6 位 6 开头=上证、0/3 开头=深证、8/4 开头=北证；非数字=美股
+    digits = "".join(ch for ch in c if ch.isdigit())
+    if c and not c.replace(".", "").isalnum():
+        return ""
+    if len(digits) == 5:
+        return "港股"
+    if len(digits) == 6:
+        if digits[0] == "6":
+            return "上证·A股"
+        if digits[0] in ("0", "3"):
+            return "深证·A股"
+        if digits[0] in ("8", "4"):
+            return "北证·A股"
+    if c and not digits:
+        return "美股"
+    return ""
 
 
 @dataclass

@@ -53,7 +53,7 @@ class StockMixin:
 
         card = {"type": "stock_quote", "name": q.name, "symbol": q.symbol,
                 "price": q.price, "change": q.change, "change_pct": q.change_pct,
-                "market_time": q.market_time,
+                "market_time": q.market_time, "market": getattr(q, "market", "") or "",
                 "candles": [
                     {"date": candle.date, "open": candle.open, "high": candle.high,
                      "low": candle.low, "close": candle.close, "volume": candle.volume}

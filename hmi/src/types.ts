@@ -242,6 +242,7 @@ export type StockCard = {
   change: string
   change_pct: string
   market_time: string
+  market?: string // 市场标签（上证·A股/深证·A股/港股/美股）——后端权威，缺失时前端按代码保守分类
   candles?: StockCandle[]
 }
 

@@ -43,6 +43,38 @@ _CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 _ORDINAL_RE = re.compile(r"第\s*(\d+|[一二两三四五六七八九十]+)\s*场")
 
+# 「下一场/接下来某队的比赛什么时候」——未来赛程追问（非今日赛程）。要求同时命中球队名，
+# 避免「世界杯什么时候开始」这类无队名的误触发。
+_NEXT_HINT = ("下一场", "下场", "下一个", "下一轮", "下轮", "接下来", "下次", "下一次",
+              "什么时候", "何时", "啥时候", "几号", "什么日子", "下一回")
+
+# 复用 api-football provider 的中文国家队名表做队名提取（同域同包）；导入失败则退化空表。
+try:
+    from ..providers.sports_apifootball import _ZH_TEAMS as _AF_ZH_TEAMS
+    _TEAM_NAMES = sorted(set(_AF_ZH_TEAMS.values()), key=len, reverse=True)
+except Exception:  # pragma: no cover
+    _TEAM_NAMES = []
+
+
+def _find_team(text: str) -> str:
+    """从查询中提取已知中文国家队名（长名优先，避免子串误命中）。无则返回 ''。"""
+    t = text or ""
+    for name in _TEAM_NAMES:
+        if name in t:
+            return name
+    return ""
+
+
+def _fmt_kickoff(iso: str) -> str:
+    """ISO 开球时间 → 「MM-DD HH:MM」（上海时区，api-football 已按 timezone 返回）。"""
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return dt.strftime("%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return iso[:16].replace("T", " ")
+
 
 def _detect_league(query: str) -> tuple[int, str]:
     """识别查询中的赛事；返回 (league_id, 中文名)，未命中返回 (0, "")。"""
@@ -134,6 +166,22 @@ class SportsMixin:
             return await self._top_scorers(league_id, league_name, meta)
 
         now = _shanghai_now()
+        # 「下一场阿根廷的比赛什么时候」——查该队未来赛程（而非今日赛程列表）。
+        team = _find_team(query)
+        if team and self._is_next_match(query):
+            res = await self._next_team_match(team, league_id, league_name, meta)
+            if res is not None:
+                return res
+            # 扫描窗口内无该队赛程 → 诚实告知（不回退今日无关列表误导用户）。
+            # 免费档只开放近两天，更靠后的赛程查不到。
+            return AgentResult(
+                speech=f"没有查询到{team}近两天的{league_name}赛程；受免费数据源限制，"
+                       f"更靠后的赛程暂时查不到，可稍后再问或换个近期有比赛的球队。",
+                ui_card={"type": "sports_scores", "title": f"{league_name} · {team}",
+                         "fixtures": [], "freshness": now.isoformat(timespec="minutes"),
+                         "source": "api-football"},
+                data={"fixtures": []})
+
         date = _sports_date(query, now)
         try:
             # 按日期查全联赛、再客户端按 league_id 精确过滤：
@@ -200,6 +248,49 @@ class SportsMixin:
     def _is_alltime_scorers(text: str) -> bool:
         """是否问的是「历史/累计总射手榜」（赛季 API 给不了，走通用搜索）。"""
         return any(w in (text or "") for w in _ALLTIME_HINT)
+
+    @staticmethod
+    def _is_next_match(text: str) -> bool:
+        """是否问的是「下一场/接下来某队的比赛」（未来赛程，非今日列表）。"""
+        return any(w in (text or "") for w in _NEXT_HINT)
+
+    async def _next_team_match(self, team_zh: str, league_id: int,
+                               league_name: str, meta) -> AgentResult | None:
+        """某队下一场比赛：从今天起按日扫描（免费档只放行 date 参数——`next`/`season` 均被门控），
+        逐日过滤联赛+队伍+未结束，命中即停。窗口 10 天覆盖世界杯赛程节奏；无数据返回 None（回落）。"""
+        now = _shanghai_now()
+        for offset in range(0, 10):
+            date = (now + timedelta(days=offset)).strftime("%Y-%m-%d")
+            try:
+                fx = await self.sports.fixtures(date=date, meta=meta)
+            except ProviderError as e:
+                logger.warning("next-match scan %s failed: %s", date, e)
+                # 免费档只开放近两天；命中「date not accessible」后续日期都会失败 → 停止扫描
+                if "access to this date" in str(e).lower() or "not have access" in str(e).lower():
+                    break
+                continue
+            for f in fx:
+                if league_id and f.league_id != league_id:
+                    continue
+                if team_zh not in (f.home, f.away):
+                    continue
+                if f.status == "finished":
+                    continue  # 已结束的跳过，找下一场未开赛/进行中的
+                full = _fmt_kickoff(f.kickoff)   # "MM-DD HH:MM"
+                time_part = full.split(" ")[-1] if " " in full else full
+                when_label = (f"今天 {time_part}" if offset == 0
+                              else f"明天 {time_part}" if offset == 1 else full)
+                lg = f.league or league_name
+                speech = f"{team_zh}下一场比赛：{lg} {f.home} vs {f.away}"
+                speech += f"，{when_label} 开球。" if full else "。"
+                fd = self._fixture_dict(f)
+                card = {"type": "sports_scores",
+                        "title": f"{lg} · {f.home} vs {f.away}",
+                        "fixtures": [fd],
+                        "freshness": now.isoformat(timespec="minutes"),
+                        "source": "api-football"}
+                return AgentResult(speech=speech, ui_card=card, data={"fixtures": [fd]})
+        return None
 
     @staticmethod
     def _pick_fixture(text: str, fixtures: list):
