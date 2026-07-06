@@ -280,7 +280,13 @@ function StockCardView({ card }: { card: StockCard }) {
   const ohlc = last
     ? [{ l: '今开', v: last.open }, { l: '最高', v: last.high }, { l: '最低', v: last.low }, { l: '昨收', v: prev?.close ?? last.open }]
     : []
-  const exch = card.symbol?.startsWith('6') ? '上证' : '深证'
+  // 市场标签优先用后端权威 market（腾讯 00700 是港股非 A 股）；缺失时按代码保守分类，不再硬编码 A股主板
+  const marketTag = card.market || (() => {
+    const d = (card.symbol || '').replace(/[^0-9]/g, '')
+    if (d.length === 5) return '港股'
+    if (d.length === 6) return d[0] === '6' ? '上证·A股' : (d[0] === '8' || d[0] === '4') ? '北证·A股' : '深证·A股'
+    return card.symbol && !d ? '美股' : ''
+  })()
   const stats = [
     { l: '市值', v: null }, { l: '市盈率', v: null }, { l: '市净率', v: null },
     { l: '成交量', v: last?.volume ?? null },
@@ -293,7 +299,7 @@ function StockCardView({ card }: { card: StockCard }) {
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 5 }}>{card.name}</div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-3)' }}>{card.symbol}</span>
-            <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>· {exch} · A 股主板</span>
+            {marketTag && <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>· {marketTag}</span>}
           </div>
         </div>
         {card.market_time && card.market_time !== 'mock' && (
@@ -1029,6 +1035,12 @@ function TripItineraryCardView({ card, onAction }:
               <button onClick={() => toggle(day.day_index)} style={{ width: '100%', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--au-text)', fontFamily: 'inherit' }}>
                 <span style={{ width: 28, height: 20, borderRadius: 6, display: 'grid', placeItems: 'center', background: `${color}20`, border: `1px solid ${color}40`, fontFamily: 'var(--au-font-mono)', fontSize: 9.5, fontWeight: 700, color }}>D{day.day_index}</span>
                 <span style={{ flex: 1, fontSize: 13, fontWeight: 600, textAlign: 'left' }}>{day.theme || `第${day.day_index}天`}</span>
+                {day.weather?.text && (
+                  <span title={day.weather.text} style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--au-text-3)' }}>
+                    {weatherGlyph(day.weather.text, 14)}
+                    {day.weather.temp_low && day.weather.temp_high ? `${day.weather.temp_low}-${day.weather.temp_high}℃` : day.weather.text}
+                  </span>
+                )}
                 <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{day.stops.length}个点</span>
                 <span style={{ fontSize: 13, color: 'var(--au-text-3)', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s' }}>›</span>
               </button>

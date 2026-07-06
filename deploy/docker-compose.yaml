@@ -273,6 +273,14 @@ services:
       # 进程内复用导航高德 provider：接地景点 POI、算 leg 路线、按 SoC 搜沿途充电站；不配走 mock。
       POI_VENDOR: ${POI_VENDOR:-mock}
       AMAP_KEY: ${AMAP_KEY:-}
+      # 天气联动（#3）：进程内复用 info 和风 provider 结合目的地预报规划；不配走 mock（天气优雅缺省）。
+      WEATHER_VENDOR: ${WEATHER_VENDOR:-mock}
+      QWEATHER_HOST: ${QWEATHER_HOST:-devapi.qweather.com}
+      QWEATHER_PROJECT_ID: ${QWEATHER_PROJECT_ID:-}
+      QWEATHER_KEY_ID: ${QWEATHER_KEY_ID:-}
+      QWEATHER_PRIVATE_KEY: ${QWEATHER_PRIVATE_KEY:-}
+      QWEATHER_PRIVATE_KEY_PATH: ${QWEATHER_PRIVATE_KEY_PATH:-}
+      QWEATHER_KEY: ${QWEATHER_KEY:-}
     depends_on: [registry, llm-gateway]
 
   info-agent:

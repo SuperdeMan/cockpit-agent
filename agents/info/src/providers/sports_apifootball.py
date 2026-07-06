@@ -63,6 +63,28 @@ def _zh(name: str) -> str:
     return _ZH_TEAMS.get(name, name)
 
 
+def _fixture_from_item(item: dict) -> "SportsFixture":
+    """api-football fixtures 响应单项 → SportsFixture（fixtures / next 复用）。"""
+    fx = item.get("fixture") or {}
+    lg = item.get("league") or {}
+    teams = item.get("teams") or {}
+    goals = item.get("goals") or {}
+    home, away = teams.get("home") or {}, teams.get("away") or {}
+    st = fx.get("status") or {}
+    group, text = _status(_g(st.get("short")), _g(st.get("long")))
+    return SportsFixture(
+        league=_g(lg.get("name")), league_id=_int(lg.get("id")),
+        round=_g(lg.get("round")),
+        home=_zh(_g(home.get("name"))), away=_zh(_g(away.get("name"))),
+        home_logo=_g(home.get("logo")), away_logo=_g(away.get("logo")),
+        home_goals=_g(goals.get("home")), away_goals=_g(goals.get("away")),
+        status=group, status_text=text,
+        elapsed=_g(st.get("elapsed")), kickoff=_g(fx.get("date")),
+        fixture_id=_int(fx.get("id")),
+        home_id=_int(home.get("id")), away_id=_int(away.get("id")),
+    )
+
+
 def _status(short: str, long: str) -> tuple[str, str]:
     if short in _FINISHED:
         return "finished", _FINISHED[short]
@@ -116,27 +138,7 @@ class ApiFootballProvider(SportsProvider):
         if errors:  # dict 或非空 list 均代表上游报错（如 key/配额/参数）
             raise ProviderError(f"api-football error: {errors}")
 
-        out: list[SportsFixture] = []
-        for item in (data.get("response") or []):
-            fx = item.get("fixture") or {}
-            lg = item.get("league") or {}
-            teams = item.get("teams") or {}
-            goals = item.get("goals") or {}
-            home, away = teams.get("home") or {}, teams.get("away") or {}
-            st = fx.get("status") or {}
-            group, text = _status(_g(st.get("short")), _g(st.get("long")))
-            out.append(SportsFixture(
-                league=_g(lg.get("name")), league_id=_int(lg.get("id")),
-                round=_g(lg.get("round")),
-                home=_zh(_g(home.get("name"))), away=_zh(_g(away.get("name"))),
-                home_logo=_g(home.get("logo")), away_logo=_g(away.get("logo")),
-                home_goals=_g(goals.get("home")), away_goals=_g(goals.get("away")),
-                status=group, status_text=text,
-                elapsed=_g(st.get("elapsed")), kickoff=_g(fx.get("date")),
-                fixture_id=_int(fx.get("id")),
-                home_id=_int(home.get("id")), away_id=_int(away.get("id")),
-            ))
-        return out
+        return [_fixture_from_item(item) for item in (data.get("response") or [])]
 
     async def events(self, fixture_id: int,
                      meta: dict | None = None) -> list[GoalEvent]:

@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timedelta
 
 from agents._sdk.http import AsyncHttpClient, ProviderError
-from .base import StockProvider, Quote, StockCandle
+from .base import StockProvider, Quote, StockCandle, market_label
 
 logger = logging.getLogger("agent.info.stock_tushare")
 
@@ -257,6 +257,7 @@ class TushareStockProvider(StockProvider):
             change=change,
             change_pct=f"{pct_chg}%" if pct_chg else "",
             market_time=trade_dt,
+            market=market_label(ts_code),
         )
 
     async def index(self, name: str = "上证",
