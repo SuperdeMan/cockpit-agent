@@ -748,3 +748,278 @@ def build_tts_provider() -> BaseTTSProvider:
     if provider in ("xiaomimimo", "mimo") and api_key:
         return MiMoTTSProvider(api_key)
     return MockTTSProvider()
+
+
+# ─── 流式 TTS Provider（服务端 PCM 流式合成，R4.2）───
+# 文本增量进、PCM 音频分片出。两个 DashScope（百炼）模型经 P0 探针实测（见
+# docs/design/2026-07-04-r4.2-streaming-tts-bargein.md §7）：
+#   - cosyvoice-v3-flash：run-task 协议（/api-ws/v1/inference，与 fun-asr 同壳），二进制音频帧，469ms 首帧
+#   - qwen3-tts-flash-realtime：OpenAI-realtime 协议（/api-ws/v1/realtime，与 qwen3-asr 同壳），base64 音频，719ms 首帧
+# 音色集互不相通（官方音色表；cosyvoice v2 名会 418）。HMI 两级选择：先选引擎（=provider）再选音色。
+
+COSYVOICE_VOICES = [
+    {"voice_id": "longxiaochun_v3", "name": "龙小淳", "language": "zh", "gender": "female",
+     "description": "语音助手·女声", "tags": ["助手", "女声"]},
+    {"voice_id": "longanwen_v3", "name": "龙安温", "language": "zh", "gender": "female",
+     "description": "语音助手·女声", "tags": ["助手", "女声"]},
+    {"voice_id": "longanyun_v3", "name": "龙安昀", "language": "zh", "gender": "male",
+     "description": "语音助手·男声", "tags": ["助手", "男声"]},
+    {"voice_id": "longhua_v3", "name": "龙华", "language": "zh", "gender": "female",
+     "description": "社交陪伴·女声", "tags": ["陪伴", "女声"]},
+    {"voice_id": "longze_v3", "name": "龙泽", "language": "zh", "gender": "male",
+     "description": "社交陪伴·男声", "tags": ["陪伴", "男声"]},
+    {"voice_id": "longanyang", "name": "龙安洋", "language": "zh", "gender": "male",
+     "description": "社交陪伴·男声", "tags": ["陪伴", "男声"]},
+    {"voice_id": "longanhuan_v3", "name": "龙安欢", "language": "zh", "gender": "female",
+     "description": "多方言·女声", "tags": ["方言", "女声"]},
+]
+
+QWEN_TTS_VOICES = [
+    {"voice_id": "Cherry", "name": "Cherry", "language": "zh", "gender": "female",
+     "description": "中英双语·女声", "tags": ["双语", "女声"]},
+    {"voice_id": "Serena", "name": "Serena", "language": "zh", "gender": "female",
+     "description": "中英双语·女声", "tags": ["双语", "女声"]},
+    {"voice_id": "Ethan", "name": "Ethan", "language": "zh", "gender": "male",
+     "description": "中英双语·男声", "tags": ["双语", "男声"]},
+    {"voice_id": "Chelsie", "name": "Chelsie", "language": "zh", "gender": "female",
+     "description": "中英双语·女声", "tags": ["双语", "女声"]},
+    {"voice_id": "Dylan", "name": "Dylan", "language": "zh", "gender": "male",
+     "description": "北京话·男声", "tags": ["方言", "北京话"]},
+    {"voice_id": "Jada", "name": "Jada", "language": "zh", "gender": "female",
+     "description": "上海话·女声", "tags": ["方言", "上海话"]},
+    {"voice_id": "Sunny", "name": "Sunny", "language": "zh", "gender": "female",
+     "description": "四川话·女声", "tags": ["方言", "四川话"]},
+]
+
+# provider id → (默认模型, 默认音色, 采样率, 音色表)。HMI/工厂共用，避免散落硬编码。
+TTS_STREAM_CATALOG = {
+    "cosyvoice": {"model": "cosyvoice-v3-flash", "voice": "longxiaochun_v3",
+                  "sample_rate": 22050, "voices": COSYVOICE_VOICES, "label": "CosyVoice·流式"},
+    "qwen": {"model": "qwen3-tts-flash-realtime", "voice": "Cherry",
+             "sample_rate": 24000, "voices": QWEN_TTS_VOICES, "label": "Qwen·方言"},
+}
+
+
+class BaseStreamingTTSProvider:
+    async def stream(self, text_deltas, *, voice: str = "", sample_rate: int = 0):
+        """text_deltas：文本分片的异步迭代器（增量进）。
+        yield bytes（PCM s16le 音频帧）或 dict（控制事件，如 {'type':'meta','sample_rate':..,'format':'pcm'}）。
+        首个 yield 应为 meta（HMI 据此建 AudioContext 播放器）。"""
+        raise NotImplementedError
+        yield  # 标记为 async generator
+
+
+# ── 协议帧构造（纯函数，离线单测）──
+def _cosyvoice_run_task(task_id: str, model: str, voice: str, sample_rate: int) -> dict:
+    return {"header": {"action": "run-task", "task_id": task_id, "streaming": "duplex"},
+            "payload": {"task_group": "audio", "task": "tts", "function": "SpeechSynthesizer",
+                        "model": model,
+                        "parameters": {"text_type": "PlainText", "voice": voice,
+                                       "format": "pcm", "sample_rate": sample_rate},
+                        "input": {}}}
+
+
+def _cosyvoice_continue(task_id: str, text: str) -> dict:
+    return {"header": {"action": "continue-task", "task_id": task_id, "streaming": "duplex"},
+            "payload": {"input": {"text": text}}}
+
+
+def _cosyvoice_finish(task_id: str) -> dict:
+    return {"header": {"action": "finish-task", "task_id": task_id, "streaming": "duplex"},
+            "payload": {"input": {}}}
+
+
+class DashScopeCosyVoiceProvider(BaseStreamingTTSProvider):
+    """CosyVoice 流式 TTS——run-task 协议（/api-ws/v1/inference，与 fun-asr 同壳）。
+    run-task→task-started→continue-task(每 delta)→二进制音频帧+result-generated→finish-task→task-finished。"""
+
+    def __init__(self, api_key: str, ws_url: str, model: str,
+                 voice: str = "longxiaochun_v3", sample_rate: int = 22050):
+        self.api_key = api_key
+        self.ws_url = ws_url
+        self.model = model
+        self.voice = voice
+        self.sample_rate = sample_rate
+
+    async def stream(self, text_deltas, *, voice="", sample_rate=0):
+        import uuid
+        import aiohttp
+        voice = voice or self.voice
+        sr = sample_rate or self.sample_rate
+        task_id = uuid.uuid4().hex
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                self.ws_url, headers={"Authorization": f"bearer {self.api_key}"}, heartbeat=20.0,
+            ) as ws:
+                await ws.send_json(_cosyvoice_run_task(task_id, self.model, voice, sr))
+                started = asyncio.Event()
+
+                async def pump():
+                    try:
+                        await started.wait()
+                        async for delta in text_deltas:
+                            if delta:
+                                await ws.send_json(_cosyvoice_continue(task_id, delta))
+                        await ws.send_json(_cosyvoice_finish(task_id))
+                    except Exception:
+                        pass  # 取消/断连时静默；WS 关闭即终止上游任务
+
+                pump_task = asyncio.create_task(pump())
+                try:
+                    while True:
+                        try:
+                            msg = await ws.receive(timeout=30.0)
+                        except asyncio.TimeoutError:
+                            break
+                        if msg.type == aiohttp.WSMsgType.BINARY:
+                            yield bytes(msg.data)
+                        elif msg.type == aiohttp.WSMsgType.TEXT:
+                            evt = json.loads(msg.data).get("header", {}).get("event", "")
+                            if evt == "task-started":
+                                started.set()
+                                yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
+                            elif evt == "task-finished":
+                                break
+                            elif evt == "task-failed":
+                                raise RuntimeError(json.loads(msg.data).get("header", {})
+                                                   .get("error_message", "cosyvoice task-failed"))
+                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR,
+                                          aiohttp.WSMsgType.CLOSING):
+                            break
+                finally:
+                    pump_task.cancel()
+
+
+# ── qwen3-tts-flash-realtime 协议帧（OpenAI-realtime）──
+def _qwen_session_update(voice: str, sample_rate: int) -> dict:
+    return {"type": "session.update", "session": {
+        "voice": voice, "response_format": "pcm", "sample_rate": sample_rate, "mode": "server_commit"}}
+
+
+class DashScopeQwenTTSProvider(BaseStreamingTTSProvider):
+    """Qwen3-TTS 流式 TTS——OpenAI-realtime 协议（/api-ws/v1/realtime，与 qwen3-asr 同壳）。
+    session.created→session.update→input_text_buffer.append(每 delta,text)→response.audio.delta(base64)
+    →commit/finish→response.audio.done→response.done。含北京/上海/四川方言音色。"""
+
+    def __init__(self, api_key: str, ws_url: str, model: str,
+                 voice: str = "Cherry", sample_rate: int = 24000):
+        self.api_key = api_key
+        self.ws_url = ws_url
+        self.model = model
+        self.voice = voice
+        self.sample_rate = sample_rate
+
+    async def stream(self, text_deltas, *, voice="", sample_rate=0):
+        import base64
+        import aiohttp
+        voice = voice or self.voice
+        sr = sample_rate or self.sample_rate
+        url = f"{self.ws_url}?model={self.model}"
+        eid = [0]
+
+        def ev(o):
+            eid[0] += 1
+            return {"event_id": f"ev{eid[0]}", **o}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                url, headers={"Authorization": f"Bearer {self.api_key}"}, heartbeat=20.0,
+            ) as ws:
+                for _ in range(5):  # 等 session.created
+                    msg = await ws.receive(timeout=10)
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        if json.loads(msg.data).get("type") == "session.created":
+                            break
+                    elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                        raise RuntimeError("qwen-tts ws closed before session.created")
+                await ws.send_json(ev(_qwen_session_update(voice, sr)))
+                ready = asyncio.Event()
+
+                async def pump():
+                    try:
+                        await ready.wait()
+                        async for delta in text_deltas:
+                            if delta:
+                                await ws.send_json(ev({"type": "input_text_buffer.append", "text": delta}))
+                        await ws.send_json(ev({"type": "input_text_buffer.commit"}))
+                        await ws.send_json(ev({"type": "session.finish"}))
+                    except Exception:
+                        pass
+
+                pump_task = asyncio.create_task(pump())
+                meta_sent = False
+                try:
+                    while True:
+                        try:
+                            msg = await ws.receive(timeout=30.0)
+                        except asyncio.TimeoutError:
+                            break
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR,
+                                            aiohttp.WSMsgType.CLOSING):
+                                break
+                            continue
+                        m = json.loads(msg.data)
+                        t = m.get("type", "")
+                        if t == "session.updated":
+                            ready.set()
+                            if not meta_sent:
+                                meta_sent = True
+                                yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
+                        elif t == "response.audio.delta":
+                            b64 = m.get("delta") or m.get("audio") or ""
+                            if b64:
+                                try:
+                                    yield base64.b64decode(b64)
+                                except Exception:
+                                    pass
+                        elif t in ("response.done", "session.finished"):
+                            break
+                        elif t == "error":
+                            raise RuntimeError((m.get("error") or {}).get("message", "qwen-tts error"))
+                finally:
+                    pump_task.cancel()
+
+
+class MockStreamingTTSProvider(BaseStreamingTTSProvider):
+    """无 key/nightly 兜底：消费文本增量，按字数产出固定静音 PCM 分片（断言帧序而非音质）。"""
+
+    def __init__(self, sample_rate: int = 24000):
+        self.sample_rate = sample_rate
+
+    async def stream(self, text_deltas, *, voice="", sample_rate=0):
+        sr = sample_rate or self.sample_rate
+        yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
+        async for delta in text_deltas:
+            n = max(1, len(delta or ""))
+            # 每字约 120ms 静音 @ sr（s16le），验证「文本增量→音频分片」链路
+            yield b"\x00" * int(sr * 0.12) * 2 * n
+
+
+def build_tts_stream_provider(provider: str = "", model: str = "",
+                              voice: str = "") -> "BaseStreamingTTSProvider | None":
+    """按请求/env 选流式 TTS 引擎。provider/model/voice 为请求级覆盖（HMI 设置可切），空则 env 默认。
+    无可用 key 或 off → None（HMI 探测到则无感回退句级批处理 /api/tts，惯例同 ASR 流式）。"""
+    provider = (provider or os.getenv("TTS_STREAM_PROVIDER", "cosyvoice")).strip().lower()
+    if provider in ("", "off", "none"):
+        return None
+    if provider == "mock":
+        return MockStreamingTTSProvider()
+    if provider in ("cosyvoice", "qwen", "dashscope"):
+        key = os.getenv("DASHSCOPE_ASR_KEY") or os.getenv("LLM_EMBED_API_KEY", "")
+        if not key:
+            return None
+        if provider == "dashscope":  # 泛指默认引擎
+            provider = "cosyvoice"
+        cat = TTS_STREAM_CATALOG[provider]
+        mdl = model or os.getenv("TTS_STREAM_MODEL", "") or cat["model"]
+        if provider == "qwen":
+            ws_url = os.getenv("DASHSCOPE_TTS_REALTIME_WS_URL",
+                               "wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
+            return DashScopeQwenTTSProvider(key, ws_url, mdl, voice=voice or cat["voice"],
+                                            sample_rate=cat["sample_rate"])
+        ws_url = os.getenv("DASHSCOPE_TTS_INFERENCE_WS_URL",
+                           "wss://dashscope.aliyuncs.com/api-ws/v1/inference")
+        return DashScopeCosyVoiceProvider(key, ws_url, mdl, voice=voice or cat["voice"],
+                                          sample_rate=cat["sample_rate"])
+    return None

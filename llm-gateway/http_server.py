@@ -20,9 +20,19 @@ from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
 from runtime.grpcio import aio_channel
 
-from providers import build_asr_provider, build_streaming_asr_provider, build_tts_provider
+from providers import (
+    build_asr_provider, build_streaming_asr_provider, build_tts_provider,
+    build_tts_stream_provider, TTS_STREAM_CATALOG, MiMoTTSProvider,
+)
 
 logger = logging.getLogger("llm.http")
+
+# 观测指标（best-effort，无 NATS/observability 不可导入时自动降级 log）。
+try:
+    from observability.events import get_emitter
+    _obs = get_emitter("llm-gateway")
+except Exception:  # observability 不在 path（如精简镜像）→ log-only
+    _obs = None
 
 _WAV_FORMATS = frozenset({"wav", "pcm", "pcm16"})
 # R4.3b P2 B1：流式 ASR 的「前端直传 s16le PCM」格式（跳过 ffmpeg，支持前滚缓冲注入根治漏字 U4）
@@ -149,7 +159,10 @@ def create_http_app() -> web.Application:
 
     @routes.get("/api/voices")
     async def handle_voices(request: web.Request):
-        """查询可用音色列表。"""
+        """查询某引擎的音色列表。?provider=cosyvoice|qwen|mimo（默认 mimo，向后兼容）。"""
+        provider = request.query.get("provider", "mimo").strip().lower()
+        if provider in TTS_STREAM_CATALOG:
+            return web.json_response({"voices": list(TTS_STREAM_CATALOG[provider]["voices"])})
         lang = request.query.get("language", "")
         gender = request.query.get("gender", "")
         voices = await tts.list_voices(language=lang, gender=gender)
@@ -279,6 +292,129 @@ def create_http_app() -> web.Application:
                     ffmpeg.kill()
                 except Exception:
                     pass
+            for t in tasks:
+                t.cancel()
+        return ws
+
+    @routes.get("/api/tts/stream/info")
+    async def handle_tts_stream_info(request: web.Request):
+        """流式 TTS 能力探测（HMI 设置页据此渲染引擎/音色两级选择 + 可用性 + 回退判定）。"""
+        has_dashscope = bool(os.getenv("DASHSCOPE_ASR_KEY") or os.getenv("LLM_EMBED_API_KEY"))
+        has_mimo = bool(os.getenv("LLM_API_KEY"))
+        default = os.getenv("TTS_STREAM_PROVIDER", "cosyvoice").strip().lower()
+        if default in ("", "off", "none"):
+            default = "mimo"
+        providers = []
+        for pid in ("cosyvoice", "qwen"):
+            cat = TTS_STREAM_CATALOG[pid]
+            providers.append({
+                "id": pid, "label": cat["label"], "streaming": True,
+                "available": has_dashscope, "model": cat["model"],
+                "sample_rate": cat["sample_rate"], "voices": cat["voices"],
+            })
+        providers.append({
+            "id": "mimo", "label": "MiMo·经典", "streaming": False,
+            "available": has_mimo, "model": DEFAULT_TTS_MODEL,
+            "voices": MiMoTTSProvider.VOICES,
+        })
+        return web.json_response({
+            "streaming": has_dashscope, "default": default, "providers": providers,
+        })
+
+    @routes.get("/api/tts/stream")
+    async def handle_tts_stream(request: web.Request):
+        """流式 TTS：HMI 经 WebSocket 送文本增量 + 控制帧，网关经流式引擎（cosyvoice run-task /
+        qwen realtime）边收边回 PCM 音频分片。见 docs/design/2026-07-04-r4.2-streaming-tts-bargein.md。
+        批处理 /api/tts 不受影响（回退路径）。
+        上行：{type:start, provider, model, voice, sample_rate?} / {type:text, delta} / {type:finish} / {type:cancel}
+        下行：{type:meta, sample_rate, format}（首帧前）+ 二进制音频帧 + {type:done, chunks, first_chunk_ms} /
+              {type:unsupported} / {type:error, message}"""
+        import time
+        ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=8 * 1024 * 1024)
+        await ws.prepare(request)
+        text_queue: asyncio.Queue = asyncio.Queue()
+        tasks: list = []
+        started = False
+        cancelled = {"v": False}
+
+        async def text_iter():
+            while True:
+                item = await text_queue.get()
+                if item is None:
+                    return
+                yield item
+
+        async def run_provider(provider, voice, sample_rate):
+            t0 = time.monotonic()
+            first_ms = None
+            chunks = 0
+            err = None
+            try:
+                async for out in provider.stream(text_iter(), voice=voice, sample_rate=sample_rate):
+                    if ws.closed:
+                        break
+                    if isinstance(out, (bytes, bytearray)):
+                        if out:
+                            if first_ms is None:
+                                first_ms = round((time.monotonic() - t0) * 1000)
+                            chunks += 1
+                            await ws.send_bytes(bytes(out))
+                    elif isinstance(out, dict):
+                        await ws.send_json(out)  # meta
+                if not ws.closed:
+                    await ws.send_json({"type": "done", "chunks": chunks, "first_chunk_ms": first_ms})
+            except asyncio.CancelledError:
+                cancelled["v"] = True
+                raise
+            except Exception as e:
+                err = str(e)
+                logger.warning("TTS stream provider error: %s", e)
+                if not ws.closed:
+                    await ws.send_json({"type": "error", "message": err})
+            finally:
+                total_ms = round((time.monotonic() - t0) * 1000)
+                if _obs is not None:
+                    try:
+                        await _obs.emit_metric(
+                            "tts-stream", count=1, avg_ms=total_ms,
+                            error_rate=1.0 if err else 0.0,
+                            tts_first_chunk_ms=first_ms or 0, tts_total_ms=total_ms,
+                            tts_chunks=chunks, tts_cancelled=cancelled["v"])
+                    except Exception:
+                        pass
+                logger.info("TTS stream done: first=%sms total=%dms chunks=%d cancelled=%s err=%s",
+                            first_ms, total_ms, chunks, cancelled["v"], err)
+
+        try:
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    mtype = data.get("type")
+                    if mtype == "start":
+                        if started:
+                            continue
+                        provider = build_tts_stream_provider(
+                            data.get("provider", ""), data.get("model", ""), data.get("voice", ""))
+                        if provider is None:
+                            await ws.send_json({"type": "unsupported"})
+                            continue
+                        started = True
+                        tasks.append(asyncio.create_task(run_provider(
+                            provider, data.get("voice", ""), int(data.get("sample_rate") or 0))))
+                    elif mtype == "text":
+                        if started:
+                            await text_queue.put(data.get("delta", ""))
+                    elif mtype == "finish":
+                        await text_queue.put(None)
+                    elif mtype == "cancel":
+                        cancelled["v"] = True
+                        await text_queue.put(None)
+                        break  # barge-in：断开 → 上游任务经 finally 取消，不再吐帧
+                elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE,
+                                  aiohttp.WSMsgType.CLOSING):
+                    break
+        finally:
+            text_queue.put_nowait(None)  # 确保 text_iter 退出
             for t in tasks:
                 t.cancel()
         return ws

@@ -46,6 +46,13 @@ export function float32ToInt16(f32) {
   return out
 }
 
+/** Int16LE → Float32 [-1,1]（流式 TTS 播放：DashScope PCM s16le → Web Audio AudioBuffer）。 */
+export function int16ToFloat32(i16) {
+  const out = new Float32Array(i16.length)
+  for (let i = 0; i < i16.length; i++) out[i] = i16[i] / 0x8000
+  return out
+}
+
 /** 给 Int16 mono PCM 加 44 字节 WAV 头（批处理兜底走 /api/asr 的 format:wav）。 */
 export function int16ToWav(i16, sampleRate = 16000) {
   const dataLen = i16.length * 2

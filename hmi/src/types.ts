@@ -370,6 +370,18 @@ export type Voice = {
   tags?: string[]
 }
 
+// 流式 TTS 引擎（provider）——设置页两级选择「引擎→音色」的数据结构。
+// 引擎决定流式能力（cosyvoice/qwen=流式、mimo=经典批处理）与其专属音色集（互不相通）。
+export type TtsProviderInfo = {
+  id: string            // cosyvoice | qwen | mimo
+  label: string         // CosyVoice·流式 / Qwen·方言 / MiMo·经典
+  streaming: boolean    // 是否服务端流式
+  available: boolean    // 后端凭据是否就绪（无 key 的流式引擎标灰）
+  model?: string
+  sample_rate?: number
+  voices: Voice[]
+}
+
 // ─── 设置模型 ───
 // 端到端已接通的：voiceId / ttsEnabled / autoplay / asrLanguage / micMode /
 //   listenSeconds / theme / fontScale / largeTouch / quickCommands / assistantName。
@@ -382,6 +394,7 @@ export type Theme = 'dark' | 'light'
 export type FontScale = 'normal' | 'large'
 export type AsrLanguage = 'zh' | 'en' | 'auto'
 export type AsrProvider = 'dashscope' | 'mimo' | 'off' // 流式识别引擎（off=走批处理）
+export type TtsProvider = 'cosyvoice' | 'qwen' | 'mimo' // 语音播报引擎（cosyvoice/qwen=流式、mimo=经典批处理）
 export type MicMode = 'hold' | 'toggle'
 export type AnswerLength = 'short' | 'standard' | 'detailed'
 export type ModelPref = 'fast' | 'deep' | 'auto'
@@ -393,6 +406,7 @@ export type Settings = {
   // 语音播报 TTS
   ttsEnabled: boolean
   autoplay: boolean
+  ttsProvider: TtsProvider // 播报引擎（cosyvoice/qwen 流式秒回首音 / mimo 经典批处理）
   voiceId: string
   // 语音输入 ASR
   asrLanguage: AsrLanguage
@@ -451,6 +465,41 @@ export const VOICE_FALLBACK: Voice[] = [
   { voice_id: 'mimo_default', name: 'MiMo 默认', language: 'zh', gender: 'neutral', description: '中国集群默认', tags: ['默认'] },
 ]
 
+// 流式 TTS 引擎离线兜底（镜像后端 providers.TTS_STREAM_CATALOG + MiMo 音色）——
+// 探测 /api/tts/stream/info 失败时用此渲染，available 交给探测结果覆盖。
+export const TTS_PROVIDER_FALLBACK: TtsProviderInfo[] = [
+  {
+    id: 'cosyvoice', label: 'CosyVoice·流式', streaming: true, available: true,
+    model: 'cosyvoice-v3-flash', sample_rate: 22050,
+    voices: [
+      { voice_id: 'longxiaochun_v3', name: '龙小淳', language: 'zh', gender: 'female', description: '语音助手·女声', tags: ['助手', '女声'] },
+      { voice_id: 'longanwen_v3', name: '龙安温', language: 'zh', gender: 'female', description: '语音助手·女声', tags: ['助手', '女声'] },
+      { voice_id: 'longanyun_v3', name: '龙安昀', language: 'zh', gender: 'male', description: '语音助手·男声', tags: ['助手', '男声'] },
+      { voice_id: 'longhua_v3', name: '龙华', language: 'zh', gender: 'female', description: '社交陪伴·女声', tags: ['陪伴', '女声'] },
+      { voice_id: 'longze_v3', name: '龙泽', language: 'zh', gender: 'male', description: '社交陪伴·男声', tags: ['陪伴', '男声'] },
+      { voice_id: 'longanyang', name: '龙安洋', language: 'zh', gender: 'male', description: '社交陪伴·男声', tags: ['陪伴', '男声'] },
+      { voice_id: 'longanhuan_v3', name: '龙安欢', language: 'zh', gender: 'female', description: '多方言·女声', tags: ['方言', '女声'] },
+    ],
+  },
+  {
+    id: 'qwen', label: 'Qwen·方言', streaming: true, available: true,
+    model: 'qwen3-tts-flash-realtime', sample_rate: 24000,
+    voices: [
+      { voice_id: 'Cherry', name: 'Cherry', language: 'zh', gender: 'female', description: '中英双语·女声', tags: ['双语', '女声'] },
+      { voice_id: 'Serena', name: 'Serena', language: 'zh', gender: 'female', description: '中英双语·女声', tags: ['双语', '女声'] },
+      { voice_id: 'Ethan', name: 'Ethan', language: 'zh', gender: 'male', description: '中英双语·男声', tags: ['双语', '男声'] },
+      { voice_id: 'Chelsie', name: 'Chelsie', language: 'zh', gender: 'female', description: '中英双语·女声', tags: ['双语', '女声'] },
+      { voice_id: 'Dylan', name: 'Dylan', language: 'zh', gender: 'male', description: '北京话·男声', tags: ['方言', '北京话'] },
+      { voice_id: 'Jada', name: 'Jada', language: 'zh', gender: 'female', description: '上海话·女声', tags: ['方言', '上海话'] },
+      { voice_id: 'Sunny', name: 'Sunny', language: 'zh', gender: 'female', description: '四川话·女声', tags: ['方言', '四川话'] },
+    ],
+  },
+  {
+    id: 'mimo', label: 'MiMo·经典', streaming: false, available: true,
+    model: 'mimo-v2.5-tts', voices: VOICE_FALLBACK,
+  },
+]
+
 export const DEFAULT_QUICK_COMMANDS = [
   '打开空调26度',
   '打开主驾座椅加热',
@@ -481,7 +530,8 @@ export function wakeKeywordsFor(word: string): string {
 export const DEFAULT_SETTINGS: Settings = {
   ttsEnabled: true,
   autoplay: true,
-  voiceId: '冰糖',
+  ttsProvider: 'cosyvoice', // 默认流式引擎（首帧 ~530ms，真栈验证）；无 key 时 HMI 无感回退批处理
+  voiceId: 'longxiaochun_v3', // cosyvoice 默认音色（龙小淳·女·语音助手）
   asrLanguage: 'zh',
   asrProvider: 'dashscope', // DashScope 实时 qwen3 真栈验证可用（边说边上屏）；mimo 分块为回退
   asrModel: 'qwen3-asr-flash-realtime-2026-02-10', // 注意全小写 id（CamelCase 会 1011）

@@ -1,6 +1,7 @@
-// 音频层：录音控制器（修掉 ASR 收音竞态）+ 增量 TTS 播放队列 + 音色查询。
+// 音频层：录音控制器（修掉 ASR 收音竞态）+ 增量 TTS 播放队列 + 流式 TTS + 音色查询。
 import { OrderedPlaybackQueue, TtsTextBuffer } from './ttsQueue.mjs'
 import { float32ToInt16, int16ToWav } from './pcmRing.mjs'
+import { PcmPlayer } from './pcmPlayer.mjs'
 //
 // 旧实现的收音失败根因（task 3 前端侧）：
 //  1. startRecording 是 async，快按快松时 MediaRecorder 还没 start()，
@@ -245,24 +246,234 @@ function enqueueChunks(chunks: string[]): Promise<void[]> {
   )
 }
 
-export function startTTSReply(apiBase: string, voiceId: string): void {
+// ─── 流式 TTS（服务端 PCM 流式合成，R4.2）───
+// provider=cosyvoice/qwen（流式引擎）时走 WS /api/tts/stream：文本增量透传（不再攒句）、
+// 服务端边合成边回 PCM 分片、pcmPlayer 无缝拼播。任一环节失败 → 无感回退句级批处理（惯例同 ASR）。
+// provider=mimo（或缺省）→ 批处理路径（下方 activeReply + TtsTextBuffer），行为逐字不变。
+
+const STREAMING_TTS_PROVIDERS = new Set(['cosyvoice', 'qwen'])
+const STREAM_FALLBACK_VOICE = '冰糖' // 流式引擎失败回退 MiMo 批处理时的音色（cosyvoice/qwen 音色 MiMo 无）
+
+export function isStreamingTtsProvider(p?: string): boolean {
+  return !!p && STREAMING_TTS_PROVIDERS.has(p)
+}
+
+export function streamingTtsSupported(): boolean {
+  return typeof WebSocket !== 'undefined' &&
+    (typeof AudioContext !== 'undefined' || typeof (window as any).webkitAudioContext !== 'undefined')
+}
+
+export function ttsStreamUrl(apiBase: string): string {
+  return apiBase.replace(/^http/, 'ws') + '/api/tts/stream'
+}
+
+// 共享 AudioContext：懒建 + 复用（避免每轮新建撞浏览器上下文数上限）。startTTSReply 在用户手势
+// 期先解锁（resume），meta 到达时复用——绕过 autoplay 策略（同批处理 HTMLAudioElement 的前提）。
+let sharedCtx: AudioContext | null = null
+function getAudioContext(): AudioContext | null {
+  try {
+    if (!sharedCtx) {
+      const AC = (window as any).AudioContext || (window as any).webkitAudioContext
+      if (!AC) return null
+      sharedCtx = new AC()
+    }
+    if (sharedCtx && sharedCtx.state === 'suspended') void sharedCtx.resume()
+    return sharedCtx
+  } catch {
+    return null
+  }
+}
+
+class StreamingTtsSession {
+  private ws: WebSocket | null = null
+  private player: PcmPlayer | null = null
+  private accum = ''                       // 累计文本，供失败回退批处理
+  private preOpenText: string[] = []       // ws.onopen 前到达的 delta，open 后按序补发
+  private finishPending: string | null = null // finish 已请求（值=最终文本）
+  private audioStarted = false
+  private done = false
+  private fellBack = false
+  private disposed = false
+  private endTimer: number | null = null
+  readonly completion: Promise<void>
+  private _res!: () => void
+  private _rej!: (e?: unknown) => void
+
+  constructor(
+    private apiBase: string,
+    private voiceId: string,
+    private provider: string,
+    private onFallback: (accum: string, finalText: string | null) => Promise<void>,
+  ) {
+    this.completion = new Promise<void>((res, rej) => { this._res = res; this._rej = rej })
+  }
+
+  start(): void {
+    getAudioContext() // 用户手势期先解锁音频上下文
+    let ws: WebSocket
+    try {
+      ws = new WebSocket(ttsStreamUrl(this.apiBase))
+    } catch {
+      void this.fallback()
+      return
+    }
+    ws.binaryType = 'arraybuffer'
+    this.ws = ws
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'start', provider: this.provider, voice: this.voiceId }))
+      for (const t of this.preOpenText) ws.send(JSON.stringify({ type: 'text', delta: t }))
+      this.preOpenText = []
+      if (this.finishPending !== null) ws.send(JSON.stringify({ type: 'finish' }))
+    }
+    ws.onmessage = (ev) => this.onMessage(ev)
+    ws.onerror = () => { if (!this.done && !this.disposed) void this.fallback() }
+    ws.onclose = () => { if (!this.done && !this.disposed) void this.fallback() }
+  }
+
+  private onMessage(ev: MessageEvent): void {
+    if (this.disposed) return
+    if (typeof ev.data !== 'string') {
+      if (this.player) this.player.push(new Int16Array(ev.data as ArrayBuffer))
+      return
+    }
+    let m: any
+    try { m = JSON.parse(ev.data) } catch { return }
+    if (m.type === 'meta') {
+      const ctx = getAudioContext()
+      if (!ctx) { void this.fallback(); return }
+      this.player = new PcmPlayer({
+        ctx, sampleRate: m.sample_rate || 24000,
+        onFirstAudio: () => { this.audioStarted = true; markTtsStart() },
+      })
+    } else if (m.type === 'done') {
+      this.done = true
+      this.finishPlayback()
+    } else if (m.type === 'unsupported' || m.type === 'error') {
+      if (!this.done && !this.disposed) void this.fallback()
+    }
+  }
+
+  // 送一段文本（accum 累计供回退；ws 未 open 则缓冲，open 后按序补发）
+  private sendText(t: string): void {
+    if (!t) return
+    this.accum += t
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try { this.ws.send(JSON.stringify({ type: 'text', delta: t })) } catch { /* 帧丢弃静默 */ }
+    } else {
+      this.preOpenText.push(t)
+    }
+  }
+
+  append(delta: string): void {
+    if (this.disposed) return
+    this.sendText(delta)
+  }
+
+  finish(finalText: string): void {
+    if (this.disposed) return
+    // 补发未流式的尾巴：Agent 卡片回复只在 final 给全文、无 speech_delta 逐字（accum 空 → 发全文）；
+    // 流式逐字回复 accum 已含全文（finalText===accum → 不重发）；部分流式补差量前缀尾。
+    const full = finalText || ''
+    let tail = ''
+    if (full && full.startsWith(this.accum)) tail = full.slice(this.accum.length)
+    else if (full && full !== this.accum) tail = full
+    if (tail) this.sendText(tail)
+    this.finishPending = full
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try { this.ws.send(JSON.stringify({ type: 'finish' })) } catch { /* ignore */ }
+    }
+  }
+
+  // done 后等已排定音频播完 → onEnd（驱动 hands-free FOLLOWUP）→ resolve
+  private finishPlayback(): void {
+    if (!this.audioStarted) { void this.fallback(); return } // done 但零音频=异常，回退
+    const remainMs = (this.player?.remainingSec() ?? 0) * 1000
+    this.endTimer = window.setTimeout(() => {
+      this.endTimer = null
+      markTtsMaybeEnd()
+      this._res()
+      this.closeWs()
+    }, remainMs + 120)
+  }
+
+  private async fallback(): Promise<void> {
+    if (this.disposed || this.fellBack) return
+    this.fellBack = true
+    this.closeWs()
+    this.player?.stop()
+    this.player = null
+    // 已播过音频：不整段重合成（避免复读），当作正常收尾
+    if (this.audioStarted) { markTtsMaybeEnd(); this._res(); return }
+    try {
+      await this.onFallback(this.accum, this.finishPending)
+      this._res()
+    } catch (e) {
+      this._rej(e) // 连批处理也失败 → 上抛，App .catch 触发 hands-free turnEnded
+    }
+  }
+
+  stop(): void { // barge-in / 发新消息
+    this.disposed = true
+    if (this.endTimer !== null) { clearTimeout(this.endTimer); this.endTimer = null }
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try { this.ws.send(JSON.stringify({ type: 'cancel' })) } catch { /* ignore */ }
+    }
+    this.closeWs()
+    this.player?.stop()
+    this.player = null
+    this._res() // 停播是主动行为，不算失败
+  }
+
+  private closeWs(): void {
+    try { this.ws?.close() } catch { /* ignore */ }
+    this.ws = null
+  }
+}
+
+let streamSession: StreamingTtsSession | null = null
+
+export function startTTSReply(apiBase: string, voiceId: string, provider = 'mimo'): void {
   stopTTS()
-  activeReply = { apiBase, voiceId, buffer: new TtsTextBuffer() }
+  if (isStreamingTtsProvider(provider) && streamingTtsSupported()) {
+    streamSession = new StreamingTtsSession(apiBase, voiceId, provider, async (accum, finalText) => {
+      // 无感回退句级批处理：把已累计文本交回 TtsTextBuffer（音色回落 MiMo 默认）
+      streamSession = null
+      activeReply = { apiBase, voiceId: STREAM_FALLBACK_VOICE, buffer: new TtsTextBuffer() }
+      if (finalText !== null) {
+        await finishReplyBatch(finalText || accum)
+      } else if (accum) {
+        await enqueueChunks(activeReply.buffer.push(accum))
+      }
+    })
+    streamSession.start()
+  } else {
+    activeReply = { apiBase, voiceId, buffer: new TtsTextBuffer() }
+  }
 }
 
 export function appendTTSDelta(delta: string): Promise<void[]> {
+  if (streamSession) { streamSession.append(delta); return Promise.resolve([]) }
   if (!activeReply || !delta) return Promise.resolve([])
   return enqueueChunks(activeReply.buffer.push(delta))
 }
 
-export function finishTTSReply(finalText: string): Promise<void[]> {
+function finishReplyBatch(finalText: string): Promise<void[]> {
   if (!activeReply) return Promise.resolve([])
   const chunks = activeReply.buffer.finish(finalText)
   activeReply.buffer = new TtsTextBuffer()
   return enqueueChunks(chunks)
 }
 
+export function finishTTSReply(finalText: string): Promise<void[]> {
+  if (streamSession) {
+    streamSession.finish(finalText)
+    return streamSession.completion.then(() => [])
+  }
+  return finishReplyBatch(finalText)
+}
+
 export function stopTTS(): void {
+  if (streamSession) { streamSession.stop(); streamSession = null }
   activeReply?.buffer.reset()
   activeReply = null
   ttsQueue.cancel()
@@ -278,9 +489,10 @@ export function stopTTS(): void {
   ttsActive = false
 }
 
-export async function playTTS(apiBase: string, text: string, voiceId: string): Promise<void> {
+export async function playTTS(apiBase: string, text: string, voiceId: string,
+                              provider = 'mimo'): Promise<void> {
   if (!text.trim()) return
-  startTTSReply(apiBase, voiceId)
+  startTTSReply(apiBase, voiceId, provider)
   await finishTTSReply(text)
 }
 
@@ -630,10 +842,21 @@ export class StreamingRecognizer {
   }
 }
 
-export async function fetchVoices(apiBase: string): Promise<import('./types').Voice[]> {
-  const resp = await fetch(`${apiBase}/api/voices`)
+export async function fetchVoices(apiBase: string, provider = ''): Promise<import('./types').Voice[]> {
+  const q = provider ? `?provider=${encodeURIComponent(provider)}` : ''
+  const resp = await fetch(`${apiBase}/api/voices${q}`)
   const data = await resp.json()
   return Array.isArray(data.voices) ? data.voices : []
+}
+
+// 流式 TTS 引擎清单（含各引擎音色 + 可用性）——设置页两级选择（引擎→音色）的单一数据源。
+export async function fetchTtsProviders(apiBase: string): Promise<import('./types').TtsProviderInfo[]> {
+  try {
+    const data = await fetch(`${apiBase}/api/tts/stream/info`).then((r) => r.json())
+    return Array.isArray(data.providers) ? data.providers : []
+  } catch {
+    return []
+  }
 }
 
 // ─── 记忆视图：会话对话 + 真实学到的记忆（偏好/常去地点/情景）───
