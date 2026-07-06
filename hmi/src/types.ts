@@ -103,6 +103,7 @@ export type TripDay = {
   theme?: string
   stops: TripStop[]
   legs: TripLeg[]
+  weather?: { date?: string; text?: string; temp_high?: string; temp_low?: string } | null // #3 天气联动
 }
 
 export type TripItineraryCard = {

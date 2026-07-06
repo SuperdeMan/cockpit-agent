@@ -19,8 +19,10 @@ from agents._sdk.shared_state import TRIP_ACTIVE
 from agents._sdk.location import current_location_from_meta
 from agents.navigation.src.providers import build_poi_provider
 from agents.navigation.src.providers.mock import MockPOIProvider
+from agents.info.src.providers import build_weather_provider
 from .models import Trip, Stop
 from .pipeline import (build_poi_pool, propose, ground, solve, narrate,
+                       plan_weather, _weather_hint, _norm_days,
                        _ground_one, _poi_to_dict)
 from .extract import extract_trip
 
@@ -48,6 +50,9 @@ class TripPlannerAgent(BaseAgent):
         # 跟随 charging_planner 先例，避免每 leg 跨 gRPC。真实 provider 抖动降级 mock。
         self.poi = build_poi_provider()
         self._fallback = MockPOIProvider()
+        # 天气联动（#3）：进程内复用 info 的和风 provider，规划时结合目的地多日预报。
+        # 无凭据/抖动时 forecast 抛错 → plan_weather 静默降级（天气非行程硬依赖）。
+        self.weather = build_weather_provider()
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         handlers = {"trip.plan": self._plan, "trip.modify": self._modify,
@@ -100,13 +105,22 @@ class TripPlannerAgent(BaseAgent):
         """propose → ground → solve，产出结构化 Trip。"""
         # 目的地是行程城市（非当前位置）→ pool 搜索 near=None，靠关键词「{dest} 景点」定位。
         pool = await build_poi_pool(self.poi, self._fallback, dest, prefs, None, meta)
+        # 天气联动：先取目的地多日预报对齐到行程各天，织进 propose（雨天优先室内/就近景点）。
+        weather = await plan_weather(self.weather, dest, raw_text,
+                                     _norm_days(days) or 2, meta)
         skeleton = await propose(self.llm, dest, days, prefs,
-                                 [p.name for p in pool], raw_text)
+                                 [p.name for p in pool], raw_text,
+                                 weather_hint=_weather_hint(weather))
         trip = await ground(self.poi, self._fallback, skeleton, pool, meta,
                             dest=dest, days=days, prefs=prefs, raw_text=raw_text,
                             llm=self.llm)
         soc = await self._soc_pct(ctx, meta)
         trip = await solve(self.poi, self._fallback, trip, soc, meta)
+        # 每天填天气（卡片/话术展示；按 day_index 对齐，超预报窗口的天保持 None）
+        for day in trip.itinerary:
+            wi = day.day_index - 1
+            if 0 <= wi < len(weather) and weather[wi]:
+                day.weather = weather[wi]
         trip.session_id = ctx.session_id or ""
         trip.user_id = ctx.user_id or ""
         return trip

@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime
 
 from agents._sdk.http import ProviderError
 from agents._sdk.landmark import is_landmark_description, landmark_candidates, name_matches
@@ -109,15 +110,78 @@ def _norm_days(days: str) -> int:
     return n
 
 
+# ── 天气联动（#3 能力增强）：目的地多日预报 → 织进 propose(雨天优先室内) + 每天卡片标注 ──
+
+def _start_offset(raw_text: str, now: datetime) -> int:
+    """从原话推断行程起始日相对今天的偏移（对齐预报窗口）。默认 0=今天/最近可用。"""
+    t = raw_text or ""
+    if "大后天" in t:
+        return 3
+    if "后天" in t:
+        return 2
+    if "明天" in t:
+        return 1
+    wd = now.weekday()  # 周一=0 … 周日=6
+    nextweek = "下周" in t or "下星期" in t or "下礼拜" in t
+    if any(k in t for k in ("周日", "星期日", "星期天", "礼拜日", "礼拜天")):
+        base = (6 - wd) % 7
+        return base + (7 if nextweek else 0)
+    if any(k in t for k in ("周末", "周六", "星期六", "礼拜六")):
+        base = (5 - wd) % 7
+        return base + (7 if nextweek else 0)
+    return 0
+
+
+async def plan_weather(weather_provider, dest: str, raw_text: str,
+                       num_days: int, meta) -> list[dict | None]:
+    """取目的地未来预报并对齐到行程各天。无 provider/无 key/超预报窗口 → 对应天 None（优雅降级）。
+    返回长度 num_days 的列表，每项 {date,text,temp_high,temp_low} 或 None。"""
+    out: list[dict | None] = [None] * max(0, num_days)
+    if not weather_provider or num_days <= 0 or not dest:
+        return out
+    try:
+        fc = await weather_provider.forecast(city=dest, days=7, meta=meta)
+    except Exception as e:  # 无 key / provider 抖动 → 静默降级（天气非行程硬依赖）
+        logger.info("trip weather forecast unavailable for %s: %s", dest, e)
+        return out
+    if not fc:
+        return out
+    off = _start_offset(raw_text, datetime.now())
+    for i in range(num_days):
+        idx = off + i
+        if 0 <= idx < len(fc):
+            f = fc[idx]
+            out[i] = {"date": f.date, "text": f.text_day,
+                      "temp_high": f.temp_high, "temp_low": f.temp_low}
+    return out
+
+
+def _weather_hint(weather: list[dict | None]) -> str:
+    """把对齐后的各天天气拼成 propose 的 LLM 提示（雨天优先室内/就近景点）。全空返回 ''。"""
+    parts = []
+    for i, w in enumerate(weather, start=1):
+        if w and w.get("text"):
+            lo, hi = w.get("temp_low", ""), w.get("temp_high", "")
+            rng = f" {lo}-{hi}℃" if lo and hi else ""
+            parts.append(f"第{i}天{w['text']}{rng}")
+    if not parts:
+        return ""
+    return ("\n【各天天气预报】" + "；".join(parts)
+            + "。请据此编排：室外/登山/海滨/公园类景点安排在天气好的天；"
+            "预计降雨的天多安排室内景点（博物馆/展馆/商圈/水族馆）或彼此就近的点，减少淋雨与奔波。")
+
+
 async def propose(llm, dest: str, days: str, prefs: str,
-                  pool_names: list[str], raw_text: str = "") -> dict:
+                  pool_names: list[str], raw_text: str = "",
+                  weather_hint: str = "") -> dict:
     """LLM 产结构化骨架；约束只选池内名字。解析失败/空 → 确定性兜底分配。"""
     target_days = _norm_days(days)
     if not pool_names:
         return _fallback_skeleton(pool_names, target_days or 1, prefs)
 
     user = (f"目的地：{dest}；天数：{target_days or '不限'}；偏好：{prefs or '无特别要求'}。\n"
-            f"原始需求：{raw_text}\n【可选景点】：{'、'.join(pool_names[:30])}")
+            f"原始需求：{raw_text}\n【可选景点】：{'、'.join(pool_names[:30])}"
+            + (weather_hint or ""))
     try:
         out = await llm.complete(
             [{"role": "system", "content": _PROPOSE_SYSTEM},
@@ -365,16 +429,24 @@ async def _ground_station(poi_provider, fallback, target: dict, meta) -> dict | 
 # ─────────────────────────── narrate ───────────────────────────
 
 def narrate(trip: Trip) -> tuple[str, dict]:
-    """确定性渲染：按天 1-2 句 TTS 话术 + trip_itinerary 卡。"""
+    """确定性渲染：按天 1-2 句 TTS 话术 + trip_itinerary 卡。有天气则每天标注、开头点明已结合天气。"""
     lines = []
+    has_weather = False
     for day in trip.itinerary:
         gs = day.grounded_stops()
         names = "、".join(s.name for s in gs[:4]) if gs else "（待补充景点）"
         charge_n = sum(len(leg.charging_stops) for leg in day.legs)
-        seg = f"第{day.day_index}天：{names}"
+        w = day.weather if isinstance(day.weather, dict) else None
+        wtag = ""
+        if w and w.get("text"):
+            has_weather = True
+            lo, hi = w.get("temp_low", ""), w.get("temp_high", "")
+            wtag = f"（{w['text']}{f' {lo}-{hi}℃' if lo and hi else ''}）"
+        seg = f"第{day.day_index}天{wtag}：{names}"
         if charge_n:
             seg += f"（途中补电{charge_n}次）"
         lines.append(seg)
-    head = f"为您规划{trip.destination}{trip.days}天行程："
+    head = (f"已结合天气为您规划{trip.destination}{trip.days}天行程："
+            if has_weather else f"为您规划{trip.destination}{trip.days}天行程：")
     speech = head + "；".join(lines) + "。"
     return speech, trip.card_dict()

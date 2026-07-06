@@ -1035,6 +1035,12 @@ function TripItineraryCardView({ card, onAction }:
               <button onClick={() => toggle(day.day_index)} style={{ width: '100%', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--au-text)', fontFamily: 'inherit' }}>
                 <span style={{ width: 28, height: 20, borderRadius: 6, display: 'grid', placeItems: 'center', background: `${color}20`, border: `1px solid ${color}40`, fontFamily: 'var(--au-font-mono)', fontSize: 9.5, fontWeight: 700, color }}>D{day.day_index}</span>
                 <span style={{ flex: 1, fontSize: 13, fontWeight: 600, textAlign: 'left' }}>{day.theme || `第${day.day_index}天`}</span>
+                {day.weather?.text && (
+                  <span title={day.weather.text} style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--au-text-3)' }}>
+                    {weatherGlyph(day.weather.text, 14)}
+                    {day.weather.temp_low && day.weather.temp_high ? `${day.weather.temp_low}-${day.weather.temp_high}℃` : day.weather.text}
+                  </span>
+                )}
                 <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{day.stops.length}个点</span>
                 <span style={{ fontSize: 13, color: 'var(--au-text-3)', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s' }}>›</span>
               </button>

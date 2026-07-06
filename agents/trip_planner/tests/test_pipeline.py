@@ -156,3 +156,46 @@ def test_narrate_outputs_speech_and_card():
     assert "杭州" in speech and "西湖" in speech
     assert card["type"] == "trip_itinerary"
     assert card["itinerary"][0]["stops"][0]["name"] == "西湖"
+
+
+# ── #3 天气联动 ──
+from datetime import datetime as _dt
+from agents.info.src.providers.base import ForecastDay as _FD
+
+
+class _FakeWeather:
+    def __init__(self, days): self._days = days
+    async def forecast(self, city="", days=3, meta=None): return self._days
+
+
+def test_start_offset():
+    mon = _dt(2026, 7, 6)  # 周一
+    assert pipeline._start_offset("明天去", mon) == 1
+    assert pipeline._start_offset("后天", mon) == 2
+    assert pipeline._start_offset("这周末去珠海玩两天", mon) == 5   # 周一→周六
+    assert pipeline._start_offset("下周末去", mon) == 12
+    assert pipeline._start_offset("周日去", mon) == 6
+    assert pipeline._start_offset("去珠海玩两天", mon) == 0        # 无时间词默认今天
+
+
+def test_weather_hint():
+    h = pipeline._weather_hint([{"text": "晴", "temp_low": "24", "temp_high": "30"}, None])
+    assert "第1天晴 24-30℃" in h and "室内" in h
+    assert pipeline._weather_hint([None, None]) == ""
+
+
+def test_plan_weather_align_and_out_of_window():
+    fc = [_FD(date="2026-07-06", text_day="晴", temp_high="30", temp_low="24"),
+          _FD(date="2026-07-07", text_day="阵雨", temp_high="27", temp_low="22")]
+    # 明天 offset=1 → day1=forecast[1]（阵雨），day2=forecast[2]（超窗→None）
+    w = asyncio.run(pipeline.plan_weather(_FakeWeather(fc), "杭州", "明天去杭州玩两天", 2, {}))
+    assert w[0]["text"] == "阵雨" and w[0]["temp_high"] == "27"
+    assert w[1] is None
+
+
+def test_plan_weather_no_provider_or_error():
+    assert asyncio.run(pipeline.plan_weather(None, "杭州", "", 2, {})) == [None, None]
+
+    class _Boom:
+        async def forecast(self, **k): raise RuntimeError("no key")
+    assert asyncio.run(pipeline.plan_weather(_Boom(), "杭州", "明天", 2, {})) == [None, None]
