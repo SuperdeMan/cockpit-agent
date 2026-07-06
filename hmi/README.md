@@ -13,14 +13,14 @@ npm run dev      # http://localhost:5173
 
 环境变量（`.env` 或构建时注入）：
 - `VITE_EDGE_GATEWAY_URL` — Edge Gateway 地址（默认 `http://localhost:8090`），WS 走 `/ws`。
-- `VITE_AUDIO_API_URL` — 音频/记忆 HTTP 代理（默认 `http://localhost:50059`），用于 `/api/asr`(批处理)、`/api/asr/stream`(WS 流式识别上屏)、`/api/tts`、`/api/voices`、`/api/memory/*`。
+- `VITE_AUDIO_API_URL` — 音频/记忆 HTTP 代理（默认 `http://localhost:50059`），用于 `/api/asr`(批处理)、`/api/asr/stream`(WS 流式识别上屏)、`/api/tts`(批处理)、`/api/tts/stream`(WS 服务端流式 TTS)、`/api/tts/stream/info`(引擎+音色探测)、`/api/voices`、`/api/memory/*`。
 
 > 麦克风需安全上下文：经 `localhost` 或 HTTPS 访问才可录音（浏览器限制）。
 
 ## 功能
 - **对话**：文字输入 / **按住下方小舟光球说话**（ASR）；语音支持**流式实时上屏**——边说边在输入框逐字显示、松手定稿自动发送（任一环失败无感回退批处理识别）；助手回复**流式逐字**渲染 + “思考中”即时反馈；危险动作多轮确认（确认/取消按钮）。
 - **信息类 UI 卡片**：天气/股票/搜索/新闻/深度调研/POI/路线/充电/行程/赛事等结构化卡片（Aurora Glass 液态玻璃风格，按 Figma 设计稿逐张重建），从 Agent 返回的 `ui_card` 经 Gateway→Cloud→Edge 全链路透传到 HMI 渲染。
-- **语音播报（TTS）**：回复可自动朗读，音色可选（接 `/api/voices`）。
+- **语音播报（TTS）**：回复可自动朗读，**服务端流式合成**（文本增量进、PCM 分片无缝拼播、首音 <1s，`pcmPlayer.mjs` 调度）；音色**两级选择**——先选引擎（CosyVoice 流式 / Qwen 流式方言 / MiMo 经典）再选该引擎音色，逐个可试听；无凭据/失败无感回退句级批处理。
 - **设置页**（右上 ⚙）：
   - 语音播报：音色选择/试听、播报与自动播放开关
   - 语音输入：**识别引擎（实时 DashScope / 分块 MiMo / 关闭）+ 模型（Qwen3-ASR / Fun-ASR）**、识别语言、麦克风模式（按住/点按）、最长聆听时长
@@ -35,7 +35,8 @@ npm run dev      # http://localhost:5173
 src/
   App.tsx            外壳：WS 连接(重连) + 视图路由 + 消息状态机 + 两栏布局
   settings.tsx       设置仓库（localStorage 持久化 + Context）+ buildMeta()
-  audio.ts           录音控制器(消除收音竞态) + StreamingRecognizer(流式识别 WS) + TTS 播放 + 音色/记忆读取
+  audio.ts           录音控制器(消除收音竞态) + StreamingRecognizer(流式识别 WS) + StreamingTtsSession(流式 TTS WS+回退) + 批处理 TTS 队列 + 音色/记忆读取
+  pcmPlayer.mjs      流式 TTS PCM 分片调度(jitter 起播/无缝拼接/underrun 重建/barge-in 停,Web Audio 注入)
   types.ts           共享类型 + 能力目录 + 默认值（数据契约，重构不改字段）
   aurora.css         Aurora Glass 设计系统 token 层（--au-*，深空/玻璃/极光/语义色/keyframes）
   shell.css          应用外壳：1920×1080 两栏栅格 + 状态栏/输入区/欢迎态/气泡

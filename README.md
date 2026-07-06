@@ -32,7 +32,7 @@
 - `DispatchToEdge`、T2 有界循环、确定性工具已实现；权限为规划期（catalog 过滤）+ 执行期
   （dispatch 硬拒）**同源单轨校验**（`security/permission.py::check_permission`，R2.2）。
 - 端侧混合意图支持按语义组分流，本地动作与导航/媒体慢意图可在同一请求中协同执行。
-- HMI 支持文字流式渲染和句子级增量 TTS：首个完整短句即可开始合成、后续音频顺序播放。
+- HMI 支持文字流式渲染和**服务端流式 TTS**：文本增量进、PCM 音频分片出、无缝拼播（DashScope cosyvoice/qwen 双引擎，首帧 <1s），无凭据无感回退句级批处理。
 - **信息类 Provider 全面落地**：导航=高德 / 天气=和风(JWT) / 搜索=Exa 正文级检索(AnySearch→Bing 降级) / 新闻=Exa 优先(SerpApi 兜底) / 赛事=api-football / 股票=Tushare，真实凭证冒烟通过，无凭证回退 mock。搜索经接地合成（强制引用、无依据诚实弃权），新闻以 TTS 播报式编号速览呈现。
 - **HMI 信息类 UI 卡片**：天气/股票/新闻/搜索/赛事/POI 结构化卡片（搜索/新闻为「气泡给结论、卡片给证据」），全链路 ui_card 透传。
 - **复杂任务动态思考 + 过程区**：行程/深度调研/多步等按统一 `is_complex` 判据动态对 LLM
@@ -79,6 +79,14 @@
   对象（真栈 edge→VAL→action 6/6），fast_intent 覆盖率 **72.04%→76.17%**。剩余 82% 目标缺口（辅助驾驶
   ADAS 功能长尾，需 ws8 安全门控甄别的对象化）另立 R4.1b 卡待做。详见 `docs/design/2026-07-04-r4.1-routing-quality.md`
   与 `docs/design/2026-07-04-r4.1b-edge-objectification-and-nlu-decision.md`。
+- **R4.2 服务端流式 TTS + barge-in（2026-07-06，真栈闭合）**：把 TTS 从「句子级增量合成 + 顺序播放」
+  升级为**真·服务端 PCM 流式**——文本增量进、音频分片出，WS `/api/tts/stream`（探针硬 gate 先行），
+  DashScope 双引擎经 `TTS_STREAM_PROVIDER` 可切：**cosyvoice-v3-flash**（run-task 协议，首帧 469ms，默认）/
+  **qwen3-tts-flash-realtime**（realtime 协议，含北京/上海/四川方言音色）；MiMo 批处理保留为无感回退。
+  **首音提速 4.7~7.2×**（批处理 3375ms→流式 469/719ms）。HMI 音色选择重设计为**「引擎→音色」两级**
+  （同 ASR 引擎范式）、`pcmPlayer.mjs` PCM 分片无缝拼播、任一环节失败无感回退句级批处理；**barge-in v1**
+  =播报中按光球/发新消息立即静音并向供应商传播取消。真栈：`test/e2e_tts_stream.py` + 真浏览器 CDP 三态
+  （流式播放 / 无感回退 / 打断）全过。详见 `docs/design/2026-07-04-r4.2-streaming-tts-bargein.md`。
 - **R4.3 语音交互前端：唤醒词 + VAD + 全双工-lite（2026-07-04/05，真栈 Docker 容器端到端验证）**：把语音从
   push-to-talk 升级为解放双手回路——`hmi/src/voiceLoop.mjs` **引擎无关状态机**（免唤醒连续对话 L1 / 播报中打断 L3 /
   误唤醒静默回收 / 本地 dismiss 与云端 F1「取消」分界，20 例 node 测）；**VAD 用 onnxruntime-web 单线程**（silero）做
@@ -171,10 +179,10 @@ Dashboard 的车辆动态接口仅供本地演示；非开发环境必须设置
 - 本地、云端混合多意图拆分，支持导航偏好、歌手等续接片段与主意图成组路由。
 - 十一个云 Agent：导航、闲聊、周边发现（高德 POI 2.0 多类目搜索 + 详情增强）、停车支付、手册问答、行程规划、信息（天气/搜索/新闻/股票）、深度调研（多视角联网调研出带引用分节报告 + 渐进语音简报）、充能规划、场景编排、路况安全（含响应式主动播报）。
 - 统一上下文装配（`ContextManager`：catalog 语义预筛 + 对话历史 + 长期语义记忆 + 结构化焦点态，统一 token 预算；敏感上下文按 manifest `context_scopes` 最小化下发）、对话记忆 + 长期语义记忆（自动学偏好/个人实体、pgvector 语义召回、可查可删）、确认/补槽续接、跨 Agent DAG、T2 自适应再规划。
-- MiMo/Mock LLM Provider，MiMo ASR/TTS（批处理）+ **DashScope 实时流式 ASR**（qwen3/fun，识别上屏）+ MiMo 分块回退，webm→wav/PCM 后端流式转码。
+- MiMo/Mock LLM Provider，MiMo ASR/TTS（批处理）+ **DashScope 实时流式 ASR**（qwen3/fun，识别上屏）+ **DashScope 服务端流式 TTS**（cosyvoice-v3-flash / qwen3-tts-flash-realtime，PCM 分片播报、barge-in）+ MiMo 分块/批处理回退，webm→wav/PCM 后端流式转码。
 - 复杂任务（行程/深度调研/多步）按统一 `is_complex` 判据**动态开思考**提质 + 气泡内嵌
   「过程区」四阶段折叠展示（理解需求→规划步骤→执行任务→整理结果，行车/泊车双态、脱敏不露 reasoning）；普通车控/闲聊零过程零额外延迟。
-- HMI（Aurora Glass 极光液态座舱）流式文字、动作卡、记忆视图、**语音流式识别上屏**、九种音色和句子级增量播报；
+- HMI（Aurora Glass 极光液态座舱）流式文字、动作卡、记忆视图、**语音流式识别上屏**、**流式 TTS 播报（引擎→音色两级选择，cosyvoice/qwen 方言/MiMo）**；
   **R4.3 免唤醒连续对话 + 播报中打断 + 唤醒词（可选预设）+ 唤醒人声播报**（浏览器本地 KWS/VAD，唤醒前音频不出浏览器，opt-in 默认关）。
 - NATS 可观测事件、collector REST/WS、车辆状态 diff、端云 trace、Agent 健康/指标/熔断状态、
   debug 车辆动态与对照实验 Dashboard；collector `GET /metrics`（Prometheus 文本格式）+ 桥接
@@ -219,7 +227,9 @@ python test/e2e_ws.py
   `GET /metrics` + 桥接真实 OTel span 导出 + Grafana 仪表盘，均经 `--profile observability`
   门控可选启用；Grafana 仪表盘已于 **R4.0**（2026-07-04）网络恢复后补验——三面板经数据源代理真实出数）；
   持久化 trace、告警规则、多车聚合与正式鉴权仍待实现。
-- 当前 TTS 是“文本短句增量合成 + 顺序播放”，不是真正的服务端 PCM 音频流。
+- **服务端流式 TTS 已由 R4.2 落地**（2026-07-06）：WS `/api/tts/stream` 文本增量进/PCM 分片出，DashScope
+  cosyvoice-v3-flash（默认）/qwen3-tts-flash-realtime 双引擎 + MiMo 批处理回退，首帧 <1s、支持 barge-in；
+  句子级批处理路径保留为无凭据/失败时的无感回退。多音色克隆/SSML 精细控制属后续。
 - 服务间 gRPC **已由 R3.2 支持双向 mTLS**（`GRPC_TLS` env 门控，默认关保持现状；`scripts/gen-certs.*`
   生成共享 mesh 证书，`GRPC_TLS=on` 全栈加密）；配合 R3.1 会话鉴权，**T3.1+T3.2 齐即安全链路无已知缺口**。
   证书轮换/per-service 证书/真实 IdP 属量产硬化后续。

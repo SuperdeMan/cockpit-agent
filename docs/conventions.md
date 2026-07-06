@@ -132,7 +132,7 @@
 | postgres | 5432 | — |
 | registry | 50051 | gRPC |
 | llm-gateway | 50052 | gRPC |
-| llm-gateway (HMI HTTP 代理) | 50059 | HTTP（`/api/asr` 批处理识别、`/api/asr/stream` **WS 流式识别上屏**、`/api/asr/stream/info` 引擎能力探测、`/api/tts` `/api/voices` `/api/memory/session` `/api/memory/context` `/api/memory/profile`(真实分层记忆:偏好/地点/经历) `/api/memory/forget`(按 scope 删)，CORS 放开供 HMI 浏览器调用） |
+| llm-gateway (HMI HTTP 代理) | 50059 | HTTP（`/api/asr` 批处理识别、`/api/asr/stream` **WS 流式识别上屏**、`/api/asr/stream/info` ASR 引擎能力探测、`/api/tts` 批处理合成、`/api/tts/stream` **WS 服务端流式 TTS**（文本增量入→meta+PCM 二进制帧+done，cancel 传播供应商）、`/api/tts/stream/info` TTS 引擎能力探测（引擎+音色+可用性）、`/api/voices`(可带 `?provider=`) `/api/memory/session` `/api/memory/context` `/api/memory/profile`(真实分层记忆:偏好/地点/经历) `/api/memory/forget`(按 scope 删)，CORS 放开供 HMI 浏览器调用） |
 | memory | 50053 | gRPC |
 | cloud-planner | 50054 | gRPC |
 | **Agent 段** | **50061–50069, 50072–50073** | gRPC |
@@ -167,9 +167,13 @@
 | `ASR_STREAM_MODEL` | DashScope 流式模型，**须全小写**：`qwen3-asr-flash-realtime-2026-02-10`(默认·realtime 协议)、`fun-asr-realtime`(inference run-task 协议) | 否 |
 | `DASHSCOPE_ASR_KEY` | DashScope(百炼) ASR key；留空复用 `LLM_EMBED_API_KEY`（同一把百炼 key）| 否 |
 | `DASHSCOPE_ASR_WS_URL` / `DASHSCOPE_ASR_INFERENCE_WS_URL` | DashScope 实时 ASR 端点：qwen3→`/api-ws/v1/realtime`、fun/paraformer→`/api-ws/v1/inference` | 否（有默认）|
-| `TTS_MODEL` | TTS 模型（MiMo mimo-v2.5-tts）| 否 |
-| `TTS_VOICE_ID` | 默认音色（冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean）| 否（默认冰糖）|
-| `TTS_FORMAT` | TTS 输出格式（wav/pcm16）| 否（默认 wav）|
+| `TTS_MODEL` | 批处理 TTS 模型（MiMo mimo-v2.5-tts）| 否 |
+| `TTS_VOICE_ID` | 批处理默认音色（冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean）| 否（默认冰糖）|
+| `TTS_FORMAT` | 批处理 TTS 输出格式（wav/pcm16）| 否（默认 wav）|
+| `TTS_STREAM_PROVIDER` | 服务端流式 TTS 引擎：`cosyvoice`(默认·cosyvoice-v3-flash run-task 协议)/`qwen`(qwen3-tts-flash-realtime realtime 协议·含方言)/`mock`/`off`；无 key 时 HMI 无感回退批处理 | 否 |
+| `TTS_STREAM_MODEL` | 覆盖流式模型；留空用引擎默认（cosyvoice-v3-flash / qwen3-tts-flash-realtime）| 否 |
+| `TTS_STREAM_VOICE` | 覆盖流式默认音色；留空用引擎默认（cosyvoice `longxiaochun_v3` / qwen `Cherry`）；HMI 设置逐请求可覆盖 | 否 |
+| `DASHSCOPE_TTS_INFERENCE_WS_URL` / `DASHSCOPE_TTS_REALTIME_WS_URL` | DashScope 流式 TTS 端点：cosyvoice→`/api-ws/v1/inference`、qwen→`/api-ws/v1/realtime` | 否（有默认）|
 | `AUDIO_HTTP_PORT` | ASR/TTS HTTP 代理端口 | 否（默认 50059）|
 | `REDIS_URL` / `NATS_URL` / `POSTGRES_DSN` | 基础设施地址 | 容器内有默认 |
 | `REGISTRY_ADDR` / `LLM_GATEWAY_ADDR` / `MEMORY_ADDR` / `CLOUD_PLANNER_ADDR` / `CLOUD_GATEWAY_ADDR` | 服务发现地址（容器 DNS）| 容器内有默认 |

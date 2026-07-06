@@ -18,8 +18,9 @@
 
 ## HMI HTTP 代理（http_server.py，端口 50059）
 HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 HTTP 代理：
-- `POST /api/asr` 批处理语音识别、`POST /api/tts` 语音合成、`GET /api/voices` 音色列表（经 ASR/TTS Provider）。
+- `POST /api/asr` 批处理语音识别、`POST /api/tts` 批处理合成、`GET /api/voices`(可带 `?provider=cosyvoice|qwen|mimo`) 音色列表（经 ASR/TTS Provider）。
 - `GET /api/asr/stream`（**WebSocket**）流式识别上屏 + `GET /api/asr/stream/info` 引擎能力探测（见下节）。
+- `GET /api/tts/stream`（**WebSocket**）服务端流式 TTS + `GET /api/tts/stream/info` 引擎+音色+可用性探测（见下节）。
 - `GET /api/memory/session` / `GET /api/memory/context` 只读记忆（转发 memory gRPC，供 HMI 记忆视图）。
 - ASR/TTS Provider 同样在无 `LLM_API_KEY` 时走 mock。
 
@@ -30,6 +31,13 @@ HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 H
 - 两者复用百炼 `LLM_EMBED_API_KEY`（或独立 `DASHSCOPE_ASR_KEY`）。
 - **MiMo 分块**（`mimo-chunked` 回退）：累积 PCM 每 ~1.2s 封 WAV 打 MiMo 批 ASR 产伪 partial，无百炼 key 时可用。
 - 批处理 `/api/asr` 保留作回退；任一环失败 HMI 无感切回批处理。
+
+## 流式 TTS（服务端 PCM 流式合成 + barge-in）
+设计见 `docs/design/2026-07-04-r4.2-streaming-tts-bargein.md`。WS `/api/tts/stream`：HMI 送 `{type:start,provider,voice}`→`{type:text,delta}`(增量)→`{type:finish}`/`{type:cancel}`；网关经流式引擎**边合成边回** `{type:meta,sample_rate,format}` + **PCM 二进制音频帧** + `{type:done,first_chunk_ms}`。引擎经 `TTS_STREAM_PROVIDER`/请求级覆盖切换（`providers.py` 的 `build_tts_stream_provider` 工厂）：
+- **DashScope cosyvoice-v3-flash**（默认）：**run-task** 协议（`/api-ws/v1/inference`；run-task→task-started→`continue-task`(每 delta)→**二进制音频帧**→finish-task→task-finished；PCM s16le 22050Hz，首帧 ~469ms）。音色须 v3 专属（`longxiaochun_v3` 等，v2 名会 418）。
+- **DashScope qwen3-tts-flash-realtime**：**realtime** 协议（`/api-ws/v1/realtime`；session.update→`input_text_buffer.append`(每 delta)→`response.audio.delta`(base64)→commit/finish；PCM s16le 24000Hz，首帧 ~719ms）。含北京/上海/四川方言音色。
+- 复用百炼 `LLM_EMBED_API_KEY`（或独立 `DASHSCOPE_ASR_KEY`）；无 key → 工厂返 None → `stream/info` 报 unavailable → HMI 无感回退批处理 `/api/tts`。`mock` 引擎产静音分片供 nightly/无 key 验证协议。
+- HMI 侧 `pcmPlayer.mjs` 无缝拼播、`cancel`/断连传播到供应商任务取消（barge-in）。
 
 ## Phase 1 已落地
 - `cache.py` — LRU 缓存（messages 哈希，TTL 5min）
