@@ -152,7 +152,7 @@
 | ✅ ~~**R4.0 收尾包**~~ | K1/K2/N1（复审 §4）+ K3 | S | **已完成（2026-07-04）**，见 `docs/design/2026-07-04-r4.0-residual-cleanup.md`：K1 通道 pause/unpause 自愈（真根因=app 心跳强制重连 CancelledError 打死 `_run`，真栈 ~2s 自愈）/ K2 过程区 e2e 复位车态自足 / N1 PermissionEngine 死注入删 / K3 Grafana 三面板经数据源代理验证；全量 1050 passed |
 | **R4.1 路由质量主题** | A6/D11/D7/K6 | L | 🚧 **P0（Registry 真语义路由，含修 §1.1 hash 伪向量 bug）+ P1（Resolve 评测基线）+ P2（语料资产化+覆盖率报告）+ P3 纯 pattern 扩规则（B1 气象 / B2 设置页族）全部落地**（本地合并 main、**未 push**；真栈 39 行/12 agent 全 1024 维真向量、直调 resolve_semantic 4/4；覆盖率 **72.04%→75.74% +3.70pt**）。**两处真栈发现**：①语义曾被既有关键词打分遮蔽（完整路径 15/20）→**已由语义重排修复**（`SEMANTIC_PROMOTE_SIM`，20/20，`dea88ce`）；②**82% 目标需另做「端侧对象化」→ 已立 R4.1b 卡**（辅助驾驶 ADAS 长尾 12+ 对象 + 导航播报 B3 + 空气净化，非 quick-win 扩规则，已触发 §7 K6 重评估）。见 `docs/design/2026-07-04-r4.1-routing-quality.md` §10 |
 | **R4.1b 端侧对象化 + K6 路径决策** | K6/D7/§7 | M-L | 📋 决策/范围卡已出：`docs/design/2026-07-04-r4.1b-edge-objectification-and-nlu-decision.md`。R4.1 P3 收官暴露「扩规则边际递减、剩余是对象密集型长尾」。**关键洞察：NLU 只解决识别不解决执行，端侧对象化（补 VAL 对象）是 A/B 两路共用地基**。推荐：先补低成本对象（navi_broadcast/air_purifier/声音残余）拿确定收益 → ADAS 数据驱动批量对象化（碰 ws8 安全门控须 Plan Mode）→ 识别侧 A（扩规则）vs B（NLU）由数据触发决策（语料/基线已 P2 资产化）。待泓舟选路径 |
-| **R4.2 流式 TTS + barge-in** | T4.2 | L | ✍️ 设计已出：`docs/design/2026-07-04-r4.2-streaming-tts-bargein.md` |
+| **R4.2 流式 TTS + barge-in** | T4.2 | L | ✅ P0-P3 落地+真栈闭合（2026-07-06）：`docs/design/2026-07-04-r4.2-streaming-tts-bargein.md` |
 | **R4.3 语音交互前端：唤醒+VAD+全双工-lite** | WS7 | L | 🚧 **P1 大脑（main）+ VAD 真集成（分支 `feat/r4.3-p1-vad-integration`）**：`voiceLoop.mjs` FSM 20 例 + `sileroEndpoint.mjs` 10 例 node 全绿（72/72）；**VAD 引擎改 onnxruntime-web 单线程**（sherpa WASM 需 COOP/COEP 挟持主 app 跨源→ORT 单线程实测无需隔离）接进 App（vadEngine/AudioWorklet/handsFreeController），headless 验证 App+ORT+模型加载通过、默认全关行为逐字一致。**唤醒词 KWS ✅ 已从源码构建 WASM**（无预构建可得→自建 sherpa-onnx KWS WASM，emsdk 6.0.2+cmake+ninja，`scripts/build-kws-wasm.sh` 重现；headless 验证 createKws + 运行时「小舟小舟」pinyin 配置成功）。**真麦验收待泓舟**。见设计 §9；取代 R4.2 §3.4 v2 |
 | R4 其余（T4.3/T4.4/T4.5/T4.6） | — | 见 §4 | 按需排期 |
 
@@ -479,7 +479,7 @@ Edge Orchestrator Python 侧、非架构图的 Go 网关；Go 死代码 ChannelC
 | 任务 | 内容 | 前置 |
 |---|---|---|
 | **R4.1 = T4.1+K6+D7-lite 路由质量主题（L）🚧 P0-P3(pattern) 已落地** | Registry 真语义路由（llm-gateway embed，删 hash 伪向量）+ 飞书语料资产化 + quick-win 扩规则；NLU 路径 defer 带触发条件。**P0/P1/P2 + P3 纯 pattern 两批（气象/设置页）已落地**（本地合 main 未 push；覆盖率 72.04%→75.74%）。**82% 目标未达**：剩余缺口是 ADAS 长尾/导航播报/空气净化的「端侧对象化」（12+ VAL 对象，非 quick-win）→ 另立卡 + 触发 §7 K6 重评估。见顶部执行进度 R4.1 行 + 设计 §10 | 无（设计定稿） |
-| **R4.2 = T4.2 服务端流式 TTS + barge-in（L）✍️ 设计已出** | DashScope CosyVoice 流式（复用 fun-asr 已破解的 run-task 协议）+ WS /api/tts/stream + HMI PCM 调度播放 + 打断；探针硬 gate 先行。**§3.4 v2 语音打断已移交 R4.3**（执行时跳过 v2） | 无（设计定稿） |
+| **R4.2 = T4.2 服务端流式 TTS + barge-in（L）✅ P0-P3 落地+真栈闭合（2026-07-06）** | DashScope 双引擎流式（cosyvoice-v3-flash run-task 469ms 首帧默认 / qwen3-tts-flash-realtime 含方言）+ WS /api/tts/stream + HMI pcmPlayer PCM 调度播放 + 无感回退批处理 + barge-in v1；探针硬 gate 先行（首音提速 4.7~7.2×）。HMI 音色重设计为**引擎→音色两级**。真栈：e2e_tts_stream + 真浏览器 CDP 三态（流式/回退/打断）。**§3.4 v2 语音打断由 R4.3 取代** | 无 |
 | **R4.3 语音交互前端：唤醒 + VAD + 全双工-lite（L）🚧 P1 大脑落地** | 补 WS7 遗留「唤醒与打断」：sherpa-onnx WASM 浏览器本地 KWS（「小舟小舟」pinyin 运行时配置）+ silero-vad 端点检测 + `voiceLoop.mjs` 纯逻辑 FSM（免唤醒连续对话/播报中打断/误唤醒静默回收/dismiss 与云端 F1 取消的分界）；唤醒前音频零上传；后端零改动；全部默认关。**本轮：FSM+设置+Orb+下载脚本 node 全量验证并 push（20 例全绿）；Worker 真绑定+真麦验收 gated 于 P0** | 无（设计定稿）；推荐 R4.2 P0-P2 先行（非硬依赖） |
 | T4.3 端侧 SLM 离线兜底（L） | 断网简单问答（架构 §3.3 可选项）；先做端侧模型基准测试（风险 R1） | — |
 | T4.4 剩余 mock 真实化（M×3） | food/parking 真实平台或沙箱；manual-rag 换 pgvector 车书库（多车型隔离+出处） | — |

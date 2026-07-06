@@ -3,7 +3,7 @@
 //  - 客户端直接生效（主题/字号/音色/ASR 语言/麦克风模式/聆听时长/快捷指令）
 //  - 经 WS meta 透传给后端（model/answerLength/assistantName/agents/memory）——见 buildMeta()
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { DEFAULT_SETTINGS, type Settings } from './types'
+import { DEFAULT_SETTINGS, TTS_PROVIDER_FALLBACK, type Settings } from './types'
 
 const STORAGE_KEY = 'cockpit.settings.v1'
 
@@ -13,11 +13,18 @@ function load(): Settings {
     if (!raw) return DEFAULT_SETTINGS
     const parsed = JSON.parse(raw)
     // 合并默认值，向前兼容新增字段；agents 做深合并
-    return {
+    const merged: Settings = {
       ...DEFAULT_SETTINGS,
       ...parsed,
       agents: { ...DEFAULT_SETTINGS.agents, ...(parsed.agents || {}) },
     }
+    // R4.2 迁移/自愈：音色必须属于所选引擎（老设置无 ttsProvider→默认 cosyvoice，但 voiceId 仍是
+    // MiMo 音色如「冰糖」→ 流式请求会 418 再回退，浪费）。音色不在该引擎里则回落该引擎默认。
+    const prov = TTS_PROVIDER_FALLBACK.find((p) => p.id === merged.ttsProvider)
+    if (prov && !prov.voices.some((v) => v.voice_id === merged.voiceId)) {
+      merged.voiceId = prov.voices[0]?.voice_id ?? merged.voiceId
+    }
+    return merged
   } catch {
     return DEFAULT_SETTINGS
   }
