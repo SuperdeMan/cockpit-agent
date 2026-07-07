@@ -377,6 +377,22 @@ def test_sports_query_routes_to_structured_data_not_search():
     assert res.ui_card["fixtures"][1]["score"] == ""
 
 
+def test_sports_fixtures_carry_country_flags():
+    """赛事卡每支球队带国旗 emoji（后端权威注入，队名映射、mock/降级也有）。"""
+    from agents.info.src.providers.sports_apifootball import flag_for
+    assert flag_for("巴西") == "🇧🇷" and flag_for("阿根廷") == "🇦🇷" and flag_for("日本") == "🇯🇵"
+    assert flag_for("未知队") == ""        # 未命中 → 空（不编造）
+    agent = InfoAgent()
+    agent.sports = _SportsStub([
+        _fx(league="FIFA 世界杯", league_id=1, home="巴西", away="海地", home_goals="3",
+            away_goals="0", status="finished", status_text="已结束"),
+    ])
+    res = asyncio.run(run_handle(
+        agent, "info.search", slots={"query": "今天世界杯赛程"}, raw_text="今天世界杯赛程"))
+    fx = res.ui_card["fixtures"][0]
+    assert fx["home_flag"] == "🇧🇷" and fx["away_flag"] == "🇭🇹"
+
+
 def test_sports_routes_only_with_competition_and_intent_word():
     agent = InfoAgent()
     agent.sports = _SportsStub([])

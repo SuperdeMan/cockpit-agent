@@ -5,11 +5,12 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { useSettings } from '../settings'
 import {
-  AGENT_CATALOG, VOICE_FALLBACK, WAKE_WORD_PRESETS, TTS_PROVIDER_FALLBACK,
-  type Voice, type TtsProviderInfo, type TtsProvider,
+  AGENT_CATALOG, VOICE_FALLBACK, WAKE_WORD_PRESETS, TTS_PROVIDER_FALLBACK, LLM_PROVIDER_FALLBACK,
+  type Voice, type TtsProviderInfo, type TtsProvider, type LlmProviderInfo, type LlmStatus,
 } from '../types'
 import {
-  fetchVoices, fetchTtsProviders, fetchMemory, fetchMemoryProfile, forgetMemory, fetchPlaces, playTTS,
+  fetchVoices, fetchTtsProviders, fetchLlmProviders, setLlmProvider,
+  fetchMemory, fetchMemoryProfile, forgetMemory, fetchPlaces, playTTS,
   type MemoryView, type MemoryProfile, type NamedPlaces,
 } from '../audio'
 import { PLACE_DEFS, isPlaceSet, formatPlace } from '../places.mjs'
@@ -172,7 +173,7 @@ export function SettingsPanel({
             {section === 'display' && <DisplaySection />}
             {section === 'location' && <LocationSection location={location} enabled={locationEnabled} status={locationStatus} onRequest={onRequestLocation} onEnabledChange={onLocationEnabledChange} />}
             {section === 'places' && <PlacesSection audioApi={audioApi} />}
-            {section === 'assistant' && <AssistantSection />}
+            {section === 'assistant' && <AssistantSection audioApi={audioApi} />}
             {section === 'agents' && <AgentsSection />}
             {section === 'memory' && <MemorySection audioApi={audioApi} sessionId={sessionId} />}
           </Glass>
@@ -531,8 +532,39 @@ function PlacesSection({ audioApi }: { audioApi: string }) {
 }
 
 // ─── 6 · 助手设置 ───
-function AssistantSection() {
+// 具体模型的短标签（去品牌前缀，Segmented 里紧凑显示）：MiMo 2.5 Pro→Pro / 通义千问 3.7 Max→Max
+function modelShort(label: string): string {
+  return label.includes(' ') ? label.split(' ').pop() || label : label
+}
+
+function AssistantSection({ audioApi }: { audioApi: string }) {
   const { settings, update } = useSettings()
+  const [llm, setLlm] = useState<LlmStatus | null>(null)
+
+  // 探测网关厂商清单 + 当前 active；失败留离线兜底
+  useEffect(() => {
+    fetchLlmProviders(audioApi).then((s) => { if (s) setLlm(s) }).catch(() => {/* 离线兜底 */})
+  }, [audioApi])
+
+  const providers: LlmProviderInfo[] = llm?.providers ?? LLM_PROVIDER_FALLBACK
+  // 选中厂商：本地显式选定优先，否则跟随网关当前 active（空则第一个）
+  const activeProvider = settings.llmProvider || llm?.active.provider || providers[0]?.id || 'mimo'
+  const curProv = providers.find((p) => p.id === activeProvider) ?? providers[0]
+  const activeModel = settings.llmModel || (settings.llmProvider ? '' : llm?.active.model) || curProv?.primary || ''
+
+  const selectProvider = async (pid: string) => {
+    const p = providers.find((x) => x.id === pid)
+    if (!p || !p.available) return
+    update({ llmProvider: pid, llmModel: '' })          // 换厂商清空具体模型（用该厂商 primary）
+    const st = await setLlmProvider(audioApi, pid, '')  // 全局切换
+    if (st) setLlm(st)
+  }
+  const selectModel = async (mid: string) => {
+    update({ llmModel: mid })
+    const st = await setLlmProvider(audioApi, activeProvider, mid)
+    if (st) setLlm(st)
+  }
+
   const models = [
     { value: 'fast' as const, name: '快速', desc: '低延迟，适合导航/天气/音乐等实时任务', latency: '<0.5s' },
     { value: 'deep' as const, name: '深度推理', desc: '复杂推理，适合行程规划、调研报告', latency: '1-3s' },
@@ -541,6 +573,21 @@ function AssistantSection() {
   return (
     <div>
       <SectionHdr icon="assistant" title="助手设置" sub={`个性化${settings.assistantName}的回答风格与底层模型（昵称即时生效，长度/模型经会话透传后端）`} />
+      <SettingGroup title="AI 大脑（LLM 厂商）">
+        <SettingRow label="模型厂商" sub="切换即全局生效、所有服务共用；未配置密钥的厂商置灰不可选。默认跟随部署配置。">
+          <Segmented value={activeProvider} onChange={selectProvider}
+            options={providers.map((p) => ({ value: p.id, label: p.label.split('·')[0], disabled: !p.available }))} />
+        </SettingRow>
+        <SettingRow label="具体模型" sub={`${curProv?.label ?? ''} · 当前 ${activeModel || '默认'}`} noBorder>
+          {curProv && curProv.models.length > 1 ? (
+            <Segmented sm value={activeModel} onChange={selectModel}
+              options={curProv.models.map((m) => ({ value: m.id, label: modelShort(m.label) }))} />
+          ) : (
+            <span style={{ fontSize: 13, color: FG3, fontFamily: MONO }}>{activeModel || '—'}</span>
+          )}
+        </SettingRow>
+      </SettingGroup>
+      <HR />
       <SettingGroup title="个性化">
         <SettingRow label="助手昵称" sub="你对助手的称呼（显示用；唤醒词在语音设置中单独选择）">
           <TextInput value={settings.assistantName} onChange={(v) => update({ assistantName: v })} placeholder="小舟" maxLength={8} width={180} />

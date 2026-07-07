@@ -859,6 +859,44 @@ export async function fetchTtsProviders(apiBase: string): Promise<import('./type
   }
 }
 
+// ─── 多 LLM 源：厂商/模型清单（含可用性 + 当前 active）+ 全局切换 ───
+export async function fetchLlmProviders(apiBase: string): Promise<import('./types').LlmStatus | null> {
+  try {
+    const data = await fetch(`${apiBase}/api/llm/providers`).then((r) => r.json())
+    if (data && Array.isArray(data.providers)) return data as import('./types').LlmStatus
+    return null
+  } catch {
+    return null
+  }
+}
+
+// 切换全局 active LLM 厂商/模型（所有服务的 LLM 调用随之切换）。返回最新状态或 null。
+export async function setLlmProvider(apiBase: string, provider: string, model = ''): Promise<import('./types').LlmStatus | null> {
+  try {
+    const resp = await fetch(`${apiBase}/api/llm/provider`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, model }),
+    })
+    if (!resp.ok) return null
+    return (await resp.json()) as import('./types').LlmStatus
+  } catch {
+    return null
+  }
+}
+
+// 启动时把本地存的「大脑」偏好重放回网关（网关重启回落 env 默认后恢复用户选择）。
+// 仅当本地已显式选定（provider 非空）且与网关当前 active 不一致时才 POST。
+export async function syncLlmProvider(apiBase: string, provider: string, model = ''): Promise<void> {
+  if (!provider) return
+  try {
+    const cur = await fetchLlmProviders(apiBase)
+    if (cur && cur.active.provider === provider && (!model || cur.active.model === model)) return
+    await setLlmProvider(apiBase, provider, model)
+  } catch {
+    /* best-effort */
+  }
+}
+
 // ─── 记忆视图：会话对话 + 真实学到的记忆（偏好/常去地点/情景）───
 
 export type MemoryTurn = { role: string; text: string; ts: number }

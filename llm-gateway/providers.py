@@ -135,12 +135,21 @@ class OpenAICompatibleProvider(BaseProvider):
 
     def __init__(self, api_key: str, base_url: str = "",
                  auth_style: str = "api-key", disable_thinking: bool = True,
+                 token_param: str = "max_completion_tokens", thinking_style: str = "mimo",
                  embed_url: str = "", embed_model: str = "", embed_api_key: str = "",
                  embed_auth_style: str = "bearer", embed_dimensions: int = 0):
         self.api_key = api_key
         self.base_url = base_url or self._DEFAULT_BASE_URL
         self.auth_style = (auth_style or "api-key").lower()
         self.disable_thinking = disable_thinking
+        # per-provider 差异（多 LLM 源）：
+        #   token_param   —— token 上限字段名：max_completion_tokens（MiMo/MiniMax）| max_tokens（DeepSeek/Qwen）
+        #   thinking_style —— 关思考的方式：
+        #     "mimo" → thinking:{type:disabled}（含 MiniMax，同款）；开思考不发键（原生 adaptive）
+        #     "qwen" → enable_thinking:false/true（DashScope 兼容模式 qwen3）
+        #     "none" → 不发任何思考键（DeepSeek 等默认非思考服务商）
+        self.token_param = (token_param or "max_completion_tokens").strip()
+        self.thinking_style = (thinking_style or "mimo").strip().lower()
         # 向量化（embedding）端点/鉴权/维度独立于 chat——embedding 常用另一服务商（如百炼）。
         # 默认从 chat 端点推导；embed_api_key 缺省回退 chat key；auth 默认 bearer（OpenAI 风格）。
         self.embed_url = embed_url or self.base_url.replace("/chat/completions", "/embeddings")
@@ -175,7 +184,8 @@ class OpenAICompatibleProvider(BaseProvider):
         """本次调用是否关思考：thinking=None 用构造默认；True/False 覆盖本次。"""
         return self.disable_thinking if thinking is None else (not thinking)
 
-    async def complete(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
+    def _build_body(self, messages, model, temperature, max_tokens, thinking, stream: bool) -> dict:
+        """按 per-provider 差异（token_param/thinking_style）构造 chat/completions 请求体。"""
         disable = self._resolve_thinking(thinking)
         # 开思考时给足 token：reasoning 占预算，content 容易被饿空/截断；下限抬到 2048。
         max_out = (max_tokens or 512) if disable else max((max_tokens or 512), 2048)
@@ -183,15 +193,23 @@ class OpenAICompatibleProvider(BaseProvider):
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "max_completion_tokens": max_out,
-            "stream": False,
+            self.token_param: max_out,
+            "stream": stream,
         }
-        if disable:
-            # MiMo 等推理模型：默认把 token 预算几乎全花在 reasoning_content 上，
-            # 导致结构化任务（Planner JSON、聚合改写、接地合成）的 content 被饿成空/截断。
-            # 关闭思考即可拿到干净、确定、低延迟的 content。非推理服务商可经 env 关掉本项。
-            # 开思考时不发本键（回 MiMo 原生思考态），reasoning_content 留服务端、不取不下发。
-            body["thinking"] = {"type": "disabled"}
+        if self.thinking_style == "mimo":
+            # MiMo/MiniMax 等推理模型：默认把 token 预算几乎全花在 reasoning_content 上，导致
+            # 结构化任务（Planner JSON、聚合改写、接地合成）的 content 被饿成空/截断——关思考拿干净、
+            # 确定、低延迟 content。开思考时不发本键（回原生思考态），reasoning_content 留服务端不下发。
+            if disable:
+                body["thinking"] = {"type": "disabled"}
+        elif self.thinking_style == "qwen":
+            # DashScope 兼容模式 qwen3：思考经 enable_thinking 显式控制（结构化任务须置 false）。
+            body["enable_thinking"] = not disable
+        # thinking_style == "none"（DeepSeek 等）：不发思考键，用服务商默认。
+        return body
+
+    async def complete(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
+        body = self._build_body(messages, model, temperature, max_tokens, thinking, stream=False)
         resp = await self._get_client().post(
             self.base_url, headers=self._headers(), json=body,
             timeout=_http_timeout(timeout_s, _HTTP_READ_CAP_S))
@@ -205,17 +223,7 @@ class OpenAICompatibleProvider(BaseProvider):
         return content, model, "stop", (prompt_tokens, completion_tokens)
 
     async def stream(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
-        disable = self._resolve_thinking(thinking)
-        max_out = (max_tokens or 512) if disable else max((max_tokens or 512), 2048)
-        body = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_completion_tokens": max_out,
-            "stream": True,
-        }
-        if disable:
-            body["thinking"] = {"type": "disabled"}
+        body = self._build_body(messages, model, temperature, max_tokens, thinking, stream=True)
         # 流式：read 超时作 per-chunk stall 检测（无新 chunk 超时即中止），不让上游卡死吊死整链。
         stall = _read_budget(timeout_s, _STREAM_STALL_S)
         async with self._get_client().stream(
@@ -791,13 +799,72 @@ QWEN_TTS_VOICES = [
      "description": "四川话·女声", "tags": ["方言", "四川话"]},
 ]
 
+# MiniMax T2A 系统音色（部分常用；完整表可调 MiniMax「查询可用音色」API）。
+MINIMAX_VOICES = [
+    {"voice_id": "female-tianmei", "name": "甜美女声", "language": "zh", "gender": "female",
+     "description": "甜美·女声", "tags": ["女声"]},
+    {"voice_id": "female-shaonv", "name": "少女音", "language": "zh", "gender": "female",
+     "description": "少女·女声", "tags": ["女声"]},
+    {"voice_id": "female-yujie", "name": "御姐音", "language": "zh", "gender": "female",
+     "description": "御姐·女声", "tags": ["女声"]},
+    {"voice_id": "male-qn-qingse", "name": "青涩青年", "language": "zh", "gender": "male",
+     "description": "青涩·男声", "tags": ["男声"]},
+    {"voice_id": "male-qn-jingying", "name": "精英青年", "language": "zh", "gender": "male",
+     "description": "精英·男声", "tags": ["男声"]},
+    {"voice_id": "presenter_female", "name": "女主持", "language": "zh", "gender": "female",
+     "description": "主持·女声", "tags": ["女声", "主持"]},
+    {"voice_id": "presenter_male", "name": "男主持", "language": "zh", "gender": "male",
+     "description": "主持·男声", "tags": ["男声", "主持"]},
+]
+
 # provider id → (默认模型, 默认音色, 采样率, 音色表)。HMI/工厂共用，避免散落硬编码。
 TTS_STREAM_CATALOG = {
     "cosyvoice": {"model": "cosyvoice-v3-flash", "voice": "longxiaochun_v3",
                   "sample_rate": 22050, "voices": COSYVOICE_VOICES, "label": "CosyVoice·流式"},
     "qwen": {"model": "qwen3-tts-flash-realtime", "voice": "Cherry",
              "sample_rate": 24000, "voices": QWEN_TTS_VOICES, "label": "Qwen·方言"},
+    "mimo": {"model": "mimo-v2.5-tts", "voice": "冰糖",
+             "sample_rate": 24000, "voices": MiMoTTSProvider.VOICES, "label": "MiMo·流式"},
+    "minimax": {"model": os.getenv("MINIMAX_TTS_MODEL", "speech-2.8-turbo"),
+                "voice": os.getenv("MINIMAX_TTS_VOICE", "female-tianmei"),
+                "sample_rate": 24000, "voices": MINIMAX_VOICES, "label": "MiniMax·流式"},
 }
+
+
+# ── 句级切分：把「文本增量流」聚成「整句流」──
+# MiMo/MiniMax 的 TTS API 都是「整段文本一次入」（不像 cosyvoice/qwen 支持 continue-task 增量喂），
+# 故靠切句实现「边说边播」：每满一句就合成一段音频，逐段流式回。
+_SENTENCE_END = "。！？!?…\n；;"
+
+
+def _find_sentence_end(s: str) -> int:
+    for i, ch in enumerate(s):
+        if ch in _SENTENCE_END:
+            return i
+    return -1
+
+
+async def _sentence_segments(text_deltas, *, max_chars: int = 60):
+    """异步生成器：缓冲文本增量，遇句末标点或超 max_chars 即吐一整句，收尾 flush 余量。"""
+    buf = ""
+    async for delta in text_deltas:
+        if not delta:
+            continue
+        buf += delta
+        while True:
+            idx = _find_sentence_end(buf)
+            if idx == -1:
+                break
+            seg, buf = buf[:idx + 1].strip(), buf[idx + 1:]
+            if seg:
+                yield seg
+        if len(buf) >= max_chars:
+            seg, buf = buf.strip(), ""
+            if seg:
+                yield seg
+    tail = buf.strip()
+    if tail:
+        yield tail
 
 
 class BaseStreamingTTSProvider:
@@ -996,6 +1063,110 @@ class MockStreamingTTSProvider(BaseStreamingTTSProvider):
             yield b"\x00" * int(sr * 0.12) * 2 * n
 
 
+class MiMoStreamingTTSProvider(BaseStreamingTTSProvider):
+    """MiMo v2.5 流式 TTS（官方 stream:true + pcm16@24k）。TTS API 整段文本一次入 → 按句切分逐段
+    流式合成、边说边播；每段一次 chat/completions(stream=true)，SSE 逐 chunk 取 delta.audio.data（base64 pcm16）。
+    docs: https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/speech-synthesis-v2.5"""
+
+    def __init__(self, api_key: str, base_url: str = "", model: str = "mimo-v2.5-tts",
+                 voice: str = "冰糖", sample_rate: int = 24000):
+        self.api_key = api_key
+        self.base_url = base_url or MiMoTTSProvider.BASE_URL
+        self.model = model
+        self.voice = voice
+        self.sample_rate = sample_rate
+
+    async def stream(self, text_deltas, *, voice="", sample_rate=0):
+        import base64
+        voice = voice or self.voice
+        sr = sample_rate or self.sample_rate
+        headers = {"api-key": self.api_key, "Content-Type": "application/json",
+                   "Accept-Encoding": "identity"}
+        meta_sent = False
+        async with httpx.AsyncClient(limits=_HTTP_LIMITS) as client:
+            async for seg in _sentence_segments(text_deltas):
+                body = {"model": self.model, "stream": True,
+                        "messages": [{"role": "assistant", "content": seg}],
+                        "audio": {"format": "pcm16", "voice": voice}}
+                async with client.stream(
+                        "POST", self.base_url, headers=headers, json=body,
+                        timeout=httpx.Timeout(30, connect=_HTTP_CONNECT_S, pool=5.0)) as resp:
+                    resp.raise_for_status()
+                    if not meta_sent:
+                        meta_sent = True
+                        yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        payload = line[5:].strip()
+                        if not payload or payload == "[DONE]":
+                            continue
+                        try:
+                            chunk = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = ((chunk.get("choices") or [{}])[0].get("delta") or {})
+                        audio = (delta.get("audio") or {})
+                        b64 = audio.get("data") or ""
+                        if b64:
+                            try:
+                                yield base64.b64decode(b64)
+                            except (ValueError, TypeError):
+                                pass
+        if not meta_sent:
+            yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
+
+
+class MiniMaxStreamingTTSProvider(BaseStreamingTTSProvider):
+    """MiniMax T2A v2 流式 TTS（stream:true → SSE，音频 hex 编码在 data.audio）。整段文本一次入 →
+    按句切分逐段流式合成。与 MiniMax LLM 同一把 MINIMAX_API_KEY（Bearer）。
+    docs: https://platform.minimaxi.com/docs/api-reference/speech-t2a-http.md"""
+
+    def __init__(self, api_key: str, url: str = "", model: str = "speech-2.8-turbo",
+                 voice: str = "female-tianmei", sample_rate: int = 24000):
+        self.api_key = api_key
+        self.url = url or os.getenv("MINIMAX_T2A_URL", "https://api.minimaxi.com/v1/t2a_v2")
+        self.model = model
+        self.voice = voice
+        self.sample_rate = sample_rate
+
+    async def stream(self, text_deltas, *, voice="", sample_rate=0):
+        voice = voice or self.voice
+        sr = sample_rate or self.sample_rate
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        meta_sent = False
+        async with httpx.AsyncClient(limits=_HTTP_LIMITS) as client:
+            async for seg in _sentence_segments(text_deltas):
+                body = {"model": self.model, "text": seg, "stream": True,
+                        "voice_setting": {"voice_id": voice, "speed": 1.0},
+                        "audio_setting": {"sample_rate": sr, "format": "pcm", "channel": 1}}
+                async with client.stream(
+                        "POST", self.url, headers=headers, json=body,
+                        timeout=httpx.Timeout(30, connect=_HTTP_CONNECT_S, pool=5.0)) as resp:
+                    resp.raise_for_status()
+                    if not meta_sent:
+                        meta_sent = True
+                        yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        payload = line[5:].strip()
+                        if not payload or payload == "[DONE]":
+                            continue
+                        try:
+                            chunk = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        audio_hex = ((chunk.get("data") or {}).get("audio")) or ""
+                        if audio_hex:
+                            try:
+                                yield bytes.fromhex(audio_hex)
+                            except ValueError:
+                                pass
+        if not meta_sent:
+            yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
+
+
 def build_tts_stream_provider(provider: str = "", model: str = "",
                               voice: str = "") -> "BaseStreamingTTSProvider | None":
     """按请求/env 选流式 TTS 引擎。provider/model/voice 为请求级覆盖（HMI 设置可切），空则 env 默认。
@@ -1005,6 +1176,20 @@ def build_tts_stream_provider(provider: str = "", model: str = "",
         return None
     if provider == "mock":
         return MockStreamingTTSProvider()
+    if provider == "mimo":
+        key = os.getenv("LLM_API_KEY", "")
+        if not key:
+            return None
+        cat = TTS_STREAM_CATALOG["mimo"]
+        return MiMoStreamingTTSProvider(key, model=model or cat["model"],
+                                        voice=voice or cat["voice"], sample_rate=cat["sample_rate"])
+    if provider == "minimax":
+        key = os.getenv("MINIMAX_API_KEY", "")
+        if not key:
+            return None
+        cat = TTS_STREAM_CATALOG["minimax"]
+        return MiniMaxStreamingTTSProvider(key, model=model or cat["model"],
+                                           voice=voice or cat["voice"], sample_rate=cat["sample_rate"])
     if provider in ("cosyvoice", "qwen", "dashscope"):
         key = os.getenv("DASHSCOPE_ASR_KEY") or os.getenv("LLM_EMBED_API_KEY", "")
         if not key:

@@ -18,7 +18,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import providers as P
 from providers import (
     _cosyvoice_run_task, _cosyvoice_continue, _cosyvoice_finish, _qwen_session_update,
-    DashScopeCosyVoiceProvider, DashScopeQwenTTSProvider, MockStreamingTTSProvider,
+    _sentence_segments, DashScopeCosyVoiceProvider, DashScopeQwenTTSProvider,
+    MockStreamingTTSProvider, MiMoStreamingTTSProvider, MiniMaxStreamingTTSProvider,
     build_tts_stream_provider, TTS_STREAM_CATALOG,
 )
 
@@ -128,10 +129,121 @@ def test_factory_dashscope_alias_maps_to_cosyvoice(monkeypatch):
 
 
 def test_catalog_shape():
-    assert set(TTS_STREAM_CATALOG) == {"cosyvoice", "qwen"}
+    assert set(TTS_STREAM_CATALOG) == {"cosyvoice", "qwen", "mimo", "minimax"}
     for cat in TTS_STREAM_CATALOG.values():
         assert cat["model"] and cat["voice"] and cat["sample_rate"] > 0
         assert cat["voices"] and all("voice_id" in v for v in cat["voices"])
+
+
+# ── 句级切分器（把文本增量流聚成整句流）──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_sentence_segments_splits_on_punct():
+    out = [s async for s in _sentence_segments(_aiter(["你好", "，今天", "天气不错。", "出门吗？好的"]))]
+    assert out == ["你好，今天天气不错。", "出门吗？", "好的"]  # 句末切分 + 收尾 flush 余量
+
+
+@pytest.mark.asyncio
+async def test_sentence_segments_flushes_on_max_chars():
+    long = "啊" * 70  # 无标点长串 → 超 max_chars(60) 强制切
+    out = [s async for s in _sentence_segments(_aiter([long]))]
+    assert len(out) >= 1 and "".join(out) == long
+
+
+@pytest.mark.asyncio
+async def test_sentence_segments_empty():
+    assert [s async for s in _sentence_segments(_aiter([]))] == []
+
+
+# ── MiMo/MiniMax 工厂路由 ────────────────────────────────────────────────────
+
+def test_factory_mimo_needs_key(monkeypatch):
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    assert build_tts_stream_provider("mimo") is None
+    monkeypatch.setenv("LLM_API_KEY", "mk")
+    prov = build_tts_stream_provider("mimo")
+    assert isinstance(prov, MiMoStreamingTTSProvider)
+    assert prov.model == "mimo-v2.5-tts" and prov.sample_rate == 24000
+
+
+def test_factory_minimax_needs_key(monkeypatch):
+    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+    assert build_tts_stream_provider("minimax") is None
+    monkeypatch.setenv("MINIMAX_API_KEY", "mmk")
+    prov = build_tts_stream_provider("minimax", voice="male-qn-qingse")
+    assert isinstance(prov, MiniMaxStreamingTTSProvider)
+    assert prov.voice == "male-qn-qingse" and prov.sample_rate == 24000
+
+
+# ── FakeHTTP 驱动 MiMo/MiniMax SSE 解析（离线验证按句切分 + 音频解码）─────────────
+
+class _FakeStreamResp:
+    def __init__(self, lines):
+        self._lines = lines
+
+    def raise_for_status(self):
+        pass
+
+    async def aiter_lines(self):
+        for ln in self._lines:
+            yield ln
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+
+class _FakeHTTPClient:
+    """脚本化 httpx.AsyncClient：每次 stream() 回放一段 SSE 行；记录发出的 body。"""
+
+    def __init__(self, lines_per_call):
+        self._calls = list(lines_per_call)
+        self.bodies = []
+
+    def stream(self, method, url, headers=None, json=None, timeout=None):
+        self.bodies.append(json)
+        lines = self._calls.pop(0) if self._calls else []
+        return _FakeStreamResp(lines)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_mimo_stream_sse_parse(monkeypatch):
+    pcm = b"\x11\x22" * 10
+    line = "data: " + json.dumps({"choices": [{"delta": {"audio": {"data": base64.b64encode(pcm).decode()}}}]})
+    fake = _FakeHTTPClient([[line, "data: [DONE]"], [line, "data: [DONE]"]])  # 两句两段
+    monkeypatch.setattr(P.httpx, "AsyncClient", lambda *a, **k: fake)
+    prov = MiMoStreamingTTSProvider("mk", voice="冰糖", sample_rate=24000)
+    out = [x async for x in prov.stream(_aiter(["你好。", "再见。"]))]
+    metas = [x for x in out if isinstance(x, dict)]
+    audio = [x for x in out if isinstance(x, (bytes, bytearray))]
+    assert metas and metas[0]["type"] == "meta" and metas[0]["sample_rate"] == 24000
+    assert b"".join(audio) == pcm * 2                       # 两句 → 两段音频
+    assert len(fake.bodies) == 2 and fake.bodies[0]["stream"] is True
+    assert fake.bodies[0]["messages"][0]["content"] == "你好。"  # 按句喂
+    assert fake.bodies[0]["audio"]["format"] == "pcm16"
+
+
+@pytest.mark.asyncio
+async def test_minimax_stream_sse_hex_parse(monkeypatch):
+    pcm = b"\x33\x44" * 8
+    line = "data:" + json.dumps({"data": {"audio": pcm.hex()}})  # MiniMax 音频 hex 编码
+    fake = _FakeHTTPClient([[line]])
+    monkeypatch.setattr(P.httpx, "AsyncClient", lambda *a, **k: fake)
+    prov = MiniMaxStreamingTTSProvider("mmk", voice="female-tianmei", sample_rate=24000)
+    out = [x async for x in prov.stream(_aiter(["你好世界"]))]
+    audio = [x for x in out if isinstance(x, (bytes, bytearray))]
+    assert b"".join(audio) == pcm                            # hex → bytes 解码正确
+    assert fake.bodies[0]["text"] == "你好世界"
+    assert fake.bodies[0]["voice_setting"]["voice_id"] == "female-tianmei"
+    assert fake.bodies[0]["audio_setting"]["format"] == "pcm"
 
 
 # ── FakeWS 驱动 DashScope provider 全循环（离线验证协议状态机）────────────────
