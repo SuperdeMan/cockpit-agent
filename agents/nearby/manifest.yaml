@@ -47,8 +47,9 @@ route_hints:
     intent: nearby.detail
     policy: replace
     priority: 55
-    # guard 反例：赛事/股票等追问的「那场…详情」「看看详情」不归周边——赛事走 info.sports（见 info manifest）
-    guard: '那场|这场|上一?场|哪场|比赛|球赛|赛况|赛程|世界杯|欧冠|欧联|英超|西甲|意甲|德甲|法甲|荷甲|射手|进球|金靴|股价|股票'
+    # guard 反例：赛事/股票等追问的「那(一)场…详情」「看看详情」不归周边——赛事走 info.sports（见 info manifest）。
+    # 「那一?场」等含可选「一」：兼容「那一场/这一场/哪一场」（真机漏例：葡萄牙那一场看看详情）。
+    guard: '那一?场|这一?场|上一?场|哪一?场|比赛|球赛|赛况|赛程|世界杯|欧冠|欧联|英超|西甲|意甲|德甲|法甲|荷甲|射手|进球|金靴|股价|股票'
     slots: {name: "$text"}
 
 requires_permissions:

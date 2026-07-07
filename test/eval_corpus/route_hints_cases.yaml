@@ -72,3 +72,16 @@
   expect_final_intents: [trip.navigate]
   source: "orchestrator/cloud/tests/test_route_hints.py::test_slot_templating_text_and_capture_group"
   tags: [trip, replace]
+
+# 赛事追问 vs 周边发现（真机漏例 2026-07-07：「那一场…详情」被 nearby.detail 劫持）
+- text: 葡萄牙那一场看看详情
+  initial_intents: []
+  expect_final_intents: [info.sports]
+  source: "真机：世界杯赛程后追问某队详情，含「那一场」（非「那场」）不被周边劫持"
+  tags: [sports, nearby, guardrail]
+
+- text: 看看它的详情
+  initial_intents: []
+  expect_final_intents: [nearby.detail]
+  source: "真·周边详情不被赛事修复误伤"
+  tags: [nearby, replace]
