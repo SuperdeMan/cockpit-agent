@@ -233,17 +233,36 @@ async def test_mimo_stream_sse_parse(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_minimax_stream_sse_hex_parse(monkeypatch):
-    pcm = b"\x33\x44" * 8
-    line = "data:" + json.dumps({"data": {"audio": pcm.hex()}})  # MiniMax 音频 hex 编码
-    fake = _FakeHTTPClient([[line]])
+    c1, c2 = b"\x33\x44" * 8, b"\x55\x66" * 6
+    full = c1 + c2
+    lines = [
+        "data:" + json.dumps({"data": {"audio": c1.hex(), "status": 1}}),  # 增量块
+        "data:" + json.dumps({"data": {"audio": c2.hex(), "status": 1}}),
+        # status=2 汇总帧把整段音频重发（MiniMax 真实行为）——必须跳过，否则双份播放（真机双播 bug）
+        "data:" + json.dumps({"data": {"audio": full.hex(), "status": 2}}),
+    ]
+    fake = _FakeHTTPClient([lines])
     monkeypatch.setattr(P.httpx, "AsyncClient", lambda *a, **k: fake)
     prov = MiniMaxStreamingTTSProvider("mmk", voice="female-tianmei", sample_rate=24000)
     out = [x async for x in prov.stream(_aiter(["你好世界"]))]
-    audio = [x for x in out if isinstance(x, (bytes, bytearray))]
-    assert b"".join(audio) == pcm                            # hex → bytes 解码正确
+    audio = b"".join(x for x in out if isinstance(x, (bytes, bytearray)))
+    assert audio == full                                    # 只增量拼接，status=2 汇总帧被跳过（非 full*2）
     assert fake.bodies[0]["text"] == "你好世界"
     assert fake.bodies[0]["voice_setting"]["voice_id"] == "female-tianmei"
     assert fake.bodies[0]["audio_setting"]["format"] == "pcm"
+
+
+@pytest.mark.asyncio
+async def test_minimax_stream_only_summary_frame(monkeypatch):
+    # 极短文本可能只发 status=2 汇总帧（无增量）→ 此时须用它，否则无声
+    pcm = b"\x77\x88" * 4
+    line = "data:" + json.dumps({"data": {"audio": pcm.hex(), "status": 2}})
+    fake = _FakeHTTPClient([[line]])
+    monkeypatch.setattr(P.httpx, "AsyncClient", lambda *a, **k: fake)
+    prov = MiniMaxStreamingTTSProvider("mmk")
+    out = [x async for x in prov.stream(_aiter(["嗯"]))]
+    audio = b"".join(x for x in out if isinstance(x, (bytes, bytearray)))
+    assert audio == pcm
 
 
 # ── FakeWS 驱动 DashScope provider 全循环（离线验证协议状态机）────────────────

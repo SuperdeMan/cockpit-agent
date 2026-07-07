@@ -1147,6 +1147,7 @@ class MiniMaxStreamingTTSProvider(BaseStreamingTTSProvider):
                     if not meta_sent:
                         meta_sent = True
                         yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
+                    got_incremental = False
                     async for line in resp.aiter_lines():
                         if not line.startswith("data:"):
                             continue
@@ -1157,8 +1158,20 @@ class MiniMaxStreamingTTSProvider(BaseStreamingTTSProvider):
                             chunk = json.loads(payload)
                         except json.JSONDecodeError:
                             continue
-                        audio_hex = ((chunk.get("data") or {}).get("audio")) or ""
+                        data = chunk.get("data") or {}
+                        audio_hex = data.get("audio") or ""
+                        # MiniMax T2A 流式：status=1 是增量音频块；status=2 是「整段音频汇总重发」（= 全部
+                        # 增量拼起来，重复！）。已收到增量则跳过 status=2 防双份播放；仅当只有汇总（极短
+                        # 文本无增量）时才用它。收到 status=2 即本段结束。
+                        if data.get("status") == 2:
+                            if not got_incremental and audio_hex:
+                                try:
+                                    yield bytes.fromhex(audio_hex)
+                                except ValueError:
+                                    pass
+                            break
                         if audio_hex:
+                            got_incremental = True
                             try:
                                 yield bytes.fromhex(audio_hex)
                             except ValueError:
