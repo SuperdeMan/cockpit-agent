@@ -88,6 +88,7 @@ BE」，套字体后渲染为真国旗。真机 webview 本就正常，本字体
 
 - 单测：`llm-gateway/tests/test_llm_runtime.py`（+9：per-provider body/注册表/档位解析/切换/qwen 复用 key）、
   `test_tts_stream.py`（+8：句切分/MiMo·MiniMax 工厂路由/SSE 解析）、`agents/info` 国旗（+1）、chitchat 档位化。
-  全量 **1141 passed, 7 skipped**（较基线 1112 增 29，零回归）。
+  全量 **1145 passed, 7 skipped**（较基线 1112 增 33：多 LLM+TTS+国旗 +29、赛事路由回归 +3、MiniMax status=2 去重 +1，零回归）。
+- **真机后续修复（同日）**：① DeepSeek v4 是推理模型→`thinking_style` 从 none 改 mimo（`thinking:{type:disabled}`），防结构化任务 content 被 reasoning 饿空；② MiniMax/MiMo TTS 试听无声=漏加 `hmi/src/audio.ts::STREAMING_TTS_PROVIDERS`（前端运行时判定集合，与 catalog 分离），补 mimo+minimax；③ MiniMax 试听双播=T2A 流式末尾 `status:2` 汇总帧把整段音频重发，须跳过；④ Windows Chromium 国旗缺字形→自托管 Twemoji Country Flags 字体；⑤ 赛事追问「那一场…详情」被周边劫持=info pattern/nearby guard 都漏「那一场」，两边补可选「一」。
 - HMI：`node --test` 119/119、`npm run build` 通过。
 - Docker 真栈：见 AGENTS.md 记录（重建 llm-gateway+hmi+info，CDP 切厂商/切 TTS 引擎/赛事国旗）。

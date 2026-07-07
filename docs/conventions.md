@@ -154,13 +154,15 @@
 
 | 变量 | 含义 | 必填 |
 |---|---|---|
-| `LLM_PROVIDER` | LLM 厂商：`anthropic` 走 Claude SDK；其余（xiaomimimo/openai/deepseek/qwen/自建）一律走 OpenAI 兼容 HTTP | 否（默认 xiaomimimo）|
-| `LLM_API_KEY` | LLM 密钥 | 否（不填走 mock）|
-| `LLM_BASE_URL` | OpenAI 兼容服务商的 chat/completions 端点；换服务商只改它 | 否（默认 MiMo 端点）|
-| `LLM_AUTH_STYLE` | 鉴权头：`api-key`（MiMo）/ `bearer`（多数 OpenAI 兼容服务）| 否（默认 api-key）|
-| `LLM_DISABLE_THINKING` | 关闭推理模型 thinking 以保结构化输出（MiMo 须 true）| 否（默认 true）|
-| `LLM_MODEL_PRIMARY` / `LLM_MODEL_FALLBACK` | 主/降级模型 | 否（默认 mimo-v2.5-pro / mimo-v2.5）|
-| `LLM_MODEL_FAST` | 开放域"快"模型（闲聊默认走它降延迟，model_pref=deep 时用 primary）| 否（默认 mimo-v2.5）|
+| `LLM_PROVIDER` | **默认 active LLM 厂商**（多 LLM 源注册表的启动默认，运行时可经 HMI/`POST /api/llm/provider` 切换）：`mimo`(=xiaomimimo)/`minimax`/`deepseek`/`qwen`/`anthropic`(Claude SDK) | 否（默认 xiaomimimo）|
+| `LLM_API_KEY` | MiMo LLM 密钥（`mimo` 厂商用；`anthropic` 时是 Claude key）| 否（不填走 mock）|
+| `LLM_BASE_URL` / `LLM_AUTH_STYLE` / `LLM_DISABLE_THINKING` | 单 provider 时的端点/鉴权头/思考开关（多 LLM 源各家已由 `llm_runtime._PROVIDER_SPECS` 内置，无需逐项配）| 否（默认 MiMo 端点 / api-key / true）|
+| `LLM_MODEL_PRIMARY` / `LLM_MODEL_FALLBACK` / `LLM_MODEL_FAST` | MiMo 主/降级/快模型（快模型供闲聊降延迟）| 否（默认 mimo-v2.5-pro / mimo-v2.5 / mimo-v2.5）|
+| `MINIMAX_API_KEY` | MiniMax 密钥（LLM MiniMax-M3 **+ TTS 同一把 key**）；填了即在切换入口出现 | 否 |
+| `MINIMAX_LLM_MODEL` | MiniMax LLM 模型 | 否（默认 MiniMax-M3）|
+| `DEEPSEEK_API_KEY` | DeepSeek 密钥；填了即在切换入口出现 | 否 |
+| `DEEPSEEK_MODEL_PRIMARY` / `DEEPSEEK_MODEL_FAST` | DeepSeek 主/快模型 | 否（默认 deepseek-v4-pro / deepseek-v4-flash）|
+| `QWEN_MODEL_PRIMARY` / `QWEN_MODEL_FAST` | 阿里百炼 qwen3.7 主/快模型（**key 复用 `LLM_EMBED_API_KEY`/`DASHSCOPE_ASR_KEY`**，无需单独 key；独立计费子账号才填 `DASHSCOPE_LLM_KEY`）| 否（默认 qwen3.7-max / qwen3.7-plus）|
 | `LLM_MOCK_DELAY_MS` | 测试专用：`MockProvider` 人为延迟（毫秒），供 `test/e2e_degrade.py`「LLM 超时」用例注入慢响应（R3.5）| 否（默认 0，零行为变化）|
 | `ASR_MODEL` / `ASR_LANGUAGE` | 批处理 ASR 模型 / 默认语言（zh）| 否 |
 | `ASR_STREAM_PROVIDER` | 流式识别上屏引擎：`dashscope`(默认·DashScope 实时)/`mimo-chunked`(MiMo 分块回退)/`off`(降级批处理) | 否 |
@@ -170,10 +172,11 @@
 | `TTS_MODEL` | 批处理 TTS 模型（MiMo mimo-v2.5-tts）| 否 |
 | `TTS_VOICE_ID` | 批处理默认音色（冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean）| 否（默认冰糖）|
 | `TTS_FORMAT` | 批处理 TTS 输出格式（wav/pcm16）| 否（默认 wav）|
-| `TTS_STREAM_PROVIDER` | 服务端流式 TTS 引擎：`cosyvoice`(默认·cosyvoice-v3-flash run-task 协议)/`qwen`(qwen3-tts-flash-realtime realtime 协议·含方言)/`mock`/`off`；无 key 时 HMI 无感回退批处理 | 否 |
-| `TTS_STREAM_MODEL` | 覆盖流式模型；留空用引擎默认（cosyvoice-v3-flash / qwen3-tts-flash-realtime）| 否 |
-| `TTS_STREAM_VOICE` | 覆盖流式默认音色；留空用引擎默认（cosyvoice `longxiaochun_v3` / qwen `Cherry`）；HMI 设置逐请求可覆盖 | 否 |
+| `TTS_STREAM_PROVIDER` | 服务端流式 TTS 引擎：`cosyvoice`(默认·run-task)/`qwen`(realtime·含方言)/`mimo`(MiMo v2.5 流式·复用 `LLM_API_KEY`)/`minimax`(T2A 流式·复用 `MINIMAX_API_KEY`)/`mock`/`off`；无 key 时 HMI 无感回退批处理 | 否 |
+| `TTS_STREAM_MODEL` | 覆盖流式模型；留空用引擎默认 | 否 |
+| `TTS_STREAM_VOICE` | 覆盖流式默认音色；留空用引擎默认（cosyvoice `longxiaochun_v3` / qwen `Cherry` / mimo `冰糖` / minimax `female-tianmei`）；HMI 设置逐请求可覆盖 | 否 |
 | `DASHSCOPE_TTS_INFERENCE_WS_URL` / `DASHSCOPE_TTS_REALTIME_WS_URL` | DashScope 流式 TTS 端点：cosyvoice→`/api-ws/v1/inference`、qwen→`/api-ws/v1/realtime` | 否（有默认）|
+| `MINIMAX_TTS_MODEL` / `MINIMAX_TTS_VOICE` / `MINIMAX_T2A_URL` | MiniMax TTS 模型 / 默认音色 / T2A 端点（与 MiniMax LLM 同 `MINIMAX_API_KEY`）| 否（默认 speech-2.8-turbo / female-tianmei / api.minimaxi.com/v1/t2a_v2）|
 | `AUDIO_HTTP_PORT` | ASR/TTS HTTP 代理端口 | 否（默认 50059）|
 | `REDIS_URL` / `NATS_URL` / `POSTGRES_DSN` | 基础设施地址 | 容器内有默认 |
 | `REGISTRY_ADDR` / `LLM_GATEWAY_ADDR` / `MEMORY_ADDR` / `CLOUD_PLANNER_ADDR` / `CLOUD_GATEWAY_ADDR` | 服务发现地址（容器 DNS）| 容器内有默认 |

@@ -32,7 +32,7 @@
 - `DispatchToEdge`、T2 有界循环、确定性工具已实现；权限为规划期（catalog 过滤）+ 执行期
   （dispatch 硬拒）**同源单轨校验**（`security/permission.py::check_permission`，R2.2）。
 - 端侧混合意图支持按语义组分流，本地动作与导航/媒体慢意图可在同一请求中协同执行。
-- HMI 支持文字流式渲染和**服务端流式 TTS**：文本增量进、PCM 音频分片出、无缝拼播（DashScope cosyvoice/qwen 双引擎，首帧 <1s），无凭据无感回退句级批处理。
+- HMI 支持文字流式渲染和**服务端流式 TTS**：文本增量进、PCM 音频分片出、无缝拼播（DashScope cosyvoice/qwen + MiMo v2.5 / MiniMax 四引擎可切，首帧 <1s），无凭据无感回退句级批处理。
 - **信息类 Provider 全面落地**：导航=高德 / 天气=和风(JWT) / 搜索=Exa 正文级检索(AnySearch→Bing 降级) / 新闻=Exa 优先(SerpApi 兜底) / 赛事=api-football / 股票=Tushare，真实凭证冒烟通过，无凭证回退 mock。搜索经接地合成（强制引用、无依据诚实弃权），新闻以 TTS 播报式编号速览呈现。
 - **HMI 信息类 UI 卡片**：天气/股票/新闻/搜索/赛事/POI 结构化卡片（搜索/新闻为「气泡给结论、卡片给证据」），全链路 ui_card 透传。
 - **复杂任务动态思考 + 过程区**：行程/深度调研/多步等按统一 `is_complex` 判据动态对 LLM
@@ -106,8 +106,17 @@
   直传/静音透传/网关 cancel）真栈 e2e 通过。HMI node 测 110/110；后端契约护栏 `test/e2e_voice_loop.py`（ASR 流式/PCM
   直传/vad_silence_ms + TTS round-trip，真栈 PASS）+ `test/e2e_ws.py`（cancel 用例）。详见
   `docs/design/2026-07-04-r4.3-wake-vad-fullduplex.md` 与 `docs/design/2026-07-05-r4.3b-voice-loop-hardening.md`。
-- 全量 pytest：**1069 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
-  一次跑通；R4.1 较 R4.0 的 1050 +19：Registry 语义/重排单测 + 端侧扩规则/对象化用例。R4.3 为 HMI 前端，pytest 不变）。
+- **多 LLM 源 + TTS 扩展 + 赛事国旗（2026-07-07，真栈四家全通）**：LLM 网关从「启动选单一厂商」升级为
+  **进程内 provider 注册表 + 全局运行时切换**——MiMo / MiniMax-M3 / DeepSeek(v4-pro·flash) / 阿里百炼
+  qwen3.7(max·plus) 四家（百炼复用现有 embedding key），一套参数化 provider 靠 token 参数/思考开关/鉴权
+  覆盖各家差异，HMI 设置页「厂商→模型」两级切换、切即全局生效；embedding 解耦（切非百炼 chat 厂商不影响
+  记忆召回）。**TTS 扩展**：新增 MiniMax T2A 流式 + MiMo v2.5 升流式（整段文本一次入→句级切分逐段合成
+  边说边播）。**ASR 核对**：MiMo 流式仅输出文本流式、不支持实时增量音频，真实时上屏保持 DashScope。
+  **赛事国旗**：后端按队名注入国旗 emoji（世界杯 2026 全部球队 + 主要国家队）+ 自托管 Twemoji Country
+  Flags 字体修复 Windows Chromium 缺国旗字形退化成 ISO 双字母。真栈四家 LLM 全部真实打通、MiMo/MiniMax
+  流式 TTS 出帧、世界杯赛事国旗全链路透传。详见 `docs/design/2026-07-07-llm-asr-tts-multiprovider-and-sports-flags.md`。
+- 全量 pytest：**1145 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
+  一次跑通；2026-07-07 多 LLM 源 + TTS 扩展 + 赛事国旗 + 赛事路由修复较 R4.3 的 1112 +33。R4.3 为 HMI 前端）。
 - 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6 + 深度调研（深调研报告 + 多轮深挖 + 新闻深挖桥接 + 异步分钟级受理→主动推送报告卡）+ nightly GitHub 断言型 e2e（含 R3.5 降级矩阵四行）全绿；R3.6 真实 Agent 调用→`/metrics` 端到端数据链路真栈验证通过。
 - Docker 全栈 **26 个服务**（含充能规划/场景编排/路况安全/深度调研等 Agent），全栈联调通过；
   另有 Prometheus/Grafana 两个可观测服务经 Compose `profiles: ["observability"]` 门控可选启用
@@ -179,10 +188,10 @@ Dashboard 的车辆动态接口仅供本地演示；非开发环境必须设置
 - 本地、云端混合多意图拆分，支持导航偏好、歌手等续接片段与主意图成组路由。
 - 十一个云 Agent：导航、闲聊、周边发现（高德 POI 2.0 多类目搜索 + 详情增强）、停车支付、手册问答、行程规划、信息（天气/搜索/新闻/股票）、深度调研（多视角联网调研出带引用分节报告 + 渐进语音简报）、充能规划、场景编排、路况安全（含响应式主动播报）。
 - 统一上下文装配（`ContextManager`：catalog 语义预筛 + 对话历史 + 长期语义记忆 + 结构化焦点态，统一 token 预算；敏感上下文按 manifest `context_scopes` 最小化下发）、对话记忆 + 长期语义记忆（自动学偏好/个人实体、pgvector 语义召回、可查可删）、确认/补槽续接、跨 Agent DAG、T2 自适应再规划。
-- MiMo/Mock LLM Provider，MiMo ASR/TTS（批处理）+ **DashScope 实时流式 ASR**（qwen3/fun，识别上屏）+ **DashScope 服务端流式 TTS**（cosyvoice-v3-flash / qwen3-tts-flash-realtime，PCM 分片播报、barge-in）+ MiMo 分块/批处理回退，webm→wav/PCM 后端流式转码。
+- **多 LLM 源可运行时全局切换**（MiMo / MiniMax-M3 / DeepSeek v4-pro·flash / 阿里百炼 qwen3.7-max·plus，HMI 设置页两级选择「厂商→模型」，一套参数化 provider 覆盖各家差异，Mock 兜底）；embedding 独立走百炼、与 chat 厂商解耦。MiMo ASR/TTS（批处理）+ **DashScope 实时流式 ASR**（qwen3/fun，识别上屏）+ **服务端流式 TTS**（cosyvoice-v3-flash / qwen3-tts-flash-realtime / MiMo v2.5 / MiniMax T2A，PCM 分片播报、barge-in）+ MiMo 分块/批处理回退，webm→wav/PCM 后端流式转码。
 - 复杂任务（行程/深度调研/多步）按统一 `is_complex` 判据**动态开思考**提质 + 气泡内嵌
   「过程区」四阶段折叠展示（理解需求→规划步骤→执行任务→整理结果，行车/泊车双态、脱敏不露 reasoning）；普通车控/闲聊零过程零额外延迟。
-- HMI（Aurora Glass 极光液态座舱）流式文字、动作卡、记忆视图、**语音流式识别上屏**、**流式 TTS 播报（引擎→音色两级选择，cosyvoice/qwen 方言/MiMo）**；
+- HMI（Aurora Glass 极光液态座舱）流式文字、动作卡、记忆视图、**语音流式识别上屏**、**流式 TTS 播报（引擎→音色两级选择，cosyvoice/qwen 方言/MiMo/MiniMax）**、**LLM 大脑两级切换（厂商→模型）**、赛事卡国家队国旗；
   **R4.3 免唤醒连续对话 + 播报中打断 + 唤醒词（可选预设）+ 唤醒人声播报**（浏览器本地 KWS/VAD，唤醒前音频不出浏览器，opt-in 默认关）。
 - NATS 可观测事件、collector REST/WS、车辆状态 diff、端云 trace、Agent 健康/指标/熔断状态、
   debug 车辆动态与对照实验 Dashboard；collector `GET /metrics`（Prometheus 文本格式）+ 桥接
