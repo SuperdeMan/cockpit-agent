@@ -43,10 +43,12 @@ async def landmark_candidates(llm, description: str, *, logger=None) -> list[str
     """把视觉化地标描述转成 1-3 个地图可检索的正式 POI 名候选（不接受模型直接导航）。"""
     log = logger or _DEFAULT_LOGGER
     try:
+        # 地标名抽取是简单确定性任务 → 走「快」模型档位（@fast），降 LLM 延迟；多意图并发下 navigate
+        # 步与 nearby 搜索一起挤 LLM/高德，快模型能减小超时概率。网关按 active provider 解析 @fast。
         raw = await llm.complete([
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": description},
-        ], temperature=0.0, max_tokens=120)
+        ], model="@fast", temperature=0.0, max_tokens=120)
     except Exception as e:
         log.warning("landmark resolution unavailable: %s", e)
         return []

@@ -7,11 +7,10 @@ deployment: cloud
 latency_budget_ms: 2000
 fallback: chitchat
 
+# 本 Agent 只做「缴费」。**停车场发现（找停车场/附近有没有停车场）归 nearby（真高德 POI）**——
+# 原 parking.find 是与 nearby 重复的 mock（余10/20/30 假空位、无 AMAP 源），已停用以免多意图下
+# LLM 误路由到 mock（真机：多意图里停车走了 mock 数据）。缴费仍归本 Agent。
 capabilities:
-  - intent: parking.find
-    description: 查找附近停车场（含空位/价格）
-    slots: [location, near]
-    examples: ["附近哪里能停车", "找个停车场", "这附近停车贵吗"]
   - intent: parking.pay
     description: 停车缴费（涉及支付，需二次确认）
     slots: [order_id, plate, amount]

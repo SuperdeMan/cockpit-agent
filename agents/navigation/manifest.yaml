@@ -4,7 +4,9 @@ display_name: 导航助手
 category: core
 trust_level: first_party
 deployment: cloud
-latency_budget_ms: 5000
+# navigate_to/search_poi 走高德 + 视觉地标 LLM 解析（像笋→中国华润大厦，走 @fast 快模型）+ name_matches
+# 校验；多意图并发下 navigate 与多个 nearby 搜索一起挤高德免费档 QPS、重试退避拖慢，5s→20s 容纳。
+latency_budget_ms: 20000
 fallback: chitchat
 
 capabilities:

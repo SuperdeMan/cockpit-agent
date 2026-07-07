@@ -45,8 +45,8 @@
   tags: [chitchat]
 
 # ── 语义需求：关键词 top-1 落到无关 Agent，需 P0 真语义纠正（离线跳过，--semantic 验证）──
-- text: 找个停车场                       # 关键词→navigation
-  expect_top1: parking-payment
+- text: 找个停车场                       # 停车场发现归 nearby（真高德 POI）；parking-payment 只做缴费
+  expect_top1: nearby
   requires_embed: true
 - text: 查一下车辆说明书怎么换轮胎        # 关键词→deep-research
   expect_top1: manual-rag

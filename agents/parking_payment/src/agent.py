@@ -1,4 +1,7 @@
-"""停车缴费 Agent —— 交易类生态 Agent。查找停车场 + 缴费(二次确认)。
+"""停车缴费 Agent —— 交易类生态 Agent。只做「缴费(二次确认)」。
+
+停车场**发现**（找停车场/附近有没有停车场）归 nearby（真高德 POI）；原 parking.find 是重复的
+mock（假空位、无 AMAP 源）已停用。
 
 Phase 1：使用 Provider 适配层（mock/real 可切换）。
 """
@@ -6,7 +9,6 @@ from __future__ import annotations
 import os
 
 from agents._sdk import BaseAgent, AgentResult, NEED_CONFIRM, FAILED
-from agents._sdk.location import current_location_from_meta
 from .providers import build_parking_provider
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
@@ -18,28 +20,10 @@ class ParkingPaymentAgent(BaseAgent):
         self.parking = build_parking_provider()
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
-        if intent.name == "parking.find":
-            return await self._find(ctx, meta)
+        # 停车场「发现」已归 nearby（真高德 POI）——本 Agent 只做缴费。
         if intent.name == "parking.pay":
             return await self._pay(intent, meta)
-        return AgentResult(status=FAILED, speech="停车助手暂不支持该请求。")
-
-    async def _find(self, ctx, meta: dict) -> AgentResult:
-        current = current_location_from_meta(meta)
-        if current:
-            location = f"{current.lng:.6f},{current.lat:.6f}"
-        else:
-            values = await ctx.fetch("vehicle.location")
-            location = values.get("vehicle.location", "")
-        lots = await self.parking.find(location=location)
-        items = [{"name": l.name, "available": l.available,
-                  "price": f"{l.price_per_hour}元/小时", "distance_m": l.distance_m}
-                 for l in lots]
-        names = "、".join(f"{l.name}(余{l.available})" for l in lots[:3])
-        return AgentResult(
-            speech=f"附近找到 {len(lots)} 个停车场：{names}。需要导航过去吗？",
-            ui_card={"type": "parking_list", "items": items},
-        )
+        return AgentResult(status=FAILED, speech="停车助手只负责缴费；找停车场请说『附近有没有停车场』。")
 
     async def _pay(self, intent, meta: dict) -> AgentResult:
         amount = intent.slots.get("amount", "")

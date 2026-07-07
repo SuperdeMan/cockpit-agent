@@ -9,29 +9,12 @@ from agents._sdk.testing import run_handle
 from agents.parking_payment.src.agent import ParkingPaymentAgent
 
 
-def test_find_returns_lots():
+def test_find_deprecated_redirects_to_nearby():
+    """停车场发现已归 nearby（真高德）——parking.find 停用，本 Agent 只做缴费。"""
     res = asyncio.run(run_handle(
         ParkingPaymentAgent(), "parking.find", raw_text="附近有停车场吗"))
-    assert res.status == "ok"
-    assert res.ui_card["type"] == "parking_list"
-    assert len(res.ui_card["items"]) > 0
-
-
-def test_find_uses_session_location():
-    agent = ParkingPaymentAgent()
-    seen = {}
-
-    async def find(location="", limit=3):
-        seen["location"] = location
-        return []
-
-    agent.parking.find = find
-    res = asyncio.run(run_handle(
-        agent, "parking.find", raw_text="附近停车场",
-        meta={"current_lat": "39.92", "current_lng": "116.41"}))
-
-    assert seen["location"] == "116.410000,39.920000"
-    assert res.status == "ok"
+    assert res.status == "failed"
+    assert "缴费" in res.speech
 
 
 def test_pay_requires_confirm():

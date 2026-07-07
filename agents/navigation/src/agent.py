@@ -223,6 +223,9 @@ class NavigationAgent(BaseAgent):
         if not dest:
             return AgentResult(status=NEED_SLOT, speech="您要去哪里？", follow_up="请告诉我目的地")
 
+        # planner 臆断修正：见 _correct_planner_landmark（把 planner 错猜的具体楼名换回真地标官方名）。
+        dest = await self._correct_planner_landmark(dest, raw_text, meta)
+
         # 常用地点（家/公司/学校）：命中别名先走画像，未设置则二次交互让用户设置。
         place_key, place_label = _match_place_alias(dest)
         if place_key:
@@ -600,6 +603,27 @@ class NavigationAgent(BaseAgent):
     async def _landmark_candidates(self, description: str) -> list[str]:
         """把视觉化地标描述转换为少量地图可检索的正式 POI 候选（共享解析器，导航/充电共用）。"""
         return await landmark_candidates(self.llm, description, logger=logger)
+
+    async def _correct_planner_landmark(self, dest: str, raw_text: str, meta) -> str:
+        """修正云端 Planner 对视觉地标的错误臆断。
+
+        Planner 的 LLM 有时会自作主张把视觉地标描述（"像笋的建筑"）直接解析成一个**具体楼名**
+        （实测把"深圳笋状地标"错猜成"京基100"）写进 destination 槽位，绕过本 Agent 带 name_matches
+        地图校验的专用地标解析器（它对整段凌乱原话仍能精准→中国华润大厦）。判据：原话是地标描述、
+        而 dest 已被解析成**不含造型词**的具体名。命中则用原话重解析 + 高德校验，用**官方名**覆盖臆断；
+        非该情形（普通导航/dest 本就是地标描述）零额外调用直接返回原 dest。"""
+        if not (raw_text and is_landmark_description(raw_text) and not is_landmark_description(dest)):
+            return dest
+        for cand in await self._landmark_candidates(raw_text):
+            try:
+                hits = await self.poi.search(cand, limit=1, meta=meta)
+            except ProviderError as e:
+                logger.warning("planner-landmark correction search failed: %s", e)
+                continue
+            if hits and name_matches(cand, hits[0].name):
+                logger.info("corrected planner dest %r -> landmark %r", dest, cand)
+                return cand
+        return dest
 
     async def _reverse_geocode(self, intent, ctx, meta) -> AgentResult:
         """逆地理编码：坐标 → 地址。"""

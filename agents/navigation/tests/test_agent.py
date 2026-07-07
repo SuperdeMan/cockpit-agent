@@ -127,6 +127,44 @@ def test_navigate_to_rejects_landmark_candidate_with_unrelated_poi():
     assert res.actions[0]["payload"]["destination"] == "中国华润大厦"
 
 
+def test_navigate_to_corrects_planner_landmark_misguess():
+    """Planner 有时把视觉地标（"像笋的建筑"）错猜成具体楼名（京基100）写进 dest 槽位、绕过地标解析。
+    原话是地标描述、dest 却不含造型词时，用原话重解析 + 高德校验，用官方名覆盖臆断（真机漏例）。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider({
+        "深圳 京基100": [_poi("京基100大厦")],       # planner 臆断的错误楼（不修正就导航到这）
+        "中国华润大厦": [_poi("中国华润大厦")],       # 原话地标校验命中的官方名
+    })
+    agent.llm.complete = _async_return('["中国华润大厦"]')
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "深圳 京基100"},        # planner 已臆断成具体楼名
+        raw_text="我想去深圳那个像笋一样的地方"))       # 原话是视觉地标描述
+
+    assert res.actions[0]["payload"]["destination"] == "中国华润大厦"
+    assert res.actions[0]["payload"]["destination"] != "京基100大厦"
+
+
+def test_navigate_to_no_landmark_correction_for_plain_dest():
+    """普通目的地（原话无造型词）不触发修正、不调 LLM。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider({"北京南站": [_poi("北京南站")]})
+    calls = {"n": 0}
+
+    async def counting(*a, **k):
+        calls["n"] += 1
+        return "[]"
+
+    agent.llm.complete = counting
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "北京南站"}, raw_text="导航去北京南站"))
+
+    assert res.actions[0]["payload"]["destination"] == "北京南站"
+    assert calls["n"] == 0
+
+
 def test_navigate_to_stop_category_offers_waypoint_choice():
     """导航去X + stop_category 吃饭 → 导航到X + 给餐厅候选(waypoint_choice 卡)让用户二次选择。"""
     agent = NavigationAgent()
