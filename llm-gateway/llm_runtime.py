@@ -43,9 +43,12 @@ _PROVIDER_SPECS: dict[str, dict] = {
         "models": [("MiniMax-M3", "MiniMax-M3")],
     },
     "deepseek": {
+        # DeepSeek v4-pro/flash 是推理模型（reasoning_content 占 completion 预算）——真栈探测确认它
+        # 与 MiMo/MiniMax 同样认 thinking:{type:disabled}（reasoning_effort/enable_thinking 均无效），
+        # 故 thinking_style=mimo：结构化任务关思考拿干净 content（不被 reasoning 饿空），复杂任务开。
         "label": "DeepSeek", "key_env": "DEEPSEEK_API_KEY", "base_url_env": "DEEPSEEK_BASE_URL",
         "base_url": "https://api.deepseek.com/v1/chat/completions",
-        "auth_style": "bearer", "token_param": "max_tokens", "thinking_style": "none",
+        "auth_style": "bearer", "token_param": "max_tokens", "thinking_style": "mimo",
         "primary_env": "DEEPSEEK_MODEL_PRIMARY", "primary": "deepseek-v4-pro",
         "fast_env": "DEEPSEEK_MODEL_FAST", "fast": "deepseek-v4-flash",
         "models": [("deepseek-v4-pro", "DeepSeek V4 Pro"), ("deepseek-v4-flash", "DeepSeek V4 Flash")],

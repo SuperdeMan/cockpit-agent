@@ -4,6 +4,19 @@
    主题 [data-theme] · 字号 [data-font] · 大触控 [data-touch] 由 settings.tsx 注入
    ─────────────────────────────────────────────────────────────────────────── */
 
+/* 国旗字体（自托管 Twemoji Country Flags，仅含国旗字形，~76KB）——修 Windows 版 Chromium 缺国旗
+   字形、把 🇪🇸 退化成「ES」双字母的问题。unicode-range 限定只对区域指示符/地区旗序列生效，其它
+   文字（队名等）自动回落系统字体。仅赛事卡国旗元素（.au-flag）套用。见 docs/design/2026-07-07-*。*/
+@font-face {
+  font-family: 'Twemoji Country Flags';
+  src: url('/fonts/TwemojiCountryFlags.woff2') format('woff2');
+  font-display: swap;
+  unicode-range: U+1F1E6-1F1FF, U+1F3F4, U+E0060-E007F;
+}
+.au-flag {
+  font-family: 'Twemoji Country Flags', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+}
+
 :root {
   --font-ui: 'Space Grotesk', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Courier New', monospace;

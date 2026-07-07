@@ -775,9 +775,9 @@ function TeamSquare({ name, color, flag }: { name: string; color: string; flag?:
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, minWidth: 0 }}>
       <div style={{ width: 48, height: 48, borderRadius: 12, display: 'grid', placeItems: 'center', background: `${color}22`, border: `2px solid ${color}55` }}>
-        {/* 国家队显示国旗 emoji（真机 webview 正常；Windows Chromium 退化为 ISO 双字母仍表意）；无旗回落队名缩写 */}
+        {/* 国家队显示国旗 emoji（.au-flag 套自托管国旗字体，Windows Chromium 也正常渲染）；无旗回落队名缩写 */}
         {flag
-          ? <span style={{ fontSize: 26, lineHeight: 1 }}>{flag}</span>
+          ? <span className="au-flag" style={{ fontSize: 26, lineHeight: 1 }}>{flag}</span>
           : <span style={{ fontFamily: 'var(--au-font-mono)', fontSize: 14, fontWeight: 700, color }}>{name.slice(0, 2)}</span>}
       </div>
       <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'center', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
@@ -831,7 +831,7 @@ function FixtureBoard({ f }: { f: SportsScoresCard['fixtures'][number] }) {
               <Icon name="sports" size={14} color="var(--au-text-2)" />
               <span style={{ fontSize: 12.5, color: 'var(--au-text)' }}>{g.player || '球员'}</span>
               {g.detail && g.detail !== '进球' && <span style={{ fontSize: 10, color: 'var(--au-text-3)', border: '1px solid var(--au-line-2)', borderRadius: 3, padding: '0 4px' }}>{g.detail}</span>}
-              <span style={{ fontSize: 11, color: 'var(--au-text-3)', marginLeft: 'auto' }}>{g.team === 'away' ? `${f.away_flag ? f.away_flag + ' ' : ''}${f.away}` : g.team === 'home' ? `${f.home_flag ? f.home_flag + ' ' : ''}${f.home}` : ''}</span>
+              <span className="au-flag" style={{ fontSize: 11, color: 'var(--au-text-3)', marginLeft: 'auto' }}>{g.team === 'away' ? `${f.away_flag ? f.away_flag + ' ' : ''}${f.away}` : g.team === 'home' ? `${f.home_flag ? f.home_flag + ' ' : ''}${f.home}` : ''}</span>
             </div>
           ))}
         </div>

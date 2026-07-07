@@ -23,7 +23,9 @@ def test_build_body_mimo_style():
     assert "thinking" not in on and on["max_completion_tokens"] == 2048 and on["stream"] is True
 
 
-def test_build_body_deepseek_style():
+def test_build_body_none_thinking_style():
+    # thinking_style="none"：不发任何思考键（用服务商默认）。注：DeepSeek 真栈探测发现其推理模型
+    # 认 thinking:{type:disabled}，故 deepseek 实际走 mimo 风格（见 llm_runtime._PROVIDER_SPECS）。
     p = OpenAICompatibleProvider("k", token_param="max_tokens", thinking_style="none")
     body = p._build_body(_MSG, "m", 0.7, 100, thinking=None, stream=False)
     assert body["max_tokens"] == 100
