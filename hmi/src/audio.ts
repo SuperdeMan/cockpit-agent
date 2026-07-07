@@ -251,8 +251,11 @@ function enqueueChunks(chunks: string[]): Promise<void[]> {
 // 服务端边合成边回 PCM 分片、pcmPlayer 无缝拼播。任一环节失败 → 无感回退句级批处理（惯例同 ASR）。
 // provider=mimo（或缺省）→ 批处理路径（下方 activeReply + TtsTextBuffer），行为逐字不变。
 
-const STREAMING_TTS_PROVIDERS = new Set(['cosyvoice', 'qwen'])
-const STREAM_FALLBACK_VOICE = '冰糖' // 流式引擎失败回退 MiMo 批处理时的音色（cosyvoice/qwen 音色 MiMo 无）
+// 走服务端流式 WS（/api/tts/stream）的引擎——须与后端 TTS_STREAM_CATALOG / types.TTS_PROVIDER_FALLBACK
+// 的 streaming 一致。mimo/minimax 是 2026-07-07 新增的流式引擎（MiMo v2.5 升流式、MiniMax T2A）；
+// 漏加会让它们误走批处理 /api/tts（只支持 MiMo/mock）→ MiniMax 无声。
+const STREAMING_TTS_PROVIDERS = new Set(['cosyvoice', 'qwen', 'mimo', 'minimax'])
+const STREAM_FALLBACK_VOICE = '冰糖' // 流式引擎失败回退 MiMo 批处理时的通用音色（其它引擎音色 MiMo 批无）
 
 export function isStreamingTtsProvider(p?: string): boolean {
   return !!p && STREAMING_TTS_PROVIDERS.has(p)
