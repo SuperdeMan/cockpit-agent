@@ -25,9 +25,9 @@ export function Toggle({ on, onChange, disabled = false }: { on: boolean; onChan
   )
 }
 
-type Opt<T> = { value: T; label: string }
+type Opt<T> = { value: T; label: string; disabled?: boolean }
 
-// 分段选择：值为枚举（如 'zh'/'auto'），展示中文标签
+// 分段选择：值为枚举（如 'zh'/'auto'），展示中文标签。option.disabled=true → 置灰不可选。
 export function Segmented<T extends string | number>({
   value, options, onChange, sm = false,
 }: { value: T; options: Opt<T>[]; onChange: (v: T) => void; sm?: boolean }) {
@@ -35,15 +35,18 @@ export function Segmented<T extends string | number>({
     <div role="tablist" style={{ display: 'flex', background: 'var(--au-fill)', borderRadius: sm ? 10 : 12, padding: 3, gap: 2 }}>
       {options.map((o) => {
         const active = o.value === value
+        const off = o.disabled
         return (
           <button
-            key={String(o.value)} role="tab" aria-selected={active} onClick={() => onChange(o.value)}
+            key={String(o.value)} role="tab" aria-selected={active} disabled={off}
+            onClick={() => !off && onChange(o.value)}
             style={{
-              padding: sm ? '5px 10px' : '7px 14px', borderRadius: sm ? 8 : 10, cursor: 'pointer',
+              padding: sm ? '5px 10px' : '7px 14px', borderRadius: sm ? 8 : 10, cursor: off ? 'default' : 'pointer',
               fontSize: sm ? 11.5 : 13, fontWeight: active ? 600 : 400,
               background: active ? 'var(--au-fill-2)' : 'transparent',
               border: `1px solid ${active ? 'var(--au-hi)' : 'transparent'}`,
-              color: active ? FG1 : FG2, transition: 'all .18s', fontFamily: 'inherit', whiteSpace: 'nowrap',
+              color: off ? 'var(--au-text-3)' : active ? FG1 : FG2, opacity: off ? 0.5 : 1,
+              transition: 'all .18s', fontFamily: 'inherit', whiteSpace: 'nowrap',
             }}>
             {o.label}
           </button>

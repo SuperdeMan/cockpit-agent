@@ -153,6 +153,8 @@ export type SportsFixture = {
   away: string
   home_logo?: string
   away_logo?: string
+  home_flag?: string   // 国旗 emoji（后端按队名注入，国家队用；俱乐部走 logo）
+  away_flag?: string
   score: string
   home_goals: string
   away_goals: string
@@ -433,6 +435,9 @@ export type Settings = {
   assistantName: string
   answerLength: AnswerLength
   model: ModelPref
+  // 多 LLM 源（全局大脑）：空 = 跟随网关 env 默认；非空 = 用户显式选定的厂商/模型（启动时重放到网关）
+  llmProvider: string
+  llmModel: string
   // Agent 开关
   agents: Record<string, boolean>
   // 记忆
@@ -497,9 +502,55 @@ export const TTS_PROVIDER_FALLBACK: TtsProviderInfo[] = [
     ],
   },
   {
-    id: 'mimo', label: 'MiMo·经典', streaming: false, available: true,
-    model: 'mimo-v2.5-tts', voices: VOICE_FALLBACK,
+    id: 'mimo', label: 'MiMo·流式', streaming: true, available: true,
+    model: 'mimo-v2.5-tts', sample_rate: 24000,
+    voices: [
+      { voice_id: '冰糖', name: '冰糖', language: 'zh', gender: 'female', description: '中文女声', tags: ['中文', '女声'] },
+      { voice_id: '茉莉', name: '茉莉', language: 'zh', gender: 'female', description: '中文女声', tags: ['中文', '女声'] },
+      { voice_id: '苏打', name: '苏打', language: 'zh', gender: 'male', description: '中文男声', tags: ['中文', '男声'] },
+      { voice_id: '白桦', name: '白桦', language: 'zh', gender: 'male', description: '中文男声', tags: ['中文', '男声'] },
+      { voice_id: 'Mia', name: 'Mia', language: 'en', gender: 'female', description: '英文女声', tags: ['英文', '女声'] },
+      { voice_id: 'Chloe', name: 'Chloe', language: 'en', gender: 'female', description: '英文女声', tags: ['英文', '女声'] },
+      { voice_id: 'Milo', name: 'Milo', language: 'en', gender: 'male', description: '英文男声', tags: ['英文', '男声'] },
+      { voice_id: 'Dean', name: 'Dean', language: 'en', gender: 'male', description: '英文男声', tags: ['英文', '男声'] },
+    ],
   },
+  {
+    id: 'minimax', label: 'MiniMax·流式', streaming: true, available: true,
+    model: 'speech-2.8-turbo', sample_rate: 24000,
+    voices: [
+      { voice_id: 'female-tianmei', name: '甜美女声', language: 'zh', gender: 'female', description: '甜美·女声', tags: ['女声'] },
+      { voice_id: 'female-shaonv', name: '少女音', language: 'zh', gender: 'female', description: '少女·女声', tags: ['女声'] },
+      { voice_id: 'female-yujie', name: '御姐音', language: 'zh', gender: 'female', description: '御姐·女声', tags: ['女声'] },
+      { voice_id: 'male-qn-qingse', name: '青涩青年', language: 'zh', gender: 'male', description: '青涩·男声', tags: ['男声'] },
+      { voice_id: 'male-qn-jingying', name: '精英青年', language: 'zh', gender: 'male', description: '精英·男声', tags: ['男声'] },
+      { voice_id: 'presenter_female', name: '女主持', language: 'zh', gender: 'female', description: '主持·女声', tags: ['女声', '主持'] },
+      { voice_id: 'presenter_male', name: '男主持', language: 'zh', gender: 'male', description: '主持·男声', tags: ['男声', '主持'] },
+    ],
+  },
+]
+
+// ─── 多 LLM 源（HMI 设置页两级切换：厂商→模型，全局生效）───
+export type LlmModelInfo = { id: string; label: string }
+export type LlmProviderInfo = {
+  id: string          // mimo | minimax | deepseek | qwen
+  label: string       // MiMo·小米 / MiniMax / DeepSeek / 阿里百炼·通义千问
+  available: boolean  // 后端凭据是否就绪（无 key 置灰）
+  primary?: string
+  models: LlmModelInfo[]
+}
+export type LlmStatus = { active: { provider: string; model: string }; providers: LlmProviderInfo[] }
+
+// 离线兜底目录（镜像后端 llm_runtime._PROVIDER_SPECS）——探测 /api/llm/providers 失败时用此渲染。
+export const LLM_PROVIDER_FALLBACK: LlmProviderInfo[] = [
+  { id: 'mimo', label: 'MiMo·小米', available: true, primary: 'mimo-v2.5-pro',
+    models: [{ id: 'mimo-v2.5-pro', label: 'MiMo 2.5 Pro' }, { id: 'mimo-v2.5', label: 'MiMo 2.5 · 快' }] },
+  { id: 'minimax', label: 'MiniMax', available: false, primary: 'MiniMax-M3',
+    models: [{ id: 'MiniMax-M3', label: 'MiniMax-M3' }] },
+  { id: 'deepseek', label: 'DeepSeek', available: false, primary: 'deepseek-v4-pro',
+    models: [{ id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }, { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' }] },
+  { id: 'qwen', label: '阿里百炼·通义千问', available: false, primary: 'qwen3.7-max',
+    models: [{ id: 'qwen3.7-max', label: '通义千问 3.7 Max' }, { id: 'qwen3.7-plus', label: '通义千问 3.7 Plus' }] },
 ]
 
 export const DEFAULT_QUICK_COMMANDS = [
@@ -552,6 +603,8 @@ export const DEFAULT_SETTINGS: Settings = {
   assistantName: '小舟',
   answerLength: 'standard',
   model: 'auto',
+  llmProvider: '',   // 空 = 跟随网关 env 默认（LLM_PROVIDER）；用户在设置页选定后写入
+  llmModel: '',
   agents: Object.fromEntries(AGENT_CATALOG.map((a) => [a.id, true])),
   memoryEnabled: true,
 }

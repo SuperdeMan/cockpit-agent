@@ -133,6 +133,16 @@ services:
       LLM_DISABLE_THINKING: ${LLM_DISABLE_THINKING:-true}
       LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY:-mimo-v2.5-pro}
       LLM_MODEL_FALLBACK: ${LLM_MODEL_FALLBACK:-mimo-v2.5}
+      # 多 LLM 源（HMI 设置页两级切换：厂商→模型，全局生效，默认 LLM_PROVIDER）：每家填 key 即出现在
+      # 切换入口（未填置灰）。qwen(阿里百炼) 复用下面的 LLM_EMBED_API_KEY/DASHSCOPE_ASR_KEY，无需单独 key。
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      MINIMAX_LLM_MODEL: ${MINIMAX_LLM_MODEL:-MiniMax-M3}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL_PRIMARY: ${DEEPSEEK_MODEL_PRIMARY:-deepseek-v4-pro}
+      DEEPSEEK_MODEL_FAST: ${DEEPSEEK_MODEL_FAST:-deepseek-v4-flash}
+      DASHSCOPE_LLM_KEY: ${DASHSCOPE_LLM_KEY:-}
+      QWEN_MODEL_PRIMARY: ${QWEN_MODEL_PRIMARY:-qwen3.7-max}
+      QWEN_MODEL_FAST: ${QWEN_MODEL_FAST:-qwen3.7-plus}
       # T3.5 e2e_degrade.py 测试钩子：MockProvider 人为延迟（ms），默认 0=零行为变化；
       # 仅该脚本「LLM 超时」用例会用 shell env 临时覆盖调大（不写入 .env，沿用
       # e2e_auth.py 已确立的"临时 env 覆盖，不改 .env"惯例）。
@@ -153,12 +163,17 @@ services:
       ASR_MODEL: ${ASR_MODEL:-mimo-v2.5-asr}
       AUDIO_HTTP_PORT: "50059"
       TTS_VOICE_ID: ${TTS_VOICE_ID:-冰糖}
-      # 流式 TTS（服务端 PCM 流式合成，R4.2）：cosyvoice（run-task，默认，复用百炼 key）| qwen（realtime，含方言）| mock | off
+      # 流式 TTS（服务端 PCM 流式合成，R4.2）：cosyvoice（run-task，默认，复用百炼 key）| qwen（realtime，含方言）
+      #   | mimo（MiMo v2.5 流式，复用 LLM_API_KEY）| minimax（T2A 流式，复用 MINIMAX_API_KEY）| mock | off
       TTS_STREAM_PROVIDER: ${TTS_STREAM_PROVIDER:-cosyvoice}
       TTS_STREAM_MODEL: ${TTS_STREAM_MODEL:-}
       TTS_STREAM_VOICE: ${TTS_STREAM_VOICE:-}
       DASHSCOPE_TTS_INFERENCE_WS_URL: ${DASHSCOPE_TTS_INFERENCE_WS_URL:-wss://dashscope.aliyuncs.com/api-ws/v1/inference}
       DASHSCOPE_TTS_REALTIME_WS_URL: ${DASHSCOPE_TTS_REALTIME_WS_URL:-wss://dashscope.aliyuncs.com/api-ws/v1/realtime}
+      # MiniMax TTS（与 MiniMax LLM 同 MINIMAX_API_KEY）：模型/默认音色/T2A 端点
+      MINIMAX_TTS_MODEL: ${MINIMAX_TTS_MODEL:-speech-2.8-turbo}
+      MINIMAX_TTS_VOICE: ${MINIMAX_TTS_VOICE:-female-tianmei}
+      MINIMAX_T2A_URL: ${MINIMAX_T2A_URL:-https://api.minimaxi.com/v1/t2a_v2}
     ports: ["50052:50052", "50059:50059"]
     depends_on: [redis]
 

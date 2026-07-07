@@ -50,10 +50,13 @@ _NEXT_HINT = ("下一场", "下场", "下一个", "下一轮", "下轮", "接下
 
 # 复用 api-football provider 的中文国家队名表做队名提取（同域同包）；导入失败则退化空表。
 try:
-    from ..providers.sports_apifootball import _ZH_TEAMS as _AF_ZH_TEAMS
+    from ..providers.sports_apifootball import _ZH_TEAMS as _AF_ZH_TEAMS, flag_for as _flag_for
     _TEAM_NAMES = sorted(set(_AF_ZH_TEAMS.values()), key=len, reverse=True)
 except Exception:  # pragma: no cover
     _TEAM_NAMES = []
+
+    def _flag_for(_name):
+        return ""
 
 
 def _find_team(text: str) -> str:
@@ -139,6 +142,7 @@ class SportsMixin:
             "league": f.league, "round": f.round,
             "home": f.home, "away": f.away,
             "home_logo": f.home_logo, "away_logo": f.away_logo,
+            "home_flag": _flag_for(f.home), "away_flag": _flag_for(f.away),
             "score": f"{f.home_goals}-{f.away_goals}" if scored else "",
             "home_goals": f.home_goals, "away_goals": f.away_goals,
             "status": f.status, "status_text": f.status_text,

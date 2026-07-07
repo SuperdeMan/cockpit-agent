@@ -25,12 +25,13 @@ _LENGTH = {
 
 
 def _resolve_model(meta: dict) -> str:
-    """开放域模型分层：deep→重模型(primary)，其余(fast/auto/未设)→快模型，低延迟。
-    返回空串表示用网关默认（含降级链）。"""
+    """开放域模型分层：deep→重模型档位（primary），其余(fast/auto/未设)→快模型档位，低延迟。
+
+    返回的是**档位哨兵**而非具体模型名（``""``=primary、``"@fast"``=fast）——由 llm-gateway 按当前
+    active provider 解析成该厂商的具体模型（见 llm-gateway/llm_runtime.py::resolve_models）。这样多
+    LLM 源切换厂商时，不会把某家的模型名（如 mimo-v2.5）误发给另一家（如 DeepSeek）而报错。"""
     pref = (meta or {}).get("model_pref", "auto")
-    if pref == "deep":
-        return os.getenv("LLM_MODEL_PRIMARY", "")
-    return os.getenv("LLM_MODEL_FAST", os.getenv("LLM_MODEL_FALLBACK", "mimo-v2.5"))
+    return "" if pref == "deep" else "@fast"
 
 
 def _length(meta: dict) -> tuple[int, str]:

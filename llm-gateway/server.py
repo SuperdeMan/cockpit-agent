@@ -13,7 +13,8 @@ import httpx
 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
 from cockpit.llm.v1 import audio_pb2, audio_pb2_grpc
 
-from providers import build_provider, build_asr_provider, build_tts_provider
+from providers import build_asr_provider, build_tts_provider
+from llm_runtime import get_runtime
 from cache import LLMCache
 from ratelimit import RateLimiter
 from metrics import cost_tracker
@@ -23,18 +24,14 @@ logger = logging.getLogger("llm.server")
 
 class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
     def __init__(self):
-        self.provider = build_provider()
-        # 默认对齐项目约定（.env.example/compose/conventions.md 均为 MiMo）；部署经 env 覆盖。
-        # 不再默认 claude——避免漏配 env 时把 claude 模型名发给已配置的 MiMo provider 而报错。
-        self.primary = os.getenv("LLM_MODEL_PRIMARY", "mimo-v2.5-pro")
-        self.fallback = os.getenv("LLM_MODEL_FALLBACK", "")
+        # 多 LLM 源：provider 注册表 + 全局 active 切换 + 档位解析统一收归 llm_runtime（gRPC 与
+        # HTTP 控制端点共用同一进程内单例）。换/切服务商见 llm_runtime.py。
+        self.runtime = get_runtime()
         self.cache = LLMCache(max_size=256, ttl_seconds=300)
         self.limiter = RateLimiter(global_rate=20, global_capacity=50)
 
     def _models(self, requested: str) -> list[str]:
-        if requested:
-            return [requested]
-        return [m for m in (self.primary, self.fallback) if m] or ["mock"]
+        return self.runtime.resolve_models(requested)
 
     @staticmethod
     def _msgs(request):
@@ -62,8 +59,10 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         if not self.limiter.allow(caller):
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, "rate limited")
 
-        # 缓存查找（thinking 并入 key，避免开/关思考结果串味）
-        cached = self.cache.get(msgs, request.model or self.primary, temp, thinking)
+        # 缓存查找（active provider + thinking 并入 key，避免切换/开关思考结果串味）
+        models = self._models(request.model)
+        aid = self.runtime.active_id
+        cached = self.cache.get(msgs, f"{aid}:{models[0]}", temp, thinking)
         if cached:
             content, used, finish, usage = cached
             logger.debug("Cache hit")
@@ -72,16 +71,17 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 prompt_tokens=usage[0], completion_tokens=usage[1])
 
         # 调用（带降级）
+        provider = self.runtime.active_provider()
         last_err = None
-        for model in self._models(request.model):
+        for model in models:
             t0 = time.monotonic()
             try:
-                content, used, finish, usage = await self.provider.complete(
+                content, used, finish, usage = await provider.complete(
                     msgs, model, temp, max_tokens, thinking=thinking)
                 latency_ms = (time.monotonic() - t0) * 1000
 
                 # 写缓存
-                self.cache.put(msgs, model, temp, content, used, thinking)
+                self.cache.put(msgs, f"{aid}:{model}", temp, content, used, thinking)
 
                 # 记录成本
                 cost_tracker.record(used, usage[0], usage[1], latency_ms)
@@ -109,7 +109,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         # 流式不走缓存
         t0 = time.monotonic()
         try:
-            async for delta in self.provider.stream(
+            async for delta in self.runtime.active_provider().stream(
                     msgs, model, request.temperature or 0.7, request.max_tokens or 512,
                     thinking=thinking):
                 yield llm_pb2.CompleteChunk(delta=delta, done=False)
@@ -130,7 +130,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             return llm_pb2.EmbedResponse(embeddings=[], dim=0)
         model = request.model or os.getenv("LLM_EMBED_MODEL", "")
         try:
-            vecs = await self.provider.embed(texts, model)
+            vecs = await self.runtime.embed_provider().embed(texts, model)
         except NotImplementedError:
             await context.abort(grpc.StatusCode.UNIMPLEMENTED, "provider 不支持 embedding")
             return

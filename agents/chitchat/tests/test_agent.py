@@ -38,19 +38,10 @@ def test_talk_returns_speech():
 # ─── task 4：开放域模型分层 + 话术长度 + 昵称 ───
 
 def test_model_tiering_by_pref():
-    old = {k: os.environ.get(k) for k in ("LLM_MODEL_FAST", "LLM_MODEL_PRIMARY")}
-    os.environ["LLM_MODEL_FAST"] = "mimo-v2.5"
-    os.environ["LLM_MODEL_PRIMARY"] = "mimo-v2.5-pro"
-    try:
-        assert _resolve_model({"model_pref": "deep"}) == "mimo-v2.5-pro"   # 深度→重模型
-        assert _resolve_model({"model_pref": "fast"}) == "mimo-v2.5"       # 快速→快模型
-        assert _resolve_model({}) == "mimo-v2.5"                            # 默认开放域走快模型
-    finally:
-        for k, v in old.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+    # 多 LLM 源：分层返回**档位哨兵**（非具体模型名），由网关按 active provider 解析成具体模型。
+    assert _resolve_model({"model_pref": "deep"}) == ""        # 深度→重模型档位（primary=空串）
+    assert _resolve_model({"model_pref": "fast"}) == "@fast"   # 快速→快模型档位
+    assert _resolve_model({}) == "@fast"                        # 默认开放域走快模型档位
 
 
 def test_length_and_name_honored():
@@ -73,5 +64,5 @@ def test_handle_passes_fast_model_and_tokens():
     res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="讲个笑话",
                                  meta={"model_pref": "fast", "answer_length": "short"}))
     assert res.speech == "好的"
-    assert captured["model"] == os.getenv("LLM_MODEL_FAST", os.getenv("LLM_MODEL_FALLBACK", "mimo-v2.5"))
+    assert captured["model"] == "@fast"   # 快模型档位哨兵（网关侧解析成 active provider 的 fast 模型）
     assert captured["max_tokens"] == 140

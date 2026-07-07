@@ -22,8 +22,9 @@ from runtime.grpcio import aio_channel
 
 from providers import (
     build_asr_provider, build_streaming_asr_provider, build_tts_provider,
-    build_tts_stream_provider, TTS_STREAM_CATALOG, MiMoTTSProvider,
+    build_tts_stream_provider, TTS_STREAM_CATALOG,
 )
+from llm_runtime import get_runtime
 
 logger = logging.getLogger("llm.http")
 
@@ -300,25 +301,24 @@ def create_http_app() -> web.Application:
     async def handle_tts_stream_info(request: web.Request):
         """流式 TTS 能力探测（HMI 设置页据此渲染引擎/音色两级选择 + 可用性 + 回退判定）。"""
         has_dashscope = bool(os.getenv("DASHSCOPE_ASR_KEY") or os.getenv("LLM_EMBED_API_KEY"))
-        has_mimo = bool(os.getenv("LLM_API_KEY"))
+        avail = {
+            "cosyvoice": has_dashscope, "qwen": has_dashscope,
+            "mimo": bool(os.getenv("LLM_API_KEY")),        # MiMo v2.5 已支持流式
+            "minimax": bool(os.getenv("MINIMAX_API_KEY")),  # MiniMax T2A 流式
+        }
         default = os.getenv("TTS_STREAM_PROVIDER", "cosyvoice").strip().lower()
         if default in ("", "off", "none"):
             default = "mimo"
         providers = []
-        for pid in ("cosyvoice", "qwen"):
+        for pid in ("cosyvoice", "qwen", "mimo", "minimax"):
             cat = TTS_STREAM_CATALOG[pid]
             providers.append({
                 "id": pid, "label": cat["label"], "streaming": True,
-                "available": has_dashscope, "model": cat["model"],
+                "available": avail.get(pid, False), "model": cat["model"],
                 "sample_rate": cat["sample_rate"], "voices": cat["voices"],
             })
-        providers.append({
-            "id": "mimo", "label": "MiMo·经典", "streaming": False,
-            "available": has_mimo, "model": DEFAULT_TTS_MODEL,
-            "voices": MiMoTTSProvider.VOICES,
-        })
         return web.json_response({
-            "streaming": has_dashscope, "default": default, "providers": providers,
+            "streaming": any(avail.values()), "default": default, "providers": providers,
         })
 
     @routes.get("/api/tts/stream")
@@ -507,6 +507,28 @@ def create_http_app() -> web.Application:
         except Exception as e:
             logger.warning("memory forget error: %s", e)
             return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+    @routes.get("/api/llm/providers")
+    async def handle_llm_providers(request: web.Request):
+        """列出已装配的 LLM 厂商 + 各自模型 + 可用性 + 当前 active（HMI 设置页两级选择据此渲染）。"""
+        return web.json_response(get_runtime().status())
+
+    @routes.post("/api/llm/provider")
+    async def handle_llm_set_provider(request: web.Request):
+        """切换全局 active LLM 厂商/模型（所有服务的 LLM 调用随之切换）。body: {provider, model?}。"""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        provider = (body.get("provider") or "").strip()
+        model = (body.get("model") or "").strip()
+        if not provider:
+            return web.json_response({"error": "missing provider"}, status=400)
+        try:
+            status = get_runtime().set_active(provider, model)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response(status)
 
     @routes.get("/api/health")
     async def handle_health(request: web.Request):
