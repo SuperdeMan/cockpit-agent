@@ -25,7 +25,7 @@
 
 ## 当前状态
 
-截至 **2026-07-04**：
+截至 **2026-07-08**：
 
 - Phase 1 的工程化 PoC 主干与云端中枢 P0-P3 已落地；原始 Phase 1
   计划中的量产级能力仍有明确 backlog。
@@ -115,8 +115,19 @@
   **赛事国旗**：后端按队名注入国旗 emoji（世界杯 2026 全部球队 + 主要国家队）+ 自托管 Twemoji Country
   Flags 字体修复 Windows Chromium 缺国旗字形退化成 ISO 双字母。真栈四家 LLM 全部真实打通、MiMo/MiniMax
   流式 TTS 出帧、世界杯赛事国旗全链路透传。详见 `docs/design/2026-07-07-llm-asr-tts-multiprovider-and-sports-flags.md`。
-- 全量 pytest：**1145 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
-  一次跑通；2026-07-07 多 LLM 源 + TTS 扩展 + 赛事国旗 + 赛事路由修复较 R4.3 的 1112 +33。R4.3 为 HMI 前端）。
+- **输入拒识 + 路由澄清：置信度三段式（2026-07-08，P0/P1/P2 全落地 + 真栈 CDP 验收）**：给「该不该处理、
+  该给谁处理」显式建模——受话判定与歧义申告**合并进 Planner 同一次 LLM 调用**（`addressed`/`clarify`
+  可选字段、fail-open、多 provider 通用）。**低置信=拒识**：hands-free 语音源（`meta.input_source=voice_*`）
+  被判非受话（乘客对话/播报腔/称呼他人）时静默丢弃——不 TTS、不落对话历史、不进画像，显式输入（文本/
+  push-to-talk/候选选择）**永不被拒**；连续拒识端侧自适应收紧（续问窗减半→仅唤醒词→一次成功交互即复位）。
+  **中置信=澄清**：真路由歧义句出 `intent_choice` 卡问一句再执行（零会话状态，点选或说「第N个」回发消歧
+  指令、深度=1 不追问；**明确句绝不反问**，反例误澄清 0/17），`_fallback` 语义 top-1 加分数门槛堵「低分硬
+  执行首个能力」。**未改 proto（卡走 `ui_card` Struct）、编排核心零领域字面量、全链路 env 门控**
+  （`REJECT_NON_ADDRESSED`/`CLARIFY_ENABLED` 默认 on，`=off` 一键回退）。真栈：`test/e2e_rejection.py` 2/2、
+  `eval_rejection.py --live` @ mimo 误拒 3.4% / 拦截 88.9% / JSON 0%、CDP 全流程（歧义句→出卡→点第一个
+  选项→消歧指令派发执行→深度=1 不再澄清）验收通过。详见 `docs/design/2026-07-07-r4.4-rejection-and-clarification.md`。
+- 全量 pytest：**1169 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
+  一次跑通；2026-07-08 R4.4 拒识 + 澄清较多 LLM 源的 1146 +23。HMI `node --test` 127；R4.3/R4.4 部分为前端）。
 - 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6 + 深度调研（深调研报告 + 多轮深挖 + 新闻深挖桥接 + 异步分钟级受理→主动推送报告卡）+ nightly GitHub 断言型 e2e（含 R3.5 降级矩阵四行）全绿；R3.6 真实 Agent 调用→`/metrics` 端到端数据链路真栈验证通过。
 - Docker 全栈 **26 个服务**（含充能规划/场景编排/路况安全/深度调研等 Agent），全栈联调通过；
   另有 Prometheus/Grafana 两个可观测服务经 Compose `profiles: ["observability"]` 门控可选启用
@@ -191,6 +202,7 @@ Dashboard 的车辆动态接口仅供本地演示；非开发环境必须设置
 - **多 LLM 源可运行时全局切换**（MiMo / MiniMax-M3 / DeepSeek v4-pro·flash / 阿里百炼 qwen3.7-max·plus，HMI 设置页两级选择「厂商→模型」，一套参数化 provider 覆盖各家差异，Mock 兜底）；embedding 独立走百炼、与 chat 厂商解耦。MiMo ASR/TTS（批处理）+ **DashScope 实时流式 ASR**（qwen3/fun，识别上屏）+ **服务端流式 TTS**（cosyvoice-v3-flash / qwen3-tts-flash-realtime / MiMo v2.5 / MiniMax T2A，PCM 分片播报、barge-in）+ MiMo 分块/批处理回退，webm→wav/PCM 后端流式转码。
 - 复杂任务（行程/深度调研/多步）按统一 `is_complex` 判据**动态开思考**提质 + 气泡内嵌
   「过程区」四阶段折叠展示（理解需求→规划步骤→执行任务→整理结果，行车/泊车双态、脱敏不露 reasoning）；普通车控/闲聊零过程零额外延迟。
+- **输入拒识 + 路由澄清（置信度三段式）**：受话判定与歧义申告合并进 Planner 一次 LLM 调用（fail-open）——hands-free 语音嘈杂环境下非受话语句静默拒识（不打扰、不落库、不进画像，连续拒识自适应收紧到仅唤醒词、成功即复位）；真路由歧义出 `intent_choice` 卡问一句再执行、明确句绝不反问；`REJECT_NON_ADDRESSED`/`CLARIFY_ENABLED` env 门控，一键回退。
 - HMI（Aurora Glass 极光液态座舱）流式文字、动作卡、记忆视图、**语音流式识别上屏**、**流式 TTS 播报（引擎→音色两级选择，cosyvoice/qwen 方言/MiMo/MiniMax）**、**LLM 大脑两级切换（厂商→模型）**、赛事卡国家队国旗；
   **R4.3 免唤醒连续对话 + 播报中打断 + 唤醒词（可选预设）+ 唤醒人声播报**（浏览器本地 KWS/VAD，唤醒前音频不出浏览器，opt-in 默认关）。
 - NATS 可观测事件、collector REST/WS、车辆状态 diff、端云 trace、Agent 健康/指标/熔断状态、
