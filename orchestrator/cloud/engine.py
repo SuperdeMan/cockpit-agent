@@ -197,7 +197,8 @@ class PlannerEngine:
                     yield {"kind": "final", "speech": clarify["question"],
                            "ui_card": {"type": "intent_choice", **clarify}}
                     return
-                yield {"kind": "final", "speech": "抱歉，我暂时无法处理这个请求。"}
+                # R4.4 D5-2：诚实降级话术（含 fallback 低分不硬执行的场景），比「无法处理」更引导重说。
+                yield {"kind": "final", "speech": "抱歉，我没听清您想让我做什么，可以换个说法吗。"}
                 return
 
             # C. 解析 endpoint（Registry）

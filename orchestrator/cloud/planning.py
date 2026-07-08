@@ -413,6 +413,15 @@ class PlanBuilder:
             if not resolved:
                 return Plan(steps=[])
             a = resolved[0]
+            # R4.4 D5-2：低分不再硬执行 capabilities[0]（堵「score 0.36 也硬套首个能力」真 bug）。
+            # 门槛与 SEMANTIC_PROMOTE_SIM 对齐（精确 intent=1.0/关键词 0.3+/语义重排=真 cosine）。
+            # 分数不足 → 诚实降级空计划（engine 出「没听清」话术），不臆断。chitchat 全局兜底
+            # （上面第 1 优先分支）不受影响——门槛只作用于「chitchat 不在 catalog、走语义 top-1」路径。
+            if (float(getattr(a, "score", 0.0) or 0.0)
+                    < float(os.getenv("CLARIFY_FALLBACK_MIN", "0.5"))):
+                logger.info("Fallback top-1 score %.3f below threshold, honest degrade",
+                            float(getattr(a, "score", 0.0) or 0.0))
+                return Plan(steps=[])
             intent = a.manifest.capabilities[0].intent if a.manifest.capabilities else ""
             return Plan(steps=[Step(
                 id="s1", agent_id=a.manifest.agent_id, endpoint=a.endpoint,

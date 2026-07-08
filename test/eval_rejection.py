@@ -49,10 +49,12 @@ if _gen_py.is_dir():
 
 _CASES_PATH = _ROOT / "test" / "eval_corpus" / "rejection_cases.yaml"
 _DEFAULT_BASELINE = _ROOT / "docs" / "reviews" / "eval" / "baseline_rejection.json"
+_CLARIFY_CASES_PATH = _ROOT / "test" / "eval_corpus" / "clarify_cases.yaml"
+_CLARIFY_BASELINE = _ROOT / "docs" / "reviews" / "eval" / "baseline_clarify.json"
 
 
-def _load_cases() -> list[dict]:
-    with open(_CASES_PATH, encoding="utf-8") as f:
+def _load_cases(path: Path = _CASES_PATH) -> list[dict]:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f) or []
 
 
@@ -227,10 +229,106 @@ def _run_live(raw_cases: list[dict], args) -> int:
     return 1 if (diff.has_regressions and args.strict) else 0
 
 
+# ── --clarify：路由歧义澄清评测 ───────────────────────────────────────────────
+
+def _clarify_shown(raw: str) -> bool:
+    """LLM 输出是否会让 engine 弹出 intent_choice 卡 = 有合法 clarify 且 steps 空（母卡 D6-2：
+    steps 非空则 clarify 让位）。"""
+    from orchestrator.cloud.planning import PlanBuilder
+    try:
+        data = json.loads(PlanBuilder._extract_json(raw or ""))
+    except (json.JSONDecodeError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    clarify = PlanBuilder._parse_clarify(data.get("clarify"))
+    return clarify is not None and not data.get("steps")
+
+
+def _run_clarify_offline(cases: list[dict]) -> int:
+    errs = []
+    n_clarify = n_direct = 0
+    for c in cases:
+        exp = c.get("expect")
+        if exp not in ("clarify", "direct"):
+            errs.append(f"{c.get('text')!r} expect 非法：{exp!r}")
+        n_clarify += exp == "clarify"
+        n_direct += exp == "direct"
+    if n_direct < 15:
+        errs.append(f"direct 硬门槛集不足 15（当前 {n_direct}）")
+    os.environ["CLARIFY_ENABLED"] = "on"
+    if "路由歧义澄清" in _planner_system_text():
+        print("  [OK] CLARIFY_ENABLED=on 下 _planner_system() 含澄清段")
+    else:
+        errs.append("CLARIFY_ENABLED=on 下 _planner_system() 未含澄清段")
+    print(f"\n离线尺子自检（clarify）：应澄清 {n_clarify} / 不得澄清 {n_direct}")
+    if errs:
+        for e in errs:
+            print(f"    - {e}")
+        return 1
+    print("  语料结构 OK")
+    return 0
+
+
+def _run_clarify_live(cases: list[dict], args) -> int:
+    os.environ["CLARIFY_ENABLED"] = "on"      # 拼入澄清段（消费端在 engine，这里只为 prompt）
+    provider = _active_provider()
+    if provider.startswith("mock"):
+        print(f"::warning::active provider={provider}——mock 不判 clarify，结果无意义。")
+    catalog = _build_catalog()
+    sys_text = _planner_system_text()
+
+    results: list[CaseResult] = []
+    for c in cases:
+        text = c["text"]
+        user_msg = f"可用能力:\n{catalog}\n\n用户说: {text}"
+        try:
+            raw = _llm_complete([{"role": "system", "content": sys_text},
+                                 {"role": "user", "content": user_msg}])
+        except Exception as e:
+            print(f"  XX LLM 调用失败 {text!r}: {e}")
+            raw = ""
+        shown = _clarify_shown(raw)
+        if c["expect"] == "clarify":
+            bucket, expected, passed = "clarify_recall", "出澄清卡", shown
+        else:
+            bucket, expected, passed = "clarify_guardrail", "不出澄清（直接执行）", not shown
+        results.append(CaseResult(
+            id=f"clarify::{text}", bucket=bucket, text=text, expected=expected,
+            actual=f"clarify_shown={shown}", passed=passed, tags=[c.get("tag", "")],
+            source=f"{_CLARIFY_CASES_PATH.relative_to(_ROOT).as_posix()}"))
+        print(f"  {'PASS' if passed else 'FAIL'} [{bucket}] {text!r} → clarify_shown={shown}")
+
+    sources = [{"path": f"{_CLARIFY_CASES_PATH.relative_to(_ROOT).as_posix()}", "count": len(cases)}]
+    report = build_report("clarify", sources, results)
+    report["meta"]["provider"] = provider
+    md = render_markdown(report)
+    md += f"\n> active provider：`{provider}`\n"
+
+    rec = report["buckets"].get("clarify_recall", {})
+    guard = report["buckets"].get("clarify_guardrail", {})
+    print(f"\nprovider={provider}")
+    print(f"应澄清命中 = {rec.get('passed', 0)}/{rec.get('total', 0)}")
+    print(f"不得澄清（direct 硬门槛）= {guard.get('passed', 0)}/{guard.get('total', 0)}"
+          f"（{guard.get('total', 0) - guard.get('passed', 0)} 条误澄清）")
+
+    baseline_path = Path(args.baseline) if args.baseline != str(_DEFAULT_BASELINE) else _CLARIFY_BASELINE
+    if args.write_baseline or not baseline_path.exists():
+        write_report(report, md, baseline_path, baseline_path.with_suffix(".md"))
+        print(f"\n基线已写入 {baseline_path}")
+        return 0
+    baseline = load_baseline(baseline_path)
+    diff = diff_against_baseline(report, baseline)
+    print_ci_annotations("eval_clarify", diff, baseline_path)
+    return 1 if (diff.has_regressions and args.strict) else 0
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="R4.4 受话判定（拒识）评测")
+    ap = argparse.ArgumentParser(description="R4.4 受话判定（拒识）/ 路由澄清评测")
     ap.add_argument("--live", action="store_true",
                     help="直连活栈 llm-gateway 打真 LLM（需真 provider + make up）")
+    ap.add_argument("--clarify", action="store_true",
+                    help="评路由歧义澄清（clarify_cases.yaml）而非拒识")
     ap.add_argument("--baseline", default=str(_DEFAULT_BASELINE))
     ap.add_argument("--write-baseline", action="store_true")
     ap.add_argument("--out-json")
@@ -238,6 +336,10 @@ def main() -> int:
     ap.add_argument("--strict", action="store_true",
                     help="有回归时 exit 1；默认非阻塞观测")
     args = ap.parse_args()
+
+    if args.clarify:
+        cases = _load_cases(_CLARIFY_CASES_PATH)
+        return _run_clarify_live(cases, args) if args.live else _run_clarify_offline(cases)
 
     raw_cases = _load_cases()
     if args.live:

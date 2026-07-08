@@ -75,6 +75,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const lastDestChoiceRef = useRef<string[] | null>(null)
   // 顺路停靠候选（waypoint_choice）：「第N个」派发「导航去{目的地}途经{名称}」→ 落途经点
   const lastWaypointChoiceRef = useRef<{ destination: string; names: string[] } | null>(null)
+  // R4.4 澄清卡（intent_choice）选项：「第N个」或点按钮 → 回发 option.send_text（带 clarify_resume 深度=1）
+  const lastIntentChoiceRef = useRef<{ options: Array<{ label: string; send_text: string }> } | null>(null)
   // 就近类目候选（plain poi_list）上下文：供「换一批/换一个」翻页取下一批不同结果。
   // 只存类目关键词（如"粤菜馆"），换一批时重发干净的「导航去附近的{关键词}」——
   // 复杂指令下不会把原句里的车控（空调/座椅/氛围灯）又执行一遍。
@@ -362,7 +364,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           lastWaypointChoiceRef.current = null
           lastPoiNamesRef.current = null
           lastPlaceItemsRef.current = null
-          if (c?.type === 'poi_list' && c.purpose === 'dest_choice') {
+          lastIntentChoiceRef.current = null   // R4.4：新一轮 final 到达即互斥清空澄清卡（自然作废，母卡 D7）
+          if (c?.type === 'intent_choice') {
+            lastIntentChoiceRef.current = { options: (c.options || []).filter((o: any) => o?.send_text) }
+          } else if (c?.type === 'poi_list' && c.purpose === 'dest_choice') {
             lastDestChoiceRef.current = names
           } else if (c?.type === 'poi_list' && c.purpose === 'waypoint_choice') {
             lastWaypointChoiceRef.current = { destination: c.destination || '', names: names || [] }
@@ -509,6 +514,20 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       lastWaypointChoiceRef.current = null
       dispatch(text, false)
       return
+    }
+    // R4.4 澄清卡选择：上一轮出了 intent_choice → 说「第N个」或点按钮回传 send_text/label
+    // → 把消歧后的完整指令当新请求回发（带 clarify_resume=1，planner 深度=1 不再澄清，母卡 D7）。
+    const ic = lastIntentChoiceRef.current
+    if (ic && ic.options.length) {
+      const idx = ordinalSelectIn(text)
+      const hit = (idx >= 0 && idx < ic.options.length) ? ic.options[idx]
+        : ic.options.find((o) => o.send_text === text || o.label === text)
+      if (hit) {
+        lastIntentChoiceRef.current = null
+        dispatch(hit.send_text, false, undefined, { clarify_resume: '1' })
+        return
+      }
+      // 不命中（用户换了话题）→ 继续正常路径；卡片在下一轮 final 到达时被互斥清空=自然作废
     }
     // 「换一批/换一个」：对上一条就近类目候选翻页，重发干净的「导航去附近的{关键词}」+ 下一页
     // （只重搜 POI，不会把复杂原句里的车控空调/座椅/氛围灯又执行一遍），并带最新定位。

@@ -20,6 +20,10 @@ from orchestrator.cloud.models import SessionState
 _WEATHER_PLAN = json.dumps({"steps": [
     {"id": "s1", "agent_id": "info", "intent": "info.weather", "slots": {}, "depends_on": []}]})
 _REJECT_PLAN = json.dumps({"addressed": False, "steps": []})
+_CLARIFY_PLAN = json.dumps({"addressed": True, "clarify": {
+    "question": "您是想看详情还是导航过去？",
+    "options": [{"label": "看详情", "send_text": "看华润大厦的详情"},
+                {"label": "导航过去", "send_text": "导航去华润大厦"}]}})
 
 
 class _Cap:
@@ -149,3 +153,33 @@ def test_confirm_continuation_bypasses_reject():
     assert "取消" in final["speech"]         # 走确认分支
     assert not (final.get("ui_card") or {}).get("type") == "rejected"
     assert asyncio.run(session.load("s1")) is None
+
+
+# ── P1 澄清短路（D6-3）───────────────────────────────────────────────────────
+
+def test_clarify_shows_card_when_enabled(monkeypatch):
+    monkeypatch.setenv("CLARIFY_ENABLED", "on")
+    engine, spy, session = _make_engine(_CLARIFY_PLAN)
+    final = _run(engine, _req("华润大厦"))[-1]
+    assert final["speech"] == "您是想看详情还是导航过去？"
+    assert (final.get("ui_card") or {}).get("type") == "intent_choice"
+    assert len((final["ui_card"] or {}).get("options") or []) == 2
+    assert asyncio.run(session.load("s1")) is None    # 零会话状态：不挂 session
+    assert spy.agent_calls == 0                        # 未执行任何 Agent
+
+
+def test_clarify_ignored_when_disabled():
+    """CLARIFY_ENABLED 默认 off → clarify 被忽略，回空计划话术（回归保护）。"""
+    engine, _, _ = _make_engine(_CLARIFY_PLAN)
+    final = _run(engine, _req("华润大厦"))[-1]
+    assert "抱歉" in final["speech"]
+    assert not (final.get("ui_card") or {}).get("type") == "intent_choice"
+
+
+def test_clarify_suppressed_on_resume(monkeypatch):
+    """clarify_resume=1 的轮次丢弃 clarify（深度=1，防问个不停）→ 空计划话术。"""
+    monkeypatch.setenv("CLARIFY_ENABLED", "on")
+    engine, _, _ = _make_engine(_CLARIFY_PLAN)
+    final = _run(engine, _req("华润大厦", meta={"clarify_resume": "1"}))[-1]
+    assert "抱歉" in final["speech"]
+    assert not (final.get("ui_card") or {}).get("type") == "intent_choice"
