@@ -5,6 +5,7 @@ WS3 §4。LLM 把已注册 Agent 能力当工具，输出 JSON DAG 计划。
 from __future__ import annotations
 import json
 import logging
+import os
 from security.permission import check_permission
 from .models import Plan, Step, PlanContext, ReplanDecision
 from .context import WorkingSet, _FALLBACK_AGENT
@@ -16,7 +17,7 @@ logger = logging.getLogger("planner.planning")
 # Agent manifest.route_hints 声明、通用 RouteHintEngine 消费（R2.1）；trip.plan 的话术抽取在
 # trip-planner Agent 的 extract.py。编排核心不再持任何领域正则/Agent 字面量。
 
-_PLANNER_SYSTEM = (
+_PLANNER_BASE = (
     "你是智能座舱的任务编排器。根据用户话术和可用 agent 能力清单，输出 JSON 调用计划。\n"
     "格式严格为：{\"complexity\":\"simple|adaptive\",\"goal\":\"一句话目标\","
     "\"steps\":[{\"id\":\"s1\",\"agent_id\":\"..\",\"intent\":\"..\","
@@ -112,6 +113,44 @@ _PLANNER_SYSTEM = (
     "- 无法匹配时输出 {\"steps\":[]}"
 )
 
+# R4.4：受话判定段——恒附在 base 之后（消费端 engine 按 input_source 门控，附着无副作用）。
+# 保守取向：拿不准输出 true（宁可处理不可误丢，母卡 §7 风险缓解）。provider 无关：纯 JSON、
+# 字段可选、fail-open。
+_ADDRESSED_SECTION = (
+    "\n\n== 受话判定（必须输出）==\n"
+    "输出顶层布尔字段 \"addressed\"：这句话是否是对你（车载助手）说的。\n"
+    "- true：请求/问题/指令/情绪表达（如『好烦啊』『我有点冷』也需要你回应）\n"
+    "- false：明显不是对助手说的——乘客间对话片段（『妈你到哪了』）、自言自语、"
+    "电台/视频/新闻播报腔（『本台记者报道…』『欢迎收听今天的节目』）、"
+    "称呼他人姓名的交谈（『王总我马上发您』）、无法构成请求的残句\n"
+    "- **拿不准时必须输出 true**（宁可处理，不可误丢）\n"
+    "- addressed 为 false 时输出 {\"addressed\":false,\"steps\":[]}，不要输出其他内容"
+)
+
+# R4.4：路由歧义澄清段——仅当 CLARIFY_ENABLED=on 时拼入（off 时 LLM 不会输出 clarify，
+# 避免它输出后被 engine 丢弃退化成空计划话术，母卡实施计划 §0-10）。
+_CLARIFY_SECTION = (
+    "\n\n== 路由歧义澄清（谨慎使用）==\n"
+    "仅当这句话确实是对你说的、但在能力清单上存在两种以上合理且结果差异明显的落法、"
+    "且从『当前对话焦点』『最近对话』都无法确定用户要哪种时，输出澄清代替 steps：\n"
+    "{\"addressed\":true,\"clarify\":{\"question\":\"口语化一句提问\","
+    "\"options\":[{\"label\":\"不超过10字\",\"send_text\":\"消歧后的完整第一人称指令\"}]}}\n"
+    "- options 2~3 个；send_text 必须可直接当用户新指令执行（如『帮我找附近的川菜馆』）\n"
+    "- **绝大多数请求是明确的，明确请求绝不允许反问**\n"
+    "- **缺槽位不算歧义**（『导航』缺目的地→照常输出 step，由对应 agent 追问）\n"
+    "- 多意图句只要主意图清楚就正常拆 step，不因次要成分歧义而澄清"
+)
+
+
+def _planner_system() -> str:
+    """每次 build() 实时拼 Planner system prompt：base + 受话段（恒附）+ 澄清段（CLARIFY_ENABLED=on）。
+    os.getenv 实时读——env 翻转即刻生效，且让 monkeypatch 单测可行（母卡实施计划 §0-10）。"""
+    prompt = _PLANNER_BASE + _ADDRESSED_SECTION
+    if os.getenv("CLARIFY_ENABLED", "off").lower() == "on":
+        prompt += _CLARIFY_SECTION
+    return prompt
+
+
 _REPLAN_SYSTEM = (
     "你是智能座舱有界任务循环的再规划器。根据用户目标、最近观察和可用能力，"
     "一次性判断任务是否完成，并在未完成时给出下一批 JSON DAG。\n"
@@ -153,7 +192,9 @@ class PlanBuilder:
         for _ in range(2):
             raw = await self._llm_plan(text, agents, working_set)
             parsed = self._parse_and_validate(raw, agent_map, text)
-            if parsed and parsed.steps:
+            # R4.4：放行「合法的空 steps 计划」——受话判定 addressed=false / 澄清 clarify
+            # 的正确输出 steps 恰为空，不能当解析失败去重试+fallback（母卡实施计划 §0-1/§0-2）。
+            if parsed and (parsed.steps or not parsed.addressed or parsed.clarify):
                 plan = parsed
                 break
 
@@ -177,7 +218,7 @@ class PlanBuilder:
         user_msg = f"可用能力:\n{catalog}\n\n{ctx_block}用户说: {text}"
         try:
             raw = await self._llm([
-                {"role": "system", "content": _PLANNER_SYSTEM},
+                {"role": "system", "content": _planner_system()},
                 {"role": "user", "content": user_msg},
             ])
             logger.info("LLM plan raw: %s", (raw or "")[:500])
@@ -228,9 +269,18 @@ class PlanBuilder:
             logger.warning("Plan JSON parse failed: %s", e)
             return None
 
+        # R4.4：受话/澄清在 steps 校验之前短路——它们的合法输出 steps 恰为空，若走下面
+        # `if not steps: return None` 会被当解析失败触发重试+fallback（母卡实施计划 §0-1）。
+        if data.get("addressed") is False:      # 仅显式 false 生效；缺省/垃圾值=True（fail-open）
+            return Plan(steps=[], raw_text=fallback_text, addressed=False)
+        clarify = self._parse_clarify(data.get("clarify"))
+
         steps = self._validated_steps(data.get("steps", []) or [], agent_map)
         if not steps:
+            if clarify:      # 是请求但落法歧义：无 steps 但带合法 clarify → 合法计划（P1 消费）
+                return Plan(steps=[], raw_text=fallback_text, clarify=clarify)
             return None
+        # steps 非空 → clarify 忽略（互斥，执行优先，母卡 D6-2>D6-3）；后续现状不动。
 
         # Chitchat is the open-domain fallback. Never trust an LLM-generated
         # text slot here: it can be missing or stale, which makes the agent
@@ -255,6 +305,31 @@ class PlanBuilder:
             complexity=complexity,
             goal=goal,
         )
+
+    @staticmethod
+    def _parse_clarify(raw) -> dict | None:
+        """R4.4：解析澄清输出。非 dict / question 空 / 有效 options<2 → None；options>3 截断为 3；
+        每项须 label+send_text 均为非空 str。纯函数不读 env——CLARIFY_ENABLED 由 prompt 拼接
+        （生产端）与 engine 消费（消费端）两端门控，解析器只认格式（母卡实施计划 §0-10）。"""
+        if not isinstance(raw, dict):
+            return None
+        question = raw.get("question")
+        if not isinstance(question, str) or not question.strip():
+            return None
+        opts_raw = raw.get("options")
+        if not isinstance(opts_raw, list):
+            return None
+        options = []
+        for o in opts_raw:
+            if not isinstance(o, dict):
+                continue
+            label, send_text = o.get("label"), o.get("send_text")
+            if (isinstance(label, str) and label.strip()
+                    and isinstance(send_text, str) and send_text.strip()):
+                options.append({"label": label.strip(), "send_text": send_text.strip()})
+        if len(options) < 2:
+            return None
+        return {"question": question.strip(), "options": options[:3]}
 
     @staticmethod
     def _validated_steps(raw_steps: list, agent_map: dict) -> list[Step]:

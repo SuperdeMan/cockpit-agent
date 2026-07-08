@@ -1,0 +1,66 @@
+# R4.4 受话判定（拒识）评测语料。照 route_hints_cases.yaml 的注释风格。
+#
+# 评测「Planner 的受话判定」本身：--live 把每条 text 拼进 _planner_system() + 真实 catalog
+# 送 llm-gateway，解析顶层 addressed 布尔——不经 engine 短路/HMI，只看 LLM 判得准不准。
+#
+# schema:
+#   text:   输入话术（模拟 hands-free 定稿上云的句子）
+#   expect: accept = 真请求/情绪表达，addressed 必须为 true（**误拒即回归**，优先守护）
+#           reject = 非受话（乘客对话/播报腔/称呼他人），addressed 应为 false
+#   tag:    分类溯源（正例：normal/emotion/noisy/contextual；负例：passenger/broadcast/phone/echo）
+#
+# 纪律：正例 ≥25 / 负例 ≥15。prompt 取保守取向（拿不准=accept），故正例误拒率是硬门槛、
+# 负例拦截率首版只入基线不设指标（母卡 §8）。上线后真栈日志被拒句人工复核回填（活资产）。
+# 强对比对：正例「深入调研一下固态电池」 vs 负例「本台记者深入调研发现…」——同含 route_hints
+# 碰瓷词（深入+调研），区别只在受话与否，专测语义判定而非字面。
+
+# ── 正例：真请求，不得拒（accept）───────────────────────────────────────────
+- {text: "帮我查下明天杭州的天气", expect: accept, tag: normal_query}
+- {text: "打开空调", expect: accept, tag: normal_control}
+- {text: "把温度调高两度", expect: accept, tag: normal_control}
+- {text: "帮我把车窗关一下", expect: accept, tag: normal_control}
+- {text: "播放周杰伦的歌", expect: accept, tag: normal_media}
+- {text: "导航去东方之门", expect: accept, tag: normal_nav}
+- {text: "附近有什么好吃的川菜馆", expect: accept, tag: normal_nearby}
+- {text: "附近哪里能停车", expect: accept, tag: normal_nearby}
+- {text: "帮我搜一下附近的加油站", expect: accept, tag: normal_nearby}
+- {text: "我想找个充电桩", expect: accept, tag: normal_nearby}
+- {text: "今天有什么新闻", expect: accept, tag: normal_query}
+- {text: "现在几点了", expect: accept, tag: normal_query}
+- {text: "明天要下雨吗", expect: accept, tag: normal_query}
+- {text: "从这里到机场大概要多久", expect: accept, tag: normal_query}
+- {text: "查一下我的电量还能跑多远", expect: accept, tag: normal_query}
+- {text: "巴西那场比赛结果怎么样", expect: accept, tag: normal_query}
+- {text: "深入调研一下固态电池技术", expect: accept, tag: normal_research}  # 对照负例 broadcast 碰瓷句
+- {text: "珠海玩两天推荐几个景点", expect: accept, tag: normal_trip}
+- {text: "讲个笑话吧", expect: accept, tag: normal_chitchat}
+- {text: "好烦啊今天", expect: accept, tag: emotion}                 # 情绪=受话（chitchat 共情是产品能力）
+- {text: "唉，又堵车了真烦人", expect: accept, tag: emotion}
+- {text: "好无聊啊", expect: accept, tag: emotion}
+- {text: "我有点冷", expect: accept, tag: emotion_implicit}          # 隐式车控，须受话
+- {text: "那个导航去西溪湿地吧", expect: accept, tag: noisy_prefix}   # ASR 噪声前缀变形
+- {text: "嗯…那个，帮我看看路况", expect: accept, tag: noisy_prefix}
+- {text: "呃，播放一首轻音乐", expect: accept, tag: noisy_prefix}
+- {text: "再大点声", expect: accept, tag: contextual}               # 指代续接（承接上一轮媒体）
+- {text: "还是刚才那家吧", expect: accept, tag: contextual}
+- {text: "换成蓝色的", expect: accept, tag: contextual}
+
+# ── 负例：非受话，应拒（reject）─────────────────────────────────────────────
+- {text: "妈你到哪了，我们在停车场等你", expect: reject, tag: passenger}
+- {text: "他昨天跟我说那个项目黄了", expect: reject, tag: passenger}
+- {text: "哎你说咱们晚上吃啥呀", expect: reject, tag: passenger}
+- {text: "我跟你讲他那个人特别抠门", expect: reject, tag: passenger}
+- {text: "欸对了昨天那事儿你处理了吗", expect: reject, tag: passenger}
+- {text: "那个电影我看了，特别无聊", expect: reject, tag: passenger}
+- {text: "你作业写完了没有", expect: reject, tag: passenger}
+- {text: "小明快点，要迟到了", expect: reject, tag: passenger_name}      # 称呼他人姓名
+- {text: "王总我这边资料马上发您", expect: reject, tag: phone_name}      # 打电话+称呼他人
+- {text: "喂，听得到吗，我在开车呢", expect: reject, tag: phone}
+- {text: "本台记者深入调研发现该地区房价持续走低", expect: reject, tag: broadcast}  # route_hints 碰瓷（深入+调研）
+- {text: "深入调研之后发现问题主要出在供应链", expect: reject, tag: broadcast}      # route_hints 碰瓷
+- {text: "据央视新闻报道，今日多地迎来强降雨天气", expect: reject, tag: broadcast}
+- {text: "记者在现场为您带来最新报道", expect: reject, tag: broadcast}
+- {text: "各位听众朋友们大家好，欢迎收听今天的节目", expect: reject, tag: broadcast}
+- {text: "本次列车终点站是北京南站，请提前做好下车准备", expect: reject, tag: announcement}
+- {text: "下一站人民广场，请从后门下车", expect: reject, tag: announcement}
+- {text: "接下来为您播放一首经典老歌", expect: reject, tag: echo_style}   # TTS 自回声风格

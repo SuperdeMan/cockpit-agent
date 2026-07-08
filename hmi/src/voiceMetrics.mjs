@@ -14,6 +14,7 @@ const METRIC_OF = {
   endpoint_merge: 'voice_endpoint_merge_count',
   barge_in: 'voice_barge_in_count',
   turn_cancelled: 'voice_turn_cancelled_count',
+  cloud_rejected: 'voice_cloud_rejected',            // R4.4 P0：云端语义拒识计数
 }
 
 /** 累计一个语音事件。sink 默认 localStorage（浏览器）；node 测注入内存 storage。 */

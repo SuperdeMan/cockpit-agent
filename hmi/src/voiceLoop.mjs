@@ -100,6 +100,7 @@ export class VoiceLoop {
     this._pendingPrefix = ''  // 续说重开 ASR 前的已定稿前缀（下次定稿拼在其后）
     this._utteranceMs = 0     // 本轮已结束 speech 段的累计时长
     this._speechStartAt = 0   // 当前 speech 段起点（now()）；0=当前无进行中 speech
+    this._listenSource = ''   // R4.4：本轮聆听进入来源（wake|followup|bargein）→ 定稿 onSend 带给云端拒识判定
   }
 
   // ─── 定时器封装（全部走注入，node 测试用 fake clock）───
@@ -180,9 +181,12 @@ export class VoiceLoop {
     this._enter(VoiceState.FOLLOWUP)
     this._setTimer('followup', this.cfg.followupWindowMs, () => this._gotoArmed())
   }
-  _enterListening({ speechAlreadyStarted = false, fromBargeIn = false } = {}) {
+  _enterListening({ speechAlreadyStarted = false, fromBargeIn = false, source = '' } = {}) {
     this._clearAllTimers()
     this._cameFromBargeIn = fromBargeIn
+    // R4.4：source 仅在新一轮聆听进入时给（wake/followup/bargein）；宽限续说/merge 不传 →
+    // 保持本轮首值（一句被端点合并的续说仍归属首次进入来源）。
+    if (source) this._listenSource = source
     this._echoSuspected = false
     this._speechActive = speechAlreadyStarted
     // 新一段聆听重置本轮 speech 计时；续说/打断进入时 speech 已在进行，起点即此刻。
@@ -223,13 +227,13 @@ export class VoiceLoop {
       this._clearPending() // 唤醒是新意图 → 放弃任何在宽限中的续说残留
       this.onMetric('wake')
       this.onWakeChime()
-      this._enterListening()
+      this._enterListening({ source: 'wake' })
     } else if (this.state === VoiceState.SPEAKING) {
       // 唤醒词打断不受 300ms VAD 护栏约束（显式意图）；若唤醒词恰在播报文本内则由 Worker 抑制。
       this._clearPending()
       this.onStopTts()
       this.onWakeChime()
-      this._enterListening()
+      this._enterListening({ source: 'wake' })
     } else if (this.state === VoiceState.THINKING) {
       // U2 真打断（P2）：处理中喊唤醒词 → 取消在飞的云端处理 + 提示音 + 重新聆听。
       // 仅 KWS 唤醒词可打断 THINKING（显式意图）；VAD speech 不行（THINKING 期环境音太易误触）。
@@ -237,7 +241,7 @@ export class VoiceLoop {
       this.onMetric('turn_cancelled')
       this.onCancelTurn()
       this.onWakeChime()
-      this._enterListening()
+      this._enterListening({ source: 'wake' })
     }
   }
 
@@ -258,7 +262,7 @@ export class VoiceLoop {
         }
         break
       case VoiceState.FOLLOWUP:
-        this._enterListening({ speechAlreadyStarted: true }) // 免唤醒追问
+        this._enterListening({ speechAlreadyStarted: true, source: 'followup' }) // 免唤醒追问
         break
       case VoiceState.SPEAKING:
         if (this._bargeInDisabled) return
@@ -358,7 +362,9 @@ export class VoiceLoop {
   }
 
   _finalizeSend(text) {
-    this.onSend(text)
+    // R4.4：第二参带 hands-free 来源 + 本轮 speech 时长 → App 拼成 meta.input_source 上云做拒识判定。
+    // 旧调用方（不读第二参）兼容。默认 'followup'（最保守：续问窗是最大垃圾入口）。
+    this.onSend(text, { source: this._listenSource || 'followup', utteranceMs: Math.round(this._currentUtteranceMs()) })
     this._gotoThinking()
   }
 
@@ -409,7 +415,7 @@ export class VoiceLoop {
     }
     this.onMetric('barge_in')
     this.onStopTts()
-    this._enterListening({ speechAlreadyStarted: true, fromBargeIn: true })
+    this._enterListening({ speechAlreadyStarted: true, fromBargeIn: true, source: 'bargein' })
   }
 
   _countSelfTrigger() {

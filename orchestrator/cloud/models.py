@@ -62,6 +62,12 @@ class Plan:
     raw_text: str = ""
     complexity: str = "simple"    # simple | adaptive：复杂度分诊（simple→T1 直执行, adaptive→T2 循环）
     goal: str = ""                # T2 再规划的锚点（一句话用户目标）；simple 时可空
+    # R4.4 受话判定：False=LLM 判「非对助手说的」（仅 hands-free 语音源 + REJECT 开时被 engine 消费）。
+    # 缺省 True = fail-open（弱 LLM/旧 prompt/mock 不输出该字段时行为与今天逐字一致）。
+    addressed: bool = True
+    # R4.4 路由歧义澄清：{"question": str, "options": [{"label","send_text"}]}；与非空 steps 互斥
+    # （steps 非空时忽略 clarify，母卡 D6-2>D6-3）。None = 无澄清。
+    clarify: dict | None = None
 
 
 @dataclass

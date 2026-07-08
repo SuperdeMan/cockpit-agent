@@ -6,6 +6,7 @@ WS3 §3。串联 planning / executor / aggregator / session。
 """
 from __future__ import annotations
 import logging
+import os
 import time
 from typing import AsyncIterator
 
@@ -34,6 +35,17 @@ _RESULT_FIELDS = {"step_id", "status", "speech", "ui_card", "actions",
 
 # _POC_DEFAULT_SCOPES 已迁入 context.py（此处 re-export 兼容既有 `from ...engine import _POC_DEFAULT_SCOPES`）。
 __all__ = ["PlannerEngine", "_POC_DEFAULT_SCOPES"]
+
+
+# R4.4：拒识/澄清 env 门控（模块级、实时读——env 翻转即刻生效，且测试可 monkeypatch）。
+# REJECT 默认 on（作用域已被 hands-free opt-in + input_source 双重限定）；CLARIFY 默认 off
+# （影响所有云端路由，比拒识作用域大，真栈验收后独立 commit 翻 on，母卡 §5）。
+def _reject_enabled() -> bool:
+    return os.getenv("REJECT_NON_ADDRESSED", "on").lower() != "off"
+
+
+def _clarify_enabled() -> bool:
+    return os.getenv("CLARIFY_ENABLED", "off").lower() == "on"
 
 
 class PlannerEngine:
@@ -67,12 +79,18 @@ class PlannerEngine:
         mem_on = ctx.prefs.get("memory_enabled", "true") != "false"
 
         assistant_speech = ""
+        rejected = False
         async for ev in self._orchestrate(request, ctx, text, mem_on):
+            # R4.4：剥离内部标记键，消费端（server.py）看不到；同时记本轮是否拒识。
+            if ev.pop("_rejected", False):
+                rejected = True
             if ev.get("kind") == "final" and ev.get("speech"):
                 assistant_speech = ev["speech"]
             yield ev
 
-        if mem_on and text:
+        # R4.4：拒识轮 user+assistant 均不落库——不污染指代消解、不触发 memory 画像抽取
+        # （母卡 D3；落库本就在编排循环之后，时序天然支持）。
+        if mem_on and text and not rejected:
             await self.context.append_turn(ctx.session_id, "user", text,
                                            ctx.user_id, ctx.vehicle_id)
             if assistant_speech:
@@ -156,7 +174,29 @@ class PlannerEngine:
                 text, working_set, ctx,
                 granted_permissions=ctx.granted_permissions)
 
+            # R4.4 D6-1：hands-free 语音源 + LLM 判非受话 → 静默拒识（route_hints 兜底的 steps
+            # 一并作废）。显式输入（push-to-talk/文本/候选选择）无 input_source，永不拒识。必须在
+            # `if not plan.steps` 之前——addressed=false 时 steps 恰为空，否则先走空计划话术+TTS
+            # 令拒识失效（母卡实施计划 §0-4）。
+            if (ctx.prefs.get("input_source", "").startswith("voice_")
+                    and not plan.addressed and _reject_enabled()):
+                await obs_events.get_emitter("cloud").emit_span(
+                    ctx.trace_id, "rejected", attrs={"reason": "not_addressed"})
+                yield {"kind": "final", "speech": "",
+                       "ui_card": {"type": "rejected", "reason": "not_addressed"},
+                       "_rejected": True}
+                return
+
             if not plan.steps:
+                # R4.4 D6-3：路由歧义澄清（CLARIFY 开 + 本轮非 clarify_resume 深度=1 才生效）。
+                # P0 时 CLARIFY_ENABLED 默认 off → 恒 None，行为=今天；P1 翻 on 后短路出卡。
+                clarify = (plan.clarify if (_clarify_enabled()
+                           and ctx.prefs.get("clarify_resume") != "1") else None)
+                if clarify:
+                    await obs_events.get_emitter("cloud").emit_span(ctx.trace_id, "clarify")
+                    yield {"kind": "final", "speech": clarify["question"],
+                           "ui_card": {"type": "intent_choice", **clarify}}
+                    return
                 yield {"kind": "final", "speech": "抱歉，我暂时无法处理这个请求。"}
                 return
 

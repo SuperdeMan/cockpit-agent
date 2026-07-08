@@ -196,7 +196,14 @@ services:
     <<: *restart
     build: { context: .., dockerfile: orchestrator/cloud/Dockerfile }
     volumes: *certs-vol
-    environment: *python-env
+    environment:
+      <<: *python-env
+      # R4.4 拒识/澄清门控：REJECT 默认 on（作用域被 hands-free + input_source 双重限定，
+      # 显式输入永不拒）；CLARIFY 默认 off（影响全部云端路由，真栈验收后单独 commit 翻 on）；
+      # FALLBACK_MIN = 语义 top-1 分数门槛（低分诚实降级，不硬执行 capabilities[0]）。
+      REJECT_NON_ADDRESSED: ${REJECT_NON_ADDRESSED:-on}
+      CLARIFY_ENABLED: ${CLARIFY_ENABLED:-off}
+      CLARIFY_FALLBACK_MIN: ${CLARIFY_FALLBACK_MIN:-0.5}
     ports: ["50054:50054"]
     depends_on: [registry, llm-gateway, memory]
 

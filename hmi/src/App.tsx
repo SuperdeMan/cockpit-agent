@@ -25,6 +25,7 @@ import { wakeKeywordsFor, DEFAULT_SETTINGS, type Msg, type Settings } from './ty
 import { poiSelectionIndex, ordinalSelectIn, isRefreshRequest } from './nav.mjs'
 import { ResilientWebSocket, appendToken } from './ws.mjs'
 import { HandsFreeController } from './handsFreeController'
+import { bumpVoiceMetric } from './voiceMetrics.mjs'
 
 const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://localhost:8090'
 // R3.1 会话鉴权：带 token 连接（env 注入，默认空=不带 token）。edge-gateway upgrade 前校验。
@@ -82,7 +83,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   settingsRef.current = settings // 始终保留最新设置，避免 ws 回调读到陈旧闭包
   // R4.3 免唤醒回路控制器（VAD+FSM+ASR 编排）：默认关，settings.handsFree 开启才激活
   const handsFreeRef = useRef<HandsFreeController | null>(null)
-  const sendRef = useRef<(text: string) => void>(() => {})
+  const sendRef = useRef<(text: string, metaExtra?: Record<string, string>) => void>(() => {})
   const [handsFreeOrb, setHandsFreeOrb] = useState<string | null>(null)
   const [handsFreeNotice, setHandsFreeNotice] = useState<string>('')
   // hands-free 聆听中的实时识别文字（issue②）：上屏成「用户正在说」ghost 气泡；离开聆听即清空
@@ -158,7 +159,9 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           model: provider === 'dashscope' ? (s.asrModel || DEFAULT_SETTINGS.asrModel) : '',
         }
       },
-      onSend: (t) => sendRef.current(t),
+      onSend: (t, vm) => sendRef.current(t, vm
+        ? { input_source: 'voice_' + vm.source, voice_utterance_ms: String(vm.utteranceMs || 0) }
+        : undefined),
       onStopTts: () => stopTTS(),
       // 离开 LISTENING（发送/静默回收/打断）即清 partial——真实用户气泡由 send 接管，避免重影
       onOrbState: (orb) => { setHandsFreeOrb(orb); if (orb !== 'listening') setHandsFreePartial('') },
@@ -315,6 +318,19 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       return
     }
     if (data.type === 'final') {
+      // R4.4：云端拒识（疑似环境人声）→ 不渲染回复、不 TTS，把本轮 pending 气泡标灰留痕供纠错。
+      // 必须自己放 FSM 出 THINKING（本分支早 return，跳过下方 turnEnded 路径 → 否则死锁，§0-6）。
+      const rc: any = data.ui_card
+      if (rc?.type === 'rejected') {
+        if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
+        const rid = pendingIdsRef.current.shift() ?? null
+        setMessages((m) => m.map((msg) => (msg.id === rid
+          ? { ...msg, pending: false, streaming: false, text: '', rejected: true } : msg)))
+        bumpVoiceMetric('cloud_rejected')
+        handsFreeRef.current?.notifyRejected?.()
+        handsFreeRef.current?.turnEnded()
+        return
+      }
       if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
       const id = pendingIdsRef.current.shift() ?? null // 出队当前轮
       // 最新轮（或无在飞轮的续流 final）才驱动确认条/候选/TTS；旧轮只更新气泡文本，静默（A2）
@@ -373,6 +389,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           // 无可播语音（TTS 关 / 纯卡片回复）：App 侧补调，放 FSM 出 THINKING，解 hands-free 一轮即废死锁
           handsFreeRef.current?.turnEnded()
         }
+        handsFreeRef.current?.notifyAccepted?.() // R4.4：正常受话轮 → 复位连续拒识计数（P2）
       }
       return
     }
@@ -481,7 +498,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     armWatchdog(pendingId)
   }
 
-  const send = (text: string) => {
+  const send = (text: string, metaExtra?: Record<string, string>) => {
     setMessages((m) => [...m, { id: uid(), role: 'user', text }])
     setAwaitConfirm(false)
     // 行程内导航/修改整句（含『下一站』或『第N天…』）：整句交编排器路由到 trip.navigate/modify，
@@ -563,10 +580,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     // 定位已开启 + 位置相关查询（导航/就近/我在哪/天气）：先实时刷新一次定位再发，
     // 用最新坐标而非可能为空/陈旧的缓存——否则"导航去最近的粤菜馆"会误报"先开定位"。
     if (settingsRef.current.locationEnabled && isLocationDependent(text)) {
-      void refreshCurrentLocation().then((position) => dispatch(text, false, position))
+      void refreshCurrentLocation().then((position) => dispatch(text, false, position, metaExtra))
       return
     }
-    dispatch(text, false)
+    dispatch(text, false, undefined, metaExtra)
   }
   sendRef.current = send // hands-free 回路的 onSend 始终派发到最新 send 闭包
 
