@@ -11,6 +11,7 @@ const CUE_FALLBACK_VOICE = '冰糖'
 import { PcmRing } from './pcmRing.mjs'
 import { stripLeadingWakeWord, isFiller } from './utteranceHeuristics.mjs'
 import { bumpVoiceMetric } from './voiceMetrics.mjs'
+import { RejectPolicy } from './rejectPolicy.mjs'
 
 // R4.3b P4：续说（followup/barge-in/宽限续说）开 ASR 时注入的前滚缓冲——只补 VAD speech-start 判定
 // 延迟（去抖 64ms + 几帧）的首字；刻意短，不带回声/上轮 TTS 尾。唤醒进入注入 0（不带唤醒词，见 openAsr）。
@@ -59,6 +60,9 @@ export class HandsFreeController {
   // R4.3b P2（U4 根治）：前滚缓冲——VAD 帧持续入环，开 ASR 时取最近 PRE_ROLL_MS 注入 PCM 直传流，
   // 补回 KWS 检测窗那段 MediaRecorder 采不到的音频。同一帧也喂当前 asr（PCM 模式）。
   private pcmRing = new PcmRing(1500)
+  // R4.4 P2：连续云端拒识 → 聆听收紧策略（纯逻辑，见 rejectPolicy.mjs）。基准续问窗随
+  // setFollowupWindow（用户设置）同步；tighten/wake_only 直改 vl.cfg 不动基准，restore 还原到基准。
+  private rejectPolicy: RejectPolicy
 
   constructor(deps: HandsFreeDeps) {
     this.deps = deps
@@ -82,6 +86,7 @@ export class HandsFreeController {
       onCancelTurn: () => this.deps.onCancelTurn?.(), // U2：THINKING 打断 → 透传 App 发网关取消
       onMetric: (name: string) => bumpVoiceMetric(name), // P3 obs：语音事件计数（localStorage，供真麦验收）
     })
+    this.rejectPolicy = new RejectPolicy({ baseFollowupMs: this.vl.cfg.followupWindowMs })
   }
 
   get enabled(): boolean {
@@ -219,12 +224,33 @@ export class HandsFreeController {
   // 命名表意（= ttsEnd 语义），App 侧读起来即「这一轮结束了」，不必知道内部靠 TTS 生命周期驱动。
   turnEnded(): void { this.ttsSpeaking = false; if (this.on) this.vl.ttsEnd() }
   setSilenceTail(ms: number): void { this.vad.setSilenceTail(ms); this.vl.cfg.silenceTailMs = ms }
-  setFollowupWindow(ms: number): void { this.vl.cfg.followupWindowMs = ms }
+  // 用户设置（App effect）改续问窗 → 同步 FSM + 收紧策略基准（restore/tighten 以最新设置为准）。
+  setFollowupWindow(ms: number): void { this.vl.cfg.followupWindowMs = ms; this.rejectPolicy.setBaseFollowupMs(ms) }
 
-  // R4.4：云端拒识/受话反馈钩子。P0 为空占位（App 已接线，避免调用报错）；P2 填连续拒识
-  // 自适应收紧（续问窗减半 → 仅唤醒词 → 成功复位，见 rejectPolicy.mjs）。
-  notifyRejected(): void { /* P2 填充 */ }
-  notifyAccepted(): void { /* P2 填充 */ }
+  // R4.4 P2：连续云端拒识自适应收紧（≥2 减半续问窗 → ≥3 仅唤醒词），一次成功交互即复位。
+  // 直改 vl.cfg（不走 setFollowupWindow，避免污染策略基准）；仅唤醒词模式额外关 VAD barge-in。
+  notifyRejected(): void {
+    const a = this.rejectPolicy.onRejected()
+    if (!a) return
+    if (a.type === 'tighten') {
+      this.vl.cfg.followupWindowMs = a.followupMs
+      this.deps.onNotice?.('周围有点吵，我收紧了聆听窗口')
+    } else if (a.type === 'wake_only') {
+      this.vl.cfg.followupWindowMs = 0
+      this.vl.setVadBargeInDisabled(true)
+      const ww = (this.deps.getWakeKeywords?.() ?? DEFAULT_KEYWORDS).split('@')[1] || '小舟小舟'
+      this.deps.onNotice?.(`环境较嘈杂，说「${ww}」再叫我`)
+      bumpVoiceMetric('reject_downgrade')
+    }
+  }
+
+  notifyAccepted(): void {
+    const a = this.rejectPolicy.onAccepted()
+    if (!a) return                         // 无连续拒识 → 无需复位
+    this.vl.cfg.followupWindowMs = a.followupMs
+    this.vl.setVadBargeInDisabled(false)
+    bumpVoiceMetric('reject_recovered')
+  }
 
   // 剥离前滚缓冲带入的唤醒词残留（「小舟小舟…」）——只用完整唤醒词 + 助手名，不用单字（避免「小明」被剥成「明」）。
   private wakeStripWords(): string[] {

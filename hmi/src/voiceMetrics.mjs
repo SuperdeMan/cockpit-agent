@@ -15,6 +15,8 @@ const METRIC_OF = {
   barge_in: 'voice_barge_in_count',
   turn_cancelled: 'voice_turn_cancelled_count',
   cloud_rejected: 'voice_cloud_rejected',            // R4.4 P0：云端语义拒识计数
+  reject_downgrade: 'voice_reject_downgrade',        // R4.4 P2：连续拒识降级仅唤醒词
+  reject_recovered: 'voice_reject_recovered',        // R4.4 P2：一次成功交互复位
 }
 
 /** 累计一个语音事件。sink 默认 localStorage（浏览器）；node 测注入内存 storage。 */

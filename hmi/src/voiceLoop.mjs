@@ -94,7 +94,8 @@ export class VoiceLoop {
     this._echoSuspected = false
     this._cameFromBargeIn = false
     this._selfTriggerCount = 0
-    this._bargeInDisabled = false
+    this._bargeInDisabled = false      // 自触发降级：会话级不可恢复（回声连续误触）
+    this._vadBargeInDisabled = false   // R4.4 P2 嘈杂降级：仅唤醒词模式关 VAD 打断，可恢复（与自触发分开）
     // R4.3b P1 端点宽限合并（U5b）：待发文本 + 续说前缀 + 本轮 speech 累计时长（短语音噪声判据）。
     this._pendingText = ''    // 疑似没说完、正在宽限等续说的定稿文本
     this._pendingPrefix = ''  // 续说重开 ASR 前的已定稿前缀（下次定稿拼在其后）
@@ -209,6 +210,10 @@ export class VoiceLoop {
   setNeedConfirm(v) {
     this._needConfirm = !!v
   }
+  // R4.4 P2：嘈杂降级「仅唤醒词」时关 VAD barge-in（可恢复，与自触发 _bargeInDisabled 分开）。
+  setVadBargeInDisabled(v) {
+    this._vadBargeInDisabled = !!v
+  }
   setTtsText(text) {
     this._ttsText = (text || '').toString()
   }
@@ -265,7 +270,9 @@ export class VoiceLoop {
         this._enterListening({ speechAlreadyStarted: true, source: 'followup' }) // 免唤醒追问
         break
       case VoiceState.SPEAKING:
-        if (this._bargeInDisabled) return
+        // 自触发降级（不可恢复）或 R4.4 P2 嘈杂降级（可恢复）时，VAD 不打断——但 wake()（KWS
+        // 唤醒词）仍能打断（显式意图，走上面 wake 分支不受此门控），故「仅唤醒词打断」天然成立。
+        if (this._bargeInDisabled || this._vadBargeInDisabled) return
         this._speechActive = true
         this._echoSuspected = false
         this._setTimer('bargeIn', this.cfg.bargeInMinMs, () => this._bargeInFire())
