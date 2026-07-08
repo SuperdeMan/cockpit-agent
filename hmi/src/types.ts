@@ -16,6 +16,7 @@ export type Msg = {
   pending?: boolean // 助手"思考中"占位（开放域慢响应时立刻给反馈）
   streaming?: boolean // 正在流式接收 speech_delta
   error?: boolean
+  rejected?: boolean // R4.4：云端判非受话（疑似环境人声）→ 静默忽略，气泡标灰留痕供纠错
   uiCard?: UiCard
   // 复杂任务过程区（脱敏「步骤+思考摘要」）：进行中默认简短摘要，完成后默认折叠可展开。
   process?: ProcessStep[]

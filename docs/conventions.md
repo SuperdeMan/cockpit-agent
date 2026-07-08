@@ -248,6 +248,21 @@
 | `GRPC_TLS_SERVER_NAME` | 客户端校验的证书目标名（`ssl_target_name_override`/`ServerName`），须与证书 CN/SAN 一致 | 否（默认 `cockpit-mesh`） |
 | `GRPC_TLS_CA` / `GRPC_TLS_CERT` / `GRPC_TLS_KEY` | 容器内 CA / 证书 / 私钥路径（compose 已挂 `../certs:/certs:ro` 并设默认）| 否（默认 `/certs/{ca,server}.{crt,crt,key}`） |
 
+### 输入拒识 / 路由澄清（R4.4，置信度三段式）
+
+> 全链路 fail-open：LLM 不输出新字段 / 解析失败 / env 关时，行为与今天逐字一致。拒识只作用于
+> 带 `meta.input_source=voice_*` 的 hands-free 源，显式输入（push-to-talk/文本/候选选择）永不被拒。
+> 见 `docs/design/2026-07-07-r4.4-rejection-and-clarification.md`。
+
+| 变量 | 含义 | 必填 |
+|---|---|---|
+| `REJECT_NON_ADDRESSED` | 拒识总开关：`on`/默认=hands-free 语音源 + LLM 判非受话（`addressed=false`）时静默丢弃、不落库；`off`=一键回今天（planner 照常输出 addressed，engine 不消费）| 否（默认 `on`） |
+| `CLARIFY_ENABLED` | 路由歧义澄清总开关：`off`/默认=解析层丢弃 clarify（行为=今天）；`on`=真歧义句出 `intent_choice` 卡问一句再执行（影响全部云端路由，真栈验收后单独 commit 翻 on）| 否（默认 `off`） |
+| `CLARIFY_FALLBACK_MIN` | LLM 挂/两次解析失败降级到语义 top-1 时的分数门槛：低于此值诚实降级（不硬执行 `capabilities[0]`），与 `SEMANTIC_PROMOTE_SIM` 对齐 | 否（默认 `0.5`） |
+
+> 卡片类型（`ui_card.type`，走 Struct 免改 proto）：`rejected`（拒识标记，`speech` 空、HMI 标灰留痕不 TTS）、
+> `intent_choice`（澄清卡，`{question, options:[{label, send_text}]}`，HMI 沿 `place_list` 先例接语音「第N个」+ 卡片按钮）。
+
 ---
 
 ## 7. 命名约定（汇总，详见 CLAUDE.md §4）

@@ -1,0 +1,689 @@
+{
+  "meta": {
+    "subject": "rejection",
+    "generated_at": "2026-07-08T02:42:32.276099+00:00",
+    "commit": "7cdfcbc",
+    "provider": "mimo:mimo-v2.5-pro",
+    "json_parse_failures": 0,
+    "json_parse_fail_rate": 0.0
+  },
+  "corpus_sources": [
+    {
+      "path": "test/eval_corpus/rejection_cases.yaml",
+      "count": 47
+    }
+  ],
+  "buckets": {
+    "accept_recall": {
+      "total": 29,
+      "passed": 28,
+      "failures": [
+        {
+          "id": "reject::换成蓝色的",
+          "bucket": "accept_recall",
+          "text": "换成蓝色的",
+          "expected": "addressed=true",
+          "actual": "addressed=False",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "contextual"
+          ],
+          "source": "test/eval_corpus/rejection_cases.yaml"
+        }
+      ],
+      "pass_rate": 0.9655
+    },
+    "reject_guardrail": {
+      "total": 18,
+      "passed": 16,
+      "failures": [
+        {
+          "id": "reject::欸对了昨天那事儿你处理了吗",
+          "bucket": "reject_guardrail",
+          "text": "欸对了昨天那事儿你处理了吗",
+          "expected": "addressed=false",
+          "actual": "addressed=True",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "passenger"
+          ],
+          "source": "test/eval_corpus/rejection_cases.yaml"
+        },
+        {
+          "id": "reject::喂，听得到吗，我在开车呢",
+          "bucket": "reject_guardrail",
+          "text": "喂，听得到吗，我在开车呢",
+          "expected": "addressed=false",
+          "actual": "addressed=True",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "phone"
+          ],
+          "source": "test/eval_corpus/rejection_cases.yaml"
+        }
+      ],
+      "pass_rate": 0.8889
+    }
+  },
+  "overall": {
+    "total": 47,
+    "passed": 44,
+    "pass_rate": 0.9362
+  },
+  "cases": {
+    "reject::帮我查下明天杭州的天气": {
+      "id": "reject::帮我查下明天杭州的天气",
+      "bucket": "accept_recall",
+      "text": "帮我查下明天杭州的天气",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_query"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::打开空调": {
+      "id": "reject::打开空调",
+      "bucket": "accept_recall",
+      "text": "打开空调",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_control"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::把温度调高两度": {
+      "id": "reject::把温度调高两度",
+      "bucket": "accept_recall",
+      "text": "把温度调高两度",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_control"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::帮我把车窗关一下": {
+      "id": "reject::帮我把车窗关一下",
+      "bucket": "accept_recall",
+      "text": "帮我把车窗关一下",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_control"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::播放周杰伦的歌": {
+      "id": "reject::播放周杰伦的歌",
+      "bucket": "accept_recall",
+      "text": "播放周杰伦的歌",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_media"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::导航去东方之门": {
+      "id": "reject::导航去东方之门",
+      "bucket": "accept_recall",
+      "text": "导航去东方之门",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_nav"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::附近有什么好吃的川菜馆": {
+      "id": "reject::附近有什么好吃的川菜馆",
+      "bucket": "accept_recall",
+      "text": "附近有什么好吃的川菜馆",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_nearby"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::附近哪里能停车": {
+      "id": "reject::附近哪里能停车",
+      "bucket": "accept_recall",
+      "text": "附近哪里能停车",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_nearby"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::帮我搜一下附近的加油站": {
+      "id": "reject::帮我搜一下附近的加油站",
+      "bucket": "accept_recall",
+      "text": "帮我搜一下附近的加油站",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_nearby"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::我想找个充电桩": {
+      "id": "reject::我想找个充电桩",
+      "bucket": "accept_recall",
+      "text": "我想找个充电桩",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_nearby"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::今天有什么新闻": {
+      "id": "reject::今天有什么新闻",
+      "bucket": "accept_recall",
+      "text": "今天有什么新闻",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_query"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::现在几点了": {
+      "id": "reject::现在几点了",
+      "bucket": "accept_recall",
+      "text": "现在几点了",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_query"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::明天要下雨吗": {
+      "id": "reject::明天要下雨吗",
+      "bucket": "accept_recall",
+      "text": "明天要下雨吗",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_query"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::从这里到机场大概要多久": {
+      "id": "reject::从这里到机场大概要多久",
+      "bucket": "accept_recall",
+      "text": "从这里到机场大概要多久",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_query"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::查一下我的电量还能跑多远": {
+      "id": "reject::查一下我的电量还能跑多远",
+      "bucket": "accept_recall",
+      "text": "查一下我的电量还能跑多远",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_query"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::巴西那场比赛结果怎么样": {
+      "id": "reject::巴西那场比赛结果怎么样",
+      "bucket": "accept_recall",
+      "text": "巴西那场比赛结果怎么样",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_query"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::深入调研一下固态电池技术": {
+      "id": "reject::深入调研一下固态电池技术",
+      "bucket": "accept_recall",
+      "text": "深入调研一下固态电池技术",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_research"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::珠海玩两天推荐几个景点": {
+      "id": "reject::珠海玩两天推荐几个景点",
+      "bucket": "accept_recall",
+      "text": "珠海玩两天推荐几个景点",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_trip"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::讲个笑话吧": {
+      "id": "reject::讲个笑话吧",
+      "bucket": "accept_recall",
+      "text": "讲个笑话吧",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "normal_chitchat"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::好烦啊今天": {
+      "id": "reject::好烦啊今天",
+      "bucket": "accept_recall",
+      "text": "好烦啊今天",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "emotion"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::唉，又堵车了真烦人": {
+      "id": "reject::唉，又堵车了真烦人",
+      "bucket": "accept_recall",
+      "text": "唉，又堵车了真烦人",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "emotion"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::好无聊啊": {
+      "id": "reject::好无聊啊",
+      "bucket": "accept_recall",
+      "text": "好无聊啊",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "emotion"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::我有点冷": {
+      "id": "reject::我有点冷",
+      "bucket": "accept_recall",
+      "text": "我有点冷",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "emotion_implicit"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::那个导航去西溪湿地吧": {
+      "id": "reject::那个导航去西溪湿地吧",
+      "bucket": "accept_recall",
+      "text": "那个导航去西溪湿地吧",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "noisy_prefix"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::嗯…那个，帮我看看路况": {
+      "id": "reject::嗯…那个，帮我看看路况",
+      "bucket": "accept_recall",
+      "text": "嗯…那个，帮我看看路况",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "noisy_prefix"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::呃，播放一首轻音乐": {
+      "id": "reject::呃，播放一首轻音乐",
+      "bucket": "accept_recall",
+      "text": "呃，播放一首轻音乐",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "noisy_prefix"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::再大点声": {
+      "id": "reject::再大点声",
+      "bucket": "accept_recall",
+      "text": "再大点声",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "contextual"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::还是刚才那家吧": {
+      "id": "reject::还是刚才那家吧",
+      "bucket": "accept_recall",
+      "text": "还是刚才那家吧",
+      "expected": "addressed=true",
+      "actual": "addressed=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "contextual"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::换成蓝色的": {
+      "id": "reject::换成蓝色的",
+      "bucket": "accept_recall",
+      "text": "换成蓝色的",
+      "expected": "addressed=true",
+      "actual": "addressed=False",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "contextual"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::妈你到哪了，我们在停车场等你": {
+      "id": "reject::妈你到哪了，我们在停车场等你",
+      "bucket": "reject_guardrail",
+      "text": "妈你到哪了，我们在停车场等你",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "passenger"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::他昨天跟我说那个项目黄了": {
+      "id": "reject::他昨天跟我说那个项目黄了",
+      "bucket": "reject_guardrail",
+      "text": "他昨天跟我说那个项目黄了",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "passenger"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::哎你说咱们晚上吃啥呀": {
+      "id": "reject::哎你说咱们晚上吃啥呀",
+      "bucket": "reject_guardrail",
+      "text": "哎你说咱们晚上吃啥呀",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "passenger"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::我跟你讲他那个人特别抠门": {
+      "id": "reject::我跟你讲他那个人特别抠门",
+      "bucket": "reject_guardrail",
+      "text": "我跟你讲他那个人特别抠门",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "passenger"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::欸对了昨天那事儿你处理了吗": {
+      "id": "reject::欸对了昨天那事儿你处理了吗",
+      "bucket": "reject_guardrail",
+      "text": "欸对了昨天那事儿你处理了吗",
+      "expected": "addressed=false",
+      "actual": "addressed=True",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "passenger"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::那个电影我看了，特别无聊": {
+      "id": "reject::那个电影我看了，特别无聊",
+      "bucket": "reject_guardrail",
+      "text": "那个电影我看了，特别无聊",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "passenger"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::你作业写完了没有": {
+      "id": "reject::你作业写完了没有",
+      "bucket": "reject_guardrail",
+      "text": "你作业写完了没有",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "passenger"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::小明快点，要迟到了": {
+      "id": "reject::小明快点，要迟到了",
+      "bucket": "reject_guardrail",
+      "text": "小明快点，要迟到了",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "passenger_name"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::王总我这边资料马上发您": {
+      "id": "reject::王总我这边资料马上发您",
+      "bucket": "reject_guardrail",
+      "text": "王总我这边资料马上发您",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "phone_name"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::喂，听得到吗，我在开车呢": {
+      "id": "reject::喂，听得到吗，我在开车呢",
+      "bucket": "reject_guardrail",
+      "text": "喂，听得到吗，我在开车呢",
+      "expected": "addressed=false",
+      "actual": "addressed=True",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "phone"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::本台记者深入调研发现该地区房价持续走低": {
+      "id": "reject::本台记者深入调研发现该地区房价持续走低",
+      "bucket": "reject_guardrail",
+      "text": "本台记者深入调研发现该地区房价持续走低",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "broadcast"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::深入调研之后发现问题主要出在供应链": {
+      "id": "reject::深入调研之后发现问题主要出在供应链",
+      "bucket": "reject_guardrail",
+      "text": "深入调研之后发现问题主要出在供应链",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "broadcast"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::据央视新闻报道，今日多地迎来强降雨天气": {
+      "id": "reject::据央视新闻报道，今日多地迎来强降雨天气",
+      "bucket": "reject_guardrail",
+      "text": "据央视新闻报道，今日多地迎来强降雨天气",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "broadcast"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::记者在现场为您带来最新报道": {
+      "id": "reject::记者在现场为您带来最新报道",
+      "bucket": "reject_guardrail",
+      "text": "记者在现场为您带来最新报道",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "broadcast"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::各位听众朋友们大家好，欢迎收听今天的节目": {
+      "id": "reject::各位听众朋友们大家好，欢迎收听今天的节目",
+      "bucket": "reject_guardrail",
+      "text": "各位听众朋友们大家好，欢迎收听今天的节目",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "broadcast"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::本次列车终点站是北京南站，请提前做好下车准备": {
+      "id": "reject::本次列车终点站是北京南站，请提前做好下车准备",
+      "bucket": "reject_guardrail",
+      "text": "本次列车终点站是北京南站，请提前做好下车准备",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "announcement"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::下一站人民广场，请从后门下车": {
+      "id": "reject::下一站人民广场，请从后门下车",
+      "bucket": "reject_guardrail",
+      "text": "下一站人民广场，请从后门下车",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "announcement"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    },
+    "reject::接下来为您播放一首经典老歌": {
+      "id": "reject::接下来为您播放一首经典老歌",
+      "bucket": "reject_guardrail",
+      "text": "接下来为您播放一首经典老歌",
+      "expected": "addressed=false",
+      "actual": "addressed=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "echo_style"
+      ],
+      "source": "test/eval_corpus/rejection_cases.yaml"
+    }
+  }
+}

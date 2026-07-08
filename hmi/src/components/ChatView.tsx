@@ -141,6 +141,9 @@ function MessageItem({
   // 错误 / 超时
   if (msg.error) return <ErrorBubble msg={msg} retryText={retryText} onAction={onAction} />
 
+  // R4.4：云端拒识（疑似环境人声）→ 弱化 muted 小气泡，静默忽略但留痕供纠错
+  if (msg.rejected) return <RejectedBubble />
+
   // 危险车控二次确认（仅当前等待确认且为最后一条）
   if (msg.needConfirm && awaitConfirm && isLast) return <ConfirmBubble msg={msg} onConfirm={onConfirm} onAction={onAction} />
 
@@ -158,6 +161,22 @@ function UserBubble({ text }: { text: string }) {
         boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
       }}>
         <div style={{ fontSize: 14.5, lineHeight: 1.65, color: FG1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</div>
+      </div>
+    </div>
+  )
+}
+
+// ─── R4.4 · 拒识提示（左对齐弱化 muted 小气泡）：云端判本轮疑似环境人声，静默忽略但留痕供纠错 ───
+function RejectedBubble() {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 14 }}>
+      <div style={{
+        maxWidth: '78%', padding: '8px 14px', borderRadius: '14px 14px 14px 4px',
+        background: 'var(--au-fill)', border: '1px dashed var(--au-fill-2)',
+      }}>
+        <div style={{ fontSize: 12.5, lineHeight: 1.5, color: FG3 }}>
+          已忽略（疑似环境人声）· 如果是对我说的，请再说一遍
+        </div>
       </div>
     </div>
   )

@@ -24,7 +24,8 @@ const EXIT_CUE_TEXTS = ['好的', '好嘞', '我先退下了']
 export type HandsFreeDeps = {
   audioApi: string
   getAsrConfig: () => { language: string; provider: string; model: string }
-  onSend: (text: string) => void
+  // R4.4：第二参带 hands-free 来源 → App 拼 meta.input_source 上云做拒识判定（旧调用方可略）。
+  onSend: (text: string, voice?: { source: string; utteranceMs: number }) => void
   onStopTts: () => void
   onOrbState: (orb: string | null) => void // null = FSM 回 IDLE，交还 mic 态
   onPartialText?: (text: string) => void    // 聆听中的实时识别文字（issue②：hands-free 上屏）
@@ -73,7 +74,7 @@ export class HandsFreeController {
       onOpenAsr: (o: { resume?: boolean }) => this.openAsr(o),
       onCloseAsr: () => this.closeAsr(),
       onEndpoint: () => { try { this.asr?.stop() } catch { /* ignore */ } },
-      onSend: (t: string) => this.deps.onSend(t),
+      onSend: (t: string, vm?: { source: string; utteranceMs: number }) => this.deps.onSend(t, vm),
       onStopTts: () => this.deps.onStopTts(),
       onWakeChime: () => this.chime(),
       onDisableBargeIn: (r: string) => this.deps.onNotice?.('已关闭语音打断（' + r + '）'),
@@ -219,6 +220,11 @@ export class HandsFreeController {
   turnEnded(): void { this.ttsSpeaking = false; if (this.on) this.vl.ttsEnd() }
   setSilenceTail(ms: number): void { this.vad.setSilenceTail(ms); this.vl.cfg.silenceTailMs = ms }
   setFollowupWindow(ms: number): void { this.vl.cfg.followupWindowMs = ms }
+
+  // R4.4：云端拒识/受话反馈钩子。P0 为空占位（App 已接线，避免调用报错）；P2 填连续拒识
+  // 自适应收紧（续问窗减半 → 仅唤醒词 → 成功复位，见 rejectPolicy.mjs）。
+  notifyRejected(): void { /* P2 填充 */ }
+  notifyAccepted(): void { /* P2 填充 */ }
 
   // 剥离前滚缓冲带入的唤醒词残留（「小舟小舟…」）——只用完整唤醒词 + 助手名，不用单字（避免「小明」被剥成「明」）。
   private wakeStripWords(): string[] {
