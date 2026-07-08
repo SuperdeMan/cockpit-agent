@@ -1,0 +1,400 @@
+{
+  "meta": {
+    "subject": "clarify",
+    "generated_at": "2026-07-08T03:03:48.189657+00:00",
+    "commit": "f9d49f6",
+    "provider": "qwen:qwen3.7-max"
+  },
+  "corpus_sources": [
+    {
+      "path": "test/eval_corpus/clarify_cases.yaml",
+      "count": 23
+    }
+  ],
+  "buckets": {
+    "clarify_recall": {
+      "total": 6,
+      "passed": 1,
+      "failures": [
+        {
+          "id": "clarify::帮我看看华润大厦",
+          "bucket": "clarify_recall",
+          "text": "帮我看看华润大厦",
+          "expected": "出澄清卡",
+          "actual": "clarify_shown=False",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "landmark_detail_vs_nav"
+          ],
+          "source": "test/eval_corpus/clarify_cases.yaml"
+        },
+        {
+          "id": "clarify::找个充电的地方",
+          "bucket": "clarify_recall",
+          "text": "找个充电的地方",
+          "expected": "出澄清卡",
+          "actual": "clarify_shown=False",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "nearby_vs_charging"
+          ],
+          "source": "test/eval_corpus/clarify_cases.yaml"
+        },
+        {
+          "id": "clarify::附近有什么好玩的帮我安排一下",
+          "bucket": "clarify_recall",
+          "text": "附近有什么好玩的帮我安排一下",
+          "expected": "出澄清卡",
+          "actual": "clarify_shown=False",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "nearby_vs_trip"
+          ],
+          "source": "test/eval_corpus/clarify_cases.yaml"
+        },
+        {
+          "id": "clarify::看看东方明珠",
+          "bucket": "clarify_recall",
+          "text": "看看东方明珠",
+          "expected": "出澄清卡",
+          "actual": "clarify_shown=False",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "landmark_detail_vs_nav"
+          ],
+          "source": "test/eval_corpus/clarify_cases.yaml"
+        },
+        {
+          "id": "clarify::我想去趟三里屯",
+          "bucket": "clarify_recall",
+          "text": "我想去趟三里屯",
+          "expected": "出澄清卡",
+          "actual": "clarify_shown=False",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "nav_vs_nearby"
+          ],
+          "source": "test/eval_corpus/clarify_cases.yaml"
+        }
+      ],
+      "pass_rate": 0.1667
+    },
+    "clarify_guardrail": {
+      "total": 17,
+      "passed": 17,
+      "failures": [],
+      "pass_rate": 1.0
+    }
+  },
+  "overall": {
+    "total": 23,
+    "passed": 18,
+    "pass_rate": 0.7826
+  },
+  "cases": {
+    "clarify::帮我看看华润大厦": {
+      "id": "clarify::帮我看看华润大厦",
+      "bucket": "clarify_recall",
+      "text": "帮我看看华润大厦",
+      "expected": "出澄清卡",
+      "actual": "clarify_shown=False",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "landmark_detail_vs_nav"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::找个充电的地方": {
+      "id": "clarify::找个充电的地方",
+      "bucket": "clarify_recall",
+      "text": "找个充电的地方",
+      "expected": "出澄清卡",
+      "actual": "clarify_shown=False",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "nearby_vs_charging"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::附近有什么好玩的帮我安排一下": {
+      "id": "clarify::附近有什么好玩的帮我安排一下",
+      "bucket": "clarify_recall",
+      "text": "附近有什么好玩的帮我安排一下",
+      "expected": "出澄清卡",
+      "actual": "clarify_shown=False",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "nearby_vs_trip"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::看看东方明珠": {
+      "id": "clarify::看看东方明珠",
+      "bucket": "clarify_recall",
+      "text": "看看东方明珠",
+      "expected": "出澄清卡",
+      "actual": "clarify_shown=False",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "landmark_detail_vs_nav"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::处理一下停车的事": {
+      "id": "clarify::处理一下停车的事",
+      "bucket": "clarify_recall",
+      "text": "处理一下停车的事",
+      "expected": "出澄清卡",
+      "actual": "clarify_shown=True",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "parking_pay_vs_find"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::我想去趟三里屯": {
+      "id": "clarify::我想去趟三里屯",
+      "bucket": "clarify_recall",
+      "text": "我想去趟三里屯",
+      "expected": "出澄清卡",
+      "actual": "clarify_shown=False",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "nav_vs_nearby"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::巴西那场帮我看看详情": {
+      "id": "clarify::巴西那场帮我看看详情",
+      "bucket": "clarify_guardrail",
+      "text": "巴西那场帮我看看详情",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "fixed_bug_sports"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::珠海玩两天推荐景点": {
+      "id": "clarify::珠海玩两天推荐景点",
+      "bucket": "clarify_guardrail",
+      "text": "珠海玩两天推荐景点",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "fixed_bug_trip"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::导航去那个像笋一样的楼": {
+      "id": "clarify::导航去那个像笋一样的楼",
+      "bucket": "clarify_guardrail",
+      "text": "导航去那个像笋一样的楼",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "fixed_bug_landmark"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::深入调研一下固态电池技术": {
+      "id": "clarify::深入调研一下固态电池技术",
+      "bucket": "clarify_guardrail",
+      "text": "深入调研一下固态电池技术",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research_route_hint"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::今天杭州天气怎么样": {
+      "id": "clarify::今天杭州天气怎么样",
+      "bucket": "clarify_guardrail",
+      "text": "今天杭州天气怎么样",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "weather"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::打开空调26度": {
+      "id": "clarify::打开空调26度",
+      "bucket": "clarify_guardrail",
+      "text": "打开空调26度",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "control"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::把温度调高两度": {
+      "id": "clarify::把温度调高两度",
+      "bucket": "clarify_guardrail",
+      "text": "把温度调高两度",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "control"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::播放周杰伦的歌": {
+      "id": "clarify::播放周杰伦的歌",
+      "bucket": "clarify_guardrail",
+      "text": "播放周杰伦的歌",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "media"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::讲个笑话": {
+      "id": "clarify::讲个笑话",
+      "bucket": "clarify_guardrail",
+      "text": "讲个笑话",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "chitchat"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::导航去东方之门": {
+      "id": "clarify::导航去东方之门",
+      "bucket": "clarify_guardrail",
+      "text": "导航去东方之门",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nav"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::附近的充电站": {
+      "id": "clarify::附近的充电站",
+      "bucket": "clarify_guardrail",
+      "text": "附近的充电站",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::今天有什么新闻": {
+      "id": "clarify::今天有什么新闻",
+      "bucket": "clarify_guardrail",
+      "text": "今天有什么新闻",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "news"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::从这里到机场大概要多久": {
+      "id": "clarify::从这里到机场大概要多久",
+      "bucket": "clarify_guardrail",
+      "text": "从这里到机场大概要多久",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "query"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::帮我查下腾讯的股价": {
+      "id": "clarify::帮我查下腾讯的股价",
+      "bucket": "clarify_guardrail",
+      "text": "帮我查下腾讯的股价",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "stock"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::现在几点了": {
+      "id": "clarify::现在几点了",
+      "bucket": "clarify_guardrail",
+      "text": "现在几点了",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "query"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::帮我找家川菜馆": {
+      "id": "clarify::帮我找家川菜馆",
+      "bucket": "clarify_guardrail",
+      "text": "帮我找家川菜馆",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    },
+    "clarify::附近哪里能停车": {
+      "id": "clarify::附近哪里能停车",
+      "bucket": "clarify_guardrail",
+      "text": "附近哪里能停车",
+      "expected": "不出澄清（直接执行）",
+      "actual": "clarify_shown=False",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby"
+      ],
+      "source": "test/eval_corpus/clarify_cases.yaml"
+    }
+  }
+}

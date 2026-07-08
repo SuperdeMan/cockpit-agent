@@ -188,6 +188,36 @@ def test_build_clarify_overridden_by_route_hint():
     assert [s.intent for s in plan.steps] == ["research.run"]   # route_hint 兜底填 steps
 
 
+# ── _fallback 语义 top-1 分数门槛（P1 T5）────────────────────────────────────
+
+def _resolved(agent_id, intent, score):
+    """构造带 .score 的 registry ResolvedAgent（fake）。"""
+    m = MagicMock()
+    m.agent_id = agent_id
+    cap = MagicMock(); cap.intent = intent
+    m.capabilities = [cap]
+    m.kind = "agent"; m.deployment = "cloud"; m.requires_permissions = []; m.trust_level = "first_party"
+    a = MagicMock(); a.manifest = m; a.endpoint = "stub:50099"; a.score = score
+    return a
+
+
+def test_fallback_low_score_honest_degrades():
+    """LLM 两次失败 + 语义 top-1 分数 < 门槛 → 空计划（不硬执行 capabilities[0]）。"""
+    agents = [MockAgent("nearby", ["nearby.search"])]        # 无 chitchat 兜底 → 走语义 top-1
+    b, calls = _builder(["nope", "still nope"], resolve_returns=[_resolved("info", "info.weather", 0.4)])
+    plan = _build(b, "含混不清的一句", agents)
+    assert plan.steps == []          # 低分诚实降级
+    assert calls["n"] == 2           # LLM 两次都失败才走 fallback
+
+
+def test_fallback_high_score_executes_top1():
+    """语义 top-1 分数 ≥ 门槛 → 现状：执行该 Agent capabilities[0]。"""
+    agents = [MockAgent("nearby", ["nearby.search"])]
+    b, _ = _builder(["nope", "still nope"], resolve_returns=[_resolved("info", "info.weather", 0.7)])
+    plan = _build(b, "含混不清的一句", agents)
+    assert [s.intent for s in plan.steps] == ["info.weather"]
+
+
 # ── _planner_system() env 拼接 ───────────────────────────────────────────────
 
 def test_planner_system_addressed_always_present(monkeypatch):

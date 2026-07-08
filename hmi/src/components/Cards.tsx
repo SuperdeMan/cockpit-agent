@@ -6,7 +6,7 @@ import type {
   NewsCard, SearchCard, SearchAnswerCard, NewsDigestCard,
   SearchResultCard, NewsBriefCard, ResearchReportCard, SportsScoresCard, SportsScorersCard,
   RoutePlanCard, ChargingRouteCard, TripItineraryCard, PoiListCard, PoiDetailCard,
-  PlaceListCard, PlaceDetailCard,
+  PlaceListCard, PlaceDetailCard, IntentChoiceCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
@@ -122,6 +122,7 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
     case 'poi_detail': return <PoiDetailCardView card={card} />
     case 'place_list': return <PlaceListCardView card={card} onAction={onAction} />
     case 'place_detail': return <PlaceDetailCardView card={card} onAction={onAction} />
+    case 'intent_choice': return <IntentChoiceCardView card={card} onAction={onAction} />
     default: return null
   }
 }
@@ -1133,6 +1134,40 @@ function PoiDetailCardView({ card }: { card: PoiDetailCard }) {
 }
 
 // ─── 周边发现列表卡（nearby.search）───
+// ─── R4.4 路由歧义澄清卡：一句提问 + 2~3 消歧选项（点/说「第N个」→ 回发 send_text 作新指令）───
+function IntentChoiceCardView({ card, onAction }: { card: IntentChoiceCard; onAction?: (t: string) => void }) {
+  const options = (card.options || []).filter((o) => o?.send_text)
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '15px 16px 12px' }}>
+        <AIBadge label="AI · 需要确认" />
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <Icon name="info" size={17} color="var(--au-primary)" style={{ marginTop: 2, flexShrink: 0 }} />
+          <span style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}>{card.question}</span>
+        </div>
+      </div>
+      <CardHR />
+      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {options.map((o, i) => (
+          <button
+            key={i}
+            onClick={onAction ? () => onAction(o.send_text) : undefined}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+              padding: '11px 14px', borderRadius: 12, cursor: onAction ? 'pointer' : 'default',
+              background: 'var(--au-fill)', border: '1px solid var(--au-line-2)', color: 'var(--au-text)',
+            }}
+          >
+            <span style={{ width: 22, height: 22, borderRadius: 7, flexShrink: 0, display: 'grid', placeItems: 'center', background: 'var(--au-line)', fontFamily: 'var(--au-font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--au-primary)' }}>{i + 1}</span>
+            <span style={{ fontSize: 13.5, fontWeight: 600 }}>{o.label}</span>
+          </button>
+        ))}
+      </div>
+      <div style={{ padding: '0 16px 12px', fontSize: 11, color: 'var(--au-text-3)' }}>说「第一个/第二个」或点选即可</div>
+    </div>
+  )
+}
+
 function PlaceListCardView({ card, onAction }: { card: PlaceListCard; onAction?: (t: string) => void }) {
   const title = `附近${card.keyword || card.category || '地点'}`
   return (

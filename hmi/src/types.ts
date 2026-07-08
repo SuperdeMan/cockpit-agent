@@ -58,6 +58,14 @@ export type UiCard =
   | PoiDetailCard
   | PlaceListCard
   | PlaceDetailCard
+  | IntentChoiceCard
+
+// R4.4 路由歧义澄清卡：一句提问 + 2~3 个消歧选项（点/说「第N个」→ 回发 send_text 作新指令）
+export type IntentChoiceCard = {
+  type: 'intent_choice'
+  question: string
+  options: Array<{ label: string; send_text: string }>
+}
 
 // 路线规划卡：出发地 → 途经点（餐厅等）→ 目的地（导航确认途经点后）
 export type RoutePlanCard = {
