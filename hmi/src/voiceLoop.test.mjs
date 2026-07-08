@@ -610,3 +610,23 @@ test('R4.4：barge-in 打断后定稿 onSend 带 source=bargein 且 utteranceMs>
   assert.equal(e[2].source, 'bargein')
   assert.ok(e[2].utteranceMs > 0)
 })
+
+// ─── R4.4 P2：嘈杂降级仅唤醒词——关 VAD barge-in，但 wake() 仍打断 ───
+test('R4.4 P2：setVadBargeInDisabled(true) 后 SPEAKING 期 VAD speech 不打断', () => {
+  const h = makeHarness()
+  driveToSpeaking(h)
+  h.vl.setVadBargeInDisabled(true)
+  h.vl.vadSpeechStart()
+  h.advance(500)               // 远超 bargeInMinMs
+  assert.equal(h.count('stopTts'), 0)          // 未打断
+  assert.equal(h.vl.state, VoiceState.SPEAKING)
+})
+
+test('R4.4 P2：仅唤醒词模式下 wake() 仍能打断 SPEAKING（显式意图不受 VAD 门控）', () => {
+  const h = makeHarness()
+  driveToSpeaking(h)
+  h.vl.setVadBargeInDisabled(true)
+  h.vl.wake()                  // KWS 唤醒词打断
+  assert.equal(h.count('stopTts'), 1)
+  assert.equal(h.vl.state, VoiceState.LISTENING)
+})
