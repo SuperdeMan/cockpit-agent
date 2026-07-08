@@ -199,10 +199,10 @@ services:
     environment:
       <<: *python-env
       # R4.4 拒识/澄清门控：REJECT 默认 on（作用域被 hands-free + input_source 双重限定，
-      # 显式输入永不拒）；CLARIFY 默认 off（影响全部云端路由，真栈验收后单独 commit 翻 on）；
-      # FALLBACK_MIN = 语义 top-1 分数门槛（低分诚实降级，不硬执行 capabilities[0]）。
+      # 显式输入永不拒）；CLARIFY 默认 on（2026-07-08 真栈 CDP 全流程验收通过后翻 on：歧义句出卡
+      # →点选消歧指令派发→深度=1 不再澄清；反例误澄清 0/17）；FALLBACK_MIN = 语义 top-1 分数门槛。
       REJECT_NON_ADDRESSED: ${REJECT_NON_ADDRESSED:-on}
-      CLARIFY_ENABLED: ${CLARIFY_ENABLED:-off}
+      CLARIFY_ENABLED: ${CLARIFY_ENABLED:-on}
       CLARIFY_FALLBACK_MIN: ${CLARIFY_FALLBACK_MIN:-0.5}
     ports: ["50054:50054"]
     depends_on: [registry, llm-gateway, memory]
