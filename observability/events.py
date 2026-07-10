@@ -72,6 +72,13 @@ class EventEmitter:
                     "observability events connected to NATS (service=%s)",
                     self.service,
                 )
+            except ImportError as exc:
+                # 缺 nats-py = 镜像配置错误而非瞬时故障：响一声 WARNING 并永久禁用，
+                # 不再无限静默重试（2026-07-10 llm-gateway 缺包致 obs.llm 全部静默丢失）。
+                self._disabled = True
+                logger.warning(
+                    "nats-py not installed; observability events disabled "
+                    "(service=%s): %s", self.service, exc)
             except Exception as exc:
                 self._next_connect_at = time.monotonic() + _CONNECT_RETRY_DELAY
                 logger.debug("NATS unavailable, observability retry delayed: %s", exc)

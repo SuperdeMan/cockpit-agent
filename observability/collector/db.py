@@ -189,7 +189,7 @@ class ObsDB:
 
     def sessions(self, limit: int = 50, q: str = "") -> list[dict]:
         """会话列表：起止时间/轮数/错误数/拒识数/badcase 数，按最近活跃倒序。
-        q 非空时只保留命中文本（用户原话或话术 LIKE）的会话。"""
+        q 非空时保留命中的会话——按会话 id 前缀，或按轮次文本（原话/话术 LIKE）。"""
         sql = ("SELECT session_id, MIN(ts) AS first_ts, MAX(ts) AS last_ts, "
                "COUNT(*) AS turns, "
                "SUM(CASE WHEN status IN ('err','timeout','empty') THEN 1 ELSE 0 END) AS errors, "
@@ -197,10 +197,11 @@ class ObsDB:
                "SUM(badcase) AS badcases FROM turns")
         params: list = []
         if q:
-            sql += (" WHERE session_id IN (SELECT DISTINCT session_id FROM turns "
+            sql += (" WHERE session_id LIKE ? OR session_id IN "
+                    "(SELECT DISTINCT session_id FROM turns "
                     "WHERE user_text LIKE ? OR speech LIKE ?)")
             like = f"%{q}%"
-            params += [like, like]
+            params += [f"{q}%", like, like]
         sql += " GROUP BY session_id ORDER BY last_ts DESC LIMIT ?"
         params.append(int(limit))
         with self._lock:
