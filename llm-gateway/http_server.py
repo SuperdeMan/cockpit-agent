@@ -31,9 +31,13 @@ logger = logging.getLogger("llm.http")
 # 观测指标（best-effort，无 NATS/observability 不可导入时自动降级 log）。
 try:
     from observability.events import get_emitter
+    from observability.redact import gate_content as _gate_content
+    from observability.tracing import set_session_id as _set_obs_session
     _obs = get_emitter("llm-gateway")
 except Exception:  # observability 不在 path（如精简镜像）→ log-only
     _obs = None
+    _gate_content = None
+    _set_obs_session = None
 
 _WAV_FORMATS = frozenset({"wav", "pcm", "pcm16"})
 # R4.3b P2 B1：流式 ASR 的「前端直传 s16le PCM」格式（跳过 ffmpeg，支持前滚缓冲注入根治漏字 U4）
@@ -190,6 +194,9 @@ def create_http_app() -> web.Application:
         """流式 ASR：HMI 经 WebSocket 推音频帧（webm/opus）+ start/stop 控制，
         网关流式 ffmpeg 转 PCM16→流式引擎（DashScope 实时 / MiMo 分块）→回 partial/final。
         见 docs/design/2026-06-30-asr-streaming-design.md。批处理 /api/asr 不受影响（回退路径）。"""
+        import time
+        import uuid as _uuid
+
         ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=8 * 1024 * 1024)
         await ws.prepare(request)
         ffmpeg = None
@@ -197,6 +204,7 @@ def create_http_app() -> web.Application:
         pcm_queue: asyncio.Queue = asyncio.Queue()
         pcm_direct = False  # True=前端直传 s16le PCM（跳 ffmpeg，B1）
         started = False     # 已收到 start（防重复；PCM 模式无 ffmpeg 句柄可判）
+        asr_meta = {"provider": "", "model": ""}  # 观测：本条 utterance 的引擎归属
 
         async def pcm_iter():
             while True:
@@ -216,18 +224,39 @@ def create_http_app() -> web.Application:
                 await pcm_queue.put(None)
 
         async def run_provider(provider, language):
+            t0 = time.monotonic()
+            final_text = ""
+            status = "ok"
             try:
                 async for r in provider.stream(pcm_iter(), language=language):
                     if ws.closed:
                         break
+                    if r.get("final") and r.get("text"):
+                        final_text = r["text"]
                     await ws.send_json({"type": "final" if r.get("final") else "partial",
                                         "text": r.get("text", "")})
                 if not ws.closed:
                     await ws.send_json({"type": "done"})
             except Exception as e:
+                status = "err"
                 logger.warning("ASR stream provider error: %s", e)
                 if not ws.closed:
                     await ws.send_json({"type": "error", "message": str(e)})
+            finally:
+                # 观测（badcase「听错了」排查）：每条 utterance 一个 asr.stream span，
+                # 引擎/时延/定稿长度 + 门控定稿文本；session_id 经 contextvar 自动携带。
+                if _obs is not None:
+                    try:
+                        await _obs.emit_span(
+                            _uuid.uuid4().hex[:16], "asr.stream", status=status,
+                            duration_ms=(time.monotonic() - t0) * 1000,
+                            attrs={"provider": asr_meta["provider"],
+                                   "model": asr_meta["model"],
+                                   "chars": len(final_text),
+                                   "text": (_gate_content(final_text, 120)
+                                            if _gate_content else "")})
+                    except Exception:
+                        pass
 
         def _close_stdin():
             if ffmpeg and ffmpeg.stdin and not ffmpeg.stdin.is_closing():
@@ -251,6 +280,11 @@ def create_http_app() -> web.Application:
                             await ws.send_json({"type": "unsupported"})
                             continue
                         started = True
+                        # 观测：引擎归属 + HMI 会话（contextvar 随 create_task 复制传播）
+                        asr_meta["provider"] = data.get("provider", "") or "default"
+                        asr_meta["model"] = data.get("model", "")
+                        if _set_obs_session and data.get("session_id"):
+                            _set_obs_session(str(data["session_id"]))
                         fmt = (data.get("format", "") or "").lower()
                         if fmt in _PCM_STREAM_FORMATS:
                             # B1 PCM 直传：前端已转 16k mono s16le，BINARY 帧直入队列，跳 ffmpeg

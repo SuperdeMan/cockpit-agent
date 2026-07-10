@@ -32,8 +32,15 @@ x-python-env: &python-env
 
 # 生存性：所有长驻服务 crash/OOM 后自动拉起（演示/长跑不因单点退出而中断）。
 # unless-stopped = 除非人工 stop，否则始终重启（含 docker daemon 重启后）。
+# 顺带全栈日志轮转（借同一 anchor 零逐服务改动）：json-file 无上限会让长跑演示机
+# 磁盘无限膨胀；观测日志已进 collector SQLite，容器 stdout 只留近期窗口。
 x-restart: &restart
   restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 # R3.2 mTLS 证书挂载：无条件挂到 gRPC mesh 服务（GRPC_TLS 关时代码不读、无害）。
 # 源 ../certs（相对 deploy/ 项目目录=仓库根 certs），由 scripts/gen-certs.* 生成、gitignore。

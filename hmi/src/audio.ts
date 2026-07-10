@@ -572,6 +572,13 @@ export function asrStreamUrl(apiBase: string): string {
   return apiBase.replace(/^http/, 'ws') + '/api/asr/stream'
 }
 
+// 观测贯通：HMI 会话 id（App 启动时注入一次）随 ASR start 消息上行，
+// 网关的 asr.stream span 据此归属会话——badcase「听错了」可按会话回看引擎/时延/定稿。
+let OBS_SESSION = ''
+export function setObsSession(sessionId: string): void {
+  OBS_SESSION = sessionId || ''
+}
+
 type StreamOpts = {
   language: string
   provider: string
@@ -649,6 +656,7 @@ export class StreamingRecognizer {
         type: 'start', format: containerOf(mime || 'audio/webm'),
         language: opts.language, provider: opts.provider, model: opts.model,
         ...(opts.vadSilenceMs ? { vad_silence_ms: opts.vadSilenceMs } : {}), // B2 静音尾透传
+        ...(OBS_SESSION ? { session_id: OBS_SESSION } : {}), // 观测：asr span 归属会话
       }))
       for (const b of preOpenBuf) sendBlob(b) // 先行采集的分片按序补发（webm 头在 preOpenBuf[0]）
       preOpenBuf.length = 0
@@ -719,6 +727,7 @@ export class StreamingRecognizer {
           type: 'start', format: 'pcm16le', sample_rate: 16000,
           language: opts.language, provider: opts.provider, model: opts.model,
           ...(opts.vadSilenceMs ? { vad_silence_ms: opts.vadSilenceMs } : {}),
+          ...(OBS_SESSION ? { session_id: OBS_SESSION } : {}), // 观测：asr span 归属会话
         }))
         if (preRoll && preRoll.length) {
           const i16 = float32ToInt16(preRoll)
