@@ -394,6 +394,11 @@ services:
       OBS_COLLECTOR_PORT: "8092"
       DEBUG_VEHICLE_CONTROL: ${DEBUG_VEHICLE_CONTROL:-true}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # badcase 排查持久层：turns/spans/llm/logs 落 SQLite（named volume，重启不丢）
+      OBS_DB_PATH: /data/obs.db
+      OBS_RETENTION_DAYS: ${OBS_RETENTION_DAYS:-7}
+    volumes:
+      - obs-data:/data
     ports: ["8092:8092"]
     depends_on:
       nats:
@@ -524,3 +529,7 @@ services:
       VITE_EDGE_GATEWAY_URL: http://localhost:8090
     ports: ["5174:5174"]
     depends_on: [observability-collector, edge-gateway]
+
+# 观测持久层（collector SQLite）：badcase 轮次/链路/日志跨重启保留
+volumes:
+  obs-data:
