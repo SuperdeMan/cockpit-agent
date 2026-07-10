@@ -208,6 +208,13 @@ Dashboard 的车辆动态接口仅供本地演示；非开发环境必须设置
 - NATS 可观测事件、collector REST/WS、车辆状态 diff、端云 trace、Agent 健康/指标/熔断状态、
   debug 车辆动态与对照实验 Dashboard；collector `GET /metrics`（Prometheus 文本格式）+ 桥接
   真实 OTel span 导出，Grafana 仪表盘经 `--profile observability` 可选启用。
+- **badcase 排查贯通（2026-07-10）**：session/trace 全链路 ID 贯通（HMI 每轮自生成 trace_id，
+  气泡角标一键复制→dashboard 搜索直达）；`obs.turn` 轮次收口（用户原话/话术/状态/路径）+
+  `obs.llm`（每跳 LLM 调用 tokens/时延/缓存/门控内容）+ `obs.log`（结构化日志按 trace 进
+  collector，全服务激活）；collector SQLite 持久化（重启不丢，`OBS_RETENTION_DAYS` 保留期、
+  badcase 豁免）；dashboard 重构为四视图（会话三级下钻默认页 / 总览 / 日志 / badcase 收藏夹
+  含一键重放对照）；内容级采集经 `OBS_CONTENT_CAPTURE` 门控+统一脱敏（量产 off）。
+  真栈验收 `test/e2e_obs.py` 16/16。
 - 通讯链路韧性：全链路 gRPC keepalive + 优雅停机（依赖重启换 IP 自愈、不需重启依赖方）、
   HMI 退避重连 + 断线发送队列 + 请求看门狗、云端 Agent 熔断快速失败。
 

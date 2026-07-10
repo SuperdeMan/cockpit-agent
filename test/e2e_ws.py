@@ -118,10 +118,13 @@ async def main():
             {"text": "确认", "session_id": "e2e-4", "is_confirmation": True},
             "链路4b 用户确认（应完成下单）",
         )
-        if "订好" in (second.get("speech") or ""):
+        # nearby 重构（2026-07-05）后点单是诚实降级话术（真实点单适配器 P2 未接），
+        # 确认闭环的验收点=确认轮被正确续接并给出实质响应，而非"订好"字面。
+        second_speech = second.get("speech") or ""
+        if any(k in second_speech for k in ("订好", "接入中", "商家信息", "已为您")):
             print("\n  ✓ 确认闭环打通！")
         else:
-            print(f"\n  ✗ 确认后结果: {second.get('speech', '')[:60]}")
+            print(f"\n  ✗ 确认后结果: {second_speech[:60]}")
     else:
         print("\n  ⚠ 未触发 need_confirm，跳过确认测试")
 

@@ -1,6 +1,12 @@
 # Dashboard 整体优化：badcase 排查导向的可观测重构（会话 / 轮次 / 日志贯通）
 
-> 状态：⚪ 设计稿，待泓舟确认分期范围后落地。
+> 状态：✅ **P0/P1/P2 全部落地并真栈验证（2026-07-10）**。
+> 真栈证据：`test/e2e_obs.py` **16/16**（turn 落库 / plan 门控采集 / obs.llm / 日志按 trace
+> 关联 / badcase 标记检索导出 / 重启 collector 持久化）+ CDP headless Edge 前端 **12/12**
+> （dashboard 会话三级下钻 / span 瀑布 / plan+LLM+日志面板 / HMI 气泡 trace 角标，全真数据）；
+> 全量单测各组零失败（新增 obs 单测 28 例）。
+> 实施提交：`2f814f4`（P0 事件层）→ `be3d499`（collector 持久化）→ `e42f982`（前端四视图）
+> → `7aa48b6`（P1 日志贯通）→ P2 + 真栈修复（见 §12 踩坑）。
 > 诉求来源：泓舟 2026-07-10——「整体优化 dashboard；明确要增加日志以及 sessionid 等，
 > 方便排查定位 badcase」。
 > 关联：`docs/design/2026-06-15-observability-dashboard.md`（可观测台首版）、
@@ -302,3 +308,32 @@ asr-stream 处埋点）与 TTS（provider/首帧时延，R4.2 已有日志字段
 | P2 | ~250 行 | ~400 行 | 无 |
 
 全程不改 proto、不加服务、不动车控链路。
+
+## 12. 落地记录与踩坑（2026-07-10 实施后补）
+
+**实现与设计的差异**：
+1. 存储用了 **stdlib sqlite3**（非 aiosqlite）：单连接+线程锁+WAL，调用方 `asyncio.to_thread`
+   旁路——零新依赖对齐 R3.6 手写 Prometheus 先例。
+2. session_id 贯通用 **contextvar**（`tracing.set_session_id`，与 `set_trace_id` 同模式）：
+   请求入口（edge Handle / cloud engine.run / SDK Execute）set 一次，`events._emit` 与
+   `StructuredFormatter` 自动携带——不必逐 emit_span 调用点透传（比设计的"逐点补参"更优）。
+3. HMI→ASR 流的会话关联用 **audio.ts 模块级 `setObsSession`**（App 一行注入），
+   Composer/handsFreeController 零改动。
+4. P1 的 LLM 部分（meta 注入 + obs.llm + llm_calls 表 + LLM 面板)随 P0 一起落了；
+   P2 的 badcase 工作流/保留期清理/compose 卷也随 P0/P1 提前落地。TTS 复用 R4.3b 已有
+   `tts-stream` metric 不重复埋；ASR 每 utterance 发 `asr.stream` span（引擎/时延/门控定稿）。
+
+**真栈踩坑**（都已修）：
+1. **llm-gateway / payment-gateway 镜像缺 `nats-py`**→ `EventEmitter._conn` 的
+   `import nats` 抛 ModuleNotFoundError 被吞（debug 级不可见）→ obs.llm 全部静默丢失。
+   修：requirements 补包 + events.py 把 ImportError 从"瞬时故障无限重试"改为
+   "WARNING 一声 + 永久禁用"（镜像配置错误应当响）。
+2. **SDK server import observability 后，6 个 Agent + memory + payment 的 Dockerfile
+   没 COPY observability** 会启动崩——全部补齐（静态 grep Dockerfile 提前抓住，未上真栈才发现）。
+3. `/api/sessions?q=` 起初只搜轮次文本，粘 session_id 搜不到会话→ q 也按 session_id 前缀匹配。
+4. `caller` 是 llm-gateway 限流桶键——观测归属刻意用独立 `caller_service` 键，不扰动限流分桶。
+
+**遗留（下一步可选）**：
+- Go 网关（edge/cloud-gateway）结构化日志未接 obs.log（日志量小，docker logs 兜底）。
+- ASR span 与 turn 只能按 session+时间邻近关联（语音流先于 trace 存在，无硬关联键）。
+- 重放对照面板是并排视图，未做逐 span diff。
