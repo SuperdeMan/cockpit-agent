@@ -473,15 +473,20 @@ sequenceDiagram
 当前 PoC 已用 NATS 接通轻量可观测旁路，Topic 如下：
 ```
 vehicle.state.changed       # VAL 状态 diff / 启动快照
-obs.span                    # 端云路由、规划、执行、聚合 span
+obs.span                    # 端云路由、规划、执行、聚合 span（自动携带 session_id）
 obs.metric                  # Agent 调用数、时延、错误率
 obs.agent.health            # Registry 主动健康探测结果
+obs.turn                    # 轮次收口：一次 Handle 一条（原话/话术/状态/路径，badcase 排查核心）
+obs.llm                     # LLM 调用（llm-gateway 唯一出口收口：模型/tokens/时延/缓存/门控内容）
+obs.log                     # 结构化日志（WARNING+ 与带 trace 的 INFO，防自激励）
 obs.debug.vehicle.set       # 仅开发环境量：车速/电量/挡位/位置
 ```
 
-`observability-collector` 订阅并内存聚合这些事件，通过 REST/WS 提供给独立
-`dashboard`。事件不改 gRPC 契约；完整 payload 与安全边界见
-`docs/design/2026-06-15-observability-dashboard.md`。
+`observability-collector` 订阅这些事件：内存聚合供实时 WS 推流，并把
+turns/spans/llm_calls/logs 落 SQLite 持久化（`OBS_RETENTION_DAYS` 保留期、badcase 豁免），
+经 REST 提供给独立 `dashboard`（会话→轮次→详情三级下钻）。事件不改 gRPC 契约；
+完整 payload 与安全边界见 `docs/design/2026-06-15-observability-dashboard.md`（首版）与
+`docs/design/2026-07-10-dashboard-badcase-observability-redesign.md`（badcase 贯通）。
 
 ---
 
@@ -516,8 +521,12 @@ obs.debug.vehicle.set       # 仅开发环境量：车速/电量/挡位/位置
 - **日志**：结构化日志，敏感字段脱敏。
 - **当前 PoC 实现**：端/云关键节点把 span、指标、健康和车辆状态 diff
   best-effort 发布到 NATS；collector 内存聚合最近链路，Dashboard 实时展示。
-  NATS 不可用时主链路不受影响。
-- **目标态差距**：Prometheus/OTel 导出、持久化 trace、告警、多车/多租户与正式鉴权
+  NATS 不可用时主链路不受影响。**badcase 排查贯通（2026-07-10）**：session/trace 全链路
+  ID 贯通（HMI 每轮自生成 trace_id、气泡可复制直达 dashboard）、`obs.turn`/`obs.llm`/
+  `obs.log` 内容级事件（`OBS_CONTENT_CAPTURE` 门控+统一脱敏）、collector SQLite 持久化
+  与会话/轮次/日志检索 API、dashboard 四视图（会话下钻/总览/日志/badcase 收藏夹+重放）；
+  Prometheus `/metrics` + OTel 桥接由 R3.6 落地（`--profile observability` 门控）。
+- **目标态差距**：告警、多车/多租户与正式鉴权（含 collector 鉴权边界）、采样与容量治理
   仍属于后续量产工作。
 - **评测体系**：
   - 意图分类：标注集 + 离线准确率/召回。

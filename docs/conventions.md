@@ -202,6 +202,9 @@
 | `TUSHARE_TOKEN` | Tushare 股票行情（info.stock）| 否（无 key 走 mock）|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `LOG_LEVEL` | 可观测；前者非空时 collector 桥接真实 OTel span 导出（T3.6，见 §8）| 否 |
 | `GRAFANA_ADMIN_PASSWORD` | Grafana admin 密码（T3.6，仅 `--profile observability` 生效）| 否（默认 `admin`，PoC 凭证）|
+| `OBS_CONTENT_CAPTURE` | badcase 排查内容级采集（用户原话/话术/plan/LLM 输入输出，统一脱敏）；**量产必须 off**（off 只留长度+哈希指纹）| 否（默认 on，开发/演示）|
+| `OBS_DB_PATH` / `OBS_RETENTION_DAYS` | collector SQLite 持久层路径（compose 挂 `obs-data` 卷 `/data/obs.db`；不设=内存库）/ 保留天数（badcase 标记豁免清理）| 否（默认 内存 / 7）|
+| `LOG_SHIP_LEVEL` | 结构化日志经 `obs.log` 上报 collector 的级别门槛（≥该级别恒发；带 trace_id 的 INFO 也发）| 否（默认 WARNING）|
 | `GRPC_KEEPALIVE_TIME_MS` / `_TIMEOUT_MS` / `GRPC_MIN_PING_INTERVAL_MS` | gRPC keepalive：空闲也 ping、死连一周期内探测重连重解析 DNS（`runtime/grpcio.py`）| 否（默认 20000/10000/10000）|
 | `GRPC_MAX_MESSAGE_BYTES` / `GRPC_MAX_CONCURRENT_RPCS` / `GRPC_SHUTDOWN_GRACE_S` | gRPC 单消息上限 / 服务端并发上限(0=不限) / 优雅停机排空在途 RPC 宽限秒 | 否（默认 16MB / 0 / 10）|
 | `CIRCUIT_FAILURE_THRESHOLD` / `CIRCUIT_RECOVERY_TIMEOUT_S` | 云端 Agent dispatch 熔断：连续失败阈值 / 冷却恢复秒 | 否（默认 5 / 30）|
@@ -281,11 +284,18 @@
 |---|---|
 | `GET http://localhost:8092/healthz` | collector 与 NATS 连接状态 |
 | `GET /api/vehicle/state` | 当前车辆状态镜像 |
-| `GET /api/traces?limit=50` / `GET /api/traces/{trace_id}` | 最近链路与单链路详情 |
+| `GET /api/traces?limit=50` / `GET /api/traces/{trace_id}` | 最近链路与单链路详情（内存实时） |
 | `GET /api/agents` | Agent 健康与累计调用指标 |
-| `WS /stream` | `snapshot/state_change/span/metric/health` 实时事件 |
+| `WS /stream` | `snapshot/state_change/span/metric/health/turn/llm/log` 实时事件 |
 | `POST /api/debug/vehicle` | 仅设置 `speed_kmh/battery/gear/location`；受 `DEBUG_VEHICLE_CONTROL` 控制 |
 | `GET /metrics`（T3.6）| Prometheus 文本暴露格式（`cockpit_agent_{calls_total,latency_seconds_avg,error_rate,circuit_state,healthy,health_fail_count}`），供 `prometheus` 服务抓取（`--profile observability` 门控）|
+| `GET /api/sessions?q=&limit=` | 会话列表（轮数/错误/拒识/badcase 计数；q=会话 id 前缀或轮次文本）（badcase 贯通，2026-07-10，SQLite 持久） |
+| `GET /api/sessions/{id}/turns` | 会话内轮次流水（时间正序） |
+| `GET /api/turns/{trace_id}` | 轮次详情一次取全：turn + spans + llm_calls + logs |
+| `GET /api/search?q=&status=&session=&badcase=&since=&until=` | 轮次检索（q 兼容 trace_id 前缀直达） |
+| `GET /api/logs?trace_id=&service=&level=&q=` | 结构化日志检索（obs.log 落库） |
+| `POST /api/turns/{trace_id}/badcase` | 标记/取消 badcase（`{badcase, note}`；标记轮豁免保留期清理） |
+| `GET /api/export/{trace_id}` | 单轮全量 JSON 导出（badcase 素材/回归用例） |
 
 Dashboard 使用 `VITE_COLLECTOR_URL` 与 `VITE_EDGE_GATEWAY_URL`，Compose 已分别配置为
 `http://localhost:8092` 和 `http://localhost:8090`。**Prometheus/Grafana（T3.6）**：

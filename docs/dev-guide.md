@@ -119,13 +119,16 @@ npm run dev
 curl http://localhost:8092/healthz
 curl http://localhost:8092/api/vehicle/state
 curl http://localhost:8092/api/agents
+curl http://localhost:8092/api/sessions          # badcase 排查：会话/轮次（SQLite 持久）
 curl -X POST http://localhost:8092/api/debug/vehicle \
   -H 'content-type: application/json' \
   -d '{"key":"speed_kmh","value":130}'
 ```
 
 `POST /api/debug/vehicle` 仅用于本地模拟安全门控；非开发环境设置
-`DEBUG_VEHICLE_CONTROL=false`。
+`DEBUG_VEHICLE_CONTROL=false`。badcase 排查链路（会话/轮次/日志/LLM 贯通）的完整接口与
+dashboard 四视图见 `docs/conventions.md` §8 与 `dashboard/README.md`；真栈验收
+`python test/e2e_obs.py`。
 
 ---
 

@@ -1,6 +1,9 @@
 # 座舱 Agent 可观测仪表盘：车辆状态 · 请求链路 · Agent 运行态
 
-- **状态**：已归档（P0-P3 已落地并验收，2026-06-15）
+- **状态**：已归档（P0-P3 已落地并验收，2026-06-15）。
+  **后继（2026-07-10）**：badcase 排查重构在此之上扩展了会话/轮次/日志/LLM 贯通、collector
+  SQLite 持久化与 dashboard 四视图——本文中「collector 仅内存聚合、无持久化」的描述自此过期，
+  以 `docs/design/2026-07-10-dashboard-badcase-observability-redesign.md` 为准。
 - **交付对象**：后续开发者 / AI（照此执行，不走偏）
 - **关联代码**：`observability/{__init__,metrics,tracing,logging}.py`、`orchestrator/edge/{server,val,edge_call,main}.py`、`orchestrator/cloud/{engine,dispatch,loop}.py`、`registry/{store,server,main}.py`、`gateway/edge/main.go`、`deploy/docker-compose.yaml`；新增 `observability/events.py`、`observability/collector/`、`dashboard/`
 - **关联文档**：`docs/architecture/cockpit-agent-architecture.md`（§8 通信与 NATS 事件总线、§10 可观测性，唯一真相源）、`docs/design/2026-06-14-cloud-central-orchestrator.md`（可观测待办：start_span 接入 + Prometheus/OTel 导出）
