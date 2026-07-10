@@ -7,9 +7,14 @@ import os
 import grpc
 from cockpit.orchestrator.v1 import orchestrator_pb2_grpc
 
+from observability import setup_structured_logging
 from runtime.grpcio import aio_server, bind_port, run_aio_server
 from server import EdgeOrchestratorServicer
 from capabilities import register_edge_capabilities
+
+# 结构化日志（stdout JSON 自动带 trace/session + obs.log 上报 collector）：
+# badcase 排查从逐容器 docker logs 升级为 dashboard 按 trace 检索。
+setup_structured_logging(os.getenv("LOG_LEVEL", "info"), service="edge-orchestrator")
 
 
 async def _debug_subscription(servicer: EdgeOrchestratorServicer):

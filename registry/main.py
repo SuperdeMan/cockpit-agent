@@ -17,13 +17,12 @@ from observability.events import EventEmitter
 from registry.health import probe_all
 from registry.server import RegistryServicer
 
-# 与其余 Python 服务一致的日志配置。此前 registry 从未配置 handler：INFO 全部被吞、
-# WARNING 走 lastResort——2026-07-04 embed 泄漏排查因此拿不到「embedding via llm-gateway」
-# 等关键状态线索，被迫用 PG 计数器/TCP 采样定位。可观测性即修复的一部分。
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "info").upper(),
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+# 与其余 Python 服务一致的日志配置（basicConfig→结构化升级）：此前 registry 从未配置
+# handler：INFO 全部被吞、WARNING 走 lastResort——2026-07-04 embed 泄漏排查因此拿不到
+# 「embedding via llm-gateway」等关键状态线索。现 stdout JSON + obs.log 上报 collector。
+from observability import setup_structured_logging  # noqa: E402
+
+setup_structured_logging(os.getenv("LOG_LEVEL", "info"), service="registry")
 
 logger = logging.getLogger("registry.main")
 

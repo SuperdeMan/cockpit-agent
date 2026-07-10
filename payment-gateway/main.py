@@ -1,9 +1,11 @@
 """Payment Gateway 启动入口。"""
 import asyncio
 import os
-import logging
 
-logging.basicConfig(level=logging.INFO)
+# 结构化日志：stdout JSON 带 trace/session + obs.log 上报（badcase 按 trace 检索）
+from observability import setup_structured_logging
+
+setup_structured_logging(os.getenv("LOG_LEVEL", "info"), service="payment-gateway")
 
 # proto 未生成时无法启动 gRPC，但 store 逻辑可独立测试
 

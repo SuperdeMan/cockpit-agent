@@ -26,6 +26,9 @@ x-python-env: &python-env
   GRPC_TLS_CERT: /certs/server.crt
   GRPC_TLS_KEY: /certs/server.key
   GRPC_TLS_SERVER_NAME: ${GRPC_TLS_SERVER_NAME:-cockpit-mesh}
+  # badcase 排查（obs.turn/obs.llm/obs.log）：内容级采集门控（量产必须 off）与日志上报门槛
+  OBS_CONTENT_CAPTURE: ${OBS_CONTENT_CAPTURE:-on}
+  LOG_SHIP_LEVEL: ${LOG_SHIP_LEVEL:-WARNING}
 
 # 生存性：所有长驻服务 crash/OOM 后自动拉起（演示/长跑不因单点退出而中断）。
 # unless-stopped = 除非人工 stop，否则始终重启（含 docker daemon 重启后）。

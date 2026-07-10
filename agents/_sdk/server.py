@@ -134,6 +134,14 @@ async def serve(agent: BaseAgent):
     port = int(os.getenv("AGENT_PORT", "50060"))
     # 观测归属：LLMClient 的 obs meta（caller_service）从这里拿 agent 身份，免逐 Agent 配置
     os.environ.setdefault("AGENT_ID", agent.manifest.agent_id)
+    # 结构化日志（一处覆盖全 Agent）：stdout JSON 带 trace/session + obs.log 上报
+    try:
+        from observability import setup_structured_logging
+
+        setup_structured_logging(
+            os.getenv("LOG_LEVEL", "info"), service=agent.manifest.agent_id)
+    except Exception:
+        pass  # 观测配置失败不阻塞 Agent 启动
     server = aio_server()
     agent_pb2_grpc.add_AgentServicer_to_server(_Servicer(agent), server)
     bind_port(server, f"[::]:{port}")
