@@ -109,6 +109,14 @@ class EventEmitter:
             return
         payload.setdefault("ts", _now_ms())
         payload.setdefault("service", self.service)
+        # 会话维度自动携带：请求入口 set_session_id 一次，所有事件免逐点透传。
+        # 后台任务（无请求上下文）取到空串则不注入，保持事件干净。
+        if not payload.get("session_id"):
+            from observability.tracing import get_session_id
+
+            sid = get_session_id()
+            if sid:
+                payload["session_id"] = sid
         try:
             self._queue.put_nowait((subject, payload))
         except asyncio.QueueFull:
@@ -136,6 +144,88 @@ class EventEmitter:
                 "status": status,
                 "duration_ms": round(duration_ms, 1),
                 "attrs": attrs or {},
+            },
+        )
+
+    async def emit_turn(
+        self,
+        trace_id,
+        session_id,
+        *,
+        user_text="",
+        speech="",
+        status="ok",
+        path="",
+        input_source="",
+        is_confirmation=False,
+        ui_card_type="",
+        actions=0,
+        duration_ms=0,
+        error="",
+        ts=None,
+    ) -> None:
+        """轮次收口事件（badcase 排查核心）：一次 Handle = 一条 turn。
+
+        内容字段（user_text/speech）经 OBS_CONTENT_CAPTURE 门控 + 统一脱敏；
+        error 恒脱敏（异常串可能夹带敏感参数）。ts 传请求开始时刻（缺省=发射时刻）。
+        """
+        from observability.redact import gate_content, redact
+
+        payload = {
+            "trace_id": trace_id,
+            "session_id": session_id,
+            "user_text": gate_content(user_text, 500),
+            "speech": gate_content(speech, 1000),
+            "status": status,
+            "path": path,
+            "input_source": input_source,
+            "is_confirmation": bool(is_confirmation),
+            "ui_card_type": ui_card_type,
+            "actions": actions,
+            "duration_ms": round(duration_ms, 1),
+            "error": redact(error)[:300] if error else "",
+        }
+        if ts is not None:
+            payload["ts"] = ts
+        await self._emit("obs.turn", payload)
+
+    async def emit_llm(
+        self,
+        *,
+        trace_id="",
+        session_id="",
+        caller="",
+        model="",
+        prompt_tokens=0,
+        completion_tokens=0,
+        latency_ms=0,
+        cache_hit=False,
+        thinking=False,
+        status="ok",
+        error="",
+        prompt_tail="",
+        content_head="",
+    ) -> None:
+        """LLM 调用事件（llm-gateway 唯一出口收口）：模型/tokens/时延/缓存按 trace 归档。
+        prompt_tail/content_head 受 OBS_CONTENT_CAPTURE 门控 + 脱敏。"""
+        from observability.redact import gate_content, redact
+
+        await self._emit(
+            "obs.llm",
+            {
+                "trace_id": trace_id,
+                "session_id": session_id,
+                "caller": caller,
+                "model": model,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "latency_ms": round(latency_ms, 1),
+                "cache_hit": bool(cache_hit),
+                "thinking": bool(thinking),
+                "status": status,
+                "error": redact(error)[:300] if error else "",
+                "prompt_tail": gate_content(prompt_tail, 500),
+                "content_head": gate_content(content_head, 800),
             },
         )
 

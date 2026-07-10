@@ -111,6 +111,14 @@ class Clients:
             temperature=0.3, max_tokens=max(max_tokens, 2048) if thinking else max_tokens)
         if thinking:
             req.meta["thinking"] = "on"
+        # 观测贯通：LLM 网关据此发 obs.llm 事件（模型/tokens/时延按 trace 归档）。
+        # caller_service 仅供观测归属——刻意不用 "caller"（那是限流桶键，不能扰动）。
+        from observability.tracing import get_session_id, get_trace_id
+        if get_trace_id():
+            req.meta["trace_id"] = get_trace_id()
+        if get_session_id():
+            req.meta["session_id"] = get_session_id()
+        req.meta["caller_service"] = "cloud-planner"
         resp = await self._llm_stub().Complete(req, timeout=60 if thinking else 30)
         return resp.content
 
@@ -140,7 +148,13 @@ class Clients:
             prefs = {k: v for k, v in prefs.items()
                      if cls._SENSITIVE_SCOPE.get(k) is None
                      or cls._SENSITIVE_SCOPE.get(k) in allowed}
-        return {**prefs, **(meta or {})}
+        merged = {**prefs, **(meta or {})}
+        # 观测贯通：trace_id 随 meta 下发——SDK server 据此 set_trace_id，Agent 进程内
+        # span/日志/LLM 调用自动归属本轮 trace；子调用经父 meta 透传天然继承。
+        tid = getattr(ctx, "trace_id", "") or ""
+        if tid:
+            merged.setdefault("trace_id", tid)
+        return merged
 
     def _exec_request(self, intent: str, slots: dict, ctx, meta: dict | None,
                       context_scopes=None):

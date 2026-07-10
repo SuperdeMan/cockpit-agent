@@ -18,6 +18,7 @@ from llm_runtime import get_runtime
 from cache import LLMCache
 from ratelimit import RateLimiter
 from metrics import cost_tracker
+from observability.events import get_emitter
 
 logger = logging.getLogger("llm.server")
 
@@ -29,6 +30,31 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         self.runtime = get_runtime()
         self.cache = LLMCache(max_size=256, ttl_seconds=300)
         self.limiter = RateLimiter(global_rate=20, global_capacity=50)
+        self.obs = get_emitter("llm-gateway")
+
+    async def _emit_llm(self, request, *, model, latency_ms, cache_hit=False,
+                        usage=(0, 0), status="ok", error="", thinking=None,
+                        msgs=None, content=""):
+        """obs.llm 事件（best-effort）：LLM 唯一出口在此收口，badcase 按 trace 回看每一跳。"""
+        try:
+            meta = dict(request.meta) if request.meta else {}
+            await self.obs.emit_llm(
+                trace_id=meta.get("trace_id", ""),
+                session_id=meta.get("session_id", ""),
+                caller=meta.get("caller_service") or meta.get("caller", ""),
+                model=model,
+                prompt_tokens=usage[0],
+                completion_tokens=usage[1],
+                latency_ms=latency_ms,
+                cache_hit=cache_hit,
+                thinking=bool(thinking),
+                status=status,
+                error=error,
+                prompt_tail=(msgs[-1].get("content", "") if msgs else ""),
+                content_head=content,
+            )
+        except Exception:
+            pass
 
     def _models(self, requested: str) -> list[str]:
         return self.runtime.resolve_models(requested)
@@ -66,6 +92,9 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         if cached:
             content, used, finish, usage = cached
             logger.debug("Cache hit")
+            await self._emit_llm(request, model=used, latency_ms=0.0, cache_hit=True,
+                                 usage=usage, thinking=thinking, msgs=msgs,
+                                 content=content)
             return llm_pb2.CompleteResponse(
                 content=content, model_used=used, finish_reason=finish,
                 prompt_tokens=usage[0], completion_tokens=usage[1])
@@ -73,6 +102,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         # 调用（带降级）
         provider = self.runtime.active_provider()
         last_err = None
+        t_all = time.monotonic()
         for model in models:
             t0 = time.monotonic()
             try:
@@ -85,6 +115,9 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
 
                 # 记录成本
                 cost_tracker.record(used, usage[0], usage[1], latency_ms)
+                await self._emit_llm(request, model=used, latency_ms=latency_ms,
+                                     usage=usage, thinking=thinking, msgs=msgs,
+                                     content=content)
 
                 return llm_pb2.CompleteResponse(
                     content=content, model_used=used, finish_reason=finish,
@@ -97,6 +130,11 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
 
         # 上游超时 → DEADLINE_EXCEEDED（非 UNAVAILABLE），避免调用方 SDK 把它当瞬时错误重试
         # 一次致延迟翻倍（曾因此 info/trip 接地合成爆 step 预算）。连接级失败仍 UNAVAILABLE 供重试。
+        await self._emit_llm(
+            request, model=models[0],
+            latency_ms=(time.monotonic() - t_all) * 1000,
+            status="timeout" if isinstance(last_err, httpx.TimeoutException) else "err",
+            error=str(last_err), thinking=thinking, msgs=msgs)
         if isinstance(last_err, httpx.TimeoutException):
             await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "llm upstream timeout")
         await context.abort(grpc.StatusCode.UNAVAILABLE, f"all models failed: {last_err}")
@@ -108,17 +146,26 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
 
         # 流式不走缓存
         t0 = time.monotonic()
+        head: list[str] = []
+        head_len = 0
         try:
             async for delta in self.runtime.active_provider().stream(
                     msgs, model, request.temperature or 0.7, request.max_tokens or 512,
                     thinking=thinking):
+                if head_len < 800:  # 观测只留输出头部，不为观测缓冲全文
+                    head.append(delta)
+                    head_len += len(delta)
                 yield llm_pb2.CompleteChunk(delta=delta, done=False)
             yield llm_pb2.CompleteChunk(delta="", done=True)
             latency_ms = (time.monotonic() - t0) * 1000
             cost_tracker.record(model, 0, 0, latency_ms)
+            await self._emit_llm(request, model=model, latency_ms=latency_ms,
+                                 thinking=thinking, msgs=msgs, content="".join(head))
         except Exception as e:
             latency_ms = (time.monotonic() - t0) * 1000
             cost_tracker.record(model, 0, 0, latency_ms, error=True)
+            await self._emit_llm(request, model=model, latency_ms=latency_ms,
+                                 status="err", error=str(e), thinking=thinking, msgs=msgs)
             code = (grpc.StatusCode.DEADLINE_EXCEEDED if isinstance(e, httpx.TimeoutException)
                     else grpc.StatusCode.UNAVAILABLE)
             await context.abort(code, str(e))

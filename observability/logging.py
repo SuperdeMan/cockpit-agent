@@ -2,19 +2,15 @@
 from __future__ import annotations
 import logging
 import json
-import re
 import sys
+
+from .redact import SENSITIVE_PATTERNS as _SHARED_PATTERNS
 
 
 class StructuredFormatter(logging.Formatter):
-    """结构化 JSON 日志格式。敏感字段自动脱敏。"""
+    """结构化 JSON 日志格式。敏感字段自动脱敏（规则与观测事件共享 redact.py）。"""
 
-    SENSITIVE_PATTERNS = [
-        (re.compile(r'password["\s:=]+\S+', re.IGNORECASE), 'password=***'),
-        (re.compile(r'token["\s:=]+\S+', re.IGNORECASE), 'token=***'),
-        (re.compile(r'api[_-]?key["\s:=]+\S+', re.IGNORECASE), 'api_key=***'),
-        (re.compile(r'\b\d{11,}\b'), '***'),  # 手机号等长数字
-    ]
+    SENSITIVE_PATTERNS = _SHARED_PATTERNS
 
     def format(self, record):
         log_data = {
@@ -24,11 +20,14 @@ class StructuredFormatter(logging.Formatter):
             "msg": record.getMessage(),
         }
 
-        # 附加 trace_id（如有）
-        from .tracing import get_trace_id
+        # 附加 trace_id / session_id（如有）——badcase 排查按 id 直接 grep/检索
+        from .tracing import get_session_id, get_trace_id
         tid = get_trace_id()
         if tid:
             log_data["trace_id"] = tid
+        sid = get_session_id()
+        if sid:
+            log_data["session_id"] = sid
 
         # 附加额外字段
         if hasattr(record, "extra_data"):

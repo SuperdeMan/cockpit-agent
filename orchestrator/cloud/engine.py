@@ -5,6 +5,7 @@ WS3 §3。串联 planning / executor / aggregator / session。
 且 confirmed 标记严格限定在挂起那一步——后续 require_confirm 步骤各自再走确认（架构 §9.1）。
 """
 from __future__ import annotations
+import json
 import logging
 import os
 import time
@@ -21,7 +22,8 @@ from .progress import (is_complex, phase_label, step_summary,
                        task_summary, plan_steps_summary)
 from observability import events as obs_events
 from observability.metrics import metrics
-from observability.tracing import set_trace_id
+from observability.redact import gate_content
+from observability.tracing import set_session_id, set_trace_id
 
 logger = logging.getLogger("planner.engine")
 
@@ -74,6 +76,7 @@ class PlannerEngine:
         """
         ctx = self._build_context(request)
         set_trace_id(ctx.trace_id)
+        set_session_id(ctx.session_id)  # 云端进程内观测事件/日志自动带会话维度
         text = (getattr(request, "text", "") or "").strip()
         ctx.raw_text = text  # 透传给 Agent（供 navigate_to 等 fallback 槽位提取）
         mem_on = ctx.prefs.get("memory_enabled", "true") != "false"
@@ -202,12 +205,19 @@ class PlannerEngine:
                 return
 
             # C. 解析 endpoint（Registry）
+            # badcase 排查内容级采集（OBS_CONTENT_CAPTURE 门控）：plan 结构 + LLM 原始输出。
+            # 此前 LLM raw 只进 stdout 截 500 字符（planning.py），与 trace 无关联。
             await obs_events.get_emitter("cloud").emit_span(
                 ctx.trace_id,
                 "cloud.planning",
                 attrs={
                     "complexity": plan.complexity,
                     "steps": len(plan.steps),
+                    "plan": gate_content(json.dumps(
+                        [{"id": s.id, "agent": s.agent_id, "intent": s.intent,
+                          "slots": s.slots} for s in plan.steps],
+                        ensure_ascii=False, default=str), 1200),
+                    "llm_raw": gate_content(plan.raw_llm, 1200),
                 },
             )
             await self._resolve_endpoints(plan)
