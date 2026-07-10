@@ -12,6 +12,8 @@ from runtime.grpcio import aio_server, bind_port, run_aio_server
 from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
 from cockpit.common.v1 import common_pb2
 
+from observability.tracing import set_session_id, set_trace_id
+
 from .base import BaseAgent, Context, IntentView, _set_current_meta
 from .clients import RegistryClient
 from .result import AgentResult
@@ -74,6 +76,9 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
     async def Execute(self, request, context):
         meta = dict(request.meta)
         _set_current_meta(meta)  # 护栏：使 AgentClient 读取跨进程 depth/stack
+        # 观测：agent 进程内的 span/结构化日志自动携带 trace/session（一处设置全 Agent 覆盖）
+        set_trace_id(meta.get("trace_id", ""))
+        set_session_id(request.session_id)
         try:
             res = await self.agent.handle(
                 _intent_view(request), _context(request, self.agent.memory), meta)
@@ -91,6 +96,8 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
         iv, ctx = _intent_view(request), _context(request, self.agent.memory)
         meta = dict(request.meta)
         _set_current_meta(meta)  # 护栏：使 AgentClient 读取跨进程 depth/stack
+        set_trace_id(meta.get("trace_id", ""))
+        set_session_id(request.session_id)
         try:
             async for kind, payload in self.agent.handle_stream(iv, ctx, meta):
                 if kind == "speech":
@@ -125,6 +132,16 @@ async def _reregister_loop(registry, manifest, endpoint: str, interval: float):
 
 async def serve(agent: BaseAgent):
     port = int(os.getenv("AGENT_PORT", "50060"))
+    # 观测归属：LLMClient 的 obs meta（caller_service）从这里拿 agent 身份，免逐 Agent 配置
+    os.environ.setdefault("AGENT_ID", agent.manifest.agent_id)
+    # 结构化日志（一处覆盖全 Agent）：stdout JSON 带 trace/session + obs.log 上报
+    try:
+        from observability import setup_structured_logging
+
+        setup_structured_logging(
+            os.getenv("LOG_LEVEL", "info"), service=agent.manifest.agent_id)
+    except Exception:
+        pass  # 观测配置失败不阻塞 Agent 启动
     server = aio_server()
     agent_pb2_grpc.add_AgentServicer_to_server(_Servicer(agent), server)
     bind_port(server, f"[::]:{port}")

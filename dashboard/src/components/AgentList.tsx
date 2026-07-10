@@ -60,6 +60,15 @@ export function AgentList({ agents }: { agents: Record<string, AgentInfo> }) {
                   {agent.circuit && agent.circuit !== 'closed' ? (
                     <span className="err">熔断{agent.circuit === 'open' ? '开' : '半开'}</span>
                   ) : null}
+                  {agent.route_hits ? <span>hint×{agent.route_hits}</span> : null}
+                  {agent.degrade ? (
+                    <span className="warn">降级×{agent.degrade}</span>
+                  ) : null}
+                  {agent.llm_tokens ? (
+                    <span>
+                      <b>{agent.llm_tokens}</b>tok
+                    </span>
+                  ) : null}
                 </span>
               </div>
             )

@@ -189,8 +189,10 @@ class PlanBuilder:
         agent_map = {a.manifest.agent_id: a for a in agents}
 
         plan = None
+        last_raw = ""
         for _ in range(2):
             raw = await self._llm_plan(text, agents, working_set)
+            last_raw = raw or last_raw
             parsed = self._parse_and_validate(raw, agent_map, text)
             # R4.4：放行「合法的空 steps 计划」——受话判定 addressed=false / 澄清 clarify
             # 的正确输出 steps 恰为空，不能当解析失败去重试+fallback（母卡实施计划 §0-1/§0-2）。
@@ -202,6 +204,8 @@ class PlanBuilder:
             logger.warning("Plan parse failed twice, falling back to chitchat/routing")
             # 降级：chitchat 全局兜底 / Registry 语义路由 top-1
             plan = await self._fallback(text, agents)
+        # 观测：保留 LLM 最后一次原始输出（fallback 路径保留失败现场），供 planning span 门控采集
+        plan.raw_llm = last_raw
 
         # 确定性路由兜底（覆盖 LLM 解析成功 + 降级语义路由两条路径）：通用 RouteHintEngine
         # 按各 Agent manifest.route_hints（priority 降序）施加。research.run 与 trip.*（含

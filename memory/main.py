@@ -5,8 +5,13 @@ import os
 import grpc
 from cockpit.memory.v1 import memory_pb2_grpc
 
+from observability import setup_structured_logging
 from runtime.grpcio import aio_server, bind_port, run_aio_server
-from server import MemoryServicer
+
+# 结构化日志：stdout JSON 带 trace/session + obs.log 上报（badcase 按 trace 检索）
+setup_structured_logging(os.getenv("LOG_LEVEL", "info"), service="memory")
+
+from server import MemoryServicer  # noqa: E402
 
 
 async def serve():

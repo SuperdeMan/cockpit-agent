@@ -1,3 +1,5 @@
 grpcio==1.66.2
 protobuf==7.35.0
 redis==5.0.8
+# obs.log 观测日志出口（best-effort）
+nats-py>=2.6.0

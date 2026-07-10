@@ -68,6 +68,9 @@ class Plan:
     # R4.4 路由歧义澄清：{"question": str, "options": [{"label","send_text"}]}；与非空 steps 互斥
     # （steps 非空时忽略 clarify，母卡 D6-2>D6-3）。None = 无澄清。
     clarify: dict | None = None
+    # 观测（badcase 排查）：Planner LLM 最后一次原始输出。仅供 cloud.planning span
+    # 门控采集（engine），不参与任何编排逻辑；解析失败走 fallback 时它保留失败现场。
+    raw_llm: str = ""
 
 
 @dataclass

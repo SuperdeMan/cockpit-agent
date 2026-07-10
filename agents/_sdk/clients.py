@@ -30,6 +30,25 @@ def _resolve_thinking(thinking) -> bool:
     return str(meta.get("thinking", "")).lower() in ("on", "true", "1", "enabled")
 
 
+def _stamp_obs_meta(req) -> None:
+    """观测贯通：trace/session 随 meta 到 LLM 网关，obs.llm 事件按轮归档。
+    contextvar 由 SDK server 在 Execute 入口设置（一处覆盖全 Agent）；
+    caller_service 仅观测归属，刻意不用 "caller"（那是网关限流桶键）。"""
+    try:
+        from observability.tracing import get_session_id, get_trace_id
+        tid = get_trace_id()
+        if tid:
+            req.meta["trace_id"] = tid
+        sid = get_session_id()
+        if sid:
+            req.meta["session_id"] = sid
+    except Exception:
+        pass
+    svc = os.getenv("AGENT_ID", "")
+    if svc:
+        req.meta["caller_service"] = svc
+
+
 class LLMClient:
     def __init__(self, addr: str | None = None):
         self.addr = addr or os.getenv("LLM_GATEWAY_ADDR", "llm-gateway:50052")
@@ -66,6 +85,7 @@ class LLMClient:
         )
         if think:
             req.meta["thinking"] = "on"
+        _stamp_obs_meta(req)
         for attempt in (1, 2):
             try:
                 resp = await self._stub().Complete(req, timeout=timeout)
@@ -90,6 +110,7 @@ class LLMClient:
         )
         if think:
             req.meta["thinking"] = "on"
+        _stamp_obs_meta(req)
         try:
             async for chunk in self._stub().CompleteStream(req, timeout=timeout):
                 if chunk.delta:

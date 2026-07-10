@@ -1,24 +1,38 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { connectObs } from './api'
-import { AgentList } from './components/AgentList'
-import { CommandBar } from './components/CommandBar'
-import { Dynamics } from './components/Dynamics'
-import { TracePanel } from './components/TracePanel'
-import { VehicleState } from './components/VehicleState'
+import { BadcasesView } from './views/BadcasesView'
+import { LiveView } from './views/LiveView'
+import { LogsView } from './views/LogsView'
+import { SessionsView } from './views/SessionsView'
 import type {
   AgentInfo,
+  LogEntry,
   Span,
   Trace,
+  Turn,
   VehicleState as VehicleStateMap,
 } from './types'
 
+type ViewKey = 'sessions' | 'live' | 'logs' | 'badcases'
+
+const NAV: ReadonlyArray<readonly [ViewKey, string, string]> = [
+  ['sessions', '会话', '轮次下钻 / badcase 定位'],
+  ['live', '总览', '实时链路 / 车辆 / Agent'],
+  ['logs', '日志', '结构化日志检索'],
+  ['badcases', '收藏', 'badcase 列表与重放'],
+]
+
 export default function App() {
+  const [view, setView] = useState<ViewKey>('sessions')
   const [connected, setConnected] = useState(false)
   const [vehicle, setVehicle] = useState<VehicleStateMap>({})
   const [changed, setChanged] = useState<Set<string>>(new Set())
   const [traces, setTraces] = useState<Trace[]>([])
   const [agents, setAgents] = useState<Record<string, AgentInfo>>({})
+  const [lastTurn, setLastTurn] = useState<Turn | null>(null)
+  const [lastLog, setLastLog] = useState<LogEntry | null>(null)
+  const [turnTick, setTurnTick] = useState(0)
   const [clock, setClock] = useState('--:--:--')
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
@@ -94,6 +108,11 @@ export default function App() {
           ].slice(0, 30)
         })
       },
+      onTurn: (turn) => {
+        setLastTurn(turn)
+        setTurnTick((n) => n + 1)
+      },
+      onLog: setLastLog,
       onHealth: (event) => {
         const agentId = typeof event.agent_id === 'string' ? event.agent_id : ''
         if (!agentId) return
@@ -147,6 +166,18 @@ export default function App() {
               typeof event.circuit === 'string'
                 ? event.circuit
                 : previous[agentId]?.circuit,
+            route_hits:
+              typeof event.route_hits === 'number'
+                ? event.route_hits
+                : previous[agentId]?.route_hits,
+            degrade:
+              typeof event.degrade === 'number'
+                ? event.degrade
+                : previous[agentId]?.degrade,
+            llm_tokens:
+              typeof event.llm_tokens === 'number'
+                ? event.llm_tokens
+                : previous[agentId]?.llm_tokens,
           },
         }))
       },
@@ -172,6 +203,18 @@ export default function App() {
             <h1>座舱 Agent 可观测台</h1>
           </div>
         </div>
+        <nav className="hud-nav" aria-label="视图切换">
+          {NAV.map(([key, label, hint]) => (
+            <button
+              key={key}
+              className={'hud-nav__item' + (view === key ? ' hud-nav__item--on' : '')}
+              onClick={() => setView(key)}
+              title={hint}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
         <div className="hud-status">
           <span className="hud-clock">{clock} · LIVE</span>
           <span className={'badge' + (connected ? '' : ' offline')}>
@@ -181,17 +224,12 @@ export default function App() {
         </div>
       </header>
 
-      <main className="hud-main">
-        <div className="hud-col left">
-          <CommandBar />
-          <TracePanel traces={traces} />
-        </div>
-        <div className="hud-col right">
-          <VehicleState state={vehicle} changed={changed} />
-          <Dynamics state={vehicle} />
-          <AgentList agents={agents} />
-        </div>
-      </main>
+      {view === 'live' && (
+        <LiveView vehicle={vehicle} changed={changed} traces={traces} agents={agents} />
+      )}
+      {view === 'sessions' && <SessionsView lastTurn={lastTurn} />}
+      {view === 'logs' && <LogsView lastLog={lastLog} />}
+      {view === 'badcases' && <BadcasesView turnTick={turnTick} />}
 
       <footer className="hud-foot">
         <span>Observability Channel · Best-Effort</span>

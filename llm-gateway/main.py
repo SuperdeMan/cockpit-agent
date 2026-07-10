@@ -5,9 +5,14 @@ import os
 import grpc
 from cockpit.llm.v1 import llm_pb2_grpc, audio_pb2_grpc
 
+from observability import setup_structured_logging
 from runtime.grpcio import aio_server, bind_port, run_aio_server
-from server import LLMGatewayServicer, AudioServiceServicer
-from http_server import start_http_server
+
+# 结构化日志：stdout JSON 带 trace/session + obs.log 上报（badcase 按 trace 检索）
+setup_structured_logging(os.getenv("LOG_LEVEL", "info"), service="llm-gateway")
+
+from server import LLMGatewayServicer, AudioServiceServicer  # noqa: E402
+from http_server import start_http_server  # noqa: E402
 
 
 async def serve():

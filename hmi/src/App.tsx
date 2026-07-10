@@ -19,6 +19,7 @@ import {
   startTTSReply,
   stopTTS,
   setTtsLifecycle,
+  setObsSession,
   syncLlmProvider,
 } from './audio'
 import { wakeKeywordsFor, DEFAULT_SETTINGS, type Msg, type Settings } from './types'
@@ -33,6 +34,7 @@ const WS_TOKEN = (import.meta.env.VITE_WS_TOKEN as string) || ''
 const WS_URL = appendToken(GATEWAY.replace(/^http/, 'ws') + '/ws', WS_TOKEN)
 const AUDIO_API = (import.meta.env.VITE_AUDIO_API_URL as string) || 'http://localhost:50059'
 const SESSION = 'demo-' + Math.random().toString(36).slice(2, 8)
+setObsSession(SESSION) // 观测贯通：ASR 流 span 归属本会话（audio.ts 模块级注入，免逐调用点管道）
 // 请求看门狗：插入"思考中"占位后，若此时长内仍无 final/error 抵达，转超时提示，
 // 杜绝后端真卡死时气泡永久转圈。略高于两网关 90s 端到端窗口。
 const REQUEST_TIMEOUT_MS = 95000
@@ -41,6 +43,15 @@ const uid = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2)
+
+// 观测贯通：每轮请求 HMI 自生成 trace_id 随 meta 上行（edge 兜底逻辑原样透传），
+// 气泡角标可复制 → 可观测台搜索直达该轮。与 dashboard CommandBar 同构。
+const genTraceId = () => {
+  const bytes = new Uint8Array(8)
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) crypto.getRandomValues(bytes)
+  else for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
 
 export default function App({ seedMessages, openSettings }: { seedMessages?: Msg[]; openSettings?: boolean } = {}) {
   const { settings, update } = useSettings()
@@ -481,6 +492,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     const s = settingsRef.current
     if (s.ttsEnabled && s.autoplay) startTTSReply(AUDIO_API, s.voiceId, s.ttsProvider)
     else stopTTS()
+    const traceId = genTraceId() // 观测贯通：本轮 trace，随 meta 上行 + 挂气泡供复制
     // 断线时入有界队列、重连后自动 flush——不再静默丢消息（旧逻辑 readyState!==OPEN 直接 return）
     ws.send({
       text,
@@ -493,13 +505,14 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           locationOverride !== undefined ? locationOverride : currentLocation,
         ),
         ...(metaExtra || {}),
+        trace_id: traceId,
       },
     })
     // 立刻插入"思考中"占位 —— 开放域慢响应也有即时反馈
     const pendingId = uid()
     pendingIdsRef.current.push(pendingId) // 入 FIFO 队尾
     lastDispatchIdRef.current = pendingId // 记为最新轮：只有它驱动 TTS/确认
-    setMessages((m) => [...m, { id: pendingId, role: 'assistant', text: '', pending: true }])
+    setMessages((m) => [...m, { id: pendingId, role: 'assistant', text: '', pending: true, traceId }])
     armWatchdog(pendingId)
   }
 

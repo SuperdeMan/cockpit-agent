@@ -263,7 +263,37 @@ function AssistantBubble({ msg, onAction }: { msg: Msg; onAction: (t: string) =>
       {msg.actions?.map((a, j) => <ActionChip key={j} action={a} />)}
 
       {msg.followUp && <div style={{ marginTop: 8, fontSize: 13, color: FG2, lineHeight: 1.6 }}>{msg.followUp}</div>}
+
+      {!msg.pending && <TraceTag traceId={msg.traceId} />}
     </AIBubbleBase>
+  )
+}
+
+// ─── 观测角标：本轮 trace 短 id，点按复制完整 id → 可观测台搜索直达全链路详情 ───
+function TraceTag({ traceId }: { traceId?: string }) {
+  const [copied, setCopied] = useState(false)
+  if (!traceId) return null
+  const copy = () => {
+    try {
+      void navigator.clipboard?.writeText(traceId)
+    } catch { /* 剪贴板不可用（非 https 等）时静默 */ }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+      <button
+        onClick={copy}
+        title={`复制 trace_id（${traceId}）用于排查`}
+        style={{
+          padding: '2px 8px', borderRadius: 7, background: 'transparent',
+          border: '1px solid var(--au-line)', fontSize: 9.5, color: FG3,
+          cursor: 'pointer', fontFamily: 'inherit', letterSpacing: '0.03em', opacity: 0.55,
+        }}
+      >
+        {copied ? '已复制' : `#${traceId.slice(0, 8)}`}
+      </button>
+    </div>
   )
 }
 
@@ -542,6 +572,7 @@ function ErrorBubble({ msg, retryText, onAction }: { msg: Msg; retryText?: strin
               <span style={{ fontSize: 11.5, color: FG3 }}>或稍后再说</span>
             </div>
           )}
+          <TraceTag traceId={msg.traceId} />
         </div>
       </div>
     </AIBubbleBase>

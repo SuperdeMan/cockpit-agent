@@ -23,7 +23,8 @@ from edge_agents import edge_execute
 from cloud_client import CloudClient
 from edge_call import EdgeCallExecutor, action_to_structured, action_type_for
 from observability.events import EventEmitter, change_source
-from observability.tracing import get_trace_id, new_trace_id, set_trace_id
+from observability.tracing import (get_trace_id, new_trace_id, set_session_id,
+                                   set_trace_id)
 
 logger = logging.getLogger("edge.orchestrator")
 
@@ -63,6 +64,17 @@ def _join_speeches(speeches: list[str]) -> str:
         if s and (not out or out[-1] != s):
             out.append(s)
     return "，".join(out)
+
+
+def _ui_card_type(final) -> str:
+    """从 FinalResult.ui_card(Struct) 读卡片类型（拒识/澄清/业务卡），供轮次状态判定。"""
+    try:
+        fields = final.ui_card.fields
+        if "type" in fields:
+            return fields["type"].string_value or ""
+    except Exception:
+        pass
+    return ""
 
 
 def _group_mixed_intents(intents: list[dict]) -> list[list[dict]]:
@@ -248,6 +260,78 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         task.add_done_callback(self._bg.discard)
 
     async def Handle(self, request, context):
+        """观测收口 wrapper：一次 Handle = 一条 obs.turn（badcase 排查的核心数据）。
+
+        编排逻辑全部在 _handle_impl；此处只旁路累积流经的事件（speech/final/卡片），
+        在流结束/取消/异常时 best-effort 发轮次事件——不改变事件语义与时序。
+        端侧是所有请求的漏斗（本地快路径/混合/上云/确认续接都流经这里），单点收口后
+        云端内部路径怎么变，turn 完整性都不受影响。
+        """
+        trace_id = _ensure_trace_id(request)
+        set_session_id(request.session_id)
+        started = time.perf_counter()
+        ts_ms = int(time.time() * 1000)
+        turn = {"path": ""}
+        speeches: list[str] = []
+        deltas: list[str] = []
+        card_type = ""
+        actions_n = 0
+        need_confirm = False
+        status = ""
+        error = ""
+        try:
+            async for event in self._handle_impl(request, context, turn):
+                which = event.WhichOneof("event")
+                if which == "final":
+                    f = event.final
+                    if f.speech:
+                        speeches.append(f.speech)
+                    actions_n += len(f.actions)
+                    need_confirm = need_confirm or f.need_confirm
+                    card_type = _ui_card_type(f) or card_type
+                elif which == "speech_delta":
+                    deltas.append(event.speech_delta)
+                yield event
+        except (asyncio.CancelledError, GeneratorExit):
+            status = "cancelled"
+            raise
+        except Exception as e:
+            status, error = "err", str(e)
+            raise
+        finally:
+            if not status:
+                if card_type == "rejected":
+                    status = "rejected"
+                elif card_type == "intent_choice":
+                    status = "clarify"
+                elif need_confirm:
+                    status = "need_confirm"
+                elif not speeches and not deltas and not actions_n:
+                    status = "empty"
+                else:
+                    status = "ok"
+            meta = dict(request.meta) if request.meta else {}
+            try:
+                # emit_turn 入队即返回（无真实 await 悬挂点），取消/关闭路径下同样安全。
+                await self.obs.emit_turn(
+                    trace_id,
+                    request.session_id,
+                    user_text=request.text,
+                    speech=_join_speeches(speeches) or "".join(deltas),
+                    status=status,
+                    path=turn.get("path", ""),
+                    input_source=meta.get("input_source", ""),
+                    is_confirmation=request.is_confirmation,
+                    ui_card_type=card_type,
+                    actions=actions_n,
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                    error=error,
+                    ts=ts_ms,
+                )
+            except Exception:
+                pass
+
+    async def _handle_impl(self, request, context, turn: dict):
         trace_id = _ensure_trace_id(request)
         self._change_source.set("T0")
         # 把端侧真实车辆电量注入 meta，透传给云端 Agent（充电规划等），避免云端读 memory
@@ -312,6 +396,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     speeches = []
                     break
             if speeches:
+                turn["path"] = "local"
                 await self._emit_span(
                     trace_id,
                     "route.multi",
@@ -378,6 +463,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     )
 
             if cloud_parts:
+                turn["path"] = "mixed"
                 await self._emit_span(
                     trace_id,
                     "route.mixed",
@@ -434,6 +520,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 return
             else:
                 # 全部本地（不应该到这里，multi 应该已经捕获）
+                turn["path"] = "local"
                 if local_speeches:
                     combined = _join_speeches(local_speeches)
                     final = orchestrator_pb2.FinalResult(speech=combined)
@@ -481,6 +568,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         type=action["type"], payload=_struct(action["payload"]),
                         require_confirm=action["require_confirm"]))
                 logger.info("LOCAL %s -> %s", intent["name"], speech)
+                turn["path"] = "local"
                 await self._emit_span(
                     trace_id,
                     "route.local",
@@ -495,6 +583,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             logger.info("LOCAL confirm-required %s -> route to cloud", intent["name"])
 
         # 慢路径：上云编排
+        turn["path"] = "cloud"
         logger.info("CLOUD route: %s", request.text)
         await self._emit_span(
             trace_id,

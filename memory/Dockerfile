@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY gen/python /app/gen/python
 COPY memory /app/memory
 COPY runtime /app/runtime
+COPY observability /app/observability
 
 ENV PYTHONPATH=/app:/app/gen/python
 ENV MEMORY_PORT=50053

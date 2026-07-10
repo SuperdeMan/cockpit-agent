@@ -17,6 +17,13 @@ _current_trace: contextvars.ContextVar[str] = contextvars.ContextVar(
     default="",
 )
 
+# 会话上下文：与 trace 同模式。请求入口（edge/cloud Handle、SDK Execute）set 一次，
+# 观测事件（events._emit）与结构化日志自动携带——不必逐个 emit_span 调用点透传。
+_current_session: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "current_session_id",
+    default="",
+)
+
 # OTel SDK 句柄（延迟初始化）
 _tracer = None
 
@@ -69,6 +76,14 @@ def get_trace_id() -> str:
 
 def set_trace_id(trace_id: str):
     _current_trace.set(trace_id)
+
+
+def get_session_id() -> str:
+    return _current_session.get()
+
+
+def set_session_id(session_id: str):
+    _current_session.set(session_id or "")
 
 
 def trace_context_from_meta(meta: dict) -> str:

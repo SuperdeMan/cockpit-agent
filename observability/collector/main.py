@@ -8,7 +8,7 @@ import os
 import uvicorn
 
 from observability.collector import otel_bridge
-from observability.collector.server import create_app, ingest_loop
+from observability.collector.server import cleanup_loop, create_app, ingest_loop
 
 logging.basicConfig(
     level=getattr(
@@ -25,6 +25,7 @@ app = create_app()
 async def _startup() -> None:
     otel_bridge.init_otel_bridge()  # T3.6: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set
     asyncio.create_task(ingest_loop(app))
+    asyncio.create_task(cleanup_loop(app))  # 保留期清理（badcase 豁免）
 
 
 if __name__ == "__main__":
