@@ -1,26 +1,5 @@
 import type { Span, Trace } from '../types'
-
-function nodeClass(node: string): string {
-  if (
-    node.startsWith('route.local') ||
-    node.startsWith('route.multi') ||
-    node.startsWith('step.edge')
-  )
-    return 'trace-node--edge'
-  if (node.startsWith('val')) return 'trace-node--val'
-  if (node.startsWith('cloud.planning')) return 'trace-node--llm'
-  if (node.startsWith('step.tool')) return 'trace-node--tool'
-  if (node.startsWith('suspend') || node.startsWith('route.mixed'))
-    return 'trace-node--wait'
-  if (
-    node.startsWith('route.cloud') ||
-    node.startsWith('step.agent') ||
-    node.startsWith('aggregate') ||
-    node.startsWith('t2')
-  )
-    return 'trace-node--cloud'
-  return 'trace-node--default'
-}
+import { LEGEND, nodeClass } from './spanMeta'
 
 type Change = { key: string; old: unknown; new: unknown }
 
@@ -28,15 +7,6 @@ function changesOf(span: Span): Change[] {
   const changes = span.attrs?.changes
   return Array.isArray(changes) ? (changes as Change[]) : []
 }
-
-const LEGEND: ReadonlyArray<readonly [string, string]> = [
-  ['端侧', 'var(--n-edge)'],
-  ['云端', 'var(--n-cloud)'],
-  ['VAL', 'var(--n-val)'],
-  ['LLM', 'var(--n-llm)'],
-  ['工具', 'var(--n-tool)'],
-  ['挂起', 'var(--n-wait)'],
-]
 
 function SpanRow({ span }: { span: Span }) {
   const intent = typeof span.attrs?.intent === 'string' ? span.attrs.intent : ''
@@ -79,10 +49,16 @@ export function TracePanel({ traces }: { traces: Trace[] }) {
         )}
         {traces.map((trace) => {
           const spans = [...trace.spans].sort((a, b) => a.ts - b.ts)
+          const sessionId = spans.map((s) => (s as Span & { session_id?: string }).session_id).find(Boolean)
           return (
             <div key={trace.trace_id} className="trace">
               <div className="trace__head">
-                <span className="trace__id">#{trace.trace_id.slice(0, 12)}</span>
+                <span className="trace__id">
+                  {trace.trace_id === 'unknown'
+                    ? '未带 trace_id 的孤儿 span'
+                    : `#${trace.trace_id.slice(0, 12)}`}
+                </span>
+                {sessionId && <span className="trace__pill">{sessionId}</span>}
                 <span className="trace__pill">{spans.length} span</span>
               </div>
               <div className="trace-tl">
