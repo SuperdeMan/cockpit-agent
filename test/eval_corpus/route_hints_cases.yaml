@@ -128,3 +128,61 @@
   expect_final_intents: []
   source: "docs/design/2026-07-11-reminder-agent-design.md §6.3"
   tags: [reminder, guard, manual]
+
+# ── reminder P1a（2026-07-11）：update 改时间 / recur / snooze / 序号续接 ──
+- text: 把接孩子的提醒改到五点
+  initial_intents: []
+  expect_final_intents: [reminder.update]
+  source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
+  tags: [reminder, update]
+
+- text: 买牛奶那条推迟到明天九点
+  initial_intents: []
+  expect_final_intents: [reminder.update]
+  source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
+  tags: [reminder, update]
+
+- text: 改第二条到晚上八点
+  initial_intents: []
+  expect_final_intents: [reminder.update]
+  source: "澄清话术「改第几条」的续接词形"
+  tags: [reminder, update, ordinal]
+
+- text: 空调改到26度
+  initial_intents: []
+  # 设备量：pattern 要求"改到"后紧跟时间词形 + guard 空调 双保险
+  expect_final_intents: []
+  source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
+  tags: [reminder, guard, hvac]
+
+- text: 音量改到50
+  initial_intents: []
+  expect_final_intents: []
+  source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
+  tags: [reminder, guard, volume]
+
+- text: 每天早上八点提醒我吃药
+  initial_intents: []
+  expect_final_intents: [reminder.create]
+  source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a recur"
+  tags: [reminder, recur]
+
+- text: 过10分钟再提醒我
+  initial_intents: []
+  # snooze 走 create 词形，Agent 内改期原条目（不新建尸体）
+  expect_final_intents: [reminder.create]
+  source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a snooze"
+  tags: [reminder, snooze]
+
+- text: 取消第二条
+  initial_intents: []
+  # 澄清话术「取消第几条」的续接词形（P1a 给 cancel hint 新增序号形）
+  expect_final_intents: [reminder.cancel]
+  source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
+  tags: [reminder, cancel, ordinal]
+
+- text: 完成第二条
+  initial_intents: []
+  expect_final_intents: [reminder.complete]
+  source: "澄清话术「完成第几条」的续接词形"
+  tags: [reminder, complete, ordinal]

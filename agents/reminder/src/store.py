@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, tzinfo
 
-from .timeparse import business_tz, format_display
+from .timeparse import business_tz, format_display, recur_label
 
 logger = logging.getLogger("agent.reminder.store")
 
@@ -44,6 +44,8 @@ class Reminder:
                 if self.fire_at else ""}
         if self.fire_at:
             item["fire_at_ms"] = self.fire_at * 1000
+        if self.recur:
+            item["recur_label"] = recur_label(self.recur)   # P1a：重复标识（每天/工作日/每周X）
         return item
 
 
@@ -156,6 +158,36 @@ class ReminderStore:
         if not r or r.user_id != user_id:
             return False
         r.status = status
+        return True
+
+    async def update_fire_at(self, user_id: str, rid: str, fire_at: int) -> bool:
+        """改期 / snooze：新时间并回到 pending 等下一次触发（fired 尸体由此收编）。"""
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                tag = await conn.execute(
+                    "UPDATE reminder_item SET fire_at=$1, status='pending' "
+                    "WHERE id=$2 AND user_id=$3 AND status=ANY($4)",
+                    fire_at, rid, user_id, list(ACTIVE))
+            return tag.endswith("1")
+        r = self._mem.get(rid)
+        if not r or r.user_id != user_id or r.status not in ACTIVE:
+            return False
+        r.fire_at, r.status = fire_at, PENDING
+        return True
+
+    async def roll_recurring(self, user_id: str, rid: str, next_fire: int) -> bool:
+        """重复系列触发后滚动到下一次（fired→pending；fired_at 保留为上次触发时刻）。"""
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                tag = await conn.execute(
+                    "UPDATE reminder_item SET fire_at=$1, status='pending' "
+                    "WHERE id=$2 AND user_id=$3 AND status='fired'",
+                    next_fire, rid, user_id)
+            return tag.endswith("1")
+        r = self._mem.get(rid)
+        if not r or r.user_id != user_id or r.status != FIRED:
+            return False
+        r.fire_at, r.status = next_fire, PENDING
         return True
 
     async def cancel_all(self, user_id: str) -> int:

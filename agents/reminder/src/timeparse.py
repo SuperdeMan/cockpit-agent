@@ -54,6 +54,9 @@ def _cn2int(s: str | None) -> int | None:
 _NUM = r"(\d+|[一两二三四五六七八九十]+)"
 _REL_RE = re.compile(_NUM + r"\s*个?\s*(半)?\s*(秒钟|秒|分钟|小时|钟头)\s*(?:以后|之后|后)")
 _REL_HALF_RE = re.compile(r"半\s*个?\s*(小时|钟头)\s*(?:以后|之后|后)")
+# 「过N分钟（再叫我）」：前缀"过"表相对，无"后"缀（P1a snooze 自然说法）
+_REL_GUO_RE = re.compile(r"过\s*" + _NUM + r"\s*个?\s*(半)?\s*(秒钟|秒|分钟|小时|钟头)")
+_REL_GUO_HALF_RE = re.compile(r"过\s*半\s*个?\s*(小时|钟头)")
 # 长词在前（"大后天"含"后天"）；今晚/明早/明晚 自带段位
 _DAY_WORDS = [("大后天", 3, ""), ("后天", 2, ""), ("明早", 1, "am"), ("明晚", 1, "eve"),
               ("明天", 1, ""), ("今晚", 0, "eve"), ("今天", 0, "")]
@@ -103,7 +106,7 @@ def parse_time_text(text: str, *, now: datetime | None = None,
         return ParsedTime(FAIL)
 
     # 1) 相对（带数量的规则优先，避免"一个半小时后"被裸"半小时后"截胡）
-    m = _REL_RE.search(t)
+    m = _REL_RE.search(t) or _REL_GUO_RE.search(t)
     if m:
         n = _cn2int(m.group(1))
         if n is not None:
@@ -115,7 +118,7 @@ def parse_time_text(text: str, *, now: datetime | None = None,
             else:
                 delta = timedelta(hours=n, minutes=30 if half else 0)
             return _ok(now_utc + delta, ln, tz)
-    if _REL_HALF_RE.search(t):
+    if _REL_HALF_RE.search(t) or _REL_GUO_HALF_RE.search(t):
         return _ok(now_utc + timedelta(minutes=30), ln, tz)
 
     # 2) 日（优先级：日词 > 周X > N月N日 > N号）
@@ -144,7 +147,10 @@ def parse_time_text(text: str, *, now: datetime | None = None,
             mo, d = _cn2int(m.group(1)), _cn2int(m.group(2))
             if mo and d:
                 y = ln.year + (1 if (mo, d) < (ln.month, ln.day) else 0)
-                day_date = ln.date().replace(year=y, month=mo, day=d)
+                try:
+                    day_date = ln.date().replace(year=y, month=mo, day=d)
+                except ValueError:
+                    return ParsedTime(FAIL)  # "2月30号"：不落 N号 分支误判，交给 LLM 兜底/追问
     if day_date is None:
         m = _DOM_RE.search(t)
         if m:
@@ -155,7 +161,10 @@ def parse_time_text(text: str, *, now: datetime | None = None,
                     mo += 1
                     if mo > 12:
                         mo, y = 1, y + 1
-                day_date = ln.date().replace(year=y, month=mo, day=d)
+                try:
+                    day_date = ln.date().replace(year=y, month=mo, day=d)
+                except ValueError:
+                    return ParsedTime(FAIL)  # "31号"于小月：诚实失败不猜下月
 
     # 3) 段位（独立段位词覆盖/补充日词内嵌段位）
     for w, k in _SEGS:
@@ -228,12 +237,74 @@ def parse_time_text(text: str, *, now: datetime | None = None,
 
 
 def strip_time_expressions(text: str) -> str:
-    """移除已识别的时间子串（供标题清洗）。"""
+    """移除已识别的时间子串（供标题清洗）。重复词形（每天/每周X）先剥，否则残留"每"污染标题。"""
     t = text or ""
-    for rx in (_REL_HALF_RE, _REL_RE, _MD_RE, _DOM_RE, _WEEK_RE, _HHMM_RE, _CLOCK_RE):
+    for rx in (_RECUR_WORKDAY_RE, _RECUR_WEEKLY_RE, _RECUR_DAILY_RE,
+               _REL_HALF_RE, _REL_GUO_HALF_RE, _REL_RE, _REL_GUO_RE,
+               _MD_RE, _DOM_RE, _WEEK_RE, _HHMM_RE, _CLOCK_RE):
         t = rx.sub("", t)
     for w, _, _ in _DAY_WORDS:
         t = t.replace(w, "")
     for w, _ in _SEGS:
         t = t.replace(w, "")
     return t.strip(" ，。,、的")
+
+
+# ── 重复规则（P1a）：解析 / 展示 / 首触发对齐 / 触发后滚动 ──
+_RECUR_WORKDAY_RE = re.compile(r"每个?工作日")
+_RECUR_DAILY_RE = re.compile(r"每天|每日|天天")
+_RECUR_WEEKLY_RE = re.compile(r"每个?(?:周|星期|礼拜)([一二三四五六日天])")
+
+
+def parse_recur(text: str) -> str:
+    """重复词形 → 'daily' | 'workday' | 'weekly:1..7' | ''（无重复）。"""
+    t = text or ""
+    if _RECUR_WORKDAY_RE.search(t):
+        return "workday"
+    m = _RECUR_WEEKLY_RE.search(t)
+    if m:
+        idx = "一二三四五六".find(m.group(1))
+        return f"weekly:{7 if idx < 0 else idx + 1}"
+    if _RECUR_DAILY_RE.search(t):
+        return "daily"
+    return ""
+
+
+def recur_label(recur: str) -> str:
+    """'daily'→每天 / 'workday'→工作日 / 'weekly:3'→每周三；供话术与卡片展示。"""
+    if recur == "daily":
+        return "每天"
+    if recur == "workday":
+        return "工作日"
+    if recur.startswith("weekly:"):
+        try:
+            return f"每周{'一二三四五六日'[int(recur.split(':')[1]) - 1]}"
+        except Exception:
+            return "每周"
+    return ""
+
+
+def align_workday(fire_at: int, tz: tzinfo | None = None) -> int:
+    """工作日系列首触发落在周末 → 顺延到下周一同时刻。"""
+    tz = tz or business_tz()
+    dt = datetime.fromtimestamp(fire_at, tz)
+    while dt.weekday() >= 5:
+        dt += timedelta(days=1)
+    return int(dt.timestamp())
+
+
+def next_recur_fire(recur: str, prev_fire: int, now_ts: int,
+                    tz: tzinfo | None = None) -> int:
+    """触发后滚动到下一次（恒 > now：停机错过的次数直接跳过，不补发轰炸）。
+    中国无夏令时，按本地墙钟推进天/周步长安全。"""
+    tz = tz or business_tz()
+    step = timedelta(days=7) if recur.startswith("weekly") else timedelta(days=1)
+    dt = datetime.fromtimestamp(prev_fire, tz)
+    while True:
+        dt += step
+        if recur == "workday":
+            while dt.weekday() >= 5:
+                dt += timedelta(days=1)
+        ts = int(dt.timestamp())
+        if ts > now_ts:
+            return ts

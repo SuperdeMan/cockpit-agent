@@ -14,9 +14,10 @@ from datetime import datetime, timedelta, timezone
 from agents._sdk import BaseAgent, AgentResult, NEED_CONFIRM, NEED_SLOT, FAILED
 from agents._sdk.shared_state import REMINDERS_ACTIVE, REMINDER_PENDING
 
-from .store import Reminder, ReminderStore, DONE, CANCELLED
-from .timeparse import (OK as T_OK, FAIL as T_FAIL, ParsedTime, business_tz,
-                        format_display, parse_time_text, strip_time_expressions)
+from .store import Reminder, ReminderStore, DONE, CANCELLED, FIRED
+from .timeparse import (OK as T_OK, FAIL as T_FAIL, ParsedTime, align_workday,
+                        business_tz, format_display, parse_recur, parse_time_text,
+                        recur_label, strip_time_expressions)
 
 logger = logging.getLogger("agent.reminder")
 
@@ -28,6 +29,7 @@ _CMD_STRIP_RE = re.compile(
     r"^(麻烦|请|帮我|给我)?(再)?(提醒我|叫我|别忘了|记得|记一下|记个待办|记个|设个提醒|建个提醒|待办[:：]?)+")
 _ORDINAL_RE = re.compile(r"第([一二三四五六七八九十0-9]+)\s*[条个项]?")
 _ALL_RE = re.compile(r"全部|所有|都|清空|全删")
+_AGAIN_RE = re.compile(r"再(提醒|叫)")   # P1a：显式 snooze 标记（「过10分钟再提醒我」）
 _CN_IDX = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 
@@ -68,7 +70,8 @@ class ReminderAgent(BaseAgent):
     # ── 请求-响应 ──
     async def handle(self, intent, ctx, meta) -> AgentResult:
         handlers = {"reminder.create": self._create, "reminder.list": self._list,
-                    "reminder.complete": self._complete, "reminder.cancel": self._cancel}
+                    "reminder.complete": self._complete, "reminder.cancel": self._cancel,
+                    "reminder.update": self._update}
         h = handlers.get(intent.name)
         if not h:
             return AgentResult(status=FAILED, speech="提醒助手暂不支持该请求。")
@@ -82,15 +85,25 @@ class ReminderAgent(BaseAgent):
     def _uid(ctx) -> str:
         return ctx.user_id or "u1"
 
-    # ── create ──
+    # ── create（含 P1a：update 续接 / snooze 收编 / 重复规则）──
     async def _create(self, intent, ctx, meta) -> AgentResult:
         raw = intent.raw_text or ""
         title = (intent.slots.get("title") or "").strip()
         time_text = (intent.slots.get("time_text") or "").strip()
         if not title or title == raw:            # route_hints 灌整句 / planner 未抽槽
             title = self._extract_title(raw)
-        if not title:
-            title = await self._load_pending(ctx)  # 上一轮 NEED_SLOT 只差时间
+        pend_update_id = ""
+        if not title:                            # 上一轮 NEED_SLOT 只差时间（create 或 update）
+            pend = await self._load_pending(ctx)
+            title = (pend.get("title") or "").strip()
+            if pend.get("action") == "update":
+                pend_update_id = pend.get("id") or ""
+        snooze_target = None
+        if not title and _AGAIN_RE.search(raw):  # 「过10分钟再叫我」无标题 → 最近 fired
+            fired, _ = await self.store.list_split(self._uid(ctx), statuses=(FIRED,))
+            if fired:
+                snooze_target = max(fired, key=lambda r: r.fired_at)
+                title = snooze_target.title
         if not title:
             return AgentResult(status=NEED_SLOT, speech="要提醒你什么事？",
                                follow_up="比如：明天早上八点提醒我带充电线",
@@ -113,23 +126,95 @@ class ReminderAgent(BaseAgent):
         if pt.status == T_FAIL:
             pt = await self._llm_time_fallback(time_text or raw)
         if pt.status != T_OK:
-            await self._save_pending(ctx, title)
+            await self._save_pending(ctx, title, update_id=pend_update_id)
             return AgentResult(status=NEED_SLOT,
                                speech=f"好的，{title}。什么时候提醒你？",
                                follow_up="比如：明天早上八点 / 半小时后",
                                missing_slots=["time_text"])
         if pt.fire_at <= int(now.timestamp()):
-            await self._save_pending(ctx, title)
+            await self._save_pending(ctx, title, update_id=pend_update_id)
             return AgentResult(status=NEED_SLOT,
                                speech=f"{pt.display}已经过了，换个时间？",
                                missing_slots=["time_text"])
+        # ①update 缺时间的续接轮：改原条目，不新建
+        if pend_update_id:
+            return await self._apply_update(ctx, pend_update_id, title, pt)
+        # ②重复规则：工作日系列首触发落周末 → 顺延周一
+        recur = parse_recur(raw) or parse_recur(time_text)
+        fire_at, display = pt.fire_at, pt.display
+        if recur == "workday":
+            aligned = align_workday(fire_at, self._tz)
+            if aligned != fire_at:
+                fire_at, display = aligned, format_display(aligned, now=now, tz=self._tz)
+        # ③snooze/尸体收编：同名 fired 一律改期原条目（「稍后10分钟」按钮即此路径）；
+        #   显式「再提醒」时同名 pending 也改期不重建 —— 根治 P0 的 fired 尸体堆积
+        target = snooze_target or await self._reschedule_target(ctx, title, raw)
+        if target:
+            await self.store.update_fire_at(self._uid(ctx), target.id, fire_at)
+            await self._refresh_active(ctx)
+            await self._clear_pending(ctx)
+            r2 = await self.store.get(self._uid(ctx), target.id)
+            return AgentResult(speech=f"好的，{display}再提醒你：{target.title}。",
+                               ui_card=self._card_single(r2, "updated"))
         r = await self.store.add(Reminder(
             user_id=self._uid(ctx), vehicle_id=ctx.vehicle_id or "",
-            title=title, kind="time", fire_at=pt.fire_at))
+            title=title, kind="time", fire_at=fire_at, recur=recur))
         await self._refresh_active(ctx)
         await self._clear_pending(ctx)
-        return AgentResult(speech=f"好的，{pt.display}提醒你：{title}。",
-                           ui_card=self._card_single(r, "created"))
+        speech = (f"好的，{recur_label(recur)} {display.split(' ')[-1]} 提醒你：{title}，"
+                  f"首次{display}。" if recur
+                  else f"好的，{display}提醒你：{title}。")
+        return AgentResult(speech=speech, ui_card=self._card_single(r, "created"))
+
+    async def _reschedule_target(self, ctx, title: str, raw: str) -> Reminder | None:
+        """同名 fired 尸体一律收编改期；显式「再提醒/再叫」时同名 pending 也改期不重建。"""
+        uid = self._uid(ctx)
+        exact = [h for h in await self.store.find_by_title(uid, title)
+                 if h.title == title]
+        fired = [h for h in exact if h.status == FIRED]
+        if fired:
+            return fired[0]
+        if _AGAIN_RE.search(raw) and exact:
+            return exact[0]
+        return None
+
+    async def _apply_update(self, ctx, rid: str, title: str, pt: ParsedTime) -> AgentResult:
+        """改期落地（update 直达轮与缺时间续接轮共用）。"""
+        ok = await self.store.update_fire_at(self._uid(ctx), rid, pt.fire_at)
+        await self._refresh_active(ctx)
+        await self._clear_pending(ctx)
+        if not ok:
+            return AgentResult(status=FAILED,
+                               speech="这条提醒不在了，说「看看我的提醒」我给你列一下。")
+        r2 = await self.store.get(self._uid(ctx), rid)
+        return AgentResult(speech=f"好的，「{title}」改到{pt.display}。",
+                           ui_card=self._card_single(r2, "updated"))
+
+    # ── update（P1a：改时间；缺时间经 REMINDER_PENDING(action=update) 两轮续接）──
+    async def _update(self, intent, ctx, meta) -> AgentResult:
+        raw = intent.raw_text or ""
+        hits = await self._resolve_targets(ctx, raw, intent.slots)
+        if not hits:
+            return AgentResult(status=FAILED,
+                               speech="没找到要改的提醒，说「看看我的提醒」我给你列一下。")
+        if len(hits) > 1:
+            return await self._clarify_multi(ctx, hits, "改")
+        r = hits[0]
+        now = self._now_utc()
+        tt = (intent.slots.get("time_text") or "").strip()
+        pt = parse_time_text(tt, now=now, tz=self._tz) if tt else ParsedTime(T_FAIL)
+        if pt.status == T_FAIL:
+            pt = parse_time_text(raw, now=now, tz=self._tz)
+        if pt.status == T_FAIL:
+            pt = await self._llm_time_fallback(tt or raw)
+        if pt.status != T_OK or pt.fire_at <= int(now.timestamp()):
+            await self._save_pending(ctx, r.title, update_id=r.id)
+            speech = (f"{pt.display}已经过了，换个时间？" if pt.status == T_OK
+                      else f"「{r.title}」改到什么时候？")
+            return AgentResult(status=NEED_SLOT, speech=speech,
+                               follow_up="比如：明天早上八点 / 晚上七点半",
+                               missing_slots=["time_text"])
+        return await self._apply_update(ctx, r.id, r.title, pt)
 
     @staticmethod
     def _extract_title(raw: str) -> str:
@@ -156,7 +241,9 @@ class ReminderAgent(BaseAgent):
             iso = json.loads(m.group(0)).get("iso") if m else None
             if not iso:
                 return ParsedTime(T_FAIL)
-            dt = datetime.fromisoformat(iso).replace(tzinfo=self._tz)
+            dt = datetime.fromisoformat(iso)
+            if dt.tzinfo is None:        # N2：LLM 偶带 Z/偏移时不误标业务时区
+                dt = dt.replace(tzinfo=self._tz)
             fire = int(dt.astimezone(timezone.utc).timestamp())
             return ParsedTime(T_OK, fire,
                               format_display(fire, now=self._now_utc(), tz=self._tz))
@@ -186,6 +273,10 @@ class ReminderAgent(BaseAgent):
             d = day0 + timedelta(days=1)
             view, label = "day", f"明天 · {d.month}月{d.day}日"
             frm, to = ep(d), ep(d + timedelta(days=1))
+        elif "大后天" in text:            # B1：长词在前，否则被"后天"分支截胡错一天
+            d = day0 + timedelta(days=3)
+            view, label = "day", f"大后天 · {d.month}月{d.day}日"
+            frm, to = ep(d), ep(d + timedelta(days=1))
         elif "后天" in text:
             d = day0 + timedelta(days=2)
             view, label = "day", f"后天 · {d.month}月{d.day}日"
@@ -194,7 +285,14 @@ class ReminderAgent(BaseAgent):
             label, frm, to = "未来三天", ep(now_utc), ep(day0 + timedelta(days=3))
         elif re.search(r"这周|本周", text):
             label, frm, to = "这周", ep(now_utc), ep(day0 + timedelta(days=7 - ln.weekday()))
-        # 词表外区间（如"下个月"）：P0 诚实回退"全部"（frm=0 含过期未办项），任意区间归 P1
+        elif re.search(r"下个?月", text):  # P1a：月区间（低密度数据，multi 分组列表足够）
+            first_next = (day0.replace(day=1) + timedelta(days=32)).replace(day=1)
+            first_after = (first_next + timedelta(days=32)).replace(day=1)
+            label, frm, to = f"下个月 · {first_next.month}月", ep(first_next), ep(first_after)
+        elif re.search(r"这个?月|本月", text):
+            nxt = (day0.replace(day=1) + timedelta(days=32)).replace(day=1)
+            label, frm, to = f"这个月 · {day0.month}月", ep(now_utc), ep(nxt)
+        # 词表外区间：诚实回退"全部"（frm=0 含过期未办项）
 
         times, todos = await self.store.list_split(self._uid(ctx), from_ts=frm, to_ts=to)
         if todo_only:
@@ -222,6 +320,11 @@ class ReminderAgent(BaseAgent):
         if len(hits) > 1:
             return await self._clarify_multi(ctx, hits, "完成")
         r = hits[0]
+        if r.recur:
+            # 重复系列：「完成」只确认本次，不杀系列（列表恒显示下一次）；结束系列用「取消」
+            nxt = r.to_card_item(now=self._now_utc(), tz=self._tz).get("time_display", "")
+            return AgentResult(speech=f"好，这次完成了。「{r.title}」{recur_label(r.recur)}"
+                                      f"还会提醒，下次{nxt}；不需要了说「取消{r.title}」。")
         await self.store.set_status(self._uid(ctx), r.id, DONE)
         await self._refresh_active(ctx)
         return AgentResult(speech=f"「{r.title}」已完成。")
@@ -279,7 +382,9 @@ class ReminderAgent(BaseAgent):
         q = (slots.get("title") or "").strip()
         if not q or q == raw:
             q = self._extract_title(re.sub(
-                r"完成提醒[:：]|完成|办完|做完|搞定|取消|删掉|删除|不用|那条|这条|了", "", raw))
+                r"完成提醒[:：]|完成|办完|做完|搞定|取消|删掉|删除|不用|那条|这条"
+                r"|把|改到|改成|推迟到?|提前到?|延到|换到|改个?时间|的提醒|的待办|了",
+                "", raw))
         return await self.store.find_by_title(uid, q) if q else []
 
     async def _clarify_multi(self, ctx, hits: list[Reminder], action: str) -> AgentResult:
@@ -297,7 +402,7 @@ class ReminderAgent(BaseAgent):
                 "todos": [r.to_card_item(now=now_utc, tz=self._tz) for r in hits if not r.fire_at]}
         return AgentResult(status=NEED_SLOT,
                            speech=f"有 {len(hits)} 条都能对上：{lines}。要{action}哪条？"
-                                  f"说「第几条」或换个更具体的说法。",
+                                  f"说「{action}第几条」或换个更具体的说法。",
                            ui_card=card)
 
     # ── shared_state（conventions §9）──
@@ -308,19 +413,23 @@ class ReminderAgent(BaseAgent):
         await ctx.save_shared_state(REMINDERS_ACTIVE, {
             "items": [{"id": r.id, "title": r.title} for r in items[:10]]})
 
-    async def _save_pending(self, ctx, title: str) -> None:
-        await ctx.save_shared_state(REMINDER_PENDING, {"title": title})
+    async def _save_pending(self, ctx, title: str, update_id: str = "") -> None:
+        """追问上下文：update_id 非空表示这是「改期缺时间」的续接（P1a）。"""
+        pend = {"title": title}
+        if update_id:
+            pend.update(action="update", id=update_id)
+        await ctx.save_shared_state(REMINDER_PENDING, pend)
 
     async def _clear_pending(self, ctx) -> None:
         await ctx.save_shared_state(REMINDER_PENDING, {})
 
-    async def _load_pending(self, ctx) -> str:
+    async def _load_pending(self, ctx) -> dict:
         data = await ctx.load_shared_state(REMINDER_PENDING)
         try:
             d = json.loads(data) if isinstance(data, str) else (data or {})
-            return (d.get("title") or "").strip()
+            return d if isinstance(d, dict) else {}
         except Exception:
-            return ""
+            return {}
 
     def _card_single(self, r: Reminder, context: str) -> dict:
         return {"type": "reminder_card", "context": context,

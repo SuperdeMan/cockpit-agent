@@ -171,3 +171,147 @@ async def test_create_past_explicit_time_asks_again():
     a = await _agent()   # 固定时钟 10:00：今天凌晨一点必然已过
     res = await run_handle(a, "reminder.create", raw_text="今天凌晨一点提醒我看球")
     assert res.status == "need_slot" and "已经过了" in res.speech
+
+
+# ── P1a：snooze 收编尸体 / update 两轮 / 重复规则 / 列表范围 ──
+
+async def _fire(a, hours_ahead: int = 7):
+    """把已建条目强制到点（fired），模拟触达后场景。"""
+    return await a.store.claim_due(int(_NOW.timestamp()) + hours_ahead * 3600)
+
+
+@pytest.mark.asyncio
+async def test_snooze_button_reschedules_fired_no_zombie():
+    """「稍后10分钟」按钮（send_text=10分钟后再提醒我X）改期原条目——根治 fired 尸体堆积。"""
+    a = await _agent()
+    await run_handle(a, "reminder.create", raw_text="今天下午三点提醒我给客户回电话")
+    assert len(await _fire(a)) == 1
+    res = await run_handle(a, "reminder.create", raw_text="10分钟后再提醒我给客户回电话")
+    assert res.status == "ok" and "再提醒你" in res.speech
+    assert res.ui_card["context"] == "updated"
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 1 and times[0].status == "pending"     # 同一条改期，无第二条
+
+
+@pytest.mark.asyncio
+async def test_snooze_without_title_targets_latest_fired():
+    a = await _agent()
+    await run_handle(a, "reminder.create", raw_text="今天下午三点提醒我给客户回电话")
+    await _fire(a)
+    res = await run_handle(a, "reminder.create", raw_text="过10分钟再叫我")
+    assert res.status == "ok" and "给客户回电话" in res.speech
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 1 and times[0].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_update_by_title_direct():
+    a = await _agent()
+    await run_handle(a, "reminder.create", raw_text="明天早上八点提醒我带充电线")
+    res = await run_handle(a, "reminder.update", raw_text="把带充电线改到明天九点")
+    assert res.status == "ok" and "改到" in res.speech and "09:00" in res.speech
+    assert res.ui_card["context"] == "updated"
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 1                                       # 改期不是新建
+
+
+@pytest.mark.asyncio
+async def test_update_two_turn_via_pending_action():
+    """「改个时间」缺新时间 → NEED_SLOT 存 action=update → 下一轮裸时间续接改原条目。"""
+    a = await _agent()
+    created = await run_handle(a, "reminder.create", raw_text="明天早上八点提醒我带充电线")
+    rid = created.ui_card["item"]["id"]
+    ctx = make_context()
+    res = await run_handle(a, "reminder.update",
+                           raw_text="把带充电线的提醒改个时间", ctx=ctx)
+    assert res.status == "need_slot" and "改到什么时候" in res.speech
+    pend_json = ctx._memory.upsert_profile.call_args.args[2]
+    assert json.loads(pend_json) == {"title": "带充电线", "action": "update", "id": rid}
+    ctx2 = make_context(context_values={"profile.reminder_pending": pend_json})
+    res2 = await run_handle(a, "reminder.create", raw_text="晚上八点", ctx=ctx2)
+    assert res2.status == "ok" and "改到" in res2.speech
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 1 and times[0].id == rid                # 还是原条目
+
+
+@pytest.mark.asyncio
+async def test_update_multi_match_clarifies():
+    a = await _agent()
+    ctx = make_context()
+    await run_handle(a, "reminder.create", raw_text="今天下午三点提醒我喝水", ctx=ctx)
+    await run_handle(a, "reminder.create", raw_text="今天下午五点提醒我喝水", ctx=ctx)
+    res = await run_handle(a, "reminder.update", slots={"title": "喝水"},
+                           raw_text="把喝水改到晚上八点", ctx=ctx)
+    assert res.status == "need_slot" and "改第几条" in res.speech
+
+
+@pytest.mark.asyncio
+async def test_create_recurring_daily():
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text="每天早上八点提醒我吃药")
+    assert res.status == "ok" and "每天" in res.speech and "首次" in res.speech
+    times, _ = await a.store.list_split("u1")
+    assert times[0].recur == "daily" and times[0].title == "吃药"
+    assert res.ui_card["item"]["recur_label"] == "每天"
+
+
+@pytest.mark.asyncio
+async def test_create_recurring_workday_aligns_weekend():
+    a = await _agent()   # 固定时钟 = 周六：9:30 已过 → 周日 → 工作日对齐到周一
+    res = await run_handle(a, "reminder.create",
+                           raw_text="每个工作日早上九点半提醒我开晨会")
+    assert res.status == "ok"
+    times, _ = await a.store.list_split("u1")
+    lt = datetime.fromtimestamp(times[0].fire_at, _TZ)
+    assert lt.weekday() == 0 and (lt.hour, lt.minute) == (9, 30)
+    assert times[0].recur == "workday"
+
+
+@pytest.mark.asyncio
+async def test_complete_recurring_keeps_series():
+    """重复系列「完成」只确认本次不杀系列；「取消」才结束系列。"""
+    a = await _agent()
+    await run_handle(a, "reminder.create", raw_text="每天早上八点提醒我吃药")
+    res = await run_handle(a, "reminder.complete", raw_text="完成提醒：吃药")
+    assert "下次" in res.speech and "取消" in res.speech
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 1 and times[0].status == "pending"     # 系列还在
+    res2 = await run_handle(a, "reminder.cancel", raw_text="取消吃药的提醒")
+    assert res2.status == "ok"
+    times, _ = await a.store.list_split("u1")
+    assert times == []                                           # 系列级取消
+
+
+@pytest.mark.asyncio
+async def test_list_dahoutian_not_shadowed():
+    """B1 回归：「大后天」不被"后天"分支截胡错一天。"""
+    a = await _agent()
+    await run_handle(a, "reminder.create", raw_text="大后天晚上八点提醒我洗车")
+    res = await run_handle(a, "reminder.list", raw_text="大后天有什么安排")
+    assert res.ui_card["date_label"].startswith("大后天")
+    assert res.ui_card["items"][0]["title"] == "洗车"
+
+
+@pytest.mark.asyncio
+async def test_list_next_month_range():
+    a = await _agent()
+    fire = int(datetime(2026, 8, 5, 8, 0, tzinfo=_TZ).timestamp())
+    await a.store.add(Reminder(user_id="u1", title="续保险", kind="time", fire_at=fire))
+    res = await run_handle(a, "reminder.list", raw_text="下个月有什么安排")
+    assert res.ui_card["date_label"] == "下个月 · 8月"
+    assert [i["title"] for i in res.ui_card["items"]] == ["续保险"]
+
+
+@pytest.mark.asyncio
+async def test_ordinal_continuation_after_clarify():
+    """B2 补测：澄清后「取消第二条」经 REMINDERS_ACTIVE 精确选中，不误删第一条。"""
+    a = await _agent()
+    r1 = await a.store.add(Reminder(user_id="u1", title="喝水", kind="time", fire_at=10 ** 12))
+    r2 = await a.store.add(Reminder(user_id="u1", title="喝水", kind="time", fire_at=10 ** 12 + 1))
+    ctx = make_context(context_values={"profile.reminders_active": json.dumps(
+        {"items": [{"id": r1.id, "title": "喝水"}, {"id": r2.id, "title": "喝水"}]},
+        ensure_ascii=False)})
+    res = await run_handle(a, "reminder.cancel", raw_text="取消第二条", ctx=ctx)
+    assert res.status == "ok"
+    assert (await a.store.get("u1", r2.id)).status == "cancelled"
+    assert (await a.store.get("u1", r1.id)).status == "pending"

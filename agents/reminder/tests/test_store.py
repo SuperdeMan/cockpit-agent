@@ -75,6 +75,39 @@ async def test_cancel_all_scoped_to_user():
     assert len(times2) == 1
 
 
+@pytest.mark.asyncio
+async def test_update_fire_at_reschedules_and_revives_fired():
+    s = await _store()
+    r = await s.add(Reminder(user_id="u1", title="回电话", kind="time", fire_at=100))
+    await s.claim_due(200)                                   # → fired（尸体）
+    assert await s.update_fire_at("u1", r.id, 900)           # snooze 收编
+    got = await s.get("u1", r.id)
+    assert got.status == "pending" and got.fire_at == 900
+    assert not await s.update_fire_at("u1", "no-such", 900)
+    await s.set_status("u1", r.id, "done")
+    assert not await s.update_fire_at("u1", r.id, 999)       # done/cancelled 不可改期
+
+
+@pytest.mark.asyncio
+async def test_roll_recurring_only_from_fired():
+    s = await _store()
+    r = await s.add(Reminder(user_id="u1", title="吃药", kind="time",
+                             fire_at=100, recur="daily"))
+    assert not await s.roll_recurring("u1", r.id, 500)       # 还没 fired 不滚
+    await s.claim_due(200)
+    assert await s.roll_recurring("u1", r.id, 500)
+    got = await s.get("u1", r.id)
+    assert got.status == "pending" and got.fire_at == 500 and got.recur == "daily"
+
+
+def test_to_card_item_recur_label():
+    r = Reminder(id="r1", user_id="u1", title="吃药", kind="time",
+                 fire_at=10 ** 10, recur="daily")
+    assert r.to_card_item()["recur_label"] == "每天"
+    assert "recur_label" not in Reminder(id="r2", user_id="u1", title="X",
+                                         kind="time", fire_at=10 ** 10).to_card_item()
+
+
 def test_to_card_item_contract():
     from datetime import datetime, timedelta, timezone
     tz = timezone(timedelta(hours=8))

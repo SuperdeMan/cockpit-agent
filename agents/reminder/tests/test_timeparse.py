@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from agents.reminder.src.timeparse import (
-    OK, NEED_TIME, FAIL, parse_time_text, strip_time_expressions, format_display)
+    OK, NEED_TIME, FAIL, parse_time_text, strip_time_expressions, format_display,
+    parse_recur, recur_label, align_workday, next_recur_fire)
 
 TZ = timezone(timedelta(hours=8), name="UTC+8")
 NOW_LOCAL = datetime(2026, 7, 11, 10, 0, tzinfo=TZ)   # 周六
@@ -33,6 +34,8 @@ def P(text):
     ("两小时后提醒我", timedelta(hours=2)),
     ("1个小时之后提醒我", timedelta(hours=1)),
     ("45分钟以后叫我", timedelta(minutes=45)),
+    ("过10分钟再叫我", timedelta(minutes=10)),      # P1a：前缀"过"无"后"缀的 snooze 说法
+    ("过半小时再提醒我", timedelta(minutes=30)),
 ])
 def test_relative(text, delta):
     r = P(text)
@@ -130,3 +133,54 @@ def test_strip_time_expressions():
     assert strip_time_expressions("明天早上八点提醒我带充电线") == "提醒我带充电线"
     assert strip_time_expressions("半小时后提醒我给客户回电话") == "提醒我给客户回电话"
     assert strip_time_expressions("提醒我周五下午三点去接孩子") == "提醒我去接孩子"
+    assert strip_time_expressions("每天早上八点提醒我吃药") == "提醒我吃药"       # P1a：重复词形先剥
+    assert strip_time_expressions("每个工作日九点半提醒我开晨会") == "提醒我开晨会"
+    assert strip_time_expressions("每周三晚上七点提醒我开例会") == "提醒我开例会"
+
+
+# ── P1a：非法日期诚实失败（B3，不落 N号 分支误判、不炸内部错误）──
+def test_invalid_date_fails_honestly():
+    for t in ("2月30号提醒我", "6月31号早上八点提醒我", "13月1号提醒我"):
+        assert P(t).status == FAIL, t
+
+
+# ── P1a：重复规则解析 / 展示 / 首触发对齐 / 滚动 ──
+def test_parse_recur():
+    assert parse_recur("每天早上八点提醒我吃药") == "daily"
+    assert parse_recur("每日九点提醒我") == "daily"
+    assert parse_recur("每个工作日九点半提醒我开晨会") == "workday"
+    assert parse_recur("每周三晚上七点提醒我开例会") == "weekly:3"
+    assert parse_recur("每星期日中午提醒我给爸妈打电话") == "weekly:7"
+    assert parse_recur("明天早上八点提醒我带充电线") == ""
+
+
+def test_recur_label():
+    assert recur_label("daily") == "每天"
+    assert recur_label("workday") == "工作日"
+    assert recur_label("weekly:3") == "每周三"
+    assert recur_label("") == ""
+
+
+def test_align_workday_pushes_weekend_to_monday():
+    sat = ts(L(2026, 7, 11, 9, 30))    # 周六
+    assert align_workday(sat, tz=TZ) == ts(L(2026, 7, 13, 9, 30))   # → 周一同时刻
+    tue = ts(L(2026, 7, 14, 9, 30))
+    assert align_workday(tue, tz=TZ) == tue                          # 工作日不动
+
+
+def test_next_recur_fire_daily_and_catchup():
+    prev = ts(L(2026, 7, 11, 8, 0))
+    assert next_recur_fire("daily", prev, ts(NOW_LOCAL), tz=TZ) == ts(L(2026, 7, 12, 8, 0))
+    # 停机三天错过的次数直接跳过（不补发轰炸），滚到 now 之后第一个
+    late_now = ts(L(2026, 7, 14, 12, 0))
+    assert next_recur_fire("daily", prev, late_now, tz=TZ) == ts(L(2026, 7, 15, 8, 0))
+
+
+def test_next_recur_fire_workday_skips_weekend():
+    fri = ts(L(2026, 7, 17, 9, 30))    # 周五
+    assert next_recur_fire("workday", fri, fri, tz=TZ) == ts(L(2026, 7, 20, 9, 30))  # → 周一
+
+
+def test_next_recur_fire_weekly():
+    wed = ts(L(2026, 7, 15, 19, 0))
+    assert next_recur_fire("weekly:3", wed, wed, tz=TZ) == ts(L(2026, 7, 22, 19, 0))

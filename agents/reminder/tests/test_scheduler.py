@@ -69,3 +69,30 @@ async def test_tick_survives_publish_failure():
     n = await ReminderScheduler(s, pub, now_fn=lambda: 200.0).tick()
     assert n == 1                                  # 已领取（fired 不回滚），失败仅日志
     assert (await s.claim_due(300)) == []          # 不会重复触发
+
+
+@pytest.mark.asyncio
+async def test_tick_rolls_recurring_to_next_and_no_refire():
+    """P1a：重复系列触发后滚动（fired→pending 下一次），一次性条目留 fired。"""
+    pub = Pub()
+    s = await _store_with(
+        Reminder(user_id="u1", title="吃药", kind="time", fire_at=100, recur="daily"),
+        Reminder(user_id="u1", title="一次性", kind="time", fire_at=100))
+    sched = ReminderScheduler(s, pub, now_fn=lambda: 200.0)
+    assert await sched.tick() == 2 and len(pub.sent) == 1
+    times, _ = await s.list_split("u1", statuses=("pending",))
+    assert [r.title for r in times] == ["吃药"]              # 滚动回 pending
+    assert times[0].fire_at == 100 + 86400                   # 下一天同刻（固定 +8 无夏令时）
+    fired, _ = await s.list_split("u1", statuses=("fired",))
+    assert [r.title for r in fired] == ["一次性"]            # 非重复保持 fired
+    assert await sched.tick() == 0                           # 滚动后不重复触发
+
+
+@pytest.mark.asyncio
+async def test_tick_recurring_rolls_even_if_publish_fails():
+    pub = Pub(fail=True)
+    s = await _store_with(Reminder(user_id="u1", title="吃药", kind="time",
+                                   fire_at=100, recur="daily"))
+    assert await ReminderScheduler(s, pub, now_fn=lambda: 200.0).tick() == 1
+    times, _ = await s.list_split("u1", statuses=("pending",))
+    assert len(times) == 1 and times[0].fire_at > 200        # 投递失败系列不停摆

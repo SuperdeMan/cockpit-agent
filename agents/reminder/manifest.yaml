@@ -10,10 +10,12 @@ fallback: chitchat
 capabilities:
   - intent: reminder.create
     description: 创建定时提醒或待办。支持绝对时间（明天早上八点/周五下午三点）、
-      相对时间（半小时后/20分钟后）；只说"记一下"不带时间则存为待办。
+      相对时间（半小时后/20分钟后）、重复（每天/每个工作日/每周X）；只说"记一下"
+      不带时间则存为待办；到点后说"过10分钟再提醒我"直接改期原条目（snooze）。
     slots: [title, time_text, kind]
     examples: ["明天早上八点提醒我带充电线", "半小时后提醒我给客户回电话",
-               "周五下午三点叫我去接孩子", "记一下要买牛奶", "帮我记个待办周末洗车"]
+               "周五下午三点叫我去接孩子", "记一下要买牛奶", "帮我记个待办周末洗车",
+               "每天早上八点提醒我吃药", "过10分钟再提醒我"]
   - intent: reminder.list
     description: 查询提醒/待办/日程安排（今天/明天/后天/未来三天/这周/全部/待办）
     slots: [scope, date_text]
@@ -27,6 +29,12 @@ capabilities:
     description: 取消某条提醒，或清空全部（清空需二次确认）
     slots: [index, title, all]
     examples: ["取消第二条提醒", "不用提醒我回电话了", "把提醒都清空"]
+  - intent: reminder.update
+    description: 修改某条提醒的时间（改到/推迟/提前/换个时间）；按标题或"第N条"定位，
+      缺新时间会追问后续接
+    slots: [index, title, time_text]
+    examples: ["把接孩子改到五点", "买牛奶那条推迟到明天九点", "改第二条到晚上八点",
+               "带充电线的提醒改个时间"]
 
 # 确定性路由（R2.1）：弱 LLM 常把"提醒我X"落到 chitchat。guard 排除车辆功能语境的
 # "提醒"（限速/车道/碰撞等设备对象词，见 orchestrator/edge/fast_intent.py:1090）与
@@ -45,10 +53,17 @@ route_hints:
     priority: 56
     guard: '行程|旅行|路线'
     slots: {scope: "$text"}
-  - pattern: '(取消|删掉|删除|不用).{0,4}(提醒|待办)|(提醒|待办).{0,4}(清空|全删)|把提醒都?清空'
+  - pattern: '(取消|删掉|删除|不用).{0,4}(提醒|待办)|(提醒|待办).{0,4}(清空|全删)|把提醒都?清空|(取消|删掉|删除)\s*第[一二三四五六七八九十0-9]+[条个]'
     intent: reminder.cancel
     policy: replace
     priority: 56
+    slots: {title: "$text"}
+  # P1a 改时间：要求"改到"后紧跟时间词形（排除"空调改到26度"这类设备量），guard 双保险
+  - pattern: '(改到|改成|推迟到|提前到|延到|换到)\s*(明天|后天|大后天|今晚|周|星期|礼拜|早上|上午|中午|下午|晚上|凌晨|半?[0-9一二三四五六七八九十两]+点|[0-9]{1,2}[:：][0-9]{2}|[0-9一二三四五六七八九十]+号)|(提醒|待办).{0,4}(推迟|提前|改个?时间)|改\s*第[一二三四五六七八九十0-9]+条'
+    intent: reminder.update
+    policy: replace
+    priority: 56
+    guard: '行程|路线|导航|充电|空调|温度|风量|音量|座椅|亮度|第[0-9一二三四五六七八九十]+天'
     slots: {title: "$text"}
   - pattern: '(完成|办完|做完|搞定)了?.{0,4}(第[一二三四五六七八九十0-9]+[条个项]|那[条个]|提醒|待办)|完成提醒[:：]'
     intent: reminder.complete

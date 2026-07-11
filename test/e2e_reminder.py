@@ -1,5 +1,6 @@
 """真栈闭环：WS 创建（相对秒级）→ NATS agent.proactive 收 reminder_fired（带卡）
-→ 列表（fired 未完成仍可见）→ 完成 → 清空确认续接（自清理可重入）。
+→ 列表（fired 未完成仍可见）→ P1a snooze 改期原条目（无尸体）→ 完成 → 清空确认续接
+（自清理可重入）。
 
 前置：make up 起全栈。依赖：pip install websockets nats-py
 用法：python test/e2e_reminder.py
@@ -80,7 +81,14 @@ async def main() -> int:
     r = await ask("我今天有什么安排", "列表")
     record("4.列表含该条", "E2E演练提醒" in r.get("speech", ""))
 
-    # 5) 完成（fired → done）
+    # 4b) P1a snooze：改期原条目，列表仍 1 条（旧实现会新建第二条留 fired 尸体）
+    r = await ask("10分钟后再提醒我E2E演练提醒", "snooze")
+    ok_snooze = "再提醒你" in r.get("speech", "")
+    r = await ask("我今天有什么安排", "snooze后列表")
+    record("4b.snooze改期无尸体", ok_snooze and "共 1 条" in r.get("speech", ""),
+           r.get("speech", "")[:40])
+
+    # 5) 完成（pending/fired 均可完成）
     r = await ask("完成提醒：E2E演练提醒", "完成")
     record("5.完成", "已完成" in r.get("speech", ""))
 

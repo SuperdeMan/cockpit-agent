@@ -10,7 +10,7 @@ import os
 import time
 
 from .store import ReminderStore
-from .timeparse import business_tz
+from .timeparse import business_tz, next_recur_fire
 
 logger = logging.getLogger("agent.reminder.scheduler")
 
@@ -50,6 +50,15 @@ class ReminderScheduler:
             logger.info("reminder fired x%d: %s", len(due), "、".join(titles)[:60])
         except Exception as e:
             logger.warning("reminder proactive publish failed（不回滚 fired）: %s", e)
+        # P1a：重复系列触发后滚动到下一次（fired→pending；错过的次数在 next_recur_fire 里跳过）。
+        # publish 失败也照滚——系列的"下一次"不因一次投递失败而停摆。
+        for r in due:
+            if r.recur:
+                try:
+                    nxt = next_recur_fire(r.recur, r.fire_at, int(self._now()), self._tz)
+                    await self._store.roll_recurring(r.user_id, r.id, nxt)
+                except Exception as e:
+                    logger.warning("reminder recur roll failed %s: %s", r.id, e)
         return len(due)
 
     async def run_forever(self):
