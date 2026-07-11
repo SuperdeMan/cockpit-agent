@@ -7,6 +7,7 @@ import type {
   SearchResultCard, NewsBriefCard, ResearchReportCard, SportsScoresCard, SportsScorersCard,
   RoutePlanCard, ChargingRouteCard, TripItineraryCard, PoiListCard, PoiDetailCard,
   PlaceListCard, PlaceDetailCard, IntentChoiceCard,
+  ReminderListCard, ReminderCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
@@ -122,6 +123,8 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
     case 'poi_detail': return <PoiDetailCardView card={card} />
     case 'place_list': return <PlaceListCardView card={card} onAction={onAction} />
     case 'place_detail': return <PlaceDetailCardView card={card} onAction={onAction} />
+    case 'reminder_list': return <ReminderListCardView card={card} />
+    case 'reminder_card': return <ReminderCardView card={card} onAction={onAction} />
     case 'intent_choice': return <IntentChoiceCardView card={card} onAction={onAction} />
     default: return null
   }
@@ -1134,6 +1137,64 @@ function PoiDetailCardView({ card }: { card: PoiDetailCard }) {
 }
 
 // ─── 周边发现列表卡（nearby.search）───
+// ─── 智能提醒列表卡（reminder.list）：时间条着色 + 待办芯片区（D7 右舞台走 AgendaStage，这里是气泡内轻卡）───
+function ReminderListCardView({ card }: { card: ReminderListCard }) {
+  const color = (s: string) =>
+    s === 'fired' ? '#F59E0B' : s === 'done' ? 'var(--au-text-3)' : 'var(--au-primary)'
+  const total = card.items.length + (card.todos?.length || 0)
+  return (
+    <div className="au-glass" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{card.date_label || '我的提醒'}</span>
+        <span style={{ fontSize: 11.5, color: 'var(--au-text-3)' }}>{total} 条</span>
+      </div>
+      {card.items.map((it) => (
+        <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className="au-num" style={{ fontSize: 12.5, minWidth: 86, color: color(it.status) }}>{it.time_display}</span>
+          <span style={{ fontSize: 13.5, flex: 1, textDecoration: it.status === 'done' ? 'line-through' : 'none', opacity: it.status === 'done' ? 0.55 : 1 }}>{it.title}</span>
+          {it.status === 'fired' && <span style={{ fontSize: 10.5, color: '#F59E0B' }}>到点</span>}
+        </div>
+      ))}
+      {(card.todos?.length || 0) > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingTop: 6, borderTop: '1px solid var(--au-line-2)' }}>
+          <span style={{ fontSize: 11, color: 'var(--au-text-3)', width: '100%' }}>待办 · {card.todos!.length}</span>
+          {card.todos!.map((t) => (
+            <span key={t.id} className="au-glass" style={{ padding: '4px 10px', fontSize: 12, textDecoration: t.status === 'done' ? 'line-through' : 'none' }}>{t.title}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── 智能提醒单条卡：created=创建回读 / fired=到点触达（琥珀脉冲 + 完成/稍后 send_text 按钮）───
+function ReminderCardView({ card, onAction }: { card: ReminderCard; onAction?: (text: string) => void }) {
+  const fired = card.context === 'fired'
+  const it = card.item
+  const accent = fired ? '#F59E0B' : 'var(--au-primary)'
+  return (
+    <div className="au-glass" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10,
+      ...(fired ? { animation: 'au-proactive-pulse-amber 3s ease-in-out infinite', border: '1px solid rgba(245,158,11,0.35)' } : {}) }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: accent, boxShadow: `0 0 8px ${accent}` }} />
+        <span style={{ fontSize: 12, color: 'var(--au-text-3)' }}>{fired ? '提醒到点' : '已创建提醒'}</span>
+        {it.time_display && <span className="au-num" style={{ marginLeft: 'auto', fontSize: 12.5, color: fired ? '#F59E0B' : 'var(--au-text-2)' }}>{it.time_display}</span>}
+      </div>
+      <div style={{ fontSize: 15, fontWeight: 600 }}>{it.title}</div>
+      {fired && (card.actions?.length || 0) > 0 && (
+        <div style={{ display: 'flex', gap: 8 }}>
+          {card.actions!.map((a) => (
+            <button key={a.label} onClick={() => onAction?.(a.send_text)} className="au-glass"
+              style={{ padding: '7px 14px', fontSize: 12.5, cursor: 'pointer', border: '1px solid var(--au-line-2)', background: 'transparent', color: 'var(--au-text)' }}>
+              {a.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── R4.4 路由歧义澄清卡：一句提问 + 2~3 消歧选项（点/说「第N个」→ 回发 send_text 作新指令）───
 function IntentChoiceCardView({ card, onAction }: { card: IntentChoiceCard; onAction?: (t: string) => void }) {
   const options = (card.options || []).filter((o) => o?.send_text)

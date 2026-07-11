@@ -5,12 +5,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSettings } from '../settings'
 import { AuroraOrb } from './aurora'
 import { Icon, type IconName } from './Icon'
-import type { Msg, UiCard, WeatherCard, PoiListCard, PoiDetailCard, RoutePlanCard, ChargingRouteCard, TripItineraryCard } from '../types'
+import type { Msg, UiCard, WeatherCard, PoiListCard, PoiDetailCard, RoutePlanCard, ChargingRouteCard, TripItineraryCard, ReminderListCard, ReminderCard, ReminderItem } from '../types'
+import { resolveView, groupByDay, timelineWindow, yForTime } from '../reminderStage.mjs'
 
 type Scene =
   | { kind: 'idle' }
   | { kind: 'weather'; card: WeatherCard }
   | { kind: 'map'; card: UiCard }
+  | { kind: 'agenda'; card: UiCard }
 
 const MAP_TYPES = ['poi_list', 'poi_detail', 'route_plan', 'charging_route', 'trip_itinerary']
 
@@ -23,6 +25,7 @@ function flatten(card?: UiCard): UiCard[] {
 function deriveScene(messages: Msg[]): Scene {
   for (let i = messages.length - 1; i >= 0; i--) {
     for (const c of flatten(messages[i].uiCard)) {
+      if (c.type === 'reminder_list' || c.type === 'reminder_card') return { kind: 'agenda', card: c }
       if (c.type === 'weather') return { kind: 'weather', card: c as WeatherCard }
       if (MAP_TYPES.includes(c.type)) return { kind: 'map', card: c }
     }
@@ -38,6 +41,8 @@ export function ContextualStage({ messages }: { messages: Msg[] }) {
         <WeatherStage card={scene.card} />
       ) : scene.kind === 'map' ? (
         <MapStage card={scene.card} />
+      ) : scene.kind === 'agenda' ? (
+        <AgendaStage card={scene.card} />
       ) : (
         <IdleStage />
       )}
@@ -360,5 +365,106 @@ function ItineraryView({ card }: { card: TripItineraryCard }) {
         </g>
       ))}
     </g>
+  )
+}
+
+// ── 日程场景（D7 双形态）：单日=时间轴+当前时刻线；多日/全部=按天分组列表（封顶一瞥）──
+function AgendaStage({ card }: { card: UiCard }) {
+  const now = Date.now()
+  const list = card.type === 'reminder_list' ? (card as ReminderListCard) : null
+  const single = card.type === 'reminder_card' ? (card as ReminderCard) : null
+  const items = list ? list.items : single ? [single.item] : []
+  const todos = list?.todos || []
+  const view = single ? 'day' : resolveView(list)
+  const firedId = single?.context === 'fired' ? single.item.id : null
+  const title = list?.date_label || (single?.context === 'fired' ? '提醒到点' : '今日日程')
+
+  return (
+    <div style={{ position: 'absolute', inset: 0, borderRadius: 'var(--au-r-3xl)', overflow: 'hidden', background: 'linear-gradient(158deg,#06080F 0%,#0B1020 60%,#080D18 100%)' }}>
+      {/* 到点=AI 时刻：屏幕边缘极光（复用天气场景语言） */}
+      {firedId && <div style={{ position: 'absolute', inset: 0, borderRadius: 'var(--au-r-3xl)', border: '1.5px solid transparent', background: 'linear-gradient(rgba(0,0,0,0),rgba(0,0,0,0)) padding-box, var(--au-aurora) border-box', animation: 'au-edge-pulse 3.5s ease-in-out infinite', pointerEvents: 'none', zIndex: 6 }} />}
+      <div style={{ position: 'absolute', top: 18, left: 18, padding: '5px 13px', borderRadius: 20, background: 'rgba(70,214,224,0.10)', border: '1px solid rgba(70,214,224,0.22)', display: 'inline-flex', alignItems: 'center', gap: 7, zIndex: 5 }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--au-primary)', boxShadow: '0 0 8px var(--au-primary)' }} />
+        <span style={{ fontSize: 12.5, color: 'var(--au-primary)', fontWeight: 500 }}>{title}</span>
+      </div>
+      {view === 'day'
+        ? <DayTimelineView items={items} now={now} firedId={firedId} hasTodos={todos.length > 0} />
+        : <MultiAgendaView items={items} now={now} />}
+      <TodoStrip todos={todos} />
+      <div style={{ position: 'absolute', bottom: 16, right: 20, fontSize: 11, color: 'var(--au-text-3)', fontFamily: 'var(--au-font-mono)' }}>{items.length + todos.length} 条 · 日程</div>
+    </div>
+  )
+}
+
+function DayTimelineView({ items, now, firedId, hasTodos }: { items: ReminderItem[]; now: number; firedId: string | null; hasTodos: boolean }) {
+  const H = 320
+  const { startH, endH } = timelineWindow(items, now)
+  const nowH = new Date(now).getHours() + new Date(now).getMinutes() / 60
+  const nowY = nowH >= startH && nowH <= endH ? ((nowH - startH) / (endH - startH)) * H : null
+  const ticks: number[] = []
+  for (let h = startH; h <= endH; h += 2) ticks.push(h)
+  const color = (s: string) => s === 'fired' ? '#F59E0B' : s === 'done' ? 'rgba(255,255,255,0.35)' : 'var(--au-primary)'
+  return (
+    <div style={{ position: 'absolute', top: 70, left: 46, right: 30, bottom: hasTodos ? 100 : 46 }}>
+      <div style={{ position: 'relative', height: H, maxHeight: '100%' }}>
+        <div style={{ position: 'absolute', left: 54, top: 0, bottom: 0, width: 1, background: 'var(--au-line-2)' }} />
+        {ticks.map((h) => (
+          <span key={h} className="au-num" style={{ position: 'absolute', left: 0, top: ((h - startH) / (endH - startH)) * H - 7, fontSize: 10.5, color: 'var(--au-text-3)' }}>{String(h).padStart(2, '0')}:00</span>
+        ))}
+        {nowY != null && (
+          <div style={{ position: 'absolute', left: 40, right: 0, top: nowY, height: 2, background: 'var(--au-aurora)', borderRadius: 1, boxShadow: '0 0 10px rgba(91,233,255,0.4)' }} />
+        )}
+        {items.map((it) => {
+          if (!it.fire_at_ms) return null
+          const y = yForTime(it.fire_at_ms, startH, endH, H)
+          const c = color(it.status)
+          const pulse = it.id === firedId || it.status === 'fired'
+          return (
+            <div key={it.id} style={{ position: 'absolute', left: 48, top: y - 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ width: 13, height: 13, borderRadius: '50%', background: 'rgba(70,214,224,0.12)', border: `1.5px solid ${c}`, ...(pulse ? { animation: 'au-proactive-pulse-amber 2.5s ease-in-out infinite' } : {}) }} />
+              <span className="au-glass" style={{ padding: '6px 12px', display: 'inline-flex', gap: 10, alignItems: 'center' }}>
+                <span className="au-num" style={{ fontSize: 12, color: c }}>{(it.time_display || '').split(' ').pop()}</span>
+                <span style={{ fontSize: 13, textDecoration: it.status === 'done' ? 'line-through' : 'none', opacity: it.status === 'done' ? 0.55 : 1 }}>{it.title}</span>
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function MultiAgendaView({ items, now }: { items: ReminderItem[]; now: number }) {
+  const { groups, more } = groupByDay(items, now, 6)
+  return (
+    <div style={{ position: 'absolute', top: 70, left: 40, right: 30, bottom: 100, display: 'flex', flexDirection: 'column', gap: 12, overflow: 'hidden' }}>
+      {groups.map((g: { label: string; items: ReminderItem[] }) => (
+        <div key={g.label}>
+          <div style={{ fontSize: 12, color: 'var(--au-text-3)', marginBottom: 6 }}>{g.label}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {g.items.map((it) => (
+              <div key={it.id} className="au-glass" style={{ padding: '8px 14px', display: 'flex', gap: 12, alignItems: 'center' }}>
+                <span className="au-num" style={{ fontSize: 12.5, minWidth: 44, color: it.status === 'fired' ? '#F59E0B' : 'var(--au-primary)' }}>{(it.time_display || '').split(' ').pop()}</span>
+                <span style={{ fontSize: 13.5, textDecoration: it.status === 'done' ? 'line-through' : 'none', opacity: it.status === 'done' ? 0.55 : 1 }}>{it.title}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      {more > 0 && <div style={{ fontSize: 11.5, color: 'var(--au-text-3)' }}>⋯ 还有 {more} 条</div>}
+    </div>
+  )
+}
+
+function TodoStrip({ todos }: { todos: ReminderItem[] }) {
+  if (!todos.length) return null
+  return (
+    <div style={{ position: 'absolute', left: 24, right: 24, bottom: 44, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>待办 · {todos.length}</span>
+      {todos.slice(0, 4).map((t) => (
+        <span key={t.id} className="au-glass" style={{ padding: '6px 12px', fontSize: 12.5, textDecoration: t.status === 'done' ? 'line-through' : 'none' }}>{t.title}</span>
+      ))}
+      {todos.length > 4 && <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>+{todos.length - 4}</span>}
+    </div>
   )
 }

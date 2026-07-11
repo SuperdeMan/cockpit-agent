@@ -61,6 +61,8 @@ export type UiCard =
   | PoiDetailCard
   | PlaceListCard
   | PlaceDetailCard
+  | ReminderListCard
+  | ReminderCard
   | IntentChoiceCard
 
 // R4.4 路由歧义澄清卡：一句提问 + 2~3 个消歧选项（点/说「第N个」→ 回发 send_text 作新指令）
@@ -377,6 +379,33 @@ export type PlaceDetailCard = {
   photos?: string[]
 }
 
+// 智能提醒（reminder Agent）：单条项契约——time_display 后端本地化，HMI 不做时区运算
+export type ReminderItem = {
+  id: string
+  title: string
+  kind: 'time' | 'todo'
+  status: 'pending' | 'fired' | 'done' | 'cancelled'
+  time_display?: string   // "今天 14:30" / "明天 08:00"
+  fire_at_ms?: number     // agenda 时间轴定位用；todo 无
+}
+
+// 提醒列表卡（reminder.list）：view 驱动右舞台形态（D7；后端按查询范围权威给出）
+export type ReminderListCard = {
+  type: 'reminder_list'
+  view?: 'day' | 'multi'
+  date_label?: string     // day："今天 · 7月11日"；multi："这周"
+  items: ReminderItem[]
+  todos?: ReminderItem[]  // 无时间待办单列
+}
+
+// 提醒单条卡：created=创建回读确认 / fired=到点触达（带 完成/稍后 按钮，send_text 模式）
+export type ReminderCard = {
+  type: 'reminder_card'
+  context: 'created' | 'fired'
+  item: ReminderItem
+  actions?: Array<{ label: string; send_text: string }>
+}
+
 export type Voice = {
   voice_id: string
   name: string
@@ -467,6 +496,7 @@ export const AGENT_CATALOG: AgentMeta[] = [
   { id: 'trip-planner', label: '行程规划', desc: '多日自驾行程编排', icon: '🗺️' },
   { id: 'deep-research', label: '深度调研', desc: '多视角联网深调研，出带引用的分节报告', icon: '🔬' },
   { id: 'nearby', label: '周边发现', desc: '找餐厅/酒店/景点/影院/停车/充电，看评分·人均·营业·电话', icon: '📍' },
+  { id: 'reminder', label: '智能提醒', desc: '说一句话创建日程提醒待办，到点主动叫你', icon: '⏰' },
   { id: 'parking-payment', label: '停车缴费', desc: '找车位、停车缴费', icon: '🅿️' },
   { id: 'manual-rag', label: '用车手册', desc: '车辆说明书问答（RAG）', icon: '📖' },
   { id: 'chitchat', label: '闲聊兜底', desc: '开放域对话与情绪陪伴（系统兜底）', icon: '💬', core: true },
