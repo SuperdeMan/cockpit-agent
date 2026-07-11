@@ -1,6 +1,6 @@
 # 智能提醒 Agent（reminder）设计：自然语言日程/提醒/待办 + 到点主动触达 + 右舞台日程时间轴
 
-- **状态**：✅ P0 已落地（2026-07-11）——Task 0-12 全绿，真栈 `test/e2e_reminder.py` 6/6，全量 `pytest --import-mode=importlib` 1268 passed。集成期修 `orchestrator/cloud/context.py::_POC_DEFAULT_SCOPES` 缺 `profile.read/profile.write`（reminder 声明的合法 first_party scope 不在 PoC 默认授权集，被 `_filter_by_permission` 在规划前剔除 → 全兜底 chitchat），补为类目级默认授权、符合 §10「profile.*，无新 scope」。此前：已批准（2026-07-11 泓舟评审通过，含 D7 多天查看维度增补）
+- **状态**：✅ P0 已落地（2026-07-11）——Task 0-12 全绿，真栈 `test/e2e_reminder.py` 6/6，全量 `pytest --import-mode=importlib` 1268 passed。集成期修 `orchestrator/cloud/context.py::_POC_DEFAULT_SCOPES` 缺 `profile.read/profile.write`（reminder 声明的合法 first_party scope 不在 PoC 默认授权集，被 `_filter_by_permission` 在规划前剔除 → 全兜底 chitchat），补为类目级默认授权、符合 §10「profile.*，无新 scope」。**真机硬化（2026-07-11 泓舟验收）**：cancel/complete 标题命中多条时旧实现取 `hits[0]` 静默少删且聚合器谎报删除数量 → 方案乙改为 `_resolve_targets` 返回全部候选、多条走 `_clarify_multi`（NEED_SLOT 反问 + 写 `REMINDERS_ACTIVE` 支持「第 N 条」续接）、单条才执行（reminder 单测 68→69，真栈端到端澄清+续接验证）。此前：已批准（2026-07-11 泓舟评审通过，含 D7 多天查看维度增补）
 - **交付对象**：Claude Code（评审通过后按 §11 分阶段清单执行）
 - **关联代码**：`agents/road_safety/src/agent.py`（on_start 后台循环 + NATS proactive 样板）、`agents/deep_research/src/agent.py:223-241`（proactive 带 card 推送样板）、`gateway/edge/main.go:315-333`（NATS→HMI 投递一跳，card 透传）、`hmi/src/App.tsx:412-427`（proactive 帧渲染与朗读条件）、`hmi/src/components/ContextualStage.tsx`（右舞台场景机制）、`hmi/src/types.ts`（卡片契约）、`memory/pg_store.py`（同 PG 实例独立表先例）、`agents/nearby/manifest.yaml:30-53`（route_hints 样板）、`agents/_sdk/shared_state.py`（跨轮状态键）
 - **关联文档**：`CLAUDE.md` §3（新增 Agent 标准流程）、`docs/conventions.md` §1/§2/§5/§9（落地时需登记）、`docs/design/2026-06-25-memory-system-redesign.md`（routine 与 reminder 的边界）
@@ -120,10 +120,12 @@ CREATE INDEX IF NOT EXISTS idx_reminder_user ON reminder_item (user_id, status);
 |---|---|---|---|
 | `reminder.create` | title, time_text, kind | 解析时间→入库→**回读确认**（"好的，明天早上 8:00 提醒你带充电线"）+ `reminder_card(context=created)`；有"提醒/叫我"语义但无时间 → NEED_SLOT 追问时刻；"记一下/待办"→ todo 直接入库 | OK / NEED_SLOT |
 | `reminder.list` | scope, date_text | 按 scope 列表，词表：今天/明天/后天/未来三天/这周/全部/待办（D7；词表外区间如"下个月"P0 回退"全部"并如实说明，任意区间解析归 P1）→ speech 摘要 + `reminder_list` 卡（带 `view` 字段驱动舞台形态 §9.2）；写 `REMINDERS_ACTIVE` 供序号指代 | OK |
-| `reminder.complete` | index, title | 定位条目：序号经 `REMINDERS_ACTIVE`（须有本会话列表）、标题直接查 store 模糊匹配（无需先列表）→ done；两路都没中→诚实告知并给当前列表 | OK |
-| `reminder.cancel` | index, title, all | 单条取消直接执行；**"清空所有提醒" `require_confirm`**（不可恢复的批量删除） | OK / NEED_CONFIRM |
+| `reminder.complete` | index, title | 定位条目：序号经 `REMINDERS_ACTIVE`（须有本会话列表）、标题直接查 store 模糊匹配（无需先列表）→ done；**标题命中多条 → 同 cancel 走 NEED_SLOT 澄清**；两路都没中→诚实告知并给当前列表 | OK / NEED_SLOT |
+| `reminder.cancel` | index, title, all | 序号/标题**唯一命中**直接执行；**标题命中多条 → NEED_SLOT 反问澄清并列候选（写 `REMINDERS_ACTIVE` 供「第 N 条」续接），绝不擅自取一条删**（方案乙，修 2026-07-11 真机「删一条却少删/谎报数量」缺陷）；**"清空所有提醒" `require_confirm`**（不可恢复的批量删除） | OK / NEED_SLOT / NEED_CONFIRM |
 
 > update（改时间）刻意不进 P0：语音场景改时间高频形态是到点后"过 10 分钟再叫我"（=snooze），与 update 一起进 P1；P0 创建错了取消重建，回读确认让错误当场可见。
+> **多条选择性删除**（"这两个和那一个一起删"）不在 P0：cancel 契约是序号/标题**单条** + 全部（确认）两态；标题撞多条时按方案乙澄清让用户逐条选，不做批量选择性删除（归 P1）。
+> **「查待办」语义**（P1 优化项，2026-07-11 真机反馈）：`待办` 专指**无时间点事项**，`_list` 的 `todo_only` 分支会滤掉带时间的定时日程——故"查待办"对只有定时项的用户返回空，"查日程/全部"才出卡。逻辑自洽但口语里待办/日程常混用、反直觉；P1 考虑「查待办」兜底附带临近定时项或话术显式区分。
 
 ### 6.2 manifest 草案
 

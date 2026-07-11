@@ -137,6 +137,22 @@ async def test_cancel_single_and_not_found():
 
 
 @pytest.mark.asyncio
+async def test_cancel_multi_match_clarifies_and_deletes_nothing():
+    """方案乙回归：同名多条命中时不擅自删（旧实现 hits[0] 会静默少删），
+    反问澄清并写入 active，用户续接「第二条」精确删一条。"""
+    a = await _agent()
+    ctx = make_context()
+    await run_handle(a, "reminder.create", raw_text="今天下午三点提醒我喝水", ctx=ctx)
+    await run_handle(a, "reminder.create", raw_text="今天下午五点提醒我喝水", ctx=ctx)
+    res = await run_handle(a, "reminder.cancel", slots={"title": "喝水"},
+                           raw_text="把喝水那条删了", ctx=ctx)
+    assert res.status == "need_slot" and "2 条" in res.speech and "哪条" in res.speech
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 2                     # 澄清阶段一条都没删（旧实现会静默删掉第一条）
+    assert res.ui_card and len(res.ui_card["items"]) == 2   # 候选卡列出两条供用户选
+
+
+@pytest.mark.asyncio
 async def test_cancel_all_needs_confirm_then_executes():
     a = await _agent()
     await run_handle(a, "reminder.create", raw_text="明天早上八点提醒我带充电线")

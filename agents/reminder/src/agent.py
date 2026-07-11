@@ -215,10 +215,13 @@ class ReminderAgent(BaseAgent):
 
     # ── complete / cancel ──
     async def _complete(self, intent, ctx, meta) -> AgentResult:
-        r = await self._resolve_target(ctx, intent.raw_text or "", intent.slots)
-        if not r:
+        hits = await self._resolve_targets(ctx, intent.raw_text or "", intent.slots)
+        if not hits:
             return AgentResult(status=FAILED,
                                speech="没找到这条提醒，说「看看我的提醒」我给你列一下。")
+        if len(hits) > 1:
+            return await self._clarify_multi(ctx, hits, "完成")
+        r = hits[0]
         await self.store.set_status(self._uid(ctx), r.id, DONE)
         await self._refresh_active(ctx)
         return AgentResult(speech=f"「{r.title}」已完成。")
@@ -238,16 +241,20 @@ class ReminderAgent(BaseAgent):
                 return AgentResult(speech=f"好的，已清空全部 {n} 条提醒和待办。")
             return AgentResult(status=NEED_CONFIRM,
                                speech=f"确定要清空全部 {n} 条提醒和待办吗？清掉就找不回来了。")
-        r = await self._resolve_target(ctx, raw, intent.slots)
-        if not r:
+        hits = await self._resolve_targets(ctx, raw, intent.slots)
+        if not hits:
             return AgentResult(status=FAILED,
                                speech="没找到这条提醒，说「看看我的提醒」我给你列一下。")
+        if len(hits) > 1:
+            return await self._clarify_multi(ctx, hits, "取消")
+        r = hits[0]
         await self.store.set_status(self._uid(ctx), r.id, CANCELLED)
         await self._refresh_active(ctx)
         return AgentResult(speech=f"好的，取消了「{r.title}」。")
 
-    async def _resolve_target(self, ctx, raw: str, slots: dict) -> Reminder | None:
-        """序号经 REMINDERS_ACTIVE（须本会话列过/建过）；标题直接查 store 子串匹配。"""
+    async def _resolve_targets(self, ctx, raw: str, slots: dict) -> list[Reminder]:
+        """序号经 REMINDERS_ACTIVE（须本会话列过/建过）→ 唯一命中；
+        标题走 store 子串匹配 → 可能多条，全部返回由调用方决定（单条直接执行、多条反问澄清）。"""
         uid = self._uid(ctx)
         idx = None
         idx_slot = (slots.get("index") or "").strip()
@@ -266,14 +273,32 @@ class ReminderAgent(BaseAgent):
             except Exception:
                 items = []
             if 0 < idx <= len(items):
-                return await self.store.get(uid, items[idx - 1]["id"])
-            return None
+                r = await self.store.get(uid, items[idx - 1]["id"])
+                return [r] if r else []
+            return []
         q = (slots.get("title") or "").strip()
         if not q or q == raw:
             q = self._extract_title(re.sub(
                 r"完成提醒[:：]|完成|办完|做完|搞定|取消|删掉|删除|不用|那条|这条|了", "", raw))
-        hits = await self.store.find_by_title(uid, q) if q else []
-        return hits[0] if hits else None
+        return await self.store.find_by_title(uid, q) if q else []
+
+    async def _clarify_multi(self, ctx, hits: list[Reminder], action: str) -> AgentResult:
+        """标题命中多条时不擅自操作（P0 单条语义）：反问澄清，并把候选写入 active，
+        用户可续接「第 N 条」精确选中。避免旧实现 hits[0] 静默少删。"""
+        now_utc = self._now_utc()
+        await self._refresh_active(ctx, hits)
+        lines = "、".join(
+            f"第{i}条 {r.title}"
+            f"（{format_display(r.fire_at, now=now_utc, tz=self._tz)}）" if r.fire_at
+            else f"第{i}条 {r.title}"
+            for i, r in enumerate(hits[:5], 1))
+        card = {"type": "reminder_list", "view": "multi", "date_label": f"待{action}",
+                "items": [r.to_card_item(now=now_utc, tz=self._tz) for r in hits if r.fire_at],
+                "todos": [r.to_card_item(now=now_utc, tz=self._tz) for r in hits if not r.fire_at]}
+        return AgentResult(status=NEED_SLOT,
+                           speech=f"有 {len(hits)} 条都能对上：{lines}。要{action}哪条？"
+                                  f"说「第几条」或换个更具体的说法。",
+                           ui_card=card)
 
     # ── shared_state（conventions §9）──
     async def _refresh_active(self, ctx, items: list | None = None) -> None:
