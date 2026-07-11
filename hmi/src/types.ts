@@ -387,6 +387,7 @@ export type ReminderItem = {
   status: 'pending' | 'fired' | 'done' | 'cancelled'
   time_display?: string   // "今天 14:30" / "明天 08:00"
   fire_at_ms?: number     // agenda 时间轴定位用；todo 无
+  recur_label?: string    // P1a 重复标识（每天/工作日/每周X）；后端权威给出
 }
 
 // 提醒列表卡（reminder.list）：view 驱动右舞台形态（D7；后端按查询范围权威给出）
@@ -398,10 +399,11 @@ export type ReminderListCard = {
   todos?: ReminderItem[]  // 无时间待办单列
 }
 
-// 提醒单条卡：created=创建回读确认 / fired=到点触达（带 完成/稍后 按钮，send_text 模式）
+// 提醒单条卡：created=创建回读确认 / updated=改期确认（P1a snooze/update）/ fired=到点触达
+// （fired 带 完成/稍后 按钮，send_text 模式）
 export type ReminderCard = {
   type: 'reminder_card'
-  context: 'created' | 'fired'
+  context: 'created' | 'updated' | 'fired'
   item: ReminderItem
   actions?: Array<{ label: string; send_text: string }>
 }

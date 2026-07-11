@@ -1152,6 +1152,7 @@ function ReminderListCardView({ card }: { card: ReminderListCard }) {
         <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className="au-num" style={{ fontSize: 12.5, minWidth: 86, color: color(it.status) }}>{it.time_display}</span>
           <span style={{ fontSize: 13.5, flex: 1, textDecoration: it.status === 'done' ? 'line-through' : 'none', opacity: it.status === 'done' ? 0.55 : 1 }}>{it.title}</span>
+          {it.recur_label && <span style={{ fontSize: 10.5, padding: '2px 8px', borderRadius: 10, color: 'var(--au-primary)', background: 'rgba(70,214,224,0.10)', border: '1px solid rgba(70,214,224,0.22)' }}>{it.recur_label}</span>}
           {it.status === 'fired' && <span style={{ fontSize: 10.5, color: '#F59E0B' }}>到点</span>}
         </div>
       ))}
@@ -1167,17 +1168,19 @@ function ReminderListCardView({ card }: { card: ReminderListCard }) {
   )
 }
 
-// ─── 智能提醒单条卡：created=创建回读 / fired=到点触达（琥珀脉冲 + 完成/稍后 send_text 按钮）───
+// ─── 智能提醒单条卡：created=创建回读 / updated=改期确认（P1a snooze/update）/ fired=到点触达（琥珀脉冲 + 完成/稍后 send_text 按钮）───
 function ReminderCardView({ card, onAction }: { card: ReminderCard; onAction?: (text: string) => void }) {
   const fired = card.context === 'fired'
   const it = card.item
   const accent = fired ? '#F59E0B' : 'var(--au-primary)'
+  const label = fired ? '提醒到点' : card.context === 'updated' ? '已改时间' : '已创建提醒'
   return (
     <div className="au-glass" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10,
       ...(fired ? { animation: 'au-proactive-pulse-amber 3s ease-in-out infinite', border: '1px solid rgba(245,158,11,0.35)' } : {}) }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: accent, boxShadow: `0 0 8px ${accent}` }} />
-        <span style={{ fontSize: 12, color: 'var(--au-text-3)' }}>{fired ? '提醒到点' : '已创建提醒'}</span>
+        <span style={{ fontSize: 12, color: 'var(--au-text-3)' }}>{label}</span>
+        {it.recur_label && <span style={{ fontSize: 10.5, padding: '2px 8px', borderRadius: 10, color: 'var(--au-primary)', background: 'rgba(70,214,224,0.10)', border: '1px solid rgba(70,214,224,0.22)' }}>{it.recur_label}</span>}
         {it.time_display && <span className="au-num" style={{ marginLeft: 'auto', fontSize: 12.5, color: fired ? '#F59E0B' : 'var(--au-text-2)' }}>{it.time_display}</span>}
       </div>
       <div style={{ fontSize: 15, fontWeight: 600 }}>{it.title}</div>
