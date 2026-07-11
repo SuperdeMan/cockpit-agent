@@ -186,3 +186,17 @@
   expect_final_intents: [reminder.complete]
   source: "澄清话术「完成第几条」的续接词形"
   tags: [reminder, complete, ordinal]
+
+# ── reminder P1c 跨域（2026-07-11）：trace b3ecd195 复现词形 ──
+- text: 第一场提醒我观看
+  initial_intents: []
+  # 「提醒我」命中 create hint；开赛时间由 REMINDABLE_ACTIVE 跨域推导（Agent 内，不在路由层）
+  expect_final_intents: [reminder.create]
+  source: "docs/design/2026-07-11-reminder-cross-domain.md §1 trace b3ecd19599c0f6aa"
+  tags: [reminder, cross_domain]
+
+- text: 开赛前半小时提醒我
+  initial_intents: []
+  expect_final_intents: [reminder.create]
+  source: "docs/design/2026-07-11-reminder-cross-domain.md §3.3 lead"
+  tags: [reminder, cross_domain, lead]

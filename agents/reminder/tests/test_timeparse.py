@@ -5,7 +5,7 @@ import pytest
 
 from agents.reminder.src.timeparse import (
     OK, NEED_TIME, FAIL, parse_time_text, strip_time_expressions, format_display,
-    parse_recur, recur_label, align_workday, next_recur_fire)
+    parse_recur, recur_label, align_workday, next_recur_fire, parse_lead)
 
 TZ = timezone(timedelta(hours=8), name="UTC+8")
 NOW_LOCAL = datetime(2026, 7, 11, 10, 0, tzinfo=TZ)   # 周六
@@ -184,3 +184,13 @@ def test_next_recur_fire_workday_skips_weekend():
 def test_next_recur_fire_weekly():
     wed = ts(L(2026, 7, 15, 19, 0))
     assert next_recur_fire("weekly:3", wed, wed, tz=TZ) == ts(L(2026, 7, 22, 19, 0))
+
+
+# ── P1c：事件锚定提前量 ──
+def test_parse_lead():
+    assert parse_lead("第一场提醒我观看") == 600            # 缺省 10 分钟
+    assert parse_lead("开赛前半小时提醒我") == 1800
+    assert parse_lead("提前20分钟提醒我") == 1200
+    assert parse_lead("开始前一小时叫我") == 3600
+    assert parse_lead("提前两小时提醒我") == 7200
+    assert parse_lead("到时候提醒我", default_s=0) == 0     # 无词形 → 传入缺省

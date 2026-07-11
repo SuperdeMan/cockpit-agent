@@ -51,6 +51,7 @@ class SearchMixin:
         # 赛事路由：命中已知赛事 + 赛事意图词 → 走结构化数据源，不进通用搜索（杜绝编造比分）
         sports = await self._maybe_sports(query, meta, intent.raw_text)
         if sports is not None:
+            await self._save_remindable(ctx, sports)   # 跨域提醒 P1c（SportsMixin，同 MRO）
             return sports
         _broad = any(w in query for w in ("全部", "所有", "每场", "比分", "赛果", "结果"))
         limit = int(intent.slots.get("limit", 6 if _broad else 5) or (6 if _broad else 5))

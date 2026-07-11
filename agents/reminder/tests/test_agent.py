@@ -302,6 +302,114 @@ async def test_list_next_month_range():
     assert [i["title"] for i in res.ui_card["items"]] == ["续保险"]
 
 
+# ── P1c 跨域提醒：REMINDABLE_ACTIVE 消费（设计 2026-07-11-reminder-cross-domain）──
+
+def _remindable(items):
+    return {"profile.remindable_active": json.dumps(
+        {"source": "info.sports", "label": "FIFA 世界杯 · 明天", "ts": 1,
+         "items": items}, ensure_ascii=False)}
+
+
+def _ts(y, mo, d, h, mi=0):
+    return int(datetime(y, mo, d, h, mi, tzinfo=_TZ).timestamp())
+
+
+@pytest.mark.asyncio
+async def test_cross_domain_ordinal_creates_at_kickoff_minus_lead():
+    """trace b3ecd195 复现：「第一场提醒我观看」→ 开赛时刻-10分钟一轮成单。"""
+    a = await _agent()
+    k1 = _ts(2026, 7, 12, 3, 0)
+    ctx = make_context(context_values=_remindable(
+        [{"title": "葡萄牙 vs 西班牙", "fire_at": k1},
+         {"title": "巴西 vs 阿根廷", "fire_at": _ts(2026, 7, 12, 19, 0)}]))
+    res = await run_handle(a, "reminder.create", raw_text="第一场提醒我观看", ctx=ctx)
+    assert res.status == "ok"
+    assert "开始" in res.speech and "提前 10 分钟" in res.speech and "03:00" in res.speech
+    times, _ = await a.store.list_split("u1")
+    assert times[0].fire_at == k1 - 600
+    assert times[0].title == "观看葡萄牙 vs 西班牙"
+
+
+@pytest.mark.asyncio
+async def test_cross_domain_lead_override():
+    a = await _agent()
+    k = _ts(2026, 7, 12, 19, 0)
+    ctx = make_context(context_values=_remindable([{"title": "巴西 vs 阿根廷", "fire_at": k}]))
+    res = await run_handle(a, "reminder.create",
+                           raw_text="第一场开赛前半小时提醒我", ctx=ctx)
+    assert res.status == "ok" and "提前 30 分钟" in res.speech
+    times, _ = await a.store.list_split("u1")
+    assert times[0].fire_at == k - 1800
+
+
+@pytest.mark.asyncio
+async def test_cross_domain_reference_single_direct():
+    a = await _agent()
+    k = _ts(2026, 7, 12, 3, 0)
+    ctx = make_context(context_values=_remindable([{"title": "葡萄牙 vs 西班牙", "fire_at": k}]))
+    res = await run_handle(a, "reminder.create", raw_text="开赛的时候提醒我", ctx=ctx)
+    assert res.status == "ok" and "葡萄牙 vs 西班牙" in res.speech
+    times, _ = await a.store.list_split("u1")
+    assert times[0].fire_at == k - 600
+
+
+@pytest.mark.asyncio
+async def test_cross_domain_reference_multi_asks():
+    a = await _agent()
+    ctx = make_context(context_values=_remindable(
+        [{"title": "A vs B", "fire_at": _ts(2026, 7, 12, 3, 0)},
+         {"title": "C vs D", "fire_at": _ts(2026, 7, 12, 19, 0)}]))
+    res = await run_handle(a, "reminder.create", raw_text="到时候提醒我看球", ctx=ctx)
+    assert res.status == "need_slot" and "第几场" in res.speech
+    times, _ = await a.store.list_split("u1")
+    assert times == []                                   # 反问阶段不落单
+
+
+@pytest.mark.asyncio
+async def test_cross_domain_started_honest():
+    a = await _agent()   # 固定时钟 7/11 10:00：7/11 02:00 已开赛
+    ctx = make_context(context_values=_remindable(
+        [{"title": "A vs B", "fire_at": _ts(2026, 7, 11, 2, 0)}]))
+    res = await run_handle(a, "reminder.create", raw_text="第一场提醒我观看", ctx=ctx)
+    assert res.status == "ok" and "已经开始" in res.speech
+    times, _ = await a.store.list_split("u1")
+    assert times == []
+
+
+@pytest.mark.asyncio
+async def test_cross_domain_pending_continuation_keeps_title():
+    """trace 后续轮：「什么时候提醒你？」→「开赛的时候」——pending 标题 + 跨域时间。"""
+    a = await _agent()
+    k = _ts(2026, 7, 12, 3, 0)
+    ctx = make_context(context_values={
+        **_remindable([{"title": "葡萄牙 vs 西班牙", "fire_at": k}]),
+        "profile.reminder_pending": json.dumps({"title": "观看世界杯第一场比赛"},
+                                               ensure_ascii=False)})
+    res = await run_handle(a, "reminder.create", raw_text="开赛的时候", ctx=ctx)
+    assert res.status == "ok"
+    times, _ = await a.store.list_split("u1")
+    assert times[0].title == "观看世界杯第一场比赛" and times[0].fire_at == k - 600
+
+
+@pytest.mark.asyncio
+async def test_cross_domain_explicit_time_wins():
+    a = await _agent()
+    ctx = make_context(context_values=_remindable(
+        [{"title": "A vs B", "fire_at": _ts(2026, 7, 12, 3, 0)}]))
+    res = await run_handle(a, "reminder.create",
+                           raw_text="第一场明天八点提醒我看回放", ctx=ctx)
+    assert res.status == "ok"
+    times, _ = await a.store.list_split("u1")
+    assert times[0].fire_at == _ts(2026, 7, 12, 8, 0)    # 原话显式时间优先于跨域推导
+
+
+@pytest.mark.asyncio
+async def test_cross_domain_absent_zero_regression():
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text="第一场提醒我观看")
+    assert res.status == "need_slot" and "什么时候" in res.speech   # 无 remindable：现状追问
+
+
 @pytest.mark.asyncio
 async def test_ordinal_continuation_after_clarify():
     """B2 补测：澄清后「取消第二条」经 REMINDERS_ACTIVE 精确选中，不误删第一条。"""

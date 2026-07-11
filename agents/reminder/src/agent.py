@@ -12,12 +12,12 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from agents._sdk import BaseAgent, AgentResult, NEED_CONFIRM, NEED_SLOT, FAILED
-from agents._sdk.shared_state import REMINDERS_ACTIVE, REMINDER_PENDING
+from agents._sdk.shared_state import REMINDABLE_ACTIVE, REMINDERS_ACTIVE, REMINDER_PENDING
 
 from .store import Reminder, ReminderStore, DONE, CANCELLED, FIRED
 from .timeparse import (OK as T_OK, FAIL as T_FAIL, ParsedTime, align_workday,
-                        business_tz, format_display, parse_recur, parse_time_text,
-                        recur_label, strip_time_expressions)
+                        business_tz, format_display, parse_lead, parse_recur,
+                        parse_time_text, recur_label, strip_time_expressions)
 
 logger = logging.getLogger("agent.reminder")
 
@@ -27,9 +27,11 @@ _PROACTIVE_SUBJECT = "agent.proactive"
 _TODO_RE = re.compile(r"记一下|记个|待办|备忘")
 _CMD_STRIP_RE = re.compile(
     r"^(麻烦|请|帮我|给我)?(再)?(提醒我|叫我|别忘了|记得|记一下|记个待办|记个|设个提醒|建个提醒|待办[:：]?)+")
-_ORDINAL_RE = re.compile(r"第([一二三四五六七八九十0-9]+)\s*[条个项]?")
+_ORDINAL_RE = re.compile(r"第([一二三四五六七八九十0-9]+)\s*[条个项场]?")   # 场：跨域「第N场」
 _ALL_RE = re.compile(r"全部|所有|都|清空|全删")
 _AGAIN_RE = re.compile(r"再(提醒|叫)")   # P1a：显式 snooze 标记（「过10分钟再提醒我」）
+# P1c 跨域：无序号时的事件指代词形（含"赛/场/开始"语素，刻意收窄防泛指误命中）
+_REMINDABLE_REF_RE = re.compile(r"这场|那场|到时候|开赛|开场|比赛开始|开始前|开始的?时候")
 _CN_IDX = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 
@@ -92,6 +94,8 @@ class ReminderAgent(BaseAgent):
         time_text = (intent.slots.get("time_text") or "").strip()
         if not title or title == raw:            # route_hints 灌整句 / planner 未抽槽
             title = self._extract_title(raw)
+        if title and not _REMINDABLE_REF_RE.sub("", title).strip(" ，。,、的时候了吧呀"):
+            title = ""    # P1c：纯事件指代（「开赛的时候」）不是标题 → 走 pending/跨域推导
         pend_update_id = ""
         if not title:                            # 上一轮 NEED_SLOT 只差时间（create 或 update）
             pend = await self._load_pending(ctx)
@@ -123,6 +127,20 @@ class ReminderAgent(BaseAgent):
             else ParsedTime(T_FAIL)
         if pt.status == T_FAIL:
             pt = parse_time_text(raw, now=now, tz=self._tz)
+        if pt.status != T_OK:
+            # P1c 跨域：规则解析不出时间 → 先查「可提醒上下文」（确定性数据优先于 LLM 猜；
+            # 「第一场提醒我观看」→ 开赛时刻-提前量）。不命中走原三层不变（零回归）。
+            rem = await self._from_remindable(ctx, raw, title)
+            if isinstance(rem, AgentResult):
+                return rem                       # 多项反问 / 已开始诚实告知
+            if rem:
+                r = await self.store.add(Reminder(
+                    user_id=self._uid(ctx), vehicle_id=ctx.vehicle_id or "",
+                    title=rem["title"], kind="time", fire_at=rem["fire_at"]))
+                await self._refresh_active(ctx)
+                await self._clear_pending(ctx)
+                return AgentResult(speech=rem["speech"],
+                                   ui_card=self._card_single(r, "created"))
         if pt.status == T_FAIL:
             pt = await self._llm_time_fallback(time_text or raw)
         if pt.status != T_OK:
@@ -165,6 +183,69 @@ class ReminderAgent(BaseAgent):
                   f"首次{display}。" if recur
                   else f"好的，{display}提醒你：{title}。")
         return AgentResult(speech=speech, ui_card=self._card_single(r, "created"))
+
+    async def _from_remindable(self, ctx, raw: str, cur_title: str):
+        """跨域提醒 P1c：缺时间时从 `REMINDABLE_ACTIVE` 推导（2026-07-11-reminder-cross-domain）。
+
+        返回 None=不命中（走原追问，零回归）；AgentResult=终局（多项反问/已开始）；
+        dict{fire_at,title,speech}=命中成单。序号按 items 全序（=卡片渲染序，含已开赛占位）；
+        无序号需命中指代词形，未来项唯一才直取、多项反问「第几场」。
+        """
+        data = await ctx.load_shared_state(REMINDABLE_ACTIVE)
+        try:
+            d = json.loads(data) if isinstance(data, str) else (data or {})
+        except Exception:
+            return None
+        all_items = [it for it in (d.get("items") or [])
+                     if isinstance(it, dict) and it.get("fire_at") and it.get("title")]
+        if not all_items:
+            return None
+        now_ts = int(self._now_utc().timestamp())
+        idx = None
+        m = _ORDINAL_RE.search(raw)
+        if m:
+            v = m.group(1)
+            idx = int(v) if v.isdigit() else _CN_IDX.get(v)
+        if idx is None and not _REMINDABLE_REF_RE.search(raw):
+            return None
+        if idx is not None:
+            if not (0 < idx <= len(all_items)):
+                return None
+            item = all_items[idx - 1]
+        else:
+            future = [it for it in all_items if int(it["fire_at"]) > now_ts]
+            if not future:
+                return None
+            if len(future) > 1:
+                heads = "、".join(
+                    f"第{i}场 {it['title']}"
+                    f"（{format_display(int(it['fire_at']), now=self._now_utc(), tz=self._tz)}）"
+                    for i, it in enumerate(all_items, 1) if int(it["fire_at"]) > now_ts)
+                return AgentResult(status=NEED_SLOT,
+                                   speech=f"有几场还没开始：{heads}。提醒你看第几场？",
+                                   missing_slots=["index"])
+            item = future[0]
+        event_ts = int(item["fire_at"])
+        if event_ts <= now_ts:
+            return AgentResult(speech=f"「{item['title']}」已经开始了，就不设提醒了。")
+        lead = parse_lead(raw)
+        fire = event_ts - lead
+        lead_txt = (f"提前 {lead // 3600} 小时" if lead >= 3600 and lead % 3600 == 0
+                    else f"提前 {max(lead // 60, 1)} 分钟")
+        if fire <= now_ts:                 # 提前量落到过去 → 事件时刻直提
+            fire, lead_txt = event_ts, "开始时"
+        # 标题：干净短动词（观看/看球）+ 事件名 > 既有标题（planner/pending 拼的）> 事件名
+        cleaned = _REMINDABLE_REF_RE.sub("", _ORDINAL_RE.sub("", raw)).strip(" ，。,、的时候了吧呀")
+        verb = self._extract_title(cleaned).strip(" ，。,、的时候了吧呀")
+        if verb and len(verb) <= 6 and not _REMINDABLE_REF_RE.search(verb):
+            title = f"{verb}{item['title']}"
+        elif cur_title and cur_title != raw and len(cur_title) <= 24:
+            title = cur_title
+        else:
+            title = item["title"]
+        event_disp = format_display(event_ts, now=self._now_utc(), tz=self._tz)
+        return {"fire_at": fire, "title": title,
+                "speech": f"好的，{item['title']} {event_disp} 开始，{lead_txt}提醒你。"}
 
     async def _reschedule_target(self, ctx, title: str, raw: str) -> Reminder | None:
         """同名 fired 尸体一律收编改期；显式「再提醒/再叫」时同名 pending 也改期不重建。"""

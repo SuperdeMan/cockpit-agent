@@ -284,6 +284,24 @@ def recur_label(recur: str) -> str:
     return ""
 
 
+# 跨域提醒 P1c：事件锚定的提前量（「提前10分钟/开赛前半小时」）；无词形用默认
+_LEAD_HALF_RE = re.compile(r"(?:提前|开赛前|开始前|前)\s*半\s*个?\s*(?:小时|钟头)")
+_LEAD_RE = re.compile(r"(?:提前|开赛前|开始前|前)\s*" + _NUM + r"\s*个?\s*(分钟|小时|钟头)")
+
+
+def parse_lead(text: str, default_s: int = 600) -> int:
+    """事件提前量（秒）：「提前N分钟/开赛前半小时/前一小时」；无词形返回 default_s。"""
+    t = text or ""
+    if _LEAD_HALF_RE.search(t):
+        return 1800
+    m = _LEAD_RE.search(t)
+    if m:
+        n = _cn2int(m.group(1))
+        if n:
+            return n * (60 if m.group(2) == "分钟" else 3600)
+    return default_s
+
+
 def align_workday(fire_at: int, tz: tzinfo | None = None) -> int:
     """工作日系列首触发落在周末 → 顺延到下周一同时刻。"""
     tz = tz or business_tz()

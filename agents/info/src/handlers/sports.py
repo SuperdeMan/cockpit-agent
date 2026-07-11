@@ -3,12 +3,13 @@
 未识别赛事回落通用搜索（self._search，SearchMixin）；历史累计榜亦转搜索。
 """
 from __future__ import annotations
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import re
 
 from agents._sdk import AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
+from agents._sdk.shared_state import REMINDABLE_ACTIVE
 
 from ._util import _shanghai_now
 
@@ -77,6 +78,20 @@ def _fmt_kickoff(iso: str) -> str:
         return dt.strftime("%m-%d %H:%M")
     except (ValueError, TypeError):
         return iso[:16].replace("T", " ")
+
+
+def _kickoff_epoch(iso: str) -> int:
+    """ISO 开球时间 → epoch 秒（跨域提醒用）；解析失败返回 0。
+    api-football 返回带时区；万一裸时间按上海时区（与 _fmt_kickoff 同源假设）。"""
+    if not iso:
+        return 0
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone(timedelta(hours=8)))
+        return int(dt.timestamp())
+    except (ValueError, TypeError):
+        return 0
 
 
 def _detect_league(query: str) -> tuple[int, str]:
@@ -148,6 +163,31 @@ class SportsMixin:
             "status": f.status, "status_text": f.status_text,
             "elapsed": f.elapsed, "kickoff": f.kickoff,
         }
+
+    async def _save_remindable(self, ctx, res) -> None:
+        """未开赛场次 → 可提醒上下文（跨域提醒 P1c，best-effort 失败不影响出卡）。
+
+        卡驱动：从 `sports_scores` 卡的 fixtures 收割。**写全部有 kickoff 的场次**
+        （含已结束——序号必须与卡片渲染严格同序，「第二场提醒我」不能因首场已结束而错位；
+        过去项由消费侧按「已经开始」诚实答复）。无 kickoff 的卡不写、不覆盖旧值。
+        见 2026-07-11-reminder-cross-domain.md §3.1/§6。
+        """
+        try:
+            card = getattr(res, "ui_card", None) or {}
+            if ctx is None or card.get("type") != "sports_scores":
+                return
+            items = []
+            for fd in card.get("fixtures") or []:
+                ts = _kickoff_epoch(fd.get("kickoff", ""))
+                if ts:
+                    items.append({"title": f"{fd.get('home', '')} vs {fd.get('away', '')}",
+                                  "fire_at": ts})
+            if items:
+                await ctx.save_shared_state(REMINDABLE_ACTIVE, {
+                    "source": "info.sports", "label": card.get("title", "赛程"),
+                    "ts": int(_shanghai_now().timestamp()), "items": items})
+        except Exception as e:
+            logger.debug("sports remindable save skipped: %s", e)
 
     async def _maybe_sports(self, query: str, meta, raw_text: str = "") -> AgentResult | None:
         """命中「已知赛事 + 赛事意图词」才路由到结构化数据源；否则返回 None 走通用搜索。
@@ -429,4 +469,5 @@ class SportsMixin:
         if res is None:
             return AgentResult(status=FAILED,
                                speech="赛事数据暂时不可用，无法确认比分，请稍后再试。")
+        await self._save_remindable(ctx, res)   # 跨域提醒 P1c：未开赛场次交接给 reminder
         return res
