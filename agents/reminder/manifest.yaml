@@ -1,0 +1,64 @@
+agent_id: reminder
+version: 0.1.0
+display_name: 智能提醒
+category: core
+trust_level: first_party
+deployment: cloud
+latency_budget_ms: 8000     # 常规确定性解析毫秒级；LLM 兜底解析一跳 @fast 留余量
+fallback: chitchat
+
+capabilities:
+  - intent: reminder.create
+    description: 创建定时提醒或待办。支持绝对时间（明天早上八点/周五下午三点）、
+      相对时间（半小时后/20分钟后）；只说"记一下"不带时间则存为待办。
+    slots: [title, time_text, kind]
+    examples: ["明天早上八点提醒我带充电线", "半小时后提醒我给客户回电话",
+               "周五下午三点叫我去接孩子", "记一下要买牛奶", "帮我记个待办周末洗车"]
+  - intent: reminder.list
+    description: 查询提醒/待办/日程安排（今天/明天/后天/未来三天/这周/全部/待办）
+    slots: [scope, date_text]
+    examples: ["我今天有什么安排", "我有哪些提醒", "看看我的待办", "明天有什么提醒",
+               "这周有什么安排", "未来三天有什么提醒"]
+  - intent: reminder.complete
+    description: 完成某条提醒/待办（按序号或内容）
+    slots: [index, title]
+    examples: ["完成第二条", "买牛奶那条办完了", "标记第一个完成", "完成提醒：给客户回电话"]
+  - intent: reminder.cancel
+    description: 取消某条提醒，或清空全部（清空需二次确认）
+    slots: [index, title, all]
+    examples: ["取消第二条提醒", "不用提醒我回电话了", "把提醒都清空"]
+
+# 确定性路由（R2.1）：弱 LLM 常把"提醒我X"落到 chitchat。guard 排除车辆功能语境的
+# "提醒"（限速/车道/碰撞等设备对象词，见 orchestrator/edge/fast_intent.py:1090）与
+# 说明书查询（"限速提醒是什么"归 manual）。pattern 为设计 §6.2 方向性草案，以
+# test/eval_corpus/route_hints_cases.yaml 实测收敛（Task 10）。
+route_hints:
+  - pattern: '提醒我|叫我(?!.{0,4}(小舟|什么))|别忘了|帮我记(一?下|个)|记个待办|设个提醒'
+    intent: reminder.create
+    policy: replace
+    priority: 56
+    guard: '限速|车道|碰撞|疲劳|盲区|导航播报|电量提醒|保养提醒|是什么|怎么(开|关|用)|什么意思'
+    slots: {title: "$text"}
+  - pattern: '我(今天|明天|后天|这周|未来.{0,2}天)?(有什么|有哪些|的)(安排|提醒|待办|日程)|看看?(我的)?(提醒|待办|日程)'
+    intent: reminder.list
+    policy: replace
+    priority: 56
+    guard: '行程|旅行|路线'
+    slots: {scope: "$text"}
+  - pattern: '(取消|删掉|删除|不用).{0,4}(提醒|待办)|(提醒|待办).{0,4}(清空|全删)|把提醒都?清空'
+    intent: reminder.cancel
+    policy: replace
+    priority: 56
+    slots: {title: "$text"}
+  - pattern: '(完成|办完|做完|搞定)了?.{0,4}(第[一二三四五六七八九十0-9]+[条个项]|那[条个]|提醒|待办)|完成提醒[:：]'
+    intent: reminder.complete
+    policy: replace
+    priority: 56
+    guard: '行程|导航|充电'
+    slots: {title: "$text"}
+
+requires_permissions:
+  - profile.read        # 提醒属用户数据域 + shared_state 经 profile KV；不新增 scope
+  - profile.write
+edge_intents: []
+context_scopes: []      # P0 不需要精确位置/电量；P1 位置触发时补 location

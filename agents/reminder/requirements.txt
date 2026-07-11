@@ -1,0 +1,2 @@
+# reminder 专属：PG 持久层（仿 memory/pg_store.py；其余依赖来自 agents/_sdk/requirements.txt）
+asyncpg>=0.29

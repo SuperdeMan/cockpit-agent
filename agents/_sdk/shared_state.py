@@ -9,6 +9,8 @@ Agent 无状态化：一次会话的临时状态落 profile KV（经 `Context.sa
 | `news_active`    | info（news 域）    | deep-research（深挖第N条）  | `{items:[{title,source}]}`             | 会话/被覆盖 |
 | `research_active`| deep-research      | deep-research（多轮聚焦）   | `{question,summary,sections[],freshness}` | 会话/被覆盖 |
 | `trip_active`    | trip-planner       | trip-planner（有状态改天）  | `Trip.to_dict()`                        | 会话/被覆盖 |
+| `reminders_active`| reminder（list/create/complete/cancel 后刷新）| reminder（「第N条」序号解析） | `{items:[{id,title}]}` | 会话/被覆盖 |
+| `reminder_pending`| reminder（缺时刻 NEED_SLOT 追问时写） | reminder（下一轮 create 合并标题） | `{title}` | 一轮追问/消费即清 |
 
 注：底层 profile KV 无独立 TTL（随画像存储；被同 key 下次写覆盖）。新增跨 Agent 状态键**先在此
 登记 + 更新 conventions.md**，再在 owner/reader 用常量引用，不要在业务码写裸字符串。
@@ -21,5 +23,10 @@ NEWS_ACTIVE = "news_active"
 RESEARCH_ACTIVE = "research_active"
 # trip-planner 写当前活动行程 → 自身「改某天」有状态读
 TRIP_ACTIVE = "trip_active"
+# reminder 写当前提醒列表（list/create/complete/cancel 后刷新）→ 自身「第N条」序号解析读
+REMINDERS_ACTIVE = "reminders_active"
+# reminder create 缺时刻追问时写 {title} → 下一轮 create 合并标题；消费即清
+REMINDER_PENDING = "reminder_pending"
 
-__all__ = ["NEWS_ACTIVE", "RESEARCH_ACTIVE", "TRIP_ACTIVE"]
+__all__ = ["NEWS_ACTIVE", "RESEARCH_ACTIVE", "TRIP_ACTIVE",
+           "REMINDERS_ACTIVE", "REMINDER_PENDING"]
