@@ -32,6 +32,7 @@ _POC_DEFAULT_SCOPES = [
     "food.ordering",
     "location.read", "navigation.control",
     "network.external", "payment.invoke",
+    "profile.read", "profile.write",
 ]
 # 敏感上下文键：默认按值广播，Phase 4 起按 manifest context_scopes 最小化下发。
 _SENSITIVE_CONTEXT_KEYS = (
