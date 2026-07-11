@@ -367,6 +367,19 @@ services:
       BING_SEARCH_KEY: ${BING_SEARCH_KEY:-}
     depends_on: [registry, llm-gateway]
 
+  reminder-agent:
+    <<: *restart
+    build: { context: .., dockerfile: agents/reminder/Dockerfile }
+    volumes: *certs-vol
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50074"
+      # PG 持久 + 到点调度（无 PG 内存降级重启丢失；无 NATS 仅日志不推送）
+      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+      REMINDER_POLL_S: ${REMINDER_POLL_S:-5}
+      REMINDER_TZ: ${REMINDER_TZ:-Asia/Shanghai}
+    depends_on: [registry, llm-gateway, memory, postgres, nats]
+
   charging-planner-agent:
     <<: *restart
     build: { context: .., dockerfile: agents/charging_planner/Dockerfile }

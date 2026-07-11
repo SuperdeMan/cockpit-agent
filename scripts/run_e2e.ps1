@@ -24,6 +24,7 @@ $steps = @(
     @{ Name = "e2e_research_async";         Cmd = { python test/e2e_research_async.py } }
     @{ Name = "e2e_degrade";                Cmd = { python test/e2e_degrade.py } }
     @{ Name = "e2e_voice_loop";             Cmd = { python test/e2e_voice_loop.py } }
+    @{ Name = "e2e_reminder";               Cmd = { python test/e2e_reminder.py } }
     @{ Name = "e2e_rejection";              Cmd = { python test/e2e_rejection.py } }
     @{ Name = "e2e_tts_stream";             Cmd = { python test/e2e_tts_stream.py } }
     @{ Name = "e2e_real_providers";         Cmd = { python -m pytest test/e2e_real_providers.py -q -s } }

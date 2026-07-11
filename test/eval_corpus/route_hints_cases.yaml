@@ -85,3 +85,46 @@
   expect_final_intents: [nearby.detail]
   source: "真·周边详情不被赛事修复误伤"
   tags: [nearby, replace]
+
+# ── reminder（2026-07-11 设计 §6.3）：正例路由 + 车辆功能"提醒"反例不被劫持 ──
+- text: 明天早上八点提醒我带充电线
+  initial_intents: []
+  expect_final_intents: [reminder.create]
+  source: "docs/design/2026-07-11-reminder-agent-design.md §6"
+  tags: [reminder, replace]
+
+- text: 半小时后提醒我给客户回电话
+  initial_intents: []
+  expect_final_intents: [reminder.create]
+  source: "docs/design/2026-07-11-reminder-agent-design.md §6"
+  tags: [reminder, replace]
+
+- text: 我今天有什么安排
+  initial_intents: []
+  expect_final_intents: [reminder.list]
+  source: "docs/design/2026-07-11-reminder-agent-design.md §6"
+  tags: [reminder, list]
+
+- text: 取消第二条提醒
+  initial_intents: []
+  expect_final_intents: [reminder.cancel]
+  source: "docs/design/2026-07-11-reminder-agent-design.md §6"
+  tags: [reminder, cancel]
+
+- text: 打开限速提醒
+  initial_intents: []
+  expect_final_intents: []
+  source: "orchestrator/edge/fast_intent.py:1090 词面冲突消解"
+  tags: [reminder, guard, adas]
+
+- text: 把车道偏离提醒关掉
+  initial_intents: []
+  expect_final_intents: []
+  source: "docs/design/2026-07-11-reminder-agent-design.md §6.3"
+  tags: [reminder, guard, adas]
+
+- text: 限速提醒是什么意思
+  initial_intents: []
+  expect_final_intents: []
+  source: "docs/design/2026-07-11-reminder-agent-design.md §6.3"
+  tags: [reminder, guard, manual]

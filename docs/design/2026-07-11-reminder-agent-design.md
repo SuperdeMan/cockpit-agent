@@ -1,6 +1,6 @@
 # 智能提醒 Agent（reminder）设计：自然语言日程/提醒/待办 + 到点主动触达 + 右舞台日程时间轴
 
-- **状态**：已批准（2026-07-11 泓舟评审通过，含 D7 多天查看维度增补）；待实施
+- **状态**：✅ P0 已落地（2026-07-11）——Task 0-12 全绿，真栈 `test/e2e_reminder.py` 6/6，全量 `pytest --import-mode=importlib` 1268 passed。集成期修 `orchestrator/cloud/context.py::_POC_DEFAULT_SCOPES` 缺 `profile.read/profile.write`（reminder 声明的合法 first_party scope 不在 PoC 默认授权集，被 `_filter_by_permission` 在规划前剔除 → 全兜底 chitchat），补为类目级默认授权、符合 §10「profile.*，无新 scope」。此前：已批准（2026-07-11 泓舟评审通过，含 D7 多天查看维度增补）
 - **交付对象**：Claude Code（评审通过后按 §11 分阶段清单执行）
 - **关联代码**：`agents/road_safety/src/agent.py`（on_start 后台循环 + NATS proactive 样板）、`agents/deep_research/src/agent.py:223-241`（proactive 带 card 推送样板）、`gateway/edge/main.go:315-333`（NATS→HMI 投递一跳，card 透传）、`hmi/src/App.tsx:412-427`（proactive 帧渲染与朗读条件）、`hmi/src/components/ContextualStage.tsx`（右舞台场景机制）、`hmi/src/types.ts`（卡片契约）、`memory/pg_store.py`（同 PG 实例独立表先例）、`agents/nearby/manifest.yaml:30-53`（route_hints 样板）、`agents/_sdk/shared_state.py`（跨轮状态键）
 - **关联文档**：`CLAUDE.md` §3（新增 Agent 标准流程）、`docs/conventions.md` §1/§2/§5/§9（落地时需登记）、`docs/design/2026-06-25-memory-system-redesign.md`（routine 与 reminder 的边界）
