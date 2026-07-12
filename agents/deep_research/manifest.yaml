@@ -11,6 +11,10 @@ fallback: chitchat
 
 capabilities:
   - intent: research.run
+    # desc 刻意保持原句不加长：registry 离线路由按「query 字符∩capability 文本」打分，
+    # 文本每加长一分，所有 query 对本能力的分都会涨（曾把「自驾游路线安排」从 trip-planner
+    # 吸过来，eval_registry_resolve 回归实测）。「勿把普通查询升级成调研」的边界由
+    # planner prompt 深度判据 + info.search desc 承载。
     description: 对一个主题做深度调研——拆成多视角子问题、并行联网检索正文级资料、产出带引用的分节报告
       与一段式语音简报。用户说「深入调研/研究一下/全面对比/系统了解/深度分析 X」时走本能力；
       单轮快查仍走 info.search。

@@ -292,8 +292,9 @@
 
 - text: 增程和纯电哪个更适合北方冬天
   tags: [mode_boundary, search_vs_research]
-  expect_mode: search
-  source: "单个比较问句要答案 → search；「全面对比」才是调研"
+  expect_mode: search|research
+  source: "有界比较问句：search 为优、research 可接受（需要当代车型事实，绝不允许 chitchat
+    凭记忆直答）；实测该句在 run 间 search/research 摇摆，双容忍防 flapping 污染回归 diff"
 
 - text: 帮我全面梳理一下智能驾驶的技术路线
   tags: [mode_boundary, search_vs_research]
@@ -669,11 +670,12 @@
 
 - text: 打开空调然后来点科技新闻
   tags: [mode_guardrail, multi_intent]
-  expect_mode: news
+  expect_mode: "news|multi:info.news,scene.activate"
   initial_intents: []
   expect_det_intents: [info.news]
   source: "真栈里空调子句由端侧 A2 混拆本地执行、云侧只见新闻子句；本评测全句直发云端，
-    云侧正确行为=接住新闻部分（车控在云 catalog 缺席）"
+    云侧正确行为=接住新闻部分（车控在云 catalog 缺席；模型把空调映射到 scene.activate
+    并列 news 也算对——新闻意图没丢）"
 
 - text: 帮我查一下去机场的路线
   tags: [mode_guardrail, navigation]

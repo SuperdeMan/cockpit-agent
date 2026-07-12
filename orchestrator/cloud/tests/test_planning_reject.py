@@ -231,3 +231,13 @@ def test_planner_system_clarify_gated_by_env(monkeypatch):
     assert "路由歧义澄清" not in _planner_system()
     monkeypatch.setenv("CLARIFY_ENABLED", "on")
     assert "路由歧义澄清" in _planner_system()
+
+
+def test_planner_system_mode_criteria_before_addressed(monkeypatch):
+    """四模式判据段（时效/常识/深度）恒在 base 内，且受话段仍拼在其后
+    ——顺序变化=拼装逻辑被动过，值得报警（2026-07-12 mode-routing 设计 P0-3）。"""
+    monkeypatch.delenv("CLARIFY_ENABLED", raising=False)
+    sys_text = _planner_system()
+    assert "时效与深度" in sys_text
+    assert "禁止凭你的记忆直答" in sys_text
+    assert sys_text.index("时效与深度") < sys_text.index("受话判定")

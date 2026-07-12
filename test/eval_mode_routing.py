@@ -94,13 +94,17 @@ def _load_agents() -> list[SimpleNamespace]:
 
 def _mode_of(intents: list[str]) -> str:
     """最终 intent 列表 → 模式。research replace 语义下含 research.run 即 research；
-    单意图查表；多意图（云域组合）用 multi: 前缀精确呈现。"""
+    单意图查表；多意图（云域组合）用 multi: 前缀精确呈现——但**同族多步归并**
+    （如「适不适合洗车」被合理规划成 forecast+indices 双步，仍是 weather 模式）。"""
     if not intents:
         return "none"
     if "research.run" in intents:
         return "research"
     if len(intents) == 1:
         return _MODE_OF_INTENT.get(intents[0], f"other:{intents[0]}")
+    fams = {_MODE_OF_INTENT.get(i, f"other:{i}") for i in intents}
+    if len(fams) == 1:
+        return fams.pop()
     return "multi:" + ",".join(sorted(intents))
 
 

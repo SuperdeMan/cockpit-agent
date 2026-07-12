@@ -9,9 +9,12 @@ fallback: ""
 
 capabilities:
   - intent: chitchat.talk
-    description: 开放域闲聊、情感陪伴、简单常识问答（其他 Agent 无法处理时的兜底）
+    description: 开放域闲聊、情绪陪伴、创作，以及**不随时间变化**的常识/原理/定义/历史知识
+      （其他 Agent 无法处理时的兜底）。不适用：实时或近期信息（新闻、价格、比分、近期事件）
+      ——那些答案会随时间变化，必须走联网检索类能力，不要用本能力直答
     slots: []
-    examples: ["讲个笑话", "陪我聊聊", "你叫什么名字", "好无聊啊"]
+    examples: ["讲个笑话", "陪我聊聊", "你叫什么名字", "好无聊啊",
+               "地球为什么是圆的", "给我讲讲光合作用", "三国演义的作者是谁"]
 
 requires_permissions: []
 edge_intents: []
