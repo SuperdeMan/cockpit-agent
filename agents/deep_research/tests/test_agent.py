@@ -106,6 +106,58 @@ def test_research_deepen_focuses_prior_section():
     assert "量产风险" in res.data["question"]           # 聚焦到上次第2节，不重跑整份调研
 
 
+def test_save_task_stores_section_citation_urls_for_seed_reuse():
+    """P2 深挖种子：_save_task 每节落 citations 对应的 urls（≤3），供下轮复用。"""
+    from agents._sdk.shared_state import RESEARCH_ACTIVE
+    from agents.deep_research.src.models import Report, Section
+    agent = DeepResearchAgent()
+    saved = {}
+
+    class _Ctx:
+        async def save_shared_state(self, key, value):
+            saved[key] = value
+
+    report = Report(
+        summary="s",
+        sections=[Section(heading="h1", body="b1", citations=[2, 1]),
+                  Section(heading="h2", body="b2", citations=[])],
+        sources=[{"idx": 1, "url": "http://a/1"}, {"idx": 2, "url": "http://a/2"}])
+    asyncio.run(agent._save_task(_Ctx(), "q", report))
+    secs = saved[RESEARCH_ACTIVE]["sections"]
+    assert secs[0]["urls"] == ["http://a/2", "http://a/1"]   # 按该节 citations 序取 url
+    assert secs[1]["urls"] == []
+
+
+def test_research_deepen_seeds_prior_urls_via_extractor():
+    """深挖命中：只抓上轮**该节**的 urls 作种子证据，且种子进全局来源（按 url 去重合并）。"""
+    prior = {"question": "固态电池", "summary": "...",
+             "sections": [{"heading": "技术原理", "urls": ["http://p/1", "http://p/2"]},
+                          {"heading": "量产风险", "urls": ["http://p/3"]}]}
+    ctx = make_context(context_values={"profile.research_active": json.dumps(prior)})
+    agent = _wire(DeepResearchAgent())
+    grabbed = []
+
+    class _Ext:
+        async def extract(self, url, meta=None):
+            grabbed.append(url)
+            return "上轮引用的正文内容，足够长可作种子证据。"
+
+    agent.extractor = _Ext()
+    res = asyncio.run(run_handle(agent, "research.run", raw_text="再深入第2点", ctx=ctx))
+    assert res.status == "ok"
+    assert grabbed == ["http://p/3"]                        # 只抓聚焦节的 urls
+    assert "http://p/3" in [s["url"] for s in res.ui_card["sources"]]
+
+
+def test_seed_from_prior_tolerates_old_state_without_urls():
+    """向后兼容：旧 RESEARCH_ACTIVE 无 urls 字段 → 种子为空、不触发 extract、纯重新检索。"""
+    agent = _wire(DeepResearchAgent())
+    agent.extractor = object()      # 若被调用会 AttributeError —— 隐式断言不触碰
+    prior = {"sections": [{"heading": "技术原理"}]}
+    seed = asyncio.run(agent._seed_from_prior(prior, "技术原理", {}))
+    assert seed == []
+
+
 def test_research_remember_saves_and_skips_pipeline():
     prior = {"question": "固态电池", "summary": "结论摘要", "sections": [{"heading": "h"}]}
     ctx = make_context(context_values={"profile.research_active": json.dumps(prior)})

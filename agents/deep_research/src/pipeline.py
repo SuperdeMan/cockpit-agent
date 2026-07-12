@@ -76,8 +76,11 @@ def _extract_json_block(text: str) -> str:
 # ──────────────────────────── plan ────────────────────────────
 
 def _plan_system(deep: bool = False) -> str:
-    """规划 system prompt。deep（异步分钟级深调研）时要求更多角度（8-11），覆盖更广。"""
-    count = "8-11" if deep else "5-7"
+    """规划 system prompt。deep（异步分钟级深调研）时要求更多角度（8-9），覆盖更广。
+
+    数量区间与解析 cap 对齐（同步 5-6/cap 6、deep 8-9/cap 9）——旧文案"5-7/8-11"让模型
+    多产的角度在 `_parse_plan` 被 cap 截断白白丢弃（浪费 plan 预算）。"""
+    count = "8-9" if deep else "5-6"
     return (
         f"你是严谨的调研规划助手。把用户的研究问题拆成 {count} 个**简短、可直接搜索**的子问题，"
         "从不同角度（背景/定义、原理/机制、对比、优劣/风险、最新进展、应用/案例）充分覆盖，"
@@ -210,19 +213,25 @@ async def _retrieve_for(search_provider, extractor, query: str, meta,
 async def investigate(search_provider, extractor, subqs: list[SubQuestion],
                       *, meta=None, max_rounds: int = MAX_ROUNDS,
                       deep: bool = False) -> None:
-    """确定性有界并行检索：每子问题 1 轮；空结果换更宽 query 再追 1 轮（受 max_rounds 约束）。
+    """确定性有界并行检索：每子问题 1 轮；证据薄(<_THIN_EVIDENCE)换更宽 query 再追 1 轮
+    合并（受 max_rounds 约束）。已带证据的子问题跳过检索（幂等化——深挖种子/重入不重检）。
 
-    deep=True（异步分钟级深调研）额外做**学术兜底**：某子问题证据「薄」(<_THIN_EVIDENCE)时，
+    deep=True（异步分钟级深调研）额外做**学术兜底**：某子问题证据仍「薄」时，
     用 Exa `research paper` 类目补权威学术文献，回填薄弱角度——不新增小节、不收窄整体（只救薄的）。
     """
     async def one(sq: SubQuestion) -> None:
+        if sq.evidence:                       # 预置证据（深挖种子）→ 不重检索
+            sq.status = "answered"
+            return
         sq.status = "searching"
         try:
             evs = await _retrieve_for(search_provider, extractor, sq.text, meta)
-            if not evs and max_rounds >= 2:
-                # gap 回溯/转向：换更宽 query 再来一轮（仿 Deep Research 的 backtrack）
-                evs = await _retrieve_for(search_provider, extractor,
-                                          f"{sq.text} 详细介绍", meta)
+            if len(evs) < _THIN_EVIDENCE and max_rounds >= 2:
+                # gap 回溯/转向：换更宽 query 再来一轮（仿 Deep Research 的 backtrack）。
+                # 旧条件「空才回溯」放宽为「薄就回溯」，且**合并不替换**（首轮仅 1 条时那条仍保留）。
+                extra = await _retrieve_for(search_provider, extractor,
+                                            f"{sq.text} 详细介绍", meta)
+                evs = _merge_evidence(evs, extra)
             if deep and len(evs) < _THIN_EVIDENCE:
                 # 学术兜底：薄结果子问题补权威学术文献（research paper 类目），不替换、只补充去重
                 papers = await _retrieve_for(search_provider, extractor, sq.text, meta,

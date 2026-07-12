@@ -111,6 +111,41 @@ def test_investigate_marks_gap_when_no_results():
     assert subqs[0].status == "gap" and subqs[0].evidence == []
 
 
+def test_investigate_backtrack_merges_on_thin_results():
+    """首轮只有 1 条（薄，<_THIN_EVIDENCE）→ 换宽 query 追一轮且**合并**（首轮那条保留）。"""
+    calls = []
+
+    class _ThinThenMore:
+        async def search(self, query, limit=5, meta=None, **kwargs):
+            calls.append(query)
+            if len(calls) == 1:
+                return [SearchResult(title="仅一条", url="http://only/1", source="s",
+                                     content="首轮唯一正文。")]
+            return [SearchResult(title="补充", url="http://more/2", source="s",
+                                 content="回溯轮补充正文。")]
+
+    subqs = [SubQuestion(sq_id="sq1", text="冷门主题")]
+    asyncio.run(pipeline.investigate(_ThinThenMore(), None, subqs, meta={}))
+    assert calls == ["冷门主题", "冷门主题 详细介绍"]
+    urls = [e.url for e in subqs[0].evidence]
+    assert urls == ["http://only/1", "http://more/2"]   # 合并不替换
+    assert subqs[0].status == "answered"
+
+
+def test_investigate_skips_preseeded_subquestion():
+    """预置证据的子问题（深挖种子 sq0）不再检索——幂等化。"""
+    class _MustNotSearch:
+        async def search(self, *a, **k):
+            raise AssertionError("预置证据的子问题不应触发检索")
+
+    seeded = SubQuestion(sq_id="sq0", text="上轮结论回顾：某节", status="pending",
+                         evidence=[Evidence(title="旧引用", url="http://prior/1",
+                                            excerpt="上轮正文")])
+    asyncio.run(pipeline.investigate(_MustNotSearch(), None, [seeded], meta={}))
+    assert seeded.status == "answered"
+    assert [e.url for e in seeded.evidence] == ["http://prior/1"]
+
+
 # ── synthesize ────────────────────────────────────────────
 
 def _subqs_with_evidence():
@@ -186,9 +221,9 @@ def test_plan_deep_prompt_asks_more_angles():
         return '{"subquestions":[{"text":"a","perspective":"背景"},{"text":"b","perspective":"对比"}]}'
 
     asyncio.run(pipeline.plan(FakeLLM(responder), "X", deep=True))
-    assert "8-11" in cap["sys"]
+    assert "8-9" in cap["sys"]                        # 与 MAX_SUBQ_DEEP=9 对齐
     asyncio.run(pipeline.plan(FakeLLM(responder), "X"))
-    assert "5-7" in cap["sys"]
+    assert "5-6" in cap["sys"]                        # 与 MAX_SUBQ=6 对齐，不再让 cap 白丢产出
 
 
 def test_synthesize_deep_uses_larger_budget_and_prompt():

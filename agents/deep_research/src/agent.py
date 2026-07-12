@@ -23,8 +23,8 @@ from agents._sdk.grounding import shanghai_now
 from agents._sdk.location import current_location_from_meta
 from agents.info.src.providers import build_search_provider, build_extractor
 from agents.info.src.providers.amap_geocoder import build_location_resolver
-from .pipeline import plan, investigate, synthesize, brief
-from .models import ResearchTask
+from .pipeline import plan, investigate, synthesize, brief, _clean_excerpt, _EXCERPT_CAP
+from .models import Evidence, ResearchTask, SubQuestion
 
 logger = logging.getLogger("agent.deep_research")
 
@@ -111,10 +111,13 @@ class DeepResearchAgent(BaseAgent):
         if prior and any(m in raw for m in _REMEMBER_MARK):
             return await self._remember_report(ctx, prior)
 
-        # 追问深挖：『再深入第N点/展开这部分』→ 取上次报告对应小节标题作聚焦问题（不重跑整份调研）。
+        # 追问深挖：『再深入第N点/展开这部分』→ 取上次报告对应小节标题作聚焦问题（不重跑整份调研），
+        # 并把上轮该节引用的正文抓回来作种子证据（复用已核实来源，不从零检索）。
         focus = self._resolve_deepen(raw, prior)
+        seed_evidence: list = []
         if focus:
             question = f"{focus}——在前述调研基础上深入展开"
+            seed_evidence = await self._seed_from_prior(prior, focus, meta)
         else:
             # 新闻深挖桥接（P2）：『详细讲讲第N条/这条新闻』→ 取上次新闻列表第N条标题做小型调研。
             news_focus = await self._resolve_news_deepen(ctx, raw)
@@ -138,6 +141,12 @@ class DeepResearchAgent(BaseAgent):
 
         # 四段流水线：事实全部确定性产出，LLM 只在 plan 提议子问题、synthesize 受约束合成。
         task.plan = await plan(self.llm, question, constraints)
+        if seed_evidence:
+            # 深挖种子：上轮该节引用正文作首个"已答"子问题（investigate 对带证据的 sq 跳过检索；
+            # 全局来源编号 _assign_global_sources 按 url 去重，种子与新检索天然合并）。
+            task.plan.insert(0, SubQuestion(
+                sq_id="sq0", text=f"上轮结论回顾：{focus}", perspective="背景",
+                evidence=seed_evidence, status="answered"))
         task.status = "investigating"
         await investigate(self.search, self.extractor, task.plan, meta=meta)
         task.status = "synthesizing"
@@ -293,17 +302,51 @@ class DeepResearchAgent(BaseAgent):
         return raw if isinstance(raw, dict) else None
 
     async def _save_task(self, ctx, question: str, report) -> None:
-        """紧凑落 memory：保存问题 + 各节标题/正文摘要，供下一轮『展开第N点』定位（best-effort）。"""
+        """紧凑落 memory：保存问题 + 各节标题/正文摘要 + 各节引用 urls（≤3，供深挖种子复用），
+        供下一轮『展开第N点』定位（best-effort）。"""
         try:
+            url_by_idx = {s.get("idx"): (s.get("url") or "")
+                          for s in (report.sources or []) if isinstance(s, dict)}
             await ctx.save_shared_state(RESEARCH_ACTIVE, {
                 "question": question,
                 "summary": (report.summary or "")[:300],
-                "sections": [{"heading": s.heading, "body": (s.body or "")[:400]}
-                             for s in report.sections],
+                "sections": [{
+                    "heading": s.heading,
+                    "body": (s.body or "")[:400],
+                    "urls": [u for u in (url_by_idx.get(c) for c in (s.citations or [])[:3]) if u],
+                } for s in report.sections],
                 "freshness": report.freshness,
             })
         except Exception as e:
             logger.debug("save research task skipped: %s", e)
+
+    async def _seed_from_prior(self, prior: dict | None, focus: str, meta) -> list:
+        """深挖聚焦时复用上轮证据：取上轮该节引用的 urls（≤3）并行抓正文作种子 Evidence。
+
+        旧 RESEARCH_ACTIVE 数据无 urls 字段 → 返回空（向后兼容，退回纯重新检索）；
+        单条失败/超时静默吞（best-effort），extractor 缺席直接跳过。"""
+        if not prior or not focus or self.extractor is None:
+            return []
+        sec = next((s for s in (prior.get("sections") or [])
+                    if (s.get("heading") or "").strip() == focus), None)
+        urls = [u for u in ((sec or {}).get("urls") or []) if u][:3]
+        if not urls:
+            return []
+
+        async def grab(u: str):
+            try:
+                text = await asyncio.wait_for(self.extractor.extract(u, meta=meta),
+                                              timeout=20)
+            except Exception as e:
+                logger.debug("seed extract skipped %s: %s", u, e)
+                return None
+            excerpt = _clean_excerpt(text or "")[:_EXCERPT_CAP]
+            if not excerpt:
+                return None
+            return Evidence(title=focus, url=u, source="上轮调研引用", excerpt=excerpt)
+
+        got = await asyncio.gather(*(grab(u) for u in urls))
+        return [e for e in got if e is not None]
 
     @staticmethod
     def _resolve_deepen(text: str, prior: dict | None) -> str:
