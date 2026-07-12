@@ -225,9 +225,13 @@ class NewsMixin:
         （后者实测返回空 → 回落 provider 旧闻）。
         """
         query = f"{topic} 最新进展" if topic else "今天有哪些值得关注的重要新闻 最新"
+        # 话题态开 livecrawl=preferred：单次调用无「多子问题并发×livecrawl 超时」风险
+        #（深调研的顾虑不适用），换取话题近况不吃缓存快照；综合态与 SerpApi 合并跑，保持不开。
+        livecrawl = "preferred" if topic else ""
         try:
             results = await self.search.search(
-                query, limit=limit + 5, meta=meta, recency_days=2, category="news")
+                query, limit=limit + 5, meta=meta, recency_days=2, category="news",
+                livecrawl=livecrawl)
         except ProviderError as e:
             logger.warning("exa news failed: %s", e)
             return []

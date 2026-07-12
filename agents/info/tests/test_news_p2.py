@@ -107,6 +107,25 @@ def test_clean_snippet_strips_markdown():
     assert clean_snippet("正文**加粗**与`代码`片段") == "正文加粗与代码片段"
 
 
+def test_news_exa_livecrawl_only_for_topic():
+    """话题新闻开 livecrawl=preferred（单调用无并发超时风险）；综合要闻不开（与 SerpApi 合并跑）。"""
+    import asyncio
+
+    captured = []
+
+    class _SearchSpy:
+        async def search(self, query, **kwargs):
+            captured.append(kwargs)
+            return []
+
+    agent = InfoAgent()
+    agent.search = _SearchSpy()
+    asyncio.run(agent._news_from_exa("英伟达", 8, {}))
+    asyncio.run(agent._news_from_exa("", 10, {}))
+    assert captured[0].get("livecrawl") == "preferred"   # 话题态
+    assert captured[1].get("livecrawl") == ""            # 综合态
+
+
 def test_has_drive_start():
     assert InfoAgent._has_drive_start([{"key": "gear", "new": "D"}]) is True
     assert InfoAgent._has_drive_start([{"key": "speed_kmh", "new": "30"}]) is True
