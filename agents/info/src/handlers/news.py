@@ -332,10 +332,13 @@ class NewsMixin:
             "全部用**简体中文**；摘要只依据对应编号内容、不得编造张冠李戴；只输出 JSON。"
         )
         try:
+            # thinking 显式关：结构化 JSON 归纳无需深推理；info.news heavy=true 会让编排在 meta
+            # 里下发 thinking=on，若不显式覆盖，MiMo 开思考在 10 条正文下易 DEADLINE/JSON 破损
+            #（与 grounded_synthesis 关思考同一策略）。
             raw = await self.llm.complete([
                 {"role": "system", "content": "你是严谨的车载新闻编辑，只归纳给定内容，绝不编造。"},
                 {"role": "user", "content": prompt},
-            ], temperature=0.2, max_tokens=1200, timeout=30)
+            ], temperature=0.2, max_tokens=1200, timeout=30, thinking=False)
         except Exception as e:
             logger.warning("news list summarize failed: %s", e)
             return "", {}, {}

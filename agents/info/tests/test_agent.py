@@ -691,6 +691,25 @@ def test_news_speaks_distilled_briefing_with_clickable_source_card():
     assert its[0]["summary"] == "甲事件的一句话" and its[1]["summary"] == "乙事件的一句话"
 
 
+def test_news_summarize_llm_call_pins_thinking_off():
+    """info.news heavy=true → 编排会在 meta 下发 thinking=on；逐条摘要是结构化 JSON 归纳，
+    必须显式 thinking=False 覆盖（与 grounded_synthesis 同一策略），否则 MiMo 开思考
+    在 10 条正文输入下易 DEADLINE/JSON 破损。"""
+    agent = InfoAgent()
+    captured = {}
+
+    async def news_llm(messages, **kwargs):
+        captured.update(kwargs)
+        return '{"overview":"要闻速览","summaries":{"1":"一句话"}}'
+
+    agent.llm.complete = news_llm
+    res = asyncio.run(run_handle(
+        agent, "info.news", slots={"topic": "科技"}, raw_text="科技新闻",
+        meta={"thinking": "on"}))
+    assert res.status == "ok"
+    assert captured.get("thinking") is False
+
+
 def test_news_dedups_repeated_titles():
     items = [{"title": "今日热点", "source": "a", "publish_time": "", "snippet": "x"},
              {"title": "今日热点", "source": "b", "publish_time": "", "snippet": "y"},
