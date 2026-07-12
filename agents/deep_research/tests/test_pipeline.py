@@ -229,6 +229,25 @@ def test_synthesize_rescues_truncated_json_sections():
     assert speech.startswith("英阿1982年")
 
 
+def test_synthesize_rescues_report_with_naked_quotes():
+    """badcase 6ce027fe 同族：某节 body 含裸英文引号 → 整份 JSON 非法 → 逐块+边界式
+    提取应恢复**全部**小节（含裸引号那节，引号保留为文本）。"""
+    subqs = _subqs_with_evidence()
+    bad_quotes = (
+        '{"summary":"英阿战争概述。",'
+        '"sections":['
+        '{"heading":"战略价值","body":"马岛扼守航道[1]。","citations":[1],"confidence":"high"},'
+        '{"heading":"经典对决","body":"包括1986年马拉多纳的"上帝之手"事件[2]。","citations":[2],"confidence":"medium"}],'
+        '"overall_confidence":"medium","gaps":[]}')
+    llm = FakeLLM(lambda m, **k: bad_quotes)
+    report = asyncio.run(pipeline.synthesize(llm, "马岛战争", subqs))
+    assert len(report.sections) == 2                      # 两节全部恢复
+    assert report.sections[0].body == "马岛扼守航道[1]。"   # 合法节走 json.loads 原样
+    assert "上帝之手" in report.sections[1].body           # 裸引号节边界式恢复
+    assert report.sections[1].body.endswith("事件[2]。")   # 不在裸引号处截断
+    assert report.summary == "英阿战争概述。"
+
+
 def test_fallback_report_bodies_are_short_and_clean():
     """fallback 报告可读性：节选剥 markdown + 截 200 字 + 诚实标注（不再上千字原文糊脸）。"""
     long_raw = ("# 福克兰战争 - 维基百科\n**背景**\n" + "英国和阿根廷为争夺福克兰群岛主权而爆发战争，" * 30)

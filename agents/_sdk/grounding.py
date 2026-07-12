@@ -100,8 +100,28 @@ def fallback_brief(query: str, sources: list[dict]) -> str:
     return lead + "暂时没有足够资料形成可靠结论，建议稍后再查。"
 
 
-# 截断 JSON 的 answer 抢救：捕获 "answer": " 之后的合法字符串体（\\. 成对，不会断在孤反斜杠）。
-_TRUNC_ANSWER_RE = re.compile(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)')
+def extract_json_str_field(text: str, field: str,
+                           next_fields: tuple[str, ...]) -> tuple[str, bool]:
+    """从**可能非法/截断**的 JSON 文本中边界式提取字符串字段值。返回 (值, 是否找到闭合边界)。
+
+    对症两种 LLM 病（badcase 0f4105c4 / 6ce027fe）：
+    - max_tokens 截断：字符串没写完 → 无边界，取到文本末尾（found=False，调用方标截断）；
+    - 字符串值里写**裸英文双引号**（如 …马拉多纳的"上帝之手"…）→ json.loads 整体失败，
+      而按「下一个引号」截取会拦腰截断。故按「引号 + 下一个已知字段名 / 收尾括号」找
+      **真正结尾**，中间的裸引号原样保留为文本。
+    """
+    m = re.search(r'"%s"\s*:\s*"' % re.escape(field), text)
+    if not m:
+        return "", False
+    start = m.end()
+    boundary = re.compile(
+        r'"\s*(?:,\s*"(?:%s)"\s*:|[}\]])' % "|".join(map(re.escape, next_fields)))
+    b = boundary.search(text, start)
+    raw = text[start:b.start()] if b else text[start:]
+    # 手工反转义常见序列（不能 json.loads——文本可能含裸引号）；顺序：先 \\" 与 \\n，最后 \\\\
+    val = (raw.replace('\\"', '"').replace("\\n", "\n")
+              .replace("\\t", " ").replace("\\\\", "\\")).strip()
+    return val, b is not None
 
 
 def parse_synth(raw: str) -> dict | None:
@@ -129,19 +149,19 @@ def parse_synth(raw: str) -> dict | None:
                         "confidence": conf, "used_sources": used}
         except (ValueError, TypeError):
             pass
-    # JSON 被 max_tokens 截断（啰嗦 provider 的长 answer 撑爆预算，真栈 @MiniMax 实测：
-    # 整段原始 JSON 被当话术上屏）→ 抢救 answer 字段已生成的部分，绝不把 JSON 外壳念给用户。
+    # JSON 非法（max_tokens 截断 / 字符串里裸英文引号，真栈 @MiniMax 两个 badcase）→
+    # 边界式抢救 answer 字段，绝不把 JSON 外壳念给用户、也不在裸引号处拦腰截断。
     if text.lstrip().startswith("{"):
-        m = _TRUNC_ANSWER_RE.search(text)
-        if m and m.group(1).strip():
-            try:
-                answer = json.loads(f'"{m.group(1)}"')   # 反转义 \n/\" 等
-            except (ValueError, TypeError):
-                answer = m.group(1)
-            answer = answer.strip().rstrip("，,、；;：:")
-            if answer:
-                return {"answer": answer, "key_points": [],
-                        "confidence": "low", "used_sources": []}
+        answer, closed = extract_json_str_field(
+            text, "answer", ("key_points", "confidence", "used_sources"))
+        answer = answer.strip()
+        if answer:
+            if not closed:                       # 真截断：收口半句 + 降置信
+                answer = answer.rstrip("，,、；;：:")
+            conf_m = re.search(r'"confidence"\s*:\s*"(high|medium|low)"', text)
+            conf = conf_m.group(1) if (closed and conf_m) else "low"
+            return {"answer": answer, "key_points": [],
+                    "confidence": conf, "used_sources": []}
         return None            # JSON 外壳但连 answer 都没有：交调用方走诚实兜底
     # 非 JSON：剥离列表编号，合并为连续文本作为答案
     flat = LIST_MARKER.sub("", text)
@@ -215,6 +235,7 @@ async def grounded_synthesis(llm, subject: str, sources: list[dict], *,
         "解释类问题用连贯段落、先结论后展开。"
         "key_points 是卡片用精简要点（每条≤30字，可为空）；"
         "confidence 反映资料对问题的覆盖程度；used_sources 是真正支撑结论的资料编号。"
+        "JSON 字符串值内不要使用英文双引号，需要引用时用中文引号「」（否则 JSON 会解析失败）。"
     )
     try:
         raw = await llm.complete([

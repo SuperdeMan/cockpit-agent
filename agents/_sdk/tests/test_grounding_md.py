@@ -60,3 +60,35 @@ def test_parse_synth_rescues_truncated_json_answer():
     assert parse_synth('{"key_points": ["半截') is None
     # 纯文本仍走剥编号路径
     assert parse_synth("1. 甲\n2. 乙")["answer"] == "甲 乙"
+
+
+def test_parse_synth_survives_naked_quotes_in_answer():
+    """badcase 6ce027fe：answer 字符串里裸英文双引号（马拉多纳的"上帝之手"）令整份 JSON
+    非法——边界式抢救须取到**真正的字段结尾**，不得在裸引号处拦腰截断。"""
+    from agents._sdk.grounding import parse_synth
+    raw = ('{"answer": "两队渊源颇深（1986年马拉多纳的"上帝之手"等经典对决），'
+           '这场半决赛也被称为"宿命对决"。", "key_points": ["渊源"], '
+           '"confidence": "high", "used_sources": [1]}')
+    out = parse_synth(raw)
+    assert out is not None
+    assert out["answer"].endswith("也被称为\"宿命对决\"。")   # 完整取到句号，裸引号保留为文本
+    assert "上帝之手" in out["answer"]
+    assert out["confidence"] == "high"                        # 边界闭合时后续字段仍可信
+
+
+def test_extract_json_str_field_boundaries():
+    from agents._sdk.grounding import extract_json_str_field
+    # 正常闭合
+    v, closed = extract_json_str_field('{"a": "文本", "b": []}', "a", ("b",))
+    assert v == "文本" and closed is True
+    # 裸引号不当边界
+    v, closed = extract_json_str_field('{"a": "他说"你好"再见", "b": 1}', "a", ("b",))
+    assert v == '他说"你好"再见' and closed is True
+    # 截断：无边界取到末尾
+    v, closed = extract_json_str_field('{"a": "没写完就断', "a", ("b",))
+    assert v == "没写完就断" and closed is False
+    # 转义序列反解
+    v, _ = extract_json_str_field('{"a": "一\\n二\\"三\\"", "b": 1}', "a", ("b",))
+    assert v == '一\n二"三"'
+    # 字段缺失
+    assert extract_json_str_field('{"x": 1}', "a", ("b",)) == ("", False)

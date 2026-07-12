@@ -22,7 +22,7 @@ import re
 
 from agents._sdk.retrieval import retrieve
 from agents._sdk.grounding import (shanghai_now, fallback_brief, latest_published,
-                                   strip_markdown_speech)
+                                   strip_markdown_speech, extract_json_str_field)
 from agents._sdk.source_quality import rerank_by_authority, domain_tier
 from agents._sdk.http import ProviderError
 from .models import SubQuestion, Evidence, Section, Report, PERSPECTIVES
@@ -301,46 +301,52 @@ def _build_grouped_materials(subqs: list[SubQuestion],
     return "\n\n".join(groups)
 
 
-# 截断抢救：section 对象内无嵌套花括号（citations 是整数数组），可逐块独立解析。
+# 抢救：section 对象内无嵌套花括号（citations 是整数数组），可逐块独立解析。
 _SECTION_OBJ_RE = re.compile(r"\{[^{}]*\}")
-_SUMMARY_RE = re.compile(r'"summary"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _rescue_section(chunk: str, valid_idx: set) -> Section | None:
+    """单个 section 块：优先 json.loads；失败（裸引号/截断）→ 边界式抽 heading/body。"""
+    sec = None
+    try:
+        obj = json.loads(chunk)
+        if isinstance(obj, dict):
+            sec = obj
+    except (ValueError, TypeError):
+        heading, _ = extract_json_str_field(chunk, "heading", ("body",))
+        body, closed = extract_json_str_field(chunk, "body", ("citations", "confidence"))
+        if heading and body and closed:      # 半截 body（未闭合）丢弃——节内容不完整不出
+            sec = {"heading": heading, "body": body}
+    if not sec or not sec.get("heading") or not sec.get("body"):
+        return None
+    cits = [int(c) for c in (sec.get("citations") or [])
+            if str(c).isdigit() and int(c) in valid_idx]
+    conf = str(sec.get("confidence") or "medium").lower()
+    return Section(
+        heading=strip_markdown_speech(str(sec["heading"]).strip()),
+        body=strip_markdown_speech(str(sec["body"]).strip()),
+        citations=cits,
+        confidence=conf if conf in ("high", "medium", "low") else "medium")
 
 
 def _rescue_truncated_report(text: str, sources: list[dict]) -> Report | None:
-    """合成 JSON 被 max_tokens 截断时抢救 summary + 已完整生成的小节。
+    """合成 JSON 非法（max_tokens 截断 / 字符串裸英文引号）时抢救 summary + 可恢复小节。
 
-    badcase 0f4105c4（@MiniMax）：completion 打满 2400 token → json.loads 失败 → 整份退化
-    fallback 堆原文。截断报告的前几节是完好的，丢掉它们去堆原文是最差选择。
+    badcase 0f4105c4：completion 打满 2400 token → json.loads 失败 → 整份退化 fallback
+    堆原文——截断报告的前几节是完好的，丢掉它们是最差选择。badcase 6ce027fe：裸引号
+    （…马拉多纳的"上帝之手"…）令整份 JSON 非法，逐块+边界式提取全部可恢复。
     抢救不到任何小节时返回 None（调用方走 fallback）。
     """
-    m = _SUMMARY_RE.search(text)
-    try:
-        summary = json.loads(f'"{m.group(1)}"') if m else ""
-    except (ValueError, TypeError):
-        summary = ""
+    summary, _ = extract_json_str_field(text, "summary", ("sections",))
     valid_idx = {s["idx"] for s in sources}
-    sections = []
-    for chunk in _SECTION_OBJ_RE.findall(text):
-        try:
-            sec = json.loads(chunk)
-        except (ValueError, TypeError):
-            continue                      # 最后一个被拦腰截断的对象解析不了，正常丢弃
-        if not isinstance(sec, dict) or not sec.get("heading") or not sec.get("body"):
-            continue
-        cits = [int(c) for c in (sec.get("citations") or [])
-                if str(c).isdigit() and int(c) in valid_idx]
-        conf = str(sec.get("confidence") or "medium").lower()
-        sections.append(Section(
-            heading=strip_markdown_speech(str(sec["heading"]).strip()),
-            body=strip_markdown_speech(str(sec["body"]).strip()),
-            citations=cits,
-            confidence=conf if conf in ("high", "medium", "low") else "medium"))
+    sections = [s for s in (_rescue_section(c, valid_idx)
+                            for c in _SECTION_OBJ_RE.findall(text)) if s is not None]
     if not sections:
         return None
-    logger.warning("synthesis JSON truncated; rescued %d sections", len(sections))
+    logger.warning("synthesis JSON invalid/truncated; rescued %d sections", len(sections))
     return Report(summary=strip_markdown_speech(summary) or sections[0].body[:120],
                   sections=sections, sources=sources, overall_confidence="low",
-                  gaps=["报告生成被长度截断，仅保留已完成的小节"])
+                  gaps=["报告解析不完整（生成截断或转义问题），仅保留可恢复的小节"])
 
 
 def _parse_report(text: str, sources: list[dict]) -> Report | None:
@@ -452,7 +458,8 @@ async def synthesize(llm, question: str, subqs: list[SubQuestion],
         "**禁止编造**数字/时间/人名/因果；⑤body 多要点时每条单独成行（\\n 分隔）；"
         "⑥不同资料数字冲突时取最权威最新者、给前后一致结论；"
         "⑦**body 用纯文本中文，不要任何 markdown 标记（#、**、- 、> 等），不要在正文里贴网址**"
-        "（来源由编号引用，链接另在来源区）。"
+        "（来源由编号引用，链接另在来源区）；"
+        "⑧JSON 字符串值内**不要使用英文双引号**，需要引用时用中文引号「」（否则 JSON 会解析失败）。"
     )
     try:
         # thinking=False：分节合成是「组织已检索证据」的结构化任务，不需深推理；开思考(MiMo 2048

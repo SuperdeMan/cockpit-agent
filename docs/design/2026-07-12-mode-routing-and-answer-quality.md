@@ -271,3 +271,18 @@ content 头部（`<think>…</think>\n\n正文`）而非独立 reasoning_content
 
 真栈复现原场景 @MiniMax 两轮（调研→深挖历史背景）全过：speech 174/222 字干净结论、
 报告 3/6 节正文无 md 无堆砌。全量 1354 passed / 7 skipped。
+
+### 8.6 badcase 6ce027fe：JSON 裸英文引号致 speech 拦腰截断
+
+泓舟真机 trace `6ce027fecaad969f`（「阿根廷和英格兰的下一场比赛」@MiniMax）：speech 断在
+「1986年马拉多纳的」。obs.llm 定位：completion 185/600 **并非** token 截断——MiniMax 在
+answer 字符串里写了**裸英文双引号**（…马拉多纳的"上帝之手"…）→ 整份 JSON 非法 →
+§8.3 的截断抢救按「下一个引号」取值，在裸引号处提前停——**抢救逻辑把转义病误当截断病**。
+
+修复（三处解析共用）：`_sdk/grounding.extract_json_str_field(text, field, next_fields)`
+边界式提取——字符串结尾按「引号 + 下一个已知字段名 / 收尾括号」判定，裸引号原样保留为
+文本；返回 `(值, 是否闭合)`：闭合=转义病（confidence 等后续字段仍可信、照抽），未闭合=
+真截断（降 low + 收口标点）。`parse_synth` 抢救路径与 `_parse_report` 的
+summary/section 抢救（`_rescue_section`：块 loads 失败转边界式抽 heading/body，半截 body
+丢弃）全部切换；两处合成 prompt 加软约束「JSON 字符串值内不要用英文双引号，引用用「」」。
+真栈原句复验 @MiniMax：126 字完整结论、句末闭合。全量 1357 passed / 7 skipped。
