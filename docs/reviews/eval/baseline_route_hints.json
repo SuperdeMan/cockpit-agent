@@ -1,32 +1,32 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-07-03T09:08:52.847631+00:00",
-    "commit": "f562ae3"
+    "generated_at": "2026-07-12T07:25:12.257885+00:00",
+    "commit": "f210eb2"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 8
+      "count": 28
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 4,
-      "passed": 4,
+      "total": 19,
+      "passed": 19,
       "failures": [],
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 4,
-      "passed": 4,
+      "total": 9,
+      "passed": 9,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 8,
-    "passed": 8,
+    "total": 28,
+    "passed": 28,
     "pass_rate": 1.0
   },
   "cases": {
@@ -179,6 +179,356 @@
         "replace"
       ],
       "source": "orchestrator/cloud/tests/test_route_hints.py::test_slot_templating_text_and_capture_group"
+    },
+    "route::葡萄牙那一场看看详情": {
+      "id": "route::葡萄牙那一场看看详情",
+      "bucket": "route_recall",
+      "text": "葡萄牙那一场看看详情",
+      "expected": [
+        "info.sports"
+      ],
+      "actual": [
+        "info.sports"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "sports",
+        "nearby",
+        "guardrail"
+      ],
+      "source": "真机：世界杯赛程后追问某队详情，含「那一场」（非「那场」）不被周边劫持"
+    },
+    "route::看看它的详情": {
+      "id": "route::看看它的详情",
+      "bucket": "route_recall",
+      "text": "看看它的详情",
+      "expected": [
+        "nearby.detail"
+      ],
+      "actual": [
+        "nearby.detail"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby",
+        "replace"
+      ],
+      "source": "真·周边详情不被赛事修复误伤"
+    },
+    "route::明天早上八点提醒我带充电线": {
+      "id": "route::明天早上八点提醒我带充电线",
+      "bucket": "route_recall",
+      "text": "明天早上八点提醒我带充电线",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "replace"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §6"
+    },
+    "route::半小时后提醒我给客户回电话": {
+      "id": "route::半小时后提醒我给客户回电话",
+      "bucket": "route_recall",
+      "text": "半小时后提醒我给客户回电话",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "replace"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §6"
+    },
+    "route::我今天有什么安排": {
+      "id": "route::我今天有什么安排",
+      "bucket": "route_recall",
+      "text": "我今天有什么安排",
+      "expected": [
+        "reminder.list"
+      ],
+      "actual": [
+        "reminder.list"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "list"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §6"
+    },
+    "route::取消第二条提醒": {
+      "id": "route::取消第二条提醒",
+      "bucket": "route_recall",
+      "text": "取消第二条提醒",
+      "expected": [
+        "reminder.cancel"
+      ],
+      "actual": [
+        "reminder.cancel"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "cancel"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §6"
+    },
+    "route::打开限速提醒": {
+      "id": "route::打开限速提醒",
+      "bucket": "route_guardrail",
+      "text": "打开限速提醒",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "guard",
+        "adas"
+      ],
+      "source": "orchestrator/edge/fast_intent.py:1090 词面冲突消解"
+    },
+    "route::把车道偏离提醒关掉": {
+      "id": "route::把车道偏离提醒关掉",
+      "bucket": "route_guardrail",
+      "text": "把车道偏离提醒关掉",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "guard",
+        "adas"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §6.3"
+    },
+    "route::限速提醒是什么意思": {
+      "id": "route::限速提醒是什么意思",
+      "bucket": "route_guardrail",
+      "text": "限速提醒是什么意思",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "guard",
+        "manual"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §6.3"
+    },
+    "route::把接孩子的提醒改到五点": {
+      "id": "route::把接孩子的提醒改到五点",
+      "bucket": "route_recall",
+      "text": "把接孩子的提醒改到五点",
+      "expected": [
+        "reminder.update"
+      ],
+      "actual": [
+        "reminder.update"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "update"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
+    },
+    "route::买牛奶那条推迟到明天九点": {
+      "id": "route::买牛奶那条推迟到明天九点",
+      "bucket": "route_recall",
+      "text": "买牛奶那条推迟到明天九点",
+      "expected": [
+        "reminder.update"
+      ],
+      "actual": [
+        "reminder.update"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "update"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
+    },
+    "route::改第二条到晚上八点": {
+      "id": "route::改第二条到晚上八点",
+      "bucket": "route_recall",
+      "text": "改第二条到晚上八点",
+      "expected": [
+        "reminder.update"
+      ],
+      "actual": [
+        "reminder.update"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "update",
+        "ordinal"
+      ],
+      "source": "澄清话术「改第几条」的续接词形"
+    },
+    "route::空调改到26度": {
+      "id": "route::空调改到26度",
+      "bucket": "route_guardrail",
+      "text": "空调改到26度",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "guard",
+        "hvac"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
+    },
+    "route::音量改到50": {
+      "id": "route::音量改到50",
+      "bucket": "route_guardrail",
+      "text": "音量改到50",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "guard",
+        "volume"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
+    },
+    "route::每天早上八点提醒我吃药": {
+      "id": "route::每天早上八点提醒我吃药",
+      "bucket": "route_recall",
+      "text": "每天早上八点提醒我吃药",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "recur"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a recur"
+    },
+    "route::过10分钟再提醒我": {
+      "id": "route::过10分钟再提醒我",
+      "bucket": "route_recall",
+      "text": "过10分钟再提醒我",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "snooze"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a snooze"
+    },
+    "route::取消第二条": {
+      "id": "route::取消第二条",
+      "bucket": "route_recall",
+      "text": "取消第二条",
+      "expected": [
+        "reminder.cancel"
+      ],
+      "actual": [
+        "reminder.cancel"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "cancel",
+        "ordinal"
+      ],
+      "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
+    },
+    "route::完成第二条": {
+      "id": "route::完成第二条",
+      "bucket": "route_recall",
+      "text": "完成第二条",
+      "expected": [
+        "reminder.complete"
+      ],
+      "actual": [
+        "reminder.complete"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "complete",
+        "ordinal"
+      ],
+      "source": "澄清话术「完成第几条」的续接词形"
+    },
+    "route::第一场提醒我观看": {
+      "id": "route::第一场提醒我观看",
+      "bucket": "route_recall",
+      "text": "第一场提醒我观看",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "cross_domain"
+      ],
+      "source": "docs/design/2026-07-11-reminder-cross-domain.md §1 trace b3ecd19599c0f6aa"
+    },
+    "route::开赛前半小时提醒我": {
+      "id": "route::开赛前半小时提醒我",
+      "bucket": "route_recall",
+      "text": "开赛前半小时提醒我",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "cross_domain",
+        "lead"
+      ],
+      "source": "docs/design/2026-07-11-reminder-cross-domain.md §3.3 lead"
     }
   }
 }

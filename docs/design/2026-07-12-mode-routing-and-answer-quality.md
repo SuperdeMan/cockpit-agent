@@ -1,0 +1,172 @@
+# 四模式路由与回答质量重设计（直答 / 联网查询 / 新闻 / 深度调研）
+
+日期：2026-07-12　发起：泓舟　状态：实施中（P0→P2 分片推进，落地态见文末进度表）
+
+## 0. 结论
+
+用户一句话要落到四种回答模式之一：**①chitchat 直答**（不联网）、**②info.search 联网查询**、
+**③info.news 新闻**、**④research.run 深度调研**。本设计解决两个问题：
+
+- **A 模式进入准确率**：现状 Planner 一次 LLM 调用从能力目录裸猜 intent，prompt 无任何
+  「直答 vs 联网 vs 新闻 vs 调研」判据，时效性判断在路由层完全缺席；chitchat 是
+  「匹配失败/LLM 降级/权限过滤」的统一落点（系统性偏向陈旧直答）；确定性护栏只保
+  research.run（2 条 priority=100 hint），其余三模式 0 条；四模式边界零评测。
+- **B 各模式结果质量**：chitchat 无日期锚点/无时效护栏且默认快模型；info.search 查询零改写、
+  证据薄不重试、重排完全不看 published 时间；news 摘要 LLM 调用漏关 thinking（存量 bug）；
+  research 深挖是聚焦重跑、不复用上轮证据。
+
+方案三层：**P0 路由准确率**（eval 先行 + 全声明式：manifest 判别化 + prompt 通用判据段 +
+两条新 route_hints）、**P1 直答与时效兜底**（chitchat 日期锚点 + **引擎级 escalate 通用机制**）、
+**P2 检索/合成质量**（薄证据重试、新鲜度加权重排、research 深挖种子复用等）。
+
+## 1. 模式边界定义（判据，同时是语料标注标准）
+
+| 模式 | 判据 | 反例（不属于） |
+|---|---|---|
+| chitchat 直答 | 闲聊/情绪/创作/观点 + **不随时间变化**的常识/原理/定义/历史 | 任何答案会随时间变化的事实 |
+| info.search 联网 | 要**一个具体问题的答案**，且答案时效敏感或模型不确定：近期事件/价格/榜单/事实核查 | 只想浏览一批资讯（news）；要系统了解（research） |
+| info.news 新闻 | 想**看一批**资讯：泛新闻、话题新闻（「X最新消息/X新闻」） | 对单个事件要解释（search） |
+| research.run 调研 | **系统性**了解/对比/评估一个主题：多视角、分节报告 | 单问题快答（search） |
+
+时效判据（planner prompt 通用段）：答案会随时间变化（近期事件/价格/榜单/比分/发布/
+「最新/现在/昨晚/今年」类）→ 必须联网检索类能力，禁止凭记忆直答、禁止空计划、禁止当闲聊。
+
+## 2. P0 模式路由准确率（全声明式，零新增热路径 LLM 调用）
+
+### P0-1 评测先行（`test/eval_mode_routing.py` + `eval_corpus/mode_routing_cases.yaml`）
+
+- 语料 122 条五桶：typical（四模式典型各 ~10）/ boundary（新闻vs搜索、调研vs搜索、直答vs搜索）/
+  adversarial（时效伪装闲聊「昨晚欧冠谁赢了」、常青伪装、动词陷阱「搜索引擎是怎么工作的」）/
+  followup（history 前置的「展开第三点」「详细讲讲第3条」）/ guardrail（天气/股票/赛事/提醒/
+  导航/附近/车控不被四模式吸走）。
+- 双口径：`--live` 真 `PlanBuilder.build()`（LLM 规划 + route_hints 后验 + 降级链的**端到端
+  最终 intent**）归一成模式 + 混淆矩阵；离线确定性子集（`initial_intents`/`expect_det_intents`
+  字段）直调 RouteHintEngine + 真实 manifests（同 eval_route_hints 装配路径）。
+- `expect_mode` 支持 `a|b` 双容忍（对抗例的合法双落点，如 昨晚欧冠→sports|search）；
+  weather 族归并（forecast/alerts/indices/air_quality 不苛求族内选择）。
+- **语料描述目标态**：P0-4 新 hints 落地前确定性子集有 21 条预期内 FAIL（钉的就是缺口），
+  落地后转 PASS 属预期 improvement，基线随之重写。
+- 顺序纪律：先 `--live --write-baseline` 采改动前基线（含混淆矩阵），再动 P0-2/3/4。
+  同时刷新滞后的 route_hints 基线（8 例 → 28 例，2026-07-03 起未随语料更新）。
+
+### P0-2 manifest 判别化（声明式主承载）
+
+capability description 是 Planner catalog 里 LLM 唯一能看到的判据文本（examples 只进
+Registry 语义路由，不进 Planner prompt——所以两者都改，回归也要**双跑**）：
+
+- chitchat：限定「闲聊/情绪/**不随时间变化的常识**」，明示「实时/近期信息必须走联网检索类能力」。
+- info.search：「**凡答案会随时间变化的问题都用本能力**，不要闲聊直答」。
+- info.news：「想**看一批**新闻时用；要具体答案→搜索；要系统了解→调研」。
+- deep-research：补一句反界定「只要一个快答案时用搜索类能力」。
+
+### P0-3 Planner prompt 通用判据段（≤10 行，不点名 agent_id/intent）
+
+`_PLANNER_BASE` 在「== 通用规则 ==」前插「== 时效与深度 ==」段：时效判据 + 常识判据 +
+深度判据（浏览→新闻类 / 要答案→搜索类 / 系统了解→调研类）。风险：Planner 一次调用同时承担
+规划+受话+澄清（R4.4），prompt 增长须跑 eval_rejection / eval_rejection --clarify /
+eval_registry_resolve / eval_mode_routing 四套 live 回归，零回归才合入。
+
+### P0-4 补 route_hints（info manifest，priority 59）
+
+R2.1 机制的对称补齐：research 有确定性召回护栏而 search/news 没有，弱 LLM 误判时只有
+research 有网兜。两条新 hint（**59 级**：避开 trip.modify=60 同级撞车——同级按 agent_id
+字典序 info < trip-planner 会改变评估顺序；仍高于 sports 58 / reminder 56 / nearby 55）：
+
+- **info.search**：句首显式搜索动词（搜索(?!引擎)/搜一下/搜/查一下/查询/检索/百度一下…，
+  裸「查」刻意排除防「查理和巧克力工厂」误伤），`^` 锚定防多意图句被 replace 吞掉；
+  guard 覆盖已有专用域（天气/洗车/紫外线/指数/股价/新闻/赛事/提醒/待办/导航/路线/附近/
+  加油站/充电/停车/餐厅/电量/胎压/说明书/歌曲/播放）+ 个人事实（我的/我老婆…→记忆召回，
+  不上网搜）+ 调研词（让位 research 100）。
+- **info.news**：动词+新闻词（看看/来点/有什么…{0,6}新闻|头条|资讯|要闻）、裸新闻句
+  （^今天有什么新闻$ 式）、话题式（^X的新闻$/^X最新消息$/^X最新动态$）；guard
+  播/放/听/联播（媒体域）+ 订阅/打开/关闭/提醒 + **搜/查**（「搜一下今天的新闻」双 hint
+  互斥都不命中→留给 LLM，刻意的保守面）。
+- slots：search 传 `$1` 捕获组（剥动词），news 留空（topic 由 handler
+  `_extract_news_subject` 从 raw_text 兜底提取，比捕获组稳）。
+
+### P0-5 回归 gate 与基线纪律
+
+P0-2/3 合入后四套 live eval 零回归（不写基线）；P0-4 合入后 route_hints 基线重写
+（28+~16 例）+ mode_routing 基线更新（确定性子集转绿属预期 improvement）。
+
+## 3. P1 直答质量与时效兜底
+
+### P1-1 chitchat 日期锚点 + 深度引导
+
+- system prompt 注入「今天是YYYY年MM月DD日」（复用 `_sdk.grounding.shanghai_now`）+
+  「实时/近期事实不确定就明说无法确认并建议联网查询，绝不编造」。
+- manifest 加 slot `depth`：Planner 对知识/解释类问题传 `depth=deep` → `_resolve_model`
+  升 primary 模型（寒暄/情绪仍 @fast）。会话级 `meta.model_pref` 语义不变，slot 优先。
+
+### P1-2 引擎级 escalate 通用机制（**泓舟 2026-07-12 拍板**，唯一编排改动）
+
+问题：任何路由改进都堵不死全部退化路径（LLM 抽风、解析失败、权限过滤都统一落
+chitchat）。机制：Agent 执行后可在结果里声明「这题我不该答，改派给 X」，engine 通用消费
+——与 RouteHintEngine 同一「机制化+契约测试」先例，任何 Agent 未来可用。
+
+协议（登记 docs/conventions.md 保留键）：
+```
+AgentResult.data["_escalate"] = {"intent": str, "slots": dict[str,str], "reason": str}
+```
+engine 收 final 后有界消费：每轮最多 1 跳；目标步经 registry/agent_map 解析 +
+`PlanBuilder._validated_steps` 装配（heavy/latency_budget/权限自动带出，**绝不裸
+call_agent**——默认 10s 超时会打死 info.search 50s 预算）；escalated 结果中的
+`_escalate` 不再消费（结构性防环）；消费后 `pop("_escalate")` 再进聚合（防 F3
+slot_refs 误引用）。挂点两处：D0 流式直通 final 处（**streamed=True 时忽略**，已播报
+不二次回答）+ executor 路径结果循环后。
+
+chitchat 侧：system 加规则「必须获取实时信息才能正确回答时只输出
+`<search>不超过20字的搜索词</search>`」；handle 解析 marker → 零语音 + `_escalate`
+到 info.search；handle_stream **头部缓冲 <12 字符**判定 marker 前不 yield（零 delta
+才允许 escalate，与 engine 端 streamed 忽略双保险）。
+
+体验：误接时效题 → 快模型短判（~1s）→ 自动转 info.search（heavy → 过程区可见）→
+搜索结果卡。放弃的替代方案：chitchat 子调用 info（AgentClient 协作，零编排改动，但等待
+期无过程区、chitchat 预算被拖宽、角色越界）；仅护栏不自动纠正（多一轮往返）。
+
+## 4. P2 检索/合成质量
+
+- **info.search**：①薄证据（有正文源 <2）一轮确定性重试——先剥口语前缀再退
+  「{query} 详细介绍」（仿 deep-research backtrack），`_merge_sources` 按 url 去重；
+  ②新鲜度加权：新增 `rerank_fresh_authority`（排序键 `(-在时效窗口内, -tier, 原序)`），
+  仅 recency_days>0 时启用；`rerank_by_authority` 一字不动（deep_research 两处在用）；
+  ③合成源 top5→6（rest_cap 900→800，总材料 ~6400 字符）；④confidence=low 时 follow_up
+  提示「深入调研」（纯文案，不自动升级）。
+- **news**：①`_summarize_news_list` 显式 thinking=False（存量 bug：info.news heavy=true
+  的 meta thinking=on 波及，与接地合成关思考策略矛盾）；②话题新闻 Exa 加
+  livecrawl=preferred（单调用无并发超时风险；综合合并路径不开）。
+- **research**：①plan prompt 子问题数与解析 cap 对齐（"5-6"/cap6、"8-9"/cap9）；
+  ②backtrack 从「空结果」放宽到「<2 条」且**合并不替换**；③深挖种子复用：
+  `_save_task` 每节存 citations 的 urls（≤3），`_resolve_deepen` 命中时 extractor 并行
+  取上轮正文作 sq0「上轮结论回顾」预置证据（investigate 对已带 evidence 的子问题跳过
+  检索——通用幂等化）；兼容旧 RESEARCH_ACTIVE 无 urls 字段。
+
+## 5. 非目标（本次不做）
+
+search→research 自动升级（仅 follow_up 文案）、逐句引用校验、策展级新闻源/RSS、
+`_fallback` 改落点（chitchat 兜底不变，escalate 接住剩余）、异步报告 outbox 补发、
+llm-gateway 预算级联死代码修复（`_read_budget` 的 deadline 分支从未被传参激活，另立卡）。
+
+## 6. 验证与重建
+
+- 评测：见 §2 P0-1/P0-5；全量 `python -m pytest --import-mode=importlib -q`。
+- Docker（无卷挂载必 --build）：planning/engine→cloud-planner；chitchat 件→chitchat-agent；
+  info 件→info-agent（manifest hints 经 registry 周期重注册生效）；research 件→
+  deep-research-agent；`_sdk/grounding|source_quality`→info-agent + deep-research-agent。
+- 手工验收：「昨晚欧冠谁赢了」不编造（P1 后出过程区→卡）；「地球为什么是圆的」直答；
+  「查一下明天杭州天气」weather 不被劫持；「来点科技新闻」news_brief 无 DEADLINE；
+  「深入调研固态电池」→「展开第2点」种子注入（extract ≤3 次）。
+
+## 7. 进度
+
+| 分片 | 内容 | 状态 |
+|---|---|---|
+| 1 | fix(news) thinking=False | ✅ f210eb2 |
+| 2 | eval(mode-routing) 语料122+脚本+双基线+本文档 | ✅（本片） |
+| 3 | feat(routing-declarative) manifest 判别化+prompt 判据段 | ⬜ |
+| 4 | feat(routing-hints) 两条 hints+语料反例+基线重写 | ⬜ |
+| 5 | feat(chitchat-freshness) 日期锚点+depth | ⬜ |
+| 6 | feat(engine-escalate) 机制+marker+契约测试 | ⬜ |
+| 7 | feat(search-quality) 重试+新鲜度+top6 | ⬜ |
+| 8 | feat(news-livecrawl) | ⬜ |
+| 9 | feat(research-depth) cap+backtrack+种子 | ⬜ |

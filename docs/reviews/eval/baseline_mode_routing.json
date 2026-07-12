@@ -1,0 +1,3403 @@
+{
+  "meta": {
+    "subject": "mode_routing",
+    "generated_at": "2026-07-12T07:30:49.105127+00:00",
+    "commit": "f210eb2",
+    "provider": "minimax:MiniMax-M3",
+    "clarify_enabled": "off",
+    "confusion": {
+      "chitchat": {
+        "chitchat": 23,
+        "search": 5,
+        "research": 2
+      },
+      "search": {
+        "search": 21,
+        "news": 2,
+        "research": 4,
+        "stock": 2,
+        "chitchat": 2
+      },
+      "news": {
+        "news": 15,
+        "search": 3,
+        "chitchat": 1
+      },
+      "research": {
+        "research": 22
+      },
+      "sports": {
+        "search": 1,
+        "sports": 2
+      },
+      "other:reminder.create": {
+        "other:reminder.create": 2
+      },
+      "weather": {
+        "weather": 3
+      },
+      "other:nearby.search": {
+        "other:nearby.search": 2
+      },
+      "other:reminder.list": {
+        "other:reminder.list": 1
+      },
+      "stock": {
+        "stock": 2
+      },
+      "other:navigation.navigate_to": {
+        "other:navigation.navigate_to": 2
+      },
+      "other:trip.plan": {
+        "other:trip.plan": 1
+      },
+      "other:manual.query": {
+        "other:manual.query": 2
+      }
+    }
+  },
+  "corpus_sources": [
+    {
+      "path": "test/eval_corpus/mode_routing_cases.yaml",
+      "count": 122
+    }
+  ],
+  "buckets": {
+    "mode_deterministic": {
+      "total": 57,
+      "passed": 36,
+      "failures": [
+        {
+          "id": "mode_det::搜一下固态电池最新进展",
+          "bucket": "mode_deterministic",
+          "text": "搜一下固态电池最新进展",
+          "expected": [
+            "info.search"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "search"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::帮我查一下iPhone现在什么价格",
+          "bucket": "mode_deterministic",
+          "text": "帮我查一下iPhone现在什么价格",
+          "expected": [
+            "info.search"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "search",
+            "freshness"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::帮我查一下特斯拉FSD在中国的落地进展",
+          "bucket": "mode_deterministic",
+          "text": "帮我查一下特斯拉FSD在中国的落地进展",
+          "expected": [
+            "info.search"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "search"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::搜索量子计算商业化现状",
+          "bucket": "mode_deterministic",
+          "text": "搜索量子计算商业化现状",
+          "expected": [
+            "info.search"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "search"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::今天有什么新闻",
+          "bucket": "mode_deterministic",
+          "text": "今天有什么新闻",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "news"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::来点科技新闻",
+          "bucket": "mode_deterministic",
+          "text": "来点科技新闻",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "news"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::看看今天的头条",
+          "bucket": "mode_deterministic",
+          "text": "看看今天的头条",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "news"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::有什么国际新闻吗",
+          "bucket": "mode_deterministic",
+          "text": "有什么国际新闻吗",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "news"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::刷刷新闻",
+          "bucket": "mode_deterministic",
+          "text": "刷刷新闻",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "news"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::新能源汽车的新闻",
+          "bucket": "mode_deterministic",
+          "text": "新能源汽车的新闻",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "news",
+            "topic_form"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::英伟达最新动态",
+          "bucket": "mode_deterministic",
+          "text": "英伟达最新动态",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "news",
+            "topic_form"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::讲讲今天的要闻",
+          "bucket": "mode_deterministic",
+          "text": "讲讲今天的要闻",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "news"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::英伟达最新消息",
+          "bucket": "mode_deterministic",
+          "text": "英伟达最新消息",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "news_vs_search",
+            "topic_form"
+          ],
+          "source": "「X最新消息」=浏览一批该主题资讯 → news（要具体答案会带问句）"
+        },
+        {
+          "id": "mode_det::给我读读今天的国际要闻",
+          "bucket": "mode_deterministic",
+          "text": "给我读读今天的国际要闻",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "news_vs_search"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::有没有关于低空经济的新闻",
+          "bucket": "mode_deterministic",
+          "text": "有没有关于低空经济的新闻",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "news_vs_search"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::帮我查一下磷酸铁锂和三元锂的区别",
+          "bucket": "mode_deterministic",
+          "text": "帮我查一下磷酸铁锂和三元锂的区别",
+          "expected": [
+            "info.search"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "search_vs_research"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::查一下固态电池",
+          "bucket": "mode_deterministic",
+          "text": "查一下固态电池",
+          "expected": [
+            "info.search"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "search_vs_research"
+          ],
+          "source": "与 route_hints_cases「搜一下固态电池」呼应：快查不被调研劫持"
+        },
+        {
+          "id": "mode_det::搜一下你叫什么名字",
+          "bucket": "mode_deterministic",
+          "text": "搜一下你叫什么名字",
+          "expected": [
+            "info.search"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_adversarial",
+            "verb_trap"
+          ],
+          "source": "显式搜索动词占优先（钉确定性行为：用户说搜就搜）"
+        },
+        {
+          "id": "mode_det::检索一下宁德时代最新财报要点",
+          "bucket": "mode_deterministic",
+          "text": "检索一下宁德时代最新财报要点",
+          "expected": [
+            "info.search"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_adversarial",
+            "verb_trap"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::再来点财经新闻",
+          "bucket": "mode_deterministic",
+          "text": "再来点财经新闻",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_followup",
+            "news_active"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode_det::打开空调然后来点科技新闻",
+          "bucket": "mode_deterministic",
+          "text": "打开空调然后来点科技新闻",
+          "expected": [
+            "info.news"
+          ],
+          "actual": [],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_guardrail",
+            "multi_intent"
+          ],
+          "source": "真栈里空调子句由端侧 A2 混拆本地执行、云侧只见新闻子句；本评测全句直发云端， 云侧正确行为=接住新闻部分（车控在云 catalog 缺席）"
+        }
+      ],
+      "pass_rate": 0.6316
+    },
+    "mode_typical": {
+      "total": 40,
+      "passed": 36,
+      "failures": [
+        {
+          "id": "mode::一光年大概是多少公里",
+          "bucket": "mode_typical",
+          "text": "一光年大概是多少公里",
+          "expected": "chitchat",
+          "actual": "search ['info.search']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "chitchat",
+            "knowledge"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode::昨晚的苹果发布会都发布了什么",
+          "bucket": "mode_typical",
+          "text": "昨晚的苹果发布会都发布了什么",
+          "expected": "search",
+          "actual": "news ['info.news']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "search",
+            "freshness"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode::帮我查一下特斯拉FSD在中国的落地进展",
+          "bucket": "mode_typical",
+          "text": "帮我查一下特斯拉FSD在中国的落地进展",
+          "expected": "search",
+          "actual": "research ['research.run']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "search"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode::英伟达最新动态",
+          "bucket": "mode_typical",
+          "text": "英伟达最新动态",
+          "expected": "news",
+          "actual": "search ['info.search']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_typical",
+            "news",
+            "topic_form"
+          ],
+          "source": ""
+        }
+      ],
+      "pass_rate": 0.9
+    },
+    "mode_boundary": {
+      "total": 30,
+      "passed": 22,
+      "failures": [
+        {
+          "id": "mode::英伟达最新消息",
+          "bucket": "mode_boundary",
+          "text": "英伟达最新消息",
+          "expected": "news",
+          "actual": "search ['info.search']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "news_vs_search",
+            "topic_form"
+          ],
+          "source": "「X最新消息」=浏览一批该主题资讯 → news（要具体答案会带问句）"
+        },
+        {
+          "id": "mode::美联储这次降息了没有",
+          "bucket": "mode_boundary",
+          "text": "美联储这次降息了没有",
+          "expected": "search",
+          "actual": "news ['info.news']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "news_vs_search",
+            "freshness"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode::固态电池现在发展到什么阶段了",
+          "bucket": "mode_boundary",
+          "text": "固态电池现在发展到什么阶段了",
+          "expected": "search",
+          "actual": "research ['research.run']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "search_vs_research"
+          ],
+          "source": "单问题快答 → search（要系统了解才升调研）；若 LLM 落 research 记 FAIL 作信号"
+        },
+        {
+          "id": "mode::麒麟电池和4680电池有什么区别",
+          "bucket": "mode_boundary",
+          "text": "麒麟电池和4680电池有什么区别",
+          "expected": "search",
+          "actual": "research ['research.run']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "search_vs_research"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode::帮我查一下磷酸铁锂和三元锂的区别",
+          "bucket": "mode_boundary",
+          "text": "帮我查一下磷酸铁锂和三元锂的区别",
+          "expected": "search",
+          "actual": "research ['research.run']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "search_vs_research"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode::珠穆朗玛峰有多高",
+          "bucket": "mode_boundary",
+          "text": "珠穆朗玛峰有多高",
+          "expected": "chitchat",
+          "actual": "search ['info.search']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "chitchat_vs_search",
+            "knowledge"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode::什么是钙钛矿电池",
+          "bucket": "mode_boundary",
+          "text": "什么是钙钛矿电池",
+          "expected": "chitchat|search",
+          "actual": "research ['research.run']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "chitchat_vs_search",
+            "knowledge"
+          ],
+          "source": "常青概念但领域较新，两落点皆可接受"
+        },
+        {
+          "id": "mode::苹果公司的创始人是谁",
+          "bucket": "mode_boundary",
+          "text": "苹果公司的创始人是谁",
+          "expected": "chitchat",
+          "actual": "search ['info.search']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_boundary",
+            "chitchat_vs_search",
+            "knowledge"
+          ],
+          "source": ""
+        }
+      ],
+      "pass_rate": 0.7333
+    },
+    "mode_adversarial": {
+      "total": 24,
+      "passed": 18,
+      "failures": [
+        {
+          "id": "mode::黄金今天什么价格",
+          "bucket": "mode_adversarial",
+          "text": "黄金今天什么价格",
+          "expected": "search",
+          "actual": "stock ['info.stock']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_adversarial",
+            "freshness_disguised"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode::下周有什么新电影上映",
+          "bucket": "mode_adversarial",
+          "text": "下周有什么新电影上映",
+          "expected": "search|news",
+          "actual": "chitchat ['chitchat.talk']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_adversarial",
+            "freshness_disguised"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode::秦始皇哪一年统一六国",
+          "bucket": "mode_adversarial",
+          "text": "秦始皇哪一年统一六国",
+          "expected": "chitchat",
+          "actual": "search ['info.search']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_adversarial",
+            "timeless"
+          ],
+          "source": ""
+        },
+        {
+          "id": "mode::搜一下你叫什么名字",
+          "bucket": "mode_adversarial",
+          "text": "搜一下你叫什么名字",
+          "expected": "search",
+          "actual": "chitchat ['chitchat.talk']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_adversarial",
+            "verb_trap"
+          ],
+          "source": "显式搜索动词占优先（钉确定性行为：用户说搜就搜）"
+        },
+        {
+          "id": "mode::搜索引擎是怎么工作的",
+          "bucket": "mode_adversarial",
+          "text": "搜索引擎是怎么工作的",
+          "expected": "chitchat",
+          "actual": "research ['research.run']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_adversarial",
+            "verb_trap",
+            "knowledge"
+          ],
+          "source": "「搜索引擎」名词开头不是搜索指令——hint pattern 须 (?!引擎)"
+        },
+        {
+          "id": "mode::查理和巧克力工厂是谁写的",
+          "bucket": "mode_adversarial",
+          "text": "查理和巧克力工厂是谁写的",
+          "expected": "chitchat",
+          "actual": "search ['info.search']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_adversarial",
+            "verb_trap",
+            "knowledge"
+          ],
+          "source": "裸「查」刻意不进 hint 动词表（查理≠查询）"
+        }
+      ],
+      "pass_rate": 0.75
+    },
+    "mode_followup": {
+      "total": 10,
+      "passed": 10,
+      "failures": [],
+      "pass_rate": 1.0
+    },
+    "mode_guardrail": {
+      "total": 16,
+      "passed": 15,
+      "failures": [
+        {
+          "id": "mode::打开空调然后来点科技新闻",
+          "bucket": "mode_guardrail",
+          "text": "打开空调然后来点科技新闻",
+          "expected": "news",
+          "actual": "chitchat ['chitchat.talk']",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_guardrail",
+            "multi_intent"
+          ],
+          "source": "真栈里空调子句由端侧 A2 混拆本地执行、云侧只见新闻子句；本评测全句直发云端， 云侧正确行为=接住新闻部分（车控在云 catalog 缺席）"
+        }
+      ],
+      "pass_rate": 0.9375
+    }
+  },
+  "overall": {
+    "total": 177,
+    "passed": 137,
+    "pass_rate": 0.774
+  },
+  "cases": {
+    "mode_det::搜一下固态电池最新进展": {
+      "id": "mode_det::搜一下固态电池最新进展",
+      "bucket": "mode_deterministic",
+      "text": "搜一下固态电池最新进展",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search"
+      ],
+      "source": ""
+    },
+    "mode_det::帮我查一下iPhone现在什么价格": {
+      "id": "mode_det::帮我查一下iPhone现在什么价格",
+      "bucket": "mode_deterministic",
+      "text": "帮我查一下iPhone现在什么价格",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode_det::帮我查一下特斯拉FSD在中国的落地进展": {
+      "id": "mode_det::帮我查一下特斯拉FSD在中国的落地进展",
+      "bucket": "mode_deterministic",
+      "text": "帮我查一下特斯拉FSD在中国的落地进展",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search"
+      ],
+      "source": ""
+    },
+    "mode_det::搜索量子计算商业化现状": {
+      "id": "mode_det::搜索量子计算商业化现状",
+      "bucket": "mode_deterministic",
+      "text": "搜索量子计算商业化现状",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search"
+      ],
+      "source": ""
+    },
+    "mode_det::今天有什么新闻": {
+      "id": "mode_det::今天有什么新闻",
+      "bucket": "mode_deterministic",
+      "text": "今天有什么新闻",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode_det::来点科技新闻": {
+      "id": "mode_det::来点科技新闻",
+      "bucket": "mode_deterministic",
+      "text": "来点科技新闻",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode_det::看看今天的头条": {
+      "id": "mode_det::看看今天的头条",
+      "bucket": "mode_deterministic",
+      "text": "看看今天的头条",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode_det::有什么国际新闻吗": {
+      "id": "mode_det::有什么国际新闻吗",
+      "bucket": "mode_deterministic",
+      "text": "有什么国际新闻吗",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode_det::刷刷新闻": {
+      "id": "mode_det::刷刷新闻",
+      "bucket": "mode_deterministic",
+      "text": "刷刷新闻",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode_det::新能源汽车的新闻": {
+      "id": "mode_det::新能源汽车的新闻",
+      "bucket": "mode_deterministic",
+      "text": "新能源汽车的新闻",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news",
+        "topic_form"
+      ],
+      "source": ""
+    },
+    "mode_det::英伟达最新动态": {
+      "id": "mode_det::英伟达最新动态",
+      "bucket": "mode_deterministic",
+      "text": "英伟达最新动态",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news",
+        "topic_form"
+      ],
+      "source": ""
+    },
+    "mode_det::讲讲今天的要闻": {
+      "id": "mode_det::讲讲今天的要闻",
+      "bucket": "mode_deterministic",
+      "text": "讲讲今天的要闻",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode_det::深入调研一下固态电池产业链": {
+      "id": "mode_det::深入调研一下固态电池产业链",
+      "bucket": "mode_deterministic",
+      "text": "深入调研一下固态电池产业链",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode_det::帮我全面对比一下增程和纯电的优劣": {
+      "id": "mode_det::帮我全面对比一下增程和纯电的优劣",
+      "bucket": "mode_deterministic",
+      "text": "帮我全面对比一下增程和纯电的优劣",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode_det::系统了解一下具身智能这个方向": {
+      "id": "mode_det::系统了解一下具身智能这个方向",
+      "bucket": "mode_deterministic",
+      "text": "系统了解一下具身智能这个方向",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode_det::彻底搞懂钠离子电池的商业化前景": {
+      "id": "mode_det::彻底搞懂钠离子电池的商业化前景",
+      "bucket": "mode_deterministic",
+      "text": "彻底搞懂钠离子电池的商业化前景",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode_det::好好研究下人形机器人赛道": {
+      "id": "mode_det::好好研究下人形机器人赛道",
+      "bucket": "mode_deterministic",
+      "text": "好好研究下人形机器人赛道",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode_det::调研一下车规级芯片的国产化进度": {
+      "id": "mode_det::调研一下车规级芯片的国产化进度",
+      "bucket": "mode_deterministic",
+      "text": "调研一下车规级芯片的国产化进度",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode_det::深度分析一下低空经济的机会": {
+      "id": "mode_det::深度分析一下低空经济的机会",
+      "bucket": "mode_deterministic",
+      "text": "深度分析一下低空经济的机会",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode_det::我想全面了解一下核聚变的最新进展": {
+      "id": "mode_det::我想全面了解一下核聚变的最新进展",
+      "bucket": "mode_deterministic",
+      "text": "我想全面了解一下核聚变的最新进展",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode_det::英伟达最新消息": {
+      "id": "mode_det::英伟达最新消息",
+      "bucket": "mode_deterministic",
+      "text": "英伟达最新消息",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search",
+        "topic_form"
+      ],
+      "source": "「X最新消息」=浏览一批该主题资讯 → news（要具体答案会带问句）"
+    },
+    "mode_det::给我读读今天的国际要闻": {
+      "id": "mode_det::给我读读今天的国际要闻",
+      "bucket": "mode_deterministic",
+      "text": "给我读读今天的国际要闻",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search"
+      ],
+      "source": ""
+    },
+    "mode_det::有没有关于低空经济的新闻": {
+      "id": "mode_det::有没有关于低空经济的新闻",
+      "bucket": "mode_deterministic",
+      "text": "有没有关于低空经济的新闻",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search"
+      ],
+      "source": ""
+    },
+    "mode_det::深入了解一下固态电池": {
+      "id": "mode_det::深入了解一下固态电池",
+      "bucket": "mode_deterministic",
+      "text": "深入了解一下固态电池",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": ""
+    },
+    "mode_det::帮我全面梳理一下智能驾驶的技术路线": {
+      "id": "mode_det::帮我全面梳理一下智能驾驶的技术路线",
+      "bucket": "mode_deterministic",
+      "text": "帮我全面梳理一下智能驾驶的技术路线",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": ""
+    },
+    "mode_det::帮我查一下磷酸铁锂和三元锂的区别": {
+      "id": "mode_det::帮我查一下磷酸铁锂和三元锂的区别",
+      "bucket": "mode_deterministic",
+      "text": "帮我查一下磷酸铁锂和三元锂的区别",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": ""
+    },
+    "mode_det::系统梳理一下自动驾驶的法规现状": {
+      "id": "mode_det::系统梳理一下自动驾驶的法规现状",
+      "bucket": "mode_deterministic",
+      "text": "系统梳理一下自动驾驶的法规现状",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": ""
+    },
+    "mode_det::查一下固态电池": {
+      "id": "mode_det::查一下固态电池",
+      "bucket": "mode_deterministic",
+      "text": "查一下固态电池",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": "与 route_hints_cases「搜一下固态电池」呼应：快查不被调研劫持"
+    },
+    "mode_det::新能源补贴政策帮我彻底弄懂": {
+      "id": "mode_det::新能源补贴政策帮我彻底弄懂",
+      "bucket": "mode_deterministic",
+      "text": "新能源补贴政策帮我彻底弄懂",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": ""
+    },
+    "mode_det::搜一下你叫什么名字": {
+      "id": "mode_det::搜一下你叫什么名字",
+      "bucket": "mode_deterministic",
+      "text": "搜一下你叫什么名字",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap"
+      ],
+      "source": "显式搜索动词占优先（钉确定性行为：用户说搜就搜）"
+    },
+    "mode_det::查一下我老婆叫什么名字": {
+      "id": "mode_det::查一下我老婆叫什么名字",
+      "bucket": "mode_deterministic",
+      "text": "查一下我老婆叫什么名字",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap",
+        "personal"
+      ],
+      "source": "个人事实走记忆召回，不上网搜——search hint guard 须含「我老婆/我的」"
+    },
+    "mode_det::搜索引擎是怎么工作的": {
+      "id": "mode_det::搜索引擎是怎么工作的",
+      "bucket": "mode_deterministic",
+      "text": "搜索引擎是怎么工作的",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap",
+        "knowledge"
+      ],
+      "source": "「搜索引擎」名词开头不是搜索指令——hint pattern 须 (?!引擎)"
+    },
+    "mode_det::查理和巧克力工厂是谁写的": {
+      "id": "mode_det::查理和巧克力工厂是谁写的",
+      "bucket": "mode_deterministic",
+      "text": "查理和巧克力工厂是谁写的",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap",
+        "knowledge"
+      ],
+      "source": "裸「查」刻意不进 hint 动词表（查理≠查询）"
+    },
+    "mode_det::提醒我晚上看新闻联播": {
+      "id": "mode_det::提醒我晚上看新闻联播",
+      "bucket": "mode_deterministic",
+      "text": "提醒我晚上看新闻联播",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap"
+      ],
+      "source": "「提醒我」56 级先接住；news hint guard 含提醒/联播"
+    },
+    "mode_det::播放新闻联播": {
+      "id": "mode_det::播放新闻联播",
+      "bucket": "mode_deterministic",
+      "text": "播放新闻联播",
+      "expected": [
+        "media.play"
+      ],
+      "actual": [
+        "media.play"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap"
+      ],
+      "source": "媒体域在 edge，云 catalog 缺席故不跑 live；det 验证 news hint guard 含播/联播"
+    },
+    "mode_det::检索一下宁德时代最新财报要点": {
+      "id": "mode_det::检索一下宁德时代最新财报要点",
+      "bucket": "mode_deterministic",
+      "text": "检索一下宁德时代最新财报要点",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap"
+      ],
+      "source": ""
+    },
+    "mode_det::展开第三点": {
+      "id": "mode_det::展开第三点",
+      "bucket": "mode_deterministic",
+      "text": "展开第三点",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "research_active"
+      ],
+      "source": ""
+    },
+    "mode_det::第二点再详细讲讲": {
+      "id": "mode_det::第二点再详细讲讲",
+      "bucket": "mode_deterministic",
+      "text": "第二点再详细讲讲",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "research_active"
+      ],
+      "source": ""
+    },
+    "mode_det::这部分展开说说": {
+      "id": "mode_det::这部分展开说说",
+      "bucket": "mode_deterministic",
+      "text": "这部分展开说说",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "research_active"
+      ],
+      "source": ""
+    },
+    "mode_det::上面那点再深入一下": {
+      "id": "mode_det::上面那点再深入一下",
+      "bucket": "mode_deterministic",
+      "text": "上面那点再深入一下",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "research_active"
+      ],
+      "source": ""
+    },
+    "mode_det::详细讲讲第3条": {
+      "id": "mode_det::详细讲讲第3条",
+      "bucket": "mode_deterministic",
+      "text": "详细讲讲第3条",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "news_active"
+      ],
+      "source": "新闻深挖桥接：路由到 research.run，由 deep-research 读 news_active 取该条标题"
+    },
+    "mode_det::这条新闻详细说说": {
+      "id": "mode_det::这条新闻详细说说",
+      "bucket": "mode_deterministic",
+      "text": "这条新闻详细说说",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "news_active"
+      ],
+      "source": ""
+    },
+    "mode_det::再来点财经新闻": {
+      "id": "mode_det::再来点财经新闻",
+      "bucket": "mode_deterministic",
+      "text": "再来点财经新闻",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "news_active"
+      ],
+      "source": ""
+    },
+    "mode_det::那帮我深入调研一下它": {
+      "id": "mode_det::那帮我深入调研一下它",
+      "bucket": "mode_deterministic",
+      "text": "那帮我深入调研一下它",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup"
+      ],
+      "source": ""
+    },
+    "mode_det::查一下明天杭州的天气": {
+      "id": "mode_det::查一下明天杭州的天气",
+      "bucket": "mode_deterministic",
+      "text": "查一下明天杭州的天气",
+      "expected": [
+        "info.forecast"
+      ],
+      "actual": [
+        "info.forecast"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "weather"
+      ],
+      "source": "search hint guard 须含天气/预报——已正确路由的 forecast 不被劫持"
+    },
+    "mode_det::查一下我的电量还能跑多远": {
+      "id": "mode_det::查一下我的电量还能跑多远",
+      "bucket": "mode_deterministic",
+      "text": "查一下我的电量还能跑多远",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "vehicle"
+      ],
+      "source": "车辆状态：云 catalog 无对应能力→空计划→chitchat 兜底（by design）；绝不允许上网搜"
+    },
+    "mode_det::搜一下附近的加油站": {
+      "id": "mode_det::搜一下附近的加油站",
+      "bucket": "mode_deterministic",
+      "text": "搜一下附近的加油站",
+      "expected": [
+        "nearby.search"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "nearby"
+      ],
+      "source": "search hint guard 含附近/加油站→让位；nearby hint(55) 自己接住"
+    },
+    "mode_det::查一下我的待办": {
+      "id": "mode_det::查一下我的待办",
+      "bucket": "mode_deterministic",
+      "text": "查一下我的待办",
+      "expected": [
+        "reminder.list"
+      ],
+      "actual": [
+        "reminder.list"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "reminder"
+      ],
+      "source": "search hint guard 含待办；reminder.list hint(56) 接住"
+    },
+    "mode_det::帮我查一下茅台股价": {
+      "id": "mode_det::帮我查一下茅台股价",
+      "bucket": "mode_deterministic",
+      "text": "帮我查一下茅台股价",
+      "expected": [
+        "info.stock"
+      ],
+      "actual": [
+        "info.stock"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "stock"
+      ],
+      "source": ""
+    },
+    "mode_det::明天早上八点提醒我开会": {
+      "id": "mode_det::明天早上八点提醒我开会",
+      "bucket": "mode_deterministic",
+      "text": "明天早上八点提醒我开会",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "reminder"
+      ],
+      "source": ""
+    },
+    "mode_det::附近有什么好吃的川菜馆": {
+      "id": "mode_det::附近有什么好吃的川菜馆",
+      "bucket": "mode_deterministic",
+      "text": "附近有什么好吃的川菜馆",
+      "expected": [
+        "nearby.search"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "nearby"
+      ],
+      "source": ""
+    },
+    "mode_det::帮我规划一个杭州两日游": {
+      "id": "mode_det::帮我规划一个杭州两日游",
+      "bucket": "mode_deterministic",
+      "text": "帮我规划一个杭州两日游",
+      "expected": [
+        "trip.plan"
+      ],
+      "actual": [
+        "trip.plan"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "trip"
+      ],
+      "source": ""
+    },
+    "mode_det::查一下这周末适不适合洗车": {
+      "id": "mode_det::查一下这周末适不适合洗车",
+      "bucket": "mode_deterministic",
+      "text": "查一下这周末适不适合洗车",
+      "expected": [
+        "info.indices"
+      ],
+      "actual": [
+        "info.indices"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "weather"
+      ],
+      "source": "生活指数：search hint guard 须含洗车——已路由的 indices 不被劫持"
+    },
+    "mode_det::打开空调然后来点科技新闻": {
+      "id": "mode_det::打开空调然后来点科技新闻",
+      "bucket": "mode_deterministic",
+      "text": "打开空调然后来点科技新闻",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "multi_intent"
+      ],
+      "source": "真栈里空调子句由端侧 A2 混拆本地执行、云侧只见新闻子句；本评测全句直发云端， 云侧正确行为=接住新闻部分（车控在云 catalog 缺席）"
+    },
+    "mode_det::帮我查一下去机场的路线": {
+      "id": "mode_det::帮我查一下去机场的路线",
+      "bucket": "mode_deterministic",
+      "text": "帮我查一下去机场的路线",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "navigation"
+      ],
+      "source": "search hint guard 须含路线/导航——不抢导航域"
+    },
+    "mode_det::搜一下周杰伦的歌": {
+      "id": "mode_det::搜一下周杰伦的歌",
+      "bucket": "mode_deterministic",
+      "text": "搜一下周杰伦的歌",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "media"
+      ],
+      "source": "媒体域在 edge：search hint guard 须含的歌/歌曲——det 断言不劫持；live 无媒体 catalog 不跑"
+    },
+    "mode_det::帮我查一下车的说明书里怎么除雾": {
+      "id": "mode_det::帮我查一下车的说明书里怎么除雾",
+      "bucket": "mode_deterministic",
+      "text": "帮我查一下车的说明书里怎么除雾",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "manual"
+      ],
+      "source": "search hint guard 须含说明书/手册——manual_rag 的地盘"
+    },
+    "mode::给我讲个笑话": {
+      "id": "mode::给我讲个笑话",
+      "bucket": "mode_typical",
+      "text": "给我讲个笑话",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "chitchat"
+      ],
+      "source": ""
+    },
+    "mode::我今天有点累，陪我说说话": {
+      "id": "mode::我今天有点累，陪我说说话",
+      "bucket": "mode_typical",
+      "text": "我今天有点累，陪我说说话",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "chitchat"
+      ],
+      "source": ""
+    },
+    "mode::你叫什么名字呀": {
+      "id": "mode::你叫什么名字呀",
+      "bucket": "mode_typical",
+      "text": "你叫什么名字呀",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "chitchat"
+      ],
+      "source": ""
+    },
+    "mode::光合作用是什么原理": {
+      "id": "mode::光合作用是什么原理",
+      "bucket": "mode_typical",
+      "text": "光合作用是什么原理",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "chitchat",
+        "knowledge"
+      ],
+      "source": ""
+    },
+    "mode::为什么天空是蓝色的": {
+      "id": "mode::为什么天空是蓝色的",
+      "bucket": "mode_typical",
+      "text": "为什么天空是蓝色的",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "chitchat",
+        "knowledge"
+      ],
+      "source": ""
+    },
+    "mode::三国演义的作者是谁": {
+      "id": "mode::三国演义的作者是谁",
+      "bucket": "mode_typical",
+      "text": "三国演义的作者是谁",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "chitchat",
+        "knowledge"
+      ],
+      "source": ""
+    },
+    "mode::帮我想一句结婚祝福语": {
+      "id": "mode::帮我想一句结婚祝福语",
+      "bucket": "mode_typical",
+      "text": "帮我想一句结婚祝福语",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "chitchat",
+        "creative"
+      ],
+      "source": ""
+    },
+    "mode::好无聊啊随便聊点什么": {
+      "id": "mode::好无聊啊随便聊点什么",
+      "bucket": "mode_typical",
+      "text": "好无聊啊随便聊点什么",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "chitchat"
+      ],
+      "source": ""
+    },
+    "mode::一光年大概是多少公里": {
+      "id": "mode::一光年大概是多少公里",
+      "bucket": "mode_typical",
+      "text": "一光年大概是多少公里",
+      "expected": "chitchat",
+      "actual": "search ['info.search']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "chitchat",
+        "knowledge"
+      ],
+      "source": ""
+    },
+    "mode::你觉得人为什么要工作": {
+      "id": "mode::你觉得人为什么要工作",
+      "bucket": "mode_typical",
+      "text": "你觉得人为什么要工作",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "chitchat",
+        "opinion"
+      ],
+      "source": ""
+    },
+    "mode::搜一下固态电池最新进展": {
+      "id": "mode::搜一下固态电池最新进展",
+      "bucket": "mode_typical",
+      "text": "搜一下固态电池最新进展",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search"
+      ],
+      "source": ""
+    },
+    "mode::帮我查一下iPhone现在什么价格": {
+      "id": "mode::帮我查一下iPhone现在什么价格",
+      "bucket": "mode_typical",
+      "text": "帮我查一下iPhone现在什么价格",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode::昨晚的苹果发布会都发布了什么": {
+      "id": "mode::昨晚的苹果发布会都发布了什么",
+      "bucket": "mode_typical",
+      "text": "昨晚的苹果发布会都发布了什么",
+      "expected": "search",
+      "actual": "news ['info.news']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode::2026年诺贝尔物理学奖颁给谁了": {
+      "id": "mode::2026年诺贝尔物理学奖颁给谁了",
+      "bucket": "mode_typical",
+      "text": "2026年诺贝尔物理学奖颁给谁了",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode::现在黄金什么价": {
+      "id": "mode::现在黄金什么价",
+      "bucket": "mode_typical",
+      "text": "现在黄金什么价",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode::帮我查一下特斯拉FSD在中国的落地进展": {
+      "id": "mode::帮我查一下特斯拉FSD在中国的落地进展",
+      "bucket": "mode_typical",
+      "text": "帮我查一下特斯拉FSD在中国的落地进展",
+      "expected": "search",
+      "actual": "research ['research.run']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search"
+      ],
+      "source": ""
+    },
+    "mode::马拉松世界纪录现在是多少": {
+      "id": "mode::马拉松世界纪录现在是多少",
+      "bucket": "mode_typical",
+      "text": "马拉松世界纪录现在是多少",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode::搜索量子计算商业化现状": {
+      "id": "mode::搜索量子计算商业化现状",
+      "bucket": "mode_typical",
+      "text": "搜索量子计算商业化现状",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search"
+      ],
+      "source": ""
+    },
+    "mode::今年的高考作文题是什么": {
+      "id": "mode::今年的高考作文题是什么",
+      "bucket": "mode_typical",
+      "text": "今年的高考作文题是什么",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode::星舰最近一次试飞成功了吗": {
+      "id": "mode::星舰最近一次试飞成功了吗",
+      "bucket": "mode_typical",
+      "text": "星舰最近一次试飞成功了吗",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode::今天有什么新闻": {
+      "id": "mode::今天有什么新闻",
+      "bucket": "mode_typical",
+      "text": "今天有什么新闻",
+      "expected": "news",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode::来点科技新闻": {
+      "id": "mode::来点科技新闻",
+      "bucket": "mode_typical",
+      "text": "来点科技新闻",
+      "expected": "news",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode::看看今天的头条": {
+      "id": "mode::看看今天的头条",
+      "bucket": "mode_typical",
+      "text": "看看今天的头条",
+      "expected": "news",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode::有什么国际新闻吗": {
+      "id": "mode::有什么国际新闻吗",
+      "bucket": "mode_typical",
+      "text": "有什么国际新闻吗",
+      "expected": "news",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode::最近有啥大事": {
+      "id": "mode::最近有啥大事",
+      "bucket": "mode_typical",
+      "text": "最近有啥大事",
+      "expected": "news|search",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": "泛「大事」两落点皆可（registry_resolve 语料同款句已标 info）"
+    },
+    "mode::刷刷新闻": {
+      "id": "mode::刷刷新闻",
+      "bucket": "mode_typical",
+      "text": "刷刷新闻",
+      "expected": "news",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode::新能源汽车的新闻": {
+      "id": "mode::新能源汽车的新闻",
+      "bucket": "mode_typical",
+      "text": "新能源汽车的新闻",
+      "expected": "news",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news",
+        "topic_form"
+      ],
+      "source": ""
+    },
+    "mode::英伟达最新动态": {
+      "id": "mode::英伟达最新动态",
+      "bucket": "mode_typical",
+      "text": "英伟达最新动态",
+      "expected": "news",
+      "actual": "search ['info.search']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news",
+        "topic_form"
+      ],
+      "source": ""
+    },
+    "mode::讲讲今天的要闻": {
+      "id": "mode::讲讲今天的要闻",
+      "bucket": "mode_typical",
+      "text": "讲讲今天的要闻",
+      "expected": "news",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode::财经资讯有什么值得看的": {
+      "id": "mode::财经资讯有什么值得看的",
+      "bucket": "mode_typical",
+      "text": "财经资讯有什么值得看的",
+      "expected": "news|search",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "news"
+      ],
+      "source": ""
+    },
+    "mode::深入调研一下固态电池产业链": {
+      "id": "mode::深入调研一下固态电池产业链",
+      "bucket": "mode_typical",
+      "text": "深入调研一下固态电池产业链",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode::帮我全面对比一下增程和纯电的优劣": {
+      "id": "mode::帮我全面对比一下增程和纯电的优劣",
+      "bucket": "mode_typical",
+      "text": "帮我全面对比一下增程和纯电的优劣",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode::系统了解一下具身智能这个方向": {
+      "id": "mode::系统了解一下具身智能这个方向",
+      "bucket": "mode_typical",
+      "text": "系统了解一下具身智能这个方向",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode::彻底搞懂钠离子电池的商业化前景": {
+      "id": "mode::彻底搞懂钠离子电池的商业化前景",
+      "bucket": "mode_typical",
+      "text": "彻底搞懂钠离子电池的商业化前景",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode::好好研究下人形机器人赛道": {
+      "id": "mode::好好研究下人形机器人赛道",
+      "bucket": "mode_typical",
+      "text": "好好研究下人形机器人赛道",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode::调研一下车规级芯片的国产化进度": {
+      "id": "mode::调研一下车规级芯片的国产化进度",
+      "bucket": "mode_typical",
+      "text": "调研一下车规级芯片的国产化进度",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode::深度分析一下低空经济的机会": {
+      "id": "mode::深度分析一下低空经济的机会",
+      "bucket": "mode_typical",
+      "text": "深度分析一下低空经济的机会",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode::我想全面了解一下核聚变的最新进展": {
+      "id": "mode::我想全面了解一下核聚变的最新进展",
+      "bucket": "mode_typical",
+      "text": "我想全面了解一下核聚变的最新进展",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": ""
+    },
+    "mode::帮我出一份氢能源汽车的完整调研报告": {
+      "id": "mode::帮我出一份氢能源汽车的完整调研报告",
+      "bucket": "mode_typical",
+      "text": "帮我出一份氢能源汽车的完整调研报告",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": "「调研报告」不在 hint 词形内，考 LLM 对 desc 的理解"
+    },
+    "mode::研究一下宁德时代的麒麟电池强在哪": {
+      "id": "mode::研究一下宁德时代的麒麟电池强在哪",
+      "bucket": "mode_typical",
+      "text": "研究一下宁德时代的麒麟电池强在哪",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_typical",
+        "research"
+      ],
+      "source": "裸「研究一下」刻意不进 hint（防误伤），考 LLM；desc/examples 应兜住"
+    },
+    "mode::英伟达最新消息": {
+      "id": "mode::英伟达最新消息",
+      "bucket": "mode_boundary",
+      "text": "英伟达最新消息",
+      "expected": "news",
+      "actual": "search ['info.search']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search",
+        "topic_form"
+      ],
+      "source": "「X最新消息」=浏览一批该主题资讯 → news（要具体答案会带问句）"
+    },
+    "mode::特斯拉这次降价是怎么回事": {
+      "id": "mode::特斯拉这次降价是怎么回事",
+      "bucket": "mode_boundary",
+      "text": "特斯拉这次降价是怎么回事",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search"
+      ],
+      "source": "「怎么回事」=要一个解释性答案 → search"
+    },
+    "mode::看看AI行业最近的新闻": {
+      "id": "mode::看看AI行业最近的新闻",
+      "bucket": "mode_boundary",
+      "text": "看看AI行业最近的新闻",
+      "expected": "news",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search"
+      ],
+      "source": "间隔超 hint 窗口（>6字），考 LLM"
+    },
+    "mode::苹果新品发布会讲了什么": {
+      "id": "mode::苹果新品发布会讲了什么",
+      "bucket": "mode_boundary",
+      "text": "苹果新品发布会讲了什么",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search"
+      ],
+      "source": ""
+    },
+    "mode::给我读读今天的国际要闻": {
+      "id": "mode::给我读读今天的国际要闻",
+      "bucket": "mode_boundary",
+      "text": "给我读读今天的国际要闻",
+      "expected": "news",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search"
+      ],
+      "source": ""
+    },
+    "mode::比亚迪出海最近有什么动作": {
+      "id": "mode::比亚迪出海最近有什么动作",
+      "bucket": "mode_boundary",
+      "text": "比亚迪出海最近有什么动作",
+      "expected": "news|search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search"
+      ],
+      "source": ""
+    },
+    "mode::美联储这次降息了没有": {
+      "id": "mode::美联储这次降息了没有",
+      "bucket": "mode_boundary",
+      "text": "美联储这次降息了没有",
+      "expected": "search",
+      "actual": "news ['info.news']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode::有没有关于低空经济的新闻": {
+      "id": "mode::有没有关于低空经济的新闻",
+      "bucket": "mode_boundary",
+      "text": "有没有关于低空经济的新闻",
+      "expected": "news",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search"
+      ],
+      "source": ""
+    },
+    "mode::昨晚科技圈发生了什么大事": {
+      "id": "mode::昨晚科技圈发生了什么大事",
+      "bucket": "mode_boundary",
+      "text": "昨晚科技圈发生了什么大事",
+      "expected": "news|search",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode::小米汽车最新销量数据": {
+      "id": "mode::小米汽车最新销量数据",
+      "bucket": "mode_boundary",
+      "text": "小米汽车最新销量数据",
+      "expected": "search|news",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "news_vs_search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode::固态电池现在发展到什么阶段了": {
+      "id": "mode::固态电池现在发展到什么阶段了",
+      "bucket": "mode_boundary",
+      "text": "固态电池现在发展到什么阶段了",
+      "expected": "search",
+      "actual": "research ['research.run']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": "单问题快答 → search（要系统了解才升调研）；若 LLM 落 research 记 FAIL 作信号"
+    },
+    "mode::深入了解一下固态电池": {
+      "id": "mode::深入了解一下固态电池",
+      "bucket": "mode_boundary",
+      "text": "深入了解一下固态电池",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": ""
+    },
+    "mode::增程和纯电哪个更适合北方冬天": {
+      "id": "mode::增程和纯电哪个更适合北方冬天",
+      "bucket": "mode_boundary",
+      "text": "增程和纯电哪个更适合北方冬天",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": "单个比较问句要答案 → search；「全面对比」才是调研"
+    },
+    "mode::帮我全面梳理一下智能驾驶的技术路线": {
+      "id": "mode::帮我全面梳理一下智能驾驶的技术路线",
+      "bucket": "mode_boundary",
+      "text": "帮我全面梳理一下智能驾驶的技术路线",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": ""
+    },
+    "mode::麒麟电池和4680电池有什么区别": {
+      "id": "mode::麒麟电池和4680电池有什么区别",
+      "bucket": "mode_boundary",
+      "text": "麒麟电池和4680电池有什么区别",
+      "expected": "search",
+      "actual": "research ['research.run']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": ""
+    },
+    "mode::帮我查一下磷酸铁锂和三元锂的区别": {
+      "id": "mode::帮我查一下磷酸铁锂和三元锂的区别",
+      "bucket": "mode_boundary",
+      "text": "帮我查一下磷酸铁锂和三元锂的区别",
+      "expected": "search",
+      "actual": "research ['research.run']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": ""
+    },
+    "mode::系统梳理一下自动驾驶的法规现状": {
+      "id": "mode::系统梳理一下自动驾驶的法规现状",
+      "bucket": "mode_boundary",
+      "text": "系统梳理一下自动驾驶的法规现状",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": ""
+    },
+    "mode::具身智能是不是下一个风口，帮我研究研究": {
+      "id": "mode::具身智能是不是下一个风口，帮我研究研究",
+      "bucket": "mode_boundary",
+      "text": "具身智能是不是下一个风口，帮我研究研究",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": ""
+    },
+    "mode::查一下固态电池": {
+      "id": "mode::查一下固态电池",
+      "bucket": "mode_boundary",
+      "text": "查一下固态电池",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": "与 route_hints_cases「搜一下固态电池」呼应：快查不被调研劫持"
+    },
+    "mode::新能源补贴政策帮我彻底弄懂": {
+      "id": "mode::新能源补贴政策帮我彻底弄懂",
+      "bucket": "mode_boundary",
+      "text": "新能源补贴政策帮我彻底弄懂",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "search_vs_research"
+      ],
+      "source": ""
+    },
+    "mode::地球为什么是圆的": {
+      "id": "mode::地球为什么是圆的",
+      "bucket": "mode_boundary",
+      "text": "地球为什么是圆的",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "chitchat_vs_search",
+        "knowledge"
+      ],
+      "source": ""
+    },
+    "mode::增程式电动车是什么原理": {
+      "id": "mode::增程式电动车是什么原理",
+      "bucket": "mode_boundary",
+      "text": "增程式电动车是什么原理",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "chitchat_vs_search",
+        "knowledge"
+      ],
+      "source": ""
+    },
+    "mode::珠穆朗玛峰有多高": {
+      "id": "mode::珠穆朗玛峰有多高",
+      "bucket": "mode_boundary",
+      "text": "珠穆朗玛峰有多高",
+      "expected": "chitchat",
+      "actual": "search ['info.search']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "chitchat_vs_search",
+        "knowledge"
+      ],
+      "source": ""
+    },
+    "mode::现在人民币兑美元汇率是多少": {
+      "id": "mode::现在人民币兑美元汇率是多少",
+      "bucket": "mode_boundary",
+      "text": "现在人民币兑美元汇率是多少",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "chitchat_vs_search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode::什么是钙钛矿电池": {
+      "id": "mode::什么是钙钛矿电池",
+      "bucket": "mode_boundary",
+      "text": "什么是钙钛矿电池",
+      "expected": "chitchat|search",
+      "actual": "research ['research.run']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "chitchat_vs_search",
+        "knowledge"
+      ],
+      "source": "常青概念但领域较新，两落点皆可接受"
+    },
+    "mode::苹果公司的创始人是谁": {
+      "id": "mode::苹果公司的创始人是谁",
+      "bucket": "mode_boundary",
+      "text": "苹果公司的创始人是谁",
+      "expected": "chitchat",
+      "actual": "search ['info.search']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "chitchat_vs_search",
+        "knowledge"
+      ],
+      "source": ""
+    },
+    "mode::苹果现在的CEO是谁": {
+      "id": "mode::苹果现在的CEO是谁",
+      "bucket": "mode_boundary",
+      "text": "苹果现在的CEO是谁",
+      "expected": "search|chitchat",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "chitchat_vs_search",
+        "freshness"
+      ],
+      "source": "「现在」信号倾向 search；模型知识内答对也可接受"
+    },
+    "mode::圆周率小数点后十位是多少": {
+      "id": "mode::圆周率小数点后十位是多少",
+      "bucket": "mode_boundary",
+      "text": "圆周率小数点后十位是多少",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "chitchat_vs_search",
+        "knowledge"
+      ],
+      "source": ""
+    },
+    "mode::一年有多少个星期": {
+      "id": "mode::一年有多少个星期",
+      "bucket": "mode_boundary",
+      "text": "一年有多少个星期",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "chitchat_vs_search",
+        "knowledge"
+      ],
+      "source": ""
+    },
+    "mode::最近有什么好看的电影上映": {
+      "id": "mode::最近有什么好看的电影上映",
+      "bucket": "mode_boundary",
+      "text": "最近有什么好看的电影上映",
+      "expected": "search|news",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_boundary",
+        "chitchat_vs_search",
+        "freshness"
+      ],
+      "source": ""
+    },
+    "mode::昨晚欧冠决赛谁赢了": {
+      "id": "mode::昨晚欧冠决赛谁赢了",
+      "bucket": "mode_adversarial",
+      "text": "昨晚欧冠决赛谁赢了",
+      "expected": "sports|search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "freshness_disguised"
+      ],
+      "source": "时效伪装闲聊的旗舰用例：绝不允许 chitchat 直答"
+    },
+    "mode::现在油价多少钱一升": {
+      "id": "mode::现在油价多少钱一升",
+      "bucket": "mode_adversarial",
+      "text": "现在油价多少钱一升",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "freshness_disguised"
+      ],
+      "source": ""
+    },
+    "mode::黄金今天什么价格": {
+      "id": "mode::黄金今天什么价格",
+      "bucket": "mode_adversarial",
+      "text": "黄金今天什么价格",
+      "expected": "search",
+      "actual": "stock ['info.stock']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "freshness_disguised"
+      ],
+      "source": ""
+    },
+    "mode::世界首富现在是谁": {
+      "id": "mode::世界首富现在是谁",
+      "bucket": "mode_adversarial",
+      "text": "世界首富现在是谁",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "freshness_disguised"
+      ],
+      "source": ""
+    },
+    "mode::最新的iPhone是哪一款": {
+      "id": "mode::最新的iPhone是哪一款",
+      "bucket": "mode_adversarial",
+      "text": "最新的iPhone是哪一款",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "freshness_disguised"
+      ],
+      "source": ""
+    },
+    "mode::GPT现在最强的版本是哪个": {
+      "id": "mode::GPT现在最强的版本是哪个",
+      "bucket": "mode_adversarial",
+      "text": "GPT现在最强的版本是哪个",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "freshness_disguised"
+      ],
+      "source": ""
+    },
+    "mode::国足最近一场比赛赢了吗": {
+      "id": "mode::国足最近一场比赛赢了吗",
+      "bucket": "mode_adversarial",
+      "text": "国足最近一场比赛赢了吗",
+      "expected": "sports|search",
+      "actual": "sports ['info.sports']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "freshness_disguised"
+      ],
+      "source": ""
+    },
+    "mode::比特币现在多少钱": {
+      "id": "mode::比特币现在多少钱",
+      "bucket": "mode_adversarial",
+      "text": "比特币现在多少钱",
+      "expected": "search|stock",
+      "actual": "stock ['info.stock']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "freshness_disguised"
+      ],
+      "source": ""
+    },
+    "mode::下周有什么新电影上映": {
+      "id": "mode::下周有什么新电影上映",
+      "bucket": "mode_adversarial",
+      "text": "下周有什么新电影上映",
+      "expected": "search|news",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "freshness_disguised"
+      ],
+      "source": ""
+    },
+    "mode::水的沸点是多少度": {
+      "id": "mode::水的沸点是多少度",
+      "bucket": "mode_adversarial",
+      "text": "水的沸点是多少度",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "timeless"
+      ],
+      "source": ""
+    },
+    "mode::光速是多少": {
+      "id": "mode::光速是多少",
+      "bucket": "mode_adversarial",
+      "text": "光速是多少",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "timeless"
+      ],
+      "source": ""
+    },
+    "mode::为什么冬天白天变短": {
+      "id": "mode::为什么冬天白天变短",
+      "bucket": "mode_adversarial",
+      "text": "为什么冬天白天变短",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "timeless"
+      ],
+      "source": ""
+    },
+    "mode::秦始皇哪一年统一六国": {
+      "id": "mode::秦始皇哪一年统一六国",
+      "bucket": "mode_adversarial",
+      "text": "秦始皇哪一年统一六国",
+      "expected": "chitchat",
+      "actual": "search ['info.search']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "timeless"
+      ],
+      "source": ""
+    },
+    "mode::给我讲讲相对论是怎么回事": {
+      "id": "mode::给我讲讲相对论是怎么回事",
+      "bucket": "mode_adversarial",
+      "text": "给我讲讲相对论是怎么回事",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "timeless"
+      ],
+      "source": ""
+    },
+    "mode::解释一下什么是通货膨胀": {
+      "id": "mode::解释一下什么是通货膨胀",
+      "bucket": "mode_adversarial",
+      "text": "解释一下什么是通货膨胀",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "timeless"
+      ],
+      "source": ""
+    },
+    "mode::月亮为什么有阴晴圆缺": {
+      "id": "mode::月亮为什么有阴晴圆缺",
+      "bucket": "mode_adversarial",
+      "text": "月亮为什么有阴晴圆缺",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "timeless"
+      ],
+      "source": ""
+    },
+    "mode::一公里等于多少英里": {
+      "id": "mode::一公里等于多少英里",
+      "bucket": "mode_adversarial",
+      "text": "一公里等于多少英里",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "timeless"
+      ],
+      "source": ""
+    },
+    "mode::搜一下你叫什么名字": {
+      "id": "mode::搜一下你叫什么名字",
+      "bucket": "mode_adversarial",
+      "text": "搜一下你叫什么名字",
+      "expected": "search",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap"
+      ],
+      "source": "显式搜索动词占优先（钉确定性行为：用户说搜就搜）"
+    },
+    "mode::查一下我老婆叫什么名字": {
+      "id": "mode::查一下我老婆叫什么名字",
+      "bucket": "mode_adversarial",
+      "text": "查一下我老婆叫什么名字",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap",
+        "personal"
+      ],
+      "source": "个人事实走记忆召回，不上网搜——search hint guard 须含「我老婆/我的」"
+    },
+    "mode::搜索引擎是怎么工作的": {
+      "id": "mode::搜索引擎是怎么工作的",
+      "bucket": "mode_adversarial",
+      "text": "搜索引擎是怎么工作的",
+      "expected": "chitchat",
+      "actual": "research ['research.run']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap",
+        "knowledge"
+      ],
+      "source": "「搜索引擎」名词开头不是搜索指令——hint pattern 须 (?!引擎)"
+    },
+    "mode::查理和巧克力工厂是谁写的": {
+      "id": "mode::查理和巧克力工厂是谁写的",
+      "bucket": "mode_adversarial",
+      "text": "查理和巧克力工厂是谁写的",
+      "expected": "chitchat",
+      "actual": "search ['info.search']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap",
+        "knowledge"
+      ],
+      "source": "裸「查」刻意不进 hint 动词表（查理≠查询）"
+    },
+    "mode::搜狐最近的新闻": {
+      "id": "mode::搜狐最近的新闻",
+      "bucket": "mode_adversarial",
+      "text": "搜狐最近的新闻",
+      "expected": "news",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap"
+      ],
+      "source": "双 hint 互斥带「搜」字留给 LLM（news guard 含搜/查）"
+    },
+    "mode::提醒我晚上看新闻联播": {
+      "id": "mode::提醒我晚上看新闻联播",
+      "bucket": "mode_adversarial",
+      "text": "提醒我晚上看新闻联播",
+      "expected": "other:reminder.create",
+      "actual": "other:reminder.create ['reminder.create']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap"
+      ],
+      "source": "「提醒我」56 级先接住；news hint guard 含提醒/联播"
+    },
+    "mode::检索一下宁德时代最新财报要点": {
+      "id": "mode::检索一下宁德时代最新财报要点",
+      "bucket": "mode_adversarial",
+      "text": "检索一下宁德时代最新财报要点",
+      "expected": "search",
+      "actual": "search ['info.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_adversarial",
+        "verb_trap"
+      ],
+      "source": ""
+    },
+    "mode::展开第三点": {
+      "id": "mode::展开第三点",
+      "bucket": "mode_followup",
+      "text": "展开第三点",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "research_active"
+      ],
+      "source": ""
+    },
+    "mode::第二点再详细讲讲": {
+      "id": "mode::第二点再详细讲讲",
+      "bucket": "mode_followup",
+      "text": "第二点再详细讲讲",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "research_active"
+      ],
+      "source": ""
+    },
+    "mode::这部分展开说说": {
+      "id": "mode::这部分展开说说",
+      "bucket": "mode_followup",
+      "text": "这部分展开说说",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "research_active"
+      ],
+      "source": ""
+    },
+    "mode::上面那点再深入一下": {
+      "id": "mode::上面那点再深入一下",
+      "bucket": "mode_followup",
+      "text": "上面那点再深入一下",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "research_active"
+      ],
+      "source": ""
+    },
+    "mode::详细讲讲第3条": {
+      "id": "mode::详细讲讲第3条",
+      "bucket": "mode_followup",
+      "text": "详细讲讲第3条",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "news_active"
+      ],
+      "source": "新闻深挖桥接：路由到 research.run，由 deep-research 读 news_active 取该条标题"
+    },
+    "mode::这条新闻详细说说": {
+      "id": "mode::这条新闻详细说说",
+      "bucket": "mode_followup",
+      "text": "这条新闻详细说说",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "news_active"
+      ],
+      "source": ""
+    },
+    "mode::再来点财经新闻": {
+      "id": "mode::再来点财经新闻",
+      "bucket": "mode_followup",
+      "text": "再来点财经新闻",
+      "expected": "news",
+      "actual": "news ['info.news']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "news_active"
+      ],
+      "source": ""
+    },
+    "mode::换个话题，陪我聊聊天吧": {
+      "id": "mode::换个话题，陪我聊聊天吧",
+      "bucket": "mode_followup",
+      "text": "换个话题，陪我聊聊天吧",
+      "expected": "chitchat",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup"
+      ],
+      "source": ""
+    },
+    "mode::那明天呢": {
+      "id": "mode::那明天呢",
+      "bucket": "mode_followup",
+      "text": "那明天呢",
+      "expected": "weather",
+      "actual": "weather ['info.forecast']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup",
+        "fragile_context"
+      ],
+      "source": "指代续接考 history 利用（无焦点态注入，允许波动）"
+    },
+    "mode::那帮我深入调研一下它": {
+      "id": "mode::那帮我深入调研一下它",
+      "bucket": "mode_followup",
+      "text": "那帮我深入调研一下它",
+      "expected": "research",
+      "actual": "research ['research.run']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_followup"
+      ],
+      "source": ""
+    },
+    "mode::查一下明天杭州的天气": {
+      "id": "mode::查一下明天杭州的天气",
+      "bucket": "mode_guardrail",
+      "text": "查一下明天杭州的天气",
+      "expected": "weather",
+      "actual": "weather ['info.forecast']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "weather"
+      ],
+      "source": "search hint guard 须含天气/预报——已正确路由的 forecast 不被劫持"
+    },
+    "mode::查一下我的电量还能跑多远": {
+      "id": "mode::查一下我的电量还能跑多远",
+      "bucket": "mode_guardrail",
+      "text": "查一下我的电量还能跑多远",
+      "expected": "chitchat|none",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "vehicle"
+      ],
+      "source": "车辆状态：云 catalog 无对应能力→空计划→chitchat 兜底（by design）；绝不允许上网搜"
+    },
+    "mode::搜一下附近的加油站": {
+      "id": "mode::搜一下附近的加油站",
+      "bucket": "mode_guardrail",
+      "text": "搜一下附近的加油站",
+      "expected": "other:nearby.search",
+      "actual": "other:nearby.search ['nearby.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "nearby"
+      ],
+      "source": "search hint guard 含附近/加油站→让位；nearby hint(55) 自己接住"
+    },
+    "mode::查一下我的待办": {
+      "id": "mode::查一下我的待办",
+      "bucket": "mode_guardrail",
+      "text": "查一下我的待办",
+      "expected": "other:reminder.list",
+      "actual": "other:reminder.list ['reminder.list']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "reminder"
+      ],
+      "source": "search hint guard 含待办；reminder.list hint(56) 接住"
+    },
+    "mode::帮我查一下茅台股价": {
+      "id": "mode::帮我查一下茅台股价",
+      "bucket": "mode_guardrail",
+      "text": "帮我查一下茅台股价",
+      "expected": "stock",
+      "actual": "stock ['info.stock']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "stock"
+      ],
+      "source": ""
+    },
+    "mode::明天早上八点提醒我开会": {
+      "id": "mode::明天早上八点提醒我开会",
+      "bucket": "mode_guardrail",
+      "text": "明天早上八点提醒我开会",
+      "expected": "other:reminder.create",
+      "actual": "other:reminder.create ['reminder.create']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "reminder"
+      ],
+      "source": ""
+    },
+    "mode::世界杯下一场比赛什么时候开打": {
+      "id": "mode::世界杯下一场比赛什么时候开打",
+      "bucket": "mode_guardrail",
+      "text": "世界杯下一场比赛什么时候开打",
+      "expected": "sports",
+      "actual": "sports ['info.sports']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "sports"
+      ],
+      "source": ""
+    },
+    "mode::帮我导航到虹桥火车站": {
+      "id": "mode::帮我导航到虹桥火车站",
+      "bucket": "mode_guardrail",
+      "text": "帮我导航到虹桥火车站",
+      "expected": "other:navigation.navigate_to",
+      "actual": "other:navigation.navigate_to ['navigation.navigate_to']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "navigation"
+      ],
+      "source": ""
+    },
+    "mode::附近有什么好吃的川菜馆": {
+      "id": "mode::附近有什么好吃的川菜馆",
+      "bucket": "mode_guardrail",
+      "text": "附近有什么好吃的川菜馆",
+      "expected": "other:nearby.search",
+      "actual": "other:nearby.search ['nearby.search']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "nearby"
+      ],
+      "source": ""
+    },
+    "mode::帮我规划一个杭州两日游": {
+      "id": "mode::帮我规划一个杭州两日游",
+      "bucket": "mode_guardrail",
+      "text": "帮我规划一个杭州两日游",
+      "expected": "other:trip.plan",
+      "actual": "other:trip.plan ['trip.plan']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "trip"
+      ],
+      "source": ""
+    },
+    "mode::查一下这周末适不适合洗车": {
+      "id": "mode::查一下这周末适不适合洗车",
+      "bucket": "mode_guardrail",
+      "text": "查一下这周末适不适合洗车",
+      "expected": "weather|search",
+      "actual": "weather ['info.indices']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "weather"
+      ],
+      "source": "生活指数：search hint guard 须含洗车——已路由的 indices 不被劫持"
+    },
+    "mode::今天上证指数怎么样": {
+      "id": "mode::今天上证指数怎么样",
+      "bucket": "mode_guardrail",
+      "text": "今天上证指数怎么样",
+      "expected": "stock",
+      "actual": "stock ['info.stock']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "stock"
+      ],
+      "source": ""
+    },
+    "mode::车道保持辅助怎么打开": {
+      "id": "mode::车道保持辅助怎么打开",
+      "bucket": "mode_guardrail",
+      "text": "车道保持辅助怎么打开",
+      "expected": "other:manual.query|chitchat",
+      "actual": "other:manual.query ['manual.query']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "manual"
+      ],
+      "source": ""
+    },
+    "mode::打开空调然后来点科技新闻": {
+      "id": "mode::打开空调然后来点科技新闻",
+      "bucket": "mode_guardrail",
+      "text": "打开空调然后来点科技新闻",
+      "expected": "news",
+      "actual": "chitchat ['chitchat.talk']",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "multi_intent"
+      ],
+      "source": "真栈里空调子句由端侧 A2 混拆本地执行、云侧只见新闻子句；本评测全句直发云端， 云侧正确行为=接住新闻部分（车控在云 catalog 缺席）"
+    },
+    "mode::帮我查一下去机场的路线": {
+      "id": "mode::帮我查一下去机场的路线",
+      "bucket": "mode_guardrail",
+      "text": "帮我查一下去机场的路线",
+      "expected": "other:navigation.navigate_to|other:navigation.search_poi",
+      "actual": "other:navigation.navigate_to ['navigation.navigate_to']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "navigation"
+      ],
+      "source": "search hint guard 须含路线/导航——不抢导航域"
+    },
+    "mode::帮我查一下车的说明书里怎么除雾": {
+      "id": "mode::帮我查一下车的说明书里怎么除雾",
+      "bucket": "mode_guardrail",
+      "text": "帮我查一下车的说明书里怎么除雾",
+      "expected": "other:manual.query",
+      "actual": "other:manual.query ['manual.query']",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_guardrail",
+        "manual"
+      ],
+      "source": "search hint guard 须含说明书/手册——manual_rag 的地盘"
+    }
+  }
+}

@@ -1,0 +1,697 @@
+# 四模式路由评测语料（chitchat 直答 / info.search 联网 / info.news 新闻 / research.run 深调研）。
+# 设计：docs/design/2026-07-12-mode-routing-and-answer-quality.md §P0-1
+#
+# 与 route_hints_cases.yaml 的分工：那份只测 RouteHintEngine 确定性层；本份测**主路径端到端
+# 口径**（Planner LLM + route_hints 后验的最终 intent），另带一个可离线复跑的确定性子集。
+#
+# schema:
+#   text:              输入话术
+#   tags:              [分桶, ...]；分桶 ∈ mode_typical|mode_boundary|mode_adversarial|
+#                      mode_followup|mode_guardrail（首个 tag 即分桶）
+#   expect_mode:       --live 期望模式；"a|b" 表示两者皆算 PASS（对抗例的合法双落点）。
+#                      取值 chitchat|search|news|research|sports|weather|stock|none|clarify
+#                      |other:<intent>（多值时 _mode_of 归一见 eval_mode_routing.py）
+#   expect_intents:    可选，--live 期望最终 intent 列表（集合比较、不计顺序；给出时优先于 expect_mode）
+#   live:              可选，false=只进离线确定性子集（如依赖 edge 能力、云 catalog 缺席的用例）
+#   history:           可选 [{role, text}]，跟进态注入 WorkingSet.history
+#   initial_intents:   可选；给出（连同 expect_det_intents）则该用例进「离线确定性子集」：
+#                      模拟 LLM 已规划出的 intents，直调 RouteHintEngine 断言（顺序敏感，
+#                      同 route_hints_cases 口径）。live 与 det 期望可不同（det 只看 hints 层）。
+#   expect_det_intents: 确定性子集的期望最终 intent 列表
+#   source:            溯源/备注
+#
+# 注意：expect_det_intents 描述的是**目标态**（含 P0-4 将新增的 info.search/info.news hints）。
+# 在 hints 落地前离线子集会有预期内 FAIL（钉的就是这个缺口）；落地后转 PASS 属预期 improvement。
+
+# ══ mode_typical：四模式典型句（各 ~10，避开 manifest examples 原句） ══════════════
+
+- text: 给我讲个笑话
+  tags: [mode_typical, chitchat]
+  expect_mode: chitchat
+
+- text: 我今天有点累，陪我说说话
+  tags: [mode_typical, chitchat]
+  expect_mode: chitchat
+
+- text: 你叫什么名字呀
+  tags: [mode_typical, chitchat]
+  expect_mode: chitchat
+
+- text: 光合作用是什么原理
+  tags: [mode_typical, chitchat, knowledge]
+  expect_mode: chitchat
+
+- text: 为什么天空是蓝色的
+  tags: [mode_typical, chitchat, knowledge]
+  expect_mode: chitchat
+
+- text: 三国演义的作者是谁
+  tags: [mode_typical, chitchat, knowledge]
+  expect_mode: chitchat
+
+- text: 帮我想一句结婚祝福语
+  tags: [mode_typical, chitchat, creative]
+  expect_mode: chitchat
+
+- text: 好无聊啊随便聊点什么
+  tags: [mode_typical, chitchat]
+  expect_mode: chitchat
+
+- text: 一光年大概是多少公里
+  tags: [mode_typical, chitchat, knowledge]
+  expect_mode: chitchat
+
+- text: 你觉得人为什么要工作
+  tags: [mode_typical, chitchat, opinion]
+  expect_mode: chitchat
+
+- text: 搜一下固态电池最新进展
+  tags: [mode_typical, search]
+  expect_mode: search
+  initial_intents: []
+  expect_det_intents: [info.search]
+
+- text: 帮我查一下iPhone现在什么价格
+  tags: [mode_typical, search, freshness]
+  expect_mode: search
+  initial_intents: []
+  expect_det_intents: [info.search]
+
+- text: 昨晚的苹果发布会都发布了什么
+  tags: [mode_typical, search, freshness]
+  expect_mode: search
+
+- text: 2026年诺贝尔物理学奖颁给谁了
+  tags: [mode_typical, search, freshness]
+  expect_mode: search
+
+- text: 现在黄金什么价
+  tags: [mode_typical, search, freshness]
+  expect_mode: search
+
+- text: 帮我查一下特斯拉FSD在中国的落地进展
+  tags: [mode_typical, search]
+  expect_mode: search
+  initial_intents: []
+  expect_det_intents: [info.search]
+
+- text: 马拉松世界纪录现在是多少
+  tags: [mode_typical, search, freshness]
+  expect_mode: search
+
+- text: 搜索量子计算商业化现状
+  tags: [mode_typical, search]
+  expect_mode: search
+  initial_intents: []
+  expect_det_intents: [info.search]
+
+- text: 今年的高考作文题是什么
+  tags: [mode_typical, search, freshness]
+  expect_mode: search
+
+- text: 星舰最近一次试飞成功了吗
+  tags: [mode_typical, search, freshness]
+  expect_mode: search
+
+- text: 今天有什么新闻
+  tags: [mode_typical, news]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+
+- text: 来点科技新闻
+  tags: [mode_typical, news]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+
+- text: 看看今天的头条
+  tags: [mode_typical, news]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+
+- text: 有什么国际新闻吗
+  tags: [mode_typical, news]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+
+- text: 最近有啥大事
+  tags: [mode_typical, news]
+  expect_mode: news|search
+  source: "泛「大事」两落点皆可（registry_resolve 语料同款句已标 info）"
+
+- text: 刷刷新闻
+  tags: [mode_typical, news]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+
+- text: 新能源汽车的新闻
+  tags: [mode_typical, news, topic_form]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+
+- text: 英伟达最新动态
+  tags: [mode_typical, news, topic_form]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+
+- text: 讲讲今天的要闻
+  tags: [mode_typical, news]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+
+- text: 财经资讯有什么值得看的
+  tags: [mode_typical, news]
+  expect_mode: news|search
+
+- text: 深入调研一下固态电池产业链
+  tags: [mode_typical, research]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+
+- text: 帮我全面对比一下增程和纯电的优劣
+  tags: [mode_typical, research]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+
+- text: 系统了解一下具身智能这个方向
+  tags: [mode_typical, research]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+
+- text: 彻底搞懂钠离子电池的商业化前景
+  tags: [mode_typical, research]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+
+- text: 好好研究下人形机器人赛道
+  tags: [mode_typical, research]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+
+- text: 调研一下车规级芯片的国产化进度
+  tags: [mode_typical, research]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+
+- text: 深度分析一下低空经济的机会
+  tags: [mode_typical, research]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+
+- text: 我想全面了解一下核聚变的最新进展
+  tags: [mode_typical, research]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+
+- text: 帮我出一份氢能源汽车的完整调研报告
+  tags: [mode_typical, research]
+  expect_mode: research
+  source: "「调研报告」不在 hint 词形内，考 LLM 对 desc 的理解"
+
+- text: 研究一下宁德时代的麒麟电池强在哪
+  tags: [mode_typical, research]
+  expect_mode: research
+  source: "裸「研究一下」刻意不进 hint（防误伤），考 LLM；desc/examples 应兜住"
+
+# ══ mode_boundary：新闻vs搜索 / 搜索vs调研 / 直答vs搜索 ══════════════════════════
+
+- text: 英伟达最新消息
+  tags: [mode_boundary, news_vs_search, topic_form]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+  source: "「X最新消息」=浏览一批该主题资讯 → news（要具体答案会带问句）"
+
+- text: 特斯拉这次降价是怎么回事
+  tags: [mode_boundary, news_vs_search]
+  expect_mode: search
+  source: "「怎么回事」=要一个解释性答案 → search"
+
+- text: 看看AI行业最近的新闻
+  tags: [mode_boundary, news_vs_search]
+  expect_mode: news
+  source: "间隔超 hint 窗口（>6字），考 LLM"
+
+- text: 苹果新品发布会讲了什么
+  tags: [mode_boundary, news_vs_search]
+  expect_mode: search
+
+- text: 给我读读今天的国际要闻
+  tags: [mode_boundary, news_vs_search]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+
+- text: 比亚迪出海最近有什么动作
+  tags: [mode_boundary, news_vs_search]
+  expect_mode: news|search
+
+- text: 美联储这次降息了没有
+  tags: [mode_boundary, news_vs_search, freshness]
+  expect_mode: search
+
+- text: 有没有关于低空经济的新闻
+  tags: [mode_boundary, news_vs_search]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+
+- text: 昨晚科技圈发生了什么大事
+  tags: [mode_boundary, news_vs_search, freshness]
+  expect_mode: news|search
+
+- text: 小米汽车最新销量数据
+  tags: [mode_boundary, news_vs_search, freshness]
+  expect_mode: search|news
+
+- text: 固态电池现在发展到什么阶段了
+  tags: [mode_boundary, search_vs_research]
+  expect_mode: search
+  source: "单问题快答 → search（要系统了解才升调研）；若 LLM 落 research 记 FAIL 作信号"
+
+- text: 深入了解一下固态电池
+  tags: [mode_boundary, search_vs_research]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+
+- text: 增程和纯电哪个更适合北方冬天
+  tags: [mode_boundary, search_vs_research]
+  expect_mode: search
+  source: "单个比较问句要答案 → search；「全面对比」才是调研"
+
+- text: 帮我全面梳理一下智能驾驶的技术路线
+  tags: [mode_boundary, search_vs_research]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+
+- text: 麒麟电池和4680电池有什么区别
+  tags: [mode_boundary, search_vs_research]
+  expect_mode: search
+
+- text: 帮我查一下磷酸铁锂和三元锂的区别
+  tags: [mode_boundary, search_vs_research]
+  expect_mode: search
+  initial_intents: []
+  expect_det_intents: [info.search]
+
+- text: 系统梳理一下自动驾驶的法规现状
+  tags: [mode_boundary, search_vs_research]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+
+- text: 具身智能是不是下一个风口，帮我研究研究
+  tags: [mode_boundary, search_vs_research]
+  expect_mode: research
+
+- text: 查一下固态电池
+  tags: [mode_boundary, search_vs_research]
+  expect_mode: search
+  initial_intents: []
+  expect_det_intents: [info.search]
+  source: "与 route_hints_cases「搜一下固态电池」呼应：快查不被调研劫持"
+
+- text: 新能源补贴政策帮我彻底弄懂
+  tags: [mode_boundary, search_vs_research]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+
+- text: 地球为什么是圆的
+  tags: [mode_boundary, chitchat_vs_search, knowledge]
+  expect_mode: chitchat
+
+- text: 增程式电动车是什么原理
+  tags: [mode_boundary, chitchat_vs_search, knowledge]
+  expect_mode: chitchat
+
+- text: 珠穆朗玛峰有多高
+  tags: [mode_boundary, chitchat_vs_search, knowledge]
+  expect_mode: chitchat
+
+- text: 现在人民币兑美元汇率是多少
+  tags: [mode_boundary, chitchat_vs_search, freshness]
+  expect_mode: search
+
+- text: 什么是钙钛矿电池
+  tags: [mode_boundary, chitchat_vs_search, knowledge]
+  expect_mode: chitchat|search
+  source: "常青概念但领域较新，两落点皆可接受"
+
+- text: 苹果公司的创始人是谁
+  tags: [mode_boundary, chitchat_vs_search, knowledge]
+  expect_mode: chitchat
+
+- text: 苹果现在的CEO是谁
+  tags: [mode_boundary, chitchat_vs_search, freshness]
+  expect_mode: search|chitchat
+  source: "「现在」信号倾向 search；模型知识内答对也可接受"
+
+- text: 圆周率小数点后十位是多少
+  tags: [mode_boundary, chitchat_vs_search, knowledge]
+  expect_mode: chitchat
+
+- text: 一年有多少个星期
+  tags: [mode_boundary, chitchat_vs_search, knowledge]
+  expect_mode: chitchat
+
+- text: 最近有什么好看的电影上映
+  tags: [mode_boundary, chitchat_vs_search, freshness]
+  expect_mode: search|news
+
+# ══ mode_adversarial：时效伪装闲聊 / 常青伪装时效 / 动词陷阱 ═══════════════════════
+
+- text: 昨晚欧冠决赛谁赢了
+  tags: [mode_adversarial, freshness_disguised]
+  expect_mode: sports|search
+  source: "时效伪装闲聊的旗舰用例：绝不允许 chitchat 直答"
+
+- text: 现在油价多少钱一升
+  tags: [mode_adversarial, freshness_disguised]
+  expect_mode: search
+
+- text: 黄金今天什么价格
+  tags: [mode_adversarial, freshness_disguised]
+  expect_mode: search
+
+- text: 世界首富现在是谁
+  tags: [mode_adversarial, freshness_disguised]
+  expect_mode: search
+
+- text: 最新的iPhone是哪一款
+  tags: [mode_adversarial, freshness_disguised]
+  expect_mode: search
+
+- text: GPT现在最强的版本是哪个
+  tags: [mode_adversarial, freshness_disguised]
+  expect_mode: search
+
+- text: 国足最近一场比赛赢了吗
+  tags: [mode_adversarial, freshness_disguised]
+  expect_mode: sports|search
+
+- text: 比特币现在多少钱
+  tags: [mode_adversarial, freshness_disguised]
+  expect_mode: search|stock
+
+- text: 下周有什么新电影上映
+  tags: [mode_adversarial, freshness_disguised]
+  expect_mode: search|news
+
+- text: 水的沸点是多少度
+  tags: [mode_adversarial, timeless]
+  expect_mode: chitchat
+
+- text: 光速是多少
+  tags: [mode_adversarial, timeless]
+  expect_mode: chitchat
+
+- text: 为什么冬天白天变短
+  tags: [mode_adversarial, timeless]
+  expect_mode: chitchat
+
+- text: 秦始皇哪一年统一六国
+  tags: [mode_adversarial, timeless]
+  expect_mode: chitchat
+
+- text: 给我讲讲相对论是怎么回事
+  tags: [mode_adversarial, timeless]
+  expect_mode: chitchat
+
+- text: 解释一下什么是通货膨胀
+  tags: [mode_adversarial, timeless]
+  expect_mode: chitchat
+
+- text: 月亮为什么有阴晴圆缺
+  tags: [mode_adversarial, timeless]
+  expect_mode: chitchat
+
+- text: 一公里等于多少英里
+  tags: [mode_adversarial, timeless]
+  expect_mode: chitchat
+
+- text: 搜一下你叫什么名字
+  tags: [mode_adversarial, verb_trap]
+  expect_mode: search
+  initial_intents: []
+  expect_det_intents: [info.search]
+  source: "显式搜索动词占优先（钉确定性行为：用户说搜就搜）"
+
+- text: 查一下我老婆叫什么名字
+  tags: [mode_adversarial, verb_trap, personal]
+  expect_mode: chitchat
+  initial_intents: []
+  expect_det_intents: []
+  source: "个人事实走记忆召回，不上网搜——search hint guard 须含「我老婆/我的」"
+
+- text: 搜索引擎是怎么工作的
+  tags: [mode_adversarial, verb_trap, knowledge]
+  expect_mode: chitchat
+  initial_intents: []
+  expect_det_intents: []
+  source: "「搜索引擎」名词开头不是搜索指令——hint pattern 须 (?!引擎)"
+
+- text: 查理和巧克力工厂是谁写的
+  tags: [mode_adversarial, verb_trap, knowledge]
+  expect_mode: chitchat
+  initial_intents: []
+  expect_det_intents: []
+  source: "裸「查」刻意不进 hint 动词表（查理≠查询）"
+
+- text: 搜狐最近的新闻
+  tags: [mode_adversarial, verb_trap]
+  expect_mode: news
+  source: "双 hint 互斥带「搜」字留给 LLM（news guard 含搜/查）"
+
+- text: 提醒我晚上看新闻联播
+  tags: [mode_adversarial, verb_trap]
+  expect_mode: "other:reminder.create"
+  initial_intents: []
+  expect_det_intents: [reminder.create]
+  source: "「提醒我」56 级先接住；news hint guard 含提醒/联播"
+
+- text: 播放新闻联播
+  tags: [mode_adversarial, verb_trap]
+  live: false
+  initial_intents: [media.play]
+  expect_det_intents: [media.play]
+  source: "媒体域在 edge，云 catalog 缺席故不跑 live；det 验证 news hint guard 含播/联播"
+
+- text: 检索一下宁德时代最新财报要点
+  tags: [mode_adversarial, verb_trap]
+  expect_mode: search
+  initial_intents: []
+  expect_det_intents: [info.search]
+
+# ══ mode_followup：跟进态（history 前置） ══════════════════════════════════════
+
+- text: 展开第三点
+  tags: [mode_followup, research_active]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+  history:
+    - {role: user, text: 深入调研一下固态电池}
+    - {role: assistant, text: 已完成调研：固态电池现状报告共5节，要点是……}
+
+- text: 第二点再详细讲讲
+  tags: [mode_followup, research_active]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+  history:
+    - {role: user, text: 深入调研一下固态电池}
+    - {role: assistant, text: 已完成调研：固态电池现状报告共5节，要点是……}
+
+- text: 这部分展开说说
+  tags: [mode_followup, research_active]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+  history:
+    - {role: user, text: 深入调研一下固态电池}
+    - {role: assistant, text: 已完成调研：固态电池现状报告共5节，要点是……}
+
+- text: 上面那点再深入一下
+  tags: [mode_followup, research_active]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+  history:
+    - {role: user, text: 深入调研一下固态电池}
+    - {role: assistant, text: 已完成调研：固态电池现状报告共5节，要点是……}
+
+- text: 详细讲讲第3条
+  tags: [mode_followup, news_active]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+  history:
+    - {role: user, text: 今天有什么新闻}
+    - {role: assistant, text: 今天值得关注的新闻有10条：1. …… 2. …… 3. ……}
+  source: "新闻深挖桥接：路由到 research.run，由 deep-research 读 news_active 取该条标题"
+
+- text: 这条新闻详细说说
+  tags: [mode_followup, news_active]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+  history:
+    - {role: user, text: 今天有什么新闻}
+    - {role: assistant, text: 今天值得关注的新闻有10条：1. …… 2. …… 3. ……}
+
+- text: 再来点财经新闻
+  tags: [mode_followup, news_active]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+  history:
+    - {role: user, text: 今天有什么新闻}
+    - {role: assistant, text: 今天值得关注的新闻有10条：1. …… 2. …… 3. ……}
+
+- text: 换个话题，陪我聊聊天吧
+  tags: [mode_followup]
+  expect_mode: chitchat
+  history:
+    - {role: user, text: 今天有什么新闻}
+    - {role: assistant, text: 今天值得关注的新闻有10条：1. …… 2. …… 3. ……}
+
+- text: 那明天呢
+  tags: [mode_followup, fragile_context]
+  expect_mode: weather
+  history:
+    - {role: user, text: 今天杭州天气怎么样}
+    - {role: assistant, text: 杭州今天多云，28到33度，空气不错。}
+  source: "指代续接考 history 利用（无焦点态注入，允许波动）"
+
+- text: 那帮我深入调研一下它
+  tags: [mode_followup]
+  expect_mode: research
+  initial_intents: []
+  expect_det_intents: [research.run]
+  history:
+    - {role: user, text: 查一下麒麟电池是什么}
+    - {role: assistant, text: 麒麟电池是宁德时代发布的第三代CTP技术电池……}
+
+# ══ mode_guardrail：其他域不被四模式吸走（含确定性反例） ═══════════════════════════
+
+- text: 查一下明天杭州的天气
+  tags: [mode_guardrail, weather]
+  expect_mode: weather
+  initial_intents: [info.forecast]
+  expect_det_intents: [info.forecast]
+  source: "search hint guard 须含天气/预报——已正确路由的 forecast 不被劫持"
+
+- text: 查一下我的电量还能跑多远
+  tags: [mode_guardrail, vehicle]
+  expect_mode: chitchat|none
+  initial_intents: []
+  expect_det_intents: []
+  source: "车辆状态：云 catalog 无对应能力→空计划→chitchat 兜底（by design）；绝不允许上网搜"
+
+- text: 搜一下附近的加油站
+  tags: [mode_guardrail, nearby]
+  expect_mode: "other:nearby.search"
+  initial_intents: []
+  expect_det_intents: [nearby.search]
+  source: "search hint guard 含附近/加油站→让位；nearby hint(55) 自己接住"
+
+- text: 查一下我的待办
+  tags: [mode_guardrail, reminder]
+  expect_mode: "other:reminder.list"
+  initial_intents: []
+  expect_det_intents: [reminder.list]
+  source: "search hint guard 含待办；reminder.list hint(56) 接住"
+
+- text: 帮我查一下茅台股价
+  tags: [mode_guardrail, stock]
+  expect_mode: stock
+  initial_intents: [info.stock]
+  expect_det_intents: [info.stock]
+
+- text: 明天早上八点提醒我开会
+  tags: [mode_guardrail, reminder]
+  expect_mode: "other:reminder.create"
+  initial_intents: []
+  expect_det_intents: [reminder.create]
+
+- text: 世界杯下一场比赛什么时候开打
+  tags: [mode_guardrail, sports]
+  expect_mode: sports
+
+- text: 帮我导航到虹桥火车站
+  tags: [mode_guardrail, navigation]
+  expect_mode: "other:navigation.navigate_to"
+
+- text: 附近有什么好吃的川菜馆
+  tags: [mode_guardrail, nearby]
+  expect_mode: "other:nearby.search"
+  initial_intents: []
+  expect_det_intents: [nearby.search]
+
+- text: 帮我规划一个杭州两日游
+  tags: [mode_guardrail, trip]
+  expect_mode: "other:trip.plan"
+  initial_intents: []
+  expect_det_intents: [trip.plan]
+
+- text: 查一下这周末适不适合洗车
+  tags: [mode_guardrail, weather]
+  expect_mode: weather|search
+  initial_intents: [info.indices]
+  expect_det_intents: [info.indices]
+  source: "生活指数：search hint guard 须含洗车——已路由的 indices 不被劫持"
+
+- text: 今天上证指数怎么样
+  tags: [mode_guardrail, stock]
+  expect_mode: stock
+
+- text: 车道保持辅助怎么打开
+  tags: [mode_guardrail, manual]
+  expect_mode: "other:manual.query|chitchat"
+
+- text: 打开空调然后来点科技新闻
+  tags: [mode_guardrail, multi_intent]
+  expect_mode: news
+  initial_intents: []
+  expect_det_intents: [info.news]
+  source: "真栈里空调子句由端侧 A2 混拆本地执行、云侧只见新闻子句；本评测全句直发云端，
+    云侧正确行为=接住新闻部分（车控在云 catalog 缺席）"
+
+- text: 帮我查一下去机场的路线
+  tags: [mode_guardrail, navigation]
+  expect_mode: "other:navigation.navigate_to|other:navigation.search_poi"
+  initial_intents: []
+  expect_det_intents: []
+  source: "search hint guard 须含路线/导航——不抢导航域"
+
+- text: 搜一下周杰伦的歌
+  tags: [mode_guardrail, media]
+  live: false
+  initial_intents: []
+  expect_det_intents: []
+  source: "媒体域在 edge：search hint guard 须含的歌/歌曲——det 断言不劫持；live 无媒体 catalog 不跑"
+
+- text: 帮我查一下车的说明书里怎么除雾
+  tags: [mode_guardrail, manual]
+  expect_mode: "other:manual.query"
+  initial_intents: []
+  expect_det_intents: []
+  source: "search hint guard 须含说明书/手册——manual_rag 的地盘"
