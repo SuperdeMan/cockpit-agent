@@ -21,6 +21,12 @@
 | `anthropic` | Anthropic Claude SDK（legacy，`LLM_PROVIDER=anthropic`） | — | — | — | `LLM_API_KEY` | env 指定 |
 | `mock` | 无任何 key 时的回显兜底 | — | — | — | — | mock |
 
+> **推理内容出口清理（2026-07-12 实测）**：MiniMax-M3 **开思考**时把思考段以 `<think>…</think>`
+> **内联在 content 头部**（非 `reasoning_content` 字段；关思考正常，mimo/deepseek/qwen 四态干净）
+> → provider 出口统一剥离（`strip_think_block` + 流式 `ThinkStreamStripper` 头部状态机，未闭合=
+> 截断在思考里则诚实置空）。另：TTS 入口（`_sentence_segments` 流式漏斗 + `/api/tts` 批处理）统一剥
+> markdown（`_strip_md_tts`，与 `agents/_sdk/grounding.strip_markdown_speech` 配对口径），星号/表格符不进语音。
+
 ## 路由与降级
 - 未指定 model / 传空 → active provider 的 `primary`；传档位哨兵 `@fast` → active 的 `fast`（chitchat 按
   `model_pref` 传哨兵，**不传具体模型名**，避免切厂商后把 A 家模型名误发给 B 家）；传当前 provider

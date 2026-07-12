@@ -27,6 +27,14 @@
 > （与独立 `deep-research` Agent 共用，改一处全覆盖）；`info.search` 行为不变（单轮快查）。
 > **深度调研（多轮迭代、分节报告）是独立 Agent `deep-research`**（`research.run`），编排层按措辞分层路由，
 > 见 [`docs/design/2026-06-26-info-agent-deep-research-redesign.md`](../../docs/design/2026-06-26-info-agent-deep-research-redesign.md)。
+>
+> 2026-07-12（四模式路由与回答质量）：`info.search`/`info.news` 补 **manifest route_hints 确定性护栏**
+> （priority 59：句首搜索动词 / 裸新闻·话题新闻，弱 LLM 误判有网兜）+ capability desc 判别化（时效判据）；
+> search 增**薄证据一轮重试**（剥口语前缀）+ **新鲜度加权重排**（recency>0 时窗口内优先于旧高权威源）+
+> 合成源 top6 + 低置信 follow_up 引导深调研；news 逐条摘要显式 thinking=False + 话题新闻 livecrawl；
+> sports **预测/前瞻类让路联网搜索**（结构化源只答已定事实）+ 赛果 speech 带比赛阶段（round 中文映射）。
+> 合成 JSON 截断/裸英文引号有边界式抢救、answer 出口剥 markdown。见
+> [`docs/design/2026-07-12-mode-routing-and-answer-quality.md`](../../docs/design/2026-07-12-mode-routing-and-answer-quality.md)。
 
 - **搜索**：Exa 正文级检索（→AnySearch→Bing→mock 降级）→ **接地合成**（喂正文、强制来源引用、
   **无依据即诚实弃权，不编造**）。气泡给结论、`search_result` 卡只给证据（来源/时效/置信度），不复读。
