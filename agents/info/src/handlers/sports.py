@@ -29,6 +29,33 @@ _LEAGUES: dict[str, tuple[int, str]] = {
 }
 _SPORTS_HINT = ("赛程", "赛果", "比分", "比赛", "战报", "对阵", "结果", "踢")
 
+# 预测/前瞻类问题（badcase 736e4bba/1de7e50c）：api-football 只有**已定事实**（且免费档只开
+# 今天±1 天，未来对阵/分析根本给不了）——「谁会赢/预测决赛/判断结果」走结构化路径必然
+# 答非所问（把最近完赛场次当答案播）。命中即让路通用搜索（检索对阵+分析后接地综合）。
+_PREDICTIVE_HINT = ("预测", "预判", "判断", "前瞻", "赔率", "概率", "可能性",
+                    "谁会赢", "谁能赢", "会是谁", "谁胜出", "会胜出", "能胜出",
+                    "夺冠热门", "看好谁", "你觉得谁", "怎么看")
+
+# api-football round → 中文阶段名（speech 必须带阶段——badcase 736e4bba：赛果不标阶段，
+# 聚合 LLM 把四分之一决赛赛果脑补成「半决赛」并错推决赛对阵）。注意 quarter/semi 须在
+# final 之前匹配（"Quarter-finals" 含 "final" 子串）。
+_ROUND_ZH = (("quarter", "四分之一决赛"), ("semi", "半决赛"),
+             ("3rd place", "季军赛"), ("third place", "季军赛"),
+             ("final", "决赛"), ("round of 16", "十六强淘汰赛"),
+             ("round of 32", "三十二强淘汰赛"), ("group", "小组赛"))
+
+
+def _round_zh(round_name: str) -> str:
+    low = (round_name or "").lower()
+    for key, zh in _ROUND_ZH:
+        if key in low:
+            return zh
+    return ""
+
+
+def _is_predictive(text: str) -> bool:
+    return any(w in (text or "") for w in _PREDICTIVE_HINT)
+
 # 追问某具体场次的进球/详情（→ 进球详情）；与"列全部"的列表诉求区分
 _DETAIL_HINT = ("进球", "谁进", "射手", "得分", "详细", "赛况", "详情", "战报",
                 "经过", "具体", "怎么样", "怎样", "集锦", "介绍", "讲讲", "说说")
@@ -197,6 +224,8 @@ class SportsMixin:
         跟进句「明天的呢」raw_text 无赛事名、slots.query 又可能丢时间词（实测 bug）。
         """
         text = f"{query} {raw_text}".strip()
+        if _is_predictive(text):
+            return None            # 预测/前瞻：结构化源答不了，让通用搜索接手
         league_id, name = _detect_league(text)
         if not league_id or not any(h in text for h in _SPORTS_HINT):
             return None
@@ -255,7 +284,11 @@ class SportsMixin:
         finished = [f for f in fixtures if f.status == "finished"]
         live = [f for f in fixtures if f.status == "live"]
         scheduled = [f for f in fixtures if f.status == "scheduled"]
-        parts = [f"{date_label}{league_name}共{len(fixtures)}场比赛"]
+        # 阶段标注：同日同轮（淘汰赛常态）时在首句点明「四分之一决赛/半决赛」——不标阶段
+        # 会让下游把 1/4 决赛赛果当半决赛错推决赛对阵（badcase 736e4bba）。
+        rounds = {_round_zh(f.round) for f in fixtures if _round_zh(f.round)}
+        stage = rounds.pop() if len(rounds) == 1 else ""
+        parts = [f"{date_label}{league_name}{stage}共{len(fixtures)}场比赛"]
         if finished:
             scores = "、".join(
                 f"{f.home} {f.home_goals}-{f.away_goals} {f.away}" for f in finished[:6])
@@ -377,8 +410,9 @@ class SportsMixin:
                           "player": e.player, "detail": e.detail})
 
         scored = f.home_goals != "" and f.away_goals != ""
-        head = (f"{league_name}，{f.home} {f.home_goals}-{f.away_goals} {f.away}"
-                if scored else f"{league_name}，{f.home} 对阵 {f.away}")
+        stage = _round_zh(f.round)     # 单场详情同样点明阶段（badcase 736e4bba 同源）
+        head = (f"{league_name}{stage}，{f.home} {f.home_goals}-{f.away_goals} {f.away}"
+                if scored else f"{league_name}{stage}，{f.home} 对阵 {f.away}")
         status = f.status_text + (f"{f.elapsed}′" if f.status == "live" and f.elapsed else "")
         if status:
             head += f"（{status}）"
@@ -446,6 +480,12 @@ class SportsMixin:
         if not text:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个赛事的比分或赛程？",
                                follow_up="请告诉我赛事名称", missing_slots=["query"])
+        # 预测/前瞻（badcase 1de7e50c「预测半决赛和决赛结果」被答成单场已结束赛果）：
+        # 结构化源只有已定事实且免费档拿不到未来对阵 → 转通用搜索（原话整句作 query，
+        # 保住「半决赛/决赛/预测」上下文）。_search 内的 _maybe_sports 对预测词已让路，不回环。
+        if _is_predictive(text):
+            intent.slots["query"] = (intent.raw_text or query).strip()
+            return await self._search(intent, ctx, meta)
         league_id, name = _detect_league(text)
         if not league_id:
             # 赛事追问（如"第一场谁进球"）槽位常不带联赛名 → 从对话历史回填联赛上下文

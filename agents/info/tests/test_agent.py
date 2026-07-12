@@ -485,6 +485,70 @@ def test_sports_query_routes_to_structured_data_not_search():
     assert res.ui_card["fixtures"][1]["score"] == ""
 
 
+def test_sports_predictive_question_goes_to_search_not_fixtures():
+    """badcase 1de7e50c：「预测半决赛和决赛结果」被 info.sports 答成单场已结束赛果。
+    预测/前瞻类：结构化源只有已定事实（免费档还拿不到未来对阵）→ 必须转通用搜索综合。"""
+    from agents.info.src.handlers.sports import _is_predictive
+    assert _is_predictive("帮我预测决赛结果") and _is_predictive("你觉得谁会赢")
+    assert _is_predictive("判断一下最终谁胜出") and not _is_predictive("今天世界杯赛程")
+
+    agent = InfoAgent()
+    calls = []
+
+    class _SearchSpy2:
+        async def search(self, query, **kwargs):
+            calls.append(query)
+            return [SearchResult(title="半决赛前瞻", url="https://x.com/1", source="x",
+                                 content="阿根廷对英格兰、西班牙对法国。" * 10)]
+
+    agent.search = _SearchSpy2()
+    agent.sports = _FailSports()          # 若误走结构化会炸，反证让路生效
+    agent.llm.complete = _llm_numbered_answer
+    raw = "你再查一查最新的数据，帮我判断世界杯半决赛和决赛的预测结果"
+    res = asyncio.run(run_handle(agent, "info.sports", slots={"query": "世界杯半决赛"},
+                                 raw_text=raw))
+    assert res.status == "ok"
+    assert calls and calls[0] == raw               # 原话整句作 query（保住预测上下文）
+    assert res.ui_card["type"] == "search_result"  # 走了检索+接地合成，不是赛果播报
+
+
+def test_sports_speech_carries_round_stage():
+    """badcase 736e4bba：赛果不标阶段 → 下游把 1/4 决赛当半决赛错推决赛对阵。
+    列表首句与单场详情都必须点明「四分之一决赛/半决赛」。"""
+    from agents.info.src.handlers.sports import _round_zh
+    assert _round_zh("Quarter-finals") == "四分之一决赛"
+    assert _round_zh("Semi-finals") == "半决赛"
+    assert _round_zh("Final") == "决赛"
+    assert _round_zh("Round of 16") == "十六强淘汰赛"
+    assert _round_zh("Group A - 3") == "小组赛"
+    assert _round_zh("") == ""
+
+    agent = InfoAgent()
+    agent.sports = _SportsStub([
+        _fx(league="FIFA 世界杯", league_id=1, home="挪威", away="英格兰", home_goals="1",
+            away_goals="2", status="finished", status_text="已结束", round="Quarter-finals"),
+        _fx(league="FIFA 世界杯", league_id=1, home="瑞士", away="阿根廷", home_goals="1",
+            away_goals="3", status="finished", status_text="已结束", round="Quarter-finals"),
+    ])
+    res = asyncio.run(run_handle(
+        agent, "info.search", slots={"query": "今天世界杯赛果"}, raw_text="今天世界杯赛果"))
+    assert "四分之一决赛" in res.speech            # 首句点明阶段
+    assert "挪威 1-2 英格兰" in res.speech
+
+
+def test_sports_match_detail_head_carries_round_stage():
+    agent = InfoAgent()
+    agent.sports = _SportsStub(
+        [_fx(league="FIFA 世界杯", league_id=1, fixture_id=9, home="挪威", away="英格兰",
+             home_goals="1", away_goals="2", status="finished", status_text="已结束",
+             round="Quarter-finals")],
+        events=[_goal(team_id=0, minute="36", player="Schjelderup", detail="进球")])
+    res = asyncio.run(run_handle(
+        agent, "info.search", slots={"query": "世界杯挪威那场比赛详情"},
+        raw_text="世界杯挪威那场比赛详情"))
+    assert res.speech.startswith("FIFA 世界杯四分之一决赛，挪威 1-2 英格兰")
+
+
 def test_sports_fixtures_carry_country_flags():
     """赛事卡每支球队带国旗 emoji（后端权威注入，队名映射、mock/降级也有）。"""
     from agents.info.src.providers.sports_apifootball import flag_for
