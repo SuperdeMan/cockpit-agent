@@ -25,6 +25,49 @@ def _is_fresh_sensitive(query: str) -> bool:
     return any(m in (query or "") for m in _FRESH_MARKERS)
 
 
+# 口语引导前缀（薄证据重试的改写用）：长词形在前，剥不动才退「详细介绍」扩展。
+# 裸「查」刻意不在列（查理/查尔斯是实体名前缀）。
+_COLLOQUIAL_PREFIX = ("麻烦", "帮我", "帮忙", "给我", "请", "上网", "联网",
+                      "百度一下", "搜索", "搜一下", "搜下", "搜搜", "搜",
+                      "查一查", "查一下", "查查", "查下", "查询", "检索")
+
+
+def _strip_colloquial(query: str) -> str:
+    """迭代剥句首口语引导词，返回剥后内容；没剥到任何东西（或剥空）返回 ""。"""
+    orig = (query or "").strip()
+    q = orig
+    changed = True
+    while changed:
+        changed = False
+        for p in _COLLOQUIAL_PREFIX:
+            if q.startswith(p) and len(q) > len(p):
+                q = q[len(p):].lstrip("，, 、").lstrip("的")
+                changed = True
+                break
+    return q if q and q != orig else ""
+
+
+def _has_body(s: dict) -> bool:
+    """来源是否有可用正文（content 非空，或 snippet 至少像一段话）。"""
+    return bool((s.get("content") or "").strip()) or \
+        len((s.get("snippet") or "").strip()) >= 60
+
+
+def _merge_sources(primary: list[dict], extra: list[dict]) -> list[dict]:
+    """按 url（无 url 用 title|source）去重合并，保序，idx 重编为 1..n。"""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for s in list(primary) + list(extra):
+        key = s.get("url") or f"{s.get('title', '')}|{s.get('source', '')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    for i, s in enumerate(out, 1):
+        s["idx"] = i
+    return out
+
+
 def _plan_search(query: str) -> tuple[int, str]:
     """规划检索参数：返回 (recency_days, category)。
 
@@ -70,11 +113,29 @@ class SearchMixin:
                 speech="联网检索暂时不可用，无法确认最新结果，请稍后再试。",
             )
 
+        # 薄证据一轮重试（仿 deep-research backtrack）：有正文的源不足 2 条时，剥口语
+        # 引导词（剥不动才退「详细介绍」扩展）best-effort 再检一轮，按 url 去重合并。
+        # 只在证据薄时多一跳，不加常态延迟；重试失败不影响首轮结果。
+        if sum(1 for s in sources if _has_body(s)) < 2:
+            retry_q = _strip_colloquial(query) or f"{query} 详细介绍"
+            try:
+                extra = await retrieve(
+                    self.search, retry_q, limit=limit, recency_days=recency_days,
+                    category=category, livecrawl=livecrawl,
+                    extractor=self.extractor, meta=meta)
+            except ProviderError as e:
+                logger.debug("thin-evidence retry skipped: %s", e)
+                extra = []
+            if extra:
+                sources = _merge_sources(sources, extra)
+
         if not sources:
             return AgentResult(speech=f"没有找到关于「{query}」的搜索结果。")
 
-        # 接地合成走 _sdk 共享内核（强制引用 + 无依据弃权）；失败诚实兜底
-        synth = await grounded_synthesis(self.llm, query, sources)
+        # 接地合成走 _sdk 共享内核（强制引用 + 无依据弃权）；失败诚实兜底。
+        # recency_days 透传：时效敏感查询在合成前用「窗口内优先 + 权威」双序重排。
+        synth = await grounded_synthesis(self.llm, query, sources,
+                                         recency_days=recency_days)
         if synth:
             speech, confidence = synth["answer"], synth["confidence"]
         else:
@@ -90,5 +151,8 @@ class SearchMixin:
             "freshness": latest_published(sources),
             "confidence": confidence,
         }
+        # 低置信=单轮快查天花板的信号：给口头升级出口（不自动升调研，尊重延迟预期）
+        follow_up = ("这轮是快查；想要更全面的结论，可以说「深入调研一下」。"
+                     if confidence == "low" else "")
         return AgentResult(speech=speech, ui_card=card,
-                           data={"sources": card["sources"]})
+                           data={"sources": card["sources"]}, follow_up=follow_up)

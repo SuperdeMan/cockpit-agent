@@ -252,9 +252,11 @@ def test_realtime_query_keeps_natural_phrasing_and_adds_recency():
     res = asyncio.run(run_handle(
         agent, "info.search", slots={"query": query}, raw_text=query))
 
-    # 自然语言查询原样下发（不再硬拼日期/「当日赛程」），改用时效窗口
-    assert search.queries == [query]
-    assert search.kwargs[-1].get("recency_days") == 2
+    # 自然语言查询原样下发（不再硬拼日期/「当日赛程」），改用时效窗口。
+    # spy 只回 1 条有正文源 → 触发薄证据重试（P2），首查必须仍是原话、重试才改写。
+    assert search.queries[0] == query
+    assert len(search.queries) == 2 and "台风最新消息" in search.queries[1]
+    assert search.kwargs[0].get("recency_days") == 2
     assert "第一条关键" in res.speech
 
 
@@ -297,6 +299,112 @@ def test_grounded_synthesis_demands_abstention_not_fabrication():
     assert res.speech == "未能从检索到的资料中确认台风的实时路径。"
     assert res.ui_card["confidence"] == "low"
     assert res.ui_card["type"] == "search_result"
+
+
+# ── P2 搜索质量：薄证据重试 / 新鲜度重排 / top6 / 升级建议 ────────────────
+
+
+def test_strip_colloquial_and_merge_sources():
+    from agents.info.src.handlers.search import _strip_colloquial, _merge_sources
+    assert _strip_colloquial("帮我查一下麒麟电池") == "麒麟电池"
+    assert _strip_colloquial("搜索固态电池") == "固态电池"
+    assert _strip_colloquial("固态电池") == ""       # 没剥到 → 空（调用方退「详细介绍」）
+    assert _strip_colloquial("查询") == ""           # 全是引导词 → 剥空保护
+    merged = _merge_sources(
+        [{"idx": 1, "url": "u1", "title": "a", "source": "s"}],
+        [{"idx": 1, "url": "u1", "title": "a", "source": "s"},
+         {"idx": 2, "url": "u2", "title": "b", "source": "s"}])
+    assert [s["url"] for s in merged] == ["u1", "u2"]   # 按 url 去重、保序
+    assert [s["idx"] for s in merged] == [1, 2]          # idx 重编连续
+
+
+def test_search_thin_evidence_retries_once_with_stripped_query_and_merges():
+    agent = InfoAgent()
+    agent.extractor = None
+    calls = []
+
+    class _ThinThenRich:
+        async def search(self, query, **kwargs):
+            calls.append(query)
+            if len(calls) == 1:
+                return [SearchResult(title="空壳页", url="https://a.com/1",
+                                     snippet="短", source="a", content="")]
+            return [SearchResult(title="正文页", url="https://b.com/2",
+                                 snippet="一段足够长的摘要内容，覆盖了问题的关键方面并给出细节说明。",
+                                 source="b", content="正文" * 200),
+                    SearchResult(title="空壳页", url="https://a.com/1",
+                                 snippet="短", source="a", content="")]
+
+    async def synth_llm(messages, **kwargs):
+        return '{"answer":"结论。","key_points":[],"confidence":"medium","used_sources":[2]}'
+
+    agent.search = _ThinThenRich()
+    agent.llm.complete = synth_llm
+    res = asyncio.run(run_handle(agent, "info.search",
+                                 slots={"query": "帮我查一下麒麟电池"},
+                                 raw_text="帮我查一下麒麟电池"))
+    assert res.status == "ok"
+    assert calls == ["帮我查一下麒麟电池", "麒麟电池"]   # 首查原话；重试剥口语前缀
+    urls = [s["url"] for s in res.ui_card["sources"]]
+    assert urls == ["https://a.com/1", "https://b.com/2"]  # 合并去重保序
+
+
+def test_search_no_retry_when_evidence_sufficient():
+    agent = InfoAgent()
+    agent.extractor = None
+    calls = []
+
+    class _Rich:
+        async def search(self, query, **kwargs):
+            calls.append(query)
+            return [SearchResult(title=f"页{i}", url=f"https://r{i}.com/x",
+                                 snippet="足够", source=f"r{i}",
+                                 content="正文" * 100) for i in range(2)]
+
+    async def synth_llm(messages, **kwargs):
+        return '{"answer":"结论。","key_points":[],"confidence":"high","used_sources":[1]}'
+
+    agent.search = _Rich()
+    agent.llm.complete = synth_llm
+    res = asyncio.run(run_handle(agent, "info.search", slots={"query": "麒麟电池"},
+                                 raw_text="麒麟电池"))
+    assert res.status == "ok" and len(calls) == 1        # 证据够 → 不加跳
+    assert res.follow_up == ""                            # 非低置信不推销调研
+
+
+def test_search_synthesis_feeds_six_sources_with_recency():
+    """时效敏感查询：合成材料喂 top-6（旧为 5），且 recency_days 透传给接地合成。"""
+    agent = InfoAgent()
+    agent.extractor = None
+    captured = {}
+
+    async def synth_llm(messages, **kwargs):
+        captured["prompt"] = messages[-1]["content"]
+        return '{"answer":"ok。","key_points":[],"confidence":"high","used_sources":[1]}'
+
+    class _Seven:
+        async def search(self, query, **kwargs):
+            return [SearchResult(title=f"t{i}", url=f"https://s{i}.com/x",
+                                 snippet="一段足够长的摘要内容，覆盖问题的关键方面与细节。",
+                                 source=f"s{i}", content="正文" * 100,
+                                 published=f"2026-07-12T0{i}:00:00") for i in range(7)]
+
+    agent.search = _Seven()
+    agent.llm.complete = synth_llm
+    res = asyncio.run(run_handle(agent, "info.search",
+                                 slots={"query": "最新手机销量排名"},
+                                 raw_text="最新手机销量排名"))
+    assert res.status == "ok"
+    assert "共6条" in captured["prompt"]
+
+
+def test_search_low_confidence_offers_research_upgrade():
+    agent = InfoAgent()
+    agent.llm.complete = _llm_unavailable          # 合成不可用 → fallback_brief + low
+    res = asyncio.run(run_handle(agent, "info.search", slots={"query": "冷门话题"},
+                                 raw_text="冷门话题"))
+    assert res.ui_card["confidence"] == "low"
+    assert "深入调研" in (res.follow_up or "")
 
 
 # ── 赛事 ─────────────────────────────────────────────────

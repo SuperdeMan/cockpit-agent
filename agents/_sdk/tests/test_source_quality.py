@@ -1,5 +1,8 @@
 """信源权威分层 + 重排单测。"""
-from agents._sdk.source_quality import domain_tier, rerank_by_authority
+from datetime import datetime, timezone
+
+from agents._sdk.source_quality import (domain_tier, rerank_by_authority,
+                                        rerank_fresh_authority)
 
 
 def test_domain_tier_academic_official_encyclopedia():
@@ -68,3 +71,41 @@ def test_rerank_empty_and_plain_string_key():
     # 默认 key：元素本身即 URL
     out = rerank_by_authority(["https://x.com/1", "https://nature.com/2"])
     assert out[0] == "https://nature.com/2"
+
+
+_NOW = datetime(2026, 7, 12, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def test_rerank_fresh_window_beats_stale_authority():
+    """时效敏感（recency_days>0）：窗口内的低权威新源排在窗口外的高权威旧源之前。"""
+    items = [
+        {"url": "https://arxiv.org/old", "published": "2026-06-01T00:00:00"},   # 3 档但过期
+        {"url": "https://random.com/new", "published": "2026-07-12T08:00:00"},  # 1 档在窗口
+        {"url": "https://reuters.com/new", "published": "2026-07-11T20:00:00"}, # 2 档在窗口
+    ]
+    out = [s["url"] for s in rerank_fresh_authority(items, 2, key=lambda s: s["url"], now=_NOW)]
+    assert out == ["https://reuters.com/new",   # 窗口内，档位 2
+                   "https://random.com/new",    # 窗口内，档位 1
+                   "https://arxiv.org/old"]     # 窗口外沉后（哪怕 3 档）
+
+
+def test_rerank_fresh_missing_published_counts_as_stale():
+    items = [
+        {"url": "https://nature.com/x", "published": ""},                        # 无时间→窗口外
+        {"url": "https://random.com/y", "published": "2026-07-12T01:00:00"},
+    ]
+    out = [s["url"] for s in rerank_fresh_authority(items, 2, key=lambda s: s["url"], now=_NOW)]
+    assert out[0] == "https://random.com/y"
+    # 窗口外组内仍按权威序：nature(3) 若与其他窗口外比较不吃亏
+    items.append({"url": "https://blog.csdn.net/z", "published": ""})
+    out2 = [s["url"] for s in rerank_fresh_authority(items, 2, key=lambda s: s["url"], now=_NOW)]
+    assert out2.index("https://nature.com/x") < out2.index("https://blog.csdn.net/z")
+
+
+def test_rerank_fresh_zero_days_degrades_to_authority():
+    items = [
+        {"url": "https://random.com/a", "published": "2026-07-12T00:00:00"},
+        {"url": "https://nature.com/b", "published": "2020-01-01T00:00:00"},
+    ]
+    out = [s["url"] for s in rerank_fresh_authority(items, 0, key=lambda s: s["url"], now=_NOW)]
+    assert out[0] == "https://nature.com/b"     # recency<=0 → 纯权威序，与既有行为一致

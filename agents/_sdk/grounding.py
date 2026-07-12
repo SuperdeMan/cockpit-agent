@@ -15,7 +15,7 @@ import logging
 import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .source_quality import rerank_by_authority
+from .source_quality import rerank_by_authority, rerank_fresh_authority
 
 logger = logging.getLogger("agent.sdk.grounding")
 
@@ -118,20 +118,28 @@ def build_materials(sources: list[dict], *, first_cap: int = 2400,
 
 async def grounded_synthesis(llm, subject: str, sources: list[dict], *,
                              timeout: float = 25, max_tokens: int = 600,
-                             thinking: bool = False) -> dict | None:
+                             thinking: bool = False,
+                             recency_days: int = 0) -> dict | None:
     """基于正文级资料接地合成。返回 {answer,key_points,confidence,used_sources} 或 None
     （LLM 不可用，调用方走诚实兜底 fallback_brief）。要求**无依据即弃权**，从根上消除编造。
-    限 5 源、首源截 2400 字其余 900 字——过大 prompt 会令上游 LLM 推理超时退化。
+    限 6 源、首源截 2400 字其余 800 字——过大 prompt 会令上游 LLM 推理超时退化。
 
     **thinking 默认 False**：接地合成是「依据资料抽取/组织」的结构化任务，不需深推理；
     开思考(HEAVY_INTENT 经 meta 自动开)会让大正文(如整页 wiki)在 deadline 内推理超时
     DEADLINE_EXCEEDED → 退化兜底堆原文（实测 info.search「什么是固态电池」踩到，与深调研同源）。
     timeout 20→25 给大页面留余量。
+
+    recency_days>0（调用方判定查询时效敏感）时改用时效+权威双序：窗口内的新源优先于
+    窗口外的高权威旧源（对症榜单/比分/价格类被旧权威页压排）。
     """
-    # 源质量加权：按域名权威重排 → 学术/官方/百科优先进 top-5（首源拿更多正文配额）；
+    # 源质量加权：按域名权威重排 → 学术/官方/百科优先进 top-6（首源拿更多正文配额）；
     # 稳定排序，同档保留检索相关性序（榜单/赛事类来源多为同档，顺序不变，不影响既有逻辑）。
-    used = rerank_by_authority(sources, key=lambda s: s.get("url", ""))[:5]
-    materials = build_materials(used)
+    if recency_days > 0:
+        used = rerank_fresh_authority(sources, recency_days,
+                                      key=lambda s: s.get("url", ""))[:6]
+    else:
+        used = rerank_by_authority(sources, key=lambda s: s.get("url", ""))[:6]
+    materials = build_materials(used, rest_cap=800, limit=6)
     prompt = (
         f"用户问题：{subject}\n"
         f"当前时间：{shanghai_now():%Y年%m月%d日 %H:%M}（Asia/Shanghai）\n\n"

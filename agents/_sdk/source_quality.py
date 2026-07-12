@@ -13,6 +13,7 @@
 档位：3=学术/官方/标准/百科；2=权威媒体/老牌科技；1=默认/未知；0=内容农场/低质聚合。
 """
 from __future__ import annotations
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 # 学术 / 官方文档 / 标准组织 / 百科（最高权威）。匹配「等于或为其子域」。
@@ -114,3 +115,31 @@ def rerank_by_authority(items: list, key=None) -> list:
     return [it for _, it in sorted(
         enumerate(items),
         key=lambda p: (-domain_tier(get(p[1]) or ""), p[0]))]
+
+
+def rerank_fresh_authority(items: list, recency_days: int, key=None,
+                           published_key=None, now=None) -> list:
+    """时效敏感查询的重排：先分「是否在时效窗口内」，组内再按权威档位，同档保原序。
+
+    rerank_by_authority 的时效变体，**仅当调用方判定查询时效敏感（recency_days>0）时使用**
+    ——纯权威序会让旧的高权威源压过新的低权威源（榜单/比分/价格类混入历史数据）。
+    published 缺失/不可解析视为窗口外（按字典序比较 ISO 前缀，与 latest_published 同口径；
+    跨时区的小时级偏差被天级窗口吸收）。recency_days<=0 时退化为纯权威序。
+    只重排、不增删（诚实优先，与 rerank_by_authority 同一取舍）。
+    """
+    if recency_days <= 0:
+        return rerank_by_authority(items, key=key)
+    get_url = key if key is not None else (lambda x: x)
+    get_pub = published_key if published_key is not None else (
+        lambda x: x.get("published", "") if isinstance(x, dict) else "")
+    base = now or datetime.now(timezone.utc)
+    cutoff = (base - timedelta(days=recency_days)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    def _in_window(it) -> bool:
+        pub = str(get_pub(it) or "")[:19]
+        return bool(pub) and pub >= cutoff
+
+    return [it for _, it in sorted(
+        enumerate(items),
+        key=lambda p: (-int(_in_window(p[1])),
+                       -domain_tier(get_url(p[1]) or ""), p[0]))]
