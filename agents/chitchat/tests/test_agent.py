@@ -66,3 +66,76 @@ def test_handle_passes_fast_model_and_tokens():
     assert res.speech == "好的"
     assert captured["model"] == "@fast"   # 快模型档位哨兵（网关侧解析成 active provider 的 fast 模型）
     assert captured["max_tokens"] == 140
+
+
+# ─── P1-2 时效兜底：<search> 标记 → 通用 escalate 改派 ───
+
+def test_parse_search_mark():
+    from agents.chitchat.src.agent import _parse_search_mark
+    assert _parse_search_mark("<search>昨晚欧冠决赛结果</search>") == "昨晚欧冠决赛结果"
+    assert _parse_search_mark("  <search> 今日油价 </search>") == "今日油价"
+    assert _parse_search_mark("好的，我给你讲个笑话") == ""
+    assert _parse_search_mark("我觉得<search>不算标记</search>") == ""   # 非开头不算
+    assert _parse_search_mark("") == ""
+
+
+def test_handle_escalates_on_search_mark():
+    agent = ChitchatAgent()
+    agent.llm.complete = AsyncMock(return_value="<search>昨晚欧冠决赛结果</search>")
+    res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="昨晚欧冠谁赢了"))
+    assert res.status == "ok"
+    assert res.speech == ""                                   # 零播报
+    esc = res.data["_escalate"]
+    assert esc["intent"] == "info.search"
+    assert esc["slots"]["query"] == "昨晚欧冠决赛结果"
+
+
+def _stream_of(*chunks):
+    async def _gen(*a, **k):
+        for c in chunks:
+            yield c
+    return _gen
+
+
+def _collect_stream(agent, raw_text):
+    async def scenario():
+        out = []
+        from agents._sdk.testing import make_context
+        from agents._sdk.base import IntentView
+        ctx = make_context()
+        intent = IntentView(name="chitchat.talk", slots={}, raw_text=raw_text,
+                            confidence=1.0)
+        async for ev in agent.handle_stream(intent, ctx, {}):
+            out.append(ev)
+        return out
+    return asyncio.run(scenario())
+
+
+def test_handle_stream_buffers_marker_and_escalates_with_zero_speech():
+    """标记被拆成多个 delta 到达：头部缓冲判定、全程零 speech、final 带 _escalate。"""
+    agent = ChitchatAgent()
+    agent.llm.stream = _stream_of("<se", "arch>昨晚欧冠", "决赛结果</search>")
+    events = _collect_stream(agent, "昨晚欧冠谁赢了")
+    kinds = [k for k, _ in events]
+    assert "speech" not in kinds                              # 零增量播报
+    final = events[-1][1]
+    assert final.data["_escalate"]["slots"]["query"] == "昨晚欧冠决赛结果"
+
+
+def test_handle_stream_normal_reply_flushes_after_probe():
+    """普通回复：判定后一次性放流缓冲，其后逐 delta 直通，final 话术完整。"""
+    agent = ChitchatAgent()
+    agent.llm.stream = _stream_of("哈哈", "，给你讲个", "冷笑话～")
+    events = _collect_stream(agent, "讲个笑话")
+    speech = "".join(p for k, p in events if k == "speech")
+    assert speech == "哈哈，给你讲个冷笑话～"
+    assert events[-1][0] == "final" and events[-1][1].speech == "哈哈，给你讲个冷笑话～"
+
+
+def test_handle_stream_short_reply_flushed_at_end():
+    """极短回复（判定窗内即结束）也不丢字。"""
+    agent = ChitchatAgent()
+    agent.llm.stream = _stream_of("好")
+    events = _collect_stream(agent, "帮我记住这件事")
+    speech = "".join(p for k, p in events if k == "speech")
+    assert speech == "好"

@@ -17,6 +17,8 @@ logger = logging.getLogger("planner.executor")
 def _struct_dict(value) -> dict:
     if value is None:
         return {}
+    if isinstance(value, dict):     # 进程内 dispatcher/测试 stub 直接携带 dict，无需 Struct 往返
+        return value
     return MessageToDict(value, preserving_proto_field_name=True)
 
 

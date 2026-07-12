@@ -301,12 +301,37 @@ class PlannerEngine:
                     attrs={"intent": step.intent, "agent_id": step.agent_id,
                            "kind": "agent", "deployment": "cloud", "via": "stream"})
                 results = [final_sr]
+                focus_plan = plan
+                # 通用 escalate（一跳）：Agent 声明「这题我不该答，改派给 X」。仅当未播报过任何
+                # 增量（streamed=False）才生效——已流出话术再改派会双重回答（agent 端零 delta
+                # 才 escalate + 此处 streamed 忽略，双保险）。检测到即剥键（含忽略场景），
+                # 防 F3 slot_refs/下游误引用保留键。
+                esc = self._parse_escalate(final_sr)
+                if esc is not None and isinstance(final_sr.data, dict):
+                    final_sr.data.pop("_escalate", None)
+                if streamed:
+                    esc = None
+                if esc is not None:
+                    sink: dict = {}
+                    async for ev in self._run_escalated(esc, ctx, agents, sink):
+                        yield ev
+                    if sink.get("suspended"):
+                        return
+                    if sink.get("results"):
+                        results = sink["results"]
+                        focus_plan = sink["plan"]
+                    else:
+                        # 改派装配/执行失败：原 speech 为空（agent 零播报），给诚实兜底话术
+                        await self.session.clear(ctx.session_id)
+                        yield {"kind": "final",
+                               "speech": "这个需要联网查询，刚才没查成，请再说一次。"}
+                        return
                 if final_sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
                     yield await self._suspend(final_sr, results, plan, ctx)
                     return
                 await self.session.clear(ctx.session_id)
                 if mem_on:
-                    await self.context.update_focus(ctx.session_id, plan, results)
+                    await self.context.update_focus(ctx.session_id, focus_plan, results)
                 final = await self.aggregator.compose(text or plan.raw_text, results)
                 await obs_events.get_emitter("cloud").emit_span(
                     ctx.trace_id,
@@ -361,6 +386,24 @@ class PlannerEngine:
                 yield await self._suspend(step_result, results, plan, ctx)
                 return
 
+        # 通用 escalate（一跳）：executor 路径——多步计划里第一个声明改派的步结果被
+        # escalated 结果替换，其余步结果保留进聚合（每轮预算 1 跳，与 D0 路径共享同一机制）。
+        esc_i = next((i for i, r in enumerate(results)
+                      if self._parse_escalate(r) is not None), None)
+        if esc_i is not None:
+            esc = self._parse_escalate(results[esc_i])
+            if isinstance(results[esc_i].data, dict):
+                results[esc_i].data.pop("_escalate", None)
+            sink: dict = {}
+            async for ev in self._run_escalated(esc, ctx, agents, sink):
+                yield ev
+            if sink.get("suspended"):
+                return
+            if sink.get("results"):
+                results[esc_i:esc_i + 1] = sink["results"]
+            # 装配失败：保留原步结果（speech 为空），其余步正常聚合——多步场景不用兜底话术
+            # 压掉别的步产出
+
         if new_plan and await self._needs_replan(plan, results):
             metrics.record_intent("reactive_upgrade", 0, True)
             logger.info("Reactive upgrade: simple→T2 for session %s",
@@ -399,6 +442,77 @@ class PlannerEngine:
             "aggregate",
         )
         yield {"kind": "final", **final}
+
+    @staticmethod
+    def _parse_escalate(result: StepResult) -> dict | None:
+        """解析 Agent 结果里的通用改派声明 `data["_escalate"]={"intent","slots","reason"}`。
+
+        非法（缺 intent / slots 非 dict）→ None（忽略，不炸主链）。协议登记见
+        docs/conventions.md「Agent→编排结果保留键」。不剥离键——消费点自行 pop。"""
+        data = getattr(result, "data", None)
+        esc = data.get("_escalate") if isinstance(data, dict) else None
+        if not isinstance(esc, dict):
+            return None
+        intent = esc.get("intent")
+        if not isinstance(intent, str) or not intent.strip():
+            return None
+        raw_slots = esc.get("slots")
+        slots = ({str(k): str(v) for k, v in raw_slots.items()}
+                 if isinstance(raw_slots, dict) else {})
+        return {"intent": intent.strip(), "slots": slots,
+                "reason": str(esc.get("reason") or "")}
+
+    async def _run_escalated(self, esc: dict, ctx: PlanContext, agents: list,
+                             sink: dict) -> AsyncIterator[dict]:
+        """执行通用 escalate 改派（每轮最多一跳）。
+
+        目标 intent 在 agent 目录里找到承接方后经 `PlanBuilder._validated_steps` 装配成单步
+        mini-plan 交 executor 执行——heavy/latency_budget/权限自动带出（**绝不裸 call_agent**：
+        其默认 10s 超时会打死 info.search 这类 50s 预算的重域步）；heavy 步照常发过程区事件。
+        过程区/挂起 final 事件原样透传；结果经 sink 回传：
+          sink["results"] 完成的 StepResult 列表（已剥离二跳 _escalate——结构性防环）
+          sink["plan"]    mini-plan（焦点态更新用）
+          sink["suspended"]=True 已 yield 挂起 final（调用方直接 return）
+        装配失败（intent 无承接 Agent / 校验不过）→ sink 留空，调用方自行兜底。"""
+        if not agents:
+            agents = await self.clients.list_agents()
+        agent_map = {a.manifest.agent_id: a for a in agents}
+        aid = next((a.manifest.agent_id for a in agents
+                    if any(c.intent == esc["intent"]
+                           for c in a.manifest.capabilities)), "")
+        steps = self.planner._validated_steps([{
+            "id": "esc1", "agent_id": aid, "intent": esc["intent"],
+            "slots": esc["slots"], "depends_on": [], "slot_refs": {},
+        }], agent_map) if aid else []
+        if not steps:
+            logger.warning("Escalate target intent %r has no serving agent; ignored",
+                           esc["intent"])
+            return
+        mini = Plan(steps=steps, raw_text=ctx.raw_text)
+        show_esc_process = is_complex(mini)
+        if show_esc_process:
+            for s in mini.steps:
+                s.meta = {**s.meta, "thinking": "on"}
+            yield self._progress("execute", phase_label(steps[0].intent),
+                                 status="running", step_id=steps[0].id)
+        await obs_events.get_emitter("cloud").emit_span(
+            ctx.trace_id, "escalate",
+            attrs={"intent": esc["intent"], "reason": esc.get("reason", "")})
+        results: list[StepResult] = []
+        async for sr in self.executor.run(mini, ctx):
+            if isinstance(sr.data, dict):
+                sr.data.pop("_escalate", None)   # 单跳预算：二跳声明不消费（结构性防环）
+            results.append(sr)
+            if sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
+                yield await self._suspend(sr, results, mini, ctx)
+                sink["suspended"] = True
+                return
+            if show_esc_process and sr.status == StepStatus.OK:
+                yield self._progress("execute", phase_label(steps[0].intent),
+                                     summary=step_summary(steps[0], sr),
+                                     status="done", step_id=steps[0].id)
+        sink["results"] = results
+        sink["plan"] = mini
 
     @staticmethod
     def _progress(phase: str, label: str, summary: str = "",

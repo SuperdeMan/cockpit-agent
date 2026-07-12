@@ -11,10 +11,29 @@
 """
 from __future__ import annotations
 import os
+import re
 
 from agents._sdk import BaseAgent, AgentResult
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
+
+# 时效兜底（2026-07-12 mode-routing 设计 P1-2）：LLM 判定「必须联网才能正确回答」时只输出
+# 该标记；agent 解析后零播报、经通用 escalate 协议改派 info.search（engine 有界一跳消费）。
+_SEARCH_MARK = "<search>"
+_SEARCH_MARK_RE = re.compile(r"^\s*<search>\s*(.{1,50}?)\s*</search>", re.S)
+
+
+def _parse_search_mark(text: str) -> str:
+    """整段回复是否以 <search>查询词</search> 开头；是则返回查询词，否则空串。"""
+    m = _SEARCH_MARK_RE.match(text or "")
+    return m.group(1).strip() if m else ""
+
+
+def _escalate_result(query: str) -> AgentResult:
+    """零播报 + 通用改派声明（协议登记见 docs/conventions.md「Agent→编排结果保留键」）。"""
+    return AgentResult(speech="", data={"_escalate": {
+        "intent": "info.search", "slots": {"query": query},
+        "reason": "needs_realtime"}})
 
 # 话术长度 → (max_tokens, 提示语)
 _LENGTH = {
@@ -45,6 +64,9 @@ def _system(meta: dict) -> str:
         f"你是车载语音助手「{name}」。风格简洁、口语化、温暖、安全。{hint}"
         "适合驾车时收听；不输出列表、代码或长文。"
         "若用户表达负面情绪，先共情、再轻轻给出建议或陪伴，不要说教。"
+        "如果不联网获取实时信息（今天的新闻、比分、价格、天气实况、近期事件等）就无法"
+        "正确回答，就只输出 <search>不超过20字的中文搜索词</search>，不要输出任何其他文字；"
+        "闲聊、情绪陪伴和不随时间变化的常识照常直接回答，不要滥用该标记。"
     )
 
 
@@ -88,18 +110,56 @@ class ChitchatAgent(BaseAgent):
         reply = await self.llm.complete(msgs, model=model, temperature=0.8, max_tokens=max_tokens)
         if not reply.strip():  # MiMo 偶发空响应：兜底重试一次
             reply = await self.llm.complete(msgs, model=model, temperature=0.9, max_tokens=max_tokens)
+        q = _parse_search_mark(reply)
+        if q:                   # 时效兜底：需要实时信息 → 零播报改派 info.search
+            return _escalate_result(q)
         return AgentResult(speech=reply.strip() or "我在听，您可以再说一次。")
 
     async def handle_stream(self, intent, ctx, meta):
+        """流式直答。头部缓冲：在确定回复不是 <search> 改派标记前不放流任何 delta——
+        escalate 的前提是「零播报」（engine 端 streamed=True 会忽略改派，双保险）。
+        判定窗口 ≤ len("<search>")+空白，普通回复只延迟一个包级别，无感。"""
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta)
         msgs = await self._build_messages(intent, ctx, meta)
         buf = ""
+        held = ""
+        mode = "probe"          # probe=判定中 | stream=正常放流 | silent=标记确认，静默缓冲
         async for delta in self.llm.stream(msgs, model=model, temperature=0.8, max_tokens=max_tokens):
             buf += delta
-            yield ("speech", delta)
+            if mode == "stream":
+                yield ("speech", delta)
+                continue
+            held += delta
+            probe = held.lstrip()
+            if mode == "probe":
+                if not probe:
+                    continue
+                if probe.startswith(_SEARCH_MARK):
+                    mode = "silent"                    # 标记确认：静默缓冲到流结束
+                elif _SEARCH_MARK.startswith(probe):
+                    continue                           # 仍是 "<sea" 类前缀，继续观望
+                else:
+                    mode = "stream"                    # 不是标记：一次性放流缓冲
+                    yield ("speech", held)
+                    held = ""
+        if mode == "silent":
+            q = _parse_search_mark(buf)
+            if q:
+                yield ("final", _escalate_result(q))
+                return
+            # 形如标记但残缺（未闭合等）：剥标签当普通话术，不丢内容
+            buf = re.sub(r"</?search>", "", buf).strip()
+            if buf:
+                yield ("speech", buf)
+        elif mode == "probe" and held.strip():
+            yield ("speech", held)                     # 极短回复（如「好」）整段放流
         if not buf.strip():  # 流式空响应：非流式重试一次，整段补发
             buf = await self.llm.complete(msgs, model=model, temperature=0.9, max_tokens=max_tokens)
+            q = _parse_search_mark(buf)
+            if q:
+                yield ("final", _escalate_result(q))
+                return
             if buf.strip():
                 yield ("speech", buf)
         yield ("final", AgentResult(speech=buf.strip() or "我在听，您可以再说一次。"))
