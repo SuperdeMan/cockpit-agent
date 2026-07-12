@@ -44,6 +44,22 @@ def test_model_tiering_by_pref():
     assert _resolve_model({}) == "@fast"                        # 默认开放域走快模型档位
 
 
+def test_model_tiering_depth_slot_beats_session_pref():
+    """P1-1：Planner 对知识/解释类下发 slots.depth=deep → primary；寒暄不传仍走快模型。"""
+    assert _resolve_model({}, {"depth": "deep"}) == ""
+    assert _resolve_model({"model_pref": "deep"}, {}) == ""     # 会话级偏好仍生效
+    assert _resolve_model({"model_pref": "fast"}, {"depth": "deep"}) == ""  # slot 优先
+    assert _resolve_model({}, {}) == "@fast"
+
+
+def test_system_has_date_anchor_and_no_fabrication_guard():
+    """P1-1：system 注入今日日期 + 时效不编造护栏。"""
+    from agents._sdk.grounding import shanghai_now
+    sys_text = _system({})
+    assert f"{shanghai_now():%Y年%m月%d日}" in sys_text
+    assert "绝不编造" in sys_text
+
+
 def test_length_and_name_honored():
     assert _length({"answer_length": "short"})[0] == 140
     assert _length({"answer_length": "detailed"})[0] == 440

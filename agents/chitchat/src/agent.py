@@ -14,6 +14,7 @@ import os
 import re
 
 from agents._sdk import BaseAgent, AgentResult
+from agents._sdk.grounding import shanghai_now
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 
@@ -43,13 +44,16 @@ _LENGTH = {
 }
 
 
-def _resolve_model(meta: dict) -> str:
+def _resolve_model(meta: dict, slots: dict | None = None) -> str:
     """开放域模型分层：deep→重模型档位（primary），其余(fast/auto/未设)→快模型档位，低延迟。
 
     返回的是**档位哨兵**而非具体模型名（``""``=primary、``"@fast"``=fast）——由 llm-gateway 按当前
     active provider 解析成该厂商的具体模型（见 llm-gateway/llm_runtime.py::resolve_models）。这样多
-    LLM 源切换厂商时，不会把某家的模型名（如 mimo-v2.5）误发给另一家（如 DeepSeek）而报错。"""
-    pref = (meta or {}).get("model_pref", "auto")
+    LLM 源切换厂商时，不会把某家的模型名（如 mimo-v2.5）误发给另一家（如 DeepSeek）而报错。
+
+    slots.depth：Planner 按问题类型下发（manifest desc 引导知识/解释类传 deep），优先于
+    会话级 meta.model_pref——寒暄走快模型省延迟，科普/解释用更强模型保质量。"""
+    pref = (slots or {}).get("depth") or (meta or {}).get("model_pref", "auto")
     return "" if pref == "deep" else "@fast"
 
 
@@ -61,9 +65,11 @@ def _system(meta: dict) -> str:
     name = (meta or {}).get("assistant_name") or "小舟"
     _, hint = _length(meta)
     return (
-        f"你是车载语音助手「{name}」。风格简洁、口语化、温暖、安全。{hint}"
+        f"你是车载语音助手「{name}」。今天是{shanghai_now():%Y年%m月%d日}。"
+        f"风格简洁、口语化、温暖、安全。{hint}"
         "适合驾车时收听；不输出列表、代码或长文。"
         "若用户表达负面情绪，先共情、再轻轻给出建议或陪伴，不要说教。"
+        "涉及实时或近期事实时，如果你不确定就明说无法确认并建议联网查询，绝不编造。"
         "如果不联网获取实时信息（今天的新闻、比分、价格、天气实况、近期事件等）就无法"
         "正确回答，就只输出 <search>不超过20字的中文搜索词</search>，不要输出任何其他文字；"
         "闲聊、情绪陪伴和不随时间变化的常识照常直接回答，不要滥用该标记。"
@@ -105,7 +111,7 @@ class ChitchatAgent(BaseAgent):
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         max_tokens, _ = _length(meta)
-        model = _resolve_model(meta)
+        model = _resolve_model(meta, intent.slots)
         msgs = await self._build_messages(intent, ctx, meta)
         reply = await self.llm.complete(msgs, model=model, temperature=0.8, max_tokens=max_tokens)
         if not reply.strip():  # MiMo 偶发空响应：兜底重试一次
@@ -120,7 +126,7 @@ class ChitchatAgent(BaseAgent):
         escalate 的前提是「零播报」（engine 端 streamed=True 会忽略改派，双保险）。
         判定窗口 ≤ len("<search>")+空白，普通回复只延迟一个包级别，无感。"""
         max_tokens, _ = _length(meta)
-        model = _resolve_model(meta)
+        model = _resolve_model(meta, intent.slots)
         msgs = await self._build_messages(intent, ctx, meta)
         buf = ""
         held = ""
