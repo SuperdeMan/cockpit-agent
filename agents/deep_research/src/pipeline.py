@@ -301,6 +301,48 @@ def _build_grouped_materials(subqs: list[SubQuestion],
     return "\n\n".join(groups)
 
 
+# 截断抢救：section 对象内无嵌套花括号（citations 是整数数组），可逐块独立解析。
+_SECTION_OBJ_RE = re.compile(r"\{[^{}]*\}")
+_SUMMARY_RE = re.compile(r'"summary"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _rescue_truncated_report(text: str, sources: list[dict]) -> Report | None:
+    """合成 JSON 被 max_tokens 截断时抢救 summary + 已完整生成的小节。
+
+    badcase 0f4105c4（@MiniMax）：completion 打满 2400 token → json.loads 失败 → 整份退化
+    fallback 堆原文。截断报告的前几节是完好的，丢掉它们去堆原文是最差选择。
+    抢救不到任何小节时返回 None（调用方走 fallback）。
+    """
+    m = _SUMMARY_RE.search(text)
+    try:
+        summary = json.loads(f'"{m.group(1)}"') if m else ""
+    except (ValueError, TypeError):
+        summary = ""
+    valid_idx = {s["idx"] for s in sources}
+    sections = []
+    for chunk in _SECTION_OBJ_RE.findall(text):
+        try:
+            sec = json.loads(chunk)
+        except (ValueError, TypeError):
+            continue                      # 最后一个被拦腰截断的对象解析不了，正常丢弃
+        if not isinstance(sec, dict) or not sec.get("heading") or not sec.get("body"):
+            continue
+        cits = [int(c) for c in (sec.get("citations") or [])
+                if str(c).isdigit() and int(c) in valid_idx]
+        conf = str(sec.get("confidence") or "medium").lower()
+        sections.append(Section(
+            heading=strip_markdown_speech(str(sec["heading"]).strip()),
+            body=strip_markdown_speech(str(sec["body"]).strip()),
+            citations=cits,
+            confidence=conf if conf in ("high", "medium", "low") else "medium"))
+    if not sections:
+        return None
+    logger.warning("synthesis JSON truncated; rescued %d sections", len(sections))
+    return Report(summary=strip_markdown_speech(summary) or sections[0].body[:120],
+                  sections=sections, sources=sources, overall_confidence="low",
+                  gaps=["报告生成被长度截断，仅保留已完成的小节"])
+
+
 def _parse_report(text: str, sources: list[dict]) -> Report | None:
     block = _extract_json_block(text)
     if not block:
@@ -308,7 +350,7 @@ def _parse_report(text: str, sources: list[dict]) -> Report | None:
     try:
         obj = json.loads(block)
     except (json.JSONDecodeError, TypeError):
-        return None
+        return _rescue_truncated_report(text, sources)
     # prompt 已要求 body 纯文本无 markdown，但换 provider 后是软约束——出口硬剥兜底
     # （加粗/表格/标题符进卡片显示成乱码、summary 进 TTS 念星号）。[N] 引用标记不受影响。
     summary = strip_markdown_speech(str(obj.get("summary") or "").strip())
@@ -325,7 +367,7 @@ def _parse_report(text: str, sources: list[dict]) -> Report | None:
         conf = str(sec.get("confidence") or "medium").lower()
         if conf not in ("high", "medium", "low"):
             conf = "medium"
-        sections.append(Section(heading=str(sec.get("heading") or "").strip(),
+        sections.append(Section(heading=strip_markdown_speech(str(sec.get("heading") or "").strip()),
                                 body=body, citations=cits, confidence=conf))
     if not summary and not sections:
         return None
@@ -339,16 +381,23 @@ def _parse_report(text: str, sources: list[dict]) -> Report | None:
 
 def _fallback_report(question: str, subqs: list[SubQuestion],
                      sources: list[dict]) -> Report:
-    """LLM 合成不可用时的诚实兜底：每子问题一节用首条证据节选，不编造、低置信。"""
+    """LLM 合成不可用时的诚实兜底：每子问题一节用首条证据节选，不编造、低置信。
+
+    节选必须**短且干净**（剥 markdown/页面残迹 + 截 200 字）——badcase 0f4105c4：旧版把
+    上千字原始维基正文整段灌进 speech/卡片，行车语音完全不可读。宁短勿糊脸。
+    """
     sections = []
     for sq in subqs:
         if not sq.evidence:
             continue
-        body = (sq.evidence[0].excerpt or "").strip()
+        body = strip_markdown_speech((sq.evidence[0].excerpt or "").strip())[:200]
+        if body and not body.endswith(("。", "！", "？")):
+            body = body.rstrip("，、；：,;") + "……"
         sections.append(Section(heading=sq.text, body=body,
                                 citations=[sq.evidence[0].idx], confidence="low"))
     gaps = [sq.text for sq in subqs if not sq.evidence]
-    summary = fallback_brief(question, [{"snippet": s.body} for s in sections])
+    gaps.append("自动合成暂不可用，以上为资料节选，建议稍后重试获取完整报告")
+    summary = fallback_brief(question, [{"snippet": s.body[:80]} for s in sections[:2]])
     return Report(summary=summary, sections=sections, sources=sources,
                  overall_confidence="low", gaps=gaps[:6],
                  freshness=latest_published(sources))
@@ -366,8 +415,13 @@ async def synthesize(llm, question: str, subqs: list[SubQuestion],
                      constraints: dict | None = None, *, deep: bool = False) -> Report:
     """复用接地内核出**分节报告**：每子问题一节、强制引用、诚实标 gaps。失败诚实兜底。
 
-    deep=True（异步分钟级深调研）：不受 90s 网关上限约束，合成预算翻倍（max_tokens 2400→4000、
-    timeout 55→150）、要求更多小节（8-12）与更长正文、每节喂更多证据，换取真·深报告。
+    deep=True（异步分钟级深调研）：不受 90s 网关上限约束，合成预算放大（max_tokens 2400→6000、
+    timeout 55→150）、要求更多小节（8-9）与更长正文、每节喂更多证据，换取真·深报告。
+
+    预算与要求对齐（2026-07-12 badcase 0f4105c4：MiniMax 按旧要求 5-7节×250-450字 写满
+    2400 token 被截断 → JSON 解析失败 → 整份退化 fallback 堆原文）：要求的字数上限
+    必须落在 max_tokens 内有余量——sync 5-6节×180-300字≈≤1800字；deep 8-9节×300-500字
+    ≈≤4500字 配 6000 token。截断仍可能（啰嗦 provider），由 _parse_report 抢救已完整小节。
     """
     # 源质量加权：合成前按域名权威重排每子问题证据 → 学术/官方/百科上移、内容农场下沉。
     # 既决定来源编号(靠前=更权威)、也决定哪几条进 top-N 合成材料。稳定排序，同档保留检索相关性序。
@@ -379,8 +433,8 @@ async def synthesize(llm, question: str, subqs: list[SubQuestion],
     ev_per = _EV_PER_SUBQ_DEEP if deep else _EV_PER_SUBQ_IN_MATERIALS
     materials = _build_grouped_materials(subqs, ev_per)
     note = _constraints_note(constraints)
-    sec_count = "8-12" if deep else "5-7"
-    body_len = "300-550 字" if deep else "250-450 字"
+    sec_count = "8-9" if deep else "5-6"
+    body_len = "300-500 字" if deep else "180-300 字"
     user = (
         f"研究问题：{question}\n"
         f"当前时间：{shanghai_now():%Y年%m月%d日 %H:%M}（Asia/Shanghai）\n"
@@ -406,7 +460,7 @@ async def synthesize(llm, question: str, subqs: list[SubQuestion],
         raw = await llm.complete(
             [{"role": "system", "content": _SYNTH_SYSTEM},
              {"role": "user", "content": user}],
-            temperature=0.3, max_tokens=4000 if deep else 2400,
+            temperature=0.3, max_tokens=6000 if deep else 2400,
             timeout=150 if deep else 55, thinking=False)
     except Exception as e:
         logger.warning("synthesis failed, fallback report: %s", e)

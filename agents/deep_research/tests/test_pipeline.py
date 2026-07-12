@@ -206,6 +206,44 @@ def test_synthesize_empty_report_when_no_evidence():
     assert report.overall_confidence == "low" and report.gaps
 
 
+def test_synthesize_rescues_truncated_json_sections():
+    """badcase 0f4105c4：合成 JSON 打满 max_tokens 被截断 → 抢救 summary+已完整小节，
+    绝不整份退化 fallback 堆原文。"""
+    subqs = _subqs_with_evidence()
+    truncated = (
+        '{"summary":"英阿1982年围绕马岛主权爆发战争，英国获胜但争端未解。",'
+        '"sections":['
+        '{"heading":"**战略价值**","body":"马岛扼守南大西洋航道[1]。","citations":[1],"confidence":"high"},'
+        '{"heading":"主权争议","body":"两国自19世纪起各自主张主权[2]。","citations":[2],"confidence":"medium"},'
+        '{"heading":"被截断的节","body":"这一节写到一半就没了')
+    llm = FakeLLM(lambda m, **k: truncated)
+    report = asyncio.run(pipeline.synthesize(llm, "马岛战争历史背景", subqs))
+    assert len(report.sections) == 2                     # 完整的两节被抢救，半截节丢弃
+    assert report.sections[0].heading == "战略价值"       # 抢救路径同样剥 markdown
+    assert report.sections[0].body == "马岛扼守南大西洋航道[1]。"
+    assert report.summary.startswith("英阿1982年")        # summary 完整字段被抢救
+    assert report.overall_confidence == "low"
+    assert any("截断" in g for g in report.gaps)          # 诚实标注
+    # speech（brief）念的是抢救出的 summary，而非原文堆砌
+    speech, _ = pipeline.brief(report, "马岛战争历史背景")
+    assert speech.startswith("英阿1982年")
+
+
+def test_fallback_report_bodies_are_short_and_clean():
+    """fallback 报告可读性：节选剥 markdown + 截 200 字 + 诚实标注（不再上千字原文糊脸）。"""
+    long_raw = ("# 福克兰战争 - 维基百科\n**背景**\n" + "英国和阿根廷为争夺福克兰群岛主权而爆发战争，" * 30)
+    sq = SubQuestion(sq_id="sq1", text="历史背景", status="answered",
+                     evidence=[Evidence(idx=1, title="wiki", url="http://w/1",
+                                        excerpt=long_raw)])
+    report = pipeline._fallback_report("马岛战争", [sq], [{"idx": 1, "url": "http://w/1"}])
+    body = report.sections[0].body
+    assert len(body) <= 210
+    assert "#" not in body and "**" not in body
+    assert body.endswith("……")                            # 截断处有省略标记
+    assert any("合成暂不可用" in g for g in report.gaps)
+    assert len(report.summary) < 300                       # speech 不再是千字原文
+
+
 def test_synthesize_fallback_on_bad_llm_output():
     subqs = _subqs_with_evidence()
     llm = FakeLLM(lambda m, **k: "模型乱答没有 JSON")
@@ -247,14 +285,17 @@ def test_synthesize_deep_uses_larger_budget_and_prompt():
     dllm = FakeLLM(lambda m, **k: good)
     asyncio.run(pipeline.synthesize(dllm, "q", subqs, deep=True))
     msgs, kw = dllm.calls[0]
-    # 深度：合成预算翻倍、超时放宽，仍恒不开思考（大材料开思考会 DEADLINE 退化）
-    assert kw["max_tokens"] == 4000 and kw["timeout"] == 150 and kw["thinking"] is False
-    assert "8-12" in msgs[1]["content"]
+    # 深度：合成预算放大（8-9节×300-500字≈4500字 落在 6000 tok 内有余量）、超时放宽，
+    # 仍恒不开思考（大材料开思考会 DEADLINE 退化）
+    assert kw["max_tokens"] == 6000 and kw["timeout"] == 150 and kw["thinking"] is False
+    assert "8-9" in msgs[1]["content"]
     sllm = FakeLLM(lambda m, **k: good)
     asyncio.run(pipeline.synthesize(sllm, "q", subqs))
     _, kw2 = sllm.calls[0]
-    assert kw2["max_tokens"] == 2400 and kw2["timeout"] == 55    # 同步预算不变
-    assert "5-7" in sllm.calls[0][0][1]["content"]
+    # 同步：token 预算不变，但要求对齐预算（5-6节×180-300字≈1800字 < 2400 tok，
+    # 不再结构性截断——badcase 0f4105c4）
+    assert kw2["max_tokens"] == 2400 and kw2["timeout"] == 55
+    assert "5-6" in sllm.calls[0][0][1]["content"]
 
 
 # ── 源质量加权 + 学术兜底 ────────────────────────────────────

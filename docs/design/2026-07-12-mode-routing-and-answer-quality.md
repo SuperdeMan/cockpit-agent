@@ -250,3 +250,24 @@ content 头部（`<think>…</think>\n\n正文`）而非独立 reasoning_content
 8. Exa 上游偶发 timeout 与本轮改动无关（真栈复测自愈）；日志同时抓到 route_hint 真实打回
    一次 MiniMax 误路由（「帮我查一下…区别」被规划成 chitchat → `s_hint_info_search` 兜回）
    ——P0-4 护栏在生产语境的第一个活证据。
+
+### 8.5 badcase 0f4105c4：调研报告退化堆原文 + fallback 路径 md 残留
+
+泓舟真机 trace `0f4105c4c2f45106`（「深入了解历史背景」@MiniMax）：speech 是上千字原始
+维基正文堆砌、报告卡有 md 残留。obs.llm 定位根因：**synthesize 的 completion_tokens=2400
+恰好打满 max_tokens → JSON 截断 → `_parse_report` 解析失败 → 整份退化 `_fallback_report`
+（原文节选直灌 speech/body，且该路径从未剥过 md）**。而且是结构性的：旧要求 5-7节×
+250-450字≈最多 3150 字，本身超 2400 token 预算，MiniMax 啰嗦必顶满。三针修复：
+
+1. **`_parse_report` 截断抢救**（parse_synth 同族）：正则抢救 summary + 已完整生成的
+   section 对象（对象内无嵌套花括号可逐块 json.loads），半截对象丢弃；overall 降 low、
+   gaps 诚实标注「报告生成被长度截断」——截断报告的前几节是完好的，丢掉去堆原文是最差选择。
+2. **预算与要求对齐**：sync 要求改 5-6节×180-300字（≈1800字 落 2400 tok 内有余量，
+   节数同时对齐 MAX_SUBQ=6）；deep 改 8-9节×300-500字 + max_tokens 4000→6000
+  （≈4500字 有余量；异步不受 90s 约束、150s 超时可容）。
+3. **`_fallback_report` 可读性收敛**：节选剥 md + 截 200 字 + 截断处省略号 + gaps 加
+   「自动合成暂不可用，以上为资料节选」诚实标注；summary 由 capped 节选构成（≤300字）
+   ——彻底告别千字原文糊脸。抢救/回退/解析三条路径的 heading/body 现在全部过 md 剥离。
+
+真栈复现原场景 @MiniMax 两轮（调研→深挖历史背景）全过：speech 174/222 字干净结论、
+报告 3/6 节正文无 md 无堆砌。全量 1354 passed / 7 skipped。
