@@ -21,7 +21,8 @@ import logging
 import re
 
 from agents._sdk.retrieval import retrieve
-from agents._sdk.grounding import shanghai_now, fallback_brief, latest_published
+from agents._sdk.grounding import (shanghai_now, fallback_brief, latest_published,
+                                   strip_markdown_speech)
 from agents._sdk.source_quality import rerank_by_authority, domain_tier
 from agents._sdk.http import ProviderError
 from .models import SubQuestion, Evidence, Section, Report, PERSPECTIVES
@@ -308,13 +309,15 @@ def _parse_report(text: str, sources: list[dict]) -> Report | None:
         obj = json.loads(block)
     except (json.JSONDecodeError, TypeError):
         return None
-    summary = str(obj.get("summary") or "").strip()
+    # prompt 已要求 body 纯文本无 markdown，但换 provider 后是软约束——出口硬剥兜底
+    # （加粗/表格/标题符进卡片显示成乱码、summary 进 TTS 念星号）。[N] 引用标记不受影响。
+    summary = strip_markdown_speech(str(obj.get("summary") or "").strip())
     valid_idx = {s["idx"] for s in sources}
     sections = []
     for sec in obj.get("sections") or []:
         if not isinstance(sec, dict):
             continue
-        body = str(sec.get("body") or "").strip()
+        body = strip_markdown_speech(str(sec.get("body") or "").strip())
         if not body:
             continue
         cits = [int(c) for c in (sec.get("citations") or [])

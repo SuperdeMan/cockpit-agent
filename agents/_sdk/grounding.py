@@ -45,6 +45,42 @@ def clean_snippet(text: str) -> str:
     return text.strip()
 
 
+# ── speech 通道 markdown 归一 ────────────────────────────────────────────────
+# 设计决策（2026-07-12，mode-routing 收尾）：speech 不上 markdown 渲染——第一消费者是
+# TTS（渲染解决不了念星号），Aurora Glass 契约=气泡短结论/结构化在卡片，且各家 LLM 的
+# md 输出不稳定（半吊子语法渲染反出乱码）。prompt 软约束（"不要 markdown"）保留，
+# 这里是出口硬剥。保留 "1. 2." 数字分行要点（prompt 刻意要求，TTS 可读）。
+_MD_FENCE = re.compile(r"(?m)^\s*```.*$")
+_MD_TABLE_SEP = re.compile(r"(?m)^\s*\|?\s*:?-{2,}[-|:\s]*$")
+_MD_TABLE_ROW = re.compile(r"(?m)^\s*\|(.+)\|\s*$")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_MD_HEADING = re.compile(r"(?m)^\s{0,3}#{1,6}\s+")
+_MD_QUOTE = re.compile(r"(?m)^\s{0,3}>\s?")
+_MD_BULLET = re.compile(r"(?m)^(\s*)[-*•]\s+")
+
+
+def strip_markdown_speech(text: str) -> str:
+    """把 LLM 泄漏的 markdown 归一成 speech 可读纯文本（TTS/气泡口径）。
+
+    清理：加粗/行内代码、围栏、#标题、>引用、无序列表符、链接[t](u)→t、
+    表格行→顿号连接（表格进语音本就不可读，退化成逐行罗列）。
+    不动：数字序号行（要点分行是刻意的）、单个 * （乘号/颜文字防误伤）。
+    """
+    t = text or ""
+    if not any(ch in t for ch in ("*", "#", "`", "|", "[", ">", "_")):
+        return t                                  # 快路径：无 md 字符（绝大多数话术）
+    t = _MD_FENCE.sub("", t)
+    t = _MD_TABLE_SEP.sub("", t)
+    t = _MD_TABLE_ROW.sub(
+        lambda m: "，".join(c.strip() for c in m.group(1).split("|") if c.strip()), t)
+    t = _MD_LINK.sub(r"\1", t)
+    t = _MD_HEADING.sub("", t)
+    t = _MD_QUOTE.sub("", t)
+    t = _MD_BULLET.sub(r"\1", t)
+    t = t.replace("**", "").replace("__", "").replace("`", "")
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
 def latest_published(sources: list[dict]) -> str:
     """取最新发布时间（ISO 字符串按字典序比较），供卡片时效展示。"""
     dates = [s.get("published") for s in sources if s.get("published")]
@@ -62,6 +98,10 @@ def fallback_brief(query: str, sources: list[dict]) -> str:
     if points:
         return lead + "；".join(points) + "。"
     return lead + "暂时没有足够资料形成可靠结论，建议稍后再查。"
+
+
+# 截断 JSON 的 answer 抢救：捕获 "answer": " 之后的合法字符串体（\\. 成对，不会断在孤反斜杠）。
+_TRUNC_ANSWER_RE = re.compile(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)')
 
 
 def parse_synth(raw: str) -> dict | None:
@@ -89,6 +129,20 @@ def parse_synth(raw: str) -> dict | None:
                         "confidence": conf, "used_sources": used}
         except (ValueError, TypeError):
             pass
+    # JSON 被 max_tokens 截断（啰嗦 provider 的长 answer 撑爆预算，真栈 @MiniMax 实测：
+    # 整段原始 JSON 被当话术上屏）→ 抢救 answer 字段已生成的部分，绝不把 JSON 外壳念给用户。
+    if text.lstrip().startswith("{"):
+        m = _TRUNC_ANSWER_RE.search(text)
+        if m and m.group(1).strip():
+            try:
+                answer = json.loads(f'"{m.group(1)}"')   # 反转义 \n/\" 等
+            except (ValueError, TypeError):
+                answer = m.group(1)
+            answer = answer.strip().rstrip("，,、；;：:")
+            if answer:
+                return {"answer": answer, "key_points": [],
+                        "confidence": "low", "used_sources": []}
+        return None            # JSON 外壳但连 answer 都没有：交调用方走诚实兜底
     # 非 JSON：剥离列表编号，合并为连续文本作为答案
     flat = LIST_MARKER.sub("", text)
     flat = " ".join(line.strip() for line in flat.splitlines() if line.strip())

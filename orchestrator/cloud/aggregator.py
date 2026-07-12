@@ -4,9 +4,65 @@ WS3 §7。单步直出（省一次 LLM 调用），多步 LLM 改写为连贯口
 """
 from __future__ import annotations
 import logging
+import re
 from .models import StepResult, StepStatus
 
 logger = logging.getLogger("planner.aggregator")
+
+# ── speech 出口 markdown 归一（编排自持实现）────────────────────────────────
+# 设计决策（2026-07-12）：speech 不上 markdown 渲染——第一消费者是 TTS，结构化内容归卡片。
+# **刻意不 import agents/_sdk**：cloud-planner 镜像不含 agents/（跨镜像依赖闭包坑，
+# 真栈实测 ModuleNotFoundError 崩启动）。与 `agents/_sdk/grounding.strip_markdown_speech`
+# （Agent 侧）、`llm-gateway/providers._strip_md_tts`（TTS 侧）配对，口径变化三处同步。
+_MD_FENCE = re.compile(r"(?m)^\s*```.*$")
+_MD_TABLE_SEP = re.compile(r"(?m)^\s*\|?\s*:?-{2,}[-|:\s]*$")
+_MD_TABLE_ROW = re.compile(r"(?m)^\s*\|(.+)\|\s*$")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_MD_HEADING = re.compile(r"(?m)^\s{0,3}#{1,6}\s+")
+_MD_QUOTE = re.compile(r"(?m)^\s{0,3}>\s?")
+_MD_BULLET = re.compile(r"(?m)^(\s*)[-*•]\s+")
+
+
+def strip_markdown_speech(text: str) -> str:
+    """LLM 泄漏的 markdown → speech 可读纯文本。保留数字序号行（分行要点是刻意的）、
+    单个 *（乘号防误伤）；表格行退化为顿号连接。"""
+    t = text or ""
+    if not any(ch in t for ch in ("*", "#", "`", "|", "[", ">", "_")):
+        return t
+    t = _MD_FENCE.sub("", t)
+    t = _MD_TABLE_SEP.sub("", t)
+    t = _MD_TABLE_ROW.sub(
+        lambda m: "，".join(c.strip() for c in m.group(1).split("|") if c.strip()), t)
+    t = _MD_LINK.sub(r"\1", t)
+    t = _MD_HEADING.sub("", t)
+    t = _MD_QUOTE.sub("", t)
+    t = _MD_BULLET.sub(r"\1", t)
+    t = t.replace("**", "").replace("__", "").replace("`", "")
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
+class MdDeltaSoftener:
+    """流式 speech 增量的轻量 markdown 软化（D0 直通路径专用）。
+
+    只剥行内视觉噪声 ``**``/`` ` ``（跨 chunk 安全：尾悬单 ``*`` 暂存一拍等下个增量配对）；
+    完整清理由 final 的 `strip_markdown_speech`（aggregator.compose 出口）收口——流式期间
+    屏显/TTS 不再蹦星号，final 替换整段时彻底干净。
+    """
+
+    def __init__(self):
+        self._carry = ""
+
+    def feed(self, delta: str) -> str:
+        s = self._carry + (delta or "")
+        self._carry = ""
+        s = s.replace("**", "").replace("`", "")
+        if s.endswith("*"):
+            self._carry, s = "*", s[:-1]
+        return s
+
+    def flush(self) -> str:
+        out, self._carry = self._carry, ""
+        return out
 
 _AGGREGATE_SYSTEM = (
     "你是座舱助手的回复组织者。把多个步骤的结果组织为自然口语回复，不罗列 JSON。\n"
@@ -64,7 +120,8 @@ class Aggregator:
                 friendly = self._ERROR_FRIENDLY.get(r.error or "", r.error or "处理失败")
                 return {"speech": f"抱歉，{friendly}。", "actions": []}
             return {
-                "speech": r.speech,
+                # speech 出口统一剥 markdown（设计决策：不上渲染，见 grounding.strip_markdown_speech）
+                "speech": strip_markdown_speech(r.speech),
                 "actions": actions,
                 "ui_card": ui_card,
                 "follow_up": r.follow_up,
@@ -74,7 +131,7 @@ class Aggregator:
         # 多步：LLM 聚合
         speech = await self._aggregate_speech(user_text, results, thinking)
         return {
-            "speech": speech,
+            "speech": strip_markdown_speech(speech),
             "actions": actions,
             "ui_card": ui_card,
             "follow_up": follow_ups[0] if follow_ups else "",

@@ -31,6 +31,39 @@ def test_single_card_unchanged():
     assert out["ui_card"]["type"] == "poi_list"
 
 
+def test_compose_strips_markdown_from_speech():
+    """speech 出口统一剥 markdown（2026-07-12 决策：不上渲染）：单步与多步聚合两路都剥。"""
+    agg = Aggregator(_fake_llm)
+    md = StepResult(step_id="s1", status=StepStatus.OK,
+                    speech="**结论**：`固态电池`更优。\n| A | B |\n|---|---|")
+    out = asyncio.run(agg.compose("查一下", [md]))
+    assert "**" not in out["speech"] and "`" not in out["speech"] and "|" not in out["speech"]
+    assert "结论：固态电池更优。" in out["speech"]
+
+    async def md_llm(messages, **kwargs):
+        return "**要点一**；`要点二`。"
+
+    agg2 = Aggregator(md_llm)
+    two = [StepResult(step_id="s1", status=StepStatus.OK, speech="a"),
+           StepResult(step_id="s2", status=StepStatus.OK, speech="b")]
+    out2 = asyncio.run(agg2.compose("多意图", two))
+    assert out2["speech"] == "要点一；要点二。"
+
+
+def test_md_delta_softener_strips_inline_across_chunks():
+    """D0 流式增量软化：** 与 ` 跨 chunk 剥除；单个 *（乘号）不误伤。"""
+    from orchestrator.cloud.aggregator import MdDeltaSoftener
+    s = MdDeltaSoftener()
+    out = [s.feed("这是**加"), s.feed("粗**和`代"), s.feed("码`片段"), s.flush()]
+    assert "".join(x for x in out if x) == "这是加粗和代码片段"
+    s2 = MdDeltaSoftener()
+    out2 = [s2.feed("3*"), s2.feed("4=12"), s2.flush()]
+    assert "".join(x for x in out2 if x) == "3*4=12"
+    s3 = MdDeltaSoftener()   # 跨 chunk 的 ** 对（尾悬单星 + 下个增量开头星）
+    out3 = [s3.feed("重点*"), s3.feed("*内容"), s3.flush()]
+    assert "".join(x for x in out3 if x) == "重点内容"
+
+
 def test_merges_charging_waypoint_into_navigate_action():
     """导航 navigate 动作 + 充电步 data.waypoint → 途经点并入 navigate.payload.waypoints。"""
     agg = Aggregator(_fake_llm)

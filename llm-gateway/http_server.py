@@ -140,7 +140,10 @@ def create_http_app() -> web.Application:
         try:
             raw = await request.read()
             body = json.loads(raw)
-            text = body.get("text", "")
+            # 批处理 TTS 与流式漏斗（providers._sentence_segments）同口径：合成前剥 markdown，
+            # 星号/井号/表格符不进语音（覆盖卡片全文朗读等 HMI 直发路径）。
+            from providers import _strip_md_tts
+            text = _strip_md_tts(body.get("text", ""))
             if not text:
                 return web.json_response({"error": "missing text"}, status=400)
 

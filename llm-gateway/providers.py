@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 
 import httpx
 
@@ -121,6 +122,75 @@ class AnthropicProvider(BaseProvider):
                 yield text
 
 
+# ── 推理模型 <think> 内联剥离 ────────────────────────────────────────────────
+# MiniMax-M3 等推理模型**开思考**时把思考段内联在 content 头部（`<think>…</think>\n\n正文`），
+# 而非独立 reasoning_content 字段（后者 stream 分支早已丢弃）。真栈探针（2026-07-12，四家
+# × complete/stream × 开/关思考）：仅 MiniMax 开思考泄漏，mimo/deepseek/qwen 干净。
+# 统一在 provider 出口剥——思考是内部推理，任何调用方（Planner/Agent/聚合）都不该收到。
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+def strip_think_block(text: str) -> str:
+    """剥离**头部** <think>…</think> 块。只看头部（推理模型先思考后作答），正文中间出现的
+    字面 <think> 不动（防误伤转述场景）。未闭合（被 max_tokens 截断在思考里）→ 无正文可用，
+    诚实返回空串（调用方按空响应既有兜底走重试/降级，绝不把半截思考当答案）。"""
+    t = text or ""
+    head = t.lstrip()
+    if not head.startswith(_THINK_OPEN):
+        return t
+    end = head.find(_THINK_CLOSE)
+    if end == -1:
+        return ""
+    return head[end + len(_THINK_CLOSE):].lstrip("\n").lstrip()
+
+
+class ThinkStreamStripper:
+    """流式头部 <think> 剥离状态机（与 strip_think_block 同语义，跨 chunk 安全）。
+
+    probe：缓冲首若干字符判定是否 `<think>` 前缀（判定窗 ≤ len("<think>")+前导空白，
+    普通回复只延迟一个包级别）；drop：吞到 `</think>` 后把余下正文放流；pass：透传。
+    """
+
+    def __init__(self):
+        self._mode = "probe"        # probe | drop | pass
+        self._buf = ""
+
+    def feed(self, delta: str) -> str:
+        if self._mode == "pass":
+            return delta
+        self._buf += delta
+        if self._mode == "probe":
+            probe = self._buf.lstrip()
+            if not probe:
+                return ""
+            if probe.startswith(_THINK_OPEN):
+                self._mode = "drop"
+            elif _THINK_OPEN.startswith(probe[:len(_THINK_OPEN)]):
+                return ""                       # 仍是 "<th" 类前缀，继续观望
+            else:
+                self._mode = "pass"
+                out, self._buf = self._buf, ""
+                return out
+        if self._mode == "drop":
+            end = self._buf.find(_THINK_CLOSE)
+            if end == -1:
+                return ""
+            rest = self._buf[end + len(_THINK_CLOSE):].lstrip("\n").lstrip()
+            self._mode = "pass"
+            self._buf = ""
+            return rest
+        return ""
+
+    def flush(self) -> str:
+        """流结束收尾：probe 残留（极短回复恰似 "<th" 前缀）原样放出不丢字；
+        drop 未闭合＝整段思考被截断，丢弃（与 strip_think_block 一致）。"""
+        if self._mode == "probe":
+            out, self._buf = self._buf, ""
+            return out
+        return ""
+
+
 class OpenAICompatibleProvider(BaseProvider):
     """OpenAI 兼容 Chat Completions 提供商（MiMo / OpenAI / DeepSeek / Qwen / 本地 vLLM 等）。
 
@@ -216,7 +286,7 @@ class OpenAICompatibleProvider(BaseProvider):
         resp.raise_for_status()
         data = resp.json()
 
-        content = data["choices"][0]["message"]["content"] or ""
+        content = strip_think_block(data["choices"][0]["message"]["content"] or "")
         usage = data.get("usage", {})
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
@@ -226,6 +296,7 @@ class OpenAICompatibleProvider(BaseProvider):
         body = self._build_body(messages, model, temperature, max_tokens, thinking, stream=True)
         # 流式：read 超时作 per-chunk stall 检测（无新 chunk 超时即中止），不让上游卡死吊死整链。
         stall = _read_budget(timeout_s, _STREAM_STALL_S)
+        stripper = ThinkStreamStripper()   # 头部 <think> 内联剥离（MiniMax 开思考泄漏，见下方注释）
         async with self._get_client().stream(
                 "POST", self.base_url, headers=self._headers(), json=body,
                 timeout=httpx.Timeout(stall, connect=_HTTP_CONNECT_S, pool=5.0)) as resp:
@@ -242,9 +313,14 @@ class OpenAICompatibleProvider(BaseProvider):
                     # 只取 content；reasoning_content（思考增量）刻意丢弃，不下发给用户。
                     text = delta.get("content", "")
                     if text:
-                        yield text
+                        out = stripper.feed(text)
+                        if out:
+                            yield out
                 except (json.JSONDecodeError, KeyError, IndexError):
                     continue
+        tail = stripper.flush()
+        if tail:
+            yield tail
 
 
     async def embed(self, texts, model="", timeout_s=None):
@@ -844,8 +920,28 @@ def _find_sentence_end(s: str) -> int:
     return -1
 
 
+# TTS 入口 markdown 清理：朗读文本可能来自任何历史/未来路径（speech 增量、卡片全文朗读、
+# proactive 报告），星号/井号/表格符进合成会被读出来或产生怪停顿。与
+# `agents/_sdk/grounding.strip_markdown_speech` 配对（llm-gateway 自包含服务，不跨包 import，
+# 保持最小实现；口径变化两处同步）。
+_TTS_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_TTS_MD_LINE = re.compile(r"(?m)^\s{0,3}(?:#{1,6}\s+|>\s?|[-*•]\s+|```.*$)")
+
+
+def _strip_md_tts(text: str) -> str:
+    t = text or ""
+    if not any(ch in t for ch in ("*", "#", "`", "|", "[", ">")):
+        return t
+    t = _TTS_MD_LINK.sub(r"\1", t)
+    t = _TTS_MD_LINE.sub("", t)
+    t = t.replace("**", "").replace("`", "")
+    t = t.replace("|", "，")            # 表格竖线读成顿号级停顿，不念符号
+    return t.strip()
+
+
 async def _sentence_segments(text_deltas, *, max_chars: int = 60):
-    """异步生成器：缓冲文本增量，遇句末标点或超 max_chars 即吐一整句，收尾 flush 余量。"""
+    """异步生成器：缓冲文本增量，遇句末标点或超 max_chars 即吐一整句，收尾 flush 余量。
+    句子组装完成后统一剥 markdown（跨增量的 ** 对已合并，此处剥不漏）。"""
     buf = ""
     async for delta in text_deltas:
         if not delta:
@@ -855,14 +951,14 @@ async def _sentence_segments(text_deltas, *, max_chars: int = 60):
             idx = _find_sentence_end(buf)
             if idx == -1:
                 break
-            seg, buf = buf[:idx + 1].strip(), buf[idx + 1:]
+            seg, buf = _strip_md_tts(buf[:idx + 1].strip()), buf[idx + 1:]
             if seg:
                 yield seg
         if len(buf) >= max_chars:
-            seg, buf = buf.strip(), ""
+            seg, buf = _strip_md_tts(buf.strip()), ""
             if seg:
                 yield seg
-    tail = buf.strip()
+    tail = _strip_md_tts(buf.strip())
     if tail:
         yield tail
 

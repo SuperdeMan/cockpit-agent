@@ -175,6 +175,20 @@ def test_synthesize_builds_sectioned_report_with_global_sources():
     assert report.freshness == "2026-06-25T00:00:00"
 
 
+def test_synthesize_strips_markdown_from_summary_and_body():
+    """prompt「纯文本无 markdown」是软约束——换 provider 后出口硬剥兜底；[N] 引用标记保留。"""
+    subqs = _subqs_with_evidence()
+    llm = FakeLLM(lambda m, **k: (
+        '{"summary":"**核心结论**：`固态`更优。","sections":['
+        '{"heading":"原理","body":"# 小标题\\n用**固态电解质**[1]。","citations":[1],'
+        '"confidence":"high"}],"overall_confidence":"medium","gaps":[]}'))
+    report = asyncio.run(pipeline.synthesize(llm, "固态电池", subqs))
+    assert report.summary == "核心结论：固态更优。"
+    body = report.sections[0].body
+    assert "**" not in body and "#" not in body
+    assert "[1]" in body                                # 引用编号不受影响
+
+
 def test_synthesize_drops_invalid_citations():
     subqs = _subqs_with_evidence()
     llm = FakeLLM(lambda m, **k: (

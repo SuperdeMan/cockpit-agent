@@ -14,7 +14,7 @@ from typing import AsyncIterator
 from .models import Plan, Step, StepResult, StepStatus, PlanContext, SessionState
 from .planning import PlanBuilder
 from .executor import DagExecutor
-from .aggregator import Aggregator
+from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
 from .session import SessionStore
 from .loop import LoopController
 from .context import ContextManager, build_context, _POC_DEFAULT_SCOPES
@@ -275,13 +275,16 @@ class PlannerEngine:
             step = plan.steps[0]
             _d0_start = time.monotonic()
             streamed = False
+            softener = MdDeltaSoftener()   # 流式增量剥 **/`（final 由 compose 出口彻底清理）
             final_sr: StepResult | None = None
             try:
                 async for kind, payload in self.clients.call_agent_stream(
                         step.endpoint, step.intent, step.slots, ctx, step.meta):
                     if kind == "speech":
                         streamed = True
-                        yield {"kind": "speech", "delta": payload}
+                        payload = softener.feed(payload)
+                        if payload:
+                            yield {"kind": "speech", "delta": payload}
                     elif kind == "action":
                         streamed = True
                         yield {"kind": "action", "action": payload}
@@ -376,10 +379,11 @@ class PlannerEngine:
                         summary=summary, status="done", step_id=step.id)
 
             # 非复杂任务每步完成后 yield 话术（HMI 流式显示）；复杂任务逐步信息走过程区，
-            # 气泡只留最终答案，避免与过程区重复刷屏。
+            # 气泡只留最终答案，避免与过程区重复刷屏。整步文本此处就位，直接完整剥 md。
             if (step_result.speech and step_result.status == StepStatus.OK
                     and not complex_task):
-                yield {"kind": "speech", "delta": step_result.speech + "。"}
+                yield {"kind": "speech",
+                       "delta": strip_markdown_speech(step_result.speech) + "。"}
 
             # 挂起：需确认/需补槽
             if step_result.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
