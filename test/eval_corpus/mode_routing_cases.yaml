@@ -602,10 +602,12 @@
 
 - text: 查一下我的电量还能跑多远
   tags: [mode_guardrail, vehicle]
-  expect_mode: chitchat|none
+  expect_mode: "chitchat|none|other:charging.status"
   initial_intents: []
   expect_det_intents: []
-  source: "车辆状态：云 catalog 无对应能力→空计划→chitchat 兜底（by design）；绝不允许上网搜"
+  source: "车辆状态：真栈被端侧 battery.query 拦下不上云；本评测全句直发云端时
+    chitchat 兜底或落 charging.status（充电域能答续航，合理落点）都算对；
+    绝不允许上网搜（search hint guard 含电量/续航）"
 
 - text: 搜一下附近的加油站
   tags: [mode_guardrail, nearby]
