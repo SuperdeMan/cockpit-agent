@@ -1,32 +1,32 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-07-12T07:25:12.257885+00:00",
-    "commit": "f210eb2"
+    "generated_at": "2026-07-12T08:12:58.897425+00:00",
+    "commit": "31cdf31"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 28
+      "count": 47
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 19,
-      "passed": 19,
+      "total": 29,
+      "passed": 29,
       "failures": [],
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 9,
-      "passed": 9,
+      "total": 18,
+      "passed": 18,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 28,
-    "passed": 28,
+    "total": 47,
+    "passed": 47,
     "pass_rate": 1.0
   },
   "cases": {
@@ -529,6 +529,350 @@
         "lead"
       ],
       "source": "docs/design/2026-07-11-reminder-cross-domain.md §3.3 lead"
+    },
+    "route::搜一下固态电池最新进展": {
+      "id": "route::搜一下固态电池最新进展",
+      "bucket": "route_recall",
+      "text": "搜一下固态电池最新进展",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "replace",
+        "recall"
+      ],
+      "source": "search hint 召回：LLM 全挂/降级时显式搜索动词也有网兜"
+    },
+    "route::帮我查一下iPhone现在什么价格": {
+      "id": "route::帮我查一下iPhone现在什么价格",
+      "bucket": "route_recall",
+      "text": "帮我查一下iPhone现在什么价格",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "replace",
+        "recall"
+      ],
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\test\\eval_corpus\\route_hints_cases.yaml"
+    },
+    "route::检索一下宁德时代最新财报要点": {
+      "id": "route::检索一下宁德时代最新财报要点",
+      "bucket": "route_recall",
+      "text": "检索一下宁德时代最新财报要点",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "replace",
+        "recall"
+      ],
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\test\\eval_corpus\\route_hints_cases.yaml"
+    },
+    "route::查一下固态电池": {
+      "id": "route::查一下固态电池",
+      "bucket": "route_guardrail",
+      "text": "查一下固态电池",
+      "expected": [
+        "info.search"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "already_routed"
+      ],
+      "source": "already-routed 保留态（replace 命中但 intent 已在计划）"
+    },
+    "route::搜索引擎是怎么工作的": {
+      "id": "route::搜索引擎是怎么工作的",
+      "bucket": "route_guardrail",
+      "text": "搜索引擎是怎么工作的",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "guardrail"
+      ],
+      "source": "「搜索引擎」名词开头不是搜索指令——pattern 用 搜索(?!引擎)"
+    },
+    "route::查理和巧克力工厂是谁写的": {
+      "id": "route::查理和巧克力工厂是谁写的",
+      "bucket": "route_guardrail",
+      "text": "查理和巧克力工厂是谁写的",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "guardrail"
+      ],
+      "source": "裸「查」刻意不进动词表（查理≠查询）"
+    },
+    "route::查一下我老婆叫什么名字": {
+      "id": "route::查一下我老婆叫什么名字",
+      "bucket": "route_guardrail",
+      "text": "查一下我老婆叫什么名字",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "guardrail",
+        "personal"
+      ],
+      "source": "个人事实走 chitchat 记忆召回，不上网搜（guard 我老婆/我的）"
+    },
+    "route::查一下明天杭州的天气": {
+      "id": "route::查一下明天杭州的天气",
+      "bucket": "route_guardrail",
+      "text": "查一下明天杭州的天气",
+      "expected": [
+        "info.forecast"
+      ],
+      "actual": [
+        "info.forecast"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "guardrail",
+        "weather"
+      ],
+      "source": "guard 天气/预报：已正确路由的 forecast 不被劫持"
+    },
+    "route::查一下这周末适不适合洗车": {
+      "id": "route::查一下这周末适不适合洗车",
+      "bucket": "route_guardrail",
+      "text": "查一下这周末适不适合洗车",
+      "expected": [
+        "info.indices"
+      ],
+      "actual": [
+        "info.indices"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "guardrail",
+        "indices"
+      ],
+      "source": "guard 洗车/指数：生活指数域不被劫持"
+    },
+    "route::搜一下附近的加油站": {
+      "id": "route::搜一下附近的加油站",
+      "bucket": "route_recall",
+      "text": "搜一下附近的加油站",
+      "expected": [
+        "nearby.search"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "guardrail",
+        "nearby",
+        "cross_hint"
+      ],
+      "source": "guard 附近/加油站 让位 → nearby(55) 自己接住"
+    },
+    "route::查一下我的待办": {
+      "id": "route::查一下我的待办",
+      "bucket": "route_recall",
+      "text": "查一下我的待办",
+      "expected": [
+        "reminder.list"
+      ],
+      "actual": [
+        "reminder.list"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "guardrail",
+        "reminder",
+        "cross_hint"
+      ],
+      "source": "guard 待办 让位 → reminder.list(56) 接住（59 不遮蔽 56）"
+    },
+    "route::搜一下周杰伦的歌": {
+      "id": "route::搜一下周杰伦的歌",
+      "bucket": "route_guardrail",
+      "text": "搜一下周杰伦的歌",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "guardrail",
+        "media"
+      ],
+      "source": "guard 的歌：媒体域在 edge，云侧 hint 不接"
+    },
+    "route::帮我查一下并深入调研固态电池": {
+      "id": "route::帮我查一下并深入调研固态电池",
+      "bucket": "route_recall",
+      "text": "帮我查一下并深入调研固态电池",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "search",
+        "research",
+        "guardrail",
+        "cross_hint"
+      ],
+      "source": "guard 深入/调研 让位 research(100)——调研请求不被降级成单次搜索"
+    },
+    "route::今天有什么新闻": {
+      "id": "route::今天有什么新闻",
+      "bucket": "route_recall",
+      "text": "今天有什么新闻",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "news",
+        "replace",
+        "recall"
+      ],
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\test\\eval_corpus\\route_hints_cases.yaml"
+    },
+    "route::来点科技新闻": {
+      "id": "route::来点科技新闻",
+      "bucket": "route_recall",
+      "text": "来点科技新闻",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "news",
+        "replace",
+        "recall"
+      ],
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\test\\eval_corpus\\route_hints_cases.yaml"
+    },
+    "route::英伟达最新消息": {
+      "id": "route::英伟达最新消息",
+      "bucket": "route_recall",
+      "text": "英伟达最新消息",
+      "expected": [
+        "info.news"
+      ],
+      "actual": [
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "news",
+        "replace",
+        "recall",
+        "topic_form"
+      ],
+      "source": "话题式「X最新消息」=浏览该主题近况 → news"
+    },
+    "route::播放新闻联播": {
+      "id": "route::播放新闻联播",
+      "bucket": "route_guardrail",
+      "text": "播放新闻联播",
+      "expected": [
+        "media.play"
+      ],
+      "actual": [
+        "media.play"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "news",
+        "guardrail",
+        "media"
+      ],
+      "source": "guard 播/联播：媒体播放不被新闻 hint 劫持"
+    },
+    "route::提醒我晚上看新闻联播": {
+      "id": "route::提醒我晚上看新闻联播",
+      "bucket": "route_recall",
+      "text": "提醒我晚上看新闻联播",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "news",
+        "guardrail",
+        "reminder",
+        "cross_hint"
+      ],
+      "source": "「提醒我」reminder(56) 接住；news hint pattern 不命中 + guard 提醒/联播 双保险"
+    },
+    "route::搜一下今天的新闻": {
+      "id": "route::搜一下今天的新闻",
+      "bucket": "route_guardrail",
+      "text": "搜一下今天的新闻",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "news",
+        "search",
+        "guardrail",
+        "deliberate_gap"
+      ],
+      "source": "刻意保守面：search guard 含新闻、news guard 含搜——双 hint 互斥都不命中，留给 LLM 判据段（P0-3）决定"
     }
   }
 }

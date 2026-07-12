@@ -200,3 +200,117 @@
   expect_final_intents: [reminder.create]
   source: "docs/design/2026-07-11-reminder-cross-domain.md §3.3 lead"
   tags: [reminder, cross_domain, lead]
+
+# ── 四模式 P0-4（2026-07-12）：info.search / info.news 确定性护栏 ──
+# 设计 docs/design/2026-07-12-mode-routing-and-answer-quality.md §2 P0-4
+
+- text: 搜一下固态电池最新进展
+  initial_intents: []
+  expect_final_intents: [info.search]
+  source: "search hint 召回：LLM 全挂/降级时显式搜索动词也有网兜"
+  tags: [search, replace, recall]
+
+- text: 帮我查一下iPhone现在什么价格
+  initial_intents: []
+  expect_final_intents: [info.search]
+  tags: [search, replace, recall]
+
+- text: 检索一下宁德时代最新财报要点
+  initial_intents: []
+  expect_final_intents: [info.search]
+  tags: [search, replace, recall]
+
+- text: 查一下固态电池
+  initial_intents: [info.search]
+  expect_final_intents: [info.search]
+  source: "already-routed 保留态（replace 命中但 intent 已在计划）"
+  tags: [search, already_routed]
+
+- text: 搜索引擎是怎么工作的
+  initial_intents: []
+  expect_final_intents: []
+  source: "「搜索引擎」名词开头不是搜索指令——pattern 用 搜索(?!引擎)"
+  tags: [search, guardrail]
+
+- text: 查理和巧克力工厂是谁写的
+  initial_intents: []
+  expect_final_intents: []
+  source: "裸「查」刻意不进动词表（查理≠查询）"
+  tags: [search, guardrail]
+
+- text: 查一下我老婆叫什么名字
+  initial_intents: []
+  expect_final_intents: []
+  source: "个人事实走 chitchat 记忆召回，不上网搜（guard 我老婆/我的）"
+  tags: [search, guardrail, personal]
+
+- text: 查一下明天杭州的天气
+  initial_intents: [info.forecast]
+  expect_final_intents: [info.forecast]
+  source: "guard 天气/预报：已正确路由的 forecast 不被劫持"
+  tags: [search, guardrail, weather]
+
+- text: 查一下这周末适不适合洗车
+  initial_intents: [info.indices]
+  expect_final_intents: [info.indices]
+  source: "guard 洗车/指数：生活指数域不被劫持"
+  tags: [search, guardrail, indices]
+
+- text: 搜一下附近的加油站
+  initial_intents: []
+  expect_final_intents: [nearby.search]
+  source: "guard 附近/加油站 让位 → nearby(55) 自己接住"
+  tags: [search, guardrail, nearby, cross_hint]
+
+- text: 查一下我的待办
+  initial_intents: []
+  expect_final_intents: [reminder.list]
+  source: "guard 待办 让位 → reminder.list(56) 接住（59 不遮蔽 56）"
+  tags: [search, guardrail, reminder, cross_hint]
+
+- text: 搜一下周杰伦的歌
+  initial_intents: []
+  expect_final_intents: []
+  source: "guard 的歌：媒体域在 edge，云侧 hint 不接"
+  tags: [search, guardrail, media]
+
+- text: 帮我查一下并深入调研固态电池
+  initial_intents: []
+  expect_final_intents: [research.run]
+  source: "guard 深入/调研 让位 research(100)——调研请求不被降级成单次搜索"
+  tags: [search, research, guardrail, cross_hint]
+
+- text: 今天有什么新闻
+  initial_intents: []
+  expect_final_intents: [info.news]
+  tags: [news, replace, recall]
+
+- text: 来点科技新闻
+  initial_intents: []
+  expect_final_intents: [info.news]
+  tags: [news, replace, recall]
+
+- text: 英伟达最新消息
+  initial_intents: []
+  expect_final_intents: [info.news]
+  source: "话题式「X最新消息」=浏览该主题近况 → news"
+  tags: [news, replace, recall, topic_form]
+
+- text: 播放新闻联播
+  initial_intents: [media.play]
+  expect_final_intents: [media.play]
+  source: "guard 播/联播：媒体播放不被新闻 hint 劫持"
+  tags: [news, guardrail, media]
+
+- text: 提醒我晚上看新闻联播
+  initial_intents: []
+  expect_final_intents: [reminder.create]
+  source: "「提醒我」reminder(56) 接住；news hint pattern 不命中 + guard 提醒/联播 双保险"
+  tags: [news, guardrail, reminder, cross_hint]
+
+- text: 搜一下今天的新闻
+  initial_intents: []
+  expect_final_intents: []
+  source: "刻意保守面：search guard 含新闻、news guard 含搜——双 hint 互斥都不命中，留给
+    LLM 判据段（P0-3）决定"
+  tags: [news, search, guardrail, deliberate_gap]
