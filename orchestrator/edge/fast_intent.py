@@ -286,7 +286,7 @@ def classify_structured(text: str) -> dict | None:
 
     # ── 空调 ──────────────────────────────────────────────
     if ("空调" in t and "界面" not in t and "页面" not in t) or \
-            ("温度" in t and "查" not in t and "几度" not in t and "多少" not in t) or \
+            ("温度" in t and not _is_env_temp_query(t)) or \
             "风速" in t or "风量" in t or \
             (("热" in t or "冷" in t) and ("度" in t or "一点" in t or "再" in t)):
         if "关" in t:
@@ -984,7 +984,13 @@ def classify_structured(text: str) -> dict | None:
     #   气象局=地点（走导航）/ 含「预警」=云端 info.alerts（非端侧天气查询），防劫持。
     if "天气" in t or ("气象" in t and "气象局" not in t and "预警" not in t):
         return _s("query", "query", "query", "weather", conf=0.9)
-    if "温度" in t and ("查" in t or "多少" in t or "几度" in t):
+    # 体感/气温=纯天气语义（info.weather 的 speech 自带体感温度），疑问式一并接住
+    # （badcase 361f6e72：「今天体感温度怎么样」原两头不沾，被空调分支劫持）。
+    if ("体感" in t or "气温" in t) and \
+            ("查" in t or "多少" in t or "几度" in t or "怎么样" in t or "怎样" in t or "如何" in t):
+        return _s("query", "query", "query", "weather", conf=0.9)
+    if "温度" in t and ("查" in t or "多少" in t or "几度" in t
+                       or "怎么样" in t or "怎样" in t or "如何" in t):
         return _s("query", "query", "query", "temperature", conf=0.9)
     if "湿度" in t and ("查" in t or "多少" in t):
         return _s("query", "query", "query", "humidity", conf=0.9)
@@ -1252,6 +1258,28 @@ def _extract_level(t: str) -> str | None:
         d = m.group(1)
         return _cn_digit_map.get(d, d)
     return None
+
+
+# 「温度」出现但语义是问天气/环境温度（badcase 361f6e72：「今天体感温度怎么样」
+# 被裸「温度」子条件劫持成开空调——问天气误触车控执行）。
+_ENV_TEMP_CTX = ("体感", "天气", "气温", "外面", "室外", "户外")
+_TEMP_INTERROGATIVES = ("怎么样", "怎样", "如何", "冷不冷", "热不热")
+_AC_ADJUST_VERBS = ("调", "设", "开", "关", "升", "降", "加", "减")
+
+
+def _is_env_temp_query(t: str) -> bool:
+    """裸「温度」该不该让给天气/环境查询。三层：
+    ① 查/几度/多少 —— 原空调分支的既有排除，无条件保留（不动 eval 基线）；
+    ② 天气语境词（体感/气温/室外…）—— 无条件让路；
+    ③ 疑问式（怎么样/如何…）—— 仅在没有空调操作动词时让路
+      （「温度如何调高」仍归空调，「温度怎么样」归查询）。"""
+    if "查" in t or "几度" in t or "多少" in t:
+        return True
+    if any(k in t for k in _ENV_TEMP_CTX):
+        return True
+    if any(v in t for v in _AC_ADJUST_VERBS):
+        return False
+    return any(k in t for k in _TEMP_INTERROGATIVES)
 
 
 def _extract_temperature(t: str) -> int | None:

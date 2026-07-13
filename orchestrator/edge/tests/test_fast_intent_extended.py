@@ -438,3 +438,35 @@ def test_climate_feeling_guard_requires_temp_wind_and_direction():
     assert climate_feeling_intents("把空调风速调一下") is None       # 只风速
     assert climate_feeling_intents("空调温度和风速调一下") is None    # 无冷热方向
     assert climate_feeling_intents("导航去公司") is None             # 与空调无关
+
+
+# ═══════════════════════════════════════════════════
+# badcase 361f6e72：温度问句不得误触空调（车控误执行）
+# ═══════════════════════════════════════════════════
+
+class TestEnvTempQueryNotHvac:
+    """「今天体感温度怎么样」曾被裸「温度」子条件劫持成 hvac 开启（3ms 本地执行）。
+    天气语境/疑问式让路查询；带操作动词仍归空调。"""
+
+    def _name(self, text):
+        r = classify(text)
+        return r["name"] if r else None
+
+    def test_feels_like_question_goes_weather(self):
+        assert self._name("今天体感温度怎么样") == "info.weather"
+
+    def test_outdoor_temp_goes_weather(self):
+        assert self._name("外面气温多少") == "info.weather"
+
+    def test_bare_temp_interrogative_not_hvac(self):
+        n = self._name("温度怎么样")
+        assert n is None or not n.startswith(("hvac", "aircon"))
+
+    def test_temp_adjust_still_hvac(self):
+        # 空调域名字双轨（set→hvac.set / inc→aircon.inc，既有现状），前缀二选一即在域内
+        for text in ("温度调到26度", "温度调高一点", "温度如何调高"):
+            n = self._name(text)
+            assert n and n.startswith(("hvac", "aircon")), f"{text} -> {n}"
+
+    def test_ac_keyword_still_hvac(self):
+        assert (self._name("打开空调") or "").startswith("hvac")
