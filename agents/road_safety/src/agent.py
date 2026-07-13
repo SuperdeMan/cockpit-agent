@@ -155,9 +155,11 @@ class RoadSafetyAgent(BaseAgent):
         """综合天气+路况给出驾驶安全建议。"""
         dest = intent.slots.get("destination", "").strip()
         if not dest:
-            return AgentResult(
-                status=NEED_SLOT, speech="您要去哪里？",
-                follow_up="请告诉我目的地", missing_slots=["destination"])
+            # badcase 11db5215：「今天天气怎么样，适合出行吗」这类泛出行询问被规划到
+            # 本能力时，反问「您要去哪里？」会在多步 plan 里吞掉并行天气步的答案。
+            # 无目的地 → 按当前位置天气给一般性出行建议（不追问）；真要路线级建议的
+            # 用户会带目的地（「开车去上海安全吗」走下方原逻辑）。
+            return await self._general_advice(ctx, meta)
 
         # 并行调用 info.weather + info.forecast + navigation.search_poi
         try:
@@ -218,6 +220,32 @@ class RoadSafetyAgent(BaseAgent):
                      "route": route_info},
             follow_up="需要帮您打开除雾或导航到服务区吗？",
         )
+
+    async def _general_advice(self, ctx, meta) -> AgentResult:
+        """无目的地的一般性出行建议：当前位置天气实况 + 按天气现象的确定性驾驶提示
+        （零 LLM——泛询问要快、要稳，路线级建议才走 LLM 综合）。"""
+        weather = ""
+        card = None
+        try:
+            res = await self.agents.call("info", "info.weather", {}, ctx)
+            if res is not None and res.status == "ok" and res.speech:
+                weather = res.speech.strip()
+                card = res.ui_card or None
+        except Exception as e:
+            logger.debug("road-safety: general advice weather query failed: %s", e)
+        if "雨" in weather:
+            tip = "有降雨，路面湿滑，建议减速慢行、保持车距。"
+        elif "雪" in weather:
+            tip = "有降雪，注意防滑，缓加速、缓刹车。"
+        elif "雾" in weather or "霾" in weather:
+            tip = "能见度可能受限，请打开雾灯、控制车速。"
+        elif weather:
+            tip = "天气状况良好，适合出行，注意劳逸结合。"
+        else:
+            tip = "暂时没拿到天气实况，出行请减速慢行、保持车距。"
+        speech = f"{weather}{tip}" if weather else tip
+        return AgentResult(speech=speech, ui_card=card,
+                           follow_up="需要我按目的地给更具体的路线建议吗？")
 
     async def _weather_alert(self, intent, ctx, meta) -> AgentResult:
         """查询天气预警。"""

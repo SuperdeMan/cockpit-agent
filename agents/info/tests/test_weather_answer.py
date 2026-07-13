@@ -80,3 +80,49 @@ def test_day_label(monkeypatch):
     assert W._day_label("2026-07-15") == "后天"
     assert W._day_label("2026-07-17") == "17号"
     assert W._day_label("bad") == "bad"
+
+
+# ── 实时天气意图先答（badcase 11db5215：「今天天气怎么样，适合出行吗」只机械播报）──
+from types import SimpleNamespace as _NS
+
+
+def _now(text="阴", temp="33", feels="35"):
+    return _NS(text=text, temp=temp, feels_like=feels)
+
+
+def test_go_out_question_hot_day():
+    out = W._weather_answer("今天天气怎么样，适合出行码", _now(), _mk("2026-07-13", "阴", "多云"), [])
+    assert out.startswith("适合出行") and "防晒" in out
+
+
+def test_go_out_question_rainy_day():
+    out = W._weather_answer("适合出门吗", _now("小雨"), _mk("2026-07-13", "小雨", "中雨"), [])
+    assert "带伞" in out
+
+
+def test_go_out_question_with_alert():
+    alert = _NS(type_name="暴雨", title="暴雨橙色预警")
+    out = W._weather_answer("适合出行吗", _now(), None, [alert])
+    assert "暴雨" in out and "预警" in out
+
+
+def test_go_out_mild_day():
+    out = W._weather_answer("适合出去玩吗", _now("晴", "24", "25"), _mk("2026-07-13", "晴", "晴"), [])
+    assert out.startswith("适合出行")
+
+
+def test_rain_question_current():
+    assert "带伞" in W._weather_answer("外面下雨吗", _now("小雨"), None, [])
+    assert W._weather_answer("下雨了吗", _now("晴"), _mk("2026-07-13", "晴", "晴"), []) == "今天没有降雨。"
+
+
+def test_generic_weather_ask_no_lead():
+    assert W._weather_answer("今天天气怎么样", _now(), None, []) == ""
+    assert W._weather_answer("", _now(), None, []) == ""
+
+
+def test_forecast_go_out_rule(monkeypatch):
+    _freeze_today(monkeypatch, "2026-07-13")
+    out = W._forecast_answer("未来几天适合出行吗", _MIXED3)
+    assert "明天" in out and "带伞" in out
+    assert W._forecast_answer("这几天适合出门吗", _DRY3) == "未来3天没有雨雪，适合出行。"

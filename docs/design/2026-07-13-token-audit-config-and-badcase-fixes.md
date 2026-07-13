@@ -39,6 +39,7 @@
 | —（UI） | 右舞台电量/续航/挡位写死 62%/430km/P | ContextualStage 占位 mock | edge-gateway 订阅 `vehicle.state.changed`（复用 edge 既有 30s 周期全量快照，编排器零改动）合并镜像→HMI **连上即推** + 变更去重广播 `{type:"vehicle_state",state}`；HMI `vehicleStage.mjs`（缺数据诚实 `--`，续航=`range_km` 优先/电量×550 折算） |
 | a3fad033 | 预测类兜底不答问题 | **4xx 响应体捕获当轮兑现：MiniMax 422 = `input new_sensitive (1026)` 内容风控**（检索源夹带敏感站正文整包被拒；编码/体量/赔率假设均否定） | `grounded_synthesis` 识别风控拒收（sensitive/data_inspection/content_filter）→ **收窄权威 top-2 重试一次**；llm-gateway 4xx(400/403/413/422)→`INVALID_ARGUMENT`（SDK 只重试 UNAVAILABLE，不再白打第二遍） |
 | 361f6e72 | 「今天体感温度怎么样」3ms 开空调（**问天气误触车控**） | 端侧裸「温度」子条件劫持疑问句 | `_is_env_temp_query` 三层让路：查/几度/多少既有排除不动基线；体感/气温/天气/室外语境**无条件**；怎么样/如何疑问式仅**无操作动词**时（「温度如何调高」仍归空调）+ 天气查询分支补体感/气温/疑问式→info.weather；`eval_fast_intent` 57/57 零回归 |
+| 11db5215 | 「今天天气怎么样，适合出行吗」只机械播报当前天气 | 三层叠加：① 实时天气 handler 无意图先答（07-13 上午只补了 forecast）；② 该句路由随模型漂（MiniMax→info.weather / mimo→多步含 safety.driving_advice）；③ 多步 plan 中 road-safety 缺目的地 NEED_SLOT 反问「您要去哪里？」**吞掉并行天气步答案** | ① `_weather_answer` 实时版意图先答（出行适宜性/雨/雪/冷热，依据实况+当日预报+预警，`_forecast_answer` 同步补出行规则）；② info manifest 新增天气×出行 route_hint（priority 57，字符类**不排逗号**——两词隔逗号跨子句是关键形态；guard=导航/路线/驾驶语义让位），`eval_route_hints` 52/52（+5 case）；③ road-safety 无目的地改**一般性出行建议**（当前位置天气+确定性驾驶提示，零 LLM，不再 NEED_SLOT 反问）——三种形态真栈重放全过（单步带 lead / 多步聚合直答 / guard 不劫持） |
 
 ## 5. 验收与坑
 

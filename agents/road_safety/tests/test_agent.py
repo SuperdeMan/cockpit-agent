@@ -16,14 +16,29 @@ from agents._sdk.testing import make_context, run_handle
 from agents.road_safety.src.agent import RoadSafetyAgent
 
 
-def test_driving_advice_needs_destination():
-    """safety.driving_advice 无目的地 → NEED_SLOT"""
+def test_driving_advice_without_destination_gives_general_advice():
+    """safety.driving_advice 无目的地 → 一般性出行建议，不再反问目的地
+    （badcase 11db5215：多步 plan 里 NEED_SLOT 追问会吞掉并行天气步的答案）。"""
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(
+        status="ok", speech="深圳市南山区当前小雨，气温33℃。"))
     ctx = make_context()
     res = asyncio.run(run_handle(
-        RoadSafetyAgent(), "safety.driving_advice",
-        slots={}, raw_text="路上怎么样", ctx=ctx))
-    assert res.status == "need_slot"
-    assert "destination" in res.missing_slots
+        agent, "safety.driving_advice",
+        slots={}, raw_text="今天天气怎么样，适合出行吗", ctx=ctx))
+    assert res.status == "ok"
+    assert "减速慢行" in res.speech and "小雨" in res.speech
+
+
+def test_driving_advice_general_weather_unavailable():
+    """无目的地且天气协作失败 → 仍给保守建议，不 NEED_SLOT 不报错。"""
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="failed", speech=""))
+    res = asyncio.run(run_handle(
+        agent, "safety.driving_advice", slots={}, raw_text="适合出行吗",
+        ctx=make_context()))
+    assert res.status == "ok"
+    assert "减速慢行" in res.speech
 
 
 def test_weather_alert_needs_city():

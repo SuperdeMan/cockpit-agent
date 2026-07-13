@@ -314,3 +314,35 @@
   source: "刻意保守面：search guard 含新闻、news guard 含搜——双 hint 互斥都不命中，留给
     LLM 判据段（P0-3）决定"
   tags: [news, search, guardrail, deliberate_gap]
+
+# badcase 11db5215（2026-07-13）：天气×出行组合句确定性落 info.weather——
+# 弱 LLM 会漂到 safety.driving_advice 反问目的地。两词隔逗号跨子句是关键形态。
+- text: 今天天气怎么样，适合出行吗
+  initial_intents: []
+  expect_final_intents: [info.weather]
+  source: "badcase 11db5215 (2026-07-13)"
+  tags: [weather, go-out, replace]
+
+- text: 今天天气怎么样，适合出行码
+  initial_intents: [safety.driving_advice]
+  expect_final_intents: [info.weather]
+  source: "badcase 11db5215 原始 ASR 同音字形态，误路由被 replace 纠正"
+  tags: [weather, go-out, replace]
+
+- text: 适合出门吗，外面天气如何
+  initial_intents: []
+  expect_final_intents: [info.weather]
+  source: "badcase 11db5215 反序形态"
+  tags: [weather, go-out, replace]
+
+- text: 导航去机场，路上天气适合出行吗
+  initial_intents: [navigate.to]
+  expect_final_intents: [navigate.to]
+  source: "badcase 11db5215 guard：路线/导航语义让位，不劫持"
+  tags: [weather, go-out, guard]
+
+- text: 明天适合出行吗
+  initial_intents: []
+  expect_final_intents: []
+  source: "badcase 11db5215 双词共现约束：无天气词的纯出行问法不召回（留给 LLM）"
+  tags: [weather, go-out, no-hit]

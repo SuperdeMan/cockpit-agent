@@ -104,6 +104,19 @@ route_hints:
     priority: 59
     slots: {}
 
+  # c) 天气×出行组合句 → info.weather（badcase 11db5215：「今天天气怎么样，适合出行吗」
+  #    弱 LLM 会漂到 safety.driving_advice 反问目的地——用户问的是天气适宜性不是路线
+  #    建议；weather handler 的意图先答（_weather_answer）直接给「适合出行/带伞/防晒」
+  #    结论）。双词共现防误伤纯出行意图；字符类排「。！？」**不排逗号**——原句两词隔
+  #    逗号跨子句。guard=路线/驾驶语义让位 navigation/road-safety。已知边界：显式点名
+  #    城市的组合句（「杭州天气适合出行吗」）city 槽会丢、按当前定位作答（占比低可接受）。
+  - pattern: '(天气|下雨|下雪|气温)[^。！？]{0,14}(出行|出门|出去)|(适合|适不适合|能不能|可以)(出行|出门|出去)[^。！？]{0,12}(天气|下雨|下雪|气温)'
+    guard: '导航|路线|路况|怎么走|驾驶建议|高速'
+    intent: info.weather
+    policy: replace
+    priority: 57
+    slots: {}
+
 requires_permissions:
   - network.external
   - location.read

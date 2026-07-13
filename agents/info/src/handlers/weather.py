@@ -57,14 +57,69 @@ def _max_wind_scale(forecast) -> int:
     return top
 
 
+def _num(v) -> int | None:
+    try:
+        return int(float(str(v).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+_GO_OUT_WORDS = ("出行", "出门", "出去", "上路")
+
+
+def _weather_answer(raw: str, w, today, alerts) -> str:
+    """实时天气的意图先答（badcase 11db5215：「今天天气怎么样，适合出行吗」只机械
+    播报当前天气）：出行适宜性/雨/雪/冷热穿衣四类问法，依据实况+当日预报+预警给
+    直接回答；泛问「天气怎么样」不加前导。纯确定性，零额外延迟/token。"""
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    texts = " ".join(filter(None, [
+        getattr(w, "text", ""), getattr(today, "text_day", "") if today else "",
+        getattr(today, "text_night", "") if today else ""]))
+    rainy, snowy = "雨" in texts, "雪" in texts
+    feels = _num(getattr(w, "feels_like", "")) or _num(getattr(w, "temp", ""))
+    if any(k in raw for k in _GO_OUT_WORDS):
+        if alerts:
+            a = alerts[0]
+            kind = getattr(a, "type_name", "") or getattr(a, "title", "") or "天气"
+            return f"今天有{kind}预警，出行请注意安全。"
+        if rainy:
+            return "可以出行，但今天有雨，记得带伞、路上慢行。"
+        if snowy:
+            return "今天有雪，出行注意路面湿滑、减速慢行。"
+        if feels is not None and feels >= 33:
+            return "适合出行，不过比较热，注意防晒和补水。"
+        if feels is not None and feels <= 0:
+            return "可以出行，但气温很低，注意保暖。"
+        return "适合出行，今天天气不错。"
+    if "雨" in raw or "伞" in raw:
+        return "今天有雨，出门记得带伞。" if rainy else "今天没有降雨。"
+    if "雪" in raw:
+        return "今天有雪，注意路面湿滑。" if snowy else "今天不会下雪。"
+    if any(k in raw for k in ("冷", "热", "穿")):
+        if feels is None:
+            return ""
+        feel_desc = "比较热" if feels >= 30 else ("比较冷" if feels <= 10 else "体感比较舒适")
+        return f"现在体感{feels}℃，{feel_desc}。"
+    return ""
+
+
 def _forecast_answer(raw: str, forecast) -> str:
-    """意图先答：用户问「会不会下雨/下雪、冷不冷、风大不大」时，先依据预报数据给
-    直接回答，随后再接逐日摘要；罗列型问法（「未来三天天气」）不加前导。
+    """意图先答：用户问「会不会下雨/下雪、冷不冷、风大不大、适不适合出行」时，先依据
+    预报数据给直接回答，随后再接逐日摘要；罗列型问法（「未来三天天气」）不加前导。
     纯确定性规则，零额外延迟/token（天气域刻意不走 LLM 的既有取向）。"""
     raw = (raw or "").strip()
     if not raw or not forecast:
         return ""
     n = len(forecast)
+    if any(k in raw for k in _GO_OUT_WORDS):
+        hits = [d for d in forecast if "雨" in f"{d.text_day}{d.text_night}"
+                or "雪" in f"{d.text_day}{d.text_night}"]
+        if not hits:
+            return f"未来{n}天没有雨雪，适合出行。"
+        labels = "、".join(_day_label(d.date) for d in hits[:4])
+        return f"可以出行，但{labels}有雨雪，记得带伞、路上慢行。"
     for kw, verb, tip in (("雨", "下雨", "出门记得带伞。"),
                           ("雪", "下雪", "注意路面湿滑。")):
         if kw in raw or (kw == "雨" and "伞" in raw):
@@ -113,7 +168,11 @@ class WeatherMixin:
         provider_city = "" if _is_coordinate_label(w.city) else w.city
         name = display_city or provider_city or "当前位置"
         accuracy_note = self._location_accuracy_note(meta)
-        parts = [f"{_speech_place(name)}当前{w.text or '天气'}"]
+        # 意图先答（适合出行吗/会下雨吗/冷不冷…）再接实况摘要（badcase 11db5215）
+        lead = _weather_answer(intent.raw_text, w,
+                               overview.forecast[0] if overview.forecast else None,
+                               overview.alerts)
+        parts = [lead, f"{_speech_place(name)}当前{w.text or '天气'}"]
         if w.temp:
             parts.append(f"，气温{w.temp}℃")
         if w.feels_like:
