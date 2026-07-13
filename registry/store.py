@@ -23,6 +23,12 @@ logger = logging.getLogger("registry.store")
 HEALTH_CHECK_INTERVAL = 10  # 秒
 HEALTH_TIMEOUT = 5          # 秒
 MAX_FAIL_COUNT = 3          # 连续失败次数阈值
+# 长期不健康自动剔除阈值：连续失败达此值即整体注销（内存 + PG 级联）。
+# 活跃 Agent 每 ~10s 周期重注册会重建记录（fail_count 归零），只有真正消失的注册
+# （Agent 改名/下线后的残留，如 2026-07 food-ordering→nearby）才会累积到位——
+# 否则残留行随 PgStore 持久化永生，每个探测周期刷不健康告警。0 或负数 = 禁用。
+# 默认 120：按 main.py 探测循环 5s 一轮 ≈ 10 分钟。
+EVICT_FAIL_COUNT = int(os.getenv("REGISTRY_EVICT_FAIL_COUNT", "120"))
 
 # R4.1 P0 语义路由参数
 # 向量维度：与 llm-gateway 向百炼请求的输出维度对齐（默认 1024，同 memory）。
@@ -76,13 +82,27 @@ class Store:
             rec.healthy = True
 
     def mark_unhealthy(self, agent_id: str):
-        """健康探测失败，累加失败计数。超阈值标记不健康。"""
+        """健康探测失败，累加失败计数。超阈值标记不健康（告警只在健康→不健康
+        转变沿打一次，不随后续每个探测周期重复刷）；连续失败达 EVICT_FAIL_COUNT
+        整体剔除（见 _evict）。"""
         rec = self._agents.get(agent_id)
-        if rec:
-            rec.fail_count += 1
-            if rec.fail_count >= MAX_FAIL_COUNT:
-                rec.healthy = False
-                logger.warning("Agent %s marked unhealthy (fail_count=%d)", agent_id, rec.fail_count)
+        if not rec:
+            return
+        rec.fail_count += 1
+        if rec.fail_count >= MAX_FAIL_COUNT:
+            if rec.healthy:
+                logger.warning("Agent %s marked unhealthy (fail_count=%d)",
+                               agent_id, rec.fail_count)
+            rec.healthy = False
+        if EVICT_FAIL_COUNT > 0 and rec.fail_count >= EVICT_FAIL_COUNT:
+            logger.warning(
+                "Agent %s evicted after %d consecutive probe failures "
+                "(re-register will restore)", agent_id, rec.fail_count)
+            self._evict(agent_id)
+
+    def _evict(self, agent_id: str):
+        """长期不健康剔除钩子：基类仅移出内存注册表；PgStore 覆写级联清理 PG。"""
+        self._agents.pop(agent_id, None)
 
     def get_healthy_agents(self) -> list[Record]:
         """返回所有健康的 Agent。"""
@@ -159,6 +179,8 @@ class PgStore(Store):
         # （内联等待会被注册客户端 5s deadline 取消——2026-07-04 embed 泄漏根因），
         # 兼作同 agent 在飞去重。
         self._embed_tasks: dict[str, asyncio.Task] = {}
+        # 长期不健康剔除的 PG 删除后台任务（持引用防 GC）
+        self._evict_tasks: set[asyncio.Task] = set()
 
     async def init(self) -> bool:
         """初始化 PostgreSQL 连接池并加载全量注册表。返回是否成功。"""
@@ -446,13 +468,30 @@ class PgStore(Store):
         """注销：内存 + PostgreSQL 双删。"""
         super().deregister(agent_id)
         if self._pg_ok:
-            try:
-                async with self._pool.acquire() as conn:
-                    await conn.execute("DELETE FROM agents WHERE agent_id = $1", agent_id)
-                    await conn.execute(
-                        "DELETE FROM agent_capability_vec WHERE agent_id = $1", agent_id)
-            except Exception as e:
-                logger.warning("PgStore: deregister PG delete failed: %s", e)
+            await self._pg_delete(agent_id)
+
+    async def _pg_delete(self, agent_id: str):
+        """删除 agent 的 PG 注册行 + capability 向量（deregister 与长期不健康剔除共用）。"""
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute("DELETE FROM agents WHERE agent_id = $1", agent_id)
+                await conn.execute(
+                    "DELETE FROM agent_capability_vec WHERE agent_id = $1", agent_id)
+        except Exception as e:
+            logger.warning("PgStore: PG delete %s failed: %s", agent_id, e)
+
+    def _evict(self, agent_id: str):
+        """长期不健康剔除：内存移除 + PG 级联删除（后台任务，探测循环里同步触发）。
+        无运行中事件循环（同步单测路径）时仅删内存，PG 行留待下次触发。"""
+        super()._evict(agent_id)
+        if not self._pg_ok:
+            return
+        try:
+            task = asyncio.create_task(self._pg_delete(agent_id))
+        except RuntimeError:
+            return
+        self._evict_tasks.add(task)
+        task.add_done_callback(self._evict_tasks.discard)
 
     async def mark_healthy(self, agent_id: str):
         """健康探测成功：内存 + PostgreSQL 双更新。"""
@@ -468,10 +507,13 @@ class PgStore(Store):
                 logger.debug("PgStore: mark_healthy PG update failed: %s", e)
 
     async def mark_unhealthy(self, agent_id: str):
-        """健康探测失败：内存更新 + PostgreSQL 更新 status。"""
+        """健康探测失败：内存更新 + PostgreSQL 更新 status（仅健康→不健康转变沿写
+        一次，不随后续每个探测周期空写；剔除后记录已不在，PG 行由 _evict 级联删）。"""
+        rec = self._agents.get(agent_id)
+        was_healthy = bool(rec and rec.healthy)
         super().mark_unhealthy(agent_id)
         rec = self._agents.get(agent_id)
-        if rec and not rec.healthy and self._pg_ok:
+        if rec and was_healthy and not rec.healthy and self._pg_ok:
             try:
                 async with self._pool.acquire() as conn:
                     await conn.execute("""
