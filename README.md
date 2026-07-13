@@ -210,7 +210,7 @@ Dashboard 的车辆动态接口仅供本地演示；非开发环境必须设置
 - 本地、云端混合多意图拆分，支持导航偏好、歌手等续接片段与主意图成组路由。
 - 十二个云 Agent：导航、闲聊、周边发现（高德 POI 2.0 多类目搜索 + 详情增强）、停车支付、手册问答、行程规划、信息（天气/搜索/新闻/股票）、深度调研（多视角联网调研出带引用分节报告 + 渐进语音简报）、充能规划、场景编排、路况安全（含响应式主动播报）、智能提醒（自然语言创建日程/提醒/待办 + 改期/snooze/重复规则 + 到点主动触达带卡 + 右舞台日程时间轴双形态 + 跨域交接「第一场提醒我观看」→开赛前自动提醒）。
 - 统一上下文装配（`ContextManager`：catalog 语义预筛 + 对话历史 + 长期语义记忆 + 结构化焦点态，统一 token 预算；敏感上下文按 manifest `context_scopes` 最小化下发）、对话记忆 + 长期语义记忆（自动学偏好/个人实体、pgvector 语义召回、可查可删）、确认/补槽续接、跨 Agent DAG、T2 自适应再规划。
-- **多 LLM 源可运行时全局切换**（MiMo / MiniMax-M3 / DeepSeek v4-pro·flash / 阿里百炼 qwen3.7-max·plus，HMI 设置页两级选择「厂商→模型」，一套参数化 provider 覆盖各家差异，Mock 兜底）；embedding 独立走百炼、与 chat 厂商解耦。MiMo ASR/TTS（批处理）+ **DashScope 实时流式 ASR**（qwen3/fun，识别上屏）+ **服务端流式 TTS**（cosyvoice-v3-flash / qwen3-tts-flash-realtime / MiMo v2.5 / MiniMax T2A，PCM 分片播报、barge-in）+ MiMo 分块/批处理回退，webm→wav/PCM 后端流式转码。
+- **多 LLM 源可运行时全局切换**（MiMo / MiniMax-M3 / DeepSeek v4-pro·flash / 阿里百炼 qwen3.7-max·plus，HMI 设置页两级选择「厂商→模型」，一套参数化 provider 覆盖各家差异，Mock 兜底）；embedding 独立走百炼、与 chat 厂商解耦。批处理 ASR/TTS 引擎可配（`ASR_PROVIDER`/`TTS_PROVIDER`，默认 auto：MiMo 可用走 MiMo，否则桥接流式引擎——不用 MiMo 时纯配置切走、不哑成 mock）+ **DashScope 实时流式 ASR**（qwen3/fun，识别上屏）+ **服务端流式 TTS**（cosyvoice-v3-flash / qwen3-tts-flash-realtime / MiMo v2.5 / MiniMax T2A，PCM 分片播报、barge-in）+ MiMo 分块/批处理回退，webm→wav/PCM 后端流式转码。
 - 复杂任务（行程/深度调研/多步）按统一 `is_complex` 判据**动态开思考**提质 + 气泡内嵌
   「过程区」四阶段折叠展示（理解需求→规划步骤→执行任务→整理结果，行车/泊车双态、脱敏不露 reasoning）；普通车控/闲聊零过程零额外延迟。
 - **输入拒识 + 路由澄清（置信度三段式）**：受话判定与歧义申告合并进 Planner 一次 LLM 调用（fail-open）——hands-free 语音嘈杂环境下非受话语句静默拒识（不打扰、不落库、不进画像，连续拒识自适应收紧到仅唤醒词、成功即复位）；真路由歧义出 `intent_choice` 卡问一句再执行、明确句绝不反问；`REJECT_NON_ADDRESSED`/`CLARIFY_ENABLED` env 门控，一键回退。
@@ -268,8 +268,10 @@ python test/e2e_ws.py
   门控可选启用；Grafana 仪表盘已于 **R4.0**（2026-07-04）网络恢复后补验——三面板经数据源代理真实出数）；
   持久化 trace、告警规则、多车聚合与正式鉴权仍待实现。
 - **服务端流式 TTS 已由 R4.2 落地**（2026-07-06）：WS `/api/tts/stream` 文本增量进/PCM 分片出，DashScope
-  cosyvoice-v3-flash（默认）/qwen3-tts-flash-realtime 双引擎 + MiMo 批处理回退，首帧 <1s、支持 barge-in；
-  句子级批处理路径保留为无凭据/失败时的无感回退。多音色克隆/SSML 精细控制属后续。
+  cosyvoice-v3-flash（默认）/qwen3-tts-flash-realtime 双引擎 + 批处理回退，首帧 <1s、支持 barge-in；
+  句子级批处理路径保留为无凭据/失败时的无感回退，**批处理引擎已可配**（2026-07-13：`TTS_PROVIDER`/
+  `ASR_PROVIDER` auto=MiMo 可用走 MiMo、否则桥接流式引擎聚 PCM 封 WAV，去 MiMo 硬绑定）。
+  多音色克隆/SSML 精细控制属后续。
 - 服务间 gRPC **已由 R3.2 支持双向 mTLS**（`GRPC_TLS` env 门控，默认关保持现状；`scripts/gen-certs.*`
   生成共享 mesh 证书，`GRPC_TLS=on` 全栈加密）；配合 R3.1 会话鉴权，**T3.1+T3.2 齐即安全链路无已知缺口**。
   证书轮换/per-service 证书/真实 IdP 属量产硬化后续。

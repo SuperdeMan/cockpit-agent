@@ -113,6 +113,9 @@ services:
       # 启动时序由 store 的按需重探兜底（无 embed 源时诚实降级关键词路径）。
       LLM_GATEWAY_ADDR: llm-gateway:50052
       LLM_EMBED_DIMENSIONS: ${LLM_EMBED_DIMENSIONS:-1024}
+      # 长期不健康自动剔除：连续探测失败达此值（5s/轮 ≈ 10 分钟）整体注销，改名/下线
+      # 残留（如 food-ordering→nearby）不再永生刷告警；活 Agent 10s 重注册自动豁免。0=禁用
+      REGISTRY_EVICT_FAIL_COUNT: ${REGISTRY_EVICT_FAIL_COUNT:-120}
       # R3.2 服务间 mTLS（默认关）
       GRPC_TLS: ${GRPC_TLS:-off}
       GRPC_TLS_CA: /certs/ca.crt
@@ -172,6 +175,14 @@ services:
       ASR_STREAM_MODEL: ${ASR_STREAM_MODEL:-qwen3-asr-flash-realtime-2026-02-10}
       ASR_MODEL: ${ASR_MODEL:-mimo-v2.5-asr}
       AUDIO_HTTP_PORT: "50059"
+      # 批处理 ASR/TTS 引擎（/api/asr、/api/tts + gRPC 面，启动时装配）：auto=LLM_PROVIDER 为
+      # MiMo 系→MiMo，否则桥接对应流式引擎（不用 MiMo 时批处理不再哑成 mock）。
+      # 可显式钉：ASR_PROVIDER=mimo|dashscope|mock；TTS_PROVIDER=mimo|cosyvoice|qwen|minimax|mock
+      ASR_PROVIDER: ${ASR_PROVIDER:-auto}
+      TTS_PROVIDER: ${TTS_PROVIDER:-auto}
+      TTS_MODEL: ${TTS_MODEL:-mimo-v2.5-tts}
+      # MiMo 音频端点（批/流式 ASR/TTS 共用；与 chat 的 LLM_BASE_URL 独立），空=官方集群
+      MIMO_AUDIO_BASE_URL: ${MIMO_AUDIO_BASE_URL:-}
       TTS_VOICE_ID: ${TTS_VOICE_ID:-冰糖}
       # 流式 TTS（服务端 PCM 流式合成，R4.2）：cosyvoice（run-task，默认，复用百炼 key）| qwen（realtime，含方言）
       #   | mimo（MiMo v2.5 流式，复用 LLM_API_KEY）| minimax（T2A 流式，复用 MINIMAX_API_KEY）| mock | off
@@ -195,6 +206,9 @@ services:
       <<: *python-env
       POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
       EMBED_DIM: ${EMBED_DIM:-1024}   # 须与 LLM_EMBED_DIMENSIONS 一致（百炼 v4 默认 1024）
+      # 合成会话（eval/e2e/badcase 重放/探针）按 session_id 前缀跳过 LLM 抽取巩固：
+      # 不烧 token、不污染真实用户画像；记忆管线自测用 memtest- 前缀（不在此列）
+      MEMORY_EXTRACT_SKIP_PREFIXES: ${MEMORY_EXTRACT_SKIP_PREFIXES:-eval-,e2e-,ctxe2e-,central-,review-,nightly-,replay-,probe-,smoke-}
     ports: ["50053:50053"]
     depends_on:
       redis:
