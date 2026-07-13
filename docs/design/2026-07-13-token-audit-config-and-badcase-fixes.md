@@ -50,4 +50,7 @@
 
 - MiniMax 内容风控的**来源级**规避（如敏感域名进 `source_quality` 低档/黑名单）——现靠权威收窄重试兜住，若高频再议。
 - HMI 右舞台续航依赖折算常量（满电 550km）；VAL 提供真实 `range_km` 信号后自动优先（HMI 已就绪）。
-- Dashboard「LLM 视图」按 caller_service 分组展示（数据已齐，视图未加）。
+- ~~Dashboard「LLM 视图」按 caller_service 分组展示~~ → **当日已补**：collector
+  `GET /api/llm/summary`（caller×model 聚合，SUM 降序——坑：SQLite ORDER BY 裸列名取
+  组内任意行而非聚合和，须重写 SUM 表达式）+ dashboard 第五视图「LLM」（时间窗
+  1h/24h/7d/30d、汇总块、归属表、「(未归属)」行红色高亮盯防），跟随 turn 事件实时刷新。

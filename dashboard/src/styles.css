@@ -401,3 +401,29 @@ body {
   body { overflow: auto; }
   .hud { height: auto; min-height: 100vh; }
 }
+
+/* ── LLM 消耗归属视图 ─────────────────────────────────────────── */
+.llm { display: flex; flex-direction: column; }
+.llm-windows { display: flex; gap: 6px; }
+.llm-win {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px;
+  padding: 4px 10px; border-radius: 7px; cursor: pointer;
+  color: var(--ink-2); background: var(--glass); border: 1px solid var(--stroke);
+}
+.llm-win--on { color: var(--teal); border-color: var(--teal); box-shadow: 0 0 10px rgba(47, 224, 200, 0.25); }
+.llm-tiles { display: flex; gap: 10px; padding: 10px 14px 2px; flex: none; }
+.llm-tile {
+  flex: 1; padding: 10px 12px; border: 1px solid var(--stroke); border-radius: 10px;
+  background: var(--glass); display: flex; flex-direction: column; gap: 4px;
+}
+.llm-tile b { font-family: var(--hud); font-size: 20px; font-weight: 600; line-height: 1; }
+.llm-tile span { font-size: 10px; color: var(--ink-3); letter-spacing: 0.5px; }
+.llm-tile--warn b { color: var(--red); }
+.llm-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.llm-table th, .llm-table td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--stroke); }
+.llm-table th { font-family: var(--mono); font-size: 9.5px; letter-spacing: 1px; color: var(--ink-3); text-transform: uppercase; position: sticky; top: 0; background: var(--panel, rgba(10, 18, 28, 0.92)); }
+.llm-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.llm-table .mono { font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
+.llm-err { color: var(--red); font-weight: 600; }
+.llm-row--blind td { background: rgba(255, 92, 92, 0.07); }
+.llm-row--blind td:first-child { color: var(--red); font-weight: 600; }

@@ -128,6 +128,13 @@ def create_app(
         return await asyncio.to_thread(
             app.state.db.query_logs, trace_id, service, level, q, limit)
 
+    @app.get("/api/llm/summary")
+    async def llm_summary(hours: float = 24):
+        """LLM 消耗归属汇总（caller×model 分组），dashboard「LLM」视图数据源。
+        窗口夹紧 [1h, 30d]，防误传拖垮全表扫描。"""
+        return await asyncio.to_thread(
+            app.state.db.llm_summary, min(max(hours, 1.0), 24.0 * 30))
+
     @app.get("/api/export/{trace_id}")
     async def export_turn(trace_id: str):
         """单轮全量 JSON（turn+spans+llm+logs）：一键素材，可直接贴 issue/回归用例。"""

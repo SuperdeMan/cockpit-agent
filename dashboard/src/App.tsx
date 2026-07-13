@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { connectObs } from './api'
 import { BadcasesView } from './views/BadcasesView'
 import { LiveView } from './views/LiveView'
+import { LlmView } from './views/LlmView'
 import { LogsView } from './views/LogsView'
 import { SessionsView } from './views/SessionsView'
 import type {
@@ -14,12 +15,13 @@ import type {
   VehicleState as VehicleStateMap,
 } from './types'
 
-type ViewKey = 'sessions' | 'live' | 'logs' | 'badcases'
+type ViewKey = 'sessions' | 'live' | 'logs' | 'llm' | 'badcases'
 
 const NAV: ReadonlyArray<readonly [ViewKey, string, string]> = [
   ['sessions', '会话', '轮次下钻 / badcase 定位'],
   ['live', '总览', '实时链路 / 车辆 / Agent'],
   ['logs', '日志', '结构化日志检索'],
+  ['llm', 'LLM', '消耗归属（caller×model）'],
   ['badcases', '收藏', 'badcase 列表与重放'],
 ]
 
@@ -229,6 +231,7 @@ export default function App() {
       )}
       {view === 'sessions' && <SessionsView lastTurn={lastTurn} />}
       {view === 'logs' && <LogsView lastLog={lastLog} />}
+      {view === 'llm' && <LlmView lastTurn={lastTurn} />}
       {view === 'badcases' && <BadcasesView turnTick={turnTick} />}
 
       <footer className="hud-foot">

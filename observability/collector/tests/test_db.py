@@ -114,3 +114,32 @@ def test_cleanup_exempts_badcase():
     assert db.turn_detail("old-bad")["turn"]["badcase"] == 1
     assert db.turn_detail("old-bad")["spans"]  # badcase 的链路数据同样豁免
     assert db.turn_detail("fresh") is not None
+
+
+def test_llm_summary_groups_and_blindspot_label():
+    """LLM 消耗归属汇总（dashboard「LLM」视图）：caller×model 分组、token 降序、
+    空 caller 显示「(未归属)」（盲区盯防）、窗口过滤生效。"""
+    db = _db()
+    now_ms = int(time.time() * 1000)
+    mk = lambda **kw: {"trace_id": "t", "ts": now_ms, "model": "m1",
+                       "prompt_tokens": 100, "completion_tokens": 10,
+                       "latency_ms": 50, "status": "ok", **kw}
+    db.insert_llm(mk(caller="cloud-planner"))
+    db.insert_llm(mk(caller="cloud-planner", prompt_tokens=300, status="err"))
+    db.insert_llm(mk(caller="memory-extract", model="m2", prompt_tokens=50))
+    db.insert_llm(mk(caller=""))                                  # 归属盲区
+    db.insert_llm(mk(caller="old", ts=now_ms - 48 * 3600 * 1000))  # 窗口外
+
+    # 多笔小额之和 > 单笔大额：暴露「ORDER BY 裸列名取组内任意行而非 SUM」的坑
+    db.insert_llm(mk(caller="many-small", prompt_tokens=250))
+    db.insert_llm(mk(caller="many-small", prompt_tokens=250))
+
+    out = db.llm_summary(hours=24)
+    groups = {(g["caller"], g["model"]): g for g in out["groups"]}
+    assert ("old", "m1") not in groups                     # 48h 前不进 24h 窗
+    planner = groups[("cloud-planner", "m1")]
+    assert planner["calls"] == 2 and planner["prompt_tokens"] == 400
+    assert planner["errors"] == 1 and planner["completion_tokens"] == 20
+    assert ("(未归属)", "m1") in groups                     # 空 caller 标注盲区
+    order = [g["caller"] for g in out["groups"]]
+    assert order[0] == "many-small" and order[1] == "cloud-planner"  # 按 SUM 降序

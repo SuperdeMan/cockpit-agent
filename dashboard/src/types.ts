@@ -99,6 +99,24 @@ export type LogEntry = {
   session_id: string
 }
 
+// LLM 消耗归属汇总（/api/llm/summary，「LLM」视图数据源）。caller=「(未归属)」
+// 是直连网关未带 caller_service 的盲区，按约定（conventions §9.2）应恒为零。
+export type LlmSummaryGroup = {
+  caller: string
+  model: string
+  calls: number
+  prompt_tokens: number
+  completion_tokens: number
+  errors: number
+  avg_latency_ms: number
+  last_ts: number
+}
+
+export type LlmSummary = {
+  hours: number
+  groups: LlmSummaryGroup[]
+}
+
 export type TurnDetail = {
   turn: Turn | null
   spans: Span[]

@@ -298,6 +298,33 @@ class ObsDB:
         rows.reverse()  # 返回按时间正序，便于阅读
         return rows
 
+    def llm_summary(self, hours: float = 24.0) -> dict:
+        """LLM 消耗归属汇总：时间窗内按 caller×model 分组（tokens/次数/错误/时延）。
+
+        2026-07-13 消耗排查的收尾一环：caller 空 = 归属盲区（直连网关未带
+        caller_service 的调用方），显示为「(未归属)」供 dashboard 高亮盯防——
+        按约定（conventions §9.2）它应恒为零。"""
+        cutoff = int((time.time() - hours * 3600) * 1000)
+        with self._lock:
+            groups = _rows_to_dicts(self._conn.execute(
+                """
+                SELECT COALESCE(NULLIF(caller, ''), '(未归属)') AS caller, model,
+                       COUNT(*) AS calls,
+                       COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                       COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                       SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) AS errors,
+                       ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
+                       MAX(ts) AS last_ts
+                FROM llm_calls WHERE ts >= ?
+                GROUP BY 1, 2
+                -- 排序必须重写聚合表达式：ORDER BY 里的裸列名会被 SQLite 解析成
+                -- 组内任意行的值而非 SUM（实测 2.7 万排到 43.8 万前面）
+                ORDER BY COALESCE(SUM(prompt_tokens), 0)
+                         + COALESCE(SUM(completion_tokens), 0) DESC,
+                         COUNT(*) DESC
+                """, (cutoff,)))
+        return {"hours": hours, "groups": groups}
+
     # ── 保留期清理 ──────────────────────────────────────────────────────
 
     def cleanup(self, retention_days: float | None = None) -> int:

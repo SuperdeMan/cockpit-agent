@@ -1,5 +1,6 @@
 import type {
   AgentInfo,
+  LlmSummary,
   LogEntry,
   SessionSummary,
   Span,
@@ -108,6 +109,10 @@ async function getJSON<T>(path: string, params?: Record<string, string | number>
 
 export function fetchSessions(q = '', limit = 50): Promise<SessionSummary[]> {
   return getJSON('/api/sessions', { q, limit })
+}
+
+export function fetchLlmSummary(hours = 24): Promise<LlmSummary> {
+  return getJSON('/api/llm/summary', { hours })
 }
 
 export function fetchSessionTurns(sessionId: string, limit = 200): Promise<Turn[]> {

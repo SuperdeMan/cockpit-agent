@@ -309,6 +309,7 @@
 | `GET /api/logs?trace_id=&service=&level=&q=` | 结构化日志检索（obs.log 落库） |
 | `POST /api/turns/{trace_id}/badcase` | 标记/取消 badcase（`{badcase, note}`；标记轮豁免保留期清理） |
 | `GET /api/export/{trace_id}` | 单轮全量 JSON 导出（badcase 素材/回归用例） |
+| `GET /api/llm/summary?hours=24` | LLM 消耗归属汇总（caller×model：次数/tokens/错误/时延；窗口夹紧 1h~30d）——dashboard「LLM」视图数据源，「(未归属)」= 未带 caller_service 的盲区（§9.2，应恒为零；2026-07-13）|
 
 Dashboard 使用 `VITE_COLLECTOR_URL` 与 `VITE_EDGE_GATEWAY_URL`，Compose 已分别配置为
 `http://localhost:8092` 和 `http://localhost:8090`。**Prometheus/Grafana（T3.6）**：
