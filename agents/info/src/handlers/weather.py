@@ -4,15 +4,92 @@
 本 mixin 经 self 调用。
 """
 from __future__ import annotations
+from datetime import datetime
 import logging
+import re
 
 from agents._sdk import AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
 
-from ._util import _is_coordinate_label
+from ._util import _is_coordinate_label, _shanghai_now
 
 logger = logging.getLogger("agent.info")
+
+
+# ── 意图先答 + speech 可读性（badcase f555cde3：「未来几天会下雨吗」只回模板罗列，
+#    且把完整逆地理地址整段念出、「预报：；」双标点）─────────────────────────
+
+_CITY_RE = re.compile(r"(?:^|省|区)([^省市区县\s]{1,7}市)")
+_DIST_RE = re.compile(r"市([^省市区县\s]{1,7}[区县])")
+
+
+def _speech_place(name: str) -> str:
+    """speech 地点名收敛：逆地理完整地址（省市区街道楼宇）收敛到「市+区」级，
+    短名/非地址原样返回。只影响语音，卡片仍用完整名。"""
+    n = (name or "").strip()
+    if len(n) <= 9:
+        return n
+    city = _CITY_RE.search(n)
+    dist = _DIST_RE.search(n)
+    if city and dist:
+        return city.group(1) + dist.group(1)
+    if city:
+        return city.group(1)
+    return n[:9]
+
+
+def _day_label(date_str: str) -> str:
+    """YYYY-MM-DD → 今天/明天/后天/N号（相对上海时区今天；解析失败原样返回）。"""
+    try:
+        d = datetime.strptime((date_str or "")[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return date_str or ""
+    diff = (d - _shanghai_now().date()).days
+    return {0: "今天", 1: "明天", 2: "后天"}.get(diff, f"{d.day}号")
+
+
+def _max_wind_scale(forecast) -> int:
+    top = 0
+    for d in forecast:
+        for m in re.findall(r"\d+", d.wind_scale or ""):
+            top = max(top, int(m))
+    return top
+
+
+def _forecast_answer(raw: str, forecast) -> str:
+    """意图先答：用户问「会不会下雨/下雪、冷不冷、风大不大」时，先依据预报数据给
+    直接回答，随后再接逐日摘要；罗列型问法（「未来三天天气」）不加前导。
+    纯确定性规则，零额外延迟/token（天气域刻意不走 LLM 的既有取向）。"""
+    raw = (raw or "").strip()
+    if not raw or not forecast:
+        return ""
+    n = len(forecast)
+    for kw, verb, tip in (("雨", "下雨", "出门记得带伞。"),
+                          ("雪", "下雪", "注意路面湿滑。")):
+        if kw in raw or (kw == "雨" and "伞" in raw):
+            hits = [d for d in forecast if kw in f"{d.text_day}{d.text_night}"]
+            if not hits:
+                return f"未来{n}天都不会{verb}。"
+            if len(hits) == n:
+                return f"会{verb}，这{n}天每天都有{kw}，{tip}"
+            labels = "、".join(_day_label(d.date) for d in hits[:4])
+            return f"会{verb}，{labels}有{kw}，{tip}"
+    if any(k in raw for k in ("冷", "热", "温度", "气温", "穿什么", "穿衣")):
+        try:
+            hi = max(int(d.temp_high) for d in forecast if d.temp_high)
+            lo = min(int(d.temp_low) for d in forecast if d.temp_low)
+        except ValueError:
+            return ""
+        feel = "白天比较热" if hi >= 30 else ("整体偏冷" if hi <= 10 else "体感比较舒适")
+        return f"未来{n}天最低{lo}℃、最高{hi}℃，{feel}。"
+    if "风" in raw:
+        top = _max_wind_scale(forecast)
+        if top >= 6:
+            return f"未来{n}天风比较大，最高有{top}级，注意行车稳定。"
+        if top > 0:
+            return f"未来{n}天风都不大，最高{top}级。"
+    return ""
 
 
 class WeatherMixin:
@@ -36,7 +113,7 @@ class WeatherMixin:
         provider_city = "" if _is_coordinate_label(w.city) else w.city
         name = display_city or provider_city or "当前位置"
         accuracy_note = self._location_accuracy_note(meta)
-        parts = [f"{name}当前{w.text or '天气'}"]
+        parts = [f"{_speech_place(name)}当前{w.text or '天气'}"]
         if w.temp:
             parts.append(f"，气温{w.temp}℃")
         if w.feels_like:
@@ -101,12 +178,12 @@ class WeatherMixin:
         if not forecast:
             return AgentResult(speech=f"暂无{name}的天气预报数据。")
 
-        parts = [f"{name}未来{len(forecast)}天天气预报："]
-        for d in forecast:
-            day_str = d.date[-5:] if len(d.date) >= 5 else d.date  # MM-DD
-            parts.append(f"{day_str} {d.text_day}转{d.text_night}，"
-                         f"{d.temp_low}~{d.temp_high}℃")
-        speech = "；".join(parts) + "。"
+        # 意图先答（会不会下雨/冷不冷…）+ 逐日摘要（今天/明天/后天，地点收敛到市区级）；
+        # 「：」后直接接首日，修「预报：；」双标点。完整地址/ISO 日期仍在卡片。
+        parts = [f"{_day_label(d.date)}{d.text_day}转{d.text_night}，"
+                 f"{d.temp_low}~{d.temp_high}℃" for d in forecast]
+        summary = f"{_speech_place(name)}未来{len(forecast)}天：" + "；".join(parts) + "。"
+        speech = _forecast_answer(intent.raw_text, forecast) + summary
 
         items = [{"date": d.date, "text_day": d.text_day, "text_night": d.text_night,
                   "temp_high": d.temp_high, "temp_low": d.temp_low,

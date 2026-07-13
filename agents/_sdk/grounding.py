@@ -87,16 +87,63 @@ def latest_published(sources: list[dict]) -> str:
     return max(dates) if dates else ""
 
 
+# 句末标点（收口截断用）；来源正文里的纯样板行（页面骨架词，进语音全是噪声）
+_SENT_END = "。！？!?；;"
+_BOILERPLATE_LINES = {"正文", "导读", "摘要", "广告", "相关阅读", "点击查看", "责任编辑"}
+
+
+def clip_sentence(text: str, limit: int) -> str:
+    """限长收口到句边界：limit 内取最后一个句末标点；退而求逗号；再退硬切加省略号。
+    杜绝「拦腰截断+句号」直达用户（badcase 6d29929e：speech 以「…4支球队不。」收尾）。"""
+    t = (text or "").strip()
+    if len(t) <= limit:
+        return t
+    cut = t[:limit]
+    for i in range(len(cut) - 1, -1, -1):
+        if cut[i] in _SENT_END:
+            return cut[:i + 1]
+    comma = max(cut.rfind("，"), cut.rfind(","))
+    if comma > limit // 2:
+        return cut[:comma] + "……"
+    return cut + "……"
+
+
+def _first_prose(text: str) -> str:
+    """从正文抽开头一段「人话」：跳过 SEO 标题行（含 | 分隔且无句末标点）、样板词行、
+    开头的短碎行（面包屑/栏目名），剩余行顺序拼接（约 160 字后停）。"""
+    picked: list[str] = []
+    total = 0
+    for ln in (line.strip() for line in (text or "").splitlines()):
+        if not ln or ln in _BOILERPLATE_LINES:
+            continue
+        if ("|" in ln or "｜" in ln) and not any(ch in ln for ch in _SENT_END):
+            continue                          # SEO 标题行（「A | B | C - 站名」）
+        if len(ln) < 12 and not picked:
+            continue                          # 开头的短碎行
+        if picked and picked[-1][-1] not in _SENT_END + "，,、：:":
+            picked.append("，")
+        picked.append(ln)
+        total += len(ln)
+        if total >= 160:
+            break
+    return "".join(picked)
+
+
 def fallback_brief(query: str, sources: list[dict]) -> str:
-    """LLM 不可用时的诚实兜底：用清理后的 snippet 拼一句简述，不编造、不罗列编号。"""
+    """LLM 归纳不可用时的诚实兜底：抽 1-2 条来源的首段人话、句边界收口、总长受控，
+    明说未完成归纳并指向卡片。绝不整段倾倒原文（badcase 6d29929e：两篇正文直拼 +
+    拦腰截断直达用户，含 SEO 标题和「正文」样板字）。"""
     points = []
-    for s in sources[:2]:
-        t = (s.get("snippet") or "").strip().rstrip("。")
-        if t:
-            points.append(t)
+    for s in sources:
+        t = _first_prose(clean_snippet(s.get("snippet") or s.get("content") or ""))
+        if len(t) >= 12:
+            points.append(clip_sentence(t, 110).rstrip(_SENT_END))
+        if len(points) == 2:
+            break
     lead = f"关于「{query}」，" if query else ""
     if points:
-        return lead + "；".join(points) + "。"
+        return (lead + "归纳暂时没有完成，先念两条检索到的要点：" + "；".join(points)
+                + "。完整来源见屏幕卡片。")
     return lead + "暂时没有足够资料形成可靠结论，建议稍后再查。"
 
 
@@ -172,17 +219,29 @@ def parse_synth(raw: str) -> dict | None:
     return None
 
 
+# 抓取的网页正文可能带控制字符/孤立代理对（脏页面/编码残缺）。json 序列化后部分服务商在
+# 请求解析层拒收整包（badcase 6d29929e：同模板同体量合成 11:08 成功、11:10 换一批来源即
+# 422 秒拒 @MiniMax，MiMo 容忍）——进 prompt 前统一消毒，杜绝单条脏来源废掉整轮归纳。
+_CTRL_OR_SURROGATE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff]")
+
+
+def sanitize_prompt_text(text: str) -> str:
+    """剥控制字符（保留 \\t\\n）与孤立 UTF-16 代理对，供拼 LLM prompt 的正文/标题使用。"""
+    return _CTRL_OR_SURROGATE.sub("", text or "")
+
+
 def build_materials(sources: list[dict], *, first_cap: int = 2400,
                     rest_cap: int = 900, limit: int = 5) -> str:
-    """把来源资料拼成给 LLM 的材料块（带编号/来源/发布时间）。
+    """把来源资料拼成给 LLM 的材料块（带编号/来源/发布时间；正文/标题过消毒）。
 
     榜单/表格常在正文较深处：给最权威的首条更多正文配额，其余收紧，控总量防上游超时。
     """
     blocks = []
     for i, s in enumerate(sources[:limit]):
         cap = first_cap if i == 0 else rest_cap
-        body = (s.get("content") or s.get("snippet") or "").strip()[:cap]
-        head = f"[{s.get('idx', i + 1)}] {s.get('title', '')}（来源：{s.get('source', '')}"
+        body = sanitize_prompt_text((s.get("content") or s.get("snippet") or "").strip()[:cap])
+        title = sanitize_prompt_text(s.get("title", ""))
+        head = f"[{s.get('idx', i + 1)}] {title}（来源：{s.get('source', '')}"
         if s.get("published"):
             head += f"，发布：{s['published']}"
         head += "）"
@@ -213,40 +272,65 @@ async def grounded_synthesis(llm, subject: str, sources: list[dict], *,
                                       key=lambda s: s.get("url", ""))[:6]
     else:
         used = rerank_by_authority(sources, key=lambda s: s.get("url", ""))[:6]
-    materials = build_materials(used, rest_cap=800, limit=6)
-    prompt = (
-        f"用户问题：{subject}\n"
-        f"当前时间：{shanghai_now():%Y年%m月%d日 %H:%M}（Asia/Shanghai）\n\n"
-        f"以下是检索到的资料（共{len(used)}条，方括号内为编号）：\n"
-        f"{materials}\n\n"
-        "请只依据上述资料用中文作答，并严格遵守：\n"
-        "1. 先给核心结论，再按需展开；不要说「根据搜索结果/资料显示」这类废话。\n"
-        "2. 资料未覆盖的内容，明确说明「未能从检索到的资料中确认」，"
-        "禁止编造对阵、比分、时间、数字、人名或因果关系。\n"
-        "3. **排行榜/榜单/数据类**：以**最权威且最新**的那一条资料为准、照它的数据呈现，"
-        "不要用你自己的记忆补全或改写名次/数字；不同资料数字冲突或时效不同时，取最新权威者"
-        "并给出**前后一致**的结论、注明依据时间，**绝不**把互相矛盾的数字混进同一答案"
-        "（例如说榜首16球却又称另一人也16球并列，自相矛盾）。\n"
-        "4. 只输出一个 JSON 对象，不要额外文字，格式：\n"
-        '{"answer": "给用户的结论文本", "key_points": ["要点1", "要点2"], '
-        '"confidence": "high|medium|low", "used_sources": [1, 2]}\n'
-        "answer 的可读性很重要：若有多个要点/条目/步骤，**每条单独成行**"
-        "（用真实换行符 \\n 分隔，可带序号），不要把多条挤在一行；"
-        "解释类问题用连贯段落、先结论后展开。"
-        "key_points 是卡片用精简要点（每条≤30字，可为空）；"
-        "confidence 反映资料对问题的覆盖程度；used_sources 是真正支撑结论的资料编号。"
-        "JSON 字符串值内不要使用英文双引号，需要引用时用中文引号「」（否则 JSON 会解析失败）。"
-    )
-    try:
-        raw = await llm.complete([
+
+    def _prompt_for(subset: list[dict]) -> str:
+        materials = build_materials(subset, rest_cap=800, limit=6)
+        return (
+            f"用户问题：{subject}\n"
+            f"当前时间：{shanghai_now():%Y年%m月%d日 %H:%M}（Asia/Shanghai）\n\n"
+            f"以下是检索到的资料（共{len(subset)}条，方括号内为编号）：\n"
+            f"{materials}\n\n"
+            "请只依据上述资料用中文作答，并严格遵守：\n"
+            "1. 先给核心结论，再按需展开；不要说「根据搜索结果/资料显示」这类废话。\n"
+            "2. 资料未覆盖的内容，明确说明「未能从检索到的资料中确认」，"
+            "禁止编造对阵、比分、时间、数字、人名或因果关系。\n"
+            "3. **排行榜/榜单/数据类**：以**最权威且最新**的那一条资料为准、照它的数据呈现，"
+            "不要用你自己的记忆补全或改写名次/数字；不同资料数字冲突或时效不同时，取最新权威者"
+            "并给出**前后一致**的结论、注明依据时间，**绝不**把互相矛盾的数字混进同一答案"
+            "（例如说榜首16球却又称另一人也16球并列，自相矛盾）。\n"
+            "4. 只输出一个 JSON 对象，不要额外文字，格式：\n"
+            '{"answer": "给用户的结论文本", "key_points": ["要点1", "要点2"], '
+            '"confidence": "high|medium|low", "used_sources": [1, 2]}\n'
+            "answer 的可读性很重要：若有多个要点/条目/步骤，**每条单独成行**"
+            "（用真实换行符 \\n 分隔，可带序号），不要把多条挤在一行；"
+            "解释类问题用连贯段落、先结论后展开。"
+            "key_points 是卡片用精简要点（每条≤30字，可为空）；"
+            "confidence 反映资料对问题的覆盖程度；used_sources 是真正支撑结论的资料编号。"
+            "JSON 字符串值内不要使用英文双引号，需要引用时用中文引号「」（否则 JSON 会解析失败）。"
+        )
+
+    async def _ask(subset: list[dict]) -> str:
+        return await llm.complete([
             {"role": "system", "content":
              "你是严谨的车载信息编辑，只能依据提供的资料作答，宁可说没有也绝不编造。"},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": _prompt_for(subset)},
         ], temperature=0.2, max_tokens=max_tokens, timeout=timeout, thinking=thinking)
+
+    try:
+        raw = await _ask(used)
     except Exception as e:
-        logger.warning("grounded synthesis failed: %s", e)
-        return None
+        # 服务商内容风控拒收（badcase a3fad033：MiniMax 422 new_sensitive——检索源夹带
+        # 敏感站内容整包被拒）：多为个别低权威来源夹带，收窄到权威 top-2 重试一次；
+        # 仍被拒/其他错误才走调用方兜底。
+        if _is_content_rejection(e) and len(used) > 2:
+            logger.warning("synthesis content-rejected, retrying with top-2 authority: %s", e)
+            try:
+                raw = await _ask(used[:2])
+            except Exception as e2:
+                logger.warning("grounded synthesis failed after narrowed retry: %s", e2)
+                return None
+        else:
+            logger.warning("grounded synthesis failed: %s", e)
+            return None
     raw = (raw or "").strip()
     if not raw or raw.startswith("[mock]"):
         return None
     return parse_synth(raw)
+
+
+def _is_content_rejection(err: Exception) -> bool:
+    """服务商内容风控拒收特征：MiniMax new_sensitive / DashScope data_inspection /
+    OpenAI 系 content_filter。4xx 响应体由 llm-gateway 带进错误文本（2026-07-13）。"""
+    s = str(err).lower()
+    return ("sensitive" in s or "data_inspection" in s or "content_filter" in s
+            or "contentfilter" in s)
