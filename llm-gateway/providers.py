@@ -283,7 +283,12 @@ class OpenAICompatibleProvider(BaseProvider):
         resp = await self._get_client().post(
             self.base_url, headers=self._headers(), json=body,
             timeout=_http_timeout(timeout_s, _HTTP_READ_CAP_S))
-        resp.raise_for_status()
+        # 4xx/5xx 的真实拒因在响应体里（如 MiniMax 422 只有 body 说得清是参数还是内容问题），
+        # raise_for_status 的异常文本不含 body——截断入异常，网关日志/obs.llm error 直接可诊断
+        # （badcase 6d29929e：422 秒拒两次，只留状态码，根因无从判定）。
+        if resp.status_code >= 400:
+            snippet = (resp.text or "")[:300].replace("\n", " ")
+            raise RuntimeError(f"provider HTTP {resp.status_code}: {snippet}")
         data = resp.json()
 
         content = strip_think_block(data["choices"][0]["message"]["content"] or "")
@@ -300,7 +305,10 @@ class OpenAICompatibleProvider(BaseProvider):
         async with self._get_client().stream(
                 "POST", self.base_url, headers=self._headers(), json=body,
                 timeout=httpx.Timeout(stall, connect=_HTTP_CONNECT_S, pool=5.0)) as resp:
-            resp.raise_for_status()
+            if resp.status_code >= 400:   # 同 complete()：把响应体带进异常，拒因可诊断
+                raw = await resp.aread()
+                snippet = raw[:300].decode("utf-8", "replace").replace("\n", " ")
+                raise RuntimeError(f"provider HTTP {resp.status_code}: {snippet}")
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
                     continue
@@ -398,8 +406,10 @@ class MiMoASRProvider(BaseASRProvider):
     """
     BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, base_url: str = ""):
         self.api_key = api_key
+        # MiMo 音频端点可配（MIMO_AUDIO_BASE_URL，ASR/TTS 共用），与 chat 的 LLM_BASE_URL 独立
+        self.base_url = base_url or os.getenv("MIMO_AUDIO_BASE_URL", "") or self.BASE_URL
         self._client: httpx.AsyncClient | None = None
 
     async def transcribe(self, audio: bytes, fmt: str, language: str, model: str):
@@ -412,7 +422,7 @@ class MiMoASRProvider(BaseASRProvider):
 
         headers = {"api-key": self.api_key, "Content-Type": "application/json"}
         body = {
-            "model": model or "mimo-v2.5-asr",
+            "model": model or os.getenv("ASR_MODEL", "mimo-v2.5-asr"),
             "messages": [
                 {
                     "role": "user",
@@ -426,7 +436,7 @@ class MiMoASRProvider(BaseASRProvider):
 
         if self._client is None:
             self._client = httpx.AsyncClient(limits=_HTTP_LIMITS)
-        resp = await self._client.post(self.BASE_URL, headers=headers, json=body, timeout=60)
+        resp = await self._client.post(self.base_url, headers=headers, json=body, timeout=60)
         resp.raise_for_status()
         result = resp.json()
 
@@ -436,11 +446,69 @@ class MiMoASRProvider(BaseASRProvider):
         return text, 0.9, language or "zh", model or "mimo-v2.5-asr", int(duration_sec * 1000)
 
 
+def _wav_pcm_data(audio: bytes) -> bytes:
+    """提取 WAV 的 data 块裸 PCM；非 RIFF 输入视为已是裸 PCM 原样返回。
+    容忍 ffmpeg pipe 产物（RIFF/data 的 size 字段可能是 0 或 0xFFFFFFFF 占位）。"""
+    if len(audio) < 12 or audio[:4] != b"RIFF":
+        return audio
+    i = audio.find(b"data", 12)
+    if i < 0 or i + 8 > len(audio):
+        return audio
+    size = int.from_bytes(audio[i + 4:i + 8], "little")
+    start = i + 8
+    if size in (0, 0xFFFFFFFF) or start + size > len(audio):
+        return audio[start:]
+    return audio[start:start + size]
+
+
+class StreamBridgeASRProvider(BaseASRProvider):
+    """把流式 ASR 引擎适配成批处理接口（/api/asr + gRPC Transcribe）。
+
+    存在意义：批处理面此前硬绑 MiMo——chat 换家（LLM_PROVIDER≠mimo 系）即静默降级
+    Mock。经此桥接，批处理可跟随 dashscope 等流式引擎：WAV→裸 PCM→按帧喂流式引擎→
+    取定稿文本。model 参数忽略（引擎模型由 ASR_STREAM_MODEL 控制）。
+    """
+
+    def __init__(self, provider: str):
+        self.provider = provider
+
+    async def transcribe(self, audio: bytes, fmt: str, language: str, model: str):
+        engine = build_streaming_asr_provider(self.provider)
+        if engine is None:
+            raise RuntimeError(f"ASR 引擎 {self.provider} 无可用 key")
+        pcm = _wav_pcm_data(audio)
+        duration_ms = int(len(pcm) / 32000 * 1000)  # 16kHz mono s16le = 32000 B/s
+
+        async def frames():
+            step = 3200  # 100ms @16k s16le
+            for i in range(0, len(pcm), step):
+                yield pcm[i:i + step]
+
+        text = ""
+        async for ev in engine.stream(frames(), language=language or "zh"):
+            if ev.get("text"):
+                text = ev["text"]
+        model_used = getattr(engine, "model", "") or self.provider
+        return text, 0.9, language or "zh", model_used, duration_ms
+
+
 def build_asr_provider() -> BaseASRProvider:
-    provider = os.getenv("LLM_PROVIDER", "xiaomimimo").lower()
+    """批处理 ASR 工厂（/api/asr + gRPC Transcribe 共用，启动时装配）。
+    ASR_PROVIDER：auto（默认）| mimo | dashscope | mock。
+    auto：LLM_PROVIDER 为 MiMo 系且有 LLM_API_KEY → MiMo（历史现状）；否则有
+    dashscope key → 桥接流式引擎；都不可用 → Mock。显式 mimo 复用 LLM_API_KEY
+    （多 LLM 源惯例：该 env 即 MiMo 的 key），chat 切走后批处理仍可钉住 MiMo。"""
+    choice = os.getenv("ASR_PROVIDER", "auto").strip().lower()
     api_key = os.getenv("LLM_API_KEY", "")
-    if provider in ("xiaomimimo", "mimo") and api_key:
+    if choice == "mock":
+        return MockASRProvider()
+    if choice in ("mimo", "xiaomimimo"):
+        return MiMoASRProvider(api_key) if api_key else MockASRProvider()
+    llm_provider = os.getenv("LLM_PROVIDER", "xiaomimimo").lower()
+    if choice == "auto" and llm_provider in ("xiaomimimo", "mimo") and api_key:
         return MiMoASRProvider(api_key)
+    if choice in ("auto", "dashscope") and build_streaming_asr_provider("dashscope") is not None:
+        return StreamBridgeASRProvider("dashscope")
     return MockASRProvider()
 
 
@@ -770,8 +838,10 @@ class MiMoTTSProvider(BaseTTSProvider):
          "gender": "male", "description": "英文男声", "tags": ["英文", "男声"]},
     ]
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, base_url: str = ""):
         self.api_key = api_key
+        # MiMo 音频端点可配（MIMO_AUDIO_BASE_URL，ASR/TTS 共用），与 chat 的 LLM_BASE_URL 独立
+        self.base_url = base_url or os.getenv("MIMO_AUDIO_BASE_URL", "") or self.BASE_URL
         self._client: httpx.AsyncClient | None = None
 
     async def synthesize(self, text: str, voice_id: str, model: str,
@@ -799,7 +869,7 @@ class MiMoTTSProvider(BaseTTSProvider):
 
         if self._client is None:
             self._client = httpx.AsyncClient(limits=_HTTP_LIMITS)
-        resp = await self._client.post(self.BASE_URL, headers=headers, json=body, timeout=60)
+        resp = await self._client.post(self.base_url, headers=headers, json=body, timeout=60)
         resp.raise_for_status()
         # MiMo TTS 返回 JSON（含 base64 音频），手动解析避免编码问题
         raw = resp.content  # 原始字节（已自动解压 gzip）
@@ -826,11 +896,73 @@ class MiMoTTSProvider(BaseTTSProvider):
         return voices
 
 
+class StreamBridgeTTSProvider(BaseTTSProvider):
+    """把流式 TTS 引擎（TTS_STREAM_CATALOG 各家）适配成批处理接口（/api/tts + gRPC Synthesize）。
+
+    整段文本一次流入 → 聚齐 PCM → 封 WAV 返回。调用方传入的 model/voice 若不属于该
+    引擎（如 HMI 旧默认「冰糖」打到 cosyvoice），忽略并用引擎目录默认，避免跨引擎
+    音色 4xx（与 HMI settings 的同名回落逻辑对称，双侧防御）。
+    """
+
+    def __init__(self, engine: str):
+        self.engine = engine
+        cat = TTS_STREAM_CATALOG.get(engine, {})
+        self._model = cat.get("model", engine)
+        self._default_voice = cat.get("voice", "")
+        self._voice_ids = {v.get("voice_id") for v in cat.get("voices", [])}
+
+    async def synthesize(self, text: str, voice_id: str, model: str,
+                         speed: float, fmt: str):
+        voice = voice_id if voice_id in self._voice_ids else ""
+        prov = build_tts_stream_provider(self.engine, voice=voice)
+        if prov is None:
+            raise RuntimeError(f"TTS 引擎 {self.engine} 无可用 key")
+
+        async def _once():
+            yield text
+
+        sr = int(TTS_STREAM_CATALOG.get(self.engine, {}).get("sample_rate") or 24000)
+        chunks: list[bytes] = []
+        async for item in prov.stream(_once(), voice=voice):
+            if isinstance(item, dict):
+                sr = int(item.get("sample_rate") or sr)
+            elif item:
+                chunks.append(item)
+        pcm = b"".join(chunks)
+        duration_ms = int(len(pcm) / (sr * 2) * 1000) if pcm else 0
+        used_voice = voice or self._default_voice
+        if fmt == "pcm16":
+            return pcm, "pcm16", duration_ms, self._model, used_voice
+        return _wav_header(len(pcm), sr) + pcm, "wav", duration_ms, self._model, used_voice
+
+    async def list_voices(self, language: str, gender: str):
+        voices = TTS_STREAM_CATALOG.get(self.engine, {}).get("voices", [])
+        return [v for v in voices
+                if (not language or v.get("language") == language)
+                and (not gender or v.get("gender") == gender)]
+
+
 def build_tts_provider() -> BaseTTSProvider:
-    provider = os.getenv("LLM_PROVIDER", "xiaomimimo").lower()
+    """批处理 TTS 工厂（/api/tts + gRPC Synthesize 共用，启动时装配）。
+    TTS_PROVIDER：auto（默认）| mimo | cosyvoice | qwen | minimax | mock。
+    auto：LLM_PROVIDER 为 MiMo 系且有 LLM_API_KEY → MiMo（历史现状）；否则桥接
+    TTS_STREAM_PROVIDER 指定的流式引擎（需对应 key）；都不可用 → Mock。
+    显式 mimo 复用 LLM_API_KEY（多 LLM 源惯例：该 env 即 MiMo 的 key）。"""
+    choice = os.getenv("TTS_PROVIDER", "auto").strip().lower()
     api_key = os.getenv("LLM_API_KEY", "")
-    if provider in ("xiaomimimo", "mimo") and api_key:
-        return MiMoTTSProvider(api_key)
+    if choice == "mock":
+        return MockTTSProvider()
+    if choice in ("mimo", "xiaomimimo"):
+        return MiMoTTSProvider(api_key) if api_key else MockTTSProvider()
+    if choice == "auto":
+        llm_provider = os.getenv("LLM_PROVIDER", "xiaomimimo").lower()
+        if llm_provider in ("xiaomimimo", "mimo") and api_key:
+            return MiMoTTSProvider(api_key)
+        choice = os.getenv("TTS_STREAM_PROVIDER", "cosyvoice").strip().lower()
+        if choice == "dashscope":  # 泛指默认引擎（同 build_tts_stream_provider）
+            choice = "cosyvoice"
+    if choice in TTS_STREAM_CATALOG and build_tts_stream_provider(choice) is not None:
+        return StreamBridgeTTSProvider(choice)
     return MockTTSProvider()
 
 
@@ -1167,7 +1299,8 @@ class MiMoStreamingTTSProvider(BaseStreamingTTSProvider):
     def __init__(self, api_key: str, base_url: str = "", model: str = "mimo-v2.5-tts",
                  voice: str = "冰糖", sample_rate: int = 24000):
         self.api_key = api_key
-        self.base_url = base_url or MiMoTTSProvider.BASE_URL
+        self.base_url = (base_url or os.getenv("MIMO_AUDIO_BASE_URL", "")
+                         or MiMoTTSProvider.BASE_URL)
         self.model = model
         self.voice = voice
         self.sample_rate = sample_rate

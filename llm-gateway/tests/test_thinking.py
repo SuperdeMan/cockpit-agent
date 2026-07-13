@@ -24,6 +24,8 @@ def test_resolve_thinking_default_and_override():
 
 
 class _Resp:
+    status_code = 200   # provider 现按 status_code 判 4xx（响应体带进异常，见 complete()）
+
     def raise_for_status(self):
         pass
 

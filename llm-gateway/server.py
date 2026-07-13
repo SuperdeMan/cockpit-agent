@@ -137,6 +137,13 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             error=str(last_err), thinking=thinking, msgs=msgs)
         if isinstance(last_err, httpx.TimeoutException):
             await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "llm upstream timeout")
+        # 请求性 4xx（400/403/413/422，含内容风控拒收）→ INVALID_ARGUMENT：同一被拒 prompt
+        # 重连重试注定再拒，SDK 只对 UNAVAILABLE 做重试，避免白打第二遍（badcase a3fad033
+        # 每次 new_sensitive 都成对出现即此）。429 限流等仍走 UNAVAILABLE。
+        err_text = str(last_err)
+        if any(f"provider HTTP {c}" in err_text for c in (400, 403, 413, 422)):
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT,
+                                f"all models failed: {last_err}")
         await context.abort(grpc.StatusCode.UNAVAILABLE, f"all models failed: {last_err}")
 
     async def CompleteStream(self, request, context):

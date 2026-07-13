@@ -167,8 +167,9 @@ def create_http_app() -> web.Application:
 
     @routes.get("/api/voices")
     async def handle_voices(request: web.Request):
-        """查询某引擎的音色列表。?provider=cosyvoice|qwen|mimo（默认 mimo，向后兼容）。"""
-        provider = request.query.get("provider", "mimo").strip().lower()
+        """查询音色列表。?provider=cosyvoice|qwen|mimo|minimax 查指定引擎；
+        缺省=当前批处理 TTS 引擎自己的音色表（默认配置下即 MiMo，向后兼容）。"""
+        provider = request.query.get("provider", "").strip().lower()
         if provider in TTS_STREAM_CATALOG:
             return web.json_response({"voices": list(TTS_STREAM_CATALOG[provider]["voices"])})
         lang = request.query.get("language", "")
