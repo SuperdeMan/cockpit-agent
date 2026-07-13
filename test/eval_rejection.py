@@ -155,6 +155,8 @@ def _llm_complete(messages: list[dict]) -> str:
     req = llm_pb2.CompleteRequest(
         messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],
         temperature=0.3, max_tokens=800)
+    # 观测归属（caller_service 仅观测、不扰动限流桶键 "caller"，惯例同 planner/SDK）
+    req.meta["caller_service"] = "eval-rejection"
     resp = stub.Complete(req, timeout=30)
     return resp.content
 

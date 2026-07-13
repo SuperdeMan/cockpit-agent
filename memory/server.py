@@ -16,6 +16,17 @@ logger = logging.getLogger("memory.server")
 _CONSOLIDATE_EVERY = 4  # 每累积 N 轮触发一次异步抽取巩固
 _PROACTIVE_SUBJECT = "agent.proactive"
 
+# 合成会话（eval/e2e/badcase 重放/探针）跳过 LLM 抽取巩固：不烧 token、不把测试对话
+# 沉淀进真实用户画像（2026-07-13 消耗排查：抽取跟着 active provider 跑且 caller 为空，
+# 是消耗归属盲区之一）。AppendTurnRequest 无 meta 字段，session_id 前缀是零 proto 变更
+# 的显式契约（见 docs/conventions.md §9.2）；短期轮次存取（GetSession）不受影响。
+# 记忆管线自测用 memtest- 前缀（刻意不在此列，e2e_memory 靠它验证抽取链路）。
+_EXTRACT_SKIP_PREFIXES = tuple(
+    p.strip() for p in os.getenv(
+        "MEMORY_EXTRACT_SKIP_PREFIXES",
+        "eval-,e2e-,ctxe2e-,central-,review-,nightly-,replay-,probe-,smoke-",
+    ).split(",") if p.strip())
+
 
 class MemoryServicer(memory_pb2_grpc.MemoryServicer):
     def __init__(self):
@@ -36,10 +47,14 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         return memory_pb2.AppendTurnResponse(ok=True)
 
     def _maybe_consolidate(self, request):
-        """每 N 轮触发一次异步抽取巩固。无 user_id（如端侧本地轮）不触发。"""
+        """每 N 轮触发一次异步抽取巩固。无 user_id（如端侧本地轮）或合成会话
+        （session_id 命中 _EXTRACT_SKIP_PREFIXES）不触发。"""
         if not request.user_id:
             return
         sid = request.session_id
+        if sid.startswith(_EXTRACT_SKIP_PREFIXES):
+            logger.debug("consolidate skipped for synthetic session %s", sid)
+            return
         n = self._turn_counts.get(sid, 0) + 1
         self._turn_counts[sid] = n
         if n % _CONSOLIDATE_EVERY != 0:

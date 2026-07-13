@@ -135,3 +135,14 @@ def test_consolidate_equivalent_skips():
     ids2, exported = asyncio.run(go())
     assert ids2 == []                              # 等价跳过，不重复写
     assert len(exported["memories"]) == 1
+
+
+# ── 观测归属（2026-07-13 消耗排查）────────────────────────
+def test_default_complete_request_carries_caller_service():
+    """抽取的 Complete 必须带 caller_service（obs.llm 归属；此前 caller 为空=盲区）。
+    刻意不设 "caller"——那是网关限流桶键（惯例同 planner/SDK）。"""
+    from extract import _build_complete_request
+    req = _build_complete_request([{"role": "user", "content": "hi"}])
+    assert req.meta["caller_service"] == "memory-extract"
+    assert "caller" not in req.meta
+    assert req.messages[0].content == "hi"

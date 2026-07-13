@@ -214,6 +214,9 @@ def _make_llm_fn():
             messages=[llm_pb2.Message(role=m["role"], content=m["content"])
                       for m in messages],
             temperature=0.3, max_tokens=800)
+        # 观测归属：eval 跑批曾以 caller 为空出现在 obs.llm（一小时 2M token 无法归因，
+        # 2026-07-13 排查）；caller_service 仅观测、不扰动限流桶键 "caller"（惯例同 planner/SDK）。
+        req.meta["caller_service"] = "eval-mode-routing"
         resp = stub.Complete(req, timeout=45)
         return resp.content
 

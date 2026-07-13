@@ -265,10 +265,12 @@ async def check_proactive_routine(stub) -> bool:
             user_id=u, kind="episodic", text="早晨在公司星巴克买咖啡", scope="episodic.general",
             value_json=json.dumps({"action": "买咖啡", "place": "公司星巴克", "hour": 8},
                                   ensure_ascii=False))])
-    # 4 轮 AppendTurn（带 user_id）触发服务端巩固 → derive → 发主动建议
+    # 4 轮 AppendTurn（带 user_id）触发服务端巩固 → derive → 发主动建议。
+    # memtest- 前缀：本链路专门验证抽取巩固，不能命中合成会话跳过表
+    # （e2e-/eval- 等前缀的会话不再触发 LLM 抽取，见 conventions §9.2）。
     for i in range(4):
         await stub.AppendTurn(memory_pb2.AppendTurnRequest(
-            session_id=f"e2e-routine-{u}", role="user", text=f"闲聊{i}", user_id=u))
+            session_id=f"memtest-routine-{u}", role="user", text=f"闲聊{i}", user_id=u))
     # 等主动建议到达
     for _ in range(20):
         if got:

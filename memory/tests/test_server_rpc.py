@@ -151,3 +151,36 @@ def test_derive_and_emit_publishes_proactive():
     assert published and published[0][0] == "agent.proactive"
     p = json.loads(published[0][1])
     assert p["type"] == "routine_suggestion" and p["speech"] and p["agent_id"] == "memory"
+
+
+def test_synthetic_sessions_skip_consolidation(monkeypatch):
+    """合成会话（eval-/e2e-/replay- 等前缀）不触发 LLM 抽取巩固：不烧 token、
+    不把测试对话沉淀进真实画像（conventions §9.2）；正常/memtest- 会话照旧 4 轮一触发。"""
+    svc = _servicer()
+    calls = []
+
+    async def fake_bg(*a, **k):
+        calls.append(a)
+
+    monkeypatch.setattr(svc, "_consolidate_bg", fake_bg)
+
+    async def go():
+        for prefix in ("eval-", "e2e-", "replay-", "nightly-"):
+            for i in range(8):
+                await svc.AppendTurn(memory_pb2.AppendTurnRequest(
+                    session_id=f"{prefix}case", role="user", text=f"t{i}", user_id="u1"), None)
+        assert calls == []  # 合成会话：多前缀 × 8 轮，零抽取
+
+        for i in range(4):
+            await svc.AppendTurn(memory_pb2.AppendTurnRequest(
+                session_id="memtest-routine-x", role="user", text=f"t{i}", user_id="u1"), None)
+        await asyncio.sleep(0)  # 让后台 task 执行
+        assert len(calls) == 1  # 抽取自测前缀不受影响
+
+        for i in range(4):
+            await svc.AppendTurn(memory_pb2.AppendTurnRequest(
+                session_id="hmi-normal-1", role="user", text=f"t{i}", user_id="u1"), None)
+        await asyncio.sleep(0)
+        assert len(calls) == 2  # 真实会话照旧
+
+    asyncio.run(go())

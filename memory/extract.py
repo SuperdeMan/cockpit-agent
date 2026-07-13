@@ -44,17 +44,26 @@ def _now() -> int:
     return int(time.time())
 
 
+def _build_complete_request(messages: list[dict]):
+    """构造抽取用 CompleteRequest。caller_service 让 obs.llm 把这笔消耗记到记忆抽取
+    头上——抽取是后台自发调用（无请求级 trace），此前 caller 为空 = 消耗归属盲区
+    （2026-07-13 排查）。刻意不用 "caller"（那是网关限流桶键，惯例同 planner/SDK）。"""
+    from cockpit.llm.v1 import llm_pb2
+    req = llm_pb2.CompleteRequest(
+        messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],
+        temperature=0.2, max_tokens=512)
+    req.meta["caller_service"] = "memory-extract"
+    return req
+
+
 async def _default_complete(messages: list[dict]) -> str:
     """默认经 gRPC 调 llm-gateway。失败抛异常由上层吞。"""
-    from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
+    from cockpit.llm.v1 import llm_pb2_grpc
     from runtime.grpcio import aio_channel
     addr = os.getenv("LLM_GATEWAY_ADDR", "llm-gateway:50052")
     async with aio_channel(addr) as ch:
         stub = llm_pb2_grpc.LLMGatewayStub(ch)
-        req = llm_pb2.CompleteRequest(
-            messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],
-            temperature=0.2, max_tokens=512)
-        resp = await stub.Complete(req, timeout=20)
+        resp = await stub.Complete(_build_complete_request(messages), timeout=20)
         return resp.content
 
 
