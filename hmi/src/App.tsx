@@ -57,6 +57,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const { settings, update } = useSettings()
   const [messages, setMessages] = useState<Msg[]>(seedMessages ?? [])
   const [connected, setConnected] = useState(false)
+  // 车况镜像（edge-gateway vehicle_state 消息：连上即推全量 + 变更广播）→ 右舞台待机场景取数
+  const [vehState, setVehState] = useState<Record<string, unknown>>({})
   // 末条若是待确认问句（真实流程由 final 置位；seedMessages 演示态据此初始化以渲染确认条）
   const [awaitConfirm, setAwaitConfirm] = useState(
     !!(seedMessages && seedMessages.length && seedMessages[seedMessages.length - 1].needConfirm),
@@ -409,6 +411,11 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       }
       return
     }
+    if (data.type === 'vehicle_state') {
+      // 车况镜像更新（NATS→edge-gateway 桥接）：只更新状态，不进消息流
+      if (data.state && typeof data.state === 'object') setVehState(data.state as Record<string, unknown>)
+      return
+    }
     if (data.type === 'proactive') {
       // 主动建议（记忆 routine / 路况安全 / 异步深调研完成等经 NATS→edge 投递）：独立通知气泡，不占用 pending。
       // 异步深调研完成会带 card（可读分节报告卡）→ 一并挂到该消息上渲染；其余主动播报无 card。
@@ -678,7 +685,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       <main className="au-main">
         <ChatView messages={messages} awaitConfirm={awaitConfirm} onConfirm={confirm} onQuick={send} partialUser={handsFreePartial} />
         <aside className="au-stage">
-          <ContextualStage messages={messages} />
+          <ContextualStage messages={messages} vehicle={vehState} />
         </aside>
       </main>
       <Composer

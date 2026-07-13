@@ -7,6 +7,7 @@ import { AuroraOrb } from './aurora'
 import { Icon, type IconName } from './Icon'
 import type { Msg, UiCard, WeatherCard, PoiListCard, PoiDetailCard, RoutePlanCard, ChargingRouteCard, TripItineraryCard, ReminderListCard, ReminderCard, ReminderItem } from '../types'
 import { resolveView, groupByDay, timelineWindow, yForTime } from '../reminderStage.mjs'
+import { stageMetrics } from '../vehicleStage.mjs'
 
 type Scene =
   | { kind: 'idle' }
@@ -33,7 +34,7 @@ function deriveScene(messages: Msg[]): Scene {
   return { kind: 'idle' }
 }
 
-export function ContextualStage({ messages }: { messages: Msg[] }) {
+export function ContextualStage({ messages, vehicle }: { messages: Msg[]; vehicle?: Record<string, unknown> }) {
   const scene = deriveScene(messages)
   return (
     <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(120% 120% at 70% 20%, rgba(91,140,255,0.10), transparent 60%)' }}>
@@ -44,14 +45,14 @@ export function ContextualStage({ messages }: { messages: Msg[] }) {
       ) : scene.kind === 'agenda' ? (
         <AgendaStage card={scene.card} />
       ) : (
-        <IdleStage />
+        <IdleStage vehicle={vehicle} />
       )}
     </div>
   )
 }
 
 // ── 待机场景：时钟 + 日期 + 车辆概览 + 光球氛围 ──
-function IdleStage() {
+function IdleStage({ vehicle }: { vehicle?: Record<string, unknown> }) {
   const { settings } = useSettings()
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -72,13 +73,9 @@ function IdleStage() {
         </div>
         <div style={{ fontSize: 15, color: 'var(--au-text-2)', marginTop: 10 }}>{date}</div>
       </div>
-      {/* 车辆概览（占位 mock，待 HMI 侧接车况取数）*/}
+      {/* 车辆概览：edge-gateway 车况镜像动态取数（vehicle_state WS 消息）；未就绪显示 -- */}
       <div style={{ display: 'flex', gap: 14 }}>
-        {[
-          { label: '电量', value: '62', unit: '%' },
-          { label: '续航', value: '430', unit: 'km' },
-          { label: '挡位', value: 'P', unit: '' },
-        ].map((m) => (
+        {stageMetrics(vehicle).map((m) => (
           <div key={m.label} className="au-glass" style={{ padding: '16px 22px', textAlign: 'center', minWidth: 96 }}>
             <div className="au-num" style={{ fontSize: 26, fontWeight: 700 }}>
               {m.value}<span style={{ fontSize: 13, fontWeight: 400, color: 'var(--au-text-2)', marginLeft: 2 }}>{m.unit}</span>

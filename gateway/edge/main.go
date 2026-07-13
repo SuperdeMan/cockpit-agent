@@ -71,6 +71,48 @@ func (h *wsHub) broadcast(v any) int {
 
 var hub = newHub()
 
+// ─── 车况镜像：NATS vehicle.state.changed（增量 diff + edge 周期全量快照，同一主题）
+// 合并缓存 → HMI 连上即推全量、变更即播。右舞台待机场景电量/续航/挡位据此动态取数
+// （此前 ContextualStage 写死 62%/430km/P 占位）。
+
+var vehState = struct {
+	mu   sync.Mutex
+	m    map[string]any
+	last string // 上次广播的序列化快照：周期全量快照重放时去重，不给 HMI 发无变化帧
+}{m: map[string]any{}}
+
+// mergeVehState 合并 changes 进镜像，返回（全量快照, 是否有实际变化）。
+func mergeVehState(changes []map[string]any) (map[string]any, bool) {
+	vehState.mu.Lock()
+	defer vehState.mu.Unlock()
+	for _, kv := range changes {
+		if k, _ := kv["key"].(string); k != "" {
+			vehState.m[k] = kv["new"]
+		}
+	}
+	snap := make(map[string]any, len(vehState.m))
+	for k, v := range vehState.m {
+		snap[k] = v
+	}
+	b, _ := json.Marshal(snap) // encoding/json 按 key 排序，序列化即规范形
+	changed := string(b) != vehState.last
+	vehState.last = string(b)
+	return snap, changed
+}
+
+func vehStateSnapshot() map[string]any {
+	vehState.mu.Lock()
+	defer vehState.mu.Unlock()
+	if len(vehState.m) == 0 {
+		return nil
+	}
+	snap := make(map[string]any, len(vehState.m))
+	for k, v := range vehState.m {
+		snap[k] = v
+	}
+	return snap
+}
+
 type wsRequest struct {
 	Type           string            `json:"type"`            // R4.3b P2：="cancel" 时取消在飞请求（旧 HMI 不发此字段，向后兼容）
 	Text           string            `json:"text"`
@@ -101,6 +143,11 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 	client := &wsClient{conn: conn}
 	hub.register(client)
 	defer hub.unregister(client)
+
+	// 车况镜像连上即推（尚无镜像时静默；下一个周期快照/变更事件会补上）
+	if snap := vehStateSnapshot(); snap != nil {
+		client.send(map[string]any{"type": "vehicle_state", "state": snap})
+	}
 
 	// WS 保活：复杂任务开思考时执行期可能 30s+ 无应用层流量，期间不读 WS 控制帧
 	// （主循环阻塞在 stream.Recv）。服务端周期 Ping 维持连接，避免浏览器/代理 idle 掐断
@@ -335,6 +382,22 @@ func main() {
 				log.Printf("[edge-gateway] NATS subscribe failed: %v", err)
 			} else {
 				log.Printf("[edge-gateway] NATS proactive bridge active (%s)", natsURL)
+			}
+			// 车况桥接：合并增量 diff / 周期全量快照（同主题）→ 有实际变化才广播全量给 HMI。
+			if _, err := nc.Subscribe("vehicle.state.changed", func(m *natsgo.Msg) {
+				var p struct {
+					Changes []map[string]any `json:"changes"`
+				}
+				if json.Unmarshal(m.Data, &p) != nil || len(p.Changes) == 0 {
+					return
+				}
+				if snap, changed := mergeVehState(p.Changes); changed {
+					hub.broadcast(map[string]any{"type": "vehicle_state", "state": snap})
+				}
+			}); err != nil {
+				log.Printf("[edge-gateway] NATS vehicle.state subscribe failed: %v", err)
+			} else {
+				log.Printf("[edge-gateway] NATS vehicle-state bridge active")
 			}
 		}
 	}
