@@ -1,42 +1,83 @@
 {
-  "generated_at": "2026-07-14 23:39:32",
-  "duration_s": 5.2,
+  "generated_at": "2026-07-14 23:57:01",
+  "duration_s": 93.1,
   "provider": "mimo:mimo-v2.5-pro",
   "lane": "all",
   "regression": {
-    "pass": 1,
-    "total": 1
-  },
-  "target": {
     "pass": 0,
     "total": 0
   },
+  "target": {
+    "pass": 0,
+    "total": 2
+  },
   "skipped": [],
   "scorecard": {
-    "honesty": "1/1"
+    "autonomy": "0/1",
+    "continuity": "0/2"
   },
   "latency_s": {
-    "p50": 5.2,
-    "p95": 5.2,
-    "max": 5.2,
-    "n_turns": 1
+    "p50": 23.7,
+    "p95": 36.2,
+    "max": 37.4,
+    "n_turns": 4
   },
   "journeys": [
     {
-      "id": "A5-2",
-      "title": "数据界外诚实不编造（免费档日期门）",
-      "level": "regression",
+      "id": "B3-1",
+      "title": "行程×天气反向驱动修改（哪天下雨改室内）",
+      "level": "target",
       "lane": "live",
-      "status": "pass",
-      "reason": "",
+      "status": "fail",
+      "reason": "any_of 全部分支未满足: speech_all 缺 ['室内'] | speech=已结合天气为您规划珠海2天行程：第1天（大雨 26-29℃）：长隆海洋王国、珠海横琴长隆国际海洋度假区 || speech_any 未命中 ['不用', '没有雨', '无需', '都没有雨'] | speech=已结合天气为您规",
       "attempts": 1,
       "turns": [
         {
           "i": 1,
-          "op": "下周三世界杯有什么比赛",
-          "elapsed": 5.2,
-          "trace_id": "da2f5f2135ad47de",
-          "speech": "今天没有查询到FIFA 世界杯的比赛安排。"
+          "op": "帮我规划周末珠海两日游",
+          "elapsed": 36.2,
+          "trace_id": "ccef2e290bdf4b04",
+          "speech": "已结合天气为您规划珠海2天行程：第1天（雷阵雨 27-31℃）：长隆海洋王国、珠海横琴长隆国际海洋度假区、海滨公园；第2天（雷阵雨 27-30℃）：珠海日月贝、"
+        },
+        {
+          "i": 2,
+          "op": "确认",
+          "elapsed": 2.2,
+          "trace_id": "a5b04d7368a7492a",
+          "speech": "好的，珠海2天的行程已确认！第一站为您安排在「长隆海洋王国」：长隆海洋王国、珠海长隆海洋王国售票处、珠海横琴长隆国际海洋度假区。说『第几个』我就为您导航过去。"
+        },
+        {
+          "i": 3,
+          "op": "哪天要下雨的话，把那天的安排换成室内的",
+          "elapsed": 37.4,
+          "trace_id": "8e71b2736f514343",
+          "speech": "已结合天气为您规划珠海2天行程：第1天（大雨 26-29℃）：长隆海洋王国、珠海横琴长隆国际海洋度假区、海滨公园；第2天（大雨 27-30℃）：珠海日月贝、海滨",
+          "fails": [
+            "any_of 全部分支未满足: speech_all 缺 ['室内'] | speech=已结合天气为您规划珠海2天行程：第1天（大雨 26-29℃）：长隆海洋王国、珠海横琴长隆国际海洋度假区 || speech_any 未命中 ['不用', '没有雨', '无需', '都没有雨'] | speech=已结合天气为您规划珠海2天行程：第1天（大雨 26-29"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "B3-3",
+      "title": "记忆×车控参数化（调到我喜欢的温度）",
+      "level": "target",
+      "lane": "live",
+      "status": "fail",
+      "reason": "speech_not 命中禁词 '保存吗' | speech=26度 将创建空调20度，共 1 个动作：空调设到20度。保存吗？",
+      "attempts": 1,
+      "turns": [
+        {
+          "i": 1,
+          "op": "记住，我最喜欢的空调温度是26度",
+          "elapsed": 11.1,
+          "trace_id": "3d05b75f6461490d",
+          "speech": "26度 将创建空调20度，共 1 个动作：空调设到20度。保存吗？",
+          "fails": [
+            "speech_not 命中禁词 '保存吗' | speech=26度 将创建空调20度，共 1 个动作：空调设到20度。保存吗？",
+            "speech_not 命中禁词 '创建' | speech=26度 将创建空调20度，共 1 个动作：空调设到20度。保存吗？",
+            "不该出现的动作 vehicle.control 出现了"
+          ]
         }
       ]
     }

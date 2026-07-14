@@ -73,8 +73,8 @@ TURN_KEYS = {"say", "press", "confirm", "cancel", "wait_push", "env", "sleep",
              "expect", "skip_journey_if_speech_any", "new_session", "name"}
 EXPECT_KEYS = {"speech_any", "speech_all", "speech_not", "cards_any",
                "card_contains", "need_confirm", "follow_up_any", "action",
-               "no_duplicate_action", "process_min", "latency_s", "vehicle",
-               "any_of"}
+               "action_absent", "no_duplicate_action", "process_min",
+               "latency_s", "vehicle", "any_of"}
 PRESS_KEYS = {"button", "text", "from"}
 WAIT_PUSH_KEYS = {"timeout_s", "speech_any", "card_any", "source"}
 SETUP_KEYS = {"vehicle", "say", "location", "docker_stop"}
@@ -364,6 +364,9 @@ def check_expect(expect: dict, out: TurnOutcome, enforce_latency: bool,
                     break
                 if hit is None:
                     f.append(f"action 未命中 {spec} | 实际类型={[a.get('type') for a in out.actions]}")
+        for atype in exp.get("action_absent", []):
+            if any(a.get("type") == atype for a in out.actions):
+                f.append(f"不该出现的动作 {atype} 出现了")
         for atype in exp.get("no_duplicate_action", []):
             n = sum(1 for a in out.actions if a.get("type") == atype)
             if n > 1:

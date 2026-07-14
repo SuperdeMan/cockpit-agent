@@ -184,11 +184,13 @@ journeys:
       - confirm: true
         expect:
           latency_s: 60
+      # 校准记录（P1 首跑假通过）：重规划把原行程原样端回+尾句「确认按此调整吗」撞中
+      # 容忍词「调整」，大雨天仍排海滨泳场——判据收紧为「点名室内」或「明说无需」。
       - say: 哪天要下雨的话，把那天的安排换成室内的
         expect:
           latency_s: 90
           any_of:
-            - speech_any: [调整, 换成, 室内, 已把, 改成]
+            - speech_all: [室内]
             - speech_any: [不用, 没有雨, 无需, 都没有雨]
           speech_not: [没明白, 无法理解]
 
@@ -220,9 +222,14 @@ journeys:
     setup:
       say: [把空调调到20度]        # 已知非 26 起点
     turns:
+      # 校准记录（P1 首跑假通过）：本句被端侧「温度26」劫持当场把空调调到 26（记忆陈述句
+      # 无人接，云端还试图 scene.create「空调20度」）→ 终态 26 是污染蒙对。action_absent
+      # 把劫持钉成显性红灯：记忆陈述句不该执行任何车控。
       - say: 记住，我最喜欢的空调温度是26度
         expect:
           latency_s: 45
+          action_absent: [vehicle.control]
+          speech_not: [保存吗, 创建]      # 也不该被当成造场景
       - sleep: 25                 # 记忆抽取巩固窗口
       - new_session: true
         say: 把空调调到我喜欢的温度
