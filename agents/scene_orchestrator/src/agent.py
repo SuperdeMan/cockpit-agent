@@ -40,7 +40,8 @@ _SCENES_PATH = os.path.join(_HERE, "scenes.yaml")
 # 用户不能拿这些名字造场景，否则同名遮蔽会把端侧秒回劫持成云端往返。
 _EDGE_MODE_NAMES = re.compile(
     r"^(驾驶|运动|舒适|经济|节能|标准|雪地|越野|性能|省电|电量|动能回收|飞行|勿扰|静音)模式$")
-_DELETE_CONFIRM_RE = re.compile(r"删除|删掉|不要了|去掉")
+# P1 会话沉淀（D11 桥）：「把刚才这些存成加班模式」——指代最近做过的操作，不是当场描述动作
+_SEDIMENT_RE = re.compile(r"刚才|刚刚|这些|这样|现在这|当前这")
 
 
 def _load_builtin(path: str) -> dict:
@@ -205,6 +206,19 @@ class SceneOrchestratorAgent(BaseAgent):
                 speech=f"「{name}」是车上本来就有的模式，不能用它当场景名。换一个吧，"
                        f"比如「钓鱼模式」。")
 
+        # P1 会话沉淀（D11）：「把刚才这些存成加班模式」——内容不在这句话里，在**最近做过的
+        # 操作**里。读 history 拼成 spec，走同一条编译+校验+回读闭环（不新增第二条创建路径）。
+        # 这是「临时智能 → 沉淀 → 可靠复用」三段桥的中间一跳：Planner 负责第一次的聪明，
+        # 场景负责每一次的可靠。
+        # 判据不能只看 `not spec`：「把刚才这些存成加班模式」剥掉名字后还剩「把刚才这些」，
+        # extract_spec 会把这句**元指令本身**当成 spec 喂给编译器（LLM 只能瞎猜）。
+        if _SEDIMENT_RE.search(raw) and (not spec or _SEDIMENT_RE.search(spec)):
+            spec = await self._history_spec(ctx)
+            if not spec:
+                return AgentResult(
+                    speech=f"我没找到刚才做过的车内操作，没法存成{name}。"
+                           f"直接说「创建{name}：座椅放平、空调22度」也行。")
+
         # 只说了名字没说内容（「帮我建个钓鱼模式」）→ 追问（名字存 pending，下轮续接）
         if not spec:
             await self._save_kv(ctx, SCENE_PENDING, {"name": name})
@@ -255,6 +269,28 @@ class SceneOrchestratorAgent(BaseAgent):
         base = name[:-2] if name.endswith("模式") else name
         return sorted({name, base} - {""})
 
+    async def _history_spec(self, ctx, last_n: int = 8) -> str:
+        """会话沉淀：把最近几轮的车内操作拼成 spec 交编译器。
+
+        用户话 + 助手回执都带上——回执（「已为您打开空调，设定26度」）才是**实际发生了什么**，
+        用户话可能含指代/口误。当前这轮不在 history 里（编排在本轮结束后才落库），天然干净。
+        """
+        try:
+            turns = await ctx.history(last_n)
+        except Exception as e:
+            logger.debug("scene: 读 history 失败：%s", e)
+            return ""
+        lines = []
+        for t in turns or []:
+            text = (t.get("text") or "").strip()
+            if not text or _SEDIMENT_RE.search(text):      # 跳过"存成X模式"这类元指令
+                continue
+            who = "用户" if t.get("role") == "user" else "已执行"
+            lines.append(f"{who}：{text[:60]}")
+        if not lines:
+            return ""
+        return "把最近这些车内操作固化成一个场景：\n" + "\n".join(lines[-6:])
+
     # ── scene.activate ──────────────────────────────────────────────────────
     async def _activate(self, intent, ctx, meta) -> AgentResult:
         query = (intent.slots.get("scene") or "").strip() or (intent.raw_text or "")
@@ -272,6 +308,13 @@ class SceneOrchestratorAgent(BaseAgent):
                        f"「创建{asked}：要做的事」。")
 
         actions = [dict(a) for a in scene.actions]
+        # P1 custom_params：「开启午休模式，温度26」——原话里的数值确定性覆盖同对象动作
+        # （只覆盖已有动作、不新增；解析不出就忽略，**不 LLM 兜底**）。
+        # 覆盖源要用 slots+raw_text 合并：确认轮的 raw_text 是「确认」，数值只在 slots 里
+        # （route_hint 的 `scene: $text` 灌的是原句），只看 raw_text 会把覆盖弄丢。
+        override_src = f"{query} {intent.raw_text or ''}"
+        actions, overridden = self._apply_param_override(actions, override_src)
+
         confirmed = str(meta.get("confirmed", "")).lower() == "true"
         danger = [a for a in actions if a.get("require_confirm")]
         if danger and not confirmed:
@@ -285,7 +328,10 @@ class SceneOrchestratorAgent(BaseAgent):
                      {"scene": scene.id, "actions": self._dispatch_payloads(actions)},
                      require_confirm=True)
 
-        return await self._dispatch(ctx, scene, actions)
+        res = await self._dispatch(ctx, scene, actions)
+        if overridden and res.status == "ok":
+            res.speech = f"已为您开启{scene.name}，{self._preview_speech(actions, limit=3)}。"
+        return res
 
     async def _dispatch(self, ctx, scene: Scene, actions: list) -> AgentResult:
         """下发动作：先按本次动作集采快照（D5 恢复基准）+ 写 SCENE_ACTIVE，再产出 actions。"""

@@ -124,14 +124,38 @@ async def main() -> int:
            and len(card.get("builtin") or []) == 3,      # 露营被用户版遮蔽 → 内置剩 3 个
            f"mine={mine} builtin={len(card.get('builtin') or [])}")
 
-    # 7) 自清理（可重入）：删掉本次建的两个场景，露营模式回归内置
+    await ask("退出露营模式", "遮蔽-退出")
+
+    # 7) P1 参数覆盖：「开启午休模式，温度26」→ 场景里写的是 24，原话的 26 要赢
+    await ask("开启午休模式，温度26", "参数覆盖")
+    await ask("确认", "参数覆盖-确认")           # 午休含座椅放平 → 危险动作要确认
+    st4 = await settle()
+    record("7.custom_params 覆盖", st4.get("hvac_temp") == 26,
+           f"hvac_temp={st4.get('hvac_temp')}（场景里写的是 24）")
+    await ask("退出午休模式", "参数覆盖-退出")
+    await ask("确认", "参数覆盖-退出确认")
+
+    # 8) P1 会话沉淀（D11 桥）：先手动调两下车，再「把刚才这些存成加班模式」
+    await ask("把空调调到28度", "沉淀-操作1")
+    await ask("氛围灯调到45%", "沉淀-操作2")
+    r = await ask("把刚才这些存成加班模式", "沉淀-固化")
+    record("8.会话沉淀回读", r.get("type") == "final" and "加班模式" in r.get("speech", ""),
+           r.get("speech", "")[:60])
+    await ask("确认", "沉淀-确认")
+    await ask("把空调调到20度", "沉淀-打乱现场")     # 先破坏现场，再看激活能不能还原
+    await ask("开启加班模式", "沉淀-激活")
+    st5 = await settle()
+    record("8b.沉淀场景可复用", st5.get("hvac_temp") == 28,
+           f"hvac_temp={st5.get('hvac_temp')}（沉淀时是 28，激活前被打乱成 20）")
+
+    # 9) 自清理（可重入）：删掉本次建的场景，露营模式回归内置
     await ask("退出场景", "清理-退出")
-    for name in ("钓鱼模式", "露营模式"):
+    for name in ("钓鱼模式", "露营模式", "加班模式"):
         await ask(f"删掉{name}", f"清理-删{name}")
         await ask("确认", "清理-确认")
     r = await ask("有哪些场景模式", "清理-复查")
     card = r.get("ui_card") or {}
-    record("7.自清理", not (card.get("mine") or []) and len(card.get("builtin") or []) == 4,
+    record("9.自清理", not (card.get("mine") or []) and len(card.get("builtin") or []) == 4,
            f"mine={[x['name'] for x in (card.get('mine') or [])]} "
            f"builtin={len(card.get('builtin') or [])}")
 

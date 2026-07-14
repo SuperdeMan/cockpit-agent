@@ -27,9 +27,11 @@ class FakeLLM:
     def __init__(self, reply: str = ""):
         self.reply = reply
         self.calls = 0
+        self.last_prompt = ""
 
     async def complete(self, messages, **kw):
         self.calls += 1
+        self.last_prompt = " ".join(m.get("content", "") for m in messages)
         if not self.reply:
             raise RuntimeError("no LLM in this test")
         return self.reply
@@ -382,3 +384,83 @@ def test_honest_refusals_use_ok_status():
         res = _run(run_handle(a, intent, slots=slots, raw_text=raw, ctx=_ctx(kv)))
         assert res.status == "ok", f"{intent} 的诚实拒绝不该用 FAILED（话术会被吞）"
         assert "没找到" in res.speech or "没有找到" in res.speech
+
+
+# ── P1：custom_params 参数覆盖 ─────────────────────────────────────────────
+
+def test_activate_custom_params_override():
+    """「开启午休模式，温度26」→ 确定性覆盖同对象动作（26 而非场景里的 24），不惊动 LLM。"""
+    kv, a = KV(), _agent()          # 无 LLM：能覆盖就说明走的确定性路径
+    res = _run(run_handle(a, "scene.activate", slots={"scene": "开启午休模式，温度26"},
+                          raw_text="开启午休模式，温度26", ctx=_ctx(kv),
+                          meta={"confirmed": "true"}))
+    assert res.status == "ok"
+    hvac = [x["payload"] for x in res.actions
+            if x["payload"].get("command") == "hvac.set"]
+    assert hvac and hvac[0]["temperature"] == "26"
+    assert a.llm.calls == 0
+
+
+def test_activate_custom_params_survive_confirm_round():
+    """确认轮的 raw_text 是「确认」——数值只在 slots 里（route_hint 灌的原句）。
+    只看 raw_text 会把覆盖弄丢，用户确认后拿到的是 24 不是 26。"""
+    kv, a = KV(), _agent()
+    res = _run(run_handle(a, "scene.activate", slots={"scene": "开启午休模式，温度26"},
+                          raw_text="确认", ctx=_ctx(kv), meta={"confirmed": "true"}))
+    hvac = [x["payload"] for x in res.actions
+            if x["payload"].get("command") == "hvac.set"]
+    assert hvac and hvac[0]["temperature"] == "26"
+
+
+def test_activate_without_numbers_unchanged():
+    kv, a = KV(), _agent()
+    res = _run(run_handle(a, "scene.activate", slots={"scene": "午休模式"},
+                          raw_text="开启午休模式", ctx=_ctx(kv), meta={"confirmed": "true"}))
+    hvac = [x["payload"] for x in res.actions
+            if x["payload"].get("command") == "hvac.set"]
+    assert hvac and hvac[0]["temperature"] == "24"          # 场景原值
+
+
+# ── P1：会话沉淀（D11 桥）─────────────────────────────────────────────────
+
+_SEDIMENT_DRAFT = json.dumps({
+    "name": "加班模式", "description": "空调28度 + 氛围灯45%", "goal": "晚上在车里加班",
+    "actions": [
+        {"type": "vehicle.control", "command": "hvac.set", "params": {"temperature": "28"}},
+        {"type": "vehicle.control", "command": "ambient_light.set",
+         "params": {"brightness": "45"}},
+    ],
+}, ensure_ascii=False)
+
+
+def test_create_from_history_sediment():
+    """「把刚才这些存成加班模式」——内容不在这句话里，在最近做过的操作里（D11 沉淀桥）。"""
+    kv, a = KV(), _agent(_SEDIMENT_DRAFT)
+    ctx = _ctx(kv, history=[
+        {"role": "user", "text": "把空调调到28度", "ts": 1},
+        {"role": "assistant", "text": "已为您打开空调，设定28度", "ts": 2},
+        {"role": "user", "text": "氛围灯调到45%", "ts": 3},
+        {"role": "assistant", "text": "氛围灯已调整", "ts": 4},
+    ])
+    res = _run(run_handle(a, "scene.create", slots={},
+                          raw_text="把刚才这些存成加班模式", ctx=ctx))
+    assert res.status == "need_confirm" and "加班模式" in res.speech
+    # 编译器收到的必须是 history 拼出来的操作，而不是「把刚才这些存成加班模式」这句元指令
+    # ——否则 LLM 只能瞎猜（mock LLM 会把这个 bug 盖住，故直接断言 prompt 内容）
+    assert "空调调到28度" in a.llm.last_prompt and "氛围灯调到45%" in a.llm.last_prompt
+    assert "把刚才这些存成" not in a.llm.last_prompt.split("用户说")[-1]
+    assert a.llm.calls == 1
+    res2 = _run(run_handle(a, "scene.create", slots={}, raw_text="确认",
+                           ctx=_ctx(kv), meta={"confirmed": "true"}))
+    assert res2.status == "ok"
+    saved = _run(a.store.get_by_name("u1", "加班模式"))
+    assert saved and len(saved.actions) == 2
+
+
+def test_sediment_without_history_is_honest():
+    """没有可沉淀的操作 → 诚实说没找到，别凭空编一个场景。"""
+    kv, a = KV(), _agent(_SEDIMENT_DRAFT)
+    res = _run(run_handle(a, "scene.create", slots={},
+                          raw_text="把刚才这些存成加班模式", ctx=_ctx(kv, history=[])))
+    assert res.status == "ok" and "没找到刚才做过" in res.speech
+    assert a.llm.calls == 0, "没内容就别调 LLM"
