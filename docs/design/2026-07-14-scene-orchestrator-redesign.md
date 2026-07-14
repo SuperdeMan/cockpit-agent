@@ -1,6 +1,6 @@
 # 场景编排 Agent（scene-orchestrator）重设计：从静态预置激活器到「用户造场景 + 策略引擎」
 
-- **状态**：**v2.1 评审修正版（2026-07-14）；P0 已落地并真栈验证（e2e_scene 14/14）**，落地纠偏见 §0.5，实施计划见姊妹篇 `2026-07-14-scene-orchestrator-implementation-plan.md`。v2 增量（泓舟提出「根据目标/环境/执行结果动态决定做什么、先做什么、失败后怎么办」）：Policy DSL v2 + 激活期 Ground·Solve 确定性具象化 + Verify-Repair 失败闭环，对应 D9/D10/D11 与 §4.1/§5.2/§5.3。**v2.1 修正（泓舟评审 4 指摘，全部成立）**：① DSL 与 PG 字段不一致（owner↔user_id、goal/guards 缺列）→ §4.1/§4.2 对齐；② 环境缺失条件视为满足会让互斥分支同时生效（两条 hvac 互相覆盖的实 bug）→ §5.2 改三态求值 unknown=exclude+话术告知、guard missing 降级 confirm；③ 单一 SCENE_ACTIVE 与异步 Verify 竞态（新激活/退出覆盖后旧 verify 错账假警）→ §5.3 activation_id 代际护栏（R4.3b epoch 同款）+ 对账清单随 task 闭包传参 + 进程内单飞；④ 退出恢复按原始场景而非本次实际执行 → §5.4 恢复基准改 `solved_actions`（快照采集同源），防覆盖用户手动调整。
+- **状态**：**v2.1 评审修正版（2026-07-14）；P0-P3 全部落地并真栈验证（e2e_scene 26/26、全量 1568 passed）**，落地纠偏见 §0.5，实施计划见姊妹篇 `2026-07-14-scene-orchestrator-implementation-plan.md`。v2 增量（泓舟提出「根据目标/环境/执行结果动态决定做什么、先做什么、失败后怎么办」）：Policy DSL v2 + 激活期 Ground·Solve 确定性具象化 + Verify-Repair 失败闭环，对应 D9/D10/D11 与 §4.1/§5.2/§5.3。**v2.1 修正（泓舟评审 4 指摘，全部成立）**：① DSL 与 PG 字段不一致（owner↔user_id、goal/guards 缺列）→ §4.1/§4.2 对齐；② 环境缺失条件视为满足会让互斥分支同时生效（两条 hvac 互相覆盖的实 bug）→ §5.2 改三态求值 unknown=exclude+话术告知、guard missing 降级 confirm；③ 单一 SCENE_ACTIVE 与异步 Verify 竞态（新激活/退出覆盖后旧 verify 错账假警）→ §5.3 activation_id 代际护栏（R4.3b epoch 同款）+ 对账清单随 task 闭包传参 + 进程内单飞；④ 退出恢复按原始场景而非本次实际执行 → §5.4 恢复基准改 `solved_actions`（快照采集同源），防覆盖用户手动调整。
 - **交付对象**：Claude Code（评审通过后按 §11 分阶段清单执行）
 - **关联代码**：`agents/scene_orchestrator/`（0.1.0 现状，本次重构对象）、`orchestrator/edge/knowledge/commands.yaml`（VAL 对象/操作唯一真相源，编译白名单来源）、`orchestrator/edge/server.py:660-705`（云端 action 回流分发：仅 `vehicle.control*` 交 VAL）、`orchestrator/edge/edge_call.py::action_to_structured`（场景动作→VAL 结构化翻译）、`orchestrator/edge/fast_intent.py:45-48`（scene_mode 端云分工决策注释）、`agents/reminder/src/{scheduler,store,timeparse}.py`（时间调度/PG 存储/中文时间解析样板）、`agents/road_safety/src/agent.py:43-100`（NATS 事件订阅+节流+proactive 样板）、`memory/routine.py`（习惯聚合先例）、`gateway/edge/main.go:315-333`（agent.proactive→HMI 投递）、`agents/reminder/manifest.yaml:43-73`（route_hints 全要素样板）
 - **关联文档**：`docs/design/2026-06-20-standalone-agents-roadmap.md` §3.2/§8（0.1.0 原设计与 VAL 命令对齐闭环）、`docs/conventions.md` §1/§2/§5/§9（落地时登记）、`docs/design/2026-07-11-reminder-agent-design.md`（D2/D3/D4 决策直接复用）、`CLAUDE.md` §3/§5（新增 Agent 流程与安全红线）
@@ -18,7 +18,24 @@
 | A3 | §11「P0 交付判据：真栈 e2e」 | **端侧快路径会把造场景的句子整句劫走**：「创建钓鱼模式：氛围灯调到10%，空调22度」被 `fast_intent` 当本地多意图车控**当场执行**（灯真调暗、空调真开），请求根本没上云 | `fast_intent` 顶部加**场景管理句护栏**（`_is_scene_management`）：造/改/删「X模式」的句子一律 None → 交云端。句中的车控词是**场景内容**不是当下指令。同一条分工在文件头 45-48 行已有先例（`scene_mode.set` 刻意不入 `LOCAL_INTENTS`）。D8 的端侧模式词（运动/省电…）仍留端侧 |
 | A4 | D10「`_dispatch_cloud_actions` speech 逐条覆盖是真缺陷 → 用 P2 的 Verify-Repair 事后诚实汇报对症」 | 信息其实就在分发器里：循环内 `new_speech` 被逐条覆盖，导致 ①失败被后续成功盖掉（D10 说的）②**场景的总结话术被最后一条动作的 VAL 通用应答顶成「好的」**（每次激活必现） | 直接在 `_dispatch_cloud_actions` 修根：单条动作仍用 VAL 精确应答（含真实温度/档位，逐字保持现状）；**多条动作保留云端总结话术**；**任何拒绝都要浮出来、不被后续成功掩埋**。P2 的 Verify-Repair 仍有价值（VAL 接受了但状态没落地、驻车补做、幂等重试），二者互补 |
 
-**顺带修掉的两个既有真缺陷**（都由本次真栈 e2e 暴露）：
+**顺带修掉的既有真缺陷**（全部由真栈 e2e 暴露，mock 单测一个都盖不住）：
+- **VAL 氛围灯的亮度从来没生效过**：`ambient_light.set` 同时带 color+brightness 时，设色分支
+  **提前 return**，亮度被静默丢弃——VAL 还回一句"设好了"。四个预置场景的 ambient_light 全是
+  color+brightness。**这是 Verify-Repair 第一次真跑就抓到的**（期望灯 10%、实际 20%），也是
+  这个功能存在价值最好的证明。已修 + 回归测试钉死。
+- **派生断言必须是复合的**：`ambient_light.set{brightness:10}` 只断言亮度的话，灯关着但亮度
+  值恰好残留 10 时，幂等跳过会把开灯动作剔掉、灯根本没开。期望态是「灯开着 **且** 亮度10」
+  （空调同理 hvac_on+hvac_temp）。`evaluate` 因此支持条件数组（AND，UNSAT 优先于 UNKNOWN）。
+- **prompt 里根本没有策略说明**：`_POLICY_DOC` 定义了却忘了插进 `_prompt` 的 f-string——
+  mock LLM 单测全绿，真实 LLM 从没见过 `when`/`on_fail`/`triggers` 的说明，功能等于不存在。
+  已补 `test_prompt_actually_carries_policy_and_trigger_docs` 钉死"喂给模型的东西"本身。
+- **scene.create 被 reminder.create 抢走**：「创建省电出行模式：…电量低于20%的时候**提醒我**开」
+  里的「提醒我」是触发器描述，不是要建提醒。priority 55 < reminder 56 → reminder 抢走并追问
+  「什么时候提醒你」，把会话挂起、后续「确认」全被它吃掉（级联翻车）。已提到 58。
+- **设计里的「行车禁座椅放平」不成立**：`commands.yaml` 的 seat 是 `drive_restricted: false`，
+  VAL 并不拦行车中的座椅。e2e ④ 改用真实存在的门控（低电量禁高耗电氛围灯）验证失败闭环。
+
+**顺带修掉的两个既有真缺陷**（P0 阶段）：
 - `scenes.yaml` 预置场景的 `mode: auto/quiet/external_circulation`、`color: warm_orange` **全在 VAL 词表之外**，被 `edge_call` 静默丢弃——即「露营模式说了开外循环，其实没开」。已改为词表内取值，并加契约测试 `test_builtin_scenes_are_catalog_valid` 逐条钉死（这正是 D3「词表唯一真相源」要根治的漂移）。
 - 聚合器对 `FAILED` 只取 `error` 码拼「抱歉，处理失败」，**会把 Agent 的诚实话术整个丢掉**（`aggregator.py:119-121`）。故本 Agent 面向用户的拒绝一律用 `OK` 状态（与 v1「没有找到X场景」既有做法一致），`FAILED` 只留给真·内部错误。
 
