@@ -674,7 +674,10 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         last_msg = ""           # 最后一条动作的 VAL 应答
         rejected: list[str] = []
         for action in final.actions:
-            if not action.type.startswith("vehicle.control"):
+            # media.control 与 vehicle.control 同经 VAL 结构化流水线（P1.4）：VAL 早已建模
+            # media/music/radio 等对象、`edge_call.action_type_for` 也早已把媒体对象映射到
+            # media.control——只是回流分发漏了这一类，导致场景里的「放舒缓音乐」永远落不了地。
+            if not action.type.startswith(("vehicle.control", "media.control")):
                 continue
             payload = MessageToDict(
                 action.payload, preserving_proto_field_name=True

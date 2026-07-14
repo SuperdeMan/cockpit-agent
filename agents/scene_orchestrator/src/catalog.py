@@ -59,14 +59,22 @@ _MAGNITUDE_CANON = {"aircon": "temperature", "ambient_light": "brightness",
 # 值域开放的对象：scene_mode 的模式就是"当前场景"，用户可造场景（D1）→ 值域天然开放，
 # commands.yaml 用 `modes: []` 显式声明"不做枚举校验"，权威场景集在本 Agent（store+scenes.yaml）。
 _OPEN_MODE_OBJECTS = {"scene_mode"}
-# P0 不支持的动作类型：端侧 `_dispatch_cloud_actions` 只回流 vehicle.control（server.py:675），
-# media.* 不在云端 action 回流路径上 → 编译期诚实剔除（设计"非目标"）；P1 扩端侧分发后放开。
+# 媒体类对象（与 edge_call._MEDIA_OBJECTS 同集）：action.type 用 media.control。
+# P1.4 已放开——端侧 `_dispatch_cloud_actions` 现在同时回流 media.control，媒体动作能真正落地
+# （此前场景里的「放舒缓音乐」只能编译期剔除，浪漫模式一直没有音乐）。
 _MEDIA_OBJECTS = {"media", "music", "radio", "online_radio", "audiobook",
                   "opera", "news", "video", "TV"}
+# 进 prompt 摘要的媒体对象：**只有这两个真能落地**——edge_call 把 `play` 归一成 `start`，
+# 而 music/audiobook/video 都没声明 `start` 操作，`music.play` 会被 VAL 直接拒（实测「暂不
+# 支持哦」）。能起播的只有 media（声明了 start）；radio 走 open/close。契约测试钉死这条。
+_MEDIA_IN_DIGEST = {"media", "radio"}
 # 不进场景词表的对象：交互元对象 / 需 target 参数而词表无声明 / 纯查询。
 _EXCLUDED_OBJECTS = {"interaction", "navigation", "map", "page", "app", "system",
                      "phone", "contacts", "call_log"}
-_CONTROL_OPS = {"open", "close", "set", "switch", "inc", "dec"}
+# 可控操作（"纯查询对象"不进场景词表）。含媒体动词——媒体对象只有 play/pause/stop 这类操作，
+# 不列进来的话 digest 会把 music 渲染成只有 close/switch，等于把「放音乐」藏起来了。
+_CONTROL_OPS = {"open", "close", "set", "switch", "inc", "dec",
+                "play", "pause", "stop", "resume", "start"}
 
 # §8.1 危险动作强制确认表：与 commands.yaml 的 require_confirm 取并集。
 _DANGER_OBJECTS = {"trunk", "frunk", "door_lock", "charging_port", "fuel_tank_cover"}
@@ -101,6 +109,7 @@ _LABELS = {
     "epb": "电子手刹", "bluetooth": "蓝牙", "wifi": "WiFi", "hotspot": "热点",
     "equalizer": "均衡器", "voice_assistant": "语音助手", "surround_view": "全景影像",
     "dashboard": "仪表", "lane_assistance": "车道保持",
+    "music": "音乐", "radio": "收音机", "media": "音乐播放",
     "lane_departure_assistance": "车道偏离预警",
 }
 
@@ -121,6 +130,10 @@ _STATE_KEYS = {
     "screen": ("screen_brightness",), "driving_mode": ("driving_mode",),
     "scene_mode": ("scene_mode",), "energy_recovery": ("energy_recovery",),
     "accompany_home": ("accompany_home",),
+    # 媒体类对象在 VAL 里共用一个 media 状态键（val.py::_simulate）
+    "media": ("media",), "music": ("media",), "radio": ("media",),
+    "online_radio": ("media",), "audiobook": ("media",), "opera": ("media",),
+    "news": ("media",), "video": ("media",), "TV": ("media",),
 }
 
 # 环境条件 key 白名单的非车身部分（P2 `when`/`guards` 用）。
@@ -263,6 +276,23 @@ def normalize_mode(cat: Catalog, obj: str, mode: str) -> str | None:
     return None
 
 
+def is_media(obj: str) -> bool:
+    """媒体类对象 → action.type 用 media.control（口径同 edge_call.action_type_for）。"""
+    return obj in _MEDIA_OBJECTS
+
+
+# 车控类动作的两种 action.type（都经端侧 `_dispatch_cloud_actions` → VAL 结构化流水线）。
+CAR_TYPES = ("vehicle.control", "media.control")
+
+
+def action_type_for(obj: str) -> str:
+    return "media.control" if is_media(obj) else "vehicle.control"
+
+
+def _is_car_action(a: dict) -> bool:
+    return (a.get("type") or "vehicle.control") in CAR_TYPES
+
+
 def is_danger(obj: str, operate: str, mode: str, cat: Catalog) -> bool:
     """§8.1 危险动作判定（commands.yaml require_confirm ∪ 场景层危险表）。"""
     if (cat.obj(obj) or {}).get("require_confirm"):
@@ -307,7 +337,7 @@ def validate_action(action: dict, cat: Catalog) -> tuple[bool, dict | None, str]
         return True, {"type": "navigate", "payload": {"destination": dest},
                       "require_confirm": False}, ""
 
-    if a_type != "vehicle.control":
+    if a_type not in CAR_TYPES:
         return False, None, f"暂不支持 {a_type} 类动作"
 
     command = str(action.get("command") or "").strip()
@@ -318,8 +348,6 @@ def validate_action(action: dict, cat: Catalog) -> tuple[bool, dict | None, str]
         return False, None, f"「{command}」不是有效的车控指令"
     obj, operate, attr, path_mode = resolved
 
-    if obj in _MEDIA_OBJECTS:
-        return False, None, "车机媒体播放我还做不到"           # P0 非目标，诚实告知
     d = cat.obj(obj)
     if d is None:
         return False, None, f"车上没有「{obj}」这个可控对象"
@@ -328,7 +356,8 @@ def validate_action(action: dict, cat: Catalog) -> tuple[bool, dict | None, str]
 
     operates = set(d.get("operates") or [])
     if operate not in operates and not (operate in ("inc", "dec") and "set" in operates):
-        return False, None, f"「{_LABELS.get(obj, obj)}」不支持「{operate}」操作"
+        raw_op = command.split(".")[-1]          # 用户/LLM 写的原词（别回「不支持 start」）
+        return False, None, f"「{_LABELS.get(obj, obj)}」不支持「{raw_op}」操作"
     if attr and attr not in set(d.get("attrs") or []):
         return False, None, f"「{_LABELS.get(obj, obj)}」没有「{attr}」属性"
 
@@ -384,7 +413,7 @@ def validate_action(action: dict, cat: Catalog) -> tuple[bool, dict | None, str]
     if operate in ("set", "inc", "dec") and not params and not path_mode:
         return False, None, f"「{command}」缺少必要参数"
 
-    cleaned = {"type": "vehicle.control", "command": command, "params": params,
+    cleaned = {"type": action_type_for(obj), "command": command, "params": params,
                "require_confirm": is_danger(obj, operate, mode, cat)}
     return True, cleaned, "；".join(notes)
 
@@ -393,7 +422,7 @@ def validate_action(action: dict, cat: Catalog) -> tuple[bool, dict | None, str]
 
 def affected_state_keys(action: dict) -> tuple[str, ...]:
     """该动作会改动的 vehicle_state 键（激活前按此采快照；P2 的 assert 也用它）。"""
-    if (action.get("type") or "") != "vehicle.control":
+    if not _is_car_action(action):
         return ()
     resolved = resolve_command(str(action.get("command") or ""))
     if resolved is None:
@@ -425,7 +454,7 @@ def restore_action(action: dict, snapshot: dict,
     None = 该对象没有可靠的恢复语义 → 调用方在话术里诚实说明"没法自动还原"。
     恢复动作的 `require_confirm` 同样经 §8.1 强制标注（D5：恢复里含座椅等危险类照走确认）。
     """
-    if (action.get("type") or "") != "vehicle.control":
+    if not _is_car_action(action):
         return None, ""
     resolved = resolve_command(str(action.get("command") or ""))
     if resolved is None:
@@ -437,8 +466,8 @@ def restore_action(action: dict, snapshot: dict,
     def act(command: str, p: dict | None = None) -> dict:
         r = resolve_command(command)
         danger = bool(cat and r and is_danger(r[0], r[1], (p or {}).get("mode", r[3]), cat))
-        return {"type": "vehicle.control", "command": command, "params": p or {},
-                "require_confirm": danger}
+        return {"type": action_type_for(r[0]) if r else "vehicle.control",
+                "command": command, "params": p or {}, "require_confirm": danger}
 
     if obj == "aircon":
         if snap.get("hvac_on") is False:
@@ -492,6 +521,15 @@ def restore_action(action: dict, snapshot: dict,
         on = bool(snap.get(obj))
         return act(f"{obj}.{'open' if on else 'close'}"), ""
 
+    if obj in _MEDIA_OBJECTS:
+        # 精确还原到激活前的播放态：paused ≠ stopped（VAL 两者都建模了，别把暂停还原成停止）
+        cur = snap.get("media")
+        if cur == "playing":
+            return act("media.play"), ""
+        if cur == "paused":
+            return act("media.pause"), ""
+        return act("media.close"), ""
+
     return None, f"「{_LABELS.get(obj, obj)}」没法自动还原"
 
 
@@ -501,8 +539,10 @@ def scene_objects(cat: Catalog) -> dict:
     """可进场景的对象子集：可控（非纯查询）、非语音禁用、非媒体、非元对象、非 Agent 自管。"""
     out = {}
     for name, d in cat.objects.items():
-        if name in _EXCLUDED_OBJECTS or name in _MEDIA_OBJECTS or name in _OPEN_MODE_OBJECTS:
+        if name in _EXCLUDED_OBJECTS or name in _OPEN_MODE_OBJECTS:
             continue          # scene_mode 由 Agent 自己追加，不给 LLM 造
+        if name in _MEDIA_OBJECTS and name not in _MEDIA_IN_DIGEST:
+            continue          # 媒体对象只推荐 music/radio（其余仍合法，只是不进摘要）
         if d.get("voice_forbidden"):
             continue
         if not (set(d.get("operates") or []) & _CONTROL_OPS):
@@ -516,7 +556,11 @@ def catalog_digest(cat: Catalog, max_modes: int = 8) -> str:
     lines: list[str] = []
     for name, d in scene_objects(cat).items():
         label = _LABELS.get(name, "")
-        ops = "/".join(o for o in (d.get("operates") or []) if o in _CONTROL_OPS)
+        declared = set(d.get("operates") or [])
+        # 只渲染**归一后仍在词表里**的操作：edge_call 把 play 归一成 start，radio 没声明 start
+        # → `radio.play` 其实会被 VAL 拒。摘要里摆一个执行不了的操作 = 引诱 LLM 编出废动作。
+        ops = "/".join(o for o in (d.get("operates") or [])
+                       if o in _CONTROL_OPS and _OPERATE_ALIASES.get(o, o) in declared)
         bits: list[str] = []
         for p in sorted(allowed_params(name, d)):
             if p == "mode":

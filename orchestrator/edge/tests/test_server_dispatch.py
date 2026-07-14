@@ -137,6 +137,24 @@ def test_multi_action_rejection_is_not_buried_by_later_success():
     assert srv.val.state.get("ambient_light") is not True
 
 
+def test_media_control_action_now_dispatched():
+    """P1.4：云端回流的 media.control 也经 VAL 结构化流水线执行。
+
+    此前 `_dispatch_cloud_actions` 只认 vehicle.control，媒体动作静默丢弃——浪漫模式的
+    「舒缓音乐」写在 description 里却从来没响过。VAL 早已建模 media 对象、
+    `edge_call.action_type_for` 也早已映射到 media.control，只差回流分发这一类。
+    """
+    srv = EdgeOrchestratorServicer()
+    final = orchestrator_pb2.FinalResult(speech="已为您开启浪漫模式。")
+    final.actions.append(common_pb2.AgentAction(
+        type="media.control", payload=_struct({"command": "media.play"}),
+        require_confirm=False))
+    out = srv._dispatch_cloud_actions(orchestrator_pb2.HandleEvent(final=final))
+
+    assert srv.val.state["media"] == "playing"
+    assert "暂不支持" not in out.final.speech
+
+
 def test_confirm_required_helper_flags_dangerous_objects():
     """R8：危险对象需二次确认（不走本地秒回）。"""
     srv = EdgeOrchestratorServicer()

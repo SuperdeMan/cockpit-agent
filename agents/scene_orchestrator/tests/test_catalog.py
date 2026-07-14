@@ -102,11 +102,22 @@ def test_ambient_light_ok_not_danger(cat):
     assert a["params"] == {"brightness": "10", "color": "warm_white"}
 
 
-def test_media_action_rejected_at_p0(cat):
-    """P0：端侧 action 回流只认 vehicle.control，媒体动作诚实剔除（不静默丢）。"""
+def test_media_action_allowed_after_p1_4(cat):
+    """P1.4：端侧 `_dispatch_cloud_actions` 已放开 media.control 回流 → 媒体动作合法，
+    且 action.type 派生成 media.control（口径同 edge_call.action_type_for）。"""
+    ok, a, _ = C.validate_action(
+        {"type": "media.control", "command": "media.play", "params": {}}, cat)
+    assert ok and a["type"] == "media.control"
+
+
+def test_media_play_only_via_media_object(cat):
+    """`music.play` 走不通——edge_call 把 play 归一成 start，而 music 没声明 start
+    （VAL 实测「暂不支持哦」）。能起播的只有 media；digest 因此只推荐 media/radio。"""
     ok, _, reason = C.validate_action(
-        {"type": "vehicle.control", "command": "music.play", "params": {}}, cat)
-    assert not ok and "媒体" in reason
+        {"type": "media.control", "command": "music.play", "params": {}}, cat)
+    assert not ok and "play" in reason        # 报错用原词，不是归一后的 start
+    digest = C.catalog_digest(cat)
+    assert "- media(" in digest and "- music(" not in digest
 
 
 def test_voice_forbidden_rejected(cat):
@@ -249,6 +260,9 @@ _GOLDEN = [
     ("scene_mode.set", {"mode": "off"}),
     ("screen.brightness.set", {"level": "40"}),
     ("driving_mode.set", {"mode": "eco"}),
+    ("media.play", {}),          # P1.4 媒体放开：起播只能经 media（music.play 会被 VAL 拒）
+    ("media.close", {}),
+    ("radio.open", {}),
 ]
 
 
@@ -305,3 +319,16 @@ def test_magnitude_param_canonicalized(cat):
         {"type": "vehicle.control", "command": "aircon.wind_speed.set",
          "params": {"level": "3"}}, cat)
     assert ok and a["params"] == {"level": "3"}
+
+
+def test_media_restore_returns_to_pre_activation_state(cat):
+    """退出场景把音乐**精确**还原到激活前的播放态——paused ≠ stopped（真栈实测：激活前
+    是暂停，旧实现退出后变成停止）。"""
+    a = {"type": "media.control", "command": "media.play", "params": {}}
+    assert C.affected_state_keys(a) == ("media",)
+    for snap, expect in (({"media": "stopped"}, "media.close"),
+                         ({"media": "paused"}, "media.pause"),
+                         ({"media": "playing"}, "media.play"),
+                         ({}, "media.close")):
+        r, _ = C.restore_action(a, snap, cat)
+        assert r["command"] == expect and r["type"] == "media.control", snap

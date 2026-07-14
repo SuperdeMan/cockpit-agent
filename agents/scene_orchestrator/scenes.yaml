@@ -65,7 +65,7 @@ scenes:
 
   romance:
     name: "浪漫模式"
-    description: "氛围灯粉色 + 香氛 + 适宜温度"
+    description: "氛围灯粉色 + 舒缓音乐 + 香氛 + 适宜温度"
     aliases: ["浪漫", "约会", "浪漫模式"]
     actions:
       - type: "vehicle.control"
@@ -78,5 +78,11 @@ scenes:
         require_confirm: false
       - type: "vehicle.control"
         command: "fragrance.on"
+        params: {}
+        require_confirm: false
+      # P1.4：媒体动作（端侧 _dispatch_cloud_actions 已放开 media.control 回流）。
+      # 起播只能用 media.play——edge_call 把 play 归一成 start，music/radio 都没声明 start。
+      - type: "media.control"
+        command: "media.play"
         params: {}
         require_confirm: false

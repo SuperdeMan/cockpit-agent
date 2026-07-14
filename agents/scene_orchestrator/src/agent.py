@@ -23,8 +23,8 @@ import yaml
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
 from agents._sdk.shared_state import SCENE_ACTIVE, SCENE_PENDING
 
-from .catalog import affected_state_keys, is_danger, load_catalog, resolve_command, \
-    restore_action, validate_action
+from .catalog import action_type_for, affected_state_keys, is_danger, load_catalog, \
+    resolve_command, restore_action, validate_action
 from .compiler import Draft, action_desc, actions_preview, compile_scene, \
     extract_scene_name, extract_spec
 from .state_mirror import StateMirror
@@ -86,7 +86,7 @@ class SceneOrchestratorAgent(BaseAgent):
             logger.warning("预置场景动作无法解析，已跳过：%s", cmd)
             return None
         params = {k: str(v) for k, v in (a.get("params") or {}).items()}
-        return {"type": "vehicle.control", "command": cmd, "params": params,
+        return {"type": action_type_for(r[0]), "command": cmd, "params": params,
                 "require_confirm": is_danger(r[0], r[1], params.get("mode", r[3]),
                                              self.catalog)}
 
@@ -368,15 +368,18 @@ class SceneOrchestratorAgent(BaseAgent):
     def _to_result_action(a: dict) -> tuple[str, dict, bool]:
         """DSL 动作 → AgentResult.action(type, payload, require_confirm)。
 
-        vehicle.control 的 command 必须并入 payload——VAL 经 payload["command"] 取指令
-        （server.py `_dispatch_cloud_actions`），丢掉它动作即不可执行；且空 payload 的
-        vehicle.control（如 fragrance.on）会被 Executor 的 action 校验直接丢弃。
+        command 必须并入 payload——VAL 经 payload["command"] 取指令（server.py
+        `_dispatch_cloud_actions`），丢掉它动作即不可执行；且空 payload 的 vehicle.control
+        （如 fragrance.on）会被 Executor 的 action 校验直接丢弃。
+        媒体类对象的 action.type 用 media.control（与 `edge_call.action_type_for` 同口径）。
         """
         if (a.get("type") or "") == "navigate":
             return "navigate", dict(a.get("payload") or {}), False
         payload = {"command": a["command"], **{k: str(v) for k, v in
                                                (a.get("params") or {}).items()}}
-        return "vehicle.control", payload, bool(a.get("require_confirm"))
+        r = resolve_command(str(a.get("command") or ""))
+        a_type = action_type_for(r[0]) if r else "vehicle.control"
+        return a_type, payload, bool(a.get("require_confirm"))
 
     def _dispatch_payloads(self, actions: list) -> list[dict]:
         out = []

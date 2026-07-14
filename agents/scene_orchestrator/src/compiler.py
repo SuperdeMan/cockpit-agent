@@ -214,6 +214,11 @@ _CMD_DESC = {
     ("power_mode", "set"): "切到{mode}动力模式",
     ("air_purifier", "open"): "打开空气净化", ("air_purifier", "close"): "关闭空气净化",
     ("wiper", "open"): "打开雨刮", ("wiper", "close"): "关闭雨刮",
+    ("music", "play"): "播放音乐", ("music", "pause"): "暂停音乐",
+    ("music", "close"): "关闭音乐",
+    ("media", "play"): "播放媒体", ("media", "start"): "播放媒体",
+    ("media", "pause"): "暂停播放", ("media", "close"): "关闭媒体",
+    ("radio", "open"): "打开收音机", ("radio", "close"): "关闭收音机",
     ("scene_mode", "set"): "标记场景状态",
 }
 _SEAT_RECLINE_DESC = "座椅放平到{angle}度"
