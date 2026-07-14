@@ -1,24 +1,94 @@
 agent_id: scene-orchestrator
-version: 0.1.0
+version: 0.2.0
 display_name: 场景助手
 category: core
 trust_level: first_party
 deployment: cloud
-latency_budget_ms: 1500
+latency_budget_ms: 20000    # 激活/退出毫秒级（零 LLM）；create/update 编译一跳 primary 模型留余量
 fallback: chitchat
 
 capabilities:
+  - intent: scene.create
+    description: 用一句话创建自定义场景模式（钓鱼模式/观星模式），说清要做哪些事
+      （座椅放平、空调温度、氛围灯亮度、香氛、车窗…），保存后随叫随到
+    slots: [name, spec]
+    examples: ["帮我创建一个钓鱼模式：座椅放平、开外循环、氛围灯调到10%",
+               "新建观星模式：氛围灯关掉，座椅放倒，空调22度",
+               "自定义一个遛狗模式：车窗开一半，空调外循环"]
   - intent: scene.activate
-    description: 激活预定义场景模式
+    description: 开启场景模式（自建的或内置的）
     slots: [scene, custom_params]
-    examples: ["开启回家模式", "露营模式", "午休模式", "打开浪漫模式"]
+    examples: ["开启回家模式", "露营模式", "午休模式", "来个钓鱼模式", "打开浪漫模式"]
   - intent: scene.deactivate
-    description: 退出当前场景模式
+    description: 退出当前场景模式，把座椅/空调/灯光恢复到开启前的样子
     slots: [scene]
-    examples: ["关闭回家模式", "退出露营"]
+    examples: ["退出露营模式", "关闭午休模式", "退出场景"]
+  - intent: scene.update
+    description: 修改已有自建场景的动作或参数
+    slots: [scene, modification]
+    examples: ["把钓鱼模式的温度改成24", "钓鱼模式再加一个开香氛", "观星模式去掉座椅放平"]
+  - intent: scene.delete
+    description: 删除自建场景（需二次确认）
+    slots: [scene]
+    examples: ["删掉钓鱼模式", "不要观星模式了"]
   - intent: scene.list
-    description: 列出可用场景
+    description: 列出可用的场景模式（我建的 / 内置的）
     slots: []
-    examples: ["有哪些场景模式", "我能用什么模式"]
+    examples: ["有哪些场景模式", "我能用什么模式", "看看我的场景"]
 
-requires_permissions: [vehicle.control, media.control, navigation.control]
+# 确定性路由（R2.1）：弱 LLM 会把「X模式」三字短语漏成 chitchat。
+# **guard 的核心职责是 D8 端云分工**：驾驶/动力类模式词（运动/省电/雪地…）是端侧
+# LOCAL_INTENTS（driving_mode.set / power_mode.set，毫秒级秒回），云端 hint 必须让路——
+# 否则会把端侧秒回劫持成 1.5s 云端往返，违反 L0 时延约束。
+# pattern 以 test/eval_corpus/route_hints_cases.yaml 实测收敛。
+route_hints:
+  # 创建（优先级高于激活：「创建钓鱼模式」两条都命中，必须走 create）
+  - pattern: '(创建|新建|自定义|帮我建|建一个|建个|做一个|做个|存成|存为)[^。]{0,6}模式'
+    intent: scene.create
+    policy: replace
+    priority: 55
+    guard: '是什么|什么意思|怎么(用|开|关)'
+    slots: {name: "$text", spec: "$text"}
+  # 激活：「开启/打开/进入/来个 X模式」或裸「X模式」。
+  # 裸分支的否定前瞻是必需的：没有它，「退出露营模式」里的「退出露营」正好是 2~6 个汉字，
+  # 整句会被 `^[一-龥]{2,6}模式$` 吞掉误判成激活（eval 实测命中）。
+  - pattern: '(开启|打开|进入|切换到|来个|来一个|启动)\s*[一-龥]{1,6}模式|^(?!退出|关闭|取消|结束|删|不要|创建|新建|自定义|修改|更改)[一-龥]{2,6}模式$'
+    intent: scene.activate
+    policy: replace
+    priority: 54
+    guard: '驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|性能模式|省电模式|电量模式|动能回收|飞行模式|勿扰模式|静音模式|专注模式|哨兵|是什么|什么意思|怎么(用|开|关)|有哪些|哪些场景'
+    slots: {scene: "$text"}
+  # 退出
+  - pattern: '(退出|关闭|取消|结束)\s*[一-龥]{0,6}模式'
+    intent: scene.deactivate
+    policy: replace
+    priority: 54
+    guard: '驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|省电模式|电量模式|勿扰|静音|飞行|是什么|什么意思'
+    slots: {scene: "$text"}
+  # 修改（端侧已把「把X模式的温度改成24」让给云端，这里确定性接住，别掉进 chitchat）。
+  # 与 reminder.update(56) 不冲突：那条的 guard 含「空调|温度|座椅|亮度|音量」会自行让路。
+  - pattern: '[一-龥]{1,6}模式(的)?[^。]{0,10}(改成|改为|改到|加上|加一个|再加|去掉|删掉)|(去掉|删掉|加上|加一个|再加)[一-龥]{1,6}模式(里|里面|中)的|(修改|更改)[一-龥]{1,6}模式'
+    intent: scene.update
+    policy: replace
+    priority: 57
+    guard: '驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|省电模式|电量模式|是什么|什么意思'
+    slots: {scene: "$text", modification: "$text"}
+  # 删除（priority 高于 activate/deactivate：「删掉钓鱼模式」不能被当成激活）。
+  # guard 里的「里的/里面/中的」是关键：「去掉钓鱼模式里的香氛」是改场景（update），
+  # 不是删场景——少了它会把整个场景删掉。
+  - pattern: '(删掉|删除|去掉|不要)\s*[一-龥]{1,6}模式(了)?'
+    intent: scene.delete
+    policy: replace
+    priority: 56
+    guard: '是什么|什么意思|里的|里面|中的'
+    slots: {scene: "$text"}
+
+requires_permissions:
+  - vehicle.control        # 场景展开为车控动作（真正下发仍由端侧 VAL 门控）
+  - navigation.control     # 回家模式含导航动作
+  - profile.read           # 用户场景属用户数据域 + shared_state 经 profile KV
+  - profile.write
+edge_intents: []
+# 激活前采车况快照（deactivate 真恢复的基准）；电量经 meta.vehicle_battery 下发。
+# 注：车况全量镜像走 NATS vehicle.state.changed（src/state_mirror.py），memory 无此 scope。
+context_scopes: [vehicle_state]

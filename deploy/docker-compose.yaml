@@ -412,7 +412,10 @@ services:
     environment:
       <<: *python-env
       AGENT_PORT: "50069"
-    depends_on: [registry, llm-gateway]
+      # 用户自建场景 PG 持久（无 PG 内存降级、重启丢失）；车况镜像/主动建议走 NATS
+      # （无 NATS：退出场景改走反向默认表恢复，不影响激活主链路）
+      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+    depends_on: [registry, llm-gateway, memory, postgres, nats]
 
   road-safety-agent:
     <<: *restart

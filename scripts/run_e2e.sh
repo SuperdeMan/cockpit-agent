@@ -50,6 +50,7 @@ run_step "e2e_research_async"         python test/e2e_research_async.py
 run_step "e2e_degrade"                python test/e2e_degrade.py
 run_step "e2e_voice_loop"             python test/e2e_voice_loop.py
 run_step "e2e_reminder"               python test/e2e_reminder.py
+run_step "e2e_scene"                  python test/e2e_scene.py
 run_step "e2e_rejection"              python test/e2e_rejection.py
 run_step "e2e_tts_stream"             python test/e2e_tts_stream.py
 run_step "e2e_real_providers"         python -m pytest test/e2e_real_providers.py -q -s

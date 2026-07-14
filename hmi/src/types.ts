@@ -63,6 +63,8 @@ export type UiCard =
   | PlaceDetailCard
   | ReminderListCard
   | ReminderCard
+  | SceneCard
+  | SceneListCard
   | IntentChoiceCard
 
 // R4.4 路由歧义澄清卡：一句提问 + 2~3 个消歧选项（点/说「第N个」→ 回发 send_text 作新指令）
@@ -408,6 +410,33 @@ export type ReminderCard = {
   actions?: Array<{ label: string; send_text: string }>
 }
 
+// 场景卡（scene-orchestrator）：一张卡复用四态——
+// confirm=创建/改动回读待确认 / created=已存下 / activated=已激活 / suggest=触发建议（P3）。
+// danger 标记的动作执行时会走二次确认（VAL 安全门控），卡上先给用户看见。
+export type SceneCard = {
+  type: 'scene_card'
+  context: 'confirm' | 'created' | 'activated' | 'suggest'
+  name: string
+  description?: string
+  actions_preview: Array<{ label: string; danger?: boolean }>
+  buttons?: Array<{ label: string; send_text: string }>
+}
+
+export type SceneItem = {
+  id: string
+  name: string
+  description?: string
+  action_count?: number
+  use_count?: number
+}
+
+// 场景列表卡（scene.list）：区分「我建的」与「内置」；条目可点 → 回发「开启X」
+export type SceneListCard = {
+  type: 'scene_list'
+  mine: SceneItem[]
+  builtin: SceneItem[]
+}
+
 export type Voice = {
   voice_id: string
   name: string
@@ -499,6 +528,7 @@ export const AGENT_CATALOG: AgentMeta[] = [
   { id: 'deep-research', label: '深度调研', desc: '多视角联网深调研，出带引用的分节报告', icon: '🔬' },
   { id: 'nearby', label: '周边发现', desc: '找餐厅/酒店/景点/影院/停车/充电，看评分·人均·营业·电话', icon: '📍' },
   { id: 'reminder', label: '智能提醒', desc: '说一句话创建日程提醒待办，到点主动叫你', icon: '⏰' },
+  { id: 'scene-orchestrator', label: '场景模式', desc: '一句话造自己的场景（钓鱼模式、观星模式），随叫随到、退出还原', icon: '🎭' },
   { id: 'parking-payment', label: '停车缴费', desc: '找车位、停车缴费', icon: '🅿️' },
   { id: 'manual-rag', label: '用车手册', desc: '车辆说明书问答（RAG）', icon: '📖' },
   { id: 'chitchat', label: '闲聊兜底', desc: '开放域对话与情绪陪伴（系统兜底）', icon: '💬', core: true },

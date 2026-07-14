@@ -94,6 +94,49 @@ def test_dispatch_cloud_action_now_passes_safety_gate():
     assert "电量过低" in out.final.speech
 
 
+def _final_with_actions(speech: str, payloads: list[dict]):
+    final = orchestrator_pb2.FinalResult(speech=speech)
+    for p in payloads:
+        final.actions.append(common_pb2.AgentAction(
+            type="vehicle.control", payload=_struct(p), require_confirm=False))
+    return orchestrator_pb2.HandleEvent(final=final)
+
+
+def test_multi_action_keeps_cloud_summary_speech():
+    """多动作（场景激活）保留云端总结话术——不能被最后一条动作的 VAL 通用应答顶成"好的"。
+
+    旧实现循环内逐条覆盖 new_speech：场景末尾追加的 scene_mode.set 应答会把
+    "已为您开启露营模式" 冲掉（2026-07-14 真栈 e2e 实测命中）。
+    """
+    srv = EdgeOrchestratorServicer()
+    out = srv._dispatch_cloud_actions(_final_with_actions(
+        "已为您开启露营模式。",
+        [{"command": "ambient_light.set", "brightness": "30"},
+         {"command": "hvac.set", "temperature": "22"},
+         {"command": "scene_mode.set", "mode": "camping"}]))
+
+    assert out.final.speech == "已为您开启露营模式。"
+    assert srv.val.state["hvac_temp"] == 22            # 动作照常执行
+    assert srv.val.state["scene_mode"] == "camping"
+
+
+def test_multi_action_rejection_is_not_buried_by_later_success():
+    """D10 真缺陷：中间某条被安全门控拒绝、后续成功，旧实现会把拒绝话术盖掉——失败对用户
+    完全静默。现在拒绝原因必须浮出来，和云端总结一起播。"""
+    srv = EdgeOrchestratorServicer()
+    srv.val.state["battery"] = 5                        # 低电量：氛围灯属高耗电，会被门控
+
+    out = srv._dispatch_cloud_actions(_final_with_actions(
+        "已为您开启午休模式。",
+        [{"command": "ambient_light.set", "brightness": "10"},   # ← 被拒
+         {"command": "hvac.set", "temperature": "24"},           # ← 成功（后发）
+         {"command": "scene_mode.set", "mode": "nap"}]))
+
+    assert "电量过低" in out.final.speech, "被拒的动作不能被后续成功静默掉"
+    assert "已为您开启午休模式" in out.final.speech, "成功的部分也要交代"
+    assert srv.val.state.get("ambient_light") is not True
+
+
 def test_confirm_required_helper_flags_dangerous_objects():
     """R8：危险对象需二次确认（不走本地秒回）。"""
     srv = EdgeOrchestratorServicer()

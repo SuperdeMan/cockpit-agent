@@ -100,6 +100,26 @@ def _i(name: str, slots: dict, conf: float) -> dict:
     return {"name": name, "slots": slots, "confidence": conf}
 
 
+# ── 场景管理句判定（端云分工，见 classify_structured 顶部）────────────────────
+# 造/改/删「X模式」是云端 scene-orchestrator 的活；句中的车控词是场景内容不是当下指令。
+_SCENE_CREATE_RE = re.compile(
+    r"(创建|新建|自定义|帮我建|建立|建一个|建个|做一个|做个|存成|存为|设一个|设个)[^。]{0,8}模式")
+_SCENE_EDIT_RE = re.compile(
+    r"(删掉|删除|去掉|不要)\s*[一-龥]{1,6}模式"
+    r"|[一-龥]{1,6}模式(的)?[^。]{0,10}(改成|改为|改到|加上|加一个|再加|去掉|删掉)")
+# D8：驾驶/动力类模式词归端侧 driving_mode/power_mode（毫秒级秒回），不让场景编排抢走
+_EDGE_MODE_RE = re.compile(
+    r"(驾驶|运动|舒适|经济|节能|标准|雪地|越野|性能|省电|电量|动能回收)模式")
+
+
+def _is_scene_management(t: str) -> bool:
+    if _SCENE_CREATE_RE.search(t):
+        # 「创建X模式」恒判场景管理——哪怕 X 撞了端侧模式名：云端会诚实告诉用户"这名字被占了"，
+        # 好过端侧把句子里的车控动作当场执行掉。
+        return True
+    return bool(_SCENE_EDIT_RE.search(t)) and not _EDGE_MODE_RE.search(t)
+
+
 def classify(text: str) -> dict | None:
     """旧接口：返回 {name, slots, confidence}。向后兼容。"""
     result = classify_structured(text)
@@ -266,6 +286,14 @@ def classify(text: str) -> dict | None:
 def classify_structured(text: str) -> dict | None:
     """新接口：返回公版 {domain, intent, data: {operate, object, ...}} 格式。"""
     t = text.strip()
+
+    # ── 场景管理句一律上云（与本文件头部「命名场景归云端 scene-orchestrator 编排」同一分工）──
+    # 「创建钓鱼模式：氛围灯调到10%，空调22度」里的车控词是**场景内容**，不是**当下的指令**：
+    # 端侧若照单执行，用户会发现灯真被调暗了、场景却没建成。同理「把钓鱼模式的温度改成24」
+    # 是改场景定义，不是现在开空调。这里返回 None → classify / split_and_classify 都判"不可
+    # 本地处理" → 整句交云端。**不新增任何执行路径**，只是把这类话让给云端编排。
+    if _is_scene_management(t):
+        return None
 
     # ── R4.1b P0：端侧对象化（空气净化 / 导航播报 / 按键音；短语明确、早置防被后续泛化截获）──
     if "空气净化" in t:
@@ -1359,7 +1387,15 @@ def _resplit_on_he(part: str) -> list[str]:
 
 
 def _split_parts(text: str) -> list[str]:
-    """按 _SPLIT_MARKERS 拆分，再对每段做“和”的安全二次拆分；返回 strip 后的非空段。"""
+    """按 _SPLIT_MARKERS 拆分，再对每段做“和”的安全二次拆分；返回 strip 后的非空段。
+
+    场景管理句**不拆**（返回空）：「创建钓鱼模式：氛围灯调到10%，空调22度」一拆，后半句
+    「空调22度」就成了独立的本地车控意图，被混合意图路径（split_and_classify_any）当场执行
+    ——用户看到空调真开了、场景却没建成。整句必须完整交云端 scene-orchestrator 编译。
+    这里是两个 split 函数的唯一收口，堵在这里即可（2026-07-14 真栈 e2e 实测命中）。
+    """
+    if _is_scene_management(text):
+        return []
     parts: list[str] = []
     for p in _SPLIT_MARKERS.split(text):
         if p and p.strip():

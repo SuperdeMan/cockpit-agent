@@ -1,5 +1,10 @@
-# 场景知识库：预定义命名场景模式
-# 每个场景包含一组动作，按顺序执行
+# 预置场景库（builtin，随镜像发版）。用户场景存 PG（scene_item 表），同名遮蔽预置（D4）。
+#
+# **词表纪律（D3）**：这里的 command/params 必须命中 VAL 知识库
+# （orchestrator/edge/knowledge/{commands,entities}.yaml）——`tests/test_agent.py::
+# test_builtin_scenes_are_catalog_valid` 逐条钉死。词表外的值会被端侧 edge_call 静默丢弃
+# （2026-07-14 前 mode: auto/quiet/external_circulation 与 color: warm_orange 就是这么
+# 悄悄失效的：说了「外循环」其实没开），这正是本次重构要根治的漂移。
 scenes:
   go_home:
     name: "回家模式"
@@ -8,7 +13,7 @@ scenes:
     actions:
       - type: "vehicle.control"
         command: "hvac.set"
-        params: { temperature: "24", mode: "auto" }
+        params: { temperature: "24" }
         require_confirm: false
       - type: "vehicle.control"
         command: "ambient_light.set"
@@ -20,7 +25,7 @@ scenes:
 
   camping:
     name: "露营模式"
-    description: "车外照明 + 座椅放平 + 空调恒温"
+    description: "座椅放平 + 空调外循环 + 暖色氛围灯"
     aliases: ["露营", "露营模式", "户外"]
     actions:
       - type: "vehicle.control"
@@ -29,11 +34,11 @@ scenes:
         require_confirm: true
       - type: "vehicle.control"
         command: "hvac.set"
-        params: { temperature: "22", mode: "external_circulation" }
+        params: { temperature: "22", mode: "外循环" }
         require_confirm: false
       - type: "vehicle.control"
         command: "ambient_light.set"
-        params: { color: "warm_orange", brightness: "30" }
+        params: { color: "orange", brightness: "30" }
         require_confirm: false
 
   nap:
@@ -51,16 +56,16 @@ scenes:
         require_confirm: false
       - type: "vehicle.control"
         command: "ambient_light.set"
-        params: { color: "warm_orange", brightness: "10" }
+        params: { color: "orange", brightness: "10" }
         require_confirm: false
       - type: "vehicle.control"
         command: "hvac.set"
-        params: { temperature: "24", mode: "quiet" }
+        params: { temperature: "24" }
         require_confirm: false
 
   romance:
     name: "浪漫模式"
-    description: "氛围灯暖色 + 舒缓音乐 + 适宜温度"
+    description: "氛围灯粉色 + 香氛 + 适宜温度"
     aliases: ["浪漫", "约会", "浪漫模式"]
     actions:
       - type: "vehicle.control"
@@ -69,7 +74,7 @@ scenes:
         require_confirm: false
       - type: "vehicle.control"
         command: "hvac.set"
-        params: { temperature: "23", mode: "auto" }
+        params: { temperature: "23" }
         require_confirm: false
       - type: "vehicle.control"
         command: "fragrance.on"

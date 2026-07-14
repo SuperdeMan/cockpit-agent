@@ -670,7 +670,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             return event
 
         final = event.final
-        new_speech = final.speech
+        dispatched = 0          # 真正交给 VAL 的动作数（跳过的不算）
+        last_msg = ""           # 最后一条动作的 VAL 应答
+        rejected: list[str] = []
         for action in final.actions:
             if not action.type.startswith("vehicle.control"):
                 continue
@@ -693,13 +695,24 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 ok, msg = self.val.execute(structured, answer_length=answer_length)
             else:
                 ok, msg = self.val.execute(cmd, payload, answer_length=answer_length)
+            dispatched += 1
+            last_msg = msg
             if ok:
                 logger.info("VAL executed: %s -> %s", cmd, msg)
-                new_speech = msg  # 用 VAL 执行结果替换 speech
             else:
                 logger.warning("VAL rejected: %s -> %s", cmd, msg)
-                new_speech = msg  # 安全门控拒绝：替换为拒绝原因
+                rejected.append(msg)
 
-        # F14：真正替换 speech（之前构建了 dispatched_actions 但丢弃了）
-        final.speech = new_speech
+        # 话术归属（2026-07-14 修正「new_speech 逐条覆盖」的两个真缺陷）：
+        # ① **失败不再被后续成功盖掉**——旧实现循环内逐条覆盖 new_speech，5 个动作里第 2 条被
+        #    安全门控拒绝、第 3~5 条成功，最终只播最后一条的成功话术，拒绝对用户完全静默。
+        # ② **多动作保留云端总结**——场景激活的「已为您开启露营模式」不该被最后一条动作
+        #    （scene_mode.set）的 VAL 通用应答顶成「好的」。逐条 VAL 应答是碎片，云端话术才是
+        #    整体交代。单条动作仍用 VAL 应答（含真实温度/档位，比云端话术精确），逐字保持现状。
+        if dispatched == 1:
+            final.speech = last_msg
+        elif dispatched > 1 and rejected:
+            reasons = "；".join(dict.fromkeys(rejected))
+            final.speech = f"{final.speech}不过{reasons}。" if final.speech else reasons
+        # dispatched > 1 且全成功 → 保留云端总结话术；dispatched == 0 → 原样不动
         return event

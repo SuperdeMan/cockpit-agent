@@ -1,0 +1,3 @@
+# scene-orchestrator 专属：用户场景 PG 持久层（仿 agents/reminder/store.py）。
+# 其余依赖（含 nats-py，车况镜像/proactive 用）来自 agents/_sdk/requirements.txt。
+asyncpg>=0.29

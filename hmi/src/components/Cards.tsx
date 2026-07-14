@@ -7,7 +7,7 @@ import type {
   SearchResultCard, NewsBriefCard, ResearchReportCard, SportsScoresCard, SportsScorersCard,
   RoutePlanCard, ChargingRouteCard, TripItineraryCard, PoiListCard, PoiDetailCard,
   PlaceListCard, PlaceDetailCard, IntentChoiceCard,
-  ReminderListCard, ReminderCard,
+  ReminderListCard, ReminderCard, SceneCard, SceneListCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
@@ -125,6 +125,8 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
     case 'place_detail': return <PlaceDetailCardView card={card} onAction={onAction} />
     case 'reminder_list': return <ReminderListCardView card={card} />
     case 'reminder_card': return <ReminderCardView card={card} onAction={onAction} />
+    case 'scene_card': return <SceneCardView card={card} onAction={onAction} />
+    case 'scene_list': return <SceneListCardView card={card} onAction={onAction} />
     case 'intent_choice': return <IntentChoiceCardView card={card} onAction={onAction} />
     default: return null
   }
@@ -1194,6 +1196,81 @@ function ReminderCardView({ card, onAction }: { card: ReminderCard; onAction?: (
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── 场景卡（scene-orchestrator）：confirm 回读 / created 已存 / activated 已开 / suggest 建议 ───
+// 动作清单是这张卡的核心——用户在**保存前**就看见场景到底会做什么、哪几步要二次确认，
+// 不给"确认时看到 3 个动作、执行时只发生 2 个"的空间（设计 §5.1③）。
+function SceneCardView({ card, onAction }: { card: SceneCard; onAction?: (t: string) => void }) {
+  const meta: Record<SceneCard['context'], { label: string; accent: string }> = {
+    confirm: { label: '待确认', accent: 'var(--au-warn)' },
+    created: { label: '已保存', accent: 'var(--au-primary)' },
+    activated: { label: '已开启', accent: 'var(--au-primary)' },
+    suggest: { label: 'AI 建议', accent: '#F59E0B' },
+  }
+  const { label, accent } = meta[card.context] || meta.created
+  const steps = card.actions_preview || []
+  return (
+    <div className="au-glass" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: accent, boxShadow: `0 0 8px ${accent}` }} />
+        <span style={{ fontSize: 15, fontWeight: 600 }}>{card.name}</span>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--au-text-3)' }}>{label}</span>
+      </div>
+      {card.description && (
+        <div style={{ fontSize: 12.5, color: 'var(--au-text-3)', lineHeight: 1.5 }}>{card.description}</div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {steps.map((s, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <span className="au-num" style={{ width: 18, height: 18, borderRadius: 6, flexShrink: 0, display: 'grid', placeItems: 'center', fontSize: 10.5, fontWeight: 700, background: 'var(--au-line)', color: 'var(--au-text-3)' }}>{i + 1}</span>
+            <span style={{ fontSize: 13, flex: 1 }}>{s.label}</span>
+            {s.danger && (
+              <span style={{ fontSize: 10.5, padding: '2px 8px', borderRadius: 10, color: 'var(--au-warn)', background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.25)' }}>需确认</span>
+            )}
+          </div>
+        ))}
+      </div>
+      {(card.buttons?.length || 0) > 0 && (
+        <div style={{ display: 'flex', gap: 8 }}>
+          {card.buttons!.filter((b) => b.send_text).map((b) => (
+            <button key={b.label} onClick={() => onAction?.(b.send_text)} className="au-glass"
+              style={{ padding: '7px 14px', fontSize: 12.5, cursor: 'pointer', border: '1px solid var(--au-line-2)', background: 'transparent', color: 'var(--au-text)' }}>
+              {b.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── 场景列表卡（scene.list）：我建的 / 内置，条目可点 → 回发「开启X」 ───
+function SceneListCardView({ card, onAction }: { card: SceneListCard; onAction?: (t: string) => void }) {
+  const Group = ({ title, items }: { title: string; items: SceneListCard['mine'] }) => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{title} · {items.length}</span>
+      {items.map((s) => (
+        <button key={s.id} onClick={onAction ? () => onAction(`开启${s.name}`) : undefined}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: 12, cursor: onAction ? 'pointer' : 'default', background: 'var(--au-fill)', border: '1px solid var(--au-line-2)', color: 'var(--au-text)' }}>
+          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{s.name}</span>
+          {s.description && (
+            <span style={{ fontSize: 11.5, color: 'var(--au-text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.description}</span>
+          )}
+          {!!s.action_count && (
+            <span className="au-num" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11, color: 'var(--au-text-3)' }}>{s.action_count} 步</span>
+          )}
+        </button>
+      ))}
+    </div>
+  )
+  return (
+    <div className="au-glass" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {card.mine?.length > 0 && <Group title="我建的" items={card.mine} />}
+      {card.builtin?.length > 0 && <Group title="内置" items={card.builtin} />}
+      <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>说「创建钓鱼模式：座椅放平、氛围灯调暗」就能造一个</div>
     </div>
   )
 }

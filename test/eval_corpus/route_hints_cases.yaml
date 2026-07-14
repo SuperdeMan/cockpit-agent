@@ -346,3 +346,90 @@
   expect_final_intents: []
   source: "badcase 11db5215 双词共现约束：无天气词的纯出行问法不召回（留给 LLM）"
   tags: [weather, go-out, no-hit]
+
+# ── 场景编排（scene-orchestrator v0.2，2026-07-14 重设计）──────────────────
+# 核心是 D8 端云分工：驾驶/动力类模式词是端侧 LOCAL_INTENTS（毫秒级秒回），云端 hint 必须
+# 让路，否则把秒回劫持成 1.5s 云端往返。正例=命名生活场景；反例=端侧模式词/说明书问法。
+- text: 开启午休模式
+  initial_intents: []
+  expect_final_intents: [scene.activate]
+  source: "设计 §6 正例：命名生活场景"
+  tags: [scene, activate, replace]
+
+- text: 来个钓鱼模式
+  initial_intents: []
+  expect_final_intents: [scene.activate]
+  source: "设计 §6 正例：用户自建场景激活"
+  tags: [scene, activate, replace]
+
+- text: 露营模式
+  initial_intents: []
+  expect_final_intents: [scene.activate]
+  source: "设计 §6 正例：裸「X模式」短语（弱 LLM 常漏成 chitchat）"
+  tags: [scene, activate, bare]
+
+- text: 帮我创建一个钓鱼模式：座椅放平，开外循环
+  initial_intents: []
+  expect_final_intents: [scene.create]
+  source: "设计 §6 正例：create 优先级(55)高于 activate(54)，同句两条命中必须走 create"
+  tags: [scene, create, replace]
+
+- text: 新建一个下雨模式，关窗加除雾
+  initial_intents: []
+  expect_final_intents: [scene.create]
+  source: "设计 §6 正例"
+  tags: [scene, create, replace]
+
+- text: 退出露营模式
+  initial_intents: []
+  expect_final_intents: [scene.deactivate]
+  source: "设计 §6 正例"
+  tags: [scene, deactivate, replace]
+
+- text: 删掉钓鱼模式
+  initial_intents: []
+  expect_final_intents: [scene.delete]
+  source: "设计 §6 正例：delete(56) 高于 activate/deactivate，不能被当成激活"
+  tags: [scene, delete, priority]
+
+- text: 打开运动模式
+  initial_intents: []
+  expect_final_intents: []
+  source: "D8 反例：端侧 driving_mode.set 毫秒级秒回，云端 guard 必须让路"
+  tags: [scene, edge-mode, guard]
+
+- text: 切换到雪地模式
+  initial_intents: []
+  expect_final_intents: []
+  source: "D8 反例：端侧 driving_mode.set"
+  tags: [scene, edge-mode, guard]
+
+- text: 省电模式怎么开
+  initial_intents: []
+  expect_final_intents: []
+  source: "D8 反例：说明书问法 + 端侧 power_mode，归 manual/chitchat"
+  tags: [scene, manual, guard]
+
+- text: 露营模式是什么意思
+  initial_intents: []
+  expect_final_intents: []
+  source: "反例：知识问法归 manual/chitchat，不激活"
+  tags: [scene, manual, guard]
+
+- text: 开启勿扰模式
+  initial_intents: []
+  expect_final_intents: []
+  source: "D8 反例：系统设置类模式词，不归场景编排"
+  tags: [scene, edge-mode, guard]
+
+- text: 把钓鱼模式的温度改成24
+  initial_intents: []
+  expect_final_intents: [scene.update]
+  source: "设计 §5.5：端侧已让路（场景管理句），云端确定性接住改场景定义"
+  tags: [scene, update, replace]
+
+- text: 去掉钓鱼模式里的香氛
+  initial_intents: []
+  expect_final_intents: [scene.update]
+  source: "设计 §5.5：动作级改动。delete 的 guard 含「里的」避免整个场景被删掉"
+  tags: [scene, update, guard]

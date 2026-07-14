@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from fast_intent import classify, classify_structured, is_local
+from fast_intent import classify, classify_structured, is_local, split_and_classify
 
 
 # ═══════════════════════════════════════════════════
@@ -72,6 +72,34 @@ class TestClassifyBackwardCompat:
         # 关键：不是本地意图 → is_local 为 False → 路由上云 scene.activate
         assert not is_local(classify("开启露营模式")["name"])
         assert not is_local("scene_mode.set")
+
+
+class TestSceneManagementGoesToCloud:
+    """场景管理句（造/改/删「X模式」）一律上云——句中的车控词是**场景内容**不是当下指令。
+
+    没有这条护栏，「创建钓鱼模式：氛围灯调到10%，空调22度」会被端侧当多意图车控当场执行：
+    灯真调暗了、空调真开了，场景却没建成（2026-07-14 真栈 e2e 实测命中）。
+    """
+
+    def test_create_sentence_not_executed_locally(self):
+        assert classify("帮我创建一个钓鱼模式：氛围灯调到10%，空调22度") is None
+        assert classify_structured("帮我创建一个钓鱼模式：氛围灯调到10%，空调22度") is None
+        assert split_and_classify("帮我创建一个钓鱼模式：氛围灯调到10%，空调22度") is None
+
+    def test_edit_and_delete_sentences_not_executed_locally(self):
+        assert classify("把钓鱼模式的温度改成24") is None      # 改场景定义 ≠ 现在开空调
+        assert classify("钓鱼模式再加一个开香氛") is None
+        assert classify("去掉钓鱼模式里的香氛") is None
+        assert classify("删掉钓鱼模式") is None
+
+    def test_edge_mode_words_still_local(self):
+        """D8：驾驶/动力类模式词是端侧毫秒级秒回，护栏不能把它们让给云端。"""
+        assert is_local(classify("打开运动模式")["name"])
+        assert is_local(classify("把驾驶模式改成运动")["name"])
+
+    def test_plain_vehicle_control_unaffected(self):
+        assert classify("把空调调到26度")["name"] == "hvac.set"
+        assert classify("氛围灯调暗一点") is not None
 
 
 # ═══════════════════════════════════════════════════

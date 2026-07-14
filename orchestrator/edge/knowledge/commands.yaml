@@ -415,17 +415,13 @@ objects:
     - set
     - switch
     attrs: []
-    modes:
-    - nap
-    - camping
-    - movie
-    - romantic
-    - meditation
-    - 小憩
-    - 露营
-    - 观影
-    - 浪漫
-    - 冥想
+    # 值域**开放**（modes 为空 = 不做枚举校验）：用户可自然语言创建场景（scene.create），
+    # 场景键集合是运行期数据（scene-orchestrator 的 PG 表 + scenes.yaml），不是出厂词表——
+    # 枚举校验会把「钓鱼模式」这类用户场景挡在状态镜像之外，也无法表达退出态 off。
+    # 权威场景集在 scene-orchestrator（激活前已校验场景存在），VAL 这里只做状态标记，无安全面。
+    # 内置场景键（供参考）：nap/camping/movie/romantic/meditation + off（退出）；
+    # 中文→键的归一仍走 entities.yaml scene_modes（小憩→nap、露营→camping…）。
+    modes: []
     positions: false
     units: []
     online: offline_ok
