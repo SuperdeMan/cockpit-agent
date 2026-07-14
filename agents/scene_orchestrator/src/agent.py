@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
@@ -47,6 +48,35 @@ _EDGE_MODE_NAMES = re.compile(
     r"^(驾驶|运动|舒适|经济|节能|标准|雪地|越野|性能|省电|电量|动能回收|飞行|勿扰|静音)模式$")
 # P1 会话沉淀（D11 桥）：「把刚才这些存成加班模式」——指代最近做过的操作，不是当场描述动作
 _SEDIMENT_RE = re.compile(r"刚才|刚刚|这些|这样|现在这|当前这")
+
+# custom_params 槽键 → (VAL 对象, 参数键)。Planner LLM 的键名不可枚举，只映射常见形态，
+# 映射不到就忽略（确定性、不猜）——语义仍以 catalog validate_action 为准。
+_SLOT_PARAM_ALIASES = {
+    "temperature": ("aircon", "temperature"), "temp": ("aircon", "temperature"),
+    "温度": ("aircon", "temperature"), "hvac_temp": ("aircon", "temperature"),
+    "brightness": ("ambient_light", "brightness"), "亮度": ("ambient_light", "brightness"),
+    "volume": ("volume", "level"), "音量": ("volume", "level"),
+    "angle": ("seat", "angle"), "seat_angle": ("seat", "angle"),
+    "座椅角度": ("seat", "angle"),
+}
+
+
+def _parse_slot_params(raw) -> dict:
+    """custom_params 槽值三态：dict / JSON 字符串 / Python repr 字符串——
+    proto map<string,string> 会把 LLM 产的 dict str() 成 `{'temperature': '26'}`。
+    三段容忍解析，解析不出返回 {}，绝不抛。"""
+    if isinstance(raw, dict):
+        return raw
+    s = str(raw or "").strip()
+    if not s or s in ("{}", "None", "null"):
+        return {}
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            v = loader(s)
+            return v if isinstance(v, dict) else {}
+        except Exception:
+            continue
+    return {}
 
 
 def _load_builtin(path: str) -> dict:
@@ -337,8 +367,11 @@ class SceneOrchestratorAgent(BaseAgent):
         # （只覆盖已有动作、不新增；解析不出就忽略，**不 LLM 兜底**）。
         # 覆盖源要用 slots+raw_text 合并：确认轮的 raw_text 是「确认」，数值只在 slots 里
         # （route_hint 的 `scene: $text` 灌的是原句），只看 raw_text 会把覆盖弄丢。
+        # 另一条路径：Planner LLM 自己路由时会把数值归一化进 **custom_params 槽**
+        # （manifest 声明了它就会产），slots.scene 只剩「午休模式」——槽位也必须消费。
         override_src = f"{query} {intent.raw_text or ''}"
-        actions, overridden = self._apply_param_override(actions, override_src)
+        actions, overridden = self._apply_param_override(
+            actions, override_src, intent.slots.get("custom_params"))
 
         # P2 Ground·Solve（D9）：读环境 → 确定性求值 → 本次具体动作序列。全程零 LLM。
         env = self._ground(meta)
@@ -541,14 +574,38 @@ class SceneOrchestratorAgent(BaseAgent):
             follow_up="说「确认」即可",
             ui_card=self._scene_card("confirm", scene.name, draft.description, draft.actions))
 
-    def _apply_param_override(self, actions: list, text: str) -> tuple[list, bool]:
-        """从原话抠数值覆盖已有动作的参数（确定性，不 LLM 兜底；只改不增）。
+    def _apply_param_override(self, actions: list, text: str,
+                              slot_params=None) -> tuple[list, bool]:
+        """从原话/槽位抠数值覆盖已有动作的参数（确定性，不 LLM 兜底；只改不增）。
 
         「温度改成24」→ hvac.temperature=24；「氛围灯调到 30%」→ ambient_light.brightness=30；
         「音量 20」→ volume.level=20；「座椅 170 度」→ seat.angle=170。解析不出就原样返回。
+
+        两个覆盖来源，**原话优先、槽位只补文本没覆盖到的参数**：
+        1. text：route_hint `scene: $text` 灌的原句（含确认轮 slots 里带过来的）。
+        2. slot_params：manifest 声明的 `custom_params` 槽——Planner LLM 自己路由时把数值
+           归一化到这里（真栈 plan 实锤：slots={"scene":"午休模式",
+           "custom_params":"{'temperature': '26'}"}，proto map<string,string> 把 dict
+           str() 成 Python repr），原话未必跟过来；声明了就必须消费，否则确认后拿到默认值。
         """
         text = text or ""
         changed = False
+        applied: set[tuple[str, str]] = set()
+
+        def _try(obj: str, key: str, value: str) -> bool:
+            hit = False
+            for a in actions:
+                r = resolve_command(str(a.get("command") or ""))
+                if not r or r[0] != obj:
+                    continue
+                probe = {"type": "vehicle.control", "command": a["command"],
+                         "params": {**(a.get("params") or {}), key: value}}
+                ok, cleaned, _ = validate_action(probe, self.catalog)
+                if ok:
+                    a["params"] = cleaned["params"]
+                    hit = True
+            return hit
+
         for pat, obj, key in (
             (r"(?:温度|空调|度数).{0,4}?(\d{1,2})\s*度?", "aircon", "temperature"),
             (r"(?:氛围灯|灯光|亮度).{0,4}?(\d{1,3})\s*[%％]?", "ambient_light", "brightness"),
@@ -556,18 +613,18 @@ class SceneOrchestratorAgent(BaseAgent):
             (r"(?:座椅|靠背).{0,4}?(\d{2,3})\s*度?", "seat", "angle"),
         ):
             m = re.search(pat, text)
-            if not m:
+            if m and _try(obj, key, m.group(1)):
+                changed = True
+                applied.add((obj, key))
+
+        for k, v in _parse_slot_params(slot_params).items():
+            target = _SLOT_PARAM_ALIASES.get(str(k).strip().lower())
+            if not target or target in applied:
                 continue
-            for a in actions:
-                r = resolve_command(str(a.get("command") or ""))
-                if not r or r[0] != obj:
-                    continue
-                probe = {"type": "vehicle.control", "command": a["command"],
-                         "params": {**(a.get("params") or {}), key: m.group(1)}}
-                ok, cleaned, _ = validate_action(probe, self.catalog)
-                if ok:
-                    a["params"] = cleaned["params"]
-                    changed = True
+            digits = re.search(r"\d{1,3}", str(v))
+            if digits and _try(target[0], target[1], digits.group(0)):
+                changed = True
+                applied.add(target)
         return actions, changed
 
     async def _delete(self, intent, ctx, meta) -> AgentResult:

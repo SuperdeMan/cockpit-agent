@@ -421,6 +421,46 @@ def test_activate_without_numbers_unchanged():
     assert hvac and hvac[0]["temperature"] == "24"          # 场景原值
 
 
+def test_activate_custom_params_slot_llm_normalized():
+    """Planner LLM 自己路由时把数值归一化进 custom_params 槽、slots.scene 只剩场景名——
+    旅程测试 B4-2 真栈抓到的原样 plan：slots={"scene":"午休模式",
+    "custom_params":"{'temperature': '26'}"}（proto map<string,string> 把 dict str()
+    成 Python repr）。槽位声明了就要消费，否则确认后拿到默认 24。"""
+    kv, a = KV(), _agent()
+    res = _run(run_handle(a, "scene.activate",
+                          slots={"scene": "午休模式",
+                                 "custom_params": "{'temperature': '26'}"},
+                          raw_text="确认", ctx=_ctx(kv), meta={"confirmed": "true"}))
+    hvac = [x["payload"] for x in res.actions
+            if x["payload"].get("command") == "hvac.set"]
+    assert hvac and hvac[0]["temperature"] == "26"
+    assert a.llm.calls == 0                                 # 槽位消费仍是零 LLM
+
+
+def test_activate_custom_params_text_wins_over_slot():
+    """原话优先：文本解析出的 25 压过槽位里的 26（原话解析优先于 LLM 槽位，仓约定）。"""
+    kv, a = KV(), _agent()
+    res = _run(run_handle(a, "scene.activate",
+                          slots={"scene": "开启午休模式，温度25",
+                                 "custom_params": '{"temperature": "26"}'},
+                          raw_text="开启午休模式，温度25", ctx=_ctx(kv),
+                          meta={"confirmed": "true"}))
+    hvac = [x["payload"] for x in res.actions
+            if x["payload"].get("command") == "hvac.set"]
+    assert hvac and hvac[0]["temperature"] == "25"
+
+
+def test_activate_custom_params_slot_garbage_ignored():
+    """槽值解析不出/映射不到 → 忽略不抛，场景按原值执行。"""
+    kv, a = KV(), _agent()
+    res = _run(run_handle(a, "scene.activate",
+                          slots={"scene": "午休模式", "custom_params": "很舒服的温度"},
+                          raw_text="确认", ctx=_ctx(kv), meta={"confirmed": "true"}))
+    hvac = [x["payload"] for x in res.actions
+            if x["payload"].get("command") == "hvac.set"]
+    assert hvac and hvac[0]["temperature"] == "24"
+
+
 # ── P1：会话沉淀（D11 桥）─────────────────────────────────────────────────
 
 _SEDIMENT_DRAFT = json.dumps({
