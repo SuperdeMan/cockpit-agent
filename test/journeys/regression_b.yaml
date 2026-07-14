@@ -1,0 +1,80 @@
+# B 组：全场景连续对话（聊天/控车/导航/办事不割裂）—— 回归级（必须绿）
+# 设计与断言口径：docs/design/2026-07-14-journey-e2e-test-system.md §5.2
+suite: B-continuity
+journeys:
+  - id: B1-4
+    title: 跨轮槽位继承：明天杭州→那后天呢
+    level: regression
+    lane: live
+    tags: [continuity]
+    setup:
+      location: {lat: 22.5333, lng: 113.9505}   # 当前在深圳——用于识破“丢杭州回落当前定位”
+    turns:
+      - say: 明天杭州天气怎么样
+        expect:
+          latency_s: 45
+          any_of:
+            - cards_any: [weather]
+            - speech_any: [杭州]
+      - say: 那后天呢
+        expect:
+          latency_s: 45
+          speech_not: [深圳, 哪个城市, 哪里的天气]   # 丢上下文的两种典型失败形态
+          any_of:
+            - speech_any: [后天, 杭州]
+            - card_contains: [杭州]
+
+  - id: B3-4
+    title: 天气×出行联动意图先答（不反问目的地）
+    level: regression
+    lane: live
+    tags: [continuity, honesty]
+    setup:
+      location: {lat: 22.5333, lng: 113.9505}
+    turns:
+      - say: 今天天气怎么样，适合出行吗
+        expect:
+          latency_s: 45
+          need_confirm: false
+          speech_any: [适合, 建议, 出行, 出门]
+          speech_not: [哪里, 目的地, 去哪]
+
+  - id: B4-1
+    title: 快慢路径共享历史：端侧动作云端可忆
+    level: regression
+    lane: live
+    tags: [continuity]
+    turns:
+      - say: 把音量调到15
+        expect:
+          latency_s: 15
+          action: {type: vehicle.control}
+      - say: 我刚才让你把音量调到多少
+        expect:
+          latency_s: 40
+          speech_any: ["15", 十五]
+    cleanup:
+      - 把音量调到30
+
+  - id: B4-2
+    title: 场景激活句不被端侧劫持 + custom_params 覆盖
+    level: regression
+    lane: mock
+    tags: [continuity, autonomy]
+    setup:
+      vehicle: {gear: P, speed_kmh: 0}
+      say: [把空调调到22度]     # 已知非 26 起点：识破“幂等跳过蒙对”
+    turns:
+      - say: 开启午休模式，温度26
+        expect:
+          latency_s: 40
+          speech_any: [午休]
+      - confirm: true           # 预置场景一般不含危险动作；有挂起才发
+        expect:
+          latency_s: 30
+      - sleep: 3
+    # scene_mode 必须真切到 nap：三种路由变体（hint 灌原句 / LLM custom_params 槽 /
+    # LLM 拆成 hvac+activate 两步）无论谁赢，用户要的都是「场景开了且温度 26」。
+    final_vehicle: {hvac_temp: 26, scene_mode: nap}
+    cleanup:
+      - 退出午休模式

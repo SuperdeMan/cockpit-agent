@@ -1,0 +1,330 @@
+# B 组：全场景连续对话 —— 目标级（能力标尺；允许红，红灯=工程 backlog）
+# B2 组的目标行为按设计 §7 Q1 建议口径写：单挂起 + 插话不清除、TTL 内回头可续
+# （当前 engine.py:128 会清挂起——预期红，红灯即「中断-恢复」立项依据）。
+suite: B-continuity-target
+journeys:
+  - id: B1-1
+    title: POI 列表→「就去第二家」跨域指代直达
+    level: target
+    lane: live
+    tags: [continuity, interaction]
+    requires: [AMAP_KEY]
+    setup:
+      location: {lat: 22.5333, lng: 113.9505}
+    turns:
+      - say: 附近有什么好吃的火锅店
+        expect:
+          latency_s: 60
+          cards_any: [place_list]
+      - say: 就去第二家
+        expect:
+          latency_s: 45
+          action: {type: navigate}
+          speech_not: [哪一家, 没明白, 请再说, 想去哪]
+
+  - id: B1-2
+    title: 导航目的地→天气焦点迁移（那边≠当前定位）
+    level: target
+    lane: live
+    tags: [continuity]
+    requires: [AMAP_KEY, QWEATHER_PROJECT_ID|QWEATHER_KEY]
+    setup:
+      location: {lat: 22.5410, lng: 114.0579}   # 当前在福田；目的地大梅沙在盐田——区级可辨
+    turns:
+      - say: 导航去大梅沙海滨公园
+        expect:
+          latency_s: 60
+          action: {type: navigate}
+      - say: 那边现在天气怎么样
+        expect:
+          latency_s: 45
+          speech_not: [福田, 哪个城市, 哪里的天气]
+          any_of:
+            - speech_any: [盐田, 大梅沙]
+            - card_contains: [盐田, 大梅沙]
+
+  - id: B1-3
+    title: 导航目的地→「那附近」周边检索中心迁移
+    level: target
+    lane: live
+    tags: [continuity]
+    requires: [AMAP_KEY]
+    setup:
+      location: {lat: 22.5410, lng: 114.0579}   # 福田；万象天地在南山——结果地址区名可辨
+    turns:
+      - say: 导航去万象天地
+        expect:
+          latency_s: 60
+          action: {type: navigate}
+      - say: 那附近有停车场吗
+        expect:
+          latency_s: 60
+          cards_any: [place_list]
+          card_contains: [南山]
+
+  - id: B1-5
+    title: 车控对象跨轮继承（副驾也开一下）
+    level: target
+    lane: live
+    tags: [continuity]
+    setup:
+      vehicle: {gear: P, speed_kmh: 0}
+    turns:
+      - say: 打开主驾座椅加热
+        expect:
+          latency_s: 15
+          action: {type: vehicle.control}
+      - say: 副驾也开一下
+        expect:
+          latency_s: 45
+          action: {type: vehicle.control}
+          speech_not: [没明白, 打开什么, 请问您, 想开什么]
+    cleanup:
+      - 关闭座椅加热
+
+  - id: B2-1
+    title: 确认挂起+插话后仍可续接（场景创建）
+    level: target
+    lane: live
+    tags: [continuity]
+    turns:
+      - say: 创建一个下班模式：空调24度，氛围灯调到60%
+        expect:
+          latency_s: 60
+          need_confirm: true
+      - say: 今天深圳天气怎么样
+        expect:
+          latency_s: 45
+          any_of:
+            - cards_any: [weather]
+            - speech_any: [气温, "℃", 多云, 晴, 雨]
+      - say: 确认
+        expect:
+          latency_s: 45
+          speech_any: [下班模式]     # 目标：挂起在插话后仍可续接；当前会命中「没有待确认的操作」
+      - say: 有哪些场景
+        expect:
+          latency_s: 45
+          card_contains: [下班模式]
+    cleanup:
+      - 删除下班模式
+      - 确定
+
+  - id: B2-2
+    title: 补槽挂起+插话后裸答案仍可续接（reminder 双层挂起）
+    level: target
+    lane: live
+    tags: [continuity]
+    turns:
+      - say: 提醒我吃降压药
+        expect:
+          latency_s: 30
+          any_of:
+            - speech_any: [什么时候, 几点]
+            - follow_up_any: [什么时候, 几点]
+      - say: 先把音量调到20
+        expect:
+          latency_s: 15
+          action: {type: vehicle.control}
+      - say: 晚上九点
+        expect:
+          latency_s: 40
+          speech_any: [降压药]
+      - say: 我有哪些提醒
+        expect:
+          latency_s: 20
+          speech_any: [降压药]
+    cleanup:
+      - 取消降压药的提醒
+      - 确定
+      - 把音量调到30
+
+  - id: B2-3
+    title: 选择卡挂起+插话后「第一个」仍可回填（充电 dest_choice）
+    level: target
+    lane: live
+    tags: [continuity, interaction]
+    requires: [AMAP_KEY]
+    setup:
+      vehicle: {battery: 40}
+      location: {lat: 22.5333, lng: 113.9505}
+    turns:
+      # dest_choice 是 poi_list 卡的 purpose 字段（hmi types.ts:327），不是独立卡类型
+      - say: 去惠州的路上帮我找个充电站
+        expect:
+          latency_s: 60
+          cards_any: [poi_list]
+          card_contains: [dest_choice]
+      - say: 现在几点了
+        expect:
+          latency_s: 30
+          speech_not: [第几个, 没明白]
+      - say: 第一个
+        expect:
+          latency_s: 90
+          any_of:
+            - cards_any: [charging_route, route_plan]
+            - speech_any: [充电, 途经]
+          speech_not: [没明白, 请再说一遍, 想问什么]
+
+  - id: B3-1
+    title: 行程×天气反向驱动修改（哪天下雨改室内）
+    level: target
+    lane: live
+    tags: [continuity, autonomy]
+    requires: [AMAP_KEY, QWEATHER_PROJECT_ID|QWEATHER_KEY]
+    setup:
+      vehicle: {battery: 80}
+      location: {lat: 22.5333, lng: 113.9505}
+    turns:
+      - say: 帮我规划周末珠海两日游
+        expect:
+          latency_s: 90
+          cards_any: [trip_itinerary]
+      - confirm: true
+        expect:
+          latency_s: 60
+      - say: 哪天要下雨的话，把那天的安排换成室内的
+        expect:
+          latency_s: 90
+          any_of:
+            - speech_any: [调整, 换成, 室内, 已把, 改成]
+            - speech_any: [不用, 没有雨, 无需, 都没有雨]
+          speech_not: [没明白, 无法理解]
+
+  - id: B3-2
+    title: 低电量长途导航主动补能建议（车辆接地护城河）
+    level: target
+    lane: live
+    tags: [continuity, autonomy, proactive]
+    requires: [AMAP_KEY]
+    setup:
+      vehicle: {battery: 15}
+      location: {lat: 22.5333, lng: 113.9505}
+    turns:
+      - say: 导航去广州塔
+        expect:
+          latency_s: 75
+          action: {type: navigate}
+          # 目标：>100km 而续航 ~80km，导航照发 + 主动提示补能（advisory，不强加动作）
+          any_of:
+            - speech_any: [续航, 电量, 充电, 补能]
+            - card_contains: [充电]
+
+  - id: B3-3
+    title: 记忆×车控参数化（调到我喜欢的温度）
+    level: target
+    lane: live
+    tags: [continuity]
+    session_prefix: memtest-      # 刻意走真实记忆抽取（conventions §9.2 豁免前缀）
+    setup:
+      say: [把空调调到20度]        # 已知非 26 起点
+    turns:
+      - say: 记住，我最喜欢的空调温度是26度
+        expect:
+          latency_s: 45
+      - sleep: 25                 # 记忆抽取巩固窗口
+      - new_session: true
+        say: 把空调调到我喜欢的温度
+        expect:
+          latency_s: 60
+          speech_not: [多少度, 请问, 没明白, 几度]
+      - sleep: 3
+    final_vehicle: {hvac_temp: 26}
+
+  - id: B5-1
+    title: 「一次通勤」14 轮跨域长会话 showcase
+    level: target
+    lane: live
+    tags: [continuity, autonomy, interaction]
+    requires: [AMAP_KEY, EXA_API_KEY|SERPAPI_API_KEY]
+    setup:
+      vehicle: {battery: 68, gear: P, speed_kmh: 0}
+      location: {lat: 22.5410, lng: 114.0579}   # 福田出发
+    turns:
+      - say: 早上好
+        expect: {latency_s: 30}
+      - say: 今天上班路上会堵吗
+        expect:
+          latency_s: 60
+          speech_not: [没明白, 无法理解]
+      - say: 导航去南山科技园
+        expect:
+          latency_s: 60
+          action: {type: navigate}
+      - say: 路上帮我找家咖啡店，顺路买一杯
+        expect:
+          latency_s: 75
+          any_of:
+            - cards_any: [poi_list, place_list]   # waypoint_choice 是 poi_list 的 purpose
+            - speech_any: [咖啡]
+      - say: 第二个
+        expect:
+          latency_s: 75
+          any_of:
+            - cards_any: [route_plan]
+            - speech_any: [途经, 已加, 顺路]
+      - say: 到公司之前提醒我交周报
+        expect:
+          latency_s: 45
+          any_of:
+            - speech_any: [提醒]
+            - follow_up_any: [什么时候, 几点]
+      - say: 播放点轻松的音乐
+        expect:
+          latency_s: 30
+          action: {type: media.control}
+      - env: {speed_kmh: 60, gear: D}
+      - say: 空调调到23度
+        expect:
+          latency_s: 15
+          action: {type: vehicle.control}
+      - say: 今天有什么科技新闻
+        expect:
+          latency_s: 75
+          cards_any: [news_brief]
+      - say: 我刚才让你提醒我什么来着
+        expect:
+          latency_s: 45
+          speech_any: [周报]
+      - say: 那个提醒不用了，取消吧
+        expect:
+          latency_s: 40
+          any_of:
+            - speech_any: [取消]
+            - speech_any: [没有找到, 没有提醒]   # 第6轮若未成单，这里诚实说没有也自洽
+      - env: {speed_kmh: 0, gear: P}
+      - say: 把音量调到30
+        expect:
+          latency_s: 15
+          action: {type: vehicle.control}
+    cleanup:
+      - 取消交周报的提醒
+      - 确定
+
+  - id: B5-2
+    title: 列表叠加消歧：「第一个」指最新列表
+    level: target
+    lane: live
+    tags: [continuity, interaction]
+    requires: [AMAP_KEY]
+    setup:
+      vehicle: {battery: 40}
+      location: {lat: 22.5333, lng: 113.9505}
+    turns:
+      - say: 附近有什么火锅店
+        expect:
+          latency_s: 60
+          cards_any: [place_list]
+      - say: 去惠州的路上帮我找个充电站
+        expect:
+          latency_s: 60
+          cards_any: [poi_list]
+          card_contains: [dest_choice]
+      - say: 第一个
+        expect:
+          latency_s: 90
+          speech_not: [火锅]        # 串台到旧列表=消歧失败
+          any_of:
+            - cards_any: [charging_route, route_plan]
+            - speech_any: [充电, 途经, 惠州]

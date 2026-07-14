@@ -1,0 +1,113 @@
+# A 组：跨 Agent 自主执行 —— 目标级（能力标尺；允许红，红灯=工程 backlog，不拦退出码）
+# 每条红灯按「修 / 立卡 / 修正预期」三选一评审（设计 §6 P1）。
+suite: A-autonomy-target
+journeys:
+  - id: A1-4
+    title: 条件依赖 DAG：查天气→按结果决定建不建提醒
+    level: target
+    lane: live
+    tags: [autonomy]
+    setup:
+      location: {lat: 22.5333, lng: 113.9505}
+    turns:
+      - say: 查一下明天深圳会不会下雨，要是下雨就提醒我明早带伞
+        expect:
+          latency_s: 75
+          # 两个合法终态：下雨→成单；不下雨→明说不用。共同红线：不能只答天气把后半句吞了。
+          any_of:
+            - speech_all: [雨, 提醒]
+            - speech_any: [不会下雨, 无需, 不用带伞, 没有雨]
+    cleanup:
+      - 取消带伞的提醒
+      - 确定
+
+  - id: A2-1
+    title: 搜店→导航单句直达（中间结果传递，不反问）
+    level: target
+    lane: live
+    tags: [autonomy]
+    requires: [AMAP_KEY]
+    setup:
+      location: {lat: 22.5333, lng: 113.9505}
+    turns:
+      - say: 找一家附近评分最高的川菜馆，直接导航过去
+        expect:
+          latency_s: 75
+          action: {type: navigate}
+          speech_not: [哪一家, 想去哪, 请选择, 第几个]   # 用户说了“直接”，反问=断链
+
+  - id: A2-2b
+    title: 赛程→提醒单句成单（REMINDABLE 单句版）
+    level: target
+    lane: live
+    tags: [autonomy, continuity]
+    requires: [API_FOOTBALL_KEY]
+    turns:
+      - say: 明天世界杯第一场是谁踢？开赛前提醒我
+        skip_journey_if_speech_any: [没有查到, 暂无, 没有比赛, 无法获取]
+        expect:
+          latency_s: 60
+          speech_any: [提醒]
+          speech_not: [什么时候提醒, 几点提醒]
+    cleanup:
+      - 取消观看的提醒
+      - 确定
+
+  - id: A2-4
+    title: 导航 ETA→提醒（REMINDABLE 即插契约的 navigation 缺口）
+    level: target
+    lane: live
+    tags: [autonomy, proactive]
+    requires: [AMAP_KEY]
+    setup:
+      location: {lat: 22.5333, lng: 113.9505}
+    turns:
+      - say: 导航去宝安国际机场
+        expect:
+          latency_s: 60
+          action: {type: navigate}
+      - say: 到之前一刻钟提醒我给张姐打电话
+        expect:
+          latency_s: 45
+          speech_any: [提醒]
+          # 理想=按 ETA-15min 成单；可接受降级=诚实说明按预计时长转时间。反问时间=红。
+          speech_not: [什么时候提醒, 几点提醒]
+    cleanup:
+      - 取消打电话的提醒
+      - 确定
+
+  - id: A3-3
+    title: 搜索薄证据→follow_up 引导→「深入调研」续接同话题
+    level: target
+    lane: live
+    tags: [autonomy, continuity]
+    requires: [EXA_API_KEY]
+    turns:
+      - say: 帮我查查车规级固态电池和半固态电池的量产良率对比
+        expect:
+          latency_s: 90
+      - say: 那深入调研一下吧
+        expect:
+          latency_s: 150
+          cards_any: [research_report]
+          card_contains: [固态]        # 复用上轮话题，不是空跑“调研一下吧”
+
+  - id: A5-1
+    title: 多步部分失败诚实回执（trip 故障注入，天气照答）
+    level: target
+    lane: live
+    tags: [honesty, autonomy]
+    requires: [QWEATHER_PROJECT_ID|QWEATHER_KEY]
+    setup:
+      docker_stop: trip-planner-agent
+      location: {lat: 22.5333, lng: 113.9505}
+    turns:
+      - say: 帮我规划明天的杭州一日游，顺便看下明天杭州的天气
+        expect:
+          latency_s: 120
+          any_of:
+            - cards_any: [weather]
+            - speech_any: ["℃", 气温, 多云, 晴, 小雨, 阵雨]
+          # 部分失败必须明说，不能静默吞掉也不能装成功
+          speech_any: [没能, 失败, 出错, 暂时, 稍后, 不可用, 遇到问题]
+          speech_not: [第1天, 第一天, 已为您规划好]
