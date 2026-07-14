@@ -29,6 +29,7 @@ except ImportError:
 
 URL = "ws://localhost:8090/ws"
 COLLECTOR = "http://localhost:8092"
+NATS_URL = "nats://localhost:4222"
 SESSION = f"e2e-scene-{int(time.time())}"      # e2e- 前缀：跳过记忆抽取（conventions §9.2）
 TIMEOUT = 90
 _results: list[bool] = []
@@ -42,6 +43,16 @@ def record(name: str, ok: bool, detail: str = ""):
 def vehicle_state() -> dict:
     with urllib.request.urlopen(f"{COLLECTOR}/api/vehicle/state", timeout=10) as r:
         return json.loads(r.read().decode())
+
+
+def debug_vehicle(key: str, value) -> None:
+    """压车辆环境（行车态/电量/车内温度）：collector → NATS → 端侧 VAL 白名单键。"""
+    req = urllib.request.Request(
+        f"{COLLECTOR}/api/debug/vehicle",
+        data=json.dumps({"key": key, "value": value}).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=10) as r:
+        r.read()
 
 
 async def ask(text: str, desc: str) -> dict:
@@ -148,14 +159,74 @@ async def main() -> int:
     record("8b.沉淀场景可复用", st5.get("hvac_temp") == 28,
            f"hvac_temp={st5.get('hvac_temp')}（沉淀时是 28，激活前被打乱成 20）")
 
-    # 9) 自清理（可重入）：删掉本次建的场景，露营模式回归内置
+    await ask("退出加班模式", "沉淀-退出")
+
+    # 9) P2 Verify-Repair：VAL 安全门控拒掉一条动作 → 即时话术不再被后续成功掩埋
+    #    + 后台对账诚实汇报 → 环境恢复后重新激活，幂等只补缺失项
+    #    门控用**真实存在**的那条：低电量(<10%)禁高耗电功能（氛围灯）。
+    #    注意 seat 在 commands.yaml 里是 drive_restricted: false——VAL 并不拦行车中的座椅，
+    #    别拿"行车禁座椅"当前提（设计原文的假设，实测不成立）。
+    proactive: list[dict] = []
+    nc = None
+    try:
+        import nats
+        nc = await nats.connect(NATS_URL)
+
+        async def on_msg(m):
+            try:
+                p = json.loads(m.data.decode())
+                if p.get("agent_id") == "scene-orchestrator":
+                    proactive.append(p)
+            except Exception:
+                pass
+
+        await nc.subscribe("agent.proactive", cb=on_msg)
+    except Exception as e:
+        print(f"  [警告] NATS 订阅失败，跳过 verify 断言：{e}")
+
+    debug_vehicle("battery", 5)           # 低电量：VAL 禁高耗电功能（氛围灯）
+    await asyncio.sleep(1.5)
+    await ask("开启午休模式", "P2-低电量激活")
+    r = await ask("确认", "P2-低电量确认")
+    sp = r.get("speech", "")
+    record("9.拒绝不被成功掩埋", "电量" in sp,
+           sp[:60])                        # 5 个动作里第 3 条被拒、后两条成功——旧实现只播最后一条
+    st6 = await settle(3)
+    record("9b.氛围灯确实被门控", st6.get("ambient_light_brightness") != 10
+           and st6.get("seat_recline") == 160,
+           f"灯={st6.get('ambient_light_brightness')} 座椅={st6.get('seat_recline')}")
+
+    if nc:
+        for _ in range(30):                # verify 后台等 4s 再对账
+            if proactive:
+                break
+            await asyncio.sleep(0.5)
+        vs = proactive[0].get("speech", "") if proactive else ""
+        record("9c.后台诚实汇报", bool(proactive) and "没有生效" in vs and "氛围灯" in vs,
+               vs[:70] or "没收到 scene_verify proactive")
+
+    debug_vehicle("battery", 72)           # 电量恢复
+    await asyncio.sleep(1.5)
+    r = await ask("开启午休模式", "P2-幂等重激活")
+    sp = r.get("speech", "")
+    record("9d.幂等只补缺失项", "跳过" in sp,
+           sp[:70])                        # 座椅/音量/空调已达成 → 只剩氛围灯；座椅不再要确认
+    st7 = await settle(3)
+    record("9e.补上了氛围灯", st7.get("ambient_light_brightness") == 10,
+           f"灯={st7.get('ambient_light_brightness')}")
+    if nc:
+        await nc.close()
+    await ask("退出午休模式", "P2-收尾")
+    await ask("确认", "P2-收尾确认")
+
+    # 10) 自清理（可重入）：删掉本次建的场景，露营模式回归内置
     await ask("退出场景", "清理-退出")
     for name in ("钓鱼模式", "露营模式", "加班模式"):
         await ask(f"删掉{name}", f"清理-删{name}")
         await ask("确认", "清理-确认")
     r = await ask("有哪些场景模式", "清理-复查")
     card = r.get("ui_card") or {}
-    record("9.自清理", not (card.get("mine") or []) and len(card.get("builtin") or []) == 4,
+    record("10.自清理", not (card.get("mine") or []) and len(card.get("builtin") or []) == 4,
            f"mine={[x['name'] for x in (card.get('mine') or [])]} "
            f"builtin={len(card.get('builtin') or [])}")
 

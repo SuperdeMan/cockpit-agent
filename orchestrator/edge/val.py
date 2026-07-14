@@ -46,6 +46,9 @@ class VAL:
             "child_lock": False,
             # 动态量（在「车辆动态」面板呈现）
             "speed_kmh": 0, "gear": "P", "battery": 72, "location": None,
+            # 座舱温度（传感器读数，非空调设定值 hvac_temp）——场景策略的环境分支据此选制冷/
+            # 制热（「同一个午休模式，35℃ 走制冷、5℃ 走制热」）。可经 debug 通道模拟。
+            "cabin_temp": 24,
         }
         self._on_change = on_change
         self.vehicle_model = vehicle_model
@@ -504,12 +507,18 @@ class VAL:
                 return "ambient_light", False
             if operate == "set":
                 self.state["ambient_light"] = True  # 设色/亮度隐含开灯
+                # 颜色与亮度**都要生效**：旧实现在设色分支里直接 return，同时带 color+brightness
+                # 的动作（四个预置场景全是这样）亮度会被静默丢弃——VAL 还回一句"设好了"。
+                # 场景 Verify 对账第一次真跑就抓到了这个（期望灯10%、实际20%）。
+                changed = None
                 if data.get("tag"):
                     self.state["ambient_light_color"] = data["tag"]
-                    return "ambient_light_color", data["tag"]
-                if value:
+                    changed = ("ambient_light_color", data["tag"])
+                if value not in (None, ""):     # 亮度 0 是合法值，不能用真值判断
                     self.state["ambient_light_brightness"] = int(value)
-                    return "ambient_light_brightness", int(value)
+                    changed = ("ambient_light_brightness", int(value))
+                if changed:
+                    return changed
                 return "ambient_light", True
 
         elif obj in ("media", "music", "radio", "online_radio", "audiobook",

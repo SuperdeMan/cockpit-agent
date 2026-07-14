@@ -126,7 +126,8 @@ class _MemoryClient:
 
 
 class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
-    _DEBUG_KEYS = {"speed_kmh", "battery", "gear", "location"}
+    # cabin_temp：座舱温度传感器（场景策略的环境分支据此选制冷/制热），可模拟压值
+    _DEBUG_KEYS = {"speed_kmh", "battery", "gear", "location", "cabin_temp"}
 
     def __init__(self):
         self.obs = EventEmitter("edge")

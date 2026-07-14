@@ -535,6 +535,110 @@ def restore_action(action: dict, snapshot: dict,
 
 # ── LLM prompt 词表摘要（D3：白名单原样喂给编译器）─────────────────────────
 
+# ── P2 策略：条件（when/guards）与断言（assert）───────────────────────────────
+
+OPS = ("eq", "ne", "lt", "lte", "gt", "gte", "in")
+ON_FAIL = ("skip", "retry_suggest", "defer_p")
+GUARD_MODES = ("confirm", "block")
+
+
+def validate_condition(cond, cat: Catalog) -> tuple[dict | None, str]:
+    """校验一条 `{key, op, value}` 条件。返回 (cleaned|None, reason)。
+
+    **key 白名单与 command 同等强度**：LLM 幻觉出的键（`weather`/`mood`）会让条件永真或
+    永假——永真=分支形同虚设，永假=动作凭空消失，两种都是静默的错。剔除时诚实告知。
+    """
+    if not isinstance(cond, dict):
+        return None, "条件格式不对"
+    key = str(cond.get("key") or "").strip()
+    op = str(cond.get("op") or "eq").strip().lower()
+    if key not in cat.condition_keys():
+        return None, f"读不到「{key}」这个状态，条件已去掉"
+    if op not in OPS:
+        return None, f"条件里的「{op}」我不认识"
+    if "value" not in cond:
+        return None, f"「{key}」的条件没给对比值"
+    return {"key": key, "op": op, "value": cond["value"]}, ""
+
+
+def validate_guard(g, cat: Catalog) -> tuple[dict | None, str]:
+    cleaned, reason = validate_condition(g, cat)
+    if cleaned is None:
+        return None, reason
+    mode = str((g or {}).get("mode") or "confirm").strip().lower()
+    if mode not in GUARD_MODES:
+        mode = "confirm"                 # 枚举外一律降级 confirm（不擅自 block）
+    cleaned["mode"] = mode
+    msg = str((g or {}).get("message") or "").strip()
+    if msg:
+        cleaned["message"] = msg
+    return cleaned, ""
+
+
+def validate_on_fail(v) -> str:
+    v = str(v or "").strip().lower()
+    return v if v in ON_FAIL else "skip"
+
+
+def derive_assert(action: dict) -> dict | None:
+    """从动作**确定性派生**期望态（Verify 对账的依据）。
+
+    刻意不依赖 LLM 产 `assert`：动作本身就是期望——`hvac.set{temperature:22}` 期望
+    `hvac_temp==22`。派生的断言不会幻觉、对预置场景和 P0/P1 编译的老场景同样生效
+    （否则 Verify 只能对"LLM 恰好写了 assert"的场景起作用，等于没有）。
+    DSL 里显式声明的 `assert` 仍然优先（solve 消费时先看 action["assert"]）。
+    """
+    if not _is_car_action(action):
+        return None
+    r = resolve_command(str(action.get("command") or ""))
+    if r is None:
+        return None
+    obj, operate, attr, path_mode = r
+    p = action.get("params") or {}
+    mode = p.get("mode", path_mode)
+
+    if obj == "aircon" and not attr:
+        if operate == "close":
+            return {"key": "hvac_on", "op": "eq", "value": False}
+        if p.get("temperature"):
+            return {"key": "hvac_temp", "op": "eq", "value": _num(p["temperature"])}
+        if operate in ("open", "set"):
+            return {"key": "hvac_on", "op": "eq", "value": True}
+    if obj == "ambient_light":
+        if operate == "close":
+            return {"key": "ambient_light", "op": "eq", "value": False}
+        if p.get("brightness"):
+            return {"key": "ambient_light_brightness", "op": "eq",
+                    "value": _num(p["brightness"])}
+        return {"key": "ambient_light", "op": "eq", "value": True}
+    if obj == "volume" and p.get("level"):
+        return {"key": "volume", "op": "eq", "value": _num(p["level"])}
+    if obj == "seat" and mode in _DANGER_SEAT_MODES and p.get("angle"):
+        return {"key": "seat_recline", "op": "eq", "value": _num(p["angle"])}
+    if obj == "fragrance":
+        return {"key": "fragrance", "op": "eq", "value": operate != "close"}
+    if obj in ("window", "sunroof") and operate in ("open", "close"):
+        return {"key": obj, "op": "eq", "value": "open" if operate == "open" else "closed"}
+    if obj in _MEDIA_OBJECTS:
+        if operate in ("start", "play", "open"):
+            return {"key": "media", "op": "eq", "value": "playing"}
+        if operate == "pause":
+            return {"key": "media", "op": "eq", "value": "paused"}
+        if operate in ("close", "stop"):
+            return {"key": "media", "op": "eq", "value": "stopped"}
+    if obj == "scene_mode":
+        return None            # 状态位不对账（它没有"没生效"的失败态）
+    return None
+
+
+def _num(v):
+    try:
+        f = float(str(v))
+        return int(f) if f == int(f) else f
+    except (TypeError, ValueError):
+        return v
+
+
 def scene_objects(cat: Catalog) -> dict:
     """可进场景的对象子集：可控（非纯查询）、非语音禁用、非媒体、非元对象、非 Agent 自管。"""
     out = {}

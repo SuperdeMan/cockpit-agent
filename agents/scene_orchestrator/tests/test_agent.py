@@ -18,7 +18,7 @@ from agents._sdk.shared_state import SCENE_ACTIVE, SCENE_PENDING
 from agents._sdk.testing import make_context, run_handle
 from agents.scene_orchestrator.src import catalog as C
 from agents.scene_orchestrator.src.agent import SceneOrchestratorAgent
-from agents.scene_orchestrator.src.store import Scene
+from agents.scene_orchestrator.src.store import USER, Scene
 
 
 # ── 夹具：内存 store + 可控 shared_state + mock LLM ─────────────────────────
@@ -464,3 +464,120 @@ def test_sediment_without_history_is_honest():
                           raw_text="把刚才这些存成加班模式", ctx=_ctx(kv, history=[])))
     assert res.status == "ok" and "没找到刚才做过" in res.speech
     assert a.llm.calls == 0, "没内容就别调 LLM"
+
+
+# ── P2：策略引擎接线（Ground·Solve + Verify）───────────────────────────────
+
+_POLICY_DRAFT = json.dumps({
+    "name": "观星模式", "description": "灯关 + 座椅放平 + 空调随温度",
+    "goal": "野外看星星",
+    "guards": [{"key": "gear", "op": "eq", "value": "P", "mode": "confirm",
+                "message": "最好停好车"},
+               {"key": "moon_phase", "op": "eq", "value": "full"}],     # 幻觉键 → 剔除
+    "actions": [
+        {"type": "vehicle.control", "command": "ambient_light.close", "params": {}},
+        {"type": "vehicle.control", "command": "seat.recline",
+         "params": {"position": "front_left", "angle": "170"}, "on_fail": "defer_p"},
+        {"type": "vehicle.control", "command": "hvac.set", "params": {"temperature": "22"},
+         "when": {"key": "cabin_temp", "op": "gte", "value": 28}},
+        {"type": "vehicle.control", "command": "hvac.set", "params": {"temperature": "26"},
+         "when": {"key": "cabin_temp", "op": "lt", "value": 15}},
+        {"type": "vehicle.control", "command": "volume.set", "params": {"level": "0"},
+         "when": {"key": "cosmic_ray", "op": "lt", "value": 3}},        # 幻觉键 → 条件剔除
+    ],
+}, ensure_ascii=False)
+
+
+def test_compile_policy_fields_with_hallucinated_keys_dropped():
+    """幻觉条件键会让条件永真（分支形同虚设）或永假（动作凭空消失）——剔除并告知。"""
+    kv, a = KV(), _agent(_POLICY_DRAFT)
+    res = _run(run_handle(a, "scene.create", slots={},
+                          raw_text="创建观星模式：灯关掉、座椅放倒、空调随温度", ctx=_ctx(kv)))
+    assert res.status == "need_confirm"
+    draft = kv.data[SCENE_PENDING]["draft"]
+    assert [g["key"] for g in draft["guards"]] == ["gear"]      # moon_phase 被剔
+    whens = [act.get("when", {}).get("key") for act in draft["actions"]]
+    assert whens == [None, None, "cabin_temp", "cabin_temp", None]   # cosmic_ray 条件被剔
+    assert draft["actions"][4]["command"] == "volume.set"       # 但动作保留（条件降级为无条件）
+    assert [act.get("on_fail") for act in draft["actions"]][1] == "defer_p"
+
+
+def _policy_scene():
+    return Scene(user_id="u1", name="观星模式", source=USER,
+                 guards=[{"key": "battery", "op": "gte", "value": 20, "mode": "block",
+                          "message": "电量太低"}],
+                 actions=[
+                     {"type": "vehicle.control", "command": "ambient_light.close",
+                      "params": {}, "require_confirm": False},
+                     {"type": "vehicle.control", "command": "hvac.set",
+                      "params": {"temperature": "22"}, "require_confirm": False,
+                      "when": {"key": "cabin_temp", "op": "gte", "value": 28}},
+                     {"type": "vehicle.control", "command": "hvac.set",
+                      "params": {"temperature": "26"}, "require_confirm": False,
+                      "when": {"key": "cabin_temp", "op": "lt", "value": 15}},
+                 ])
+
+
+def test_activate_env_branch_hot():
+    kv, a = KV(), _agent()
+    _run(a.store.save(_policy_scene()))
+    a.mirror._state = {"battery": 80, "cabin_temp": 35}
+    res = _run(run_handle(a, "scene.activate", slots={"scene": "观星模式"},
+                          raw_text="开启观星模式", ctx=_ctx(kv)))
+    temps = [x["payload"]["temperature"] for x in res.actions
+             if x["payload"].get("command") == "hvac.set"]
+    assert temps == ["22"], "35℃ 应只走制冷分支"
+
+
+def test_activate_env_branch_missing_data_does_not_double_fire():
+    """v2.1 修正②真实链路复现：车内温度读不到 → 两条互斥分支都跳过，并诚实告知。"""
+    kv, a = KV(), _agent()
+    _run(a.store.save(_policy_scene()))
+    a.mirror._state = {"battery": 80}                # 无 cabin_temp
+    res = _run(run_handle(a, "scene.activate", slots={"scene": "观星模式"},
+                          raw_text="开启观星模式", ctx=_ctx(kv)))
+    cmds = [x["payload"].get("command") for x in res.actions]
+    assert "hvac.set" not in cmds, "缺数据时互斥分支绝不能双发"
+    assert "cabin_temp" in res.speech or "跳过" in res.speech
+
+
+def test_activate_guard_block_rejects_honestly():
+    kv, a = KV(), _agent()
+    _run(a.store.save(_policy_scene()))
+    a.mirror._state = {"battery": 5, "cabin_temp": 30}
+    res = _run(run_handle(a, "scene.activate", slots={"scene": "观星模式"},
+                          raw_text="开启观星模式", ctx=_ctx(kv)))
+    assert res.status == "rejected" and "电量太低" in res.speech
+    assert not res.actions
+
+
+def test_activate_idempotent_all_done():
+    """重复激活：都已是这个状态 → 诚实反馈，不空发一堆动作。"""
+    kv, a = KV(), _agent()
+    _run(a.store.save(Scene(user_id="u1", name="静音模式2", source=USER, actions=[
+        {"type": "vehicle.control", "command": "volume.set", "params": {"level": "0"},
+         "require_confirm": False}])))
+    a.mirror._state = {"volume": 0}
+    res = _run(run_handle(a, "scene.activate", slots={"scene": "静音模式2"},
+                          raw_text="开启静音模式2", ctx=_ctx(kv)))
+    assert res.status == "ok" and "无需调整" in res.speech and not res.actions
+
+
+def test_activate_schedules_verify_and_deactivate_cancels():
+    """激活注册后台对账、退出掐掉在飞任务（v2.1 修正③单飞）。
+
+    断言必须在**同一个事件循环内**做——asyncio.run 退出时会取消挂起 task 并触发
+    done_callback，`_tasks` 会被清空，跨 run 断言只会看到空字典。
+    """
+    kv, a = KV(), _agent()
+    a.mirror._state = {"hvac_temp": 21}
+
+    async def go():
+        await run_handle(a, "scene.activate", slots={"scene": "回家模式"},
+                         raw_text="开启回家模式", ctx=_ctx(kv))
+        assert "u1" in a.verify._tasks, "激活应注册后台对账"
+        await run_handle(a, "scene.deactivate", slots={}, raw_text="退出",
+                         ctx=_ctx(kv), meta={"confirmed": "true"})
+        assert "u1" not in a.verify._tasks, "退出应掐掉在飞对账"
+
+    _run(go())

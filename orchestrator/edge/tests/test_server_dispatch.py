@@ -72,6 +72,27 @@ def test_dispatch_scene_actions_execute_via_structured():
         assert "暂不支持" not in out.final.speech, f"{payload['command']} 仍落 legacy 串路径"
 
 
+def test_ambient_light_applies_color_and_brightness_together():
+    """氛围灯同时设色+设亮度时，两者都要生效。
+
+    旧实现在设色分支里直接 return，亮度被**静默丢弃**（VAL 还回一句"设好了"）——四个预置
+    场景的 ambient_light 全是 color+brightness，亮度因此从来没生效过。2026-07-14 场景
+    Verify 对账第一次真跑就抓到（期望灯 10%、实际 20%）。
+    """
+    srv = EdgeOrchestratorServicer()
+    srv._dispatch_cloud_actions(_final_with_action(
+        "placeholder", {"command": "ambient_light.set", "color": "orange",
+                        "brightness": "10"}))
+    assert srv.val.state["ambient_light"] is True
+    assert srv.val.state["ambient_light_color"] == "orange"
+    assert srv.val.state["ambient_light_brightness"] == 10, "亮度被静默丢弃了"
+
+    # 亮度 0 是合法值（关灯≠亮度0），不能被真值判断吃掉
+    srv._dispatch_cloud_actions(_final_with_action(
+        "placeholder", {"command": "ambient_light.set", "brightness": "0"}))
+    assert srv.val.state["ambient_light_brightness"] == 0
+
+
 def test_dispatch_scene_hvac_respects_temperature():
     """场景 hvac.set 经结构化路径采纳 temperature；VAL 不认的 mode(auto) 被丢弃，不致整条拒绝。
     （legacy 串路径读 args['temp']，会把场景的 temperature 丢掉。）"""

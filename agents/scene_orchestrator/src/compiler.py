@@ -15,7 +15,8 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from .catalog import Catalog, catalog_digest, resolve_command, validate_action
+from .catalog import (Catalog, catalog_digest, resolve_command, validate_action,
+                      validate_condition, validate_guard, validate_on_fail)
 
 logger = logging.getLogger("agent.scene.compiler")
 
@@ -35,12 +36,35 @@ _CREATE_NOISE_RE = re.compile(
 
 _SYSTEM = "你是车载场景编译器。把用户的场景需求编译成结构化 JSON，只输出 JSON，不要解释。"
 
-_FEWSHOT = """示例——用户说「建个观星模式：车里灯全关，座椅放倒，空调 22 度，放点音乐」，输出：
-{"name":"观星模式","description":"氛围灯关闭 + 座椅放平 + 空调22度","goal":"停在野外舒服地看星星",
- "actions":[{"type":"vehicle.control","command":"ambient_light.close","params":{}},
-  {"type":"vehicle.control","command":"seat.recline","params":{"position":"front_left","angle":"170"}},
-  {"type":"vehicle.control","command":"hvac.set","params":{"temperature":"22"}}],
- "unsupported":["放点音乐"]}"""
+_FEWSHOT = """示例——用户说「建个观星模式：车里灯全关，座椅放倒，空调看情况调，热就制冷、冷就制热」，输出：
+{"name":"观星模式","description":"氛围灯关闭 + 座椅放平 + 空调按车内温度自适应",
+ "goal":"停在野外舒服地看星星",
+ "guards":[{"key":"gear","op":"eq","value":"P","mode":"confirm","message":"最好停好车再开"}],
+ "actions":[
+  {"type":"vehicle.control","command":"ambient_light.close","params":{}},
+  {"type":"vehicle.control","command":"seat.recline","params":{"position":"front_left","angle":"170"},
+   "on_fail":"defer_p"},
+  {"type":"vehicle.control","command":"hvac.set","params":{"temperature":"22"},
+   "when":{"key":"cabin_temp","op":"gte","value":28}},
+  {"type":"vehicle.control","command":"hvac.set","params":{"temperature":"26"},
+   "when":{"key":"cabin_temp","op":"lt","value":15}}],
+ "unsupported":[]}"""
+
+# 策略字段的说明（P2）。刻意平铺、不做嵌套分支树——弱模型编得动、求值器 100 行写得完、
+# schema 一眼验得完。"互斥环境分支"就用两条相反 when 的动作表达（夏冷/冬热各一条）。
+_POLICY_DOC = """可选策略字段（不确定就**别写**，写错不如不写）：
+- guards：激活前置检查（数组）。{"key":..,"op":..,"value":..,"mode":"confirm|block","message":".."}
+  confirm=提示后可继续（默认）；block=直接拒绝激活。只在用户明确提了前提条件时才写。
+- when：单条动作的环境条件。{"key":..,"op":..,"value":..} —— 条件不满足**或读不到**，
+  这条动作本次就跳过。互斥分支写成两条相反 when 的动作（如车内热走制冷、车内冷走制热）。
+- on_fail：这条动作没生效时怎么办。"skip"(默认，事后诚实告知) |
+  "retry_suggest"(建议用户重试) | "defer_p"(挂起，停好车再提醒补做——座椅这类行车中会被
+  安全限制拦下的动作适合它)
+可用的 key（**只能从这里选**，别的键一律无效）：
+  battery(电量%) / gear(挡位 P|R|N|D) / speed_kmh(车速) / cabin_temp(车内温度℃) / hour(0-23) /
+  以及车身状态键：hvac_on hvac_temp ambient_light ambient_light_brightness volume
+  seat_recline fragrance window sunroof media
+op：eq / ne / lt / lte / gt / gte / in"""
 
 
 @dataclass
@@ -50,19 +74,22 @@ class Draft:
     description: str = ""
     goal: str = ""
     actions: list = field(default_factory=list)     # 已过白名单校验的干净动作
+    guards: list = field(default_factory=list)      # P2：激活前置检查
     dropped: list = field(default_factory=list)     # 剔除/降级项（回读时诚实告知）
-    notes: list = field(default_factory=list)       # 参数夹紧等提示
+    notes: list = field(default_factory=list)       # 参数夹紧/幻觉键剔除等提示
     ok: bool = False
     error: str = ""
 
     def to_dict(self) -> dict:
         return {"name": self.name, "description": self.description, "goal": self.goal,
-                "actions": self.actions, "dropped": self.dropped, "notes": self.notes}
+                "actions": self.actions, "guards": self.guards,
+                "dropped": self.dropped, "notes": self.notes}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Draft":
         return cls(name=d.get("name", ""), description=d.get("description", ""),
                    goal=d.get("goal", ""), actions=d.get("actions") or [],
+                   guards=d.get("guards") or [],
                    dropped=d.get("dropped") or [], notes=d.get("notes") or [],
                    ok=bool(d.get("actions")))
 
@@ -168,11 +195,34 @@ def build_draft(data: dict, cat: Catalog, *, text: str = "", name_hint: str = ""
     d.description = str(data.get("description") or "").strip()
     d.goal = str(data.get("goal") or "").strip()
 
+    for g in (data.get("guards") or []):
+        cg, why = validate_guard(g, cat)
+        if cg is None:
+            if why:
+                d.notes.append(why)                  # 幻觉键 → 剔除并告知（不静默留个永假条件）
+            continue
+        d.guards.append(cg)
+
     for a in (data.get("actions") or []):
         ok, cleaned, reason = validate_action(a, cat)
         if not ok:
             d.dropped.append(reason or "有个动作我做不到")
             continue
+        # P2 策略字段：when 的 key 与 command 同等强度校验——幻觉键会让条件永真（分支形同
+        # 虚设）或永假（动作凭空消失），两种都是静默的错。剔除时诚实告知。
+        if a.get("when"):
+            cw, why = validate_condition(a["when"], cat)
+            if cw is None:
+                if why:
+                    d.notes.append(why)
+            else:
+                cleaned["when"] = cw
+        if a.get("assert"):
+            ca, _ = validate_condition(a["assert"], cat)
+            if ca:
+                cleaned["assert"] = ca               # 没写也没关系：catalog.derive_assert 会派生
+        if a.get("on_fail"):
+            cleaned["on_fail"] = validate_on_fail(a["on_fail"])
         d.actions.append(cleaned)
         if reason:
             d.notes.append(reason)                   # 参数被夹紧等提示

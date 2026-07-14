@@ -20,15 +20,18 @@ from difflib import get_close_matches
 
 import yaml
 
-from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
+from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM, REJECTED
+from agents._sdk.base import Context
 from agents._sdk.shared_state import SCENE_ACTIVE, SCENE_PENDING
 
 from .catalog import action_type_for, affected_state_keys, is_danger, load_catalog, \
     resolve_command, restore_action, validate_action
 from .compiler import Draft, action_desc, actions_preview, compile_scene, \
     extract_scene_name, extract_spec
+from .solve import solve
 from .state_mirror import StateMirror
 from .store import BUILTIN, DISABLED, ENABLED, Scene, SceneStore, USER
+from .verify import VerifyManager
 
 logger = logging.getLogger("agent.scene_orchestrator")
 
@@ -58,6 +61,16 @@ class SceneOrchestratorAgent(BaseAgent):
         self.store = SceneStore()
         self.mirror = StateMirror()
         self._builtin: list[Scene] = self._builtin_scenes(_load_builtin(_SCENES_PATH))
+        # P2 Verify-Repair：后台对账（按 user 单飞）。ctx_ids = (session, user, vehicle)——
+        # 后台任务不依赖请求级 ctx，用 Agent 级 self.memory 重建 Context（deep_research 先例）。
+        self.verify = VerifyManager(
+            self.mirror, self.mirror.publish,
+            load_active=lambda ids: self._load_kv(self._ctx_of(ids), SCENE_ACTIVE),
+            save_active=lambda ids, v: self._save_kv(self._ctx_of(ids), SCENE_ACTIVE, v),
+            wait_s=float(os.getenv("SCENE_VERIFY_WAIT_S", "4")))
+
+    def _ctx_of(self, ids: tuple) -> Context:
+        return Context(ids[0], ids[1], ids[2], self.memory)
 
     # ── 生命周期 ────────────────────────────────────────────────────────────
     async def on_start(self) -> None:
@@ -249,7 +262,7 @@ class SceneOrchestratorAgent(BaseAgent):
     async def _persist(self, ctx, draft: Draft, overwrite: bool) -> AgentResult:
         s = Scene(user_id=self._uid(ctx), name=draft.name, description=draft.description,
                   goal=draft.goal, source=USER, actions=draft.actions,
-                  aliases=self._aliases_for(draft.name))
+                  guards=draft.guards, aliases=self._aliases_for(draft.name))
         try:
             saved = await self.store.save(s)
         except Exception as e:
@@ -315,13 +328,27 @@ class SceneOrchestratorAgent(BaseAgent):
         override_src = f"{query} {intent.raw_text or ''}"
         actions, overridden = self._apply_param_override(actions, override_src)
 
+        # P2 Ground·Solve（D9）：读环境 → 确定性求值 → 本次具体动作序列。全程零 LLM。
+        env = self._ground(meta)
+        sol = solve(actions, scene.guards, env, label=scene.name)
+        if sol.blocked:                                   # guard block：确凿不满足 → 诚实拒绝
+            return AgentResult(status=REJECTED, speech=sol.blocked)
+        actions = sol.actions
+        if not actions:                                   # 求值后空集 = 都已就绪（幂等激活）
+            tail = ("；" + "；".join(sol.notes)) if sol.notes else ""
+            return AgentResult(speech=f"{scene.name}该做的都已经是这个状态了，无需调整{tail}。")
+
         confirmed = str(meta.get("confirmed", "")).lower() == "true"
         danger = [a for a in actions if a.get("require_confirm")]
-        if danger and not confirmed:
-            desc = "、".join(action_desc(a) for a in danger)
+        if (danger or sol.confirm_notes) and not confirmed:
+            bits = []
+            if sol.confirm_notes:
+                bits.append("、".join(sol.confirm_notes))
+            if danger:
+                bits.append("其中" + "、".join(action_desc(a) for a in danger) + "需要您确认")
             return AgentResult(
                 status=NEED_CONFIRM,
-                speech=f"即将开启{scene.name}。其中{desc}需要您确认。确认执行吗？",
+                speech=f"即将开启{scene.name}。{'；'.join(bits)}。确认执行吗？",
                 follow_up="说「确认」即可",
                 ui_card=self._scene_card("confirm", scene.name, scene.description, actions),
             ).action("scene.activate",
@@ -329,9 +356,28 @@ class SceneOrchestratorAgent(BaseAgent):
                      require_confirm=True)
 
         res = await self._dispatch(ctx, scene, actions)
-        if overridden and res.status == "ok":
-            res.speech = f"已为您开启{scene.name}，{self._preview_speech(actions, limit=3)}。"
+        if res.status == "ok":
+            head = f"已为您开启{scene.name}"
+            if overridden:
+                head += f"，{self._preview_speech(actions, limit=3)}"
+            tail = ("（" + "；".join(sol.notes) + "）") if sol.notes else ""
+            if sol.skipped_done:
+                tail += f"（有 {sol.skipped_done} 项本来就是这个状态，跳过了）"
+            res.speech = f"{head}。{tail}"
         return res
+
+    def _ground(self, meta: dict) -> dict:
+        """读环境（Ground）：车况镜像 + meta 电量 + 本地时。取不到的键**不进 env**——
+        solve 会把它判成 unknown 而不是猜一个值（三态求值的前提）。"""
+        env = self.mirror.snapshot()
+        battery = (meta or {}).get("vehicle_battery")     # context_scopes: [vehicle_state]
+        if battery not in (None, "") and "battery" not in env:
+            try:
+                env["battery"] = float(str(battery).replace("%", ""))
+            except ValueError:
+                pass
+        env["hour"] = time.localtime().tm_hour
+        return env
 
     async def _dispatch(self, ctx, scene: Scene, actions: list) -> AgentResult:
         """下发动作：先按本次动作集采快照（D5 恢复基准）+ 写 SCENE_ACTIVE，再产出 actions。"""
@@ -350,6 +396,12 @@ class SceneOrchestratorAgent(BaseAgent):
         })
         if scene.source == USER:
             await self.store.bump_use(self._uid(ctx), scene.id)
+
+        # P2：注册后台对账（D10）。闭包携带 activation_id + 本次动作集——**不回读单槽**，
+        # 旧 task 醒来时单槽可能已被新激活覆盖（v2.1 修正③）。
+        self.verify.schedule(
+            (ctx.session_id, self._uid(ctx), ctx.vehicle_id or ""),
+            scene.name, activation_id, actions)
 
         res = AgentResult(speech=f"已为您开启{scene.name}。",
                           ui_card=self._scene_card("activated", scene.name,
@@ -390,6 +442,7 @@ class SceneOrchestratorAgent(BaseAgent):
 
     # ── scene.deactivate：真恢复（D5）───────────────────────────────────────
     async def _deactivate(self, intent, ctx, meta) -> AgentResult:
+        self.verify.cancel(self._uid(ctx))     # 先掐掉在飞的对账（v2.1 修正③单飞）
         active = await self._load_kv(ctx, SCENE_ACTIVE)
         if not active.get("scene_id"):
             return AgentResult(speech="当前没有开启场景模式。")
