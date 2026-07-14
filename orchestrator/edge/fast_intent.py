@@ -112,12 +112,41 @@ _EDGE_MODE_RE = re.compile(
     r"(驾驶|运动|舒适|经济|节能|标准|雪地|越野|性能|省电|电量|动能回收)模式")
 
 
+# 场景激活/退出句（带动词的「X模式」）——句中的车控词是场景参数，不是当下指令
+_SCENE_ACT_RE = re.compile(
+    r"(开启|打开|进入|切换到|来个|来一个|启动|退出|关闭|取消|结束)\s*[一-龥]{1,6}模式")
+
+_FACTORY_SCENE_MODES = (
+    ("小憩", "nap"), ("小睡", "nap"), ("露营", "camping"),
+    ("观影", "movie"), ("看电影", "movie"), ("浪漫", "romantic"), ("冥想", "meditation"),
+)
+
+
+def _factory_scene_mode(t: str) -> str | None:
+    """出厂场景词 → VAL scene_mode 值（与 entities.yaml scene_modes 同源）。"""
+    for kw, mode in _FACTORY_SCENE_MODES:
+        if kw in t:
+            return mode
+    return None
+
+
 def _is_scene_management(t: str) -> bool:
     if _SCENE_CREATE_RE.search(t):
         # 「创建X模式」恒判场景管理——哪怕 X 撞了端侧模式名：云端会诚实告诉用户"这名字被占了"，
         # 好过端侧把句子里的车控动作当场执行掉。
         return True
     return bool(_SCENE_EDIT_RE.search(t)) and not _EDGE_MODE_RE.search(t)
+
+
+def _is_scene_utterance(t: str) -> bool:
+    """整句归云端场景编排的话：造/改/删场景 **+ 开启/退出场景**。
+
+    激活句也要算进来：「开启午休模式，温度26」里的「温度26」是**场景参数**，一旦被拆句，
+    后半句就成了独立的本地车控意图、被混合意图路径当场执行——空调开了、场景没激活
+    （真机实测命中，与造场景句同一个坑）。D8 的端侧模式词不在此列。
+    """
+    return _is_scene_management(t) or bool(
+        _SCENE_ACT_RE.search(t) and not _EDGE_MODE_RE.search(t))
 
 
 def classify(text: str) -> dict | None:
@@ -287,12 +316,22 @@ def classify_structured(text: str) -> dict | None:
     """新接口：返回公版 {domain, intent, data: {operate, object, ...}} 格式。"""
     t = text.strip()
 
-    # ── 场景管理句一律上云（与本文件头部「命名场景归云端 scene-orchestrator 编排」同一分工）──
-    # 「创建钓鱼模式：氛围灯调到10%，空调22度」里的车控词是**场景内容**，不是**当下的指令**：
-    # 端侧若照单执行，用户会发现灯真被调暗了、场景却没建成。同理「把钓鱼模式的温度改成24」
-    # 是改场景定义，不是现在开空调。这里返回 None → classify / split_and_classify 都判"不可
-    # 本地处理" → 整句交云端。**不新增任何执行路径**，只是把这类话让给云端编排。
+    # ── 场景句一律上云（与本文件头部「命名场景归云端 scene-orchestrator 编排」同一分工）──
+    # ① 场景**管理**句：「创建钓鱼模式：氛围灯调到10%，空调22度」里的车控词是**场景内容**，
+    #    不是**当下的指令**——端侧若照单执行，用户会发现灯真被调暗了、场景却没建成。
+    #    「把钓鱼模式的温度改成24」同理：改的是场景定义，不是现在开空调。
+    # ② 场景**激活/退出**句：「开启午休模式，温度26」里的「温度26」是**场景参数**（激活时
+    #    覆盖场景里的空调设定），不是当下要开空调。**这一条必须早于空调分支**——否则
+    #    「温度26」会让整句落到 aircon，端侧把空调开了、场景根本没激活（真机实测命中）。
+    #    出厂场景词（露营/小憩…）仍返回结构化 scene_mode（保留 VAL 知识与语料），但它不在
+    #    LOCAL_INTENTS 里，照样上云；用户自建场景端侧无知识 → None → 整句上云。
+    #    D8：驾驶/动力类模式词（运动/省电/雪地…）不在此列，继续走端侧毫秒级秒回。
     if _is_scene_management(t):
+        return None
+    if _SCENE_ACT_RE.search(t) and not _EDGE_MODE_RE.search(t):
+        mode = _factory_scene_mode(t)
+        if mode:
+            return _s("setting", "control", "set", "scene_mode", mode=mode, conf=0.9)
         return None
 
     # ── R4.1b P0：端侧对象化（空气净化 / 导航播报 / 按键音；短语明确、早置防被后续泛化截获）──
@@ -620,22 +659,10 @@ def classify_structured(text: str) -> dict | None:
             return _s("setting", "control", "close", "dashcam", conf=0.9)
         return _s("setting", "control", "open", "dashcam", conf=0.9)
 
-    # ── 场景模式 ──────────────────────────────────────────
-    if "小憩" in t or "露营" in t or "观影" in t or "浪漫" in t or "冥想" in t:
-        mode = None
-        if "小憩" in t or "小睡" in t:
-            mode = "nap"
-        elif "露营" in t:
-            mode = "camping"
-        elif "观影" in t or "看电影" in t:
-            mode = "movie"
-        elif "浪漫" in t:
-            mode = "romantic"
-        elif "冥想" in t:
-            mode = "meditation"
-        if mode:
-            return _s("setting", "control", "set", "scene_mode",
-                      mode=mode, conf=0.9)
+    # ── 场景模式（裸「露营模式」这类无动词形态；带动词的已在顶部护栏处理）──
+    mode = _factory_scene_mode(t)
+    if mode:
+        return _s("setting", "control", "set", "scene_mode", mode=mode, conf=0.9)
 
     # ── 电源模式 ──────────────────────────────────────────
     if "电源模式" in t or "动力模式" in t:
@@ -1389,12 +1416,13 @@ def _resplit_on_he(part: str) -> list[str]:
 def _split_parts(text: str) -> list[str]:
     """按 _SPLIT_MARKERS 拆分，再对每段做“和”的安全二次拆分；返回 strip 后的非空段。
 
-    场景管理句**不拆**（返回空）：「创建钓鱼模式：氛围灯调到10%，空调22度」一拆，后半句
+    场景句**不拆**（返回空）：「创建钓鱼模式：氛围灯调到10%，空调22度」一拆，后半句
     「空调22度」就成了独立的本地车控意图，被混合意图路径（split_and_classify_any）当场执行
-    ——用户看到空调真开了、场景却没建成。整句必须完整交云端 scene-orchestrator 编译。
-    这里是两个 split 函数的唯一收口，堵在这里即可（2026-07-14 真栈 e2e 实测命中）。
+    ——用户看到空调真开了、场景却没建成。「开启午休模式，温度26」同理（「温度26」是场景参数）。
+    整句必须完整交云端 scene-orchestrator。
+    这里是两个 split 函数的唯一收口，堵在这里即可（2026-07-14 真栈实测两次命中）。
     """
-    if _is_scene_management(text):
+    if _is_scene_utterance(text):
         return []
     parts: list[str] = []
     for p in _SPLIT_MARKERS.split(text):

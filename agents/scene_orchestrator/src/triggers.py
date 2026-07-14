@@ -28,8 +28,14 @@ from .solve import SAT, evaluate
 
 logger = logging.getLogger("agent.scene.triggers")
 
+# 业务时区（中国车机 PoC 固定 UTC+8，与 reminder 的 Asia/Shanghai 默认一致）。
+# time watcher 与策略求值的 `hour` 环境键（agent._ground）都用它——容器本地时是 UTC，
+# 直接 time.localtime() 会让「晚上10点后」这类条件错 8 小时。
+BUSINESS_TZ = timezone(timedelta(hours=8))
+
 _OP_ALIASES = {"enter": "eq", "leave": "ne"}       # 位置进入/离开 → 边沿语义已由 watcher 保证
 RECURS = ("daily", "workday", "once")
+_SCENES_CACHE_S = 10.0     # enabled 场景短缓存：车速这类高频状态广播不该次次打 DB
 
 
 def enrich_env(state: dict) -> dict:
@@ -76,12 +82,14 @@ class TriggerWatcher:
         self._publish = publish
         self._poll_s = poll_s
         self._throttle_s = throttle_s
-        self._tz = tz or timezone(timedelta(hours=8))
+        self._tz = tz or BUSINESS_TZ
         self._load_active = load_active          # async (ctx_ids) -> SCENE_ACTIVE
         self._users = list(users)                # PoC 单用户；多用户需 store 层枚举
         self._fired: dict[str, float] = {}       # 节流：scene_id|idx -> 上次触发
         self._edge: dict[str, bool] = {}         # 边沿：scene_id|idx -> 上次是否满足
         self._due: dict[str, int] = {}           # 时间触发的下一次时刻（消费后重算=recur 滚动）
+        self._scenes_at = 0.0                    # _enabled_scenes 缓存时间戳
+        self._scenes_cached: list = []
         self._task: asyncio.Task | None = None
         self._parked = True                      # gear 边沿（驻车补做用）
 
@@ -164,7 +172,12 @@ class TriggerWatcher:
                 due = self._due_at(key, spec, now)
                 if due and now_ts >= due and self._allow(key, 3600):
                     await self._suggest(scene, f"到{spec.get('at')}了")
-                    self._due.pop(key, None)       # 消费后重算下一次（recur 滚动）
+                    if str(spec.get("recur") or "daily") == "once":
+                        # once：消费即熄（置 0 哨兵，_due_at 不再重算）。进程重启会重新装填、
+                        # 在未来同一时刻再触发一次——单实例进程内去重的诚实边界（模块头注释）。
+                        self._due[key] = 0
+                    else:
+                        self._due.pop(key, None)   # 消费后重算下一次（recur 滚动）
                     fired += 1
         return fired
 
@@ -175,12 +188,19 @@ class TriggerWatcher:
 
     # ── 共用 ────────────────────────────────────────────────────────────────
     async def _enabled_scenes(self) -> list:
+        """带短缓存（10s）：事件路径每条 `vehicle.state.changed` 都会进来，而行车中车速
+        广播几乎连续——不缓存就是一场 DB 查询风暴。触发本身有分钟级节流，缓存不损语义
+        （新建触发器最晚 10s 后被看见）。"""
+        now = time.time()
+        if now - self._scenes_at < _SCENES_CACHE_S:
+            return self._scenes_cached
         out = []
         for uid in self._users:
             try:
                 out.extend(s for s in await self._store.list(uid) if s.triggers)
             except Exception as e:
                 logger.debug("scene triggers: 读场景失败：%s", e)
+        self._scenes_at, self._scenes_cached = now, out
         return out
 
     def _allow(self, key: str, throttle_s: float | None = None) -> bool:

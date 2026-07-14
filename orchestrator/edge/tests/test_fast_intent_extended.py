@@ -10,7 +10,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from fast_intent import classify, classify_structured, is_local, split_and_classify
+from fast_intent import (classify, classify_structured, is_local,
+                         split_and_classify, split_and_classify_any)
 
 
 # ═══════════════════════════════════════════════════
@@ -100,6 +101,40 @@ class TestSceneManagementGoesToCloud:
     def test_plain_vehicle_control_unaffected(self):
         assert classify("把空调调到26度")["name"] == "hvac.set"
         assert classify("氛围灯调暗一点") is not None
+
+    def test_scene_activation_with_param_not_hijacked_by_aircon(self):
+        """「开启午休模式，温度26」里的「温度26」是**场景参数**（激活时覆盖场景的空调设定），
+        不是当下要开空调。
+
+        护栏必须早于空调分支：否则「温度26」让整句落到 aircon，端侧把空调开了、
+        **场景根本没激活**（真机实测：speech「开了」、scene_mode 仍是 off）。
+        """
+        assert classify("开启午休模式，温度26") is None          # 用户/未知场景 → 整句上云
+        assert classify("开启午休模式") is None
+
+        # 出厂场景词仍结构化识别（保留 VAL 知识/语料），但不是 LOCAL_INTENTS → 照样上云
+        r = classify_structured("开启露营模式，温度26")
+        assert r["data"]["object"] == "scene_mode" and r["data"]["mode"] == "camping"
+        assert not is_local(classify("开启露营模式，温度26")["name"])
+
+    def test_scene_deactivation_goes_to_cloud(self):
+        assert classify("退出午休模式") is None
+        assert not is_local(classify("退出露营模式")["name"])
+
+    def test_scene_sentences_are_never_split(self):
+        """**混合意图路径也得堵**：`split_and_classify_any` 会把拆出来的本地子句当场执行。
+
+        「开启午休模式，温度26」若被拆成「开启午休模式」+「温度26」，后半句就成了独立的
+        本地空调指令——真机实测：speech「开了」、空调真开了、场景根本没激活。
+        `_split_parts` 是两个 split 函数的唯一收口，堵在那里。
+        """
+        for t in ("开启午休模式，温度26", "帮我创建一个钓鱼模式：氛围灯调到10%，空调22度",
+                  "退出露营模式，把灯关了"):
+            assert split_and_classify(t) is None, t
+            assert split_and_classify_any(t) is None, t
+
+        # 普通多意图照拆不误（零回归）
+        assert split_and_classify_any("空调22度，氛围灯调暗") is not None
 
 
 # ═══════════════════════════════════════════════════

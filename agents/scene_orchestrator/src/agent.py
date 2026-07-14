@@ -16,6 +16,7 @@ import os
 import re
 import time
 import uuid
+from datetime import datetime
 from difflib import get_close_matches
 
 import yaml
@@ -31,7 +32,7 @@ from .compiler import Draft, action_desc, actions_preview, compile_scene, \
 from .solve import solve
 from .state_mirror import StateMirror
 from .store import BUILTIN, DISABLED, ENABLED, Scene, SceneStore, USER
-from .triggers import TriggerWatcher
+from .triggers import BUSINESS_TZ, TriggerWatcher
 from .verify import VerifyManager
 
 logger = logging.getLogger("agent.scene_orchestrator")
@@ -387,7 +388,9 @@ class SceneOrchestratorAgent(BaseAgent):
                 env["battery"] = float(str(battery).replace("%", ""))
             except ValueError:
                 pass
-        env["hour"] = time.localtime().tm_hour
+        # 业务时区（BUSINESS_TZ，与 time watcher 同源）：容器本地时是 UTC，
+        # 直接 time.localtime() 会让「hour>=22 才调暗灯」这类条件错 8 小时。
+        env["hour"] = datetime.now(BUSINESS_TZ).hour
         return env
 
     async def _dispatch(self, ctx, scene: Scene, actions: list) -> AgentResult:

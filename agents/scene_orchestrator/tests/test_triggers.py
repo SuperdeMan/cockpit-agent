@@ -234,3 +234,66 @@ def test_enrich_env_flattens_location():
     env = enrich_env({"location": {"city": "深圳", "name": "科技园"}, "battery": 50})
     assert env["location.city"] == "深圳" and env["battery"] == 50
     assert enrich_env({"location": None})["location"] is None      # 不炸
+
+
+# ── recur=once：消费即熄（2026-07-14 评审修复：原实现 pop 后重算，once 变 daily）────
+
+def test_once_trigger_fires_only_once():
+    """next_fire_at 只装填未来时刻（新建触发器不补发今天已过的点），故先在过点前 poll
+    一次装填 due，再在过点后验证触发/熄火。"""
+    async def go():
+        bus, mirror = Bus(), FakeMirror()
+        s = Scene(user_id="u1", name="观星模式", actions=[{"command": "ambient_light.close"}],
+                  triggers=[{"type": "time", "spec": {"at": "21:00", "recur": "once"}}])
+        w = await _watcher([s], bus, mirror)
+        arm = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)     # 北京 20:00，装填今晚 21:00
+        n0 = await w.poll_once(arm)
+        n1 = await w.poll_once(arm + timedelta(hours=2))            # 北京 22:00，过点触发
+        w._fired.clear()                                            # 排除节流干扰，单测 once 语义
+        n2 = await w.poll_once(arm + timedelta(days=1, hours=2))    # 次日同刻
+        return n0, n1, n2, bus.sent
+    n0, n1, n2, sent = _run(go())
+    assert (n0, n1) == (0, 1)
+    assert n2 == 0, "once 触发后必须熄火，不能滚成 daily"
+    assert len(sent) == 1
+
+
+def test_daily_trigger_rolls_to_next_day():
+    async def go():
+        bus, mirror = Bus(), FakeMirror()
+        s = Scene(user_id="u1", name="午休模式", actions=[{"command": "volume.set"}],
+                  triggers=[{"type": "time", "spec": {"at": "12:30", "recur": "daily"}}])
+        w = await _watcher([s], bus, mirror)
+        arm = datetime(2026, 7, 14, 4, 0, tzinfo=timezone.utc)      # 北京 12:00，装填今天 12:30
+        n0 = await w.poll_once(arm)
+        n1 = await w.poll_once(arm + timedelta(hours=1))            # 北京 13:00，触发
+        w._fired.clear()
+        w._scenes_at = 0.0                                          # 缓存过期，模拟次日
+        # 装填-触发两拍模型：触发后 pop，下一次 poll 重装填明天 12:30（真实运行 poll 每 30s
+        # 一次，两拍间隔可忽略）——这里补一拍装填，再到点验证
+        await w.poll_once(arm + timedelta(hours=2))                 # 重装填明天 12:30
+        n2 = await w.poll_once(arm + timedelta(days=1, hours=1))    # 次日 13:00，再触发
+        return n0, n1, n2
+    n0, n1, n2 = _run(go())
+    assert (n0, n1, n2) == (0, 1, 1), "daily 每天都该触发"
+
+
+# ── enabled 场景短缓存（2026-07-14 评审修复：行车中车速广播连续，不缓存=DB 查询风暴）──
+
+def test_enabled_scenes_cached_within_window():
+    async def go():
+        bus, mirror = Bus(), FakeMirror()
+        w = await _watcher([_low_battery_scene()], bus, mirror)
+        calls = {"n": 0}
+        orig = w._store.list
+
+        async def counting(uid, **kw):
+            calls["n"] += 1
+            return await orig(uid, **kw)
+
+        w._store.list = counting
+        await mirror.fire({"speed_kmh": 41})       # 模拟行车中连续车速广播
+        await mirror.fire({"speed_kmh": 42})
+        await mirror.fire({"speed_kmh": 43})
+        return calls["n"]
+    assert _run(go()) == 1, "10s 窗口内的状态风暴只该打一次 DB"

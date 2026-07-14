@@ -214,3 +214,22 @@ def test_defer_p_not_written_on_stale_generation():
     bus = _run(go())
     assert bus.active["deferred"] == []
     assert bus.sent == [], "代际不匹配连汇报都不该发"
+
+
+def test_composite_assert_report_does_not_crash():
+    """复合断言（derive_assert 对 ambient_light 返回条件数组）的未达成汇报不许炸——
+    2026-07-14 评审修复：排查明细日志对 list 调 .get 会 AttributeError，虽然 proactive
+    已先发出，但整段 info 明细（排查靠它）被吞成一条 warning。"""
+    async def go():
+        bus = Bus({"activation_id": "g1"})
+        # 灯关着（ambient_light=False）→ 复合断言 [灯开, 亮度10] 确凿未达成
+        m = _mgr(FakeMirror({"ambient_light": False, "ambient_light_brightness": 10}), bus)
+        m.schedule(_IDS, "钓鱼模式", "g1",
+                   [_act("ambient_light.set", {"brightness": "10"})])
+        await _settle()
+        return bus.sent
+    sent = _run(go())
+    assert len(sent) == 1 and sent[0]["type"] == "scene_verify"
+    assert "没有生效" in sent[0]["speech"]
+    assert "安全限制" not in sent[0]["speech"], \
+        "不猜原因——未达成也可能是 VAL 接受了但状态没落地（氛围灯亮度那类静默失败）"

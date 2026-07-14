@@ -120,9 +120,10 @@ class VerifyManager:
 
         tail = ("，停好车我再提醒你补上" if defer
                 else "，要我再试一次吗" if retry else "")
-        # 不猜原因：拒绝可能来自行车限制、低电量门控、儿童锁……VAL 的具体理由已在即时话术里
-        # 播过（分发器不再让后续成功掩埋它），这里只做"没生效"的事实汇报。
-        speech = f"{scene_name}已开启，不过{what}没有生效（被安全限制拦下了）{tail}。"
+        # 不猜原因：未达成可能是安全门控拒了（VAL 的具体理由已在即时话术里播过，分发器不再
+        # 让后续成功掩埋它），也可能是 VAL 接受了但状态没落地（氛围灯亮度那类静默失败）——
+        # 这里只做"没生效"的事实汇报，不硬安一个"被安全限制拦下"的理由。
+        speech = f"{scene_name}已开启，不过{what}没有生效{tail}。"
         await self._publish({
             "type": "scene_verify",
             "speech": speech,
@@ -138,8 +139,13 @@ class VerifyManager:
         logger.info("scene verify: %s 有 %d 个动作未生效（skip=%d retry=%d defer=%d）；"
                     "未达成明细=%s",
                     scene_name, len(bad), len(skip), len(retry), len(defer),
-                    [{"cmd": a.get("command"),
-                      "expect": a.get("assert") or derive_assert(a),
-                      "actual": self._mirror.get(
-                          (a.get("assert") or derive_assert(a) or {}).get("key"))}
-                     for a in bad])
+                    [self._debug_item(a) for a in bad])
+
+    def _debug_item(self, a: dict) -> dict:
+        """排查明细。expect 可能是**复合断言（list）**——derive_assert 对「灯开着且亮度10」
+        这类期望返回条件数组，对 list 调 .get 会 AttributeError，把整段 info 日志炸没。"""
+        exp = a.get("assert") or derive_assert(a)
+        conds = exp if isinstance(exp, list) else ([exp] if isinstance(exp, dict) else [])
+        return {"cmd": a.get("command"), "expect": exp,
+                "actual": {c.get("key"): self._mirror.get(c.get("key"))
+                           for c in conds if isinstance(c, dict) and c.get("key")}}

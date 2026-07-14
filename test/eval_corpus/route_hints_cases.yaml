@@ -392,6 +392,18 @@
   source: "设计 §6 正例：delete(56) 高于 activate/deactivate，不能被当成激活"
   tags: [scene, delete, priority]
 
+- text: 开启午休模式，温度改成26
+  initial_intents: []
+  expect_final_intents: [scene.activate]
+  source: "2026-07-14 评审修复：句首激活动词 guard——这是激活+本次参数覆盖，被 update 抢走会把场景默认温度持久改掉"
+  tags: [scene, activate, update-guard]
+
+- text: 退出性能模式
+  initial_intents: []
+  expect_final_intents: []
+  source: "2026-07-14 评审修复：deactivate guard 补「性能模式」对齐 activate（D8 端侧驾驶模式词）"
+  tags: [scene, edge-mode, guard]
+
 - text: 打开运动模式
   initial_intents: []
   expect_final_intents: []

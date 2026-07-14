@@ -35,7 +35,8 @@ TIMEOUT = 90
 _results: list[bool] = []
 
 
-def record(name: str, ok: bool, detail: str = ""):
+def record(name, ok, detail: str = ""):
+    ok = bool(ok)                      # 断言表达式可能算出 list/None（如 .get("buttons")）
     _results.append(ok)
     print(f"{'✅' if ok else '❌'} {name}  {detail}")
 
@@ -164,11 +165,17 @@ async def main() -> int:
 
     await ask_confirm("退出露营模式", "遮蔽-退出")
 
-    # 7) P1 参数覆盖：「开启午休模式，温度26」→ 场景里写的是 24，原话的 26 要赢
-    await ask_confirm("开启午休模式，温度26", "参数覆盖")   # 午休含座椅放平 → 可能要确认
+    # 7) P1 参数覆盖：「开启午休模式，温度26」→ 场景里写的是 24，原话的 26 要赢。
+    #    先把空调压到 22——不然若当前恰好是 26，这条断言会"蒙对"（真机实测踩过：端侧把
+    #    「温度26」当空调指令劫走、场景根本没激活，断言却因残留值通过）。
+    await ask("把空调调到22度", "参数覆盖-前置")
+    await asyncio.sleep(1)
+    r = await ask_confirm("开启午休模式，温度26", "参数覆盖")   # 午休含座椅放平 → 可能要确认
     st4 = await settle()
-    record("7.custom_params 覆盖", st4.get("hvac_temp") == 26,
-           f"hvac_temp={st4.get('hvac_temp')}（场景里写的是 24）")
+    record("7.custom_params 覆盖", st4.get("hvac_temp") == 26
+           and st4.get("scene_mode") == "nap",
+           f"hvac_temp={st4.get('hvac_temp')}（场景写 24、前置压到 22）"
+           f" scene_mode={st4.get('scene_mode')}")
     await ask_confirm("退出午休模式", "参数覆盖-退出")
 
     # 8) P1 会话沉淀（D11 桥）：先手动调两下车，再「把刚才这些存成加班模式」
@@ -217,9 +224,11 @@ async def main() -> int:
     record("9.拒绝不被成功掩埋", "电量" in sp,
            sp[:60])                        # 5 个动作里第 3 条被拒、后两条成功——旧实现只播最后一条
     st6 = await settle(3)
-    record("9b.氛围灯确实被门控", st6.get("ambient_light_brightness") != 10
+    # 判据是「灯没被点亮」——不能看 brightness：ambient_light.close 只置 ambient_light=False，
+    # 亮度值会留着上一次的（真栈实测：灯是关的、brightness 仍是 10，断言按亮度写就假失败）。
+    record("9b.氛围灯确实被门控", st6.get("ambient_light") is False
            and st6.get("seat_recline") == 160,
-           f"灯={st6.get('ambient_light_brightness')} 座椅={st6.get('seat_recline')}")
+           f"灯亮着={st6.get('ambient_light')} 座椅={st6.get('seat_recline')}")
 
     if nc:
         for _ in range(30):                # verify 后台等 4s 再对账
@@ -237,8 +246,9 @@ async def main() -> int:
     record("9d.幂等只补缺失项", "跳过" in sp,
            sp[:70])                        # 座椅/音量/空调已达成 → 只剩氛围灯；座椅不再要确认
     st7 = await settle(3)
-    record("9e.补上了氛围灯", st7.get("ambient_light_brightness") == 10,
-           f"灯={st7.get('ambient_light_brightness')}")
+    record("9e.补上了氛围灯", st7.get("ambient_light") is True
+           and st7.get("ambient_light_brightness") == 10,
+           f"灯亮着={st7.get('ambient_light')} 亮度={st7.get('ambient_light_brightness')}")
     if nc:
         await nc.close()
     await ask_confirm("退出午休模式", "P2-收尾")

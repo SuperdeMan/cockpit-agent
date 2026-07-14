@@ -71,15 +71,17 @@ route_hints:
     intent: scene.deactivate
     policy: replace
     priority: 54
-    guard: '驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|省电模式|电量模式|勿扰|静音|飞行|是什么|什么意思'
+    guard: '驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|性能模式|省电模式|电量模式|勿扰|静音|飞行|是什么|什么意思'
     slots: {scene: "$text"}
   # 修改（端侧已把「把X模式的温度改成24」让给云端，这里确定性接住，别掉进 chitchat）。
   # 与 reminder.update(56) 不冲突：那条的 guard 含「空调|温度|座椅|亮度|音量」会自行让路。
+  # guard 的句首激活动词是关键：「开启午休模式，温度改成26」是**激活+本次参数覆盖**，
+  # 不是改场景定义——被 update 抢走会把场景的默认温度持久改掉，用户下次激活才发现不对。
   - pattern: '[一-龥]{1,6}模式(的)?[^。]{0,10}(改成|改为|改到|加上|加一个|再加|去掉|删掉)|(去掉|删掉|加上|加一个|再加)[一-龥]{1,6}模式(里|里面|中)的|(修改|更改)[一-龥]{1,6}模式'
     intent: scene.update
     policy: replace
     priority: 57
-    guard: '驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|省电模式|电量模式|是什么|什么意思'
+    guard: '^(开启|打开|进入|切换到|来个|来一个|启动)|驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|省电模式|电量模式|是什么|什么意思'
     slots: {scene: "$text", modification: "$text"}
   # 删除（priority 高于 activate/deactivate：「删掉钓鱼模式」不能被当成激活）。
   # guard 里的「里的/里面/中的」是关键：「去掉钓鱼模式里的香氛」是改场景（update），
@@ -93,6 +95,7 @@ route_hints:
 
 requires_permissions:
   - vehicle.control        # 场景展开为车控动作（真正下发仍由端侧 VAL 门控）
+  - media.control          # P1.4 起场景可含媒体动作（浪漫模式 media.play，端侧回流已放开）
   - navigation.control     # 回家模式含导航动作
   - profile.read           # 用户场景属用户数据域 + shared_state 经 profile KV
   - profile.write

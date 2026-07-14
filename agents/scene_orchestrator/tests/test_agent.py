@@ -581,3 +581,16 @@ def test_activate_schedules_verify_and_deactivate_cancels():
         assert "u1" not in a.verify._tasks, "退出应掐掉在飞对账"
 
     _run(go())
+
+
+def test_ground_hour_uses_business_tz():
+    """`when: {key:"hour"}` 的环境值必须按业务时区（UTC+8）取——容器本地时是 UTC，
+    2026-07-14 评审修复前用 time.localtime()，「晚上10点后才调暗灯」这类条件错 8 小时。"""
+    from datetime import datetime
+    from agents.scene_orchestrator.src.triggers import BUSINESS_TZ
+
+    a = _agent()
+    before = datetime.now(BUSINESS_TZ).hour
+    env = a._ground({})
+    after = datetime.now(BUSINESS_TZ).hour
+    assert env["hour"] in {before, after}          # 夹逼，容忍跨小时边界的瞬间
