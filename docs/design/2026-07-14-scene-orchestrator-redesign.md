@@ -39,6 +39,23 @@
 - `scenes.yaml` 预置场景的 `mode: auto/quiet/external_circulation`、`color: warm_orange` **全在 VAL 词表之外**，被 `edge_call` 静默丢弃——即「露营模式说了开外循环，其实没开」。已改为词表内取值，并加契约测试 `test_builtin_scenes_are_catalog_valid` 逐条钉死（这正是 D3「词表唯一真相源」要根治的漂移）。
 - 聚合器对 `FAILED` 只取 `error` 码拼「抱歉，处理失败」，**会把 Agent 的诚实话术整个丢掉**（`aggregator.py:119-121`）。故本 Agent 面向用户的拒绝一律用 `OK` 状态（与 v1「没有找到X场景」既有做法一致），`FAILED` 只留给真·内部错误。
 
+### 0.6 落地后全量代码评审修复（2026-07-14 傍晚，随 `f436521` 入库）
+
+P0-P3 收口后对全部 scene 提交做完整评审，修掉 6 处（与「场景激活句修根」同车入库，此处补叙述留档）：
+
+| # | 问题 | 修复 |
+|---|---|---|
+| R1 | **`when hour` 条件错 8 小时**：`agent._ground` 用 `time.localtime()`（容器=UTC），而 time watcher 默认 UTC+8，同一个「晚上10点后」两处答案不同 | 抽 `triggers.BUSINESS_TZ`（UTC+8）常量，`_ground` 与 watcher 同源取 hour；`test_ground_hour_uses_business_tz` 夹逼钉死 |
+| R2 | **`recur=once` 触发后滚成 daily**：消费后 `_due.pop` → 下轮 `next_fire_at` 重算出明天同刻 | once 消费后置 `_due[key]=0` 哨兵（永不再触发；进程重启会重新装填一次——单实例进程内去重的诚实边界，随模块头注释留档）；daily 保持 pop 滚动（装填-触发两拍模型） |
+| R3 | **事件路径 DB 查询风暴**：每条 `vehicle.state.changed` 都全量 `store.list`，行车中车速广播几乎连续 | `_enabled_scenes` 加 10s 短缓存（触发本身有分钟级节流，缓存不损语义，新触发器最晚 10s 被看见） |
+| R4 | **verify 排查日志对复合断言崩**：`derive_assert` 对氛围灯返回条件数组，日志行对 list 调 `.get` → AttributeError 被 fail-open 吞成 warning，未达成明细（排查靠它）丢失 | 抽 `_debug_item`（list/dict 双形态，actual 按每条件键取值）；顺带把汇报话术里硬安的「（被安全限制拦下了）」去掉——未达成也可能是 VAL 接受了但状态没落地（0.5 氛围灯那类），不猜原因 |
+| R5 | **manifest 权限声明缺 `media.control`**：P1.4 起场景可含媒体动作（端侧回流已放开），声明面没跟上 | 补声明（在 `_POC_DEFAULT_SCOPES` 内，零行为变化，纯声明诚实性） |
+| R6 | **两处 route_hints guard 缺口**：①「开启午休模式，温度改成26」被 update(57) 抢走——那是激活+本次参数覆盖，被 update 接走会把场景默认温度**持久**改掉；②deactivate guard 漏「性能模式」（activate 有），「退出性能模式」低置信上云时会被接走 | update guard 加句首激活动词 `^(开启|打开|进入|切换到|来个|来一个|启动)`；deactivate guard 补「性能模式」。`route_hints_cases.yaml` +2 例（70/70 无回归） |
+
+评审同时核实两处架构疑点为**自洽**（不需改）：确认链是 engine `_restore` 重入式（`confirmed=true` 重跑挂起步，activate 确认轮会重新 Ground·Solve+快照+verify，无旁路），NEED_CONFIRM 里挂的 `scene.activate` 类型 action 不会被端侧执行（`_dispatch_cloud_actions` 只回流 `vehicle.control*`/`media.control*`）；store 的 `ON CONFLICT (id)` 与 `(user_id,name)` 唯一索引在并发同名写入下有理论撞索引窗口——PoC 单实例接受，留档。
+
+验证：全量 1576 passed / scene 单测 179（+8）/ smoke_edge 13/13 / eval_route_hints 70/70 / eval_fast_intent 57/57 / 真栈 `e2e_scene.py` 26/26 / HMI CDP 真栈（scene_list 卡渲染 + 露营激活确认 + 取消，headless Edge 截图）。
+
 ---
 
 ## 0. 决策纪要（推荐结论，待泓舟拍板）
