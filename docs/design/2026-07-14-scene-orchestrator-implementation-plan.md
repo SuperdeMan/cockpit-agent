@@ -1,5 +1,7 @@
 # 场景编排 Agent 重设计实施计划（可直接接手开工版）
 
+> **状态（2026-07-14）**：✅ **已执行完毕**——P0-P3 当日全落地并真栈验证（e2e_scene 26/26、全量 1576 passed），随后全量代码评审六修复亦已入库。实际落地与本计划的出入（vehicle_state 非 memory scope 改 NATS 镜像、`state_mirror.py` 提前到 P0、端侧场景句护栏为计划外新增等）以 `2026-07-14-scene-orchestrator-redesign.md` **§0.5 落地纠偏 / §0.6 评审修复**为准。本文保留作实施过程参考。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 落地 `docs/design/2026-07-14-scene-orchestrator-redesign.md`（**v2.1 评审修正版**，D1-D11）：P0 用户造场景闭环 → P1 管理与覆盖 → P2 场景策略引擎（Ground·Solve + Verify-Repair）→ P3 询问式触发。本计划 P0 为 Task 级可开工粒度，P1/P2/P3 为承接概要。
