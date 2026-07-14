@@ -31,6 +31,7 @@ from .compiler import Draft, action_desc, actions_preview, compile_scene, \
 from .solve import solve
 from .state_mirror import StateMirror
 from .store import BUILTIN, DISABLED, ENABLED, Scene, SceneStore, USER
+from .triggers import TriggerWatcher
 from .verify import VerifyManager
 
 logger = logging.getLogger("agent.scene_orchestrator")
@@ -63,6 +64,7 @@ class SceneOrchestratorAgent(BaseAgent):
         self._builtin: list[Scene] = self._builtin_scenes(_load_builtin(_SCENES_PATH))
         # P2 Verify-Repair：后台对账（按 user 单飞）。ctx_ids = (session, user, vehicle)——
         # 后台任务不依赖请求级 ctx，用 Agent 级 self.memory 重建 Context（deep_research 先例）。
+        self.triggers: TriggerWatcher | None = None
         self.verify = VerifyManager(
             self.mirror, self.mirror.publish,
             load_active=lambda ids: self._load_kv(self._ctx_of(ids), SCENE_ACTIVE),
@@ -76,6 +78,14 @@ class SceneOrchestratorAgent(BaseAgent):
     async def on_start(self) -> None:
         await self.store.init()
         await self.mirror.start()
+        # P3 询问式触发（D6：只产建议卡、零执行权）。事件 watcher 挂已有的车况镜像订阅，
+        # 不新建（§7.2「一条订阅多消费方」）。
+        self.triggers = TriggerWatcher(
+            self.store, self.mirror, self.mirror.publish,
+            poll_s=float(os.getenv("SCENE_TRIGGER_POLL_S", "30")),
+            throttle_s=float(os.getenv("SCENE_TRIGGER_THROTTLE_S", "1800")),
+            load_active=lambda ids: self._load_kv(self._ctx_of(ids), SCENE_ACTIVE))
+        await self.triggers.start()
 
     def _builtin_scenes(self, raw: dict) -> list[Scene]:
         """预置场景（scenes.yaml）→ 统一 Scene 对象。危险标注同样经 §8.1 强制改写。"""
@@ -262,7 +272,8 @@ class SceneOrchestratorAgent(BaseAgent):
     async def _persist(self, ctx, draft: Draft, overwrite: bool) -> AgentResult:
         s = Scene(user_id=self._uid(ctx), name=draft.name, description=draft.description,
                   goal=draft.goal, source=USER, actions=draft.actions,
-                  guards=draft.guards, aliases=self._aliases_for(draft.name))
+                  guards=draft.guards, triggers=draft.triggers,
+                  aliases=self._aliases_for(draft.name))
         try:
             saved = await self.store.save(s)
         except Exception as e:

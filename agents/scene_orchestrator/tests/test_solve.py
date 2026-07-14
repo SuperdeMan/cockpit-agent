@@ -109,9 +109,30 @@ def test_idempotent_skip_when_already_satisfied():
     """重复激活 / 触发与手动撞车 / 「再试一次」——天然只补缺失项。"""
     actions = [_act("hvac.set", {"temperature": "22"}),
                _act("ambient_light.set", {"brightness": "10"})]
-    sol = solve(actions, [], {"hvac_temp": 22, "ambient_light_brightness": 60})
+    env = {"hvac_on": True, "hvac_temp": 22,
+           "ambient_light": True, "ambient_light_brightness": 60}
+    sol = solve(actions, [], env)
     assert [a["command"] for a in sol.actions] == ["ambient_light.set"]
     assert sol.skipped_done == 1
+
+
+def test_compound_assert_light_off_is_not_already_done():
+    """**灯关着、亮度值恰好还是 10** —— 不能因为亮度对得上就判"已达成"把开灯动作跳过。
+
+    真栈 e2e 实测命中：上一轮把灯关了但 brightness 残留 10，新场景的
+    `ambient_light.set{brightness:10}` 被幂等跳过，灯根本没开。期望态必须是复合的
+    （灯开着 **且** 亮度10）。空调同理（hvac_on + hvac_temp）。
+    """
+    a = _act("ambient_light.set", {"brightness": "10"})
+    off = solve([a], [], {"ambient_light": False, "ambient_light_brightness": 10})
+    assert off.actions == [a] and off.skipped_done == 0, "灯关着就不算已达成"
+
+    on = solve([a], [], {"ambient_light": True, "ambient_light_brightness": 10})
+    assert on.actions == [] and on.skipped_done == 1
+
+    h = _act("hvac.set", {"temperature": "22"})
+    hoff = solve([h], [], {"hvac_on": False, "hvac_temp": 22})
+    assert hoff.actions == [h], "空调关着就不算已达成"
 
 
 def test_unknown_assert_key_does_not_skip():
@@ -121,8 +142,20 @@ def test_unknown_assert_key_does_not_skip():
 
 
 def test_all_actions_already_satisfied_is_honest():
-    sol = solve([_act("hvac.set", {"temperature": "22"})], [], {"hvac_temp": 22})
+    sol = solve([_act("hvac.set", {"temperature": "22"})], [],
+                {"hvac_on": True, "hvac_temp": 22})
     assert sol.actions == [] and sol.skipped_done == 1
+
+
+def test_compound_assert_unsat_dominates_unknown():
+    """复合断言里一条确凿不满足、另一条读不到 → 判 UNSAT（有硬证据说明没做成，该报就报）。"""
+    from agents.scene_orchestrator.src.solve import evaluate
+    cond = [{"key": "ambient_light", "op": "eq", "value": True},
+            {"key": "ambient_light_brightness", "op": "eq", "value": 10}]
+    assert evaluate(cond, {"ambient_light": False}) == UNSAT
+    assert evaluate(cond, {"ambient_light": True}) == UNKNOWN        # 亮度读不到
+    assert evaluate(cond, {"ambient_light": True,
+                           "ambient_light_brightness": 10}) == SAT
 
 
 def test_explicit_assert_wins_over_derived():

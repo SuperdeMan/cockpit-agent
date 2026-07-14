@@ -575,18 +575,61 @@ def validate_guard(g, cat: Catalog) -> tuple[dict | None, str]:
     return cleaned, ""
 
 
+TRIGGER_TYPES = ("time", "event")
+# 事件触发的 key 词表**刻意先窄**（设计 §7.1）：走通再扩。宽词表 = 更多可被误触发的面。
+TRIGGER_EVENT_KEYS = ("battery", "gear", "speed_kmh", "cabin_temp", "location.city")
+TRIGGER_RECURS = ("daily", "workday", "once")
+
+
+def validate_trigger(t, cat: Catalog) -> tuple[dict | None, str]:
+    """校验一条触发器。返回 (cleaned|None, reason)。
+
+    触发只产建议卡、零执行权（D6），但**误触发依然是骚扰**——key 词表先窄、时刻要合法。
+    """
+    if not isinstance(t, dict):
+        return None, "触发器格式不对"
+    ttype = str(t.get("type") or "").strip().lower()
+    spec = t.get("spec") or {}
+    if ttype not in TRIGGER_TYPES:
+        return None, f"我不认识「{ttype}」这种触发方式"
+    if ttype == "time":
+        at = str(spec.get("at") or "").strip()
+        try:
+            hh, mm = (int(x) for x in at.split(":", 1))
+            assert 0 <= hh <= 23 and 0 <= mm <= 59
+        except (ValueError, AssertionError):
+            return None, f"「{at}」不是有效的时刻"
+        recur = str(spec.get("recur") or "daily").lower()
+        if recur not in TRIGGER_RECURS:
+            recur = "daily"
+        return {"type": "time", "spec": {"at": f"{hh:02d}:{mm:02d}", "recur": recur}}, ""
+    key = str(spec.get("key") or "").strip()
+    if key not in TRIGGER_EVENT_KEYS:
+        return None, f"「{key}」还不能用来触发场景"
+    op = str(spec.get("op") or "eq").strip().lower()
+    if op not in OPS + ("enter", "leave"):
+        return None, f"触发条件里的「{op}」我不认识"
+    if "value" not in spec:
+        return None, f"「{key}」的触发条件没给对比值"
+    return {"type": "event", "spec": {"key": key, "op": op, "value": spec["value"]}}, ""
+
+
 def validate_on_fail(v) -> str:
     v = str(v or "").strip().lower()
     return v if v in ON_FAIL else "skip"
 
 
-def derive_assert(action: dict) -> dict | None:
-    """从动作**确定性派生**期望态（Verify 对账的依据）。
+def derive_assert(action: dict):
+    """从动作**确定性派生**期望态（Verify 对账 + 幂等跳过的依据）。返回 dict / list / None。
 
     刻意不依赖 LLM 产 `assert`：动作本身就是期望——`hvac.set{temperature:22}` 期望
     `hvac_temp==22`。派生的断言不会幻觉、对预置场景和 P0/P1 编译的老场景同样生效
     （否则 Verify 只能对"LLM 恰好写了 assert"的场景起作用，等于没有）。
     DSL 里显式声明的 `assert` 仍然优先（solve 消费时先看 action["assert"]）。
+
+    **复合断言（list）是必需的**：`ambient_light.set{brightness:10}` 的期望是「灯开着**且**
+    亮度10」。只断言亮度的话——灯关着、但亮度值恰好还是上次的 10——幂等跳过会把这条动作剔掉，
+    灯根本没开（真栈 e2e 实测命中）。空调同理（hvac_on + hvac_temp）。
     """
     if not _is_car_action(action):
         return None
@@ -597,35 +640,40 @@ def derive_assert(action: dict) -> dict | None:
     p = action.get("params") or {}
     mode = p.get("mode", path_mode)
 
+    def eq(key, value):
+        return {"key": key, "op": "eq", "value": value}
+
     if obj == "aircon" and not attr:
         if operate == "close":
-            return {"key": "hvac_on", "op": "eq", "value": False}
+            return eq("hvac_on", False)
         if p.get("temperature"):
-            return {"key": "hvac_temp", "op": "eq", "value": _num(p["temperature"])}
+            return [eq("hvac_on", True), eq("hvac_temp", _num(p["temperature"]))]
         if operate in ("open", "set"):
-            return {"key": "hvac_on", "op": "eq", "value": True}
+            return eq("hvac_on", True)
     if obj == "ambient_light":
         if operate == "close":
-            return {"key": "ambient_light", "op": "eq", "value": False}
+            return eq("ambient_light", False)
+        out = [eq("ambient_light", True)]
         if p.get("brightness"):
-            return {"key": "ambient_light_brightness", "op": "eq",
-                    "value": _num(p["brightness"])}
-        return {"key": "ambient_light", "op": "eq", "value": True}
+            out.append(eq("ambient_light_brightness", _num(p["brightness"])))
+        if p.get("color"):
+            out.append(eq("ambient_light_color", p["color"]))
+        return out
     if obj == "volume" and p.get("level"):
-        return {"key": "volume", "op": "eq", "value": _num(p["level"])}
+        return eq("volume", _num(p["level"]))
     if obj == "seat" and mode in _DANGER_SEAT_MODES and p.get("angle"):
-        return {"key": "seat_recline", "op": "eq", "value": _num(p["angle"])}
+        return eq("seat_recline", _num(p["angle"]))
     if obj == "fragrance":
-        return {"key": "fragrance", "op": "eq", "value": operate != "close"}
+        return eq("fragrance", operate != "close")
     if obj in ("window", "sunroof") and operate in ("open", "close"):
-        return {"key": obj, "op": "eq", "value": "open" if operate == "open" else "closed"}
+        return eq(obj, "open" if operate == "open" else "closed")
     if obj in _MEDIA_OBJECTS:
         if operate in ("start", "play", "open"):
-            return {"key": "media", "op": "eq", "value": "playing"}
+            return eq("media", "playing")
         if operate == "pause":
-            return {"key": "media", "op": "eq", "value": "paused"}
+            return eq("media", "paused")
         if operate in ("close", "stop"):
-            return {"key": "media", "op": "eq", "value": "stopped"}
+            return eq("media", "stopped")
     if obj == "scene_mode":
         return None            # 状态位不对账（它没有"没生效"的失败态）
     return None

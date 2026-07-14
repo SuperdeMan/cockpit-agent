@@ -189,3 +189,39 @@ def test_action_desc_never_renders_empty_slot():
     d2 = CP.action_desc({"type": "vehicle.control", "command": "ambient_light.set",
                          "params": {"color": "pink"}})
     assert "%" not in d2                       # 没有亮度就别硬套亮度模板
+
+
+# ── prompt 契约（mock LLM 的单测最容易漏的洞）────────────────────────────────
+
+def test_prompt_actually_carries_policy_and_trigger_docs(cat):
+    """策略/触发说明必须**真的进 prompt**。
+
+    2026-07-14 实测踩到：`_POLICY_DOC` 定义了却忘了插进 `_prompt` 的 f-string——mock LLM
+    的单测全绿，真实 LLM 却从没见过 when/on_fail/triggers 的说明，功能等于不存在。
+    这条测试就是钉死"喂给模型的东西"本身。
+    """
+    from agents.scene_orchestrator.src.compiler import _prompt
+    p = _prompt(cat, "创建观星模式", "")
+    for must in ("when", "on_fail", "guards", "triggers",
+                 "cabin_temp", "battery", "retry_suggest", "defer_p"):
+        assert must in p, f"prompt 里没有「{must}」的说明"
+    assert "seat.recline" in p and "ambient_light" in p          # 白名单摘要
+    assert len(p) < 6000, f"prompt 过长（{len(p)}）"
+
+
+def test_compile_triggers(cat):
+    raw = json.dumps({"name": "省电出行模式", "description": "降能耗",
+                      "actions": [{"type": "vehicle.control",
+                                   "command": "ambient_light.close", "params": {}}],
+                      "triggers": [
+                          {"type": "event", "spec": {"key": "battery", "op": "lt",
+                                                     "value": 20}},
+                          {"type": "event", "spec": {"key": "moon_phase", "op": "eq",
+                                                     "value": "full"}},   # 幻觉键
+                          {"type": "time", "spec": {"at": "25:99"}},      # 非法时刻
+                      ]}, ensure_ascii=False)
+    d = _run(CP.compile_scene(FakeLLM(raw), cat, "创建省电出行模式，电量低于20%提醒我"))
+    assert d.ok and len(d.triggers) == 1
+    assert d.triggers[0] == {"type": "event",
+                             "spec": {"key": "battery", "op": "lt", "value": 20}}
+    assert len(d.notes) >= 2, "幻觉键/非法时刻要诚实告知，不静默丢"

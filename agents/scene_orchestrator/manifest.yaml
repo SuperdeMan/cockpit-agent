@@ -42,11 +42,16 @@ capabilities:
 # 否则会把端侧秒回劫持成 1.5s 云端往返，违反 L0 时延约束。
 # pattern 以 test/eval_corpus/route_hints_cases.yaml 实测收敛。
 route_hints:
-  # 创建（优先级高于激活：「创建钓鱼模式」两条都命中，必须走 create）
+  # 创建（priority 最高）：
+  # - 高于激活(54)：「创建钓鱼模式」两条都命中，必须走 create；
+  # - **高于 reminder.create(56)**：「创建省电出行模式：…电量低于20%的时候提醒我开」里的
+  #   「提醒我」是**触发器的描述**，不是要建一条提醒。不压过它的话，reminder 会抢走并追问
+  #   「什么时候提醒你」，把会话挂起、后续的「确认」全被它吃掉（真栈 e2e 实测级联翻车）。
+  #   反过来「创建一个提醒：明天开午休模式」不会误命中——pattern 要求 6 字内紧跟「模式」。
   - pattern: '(创建|新建|自定义|帮我建|建一个|建个|做一个|做个|存成|存为)[^。]{0,6}模式'
     intent: scene.create
     policy: replace
-    priority: 55
+    priority: 58
     guard: '是什么|什么意思|怎么(用|开|关)'
     slots: {name: "$text", spec: "$text"}
   # 激活：「开启/打开/进入/来个 X模式」或裸「X模式」。

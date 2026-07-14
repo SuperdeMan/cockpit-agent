@@ -66,7 +66,22 @@ def _to_bool(v):
 
 
 def evaluate(cond, env: dict) -> str:
-    """`{key, op, value}` 在 env 下的三态结果。"""
+    """条件在 env 下的三态结果。cond 可以是单条 `{key,op,value}`，也可以是**条件数组**。
+
+    数组按 **AND** 求值，且 UNSAT 优先于 UNKNOWN：
+    - 任一确凿不满足 → UNSAT（有硬证据说明没做成，该报就报）
+    - 否则任一读不到 → UNKNOWN（不知道 ≠ 失败，也 ≠ 已达成）
+    - 全满足 → SAT
+    复合断言（灯开着**且**亮度10）靠这条：只判亮度的话，灯关着而亮度值恰好是 10 时，
+    幂等跳过会把开灯动作剔掉（真栈实测）。
+    """
+    if isinstance(cond, (list, tuple)):
+        rs = [evaluate(c, env) for c in cond if c]
+        if not rs:
+            return UNKNOWN
+        if UNSAT in rs:
+            return UNSAT
+        return UNKNOWN if UNKNOWN in rs else SAT
     if not isinstance(cond, dict) or not cond.get("key"):
         return UNKNOWN
     key = cond["key"]

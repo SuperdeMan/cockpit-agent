@@ -433,3 +433,15 @@
   expect_final_intents: [scene.update]
   source: "设计 §5.5：动作级改动。delete 的 guard 含「里的」避免整个场景被删掉"
   tags: [scene, update, guard]
+
+- text: 创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开
+  initial_intents: []
+  expect_final_intents: [scene.create]
+  source: "P3：带触发器的造场景句。「提醒我」是触发器描述，不是要建提醒——scene.create(58) 必须压过 reminder.create(56)，否则 reminder 抢走并追问「什么时候提醒你」，把会话挂起（真栈 e2e 实测级联翻车）"
+  tags: [scene, create, trigger, priority]
+
+- text: 明天早上八点提醒我带充电线
+  initial_intents: []
+  expect_final_intents: [reminder.create]
+  source: "反向护栏：普通提醒不能被 scene.create 抢走（无「X模式」词形）"
+  tags: [scene, reminder, guard]

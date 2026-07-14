@@ -65,20 +65,47 @@ async def ask(text: str, desc: str) -> dict:
                 return msg
 
 
+async def ask_confirm(text: str, desc: str) -> dict:
+    """问一句；**只有真挂起确认时**才补发「确认」。
+
+    P2 幂等跳过之后，危险动作若已达成就不再需要二次确认——写死"必发确认"会让下一句
+    「确认」落到空处（engine 回「当前没有待确认的操作」），后续断言全线错位。
+    """
+    r = await ask(text, desc)
+    if r.get("need_confirm"):
+        return await ask("确认", f"{desc}-确认")
+    return r
+
+
 async def settle(seconds: float = 2.5) -> dict:
     """等动作经端侧 VAL 落地 + 状态 diff 经 NATS 回到 collector 镜像。"""
     await asyncio.sleep(seconds)
     return vehicle_state()
 
 
+async def reset_env() -> dict:
+    """把车恢复到一个**已知起点**。VAL 状态跨 e2e 运行是持久的，而 P2 的幂等跳过会
+    "跳过已达成的动作"——不归零的话，上一轮留下的灯/座椅/温度会让本轮断言随机翻车。"""
+    await ask("关闭氛围灯", "重置")
+    await ask("把音量调到30", "重置")
+    debug_vehicle("battery", 72)
+    debug_vehicle("gear", "P")
+    debug_vehicle("speed_kmh", 0)
+    await asyncio.sleep(1.5)
+    return vehicle_state()
+
+
 async def main() -> int:
     print(f"session={SESSION}")
 
-    # 0) 先把空调开到 26 度——一个**非默认**的激活前状态，用来证明退出走的是快照而非默认表
+    # 0) 归零 + 把空调开到 26 度（一个**非默认**的激活前状态，用来证明退出走快照而非默认表）
+    await reset_env()
     await ask("把空调调到26度", "前置")
     st0 = await settle()
     base_temp = st0.get("hvac_temp")
-    record("0.前置车况", base_temp == 26, f"hvac_temp={base_temp}")
+    base_light_on = st0.get("ambient_light")
+    record("0.前置车况", base_temp == 26 and base_light_on is False,
+           f"hvac_temp={base_temp} 氛围灯={base_light_on}")
 
     # 1) 创建：一句话 → 回读确认（含动作清单 + 做不到的诚实告知）
     r = await ask("帮我创建一个钓鱼模式：氛围灯调到10%，空调22度", "创建")
@@ -105,12 +132,12 @@ async def main() -> int:
            f"scene_mode={st1.get('scene_mode')}")
 
     # 4) 退出 → 恢复到**激活前**的 26 度（不是默认 24），氛围灯关回去
-    await ask("退出钓鱼模式", "退出")
+    await ask_confirm("退出钓鱼模式", "退出")
     st2 = await settle()
     record("4.退出真恢复", st2.get("hvac_temp") == base_temp,
            f"hvac_temp={st2.get('hvac_temp')}（激活前 {base_temp}，默认表是 24）")
-    record("4b.氛围灯还原", st2.get("ambient_light") is False,
-           f"ambient_light={st2.get('ambient_light')}")
+    record("4b.氛围灯还原", st2.get("ambient_light") == base_light_on,
+           f"ambient_light={st2.get('ambient_light')}（激活前 {base_light_on}）")
     record("4c.场景位清空", st2.get("scene_mode") == "off",
            f"scene_mode={st2.get('scene_mode')}")
 
@@ -120,8 +147,8 @@ async def main() -> int:
     record("5.同名场景已存", "露营模式" in r.get("speech", ""))
     r = await ask("开启露营模式", "遮蔽-激活")
     sp = r.get("speech", "")
-    record("5b.用户版遮蔽预置", "需要您确认" not in sp and "已为您开启露营模式" in sp,
-           "用户版无座椅动作 → 不该要确认" if "需要您确认" in sp else sp[:40])
+    record("5b.用户版遮蔽预置", "需要您确认" not in sp and not r.get("need_confirm"),
+           "命中的是预置版（有座椅动作要确认）" if r.get("need_confirm") else sp[:40])
     st3 = await settle()
     record("5c.遮蔽版生效", st3.get("ambient_light_brightness") == 20,
            f"灯={st3.get('ambient_light_brightness')}（预置版是 30）")
@@ -135,16 +162,14 @@ async def main() -> int:
            and len(card.get("builtin") or []) == 3,      # 露营被用户版遮蔽 → 内置剩 3 个
            f"mine={mine} builtin={len(card.get('builtin') or [])}")
 
-    await ask("退出露营模式", "遮蔽-退出")
+    await ask_confirm("退出露营模式", "遮蔽-退出")
 
     # 7) P1 参数覆盖：「开启午休模式，温度26」→ 场景里写的是 24，原话的 26 要赢
-    await ask("开启午休模式，温度26", "参数覆盖")
-    await ask("确认", "参数覆盖-确认")           # 午休含座椅放平 → 危险动作要确认
+    await ask_confirm("开启午休模式，温度26", "参数覆盖")   # 午休含座椅放平 → 可能要确认
     st4 = await settle()
     record("7.custom_params 覆盖", st4.get("hvac_temp") == 26,
            f"hvac_temp={st4.get('hvac_temp')}（场景里写的是 24）")
-    await ask("退出午休模式", "参数覆盖-退出")
-    await ask("确认", "参数覆盖-退出确认")
+    await ask_confirm("退出午休模式", "参数覆盖-退出")
 
     # 8) P1 会话沉淀（D11 桥）：先手动调两下车，再「把刚才这些存成加班模式」
     await ask("把空调调到28度", "沉淀-操作1")
@@ -159,7 +184,7 @@ async def main() -> int:
     record("8b.沉淀场景可复用", st5.get("hvac_temp") == 28,
            f"hvac_temp={st5.get('hvac_temp')}（沉淀时是 28，激活前被打乱成 20）")
 
-    await ask("退出加班模式", "沉淀-退出")
+    await ask_confirm("退出加班模式", "沉淀-退出")
 
     # 9) P2 Verify-Repair：VAL 安全门控拒掉一条动作 → 即时话术不再被后续成功掩埋
     #    + 后台对账诚实汇报 → 环境恢复后重新激活，幂等只补缺失项
@@ -184,10 +209,10 @@ async def main() -> int:
     except Exception as e:
         print(f"  [警告] NATS 订阅失败，跳过 verify 断言：{e}")
 
+    await ask("关闭氛围灯", "P2-归零灯")   # 保证氛围灯动作不会被幂等跳过（要它真被门控拒绝）
     debug_vehicle("battery", 5)           # 低电量：VAL 禁高耗电功能（氛围灯）
     await asyncio.sleep(1.5)
-    await ask("开启午休模式", "P2-低电量激活")
-    r = await ask("确认", "P2-低电量确认")
+    r = await ask_confirm("开启午休模式", "P2-低电量激活")
     sp = r.get("speech", "")
     record("9.拒绝不被成功掩埋", "电量" in sp,
            sp[:60])                        # 5 个动作里第 3 条被拒、后两条成功——旧实现只播最后一条
@@ -216,17 +241,61 @@ async def main() -> int:
            f"灯={st7.get('ambient_light_brightness')}")
     if nc:
         await nc.close()
-    await ask("退出午休模式", "P2-收尾")
-    await ask("确认", "P2-收尾确认")
+    await ask_confirm("退出午休模式", "P2-收尾")
 
-    # 10) 自清理（可重入）：删掉本次建的场景，露营模式回归内置
-    await ask("退出场景", "清理-退出")
-    for name in ("钓鱼模式", "露营模式", "加班模式"):
-        await ask(f"删掉{name}", f"清理-删{name}")
-        await ask("确认", "清理-确认")
+    # 10) P3 询问式触发：造一个带电量触发的场景 → 压电量 <20 → 收到 scene_suggest 建议卡
+    #     （**只建议、不执行**：D6 铁律，触发路径零执行权）
+    suggests: list[dict] = []
+    nc2 = None
+    try:
+        import nats
+        nc2 = await nats.connect(NATS_URL)
+
+        async def on_sug(m):
+            try:
+                p = json.loads(m.data.decode())
+                if p.get("type") == "scene_suggest":
+                    suggests.append(p)
+            except Exception:
+                pass
+
+        await nc2.subscribe("agent.proactive", cb=on_sug)
+    except Exception as e:
+        print(f"  [警告] NATS 订阅失败，跳过触发断言：{e}")
+
+    debug_vehicle("battery", 80)          # 先拉高，保证后面是「从不满足→满足」的变沿
+    await asyncio.sleep(1)
+    await ask("创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+              "P3-造带触发的场景")
+    r = await ask("确认", "P3-确认")
+    record("10.触发场景已存", "省电出行模式" in r.get("speech", ""), r.get("speech", "")[:50])
+
+    st_before = vehicle_state()
+    debug_vehicle("battery", 15)          # 压低电量 → 事件触发变沿
+    for _ in range(20):
+        if suggests:
+            break
+        await asyncio.sleep(0.5)
+    sp = suggests[0].get("speech", "") if suggests else ""
+    record("10b.低电量建议卡", bool(suggests) and "省电出行模式" in sp,
+           sp[:60] or "没收到 scene_suggest")
+    record("10c.触发零执行权", bool(suggests) and "actions" not in suggests[0]
+           and (suggests[0].get("card") or {}).get("buttons"),
+           "触发只发建议卡，不下发任何动作")
+    st_after = await settle(2)
+    record("10d.触发未擅自动车", st_after.get("hvac_temp") == st_before.get("hvac_temp"),
+           f"空调 {st_before.get('hvac_temp')} → {st_after.get('hvac_temp')}（不该变）")
+    if nc2:
+        await nc2.close()
+    debug_vehicle("battery", 72)
+
+    # 11) 自清理（可重入）：删掉本次建的场景，露营模式回归内置
+    await ask_confirm("退出场景", "清理-退出")
+    for name in ("钓鱼模式", "露营模式", "加班模式", "省电出行模式"):
+        await ask_confirm(f"删掉{name}", f"清理-删{name}")
     r = await ask("有哪些场景模式", "清理-复查")
     card = r.get("ui_card") or {}
-    record("10.自清理", not (card.get("mine") or []) and len(card.get("builtin") or []) == 4,
+    record("11.自清理", not (card.get("mine") or []) and len(card.get("builtin") or []) == 4,
            f"mine={[x['name'] for x in (card.get('mine') or [])]} "
            f"builtin={len(card.get('builtin') or [])}")
 
