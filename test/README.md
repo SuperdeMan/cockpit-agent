@@ -77,8 +77,32 @@ python test/e2e_tts_stream.py              # 断言型：R4.2 服务端流式 TT
 python test/e2e_degrade.py                 # 断言型：架构 §3.3 降级矩阵四行（单 Agent 故障/LLM 超时/云 Planner 故障/断网）——docker 级故障注入 + 严格 try/finally 恢复，务必放在其它 e2e 脚本之后跑
 python test/e2e_auth.py                    # 断言型：会话鉴权（需 AUTH_REQUIRED=true + token，非默认栈配置）
 python test/e2e_mtls.py                    # 断言型：服务间 mTLS（需 GRPC_TLS=on + scripts/gen-certs.*，非默认栈配置）
+python test/e2e_journeys.py                # 旅程级（L3）：跨 Agent 自主执行 × 全场景连续对话（见下节）
 python -m pytest test/e2e_real_providers.py -q -s   # 无需 docker：真实三方 provider 冒烟（按 key 自动 skip）
 ```
+
+### 5.1 旅程级测试（L3）与 HMI CDP 层（L4）
+
+设计与语料口径：`docs/design/2026-07-14-journey-e2e-test-system.md`。
+
+```bash
+python test/e2e_journeys.py                       # 全部旅程（live 栈，真 key）
+python test/e2e_journeys.py --level regression    # 仅回归级（必须 100% 绿，红=回归）
+python test/e2e_journeys.py --level target        # 仅目标级（能力标尺，允许红——红灯=工程 backlog）
+python test/e2e_journeys.py --lane mock           # mock-safe 子集（nightly 跑的就是它）
+python test/e2e_journeys.py --id A4-2,B4-2        # 指定旅程
+python test/e2e_journeys.py --list                # 列语料不执行
+node test/hmi_cdp/run_cases.mjs                   # L4：HMI 二次交互 CDP 用例（渲染/点击→WS 帧断言）
+```
+
+- 语料在 `test/journeys/*.yaml`（regression=保护存量 / target=定义目标能力）；新增旅程改语料
+  不改 runner，schema 严格校验（拼错断言键直接拒跑）。
+- 报告落 `docs/reviews/eval/journeys_report.{json,md}`（含 active LLM 声明与时延基线——
+  **跨 provider 结果不可直接对比**）；失败轮自动标 collector badcase，dashboard 收藏夹可重放下钻。
+- 运行纪律：全栈起后 settle ≥40s；**禁与 docker build 并发**；外部数据源断供（api-football
+  超时等）按语料内 `skip_journey_if_speech_any` 约定判 SKIP 不判 FAIL。
+- L4 前置：宿主装有 Edge/Chrome（`CDP_BROWSER` 可指定路径）、宿主 5173 未被本地 vite 占用；
+  截图证据落 `test/hmi_cdp/shots/`（gitignore）。
 
 一次跑全部脚本：`make e2e`（本地全量清单，`scripts/run_e2e.sh` / `run_e2e.ps1`；假定 `.env` 可能
 配了真实 key，未配置时部分用例按记忆系统既有 SKIP 约定优雅跳过或合理失败，非回归）。

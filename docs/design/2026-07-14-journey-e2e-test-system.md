@@ -461,6 +461,14 @@ journeys:
 B3-1 原靠尾句「确认按此**调整**吗」撞中容忍词（行程根本没动）→ 判据收紧为「点名室内/
 明说无需」；B3-3 原靠端侧劫持污染蒙对终态 26 → 新增 `action_absent` 断言把劫持钉成显性红。
 
+### 收官全量跑（2026-07-15 canonical run，33 条一次连续执行，19 分钟）
+
+**回归级 13/13 全绿 + 2 SKIP**（A2-2a/A5-2：api-football 当晚断供，skip 语义按设计生效；
+两条在源活着时各有绿灯证据）；**目标级 7/18，11 红与首跑完全一致——红灯集稳定可复现**
+（backlog 的价值前提）。记分卡：autonomy 13/18 · continuity 11/20 · honesty 3/3 ·
+proactive 2/4 · interaction 3/6 · safety 1/1。时延基线（65 轮）：P50 5.7s / P95 40s /
+max 62.8s——P1 定阈值的数据依据（§7 Q2）。报告工件 `journeys_report.{json,md}` 即本次。
+
 ### P2 已完成：HMI CDP 层固化（`test/hmi_cdp/`，2026-07-15 真栈真浏览器）
 
 宿主 Node22 零依赖 driver（headless Edge + `Network.webSocketFrameSent` 实拦出帧）+

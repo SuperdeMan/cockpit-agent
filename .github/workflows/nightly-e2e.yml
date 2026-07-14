@@ -102,6 +102,11 @@ jobs:
           run_e2e test/e2e_trip.py
           run_e2e test/e2e_research.py
           run_e2e test/e2e_research_async.py
+          # 旅程级 mock-safe 子集（--lane mock）：reminder 全链路 / scene 激活等
+          # route_hints 确定性路由 + 零 LLM 依赖的旅程（设计
+          # docs/design/2026-07-14-journey-e2e-test-system.md §4.3）。badcase 收藏
+          # 是本地排查工作流，CI 栈即弃，关掉少一次无意义写库。
+          run_e2e test/e2e_journeys.py --lane mock --no-badcase
           run_e2e test/e2e_degrade.py
           exit $fail
 
