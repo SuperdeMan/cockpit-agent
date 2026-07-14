@@ -51,6 +51,9 @@ certs/*.pem
 certs/*.csr
 certs/*.srl
 
+# HMI CDP 用例截图留档（本地证据，不入库）
+test/hmi_cdp/shots/
+
 # Brainstorm visual companion (ephemeral mockups)
 .superpowers/
 

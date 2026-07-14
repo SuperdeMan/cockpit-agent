@@ -460,3 +460,25 @@ journeys:
 **两处假通过被本轮收紧钉死**（测试体系自身的校准，佐证「断言状态化」纪律）：
 B3-1 原靠尾句「确认按此**调整**吗」撞中容忍词（行程根本没动）→ 判据收紧为「点名室内/
 明说无需」；B3-3 原靠端侧劫持污染蒙对终态 26 → 新增 `action_absent` 断言把劫持钉成显性红。
+
+### P2 已完成：HMI CDP 层固化（`test/hmi_cdp/`，2026-07-15 真栈真浏览器）
+
+宿主 Node22 零依赖 driver（headless Edge + `Network.webSocketFrameSent` 实拦出帧）+
+7 条 C 组用例。**决策：不给产品代码加 testid**——按可见文本选按钮/断言（文本即契约），
+HMI 零改动。结果：
+
+- ✅ C1 确认条：渲染→点确认→帧 `is_confirmation:true`→collector `trunk=open` 车况真变。
+- ✅ C2a place_list 裸序号：「点一下第二个」→ HMI 改写「看金凤皇鲜切鸡煲火锅(南山店)的
+  详情」+ `meta.nearby_poi_id` 透传——`App.tsx send()` 序号改写语义的真帧实锤。
+- ⏭️ C2b dest_choice 回填：前提被 R1 族压掉（「惠州」被就近解析成「惠州出口」直接出
+  charging_route，不出候选卡；「第一个」原样发出证明 HMI 无候选可改写，**非 HMI 缺陷**）
+  ——用例改为前提未成立判 SKIP，R1 修复后自动恢复有效。
+- ✅ C3 scene_list 卡按钮：点「露营模式」→帧「开启露营模式」→确认条→点取消链路通。
+- ✅ C4 主动推送渲染：到点「提醒到点」卡（琥珀脉冲）出现→点「完成」→帧「完成提醒：X」。
+- ✅ C5 过程区门控：重域调研出「理解需求…」四阶段；简单车控零过程。
+- ✅ C6 右舞台车况联动：debug 压电量 55 → 舞台渲染 55。
+
+坑两则：①headless 无地理定位——driver 三件套（`Browser.grantPermissions` +
+`Emulation.setGeolocationOverride` + 预置 localStorage `cockpit.settings.v1.locationEnabled`
+后 reload），「附近」类用例才有定位；②React 受控输入必须走原生 setter + `input` 事件，
+直接赋值 value 不生效。截图证据 `test/hmi_cdp/shots/`（gitignore）。
