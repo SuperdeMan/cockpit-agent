@@ -25,6 +25,11 @@ export type Msg = {
   // 观测贯通（badcase 排查）：本轮请求的 trace_id，HMI 生成随 meta 上行；
   // 助手气泡角标可点按复制，粘进可观测台搜索框直达该轮全链路详情
   traceId?: string
+  // 主动播报的**种类**（网关把 NATS payload 的 type 透传成 advisory）：
+  // scene_suggest=场景建议 / scene_verify=执行反馈 / reminder_fired=提醒到点 / 其余=报告或提示。
+  // 没有它的话，凡是带卡的主动播报都会被标成「任务完成」（异步深调研的标题）——场景建议顶着
+  // 「任务完成」很违和。
+  proactiveKind?: string
 }
 
 // 过程区单步：phase=understand|plan|execute|synthesize；summary 为后端按步骤结果合成的脱敏摘要。

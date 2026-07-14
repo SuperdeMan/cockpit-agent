@@ -425,6 +425,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         setMessages((m) => [...m, {
           id: uid(), role: 'assistant',
           text: text ? '💡 ' + text : '', uiCard: card,
+          // 网关把原始 NATS type 透传成 advisory（scene_suggest / scene_verify / reminder_fired…）
+          proactiveKind: typeof data.advisory === 'string' ? data.advisory : undefined,
         } as Msg])
         // 仅异步深调研完成（带报告卡）时朗读结论——兑现「查完语音通知你」；其余主动播报维持气泡（不改既有行为）。
         if (s.ttsEnabled && s.autoplay && text && card) {

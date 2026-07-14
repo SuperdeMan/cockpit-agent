@@ -171,7 +171,9 @@ def _prompt(cat: Catalog, text: str, name_hint: str) -> str:
 - actions：有序动作数组；command 必须命中白名单（座椅放平用 seat.recline）；
   params 只能用该对象列出的参数名，数值在给出的范围内；不确定的参数就不写；
   可选带 when / on_fail
-- unsupported：白名单里做不到的用户诉求（原话），**禁止为它编造 command**
+- unsupported：白名单里**完全做不到**的用户诉求（原话），**禁止为它编造 command**。
+  **已经为某个诉求编了动作，就别再把它写进 unsupported**（「放点舒缓音乐」编了 media.play
+  就不算做不到——媒体只能控播放/暂停，选不了具体曲风，这属于做到了一部分，不写进 unsupported）
 只输出 JSON。"""
 
 

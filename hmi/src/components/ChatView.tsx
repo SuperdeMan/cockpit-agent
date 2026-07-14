@@ -508,15 +508,26 @@ function ConfirmBubble({ msg, onConfirm, onAction }: { msg: Msg; onConfirm: (r: 
   )
 }
 
-// ─── A-6.5 · 主动播报（独立通知气泡；任务完成=冷蓝+报告卡 / 行程预警=琥珀）───
+// ─── A-6.5 · 主动播报（独立通知气泡；任务完成=冷蓝+报告卡 / 行程预警=琥珀 / 场景建议=冷蓝）───
+// 标题按**种类**取（网关透传的 advisory），不能只看"有没有卡"——场景建议/执行反馈都带卡，
+// 只看卡会把它们全标成「任务完成」（那是异步深调研的标题）。
+const PROACTIVE_LABEL: Record<string, string> = {
+  scene_suggest: '主动播报 · AI 建议',
+  scene_verify: '主动播报 · 执行反馈',
+  reminder_fired: '主动播报 · 提醒到点',
+}
+
 function ProactiveBubble({ msg, onAction }: { msg: Msg; onAction: (t: string) => void }) {
   const text = msg.text.replace(/^💡\s*/, '')
+  const kind = msg.proactiveKind || ''
   const isReport = !!msg.uiCard
-  const isAlert = !isReport && ALERT_RE.test(text)
+  // 执行反馈=有动作没生效 → 琥珀（同预警级别的"需要你知道"）；其余信息类走冷蓝。
+  const isAlert = kind === 'scene_verify' || (!isReport && !kind && ALERT_RE.test(text))
   const accent = isAlert ? AMBER : TEAL
   const tintBg = isAlert ? 'rgba(245,158,11,0.08)' : 'rgba(70,214,224,0.07)'
   const tintBd = isAlert ? 'rgba(245,158,11,0.24)' : 'rgba(70,214,224,0.22)'
-  const label = isReport ? '主动播报 · 任务完成' : isAlert ? '主动播报 · 行程预警' : '主动播报 · 提醒'
+  const label = PROACTIVE_LABEL[kind]
+    || (isReport ? '主动播报 · 任务完成' : isAlert ? '主动播报 · 行程预警' : '主动播报 · 提醒')
 
   return (
     <div style={{ marginBottom: 14 }}>
