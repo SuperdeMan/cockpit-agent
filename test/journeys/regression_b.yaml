@@ -44,6 +44,7 @@ journeys:
     level: regression
     lane: live
     tags: [continuity]
+    retry: 1        # 回忆类答复依赖 LLM 从历史取值，单次采样偶发「没记下来」（收官复跑实测）
     turns:
       - say: 把音量调到15
         expect:

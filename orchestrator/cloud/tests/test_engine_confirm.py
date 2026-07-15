@@ -339,3 +339,26 @@ def test_slot_interjection_keeps_pending():
     assert state is not None and state.phase == "wait_slot"      # 挂起还在
     assert "继续补充" in (final.get("follow_up") or "")
     assert "创建吃药提醒" in (final.get("follow_up") or "")       # 软提醒点名 goal
+
+
+def test_slot_pending_cancel_phrase_clears():
+    """B5-1 黑洞修复①：wait_slot 挂起中「那个提醒不用了，取消吧」= 取消挂起
+    （长句被 _confirm_reply 整句规则拦住，须语境内词表）。"""
+    from orchestrator.cloud.models import SessionState
+    engine, spy, session = _make_engine_interject()
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", pending_step_id="s1", missing_slots=["time_text"],
+        completed_results={}, pending_plan={"goal": "创建交周报提醒"})))
+    events = _run(engine, _req("那个提醒不用了，取消吧"))
+    assert "取消" in events[-1]["speech"]
+    assert asyncio.run(session.load("sess-1")) is None
+
+
+def test_slot_pending_question_not_eaten_as_answer():
+    """B5-1 黑洞修复②：疑问/回忆式（「我刚才让你提醒我什么来着」）不是槽位答案——
+    判为换话题（挂起保留），不再拿去当 time_text 反复追问。"""
+    assert PlannerEngine._is_topic_change("我刚才让你提醒我什么来着") is True
+    assert PlannerEngine._is_topic_change("现在几点了？") is True
+    assert PlannerEngine._is_topic_change("外面冷吗") is True
+    assert PlannerEngine._is_topic_change("晚上九点") is False      # 真答案不误判
+    assert PlannerEngine._is_topic_change("明天早上八点") is False

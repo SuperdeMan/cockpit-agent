@@ -9,6 +9,8 @@ journeys:
     lane: live
     tags: [continuity, interaction]
     requires: [AMAP_KEY]
+    retry: 1        # 裸序号协议层依赖 LLM 路由（收官复跑偶发落 nearby.detail）；HMI 层由
+                    # ordinalSelectIn 确定性改写（C2a 已真点验证），协议层按两采样度量
     setup:
       location: {lat: 22.5333, lng: 113.9505}
     turns:
@@ -309,6 +311,8 @@ journeys:
       - 取消交周报的提醒
       - 确定
 
+  # 校准记录：原第二列表用「去惠州充电」造 dest_choice——R1 修复后城市级目的地常被
+  # 直接成路线（更优行为），前提不再稳定。改用 nearby 设施发现造第二个列表。
   - id: B5-2
     title: 列表叠加消歧：「第一个」指最新列表
     level: target
@@ -316,22 +320,19 @@ journeys:
     tags: [continuity, interaction]
     requires: [AMAP_KEY]
     setup:
-      vehicle: {battery: 40}
       location: {lat: 22.5333, lng: 113.9505}
     turns:
       - say: 附近有什么火锅店
         expect:
           latency_s: 60
           cards_any: [place_list]
-      - say: 去惠州的路上帮我找个充电站
+      - say: 附近有没有充电站
         expect:
           latency_s: 60
-          cards_any: [poi_list]
-          card_contains: [dest_choice]
-      - say: 第一个
+          cards_any: [place_list]
+          card_contains: [充电]
+      - say: 看看第一个的详情
         expect:
-          latency_s: 90
+          latency_s: 60
           speech_not: [火锅]        # 串台到旧列表=消歧失败
-          any_of:
-            - cards_any: [charging_route, route_plan]
-            - speech_any: [充电, 途经, 惠州]
+          speech_any: [充电]

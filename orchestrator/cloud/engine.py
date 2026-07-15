@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from typing import AsyncIterator
 
@@ -26,6 +27,10 @@ from observability.redact import gate_content
 from observability.tracing import set_session_id, set_trace_id
 
 logger = logging.getLogger("planner.engine")
+
+# wait_slot 语境内取消词（旅程 B5-1）：补槽追问是当前活跃语境，句中出现取消语义即指它。
+# 不复用 _confirm_reply——其「占据整句」规则（防子串误判）会拦住「那个提醒不用了，取消吧」。
+_SLOT_CANCEL_RE = re.compile(r"取消|不用了|算了|不需要了|不要了|别设了|别提醒了|不设了")
 
 # 确认/取消话术词表（语音兜底；HMI 确认按钮走 is_confirmation 显式标记）
 _YES_WORDS = ("确认", "确定", "好的", "好啊", "可以", "订吧", "订了", "是的",
@@ -135,7 +140,15 @@ class PlannerEngine:
                 # 用户回头说「确认」只能得到「当前没有待确认的操作」，旅程 B2-1 抓到）
                 held_pending = pending
         elif pending and pending.phase == "wait_slot":
-            # F12：补槽续接——判定用户是在回答追问还是换了话题
+            # F12：补槽续接——判定用户是在回答追问还是换了话题。
+            # 「取消/不用了」对补槽挂起同样是取消（镜像 wait_confirm；旅程 B5-1 抓到：
+            # R2 保留挂起后「那个提醒不用了，取消吧」被当槽位答案吃掉，挂起成黑洞）。
+            # 用语境内包含词表而非 _confirm_reply（其"占据整句"规则会拦住长取消句——
+            # 补槽追问是当前活跃语境，句中出现取消语义即指它，误伤面可忽略）。
+            if _SLOT_CANCEL_RE.search(text or ""):
+                await self.session.clear(ctx.session_id)
+                yield {"kind": "final", "speech": "好的，已为您取消。"}
+                return
             if self._is_topic_change(text):
                 # 答非所问：用户插话——保留挂起按新请求处理（R2，下轮裸答案仍可续接）
                 held_pending = pending
@@ -623,11 +636,17 @@ class PlannerEngine:
         """判定 wait_slot 状态下用户是否换了话题（答非所问）。
 
         典型场景：Agent 追问"您要去哪里？"，用户回答"讲个笑话"——这不是在补槽。
-        判断方式：文本以"动作动词"开头（讲/播/打开/关闭/搜/查…）→ 新意图；否则视为槽位补充。
+        判断方式：①文本以"动作动词"开头（讲/播/打开/关闭/搜/查…）→ 新意图；
+        ②疑问/回忆式（什么来着/……吗/？）→ 新意图——问题不是槽位答案（旅程 B5-1：
+        R2 保留挂起后「我刚才让你提醒我什么来着」被当 time_text 吃掉，挂起成黑洞）。
+        否则视为槽位补充。
         """
         t = (text or "").strip()
         if not t:
             return False
+        # 疑问/回忆式不是槽位答案
+        if any(k in t for k in ("什么来着", "来着")) or t.endswith(("吗", "？", "?", "呢")):
+            return True
         # 以动作动词开头 → 大概率是新意图（不是在回答补槽追问）
         _verbs = (
             "讲", "说", "播放", "暂停", "打开", "关闭", "关掉",
