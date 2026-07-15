@@ -137,9 +137,18 @@
   speech 出口统一剥 markdown（判断=不上渲染，TTS 是第一消费者）、合成 JSON 截断/裸引号
   边界式抢救、赛事预测类让路搜索 + 赛果带比赛阶段。详见
   `docs/design/2026-07-12-mode-routing-and-answer-quality.md`。
-- 全量 pytest：**1360 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
-  一次跑通；2026-07-12 四模式路由与回答质量主题较智能提醒收官的 1306 +54。HMI `node --test` 133；R4.3/R4.4 部分为前端）。
-- 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6 + 深度调研（深调研报告 + 多轮深挖 + 新闻深挖桥接 + 异步分钟级受理→主动推送报告卡）+ nightly GitHub 断言型 e2e（含 R3.5 降级矩阵四行）全绿；R3.6 真实 Agent 调用→`/metrics` 端到端数据链路真栈验证通过。
+- **旅程级验证体系 L3/L4 + 红灯修复（2026-07-14/15）**：在单测/eval/单链路 e2e 之上新建
+  **旅程层**度量「跨 Agent 自主执行（把事情办完）」与「全场景连续对话」——`test/e2e_journeys.py`
+  数据驱动 runner + `test/journeys/` 33 条语料（回归级 15 必绿 / 目标级 18 为能力标尺）+
+  `test/hmi_cdp/` 真浏览器二次交互验证（点击→WS 帧断言）。目标级首跑 7/18 产出 9 项红灯
+  工作项，**当日全部按建议修复：终态回归 15/15、目标 16/18**——POI 地标语义五连转正
+  （「导航去广州塔」不再去就近同名弱匹配）、确认/补槽挂起可被插话打断再续接（中断-恢复）、
+  「到公司之前提醒我交周报」按导航 ETA 一轮成单、「哪天下雨就换成室内」按预报确定性改排、
+  provider 故障层层诚实降级；**「一次通勤」14 轮跨域长会话整旅程全绿**。详见
+  `docs/design/2026-07-14-journey-e2e-test-system.md`。
+- 全量 pytest：**1603 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
+  一次跑通；2026-07-15 旅程主题较四模式收官的 1360 +243。HMI `node --test` 137、dashboard vitest 16）。
+- 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6 + 深度调研（深调研报告 + 多轮深挖 + 新闻深挖桥接 + 异步分钟级受理→主动推送报告卡）+ **旅程级 33 条**（回归 15/15，目标 16/18，时延基线 P50 5.7s/P95 40s）+ nightly GitHub 断言型 e2e（含 R3.5 降级矩阵四行 + journeys mock 车道）全绿；R3.6 真实 Agent 调用→`/metrics` 端到端数据链路真栈验证通过。
 - Docker 全栈 **26 个服务**（含充能规划/场景编排/路况安全/深度调研等 Agent），全栈联调通过；
   另有 Prometheus/Grafana 两个可观测服务经 Compose `profiles: ["observability"]` 门控可选启用
   （`docker compose --profile observability up -d prometheus grafana`）。

@@ -11,9 +11,9 @@ python test/smoke_edge.py
 python -m pytest --import-mode=importlib -q
 ```
 `conftest.py` 已配好 PYTHONPATH，`--import-mode=importlib` 解决 test_agent.py 重名。
-**当前结果：1200 passed, 7 skipped（2026-07-10 实测；skip 含 nightly 真实 LLM 默认跳过）。**
+**当前结果：1603 passed, 7 skipped（2026-07-15 实测；skip 含 nightly 真实 LLM 默认跳过）。**
 注意 CI 按分组进程隔离跑（见 `.github/workflows/ci.yml` run_group），本地单命令与 CI
-口径一致；前端另有 `hmi` 127 + `dashboard` 14（node/vitest）。
+口径一致；前端另有 `hmi` 137 + `dashboard` 16（node/vitest）。
 
 ### 测试分布
 | 模块 | 文件 | 覆盖 |
