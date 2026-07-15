@@ -144,10 +144,13 @@
   工作项，**当日全部按建议修复：终态回归 15/15、目标 16/18**——POI 地标语义五连转正
   （「导航去广州塔」不再去就近同名弱匹配）、确认/补槽挂起可被插话打断再续接（中断-恢复）、
   「到公司之前提醒我交周报」按导航 ETA 一轮成单、「哪天下雨就换成室内」按预报确定性改排、
-  provider 故障层层诚实降级；**「一次通勤」14 轮跨域长会话整旅程全绿**。详见
-  `docs/design/2026-07-14-journey-e2e-test-system.md`。
-- 全量 pytest：**1603 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
-  一次跑通；2026-07-15 旅程主题较四模式收官的 1360 +243。HMI `node --test` 137、dashboard vitest 16）。
+  provider 故障层层诚实降级；**「一次通勤」14 轮跨域长会话整旅程全绿**。2026-07-15 遗留卡
+  收口：挂起追问前先播报前序结论（「查到雨」先说有雨再问时刻）、「明早」默认 8 点成单
+  不反问、「记住我最喜欢26度」立即入库且时序覆盖旧偏好、场景配置参数不再漏进个人画像；
+  顺带修墙钟 badcase——「现在几点/今天几号/星期几」按系统时钟确定性直答，不再让 LLM
+  编造时刻。详见 `docs/design/2026-07-14-journey-e2e-test-system.md`。
+- 全量 pytest：**1627 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
+  一次跑通；2026-07-15 旅程主题+遗留卡收口较四模式收官的 1360 +267。HMI `node --test` 137、dashboard vitest 16）。
 - 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6 + 深度调研（深调研报告 + 多轮深挖 + 新闻深挖桥接 + 异步分钟级受理→主动推送报告卡）+ **旅程级 33 条**（回归 15/15，目标 16/18，时延基线 P50 5.7s/P95 40s）+ nightly GitHub 断言型 e2e（含 R3.5 降级矩阵四行 + journeys mock 车道）全绿；R3.6 真实 Agent 调用→`/metrics` 端到端数据链路真栈验证通过。
 - Docker 全栈 **26 个服务**（含充能规划/场景编排/路况安全/深度调研等 Agent），全栈联调通过；
   另有 Prometheus/Grafana 两个可观测服务经 Compose `profiles: ["observability"]` 门控可选启用

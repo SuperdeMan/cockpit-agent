@@ -308,3 +308,13 @@ info.sports 答成单场已结束的 1/4 决赛详情。两个缺口：
 真栈原话复验 @deepseek：预测句 → search_result 卡给出**正确半决赛对阵**（法vs西 7/15、
 英vs阿 7/16）+ 诚实「决赛对阵尚未产生」；事实句「昨天的世界杯赛果」→ speech 带
 「四分之一决赛」。全量 1360 passed / 7 skipped。
+
+## 9. 后续（2026-07-15）：日期锚扩为墙钟三件套（badcase 见 journey 文档 §10）
+
+本设计落的「chitchat 日期锚」只有日期没有时刻——旅程 B2-3 插话轮暴露「现在几点了」
+被 LLM **编造时刻**（obs 对表两采样全错：实际 14:25 答 14:43 / 10:06，编得像也是编的），
+且 planner 会把该句误路由 info.search（联网答不了墙钟）。修复三件套：①锚扩为
+日期+星期+时刻；②纯钟点/日期/星期问句（占据整句）chitchat `_clock_answer` 按系统
+墙钟确定性直答，零 LLM；③chitchat 首个 manifest route_hints（priority 61 > 本设计的
+search/news 59）钉路由。原则：**系统自己持有的事实绝不让 LLM 答**。语料
+`route_hints_cases.yaml` +8、基线刷新；详录 `2026-07-14-journey-e2e-test-system.md` §10。
