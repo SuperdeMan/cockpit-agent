@@ -12,11 +12,47 @@
 from __future__ import annotations
 import os
 import re
+from datetime import datetime
 
 from agents._sdk import BaseAgent, AgentResult
 from agents._sdk.grounding import shanghai_now
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
+
+# ── 钟点/日期/星期确定性直答（badcase 2026-07-15：「现在几点了」被 LLM 编造时刻）──
+# 系统自己持有墙钟，这类问题不该让 LLM 回答——prompt 锚只有日期时，模型会编一个像真的
+# 时刻（实测 14:25 答 14:43 / 10:06，两采样全错）。正则须**占据整句**（去礼貌前缀与
+# 语气尾词后锚定 ^$），防劫持「明天几点有比赛」「几点提醒我」这类含时间词的其他意图。
+_Q_PREFIX_RE = re.compile(r"^(请问|问一下|问下|那|哎|诶|嘿)+")
+_Q_SUFFIX = " 呀啊呢哦吧了嘛么？?。！!，,"
+_CLOCK_RE = re.compile(r"^(现在|当前)?(是)?几点(钟)?$|^(现在|当前)(的)?(是)?(什么)?时间(是多少|是几点)?$")
+_DATE_RE = re.compile(r"^今天(是)?(几号|多少号|几月几号|几月几日|什么日期)$")
+_WEEK_RE = re.compile(r"^今天(是)?(星期几|周几|礼拜几)$")
+_WEEKDAY = "一二三四五六日"
+
+
+def _spoken_time(now: datetime) -> str:
+    """口语化时刻：「下午2点27分」（0 分说「整」；0 点按惯例说凌晨12点）。"""
+    h, m = now.hour, now.minute
+    seg = ("凌晨" if h < 5 else "早上" if h < 9 else "上午" if h < 12
+           else "中午" if h == 12 else "下午" if h < 18 else "晚上")
+    h12 = h % 12 or 12
+    return f"{seg}{h12}点" + ("整" if m == 0 else f"{m}分")
+
+
+def _clock_answer(text: str) -> str:
+    """纯钟点/日期/星期问句 → 按系统墙钟直答；非此类返回空串（走 LLM）。"""
+    t = _Q_PREFIX_RE.sub("", (text or "").strip()).strip(_Q_SUFFIX)
+    if not t:
+        return ""
+    now = shanghai_now()
+    if _CLOCK_RE.match(t):
+        return f"现在是{_spoken_time(now)}。"
+    if _DATE_RE.match(t):
+        return f"今天是{now.year}年{now.month}月{now.day}日，星期{_WEEKDAY[now.weekday()]}。"
+    if _WEEK_RE.match(t):
+        return f"今天星期{_WEEKDAY[now.weekday()]}，{now.month}月{now.day}日。"
+    return ""
 
 # 时效兜底（2026-07-12 mode-routing 设计 P1-2）：LLM 判定「必须联网才能正确回答」时只输出
 # 该标记；agent 解析后零播报、经通用 escalate 协议改派 info.search（engine 有界一跳消费）。
@@ -64,8 +100,12 @@ def _length(meta: dict) -> tuple[int, str]:
 def _system(meta: dict) -> str:
     name = (meta or {}).get("assistant_name") or "小舟"
     _, hint = _length(meta)
+    now = shanghai_now()
+    # 锚点带星期与时刻：纯钟点问句已被 _clock_answer 确定性拦下，这里供「该吃午饭了吗」
+    # 这类时间相对话题参考——没有时刻锚模型会编一个像真的（badcase 2026-07-15）。
     return (
-        f"你是车载语音助手「{name}」。今天是{shanghai_now():%Y年%m月%d日}。"
+        f"你是车载语音助手「{name}」。今天是{now:%Y年%m月%d日}"
+        f"（星期{_WEEKDAY[now.weekday()]}），现在{now:%H:%M}。"
         f"风格简洁、口语化、温暖、安全。{hint}"
         "适合驾车时收听；不输出列表、代码或长文。"
         "若用户表达负面情绪，先共情、再轻轻给出建议或陪伴，不要说教。"
@@ -110,6 +150,9 @@ class ChitchatAgent(BaseAgent):
         return msgs
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
+        clock = _clock_answer(intent.raw_text or intent.slots.get("text", ""))
+        if clock:               # 钟点/日期/星期：系统墙钟直答，零 LLM 零编造
+            return AgentResult(speech=clock)
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta, intent.slots)
         msgs = await self._build_messages(intent, ctx, meta)
@@ -125,6 +168,11 @@ class ChitchatAgent(BaseAgent):
         """流式直答。头部缓冲：在确定回复不是 <search> 改派标记前不放流任何 delta——
         escalate 的前提是「零播报」（engine 端 streamed=True 会忽略改派，双保险）。
         判定窗口 ≤ len("<search>")+空白，普通回复只延迟一个包级别，无感。"""
+        clock = _clock_answer(intent.raw_text or intent.slots.get("text", ""))
+        if clock:               # 钟点/日期/星期：系统墙钟直答，零 LLM 零编造
+            yield ("speech", clock)
+            yield ("final", AgentResult(speech=clock))
+            return
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta, intent.slots)
         msgs = await self._build_messages(intent, ctx, meta)

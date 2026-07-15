@@ -497,3 +497,51 @@
   expect_final_intents: [reminder.create]
   source: "反向护栏：普通提醒不能被 scene.create 抢走（无「X模式」词形）"
   tags: [scene, reminder, guard]
+
+- text: 现在几点了
+  initial_intents: [info.search]
+  expect_final_intents: [chitchat.talk]
+  source: "badcase 2026-07-15：planner 把墙钟问句误路由 info.search（联网答不了墙钟→诚实降级话术）；chitchat 钟点 hint(61) replace 纠正 → _clock_answer 系统墙钟直答"
+  tags: [chitchat, clock, replace, recall]
+
+- text: 现在几点了
+  initial_intents: []
+  expect_final_intents: [chitchat.talk]
+  source: "badcase 2026-07-15：LLM 完全没规划时钟点问句也有网兜"
+  tags: [chitchat, clock, replace]
+
+- text: 请问现在是什么时间
+  initial_intents: []
+  expect_final_intents: [chitchat.talk]
+  source: "钟点问句变体（礼貌前缀+时间词形）"
+  tags: [chitchat, clock, replace]
+
+- text: 今天星期几
+  initial_intents: []
+  expect_final_intents: [chitchat.talk]
+  source: "星期问句归墙钟直答家族"
+  tags: [chitchat, clock, replace]
+
+- text: 今天几号
+  initial_intents: []
+  expect_final_intents: [chitchat.talk]
+  source: "日期问句归墙钟直答家族"
+  tags: [chitchat, clock, replace]
+
+- text: 几点提醒我吃药
+  initial_intents: [reminder.create]
+  expect_final_intents: [reminder.create]
+  source: "反向护栏：含「几点」的补槽/提醒句不被钟点 hint 劫持（pattern 占据整句）"
+  tags: [chitchat, clock, guardrail, reminder]
+
+- text: 明天几点有比赛
+  initial_intents: [info.sports]
+  expect_final_intents: [info.sports]
+  source: "反向护栏：赛事时间问句不被钟点 hint 劫持"
+  tags: [chitchat, clock, guardrail, sports]
+
+- text: 现在时间还早吗
+  initial_intents: []
+  expect_final_intents: []
+  source: "反向护栏：时间感慨句非钟点问句（整句锚定不命中），留给 LLM"
+  tags: [chitchat, clock, guardrail]

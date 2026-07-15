@@ -60,6 +60,67 @@ def test_system_has_date_anchor_and_no_fabrication_guard():
     assert "绝不编造" in sys_text
 
 
+def test_system_anchor_includes_weekday_and_clock():
+    """badcase 2026-07-15：锚只有日期时模型会编时刻——锚补星期+时刻。"""
+    import re as _re
+    sys_text = _system({})
+    assert _re.search(r"星期[一二三四五六日]", sys_text)
+    assert _re.search(r"现在\d{2}:\d{2}", sys_text)
+
+
+# ─── 钟点/日期/星期确定性直答（badcase 2026-07-15：LLM 编造时刻）───
+
+def test_clock_answer_patterns():
+    from agents.chitchat.src.agent import _clock_answer
+    # 占据整句的钟点/日期/星期问句 → 直答
+    for q in ("现在几点了", "几点了", "请问现在几点", "现在几点钟",
+              "现在是什么时间", "当前时间", "现在时间是多少"):
+        assert _clock_answer(q).startswith("现在是"), q
+    for q in ("今天几号", "今天是几月几号", "今天多少号"):
+        assert _clock_answer(q).startswith("今天是"), q
+    for q in ("今天星期几", "今天周几", "今天是礼拜几"):
+        assert _clock_answer(q).startswith("今天星期"), q
+    # 含时间词的其他意图不劫持
+    for q in ("明天几点有比赛", "几点提醒我吃药", "现在时间还早吗",
+              "昨晚比赛几点开的", "讲个笑话", "今天天气怎么样", ""):
+        assert _clock_answer(q) == "", q
+
+
+def test_spoken_time_segments():
+    from datetime import datetime
+    from agents.chitchat.src.agent import _spoken_time
+    assert _spoken_time(datetime(2026, 7, 15, 14, 27)) == "下午2点27分"
+    assert _spoken_time(datetime(2026, 7, 15, 0, 5)) == "凌晨12点5分"
+    assert _spoken_time(datetime(2026, 7, 15, 12, 0)) == "中午12点整"
+    assert _spoken_time(datetime(2026, 7, 15, 20, 30)) == "晚上8点30分"
+    assert _spoken_time(datetime(2026, 7, 15, 7, 0)) == "早上7点整"
+
+
+def test_handle_clock_question_skips_llm():
+    """「现在几点了」按系统墙钟直答，LLM 完全不参与（零编造面）。"""
+    agent = ChitchatAgent()
+    agent.llm.complete = AsyncMock(side_effect=AssertionError("LLM 不该被调"))
+    res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="现在几点了"))
+    assert res.status == "ok"
+    assert res.speech.startswith("现在是") and "点" in res.speech
+    agent.llm.complete.assert_not_called()
+
+
+def test_handle_stream_clock_question_skips_llm():
+    agent = ChitchatAgent()
+
+    async def boom(*a, **k):
+        raise AssertionError("LLM 不该被调")
+        yield  # pragma: no cover
+
+    agent.llm.stream = boom
+    events = _collect_stream(agent, "今天星期几")
+    kinds = [k for k, _ in events]
+    assert kinds == ["speech", "final"]
+    assert events[0][1].startswith("今天星期")
+    assert events[-1][1].speech == events[0][1]
+
+
 def test_length_and_name_honored():
     assert _length({"answer_length": "short"})[0] == 140
     assert _length({"answer_length": "detailed"})[0] == 440

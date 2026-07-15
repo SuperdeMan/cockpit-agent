@@ -19,3 +19,15 @@ capabilities:
 
 requires_permissions: []
 edge_intents: []
+
+# 钟点/日期/星期问句确定性路由（badcase 2026-07-15：「现在几点了」被 planner 误路由到
+# info.search——联网检索答不了墙钟只能诚实降级；chitchat 侧 _clock_answer 按系统墙钟
+# 零 LLM 直答，路由钉住后该问句家族全链路确定性）。pattern 占据整句（^$ 锚定 + 礼貌
+# 前缀 + ≤2 个语气尾词），防劫持「几点提醒我」「明天几点有比赛」等含时间词的其他意图。
+# priority=61：高于 info search/news=59（保证先于宽泛搜索动词类评估），无同级撞车。
+route_hints:
+  - pattern: '^(?:请问|问一下|问下)?(?:(?:现在|当前)?(?:是)?几点(?:钟)?|(?:现在|当前)(?:的)?(?:是)?(?:什么)?时间(?:是多少|是几点)?|今天(?:是)?(?:几号|多少号|几月几号|几月几日|什么日期|星期几|周几|礼拜几))[呀啊呢哦吧了嘛么]{0,2}[？?。！!]?$'
+    intent: chitchat.talk
+    policy: replace
+    priority: 61
+    slots: {}

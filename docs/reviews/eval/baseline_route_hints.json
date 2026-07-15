@@ -1,32 +1,32 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-07-12T08:12:58.897425+00:00",
-    "commit": "31cdf31"
+    "generated_at": "2026-07-15T06:51:06.382692+00:00",
+    "commit": "81c02ec"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 47
+      "count": 84
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 29,
-      "passed": 29,
+      "total": 51,
+      "passed": 51,
       "failures": [],
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 18,
-      "passed": 18,
+      "total": 33,
+      "passed": 33,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 47,
-    "passed": 47,
+    "total": 84,
+    "passed": 84,
     "pass_rate": 1.0
   },
   "cases": {
@@ -230,10 +230,105 @@
       "passed": true,
       "detail": "",
       "tags": [
+        "scene",
+        "reminder",
+        "guard"
+      ],
+      "source": "反向护栏：普通提醒不能被 scene.create 抢走（无「X模式」词形）"
+    },
+    "route::我刚才让你提醒我什么来着": {
+      "id": "route::我刚才让你提醒我什么来着",
+      "bucket": "route_guardrail",
+      "text": "我刚才让你提醒我什么来着",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "guard"
+      ],
+      "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
+    },
+    "route::你提醒过我什么事": {
+      "id": "route::你提醒过我什么事",
+      "bucket": "route_guardrail",
+      "text": "你提醒过我什么事",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "guard"
+      ],
+      "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
+    },
+    "route::到时候提醒我什么时候该出发": {
+      "id": "route::到时候提醒我什么时候该出发",
+      "bucket": "route_recall",
+      "text": "到时候提醒我什么时候该出发",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
         "reminder",
         "replace"
       ],
-      "source": "docs/design/2026-07-11-reminder-agent-design.md §6"
+      "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
+    },
+    "route::查一下明天深圳会不会下雨，要是下雨就提醒我明早带伞": {
+      "id": "route::查一下明天深圳会不会下雨，要是下雨就提醒我明早带伞",
+      "bucket": "route_guardrail",
+      "text": "查一下明天深圳会不会下雨，要是下雨就提醒我明早带伞",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "guard",
+        "conditional"
+      ],
+      "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R6"
+    },
+    "route::那附近有停车场吗": {
+      "id": "route::那附近有停车场吗",
+      "bucket": "route_guardrail",
+      "text": "那附近有停车场吗",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby",
+        "guard",
+        "focus"
+      ],
+      "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R3"
+    },
+    "route::附近有没有停车场": {
+      "id": "route::附近有没有停车场",
+      "bucket": "route_recall",
+      "text": "附近有没有停车场",
+      "expected": [
+        "nearby.search"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby",
+        "replace"
+      ],
+      "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R3"
     },
     "route::半小时后提醒我给客户回电话": {
       "id": "route::半小时后提醒我给客户回电话",
@@ -873,6 +968,528 @@
         "deliberate_gap"
       ],
       "source": "刻意保守面：search guard 含新闻、news guard 含搜——双 hint 互斥都不命中，留给 LLM 判据段（P0-3）决定"
+    },
+    "route::今天天气怎么样，适合出行吗": {
+      "id": "route::今天天气怎么样，适合出行吗",
+      "bucket": "route_recall",
+      "text": "今天天气怎么样，适合出行吗",
+      "expected": [
+        "info.weather"
+      ],
+      "actual": [
+        "info.weather"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "weather",
+        "go-out",
+        "replace"
+      ],
+      "source": "badcase 11db5215 (2026-07-13)"
+    },
+    "route::今天天气怎么样，适合出行码": {
+      "id": "route::今天天气怎么样，适合出行码",
+      "bucket": "route_recall",
+      "text": "今天天气怎么样，适合出行码",
+      "expected": [
+        "info.weather"
+      ],
+      "actual": [
+        "info.weather"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "weather",
+        "go-out",
+        "replace"
+      ],
+      "source": "badcase 11db5215 原始 ASR 同音字形态，误路由被 replace 纠正"
+    },
+    "route::适合出门吗，外面天气如何": {
+      "id": "route::适合出门吗，外面天气如何",
+      "bucket": "route_recall",
+      "text": "适合出门吗，外面天气如何",
+      "expected": [
+        "info.weather"
+      ],
+      "actual": [
+        "info.weather"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "weather",
+        "go-out",
+        "replace"
+      ],
+      "source": "badcase 11db5215 反序形态"
+    },
+    "route::导航去机场，路上天气适合出行吗": {
+      "id": "route::导航去机场，路上天气适合出行吗",
+      "bucket": "route_guardrail",
+      "text": "导航去机场，路上天气适合出行吗",
+      "expected": [
+        "navigate.to"
+      ],
+      "actual": [
+        "navigate.to"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "weather",
+        "go-out",
+        "guard"
+      ],
+      "source": "badcase 11db5215 guard：路线/导航语义让位，不劫持"
+    },
+    "route::明天适合出行吗": {
+      "id": "route::明天适合出行吗",
+      "bucket": "route_guardrail",
+      "text": "明天适合出行吗",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "weather",
+        "go-out",
+        "no-hit"
+      ],
+      "source": "badcase 11db5215 双词共现约束：无天气词的纯出行问法不召回（留给 LLM）"
+    },
+    "route::开启午休模式": {
+      "id": "route::开启午休模式",
+      "bucket": "route_recall",
+      "text": "开启午休模式",
+      "expected": [
+        "scene.activate"
+      ],
+      "actual": [
+        "scene.activate"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "activate",
+        "replace"
+      ],
+      "source": "设计 §6 正例：命名生活场景"
+    },
+    "route::来个钓鱼模式": {
+      "id": "route::来个钓鱼模式",
+      "bucket": "route_recall",
+      "text": "来个钓鱼模式",
+      "expected": [
+        "scene.activate"
+      ],
+      "actual": [
+        "scene.activate"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "activate",
+        "replace"
+      ],
+      "source": "设计 §6 正例：用户自建场景激活"
+    },
+    "route::露营模式": {
+      "id": "route::露营模式",
+      "bucket": "route_recall",
+      "text": "露营模式",
+      "expected": [
+        "scene.activate"
+      ],
+      "actual": [
+        "scene.activate"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "activate",
+        "bare"
+      ],
+      "source": "设计 §6 正例：裸「X模式」短语（弱 LLM 常漏成 chitchat）"
+    },
+    "route::帮我创建一个钓鱼模式：座椅放平，开外循环": {
+      "id": "route::帮我创建一个钓鱼模式：座椅放平，开外循环",
+      "bucket": "route_recall",
+      "text": "帮我创建一个钓鱼模式：座椅放平，开外循环",
+      "expected": [
+        "scene.create"
+      ],
+      "actual": [
+        "scene.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "create",
+        "replace"
+      ],
+      "source": "设计 §6 正例：create 优先级(55)高于 activate(54)，同句两条命中必须走 create"
+    },
+    "route::新建一个下雨模式，关窗加除雾": {
+      "id": "route::新建一个下雨模式，关窗加除雾",
+      "bucket": "route_recall",
+      "text": "新建一个下雨模式，关窗加除雾",
+      "expected": [
+        "scene.create"
+      ],
+      "actual": [
+        "scene.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "create",
+        "replace"
+      ],
+      "source": "设计 §6 正例"
+    },
+    "route::退出露营模式": {
+      "id": "route::退出露营模式",
+      "bucket": "route_recall",
+      "text": "退出露营模式",
+      "expected": [
+        "scene.deactivate"
+      ],
+      "actual": [
+        "scene.deactivate"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "deactivate",
+        "replace"
+      ],
+      "source": "设计 §6 正例"
+    },
+    "route::删掉钓鱼模式": {
+      "id": "route::删掉钓鱼模式",
+      "bucket": "route_recall",
+      "text": "删掉钓鱼模式",
+      "expected": [
+        "scene.delete"
+      ],
+      "actual": [
+        "scene.delete"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "delete",
+        "priority"
+      ],
+      "source": "设计 §6 正例：delete(56) 高于 activate/deactivate，不能被当成激活"
+    },
+    "route::开启午休模式，温度改成26": {
+      "id": "route::开启午休模式，温度改成26",
+      "bucket": "route_recall",
+      "text": "开启午休模式，温度改成26",
+      "expected": [
+        "scene.activate"
+      ],
+      "actual": [
+        "scene.activate"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "activate",
+        "update-guard"
+      ],
+      "source": "2026-07-14 评审修复：句首激活动词 guard——这是激活+本次参数覆盖，被 update 抢走会把场景默认温度持久改掉"
+    },
+    "route::退出性能模式": {
+      "id": "route::退出性能模式",
+      "bucket": "route_guardrail",
+      "text": "退出性能模式",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "edge-mode",
+        "guard"
+      ],
+      "source": "2026-07-14 评审修复：deactivate guard 补「性能模式」对齐 activate（D8 端侧驾驶模式词）"
+    },
+    "route::打开运动模式": {
+      "id": "route::打开运动模式",
+      "bucket": "route_guardrail",
+      "text": "打开运动模式",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "edge-mode",
+        "guard"
+      ],
+      "source": "D8 反例：端侧 driving_mode.set 毫秒级秒回，云端 guard 必须让路"
+    },
+    "route::切换到雪地模式": {
+      "id": "route::切换到雪地模式",
+      "bucket": "route_guardrail",
+      "text": "切换到雪地模式",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "edge-mode",
+        "guard"
+      ],
+      "source": "D8 反例：端侧 driving_mode.set"
+    },
+    "route::省电模式怎么开": {
+      "id": "route::省电模式怎么开",
+      "bucket": "route_guardrail",
+      "text": "省电模式怎么开",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "manual",
+        "guard"
+      ],
+      "source": "D8 反例：说明书问法 + 端侧 power_mode，归 manual/chitchat"
+    },
+    "route::露营模式是什么意思": {
+      "id": "route::露营模式是什么意思",
+      "bucket": "route_guardrail",
+      "text": "露营模式是什么意思",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "manual",
+        "guard"
+      ],
+      "source": "反例：知识问法归 manual/chitchat，不激活"
+    },
+    "route::开启勿扰模式": {
+      "id": "route::开启勿扰模式",
+      "bucket": "route_guardrail",
+      "text": "开启勿扰模式",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "edge-mode",
+        "guard"
+      ],
+      "source": "D8 反例：系统设置类模式词，不归场景编排"
+    },
+    "route::把钓鱼模式的温度改成24": {
+      "id": "route::把钓鱼模式的温度改成24",
+      "bucket": "route_recall",
+      "text": "把钓鱼模式的温度改成24",
+      "expected": [
+        "scene.update"
+      ],
+      "actual": [
+        "scene.update"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "update",
+        "replace"
+      ],
+      "source": "设计 §5.5：端侧已让路（场景管理句），云端确定性接住改场景定义"
+    },
+    "route::去掉钓鱼模式里的香氛": {
+      "id": "route::去掉钓鱼模式里的香氛",
+      "bucket": "route_recall",
+      "text": "去掉钓鱼模式里的香氛",
+      "expected": [
+        "scene.update"
+      ],
+      "actual": [
+        "scene.update"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "update",
+        "guard"
+      ],
+      "source": "设计 §5.5：动作级改动。delete 的 guard 含「里的」避免整个场景被删掉"
+    },
+    "route::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开": {
+      "id": "route::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "bucket": "route_recall",
+      "text": "创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "expected": [
+        "scene.create"
+      ],
+      "actual": [
+        "scene.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "create",
+        "trigger",
+        "priority"
+      ],
+      "source": "P3：带触发器的造场景句。「提醒我」是触发器描述，不是要建提醒——scene.create(58) 必须压过 reminder.create(56)，否则 reminder 抢走并追问「什么时候提醒你」，把会话挂起（真栈 e2e 实测级联翻车）"
+    },
+    "route::现在几点了": {
+      "id": "route::现在几点了",
+      "bucket": "route_recall",
+      "text": "现在几点了",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "chitchat",
+        "clock",
+        "replace"
+      ],
+      "source": "badcase 2026-07-15：LLM 完全没规划时钟点问句也有网兜"
+    },
+    "route::请问现在是什么时间": {
+      "id": "route::请问现在是什么时间",
+      "bucket": "route_recall",
+      "text": "请问现在是什么时间",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "chitchat",
+        "clock",
+        "replace"
+      ],
+      "source": "钟点问句变体（礼貌前缀+时间词形）"
+    },
+    "route::今天星期几": {
+      "id": "route::今天星期几",
+      "bucket": "route_recall",
+      "text": "今天星期几",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "chitchat",
+        "clock",
+        "replace"
+      ],
+      "source": "星期问句归墙钟直答家族"
+    },
+    "route::今天几号": {
+      "id": "route::今天几号",
+      "bucket": "route_recall",
+      "text": "今天几号",
+      "expected": [
+        "chitchat.talk"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "chitchat",
+        "clock",
+        "replace"
+      ],
+      "source": "日期问句归墙钟直答家族"
+    },
+    "route::几点提醒我吃药": {
+      "id": "route::几点提醒我吃药",
+      "bucket": "route_guardrail",
+      "text": "几点提醒我吃药",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "chitchat",
+        "clock",
+        "guardrail",
+        "reminder"
+      ],
+      "source": "反向护栏：含「几点」的补槽/提醒句不被钟点 hint 劫持（pattern 占据整句）"
+    },
+    "route::明天几点有比赛": {
+      "id": "route::明天几点有比赛",
+      "bucket": "route_guardrail",
+      "text": "明天几点有比赛",
+      "expected": [
+        "info.sports"
+      ],
+      "actual": [
+        "info.sports"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "chitchat",
+        "clock",
+        "guardrail",
+        "sports"
+      ],
+      "source": "反向护栏：赛事时间问句不被钟点 hint 劫持"
+    },
+    "route::现在时间还早吗": {
+      "id": "route::现在时间还早吗",
+      "bucket": "route_guardrail",
+      "text": "现在时间还早吗",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "chitchat",
+        "clock",
+        "guardrail"
+      ],
+      "source": "反向护栏：时间感慨句非钟点问句（整句锚定不命中），留给 LLM"
     }
   }
 }
