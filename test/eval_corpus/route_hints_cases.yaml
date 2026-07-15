@@ -93,6 +93,26 @@
   source: "docs/design/2026-07-11-reminder-agent-design.md §6"
   tags: [reminder, replace]
 
+# R4（旅程 B5-1）：回忆/疑问式不是建新提醒——guard 排除「什么来着/让你提醒/提醒过」
+- text: 我刚才让你提醒我什么来着
+  initial_intents: []
+  expect_final_intents: []
+  source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
+  tags: [reminder, guard]
+
+- text: 你提醒过我什么事
+  initial_intents: []
+  expect_final_intents: []
+  source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
+  tags: [reminder, guard]
+
+# 反向护栏：真创建句不被新 guard 误伤（「提醒我什么时候出发」是创建不是回忆）
+- text: 到时候提醒我什么时候该出发
+  initial_intents: []
+  expect_final_intents: [reminder.create]
+  source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
+  tags: [reminder, replace]
+
 - text: 半小时后提醒我给客户回电话
   initial_intents: []
   expect_final_intents: [reminder.create]

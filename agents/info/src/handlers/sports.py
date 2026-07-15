@@ -145,12 +145,38 @@ def _ordinal_index(text: str, n: int) -> int | None:
     return None
 
 
+_WEEKDAY_ZH = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
+
+
 def _sports_date(query: str, now: datetime) -> str:
-    """从查询推断目标日期，默认今天（YYYY-MM-DD，上海时区）。"""
-    if "明天" in query:
-        return (now + timedelta(days=1)).strftime("%Y-%m-%d")
-    if "昨天" in query:
-        return (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    """从查询推断目标日期，默认今天（YYYY-MM-DD，上海时区）。
+
+    Q3（旅程 A5-2/A3-1 抓到）：「下周三」「昨晚」原来解析不了 → 静默回落今天，
+    答出「**今天**没有查询到…」答非所问。补齐常见相对日期与周几；解析出的日期
+    超出数据源窗口时由 `_do_sports` 的门控分支按**所问日期**口径诚实告知。
+    """
+    def d(offset: int) -> str:
+        return (now + timedelta(days=offset)).strftime("%Y-%m-%d")
+
+    if "大后天" in query:
+        return d(3)
+    if "后天" in query:
+        return d(2)
+    if "前天" in query:
+        return d(-2)
+    if any(w in query for w in ("昨天", "昨晚", "昨夜")):
+        return d(-1)
+    if any(w in query for w in ("明天", "明晚", "明早")):
+        return d(1)
+    m = re.search(r"(下+)?(?:周|星期|礼拜)([一二三四五六日天])", query)
+    if m:
+        target = _WEEKDAY_ZH[m.group(2)]
+        n_down = len(m.group(1) or "")
+        if n_down:      # 「下周X」=下个自然周（周一起算）的周X；「下下周」再 +7
+            ahead = (7 - now.weekday()) + target + 7 * (n_down - 1)
+        else:           # 裸「周X」=本周该天（已过则下周），当天算今天
+            ahead = (target - now.weekday()) % 7
+        return d(ahead)
     return now.strftime("%Y-%m-%d")
 
 
@@ -263,6 +289,14 @@ class SportsMixin:
             all_fixtures = await self.sports.fixtures(date=date, meta=meta)
         except ProviderError as e:
             logger.warning("sports fixtures failed: %s", e)
+            # 日期门控（免费档只放行今天±1）→ 按**所问日期**口径诚实（Q3：原来静默回落
+            # 今天，答「今天没有查询到」答非所问）；其余故障返回 None → 上层回落通用搜索。
+            msg = str(e).lower()
+            if "access to this date" in msg or "not have access" in msg:
+                asked = "今天" if date == now.strftime("%Y-%m-%d") else date[5:]
+                return AgentResult(
+                    speech=f"受数据源限制，只能查今天前后一天的赛程，{asked}的暂时查不到，"
+                           f"可以临近了再问我。")
             return None
         fixtures = [f for f in all_fixtures if f.league_id == league_id]
 
@@ -457,8 +491,8 @@ class SportsMixin:
                 used_season = season
                 break
         if not scorers:
+            # 诚实降级用 OK——FAILED 话术会被聚合器吞掉换成裸「处理失败」（R9/scene 同坑）
             return AgentResult(
-                status=FAILED,
                 speech=f"暂时获取不到{league_name}的射手榜，可能是数据源限制，请稍后再试。")
 
         label = f"{used_season}赛季"
@@ -507,7 +541,12 @@ class SportsMixin:
             return await self._search(intent, ctx, meta)
         res = await self._do_sports(text, league_id, name, meta)
         if res is None:
-            return AgentResult(status=FAILED,
-                               speech="赛事数据暂时不可用，无法确认比分，请稍后再试。")
+            # R9（旅程 A3-1/A2-2a 抓到）：provider 故障时原来返回 FAILED——聚合器会吞掉
+            # FAILED 话术换成裸「抱歉，处理失败」（scene 主题登记过的同一坑）。降级升级为
+            # **回落通用搜索接地**（_search 自带诚实弃权），skip_sports 防再进结构化源
+            # 二次吃超时。原话整句作 query，保住「昨晚/决赛」等上下文。
+            logger.warning("sports provider down, fallback to grounded search: %s", text[:40])
+            intent.slots["query"] = (intent.raw_text or query).strip()
+            return await self._search(intent, ctx, meta, skip_sports=True)
         await self._save_remindable(ctx, res)   # 跨域提醒 P1c：未开赛场次交接给 reminder
         return res

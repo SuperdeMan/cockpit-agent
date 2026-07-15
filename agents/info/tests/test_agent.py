@@ -267,7 +267,9 @@ def test_live_search_failure_does_not_fall_back_to_fabricated_results():
     res = asyncio.run(run_handle(
         agent, "info.search", slots={"query": "今晚的台风路径"}, raw_text="今晚的台风路径"))
 
-    assert res.status == "failed"
+    # R9 契约：诚实降级话术用 OK 返回——FAILED 会被聚合器吞掉换成裸「抱歉，处理失败」
+    # （旅程 A3-1 真栈实锤；scene 主题同坑）。诚实性由话术断言保证，不再靠 status。
+    assert res.status == "ok"
     assert res.ui_card is None
     assert "联网检索暂时不可用" in res.speech
 
@@ -594,7 +596,7 @@ def test_sports_provider_failure_falls_back_to_search_then_honest_failure():
     agent.search = _UnavailableSearchProvider()  # 赛事失败回落搜索，搜索也不可用 → 诚实失败
     res = asyncio.run(run_handle(
         agent, "info.search", slots={"query": "世界杯比分"}, raw_text="世界杯比分"))
-    assert res.status == "failed"
+    assert res.status == "ok"      # R9：诚实降级用 OK（FAILED 话术会被聚合器吞）
     assert "联网检索暂时不可用" in res.speech
 
 
@@ -756,7 +758,7 @@ def test_scorers_all_unavailable_is_honest():
     agent.sports = _SportsStub(scorers={})   # 任何赛季都空
     res = asyncio.run(run_handle(
         agent, "info.sports", slots={"query": "世界杯"}, raw_text="世界杯射手榜"))
-    assert res.status == "failed"
+    assert res.status == "ok"      # R9：诚实降级用 OK（FAILED 话术会被聚合器吞）
     assert "射手榜" in res.speech
 
 

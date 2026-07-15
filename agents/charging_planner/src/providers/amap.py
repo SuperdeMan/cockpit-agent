@@ -131,8 +131,9 @@ class AmapChargingProvider(ChargingProvider):
         dur = self._fmt_dur(duration_min)
         head = f"前往{destination}，全程约{distance_km}公里" + (f"、约{dur}" if dur else "")
 
-        # 续航足够 → 直达
-        if distance_km <= usable or not points:
+        # 续航足够 → 直达。带 15% 保留余量（Q2，旅程 A1-2 抓到：10%→50km 对 47.7km
+        # 判「足够直达」只剩 2.3km 余量，真车是抛锚风险）——到达时至少留 15% 可用续航。
+        if distance_km <= usable * 0.85 or not points:
             return ChargingPlan(
                 summary=f"{head}。当前电量{soc_pct}%（约{round(usable)}公里续航）足够直达，无需途中补电。",
                 stops=[], total_duration_min=int(duration_min), distance_km=distance_km)
@@ -142,6 +143,9 @@ class AmapChargingProvider(ChargingProvider):
         while d < distance_km - 20 and len(targets) < 4:
             targets.append(d)
             d += self._full_range * 0.65
+        if not targets:
+            # 短途但余量不足（首目标落进尾缓冲）→ 至少一个补电点，否则空集等同直达（Q2）
+            targets.append(max(1.0, min(usable * 0.85, distance_km - 20)))
         stops = []
         for t in targets:
             pt = next((p for p in points if p["cum_km"] >= t), None)

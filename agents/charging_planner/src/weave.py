@@ -14,19 +14,22 @@ def weave_charging_targets(points: list[dict], distance_km: float,
                            start_soc_pct: float, full_range_km: float,
                            *, first_leg_frac: float = 0.85, hop_frac: float = 0.65,
                            tail_buffer_km: float = 20.0,
-                           max_stops: int = 4) -> list[dict]:
+                           max_stops: int = 4,
+                           reserve_frac: float = 0.85) -> list[dict]:
     """沿路线按里程放补电目标点。
 
     策略（与原 amap.plan_route 一致）：首段用到 ~85% 当前可用续航再补，
     之后每段约 65% 满电续航补一次；末段 tail_buffer_km 内不再补（快到了）；最多 max_stops 次。
 
     返回 `[{"at_km": int, "lat": float, "lng": float}]`（按出现顺序）。
-    续航足够（distance_km <= 可用续航）、无路线点、或参数非法 → `[]`。
+    直达判定带保留余量（Q2，旅程 A1-2 抓到：10%→50km 对 47.7km 判「足够直达」只剩
+    2.3km 余量）：`distance_km <= usable * reserve_frac` 才算够，到达时至少留 15% 可用续航。
+    无路线点或参数非法 → `[]`。
     """
     if not points or full_range_km <= 0 or distance_km <= 0:
         return []
     usable = max(0.0, start_soc_pct) / 100.0 * full_range_km
-    if distance_km <= usable:           # 当前电量足够直达，无需补电
+    if distance_km <= usable * reserve_frac:   # 足够直达且留有余量，无需补电
         return []
 
     targets: list[float] = []
@@ -34,6 +37,11 @@ def weave_charging_targets(points: list[dict], distance_km: float,
     while d < distance_km - tail_buffer_km and len(targets) < max_stops:
         targets.append(d)
         d += full_range_km * hop_frac
+    if not targets:
+        # 短途但余量不足（首个目标点落进尾缓冲）：至少放一个补电点，夹到尾缓冲之前——
+        # 否则空集在下游等同「直达」，Q2 的余量判定就被架空了。
+        targets.append(max(1.0, min(usable * first_leg_frac,
+                                    distance_km - tail_buffer_km)))
 
     out: list[dict] = []
     for t in targets:

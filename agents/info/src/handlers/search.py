@@ -86,13 +86,15 @@ def _plan_search(query: str) -> tuple[int, str]:
 
 
 class SearchMixin:
-    async def _search(self, intent, ctx, meta) -> AgentResult:
+    async def _search(self, intent, ctx, meta, skip_sports: bool = False) -> AgentResult:
+        """skip_sports：sports provider 故障回落本方法时置 True——防再进结构化源二次吃超时
+        （R9；`_maybe_sports` 自身故障返回 None 会自然落到通用检索，无回环）。"""
         query = (intent.slots.get("query") or "").strip()
         if not query:
             return AgentResult(status=NEED_SLOT, speech="您想搜什么？",
                                follow_up="请告诉我搜索内容", missing_slots=["query"])
         # 赛事路由：命中已知赛事 + 赛事意图词 → 走结构化数据源，不进通用搜索（杜绝编造比分）
-        sports = await self._maybe_sports(query, meta, intent.raw_text)
+        sports = None if skip_sports else await self._maybe_sports(query, meta, intent.raw_text)
         if sports is not None:
             await self._save_remindable(ctx, sports)   # 跨域提醒 P1c（SportsMixin，同 MRO）
             return sports
@@ -108,8 +110,8 @@ class SearchMixin:
                 category=category, livecrawl=livecrawl, extractor=self.extractor, meta=meta)
         except ProviderError as e:
             logger.warning("search failed: %s", e)
+            # 诚实降级用 OK——FAILED 话术会被聚合器吞掉换成裸「处理失败」（R9/scene 同坑）
             return AgentResult(
-                status=FAILED,
                 speech="联网检索暂时不可用，无法确认最新结果，请稍后再试。",
             )
 

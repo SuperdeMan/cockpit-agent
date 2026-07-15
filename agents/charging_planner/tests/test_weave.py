@@ -18,6 +18,17 @@ def test_sufficient_range_no_charge():
     assert weave_charging_targets(pts, 300, start_soc_pct=80, full_range_km=500) == []
 
 
+def test_direct_needs_reserve_margin():
+    """Q2（旅程 A1-2）：10%→50km 对 47.7km 不算「足够直达」——到达须留 ≥15% 可用续航；
+    且短途尾缓冲不能吞掉唯一补电点（空集在下游等同直达）。"""
+    pts = _route(47.7, step_km=2)
+    out = weave_charging_targets(pts, 47.7, start_soc_pct=10, full_range_km=500)
+    assert out, "2.3km 余量不该判直达"
+    assert out[0]["at_km"] <= 47.7 - 20 + 2      # 补电点被夹到尾缓冲之前（±路线点步长）
+    # 余量充足（12%→60km，51≥47.7）才直达
+    assert weave_charging_targets(pts, 47.7, start_soc_pct=12, full_range_km=500) == []
+
+
 def test_long_trip_inserts_stops():
     """长途超续航 → 沿途按里程放补电目标点。"""
     pts = _route(1200, step_km=10)
