@@ -9,10 +9,12 @@ import json
 import logging
 import os
 import re
+import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
+from agents._sdk.shared_state import REMINDABLE_ACTIVE
 from agents._sdk.landmark import (
     is_landmark_description, landmark_candidates, name_matches)
 from .providers import build_poi_provider
@@ -258,7 +260,7 @@ class NavigationAgent(BaseAgent):
                 if stop_category:
                     return await self._navigate_with_stop_choice(
                         stored_poi, place_label, stop_category, items, meta)
-                return await self._navigate_to_stored(place_label, stored, meta)
+                return await self._navigate_to_stored(place_label, stored, meta, ctx=ctx)
             example = "深圳科技园" if place_key == "company" else "上海长宁区某某小区"
             return AgentResult(
                 status=NEED_SLOT,
@@ -345,7 +347,8 @@ class NavigationAgent(BaseAgent):
         # 普通导航：出路线规划卡（当前位置 → 目的地，起终点 + best-effort 距离/时长）
         prefix = (f"识别到您说的是{first.name}。" if resolved_name != dest else "")
         return await self._route_plan_to(
-            first.name, first.address, first.lat, first.lng, meta, resolved_prefix=prefix)
+            first.name, first.address, first.lat, first.lng, meta,
+            resolved_prefix=prefix, ctx=ctx)
 
     # ── 常用地点（家/公司/学校）──────────────────────────────
     async def _get_places(self, ctx) -> dict:
@@ -369,13 +372,14 @@ class NavigationAgent(BaseAgent):
         place = (await self._get_places(ctx)).get(place_key)
         return place if isinstance(place, dict) and place.get("lat") is not None else None
 
-    async def _navigate_to_stored(self, label: str, stored: dict, meta) -> AgentResult:
+    async def _navigate_to_stored(self, label: str, stored: dict, meta,
+                                  ctx=None) -> AgentResult:
         """已设置的常用地点 → 直接导航（出路线规划卡 起点→终点）。"""
         name = stored.get("name") or label
         addr = stored.get("address") or name
         return await self._route_plan_to(
             name, addr, stored.get("lat"), stored.get("lng"), meta,
-            resolved_prefix=f"正在前往{label}：")
+            resolved_prefix=f"正在前往{label}：", ctx=ctx)
 
     async def _set_place_and_go(self, place_key: str, label: str, address: str,
                                 ctx, meta, navigate: bool) -> AgentResult:
@@ -532,7 +536,7 @@ class NavigationAgent(BaseAgent):
         ).action("navigate", payload)
 
     async def _route_plan_to(self, name: str, address: str, lat, lng, meta,
-                             *, resolved_prefix: str = "") -> AgentResult:
+                             *, resolved_prefix: str = "", ctx=None) -> AgentResult:
         """导航到具体目的地：出路线规划卡（当前位置 → 目的地，best-effort 距离/时长）+ navigate。
         与顺路途经点的 route_plan 卡同一范式，让用户直观看到"已规划好路线（起点→终点）"。"""
         payload = self._navigate_payload(name, lat, lng, meta)
@@ -558,6 +562,19 @@ class NavigationAgent(BaseAgent):
         # 用户接一句「沿途帮我找充电站」即进 charging 流程。电量经端侧 meta 注入
         # （server.py 把 VAL 真实电量写 vehicle_battery），拿不到就不提示（fail-open）。
         speech += self._range_advisory(distance_km, meta)
+        # R7（旅程 A2-4/B5-1⑥）：REMINDABLE_ACTIVE「即插」契约兑现——写 ETA 事件，
+        # 「到之前一刻钟提醒我打电话」由 reminder 消费（事件时刻-提前量），不再反问时间。
+        # best-effort：无 ctx/无时长/写失败都不影响导航本体。
+        if ctx is not None and duration_min:
+            try:
+                now_ts = int(time.time())
+                await ctx.save_shared_state(REMINDABLE_ACTIVE, {
+                    "source": "navigation", "label": f"前往{name}",
+                    "ts": now_ts,
+                    "items": [{"title": f"到达{name}",
+                               "fire_at": now_ts + int(float(duration_min) * 60)}]})
+            except Exception as e:
+                logger.debug("navigation remindable save skipped: %s", e)
         card = {"type": "route_plan", "origin": "当前位置", "destination": name,
                 "waypoints": [], "distance_km": distance_km, "duration_min": duration_min}
         return AgentResult(

@@ -352,7 +352,14 @@ def classify_structured(text: str) -> dict | None:
         return _s("setting", "control", "close" if "关" in t else "open", "key_tone", conf=0.9)
 
     # ── 空调 ──────────────────────────────────────────────
-    if ("空调" in t and "界面" not in t and "页面" not in t) or \
+    # R5 让路（旅程 B3-3）：①「记住，我最喜欢的空调温度是26度」是**偏好陈述**要进云端
+    # 记忆（原被温度分支当场执行成开空调 26 度）；②「把空调调到我喜欢的温度」参数在
+    # 用户画像里，须由云端记忆召回填值（原端侧当「开空调」秒回「开了」）。整句上云。
+    if any(w in t for w in ("记住", "记一下", "帮我记", "别忘了我")) \
+            or ("喜欢" in t and ("温度" in t or "空调" in t)) \
+            or any(w in t for w in ("常用的温度", "习惯的温度", "老样子")):
+        pass                                   # 不进空调分支，落到云端兜底
+    elif ("空调" in t and "界面" not in t and "页面" not in t) or \
             ("温度" in t and not _is_env_temp_query(t)) or \
             "风速" in t or "风量" in t or \
             (("热" in t or "冷" in t) and ("度" in t or "一点" in t or "再" in t)):
@@ -859,7 +866,10 @@ def classify_structured(text: str) -> dict | None:
         return _s("phone", "control", "hangup", "phone", conf=0.95)
     if "回拨" in t or "重拨" in t:
         return _s("phone", "control", "callback", "phone", conf=0.9)
-    if "打电话" in t or "拨打" in t or "拨电话" in t or "拨给" in t:
+    # R7 让路（旅程 A2-4）：「到之前一刻钟**提醒我**给张姐打电话」是设提醒不是当场拨号——
+    # 含提醒/别忘了词形的整句上云归 reminder（否则端侧秒回「暂不支持哦」把提醒吞了）。
+    if ("打电话" in t or "拨打" in t or "拨电话" in t or "拨给" in t) \
+            and not any(w in t for w in ("提醒", "别忘了", "记得", "叫我")):
         return _s("phone", "control", "call", "phone", conf=0.9)
 
     # ── 通讯录 ────────────────────────────────────────────

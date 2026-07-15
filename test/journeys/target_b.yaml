@@ -230,7 +230,7 @@ journeys:
           latency_s: 45
           action_absent: [vehicle.control]
           speech_not: [保存吗, 创建]      # 也不该被当成造场景
-      - sleep: 25                 # 记忆抽取巩固窗口
+      - sleep: 40                 # 记忆抽取巩固窗口（LLM 抽取+embedding 是异步后处理）
       - new_session: true
         say: 把空调调到我喜欢的温度
         expect:

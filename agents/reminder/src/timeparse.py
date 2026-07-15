@@ -286,14 +286,18 @@ def recur_label(recur: str) -> str:
 
 # 跨域提醒 P1c：事件锚定的提前量（「提前10分钟/开赛前半小时」）；无词形用默认
 _LEAD_HALF_RE = re.compile(r"(?:提前|开赛前|开始前|前)\s*半\s*个?\s*(?:小时|钟头)")
+# R7：「一刻钟」提前量（「到之前一刻钟提醒我」）——非标准数词，单列
+_LEAD_QUARTER_RE = re.compile(r"(?:提前|之前|前)\s*一?刻钟?|一刻钟\s*(?:前|之前)")
 _LEAD_RE = re.compile(r"(?:提前|开赛前|开始前|前)\s*" + _NUM + r"\s*个?\s*(分钟|小时|钟头)")
 
 
 def parse_lead(text: str, default_s: int = 600) -> int:
-    """事件提前量（秒）：「提前N分钟/开赛前半小时/前一小时」；无词形返回 default_s。"""
+    """事件提前量（秒）：「提前N分钟/开赛前半小时/前一小时/一刻钟」；无词形返回 default_s。"""
     t = text or ""
     if _LEAD_HALF_RE.search(t):
         return 1800
+    if "刻钟" in t and _LEAD_QUARTER_RE.search(t):
+        return 900
     m = _LEAD_RE.search(t)
     if m:
         n = _cn2int(m.group(1))

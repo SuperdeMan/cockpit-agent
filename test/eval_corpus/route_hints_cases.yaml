@@ -113,6 +113,13 @@
   source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
   tags: [reminder, replace]
 
+# R6（旅程 A1-4）：条件句让给 LLM 规划走 adaptive（整句 replace 会把条件吞成标题反问时间）
+- text: 查一下明天深圳会不会下雨，要是下雨就提醒我明早带伞
+  initial_intents: []
+  expect_final_intents: []
+  source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R6"
+  tags: [reminder, guard, conditional]
+
 # R3（旅程 B1-3）：焦点指代「那附近」让给 LLM 规划（replace 灌整句会剥 location 槽）
 - text: 那附近有停车场吗
   initial_intents: []

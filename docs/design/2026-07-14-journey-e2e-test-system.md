@@ -490,3 +490,68 @@ HMI 零改动。结果：
 `Emulation.setGeolocationOverride` + 预置 localStorage `cockpit.settings.v1.locationEnabled`
 后 reload），「附近」类用例才有定位；②React 受控输入必须走原生 setter + `input` 事件，
 直接赋值 value 不生效。截图证据 `test/hmi_cdp/shots/`（gitignore）。
+
+### 红灯修复（2026-07-15，泓舟拍板「9 项全按建议修」+ Q1-Q4 按建议执行）
+
+**批次1（快赢，commit `96093ad`）**：R4 reminder hint 回忆式 guard（「提醒我什么来着」不再
+被当新提醒）/ R9 provider 故障降级升级为回落接地搜索（`_search(skip_sports=True)` 防二次吃
+超时；FAILED 话术改 OK——聚合器吞 FAILED 的 scene 同坑，3 个旧契约单测按新契约更新）/
+Q3 `_sports_date` 补 昨晚·后天·周X·下周X（自然周口径）+ 日期门控按所问口径诚实 /
+Q2 charging 直达判定 15% 保留余量 + 短途尾缓冲不吞唯一补电点。真栈双源齐挂
+（apifootball+exa 同晚超时）实测降级链层层诚实。
+
+**批次2（commit `983bedf`）**：
+- **R1**：navigation `_dest_matches` 包含式强校验（name_matches 的 2 字公共子串对直报
+  目的地太松）→ 不匹配先去偏置全国重搜再地标 LLM，都验证不出保留原结果；就近类目流
+  strict=False 免伤。裸城市名走 provider 新增 `geocode_level`（高德 level 权威判据）：
+  navigation ≤4 字先判行政级→导航行政中心；charging `_clarify_vague_destination` 挂
+  `_plan`+`_find` 双入口。**真栈五连转正**：广州塔→广州塔、宝安机场→深圳宝安国际机场、
+  大梅沙→大梅沙海滨公园、惠州→dest_choice 候选卡（B2-3/B5-2 前提恢复）。
+- **R2**：engine 插话不清挂起（`held_pending` 贯穿 + `_settle_session` + final 软提醒；
+  新挂起单槽覆盖；「取消」仍即时）。B2-1 转绿（插话天气后「确认」→「下班模式建好了」）、
+  B2-3 转绿。**测试防假绿**：插话轮必须用不自挂起的单步计划（stub planner 恒回两步
+  计划会覆盖旧挂起「因错误的理由通过」）。
+- **R3**：B1-2 被 R1 连带修复（focus→weather 链路本就在，是错 POI 进焦点装成缺失）；
+  B1-3 真根因=nearby 把地名 location 槽交给**无城市偏置 geocode**（「万象天地」全国歧义
+  →呼和浩特）→ `_resolve_center` 按当前坐标偏置搜名+包含校验取坐标；manifest guard
+  放行焦点指代句（那附近/那边）。B1-3 转绿（润玺一期-东停车场）。
+- **B3-2 本体**：navigation `_range_advisory`（续航盖不住本程含 15% 余量→话术主动建议
+  补能，advisory 零动作，fail-open）。B3-2 转绿。
+
+**批次3（R5/R6/R7/R8 + B2-3 序号尾巴）**：
+- **R7**：navigation `_route_plan_to` 按 ETA 写 `REMINDABLE_ACTIVE`（「即插」契约兑现）+
+  reminder `_REMINDABLE_REF_RE` 补 到之前/抵达前/快到 + `parse_lead` 一刻钟=900s +
+  端侧电话分支对 提醒/别忘了/记得 让路。**A2-4 转绿**（「到之前一刻钟提醒我给张姐打电话」
+  →「到达深圳宝安国际机场 今天 12:23 开始，提前 15 分钟提醒你」）。
+- **R5**：端侧空调分支对 记住/我喜欢+温度 让路（偏好陈述不再被当场执行、参数化句不再
+  「开了」敷衍）+ scene manifest 反界定（偏好陈述≠创建场景）+ planner prompt 偏好槽位
+  护栏（**只能取自记忆召回，召回不到留空追问，绝不臆造数值执行**——首验抓到 LLM 臆造
+  22 度直接开空调）。turn1 已验通过（「好嘞，已经记住啦」纯记忆应答）。
+- **R6**：planner prompt 条件依赖判据（如果/要是…就→adaptive 先查后定）+ reminder hint
+  guard 排除条件连词（**首验发现 hint 的「提醒我」把条件句整句抢走，prompt 根本没见到**）
+  ——A1-4 断言同步收紧（原被用户原话回声蒙过=假绿）。
+- **R8**：trip `_modify_rainy_days_indoor`——按 `Day.weather` **确定性**定位雨天 → 全部
+  雨天合并一次 propose+ground 强室内约束（首验逐天各跑一轮 85.9s 撑爆 90s 网关窗口）→
+  无雨诚实「不用调整」。
+- **B2-3 序号尾巴**：新共享键 `CHARGING_DEST_CHOICES`（登记 shared_state.py+conventions
+  §9）——澄清时存候选、续接轮 `_resolve_dest_ordinal` 把引擎补槽的字面「第一个」按序
+  回填真名（消费即清）；首验发现真栈拿字面搜 POI 选到当前位置旁无关站。
+
+**测试方法论追加**：mock KV 不回读（`make_context` 的 AsyncMock）——共享态断言必须
+KV 钉内存（scene 测试 KV.bind 同款），本批抓到两个「因兜底断言蒙混」的假绿单测并收紧。
+
+### 修复后旅程账本（2026-07-15 批次3 收口）
+
+| 旅程 | 修复前 | 修复后 | 备注 |
+|---|---|---|---|
+| A2-4 | 🔴「暂不支持哦」 | ✅ | 「到之前一刻钟提醒我给张姐打电话」→「到达深圳宝安国际机场 今天 12:23，提前 15 分钟提醒你」 |
+| B1-2/B1-3 | 🔴 | ✅ | 焦点位置迁移（天气@大梅沙 / 停车场@润玺一期） |
+| B2-1/B2-2/B2-3 | 🔴🟡🔴 | ✅✅✅ | 中断-恢复三态全通 |
+| B3-1 | 🔴 假重排→超时 | ✅ | 「第1天、第2天预计有雨，已把当天安排改成室内为主」36.3s |
+| B3-2 | 🔴 | ✅ | 广州塔真解析 + 低电量补能 advisory |
+| **A1-4** | 🔴 条件被吞直接建单 | 🔴（能力跃迁后残余） | **条件链已通**：plan=adaptive 只排天气步→T2 查到雨自主补建 reminder（`t2.iter replans=1`）→挂起追问时刻。残余两点：①挂起话术未携带前序天气结论（engine `_suspend` 只带挂起步 speech，用户听不到「明天有雨」）②「明早」无时刻 timeparse 不出→追问（半合理）。修复路径：`_suspend` 对 adaptive 多结果场景前缀已完成步简报（注意别让 trip 确认双重播报）｜留卡 |
+| **B3-3** | 🔴 端侧劫持污染 | 🔴（根因移到记忆层） | 端侧/规划侧已修（turn1「记住啦」纯记忆应答✓、turn3 上云✓）；真栈探针揪出记忆两缺陷：**M1 场景参数漏进个人偏好**（钓鱼模式的空调 22 度被抽取成「你最喜欢 22 度」）、**M2 显式新偏好（26）未时序覆盖旧值**（superseded_by 未生效或 26 未被抽取）。属记忆子系统主题，立卡 |
+
+**遗留卡（三张，独立会话认领）**：①A1-4 残余（`_suspend` 携带前序结论）；②B3-3 记忆
+M1/M2（抽取黑名单补场景参数 + 显式偏好陈述的时序覆盖）；③B5-1 showcase 全量重跑验证
+（多项依赖修复已合入，待整旅程复验）。

@@ -704,3 +704,35 @@ def test_range_advisory_low_battery_long_trip():
     assert adv(114.2, {}) == ""                                # 无电量数据
     assert adv(0, {"vehicle_battery": "15"}) == ""             # 无里程
     assert adv(114.2, {"vehicle_battery": "abc"}) == ""        # 脏数据
+
+
+def test_navigate_writes_remindable_eta():
+    """R7（旅程 A2-4）：导航成功按 ETA 写 REMINDABLE_ACTIVE——「到之前一刻钟提醒我打电话」
+    由 reminder 消费（事件时刻-提前量），不再反问时间。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider(default=[_poi("深圳宝安国际机场")])
+
+    async def get_route(o, d, meta=None, **kw):
+        return {"distance_km": 26.1, "duration_min": 41.0}
+
+    agent.poi.get_route = get_route
+    # make_context 的 shared_state 是 AsyncMock 不真存——钉进内存 dict 才能断言写入
+    kv = {}
+    ctx = make_context()
+
+    async def _save(key, value):
+        kv[key] = value
+        return True
+
+    ctx.save_shared_state = _save
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "宝安国际机场"},
+        raw_text="导航去宝安国际机场", ctx=ctx,
+        meta={"current_lat": "22.53", "current_lng": "113.95"}))
+    assert res.status == "ok"
+
+    d = kv.get("remindable_active") or {}
+    assert d.get("source") == "navigation"
+    items = d.get("items") or []
+    assert items and "宝安国际机场" in items[0]["title"]
+    assert items[0]["fire_at"] > d.get("ts", 0)          # ETA 在未来

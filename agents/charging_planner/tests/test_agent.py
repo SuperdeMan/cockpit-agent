@@ -353,3 +353,50 @@ def test_find_specific_destination_not_blocked_by_level_probe():
         raw_text="去会展中心的路上找个充电站"))
     assert res.status == "ok"
     assert "真充电站" in (res.speech or "")
+
+
+def test_dest_ordinal_resolved_from_choices():
+    """B2-3 尾巴：destination=「第一个」按上一轮 dest_choice 候选回填真名（消费即清）。"""
+    import asyncio
+    from agents._sdk.testing import make_context, run_handle
+    from agents._sdk.shared_state import CHARGING_DEST_CHOICES
+    from agents.charging_planner.src.providers.base import ChargingStation
+
+    agent = ChargingPlannerAgent()
+    seen = {}
+
+    class _PoiStub:
+        async def geocode_level(self, address, meta=None):
+            return "兴趣点", "114.4,23.1"
+
+    class _ChargingStub:
+        _poi = _PoiStub()
+
+        async def find_nearby(self, near, charger_type="", meta=None):
+            seen["near_addr"] = getattr(near, "address", "")
+            return [ChargingStation(id="c1", name="惠州站充电站", lat=23.1, lng=114.4,
+                                    distance_km=0.4, available=0, total=0)]
+
+    agent.charging = _ChargingStub()
+    # make_context 的 shared_state 是 AsyncMock 不真存——钉进内存 dict（scene KV 同款）
+    kv = {}
+    ctx = make_context()
+
+    async def _save(key, value):
+        kv[key] = value
+        return True
+
+    async def _load(key):
+        return kv.get(key)
+
+    ctx.save_shared_state = _save
+    ctx.load_shared_state = _load
+    # 预置上一轮澄清写入的候选
+    kv[CHARGING_DEST_CHOICES] = {"items": [{"name": "惠州站", "address": "惠城区"},
+                                           {"name": "惠州西湖", "address": "惠城区"}]}
+    res = asyncio.run(run_handle(
+        agent, "charging.find", slots={"destination": "第一个"},
+        raw_text="第一个", ctx=ctx))
+    assert res.status == "ok"
+    assert seen.get("near_addr") == "惠州站"            # 序号真回填成候选名（不许蒙混）
+    assert kv.get(CHARGING_DEST_CHOICES) == {}          # 消费即清

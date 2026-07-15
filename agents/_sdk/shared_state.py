@@ -14,6 +14,7 @@ Agent 无状态化：一次会话的临时状态落 profile KV（经 `Context.sa
 | `remindable_active`| 产"未来事件"的域 opt-in（现 info sports；trip/charging 即插）| reminder（缺时间路径推导） | `{source,label,ts,items:[{title,fire_at}]}`（items 序=卡片渲染序） | 会话/被覆盖 |
 | `scene_active`   | scene-orchestrator（activate 写 / deactivate 清） | scene-orchestrator（deactivate 恢复基准；P2 verify 对账） | `{scene_id,scene_name,activated_at,activation_id,snapshot{},solved_actions[],deferred[]}` | 会话/被覆盖 |
 | `scene_pending`  | scene-orchestrator（create/update 追问或回读时写草案） | scene-orchestrator（确认轮取草案落库，不重跑 LLM） | `{name,spec,draft{},overwrite}` | 一轮追问/确认；消费即清 |
+| `charging_dest_choices` | charging-planner（泛目的地 dest_choice 澄清时写候选） | charging-planner（续接轮「第N个」按序回填目的地） | `{items:[{name,address}]}`（序=卡片渲染序） | 一轮澄清；消费即清 |
 
 注：底层 profile KV 无独立 TTL（随画像存储；被同 key 下次写覆盖）。新增跨 Agent 状态键**先在此
 登记 + 更新 conventions.md**，再在 owner/reader 用常量引用，不要在业务码写裸字符串。
@@ -40,7 +41,10 @@ SCENE_ACTIVE = "scene_active"
 # scene.create/update 的追问与回读草案 → 确认轮直接取草案落库（不重跑 LLM：重编译可能
 # 产出与用户确认时看到的不一样的动作）。消费即清。
 SCENE_PENDING = "scene_pending"
+# charging 泛目的地 dest_choice 澄清候选 → 续接轮「第N个」按序回填目的地（旅程 B2-3：
+# 引擎补槽回填的是字面「第一个」，agent 侧须能解序号，否则拿字面去搜 POI）。消费即清。
+CHARGING_DEST_CHOICES = "charging_dest_choices"
 
 __all__ = ["NEWS_ACTIVE", "RESEARCH_ACTIVE", "TRIP_ACTIVE",
            "REMINDERS_ACTIVE", "REMINDER_PENDING", "REMINDABLE_ACTIVE",
-           "SCENE_ACTIVE", "SCENE_PENDING"]
+           "SCENE_ACTIVE", "SCENE_PENDING", "CHARGING_DEST_CHOICES"]

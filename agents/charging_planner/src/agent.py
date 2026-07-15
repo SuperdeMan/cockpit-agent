@@ -4,13 +4,16 @@
 不做车控——只产出导航动作和信息建议。
 """
 from __future__ import annotations
+import json
 import logging
 import os
+import re
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
 from agents._sdk.landmark import is_landmark_description, landmark_candidates
+from agents._sdk.shared_state import CHARGING_DEST_CHOICES
 from .providers import build_charging_provider
 from .providers.mock import MockChargingProvider
 from .providers.base import GeoPoint
@@ -18,6 +21,11 @@ from .providers.base import GeoPoint
 logger = logging.getLogger("agent.charging_planner")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
+
+# dest_choice 续接（旅程 B2-3）：引擎补槽回填的是用户字面「第一个」——按上一轮候选序号解析
+_ORDINAL_DEST_RE = re.compile(r"^第?\s*([一二两三四五六七八九十\d])\s*[个家项]?$")
+_CN_ORD = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+           "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 
 
 class ChargingPlannerAgent(BaseAgent):
@@ -58,7 +66,8 @@ class ChargingPlannerAgent(BaseAgent):
         # 泛目的地（含裸城市名）与 plan 同门：先 dest_choice 澄清（R1，B2-3/B5-2）。
         destination = (intent.slots.get("destination") or "").strip()
         if destination:
-            clarify = await self._clarify_vague_destination(destination, meta)
+            destination = await self._resolve_dest_ordinal(ctx, destination)
+            clarify = await self._clarify_vague_destination(destination, meta, ctx=ctx)
             if clarify:
                 return clarify
             return await self._find_near_destination(destination, charger_type, soc, meta)
@@ -184,7 +193,35 @@ class ChargingPlannerAgent(BaseAgent):
         d = (dest or "").strip()
         return bool(d) and d.endswith(cls._ADMIN_SUFFIX)
 
-    async def _clarify_vague_destination(self, dest: str, meta) -> AgentResult | None:
+    async def _resolve_dest_ordinal(self, ctx, dest: str) -> str:
+        """dest_choice 续接：destination=「第一个」这类字面序号 → 按上一轮候选回填真名。
+
+        引擎补槽把用户原话原样灌进槽位（旅程 B2-3：真栈拿「第一个」去搜 POI，选到当前
+        位置旁的无关站）。候选由 `_clarify_vague_destination` 写入 CHARGING_DEST_CHOICES
+        （序=卡片渲染序），命中即消费清空；无候选/越界原样返回（走后续正常解析）。"""
+        m = _ORDINAL_DEST_RE.match((dest or "").strip())
+        if not m or ctx is None:
+            return dest
+        try:
+            data = await ctx.load_shared_state(CHARGING_DEST_CHOICES)
+            d = json.loads(data) if isinstance(data, str) else (data or {})
+        except Exception:
+            return dest
+        items = [it for it in (d.get("items") or []) if isinstance(it, dict)]
+        v = m.group(1)
+        idx = int(v) if v.isdigit() else _CN_ORD.get(v, 0)
+        if 0 < idx <= len(items) and items[idx - 1].get("name"):
+            name = str(items[idx - 1]["name"])
+            try:
+                await ctx.save_shared_state(CHARGING_DEST_CHOICES, {})   # 消费即清
+            except Exception:
+                pass
+            logger.info("dest ordinal %r -> %r", dest, name)
+            return name
+        return dest
+
+    async def _clarify_vague_destination(self, dest: str, meta,
+                                         ctx=None) -> AgentResult | None:
         """目的地过泛 → dest_choice 澄清卡；不过泛返回 None（plan 与 find 共用）。
 
         判定两层：①行政区划后缀（"兰州市"）；②R1（旅程 B2-3/B5-2）：裸城市名
@@ -213,6 +250,13 @@ class ChargingPlannerAgent(BaseAgent):
             logger.warning("charging suggest destinations failed: %s", e)
         if candidates:
             names = "、".join(c["name"] for c in candidates[:3])
+            if ctx is not None:
+                try:   # 候选落共享态（序=卡片渲染序）：续接轮「第N个」由 _resolve_dest_ordinal 回填
+                    await ctx.save_shared_state(CHARGING_DEST_CHOICES, {
+                        "items": [{"name": c["name"], "address": c.get("address", "")}
+                                  for c in candidates]})
+                except Exception as e:
+                    logger.debug("dest choices save skipped: %s", e)
             return AgentResult(
                 status=NEED_SLOT, missing_slots=["destination"],
                 speech=f"{dest}范围比较大，您具体要去哪个？例如{names}。"
@@ -239,7 +283,8 @@ class ChargingPlannerAgent(BaseAgent):
                 follow_up="请告诉我目的地", missing_slots=["destination"])
 
         # 目的地过泛（如"兰州市"/裸「惠州」）→ 先二次确认具体地点，再据此规划途经点。
-        clarify = await self._clarify_vague_destination(dest, meta)
+        dest = await self._resolve_dest_ordinal(ctx, dest)
+        clarify = await self._clarify_vague_destination(dest, meta, ctx=ctx)
         if clarify:
             return clarify
 

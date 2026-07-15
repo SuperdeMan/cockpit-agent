@@ -194,3 +194,11 @@ def test_parse_lead():
     assert parse_lead("开始前一小时叫我") == 3600
     assert parse_lead("提前两小时提醒我") == 7200
     assert parse_lead("到时候提醒我", default_s=0) == 0     # 无词形 → 传入缺省
+
+
+def test_parse_lead_quarter_hour():
+    """R7（旅程 A2-4）：「到之前一刻钟」= 提前 900 秒。"""
+    from agents.reminder.src.timeparse import parse_lead
+    assert parse_lead("到之前一刻钟提醒我给张姐打电话") == 900
+    assert parse_lead("提前一刻钟叫我") == 900
+    assert parse_lead("开赛前提醒我") == 600          # 无量词仍默认 10 分钟

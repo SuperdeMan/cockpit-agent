@@ -533,3 +533,35 @@ class TestEnvTempQueryNotHvac:
 
     def test_ac_keyword_still_hvac(self):
         assert (self._name("打开空调") or "").startswith("hvac")
+
+
+# ═══════════════════════════════════════════════════
+# 旅程红灯 R5/R7：偏好陈述与「提醒打电话」不被端侧劫持
+# ═══════════════════════════════════════════════════
+
+class TestPreferenceAndReminderLetThrough:
+    """B3-3：「记住，我最喜欢的空调温度是26度」曾被温度分支当场执行成开空调；
+    「把空调调到我喜欢的温度」曾被当「开空调」秒回——参数在画像里须云端记忆召回。
+    A2-4：「到之前一刻钟提醒我给张姐打电话」曾被电话分支秒回「暂不支持哦」。"""
+
+    def _name(self, text):
+        r = classify(text)
+        return r["name"] if r else None
+
+    def test_remember_preference_not_hvac(self):
+        n = self._name("记住，我最喜欢的空调温度是26度")
+        assert n is None or not n.startswith(("hvac", "aircon"))
+
+    def test_favorite_temp_not_hvac(self):
+        n = self._name("把空调调到我喜欢的温度")
+        assert n is None or not n.startswith(("hvac", "aircon"))
+
+    def test_plain_hvac_still_local(self):
+        assert self._name("把空调调到26度") in ("hvac.set", "aircon.set")
+
+    def test_reminder_call_not_phone(self):
+        n = self._name("到之前一刻钟提醒我给张姐打电话")
+        assert n is None or not n.startswith("phone")
+
+    def test_plain_call_still_phone(self):
+        assert self._name("给张姐打电话") == "phone.call"

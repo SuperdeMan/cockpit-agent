@@ -10,10 +10,13 @@ journeys:
     setup:
       location: {lat: 22.5333, lng: 113.9505}
     turns:
+      # 校准记录（批次3 假绿）：speech_all [雨,提醒] 被「好的，查一下…就提醒我带伞。
+      # 什么时候提醒你？」的**用户原话回声**蒙过（reminder hint 吞条件句反问时间）——
+      # 补 speech_not 反问 + 要求天气证据词。
       - say: 查一下明天深圳会不会下雨，要是下雨就提醒我明早带伞
         expect:
           latency_s: 75
-          # 两个合法终态：下雨→成单；不下雨→明说不用。共同红线：不能只答天气把后半句吞了。
+          speech_not: [什么时候提醒, 几点提醒]
           any_of:
             - speech_all: [雨, 提醒]
             - speech_any: [不会下雨, 无需, 不用带伞, 没有雨]
