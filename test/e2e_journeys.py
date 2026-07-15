@@ -777,6 +777,8 @@ async def main() -> int:
     ap.add_argument("--strict-target", action="store_true",
                     help="目标级失败也让退出码=1")
     ap.add_argument("--no-report", action="store_true")
+    ap.add_argument("--force-report", action="store_true",
+                    help="局部跑（--id/--suite/--lane/--level）也覆盖 canonical 报告")
     ap.add_argument("--no-badcase", action="store_true")
     args = ap.parse_args()
 
@@ -821,12 +823,18 @@ async def main() -> int:
     await listener.close()
 
     data, md = build_report(results, provider, args.lane, started)
-    if not args.no_report:
+    # 报告工件纪律：journeys_report.{json,md} 是 canonical 全量基线（入库），只有
+    # **无过滤的全量跑**才默认覆盖——否则一次 --id 局部验证就把 33 条收官报告顶掉
+    # （批次1 踩过）。局部跑要留档用 --force-report。
+    is_full_run = not (ids or args.suite or args.lane or args.level)
+    if not args.no_report and (is_full_run or args.force_report):
         REPORT_DIR.mkdir(parents=True, exist_ok=True)
         (REPORT_DIR / "journeys_report.json").write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         (REPORT_DIR / "journeys_report.md").write_text(md, encoding="utf-8")
         print(f"报告已写 {REPORT_DIR / 'journeys_report.md'}")
+    elif not args.no_report:
+        print("（局部跑不覆盖 canonical 报告；要留档加 --force-report）")
 
     reg_fail = [r for r in results if r.status == "fail" and r.j["level"] == "regression"]
     tgt_fail = [r for r in results if r.status == "fail" and r.j["level"] == "target"]
