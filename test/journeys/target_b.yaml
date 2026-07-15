@@ -152,7 +152,12 @@ journeys:
       location: {lat: 22.5333, lng: 113.9505}
     turns:
       # dest_choice 是 poi_list 卡的 purpose 字段（hmi types.ts:327），不是独立卡类型
-      - say: 去惠州的路上帮我找个充电站
+      # 校准记录（2026-07-15）：原句「去惠州的路上帮我找个充电站」的「路上/找个」形态
+      # 被 planner 采样翻面到 navigation 顺路途经点流（直接出路线+waypoint 候选，无挂起
+      # ——对该句是更优体验，非缺陷；charging 无 route_hints，路由纯 LLM），dest_choice
+      # 前提不稳（B5-2 校准同族）。改用 charging 例句形态「怎么充电」——真栈探针 6/6
+      # 稳定出 dest_choice（obs 翻面样本 c03a87cf35934837）。
+      - say: 去惠州怎么充电
         expect:
           latency_s: 60
           cards_any: [poi_list]

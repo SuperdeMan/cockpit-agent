@@ -65,6 +65,11 @@ _MD_RE = re.compile(_NUM + r"\s*月\s*" + _NUM + r"\s*[日号]")
 _DOM_RE = re.compile(_NUM + r"\s*号")
 _SEGS = [("凌晨", "dawn"), ("早上", "am"), ("早晨", "am"), ("上午", "am"), ("中午", "noon"),
          ("下午", "pm"), ("傍晚", "pm"), ("晚上", "eve"), ("夜里", "eve")]
+# 段位默认时刻（旅程 A1-4 ②收口）：「明早/明晚/明天下午」已给出日+段位粒度，再追问
+# 「什么时候提醒你」是忽略已给信息——按段位惯例默认成单，display 回读完整时刻，用户
+# 可一句「改到九点」调整（P1a update）。仅「日+段位」同时在场才默认；裸日期（「明天
+# 提醒我开会」）与裸段位（「晚上提醒我」——过点后会被滚到明晚，语义存疑）仍 NEED_TIME。
+_SEG_DEFAULT_HOUR = {"dawn": 6, "am": 8, "noon": 12, "pm": 15, "eve": 20}
 _HHMM_RE = re.compile(r"([01]?\d|2[0-3])[:：]([0-5]\d)")
 _CLOCK_RE = re.compile(_NUM + r"\s*点\s*(半|一刻|三刻|" + _NUM + r"\s*分?)?")
 
@@ -195,6 +200,8 @@ def parse_time_text(text: str, *, now: datetime | None = None,
                 hour = None
     if hour is None and seg_kind == "noon":
         hour, minute, h24 = 12, 0, True   # "中午"默认 12:00
+    if hour is None and day_date is not None and seg_kind:
+        hour, minute, h24 = _SEG_DEFAULT_HOUR[seg_kind], 0, True   # 日+段位 → 段位默认时刻
 
     if hour is None:
         return ParsedTime(NEED_TIME) if (day_date is not None or seg_kind) else ParsedTime(FAIL)

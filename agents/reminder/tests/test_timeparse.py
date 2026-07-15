@@ -99,9 +99,25 @@ def test_week_and_date(text, local):
     assert r.fire_at == ts(local)
 
 
+# ── 日+段位无时刻 → 段位默认（旅程 A1-4 ②：「明早带伞」不再反问「什么时候」）──
+@pytest.mark.parametrize("text,local", [
+    ("提醒我明早带伞", L(2026, 7, 12, 8, 0)),           # A1-4 原句形态
+    ("明天早上提醒我", L(2026, 7, 12, 8, 0)),
+    ("明晚提醒我看球", L(2026, 7, 12, 20, 0)),
+    ("明天下午提醒我复诊", L(2026, 7, 12, 15, 0)),
+    ("后天凌晨提醒我看流星雨", L(2026, 7, 13, 6, 0)),
+    ("今晚提醒我吃药", L(2026, 7, 11, 20, 0)),          # now 10:00 未过点
+])
+def test_day_plus_segment_defaults_clock(text, local):
+    r = P(text)
+    assert r.status == OK, text
+    assert r.fire_at == ts(local), text
+
+
 # ── need_time / fail / 显式过去 ──
 def test_day_without_clock_needs_time():
-    for t in ("明天提醒我开会", "周三提醒我", "明天早上提醒我", "下午提醒我"):
+    # 裸日期与裸段位仍追问：默认只在「日+段位」同时在场时给
+    for t in ("明天提醒我开会", "周三提醒我", "下午提醒我", "晚上提醒我"):
         assert P(t).status == NEED_TIME, t
 
 
