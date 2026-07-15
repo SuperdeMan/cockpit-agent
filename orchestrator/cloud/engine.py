@@ -19,7 +19,7 @@ from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
 from .session import SessionStore
 from .loop import LoopController
 from .context import ContextManager, build_context, _POC_DEFAULT_SCOPES
-from .progress import (is_complex, phase_label, step_summary,
+from .progress import (is_complex, phase_label, result_summary, step_summary,
                        task_summary, plan_steps_summary)
 from observability import events as obs_events
 from observability.metrics import metrics
@@ -405,9 +405,12 @@ class PlannerEngine:
                 yield {"kind": "speech",
                        "delta": strip_markdown_speech(step_result.speech) + "。"}
 
-            # 挂起：需确认/需补槽
+            # 挂起：需确认/需补槽。prior=本轮新完成步（种子是上轮已播报过的，切掉）；
+            # 非复杂路径逐步 speech 已流出，但那只在单步计划成立（多步即 is_complex），
+            # 单步无前序——无双重播报面。
             if step_result.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
-                yield await self._suspend(step_result, results, plan, ctx)
+                yield await self._suspend(step_result, results, plan, ctx,
+                                          prior=results[len(seed_results):])
                 return
 
         # 通用 escalate（一跳）：executor 路径——多步计划里第一个声明改派的步结果被
@@ -419,7 +422,8 @@ class PlannerEngine:
             if isinstance(results[esc_i].data, dict):
                 results[esc_i].data.pop("_escalate", None)
             sink: dict = {}
-            async for ev in self._run_escalated(esc, ctx, agents, sink):
+            async for ev in self._run_escalated(esc, ctx, agents, sink,
+                                                prior=results[len(seed_results):]):
                 yield ev
             if sink.get("suspended"):
                 return
@@ -488,7 +492,8 @@ class PlannerEngine:
                 "reason": str(esc.get("reason") or "")}
 
     async def _run_escalated(self, esc: dict, ctx: PlanContext, agents: list,
-                             sink: dict) -> AsyncIterator[dict]:
+                             sink: dict,
+                             prior: list[StepResult] | None = None) -> AsyncIterator[dict]:
         """执行通用 escalate 改派（每轮最多一跳）。
 
         目标 intent 在 agent 目录里找到承接方后经 `PlanBuilder._validated_steps` 装配成单步
@@ -529,7 +534,7 @@ class PlannerEngine:
                 sr.data.pop("_escalate", None)   # 单跳预算：二跳声明不消费（结构性防环）
             results.append(sr)
             if sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
-                yield await self._suspend(sr, results, mini, ctx)
+                yield await self._suspend(sr, results, mini, ctx, prior=prior)
                 sink["suspended"] = True
                 return
             if show_esc_process and sr.status == StepStatus.OK:
@@ -547,9 +552,16 @@ class PlannerEngine:
                 "summary": summary, "status": status, "step_id": step_id}
 
     async def _suspend(self, step_result: StepResult, results: list[StepResult],
-                       plan: Plan, ctx: PlanContext) -> dict:
+                       plan: Plan, ctx: PlanContext,
+                       prior: list[StepResult] | None = None) -> dict:
         """挂起待确认/待补槽：保存会话态并构造 final 事件。executor 与流式两路共用，
-        保证 F1 多轮确认闭环行为一致。"""
+        保证 F1 多轮确认闭环行为一致。
+
+        prior=本轮**新完成且尚未播报**的步骤结果（旅程 A1-4）：多步/adaptive 计划里
+        前序结论只存在于各步 speech（复杂任务不逐步流出、聚合器在挂起时不会跑），
+        挂起 final 又会整体替换 HMI 气泡——不前缀简报，用户就会被凭空追问
+        （「查到雨才建提醒」却没听到有雨）。调用方负责剔除确认续接种子与已流式
+        播报的结果，防双重播报；挂起步自身不进前缀（trip 确认话术本就是完整叙述）。"""
         await self.session.save(ctx.session_id, SessionState(
             phase="wait_confirm" if step_result.status == StepStatus.NEED_CONFIRM else "wait_slot",
             pending_step_id=step_result.step_id,
@@ -563,14 +575,30 @@ class PlannerEngine:
             status=step_result.status.value,
             attrs={"step_id": step_result.step_id},
         )
+        brief = self._prior_brief(prior or [], step_result)
         return {
             "kind": "final",
-            "speech": step_result.speech,
+            "speech": (brief + (step_result.speech or "")) if brief else step_result.speech,
             "follow_up": step_result.follow_up,
             "actions": step_result.actions,
             "ui_card": step_result.ui_card,
             "need_confirm": step_result.status == StepStatus.NEED_CONFIRM,
         }
+
+    @staticmethod
+    def _prior_brief(prior: list[StepResult], step_result: StepResult) -> str:
+        """挂起前缀：前序已完成步的脱敏简报（安全计数/首句，同过程区口径）。
+
+        身份比较（is）而非 step_id——T2 各轮 replan 的步 id 可能撞名；短回执
+        （「好的」类）不值一播，滤掉。"""
+        parts = []
+        for r in prior:
+            if r is step_result or r.status != StepStatus.OK:
+                continue
+            s = strip_markdown_speech(result_summary(r)).strip().rstrip("。！？!?；;，,")
+            if len(s) >= 4:
+                parts.append(s)
+        return "；".join(parts) + "。" if parts else ""
 
     async def _settle_session(self, ctx: PlanContext, held_pending) -> None:
         """本轮正常收口时的会话清理（R2）：插话轮（held_pending 非空）**不清挂起**——

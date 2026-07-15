@@ -27,6 +27,7 @@ def test_extract_governs_four_classes_and_blacklist():
          "text": "今天别走高速", "scope": "profile.route", "confidence": 0.8},
         {"category": "inferred_preference", "kind": "semantic", "predicate": "hvac.temp",
          "text": "用户常把空调调到23度", "scope": "profile.comfort", "confidence": 0.9},
+        # ↑ hvac.temp 是 climate.temperature 的已知别名 → 写入前归一（B3-3 M2）
         {"category": "sensitive_fact", "kind": "semantic", "predicate": "place.home",
          "text": "家在某小区", "scope": "profile.places", "confidence": 0.95},
         {"category": "explicit_preference", "kind": "semantic", "predicate": "loc",
@@ -40,8 +41,9 @@ def test_extract_governs_four_classes_and_blacklist():
     assert preds["route.avoid_highway"]["provenance"] == "user_stated"
     assert preds["route.avoid_highway"]["confidence"] >= 0.7
     assert preds["route.today"]["expires_at"] > 0                 # temporary 带过期
-    assert preds["hvac.temp"]["provenance"] == "agent_inferred"
-    assert preds["hvac.temp"]["confidence"] <= 0.5               # inferred 低置信
+    assert "hvac.temp" not in preds                              # 别名已归一
+    assert preds["climate.temperature"]["provenance"] == "agent_inferred"
+    assert preds["climate.temperature"]["confidence"] <= 0.5     # inferred 低置信
     assert all(o["review_status"] == "auto_extracted" for o in out)
 
 
@@ -90,6 +92,61 @@ def test_has_coords_and_parse():
     assert _parse("garbage no json") == []
 
 
+# ── 场景配置参数黑名单（B3-3 M1）──────────────────────────
+_SCENE_TURNS = [
+    {"role": "user", "text": "创建一个钓鱼模式：空调22度，氛围灯蓝色"},
+    {"role": "assistant", "text": "将创建「钓鱼模式」：空调22度、氛围灯蓝色。确认保存吗？"},
+    {"role": "user", "text": "确认"},
+]
+
+
+def test_scene_config_params_not_extracted_as_preference():
+    """「创建钓鱼模式：空调22度」的 22 度是场景配置——即使 LLM 抽成偏好也被治理丢弃。"""
+    cands = json.dumps([
+        {"category": "explicit_preference", "kind": "semantic",
+         "predicate": "climate.temperature", "text": "用户最喜欢的空调温度是22度",
+         "scope": "profile.comfort", "confidence": 0.9},
+        {"category": "inferred_preference", "kind": "semantic",
+         "predicate": "light.ambient_color", "text": "用户喜欢蓝色氛围灯",
+         "scope": "profile.comfort", "confidence": 0.8},
+        {"category": "episodic", "kind": "episodic", "predicate": "",
+         "text": "用户创建了钓鱼模式", "scope": "episodic.general", "confidence": 0.8},
+    ])
+    out = asyncio.run(extract(list(_SCENE_TURNS), user_id="u1",
+                              complete_fn=_mock(cands)))
+    texts = [o["text"] for o in out]
+    assert "用户最喜欢的空调温度是22度" not in texts   # 场景参数 → 丢
+    assert "用户喜欢蓝色氛围灯" not in texts           # 场景颜色 → 丢
+    assert "用户创建了钓鱼模式" in texts               # 情景事件本身照常保留
+
+
+def test_scene_activation_param_dropped_but_stated_preference_kept():
+    """「开启午休模式，温度26」的 26 是一次性覆盖 → 丢；显式「记住我最喜欢26度」→ 留。"""
+    activation = [{"role": "user", "text": "开启午休模式，温度26"}]
+    stated = [{"role": "user", "text": "记住，我最喜欢的空调温度是26度"}]
+    cand = json.dumps([
+        {"category": "explicit_preference", "kind": "semantic",
+         "predicate": "climate.temperature", "text": "用户最喜欢的空调温度是26度",
+         "scope": "profile.comfort", "confidence": 0.9},
+    ])
+    dropped = asyncio.run(extract(activation, user_id="u1", complete_fn=_mock(cand)))
+    kept = asyncio.run(extract(stated, user_id="u1", complete_fn=_mock(cand)))
+    assert dropped == []
+    assert len(kept) == 1 and kept[0]["predicate"] == "climate.temperature"
+
+
+def test_preference_stated_inside_scene_sentence_kept():
+    """场景句里带偏好口吻（「记住我喜欢…」）不算纯场景配置——不误伤。"""
+    turns = [{"role": "user", "text": "睡觉模式的时候记住我喜欢24度"}]
+    cand = json.dumps([
+        {"category": "explicit_preference", "kind": "semantic",
+         "predicate": "climate.temperature", "text": "用户喜欢24度",
+         "scope": "profile.comfort", "confidence": 0.9},
+    ])
+    out = asyncio.run(extract(turns, user_id="u1", complete_fn=_mock(cand)))
+    assert len(out) == 1
+
+
 # ── consolidate ──────────────────────────────────────────
 def _store() -> MemoryStore:
     s = MemoryStore()
@@ -117,6 +174,34 @@ def test_consolidate_insert_then_conflict_supersede():
     ids1, ids2, current = asyncio.run(go())
     assert len(ids1) == 1 and len(ids2) == 1
     assert len(current) == 1 and current[0][0]["text"] == "用户现在能吃辣了"  # 只取现行
+
+
+def test_consolidate_supersedes_across_predicate_aliases():
+    """B3-3 M2：历史条目带 LLM 自由造的别名谓词（hvac.temperature），新显式偏好
+    （climate.temperature）也要 supersede 它——否则新旧并存、召回二义（22 vs 26）。"""
+    store = _store()
+
+    async def go():
+        vs = await store._vec()
+        await vs.remember([{  # 模拟修复前入库的旧偏好（别名谓词）
+            "user_id": "u1", "occupant_id": "primary", "kind": "semantic",
+            "predicate": "hvac.temperature", "text": "用户最喜欢的空调温度是22度",
+            "scope": "profile.comfort", "provenance": "user_stated",
+            "confidence": 0.9, "review_status": "auto_extracted"}])
+        await store.append_turn("s1", "user", "记住，我最喜欢的空调温度是26度")
+        j = _mock(json.dumps([{"category": "explicit_preference", "kind": "semantic",
+                               "predicate": "climate.temperature",
+                               "text": "用户最喜欢的空调温度是26度",
+                               "scope": "profile.comfort", "confidence": 0.9}]))
+        ids = await store.consolidate("s1", "u1", complete_fn=j)
+        current = await store.recall(user_id="u1", query="空调温度")
+        return ids, current
+
+    ids, current = asyncio.run(go())
+    assert len(ids) == 1
+    assert len(current) == 1                              # 旧 22 已被时序覆盖
+    assert "26度" in current[0][0]["text"]
+    assert current[0][0]["predicate"] == "climate.temperature"
 
 
 def test_consolidate_equivalent_skips():

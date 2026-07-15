@@ -54,11 +54,19 @@ class LoopController:
                   show_process: bool = False, thinking: bool = False
                   ) -> AsyncIterator[dict]:
         results = list(seed_results or [])
+        n_seed = len(results)      # 种子（确认续接带入，上轮已播报）不进挂起前缀
+        spoken: set[int] = set()   # 已流式播报过的结果（id()）——挂起前缀不再复读
         observations = [summarize(r) for r in results][-self.observation_limit:]
         deadline = self.clock() + self.budget_ms / 1000.0
         current = initial_plan
         replans = 0
         exhausted = False
+
+        def _prior(sr):
+            """本轮新完成且未播报的结果，供挂起 final 前缀简报（旅程 A1-4：
+            adaptive 先查天气再补建 reminder，追问时刻前用户必须先听到天气结论）。"""
+            return [r for r in results[n_seed:]
+                    if id(r) not in spoken and r is not sr]
 
         # 即时反馈：复杂任务由过程区承载（不再用 filler speech，避免气泡刷屏 + 被 TTS 念出）；
         # 非过程区路径（如 reactive 非复杂）保留原 filler 话术。
@@ -100,12 +108,14 @@ class LoopController:
                     self.executor._resolve_slot_refs(step, done_seed)
                 timeout = step.latency_budget_ms / 1000.0
                 final_sr = None
+                did_speak = False
                 stream_start = self.clock()
                 try:
                     async for kind, payload in self._stream(
                             step.endpoint, step.intent, step.slots,
                             ctx, step.meta, timeout=timeout):
                         if kind == "speech":
+                            did_speak = did_speak or bool(payload)
                             yield {"kind": "speech", "delta": payload}
                         elif kind == "action":
                             yield {"kind": "action", "action": payload}
@@ -136,6 +146,8 @@ class LoopController:
                     except Exception:
                         pass
                     results.append(final_sr)
+                    if did_speak:
+                        spoken.add(id(final_sr))   # 话术已流出，前缀不复读
                     observations.append(summarize(final_sr))
                     observations = observations[-self.observation_limit:]
                     if show_process and final_sr.status == StepStatus.OK:
@@ -146,7 +158,8 @@ class LoopController:
                     if final_sr.status in (
                             StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
                         yield await self.suspend(
-                            final_sr, results, current, ctx)
+                            final_sr, results, current, ctx,
+                            prior=_prior(final_sr))
                         return
                 elif streamed:
                     # Streamed speech but no final — best-effort, avoid re-run.
@@ -173,7 +186,8 @@ class LoopController:
                     if step_result.status in (
                             StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
                         yield await self.suspend(
-                            step_result, results, current, ctx)
+                            step_result, results, current, ctx,
+                            prior=_prior(step_result))
                         return
 
             try:

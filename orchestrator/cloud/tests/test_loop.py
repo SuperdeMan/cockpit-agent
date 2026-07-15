@@ -64,7 +64,7 @@ def test_adaptive_loop_executes_initial_batch_then_replans_until_done():
     aggregator = _Aggregator()
     suspended = []
 
-    async def suspend(*args):
+    async def suspend(*args, **kwargs):
         suspended.append(args)
         return {"kind": "final", "speech": "suspended"}
 
@@ -101,8 +101,8 @@ def test_need_confirm_suspends_immediately_inside_loop():
     aggregator = _Aggregator()
     suspend_calls = []
 
-    async def suspend(step_result, results, plan, ctx):
-        suspend_calls.append((step_result, results, plan, ctx))
+    async def suspend(step_result, results, plan, ctx, prior=None):
+        suspend_calls.append((step_result, results, plan, ctx, prior))
         return {"kind": "final", "speech": step_result.speech, "need_confirm": True}
 
     controller = LoopController(
@@ -131,7 +131,7 @@ def test_budget_exhaustion_returns_best_effort_and_continue_prompt():
     })
     aggregator = _Aggregator()
 
-    async def suspend(*_args):
+    async def suspend(*_args, **_kwargs):
         raise AssertionError("should not suspend")
 
     controller = LoopController(
@@ -235,7 +235,7 @@ def test_stream_need_confirm_suspends_in_loop():
     aggregator = _Aggregator()
     suspend_calls = []
 
-    async def suspend(step_result, results, plan, ctx):
+    async def suspend(step_result, results, plan, ctx, prior=None):
         suspend_calls.append(step_result)
         return {"kind": "final", "speech": step_result.speech, "need_confirm": True}
 
@@ -296,7 +296,7 @@ def test_stream_emits_step_agent_span(monkeypatch):
     aggregator = _Aggregator()
     suspend_calls = []
 
-    async def suspend(step_result, results, plan, ctx):
+    async def suspend(step_result, results, plan, ctx, prior=None):
         suspend_calls.append(step_result)
         return {"kind": "final", "speech": step_result.speech, "need_confirm": True}
 

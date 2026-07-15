@@ -228,7 +228,7 @@ class MemoryStore:
         返回新写入的记忆 id。LLM 不可用时静默返回 []（不阻塞）。"""
         if not user_id:
             return []
-        from extract import extract
+        from extract import extract, predicate_class
         turns = await self.get_session(session_id, 12)
         cands = await extract(turns, user_id=user_id, occupant_id=occupant_id,
                               vehicle_id=vehicle_id, session_id=session_id,
@@ -240,7 +240,14 @@ class MemoryStore:
         for c in cands:
             pred = c.get("predicate") or ""
             if c.get("kind") == "semantic" and pred:
-                cur = await vs.current_by_predicate(user_id, occupant_id, pred)
+                # 冲突查找按谓词等价类（B3-3 M2）：历史条目可能带 LLM 自由造的别名
+                # （hvac.temperature vs climate.temperature），精确匹配失手会让新旧偏好
+                # 并存、召回二义。命中类内任一别名即视为同一偏好做 supersede。
+                cur = None
+                for p in predicate_class(pred):
+                    cur = await vs.current_by_predicate(user_id, occupant_id, p)
+                    if cur:
+                        break
                 if cur:
                     if (cur.get("text") or "").strip() == (c.get("text") or "").strip():
                         continue  # 等价 → 跳过，不重复写

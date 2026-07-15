@@ -131,7 +131,12 @@ def _first_sentence(text: str, limit: int = 60) -> str:
 
 
 def step_summary(step: Step, result: StepResult) -> str:
-    """执行任务阶段：按步骤结果合成一句脱敏自然摘要（「已…」句式）。
+    """执行任务阶段：按步骤结果合成一句脱敏自然摘要（「已…」句式）。step 仅保签名兼容。"""
+    return result_summary(result)
+
+
+def result_summary(result: StepResult) -> str:
+    """按结果合成一句脱敏自然摘要（过程区与挂起前缀共用）。
 
     优先安全计数（地点/充电点/来源数），否则取完整首句（不腰斩关键数字）。
     只用 speech（已用户向）与结构化结果里的**安全计数/名称**——不读内部参数 / prompt / reasoning。

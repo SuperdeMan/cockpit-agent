@@ -105,6 +105,37 @@ def test_appendturn_triggers_consolidate_every_n():
     assert calls == [("s1", "u1")]
 
 
+def test_appendturn_explicit_remember_triggers_immediately():
+    """B3-3 M2：「记住，我最喜欢…」这类会话往往 2 轮就结束，凑不满 4 轮节流窗——
+    显式记忆陈述（用户轮）须立即触发抽取，且触发后重新计数不双跑。"""
+    svc = _servicer()
+    calls = []
+
+    async def fake_consolidate(session_id, user_id, occupant_id="primary", vehicle_id=""):
+        calls.append(session_id)
+        return []
+
+    svc.store.consolidate = fake_consolidate
+
+    async def go():
+        await svc.AppendTurn(memory_pb2.AppendTurnRequest(
+            session_id="s1", role="user",
+            text="记住，我最喜欢的空调温度是26度", user_id="u1"), None)
+        await svc.AppendTurn(memory_pb2.AppendTurnRequest(
+            session_id="s1", role="assistant", text="好嘞，已经记住啦", user_id="u1"), None)
+        await asyncio.gather(*list(svc._bg))
+        assert calls == ["s1"]              # 第 1 轮即触发；助手轮不重复触发
+
+        # 助手复述「记住」不触发（role 门控）；普通轮回归 4 轮节流
+        await svc.AppendTurn(memory_pb2.AppendTurnRequest(
+            session_id="s2", role="assistant", text="记住了哦", user_id="u1"), None)
+        if svc._bg:
+            await asyncio.gather(*list(svc._bg))
+        assert calls == ["s1"]
+
+    asyncio.run(go())
+
+
 def test_appendturn_without_userid_never_triggers():
     svc = _servicer()
     calls = []

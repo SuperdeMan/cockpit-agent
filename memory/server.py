@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
@@ -15,6 +16,11 @@ logger = logging.getLogger("memory.server")
 
 _CONSOLIDATE_EVERY = 4  # 每累积 N 轮触发一次异步抽取巩固
 _PROACTIVE_SUBJECT = "agent.proactive"
+
+# 显式记忆陈述立即抽取（旅程 B3-3 M2）：「记住，我最喜欢26度」这类会话往往一问一答
+# 就结束（2 轮），永远凑不满 4 轮节流窗 → 偏好从未被抽取。用户明说「记住/我喜欢」
+# 即写入意图明确，等不起下个周期。
+_REMEMBER_NOW_RE = re.compile(r"记住|记好|别忘了|我(最|比较|还是)?(喜欢|习惯|偏好)")
 
 # 合成会话（eval/e2e/badcase 重放/探针）跳过 LLM 抽取巩固：不烧 token、不把测试对话
 # 沉淀进真实用户画像（2026-07-13 消耗排查：抽取跟着 active provider 跑且 caller 为空，
@@ -47,8 +53,9 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         return memory_pb2.AppendTurnResponse(ok=True)
 
     def _maybe_consolidate(self, request):
-        """每 N 轮触发一次异步抽取巩固。无 user_id（如端侧本地轮）或合成会话
-        （session_id 命中 _EXTRACT_SKIP_PREFIXES）不触发。"""
+        """每 N 轮触发一次异步抽取巩固；显式记忆陈述（「记住/我喜欢」用户轮）立即触发。
+        无 user_id（如端侧本地轮）或合成会话（session_id 命中 _EXTRACT_SKIP_PREFIXES）
+        不触发。"""
         if not request.user_id:
             return
         sid = request.session_id
@@ -57,7 +64,9 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
             return
         n = self._turn_counts.get(sid, 0) + 1
         self._turn_counts[sid] = n
-        if n % _CONSOLIDATE_EVERY != 0:
+        if request.role == "user" and _REMEMBER_NOW_RE.search(request.text or ""):
+            self._turn_counts[sid] = 0   # 立即触发后重新计数，防紧邻的周期触发双跑
+        elif n % _CONSOLIDATE_EVERY != 0:
             return
         task = asyncio.create_task(self._consolidate_bg(
             sid, request.user_id, request.occupant_id or "primary", request.vehicle_id))
