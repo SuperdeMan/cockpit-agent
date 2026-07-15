@@ -284,8 +284,11 @@ class NavigationAgent(BaseAgent):
             page = max(1, int((meta or {}).get("poi_page", 1)))
         except (TypeError, ValueError):
             page = 1
+        # strict=False：就近类目（「最近的粤菜馆」）的结果店名天然不含类目词，
+        # 不做 R1 强校验（否则每次类目导航都白跑一轮去偏置重搜 + 地标 LLM）。
         resolved_name, results = await self._find_destination(
-            dest, meta, near=near, limit=5 if is_proximity else 3, page=page)
+            dest, meta, near=near, limit=5 if is_proximity else 3, page=page,
+            strict=not is_proximity)
         if not results:
             if is_proximity:
                 if page > 1:  # "换一批"翻到底了
@@ -550,6 +553,11 @@ class NavigationAgent(BaseAgent):
             speech += f"全程约{distance_km}公里" + (f"、约{dur}" if dur else "") + "，已规划好路线。"
         else:
             speech += "已规划好路线。"
+        # 车辆接地 advisory（旅程 B3-2）：续航覆盖不了本程（含 15% 保留余量，与 charging
+        # 同款判定）→ 主动提示补能。只加话术不加动作（advisory 不发车控/不改路线），
+        # 用户接一句「沿途帮我找充电站」即进 charging 流程。电量经端侧 meta 注入
+        # （server.py 把 VAL 真实电量写 vehicle_battery），拿不到就不提示（fail-open）。
+        speech += self._range_advisory(distance_km, meta)
         card = {"type": "route_plan", "origin": "当前位置", "destination": name,
                 "waypoints": [], "distance_km": distance_km, "duration_min": duration_min}
         return AgentResult(
@@ -557,19 +565,54 @@ class NavigationAgent(BaseAgent):
             data={"destination": name, "lat": lat, "lng": lng},
         ).action("navigate", payload)
 
+    @staticmethod
+    def _range_advisory(distance_km, meta) -> str:
+        """里程 vs 电量续航的补能提示；不适用/数据缺失返回空串。"""
+        try:
+            pct = float(str((meta or {}).get("vehicle_battery", "")).replace("%", ""))
+            dist = float(distance_km or 0)
+        except (TypeError, ValueError):
+            return ""
+        if not (0 < pct <= 100) or dist <= 0:
+            return ""
+        full_range = float(os.getenv("CHARGING_FULL_RANGE_KM", "500") or 500)
+        usable = pct / 100.0 * full_range
+        if dist <= usable * 0.85:
+            return ""
+        return (f"提醒一下：当前电量约{round(pct)}%（续航约{round(usable)}公里），"
+                f"本程约{round(dist)}公里，建议途中补能，可以说「沿途帮我找充电站」。")
+
+    @staticmethod
+    def _dest_matches(query: str, poi_name: str) -> bool:
+        """目的地名与 POI 名强校验（R1，包含式）。
+
+        `landmark.name_matches` 的「2 字公共子串」对**用户直报的目的地名**太松——
+        「广州塔」和「广州仄仄科技有限公司」共享「广州」也算匹配，带 near 偏置的
+        关键词搜索会让就近弱匹配顶掉真地标（旅程 B3-2/A2-4/B1-2 三例同族）。
+        归一（去括号注记/空白/连接符）后任一方向包含才算。"""
+        def norm(s: str) -> str:
+            s = re.sub(r"[（(].*?[)）]", "", s or "")
+            return re.sub(r"[\s·,，\-—]", "", s)
+        a, b = norm(query), norm(poi_name)
+        return bool(a) and bool(b) and (a in b or b in a)
+
     async def _find_destination(self, description: str, meta, near=None,
-                                limit: int = 3, page: int = 1) -> tuple[str, list]:
+                                limit: int = 3, page: int = 1,
+                                strict: bool = True) -> tuple[str, list]:
         """解析目的地 POI。
 
         视觉地标描述（“像笋的建筑”）：高德直接搜常返回勉强的模糊匹配，必须先经 LLM
         解析正式名称再由地图验证，避免被垃圾匹配抢占（否则导航到错误 POI）。
         普通目的地：原话直搜优先（带当前位置 near，使“最近的/附近的粤菜馆”按距离就近），
-        未命中再尝试地标解析兜底。地标候选按官方名搜，不受当前位置范围限制（near=None）。
+        top1 名字过 `_dest_matches` 强校验——不匹配先去偏置全国重搜（知名地标全国序第一），
+        再走地标解析；都验证不出保留原结果兜底（话术会报出实际名，用户可纠正，不无中生有）。
+        行政级目的地（「导航去惠州」）经 geocode level 判定，直接导航到行政中心，
+        不给就近弱匹配（0.3km 的「惠州出口」）机会。
         limit：类目就近查询给更多候选（5）供用户选目的地；具体地点解析用默认（3）。
         """
-        async def _direct() -> list:
+        async def _direct(bias) -> list:
             try:
-                return await self.poi.search(description, near=near, limit=limit,
+                return await self.poi.search(description, near=bias, limit=limit,
                                              page=page, meta=meta)
             except ProviderError as e:
                 logger.warning("destination POI search failed: %s", e)
@@ -592,12 +635,41 @@ class NavigationAgent(BaseAgent):
             name, results = await _via_landmark()
             if results:
                 return name, results
-            results = await _direct()        # 地标候选验证不出来 → 退回原话直搜
+            results = await _direct(near)    # 地标候选验证不出来 → 退回原话直搜
             return (description, results) if results else ("", [])
 
-        results = await _direct()
+        # R1：短名先过行政级判定（「惠州」「珠海」这类裸城市名不带 市/省 后缀，
+        # 关键词搜索会顶出就近弱匹配）。仅 strict 且 ≤4 字触发，控制额外 geocode 调用面。
+        geocode_level = getattr(self.poi, "geocode_level", None)
+        if strict and geocode_level and 2 <= len(description) <= 4:
+            try:
+                level, loc = await geocode_level(description, meta=meta)
+            except Exception as e:
+                logger.debug("geocode level probe failed: %s", e)
+                level, loc = "", ""
+            if level in ("国家", "省", "市", "区县") and loc and "," in loc:
+                try:
+                    lng_s, lat_s = loc.split(",")[:2]
+                    admin_poi = POI(id=f"admin_{description}", name=description,
+                                    address=f"{description}（市区中心）",
+                                    lat=float(lat_s), lng=float(lng_s))
+                    return description, [admin_poi]
+                except ValueError:
+                    pass
+
+        results = await _direct(near)
         if results:
-            return description, results
+            if not strict or self._dest_matches(description, results[0].name):
+                return description, results
+            # R1：就近弱匹配顶上了 top1 → 去偏置全国重搜（真地标全国序靠前）
+            if near is not None:
+                wide = await _direct(None)
+                if wide and self._dest_matches(description, wide[0].name):
+                    return description, wide
+            name, lm = await _via_landmark()
+            if lm:
+                return name, lm
+            return description, results     # 兜底：报出实际名让用户纠正
         return await _via_landmark()
 
     async def _landmark_candidates(self, description: str) -> list[str]:

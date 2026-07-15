@@ -187,3 +187,38 @@ def test_search_raw_price_band_overrides_llm_price_max_slot():
     asyncio.run(run_handle(agent, "nearby.search",
                            slots={"price_max": "100"}, raw_text="附近人均一百左右的餐厅"))
     assert seen["price_min"] == 60.0 and seen["price_max"] == 140.0
+
+
+def test_focus_location_name_resolved_near_current_not_nationwide():
+    """R3（旅程 B1-3）：location 槽是地名（焦点指代「那附近」）→ 先按当前坐标偏置
+    搜该名解析成坐标（含名字包含校验），不交给全国歧义的 geocode（真栈解析到
+    呼和浩特万象天地）。类目搜索收到的是解析后的**坐标**中心。"""
+    import asyncio
+    from agents.nearby.src.agent import NearbyAgent
+    from agents.nearby.src.providers.base import Place
+    from agents._sdk.testing import run_handle
+
+    agent = NearbyAgent()
+    calls = []
+
+    class _Spy:
+        async def search(self, keyword, near=None, meta=None, **kw):
+            calls.append((keyword, near))
+            if keyword == "万象天地":
+                assert near is not None and abs(near.lat - 22.541) < 1e-3  # 按当前坐标偏置
+                return [Place(id="wxtd", name="华润城万象天地1期",
+                              address="南山区大冲三路", lat=22.535, lng=113.954)]
+            return [Place(id="p1", name="某停车场", address="南山区",
+                          lat=22.536, lng=113.955)]
+
+    agent.place = _Spy()
+    res = asyncio.run(run_handle(
+        agent, "nearby.search",
+        slots={"category": "停车场", "location": "万象天地"},
+        raw_text="那附近有停车场吗",
+        meta={"current_lat": "22.5410", "current_lng": "114.0579"}))
+
+    assert res.status == "ok"
+    # 第二次调用（类目搜索）中心=解析出的万象天地坐标，而非当前 GPS/地名 geocode
+    cat_near = calls[-1][1]
+    assert cat_near is not None and abs(cat_near.lat - 22.535) < 1e-3

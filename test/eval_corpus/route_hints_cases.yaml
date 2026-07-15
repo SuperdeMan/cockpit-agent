@@ -113,6 +113,19 @@
   source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
   tags: [reminder, replace]
 
+# R3（旅程 B1-3）：焦点指代「那附近」让给 LLM 规划（replace 灌整句会剥 location 槽）
+- text: 那附近有停车场吗
+  initial_intents: []
+  expect_final_intents: []
+  source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R3"
+  tags: [nearby, guard, focus]
+
+- text: 附近有没有停车场
+  initial_intents: []
+  expect_final_intents: [nearby.search]
+  source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R3"
+  tags: [nearby, replace]
+
 - text: 半小时后提醒我给客户回电话
   initial_intents: []
   expect_final_intents: [reminder.create]

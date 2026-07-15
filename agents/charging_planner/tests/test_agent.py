@@ -298,3 +298,58 @@ def test_resolve_soc_prefers_meta_battery_over_memory():
     assert soc == "72"                                              # 取边端真实电量
     soc2 = asyncio.run(agent._resolve_soc(ctx, {}))
     assert soc2 == "50%"                                           # 无 meta 时回退 memory
+
+
+def test_find_bare_city_destination_asks_choice():
+    """R1（旅程 B2-3/B5-2）：「去惠州的路上找充电站」——裸城市名（无 市 后缀）经
+    geocode level 判定为过泛 → dest_choice 澄清，不吃就近关键词匹配（0.3km「惠州出口」）。"""
+    import asyncio
+    from agents._sdk.testing import run_handle
+    agent = ChargingPlannerAgent()
+
+    class _PoiStub:
+        async def geocode_level(self, address, meta=None):
+            return ("市", "114.416,23.111") if address == "惠州" else ("", "")
+
+    class _ChargingStub:
+        _poi = _PoiStub()
+
+        async def suggest_destinations(self, dest, meta=None):
+            return [{"id": "1", "name": "惠州西湖", "address": "惠城区"},
+                    {"id": "2", "name": "惠州站", "address": "惠城区"}]
+
+    agent.charging = _ChargingStub()
+    res = asyncio.run(run_handle(
+        agent, "charging.find", slots={"destination": "惠州"},
+        raw_text="去惠州的路上帮我找个充电站"))
+    assert res.status == "need_slot"
+    assert res.ui_card and res.ui_card.get("purpose") == "dest_choice"
+    assert "惠州西湖" in (res.speech or "")
+
+
+def test_find_specific_destination_not_blocked_by_level_probe():
+    """具体地点（探测返回兴趣点级）不受 R1 城市门影响，照常按目的地搜途经点。"""
+    import asyncio
+    from agents._sdk.testing import run_handle
+    from agents.charging_planner.src.providers.base import ChargingStation
+    agent = ChargingPlannerAgent()
+
+    class _PoiStub:
+        async def geocode_level(self, address, meta=None):
+            return "兴趣点", "113.9,22.5"
+
+    stations = [ChargingStation(id="c1", name="真充电站", lat=22.5, lng=113.9,
+                                distance_km=0.5, available=0, total=0)]
+
+    class _ChargingStub:
+        _poi = _PoiStub()
+
+        async def find_nearby(self, near, charger_type="", meta=None):
+            return stations
+
+    agent.charging = _ChargingStub()
+    res = asyncio.run(run_handle(
+        agent, "charging.find", slots={"destination": "会展中心"},
+        raw_text="去会展中心的路上找个充电站"))
+    assert res.status == "ok"
+    assert "真充电站" in (res.speech or "")

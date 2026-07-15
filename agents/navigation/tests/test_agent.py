@@ -627,3 +627,80 @@ def test_non_alias_destination_unaffected_by_places():
     assert res.status == "ok"
     assert any(a["type"] == "navigate" for a in res.actions)
     ctx._memory.upsert_profile.assert_not_awaited()
+
+
+# ── R1（旅程 B3-2/A2-4/B1-2）：就近弱匹配不得顶掉知名地标 / 裸城市名走行政中心 ──
+
+def test_dest_matches_strictness():
+    """包含式强校验：共享城市名两字（广州/海滨）不算匹配——landmark.name_matches
+    的 2 字公共子串规则对用户直报目的地太松，是 R1 五例同族的判定缺口。"""
+    m = NavigationAgent._dest_matches
+    assert m("广州塔", "广州塔(广州地标)") is True
+    assert m("宝安国际机场", "深圳宝安国际机场") is True
+    assert m("东部华侨城", "东部华侨城大门") is True
+    assert m("广州塔", "广州仄仄科技有限公司") is False
+    assert m("大梅沙海滨公园", "红树林海滨生态公园") is False
+    assert m("宝安国际机场", "北环大道入口") is False
+
+
+def test_navigate_mismatch_retries_without_near_bias():
+    """带 near 偏置搜出就近弱匹配（广州仄仄科技）→ 去偏置全国重搜取真地标（R1）。"""
+    agent = NavigationAgent()
+    calls = []
+
+    class _BiasedPoi:
+        async def search(self, keyword, near=None, limit=3, page=1, meta=None, **kw):
+            calls.append((keyword, near is not None))
+            if near is not None:
+                return [POI(id="x", name="广州仄仄科技有限公司",
+                            address="深南大道10128号", lat=22.54, lng=113.95)]
+            return [POI(id="gzta", name="广州塔", address="广州市海珠区",
+                        lat=23.106, lng=113.324)]
+
+    agent.poi = _BiasedPoi()
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "广州塔"},
+        raw_text="导航去广州塔",
+        meta={"current_lat": "22.53", "current_lng": "113.95"}))
+
+    assert res.status == "ok"
+    nav = [a for a in res.actions if a["type"] == "navigate"]
+    assert nav and nav[0]["payload"]["destination"] == "广州塔"
+    assert "仄仄" not in res.speech
+    assert (("广州塔", True) in calls and ("广州塔", False) in calls), calls
+
+
+def test_navigate_bare_city_goes_admin_center():
+    """「导航去惠州」：geocode level=市 → 导航行政中心，不吃就近「惠州出口」（R1）。"""
+    agent = NavigationAgent()
+
+    class _CityPoi:
+        async def search(self, keyword, near=None, **kw):
+            return [POI(id="exit", name="惠州出口", address="深圳市盐田区",
+                        lat=22.55, lng=114.30)]
+
+        async def geocode_level(self, address, meta=None):
+            assert address == "惠州"
+            return "市", "114.416,23.111"
+
+    agent.poi = _CityPoi()
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "惠州"},
+        raw_text="导航去惠州",
+        meta={"current_lat": "22.53", "current_lng": "113.95"}))
+
+    assert res.status == "ok"
+    assert "惠州出口" not in res.speech
+    nav = [a for a in res.actions if a["type"] == "navigate"]
+    assert nav and abs(nav[0]["payload"]["lat"] - 23.111) < 1e-6
+
+
+def test_range_advisory_low_battery_long_trip():
+    """车辆接地 advisory（旅程 B3-2）：续航盖不住本程（含 15% 余量）→ 话术主动提示补能；
+    充足/缺数据不打扰（fail-open）。"""
+    adv = NavigationAgent._range_advisory
+    assert "补能" in adv(114.2, {"vehicle_battery": "15"})     # 15%→75km 盖不住 114km
+    assert adv(47.7, {"vehicle_battery": "80"}) == ""          # 充足
+    assert adv(114.2, {}) == ""                                # 无电量数据
+    assert adv(0, {"vehicle_battery": "15"}) == ""             # 无里程
+    assert adv(114.2, {"vehicle_battery": "abc"}) == ""        # 脏数据

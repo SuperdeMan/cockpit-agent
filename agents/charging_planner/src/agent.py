@@ -54,9 +54,13 @@ class ChargingPlannerAgent(BaseAgent):
         prefer = (intent.slots.get("prefer") or "").strip()
         charger_type = "快充" if "快" in prefer else ""
 
-        # 「导航去X + 在附近找充电桩」：按目的地搜，最优站经聚合器并入导航路线作为途经点
+        # 「导航去X + 在附近找充电桩」：按目的地搜，最优站经聚合器并入导航路线作为途经点。
+        # 泛目的地（含裸城市名）与 plan 同门：先 dest_choice 澄清（R1，B2-3/B5-2）。
         destination = (intent.slots.get("destination") or "").strip()
         if destination:
+            clarify = await self._clarify_vague_destination(destination, meta)
+            if clarify:
+                return clarify
             return await self._find_near_destination(destination, charger_type, soc, meta)
 
         # 获取位置
@@ -180,6 +184,52 @@ class ChargingPlannerAgent(BaseAgent):
         d = (dest or "").strip()
         return bool(d) and d.endswith(cls._ADMIN_SUFFIX)
 
+    async def _clarify_vague_destination(self, dest: str, meta) -> AgentResult | None:
+        """目的地过泛 → dest_choice 澄清卡；不过泛返回 None（plan 与 find 共用）。
+
+        判定两层：①行政区划后缀（"兰州市"）；②R1（旅程 B2-3/B5-2）：裸城市名
+        （「惠州」不带 市 后缀）绕过后缀判定 → 就近关键词搜出 0.3km 的「惠州出口」
+        当目的地——短名补 geocode level 权威判定，探测失败 fail-open 不拦。
+        这是澄清式 NEED_SLOT（编排器用用户回复回填 destination 重跑本步）。
+        """
+        vague = self._is_vague_destination(dest)
+        if not vague and 2 <= len(dest) <= 4:
+            level_fn = getattr(getattr(self.charging, "_poi", None), "geocode_level", None)
+            if level_fn:
+                try:
+                    level, _loc = await level_fn(dest, meta=meta)
+                    vague = level in ("国家", "省", "市", "区县")
+                except Exception as e:
+                    logger.debug("charging dest level probe failed: %s", e)
+        if not vague:
+            return None
+        candidates = []
+        try:
+            raw = await self.charging.suggest_destinations(dest, meta=meta)
+            # 丢弃仍是行政区划级的候选（如"兰州市"自身），否则选它会再次触发追问
+            candidates = [c for c in raw
+                          if c.get("name") and not self._is_vague_destination(c["name"])]
+        except ProviderError as e:
+            logger.warning("charging suggest destinations failed: %s", e)
+        if candidates:
+            names = "、".join(c["name"] for c in candidates[:3])
+            return AgentResult(
+                status=NEED_SLOT, missing_slots=["destination"],
+                speech=f"{dest}范围比较大，您具体要去哪个？例如{names}。"
+                       f"说出名称或『第几个』，也可以直接告诉我详细地址。",
+                # purpose=dest_choice 让 HMI 把"第N个"回填为目的地槽位（而非发起导航）
+                ui_card={"type": "poi_list", "purpose": "dest_choice",
+                         "display_priority": 1,
+                         "title": f"{dest} · 选择目的地",
+                         "items": [{"id": c.get("id", ""), "name": c["name"],
+                                    "address": c.get("address", "")} for c in candidates]},
+                follow_up="选择具体目的地")
+        return AgentResult(
+            status=NEED_SLOT, missing_slots=["destination"],
+            speech=f"{dest}范围比较大，您具体要去哪里？比如火车站、机场，"
+                   f"或告诉我详细地址，我再为您规划沿途充电。",
+            follow_up="告诉我具体地点")
+
     async def _plan(self, intent, ctx, meta) -> AgentResult:
         """规划长途充能策略。"""
         dest = intent.slots.get("destination", "").strip()
@@ -188,36 +238,10 @@ class ChargingPlannerAgent(BaseAgent):
                 status=NEED_SLOT, speech="您要去哪里？",
                 follow_up="请告诉我目的地", missing_slots=["destination"])
 
-        # 目的地过泛（如"兰州市"）→ 先二次确认具体地点，再据此规划沿途途经点。
-        # 候选地点经高德 POI 搜索给出（真实地点，不臆造）；这是澄清式 NEED_SLOT
-        # （编排器用用户回复回填 destination 重跑本步），与已移除的"确认导航"冗余确认不同。
-        if self._is_vague_destination(dest):
-            candidates = []
-            try:
-                raw = await self.charging.suggest_destinations(dest, meta=meta)
-                # 丢弃仍是行政区划级的候选（如"兰州市"自身），否则选它会再次触发追问
-                candidates = [c for c in raw
-                              if c.get("name") and not self._is_vague_destination(c["name"])]
-            except ProviderError as e:
-                logger.warning("charging suggest destinations failed: %s", e)
-            if candidates:
-                names = "、".join(c["name"] for c in candidates[:3])
-                return AgentResult(
-                    status=NEED_SLOT, missing_slots=["destination"],
-                    speech=f"{dest}范围比较大，您具体要去哪个？例如{names}。"
-                           f"说出名称或『第几个』，也可以直接告诉我详细地址。",
-                    # purpose=dest_choice 让 HMI 把"第N个"回填为目的地槽位（而非发起导航）
-                    ui_card={"type": "poi_list", "purpose": "dest_choice",
-                             "display_priority": 1,
-                             "title": f"{dest} · 选择目的地",
-                             "items": [{"id": c.get("id", ""), "name": c["name"],
-                                        "address": c.get("address", "")} for c in candidates]},
-                    follow_up="选择具体目的地")
-            return AgentResult(
-                status=NEED_SLOT, missing_slots=["destination"],
-                speech=f"{dest}范围比较大，您具体要去哪里？比如火车站、机场，"
-                       f"或告诉我详细地址，我再为您规划沿途充电。",
-                follow_up="告诉我具体地点")
+        # 目的地过泛（如"兰州市"/裸「惠州」）→ 先二次确认具体地点，再据此规划途经点。
+        clarify = await self._clarify_vague_destination(dest, meta)
+        if clarify:
+            return clarify
 
         soc = await self._resolve_soc(ctx, meta)
 

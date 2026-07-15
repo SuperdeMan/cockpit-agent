@@ -198,7 +198,7 @@ def test_voice_short_yes_resumes_without_flag():
 
 
 def test_unrelated_reply_treated_as_new_request():
-    """挂起期间换话题：丢弃挂起任务，按新请求重新规划。"""
+    """挂起期间换话题：按新请求重新规划（R2 起挂起保留可回头续接，见下方 R2 组）。"""
     engine, spy, session = _make_engine()
     _run(engine, _req("找家川菜馆订今晚7点两位"))
     assert spy.llm_plan_calls == 1
@@ -241,3 +241,101 @@ def test_modify_phrase_with_xing_not_mistaken_for_confirm():
     assert spy.count("nearby.search") == 2  # 新规划重跑了搜索（确认续接则不会）
     # 若被误判成确认，会用 confirmed 续接挂起的订餐那一步
     assert all(m.get("confirmed") != "true" for m in spy.metas("nearby.order"))
+
+
+# ─── R2 中断-恢复（Q1 口径：插话不清除挂起，TTL 内可回头续接）───
+#
+# 插话轮必须用**不会自己挂起**的单步计划（搜索即完成），否则 stub planner 恒回两步
+# 计划会让插话轮再次 NEED_CONFIRM、单槽覆盖旧挂起——测试会"因错误的理由通过"。
+
+_SEARCH_ONLY_PLAN = json.dumps({
+    "steps": [{"id": "s1", "agent_id": "nearby", "intent": "nearby.search",
+               "slots": {"cuisine": "景点"}, "depends_on": []}]
+})
+
+
+def _make_engine_interject() -> tuple[PlannerEngine, "_Spy", SessionStore]:
+    """同 _make_engine，但含「景点」的规划请求返回单步计划（插话轮不挂起）。"""
+    spy = _Spy()
+    orig_llm = spy.llm
+
+    async def llm(messages, **kwargs):
+        blob = json.dumps([m.get("content", "") for m in messages], ensure_ascii=False)
+        if "任务编排器" in (messages[0].get("content") or "") and "景点" in blob:
+            spy.llm_plan_calls += 1
+            return _SEARCH_ONLY_PLAN
+        return await orig_llm(messages, **kwargs)
+
+    session = SessionStore(redis_url="")
+    engine = PlannerEngine(
+        clients=spy,
+        planner=PlanBuilder(llm_fn=llm, registry_fn=spy.resolve),
+        executor=DagExecutor(call_agent_fn=spy.call_agent),
+        aggregator=Aggregator(llm_fn=llm),
+        session=session,
+    )
+    return engine, spy, session
+
+
+def test_interjection_keeps_pending_and_confirm_resumes():
+    """R2（旅程 B2-1）：确认挂起中插一句别的（插话轮自身不挂起）→ 挂起保留 +
+    final 带软提醒；回头「确认」仍能续接完成。原实现插话即清挂起，回头确认
+    只得到「当前没有待确认的操作」。"""
+    engine, spy, session = _make_engine_interject()
+    _run(engine, _req("找家川菜馆订今晚7点两位"))
+    state0 = asyncio.run(session.load("sess-1"))
+    assert state0 is not None and state0.phase == "wait_confirm"
+
+    events = _run(engine, _req("帮我看看附近有什么景点"))
+    final = events[-1]
+    assert not final.get("need_confirm")                         # 插话轮正常完成
+    state1 = asyncio.run(session.load("sess-1"))
+    assert state1 is not None and state1.phase == "wait_confirm"  # 旧挂起原样保留
+    assert state1.pending_step_id == state0.pending_step_id
+    assert "等你确认" in (final.get("follow_up") or "")            # 软提醒
+
+    events = _run(engine, _req("确认", is_confirmation=True))
+    final = events[-1]
+    assert spy.metas("nearby.order")[-1].get("confirmed") == "true"
+    assert not final.get("need_confirm")
+    assert asyncio.run(session.load("sess-1")) is None           # 消费后才清
+
+
+def test_interjection_cancel_still_cancels():
+    """插话后说「取消」仍取消挂起（保留不等于永生）。"""
+    engine, spy, session = _make_engine_interject()
+    _run(engine, _req("找家川菜馆订今晚7点两位"))
+    _run(engine, _req("帮我看看附近有什么景点"))
+    events = _run(engine, _req("取消", is_confirmation=True))
+    assert "取消" in events[-1]["speech"]
+    assert asyncio.run(session.load("sess-1")) is None
+    assert all(m.get("confirmed") != "true" for m in spy.metas("nearby.order"))
+
+
+def test_new_suspension_overwrites_old_pending():
+    """插话轮自身产生新挂起 → 单槽覆盖旧挂起（确认条 UI 只有一个，最新语义）。"""
+    engine, spy, session = _make_engine()
+    _run(engine, _req("找家川菜馆订今晚7点两位"))
+    _run(engine, _req("再找一家川菜馆订明晚8点三位"))    # 新规划 → 新 NEED_CONFIRM 覆盖
+    state = asyncio.run(session.load("sess-1"))
+    assert state is not None and state.phase == "wait_confirm"
+    events = _run(engine, _req("确认", is_confirmation=True))
+    assert spy.metas("nearby.order")[-1].get("confirmed") == "true"
+    assert not events[-1].get("need_confirm")
+
+
+def test_slot_interjection_keeps_pending():
+    """R2（旅程 B2-2 引擎层）：wait_slot 挂起中换话题（动词开头、插话轮不挂起）→
+    挂起保留 + 软提醒「继续补充」。"""
+    from orchestrator.cloud.models import SessionState
+    engine, spy, session = _make_engine_interject()
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", pending_step_id="s1", missing_slots=["time_text"],
+        completed_results={}, pending_plan={"goal": "创建吃药提醒"})))
+
+    events = _run(engine, _req("帮我看看附近有什么景点"))
+    final = events[-1]
+    state = asyncio.run(session.load("sess-1"))
+    assert state is not None and state.phase == "wait_slot"      # 挂起还在
+    assert "继续补充" in (final.get("follow_up") or "")
+    assert "创建吃药提醒" in (final.get("follow_up") or "")       # 软提醒点名 goal

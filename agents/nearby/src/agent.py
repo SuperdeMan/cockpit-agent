@@ -147,6 +147,33 @@ class NearbyAgent(BaseAgent):
         return AgentResult(status=FAILED, speech="周边助手暂不支持该请求。")
 
     # ── 位置 / 类目 / 关键词 ──
+    async def _resolve_center(self, intent, meta) -> GeoPoint | None:
+        """搜索中心解析（R3 残余根因，旅程 B1-3）。
+
+        location 槽是**地名**时（焦点指代：「那附近有停车场」→ LLM 从焦点填
+        location=万象天地），不能直接交给无城市偏置的 geocode——「万象天地」全国
+        歧义，真栈解析到**呼和浩特**分店。先用富 provider 按当前坐标偏置搜该名，
+        top1 名字包含校验通过才取其坐标；搜不到/校验不过回退地址 geocode（原行为）。
+        """
+        near = self._near(intent, meta)
+        if near is None or near.lat or not near.address:
+            return near                      # 无位置 / 已是坐标 → 原样
+        cur = current_location_from_meta(meta)
+        bias = GeoPoint(lat=cur.lat, lng=cur.lng) if cur else None
+        try:
+            hits = await self.place.search(near.address, near=bias, meta=meta)
+        except ProviderError as e:
+            logger.debug("center resolve search failed: %s", e)
+            hits = []
+        if hits:
+            top = hits[0]
+            a, b = near.address, (top.name or "")
+            if a and b and (a in b or b in a) and top.lat and top.lng:
+                logger.info("center %r resolved to %r (%.4f,%.4f)",
+                            near.address, top.name, top.lat, top.lng)
+                return GeoPoint(lat=top.lat, lng=top.lng)
+        return near
+
     @staticmethod
     def _near(intent, meta) -> GeoPoint | None:
         """搜索中心：显式 location 槽位（坐标或地名）优先，否则本轮已授权 GPS。
@@ -224,7 +251,7 @@ class NearbyAgent(BaseAgent):
         sort = (intent.slots.get("sort") or "").strip() or _parse_sort(raw)
         open_now = str(intent.slots.get("open_now") or "").lower() in ("1", "true", "yes") \
             or _parse_open_now(raw)
-        near = self._near(intent, meta)
+        near = await self._resolve_center(intent, meta)
 
         skw = dict(category=category, near=near, rating_min=rating_min,
                    price_min=price_min, price_max=price_max, brand=brand,

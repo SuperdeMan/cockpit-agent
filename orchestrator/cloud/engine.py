@@ -109,6 +109,11 @@ class PlannerEngine:
         working_set = None  # 新规划轮由 ContextManager 装配；确认/补槽续接保持 None
 
         # A. 多轮续接：存在挂起的待确认会话时，判定本轮是否在回应确认
+        # R2（中断-恢复，Q1 口径）：插话**不清除**挂起——插话轮正常处理，挂起在 TTL 内
+        # 可回头「确认」/裸答案续接；新话轮若再产生挂起，_suspend 单槽覆盖旧挂起
+        # （确认条 UI 也只有一个，语义一致）。held_pending 贯穿本轮：完成路径经
+        # _settle_session 跳过 clear，并在 final 上补一句软提醒。
+        held_pending = None
         pending = await self.session.load(ctx.session_id)
         if pending and pending.phase == "wait_confirm":
             reply = self._confirm_reply(text, ctx.is_confirmation)
@@ -126,13 +131,14 @@ class PlannerEngine:
                 logger.info("Resuming plan for session %s (confirm step %s)",
                             ctx.session_id, pending.pending_step_id)
             else:
-                # 答非所问：用户换了话题，丢弃挂起任务，按新请求处理
-                await self.session.clear(ctx.session_id)
+                # 答非所问：用户插话——保留挂起按新请求处理（R2；原实现在此丢弃挂起，
+                # 用户回头说「确认」只能得到「当前没有待确认的操作」，旅程 B2-1 抓到）
+                held_pending = pending
         elif pending and pending.phase == "wait_slot":
             # F12：补槽续接——判定用户是在回答追问还是换了话题
             if self._is_topic_change(text):
-                # 答非所问：用户换了话题，丢弃挂起任务，按新请求处理
-                await self.session.clear(ctx.session_id)
+                # 答非所问：用户插话——保留挂起按新请求处理（R2，下轮裸答案仍可续接）
+                held_pending = pending
                 plan, seed_results = None, []
             else:
                 plan, seed_results = self._restore(pending)
@@ -325,17 +331,18 @@ class PlannerEngine:
                         focus_plan = sink["plan"]
                     else:
                         # 改派装配/执行失败：原 speech 为空（agent 零播报），给诚实兜底话术
-                        await self.session.clear(ctx.session_id)
+                        await self._settle_session(ctx, held_pending)
                         yield {"kind": "final",
                                "speech": "这个需要联网查询，刚才没查成，请再说一次。"}
                         return
                 if final_sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
                     yield await self._suspend(final_sr, results, plan, ctx)
                     return
-                await self.session.clear(ctx.session_id)
+                await self._settle_session(ctx, held_pending)
                 if mem_on:
                     await self.context.update_focus(ctx.session_id, focus_plan, results)
                 final = await self.aggregator.compose(text or plan.raw_text, results)
+                self._append_pending_hint(final, held_pending)
                 await obs_events.get_emitter("cloud").emit_span(
                     ctx.trace_id,
                     "aggregate",
@@ -433,7 +440,7 @@ class PlannerEngine:
             return
 
         # E. 聚合 + 输出
-        await self.session.clear(ctx.session_id)
+        await self._settle_session(ctx, held_pending)
         if mem_on:
             await self.context.update_focus(ctx.session_id, plan, results)  # 焦点态供下轮指代
         if show_process:
@@ -441,6 +448,7 @@ class PlannerEngine:
                                  summary="合并各步结果生成回复", status="start")
         final = await self.aggregator.compose(
             text or plan.raw_text, results, thinking=complex_task)
+        self._append_pending_hint(final, held_pending)
         await obs_events.get_emitter("cloud").emit_span(
             ctx.trace_id,
             "aggregate",
@@ -550,6 +558,30 @@ class PlannerEngine:
             "ui_card": step_result.ui_card,
             "need_confirm": step_result.status == StepStatus.NEED_CONFIRM,
         }
+
+    async def _settle_session(self, ctx: PlanContext, held_pending) -> None:
+        """本轮正常收口时的会话清理（R2）：插话轮（held_pending 非空）**不清挂起**——
+        用户 TTL 内回头「确认」/裸答案仍可续接；非插话轮照旧 clear（消费/过期清理）。
+        不刷新 TTL：挂起窗口以首次挂起时刻起算，插话不无限续命。"""
+        if held_pending is None:
+            await self.session.clear(ctx.session_id)
+
+    @staticmethod
+    def _append_pending_hint(final: dict, held_pending) -> None:
+        """插话轮的 final 补软提醒：告知挂起还在（Q1 决策的配套——插话后 HMI 确认条
+        已被新消息顶掉，不提示的话用户忘了挂起、说「确认」会显得凭空执行）。原地改 final。"""
+        if held_pending is None or not isinstance(final, dict):
+            return
+        goal = ""
+        try:
+            goal = (held_pending.pending_plan or {}).get("goal") or ""
+        except AttributeError:
+            pass
+        what = f"「{goal[:20]}」" if goal else "刚才的操作"
+        ask = "确认" if held_pending.phase == "wait_confirm" else "继续补充"
+        hint = f"对了，{what}还在等你{ask}。"
+        follow = str(final.get("follow_up") or "")
+        final["follow_up"] = (follow + (" " if follow else "") + hint).strip()
 
     # 对话落库(append_turn)/历史·记忆召回(_history/_recall)/上下文构建(build_context)
     # 均已迁入 context.py（ContextManager + 模块级 build_context），统一上下文生命周期。

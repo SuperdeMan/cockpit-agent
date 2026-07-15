@@ -47,6 +47,22 @@ class AmapPOIProvider(POIProvider):
         geocodes = data.get("geocodes") or []
         return (_as_str(geocodes[0].get("location")) or None) if geocodes else None
 
+    async def geocode_level(self, address: str, meta=None) -> tuple[str, str]:
+        """正向地理编码返回 (行政级别, "lng,lat")。
+
+        R1（旅程 B3-2/B2-3 家族）：「导航去惠州/广州塔」这类短名，带 near 偏置的关键词
+        搜索会把就近弱匹配顶上 top1（0.3km 的「惠州出口」）。高德 geocode 的 level 字段
+        （国家/省/市/区县/…/兴趣点）是行政级别的权威判据。失败返回 ("", "")，调用方 fail-open。
+        """
+        try:
+            data = await self._get("/v3/geocode/geo", {"address": address}, "geocode", meta)
+        except ProviderError:
+            return "", ""
+        geocodes = data.get("geocodes") or []
+        if not geocodes:
+            return "", ""
+        return _as_str(geocodes[0].get("level")), _as_str(geocodes[0].get("location"))
+
     async def _resolve_location(self, point: GeoPoint | None, meta) -> str | None:
         """把 GeoPoint 归一成高德的 "lng,lat"；地名经地理编码解析。"""
         if point is None:
