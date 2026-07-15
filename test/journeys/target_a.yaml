@@ -33,11 +33,14 @@ journeys:
     setup:
       location: {lat: 22.5333, lng: 113.9505}
     turns:
+      # 校准记录（2026-07-15 @M3 canonical）：禁词 '第几个' 被顺路补能 offer 的通用话术
+      # 误伤（「另外顺路的充电有…说『第几个』即可」——导航已直达真店名，非反问哪家店）
+      # → 移除；反问断链语义仍由 哪一家/想去哪/请选择 钉住。
       - say: 找一家附近评分最高的川菜馆，直接导航过去
         expect:
           latency_s: 75
           action: {type: navigate}
-          speech_not: [哪一家, 想去哪, 请选择, 第几个]   # 用户说了“直接”，反问=断链
+          speech_not: [哪一家, 想去哪, 请选择]   # 用户说了“直接”，反问=断链
 
   - id: A2-2b
     title: 赛程→提醒单句成单（REMINDABLE 单句版）

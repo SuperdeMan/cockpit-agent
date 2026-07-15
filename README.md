@@ -149,9 +149,9 @@
   不反问、「记住我最喜欢26度」立即入库且时序覆盖旧偏好、场景配置参数不再漏进个人画像；
   顺带修墙钟 badcase——「现在几点/今天几号/星期几」按系统时钟确定性直答，不再让 LLM
   编造时刻。详见 `docs/design/2026-07-14-journey-e2e-test-system.md`。
-- 全量 pytest：**1627 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
-  一次跑通；2026-07-15 旅程主题+遗留卡收口较四模式收官的 1360 +267。HMI `node --test` 137、dashboard vitest 16）。
-- 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6 + 深度调研（深调研报告 + 多轮深挖 + 新闻深挖桥接 + 异步分钟级受理→主动推送报告卡）+ **旅程级 33 条**（回归 15/15，目标 16/18，时延基线 P50 5.7s/P95 40s）+ nightly GitHub 断言型 e2e（含 R3.5 降级矩阵四行 + journeys mock 车道）全绿；R3.6 真实 Agent 调用→`/metrics` 端到端数据链路真栈验证通过。
+- 全量 pytest：**1629 passed, 7 skipped**（单一命令 `python -m pytest --import-mode=importlib`
+  一次跑通；2026-07-15 旅程主题+遗留卡收口较四模式收官的 1360 +269。HMI `node --test` 137、dashboard vitest 16）。
+- 端侧 smoke：**13 passed, 0 failed**；真栈 e2e：中枢断言 7/7 + 上下文 6/6 + 韧性自愈 2/2 + 行程规划 6/6 + 深度调研（深调研报告 + 多轮深挖 + 新闻深挖桥接 + 异步分钟级受理→主动推送报告卡）+ **旅程级 33 条**（回归级恒 15/15；目标级 16/18 @mimo / 13/18 @MiniMax-M3——跨 provider 不可直比，以报告所记 active LLM 为准；时延基线 @M3 P50 4.9s/P95 25.5s）+ nightly GitHub 断言型 e2e（含 R3.5 降级矩阵四行 + journeys mock 车道）全绿；R3.6 真实 Agent 调用→`/metrics` 端到端数据链路真栈验证通过。
 - Docker 全栈 **26 个服务**（含充能规划/场景编排/路况安全/深度调研等 Agent），全栈联调通过；
   另有 Prometheus/Grafana 两个可观测服务经 Compose `profiles: ["observability"]` 门控可选启用
   （`docker compose --profile observability up -d prometheus grafana`）。

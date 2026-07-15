@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 小舟 AuroraOrb favicon：液态玻璃光球（配色与七层结构对齐 components/aurora/AuroraOrb.tsx：
+       AURORA_CONIC #5BE9FF→#5B8CFF→#9A6BFF→#FF6BD6 + 左上镜面高光 + 右下粉色散 + 环境辉光） -->
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#5B8CFF" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#9A6BFF" stop-opacity=".26"/>
+      <stop offset="100%" stop-color="#9A6BFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="ball" cx="36%" cy="28%" r="88%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity=".95"/>
+      <stop offset="20%" stop-color="#8FF3FF"/>
+      <stop offset="44%" stop-color="#5BE9FF"/>
+      <stop offset="66%" stop-color="#5B8CFF"/>
+      <stop offset="86%" stop-color="#9A6BFF"/>
+      <stop offset="100%" stop-color="#FF6BD6"/>
+    </radialGradient>
+    <radialGradient id="spec" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity=".9"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="pink" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FF6BD6" stop-opacity=".65"/>
+      <stop offset="100%" stop-color="#FF6BD6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="32" cy="32" r="31" fill="url(#glow)"/>
+  <circle cx="32" cy="32" r="22" fill="url(#ball)"/>
+  <circle cx="32" cy="32" r="22" fill="none" stroke="#FFFFFF" stroke-opacity=".35"/>
+  <ellipse cx="25" cy="21.5" rx="9.5" ry="6" fill="url(#spec)" transform="rotate(-18 25 21.5)"/>
+  <ellipse cx="41.5" cy="43" rx="7.5" ry="5.5" fill="url(#pink)"/>
+</svg>

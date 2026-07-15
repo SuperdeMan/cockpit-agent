@@ -77,6 +77,30 @@ async def test_create_todo_without_time():
 
 
 @pytest.mark.asyncio
+async def test_explicit_remind_wording_beats_todo_slot():
+    """原话优先（B2-2 @M3 canonical）：planner 误填 kind=todo 时，显式「提醒我」话术
+    仍走定时提醒（无时间→追问），不被槽位改写成待办静默成单。"""
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text="提醒我吃降压药",
+                           slots={"kind": "todo"})
+    assert res.status == "need_slot"
+    assert "什么时候" in res.speech
+    _, todos = await a.store.list_split("u1")
+    assert todos == []                       # 没被建成待办
+
+
+@pytest.mark.asyncio
+async def test_todo_slot_honored_without_remind_wording():
+    """无「提醒/叫我」冲突时 kind=todo 槽位照常生效（槽位兜底面不回退）。"""
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text="记一下要交物业费",
+                           slots={"kind": "todo"})
+    assert res.status == "ok"
+    _, todos = await a.store.list_split("u1")
+    assert len(todos) == 1 and todos[0].kind == "todo"
+
+
+@pytest.mark.asyncio
 async def test_list_today_writes_active_and_card():
     a = await _agent()
     await run_handle(a, "reminder.create", raw_text="今晚八点提醒我取快递")

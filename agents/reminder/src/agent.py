@@ -117,8 +117,12 @@ class ReminderAgent(BaseAgent):
             return AgentResult(status=NEED_SLOT, speech="要提醒你什么事？",
                                follow_up="比如：明天早上八点提醒我带充电线",
                                missing_slots=["title"])
-        is_todo = intent.slots.get("kind") == "todo" or bool(
-            _TODO_RE.search(raw) and not re.search(r"提醒|叫我", raw))
+        # 原话优先（B2-2 @M3 canonical 抓到：planner 对「提醒我吃降压药」误填 kind=todo，
+        # todo 路径静默跳过时间追问）：显式「提醒/叫我」话术永远走定时提醒，槽位只在
+        # 与原话不冲突时生效——同 scene custom_params 的「原话优先、槽位兜底」原则。
+        explicit_remind = bool(re.search(r"提醒|叫我", raw))
+        is_todo = not explicit_remind and (
+            intent.slots.get("kind") == "todo" or bool(_TODO_RE.search(raw)))
         if is_todo:
             r = await self.store.add(Reminder(
                 user_id=self._uid(ctx), vehicle_id=ctx.vehicle_id or "",
