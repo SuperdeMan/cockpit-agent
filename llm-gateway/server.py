@@ -4,6 +4,7 @@ Phase 1 已落地：缓存（messages 哈希）、令牌桶限流、token 成本
 Phase 1 扩展：ASR（MiMo mimo-v2.5-asr）+ TTS（MiMo mimo-v2.5-tts）+ 音色选择。
 """
 from __future__ import annotations
+import asyncio
 import os
 import time
 import logging
@@ -13,8 +14,13 @@ import httpx
 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
 from cockpit.llm.v1 import audio_pb2, audio_pb2_grpc
 
-from providers import build_asr_provider, build_tts_provider
+from providers import build_asr_provider, build_tts_provider, ProviderHTTPError
+from health import health_tracker
 from llm_runtime import get_runtime
+
+# 429 且带 Retry-After 时最多等这么久重试同模型一次；更长的 Retry-After 直接失败
+# 让上层诚实降级（车内对话等不起）。
+_429_WAIT_CAP_S = float(os.getenv("LLM_429_WAIT_CAP_S", "2"))
 from cache import LLMCache
 from ratelimit import RateLimiter
 from metrics import cost_tracker
@@ -102,83 +108,144 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 content=content, model_used=used, finish_reason=finish,
                 prompt_tokens=usage[0], completion_tokens=usage[1])
 
-        # 调用（带降级）
+        # 调用（带降级：同厂商 primary→fast）。429 单独分类（D3）：Retry-After 小且预算
+        # 余量足 → 等一次重试同模型；否则不再打 fast 档（限流通常是账号/厂商级，白打）。
         provider = self.runtime.active_provider()
         last_err = None
+        rate_limited = False
         t_all = time.monotonic()
         for model in models:
-            t0 = time.monotonic()
-            try:
-                content, used, finish, usage = await provider.complete(
-                    msgs, model, temp, max_tokens, thinking=thinking)
-                latency_ms = (time.monotonic() - t0) * 1000
+            waited_429 = False
+            while True:
+                t0 = time.monotonic()
+                try:
+                    content, used, finish, usage = await provider.complete(
+                        msgs, model, temp, max_tokens, thinking=thinking)
+                    latency_ms = (time.monotonic() - t0) * 1000
 
-                # 写缓存
-                self.cache.put(msgs, f"{aid}:{model}", temp, content, used, thinking)
+                    # 写缓存
+                    self.cache.put(msgs, f"{aid}:{model}", temp, content, used, thinking)
 
-                # 记录成本
-                cost_tracker.record(used, usage[0], usage[1], latency_ms)
-                await self._emit_llm(request, model=used, latency_ms=latency_ms,
-                                     usage=usage, thinking=thinking, msgs=msgs,
-                                     content=content)
+                    # 记录成本 + 健康
+                    cost_tracker.record(used, usage[0], usage[1], latency_ms)
+                    health_tracker.record(aid, True, latency_ms=latency_ms)
+                    await self._emit_llm(request, model=used, latency_ms=latency_ms,
+                                         usage=usage, thinking=thinking, msgs=msgs,
+                                         content=content)
 
-                return llm_pb2.CompleteResponse(
-                    content=content, model_used=used, finish_reason=finish,
-                    prompt_tokens=usage[0], completion_tokens=usage[1])
-            except Exception as e:
-                latency_ms = (time.monotonic() - t0) * 1000
-                cost_tracker.record(model, 0, 0, latency_ms, error=True)
-                last_err = e
-                logger.warning("Model %s failed: %s; trying next", model, e)
+                    return llm_pb2.CompleteResponse(
+                        content=content, model_used=used, finish_reason=finish,
+                        prompt_tokens=usage[0], completion_tokens=usage[1])
+                except Exception as e:
+                    latency_ms = (time.monotonic() - t0) * 1000
+                    cost_tracker.record(model, 0, 0, latency_ms, error=True)
+                    last_err = e
+                    if isinstance(e, ProviderHTTPError) and e.status_code == 429:
+                        health_tracker.record(aid, False, kind="rate_limited", error=str(e))
+                        ra = e.retry_after
+                        remaining = context.time_remaining()
+                        if (not waited_429 and ra is not None and ra <= _429_WAIT_CAP_S
+                                and (remaining is None or remaining > ra + 2.0)):
+                            waited_429 = True
+                            logger.info("429 Retry-After=%.1fs，等待后重试 %s", ra, model)
+                            await asyncio.sleep(ra)
+                            continue          # 等一次重试同模型（仅一次）
+                        rate_limited = True   # 跳过剩余档位
+                        break
+                    health_tracker.record(
+                        aid, False,
+                        kind="timeout" if isinstance(e, httpx.TimeoutException) else "",
+                        error=str(e))
+                    logger.warning("Model %s failed: %s; trying next", model, e)
+                    break
+            if rate_limited:
+                break
 
+        # 错误映射：429→RESOURCE_EXHAUSTED（SDK 对它不做重连重试——那是连接语义，白打）；
         # 上游超时 → DEADLINE_EXCEEDED（非 UNAVAILABLE），避免调用方 SDK 把它当瞬时错误重试
         # 一次致延迟翻倍（曾因此 info/trip 接地合成爆 step 预算）。连接级失败仍 UNAVAILABLE 供重试。
         await self._emit_llm(
             request, model=models[0],
             latency_ms=(time.monotonic() - t_all) * 1000,
-            status="timeout" if isinstance(last_err, httpx.TimeoutException) else "err",
+            status=("rate_limited" if rate_limited
+                    else "timeout" if isinstance(last_err, httpx.TimeoutException) else "err"),
             error=str(last_err), thinking=thinking, msgs=msgs)
+        if rate_limited:
+            await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED,
+                                f"provider rate limited (429): {last_err}")
         if isinstance(last_err, httpx.TimeoutException):
             await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "llm upstream timeout")
         # 请求性 4xx（400/403/413/422，含内容风控拒收）→ INVALID_ARGUMENT：同一被拒 prompt
         # 重连重试注定再拒，SDK 只对 UNAVAILABLE 做重试，避免白打第二遍（badcase a3fad033
-        # 每次 new_sensitive 都成对出现即此）。429 限流等仍走 UNAVAILABLE。
+        # 每次 new_sensitive 都成对出现即此）。
+        req_4xx = (isinstance(last_err, ProviderHTTPError)
+                   and last_err.status_code in (400, 403, 413, 422))
         err_text = str(last_err)
-        if any(f"provider HTTP {c}" in err_text for c in (400, 403, 413, 422)):
+        if req_4xx or any(f"provider HTTP {c}" in err_text for c in (400, 403, 413, 422)):
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT,
                                 f"all models failed: {last_err}")
         await context.abort(grpc.StatusCode.UNAVAILABLE, f"all models failed: {last_err}")
 
     async def CompleteStream(self, request, context):
         msgs = self._msgs(request)
-        model = self._models(request.model)[0]
+        models = self._models(request.model)
         thinking = self._thinking(request)
+        aid = self.runtime.active_id
 
-        # 流式不走缓存
-        t0 = time.monotonic()
-        head: list[str] = []
-        head_len = 0
-        try:
-            async for delta in self.runtime.active_provider().stream(
-                    msgs, model, request.temperature or 0.7, request.max_tokens or 512,
-                    thinking=thinking):
-                if head_len < 800:  # 观测只留输出头部，不为观测缓冲全文
-                    head.append(delta)
-                    head_len += len(delta)
-                yield llm_pb2.CompleteChunk(delta=delta, done=False)
-            yield llm_pb2.CompleteChunk(delta="", done=True)
-            latency_ms = (time.monotonic() - t0) * 1000
-            cost_tracker.record(model, 0, 0, latency_ms)
-            await self._emit_llm(request, model=model, latency_ms=latency_ms,
-                                 thinking=thinking, msgs=msgs, content="".join(head))
-        except Exception as e:
-            latency_ms = (time.monotonic() - t0) * 1000
-            cost_tracker.record(model, 0, 0, latency_ms, error=True)
-            await self._emit_llm(request, model=model, latency_ms=latency_ms,
-                                 status="err", error=str(e), thinking=thinking, msgs=msgs)
-            code = (grpc.StatusCode.DEADLINE_EXCEEDED if isinstance(e, httpx.TimeoutException)
-                    else grpc.StatusCode.UNAVAILABLE)
-            await context.abort(code, str(e))
+        # 流式不走缓存。**首 token 前**失败按档位链降级到下一模型（D4，兑现 R3.5 记录的
+        # 「CompleteStream 无备用模型重试」缺口）；**首 token 后**不切——半段话术不可拼接，
+        # 宁可 abort 让调用方走既有失败路径。
+        last_err = None
+        for model in models:
+            t0 = time.monotonic()
+            head: list[str] = []
+            head_len = 0
+            first_token = False
+            try:
+                async for delta in self.runtime.active_provider().stream(
+                        msgs, model, request.temperature or 0.7, request.max_tokens or 512,
+                        thinking=thinking):
+                    if delta:
+                        first_token = True
+                        if head_len < 800:  # 观测只留输出头部，不为观测缓冲全文
+                            head.append(delta)
+                            head_len += len(delta)
+                    yield llm_pb2.CompleteChunk(delta=delta, done=False)
+                yield llm_pb2.CompleteChunk(delta="", done=True)
+                latency_ms = (time.monotonic() - t0) * 1000
+                cost_tracker.record(model, 0, 0, latency_ms)
+                health_tracker.record(aid, True, latency_ms=latency_ms)
+                await self._emit_llm(request, model=model, latency_ms=latency_ms,
+                                     thinking=thinking, msgs=msgs, content="".join(head))
+                return
+            except Exception as e:
+                latency_ms = (time.monotonic() - t0) * 1000
+                cost_tracker.record(model, 0, 0, latency_ms, error=True)
+                kind = ("rate_limited"
+                        if isinstance(e, ProviderHTTPError) and e.status_code == 429
+                        else "timeout" if isinstance(e, httpx.TimeoutException) else "")
+                health_tracker.record(aid, False, kind=kind, error=str(e))
+                last_err = e
+                if first_token:   # 已流出内容：不可换模型拼接，按既有语义直接失败
+                    await self._emit_llm(request, model=model, latency_ms=latency_ms,
+                                         status="err", error=str(e), thinking=thinking,
+                                         msgs=msgs)
+                    code = (grpc.StatusCode.DEADLINE_EXCEEDED
+                            if isinstance(e, httpx.TimeoutException)
+                            else grpc.StatusCode.UNAVAILABLE)
+                    await context.abort(code, str(e))
+                logger.warning("stream model %s failed before first token: %s; trying next",
+                               model, e)
+
+        await self._emit_llm(request, model=models[0], latency_ms=0.0,
+                             status="err", error=str(last_err), thinking=thinking, msgs=msgs)
+        if isinstance(last_err, ProviderHTTPError) and last_err.status_code == 429:
+            await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED,
+                                f"provider rate limited (429): {last_err}")
+        code = (grpc.StatusCode.DEADLINE_EXCEEDED
+                if isinstance(last_err, httpx.TimeoutException)
+                else grpc.StatusCode.UNAVAILABLE)
+        await context.abort(code, str(last_err))
 
     async def Embed(self, request, context):
         """文本向量化（记忆语义检索）。provider 不支持/失败 → UNAVAILABLE，调用方降级。"""

@@ -19,7 +19,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 
+import httpx
+
+from health import health_tracker
 from providers import (
     BaseProvider, MockProvider, AnthropicProvider, OpenAICompatibleProvider,
 )
@@ -268,7 +272,31 @@ class LLMRuntime:
             "active": {"provider": self._active_id,
                        "model": self._active_model or self.active_config()["primary"]},
             "providers": [dict(c) for c in self._catalog],
+            # 被动健康（D5）：available=配了 key，health=最近真的答得上来（滚动窗口）
+            "health": health_tracker.snapshot(),
         }
+
+    async def probe(self, provider: str = "") -> dict:
+        """按需体检（D5）：对指定（缺省=active）provider 的 primary 模型发一条小请求。
+        不改 active、不进缓存；结果记入 health。演示前手检用——刻意无周期探活。"""
+        pid = _norm_id(provider) or self._active_id
+        if pid not in self._registry:
+            return {"ok": False, "provider": pid, "error": "provider 未配置或不可用"}
+        prov, cfg = self._registry[pid]
+        t0 = time.monotonic()
+        try:
+            content, used, _, _ = await prov.complete(
+                [{"role": "user", "content": "ping"}], cfg["primary"], 0.1, 8,
+                thinking=False, timeout_s=10)
+            ms = round((time.monotonic() - t0) * 1000, 1)
+            health_tracker.record(pid, True, latency_ms=ms)
+            return {"ok": True, "provider": pid, "model": used, "latency_ms": ms}
+        except Exception as e:
+            ms = round((time.monotonic() - t0) * 1000, 1)
+            kind = ("timeout" if isinstance(e, httpx.TimeoutException)
+                    else "rate_limited" if getattr(e, "status_code", 0) == 429 else "")
+            health_tracker.record(pid, False, kind=kind, error=str(e))
+            return {"ok": False, "provider": pid, "latency_ms": ms, "error": str(e)[:300]}
 
 
 _runtime: LLMRuntime | None = None

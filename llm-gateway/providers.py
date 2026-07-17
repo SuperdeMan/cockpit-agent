@@ -42,6 +42,30 @@ def _http_timeout(budget_s, read_cap: float) -> httpx.Timeout:
                          connect=min(_HTTP_CONNECT_S, read_cap), pool=5.0)
 
 
+class ProviderHTTPError(RuntimeError):
+    """上游 HTTP 错误：状态码 + Retry-After 结构化（运行时硬化 D3，网关按语义分类映射——
+    429→RESOURCE_EXHAUSTED、请求性 4xx→INVALID_ARGUMENT）；消息保持
+    `provider HTTP <code>: <body片段>` 格式，日志/obs.llm error 可诊断口径不变。"""
+
+    def __init__(self, status_code: int, snippet: str, retry_after: float | None = None):
+        super().__init__(f"provider HTTP {status_code}: {snippet}")
+        self.status_code = status_code
+        self.retry_after = retry_after
+
+
+def _retry_after_s(resp) -> float | None:
+    """解析 Retry-After 秒数（仅数字形式；HTTP-date 形式少见，按无处理）。
+    对无 headers 的测试桩防御（getattr）。"""
+    headers = getattr(resp, "headers", None) or {}
+    v = (headers.get("retry-after") or "").strip()
+    if not v:
+        return None
+    try:
+        return max(0.0, float(v))
+    except ValueError:
+        return None
+
+
 class BaseProvider:
     async def complete(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         """returns (content, model_used, finish_reason, (prompt_tokens, completion_tokens)).
@@ -288,7 +312,7 @@ class OpenAICompatibleProvider(BaseProvider):
         # （badcase 6d29929e：422 秒拒两次，只留状态码，根因无从判定）。
         if resp.status_code >= 400:
             snippet = (resp.text or "")[:300].replace("\n", " ")
-            raise RuntimeError(f"provider HTTP {resp.status_code}: {snippet}")
+            raise ProviderHTTPError(resp.status_code, snippet, _retry_after_s(resp))
         data = resp.json()
 
         content = strip_think_block(data["choices"][0]["message"]["content"] or "")
@@ -308,7 +332,7 @@ class OpenAICompatibleProvider(BaseProvider):
             if resp.status_code >= 400:   # 同 complete()：把响应体带进异常，拒因可诊断
                 raw = await resp.aread()
                 snippet = raw[:300].decode("utf-8", "replace").replace("\n", " ")
-                raise RuntimeError(f"provider HTTP {resp.status_code}: {snippet}")
+                raise ProviderHTTPError(resp.status_code, snippet, _retry_after_s(resp))
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
                     continue

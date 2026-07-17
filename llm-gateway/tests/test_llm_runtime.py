@@ -162,3 +162,23 @@ def test_no_redis_url_keeps_legacy_behavior():
     rt = _runtime({"LLM_PROVIDER": "xiaomimimo", "LLM_API_KEY": "mk"})
     assert rt._redis is None            # 未配 REDIS_URL → 持久化整体旁路
     rt.set_active("mimo")               # 不炸
+
+
+# ── 按需探针 + 被动健康（运行时硬化 D5）──
+
+def test_probe_default_active_records_health():
+    import asyncio
+    rt = _runtime({})                   # 无 key → mock provider
+    res = asyncio.run(rt.probe(""))
+    assert res["ok"] is True and res["provider"] == "mock"
+    from health import health_tracker
+    snap = health_tracker.snapshot()
+    assert snap["mock"]["ok"] >= 1 and snap["mock"]["ewma_latency_ms"] >= 0
+    assert "health" in rt.status()      # /api/llm/providers 附带健康块
+
+
+def test_probe_unknown_provider_reports_not_configured():
+    import asyncio
+    rt = _runtime({})
+    res = asyncio.run(rt.probe("nope"))
+    assert res["ok"] is False and "未配置" in res["error"]

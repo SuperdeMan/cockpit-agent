@@ -551,6 +551,17 @@ def create_http_app() -> web.Application:
         """列出已装配的 LLM 厂商 + 各自模型 + 可用性 + 当前 active（HMI 设置页两级选择据此渲染）。"""
         return web.json_response(get_runtime().status())
 
+    @routes.post("/api/llm/probe")
+    async def handle_llm_probe(request: web.Request):
+        """按需体检指定厂商（缺省=active）：1 条小请求返回 ok/latency，并记入 health。
+        body: {provider?}。刻意无周期探活（不烧付费 token），演示前手动点检用。"""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        result = await get_runtime().probe((body.get("provider") or "").strip())
+        return web.json_response(result, status=200 if result.get("ok") else 502)
+
     @routes.post("/api/llm/provider")
     async def handle_llm_set_provider(request: web.Request):
         """切换全局 active LLM 厂商/模型（所有服务的 LLM 调用随之切换）。body: {provider, model?}。"""
