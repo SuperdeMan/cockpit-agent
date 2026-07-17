@@ -1,6 +1,6 @@
 # 数据真实性治理：禁静默回退 mock + 卡片 provenance 契约
 
-- **状态**：已落地——P0/P1/P2 全部完成并真栈验证（2026-07-17，见 §8）
+- **状态**：✅ **已归档**（2026-07-17）——P0/P1/P2 全部完成并真栈验证（见 §8），定稿已并入架构唯一真相源 `docs/architecture/cockpit-agent-architecture.md` **§9.5**（另 §10 评测可信度）。本文余作决策依据与落地记录
 - **交付对象**：后续实现者（人 / AI agent）
 - **关联**：各 Agent `src/providers/__init__.py` 工厂、`llm-gateway/llm_runtime.py`、`agents/_sdk/result.py`、`agents/_sdk/server.py`、`orchestrator/cloud/aggregator.py`、`hmi/src/types.ts`、`docs/conventions.md` §9、`docs/guides/provider-integration.md`、`test/e2e_real_providers.py`
 - **姊妹篇**：[2026-07-17 多模型运行时硬化](2026-07-17-llm-runtime-hardening.md)（「pin 住的请求绝不静默漂移」与「真实数据绝不静默变假」是同一条原则的两面）

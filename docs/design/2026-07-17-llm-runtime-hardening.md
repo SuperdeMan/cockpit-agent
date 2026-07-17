@@ -1,6 +1,6 @@
 # 多模型运行时硬化：评测锁定、active 持久化、429/流式降级与健康可视
 
-- **状态**：已落地——P0/P1/P2 全部完成并真栈验证（2026-07-17，见 §8）；D7 跨厂商 failover **刻意仅存设计**（触发条件=真实厂商事故，见 §4 D7）
+- **状态**：✅ **已归档**（2026-07-17）——P0/P1/P2 全部完成并真栈验证（见 §8），定稿已并入架构唯一真相源 `docs/architecture/cockpit-agent-architecture.md` **§8.1**（另 §3.3 注/§10 评测可信度）；D7 跨厂商 failover **刻意仅存设计**（触发条件=真实厂商事故，见 §4 D7）。本文余作决策依据与落地记录
 - **交付对象**：后续实现者（人 / AI agent）
 - **关联**：`llm-gateway/llm_runtime.py`、`llm-gateway/server.py`、`llm-gateway/providers.py`、`llm-gateway/http_server.py`、`agents/_sdk/clients.py`、`test/e2e_journeys.py`、`test/eval_common.py`；前作 [2026-07-07 多 LLM 源](2026-07-07-llm-asr-tts-multiprovider-and-sports-flags.md)、[R3.5 降级矩阵](2026-07-03-r3.5-degrade-matrix-e2e.md)（CompleteStream 无备用模型重试的缺口在此首次记录、当时决定只记不修）
 - **姊妹篇**：[2026-07-17 数据真实性治理](2026-07-17-data-authenticity-governance.md)（「pin 住的请求绝不静默漂移」与「真实数据绝不静默变假」是同一条原则的两面）

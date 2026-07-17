@@ -175,9 +175,10 @@ flowchart TB
 > （`gateway/cloud/main.go`）。"LLM Gateway 直连单 Agent 兜底"未实现（纯 aspiration）。"某 Agent
 > 故障降级到 fallback" 仅适用于**规划期**（LLM 完全无法产出计划时的全局兜底），**执行期**单个
 > Agent 调用失败不会重路由到 chitchat，而是该步标 FAILED、DAG 其余步骤继续（`executor.py` 不因
-> 单步失败中断）。"LLM 超时" 的"重试到备用模型"仅对 `llm-gateway` 的非流式 `Complete()` 成立，
-> 流式 `CompleteStream()` 无此重试。这些差异属已知技术债（`docs/reviews/2026-07-02-repo-audit-and-roadmap.md`
-> 提及的 executor 错误信息丢失/CompleteStream 无重试等），详见
+> 单步失败中断）。"LLM 超时" 的"重试到备用模型"对非流式 `Complete()` 成立；流式
+> `CompleteStream()` 自 2026-07-17 起**首 token 前**同样按档位链降级（首 token 后不切，
+> 半段话术不可拼接——R3.5 记录的缺口已由运行时硬化 P1 兑现，见 §8.1）。其余差异
+> （executor 错误信息丢失等）属已知技术债，详见
 > `docs/design/2026-07-03-r3.5-degrade-matrix-e2e.md` §6。
 
 ---
@@ -488,6 +489,32 @@ turns/spans/llm_calls/logs 落 SQLite 持久化（`OBS_RETENTION_DAYS` 保留期
 完整 payload 与安全边界见 `docs/design/2026-06-15-observability-dashboard.md`（首版）与
 `docs/design/2026-07-10-dashboard-badcase-observability-redesign.md`（badcase 贯通）。
 
+### 8.1 LLM 网关多模型运行时（2026-07-17 定稿归档）
+
+所有 LLM 调用的唯一出口（§2.2）在多厂商注册表之上的**调用语义契约**
+（定稿并入自 `docs/design/2026-07-17-llm-runtime-hardening.md`，含决策卡与落地记录）：
+
+- **注册表与「单一大脑」**：`llm_runtime.py` 按 env 装配已配置 key 的厂商
+  （mimo/minimax/deepseek/qwen/anthropic-legacy），一套参数化 `OpenAICompatibleProvider`
+  覆盖各家差异；全局 active 经 `POST /api/llm/provider` 切换、所有服务共用，
+  **持久化 Redis `llm:active`**——重启/重建恢复上次选择，不回落 env 默认。
+- **档位与降级**：调用方传档位哨兵（`""`=primary / `"@fast"`）而非具体模型名，按
+  serving 厂商词表解析；同厂商 primary→fast 降级链。**429 单独分类**：
+  Retry-After ≤ `LLM_429_WAIT_CAP_S`(2s) 且预算余量足→等一次重试同模型，否则跳过
+  剩余档位映射 `RESOURCE_EXHAUSTED`（客户端 SDK 只对 UNAVAILABLE 做重连重试）；
+  请求性 4xx→`INVALID_ARGUMENT`、超时→`DEADLINE_EXCEEDED`。流式首 token 前按档位链
+  降级、首 token 后不切（§3.3 注）。
+- **请求级 pin（meta 契约）**：`meta.llm_provider`（可选 `meta.llm_model`）逐请求指定
+  厂商——WS 入口 `meta` 整链透传（cloud prefs 白名单→Agent ExecuteRequest.meta→SDK
+  contextvar；planner/aggregator 经 engine 入口 contextvar），pin 到未配置厂商
+  fail-closed。消费方：评测锁定（`e2e_journeys.py --provider`，漂移=报告作废）与
+  dashboard 重放跨厂商 A/B。
+- **健康与探针**：调用路径被动滚动窗口记账（`health.py`），`GET /api/llm/providers`
+  附 health 块（HMI 设置页健康点）；`POST /api/llm/probe` 按需体检。**刻意无周期探活**。
+  **跨厂商自动 failover 刻意未建**（与「单一大脑」确定性冲突；设计存档，真实厂商
+  事故才建）。
+- embedding 与 chat 解耦（`LLM_EMBED_*` 独立），切厂商不影响记忆语义召回。
+
 ---
 
 ## 9. 安全、权限与合规
@@ -512,6 +539,30 @@ turns/spans/llm_calls/logs 落 SQLite 持久化（`OBS_RETENTION_DAYS` 保留期
 - Prompt 注入防护：用户输入与系统指令隔离；Agent 工具调用参数做 schema 校验。
 - 内容安全：LLM Gateway 接入内容审核；车控相关输出走"白名单动作"而非自由文本解析。
 
+### 9.5 数据真实性（provider 决议契约与卡片 provenance，2026-07-17 定稿归档）
+
+「栈起来了」≠「栈是真的」——mock 是 CI/离线开发的合法公民，要治理的是**静默**
+（定稿并入自 `docs/design/2026-07-17-data-authenticity-governance.md`；契约登记
+`docs/conventions.md` §9.3/§9.4，接入规范 `docs/guides/provider-integration.md`）：
+
+- **决议三铁律**：① 默认 env（无凭证）→ mock，CI/离线照跑；② 显式 real 意图
+  （vendor env 显式非 mock，或配了该域凭证）+ 构造失败 → **fail-fast 启动即炸**，
+  绝不静默回退 mock；③ 运行期真实源失败 → **诚实降级说拿不到**（FAILED 话术），
+  绝不改供 mock 假数据（假 POI 可能被导航过去）。
+- **决议可审计**：每个 Provider 工厂收口输出统一行
+  `provider[<domain>]=<vendor>(real)|mock`（`agents/_sdk/provenance.py::log_resolution`，
+  顺带给 provider 盖来源章），全栈 `docker compose logs | grep "provider\["` 一屏审计。
+- **严格栈**：`REQUIRE_REAL_PROVIDERS=on`（默认 off）时任何 mock 决议拒绝启动，含
+  llm-gateway 侧 llm/embed/asr/tts 四闸；豁免域 `REQUIRE_REAL_EXEMPT`
+  （默认 `parking,knowledge`——支付设计即模拟、车书暂无真实实现）。
+- **卡片 provenance**：外源数据 ui_card 统一携带保留键
+  `_prov={mode: real|cached|degraded|mock, vendor, fetched_at, note?}`（Struct 免 proto），
+  HMI 徽章渲染（mock 醒目/degraded 灰/real 小字来源·取数时间）；13 卡族已覆盖，
+  trip_itinerary（停靠点级 grounded 布尔）、research_report（sources+权威编号）与
+  内部数据卡**刻意不标**（已有更强或不适用的证据链）。
+- **泄漏探针**：`test/e2e_strict_stack.py`（run_e2e 清单内）——真栈三问断言外源卡
+  `_prov` 全非 mock，防「演示数据其实是假的」回归。
+
 ---
 
 ## 10. 可观测性与质量
@@ -525,13 +576,18 @@ turns/spans/llm_calls/logs 落 SQLite 持久化（`OBS_RETENTION_DAYS` 保留期
   ID 贯通（HMI 每轮自生成 trace_id、气泡可复制直达 dashboard）、`obs.turn`/`obs.llm`/
   `obs.log` 内容级事件（`OBS_CONTENT_CAPTURE` 门控+统一脱敏）、collector SQLite 持久化
   与会话/轮次/日志检索 API、dashboard 四视图（会话下钻/总览/日志/badcase 收藏夹+重放）；
-  Prometheus `/metrics` + OTel 桥接由 R3.6 落地（`--profile observability` 门控）。
+  Prometheus `/metrics` + OTel 桥接由 R3.6 落地（`--profile observability` 门控）；
+  `obs.llm` 自 2026-07-17 增 `provider`/`requested_tier`/`pinned` 归属字段
+  （collector `llm_calls` 落 `provider` 列——「哪个脑答的」按 trace 可审计）。
 - **目标态差距**：告警、多车/多租户与正式鉴权（含 collector 鉴权边界）、采样与容量治理
   仍属于后续量产工作。
 - **评测体系**：
   - 意图分类：标注集 + 离线准确率/召回。
   - 端到端：场景化测试集（车控/导航/组合意图/降级）回归。
   - Agent 质量：每个 Agent 自带契约测试（Describe/Execute 黄金用例）。
+  - **评测可信度（2026-07-17）**：真 LLM 评测经 `--provider` 锁定 active 厂商 +
+    逐旅程漂移守卫（漂移=报告作废退出码 1，且拦 `--write-baseline` 防混脑基线）；
+    数据真实性经严格栈冒烟 + mock 泄漏探针把关（§9.5）。
 
 ---
 
