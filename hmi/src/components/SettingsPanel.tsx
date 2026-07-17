@@ -537,6 +537,18 @@ function modelShort(label: string): string {
   return label.includes(' ') ? label.split(' ').pop() || label : label
 }
 
+// 被动健康点（运行时硬化 D5）：绿=近窗全成 / 黄=偶发失败 / 红=高失败或限流 / 灰=近期未使用。
+// 「可用」只代表配了 key，这里回答「最近真的答得上来吗」。
+function llmHealthDot(h?: import('../types').LlmProviderHealth): { color: string; text: string } {
+  if (!h || !h.window) return { color: 'var(--au-text-3)', text: '未使用' }
+  const bad = h.err / h.window
+  if (bad === 0) {
+    return { color: 'var(--au-primary)', text: h.ewma_latency_ms ? `${Math.round(h.ewma_latency_ms)}ms` : '正常' }
+  }
+  if (bad < 0.3) return { color: 'var(--au-warn, #FCD34D)', text: `${h.err}/${h.window} 失败` }
+  return { color: 'var(--au-danger, #F87171)', text: h.rate_limited ? '限流' : `${h.err}/${h.window} 失败` }
+}
+
 function AssistantSection({ audioApi }: { audioApi: string }) {
   const { settings, update } = useSettings()
   const [llm, setLlm] = useState<LlmStatus | null>(null)
@@ -578,6 +590,20 @@ function AssistantSection({ audioApi }: { audioApi: string }) {
           <Segmented value={activeProvider} onChange={selectProvider}
             options={providers.map((p) => ({ value: p.id, label: p.label.split('·')[0], disabled: !p.available }))} />
         </SettingRow>
+        {llm?.health && (
+          <div style={{ padding: '2px 2px 12px', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+            {providers.filter((p) => p.available).map((p) => {
+              const d = llmHealthDot(llm.health?.[p.id])
+              return (
+                <span key={p.id} title={llm.health?.[p.id]?.last_error || ''}
+                  style={{ fontSize: 11, color: FG3, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: 999, background: d.color, display: 'inline-block' }} />
+                  {p.label.split('·')[0].trim()} {d.text}
+                </span>
+              )
+            })}
+          </div>
+        )}
         <SettingRow label="具体模型" sub={`${curProv?.label ?? ''} · 当前 ${activeModel || '默认'}`} noBorder>
           {curProv && curProv.models.length > 1 ? (
             <Segmented sm value={activeModel} onChange={selectModel}

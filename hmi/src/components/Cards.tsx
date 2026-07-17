@@ -7,7 +7,7 @@ import type {
   SearchResultCard, NewsBriefCard, ResearchReportCard, SportsScoresCard, SportsScorersCard,
   RoutePlanCard, ChargingRouteCard, TripItineraryCard, PoiListCard, PoiDetailCard,
   PlaceListCard, PlaceDetailCard, IntentChoiceCard,
-  ReminderListCard, ReminderCard, SceneCard, SceneListCard,
+  ReminderListCard, ReminderCard, SceneCard, SceneListCard, Provenance,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
@@ -134,6 +134,24 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
 
 // ─── 天气卡片 ───
 
+// 数据真实性徽章（`_prov`，conventions §9.3）：mock=醒目琥珀「模拟数据」、degraded/cached=灰标、
+// real=不打扰小字角标（来源 · 取数时间）。治理 P1 试点：weather / place 族 / search_result。
+function ProvBadge({ prov }: { prov?: Provenance }) {
+  if (!prov) return null
+  const pill = (bg: string, fg: string, text: string, title?: string) => (
+    <span title={title} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: bg, color: fg, whiteSpace: 'nowrap', flexShrink: 0 }}>{text}</span>
+  )
+  if (prov.mode === 'mock') return pill('rgba(245,158,11,0.16)', 'var(--au-warn)', '模拟数据', '演示用模拟数据，非真实来源')
+  if (prov.mode === 'degraded') return pill('rgba(148,163,184,0.16)', 'var(--au-text-2)', prov.note ? `降级 · ${prov.note}` : '降级', '真实数据，但经降级路径取得')
+  if (prov.mode === 'cached') return pill('rgba(148,163,184,0.16)', 'var(--au-text-2)', prov.note ? `缓存 · ${prov.note}` : '缓存')
+  const t = (prov.fetched_at || '').replace('T', ' ').slice(5, 16)
+  return (
+    <span title="数据来源 · 取数时间" style={{ fontSize: 10, color: 'var(--au-text-3)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+      {prov.vendor}{t ? ` · ${t}` : ''}
+    </span>
+  )
+}
+
 function WeatherCardView({ card }: { card: WeatherCard }) {
   const alert = weatherAlertSummary(card.alerts)
   const upd = card.update_time && card.update_time !== 'mock'
@@ -171,6 +189,11 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
         <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 2 }}>
           <span style={{ lineHeight: 1, display: 'inline-flex', justifyContent: 'flex-end' }}>{weatherGlyph(card.text, 40, 'var(--au-text)')}</span>
           {upd && <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>更新 {upd}</span>}
+          {card._prov && (
+            <span style={{ display: 'inline-flex', justifyContent: 'flex-end' }}>
+              <ProvBadge prov={card._prov} />
+            </span>
+          )}
         </div>
       </div>
       <CardHR />
@@ -542,7 +565,10 @@ function SearchResultCardView({ card }: { card: SearchResultCard }) {
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
       <div style={{ padding: '15px 16px 12px' }}>
-        <AIBadge label="AI · 联网搜索" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <AIBadge label="AI · 联网搜索" />
+          <ProvBadge prov={card._prov} />
+        </div>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
@@ -1314,7 +1340,10 @@ function PlaceListCardView({ card, onAction }: { card: PlaceListCard; onAction?:
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
       <div style={{ padding: '15px 16px 12px' }}>
-        <AIBadge label="AI · 周边发现" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <AIBadge label="AI · 周边发现" />
+          <ProvBadge prov={card._prov} />
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600 }}><Icon name="location" size={17} color="var(--au-text)" />{title}</span>
           <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>共 {card.items.length} 家</span>
@@ -1370,7 +1399,10 @@ function PlaceDetailCardView({ card, onAction }: { card: PlaceDetailCard; onActi
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
       <div style={{ padding: '15px 16px 12px' }}>
-        <AIBadge label="AI · 商户详情" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <AIBadge label="AI · 商户详情" />
+          <ProvBadge prov={card._prov} />
+        </div>
         <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{card.name}</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
           {(card.rating ?? 0) > 0 && <span style={{ fontSize: 12, color: 'var(--au-warn)', fontWeight: 700 }}>★ {card.rating}</span>}

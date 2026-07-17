@@ -1,6 +1,6 @@
 # 多模型运行时硬化：评测锁定、active 持久化、429/流式降级与健康可视
 
-- **状态**：落地中——P0（D1/D6/D8）已落地并真栈验证（2026-07-17，见 §8）；P1（D3/D4/D5）/P2（D2/D7）待做
+- **状态**：落地中——P0（D1/D6/D8）+ P1（D3/D4/D5）已落地并真栈验证（2026-07-17，见 §8）；P2（D2 请求级 pin / D7 failover 存档）待做
 - **交付对象**：后续实现者（人 / AI agent）
 - **关联**：`llm-gateway/llm_runtime.py`、`llm-gateway/server.py`、`llm-gateway/providers.py`、`llm-gateway/http_server.py`、`agents/_sdk/clients.py`、`test/e2e_journeys.py`、`test/eval_common.py`；前作 [2026-07-07 多 LLM 源](2026-07-07-llm-asr-tts-multiprovider-and-sports-flags.md)、[R3.5 降级矩阵](2026-07-03-r3.5-degrade-matrix-e2e.md)（CompleteStream 无备用模型重试的缺口在此首次记录、当时决定只记不修）
 - **姊妹篇**：[2026-07-17 数据真实性治理](2026-07-17-data-authenticity-governance.md)（「pin 住的请求绝不静默漂移」与「真实数据绝不静默变假」是同一条原则的两面）
@@ -122,3 +122,25 @@ python test/eval_mode_routing.py --live --provider mimo   # live 评测锁定
   `docker compose restart llm-gateway` → active 保持 `minimax:MiniMax-M3`；漂移演练
   pin→切 mimo→`drift_detected=true`（含 from/to/at）→恢复原值 PASS；probe Complete 一条 →
   collector `llm_calls` 落 `provider='minimax'`。
+- **P1 ✅（2026-07-17 当日）**：
+  - **D3**：providers 抛结构化 `ProviderHTTPError`（status_code + Retry-After；消息格式
+    `provider HTTP <code>: <body>` 不变，诊断口径保持）。网关 429 单独分类：Retry-After ≤
+    `LLM_429_WAIT_CAP_S`（默认 2s）且 gRPC 预算余量足 → 等一次重试**同模型**；否则跳过
+    剩余档位（限流多为账号级，fast 档白打）→ 映射 **RESOURCE_EXHAUSTED**（SDK 只对
+    UNAVAILABLE 做重连重试，429 从此不再白打第二遍）；请求性 4xx 升级为类型判断
+    （字符串匹配保留兜底 Anthropic 路径）。
+  - **D4**：CompleteStream **首 token 前**失败按档位链降级到下一模型（兑现 R3.5「只记不修」
+    缺口）；**首 token 后**不切（半段话术不可拼接）。
+  - **D5**：`llm-gateway/health.py` 被动滚动窗口（50 条/provider：ok/err/timeout/rate_limited/
+    last_error/EWMA 时延），Complete/CompleteStream/probe 调用路径顺手记账；
+    `GET /api/llm/providers` 附 health 块；`POST /api/llm/probe {provider?}` 按需体检
+    （拒绝周期探活——不给付费 API 烧闲置 token）；HMI 设置页厂商健康点
+    （绿=近窗全成+EWMA 时延 / 黄=偶发失败 / 红=高失败或限流 / 灰=近期未使用）。
+  - 验证：+9 服务器层降级单测（假 provider/context 直驱：429 小 Retry-After 等待重试同模型 /
+    无 Retry-After 跳 fast / 长 Retry-After 快速失败 / 非 429 照降档 / 4xx 映射 / 流式跨档 /
+    半途不切 / 流式全 429）+2 probe/health 单测；真栈 `POST /api/llm/probe` → minimax ok
+    1373ms → health 窗口记账 `{window:1, ok:1, ewma_latency_ms:1373.2}`；HMI build + node 例过。
+  - 实施坑：新测试 `import server` 裸模块名写进 sys.modules，全量跑时**劫持
+    orchestrator/edge tests 的 `from server import ...`**（「providers 通用包名劫持」教训在
+    server 名上重演）→ importlib 按文件路径独名加载修复；`cmd | tail` 吞真实退出码
+    （PIPESTATUS 教训二次咬人）→ 回归日志落文件取真值。

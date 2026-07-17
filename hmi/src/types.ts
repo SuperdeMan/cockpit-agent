@@ -45,6 +45,16 @@ export type ProcessStep = {
 
 export type CardGroup = { type: 'card_group'; items: UiCard[] }
 
+// 数据真实性标记（后端保留键 `_prov`，契约 docs/conventions.md §9.3）：
+// mock=模拟数据醒目提示 / degraded=真实但降级路径 / cached=缓存 / real=不打扰角标（来源·取数时间）。
+// 治理 P1 试点：weather / place_list·place_detail / search_result 三族，其余分批推广。
+export type Provenance = {
+  mode: 'real' | 'cached' | 'degraded' | 'mock'
+  vendor?: string
+  fetched_at?: string   // 数据获取时刻（ISO8601），非渲染时刻
+  note?: string         // degraded/cached 的原因或缓存龄
+}
+
 export type UiCard =
   | CardGroup
   | WeatherCard
@@ -141,6 +151,7 @@ export type Confidence = 'high' | 'medium' | 'low'
 
 export type SearchResultCard = {
   type: 'search_result'
+  _prov?: Provenance
   query: string
   sources: Array<{ title: string; url: string; source: string; published?: string }>
   freshness?: string
@@ -206,6 +217,7 @@ export type SportsScorersCard = {
 
 export type WeatherCard = {
   type: 'weather'
+  _prov?: Provenance
   city: string
   temp: string
   text: string
@@ -351,6 +363,7 @@ export type PoiDetailCard = {
 // 周边发现列表卡（nearby.search）：多类目富数据——评分/人均/距离/营业/特色芯片
 export type PlaceListCard = {
   type: 'place_list'
+  _prov?: Provenance
   category?: string            // 餐饮/酒店/景点/影院…（卡头与文案用）
   keyword?: string
   items: Array<{
@@ -371,6 +384,7 @@ export type PlaceListCard = {
 // 周边发现详情卡（nearby.detail）：评分/人均/电话/营业时间/特色/图片 + 导航·拨打
 export type PlaceDetailCard = {
   type: 'place_detail'
+  _prov?: Provenance
   id: string
   name: string
   category?: string
@@ -618,7 +632,16 @@ export type LlmProviderInfo = {
   primary?: string
   models: LlmModelInfo[]
 }
-export type LlmStatus = { active: { provider: string; model: string }; providers: LlmProviderInfo[] }
+// 被动健康（运行时硬化 D5）：llm-gateway 调用路径滚动窗口记账，/api/llm/providers 附带
+export type LlmProviderHealth = {
+  window: number; ok: number; err: number; timeout: number; rate_limited: number
+  last_error: string; last_ok_at: number; ewma_latency_ms: number
+}
+export type LlmStatus = {
+  active: { provider: string; model: string }
+  providers: LlmProviderInfo[]
+  health?: Record<string, LlmProviderHealth>
+}
 
 // 离线兜底目录（镜像后端 llm_runtime._PROVIDER_SPECS）——探测 /api/llm/providers 失败时用此渲染。
 export const LLM_PROVIDER_FALLBACK: LlmProviderInfo[] = [
