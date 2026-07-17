@@ -1,9 +1,11 @@
 """信息类 Provider 工厂。按环境变量选择 real/mock。
 
-治理 P0（docs/design/2026-07-17-data-authenticity-governance.md §4 D2）：
-显式要求真实数据（vendor env 显式指定，或配了该域凭证）而构造失败 → fail-fast
-启动即炸，绝不静默回退 mock；默认 env（无凭证）照旧 mock，CI/离线开发不受影响。
-每个工厂返回前输出统一决议日志 `provider[<domain>]=...` 供全栈 grep 审计。
+治理 P0/P1（docs/design/2026-07-17-data-authenticity-governance.md §4 D2/D1）：
+- 显式要求真实数据（vendor env 显式指定，或配了该域凭证）而构造失败 → fail-fast
+  启动即炸，绝不静默回退 mock；默认 env（无凭证）照旧 mock，CI/离线开发不受影响。
+- 每个工厂返回前 `log_resolution(domain, vendor, real, provider)`：统一决议日志
+  `provider[<domain>]=...` 供全栈 grep 审计 + 给 provider 盖来源章（出卡处
+  `provenance.attach()` 据此写 ui_card `_prov`，conventions §9.3）。
 """
 import logging
 import os
@@ -55,7 +57,7 @@ def build_weather_provider() -> WeatherProvider:
                     jwt_auth=QWeatherJWT(project_id, key_id, private_key), host=host)
             else:        # API Key（旧版）
                 p = QWeatherProvider(api_key=os.getenv("QWEATHER_KEY"), host=host)
-            log_resolution("weather", "qweather", True)
+            log_resolution("weather", "qweather", True, p)
             return p
         except Exception as e:
             fail("weather", f"QWeatherProvider 构造失败：{e}", e)
@@ -63,8 +65,9 @@ def build_weather_provider() -> WeatherProvider:
     if vendor == "qweather" or any([project_id, key_id, private_key]):
         fail("weather", "和风凭证不齐：JWT 需 QWEATHER_PROJECT_ID+QWEATHER_KEY_ID+"
                         "QWEATHER_PRIVATE_KEY(_PATH) 三件套，或旧版 QWEATHER_KEY")
-    log_resolution("weather", "mock", False)
-    return MockWeatherProvider()
+    m = MockWeatherProvider()
+    log_resolution("weather", "mock", False, m)
+    return m
 
 
 def build_search_provider() -> SearchProvider:
@@ -82,7 +85,7 @@ def build_search_provider() -> SearchProvider:
                 os.getenv("EXA_API_KEY"),
                 base_url=os.getenv("EXA_BASE_URL", ""),
             )
-            log_resolution("search", "exa", True)
+            log_resolution("search", "exa", True, p)
             return p
         except Exception as e:
             errors.append(f"exa: {e}")
@@ -95,7 +98,7 @@ def build_search_provider() -> SearchProvider:
                 os.getenv("ANYSEARCH_API_KEY"),
                 base_url=os.getenv("ANYSEARCH_BASE_URL", ""),
             )
-            log_resolution("search", "anysearch", True)
+            log_resolution("search", "anysearch", True, p)
             return p
         except Exception as e:
             errors.append(f"anysearch: {e}")
@@ -105,15 +108,16 @@ def build_search_provider() -> SearchProvider:
         try:
             from .search_bing import BingSearchProvider
             p = BingSearchProvider(os.getenv("BING_SEARCH_KEY"))
-            log_resolution("search", "bing", True)
+            log_resolution("search", "bing", True, p)
             return p
         except Exception as e:
             errors.append(f"bing: {e}")
             logger.warning("BingSearchProvider init failed: %s", e)
     if errors:
         fail("search", "已配置的搜索引擎全部构造失败：" + "；".join(errors))
-    log_resolution("search", "mock", False)
-    return MockSearchProvider()
+    m = MockSearchProvider()
+    log_resolution("search", "mock", False, m)
+    return m
 
 
 def build_news_provider() -> NewsProvider:
@@ -132,7 +136,7 @@ def build_news_provider() -> NewsProvider:
                 )
             from .news_serpapi import SerpApiNewsProvider
             p = SerpApiNewsProvider(serpapi_key, anysearch_provider=anysearch)
-            log_resolution("news", "serpapi", True)
+            log_resolution("news", "serpapi", True, p)
             return p
         except Exception as e:
             errors.append(f"serpapi: {e}")
@@ -142,15 +146,16 @@ def build_news_provider() -> NewsProvider:
         try:
             from .news_api import NewsAPIProvider
             p = NewsAPIProvider(os.getenv("NEWS_API_KEY"))
-            log_resolution("news", "newsapi", True)
+            log_resolution("news", "newsapi", True, p)
             return p
         except Exception as e:
             errors.append(f"newsapi: {e}")
             logger.warning("NewsAPIProvider init failed: %s", e)
     if errors:
         fail("news", "已配置的新闻源全部构造失败：" + "；".join(errors))
-    log_resolution("news", "mock", False)
-    return MockNewsProvider()
+    m = MockNewsProvider()
+    log_resolution("news", "mock", False, m)
+    return m
 
 
 def build_extractor():
@@ -178,12 +183,13 @@ def build_sports_provider() -> SportsProvider:
         try:
             from .sports_apifootball import ApiFootballProvider
             p = ApiFootballProvider(key, host=os.getenv("API_FOOTBALL_HOST", ""))
-            log_resolution("sports", "api-football", True)
+            log_resolution("sports", "api-football", True, p)
             return p
         except Exception as e:
             fail("sports", f"ApiFootballProvider 构造失败：{e}", e)
-    log_resolution("sports", "mock", False)
-    return MockSportsProvider()
+    m = MockSportsProvider()
+    log_resolution("sports", "mock", False, m)
+    return m
 
 
 def build_stock_provider() -> StockProvider:
@@ -193,7 +199,7 @@ def build_stock_provider() -> StockProvider:
         try:
             from .stock_tushare import TushareStockProvider
             p = TushareStockProvider(os.getenv("TUSHARE_TOKEN"))
-            log_resolution("stock", "tushare", True)
+            log_resolution("stock", "tushare", True, p)
             return p
         except Exception as e:
             errors.append(f"tushare: {e}")
@@ -203,12 +209,13 @@ def build_stock_provider() -> StockProvider:
         try:
             from .stock_quote import QuoteStockProvider
             p = QuoteStockProvider(os.getenv("STOCK_API_KEY"))
-            log_resolution("stock", "alphavantage", True)
+            log_resolution("stock", "alphavantage", True, p)
             return p
         except Exception as e:
             errors.append(f"alphavantage: {e}")
             logger.warning("QuoteStockProvider init failed: %s", e)
     if errors:
         fail("stock", "已配置的股票源全部构造失败：" + "；".join(errors))
-    log_resolution("stock", "mock", False)
-    return MockStockProvider()
+    m = MockStockProvider()
+    log_resolution("stock", "mock", False, m)
+    return m

@@ -2,7 +2,8 @@
 
 发现归本 Agent、出行归 navigation（见 docs/design/2026-07-05-nearby-discovery-redesign.md）：
 本 Agent 只做「找 + 看详情」，导航由 HMI 卡片按钮 handoff 给 navigate 链路；nearby.order 为诚实预留桩。
-Provider 适配层（mock/amap 经 env 切换）；真实失败降级 mock，不击穿主链。
+Provider 适配层（mock/amap 经 env 切换）；真实源运行期失败**诚实降级**说拿不到，
+不改供 mock 假 POI（治理 P0，conventions §9.4——假餐厅可能被导航过去，代价不对称）。
 """
 from __future__ import annotations
 import logging
@@ -12,9 +13,9 @@ import re
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, NEED_CONFIRM, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
+from agents._sdk.provenance import attach
 from .providers import build_place_provider
 from .providers.base import GeoPoint, Place
-from .providers.mock import MockPlaceProvider
 
 logger = logging.getLogger("agent.nearby")
 
@@ -133,7 +134,6 @@ class NearbyAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
         self.place = build_place_provider()
-        self._fallback = MockPlaceProvider()  # 真实 provider 抖动时降级兜底
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         handlers = {
@@ -259,8 +259,10 @@ class NearbyAgent(BaseAgent):
         try:
             results = await self.place.search(keyword, **skw)
         except ProviderError as e:
-            logger.warning("place search failed, fallback to mock: %s", e)
-            results = await self._fallback.search(keyword, **skw)
+            # 真实源失败不再改供 mock 假 POI（假餐厅可能被用户导航过去）——诚实说拿不到。
+            logger.warning("place search failed（诚实降级，无 mock 回退）: %s", e)
+            return AgentResult(status=FAILED,
+                               speech="周边搜索服务暂时不可用，稍后再试一次？")
 
         label = cuisine or brand or keyword
         if not results:
@@ -279,8 +281,8 @@ class NearbyAgent(BaseAgent):
         names = "、".join(p.name for p in results[:3])
         extra = self._known_attrs(results[0])
         extra_s = f"，{results[0].name}{extra}" if extra else ""
-        card = {"type": "place_list", "category": category, "keyword": label,
-                "items": items, "display_priority": 1}
+        card = attach({"type": "place_list", "category": category, "keyword": label,
+                       "items": items, "display_priority": 1}, self.place)
         return AgentResult(
             speech=f"为您找到 {len(results)} 家{label}{pref_note}，推荐：{names}{extra_s}。",
             ui_card=card,
@@ -314,11 +316,12 @@ class NearbyAgent(BaseAgent):
         try:
             p = await self.place.detail(place_id, name=name, near=near, meta=meta)
         except ProviderError as e:
-            logger.warning("place detail failed, fallback to mock: %s", e)
-            p = await self._fallback.detail(place_id, name=name, near=near, meta=meta)
+            logger.warning("place detail failed（诚实降级，无 mock 回退）: %s", e)
+            return AgentResult(status=FAILED,
+                               speech=f"暂时拿不到「{name or '该地点'}」的详情，稍后再试一次？")
         return AgentResult(
             speech=self._detail_speech(p),
-            ui_card=self._detail_card(p),
+            ui_card=attach(self._detail_card(p), self.place),
             # 详情不自动导航；lat/lng/tel 供 HMI 卡片「导航」「拨打」按钮 handoff
             data={"place": {"name": p.name, "lat": p.lat, "lng": p.lng, "tel": p.tel}},
         )

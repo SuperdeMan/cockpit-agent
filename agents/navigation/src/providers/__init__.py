@@ -24,7 +24,7 @@ def build_poi_provider() -> POIProvider:
         try:
             from .amap import AmapPOIProvider
             p = AmapPOIProvider(key)
-            log_resolution("poi", "amap", True)
+            log_resolution("poi", "amap", True, p)
             return p
         except Exception as e:
             fail("poi", f"AmapPOIProvider 构造失败：{e}", e)
@@ -33,5 +33,6 @@ def build_poi_provider() -> POIProvider:
         fail("poi", "POI_VENDOR=baidu 未接入（TODO），可用 amap 或 mock")
     elif vendor != "mock":
         fail("poi", f"未知 POI_VENDOR={vendor}")
-    log_resolution("poi", "mock", False)
-    return MockPOIProvider()
+    m = MockPOIProvider()
+    log_resolution("poi", "mock", False, m)
+    return m

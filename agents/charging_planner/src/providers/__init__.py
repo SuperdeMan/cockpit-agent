@@ -20,9 +20,10 @@ def build_charging_provider():
         try:
             from .amap import AmapChargingProvider
             p = AmapChargingProvider(key)
-            log_resolution("charging", "amap", True)
+            log_resolution("charging", "amap", True, p)
             return p
         except Exception as e:
             fail("charging", f"AmapChargingProvider 构造失败：{e}", e)
-    log_resolution("charging", "mock", False)
-    return MockChargingProvider()
+    m = MockChargingProvider()
+    log_resolution("charging", "mock", False, m)
+    return m

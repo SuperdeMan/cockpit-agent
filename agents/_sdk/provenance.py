@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import NoReturn
 
 logger = logging.getLogger("sdk.provenance")
@@ -39,8 +40,46 @@ def fail(domain: str, why: str, cause: Exception | None = None) -> NoReturn:
     raise err
 
 
-def log_resolution(domain: str, vendor: str, real: bool) -> None:
-    """统一决议日志（启动期一次）。print 保证容器 stdout 可 grep（同 llm_runtime 启动行惯例）。"""
+def log_resolution(domain: str, vendor: str, real: bool, provider=None) -> None:
+    """统一决议日志（启动期一次）。print 保证容器 stdout 可 grep（同 llm_runtime 启动行惯例）。
+    传 provider 时顺带盖来源章（attach() 出卡时读）——决议=日志+章，一处收口。"""
     line = f"provider[{domain}]={vendor}(real)" if real else f"provider[{domain}]={vendor}"
     logger.info(line)
     print(line, flush=True)
+    if provider is not None:
+        try:
+            provider.provenance_vendor = vendor
+            provider.provenance_mode = "real" if real else "mock"
+        except Exception:   # __slots__ 等极端情况：不阻断构造
+            pass
+
+
+def attach(card, source, *, mode: str = "", fetched_at: str = "", note: str = ""):
+    """给 ui_card 盖 `_prov` 真实性标记（契约 conventions §9.3；治理 P1）。
+
+    - ``source``：provider 实例（读 log_resolution 盖的章）或 vendor 字符串。
+    - ``mode`` 缺省从章取（real/mock）；``degraded``/``cached`` 由调用方显式传（note 说明原因）。
+    - ``fetched_at`` 缺省=当下（ISO8601 本地时区）——数据获取时刻，非渲染时刻。
+    - card 为 None 原样返回；``card_group`` 打在成员卡上（同源场景）。返回 card 便于内联。
+    """
+    if card is None:
+        return None
+    if isinstance(source, str):
+        vendor, default_mode = source, "real"
+    else:
+        vendor = getattr(source, "provenance_vendor", "") or "unknown"
+        default_mode = getattr(source, "provenance_mode", "") or "real"
+    prov = {
+        "mode": mode or default_mode,
+        "vendor": vendor,
+        "fetched_at": fetched_at or datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    if note:
+        prov["note"] = note
+    if card.get("type") == "card_group":
+        for item in card.get("items") or []:
+            if isinstance(item, dict):
+                item.setdefault("_prov", dict(prov))
+        return card
+    card["_prov"] = prov
+    return card

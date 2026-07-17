@@ -11,6 +11,7 @@ import re
 from agents._sdk import AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
+from agents._sdk.provenance import attach
 
 from ._util import _is_coordinate_label, _shanghai_now
 
@@ -216,6 +217,7 @@ class WeatherMixin:
             "indices": indices, "alerts": alerts,
             "alerts_available": overview.alerts_available,
         }
+        attach(card, self.weather)   # 真实性标记（_prov，治理 P1 试点族）
         return AgentResult(speech=speech, ui_card=card, data={"weather": card})
 
     async def _forecast(self, intent, ctx, meta) -> AgentResult:

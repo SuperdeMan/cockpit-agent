@@ -19,5 +19,6 @@ def build_parking_provider() -> ParkingProvider:
         fail("parking", "PARKING_VENDOR=etcp 未接入（TODO）")
     elif vendor != "mock":
         fail("parking", f"未知 PARKING_VENDOR={vendor}")
-    log_resolution("parking", "mock", False)
-    return MockParkingProvider()
+    m = MockParkingProvider()
+    log_resolution("parking", "mock", False, m)
+    return m

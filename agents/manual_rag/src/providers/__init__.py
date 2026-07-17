@@ -18,5 +18,6 @@ def build_knowledge_retriever() -> KnowledgeRetriever:
         fail("knowledge", "KNOWLEDGE_VENDOR=pgvector 未接入（TODO），当前仅 mock 语料")
     elif vendor != "mock":
         fail("knowledge", f"未知 KNOWLEDGE_VENDOR={vendor}")
-    log_resolution("knowledge", "mock", False)
-    return MockKnowledgeRetriever()
+    m = MockKnowledgeRetriever()
+    log_resolution("knowledge", "mock", False, m)
+    return m

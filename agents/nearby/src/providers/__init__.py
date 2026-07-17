@@ -23,11 +23,12 @@ def build_place_provider() -> PlaceProvider:
         try:
             from .amap import AmapPlaceProvider
             p = AmapPlaceProvider(key)
-            log_resolution("place", "amap", True)
+            log_resolution("place", "amap", True, p)
             return p
         except Exception as e:
             fail("place", f"AmapPlaceProvider 构造失败：{e}", e)
     elif vendor != "mock":
         fail("place", f"未知 POI_VENDOR={vendor}（本域仅支持 amap|mock）")
-    log_resolution("place", "mock", False)
-    return MockPlaceProvider()
+    m = MockPlaceProvider()
+    log_resolution("place", "mock", False, m)
+    return m

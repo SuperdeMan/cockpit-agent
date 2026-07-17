@@ -9,6 +9,7 @@ import logging
 from agents._sdk import AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.grounding import fallback_brief, grounded_synthesis, latest_published
+from agents._sdk.provenance import attach
 from agents._sdk.retrieval import retrieve
 
 logger = logging.getLogger("agent.info")
@@ -145,14 +146,14 @@ class SearchMixin:
 
         # search_result：气泡给结论，卡片只给证据（来源/时效/置信度）——不放结论文本，
         # 也不放 key_points（要点与气泡结论重复，用户反馈像"又一个总结"）。
-        card = {
+        card = attach({
             "type": "search_result",
             "query": query,
             "sources": [{"title": s["title"], "url": s["url"], "source": s["source"],
                          "published": s["published"]} for s in sources],
             "freshness": latest_published(sources),
             "confidence": confidence,
-        }
+        }, self.search)   # 真实性标记（_prov，治理 P1 试点族）
         # 低置信=单轮快查天花板的信号：给口头升级出口（不自动升调研，尊重延迟预期）
         follow_up = ("这轮是快查；想要更全面的结论，可以说「深入调研一下」。"
                      if confidence == "low" else "")
