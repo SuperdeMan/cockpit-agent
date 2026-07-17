@@ -33,7 +33,8 @@
   （dispatch 硬拒）**同源单轨校验**（`security/permission.py::check_permission`，R2.2）。
 - 端侧混合意图支持按语义组分流，本地动作与导航/媒体慢意图可在同一请求中协同执行。
 - HMI 支持文字流式渲染和**服务端流式 TTS**：文本增量进、PCM 音频分片出、无缝拼播（DashScope cosyvoice/qwen + MiMo v2.5 / MiniMax 四引擎可切，首帧 <1s），无凭据无感回退句级批处理。
-- **信息类 Provider 全面落地**：导航=高德 / 天气=和风(JWT) / 搜索=Exa 正文级检索(AnySearch→Bing 降级) / 新闻=Exa 优先(SerpApi 兜底) / 赛事=api-football / 股票=Tushare，真实凭证冒烟通过，无凭证回退 mock。搜索经接地合成（强制引用、无依据诚实弃权），新闻以 TTS 播报式编号速览呈现。
+- **信息类 Provider 全面落地**：导航=高德 / 天气=和风(JWT) / 搜索=Exa 正文级检索(AnySearch→Bing 降级) / 新闻=Exa 优先(SerpApi 兜底) / 赛事=api-football / 股票=Tushare，真实凭证冒烟通过；**无凭证（默认 env）走 mock，显式配置真实源而构造失败则 fail-fast 启动即炸、绝不静默回退**（2026-07-17 数据真实性治理）。搜索经接地合成（强制引用、无依据诚实弃权），新闻以 TTS 播报式编号速览呈现。
+- **数据真实性治理 + 多模型运行时硬化（2026-07-17）**：外源数据卡片统一携带 `_prov` 真实性标记（real/degraded/cached/mock + 来源 + 取数时间，HMI 徽章渲染，13 卡族覆盖）；全部 Provider 工厂统一决议日志 `provider[<domain>]=…` 可一屏审计；严格栈 `REQUIRE_REAL_PROVIDERS=on` 拒绝任何 mock 决议；LLM 侧 active 切换持久化 Redis、429/流式分类降级、被动健康+按需探针（`POST /api/llm/probe`）、评测 `--provider` 锁定与请求级 `meta.llm_provider` pin。详见 `docs/design/2026-07-17-data-authenticity-governance.md`、`docs/design/2026-07-17-llm-runtime-hardening.md`。
 - **HMI 信息类 UI 卡片**：天气/股票/新闻/搜索/赛事/POI 结构化卡片（搜索/新闻为「气泡给结论、卡片给证据」），全链路 ui_card 透传。
 - **复杂任务动态思考 + 过程区**：行程/深度调研/多步等按统一 `is_complex` 判据动态对 LLM
   开思考提质，HMI 气泡内嵌四阶段可折叠「过程区」（理解需求→规划步骤→执行任务→整理结果，
@@ -270,7 +271,7 @@ python test/e2e_ws.py
 - Cloud Gateway 的车辆长连接状态仍在单实例内存中，多实例需会话亲和或一致性路由。
 - Registry 已实现 PgStore（PostgreSQL）持久化，内存 fallback 保留；各 Agent / edge / cloud-planner 周期重注册自愈，重启后自动补注册（无需人工）；多实例扩展仍待做。
 - 导航（高德）、周边发现（高德 POI 2.0）、充电（高德）、天气（和风 JWT）已接真实 Provider 并经真实凭证冒烟通过（接入规范见
-  [`docs/guides/provider-integration.md`](docs/guides/provider-integration.md)）；停车/手册仍为 mock，按环境接入。
+  [`docs/guides/provider-integration.md`](docs/guides/provider-integration.md)）；停车/手册仍为 mock（严格栈默认豁免域 `parking,knowledge`），按环境接入。
 - HTTP/MCP 外部工具尚未实现；第三方 Agent 出站白名单已由 `deploy/egress-proxy.py` 落地（CONNECT 正向代理 + 域名白名单，实测 amap 放行 / 越权域名 403）。
 - 会话鉴权已由 **R3.1** 落地最小闭环：静态 token 两层校验（HMI WS `?token=` → edge-gateway 解析
   身份+`granted_scopes`、去 `user_id="u1"` 硬编码；Hello channel token → cloud-gateway 校验），env 门控

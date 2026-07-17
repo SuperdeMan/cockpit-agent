@@ -25,7 +25,7 @@ npm run dev      # http://localhost:5173
   - 语音播报：音色选择/试听、播报与自动播放开关
   - 语音输入：**识别引擎（实时 DashScope / 分块 MiMo / 关闭）+ 模型（Qwen3-ASR / Fun-ASR）**、识别语言、麦克风模式（按住/点按）、最长聆听时长
   - 显示主题：深/浅色、字号、大触控、快捷指令编辑
-  - 助手：昵称、回答长度、对话模型（快速/深度/自动）、**AI 大脑（LLM 厂商→模型两级切换：MiMo/MiniMax/DeepSeek/阿里百炼，切即全局生效，未配 key 置灰，接 `/api/llm/providers`+`/api/llm/provider`）**
+  - 助手：昵称、回答长度、对话模型（快速/深度/自动）、**AI 大脑（LLM 厂商→模型两级切换：MiMo/MiniMax/DeepSeek/阿里百炼，切即全局生效并持久化 Redis，未配 key 置灰，接 `/api/llm/providers`+`/api/llm/provider`；厂商行下带被动健康点——绿=近窗全成+EWMA 时延/黄=偶发失败/红=高失败或限流/灰=近期未使用，2026-07-17）**；信息卡带 `_prov` 数据真实性徽章（mock=琥珀「模拟数据」醒目 / degraded·cached=灰标 / real=小字来源·取数时间角标，`Cards.tsx::ProvBadge`）
   - 能力开关：各 Agent 开关
   - 记忆：开关 + **查看会话对话记忆与偏好画像**（接 `/api/memory`）
 - 会话级偏好经 WS `meta` 透传后端（`model_pref`/`answer_length`/`assistant_name`/`memory_enabled`）。

@@ -29,6 +29,9 @@ python -m observability.collector.main
 
 - SQLite（stdlib，WAL）四张表：`turns` / `spans` / `llm_calls` / `logs`；
   写入 best-effort，持久层故障不影响实时流。
+- `llm_calls` 自 2026-07-17 增 `provider` 列（实际 serving 的 LLM 厂商，供「哪个脑答的」审计；
+  `_ensure_column` 加法迁移兼容既有 volume 旧库）；`obs.llm` 事件另带
+  `requested_tier`/`pinned` 字段（广播可见，未落列）。
 - `OBS_RETENTION_DAYS`（默认 7）定期清理；**badcase 标记的轮次及其链路数据豁免**。
 - 内容级字段（用户原话/话术/plan/LLM 输入输出）受 `OBS_CONTENT_CAPTURE` 门控 +
   统一脱敏（`observability/redact.py`）；off 时只存长度与哈希指纹。

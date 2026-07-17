@@ -19,7 +19,7 @@
 | `deepseek` | api.deepseek.com/v1/chat/completions | bearer | max_tokens | `thinking:{type:disabled}`（v4 是推理模型，须关思考拿干净 content） | `DEEPSEEK_API_KEY` | deepseek-v4-pro / deepseek-v4-flash |
 | `qwen` | dashscope…/compatible-mode/v1/chat/completions | bearer | max_tokens | `enable_thinking:false`（qwen3） | 复用 `LLM_EMBED_API_KEY`/`DASHSCOPE_ASR_KEY` | qwen3.7-max / qwen3.7-plus |
 | `anthropic` | Anthropic Claude SDK（legacy，`LLM_PROVIDER=anthropic`） | — | — | — | `LLM_API_KEY` | env 指定 |
-| `mock` | 无任何 key 时的回显兜底 | — | — | — | — | mock |
+| `mock` | 无任何 key 时的回显兜底（严格栈 `REQUIRE_REAL_PROVIDERS=on` 时禁止成为 active，启动即拒） | — | — | — | — | mock |
 
 > **推理内容出口清理（2026-07-12 实测）**：MiniMax-M3 **开思考**时把思考段以 `<think>…</think>`
 > **内联在 content 头部**（非 `reasoning_content` 字段；关思考正常，mimo/deepseek/qwen 四态干净）
@@ -27,22 +27,35 @@
 > 截断在思考里则诚实置空）。另：TTS 入口（`_sentence_segments` 流式漏斗 + `/api/tts` 批处理）统一剥
 > markdown（`_strip_md_tts`，与 `agents/_sdk/grounding.strip_markdown_speech` 配对口径），星号/表格符不进语音。
 
-## 路由与降级
+## 路由与降级（运行时硬化 P0-P2，2026-07-17，设计见 `docs/design/2026-07-17-llm-runtime-hardening.md`）
 - 未指定 model / 传空 → active provider 的 `primary`；传档位哨兵 `@fast` → active 的 `fast`（chitchat 按
   `model_pref` 传哨兵，**不传具体模型名**，避免切厂商后把 A 家模型名误发给 B 家）；传当前 provider
   不认识的具体模型名 → 回落 primary（防御）。primary 失败降级到 fast。
+- **429 单独分类**：`Retry-After ≤ LLM_429_WAIT_CAP_S`（默认 2s）且预算余量足 → 等一次重试**同模型**；
+  否则跳过剩余档位（限流多为账号级）→ 映射 `RESOURCE_EXHAUSTED`（SDK 只对 UNAVAILABLE 重连重试，
+  429 不再白打）；请求性 4xx（400/403/413/422）→ `INVALID_ARGUMENT`；上游超时 → `DEADLINE_EXCEEDED`。
+- **流式降级**：`CompleteStream` **首 token 前**失败按档位链降级到下一模型；首 token 后不切
+  （半段话术不可拼接）。
+- **请求级 pin（D2）**：`meta.llm_provider`（可选 `meta.llm_model`）按指定厂商的档位表解析并调用
+  （缓存/obs/健康记实际 serving），pin 到未配置厂商 → `INVALID_ARGUMENT` fail-closed。评测锁定与
+  dashboard 重放 A/B 用；WS 入口 `meta` 字段整链透传（prefs 白名单 + SDK/planner contextvar）。
 - **embedding 解耦**：`Embed` 走独立 `embed_provider()`（按 `LLM_EMBED_*` 配 DashScope 百炼），**与 active
   chat provider 无关**——切到无 embedding 能力的厂商（DeepSeek/MiniMax）也不影响记忆语义召回。
-- 未配置任何 chat key → `MockProvider`，保证可离线跑通。
-- 切换是网关**内存态**（重启回落 `LLM_PROVIDER` env 默认；HMI 启动时把本地存的选择重放回网关兜底）。
-  多实例部署需外置到 Redis（本 PoC 未做）。
+- 未配置任何 chat key → `MockProvider`，保证可离线跑通（严格栈 `REQUIRE_REAL_PROVIDERS=on` 时
+  llm/embed/asr/tts 四处 mock 决议均启动即拒，豁免 `REQUIRE_REAL_EXEMPT`）。
+- **active 切换持久化 Redis（`llm:active`）**：网关重启/重建自动恢复上次选择，不再回落
+  `LLM_PROVIDER` env 默认（07-12 事故根治）；Redis 缺包/不可达降级进程内存态（仅告警不拒启）。
+  HMI 启动时的选择重放保留（幂等兜底）。
+- **被动健康 + 按需探针（D5）**：调用路径滚动窗口记账（ok/err/timeout/rate_limited/EWMA 时延，
+  `health.py`），`GET /api/llm/providers` 附 `health` 块（HMI 设置页健康点据此渲染）；
+  `POST /api/llm/probe {provider?}` 按需体检（1 条小请求）。**刻意无周期探活**——不给付费 API 烧闲置 token。
 
 ## HMI HTTP 代理（http_server.py，端口 50059）
 HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 HTTP 代理：
 - `POST /api/asr` 批处理语音识别、`POST /api/tts` 批处理合成、`GET /api/voices`(可带 `?provider=cosyvoice|qwen|mimo`) 音色列表（经 ASR/TTS Provider）。
 - `GET /api/asr/stream`（**WebSocket**）流式识别上屏 + `GET /api/asr/stream/info` 引擎能力探测（见下节）。
 - `GET /api/tts/stream`（**WebSocket**）服务端流式 TTS + `GET /api/tts/stream/info` 引擎+音色+可用性探测（见下节）。
-- `GET /api/llm/providers` 列出已装配的 LLM 厂商+模型+可用性+当前 active（供 HMI 设置页两级选择）；`POST /api/llm/provider` `{provider,model?}` 全局切换 active 厂商/模型。
+- `GET /api/llm/providers` 列出已装配的 LLM 厂商+模型+可用性+当前 active+**health 被动健康块**（供 HMI 设置页两级选择与健康点）；`POST /api/llm/provider` `{provider,model?}` 全局切换 active（**持久化 Redis**）；`POST /api/llm/probe` `{provider?}` 按需体检指定厂商（1 条小请求回 ok/latency 并记入 health）。
 - `GET /api/memory/session` / `GET /api/memory/context` 只读记忆（转发 memory gRPC，供 HMI 记忆视图）。
 - ASR/TTS Provider 同样在无 `LLM_API_KEY` 时走 mock。
 
@@ -65,9 +78,10 @@ HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 H
 - HMI 侧 `pcmPlayer.mjs` 无缝拼播、`cancel`/断连传播到供应商任务取消（barge-in）；`STREAMING_TTS_PROVIDERS`（`hmi/src/audio.ts`）须与本节引擎清单一致，否则漏配的引擎会误走批处理。
 
 ## Phase 1 已落地
-- `cache.py` — LRU 缓存（messages 哈希，TTL 5min）
+- `cache.py` — LRU 缓存（messages 哈希 + serving provider + thinking 并入 key，TTL 5min）
 - `ratelimit.py` — 令牌桶限流（全局 + 每 key）
 - `metrics.py` — 按模型统计 calls/tokens/latency/cost
+- `health.py` — 每厂商被动健康滚动窗口（运行时硬化 D5，2026-07-17）
 
 ## 后续
 - 将 `security/` 内容审核/注入防护钩子接入统一网关请求链。

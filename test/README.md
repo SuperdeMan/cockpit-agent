@@ -77,8 +77,9 @@ python test/e2e_tts_stream.py              # 断言型：R4.2 服务端流式 TT
 python test/e2e_degrade.py                 # 断言型：架构 §3.3 降级矩阵四行（单 Agent 故障/LLM 超时/云 Planner 故障/断网）——docker 级故障注入 + 严格 try/finally 恢复，务必放在其它 e2e 脚本之后跑
 python test/e2e_auth.py                    # 断言型：会话鉴权（需 AUTH_REQUIRED=true + token，非默认栈配置）
 python test/e2e_mtls.py                    # 断言型：服务间 mTLS（需 GRPC_TLS=on + scripts/gen-certs.*，非默认栈配置）
-python test/e2e_journeys.py                # 旅程级（L3）：跨 Agent 自主执行 × 全场景连续对话（见下节）
+python test/e2e_journeys.py                # 旅程级（L3）：跨 Agent 自主执行 × 全场景连续对话（见下节）；--provider <pid> 锁定 active LLM（评测中途漂移=报告作废、退出码 1）
 python -m pytest test/e2e_real_providers.py -q -s   # 无需 docker：真实三方 provider 冒烟（按 key 自动 skip）
+python test/e2e_strict_stack.py            # 断言型：数据真实性——严格栈冒烟 + mock 泄漏探针（三问外源卡 _prov 全 real；active=mock 自动 SKIP，属 live 车道）（2026-07-17）
 ```
 
 ### 5.1 旅程级测试（L3）与 HMI CDP 层（L4）

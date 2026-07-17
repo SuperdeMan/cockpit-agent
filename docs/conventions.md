@@ -173,6 +173,9 @@
 | `DEEPSEEK_MODEL_PRIMARY` / `DEEPSEEK_MODEL_FAST` | DeepSeek 主/快模型 | 否（默认 deepseek-v4-pro / deepseek-v4-flash）|
 | `QWEN_MODEL_PRIMARY` / `QWEN_MODEL_FAST` | 阿里百炼 qwen3.7 主/快模型（**key 复用 `LLM_EMBED_API_KEY`/`DASHSCOPE_ASR_KEY`**，无需单独 key；独立计费子账号才填 `DASHSCOPE_LLM_KEY`）| 否（默认 qwen3.7-max / qwen3.7-plus）|
 | `LLM_MOCK_DELAY_MS` | 测试专用：`MockProvider` 人为延迟（毫秒），供 `test/e2e_degrade.py`「LLM 超时」用例注入慢响应（R3.5）| 否（默认 0，零行为变化）|
+| `LLM_429_WAIT_CAP_S` | 上游 429 带 Retry-After 时最多等待重试同模型的秒数上限；更长直接 `RESOURCE_EXHAUSTED` 让上层诚实降级（运行时硬化 D3，2026-07-17）| 否（默认 2）|
+| `REQUIRE_REAL_PROVIDERS` | **数据真实性严格栈**（治理 P2，§9.4）：`on`=任何 provider 决议落 mock 即启动失败（含 llm-gateway 的 llm/embed/asr/tts 四闸），演示/验收前翻开自证全真 | 否（默认 off，CI/离线全 mock 照跑）|
+| `REQUIRE_REAL_EXEMPT` | 严格栈豁免域（逗号分隔）：`parking`=支付设计即模拟、`knowledge`=车书暂无真实实现 | 否（默认 `parking,knowledge`）|
 | `ASR_PROVIDER` | **批处理 ASR 引擎**（/api/asr + gRPC Transcribe）：`auto`(默认：LLM_PROVIDER 为 MiMo 系→MiMo，否则有百炼 key→桥接 dashscope 流式引擎，都没有→mock)/`mimo`(钉住 MiMo)/`dashscope`/`mock`——chat 换家后批处理不再哑成 mock（2026-07-13）| 否 |
 | `ASR_MODEL` / `ASR_LANGUAGE` | 批处理 ASR 模型 / 默认语言（zh）| 否 |
 | `MIMO_AUDIO_BASE_URL` | MiMo 音频端点（批/流式 ASR/TTS 共用，与 chat 的 `LLM_BASE_URL` 独立），空=官方集群 | 否 |
@@ -323,6 +326,12 @@
 | `POST /api/turns/{trace_id}/badcase` | 标记/取消 badcase（`{badcase, note}`；标记轮豁免保留期清理） |
 | `GET /api/export/{trace_id}` | 单轮全量 JSON 导出（badcase 素材/回归用例） |
 | `GET /api/llm/summary?hours=24` | LLM 消耗归属汇总（caller×model：次数/tokens/错误/时延；窗口夹紧 1h~30d）——dashboard「LLM」视图数据源，「(未归属)」= 未带 caller_service 的盲区（§9.2，应恒为零；2026-07-13）|
+
+> **LLM 网关控制面**（`:50059`，非 collector）：`GET /api/llm/providers`（厂商/模型/可用性/active
+> +**health 被动健康块**）、`POST /api/llm/provider`（全局切换，**持久化 Redis `llm:active`**）、
+> `POST /api/llm/probe {provider?}`（按需体检，2026-07-17）。`obs.llm` 事件自 2026-07-17 增
+> `provider`（实际 serving 厂商）/`requested_tier`（原始档位参数）/`pinned`（请求级 pin）三字段，
+> collector `llm_calls` 表加法迁移 `provider` 列。
 
 Dashboard 使用 `VITE_COLLECTOR_URL` 与 `VITE_EDGE_GATEWAY_URL`，Compose 已分别配置为
 `http://localhost:8092` 和 `http://localhost:8090`。**Prometheus/Grafana（T3.6）**：
