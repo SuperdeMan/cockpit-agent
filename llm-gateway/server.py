@@ -43,6 +43,9 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 session_id=meta.get("session_id", ""),
                 caller=meta.get("caller_service") or meta.get("caller", ""),
                 model=model,
+                provider=self.runtime.active_id,          # 实际 serving 厂商（审计「哪个脑答的」）
+                requested_tier=(request.model or ""),     # 调用方原始档位/模型参数
+                pinned=False,                             # D2 请求级 pin 落地后按 meta 置真
                 prompt_tokens=usage[0],
                 completion_tokens=usage[1],
                 latency_ms=latency_ms,

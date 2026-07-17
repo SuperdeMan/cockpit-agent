@@ -5,3 +5,5 @@ httpx==0.27.2
 aiohttp==3.11.18
 # obs.llm / obs.log 观测事件出口（best-effort；缺包时 EventEmitter 静默失联——2026-07-10 真栈踩坑）
 nats-py>=2.6.0
+# active provider 选择持久化（llm:active；缺包时 llm_runtime 降级内存态，仅告警）
+redis>=5.0,<7

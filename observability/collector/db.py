@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS llm_calls(
   ts INTEGER DEFAULT 0,
   caller TEXT DEFAULT '',
   model TEXT DEFAULT '',
+  provider TEXT DEFAULT '',
   prompt_tokens INTEGER DEFAULT 0,
   completion_tokens INTEGER DEFAULT 0,
   latency_ms REAL DEFAULT 0,
@@ -111,7 +112,15 @@ class ObsDB:
             if self.path != ":memory:":
                 self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(_SCHEMA)
+            # 加法式迁移：已存在的 obs.db（named volume 跨重启）补新列，
+            # CREATE IF NOT EXISTS 不会给旧表加列
+            self._ensure_column("llm_calls", "provider", "TEXT DEFAULT ''")
             self._conn.commit()
+
+    def _ensure_column(self, table: str, column: str, decl: str) -> None:
+        cols = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # ── 写入（ingest 路径） ──────────────────────────────────────────────
 
@@ -158,13 +167,13 @@ class ObsDB:
     def insert_llm(self, event: dict) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT INTO llm_calls(trace_id, session_id, ts, caller, model, "
+                "INSERT INTO llm_calls(trace_id, session_id, ts, caller, model, provider, "
                 "prompt_tokens, completion_tokens, latency_ms, cache_hit, thinking, "
                 "status, error, prompt_tail, content_head) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (event.get("trace_id", "") or "", event.get("session_id", "") or "",
                  int(event.get("ts", 0) or 0), event.get("caller", "") or "",
-                 event.get("model", "") or "",
+                 event.get("model", "") or "", event.get("provider", "") or "",
                  int(event.get("prompt_tokens", 0) or 0),
                  int(event.get("completion_tokens", 0) or 0),
                  float(event.get("latency_ms", 0) or 0),

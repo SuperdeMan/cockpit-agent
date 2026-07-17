@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -178,3 +179,82 @@ def print_ci_annotations(subject: str, diff: DiffResult, baseline_path: Path) ->
         f"{cid!r}(actual={cc['actual']!r})" for cid, _bc, cc in diff.regressions
     )
     print(f"::warning::{subject}: {len(diff.regressions)} case(s) regressed vs baseline — {detail}")
+
+
+# ── 评测 LLM provider 锁定 + 漂移守卫（多模型运行时硬化 D8）──────────────────
+# 治两次真实事故：llm-gateway 重建后 active 静默回落 env、评测中途 HMI 切 provider
+# 产出混脑报告（canonical 重跑 @M3 与基线 @mimo 不可比）。设计：
+# docs/design/2026-07-17-llm-runtime-hardening.md §4 D8。
+
+
+class ProviderLock:
+    """评测期 active LLM 锁定 + 漂移守卫。
+
+    - ``pin()``：want 非空 → POST /api/llm/provider 钉住（失败抛 RuntimeError，锁定是
+      硬要求）；want 空 → 记录当前 active 作基线（网关不可达则降级 locked=False、
+      check 全跳过——mock 车道无网关也能跑）。
+    - ``check(label)``：GET 复核 active；变了记一笔漂移（时点+前后值），并以新值续测
+      （同一漂移不刷屏）。
+    - ``summary()``：并进评测报告；``drift_detected=True`` 时驱动器应让退出码非零
+      （报告作废重跑——评测期间切 provider 本来就该炸，这是特性）。
+    """
+
+    def __init__(self, base_url: str, want: str = "", model: str = "",
+                 timeout: float = 5.0):
+        self.base_url = base_url.rstrip("/")
+        self.want = (want or "").strip()
+        self.model = (model or "").strip()
+        self.timeout = timeout
+        self.baseline = ""          # "provider:model"
+        self.locked = False         # 显式 pin 成功
+        self.available = True       # 网关可达；False 时 check 全跳过
+        self.drifts: list[dict] = []
+
+    # 独立方法便于单测注入替身（monkeypatch 实例 _http 即可，不起真 HTTP）。
+    def _http(self, method: str, path: str, payload: dict | None = None) -> dict | None:
+        url = f"{self.base_url}{path}"
+        data = json.dumps(payload).encode() if payload is not None else None
+        req = urllib.request.Request(
+            url, data=data, method=method,
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                return json.loads(resp.read().decode("utf-8", "replace"))
+        except Exception:
+            return None
+
+    def _active(self) -> str:
+        st = self._http("GET", "/api/llm/providers")
+        act = st.get("active") if isinstance(st, dict) else None
+        if not isinstance(act, dict):
+            return ""
+        return f"{act.get('provider', '?')}:{act.get('model', '?')}"
+
+    def pin(self) -> str:
+        if self.want:
+            body = {"provider": self.want}
+            if self.model:
+                body["model"] = self.model
+            st = self._http("POST", "/api/llm/provider", body)
+            if not isinstance(st, dict) or "active" not in st:
+                raise RuntimeError(
+                    f"ProviderLock: 钉住 {self.want} 失败（网关不可达或 provider 未配置）")
+            self.locked = True
+        cur = self._active()
+        if not cur:
+            self.available = False
+            return "unknown"
+        self.baseline = cur
+        return cur
+
+    def check(self, label: str = "") -> None:
+        if not self.available or not self.baseline:
+            return
+        cur = self._active()
+        if cur and cur != self.baseline:
+            self.drifts.append({"at": label, "from": self.baseline, "to": cur})
+            self.baseline = cur
+
+    def summary(self) -> dict:
+        return {"provider": self.baseline or "unknown", "locked": self.locked,
+                "drift_detected": bool(self.drifts), "drifts": list(self.drifts)}

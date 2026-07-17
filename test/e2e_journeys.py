@@ -53,6 +53,9 @@ except ImportError:
     print("请先：pip install pyyaml")
     sys.exit(1)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录兄弟模块（eval_common）
+from eval_common import ProviderLock  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 JOURNEY_DIR = ROOT / "test" / "journeys"
 REPORT_DIR = ROOT / "docs" / "reviews" / "eval"
@@ -698,7 +701,8 @@ def validate_journey(j: dict) -> list[str]:
 # ───────────────────────── 报告 ─────────────────────────
 
 def build_report(results: list[JourneyResult], provider: str,
-                 lane: str, started: float) -> tuple[dict, str]:
+                 lane: str, started: float,
+                 lock_summary: dict | None = None) -> tuple[dict, str]:
     def bucket(pred):
         rs = [r for r in results if pred(r)]
         return sum(1 for r in rs if r.status == "pass"), \
@@ -720,7 +724,8 @@ def build_report(results: list[JourneyResult], provider: str,
     data = {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "duration_s": round(time.time() - started, 1),
-        "provider": provider, "lane": lane or "all",
+        "provider": provider, "provider_lock": lock_summary or {},
+        "lane": lane or "all",
         "regression": {"pass": reg_p, "total": reg_n},
         "target": {"pass": tgt_p, "total": tgt_n},
         "skipped": [{"id": r.id, "reason": r.reason} for r in results if r.status == "skip"],
@@ -732,10 +737,18 @@ def build_report(results: list[JourneyResult], provider: str,
         } for r in results],
     }
 
+    locked = bool((lock_summary or {}).get("locked"))
+    drifts = (lock_summary or {}).get("drifts") or []
     lines = [
         "# 旅程级 e2e 报告（journeys_report）", "",
         f"- 生成时间：{data['generated_at']}（耗时 {data['duration_s']}s）",
-        f"- active LLM：`{provider}`（跨 provider 结果不可直接对比）",
+        f"- active LLM：`{provider}`"
+        + ("（--provider 已锁定）" if locked else "（跨 provider 结果不可直接对比）"),
+    ]
+    if drifts:
+        lines.append("- **⚠️ 评测中途 provider 漂移，本报告作废重跑**："
+                     + "；".join(f"`{d['from']}`→`{d['to']}`（@{d['at']}）" for d in drifts))
+    lines += [
         f"- 车道：{data['lane']}",
         f"- **回归级 {reg_p}/{reg_n}**（必须全绿）；目标级 {tgt_p}/{tgt_n}（红灯=工程 backlog）",
         f"- 时延（全轮）：P50={latency['p50']}s P95={latency['p95']}s max={latency['max']}s n={latency['n_turns']}",
@@ -780,6 +793,8 @@ async def main() -> int:
     ap.add_argument("--force-report", action="store_true",
                     help="局部跑（--id/--suite/--lane/--level）也覆盖 canonical 报告")
     ap.add_argument("--no-badcase", action="store_true")
+    ap.add_argument("--provider", default="",
+                    help="锁定 active LLM 厂商（POST 切换后逐旅程校验漂移；漂移=报告作废、退出码 1）")
     args = ap.parse_args()
 
     ids = {x.strip() for x in args.id.split(",") if x.strip()}
@@ -794,8 +809,16 @@ async def main() -> int:
         print(f"共 {len(journeys)} 条")
         return 0
 
-    provider = active_provider()
-    print(f"=== 旅程级 e2e：{len(journeys)} 条 | active LLM: {provider} ===\n")
+    lock = ProviderLock(LLM_HTTP, args.provider)
+    try:
+        provider = lock.pin()
+    except RuntimeError as e:
+        print(f"✗ {e}")
+        return 2
+    if not lock.available:
+        provider = active_provider()   # 网关不可达时沿用旧的可读降级串
+    print(f"=== 旅程级 e2e：{len(journeys)} 条 | active LLM: {provider}"
+          + ("（--provider 已锁定）" if lock.locked else "") + " ===\n")
     env_keys = load_env_keys()
     listener = PushListener()
     if any("wait_push" in t for j in journeys for t in j.get("turns") or []):
@@ -808,6 +831,7 @@ async def main() -> int:
         r = await run_journey(j, env_keys, listener,
                               args.enforce_latency, not args.no_badcase)
         results.append(r)
+        lock.check(j["id"])   # 漂移守卫：每条旅程后复核 active 未被切走/回落
         icon = {"pass": "✅", "fail": "❌", "skip": "⏭️"}[r.status]
         for t in r.turns:
             mark = "✗" if t.get("fails") else ("→" if not t.get("skipped") else "○")
@@ -822,7 +846,7 @@ async def main() -> int:
         print(f"   {icon} {r.status.upper()} {r.reason}\n")
     await listener.close()
 
-    data, md = build_report(results, provider, args.lane, started)
+    data, md = build_report(results, provider, args.lane, started, lock.summary())
     # 报告工件纪律：journeys_report.{json,md} 是 canonical 全量基线（入库），只有
     # **无过滤的全量跑**才默认覆盖——否则一次 --id 局部验证就把 33 条收官报告顶掉
     # （批次1 踩过）。局部跑要留档用 --force-report。
@@ -845,7 +869,11 @@ async def main() -> int:
         print("回归级失败: " + ", ".join(r.id for r in reg_fail))
     if tgt_fail:
         print("目标级红灯: " + ", ".join(r.id for r in tgt_fail))
-    return 1 if reg_fail or (args.strict_target and tgt_fail) else 0
+    drifted = lock.summary()["drift_detected"]
+    if drifted:
+        print("⚠️ 评测中途 active provider 漂移（HMI 切换或网关重启回落），报告作废重跑: "
+              + "; ".join(f"{d['from']}→{d['to']}@{d['at']}" for d in lock.drifts))
+    return 1 if reg_fail or drifted or (args.strict_target and tgt_fail) else 0
 
 
 if __name__ == "__main__":

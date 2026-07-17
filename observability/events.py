@@ -203,6 +203,9 @@ class EventEmitter:
         session_id="",
         caller="",
         model="",
+        provider="",
+        requested_tier="",
+        pinned=False,
         prompt_tokens=0,
         completion_tokens=0,
         latency_ms=0,
@@ -214,6 +217,8 @@ class EventEmitter:
         content_head="",
     ) -> None:
         """LLM 调用事件（llm-gateway 唯一出口收口）：模型/tokens/时延/缓存按 trace 归档。
+        provider=实际 serving 的厂商 id；requested_tier=调用方原始 model 参数（""/@fast/具体名，
+        审计谁在用什么档）；pinned=本次调用是否被请求级锁定（D2 落地前恒 False）。
         prompt_tail/content_head 受 OBS_CONTENT_CAPTURE 门控 + 脱敏。"""
         from observability.redact import gate_content, redact
 
@@ -224,6 +229,9 @@ class EventEmitter:
                 "session_id": session_id,
                 "caller": caller,
                 "model": model,
+                "provider": provider,
+                "requested_tier": requested_tier,
+                "pinned": bool(pinned),
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "latency_ms": round(latency_ms, 1),

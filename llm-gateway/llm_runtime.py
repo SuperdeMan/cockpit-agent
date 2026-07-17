@@ -7,14 +7,16 @@ gRPC 服务（server.py）与 HTTP 控制端点（http_server.py）在 llm-gatew
   legacy anthropic 特例）。一套 `OpenAICompatibleProvider` 靠 token_param/thinking_style/auth
   三个 per-provider 参数覆盖四家差异（见 providers.py）。
 - **全局 active**：默认 `LLM_PROVIDER`；运行时经 HTTP `/api/llm/provider` 切换，所有服务的 LLM
-  调用随之切换（座舱「单一大脑」模型）。切换是进程内内存态——网关重启回落 env 默认，HMI 载入时
-  再 POST 同步（多实例需 Redis，本 PoC 不做）。
+  调用随之切换（座舱「单一大脑」模型）。切换**持久化到 Redis**（`llm:active`）：网关重启/重建
+  读回上次选择，不再静默回落 env 默认（07-12 教训：重建后 eval 换了脑子无人知晓）；Redis
+  缺包/不可达时降级为进程内存态（仅告警，不拒启）。HMI 载入时的 POST 重放保留（幂等）。
 - **档位解析**：调用方传 `""`→primary、`"@fast"`→fast、`"@primary"/"@deep"`→primary；传了当前
   provider 不认识的具体模型名 → 回落 primary（防「切到 DeepSeek 却收到 chitchat 发来的 mimo 模型名」）。
 - **embedding 解耦**：`embed_provider()` 独立按 `LLM_EMBED_*`（DashScope）建，**与 active chat
   provider 无关**——切到无 embedding 的 chat 服务商（如 DeepSeek）也不影响记忆语义召回。
 """
 from __future__ import annotations
+import json
 import logging
 import os
 
@@ -23,6 +25,25 @@ from providers import (
 )
 
 logger = logging.getLogger("llm.runtime")
+
+# active 选择的持久化键（Redis）。value: {"provider": str, "model": str}
+_ACTIVE_KEY = "llm:active"
+
+
+def _redis_client():
+    """Redis 客户端（可选依赖，仅用于 active 持久化）。缺包/URL 未配 → None，
+    持久化静默降级为进程内存态（LLM 服务本身不依赖 Redis 可用）。"""
+    url = os.getenv("REDIS_URL", "")
+    if not url:
+        return None
+    try:
+        import redis  # 延迟导入：精简镜像/宿主测试缺包不影响启动
+        return redis.Redis.from_url(
+            url, socket_connect_timeout=1.0, socket_timeout=1.0,
+            decode_responses=True)
+    except Exception as e:
+        logger.warning("llm:active 持久化不可用（redis 缺包/URL 无效）：%s", e)
+        return None
 
 # provider id → 静态配置。endpoint/model 均 env 可覆盖（*_env 键）；key 见 _provider_key。
 _PROVIDER_SPECS: dict[str, dict] = {
@@ -106,6 +127,7 @@ class LLMRuntime:
         self._active_id = "mock"
         self._active_model = ""             # 空 = 用 active 的 primary
         self._embed: BaseProvider = MockProvider()
+        self._redis = _redis_client()
         self._build()
 
     def _build(self):
@@ -154,9 +176,44 @@ class LLMRuntime:
             self._active_id = "mock"
 
         self._embed = _build_embed_provider()
+        self._load_persisted()
         logger.info("LLM runtime: active=%s, registry=%s", self._active_id, list(self._registry))
         print(f"[llm-gateway] LLM runtime active={self._active_id} "
               f"available={[c['id'] for c in self._catalog if c['available']]}", flush=True)
+
+    def _load_persisted(self):
+        """启动时读回上次 set_active 的选择——重启/重建不再回落 env 默认（07-12 教训）。"""
+        if self._redis is None:
+            return
+        try:
+            raw = self._redis.get(_ACTIVE_KEY)
+        except Exception as e:
+            logger.warning("读 %s 失败（保持 env 默认 active=%s）：%s", _ACTIVE_KEY, self._active_id, e)
+            return
+        if not raw:
+            return
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return
+        pid = _norm_id(data.get("provider", "") if isinstance(data, dict) else "")
+        if pid not in self._registry:
+            logger.warning("持久化的 provider=%s 未配置，保持 env 默认 active=%s", pid, self._active_id)
+            return
+        self._active_id = pid
+        model = (data.get("model") or "").strip()
+        known = {m["id"] for m in self._registry[pid][1]["models"]}
+        self._active_model = model if model in known else ""
+        logger.info("LLM active 恢复自持久化: %s model=%s", pid, self._active_model or "(primary)")
+
+    def _persist_active(self):
+        if self._redis is None:
+            return
+        try:
+            self._redis.set(_ACTIVE_KEY, json.dumps(
+                {"provider": self._active_id, "model": self._active_model}))
+        except Exception as e:
+            logger.warning("写 %s 失败（本次切换仅进程内存态）：%s", _ACTIVE_KEY, e)
 
     # ── 服务面 ──
     @property
@@ -202,6 +259,7 @@ class LLMRuntime:
         self._active_id = pid
         known = {m["id"] for m in self.active_config()["models"]}
         self._active_model = model if (model and model in known) else ""
+        self._persist_active()
         logger.info("LLM active switched -> %s model=%s", pid, self._active_model or "(primary)")
         return self.status()
 

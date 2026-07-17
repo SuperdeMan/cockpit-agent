@@ -74,3 +74,53 @@ def test_diff_against_baseline_tracks_new_and_removed_cases():
 
 def test_load_baseline_missing_file_returns_none(tmp_path: Path):
     assert load_baseline(tmp_path / "does_not_exist.json") is None
+
+
+# ── ProviderLock（多模型运行时硬化 D8）──────────────────────────────────────
+
+from eval_common import ProviderLock  # noqa: E402
+
+
+def test_provider_lock_pin_explicit_success():
+    lock = ProviderLock("http://x", want="mimo")
+    seq = [{"active": {"provider": "mimo", "model": "m1"}},   # POST 返回
+           {"active": {"provider": "mimo", "model": "m1"}}]   # GET 复核
+    lock._http = lambda m, p, payload=None: seq.pop(0)
+    assert lock.pin() == "mimo:m1"
+    assert lock.locked and lock.available
+
+
+def test_provider_lock_pin_explicit_gateway_down_raises():
+    lock = ProviderLock("http://x", want="mimo")
+    lock._http = lambda m, p, payload=None: None
+    try:
+        lock.pin()
+        raise AssertionError("显式 pin 网关不可达应当抛 RuntimeError")
+    except RuntimeError:
+        pass
+
+
+def test_provider_lock_baseline_mode_gateway_down_degrades():
+    lock = ProviderLock("http://x")
+    lock._http = lambda m, p, payload=None: None
+    assert lock.pin() == "unknown"
+    assert lock.available is False
+    lock.check("case-1")   # no-op，不炸
+    s = lock.summary()
+    assert s["drift_detected"] is False and s["locked"] is False
+
+
+def test_provider_lock_detects_drift_and_continues():
+    lock = ProviderLock("http://x")
+    seq = [{"active": {"provider": "mimo", "model": "a"}},      # pin 基线
+           {"active": {"provider": "mimo", "model": "a"}},      # check j1 无漂移
+           {"active": {"provider": "minimax", "model": "b"}},   # check j2 漂移
+           {"active": {"provider": "minimax", "model": "b"}}]   # check j3 以新基线续测
+    lock._http = lambda m, p, payload=None: seq.pop(0)
+    lock.pin()
+    lock.check("j1")
+    lock.check("j2")
+    lock.check("j3")
+    s = lock.summary()
+    assert s["drift_detected"] is True
+    assert s["drifts"] == [{"at": "j2", "from": "mimo:a", "to": "minimax:b"}]

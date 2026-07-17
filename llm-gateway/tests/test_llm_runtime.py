@@ -7,6 +7,7 @@ import pytest
 _DIR = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, _DIR)
 from providers import OpenAICompatibleProvider  # noqa: E402
+import llm_runtime  # noqa: E402
 from llm_runtime import LLMRuntime  # noqa: E402
 
 _MSG = [{"role": "user", "content": "hi"}]
@@ -48,7 +49,8 @@ def test_auth_headers():
 _ENV_KEYS = ("LLM_PROVIDER", "LLM_API_KEY", "MINIMAX_API_KEY", "DEEPSEEK_API_KEY",
              "DASHSCOPE_LLM_KEY", "DASHSCOPE_ASR_KEY", "LLM_EMBED_API_KEY",
              "LLM_MODEL_PRIMARY", "LLM_MODEL_FAST", "MINIMAX_LLM_MODEL",
-             "DEEPSEEK_MODEL_PRIMARY", "DEEPSEEK_MODEL_FAST", "QWEN_MODEL_PRIMARY", "QWEN_MODEL_FAST")
+             "DEEPSEEK_MODEL_PRIMARY", "DEEPSEEK_MODEL_FAST", "QWEN_MODEL_PRIMARY",
+             "QWEN_MODEL_FAST", "REDIS_URL")
 
 
 @pytest.fixture(autouse=True)
@@ -107,3 +109,56 @@ def test_no_keys_falls_back_to_mock():
     rt = _runtime({})
     assert rt.active_id == "mock"
     assert rt.resolve_models("") == ["mock"]
+
+
+# ── active 持久化（运行时硬化 D1：重启/重建不回落 env 默认）──
+
+class _FakeRedis:
+    def __init__(self):
+        self.kv = {}
+
+    def get(self, k):
+        return self.kv.get(k)
+
+    def set(self, k, v):
+        self.kv[k] = v
+
+
+class _DeadRedis:
+    def get(self, k):
+        raise ConnectionError("redis down")
+
+    def set(self, k, v):
+        raise ConnectionError("redis down")
+
+
+def test_active_persists_across_rebuild(monkeypatch):
+    fake = _FakeRedis()
+    monkeypatch.setattr(llm_runtime, "_redis_client", lambda: fake)
+    rt = _runtime({"LLM_PROVIDER": "xiaomimimo", "LLM_API_KEY": "mk", "DEEPSEEK_API_KEY": "dk"})
+    rt.set_active("deepseek", "deepseek-v4-flash")
+    rt2 = LLMRuntime()   # 重建（模拟网关重启/重建镜像）
+    assert rt2.active_id == "deepseek"
+    assert rt2.status()["active"]["model"] == "deepseek-v4-flash"
+
+
+def test_persisted_unknown_provider_falls_back_env_default(monkeypatch):
+    import json as _json
+    fake = _FakeRedis()
+    fake.set("llm:active", _json.dumps({"provider": "qwen", "model": ""}))  # 未配 key 的厂商
+    monkeypatch.setattr(llm_runtime, "_redis_client", lambda: fake)
+    rt = _runtime({"LLM_PROVIDER": "xiaomimimo", "LLM_API_KEY": "mk"})
+    assert rt.active_id == "mimo"   # 持久化值不可用 → 保持 env 默认
+
+
+def test_redis_down_degrades_to_memory_state(monkeypatch):
+    monkeypatch.setattr(llm_runtime, "_redis_client", lambda: _DeadRedis())
+    rt = _runtime({"LLM_PROVIDER": "xiaomimimo", "LLM_API_KEY": "mk", "DEEPSEEK_API_KEY": "dk"})
+    rt.set_active("deepseek")           # 写失败仅告警，不炸
+    assert rt.active_id == "deepseek"   # 内存态不受影响
+
+
+def test_no_redis_url_keeps_legacy_behavior():
+    rt = _runtime({"LLM_PROVIDER": "xiaomimimo", "LLM_API_KEY": "mk"})
+    assert rt._redis is None            # 未配 REDIS_URL → 持久化整体旁路
+    rt.set_active("mimo")               # 不炸

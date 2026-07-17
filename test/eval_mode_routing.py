@@ -44,7 +44,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from eval_common import (  # noqa: E402
     build_report, diff_against_baseline, load_baseline, print_ci_annotations,
-    render_markdown, write_report, CaseResult,
+    render_markdown, write_report, CaseResult, ProviderLock,
 )
 
 sys.path.insert(0, str(_ROOT))
@@ -296,7 +296,16 @@ def _run_live(raw_cases: list[dict], args, full_cases: list[dict] | None = None)
         for e in errs:
             print(f"    - {e}")
         return 1
-    provider = _active_provider()
+    port = os.getenv("AUDIO_HTTP_PORT", "50059")
+    host = os.getenv("LLM_GATEWAY_HTTP_HOST", "localhost")
+    lock = ProviderLock(f"http://{host}:{port}", getattr(args, "provider", ""))
+    try:
+        provider = lock.pin()
+    except RuntimeError as e:
+        print(f"✗ {e}")
+        return 1
+    if provider == "unknown":
+        provider = _active_provider()   # 网关 HTTP 不可达时沿用 env 兜底可读串
     if provider.startswith("mock"):
         print(f"::warning::active provider={provider}——mock 不做规划，--live 结果无意义。")
     agents = _load_agents()
@@ -304,11 +313,13 @@ def _run_live(raw_cases: list[dict], args, full_cases: list[dict] | None = None)
 
     det_results = [_run_det_case(c, agent_map) for c in _det_cases(raw_cases)]
     live_results = asyncio.run(_drive_live(raw_cases, agents))
+    lock.check("live 跑完")   # 漂移守卫：全程 active 未被切走/回落才算数
     cases = det_results + live_results
 
     sources = [{"path": f"{_CASES_PATH.relative_to(_ROOT).as_posix()}", "count": len(raw_cases)}]
     report = build_report("mode_routing", sources, cases)
     report["meta"]["provider"] = provider
+    report["meta"]["provider_lock"] = lock.summary()
     report["meta"]["clarify_enabled"] = os.getenv("CLARIFY_ENABLED", "off")
     raw_by_text = {c["text"]: c for c in raw_cases}
     matrix = _confusion(live_results, raw_by_text)
@@ -325,6 +336,11 @@ def _run_live(raw_cases: list[dict], args, full_cases: list[dict] | None = None)
     overall = report["overall"]
     print(f"总计 {overall['passed']}/{overall['total']}"
           f" ({overall['pass_rate'] * 100:.1f}%)")
+
+    if lock.summary()["drift_detected"]:
+        print("⚠️ 评测中途 active provider 漂移（HMI 切换或网关重启回落），报告作废重跑: "
+              + "; ".join(f"{d['from']}→{d['to']}" for d in lock.drifts))
+        return 1   # 也拦住 --write-baseline：不许把混脑报告写成基线
 
     baseline_path = Path(args.baseline)
     if args.write_baseline or not baseline_path.exists():
@@ -351,6 +367,8 @@ def main() -> int:
     ap.add_argument("--out-json")
     ap.add_argument("--out-md")
     ap.add_argument("--strict", action="store_true", help="有回归 exit 1；默认非阻塞观测")
+    ap.add_argument("--provider", default="",
+                    help="--live 时锁定 active LLM 厂商（评测中途漂移 = 退出码 1、报告作废）")
     ap.add_argument("--dump", action="store_true",
                     help="打印确定性子集逐例 actual（编写/校准语料时用）")
     ap.add_argument("--only", default="",
