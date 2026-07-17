@@ -42,6 +42,20 @@ def _http_timeout(budget_s, read_cap: float) -> httpx.Timeout:
                          connect=min(_HTTP_CONNECT_S, read_cap), pool=5.0)
 
 
+def _strict_mock_gate(domain: str, why: str) -> None:
+    """严格栈（REQUIRE_REAL_PROVIDERS=on，治理 P2）：mock 决议直接拒绝启动。
+    与 agents/_sdk/provenance.py 同一契约（conventions §9.4）；豁免 REQUIRE_REAL_EXEMPT。"""
+    if os.getenv("REQUIRE_REAL_PROVIDERS", "off").strip().lower() not in ("on", "true", "1", "yes"):
+        return
+    exempt = {d.strip() for d in
+              os.getenv("REQUIRE_REAL_EXEMPT", "parking,knowledge").split(",") if d.strip()}
+    if domain in exempt:
+        return
+    raise RuntimeError(
+        f"REQUIRE_REAL_PROVIDERS=on：provider[{domain}] 将落 mock（{why}）——严格栈禁止；"
+        f"补齐凭证或把 {domain} 加入 REQUIRE_REAL_EXEMPT")
+
+
 class ProviderHTTPError(RuntimeError):
     """上游 HTTP 错误：状态码 + Retry-After 结构化（运行时硬化 D3，网关按语义分类映射——
     429→RESOURCE_EXHAUSTED、请求性 4xx→INVALID_ARGUMENT）；消息保持
@@ -524,16 +538,21 @@ def build_asr_provider() -> BaseASRProvider:
     （多 LLM 源惯例：该 env 即 MiMo 的 key），chat 切走后批处理仍可钉住 MiMo。"""
     choice = os.getenv("ASR_PROVIDER", "auto").strip().lower()
     api_key = os.getenv("LLM_API_KEY", "")
-    if choice == "mock":
+
+    def _mock(why: str):
+        _strict_mock_gate("asr", why)
         return MockASRProvider()
+
+    if choice == "mock":
+        return _mock("ASR_PROVIDER=mock 显式指定")
     if choice in ("mimo", "xiaomimimo"):
-        return MiMoASRProvider(api_key) if api_key else MockASRProvider()
+        return MiMoASRProvider(api_key) if api_key else _mock("mimo 引擎但无 LLM_API_KEY")
     llm_provider = os.getenv("LLM_PROVIDER", "xiaomimimo").lower()
     if choice == "auto" and llm_provider in ("xiaomimimo", "mimo") and api_key:
         return MiMoASRProvider(api_key)
     if choice in ("auto", "dashscope") and build_streaming_asr_provider("dashscope") is not None:
         return StreamBridgeASRProvider("dashscope")
-    return MockASRProvider()
+    return _mock("无可用引擎（MiMo/DashScope key 均缺）")
 
 
 # ─── 流式 ASR Provider（实时识别上屏）───
@@ -974,10 +993,15 @@ def build_tts_provider() -> BaseTTSProvider:
     显式 mimo 复用 LLM_API_KEY（多 LLM 源惯例：该 env 即 MiMo 的 key）。"""
     choice = os.getenv("TTS_PROVIDER", "auto").strip().lower()
     api_key = os.getenv("LLM_API_KEY", "")
-    if choice == "mock":
+
+    def _mock(why: str):
+        _strict_mock_gate("tts", why)
         return MockTTSProvider()
+
+    if choice == "mock":
+        return _mock("TTS_PROVIDER=mock 显式指定")
     if choice in ("mimo", "xiaomimimo"):
-        return MiMoTTSProvider(api_key) if api_key else MockTTSProvider()
+        return MiMoTTSProvider(api_key) if api_key else _mock("mimo 引擎但无 LLM_API_KEY")
     if choice == "auto":
         llm_provider = os.getenv("LLM_PROVIDER", "xiaomimimo").lower()
         if llm_provider in ("xiaomimimo", "mimo") and api_key:
@@ -987,7 +1011,7 @@ def build_tts_provider() -> BaseTTSProvider:
             choice = "cosyvoice"
     if choice in TTS_STREAM_CATALOG and build_tts_stream_provider(choice) is not None:
         return StreamBridgeTTSProvider(choice)
-    return MockTTSProvider()
+    return _mock("无可用引擎（流式引擎 key 均缺）")
 
 
 # ─── 流式 TTS Provider（服务端 PCM 流式合成，R4.2）───

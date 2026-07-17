@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from agents._sdk import AgentResult
 from agents._sdk.http import ProviderError
 from agents._sdk.grounding import clean_snippet
+from agents._sdk.provenance import attach
 from agents._sdk.source_quality import domain_tier
 from agents._sdk.shared_state import NEWS_ACTIVE
 
@@ -414,8 +415,9 @@ class NewsMixin:
         await self._save_news_active(ctx, items)   # 持久化供「深挖第N条」桥接 research.run（P2）
         fresh = [n["publish_time"] for n in raw
                  if n["publish_time"] and n["publish_time"] != "mock"]
-        card = {"type": "news_brief", "topic": topic, "items": items,
-                "freshness": max(fresh) if fresh else ""}
+        # _prov.vendor=配置的新闻引擎（serpapi/mock）；逐条真实出处见 items[].source
+        card = attach({"type": "news_brief", "topic": topic, "items": items,
+                       "freshness": max(fresh) if fresh else ""}, self.news)
         return AgentResult(speech=speech, ui_card=card,
                            follow_up="想深入某条说『详细讲讲第N条』。",
                            data={"items": items})

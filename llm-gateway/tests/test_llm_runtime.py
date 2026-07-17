@@ -50,7 +50,9 @@ _ENV_KEYS = ("LLM_PROVIDER", "LLM_API_KEY", "MINIMAX_API_KEY", "DEEPSEEK_API_KEY
              "DASHSCOPE_LLM_KEY", "DASHSCOPE_ASR_KEY", "LLM_EMBED_API_KEY",
              "LLM_MODEL_PRIMARY", "LLM_MODEL_FAST", "MINIMAX_LLM_MODEL",
              "DEEPSEEK_MODEL_PRIMARY", "DEEPSEEK_MODEL_FAST", "QWEN_MODEL_PRIMARY",
-             "QWEN_MODEL_FAST", "REDIS_URL")
+             "QWEN_MODEL_FAST", "REDIS_URL",
+             "REQUIRE_REAL_PROVIDERS", "REQUIRE_REAL_EXEMPT",
+             "ASR_PROVIDER", "TTS_PROVIDER", "TTS_STREAM_PROVIDER")
 
 
 @pytest.fixture(autouse=True)
@@ -162,6 +164,59 @@ def test_no_redis_url_keeps_legacy_behavior():
     rt = _runtime({"LLM_PROVIDER": "xiaomimimo", "LLM_API_KEY": "mk"})
     assert rt._redis is None            # 未配 REDIS_URL → 持久化整体旁路
     rt.set_active("mimo")               # 不炸
+
+
+# ── 请求级 pin 的档位解析（运行时硬化 D2）──
+
+def test_resolve_models_for_pinned_provider_uses_its_tiers():
+    rt = _runtime({"LLM_PROVIDER": "xiaomimimo", "LLM_API_KEY": "mk", "DEEPSEEK_API_KEY": "dk"})
+    assert rt.active_id == "mimo"
+    # pin 到非 active 厂商：档位按该厂商词表解析
+    assert rt.resolve_models_for("deepseek", "") == ["deepseek-v4-pro", "deepseek-v4-flash"]
+    assert rt.resolve_models_for("deepseek", "@fast")[0] == "deepseek-v4-flash"
+    # meta.llm_model 覆盖（须在词表内；不在则忽略回落 primary）
+    assert rt.resolve_models_for("deepseek", "", "deepseek-v4-flash")[0] == "deepseek-v4-flash"
+    assert rt.resolve_models_for("deepseek", "", "mimo-v2.5")[0] == "deepseek-v4-pro"
+
+
+def test_provider_entry_normalizes_alias():
+    rt = _runtime({"LLM_PROVIDER": "xiaomimimo", "LLM_API_KEY": "mk"})
+    pid, provider = rt.provider_entry("xiaomimimo")
+    assert pid == "mimo" and provider is rt.active_provider()
+    assert rt.provider_entry("nope") is None
+
+
+# ── 严格栈（治理 P2：REQUIRE_REAL_PROVIDERS 禁 mock 决议）──
+
+def test_strict_stack_forbids_mock_llm(monkeypatch):
+    monkeypatch.setenv("REQUIRE_REAL_PROVIDERS", "on")
+    with pytest.raises(RuntimeError, match="REQUIRE_REAL_PROVIDERS"):
+        _runtime({})                     # 无任何 chat key → mock active 被拒
+
+
+def test_strict_stack_forbids_mock_embed(monkeypatch):
+    monkeypatch.setenv("REQUIRE_REAL_PROVIDERS", "on")
+    with pytest.raises(RuntimeError, match="embed"):
+        _runtime({"LLM_PROVIDER": "xiaomimimo", "LLM_API_KEY": "mk"})  # chat 真、embed 缺
+
+
+def test_strict_stack_exempt_allows_mock(monkeypatch):
+    monkeypatch.setenv("REQUIRE_REAL_PROVIDERS", "on")
+    monkeypatch.setenv("REQUIRE_REAL_EXEMPT", "llm,embed")
+    rt = _runtime({})
+    assert rt.active_id == "mock"        # 显式豁免 → 保持现状
+
+
+def test_strict_stack_forbids_mock_asr_tts(monkeypatch):
+    from providers import build_asr_provider, build_tts_provider
+    monkeypatch.setenv("REQUIRE_REAL_PROVIDERS", "on")   # 其余 key 已被 _clean_env 清空
+    with pytest.raises(RuntimeError, match="asr"):
+        build_asr_provider()
+    with pytest.raises(RuntimeError, match="tts"):
+        build_tts_provider()
+    monkeypatch.setenv("REQUIRE_REAL_EXEMPT", "asr,tts")
+    build_asr_provider()                 # 豁免 → mock 照旧，不炸
+    build_tts_provider()
 
 
 # ── 按需探针 + 被动健康（运行时硬化 D5）──

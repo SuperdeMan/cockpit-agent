@@ -56,6 +56,7 @@ run_step "e2e_tts_stream"             python test/e2e_tts_stream.py
 # 旅程级（L3）：回归级必须绿；目标级红灯是能力标尺不拦退出码（--strict-target 才拦）
 run_step "e2e_journeys"               python test/e2e_journeys.py
 run_step "e2e_real_providers"         python -m pytest test/e2e_real_providers.py -q -s
+run_step "e2e_strict_stack"           python test/e2e_strict_stack.py
 
 echo ""
 echo "===== e2e 汇总 ====="

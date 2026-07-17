@@ -31,6 +31,7 @@ $steps = @(
     # 旅程级（L3）：回归级必须绿；目标级红灯是能力标尺不拦退出码（--strict-target 才拦）。
     @{ Name = "e2e_journeys";               Cmd = { python test/e2e_journeys.py } }
     @{ Name = "e2e_real_providers";         Cmd = { python -m pytest test/e2e_real_providers.py -q -s } }
+    @{ Name = "e2e_strict_stack";           Cmd = { python test/e2e_strict_stack.py } }
 )
 
 $results = @()

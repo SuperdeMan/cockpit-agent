@@ -19,10 +19,23 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 from typing import NoReturn
 
 logger = logging.getLogger("sdk.provenance")
+
+
+def _strict_forbidden(domain: str) -> bool:
+    """严格栈（REQUIRE_REAL_PROVIDERS=on，治理 P2）：该域 mock 决议是否被禁止。
+    豁免 REQUIRE_REAL_EXEMPT（逗号分隔域名；默认 parking=支付设计即模拟、
+    knowledge=车书暂无真实实现——接入 pgvector 后应移出豁免）。默认 off：
+    CI 与离线开发全 mock 照跑。"""
+    if os.getenv("REQUIRE_REAL_PROVIDERS", "off").strip().lower() not in ("on", "true", "1", "yes"):
+        return False
+    exempt = {d.strip() for d in
+              os.getenv("REQUIRE_REAL_EXEMPT", "parking,knowledge").split(",") if d.strip()}
+    return domain not in exempt
 
 
 class ProviderConfigError(RuntimeError):
@@ -42,10 +55,15 @@ def fail(domain: str, why: str, cause: Exception | None = None) -> NoReturn:
 
 def log_resolution(domain: str, vendor: str, real: bool, provider=None) -> None:
     """统一决议日志（启动期一次）。print 保证容器 stdout 可 grep（同 llm_runtime 启动行惯例）。
-    传 provider 时顺带盖来源章（attach() 出卡时读）——决议=日志+章，一处收口。"""
+    传 provider 时顺带盖来源章（attach() 出卡时读）——决议=日志+章，一处收口。
+    严格栈（REQUIRE_REAL_PROVIDERS=on）下 mock 决议在此拒绝（豁免见 _strict_forbidden）。"""
     line = f"provider[{domain}]={vendor}(real)" if real else f"provider[{domain}]={vendor}"
     logger.info(line)
     print(line, flush=True)
+    if not real and _strict_forbidden(domain):
+        raise ProviderConfigError(
+            f"REQUIRE_REAL_PROVIDERS=on：provider[{domain}] 决议为 mock——严格栈禁止；"
+            f"补齐该域凭证，或把 {domain} 加入 REQUIRE_REAL_EXEMPT")
     if provider is not None:
         try:
             provider.provenance_vendor = vendor

@@ -250,7 +250,7 @@ class WeatherMixin:
                   "temp_high": d.temp_high, "temp_low": d.temp_low,
                   "wind_dir": d.wind_dir, "wind_scale": d.wind_scale}
                  for d in forecast]
-        card = {"type": "forecast", "city": name, "days": items}
+        card = attach({"type": "forecast", "city": name, "days": items}, self.weather)
         return AgentResult(speech=speech, ui_card=card, data={"forecast": items})
 
     async def _alerts(self, intent, ctx, meta) -> AgentResult:

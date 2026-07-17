@@ -12,6 +12,7 @@ import re
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
+from agents._sdk.provenance import attach
 from agents._sdk.landmark import is_landmark_description, landmark_candidates
 from agents._sdk.shared_state import CHARGING_DEST_CHOICES
 from .providers import build_charging_provider
@@ -169,9 +170,10 @@ class ChargingPlannerAgent(BaseAgent):
         speech = (f"已为前往{resolved}的路线加入途经充电站：{top.name}"
                   f"（{dist}{extra}）。")
         # 复用 charging_route 卡：出发地 → ⚡该站 → 目的地
-        card = {"type": "charging_route", "display_priority": 0, "destination": resolved,
-                "stops": [{"name": top.name, "address": top.address}],
-                "soc": soc}
+        card = attach({"type": "charging_route", "display_priority": 0,
+                       "destination": resolved,
+                       "stops": [{"name": top.name, "address": top.address}],
+                       "soc": soc}, self.charging)
         items = [
             {"id": s.id, "name": s.name, "available": s.available,
              "total": s.total, "price": s.price_per_kwh,
@@ -262,11 +264,12 @@ class ChargingPlannerAgent(BaseAgent):
                 speech=f"{dest}范围比较大，您具体要去哪个？例如{names}。"
                        f"说出名称或『第几个』，也可以直接告诉我详细地址。",
                 # purpose=dest_choice 让 HMI 把"第N个"回填为目的地槽位（而非发起导航）
-                ui_card={"type": "poi_list", "purpose": "dest_choice",
-                         "display_priority": 1,
-                         "title": f"{dest} · 选择目的地",
-                         "items": [{"id": c.get("id", ""), "name": c["name"],
-                                    "address": c.get("address", "")} for c in candidates]},
+                ui_card=attach({"type": "poi_list", "purpose": "dest_choice",
+                                "display_priority": 1,
+                                "title": f"{dest} · 选择目的地",
+                                "items": [{"id": c.get("id", ""), "name": c["name"],
+                                           "address": c.get("address", "")}
+                                          for c in candidates]}, self.charging),
                 follow_up="选择具体目的地")
         return AgentResult(
             status=NEED_SLOT, missing_slots=["destination"],
@@ -303,7 +306,7 @@ class ChargingPlannerAgent(BaseAgent):
         # 信息建议（advisory）：充能路线卡 = 出发地→沿途途经充电点→目的地，不二次确认、
         # 不发导航动作（导航由「导航」步处理）。专属 type 让聚合器在多意图下优先展示它
         # （否则只取首个卡=导航候选，充电途经点不可见）。
-        card = {
+        card = attach({
             "type": "charging_route",
             "display_priority": 0,
             "destination": dest,
@@ -312,7 +315,8 @@ class ChargingPlannerAgent(BaseAgent):
             "stops": [{"name": s.get("name", ""), "address": s.get("address", ""),
                        "at_km": s.get("at_km")} for s in plan.stops],
             "soc": soc,
-        } if plan.distance_km > 0 else None   # 无路线（需定位/取路失败）→ 纯语音
+        } if plan.distance_km > 0 else None,  # 无路线（需定位/取路失败）→ 纯语音
+            self.charging)
         return AgentResult(
             speech=plan.summary.rstrip("。") + "。",   # provider summary 可能已带句号，避免"。。"
             ui_card=card,

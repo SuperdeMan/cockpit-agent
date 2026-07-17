@@ -14,6 +14,7 @@ import time
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
+from agents._sdk.provenance import attach
 from agents._sdk.shared_state import REMINDABLE_ACTIVE
 from agents._sdk.landmark import (
     is_landmark_description, landmark_candidates, name_matches)
@@ -141,7 +142,8 @@ class NavigationAgent(BaseAgent):
         items = [{"id": r.id, "name": r.name, "rating": r.rating,
                   "distance_km": r.distance_km, "address": r.address,
                   "lat": r.lat, "lng": r.lng} for r in results]
-        card = {"type": "poi_list", "keyword": resolved_keyword, "items": items}
+        card = attach({"type": "poi_list", "keyword": resolved_keyword, "items": items},
+                      self.poi)
 
         if results and not is_category and self._is_navigation_phrase(raw_text):
             first = results[0]
@@ -317,7 +319,8 @@ class NavigationAgent(BaseAgent):
             more = f" 等{len(results)}家" if len(results) > 3 else ""
             return AgentResult(
                 speech=f"附近为您找到这些{dest}：{names}{more}。想去哪一家？说『第几个』即可。",
-                ui_card={"type": "poi_list", "keyword": dest, "items": items},
+                ui_card=attach({"type": "poi_list", "keyword": dest, "items": items},
+                               self.poi),
                 data={"items": items},
                 follow_up="说『第一个』『第二个』选择目的地",
             )
@@ -405,7 +408,8 @@ class NavigationAgent(BaseAgent):
         if navigate:
             return AgentResult(
                 speech=f"已把{label}设为{first.name}，正在为您导航过去。",
-                ui_card={"type": "poi_list", "keyword": label, "items": [record]},
+                ui_card=attach({"type": "poi_list", "keyword": label, "items": [record]},
+                               self.poi),
                 data={"place": label, "item": record},
             ).action("navigate", self._navigate_payload(
                 first.name, first.lat, first.lng, meta))
@@ -463,7 +467,8 @@ class NavigationAgent(BaseAgent):
         if not stops:
             return AgentResult(
                 speech=f"已为您导航到{dest_poi.name}；附近暂未找到{keyword}。",
-                ui_card={"type": "poi_list", "keyword": resolved_name, "items": items},
+                ui_card=attach({"type": "poi_list", "keyword": resolved_name,
+                                "items": items}, self.poi),
                 data={"items": items},
             ).action("navigate", payload)
         names = "、".join(s.name for s in stops[:3])
@@ -474,10 +479,11 @@ class NavigationAgent(BaseAgent):
         return AgentResult(
             speech=f"已为您规划到{dest_poi.name}的路线。顺路的{keyword}有：{names}，"
                    f"想顺道去哪家？说『第几个』即可，不去也可以直接出发。",
-            ui_card={"type": "poi_list", "purpose": "waypoint_choice",
-                     "display_priority": 1,
-                     "title": f"顺路{keyword} · 选择途经点",
-                     "destination": dest_poi.name, "items": choice_items},
+            ui_card=attach({"type": "poi_list", "purpose": "waypoint_choice",
+                            "display_priority": 1,
+                            "title": f"顺路{keyword} · 选择途经点",
+                            "destination": dest_poi.name, "items": choice_items},
+                           self.poi),
             data={"destination": dest_poi.name, "stops": choice_items},
         ).action("navigate", payload)
 
@@ -502,7 +508,8 @@ class NavigationAgent(BaseAgent):
         if not wp_results:
             return AgentResult(
                 speech=f"没找到「{waypoint}」，已先为您导航到{dest_poi.name}。",
-                ui_card={"type": "poi_list", "keyword": resolved_name, "items": items},
+                ui_card=attach({"type": "poi_list", "keyword": resolved_name,
+                                "items": items}, self.poi),
                 data={"items": items},
             ).action("navigate", payload)
 
@@ -527,9 +534,10 @@ class NavigationAgent(BaseAgent):
         if distance_km:
             dur = self._fmt_dur(duration_min)
             head += f"，全程约{distance_km}公里" + (f"、约{dur}" if dur else "")
-        card = {"type": "route_plan", "origin": "当前位置", "destination": dest_poi.name,
-                "waypoints": [{"name": wp.name, "address": wp.address}],
-                "distance_km": distance_km, "duration_min": duration_min}
+        card = attach({"type": "route_plan", "origin": "当前位置",
+                       "destination": dest_poi.name,
+                       "waypoints": [{"name": wp.name, "address": wp.address}],
+                       "distance_km": distance_km, "duration_min": duration_min}, self.poi)
         return AgentResult(
             speech=head + "。", ui_card=card,
             data={"waypoints": payload["waypoints"]},
@@ -575,8 +583,9 @@ class NavigationAgent(BaseAgent):
                                "fire_at": now_ts + int(float(duration_min) * 60)}]})
             except Exception as e:
                 logger.debug("navigation remindable save skipped: %s", e)
-        card = {"type": "route_plan", "origin": "当前位置", "destination": name,
-                "waypoints": [], "distance_km": distance_km, "duration_min": duration_min}
+        card = attach({"type": "route_plan", "origin": "当前位置", "destination": name,
+                       "waypoints": [], "distance_km": distance_km,
+                       "duration_min": duration_min}, self.poi)
         return AgentResult(
             speech=speech, ui_card=card,
             data={"destination": name, "lat": lat, "lng": lng},
@@ -775,7 +784,7 @@ class NavigationAgent(BaseAgent):
         speech = f"{poi.name}，地址：{poi.address}。"
         if poi.rating:
             speech += f"评分{poi.rating}。"
-        card = {"type": "poi_detail", "id": poi.id, "name": poi.name,
-                "address": poi.address, "lat": poi.lat, "lng": poi.lng,
-                "rating": poi.rating, "category": poi.category}
+        card = attach({"type": "poi_detail", "id": poi.id, "name": poi.name,
+                       "address": poi.address, "lat": poi.lat, "lng": poi.lng,
+                       "rating": poi.rating, "category": poi.category}, self.poi)
         return AgentResult(speech=speech, ui_card=card, data={"poi": card})

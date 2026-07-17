@@ -23,6 +23,7 @@ _ENVS = (
     "EXA_API_KEY", "ANYSEARCH_API_KEY", "BING_SEARCH_KEY",
     "SERPAPI_API_KEY", "NEWS_API_KEY", "API_FOOTBALL_KEY",
     "TUSHARE_TOKEN", "STOCK_API_KEY",
+    "REQUIRE_REAL_PROVIDERS", "REQUIRE_REAL_EXEMPT",
 )
 
 
@@ -125,6 +126,19 @@ def test_stock_configured_but_broken_fails_fast(monkeypatch):
     monkeypatch.setattr("agents.info.src.providers.stock_tushare.TushareStockProvider", _Boom)
     with pytest.raises(ProviderConfigError, match="股票源全部构造失败"):
         build_stock_provider()
+
+
+def test_strict_stack_forbids_mock_resolution(monkeypatch):
+    """严格栈（治理 P2）：REQUIRE_REAL_PROVIDERS=on 时无凭证的 mock 决议直接拒绝启动。"""
+    monkeypatch.setenv("REQUIRE_REAL_PROVIDERS", "on")
+    with pytest.raises(ProviderConfigError, match="REQUIRE_REAL_PROVIDERS"):
+        build_weather_provider()
+
+
+def test_strict_stack_exempt_domain_still_mocks(monkeypatch):
+    monkeypatch.setenv("REQUIRE_REAL_PROVIDERS", "on")
+    monkeypatch.setenv("REQUIRE_REAL_EXEMPT", "weather")
+    assert isinstance(build_weather_provider(), MockWeatherProvider)
 
 
 def test_news_runtime_failure_returns_empty_not_mock(monkeypatch):

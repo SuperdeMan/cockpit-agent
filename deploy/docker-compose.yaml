@@ -13,6 +13,10 @@ x-python-env: &python-env
   NATS_URL: nats://nats:4222
   REDIS_URL: redis://redis:6379/0
   LOG_LEVEL: ${LOG_LEVEL:-info}
+  # 数据真实性严格栈（治理 P2）：on=任何 provider 决议落 mock 即启动失败（含 LLM/embed/ASR/TTS），
+  # 演示/验收前翻开；默认 off=CI 与离线开发全 mock 照跑。豁免域见 .env.example。
+  REQUIRE_REAL_PROVIDERS: ${REQUIRE_REAL_PROVIDERS:-off}
+  REQUIRE_REAL_EXEMPT: ${REQUIRE_REAL_EXEMPT:-parking,knowledge}
   # 开放域模型分层（task 4）：Agent（如 chitchat）据此选快/重模型
   LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY:-mimo-v2.5-pro}
   LLM_MODEL_FAST: ${LLM_MODEL_FAST:-mimo-v2.5}

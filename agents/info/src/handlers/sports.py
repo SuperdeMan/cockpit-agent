@@ -9,6 +9,7 @@ import re
 
 from agents._sdk import AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
+from agents._sdk.provenance import attach
 from agents._sdk.shared_state import REMINDABLE_ACTIVE
 
 from ._util import _shanghai_now
@@ -276,9 +277,10 @@ class SportsMixin:
             return AgentResult(
                 speech=f"没有查询到{team}近两天的{league_name}赛程；受免费数据源限制，"
                        f"更靠后的赛程暂时查不到，可稍后再问或换个近期有比赛的球队。",
-                ui_card={"type": "sports_scores", "title": f"{league_name} · {team}",
-                         "fixtures": [], "freshness": now.isoformat(timespec="minutes"),
-                         "source": "api-football"},
+                ui_card=attach({"type": "sports_scores", "title": f"{league_name} · {team}",
+                                "fixtures": [],
+                                "freshness": now.isoformat(timespec="minutes"),
+                                "source": "api-football"}, self.sports),
                 data={"fixtures": []})
 
         date = _sports_date(query, now)
@@ -306,8 +308,9 @@ class SportsMixin:
         if not fixtures:
             return AgentResult(
                 speech=f"{date_label}没有查询到{league_name}的比赛安排。",
-                ui_card={"type": "sports_scores", "title": title, "fixtures": [],
-                         "freshness": freshness, "source": "api-football"},
+                ui_card=attach({"type": "sports_scores", "title": title, "fixtures": [],
+                                "freshness": freshness, "source": "api-football"},
+                               self.sports),
                 data={"fixtures": []})
 
         # 追问某具体场次（第N场/队名）且非"列全部"诉求 → 进球详情（射手/分钟）
@@ -337,9 +340,9 @@ class SportsMixin:
             parts.append(f"未开赛{len(scheduled)}场")
         speech = "，".join(parts) + "。"
 
-        card = {"type": "sports_scores", "title": title,
-                "fixtures": [self._fixture_dict(f) for f in fixtures],
-                "freshness": freshness, "source": "api-football"}
+        card = attach({"type": "sports_scores", "title": title,
+                       "fixtures": [self._fixture_dict(f) for f in fixtures],
+                       "freshness": freshness, "source": "api-football"}, self.sports)
         return AgentResult(speech=speech, ui_card=card,
                            data={"fixtures": card["fixtures"]})
 
@@ -395,11 +398,11 @@ class SportsMixin:
                 speech = f"{team_zh}下一场比赛：{lg} {f.home} vs {f.away}"
                 speech += f"，{when_label} 开球。" if full else "。"
                 fd = self._fixture_dict(f)
-                card = {"type": "sports_scores",
-                        "title": f"{lg} · {f.home} vs {f.away}",
-                        "fixtures": [fd],
-                        "freshness": now.isoformat(timespec="minutes"),
-                        "source": "api-football"}
+                card = attach({"type": "sports_scores",
+                               "title": f"{lg} · {f.home} vs {f.away}",
+                               "fixtures": [fd],
+                               "freshness": now.isoformat(timespec="minutes"),
+                               "source": "api-football"}, self.sports)
                 return AgentResult(speech=speech, ui_card=card, data={"fixtures": [fd]})
         return None
 
@@ -470,11 +473,11 @@ class SportsMixin:
 
         fd = self._fixture_dict(f)
         fd["goals"] = goals
-        card = {"type": "sports_scores",
-                "title": f"{league_name} · {f.home} vs {f.away}",
-                "fixtures": [fd],
-                "freshness": _shanghai_now().isoformat(timespec="minutes"),
-                "source": "api-football"}
+        card = attach({"type": "sports_scores",
+                       "title": f"{league_name} · {f.home} vs {f.away}",
+                       "fixtures": [fd],
+                       "freshness": _shanghai_now().isoformat(timespec="minutes"),
+                       "source": "api-football"}, self.sports)
         return AgentResult(speech=speech, ui_card=card,
                            data={"fixtures": [fd], "goals": goals})
 
@@ -498,12 +501,12 @@ class SportsMixin:
         label = f"{used_season}赛季"
         top3 = "、".join(f"{s.player} {s.goals}球（{s.team}）" for s in scorers[:3])
         speech = f"{league_name}（{label}）射手榜：{top3}。"
-        card = {"type": "sports_scorers",
+        card = attach({"type": "sports_scorers",
                 "title": f"{league_name} 射手榜", "season": label,
                 "scorers": [{"rank": s.rank, "player": s.player,
                              "team": s.team, "goals": s.goals} for s in scorers[:10]],
                 "freshness": _shanghai_now().isoformat(timespec="minutes"),
-                "source": "api-football"}
+                "source": "api-football"}, self.sports)
         return AgentResult(speech=speech, ui_card=card, data={"scorers": card["scorers"]})
 
     async def _sports(self, intent, ctx, meta) -> AgentResult:

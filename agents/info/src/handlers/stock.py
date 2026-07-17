@@ -4,6 +4,7 @@ import logging
 
 from agents._sdk import AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
+from agents._sdk.provenance import attach
 
 logger = logging.getLogger("agent.info")
 
@@ -59,4 +60,9 @@ class StockMixin:
                      "low": candle.low, "close": candle.close, "volume": candle.volume}
                     for candle in candles
                 ]}
+        # 真实性标记：主路径按配置源（tushare/mock）；东财降级路径如实标 degraded
+        if stock_provider is self.stock:
+            attach(card, self.stock)
+        else:
+            attach(card, "eastmoney", mode="degraded", note="Tushare 失败降级东方财富")
         return AgentResult(speech=speech, ui_card=card, data={"quote": card})
