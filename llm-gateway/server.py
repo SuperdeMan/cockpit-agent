@@ -40,7 +40,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
 
     async def _emit_llm(self, request, *, model, latency_ms, cache_hit=False,
                         usage=(0, 0), status="ok", error="", thinking=None,
-                        msgs=None, content=""):
+                        msgs=None, content="", provider="", pinned=False):
         """obs.llm 事件（best-effort）：LLM 唯一出口在此收口，badcase 按 trace 回看每一跳。"""
         try:
             meta = dict(request.meta) if request.meta else {}
@@ -49,9 +49,9 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 session_id=meta.get("session_id", ""),
                 caller=meta.get("caller_service") or meta.get("caller", ""),
                 model=model,
-                provider=self.runtime.active_id,          # 实际 serving 厂商（审计「哪个脑答的」）
-                requested_tier=(request.model or ""),     # 调用方原始档位/模型参数
-                pinned=False,                             # D2 请求级 pin 落地后按 meta 置真
+                provider=provider or self.runtime.active_id,  # 实际 serving 厂商（审计「哪个脑答的」）
+                requested_tier=(request.model or ""),         # 调用方原始档位/模型参数
+                pinned=pinned,                                # 请求级 pin（D2）
                 prompt_tokens=usage[0],
                 completion_tokens=usage[1],
                 latency_ms=latency_ms,
@@ -65,8 +65,22 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         except Exception:
             pass
 
-    def _models(self, requested: str) -> list[str]:
-        return self.runtime.resolve_models(requested)
+    def _serving(self, request):
+        """请求级 pin（meta.llm_provider/llm_model，运行时硬化 D2）：返回
+        (provider, pid, models, pinned)。无 pin → active 现状；pin 到未配置厂商 →
+        ValueError，调用方映射 INVALID_ARGUMENT fail-closed——pin 的意义就是不许静默漂移。"""
+        meta = dict(request.meta) if request.meta else {}
+        pin = (meta.get("llm_provider") or "").strip().lower()
+        if not pin:
+            return (self.runtime.active_provider(), self.runtime.active_id,
+                    self.runtime.resolve_models(request.model), False)
+        entry = self.runtime.provider_entry(pin)
+        if entry is None:
+            raise ValueError(f"pinned llm_provider 未配置或不可用: {pin}")
+        pid, provider = entry
+        models = self.runtime.resolve_models_for(
+            pid, request.model, (meta.get("llm_model") or "").strip())
+        return provider, pid, models, True
 
     @staticmethod
     def _msgs(request):
@@ -94,23 +108,26 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         if not self.limiter.allow(caller):
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, "rate limited")
 
-        # 缓存查找（active provider + thinking 并入 key，避免切换/开关思考结果串味）
-        models = self._models(request.model)
-        aid = self.runtime.active_id
+        # 请求级 pin 解析（D2）：pinned 请求按指定厂商的档位表走，未配置 fail-closed
+        try:
+            provider, aid, models, pinned = self._serving(request)
+        except ValueError as e:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+
+        # 缓存查找（serving provider + thinking 并入 key，避免切换/pin/开关思考结果串味）
         cached = self.cache.get(msgs, f"{aid}:{models[0]}", temp, thinking)
         if cached:
             content, used, finish, usage = cached
             logger.debug("Cache hit")
             await self._emit_llm(request, model=used, latency_ms=0.0, cache_hit=True,
                                  usage=usage, thinking=thinking, msgs=msgs,
-                                 content=content)
+                                 content=content, provider=aid, pinned=pinned)
             return llm_pb2.CompleteResponse(
                 content=content, model_used=used, finish_reason=finish,
                 prompt_tokens=usage[0], completion_tokens=usage[1])
 
         # 调用（带降级：同厂商 primary→fast）。429 单独分类（D3）：Retry-After 小且预算
         # 余量足 → 等一次重试同模型；否则不再打 fast 档（限流通常是账号/厂商级，白打）。
-        provider = self.runtime.active_provider()
         last_err = None
         rate_limited = False
         t_all = time.monotonic()
@@ -131,7 +148,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                     health_tracker.record(aid, True, latency_ms=latency_ms)
                     await self._emit_llm(request, model=used, latency_ms=latency_ms,
                                          usage=usage, thinking=thinking, msgs=msgs,
-                                         content=content)
+                                         content=content, provider=aid, pinned=pinned)
 
                     return llm_pb2.CompleteResponse(
                         content=content, model_used=used, finish_reason=finish,
@@ -169,7 +186,8 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             latency_ms=(time.monotonic() - t_all) * 1000,
             status=("rate_limited" if rate_limited
                     else "timeout" if isinstance(last_err, httpx.TimeoutException) else "err"),
-            error=str(last_err), thinking=thinking, msgs=msgs)
+            error=str(last_err), thinking=thinking, msgs=msgs,
+            provider=aid, pinned=pinned)
         if rate_limited:
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED,
                                 f"provider rate limited (429): {last_err}")
@@ -188,9 +206,11 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
 
     async def CompleteStream(self, request, context):
         msgs = self._msgs(request)
-        models = self._models(request.model)
         thinking = self._thinking(request)
-        aid = self.runtime.active_id
+        try:
+            provider_obj, aid, models, pinned = self._serving(request)   # 请求级 pin（D2）
+        except ValueError as e:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
 
         # 流式不走缓存。**首 token 前**失败按档位链降级到下一模型（D4，兑现 R3.5 记录的
         # 「CompleteStream 无备用模型重试」缺口）；**首 token 后**不切——半段话术不可拼接，
@@ -202,7 +222,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             head_len = 0
             first_token = False
             try:
-                async for delta in self.runtime.active_provider().stream(
+                async for delta in provider_obj.stream(
                         msgs, model, request.temperature or 0.7, request.max_tokens or 512,
                         thinking=thinking):
                     if delta:
@@ -216,7 +236,8 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 cost_tracker.record(model, 0, 0, latency_ms)
                 health_tracker.record(aid, True, latency_ms=latency_ms)
                 await self._emit_llm(request, model=model, latency_ms=latency_ms,
-                                     thinking=thinking, msgs=msgs, content="".join(head))
+                                     thinking=thinking, msgs=msgs, content="".join(head),
+                                     provider=aid, pinned=pinned)
                 return
             except Exception as e:
                 latency_ms = (time.monotonic() - t0) * 1000
@@ -229,7 +250,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 if first_token:   # 已流出内容：不可换模型拼接，按既有语义直接失败
                     await self._emit_llm(request, model=model, latency_ms=latency_ms,
                                          status="err", error=str(e), thinking=thinking,
-                                         msgs=msgs)
+                                         msgs=msgs, provider=aid, pinned=pinned)
                     code = (grpc.StatusCode.DEADLINE_EXCEEDED
                             if isinstance(e, httpx.TimeoutException)
                             else grpc.StatusCode.UNAVAILABLE)
@@ -238,7 +259,8 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                                model, e)
 
         await self._emit_llm(request, model=models[0], latency_ms=0.0,
-                             status="err", error=str(last_err), thinking=thinking, msgs=msgs)
+                             status="err", error=str(last_err), thinking=thinking, msgs=msgs,
+                             provider=aid, pinned=pinned)
         if isinstance(last_err, ProviderHTTPError) and last_err.status_code == 429:
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED,
                                 f"provider rate limited (429): {last_err}")

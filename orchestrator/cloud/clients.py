@@ -5,11 +5,22 @@ Phase 1 改进：连接复用、统一超时。
 from __future__ import annotations
 import logging
 import os
+from contextvars import ContextVar
+
 import grpc
 
 from runtime.grpcio import aio_channel
 
 logger = logging.getLogger("planner.clients")
+
+# 运行时硬化 D2：请求级 LLM pin（meta.llm_provider/llm_model）。engine 在请求入口按
+# ctx.prefs 设置；llm_complete（planner/aggregator 共用）据此透传给网关。Agent 路径
+# 不走此变量——pin 随 _merge_meta 进 ExecuteRequest.meta、SDK 自动透传。
+_LLM_PIN: ContextVar[tuple[str, str]] = ContextVar("cloud_llm_pin", default=("", ""))
+
+
+def set_llm_pin(provider: str = "", model: str = "") -> None:
+    _LLM_PIN.set(((provider or "").strip(), (model or "").strip()))
 from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
 from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
@@ -111,6 +122,13 @@ class Clients:
             temperature=0.3, max_tokens=max(max_tokens, 2048) if thinking else max_tokens)
         if thinking:
             req.meta["thinking"] = "on"
+        # 运行时硬化 D2：请求级 LLM pin（engine 在请求入口 set_llm_pin）——planner/aggregator
+        # 的 LLM 调用与 Agent 路径同脑，评测/重放 A/B 才有意义。
+        pin_provider, pin_model = _LLM_PIN.get()
+        if pin_provider:
+            req.meta["llm_provider"] = pin_provider
+            if pin_model:
+                req.meta["llm_model"] = pin_model
         # 观测贯通：LLM 网关据此发 obs.llm 事件（模型/tokens/时延按 trace 归档）。
         # caller_service 仅供观测归属——刻意不用 "caller"（那是限流桶键，不能扰动）。
         from observability.tracing import get_session_id, get_trace_id

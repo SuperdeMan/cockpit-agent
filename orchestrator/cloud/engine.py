@@ -18,6 +18,7 @@ from .executor import DagExecutor
 from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
 from .session import SessionStore
 from .loop import LoopController
+from .clients import set_llm_pin
 from .context import ContextManager, build_context, _POC_DEFAULT_SCOPES
 from .progress import (is_complex, phase_label, result_summary, step_summary,
                        task_summary, plan_steps_summary)
@@ -82,6 +83,8 @@ class PlannerEngine:
         ctx = self._build_context(request)
         set_trace_id(ctx.trace_id)
         set_session_id(ctx.session_id)  # 云端进程内观测事件/日志自动带会话维度
+        # 运行时硬化 D2：请求级 LLM pin——planner/aggregator 的 LLM 调用与 Agent 同脑
+        set_llm_pin(ctx.prefs.get("llm_provider", ""), ctx.prefs.get("llm_model", ""))
         text = (getattr(request, "text", "") or "").strip()
         ctx.raw_text = text  # 透传给 Agent（供 navigate_to 等 fallback 槽位提取）
         mem_on = ctx.prefs.get("memory_enabled", "true") != "false"

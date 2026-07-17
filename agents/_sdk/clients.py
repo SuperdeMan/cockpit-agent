@@ -47,6 +47,13 @@ def _stamp_obs_meta(req) -> None:
     svc = os.getenv("AGENT_ID", "")
     if svc:
         req.meta["caller_service"] = svc
+    # 运行时硬化 D2：请求级 LLM pin 随父请求 meta 自动透传（同 thinking 模式，
+    # 改一处全 Agent 覆盖）；网关对未配置的 pin fail-closed INVALID_ARGUMENT。
+    meta = get_current_meta() or {}
+    for k in ("llm_provider", "llm_model"):
+        v = str(meta.get(k, "") or "").strip()
+        if v:
+            req.meta[k] = v
 
 
 class LLMClient:

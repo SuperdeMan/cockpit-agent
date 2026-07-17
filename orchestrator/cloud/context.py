@@ -430,7 +430,9 @@ def build_context(request) -> PlanContext:
               "vehicle_battery",   # 端侧真实电量，透传给 charging
               "input_source",      # R4.4：hands-free 语音来源（voice_wake|voice_followup|voice_bargein）
               "voice_utterance_ms",  # R4.4：本轮 speech 累计时长（数字字符串）
-              "clarify_resume")    # R4.4：澄清续接标记（"1"）——engine 据此深度=1 抑制再澄清
+              "clarify_resume",    # R4.4：澄清续接标记（"1"）——engine 据此深度=1 抑制再澄清
+              "llm_provider", "llm_model")  # 运行时硬化 D2：请求级 LLM pin（评测/重放 A/B），
+                                            # 随 prefs 下发全部 Agent + engine 设 planner 侧 pin
              if meta.get(k)}
     if "location.read" in granted:
         prefs.update({k: meta[k] for k in

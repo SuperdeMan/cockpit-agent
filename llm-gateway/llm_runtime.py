@@ -26,6 +26,7 @@ import httpx
 from health import health_tracker
 from providers import (
     BaseProvider, MockProvider, AnthropicProvider, OpenAICompatibleProvider,
+    _strict_mock_gate,
 )
 
 logger = logging.getLogger("llm.runtime")
@@ -113,6 +114,8 @@ def _build_embed_provider() -> BaseProvider:
     的兜底，见 providers.MockProvider._mock_embed_one）。"""
     key = os.getenv("LLM_EMBED_API_KEY", "")
     if not key:
+        # 严格栈禁 embed mock：伪向量在 EMBED_DIM=384 时会撞维度混进召回（治理文档 §7 边缘）
+        _strict_mock_gate("embed", "LLM_EMBED_API_KEY 未配置")
         return MockProvider()
     return OpenAICompatibleProvider(
         key, base_url="",  # chat 端点不用，仅用 embed_*
@@ -173,6 +176,8 @@ class LLMRuntime:
         elif self._registry:
             self._active_id = next(iter(self._registry))
         else:
+            # 严格栈禁 mock 成为 active（LLM mock 话术最具欺骗性）
+            _strict_mock_gate("llm", "无任何已配置的 chat 厂商 key")
             cfg = {"id": "mock", "label": "Mock（未配置 key）", "available": True,
                    "primary": "mock", "fast": "mock", "models": [{"id": "mock", "label": "Mock"}]}
             self._registry["mock"] = (MockProvider(), cfg)
@@ -235,8 +240,23 @@ class LLMRuntime:
 
     def resolve_models(self, requested: str) -> list[str]:
         """档位/具体模型 → 待尝试模型列表（含降级）。见模块 docstring。"""
-        cfg = self.active_config()
-        primary = self._active_model or cfg["primary"]
+        return self.resolve_models_for(self._active_id, requested)
+
+    def provider_entry(self, pid: str):
+        """注册表查询（含别名归一）。返回 (norm_pid, provider) 或 None——供请求级 pin（D2）。"""
+        norm = _norm_id(pid)
+        entry = self._registry.get(norm)
+        return (norm, entry[0]) if entry else None
+
+    def resolve_models_for(self, pid: str, requested: str, model_override: str = "") -> list[str]:
+        """档位解析（指定 provider 版，运行时硬化 D2）。pid 须已在注册表（调用方先
+        fail-closed）；model_override=meta.llm_model，须在该厂商词表内否则忽略。"""
+        norm = _norm_id(pid)
+        cfg = self._registry[norm][1]
+        known = {m["id"] for m in cfg["models"]}
+        primary = ((model_override if model_override in known else "")
+                   or (self._active_model if norm == self._active_id else "")
+                   or cfg["primary"])
         fast = cfg.get("fast") or primary
         r = (requested or "").strip()
         if not r or r in ("@primary", "@deep"):
@@ -244,7 +264,6 @@ class LLMRuntime:
         elif r in ("@fast", "@fallback"):
             chosen = fast
         else:
-            known = {m["id"] for m in cfg["models"]}
             chosen = r if r in known else primary  # 不认识的具体模型名 → 回落 primary
         out = [chosen]
         if fast and fast != chosen:

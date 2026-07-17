@@ -70,14 +70,22 @@ class _FakeProvider:
 class _RT:
     active_id = "fake"
 
-    def __init__(self, provider, models):
+    def __init__(self, provider, models, entries=None):
         self._p = provider
         self._m = models
+        self._entries = entries or {}    # pid -> provider（请求级 pin 用）
 
     def active_provider(self):
         return self._p
 
     def resolve_models(self, requested):
+        return list(self._m)
+
+    def provider_entry(self, pid):
+        p = self._entries.get(pid)
+        return (pid, p) if p is not None else None
+
+    def resolve_models_for(self, pid, requested, model_override=""):
         return list(self._m)
 
 
@@ -173,3 +181,41 @@ def test_stream_all_tiers_429_maps_resource_exhausted():
     with pytest.raises(_Abort) as ei:
         asyncio.run(_collect_stream(s, _req("s3"), _Ctx()))
     assert ei.value.code == grpc.StatusCode.RESOURCE_EXHAUSTED
+
+
+# ── 请求级 pin（运行时硬化 D2）──
+
+def _pin_req(text, provider):
+    req = _req(text)
+    req.meta["llm_provider"] = provider
+    return req
+
+
+def test_pin_routes_to_pinned_provider_not_active():
+    active = _FakeProvider(complete_script=[("active 不该被用到", "a", "stop", (1, 1))])
+    pinned = _FakeProvider(complete_script=[("好", "p1", "stop", (1, 1))])
+    s = srv.LLMGatewayServicer()
+    s.runtime = _RT(active, ["p1"], entries={"other": pinned})
+    resp = asyncio.run(s.Complete(_pin_req("pin1", "other"), _Ctx()))
+    assert resp.content == "好"
+    assert pinned.calls == ["p1"] and active.calls == []
+
+
+def test_pin_unknown_provider_fails_closed_invalid_argument():
+    active = _FakeProvider(complete_script=[("不该执行", "a", "stop", (1, 1))])
+    s = srv.LLMGatewayServicer()
+    s.runtime = _RT(active, ["m1"])
+    with pytest.raises(_Abort) as ei:
+        asyncio.run(s.Complete(_pin_req("pin2", "nope"), _Ctx()))
+    assert ei.value.code == grpc.StatusCode.INVALID_ARGUMENT
+    assert active.calls == []            # fail-closed：不许静默漂移到 active
+
+
+def test_pin_stream_routes_to_pinned_provider():
+    active = _FakeProvider(stream_script=[["不该被用到"]])
+    pinned = _FakeProvider(stream_script=[["你", "好"]])
+    s = srv.LLMGatewayServicer()
+    s.runtime = _RT(active, ["p1"], entries={"other": pinned})
+    out = asyncio.run(_collect_stream(s, _pin_req("pin3", "other"), _Ctx()))
+    assert [d for d, done in out if not done] == ["你", "好"]
+    assert pinned.stream_calls == ["p1"] and active.stream_calls == []
