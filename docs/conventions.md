@@ -402,9 +402,12 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
 
 - `degraded` = 真实数据但经降级路径（备选 vendor / 赛季回退 / 薄证据 / lexical 召回）；
   `cached` 当前无生产者（栈内无数据缓存层），词表前向兼容——**禁止无缓存装缓存**。
-- 凡展示外源数据的卡必须带（P1 起试点 weather / place_list / search_result 三族推开），
-  生产点 `agents/_sdk/provenance.py::attach()`（P1 落地）。LLM 生成的对话内容**不标**
-  （语言无真值可标；证据链由卡片 sources 字段承担）。
+- 凡展示外源数据的卡必须带（P2 已推广：weather / forecast / search_result / news_brief /
+  stock_quote / sports_scores / sports_scorers / place_list / place_detail / poi_list /
+  poi_detail / route_plan / charging_route），生产点 `agents/_sdk/provenance.py::attach()`。
+  **刻意不标**（卡内已有更强证据链）：trip_itinerary（每停靠点 grounded 布尔粒度更细）、
+  research_report（sources + 全局权威编号）、内部数据卡（reminder/scene/vehicle）。
+  LLM 生成的对话内容**不标**（语言无真值可标；证据链由卡片 sources 字段承担）。
 
 ### 9.4 Provider 决议契约（fail-fast + 统一决议日志）
 
@@ -418,6 +421,11 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
   `provider[<domain>]=mock`（print 到 stdout）；全栈审计
   `docker compose logs | grep "provider\["`。
 - **运行期口径**：构造成功后真实源调用失败按域诚实降级（说拿不到），**不得改供 mock
-  数据**（weather / alerts / stock / news 已对齐）。
+  数据**（weather / alerts / stock / news / nearby 已对齐）。
+- **严格栈（P2）**：`REQUIRE_REAL_PROVIDERS=on`（默认 off）时任何 mock 决议直接拒绝启动，
+  含 llm-gateway 侧 llm / embed / asr / tts 四闸；豁免域 `REQUIRE_REAL_EXEMPT`
+  （默认 `parking,knowledge`）。泄漏探针 `test/e2e_strict_stack.py`（run_e2e 已挂，
+  mock 栈自动 SKIP）。
 - 域名清单：weather / search / news / sports / stock / poi(navigation) / place(nearby) /
-  charging / knowledge(manual-rag) / parking(设计即模拟，严格栈豁免)。
+  charging / knowledge(manual-rag) / parking(设计即模拟，严格栈豁免) +
+  llm-gateway 侧 llm / embed / asr / tts。

@@ -1,6 +1,6 @@
 # 多模型运行时硬化：评测锁定、active 持久化、429/流式降级与健康可视
 
-- **状态**：落地中——P0（D1/D6/D8）+ P1（D3/D4/D5）已落地并真栈验证（2026-07-17，见 §8）；P2（D2 请求级 pin / D7 failover 存档）待做
+- **状态**：已落地——P0/P1/P2 全部完成并真栈验证（2026-07-17，见 §8）；D7 跨厂商 failover **刻意仅存设计**（触发条件=真实厂商事故，见 §4 D7）
 - **交付对象**：后续实现者（人 / AI agent）
 - **关联**：`llm-gateway/llm_runtime.py`、`llm-gateway/server.py`、`llm-gateway/providers.py`、`llm-gateway/http_server.py`、`agents/_sdk/clients.py`、`test/e2e_journeys.py`、`test/eval_common.py`；前作 [2026-07-07 多 LLM 源](2026-07-07-llm-asr-tts-multiprovider-and-sports-flags.md)、[R3.5 降级矩阵](2026-07-03-r3.5-degrade-matrix-e2e.md)（CompleteStream 无备用模型重试的缺口在此首次记录、当时决定只记不修）
 - **姊妹篇**：[2026-07-17 数据真实性治理](2026-07-17-data-authenticity-governance.md)（「pin 住的请求绝不静默漂移」与「真实数据绝不静默变假」是同一条原则的两面）
@@ -144,3 +144,23 @@ python test/eval_mode_routing.py --live --provider mimo   # live 评测锁定
     orchestrator/edge tests 的 `from server import ...`**（「providers 通用包名劫持」教训在
     server 名上重演）→ importlib 按文件路径独名加载修复；`cmd | tail` 吞真实退出码
     （PIPESTATUS 教训二次咬人）→ 回归日志落文件取真值。
+- **P2 ✅（2026-07-17 当日）**：D2 请求级 pin 全链路——
+  - **透传面验证结果**（动手前先验，兑现 §7 承诺）：WS `meta` 字段 Go 网关**整包转发**
+    （`wsRequest.Meta` 直入 HandleRequest.meta，零 Go 改动）；云侧 `context.py` prefs
+    白名单补 `llm_provider/llm_model` 两键；Agent 路径经 `_merge_meta`→ExecuteRequest.meta→
+    SDK contextvar 自动透传（`_stamp_obs_meta` 补两键，改一处全 Agent 覆盖）；
+    planner/aggregator 路径经 `clients.set_llm_pin` contextvar（engine 请求入口按 prefs 设置，
+    与 trace/session contextvar 同款模式）。
+  - **网关侧**：`_serving()` 按 pin 解析——`provider_entry`（别名归一）+
+    `resolve_models_for`（指定厂商档位表；`meta.llm_model` 须在其词表内否则忽略）；缓存键/
+    obs/health 记**实际 serving** 厂商、obs `pinned=true`；pin 到未配置厂商 →
+    INVALID_ARGUMENT **fail-closed**（与治理侧同一原则：不许静默漂移）。
+  - 验证：+9 单测（prefs 白名单 / merge_meta / SDK stamp×2 / resolve_models_for /
+    provider_entry / pin 路由隔离 / 未知 pin fail-closed / pin 流式）；真栈探针：WS
+    `meta.llm_provider=mimo` 一轮 → collector 同 trace 两行
+    `cloud-planner: mimo-v2.5-pro@mimo` + `chitchat: mimo-v2.5@mimo`（`@fast` 档按被 pin
+    厂商词表解析），全局 active 全程 `minimax:MiniMax-M3` 不受扰。全量 **1695 passed/7 skipped**。
+  - 踩坑：重建后 3-4 分钟内 chitchat 腿超时且零 LLM 行——**非 pin 问题**（无 pin 对照同样
+    超时），是 registry 与 agent 同秒重启的连接沉降（初始注册 Connection refused → 周期
+    重注册补上）；探针前先跑一发无 pin 对照分辨基建与功能。
+- **D7 跨厂商 failover**：按计划**不建**，仅存 §4 D7 设计；触发条件=真实厂商故障咬到演示。
