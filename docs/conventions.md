@@ -385,3 +385,39 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
 > `meta["caller_service"]`（仅观测归属；**别用 `"caller"`**——那是网关限流桶键）。
 > Agent 经 SDK `_stamp_obs_meta` 自动带（`AGENT_ID` env）；planner=`cloud-planner`；
 > 记忆抽取=`memory-extract`；eval 脚本=`eval-<name>`。obs.llm 里 caller 为空视为待修盲区。
+
+### 9.3 ui_card 保留键 `_prov`（数据真实性标记）
+
+`ui_card` 顶层 **`_prov`** 保留给数据真实性标记（`card_group` 时打在成员卡上）；HMI 按它
+渲染徽章，dashboard 轮次详情原样可见。设计：`docs/design/2026-07-17-data-authenticity-governance.md`。
+
+```jsonc
+"_prov": {
+  "mode": "real" | "cached" | "degraded" | "mock",
+  "vendor": "amap" | "qweather" | "exa" | "serpapi" | "api-football" | "tushare" | "mock" | "…",
+  "fetched_at": "2026-07-17T10:30:00+08:00",   // 数据获取时刻，非渲染时刻
+  "note": "赛季回退 2024/25"                    // 可选：degraded/cached 的原因或缓存龄
+}
+```
+
+- `degraded` = 真实数据但经降级路径（备选 vendor / 赛季回退 / 薄证据 / lexical 召回）；
+  `cached` 当前无生产者（栈内无数据缓存层），词表前向兼容——**禁止无缓存装缓存**。
+- 凡展示外源数据的卡必须带（P1 起试点 weather / place_list / search_result 三族推开），
+  生产点 `agents/_sdk/provenance.py::attach()`（P1 落地）。LLM 生成的对话内容**不标**
+  （语言无真值可标；证据链由卡片 sources 字段承担）。
+
+### 9.4 Provider 决议契约（fail-fast + 统一决议日志）
+
+所有 Provider 工厂（`agents/*/src/providers/__init__.py`）遵守，实现见
+`agents/_sdk/provenance.py`（治理 P0，2026-07-17）：
+
+- **fail-fast**：显式 real 意图（vendor env 显式非 mock，或配了该域专属凭证）下构造失败
+  → 抛 `ProviderConfigError` 启动即炸、日志说清缺什么，绝不静默回退 mock。默认 env
+  （全 mock/空）永不触发——CI 与离线开发照旧全 mock 可跑。
+- **决议日志**：工厂返回前必输出一行 `provider[<domain>]=<vendor>(real)` /
+  `provider[<domain>]=mock`（print 到 stdout）；全栈审计
+  `docker compose logs | grep "provider\["`。
+- **运行期口径**：构造成功后真实源调用失败按域诚实降级（说拿不到），**不得改供 mock
+  数据**（weather / alerts / stock / news 已对齐）。
+- 域名清单：weather / search / news / sports / stock / poi(navigation) / place(nearby) /
+  charging / knowledge(manual-rag) / parking(设计即模拟，严格栈豁免)。

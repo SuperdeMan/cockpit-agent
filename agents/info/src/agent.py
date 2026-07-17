@@ -20,7 +20,6 @@ from .providers import (
     build_news_provider, build_stock_provider, build_sports_provider,
     build_extractor,
 )
-from .providers.mock import MockNewsProvider
 from .providers.amap_geocoder import build_location_resolver
 from .handlers import (
     WeatherMixin, SearchMixin, SportsMixin, NewsMixin, StockMixin, BriefingMixin,
@@ -48,7 +47,6 @@ class InfoAgent(WeatherMixin, SearchMixin, SportsMixin, NewsMixin, StockMixin,
             self._stock_eastmoney = EastMoneyStockProvider()
         except Exception:
             self._stock_eastmoney = None
-        self._fallback_news = MockNewsProvider()  # 新闻 provider 失败时的离线兜底
         # 主动早报（P2 雏形）：NATS 连接 + 每日一次去重
         self._nc = None
         self._last_briefing_date = ""

@@ -242,15 +242,16 @@ class NewsMixin:
                 if r.title and not self._is_junk_news(r.title, r.url, r.content)]
 
     async def _news_from_provider(self, topic: str, limit: int, meta) -> list[dict]:
-        """SerpApi 新闻源（Google/Baidu News，多来源广覆盖头条）→ AnySearch → mock。失败/空 → []。"""
+        """SerpApi 新闻源（Google/Baidu News，多来源广覆盖头条）→ AnySearch。失败/空 → []。
+
+        治理 P0：真实新闻源运行期失败**不再回退 mock 假头条**——诚实返回空，由上层
+        话术承认拿不到（与 weather/alerts/stock 既有口径一致）。
+        """
         try:
             items = await self.news.headlines(topic=topic, limit=limit + 5, meta=meta)
         except ProviderError as e:
-            logger.warning("news provider failed, fallback to mock: %s", e)
-            try:
-                items = await self._fallback_news.headlines(topic=topic, limit=limit, meta=meta)
-            except ProviderError:
-                return []
+            logger.warning("news provider failed（诚实降级为空，不回退 mock）: %s", e)
+            return []
         return [{"title": n.title, "url": n.url, "source": n.source,
                  "publish_time": _normalize_publish_time(n.publish_time),
                  "snippet": clean_snippet(n.summary)}
