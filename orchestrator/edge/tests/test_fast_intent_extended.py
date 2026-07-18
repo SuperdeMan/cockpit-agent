@@ -15,6 +15,45 @@ from fast_intent import (classify, classify_structured, is_local,
 
 
 # ═══════════════════════════════════════════════════
+# 0. 提醒话术让路 + 体感入口收窄（badcase c9bcf8c2）
+# ═══════════════════════════════════════════════════
+
+class TestReminderUtteranceYieldsToCloud:
+    def test_badcase_reminder_with_leng_cui_not_hijacked(self):
+        """「再帮我加一个…提醒我冷萃咖啡过滤」：「冷」(冷萃)+「再」(再帮我) 撞旧体感
+        共现规则被端侧当 hvac.on 真开了空调——提醒话术必须整句上云归 reminder。"""
+        assert classify_structured("再帮我加一个明天晚上10点提醒我冷萃咖啡过滤。") is None
+        assert classify("再帮我加一个明天晚上10点提醒我冷萃咖啡过滤。") is None
+
+    def test_reminder_verbs_go_cloud(self):
+        assert classify_structured("提醒我明天带伞") is None
+        assert classify_structured("明早七点设个闹钟") is None
+        assert classify_structured("别忘了提醒我给妈妈打电话") is None
+        assert classify_structured("到时候叫我一下") is None
+
+    def test_adas_alert_settings_stay_local(self):
+        """裸「提醒」不触发让路：「限速提醒/疲劳提醒」是 ADAS 功能开关，仍走端侧。"""
+        r = classify_structured("打开限速提醒")
+        assert r is not None
+
+    def test_feeling_relative_forms_still_local(self):
+        assert classify("温度再热一点")["name"] == "aircon.inc"
+        assert classify("冷一点")["name"] == "aircon.dec"
+
+    def test_feeling_with_degree_still_local(self):
+        r = classify("太热了，调到24度")
+        assert r is not None and r["name"] == "hvac.set" and r["slots"]["temp"] == "24"
+
+    def test_bare_cooccurrence_no_longer_enters_aircon(self):
+        """旧规则 (热|冷)×(再|一点|度) 的误伤面：含「冷/热」的无关句不再被空调分支接走
+        （允许落到其它更贴切的域，如「这首歌…再来一遍」归媒体；只断言不进空调）。"""
+        r1 = classify_structured("这首歌太热了再来一遍")
+        assert r1 is None or r1.get("data", {}).get("object") != "aircon"
+        r2 = classify_structured("再来一杯冷萃咖啡")
+        assert r2 is None or r2.get("data", {}).get("object") != "aircon"
+
+
+# ═══════════════════════════════════════════════════
 # 1. 旧接口 classify() 向后兼容
 # ═══════════════════════════════════════════════════
 

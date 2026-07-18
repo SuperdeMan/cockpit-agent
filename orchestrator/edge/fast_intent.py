@@ -149,6 +149,26 @@ def _is_scene_utterance(t: str) -> bool:
         _SCENE_ACT_RE.search(t) and not _EDGE_MODE_RE.search(t))
 
 
+# 提醒类话术（→云端 reminder Agent）：代词/时点锚定的「提醒」词形 + 闹钟/待办。
+# 刻意不含裸「提醒」——「打开限速提醒/超速提醒/疲劳提醒」是 ADAS 功能开关（端侧设置域）；
+# 「记得/叫我」单独出现歧义大，只收「记得提醒/到时候叫我」等组合形。R7 拨号分支的
+# 同类让路（提醒我给张姐打电话）由本守卫统一承接。
+_REMINDER_UTTER_RE = re.compile(
+    r"提醒(我|一下|咱|大家)|别忘了|别忘记|勿忘"
+    r"|(记得|一定要)(提醒|叫|喊)|到时候?(叫|喊)我"
+    r"|[设定加建创][个一两三]?[个条]?(闹钟|提醒|待办)|闹钟|待办")
+
+
+def _is_reminder_utterance(t: str) -> bool:
+    return bool(_REMINDER_UTTER_RE.search(t))
+
+
+# 显式体感调节词形（空调分支入口白名单）：与分支内 inc/dec 处理一一对应的相对调节说法。
+# 刻意只收旧共现规则的**合理子集**——「有点冷/好热」这类裸体感陈述历史上就走云端
+# 隐式车控（planner 规则），不在此扩大端侧接管面。
+_FEELING_FORMS = ("热一点", "冷一点", "再热", "再冷")
+
+
 def classify(text: str) -> dict | None:
     """旧接口：返回 {name, slots, confidence}。向后兼容。"""
     result = classify_structured(text)
@@ -316,6 +336,13 @@ def classify_structured(text: str) -> dict | None:
     """新接口：返回公版 {domain, intent, data: {operate, object, ...}} 格式。"""
     t = text.strip()
 
+    # ── 提醒类话术一律上云（badcase c9bcf8c2：「再帮我加一个明晚10点提醒我冷萃咖啡过滤」
+    # 中「冷」（冷萃）+「再」（再帮我）撞上体感共现规则，被端侧当 hvac.on 秒回并真开了空调）。
+    # 「提醒我/别忘了/设个闹钟」是建提醒诉求，归云端 reminder Agent；须早于一切车控分支。
+    # 刻意不用裸「提醒」——「打开限速提醒/疲劳提醒」是 ADAS 设置（下方分支），仍走端侧。
+    if _is_reminder_utterance(t):
+        return None
+
     # ── 场景句一律上云（与本文件头部「命名场景归云端 scene-orchestrator 编排」同一分工）──
     # ① 场景**管理**句：「创建钓鱼模式：氛围灯调到10%，空调22度」里的车控词是**场景内容**，
     #    不是**当下的指令**——端侧若照单执行，用户会发现灯真被调暗了、场景却没建成。
@@ -355,6 +382,8 @@ def classify_structured(text: str) -> dict | None:
     # R5 让路（旅程 B3-3）：①「记住，我最喜欢的空调温度是26度」是**偏好陈述**要进云端
     # 记忆（原被温度分支当场执行成开空调 26 度）；②「把空调调到我喜欢的温度」参数在
     # 用户画像里，须由云端记忆召回填值（原端侧当「开空调」秒回「开了」）。整句上云。
+    # 体感入口收窄（badcase c9bcf8c2）：旧共现规则 (热|冷)×(度|一点|再) 宽到「再帮我…
+    # 冷萃咖啡」「这歌太热了再来一遍」都命中——收成显式体感词形白名单，兜底不再误开空调。
     if any(w in t for w in ("记住", "记一下", "帮我记", "别忘了我")) \
             or ("喜欢" in t and ("温度" in t or "空调" in t)) \
             or any(w in t for w in ("常用的温度", "习惯的温度", "老样子")):
@@ -362,7 +391,8 @@ def classify_structured(text: str) -> dict | None:
     elif ("空调" in t and "界面" not in t and "页面" not in t) or \
             ("温度" in t and not _is_env_temp_query(t)) or \
             "风速" in t or "风量" in t or \
-            (("热" in t or "冷" in t) and ("度" in t or "一点" in t or "再" in t)):
+            any(w in t for w in _FEELING_FORMS) or \
+            (("热" in t or "冷" in t) and _extract_temperature(t) is not None):
         if "关" in t:
             return _s("setting", "control", "close", "aircon", conf=0.93)
         # 风速/风量
