@@ -131,6 +131,25 @@ def test_weather_tomorrow_answers_forecast_not_current(monkeypatch=None):
     assert "明天" in res.speech
     assert "当前" not in res.speech          # 不拿今天实况顶包
     assert res.ui_card["type"] == "weather"  # 卡片契约不变（含 forecast 区）
+    # badcase ad377bed 三连：speech 对了但卡片主视觉仍是今天实况 → focus 焦点日下发
+    focus = res.ui_card.get("focus") or {}
+    assert focus.get("label") == "明天"
+    assert focus.get("temp_high") and focus.get("text_day")
+
+
+def test_search_query_relative_year_fix(monkeypatch):
+    """badcase f11aa344：planner 无日期锚，把「今年世界杯」按训练先验改写成「2024年世界杯」
+    灌进 slots.query，检索整轮被污染。确定性护栏：按原话相对年份词换算纠正。"""
+    from agents.info.src.handlers import search as S
+    monkeypatch.setattr(S, "_shanghai_now", lambda: datetime(2026, 7, 18))
+    fix = S.fix_relative_year
+    assert fix("2024年世界杯决赛预测 法国 vs 阿根廷", "今年世界杯决赛你更看好哪支球队呢？") \
+        == "2026年世界杯决赛预测 法国 vs 阿根廷"
+    assert fix("2024年世界杯冠军", "去年欧冠冠军是谁") == "2025年世界杯冠军"   # 去年=2025
+    assert fix("2022年世界杯决赛", "2022年世界杯决赛比分") == "2022年世界杯决赛"  # 原话明说的年份不动
+    assert fix("2026年世界杯决赛预测", "今年世界杯决赛") == "2026年世界杯决赛预测"  # 已一致不动
+    assert fix("世界杯决赛预测", "今年世界杯决赛") == "世界杯决赛预测"           # 无年份不动
+    assert fix("2024年报销政策", "最新报销政策") == "2024年报销政策"             # 原话无相对词不动
 
 
 def test_weather_beyond_forecast_window_is_honest():
@@ -543,6 +562,7 @@ def test_sports_predictive_guess_anchors_anaphor_to_fixture():
     from agents.info.src.handlers.sports import _is_predictive
     assert _is_predictive("你猜一猜明天世界杯那场比赛的结果大概是怎么样呢")
     assert _is_predictive("猜猜明天谁能赢")
+    assert _is_predictive("今年世界杯决赛你更看好哪支球队呢")   # f11aa344 复验抓到的漏网句式
     assert not _is_predictive("昨晚世界杯比赛结果")   # 事实性赛果不让路
 
     from agents.info.src.handlers._util import _shanghai_now

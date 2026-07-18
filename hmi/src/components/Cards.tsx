@@ -156,14 +156,26 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
   const alert = weatherAlertSummary(card.alerts)
   const upd = card.update_time && card.update_time !== 'mock'
     ? card.update_time.replace('T', ' ').replace(/\+.*/, '') : ''
-  const tele: Array<{ icon: IconName; label: string; v: string | null; u: string }> = [
-    { icon: 'temperature', label: '体感', v: card.feels_like || null, u: '°C' },
-    { icon: 'humidity', label: '湿度', v: card.humidity || null, u: '%' },
-    { icon: 'wind', label: '风向', v: card.wind_dir ? `${card.wind_dir}${card.wind_scale ? `${card.wind_scale}级` : ''}` : null, u: '' },
-    { icon: 'visibility', label: '能见度', v: card.visibility || null, u: 'km' },
-    { icon: 'weather-rain', label: '降水', v: card.precip || null, u: 'mm' },
-    { icon: 'pressure', label: '气压', v: card.pressure || null, u: 'hPa' },
-  ]
+  // 焦点日（问「明天/后天天气」）：主视觉切到该日预报，今天实况降为次行；遥测格换该日字段
+  const focus = card.focus
+  const tele: Array<{ icon: IconName; label: string; v: string | null; u: string }> = focus
+    ? [
+        { icon: 'humidity', label: '湿度', v: focus.humidity || null, u: '%' },
+        { icon: 'wind', label: '风向', v: focus.wind_dir ? `${focus.wind_dir}${focus.wind_scale ? `${focus.wind_scale}级` : ''}` : null, u: '' },
+        { icon: 'weather-rain', label: '降水', v: focus.precip || null, u: 'mm' },
+        { icon: 'weather-sunny', label: '紫外线', v: focus.uv_index || null, u: '' },
+        { icon: 'weather-cloudy', label: '夜间', v: focus.text_night || null, u: '' },
+        { icon: 'temperature', label: '现在', v: card.temp ? `${card.temp}°C ${card.text}` : null, u: '' },
+      ]
+    : [
+        { icon: 'temperature', label: '体感', v: card.feels_like || null, u: '°C' },
+        { icon: 'humidity', label: '湿度', v: card.humidity || null, u: '%' },
+        { icon: 'wind', label: '风向', v: card.wind_dir ? `${card.wind_dir}${card.wind_scale ? `${card.wind_scale}级` : ''}` : null, u: '' },
+        { icon: 'visibility', label: '能见度', v: card.visibility || null, u: 'km' },
+        { icon: 'weather-rain', label: '降水', v: card.precip || null, u: 'mm' },
+        { icon: 'pressure', label: '气压', v: card.pressure || null, u: 'hPa' },
+      ]
+  const headGlyphText = focus ? focus.text_day : card.text
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
       {/* 预警 callout */}
@@ -176,18 +188,34 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
           </div>
         </div>
       )}
-      {/* 头部：城市 + 大温度 + 天气文案 | 图标 + 更新 */}
+      {/* 头部：城市(+焦点日 chip) + 大温度/温度区间 + 天气文案 | 图标 + 更新 */}
       <div style={{ padding: '18px 18px 12px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>{card.city}</div>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4, lineHeight: 1 }}>
-            <span className="au-num" style={{ fontSize: 68, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--au-text)' }}>{card.temp}</span>
-            <span className="au-num" style={{ fontSize: 24, fontWeight: 300, color: 'var(--au-text-2)', marginTop: 10 }}>°C</span>
+          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>{card.city}</span>
+            {focus && (
+              <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: 'rgba(91,140,255,0.14)', color: 'var(--au-accent, #5B8CFF)', border: '1px solid rgba(91,140,255,0.28)' }}>{focus.label}</span>
+            )}
           </div>
-          <div style={{ fontSize: 13.5, color: 'var(--au-text-2)', marginTop: 5 }}>{card.text || '天气数据更新中'}</div>
+          {focus ? (
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, lineHeight: 1 }}>
+              <span className="au-num" style={{ fontSize: 54, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--au-text)' }}>{focus.temp_low}~{focus.temp_high}</span>
+              <span className="au-num" style={{ fontSize: 22, fontWeight: 300, color: 'var(--au-text-2)', marginBottom: 4 }}>°C</span>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4, lineHeight: 1 }}>
+              <span className="au-num" style={{ fontSize: 68, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--au-text)' }}>{card.temp}</span>
+              <span className="au-num" style={{ fontSize: 24, fontWeight: 300, color: 'var(--au-text-2)', marginTop: 10 }}>°C</span>
+            </div>
+          )}
+          <div style={{ fontSize: 13.5, color: 'var(--au-text-2)', marginTop: 5 }}>
+            {focus
+              ? `${focus.text_day}${focus.text_night && focus.text_night !== focus.text_day ? `转${focus.text_night}` : ''}`
+              : (card.text || '天气数据更新中')}
+          </div>
         </div>
         <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 2 }}>
-          <span style={{ lineHeight: 1, display: 'inline-flex', justifyContent: 'flex-end' }}>{weatherGlyph(card.text, 40, 'var(--au-text)')}</span>
+          <span style={{ lineHeight: 1, display: 'inline-flex', justifyContent: 'flex-end' }}>{weatherGlyph(headGlyphText, 40, 'var(--au-text)')}</span>
           {upd && <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>更新 {upd}</span>}
           {card._prov && (
             <span style={{ display: 'inline-flex', justifyContent: 'flex-end' }}>
@@ -210,23 +238,26 @@ function WeatherCardView({ card }: { card: WeatherCard }) {
           )
         })}
       </div>
-      {/* 3 日预报 */}
+      {/* 3 日预报（焦点日高亮） */}
       {!!card.forecast?.length && (
         <>
           <CardHR />
           <div style={{ padding: '13px 12px', display: 'flex' }}>
-            {card.forecast.slice(0, 3).map((f, i) => (
-              <div key={i} style={{ flex: 1, textAlign: 'center', padding: '0 6px', borderRight: i < 2 ? '1px solid var(--au-line)' : 'none' }}>
-                <div style={{ fontSize: 11, color: 'var(--au-text-3)', marginBottom: 6 }}>{i === 0 ? '今天' : f.date.slice(5)}</div>
-                <div style={{ marginBottom: 4, lineHeight: 1, display: 'flex', justifyContent: 'center' }}>{weatherGlyph(f.text_day, 26)}</div>
-                <div style={{ fontSize: 11, color: 'var(--au-text-2)', marginBottom: 8 }}>{f.text_day}</div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                  <span className="au-num" style={{ fontSize: 11, color: '#93C5FD' }}>{f.temp_low}°</span>
-                  <div style={{ flex: 1, height: 2.5, borderRadius: 2, background: 'linear-gradient(to right,rgba(91,140,255,.5),rgba(255,165,50,.5))' }} />
-                  <span className="au-num" style={{ fontSize: 11, color: '#FCA5A5' }}>{f.temp_high}°</span>
+            {card.forecast.slice(0, 3).map((f, i) => {
+              const isFocus = !!focus && f.date.slice(0, 10) === focus.date
+              return (
+                <div key={i} style={{ flex: 1, textAlign: 'center', padding: '6px 6px', borderRight: i < 2 ? '1px solid var(--au-line)' : 'none', borderRadius: isFocus ? 11 : 0, background: isFocus ? 'rgba(91,140,255,0.10)' : 'transparent' }}>
+                  <div style={{ fontSize: 11, color: isFocus ? 'var(--au-accent, #5B8CFF)' : 'var(--au-text-3)', fontWeight: isFocus ? 700 : 400, marginBottom: 6 }}>{isFocus ? focus.label : (i === 0 ? '今天' : f.date.slice(5))}</div>
+                  <div style={{ marginBottom: 4, lineHeight: 1, display: 'flex', justifyContent: 'center' }}>{weatherGlyph(f.text_day, 26)}</div>
+                  <div style={{ fontSize: 11, color: 'var(--au-text-2)', marginBottom: 8 }}>{f.text_day}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                    <span className="au-num" style={{ fontSize: 11, color: '#93C5FD' }}>{f.temp_low}°</span>
+                    <div style={{ flex: 1, height: 2.5, borderRadius: 2, background: 'linear-gradient(to right,rgba(91,140,255,.5),rgba(255,165,50,.5))' }} />
+                    <span className="au-num" style={{ fontSize: 11, color: '#FCA5A5' }}>{f.temp_high}°</span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </>
       )}

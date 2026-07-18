@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 import logging
+import re
 
 from agents._sdk import AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
@@ -12,7 +13,38 @@ from agents._sdk.grounding import fallback_brief, grounded_synthesis, latest_pub
 from agents._sdk.provenance import attach
 from agents._sdk.retrieval import retrieve
 
+from ._util import _shanghai_now
+
 logger = logging.getLogger("agent.info")
+
+# 相对年份词 → 相对当前年的偏移（badcase f11aa344：planner 把「今年世界杯」按训练先验
+# 改写成「2024年世界杯」灌进 query，检索整轮被污染答出 2022/2024 旧料）。
+_REL_YEAR = (("今年", 0), ("本年", 0), ("去年", -1), ("明年", 1), ("前年", -2), ("后年", 2))
+_YEAR_IN_QUERY_RE = re.compile(r"(20\d{2})(?=年)")   # 只动「20XX年」词形，不碰裸数字/型号
+
+
+def fix_relative_year(query: str, raw: str) -> str:
+    """query 年份对齐原话的相对年份词（确定性护栏，planner 日期锚之外的第二道防线）。
+
+    原话含「今年/去年/明年…」而 query 里出现按当前日期换算**不一致**、且原话中也没有
+    出现过的「20XX年」→ 改写成换算年份。原话自带的年份（用户明说 2022）原样保留。"""
+    q = (query or "")
+    r = (raw or "")
+    if not q or not r:
+        return q
+    offset = next((off for w, off in _REL_YEAR if w in r), None)
+    if offset is None:
+        return q
+    target = str(_shanghai_now().year + offset)
+
+    def _sub(m):
+        y = m.group(1)
+        return y if (y == target or y in r) else target
+
+    fixed = _YEAR_IN_QUERY_RE.sub(_sub, q)
+    if fixed != q:
+        logger.info("relative-year fix: %r -> %r (raw=%r)", q, fixed, r[:40])
+    return fixed
 
 _RECENCY_NOW = ("今天", "今日", "今晚", "现在", "此刻", "实时", "刚刚", "最新", "目前", "当前")
 _RECENCY_WEEK = ("本周", "这周", "近期", "最近", "这几天", "这两天", "近几天")
@@ -94,6 +126,8 @@ class SearchMixin:
         if not query:
             return AgentResult(status=NEED_SLOT, speech="您想搜什么？",
                                follow_up="请告诉我搜索内容", missing_slots=["query"])
+        # 相对年份纠偏：planner 幻觉年份（「今年」→2024）污染 query 时按当前日期换算改正
+        query = fix_relative_year(query, intent.raw_text)
         # 赛事路由：命中已知赛事 + 赛事意图词 → 走结构化数据源，不进通用搜索（杜绝编造比分）
         sports = None if skip_sports else await self._maybe_sports(query, meta, intent.raw_text)
         if sports is not None:

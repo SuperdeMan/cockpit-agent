@@ -104,6 +104,19 @@ route_hints:
     priority: 59
     slots: {}
 
+  # d) 赛事预测/观点句 → info.sports（badcase f11aa344 复验：「今年世界杯决赛你更看好
+  #    哪支球队」无场次指代、无搜查动词——上面两条 hint 都接不住，planner 在 chitchat 与
+  #    检索之间掷硬币，落 chitchat 就答「我不太清楚」。收口成确定性：联赛/决赛词 ×
+  #    预测词共现 → info.sports，其 handler 的 _is_predictive 让路通用搜索并带
+  #    _predictive_anchor 指代锚点，最终仍是检索接地作答，不误进赛程列表。
+  #    guard 排除电影/彩票等同样用「夺冠/看好」的非赛事上下文。
+  - pattern: '(世界杯|欧冠|欧联|英超|西甲|意甲|德甲|法甲|荷甲|中超|NBA|决赛|半决赛|季军赛|淘汰赛|小组赛)[^。！？]{0,16}(看好|预测|预判|前瞻|谁会赢|谁能赢|谁胜出|夺冠|胜算|赢面|猜一猜|猜猜|你猜|几比几)|(看好|预测|猜一猜|猜猜|你猜)[^。！？]{0,16}(世界杯|欧冠|欧联|英超|西甲|意甲|德甲|法甲|荷甲|中超|NBA|决赛|半决赛|季军赛)'
+    guard: '电影|影院|演唱会|音乐会|话剧|展览|彩票|股票|股价|大盘|基金'
+    intent: info.sports
+    policy: replace
+    priority: 58
+    slots: {query: "$text"}
+
   # c) 天气×出行组合句 → info.weather（badcase 11db5215：「今天天气怎么样，适合出行吗」
   #    弱 LLM 会漂到 safety.driving_advice 反问目的地——用户问的是天气适宜性不是路线
   #    建议；weather handler 的意图先答（_weather_answer）直接给「适合出行/带伞/防晒」

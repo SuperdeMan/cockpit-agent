@@ -6,12 +6,22 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from security.permission import check_permission
 from .models import Plan, Step, PlanContext, ReplanDecision
 from .context import WorkingSet, _FALLBACK_AGENT
 from .route_hints import RouteHintEngine
 
 logger = logging.getLogger("planner.planning")
+
+
+def _date_line() -> str:
+    """规划 prompt 的日期锚（上海时区，日粒度——时刻由端侧墙钟直答负责，不进 prompt 防
+    每分钟扰动）。badcase f11aa344：prompt 无日期锚，LLM 把「今年世界杯」按训练先验改写成
+    「2024年世界杯」灌进检索槽位——相对时间词必须有权威基准可换算。"""
+    now = datetime.now(timezone(timedelta(hours=8)))
+    wd = "一二三四五六日"[now.weekday()]
+    return f"当前日期：{now.year}年{now.month}月{now.day}日 周{wd}（今年={now.year}年）"
 
 # 路由兜底已全部机制化：research.run 与 trip.*（含 trip.plan 的目的地/天数/偏好抽取）均由各
 # Agent manifest.route_hints 声明、通用 RouteHintEngine 消费（R2.1）；trip.plan 的话术抽取在
@@ -107,6 +117,9 @@ _PLANNER_BASE = (
     "- 时效判据：答案会随时间变化的问题（近期事件/价格/榜单/比分/新品发布，或含"
     "『最新/现在/今天/昨晚/今年/最近』类时间词）→ **必须**选择能力清单里能联网检索的"
     "查询能力，禁止凭你的记忆直答、禁止空计划、禁止当闲聊处理。\n"
+    "- 相对时间只按『当前日期』换算：槽位里出现的年份/日期必须由用户原话或上方"
+    "『当前日期』推出（今年=当前年份）；**绝不**凭你的训练记忆把『今年/去年/明天』"
+    "改写成别的绝对年份，拿不准就把用户原词原样放进槽位。\n"
     "- 常识判据：不随时间变化的常识/原理/定义/历史、闲聊、情绪陪伴 → 选开放域对话能力"
     "直接回答，不要联网检索。\n"
     "- 深度判据：只想浏览一批资讯 → 新闻类能力；对一个具体问题要答案（查一下/搜一下/"
@@ -246,7 +259,7 @@ class PlanBuilder:
     async def _llm_plan(self, text: str, agents: list, working_set: WorkingSet) -> str:
         catalog = WorkingSet.render_catalog(agents)
         ctx_block = working_set.render_context()  # 记忆 +（焦点）+ 历史，统一预算
-        user_msg = f"可用能力:\n{catalog}\n\n{ctx_block}用户说: {text}"
+        user_msg = f"可用能力:\n{catalog}\n\n{_date_line()}\n{ctx_block}用户说: {text}"
         try:
             raw = await self._llm([
                 {"role": "system", "content": _planner_system()},
@@ -272,6 +285,7 @@ class PlanBuilder:
         ctx_block = working_set.render_context() if working_set is not None else ""
         prompt = (
             f"目标：{goal}\n"
+            f"{_date_line()}\n"
             f"{ctx_block}最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
             f"可用能力：{WorkingSet.render_catalog(agents)}"
         )

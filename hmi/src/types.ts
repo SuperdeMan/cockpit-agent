@@ -231,6 +231,20 @@ export type WeatherCard = {
   cloud?: string
   dew_point?: string
   update_time: string
+  // 焦点日（问「明天/后天天气」时后端下发）：卡片主视觉展示该日预报，今天实况降为次行
+  focus?: {
+    date: string
+    label: string
+    text_day: string
+    text_night: string
+    temp_high: string
+    temp_low: string
+    wind_dir: string
+    wind_scale: string
+    humidity: string
+    precip: string
+    uv_index: string
+  }
   forecast?: Array<{
     date: string
     text_day: string

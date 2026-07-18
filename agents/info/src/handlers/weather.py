@@ -233,6 +233,7 @@ class WeatherMixin:
         accuracy_note = self._location_accuracy_note(meta)
         # 日期感知：问的是未来某天（date 槽位/原话含明天·后天·周X）→ 按该日预报作答，
         # 绝不拿今天实况顶包；超出预报窗口则诚实说明（badcase demo-i9c92i 三连答非所问）。
+        focus = None   # 问未来日时卡片的焦点日（HMI 主视觉展示该日而非今天实况）
         off = _requested_day_offset(str(intent.slots.get("date") or ""), intent.raw_text)
         if off > 0:
             target = (_shanghai_now() + timedelta(days=off)).date().isoformat()
@@ -251,6 +252,13 @@ class WeatherMixin:
                         if day.wind_dir and day.wind_scale else "")
                 speech = (f"{lead}{_speech_place(name)}{label}{day.text_day}{night}"
                           f"，{day.temp_low}~{day.temp_high}℃{wind}。")
+                # 卡片焦点日（badcase ad377bed 等三连：speech 对了但卡片主视觉仍是今天实况）
+                focus = {"date": (day.date or "")[:10], "label": label,
+                         "text_day": day.text_day, "text_night": day.text_night,
+                         "temp_high": day.temp_high, "temp_low": day.temp_low,
+                         "wind_dir": day.wind_dir, "wind_scale": day.wind_scale,
+                         "humidity": day.humidity, "precip": day.precip,
+                         "uv_index": day.uv_index}
         else:
             # 意图先答（适合出行吗/会下雨吗/冷不冷…）再接实况摘要（badcase 11db5215）
             lead = _weather_answer(intent.raw_text, w,
@@ -300,6 +308,8 @@ class WeatherMixin:
             "indices": indices, "alerts": alerts,
             "alerts_available": overview.alerts_available,
         }
+        if focus:
+            card["focus"] = focus   # 问未来日：HMI 主视觉切到该日预报（今天实况降为次行）
         attach(card, self.weather)   # 真实性标记（_prov，治理 P1 试点族）
         return AgentResult(speech=speech, ui_card=card, data={"weather": card})
 
