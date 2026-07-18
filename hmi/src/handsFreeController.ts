@@ -4,18 +4,18 @@
 import { VoiceLoop } from './voiceLoop.mjs'
 import { VadEngine } from './vadEngine'
 import { KwsEngine, DEFAULT_KEYWORDS } from './kwsEngine'
-import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues, isStreamingTtsProvider } from './audio'
-
-// 流式引擎下唤醒/退场提示音的回落音色（MiMo 批处理，流式引擎音色 MiMo 无）
-const CUE_FALLBACK_VOICE = '冰糖'
+import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues } from './audio'
 import { PcmRing } from './pcmRing.mjs'
 import { stripLeadingWakeWord, isFiller } from './utteranceHeuristics.mjs'
 import { bumpVoiceMetric } from './voiceMetrics.mjs'
 import { RejectPolicy } from './rejectPolicy.mjs'
 
-// R4.3b P4：续说（followup/barge-in/宽限续说）开 ASR 时注入的前滚缓冲——只补 VAD speech-start 判定
+// R4.3b P4：续说（followup/宽限续说）开 ASR 时注入的前滚缓冲——只补 VAD speech-start 判定
 // 延迟（去抖 64ms + 几帧）的首字；刻意短，不带回声/上轮 TTS 尾。唤醒进入注入 0（不带唤醒词，见 openAsr）。
 const RESUME_PRE_ROLL_MS = 200
+// barge-in 动态 pre-roll 上限：打断确认窗（bargeInMinMs 300ms）+VAD 判定延迟期间 ASR 未开，
+// FSM 会带来 sinceSpeechStartMs，pre-roll = 它 + RESUME_PRE_ROLL_MS，按此上限截断（pcmRing 容量 1500ms）。
+const MAX_PRE_ROLL_MS = 1200
 
 // 唤醒提示语候选（issue①）：短促，唤醒时随机播一条求变化；回声靠 getUserMedia 的 AEC 兜底（同 barge-in 前提）。
 const WAKE_CUE_TEXTS = ['在呢', '我在', '你说', '请讲', '我在听']
@@ -75,7 +75,7 @@ export class HandsFreeController {
         endpointGraceMs: deps.config?.endpointGraceMs ?? 700, // U5b 端点宽限合并窗
       },
       onState: (orb: string) => this.deps.onOrbState(orb),
-      onOpenAsr: (o: { resume?: boolean }) => this.openAsr(o),
+      onOpenAsr: (o: { resume?: boolean; sinceSpeechStartMs?: number }) => this.openAsr(o),
       onCloseAsr: () => this.closeAsr(),
       onEndpoint: () => { try { this.asr?.stop() } catch { /* ignore */ } },
       onSend: (t: string, vm?: { source: string; utteranceMs: number }) => this.deps.onSend(t, vm),
@@ -183,14 +183,14 @@ export class HandsFreeController {
     this.startKws()
   }
 
-  // 语音提示音集：随音色/TTS 开关刷新（enable 时也调用一次）——唤醒 wake + 退场 exit 一并预合成。
-  // 提示音走批处理 /api/tts（短固定语，无需流式）；流式引擎（cosyvoice/qwen）的音色 MiMo 批处理无，
-  // 故回落 MiMo 音色合成（提示音是通用应答，音色一致性非关键），保证仍是真人声而非 beep。
+  // 语音提示音集：随引擎/音色/TTS 开关刷新（enable 时也调用一次）——唤醒 wake + 退场 exit 一并预合成。
+  // 用当前选定引擎+音色合成（prepareCueSet 内流式引擎走 /api/tts/stream 收全 PCM），
+  // 唤醒应答与正文同声同色；引擎不可用时才回落 MiMo 批处理，保证仍是真人声而非 beep。
   refreshWakeCue(): void {
     const tts = this.deps.getTts?.()
     if (this.on && tts?.enabled) {
-      const cueVoice = isStreamingTtsProvider(tts.provider) ? CUE_FALLBACK_VOICE : tts.voiceId
-      void prepareCueSet(this.deps.audioApi, cueVoice, { wake: WAKE_CUE_TEXTS, exit: EXIT_CUE_TEXTS })
+      void prepareCueSet(this.deps.audioApi, tts.voiceId,
+                         { wake: WAKE_CUE_TEXTS, exit: EXIT_CUE_TEXTS }, tts.provider || '')
         .catch(() => { /* wake 全失败 → 唤醒回退 beep；exit 无则静默退场 */ })
     } else {
       clearCues()
@@ -261,9 +261,11 @@ export class HandsFreeController {
 
   // ─── 内部 ───
   // P2 PCM 直传（U4 根治）：不用 MediaRecorder，用 vadEngine.onFrame 喂帧 + 前滚缓冲；partial/final 剥唤醒词残留。
-  // P4 真麦修复：仅续说路径（resume=true：续问/打断/宽限续说，无唤醒词）注入短 pre-roll 补 VAD 判定延迟首字；
+  // P4 真麦修复：仅续说路径（resume=true：续问/打断/宽限续说，无唤醒词）注入 pre-roll 补 VAD 判定延迟首字；
   // KWS 唤醒进入（resume=false）不注入——KWS 命中点往回取恰是唤醒词本身，会被识别成同音字残留上屏（「小周」）。
-  private openAsr(opts: { resume?: boolean } = {}): void {
+  // barge-in 修复：FSM 带 sinceSpeechStartMs（打断确认窗耗时）→ pre-roll 动态回取到 speech 起点，
+  // 固定 200ms 盖不住 300ms+ 确认窗导致的「打断漏首字」在此根治。
+  private openAsr(opts: { resume?: boolean; sinceSpeechStartMs?: number } = {}): void {
     if (this.asr) return
     const cfg = this.deps.getAsrConfig()
     const gen = ++this.asrGen // 本条会话代号；下方回调只在代号仍为当前时才作数
@@ -271,8 +273,11 @@ export class HandsFreeController {
     const words = this.wakeStripWords()
     const strip = (t: string) => stripLeadingWakeWord(t, words)
     this.asr = new StreamingRecognizer()
-    // 唤醒进入 pre-roll=0（唤醒词不进 ASR）；续说进入取 RESUME_PRE_ROLL_MS 补首字（无唤醒词，安全）
-    const preRoll = opts.resume ? this.pcmRing.takeLast(RESUME_PRE_ROLL_MS) : new Float32Array(0)
+    // 唤醒进入 pre-roll=0（唤醒词不进 ASR）；续说/打断进入按 speech 起点回取（无唤醒词，安全）
+    const preRollMs = opts.resume
+      ? Math.min(RESUME_PRE_ROLL_MS + Math.max(0, opts.sinceSpeechStartMs || 0), MAX_PRE_ROLL_MS)
+      : 0
+    const preRoll = preRollMs > 0 ? this.pcmRing.takeLast(preRollMs) : new Float32Array(0)
     void this.asr
       .startPcm(asrStreamUrl(this.deps.audioApi), {
         language: cfg.language,

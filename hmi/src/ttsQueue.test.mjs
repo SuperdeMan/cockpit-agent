@@ -1,7 +1,25 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { OrderedPlaybackQueue, TtsTextBuffer } from './ttsQueue.mjs'
+import { OrderedPlaybackQueue, TtsTextBuffer, normSpeech, speechCovered } from './ttsQueue.mjs'
+
+// ── 流式收尾判定（audio.ts divergent 分类；长内容断播修复）──
+
+test('normSpeech 剥标点/空白/markdown 符号，只留文字', () => {
+  assert.equal(normSpeech('你好，**世界**！\n'), '你好世界')
+  assert.equal(normSpeech(''), '')
+})
+
+test('speechCovered：化妆品级差异（md 剥法/标点）视为已覆盖，不重播', () => {
+  assert.equal(speechCovered('今天**多云**，26度。', '今天多云，26度'), true)
+  assert.equal(speechCovered('第一句。第二句。', '第二句。'), true)   // 尾段包含
+  assert.equal(speechCovered('任意已播内容', ''), true)               // final 空
+})
+
+test('speechCovered：截然不同的两段话 → false（混合轮云端总结须链下一段）', () => {
+  assert.equal(speechCovered('空调已开启', '明天深圳有小雨，出门记得带伞。'), false)
+  assert.equal(speechCovered('', '有内容的最终文本'), false)          // 未流式过 → 该播
+})
 
 test('emits a completed sentence before final', () => {
   const buffer = new TtsTextBuffer()

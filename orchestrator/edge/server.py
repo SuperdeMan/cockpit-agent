@@ -214,6 +214,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         args: dict | None = None,
         answer_length: str = "short",
         intent: str = "",
+        multi: bool = False,
     ):
         started = time.perf_counter()
         before = dict(self.val.state)
@@ -221,6 +222,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             command,
             args,
             answer_length=answer_length,
+            multi=multi,
         )
         changes = _state_changes(before, self.val.state)
         await self._emit_span(
@@ -370,12 +372,13 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 legacy = structured_to_legacy(m_intent)
                 if (legacy and legacy["confidence"] >= _HIGH and is_local(legacy["name"])
                         and not self._confirm_required(m_intent)):
-                    # 结构化命令直通 VAL
+                    # 结构化命令直通 VAL（multi=名词式话术，合并播报可归属：「空调已开启，车窗已打开」）
                     ok, speech = await self._execute_val_observed(
                         trace_id,
                         m_intent,
                         answer_length=answer_length,
                         intent=legacy["name"],
+                        multi=len(multi) > 1,
                     )
                     if not ok:
                         speech = speech or "操作失败"
@@ -437,6 +440,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                             m_intent,
                             answer_length=answer_length,
                             intent=legacy["name"],
+                            multi=len(mixed_intents) > 1,
                         )
                         if not ok:
                             speech = speech or "操作失败"

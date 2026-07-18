@@ -79,8 +79,10 @@ class Focus:
     last_destination: str = ""                          # 上个导航目的地
 
     def is_empty(self) -> bool:
+        # last_intent 也算有效焦点：纯信息轮（查赛程/天气）此前不落焦点，「明天呢」这类
+        # 省略式追问就只能靠裸历史猜域（badcase demo-i9c92i 追问被错绑到天气）。
         return not (self.obj or self.positions or self.attr
-                    or self.last_poi or self.last_destination)
+                    or self.last_poi or self.last_destination or self.last_intent)
 
 
 @dataclass
@@ -200,6 +202,8 @@ def _render_focus(focus) -> str:
     if not focus or focus.is_empty():
         return ""
     parts = []
+    if focus.last_intent:
+        parts.append(f"上一轮意图={focus.last_intent}")  # 省略式追问（「明天呢」）延续判据
     if focus.obj:
         parts.append(f"对象={focus.obj}")
     if focus.positions:
@@ -212,7 +216,7 @@ def _render_focus(focus) -> str:
         parts.append(f"上个目的地={focus.last_destination}")
     if not parts:
         return ""
-    return ("当前对话焦点（用于指代消解，仅在用户话术含指代时参考）：\n"
+    return ("当前对话焦点（用于指代消解，仅在用户话术含指代/省略式追问时参考）：\n"
             + " ".join(parts) + "\n\n")
 
 

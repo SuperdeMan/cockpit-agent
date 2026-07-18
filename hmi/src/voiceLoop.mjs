@@ -190,6 +190,12 @@ export class VoiceLoop {
     if (source) this._listenSource = source
     this._echoSuspected = false
     this._speechActive = speechAlreadyStarted
+    // barge-in 漏首字根因：打断需过 bargeInMinMs 确认窗（+VAD 判定延迟），期间 ASR 未开，
+    // 固定 200ms pre-roll 盖不住这 300ms+ → 首字必丢。把「距 VAD speech 起点的耗时」告诉
+    // 控制器，pre-roll 按它动态回取（仅 barge-in 进入；续说/追问起点即此刻，传 0 维持原短 pre-roll）。
+    // 判据用 speechAlreadyStarted 而非时间戳真值——now() 可为 0（同 _currentUtteranceMs 的处理）。
+    const sinceSpeechStartMs = (fromBargeIn && speechAlreadyStarted)
+      ? Math.max(0, this.now() - this._speechStartAt) : 0
     // 新一段聆听重置本轮 speech 计时；续说/打断进入时 speech 已在进行，起点即此刻。
     this._utteranceMs = 0
     this._speechStartAt = speechAlreadyStarted ? this.now() : 0
@@ -197,7 +203,7 @@ export class VoiceLoop {
       this._asrOpen = true
       // resume=true（续问/打断/宽限续说）→ 控制器可注入短 pre-roll 补 VAD 判定延迟首字；
       // resume=false（KWS 唤醒进入）→ 不注入 pre-roll，避免把唤醒词本身喂进 ASR（真麦「小周」误上屏根因）。
-      this.onOpenAsr({ resume: speechAlreadyStarted })
+      this.onOpenAsr({ resume: speechAlreadyStarted, sinceSpeechStartMs })
     }
     this._enter(VoiceState.LISTENING)
     // 唤醒进入且尚无 speech → 挂误唤醒回收窗；续问/打断进入时 speech 已起，不挂。
@@ -274,6 +280,7 @@ export class VoiceLoop {
         // 唤醒词）仍能打断（显式意图，走上面 wake 分支不受此门控），故「仅唤醒词打断」天然成立。
         if (this._bargeInDisabled || this._vadBargeInDisabled) return
         this._speechActive = true
+        this._speechStartAt = this.now() // 打断 speech 起点：确认后开 ASR 按它回取 pre-roll，首字不丢
         this._echoSuspected = false
         this._setTimer('bargeIn', this.cfg.bargeInMinMs, () => this._bargeInFire())
         break
@@ -292,6 +299,7 @@ export class VoiceLoop {
     } else if (this.state === VoiceState.SPEAKING) {
       // 开口不足 bargeInMinMs 即结束 → _bargeInFire 时会看到 !speechActive 从而不打断
       this._speechActive = false
+      this._speechStartAt = 0 // 未成打断的短 speech：清起点，防陈旧值污染下次 pre-roll 回取
     }
   }
 

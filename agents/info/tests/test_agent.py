@@ -121,6 +121,28 @@ def test_weather_missing_city_asks():
     assert "city" in res.missing_slots
 
 
+def test_weather_tomorrow_answers_forecast_not_current(monkeypatch=None):
+    """badcase demo-i9c92i：「明天还会下雨吗」planner 已解出 date=明天，但 _weather 从不
+    消费 date 槽位，三连答成今天实况。问未来某天必须按该日预报作答，不出现「当前」。"""
+    res = asyncio.run(run_handle(
+        InfoAgent(), "info.weather", slots={"city": "北京", "date": "明天"},
+        raw_text="北京明天还会下雨吗？"))
+    assert res.status == "ok"
+    assert "明天" in res.speech
+    assert "当前" not in res.speech          # 不拿今天实况顶包
+    assert res.ui_card["type"] == "weather"  # 卡片契约不变（含 forecast 区）
+
+
+def test_weather_beyond_forecast_window_is_honest():
+    """mock 预报只有 3 天（今天~后天）：「大后天」超窗 → 诚实说明，不拿实况顶包。"""
+    res = asyncio.run(run_handle(
+        InfoAgent(), "info.weather", slots={"city": "北京"},
+        raw_text="北京大后天会下雨吗"))
+    assert res.status == "ok"
+    assert "还查不到" in res.speech and "临近" in res.speech
+    assert "当前" not in res.speech
+
+
 def test_weather_provider_failure_is_honest_not_mock():
     """真实天气 provider 失败时诚实报错，绝不 fallback mock 编出假天气（如无效城市）。"""
     agent = InfoAgent()
@@ -512,6 +534,46 @@ def test_sports_predictive_question_goes_to_search_not_fixtures():
     assert res.status == "ok"
     assert calls and calls[0] == raw               # 原话整句作 query（保住预测上下文）
     assert res.ui_card["type"] == "search_result"  # 走了检索+接地合成，不是赛果播报
+
+
+def test_sports_predictive_guess_anchors_anaphor_to_fixture():
+    """badcase demo-i9c92i 轮9/10：「猜一猜…结果」未命中预测词被重播赛程列表；
+    「预测这一场」裸传原话检索命中错场次（问季军赛答出决赛预测）。
+    修复：猜族命中预测让路 + 指代解析成「明天的季军赛对阵」锚点拼进检索 query。"""
+    from agents.info.src.handlers.sports import _is_predictive
+    assert _is_predictive("你猜一猜明天世界杯那场比赛的结果大概是怎么样呢")
+    assert _is_predictive("猜猜明天谁能赢")
+    assert not _is_predictive("昨晚世界杯比赛结果")   # 事实性赛果不让路
+
+    from agents.info.src.handlers._util import _shanghai_now
+    from datetime import timedelta
+    tomorrow = (_shanghai_now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    class _DateSports(_SportsStub):
+        async def fixtures(self, **kwargs):     # 今天无赛程、明天有季军赛
+            self.calls.append(kwargs)
+            return self._fixtures if kwargs.get("date") == tomorrow else []
+
+    agent = InfoAgent()
+    calls = []
+
+    class _SearchSpy3:
+        async def search(self, query, **kwargs):
+            calls.append(query)
+            return [SearchResult(title="季军赛前瞻", url="https://x.com/1", source="x",
+                                 content="乌拉圭对法国，季军赛前瞻分析。" * 10)]
+
+    agent.search = _SearchSpy3()
+    agent.sports = _DateSports([
+        _fx(league="FIFA 世界杯", league_id=1, home="乌拉圭", away="法国",
+            status="scheduled", status_text="未开赛", round="3rd Place Final")])
+    agent.llm.complete = _llm_numbered_answer
+    raw = "预测一下这个这一场世界杯比赛结果怎么样"
+    res = asyncio.run(run_handle(agent, "info.sports", slots={"query": raw}, raw_text=raw))
+    assert res.status == "ok"
+    assert res.ui_card["type"] == "search_result"       # 走了检索，不是赛果播报
+    assert calls and raw in calls[0]                    # 原话保留
+    assert "季军赛" in calls[0] and "乌拉圭 vs 法国" in calls[0]  # 指代锚点拼进 query
 
 
 def test_sports_speech_carries_round_stage():

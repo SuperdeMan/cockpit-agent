@@ -4,7 +4,7 @@
 本 mixin 经 self 调用。
 """
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import re
 
@@ -48,6 +48,68 @@ def _day_label(date_str: str) -> str:
         return date_str or ""
     diff = (d - _shanghai_now().date()).days
     return {0: "今天", 1: "明天", 2: "后天"}.get(diff, f"{d.day}号")
+
+
+# ── 日期感知（badcase demo-i9c92i：「明天还会下雨吗」三连被答成今天实况——planner 已解出
+#    slots.date=明天 但 _weather 从未消费，date 槽位在此落地）─────────────────────────
+
+_DAY_WORDS = (("大后天", 3), ("后天", 2), ("明天", 1), ("明日", 1), ("明早", 1), ("明晚", 1))
+_WEEKDAY_ZH = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
+_WEEKDAY_RE = re.compile(r"(下+)?(?:周|星期|礼拜)([一二三四五六日天])")
+_ISO_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _requested_day_offset(date_slot: str, raw: str) -> int:
+    """解析用户问的是哪天（相对今天的偏移天数，0=今天/未指明）。
+
+    优先 planner 槽位（date=「明天」或 ISO 日期），再扫原话兜底（槽位可能丢时间词）。
+    周X 按「本周该天、已过则下周」；「周末」= 最近的周六。识别不出返回 0（今天实况）。"""
+    for src in (date_slot, raw):
+        s = (src or "").strip()
+        if not s:
+            continue
+        m = _ISO_RE.search(s)
+        if m:
+            try:
+                d = datetime.strptime(m.group(0), "%Y-%m-%d").date()
+                return (d - _shanghai_now().date()).days
+            except ValueError:
+                pass
+        for w, off in _DAY_WORDS:
+            if w in s:
+                return off
+        m = _WEEKDAY_RE.search(s)
+        if m:
+            now = _shanghai_now()
+            target = _WEEKDAY_ZH[m.group(2)]
+            n_down = len(m.group(1) or "")
+            if n_down:      # 「下周X」=下个自然周的周X（与 sports._sports_date 同口径）
+                return (7 - now.weekday()) + target + 7 * (n_down - 1)
+            return (target - now.weekday()) % 7
+        if "周末" in s:
+            return (5 - _shanghai_now().weekday()) % 7
+    return 0
+
+
+def _day_answer(raw: str, day, label: str) -> str:
+    """意图先答（指定未来日）：会不会下雨/下雪、适不适合出行——按该日预报直答。
+    与 _weather_answer（今天实况）同取向：纯确定性、零额外延迟。"""
+    raw = (raw or "").strip()
+    if not raw or day is None:
+        return ""
+    texts = f"{day.text_day or ''}{day.text_night or ''}"
+    rainy, snowy = "雨" in texts, "雪" in texts
+    if any(k in raw for k in _GO_OUT_WORDS):
+        if rainy:
+            return f"可以出行，但{label}有雨，记得带伞、路上慢行。"
+        if snowy:
+            return f"{label}有雪，出行注意路面湿滑、减速慢行。"
+        return f"适合出行，{label}天气不错。"
+    if "雨" in raw or "伞" in raw:
+        return f"{label}有雨，出门记得带伞。" if rainy else f"{label}不会下雨。"
+    if "雪" in raw:
+        return f"{label}有雪，注意路面湿滑。" if snowy else f"{label}不会下雪。"
+    return ""
 
 
 def _max_wind_scale(forecast) -> int:
@@ -169,20 +231,41 @@ class WeatherMixin:
         provider_city = "" if _is_coordinate_label(w.city) else w.city
         name = display_city or provider_city or "当前位置"
         accuracy_note = self._location_accuracy_note(meta)
-        # 意图先答（适合出行吗/会下雨吗/冷不冷…）再接实况摘要（badcase 11db5215）
-        lead = _weather_answer(intent.raw_text, w,
-                               overview.forecast[0] if overview.forecast else None,
-                               overview.alerts)
-        parts = [lead, f"{_speech_place(name)}当前{w.text or '天气'}"]
-        if w.temp:
-            parts.append(f"，气温{w.temp}℃")
-        if w.feels_like:
-            parts.append(f"，体感{w.feels_like}℃")
-        if w.wind_dir:
-            parts.append(f"，{w.wind_dir}{w.wind_scale}级" if w.wind_scale else f"，{w.wind_dir}")
-        if accuracy_note:
-            parts.append(accuracy_note)
-        speech = "".join(parts) + "。"
+        # 日期感知：问的是未来某天（date 槽位/原话含明天·后天·周X）→ 按该日预报作答，
+        # 绝不拿今天实况顶包；超出预报窗口则诚实说明（badcase demo-i9c92i 三连答非所问）。
+        off = _requested_day_offset(str(intent.slots.get("date") or ""), intent.raw_text)
+        if off > 0:
+            target = (_shanghai_now() + timedelta(days=off)).date().isoformat()
+            label = _day_label(target)
+            day = next((d for d in overview.forecast if (d.date or "")[:10] == target), None)
+            if day is None:
+                n = len(overview.forecast)
+                horizon = f"未来{n}天" if n else "近几天"
+                speech = (f"{label}的天气还查不到（目前只能看到{horizon}的预报），"
+                          f"临近了再问我。")
+            else:
+                lead = _day_answer(intent.raw_text, day, label)
+                night = (f"转{day.text_night}"
+                         if day.text_night and day.text_night != day.text_day else "")
+                wind = (f"，{day.wind_dir}{day.wind_scale}级"
+                        if day.wind_dir and day.wind_scale else "")
+                speech = (f"{lead}{_speech_place(name)}{label}{day.text_day}{night}"
+                          f"，{day.temp_low}~{day.temp_high}℃{wind}。")
+        else:
+            # 意图先答（适合出行吗/会下雨吗/冷不冷…）再接实况摘要（badcase 11db5215）
+            lead = _weather_answer(intent.raw_text, w,
+                                   overview.forecast[0] if overview.forecast else None,
+                                   overview.alerts)
+            parts = [lead, f"{_speech_place(name)}当前{w.text or '天气'}"]
+            if w.temp:
+                parts.append(f"，气温{w.temp}℃")
+            if w.feels_like:
+                parts.append(f"，体感{w.feels_like}℃")
+            if w.wind_dir:
+                parts.append(f"，{w.wind_dir}{w.wind_scale}级" if w.wind_scale else f"，{w.wind_dir}")
+            if accuracy_note:
+                parts.append(accuracy_note)
+            speech = "".join(parts) + "。"
 
         forecast = [
             {"date": d.date, "text_day": d.text_day, "text_night": d.text_night,

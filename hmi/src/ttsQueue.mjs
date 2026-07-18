@@ -78,6 +78,23 @@ export class TtsTextBuffer {
   }
 }
 
+// ── 流式收尾判定（audio.ts StreamingTtsSession.finish 消费，纯函数可测）──
+// 已流式播报的文本 vs 最终文本的关系分类：final 与流式增量只是「化妆品级差异」
+// （markdown 剥法不同/标点空白）→ 视为已播完不再重播（旧逻辑整段重发=复读）；
+// 截然不同（混合意图「本地回执」+「云端总结」两段话）→ 由调用方链为下一段合成。
+export function normSpeech(s) {
+  return (s || '').replace(/[^\p{Script=Han}\p{L}\p{N}]+/gu, '')
+}
+
+/** 已流式文本是否已覆盖最终文本（true=无需再播；false=最终文本是另一段话）。 */
+export function speechCovered(accum, final) {
+  const na = normSpeech(accum)
+  const nf = normSpeech(final)
+  if (!nf) return true
+  if (!na) return false
+  return na === nf || na.endsWith(nf) || na.includes(nf)
+}
+
 export class OrderedPlaybackQueue {
   constructor(prepare, play, dispose = (item) => item?.dispose?.()) {
     this.prepare = prepare

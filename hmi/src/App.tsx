@@ -16,6 +16,7 @@ import { ContextualStage } from './components/ContextualStage'
 import {
   appendTTSDelta,
   finishTTSReply,
+  queueTTS,
   startTTSReply,
   stopTTS,
   setTtsLifecycle,
@@ -232,10 +233,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     handsFreeRef.current?.updateWakeKeywords()
   }, [settings.wakeWord])
 
-  // 音色 / TTS 开关变化 → 刷新唤醒提示音（issue①）
+  // 引擎 / 音色 / TTS 开关变化 → 刷新唤醒提示音（issue①；提示音与正文同引擎同音色）
   useEffect(() => {
     handsFreeRef.current?.refreshWakeCue()
-  }, [settings.ttsEnabled, settings.voiceId])
+  }, [settings.ttsEnabled, settings.voiceId, settings.ttsProvider])
 
   // HMI 是否有挂起确认条 → 喂给 FSM（D5-2：确认条可见时裸「取消」必上云，不本地 dismiss）
   useEffect(() => {
@@ -429,8 +430,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           proactiveKind: typeof data.advisory === 'string' ? data.advisory : undefined,
         } as Msg])
         // 仅异步深调研完成（带报告卡）时朗读结论——兑现「查完语音通知你」；其余主动播报维持气泡（不改既有行为）。
+        // queueTTS：空闲即刻播；正在播回复则排在其后（旧 finishTTSReply 空闲时静默不响、
+        // 忙时会把文本灌进已收尾的会话丢失）。
         if (s.ttsEnabled && s.autoplay && text && card) {
-          finishTTSReply(text).catch(() => {/* 播放失败静默 */})
+          queueTTS(AUDIO_API, text, s.voiceId, s.ttsProvider).catch(() => {/* 播放失败静默 */})
         }
       }
       return

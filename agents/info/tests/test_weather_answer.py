@@ -126,3 +126,30 @@ def test_forecast_go_out_rule(monkeypatch):
     out = W._forecast_answer("未来几天适合出行吗", _MIXED3)
     assert "明天" in out and "带伞" in out
     assert W._forecast_answer("这几天适合出门吗", _DRY3) == "未来3天没有雨雪，适合出行。"
+
+
+# ── 日期感知（badcase demo-i9c92i：「明天还会下雨吗」三连被答成今天实况）──
+
+
+def test_requested_day_offset(monkeypatch):
+    _freeze_today(monkeypatch, "2026-07-13")     # 2026-07-13 是周一
+    assert W._requested_day_offset("明天", "") == 1                 # planner 槽位优先
+    assert W._requested_day_offset("", "明天还会下雨吗？") == 1      # 原话兜底
+    assert W._requested_day_offset("", "后天呢") == 2
+    assert W._requested_day_offset("大后天", "") == 3
+    assert W._requested_day_offset("2026-07-15", "") == 2           # ISO 槽位
+    assert W._requested_day_offset("", "今天天气怎么样") == 0
+    assert W._requested_day_offset("", "天气怎么样") == 0
+    assert W._requested_day_offset("", "周三的天气") == 2            # 本周三
+    assert W._requested_day_offset("", "周末适合出去玩吗") == 5      # 最近的周六
+    assert W._requested_day_offset("下周一", "") == 7
+
+
+def test_day_answer_rain_and_dry():
+    rainy = _mk("2026-07-14", "小雨", "多云")
+    dry = _mk("2026-07-14", "晴", "晴")
+    assert W._day_answer("明天还会下雨吗", rainy, "明天") == "明天有雨，出门记得带伞。"
+    assert W._day_answer("明天会下雨吗", dry, "明天") == "明天不会下雨。"
+    assert "带伞" in W._day_answer("明天适合出行吗", rainy, "明天")
+    assert W._day_answer("明天天气怎么样", rainy, "明天") == ""      # 罗列型问法不加前导
+    assert W._day_answer("", rainy, "明天") == ""

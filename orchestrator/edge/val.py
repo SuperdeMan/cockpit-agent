@@ -77,9 +77,10 @@ class VAL:
         cmd: Any,
         args: dict | None = None,
         answer_length: str = "short",
+        multi: bool = False,
     ) -> tuple[bool, str]:
         before = dict(self.state)
-        result = self._run(cmd, args, answer_length)
+        result = self._run(cmd, args, answer_length, multi)
         self._notify(before)
         return result
 
@@ -88,12 +89,15 @@ class VAL:
         cmd: Any,
         args: dict | None,
         answer_length: str,
+        multi: bool = False,
     ) -> tuple[bool, str]:
         """兼容旧接口 (str, dict) 和新接口 (dict)。
 
         answer_length: "short"/"standard"（默认，行车简短）或 "detailed"（详细）。
+        multi: 本条是多意图批次的一员——话术选名词式全句（见 _pick_response）。
         """
         self._answer_length = answer_length
+        self._multi = multi
         if isinstance(cmd, str):
             return self._legacy_execute(cmd, args or {})
         if isinstance(cmd, dict):
@@ -828,8 +832,15 @@ class VAL:
 
         return "generic_success"
 
+    # 多意图批次要避开的礼貌式开头：堆叠起来重复冗长（「已为您打开空调，已为您打开车窗」）
+    _COURTESY_PREFIXES = ("已为您", "已将", "正在为您")
+
     def _pick_response(self, key: str, data: dict | None = None) -> str:
-        """从 responses.yaml 选话术。根据 answer_length 选 brief 或 full。"""
+        """从 responses.yaml 选话术。根据 answer_length 选 brief 或 full。
+
+        多意图批次（_multi）：强制名词式全句（「空调已开启，车窗已打开」）——简短应答
+        （「开了，好的」）无法区分是哪个动作的回执，礼貌式堆叠又重复冗长；并去随机，
+        保证同一句合并播报风格稳定。单意图行为不变。"""
         resp = self.responses.get(key)
         if not resp:
             return key  # 无模板时返回 key 本身作为 fallback
@@ -837,7 +848,8 @@ class VAL:
         # 根据 answer_length 设置选择话术列表
         # HMI 发 short/standard/detailed；detailed 用 full，其余用 brief
         length = getattr(self, '_answer_length', 'short')
-        if length == 'detailed':
+        multi = getattr(self, '_multi', False)
+        if multi or length == 'detailed':
             speeches = resp.get("speech_full") or resp.get("speech_brief") or []
         else:
             speeches = resp.get("speech_brief") or resp.get("speech_full") or []
@@ -850,7 +862,12 @@ class VAL:
             if placeholder_speeches:
                 speeches = placeholder_speeches
 
-        template = random.choice(speeches)
+        if multi:
+            noun_first = [s for s in speeches
+                          if not s.startswith(self._COURTESY_PREFIXES)]
+            template = (noun_first or speeches)[0]
+        else:
+            template = random.choice(speeches)
 
         # 替换占位符
         if data:

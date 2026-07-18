@@ -225,10 +225,14 @@ def test_extract_focus_navigation_poi():
     assert f.last_poi == "海岸城"
 
 
-def test_extract_focus_empty_returns_none():
-    plan = Plan(steps=[Step(id="s1", agent_id="chitchat",
-                            intent="chitchat.talk", slots={})])
-    assert extract_focus(plan, [_ok("s1")]) is None
+def test_extract_focus_info_turn_keeps_last_intent():
+    """纯信息轮（无对象/POI/目的地）也落焦点：last_intent 供「明天呢」省略式追问延续判域
+    （badcase demo-i9c92i：赛程问句后「明天呢」被错绑到天气）。"""
+    plan = Plan(steps=[Step(id="s1", agent_id="info",
+                            intent="info.sports", slots={})])
+    f = extract_focus(plan, [_ok("s1")])
+    assert f is not None and f.last_intent == "info.sports"
+    assert "上一轮意图=info.sports" in WorkingSet(focus=f).render_context()
 
 
 def test_extract_focus_ignores_failed_steps():

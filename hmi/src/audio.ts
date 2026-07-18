@@ -1,5 +1,5 @@
 // 音频层：录音控制器（修掉 ASR 收音竞态）+ 增量 TTS 播放队列 + 流式 TTS + 音色查询。
-import { OrderedPlaybackQueue, TtsTextBuffer } from './ttsQueue.mjs'
+import { OrderedPlaybackQueue, TtsTextBuffer, speechCovered } from './ttsQueue.mjs'
 import { float32ToInt16, int16ToWav } from './pcmRing.mjs'
 import { PcmPlayer } from './pcmPlayer.mjs'
 //
@@ -163,6 +163,9 @@ function markTtsMaybeEnd(): void {
   if (ttsEndTimer !== null) clearTimeout(ttsEndTimer)
   ttsEndTimer = window.setTimeout(() => {
     ttsEndTimer = null
+    // 段间轮转中（还有链上的段没播）：继续等——下一段起播 markTtsStart 会接管；
+    // 轮转失败链会被清空，随后的一次 tick 正常收尾，不会悬死。
+    if (chainSegs.length) { markTtsMaybeEnd(); return }
     if (ttsActive) { ttsActive = false; ttsLifecycle?.onEnd() }
   }, 250)
 }
@@ -298,9 +301,15 @@ class StreamingTtsSession {
   private fellBack = false
   private disposed = false
   private endTimer: number | null = null
+  rotateArmed = false                      // 段链轮转已挂到本会话 completion（防重复注册）
   readonly completion: Promise<void>
   private _res!: () => void
   private _rej!: (e?: unknown) => void
+
+  /** 本会话已收尾/终态：不能再接收文本，后续内容须链为下一段（_chainDelta/_chainFinal）。 */
+  get spent(): boolean {
+    return this.disposed || this.done || this.fellBack || this.finishPending !== null
+  }
 
   constructor(
     private apiBase: string,
@@ -372,19 +381,26 @@ class StreamingTtsSession {
     this.sendText(delta)
   }
 
-  finish(finalText: string): void {
-    if (this.disposed) return
+  /** 收尾。返回 false = divergent：最终文本与已流式内容是两段话（如混合意图「本地回执」
+   *  之后的云端总结）——本会话按已流式内容收尾，finalText 由调用方链为下一段合成。
+   *  旧逻辑对这种情况整段重发进当前会话：要么复读、要么（会话已 finish）静默丢失。 */
+  finish(finalText: string): boolean {
+    if (this.disposed) return true
     // 补发未流式的尾巴：Agent 卡片回复只在 final 给全文、无 speech_delta 逐字（accum 空 → 发全文）；
-    // 流式逐字回复 accum 已含全文（finalText===accum → 不重发）；部分流式补差量前缀尾。
+    // 流式逐字回复 accum 已含全文（覆盖判定 → 不重发）；部分流式补差量前缀尾。
     const full = finalText || ''
     let tail = ''
-    if (full && full.startsWith(this.accum)) tail = full.slice(this.accum.length)
-    else if (full && full !== this.accum) tail = full
+    let divergent = false
+    if (!this.accum) tail = full
+    else if (full.startsWith(this.accum)) tail = full.slice(this.accum.length)
+    else if (full && !speechCovered(this.accum, full)) divergent = true
+    // 其余（full 为空 / 与流式内容仅化妆品级差异）：已播内容即全部，无尾可补
     if (tail) this.sendText(tail)
-    this.finishPending = full
+    this.finishPending = divergent ? this.accum : full
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try { this.ws.send(JSON.stringify({ type: 'finish' })) } catch { /* ignore */ }
     }
+    return !divergent
   }
 
   // done 后等已排定音频播完 → onEnd（驱动 hands-free FOLLOWUP）→ resolve
@@ -434,9 +450,85 @@ class StreamingTtsSession {
 }
 
 let streamSession: StreamingTtsSession | null = null
+let streamParams: { apiBase: string; voiceId: string; provider: string } | null = null
+
+// ── 段链（长内容断播修复）：当前流式会话已收尾（spent）后到达的文本（混合意图轮的云端
+// 总结、主动播报排队、divergent 收尾）不再灌进死会话（旧行为=静默丢失/复读），而是排成
+// 待播段；当前段播完逐段轮转成新的流式会话接着播——与批处理 TtsTextBuffer
+// 「先播完反馈尾巴，再播最终总结」同语义。stopTTS（barge-in/新一轮）清空整条链。──
+type PendingSeg = {
+  deltas: string[]; final: string | null
+  resolve: () => void; reject: (e?: unknown) => void; promise: Promise<void>
+}
+let chainSegs: PendingSeg[] = []
+
+function _newSeg(): PendingSeg {
+  let resolve!: () => void
+  let reject!: (e?: unknown) => void
+  const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej })
+  promise.catch(() => { /* 调用方可能不取 promise，防 unhandledrejection */ })
+  return { deltas: [], final: null, resolve, reject, promise }
+}
+
+function _openSeg(): PendingSeg {
+  let seg = chainSegs[chainSegs.length - 1]
+  if (!seg || seg.final !== null) { seg = _newSeg(); chainSegs.push(seg) }
+  return seg
+}
+
+function _chainDelta(delta: string): void {
+  _openSeg().deltas.push(delta)
+  _armRotate()
+}
+
+function _chainFinal(text: string): Promise<void> {
+  const seg = _openSeg()
+  seg.final = text
+  _armRotate()
+  return seg.promise
+}
+
+// 把「当前会话播完 → 轮转下一段」挂到会话 completion 上（每会话一次）；无会话则直接轮转。
+function _armRotate(): void {
+  if (!chainSegs.length) return
+  const cur = streamSession
+  if (!cur) { _rotate(); return }
+  if (cur.rotateArmed) return
+  cur.rotateArmed = true
+  void cur.completion.catch(() => { /* 失败也轮转 */ }).then(() => {
+    // 仅当没有新一轮 startTTSReply 接管时才轮转（stopTTS 已清链则此处天然 no-op）
+    if (streamSession === cur || streamSession === null) _rotate()
+  })
+}
+
+function _rotate(): void {
+  const seg = chainSegs.shift()
+  if (!seg) return
+  if (!streamParams) { seg.reject(new Error('no stream params')); return }
+  const { apiBase, voiceId, provider } = streamParams
+  const s = new StreamingTtsSession(apiBase, voiceId, provider, async (accum, finalText) => {
+    // 轮转段失败 → 回退批处理（同 startTTSReply 的回退语义，音色回落 MiMo 通用）
+    if (streamSession === s) streamSession = null
+    activeReply = { apiBase, voiceId: STREAM_FALLBACK_VOICE, buffer: new TtsTextBuffer() }
+    if (finalText !== null) await finishReplyBatch(finalText || accum)
+    else if (accum) await enqueueChunks(activeReply.buffer.push(accum))
+  })
+  streamSession = s
+  s.start()
+  for (const d of seg.deltas) s.append(d)
+  if (seg.final !== null) _finishSession(s, seg.final)
+  void s.completion.then(() => seg.resolve(), (e) => seg.reject(e))
+  _armRotate() // 链上还有段 → 挂到新会话继续
+}
+
+// 统一收尾入口：divergent（最终文本是另一段话）时链为下一段，绝不灌回当前会话
+function _finishSession(sess: StreamingTtsSession, text: string): void {
+  if (!sess.finish(text)) void _chainFinal(text)
+}
 
 export function startTTSReply(apiBase: string, voiceId: string, provider = 'mimo'): void {
   stopTTS()
+  streamParams = { apiBase, voiceId, provider }
   if (isStreamingTtsProvider(provider) && streamingTtsSupported()) {
     streamSession = new StreamingTtsSession(apiBase, voiceId, provider, async (accum, finalText) => {
       // 无感回退句级批处理：把已累计文本交回 TtsTextBuffer（音色回落 MiMo 默认）
@@ -455,7 +547,13 @@ export function startTTSReply(apiBase: string, voiceId: string, provider = 'mimo
 }
 
 export function appendTTSDelta(delta: string): Promise<void[]> {
-  if (streamSession) { streamSession.append(delta); return Promise.resolve([]) }
+  if (streamSession) {
+    if (!delta) return Promise.resolve([])
+    // 混合意图轮：本地段 final 已收尾会话，云端流式增量链为下一段（旧行为=灌死会话静默丢）
+    if (streamSession.spent) _chainDelta(delta)
+    else streamSession.append(delta)
+    return Promise.resolve([])
+  }
   if (!activeReply || !delta) return Promise.resolve([])
   return enqueueChunks(activeReply.buffer.push(delta))
 }
@@ -469,13 +567,23 @@ function finishReplyBatch(finalText: string): Promise<void[]> {
 
 export function finishTTSReply(finalText: string): Promise<void[]> {
   if (streamSession) {
-    streamSession.finish(finalText)
-    return streamSession.completion.then(() => [])
+    // 会话已收尾（混合轮的云端总结 final / 迟到 final）→ 链为下一段，播完当前段接着播
+    if (streamSession.spent) return _chainFinal(finalText).then(() => [])
+    const sess = streamSession
+    if (!sess.finish(finalText)) {
+      // divergent：当前会话按已流式内容收尾，最终文本作为独立下一段（同批处理语义）
+      const p = _chainFinal(finalText)
+      return sess.completion.catch(() => { /* 前段失败不吞后段 */ }).then(() => p).then(() => [])
+    }
+    return sess.completion.then(() => [])
   }
   return finishReplyBatch(finalText)
 }
 
 export function stopTTS(): void {
+  const segs = chainSegs
+  chainSegs = []
+  for (const seg of segs) seg.resolve() // 主动停播：链上未播段作废（不算失败）
   if (streamSession) { streamSession.stop(); streamSession = null }
   activeReply?.buffer.reset()
   activeReply = null
@@ -499,24 +607,108 @@ export async function playTTS(apiBase: string, text: string, voiceId: string,
   await finishTTSReply(text)
 }
 
+/** 排队朗读（proactive 主动播报用）：绝不打断正在播的回复——流式忙时链在其后、
+ *  批处理忙时按序入播放队列，空闲时即刻播。修「主动播报静默不朗读 / 打断正在播的长回复」。 */
+export function queueTTS(apiBase: string, text: string, voiceId: string,
+                         provider = 'mimo'): Promise<void> {
+  const t = (text || '').trim()
+  if (!t) return Promise.resolve()
+  if (streamSession) {
+    streamParams = streamParams || { apiBase, voiceId, provider }
+    return _chainFinal(t)
+  }
+  if (activeReply) {
+    return ttsQueue
+      .enqueue({ apiBase: activeReply.apiBase, text: t, voiceId: activeReply.voiceId })
+      .then(() => undefined)
+  }
+  return playTTS(apiBase, t, voiceId, provider)
+}
+
 // ─── 语音提示音集（R4.3 issue① 唤醒 / R4.3b P1 U3 退场）：hands-free 开启时按类别预合成
 // 若干短语音（wake=「在呢」…、exit=「好的」…），触发瞬间本地零延迟随机播一条，替代纯 beep。
-// 走同一 /api/tts + 选定音色；TTS 关时不合成，wake 由调用方回退 beep、exit 静默（退场不该出声）。
+// 用**当前选定引擎+音色**合成（流式引擎经一次性 /api/tts/stream 收全 PCM 拼 WAV）——
+// 修「唤醒应答与正文音色不一致」（旧逻辑流式引擎一律回落 MiMo 冰糖）。流式合成失败才
+// 回落 MiMo 批处理（保底仍是真人声）。TTS 关时不合成，wake 由调用方回退 beep、exit 静默。
 // 有回声担忧靠 getUserMedia 的 AEC 兜底（同 barge-in 前提）。────────────────────────────────
 const cueSets: Record<string, PreparedAudio[]> = {}
-let cueSetsKey = '' // voiceId|sets：变了才重合成，避免每次开启都打后端
+let cueSetsKey = '' // provider|voiceId|sets：变了才重合成，避免每次开启都打后端
+
+// 一次性流式合成一条短提示语：start→text→finish，收全二进制 PCM 分片 → WAV blob。
+function prepareStreamCue(apiBase: string, provider: string, voiceId: string,
+                          text: string): Promise<PreparedAudio> {
+  return new Promise((resolve, reject) => {
+    let ws: WebSocket
+    try { ws = new WebSocket(ttsStreamUrl(apiBase)) } catch (e) { reject(e); return }
+    ws.binaryType = 'arraybuffer'
+    const chunks: Int16Array[] = []
+    let sampleRate = 24000
+    let settled = false
+    const settle = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try { ws.close() } catch { /* ignore */ }
+      fn()
+    }
+    const timer = window.setTimeout(() => settle(() => reject(new Error('提示音合成超时'))), 10000)
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'start', provider, voice: voiceId }))
+      ws.send(JSON.stringify({ type: 'text', delta: text }))
+      ws.send(JSON.stringify({ type: 'finish' }))
+    }
+    ws.onmessage = (ev) => {
+      if (typeof ev.data !== 'string') {
+        chunks.push(new Int16Array(ev.data as ArrayBuffer))
+        return
+      }
+      let m: any
+      try { m = JSON.parse(ev.data) } catch { return }
+      if (m.type === 'meta') sampleRate = m.sample_rate || sampleRate
+      else if (m.type === 'done') settle(() => {
+        const total = chunks.reduce((s, c) => s + c.length, 0)
+        if (!total) { reject(new Error('提示音合成为空')); return }
+        const merged = new Int16Array(total)
+        let o = 0
+        for (const c of chunks) { merged.set(c, o); o += c.length }
+        const blob = new Blob([int16ToWav(merged, sampleRate)], { type: 'audio/wav' })
+        const url = URL.createObjectURL(blob)
+        let disposed = false
+        resolve({ url, dispose: () => { if (!disposed) { URL.revokeObjectURL(url); disposed = true } } })
+      })
+      else if (m.type === 'error' || m.type === 'unsupported') {
+        settle(() => reject(new Error(m.message || m.type)))
+      }
+    }
+    ws.onerror = () => settle(() => reject(new Error('提示音合成连接失败')))
+    ws.onclose = () => settle(() => reject(new Error('提示音合成连接中断')))
+  })
+}
 
 /** 按类别预合成提示语集（每类多条，触发时随机播一条避免每次同一句）。
+ *  provider 为流式引擎时用它合成（与正文同声同色），单条失败回落 MiMo 批处理；
  *  部分失败保留成功的；wake 类全空才抛（调用方据此回退 beep）；exit 类可空（静默退场）。 */
-export async function prepareCueSet(apiBase: string, voiceId: string, sets: Record<string, string[]>): Promise<void> {
-  const key = voiceId + '|' + JSON.stringify(sets)
+export async function prepareCueSet(apiBase: string, voiceId: string,
+                                    sets: Record<string, string[]>, provider = ''): Promise<void> {
+  const key = provider + '|' + voiceId + '|' + JSON.stringify(sets)
   if (cueSetsKey === key && Object.keys(cueSets).length) return
+  const streaming = isStreamingTtsProvider(provider) && streamingTtsSupported()
+  const synthOne = async (text: string): Promise<PreparedAudio> => {
+    if (streaming) {
+      try {
+        return await prepareStreamCue(apiBase, provider, voiceId, text)
+      } catch { /* 流式引擎不可用 → 回落批处理通用音色（仍是真人声） */ }
+    }
+    const v = streaming ? STREAM_FALLBACK_VOICE : voiceId
+    return prepareTTS({ apiBase, text, voiceId: v }, new AbortController().signal)
+  }
   const next: Record<string, PreparedAudio[]> = {}
   for (const [kind, texts] of Object.entries(sets)) {
-    const results = await Promise.allSettled(
-      texts.map((text) => prepareTTS({ apiBase, text, voiceId }, new AbortController().signal)),
-    )
-    next[kind] = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+    const out: PreparedAudio[] = []
+    for (const text of texts) {  // 逐条串行：8 条并发会顶到流式引擎并发上限
+      try { out.push(await synthOne(text)) } catch { /* 单条失败跳过 */ }
+    }
+    next[kind] = out
   }
   if (!(next.wake && next.wake.length)) throw new Error('唤醒提示音合成全部失败') // wake 全失败才回退 beep
   clearCues()
