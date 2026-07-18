@@ -4,16 +4,18 @@
 > 日期：2026-06-15
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
-> 实现说明：当前仓库完成的是该架构的工程化 PoC 主干；文中的 K8s、持久化注册、
-> 真实 Provider、mTLS、正式沙箱、完整 OTel 与真实 VAL 等仍是目标态。实现现状和
-> 差距以 `AGENTS.md` 与 `phase1-implementation-plan.md` 顶部说明为准。
+> 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
+>（Registry PgStore）、首批真实 Provider（高德/和风/Exa/Tushare/api-football）、服务间
+> mTLS 与会话鉴权（env 门控默认关）、Prometheus/OTel 导出均已落地；文中的 K8s、正式
+> 沙箱、真实 VAL（SOME-IP/CAN、车规适配）仍是目标态。实现现状和差距以 `AGENTS.md`
+> 与 `phase1-implementation-plan.md` 顶部说明为准。
 
 ---
 
 ## 0. 一页速读（TL;DR）
 
 - **架构范式**：分层混合编排（Hierarchical Hybrid）。端侧"快系统"负责高频、确定性、安全敏感指令（车控/媒体）的毫秒级本地执行与离线兜底；云侧"慢系统"用 LLM Planner 编排复杂、多轮、跨域组合意图。
-- **Agent 生态**：所有 Agent 实现统一 gRPC 契约 + 声明 Manifest，经注册中心即插即用。分为 `core`（系统内置、安全敏感）与 `ecosystem`（可插拔、可第三方：点餐/停车/车书/行程/闲聊等）两类，安全等级不同。
+- **Agent 生态**：所有 Agent 实现统一 gRPC 契约 + 声明 Manifest，经注册中心即插即用。分为 `core`（系统内置、安全敏感）与 `ecosystem`（可插拔、可第三方：周边发现/停车/车书/行程/闲聊等）两类，安全等级不同。
 - **云边协同**：意图分级路由（Fast Intent 端侧 / Cloud Planner 云侧），断网降级到端侧小模型 + 规则。
 - **技术栈**：Go（接入网关，高并发/WebSocket）+ Python（编排器与各 Agent，AI 生态最好）+ gRPC（服务间同步调用）+ 事件总线（异步/广播/车控事件）+ React（座舱 HMI）。
 - **落地节奏**：Phase 0 PoC（端到端跑通一条链路）→ Phase 1 工程化（全能力域 + 注册生态 + 可观测）→ Phase 2 量产（车规适配、降级、安全、OTA）。
@@ -23,7 +25,7 @@
 ## 1. 设计目标与约束
 
 ### 1.1 业务目标
-1. 用户用自然语言（语音为主、触控/多模态为辅）完成座舱内绝大多数任务：车控、导航、娱乐、信息、以及不断扩展的生态服务（点餐、停车缴费、车书问答、行程规划、闲聊等）。
+1. 用户用自然语言（语音为主、触控/多模态为辅）完成座舱内绝大多数任务：车控、导航、娱乐、信息、以及不断扩展的生态服务（周边发现、停车缴费、车书问答、行程规划、闲聊等）。
 2. 支持**跨 Agent 的组合意图**（一句话触发多个 Agent 协作完成一个目标）。
 3. 生态可持续扩展：新增一个 Agent **不修改编排核心代码**，通过注册接入。
 
@@ -87,7 +89,7 @@ flowchart TB
             ChatA["闲聊"]
             TripA["行程规划"]
             ManualA["车书 (RAG)"]
-            FoodA["点餐"]
+            NearA["周边发现"]
             ParkA["停车缴费"]
         end
     end
@@ -145,6 +147,8 @@ flowchart TB
 | **L3 跨域组合** | "找家顺路评分高的川菜馆订今晚的位" | 云侧 Planner 编排多 Agent | < 2s 首响 + 流式 | 是 |
 | **L4 开放对话/知识** | 闲聊、车书问答、行程建议 | 云侧（RAG/LLM）| < 2s 首响 | 是 |
 
+> **实现对应（2026-07-18 校准）**：当前实现把上述分级落地为三层运行模型——**T0 端侧快路径**（L0/L1，毫秒级本地执行、离线可用）、**T1 云端单次 DAG**（L2/L3/L4 一次规划后确定性执行）、**T2 有界 Agentic 循环**（需按中间结果调整计划时进入，迭代次数与时间预算受控）。该术语与 `AGENTS.md`、README 同源，详见 `docs/design/2026-06-14-cloud-central-orchestrator.md`。
+
 ### 3.2 路由决策（端侧 Fast Intent 的判定逻辑）
 
 ```
@@ -190,7 +194,7 @@ flowchart TB
 | 类别 | trust_level | 例子 | 特点 |
 |---|---|---|---|
 | **core（核心）** | `system` / `first_party` | 车控、媒体、导航、信息、语音 | 系统内置，可碰敏感能力（车控），随系统发版 |
-| **ecosystem（生态）** | `first_party` / `third_party` | 点餐、停车缴费、车书、行程规划、闲聊 | 可插拔，独立发版，第三方可接入，权限受限沙箱 |
+| **ecosystem（生态）** | `first_party` / `third_party` | 周边发现、停车缴费、车书、行程规划、闲聊 | 可插拔，独立发版，第三方可接入，权限受限沙箱 |
 
 不同 trust_level 对应不同的权限上限与审核要求（见 §9）。
 
@@ -259,7 +263,8 @@ message ExecuteEvent {     // 流式: 边想边说边做
 每个 Agent 用一份声明式 Manifest 描述自己。注册中心据此建立**能力索引**，Planner 据此做**语义路由**。
 
 ```yaml
-# agents/food-ordering/manifest.yaml
+# 教学示意（假想的第三方点餐 Agent，用于展示 require_confirm/支付权限等字段全貌）；
+# 真实清单见 agents/<name>/manifest.yaml，接入样板参考 agents/nearby/、agents/navigation/
 agent_id: food-ordering
 version: 1.2.0
 display_name: 点餐助手
@@ -410,6 +415,8 @@ sequenceDiagram
     Food-->>CP: OK(订单号)
     CP-->>EO: "已订好,订单号..."
 ```
+
+> 注（2026-07-18 校准）：本场景为教学示意（预订类 Agent 未接入）。当前仓库真实的同型链路：「顺路找餐厅」由导航×周边发现出候选、`waypoint_choice` 二次选择后并入途经点；涉费/危险动作的真实确认样例为停车缴费与场景创建（`require_confirm` 机制同图）。
 
 ### 6.3 场景 C：断网降级
 
@@ -666,8 +673,9 @@ car-agent/
 │  ├─ chitchat/                   # 闲聊(eco)
 │  ├─ trip-planner/               # 行程规划(eco)
 │  ├─ manual-rag/                 # 车书(eco)
-│  ├─ food-ordering/              # 点餐(eco)
-│  └─ parking-payment/            # 停车缴费(eco)
+│  ├─ nearby/                     # 周边发现(eco, 原点餐域重构)
+│  ├─ parking-payment/            # 停车缴费(eco)
+│  └─ ...                         # 另有 deep_research/reminder/charging_planner/scene_orchestrator/road_safety 等，现共 12 个云 Agent
 ├─ vehicle-abstraction/           # C++: VAL 车控抽象层
 ├─ hmi/                           # React 座舱前端
 ├─ dashboard/                     # React 可观测仪表盘
@@ -679,8 +687,10 @@ car-agent/
 ```
 
 当前 PoC 将车控/媒体端侧能力与 Python 模拟 VAL 放在 `orchestrator/edge/`；
-尚未创建目标态的 `agents/vehicle/`、`agents/media/`、`agents/info/` 和
-`vehicle-abstraction/`。不要因目录示意图而误判这些独立模块已经存在。
+尚未创建目标态的 `agents/vehicle/`、`agents/media/` 和 `vehicle-abstraction/`
+（`agents/info/` 已落地）。不要因目录示意图而误判端侧独立模块已经存在；
+另有 `security/`、`payment-gateway/`、`runtime/`（共享 gRPC 运行时）等
+当前已存在的顶层目录未画入上图，职责见 `CLAUDE.md` §3。
 
 **每个 Agent 的内部结构（统一模板）**：
 ```
@@ -706,7 +716,7 @@ agents/<name>/
 
 ### Phase 1 — 工程化（约 6-10 周）
 **目标**：补齐全能力域 + 可插拔生态 + 可观测。
-- Agent Registry 注册/发现/健康全功能；Agent SDK 成型，按模板接入全部 core + 首批 eco（点餐/停车/车书/行程）。
+- Agent Registry 注册/发现/健康全功能；Agent SDK 成型，按模板接入全部 core + 首批 eco（周边发现/停车/车书/行程）。
 - 记忆/画像服务、上下文按引用、多轮澄清、结果聚合话术。
 - 端云双向流式通道、降级矩阵、权限模型、链路追踪、评测集。
 - 验收：全能力域可用；新增一个 Agent 不改编排核心；端到端场景回归通过。
@@ -737,7 +747,7 @@ agents/<name>/
 ## 附录 A：关键命名约定
 - Intent 命名空间：`<domain>.<action>`，如 `hvac.set`、`navigation.search_poi`、`food.reserve`。
 - Permission scope：`<resource>.<action>[.<sub>]`，如 `vehicle.control.hvac`、`location.read`。
-- Agent ID：kebab-case，如 `food-ordering`。
+- Agent ID：kebab-case，如 `charging-planner`。
 
 ## 附录 B：与既有 car-agent 资产的关系
 本方案与历史 car-agent 工作（gRPC 微服务、Go 网关、Python Agent、React 前端）在技术栈上一致，可复用其工程经验；主要增量是：**云边分层混合编排**、**统一 Agent 契约 + 注册生态**、**规划/执行分离的车控安全模型**。
