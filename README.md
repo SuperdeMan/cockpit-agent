@@ -6,6 +6,7 @@
 ![Go](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white)
 ![React](https://img.shields.io/badge/React-TypeScript-61DAFB?logo=react&logoColor=black)
 ![gRPC](https://img.shields.io/badge/gRPC-proto3-5b5b5b)
+[![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
 > 云边协同的智能座舱 AI Agent 系统。喊一声「小舟小舟」，从毫秒级车控到多日行程规划、分钟级深度调研，一个语音入口全部完成。LLM 只负责理解与规划，确定性系统负责执行——没有任何一条车控指令由 LLM 直接下发。
 
@@ -260,3 +261,7 @@ docs/             架构（真相源）、设计记录、指南
 - HTTP / MCP 外部工具未实现；第三方 Agent 出站已有域名白名单正向代理。
 
 实时状态、测试证据与待办清单以 [`AGENTS.md`](AGENTS.md) 为准。
+
+## 许可
+
+本项目以 [Apache License 2.0](LICENSE) 发布。
