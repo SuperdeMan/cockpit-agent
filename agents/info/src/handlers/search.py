@@ -14,6 +14,7 @@ from agents._sdk.provenance import attach
 from agents._sdk.retrieval import retrieve
 
 from ._util import _shanghai_now
+from .sports import _is_predictive
 
 logger = logging.getLogger("agent.info")
 
@@ -128,6 +129,13 @@ class SearchMixin:
                                follow_up="请告诉我搜索内容", missing_slots=["query"])
         # 相对年份纠偏：planner 幻觉年份（「今年」→2024）污染 query 时按当前日期换算改正
         query = fix_relative_year(query, intent.raw_text)
+        # 预测/前瞻的赛事句：planner 直路由 info.search 时也要做指代锚定/完赛判定
+        # （badcase bfb5d9c7：planner 把「这场」缝成「决赛 法国vs英格兰」幻觉对阵灌进
+        # query，且季军赛已完赛仍出预测）。SportsMixin 同 MRO；解析不出 → None 原样检索。
+        if not skip_sports and _is_predictive(f"{query} {intent.raw_text or ''}"):
+            red = await self._predictive_redirect(intent, ctx, meta)
+            if red is not None:
+                return red
         # 赛事路由：命中已知赛事 + 赛事意图词 → 走结构化数据源，不进通用搜索（杜绝编造比分）
         sports = None if skip_sports else await self._maybe_sports(query, meta, intent.raw_text)
         if sports is not None:

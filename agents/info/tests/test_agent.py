@@ -596,6 +596,126 @@ def test_sports_predictive_guess_anchors_anaphor_to_fixture():
     assert "季军赛" in calls[0] and "乌拉圭 vs 法国" in calls[0]  # 指代锚点拼进 query
 
 
+def test_sports_this_match_goal_detail_queries_events():
+    """badcase 8e23ce30/acb35676：「这场比赛都有谁进球」只回了当日比分汇总，没查进球明细。
+    两坑叠加：「都有」误判成列表诉求吞掉详情分支；「这场」解析不到具体场次。
+    修复=进球类强详情词优先于列表词 + 当日唯一一场时「这场」就指它 → 走 events。"""
+    agent = InfoAgent()
+    agent.search = _UnavailableSearchProvider()   # 若误走通用搜索会失败，反证结构化路由
+    agent.sports = _SportsStub(
+        [_fx(league="FIFA 世界杯", league_id=1, home="法国", away="英格兰",
+             home_goals="4", away_goals="6", status="finished", status_text="已结束",
+             round="3rd Place Final", fixture_id=77, home_id=2, away_id=10)],
+        events=[_goal(minute="12", team_id=2, player="Mbappé", detail="进球"),
+                _goal(minute="30", team_id=10, player="Kane", detail="点球")])
+    ctx = make_context(history=[{"role": "user", "text": "今天世界杯有什么比赛"}])
+    res = asyncio.run(run_handle(
+        agent, "info.sports", slots={}, raw_text="这场比赛都有谁进球", ctx=ctx))
+    assert agent.sports.events_calls == [77]            # 真去查了进球事件
+    assert "Mbappé" in res.speech and "Kane" in res.speech
+    assert "季军赛" in res.speech and "4-6" in res.speech
+    assert res.ui_card["fixtures"][0]["goals"]
+
+    # 变体（badcase acb35676 原话，hint 替换后 query 槽=整句原话）同样走进详情
+    res2 = asyncio.run(run_handle(
+        agent, "info.sports", slots={"query": "这场比赛详情帮我看看，都有谁进球"},
+        raw_text="这场比赛详情帮我看看，都有谁进球", ctx=ctx))
+    assert agent.sports.events_calls == [77, 77]
+    assert "Mbappé" in res2.speech
+
+
+class _DayKeyedSports(_SportsStub):
+    """按日期返回不同赛程（今天季军赛已完赛 / 明天决赛未开赛）。"""
+
+    def __init__(self, by_date: dict):
+        super().__init__()
+        self._by_date = by_date
+
+    async def fixtures(self, **kwargs):
+        self.calls.append(kwargs)
+        return self._by_date.get(kwargs.get("date"), [])
+
+
+def _wc_finished_third_place(**kw):
+    return _fx(league="FIFA 世界杯", league_id=1, home="法国", away="英格兰",
+               home_goals="4", away_goals="6", status="finished", status_text="已结束",
+               round="3rd Place Final", fixture_id=77, home_id=2, away_id=10, **kw)
+
+
+def test_sports_predictive_anaphor_follows_recent_focus_date():
+    """badcase bfb5d9c7：「明天世界杯有什么比赛」→「这场比赛你预测谁会赢」被 planner
+    缝合成「决赛 法国vs英格兰」幻觉对阵（法英是当天季军赛，决赛实为另两队）。
+    修复：焦点日期=最近赛事轮用户句的「明天」→ 锚定明天决赛的真实对阵重建检索 query，
+    丢弃 planner 缝合的幻觉对阵。"""
+    from datetime import timedelta
+    today = _shanghai_now().strftime("%Y-%m-%d")
+    tomorrow = (_shanghai_now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    agent = InfoAgent()
+    calls = []
+
+    class _SearchSpy4:
+        async def search(self, query, **kwargs):
+            calls.append(query)
+            return [SearchResult(title="决赛前瞻", url="https://x.com/1", source="x",
+                                 content="西班牙对阿根廷决赛前瞻分析。" * 10)]
+
+    agent.search = _SearchSpy4()
+    agent.sports = _DayKeyedSports({
+        today: [_wc_finished_third_place()],
+        tomorrow: [_fx(league="FIFA 世界杯", league_id=1, home="西班牙", away="阿根廷",
+                       status="scheduled", status_text="未开赛", round="Final",
+                       kickoff=f"{tomorrow}T02:00:00+08:00", fixture_id=88)],
+    })
+    agent.llm.complete = _llm_numbered_answer
+    ctx = make_context(history=[
+        {"role": "user", "text": "明天世界杯有什么比赛"},
+        {"role": "assistant", "text": "07-20FIFA 世界杯决赛共1场比赛，未开赛1场。"},
+    ])
+    # 复刻真实链路：planner 直路由 info.search 且 query 已被缝合成幻觉对阵
+    res = asyncio.run(run_handle(
+        agent, "info.search",
+        slots={"query": "2026 FIFA世界杯决赛 法国 vs 英格兰 预测 谁会赢"},
+        raw_text="这场比赛你预测谁会赢", ctx=ctx))
+    assert res.status == "ok" and res.ui_card["type"] == "search_result"
+    assert "西班牙 vs 阿根廷" in calls[0]           # 锚到明天决赛的真实对阵
+    assert "尚未开赛" in calls[0]                   # 时效框定：明确是赛前预测
+    assert "法国" not in calls[0] and "英格兰" not in calls[0]   # 幻觉对阵被丢弃
+
+    # hint(d) 替换路径（intent=info.sports, query=$text）同样锚定
+    res2 = asyncio.run(run_handle(
+        agent, "info.sports", slots={"query": "这场比赛你预测谁会赢"},
+        raw_text="这场比赛你预测谁会赢", ctx=ctx))
+    assert res2.ui_card["type"] == "search_result"
+    assert "西班牙 vs 阿根廷" in calls[-1]
+
+
+def test_sports_predictive_on_finished_match_reports_result():
+    """badcase bfb5d9c7 时效面：提问时季军赛已有结果，仍被当未来赛出了一屏预测。
+    指代明确（这场/今天）且该场已完赛 → 直接报结构化赛果+进球，不做任何检索预测。
+    query 槽刻意用 planner 污染形态（真栈复验二层缺口：planner 把「今天这场」缝成
+    「决赛 西班牙 vs 阿根廷」，query 里的「决赛」曾把当天季军赛阶段过滤清空——
+    指代词/日期/阶段必须只从原话取）。"""
+    agent = InfoAgent()
+    agent.search = _UnavailableSearchProvider()   # 若走了检索预测会失败，反证短路生效
+    today = _shanghai_now().strftime("%Y-%m-%d")
+    agent.sports = _DayKeyedSports({today: [_wc_finished_third_place()]})
+    agent.sports._events = [_goal(minute="12", team_id=2, player="Mbappé", detail="进球")]
+    ctx = make_context(history=[
+        {"role": "user", "text": "今天世界杯有什么比赛"},
+        {"role": "assistant", "text": "今天FIFA 世界杯季军赛共1场比赛，已结束1场：法国 4-6 英格兰。"},
+    ])
+    res = asyncio.run(run_handle(
+        agent, "info.sports",
+        slots={"query": "2026世界杯决赛 西班牙 vs 阿根廷 预测", "league": "世界杯"},
+        raw_text="今天这场比赛你预测谁会赢", ctx=ctx))
+    assert res.status == "ok"
+    assert "已经踢完" in res.speech                 # 明确告知已完赛，不再预测
+    assert "4-6" in res.speech and "季军赛" in res.speech
+    assert res.ui_card["type"] == "sports_scores"   # 结构化赛果卡，非 search_result
+    assert agent.sports.events_calls == [77]        # 顺带给到进球明细
+
+
 def test_sports_speech_carries_round_stage():
     """badcase 736e4bba：赛果不标阶段 → 下游把 1/4 决赛当半决赛错推决赛对阵。
     列表首句与单场详情都必须点明「四分之一决赛/半决赛」。"""

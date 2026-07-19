@@ -70,6 +70,10 @@ _DETAIL_HINT = ("进球", "谁进", "射手", "得分", "详细", "赛况", "详
                 "经过", "具体", "怎么样", "怎样", "集锦", "介绍", "讲讲", "说说")
 _LIST_HINT = ("全部", "所有", "有哪些", "哪些比赛", "哪些场", "赛程", "列表",
               "几场", "都有", "还有")
+# 进球/战报类**强详情词**：与列表词共现时详情优先（badcase 8e23ce30：「这场比赛都有
+# 谁进球」的「都有」误判成列表诉求，进球明细被吞成当日比分汇总）。弱详情词
+# （怎么样/详情）不夺权——「赛程怎么样」仍是列表。
+_GOAL_DETAIL_HINT = ("进球", "谁进", "射手", "得分", "战报", "赛况", "集锦", "经过")
 # 射手榜（联赛级排行，非某场）—— 独立于赛程列表与单场进球详情
 _SCORERS_HINT = ("射手榜", "射手", "金靴", "得分王", "进球榜", "神射手",
                  "谁进球最多", "谁球最多", "topscorer", "top scorer")
@@ -87,6 +91,34 @@ _NEXT_HINT = ("下一场", "下场", "下一个", "下一轮", "下轮", "接下
 
 # 预测问句里的场次指代（「这一场/那场比赛」）——无日期词时按今天→明天顺序找具体对阵作检索锚点
 _ANAPHOR_HINT = ("这场", "那场", "这一场", "那一场", "这次", "那次", "这个比赛", "那个比赛")
+
+# 显式日期词（与 _sports_date 同源口径）：预测指代解析时判「本句是否自带日期」——
+# 自带则只按该日找；没带才用「最近赛事轮的焦点日期 → 今天 → 明天」链（badcase bfb5d9c7）。
+_DATE_WORDS = ("今天", "今日", "今晚", "明天", "明晚", "明早", "后天", "大后天",
+               "昨天", "昨晚", "昨夜", "前天")
+_WEEKDAY_RE = re.compile(r"(?:下+)?(?:周|星期|礼拜)[一二三四五六日天]")
+
+
+def _has_date_word(text: str) -> bool:
+    t = text or ""
+    return any(w in t for w in _DATE_WORDS) or bool(_WEEKDAY_RE.search(t))
+
+
+# 阶段词 → _round_zh 规范名（长词在前：「半决赛/四分之一决赛」含「决赛」子串）。
+# 预测指代解析按阶段过滤场次——badcase bfb5d9c7：「决赛谁会赢」不加阶段过滤会锚到
+# 当天的季军赛（planner 又把历史里的法英对阵缝进「决赛」，成幻觉查询）。
+_STAGE_CANON = (("四分之一决赛", "四分之一决赛"), ("1/4决赛", "四分之一决赛"),
+                ("半决赛", "半决赛"), ("季军赛", "季军赛"), ("季军战", "季军赛"),
+                ("三四名", "季军赛"), ("十六强", "十六强淘汰赛"),
+                ("小组赛", "小组赛"), ("决赛", "决赛"))
+
+
+def _stage_in(text: str) -> str:
+    t = text or ""
+    for w, canon in _STAGE_CANON:
+        if w in t:
+            return canon
+    return ""
 
 # 复用 api-football provider 的中文国家队名表做队名提取（同域同包）；导入失败则退化空表。
 try:
@@ -326,7 +358,14 @@ class SportsMixin:
 
         # 追问某具体场次（第N场/队名）且非"列全部"诉求 → 进球详情（射手/分钟）
         picked = self._pick_fixture(query, fixtures)
-        if picked is not None and not self._is_list_request(query):
+        # 「这场/那场」纯指代解析不到序号/队名；当日仅此一场时它就是指代对象
+        # （badcase 8e23ce30：「这场比赛都有谁进球」落回当日比分汇总，没查进球明细）
+        if picked is None and len(fixtures) == 1 and (
+                any(w in query for w in _ANAPHOR_HINT) or self._is_detail_request(query)):
+            picked = fixtures[0]
+        # 进球类强详情词优先于列表词：「都有谁进球」的「都有」不再劫持成列表
+        if picked is not None and (self._is_goal_detail(query)
+                                   or not self._is_list_request(query)):
             return await self._match_detail(picked, league_name, meta)
 
         finished = [f for f in fixtures if f.status == "finished"]
@@ -348,7 +387,16 @@ class SportsMixin:
                 for f in live[:4])
             parts.append(f"进行中{len(live)}场：{ls}")
         if scheduled:
-            parts.append(f"未开赛{len(scheduled)}场")
+            # 点名对阵（badcase bfb5d9c7 根因链：只报「未开赛1场」不说是谁对谁，语音端
+            # 听不到对阵，下游追问「这场谁会赢」时 planner 只能从更早历史里缝合错对阵）
+            segs = []
+            for f in scheduled[:4]:
+                seg = f"{f.home} vs {f.away}"
+                ko = _fmt_kickoff(f.kickoff)
+                if ko and len(scheduled) <= 2:
+                    seg += f"（{ko.split(' ')[-1]} 开球）"
+                segs.append(seg)
+            parts.append(f"未开赛{len(scheduled)}场：" + "、".join(segs))
         speech = "，".join(parts) + "。"
 
         card = attach({"type": "sports_scores", "title": title,
@@ -360,6 +408,10 @@ class SportsMixin:
     @staticmethod
     def _is_detail_request(text: str) -> bool:
         return any(w in (text or "") for w in _DETAIL_HINT)
+
+    @staticmethod
+    def _is_goal_detail(text: str) -> bool:
+        return any(w in (text or "") for w in _GOAL_DETAIL_HINT)
 
     @staticmethod
     def _is_list_request(text: str) -> bool:
@@ -520,44 +572,127 @@ class SportsMixin:
                 "source": "api-football"}, self.sports)
         return AgentResult(speech=speech, ui_card=card, data={"scorers": card["scorers"]})
 
-    async def _predictive_anchor(self, text: str, ctx, meta) -> str:
-        """预测问句的检索锚点：把「这场/明天那场」解析成具体对阵（阶段+双方）。
+    async def _focus_date_from_history(self, ctx, now) -> str:
+        """最近一轮赛事相关**用户**发言的日期语境（badcase bfb5d9c7 的焦点锚）。
 
-        免费档恰好放行今天±1 的赛程查询，覆盖「今天/明天的那场」；带日期词按该日查，
-        纯指代（这场/那场）无日期词时按今天→明天顺序找。解析不出（无联赛上下文/无赛程/
-        provider 故障）返回空串——查询按原话走，绝不阻塞让路主流程。"""
-        league_id, name = _detect_league(text)
-        if not league_id and ctx is not None:
+        「明天世界杯有什么比赛」→「这场比赛你预测谁会赢」：「这场」指的是明天那场，
+        不是今天的。只扫用户轮——assistant 播报里的「今天/07-20」是转述口径，直接
+        解析会把焦点拽回播报当天。最近一轮提及联赛/赛事词的用户句即焦点轮，取其
+        日期词（无日期词=今天）。取不到返回 ""。"""
+        try:
+            turns = await ctx.history(6)
+        except Exception as e:
+            logger.debug("sports focus history fetch failed: %s", e)
+            return ""
+        for t in reversed(turns or []):
+            if (t.get("role") or "") != "user":
+                continue
+            tx = t.get("text") or ""
+            if not tx:
+                continue
+            if _detect_league(tx)[0] or any(h in tx for h in _SPORTS_HINT):
+                return _sports_date(tx, now)
+        return ""
+
+    async def _resolve_predictive(self, ref_text: str, league_text: str, ctx, meta,
+                                  assume_sports: bool = False):
+        """预测问句的场次解析。返回 (检索锚点, 已定局答案 AgentResult|None)。
+
+        锚点=把「这场/明天那场/决赛」解析成具体对阵（阶段+双方+开球时间）拼进检索
+        query；若明确指代的场次**已经完赛**（badcase bfb5d9c7：季军赛已 4-6 终场还被
+        当未来赛出预测），预测无从谈起——直接返回结构化赛果作答（系统持有的事实
+        不让检索/LLM 猜）。日期锚定顺序：本句显式日期词 > 最近赛事轮的焦点日期 >
+        今天 → 明天；带阶段词（决赛/季军赛）时按阶段过滤场次。
+        解析不出（无联赛上下文/无赛程/provider 故障）返回 ("", None)——按原话走。
+
+        **ref_text=用户原话**：指代词/日期词/阶段词只从原话取——planner 改写的 query
+        是不可信的指代通道（真栈复验二层缺口：planner 把「今天这场」缝成「决赛 西班牙
+        vs 阿根廷」，query 里的「决赛」把当天季军赛阶段过滤清空，完赛短路失效）。
+        league_text=query+原话：联赛识别是封闭词表无幻觉面，query 里的「世界杯」可信。
+
+        assume_sports：经 info.sports 意图进来时为 True，允许在本句无赛事词时也查
+        历史回填联赛；info.search 入口为 False（非赛事的预测句不多付一次历史 RTT）。"""
+        league_id, name = _detect_league(league_text)
+        if not league_id and ctx is not None and (
+                assume_sports or any(h in ref_text for h in _SPORTS_HINT)
+                or any(w in ref_text for w in _ANAPHOR_HINT) or _stage_in(ref_text)):
             try:
                 league_id, name = await self._league_from_history(ctx)
             except Exception:  # 历史回填失败不阻塞
                 league_id = 0
         if not league_id:
-            return ""
+            return "", None
         now = _shanghai_now()
         today = now.strftime("%Y-%m-%d")
-        date = _sports_date(text, now)
-        dates = [date]
-        # 纯指代无日期词（_sports_date 回落今天）→ 今天没有比赛就看明天的
-        if date == today and any(w in text for w in _ANAPHOR_HINT):
-            dates.append((now + timedelta(days=1)).strftime("%Y-%m-%d"))
+        tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+        stage = _stage_in(ref_text)
+        # 指代是否落到「具体某场」：指代词/阶段词/显式日期任一 → 完赛时可直接报赛果；
+        # 泛问（「世界杯你看好谁夺冠」）不具体，完赛场次只跳过、绝不抢答成单场结果。
+        specific_ref = bool(stage or _has_date_word(ref_text)
+                            or any(w in ref_text for w in _ANAPHOR_HINT))
+        if _has_date_word(ref_text):
+            dates = [_sports_date(ref_text, now)]
+        else:
+            dates = []
+            if ctx is not None:
+                focus = await self._focus_date_from_history(ctx, now)
+                if focus:
+                    dates.append(focus)
+            dates += [today, tomorrow]
+        seen: set[str] = set()
         for d in dates:
+            if d in seen:
+                continue
+            seen.add(d)
             try:
                 fixtures = [f for f in await self.sports.fixtures(date=d, meta=meta)
                             if f.league_id == league_id]
             except ProviderError as e:
                 logger.debug("predictive anchor fixtures failed: %s", e)
-                return ""
+                return "", None
+            if stage:
+                fixtures = [f for f in fixtures if _round_zh(f.round) == stage]
             if not fixtures:
                 continue
-            tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
             label = "今天" if d == today else ("明天" if d == tomorrow else d[5:])
-            parts = []
-            for f in fixtures[:2]:   # 最多两场，锚点保持紧凑
-                stage = _round_zh(f.round)
-                parts.append(f"{stage}{'：' if stage else ''}{f.home} vs {f.away}")
-            return f"{label}的{name}{'；'.join(parts)}"
-        return ""
+            upcoming = [f for f in fixtures if f.status != "finished"]
+            if upcoming:
+                parts = []
+                for f in upcoming[:2]:   # 最多两场，锚点保持紧凑
+                    st = _round_zh(f.round)
+                    seg = f"{st}{'：' if st else ''}{f.home} vs {f.away}"
+                    ko = _fmt_kickoff(f.kickoff)
+                    if ko:
+                        seg += (f"（{ko} 开球，尚未开赛）" if f.status == "scheduled"
+                                else "（进行中）")
+                    parts.append(seg)
+                return f"{label}的{name}{'；'.join(parts)}", None
+            if specific_ref and len(fixtures) == 1:
+                res = await self._match_detail(fixtures[0], name, meta)
+                res.speech = "这场比赛已经踢完了，结果是：" + res.speech
+                return "", res
+            # 该日全部完赛且指代不到唯一一场 → 看下一个候选日期
+        return "", None
+
+    async def _predictive_redirect(self, intent, ctx, meta,
+                                   assume_sports: bool = False):
+        """预测/前瞻句统一收口（info.sports 与 planner 直路由 info.search 两入口共用）：
+        指代→具体对阵锚点拼进检索 query（以原话+结构化对阵重建，**丢弃** planner 可能
+        缝合出的幻觉对阵——badcase bfb5d9c7 把历史里的法英 4-6 与「决赛」缝成
+        「决赛 法国 vs 英格兰」）；指代场次已完赛→直接报结构化赛果。
+        解析不出返回 None，调用方按原 query 继续（不降级已有的 LLM 改写）。"""
+        query = (intent.slots.get("query") or "").strip()
+        ref = (intent.raw_text or query).strip()
+        anchor, settled = await self._resolve_predictive(
+            ref, f"{query} {intent.raw_text or ''}".strip(), ctx, meta,
+            assume_sports=assume_sports)
+        if settled is not None:
+            return settled
+        if not anchor:
+            return None
+        q = (intent.raw_text or intent.slots.get("query") or "").strip()
+        intent.slots["query"] = f"{q}（用户问的是{anchor}）"
+        return await self._search(intent, ctx, meta, skip_sports=True)
 
     async def _sports(self, intent, ctx, meta) -> AgentResult:
         """info.sports 意图入口。识别赛事后取结构化数据；未识别则回落通用搜索。"""
@@ -568,15 +703,16 @@ class SportsMixin:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个赛事的比分或赛程？",
                                follow_up="请告诉我赛事名称", missing_slots=["query"])
         # 预测/前瞻（badcase 1de7e50c「预测半决赛和决赛结果」被答成单场已结束赛果）：
-        # 结构化源只有已定事实且免费档拿不到未来对阵 → 转通用搜索（原话整句作 query，
-        # 保住「半决赛/决赛/预测」上下文）。_search 内的 _maybe_sports 对预测词已让路，不回环。
-        # badcase demo-i9c92i：「预测这一场」裸传原话检索会命中错误场次（问季军赛答出
-        # 决赛预测）→ 先把指代解析成具体对阵（联赛+阶段+双方）拼进 query 锚定检索。
+        # 结构化源只有已定事实且免费档拿不到未来对阵 → 经 _predictive_redirect 收口：
+        # 指代解析成具体对阵锚定检索（badcase demo-i9c92i）、指代场次已完赛直接报赛果
+        # （badcase bfb5d9c7）。解析不出按原话整句检索（保住「半决赛/决赛/预测」上下文），
+        # skip_sports 防回环。
         if _is_predictive(text):
-            q = (intent.raw_text or query).strip()
-            anchor = await self._predictive_anchor(text, ctx, meta)
-            intent.slots["query"] = f"{q}（用户问的是{anchor}）" if anchor else q
-            return await self._search(intent, ctx, meta)
+            res = await self._predictive_redirect(intent, ctx, meta, assume_sports=True)
+            if res is not None:
+                return res
+            intent.slots["query"] = (intent.raw_text or query).strip()
+            return await self._search(intent, ctx, meta, skip_sports=True)
         league_id, name = _detect_league(text)
         if not league_id:
             # 赛事追问（如"第一场谁进球"）槽位常不带联赛名 → 从对话历史回填联赛上下文

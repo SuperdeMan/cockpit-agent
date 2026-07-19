@@ -86,6 +86,26 @@
   source: "真·周边详情不被赛事修复误伤"
   tags: [nearby, replace]
 
+# 赛事预测指代句（badcase bfb5d9c7 2026-07-19：「这场比赛你预测谁会赢」无联赛词，
+# 原预测 hint 接不住 → planner 缝合幻觉对阵「决赛 法国vs英格兰」且对已完赛季军赛出预测）
+- text: 这场比赛你预测谁会赢
+  initial_intents: []
+  expect_final_intents: [info.sports]
+  source: "badcase bfb5d9c7：指代×预测词召回，handler 内解析焦点场次"
+  tags: [sports, predictive, replace, recall]
+
+- text: 这场比赛你预测谁会赢
+  initial_intents: [info.search]
+  expect_final_intents: [info.sports]
+  source: "badcase bfb5d9c7：LLM 误路由 info.search 也被取代（handler 带锚点让路检索）"
+  tags: [sports, predictive, replace]
+
+- text: 这场官司你觉得谁会赢
+  initial_intents: []
+  expect_final_intents: []
+  source: "guard 反例：非赛事的「这场…谁会赢」不进赛事域"
+  tags: [sports, predictive, guardrail]
+
 # ── reminder（2026-07-11 设计 §6.3）：正例路由 + 车辆功能"提醒"反例不被劫持 ──
 - text: 明天早上八点提醒我带充电线
   initial_intents: []

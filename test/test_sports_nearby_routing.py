@@ -61,3 +61,21 @@ def test_real_nearby_detail_still_routes():
     """真·周边详情不被赛事修复误伤。"""
     assert _route("这家怎么样") == ["nearby.detail"]
     assert _route("看看它的详情") == ["nearby.detail"]
+
+
+def test_sports_predictive_anaphor_routes_to_sports():
+    """badcase bfb5d9c7：「这场比赛你预测谁会赢」无联赛词，原预测 hint 接不住 →
+    planner 自由发挥缝合幻觉对阵。补「这场/那场 × 预测词」召回 → info.sports
+    （handler 内解析焦点场次后让路检索或直接报已完赛赛果）。"""
+    assert _route("这场比赛你预测谁会赢") == ["info.sports"]
+    assert _route("你预测一下这场谁能赢") == ["info.sports"]
+    assert _route("那一场你怎么看") == ["info.sports"]
+    # LLM 误路由 info.search 时同样被取代（handler 内部再按需让路检索，语义等价且带锚点）
+    assert _route("这场比赛你预测谁会赢", initial=["info.search"]) == ["info.sports"]
+
+
+def test_predictive_guard_non_sports_not_hijacked():
+    """非赛事的「这场…谁会赢/怎么看」不进赛事域。"""
+    assert "info.sports" not in _route("这场官司你觉得谁会赢")
+    assert "info.sports" not in _route("这场电影你怎么看")
+    assert "info.sports" not in _route("这场雨你怎么看")
