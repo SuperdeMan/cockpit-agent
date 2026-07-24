@@ -112,14 +112,10 @@ class Clients:
             timeout=_DEFAULT_TIMEOUT)
         return list(resp.agents)
 
-    async def llm_complete(self, messages: list[dict], max_tokens: int = 800,
-                           thinking: bool = False) -> str:
-        """thinking=True 时本次开思考（meta 透传给网关）并抬 token/超时。
-        **Planner 调用恒 False**（结构化 JSON 不能被 reasoning 吃空）；Aggregator 由
-        engine 对复杂任务传 True。"""
-        req = llm_pb2.CompleteRequest(
-            messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],
-            temperature=0.3, max_tokens=max(max_tokens, 2048) if thinking else max_tokens)
+    @staticmethod
+    def _stamp_llm_meta(req, thinking: bool = False) -> None:
+        """llm_complete / llm_complete_tools 共用的 meta 盖章：思考开关 + 请求级 pin +
+        trace 贯通 + 观测归属。"""
         if thinking:
             req.meta["thinking"] = "on"
         # 运行时硬化 D2：请求级 LLM pin（engine 在请求入口 set_llm_pin）——planner/aggregator
@@ -137,8 +133,60 @@ class Clients:
         if get_session_id():
             req.meta["session_id"] = get_session_id()
         req.meta["caller_service"] = "cloud-planner"
+
+    async def llm_complete(self, messages: list[dict], max_tokens: int = 800,
+                           thinking: bool = False) -> str:
+        """thinking=True 时本次开思考（meta 透传给网关）并抬 token/超时。
+        **Planner 调用恒 False**（结构化 JSON 不能被 reasoning 吃空）；Aggregator 由
+        engine 对复杂任务传 True。"""
+        req = llm_pb2.CompleteRequest(
+            messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],
+            temperature=0.3, max_tokens=max(max_tokens, 2048) if thinking else max_tokens)
+        self._stamp_llm_meta(req, thinking=thinking)
         resp = await self._llm_stub().Complete(req, timeout=60 if thinking else 30)
         return resp.content
+
+    @classmethod
+    def _destruct_nums(cls, v):
+        """protobuf Struct 数字恒 double：整数值 float 还原 int（递归）。对齐 JSON 路径
+        json.loads 的 int 行为——否则 slots str() 化后 "24"→"24.0"，A/B 出现假漂移。"""
+        if isinstance(v, float) and v.is_integer():
+            return int(v)
+        if isinstance(v, list):
+            return [cls._destruct_nums(x) for x in v]
+        if isinstance(v, dict):
+            return {k: cls._destruct_nums(x) for k, x in v.items()}
+        return v
+
+    async def llm_complete_tools(self, messages: list[dict], tools: dict,
+                                 max_tokens: int = 800) -> tuple[str, list[dict]]:
+        """带工具定义的补全（M1a submit_plan 结构化输出，RFC §4）。
+
+        tools：线格式 ``{"tools": [...], "tool_choice": ...}``，经 CompleteRequest.tools
+        Struct 透传；返回 (content, tool_calls)，tool_calls 为网关归一化形状
+        ``[{"id","name","arguments"(dict)}]``。规划轮恒关思考（同 llm_complete 口径）。"""
+        req = llm_pb2.CompleteRequest(
+            messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],
+            temperature=0.3, max_tokens=max_tokens)
+        req.tools.update(tools or {})
+        self._stamp_llm_meta(req)
+        resp = await self._llm_stub().Complete(req, timeout=30)
+        calls: list[dict] = []
+        if resp.HasField("tool_calls"):
+            from google.protobuf.json_format import MessageToDict
+            try:
+                # Struct 的键是数据非字段名，MessageToDict 原样保留（无 camelCase 转换）
+                data = MessageToDict(resp.tool_calls)
+            except Exception:
+                data = {}
+            for tc in (data.get("tool_calls") or []):
+                if isinstance(tc, dict) and tc.get("name"):
+                    calls.append({
+                        "id": tc.get("id") or "",
+                        "name": tc["name"],
+                        "arguments": self._destruct_nums(tc.get("arguments") or {}),
+                    })
+        return resp.content, calls
 
     def _agent_stub(self, endpoint: str):
         # F15：按 endpoint 复用 channel（之前每次新建泄漏）

@@ -74,6 +74,11 @@ class Plan:
     # M0b Skill 层：本轮检索/注入的 skill 名单（"<mode>:<name>"），仅供 cloud.planning
     # span 观测（badcase 归因：知识没进上下文还是进了没用对）；不参与编排逻辑。
     skills: list[str] = field(default_factory=list)
+    # M1a submit_plan 结构化输出：本轮走的输出通道，仅供 cloud.planning span 观测
+    # （A/B 协议层指标聚合）。json=纯文本路径（PLANNER_TOOLCALL=off 恒此值）；
+    # toolcall=工具 arguments 直入；toolcall_salvage=模型无视工具、同轮文本抢救；
+    # toolcall_fallback=第 2 轮 JSON 路径；toolcall_degraded=两轮全失败走 _fallback。
+    plan_mode: str = "json"
 
 
 @dataclass

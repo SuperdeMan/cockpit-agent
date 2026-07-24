@@ -122,13 +122,84 @@ _CLARIFY_SECTION = (
 )
 
 
-def _planner_system() -> str:
+# M1a（submit_plan 结构化输出，RFC §3.3）：toolcall 模式不改 base/受话段/澄清段——JSON
+# 协议描述同时是工具 schema 的语义说明，双路径共享领域协议=A/B 单变量；仅追加输出通道指令。
+# 「完整参数表」段=真栈 B1-4 修复：工具输出形态自带「函数入参只传需要的」先验，省略式
+# 追问会只写变化槽（date）丢继承槽（city）执行错对象；schema description 压不住（1/3），
+# 形态 few-shot 才有效。示例用抽象 A市 + 通用槽键，不嵌 agent/intent 字面量（铁律）。
+_TOOLCALL_SECTION = (
+    "\n\n== 输出通道（工具调用模式）==\n"
+    "上述全部输出协议（计划 JSON / addressed / clarify）一律通过调用 submit_plan 工具提交："
+    "顶层 JSON 对象即工具参数。不要以文本形式输出 JSON，不要输出任何解释。\n"
+    "slots 是该步骤的**完整参数表，不是增量**：省略式追问必须把上一轮继承的槽位与本轮"
+    "变化的槽位一起写全。例：上一轮『明天A市天气怎么样』该步 slots={\"city\":\"A市\","
+    "\"date\":\"明天\"}，本轮用户说『那后天呢』→ 本轮 slots 必须={\"city\":\"A市\","
+    "\"date\":\"后天\"}；只写 {\"date\":\"后天\"} 丢掉继承的 city 会执行错对象。\n"
+    "写全指**上下文里实际有的值**：用户话术和上下文里都没有的槽位直接省略该键，"
+    "绝不编造占位值（如『当前位置』『未知』）——留空由能力方用定位/追问补全，"
+    "填了占位字面量反而会当成真值执行出错。"
+)
+
+_SUBMIT_PLAN_NAME = "submit_plan"
+
+
+def _submit_plan_tools() -> dict:
+    """submit_plan 工具定义（线格式 ``{"tools":[...],"tool_choice":named 强制}``，RFC §3.2）。
+
+    schema 顶层=现 JSON 协议顶层——语义零漂移，`_parse_and_validate_data` 直接消费；
+    **无 require_confirm**（确认权不在 LLM，M0a 已中央落实）；clarify 属性与
+    _CLARIFY_SECTION 同门控（off 时 schema 不反向引导模型输出澄清）。named tool_choice
+    强制 + prompt 指令双保险；某家不认 → build() 轮内降级承接（RFC §4）。"""
+    props = {
+        "complexity": {"type": "string", "enum": ["simple", "adaptive"],
+                       "description": "simple=一次可确定全部步骤；adaptive=须按运行结果决定下一步"},
+        "goal": {"type": "string", "description": "一句话目标"},
+        "addressed": {"type": "boolean",
+                      "description": "这句话是否是对车载助手说的；拿不准必须输出 true"},
+        "steps": {"type": "array", "items": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "agent_id": {"type": "string"},
+            "intent": {"type": "string"},
+            # 语义必须随字段走（真栈 B1-4 教训，与 clarify 案例同族反向）：无说明的空
+            # object 会放大工具输出形态的「最小化填写」倾向——省略式追问只写变化槽
+            # （date=后天）丢继承槽（city=杭州），执行错落定位城市；JSON 文本路径靠
+            # prompt 规则+few-shot 引导写全、从不丢。
+            "slots": {"type": "object", "description": (
+                "该步骤的全部槽位键值。省略式追问（如『那后天呢』『换成XX呢』）必须把"
+                "从上一轮继承的槽位（城市/对象等）与本轮变化的槽位一起显式写全——"
+                "只写变化的槽位会导致执行错对象")},
+            "depends_on": {"type": "array", "items": {"type": "string"}},
+            "slot_refs": {"type": "object"},
+        }, "required": ["id", "agent_id", "intent"]}},
+    }
+    # clarify 刻意**不进 schema**（真栈 B4-1 两轮教训）：schema 把 clarify 变成「摆在
+    # 眼前的可选字段」，结构可见性把误澄清率从 0 抬到 ~50-66%（历史追问「我刚才让你调到
+    # 多少」被反问），且 description 带满「绝大多数请求明确」约束也压不回去——模型对
+    # schema 结构的响应强于 description 文本。退回 prompt-only 触发面（_CLARIFY_SECTION
+    # 恒拼，见 _planner_system）＝R4.4 验收时的原始形态：软 schema 下模型按 prompt 在
+    # arguments 里输出 clarify 属额外字段、完全合法，_parse_and_validate_data 照常消费
+    # ——触发条件两路径对称，都只由 prompt 判据承载。
+    return {
+        "tools": [{"type": "function", "function": {
+            "name": _SUBMIT_PLAN_NAME,
+            "description": "提交本轮规划结果。这是唯一合法的输出通道。",
+            "parameters": {"type": "object", "properties": props,
+                           "required": ["addressed", "steps"]},
+        }}],
+        "tool_choice": {"type": "function", "function": {"name": _SUBMIT_PLAN_NAME}},
+    }
+
+
+def _planner_system(toolcall: bool = False) -> str:
     """每次 build() 实时拼 Planner system prompt：base + 受话段（恒附）+ 澄清段（CLARIFY_ENABLED=on）。
     os.getenv 实时读——env 翻转即刻生效，且让 monkeypatch 单测可行（母卡实施计划 §0-10）。
-    Full Migration 后 base 唯一（领域知识由 skill 注入块承载，见 skills.py）。"""
+    Full Migration 后 base 唯一（领域知识由 skill 注入块承载，见 skills.py）。
+    toolcall=True（M1a）追加输出通道指令段，其余逐字一致。"""
     prompt = _PLANNER_BASE + _ADDRESSED_SECTION
     if os.getenv("CLARIFY_ENABLED", "off").lower() == "on":
         prompt += _CLARIFY_SECTION
+    if toolcall:
+        prompt += _TOOLCALL_SECTION
     return prompt
 
 
@@ -142,13 +213,17 @@ _REPLAN_SYSTEM = (
 
 
 class PlanBuilder:
-    def __init__(self, llm_fn, registry_fn):
+    def __init__(self, llm_fn, registry_fn, llm_tool_fn=None):
         """
         llm_fn: async (messages: list[dict]) -> str
         registry_fn: async (query: str, top_k: int) -> list[ResolvedAgent]
+        llm_tool_fn: async (messages, tools: dict) -> (content: str, tool_calls: list[dict])
+            —— M1a submit_plan 结构化输出通道，可选：None 时 PLANNER_TOOLCALL 即使 on 也
+            走 JSON 路径（存量测试/spy 零波及，RFC §4）。
         """
         self._llm = llm_fn
         self._resolve = registry_fn
+        self._llm_tools = llm_tool_fn
         # R2.1：确定性路由兜底降为通用引擎——领域正则由各 Agent manifest.route_hints 声明，
         # 编排核心不再硬编码特定 Agent/意图（恢复「新增 Agent 不改编排核心」铁律）。
         self._route_hints = RouteHintEngine(self._validated_steps)
@@ -174,26 +249,49 @@ class PlanBuilder:
         # 名单落 plan.skills 供 cloud.planning span 归因。
         sk_mode, sk_names, sk_block = _skills.plan_skills(text)
 
+        # M1a（RFC §4）：PLANNER_TOOLCALL=on 且注入了 llm_tool_fn → 第 1 轮走 submit_plan
+        # 工具通道；协议失败（异常/无 tool_calls）同轮内容抢救、第 2 轮直接 JSON 路径——
+        # 降级轮内闭合，最坏 2 次调用与现状重试上限一致。off（默认）与今天字节级一致。
+        toolcall = (os.getenv("PLANNER_TOOLCALL", "off").strip().lower() == "on"
+                    and self._llm_tools is not None)
         plan = None
+        plan_mode = "json"
         last_raw = ""
-        for _ in range(2):
-            raw = await self._llm_plan(text, agents, working_set,
-                                       skills_block=sk_block)
-            last_raw = raw or last_raw
-            parsed = self._parse_and_validate(raw, agent_map, text)
+        for attempt in range(2):
+            mode = "json"
+            if toolcall and attempt == 0:
+                raw, args = await self._llm_plan_tools(text, agents, working_set,
+                                                       skills_block=sk_block)
+                last_raw = raw or last_raw
+                if args is not None:
+                    parsed = self._parse_and_validate_data(args, agent_map, text)
+                    mode = "toolcall"
+                else:
+                    # 模型无视工具直接文本输出（或 named tool_choice 不被支持）→ 同轮抢救
+                    parsed = self._parse_and_validate(raw, agent_map, text)
+                    mode = "toolcall_salvage"
+            else:
+                raw = await self._llm_plan(text, agents, working_set,
+                                           skills_block=sk_block)
+                last_raw = raw or last_raw
+                parsed = self._parse_and_validate(raw, agent_map, text)
+                mode = "toolcall_fallback" if toolcall else "json"
             # R4.4：放行「合法的空 steps 计划」——受话判定 addressed=false / 澄清 clarify
             # 的正确输出 steps 恰为空，不能当解析失败去重试+fallback（母卡实施计划 §0-1/§0-2）。
             if parsed and (parsed.steps or not parsed.addressed or parsed.clarify):
                 plan = parsed
+                plan_mode = mode
                 break
 
         if plan is None:
             logger.warning("Plan parse failed twice, falling back to chitchat/routing")
             # 降级：chitchat 全局兜底 / Registry 语义路由 top-1
             plan = await self._fallback(text, agents)
+            plan_mode = "toolcall_degraded" if toolcall else "json"
         # 观测：保留 LLM 最后一次原始输出（fallback 路径保留失败现场），供 planning span 门控采集
         plan.raw_llm = last_raw
         plan.skills = sk_names
+        plan.plan_mode = plan_mode
 
         # 确定性路由兜底（覆盖 LLM 解析成功 + 降级语义路由两条路径）：通用 RouteHintEngine
         # 按各 Agent manifest.route_hints（priority 降序）施加。research.run 与 trip.*（含
@@ -204,13 +302,19 @@ class PlanBuilder:
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan
 
-    async def _llm_plan(self, text: str, agents: list, working_set: WorkingSet,
-                        skills_block: str = "") -> str:
+    @staticmethod
+    def _planner_user_msg(text: str, agents: list, working_set: WorkingSet,
+                          skills_block: str = "") -> str:
+        """双路径共用的 user message（逐字一致=A/B 单变量，RFC §3.3）。"""
         catalog = WorkingSet.render_catalog(agents)
         ctx_block = working_set.render_context()  # 记忆 +（焦点）+ 历史，统一预算
         # skills 块紧跟日期锚之后（policy 文本引用「上方『当前日期』」，顺序是契约）
         sk_part = f"{skills_block}\n\n" if skills_block else ""
-        user_msg = f"可用能力:\n{catalog}\n\n{_date_line()}\n{sk_part}{ctx_block}用户说: {text}"
+        return f"可用能力:\n{catalog}\n\n{_date_line()}\n{sk_part}{ctx_block}用户说: {text}"
+
+    async def _llm_plan(self, text: str, agents: list, working_set: WorkingSet,
+                        skills_block: str = "") -> str:
+        user_msg = self._planner_user_msg(text, agents, working_set, skills_block)
         try:
             raw = await self._llm([
                 {"role": "system", "content": _planner_system()},
@@ -221,6 +325,30 @@ class PlanBuilder:
         except Exception as e:
             logger.warning("LLM plan exception: %s", e)
             return ""
+
+    async def _llm_plan_tools(self, text: str, agents: list, working_set: WorkingSet,
+                              skills_block: str = "") -> tuple[str, dict | None]:
+        """M1a submit_plan 工具通道（RFC §4）。返回 (raw, args)：args=工具 arguments
+        dict（协议成功）；None=协议失败（异常/无 tool_calls），raw 保留 content 供同轮
+        文本抢救与 obs raw_llm 采集。"""
+        user_msg = self._planner_user_msg(text, agents, working_set, skills_block)
+        try:
+            content, calls = await self._llm_tools([
+                {"role": "system", "content": _planner_system(toolcall=True)},
+                {"role": "user", "content": user_msg},
+            ], _submit_plan_tools())
+        except Exception as e:
+            logger.warning("LLM plan toolcall exception: %s", e)
+            return "", None
+        args = next((c.get("arguments") for c in (calls or [])
+                     if isinstance(c, dict) and c.get("name") == _SUBMIT_PLAN_NAME
+                     and isinstance(c.get("arguments"), dict)), None)
+        if args is not None:
+            raw = json.dumps(args, ensure_ascii=False)
+            logger.info("LLM plan toolcall args: %s", raw[:500])
+            return raw, args
+        logger.info("LLM plan toolcall no tool_calls, content: %s", (content or "")[:300])
+        return content or "", None
 
     async def replan(self, goal: str, observations: list[dict], agents: list,
                      ctx: PlanContext, granted_permissions: list[str] = None,
@@ -263,6 +391,14 @@ class PlanBuilder:
             data = json.loads(self._extract_json(raw))
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning("Plan JSON parse failed: %s", e)
+            return None
+        return self._parse_and_validate_data(data, agent_map, fallback_text)
+
+    def _parse_and_validate_data(self, data, agent_map: dict,
+                                 fallback_text: str) -> Plan | None:
+        """dict 直入的校验主体（M1a：toolcall 的 arguments 与 JSON 文本解析共用同一份
+        校验语义——受话/澄清/steps 原子性单源，RFC §4）。"""
+        if not isinstance(data, dict):
             return None
 
         # R4.4：受话/澄清在 steps 校验之前短路——它们的合法输出 steps 恰为空，若走下面

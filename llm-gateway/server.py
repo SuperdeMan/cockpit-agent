@@ -11,6 +11,7 @@ import logging
 
 import grpc
 import httpx
+from google.protobuf.json_format import MessageToDict
 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
 from cockpit.llm.v1 import audio_pb2, audio_pb2_grpc
 
@@ -97,11 +98,24 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             return False
         return None
 
+    @staticmethod
+    def _tools_spec(request) -> dict | None:
+        """M1a：读 CompleteRequest.tools（Struct，线格式 {"tools":[...],"tool_choice":...}，
+        RFC §3.1）。未设置/空/畸形 → None（纯文本路径，行为与今天逐字一致）。"""
+        try:
+            if not request.HasField("tools"):
+                return None
+            spec = MessageToDict(request.tools)
+        except Exception:
+            return None
+        return spec if isinstance(spec, dict) and spec.get("tools") else None
+
     async def Complete(self, request, context):
         msgs = self._msgs(request)
         temp = request.temperature or 0.7
         max_tokens = request.max_tokens or 512
         thinking = self._thinking(request)
+        tools_spec = self._tools_spec(request)   # M1a：非 None 即 tool-calling 路径
 
         # 限流
         caller = dict(request.meta).get("caller", "default")
@@ -114,8 +128,10 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         except ValueError as e:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
 
-        # 缓存查找（serving provider + thinking 并入 key，避免切换/pin/开关思考结果串味）
-        cached = self.cache.get(msgs, f"{aid}:{models[0]}", temp, thinking)
+        # 缓存查找（serving provider + thinking 并入 key，避免切换/pin/开关思考结果串味）。
+        # 带 tools 的请求跳过缓存：tools 不进缓存键会串味（同 messages 不同工具面），而
+        # planner 上下文轮轮不同命中率≈0——跳过换正确性（RFC §8-4；键改造留 V2）。
+        cached = None if tools_spec else self.cache.get(msgs, f"{aid}:{models[0]}", temp, thinking)
         if cached:
             content, used, finish, usage = cached
             logger.debug("Cache hit")
@@ -136,23 +152,40 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             while True:
                 t0 = time.monotonic()
                 try:
-                    content, used, finish, usage = await provider.complete(
-                        msgs, model, temp, max_tokens, thinking=thinking)
+                    if tools_spec:
+                        content, used, finish, usage, tool_calls = await provider.complete_tools(
+                            msgs, model, temp, max_tokens,
+                            tools=tools_spec.get("tools"),
+                            tool_choice=tools_spec.get("tool_choice"),
+                            thinking=thinking)
+                    else:
+                        content, used, finish, usage = await provider.complete(
+                            msgs, model, temp, max_tokens, thinking=thinking)
+                        tool_calls = []
                     latency_ms = (time.monotonic() - t0) * 1000
 
-                    # 写缓存
-                    self.cache.put(msgs, f"{aid}:{model}", temp, content, used, thinking)
+                    # 写缓存（tools 路径不写，与查同门控）
+                    if not tools_spec:
+                        self.cache.put(msgs, f"{aid}:{model}", temp, content, used, thinking)
 
                     # 记录成本 + 健康
                     cost_tracker.record(used, usage[0], usage[1], latency_ms)
                     health_tracker.record(aid, True, latency_ms=latency_ms)
+                    # tool call 场景 content 常为空：obs content_head 以工具名单补记（RFC §5）
+                    obs_content = content or (
+                        "[tool_calls] " + ",".join(tc.get("name", "") for tc in tool_calls)
+                        if tool_calls else "")
                     await self._emit_llm(request, model=used, latency_ms=latency_ms,
                                          usage=usage, thinking=thinking, msgs=msgs,
-                                         content=content, provider=aid, pinned=pinned)
+                                         content=obs_content, provider=aid, pinned=pinned)
 
-                    return llm_pb2.CompleteResponse(
+                    out = llm_pb2.CompleteResponse(
                         content=content, model_used=used, finish_reason=finish,
                         prompt_tokens=usage[0], completion_tokens=usage[1])
+                    if tool_calls:
+                        # 回填 Struct（线格式 {"tool_calls":[{id,name,arguments}]}，RFC §3.1）
+                        out.tool_calls.update({"tool_calls": tool_calls})
+                    return out
                 except Exception as e:
                     latency_ms = (time.monotonic() - t0) * 1000
                     cost_tracker.record(model, 0, 0, latency_ms, error=True)

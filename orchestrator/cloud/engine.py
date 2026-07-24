@@ -242,6 +242,8 @@ class PlannerEngine:
                     "llm_raw": gate_content(plan.raw_llm, 1200),
                     # M0b Skill 层注入名单（"<mode>:<name>"），badcase 归因用
                     **({"skills": ",".join(plan.skills)} if plan.skills else {}),
+                    # M1a：本轮规划输出通道（toolcall|toolcall_salvage|…|json），A/B 聚合用
+                    "plan_mode": getattr(plan, "plan_mode", "json"),
                 },
             )
             await self._resolve_endpoints(plan)

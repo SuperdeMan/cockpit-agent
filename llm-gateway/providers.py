@@ -10,10 +10,13 @@
 from __future__ import annotations
 import asyncio
 import json
+import logging
 import os
 import re
 
 import httpx
+
+logger = logging.getLogger("llm.providers")
 
 # ── 出站 HTTP 连接池 + 超时（复用连接，免去每调用新建 client 的 TLS 握手开销）──
 _HTTP_LIMITS = httpx.Limits(max_connections=32, max_keepalive_connections=16,
@@ -80,6 +83,39 @@ def _retry_after_s(resp) -> float | None:
         return None
 
 
+def normalize_tool_calls(raw_calls) -> list[dict]:
+    """OpenAI 形状 tool_calls → 网关统一形状 ``[{"id","name","arguments"(dict)}]``。
+
+    M1a（submit_plan 结构化输出，RFC §3.1）：``function.arguments`` 是 JSON string，
+    统一解析为 object 再下发——调用方（planning）不再管各家差异。畸形 arguments
+    **丢弃该条**（warning 计数），刻意不做字符串抢救：tool-calling 的价值就是服务端
+    约束，畸形=协议失败，诚实回退让调用方走 JSON 抢救/重试路径（RFC §8-3）。
+    个别服务商直接给 object 的宽容接收。
+    """
+    out = []
+    for tc in raw_calls or []:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function") or {}
+        name = fn.get("name") or ""
+        if not name:
+            continue
+        args_raw = fn.get("arguments")
+        if isinstance(args_raw, dict):
+            args = args_raw
+        else:
+            try:
+                args = json.loads(args_raw or "{}")
+            except (TypeError, ValueError) as e:
+                logger.warning("tool_call %s arguments 畸形，丢弃：%s", name, e)
+                continue
+        if not isinstance(args, dict):
+            logger.warning("tool_call %s arguments 非 object，丢弃", name)
+            continue
+        out.append({"id": tc.get("id") or "", "name": name, "arguments": args})
+    return out
+
+
 class BaseProvider:
     async def complete(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         """returns (content, model_used, finish_reason, (prompt_tokens, completion_tokens)).
@@ -88,6 +124,20 @@ class BaseProvider:
         False=本次关思考。复杂任务（行程/调研）由编排层经 meta 动态传 True。
         """
         raise NotImplementedError
+
+    async def complete_tools(self, messages, model, temperature, max_tokens,
+                             tools=None, tool_choice=None, thinking=None, timeout_s=None):
+        """带工具定义的补全（M1a submit_plan 结构化输出）。
+
+        returns (content, model_used, finish_reason, usage, tool_calls)——tool_calls 为
+        网关归一化形状 ``[{"id","name","arguments"(dict)}]``，无工具调用时 ``[]``。
+        默认实现回落纯文本 ``complete`` + 空 tool_calls（Mock/未覆盖 provider fail-open：
+        调用方按无工具调用处理，走既有 JSON 抢救/回退路径）。刻意不改 ``complete``
+        四元组契约——仓内 fake/测试按其实现，独立方法存量零波及（RFC §8-1）。
+        """
+        content, used, finish, usage = await self.complete(
+            messages, model, temperature, max_tokens, thinking=thinking, timeout_s=timeout_s)
+        return content, used, finish, usage, []
 
     async def stream(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         raise NotImplementedError
@@ -150,6 +200,54 @@ class AnthropicProvider(BaseProvider):
             temperature=temperature, max_tokens=max_tokens or 512)
         text = "".join(b.text for b in resp.content if b.type == "text")
         return text, model, resp.stop_reason, (resp.usage.input_tokens, resp.usage.output_tokens)
+
+    @staticmethod
+    def _to_anthropic_tools(tools, tool_choice):
+        """OpenAI 线格式 → Anthropic 专有形状（转换放最少数一侧，RFC §8-2）。
+        tools: [{"type":"function","function":{name,description,parameters}}] →
+        [{name, description, input_schema}]；tool_choice named→{"type":"tool"}、
+        "required"→{"type":"any"}、"none"→{"type":"none"}、其余缺省 auto。"""
+        a_tools = []
+        for t in tools or []:
+            fn = (t or {}).get("function") or {}
+            if not fn.get("name"):
+                continue
+            a_tools.append({
+                "name": fn["name"],
+                "description": fn.get("description", ""),
+                "input_schema": fn.get("parameters") or {"type": "object"},
+            })
+        a_choice = None
+        if isinstance(tool_choice, dict):
+            name = (tool_choice.get("function") or {}).get("name", "")
+            a_choice = {"type": "tool", "name": name} if name else {"type": "auto"}
+        elif tool_choice == "required":
+            a_choice = {"type": "any"}
+        elif tool_choice == "none":
+            a_choice = {"type": "none"}
+        return a_tools, a_choice
+
+    async def complete_tools(self, messages, model, temperature, max_tokens,
+                             tools=None, tool_choice=None, thinking=None, timeout_s=None):
+        system, msgs = self._split(messages)
+        kwargs = {}
+        a_tools, a_choice = self._to_anthropic_tools(tools, tool_choice)
+        if a_tools:
+            kwargs["tools"] = a_tools
+            if a_choice is not None:
+                kwargs["tool_choice"] = a_choice
+        resp = await self.client.messages.create(
+            model=model, system=system, messages=msgs,
+            temperature=temperature, max_tokens=max_tokens or 512, **kwargs)
+        text = "".join(b.text for b in resp.content if b.type == "text")
+        # tool_use block 的 input 天生 object（与 OpenAI 的 JSON string 不同），直取归一化
+        tool_calls = [
+            {"id": getattr(b, "id", "") or "", "name": getattr(b, "name", "") or "",
+             "arguments": dict(b.input) if isinstance(getattr(b, "input", None), dict) else {}}
+            for b in resp.content if b.type == "tool_use" and getattr(b, "name", "")
+        ]
+        return (text, model, resp.stop_reason,
+                (resp.usage.input_tokens, resp.usage.output_tokens), tool_calls)
 
     async def stream(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         system, msgs = self._split(messages)
@@ -316,24 +414,58 @@ class OpenAICompatibleProvider(BaseProvider):
         # thinking_style == "none"（DeepSeek 等）：不发思考键，用服务商默认。
         return body
 
-    async def complete(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
-        body = self._build_body(messages, model, temperature, max_tokens, thinking, stream=False)
+    async def _post_chat(self, body, timeout_s) -> dict:
+        """非流式 chat/completions POST + 错误结构化（complete/complete_tools 共用）。
+        4xx/5xx 的真实拒因在响应体里（如 MiniMax 422 只有 body 说得清是参数还是内容问题），
+        raise_for_status 的异常文本不含 body——截断入异常，网关日志/obs.llm error 直接可诊断
+        （badcase 6d29929e：422 秒拒两次，只留状态码，根因无从判定）。"""
         resp = await self._get_client().post(
             self.base_url, headers=self._headers(), json=body,
             timeout=_http_timeout(timeout_s, _HTTP_READ_CAP_S))
-        # 4xx/5xx 的真实拒因在响应体里（如 MiniMax 422 只有 body 说得清是参数还是内容问题），
-        # raise_for_status 的异常文本不含 body——截断入异常，网关日志/obs.llm error 直接可诊断
-        # （badcase 6d29929e：422 秒拒两次，只留状态码，根因无从判定）。
         if resp.status_code >= 400:
             snippet = (resp.text or "")[:300].replace("\n", " ")
             raise ProviderHTTPError(resp.status_code, snippet, _retry_after_s(resp))
-        data = resp.json()
+        return resp.json()
+
+    async def complete(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
+        body = self._build_body(messages, model, temperature, max_tokens, thinking, stream=False)
+        data = await self._post_chat(body, timeout_s)
 
         content = strip_think_block(data["choices"][0]["message"]["content"] or "")
         usage = data.get("usage", {})
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
         return content, model, "stop", (prompt_tokens, completion_tokens)
+
+    async def complete_tools(self, messages, model, temperature, max_tokens,
+                             tools=None, tool_choice=None, thinking=None, timeout_s=None):
+        """带 tools 的补全（M1a）。tools/tool_choice 为 OpenAI 线格式原样注入
+        （四家 OpenAI 兼容直通，RFC §2/§3.1）；响应 message.tool_calls 经
+        normalize_tool_calls 归一化（arguments string→object）。tool call 场景
+        content 常为空/None，与 tool_calls 并行返回，取舍交调用方。
+
+        finish_reason 只透传不判断：qwen（DashScope 兼容模式）出 tool_calls 时
+        finish_reason 仍是 "stop" 而非 "tool_calls"（2026-07-24 真栈探针实测，
+        其余三家标准）——是否工具调用一律按 tool_calls 置位判断，勿按 finish 分支。"""
+        if not tools:
+            return await super().complete_tools(
+                messages, model, temperature, max_tokens,
+                thinking=thinking, timeout_s=timeout_s)
+        body = self._build_body(messages, model, temperature, max_tokens, thinking, stream=False)
+        body["tools"] = list(tools)
+        if tool_choice is not None:
+            body["tool_choice"] = tool_choice
+        data = await self._post_chat(body, timeout_s)
+
+        choice = data["choices"][0]
+        msg = choice.get("message") or {}
+        content = strip_think_block(msg.get("content") or "")
+        tool_calls = normalize_tool_calls(msg.get("tool_calls"))
+        finish = choice.get("finish_reason") or "stop"
+        usage = data.get("usage", {})
+        return (content, model, finish,
+                (usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)),
+                tool_calls)
 
     async def stream(self, messages, model, temperature, max_tokens, thinking=None, timeout_s=None):
         body = self._build_body(messages, model, temperature, max_tokens, thinking, stream=True)

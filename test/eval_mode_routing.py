@@ -223,20 +223,60 @@ def _make_llm_fn():
     return _llm
 
 
+def _make_llm_tool_fn():
+    """直连 gRPC 的 llm_tool_fn（M1a submit_plan 通道）。恒注入——是否走它由 PlanBuilder
+    按 **eval 进程** env PLANNER_TOOLCALL 门控（builder 是本地代码，非容器内 planner），
+    A/B 切换无需重建容器：`PLANNER_TOOLCALL=on python test/eval_mode_routing.py --live`。
+    解码与生产同源（Clients._destruct_nums 还原 Struct 整数），A/B 环境=生产环境。"""
+    import grpc
+    from google.protobuf.json_format import MessageToDict
+    from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
+    from orchestrator.cloud.clients import Clients
+    addr = os.getenv("LLM_GATEWAY_ADDR", "localhost:50052")
+    ch = grpc.insecure_channel(addr)
+    stub = llm_pb2_grpc.LLMGatewayStub(ch)
+
+    async def _llm_tools(messages: list[dict], tools: dict):
+        req = llm_pb2.CompleteRequest(
+            messages=[llm_pb2.Message(role=m["role"], content=m["content"])
+                      for m in messages],
+            temperature=0.3, max_tokens=800)
+        req.tools.update(tools or {})
+        req.meta["caller_service"] = "eval-mode-routing"
+        resp = stub.Complete(req, timeout=45)
+        calls = []
+        if resp.HasField("tool_calls"):
+            data = MessageToDict(resp.tool_calls)
+            for tc in (data.get("tool_calls") or []):
+                if isinstance(tc, dict) and tc.get("name"):
+                    calls.append({
+                        "id": tc.get("id") or "", "name": tc["name"],
+                        "arguments": Clients._destruct_nums(tc.get("arguments") or {})})
+        return resp.content, calls
+
+    return _llm_tools
+
+
 async def _registry_empty(query: str, top_k: int = 1):
     """catalog 恒含 chitchat → _fallback 走兜底 Agent 分支，语义路由不会被触达。"""
     return []
 
 
-async def _drive_live(raw_cases: list[dict], agents: list) -> list[CaseResult]:
-    builder = PlanBuilder(llm_fn=_make_llm_fn(), registry_fn=_registry_empty)
+async def _drive_live(raw_cases: list[dict], agents: list,
+                      plan_modes: dict | None = None) -> list[CaseResult]:
+    builder = PlanBuilder(llm_fn=_make_llm_fn(), registry_fn=_registry_empty,
+                          llm_tool_fn=_make_llm_tool_fn())
     results: list[CaseResult] = []
     live_cases = [c for c in raw_cases if c.get("live", True)]
     for i, c in enumerate(live_cases, 1):
         text = c["text"]
+        pm = ""
         ws = WorkingSet(catalog=agents, history=list(c.get("history") or []))
         try:
             plan = await builder.build(text, ws, PlanContext())
+            pm = getattr(plan, "plan_mode", "json")
+            if plan_modes is not None:      # M1a 协议层聚合：本轮输出通道分布
+                plan_modes[pm] = plan_modes.get(pm, 0) + 1
             intents = [s.intent for s in plan.steps]
             if getattr(plan, "clarify", None) and not plan.steps:
                 actual_mode = "clarify"
@@ -256,7 +296,9 @@ async def _drive_live(raw_cases: list[dict], agents: list) -> list[CaseResult]:
         results.append(CaseResult(
             id=f"mode::{text}", bucket=(c.get("tags") or ["mode_typical"])[0], text=text,
             expected=expected_repr, actual=f"{actual_mode} {intents}", passed=passed,
-            tags=c.get("tags", []), source=c.get("source", "")))
+            # pm:<plan_mode> 进 tags（M1a per-case 归因：degraded/salvage 落在哪些例上）
+            tags=list(c.get("tags", [])) + ([f"pm:{pm}"] if pm else []),
+            source=c.get("source", "")))
         print(f"  [{i}/{len(live_cases)}] {'PASS' if passed else 'FAIL'} "
               f"{text!r} → {actual_mode} {intents}")
     return results
@@ -312,7 +354,8 @@ def _run_live(raw_cases: list[dict], args, full_cases: list[dict] | None = None)
     agent_map = {a.manifest.agent_id: a for a in agents}
 
     det_results = [_run_det_case(c, agent_map) for c in _det_cases(raw_cases)]
-    live_results = asyncio.run(_drive_live(raw_cases, agents))
+    plan_modes: dict[str, int] = {}
+    live_results = asyncio.run(_drive_live(raw_cases, agents, plan_modes))
     lock.check("live 跑完")   # 漂移守卫：全程 active 未被切走/回落才算数
     cases = det_results + live_results
 
@@ -321,15 +364,24 @@ def _run_live(raw_cases: list[dict], args, full_cases: list[dict] | None = None)
     report["meta"]["provider"] = provider
     report["meta"]["provider_lock"] = lock.summary()
     report["meta"]["clarify_enabled"] = os.getenv("CLARIFY_ENABLED", "off")
+    # M1a A/B：开关状态 + 输出通道分布（协议层指标：toolcall 占比=协议成功率，
+    # salvage/fallback=协议失败率，degraded=完全失败）
+    report["meta"]["planner_toolcall"] = os.getenv("PLANNER_TOOLCALL", "off")
+    report["meta"]["plan_modes"] = plan_modes
     raw_by_text = {c["text"]: c for c in raw_cases}
     matrix = _confusion(live_results, raw_by_text)
     report["meta"]["confusion"] = matrix
     md = render_markdown(report)
     md += _render_confusion(matrix)
     md += (f"\n> active provider：`{provider}`　CLARIFY_ENABLED={report['meta']['clarify_enabled']}"
-           f"　live {len(live_results)} 例 + 确定性子集 {len(det_results)} 例\n")
+           f"　live {len(live_results)} 例 + 确定性子集 {len(det_results)} 例"
+           f"　PLANNER_TOOLCALL={report['meta']['planner_toolcall']}"
+           + (f"　plan_modes={plan_modes}" if plan_modes else "") + "\n")
 
     print(f"\nprovider={provider}")
+    if plan_modes:
+        print(f"plan_modes（M1a 协议层）: {plan_modes}  "
+              f"PLANNER_TOOLCALL={report['meta']['planner_toolcall']}")
     for name, bucket in report["buckets"].items():
         print(f"  {name}: {bucket['passed']}/{bucket['total']}"
               f" ({bucket['pass_rate'] * 100:.1f}%)")

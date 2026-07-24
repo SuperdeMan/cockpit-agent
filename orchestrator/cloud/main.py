@@ -48,6 +48,8 @@ async def serve():
     planner = PlanBuilder(
         llm_fn=clients.llm_complete,
         registry_fn=clients.resolve,
+        # M1a submit_plan 结构化输出通道（PLANNER_TOOLCALL=on 时启用，默认 off）
+        llm_tool_fn=clients.llm_complete_tools,
     )
     tools = ToolRegistry()
     dispatcher = UnifiedDispatcher(
