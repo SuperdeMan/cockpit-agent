@@ -37,7 +37,7 @@ observability/  可观测模块：NATS 事件出口、collector、trace/日志/�
 hmi/            React 座舱前端
 dashboard/      React 开发/演示可观测台（不进入车控执行主链）
 deploy/         docker-compose / helm / k8s
-scripts/        codegen、构建辅助（含 gen-certs.* 生成 mTLS 证书）
+scripts/        codegen、构建辅助（含 gen-certs.* 生成 mTLS 证书）、自进化流水线 evolve.py（M1b，nightly 经 Task Scheduler）
 runtime/        共享 gRPC 运行时（keepalive/优雅停机/mTLS 工厂；全 Python 服务经此建 channel/server）
 docs/           架构与设计文档
 test/           端到端场景测试

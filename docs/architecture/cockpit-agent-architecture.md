@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.2（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-07-17（v1.2 定稿归档）
+> 版本：v1.3（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-07-24（v1.3 定稿归档）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -356,6 +356,14 @@ flowchart LR
 - **执行与规划分离**：LLM 只负责"规划"（决定调谁、传什么），实际"执行"由确定性的 Executor 完成（带超时/重试/熔断）。**LLM 不直接产生车控信号**——车控类 action 一律回流到端侧 VAL 经权限校验后执行（见 §9.1）。
 - **结果聚合**：多 Agent 结果由 LLM 改写成连贯的口语化播报 + 结构化卡片，保证体验一致。
 - **多轮与澄清**：缺槽位（`NEED_SLOT`）或需确认（`NEED_CONFIRM`）时，生成追问，挂起任务状态等待用户回复。
+
+### 5.2.1 规划知识 Skill 层与结构化规划输出（2026-07-24 定稿归档）
+
+Planner 的两种"智能供给"均已声明式化（设计详见 `docs/design/2026-07-24-eva-benchmark-intelligence-upgrade.md` 与两份子 RFC）：
+
+1. **规划知识 Skill 层（`skills/`，M0b）**：领域组合知识与跨域判据从中央 system prompt 外迁为声明式文件——`guides/`（领域组合知识+few-shot，纯词法检索 top-K 按需注入）、`policies/`（跨域规划**软约束**，常驻注入）、`workflows/`（v2 预留）。`SKILLS_MODE=off|shadow|canary|full`（默认 full）；中央 `_PLANNER_BASE` 只余通用规划契约。**加规划知识=投 skill 文件，不改编排核心**——与 route_hints（LLM 之后的确定性纠错）互补：skill 是 LLM 之前的知识供给。权威链（软硬分层）：VAL/payment/Runtime Policy > Capability Manifest > Plan Validator > PlannerPolicyPack（软）> PlanningGuide（软）。
+2. **结构化规划输出（`submit_plan`，M1a）**：规划轮经原生 function calling 强制输出合法 Plan JSON（单一 `submit_plan` 工具、named tool_choice，`PLANNER_TOOLCALL=on|off` 默认 on），替代文本补全+脆弱 JSON 截取。schema 顶层=既有计划协议、**不含 `require_confirm`**（确认权在 capability manifest ∨ action ∨ VAL 硬层，LLM 无权降级）；协议失败轮内降级（同轮文本抢救→JSON 路径→兜底），最坏调用数与旧路径持平。承载走既有 `CompleteRequest.tools`/`CompleteResponse.tool_calls` Struct 字段（V1 不改 proto；V2 真 agentic tool loop 需 proto 演进）。
+   - 实施教训（V2 设计约束）：tool schema 与输出指令会三向改变模型输出分布（可选字段诱发多填、无说明 object 诱发少填、"写全"指令诱发编造占位值）——凡改 schema 必过旅程级行为对照。
 
 ### 5.3 为什么"规划/执行分离"是 P0 安全要求
 让 LLM 直接调用车控接口（function calling 直连车身）在量产不可接受：幻觉、注入攻击会变成真实的车辆动作。本设计中 LLM 的输出永远是"计划/意图"，所有副作用动作（尤其 `vehicle.control`）都要经过确定性的、可审计的 Executor + VAL 权限层（见 §9）。
@@ -761,5 +769,6 @@ agents/<name>/
 | v1.0 | 2026-05-29 | 初版设计稿（待评审）：整体架构、组件职责、契约、数据流、安全、选型、部署、分阶段路线 |
 | v1.1 | 2026-06-15 | 定为当前架构基线（Phase 1 实施基线） |
 | v1.2 | 2026-07-17 | 内容性合入：§8.1 LLM 网关多模型运行时、§9.5 数据真实性（provider 决议契约与卡片 provenance）两主题定稿归档 |
+| v1.3 | 2026-07-24 | 内容性合入：§5.2.1 规划知识 Skill 层（M0b）与结构化规划输出 submit_plan（M1a）定稿归档 |
 
 > 校准记录（不 bump）：2026-07-02/03/10 同步 R1-R3 落地现状；2026-07-18 实现说明、§3.1 T0-T2 运行模型对应、点餐→周边发现、§13 目录映射校准。

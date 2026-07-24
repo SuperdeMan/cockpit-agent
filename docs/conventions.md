@@ -190,6 +190,8 @@
 | `TTS_STREAM_PROVIDER` | 服务端流式 TTS 引擎：`cosyvoice`(默认·run-task)/`qwen`(realtime·含方言)/`mimo`(MiMo v2.5 流式·复用 `LLM_API_KEY`)/`minimax`(T2A 流式·复用 `MINIMAX_API_KEY`)/`mock`/`off`；无 key 时 HMI 无感回退批处理 | 否 |
 | `TTS_STREAM_MODEL` | 覆盖流式模型；留空用引擎默认 | 否 |
 | `TTS_STREAM_VOICE` | 覆盖流式默认音色；留空用引擎默认（cosyvoice `longxiaochun_v3` / qwen `Cherry` / mimo `冰糖` / minimax `female-tianmei`）；HMI 设置逐请求可覆盖 | 否 |
+| `TTS_INSTRUCT_DEFAULT` | 情感 TTS 指令（M1b 能力面，仅 cosyvoice）：如「用温柔的语气说」；缺省空=不发键零行为变化；按情绪标签动态选参的接线留 M2 emotion | 否 |
+| `TTS_SPEED_DEFAULT` | 语速（M1b 能力面，仅 cosyvoice `rate`，0.5~2.0 夹紧）；缺省空=不发键 | 否 |
 | `DASHSCOPE_TTS_INFERENCE_WS_URL` / `DASHSCOPE_TTS_REALTIME_WS_URL` | DashScope 流式 TTS 端点：cosyvoice→`/api-ws/v1/inference`、qwen→`/api-ws/v1/realtime` | 否（有默认）|
 | `MINIMAX_TTS_MODEL` / `MINIMAX_TTS_VOICE` / `MINIMAX_T2A_URL` | MiniMax TTS 模型 / 默认音色 / T2A 端点（与 MiniMax LLM 同 `MINIMAX_API_KEY`）| 否（默认 speech-2.8-turbo / female-tianmei / api.minimaxi.com/v1/t2a_v2）|
 | `AUDIO_HTTP_PORT` | ASR/TTS HTTP 代理端口 | 否（默认 50059）|
@@ -251,6 +253,8 @@
 | `PLANNER_CTX_BUDGET_CHARS` | 上下文块（焦点+记忆+历史）字符预算 | 否（默认 1400） |
 | `PLANNER_CATALOG_BUDGET_CHARS` | catalog JSON 字符预算（超则丢尾部 agent）| 否（默认 8000） |
 | `PLANNER_FALLBACK_AGENT` | LLM 规划失败/抽风时的全局兜底 Agent（R2.1 P5，取代硬编码 chitchat）| 否（默认 `chitchat`） |
+| `SKILLS_MODE` | 规划知识 Skill 层（M0b）：`full`=检索注入（默认）\|`canary`\|`shadow`=只检索记录\|`off`；Full Migration 后中央 base 无领域知识，shadow/off 仅研究/debug 档 | 否（默认 `full`） |
+| `PLANNER_TOOLCALL` | 结构化规划输出（M1a submit_plan）：`on`=原生 function calling 强制合法 Plan（默认）\|`off`=JSON 纯文本回退档（对照/应急） | 否（默认 `on`） |
 | `PERMISSIONS_FAIL_OPEN` | 请求无 `granted_scopes` 时的权限兜底（R2.2）：`true`/默认=PoC 全开保持现状；`false`=fail-closed 仅无权限 Agent 可达 + 记结构化审计 | 否（默认 `true`） |
 
 ### 会话鉴权（R3.1，最小闭环）
@@ -438,3 +442,17 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
 - 域名清单：weather / search / news / sports / stock / poi(navigation) / place(nearby) /
   charging / knowledge(manual-rag) / parking(设计即模拟，严格栈豁免) +
   llm-gateway 侧 llm / embed / asr / tts。
+
+### 9.5 诚实降级话术契约（R9：话术型拒绝用 OK，不用 FAILED）
+
+Agent 返回**带用户话术的诚实拒绝/降级**（「没找到这条提醒」「服务暂时不可用」「没有查到」）
+时，`AgentResult` **必须用 OK 状态承载话术**，不得用 FAILED——链路事实：executor
+`_to_result` 不映射 `resp.error`、聚合器对单步 FAILED 只读 `r.error`，FAILED 上的话术
+会被吞成裸「抱歉，处理失败」。FAILED 仅用于**无话术可播的真异常**（超时/崩溃），由聚合
+器出通用失败话术。
+
+- 成文注释：`agents/info/tests/test_agent.py:311`；对齐修复史：M0a 三 Agent
+  （navigation / charging_planner / nearby，2026-07-24）+ reminder 五处
+  （badcase「取消观看的提醒」，2026-07-24——第四个 Agent 中招后由此正式登记）。
+- 新写 Agent 的 handler 自查：`return AgentResult(status=FAILED, speech=...)` 且 speech
+  是给用户听的话 → 改 OK。

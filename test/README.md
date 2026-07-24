@@ -80,6 +80,7 @@ python test/e2e_mtls.py                    # 断言型：服务间 mTLS（需 GR
 python test/e2e_journeys.py                # 旅程级（L3）：跨 Agent 自主执行 × 全场景连续对话（见下节）；--provider <pid> 锁定 active LLM（评测中途漂移=报告作废、退出码 1）
 python -m pytest test/e2e_real_providers.py -q -s   # 无需 docker：真实三方 provider 冒烟（按 key 自动 skip）
 python test/e2e_strict_stack.py            # 断言型：数据真实性——严格栈冒烟 + mock 泄漏探针（三问外源卡 _prov 全 real；active=mock 自动 SKIP，属 live 车道）（2026-07-17）
+python test/e2e_planner_toolcall.py        # 协议探针：各 provider tool-calling 真实行为矩阵（M1a submit_plan；named tool_choice/arguments 合法性/finish_reason，--providers 指定逐家 pin）（2026-07-24）
 ```
 
 ### 5.1 旅程级测试（L3）与 HMI CDP 层（L4）
