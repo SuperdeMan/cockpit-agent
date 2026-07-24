@@ -42,6 +42,21 @@ def test_cosyvoice_run_task_frame():
     assert p["input"] == {}
 
 
+def test_cosyvoice_run_task_instruct_speed_optional():
+    """M1b C 件（情感 TTS 能力面）：instruct/speed 缺省不发键=帧字节级不变（上面用例
+    锁定）；给了才注入 instruction/rate，rate 夹紧 [0.5, 2.0]。"""
+    f = _cosyvoice_run_task("t", "m", "v", 22050, instruct="用温柔的语气说", speed=1.2)
+    p = f["payload"]["parameters"]
+    assert p["instruction"] == "用温柔的语气说"
+    assert p["rate"] == 1.2
+    clamped = _cosyvoice_run_task("t", "m", "v", 22050, speed=9.9)
+    assert clamped["payload"]["parameters"]["rate"] == 2.0
+    assert "instruction" not in clamped["payload"]["parameters"]
+    plain = _cosyvoice_run_task("t", "m", "v", 22050)
+    assert "instruction" not in plain["payload"]["parameters"]
+    assert "rate" not in plain["payload"]["parameters"]
+
+
 def test_cosyvoice_continue_and_finish_frames():
     c = _cosyvoice_continue("tid1", "你好")
     assert c["header"]["action"] == "continue-task"

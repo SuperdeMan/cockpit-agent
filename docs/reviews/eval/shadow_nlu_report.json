@@ -1,0 +1,387 @@
+{
+  "meta": {
+    "subject": "shadow_nlu",
+    "generated_at": "2026-07-24T15:02:26.782442+00:00",
+    "commit": "b9a700c",
+    "corpus": "test/eval_corpus/feishu_intents_full.jsonl",
+    "scope": 8579,
+    "llm_covered": 8559
+  },
+  "rule_arm": {
+    "hit_rate_total": 0.7586,
+    "hit_rate_edge_subset": 0.7973
+  },
+  "llm_arm": {
+    "domain_acc_total": 0.9121,
+    "domain_acc_edge_subset": 0.9068,
+    "unknown_rate": 0.0043
+  },
+  "confusion": {
+    "app": {
+      "app": 76,
+      "setting": 27,
+      "navi": 13,
+      "media": 2,
+      "unknown": 1,
+      "phone": 1
+    },
+    "base": {
+      "base": 23,
+      "media": 17,
+      "app": 11,
+      "setting": 5,
+      "unknown": 1
+    },
+    "information": {
+      "information": 235,
+      "app": 20,
+      "unknown": 20,
+      "phone": 12,
+      "navi": 10
+    },
+    "media": {
+      "media": 994,
+      "app": 134,
+      "setting": 51
+    },
+    "navi": {
+      "navi": 1102,
+      "setting": 33,
+      "information": 23,
+      "app": 11,
+      "unknown": 5,
+      "base": 2
+    },
+    "phone": {
+      "phone": 117,
+      "app": 12
+    },
+    "setting": {
+      "setting": 3761,
+      "app": 225,
+      "media": 53,
+      "base": 27,
+      "unknown": 10,
+      "phone": 7,
+      "navi": 4
+    },
+    "weather": {
+      "weather": 1499,
+      "information": 15
+    }
+  },
+  "buckets": {
+    "setting": {
+      "count": 4087,
+      "rule_hit": 2992,
+      "switch_candidate": 995,
+      "both_miss": 100,
+      "rule_hit_rate": 0.7321,
+      "switch_gain": 0.2435
+    },
+    "weather": {
+      "count": 1514,
+      "rule_hit": 1271,
+      "switch_candidate": 243,
+      "both_miss": 0,
+      "rule_hit_rate": 0.8395,
+      "switch_gain": 0.1605
+    },
+    "media": {
+      "count": 1179,
+      "rule_hit": 1090,
+      "switch_candidate": 44,
+      "both_miss": 45,
+      "rule_hit_rate": 0.9245,
+      "switch_gain": 0.0373
+    },
+    "navi": {
+      "count": 1176,
+      "rule_hit": 663,
+      "switch_candidate": 496,
+      "both_miss": 17,
+      "rule_hit_rate": 0.5638,
+      "switch_gain": 0.4218
+    },
+    "information": {
+      "count": 297,
+      "rule_hit": 288,
+      "switch_candidate": 2,
+      "both_miss": 7,
+      "rule_hit_rate": 0.9697,
+      "switch_gain": 0.0067
+    },
+    "phone": {
+      "count": 129,
+      "rule_hit": 91,
+      "switch_candidate": 38,
+      "both_miss": 0,
+      "rule_hit_rate": 0.7054,
+      "switch_gain": 0.2946
+    },
+    "app": {
+      "count": 120,
+      "rule_hit": 97,
+      "switch_candidate": 15,
+      "both_miss": 8,
+      "rule_hit_rate": 0.8083,
+      "switch_gain": 0.125
+    },
+    "base": {
+      "count": 57,
+      "rule_hit": 3,
+      "switch_candidate": 23,
+      "both_miss": 31,
+      "rule_hit_rate": 0.0526,
+      "switch_gain": 0.4035
+    }
+  },
+  "switch_ranking": [
+    {
+      "domain": "setting",
+      "count": 4087,
+      "rule_hit": 2992,
+      "switch_candidate": 995,
+      "both_miss": 100,
+      "rule_hit_rate": 0.7321,
+      "switch_gain": 0.2435
+    },
+    {
+      "domain": "navi",
+      "count": 1176,
+      "rule_hit": 663,
+      "switch_candidate": 496,
+      "both_miss": 17,
+      "rule_hit_rate": 0.5638,
+      "switch_gain": 0.4218
+    },
+    {
+      "domain": "weather",
+      "count": 1514,
+      "rule_hit": 1271,
+      "switch_candidate": 243,
+      "both_miss": 0,
+      "rule_hit_rate": 0.8395,
+      "switch_gain": 0.1605
+    },
+    {
+      "domain": "media",
+      "count": 1179,
+      "rule_hit": 1090,
+      "switch_candidate": 44,
+      "both_miss": 45,
+      "rule_hit_rate": 0.9245,
+      "switch_gain": 0.0373
+    },
+    {
+      "domain": "phone",
+      "count": 129,
+      "rule_hit": 91,
+      "switch_candidate": 38,
+      "both_miss": 0,
+      "rule_hit_rate": 0.7054,
+      "switch_gain": 0.2946
+    },
+    {
+      "domain": "base",
+      "count": 57,
+      "rule_hit": 3,
+      "switch_candidate": 23,
+      "both_miss": 31,
+      "rule_hit_rate": 0.0526,
+      "switch_gain": 0.4035
+    },
+    {
+      "domain": "app",
+      "count": 120,
+      "rule_hit": 97,
+      "switch_candidate": 15,
+      "both_miss": 8,
+      "rule_hit_rate": 0.8083,
+      "switch_gain": 0.125
+    },
+    {
+      "domain": "information",
+      "count": 297,
+      "rule_hit": 288,
+      "switch_candidate": 2,
+      "both_miss": 7,
+      "rule_hit_rate": 0.9697,
+      "switch_gain": 0.0067
+    }
+  ],
+  "slot_samples": {
+    "setting": [
+      {
+        "text": "打开座椅加热",
+        "slots": {
+          "object": "座椅加热",
+          "action": "打开"
+        }
+      },
+      {
+        "text": "打开主驾座椅加热",
+        "slots": {
+          "object": "主驾座椅加热",
+          "action": "打开"
+        }
+      },
+      {
+        "text": "请将右座椅加热打开",
+        "slots": {
+          "object": "右座椅加热",
+          "action": "打开"
+        }
+      }
+    ],
+    "weather": [
+      {
+        "text": "上午天气怎么样",
+        "slots": {
+          "date": "上午"
+        }
+      },
+      {
+        "text": "麻烦你将大后年的天气查询",
+        "slots": {
+          "date": "大后年"
+        }
+      },
+      {
+        "text": "五更天的天气查询一下",
+        "slots": {
+          "date": "五更天"
+        }
+      }
+    ],
+    "app": [
+      {
+        "text": "打开行车记录仪",
+        "slots": {
+          "object": "行车记录仪",
+          "action": "打开"
+        }
+      },
+      {
+        "text": "请把行车记录仪打开",
+        "slots": {
+          "object": "行车记录仪",
+          "action": "打开"
+        }
+      },
+      {
+        "text": "请帮我把行车记录仪打开一下",
+        "slots": {
+          "object": "行车记录仪",
+          "action": "打开"
+        }
+      }
+    ],
+    "media": [
+      {
+        "text": "切换音效",
+        "slots": {
+          "object": "音效",
+          "action": "切换"
+        }
+      },
+      {
+        "text": "请帮我把音效切换",
+        "slots": {
+          "object": "音效",
+          "action": "切换"
+        }
+      },
+      {
+        "text": "换音效",
+        "slots": {
+          "object": "音效",
+          "action": "切换"
+        }
+      }
+    ],
+    "base": [
+      {
+        "text": "上一个",
+        "slots": {
+          "action": "上一个"
+        }
+      },
+      {
+        "text": "切换上一个",
+        "slots": {
+          "action": "切换上一个"
+        }
+      },
+      {
+        "text": "切上一个",
+        "slots": {
+          "action": "切上一个"
+        }
+      }
+    ],
+    "phone": [
+      {
+        "text": "接听",
+        "slots": {
+          "action": "接听"
+        }
+      },
+      {
+        "text": "接听一下电话",
+        "slots": {
+          "action": "接听"
+        }
+      },
+      {
+        "text": "把电话接听",
+        "slots": {
+          "action": "接听"
+        }
+      }
+    ],
+    "navi": [
+      {
+        "text": "打开导航播报",
+        "slots": {
+          "object": "导航播报",
+          "action": "打开"
+        }
+      },
+      {
+        "text": "麻烦你将导航信息播报打开",
+        "slots": {
+          "object": "导航信息播报",
+          "action": "打开"
+        }
+      },
+      {
+        "text": "请将导航信息播报打开",
+        "slots": {
+          "object": "导航信息播报",
+          "action": "打开"
+        }
+      }
+    ],
+    "information": [
+      {
+        "text": "查一下深圳成指情况",
+        "slots": {
+          "keyword": "深圳成指"
+        }
+      },
+      {
+        "text": "请帮我把标普500指数的信息查询一下",
+        "slots": {
+          "keyword": "标普500指数"
+        }
+      },
+      {
+        "text": "请将标普500的信息查询清楚",
+        "slots": {
+          "keyword": "标普500"
+        }
+      }
+    ]
+  }
+}

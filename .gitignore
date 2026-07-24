@@ -71,3 +71,4 @@ hmi/public/kws/
 
 # 本机 compose 应急 override（winnat 端口保留区等，见文件头注释）
 compose.*.local.yaml
+docs/reviews/badcase/.work/

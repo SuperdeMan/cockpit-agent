@@ -1285,12 +1285,21 @@ class BaseStreamingTTSProvider:
 
 
 # ── 协议帧构造（纯函数，离线单测）──
-def _cosyvoice_run_task(task_id: str, model: str, voice: str, sample_rate: int) -> dict:
+def _cosyvoice_run_task(task_id: str, model: str, voice: str, sample_rate: int,
+                        instruct: str = "", speed: float = 0.0) -> dict:
+    """M1b C 件（母提案 §4.H 情感 TTS）：可选 instruct（指令化情感/风格，cosyvoice v3
+    `instruction` 参数）与 speed（语速 `rate`，DashScope 取值 0.5~2.0）。缺省不发键=
+    与既有请求字节级一致；话术层按情绪标签选参的接线等 §4.D emotion 落地（M2）。"""
+    params: dict = {"text_type": "PlainText", "voice": voice,
+                    "format": "pcm", "sample_rate": sample_rate}
+    if instruct:
+        params["instruction"] = instruct
+    if speed and speed > 0:
+        params["rate"] = max(0.5, min(2.0, float(speed)))
     return {"header": {"action": "run-task", "task_id": task_id, "streaming": "duplex"},
             "payload": {"task_group": "audio", "task": "tts", "function": "SpeechSynthesizer",
                         "model": model,
-                        "parameters": {"text_type": "PlainText", "voice": voice,
-                                       "format": "pcm", "sample_rate": sample_rate},
+                        "parameters": params,
                         "input": {}}}
 
 
@@ -1315,8 +1324,16 @@ class DashScopeCosyVoiceProvider(BaseStreamingTTSProvider):
         self.model = model
         self.voice = voice
         self.sample_rate = sample_rate
+        # M1b C 件：情感/语速默认经 env 注入（缺省空=零行为变化）；请求级参数化接线
+        # 等 §4.D emotion 标签落地（M2）后走 stream() 形参。
+        self.instruct = os.getenv("TTS_INSTRUCT_DEFAULT", "").strip()
+        try:
+            self.speed = float(os.getenv("TTS_SPEED_DEFAULT", "0") or 0)
+        except ValueError:
+            self.speed = 0.0
 
-    async def stream(self, text_deltas, *, voice="", sample_rate=0):
+    async def stream(self, text_deltas, *, voice="", sample_rate=0,
+                     instruct="", speed=0.0):
         import uuid
         import aiohttp
         voice = voice or self.voice
@@ -1326,7 +1343,9 @@ class DashScopeCosyVoiceProvider(BaseStreamingTTSProvider):
             async with session.ws_connect(
                 self.ws_url, headers={"Authorization": f"bearer {self.api_key}"}, heartbeat=20.0,
             ) as ws:
-                await ws.send_json(_cosyvoice_run_task(task_id, self.model, voice, sr))
+                await ws.send_json(_cosyvoice_run_task(
+                    task_id, self.model, voice, sr,
+                    instruct=instruct or self.instruct, speed=speed or self.speed))
                 started = asyncio.Event()
 
                 async def pump():
