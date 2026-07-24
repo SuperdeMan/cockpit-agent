@@ -154,3 +154,9 @@ Edge Semantic NLU 运行时接入（M2+，等 A 报告）；自动合入/自动 
 **验证**：新增单测 15（scripts/tests/test_evolve 9 + test_shadow_nlu 4 + tts 帧 1 + 报告迭代 1）；全量 pytest **1786 passed / 7 skipped** 零回归。运行时零改动（B 纯脚本；C 缺省零变化）——journeys 无需重跑。
 
 **遗留/下游**：①日报未知族「取消观看的提醒」待审（可能与 journey cleanup 断链同族）；②shadow 残留 20 条重跑补齐（`--report-only` 前再跑一次主命令即可）；③Edge Semantic NLU 立项决策（navi+setting 先行）随 M2 规划；④正式 nightly 调度（Task Scheduler）留泓舟环境侧配置。
+
+### 8.1 补记（2026-07-24 深夜，遗留①②④全清 + 闭环首个完整案例）
+
+- **闭环首案（日报→审→根因→修→绿）**：泓舟审日报后拍板处理「取消观看的提醒」族——四层根因：世界杯 07-19 已结束（数据源真空窗）→ A2-2a `skip_journey_if` 表写「没有查到」漏配实际话术「没有查**询**到」致假跑 → sports 诚实话术含「提醒」字样致 `speech_any:[提醒]` 假 PASS → cleanup 找不到提醒的 FAILED 话术被聚合器吞。修复：①reminder 五处 `FAILED→OK`（**R9 契约第四个 Agent 中招，已正式登记 `docs/conventions.md` §9.5**），真栈探针「没找到这条提醒…」诚实话术 ✓；②A2-2a skip 表补「没有查询到」，真栈 SKIP ✓（赛事空窗期不再假跑）。断言 `speech_any:[提醒]` 过宽由 skip 修复覆盖，未单独收紧（收紧需采样选型，非本卡）。
+- **shadow 残留 20 条根因并修**：相似句批（播放音乐×4+音乐 app×6 / USB 图片×10）诱发每条饱满 slots，输出恰在数组闭合 `]` 前截断——`parse_batch_reply` 补「闭合符修复」（条目完整性仍由 json.loads 保证，非内容抢救）+ max_tokens 1200→1600；**8579/8579 全覆盖**，终版指标不变（75.9% vs 91.2%）。
+- **nightly 调度落地**：evolve.py 补 collector 不可达优雅 SKIP（无人值守栈未起退出 0）；Task Scheduler `car-agent-evolve-nightly` 每日 23:30（cmd 包装 PYTHONIOENCODING=utf-8，日志 `.work/nightly.log`），手动触发真栈验证 LastTaskResult=0 全链跑通。

@@ -142,13 +142,19 @@ def _plan_mode_of(trace: dict) -> tuple[str, str]:
     return "", ""
 
 
-def cmd_mine(args) -> Path:
+def cmd_mine(args) -> Path | None:
     date = args.date
     since_dt = datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=_TZ)
     until_dt = (datetime.strptime(args.until, "%Y-%m-%d").replace(tzinfo=_TZ)
                 + timedelta(days=1)) if args.until else since_dt + timedelta(days=1)
     since_ms, until_ms = int(since_dt.timestamp() * 1000), int(until_dt.timestamp() * 1000)
     base = _collector()
+    try:
+        _http_json(f"{base}/healthz")
+    except Exception as e:
+        # nightly 无人值守：栈未起（collector 不可达）优雅 SKIP 退出 0，不 crash 不产空报告
+        print(f"SKIP：collector 不可达（{e}）——栈未起，本次 nightly 跳过")
+        return None
     turns = _http_json(f"{base}/api/search?since={since_ms}&until={until_ms}&limit=800")
     if not args.include_synthetic:
         turns = [t for t in turns if not is_synthetic(t.get("session_id") or "")]
@@ -466,7 +472,9 @@ def main() -> int:
     if args.cmd == "all":
         for name in ("mine", "triage", "propose", "gate", "report"):
             print(f"── {name} ──")
-            steps[name](args)
+            out = steps[name](args)
+            if name == "mine" and out is None:   # 栈未起 SKIP：后续步全免（nightly 幂等）
+                return 0
     else:
         steps[args.cmd](args)
     return 0

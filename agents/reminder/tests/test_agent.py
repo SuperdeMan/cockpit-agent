@@ -157,7 +157,7 @@ async def test_cancel_single_and_not_found():
     res = await run_handle(a, "reminder.cancel", raw_text="不用提醒我带充电线了")
     assert res.status == "ok" and "取消" in res.speech
     res2 = await run_handle(a, "reminder.cancel", raw_text="取消买牛奶那条")
-    assert res2.status == "failed" and "没找到" in res2.speech
+    assert res2.status == "ok" and "没找到" in res2.speech   # R9：诚实降级用 OK（FAILED 话术会被聚合器吞）
 
 
 @pytest.mark.asyncio

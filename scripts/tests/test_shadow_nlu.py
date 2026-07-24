@@ -40,3 +40,17 @@ def test_parse_batch_garbage_and_slot_truncation():
 
 def test_extract_json_array_from_noise():
     assert sn._extract_json_array('噪声 [1,2] 尾') == "[1,2]"
+
+
+def test_parse_batch_truncated_array_salvaged():
+    """截断抢救（真栈残留 20 条根因）：条目全完整只缺数组闭合 ']' → 补闭合恢复；
+    末尾残项丢弃（不落盘重试）；纯残片仍整批失败。"""
+    raw = ('[{"id":1,"domain":"media","slots":{"action":"播放"}},'
+           '{"id":2,"domain":"app","slots":{"action":"打开","object":"QQ音乐"}}')  # 无 ]
+    out = sn.parse_batch_reply(raw, _BATCH)
+    assert [r["idx"] for r in out] == [10, 11]
+    assert out[1]["llm_slots"]["object"] == "QQ音乐"
+    trunc_mid = raw + ',{"id":3,"domain":"na'          # 末尾残项 → 完整两项保留
+    out2 = sn.parse_batch_reply(trunc_mid, _BATCH)
+    assert [r["idx"] for r in out2] == [10, 11]
+    assert sn.parse_batch_reply('[{"id":1,"domai', _BATCH) == []   # 纯残片整批失败

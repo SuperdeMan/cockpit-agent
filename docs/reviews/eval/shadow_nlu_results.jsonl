@@ -8557,3 +8557,23 @@
 {"idx": 8587, "llm_domain": "media", "llm_slots": {"action": "不喜欢", "object": "收音机节目"}}
 {"idx": 8588, "llm_domain": "setting", "llm_slots": {"action": "打开", "object": "免唤醒词"}}
 {"idx": 8589, "llm_domain": "setting", "llm_slots": {"action": "关闭", "object": "免唤醒词"}}
+{"idx": 6708, "llm_domain": "setting", "llm_slots": {"object": "USB图片", "action": "关闭", "scope": "司机区与乘客区"}}
+{"idx": 6709, "llm_domain": "setting", "llm_slots": {"object": "USB图片", "action": "关闭"}}
+{"idx": 6710, "llm_domain": "setting", "llm_slots": {"object": "USB图片", "action": "关闭"}}
+{"idx": 6711, "llm_domain": "setting", "llm_slots": {"object": "USB图片", "action": "关闭"}}
+{"idx": 6712, "llm_domain": "setting", "llm_slots": {"object": "U盘图片", "action": "关闭"}}
+{"idx": 6713, "llm_domain": "setting", "llm_slots": {"object": "U盘图片", "action": "关闭"}}
+{"idx": 6714, "llm_domain": "media", "llm_slots": {"object": "司机区相册", "action": "继续播放"}}
+{"idx": 6715, "llm_domain": "media", "llm_slots": {"object": "乘客区图片", "action": "继续播放"}}
+{"idx": 6716, "llm_domain": "media", "llm_slots": {"object": "乘客区图片", "action": "继续播放"}}
+{"idx": 6717, "llm_domain": "media", "llm_slots": {"object": "驾驶区图片", "action": "继续播放"}}
+{"idx": 2052, "llm_domain": "media", "llm_slots": {"action": "播放", "object": "音乐"}}
+{"idx": 2053, "llm_domain": "media", "llm_slots": {"action": "播放", "object": "音乐"}}
+{"idx": 2054, "llm_domain": "media", "llm_slots": {"action": "播放", "object": "音乐"}}
+{"idx": 2055, "llm_domain": "media", "llm_slots": {"action": "播放", "object": "音乐", "duration": "一会儿"}}
+{"idx": 2056, "llm_domain": "app", "llm_slots": {"action": "打开", "object": "酷狗音乐"}}
+{"idx": 2057, "llm_domain": "app", "llm_slots": {"action": "打开", "object": "QQ音乐"}}
+{"idx": 2058, "llm_domain": "app", "llm_slots": {"action": "打开", "object": "QQ音乐"}}
+{"idx": 2059, "llm_domain": "app", "llm_slots": {"action": "打开", "object": "QQ音乐"}}
+{"idx": 2061, "llm_domain": "app", "llm_slots": {"action": "打开", "object": "QQ音乐"}}
+{"idx": 2062, "llm_domain": "app", "llm_slots": {"action": "关闭", "object": "酷狗音乐"}}

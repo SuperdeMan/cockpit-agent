@@ -81,7 +81,9 @@ class ReminderAgent(BaseAgent):
                     "reminder.update": self._update}
         h = handlers.get(intent.name)
         if not h:
-            return AgentResult(status=FAILED, speech="提醒助手暂不支持该请求。")
+            # R9 契约：诚实拒绝用 OK——FAILED 话术会被聚合器吞成裸「抱歉，处理失败」
+            # （M0a 三 Agent 同款修法；真栈 badcase 2026-07-24「取消观看的提醒」第四处补齐）
+            return AgentResult(speech="提醒助手暂不支持该请求。")
         return await h(intent, ctx, meta)
 
     # 测试注入点：所有"现在"经此取
@@ -274,8 +276,9 @@ class ReminderAgent(BaseAgent):
         await self._refresh_active(ctx)
         await self._clear_pending(ctx)
         if not ok:
-            return AgentResult(status=FAILED,
-                               speech="这条提醒不在了，说「看看我的提醒」我给你列一下。")
+            # R9：诚实降级话术用 OK（FAILED 会被聚合器吞）
+            return AgentResult(
+                speech="这条提醒不在了，说「看看我的提醒」我给你列一下。")
         r2 = await self.store.get(self._uid(ctx), rid)
         return AgentResult(speech=f"好的，「{title}」改到{pt.display}。",
                            ui_card=self._card_single(r2, "updated"))
@@ -285,8 +288,9 @@ class ReminderAgent(BaseAgent):
         raw = intent.raw_text or ""
         hits = await self._resolve_targets(ctx, raw, intent.slots)
         if not hits:
-            return AgentResult(status=FAILED,
-                               speech="没找到要改的提醒，说「看看我的提醒」我给你列一下。")
+            # R9：诚实降级话术用 OK（FAILED 会被聚合器吞）
+            return AgentResult(
+                speech="没找到要改的提醒，说「看看我的提醒」我给你列一下。")
         if len(hits) > 1:
             return await self._clarify_multi(ctx, hits, "改")
         r = hits[0]
@@ -405,8 +409,9 @@ class ReminderAgent(BaseAgent):
     async def _complete(self, intent, ctx, meta) -> AgentResult:
         hits = await self._resolve_targets(ctx, intent.raw_text or "", intent.slots)
         if not hits:
-            return AgentResult(status=FAILED,
-                               speech="没找到这条提醒，说「看看我的提醒」我给你列一下。")
+            # R9：诚实降级话术用 OK（FAILED 会被聚合器吞）
+            return AgentResult(
+                speech="没找到这条提醒，说「看看我的提醒」我给你列一下。")
         if len(hits) > 1:
             return await self._clarify_multi(ctx, hits, "完成")
         r = hits[0]
@@ -436,8 +441,9 @@ class ReminderAgent(BaseAgent):
                                speech=f"确定要清空全部 {n} 条提醒和待办吗？清掉就找不回来了。")
         hits = await self._resolve_targets(ctx, raw, intent.slots)
         if not hits:
-            return AgentResult(status=FAILED,
-                               speech="没找到这条提醒，说「看看我的提醒」我给你列一下。")
+            # R9：诚实降级话术用 OK（FAILED 会被聚合器吞）
+            return AgentResult(
+                speech="没找到这条提醒，说「看看我的提醒」我给你列一下。")
         if len(hits) > 1:
             return await self._clarify_multi(ctx, hits, "取消")
         r = hits[0]

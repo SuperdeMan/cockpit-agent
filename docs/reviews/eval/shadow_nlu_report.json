@@ -1,24 +1,24 @@
 {
   "meta": {
     "subject": "shadow_nlu",
-    "generated_at": "2026-07-24T15:02:26.782442+00:00",
-    "commit": "b9a700c",
+    "generated_at": "2026-07-24T15:30:57.614049+00:00",
+    "commit": "a10fe2a",
     "corpus": "test/eval_corpus/feishu_intents_full.jsonl",
     "scope": 8579,
-    "llm_covered": 8559
+    "llm_covered": 8579
   },
   "rule_arm": {
     "hit_rate_total": 0.7586,
     "hit_rate_edge_subset": 0.7973
   },
   "llm_arm": {
-    "domain_acc_total": 0.9121,
-    "domain_acc_edge_subset": 0.9068,
+    "domain_acc_total": 0.9116,
+    "domain_acc_edge_subset": 0.9063,
     "unknown_rate": 0.0043
   },
   "confusion": {
     "app": {
-      "app": 76,
+      "app": 82,
       "setting": 27,
       "navi": 13,
       "media": 2,
@@ -40,9 +40,9 @@
       "navi": 10
     },
     "media": {
-      "media": 994,
+      "media": 1002,
       "app": 134,
-      "setting": 51
+      "setting": 57
     },
     "navi": {
       "navi": 1102,
@@ -88,12 +88,12 @@
       "switch_gain": 0.1605
     },
     "media": {
-      "count": 1179,
-      "rule_hit": 1090,
-      "switch_candidate": 44,
-      "both_miss": 45,
-      "rule_hit_rate": 0.9245,
-      "switch_gain": 0.0373
+      "count": 1193,
+      "rule_hit": 1097,
+      "switch_candidate": 45,
+      "both_miss": 51,
+      "rule_hit_rate": 0.9195,
+      "switch_gain": 0.0377
     },
     "navi": {
       "count": 1176,
@@ -120,12 +120,12 @@
       "switch_gain": 0.2946
     },
     "app": {
-      "count": 120,
-      "rule_hit": 97,
+      "count": 126,
+      "rule_hit": 103,
       "switch_candidate": 15,
       "both_miss": 8,
-      "rule_hit_rate": 0.8083,
-      "switch_gain": 0.125
+      "rule_hit_rate": 0.8175,
+      "switch_gain": 0.119
     },
     "base": {
       "count": 57,
@@ -166,12 +166,12 @@
     },
     {
       "domain": "media",
-      "count": 1179,
-      "rule_hit": 1090,
-      "switch_candidate": 44,
-      "both_miss": 45,
-      "rule_hit_rate": 0.9245,
-      "switch_gain": 0.0373
+      "count": 1193,
+      "rule_hit": 1097,
+      "switch_candidate": 45,
+      "both_miss": 51,
+      "rule_hit_rate": 0.9195,
+      "switch_gain": 0.0377
     },
     {
       "domain": "phone",
@@ -193,12 +193,12 @@
     },
     {
       "domain": "app",
-      "count": 120,
-      "rule_hit": 97,
+      "count": 126,
+      "rule_hit": 103,
       "switch_candidate": 15,
       "both_miss": 8,
-      "rule_hit_rate": 0.8083,
-      "switch_gain": 0.125
+      "rule_hit_rate": 0.8175,
+      "switch_gain": 0.119
     },
     {
       "domain": "information",

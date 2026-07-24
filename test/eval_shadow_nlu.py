@@ -105,7 +105,18 @@ def parse_batch_reply(raw: str, batch: list[dict]) -> list[dict]:
     try:
         arr = json.loads(_extract_json_array(raw))
     except (ValueError, TypeError):
-        return []
+        # 截断抢救（真栈残留 20 条根因）：相似句批诱发每条饱满 slots，输出恰在数组
+        # 闭合 `]` 前被截——条目本身全完整，截到最后一个完整 '}' 补 ']' 恢复；丢弃
+        # 末尾残项（若有），仍失败按整批失败重试。这不是内容抢救（条目完整性由
+        # json.loads 保证），是闭合符修复。
+        s = _extract_json_array(raw)
+        j = s.rfind("}")
+        if j <= 0:
+            return []
+        try:
+            arr = json.loads(s[:j + 1] + "]")
+        except (ValueError, TypeError):
+            return []
     if not isinstance(arr, list):
         return []
     by_id = {}
@@ -137,7 +148,7 @@ def _make_llm():
         req = llm_pb2.CompleteRequest(
             messages=[llm_pb2.Message(role="system", content=_SYSTEM),
                       llm_pb2.Message(role="user", content=lines)],
-            model="@fast", temperature=0.1, max_tokens=1200)
+            model="@fast", temperature=0.1, max_tokens=1600)
         req.meta["thinking"] = "off"
         req.meta["caller_service"] = "eval-shadow-nlu"
         if provider:
