@@ -736,3 +736,86 @@ def test_navigate_writes_remindable_eta():
     items = d.get("items") or []
     assert items and "宝安国际机场" in items[0]["title"]
     assert items[0]["fire_at"] > d.get("ts", 0)          # ETA 在未来
+
+
+# ── M0a-1 数据真实性：运行期真实源失败 → 诚实降级，绝不回退 mock 假数据 ──────────
+# 契约（架构 §9.5 铁律③ + R9）：诚实降级话术用 OK 返回（FAILED 话术会被聚合器吞成
+# 裸「抱歉，处理失败」）；不出假卡；mock 兜底 provider 不得在运行期被咨询。
+
+def _boom(*a, **kw):
+    from agents._sdk.http import ProviderError
+    raise ProviderError("amap 5xx")
+
+
+def test_no_runtime_mock_fallback_field():
+    """mock 兜底 provider 字段已随 §9.5 铁律③整改移除——结构上不可能运行期回退 mock。"""
+    assert not hasattr(NavigationAgent(), "_fallback")
+
+
+def test_search_poi_outage_degrades_honestly_no_mock():
+    """poi.search 运行期失败 → OK + 诚实话术，无假 POI 卡，mock 不被咨询。"""
+    agent = NavigationAgent()
+
+    async def boom(*a, **kw):
+        _boom()
+
+    agent.poi.search = boom
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.search_poi", slots={"keyword": "充电站"},
+        raw_text="附近找个充电站"))
+    assert res.status == "ok"
+    assert res.ui_card is None                       # 没有假列表
+    assert not (res.data or {}).get("items")
+    assert "暂时" in res.speech and "充电站" in res.speech
+
+
+def test_reverse_geocode_outage_degrades_honestly_no_mock():
+    """reverse_geocode 运行期失败 → 诚实说解析不了，不编 mock 地址。"""
+    agent = NavigationAgent()
+
+    async def boom(*a, **kw):
+        _boom()
+
+    agent.poi.reverse_geocode = boom
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.reverse_geocode",
+        slots={"lng": "113.95", "lat": "22.53"}, raw_text="这是什么位置"))
+    assert res.status == "ok"
+    assert "暂时" in res.speech
+    assert (res.data or {}).get("address") in ("", None)   # 不给假地址
+
+
+def test_locate_outage_degrades_honestly_no_mock():
+    """「我在哪」定位反查失败 → 诚实降级，不拿 mock 地址冒充。"""
+    agent = NavigationAgent()
+
+    async def boom(*a, **kw):
+        _boom()
+
+    agent.poi.reverse_geocode = boom
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.locate", slots={}, raw_text="我现在在哪",
+        meta={"current_lat": "22.53", "current_lng": "113.95"}))
+    assert res.status == "ok"
+    assert "暂时" in res.speech
+    assert (res.data or {}).get("address") in ("", None)
+
+
+def test_poi_detail_outage_degrades_honestly_no_mock():
+    """poi_detail 运行期失败 → 诚实降级，不出 mock 假详情卡。"""
+    agent = NavigationAgent()
+
+    async def boom(*a, **kw):
+        _boom()
+
+    agent.poi.poi_detail = boom
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.poi_detail", slots={"poi_id": "B0FFG12345"},
+        raw_text="看下第一个的详情"))
+    assert res.status == "ok"
+    assert res.ui_card is None
+    assert "暂时" in res.speech

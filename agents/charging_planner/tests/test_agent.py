@@ -264,11 +264,11 @@ def test_status_returns_battery():
     assert "72%" in res.speech
 
 
-def test_find_provider_fallback():
-    """Provider 失败 → 降级 mock，链路不阻断"""
+def test_find_provider_outage_degrades_honestly_no_mock():
+    """M0a-2（架构 §9.5 铁律③）：真实源运行期失败 → 诚实降级 OK 话术，
+    绝不改供 mock 假充电站（假站可能被用户导航过去）；不出假列表卡。"""
     from agents._sdk.http import ProviderError
     agent = ChargingPlannerAgent()
-    # 强制让 provider 抛 ProviderError（触发降级）
     async def _fail(*a, **kw):
         raise ProviderError("provider down")
     agent.charging.find_nearby = _fail
@@ -276,9 +276,47 @@ def test_find_provider_fallback():
     res = asyncio.run(run_handle(
         agent, "charging.find",
         slots={}, raw_text="找个充电站", ctx=ctx))
-    # 降级到 mock，仍应返回结果
+    assert res.status == "ok"          # R9 契约：诚实降级用 OK（FAILED 话术会被聚合器吞）
+    assert res.ui_card is None         # 没有假列表
+    assert "暂时" in res.speech
+
+
+def test_find_near_destination_outage_degrades_honestly_no_mock():
+    """按目的地搜充电站真实源失败 → 诚实说拿不到（到达后再找），不喂 mock 站、无途经点契约。"""
+    from agents._sdk.http import ProviderError
+    agent = ChargingPlannerAgent()
+    async def _fail(*a, **kw):
+        raise ProviderError("amap 5xx")
+    agent.charging.find_nearby = _fail
+    ctx = make_context(context_values={"vehicle.battery": "60%"})
+    res = asyncio.run(run_handle(
+        agent, "charging.find", slots={"destination": "兰州西站"},
+        raw_text="导航去兰州西站，附近找个充电桩", ctx=ctx))
     assert res.status == "ok"
-    assert res.ui_card and res.ui_card["type"] == "charging_list"
+    assert res.ui_card is None
+    assert "暂时" in res.speech and "兰州西站" in res.speech
+    assert not (res.data or {}).get("waypoint")       # 不产假途经点
+
+
+def test_plan_provider_outage_degrades_honestly_no_mock():
+    """charging.plan 真实源失败 → 诚实降级 OK 话术，不出 mock 假路线卡。"""
+    from agents._sdk.http import ProviderError
+    agent = ChargingPlannerAgent()
+    async def _fail(*a, **kw):
+        raise ProviderError("amap route 5xx")
+    agent.charging.plan_route = _fail
+    ctx = make_context(context_values={"vehicle.battery": "50%"})
+    res = asyncio.run(run_handle(
+        agent, "charging.plan", slots={"destination": "兰州西站"},
+        raw_text="去兰州西站规划充电", ctx=ctx))
+    assert res.status == "ok"
+    assert res.ui_card is None
+    assert "暂时" in res.speech
+
+
+def test_no_runtime_mock_fallback_field():
+    """mock 兜底 provider 字段已随 §9.5 铁律③整改移除——结构上不可能运行期回退 mock。"""
+    assert not hasattr(ChargingPlannerAgent(), "_fallback")
 
 
 def test_unsupported_intent():

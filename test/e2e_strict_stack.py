@@ -27,7 +27,11 @@ except ImportError:
 
 WS_URL = "ws://localhost:8090/ws"
 LLM_HTTP = "http://localhost:50059"
-PROBES = ("北京今天天气怎么样", "附近有什么川菜馆", "导航去天安门")
+# M0a（2026-07-24）补充电探针：navigation/charging 曾在运行期 ProviderError 后回退 mock
+# 仍盖真实 provider 章（评审核实的 §9.5 铁律③违例，已改诚实降级）。泄漏形态（mock 数据
+# 盖 real 章）本探针按 vendor/mode 一致性兜不住故障注入场景——运行期降级契约由
+# agents/{navigation,charging_planner,nearby}/tests 的 outage 用例在 unit 层锁定。
+PROBES = ("北京今天天气怎么样", "附近有什么川菜馆", "导航去天安门", "帮我找附近的充电站")
 
 
 def _active_provider() -> str:

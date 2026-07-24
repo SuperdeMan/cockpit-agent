@@ -421,6 +421,12 @@ class PlanBuilder:
                 context_scopes=list(getattr(manifest, "context_scopes", []) or []),
                 heavy=next((bool(getattr(c, "heavy", False))
                             for c in manifest.capabilities if c.intent == intent), False),
+                # M0a-3：确认权威=capability manifest。LLM 计划输出的 require_confirm 一律
+                # 不读——不可降级也不可升级（升级权在 Agent/action/VAL 硬层）；Agent 漏标由
+                # executor._enforce_capability_confirm 兜底（契约 test_capability_confirm）。
+                require_confirm=next(
+                    (bool(getattr(c, "require_confirm", False))
+                     for c in manifest.capabilities if c.intent == intent), False),
             )
             steps.append(step)
 

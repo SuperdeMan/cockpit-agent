@@ -260,9 +260,9 @@ class NearbyAgent(BaseAgent):
             results = await self.place.search(keyword, **skw)
         except ProviderError as e:
             # 真实源失败不再改供 mock 假 POI（假餐厅可能被用户导航过去）——诚实说拿不到。
+            # M0a 对齐 R9 契约：OK 话术（单步 FAILED 的 speech 被聚合器吞成裸「处理失败」）。
             logger.warning("place search failed（诚实降级，无 mock 回退）: %s", e)
-            return AgentResult(status=FAILED,
-                               speech="周边搜索服务暂时不可用，稍后再试一次？")
+            return AgentResult(speech="周边搜索服务暂时不可用，稍后再试一次？")
 
         label = cuisine or brand or keyword
         if not results:
@@ -317,8 +317,8 @@ class NearbyAgent(BaseAgent):
             p = await self.place.detail(place_id, name=name, near=near, meta=meta)
         except ProviderError as e:
             logger.warning("place detail failed（诚实降级，无 mock 回退）: %s", e)
-            return AgentResult(status=FAILED,
-                               speech=f"暂时拿不到「{name or '该地点'}」的详情，稍后再试一次？")
+            return AgentResult(  # R9 契约：OK 话术防聚合器吞
+                speech=f"暂时拿不到「{name or '该地点'}」的详情，稍后再试一次？")
         return AgentResult(
             speech=self._detail_speech(p),
             ui_card=attach(self._detail_card(p), self.place),

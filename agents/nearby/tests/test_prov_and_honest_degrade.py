@@ -24,7 +24,9 @@ def test_search_runtime_failure_degrades_honestly_no_mock_items():
     agent.place.search = boom
     res = asyncio.run(run_handle(agent, "nearby.search",
                                  slots={"cuisine": "川菜"}, raw_text="附近的川菜馆"))
-    assert res.status == "failed"
+    # M0a 对齐 R9 契约：诚实降级话术用 OK 返回——单步 FAILED 的 speech 会被聚合器
+    # 吞成裸「抱歉，处理失败」（executor 不映射 error，aggregator 只读 r.error）。
+    assert res.status == "ok"
     assert res.ui_card is None                      # 没有假列表
     assert "暂时不可用" in res.speech
 
@@ -38,6 +40,6 @@ def test_detail_runtime_failure_degrades_honestly():
     agent.place.detail = boom
     res = asyncio.run(run_handle(agent, "nearby.detail",
                                  slots={"name": "老王川菜"}, raw_text="看看老王川菜的详情"))
-    assert res.status == "failed"
+    assert res.status == "ok"          # 同上：R9 契约，OK 话术防聚合器吞
     assert res.ui_card is None
     assert "老王川菜" in res.speech

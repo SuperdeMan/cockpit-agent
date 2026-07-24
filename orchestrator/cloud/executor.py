@@ -97,7 +97,39 @@ class DagExecutor:
             logger.warning("Step %s failed: %s", step.id, e)
             return StepResult(step_id=step.id, status=StepStatus.FAILED, error=str(e))
 
-        return self._to_result(step.id, resp)
+        return self._enforce_capability_confirm(step, self._to_result(step.id, resp))
+
+    @staticmethod
+    def _enforce_capability_confirm(step: Step, result: StepResult) -> StepResult:
+        """M0a-3 兜底闸（架构 §9.1 权威链）：capability 声明 require_confirm 的步骤，
+        未经用户确认（engine._restore 注入 meta.confirmed 前）不得以 OK 落地副作用。
+
+        - Agent 自身返回 NEED_CONFIRM（正路）不受影响；漏标时本闸改判 NEED_CONFIRM
+          并扣下动作——副作用通道被守住；Agent 内部副作用由 VAL/payment-gateway 硬层把守。
+        - confirmed 只可由 engine 注入；LLM/计划输出无从触达（_validated_steps 不读该字段）。
+        - confirmed 放行=回到正常执行通道（动作仍经 dispatch→VAL），不是绕过硬层。
+        契约测试：test_capability_confirm.py。"""
+        if not step.require_confirm or result.status != StepStatus.OK:
+            return result
+        if (step.meta or {}).get("confirmed") == "true":
+            return result
+        logger.warning(
+            "Step %s(%s): capability requires confirm but agent returned OK unconfirmed; "
+            "withholding %d action(s), forcing NEED_CONFIRM (manifest 兜底)",
+            step.id, step.intent, len(result.actions))
+        ask = "这个操作需要您确认后才会执行，确定继续吗？"
+        speech = (result.speech or "").strip()
+        if speech and speech[-1] not in "。！？!?":
+            speech += "。"
+        return StepResult(
+            step_id=result.step_id,
+            status=StepStatus.NEED_CONFIRM,
+            speech=(speech + ask) if speech else ask,
+            ui_card=result.ui_card,
+            actions=[],                    # 副作用扣下：用户确认后该步带 confirmed 重跑再产
+            follow_up=result.follow_up or ask,
+            data=result.data,
+        )
 
     def _resolve_slot_refs(self, step: Step, done: dict):
         """用前序 step 的结果填充 slot_refs。"""

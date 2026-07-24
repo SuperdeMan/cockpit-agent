@@ -20,7 +20,6 @@ from agents._sdk.landmark import (
     is_landmark_description, landmark_candidates, name_matches)
 from .providers import build_poi_provider
 from .providers.base import GeoPoint, POI
-from .providers.mock import MockPOIProvider
 
 logger = logging.getLogger("agent.navigation")
 
@@ -59,7 +58,6 @@ class NavigationAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
         self.poi = build_poi_provider()
-        self._fallback = MockPOIProvider()  # 真实 provider 抖动时的降级兜底
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         handlers = {
@@ -103,13 +101,15 @@ class NavigationAgent(BaseAgent):
         near = await self._current_position(ctx, meta)
 
         rating_min = float(intent.slots.get("rating_min", 0) or 0)
-        # 真实 provider 失败（超时/熔断/厂商错误）降级到 mock，保证链路不阻断；
-        # 失败本身已由 provider span(outcome=error) 记录，便于在 Dashboard 发现。
+        # 真实 provider 运行期失败 → 诚实降级说拿不到（架构 §9.5 铁律③）：绝不改供 mock
+        # 假 POI（可能被用户导航过去）。R9 契约：话术用 OK 返回（FAILED 会被聚合器吞成裸报错）。
         try:
             results = await self.poi.search(keyword, near=near, rating_min=rating_min, meta=meta)
         except ProviderError as e:
-            logger.warning("poi search failed, fallback to mock: %s", e)
-            results = await self._fallback.search(keyword, near=near, rating_min=rating_min, meta=meta)
+            logger.warning("poi search failed（诚实降级，无 mock 回退）: %s", e)
+            return AgentResult(
+                speech=f"地图服务暂时不可用，没查到「{keyword}」，请稍后再试。",
+                follow_up="稍后再说一次就行")
         resolved_keyword = keyword
 
         # 设施类目搜索（充电站/加油站/停车场…）按本步关键词如实搜附近，不得被整句多意图
@@ -745,8 +745,11 @@ class NavigationAgent(BaseAgent):
         try:
             pt = await self.poi.reverse_geocode(lng, lat, meta=meta)
         except ProviderError as e:
-            logger.warning("reverse_geocode failed, fallback to mock: %s", e)
-            pt = await self._fallback.reverse_geocode(lng, lat, meta=meta)
+            # §9.5 铁律③：不拿 mock 地址冒充真实位置，诚实说解析不了（OK 话术防聚合器吞）。
+            logger.warning("reverse_geocode failed（诚实降级，无 mock 回退）: %s", e)
+            return AgentResult(
+                speech="定位服务暂时不可用，这个位置的地址暂时解析不出来，请稍后再试。",
+                data={"lng": lng, "lat": lat})
         speech = f"该位置位于{pt.address}。" if pt.address else "未能解析该位置的地址。"
         return AgentResult(speech=speech,
                            data={"address": pt.address, "lng": lng, "lat": lat})
@@ -763,8 +766,11 @@ class NavigationAgent(BaseAgent):
         try:
             pt = await self.poi.reverse_geocode(current.lng, current.lat, meta=meta)
         except ProviderError as e:
-            logger.warning("locate reverse_geocode failed, fallback to mock: %s", e)
-            pt = await self._fallback.reverse_geocode(current.lng, current.lat, meta=meta)
+            # §9.5 铁律③：宁可说不知道，不拿 mock 地址回答「我在哪」。
+            logger.warning("locate reverse_geocode failed（诚实降级，无 mock 回退）: %s", e)
+            return AgentResult(
+                speech="定位服务暂时不可用，暂时说不准您在哪，请稍后再试。",
+                data={"lat": current.lat, "lng": current.lng})
         addr = pt.address or "当前位置"
         return AgentResult(
             speech=f"您当前位于{addr}。",
@@ -779,8 +785,9 @@ class NavigationAgent(BaseAgent):
         try:
             poi = await self.poi.poi_detail(poi_id, meta=meta)
         except ProviderError as e:
-            logger.warning("poi_detail failed, fallback to mock: %s", e)
-            poi = await self._fallback.poi_detail(poi_id, meta=meta)
+            # §9.5 铁律③：不出 mock 假详情卡（假地址/假评分会误导决策）。
+            logger.warning("poi_detail failed（诚实降级，无 mock 回退）: %s", e)
+            return AgentResult(speech="地图服务暂时不可用，这个地点的详情暂时拿不到，请稍后再试。")
         speech = f"{poi.name}，地址：{poi.address}。"
         if poi.rating:
             speech += f"评分{poi.rating}。"

@@ -293,7 +293,10 @@ class PlannerEngine:
         if (new_plan and plan.complexity == "simple" and len(plan.steps) == 1
                 and not ctx.is_confirmation and not complex_task
                 and plan.steps[0].kind == "agent"
-                and plan.steps[0].deployment == "cloud"):
+                and plan.steps[0].deployment == "cloud"
+                # M0a-3：capability 声明 require_confirm 的步不走流式直通——D0 会把
+                # 流中 action 直接放行，绕开 executor 的确认兜底闸；走 executor 路径。
+                and not plan.steps[0].require_confirm):
             step = plan.steps[0]
             _d0_start = time.monotonic()
             streamed = False

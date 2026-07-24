@@ -16,7 +16,6 @@ from agents._sdk.provenance import attach
 from agents._sdk.landmark import is_landmark_description, landmark_candidates
 from agents._sdk.shared_state import CHARGING_DEST_CHOICES
 from .providers import build_charging_provider
-from .providers.mock import MockChargingProvider
 from .providers.base import GeoPoint
 
 logger = logging.getLogger("agent.charging_planner")
@@ -33,7 +32,6 @@ class ChargingPlannerAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
         self.charging = build_charging_provider()
-        self._fallback = MockChargingProvider()
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         handlers = {
@@ -87,8 +85,12 @@ class ChargingPlannerAgent(BaseAgent):
             stations = await self.charging.find_nearby(
                 near, charger_type=charger_type, meta=meta)
         except ProviderError as e:
-            logger.warning("charging find failed, fallback: %s", e)
-            stations = await self._fallback.find_nearby(near, meta=meta)
+            # §9.5 铁律③：运行期真实源失败不改供 mock 假充电站（假站可能被用户导航过去）；
+            # R9 契约：诚实话术用 OK 返回（FAILED 会被聚合器吞成裸「抱歉，处理失败」）。
+            logger.warning("charging find failed（诚实降级，无 mock 回退）: %s", e)
+            return AgentResult(
+                speech="充电站信息暂时拿不到（服务不可用），请稍后再试。",
+                follow_up="稍后再说一次就行")
 
         if not stations:
             return AgentResult(speech="附近暂未找到充电站，请稍后重试。")
@@ -135,26 +137,25 @@ class ChargingPlannerAgent(BaseAgent):
             if cands:
                 targets = cands + [destination]
 
-        resolved, stations = destination, []
+        resolved, stations, errored = destination, [], False
         for target in targets:
             try:
                 stations = await self.charging.find_nearby(
                     GeoPoint(address=target), charger_type=charger_type, meta=meta)
             except ProviderError as e:
-                logger.warning("charging find near %s failed: %s", target, e)
+                logger.warning("charging find near %s failed（诚实降级，无 mock 回退）: %s",
+                               target, e)
+                errored = True
                 stations = []
             if stations:
                 resolved = target
                 break
 
-        if not stations:   # 真实 provider 全失败 → mock 兜底，不阻断链路
-            try:
-                stations = await self._fallback.find_nearby(
-                    GeoPoint(address=destination), meta=meta)
-            except ProviderError:
-                stations = []
-
         if not stations:
+            # §9.5 铁律③：真实源失败不改供 mock 假站；区分「服务坏了」与「真没有」，都诚实。
+            if errored:
+                return AgentResult(
+                    speech=f"充电站信息暂时拿不到（服务不可用），到达{destination}后我再帮您找。")
             return AgentResult(
                 speech=f"{destination}附近暂未找到充电站，到达后我再帮您找。")
 
@@ -297,11 +298,9 @@ class ChargingPlannerAgent(BaseAgent):
         try:
             plan = await self.charging.plan_route(dest, soc=soc, meta=meta)
         except ProviderError as e:
-            logger.warning("charging plan failed, fallback: %s", e)
-            try:
-                plan = await self._fallback.plan_route(dest, soc=soc, meta=meta)
-            except ProviderError:
-                return AgentResult(speech="暂无法规划充能路线，请稍后重试。", status=FAILED)
+            # §9.5 铁律③：不出 mock 假路线卡；R9 契约：OK 话术（FAILED 会被聚合器吞成裸报错）。
+            logger.warning("charging plan failed（诚实降级，无 mock 回退）: %s", e)
+            return AgentResult(speech="充电规划服务暂时不可用，请稍后再试。")
 
         # 信息建议（advisory）：充能路线卡 = 出发地→沿途途经充电点→目的地，不二次确认、
         # 不发导航动作（导航由「导航」步处理）。专属 type 让聚合器在多意图下优先展示它
