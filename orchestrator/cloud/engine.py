@@ -240,6 +240,8 @@ class PlannerEngine:
                           "slots": s.slots} for s in plan.steps],
                         ensure_ascii=False, default=str), 1200),
                     "llm_raw": gate_content(plan.raw_llm, 1200),
+                    # M0b Skill 层注入名单（"<mode>:<name>"），badcase 归因用
+                    **({"skills": ",".join(plan.skills)} if plan.skills else {}),
                 },
             )
             await self._resolve_endpoints(plan)

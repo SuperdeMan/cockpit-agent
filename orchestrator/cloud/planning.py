@@ -11,6 +11,7 @@ from security.permission import check_permission
 from .models import Plan, Step, PlanContext, ReplanDecision
 from .context import WorkingSet, _FALLBACK_AGENT
 from .route_hints import RouteHintEngine
+from . import skills as _skills
 
 logger = logging.getLogger("planner.planning")
 
@@ -153,6 +154,71 @@ _PLANNER_BASE = (
     "- 无法匹配时输出 {\"steps\":[]}"
 )
 
+# M0b Skill 层：canary/full 模式用瘦身 base——领域组合知识（多日出行/顺路停靠/条件依赖）
+# 与跨域判据（时效深度/隐式车控）已外迁 skills/{guides,policies}/*.yaml，由 plan_skills()
+# 检索后注入 user message（== 规划知识 == 块）。此处只留通用规划契约与通用示例。
+# Full Migration（A/B 达标后）删除上方 _PLANNER_BASE，本常量成为唯一 base。
+_PLANNER_BASE_SLIM = (
+    "你是智能座舱的任务编排器。根据用户话术和可用 agent 能力清单，输出 JSON 调用计划。\n"
+    "格式严格为：{\"complexity\":\"simple|adaptive\",\"goal\":\"一句话目标\","
+    "\"steps\":[{\"id\":\"s1\",\"agent_id\":\"..\",\"intent\":\"..\","
+    "\"slots\":{..},\"depends_on\":[],\"slot_refs\":{}}]}\n"
+    "simple 表示一次可确定全部步骤；adaptive 表示必须根据运行结果决定下一步"
+    "（例如满了换次近、失败换一家、探索式查询）。普通单域、多意图并行、固定串行都选 simple。\n"
+    "**个人偏好指代**（「我喜欢的温度」「常用的那个」「老样子」）：槽位值只能取自上下文里"
+    "召回的用户偏好记忆；记忆里没有对应值就**留空该槽位**让能力方追问——绝不臆造一个数值"
+    "直接执行（把空调猜成 22 度打开比多问一句糟糕得多）。\n"
+    "\n"
+    "== 意图拆分 ==\n"
+    "- 用户一句话包含多个意图时（如『打开空调并播放音乐』），必须拆成多个 step\n"
+    "- 单意图只输出一个 step，不要过度拆分\n"
+    "\n"
+    "== 并行 vs 串行 ==\n"
+    "- 无数据依赖的步骤 → 各自 depends_on=[]，执行器会自动并行\n"
+    "- 有数据依赖（如先搜索再预订）→ 后续步骤用 depends_on + slot_refs 引用前序结果\n"
+    "- 判断依据：后一步是否需要前一步的输出数据？不需要则并行\n"
+    "\n"
+    "== 指令类型（规划时参考，影响执行语义）==\n"
+    "- 控制类（control）：车控/媒体等硬件操作，立即执行，可并行。如 hvac.set、media.play\n"
+    "- 引导类（guide）：打开 UI/导航界面。如 navigation.search_poi\n"
+    "- 播报类（query）：查询后播报结果，需要联网。如 info.weather、info.news\n"
+    "- 不同类型互不阻塞，可并行；同类型也可并行（只要无数据依赖）\n"
+    "\n"
+    "== 示例 ==\n"
+    "用户：『打开空调并播放音乐』\n"
+    "→ 2 个 step，无依赖，并行执行：\n"
+    "{\"steps\":["
+    "{\"id\":\"s1\",\"agent_id\":\"hvac\",\"intent\":\"hvac.set\",\"slots\":{\"temperature\":\"24\"},\"depends_on\":[],\"slot_refs\":{}},"
+    "{\"id\":\"s2\",\"agent_id\":\"media\",\"intent\":\"media.play\",\"slots\":{},\"depends_on\":[],\"slot_refs\":{}}"
+    "]}\n"
+    "\n"
+    "用户：『找川菜馆然后帮我订位』\n"
+    "→ 2 个 step，有依赖，串行：\n"
+    "{\"steps\":["
+    "{\"id\":\"s1\",\"agent_id\":\"nearby\",\"intent\":\"nearby.search\",\"slots\":{\"category\":\"餐饮\",\"cuisine\":\"川菜\"},\"depends_on\":[],\"slot_refs\":{}},"
+    "{\"id\":\"s2\",\"agent_id\":\"nearby\",\"intent\":\"nearby.order\",\"slots\":{},\"depends_on\":[\"s1\"],\"slot_refs\":{\"poi_id\":\"s1.data.items.0.id\"}}"
+    "]}\n"
+    "\n"
+    "用户：『打开空调顺便看看今天天气』\n"
+    "→ 2 个 step，无依赖，并行（控制类 + 播报类互不阻塞）：\n"
+    "{\"steps\":["
+    "{\"id\":\"s1\",\"agent_id\":\"hvac\",\"intent\":\"hvac.set\",\"slots\":{\"temperature\":\"24\"},\"depends_on\":[],\"slot_refs\":{}},"
+    "{\"id\":\"s2\",\"agent_id\":\"info\",\"intent\":\"info.weather\",\"slots\":{},\"depends_on\":[],\"slot_refs\":{}}"
+    "]}\n"
+    "\n"
+    "== 通用规则 ==\n"
+    "- 用 slot_refs 引用前序 step 结果，如 {\"poi_id\":\"s1.data.items.0.id\"}\n"
+    "- 若用户话术含指代（如『再调高一点』『还是刚才那家』『换个颜色』），"
+    "优先结合下方『当前对话焦点』（对象/位置/属性/上个地点）、再参考『最近对话』"
+    "补全对象/槽位后再规划\n"
+    "- **省略式追问延续上一轮**：用户只说『明天呢』『那后天呢』『换成XX呢』这类省略句，"
+    "是把**最近对话里最后一轮**的问题换个时间/对象重问——必须沿用上一轮的意图与能力"
+    "（『当前对话焦点』的上一轮意图可参考），只替换对应槽位；不得凭省略句里的零星词"
+    "改判到别的领域（如上一轮问比赛赛程，『明天呢』=查明天赛程，不是查天气）\n"
+    "- 只输出 JSON，不要任何解释\n"
+    "- 无法匹配时输出 {\"steps\":[]}"
+)
+
 # R4.4：受话判定段——恒附在 base 之后（消费端 engine 按 input_source 门控，附着无副作用）。
 # 保守取向：拿不准输出 true（宁可处理不可误丢，母卡 §7 风险缓解）。provider 无关：纯 JSON、
 # 字段可选、fail-open。
@@ -182,10 +248,11 @@ _CLARIFY_SECTION = (
 )
 
 
-def _planner_system() -> str:
+def _planner_system(slim: bool = False) -> str:
     """每次 build() 实时拼 Planner system prompt：base + 受话段（恒附）+ 澄清段（CLARIFY_ENABLED=on）。
-    os.getenv 实时读——env 翻转即刻生效，且让 monkeypatch 单测可行（母卡实施计划 §0-10）。"""
-    prompt = _PLANNER_BASE + _ADDRESSED_SECTION
+    os.getenv 实时读——env 翻转即刻生效，且让 monkeypatch 单测可行（母卡实施计划 §0-10）。
+    slim=True（SKILLS_MODE=canary/full）：用瘦身 base，领域知识由 skill 注入块承载。"""
+    prompt = (_PLANNER_BASE_SLIM if slim else _PLANNER_BASE) + _ADDRESSED_SECTION
     if os.getenv("CLARIFY_ENABLED", "off").lower() == "on":
         prompt += _CLARIFY_SECTION
     return prompt
@@ -228,10 +295,16 @@ class PlanBuilder:
 
         agent_map = {a.manifest.agent_id: a for a in agents}
 
+        # M0b Skill 层：shadow=只检索记录（零行为变化）；canary/full=瘦身 base + 注入块。
+        # 纯词法同步计算，不增加规划轮网络调用；名单落 plan.skills 供 cloud.planning span 归因。
+        sk_mode, sk_names, sk_block = _skills.plan_skills(text)
+        slim = sk_mode in ("canary", "full")
+
         plan = None
         last_raw = ""
         for _ in range(2):
-            raw = await self._llm_plan(text, agents, working_set)
+            raw = await self._llm_plan(text, agents, working_set,
+                                       skills_block=sk_block, slim=slim)
             last_raw = raw or last_raw
             parsed = self._parse_and_validate(raw, agent_map, text)
             # R4.4：放行「合法的空 steps 计划」——受话判定 addressed=false / 澄清 clarify
@@ -246,6 +319,7 @@ class PlanBuilder:
             plan = await self._fallback(text, agents)
         # 观测：保留 LLM 最后一次原始输出（fallback 路径保留失败现场），供 planning span 门控采集
         plan.raw_llm = last_raw
+        plan.skills = sk_names
 
         # 确定性路由兜底（覆盖 LLM 解析成功 + 降级语义路由两条路径）：通用 RouteHintEngine
         # 按各 Agent manifest.route_hints（priority 降序）施加。research.run 与 trip.*（含
@@ -256,13 +330,16 @@ class PlanBuilder:
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan
 
-    async def _llm_plan(self, text: str, agents: list, working_set: WorkingSet) -> str:
+    async def _llm_plan(self, text: str, agents: list, working_set: WorkingSet,
+                        skills_block: str = "", slim: bool = False) -> str:
         catalog = WorkingSet.render_catalog(agents)
         ctx_block = working_set.render_context()  # 记忆 +（焦点）+ 历史，统一预算
-        user_msg = f"可用能力:\n{catalog}\n\n{_date_line()}\n{ctx_block}用户说: {text}"
+        # skills 块紧跟日期锚之后（policy 文本引用「上方『当前日期』」，顺序是契约）
+        sk_part = f"{skills_block}\n\n" if skills_block else ""
+        user_msg = f"可用能力:\n{catalog}\n\n{_date_line()}\n{sk_part}{ctx_block}用户说: {text}"
         try:
             raw = await self._llm([
-                {"role": "system", "content": _planner_system()},
+                {"role": "system", "content": _planner_system(slim=slim)},
                 {"role": "user", "content": user_msg},
             ])
             logger.info("LLM plan raw: %s", (raw or "")[:500])

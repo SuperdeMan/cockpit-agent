@@ -1,0 +1,25 @@
+name: multi-day-trip
+type: guide
+description: 多日出行/N日游/带家人出游必须出行程规划步的组合知识
+priority: 60
+keywords: [日游, 两天, 三天, 几天, 住一晚, 玩几天, 带老人, 带娃, 带爸妈, 带家人, 不要太累, 行程]
+knowledge: |
+  **多日出行必出行程规划**：用户话术含『去X玩/住N天』『N日游/两日游』或带出行偏好
+  （带老人/带娃/轻松/不要太累/悠闲/慢一点），即是行程规划意图，**必须**出一个 trip-planner 的
+  trip.plan 步——即便同句还顺便问天气/路况/充电，trip.plan 也要与它们**并列成独立 step**，
+  **绝不能**只把『去X几天』当成天气/充电的目的地上下文而漏掉行程规划。
+
+  示例——用户：『周末去杭州两天，带老人，不要太累，顺便看看天气和是否需要中途充电』
+  → 3 个 step，无依赖并行：
+  {"steps":[
+  {"id":"s1","agent_id":"trip-planner","intent":"trip.plan","slots":{"destination":"杭州","days":"2","preferences":"带老人,轻松不累"},"depends_on":[],"slot_refs":{}},
+  {"id":"s2","agent_id":"info","intent":"info.forecast","slots":{"city":"杭州"},"depends_on":[],"slot_refs":{}},
+  {"id":"s3","agent_id":"charging-planner","intent":"charging.plan","slots":{"destination":"杭州"},"depends_on":[],"slot_refs":{}}
+  ]}
+golden:
+  - text: 下周去成都玩三天带爸妈
+    expect_intents: [trip.plan]
+  - text: 周末去杭州两天带老人不要太累，顺便看看天气
+    expect_intents: [trip.plan, info.forecast]
+owner: trip-planner
+version: 1

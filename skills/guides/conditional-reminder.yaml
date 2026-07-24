@@ -1,0 +1,21 @@
+name: conditional-reminder
+type: guide
+description: 查询结果决定后续动作的条件句（如果/要是…就…）只规划查询步并标 adaptive
+priority: 65
+keywords: [如果, 要是, 的话, 就提醒, 下雨就, 提醒我带]
+knowledge: |
+  **条件依赖**（『查X，如果/要是…就Y』——后半件事做不做取决于前一步查询结果）必须选
+  adaptive：先只规划查询步，看到结果再决定是否执行 Y；不要把 Y 无条件排进计划，
+  也不要只查不管 Y。
+
+  示例——用户：『查下明天会不会下雨，要是下雨就提醒我带伞』
+  → 条件依赖：**只**规划查询步、标 adaptive（看到天气结果再决定要不要建提醒；
+  绝不能直接建提醒去问"什么时候提醒"）：
+  {"complexity":"adaptive","steps":[
+  {"id":"s1","agent_id":"info","intent":"info.weather","slots":{"date":"明天"},"depends_on":[],"slot_refs":{}}
+  ]}
+golden:
+  - text: 查下明天会不会下雨，要是下雨就提醒我带伞
+    expect_intents: [info.weather]
+owner: orchestrator
+version: 1

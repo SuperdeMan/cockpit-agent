@@ -1,0 +1,33 @@
+name: navigation-with-stop
+type: guide
+description: 导航去某地并顺路/在目的地附近找餐饮咖啡充电桩等停靠需求的组合规划
+priority: 55
+keywords: [导航, 顺路, 途经, 附近找, 找个吃, 吃饭的地方, 充电桩, 找个充电, 咖啡, 停一下]
+knowledge: |
+  **导航去X + 顺路/在附近 找吃饭/餐厅/咖啡** → 用**单个** navigation.navigate_to
+  （带 stop_category，它会导航并给真实候选让用户选途经点），**不要**再拆出
+  nearby.search（nearby 仅用于纯发现/看详情/订位，不产生导航途经点；拆了会串味）。
+
+  示例——用户：『导航去东方之门，然后在附近找个吃饭的地方』→ 单 step：
+  {"steps":[
+  {"id":"s1","agent_id":"navigation","intent":"navigation.navigate_to","slots":{"destination":"东方之门","stop_category":"吃饭"},"depends_on":[],"slot_refs":{}}
+  ]}
+
+  示例——用户：『导航去东方之门途经肯德基』（用户已选好途经点）→ 单 step，destination + waypoint：
+  {"steps":[
+  {"id":"s1","agent_id":"navigation","intent":"navigation.navigate_to","slots":{"destination":"东方之门","waypoint":"肯德基"},"depends_on":[],"slot_refs":{}}
+  ]}
+
+  示例——用户：『导航去深圳湾，在附近找个充电桩』→ 2 个 step，无依赖并行；
+  充电步必须带 destination（按目的地找站，作为导航途经点）：
+  {"steps":[
+  {"id":"s1","agent_id":"navigation","intent":"navigation.navigate_to","slots":{"destination":"深圳湾"},"depends_on":[],"slot_refs":{}},
+  {"id":"s2","agent_id":"charging-planner","intent":"charging.find","slots":{"destination":"深圳湾"},"depends_on":[],"slot_refs":{}}
+  ]}
+golden:
+  - text: 导航去东方之门，附近找个吃饭的地方
+    expect_intents: [navigation.navigate_to]
+  - text: 导航去深圳湾，在附近找个充电桩
+    expect_intents: [navigation.navigate_to, charging.find]
+owner: navigation
+version: 1

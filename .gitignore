@@ -68,3 +68,6 @@ test/hmi_cdp/shots/
 docs/reviews/eval/_ci-run-*
 # R4.3 KWS 唤醒词 WASM 运行时（~31MB，scripts/build-kws-wasm.sh 生成，勿提交）
 hmi/public/kws/
+
+# 本机 compose 应急 override（winnat 端口保留区等，见文件头注释）
+compose.*.local.yaml

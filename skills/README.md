@@ -39,6 +39,8 @@ name: multi-day-trip            # 唯一 ID = 文件名
 type: guide                     # guide | policy | workflow
 description: 多日出行/N日游/带家人出游的规划知识   # 常驻语义索引（预筛用，一句话）
 priority: 60                    # 预算内注入排序（高者先）
+keywords: [日游, 两天, 带老人]   # 词法检索触发词（v1 检索=keywords 命中+bigram 重合；
+                                #   embedding 升级由 shadow 召回数据决定，eval 先行）
 knowledge: |                    # 注入 planner 的领域判据（markdown，预算裁剪）
   「去X玩N天/N日游/带老人/带娃」是行程规划意图，必须出 trip.plan 步…
 few_shots:                      # 可选：输入→计划片段示例

@@ -71,6 +71,9 @@ class Plan:
     # 观测（badcase 排查）：Planner LLM 最后一次原始输出。仅供 cloud.planning span
     # 门控采集（engine），不参与任何编排逻辑；解析失败走 fallback 时它保留失败现场。
     raw_llm: str = ""
+    # M0b Skill 层：本轮检索/注入的 skill 名单（"<mode>:<name>"），仅供 cloud.planning
+    # span 观测（badcase 归因：知识没进上下文还是进了没用对）；不参与编排逻辑。
+    skills: list[str] = field(default_factory=list)
 
 
 @dataclass

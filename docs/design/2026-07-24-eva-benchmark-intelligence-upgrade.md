@@ -328,6 +328,12 @@ verification:
 - ③ **Full Migration**：A/B 达标后删中央领域知识、全量启用。
 - 载荷同前：guides×3（multi-day-trip / navigation-with-stop / conditional-reminder）+ policies×2（freshness-and-depth / implicit-vehicle-control）；`eval_skills.py` + obs.turn 记注入名单。**保持现有 JSON 规划路径，不动 T2**（Background 档 deep-research 试点可单独并行，守卫见 §4.B）。
 - DoD：①出召回报告；②canary 组 mode_routing 122 / journeys regression 15 不低于对照组；③全量后 `_PLANNER_BASE` 减半 + 契约测试「加规划知识=只投 skill 文件」。
+- **落地记录（2026-07-24，步① Shadow + canary 机制全落地；步② A/B 与步③ Full Migration 留待下批）**：
+  - 机制：`orchestrator/cloud/skills.py`（SkillStore mtime 热更 / **纯词法检索**=keywords 命中+bigram 重合（零网络、离线确定，embedding 升级由 shadow 召回数据决定）/ 预算渲染）；`SKILLS_MODE=off|shadow|canary|full`（默认 shadow 零行为变化）；`_PLANNER_BASE_SLIM` 与注入块双路径并存；`Plan.skills` + `cloud.planning` span `skills` 属性（badcase 归因）；Dockerfile `COPY skills` + pyyaml + compose/.env.example 接线。
+  - 载荷：guides×3（multi-day-trip / navigation-with-stop / conditional-reminder）+ policies×2（freshness-and-depth / implicit-vehicle-control），knowledge 从 `_PLANNER_BASE` 逐字迁移保行为。
+  - 验证：`test_skills.py` 11 条（加载/检索命中/反例静默/渲染预算/**即插即用契约**（tmp 目录投新 guide 文件即被检索，零中央代码）/四态注入——canary 断言瘦身 base 不双份、date 锚在 skills 块前）；`test/eval_skills.py` 离线召回 **5/5**、反例误召回 1/6（纯导航句召回 navigation-with-stop，判定为可接受噪声——注入内容对导航句无害，shadow 持续观察）；**真栈 shadow 冒烟 PASS**（多日出行/条件句两探针，span 记录 `shadow:multi-day-trip`/`shadow:conditional-reminder`，行为零变化：行程×天气联动与 adaptive 条件链正常）。
+  - 真栈复验（M0a+M0b 同栈）：e2e_ws 通过（含 cancel 打断）；strict_stack PASS（weather=qweather/place_list=amap/route_plan=amap 全 real；充电探针本轮未出 `_prov` 卡=无定位纯语音路径，探针下限 ≥2 满足）；**journeys regression 15/15 全绿**（@minimax provider 锁定；含 A5-3 后备箱危险确认链与 B4-2 场景确认链——M0a 确认兜底闸对既有确认流零破坏；A3-1 现场演示诚实降级话术）；全量 pytest **1740 passed / 7 skipped**（skip 回落 7 证实上批 +2 系栈未起波动）。
+  - 环境注：本机 winnat 动态保留区（50063-50162）挡 50070/50071 宿主发布——`compose.winnat.local.yaml`（不入库）取消这两个端口的宿主发布（宿主侧无直连，容器网不受影响）；根治需管理员扩管理排除区（见文件头注释）。
 
 **M1a `submit_plan` 结构化输出（约 1 周；开工首件事=出「Provider tool-calling 兼容」子 RFC——四家 OpenAI 兼容 + anthropic 的 tool_calls 格式矩阵）**
 - `submit_plan` V1（providers/server/clients/planning 四件 + 灰度 A/B）。
