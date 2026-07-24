@@ -342,7 +342,7 @@ verification:
 **M1a `submit_plan` 结构化输出（约 1 周；开工首件事=出「Provider tool-calling 兼容」子 RFC——四家 OpenAI 兼容 + anthropic 的 tool_calls 格式矩阵）**
 - `submit_plan` V1（providers/server/clients/planning 四件 + 灰度 A/B）。
 - DoD：按 §4.B 两层口径——协议层归零 + 功能层对照不劣化、分 provider 统计。
-- **落地记录（2026-07-24，单日完成；全量细节见子 RFC `2026-07-24-m1a-provider-toolcall-rfc.md` §11）**：子 RFC + 四件套 + `PLANNER_TOOLCALL=on|off` 灰度（默认 off）全落地；proto Struct 死字段首次启用（不改 proto，V1 判断成立）。**协议探针四家 16/16**（named tool_choice 全尊重；qwen finish_reason 恒 "stop" 怪癖已钉契约注释）；**A/B @minimax**：mode_routing on 三轮 171/175/173 vs off 173/174 持平（方差带）、arguments 畸形 360 例全程 **0**（`_extract_json` 截断/裸引号工程债在 toolcall 通道退役）、降级链零静默丢失；**journeys regression 15/15**。**旅程级抓出三个 toolcall 独有 badcase 并修**（B4-1 误澄清/B1-4 丢继承槽/B3-4 编造「当前位置」占位值）——沉淀 V2 设计约束：**tool schema 与输出指令三向改变模型输出分布（多填/少填/编造），改 schema 必过旅程级行为对照**，协议成功率与单轮评测全看不见这族问题。单测 +30，全量 pytest 零回归。翻默认 on 属产品节奏决策，材料齐、留泓舟拍板。
+- **落地记录（2026-07-24，单日完成；全量细节见子 RFC `2026-07-24-m1a-provider-toolcall-rfc.md` §11）**：子 RFC + 四件套 + `PLANNER_TOOLCALL=on|off` 灰度（默认 off）全落地；proto Struct 死字段首次启用（不改 proto，V1 判断成立）。**协议探针四家 16/16**（named tool_choice 全尊重；qwen finish_reason 恒 "stop" 怪癖已钉契约注释）；**A/B @minimax**：mode_routing on 三轮 171/175/173 vs off 173/174 持平（方差带）、arguments 畸形 360 例全程 **0**（`_extract_json` 截断/裸引号工程债在 toolcall 通道退役）、降级链零静默丢失；**journeys regression 15/15**。**旅程级抓出三个 toolcall 独有 badcase 并修**（B4-1 误澄清/B1-4 丢继承槽/B3-4 编造「当前位置」占位值）——沉淀 V2 设计约束：**tool schema 与输出指令三向改变模型输出分布（多填/少填/编造），改 schema 必过旅程级行为对照**，协议成功率与单轮评测全看不见这族问题。单测 +30，全量 pytest 零回归。默认已翻 on（同日泓舟拍板；off 降为 JSON 回退档）。
 
 **M1b 自进化 v1 + Cloud Shadow NLU（约 1 周）**
 - 自进化 v1 流水线（含 §4.G 安全治理）；Cloud Shadow NLU 影子评测（8590 语料混淆矩阵→切换建议）；情感 TTS 参数并行落、**不作阻塞 DoD**。

@@ -141,9 +141,20 @@ def test_toolcall_degraded_after_both_rounds_fail(monkeypatch):
     assert plan.steps == []
 
 
-def test_toolcall_off_default_zero_touch(monkeypatch):
-    """默认 off：工具通道零调用、plan_mode=json——存量行为字节级一致。"""
+def test_toolcall_default_on(monkeypatch):
+    """默认（不设 env）＝on（2026-07-24 泓舟拍板翻正）：注入 llm_tool_fn 即走工具通道。"""
     monkeypatch.delenv("PLANNER_TOOLCALL", raising=False)
+    spy = _SpyLLM(tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                                    "arguments": _ARGS_OK}]))
+    b = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+    plan = _build(b)
+    assert plan.plan_mode == "toolcall"
+    assert spy.tool_calls_n == 1 and spy.text_calls == 0
+
+
+def test_toolcall_off_is_json_fallback_tier(monkeypatch):
+    """显式 off＝JSON 纯文本回退档（对照/应急）：工具通道零调用、plan_mode=json。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "off")
     spy = _SpyLLM(text_reply=json.dumps(_ARGS_OK, ensure_ascii=False))
     b = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
     plan = _build(b)

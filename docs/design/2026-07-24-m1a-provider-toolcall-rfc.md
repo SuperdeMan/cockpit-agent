@@ -131,7 +131,7 @@ planning.build()                                # PLANNER_TOOLCALL=on 且 llm_to
 
 ## 6. 灰度与运营口径
 
-- `PLANNER_TOOLCALL=on|off`，**默认 off**：`.env.example` + `deploy/docker-compose.yaml`（cloud-planner 服务）。
+- `PLANNER_TOOLCALL=on|off`，**默认 on（2026-07-24 A/B 达标后泓舟拍板翻正；灰度期默认 off 已退役）**：`.env.example` + `deploy/docker-compose.yaml`（cloud-planner 服务）+ `planning.py` 三处同源。off 降为 JSON 纯文本回退档（badcase 对照/弱 tool-calling 厂商应急）。
 - 开关是**全局**的（不做 per-provider 矩阵配置——复杂度不换收益）；哪些 provider 达标启用是 A/B 报告之后的运营决策：达标 → 默认翻 on；个别 provider 协议层不达标 → 报告记录，切到该 provider 演示时手动 off（与「单一大脑手动 pin，不自动 failover」既有决策同风格）。
 
 ## 7. 真栈探针与 A/B 计划
@@ -199,4 +199,4 @@ planning.build()                                # PLANNER_TOOLCALL=on 且 llm_to
 **DoD 判定**：
 - 协议层 ✅（口径修订）：**arguments 畸形归零**（探针 16 + eval 240 on 例全程 0）+ 全链观测可归因（plan_mode span/eval 聚合 + per-case）。原字面「0 次 `_extract_json` 抢救介入」修订——salvage ~5% 是 MiniMax-M3 无视 named tool_choice 直接文本作答的**模型行为**（非我们可控、非事故），属设计内降级且全部被接住；「消灭脆弱解析」的实质=畸形不再产生失败，已达成。
 - 功能层 ✅：mode_routing 三轮 on（171/175/173）vs 两轮 off（173/174）持平（方差带）、无静默丢失；**journeys regression 15/15 全绿**（三个 toolcall 独有 badcase 修复后）。时延/token：toolcall 请求 schema 固有增量在 max_tokens 800 预算内未触截断（360 on 例零 length 截断），P95 未见劣化信号（eval 墙钟两臂同量级）。
-- **灰度决策：`PLANNER_TOOLCALL` 默认保持 off**。协议收益已证实、功能持平，翻默认 on 属产品节奏决策，材料齐、留泓舟拍板（与 M0b canary「达标才翻」同款流程；差异：M0b 是 +2 反超、本卡是持平+协议债退役收益）。
+- **灰度决策：`PLANNER_TOOLCALL` 默认翻 on（2026-07-24 泓舟拍板）**。协议收益证实（畸形归零+工程债退役）、功能持平、journeys 15/15——三处默认（planning.py/compose/.env.example）同步翻正，off 降为 JSON 回退档（对照/应急）；契约测试改判「默认=on」+「off=回退档」两条。

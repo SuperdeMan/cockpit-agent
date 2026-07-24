@@ -235,9 +235,10 @@ services:
       # M0b Skill 层：full|canary|shadow|off（默认 full=注入——Full Migration 后中央 base
       # 不含领域知识，shadow/off 仅作研究/debug 档，会缺规划知识）
       SKILLS_MODE: ${SKILLS_MODE:-full}
-      # M1a submit_plan 结构化规划输出：on|off（默认 off 灰度；on=规划轮经原生 function
-      # calling 强制输出合法 Plan，协议失败轮内回退 JSON 路径。RFC 2026-07-24-m1a）
-      PLANNER_TOOLCALL: ${PLANNER_TOOLCALL:-off}
+      # M1a submit_plan 结构化规划输出：on|off（默认 on——2026-07-24 泓舟拍板翻正，
+      # A/B 材料 RFC §11；off=JSON 纯文本回退档。规划轮经原生 function calling 强制
+      # 输出合法 Plan，协议失败轮内回退 JSON 路径）
+      PLANNER_TOOLCALL: ${PLANNER_TOOLCALL:-on}
     ports: ["50054:50054"]
     depends_on: [registry, llm-gateway, memory]
 

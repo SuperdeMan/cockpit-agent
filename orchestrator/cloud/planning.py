@@ -251,8 +251,10 @@ class PlanBuilder:
 
         # M1a（RFC §4）：PLANNER_TOOLCALL=on 且注入了 llm_tool_fn → 第 1 轮走 submit_plan
         # 工具通道；协议失败（异常/无 tool_calls）同轮内容抢救、第 2 轮直接 JSON 路径——
-        # 降级轮内闭合，最坏 2 次调用与现状重试上限一致。off（默认）与今天字节级一致。
-        toolcall = (os.getenv("PLANNER_TOOLCALL", "off").strip().lower() == "on"
+        # 降级轮内闭合，最坏 2 次调用与现状重试上限一致。默认 on（2026-07-24 泓舟拍板，
+        # A/B 材料 RFC §11：协议畸形归零+功能持平+journeys 15/15）；off=JSON 纯文本
+        # 回退档（badcase 对照/弱 tool-calling 厂商应急用）。
+        toolcall = (os.getenv("PLANNER_TOOLCALL", "on").strip().lower() == "on"
                     and self._llm_tools is not None)
         plan = None
         plan_mode = "json"
