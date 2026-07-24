@@ -28,137 +28,11 @@ def _date_line() -> str:
 # Agent manifest.route_hints 声明、通用 RouteHintEngine 消费（R2.1）；trip.plan 的话术抽取在
 # trip-planner Agent 的 extract.py。编排核心不再持任何领域正则/Agent 字面量。
 
+# M0b Full Migration（2026-07-24，canary A/B 达标后收敛）：领域组合知识（多日出行/顺路
+# 停靠/条件依赖）与跨域判据（时效深度/隐式车控）已外迁 skills/{guides,policies}/*.yaml，
+# 由 plan_skills() 检索后注入 user message（== 规划知识 == 块，SKILLS_MODE 默认 full）。
+# 本常量为唯一 base，只留通用规划契约与通用示例——加规划知识=投 skill 文件，不改此处。
 _PLANNER_BASE = (
-    "你是智能座舱的任务编排器。根据用户话术和可用 agent 能力清单，输出 JSON 调用计划。\n"
-    "格式严格为：{\"complexity\":\"simple|adaptive\",\"goal\":\"一句话目标\","
-    "\"steps\":[{\"id\":\"s1\",\"agent_id\":\"..\",\"intent\":\"..\","
-    "\"slots\":{..},\"depends_on\":[],\"slot_refs\":{}}]}\n"
-    "simple 表示一次可确定全部步骤；adaptive 表示必须根据运行结果决定下一步"
-    "（例如满了换次近、失败换一家、探索式查询）。普通单域、多意图并行、固定串行都选 simple。\n"
-    "**条件依赖**（「查X，如果/要是…就Y」——后半件事做不做取决于前一步查询结果）必须选"
-    " adaptive：先只规划查询步，看到结果再决定是否执行 Y；不要把 Y 无条件排进计划，"
-    "也不要只查不管 Y。\n"
-    "**个人偏好指代**（「我喜欢的温度」「常用的那个」「老样子」）：槽位值只能取自上下文里"
-    "召回的用户偏好记忆；记忆里没有对应值就**留空该槽位**让能力方追问——绝不臆造一个数值"
-    "直接执行（把空调猜成 22 度打开比多问一句糟糕得多）。\n"
-    "\n"
-    "== 意图拆分 ==\n"
-    "- 用户一句话包含多个意图时（如『打开空调并播放音乐』），必须拆成多个 step\n"
-    "- 单意图只输出一个 step，不要过度拆分\n"
-    "\n"
-    "== 并行 vs 串行 ==\n"
-    "- 无数据依赖的步骤 → 各自 depends_on=[]，执行器会自动并行\n"
-    "- 有数据依赖（如先搜索再预订）→ 后续步骤用 depends_on + slot_refs 引用前序结果\n"
-    "- 判断依据：后一步是否需要前一步的输出数据？不需要则并行\n"
-    "\n"
-    "== 指令类型（规划时参考，影响执行语义）==\n"
-    "- 控制类（control）：车控/媒体等硬件操作，立即执行，可并行。如 hvac.set、media.play\n"
-    "- 引导类（guide）：打开 UI/导航界面。如 navigation.search_poi\n"
-    "- 播报类（query）：查询后播报结果，需要联网。如 info.weather、info.news\n"
-    "- 不同类型互不阻塞，可并行；同类型也可并行（只要无数据依赖）\n"
-    "\n"
-    "== 示例 ==\n"
-    "用户：『打开空调并播放音乐』\n"
-    "→ 2 个 step，无依赖，并行执行：\n"
-    "{\"steps\":["
-    "{\"id\":\"s1\",\"agent_id\":\"hvac\",\"intent\":\"hvac.set\",\"slots\":{\"temperature\":\"24\"},\"depends_on\":[],\"slot_refs\":{}},"
-    "{\"id\":\"s2\",\"agent_id\":\"media\",\"intent\":\"media.play\",\"slots\":{},\"depends_on\":[],\"slot_refs\":{}}"
-    "]}\n"
-    "\n"
-    "用户：『找川菜馆然后帮我订位』\n"
-    "→ 2 个 step，有依赖，串行：\n"
-    "{\"steps\":["
-    "{\"id\":\"s1\",\"agent_id\":\"nearby\",\"intent\":\"nearby.search\",\"slots\":{\"category\":\"餐饮\",\"cuisine\":\"川菜\"},\"depends_on\":[],\"slot_refs\":{}},"
-    "{\"id\":\"s2\",\"agent_id\":\"nearby\",\"intent\":\"nearby.order\",\"slots\":{},\"depends_on\":[\"s1\"],\"slot_refs\":{\"poi_id\":\"s1.data.items.0.id\"}}"
-    "]}\n"
-    "\n"
-    "用户：『查下明天会不会下雨，要是下雨就提醒我带伞』\n"
-    "→ 条件依赖：**只**规划查询步、标 adaptive（看到天气结果再决定要不要建提醒；"
-    "绝不能直接建提醒去问“什么时候提醒”）：\n"
-    "{\"complexity\":\"adaptive\",\"steps\":["
-    "{\"id\":\"s1\",\"agent_id\":\"info\",\"intent\":\"info.weather\",\"slots\":{\"date\":\"明天\"},\"depends_on\":[],\"slot_refs\":{}}"
-    "]}\n"
-    "\n"
-    "用户：『打开空调顺便看看今天天气』\n"
-    "→ 2 个 step，无依赖，并行（控制类 + 播报类互不阻塞）：\n"
-    "{\"steps\":["
-    "{\"id\":\"s1\",\"agent_id\":\"hvac\",\"intent\":\"hvac.set\",\"slots\":{\"temperature\":\"24\"},\"depends_on\":[],\"slot_refs\":{}},"
-    "{\"id\":\"s2\",\"agent_id\":\"info\",\"intent\":\"info.weather\",\"slots\":{},\"depends_on\":[],\"slot_refs\":{}}"
-    "]}\n"
-    "\n"
-    "用户：『导航去深圳湾，在附近找个充电桩』\n"
-    "→ 2 个 step，无依赖并行；充电步必须带 destination（按目的地找站，作为导航途经点）：\n"
-    "{\"steps\":["
-    "{\"id\":\"s1\",\"agent_id\":\"navigation\",\"intent\":\"navigation.navigate_to\",\"slots\":{\"destination\":\"深圳湾\"},\"depends_on\":[],\"slot_refs\":{}},"
-    "{\"id\":\"s2\",\"agent_id\":\"charging-planner\",\"intent\":\"charging.find\",\"slots\":{\"destination\":\"深圳湾\"},\"depends_on\":[],\"slot_refs\":{}}"
-    "]}\n"
-    "\n"
-    "用户：『导航去东方之门，然后在附近找个吃饭的地方』\n"
-    "→ 单 step：顺路用餐用 navigation.navigate_to 的 stop_category（它会导航并给餐厅候选让用户选途经点），不要拆成 nearby.search：\n"
-    "{\"steps\":["
-    "{\"id\":\"s1\",\"agent_id\":\"navigation\",\"intent\":\"navigation.navigate_to\",\"slots\":{\"destination\":\"东方之门\",\"stop_category\":\"吃饭\"},\"depends_on\":[],\"slot_refs\":{}}"
-    "]}\n"
-    "\n"
-    "用户：『导航去东方之门途经肯德基』（用户已选好途经点）\n"
-    "→ 单 step navigation.navigate_to，destination + waypoint：\n"
-    "{\"steps\":["
-    "{\"id\":\"s1\",\"agent_id\":\"navigation\",\"intent\":\"navigation.navigate_to\",\"slots\":{\"destination\":\"东方之门\",\"waypoint\":\"肯德基\"},\"depends_on\":[],\"slot_refs\":{}}"
-    "]}\n"
-    "\n"
-    "用户：『周末去杭州两天，带老人，不要太累，顺便看看天气和是否需要中途充电』\n"
-    "→ 3 个 step，无依赖并行：『去X玩N天』+出行偏好(带老人/轻松)本身就是行程规划意图，必须"
-    "单独成 trip.plan 步，别只把它当成天气/充电的目的地上下文而漏掉：\n"
-    "{\"steps\":["
-    "{\"id\":\"s1\",\"agent_id\":\"trip-planner\",\"intent\":\"trip.plan\",\"slots\":{\"destination\":\"杭州\",\"days\":\"2\",\"preferences\":\"带老人,轻松不累\"},\"depends_on\":[],\"slot_refs\":{}},"
-    "{\"id\":\"s2\",\"agent_id\":\"info\",\"intent\":\"info.forecast\",\"slots\":{\"city\":\"杭州\"},\"depends_on\":[],\"slot_refs\":{}},"
-    "{\"id\":\"s3\",\"agent_id\":\"charging-planner\",\"intent\":\"charging.plan\",\"slots\":{\"destination\":\"杭州\"},\"depends_on\":[],\"slot_refs\":{}}"
-    "]}\n"
-    "\n"
-    "== 时效与深度（通用规则）==\n"
-    "- 时效判据：答案会随时间变化的问题（近期事件/价格/榜单/比分/新品发布，或含"
-    "『最新/现在/今天/昨晚/今年/最近』类时间词）→ **必须**选择能力清单里能联网检索的"
-    "查询能力，禁止凭你的记忆直答、禁止空计划、禁止当闲聊处理。\n"
-    "- 相对时间只按『当前日期』换算：槽位里出现的年份/日期必须由用户原话或上方"
-    "『当前日期』推出（今年=当前年份）；**绝不**凭你的训练记忆把『今年/去年/明天』"
-    "改写成别的绝对年份，拿不准就把用户原词原样放进槽位。\n"
-    "- 常识判据：不随时间变化的常识/原理/定义/历史、闲聊、情绪陪伴 → 选开放域对话能力"
-    "直接回答，不要联网检索。\n"
-    "- 深度判据：只想浏览一批资讯 → 新闻类能力；对一个具体问题要答案（查一下/搜一下/"
-    "X是什么/X怎么样）→ 搜索类能力；要系统性了解/全面对比/评估一个主题 → 深度调研类能力。"
-    "不要把普通查询升级成调研，也不要把调研请求降级成单次搜索。\n"
-    "\n"
-    "== 通用规则 ==\n"
-    "- **多日出行必出行程规划**：用户话术含『去X玩/住N天』『N日游/两日游』或带出行偏好"
-    "（带老人/带娃/轻松/不要太累/悠闲/慢一点），即是行程规划意图，**必须**出一个 trip-planner 的"
-    " trip.plan 步——即便同句还顺便问天气/路况/充电，trip.plan 也要与它们**并列成独立 step**，"
-    "**绝不能**只把『去X几天』当成天气/充电的目的地上下文而漏掉行程规划。\n"
-    "- **导航去X + 顺路/在附近 找吃饭/餐厅/咖啡** → 用**单个** navigation.navigate_to"
-    "（带 stop_category，它会导航并给真实候选让用户选途经点），**不要**再拆出"
-    " nearby.search（nearby 仅用于纯发现/看详情/订位，不产生导航途经点；拆了会串味）。\n"
-    "- 用 slot_refs 引用前序 step 结果，如 {\"poi_id\":\"s1.data.items.0.id\"}\n"
-    "- 若用户话术含指代（如『再调高一点』『还是刚才那家』『换个颜色』），"
-    "优先结合下方『当前对话焦点』（对象/位置/属性/上个地点）、再参考『最近对话』"
-    "补全对象/槽位后再规划\n"
-    "- **省略式追问延续上一轮**：用户只说『明天呢』『那后天呢』『换成XX呢』这类省略句，"
-    "是把**最近对话里最后一轮**的问题换个时间/对象重问——必须沿用上一轮的意图与能力"
-    "（『当前对话焦点』的上一轮意图可参考），只替换对应槽位；不得凭省略句里的零星词"
-    "改判到别的领域（如上一轮问比赛赛程，『明天呢』=查明天赛程，不是查天气）\n"
-    "- **隐式车控必须识别**：若最近对话含车控操作（如 hvac.set、window.open），"
-    "用户说『再高/低一点』『打开/关掉』『我冷/热』等，必须映射为对应车控 step（如 hvac.inc/hvac.dec/hvac.set），"
-    "不得输出空 steps 或当作闲聊。不确定具体值时用合理的默认值（如温度调高/低 1 度）。\n"
-    "- 状态/查询类（query）意图必须与某个 capability 语义精确对应；"
-    "若用户想查的状态（如电量、续航、能耗、剩余里程、保养）在能力清单里没有对应 intent，"
-    "绝不要硬套相近的查询意图（例如把『电量/续航』套成 tire_pressure.query/胎压查询）。"
-    "此时输出 {\"steps\":[]} 交系统兜底，宁可不答也不要张冠李戴\n"
-    "- 只输出 JSON，不要任何解释\n"
-    "- 无法匹配时输出 {\"steps\":[]}"
-)
-
-# M0b Skill 层：canary/full 模式用瘦身 base——领域组合知识（多日出行/顺路停靠/条件依赖）
-# 与跨域判据（时效深度/隐式车控）已外迁 skills/{guides,policies}/*.yaml，由 plan_skills()
-# 检索后注入 user message（== 规划知识 == 块）。此处只留通用规划契约与通用示例。
-# Full Migration（A/B 达标后）删除上方 _PLANNER_BASE，本常量成为唯一 base。
-_PLANNER_BASE_SLIM = (
     "你是智能座舱的任务编排器。根据用户话术和可用 agent 能力清单，输出 JSON 调用计划。\n"
     "格式严格为：{\"complexity\":\"simple|adaptive\",\"goal\":\"一句话目标\","
     "\"steps\":[{\"id\":\"s1\",\"agent_id\":\"..\",\"intent\":\"..\","
@@ -248,11 +122,11 @@ _CLARIFY_SECTION = (
 )
 
 
-def _planner_system(slim: bool = False) -> str:
+def _planner_system() -> str:
     """每次 build() 实时拼 Planner system prompt：base + 受话段（恒附）+ 澄清段（CLARIFY_ENABLED=on）。
     os.getenv 实时读——env 翻转即刻生效，且让 monkeypatch 单测可行（母卡实施计划 §0-10）。
-    slim=True（SKILLS_MODE=canary/full）：用瘦身 base，领域知识由 skill 注入块承载。"""
-    prompt = (_PLANNER_BASE_SLIM if slim else _PLANNER_BASE) + _ADDRESSED_SECTION
+    Full Migration 后 base 唯一（领域知识由 skill 注入块承载，见 skills.py）。"""
+    prompt = _PLANNER_BASE + _ADDRESSED_SECTION
     if os.getenv("CLARIFY_ENABLED", "off").lower() == "on":
         prompt += _CLARIFY_SECTION
     return prompt
@@ -295,16 +169,16 @@ class PlanBuilder:
 
         agent_map = {a.manifest.agent_id: a for a in agents}
 
-        # M0b Skill 层：shadow=只检索记录（零行为变化）；canary/full=瘦身 base + 注入块。
-        # 纯词法同步计算，不增加规划轮网络调用；名单落 plan.skills 供 cloud.planning span 归因。
+        # M0b Skill 层（Full Migration 后默认 full）：canary/full=注入块；shadow=只检索
+        # 记录；off=注入关（debug 档，无领域知识）。纯词法同步计算，不增加规划轮网络调用；
+        # 名单落 plan.skills 供 cloud.planning span 归因。
         sk_mode, sk_names, sk_block = _skills.plan_skills(text)
-        slim = sk_mode in ("canary", "full")
 
         plan = None
         last_raw = ""
         for _ in range(2):
             raw = await self._llm_plan(text, agents, working_set,
-                                       skills_block=sk_block, slim=slim)
+                                       skills_block=sk_block)
             last_raw = raw or last_raw
             parsed = self._parse_and_validate(raw, agent_map, text)
             # R4.4：放行「合法的空 steps 计划」——受话判定 addressed=false / 澄清 clarify
@@ -331,7 +205,7 @@ class PlanBuilder:
         return plan
 
     async def _llm_plan(self, text: str, agents: list, working_set: WorkingSet,
-                        skills_block: str = "", slim: bool = False) -> str:
+                        skills_block: str = "") -> str:
         catalog = WorkingSet.render_catalog(agents)
         ctx_block = working_set.render_context()  # 记忆 +（焦点）+ 历史，统一预算
         # skills 块紧跟日期锚之后（policy 文本引用「上方『当前日期』」，顺序是契约）
@@ -339,7 +213,7 @@ class PlanBuilder:
         user_msg = f"可用能力:\n{catalog}\n\n{_date_line()}\n{sk_part}{ctx_block}用户说: {text}"
         try:
             raw = await self._llm([
-                {"role": "system", "content": _planner_system(slim=slim)},
+                {"role": "system", "content": _planner_system()},
                 {"role": "user", "content": user_msg},
             ])
             logger.info("LLM plan raw: %s", (raw or "")[:500])

@@ -232,9 +232,9 @@ services:
       REJECT_NON_ADDRESSED: ${REJECT_NON_ADDRESSED:-on}
       CLARIFY_ENABLED: ${CLARIFY_ENABLED:-on}
       CLARIFY_FALLBACK_MIN: ${CLARIFY_FALLBACK_MIN:-0.5}
-      # M0b Skill 层：off|shadow|canary|full（默认 shadow=只检索记录不注入，零行为变化；
-      # canary=瘦身 base+注入块做 A/B；full=Full Migration 后与 canary 合流）
-      SKILLS_MODE: ${SKILLS_MODE:-shadow}
+      # M0b Skill 层：full|canary|shadow|off（默认 full=注入——Full Migration 后中央 base
+      # 不含领域知识，shadow/off 仅作研究/debug 档，会缺规划知识）
+      SKILLS_MODE: ${SKILLS_MODE:-full}
     ports: ["50054:50054"]
     depends_on: [registry, llm-gateway, memory]
 

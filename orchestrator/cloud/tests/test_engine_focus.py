@@ -8,11 +8,20 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.planning import PlanBuilder
 from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.aggregator import Aggregator
 from orchestrator.cloud.session import SessionStore
+
+
+@pytest.fixture(autouse=True)
+def _skills_off(monkeypatch):
+    """本文件测焦点机制：假 LLM 按 prompt 关键词出计划——skill 注入块的 policy 文本
+    （含「空调」「最近对话」字样）会误触发关键词匹配，钉 off 隔离（M0b Full Migration）。"""
+    monkeypatch.setenv("SKILLS_MODE", "off")
 
 
 def _agent(agent_id, intents):

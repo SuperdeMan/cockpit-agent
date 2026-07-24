@@ -5,8 +5,9 @@ workflow（v2 未实装）。设计稿 `docs/design/2026-07-24-eva-benchmark-int
 
 - 检索 v1 刻意用**纯词法**（keywords 命中 + 中文字符 bigram 重合）：零网络调用、离线
   确定可测；是否升级 embedding 预筛由 Shadow Retrieval 阶段的召回数据决定（eval 先行）。
-- `SKILLS_MODE`：off=完全关闭｜shadow=只检索记录不注入（零行为变化，默认）｜
-  canary=瘦身 base + 注入｜full=同 canary（中央领域知识删除后与 canary 合流）。
+- `SKILLS_MODE`：**full=注入（默认，Full Migration 2026-07-24 后中央 base 不再含领域
+  知识）**｜canary=同 full（A/B 阶段命名保留）｜shadow=只检索记录不注入（研究档，
+  注意 Full 后 base 无领域知识，shadow/off 会缺知识）｜off=完全关闭（debug 档）。
 - 权威链：skill 永远在软层——确认/权限/隐私由 VAL/manifest/Validator 硬层承担。
 """
 from __future__ import annotations
@@ -164,8 +165,8 @@ def default_store() -> SkillStore:
 
 
 def skills_mode() -> str:
-    mode = os.getenv("SKILLS_MODE", "shadow").strip().lower()
-    return mode if mode in ("off", "shadow", "canary", "full") else "shadow"
+    mode = os.getenv("SKILLS_MODE", "full").strip().lower()
+    return mode if mode in ("off", "shadow", "canary", "full") else "full"
 
 
 def plan_skills(text: str) -> tuple[str, list[str], str]:

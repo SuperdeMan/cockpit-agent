@@ -14,6 +14,15 @@ from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.aggregator import Aggregator
 from orchestrator.cloud.session import SessionStore
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _skills_off(monkeypatch):
+    """本文件测记忆/历史注入机制：负向断言按裸子串判——skill policy 文本恰含
+    「最近对话」字样会误触发，钉 off 隔离（M0b Full Migration）。"""
+    monkeypatch.setenv("SKILLS_MODE", "off")
+
 _PLAN_JSON = json.dumps({"steps": [
     {"id": "s1", "agent_id": "demo", "intent": "demo.do", "slots": {}, "depends_on": []},
 ]})

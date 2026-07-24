@@ -233,11 +233,16 @@ def test_planner_system_clarify_gated_by_env(monkeypatch):
     assert "路由歧义澄清" in _planner_system()
 
 
-def test_planner_system_mode_criteria_before_addressed(monkeypatch):
-    """四模式判据段（时效/常识/深度）恒在 base 内，且受话段仍拼在其后
-    ——顺序变化=拼装逻辑被动过，值得报警（2026-07-12 mode-routing 设计 P0-3）。"""
+def test_planner_system_mode_criteria_live_in_policy_skill(monkeypatch):
+    """M0b Full Migration 后：四模式判据（时效/常识/深度）唯一来源=policy skill
+    `freshness-and-depth`，中央 base 不得倒灌回判据文本；受话段仍恒附在 system。
+    （原契约「判据在受话段之前」由 skills 注入块先于上下文渲染承接，
+    见 test_skills 的 date 锚序断言；2026-07-12 mode-routing 设计 P0-3 的守护目标不变。）"""
     monkeypatch.delenv("CLARIFY_ENABLED", raising=False)
     sys_text = _planner_system()
-    assert "时效与深度" in sys_text
-    assert "禁止凭你的记忆直答" in sys_text
-    assert sys_text.index("时效与深度") < sys_text.index("受话判定")
+    assert "时效与深度" not in sys_text          # 判据不在中央（防倒灌）
+    assert "受话判定" in sys_text                # 受话段仍恒附
+    from orchestrator.cloud import skills as sk
+    pol = {d.name: d for d in sk.SkillStore().policies()}
+    assert "freshness-and-depth" in pol
+    assert "禁止凭你的记忆直答" in pol["freshness-and-depth"].knowledge

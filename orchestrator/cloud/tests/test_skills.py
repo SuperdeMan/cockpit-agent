@@ -130,24 +130,49 @@ def _run_build(monkeypatch, mode, text="周末去杭州玩两天带老人"):
 
 
 def test_mode_shadow_records_but_does_not_inject(monkeypatch):
+    """shadow=研究档：记录检索名单但不注入。Full Migration 后 base 唯一且不含领域知识。"""
     plan, seen = _run_build(monkeypatch, "shadow")
     assert any(s.startswith("shadow:") for s in plan.skills)          # 记录检索名单
-    assert "多日出行必出行程规划" in seen["system"]                    # 完整 base 未瘦身
     assert "== 规划知识" not in seen["user"]                          # 不注入
+    assert "多日出行必出行程规划" not in seen["system"]                # 单 base，无领域知识
 
 
-def test_mode_canary_injects_and_slims_base(monkeypatch):
+def test_mode_canary_injects_without_duplication(monkeypatch):
     plan, seen = _run_build(monkeypatch, "canary")
     assert any(s.startswith("canary:") for s in plan.skills)
     assert "== 规划知识" in seen["user"]                              # 注入块
     assert "多日出行必出行程规划" in seen["user"]                      # guide 进了 user msg
-    assert "多日出行必出行程规划" not in seen["system"]                # base 已瘦身（知识不双份）
+    assert "多日出行必出行程规划" not in seen["system"]                # 知识不双份（单 base）
     assert "时效判据" in seen["user"]                                 # policy 常驻
     assert "当前日期" in seen["user"].split("== 规划知识")[0]          # date 锚在 skills 块之前
 
 
-def test_mode_off_is_legacy_behavior(monkeypatch):
+def test_mode_off_is_debug_no_injection(monkeypatch):
+    """off=debug 档：注入关。Full Migration 后此档缺领域知识，仅排障用。"""
     plan, seen = _run_build(monkeypatch, "off")
     assert plan.skills == []
     assert "== 规划知识" not in seen["user"]
-    assert "多日出行必出行程规划" in seen["system"]
+    assert "多日出行必出行程规划" not in seen["system"]
+
+
+def test_default_mode_is_full_injection(monkeypatch):
+    """缺省（未设 SKILLS_MODE）= full：注入生效——Full Migration 后的默认交付形态。"""
+    monkeypatch.delenv("SKILLS_MODE", raising=False)
+    seen = {}
+
+    async def mock_llm(messages, **kw):
+        seen["system"] = messages[0]["content"]
+        seen["user"] = messages[-1]["content"]
+        return ('{"complexity":"simple","goal":"g","steps":[{"id":"s1",'
+                '"agent_id":"trip-planner","intent":"trip.plan","slots":{},'
+                '"depends_on":[],"slot_refs":{}}]}')
+
+    async def mock_resolve(query, top_k):
+        return []
+
+    builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
+    agents = [_mock_agent("trip-planner", ["trip.plan"])]
+    plan = asyncio.run(builder.build("周末去杭州玩两天带老人", WorkingSet(catalog=agents),
+                                     PlanContext(session_id="t")))
+    assert any(s.startswith("full:") for s in plan.skills)
+    assert "== 规划知识" in seen["user"] and "多日出行必出行程规划" in seen["user"]

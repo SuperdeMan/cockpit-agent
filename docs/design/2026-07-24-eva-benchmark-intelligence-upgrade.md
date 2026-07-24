@@ -334,6 +334,10 @@ verification:
   - 验证：`test_skills.py` 11 条（加载/检索命中/反例静默/渲染预算/**即插即用契约**（tmp 目录投新 guide 文件即被检索，零中央代码）/四态注入——canary 断言瘦身 base 不双份、date 锚在 skills 块前）；`test/eval_skills.py` 离线召回 **5/5**、反例误召回 1/6（纯导航句召回 navigation-with-stop，判定为可接受噪声——注入内容对导航句无害，shadow 持续观察）；**真栈 shadow 冒烟 PASS**（多日出行/条件句两探针，span 记录 `shadow:multi-day-trip`/`shadow:conditional-reminder`，行为零变化：行程×天气联动与 adaptive 条件链正常）。
   - 真栈复验（M0a+M0b 同栈）：e2e_ws 通过（含 cancel 打断）；strict_stack PASS（weather=qweather/place_list=amap/route_plan=amap 全 real；充电探针本轮未出 `_prov` 卡=无定位纯语音路径，探针下限 ≥2 满足）；**journeys regression 15/15 全绿**（@minimax provider 锁定；含 A5-3 后备箱危险确认链与 B4-2 场景确认链——M0a 确认兜底闸对既有确认流零破坏；A3-1 现场演示诚实降级话术）；全量 pytest **1740 passed / 7 skipped**（skip 回落 7 证实上批 +2 系栈未起波动）。
   - 环境注：本机 winnat 动态保留区（50063-50162）挡 50070/50071 宿主发布——`compose.winnat.local.yaml`（不入库）取消这两个端口的宿主发布（宿主侧无直连，容器网不受影响）；根治需管理员扩管理排除区（见文件头注释）。
+- **落地记录（2026-07-24 续，步② Canary A/B 达标 + 步③ Full Migration 收官）**：
+  - **步② A/B（同 provider @minimax 组内对照）**：mode_routing --live 对照组 off（完整旧 base）**174/177（98.3%）** vs 实验组 canary（瘦身 base+注入）**176/177（99.4%）**——canary 反超 2 例、guardrail 桶 15/16→16/16；唯一共同失例（麒麟电池对比判 research）两组同错=既有 provider 边界方差与 skill 无关。journeys regression canary 下 **15/15** 与对照持平。**DoD ②「不低于对照组」达标且为正收益。**
+  - **步③ Full Migration**：删 `_PLANNER_BASE` 遗留领域块 **126 行**（planning.py 604→478 行；base 124→59 行，「减半」DoD 达成），slim 升格唯一 base、`_planner_system` 收敛无参；`SKILLS_MODE` 默认翻 **full**（skills.py/compose/.env.example 三处；off/shadow 降为 debug/研究档——Full 后中央无领域知识，这两档会缺知识，文档已注明）。
+  - 迁移附带修 4 条测试：`test_planner_system_mode_criteria_before_addressed` 重写为「判据唯一来源=policy skill、中央不得倒灌」新契约；engine focus/context 三条钉 `SKILLS_MODE=off`（假 LLM 按 prompt 关键词出计划、负向断言按裸子串判——policy 文本恰含「空调」「最近对话」字样会误触发，属测试与注入文本的巧合冲突，非行为回归）。云端套件 239 全绿（+1 默认 full 契约测试）。
 
 **M1a `submit_plan` 结构化输出（约 1 周；开工首件事=出「Provider tool-calling 兼容」子 RFC——四家 OpenAI 兼容 + anthropic 的 tool_calls 格式矩阵）**
 - `submit_plan` V1（providers/server/clients/planning 四件 + 灰度 A/B）。
