@@ -375,6 +375,7 @@ verification:
   - 验证：全量 pytest **2122 passed / 7 skipped**（基线 2041，净 **+81**，零回归）；`e2e_proactive` 16/16、`e2e_geofence` 7/7、`e2e_mcp` 10/10 均已挂 `run_e2e`；journeys regression **14/14 @minimax**；`eval_route_hints` 101/101。
 
 **M4 形态升级（4 周+，供应商依赖弹性）**
+- 核心件子 RFC 已出（2026-07-25）：`docs/design/2026-07-25-m4-s2s-fullduplex-rfc.md`——S2S 四件咬合结构件（realtime adapter 双端契约 / 三层状态机本侧权威+provider session=可丢弃缓存 / **单工具 escalate 分工契约**（不注能力清单，执行全量回确定性链）/ 双链路域灰度=escalate 描述收放）；打断三层语义表、重连重注入、文本副产品强制回灌防记忆黑洞；声纹/视觉边界速写交接手人。
 - 统一 realtime adapter → S2S 灰度（chitchat 先行）；声纹多用户；VAL sim.adas.* 演示域；视觉入口（车外「那是什么」以图片问答起步）。
 - DoD：语音双链路可切换；多用户记忆隔离旅程。（`sim.adas.*` 演示域=低优先级 backlog，**非 M4 必做 DoD**——2026-07-24 拍板 §8-6。）
 

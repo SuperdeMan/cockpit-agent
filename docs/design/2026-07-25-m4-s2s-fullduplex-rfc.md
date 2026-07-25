@@ -1,0 +1,260 @@
+# M4 子 RFC：全双工 S2S 核心设计（realtime adapter 协议 × 三层状态机 × 安全链分工）
+
+> 日期：2026-07-25
+> 状态：核心设计定稿，待泓舟审后交接手人落地（本 RFC 锁**结构性决策**；实现细节与非核心件由接手人展开）
+> 依据：母提案 `2026-07-24-eva-benchmark-intelligence-upgrade.md` §4.H / §6-M4 / §8-5「先锁 adapter 协议不锁厂商」/ §8-6「sim.adas 低优先 backlog 非 M4 DoD」
+> 前序：M0a→M3 全部完成（Skill 层 / submit_plan / 自进化 / Ledger+Verifier / 统一主动引擎 / 位置提醒 / MCP 桥）
+> 范围：**S2S 接入的四件咬合结构件**——①统一 realtime adapter 协议 ②全双工三层状态机（含 barge-in / 重连 / 工具调用打断 / 状态恢复）③S2S×确定性安全链分工契约 ④双链路共存与域灰度。声纹多用户与视觉入口给**边界速写**（§8，接手人自行展开设计）。
+
+---
+
+## 0. TL;DR 与关键设计判断
+
+泓舟点名「生产级全双工 S2S 状态机」为最关键件。我的判断：**状态机本身不是最难的，最难的是它周围五个会返工整期的结构性决策**——本 RFC 把它们全部锁定：
+
+1. **三层状态机的权威关系**（§2.2）：HMI voiceLoop（六态半双工）× S2S provider 会话（server VAD/response 生命周期）× 编排执行（planner/executor 在飞任务）。定「**我们侧是权威、provider 侧是执行器**」——所有用户可感知状态由本侧状态机决定，provider 事件只是输入。
+2. **provider session = 可丢弃缓存，不是真相源**（§2.3）：S2S 长连断了，provider 侧对话上下文即灭。对话历史唯一真相源保持在本侧（memory AppendTurn 既有链），重连 = 新 session + 上下文重注入。这条定错了，重连恢复就无从谈起。
+3. **工具调用绝不在 S2S 会话内闭环**（§5）：S2S 模型的 function call 输出「意图+槽位」后**必须回本侧确定性链**（planner 校验→executor→VAL/确认链），执行结果以文本事件回注 S2S 供其播报——Eva 同款分工「端到端负责听感，执行仍确定性」。车控/支付/任何副作用**没有一条路径**绕过 M0a 确认闸与 VAL。
+4. **音频通道拓扑**（§2.1）：S2S 会话 WS 落 **llm-gateway 音频面**（50059，与流式 ASR/TTS 同门），**不经 edge-gateway 代理**——但文本副产品必须回灌对话主链（§7），否则 S2S 轮次成为记忆/观测黑洞（接手人最容易漏的整合点）。
+5. **打断不是一件事，是三层语义**（§4.3）：听感打断（provider server VAD 自动 response 取消）／任务打断（在飞编排任务，复用 M1a `{type:cancel}` 通道与 M2 Ledger cancel）／工具调用中打断（call 已派发结果未回——**结果回来后静默丢弃不播报，副作用步照常走完确认链**）。每层权威不同、传播方向不同，混为一谈必出双播/幽灵执行。
+6. **双链路是常态不是过渡**（§6）：S2S 只授权 chitchat/轻查询域；非授权域**轮级逃逸**回三段式链路。逃逸判定点在 S2S 首个语义事件（转写/工具调用），不做「S2S 说到一半拽回来」——宁可首响应慢半拍，不接受播到一半换嗓子。
+7. **不自研声学，不接管 KWS/VAD 资产**：唤醒/退出/dismiss/误唤醒治理全部留在 HMI 既有层（R4.3 资产），S2S 只在 LISTENING 之后接管「听清+回答」——143 个 node 测试保护的东西一个不动。
+
+## 1. 现状资产盘点（设计的复用面与接缝）
+
+| 资产 | 位置/形态 | 在 S2S 设计中的角色 |
+|---|---|---|
+| HMI 语音 FSM：六态 `IDLE/ARMED/LISTENING/THINKING/SPEAKING/FOLLOWUP`，效果回调注入（onOpenAsr/onSend/onStopTts/onCancelTurn…），KWS 唤醒/VAD/barge-in/退出词/端点宽限全套 | `hmi/src/voiceLoop.mjs`（457 行，143 node 测试族保护） | **原样保留为权威状态机**；S2S 模式下六态语义重映射（§4.1），KWS/退出词/dismiss 零改动 |
+| 双 WS 拓扑：对话文本 WS（edge-gateway 8090 `/ws`，含 `{type:cancel}`→gRPC ctx 取消传播，M1a/R4.3b）＋音频 WS（llm-gateway 50059 `/api/asr/stream`、TTS 流） | `gateway/edge/`、`llm-gateway/http_server.py` | S2S 会话 WS 开在音频面同门（§2.1）；cancel 通道复用（§4.3） |
+| realtime 客户端先例：DashScope `/api-ws/v1/realtime`（OpenAI realtime 风格，session.update/事件流/base64 音频）与 `/api-ws/v1/inference`（run-task）两壳的 WS 客户端都已真栈验证 | `llm-gateway/providers.py`（qwen3 ASR realtime / cosyvoice TTS） | adapter 的 provider 侧实现直接续用这套 WS 工程（心跳/超时/事件解析惯例） |
+| 服务端流式 TTS + barge-in v1（HMI 停播+cancel 收尾）、TTS 分层（引擎→音色） | R4.2 资产 | 三段式链路照旧；S2S 模式下 TTS 由 provider 音频流替代，**HMI 播放器复用**（PCM 播放/停止面一致） |
+| 受话判定+澄清（R4.4：planner 一次 LLM 输出 addressed/clarify，hands-free 源门控） | planning/engine D6 | §5.3：S2S 授权域内由 S2S 模型自答自判；**逃逸到确定性链的轮次照走 R4.4 全套** |
+| M1a submit_plan（named tool_choice、轮内降级）；M0a require_confirm 中央闸；R9 话术契约 | planning/executor | §5：S2S 工具调用落地为「向确定性链投递一句等价文本指令」，上述全部机制**天然全量生效** |
+| M2 Task Ledger（长任务可查可停）+ Outcome Verifier | `_sdk/ledger.py` + executor 尾链 | 长任务在 S2S 会话中受理→照常开单；S2S 播报其 ack；完成推送经 M3 主动引擎（下行） |
+| M3 统一主动引擎（六路主动收敛，频控/驾驶负荷/同窗合并，fail-open） | `proactive/` + `runtime/proactive.py` | §4.4：主动消息在 S2S SPEAKING 期到达 → **不抢话**，treated as 排队下行事件，S2S 轮结束后按治理器节律播 |
+| qwen3.5-omni realtime（候选首厂商）：WS + server VAD + **tool calling**（返回 function name/args/call id）+ `response.audio.delta` 流式音频，OpenAI realtime 风格事件 | DashScope 公开文档（2026-07 口径） | adapter 协议的地气参照；Step-Audio 自托管为第二候选（协议映射见 §3.4） |
+
+## 2. 总体拓扑与三条结构性决策
+
+### 2.1 通道拓扑：S2S 会话 WS 落 llm-gateway 音频面
+
+```
+HMI mic ──PCM──> llm-gateway /api/s2s (WS, 新)  <──双向──>  S2S provider (WS realtime)
+  │                    │ 事件下行：transcript/answer_text/audio.delta/tool_intent/turn 生命周期
+  │                    │ 音频下行：PCM（HMI 既有播放器）
+  └──文本对话 WS(8090)──> edge-gateway → 编排主链   ←──工具调用逃逸/文本回灌（§5/§7）
+```
+
+- **决策：不经 edge-gateway 代理**。理由：音频面（ASR/TTS 流）本来就在 llm-gateway HTTP 面直连（现状拓扑），S2S 是同类流量；经 edge-gateway 加一跳纯增延迟与断点，鉴权用音频面既有口径。**代价与补偿**：edge-gateway 看不见 S2S 轮次 → §7 文本副产品回灌为**强制项**（不是可选优化）。
+- llm-gateway 内新模块 `s2s/`（会话管理+adapter），不与批处理/流式 ASR/TTS 抢生命周期。
+
+### 2.2 三层状态机：我们侧权威，provider 事件只是输入
+
+| 层 | 持有者 | 职责 | 权威范围 |
+|---|---|---|---|
+| L-HMI：voiceLoop 六态 | HMI | 唤醒/聆听/打断/退出/续问窗——**用户可感知状态的唯一权威** | 何时听、何时说、何时打断 |
+| L-Session：S2S 会话态 | llm-gateway `s2s/` | provider 连接生命周期、轮次对账（response id ↔ 本侧 turn id）、重连、上下文重注入 | provider 何时收音频、response 取消、session 重建 |
+| L-Exec：编排执行态 | engine/executor/Ledger | 逃逸轮的计划执行、确认挂起、长任务 | 一切副作用 |
+
+**铁律：下层事件永远不直接驱动上层状态迁移，只作为上层状态机的输入。** 例：provider 的 server VAD 判了「用户说完了」→ 上报 `turn.detected_end` 事件 → L-HMI 决定是否进 THINKING（它还要过本侧 VAD/宽限窗的既有判据）；provider 断连 → L-Session 静默重建，L-HMI 只有在重建超时才感知（降级提示）。反例（禁止）：provider `response.created` 直接把 HMI 置为 SPEAKING——若此时本侧刚判定 barge-in，就会出现「打断了却又开始说」的竞态。
+
+### 2.3 provider session = 可丢弃缓存
+
+S2S 会话在 provider 侧持有对话上下文（其多轮能力来源），但**本侧不依赖它存活**：
+
+- 对话历史唯一真相源 = 本侧 memory（AppendTurn 既有链，经 §7 回灌）。
+- **重连 = 新 session + 重注入**：`session.update`（或等价 system 注入）带三样——①近 N 轮对话摘要（memory GetSession 既有接口，N=4 与 planner 口径一致）②人设/话术契约（简短系统提示，与 chitchat persona 同源）③当前焦点（planner:focus 既有键，可选）。**不逐字回放全部历史**（token 成本+provider 兼容性），摘要粒度足够 chitchat 域连续性。
+- 推论：**任何时刻杀掉 provider session 都无损**——这是重连、厂商切换、A/B 的共同地基；也是「锁协议不锁厂商」在状态层的真正含义。
+
+## 3. 统一 realtime adapter 协议（llm-gateway 内）
+
+### 3.1 设计原则
+
+- **两端两个契约**：对上（HMI/回灌）一个**本侧事件协议**（穿越厂商差异，永不随厂商变）；对下（provider）一个 **`BaseS2SProvider` 抽象**（每厂商一实现）。HMI 只认识本侧协议。
+- 事件命名走本侧语义，不照抄 OpenAI realtime（避免「协议漂移即 HMI 重写」）；但字段语义与之可映射（降低厂商实现成本）。
+
+### 3.2 对上事件协议（`/api/s2s` WS，JSON 文本帧 + 二进制 PCM 帧）
+
+上行（HMI→网关）：
+
+```jsonc
+{"type": "session.start", "session_id", "user_id", "voice", "context": {...}}  // context=重注入材料，HMI 不组装、网关向 memory 取
+{"type": "audio"}            // 之后跟二进制 PCM 帧（16k mono s16le，与 /api/asr/stream 同格式）
+{"type": "barge_in"}         // L-HMI 判定打断（本侧 VAD/KWS 权威）→ 网关 cancel 当前 response
+{"type": "cancel_turn"}      // THINKING 期取消（对齐既有 onCancelTurn 语义）
+{"type": "session.end"}
+```
+
+下行（网关→HMI）：
+
+```jsonc
+{"type": "turn.transcript", "turn_id", "text", "final": bool}   // 用户话转写（上屏复用 partial 气泡）
+{"type": "turn.answer_delta", "turn_id", "text"}                // 回答文本增量（字幕/气泡）
+{"type": "turn.audio_meta", "turn_id", "sample_rate"}           // 之后跟二进制 PCM 帧（复用既有播放器）
+{"type": "turn.end", "turn_id", "reason": "complete|cancelled|escalated"}
+{"type": "turn.escalated", "turn_id", "utterance"}              // §6 逃逸：本轮改走文本主链，HMI 按既有 send(utterance) 流程走（含 THINKING 态）
+{"type": "session.state", "state": "ready|reconnecting|degraded"}  // degraded=重连超限，HMI 回落三段式（§6.3）
+```
+
+- **turn_id 由网关生成**（uuid4；provider 的 response id 只在 L-Session 内部对账用）——上层协议不透传厂商 id（可丢弃缓存原则的协议面）。
+- 逃逸轮（`turn.escalated`）**不含音频**：网关不代理执行，HMI 拿 utterance 走既有文本 WS——执行/卡片/确认全部走存量通道，S2S 面零职责。
+
+### 3.3 对下 provider 抽象（`BaseS2SProvider`）
+
+```python
+class BaseS2SProvider:
+    async def open(self, *, voice, system, context_summary, tools) -> None
+    async def send_audio(self, pcm: bytes) -> None
+    async def cancel_response(self) -> None          # barge-in 落点：立即停止当前生成
+    async def inject_text(self, role, text) -> None  # 工具结果/上下文补注入（§5.2）
+    async def close(self) -> None
+    def events(self) -> AsyncIterator[S2SEvent]      # 归一化事件流，见下
+```
+
+归一化事件（provider→L-Session）：`transcript(text, final)` / `answer_delta(text)` / `audio_delta(pcm)` / `tool_call(name, args, call_id)` / `turn_started` / `turn_done(reason)` / `error(kind)`。**tools 参数**：open 时注入**单一工具 `escalate(utterance)`**——不是把座舱能力清单塞给 S2S 模型（§5.1 讲为什么）。
+
+### 3.4 厂商映射与探针清单（接手人首件事，M1a 探针先例）
+
+- qwen3.5-omni-flash-realtime（首选）：WS `/api-ws/v1/realtime` 同壳（仓库已有两个客户端先例）；server VAD→`transcript`；`response.audio.delta`→`audio_delta`；tool calling→`tool_call`。**★待探针**：①server VAD 与本侧 barge_in（response.cancel）竞态行为 ②tool call 后 `inject_text` 结果再续说的事件序 ③session 内上下文长度上限（决定重注入摘要粒度）④中文口语时延（首音频包 P50/P95）。
+- Step-Audio 系自托管（第二候选，验证「锁协议」）：映射同一抽象；无 server 侧工具调用时 `tool_call` 由**转写文本过本侧轻分类**兜底（协议允许 provider 无原生 tool calling——adapter 层能力降级表）。
+- **探针脚本先行**（`test/e2e_s2s_probe.py`，M1a `e2e_planner_toolcall` 同款打法）：文档≠实测是本仓库每次接新协议的固定教训（ASR 双协议、qwen finish_reason 前科）。
+
+## 4. 全双工会话状态机
+
+### 4.1 L-HMI：六态语义重映射（不加新状态，不动 KWS/退出/dismiss）
+
+S2S 模式 = voiceLoop 的一组新效果回调注入（构造参数本来就是全注入的——D4 设计红利）：
+
+| 态 | 三段式（现状） | S2S 模式差异 |
+|---|---|---|
+| IDLE/ARMED | KWS 待机 | **零改动**（唤醒仍本地 KWS，S2S 不参与——不把唤醒外包给云） |
+| LISTENING | 开 /api/asr/stream | 开/复用 `/api/s2s` 会话并推 PCM；上屏数据源换 `turn.transcript` |
+| THINKING | 等编排 final | 等 `turn.answer_delta` 首包；**逃逸轮**收到 `turn.escalated` → 改挂既有文本链路等待（对用户无感，仍是 THINKING） |
+| SPEAKING | 播 TTS 流 | 播 `turn.audio` PCM；**barge-in 判定仍在本侧**（既有 VAD bargeInMinMs 判据）→ 上行 `barge_in` + 本地立即停播（不等网关回执——听感优先，provider 取消是异步收尾） |
+| FOLLOWUP | 8s 续问窗 | **零改动**；续问直接复用同一 S2S 会话（多轮上下文是 S2S 的主场） |
+
+**全双工的实质增量**：LISTENING 与 SPEAKING 不再互斥于音频通道（provider 持续收音）——但**用户可感知语义仍是回合制**（说→答）。v1 刻意不做「边听边抢答」的重叠对话（thinking 期免唤醒插话已有 onCancelTurn 资产覆盖），全双工红利先兑现在：唤醒后零 ASR 建连延迟（会话常驻）、barge-in 后无缝续听（不重建通道）、多轮上下文免重注入。
+
+### 4.2 L-Session 状态机（网关 `s2s/session.py`）
+
+```
+CONNECTING → READY ⇄ IN_TURN（turn_started..turn_done）
+     ↑          │
+     └── RECONNECTING（指数退避 ≤3 次）── 超限 → DEGRADED（下行 session.state，HMI 回落三段式）
+```
+
+- 对账：本侧 turn_id ↔ provider response id 映射表；**barge_in 到达时**：置当前 turn `cancelling`，调 `cancel_response()`，其后到达的该 response 音频/文本增量**全部丢弃**（防「打断后残包续播」——R4.2 barge-in v1 的同款教训在会话层重现）。
+- 心跳：复用 aiohttp WS heartbeat 惯例（providers.py 既有 20s）。
+
+### 4.3 打断语义三层表（本 RFC 最重要的表之一）
+
+| 层 | 触发 | 权威 | 动作链 | 关键约束 |
+|---|---|---|---|---|
+| ①听感打断 | SPEAKING 期本侧 VAD 判 speech ≥ bargeInMinMs（或 KWS） | **L-HMI** | HMI 立即停播 → 上行 `barge_in` → L-Session cancel_response + 丢残包 → 进 LISTENING（同会话续听） | provider server VAD 可能也自判打断——**以本侧为准**，provider 侧多取消一次无害（幂等），少取消由 barge_in 兜底 |
+| ②任务打断 | 逃逸轮 THINKING 期用户再说话/取消词 | L-HMI → 编排 | 既有 `onCancelTurn` → 文本 WS `{type:cancel}`（M1a 通道）→ gRPC ctx 取消；长任务另有 Ledger cancel 语义（「别查了」是新指令不是打断） | **零新机制**——存量通道原样 |
+| ③工具调用中打断 | S2S 轮已派发 escalate、确定性链在飞，用户打断 | L-Session | 标记该 turn `abandoned`：执行结果回来后**不再 inject_text 回 S2S、不播报**；**但副作用步照常走完**（确认挂起照常挂——确认是 SessionState 语义，用户下句「确定」仍能续接） | 打断≠回滚：已进确认链的动作由确认链自己收束，静默丢弃的只是「播报权」。防两个错误：结果回来抢话（双播）、以为打断就该取消副作用（用户打断常是为了补充，不是反悔） |
+
+### 4.4 与 M3 主动引擎的交叉
+
+主动消息（提醒触达/任务完成推送/围栏触发）在 S2S SPEAKING 期到达：**不抢话**——M3 治理器本来就有投递期复核/延后语义，S2S 会话状态经网关上报为一个「驾驶负荷」类情境输入（`s2s_speaking=true`），治理器按既有 advisory 延后逻辑排队，S2S turn.end 后放行。**接手人只需把该情境位接进 M3 断言源**，治理逻辑零新增。
+
+### 4.5 重连与状态恢复时序（§2.3 的落地）
+
+```
+断连（网络抖/provider 1011）
+→ L-Session 进 RECONNECTING：新 session + open(context_summary=memory 近4轮摘要+persona+焦点)
+→ 成功：READY，HMI 无感（正在录的音频在网关侧 ring buffer 续灌，≤2s 补偿——复用 R4.3b pcmRing 前滚思想）
+→ 3 次退避失败：DEGRADED 下行 → HMI 本轮回落三段式（§6.3），后台每 30s 探活，恢复后下轮回 S2S
+```
+
+**IN_TURN 中断连**：当前 turn 按 `turn.end(reason=cancelled)` 收束 + HMI 出「刚才说到一半断了，你可以再说一遍」话术（诚实降级，不假装无事）。
+
+## 5. S2S × 确定性安全链分工（安全上最重要的一节）
+
+### 5.1 单工具 `escalate`：S2S 模型只有一个出口，没有能力清单
+
+**决策：不把座舱 capability 清单注入 S2S 会话的 tools。** S2S 模型 open 时只拿到一个工具：
+
+```json
+{"name": "escalate", "description": "用户的请求超出闲聊/常识问答范围（车辆控制、导航、查询实时信息、提醒、支付等一切需要执行或查询车辆/外部系统的请求）时调用。把用户请求原样转述。", "parameters": {"utterance": "string"}}
+```
+
+理由（对齐三条既有决议）：
+- **M1a 教训直接适用**：tool schema 会三向改变模型输出分布——把几十个 capability 塞进 S2S 会话，误触发/漏触发/编造槽位在语音场景没有旅程级护栏可兜（S2S 轮不过 planner 校验）。单工具把「判定权」压缩为二元：自答 or 移交——错误面只剩「该移交没移交」（§5.3 有背板）。
+- **权威链无损**：utterance 进入文本主链后，submit_plan/route_hints/Skill 注入/require_confirm 闸/VAL/R4.4 澄清**逐字全量生效**——S2S 不是新的规划入口，只是新的「话筒」。审计上：S2S 轮次的任何副作用都能在既有 trace 里找到完整决策链。
+- 灰度期（chitchat 域）连 escalate 的槽位质量都不影响执行正确性（utterance 是原话转述，槽位抽取在主链做）。
+
+### 5.2 逃逸轮完整时序（正常路径）
+
+```
+用户（S2S 会话中）：「把空调调到24度」
+→ provider tool_call: escalate(utterance="把空调调到24度")
+→ L-Session：turn 转 escalated；下行 turn.escalated{utterance} + turn.end(escalated)
+→ HMI：按既有 send(utterance, input_source=voice) 走文本 WS → 端侧 fast_intent 先接（车控秒回！）
+   或上云主链（R4.4 受话判定→planner→executor→VAL/确认）
+→ 回答经既有 TTS 链路播报（三段式）；HMI 回 FOLLOWUP
+→ 下轮闲聊回 S2S 会话（网关 inject_text 该轮问答摘要进 provider session，保持上下文连续）
+```
+
+- **端侧快路径的保留是这个设计的隐藏红利**：escalate 落回 HMI send 意味着「打开空调」仍走 fast_intent 毫秒路径——S2S 不在车控链路上，既保安全又保时延。
+- 逃逸轮的听感代价：回答用三段式 TTS（换了引擎音色）——**缓解**：TTS 音色配置与 S2S voice 选同系音色（HMI 设置两级选择资产）；v1 接受「执行类回答音色略不同」，不接受「同一句话播到一半换嗓子」（这就是 §6.2 逃逸判定点前置的原因）。
+
+### 5.3 该移交没移交的背板（S2S 模型自答了车控怎么办）
+
+S2S 模型直接口头答应「好的，空调已调到24度」但没 escalate——车没动，模型说谎。三道背板：
+1. **物理背板**：S2S 面没有任何执行通道——最坏结果是「口头答应没办事」，**绝无「没确认就执行」**（安全事故不可能，体验事故可能）。
+2. **检测背板**：网关对 `answer_delta` 聚合文本跑**轻量承诺检测**（「已/帮你/好的，…开/关/调/导航」类模式 + 无 escalate 记录 → span 标 `s2s_false_promise`）——进 obs，自进化 nightly（M1b 资产）自动挖掘该族 badcase，量化「漏移交率」供灰度决策。**v1 只检测不拦截**（拦截=打断已播出的音频，听感更糟；靠 persona 提示+域灰度收窄把率压低）。
+3. **语料背板**：S2S 上线评测集必含「闲聊中夹车控」对抗句（journeys 新 lane，§9），漏移交率是灰度门槛硬指标。
+
+### 5.4 R4.4 受话判定在 S2S 下的位置
+
+S2S 授权域内（chitchat）：受话判定由 S2S 模型的对话能力天然承担（乘客对话/电台声它答非所问的代价=一句废话，可接受）；**逃逸轮**进入主链后 R4.4 全套照走（hands-free 源标记随 send 透传，input_source=voice 既有约定）。KWS 唤醒仍是总闸——S2S 会话只在唤醒后的交互窗内收音（ARMED 态不推流，隐私边界与现状一致：**音频不出车的例外仅在用户主动唤醒的会话窗内**，与 §9.3 数据合规对齐，RFC 明示这是隐私口径变化点——三段式只上行「定稿文本」，S2S 上行「原始音频」，需在隐私声明与设置开关（HMI「语音引擎」选项）中显式呈现，默认关、用户显式选择 S2S 才开）。
+
+## 6. 双链路共存与域灰度
+
+### 6.1 常态双链路
+
+`VOICE_PIPELINE=classic|s2s`（会话级，HMI 设置切换，默认 classic）——**s2s 挡位下三段式也不下线**：逃逸轮、DEGRADED 降级、非语音入口（打字）全走三段式。二者共享：memory、obs、TTS 播放器、voiceLoop FSM、唤醒层。
+
+### 6.2 域灰度 = escalate 描述的宽窄，不是运行时白名单
+
+灰度推进（chitchat 先行 → +轻查询 → …）通过**收放 escalate 工具的 description 边界**实现（「实时信息查询也自答」vs「一切查询移交」），配合评测门槛推进；**不做运行时按 intent 拦截 S2S 回答**——判定点在模型生成前（工具选择），生成后拦截必然截断音频。每档灰度门槛：漏移交率（§5.3-3）+ chitchat 质量对照（S2S vs 三段式同语料）+ 首音频包 P95。
+
+### 6.3 逃逸/降级的听感统一
+
+三种「离开 S2S」路径共用同一 HMI 处理：`turn.escalated`（本轮走主链）、`session.state=degraded`（回落三段式直到恢复）、用户设置切回 classic。HMI 无分支特判——都收敛为「本轮按既有 send 流程走」。
+
+## 7. 文本副产品回灌（防黑洞，强制项）
+
+S2S 轮次绕过 edge-gateway，若不回灌则：记忆断代（下次 planner 看不到这几轮）、obs 无轮次记录（badcase 无从查）、自进化失明。**网关在每个 turn.end 后强制回灌**：
+
+1. **memory**：AppendTurn(user=transcript, assistant=answer_text)——走既有 gRPC 接口，session_id 同一会话（记忆抽取/画像管线零改动，S2S 轮天然参与）。
+2. **obs**：`obs.turn` 事件（path="s2s"，speech=answer_text，转写进 user_text）+ span `s2s.turn`（provider/时延/打断/escalated/false_promise 标记）——dashboard 既有三级下钻直接可用。
+3. escalated 轮不重复回灌（主链已落，只补 span 关联 turn_id↔trace_id）。
+
+## 8. 非核心件边界速写（接手人展开，本 RFC 只锁边界）
+
+- **声纹多用户**：识别点在**唤醒后首句**（LISTENING 首个定稿/S2S 首个 transcript 送声纹服务，DashScope/3D-Speaker 档）；产出 `occupant_id` 注入 send meta 与 S2S session context——**下游零改动**（memory 的 occupant 维度 schema 早已就位，M2 图谱 preference 表带 occupant）。边界：v1 只做「区分主驾/乘客的记忆隔离」，不做声纹开锁级安全（声纹不是鉴权因子，红线）；注册流程（「记住我的声音」）设计留接手人。DoD 承接母提案「多用户记忆隔离旅程」。
+- **视觉入口**：「那是什么」车外摄像头单帧 → 走**既有 escalate 同构**（图片+问题投文本主链新 capability `vision.describe`，qwen3-omni 图片理解档）——不进 S2S 会话流（视频流实时理解是 v2，成本与隐私都另议）；帧采集触发词与隐私门控（默认不采、请求时单帧）是关键约束。
+- **sim.adas.***：低优先 backlog 维持（§8-6 拍板），不进 M4。
+
+## 9. 分期、DoD 与测试
+
+**P0 探针+协议冻结**：`e2e_s2s_probe.py` 钉死 qwen3.5-omni 四个★（§3.4）→ 按实测修订 §3 协议 → 冻结对上事件协议（HMI/网关并行开发的接口基线）。
+**P1 链路最小闭环**：网关 `s2s/`（session+qwen adapter）+ HMI s2s 回调组 + chitchat 域自答 + escalate 逃逸 + 回灌。DoD：真栈——闲聊多轮连续（S2S 会话上下文生效）、「打开空调」逃逸后端侧秒回、记忆/obs 回灌断言（e2e_s2s.py）。
+**P2 打断/重连/降级**：barge-in 三层表全实现 + 重连重注入 + DEGRADED 回落。DoD：SPEAKING 期打断 ≤300ms 停播且续听不重建；kill provider 连接后 2s 内无感恢复、3 次失败回落三段式并诚实播报；工具调用中打断零双播（journeys 新 lane：S2S 语音旅程 4 条——闲聊连续/夹车控/打断/断线）。
+**P3 灰度与门槛**：false_promise 检测接 obs+自进化；同语料 S2S vs classic 对照（chitchat 质量+首音频 P95）；漏移交对抗集 ≥95% 移交率达标才扩下一域。
+**P4（并行线，接手人）**：声纹注册+隔离旅程；视觉单帧入口。
+
+## 10. 不做清单与风险
+
+**不做**：重叠对话/抢答式全双工（v1 语义仍回合制）；S2S 域内运行时拦截（判定点前置）；把 capability 清单注入 S2S tools（§5.1）；唤醒外包云端（KWS 本地保留）；视频流实时理解；声纹作鉴权因子；自研声学。
+
+| 风险 | 缓解 |
+|---|---|
+| S2S 漏移交（口头答应车控） | 物理背板（无执行通道）+ false_promise 检测量化 + 对抗集门槛 + escalate description 调参（§5.3） |
+| provider server VAD 与本侧 barge-in 竞态 | 本侧权威 + cancel 幂等 + 残包丢弃（turn 对账表）；P0 探针①专项 |
+| 重注入摘要不足致 S2S「失忆感」 | 摘要粒度 A/B（近 4 轮 vs 8 轮）；探针③先钉上下文上限 |
+| 逃逸轮音色切换的听感割裂 | 同系音色配置 + 逃逸判定前置（绝不中途换嗓）；灰度问卷验证接受度 |
+| 原始音频上云的隐私面扩大 | 默认 classic、显式开关、仅唤醒窗内收音、隐私声明更新（§5.4）|
+| 厂商协议漂移（realtime API 迭代快） | adapter 两端契约隔离；本侧事件协议冻结于 P0；探针脚本可重跑验证 |
