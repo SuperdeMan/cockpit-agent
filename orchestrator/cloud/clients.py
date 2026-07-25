@@ -89,7 +89,9 @@ class Clients:
                 min_confidence=min_confidence),
             timeout=_DEFAULT_TIMEOUT)
         return [{"text": it.text, "scope": it.scope, "predicate": it.predicate,
-                 "provenance": it.provenance, "confidence": it.confidence}
+                 "provenance": it.provenance, "confidence": it.confidence,
+                 # M2 P0：偏好强度（0=未参与加权的存量条目，渲染时回退 confidence）
+                 "weight": it.weight, "evidence_count": it.evidence_count}
                 for it in resp.items]
 
     async def list_agents(self):

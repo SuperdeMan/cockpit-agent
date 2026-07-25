@@ -87,6 +87,21 @@ class Context:
             predicate_prefix=predicate_prefix, min_score=min_score,
             min_confidence=min_confidence, max_age_days=max_age_days)
 
+    async def resolve_person_place(self, person_word: str) -> dict | None:
+        """人称词 → 常去地点（M2 记忆图谱 P1 关系边一跳，「去接孩子放学」）。
+
+        返回 `{person, place, object_ref}`；**查不到或有歧义返回 None**——调用方必须
+        诚实追问，绝不用相似度猜（导航到错学校比查不到更糟）。
+        """
+        if not self.user_id or not person_word:
+            return None
+        try:
+            return await self._memory.resolve_person_place(self.user_id, person_word)
+        except Exception as e:
+            import logging
+            logging.getLogger("agent.sdk").debug("resolve_person_place skipped: %s", e)
+            return None
+
     async def remember(self, text: str, *, predicate: str = "", kind: str = "semantic",
                        scope: str = "", value=None, provenance: str = "user_stated",
                        confidence: float = 1.0, privacy_level: str = "normal",

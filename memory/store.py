@@ -216,11 +216,56 @@ class MemoryStore:
         return deleted
 
     async def export_user(self, user_id: str) -> dict:
-        """合规：导出用户画像 + 全量记忆。"""
+        """合规：导出用户画像 + 全量记忆 + 关系边。
+
+        导出必须与删除对称：能被 `forget_user` 删掉的东西，用户就有权先看到它
+        （M2 P1 关系边同样是个人数据）。
+        """
+        vs = await self._vec()
         return {
             "profile": await self.export_profile(user_id),
-            "memories": await (await self._vec()).export(user_id),
+            "memories": await vs.export(user_id),
+            "relations": await vs.query_relations(user_id, limit=500),
         }
+
+    async def relations(self, user_id: str, *, occupant_id: str = "primary",
+                        subject: str = "", rel: str = "", object_: str = "",
+                        limit: int = 20) -> list[dict]:
+        """关系边一跳查询（M2 P1）。消费方：navigation 人称地点解析、导出。"""
+        return await (await self._vec()).query_relations(
+            user_id, occupant_id=occupant_id, subject=subject, rel=rel,
+            object_=object_, limit=limit)
+
+    async def resolve_person_place(self, user_id: str, person_word: str, *,
+                                   occupant_id: str = "primary") -> dict | None:
+        """**一跳解析**：人称词 → family 边找实体 → place_of 边找地点。
+
+        「去接孩子放学」→「孩子」→（family: 小雨-女儿）→（place_of: 小雨-XX小学）。
+        泛称「孩子」要能命中存成「女儿」的边（kinship_aliases），因为用户存的时候说
+        「我女儿叫小雨」、用的时候说「去接孩子」。
+
+        **查不到返回 None**（调用方诚实追问）；命中多个实体也返回 None——导航到错地方
+        比查不到更糟，宁可问一句。
+        """
+        from relation import REL_FAMILY, REL_PLACE_OF, kinship_aliases
+        aliases = kinship_aliases(person_word)
+        if not aliases:
+            return None
+        vs = await self._vec()
+        persons: list[str] = []
+        for alias in aliases:
+            for edge in await vs.query_relations(user_id, occupant_id=occupant_id,
+                                                 rel=REL_FAMILY, object_=alias):
+                if edge["subject"] not in persons:
+                    persons.append(edge["subject"])
+        if len(persons) != 1:
+            return None                      # 0=不知道；>1=有歧义，都该问不该猜
+        places = await vs.query_relations(user_id, occupant_id=occupant_id,
+                                          subject=persons[0], rel=REL_PLACE_OF)
+        if len(places) != 1:
+            return None
+        return {"person": persons[0], "place": places[0]["object"],
+                "object_ref": places[0].get("object_ref") or ""}
 
     async def consolidate(self, session_id: str, user_id: str, occupant_id: str = "primary",
                           vehicle_id: str = "", complete_fn=None) -> list[str]:
@@ -237,7 +282,14 @@ class MemoryStore:
             return []
         vs = await self._vec()
         written: list[str] = []
+        # M2 P1：关系边与记忆条目分流——前者进 memory_relation，不进 memory_item
+        # （`_relation` 保留键由 extract._govern 打，同 `_escalate`/`_verify` 哲学）。
+        edges = [c["_relation"] for c in cands if c.get("_relation")]
+        if edges:
+            await vs.add_relations(user_id, edges, occupant_id=occupant_id)
         for c in cands:
+            if c.get("_relation"):
+                continue
             pred = c.get("predicate") or ""
             if c.get("kind") == "semantic" and pred:
                 # 冲突查找按谓词等价类（B3-3 M2）：历史条目可能带 LLM 自由造的别名
@@ -250,13 +302,55 @@ class MemoryStore:
                         break
                 if cur:
                     if (cur.get("text") or "").strip() == (c.get("text") or "").strip():
-                        continue  # 等价 → 跳过，不重复写
-                    ids = await vs.remember([c])          # 冲突 → 插新
+                        # 等价 → **加权而非跳过**（M2 P0）：同一偏好每次复现都是一次独立
+                        # 证据，「每周三次点川菜」正是靠这里超过「说过一次爱吃辣」。
+                        # 今天的「跳过」让重复出现完全不留痕，是 C4 的根因之一。
+                        await self._reinforce(vs, cur, c)
+                        continue
+                    # 冲突 → 插新。**证据链要继承**（子 RFC §5）：旧条目连同它的
+                    # source_turn_ids 一起被 supersede，不继承就追不回完整证据了。
+                    c = self._inherit_evidence(cur, c)
+                    ids = await vs.remember([c])
                     await vs.supersede(cur["id"], ids[0])  # 旧条标记被取代
                     written += ids
                     continue
             written += await vs.remember([c])
         return written
+
+    @staticmethod
+    def _inherit_evidence(cur: dict, cand: dict) -> dict:
+        """新条目继承旧条目的证据轮次与计数（冲突 supersede 路径）。"""
+        import weighting
+        out = dict(cand)
+        merged = weighting.merge_evidence(cur.get("source_turn_ids") or "",
+                                          out.get("source_turn_ids") or "")
+        out["source_turn_ids"] = merged
+        out["evidence_count"] = weighting.evidence_count(
+            merged, fallback=int(cur.get("evidence_count") or 1))
+        return out
+
+    async def _reinforce(self, vs, cur: dict, cand: dict) -> None:
+        """同一偏好复现 → 证据 +1、重算 weight 就地更新（不新增条目、不改 text）。
+
+        **只动强度不动内容**：文本相同才走这条路，重写一遍没意义还会刷新 valid_from
+        （那会让衰减基准漂移，等于把旧偏好洗成新的）。
+        """
+        import weighting
+        merged = weighting.merge_evidence(cur.get("source_turn_ids") or "",
+                                          cand.get("source_turn_ids") or "")
+        count = weighting.evidence_count(
+            merged, fallback=int(cur.get("evidence_count") or 1) + 1)
+        # 证据串为空（存量条目没记轮次）时至少把计数往前推一格，否则永远加不上权
+        if not merged:
+            count = int(cur.get("evidence_count") or 1) + 1
+        provenance = cur.get("provenance") or "user_stated"
+        half_life = float(cur.get("half_life_days") or 0) or weighting.default_half_life(
+            provenance, cur.get("review_status") or "")
+        age = max(0, int(time.time()) - int(cur.get("valid_from") or 0))
+        weight = weighting.compute_weight(provenance=provenance, evidence_count=count,
+                                          age_seconds=age, half_life_days=half_life)
+        await vs.reinforce(cur["id"], weight=weight, evidence_count=count,
+                           source_turn_ids=merged, half_life_days=half_life)
 
     async def derive_routines(self, user_id: str, occupant_id: str = "primary",
                               min_count: int = 3) -> list[dict]:

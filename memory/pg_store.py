@@ -19,6 +19,9 @@ import os
 import time
 import uuid
 
+import relation
+import weighting
+
 logger = logging.getLogger("memory.pg_store")
 
 # 向量维度：须与 embedding 源一致。百炼 text-embedding-v4 默认 1024（不支持 384）。
@@ -27,6 +30,11 @@ EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))
 DEFAULT_TOP_K = 5
 _EMBED_MODEL = "BAAI/bge-small-zh-v1.5"
 _SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
+
+
+def _weighting_on() -> bool:
+    """M2 P0 偏好加权总开关。off = 逐字回到加权前（weight 恒 0 → 召回用 confidence）。"""
+    return os.getenv("MEMORY_WEIGHTING", "on").strip().lower() != "off"
 
 
 def _now() -> int:
@@ -74,6 +82,23 @@ def _normalize_item(item: dict) -> dict:
     out["source_ts"] = int(out.get("source_ts") or out["valid_from"])
     out["source_session"] = out.get("source_session") or ""
     out["created_at"] = int(out.get("created_at") or _now())
+    # M2 P0 偏好加权：仅 semantic 参与（情景/程序记忆维持既有 confidence 打分）。
+    # 未显式给 weight 时按 provenance/证据数算一次；weight=0 → 召回回退 confidence（存量兼容）。
+    out["evidence_count"] = int(out.get("evidence_count")
+                                or weighting.evidence_count(out["source_turn_ids"]))
+    hl = out.get("half_life_days")
+    out["half_life_days"] = float(
+        hl if hl not in (None, "") else
+        (weighting.default_half_life(out["provenance"], out["review_status"])
+         if out["kind"] == "semantic" else 0.0))
+    w = out.get("weight")
+    if w in (None, "") and out["kind"] == "semantic" and _weighting_on():
+        w = weighting.compute_weight(provenance=out["provenance"],
+                                     evidence_count=out["evidence_count"],
+                                     age_seconds=0.0,
+                                     half_life_days=out["half_life_days"])
+    out["weight"] = float(w or 0)
+    out["consent"] = out.get("consent") or ""
     return out
 
 
@@ -131,6 +156,7 @@ class MemoryVectorStore:
         self._llm_addr = os.getenv("LLM_GATEWAY_ADDR", "")
         self._embed_source = None  # "llm" | "local" | None（决定能否真实语义召回）
         self._mem: dict[str, dict] = {}  # id -> item（PG 不可用时兜底）
+        self._rel: dict[str, dict] = {}  # id -> 关系边（同上兜底；M2 P1）
 
     @property
     def pg_ok(self) -> bool:
@@ -244,15 +270,19 @@ class MemoryVectorStore:
                            predicate,text,value_json,embedding,embedding_model,provenance,
                            confidence,review_status,scope,privacy_level,valid_from,valid_to,
                            expires_at,superseded_by,source_turn_ids,last_used_at,use_count,
-                           salience,entities,source_ts,source_session,created_at)
+                           salience,entities,source_ts,source_session,created_at,
+                           weight,evidence_count,half_life_days,consent)
                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,'')::jsonb,$11::vector,$12,
                                 $13,$14,$15,$16,$17,$18,$19,$20,NULLIF($21,''),$22,$23,$24,$25,
-                                NULLIF($26,'')::jsonb,$27,$28,$29)
+                                NULLIF($26,'')::jsonb,$27,$28,$29,$30,$31,$32,$33)
                         ON CONFLICT (id) DO UPDATE SET
                           text=EXCLUDED.text, value_json=EXCLUDED.value_json,
                           embedding=EXCLUDED.embedding, embedding_model=EXCLUDED.embedding_model,
                           confidence=EXCLUDED.confidence, review_status=EXCLUDED.review_status,
-                          superseded_by=EXCLUDED.superseded_by, valid_to=EXCLUDED.valid_to
+                          superseded_by=EXCLUDED.superseded_by, valid_to=EXCLUDED.valid_to,
+                          weight=EXCLUDED.weight, evidence_count=EXCLUDED.evidence_count,
+                          half_life_days=EXCLUDED.half_life_days,
+                          source_turn_ids=EXCLUDED.source_turn_ids
                     """, it["id"], it["kind"], it["tenant_id"], it["user_id"], it["occupant_id"],
                          it["vehicle_id"], it["memory_level"], it["predicate"], it["text"],
                          it["value_json"], str(emb) if emb else None, it["embedding_model"],
@@ -260,7 +290,9 @@ class MemoryVectorStore:
                          it["privacy_level"], it["valid_from"], it["valid_to"], it["expires_at"],
                          it["superseded_by"], it["source_turn_ids"], it["last_used_at"],
                          it["use_count"], it["salience"], it["entities"], it["source_ts"],
-                         it["source_session"], it["created_at"])
+                         it["source_session"], it["created_at"],
+                         it["weight"], it["evidence_count"], it["half_life_days"],
+                         it["consent"])
         else:
             for it in norm:
                 self._mem[it["id"]] = it
@@ -276,6 +308,34 @@ class MemoryVectorStore:
         elif old_id in self._mem:
             self._mem[old_id]["superseded_by"] = new_id
             self._mem[old_id]["valid_to"] = vt
+
+    async def reinforce(self, item_id: str, *, weight: float, evidence_count: int,
+                        source_turn_ids: str = "", half_life_days: float = 0.0) -> bool:
+        """同一偏好复现时**就地加强**（M2 P0）：只更新强度与证据，不动 text/valid_from。
+
+        刻意不刷新 `valid_from`——它是衰减基准，刷新等于把陈年偏好洗成新的。
+        """
+        if not _weighting_on():
+            return False
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                tag = await conn.execute(
+                    "UPDATE memory_item SET weight=$2, evidence_count=$3, "
+                    "half_life_days=$4, "
+                    "source_turn_ids=CASE WHEN $5='' THEN source_turn_ids ELSE $5 END, "
+                    "last_used_at=$6 WHERE id=$1",
+                    item_id, float(weight), int(evidence_count), float(half_life_days),
+                    source_turn_ids or "", _now())
+            return str(tag).endswith("1")
+        it = self._mem.get(item_id)
+        if not it:
+            return False
+        it["weight"] = float(weight)
+        it["evidence_count"] = int(evidence_count)
+        it["half_life_days"] = float(half_life_days)
+        if source_turn_ids:
+            it["source_turn_ids"] = source_turn_ids
+        return True
 
     async def current_by_predicate(self, user_id: str, occupant_id: str,
                                    predicate: str) -> dict | None:
@@ -363,7 +423,12 @@ class MemoryVectorStore:
                 base = _lexical_score(flt["query"], it["text"], it["predicate"])
             if base <= 0:
                 continue
-            score = base * it["confidence"]
+            # M2 P0：有效强度 = weight（带实时衰减）或回退 confidence。
+            # **存量兼容硬要求**：weight<=0（M2 前写入的全部条目 + 非 semantic）逐字回到
+            # 原来的 `base × confidence`，不扰动已绿的旅程（B3-3 记忆族）。
+            eff = weighting.effective_confidence(it, now=now) if _weighting_on() \
+                else float(it.get("confidence") or 0)
+            score = base * eff
             if score < flt["min_score"]:
                 continue
             results.append((it, score))
@@ -431,14 +496,26 @@ class MemoryVectorStore:
     # ── 合规 ───────────────────────────────────────────────
     async def forget(self, user_id: str, occupant_id: str = "",
                      scopes: list[str] | None = None) -> int:
+        """合规硬删。**必须级联删关系边**（子 RFC §5 红线）——只删 memory_item 的话，
+        家人关系与孩子学校（恰恰是最敏感的那部分数据）会留在库里，那是假删除。
+
+        scope 定向删除（`scopes` 非空）时关系边不参与——它没有 scope 维度，按 scope 删
+        一部分记忆不应连带清空整张关系图。全量删除（scopes 为空）才级联。
+        """
         scopes = list(scopes or [])
         if self._pg_ok:
             async with self._pool.acquire() as conn:
-                res = await conn.execute("""
-                    DELETE FROM memory_item WHERE user_id=$1
-                      AND ($2='' OR occupant_id=$2)
-                      AND (cardinality($3::text[])=0 OR scope = ANY($3))
-                """, user_id, occupant_id or "", scopes)
+                async with conn.transaction():          # 同事务：不能只删一半
+                    res = await conn.execute("""
+                        DELETE FROM memory_item WHERE user_id=$1
+                          AND ($2='' OR occupant_id=$2)
+                          AND (cardinality($3::text[])=0 OR scope = ANY($3))
+                    """, user_id, occupant_id or "", scopes)
+                    if not scopes:
+                        await conn.execute("""
+                            DELETE FROM memory_relation WHERE user_id=$1
+                              AND ($2='' OR occupant_id=$2)
+                        """, user_id, occupant_id or "")
             try:
                 return int(res.split()[-1])
             except Exception:
@@ -449,6 +526,11 @@ class MemoryVectorStore:
                   and (not scopes or v["scope"] in scopes)]
         for k in to_del:
             del self._mem[k]
+        if not scopes:
+            for k in [k for k, v in self._rel.items()
+                      if v["user_id"] == user_id
+                      and (not occupant_id or v["occupant_id"] == occupant_id)]:
+                del self._rel[k]
         return len(to_del)
 
     async def export(self, user_id: str) -> list[dict]:
@@ -457,6 +539,85 @@ class MemoryVectorStore:
                 rows = await conn.fetch("SELECT * FROM memory_item WHERE user_id=$1", user_id)
             return [_strip(_row_to_item(r)) for r in rows]
         return [_strip(dict(v)) for v in self._mem.values() if v["user_id"] == user_id]
+
+    # ── 关系边（M2 P1）：只存边 + 一跳查询，不做多跳推理 ────────────────
+    async def add_relations(self, user_id: str, rels: list[dict], *,
+                            occupant_id: str = "primary") -> list[str]:
+        """写关系边（同 (subject, rel, object) 已存在则跳过，不重复堆边）。"""
+        out: list[str] = []
+        for r in rels or []:
+            edge = relation.normalize_candidate(r)
+            if not edge:
+                continue                                # 词表外/残缺 → 丢弃，不猜
+            if await self._relation_exists(user_id, occupant_id, edge):
+                continue
+            row = {
+                "id": uuid.uuid4().hex, "tenant_id": "default", "user_id": user_id,
+                "occupant_id": occupant_id or "primary", "valid_from": _now(),
+                "created_at": _now(), "superseded_by": "", "consent": "", **edge,
+            }
+            if self._pg_ok:
+                async with self._pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO memory_relation
+                          (id,tenant_id,user_id,occupant_id,subject,rel,object,object_ref,
+                           confidence,provenance,privacy_level,consent,source_turn_ids,
+                           valid_from,superseded_by,created_at)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+                                NULLIF($15,''),$16)
+                        ON CONFLICT (id) DO NOTHING
+                    """, row["id"], row["tenant_id"], row["user_id"], row["occupant_id"],
+                         row["subject"], row["rel"], row["object"], row["object_ref"],
+                         row["confidence"], row["provenance"], row["privacy_level"],
+                         row["consent"], row["source_turn_ids"], row["valid_from"],
+                         row["superseded_by"], row["created_at"])
+            else:
+                self._rel[row["id"]] = row
+            out.append(row["id"])
+        return out
+
+    async def _relation_exists(self, user_id: str, occupant_id: str, edge: dict) -> bool:
+        occ = occupant_id or "primary"
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT 1 FROM memory_relation WHERE user_id=$1 AND occupant_id=$2
+                      AND subject=$3 AND rel=$4 AND object=$5 AND superseded_by IS NULL
+                    LIMIT 1
+                """, user_id, occ, edge["subject"], edge["rel"], edge["object"])
+            return row is not None
+        return any(v["user_id"] == user_id and v["occupant_id"] == occ
+                   and v["subject"] == edge["subject"] and v["rel"] == edge["rel"]
+                   and v["object"] == edge["object"] and not v.get("superseded_by")
+                   for v in self._rel.values())
+
+    async def query_relations(self, user_id: str, *, occupant_id: str = "primary",
+                              subject: str = "", rel: str = "", object_: str = "",
+                              limit: int = 20) -> list[dict]:
+        """按 subject / rel / object 任意组合精确查（**双向**：object 也建了索引）。
+
+        空条件即列出全部（供导出/调试）；不做模糊匹配——关系边靠精确实体名，
+        模糊会把「小雨」匹到「小雨点」，导航到错地方比查不到更糟。
+        """
+        occ = occupant_id or "primary"
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT * FROM memory_relation
+                    WHERE user_id=$1 AND occupant_id=$2 AND superseded_by IS NULL
+                      AND ($3='' OR subject=$3) AND ($4='' OR rel=$4)
+                      AND ($5='' OR object=$5)
+                    ORDER BY confidence DESC, valid_from DESC LIMIT $6
+                """, user_id, occ, subject or "", rel or "", object_ or "", limit)
+            return [dict(r) for r in rows]
+        out = [dict(v) for v in self._rel.values()
+               if v["user_id"] == user_id and v["occupant_id"] == occ
+               and not v.get("superseded_by")
+               and (not subject or v["subject"] == subject)
+               and (not rel or v["rel"] == rel)
+               and (not object_ or v["object"] == object_)]
+        out.sort(key=lambda v: (v["confidence"], v["valid_from"]), reverse=True)
+        return out[:limit]
 
 
 def _row_to_item(row) -> dict:

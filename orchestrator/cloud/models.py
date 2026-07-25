@@ -88,6 +88,9 @@ class Plan:
     # toolcall=工具 arguments 直入；toolcall_salvage=模型无视工具、同轮文本抢救；
     # toolcall_fallback=第 2 轮 JSON 路径；toolcall_degraded=两轮全失败走 _fallback。
     plan_mode: str = "json"
+    # M2 P2：本轮用户情绪（会话级，不入记忆）。planner 同轮附带输出（R4.4 addressed/
+    # clarify 同款 fail-open），随 final 透传给 HMI 选 TTS 情感参数。空=neutral。
+    emotion: str = ""
 
 
 @dataclass

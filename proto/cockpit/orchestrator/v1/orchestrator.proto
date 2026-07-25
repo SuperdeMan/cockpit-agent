@@ -52,4 +52,8 @@ message FinalResult {
   repeated cockpit.common.v1.AgentAction actions = 3;
   string follow_up = 4;
   bool need_confirm = 5;
+  // M2 记忆图谱 P2（子 RFC §2.3）：**会话级**情绪信号，供 HMI 选 TTS 情感参数。
+  // 刻意不进记忆层——短 TTL + 不入画像的东西是会话态不是记忆；而 M1b 已就绪的
+  // 情感 TTS 参数面缺的正是「当前这轮」的情绪。空串 = neutral（fail-open）。
+  string emotion = 6;   // neutral | happy | tired | urgent | frustrated
 }

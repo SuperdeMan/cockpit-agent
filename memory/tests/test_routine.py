@@ -1,5 +1,7 @@
 """程序记忆雏形单测（P3）：routine 检测 + derive 写 procedural（去重）。纯内存。"""
 import asyncio
+
+import pytest
 import json
 import os
 import sys
@@ -63,3 +65,46 @@ def test_derive_routines_writes_procedural_and_dedups():
     assert second == []  # 不重复沉淀
     kinds = [m["kind"] for m in exported["memories"]]
     assert kinds.count("procedural") == 1 and kinds.count("episodic") == 3
+
+
+# ── M2 P2：routine 时间加权（旧习惯自然沉底）────────────────────────────
+
+def _ev(action, place, hour, ts=0):
+    return {"value_json": json.dumps({"action": action, "place": place, "hour": hour}),
+            "source_ts": ts}
+
+
+def test_legacy_events_without_ts_behave_as_before():
+    """存量事件没有 source_ts → 全额计入，行为与加权前逐字一致。"""
+    evs = [_ev("买咖啡", "星巴克", 8) for _ in range(3)]
+    assert len(detect_routines(evs, min_count=3)) == 1
+
+
+def test_recent_routine_still_detected():
+    now = 1_800_000_000
+    evs = [_ev("买咖啡", "星巴克", 8, now - i * 86400) for i in range(3)]
+    assert len(detect_routines(evs, min_count=3, now=now)) == 1
+
+
+def test_stale_routine_sinks_below_threshold():
+    """**本卡语义**：裸频次够（真发生过 3 次）但已凉透 → 有效计数跌破 recency 门槛，
+    不再骚扰用户。"""
+    now = 1_800_000_000
+    old = now - 120 * 86400          # 4 个月前（半衰期 30 天 → 衰减到 ~6%）
+    evs = [_ev("买咖啡", "星巴克", 8, old - i * 86400) for i in range(3)]
+    assert detect_routines(evs, min_count=3, now=now) == []
+
+
+def test_many_stale_events_can_still_qualify():
+    """够多的旧事件仍能达标——衰减是降权不是一刀切（十几次两个月前的习惯仍算习惯）。"""
+    now = 1_800_000_000
+    old = now - 60 * 86400           # 2 个月前 → 每条约 0.25
+    evs = [_ev("买咖啡", "星巴克", 8, old) for _ in range(16)]
+    assert len(detect_routines(evs, min_count=3, now=now)) == 1
+
+
+def test_effective_count_recorded_for_debug():
+    now = 1_800_000_000
+    evs = [_ev("买咖啡", "星巴克", 8, now) for _ in range(3)]
+    v = json.loads(detect_routines(evs, min_count=3, now=now)[0]["value_json"])
+    assert v["count"] == 3 and v["effective_count"] == pytest.approx(3.0, abs=0.01)

@@ -55,6 +55,7 @@ class CloudPlannerServicer(orchestrator_pb2_grpc.CloudPlannerServicer):
                     follow_up=event.get("follow_up", ""),
                     need_confirm=event.get("need_confirm", False),
                     actions=actions,
+                    emotion=event.get("emotion", "") or "",
                 )
                 # 透传 ui_card（Agent 返回的结构化卡片数据给 HMI）
                 ui_card = event.get("ui_card")

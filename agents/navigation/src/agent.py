@@ -42,6 +42,52 @@ def _match_place_alias(text: str) -> tuple[str | None, str]:
     return None, ""
 
 
+# ── M2 记忆图谱 P1：人称目的地（「去接孩子放学」）────────────────────────
+# 人称词表与 memory/relation.py::_KINSHIP_SYNONYMS 同源（那边是权威登记，这里只做
+# 消费侧识别；跨服务不共享代码，保持各自可独立部署）。
+# 含裸「妈/爸」：口语里「去接我妈」比「去接妈妈」更常见（真栈首验实测漏掉）。
+# 单字不会误伤——`_person_destination` 要求「去掉人称词与填充词后没有实质内容」，
+# 「大妈」剥掉「妈」剩「大」即不触发。
+_PERSON_WORDS = ("女儿", "闺女", "儿子", "孩子", "娃", "小孩",
+                 "老婆", "妻子", "太太", "媳妇", "老公", "丈夫",
+                 "妈妈", "母亲", "老妈", "妈", "爸爸", "父亲", "老爸", "爸")
+_PERSON_RE = re.compile("|".join(sorted(_PERSON_WORDS, key=len, reverse=True)))
+# 目的地里去掉人称词后剩下的"非实质内容"：动词、泛称地点、方位词。剩下这些说明用户
+# 没给具体地名（"接孩子"/"孩子的学校"），才需要走关系边解析。
+# 含人称代词「我/你/他/她」：「接我妈」里的「我」不是地点信息（真栈首验实测漏掉——
+# 剥完「妈」剩个「我」被当成实质内容，整条链路不触发）。
+_PERSON_FILLER_RE = re.compile(
+    r"接|送|去|到|的|我|你|他|她|那边|那儿|附近|学校|幼儿园|放学|上学|下课|单位|公司|家|"
+    r"所在|地方|一下|吧|呢")
+
+
+# 裸称谓 → 播报用的自然说法（「我还不知道**妈**平时在哪」读着别扭，真栈实测）
+_PERSON_DISPLAY = {"妈": "妈妈", "爸": "爸爸", "娃": "孩子", "小孩": "孩子"}
+
+
+def _person_display(word: str) -> str:
+    return _PERSON_DISPLAY.get(word, word)
+
+
+def _person_destination(dest: str) -> str:
+    """目的地是否只是个人称（需走关系边解析）→ 返回人称词，否则空串。
+
+    **判据是「去掉人称词与填充词后还剩不剩实质内容」**：
+    - 「孩子」/「接孩子」/「孩子的学校」→ 剩空 → 触发解析
+    - 「孩子学校旁边的星巴克」→ 剩「旁边星巴克」→ **不触发**（用户已给具体地点，
+      改写它就是帮倒忙）
+    - 「XX小学」→ 无人称词 → 不触发
+    """
+    t = (dest or "").strip()
+    if not t:
+        return ""
+    m = _PERSON_RE.search(t)
+    if not m:
+        return ""
+    rest = _PERSON_FILLER_RE.sub("", _PERSON_RE.sub("", t)).strip("。，,. 、")
+    return m.group(0) if not rest else ""
+
+
 # "最近的/附近的X" 这类就近查询依赖当前位置；无定位时不应拿任意城市冒充"最近"。
 _PROXIMITY_RE = re.compile(r"最近|附近|周边|就近|离我")
 # 剥掉就近前缀，留类目关键词（"附近的粤菜馆"→"粤菜馆"）。否则高德按整句"附近的粤菜馆"
@@ -229,6 +275,25 @@ class NavigationAgent(BaseAgent):
 
         # planner 臆断修正：见 _correct_planner_landmark（把 planner 错猜的具体楼名换回真地标官方名）。
         dest = await self._correct_planner_landmark(dest, raw_text, meta)
+
+        # M2 记忆图谱 P1：人称目的地一跳解析（「去接孩子放学」→ 孩子=小雨 → 小雨在 XX 小学）。
+        # 这是母提案 §1.2-E2 的 Eva 例子，也是关系边唯一非做不可的消费面。
+        person_word = _person_destination(dest)
+        if person_word:
+            hit = await ctx.resolve_person_place(person_word)
+            if hit and hit.get("place"):
+                logger.info("person destination resolved: %s → %s(%s)",
+                            person_word, hit["place"], hit.get("person", ""))
+                dest = hit["place"]
+            else:
+                # **诚实追问，绝不猜**：不知道「孩子」是谁/在哪时，导航到错地方比问一句更糟。
+                who = _person_display(person_word)
+                return AgentResult(
+                    status=NEED_SLOT,
+                    speech=f"我还不知道你{who}平时在哪，你说个地方我就记住了。",
+                    follow_up=f"可以说「我{who}在XX上班」或「我{who}在XX小学上学」，"
+                              "以后我就能直接带你去。",
+                    missing_slots=["destination"])
 
         # 常用地点（家/公司/学校）：命中别名先走画像，未设置则二次交互让用户设置。
         place_key, place_label = _match_place_alias(dest)

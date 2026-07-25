@@ -34,9 +34,50 @@ CREATE TABLE IF NOT EXISTS memory_item (
     created_at     BIGINT NOT NULL
 );
 
+-- M2 记忆图谱 P0（2026-07-25）：偏好加权与衰减。**加列不建 preference 新表**——字段级对照后
+-- 真缺口只有下面三个，其余（predicate/confidence/source_turn_ids/superseded_by/privacy_level）
+-- 本表全都有；建表会推翻上面那条「两表合并为单表」的决策，且 supersede/隐私分级/GDPR 级联/
+-- 召回打分要重写一遍（子 RFC 2026-07-25-m2-memory-graph-rfc.md §2.1，泓舟拍板）。
+-- 缺省值让存量条目行为逐字不变：weight=0 → 召回回退 confidence（weighting.effective_confidence）。
+ALTER TABLE memory_item ADD COLUMN IF NOT EXISTS weight         REAL NOT NULL DEFAULT 0;
+ALTER TABLE memory_item ADD COLUMN IF NOT EXISTS evidence_count INT  NOT NULL DEFAULT 1;
+ALTER TABLE memory_item ADD COLUMN IF NOT EXISTS half_life_days REAL NOT NULL DEFAULT 0;
+-- consent：''=未特别声明（沿用 privacy_level 治理）；'explicit'=用户显式授权过的敏感画像。
+-- v1 只写不读，为 §5 生命周期强制项预留（消费在 M3/M4 的敏感画像功能）。
+ALTER TABLE memory_item ADD COLUMN IF NOT EXISTS consent        TEXT NOT NULL DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_mem_user ON memory_item (tenant_id, user_id, occupant_id, superseded_by);
 CREATE INDEX IF NOT EXISTS idx_mem_kind ON memory_item (kind);
 CREATE INDEX IF NOT EXISTS idx_mem_predicate ON memory_item (user_id, predicate);
+
+-- ── M2 记忆图谱 P1：关系边（2026-07-25）──────────────────────────────────
+-- **为什么它独立成表而偏好不**（子 RFC §2.2）：关系边的 subject 不是当前用户
+-- （「小雨 × 是女儿」「XX小学 × 是小雨的学校」），查询模式是**按实体名双向精确查 + 一跳**
+-- 而非语义相似召回；塞进 memory_item 要么污染召回（关系边被当偏好注进 prompt），
+-- 要么加一堆 kind='relation' 的特判。
+-- v1 只存边 + 一跳，不做多跳推理/图算法/自动实体消歧（那些没有消费方）。
+-- **红线**：GDPR forget() 必须同事务级联删本表，否则关系边（家人、孩子学校——恰恰最敏感
+-- 的那部分）是假删除。契约测试 memory/tests/test_relation.py 直接锁。
+CREATE TABLE IF NOT EXISTS memory_relation (
+    id              TEXT PRIMARY KEY,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
+    user_id         TEXT NOT NULL,
+    occupant_id     TEXT NOT NULL DEFAULT 'primary',
+    subject         TEXT NOT NULL,                      -- 实体名（"小雨"）
+    rel             TEXT NOT NULL,                      -- 封闭词表，见 memory/relation.py::REL_VOCAB
+    object          TEXT NOT NULL,                      -- 实体名或字面值（"女儿" / "XX小学"）
+    object_ref      TEXT NOT NULL DEFAULT '',           -- 可选：memory_item.id 或 profile.places 键
+    confidence      REAL NOT NULL DEFAULT 1.0,
+    provenance      TEXT NOT NULL DEFAULT 'user_stated',
+    privacy_level   TEXT NOT NULL DEFAULT 'sensitive',  -- 家人/地点默认敏感（非 highly：要能被定向查到）
+    consent         TEXT NOT NULL DEFAULT '',
+    source_turn_ids TEXT NOT NULL DEFAULT '',           -- 证据溯源（§5 强制）
+    valid_from      BIGINT NOT NULL DEFAULT 0,
+    superseded_by   TEXT,
+    created_at      BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rel_subject ON memory_relation (user_id, occupant_id, subject);
+CREATE INDEX IF NOT EXISTS idx_rel_object  ON memory_relation (user_id, occupant_id, object);
 -- pgvector ivfflat（与 registry 一致，需先有数据再建索引才高效；PoC 数据量小可暂不建）
 -- CREATE INDEX IF NOT EXISTS idx_mem_embedding ON memory_item
 --     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 10);

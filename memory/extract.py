@@ -14,6 +14,8 @@ import os
 import re
 import time
 
+import relation
+
 logger = logging.getLogger("memory.extract")
 
 _CONSOLIDATE_LOOKBACK = 12         # 抽取回看轮数
@@ -100,7 +102,14 @@ _SYSTEM = (
     "以及**场景/模式配置里的参数**——『创建/修改/开启XX模式：空调22度、氛围灯蓝色』"
     "这类话里的 22 度/蓝色是该场景的配置，不是用户偏好（用户明说『记住/我最喜欢』的才是）。"
     "常用车控偏好的 predicate 统一用：climate.temperature（空调温度）、media.volume（音量）、"
-    "light.ambient_color（氛围灯颜色）、seat.heating（座椅加热）。只输出 JSON，不要解释。"
+    "light.ambient_color（氛围灯颜色）、seat.heating（座椅加热）。"
+    # M2 P1 关系边：与偏好共用同一个 JSON 数组（不改输出结构），靠 category 分流。
+    "另可抽取【实体关系】：category=\"relation\"，额外给 "
+    '{"subject":"实体名","rel":"关系","object":"对象"}。'
+    "rel 只能是：family（亲属，如 小雨-family-女儿）、place_of（常去地点，如 小雨-place_of-XX小学）、"
+    "works_at、lives_at、owns（车辆等）、prefers_brand。**不在这六个里的关系不要抽**。"
+    "只有用户明说的才抽（『我女儿叫小雨』『小雨在XX小学上学』），不要从上下文推断亲属关系。"
+    "只输出 JSON，不要解释。"
 )
 
 
@@ -142,6 +151,20 @@ def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
             session_id: str) -> dict | None:
     """把一条 LLM 候选治理成可入库的 MemoryItem dict；不合规返回 None（丢弃）。"""
     category = (c.get("category") or "").strip()
+    # M2 P1 关系边：**必须在 text 空检查之前分流**——关系候选是 (subject, rel, object)
+    # 三元组、本来就没有 text 字段，放在后面会被「text 为空即丢弃」提前吃掉（实测踩到）。
+    # 黑名单同样生效：拿 subject+object 过一遍坐标/PII 检查（家庭住址不该进关系图）。
+    if category == "relation":
+        probe = f'{c.get("subject") or ""} {c.get("object") or ""}'
+        if _has_coords(probe) or _PII_RE.search(probe):
+            logger.debug("extract drop (relation coords/pii): %s", probe[:40])
+            return None
+        edge = relation.normalize_candidate(dict(c, source_turn_ids=session_id))
+        if not edge:      # 词表外 / 残缺 → 丢弃，绝不猜
+            logger.debug("extract drop (bad relation): %s", str(c)[:60])
+            return None
+        return {"_relation": edge}
+
     text = (c.get("text") or "").strip()
     if not text:
         return None

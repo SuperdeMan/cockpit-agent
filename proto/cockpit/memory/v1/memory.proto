@@ -15,6 +15,10 @@ service Memory {
   rpc Recall (RecallRequest) returns (RecallResponse);         // 语义召回（向量 + scope/occupant + 时序融合）
   rpc ForgetUser (ForgetUserRequest) returns (ForgetUserResponse); // 合规：删除用户全量记忆
   rpc ExportUser (ExportUserRequest) returns (ExportUserResponse); // 合规：导出用户全量记忆
+  // M2 记忆图谱 P1：关系边一跳查询。**刻意不做通用图遍历 RPC**——v1 只有两种消费形态
+  // （按实体查边 / 人称→地点一跳），开放多跳会长出没人验证的推理路径。
+  rpc QueryRelations (QueryRelationsRequest) returns (QueryRelationsResponse);
+  rpc ResolvePersonPlace (ResolvePersonPlaceRequest) returns (ResolvePersonPlaceResponse);
 }
 
 message GetContextRequest {
@@ -83,6 +87,12 @@ message MemoryItem {
   int64 expires_at = 21;       // 0=不过期；临时偏好设此
   string review_status = 22;   // auto_extracted | user_confirmed | rejected | corrected
   string source_turn_ids = 23; // 抽取证据轮次（逗号分隔）
+  // M2 记忆图谱 P0：偏好强度。weight=0 表示未参与加权（M2 前的存量条目 / 非 semantic），
+  // 消费方一律回退 confidence——存量行为逐字不变（memory/weighting.effective_confidence）。
+  float weight = 24;           // 0-1，巩固期算出：base(provenance) + 重复证据加成，再乘时间衰减
+  int32 evidence_count = 25;   // 支撑该偏好的独立证据轮次数（「说过一次」vs「每周三次」的区分依据）
+  float half_life_days = 26;   // 0=不衰减（显式偏好）；推断类默认 90 天
+  string consent = 27;         // ''=未特别声明（沿用 privacy_level）；'explicit'=用户显式授权的敏感画像
 }
 
 message RememberRequest { repeated MemoryItem items = 1; }
@@ -116,3 +126,38 @@ message ForgetUserResponse { bool ok = 1; uint32 deleted = 2; }
 
 message ExportUserRequest { string user_id = 1; }
 message ExportUserResponse { string json = 1; } // 全量记忆 + 画像的 JSON
+
+// ── M2 记忆图谱 P1：关系边 ──────────────────────────────────────────────
+message RelationEdge {
+  string subject = 1;        // 实体名（"小雨"）
+  string rel = 2;            // 封闭词表：family|place_of|works_at|lives_at|owns|prefers_brand
+  string object = 3;         // 实体名或字面值（"女儿" / "XX小学"）
+  string object_ref = 4;     // 可选：memory_item.id 或 profile.places 键
+  float confidence = 5;
+  string provenance = 6;
+  string source_turn_ids = 7;
+}
+
+message QueryRelationsRequest {
+  string user_id = 1;
+  string occupant_id = 2;    // 空=primary
+  string subject = 3;        // 任意组合精确查（空=不限）；不做模糊匹配
+  string rel = 4;
+  string object = 5;
+  int32 limit = 6;
+}
+message QueryRelationsResponse { repeated RelationEdge edges = 1; }
+
+// 「去接孩子放学」：人称词 → family 边定人 → place_of 边定地点。
+// 查不到 / 有歧义一律 found=false —— 导航到错地方比查不到更糟，调用方须诚实追问。
+message ResolvePersonPlaceRequest {
+  string user_id = 1;
+  string occupant_id = 2;
+  string person_word = 3;    // 话术里的人称词（"孩子"/"女儿"/"老婆"）
+}
+message ResolvePersonPlaceResponse {
+  bool found = 1;
+  string person = 2;         // 解析到的实体名（"小雨"）
+  string place = 3;          // 地点（"XX小学"）
+  string object_ref = 4;
+}

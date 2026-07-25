@@ -173,9 +173,34 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         return memory_pb2.ForgetUserResponse(ok=True, deleted=n)
 
     async def ExportUser(self, request, context):
-        """合规：导出用户全量记忆 + 画像。"""
+        """合规：导出用户全量记忆 + 画像 + 关系边。"""
         data = await self.store.export_user(request.user_id) if request.user_id else {}
         return memory_pb2.ExportUserResponse(json=json.dumps(data, ensure_ascii=False))
+
+    # ── M2 记忆图谱 P1：关系边 ────────────────────────────────────────
+    async def QueryRelations(self, request, context):
+        if not request.user_id:
+            return memory_pb2.QueryRelationsResponse()
+        edges = await self.store.relations(
+            request.user_id, occupant_id=request.occupant_id or "primary",
+            subject=request.subject, rel=request.rel, object_=request.object,
+            limit=int(request.limit or 20))
+        return memory_pb2.QueryRelationsResponse(
+            edges=[_edge_to_proto(e) for e in edges])
+
+    async def ResolvePersonPlace(self, request, context):
+        """「去接孩子放学」的一跳解析。**查不到/有歧义一律 found=false**——
+        调用方据此诚实追问，绝不猜（导航到错地方比查不到更糟）。"""
+        if not request.user_id or not request.person_word:
+            return memory_pb2.ResolvePersonPlaceResponse(found=False)
+        hit = await self.store.resolve_person_place(
+            request.user_id, request.person_word,
+            occupant_id=request.occupant_id or "primary")
+        if not hit:
+            return memory_pb2.ResolvePersonPlaceResponse(found=False)
+        return memory_pb2.ResolvePersonPlaceResponse(
+            found=True, person=hit["person"], place=hit["place"],
+            object_ref=hit.get("object_ref", ""))
 
 
 def _item_to_dict(m) -> dict:
@@ -189,6 +214,9 @@ def _item_to_dict(m) -> dict:
         "valid_from": m.valid_from, "valid_to": m.valid_to, "expires_at": m.expires_at,
         "superseded_by": m.superseded_by, "source_turn_ids": m.source_turn_ids,
         "source_ts": m.source_ts, "source_session": m.source_session,
+        # M2 P0 偏好加权：weight=0 表示未参与加权，消费方回退 confidence（存量兼容）
+        "weight": m.weight, "evidence_count": m.evidence_count,
+        "half_life_days": m.half_life_days, "consent": m.consent,
     }
 
 
@@ -207,5 +235,18 @@ def _dict_to_item(d: dict):
         expires_at=int(d.get("expires_at", 0) or 0),
         superseded_by=d.get("superseded_by", "") or "",
         source_turn_ids=d.get("source_turn_ids", "") or "",
+        weight=float(d.get("weight", 0) or 0),
+        evidence_count=int(d.get("evidence_count", 0) or 0),
+        half_life_days=float(d.get("half_life_days", 0) or 0),
+        consent=d.get("consent", "") or "",
         source_ts=int(d.get("source_ts", 0) or 0),
         source_session=d.get("source_session", "") or "")
+
+
+def _edge_to_proto(e: dict):
+    return memory_pb2.RelationEdge(
+        subject=e.get("subject", "") or "", rel=e.get("rel", "") or "",
+        object=e.get("object", "") or "", object_ref=e.get("object_ref", "") or "",
+        confidence=float(e.get("confidence", 0) or 0),
+        provenance=e.get("provenance", "") or "",
+        source_turn_ids=e.get("source_turn_ids", "") or "")

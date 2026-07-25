@@ -282,6 +282,10 @@ func eventToMap(ev *orchpb.HandleEvent) map[string]any {
 			"type": "final", "speech": f.Speech, "follow_up": f.FollowUp,
 			"need_confirm": f.NeedConfirm, "actions": actions,
 		}
+		// M2 P2：会话级情绪信号（空=中性不发键，HMI 按缺省处理）
+		if f.Emotion != "" {
+			result["emotion"] = f.Emotion
+		}
 		if f.UiCard != nil {
 			result["ui_card"] = f.UiCard.AsMap()
 		}

@@ -316,6 +316,8 @@ class StreamingTtsSession {
     private voiceId: string,
     private provider: string,
     private onFallback: (accum: string, finalText: string | null) => Promise<void>,
+    // M2 P2：会话级情绪 → 后端映射成 TTS instruction（措辞表在 llm-gateway 侧）
+    private emotion = '',
   ) {
     this.completion = new Promise<void>((res, rej) => { this._res = res; this._rej = rej })
   }
@@ -332,7 +334,10 @@ class StreamingTtsSession {
     ws.binaryType = 'arraybuffer'
     this.ws = ws
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'start', provider: this.provider, voice: this.voiceId }))
+      ws.send(JSON.stringify({
+        type: 'start', provider: this.provider, voice: this.voiceId,
+        ...(this.emotion ? { emotion: this.emotion } : {}),
+      }))
       for (const t of this.preOpenText) ws.send(JSON.stringify({ type: 'text', delta: t }))
       this.preOpenText = []
       if (this.finishPending !== null) ws.send(JSON.stringify({ type: 'finish' }))
@@ -450,7 +455,8 @@ class StreamingTtsSession {
 }
 
 let streamSession: StreamingTtsSession | null = null
-let streamParams: { apiBase: string; voiceId: string; provider: string } | null = null
+let streamParams: { apiBase: string; voiceId: string; provider: string;
+                    emotion: string } | null = null
 
 // ── 段链（长内容断播修复）：当前流式会话已收尾（spent）后到达的文本（混合意图轮的云端
 // 总结、主动播报排队、divergent 收尾）不再灌进死会话（旧行为=静默丢失/复读），而是排成
@@ -505,14 +511,14 @@ function _rotate(): void {
   const seg = chainSegs.shift()
   if (!seg) return
   if (!streamParams) { seg.reject(new Error('no stream params')); return }
-  const { apiBase, voiceId, provider } = streamParams
+  const { apiBase, voiceId, provider, emotion } = streamParams
   const s = new StreamingTtsSession(apiBase, voiceId, provider, async (accum, finalText) => {
     // 轮转段失败 → 回退批处理（同 startTTSReply 的回退语义，音色回落 MiMo 通用）
     if (streamSession === s) streamSession = null
     activeReply = { apiBase, voiceId: STREAM_FALLBACK_VOICE, buffer: new TtsTextBuffer() }
     if (finalText !== null) await finishReplyBatch(finalText || accum)
     else if (accum) await enqueueChunks(activeReply.buffer.push(accum))
-  })
+  }, emotion)
   streamSession = s
   s.start()
   for (const d of seg.deltas) s.append(d)
@@ -526,9 +532,15 @@ function _finishSession(sess: StreamingTtsSession, text: string): void {
   if (!sess.finish(text)) void _chainFinal(text)
 }
 
-export function startTTSReply(apiBase: string, voiceId: string, provider = 'mimo'): void {
+/**
+ * 开一轮播报。`emotion`（M2 P2）是**上一轮**判定的会话级情绪——本轮的 TTS 在 final
+ * 到达前就已开播（流式），当轮改不了语气；「用户上一句烦躁 → 这一句安抚着说」才是
+ * 可实现且语义诚实的形态。空=中性（不发键，行为逐字不变）。
+ */
+export function startTTSReply(apiBase: string, voiceId: string, provider = 'mimo',
+                              emotion = ''): void {
   stopTTS()
-  streamParams = { apiBase, voiceId, provider }
+  streamParams = { apiBase, voiceId, provider, emotion }
   if (isStreamingTtsProvider(provider) && streamingTtsSupported()) {
     streamSession = new StreamingTtsSession(apiBase, voiceId, provider, async (accum, finalText) => {
       // 无感回退句级批处理：把已累计文本交回 TtsTextBuffer（音色回落 MiMo 默认）
@@ -539,7 +551,7 @@ export function startTTSReply(apiBase: string, voiceId: string, provider = 'mimo
       } else if (accum) {
         await enqueueChunks(activeReply.buffer.push(accum))
       }
-    })
+    }, emotion)
     streamSession.start()
   } else {
     activeReply = { apiBase, voiceId, buffer: new TtsTextBuffer() }
@@ -614,7 +626,7 @@ export function queueTTS(apiBase: string, text: string, voiceId: string,
   const t = (text || '').trim()
   if (!t) return Promise.resolve()
   if (streamSession) {
-    streamParams = streamParams || { apiBase, voiceId, provider }
+    streamParams = streamParams || { apiBase, voiceId, provider, emotion: '' }
     return _chainFinal(t)
   }
   if (activeReply) {

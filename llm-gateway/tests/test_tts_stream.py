@@ -401,3 +401,36 @@ async def test_qwen_provider_full_loop(monkeypatch):
     assert "input_text_buffer.append" in types_sent
     assert "input_text_buffer.commit" in types_sent
     assert "session.finish" in types_sent
+
+
+# ── M2 P2：会话级情绪 → TTS 指令化措辞（记忆图谱子 RFC §2.3）────────────
+
+def test_emotion_instruct_maps_known_labels():
+    from providers import emotion_instruct
+    for label in ("happy", "tired", "urgent", "frustrated"):
+        assert emotion_instruct(label), f"{label} 应有对应 instruction"
+
+
+def test_emotion_instruct_neutral_and_unknown_are_empty():
+    """中性/未知 → 空串 = 不发键 = 与情绪功能上线前字节级一致。"""
+    from providers import emotion_instruct
+    assert emotion_instruct("neutral") == ""
+    assert emotion_instruct("") == ""
+    assert emotion_instruct("狂喜") == ""
+    assert emotion_instruct(None) == ""
+
+
+def test_emotion_instruct_lands_in_cosyvoice_frame():
+    """措辞真的进了 run-task 的 instruction 参数（M1b 留的接线口）。"""
+    from providers import _cosyvoice_run_task, emotion_instruct
+    frame = _cosyvoice_run_task("t1", "m", "v", 22050,
+                                instruct=emotion_instruct("tired"))
+    assert frame["payload"]["parameters"]["instruction"] == emotion_instruct("tired")
+
+
+def test_no_emotion_keeps_frame_byte_identical():
+    from providers import _cosyvoice_run_task, emotion_instruct
+    base = _cosyvoice_run_task("t1", "m", "v", 22050)
+    with_neutral = _cosyvoice_run_task("t1", "m", "v", 22050,
+                                       instruct=emotion_instruct("neutral"))
+    assert base == with_neutral

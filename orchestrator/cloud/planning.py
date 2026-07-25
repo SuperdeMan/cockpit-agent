@@ -44,6 +44,20 @@ def _verification_dict(cap) -> dict:
     }
 
 
+# M2 P2（子 RFC §2.3）：会话级情绪信号的封闭词表。**不进记忆层**——短 TTL 且不入画像的
+# 东西是会话态不是记忆；它唯一的消费方是 TTS 情感参数（M1b 已就绪的能力面），要的是
+# 「当前这轮」不是画像。词表外/缺省一律 neutral（fail-open，与 addressed/clarify 同款）。
+EMOTIONS = ("neutral", "happy", "tired", "urgent", "frustrated")
+
+
+def _parse_emotion(raw) -> str:
+    """LLM 输出的情绪标签 → 封闭词表内的值；非法/缺省 → ""（= neutral，不发信号）。"""
+    v = str(raw or "").strip().lower()
+    if v in EMOTIONS and v != "neutral":
+        return v
+    return ""
+
+
 def _date_line() -> str:
     """规划 prompt 的日期锚（上海时区，日粒度——时刻由端侧墙钟直答负责，不进 prompt 防
     每分钟扰动）。badcase f11aa344：prompt 无日期锚，LLM 把「今年世界杯」按训练先验改写成
@@ -150,6 +164,19 @@ _CLARIFY_SECTION = (
 )
 
 
+# M2 P2（子 RFC §2.3）：会话级情绪信号。**刻意走 prompt-only、不进 submit_plan schema**
+# ——B4-1 两轮教训已证明「模型对 schema 结构的响应强于 description 文本」，把可选字段
+# 摆进 schema 会诱发多填；emotion 是旁路信号（只喂 TTS 选参、不影响 steps），更不值得
+# 冒行为漂移的风险。模型不输出=neutral（fail-open，与 addressed/clarify 同款姿态）。
+_EMOTION_SECTION = (
+    "\n\n== 情绪标注（可选，一个词）==\n"
+    "如果用户这句话明显带情绪，额外输出顶层字段 \"emotion\"，取值只能是："
+    "happy（开心/兴奋）、tired（疲惫/困倦）、urgent（着急/赶时间）、frustrated（烦躁/不满）。\n"
+    "- 平静陈述、普通指令、单纯提问一律**不要输出该字段**（默认中性）\n"
+    "- 它只影响播报语气，不影响你的规划——绝不为了标情绪改变 steps"
+)
+
+
 # M1a（submit_plan 结构化输出，RFC §3.3）：toolcall 模式不改 base/受话段/澄清段——JSON
 # 协议描述同时是工具 schema 的语义说明，双路径共享领域协议=A/B 单变量；仅追加输出通道指令。
 # 「完整参数表」段=真栈 B1-4 修复：工具输出形态自带「函数入参只传需要的」先验，省略式
@@ -224,6 +251,8 @@ def _planner_system(toolcall: bool = False) -> str:
     Full Migration 后 base 唯一（领域知识由 skill 注入块承载，见 skills.py）。
     toolcall=True（M1a）追加输出通道指令段，其余逐字一致。"""
     prompt = _PLANNER_BASE + _ADDRESSED_SECTION
+    if os.getenv("PLANNER_EMOTION", "on").strip().lower() != "off":
+        prompt += _EMOTION_SECTION
     if os.getenv("CLARIFY_ENABLED", "off").lower() == "on":
         prompt += _CLARIFY_SECTION
     if toolcall:
@@ -455,6 +484,7 @@ class PlanBuilder:
         if complexity not in ("simple", "adaptive"):
             complexity = "simple"
         goal = str(data.get("goal", "") or "")
+        emotion = _parse_emotion(data.get("emotion"))
 
         # 校验 depends_on 引用
         valid_ids = {s.id for s in steps}
@@ -466,6 +496,7 @@ class PlanBuilder:
             raw_text=fallback_text,
             complexity=complexity,
             goal=goal,
+            emotion=emotion,
         )
 
     @staticmethod

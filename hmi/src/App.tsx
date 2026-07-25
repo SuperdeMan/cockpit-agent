@@ -96,6 +96,9 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   // 复杂指令下不会把原句里的车控（空调/座椅/氛围灯）又执行一遍。
   const categoryRef = useRef<{ keyword: string; page: number } | null>(null)
   const settingsRef = useRef<Settings>(settings)
+  // M2 P2：上一轮判定的会话级情绪 → 下一轮播报的 TTS 语气。**只在内存、不落盘**
+  // （它是会话态不是画像；长期情绪画像需用户显式授权，见记忆图谱子 RFC §2.3）。
+  const lastEmotionRef = useRef<string>('')
   settingsRef.current = settings // 始终保留最新设置，避免 ws 回调读到陈旧闭包
   // R4.3 免唤醒回路控制器（VAD+FSM+ASR 编排）：默认关，settings.handsFree 开启才激活
   const handsFreeRef = useRef<HandsFreeController | null>(null)
@@ -334,6 +337,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       return
     }
     if (data.type === 'final') {
+      // M2 P2：本轮情绪只能影响**下一轮**语气——本轮 TTS 在 final 之前就已流式开播了。
+      if (typeof data.emotion === 'string') lastEmotionRef.current = data.emotion
       // R4.4：云端拒识（疑似环境人声）→ 不渲染回复、不 TTS，把本轮 pending 气泡标灰留痕供纠错。
       // 必须自己放 FSM 出 THINKING（本分支早 return，跳过下方 turnEnded 路径 → 否则死锁，§0-6）。
       const rc: any = data.ui_card
@@ -502,7 +507,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     const ws = wsRef.current
     if (!ws) return
     const s = settingsRef.current
-    if (s.ttsEnabled && s.autoplay) startTTSReply(AUDIO_API, s.voiceId, s.ttsProvider)
+    if (s.ttsEnabled && s.autoplay)
+      startTTSReply(AUDIO_API, s.voiceId, s.ttsProvider, lastEmotionRef.current)
     else stopTTS()
     const traceId = genTraceId() // 观测贯通：本轮 trace，随 meta 上行 + 挂气泡供复制
     // 断线时入有界队列、重连后自动 flush——不再静默丢消息（旧逻辑 readyState!==OPEN 直接 return）

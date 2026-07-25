@@ -221,6 +221,26 @@ class MemoryClient:
                     continue
                 raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
 
+    async def resolve_person_place(self, user_id: str, person_word: str, *,
+                                   occupant_id: str = "") -> dict | None:
+        """人称词 → 常去地点一跳解析（M2 记忆图谱 P1，「去接孩子放学」）。
+
+        查不到 / 有歧义 → None（调用方须**诚实追问**，不猜——导航到错地方比查不到更糟）。
+        memory 不可达时同样 None（best-effort，绝不阻塞主链）。
+        """
+        if not user_id or not person_word:
+            return None
+        req = memory_pb2.ResolvePersonPlaceRequest(
+            user_id=user_id, occupant_id=occupant_id, person_word=person_word)
+        try:
+            resp = await self._stub().ResolvePersonPlace(req, timeout=DEFAULT_TIMEOUT)
+        except Exception:
+            return None
+        if not resp.found:
+            return None
+        return {"person": resp.person, "place": resp.place,
+                "object_ref": resp.object_ref}
+
 
 def _to_memory_item(d: dict):
     return memory_pb2.MemoryItem(

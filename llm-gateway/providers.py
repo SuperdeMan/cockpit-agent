@@ -1284,6 +1284,22 @@ class BaseStreamingTTSProvider:
         yield  # 标记为 async generator
 
 
+# M2 P2（记忆图谱子 RFC §2.3）：会话级情绪标签 → TTS 指令化措辞。
+# **措辞留在后端**：HMI 只传语义标签（happy/tired/...），不该知道某家 TTS 的 instruction
+# 怎么写——换引擎时只改这里。词表外/neutral/空 → 空串 = 不发键（零行为变化）。
+EMOTION_INSTRUCT = {
+    "happy": "用轻快愉悦的语气说",
+    "tired": "用放松柔和的语气慢慢说",
+    "urgent": "用干脆利落的语气快速说",
+    "frustrated": "用温和安抚的语气说",
+}
+
+
+def emotion_instruct(emotion: str) -> str:
+    """情绪标签 → TTS instruction。未知/中性 → ""（缺省不发键）。"""
+    return EMOTION_INSTRUCT.get((emotion or "").strip().lower(), "")
+
+
 # ── 协议帧构造（纯函数，离线单测）──
 def _cosyvoice_run_task(task_id: str, model: str, voice: str, sample_rate: int,
                         instruct: str = "", speed: float = 0.0) -> dict:

@@ -372,6 +372,9 @@ class PlannerEngine:
                     await self.context.update_focus(ctx.session_id, focus_plan, results)
                 final = await self.aggregator.compose(text or plan.raw_text, results)
                 self._append_pending_hint(final, held_pending)
+                # M2 P2：会话级情绪信号随 final 透传给 HMI 选 TTS 情感参数（不入记忆）
+                if getattr(plan, "emotion", ""):
+                    final["emotion"] = plan.emotion
                 await obs_events.get_emitter("cloud").emit_span(
                     ctx.trace_id,
                     "aggregate",
@@ -482,6 +485,8 @@ class PlannerEngine:
         final = await self.aggregator.compose(
             text or plan.raw_text, results, thinking=complex_task)
         self._append_pending_hint(final, held_pending)
+        if getattr(plan, "emotion", ""):
+            final["emotion"] = plan.emotion
         await obs_events.get_emitter("cloud").emit_span(
             ctx.trace_id,
             "aggregate",

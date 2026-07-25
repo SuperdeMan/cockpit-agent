@@ -151,27 +151,64 @@ def _catalog_item(a) -> dict:
     }
 
 
+# M2 P0 偏好加权：高权偏好用**确定性人话强度词**（不进 LLM——「有多常用」是系统持有的
+# 事实，让模型自己揣摩会把「说过一次」和「每周三次」说成一样）。阈值与 weighting 的
+# base 分档对齐：0.7=显式陈述被反复印证 / 0.5=显式说过一次 / 更低=推断且证据薄。
+_STRENGTH_HIGH, _STRENGTH_MID = 0.7, 0.5
+_MEMORY_TOP_N = 5          # 从 3 放宽：今天 top-3 会被一条久远的推断偏好挤掉真正常用的
+
+
+def _strength_label(weight: float) -> str:
+    if weight >= _STRENGTH_HIGH:
+        return "常用"
+    if weight >= _STRENGTH_MID:
+        return "明确说过"
+    return "偶尔提过"
+
+
 def _render_memory(memory: list[dict] | None) -> str:
-    """长期偏好记忆 → prompt 片段（最多 3 条、≤_MEMORY_BUDGET）。逐字沿用旧 _format_memory。
-    勿向用户暴露置信度；高风险动作仍需确认（由执行层保证）。"""
+    """长期偏好记忆 → prompt 片段（≤_MEMORY_BUDGET）。
+
+    两段式（M2 P0）：**带权偏好**按强度排序、用人话强度词渲染；未参与加权的条目
+    （weight=0，即 M2 之前的存量条目与情景/程序记忆）走原格式的「相关记忆」段。
+
+    **存量兼容**：全部条目 weight=0 时输出与加权前逐字一致（契约测试锁）——
+    不扰动已绿的旅程（B3-3 记忆族）。
+    勿向用户暴露置信度；高风险动作仍需确认（由执行层保证）。
+    """
     if not memory:
         return ""
-    lines = []
-    for m in memory[:3]:
+    weighted, plain = [], []
+    for m in memory[:_MEMORY_TOP_N]:
         txt = (m.get("text") or "").strip()
         if not txt:
             continue
-        tag = m.get("scope") or m.get("predicate") or ""
-        prov = m.get("provenance") or ""
         try:
-            conf = float(m.get("confidence") or 0)
+            w = float(m.get("weight") or 0)
         except (TypeError, ValueError):
-            conf = 0.0
-        lines.append(f"- [{tag} | {conf:.2f} | {prov}] {txt}")
-    if not lines:
+            w = 0.0
+        if w > 0:
+            weighted.append((w, txt))
+        else:
+            tag = m.get("scope") or m.get("predicate") or ""
+            prov = m.get("provenance") or ""
+            try:
+                conf = float(m.get("confidence") or 0)
+            except (TypeError, ValueError):
+                conf = 0.0
+            plain.append(f"- [{tag} | {conf:.2f} | {prov}] {txt}")
+    if not weighted and not plain:
         return ""
-    block = ("已知用户记忆（仅在与当前任务相关时参考，勿向用户暴露置信度）：\n"
-             + "\n".join(lines))
+    parts = []
+    if weighted:
+        weighted.sort(key=lambda x: x[0], reverse=True)
+        parts.append("已知用户偏好（按强度排序，仅在与当前任务相关时参考）：\n"
+                     + "\n".join(f"- {txt}（{_strength_label(w)}）"
+                                 for w, txt in weighted))
+    if plain:
+        head = "相关记忆：" if weighted else "已知用户记忆（仅在与当前任务相关时参考，勿向用户暴露置信度）："
+        parts.append(head + "\n" + "\n".join(plain[:3]))
+    block = "\n".join(parts)
     return block[:_MEMORY_BUDGET] + "\n\n"
 
 

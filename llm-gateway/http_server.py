@@ -22,7 +22,7 @@ from runtime.grpcio import aio_channel
 
 from providers import (
     build_asr_provider, build_streaming_asr_provider, build_tts_provider,
-    build_tts_stream_provider, TTS_STREAM_CATALOG,
+    build_tts_stream_provider, emotion_instruct, TTS_STREAM_CATALOG,
 )
 from llm_runtime import get_runtime
 
@@ -382,13 +382,15 @@ def create_http_app() -> web.Application:
                     return
                 yield item
 
-        async def run_provider(provider, voice, sample_rate):
+        async def run_provider(provider, voice, sample_rate, instruct=""):
             t0 = time.monotonic()
             first_ms = None
             chunks = 0
             err = None
             try:
-                async for out in provider.stream(text_iter(), voice=voice, sample_rate=sample_rate):
+                async for out in provider.stream(text_iter(), voice=voice,
+                                                 sample_rate=sample_rate,
+                                                 instruct=instruct):
                     if ws.closed:
                         break
                     if isinstance(out, (bytes, bytearray)):
@@ -437,8 +439,12 @@ def create_http_app() -> web.Application:
                             await ws.send_json({"type": "unsupported"})
                             continue
                         started = True
+                        # M2 P2：会话级情绪 → TTS 指令化措辞（措辞表在 providers 侧；
+                        # 引擎不支持 instruct 时形参被忽略，零行为变化）
                         tasks.append(asyncio.create_task(run_provider(
-                            provider, data.get("voice", ""), int(data.get("sample_rate") or 0))))
+                            provider, data.get("voice", ""),
+                            int(data.get("sample_rate") or 0),
+                            emotion_instruct(data.get("emotion", "")))))
                     elif mtype == "text":
                         if started:
                             await text_queue.put(data.get("delta", ""))

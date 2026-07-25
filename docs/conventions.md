@@ -221,6 +221,8 @@
 | `SERPAPI_API_KEY` | 新闻源（综合要闻 Google News 头条为主+Exa 合并；国内话题 Baidu News）| 否 |
 | `API_FOOTBALL_KEY` / `API_FOOTBALL_HOST` | api-football 赛事比分/赛程（info.sports）| 否（无 key 走 mock）|
 | `TUSHARE_TOKEN` | Tushare 股票行情（info.stock）| 否（无 key 走 mock）|
+| `MEMORY_WEIGHTING` | 偏好加权与衰减（M2 记忆图谱 P0）：`on`/默认=巩固期算 weight、召回按有效强度排序（重复出现的偏好压过只说过一次的）；`off`=逐字回加权前（weight 恒 0 → 召回用 confidence）| 否（默认 `on`）|
+| `PLANNER_EMOTION` | 会话级情绪信号（M2 记忆图谱 P2）：`on`/默认=planner 同轮标注 happy/tired/urgent/frustrated（**prompt-only 不进 tool schema**），随 final 透传 HMI 选 TTS 语气；`off`=不拼该 prompt 段 | 否（默认 `on`）|
 | `LEDGER_ORPHAN_TTL_S` | Task Ledger（§9.6）孤儿判定阈值秒：active 态超此时长无心跳即惰性改判 `orphaned`（≈9 个心跳的余量）| 否（默认 90）|
 | `RESEARCH_TASK_DEADLINE_S` / `_LLM_MAX` / `_EXT_MAX` | 后台深调研任务预算（Background 守卫①③）：截止时长 / LLM 调用次数上限 / 外部检索次数上限；超限由心跳就地截停并主动告知 | 否（默认 900 / 6 / 40）|
 | `REMINDER_POLL_S` | reminder 到点调度轮询秒（触发精度；越小越准越费）| 否（默认 5）|
@@ -490,3 +492,26 @@ DDL 见 `agents/_sdk/ledger_schema.sql`。设计
 > 新增任务类型：选一个 `kind` 常量登记在本表，Agent 侧照 `agents/deep_research/src/agent.py`
 > 的 `LEDGER_KIND` 模式引用；查询/取消的用户入口由该 Agent 的 manifest capability +
 > `route_hints` 声明（不改编排核心）。
+
+### 9.7 记忆图谱：偏好加权与关系边（M2 P0/P1）
+
+设计 `docs/design/2026-07-25-m2-memory-graph-rfc.md`。**偏好层加列不建新表**（§2.1 拍板）：
+字段级对照后真缺口只有三个，其余（predicate/confidence/source_turn_ids/superseded_by/
+privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25 的单表合并决策，
+且 supersede/隐私分级/GDPR 级联/召回打分要重写一遍。
+
+| 项 | 约定 |
+|---|---|
+| 新增列 | `memory_item.weight`（0-1 强度）/ `evidence_count`（独立证据轮次数）/ `half_life_days`（0=不衰减）/ `consent`（`''` \| `explicit`，v1 只写不读） |
+| 强度公式 | `clamp(base(provenance) + 0.1×(evidence_count-1), 0, 1) × 0.5^(age/half_life)`，实现 `memory/weighting.py`（纯函数）。base：user_stated 0.6 / agent_inferred 0.3；重复加成封顶 +0.4 |
+| 半衰期 | **显式偏好不衰减**（用户明说的凭什么因为久了就不算数）；推断类 90 天；临时偏好走既有 `expires_at` 硬过期 |
+| 存量兼容（硬要求）| `weight<=0`（M2 前写入的全部条目 + 非 semantic）→ 召回打分与注入渲染**逐字回到 confidence 口径**，不扰动已绿旅程 |
+| 巩固期语义 | 同一偏好复现 = **就地加权**（不新增条目、不刷新 `valid_from`——那是衰减基准，刷新等于把陈年偏好洗成新的）；文本冲突才 supersede，且新条目**继承旧证据链** |
+| 注入渲染 | 带权偏好按强度排序 + **确定性人话强度词**（常用/明确说过/偶尔提过，不进 LLM）；未加权条目走原格式「相关记忆」段。top-N 3→5，预算仍 400 字符 |
+| 关系边表 | `memory_relation`（**独立成表**：subject 非用户、查询是实体双向精确查而非相似召回）。`rel` **封闭词表**：`family`/`place_of`/`works_at`/`lives_at`/`owns`/`prefers_brand`——词表外一律丢弃不猜（`predicate_class` 别名爆炸的教训） |
+| 关系边消费面 | v1 只有两个：`ResolvePersonPlace`（人称→family→place_of 一跳，「去接孩子放学」）与导出。**查不到或有歧义一律 found=false**，调用方诚实追问——导航到错学校比查不到更糟 |
+| **GDPR 级联（红线）** | 全量 `forget_user` **必须同事务删 `memory_relation`**，否则家人关系与孩子学校（最敏感的那部分）留在库里 = 假删除。scope 定向删除不级联（关系边无 scope 维度）。契约测试 `memory/tests/test_relation.py::test_forget_user_cascades_to_relations` |
+| 导出对称 | `ExportUser` 必须带 `relations`——能被删掉的东西，用户有权先看到 |
+| emotion 的落点 | **不进记忆层**（§2.3）：短 TTL+不入画像的东西是会话态。planner 同轮输出 `emotion` → `FinalResult.emotion` → HMI 存**下一轮**的 TTS 语气（本轮 TTS 在 final 前已开播，当轮改不了）。措辞表 `llm-gateway/providers.py::EMOTION_INSTRUCT`（HMI 只传语义标签） |
+
+> 新增 `rel` 先在本表登记再用；中央不为具体 rel 写分支（同 route_hints/verification 哲学）。

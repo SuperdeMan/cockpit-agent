@@ -50,6 +50,8 @@ run_step "e2e_research_async"         python test/e2e_research_async.py
 # M2：Task Ledger 五场景（受理/查询/幂等/取消/重启后 orphaned）+ Outcome Verifier 对账
 run_step "e2e_ledger"                 python test/e2e_ledger.py
 run_step "e2e_verify"                 python test/e2e_verify.py
+# M2 记忆图谱：偏好加权 / 关系边 / 人称地点解析 / **GDPR 级联删除（红线）**
+run_step "e2e_memory_graph"           python test/e2e_memory_graph.py
 run_step "e2e_degrade"                python test/e2e_degrade.py
 run_step "e2e_voice_loop"             python test/e2e_voice_loop.py
 run_step "e2e_reminder"               python test/e2e_reminder.py
