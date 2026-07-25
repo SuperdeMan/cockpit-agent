@@ -82,8 +82,12 @@ S2S 会话在 provider 侧持有对话上下文（其多轮能力来源），但
 {"type": "audio"}            // 之后跟二进制 PCM 帧（16k mono s16le，与 /api/asr/stream 同格式）
 {"type": "barge_in"}         // L-HMI 判定打断（本侧 VAD/KWS 权威）→ 网关 cancel 当前 response
 {"type": "cancel_turn"}      // THINKING 期取消（对齐既有 onCancelTurn 语义）
+{"type": "escalated_result", "turn_id", "text"}  // 逃逸轮主链回答播完后回传（见下）
 {"type": "session.end"}
 ```
+
+- **`escalated_result` 为何存在**（P0 探针后补入协议）：逃逸轮的执行/回答全在主链，S2S 会话对此**一无所知**——下轮闲聊时模型不知道空调已经调过了，多轮连续性断在每个逃逸轮上。故 HMI 在逃逸轮的主链回答落地后，把回答文本回传网关，网关以 `function_call_output` 注入 provider session（**R1 实测：不发 `response.create` 则完全静默，不会与主链播报撞成双播**）。这条通道**只为上下文连续，不为播报**。
+  - 丢了也不坏：R2 实测悬挂 `function_call` 不影响后续对话——HMI 没回传（用户切走/网络抖）时，S2S 只是少一条上下文，会话照常。**无需补偿逻辑**。
 
 下行（网关→HMI）：
 
@@ -118,6 +122,49 @@ class BaseS2SProvider:
 - qwen3.5-omni-flash-realtime（首选）：WS `/api-ws/v1/realtime` 同壳（仓库已有两个客户端先例）；server VAD→`transcript`；`response.audio.delta`→`audio_delta`；tool calling→`tool_call`。**★待探针**：①server VAD 与本侧 barge_in（response.cancel）竞态行为 ②tool call 后 `inject_text` 结果再续说的事件序 ③session 内上下文长度上限（决定重注入摘要粒度）④中文口语时延（首音频包 P50/P95）。
 - Step-Audio 系自托管（第二候选，验证「锁协议」）：映射同一抽象；无 server 侧工具调用时 `tool_call` 由**转写文本过本侧轻分类**兜底（协议允许 provider 无原生 tool calling——adapter 层能力降级表）。
 - **探针脚本先行**（`test/e2e_s2s_probe.py`，M1a `e2e_planner_toolcall` 同款打法）：文档≠实测是本仓库每次接新协议的固定教训（ASR 双协议、qwen finish_reason 前科）。
+
+### 3.5 P0 探针实测结果（2026-07-25，协议冻结基线）
+
+`test/e2e_s2s_probe.py --case all` 实测 **12/12 协议断言通过**。本节即**冻结基线**：HMI 与网关按此并行开发；厂商 API 迭代后重跑本探针验证未漂移。
+
+**选型结论（★T，探针挖出的一票否决项）**：`session.created` **不校验 model**——传任意名字（含 `totally-not-a-real-model-xyz`）都返回 session，只是 echo 名字、配置回落默认。真判据是**默认值是否偏离**（默认 voice=Chelsie/in=pcm16/out=pcm24）。据此逐个实测 tools 支持度：
+
+| 模型 | `session.updated.tools` | 车控句行为 | 可用性 |
+|---|---|---|---|
+| **`qwen3.5-omni-flash-realtime`** | `['escalate']` 完整回显 | 正确发 `function_call` | ✅ **选定** |
+| `qwen3-omni-flash-realtime` | **`<无>`（静默丢弃）** | 口头自答"我可以帮你开空调…" | ❌ 无 escalate 通道 |
+
+**`qwen3-omni-flash-realtime` 不可用于 §5.1 分工契约**——tools 被静默丢弃意味着模型没有移交出口，§5.3 的「漏移交」从概率问题变成必然问题，安全设计整体不成立。**这条是文档读不出来的**（两个模型的 API 文档都写"支持函数调用"）。
+
+**事件映射表（实测事件谱 → 本侧归一化事件）**
+
+| provider 事件 | 归一化 | 备注 |
+|---|---|---|
+| `input_audio_buffer.speech_started` / `.speech_stopped` / `.committed` | （L-Session 内部） | server VAD 判定，**不驱动 L-HMI 迁移**（§2.2 铁律） |
+| `conversation.item.input_audio_transcription.delta` | `transcript(final=False)` | 用户话增量 |
+| `conversation.item.input_audio_transcription.completed` | `transcript(final=True)` | 字段名 `transcript` |
+| `response.created` | `turn_started` | **server VAD 自驱**（`create_response=True`）——L-Session **不必手动 `response.create`** |
+| `response.audio_transcript.delta` | `answer_delta` | 助手回答文本增量 |
+| `response.audio.delta` | `audio_delta` | base64 PCM，**24kHz**（见下） |
+| `response.function_call_arguments.delta` | （累积，不产事件） | 带 `call_id` **不带 name** |
+| `response.function_call_arguments.done` | **`tool_call`** | `name`/`call_id`/`arguments` 在此齐备 → **adapter 归一化落点**（不必等 `response.done`） |
+| `response.done` | `turn_done(reason)` | `status=completed\|cancelled`；`output[].type=message\|function_call` |
+
+**★1 barge-in 竞态**：`response.cancel` → `response.done status=cancelled`，**零音频残包**。本侧丢弃保护仍保留（cancel 在途时 delta 可能已在飞），但 provider 侧配合良好。
+- **实测挖出的坑**：被 cancel 的轮次，`response.audio_transcript.done` 仍带**完整全文**（30 字），而实播音频只有 3 包（≈1s）。**该文本 ≠ 用户听到的内容**——§7 回灌 assistant 文本时必须按截断处理，否则记忆里存着用户从没听到的话。
+
+**★2 事件序**：见上表。逃逸轮**零音频零文本**（`output=[function_call]`，无 `audio_transcript.delta`）——模型不会先口头答应再移交，§6.2「判定点在生成前」的听感前提**实测成立**。
+
+**R1 双播风险（探针新增，RFC 原文未列）**：回注 `function_call_output` 后**不发 `response.create` → 完全静默**（6s 内只有 `conversation.item.created`）。§5.2「逃逸轮结果只为上下文连续、不为播报」的前提成立——若 provider 自动续说，就会与主链 TTS 撞成双播，设计需整体返工。
+
+**R2 悬挂韧性（探针新增）**：`function_call` 不回注 output 也**不坏会话**，下一轮正常。→ 回灌 provider 上下文失败**无需补偿逻辑**（fail-safe）。
+
+**★3 上下文**：provider 侧多轮保持实测成立（轮2 正确答出轮1 说的名字）。§2.3 前提站住。
+- **未钉死**：session 内上下文长度上限（provider 未在 session 暴露该字段）。对我们的用途无实际约束——重注入材料（近 4 轮摘要+persona+焦点）量级 <2KB。真实风险不在上限而在**长会话累积**（成本/时延/触限），故实现给 `S2S_SESSION_MAX_TURNS` 旋钮：超限主动重建 session + 摘要重注入（**复用 §4.5 重连路径，零新机制**）。
+
+**★4 时延**（3 轮采样，自音频推完起算）：首音频包 **P50=609ms / max=703ms**；首文本增量 **P50=328ms**。灰度门槛 §6.2 的首音频 P95 以此为基线。
+
+**输出采样率**：`output_audio_format` 只报 `"pcm"`，采样率**未在协议中声明**——按「字节数 ÷ 2 ÷ 采样率 ≈ 语音时长」反推为 **24kHz**（403200B → 24k≈8.4s 匹配 42 字语速；16k≈12.6s 明显过慢）。下行 `turn.audio_meta{sample_rate:24000}`；**HMI `PcmPlayer` 已支持 `sampleRate` 注入且默认 24000**（qwen TTS 同采样率），播放器零改动。
 
 ## 4. 全双工会话状态机
 
@@ -193,7 +240,8 @@ CONNECTING → READY ⇄ IN_TURN（turn_started..turn_done）
 → HMI：按既有 send(utterance, input_source=voice) 走文本 WS → 端侧 fast_intent 先接（车控秒回！）
    或上云主链（R4.4 受话判定→planner→executor→VAL/确认）
 → 回答经既有 TTS 链路播报（三段式）；HMI 回 FOLLOWUP
-→ 下轮闲聊回 S2S 会话（网关 inject_text 该轮问答摘要进 provider session，保持上下文连续）
+→ HMI 上行 `escalated_result{turn_id, text=主链回答}`（§3.2）→ 网关以 function_call_output 注入
+   provider session，保持上下文连续（**不发 response.create，故不播报**——R1 实测已钉死）
 ```
 
 - **端侧快路径的保留是这个设计的隐藏红利**：escalate 落回 HMI send 意味着「打开空调」仍走 fast_intent 毫秒路径——S2S 不在车控链路上，既保安全又保时延。
@@ -229,6 +277,7 @@ S2S 授权域内（chitchat）：受话判定由 S2S 模型的对话能力天然
 S2S 轮次绕过 edge-gateway，若不回灌则：记忆断代（下次 planner 看不到这几轮）、obs 无轮次记录（badcase 无从查）、自进化失明。**网关在每个 turn.end 后强制回灌**：
 
 1. **memory**：AppendTurn(user=transcript, assistant=answer_text)——走既有 gRPC 接口，session_id 同一会话（记忆抽取/画像管线零改动，S2S 轮天然参与）。
+   - **被打断轮按截断处理**（★1 实测）：provider 的 `audio_transcript.done` 带模型已生成的**完整全文**，但用户只听到了打断前那一小段。回灌时只存**已播出的增量**（`answer_delta` 累积到 barge_in 时刻为止）并标 `truncated`——否则记忆里存着用户从没听到的话，下轮 planner 据此指代就会错。
 2. **obs**：`obs.turn` 事件（path="s2s"，speech=answer_text，转写进 user_text）+ span `s2s.turn`（provider/时延/打断/escalated/false_promise 标记）——dashboard 既有三级下钻直接可用。
 3. escalated 轮不重复回灌（主链已落，只补 span 关联 turn_id↔trace_id）。
 
