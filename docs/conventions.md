@@ -20,7 +20,7 @@
 | (车控/媒体) | orchestrator/edge | core | system | **edge** | 50070 | hvac.*, window.*, media.*（端侧 Fast Intent 直执行）|
 | payment-gateway | payment-gateway | core | system | cloud | 50071 | 支付网关（非 Agent，统一支付出口） |
 | road-safety | road_safety | core | first_party | cloud | 50072 | safety.driving_advice, safety.weather_alert, safety.road_condition |
-| deep-research | deep_research | ecosystem | first_party | cloud | 50073 | research.run |
+| deep-research | deep_research | ecosystem | first_party | cloud | 50073 | research.run, research.status, research.cancel |
 | reminder | reminder | core | first_party | cloud | 50074 | reminder.create, reminder.list, reminder.complete, reminder.cancel, reminder.update |
 
 > 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent（**50075 起**，50074 已由 reminder 实占）。新增时按本表分配端口与 intent 命名空间。
@@ -54,6 +54,8 @@
 | `trip.status` | trip-planner | cloud | — | 在途进度只读：在第几站/下一站/还剩几站/全程补电几次 |
 | `trip.reschedule` | trip-planner | cloud | hint | 在途重排（时间不够/太累了/提前回）：确定性砍尾部停靠点或最后一天，NEED_CONFIRM（"不要太累"是慢节奏偏好，不触发） |
 | `research.run` | deep-research | cloud | query, topic, question | 深度调研：LLM 拆多视角子问题→有界并行迭代检索→分节接地报告 + 一段式语音简报；HEAVY_INTENT（动态开思考+过程区）；出 research_report 卡；「深入调研/全面对比 X」编排层 `_ensure_research_step` 兜底纠偏（不劫持普通搜索）|
+| `research.status` | deep-research | cloud | — | **M2 P0**：查后台深调研进度。从 Task Ledger（§9.6）读事实后**确定性作答**，不进 LLM；区分 还在查/已查完/被停了(用户·超时·预算)/中断(orphaned) |
+| `research.cancel` | deep-research | cloud | query | **M2 P0**：停掉在跑的深调研（拉模式：置账本 cancelled，后台任务下次心跳自行收尾）。多条在跑先按原话消歧，仍歧义才反问 |
 | `charging.find` | charging-planner | cloud | destination, soc, prefer | 找充电站。带 destination → 按目的地搜、最优站作为导航途经点（出 charging_route 卡 + data.waypoint，聚合器并入 navigate）；无 destination → 按当前位置出附近列表 |
 | `charging.plan` | charging-planner | cloud | destination, soc | 规划长途充能（出发地→沿途途经充电点→目的地）；信息建议 advisory（不发导航/不二次确认导航）；目的地过泛→NEED_SLOT 高德候选二次确认 |
 | `charging.status` | charging-planner | cloud | — | 查询当前充电状态 |
@@ -219,6 +221,8 @@
 | `SERPAPI_API_KEY` | 新闻源（综合要闻 Google News 头条为主+Exa 合并；国内话题 Baidu News）| 否 |
 | `API_FOOTBALL_KEY` / `API_FOOTBALL_HOST` | api-football 赛事比分/赛程（info.sports）| 否（无 key 走 mock）|
 | `TUSHARE_TOKEN` | Tushare 股票行情（info.stock）| 否（无 key 走 mock）|
+| `LEDGER_ORPHAN_TTL_S` | Task Ledger（§9.6）孤儿判定阈值秒：active 态超此时长无心跳即惰性改判 `orphaned`（≈9 个心跳的余量）| 否（默认 90）|
+| `RESEARCH_TASK_DEADLINE_S` / `_LLM_MAX` / `_EXT_MAX` | 后台深调研任务预算（Background 守卫①③）：截止时长 / LLM 调用次数上限 / 外部检索次数上限；超限由心跳就地截停并主动告知 | 否（默认 900 / 6 / 40）|
 | `REMINDER_POLL_S` | reminder 到点调度轮询秒（触发精度；越小越准越费）| 否（默认 5）|
 | `REMINDER_TZ` | reminder 业务时区（中文时间表达解析与展示本地化）| 否（默认 Asia/Shanghai）|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `LOG_LEVEL` | 可观测；前者非空时 collector 桥接真实 OTel span 导出（T3.6，见 §8）| 否 |
@@ -247,8 +251,12 @@
 
 | 变量 | 含义 | 必填 |
 |---|---|---|
-| `PLANNER_LOOP_MAX_ITERS` | T2 自适应循环最多再规划次数 | 否（默认 2） |
-| `PLANNER_LOOP_BUDGET_MS` | T2 自适应循环总时间预算（毫秒） | 否（默认 5000） |
+| `PLANNER_LOOP_MAX_ITERS` / `_BUDGET_MS` | T2 循环预算的**全局覆盖**（设了则所有档同时生效，一键回退放宽前用）；不设=按 `plan.complexity` 分档（M2 P2） | 否（默认不设） |
+| `PLANNER_LOOP_MAX_ITERS_COMPLEX` / `PLANNER_LOOP_BUDGET_MS_COMPLEX` | Complex 档（`complexity=adaptive`，多意图/条件依赖链）覆盖 | 否（默认 3 次 / 12000ms） |
+| — | Interactive 档（其余，simple 误入 T2 的兜底）内置 **2 次 / 8000ms**；Background 档不走 T2 循环（归 Task Ledger §9.6 语义） | — |
+| `PLANNER_DEDUP_SIDE_EFFECTS` | 重复副作用防抖（M2 P2）：`on`/默认=本轮内 `(intent, 解析后 slots)` 指纹相同且已 OK 产过 actions 的步直接回填、**动作不重发**（replan 对已完成步失忆的典型失误）；`off`=回放宽前 | 否（默认 `on`） |
+| `VERIFY_OUTCOME` | 执行后对账总开关（M2 P1 Outcome Verifier）：`on`/默认=按 `capability.verification` 声明对账；`off`=声明照读但不执行（一键回 M2 前） | 否（默认 `on`） |
+| `VERIFY_MIRROR_STALE_S` | 云侧车况镜像陈旧上限秒：超过此时长没收到 `vehicle.state.changed` 即当作「看不见」（`state_match` 判 UNKNOWN 不定罪），而非拿陈旧值定罪 | 否（默认 180） |
 | `PLANNER_CATALOG_TOP_K` | 规划时 catalog 语义预筛上限；agent 数 ≤ 此值不预筛（始终保留有 `route_hints` 的 Agent、`PLANNER_FALLBACK_AGENT` 与 edge 车控）| 否（默认 20） |
 | `PLANNER_CTX_BUDGET_CHARS` | 上下文块（焦点+记忆+历史）字符预算 | 否（默认 1400） |
 | `PLANNER_CATALOG_BUDGET_CHARS` | catalog JSON 字符预算（超则丢尾部 agent）| 否（默认 8000） |
@@ -375,6 +383,7 @@ Agent 无状态化：一次会话的临时状态落 **memory profile KV**，供�
 | key | 声明方 | 消费方 | schema | 语义 |
 |---|---|---|---|---|
 | `_escalate` | 任意 Agent（现 chitchat 时效兜底） | engine D0/executor 两路径（每轮最多 **1 跳**；已流式播报过的结果忽略；escalated 结果里的二跳声明不消费——结构性防环） | `{"intent": str, "slots": {str:str}, "reason": str}` | 「这题我不该答，改派给该 intent 的 Agent」——engine 经 `_validated_steps` 装配单步 mini-plan 走 executor（heavy/预算/权限自动带出），过程区/挂起语义与正常步一致。设计：`docs/design/2026-07-12-mode-routing-and-answer-quality.md` P1-2，契约测试 `orchestrator/cloud/tests/test_engine_escalate.py` |
+| `_verify` | **编排核心**（`executor._verify_outcome`，非 Agent 声明） | 聚合器 `_append_verify_note`（确定性拼接诚实口径，不进 LLM） | `{"verdict": "unsat", "mode": str, "attempts": int}` | 「这步声称成功，但对账没通过」——执行后对账判定确凿未达成（M2 Outcome Verifier）。**状态保持 OK**（R9 §9.5：FAILED 上的话术会被聚合器吞成裸「处理失败」）。Agent 已按 R9 诚实降级（无卡无动作无 data）时不再补口径，防重复念。设计：`docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md` §3，契约测试 `orchestrator/cloud/tests/test_verify.py` |
 
 ### 9.2 合成会话 session_id 前缀（跳过记忆抽取）
 
@@ -456,3 +465,28 @@ Agent 返回**带用户话术的诚实拒绝/降级**（「没找到这条提醒
   （badcase「取消观看的提醒」，2026-07-24——第四个 Agent 中招后由此正式登记）。
 - 新写 Agent 的 handler 自查：`return AgentResult(status=FAILED, speech=...)` 且 speech
   是给用户听的话 → 改 OK。
+
+### 9.6 Task Ledger 表契约（`task_ledger`，M2 P0）
+
+跨轮持久任务账本：**「谁在替用户干活、干到哪了、还让不让它干」的唯一权威记录**。
+schema 由 `agents/_sdk/ledger.py` 单方 `CREATE IF NOT EXISTS` 持有（reminder_item 先例），
+DDL 见 `agents/_sdk/ledger_schema.sql`。设计
+`docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md` §2。
+
+| 项 | 约定 |
+|---|---|
+| 覆盖对象 | **活过请求生命周期的后台任务**（首批：deep-research 异步深调研 `kind=research`）。同步 T1/T2 轮内完成的**不立单** |
+| 不覆盖 | 确认/补槽挂起（`SessionState`，Redis，秒-分钟）；reminder（有自己的 `reminder_item`，语义是「未来触发」不是「进行中」） |
+| 状态机 | `accepted → running → done\|failed\|cancelled`；`accepted/running → orphaned`（心跳超时惰性判定）。`done/failed/cancelled` 三终态不可逆；**`orphaned` 是判定不是结局**——迟到心跳会把它拉回 `running`（防误判变成假的中断报告） |
+| 主键 | `task_id` = uuid4 hex。**禁 `id(obj)`**（内存地址 GC 复用撞键，corr_id 老教训） |
+| 幂等 | `idempotency_key = sha256(user_id|kind|归一化 goal)[:16]`；`open()` 命中同用户 active 同键 → 返回 `Duplicate`，Agent 出「已经在查了」话术、不重复开跑 |
+| 心跳节律 | 后台任务主循环 **≤10s 一跳**（阶段边界 + 分片收敛点）。`heartbeat()` 的返回值即当前 status |
+| cancel | **拉模式**：`cancel()` 只置态，后台任务下一次心跳读到 `cancelled` 自行收尾。不跨进程强杀、不建 NATS 推送通道。取消延迟上限 ≈ 一次心跳/一轮外部调用 |
+| 预算 | `budget = {deadline_ts, llm_calls_max/used, ext_calls_max/used}`；心跳 `used=` 累加，超上限 SDK 就地置 `cancelled` 并写 `budget.stop_reason`（`user`\|`deadline`\|`budget`），供 Agent 区分「你叫停的 / 超时停了 / 预算用尽」三种话术 |
+| orphaned 判定 | 惰性（只在 `query_active`/`recent`/`get` 时判），阈值 `LEDGER_ORPHAN_TTL_S`（默认 90s ≈ 9 个心跳）。改判 UPDATE 的 WHERE 再钉一次 TTL，并发心跳落在读写之间时放弃改判 |
+| 降级姿态 | 无 `POSTGRES_DSN` / 无 asyncpg / 连接失败 → 所有读写返回 None/[]，**Agent 照常执行任务**，只是受理话术不承诺可取消/可查询。**刻意不做内存兜底**——账本的核心价值是跨重启诚实，进程内兜底会承诺「可查询」而重启后又答不上来 |
+| 消费面 | Agent 侧：`open`/`heartbeat`/`close` 三个函数即接入（`BaseAgent.self.ledger`，编排核心零改动）。v2 若编排器主动派发长任务，它成为同一存储契约的另一个客户端，schema 不变 |
+
+> 新增任务类型：选一个 `kind` 常量登记在本表，Agent 侧照 `agents/deep_research/src/agent.py`
+> 的 `LEDGER_KIND` 模式引用；查询/取消的用户入口由该 Agent 的 manifest capability +
+> `route_hints` 声明（不改编排核心）。

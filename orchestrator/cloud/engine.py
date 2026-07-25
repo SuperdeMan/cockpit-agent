@@ -323,6 +323,12 @@ class PlannerEngine:
                 logger.warning("Single-step stream failed (%s); falling back to unary", e)
 
             if final_sr is not None:
+                # M2 Verifier：流式直通不经 executor._exec_step，必须在此显式对账，
+                # 否则 capability 声明了 verification 却静默不生效（真栈首验实测：
+                # weather 走 D0 流式，一条 step.verify span 都没有）。
+                # allow_retry=False：话术已经流给用户了，重跑会重复播报。
+                final_sr = await self.executor._verify_outcome(
+                    step, final_sr, ctx, allow_retry=False)
                 # 流式直通也补 step.agent span（否则单步云端 agent 链路缺这一跳）
                 _pending = final_sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT)
                 await obs_events.get_emitter("cloud").emit_span(
@@ -766,7 +772,10 @@ class PlannerEngine:
                  "latency_budget_ms": s.latency_budget_ms,
                  "required_permissions": s.required_permissions,
                  "trust_level": s.trust_level,
-                 "context_scopes": s.context_scopes}
+                 "context_scopes": s.context_scopes,
+                 # M2 Verifier：确认后重跑的正是最该对账的车控步——挂起态不带上它，
+                 # 「用户确认→执行→没生效」这条最危险的路径反而不验（纯 dict，JSON 安全）
+                 "verification": s.verification}
                 for s in plan.steps
             ],
             "raw_text": plan.raw_text,

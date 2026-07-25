@@ -40,6 +40,20 @@ message Capability {
   repeated string examples = 4;     // 供语义路由的示例话术
   bool require_confirm = 5;
   bool heavy = 6;                   // 重域能力：命中即开思考+过程区（progress.HEAVY_INTENTS 机制化，R2.1）
+  Verification verification = 7;    // 执行后对账期望（M2 Outcome Verifier）：领域期望由 Agent 声明，中央只跑通用求值器
+}
+
+// 执行后对账声明（M2 Outcome Verifier）：解「步骤 OK ≠ 结果达成」——
+// 车控步 VAL 层可能没生效、查询步可能拿了空数据，两者今天都以 OK 落地。
+// **声明式是铁律**：领域期望全部写在这里，中央 `_verify_outcome` 与求值器不得出现任何
+// agent_id/intent 字面量分支——否则会长成下一个 fast_intent.py（v1.2 评审既定，
+// 与 route_hints 把领域路由知识搬回 Agent 是同一条哲学）。
+message Verification {
+  string mode = 1;         // none(缺省，不验) | schema(查询步拿到真东西) | state_match(车控步世界真的变了)
+  uint32 timeout_ms = 2;   // state_match 等待状态收敛的上限（缺省 2000）
+  string on_fail = 3;      // report(缺省，诚实告知) | retry(重执行，仅对无副作用步开放)
+  uint32 max_attempts = 4; // retry 次数上限（缺省 1）
+  google.protobuf.Struct expect = 5;  // 按 mode 的期望：schema={data_keys:[...]}；state_match={mirror:"vehicle_state", keys:{k:v}}
 }
 
 // 确定性路由提示（R2.1）：Agent 声明「命中 pattern 即路由到本 Agent 的 intent」，

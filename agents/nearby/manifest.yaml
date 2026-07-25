@@ -14,6 +14,16 @@ capabilities:
     slots: [category, keyword, cuisine, brand, rating_min, price_max, price_level, open_now, sort, location, radius]
     examples: ["附近有什么好吃的", "找家川菜馆", "附近评分高的火锅", "人均一百以内的川菜",
                "附近的餐厅", "附近的酒店", "附近的电影院", "找个停车场", "麦当劳在哪", "附近的景点"]
+    # M2 Outcome Verifier 首批试点（列表面）：出了 place_list 卡但 items 是空列表 = 假完成。
+    # on_fail: retry（1 次）——POI 检索的空结果常是瞬时的，重试有真实成功率；
+    # 重试只对 require_confirm=false 的步开放（副作用永不重放，verify.retry_allowed 硬约束）。
+    # Agent 自己诚实降级（「附近暂时没找到」，无卡无 data）的路径不会被重复念，
+    # 见 executor._should_report。
+    verification:
+      mode: schema
+      on_fail: retry
+      max_attempts: 1
+      expect: { data_keys: [items] }
   - intent: nearby.detail
     description: 查看某个地点的详情——评分、人均、电话、营业时间、特色、图片、地址
     slots: [poi_id, name]

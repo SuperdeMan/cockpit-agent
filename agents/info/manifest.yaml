@@ -14,6 +14,13 @@ capabilities:
     description: 查询指定城市或当前位置的实时天气
     slots: [city, date]
     examples: ["今天天气怎么样", "北京天气如何", "上海现在多少度"]
+    # M2 Outcome Verifier 首批试点（查询面）：卡出来了但 data 空 = 假完成。
+    # on_fail: report——天气 provider 挂了重试也是挂，重试只增延迟不增成功率；
+    # 诚实告知比空转有用（真正该 retry 的是偶发空结果的检索类，见 nearby.search）。
+    verification:
+      mode: schema
+      on_fail: report
+      expect: { data_keys: [weather] }
 
   - intent: info.forecast
     description: 查询指定城市未来几天天气预报

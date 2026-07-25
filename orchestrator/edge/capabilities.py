@@ -16,12 +16,37 @@ from edge_agents_mod.vehicle import VEHICLE_INTENTS
 logger = logging.getLogger("edge.capabilities")
 
 
+# M2 Outcome Verifier 首批声明（车控面试点）：VAL 说"执行成功"但状态没落地是**真实
+# 发生过**的静默失败（scene Verify 首跑抓到 ambient_light.set 的亮度分支被提前 return
+# 吞掉，四个预置场景的亮度从没生效过）。这里按 intent 声明期望态，云侧 executor 的通用
+# 求值器对 NATS 车况镜像对账；镜像读不到 → UNKNOWN 不定罪。
+# 状态键与 `orchestrator/edge/val.py` 的 `self.state` 同源。
+# on_fail 一律 report：车控是副作用动作，**永不自动重放**（retry 只对查询步开放）。
+_VERIFICATION = {
+    "hvac.set": {"mirror": "vehicle_state", "keys": {"hvac_on": "true"}},
+    "hvac.on": {"mirror": "vehicle_state", "keys": {"hvac_on": "true"}},
+    "hvac.off": {"mirror": "vehicle_state", "keys": {"hvac_on": "false"}},
+}
+
+
+def _verification_for(intent: str):
+    expect = _VERIFICATION.get(intent)
+    if not expect:
+        return None
+    from google.protobuf.struct_pb2 import Struct
+    s = Struct()
+    s.update(expect)
+    return agent_pb2.Verification(mode="state_match", timeout_ms=2500,
+                                  on_fail="report", max_attempts=1, expect=s)
+
+
 def _capabilities(intents: set[str], description: str):
     return [
         agent_pb2.Capability(
             intent=intent,
             description=description,
             examples=[],
+            verification=_verification_for(intent),
         )
         for intent in sorted(intents)
     ]

@@ -16,6 +16,46 @@ logger = logging.getLogger("planner.loop")
 
 THINKING_FILLER = "我正在根据当前结果继续处理。"
 
+# ── T2 分档预算（M2 P2，母提案 §4.B 档位表 / 子 RFC §4.1）────────────────
+# 原本是单值 env（2 次 / 5s）两档共用：对「查天气→再按结果补建提醒」这种条件依赖链太紧，
+# 对误入 T2 的简单句又白等。改为按 plan.complexity 选档——**放宽的前置条件（Ledger 可
+# 中断长任务 + Verifier 对账假完成）已在 M2 P0/P1 就位**，故此处才敢动预算。
+#
+# Background 档（6+ 次 / 30-300s）**刻意不在这里**：长任务归 Task Ledger 语义（受理即返回、
+# 心跳/取消/预算另有一套），不占请求线程的循环预算。
+#
+# 灰度姿态（子 RFC §4.2）：先落 Complex 3 次/12s 这一档，journeys regression 15/15 且
+# P95 增量 ≤10% 才继续放到 3-4 次/15s。任一红灯回退上一档 = 改一行 env。
+_TIERS = {
+    "simple": (2, 8000),        # Interactive：simple 误入 T2 的兜底（escalate/replan）
+    "adaptive": (3, 12000),     # Complex：多意图、条件依赖链
+}
+_DEFAULT_TIER = "simple"
+
+
+def tier_budget(complexity: str) -> tuple[int, int]:
+    """按复杂度取 (max_iters, budget_ms)，env 可逐档覆盖（评测钉档用）。
+
+    覆盖优先级：全局 env（`PLANNER_LOOP_MAX_ITERS`/`_BUDGET_MS`，两档同时生效——
+    保留它是为了老配置与一键回退不失效）> 分档 env（`..._COMPLEX`）> 内置档位。
+    """
+    iters, budget = _TIERS.get(complexity or "", _TIERS[_DEFAULT_TIER])
+    if complexity == "adaptive":
+        iters = _env_int("PLANNER_LOOP_MAX_ITERS_COMPLEX", iters)
+        budget = _env_int("PLANNER_LOOP_BUDGET_MS_COMPLEX", budget)
+    return (_env_int("PLANNER_LOOP_MAX_ITERS", iters),
+            _env_int("PLANNER_LOOP_BUDGET_MS", budget))
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "")
+    if raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
 
 def summarize(result: StepResult) -> dict:
     """Keep only bounded, decision-relevant observation fields."""
@@ -39,13 +79,19 @@ class LoopController:
         self.executor = executor
         self.aggregator = aggregator
         self.suspend = suspend_fn
-        self.max_iters = max_iters if max_iters is not None else int(
-            os.getenv("PLANNER_LOOP_MAX_ITERS", "2"))
-        self.budget_ms = budget_ms if budget_ms is not None else int(
-            os.getenv("PLANNER_LOOP_BUDGET_MS", "5000"))
+        # 显式传参（测试/特殊接线）恒定优先；缺省则每轮按 plan.complexity 选档（M2 P2）。
+        # 保留 self.max_iters/budget_ms 属性作为「当轮生效值」——既有测试与日志都读它。
+        self._pinned_iters = max_iters
+        self._pinned_budget = budget_ms
+        self.max_iters, self.budget_ms = self._budget_for(_DEFAULT_TIER)
         self.observation_limit = observation_limit
         self.clock = clock or time.monotonic
         self._stream = stream_fn
+
+    def _budget_for(self, complexity: str) -> tuple[int, int]:
+        iters, budget = tier_budget(complexity)
+        return (self._pinned_iters if self._pinned_iters is not None else iters,
+                self._pinned_budget if self._pinned_budget is not None else budget)
 
     async def run(self, goal: str, initial_plan: Plan | None, agents: list,
                   ctx: PlanContext, user_text: str,
@@ -57,6 +103,9 @@ class LoopController:
         n_seed = len(results)      # 种子（确认续接带入，上轮已播报）不进挂起前缀
         spoken: set[int] = set()   # 已流式播报过的结果（id()）——挂起前缀不再复读
         observations = [summarize(r) for r in results][-self.observation_limit:]
+        # M2 P2 分档：本轮预算按计划复杂度取（adaptive=Complex 档、其余=Interactive 档）
+        complexity = getattr(initial_plan, "complexity", "") or _DEFAULT_TIER
+        self.max_iters, self.budget_ms = self._budget_for(complexity)
         deadline = self.clock() + self.budget_ms / 1000.0
         current = initial_plan
         replans = 0
@@ -129,6 +178,11 @@ class LoopController:
 
                 if final_sr is not None:
                     streamed = True
+                    # M2 Verifier：T2 流式直通同样不经 executor._exec_step，显式对账
+                    # （与 engine D0 同款；allow_retry=False——话术已流出，不重跑）。
+                    if hasattr(self.executor, "_verify_outcome"):
+                        final_sr = await self.executor._verify_outcome(
+                            step, final_sr, ctx, allow_retry=False)
                     # T2 流式直通也补 step.agent span（与 engine.py D0 一致，否则
                     # 单步 cloud agent 在 T2 循环里缺这一跳——trace 丢失该 Agent 身份，
                     # NEED_CONFIRM/NEED_SLOT 挂起时尤其明显）。
@@ -208,8 +262,8 @@ class LoopController:
 
         elapsed_ms = (self.clock() - (deadline - self.budget_ms / 1000.0)) * 1000
         metrics.record_intent("t2_loop", elapsed_ms, not exhausted)
-        logger.info("T2 loop done: replans=%d exhausted=%s elapsed=%.0fms",
-                     replans, exhausted, elapsed_ms)
+        logger.info("T2 loop done: tier=%s replans=%d/%d exhausted=%s elapsed=%.0fms",
+                    complexity, replans, self.max_iters, exhausted, elapsed_ms)
 
         if show_process:
             yield make_progress("synthesize", "整理结果",

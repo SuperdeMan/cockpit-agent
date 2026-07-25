@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from .clients import LLMClient, MemoryClient, RegistryClient
+from .ledger import TaskLedger
 from .manifest import load_manifest
 from .result import AgentResult
 # contextvar 抽到 _ctx（中立模块），解 base↔clients 循环依赖；此处保留同名再导出向后兼容。
@@ -114,6 +115,10 @@ class BaseAgent(ABC):
         self.llm = LLMClient()
         self.memory = MemoryClient()
         self.registry = RegistryClient()  # ws2: 供 AgentClient 动态解析 endpoint
+        # M2 P0：跨轮持久任务账本。构造只读 env（不建连），首次调用惰性 init；
+        # 无 POSTGRES_DSN / 无 asyncpg → 全部操作静默返回空，Agent 照常干活（诚实降级）。
+        # 接入长任务 = 调 open/heartbeat/close 三个函数，编排核心零改动（RFC §2.1）。
+        self.ledger = TaskLedger()
         # 跨 Agent 协作客户端（延迟初始化，避免循环依赖）
         self._agents = None
         # 跨 Agent 调用的 channel 缓存：按 endpoint 复用 keepalive 连接，

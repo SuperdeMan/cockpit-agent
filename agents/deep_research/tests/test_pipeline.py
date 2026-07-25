@@ -146,6 +146,63 @@ def test_investigate_skips_preseeded_subquestion():
     assert [e.url for e in seeded.evidence] == ["http://prior/1"]
 
 
+# ── investigate 的 M2 P0 钩子（Task Ledger 心跳 / 拉模式停手）─────────────
+
+def test_investigate_reports_progress_per_subquestion():
+    """心跳落点：每个子问题收敛报一次进度（账本据此更新「检索中 N/M」）。"""
+    subqs = [SubQuestion(sq_id=f"sq{i}", text=f"角度{i}") for i in range(3)]
+    seen = []
+
+    async def on_progress(done, total):
+        seen.append((done, total))
+
+    asyncio.run(pipeline.investigate(FakeSearch(), None, subqs, meta={},
+                                     on_progress=on_progress))
+    assert [t for _, t in seen] == [3, 3, 3]
+    assert sorted(d for d, _ in seen) == [1, 2, 3]
+
+
+def test_investigate_progress_exception_never_breaks_pipeline():
+    """账本是增强不是执行依赖：心跳炸了流水线照跑完。"""
+    subqs = [SubQuestion(sq_id="sq1", text="角度")]
+
+    async def boom(done, total):
+        raise RuntimeError("ledger down")
+
+    asyncio.run(pipeline.investigate(FakeSearch(), None, subqs, meta={},
+                                     on_progress=boom))
+    assert subqs[0].status == "answered"
+
+
+def test_investigate_should_stop_halts_further_retrieval():
+    """拉模式 cancel 的落点：置停后不再开新检索，未跑的子问题标 gap。"""
+    subqs = [SubQuestion(sq_id=f"sq{i}", text=f"角度{i}") for i in range(4)]
+    search = FakeSearch()
+    stopped = {"v": False}
+
+    async def on_progress(done, total):
+        stopped["v"] = True          # 第一个子问题一收敛就喊停
+
+    asyncio.run(pipeline.investigate(search, None, subqs, meta={},
+                                     on_progress=on_progress,
+                                     should_stop=lambda: stopped["v"]))
+    # 并行 gather 下已在飞的会跑完，但检索次数必须显著少于「无停手」的满量
+    assert len(search.queries) < len(subqs) * 2
+    assert any(sq.status == "gap" for sq in subqs)
+
+
+def test_investigate_should_stop_error_is_ignored():
+    """should_stop 自身抛错 → 当作「没停」，绝不因旁路异常中断调研。"""
+    subqs = [SubQuestion(sq_id="sq1", text="角度")]
+
+    def boom():
+        raise RuntimeError("ledger blip")
+
+    asyncio.run(pipeline.investigate(FakeSearch(), None, subqs, meta={},
+                                     should_stop=boom))
+    assert subqs[0].status == "answered"
+
+
 # ── synthesize ────────────────────────────────────────────
 
 def _subqs_with_evidence():

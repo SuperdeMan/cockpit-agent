@@ -18,6 +18,10 @@ import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.base import Context
+from agents._sdk.ledger import (
+    CANCELLED, DONE, ORPHANED, STOP_BUDGET, STOP_DEADLINE, STOP_USER, Duplicate,
+)
+from agents._sdk.ledger import FAILED as FAILED_STATUS   # 与 AgentResult 的 FAILED 同名，显式区分
 from agents._sdk.shared_state import NEWS_ACTIVE, RESEARCH_ACTIVE
 from agents._sdk.grounding import shanghai_now
 from agents._sdk.location import current_location_from_meta
@@ -68,6 +72,15 @@ _ASYNC_NOISE_RE = re.compile(
     r"慢工出细活|先忙[^，。]*|"
     r"(?:查完|查好|弄完|好了|完了|等会|待会)[^，。]{0,6}(?:告诉|通知|叫|跟我说)[^，。]*)"
     r".*$")
+# Task Ledger 里本 Agent 的任务类型（同一账本按 kind 分域，供跨 Agent 消歧）。
+LEDGER_KIND = "research"
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "") or default)
+    except ValueError:
+        return default
 
 
 class DeepResearchAgent(BaseAgent):
@@ -84,7 +97,12 @@ class DeepResearchAgent(BaseAgent):
 
     async def on_start(self) -> None:
         """连 NATS 供异步深调研完成后主动推送（agent.proactive）。无 NATS_URL/连接失败 → 静默禁用：
-        异步调研仍会跑、仍落 memory（用户可再问取回），仅不主动推送。本 Agent 只发布、不订阅。"""
+        异步调研仍会跑、仍落 memory（用户可再问取回），仅不主动推送。本 Agent 只发布、不订阅。
+
+        同时初始化 Task Ledger（M2 P0）：在此建池建表，让首次受理不背建连成本；
+        失败静默降级（异步调研照跑，只是不承诺可查询/可取消）。
+        """
+        await self.ledger.init()
         nats_url = os.getenv("NATS_URL", "")
         if not nats_url:
             logger.info("deep-research: NATS_URL 未设置，异步调研主动推送禁用")
@@ -99,6 +117,12 @@ class DeepResearchAgent(BaseAgent):
     async def handle(self, intent, ctx, meta) -> AgentResult:
         if intent.name == "research.run":
             return await self._research(intent, ctx, meta)
+        # M2 P0：长任务的「还让不让它干 / 干到哪了」——两条都从 Task Ledger 读事实后
+        # **确定性作答**，绝不让 LLM 编（墙钟直答同一原则）。
+        if intent.name == "research.cancel":
+            return await self._cancel_task(intent, ctx)
+        if intent.name == "research.status":
+            return await self._task_status(ctx)
         return AgentResult(status=FAILED, speech="深度调研助手暂不支持该请求。")
 
     async def _research(self, intent, ctx, meta) -> AgentResult:
@@ -134,7 +158,7 @@ class DeepResearchAgent(BaseAgent):
         # 异步分钟级深调研：用户明示「不急/慢慢查/查完告诉我/要详细完整报告」→ 立即受理，后台跑
         # 更深流水线（deep=True，不受 90s 网关上限），查完经 NATS agent.proactive 主动播报+推报告卡。
         if self._is_async_request(raw):
-            return self._kickoff_async(question, constraints, ctx, meta)
+            return await self._kickoff_async(question, constraints, ctx, meta)
 
         task = ResearchTask(session_id=ctx.session_id or "", user_id=ctx.user_id or "",
                             question=question, constraints=constraints)
@@ -187,34 +211,104 @@ class DeepResearchAgent(BaseAgent):
         """从问题取简短主题（去掉深挖后缀『——…』），用于话术/推送标题。"""
         return question.split("——")[0].split("（")[0].strip()[:24] or "这个主题"
 
-    def _kickoff_async(self, question: str, constraints: dict, ctx, meta) -> AgentResult:
-        """受理异步深调研：spawn 后台 task（持引用防 GC），立即返回受理话术。
+    async def _kickoff_async(self, question: str, constraints: dict, ctx,
+                             meta) -> AgentResult:
+        """受理异步深调研：先向 Task Ledger 开单（幂等），再 spawn 后台 task（持引用防 GC），
+        立即返回受理话术。
 
         ctx 是请求级句柄，后台任务用 self.memory（Agent 级持久）重建 Context 落记忆，
         故此处只捕获身份标识（session/user/vehicle）与 meta 的纯 dict 拷贝交给后台。
+
+        三档话术（M2 P0）：
+        - 幂等命中 → 「已经在查了」，**不重复开跑**（连说两遍/重试风暴不双跑）；
+        - 开单成功 → 受理话术加「可停可问」（承诺得起才说）；
+        - 账本不可用（无 PG）→ 退回原话术，**不承诺**可取消/可查询（诚实降级）。
         """
         question = self._strip_async_noise(question)   # 清尾部延后语，防噪声污染子问题/报告卡
         sid, uid, vid = ctx.session_id, ctx.user_id, ctx.vehicle_id
+        topic = self._topic(question)
+
+        entry = await self.ledger.open(
+            uid, sid, self.manifest.agent_id, LEDGER_KIND, question,
+            budget=self._task_budget(), origin_trace_id=(meta or {}).get("trace_id", ""))
+        if isinstance(entry, Duplicate):
+            prior = entry.existing
+            detail = f"，{prior.progress}" if prior.progress else ""
+            return AgentResult(
+                speech=f"「{self._topic(prior.goal)}」我已经在查了{detail}，查完主动告诉你。",
+                follow_up="想知道进度就问「查得怎么样了」，不想查了就说「别查了」。",
+                data={"async": True, "question": question, "duplicate": True,
+                      "task_id": prior.task_id})
+
+        task_id = entry.task_id if entry is not None else ""
         task = asyncio.create_task(
-            self._run_deep_async(question, constraints, sid, uid, vid, dict(meta or {})))
+            self._run_deep_async(question, constraints, sid, uid, vid,
+                                 dict(meta or {}), task_id))
         self._bg_tasks.add(task)
         task.add_done_callback(self._bg_tasks.discard)
-        speech = (f"好的，「{self._topic(question)}」这个我深入查一份完整报告，大概几分钟，"
+        speech = (f"好的，「{topic}」这个我深入查一份完整报告，大概几分钟，"
                   "查完直接语音通知你、把报告推过来，你可以先忙别的。")
+        follow = "我查完会主动播报结论并推送可读报告，无需等待。"
+        if task_id:
+            follow = ("想知道进度随时问「查得怎么样了」，不想查了就说「别查了」；"
+                      "查完我会主动播报并推送可读报告。")
         return AgentResult(
-            speech=speech,
-            follow_up="我查完会主动播报结论并推送可读报告，无需等待。",
-            data={"async": True, "question": question})
+            speech=speech, follow_up=follow,
+            data={"async": True, "question": question, "task_id": task_id})
+
+    @staticmethod
+    def _task_budget() -> dict:
+        """后台深调研预算（Background 档六守卫之 deadline①/预算③）。
+
+        deadline 从受理时刻起算；LLM 次数上限覆盖 plan+synthesize+重试余量；外部检索次数
+        上限按 9 子问题 × 3 轮（首轮/回溯/学术兜底）留足。env 可调，供评测钉档。
+        """
+        return {
+            "deadline_ts": time.time() + _env_int("RESEARCH_TASK_DEADLINE_S", 900),
+            "llm_calls_max": _env_int("RESEARCH_TASK_LLM_MAX", 6),
+            "ext_calls_max": _env_int("RESEARCH_TASK_EXT_MAX", 40),
+        }
 
     async def _run_deep_async(self, question: str, constraints: dict,
-                              sid: str, uid: str, vid: str, meta: dict) -> None:
+                              sid: str, uid: str, vid: str, meta: dict,
+                              task_id: str = "") -> None:
         """后台跑深度流水线（deep=True，不受 90s 上限）→ 落 memory → 经 NATS 主动推送报告。
 
         全程 best-effort：已脱离请求路径，任何阶段异常都只记日志、发一条简短失败告知，不崩进程。
+
+        M2 P0 心跳（task_id 为空=无账本，全部退化成今天的行为）：阶段边界各一次
+        + investigate 每子问题收敛一次。心跳返回 cancelled 即自行收尾——这是拉模式
+        cancel/deadline/预算截停的**唯一**生效点，不跨进程强杀 asyncio.Task。
         """
+        stopped = {"v": False}
+
+        async def beat(progress: str = "", used: dict | None = None) -> bool:
+            """打一次心跳；返回 True=继续。无账本恒 True。"""
+            if not task_id:
+                return True
+            status = await self.ledger.heartbeat(task_id, progress=progress, used=used)
+            if status == CANCELLED:
+                stopped["v"] = True
+                return False
+            return True
+
         try:
+            if not await beat("正在拆解调研角度"):
+                return await self._finish_stopped(task_id, question, meta)
             subqs = await plan(self.llm, question, constraints, deep=True)
-            await investigate(self.search, self.extractor, subqs, meta=meta, deep=True)
+            if not await beat(f"已拆成 {len(subqs)} 个角度，开始检索",
+                              used={"llm_calls": 1}):
+                return await self._finish_stopped(task_id, question, meta)
+
+            async def on_progress(done: int, total: int) -> None:
+                await beat(f"检索中 {done}/{total} 个子问题", used={"ext_calls": 1})
+
+            await investigate(self.search, self.extractor, subqs, meta=meta, deep=True,
+                              on_progress=on_progress,
+                              should_stop=lambda: stopped["v"])
+            if stopped["v"] or not await beat("检索完成，正在撰写报告"):
+                return await self._finish_stopped(task_id, question, meta)
+
             report = await synthesize(self.llm, question, subqs, constraints, deep=True)
             speech, card = brief(report, question)
             # 落 memory（供后续「展开第N点」深挖）：后台用持久 self.memory 重建 Context。
@@ -222,14 +316,51 @@ class DeepResearchAgent(BaseAgent):
                 await self._save_task(Context(sid, uid, vid, self.memory), question, report)
             except Exception as e:
                 logger.debug("async save research task skipped: %s", e)
-            await self._publish_research_done(question, speech, card)
+            # 先销单再推送：推送失败（无 NATS）不该让账本停在 running 变成假孤儿。
+            await self._close_task(task_id, DONE, progress="已完成", result_ref={
+                "sections": len(report.sections), "sources": len(report.sources),
+                "summary": (report.summary or "")[:200], "shared_state": RESEARCH_ACTIVE})
+            await self._publish_research_done(question, speech, card,
+                                              self._task_ref(task_id, meta))
             logger.info("async deep research done: %s（%d 节/%d 源）",
                         self._topic(question), len(report.sections), len(report.sources))
         except Exception as e:
             logger.warning("async deep research failed for '%s': %s", question[:40], e)
-            await self._publish_research_failed(question)
+            await self._close_task(task_id, FAILED_STATUS, progress=str(e)[:120])
+            await self._publish_research_failed(question,
+                                                self._task_ref(task_id, meta))
 
-    async def _publish_research_done(self, question: str, speech: str, card: dict) -> None:
+    async def _close_task(self, task_id: str, status: str, *, progress: str = "",
+                          result_ref: dict | None = None) -> None:
+        if task_id:
+            await self.ledger.close(task_id, status, result_ref=result_ref,
+                                    progress=progress)
+
+    async def _finish_stopped(self, task_id: str, question: str,
+                              meta: dict | None = None) -> None:
+        """被截停的收尾：账本已是 cancelled（cancel/deadline/预算三种来源共用此路），
+        这里只补一句主动告知——超时/预算截停用户没主动喊停，静默消失是不诚实的。"""
+        task = await self.ledger.get(task_id) if task_id else None
+        reason = task.stop_reason if task else ""
+        logger.info("async deep research stopped (%s): %s", reason or "user",
+                    self._topic(question))
+        if reason in (STOP_DEADLINE, STOP_BUDGET):
+            await self._publish_research_stopped(
+                question, reason, self._task_ref(task_id, meta))
+
+    def _task_ref(self, task_id: str, meta: dict | None = None) -> dict:
+        """proactive 推送里的任务级归因（RFC §5 obs）：带回 task_id 与**受理轮** trace_id，
+        dashboard 可从完成推送下钻回受理那一轮（后台任务脱离请求路径，trace 天然断链）。"""
+        ref = {}
+        if task_id:
+            ref["task_id"] = task_id
+        tid = (meta or {}).get("trace_id", "")
+        if tid:
+            ref["origin_trace_id"] = tid
+        return ref
+
+    async def _publish_research_done(self, question: str, speech: str, card: dict,
+                                     ref: dict | None = None) -> None:
         """异步调研完成 → 发 NATS agent.proactive（带 card=报告卡）。无 NATS → 仅日志（同 road-safety）。
 
         edge 网关订阅 agent.proactive 并透传 speech+card 给 HMI（card 为可读分节报告卡）。
@@ -241,7 +372,7 @@ class DeepResearchAgent(BaseAgent):
         payload = {"type": "research_done",
                    "speech": f"关于「{topic}」的深度调研完成了。{speech}",
                    "card": card, "agent_id": self.manifest.agent_id,
-                   "ts": int(time.time() * 1000)}
+                   "ts": int(time.time() * 1000), **(ref or {})}
         try:
             await self._nc.publish(
                 "agent.proactive", json.dumps(payload, ensure_ascii=False).encode())
@@ -249,18 +380,138 @@ class DeepResearchAgent(BaseAgent):
         except Exception as e:
             logger.warning("async research publish failed: %s", e)
 
-    async def _publish_research_failed(self, question: str) -> None:
+    async def _publish_research_failed(self, question: str,
+                                       ref: dict | None = None) -> None:
         """异步调研失败 → 发一条简短主动告知（best-effort，无 NATS 静默）。"""
         if not self._nc:
             return
         payload = {"type": "research_failed",
                    "speech": f"抱歉，「{self._topic(question)}」的深度调研没能完成，稍后可以让我再试一次。",
-                   "agent_id": self.manifest.agent_id, "ts": int(time.time() * 1000)}
+                   "agent_id": self.manifest.agent_id, "ts": int(time.time() * 1000),
+                   **(ref or {})}
         try:
             await self._nc.publish(
                 "agent.proactive", json.dumps(payload, ensure_ascii=False).encode())
         except Exception as e:
             logger.debug("async research fail-publish skipped: %s", e)
+
+    async def _publish_research_stopped(self, question: str, reason: str,
+                                        ref: dict | None = None) -> None:
+        """预算/超时截停 → 主动告知（用户没喊停，静默消失不诚实）。用户主动 cancel 不走这里
+        （他刚说完「别查了」，再播一遍是噪声）。"""
+        if not self._nc:
+            return
+        why = "查得太久超时停了" if reason == STOP_DEADLINE else "查到预算上限停了"
+        payload = {"type": "research_stopped",
+                   "speech": (f"「{self._topic(question)}」的深度调研{why}，"
+                              "换个更聚焦的问题我可以再查一次。"),
+                   "agent_id": self.manifest.agent_id, "ts": int(time.time() * 1000),
+                   **(ref or {})}
+        try:
+            await self._nc.publish(
+                "agent.proactive", json.dumps(payload, ensure_ascii=False).encode())
+        except Exception as e:
+            logger.debug("async research stop-publish skipped: %s", e)
+
+    # ── 任务账本消费面（M2 P0）：查询 / 取消 ────────────────────────────────
+    async def _task_status(self, ctx) -> AgentResult:
+        """「查得怎么样了」——**从账本读事实后确定性作答**，绝不让 LLM 编进度。
+
+        无账本（PG 不可达）时诚实说不知道，不假装在跑（R9 契约：话术型降级走 OK）。
+        """
+        if not self.ledger.pg_ok and not await self.ledger.init():
+            return AgentResult(
+                speech="我这边暂时查不到后台任务的状态，抱歉。",
+                follow_up="你可以直接让我重新查一次。")
+        active = await self.ledger.query_active(ctx.user_id, kind=LEDGER_KIND)
+        if active:
+            lines = [self._active_line(t) for t in active[:3]]
+            return AgentResult(
+                speech="".join(lines),
+                follow_up="不想查了就说「别查了」。",
+                data={"tasks": [{"task_id": t.task_id, "status": t.status,
+                                 "progress": t.progress} for t in active]})
+
+        recent = await self.ledger.recent(ctx.user_id, kind=LEDGER_KIND, limit=1)
+        if not recent:
+            return AgentResult(
+                speech="你最近没让我查过什么后台调研。",
+                follow_up="想深挖某个主题就说「慢慢查一下 X，查完告诉我」。")
+        return AgentResult(speech=self._finished_line(recent[0]),
+                           follow_up="要我重新查一份吗？",
+                           data={"task_id": recent[0].task_id,
+                                 "status": recent[0].status})
+
+    def _active_line(self, task) -> str:
+        mins = max(1, int((time.time() - task.created_at) // 60)) if task.created_at else 0
+        detail = f"，{task.progress}" if task.progress else ""
+        elapsed = f"，已经查了 {mins} 分钟" if mins else ""
+        return f"「{self._topic(task.goal)}」还在查{detail}{elapsed}。"
+
+    def _finished_line(self, task) -> str:
+        """终态话术：每种终态说清楚是**怎么**结束的——「中断的诚实报告」在此兑现。"""
+        topic = self._topic(task.goal)
+        if task.status == ORPHANED:
+            return f"「{topic}」查到一半中断了（我这边重启过），要不要重新查一份？"
+        if task.status == DONE:
+            summary = str((task.result_ref or {}).get("summary") or "").strip()
+            head = f"「{topic}」已经查完了。"
+            return f"{head}{summary}" if summary else head + "要我再说一遍结论吗？"
+        if task.status == CANCELLED:
+            reason = task.stop_reason
+            if reason == STOP_DEADLINE:
+                return f"「{topic}」上次查得太久超时停了。"
+            if reason == STOP_BUDGET:
+                return f"「{topic}」上次查到预算上限停了。"
+            return f"「{topic}」上次按你说的停掉了。"
+        return f"「{topic}」上次没能查完。"
+
+    async def _cancel_task(self, intent, ctx) -> AgentResult:
+        """「别查了」——拉模式取消：置账本为 cancelled，后台任务下一次心跳自行收尾。
+
+        多条同类在跑时先按原话匹配主题，仍消歧不掉才反问（不猜、不一次全停——
+        停错了用户要重等几分钟）。
+        """
+        if not self.ledger.pg_ok and not await self.ledger.init():
+            return AgentResult(
+                speech="我这边暂时管不了后台任务，抱歉。",
+                follow_up="")
+        active = await self.ledger.query_active(ctx.user_id, kind=LEDGER_KIND)
+        if not active:
+            return AgentResult(speech="现在没有正在跑的调研。")
+        if len(active) > 1:
+            picked = self._match_by_text(active, intent)
+            if picked is None:
+                names = "、".join(f"「{self._topic(t.goal)}」" for t in active[:3])
+                return AgentResult(
+                    status=NEED_SLOT,
+                    speech=f"现在有 {len(active)} 个调研在跑：{names}，你要停哪个？",
+                    follow_up="说主题名字就行。", missing_slots=["query"])
+            active = [picked]
+        task = active[0]
+        ok = await self.ledger.cancel(task.task_id, reason=STOP_USER)
+        topic = self._topic(task.goal)
+        if not ok:
+            return AgentResult(speech=f"「{topic}」这会儿已经结束了，不用停了。")
+        return AgentResult(
+            speech=f"好的，正在停下「{topic}」的调研。",
+            follow_up="", data={"task_id": task.task_id, "cancelled": True})
+
+    @staticmethod
+    def _match_by_text(tasks: list, intent) -> object | None:
+        """多条在跑时按用户原话/槽位定位唯一一条（「停掉固态电池那个」）。
+
+        只认**恰好一条**命中——两条都沾边说明还是歧义，交回反问；命中判据是
+        任务主题里连续 2 字出现在原话中（中文双字词已足够判别，且不误伤单字噪声）。
+        """
+        text = f"{(intent.raw_text or '')} {' '.join((intent.slots or {}).values())}"
+        hits = []
+        for t in tasks:
+            topic = DeepResearchAgent._topic(t.goal)
+            grams = {topic[i:i + 2] for i in range(max(0, len(topic) - 1))}
+            if any(g in text for g in grams if len(g) == 2):
+                hits.append(t)
+        return hits[0] if len(hits) == 1 else None
 
     async def _constraints(self, question: str, ctx, meta) -> dict:
         """收集与研究**相关**的处境（接地「我」）。

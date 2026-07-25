@@ -20,6 +20,7 @@ from .aggregator import Aggregator
 from .session import SessionStore
 from .engine import PlannerEngine
 from .server import CloudPlannerServicer
+from .state_mirror import VehicleStateMirror
 
 # 结构化日志（原 basicConfig 升级）：stdout JSON 自动带 trace/session，
 # WARNING+ 与带 trace 的 INFO 经 obs.log 进 collector——badcase 按 trace 检索日志。
@@ -57,7 +58,11 @@ async def serve():
         edge_call=clients.dispatch_to_edge,
         tools=tools,
     )
-    executor = DagExecutor(dispatcher=dispatcher)
+    # M2 Verifier：车况镜像供 state_match 求值（只读订阅 vehicle.state.changed）。
+    # 连不上 NATS → 镜像恒空 → 对账判 UNKNOWN 不定罪，主链不受影响。
+    mirror = VehicleStateMirror()
+    await mirror.start()
+    executor = DagExecutor(dispatcher=dispatcher, state_mirror=mirror)
     aggregator = Aggregator(llm_fn=clients.llm_complete)
 
     engine = PlannerEngine(
@@ -83,6 +88,7 @@ async def serve():
         tools_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await tools_task
+        await mirror.close()
 
 
 if __name__ == "__main__":

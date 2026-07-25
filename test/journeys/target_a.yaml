@@ -117,3 +117,51 @@ journeys:
           # 部分失败必须明说，不能静默吞掉也不能装成功
           speech_any: [没能, 失败, 出错, 暂时, 稍后, 不可用, 遇到问题]
           speech_not: [第1天, 第一天, 已为您规划好]
+
+  # ── M2 Task Ledger：长任务的三条用户可见语义（子 RFC §6 P2 DoD）──────────
+  # orphaned 续接（重启容器后诚实报告）与 verify 失败话术不在此处：前者要重启容器
+  # （runner 不做基础设施操作，已由 test/e2e_ledger.py 场景⑤覆盖）；后者在当前代码下
+  # 不会自然 unsat（首批三处声明的 Agent 今天没有假完成，见子 RFC §9.6）。
+  - id: A6-1
+    title: 长任务可停可问：受理→查进度→喊停（Task Ledger 拉模式）
+    level: target
+    lane: live
+    tags: [autonomy, honesty]
+    turns:
+      # 受理：开单成功才承诺「可停可问」——承诺得起才说
+      - say: 慢慢查一下钠离子电池的产业化进展，查完告诉我
+        expect:
+          latency_s: 60
+          speech_any: [报告, 查, 几分钟]
+          follow_up_any: [别查了, 怎么样了]
+      # 进度：从账本读事实确定性作答，不进 LLM（任务状态是系统持有的事实）
+      - say: 那个调研查得怎么样了
+        expect:
+          latency_s: 30
+          speech_any: [还在查, 查完, 中断]
+          speech_not: [没让我查过, 查不到]
+      # 取消：拉模式置态，后台下一次心跳自行收尾
+      - say: 别查了
+        expect:
+          latency_s: 30
+          speech_any: [正在停, 已经结束]
+    cleanup:
+      - 别查了
+
+  - id: A6-2
+    title: 长任务幂等受理：连说两遍不双跑
+    level: target
+    lane: live
+    tags: [autonomy, honesty]
+    turns:
+      - say: 慢慢查一下固态电池的封装工艺，查完告诉我
+        expect:
+          latency_s: 60
+          speech_any: [报告, 查, 几分钟]
+      # 同一目标再说一遍 → 幂等命中，答「已经在查了」而不是又开一个后台任务
+      - say: 慢慢查一下固态电池的封装工艺，查完告诉我
+        expect:
+          latency_s: 30
+          speech_any: [已经在查]
+    cleanup:
+      - 别查了

@@ -213,27 +213,45 @@ async def _retrieve_for(search_provider, extractor, query: str, meta,
 
 async def investigate(search_provider, extractor, subqs: list[SubQuestion],
                       *, meta=None, max_rounds: int = MAX_ROUNDS,
-                      deep: bool = False) -> None:
+                      deep: bool = False, on_progress=None, should_stop=None) -> None:
     """确定性有界并行检索：每子问题 1 轮；证据薄(<_THIN_EVIDENCE)换更宽 query 再追 1 轮
     合并（受 max_rounds 约束）。已带证据的子问题跳过检索（幂等化——深挖种子/重入不重检）。
 
     deep=True（异步分钟级深调研）额外做**学术兜底**：某子问题证据仍「薄」时，
     用 Exa `research paper` 类目补权威学术文献，回填薄弱角度——不新增小节、不收窄整体（只救薄的）。
+
+    M2 P0（两个可选钩子，缺省 None = 行为逐字不变）：
+    - `on_progress(done, total)`：每个子问题收敛后 await 一次，供 Task Ledger 打心跳
+      （异常吞掉——账本是增强，不许拖垮流水线）。
+    - `should_stop() -> bool`：**每轮检索前**问一次；True 即停手（拉模式 cancel 的落点）。
+      已在飞的外部 HTTP 无法优雅中断，故取消延迟 ≈ 一轮检索时长，不是瞬时。
     """
+    total = len(subqs)
+    done = 0
+
+    def _stop() -> bool:
+        try:
+            return bool(should_stop and should_stop())
+        except Exception:
+            return False
+
     async def one(sq: SubQuestion) -> None:
         if sq.evidence:                       # 预置证据（深挖种子）→ 不重检索
             sq.status = "answered"
             return
+        if _stop():
+            sq.status = "gap"
+            return
         sq.status = "searching"
         try:
             evs = await _retrieve_for(search_provider, extractor, sq.text, meta)
-            if len(evs) < _THIN_EVIDENCE and max_rounds >= 2:
+            if len(evs) < _THIN_EVIDENCE and max_rounds >= 2 and not _stop():
                 # gap 回溯/转向：换更宽 query 再来一轮（仿 Deep Research 的 backtrack）。
                 # 旧条件「空才回溯」放宽为「薄就回溯」，且**合并不替换**（首轮仅 1 条时那条仍保留）。
                 extra = await _retrieve_for(search_provider, extractor,
                                             f"{sq.text} 详细介绍", meta)
                 evs = _merge_evidence(evs, extra)
-            if deep and len(evs) < _THIN_EVIDENCE:
+            if deep and len(evs) < _THIN_EVIDENCE and not _stop():
                 # 学术兜底：薄结果子问题补权威学术文献（research paper 类目），不替换、只补充去重
                 papers = await _retrieve_for(search_provider, extractor, sq.text, meta,
                                              category="research paper")
@@ -243,6 +261,14 @@ async def investigate(search_provider, extractor, subqs: list[SubQuestion],
         except Exception as e:  # 单子问题失败不拖垮整批
             logger.warning("investigate subq failed: %s", e)
             sq.status = "gap"
+        finally:
+            nonlocal done
+            done += 1
+            if on_progress is not None:
+                try:
+                    await on_progress(done, total)
+                except Exception as e:
+                    logger.debug("investigate on_progress ignored: %s", e)
 
     await asyncio.gather(*(one(sq) for sq in subqs), return_exceptions=True)
 

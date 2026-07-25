@@ -20,8 +20,17 @@ x-python-env: &python-env
   # 开放域模型分层（task 4）：Agent（如 chitchat）据此选快/重模型
   LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY:-mimo-v2.5-pro}
   LLM_MODEL_FAST: ${LLM_MODEL_FAST:-mimo-v2.5}
-  PLANNER_LOOP_MAX_ITERS: ${PLANNER_LOOP_MAX_ITERS:-2}
-  PLANNER_LOOP_BUDGET_MS: ${PLANNER_LOOP_BUDGET_MS:-5000}
+  # T2 循环预算（M2 P2 分档）：**这两个是全局覆盖，故意留空**——留空才让 loop.py 按
+  # plan.complexity 选档（Interactive 2次/8s、Complex 3次/12s）。填上等于两档同时压死，
+  # 只在需要一键回退放宽前（2/5000）或评测钉档时才设。
+  PLANNER_LOOP_MAX_ITERS: ${PLANNER_LOOP_MAX_ITERS:-}
+  PLANNER_LOOP_BUDGET_MS: ${PLANNER_LOOP_BUDGET_MS:-}
+  PLANNER_LOOP_MAX_ITERS_COMPLEX: ${PLANNER_LOOP_MAX_ITERS_COMPLEX:-3}
+  PLANNER_LOOP_BUDGET_MS_COMPLEX: ${PLANNER_LOOP_BUDGET_MS_COMPLEX:-12000}
+  # M2 P2 重复副作用防抖 / M2 P1 执行后对账：默认 on，off 各自回到 M2 前
+  PLANNER_DEDUP_SIDE_EFFECTS: ${PLANNER_DEDUP_SIDE_EFFECTS:-on}
+  VERIFY_OUTCOME: ${VERIFY_OUTCOME:-on}
+  VERIFY_MIRROR_STALE_S: ${VERIFY_MIRROR_STALE_S:-180}
   # 规划失败/预筛保护的全局兜底 Agent（R2.1 P5：去 planning/context 硬编码 chitchat）
   PLANNER_FALLBACK_AGENT: ${PLANNER_FALLBACK_AGENT:-chitchat}
   # R3.2 服务间 mTLS：全 env 门控，默认关（GRPC_TLS 未设/off = insecure，逐字保持现状）。
@@ -390,7 +399,14 @@ services:
       ANYSEARCH_API_KEY: ${ANYSEARCH_API_KEY:-}
       ANYSEARCH_BASE_URL: ${ANYSEARCH_BASE_URL:-https://api.anysearch.com}
       BING_SEARCH_KEY: ${BING_SEARCH_KEY:-}
-    depends_on: [registry, llm-gateway]
+      # M2 P0 Task Ledger：后台异步深调研的持久任务账本（可查询/可取消/可诚实报告中断）。
+      # 无 PG → 账本静默禁用，异步调研仍照跑，只是受理话术不承诺可停可问。
+      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+      LEDGER_ORPHAN_TTL_S: ${LEDGER_ORPHAN_TTL_S:-90}
+      RESEARCH_TASK_DEADLINE_S: ${RESEARCH_TASK_DEADLINE_S:-900}
+      RESEARCH_TASK_LLM_MAX: ${RESEARCH_TASK_LLM_MAX:-6}
+      RESEARCH_TASK_EXT_MAX: ${RESEARCH_TASK_EXT_MAX:-40}
+    depends_on: [registry, llm-gateway, postgres]
 
   reminder-agent:
     <<: *restart

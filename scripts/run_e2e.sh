@@ -47,6 +47,9 @@ run_step "e2e_process_region"         python test/e2e_process_region.py
 run_step "e2e_trip"                   python test/e2e_trip.py
 run_step "e2e_research"               python test/e2e_research.py
 run_step "e2e_research_async"         python test/e2e_research_async.py
+# M2：Task Ledger 五场景（受理/查询/幂等/取消/重启后 orphaned）+ Outcome Verifier 对账
+run_step "e2e_ledger"                 python test/e2e_ledger.py
+run_step "e2e_verify"                 python test/e2e_verify.py
 run_step "e2e_degrade"                python test/e2e_degrade.py
 run_step "e2e_voice_loop"             python test/e2e_voice_loop.py
 run_step "e2e_reminder"               python test/e2e_reminder.py

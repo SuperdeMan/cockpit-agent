@@ -75,6 +75,16 @@ _AGGREGATE_SYSTEM = (
 )
 
 
+# M2 Outcome Verifier：对账判定「确凿未达成」时补的诚实口径（executor 落
+# `data["_verify"]` 保留键，见 docs/conventions.md §9.1）。**确定性拼接、不进 LLM**——
+# 「有没有生效」是系统持有的事实，让模型改写它就可能被润色掉（墙钟直答同一原则）。
+_VERIFY_NOTE = {
+    "state_match": "不过我没确认到这个操作真的生效，你留意一下。",
+    "schema": "不过这次没拿到实际内容，可能是数据源没返回，要不要我再试一次？",
+}
+_VERIFY_NOTE_DEFAULT = "不过我没确认到结果真的达成，你留意一下。"
+
+
 class Aggregator:
     def __init__(self, llm_fn):
         """llm_fn: async (messages: list[dict]) -> str"""
@@ -86,6 +96,31 @@ class Aggregator:
         "timeout": "处理超时了，请稍后再试",
         "circuit_open": "该服务暂时不可用，请稍后再试",
     }
+
+    @staticmethod
+    def _verify_note(results: list[StepResult]) -> str:
+        """收集本轮所有 unsat 的对账口径（同 mode 只说一次，不逐步轰炸）。"""
+        modes, seen = [], set()
+        for r in results:
+            v = (r.data or {}).get("_verify") if isinstance(r.data, dict) else None
+            if not isinstance(v, dict) or v.get("verdict") != "unsat":
+                continue
+            mode = str(v.get("mode") or "")
+            if mode in seen:
+                continue
+            seen.add(mode)
+            modes.append(_VERIFY_NOTE.get(mode, _VERIFY_NOTE_DEFAULT))
+        return "".join(modes)
+
+    @classmethod
+    def _append_verify_note(cls, speech: str, results: list[StepResult]) -> str:
+        note = cls._verify_note(results)
+        if not note:
+            return speech
+        s = (speech or "").strip()
+        if s and s[-1] not in "。！？!?":
+            s += "。"
+        return s + note
 
     async def compose(self, user_text: str, results: list[StepResult],
                       thinking: bool = False) -> dict:
@@ -121,7 +156,9 @@ class Aggregator:
                 return {"speech": f"抱歉，{friendly}。", "actions": []}
             return {
                 # speech 出口统一剥 markdown（设计决策：不上渲染，见 grounding.strip_markdown_speech）
-                "speech": strip_markdown_speech(r.speech),
+                # 对账口径在剥 markdown **之后**拼接：它是确定性文本，不该过任何改写
+                "speech": self._append_verify_note(
+                    strip_markdown_speech(r.speech), results),
                 "actions": actions,
                 "ui_card": ui_card,
                 "follow_up": r.follow_up,
@@ -131,7 +168,8 @@ class Aggregator:
         # 多步：LLM 聚合
         speech = await self._aggregate_speech(user_text, results, thinking)
         return {
-            "speech": strip_markdown_speech(speech),
+            "speech": self._append_verify_note(
+                strip_markdown_speech(speech), results),
             "actions": actions,
             "ui_card": ui_card,
             "follow_up": follow_ups[0] if follow_ups else "",

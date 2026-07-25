@@ -565,3 +565,73 @@
   expect_final_intents: []
   source: "反向护栏：时间感慨句非钟点问句（整句锚定不命中），留给 LLM"
   tags: [chitchat, clock, guardrail]
+
+# ── M2 P0：后台长任务的取消/查询（Task Ledger 消费面）──────────────────
+# pattern 刻意收窄（「别查了」三字太泛 → 只在整句就是它时认）+ guard 排除有自己取消语义
+# 的域（提醒/导航/日程/场景/订单）。下列 expect 均经 --dump 对真实 manifest 实测校准。
+
+- text: 别查了
+  initial_intents: []
+  expect_final_intents: [research.cancel]
+  source: "M2 P0 拉模式取消入口（RFC §2.4）"
+  tags: [research, ledger, cancel, recall]
+
+- text: 不用查了
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [research.cancel]
+  source: "M2 P0：LLM 误落闲聊时确定性纠偏到取消"
+  tags: [research, ledger, cancel, replace]
+
+- text: 取消那个调研
+  initial_intents: []
+  expect_final_intents: [research.cancel]
+  source: "M2 P0 取消（明确宾语）"
+  tags: [research, ledger, cancel, recall]
+
+- text: 固态电池那个调研不用查了
+  initial_intents: []
+  expect_final_intents: [research.cancel]
+  source: "M2 P0 取消（带主题，供 Agent 侧多条消歧）"
+  tags: [research, ledger, cancel, recall]
+
+- text: 那个调研查得怎么样了
+  initial_intents: []
+  expect_final_intents: [research.status]
+  source: "M2 P0 状态查询（确定性直答，不进 LLM）"
+  tags: [research, ledger, status, recall]
+
+- text: 调研有结果了吗
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [research.status]
+  source: "M2 P0 状态查询：闲聊误路由的确定性纠偏"
+  tags: [research, ledger, status, replace]
+
+- text: 还在查吗
+  initial_intents: []
+  expect_final_intents: [research.status]
+  source: "M2 P0 状态查询（整句锚定，防泛化劫持）"
+  tags: [research, ledger, status, recall]
+
+- text: 取消明天的提醒
+  initial_intents: [reminder.cancel]
+  expect_final_intents: [reminder.cancel]
+  source: "反向护栏：guard「提醒」拦下——提醒有自己的取消语义，不被调研取消抢"
+  tags: [research, ledger, cancel, guardrail, reminder]
+
+- text: 取消导航
+  initial_intents: []
+  expect_final_intents: []
+  source: "反向护栏：guard「导航」拦下"
+  tags: [research, ledger, cancel, guardrail, navigation]
+
+- text: 别查天气了
+  initial_intents: [info.weather]
+  expect_final_intents: [info.weather]
+  source: "反向护栏：pattern 要求整句就是「别查了」，带宾语的句子不劫持"
+  tags: [research, ledger, cancel, guardrail, weather]
+
+- text: 深入调研一下固态电池
+  initial_intents: []
+  expect_final_intents: [research.run]
+  source: "反向护栏：发起调研不被 cancel/status 抢（run=100 > 95，且 pattern 不重叠）"
+  tags: [research, ledger, guardrail, run]

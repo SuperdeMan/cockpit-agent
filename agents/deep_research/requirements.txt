@@ -1,0 +1,4 @@
+# deep-research 专属：Task Ledger 持久层（M2 P0，仿 reminder 的 asyncpg 叠加层模式；
+# 其余依赖来自 agents/_sdk/requirements.txt）。无此依赖时 TaskLedger 静默降级——
+# 异步调研照跑，只是不承诺可查询/可取消。
+asyncpg>=0.29

@@ -16,6 +16,34 @@ from . import skills as _skills
 logger = logging.getLogger("planner.planning")
 
 
+def _verification_dict(cap) -> dict:
+    """capability.verification（proto/dict/None）→ Step 用的纯 dict。
+
+    编排核心**只搬运不解释**：`expect` 的领域语义由 verify.py 的求值器按 mode 消费，
+    这里出现任何 intent/agent 字面量分支即违反 M2 声明式铁律（契约测试 test_verify 锁）。
+    """
+    v = getattr(cap, "verification", None)
+    if v is None:
+        return {}
+    if isinstance(v, dict):
+        raw = v
+    else:
+        if not str(getattr(v, "mode", "") or "").strip():
+            return {}          # proto 未设该字段时 mode 为空串
+        from google.protobuf.json_format import MessageToDict
+        raw = MessageToDict(v, preserving_proto_field_name=True)
+    mode = str(raw.get("mode", "") or "").strip()
+    if not mode or mode == "none":
+        return {}
+    return {
+        "mode": mode,
+        "timeout_ms": int(raw.get("timeout_ms") or 0),
+        "on_fail": str(raw.get("on_fail", "") or ""),
+        "max_attempts": int(raw.get("max_attempts") or 0),
+        "expect": raw.get("expect") if isinstance(raw.get("expect"), dict) else {},
+    }
+
+
 def _date_line() -> str:
     """规划 prompt 的日期锚（上海时区，日粒度——时刻由端侧墙钟直答负责，不进 prompt 防
     每分钟扰动）。badcase f11aa344：prompt 无日期锚，LLM 把「今年世界杯」按训练先验改写成
@@ -516,6 +544,11 @@ class PlanBuilder:
                 require_confirm=next(
                     (bool(getattr(c, "require_confirm", False))
                      for c in manifest.capabilities if c.intent == intent), False),
+                # M2 Verifier：执行后对账期望同样只从 capability 读（LLM 字段不读——
+                # 「验不验、验什么」不是模型的决定权，与 require_confirm 同一条权威链）。
+                verification=next(
+                    (_verification_dict(c)
+                     for c in manifest.capabilities if c.intent == intent), {}),
             )
             steps.append(step)
 

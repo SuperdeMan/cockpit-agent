@@ -4,14 +4,24 @@ WS3 §5。Kahn 拓扑排序分层 → 每层内 asyncio.gather 并行 → 层间
 """
 from __future__ import annotations
 import asyncio
+import hashlib
+import json
 import logging
+import os
 from typing import AsyncIterator
 from collections import defaultdict, deque
 from google.protobuf.json_format import MessageToDict
 
+from . import verify as _verify
 from .models import Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan
+from observability import events as obs_events
 
 logger = logging.getLogger("planner.executor")
+
+
+def _dedup_enabled() -> bool:
+    """重复副作用防抖总开关（M2 P2）。off = 回到 T2 放宽前的行为。"""
+    return os.getenv("PLANNER_DEDUP_SIDE_EFFECTS", "on").strip().lower() != "off"
 
 
 def _struct_dict(value) -> dict:
@@ -23,16 +33,19 @@ def _struct_dict(value) -> dict:
 
 
 class DagExecutor:
-    def __init__(self, dispatcher=None, call_agent_fn=None):
+    def __init__(self, dispatcher=None, call_agent_fn=None, state_mirror=None):
         """
         dispatcher: UnifiedDispatcher-compatible object with dispatch(step, ctx).
         call_agent_fn: legacy async callable kept for existing embedders/tests.
+        state_mirror: 车况镜像（M2 Verifier 的 state_match 求值源）。None = 无镜像 →
+                      state_match 恒 UNKNOWN（不定罪），其余模式不受影响。
         """
         if dispatcher is None:
             if call_agent_fn is None:
                 raise ValueError("dispatcher or call_agent_fn is required")
             dispatcher = _LegacyDispatcher(call_agent_fn)
         self._dispatcher = dispatcher
+        self._mirror = state_mirror
 
     async def run(self, plan: Plan, ctx: PlanContext,
                   done: dict[str, StepResult] | None = None) -> AsyncIterator[StepResult]:
@@ -79,10 +92,68 @@ class DagExecutor:
             self._mark_skipped(plan.steps, done)
 
     async def _exec_step(self, step: Step, done: dict, ctx: PlanContext) -> StepResult:
-        """执行单个 step。"""
-        # 解析 slot_refs：用前序结果填 slot
+        """执行单个 step。尾链：防抖(M2) → dispatch → _to_result → 确认兜底闸(M0a) → 对账(M2)。"""
+        # 解析 slot_refs：用前序结果填 slot（**防抖判定必须在此之后**——指纹要含真实槽位）
         self._resolve_slot_refs(step, done)
 
+        fingerprint = self._fingerprint(step)
+        prior = self._find_duplicate(fingerprint, done)
+        if prior is not None:
+            return await self._replay_prior(step, prior, ctx)
+
+        result = self._enforce_capability_confirm(
+            step, await self._dispatch_once(step, ctx))
+        result = await self._verify_outcome(step, result, ctx)
+        # 只给「真产生了副作用」的成功结果打指纹：纯查询步重复执行无害（还可能要刷新数据）
+        if result.status == StepStatus.OK and result.actions:
+            result.fingerprint = fingerprint
+        return result
+
+    @staticmethod
+    def _fingerprint(step: Step) -> str:
+        """(intent, 归一化 slots) 指纹。slots 排序后序列化——槽位顺序不该影响同一性判定。"""
+        try:
+            slots = json.dumps(step.slots or {}, sort_keys=True, ensure_ascii=False)
+        except (TypeError, ValueError):
+            slots = str(sorted((step.slots or {}).items()))
+        raw = f"{step.intent}|{slots}".encode("utf-8")
+        return hashlib.sha1(raw).hexdigest()[:12]
+
+    @staticmethod
+    def _find_duplicate(fingerprint: str, done: dict) -> StepResult | None:
+        """本轮内是否已成功执行过同一副作用动作。
+
+        **对症 T2 放宽后的真实风险**（子 RFC §4.3 对 M0「副作用步不进循环体」的重定义）：
+        replan 会对已完成步骤失忆而重复产出同一动作（「打开空调」被开两次）。
+        比原闸精准——不阉割 T2 对副作用任务的编排能力，只挡重复执行；也比原闸可测。
+        """
+        if not fingerprint or not _dedup_enabled():
+            return None
+        for prior in done.values():
+            if (getattr(prior, "fingerprint", "") == fingerprint
+                    and prior.status == StepStatus.OK):
+                return prior
+        return None
+
+    async def _replay_prior(self, step: Step, prior: StepResult,
+                            ctx: PlanContext) -> StepResult:
+        """以既有结果回填：**动作不重发**（重发才是要防的那件事），话术/卡片沿用。"""
+        logger.info("Step %s(%s): duplicate side-effect suppressed (fingerprint=%s)",
+                    step.id, step.intent, prior.fingerprint)
+        try:
+            await obs_events.get_emitter("cloud").emit_span(
+                getattr(ctx, "trace_id", ""), "step.dedup",
+                attrs={"step_id": step.id, "intent": step.intent,
+                       "prior_step_id": prior.step_id})
+        except Exception:
+            pass
+        return StepResult(
+            step_id=step.id, status=StepStatus.OK, speech=prior.speech,
+            ui_card=prior.ui_card, actions=[],       # ← 副作用不重放
+            follow_up=prior.follow_up, data=dict(prior.data or {}),
+            fingerprint=prior.fingerprint)
+
+    async def _dispatch_once(self, step: Step, ctx: PlanContext) -> StepResult:
         timeout = step.latency_budget_ms / 1000.0
         try:
             resp = await asyncio.wait_for(
@@ -96,8 +167,91 @@ class DagExecutor:
         except Exception as e:
             logger.warning("Step %s failed: %s", step.id, e)
             return StepResult(step_id=step.id, status=StepStatus.FAILED, error=str(e))
+        return self._to_result(step.id, resp)
 
-        return self._enforce_capability_confirm(step, self._to_result(step.id, resp))
+    async def _verify_outcome(self, step: Step, result: StepResult,
+                              ctx: PlanContext,
+                              allow_retry: bool = True) -> StepResult:
+        """M2 Outcome Verifier：只验「声称成功」的步，期望全部来自 `step.verification`。
+
+        `allow_retry=False` 供**流式直通路径**（engine D0 / loop T2）调用：话术已经流给
+        用户了，重跑会重复播报，故那条路径只走 report 分支。**必须由它们显式调用本方法**
+        ——流式直通不经 `_exec_step`，不接上就是「声明了却不生效」的静默缺口（真栈首验
+        实测：weather 走 D0 流式，一条 step.verify span 都没有）。
+
+        **本方法与 verify.py 不得出现任何 agent_id/intent 字面量分支**——新能力声明
+        verification 即生效、编排核心零改动（契约测试 test_verify.py 源码断言 + 即插即用）。
+
+        - `mode` 未声明 / 结果非 OK → 原样透传（零行为变化）
+        - SAT / UNKNOWN → 透传（观测缺失不定罪）
+        - UNSAT + retry → 重执行一次（仅 require_confirm=false 的步，副作用不重放）
+        - UNSAT + report → **保持 OK**（R9 契约：话术型诚实提示走 OK，FAILED 上的话术
+          会被聚合器吞成裸「抱歉，处理失败」），落 `data["_verify"]` 保留键供聚合器加口径
+        """
+        verification = step.verification or {}
+        if not verification.get("mode") or result.status != StepStatus.OK:
+            return result
+        if not _verify.enabled():
+            return result
+
+        attempts = 0
+        verdict = await self._evaluate(step, result, ctx, attempts)
+        while (verdict == _verify.UNSAT and allow_retry
+               and _verify.retry_allowed(verification, step.require_confirm, attempts)):
+            attempts += 1
+            logger.info("Step %s(%s): verify unsat, retrying (%d)",
+                        step.id, step.intent, attempts)
+            retried = self._enforce_capability_confirm(
+                step, await self._dispatch_once(step, ctx))
+            if retried.status != StepStatus.OK:
+                return retried          # 重试本身失败：交回常规失败通道，不再对账
+            result = retried
+            verdict = await self._evaluate(step, result, ctx, attempts)
+
+        if verdict == _verify.UNSAT and self._should_report(result):
+            data = dict(result.data or {})
+            data["_verify"] = {"verdict": _verify.UNSAT,
+                               "mode": verification.get("mode", ""),
+                               "attempts": attempts}
+            result = StepResult(
+                step_id=result.step_id, status=result.status, speech=result.speech,
+                ui_card=result.ui_card, actions=result.actions,
+                follow_up=result.follow_up, data=data,
+                missing_slots=result.missing_slots, error=result.error)
+        return result
+
+    @staticmethod
+    def _should_report(result: StepResult) -> bool:
+        """UNSAT 要不要补一句对账口径。
+
+        **不要重复念**：Agent 走 R9 诚实降级（「周边暂时没找到」「服务暂时不可用」）时
+        既不出卡也不带 data——它已经把情况交代清楚了，再补「这次没拿到实际内容」是啰嗦。
+        真正该报的是「有卡/有动作、看起来办成了、但结果是空的」那种**假完成**。
+
+        判据通用、零领域字面量：有 ui_card 或 actions 或非空 data = 声称有产出。
+        （不论报不报，span 都已记 unsat——观测面不受影响。）
+        """
+        return bool(result.ui_card or result.actions or (result.data or {}))
+
+    async def _evaluate(self, step: Step, result: StepResult, ctx: PlanContext,
+                        attempts: int) -> str:
+        verification = step.verification or {}
+        try:
+            verdict = await _verify.evaluate(verification, result.data or {},
+                                             mirror=self._mirror)
+        except Exception as e:      # fail-open：对账是增强，绝不因它炸主链
+            logger.warning("Step %s verify errored (ignored): %s", step.id, e)
+            return _verify.UNKNOWN
+        try:
+            await obs_events.get_emitter("cloud").emit_span(
+                getattr(ctx, "trace_id", ""), "step.verify",
+                status="err" if verdict == _verify.UNSAT else "ok",
+                attrs={"step_id": step.id, "intent": step.intent,
+                       "mode": verification.get("mode", ""), "verdict": verdict,
+                       "attempts": attempts})
+        except Exception:
+            pass
+        return verdict
 
     @staticmethod
     def _enforce_capability_confirm(step: Step, result: StepResult) -> StepResult:

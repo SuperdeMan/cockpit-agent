@@ -35,6 +35,11 @@ class Step:
     trust_level: str = ""
     context_scopes: list[str] = field(default_factory=list)
     heavy: bool = False           # 重域能力（capability.heavy）：命中即开思考+过程区（progress.is_complex）
+    # M2 Outcome Verifier：执行后对账期望，从 capability.verification 装配（LLM 字段不读，
+    # 同 require_confirm 权威链）。空 dict = 不验（缺省，零行为变化）。
+    # schema: {"mode","timeout_ms","on_fail","max_attempts","expect":{...}}——**用 dict 不用
+    # proto**：Step 会随挂起态序列化进 Redis，且求值器只需读值，dict 免 proto 往返。
+    verification: dict = field(default_factory=dict)
     # Agent manifest 声明需要的敏感上下文片段（location | vehicle_state）；
     # 编排下发时按此最小化（未声明则不下发精确位置/电量）。
     # 运行期注入、随 ExecuteRequest.meta 下发给 Agent（如确认续接的 {"confirmed":"true"}）。
@@ -53,6 +58,10 @@ class StepResult:
     data: dict = field(default_factory=dict)   # F3：结构化结果，供后续 step 的 slot_refs 取值
     missing_slots: list[str] = field(default_factory=list)  # F12：NEED_SLOT 时声明缺失的槽位名
     error: str = ""
+    # M2 P2 重复副作用防抖：本结果对应的 (intent, slots) 指纹。**只对产生了 actions 的
+    # OK 结果写**——T2 放宽后 replan 可能对已完成的副作用步失忆而重复产出（弱模型的
+    # 典型失败），指纹随结果走，executor 下一轮撞上即回填不重放。空串=不参与防抖。
+    fingerprint: str = ""
 
 
 @dataclass

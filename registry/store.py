@@ -574,13 +574,46 @@ def _manifest_to_dict(manifest) -> dict:
     caps = []
     for c in getattr(manifest, "capabilities", []):
         cap = {}
-        for ck in ("intent", "description", "examples", "require_confirm"):
+        for ck in ("intent", "description", "examples", "require_confirm", "heavy"):
             cap[ck] = getattr(c, ck, None if ck != "examples" else [])
         cap["slots"] = list(getattr(c, "slots", []))
+        # M2 Verifier：非 proto manifest（测试/内存 Store 的 dataclass 形态）也要带上声明，
+        # 否则 round-trip 后对账静默失效（R2.1 route_hints 丢字段的同一类坑）
+        ver = getattr(c, "verification", None)
+        if isinstance(ver, dict):
+            cap["verification"] = ver
+        elif ver is not None and str(getattr(ver, "mode", "") or ""):
+            from google.protobuf.json_format import MessageToDict
+            cap["verification"] = MessageToDict(ver, preserving_proto_field_name=True)
         caps.append(cap)
     d["capabilities"] = caps
     d["requires_permissions"] = list(getattr(manifest, "requires_permissions", []))
     return d
+
+
+def _dict_to_verification(v):
+    """capability.verification dict（MessageToDict 产物）→ Verification proto。
+
+    缺省 / 非 dict / mode 空或 none → None（不声明=不验）。`expect` 是自由 Struct，
+    原样搬运（中央不解释领域语义，那是求值器按 mode 的事）。
+    """
+    if not isinstance(v, dict):
+        return None
+    mode = str(v.get("mode", "") or "").strip()
+    if not mode or mode == "none":
+        return None
+    from cockpit.agent.v1 import agent_pb2
+    from google.protobuf.struct_pb2 import Struct
+    expect = Struct()
+    if isinstance(v.get("expect"), dict):
+        expect.update(v["expect"])
+    return agent_pb2.Verification(
+        mode=mode,
+        timeout_ms=int(v.get("timeout_ms") or 0),
+        on_fail=str(v.get("on_fail", "") or ""),
+        max_attempts=int(v.get("max_attempts") or 0),
+        expect=expect,
+    )
 
 
 def _dict_to_manifest(d: dict):
@@ -600,6 +633,9 @@ def _dict_to_manifest(d: dict):
             examples=list(c.get("examples") or []),
             require_confirm=bool(c.get("require_confirm", False)),
             heavy=bool(c.get("heavy", False)),
+            # M2 Verifier：**必须随 round-trip 还原**——R2.1 当年 route_hints 正是在这里丢过，
+            # registry 重启恢复后声明静默失效、执行后对账形同虚设（契约测试 test_store_roundtrip）。
+            verification=_dict_to_verification(c.get("verification")),
         )
         for c in d.get("capabilities", [])
     ]
