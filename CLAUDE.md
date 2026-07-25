@@ -27,7 +27,8 @@
 proto/          gRPC 契约——所有接口的唯一真相源，改接口先改这里再 codegen
 gateway/        Go 接入网关（edge/ 端侧，cloud/ 云侧）
 orchestrator/   edge/ 端侧编排+FastIntent；cloud/ 云端 Planner
-llm-gateway/    LLM 多模型网关（所有 LLM 调用的唯一出口）
+llm-gateway/    LLM 多模型网关（所有 LLM 调用的唯一出口）；音频面同门：批/流式 ASR·TTS
+                + s2s/ 端到端语音会话（M4；协议/provider/会话/回灌四层，换厂商只加 provider 子类）
 registry/       Agent 注册中心
 memory/         记忆/画像服务
 agents/         所有 Agent；_sdk/ 是公共 SDK，每个 Agent 一个子目录

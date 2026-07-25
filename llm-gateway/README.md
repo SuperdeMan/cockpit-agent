@@ -55,6 +55,7 @@ HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 H
 - `POST /api/asr` 批处理语音识别、`POST /api/tts` 批处理合成、`GET /api/voices`(可带 `?provider=cosyvoice|qwen|mimo`) 音色列表（经 ASR/TTS Provider）。
 - `GET /api/asr/stream`（**WebSocket**）流式识别上屏 + `GET /api/asr/stream/info` 引擎能力探测（见下节）。
 - `GET /api/tts/stream`（**WebSocket**）服务端流式 TTS + `GET /api/tts/stream/info` 引擎+音色+可用性探测（见下节）。
+- `GET /api/s2s`（**WebSocket**）端到端语音会话 + `GET /api/s2s/info` 能力探测（见下节）。
 - `GET /api/llm/providers` 列出已装配的 LLM 厂商+模型+可用性+当前 active+**health 被动健康块**（供 HMI 设置页两级选择与健康点）；`POST /api/llm/provider` `{provider,model?}` 全局切换 active（**持久化 Redis**）；`POST /api/llm/probe` `{provider?}` 按需体检指定厂商（1 条小请求回 ok/latency 并记入 health）。
 - `GET /api/memory/session` / `GET /api/memory/context` 只读记忆（转发 memory gRPC，供 HMI 记忆视图）。
 - ASR/TTS Provider 同样在无 `LLM_API_KEY` 时走 mock。
@@ -76,6 +77,38 @@ HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 H
 - mimo/minimax 的 TTS API 是「整段文本一次入」，靠 `providers._sentence_segments` 句级切分逐段流式合成、边说边播。
 - 无对应 key → 工厂返 None → `stream/info` 报 unavailable → HMI 无感回退批处理 `/api/tts`。`mock` 引擎产静音分片供 nightly/无 key 验证协议。
 - HMI 侧 `pcmPlayer.mjs` 无缝拼播、`cancel`/断连传播到供应商任务取消（barge-in）；`STREAMING_TTS_PROVIDERS`（`hmi/src/audio.ts`）须与本节引擎清单一致，否则漏配的引擎会误走批处理。
+
+## 端到端语音 S2S（`s2s/` 子包，M4）
+
+设计与协议冻结基线见 `docs/design/2026-07-25-m4-s2s-fullduplex-rfc.md`（§3.5 事件映射表 / §11 落地记录），
+契约登记 `docs/conventions.md` §9.10。WS `/api/s2s`：HMI 推 PCM（16k mono s16le）→ provider
+realtime 会话 → 回转写/回答增量/PCM 音频（24kHz）/turn 生命周期。
+
+**四层分工（换厂商只加 `provider.py` 的子类，其余一字不动）**：
+
+| 文件 | 职责 |
+|---|---|
+| `protocol.py` | 对上事件协议 + 单工具 `escalate` 定义。**HMI 只认这层，永不随厂商变** |
+| `provider.py` | `BaseS2SProvider` 抽象 + qwen omni realtime 实现 + mock；工厂对 tools 不支持的型号 **fail-fast** |
+| `session.py` | L-Session 状态机：turn 对账 / barge-in 残包丢弃 / 重连与摘要重注入 / DEGRADED / turn 悬挂看门狗 |
+| `reflux.py` | 文本副产品**强制回灌** memory+obs（防记忆黑洞）+ 漏移交检测 |
+
+**安全铁律**：S2S 会话内**没有任何执行通道**。模型唯一的工具是 `escalate`，它只把用户原话交回文本
+主链——车控/支付照走 planner→executor→VAL→确认闸。**不得把 capability 清单注入 S2S 的 tools**
+（那等于把执行判定权交给一个不过 planner 校验的模型）。S2S 是新的「话筒」，不是新的规划入口。
+
+**两个最容易踩的实现点**：
+- **`audio_done` 不能省**。本侧 VAD 判到端点后必须上行它，网关经 `commit_audio()` 补静音尾触发
+  server VAD 收尾。server VAD 靠**连续静音**判「说完了」，而 HMI 端点后即停推流——不发就是死锁
+  （provider 等静音 ↔ HMI 等定稿），表现为 turn 永久悬挂、**用户说什么都没有回复**（真机首验踩过）。
+  静音尾长度须 > `silence_duration_ms`，与 `DashScopeRealtimeASRProvider` 同款打法。
+- **只在 LISTENING 期推流**。provider `interrupt_response=true` 会自主判打断，SPEAKING 期继续推流
+  就与「本侧权威」打架；不推流则它根本没有输入可判。
+- 回灌里 **escalated 轮不重复写 memory**（主链已落）、**被打断轮只存已播增量**（provider 的
+  `audio_transcript.done` 带完整全文，那≠用户听到的）。
+
+验证：`test/e2e_s2s_probe.py`（协议探针，换厂商重跑）、`test/e2e_s2s.py`（真栈闭环）、
+`test/e2e_s2s_resilience.py`（断连重连/降级）、`test/eval_s2s_escalation.py`（移交率门槛 ≥95%）。
 
 ## Phase 1 已落地
 - `cache.py` — LRU 缓存（messages 哈希 + serving provider + thinking 并入 key，TTL 5min）

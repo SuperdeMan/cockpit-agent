@@ -199,6 +199,15 @@
 | `TTS_STREAM_VOICE` | 覆盖流式默认音色；留空用引擎默认（cosyvoice `longxiaochun_v3` / qwen `Cherry` / mimo `冰糖` / minimax `female-tianmei`）；HMI 设置逐请求可覆盖 | 否 |
 | `TTS_INSTRUCT_DEFAULT` | 情感 TTS 指令（M1b 能力面，仅 cosyvoice）：如「用温柔的语气说」；缺省空=不发键零行为变化；按情绪标签动态选参的接线留 M2 emotion | 否 |
 | `TTS_SPEED_DEFAULT` | 语速（M1b 能力面，仅 cosyvoice `rate`，0.5~2.0 夹紧）；缺省空=不发键 | 否 |
+| `S2S_PROVIDER` | **端到端语音**（M4，`/api/s2s`）引擎：`dashscope`(默认)/`mock`(离线假 provider)/`off`(停用→HMI 回落三段式)。**HMI 侧默认挡位仍是 classic**，s2s 须用户在设置显式开（隐私口径变化点，§9.10）| 否 |
+| `S2S_MODEL` | S2S 模型，默认 `qwen3.5-omni-flash-realtime`。⚠️ **必须支持 tools**：`qwen3-omni-flash-realtime`（无 `.5`）静默丢弃 tools（P0 探针 ★T 实测），车控请求会被口头答应而不执行 → 工厂 fail-fast 拒绝该族 | 否 |
+| `S2S_API_KEY` | S2S key；留空依次复用 `DASHSCOPE_ASR_KEY` / `LLM_EMBED_API_KEY`（同一把百炼 key）| 否 |
+| `S2S_WS_URL` | S2S realtime 端点，默认 `wss://dashscope.aliyuncs.com/api-ws/v1/realtime`（与 qwen3-asr / qwen3-tts 同壳）| 否（有默认）|
+| `S2S_VAD_SILENCE_MS` / `S2S_VAD_THRESHOLD` | server VAD 静音尾（默认 800，夹紧 [300,2000]）/ 阈值（默认 0.2）。静音尾同时决定 `commit_audio()` 补几帧——**须长于它才触发端点判定** | 否 |
+| `S2S_TURN_TIMEOUT_S` | turn 悬挂看门狗（默认 45）：turn 开了却迟迟不收束 → 诚实收 `turn.end(error, provider_silent)`；0=关 | 否 |
+| `S2S_SESSION_MAX_TURNS` | 长会话累积到此轮数（默认 20）→ 主动重建 session + 摘要重注入（走同一条重连路径）| 否 |
+| `S2S_ESCALATE_DESC` | **域灰度旋钮**：覆盖 `escalate` 工具描述以收放 S2S 自答范围（§9.10）。留空用内置默认 | 否 |
+| `S2S_PERSONA` | S2S 会话人设；留空用与 chitchat 同源的内置口径 | 否 |
 | `DASHSCOPE_TTS_INFERENCE_WS_URL` / `DASHSCOPE_TTS_REALTIME_WS_URL` | DashScope 流式 TTS 端点：cosyvoice→`/api-ws/v1/inference`、qwen→`/api-ws/v1/realtime` | 否（有默认）|
 | `MINIMAX_TTS_MODEL` / `MINIMAX_TTS_VOICE` / `MINIMAX_T2A_URL` | MiniMax TTS 模型 / 默认音色 / T2A 端点（与 MiniMax LLM 同 `MINIMAX_API_KEY`）| 否（默认 speech-2.8-turbo / female-tianmei / api.minimaxi.com/v1/t2a_v2）|
 | `AUDIO_HTTP_PORT` | ASR/TTS HTTP 代理端口 | 否（默认 50059）|

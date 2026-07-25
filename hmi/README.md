@@ -21,9 +21,13 @@ npm run dev      # http://localhost:5173
 - **对话**：文字输入 / **按住下方小舟光球说话**（ASR）；语音支持**流式实时上屏**——边说边在输入框逐字显示、松手定稿自动发送（任一环失败无感回退批处理识别）；助手回复**流式逐字**渲染 + “思考中”即时反馈；危险动作多轮确认（确认/取消按钮）。
 - **信息类 UI 卡片**：天气/股票/搜索/新闻/深度调研/POI/路线/充电/行程/赛事等结构化卡片（Aurora Glass 液态玻璃风格，按 Figma 设计稿逐张重建），从 Agent 返回的 `ui_card` 经 Gateway→Cloud→Edge 全链路透传到 HMI 渲染。
 - **语音播报（TTS）**：回复可自动朗读，**服务端流式合成**（文本增量进、PCM 分片无缝拼播、首音 <1s，`pcmPlayer.mjs` 调度）；音色**两级选择**——先选引擎（CosyVoice 流式 / Qwen 流式方言 / MiMo 流式 / MiniMax 流式）再选该引擎音色，逐个可试听；无凭据/失败无感回退句级批处理。
+- **免唤醒连续对话 / 唤醒词**（R4.3，opt-in 默认关）：本地 KWS 唤醒（sherpa-onnx WASM）+ silero VAD 端点 + 续问窗免唤醒接话 + 播报中打断（barge-in）+ 「退下吧」本地退场不上云。状态机在 `voiceLoop.mjs`（六态，纯逻辑全注入），外设接线在 `handsFreeController.ts`。
+- **端到端语音直连（S2S，M4，可选挡位，默认关）**：闲聊与常识由语音大模型直接听直接答（首音频 ~609ms、多轮更连贯）；**需要执行或查实时信息的请求由模型自动交回确定性主链**——车控不绕权限校验与二次确认。断线自动重连并重注入上下文，连不上整条回落三段式。**voiceLoop 状态机零改动**，S2S 只是换了一组效果回调（详见 `docs/design/2026-07-25-m4-s2s-fullduplex-rfc.md`）。⚠️ 开启后唤醒窗内的**原始语音**会上云（三段式只上传识别后的文字），故须用户显式开启。
 - **设置页**（右上 ⚙）：
   - 语音播报：音色选择/试听、播报与自动播放开关
   - 语音输入：**识别引擎（实时 DashScope / 分块 MiMo / 关闭）+ 模型（Qwen3-ASR / Fun-ASR）**、识别语言、麦克风模式（按住/点按）、最长聆听时长
+  - 语音唤醒·连续对话：免唤醒开关、唤醒词选择、续问聆听窗、静音断句
+  - **语音链路**：端到端语音直连开关（默认关）+ 直连音色
   - 显示主题：深/浅色、字号、大触控、快捷指令编辑
   - 助手：昵称、回答长度、对话模型（快速/深度/自动）、**AI 大脑（LLM 厂商→模型两级切换：MiMo/MiniMax/DeepSeek/阿里百炼，切即全局生效并持久化 Redis，未配 key 置灰，接 `/api/llm/providers`+`/api/llm/provider`；厂商行下带被动健康点——绿=近窗全成+EWMA 时延/黄=偶发失败/红=高失败或限流/灰=近期未使用，2026-07-17）**；信息卡带 `_prov` 数据真实性徽章（mock=琥珀「模拟数据」醒目 / degraded·cached=灰标 / real=小字来源·取数时间角标，`Cards.tsx::ProvBadge`）
   - 能力开关：各 Agent 开关
@@ -37,6 +41,16 @@ src/
   settings.tsx       设置仓库（localStorage 持久化 + Context）+ buildMeta()
   audio.ts           录音控制器(消除收音竞态) + StreamingRecognizer(流式识别 WS) + StreamingTtsSession(流式 TTS WS+回退) + 批处理 TTS 队列 + 音色/记忆读取
   pcmPlayer.mjs      流式 TTS PCM 分片调度(jitter 起播/无缝拼接/underrun 重建/barge-in 停,Web Audio 注入)
+  ── 语音回路（R4.3 / M4；全部纯逻辑+注入，可 node:test 无 DOM 单测）──
+  voiceLoop.mjs      语音 FSM 六态(IDLE/ARMED/LISTENING/THINKING/SPEAKING/FOLLOWUP)：唤醒/聆听/
+                     打断/退出词/续问窗/端点宽限。效果全注入=换 DSP 本文件一字不改；143 例保护
+  handsFreeController.ts  把 FSM 接到真实外设：VAD/KWS/流式 ASR/S2S 会话 + App 效果(send/stopTTS/orb)
+  s2sClient.mjs      M4 端到端语音会话客户端(/api/s2s)：协议翻译+收音门控+播放+打断；**不含状态机**
+                     ——用户可感知状态的唯一权威是 voiceLoop
+  vadEngine.ts / kwsEngine.ts / sileroEndpoint.mjs   VAD 端点 / 唤醒词(WASM) / 端点判据
+  pcmRing.mjs        VAD 帧前滚缓冲(pre-roll 补首字) + Float32↔Int16 转换
+  utteranceHeuristics.mjs  退出词/语气词/完整度判据（去尾语气词后精确匹配，防吞「退出导航」）
+  voiceMetrics.mjs   语音语义事件计数(localStorage，供真麦验收)
   types.ts           共享类型 + 能力目录 + 默认值（数据契约，重构不改字段）
   aurora.css         Aurora Glass 设计系统 token 层（--au-*，深空/玻璃/极光/语义色/keyframes）
   shell.css          应用外壳：1920×1080 两栏栅格 + 状态栏/输入区/欢迎态/气泡
