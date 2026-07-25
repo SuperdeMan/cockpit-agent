@@ -430,7 +430,10 @@ services:
       AGENT_PORT: "50068"
       # 高德：充电站 POI 搜索 + 路线距离/时长（真实充能规划）；不配走 mock
       AMAP_KEY: ${AMAP_KEY:-}
-    depends_on: [registry, llm-gateway, memory]
+      # M3 P0 低电量主动建议：跌破阈值的**变沿**触发一次 + 生产侧节流防读数抖动
+      CHARGING_LOW_SOC: ${CHARGING_LOW_SOC:-20}
+      CHARGING_LOW_SOC_THROTTLE_S: ${CHARGING_LOW_SOC_THROTTLE_S:-1800}
+    depends_on: [registry, llm-gateway, memory, nats]
 
   scene-orchestrator-agent:
     <<: *restart

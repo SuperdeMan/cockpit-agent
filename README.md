@@ -117,7 +117,7 @@ Agent 的接入完全声明式：manifest 声明能力与权限、`route_hints` 
 
 150 条意图 pattern 覆盖 62 个车控/媒体对象（空调 / 座椅 / 车窗 / 氛围灯 / 360 环视 / 蓝牙 / 广播…），知识库驱动归一化、校验、安全门控与话术；混合多意图按语义组分流，本地动作与云端慢意图在同一请求内协同执行。
 
-### 云端：12 个领域 Agent
+### 云端：13 个领域 Agent
 
 | Agent | 一句话能力 |
 |---|---|
@@ -133,6 +133,7 @@ Agent 的接入完全声明式：manifest 声明能力与权限、`route_hints` 
 | `parking-payment` | 停车缴费（经统一支付网关，Agent 不持支付凭证） |
 | `manual-rag` | 车主手册问答（RAG） |
 | `chitchat` | 闲聊与常识直答（墙钟/日期按系统时钟确定性直答，绝不让 LLM 编时刻） |
+| `mcp-bridge` | 受控 MCP 生态桥：一个 Agent 承载 N 个外部 MCP server，**人工准入 + 版本锁定 + schema 指纹**三重锁定；写操作有幂等键/订单状态机/超时口径/补偿路径/审计（首批为演示商户，卡片与话术恒标注） |
 
 回答模式判据化路由：一句话精确落到**直答 / 联网查询 / 新闻 / 深度调研**四模式（常识不联网、时效必联网、浏览一批走新闻、系统了解升调研），评测先行（五桶语料 + 混淆矩阵，基线准确率 98.9%）；Agent 误接时经 `_escalate` 机制零播报自动改派。
 
@@ -140,7 +141,7 @@ Agent 的接入完全声明式：manifest 声明能力与权限、`route_hints` 
 
 - **语义记忆**（pgvector）：自动从对话抽取偏好与个人实体，语义召回注入规划与闲聊；隐私分级、可查可删。
 - **上下文装配**：统一 token 预算内装配能力目录（语义预筛）+ 对话历史 + 长期记忆 + 结构化焦点态（跨轮指代不靠啃原文）；敏感上下文按 manifest 最小化下发。
-- **主动性**：routine 建议、晨间早报、提醒触达、深调研完成推送，统一经 NATS `agent.proactive` 到 HMI。
+- **主动性有治理层**：七路主动（routine / 场景触发 / 路况播报 / 提醒到点与到地 / 深调研完成 / 晨间早报 / 低电量顺路建议）先过**统一主动引擎**——情境断言在投递时刻复核、跨生产方去重、驾驶负荷高时攒着说、同窗到达的合并成一条，再经 NATS 到 HMI。治理器缺席即自动回落直发，不会静默吞掉用户显式约定的提醒。
 
 ### 多 LLM / 多引擎运行时
 
@@ -220,16 +221,17 @@ node test/hmi_cdp/run_cases.mjs    # L4 真浏览器 CDP
 proto/            gRPC 契约——所有接口的唯一真相源
 gateway/          Go 接入网关（edge/ 端侧、cloud/ 云侧）
 orchestrator/     edge/ 端侧编排 + FastIntent + VAL（PoC 模拟）；cloud/ 云端 LLM Planner
-agents/           12 个领域 Agent；_sdk/ 公共 SDK（BaseAgent / 检索与接地内核）
+agents/           13 个领域 Agent；_sdk/ 公共 SDK（BaseAgent / 检索与接地内核 / 任务账本）
 llm-gateway/      LLM 多模型网关——LLM / Embedding / ASR / TTS 的唯一出口
 registry/         Agent 注册中心（manifest + 能力语义检索）
 memory/           记忆 / 画像服务（pgvector）
 security/         权限引擎、scope 定义、内容审核、注入防护
 payment-gateway/  统一支付网关（Agent 不持支付凭证）
+proactive/        统一主动引擎——「该不该现在打扰驾驶员」的唯一裁决点
 observability/    NATS 事件出口、collector、trace / 指标
 hmi/              React 座舱前端（Aurora Glass）
 dashboard/        React 开发 / 演示可观测台
-runtime/          共享 gRPC 运行时（keepalive / mTLS / 优雅停机）
+runtime/          共享运行时（gRPC keepalive / mTLS / 优雅停机 + 主动消息出口）
 deploy/           docker-compose / 证书生成
 test/             e2e、评测基线、旅程语料、CDP 用例
 docs/             架构（真相源）、设计记录、指南
@@ -259,7 +261,7 @@ docs/             架构（真相源）、设计记录、指南
 - **单实例状态**：Cloud Gateway 车辆长连状态在单实例内存；Registry 已有 PostgreSQL 持久化与周期重注册自愈，多实例扩展待做。
 - **安全能力已落地但默认关**：两层会话鉴权（`AUTH_REQUIRED`）与服务间 mTLS（`GRPC_TLS`）经 env 门控，开启即全栈生效；真实 IdP、证书轮换属后续。
 - **声学层指标**（真麦命中率 / 误唤醒率）属人工验收范畴；浏览器内 KWS / VAD 链路已真机验证。
-- HTTP / MCP 外部工具未实现；第三方 Agent 出站已有域名白名单正向代理。
+- **MCP 生态桥已落地但首批是演示商户**：协议、准入（版本锁定 + schema 指纹）、写操作生命周期（幂等 / 状态机 / 超时口径 / 补偿 / 审计）均已跑通并与官方参考实现互操作验证；接真实商户属 BD 而非技术依赖。通用 HTTP 工具面仍未做；第三方 Agent 出站已有域名白名单正向代理。
 
 实时状态、测试证据与待办清单以 [`AGENTS.md`](AGENTS.md) 为准。
 

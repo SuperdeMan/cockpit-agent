@@ -22,8 +22,11 @@
 | road-safety | road_safety | core | first_party | cloud | 50072 | safety.driving_advice, safety.weather_alert, safety.road_condition |
 | deep-research | deep_research | ecosystem | first_party | cloud | 50073 | research.run, research.status, research.cancel |
 | reminder | reminder | core | first_party | cloud | 50074 | reminder.create, reminder.list, reminder.complete, reminder.cancel, reminder.update |
+| mcp-bridge | mcp_bridge | ecosystem | third_party | cloud | 50076 | 由 `servers.yaml` 准入清单**启动期合成**（首批 shop.menu / shop.order）——manifest 里 capabilities 故意留空，见 §9.9 |
 
-> 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent（**50075 起**，50074 已由 reminder 实占）。新增时按本表分配端口与 intent 命名空间。
+> 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent。
+> 端口已用到 **50076**（50075=主动治理器 HTTP 健康口，见 §5），新 Agent 从 **50077** 起。
+> 新增时按本表分配端口与 intent 命名空间。
 
 ---
 
@@ -149,6 +152,8 @@
 | **Agent 段** | **50061–50069, 50072–50074** | gRPC |
 | edge-orchestrator | 50070 | gRPC |
 | payment-gateway | 50071 | gRPC |
+| proactive（统一主动引擎，纯 NATS 消费者）| 50075 | HTTP（仅 /healthz）|
+| mcp-bridge | 50076 | gRPC |
 | cloud-gateway | 8080 | gRPC (EdgeCloudChannel bidi) |
 | edge-gateway | 8090 | HTTP/WS |
 | observability-collector | 8092 | HTTP/WS |
@@ -157,7 +162,7 @@
 | hmi | 5173 | HTTP |
 | dashboard | 5174 | HTTP |
 
-> Agent 端口段已用到 50074（reminder；50068 charging/50069 scene/50072 road-safety/50073 deep-research 已用，50070/50071 为 edge-orchestrator/payment-gateway），新 Agent 从 **50075** 起。端口在 `deploy/docker-compose.yaml` 与各 Agent `Dockerfile` 的 `AGENT_PORT` 两处，保持一致。
+> Agent 端口段已用到 **50076**（mcp-bridge；50068 charging/50069 scene/50072 road-safety/50073 deep-research/50074 reminder 已用，50070/50071 为 edge-orchestrator/payment-gateway，50075 为主动治理器健康口），新 Agent 从 **50077** 起。端口在 `deploy/docker-compose.yaml` 与各 Agent `Dockerfile` 的 `AGENT_PORT` 两处，保持一致。
 
 ---
 

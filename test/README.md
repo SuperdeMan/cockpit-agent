@@ -71,6 +71,12 @@ python test/e2e_trip.py                    # 断言型：行程规划 6 轮（�
 python test/e2e_research.py                # 断言型：深度调研（research_report 分节报告+真实来源、多轮「展开第N点」聚焦深挖、普通搜索不被劫持、新闻「详细讲讲第N条」深挖桥接）
 python test/e2e_research_async.py          # 断言型：异步分钟级深调研（明示「不急/查完告诉我」→秒级受理 ack→后台 deep 流水线越过 90s 上限→NATS agent.proactive 主动推送带 card 报告卡，真栈 9 节/36 源/~3031 字）
 python test/e2e_rejection.py               # 断言型：R4.4 拒识主链（hands-free 语音源乘客对话→rejected 卡+空 speech 不落库；正常受话照常应答）——需真 provider，mock 模式自动 SKIP
+python test/e2e_ledger.py                  # 断言型：M2 Task Ledger 五场景（受理开单→进度查询「话术与账本逐字一致」→幂等去重不双跑→cancel 后台停手→**重启容器后 orphaned 诚实报告**）
+python test/e2e_verify.py                  # 断言型：M2 Outcome Verifier 声明式执行后对账（state_match 对 NATS 车况镜像 / schema 拿到真东西；三态 UNKNOWN 不定罪）
+python test/e2e_memory_graph.py            # 断言型：M2 记忆图谱五场景（偏好加权/关系边入图/人称地点解析/查不到诚实追问/**GDPR 级联删除红线**）
+python test/e2e_proactive.py               # 断言型：M3 统一主动引擎（单条直通字节级兼容/**同窗两条合并成一条**/卡片 card_group/跨生产方去重/情境断言投递期复核/user_contract 豁免 vs advisory 延后/全局频控）——开跑前重启 proactive 拿净初态（治理器刻意无持久化）
+python test/e2e_geofence.py                # 断言型：M3 位置提醒（地点经 nearby 真解析出坐标→围栏外只播种→进围栏触达一次→不重复）；地点解析走**邻近搜索**，故先压一次市区位置作前提
+python test/e2e_mcp.py                     # 断言型：M3 受控 MCP 桥（准入边界=清单外工具不进注册中心/只读真数据+演示商户三重标注/下单先确认/幂等不双扣）——开跑前重启桥拿演示商户净初态
 python test/e2e_obs.py                     # 断言型：badcase 排查观测链路 16 断言（obs.turn 落库/plan 门控采集/obs.llm/日志按 trace 关联/badcase 标记检索导出/重启 collector 持久化）
 python test/e2e_voice_loop.py              # 断言型：语音回路后端契约（/api/asr/stream PCM 直传 partial→final→done + vad_silence_ms 透传 + TTS round-trip）——浏览器声学层 CI 测不了，留真麦
 python test/e2e_tts_stream.py              # 断言型：R4.2 服务端流式 TTS（cosyvoice 首帧延迟 G1 门槛 + cancel 收尾）——需 DashScope key
