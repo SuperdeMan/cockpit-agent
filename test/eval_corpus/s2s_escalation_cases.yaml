@@ -1,0 +1,55 @@
+# M4 S2S 移交判定评测语料（RFC §5.3-3「语料背板」+ §6.2 灰度门槛硬指标）。
+#
+# eval_s2s_escalation.py 把每条 text 送进**生产同源**的 S2S 会话配置（protocol.escalate_tool()
+# + protocol.persona()，不是评测专用 prompt——M1a 探针的教训：探的必须是生产形态），
+# 看模型是否调 escalate 工具。
+#
+# schema:
+#   text:   用户话
+#   expect: escalate    = 需要执行动作或查实时信息 → **必须移交**确定性链
+#           self_answer = 闲聊/常识/对上文的回应 → 应自答（移交=多余的一跳，体验变差）
+#   tag:    溯源分类
+#
+# 纪律（RFC §5.3）：
+#   · **漏移交（expect=escalate 却自答）是硬门槛**——它意味着「口头答应没办事」，安全上不会
+#     出事（S2S 面无执行通道），但是确定的体验事故。灰度扩域前该指标须 ≥95%。
+#   · 误移交（expect=self_answer 却移交）只入基线不设硬指标：代价是一次多余的主链往返
+#     （回答仍正确，只是慢半拍、音色切换），远轻于漏移交。
+#   · 对抗重点是**夹在闲聊里的动作句**——直白的「打开空调」谁都能判对，真实车内说的是
+#     「今天真热啊，把空调开低点」。这类混合句才是灰度门槛真正在量的东西。
+
+# ── 必须移交：直白动作句（基线，判错说明工具描述有问题）──────────────────────
+- {text: "把空调调到24度", expect: escalate, tag: hvac_direct}
+- {text: "导航去公司", expect: escalate, tag: navi_direct}
+- {text: "放首周杰伦的歌", expect: escalate, tag: media_direct}
+- {text: "打开车窗", expect: escalate, tag: window_direct}
+
+# ── 必须移交：查实时信息（模型有常识但没有实时数据，自答=编造）────────────────
+- {text: "今天天气怎么样", expect: escalate, tag: weather}
+- {text: "现在还有多少电", expect: escalate, tag: vehicle_state}
+- {text: "特斯拉今天股价多少", expect: escalate, tag: stock}
+- {text: "昨晚国足比赛结果怎么样", expect: escalate, tag: sports}
+
+# ── 必须移交：夹在闲聊里的动作句（**对抗重点**）────────────────────────────
+- {text: "今天真热啊，把空调开低一点", expect: escalate, tag: mixed_chitchat_hvac}
+- {text: "聊得挺开心，不过我该走了，导航回家吧", expect: escalate, tag: mixed_chitchat_navi}
+- {text: "说到吃饭，帮我看看附近有什么好吃的", expect: escalate, tag: mixed_chitchat_nearby}
+- {text: "有点冷", expect: escalate, tag: implicit_hvac}
+- {text: "我十分钟后到，到了提醒我一下", expect: escalate, tag: implicit_reminder}
+- {text: "这歌不好听，换一首", expect: escalate, tag: implicit_media}
+
+# ── 应自答：闲聊 ────────────────────────────────────────────────────────
+- {text: "今天心情不错", expect: self_answer, tag: chitchat}
+- {text: "给我讲个笑话", expect: self_answer, tag: chitchat_joke}
+- {text: "你觉得开电动车比油车省钱吗", expect: self_answer, tag: chitchat_opinion}
+- {text: "路上有点无聊，陪我聊聊天", expect: self_answer, tag: chitchat_companion}
+
+# ── 应自答：常识问答（模型自己就会，不需要查）────────────────────────────
+- {text: "水的沸点是多少度", expect: self_answer, tag: commonsense}
+- {text: "一光年大概有多远", expect: self_answer, tag: commonsense}
+- {text: "为什么天空是蓝色的", expect: self_answer, tag: commonsense}
+
+# ── 应自答：对上文的回应（误移交这类会让对话变得很卡）──────────────────────
+- {text: "刚才那个笑话还挺好笑", expect: self_answer, tag: followup_reaction}
+- {text: "你说得对", expect: self_answer, tag: followup_agree}
+- {text: "嗯，我知道了，谢谢", expect: self_answer, tag: followup_thanks}

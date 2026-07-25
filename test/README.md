@@ -80,7 +80,8 @@ python test/e2e_mcp.py                     # 断言型：M3 受控 MCP 桥（准
 python test/e2e_obs.py                     # 断言型：badcase 排查观测链路 16 断言（obs.turn 落库/plan 门控采集/obs.llm/日志按 trace 关联/badcase 标记检索导出/重启 collector 持久化）
 python test/e2e_voice_loop.py              # 断言型：语音回路后端契约（/api/asr/stream PCM 直传 partial→final→done + vad_silence_ms 透传 + TTS round-trip）——浏览器声学层 CI 测不了，留真麦
 python test/e2e_tts_stream.py              # 断言型：R4.2 服务端流式 TTS（cosyvoice 首帧延迟 G1 门槛 + cancel 收尾）——需 DashScope key
-python test/e2e_s2s.py                     # 断言型：M4 S2S 全双工最小闭环（自答闭环/多轮上下文/escalate 逃逸零音频/回灌 memory+obs 且逃逸轮不重复写）——需 DashScope key（2026-07-25）
+python test/e2e_s2s.py                     # 断言型：M4 S2S 全双工最小闭环（自答闭环/多轮上下文/escalate 逃逸零音频/①听感打断零残包/③工具调用中打断不播报/unsupported 回落/回灌 memory+obs 且逃逸轮不重复写）——需 DashScope key（2026-07-25）
+python test/e2e_s2s_resilience.py          # 断言型：M4 S2S 韧性（宿主内 WS 代理注入断连→重连+摘要重注入/IN_TURN 断连诚实收束/持续不可达→DEGRADED 回落）——需 DashScope key；不改 .env 不给生产协议加后门（2026-07-25）
 python test/e2e_degrade.py                 # 断言型：架构 §3.3 降级矩阵四行（单 Agent 故障/LLM 超时/云 Planner 故障/断网）——docker 级故障注入 + 严格 try/finally 恢复，务必放在其它 e2e 脚本之后跑
 python test/e2e_auth.py                    # 断言型：会话鉴权（需 AUTH_REQUIRED=true + token，非默认栈配置）
 python test/e2e_mtls.py                    # 断言型：服务间 mTLS（需 GRPC_TLS=on + scripts/gen-certs.*，非默认栈配置）
@@ -113,6 +114,25 @@ node test/hmi_cdp/run_cases.mjs                   # L4：HMI 二次交互 CDP �
   超时等）按语料内 `skip_journey_if_speech_any` 约定判 SKIP 不判 FAIL。
 - L4 前置：宿主装有 Edge/Chrome（`CDP_BROWSER` 可指定路径）、宿主 5173 未被本地 vite 占用；
   截图证据落 `test/hmi_cdp/shots/`（gitignore）。
+
+### 5.2 灰度门槛评测（M4 S2S）
+
+```bash
+python test/eval_s2s_escalation.py            # 移交判定准确率（文本路径，~15s/24 条）
+python test/eval_s2s_escalation.py --audio    # 真实音频路径（含转写误差，与线上一致，慢 ~6×）
+python test/eval_s2s_escalation.py --desc "…" # §6.2 灰度调参：换 escalate 描述做对照
+```
+
+- 语料 `test/eval_corpus/s2s_escalation_cases.yaml`；配置**生产同源**（直接用
+  `s2s.protocol.escalate_tool()` 与 `persona()`，不写评测专用 prompt）。
+- **漏移交率 ≥95% 是灰度扩域的硬门槛**（RFC §9 P3）；误移交只入基线不设指标——它的代价是
+  多一次主链往返，远轻于「口头答应没办事」。
+- 对抗重点是**夹在闲聊里的动作句**（「今天真热啊，把空调开低一点」），直白句谁都判得对。
+- 基线（2026-07-25，`qwen3.5-omni-flash-realtime`）：两条路径均 **24/24=100%**，
+  文本 613ms/轮、音频 2160ms/轮。
+- **provider 错误不算模型判断**：命中 provider 侧错误的条目重试一次，仍失败则单列并**排除出
+  分母**（把调用失败记作「模型选择自答」会让指标朝好看的方向失真）；错误率 >10% 直接判
+  「报告作废」，退出码 2。
 
 一次跑全部脚本：`make e2e`（本地全量清单，`scripts/run_e2e.sh` / `run_e2e.ps1`；假定 `.env` 可能
 配了真实 key，未配置时部分用例按记忆系统既有 SKIP 约定优雅跳过或合理失败，非回归）。

@@ -415,6 +415,14 @@ class S2SSession:
                 if self._closed:
                     return False
                 try:
+                    # 先关旧 provider 再造新的——否则每次重连泄漏一个 aiohttp
+                    # ClientSession（长跑会话累积；韧性验证时由 "Unclosed client
+                    # session" 警告暴露）。已断的连接 close 一次无害（幂等）。
+                    if self.provider is not None:
+                        try:
+                            await self.provider.close()
+                        except Exception:
+                            pass
                     self.provider = self._provider_factory()
                     await self.provider.open(voice=self.voice, system=P.persona(),
                                              context_summary=await self._summary(),

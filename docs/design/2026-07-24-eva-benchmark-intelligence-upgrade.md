@@ -378,6 +378,17 @@ verification:
 - 核心件子 RFC 已出（2026-07-25）：`docs/design/2026-07-25-m4-s2s-fullduplex-rfc.md`——S2S 四件咬合结构件（realtime adapter 双端契约 / 三层状态机本侧权威+provider session=可丢弃缓存 / **单工具 escalate 分工契约**（不注能力清单，执行全量回确定性链）/ 双链路域灰度=escalate 描述收放）；打断三层语义表、重连重注入、文本副产品强制回灌防记忆黑洞；声纹/视觉边界速写交接手人。
 - 统一 realtime adapter → S2S 灰度（chitchat 先行）；声纹多用户；VAL sim.adas.* 演示域；视觉入口（车外「那是什么」以图片问答起步）。
 - DoD：语音双链路可切换；多用户记忆隔离旅程。（`sim.adas.*` 演示域=低优先级 backlog，**非 M4 必做 DoD**——2026-07-24 拍板 §8-6。）
+- **落地记录（2026-07-25，S2S 线 P0→P3 完成；全量细节见子 RFC §11）**：
+  - **选型是被实测钉死的，不是被文档定的**：`session.created` 不校验 model（传假名字也返回 session，只 echo 名字回落默认配置），故逐个实测 tools 支持度才发现 `qwen3-omni-flash-realtime`（无 `.5`）**静默丢弃 session.update 的 tools**——车控句它会口头自答「我可以帮你开空调」而不移交。**两个型号的官方文档都写「支持函数调用」**，只有 §5.1 的单工具契约在它上面整体不成立。工厂对该族型号 fail-fast 拒绝。这条是 M1a「文档≠实测」教训的第二次兑现。
+  - **P0 协议冻结**：`e2e_s2s_probe.py` 七组 12 断言 → 子 RFC §3.5 成为**冻结基线**（事件映射表、首音频 P50=609ms/max=703ms、首文本 P50=328ms、输出 24kHz 靠字节数反推——协议不声明采样率）。探针额外挖出两个 RFC 未列的实现级风险点：**R1** 回注 `function_call_output` 不发 `response.create` → provider 完全静默（§5.2「逃逸轮结果只为上下文连续不为播报」的前提成立；若自动续说就会与主链 TTS 双播、设计整体返工）；**R2** 悬挂 `function_call` 不坏会话 → 回灌失败无需补偿。
+  - **P1 最小闭环**：网关 `llm-gateway/s2s/` 四层（对上协议 / provider 抽象+qwen 实现 / L-Session 状态机 / 回灌）+ `/api/s2s`；HMI `s2sClient.mjs` + 一组新效果回调 + 设置挡位（默认 classic）。**voiceLoop 一字未改**——S2S 只是换了效果注入：`onOpenAsr` 从「建 ASR 连接」变成「开收音门」，`onEndpoint` 变空操作（provider server VAD 自驱轮次）。R4.3b 的退出词/语气词/误唤醒本地治理靠 **`onMetric` 语义事件总线**接住（FSM 判为噪声的句子额外发 `barge_in` 取消 provider 在飞生成，否则一句「嗯」会被 S2S 当一轮答出来）。
+  - **协议补了一个类型**：`escalated_result`。原设计漏了「逃逸轮的执行结果怎么回 S2S 会话」，不补则多轮连续性断在每个逃逸轮上（下轮闲聊时模型不知道空调已经调过了）。
+  - **收音门控比原设计更保守**：**只在 LISTENING 期推流**。provider `interrupt_response=true` 会自主判打断，SPEAKING 期推流就与「本侧权威」打架——**不给它输入才是本侧 100% 权威的实现方式，靠约定不行**。会话常驻的红利（唤醒零建连延迟）照旧。
+  - **真栈才暴露的三个缺陷**：① turn 悬挂无收口（客户端慢读→下行 send 背压→事件泵阻塞→provider 侧数据丢→该 turn 永不 done，HMI 干等到 voiceLoop 100s 兜底）→ 加 turn 看门狗诚实收 `turn.end(error, provider_silent)`，**不追究成因、任何原因导致的悬挂都在此收口**；② 重连直接覆盖 `self.provider` 泄漏 aiohttp ClientSession（由韧性验证的 "Unclosed client session" 暴露）；③ e2e 自身「先推完再读」不是真实客户端行为（浏览器 WS 总在读），顺序写法自造背压把整轮回答弄丢。
+  - **P2 的 journeys lane 改道**：子 RFC §9 原写「journeys 新 lane 4 条」，但 journeys runner 是**文本驱动**（发文本给 edge-gateway），跑不了音频通道——S2S 旅程无法用它表达。改在 `e2e_s2s.py` 覆盖四形态（闲聊连续/夹车控/打断/断线），断言更强（能验残包与回灌）。中途断连用**宿主内 WS 代理**注入（不改 `.env`、不给生产协议加测试后门）。
+  - **P3 灰度门槛**：`eval_s2s_escalation.py` + 24 条语料（对抗重点是**夹在闲聊里的动作句**，直白句谁都判得对）；配置生产同源（直接用 `protocol.escalate_tool()`/`persona()`）。实测两条路径都 **24/24=100%**（文本 613ms/轮；音频路径含转写误差、2160ms/轮、零 provider 错误），门槛 ≥95% 达标。**评测本身先修过一次有效性缺陷**：音频路径首跑 85.7%，逐条看才发现 4 条是 provider 侧 `algorithm server connection closed`，而脚本把「没拿到 function_call」一律记作「模型选择自答」——2 条判红、**2 条假绿**。这类缺陷让指标朝好看的方向失真（错误越多自答准确率越高），比红灯更危险；改成 error 单列+重试+排除出分母，错误率 >10% 直接判报告作废。`s2s_false_promise` 检测已进 obs span 供 M1b nightly 挖掘。
+  - 验证：全量 pytest **2184 passed / 7 skipped**（基线 2122，净 **+62**）；HMI node **170**（143 既有 + 27 新增）、tsc 错误数不变、build 通过；真栈 `e2e_s2s` **25/25**、`e2e_s2s_resilience` **11/11**（断连 625ms 重连 + 摘要重注入 + 重连后记得断线前的话）；两个新 e2e 已挂 `run_e2e`。
+  - **未做**：声纹多用户 / 视觉入口（P4，子 RFC §8 边界速写在案）；真麦声学验收（打断手感/音色接受度，同 R4.3 惯例留泓舟）。因此 M4 的另一条 DoD「多用户记忆隔离旅程」尚未兑现。
 
 ---
 

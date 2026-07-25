@@ -146,7 +146,7 @@
 | postgres | 5432 | — |
 | registry | 50051 | gRPC |
 | llm-gateway | 50052 | gRPC |
-| llm-gateway (HMI HTTP 代理) | 50059 | HTTP（`/api/asr` 批处理识别、`/api/asr/stream` **WS 流式识别上屏**、`/api/asr/stream/info` ASR 引擎能力探测、`/api/tts` 批处理合成、`/api/tts/stream` **WS 服务端流式 TTS**（文本增量入→meta+PCM 二进制帧+done，cancel 传播供应商）、`/api/tts/stream/info` TTS 引擎能力探测（引擎+音色+可用性）、`/api/voices`(可带 `?provider=`) `/api/memory/session` `/api/memory/context` `/api/memory/profile`(真实分层记忆:偏好/地点/经历) `/api/memory/forget`(按 scope 删)，CORS 放开供 HMI 浏览器调用） |
+| llm-gateway (HMI HTTP 代理) | 50059 | HTTP（`/api/asr` 批处理识别、`/api/asr/stream` **WS 流式识别上屏**、`/api/asr/stream/info` ASR 引擎能力探测、`/api/tts` 批处理合成、`/api/tts/stream` **WS 服务端流式 TTS**（文本增量入→meta+PCM 二进制帧+done，cancel 传播供应商）、`/api/tts/stream/info` TTS 引擎能力探测（引擎+音色+可用性）、`/api/s2s` **WS 端到端语音会话**（M4；PCM 上行↔转写/回答增量/音频帧下行 + escalate 逃逸，协议见 §11）、`/api/s2s/info` S2S 能力探测、`/api/voices`(可带 `?provider=`) `/api/memory/session` `/api/memory/context` `/api/memory/profile`(真实分层记忆:偏好/地点/经历) `/api/memory/forget`(按 scope 删)，CORS 放开供 HMI 浏览器调用） |
 | memory | 50053 | gRPC |
 | cloud-planner | 50054 | gRPC |
 | **Agent 段** | **50061–50069, 50072–50074** | gRPC |
@@ -567,3 +567,24 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | 权限 | 一律 `trust_level: third_party`（硬上限表自动禁高危车控/精确位置/摄像头麦克风）+ `network.external`；涉钱走 payment-gateway，Agent 不持凭证 |
 | 故障隔离 | 一台 server 起不来/版本不符 → **只让它自己的工具缺席**，桥照常服务其余；绝不静默降级成假数据 |
 | 不做 | resources/prompts/sampling、HTTP/SSE transport、动态放行注册（子 RFC §7） |
+
+### 9.10 S2S 对上事件协议与分工契约（M4 P0/P1）
+
+设计与实测基线：`docs/design/2026-07-25-m4-s2s-fullduplex-rfc.md`（§3.5 是**协议冻结基线**）。
+端点 `/api/s2s`（llm-gateway 音频面 50059，**不经 edge-gateway**）。
+
+| 项 | 契约 |
+|---|---|
+| 两端两个契约 | 对上=本侧事件协议（`llm-gateway/s2s/protocol.py`，HMI 只认这层，**永不随厂商变**）；对下=`BaseS2SProvider`（每厂商一实现）。换厂商只加 `provider.py` 的子类 |
+| 上行 | `session.start` / `audio`(+二进制 PCM 16k mono s16le) / `barge_in` / `cancel_turn` / `escalated_result{turn_id,text}` / `session.end` |
+| 下行 | `turn.transcript{final}` / `turn.answer_delta` / `turn.audio_meta{sample_rate}`(+二进制 PCM) / `turn.end{reason,detail?}` / `turn.escalated{utterance}` / `session.state{ready\|reconnecting\|degraded}` / `unsupported` |
+| turn_id | **网关生成**（uuid4 前 16）。provider 的 response id 只在会话层对账，不透传上层——「provider session=可丢弃缓存」的协议面 |
+| **执行分工（安全铁律）** | S2S 会话内**没有任何执行通道**。模型唯一的工具是 `escalate(utterance)`，它只把原话交回文本主链——submit_plan / route_hints / Skill 注入 / `require_confirm` 闸 / VAL / R4.4 澄清**逐字全量生效**。S2S 是新的「话筒」，不是新的规划入口 |
+| **不注 capability 清单** | 单工具把判定权压成二元（自答 or 移交），错误面只剩「该移交没移交」（有三道背板）。注入几十个 capability 会让 M1a「tool schema 三向改输出分布」的教训在语音场景重演，而 S2S 轮不过 planner 校验、没有旅程级护栏可兜 |
+| 域灰度 | = 收放 `escalate` 的 **description 边界**（`S2S_ESCALATE_DESC`），**不做运行时按 intent 拦截**——判定点必须在模型生成前的工具选择，生成后拦截必然截断已播出的音频 |
+| 打断三层 | ①听感（本侧 VAD 权威→cancel+**残包丢弃**）②任务（复用 `{type:cancel}` 存量通道）③工具调用中（turn 标 abandoned：结果回来不 inject 不播报，**但副作用步照常走完确认链**——打断≠回滚） |
+| 回灌（强制项） | 每 turn 收束后 `AppendTurn(user=transcript, assistant=answer)` + `obs.turn(path="s2s")` + span `s2s.turn`。**escalated 轮不重复写 memory**（主链已落，只补 span 关联）。**被打断轮只存已播出的增量**并标 `truncated`——provider 的 `audio_transcript.done` 带完整全文，那≠用户听到的 |
+| 收音门控 | **只在 LISTENING 期推流**。provider `interrupt_response=true`，SPEAKING 期推流它会自主判打断，与「本侧权威」冲突；不推流则它根本不会自主打断 |
+| 型号红线 | 必须支持 tools。`qwen3-omni-flash-realtime`（无 `.5`）**静默丢弃 tools**（P0 探针 ★T 实测）→ 工厂 fail-fast 拒绝，别绕过；文档上两个型号都写「支持函数调用」，只有实测能分辨 |
+| 韧性 | turn 悬挂看门狗 `S2S_TURN_TIMEOUT_S=45` → 诚实收 `turn.end(error, provider_silent)`；重连 ≤3 次退避后 DEGRADED（HMI 回落三段式）；长会话 `S2S_SESSION_MAX_TURNS=20` 主动重建 + 摘要重注入 |
+| 隐私口径变化点 | s2s 挡位**上行原始音频**（三段式只上行定稿文本），且仅在唤醒后的交互窗内。设置默认 `classic`，须用户显式选择 |

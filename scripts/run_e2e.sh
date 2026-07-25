@@ -64,8 +64,10 @@ run_step "e2e_proactive"              python test/e2e_proactive.py
 run_step "e2e_mcp"                    python test/e2e_mcp.py
 run_step "e2e_rejection"              python test/e2e_rejection.py
 run_step "e2e_tts_stream"             python test/e2e_tts_stream.py
-# M4 P1：S2S 全双工最小闭环（自答/多轮上下文/escalate 逃逸/回灌防黑洞）——需 DashScope key
+# M4 P1/P2：S2S 全双工最小闭环（自答/多轮上下文/escalate 逃逸/三层打断/回灌防黑洞）
+# 与韧性（宿主内 WS 代理注入断连 → 重连+摘要重注入 / DEGRADED 回落）——均需 DashScope key
 run_step "e2e_s2s"                    python test/e2e_s2s.py
+run_step "e2e_s2s_resilience"         python test/e2e_s2s_resilience.py
 # 旅程级（L3）：回归级必须绿；目标级红灯是能力标尺不拦退出码（--strict-target 才拦）
 run_step "e2e_journeys"               python test/e2e_journeys.py
 run_step "e2e_real_providers"         python -m pytest test/e2e_real_providers.py -q -s

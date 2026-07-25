@@ -36,6 +36,9 @@ SESSION = "e2e-s2s-" + time.strftime("%H%M%S")
 UTT_FACT = "我最喜欢喝拿铁咖啡"
 UTT_ASK = "我刚才说我最喜欢喝什么"
 UTT_CONTROL = "把空调调到二十四度"
+# 打断验证要一段够长且**确定自答**的回答。别用「讲讲咖啡豆产地和风味区别」这类落在
+# 灰度边界上的句子——模型会判成「查信息」走 escalate（实测过），那轮就没有播报可打断。
+UTT_LONG = "给我讲个长一点的笑话"
 
 _fails: list[str] = []
 
@@ -59,18 +62,25 @@ class Turn:
         self.transcript = ""
         self.answer = ""
         self.audio_bytes = 0
+        self.audio_frames = 0
         self.audio_meta = None
         self.end_reason = ""
         self.end_detail = ""
         self.escalated_utterance = ""
+        self.barge_in_at = None      # 上行 barge_in 的时刻
+        self.post_barge_frames = 0   # barge_in 之后仍收到的音频帧（残包，必须为 0）
+        self.end_at = None           # turn.end 到达时刻（量停播延迟）
 
 
-async def run_turn(ws, pcm: bytes, *, timeout: float = 60.0) -> Turn:
+async def run_turn(ws, pcm: bytes, *, timeout: float = 60.0,
+                   barge_in_after: int = 0) -> Turn:
     """推一段音频并**并发收下行**，直到 turn.end。
 
     必须并发——真实 HMI 是 WS 事件驱动（onmessage 随时到达），不存在「推完再读」。
     真栈验证时踩过这个坑：顺序写法下客户端不读 → 下行 send 背压 → 网关事件泵阻塞 →
     provider 侧数据丢，该轮回答整段消失（网关侧现已有 turn 看门狗兜底诚实收束）。
+
+    barge_in_after>0：收到第 N 个音频帧后上行 barge_in（①听感打断的后端契约验证）。
     """
     t = Turn()
     step = 3200
@@ -84,7 +94,13 @@ async def run_turn(ws, pcm: bytes, *, timeout: float = 60.0) -> Turn:
             except asyncio.TimeoutError:
                 return
             if isinstance(msg, (bytes, bytearray)):
+                t.audio_frames += 1
                 t.audio_bytes += len(msg)
+                if t.barge_in_at is None and barge_in_after and t.audio_frames >= barge_in_after:
+                    t.barge_in_at = time.monotonic()
+                    await ws.send(json.dumps({"type": "barge_in"}))
+                elif t.barge_in_at is not None:
+                    t.post_barge_frames += 1
                 continue
             m = json.loads(msg)
             mt = m.get("type", "")
@@ -102,6 +118,16 @@ async def run_turn(ws, pcm: bytes, *, timeout: float = 60.0) -> Turn:
             elif mt == "turn.end":
                 t.end_reason = m.get("reason") or ""
                 t.end_detail = m.get("detail") or ""
+                t.end_at = time.monotonic()
+                if barge_in_after:
+                    # 打断轮：turn.end 后再听 1.5s，确认没有残包续播（★1 本侧丢弃保护）
+                    try:
+                        while True:
+                            extra = await asyncio.wait_for(ws.recv(), timeout=1.5)
+                            if isinstance(extra, (bytes, bytearray)):
+                                t.post_barge_frames += 1
+                    except asyncio.TimeoutError:
+                        pass
                 return
             elif mt == "unsupported":
                 t.end_reason = "unsupported"
@@ -196,9 +222,57 @@ async def main() -> int:
             note = "5s 内无下行"
         check("回传后不产生播报（无双播）", quiet, note)
 
+        print("\n[6] ①听感打断（barge_in 的后端契约）")
+        t4 = await run_turn(ws, synth_pcm16k(UTT_LONG), barge_in_after=2)
+        check("打断令本轮收 turn.end=cancelled", t4.end_reason == "cancelled",
+              f"reason={t4.end_reason}")
+        if t4.barge_in_at and t4.end_at:
+            ms = (t4.end_at - t4.barge_in_at) * 1000
+            check("网关收束响应及时（<1s）", ms < 1000, f"{ms:.0f} ms")
+        check("打断后无残包续播", t4.post_barge_frames == 0,
+              f"barge_in 后又收到 {t4.post_barge_frames} 个音频帧")
+        check("打断轮回答被截断（不是完整全文）", bool(t4.answer),
+              f"已播文本 {len(t4.answer)} 字（provider 全文更长，回灌只存这段）")
+
+        print("\n[7] 打断后同会话续听（不重建）")
+        t5 = await run_turn(ws, synth_pcm16k(UTT_ASK))
+        check("打断后下一轮正常且上下文仍在", t5.end_reason == "complete"
+              and ("拿铁" in t5.answer or "咖啡" in t5.answer),
+              f"reason={t5.end_reason} answer={t5.answer[:40]!r}")
+
+        print("\n[8] ③工具调用中打断（打断≠回滚）")
+        t6 = await run_turn(ws, pcm_ctl)
+        if t6.end_reason == "escalated":
+            await ws.send(json.dumps({"type": "barge_in"}))
+            await asyncio.sleep(0.3)
+            # abandoned turn 的结果回来应被静默丢弃——不 inject、不播报
+            await ws.send(json.dumps({"type": "escalated_result", "turn_id": t6.turn_id,
+                                      "text": "已为你调好空调"}))
+            quiet2 = True
+            try:
+                m = await asyncio.wait_for(ws.recv(), timeout=4)
+                quiet2 = False
+                note2 = str(m)[:120]
+            except asyncio.TimeoutError:
+                note2 = "4s 内无下行"
+            check("被打断的逃逸轮：结果回来不播报", quiet2, note2)
+        else:
+            check("③前置（车控句 escalate）", False, f"reason={t6.end_reason}")
+
         await ws.send(json.dumps({"type": "session.end"}))
 
-    print("\n[6] 回灌防黑洞（§7 强制项）")
+    print("\n[9] unsupported 回落（provider=off → HMI 走三段式）")
+    async with websockets.connect(ws_url, max_size=16 * 1024 * 1024) as ws2:
+        await ws2.send(json.dumps({"type": "session.start", "session_id": SESSION + "-off",
+                                   "user_id": "u1", "provider": "off"}))
+        try:
+            m = json.loads(await asyncio.wait_for(ws2.recv(), timeout=15))
+        except asyncio.TimeoutError:
+            m = {}
+        check("provider=off 下行 unsupported（而非静默卡住）",
+              m.get("type") == "unsupported", json.dumps(m, ensure_ascii=False)[:140])
+
+    print("\n[10] 回灌防黑洞（§7 强制项）")
 
     async def _mem_turns():
         return _get(f"{LLM_HTTP}/api/memory/session?session_id={SESSION}&last_n=20").get("turns", [])
