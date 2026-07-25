@@ -358,7 +358,8 @@ verification:
   - **P2**：T2 按 `plan.complexity` 分档（Interactive 2/8s、Complex 3/12s——§4.B 档位表第一档）+ 重复副作用防抖（§4.3 重定义，指纹撞上即回填、动作不重发）。
   - **子 RFC 设计有三处偏差被编码期推翻并记账**（子 RFC §9.1）：① §3.3「engine 已持有 NATS 镜像」是事实错误（编排器侧只有出站，无订阅）→ 新建只读镜像模块；② 挂点漏了 engine D0 / loop T2 两条**流式直通路径**——真栈首验实测「一条 verify span 都没有」，声明了却静默不生效；③ report 口径增「Agent 已诚实降级则不重复念」判据。
   - 验证：全量 pytest **1922 passed/7 skipped**（基线 1787，+135 零回归）；journeys 全量 @minimax **回归 12/14+1 数据真空 skip / 目标 15/18**（旧 canonical 13/18）、**P95 19.1s vs 基线 25.5s 未劣化**（DoD「增量 ≤10%」达标）——两条回归红灯逐条复验为方差非本卡引入（A4-2 单跑绿=wait_push 时序；A3-1 同句三次 2 绿 1 红=M1a「tool schema 诱发少填槽位」族的既有抖动）；**L3 新增 A6-1/A6-2 2/2 绿**（cancel 与幂等两条 DoD 用例；orphaned 续接需重启容器留在 e2e_ledger、verify 失败真栈不可自然触发）；`eval_route_hints` 98/98（+11）；两个新 e2e 挂进 `run_e2e.sh`。
-  - **余项**：记忆图谱（独立子 RFC，M2 后半）；Complex 档后续放宽（3-4 次/15s）与 Interactive 跟进等下一轮双指标数据。
+  - **余项**：Complex 档后续放宽（3-4 次/15s）与 Interactive 跟进等下一轮双指标数据。
+- **记忆图谱子 RFC 已出（2026-07-25）**：`docs/design/2026-07-25-m2-memory-graph-rfc.md`——侦查后发现 §4.D 的 `preference` 表**真缺口只有 weight/evidence_count/half_life 三个字段**，故提出两处修正建议待拍板：①**偏好层加列而非建新表**（建表会推翻 2026-06-25 刚做的「两表合并为单表」决策，且级联删除/隐私分级/supersede/召回打分全要重写一遍）；②**emotion 不进记忆层**，改为 planner 同轮输出会话级情绪信号直供 M1b 已就绪的情感 TTS 参数面（母提案自己给的约束「短 TTL+不入长期画像+需显式授权」已把它排除在记忆之外，而 TTS 要的是当轮情绪不是画像）。`relation` 仍建新表（subject 非用户、查询模式是实体双向查而非相似召回），但 v1 只存边+一跳，且**先定消费面**（召回注入升级 / 「去接孩子放学」人称地点解析 / routine 加权）——没有消费方的边不存。红线：GDPR `forget()` 必须同事务级联删关系边，否则是假删除。
 
 **M3 主动与生态（约 2-3 周；先出 MCP 安全与交易生命周期子 RFC）**
 - 统一主动引擎（四路收敛 + P1b geofence）；受控 MCP 桥（一读一写首批，准入/审计/熔断全过 + §4.F 写操作生命周期强制项）。
