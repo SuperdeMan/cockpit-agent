@@ -87,11 +87,25 @@ Windows 无 make 时用 `scripts/gen-proto.ps1`、`scripts/run_e2e.ps1` 等价�
 **工程纪律**：改完主动跑 `make test`；不要注释报错或加绕过标记来"让它跑起来"，找根因；大改动先在设计文档对齐再动手。
 
 ## 7. 当前阶段
-截至 2026-07-15，Phase 1 工程化 PoC 主干、云端中枢 P0-P3、R2-R4 硬化主题（架构还债/
+截至 2026-07-25，Phase 1 工程化 PoC 主干、云端中枢 P0-P3、R2-R4 硬化主题（架构还债/
 安全/语音回路/拒识澄清等）、可观测台（badcase 排查贯通：会话/轮次/日志/LLM + SQLite
-持久化）与**旅程级验证体系**（L3 journeys + L4 HMI CDP，跨 Agent 自主执行/连续对话
-的红灯驱动闭环）已落地，运行模型为 T0 端侧快路径 / T1 单次 DAG / T2 有界 Agentic 循环。
-当前事实、测试证据和待办统一维护在 `AGENTS.md`；设计与落地记录见
-`docs/design/`。原始量产级目标和未完成项见
+持久化）与**旅程级验证体系**（L3 journeys + L4 HMI CDP）已落地，运行模型为
+T0 端侧快路径 / T1 单次 DAG / T2 有界 Agentic 循环。
+
+**智能化升级（对标超级 Eva，母提案 `docs/design/2026-07-24-eva-benchmark-intelligence-upgrade.md`）
+M0a→M2 全部完成**，主线是「把每一种智能供给都声明式化」：
+
+| 期 | 交付 | 一句话 |
+|---|---|---|
+| M0a | 数据真实性 + 确认兜底 | 运行期 mock 回退按铁律③改诚实降级；`require_confirm` 中央强制落实 |
+| M0b | 规划知识 Skill 层 | 领域知识外迁 `skills/`，**加规划知识=投 skill 文件不改编排核心** |
+| M1a | `submit_plan` 结构化输出 | 原生 function calling 强制合法 Plan，`_extract_json` 工程债退役 |
+| M1b | 自进化 v1 + Shadow NLU | badcase→归因→补丁提案→eval 门禁→人审（nightly）；端侧切换建议出数据 |
+| M2 | 执行治理 + 记忆图谱 | **Task Ledger**（长任务可查可停可诚实报告中断）+ **Outcome Verifier**（声明式执行后对账）+ T2 分档 + **偏好加权与关系边** |
+
+**下一站 M3**（统一主动引擎 + 受控 MCP 桥）：按 v1.2 既定制度，**开工前先出子 RFC**。
+
+当前事实、测试证据和待办统一维护在 `AGENTS.md`（§4 顶部有「当前进度与下一步」交接区）；
+设计与落地记录见 `docs/design/`（索引 `docs/design/README.md`）。原始量产级目标和未完成项见
 `docs/architecture/phase1-implementation-plan.md`，不要把当前 PoC 验收等同于该计划
 全部 DoD 已完成。

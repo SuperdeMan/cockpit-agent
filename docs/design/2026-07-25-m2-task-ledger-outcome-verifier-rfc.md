@@ -3,6 +3,7 @@
 > 日期：2026-07-25
 > 状态：**✅ P0/P1/P2 全落地并真栈验证（2026-07-25，落地记录见 §9）**；设计部分保持原稿，
 > 与实现的三处偏差已在 §9.1 逐条记账（不改原文，便于对照设计意图与落地事实）
+> **已归档**：定稿内容已并入架构文档 v1.4 §5.2.2（`docs/architecture/cockpit-agent-architecture.md`）——架构是唯一真相源，本 RFC 保留作设计过程与决策依据的记录。
 > 依据：母提案 `2026-07-24-eva-benchmark-intelligence-upgrade.md` §4.I / §4.B 档位表 / §6-M2；
 > 前序：M0a（确认兜底闸）/ M0b（Skill 层）/ M1a（submit_plan 默认 on）/ M1b（自进化+Shadow NLU）均已收口
 > 范围：**M2 最核心的两件解锁件**——Task Ledger（跨轮持久任务账本）与 Outcome Verifier
