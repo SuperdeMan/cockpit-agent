@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.3（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-07-24（v1.3 定稿归档）
+> 版本：v1.4（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-07-25（v1.4 定稿归档）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -364,6 +364,29 @@ Planner 的两种"智能供给"均已声明式化（设计详见 `docs/design/20
 1. **规划知识 Skill 层（`skills/`，M0b）**：领域组合知识与跨域判据从中央 system prompt 外迁为声明式文件——`guides/`（领域组合知识+few-shot，纯词法检索 top-K 按需注入）、`policies/`（跨域规划**软约束**，常驻注入）、`workflows/`（v2 预留）。`SKILLS_MODE=off|shadow|canary|full`（默认 full）；中央 `_PLANNER_BASE` 只余通用规划契约。**加规划知识=投 skill 文件，不改编排核心**——与 route_hints（LLM 之后的确定性纠错）互补：skill 是 LLM 之前的知识供给。权威链（软硬分层）：VAL/payment/Runtime Policy > Capability Manifest > Plan Validator > PlannerPolicyPack（软）> PlanningGuide（软）。
 2. **结构化规划输出（`submit_plan`，M1a）**：规划轮经原生 function calling 强制输出合法 Plan JSON（单一 `submit_plan` 工具、named tool_choice，`PLANNER_TOOLCALL=on|off` 默认 on），替代文本补全+脆弱 JSON 截取。schema 顶层=既有计划协议、**不含 `require_confirm`**（确认权在 capability manifest ∨ action ∨ VAL 硬层，LLM 无权降级）；协议失败轮内降级（同轮文本抢救→JSON 路径→兜底），最坏调用数与旧路径持平。承载走既有 `CompleteRequest.tools`/`CompleteResponse.tool_calls` Struct 字段（V1 不改 proto；V2 真 agentic tool loop 需 proto 演进）。
    - 实施教训（V2 设计约束）：tool schema 与输出指令会三向改变模型输出分布（可选字段诱发多填、无说明 object 诱发少填、"写全"指令诱发编造占位值）——凡改 schema 必过旅程级行为对照。
+
+### 5.2.2 执行治理：Task Ledger 与 Outcome Verifier（2026-07-25 定稿归档）
+
+规划期声明式化（§5.2.1）之后，**执行期**补齐两件解锁件（设计详见 `docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md`）：
+
+1. **Task Ledger（跨轮持久任务账本）**——「谁在替用户干活、干到哪了、还让不让它干」的唯一权威记录。
+   - **分层不重叠**：`SessionState`（Redis）盖对话挂起窗（确认/补槽，秒-分钟）；Ledger（PG 表 `task_ledger`）盖**任务生命周期**（分钟-小时、跨会话跨重启）。存储否决 Redis 选 PG，因为「跨重启诚实」正是它的核心价值。
+   - **落点在 SDK 侧**（`agents/_sdk/ledger.py`，挂 `BaseAgent.self.ledger`）：执行权本来就在 Agent 侧，登记权同侧则心跳/销单/预算都是进程内调用，无跨服务一致性问题。**接入长任务=调 `open`/`heartbeat`/`close` 三个函数，编排核心零改动**。v2 若编排器主动派发长任务，它成为同一存储契约的另一个客户端，消费面平移。
+   - **cancel 走拉模式**：置态 + 心跳搭车读状态，后台任务自行收尾——不跨进程强杀、不建新推送通道。取消延迟上限 ≈ 一次心跳。
+   - **预算与 deadline 是强制不是声明**：`budget` 里的 deadline/调用次数上限由心跳就地判定并截停，写 `stop_reason` 供区分「你叫停的 / 超时停了 / 预算用尽」三种话术。这把 Background 档守卫从口头承诺变成机制。
+   - **中断诚实报告**：崩溃/重启后 active 任务永不心跳 → 查询侧惰性判 `orphaned` → 答「查到一半中断了，要不要重新查」。**v1 刻意不做 checkpoint 自动续跑**（重跑成本低于序列化中间态）。
+   - **降级姿态**：PG 不可达时账本静默禁用，Agent 照常执行任务，只是受理话术不承诺可停可问。**刻意不做内存兜底**——承诺「可查询」而重启后答不上来，比没有账本更不诚实。
+   - 契约登记：`docs/conventions.md` §9.6。
+
+2. **Outcome Verifier（执行后对账）**——解「步骤 OK ≠ 结果达成」：车控步 VAL 层可能没落地、查询步可能拿了空数据，两者今天都以"成功"落地。
+   - **声明式是铁律**：期望由 `capability.verification` 声明（proto `Capability` field 7），中央只实现通用求值器，**不得出现任何 agent_id/intent 字面量分支**——否则会长成第二个 `fast_intent.py`。与 route_hints 把领域路由知识搬回 Agent 是同一条哲学，由源码断言契约测试钉死。
+   - v1 两个求值器：`schema`（`data_keys` 存在且非空，对症"空结果假 OK"）、`state_match`（对车况镜像逐键比对，对症"VAL 说成功、状态没落地"）。
+   - **三态语义**：SAT 通过 / UNSAT 进 `on_fail` / **UNKNOWN 不定罪**（观测缺失≠没做成，防假警）。
+   - `on_fail`：`report`（保持 **OK** 状态 + `data["_verify"]` 保留键 → 聚合器确定性拼接诚实口径，遵 R9 §9.5）、`retry`（**只对 `require_confirm=false` 的步开放**——副作用永不重放）。
+   - 挂点是 executor 尾链（`dispatch → _to_result → 确认兜底闸 → 对账`）**外加两条流式直通路径**（engine D0 / loop T2）显式调用，且流式路径不重试（话术已流出）。
+   - 求值源：`orchestrator/cloud/state_mirror.py` 只读订阅 NATS `vehicle.state.changed`（与 gateway/edge、collector、scene 三处镜像同源同形态），fail-open。
+
+二者就位后，T2 有界循环预算由单值升级为按 `plan.complexity` **分档**（Interactive / Complex；Background 归 Ledger 语义不占循环预算），并落**重复副作用防抖**（`(intent, 解析后 slots)` 指纹撞上即回填、动作不重发）——对症"replan 对已完成步骤失忆而重复产出同一动作"，比原设想的"副作用步不进循环体"精准（不阉割 T2 对副作用任务的编排能力）且可测。
 
 ### 5.3 为什么"规划/执行分离"是 P0 安全要求
 让 LLM 直接调用车控接口（function calling 直连车身）在量产不可接受：幻觉、注入攻击会变成真实的车辆动作。本设计中 LLM 的输出永远是"计划/意图"，所有副作用动作（尤其 `vehicle.control`）都要经过确定性的、可审计的 Executor + VAL 权限层（见 §9）。
@@ -770,5 +793,6 @@ agents/<name>/
 | v1.1 | 2026-06-15 | 定为当前架构基线（Phase 1 实施基线） |
 | v1.2 | 2026-07-17 | 内容性合入：§8.1 LLM 网关多模型运行时、§9.5 数据真实性（provider 决议契约与卡片 provenance）两主题定稿归档 |
 | v1.3 | 2026-07-24 | 内容性合入：§5.2.1 规划知识 Skill 层（M0b）与结构化规划输出 submit_plan（M1a）定稿归档 |
+| v1.4 | 2026-07-25 | 内容性合入：§5.2.2 执行治理——Task Ledger（跨轮持久任务账本、拉模式 cancel、预算强制、中断诚实报告）与 Outcome Verifier（声明式执行后对账、三态不定罪）定稿归档，含 T2 分档与重复副作用防抖 |
 
 > 校准记录（不 bump）：2026-07-02/03/10 同步 R1-R3 落地现状；2026-07-18 实现说明、§3.1 T0-T2 运行模型对应、点餐→周边发现、§13 目录映射校准。

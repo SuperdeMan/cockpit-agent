@@ -1,7 +1,8 @@
 # M2 子 RFC：Task Ledger + Outcome Verifier（核心件设计）
 
 > 日期：2026-07-25
-> 状态：设计定稿，待泓舟审后新会话编码（本 RFC 只做设计，不含实现）
+> 状态：**✅ P0/P1/P2 全落地并真栈验证（2026-07-25，落地记录见 §9）**；设计部分保持原稿，
+> 与实现的三处偏差已在 §9.1 逐条记账（不改原文，便于对照设计意图与落地事实）
 > 依据：母提案 `2026-07-24-eva-benchmark-intelligence-upgrade.md` §4.I / §4.B 档位表 / §6-M2；
 > 前序：M0a（确认兜底闸）/ M0b（Skill 层）/ M1a（submit_plan 默认 on）/ M1b（自进化+Shadow NLU）均已收口
 > 范围：**M2 最核心的两件解锁件**——Task Ledger（跨轮持久任务账本）与 Outcome Verifier
@@ -217,3 +218,62 @@ checkpoint 自动 resume（§2.5，重跑成本低于序列化中间态）；NAT
 | verifier retry 放大延迟 | 只对查询步开放 + max_attempts=1 缺省 + span 可观测 |
 | PgStore round-trip 再丢新字段（R2.1 旧坑） | 契约测试直接锁 manifest→register→resolve 全链 round-trip |
 | T2 放宽推高 P95 | §4.2 逐档灰度 + env 一行回退 |
+
+---
+
+## 9. 落地记录（2026-07-25，P0/P1/P2 单日完成）
+
+### 9.1 与设计稿的三处偏差（编码期发现，逐条记账）
+
+| # | 设计原文 | 落地事实 | 处置理由 |
+|---|---|---|---|
+| ① | §3.3「`expect.mirror` 指定源（v1 仅 `vehicle_state`——**engine 已持有 VAL 镜像/NATS 镜像**）」 | **事实错误**。编排器侧此前只有 NATS **出站**（obs 事件发布），无任何订阅；`ctx.fetch("vehicle_state")` 也拿不到车况（memory 无此 scope，manifest 的 `context_scopes: [vehicle_state]` 只控制 `vehicle_battery` 一个 meta 键是否下发）。**新建** `orchestrator/cloud/state_mirror.py` 只读订阅 `vehicle.state.changed` | 与 §1 自述「编排器侧无 NATS（grep 零命中）」自相矛盾，设计稿这一条没核。新建模块照仓库里已跑通三次的同一形态（gateway/edge 的 vehState、collector 的 CollectorStore、scene 的 StateMirror）；nats-py 已在 cloud requirements（obs 出口用），**零新依赖、零新通道**；全程 fail-open——镜像空 → UNKNOWN → 不定罪 |
+| ② | §3.4 挂点「`_exec_step` 尾链：dispatch → `_to_result` → `_enforce_capability_confirm` → `_verify_outcome`」 | 尾链之外**还有两条流式直通路径绕过 executor**：engine D0（单步 cloud agent 边想边说）与 loop T2 流式，二者直接 `DagExecutor._to_result(...)` 当结果用。已在两处显式调 `_verify_outcome(..., allow_retry=False)` | **真栈首验实测抓到**：`深圳天气怎么样` 走 D0 流式，一条 `step.verify` span 都没有——声明了却静默不生效。`allow_retry=False` 是因为话术已经流给用户了，重跑会重复播报。源码断言测试钉死（`test_streaming_paths_must_call_verify_outcome`） |
+| ③ | §3.4「UNSAT + `on_fail=report` → `data["_verify"]` … 聚合器话术加口径」 | 增一条通用判据 `executor._should_report`：结果**既无卡、无动作、data 也空**时不补口径 | Agent 按 R9 诚实降级（「附近暂时没找到」「服务暂时不可用」）正是这个形态——它已经把情况交代清楚，再补「这次没拿到实际内容」是重复念。判据零领域字面量：有 ui_card / actions / 非空 data = 声称有产出，那才是要报的「假完成」。span 照记 unsat，观测面不受影响 |
+
+另有两处**设计未写、实现补上**的细节：`heartbeat()` 对已被判 orphaned 的任务**迟到心跳复活**（拉回 running——orphaned 是判定不是结局，误判不该变成假的中断报告）；`open()` 幂等命中的若是孤儿则就地改判后放行新开单（否则用户被一条永不销单的尸体永久挡住重试）。
+
+### 9.2 P0 Task Ledger（deep-research 载体）
+
+- `agents/_sdk/ledger.py` + `ledger_schema.sql`：`open`/`heartbeat`/`close`/`cancel`/`query_active`/`recent`/`get`；纯函数层（`idem_key`/`budget_exhausted`/`merge_used`/`is_orphaned`）与 SQL 层分离，前者离线全覆盖。挂到 `BaseAgent.self.ledger`——**任何 Agent 接入长任务=调三个函数，编排核心零改动**。
+- deep-research 接入：`_kickoff_async` 开单（Duplicate → 「已经在查了」不重复开跑）；`_run_deep_async` 阶段边界 + `investigate` 每子问题收敛各打一次心跳（pipeline 加 `on_progress`/`should_stop` 两个可选钩子，缺省 None = 行为逐字不变）；`research.status`/`research.cancel` 两 capability + 收窄的 route_hints。
+- **话术三档诚实**：开单成功才承诺「可停可问」；账本不可用退回原话术（不承诺）；任务状态**从账本读后确定性作答，不进 LLM**（墙钟直答同一原则）。
+- 单测 59（`test_ledger.py` 36 + `test_ledger_integration.py` 23）+ pipeline 钩子 4。
+
+### 9.3 P1 Outcome Verifier
+
+- proto `Capability` field 7 + `Verification` message（`make proto` 既定流程）；全链：YAML → `_sdk/manifest.py` → register → **registry PgStore round-trip**（`_dict_to_verification`，R2.1 旧坑处补映射 + 3 条 round-trip 契约测试）→ resolve → `_validated_steps` 装配 `Step.verification`（**LLM 字段一律不读**，与 require_confirm 同一条权威链）→ executor 消费。挂起态 `_serialize_plan` 也带上它——确认后重跑的正是最该对账的车控步。
+- 两求值器（`orchestrator/cloud/verify.py`）：`schema`（data_keys 存在且非空；0/false 是真实值不算空）、`state_match`（对 NATS 车况镜像逐键比对，`timeout_ms` 内轮询等收敛）。三态 SAT/UNSAT/**UNKNOWN 不定罪**。
+- **防 fast_intent 化铁律**由源码断言测试钉死：`verify.py` 与 executor 三个钩子的代码行里不得出现任何 agent_id/intent 字面量；另有「临时 manifest 投新 capability 即生效」的即插即用测试（照 M0b skills 先例）。
+- 首批声明：`hvac.set/on/off`（state_match，edge-vehicle capabilities）、`info.weather`（schema/report）、`nearby.search`（schema/retry×1）。
+- 单测 44 + 镜像 8。
+
+### 9.4 P2 T2 分档 + 重复副作用防抖
+
+- 分档：`simple`→Interactive 2 次/8s、`adaptive`→Complex 3 次/12s（§4.2 第一档灰度值）；Background 不占循环预算（归 Ledger 语义）。**关键接线**：`.env.example` 与 compose 里原本是**活跃的** `PLANNER_LOOP_MAX_ITERS=2/BUDGET_MS=5000` 全局覆盖——不清空则分档完全不生效，两处已改为留空（填上=一键回退放宽前）。
+- 防抖（§4.3 对原「副作用步不进循环体」的重定义）：`StepResult.fingerprint` 记 `(intent, 解析后 slots)` 指纹，**只对产生了 actions 的 OK 结果打**；下一步撞上即回填、**动作不重发**。指纹在 `_resolve_slot_refs` **之后**算（否则「导航去 $s1.data.name」两次会被误判成同一件事）。
+- 单测 17。
+
+### 9.5 验证
+
+| 项 | 结果 |
+|---|---|
+| 全量 pytest | **1922 passed / 7 skipped**（基线 1787，净 +135，零回归） |
+| `test/e2e_ledger.py` 真栈五场景 | ✅ 全绿：受理开单（预算落库）→ 状态查询（**话术里的进度与账本逐字一致**）→ 幂等去重（不新开任务）→ cancel（16s 内后台停手、进度不再推进）→ **重启容器后 orphaned 诚实报告**（「查到一半中断了，要不要重新查一份？」） |
+| `test/e2e_verify.py` 真栈对账 | ✅ 全绿：`hvac.on` **state_match sat**（NATS 镜像确认世界真的变了）+ `nearby.search` **schema sat** + D0 流式直通路径同样产生 span + 未声明的能力零 span |
+| journeys（全量 @minimax，`--force-report` 覆盖 canonical） | 回归级 **12/14 + 1 数据真空 skip**、目标级 **15/18**（旧 canonical 13/18）；**P50 5.4s / P95 19.1s / n=68 —— P95 未劣化**（基线 25.5s，远优于「增量 ≤10%」门槛）。两条回归红灯**逐条复验为方差、非本卡引入**：A4-2 单独重跑 ✅（`wait_push` 收帧时序）；A3-1 同句连打三次 **2 绿 1 红**（抽风那次 planner 把「昨晚欧冠决赛比分」规划成 `info.search` 却漏填 query → 反问「您想搜什么？」，属 M1a 已登记的「tool schema 诱发少填槽位」族，与执行治理无关） |
+| L3 新增旅程 A6-1 / A6-2 | ✅ 2/2（`target_a.yaml`）：A6-1 受理→查进度（**答出「检索中 8/9 个子问题」真进度**）→喊停；A6-2 连说两遍答「已经在查了」 |
+| `eval_route_hints` / `eval_registry_resolve` | 98/98（新增 11 条：cancel/status 正例 7 + 反例 4）/ 15/15 无回归 |
+
+两个新 e2e 已挂进 `scripts/run_e2e.sh`。
+
+**真栈踩坑三条**：① 首验设计的 orphaned 场景（把 heartbeat_at 改老）不成立——进程还活着，下一次心跳把任务复活了（正是 §9.1 的防误判机制），改为**真重启容器**才是 DoD 说的场景；② e2e 里连 created_at 也改老，导致「最近一条」排到了更早的已取消任务上（只改 heartbeat_at）；③ collector span 的名字段是 `node` 不是 `name`（M0b 已记过同一坑，又踩一次）。
+
+### 9.6 未做与边界（诚实清单）
+
+- **UNSAT→retry→report 未在真栈验**：首批三处声明在当前代码下都不会自然 unsat（nearby 空结果时 Agent 已按 R9 诚实降级、无卡无 data；weather 的 data 恒非空）——这恰恰说明这两个 Agent 今天没有假完成，verifier 是**防回归的护栏**。硬造 unsat 需故障注入或临时改声明重建容器，收益不抵成本；该路径由 44 条契约测试逐条锁定（retry 次数、副作用不重放、R9 口径、聚合器话术）。同款取舍先例：M0a 的 strict_stack 故障注入断言也落在 unit 层。
+- **`hvac.*` 的 state_match 触发面窄**：单句「打开空调」走端侧快路径根本不上云，云侧 executor 看不到；只有混合多意图句（「帮我把空调打开，再查一下附近有什么好吃的」）才会规划出云侧 hvac 步。这是 T0 设计使然，不是缺陷——真栈验证用的正是这类句子。
+- **§4.2 后续档位未放**：Complex 只放到第一档 3 次/12s，`3-4 次/15s` 与 Interactive 跟进等下一轮 journeys 双指标数据。
+- **L3 只补了 2 条（不是 DoD 写的 4 条）**：①cancel + ③幂等受理已入 target 级（A6-1/A6-2，2/2 绿）；②orphaned 续接要**重启容器**（runner 不做基础设施操作，已由 `e2e_ledger.py` 场景⑤覆盖）；④verify 失败话术在真栈不可自然触发（见上一条）。两条的实质覆盖在 e2e/单测里，不在 journeys 里。
+- **A3-1 的既有槽位抖动未修**：属 M1a「tool schema 三向改变输出分布」族的延续（`info.search` 漏填 query 就反问，而信息明明在原话里），是既有 provider 边界方差，本卡不扩范围；若要修，落点是 skills 的 policy 或 info.search 的原话兜底，需独立卡与 eval 对照。
+- 仍按 §7 不做：checkpoint 自动 resume、NATS cancel 推送、readback 求值器、显式 `on_fail=replan`、Ledger 的 HMI 任务中心面板、编排器主动派发长任务。记忆图谱另出子 RFC。

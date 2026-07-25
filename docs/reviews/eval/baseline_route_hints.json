@@ -1,32 +1,32 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-07-15T06:51:06.382692+00:00",
-    "commit": "81c02ec"
+    "generated_at": "2026-07-25T02:34:23.892316+00:00",
+    "commit": "e743ee8"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 84
+      "count": 98
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 51,
-      "passed": 51,
+      "total": 61,
+      "passed": 61,
       "failures": [],
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 33,
-      "passed": 33,
+      "total": 37,
+      "passed": 37,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 84,
-    "passed": 84,
+    "total": 98,
+    "passed": 98,
     "pass_rate": 1.0
   },
   "cases": {
@@ -216,6 +216,40 @@
         "replace"
       ],
       "source": "真·周边详情不被赛事修复误伤"
+    },
+    "route::这场比赛你预测谁会赢": {
+      "id": "route::这场比赛你预测谁会赢",
+      "bucket": "route_recall",
+      "text": "这场比赛你预测谁会赢",
+      "expected": [
+        "info.sports"
+      ],
+      "actual": [
+        "info.sports"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "sports",
+        "predictive",
+        "replace"
+      ],
+      "source": "badcase bfb5d9c7：LLM 误路由 info.search 也被取代（handler 带锚点让路检索）"
+    },
+    "route::这场官司你觉得谁会赢": {
+      "id": "route::这场官司你觉得谁会赢",
+      "bucket": "route_guardrail",
+      "text": "这场官司你觉得谁会赢",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "sports",
+        "predictive",
+        "guardrail"
+      ],
+      "source": "guard 反例：非赛事的「这场…谁会赢」不进赛事域"
     },
     "route::明天早上八点提醒我带充电线": {
       "id": "route::明天早上八点提醒我带充电线",
@@ -1490,6 +1524,225 @@
         "guardrail"
       ],
       "source": "反向护栏：时间感慨句非钟点问句（整句锚定不命中），留给 LLM"
+    },
+    "route::别查了": {
+      "id": "route::别查了",
+      "bucket": "route_recall",
+      "text": "别查了",
+      "expected": [
+        "research.cancel"
+      ],
+      "actual": [
+        "research.cancel"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "ledger",
+        "cancel",
+        "recall"
+      ],
+      "source": "M2 P0 拉模式取消入口（RFC §2.4）"
+    },
+    "route::不用查了": {
+      "id": "route::不用查了",
+      "bucket": "route_recall",
+      "text": "不用查了",
+      "expected": [
+        "research.cancel"
+      ],
+      "actual": [
+        "research.cancel"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "ledger",
+        "cancel",
+        "replace"
+      ],
+      "source": "M2 P0：LLM 误落闲聊时确定性纠偏到取消"
+    },
+    "route::取消那个调研": {
+      "id": "route::取消那个调研",
+      "bucket": "route_recall",
+      "text": "取消那个调研",
+      "expected": [
+        "research.cancel"
+      ],
+      "actual": [
+        "research.cancel"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "ledger",
+        "cancel",
+        "recall"
+      ],
+      "source": "M2 P0 取消（明确宾语）"
+    },
+    "route::固态电池那个调研不用查了": {
+      "id": "route::固态电池那个调研不用查了",
+      "bucket": "route_recall",
+      "text": "固态电池那个调研不用查了",
+      "expected": [
+        "research.cancel"
+      ],
+      "actual": [
+        "research.cancel"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "ledger",
+        "cancel",
+        "recall"
+      ],
+      "source": "M2 P0 取消（带主题，供 Agent 侧多条消歧）"
+    },
+    "route::那个调研查得怎么样了": {
+      "id": "route::那个调研查得怎么样了",
+      "bucket": "route_recall",
+      "text": "那个调研查得怎么样了",
+      "expected": [
+        "research.status"
+      ],
+      "actual": [
+        "research.status"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "ledger",
+        "status",
+        "recall"
+      ],
+      "source": "M2 P0 状态查询（确定性直答，不进 LLM）"
+    },
+    "route::调研有结果了吗": {
+      "id": "route::调研有结果了吗",
+      "bucket": "route_recall",
+      "text": "调研有结果了吗",
+      "expected": [
+        "research.status"
+      ],
+      "actual": [
+        "research.status"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "ledger",
+        "status",
+        "replace"
+      ],
+      "source": "M2 P0 状态查询：闲聊误路由的确定性纠偏"
+    },
+    "route::还在查吗": {
+      "id": "route::还在查吗",
+      "bucket": "route_recall",
+      "text": "还在查吗",
+      "expected": [
+        "research.status"
+      ],
+      "actual": [
+        "research.status"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "ledger",
+        "status",
+        "recall"
+      ],
+      "source": "M2 P0 状态查询（整句锚定，防泛化劫持）"
+    },
+    "route::取消明天的提醒": {
+      "id": "route::取消明天的提醒",
+      "bucket": "route_guardrail",
+      "text": "取消明天的提醒",
+      "expected": [
+        "reminder.cancel"
+      ],
+      "actual": [
+        "reminder.cancel"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "ledger",
+        "cancel",
+        "guardrail",
+        "reminder"
+      ],
+      "source": "反向护栏：guard「提醒」拦下——提醒有自己的取消语义，不被调研取消抢"
+    },
+    "route::取消导航": {
+      "id": "route::取消导航",
+      "bucket": "route_guardrail",
+      "text": "取消导航",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "ledger",
+        "cancel",
+        "guardrail",
+        "navigation"
+      ],
+      "source": "反向护栏：guard「导航」拦下"
+    },
+    "route::别查天气了": {
+      "id": "route::别查天气了",
+      "bucket": "route_guardrail",
+      "text": "别查天气了",
+      "expected": [
+        "info.weather"
+      ],
+      "actual": [
+        "info.weather"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "ledger",
+        "cancel",
+        "guardrail",
+        "weather"
+      ],
+      "source": "反向护栏：pattern 要求整句就是「别查了」，带宾语的句子不劫持"
+    },
+    "route::深入调研一下固态电池": {
+      "id": "route::深入调研一下固态电池",
+      "bucket": "route_recall",
+      "text": "深入调研一下固态电池",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "ledger",
+        "guardrail",
+        "run"
+      ],
+      "source": "反向护栏：发起调研不被 cancel/status 抢（run=100 > 95，且 pattern 不重叠）"
     }
   }
 }

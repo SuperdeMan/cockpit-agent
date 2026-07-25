@@ -348,10 +348,17 @@ verification:
 - 自进化 v1 流水线（含 §4.G 安全治理）；Cloud Shadow NLU 影子评测（8590 语料混淆矩阵→切换建议）；情感 TTS 参数并行落、**不作阻塞 DoD**。
 - DoD：首份 nightly badcase 报告落库；影子评测报告产出切换建议。
 
-**M2 执行治理与放宽（约 2-3 周；先出 Ledger/Verifier + 记忆图谱生命周期子 RFC）**
+**M2 执行治理与放宽（先出 Ledger/Verifier + 记忆图谱生命周期子 RFC）**
 - 核心件子 RFC 已出（2026-07-25）：`docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md`——Ledger 落点修正为 SDK+PG 层（编排核心零改动，理由 §2.1）、cancel 拉模式、Verifier 走 route_hints 同款 proto 全链、"副作用简单闸"重定义为重复副作用防抖（§4.3 现状分析）；记忆图谱另出子 RFC。
 - Task Ledger + Outcome Verifier（§4.I，verification 声明式契约）；T2 Interactive/Complex 档逐档放宽（journeys 时延与红灯双指标护栏）；记忆图谱（preference/relation + 巩固聚合 + 注入升级 + §4.D 生命周期强制项）。
 - DoD：中断-续接/幂等旅程用例入 L3；放宽后 P95 不劣化超阈；偏好演进旅程绿。
+- **落地记录（2026-07-25，核心件 P0/P1/P2 单日完成；全量细节见子 RFC §9）**：
+  - **P0 Task Ledger**：`agents/_sdk/ledger.py` + PG `task_ledger` 表（契约登记 conventions §9.6），deep-research 首批接入。**Background 档六守卫的三张空头支票全兑现**——deadline/cancel/预算从「设计里写了」变成账本里的字段与心跳里的强制。真栈五场景全绿：受理开单 → 状态查询（**话术里的进度与账本逐字一致，不进 LLM**）→ 幂等去重（连说两遍不双跑）→ cancel 16s 内后台停手 → **重启容器后 orphaned 诚实报告**。
+  - **P1 Outcome Verifier**：proto `Capability` field 7 + 两求值器（schema / state_match），三态 UNKNOWN 不定罪；**防 fast_intent 化由源码断言测试钉死**（中央零领域字面量 + 新 capability 投声明即生效）。首批三处试点。真栈：`hvac.on` state_match **sat**（NATS 镜像确认世界真的变了）+ `nearby.search` schema sat。
+  - **P2**：T2 按 `plan.complexity` 分档（Interactive 2/8s、Complex 3/12s——§4.B 档位表第一档）+ 重复副作用防抖（§4.3 重定义，指纹撞上即回填、动作不重发）。
+  - **子 RFC 设计有三处偏差被编码期推翻并记账**（子 RFC §9.1）：① §3.3「engine 已持有 NATS 镜像」是事实错误（编排器侧只有出站，无订阅）→ 新建只读镜像模块；② 挂点漏了 engine D0 / loop T2 两条**流式直通路径**——真栈首验实测「一条 verify span 都没有」，声明了却静默不生效；③ report 口径增「Agent 已诚实降级则不重复念」判据。
+  - 验证：全量 pytest **1922 passed/7 skipped**（基线 1787，+135 零回归）；journeys 全量 @minimax **回归 12/14+1 数据真空 skip / 目标 15/18**（旧 canonical 13/18）、**P95 19.1s vs 基线 25.5s 未劣化**（DoD「增量 ≤10%」达标）——两条回归红灯逐条复验为方差非本卡引入（A4-2 单跑绿=wait_push 时序；A3-1 同句三次 2 绿 1 红=M1a「tool schema 诱发少填槽位」族的既有抖动）；**L3 新增 A6-1/A6-2 2/2 绿**（cancel 与幂等两条 DoD 用例；orphaned 续接需重启容器留在 e2e_ledger、verify 失败真栈不可自然触发）；`eval_route_hints` 98/98（+11）；两个新 e2e 挂进 `run_e2e.sh`。
+  - **余项**：记忆图谱（独立子 RFC，M2 后半）；Complex 档后续放宽（3-4 次/15s）与 Interactive 跟进等下一轮双指标数据。
 
 **M3 主动与生态（约 2-3 周；先出 MCP 安全与交易生命周期子 RFC）**
 - 统一主动引擎（四路收敛 + P1b geofence）；受控 MCP 桥（一读一写首批，准入/审计/熔断全过 + §4.F 写操作生命周期强制项）。
