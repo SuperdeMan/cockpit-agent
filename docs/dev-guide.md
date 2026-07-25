@@ -162,6 +162,7 @@ dashboard 四视图见 `docs/conventions.md` §8 与 `dashboard/README.md`；真
 | ASR webm 格式返回 500 | Docker 镜像需含 ffmpeg（`llm-gateway/Dockerfile` 已加 `apt-get install ffmpeg`）；需 `docker compose build --no-cache llm-gateway` |
 | 新车控指令返回"暂不支持该端侧指令" | 检查 `orchestrator/edge/knowledge/commands.yaml` 是否含该 object；`fast_intent.py` 的 `LOCAL_INTENTS` 是否含该 intent name |
 | `make proto` 后报 `Detected incompatible Protobuf Gencode/Runtime versions`（gencode 新于 runtime）| buf 默认拉最新 python 插件，可能比运行时 protobuf 新。已在 `buf.gen.yaml` 把 `protocolbuffers/python` 钉到 `v35.0`（gencode 7.35.0 = 运行时 protobuf 7.35.0）；升级运行时 protobuf 时需同步该 pin（插件号 `vX.Y` → gencode `7.X.Y`）|
+| 某容器起不来报 `ports are not available … forbidden by its access permissions`（Windows）| Windows **winnat 动态保留区间**吞了该宿主端口（`netsh int ipv4 show excludedportrange protocol=tcp` 查；实测 50063-50162 覆盖了 `edge-orchestrator` 的 50070）。**容器一直在跑时不会暴露**——一旦停掉，端口立刻被区间吸收，就再也起不来。<br>① 治本要管理员：`net stop winnat` → `docker compose up -d` → `net start winnat`（**改系统服务状态，先问机主**）。<br>② 无管理员的应急（有先例、已验证）：**临时去掉宿主端口发布**，容器间调用走 docker DNS 不受影响——先确认宿主侧无脚本依赖该端口，然后叠一个不进仓库的 override：<br>`services: {<svc>: {ports: !reset []}}` + `docker compose -f compose.yaml -f <override> up -d --no-deps <svc>`。<br>**`ports: []` 不管用**——compose 的 ports 是追加语义，必须 `!reset`（需 compose ≥2.24）。<br>③ 连带提醒：`docker compose up --build <svc>` 会顺着 `depends_on` 重启依赖服务，可能把本来健在的容器停掉后起不来；只想重建一个服务时加 `--no-deps`。|
 
 ---
 
