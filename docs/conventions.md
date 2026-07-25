@@ -542,3 +542,23 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 > `priority`（+ 按需 `conditions`/`dedup_key`/`ttl_ms`）即可，**治理器与网关都不用改**。
 > 生产侧自身的节流（如 road-safety 的 30/60 分钟）**保留**：生产侧防抖与中央治理是两层，
 > 中央管的是跨生产方那一半。
+
+### 9.9 MCP 准入清单契约（`agents/mcp_bridge/servers.yaml`，M3 P2）
+
+受控 MCP 桥：**一个 Agent 承载 N 个 MCP server**，接入永远是**人工准入**而不是动态放行
+（母提案 §4.F 明列「MCP 动态放行注册」为不做项）。设计
+`docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md` §4。
+
+| 项 | 约定 |
+|---|---|
+| 唯一准入依据 | `servers.yaml`。改这个文件 + 人工审才能接新工具；**不改 Agent 代码、不改编排核心** |
+| 三重锁定 | ① `version` 与 server 自报 `serverInfo.version` **逐字相等**，否则拒载；② tool 白名单（server 多提供的直接忽略，清单里有而 server 没有 → 记拒绝理由）；③ `schema_sha` 指纹（`inputSchema` 排序后 sha256 前 12 位，变了就拒载重审；留空=首次接入只记录） |
+| 写操作强制项 | `write: true` 必须同时有 `require_confirm: true`、`idempotency_key_arg`、`compensate_tool`——**没有补偿路径的写操作 admission 直接拒载**（§4.F 生命周期五项） |
+| 幂等键 | = **请求指纹** `idem_key(user_id, kind, 归一化 goal)`，与账本 `idempotency_key` 列同源。**不得用 task_id**（每次调用都新 = 等于没有幂等，重说一遍就双扣） |
+| 订单状态机 | 复用 `task_ledger`（kind=`mcp_order`），**不新建表**——它是 M2 Ledger 的第二个载体 |
+| 超时口径 | 调用超时 **≠ 没下单**：诚实说「不确定，稍后帮你核对」并把账目落 `failed`，绝不假装失败或成功 |
+| 演示商户 | `demo: true` → 卡片 `demo`/`demo_label` 角标 + `_prov.mode=mock`+note + 话术前缀「（演示商户）」**三重冗余**。演示不是问题，把演示装成真实才是 |
+| 能力合成 | capability 由 `bootstrap()` 在 `serve()` **之前**从准入清单合成（注册在 serve 里发生，晚一步注册中心就看到空能力表）；manifest.yaml 的 `capabilities` 故意留空 |
+| 权限 | 一律 `trust_level: third_party`（硬上限表自动禁高危车控/精确位置/摄像头麦克风）+ `network.external`；涉钱走 payment-gateway，Agent 不持凭证 |
+| 故障隔离 | 一台 server 起不来/版本不符 → **只让它自己的工具缺席**，桥照常服务其余；绝不静默降级成假数据 |
+| 不做 | resources/prompts/sampling、HTTP/SSE transport、动态放行注册（子 RFC §7） |

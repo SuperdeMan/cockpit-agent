@@ -1,7 +1,9 @@
 # M3 子 RFC：统一主动引擎 + 受控 MCP 桥
 
 > 日期：2026-07-25
-> 状态：**设计待审**（§9 三个决策点待泓舟拍板）
+> 状态：**✅ P0/P1/P2 全落地并真栈验证（2026-07-25，落地记录见 §10）**；设计部分保持原稿，
+> 与实现的五处偏差已在 §10.1 逐条记账（不改原文，便于对照设计意图与落地事实）
+> **已归档**：定稿内容已并入架构文档 **v1.6 §7.2/§7.3**（`docs/architecture/cockpit-agent-architecture.md`）——架构是唯一真相源，本 RFC 保留作设计过程与决策依据的记录。
 > 依据：母提案 `2026-07-24-eva-benchmark-intelligence-upgrade.md` §4.E / §4.F / §6-M3
 > 前序：M0a（确认兜底闸）/ M0b（Skill 层）/ M1a（submit_plan）/ M1b（自进化+Shadow NLU）/ M2（Ledger+Verifier+记忆图谱）全部收口
 > 范围：**M3 两件事**——统一主动引擎（四路→六路主动收敛 + reminder P1b 位置触发）与受控 MCP 桥
@@ -369,3 +371,93 @@ servers:
 - 母提案 §4.E 说「四路主动」，实际是**六路**（deep-research 三处 + info 早报是 M1 之后新增的，
   提案盘点时口径没跟上）。迁移清单按六路 + 位置提醒 = 七路。
 - 母提案 §4.E 说「判断规则复用 scene 的三态求值器」——**复用的是设计不是代码**（§2.4 理由）。
+
+---
+
+## 10. 落地记录（2026-07-25，P0/P1/P2 单日完成）
+
+> 设计部分保持原稿；与实现的偏差在 §10.1 逐条记账（不改原文，便于对照设计意图与落地事实）。
+
+### 10.1 与设计稿的偏差（编码期发现，逐条记账）
+
+1. **`merge_group` 删除**（§2.2 已就地标注）：合并规则就是「同窗到达即合并」，分组键**没有消费方**。
+   按 M2 沉淀的「消费面先于存储面」，没有消费方的字段不建——设计稿写了，编码期删掉。
+2. **免打扰默认值从 `23:00-07:00` 改为空**（§9-3 泓舟拍板）：车机夜间场景与手机不同，
+   机制建好但不预设口径。
+3. **位置提醒不加新列**（§3 原文写「加 4 个列」）：字段级对照后发现地点数据
+   （place/lat/lon/radius/trigger_on）**只在按 `kind` 选出条目后被读，从不参与过滤或排序**，
+   既有 `extra` JSONB 就是它的家。只有 `kind` 增第三态 `location`。
+   （与 M2 记忆图谱「加列不建表」同一条判据：先做字段级对照，再决定要不要动 schema。）
+4. **MCP 槽位词表与工具参数名解耦**（设计稿没写，真栈才暴露）：capability 声明 `slots: [sku]`
+   时 planner 填不进去——LLM 自然会用 `item`（"点一杯拿铁"），不会用商户的内部词 `sku`。
+   加 `arg_map: {item: sku}` 在准入清单里做映射，**桥本身不含任何领域词**。
+5. **road-safety 存量缺陷顺手修**（不在设计范围内，真栈实测撞上）：见 §10.5。
+
+### 10.2 P0 统一主动引擎
+
+- 新服务 `proactive/`（governor / evaluate / mirror / main + README），
+  共享客户端 `runtime/proactive.py`，契约登记 conventions §9.8。
+- 六路生产方全部迁移（memory routine / road-safety / reminder / scene 触发×2 /
+  deep-research×3 / info 早报），各自在信封里声明 priority + dedup_key（+ conditions/ttl）。
+- 新生产方 `charging-planner` 低电量建议（`src/low_battery.py`）——母提案 DoD 场景
+  「电量 18% + 顺路有桩」的电量那一半，此前**没有任何生产方会因为低电量说话**。
+- **零 kind 字面量**由源码断言测试钉死；**迁移不许漏**由全仓字面量断言钉死。
+
+### 10.3 P1 位置提醒（reminder P1b）
+
+`placeparse.py`（ETA 族词形主动让路，防两条链路抢同一句话）+ `geofence.py`（首次观测只播种）
++ store `kind=location` + 地点四级解析。**解析不出就诚实追问**，不存永不触发的提醒。
+
+### 10.4 P2 受控 MCP 桥
+
+- `agents/mcp_bridge/`：`mcp_client.py`（stdio JSON-RPC）/ `admission.py`（三重锁定）/
+  `agent.py`（读写两条路径）/ `servers.yaml`（唯一准入依据）/ `demo_servers/demo_coffee.py`
+  （演示商户替身）。契约登记 conventions §9.9。
+- **写操作生命周期五项全兑现**：幂等键=请求指纹（`idem_key(user, kind, goal)`，
+  与账本 `idempotency_key` 列同源）/ 订单状态机复用 `task_ledger`（kind=`mcp_order`，不建表）/
+  timeout·cancel / 补偿（`compensate_tool` 缺失即拒载）/ 审计（结构化日志带 server·tool·订单号·金额·账本 id）。
+- **第三方互操作已验**（§4.3 承诺项）：用我们的 `StdioMcpClient` 打官方参考实现
+  `@modelcontextprotocol/server-everything` v2.0.0 —— 握手（protocolVersion `2025-06-18`）、
+  `tools/list`（12 个工具）、schema 指纹、`tools/call`（`Echo: hello from cockpit`）全通。
+  **顺带确认一条协议细节**：调不存在的工具，参考实现返回的是 `result.isError=true`
+  而不是 JSON-RPC `error`——MCP 区分「协议错误」与「工具执行错误」，我们的客户端两条都处理
+  （`call_tool` 返回 `ok=False`，Agent 侧据此走诚实话术）。
+
+### 10.5 顺手修的存量缺陷：road-safety 把周期快照当成「进入新区域」
+
+真栈跑 journeys 时天气域整片变红（B1-4/B3-4「抱歉，处理失败」）。追下去不是本卡引入的：
+`orchestrator/edge/main.py` 每 30s 发一次**全量车况快照**，快照里 `location` 必在 changes 里，
+而 road-safety 的 `_on_state_event` **不比对上一次**，于是车停着不动也每 30 秒查一次天气预警。
+本次 e2e 注入的合成地名查不到 → 每 30 秒一次和风 400 → **把共享的 qweather 熔断器打开** →
+天气域跟着一起垮。改为「位置真的变了才评估」（语义上「进入新区域」本来就该是变沿），
+e2e 注入的 location 也补上真实 `city`。
+
+> 教训（可复用）：**周期性全量快照会把「变更回调」变成「定时器」**。任何挂在
+> `vehicle.state.changed` 上的消费方，只要语义是「变了才做」，就必须自己比对上一次——
+> 广播端不承诺只发增量。scene triggers 的边沿判定、charging 的低电量变沿、reminder 的围栏
+> 播种都是这条，road-safety 是唯一漏掉的那个。
+
+### 10.6 验证
+
+| 项 | 结果 |
+|---|---|
+| 全量 pytest | **2122 passed / 7 skipped**（基线 2041，净 **+81**，零回归） |
+| `e2e_proactive` | **16/16**（单条直通字节级兼容 / DoD 合并 / 卡片 card_group / 跨生产方去重 / 断言投递期复核 / user_contract 豁免 vs advisory 延后 / 频控） |
+| `e2e_geofence` | **7/7**（真高德解析坐标 → 播种 → 进围栏触达一次 → 不重复） |
+| `e2e_mcp` | **10/10**（准入边界 / 只读真数据 + 演示标注三重冗余 / 确认链 / 下单 / 幂等不双扣） |
+| journeys regression | **14/14 @minimax**（road-safety 修复后；修复前因熔断器被打开红 3 条） |
+| `eval_route_hints` | **101/101**（+3 位置提醒路由与 ETA 族并存） |
+| fail-open 真栈手验 | 停 `proactive` 容器 → 生产方日志 `NoRespondersError` 毫秒级回落直发老主题，低电量建议照常到达 |
+| 第三方 MCP 互操作 | 官方 `server-everything` v2.0.0 握手/列表/调用全通（§10.4） |
+
+### 10.7 未做与边界（诚实清单）
+
+- 治理器**无持久化**：重启丢待发/延后队列与频控计数（这些消息生命周期以秒计，落库不值当）。
+  e2e 正是靠「重启即净初态」做重置，顺带证明了这条设计。
+- 合并话术是**确定性拼接**（「A。另外，B」），LLM 改写合并留 v2（且必须只重述不新增事实）。
+- 位置提醒的 `location` 今天只能由 debug 通道注入（PoC 没有真实 GPS 流）；接上真车 GPS 后
+  围栏模块零改动——它只消费广播。
+- MCP 首批是**演示商户**（真实商户 BD 是非技术依赖，母提案已标）；resources/prompts/sampling、
+  HTTP/SSE transport、动态放行注册均不做。
+- 多用户维度的免打扰/频控、主动消息的用户偏好学习（「这类别再提醒我」）无消费方，不做。
+- 治理器的 dashboard 视图后置（`obs.proactive.decision` 事件已在发，消费面待建）。

@@ -506,6 +506,20 @@ services:
       retries: 10
     depends_on: [prometheus]
 
+  # ── 受控 MCP 桥（M3 P2）──
+  # 一个 Agent 承载 N 个 MCP server；接入永远是**人工准入**（agents/mcp_bridge/servers.yaml
+  # 的 allowlist + 版本锁定 + schema 指纹），不是动态放行。首批一读一写（演示商户）。
+  mcp-bridge:
+    <<: *restart
+    build: { context: .., dockerfile: agents/mcp_bridge/Dockerfile }
+    volumes: *certs-vol
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50076"
+      # 写操作订单状态机复用 M2 task_ledger（不新建表）；无 PG → 诚实降级不承诺可查
+      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+    depends_on: [registry, llm-gateway, memory, postgres]
+
   # ── 统一主动引擎（M3 P0）──
   # 「该不该现在打扰驾驶员」的唯一裁决点：订 agent.proactive.request → 六道闸 + 合并窗口
   # → 发既有 agent.proactive（网关与 HMI 零改动）。**它可以随时死掉**：生产方经

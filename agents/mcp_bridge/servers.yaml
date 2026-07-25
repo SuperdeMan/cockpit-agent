@@ -1,0 +1,47 @@
+# MCP 准入清单（M3 P2）—— **唯一准入依据，改这个文件 + 人工审才能接新工具**。
+#
+# 母提案 §4.F「MCP 动态放行注册」是明确的不做项：外部服务改了接口，我们必须重新审，
+# 而不是自动接受。所以这里同时锁三样东西：
+#   1. server 版本（`version` 与 server 自报的 serverInfo.version **逐字相等**，否则拒载）
+#   2. tool 白名单（server 多提供的工具直接忽略；清单里有而 server 没有 → 记拒绝理由）
+#   3. tool schema 指纹（`schema_sha`，接口变了就拒载重审；留空=首次接入，只记录不校验）
+#
+# 写操作额外强制：必须声明 `compensate_tool`（补偿路径），否则拒载——
+# 没有退款/取消路径的写操作不许接真实商户（§4.F 生命周期五项之一）。
+#
+# 契约登记见 docs/conventions.md §9.9。
+
+servers:
+  - id: demo-coffee
+    # **演示商户**：真实商户的替身，存在的唯一目的是让写操作生命周期能在真栈被验证。
+    # demo: true → 卡片打 _prov=demo + HMI「演示商户」角标 + 话术明说（诚实标注是硬要求）。
+    demo: true
+    trust: third_party
+    transport: stdio
+    command: ["python", "-m", "agents.mcp_bridge.demo_servers.demo_coffee"]
+    version: "0.1.0"
+    startup_timeout_ms: 20000
+    tools:
+      # ── 只读 ──
+      - name: menu.list
+        intent: shop.menu
+        write: false
+        schema_sha: "f46214ddb414"
+        description: 查看咖啡店菜单与价格（演示商户）
+        slots: []
+        examples: ["咖啡有什么", "看看咖啡菜单", "咖啡多少钱"]
+        timeout_ms: 8000
+      # ── 可确认写入（生命周期五项齐备才允许准入）──
+      - name: order.create
+        intent: shop.order
+        write: true
+        require_confirm: true          # 中央确认闸（M0a）会强制落实，Agent 漏标也拦得住
+        idempotency_key_arg: idempotency_key
+        compensate_tool: order.cancel  # 缺它 → admission 拒载
+        schema_sha: "041a13dc1703"
+        description: 下单一杯咖啡（演示商户，不产生真实交易）
+        # 规划期槽位用自然词（LLM 会填 item/size），经 arg_map 翻成商户的参数名
+        slots: [item, size]
+        arg_map: {item: sku, size: size}
+        examples: ["点一杯拿铁", "来杯大杯美式", "帮我买杯咖啡"]
+        timeout_ms: 15000

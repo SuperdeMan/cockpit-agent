@@ -1,0 +1,19 @@
+agent_id: mcp-bridge
+version: 0.1.0
+display_name: 生态服务桥
+category: ecosystem
+trust_level: third_party      # 外部服务一律 third_party（硬上限表自动禁高危车控/精确位置）
+deployment: cloud
+latency_budget_ms: 20000      # 外部 server 走子进程 + 网络，给足余量
+fallback: chitchat
+
+# **capabilities 故意留空**：由 `servers.yaml` 准入清单在启动期合成
+# （`McpBridgeAgent.bootstrap()`，注册发生在 serve 之前）。
+# 新增工具 = 改 servers.yaml + 人工审，不改本文件、不改编排核心。
+capabilities: []
+
+requires_permissions:
+  - network.external          # 外部服务出站
+  - payment.invoke            # 写操作涉钱时经 payment-gateway（Agent 不持凭证）
+edge_intents: []
+context_scopes: []            # 生态桥不需要精确位置/电量
