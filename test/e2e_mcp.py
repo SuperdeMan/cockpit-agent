@@ -15,6 +15,7 @@
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -60,6 +61,19 @@ async def ask(text: str, session: str = SESSION) -> dict:
     return {}
 
 
+def reset_bridge() -> None:
+    """重启 mcp-bridge = 演示商户净初态。
+
+    演示 server 的订单表是**进程内**的（它是真实商户的替身，不该自建持久化）——
+    不重置的话，第二遍跑「确认后真的下单了」拿到的是上一遍的幂等复用响应，
+    那条断言就名不副实了。真实商户不需要这一步：幂等是按请求指纹算的，
+    换一天/换一单自然就是新单。
+    """
+    subprocess.run(["docker", "compose", "restart", "mcp-bridge"],
+                   capture_output=True, text=True, timeout=180)
+    time.sleep(18)          # 覆盖 MCP 握手 + registry 重注册
+
+
 def bridge_capabilities() -> list | None:
     """直接问注册中心：mcp-bridge 注册了哪些 intent（None=没注册上）。
 
@@ -94,6 +108,7 @@ def cards_of(msg: dict) -> list:
 
 
 async def main():
+    reset_bridge()          # 净初态（见 reset_bridge 注释）
     print("── 1. 准入边界：注册中心只看得到清单里的能力 ──")
     caps = bridge_capabilities()
     record("mcp-bridge 已注册", caps is not None, "" if caps else "注册中心里没有")
@@ -129,8 +144,8 @@ async def main():
     print("\n── 4. 确认后下单 + 幂等 ──")
     res = await ask("确认", sess)
     sp1 = res.get("speech", "")
-    ordered = "订单" in sp1 or "下单" in sp1
-    record("确认后真的下单了", ordered, sp1[:70])
+    ordered = ("订单" in sp1 or "下单" in sp1) and "已经下过了" not in sp1
+    record("确认后真的下单了（新单，不是幂等复用）", ordered, sp1[:70])
 
     res = await ask("点一杯大杯拿铁", f"{SESSION}-order2")
     if "确认" in res.get("speech", ""):

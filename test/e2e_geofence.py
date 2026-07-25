@@ -38,6 +38,7 @@ SESSION = f"e2e-geofence-{int(time.time())}"     # e2e- 前缀：跳过记忆抽
 # 脚本再把它读回来当围栏中心——这样验的是真实解析链路，而不是脚本自己编的坐标。
 PLACE = "望京SOHO"
 TITLE = "拿文件"
+CITY_CENTER = {"lat": 39.9950, "lng": 116.4800, "city": "北京市", "name": "北京市朝阳区"}
 _results: list[bool] = []
 
 
@@ -106,6 +107,12 @@ async def main():
         except Exception:
             pass
     await nc.subscribe("agent.proactive", cb=on_proactive)
+
+    # 显式前置：车在市区。地点解析走 nearby（**邻近搜索**，不是通用地理编码）——
+    # 车在 50 公里外时 PLACE 落在搜索半径外，Agent 会诚实追问而不是乱猜（这是对的行为，
+    # 但会让本用例失去验证对象）。不设这个前置，脚本就依赖上一个 e2e 留下的车况。
+    debug_vehicle("location", CITY_CENTER)
+    await asyncio.sleep(2)
 
     print("── 1. 创建位置提醒 ──")
     res = await ask(f"到{PLACE}提醒我{TITLE}")
