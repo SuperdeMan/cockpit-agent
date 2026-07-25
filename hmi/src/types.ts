@@ -510,6 +510,10 @@ export type ModelPref = 'fast' | 'deep' | 'auto'
 export type ListenSeconds = 10 | 15 | 30 | 60
 export type FollowupWindowS = 5 | 8 | 15 // R4.3 免唤醒续问聆听窗（秒）
 export type SilenceTailMs = 500 | 800 | 1200 // R4.3 VAD 静音尾（端点判据，毫秒）
+// M4 语音链路挡位：classic=三段式（ASR→编排→TTS，默认）；s2s=端到端语音直连。
+// **默认必须 classic**：s2s 会把「唤醒窗内的原始音频」上云，是隐私口径变化点（RFC §5.4），
+// 只能由用户显式选择。非语音入口（打字）与逃逸轮永远走 classic。
+export type VoicePipeline = 'classic' | 's2s'
 
 export type Settings = {
   // 语音播报 TTS
@@ -529,6 +533,10 @@ export type Settings = {
   wakeWord: string              // 选定的唤醒词（display 值，映射到 KWS pinyin token；见 WAKE_WORD_PRESETS）
   followupWindowS: FollowupWindowS // 续问聆听窗时长（秒）
   silenceTailMs: SilenceTailMs  // VAD 静音尾（端点判据，毫秒）
+  // M4 端到端语音（S2S）：默认 classic。s2s 挡位下闲聊/常识由语音大模型直答（首音 ~600ms），
+  // 需要执行或查实时信息的请求由模型 escalate 交回确定性主链——车控绝不经 S2S 下发。
+  voicePipeline: VoicePipeline
+  s2sVoice: string              // S2S 音色（provider 侧音色，与 TTS 音色分开——尽量选同系减少割裂感）
   // 显示与主题
   theme: Theme
   fontScale: FontScale
@@ -696,6 +704,10 @@ export function wakeKeywordsFor(word: string): string {
   return WAKE_WORD_PRESETS.find((p) => p.word === word)?.keywords ?? WAKE_WORD_PRESETS[0].keywords
 }
 
+// M4 S2S 音色（qwen3.5-omni realtime 侧音色；与 TTS 音色是两套引擎，见 RFC §5.2 听感缓解）。
+// 网关 /api/s2s/info 也返回同一组，此处为设置页离线渲染的默认表。
+export const S2S_VOICES = ['Tina', 'Cherry', 'Chelsie', 'Serena', 'Ethan'] as const
+
 export const DEFAULT_SETTINGS: Settings = {
   ttsEnabled: true,
   autoplay: true,
@@ -711,6 +723,8 @@ export const DEFAULT_SETTINGS: Settings = {
   wakeWord: '小舟小舟',    // 默认唤醒词（真麦已验证命中）
   followupWindowS: 8,
   silenceTailMs: 800,
+  voicePipeline: 'classic', // M4 opt-in：默认三段式。s2s 上行原始音频，须用户显式选择
+  s2sVoice: 'Tina',         // qwen3.5-omni 默认音色
   theme: 'dark',
   fontScale: 'normal',
   largeTouch: false,

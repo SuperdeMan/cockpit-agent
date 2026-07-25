@@ -80,6 +80,7 @@ python test/e2e_mcp.py                     # 断言型：M3 受控 MCP 桥（准
 python test/e2e_obs.py                     # 断言型：badcase 排查观测链路 16 断言（obs.turn 落库/plan 门控采集/obs.llm/日志按 trace 关联/badcase 标记检索导出/重启 collector 持久化）
 python test/e2e_voice_loop.py              # 断言型：语音回路后端契约（/api/asr/stream PCM 直传 partial→final→done + vad_silence_ms 透传 + TTS round-trip）——浏览器声学层 CI 测不了，留真麦
 python test/e2e_tts_stream.py              # 断言型：R4.2 服务端流式 TTS（cosyvoice 首帧延迟 G1 门槛 + cancel 收尾）——需 DashScope key
+python test/e2e_s2s.py                     # 断言型：M4 S2S 全双工最小闭环（自答闭环/多轮上下文/escalate 逃逸零音频/回灌 memory+obs 且逃逸轮不重复写）——需 DashScope key（2026-07-25）
 python test/e2e_degrade.py                 # 断言型：架构 §3.3 降级矩阵四行（单 Agent 故障/LLM 超时/云 Planner 故障/断网）——docker 级故障注入 + 严格 try/finally 恢复，务必放在其它 e2e 脚本之后跑
 python test/e2e_auth.py                    # 断言型：会话鉴权（需 AUTH_REQUIRED=true + token，非默认栈配置）
 python test/e2e_mtls.py                    # 断言型：服务间 mTLS（需 GRPC_TLS=on + scripts/gen-certs.*，非默认栈配置）

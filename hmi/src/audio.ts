@@ -273,6 +273,15 @@ export function ttsStreamUrl(apiBase: string): string {
   return apiBase.replace(/^http/, 'ws') + '/api/tts/stream'
 }
 
+/** M4 S2S：给 provider 音频流建播放器。**复用三段式流式 TTS 的同一个共享 AudioContext
+ *  与 PcmPlayer**——S2S 换的是音频来源，播放/停止面一致（RFC §1 资产盘点）。
+ *  无音频上下文（未解锁/不支持）返回 null，S2S 侧静默降级为只出文本气泡。 */
+export function makeS2sPlayer(sampleRate: number): PcmPlayer | null {
+  const ctx = getAudioContext()
+  if (!ctx) return null
+  return new PcmPlayer({ ctx, sampleRate: sampleRate || 24000 })
+}
+
 // 共享 AudioContext：懒建 + 复用（避免每轮新建撞浏览器上下文数上限）。startTTSReply 在用户手势
 // 期先解锁（resume），meta 到达时复用——绕过 autoplay 策略（同批处理 HTMLAudioElement 的前提）。
 let sharedCtx: AudioContext | null = null

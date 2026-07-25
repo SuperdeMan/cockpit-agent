@@ -4,11 +4,12 @@
 import { VoiceLoop } from './voiceLoop.mjs'
 import { VadEngine } from './vadEngine'
 import { KwsEngine, DEFAULT_KEYWORDS } from './kwsEngine'
-import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues } from './audio'
+import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues, makeS2sPlayer } from './audio'
 import { PcmRing } from './pcmRing.mjs'
 import { stripLeadingWakeWord, isFiller } from './utteranceHeuristics.mjs'
 import { bumpVoiceMetric } from './voiceMetrics.mjs'
 import { RejectPolicy } from './rejectPolicy.mjs'
+import { S2SClient, s2sUrl } from './s2sClient.mjs'
 
 // R4.3b P4：续说（followup/宽限续说）开 ASR 时注入的前滚缓冲——只补 VAD speech-start 判定
 // 延迟（去抖 64ms + 几帧）的首字；刻意短，不带回声/上轮 TTS 尾。唤醒进入注入 0（不带唤醒词，见 openAsr）。
@@ -21,6 +22,10 @@ const MAX_PRE_ROLL_MS = 1200
 const WAKE_CUE_TEXTS = ['在呢', '我在', '你说', '请讲', '我在听']
 // 退场应答候选（R4.3b P1 U3）：说「退下吧」等退出词后短促回一句再闭麦回待机（TTS 关时静默）。
 const EXIT_CUE_TEXTS = ['好的', '好嘞', '我先退下了']
+
+// M4：FSM 判为「本地消化、不上云」的语义事件——S2S 下须额外取消 provider 在飞的生成
+// （它不知道我们把这句判成了噪声/退出）。名字与 voiceLoop.onMetric 的事件名一一对应。
+const S2S_LOCAL_HANDLED = new Set(['exit_word', 'filler_dismissed', 'false_wake_dismissed'])
 
 export type HandsFreeDeps = {
   audioApi: string
@@ -37,6 +42,13 @@ export type HandsFreeDeps = {
   getAssistantName?: () => string            // 助手名（D6：助手 TTS 念到它/唤醒词则抑制 KWS 自触发）
   getTts?: () => { enabled: boolean; voiceId: string; provider?: string } // 唤醒提示音是否合成 + 音色 + 引擎
   config?: { followupWindowMs?: number; silenceTailMs?: number; endpointGraceMs?: number }
+  // ── M4 S2S（默认 classic，不传即完全走原路径）──
+  getS2sConfig?: () => { pipeline: 'classic' | 's2s'; voice?: string; provider?: string; model?: string }
+  getSessionMeta?: () => { sessionId: string; userId?: string; vehicleId?: string }
+  onS2sUserUtterance?: (text: string) => void // S2S 自答轮的用户气泡（过了 FSM 本地治理的）
+  onS2sAnswerDelta?: (text: string) => void   // S2S 自答的回答增量（气泡/字幕）
+  onS2sEscalated?: (utterance: string, turnId: string) => void // 逃逸 → App 按既有 send 走
+  onS2sTurnEnd?: (r: { turnId: string; reason: string; detail: string }) => void
 }
 
 export class HandsFreeController {
@@ -63,6 +75,10 @@ export class HandsFreeController {
   // R4.4 P2：连续云端拒识 → 聆听收紧策略（纯逻辑，见 rejectPolicy.mjs）。基准续问窗随
   // setFollowupWindow（用户设置）同步；tighten/wake_only 直改 vl.cfg 不动基准，restore 还原到基准。
   private rejectPolicy: RejectPolicy
+  // M4：S2S 会话（会话级挡位，enable 时定；null=classic）。DEGRADED 期自动回落 classic
+  // 而不拆会话——网关后台探活恢复后下一轮自动回 S2S（RFC §6.3 三种「离开 S2S」共用一条处理）。
+  private s2s: any = null
+  private s2sPendingUser = '' // 已过 FSM 本地治理、待确定归属（自答/逃逸）的用户话
 
   constructor(deps: HandsFreeDeps) {
     this.deps = deps
@@ -77,14 +93,28 @@ export class HandsFreeController {
       onState: (orb: string) => this.deps.onOrbState(orb),
       onOpenAsr: (o: { resume?: boolean; sinceSpeechStartMs?: number }) => this.openAsr(o),
       onCloseAsr: () => this.closeAsr(),
-      onEndpoint: () => { try { this.asr?.stop() } catch { /* ignore */ } },
-      onSend: (t: string, vm?: { source: string; utteranceMs: number }) => this.deps.onSend(t, vm),
-      onStopTts: () => this.deps.onStopTts(),
+      // S2S：端点由 provider server VAD 自判（轮次 provider 自驱）→ 本侧不请定稿
+      onEndpoint: () => { if (this.useS2s()) return; try { this.asr?.stop() } catch { /* ignore */ } },
+      // S2S：本轮 provider 已在生成回答，不再走文本主链——FSM 照常进 THINKING（等首音频）。
+      // 用户气泡**不在此刻上屏**：本轮还不知道是自答还是逃逸，逃逸轮的用户气泡由 send() 自己插，
+      // 这里插就成双份。暂存，等 answer_delta 首包（=确定自答）再 flush。实测两者互斥：
+      // 逃逸轮零文本零音频、自答轮无 tool_call（RFC §3.5）。
+      onSend: (t: string, vm?: { source: string; utteranceMs: number }) => {
+        if (this.useS2s()) { this.s2sPendingUser = t; return }
+        this.deps.onSend(t, vm)
+      },
+      onStopTts: () => { this.s2s?.bargeIn(); this.deps.onStopTts() },
       onWakeChime: () => this.chime(),
       onDisableBargeIn: (r: string) => this.deps.onNotice?.('已关闭语音打断（' + r + '）'),
       onExitAck: () => this.exitAck(), // U3：退出词命中 → 播退场应答
-      onCancelTurn: () => this.deps.onCancelTurn?.(), // U2：THINKING 打断 → 透传 App 发网关取消
-      onMetric: (name: string) => bumpVoiceMetric(name), // P3 obs：语音事件计数（localStorage，供真麦验收）
+      onCancelTurn: () => { this.s2s?.cancelTurn(); this.deps.onCancelTurn?.() }, // U2：THINKING 打断
+      onMetric: (name: string) => {
+        // S2S 下 FSM 的「本地消化」判定（退出词/语气词/短语音/误唤醒）必须取消 provider 在飞的
+        // 生成——不然一句「嗯」会被 S2S 当一轮答出来，R4.3b 辛苦做的本地治理在 S2S 下全失效。
+        // onMetric 就是 FSM 的语义事件总线（RFC §4.1「一组新效果回调注入」），voiceLoop 零改动。
+        if (this.useS2s() && S2S_LOCAL_HANDLED.has(name)) this.s2s.bargeIn()
+        bumpVoiceMetric(name)
+      }, // P3 obs：语音事件计数（localStorage，供真麦验收）
     })
     this.rejectPolicy = new RejectPolicy({ baseFollowupMs: this.vl.cfg.followupWindowMs })
   }
@@ -137,10 +167,12 @@ export class HandsFreeController {
       if (this.sharedStream === stream) { this.vad.stop(); this.sharedStream = null } // 已被更新 enable 接管则不动
       return false
     }
-    // P2：VAD 帧旁路——持续入前滚缓冲，且若 PCM 直传 ASR 已开则同帧喂入（保帧序）
+    // P2：VAD 帧旁路——持续入前滚缓冲，且若 PCM 直传 ASR 已开则同帧喂入（保帧序）。
+    // M4：S2S 挡位下同一帧喂 S2S 会话（其内部按 LISTENING 门控决定是否上行）。
     this.pcmRing.clear()
-    this.vad.onFrame = (f) => { this.pcmRing.push(f); this.asr?.pushFrame(f) }
+    this.vad.onFrame = (f) => { this.pcmRing.push(f); this.asr?.pushFrame(f); this.s2s?.pushFrame(f) }
     this.on = true
+    this.openS2sIfSelected()
     this.vl.handsFreeOn()
     this.refreshWakeCue() // 唤醒提示音预合成（best-effort，失败自动回退 beep）
     if (this.deps.wakeWord?.()) this.startKws()
@@ -155,6 +187,7 @@ export class HandsFreeController {
     this.vad.onFrame = null // 停 VAD 帧旁路（前滚缓冲 + PCM 直传）
     this.vad.stop()
     this.kws.stop()
+    this.closeS2s()
     this.closeAsr()
     this.pcmRing.clear()
     this.sharedStream?.getTracks().forEach((t) => t.stop())
@@ -259,6 +292,92 @@ export class HandsFreeController {
     return [...new Set([display, name].filter(Boolean))]
   }
 
+  // ─── M4 S2S ───
+  /** 本轮是否走 S2S。DEGRADED 期返回 false → openAsr 自动落回 classic（RFC §6.3），
+   *  网关探活恢复后（session.state=ready）下一轮自动回 S2S，HMI 无分支特判。 */
+  private useS2s(): boolean {
+    return !!this.s2s && this.s2s.active && !this.s2s.degraded
+  }
+
+  private openS2sIfSelected(): void {
+    const cfg = this.deps.getS2sConfig?.()
+    if (!cfg || cfg.pipeline !== 's2s') return
+    const meta = this.deps.getSessionMeta?.() || { sessionId: '' }
+    const words = this.wakeStripWords()
+    const strip = (t: string) => stripLeadingWakeWord(t, words)
+    this.s2s = new S2SClient({
+      playerFactory: (sr: number) => makeS2sPlayer(sr),
+      // 转写喂 FSM（退出词/dismiss/filler/回声判据全量复用），并上屏
+      onTranscript: (t: string, final: boolean) => {
+        const s = strip(t)
+        if (final) { this.vl.asrFinal(s); return }
+        this.vl.asrPartial(s)
+        if (!isFiller(s)) this.deps.onPartialText?.(s)
+      },
+      onAnswerDelta: (t: string) => {
+        this.flushS2sUser() // 首个回答增量 = 确定自答 → 用户气泡先上屏（保证气泡顺序）
+        this.deps.onS2sAnswerDelta?.(t)
+      },
+      onFirstAudio: () => { this.ttsSpeaking = true; this.vl.ttsStart() },
+      onTurnEnd: (r: { turnId: string; reason: string; detail: string }) => {
+        this.ttsSpeaking = false
+        // 无文本无音频却也没逃逸（异常轮）：用户确实说了话，照样上屏，不静默吞
+        if (r.reason !== 'escalated') this.flushS2sUser()
+        else this.s2sPendingUser = ''  // 逃逸轮的用户气泡由 send() 插
+        this.deps.onS2sTurnEnd?.(r)
+        // escalated 轮由主链接管播报与收窗（App 侧走既有 send/TTS 生命周期）→ 本层不收窗
+        if (r.reason !== 'escalated') this.vl.ttsEnd()
+      },
+      onEscalated: (r: { turnId: string; utterance: string }) => {
+        this.s2sPendingUser = ''
+        this.deps.onS2sEscalated?.(r.utterance, r.turnId)
+      },
+      onSessionState: (state: string) => {
+        if (state === 'degraded') this.deps.onNotice?.('语音直连不可用，已切回常规链路')
+      },
+      onUnsupported: (msg: string) => {
+        // 首次建会话失败/网关断开 → 彻底回落 classic（不留半死会话）
+        this.deps.onNotice?.('S2S 不可用，已切回常规链路：' + msg)
+        this.closeS2s()
+      },
+    })
+    const asr = this.deps.getAsrConfig()
+    this.s2s.start(s2sUrl(this.deps.audioApi), {
+      session_id: meta.sessionId,
+      user_id: meta.userId || '',
+      vehicle_id: meta.vehicleId || '',
+      voice: cfg.voice || '',
+      provider: cfg.provider || '',
+      model: cfg.model || '',
+      language: asr.language,
+      vad_silence_ms: this.vl.cfg.silenceTailMs,
+    })
+  }
+
+  private closeS2s(): void {
+    try { this.s2s?.close() } catch { /* ignore */ }
+    this.s2s = null
+    this.s2sPendingUser = ''
+  }
+
+  /** 把暂存的用户话上屏（幂等）。 */
+  private flushS2sUser(): void {
+    const t = this.s2sPendingUser
+    if (!t) return
+    this.s2sPendingUser = ''
+    this.deps.onS2sUserUtterance?.(t)
+  }
+
+  /** 逃逸轮主链回答落地后回传，保持 provider 上下文连续（RFC §3.2；不触发播报）。 */
+  escalatedResult(turnId: string, text: string): void {
+    this.s2s?.escalatedResult(turnId, text)
+  }
+
+  /** 当前挡位是否真在 S2S 上跑（供 App 决定用哪条播报链路）。 */
+  get s2sActive(): boolean {
+    return this.useS2s()
+  }
+
   // ─── 内部 ───
   // P2 PCM 直传（U4 根治）：不用 MediaRecorder，用 vadEngine.onFrame 喂帧 + 前滚缓冲；partial/final 剥唤醒词残留。
   // P4 真麦修复：仅续说路径（resume=true：续问/打断/宽限续说，无唤醒词）注入 pre-roll 补 VAD 判定延迟首字；
@@ -266,6 +385,17 @@ export class HandsFreeController {
   // barge-in 修复：FSM 带 sinceSpeechStartMs（打断确认窗耗时）→ pre-roll 动态回取到 speech 起点，
   // 固定 200ms 盖不住 300ms+ 确认窗导致的「打断漏首字」在此根治。
   private openAsr(opts: { resume?: boolean; sinceSpeechStartMs?: number } = {}): void {
+    // S2S：会话常驻，进 LISTENING 只是开收音门（省掉 ASR 建连——全双工的第一份红利）。
+    // pre-roll 口径与 classic 逐字一致：唤醒进入注 0（否则唤醒词自己被识别成同音字上屏），
+    // 续说/打断按 speech 起点回取（真麦「小周」误上屏的同一根因，别在 S2S 上重犯）。
+    if (this.useS2s()) {
+      const preRollMs = opts.resume
+        ? Math.min(RESUME_PRE_ROLL_MS + Math.max(0, opts.sinceSpeechStartMs || 0), MAX_PRE_ROLL_MS)
+        : 0
+      if (preRollMs > 0) this.s2s.pushPreRoll(this.pcmRing.takeLast(preRollMs))
+      this.s2s.setCollecting(true)
+      return
+    }
     if (this.asr) return
     const cfg = this.deps.getAsrConfig()
     const gen = ++this.asrGen // 本条会话代号；下方回调只在代号仍为当前时才作数
@@ -294,6 +424,8 @@ export class HandsFreeController {
   }
 
   private closeAsr(): void {
+    // S2S：关收音门而不拆会话（多轮上下文是 S2S 的主场，拆了就白瞎）
+    this.s2s?.setCollecting(false)
     this.asrGen++ // 使旧会话的一切后续回调作废（A1）
     try { this.asr?.stop() } catch { /* ignore */ }
     this.asr = null

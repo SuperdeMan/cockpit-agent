@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } 
 import { useSettings } from '../settings'
 import {
   AGENT_CATALOG, VOICE_FALLBACK, WAKE_WORD_PRESETS, TTS_PROVIDER_FALLBACK, LLM_PROVIDER_FALLBACK,
+  S2S_VOICES,
   type Voice, type TtsProviderInfo, type TtsProvider, type LlmProviderInfo, type LlmStatus,
 } from '../types'
 import {
@@ -370,6 +371,26 @@ function AsrSection() {
                 options={[{ value: 500, label: '0.5s 敏捷' }, { value: 800, label: '0.8s 均衡' }, { value: 1200, label: '1.2s 从容' }]} />
             </SettingRow>
           </>
+        )}
+      </SettingGroup>
+      <HR />
+      <SettingGroup title="语音链路">
+        <SettingRow
+          label="端到端语音直连"
+          sub={'闲聊与常识问答由语音大模型直接听、直接答（首音约 0.6 秒，比常规链路快一截，多轮更连贯）。'
+            + '需要执行的事（车控、导航、提醒、支付）和查实时信息的事，一律自动交回常规链路——车辆动作永不经此下发。'
+            + '开启后唤醒到说完这段窗口内的原始语音会上传云端处理（常规链路只上传识别后的文字）；未唤醒时不采集。'
+            + '切换在下次开启连续对话时生效。默认关。'}
+          noBorder={settings.voicePipeline !== 's2s'}
+        >
+          <Toggle on={settings.voicePipeline === 's2s'}
+            onChange={(v) => update({ voicePipeline: v ? 's2s' : 'classic' })} />
+        </SettingRow>
+        {settings.voicePipeline === 's2s' && (
+          <SettingRow label="直连音色" sub="端到端链路的说话人（与上方播报音色是两套引擎；选相近的可减少切回常规链路时的音色差）" noBorder>
+            <Segmented sm value={settings.s2sVoice} onChange={(v) => update({ s2sVoice: v })}
+              options={S2S_VOICES.map((v) => ({ value: v, label: v }))} />
+          </SettingRow>
         )}
       </SettingGroup>
     </div>

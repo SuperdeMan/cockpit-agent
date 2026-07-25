@@ -102,6 +102,9 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   settingsRef.current = settings // 始终保留最新设置，避免 ws 回调读到陈旧闭包
   // R4.3 免唤醒回路控制器（VAD+FSM+ASR 编排）：默认关，settings.handsFree 开启才激活
   const handsFreeRef = useRef<HandsFreeController | null>(null)
+  // M4 S2S：当前自答轮的助手气泡 id（逐字累积）／待回传主链回答的逃逸轮 turn_id
+  const s2sBubbleRef = useRef<string>('')
+  const s2sEscalatedTurnRef = useRef<string>('')
   const sendRef = useRef<(text: string, metaExtra?: Record<string, string>) => void>(() => {})
   const [handsFreeOrb, setHandsFreeOrb] = useState<string | null>(null)
   const [handsFreeNotice, setHandsFreeNotice] = useState<string>('')
@@ -194,6 +197,35 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       config: {
         followupWindowMs: settingsRef.current.followupWindowS * 1000,
         silenceTailMs: settingsRef.current.silenceTailMs,
+      },
+      // ── M4 S2S（挡位在开 hands-free 时定；默认 classic 则以下全不生效）──
+      getS2sConfig: () => ({
+        pipeline: settingsRef.current.voicePipeline,
+        voice: settingsRef.current.s2sVoice,
+      }),
+      getSessionMeta: () => ({ sessionId: SESSION, userId: 'u1' }),
+      // 自答轮：用户气泡 + 助手气泡逐字（S2S 不走 WS，消息由本地组装；回灌在网关侧完成）
+      onS2sUserUtterance: (t) => setMessages((m) => [...m, { id: uid(), role: 'user', text: t }]),
+      onS2sAnswerDelta: (t) => {
+        const id = s2sBubbleRef.current
+        if (!id) {
+          const nid = uid()
+          s2sBubbleRef.current = nid
+          setMessages((m) => [...m, { id: nid, role: 'assistant', text: t, streaming: true }])
+        } else {
+          setMessages((m) => m.map((msg) => (msg.id === id ? { ...msg, text: msg.text + t } : msg)))
+        }
+      },
+      onS2sTurnEnd: () => {
+        const id = s2sBubbleRef.current
+        s2sBubbleRef.current = ''
+        if (id) setMessages((m) => m.map((msg) => (msg.id === id ? { ...msg, streaming: false } : msg)))
+      },
+      // 逃逸轮：按既有 send 全流程走（端侧 fast_intent 秒回车控 / 上云 R4.4→planner→VAL→确认闸）。
+      // 记 turn_id，待主链回答落地后回传 S2S 会话保上下文连续（RFC §3.2 escalated_result）。
+      onS2sEscalated: (utterance, turnId) => {
+        s2sEscalatedTurnRef.current = turnId
+        sendRef.current(utterance, { input_source: 'voice_s2s' })
       },
     })
     handsFreeRef.current = ctrl
@@ -406,6 +438,13 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         }
         // hands-free 回声指纹：把本轮播报文本喂给 FSM，供 SPEAKING 态 barge-in 时比对（D6）
         handsFreeRef.current?.setTtsText(data.speech || '')
+        // M4：逃逸轮的主链回答回传 S2S 会话——否则 S2S 不知道刚才空调调过了，多轮连续性
+        // 断在每个逃逸轮上。只注入上下文不触发播报（R1 实测），丢了也不坏（R2）。
+        if (s2sEscalatedTurnRef.current) {
+          const tid = s2sEscalatedTurnRef.current
+          s2sEscalatedTurnRef.current = ''
+          handsFreeRef.current?.escalatedResult(tid, data.speech || '')
+        }
         if (s.ttsEnabled && s.autoplay && data.speech) {
           // 有语音播报：TTS 生命周期（onEnd）驱动 FSM 出 THINKING；合成全失败也补 turnEnded 兜底（U2 死锁）
           finishTTSReply(data.speech).catch(() => handsFreeRef.current?.turnEnded())

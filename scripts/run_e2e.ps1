@@ -34,6 +34,8 @@ $steps = @(
     @{ Name = "e2e_mcp";                    Cmd = { python test/e2e_mcp.py } }
     @{ Name = "e2e_rejection";              Cmd = { python test/e2e_rejection.py } }
     @{ Name = "e2e_tts_stream";             Cmd = { python test/e2e_tts_stream.py } }
+    # M4 P1：S2S 全双工最小闭环（自答/多轮上下文/escalate 逃逸/回灌防黑洞）——需 DashScope key
+    @{ Name = "e2e_s2s";                    Cmd = { python test/e2e_s2s.py } }
     # 旅程级（L3）：回归级必须绿；目标级红灯是能力标尺不拦退出码（--strict-target 才拦）。
     @{ Name = "e2e_journeys";               Cmd = { python test/e2e_journeys.py } }
     @{ Name = "e2e_real_providers";         Cmd = { python -m pytest test/e2e_real_providers.py -q -s } }

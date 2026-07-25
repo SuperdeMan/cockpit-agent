@@ -585,6 +585,134 @@ def create_http_app() -> web.Application:
             return web.json_response({"error": str(e)}, status=400)
         return web.json_response(status)
 
+    @routes.get("/api/s2s/info")
+    async def handle_s2s_info(request: web.Request):
+        """S2S 能力探测（HMI 设置页据此渲染「语音链路」挡位可用性）。
+
+        默认 classic——原始音频上云是隐私口径变化点（RFC §5.4），必须用户显式选择。"""
+        from s2s import s2s_available
+        return web.json_response({
+            "available": s2s_available(),
+            "default": "classic",  # §6.1 常态双链路，s2s 挡位不默认开
+            "provider": os.getenv("S2S_PROVIDER", "dashscope"),
+            "model": os.getenv("S2S_MODEL", "qwen3.5-omni-flash-realtime"),
+            "voices": ["Tina", "Cherry", "Chelsie", "Serena", "Ethan"],
+            "out_sample_rate": 24000,
+        })
+
+    @routes.get("/api/s2s")
+    async def handle_s2s(request: web.Request):
+        """S2S 全双工会话（M4 RFC §2.1 通道拓扑：落 llm-gateway 音频面，不经 edge-gateway）。
+
+        上行：{type:session.start,…} / {type:audio}+二进制 PCM 帧 / {type:barge_in} /
+              {type:cancel_turn} / {type:escalated_result,turn_id,text} / {type:session.end}
+        下行：turn.transcript / turn.answer_delta / turn.audio_meta+二进制 PCM /
+              turn.end / turn.escalated / session.state / unsupported
+
+        代价与补偿：edge-gateway 看不见 S2S 轮次 → 文本副产品回灌为**强制项**（§7）。
+        """
+        from s2s import (
+            S2SSession, Reflux, build_context_summary, build_s2s_provider,
+            UP_AUDIO, UP_BARGE_IN, UP_CANCEL_TURN, UP_ESCALATED_RESULT,
+            UP_SESSION_END, UP_SESSION_START, DOWN_UNSUPPORTED,
+        )
+
+        ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=16 * 1024 * 1024)
+        await ws.prepare(request)
+        session: "S2SSession | None" = None
+
+        async def emit_json(obj: dict):
+            if not ws.closed:
+                try:
+                    await ws.send_json(obj)
+                except Exception:
+                    pass
+
+        async def emit_audio(pcm: bytes):
+            if not ws.closed:
+                try:
+                    await ws.send_bytes(pcm)
+                except Exception:
+                    pass
+
+        try:
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.BINARY:
+                    if session is not None:
+                        await session.push_audio(bytes(msg.data))
+                    continue
+                if msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE,
+                                aiohttp.WSMsgType.CLOSING):
+                    break
+                if msg.type != aiohttp.WSMsgType.TEXT:
+                    continue
+                try:
+                    data = json.loads(msg.data)
+                except Exception:
+                    continue
+                mtype = data.get("type")
+
+                if mtype == UP_SESSION_START:
+                    if session is not None:
+                        continue  # 幂等：一条 WS 一个会话
+                    sid = str(data.get("session_id") or "")
+                    if _set_obs_session and sid:
+                        _set_obs_session(sid)
+                    prov_name = (data.get("provider") or "").strip()
+                    model = (data.get("model") or "").strip()
+                    vad_ms = int(data.get("vad_silence_ms") or 0)
+                    try:
+                        probe = build_s2s_provider(prov_name, model, vad_silence_ms=vad_ms)
+                    except ValueError as e:  # 型号不支持 tools → fail-fast，不静默降级
+                        logger.warning("S2S 型号被拒: %s", e)
+                        await emit_json({"type": DOWN_UNSUPPORTED, "message": str(e)})
+                        continue
+                    if probe is None:
+                        await emit_json({"type": DOWN_UNSUPPORTED,
+                                         "message": "S2S 未配置或无凭据"})
+                        continue
+                    reflux = Reflux(
+                        memory_stub_getter=_memory_stub, obs=_obs,
+                        gate_content=_gate_content, session_id=sid,
+                        user_id=str(data.get("user_id") or ""),
+                        vehicle_id=str(data.get("vehicle_id") or ""),
+                        occupant_id=str(data.get("occupant_id") or ""),
+                        provider_name=prov_name or os.getenv("S2S_PROVIDER", "dashscope"),
+                        model=model or os.getenv("S2S_MODEL", "qwen3.5-omni-flash-realtime"))
+                    session = S2SSession(
+                        provider_factory=lambda: build_s2s_provider(
+                            prov_name, model, vad_silence_ms=vad_ms),
+                        emit_json=emit_json, emit_audio=emit_audio,
+                        context_provider=lambda: build_context_summary(_memory_stub(), sid),
+                        reflux=reflux, session_id=sid,
+                        user_id=str(data.get("user_id") or ""),
+                        voice=(data.get("voice") or "").strip())
+                    try:
+                        await session.start()
+                    except Exception as e:
+                        logger.warning("S2S 会话建立失败: %s", e)
+                        await emit_json({"type": DOWN_UNSUPPORTED, "message": str(e)[:200]})
+                        session = None
+                    continue
+
+                if session is None:
+                    continue
+                if mtype == UP_BARGE_IN:
+                    await session.barge_in()
+                elif mtype == UP_CANCEL_TURN:
+                    await session.cancel_turn()
+                elif mtype == UP_ESCALATED_RESULT:
+                    await session.escalated_result(str(data.get("turn_id") or ""),
+                                                   str(data.get("text") or ""))
+                elif mtype == UP_SESSION_END:
+                    break
+                elif mtype == UP_AUDIO:
+                    pass  # 声明式前导帧，后跟二进制（与 /api/asr/stream 同惯例）
+        finally:
+            if session is not None:
+                await session.close()
+        return ws
+
     @routes.get("/api/health")
     async def handle_health(request: web.Request):
         return web.json_response({"status": "ok", "service": "audio-http"})
