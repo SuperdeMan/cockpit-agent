@@ -349,6 +349,7 @@ verification:
 - DoD：首份 nightly badcase 报告落库；影子评测报告产出切换建议。
 
 **M2 执行治理与放宽（约 2-3 周；先出 Ledger/Verifier + 记忆图谱生命周期子 RFC）**
+- 核心件子 RFC 已出（2026-07-25）：`docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md`——Ledger 落点修正为 SDK+PG 层（编排核心零改动，理由 §2.1）、cancel 拉模式、Verifier 走 route_hints 同款 proto 全链、"副作用简单闸"重定义为重复副作用防抖（§4.3 现状分析）；记忆图谱另出子 RFC。
 - Task Ledger + Outcome Verifier（§4.I，verification 声明式契约）；T2 Interactive/Complex 档逐档放宽（journeys 时延与红灯双指标护栏）；记忆图谱（preference/relation + 巩固聚合 + 注入升级 + §4.D 生命周期强制项）。
 - DoD：中断-续接/幂等旅程用例入 L3；放宽后 P95 不劣化超阈；偏好演进旅程绿。
 
