@@ -15,6 +15,8 @@ from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
 from agents._sdk.landmark import is_landmark_description, landmark_candidates
 from agents._sdk.shared_state import CHARGING_DEST_CHOICES
+from runtime.proactive import publish_proactive
+from .low_battery import LowBatteryWatcher
 from .providers import build_charging_provider
 from .providers.base import GeoPoint
 
@@ -32,6 +34,55 @@ class ChargingPlannerAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
         self.charging = build_charging_provider()
+        self._nc = None
+        self._state: dict = {}
+        self._low_battery = None
+
+    # ── 低电量主动建议（M3 P0）────────────────────────────────────────────
+    async def on_start(self) -> None:
+        """订车况广播，电量跌破阈值的变沿发一条建议（road-safety 同款范式）。
+
+        无 NATS_URL / 连接失败 → 静默禁用，不影响请求-响应服务。
+        """
+        url = os.getenv("NATS_URL", "")
+        if not url:
+            logger.info("charging: NATS_URL 未设置，低电量主动建议禁用")
+            return
+        try:
+            import nats
+            self._nc = await nats.connect(url, max_reconnect_attempts=-1)
+        except Exception as e:
+            logger.warning("charging: NATS 连接失败，低电量主动建议禁用：%s", e)
+            return
+        self._low_battery = LowBatteryWatcher(
+            self._publish_proactive, self._find_stations_for_advice,
+            threshold=float(os.getenv("CHARGING_LOW_SOC", "20")),
+            throttle_s=float(os.getenv("CHARGING_LOW_SOC_THROTTLE_S", "1800")),
+            agent_id=self.manifest.agent_id)
+        await self._nc.subscribe("vehicle.state.changed", cb=self._on_state_event)
+        logger.info("charging: 已订阅车况，低电量主动建议开启（阈值 %s%%）",
+                    os.getenv("CHARGING_LOW_SOC", "20"))
+
+    async def _on_state_event(self, msg) -> None:
+        try:
+            event = json.loads(msg.data.decode())
+        except Exception:
+            return
+        changes = [c for c in (event.get("changes") or [])
+                   if isinstance(c, dict) and c.get("key")]
+        for c in changes:
+            self._state[c["key"]] = c.get("new")
+        if self._low_battery:
+            try:
+                await self._low_battery.on_state(changes, dict(self._state))
+            except Exception as e:               # 旁路异常绝不拖垮 Agent
+                logger.warning("charging: 低电量建议异常（忽略）：%s", e)
+
+    async def _find_stations_for_advice(self, point):
+        return await self.charging.find_nearby(point)
+
+    async def _publish_proactive(self, payload: dict) -> None:
+        await publish_proactive(self._nc, payload)
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         handlers = {

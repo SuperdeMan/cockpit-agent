@@ -25,6 +25,7 @@ from agents._sdk.ledger import FAILED as FAILED_STATUS   # 与 AgentResult 的 F
 from agents._sdk.shared_state import NEWS_ACTIVE, RESEARCH_ACTIVE
 from agents._sdk.grounding import shanghai_now
 from agents._sdk.location import current_location_from_meta
+from runtime.proactive import P_USER_CONTRACT, publish_proactive
 from agents.info.src.providers import build_search_provider, build_extractor
 from agents.info.src.providers.amap_geocoder import build_location_resolver
 from .pipeline import plan, investigate, synthesize, brief, _clean_excerpt, _EXCERPT_CAP
@@ -372,13 +373,13 @@ class DeepResearchAgent(BaseAgent):
         payload = {"type": "research_done",
                    "speech": f"关于「{topic}」的深度调研完成了。{speech}",
                    "card": card, "agent_id": self.manifest.agent_id,
-                   "ts": int(time.time() * 1000), **(ref or {})}
-        try:
-            await self._nc.publish(
-                "agent.proactive", json.dumps(payload, ensure_ascii=False).encode())
-            logger.info("async research proactive sent: %s", topic)
-        except Exception as e:
-            logger.warning("async research publish failed: %s", e)
+                   "ts": int(time.time() * 1000),
+                   # 用户在等这个结果 → user_contract 档（免打扰/负荷/频控豁免，仅参与合并）
+                   "priority": P_USER_CONTRACT,
+                   "dedup_key": f"research.done|{topic}",
+                   **(ref or {})}
+        await publish_proactive(self._nc, payload)
+        logger.info("async research proactive sent: %s", topic)
 
     async def _publish_research_failed(self, question: str,
                                        ref: dict | None = None) -> None:
@@ -388,12 +389,10 @@ class DeepResearchAgent(BaseAgent):
         payload = {"type": "research_failed",
                    "speech": f"抱歉，「{self._topic(question)}」的深度调研没能完成，稍后可以让我再试一次。",
                    "agent_id": self.manifest.agent_id, "ts": int(time.time() * 1000),
+                   "priority": P_USER_CONTRACT,
+                   "dedup_key": f"research.failed|{self._topic(question)}",
                    **(ref or {})}
-        try:
-            await self._nc.publish(
-                "agent.proactive", json.dumps(payload, ensure_ascii=False).encode())
-        except Exception as e:
-            logger.debug("async research fail-publish skipped: %s", e)
+        await publish_proactive(self._nc, payload)
 
     async def _publish_research_stopped(self, question: str, reason: str,
                                         ref: dict | None = None) -> None:
@@ -406,12 +405,10 @@ class DeepResearchAgent(BaseAgent):
                    "speech": (f"「{self._topic(question)}」的深度调研{why}，"
                               "换个更聚焦的问题我可以再查一次。"),
                    "agent_id": self.manifest.agent_id, "ts": int(time.time() * 1000),
+                   "priority": P_USER_CONTRACT,
+                   "dedup_key": f"research.stopped|{self._topic(question)}",
                    **(ref or {})}
-        try:
-            await self._nc.publish(
-                "agent.proactive", json.dumps(payload, ensure_ascii=False).encode())
-        except Exception as e:
-            logger.debug("async research stop-publish skipped: %s", e)
+        await publish_proactive(self._nc, payload)
 
     # ── 任务账本消费面（M2 P0）：查询 / 取消 ────────────────────────────────
     async def _task_status(self, ctx) -> AgentResult:

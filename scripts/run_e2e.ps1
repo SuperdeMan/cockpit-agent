@@ -25,7 +25,11 @@ $steps = @(
     @{ Name = "e2e_degrade";                Cmd = { python test/e2e_degrade.py } }
     @{ Name = "e2e_voice_loop";             Cmd = { python test/e2e_voice_loop.py } }
     @{ Name = "e2e_reminder";               Cmd = { python test/e2e_reminder.py } }
+    # M3 P1：位置提醒围栏（建单→播种→进围栏触达→不重复）
+    @{ Name = "e2e_geofence";               Cmd = { python test/e2e_geofence.py } }
     @{ Name = "e2e_scene";                  Cmd = { python test/e2e_scene.py } }
+    # M3 P0：统一主动引擎（单条直通/DoD 合并/去重/断言复核/user_contract 豁免）
+    @{ Name = "e2e_proactive";              Cmd = { python test/e2e_proactive.py } }
     @{ Name = "e2e_rejection";              Cmd = { python test/e2e_rejection.py } }
     @{ Name = "e2e_tts_stream";             Cmd = { python test/e2e_tts_stream.py } }
     # 旅程级（L3）：回归级必须绿；目标级红灯是能力标尺不拦退出码（--strict-target 才拦）。

@@ -18,6 +18,10 @@ logger = logging.getLogger("agent.reminder.store")
 _SCHEMA_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "schema.sql")
 PENDING, FIRED, DONE, CANCELLED = "pending", "fired", "done", "cancelled"
 ACTIVE = (PENDING, FIRED)     # 默认过滤：用户可见/可操作态
+# kind 第三态（M3 P1 位置提醒）：地点数据存 `extra`（place/lat/lon/radius_m/trigger_on）——
+# 它只在按 kind 选出条目后被读，从不参与过滤/排序，JSONB 是正确的家，**不加新列**
+# （M2「字段级对照后否掉建表」的同一条判据）。
+LOCATION = "location"
 
 
 @dataclass
@@ -42,6 +46,10 @@ class Reminder:
                 "status": self.status,
                 "time_display": format_display(self.fire_at, now=now, tz=tz)
                 if self.fire_at else ""}
+        if self.kind == LOCATION:          # 位置提醒用地点占 time_display 的位置（HMI 零改动）
+            place = str(self.extra.get("place") or "")
+            verb = "离开" if self.extra.get("trigger_on") == "leave" else "到"
+            item["time_display"] = f"{verb}{place}时" if place else ""
         if self.fire_at:
             item["fire_at_ms"] = self.fire_at * 1000
         if self.recur:
@@ -206,6 +214,38 @@ class ReminderStore:
                 r.status = CANCELLED
                 n += 1
         return n
+
+    async def list_location_pending(self, limit: int = 50) -> list[Reminder]:
+        """待触发的位置提醒（M3 P1）。跨用户——围栏判定由车况驱动，与会话无关。"""
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT * FROM reminder_item WHERE kind=$1 AND status=$2 "
+                    "ORDER BY created_at ASC LIMIT $3", LOCATION, PENDING, limit)
+            return [self._row(x) for x in rows]
+        return sorted((r for r in self._mem.values()
+                       if r.kind == LOCATION and r.status == PENDING),
+                      key=lambda r: r.created_at)[:limit]
+
+    async def claim_location(self, ids: list[str], now_ts: int) -> list[Reminder]:
+        """原子领取到地条目（pending→fired）。同 claim_due：重复判定不重复触达。"""
+        ids = [i for i in (ids or []) if i]
+        if not ids:
+            return []
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "UPDATE reminder_item SET status='fired', fired_at=$1 "
+                    "WHERE id=ANY($2) AND status='pending' AND kind=$3 RETURNING *",
+                    now_ts, ids, LOCATION)
+            return [self._row(x) for x in rows]
+        out = []
+        for rid in ids:
+            r = self._mem.get(rid)
+            if r and r.status == PENDING and r.kind == LOCATION:
+                r.status, r.fired_at = FIRED, now_ts
+                out.append(r)
+        return out
 
     async def claim_due(self, now_ts: int) -> list[Reminder]:
         """原子领取到期项（pending→fired，跨用户）。二次调用不重复返回。"""

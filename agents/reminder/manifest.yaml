@@ -9,13 +9,15 @@ fallback: chitchat
 
 capabilities:
   - intent: reminder.create
-    description: 创建定时提醒或待办。支持绝对时间（明天早上八点/周五下午三点）、
-      相对时间（半小时后/20分钟后）、重复（每天/每个工作日/每周X）；只说"记一下"
-      不带时间则存为待办；到点后说"过10分钟再提醒我"直接改期原条目（snooze）。
+    description: 创建定时提醒、位置提醒或待办。支持绝对时间（明天早上八点/周五下午三点）、
+      相对时间（半小时后/20分钟后）、重复（每天/每个工作日/每周X）；**到某地/离开某地
+      触发的位置提醒**（到公司提醒我拿文件）；只说"记一下"不带时间则存为待办；
+      到点后说"过10分钟再提醒我"直接改期原条目（snooze）。
     slots: [title, time_text, kind]
     examples: ["明天早上八点提醒我带充电线", "半小时后提醒我给客户回电话",
                "周五下午三点叫我去接孩子", "记一下要买牛奶", "帮我记个待办周末洗车",
-               "每天早上八点提醒我吃药", "过10分钟再提醒我"]
+               "每天早上八点提醒我吃药", "过10分钟再提醒我",
+               "到公司提醒我拿文件", "到家提醒我收快递", "离开公司提醒我买菜"]
   - intent: reminder.list
     description: 查询提醒/待办/日程安排（今天/明天/后天/未来三天/这周/全部/待办）
     slots: [scope, date_text]
@@ -81,4 +83,6 @@ requires_permissions:
   - profile.read        # 提醒属用户数据域 + shared_state 经 profile KV；不新增 scope
   - profile.write
 edge_intents: []
-context_scopes: []      # P0 不需要精确位置/电量；P1 位置触发时补 location
+# M3 P1 位置提醒：围栏判定读的是 NATS 车况广播的 location（不是 meta 下发），
+# 但创建期解析地点要按当前位置搜 POI，故声明 location。
+context_scopes: [location]

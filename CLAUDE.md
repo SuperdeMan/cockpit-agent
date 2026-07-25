@@ -33,12 +33,13 @@ memory/         记忆/画像服务
 agents/         所有 Agent；_sdk/ 是公共 SDK，每个 Agent 一个子目录
 security/       权限引擎、scope 定义、内容审核、注入防护
 payment-gateway/  统一支付网关（Agent 不持支付凭证）
+proactive/      统一主动引擎：主动消息的全局治理器（频控/免打扰/驾驶负荷/同类合并）
 observability/  可观测模块：NATS 事件出口、collector、trace/日志/指标
 hmi/            React 座舱前端
 dashboard/      React 开发/演示可观测台（不进入车控执行主链）
 deploy/         docker-compose / helm / k8s
 scripts/        codegen、构建辅助（含 gen-certs.* 生成 mTLS 证书）、自进化流水线 evolve.py（M1b，nightly 经 Task Scheduler）
-runtime/        共享 gRPC 运行时（keepalive/优雅停机/mTLS 工厂；全 Python 服务经此建 channel/server）
+runtime/        共享运行时（gRPC keepalive/优雅停机/mTLS 工厂；+ 主动消息出口 proactive.py——全 Python 服务经此建 channel/server、发主动消息）
 docs/           架构与设计文档
 test/           端到端场景测试
 gen/            codegen 产出（gitignore，不要手动编辑）

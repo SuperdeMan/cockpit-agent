@@ -635,3 +635,24 @@
   expect_final_intents: [research.run]
   source: "反向护栏：发起调研不被 cancel/status 抢（run=100 > 95，且 pattern 不重叠）"
   tags: [research, ledger, guardrail, run]
+
+# ── M3 P1 位置提醒：路由与 ETA 族不打架（子 RFC §3）──
+# 「到X提醒我Y」走 reminder.create（既有 pattern 已覆盖，此处钉死不被未来 guard 误伤）
+- text: 到公司提醒我拿文件
+  initial_intents: []
+  expect_final_intents: [reminder.create]
+  source: "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
+  tags: [reminder, location]
+
+- text: 离开公司提醒我买菜
+  initial_intents: []
+  expect_final_intents: [reminder.create]
+  source: "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
+  tags: [reminder, location]
+
+# ETA 族仍归 reminder（P1c 交接链），只是走时间路径不走围栏——路由层同一个意图
+- text: 到公司之前提醒我交周报
+  initial_intents: []
+  expect_final_intents: [reminder.create]
+  source: "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
+  tags: [reminder, eta]

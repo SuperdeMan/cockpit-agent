@@ -13,8 +13,10 @@ from datetime import datetime, timedelta, timezone
 
 from agents._sdk import BaseAgent, AgentResult, NEED_CONFIRM, NEED_SLOT, FAILED
 from agents._sdk.shared_state import REMINDABLE_ACTIVE, REMINDERS_ACTIVE, REMINDER_PENDING
+from runtime.proactive import publish_proactive
 
-from .store import Reminder, ReminderStore, DONE, CANCELLED, FIRED
+from .placeparse import ARRIVE, parse_place_text
+from .store import Reminder, ReminderStore, DONE, CANCELLED, FIRED, LOCATION
 from .timeparse import (OK as T_OK, FAIL as T_FAIL, ParsedTime, align_workday,
                         business_tz, format_display, parse_lead, parse_recur,
                         parse_time_text, recur_label, strip_time_expressions)
@@ -22,8 +24,8 @@ from .timeparse import (OK as T_OK, FAIL as T_FAIL, ParsedTime, align_workday,
 logger = logging.getLogger("agent.reminder")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
-_PROACTIVE_SUBJECT = "agent.proactive"
 
+_GEOFENCE_RADIUS_M = 300      # 默认围栏半径（米）——够近，又不至于反复进出抖动
 _TODO_RE = re.compile(r"记一下|记个|待办|备忘")
 _CMD_STRIP_RE = re.compile(
     r"^(麻烦|请|帮我|给我)?(再)?(提醒我|叫我|别忘了|记得|记一下|记个待办|记个|设个提醒|建个提醒|待办[:：]?)+")
@@ -48,6 +50,8 @@ class ReminderAgent(BaseAgent):
         self._nc = None
         self._tz = business_tz()
         self._sched_task = None
+        self._geofence = None
+        self._veh_state: dict = {}
 
     # ── 生命周期：存储初始化 + NATS + 调度循环（road-safety 先例）──
     async def on_start(self) -> None:
@@ -65,14 +69,39 @@ class ReminderAgent(BaseAgent):
         from .scheduler import ReminderScheduler
         self._sched_task = asyncio.create_task(
             ReminderScheduler(self.store, self._publish_proactive).run_forever())
+        if self._nc:                     # M3 P1：位置提醒围栏（复用同一条车况广播）
+            from .geofence import GeofenceWatcher
+            self._geofence = GeofenceWatcher(
+                self.store, self._publish_proactive, tz=self._tz)
+            await self._nc.subscribe("vehicle.state.changed", cb=self._on_state_event)
+            logger.info("reminder: 已订阅车况，位置提醒围栏开启")
+
+    async def _on_state_event(self, msg) -> None:
+        try:
+            event = json.loads(msg.data.decode())
+        except Exception:
+            return
+        for c in event.get("changes") or []:
+            if isinstance(c, dict) and c.get("key"):
+                self._veh_state[c["key"]] = c.get("new")
+        if not self._geofence:
+            return
+        try:
+            await self._geofence.on_state([], dict(self._veh_state))
+        except Exception as e:           # 围栏是旁路，异常绝不拖垮 Agent
+            logger.warning("reminder: 围栏判定异常（忽略）：%s", e)
 
     async def _publish_proactive(self, payload: dict) -> None:
+        """到点/到地触达经主动治理器（`user_contract` 档：免打扰/负荷/频控全豁免）。
+
+        提醒是**用户显式约定**，到点必响的契约不因治理让路；治理器对它只做合并
+        （和同窗到达的别的消息说成一句，而不是连响两次）。
+        """
         if not self._nc:
             logger.info("reminder fired（NATS 禁用未推送）: %s",
                         payload.get("speech", "")[:40])
             return
-        await self._nc.publish(_PROACTIVE_SUBJECT,
-                               json.dumps(payload, ensure_ascii=False).encode())
+        await publish_proactive(self._nc, payload)
 
     # ── 请求-响应 ──
     async def handle(self, intent, ctx, meta) -> AgentResult:
@@ -133,6 +162,12 @@ class ReminderAgent(BaseAgent):
             await self._clear_pending(ctx)
             return AgentResult(speech=f"记下了：{title}。办完了跟我说「完成」就行。",
                                ui_card=self._card_single(r, "created"))
+        # M3 P1 位置提醒：「到公司提醒我拿文件」。放在时间解析**之前**——这类句子里
+        # 没有时间表达，走完时间三层只会白白进 LLM 兜底再追问「什么时候」。
+        # ETA 族（到X之前/快到）由 placeparse 自身让路，仍走下面的 _from_remindable。
+        pp = parse_place_text(raw)
+        if pp.ok:
+            return await self._create_location(pp, title, ctx, meta)
         now = self._now_utc()
         pt = parse_time_text(time_text, now=now, tz=self._tz) if time_text \
             else ParsedTime(T_FAIL)
@@ -282,6 +317,71 @@ class ReminderAgent(BaseAgent):
         r2 = await self.store.get(self._uid(ctx), rid)
         return AgentResult(speech=f"好的，「{title}」改到{pt.display}。",
                            ui_card=self._card_single(r2, "updated"))
+
+    # ── 位置提醒（M3 P1）──
+    async def _create_location(self, pp, fallback_title: str, ctx, meta) -> AgentResult:
+        """建一条位置提醒。**地点解析不出就诚实追问，绝不存一条永远不会触发的提醒。**"""
+        title = (pp.title or fallback_title or "").strip()
+        if not title:
+            return AgentResult(status=NEED_SLOT, speech=f"到{pp.place}提醒你什么事？",
+                               missing_slots=["title"])
+        resolved = await self._resolve_place(pp.place, ctx)
+        verb = "离开" if pp.trigger_on != ARRIVE else "到"
+        if not resolved:
+            return AgentResult(
+                status=NEED_SLOT,
+                speech=f"我还不知道{pp.place}在哪，说个地址我就记住了。",
+                follow_up=f"比如「我{pp.place}在XX路X号」，以后{verb}{pp.place}我就能提醒你。",
+                missing_slots=["place_address"])
+        r = await self.store.add(Reminder(
+            user_id=self._uid(ctx), vehicle_id=ctx.vehicle_id or "",
+            title=title, kind=LOCATION,
+            extra={"place": pp.place, "trigger_on": pp.trigger_on, **resolved}))
+        await self._refresh_active(ctx)
+        await self._clear_pending(ctx)
+        return AgentResult(speech=f"好的，{verb}{pp.place}我就提醒你：{title}。",
+                           ui_card=self._card_single(r, "created"))
+
+    async def _resolve_place(self, place: str, ctx) -> dict | None:
+        """地点 → 围栏数据。四级，全落空返回 None（调用方诚实追问）。
+
+        ① 画像常用地点（家/公司/学校，带 lat/lng）；② 关系边一跳（「孩子学校」→ 校名）；
+        ③ 经 nearby.search 拿坐标（**卡片可跨 Agent 传、data 不能**，所以读 ui_card）；
+        ④ 落空 → None。
+        """
+        alias = {"家": "home", "我家": "home", "家里": "home",
+                 "公司": "company", "单位": "company",
+                 "学校": "school"}.get(place)
+        if alias:
+            try:
+                vals = await ctx.fetch("profile.places")
+                raw = vals.get("profile.places")
+                places = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                hit = (places or {}).get(alias)
+                if isinstance(hit, dict) and hit.get("lat") is not None:
+                    return {"lat": hit.get("lat"), "lon": hit.get("lng"),
+                            "radius_m": _GEOFENCE_RADIUS_M}
+            except Exception as e:
+                logger.debug("画像常用地点读取失败：%s", e)
+        keyword = place
+        try:
+            hit = await ctx.resolve_person_place(place)
+            if hit and hit.get("place"):
+                keyword = hit["place"]        # 「孩子学校」→ 阳光小学，再去要坐标
+        except Exception as e:
+            logger.debug("关系边解析跳过：%s", e)
+        try:
+            res = await self.agents.call("nearby", "nearby.search",
+                                         {"keyword": keyword}, ctx)
+            items = ((res.ui_card or {}).get("items") or []) if res else []
+            for it in items:
+                if it.get("lat") is not None and it.get("lng") is not None:
+                    return {"lat": it["lat"], "lon": it["lng"],
+                            "radius_m": _GEOFENCE_RADIUS_M,
+                            "resolved_name": it.get("name")}
+        except Exception as e:
+            logger.debug("nearby 地点解析失败：%s", e)
+        return None
 
     # ── update（P1a：改时间；缺时间经 REMINDER_PENDING(action=update) 两轮续接）──
     async def _update(self, intent, ctx, meta) -> AgentResult:

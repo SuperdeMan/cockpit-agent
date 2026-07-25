@@ -9,6 +9,8 @@ import logging
 import os
 import time
 
+from runtime.proactive import P_USER_CONTRACT
+
 from .store import ReminderStore
 from .timeparse import business_tz, next_recur_fire
 
@@ -44,7 +46,11 @@ class ReminderScheduler:
                    "card": cards[0] if len(cards) == 1 else
                    {"type": "card_group", "items": cards},
                    "agent_id": "reminder", "ts": int(self._now() * 1000),
-                   "user_id": due[0].user_id}
+                   "user_id": due[0].user_id,
+                   # 用户显式约定 → 治理器免打扰/负荷/频控全豁免（仅参与合并）。
+                   # 去重键带条目 id：同一条提醒不会因重投而说两遍，不同条目互不遮蔽。
+                   "priority": P_USER_CONTRACT,
+                   "dedup_key": "reminder.fired|" + ",".join(sorted(r.id for r in due))}
         try:
             await self._publish(payload)
             logger.info("reminder fired x%d: %s", len(due), "、".join(titles)[:60])

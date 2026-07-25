@@ -9,13 +9,16 @@ import re
 import time
 
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
+from runtime.proactive import P_ADVISORY, publish_proactive
 
 from store import MemoryStore
 
 logger = logging.getLogger("memory.server")
 
 _CONSOLIDATE_EVERY = 4  # 每累积 N 轮触发一次异步抽取巩固
-_PROACTIVE_SUBJECT = "agent.proactive"
+# routine 建议属**建议类**：可以攒着说（10 分钟 TTL），也可以不说——习惯建议不是
+# 用户显式约定，赶上高负荷/免打扰就该让路。治理见 docs/conventions.md §9.8。
+_ROUTINE_TTL_MS = 600_000
 
 # 显式记忆陈述立即抽取（旅程 B3-3 M2）：「记住，我最喜欢26度」这类会话往往一问一答
 # 就结束（2 轮），永远凑不满 4 轮节流窗 → 偏好从未被抽取。用户明说「记住/我喜欢」
@@ -106,19 +109,19 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         return self._nc
 
     async def _emit_proactive(self, suggestion: str, predicate: str):
-        """向 NATS 发主动建议（best-effort，复用 agent.proactive；HMI 投递为既有待接一跳）。"""
+        """向主动治理器发建议（治理器缺席则自动直发老主题，见 runtime/proactive.py）。"""
         nc = await self._ensure_nats()
         if not nc or not suggestion:
             return
         payload = {"type": "routine_suggestion", "speech": suggestion,
                    "agent_id": "memory", "predicate": predicate,
-                   "ts": int(time.time() * 1000)}
-        try:
-            await nc.publish(_PROACTIVE_SUBJECT,
-                             json.dumps(payload, ensure_ascii=False).encode())
-            logger.info("memory: 主动建议 %s", suggestion[:40])
-        except Exception as e:
-            logger.debug("memory: 主动建议发布失败：%s", e)
+                   "ts": int(time.time() * 1000),
+                   "priority": P_ADVISORY,
+                   # 同一条习惯（谓词）在去重窗口内只说一次——跨生产方生效
+                   "dedup_key": f"memory.routine|{predicate}",
+                   "ttl_ms": _ROUTINE_TTL_MS}
+        await publish_proactive(nc, payload)
+        logger.info("memory: 主动建议 %s", suggestion[:40])
 
     async def GetSession(self, request, context):
         turns = await self.store.get_session(request.session_id, request.last_n or 6)

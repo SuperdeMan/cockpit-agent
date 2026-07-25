@@ -23,6 +23,8 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
+from runtime.proactive import P_ADVISORY
+
 from .compiler import actions_preview
 from .solve import SAT, evaluate
 
@@ -36,6 +38,7 @@ BUSINESS_TZ = timezone(timedelta(hours=8))
 _OP_ALIASES = {"enter": "eq", "leave": "ne"}       # 位置进入/离开 → 边沿语义已由 watcher 保证
 RECURS = ("daily", "workday", "once")
 _SCENES_CACHE_S = 10.0     # enabled 场景短缓存：车速这类高频状态广播不该次次打 DB
+_SUGGEST_TTL_MS = 300_000  # 建议攒着说的上限（5 分钟）——过了这个点场景建议就不新鲜了
 
 
 def enrich_env(state: dict) -> dict:
@@ -116,7 +119,7 @@ class TriggerWatcher:
                 # **边沿触发**：只在「从不满足 → 满足」发一次。否则 battery=19 每来一次
                 # 状态广播就播一遍，成了骚扰风暴。
                 if ok and not was and self._allow(key):
-                    await self._suggest(scene, self._reason(t, env))
+                    await self._suggest(scene, self._reason(t, env), [_cond(t.get("spec") or {})])
 
         await self._check_deferred(env)          # 第三消费方：驻车补做
 
@@ -139,6 +142,9 @@ class TriggerWatcher:
             await self._publish({
                 "type": "scene_suggest", "agent_id": "scene-orchestrator", "user_id": uid,
                 "ts": int(time.time() * 1000),
+                # 驻车补做：只在 P 挡发，不带情境断言（gear 边沿已是判据本身）
+                "priority": P_ADVISORY, "dedup_key": f"scene.deferred|{uid}",
+                "ttl_ms": _SUGGEST_TTL_MS,
                 "speech": f"已经停好车了，刚才{name}里没做成的{what}，现在补上吗？",
                 "card": {"type": "scene_card", "context": "suggest", "name": name,
                          "description": "停车后可以补做",
@@ -218,11 +224,18 @@ class TriggerWatcher:
                   "cabin_temp": "车内温度", "location.city": "位置"}
         return f"{labels.get(k, k)}现在是 {env.get(k)}"
 
-    async def _suggest(self, scene, reason: str) -> None:
-        """**只发建议卡，零执行权**（D6）。用户点「开启」→ 回发原话走正常语音链路。"""
+    async def _suggest(self, scene, reason: str, conditions: list | None = None) -> None:
+        """**只发建议卡，零执行权**（D6）。用户点「开启」→ 回发原话走正常语音链路。
+
+        M3：走主动治理器（`advisory` 档）。带上**触发条件本身**作为情境断言——
+        高负荷时这条建议会被攒着，投递前治理器重新求值：条件已不成立就不说了
+        （「电量低要不要省电模式」在车已经充上电之后播出来，比不播更糟）。
+        """
         await self._publish({
             "type": "scene_suggest", "agent_id": "scene-orchestrator",
             "user_id": scene.user_id or "u1", "ts": int(time.time() * 1000),
+            "priority": P_ADVISORY, "dedup_key": f"scene.suggest|{scene.id}",
+            "ttl_ms": _SUGGEST_TTL_MS, "conditions": conditions or [],
             "speech": f"{reason}，要开启{scene.name}吗？",
             "card": {"type": "scene_card", "context": "suggest", "name": scene.name,
                      "description": scene.description or reason,

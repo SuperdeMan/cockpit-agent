@@ -21,10 +21,11 @@ import logging
 import os
 from typing import Awaitable, Callable
 
+from runtime.proactive import SKIPPED, publish_proactive
+
 logger = logging.getLogger("agent.scene.mirror")
 
 STATE_SUBJECT = "vehicle.state.changed"
-PROACTIVE_SUBJECT = "agent.proactive"
 
 ChangeCb = Callable[[list, dict], Awaitable[None]]
 
@@ -91,18 +92,13 @@ class StateMirror:
         return {k: self._state.get(k) for k in keys}
 
     # ── 写（proactive 播报；P2 Verify / P3 触发用）──
-    async def publish(self, payload: dict, subject: str = PROACTIVE_SUBJECT) -> bool:
+    async def publish(self, payload: dict) -> bool:
+        """经主动治理器发（M3 P0）。治理器缺席 → runtime 客户端自动直发老主题。"""
         if not self._nc:
             logger.info("scene: NATS 未连接，proactive 未推送：%s",
                         str(payload.get("speech", ""))[:40])
             return False
-        try:
-            await self._nc.publish(
-                subject, json.dumps(payload, ensure_ascii=False).encode())
-            return True
-        except Exception as e:
-            logger.warning("scene: proactive 推送失败：%s", e)
-            return False
+        return await publish_proactive(self._nc, payload) != SKIPPED
 
     async def close(self) -> None:
         if self._nc:

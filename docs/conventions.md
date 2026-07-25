@@ -515,3 +515,30 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | emotion 的落点 | **不进记忆层**（§2.3）：短 TTL+不入画像的东西是会话态。planner 同轮输出 `emotion` → `FinalResult.emotion` → HMI 存**下一轮**的 TTS 语气（本轮 TTS 在 final 前已开播，当轮改不了）。措辞表 `llm-gateway/providers.py::EMOTION_INSTRUCT`（HMI 只传语义标签） |
 
 > 新增 `rel` 先在本表登记再用；中央不为具体 rel 写分支（同 route_hints/verification 哲学）。
+
+### 9.8 主动消息信封与治理契约（M3 P0）
+
+统一主动引擎（服务 `proactive/`）是**「该不该现在打扰驾驶员」的唯一裁决点**。
+生产方经 `runtime/proactive.py::publish_proactive` 发 `agent.proactive.request`，
+治理器裁决后发既有 `agent.proactive`（网关与 HMI 零改动）。设计
+`docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md` §2。
+
+| 项 | 约定 |
+|---|---|
+| 主题 | 入 `agent.proactive.request`（request/ack）；出 `agent.proactive`（既有）；裁决事件 `obs.proactive.decision`（best-effort，无订阅者也无副作用） |
+| **fail-open** | ack 拿不到（治理器没起/被关/卡住）→ **客户端直发 `agent.proactive`**。治理器故障 = 逐字回落到它上线前的行为，绝不静默吞掉用户显式约定的提醒。停容器或 `PROACTIVE_GOVERNOR_ENABLED=false` 即一键回退 |
+| 信封 | 今天的 payload 原样 + 全可选治理键：`priority` / `conditions` / `dedup_key` / `ttl_ms` |
+| `priority` 四档 | `critical` 安全播报（全豁免、窗口 0 立即发）；`user_contract` 用户显式约定（免打扰/负荷/频控豁免，仍参与合并）；`advisory` 建议类（全套治理）；`ambient` 环境类（全套治理）。**缺省/不认识 = `advisory`**——不认识不等于豁免 |
+| `conditions` | 投递时刻的**再证实**，三态求值：`unsat` 与 **`unknown` 一律丢**。生产方声称的前提无法证实就不替它说；顺带解决「产出时成立、延后后已不成立」的陈旧建议 |
+| `dedup_key` | 去重窗（默认 600s）内同键只说一次，**跨生产方生效**（各自进程内节流做不到的那一半）。缺省 = `agent_id|type`。治理器**接手即打标**（不是投递时）——语义是「同一件事窗口内只说一次」 |
+| `ttl_ms` | 被负荷/免打扰抑制时「攒着说」的上限；**缺省 0 = 现在说不了就算了**，不做无限期堆积 |
+| 驾驶负荷闸 | `speed_kmh >= PROACTIVE_HIGH_LOAD_SPEED` 判高负荷。**读不到车速 → 放行**（唯一故意背离「unknown 不打扰」处：镜像冷启动最长一个快照周期全空，用缺数据定罪等于把主动链路静默掐死一分钟） |
+| 单条输出 | **剥掉治理键后原样转发**——字节级兼容保证 |
+| 合并输出 | `type`/`agent_id` 取最高优先级那条；`speech` 确定性拼接「A。另外，B」（零 LLM，不改写事实）；多张卡 → `card_group`；追加 `merged_from` |
+| 零领域字面量 | 治理器源码**不得出现任何生产方 agent_id / 消息 type 的具体值**。新增生产方 = 在信封里声明，**不改治理器一行**。由源码断言测试 `proactive/tests/test_governor.py::test_governor_source_has_zero_domain_literals` 钉死 |
+| 迁移护栏 | 全仓（除客户端与治理器输出端）不得再出现 `"agent.proactive"` 字面量——`proactive/tests/test_client_contract.py` 断言 |
+
+> 新增主动生产方：拿到 NATS 连接后调 `publish_proactive(nc, payload)`，在 payload 里声明
+> `priority`（+ 按需 `conditions`/`dedup_key`/`ttl_ms`）即可，**治理器与网关都不用改**。
+> 生产侧自身的节流（如 road-safety 的 30/60 分钟）**保留**：生产侧防抖与中央治理是两层，
+> 中央管的是跨生产方那一半。

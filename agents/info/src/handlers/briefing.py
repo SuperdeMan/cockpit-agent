@@ -1,4 +1,4 @@
-"""主动早报域（P2 雏形，响应式）：晨间起步 → 每日一次新闻速览 → agent.proactive（NATS）。
+"""主动早报域（P2 雏形，响应式）：晨间起步 → 每日一次新闻速览 → 主动治理器（NATS）。
 
 复用 road-safety on_start→agent.proactive 范式。新闻聚合方法（_gather_news/_dedup_news/
 _clean_title）在 NewsMixin，本 mixin 经 self 调用。
@@ -8,6 +8,8 @@ import json
 import logging
 import os
 import time
+
+from runtime.proactive import P_AMBIENT, publish_proactive
 
 from ._util import _shanghai_now
 
@@ -77,11 +79,10 @@ class BriefingMixin:
                          for i, n in enumerate(raw, 1))
         speech = f"早安！今天有几条值得关注的新闻——{heads}。说『看新闻』我给你逐条讲。"
         payload = {"type": "morning_news", "speech": speech,
-                   "agent_id": self.manifest.agent_id, "ts": int(time.time() * 1000)}
-        try:
-            await self._nc.publish(
-                "agent.proactive",
-                json.dumps(payload, ensure_ascii=False).encode())
-            logger.info("info: 主动早报 %s", speech[:40])
-        except Exception as e:
-            logger.debug("info: 主动早报发布失败：%s", e)
+                   "agent_id": self.manifest.agent_id, "ts": int(time.time() * 1000),
+                   # 环境类：赶上高负荷/免打扰就让路；半小时内没说出去就算了（早报过时即无用）
+                   "priority": P_AMBIENT,
+                   "dedup_key": "info.morning-briefing",
+                   "ttl_ms": 1_800_000}
+        await publish_proactive(self._nc, payload)
+        logger.info("info: 主动早报 %s", speech[:40])

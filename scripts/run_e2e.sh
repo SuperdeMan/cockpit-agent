@@ -55,7 +55,11 @@ run_step "e2e_memory_graph"           python test/e2e_memory_graph.py
 run_step "e2e_degrade"                python test/e2e_degrade.py
 run_step "e2e_voice_loop"             python test/e2e_voice_loop.py
 run_step "e2e_reminder"               python test/e2e_reminder.py
+# M3 P1：位置提醒围栏（建单→播种→进围栏触达→不重复）
+run_step "e2e_geofence"               python test/e2e_geofence.py
 run_step "e2e_scene"                  python test/e2e_scene.py
+# M3 P0：统一主动引擎（单条直通/DoD 合并/去重/断言复核/user_contract 豁免）
+run_step "e2e_proactive"              python test/e2e_proactive.py
 run_step "e2e_rejection"              python test/e2e_rejection.py
 run_step "e2e_tts_stream"             python test/e2e_tts_stream.py
 # 旅程级（L3）：回归级必须绿；目标级红灯是能力标尺不拦退出码（--strict-target 才拦）

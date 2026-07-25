@@ -506,6 +506,27 @@ services:
       retries: 10
     depends_on: [prometheus]
 
+  # ── 统一主动引擎（M3 P0）──
+  # 「该不该现在打扰驾驶员」的唯一裁决点：订 agent.proactive.request → 六道闸 + 合并窗口
+  # → 发既有 agent.proactive（网关与 HMI 零改动）。**它可以随时死掉**：生产方经
+  # runtime/proactive.py 走 request/ack，没人 ack 就直发老主题，行为逐字回落到上线前。
+  proactive:
+    <<: *restart
+    build: { context: .., dockerfile: proactive/Dockerfile }
+    environment:
+      NATS_URL: nats://nats:4222
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # 一键回退：false → 治理器不订阅 → 全部生产方自动直发老主题
+      PROACTIVE_GOVERNOR_ENABLED: ${PROACTIVE_GOVERNOR_ENABLED:-true}
+      PROACTIVE_MERGE_WINDOW_MS: ${PROACTIVE_MERGE_WINDOW_MS:-1500}
+      PROACTIVE_DEDUP_WINDOW_S: ${PROACTIVE_DEDUP_WINDOW_S:-600}
+      PROACTIVE_MAX_PER_HOUR: ${PROACTIVE_MAX_PER_HOUR:-6}
+      PROACTIVE_HIGH_LOAD_SPEED: ${PROACTIVE_HIGH_LOAD_SPEED:-80}
+      # 默认空 = 免打扰闸不启用（M3 §9-3 拍板：车机夜间场景与手机不同，不预设口径）
+      PROACTIVE_QUIET_HOURS: ${PROACTIVE_QUIET_HOURS:-}
+      PROACTIVE_DEFER_TICK_S: ${PROACTIVE_DEFER_TICK_S:-5}
+    depends_on: [nats]
+
   # ── 接入层 ──
   cloud-gateway:
     <<: *restart

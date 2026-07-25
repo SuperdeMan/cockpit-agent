@@ -17,14 +17,14 @@ import os
 import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
+from runtime.proactive import P_CRITICAL, publish_proactive
 
 logger = logging.getLogger("agent.road_safety")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 
-# NATS 主题：订阅车辆状态变更，发布主动播报
+# NATS 主题：订阅车辆状态变更
 _STATE_SUBJECT = "vehicle.state.changed"
-_PROACTIVE_SUBJECT = "agent.proactive"
 
 
 class RoadSafetyAgent(BaseAgent):
@@ -33,6 +33,7 @@ class RoadSafetyAgent(BaseAgent):
         # 主动播报：NATS 连接 + 同类提示节流时间戳
         self._nc = None
         self._last_broadcast: dict[str, float] = {}
+        self._last_city = ""          # 上一次已评估的位置（周期全量快照不算「进入新区域」）
         # 节流窗口：同类提示默认 30 分钟不重复；夜间（22:00–06:00）降频到 60 分钟
         self._throttle_sec = float(os.getenv("ROAD_SAFETY_THROTTLE_SEC", "1800"))
         self._night_throttle_sec = float(
@@ -56,14 +57,22 @@ class RoadSafetyAgent(BaseAgent):
         logger.info("road-safety: 已订阅 %s，开启主动播报", _STATE_SUBJECT)
 
     async def _on_state_event(self, msg) -> None:
-        """车辆状态变更回调：location 变更视为进入新区域 → 查预警 → 节流后主动播报。"""
+        """车辆状态变更回调：location **真的变了**才算进入新区域 → 查预警 → 节流后主动播报。
+
+        为什么要比对上一次：`orchestrator/edge/main.py` 每 `OBS_SNAPSHOT_INTERVAL`
+        （默认 30s）发一次**全量快照**，快照里 location 一定在 changes 里——不比对的话
+        车停着不动也每 30 秒查一次预警。2026-07-25 真栈实测的后果是：一个查不到的地名
+        每 30 秒打一次和风 400，把**共享的 qweather 熔断器打开**，天气域跟着一起垮
+        （journeys B1-4/B3-4 因此变红）。语义上「进入新区域」本来就该是变沿。
+        """
         try:
             event = json.loads(msg.data.decode())
         except Exception:
             return
         city = self._location_from_changes(event.get("changes") or [])
-        if not city:
+        if not city or city == self._last_city:
             return
+        self._last_city = city
         advisory = await self._evaluate_hazard(city)
         if advisory:
             await self._maybe_broadcast("weather_safety", "weather_safety", advisory)
@@ -120,7 +129,12 @@ class RoadSafetyAgent(BaseAgent):
         return True
 
     async def _publish_proactive(self, advisory_type: str, speech: str) -> None:
-        """向 NATS 发主动播报事件（best-effort）。HMI 投递桥接为后续一跳。"""
+        """向主动治理器发安全播报。
+
+        **`critical` 档**：免打扰/驾驶负荷/频控全豁免，合并窗口为 0 立即发——
+        危险天气正是开车时该说的话，攒着说等于不说。上面的进程内 30/60 分钟节流保留：
+        生产侧防抖与中央治理是两层，不互斥（中央治理管的是跨生产方那一半）。
+        """
         if not self._nc:
             return
         payload = {
@@ -128,15 +142,11 @@ class RoadSafetyAgent(BaseAgent):
             "speech": speech,
             "agent_id": self.manifest.agent_id,
             "ts": int(time.time() * 1000),
+            "priority": P_CRITICAL,
+            "dedup_key": f"road-safety.{advisory_type}",
         }
-        try:
-            await self._nc.publish(
-                _PROACTIVE_SUBJECT,
-                json.dumps(payload, ensure_ascii=False).encode(),
-            )
-            logger.info("road-safety: 主动播报 %s", speech[:40])
-        except Exception as e:
-            logger.debug("road-safety: 主动播报发布失败：%s", e)
+        await publish_proactive(self._nc, payload)
+        logger.info("road-safety: 主动播报 %s", speech[:40])
 
     # ── 请求-响应意图 ────────────────────────────────────────
 
