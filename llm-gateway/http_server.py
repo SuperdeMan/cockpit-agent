@@ -613,7 +613,7 @@ def create_http_app() -> web.Application:
         """
         from s2s import (
             S2SSession, Reflux, build_context_summary, build_s2s_provider,
-            UP_AUDIO, UP_BARGE_IN, UP_CANCEL_TURN, UP_ESCALATED_RESULT,
+            UP_AUDIO, UP_AUDIO_DONE, UP_BARGE_IN, UP_CANCEL_TURN, UP_ESCALATED_RESULT,
             UP_SESSION_END, UP_SESSION_START, DOWN_UNSUPPORTED,
         )
 
@@ -697,7 +697,9 @@ def create_http_app() -> web.Application:
 
                 if session is None:
                     continue
-                if mtype == UP_BARGE_IN:
+                if mtype == UP_AUDIO_DONE:
+                    await session.audio_done()
+                elif mtype == UP_BARGE_IN:
                     await session.barge_in()
                 elif mtype == UP_CANCEL_TURN:
                     await session.cancel_turn()

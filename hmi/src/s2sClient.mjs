@@ -19,6 +19,7 @@ import { float32ToInt16 } from './pcmRing.mjs'
 export const UP = {
   START: 'session.start',
   AUDIO: 'audio',
+  AUDIO_DONE: 'audio_done',
   BARGE_IN: 'barge_in',
   CANCEL_TURN: 'cancel_turn',
   ESCALATED_RESULT: 'escalated_result',
@@ -151,6 +152,16 @@ export class S2SClient {
     this._buf.push(i16)
     this._bufBytes += i16.length * 2
     if (this._bufBytes >= SEND_CHUNK_BYTES) this._flush()
+  }
+
+  /** 本轮音频段推完（本侧 VAD 判到端点）→ flush 残余帧并请网关让 provider 收尾定稿。
+   *
+   *  **不能省**：provider 的 server VAD 靠连续静音判「说完了」，而我们在端点后就停推流，
+   *  它永远等不到静音 → turn 永不收束、用户永远得不到回复（真机首验踩到的死锁）。
+   *  与 classic 的 `onEndpoint → asr.stop()`（请引擎定稿）逐字同构。 */
+  commitAudio() {
+    this._flush()
+    this._send({ type: UP.AUDIO_DONE })
   }
 
   /** 注入前滚缓冲（唤醒/续说的首字补偿，与 classic 的 pre-roll 同思想）。 */

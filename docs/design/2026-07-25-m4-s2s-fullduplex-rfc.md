@@ -80,11 +80,14 @@ S2S 会话在 provider 侧持有对话上下文（其多轮能力来源），但
 ```jsonc
 {"type": "session.start", "session_id", "user_id", "voice", "context": {...}}  // context=重注入材料，HMI 不组装、网关向 memory 取
 {"type": "audio"}            // 之后跟二进制 PCM 帧（16k mono s16le，与 /api/asr/stream 同格式）
+{"type": "audio_done"}       // 本轮音频段推完（本侧 VAD 判到端点）→ 网关请 provider 收尾定稿
 {"type": "barge_in"}         // L-HMI 判定打断（本侧 VAD/KWS 权威）→ 网关 cancel 当前 response
 {"type": "cancel_turn"}      // THINKING 期取消（对齐既有 onCancelTurn 语义）
 {"type": "escalated_result", "turn_id", "text"}  // 逃逸轮主链回答播完后回传（见下）
 {"type": "session.end"}
 ```
+
+- **`audio_done` 为何存在**（真机首验后补入协议）：provider 的 server VAD 靠**连续静音输入**判「说完了」，而 L-HMI 在本侧 VAD 判到端点后就停止推流——provider 永远等不到静音，turn 永不收束，**用户说什么都没有回复**。这一步缺了就是死锁：provider 等静音 ↔ HMI 等定稿才进 THINKING 才关收音。故端点判定权留在本侧（与 classic 的 `onEndpoint → asr.stop()` 逐字同构），收尾动作经 `audio_done` 交给网关，由 `BaseS2SProvider.commit_audio()` 按厂商方式实现（qwen 补静音尾，长度须 > `silence_duration_ms`——ASR 面早就踩过同一个坑）。**HMI 不必知道任何 provider 的 VAD 参数。**
 
 - **`escalated_result` 为何存在**（P0 探针后补入协议）：逃逸轮的执行/回答全在主链，S2S 会话对此**一无所知**——下轮闲聊时模型不知道空调已经调过了，多轮连续性断在每个逃逸轮上。故 HMI 在逃逸轮的主链回答落地后，把回答文本回传网关，网关以 `function_call_output` 注入 provider session（**R1 实测：不发 `response.create` 则完全静默，不会与主链播报撞成双播**）。这条通道**只为上下文连续，不为播报**。
   - 丢了也不坏：R2 实测悬挂 `function_call` 不影响后续对话——HMI 没回传（用户切走/网络抖）时，S2S 只是少一条上下文，会话照常。**无需补偿逻辑**。
@@ -175,7 +178,7 @@ S2S 模式 = voiceLoop 的一组新效果回调注入（构造参数本来就是
 | 态 | 三段式（现状） | S2S 模式差异 |
 |---|---|---|
 | IDLE/ARMED | KWS 待机 | **零改动**（唤醒仍本地 KWS，S2S 不参与——不把唤醒外包给云） |
-| LISTENING | 开 /api/asr/stream | 开/复用 `/api/s2s` 会话并推 PCM；上屏数据源换 `turn.transcript` |
+| LISTENING | 开 /api/asr/stream | 开收音门并推 PCM（会话常驻）；上屏数据源换 `turn.transcript`；**本侧 VAD 判到端点 → 上行 `audio_done` 请 provider 收尾**（原文写「provider server VAD 自驱、本侧不请定稿」是错的，见 §11.3-5） |
 | THINKING | 等编排 final | 等 `turn.answer_delta` 首包；**逃逸轮**收到 `turn.escalated` → 改挂既有文本链路等待（对用户无感，仍是 THINKING） |
 | SPEAKING | 播 TTS 流 | 播 `turn.audio` PCM；**barge-in 判定仍在本侧**（既有 VAD bargeInMinMs 判据）→ 上行 `barge_in` + 本地立即停播（不等网关回执——听感优先，provider 取消是异步收尾） |
 | FOLLOWUP | 8s 续问窗 | **零改动**；续问直接复用同一 S2S 会话（多轮上下文是 S2S 的主场） |
@@ -349,6 +352,16 @@ S2S 轮次绕过 edge-gateway，若不回灌则：记忆断代（下次 planner 
    aiohttp session。由韧性验证的 "Unclosed client session" 警告暴露。
 3. **e2e 自身的写法错误**：「先推完音频再读」不是真实客户端行为（浏览器 WS 事件驱动、总在读），
    顺序写法会自造背压把整轮回答弄丢。改并发读写。
+5. **【真机首验的死锁，最严重的一个】S2S 下 `onEndpoint` 被做成了空操作**，理由写的是「provider
+   server VAD 自驱轮次」——但 server VAD 靠**连续静音输入**判端点，而 HMI 在本侧 VAD 判到端点后就
+   停止推流，provider 永远等不到静音：turn 开了却永不收束，**用户说什么都没有回复**（网关日志里是
+   一串「turn 悬挂超 45s 未收束」）。修法=端点判定权留在本侧、经新增的 `audio_done` 上行帧请网关收尾，
+   `BaseS2SProvider.commit_audio()` 按厂商方式实现（qwen 补静音尾）。
+   - **两个可复用的教训**：① 仓库的 ASR provider 早就解决过同一问题（流末补静音尾，注释写着「须 >
+     silence_duration_ms 才生效」）——接同一族协议时**先去翻既有实现踩过的坑**，我这次没翻；
+     ② **e2e 把它整个掩盖了**：脚本自己发 13 帧静音，替生产代码做了它没做的事。e2e 模拟客户端就得
+     **只做客户端做的事**，生产缺的那一步必须在测试里也缺出来。修 e2e 后同一套断言立刻复现死锁。
+
 4. **评测把调用失败算成了模型判断**：音频路径首跑报移交率 85.7%，逐条看才发现 4 条命中 provider 侧
    `algorithm server connection closed`，而脚本把「没拿到 function_call」一律记作「模型选择自答」——
    其中 2 条 `expect=escalate` 判红、**2 条 `expect=self_answer` 假绿**。这类缺陷会让指标朝好看的方向
@@ -363,8 +376,8 @@ S2S 轮次绕过 edge-gateway，若不回灌则：记忆断代（下次 planner 
 | 真栈 `e2e_s2s.py` | **25/25**（自答闭环 / 多轮上下文 / escalate 逃逸零音频 / 打断 0ms 响应零残包 / 打断后同会话续听且上下文仍在 / 工具调用中打断不播报 / unsupported 回落 / 回灌 memory+obs 且逃逸轮不重复写） |
 | 韧性 `e2e_s2s_resilience.py` | **11/11**（断连→625ms 重连 + 摘要重注入 / 重连后记得断线前的话 / IN_TURN 断连诚实收 `cancelled+disconnected` / 持续不可达→DEGRADED 且不再上行音频） |
 | 灰度 `eval_s2s_escalation.py` | 两条路径都 **24/24=100%**：文本路径移交 14/14、自答 10/10，613ms/轮；**音频路径**（含转写误差，与线上一致）移交 14/14、自答 10/10，2160ms/轮，零 provider 错误 ← 门槛 ≥95%。对抗集含 6 条夹在闲聊里的动作句（「今天真热啊，把空调开低一点」「有点冷」「这歌不好听，换一首」） |
-| 单测 | 网关 62（协议/事件映射/工厂拒不支持型号/三层打断/重连降级/看门狗/回灌两条易漏项/源码级铁律 3）+ HMI node 27 |
-| 全量 | `pytest` **2184 passed, 7 skipped**（M3 基线 2122，净 +62）；HMI node **170**（143 既有 + 27）；tsc 错误数不变、build 通过 |
+| 单测 | 网关 **67**（协议/事件映射/工厂拒不支持型号/三层打断/重连降级/看门狗/**音频段收尾 5**[死锁回归护栏：audio_done 必落 commit、新音频与 barge_in 撤在途静音尾、DEGRADED 空操作、静音总时长须超 VAD 判定窗]/回灌两条易漏项/源码级铁律 3）+ HMI node **28** |
+| 全量 | `pytest` **2189 passed, 7 skipped**（M3 基线 2122，净 +67）；HMI node **171**（143 既有 + 28）；tsc 错误数不变、build 通过 |
 
 ### 11.5 余项（都不阻塞，按需取用）
 

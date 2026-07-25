@@ -387,7 +387,7 @@ verification:
   - **真栈才暴露的三个缺陷**：① turn 悬挂无收口（客户端慢读→下行 send 背压→事件泵阻塞→provider 侧数据丢→该 turn 永不 done，HMI 干等到 voiceLoop 100s 兜底）→ 加 turn 看门狗诚实收 `turn.end(error, provider_silent)`，**不追究成因、任何原因导致的悬挂都在此收口**；② 重连直接覆盖 `self.provider` 泄漏 aiohttp ClientSession（由韧性验证的 "Unclosed client session" 暴露）；③ e2e 自身「先推完再读」不是真实客户端行为（浏览器 WS 总在读），顺序写法自造背压把整轮回答弄丢。
   - **P2 的 journeys lane 改道**：子 RFC §9 原写「journeys 新 lane 4 条」，但 journeys runner 是**文本驱动**（发文本给 edge-gateway），跑不了音频通道——S2S 旅程无法用它表达。改在 `e2e_s2s.py` 覆盖四形态（闲聊连续/夹车控/打断/断线），断言更强（能验残包与回灌）。中途断连用**宿主内 WS 代理**注入（不改 `.env`、不给生产协议加测试后门）。
   - **P3 灰度门槛**：`eval_s2s_escalation.py` + 24 条语料（对抗重点是**夹在闲聊里的动作句**，直白句谁都判得对）；配置生产同源（直接用 `protocol.escalate_tool()`/`persona()`）。实测两条路径都 **24/24=100%**（文本 613ms/轮；音频路径含转写误差、2160ms/轮、零 provider 错误），门槛 ≥95% 达标。**评测本身先修过一次有效性缺陷**：音频路径首跑 85.7%，逐条看才发现 4 条是 provider 侧 `algorithm server connection closed`，而脚本把「没拿到 function_call」一律记作「模型选择自答」——2 条判红、**2 条假绿**。这类缺陷让指标朝好看的方向失真（错误越多自答准确率越高），比红灯更危险；改成 error 单列+重试+排除出分母，错误率 >10% 直接判报告作废。`s2s_false_promise` 检测已进 obs span 供 M1b nightly 挖掘。
-  - 验证：全量 pytest **2184 passed / 7 skipped**（基线 2122，净 **+62**）；HMI node **170**（143 既有 + 27 新增）、tsc 错误数不变、build 通过；真栈 `e2e_s2s` **25/25**、`e2e_s2s_resilience` **11/11**（断连 625ms 重连 + 摘要重注入 + 重连后记得断线前的话）；两个新 e2e 已挂 `run_e2e`。
+  - 验证：全量 pytest **2189 passed / 7 skipped**（基线 2122，净 **+67**）；HMI node **171**（143 既有 + 28 新增）、tsc 错误数不变、build 通过；真栈 `e2e_s2s` **25/25**、`e2e_s2s_resilience` **11/11**（断连 625ms 重连 + 摘要重注入 + 重连后记得断线前的话）；两个新 e2e 已挂 `run_e2e`。
   - **未做**：声纹多用户 / 视觉入口（P4，子 RFC §8 边界速写在案）；真麦声学验收（打断手感/音色接受度，同 R4.3 惯例留泓舟）。因此 M4 的另一条 DoD「多用户记忆隔离旅程」尚未兑现。
 
 ---

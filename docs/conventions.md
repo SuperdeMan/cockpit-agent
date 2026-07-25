@@ -576,7 +576,8 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | 项 | 契约 |
 |---|---|
 | 两端两个契约 | 对上=本侧事件协议（`llm-gateway/s2s/protocol.py`，HMI 只认这层，**永不随厂商变**）；对下=`BaseS2SProvider`（每厂商一实现）。换厂商只加 `provider.py` 的子类 |
-| 上行 | `session.start` / `audio`(+二进制 PCM 16k mono s16le) / `barge_in` / `cancel_turn` / `escalated_result{turn_id,text}` / `session.end` |
+| 上行 | `session.start` / `audio`(+二进制 PCM 16k mono s16le) / **`audio_done`** / `barge_in` / `cancel_turn` / `escalated_result{turn_id,text}` / `session.end` |
+| **`audio_done` 不能省** | 本侧 VAD 判到端点后必须发它请 provider 收尾。server VAD 靠**连续静音**判「说完了」，而 HMI 端点后即停推流——不发就是死锁（provider 等静音 ↔ HMI 等定稿才进 THINKING 才关收音），表现为 turn 永久悬挂、**用户说什么都没有回复**。端点判定权在本侧，与 classic 的 `onEndpoint → asr.stop()` 同构；静音尾长度由 `commit_audio()` 按 `silence_duration_ms` 放大，HMI 不碰 provider VAD 参数 |
 | 下行 | `turn.transcript{final}` / `turn.answer_delta` / `turn.audio_meta{sample_rate}`(+二进制 PCM) / `turn.end{reason,detail?}` / `turn.escalated{utterance}` / `session.state{ready\|reconnecting\|degraded}` / `unsupported` |
 | turn_id | **网关生成**（uuid4 前 16）。provider 的 response id 只在会话层对账，不透传上层——「provider session=可丢弃缓存」的协议面 |
 | **执行分工（安全铁律）** | S2S 会话内**没有任何执行通道**。模型唯一的工具是 `escalate(utterance)`，它只把原话交回文本主链——submit_plan / route_hints / Skill 注入 / `require_confirm` 闸 / VAL / R4.4 澄清**逐字全量生效**。S2S 是新的「话筒」，不是新的规划入口 |

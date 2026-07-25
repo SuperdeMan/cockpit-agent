@@ -510,6 +510,70 @@ async def test_max_turns_triggers_proactive_rebuild():
     await h.sess.close()
 
 
+# ─────────── 音频段收尾（真机死锁的回归护栏）───────────
+
+@pytest.mark.asyncio
+async def test_audio_done_commits_to_provider():
+    """本侧 VAD 判端点 → 必须请 provider 收尾定稿。
+
+    真机首验的死锁：这一步缺了，provider 的 server VAD 永远等不到静音尾 → turn 永不
+    收束 → **用户说什么都没有回复**。早先的 e2e 自己灌静音尾，把它整个掩盖过去了。
+    """
+    h = Harness()
+    await h.sess.start()
+    await h.sess.push_audio(b"\x01\x02" * 800)
+    await h.sess.audio_done()
+    await asyncio.sleep(0.02)
+    assert h.prov.commits == 1, "audio_done 必须落到 provider.commit_audio"
+    await h.sess.close()
+
+
+@pytest.mark.asyncio
+async def test_new_audio_cancels_inflight_commit():
+    """用户又说话了 → 撤掉在途静音尾，别让它污染这一段。"""
+    h = Harness()
+    await h.sess.start()
+    await h.sess.audio_done()
+    assert h.sess._commit is not None
+    await h.sess.push_audio(b"\x01" * 100)
+    assert h.sess._commit is None, "新音频到达应撤销在途 commit"
+    await h.sess.close()
+
+
+@pytest.mark.asyncio
+async def test_barge_in_cancels_inflight_commit():
+    """打断了就别再补静音尾催它说完。"""
+    h = Harness()
+    await h.sess.start()
+    await h.pump_once(S2SEvent(kind=EV_TURN_STARTED),
+                      S2SEvent(kind=EV_ANSWER_DELTA, text="嗯"))
+    await h.sess.audio_done()
+    await h.sess.barge_in()
+    assert h.sess._commit is None
+    await h.sess.close()
+
+
+@pytest.mark.asyncio
+async def test_audio_done_noop_when_degraded():
+    h = Harness()
+    await h.sess.start()
+    h.sess.state = SessionState.DEGRADED
+    await h.sess.audio_done()
+    await asyncio.sleep(0.02)
+    assert h.prov.commits == 0
+    await h.sess.close()
+
+
+def test_qwen_commit_sends_silence_longer_than_vad_window():
+    """静音尾**须长于** silence_duration_ms 才触发 server VAD（ASR 面早就踩过的坑）。"""
+    import inspect
+    src = inspect.getsource(QwenOmniRealtimeProvider.commit_audio)
+    assert "vad_silence_ms" in src, "静音尾长度必须随 vad_silence_ms 放大，不能写死"
+    p = QwenOmniRealtimeProvider("k", "w", "m", vad_silence_ms=2000)
+    frames = max(13, p.vad_silence_ms // 100 + 4)
+    assert frames * 100 > p.vad_silence_ms, "静音总时长须超过 VAD 判定窗"
+
+
 @pytest.mark.asyncio
 async def test_hanging_turn_is_honestly_closed_by_watchdog():
     """真栈踩到的缺口：turn 开了却永不 done（下行背压/provider 静默）→ HMI 干等。

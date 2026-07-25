@@ -12,6 +12,12 @@ import uuid
 # ── 上行（HMI → 网关）──
 UP_SESSION_START = "session.start"
 UP_AUDIO = "audio"                    # 之后跟二进制 PCM 帧（16k mono s16le）
+# 本轮音频段推完（L-HMI 的 VAD 判到端点）→ 网关请 provider 收尾定稿。
+# **不能省**：server VAD 靠连续静音输入判「说完了」，而 HMI 在端点后就停止推流，
+# provider 永远等不到静音 → turn 永远不收束（真机首验的死锁：provider 等静音、
+# HMI 等定稿才进 THINKING 才关收音）。端点判定权仍在本侧，与 classic 的
+# 「onEndpoint → asr.stop() 请引擎定稿」逐字同构。
+UP_AUDIO_DONE = "audio_done"
 UP_BARGE_IN = "barge_in"              # L-HMI 判定打断（本侧 VAD/KWS 权威）
 UP_CANCEL_TURN = "cancel_turn"        # THINKING 期取消（对齐既有 onCancelTurn）
 UP_ESCALATED_RESULT = "escalated_result"  # 逃逸轮主链回答回传（只为上下文连续，不为播报）

@@ -112,6 +112,7 @@ class S2SSession:
         self._by_id: dict[str, Turn] = {}   # turn_id → Turn（escalated_result 回查）
         self._pump: asyncio.Task | None = None
         self._watchdog: asyncio.Task | None = None
+        self._commit: asyncio.Task | None = None  # 在途的音频段收尾（静音尾）
         self._ring = bytearray()            # 重连期 HMI 音频缓冲
         self._reconnecting = False
         self._closed = False
@@ -131,6 +132,7 @@ class S2SSession:
         self._closed = True
         self.state = SessionState.CLOSED
         self._clear_watchdog()
+        self._cancel_commit()
         if self._pump is not None:
             self._pump.cancel()
         if self.provider is not None:
@@ -151,6 +153,8 @@ class S2SSession:
     # ── 上行入口（HMI → 本层）──
     async def push_audio(self, pcm: bytes) -> None:
         """HMI 音频帧。重连期进前滚缓冲（≤ring_max），恢复后续灌。"""
+        # 新音频到达 = 用户又说话了 → 撤掉在途的静音尾，别让它污染这一段
+        self._cancel_commit()
         if self.state in (SessionState.RECONNECTING, SessionState.CONNECTING):
             self._ring.extend(pcm)
             if len(self._ring) > self.ring_max:
@@ -163,6 +167,32 @@ class S2SSession:
         except Exception as e:
             logger.debug("s2s send_audio 失败 → 触发重连: %s", e)
             await self._schedule_reconnect()
+
+    async def audio_done(self) -> None:
+        """本轮音频段推完（L-HMI 的 VAD 判到端点）→ 请 provider 收尾定稿。
+
+        **起后台 task 而不是 await**：静音尾要逐帧间隔发（~0.65s），在上行读循环里
+        await 会把 barge_in 等帧一起堵住。
+        """
+        if self.provider is None or self.state == SessionState.DEGRADED:
+            return
+        self._cancel_commit()
+        prov = self.provider
+
+        async def commit():
+            try:
+                await prov.commit_audio()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug("s2s commit_audio 失败: %s", e)
+
+        self._commit = asyncio.create_task(commit())
+
+    def _cancel_commit(self) -> None:
+        if self._commit is not None:
+            self._commit.cancel()
+            self._commit = None
 
     async def barge_in(self) -> None:
         """①听感打断（RFC §4.3）：本侧权威。立即 cancel + 后续该 response 增量全部丢弃。
@@ -180,6 +210,7 @@ class S2SSession:
             return
         t.status = T_CANCELLING
         t.truncated = True
+        self._cancel_commit()  # 打断了就别再补静音尾催它说完
         if self.provider is not None:
             await self.provider.cancel_response()  # 幂等
         # keep_status：保留 CANCELLING 而非置 DONE——turn.end 已下行，但 provider 侧

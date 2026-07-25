@@ -64,6 +64,15 @@ class BaseS2SProvider:
     async def send_audio(self, pcm: bytes) -> None:
         raise NotImplementedError
 
+    async def commit_audio(self) -> None:
+        """本轮音频段推完 → 请 provider 收尾定稿（本侧 VAD 判到端点时调）。
+
+        **怎么收尾是厂商差异，由子类决定**：server VAD 型要补静音尾（够长才触发
+        silence_duration_ms 判定），支持显式提交的可发 commit。抽象在这里，HMI 不必
+        知道任何 provider 的 VAD 参数。
+        """
+        raise NotImplementedError
+
     async def cancel_response(self) -> None:
         """barge-in 落点：立即停止当前生成。**必须幂等**——本侧权威，多取消一次无害。"""
         raise NotImplementedError
@@ -181,6 +190,18 @@ class QwenOmniRealtimeProvider(BaseS2SProvider):
         await self._send({"type": "input_audio_buffer.append",
                           "audio": base64.b64encode(pcm).decode("ascii")})
 
+    async def commit_audio(self) -> None:
+        """补静音尾触发 server VAD 收尾定稿——与 `DashScopeRealtimeASRProvider` 同款打法
+        （ASR 面早就踩过这个坑：静音**须长于** silence_duration_ms 才生效，故按它放大帧数）。
+
+        逐帧间隔发送，避免一次性灌爆被服务端丢帧；调用方以 task 形式起，别阻塞上行读循环。
+        """
+        sil = base64.b64encode(b"\x00" * 3200).decode("ascii")  # 100ms @16k s16le
+        tail_frames = max(13, self.vad_silence_ms // 100 + 4)
+        for _ in range(tail_frames):
+            await self._send({"type": "input_audio_buffer.append", "audio": sil})
+            await asyncio.sleep(0.05)
+
     async def cancel_response(self) -> None:
         # 幂等：无在飞 response 时 provider 回 error，忽略即可（本侧权威，多取消一次无害）
         try:
@@ -285,6 +306,7 @@ class MockS2SProvider(BaseS2SProvider):
         self.answer = answer
         self._q: asyncio.Queue[S2SEvent | None] = asyncio.Queue()
         self.sent_audio = 0
+        self.commits = 0
         self.cancels = 0
         self.injected: list[tuple[str, str]] = []
         self.opened = False
@@ -296,6 +318,9 @@ class MockS2SProvider(BaseS2SProvider):
 
     async def send_audio(self, pcm: bytes) -> None:
         self.sent_audio += len(pcm)
+
+    async def commit_audio(self) -> None:
+        self.commits += 1
 
     async def cancel_response(self) -> None:
         self.cancels += 1

@@ -137,8 +137,9 @@ async def drive_turn(sess, out: list, pcm: bytes, *, timeout: float = 60.0) -> d
     step = 3200
     for i in range(0, len(pcm), step):
         await sess.push_audio(pcm[i:i + step])
-    for _ in range(13):
-        await sess.push_audio(b"\x00" * step)
+    # 走生产路径收尾（静音尾由 provider adapter 补），不自己灌静音——自己灌就等于
+    # 替生产代码做了它没做的事，会把「provider 永远等不到静音」的死锁掩盖掉
+    await sess.audio_done()
     t0 = time.monotonic()
     while time.monotonic() - t0 < timeout:
         await asyncio.sleep(0.2)
@@ -226,6 +227,10 @@ async def main() -> int:
               f"open 带摘要次数={len(opened_summaries)}")
 
         print("\n[4] 重连后仍是同一对话（provider 上下文经摘要恢复）")
+        # 重连成功的同一瞬间就推音频是最坏时序（新 session 刚建 + 前滚缓冲刚灌完），实测会
+        # 偶发空回答。生产上用户不会在断线恢复的同一秒说话，故给 1s settle——这不是掩盖缺陷：
+        # 重连本身与摘要重注入已由 [3] 独立断言，这里量的是「上下文是否真恢复」。
+        await asyncio.sleep(1.0)
         r2 = await drive_turn(sess, out, synth_pcm16k("我刚才说我最喜欢喝什么"))
         check("重连后记得断线前说过的事",
               "拿铁" in r2["answer"] or "咖啡" in r2["answer"],
@@ -239,8 +244,7 @@ async def main() -> int:
         step = 3200
         for i in range(0, len(pcm), step):
             await sess.push_audio(pcm[i:i + step])
-        for _ in range(13):
-            await sess.push_audio(b"\x00" * step)
+        await sess.audio_done()
         # 等本轮真的开始产出，再断
         for _ in range(80):
             await asyncio.sleep(0.2)

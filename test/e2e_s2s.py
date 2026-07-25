@@ -139,8 +139,11 @@ async def run_turn(ws, pcm: bytes, *, timeout: float = 60.0,
     await ws.send(json.dumps({"type": "audio"}))
     for i in range(0, len(pcm), step):
         await ws.send(pcm[i:i + step])
-    for _ in range(13):  # 静音尾触发 server VAD 收尾
-        await ws.send(b"\x00" * step)
+    # **按真实 HMI 的路径收尾**：本侧 VAD 判到端点 → 上行 audio_done，静音尾由网关补。
+    # 早先这里自己发 13 帧静音——那是替生产代码做了它没做的事，把「provider 永远等不到
+    # 静音尾、turn 永不收束」的真机死锁整个掩盖过去了。e2e 模拟客户端就得**只做客户端
+    # 做的事**，缺的那一步必须让它在测试里也缺出来。
+    await ws.send(json.dumps({"type": "audio_done"}))
     try:
         await asyncio.wait_for(rt, timeout=timeout + 5)
     except asyncio.TimeoutError:

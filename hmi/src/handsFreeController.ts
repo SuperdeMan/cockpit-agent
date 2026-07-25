@@ -93,8 +93,14 @@ export class HandsFreeController {
       onState: (orb: string) => this.deps.onOrbState(orb),
       onOpenAsr: (o: { resume?: boolean; sinceSpeechStartMs?: number }) => this.openAsr(o),
       onCloseAsr: () => this.closeAsr(),
-      // S2S：端点由 provider server VAD 自判（轮次 provider 自驱）→ 本侧不请定稿
-      onEndpoint: () => { if (this.useS2s()) return; try { this.asr?.stop() } catch { /* ignore */ } },
+      // 端点判定权在**本侧 VAD**（S2S 与 classic 同构）：classic 请引擎定稿，S2S 提交音频段
+      // 让 provider 收尾。**S2S 下绝不能空操作**——provider 的 server VAD 靠连续静音判「说完
+      // 了」，而我们在端点后就停推流，它永远等不到静音，turn 永不收束＝用户永远没有回复
+      // （真机首验的死锁：provider 等静音、HMI 等定稿才进 THINKING 才关收音）。
+      onEndpoint: () => {
+        if (this.useS2s()) { this.s2s.commitAudio(); return }
+        try { this.asr?.stop() } catch { /* ignore */ }
+      },
       // S2S：本轮 provider 已在生成回答，不再走文本主链——FSM 照常进 THINKING（等首音频）。
       // 用户气泡**不在此刻上屏**：本轮还不知道是自答还是逃逸，逃逸轮的用户气泡由 send() 自己插，
       // 这里插就成双份。暂存，等 answer_delta 首包（=确定自答）再 flush。实测两者互斥：

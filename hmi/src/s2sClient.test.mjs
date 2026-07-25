@@ -112,6 +112,17 @@ test('关收音门时 flush 尾帧（末尾几十毫秒不丢）', () => {
   assert.equal(ws.bin.length, 1, '关门应 flush 残余')
 })
 
+test('commitAudio 先 flush 残余帧再发 audio_done（真机死锁的回归护栏）', () => {
+  // 缺了 audio_done，provider 的 server VAD 永远等不到静音尾 → turn 永不收束 →
+  // 用户说什么都没有回复。这条断言就是那个死锁的护栏。
+  const { c, ws } = harness()
+  c.setCollecting(true)
+  c.pushFrame(frame(300)) // 不足一包
+  c.commitAudio()
+  assert.equal(ws.bin.length, 1, 'commit 前必须 flush 残余音频')
+  assert.equal(ws.sent[ws.sent.length - 1].type, UP.AUDIO_DONE)
+})
+
 test('pre-roll 插在攒包最前（保帧序）', () => {
   const { c, ws } = harness()
   c.setCollecting(true)
