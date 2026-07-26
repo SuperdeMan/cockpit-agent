@@ -469,14 +469,33 @@ def main() -> int:
     args.date = args.date or args.since
     steps = {"mine": cmd_mine, "triage": cmd_triage, "propose": cmd_propose,
              "gate": cmd_gate, "report": cmd_report}
+    gate_failed = False
     if args.cmd == "all":
         for name in ("mine", "triage", "propose", "gate", "report"):
             print(f"── {name} ──")
             out = steps[name](args)
             if name == "mine" and out is None:   # 栈未起 SKIP：后续步全免（nightly 幂等）
                 return 0
+            # 验收修正：此前任何 eval 挂掉流水线仍无条件退 0——「门禁」只是记录仪，
+            # nightly 按退出码看永远是绿的。报告照常产出（人还要看归因），但主干健康
+            # 基线破了必须反映到退出码，Task Scheduler 历史里才看得见红。
+            if name == "gate" and isinstance(out, Path) and out.exists():
+                try:
+                    gate_failed = any(r.get("exit") != 0
+                                      for r in json.loads(out.read_text(encoding="utf-8")))
+                except (ValueError, OSError):
+                    gate_failed = True
     else:
-        steps[args.cmd](args)
+        out = steps[args.cmd](args)
+        if args.cmd == "gate" and isinstance(out, Path) and out.exists():
+            try:
+                gate_failed = any(r.get("exit") != 0
+                                  for r in json.loads(out.read_text(encoding="utf-8")))
+            except (ValueError, OSError):
+                gate_failed = True
+    if gate_failed:
+        print("gate：存在非零 eval——主干健康基线破损，流水线退出码置 1（报告已产出）")
+        return 1
     return 0
 
 

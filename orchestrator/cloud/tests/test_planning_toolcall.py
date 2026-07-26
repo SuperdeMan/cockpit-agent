@@ -276,3 +276,42 @@ def test_destruct_nums_restores_ints():
     assert isinstance(fixed["steps"][0]["slots"]["temperature"], int)
     assert fixed["steps"][0]["slots"]["ratio"] == 0.5      # 真小数不动
     assert fixed["n"] == 3 and isinstance(fixed["n"], int)
+
+
+def test_malformed_slots_list_rejects_plan_atomically():
+    """验收真栈抓到：模型偶发输出 slots=["item>拿铁","size>大杯"]（list 非 dict），
+    旧代码 .items() 直接 AttributeError 崩掉整个 Handle——空响应、确认挂起蒸发。
+    畸形 slots 步按无效步走计划原子拒绝（触发既有重试链），绝不崩 servicer。"""
+    from types import SimpleNamespace
+    from orchestrator.cloud.planning import PlanBuilder
+
+    cap = SimpleNamespace(intent="shop.order", description="", slots=[],
+                          require_confirm=True, heavy=False)
+    manifest = SimpleNamespace(agent_id="mcp-bridge", trust_level="third_party",
+                               latency_budget_ms=2000, requires_permissions=[],
+                               capabilities=[cap], kind="agent", deployment="cloud",
+                               context_scopes=[])
+    amap = {"mcp-bridge": SimpleNamespace(manifest=manifest, endpoint="stub:1")}
+    raw = [{"id": "s1", "agent_id": "mcp-bridge", "intent": "shop.order",
+            "slots": ["item>拿铁", "size>大杯"]}]
+    assert PlanBuilder._validated_steps(raw, amap) == []
+
+
+def test_malformed_depends_and_slot_refs_normalized_not_crash():
+    """depends_on/slot_refs 被模型输出成 ""（真栈日志实证）：字符串 depends_on 会被
+    逐字符迭代、非 dict slot_refs 在 executor 处同款崩——归一为空后步骤照常成立。"""
+    from types import SimpleNamespace
+    from orchestrator.cloud.planning import PlanBuilder
+
+    cap = SimpleNamespace(intent="shop.order", description="", slots=[],
+                          require_confirm=True, heavy=False)
+    manifest = SimpleNamespace(agent_id="mcp-bridge", trust_level="third_party",
+                               latency_budget_ms=2000, requires_permissions=[],
+                               capabilities=[cap], kind="agent", deployment="cloud",
+                               context_scopes=[])
+    amap = {"mcp-bridge": SimpleNamespace(manifest=manifest, endpoint="stub:1")}
+    raw = [{"id": "s1", "agent_id": "mcp-bridge", "intent": "shop.order",
+            "slots": {"item": "拿铁"}, "depends_on": "", "slot_refs": ""}]
+    steps = PlanBuilder._validated_steps(raw, amap)
+    assert len(steps) == 1
+    assert steps[0].depends_on == [] and steps[0].slot_refs == {}

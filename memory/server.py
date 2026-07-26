@@ -52,7 +52,9 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         return memory_pb2.GetContextResponse(values=values)
 
     async def AppendTurn(self, request, context):
-        await self.store.append_turn(request.session_id, request.role, request.text)
+        # user_id 一并入库：维护 user→sessions 索引，ForgetUser 才能删到原始对话
+        await self.store.append_turn(request.session_id, request.role, request.text,
+                                     user_id=request.user_id)
         self._maybe_consolidate(request)
         return memory_pb2.AppendTurnResponse(ok=True)
 

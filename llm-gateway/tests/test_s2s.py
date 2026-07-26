@@ -793,3 +793,37 @@ def test_provider_never_creates_response_after_tool_result():
     src = inspect.getsource(QwenOmniRealtimeProvider.inject_tool_result)
     code = "\n".join(l.split("#", 1)[0] for l in src.splitlines())
     assert "response.create" not in code
+
+
+@pytest.mark.asyncio
+async def test_reflux_occupant_is_mutable_and_reaches_append_turn():
+    """M4 P4 补口（验收抓到）：occupant 是唤醒粒度不是会话粒度。
+
+    会话级静态快照会把 S2S 自答轮全记进 primary——乘员 B 的闲聊进主驾记忆，
+    多用户隔离在 S2S 挡位下被破坏。网关收到 occupant 上行帧后就地更新
+    reflux.occupant_id，下一次 turn 收束的 AppendTurn 必须按新说话人归档。
+    """
+    class OccMemStub(FakeMemStub):
+        def __init__(self):
+            super().__init__()
+            self.occupants: list[str] = []
+
+        async def AppendTurn(self, req, timeout=None):
+            self.occupants.append(req.occupant_id)
+            return await super().AppendTurn(req, timeout)
+
+    mem, obs = OccMemStub(), FakeObs()
+    r = Reflux(memory_stub_getter=lambda: mem, obs=obs, gate_content=lambda s, n: s[:n],
+               session_id="s1", user_id="u1")
+    await r(_turn(transcript="你好", answer="在呢", end_reason="complete"))
+    assert mem.occupants[-2:] == ["primary", "primary"]   # 未识别 → 逐字回落 P4 之前
+
+    r.occupant_id = "occ-2"                                # ← 网关 UP_OCCUPANT 帧的效果
+    await r(_turn(turn_id="t2", transcript="我爱吃辣", answer="记住啦",
+                  end_reason="complete"))
+    assert mem.occupants[-2:] == ["occ-2", "occ-2"], "换人后自答轮必须记进新说话人"
+
+    r.occupant_id = "primary"                              # 唤醒窗结束归位
+    await r(_turn(turn_id="t3", transcript="今天冷吗", answer="有点",
+                  end_reason="complete"))
+    assert mem.occupants[-2:] == ["primary", "primary"]

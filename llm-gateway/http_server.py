@@ -814,7 +814,7 @@ def create_http_app() -> web.Application:
         from s2s import (
             S2SSession, Reflux, build_context_summary, build_s2s_provider,
             UP_AUDIO, UP_AUDIO_DONE, UP_BARGE_IN, UP_CANCEL_TURN, UP_ESCALATED_RESULT,
-            UP_SESSION_END, UP_SESSION_START, DOWN_UNSUPPORTED,
+            UP_OCCUPANT, UP_SESSION_END, UP_SESSION_START, DOWN_UNSUPPORTED,
         )
 
         ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=16 * 1024 * 1024)
@@ -906,6 +906,10 @@ def create_http_app() -> web.Application:
                 elif mtype == UP_ESCALATED_RESULT:
                     await session.escalated_result(str(data.get("turn_id") or ""),
                                                    str(data.get("text") or ""))
+                elif mtype == UP_OCCUPANT:
+                    # M4 P4 补口（验收抓到）：会话级静态快照会把 S2S 自答轮全记进
+                    # primary——说话人是唤醒粒度的，声纹识别落地即更新回灌归属。
+                    reflux.occupant_id = str(data.get("occupant_id") or "primary")
                 elif mtype == UP_SESSION_END:
                     break
                 elif mtype == UP_AUDIO:

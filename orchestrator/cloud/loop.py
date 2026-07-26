@@ -151,7 +151,11 @@ class LoopController:
             streamed = False
             if (self._stream and len(current.steps) == 1
                     and current.steps[0].kind == "agent"
-                    and current.steps[0].deployment == "cloud"):
+                    and current.steps[0].deployment == "cloud"
+                    # M0a-3 同款（engine D0 有、这里曾漏）：capability 声明 require_confirm
+                    # 的步不走流式直通——流中 action 会绕开 executor._enforce_capability_confirm
+                    # 兜底闸直接放行到 HMI；走 executor 路径让中央闸生效。
+                    and not current.steps[0].require_confirm):
                 step = current.steps[0]
                 if hasattr(self.executor, '_resolve_slot_refs'):
                     self.executor._resolve_slot_refs(step, done_seed)

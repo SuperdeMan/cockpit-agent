@@ -83,6 +83,7 @@ export class HandsFreeController {
   // 而不拆会话——网关后台探活恢复后下一轮自动回 S2S（RFC §6.3 三种「离开 S2S」共用一条处理）。
   private s2s: any = null
   private s2sPendingUser = '' // 已过 FSM 本地治理、待确定归属（自答/逃逸）的用户话
+  private needConfirm = false // 主链挂起确认镜像（S2S 分支 onSend 判「必须上主链」用）
   // M4 P4 声纹：唤醒后首句边说边识别，结果锁定整个唤醒窗（null=该面禁用/未开）。
   private vp: VoiceprintIdentifier | null = null
 
@@ -99,7 +100,11 @@ export class HandsFreeController {
       onState: (orb: string, fsm: string) => {
         // M4 P4：回 ARMED/IDLE = 本次唤醒窗结束 → 解锁说话人，下次唤醒重识。
         // 用 onState 既有的第二参（fsmState），**不给 voiceLoop 加回调**（同 S2S 期的纪律）。
-        if (fsm === 'ARMED' || fsm === 'IDLE') this.vp?.reset()
+        // S2S 侧同步归位 primary：不归位的话上一个人会残留到下一唤醒窗，下一位乘员
+        // 识别结果回来之前收束的自答轮会被记进上一个人的记忆。
+        if (fsm === 'ARMED' || fsm === 'IDLE') {
+          if (this.vp) { this.vp.reset(); this.s2s?.setOccupant('primary', '') }
+        }
         this.deps.onOrbState(orb)
       },
       onOpenAsr: (o: { resume?: boolean; sinceSpeechStartMs?: number }) => this.openAsr(o),
@@ -123,7 +128,12 @@ export class HandsFreeController {
       // 声纹也根本不需要这个等待：识别在用户说到 1.5s 时就发出，而端点还要再等一个静音尾
       // （默认 800ms），结果早就回来了——**为一个几乎不生效的优化牺牲一条不变量是亏的**。
       onSend: (t: string, vm?: { source: string; utteranceMs: number }) => {
-        if (this.useS2s()) { this.s2sPendingUser = t; return }
+        // D5-2 红线在 S2S 下的兑现：**确认条可见时一切定稿必须上主链**。S2S 模型没有
+        // 任何机制感知主链的挂起确认——「确认/取消」留给它只会被当闲聊自答（「好的已
+        // 确认」而后备箱没开；「已为您取消」而挂起还活着），是假承诺。此时取消 provider
+        // 在飞的生成（同本地治理 bargeIn 语义），这句话由确定性主链接管。
+        if (this.useS2s() && !this.needConfirm) { this.s2sPendingUser = t; return }
+        if (this.useS2s()) this.s2s.bargeIn()
         this.deps.onSend(t, vm)
       },
       onStopTts: () => { this.s2s?.bargeIn(); this.deps.onStopTts() },
@@ -278,7 +288,9 @@ export class HandsFreeController {
   wake(): void { if (this.on) this.vl.wake() }
 
   // ─── App 侧状态/生命周期喂给 FSM ───
-  setNeedConfirm(v: boolean): void { if (this.on) this.vl.setNeedConfirm(v) }
+  // needConfirm 本层也留一份：S2S 分支的 onSend 要靠它判「这句必须上主链」（只喂 vl
+  // 的话 S2S 旁路看不见挂起确认——验收抓到的确认链断口）。
+  setNeedConfirm(v: boolean): void { this.needConfirm = v; if (this.on) this.vl.setNeedConfirm(v) }
   setTtsText(t: string): void { this.ttsText = t || ''; if (this.on) this.vl.setTtsText(t) }
   ttsStart(): void { this.ttsSpeaking = true; if (this.on) this.vl.ttsStart() }
   ttsEnd(): void { this.ttsSpeaking = false; if (this.on) this.vl.ttsEnd() }
@@ -407,6 +419,17 @@ export class HandsFreeController {
     return this.useS2s()
   }
 
+  /** 主动消息此刻不宜出声：S2S 交互进行中（LISTENING/THINKING/SPEAKING/FOLLOWUP）。
+   *  classic 的互斥由 queueTTS 的 activeReply/streamSession 前提保障；S2S 自答轮不经
+   *  dispatch()，那个前提恒空 → 主动 TTS 会与模型音频直接混音（两个播放器共用
+   *  AudioContext 互不知情），且其 onplay/onend 会把 FSM 从 SPEAKING 误推 FOLLOWUP。
+   *  此时降级为只出气泡——信息不丢，只是不抢话。 */
+  get proactiveTtsBlocked(): boolean {
+    if (!this.useS2s()) return false
+    const st = this.vl.state
+    return this.ttsSpeaking || (st !== 'IDLE' && st !== 'ARMED')
+  }
+
   /**
    * 本轮说话人（M4 P4）。未开声纹/未识别/认不出一律 'primary' = P4 之前的行为。
    * App 在 buildMeta 时读它，随每轮 meta 上云 → 记忆按乘员隔离。
@@ -428,7 +451,11 @@ export class HandsFreeController {
     const uid = this.deps.getSessionMeta?.().userId || ''
     this.vp = new VoiceprintIdentifier({
       identify: postIdentify(this.deps.audioApi, uid),
-      onResult: (r: { decision?: string; display_name?: string }) => {
+      onResult: (r: { occupant_id?: string; decision?: string; display_name?: string }) => {
+        // S2S 挡位：识别一落地就告诉网关本窗说话人——自答轮的记忆回灌按它隔离
+        // （classic/逃逸轮由 send() meta 带，不经此路）。认不出也发（=primary），
+        // 语义与 meta 口径逐字一致。
+        if (this.useS2s()) this.s2s.setOccupant(r.occupant_id || 'primary', r.display_name || '')
         this.deps.onVoiceprintResult?.(r)
       },
     })

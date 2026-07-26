@@ -96,3 +96,26 @@ async def test_tick_recurring_rolls_even_if_publish_fails():
     assert await ReminderScheduler(s, pub, now_fn=lambda: 200.0).tick() == 1
     times, _ = await s.list_split("u1", statuses=("pending",))
     assert len(times) == 1 and times[0].fire_at > 200        # 投递失败系列不停摆
+
+
+@pytest.mark.asyncio
+async def test_snooze_refire_gets_fresh_dedup_key():
+    """snooze 保留原条目 id → dedup_key 只按 id 会把第二次触发在治理器 10 分钟
+    去重窗里静默吞掉（「过5分钟再叫我」用户永远等不到）。触发时刻必须进 key：
+    同一次触发的重投 key 相同（判重仍成立），跨次触发 key 必不同。"""
+    pub = Pub()
+    r = Reminder(user_id="u1", title="喝水", kind="time", fire_at=100)
+    s = await _store_with(r)
+    clock = {"t": 200.0}
+    sched = ReminderScheduler(s, pub, now_fn=lambda: clock["t"])
+    await sched.tick()
+    k1 = pub.sent[0]["dedup_key"]
+
+    # snooze：同一条目改期回 pending（保留 id），5 分钟后再触发
+    await s.update_fire_at("u1", r.id, 500)
+    clock["t"] = 600.0
+    await sched.tick()
+    assert len(pub.sent) == 2, "snooze 后第二次触发必须真的发出"
+    k2 = pub.sent[1]["dedup_key"]
+    assert k1 != k2, "跨次触发的 dedup_key 必须不同，否则被治理器去重窗吞掉"
+    assert k1.rsplit("|", 1)[0] == k2.rsplit("|", 1)[0], "同一条目的 id 部分保持稳定"

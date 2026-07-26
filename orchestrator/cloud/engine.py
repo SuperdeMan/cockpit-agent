@@ -38,8 +38,11 @@ _YES_WORDS = ("确认", "确定", "好的", "好啊", "可以", "订吧", "订�
               "嗯", "行", "ok", "付吧", "支付", "下单", "就这家", "就它")
 _NO_WORDS = ("取消", "不用", "不要", "算了", "不订", "不付", "不了", "别订", "先不")
 
+# fingerprint 必须在列：它是 M2 重复副作用防抖的比对键——挂起时随 __dict__ 存进了
+# Redis，恢复侧若把它滤掉，任何跨过一次确认/补槽挂起的副作用步防抖都会静默失效
+# （executor._find_duplicate 对空串永不命中）。
 _RESULT_FIELDS = {"step_id", "status", "speech", "ui_card", "actions",
-                  "follow_up", "data", "missing_slots", "error"}
+                  "follow_up", "data", "missing_slots", "error", "fingerprint"}
 
 # _POC_DEFAULT_SCOPES 已迁入 context.py（此处 re-export 兼容既有 `from ...engine import _POC_DEFAULT_SCOPES`）。
 __all__ = ["PlannerEngine", "_POC_DEFAULT_SCOPES"]
@@ -131,7 +134,7 @@ class PlannerEngine:
                 yield {"kind": "final", "speech": "好的，已为您取消。"}
                 return
             if reply == "yes":
-                plan, seed_results = self._restore(pending)
+                plan, seed_results = self._restore(pending, inject_confirmed=True)
                 if plan is None:
                     await self.session.clear(ctx.session_id)
                     yield {"kind": "final",
@@ -158,7 +161,8 @@ class PlannerEngine:
                 held_pending = pending
                 plan, seed_results = None, []
             else:
-                plan, seed_results = self._restore(pending)
+                # 补槽恢复绝不注入 confirmed——补槽答案不是确认（见 _restore docstring）
+                plan, seed_results = self._restore(pending, inject_confirmed=False)
                 if plan is None:
                     await self.session.clear(ctx.session_id)
                     yield {"kind": "final",
@@ -705,20 +709,28 @@ class PlannerEngine:
         )
         return any(t.startswith(v) for v in _verbs)
 
-    def _restore(self, state: SessionState) -> tuple[Plan | None, list[StepResult]]:
+    def _restore(self, state: SessionState, *,
+                 inject_confirmed: bool) -> tuple[Plan | None, list[StepResult]]:
         """从挂起态恢复计划与已完成结果。
 
-        挂起步骤本身（NEED_CONFIRM/NEED_SLOT 那条）不进种子——它要带 confirmed 标记重跑；
+        挂起步骤本身（NEED_CONFIRM/NEED_SLOT 那条）不进种子——它要重跑；
         confirmed 只注入挂起那一步，不污染后续 require_confirm 步骤。
+
+        **inject_confirmed 只有 wait_confirm 恢复（用户明确说了「确认」）才为 True。**
+        wait_slot 恢复必须为 False——补槽答案（「拿铁」）不是确认；若这里也注入，
+        require_confirm 步会在用户从未见过金额/后果的情况下直接执行（验收抓到的 P0：
+        「下单一杯咖啡」→「要点什么？」→「拿铁」→ 无确认直接下单）。补槽重跑后该步
+        照常返回 NEED_CONFIRM，走第二次挂起等真正的确认。
         """
         try:
             steps = [Step(**s) for s in state.pending_plan.get("steps", [])]
             if not steps:
                 return None, []
 
-            for s in steps:
-                if s.id == state.pending_step_id:
-                    s.meta = {**s.meta, "confirmed": "true"}
+            if inject_confirmed:
+                for s in steps:
+                    if s.id == state.pending_step_id:
+                        s.meta = {**s.meta, "confirmed": "true"}
 
             seeds: list[StepResult] = []
             for sid, d in (state.completed_results or {}).items():

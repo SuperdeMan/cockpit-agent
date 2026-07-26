@@ -21,6 +21,7 @@ UP_AUDIO_DONE = "audio_done"
 UP_BARGE_IN = "barge_in"              # L-HMI 判定打断（本侧 VAD/KWS 权威）
 UP_CANCEL_TURN = "cancel_turn"        # THINKING 期取消（对齐既有 onCancelTurn）
 UP_ESCALATED_RESULT = "escalated_result"  # 逃逸轮主链回答回传（只为上下文连续，不为播报）
+UP_OCCUPANT = "occupant"              # 本唤醒窗说话人（声纹）——自答轮记忆回灌按它隔离
 UP_SESSION_END = "session.end"
 
 # ── 下行（网关 → HMI）──
@@ -55,6 +56,8 @@ _ESCALATE_DESC_DEFAULT = (
     "当用户的请求超出闲聊/常识问答范围时调用——车辆控制（空调/车窗/座椅/氛围灯）、导航、"
     "查询实时信息（天气/股价/新闻/赛事/路况）、设置提醒、播放媒体、支付等一切需要执行动作"
     "或查询车辆/外部系统的请求，都必须调用本工具移交，不要自己口头答应。把用户请求原样转述。"
+    "如果上一次移交返回的是一个待确认的问题（例如「确定要打开后备箱吗」），用户接下来说的"
+    "「确认/确定/取消/不用了」等表态也必须原样移交，绝不自己替系统答应或取消。"
 )
 
 
@@ -75,6 +78,7 @@ def escalate_tool() -> dict:
 _PERSONA_DEFAULT = (
     "你是车载语音助手小舟，说话简短口语化，一两句话说完。"
     "遇到需要执行动作或查实时信息的请求，必须调用 escalate 工具移交，绝不自己口头答应。"
+    "系统在等用户确认某个操作时，用户的「确认/取消」表态同样移交，你没有替系统确认或取消的权力。"
 )
 
 

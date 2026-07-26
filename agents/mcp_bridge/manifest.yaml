@@ -12,6 +12,18 @@ fallback: chitchat
 # 新增工具 = 改 servers.yaml + 人工审，不改本文件、不改编排核心。
 capabilities: []
 
+# 确定性路由兜底（R2.1；2026-07-26 验收补）：「点一杯大杯拿铁」在 shop.order 与
+# nearby.search 之间掷硬币——toolcall 通道 salvage 时判下单、fallback 的 JSON 路径
+# 判找店（画像里有「爱喝拿铁」时更偏后者）。下单动词+量词「杯」+品类共现才兜，
+# 发现类语义（附近/找店/推荐）guard 让路给 nearby，劫持面收窄到点单句式。
+route_hints:
+  - pattern: '(点|来|买|订|下单).{0,4}杯\s*(大杯|中杯|小杯)?\s*(拿铁|美式|摩卡|卡布奇诺|澳白|燕麦拿铁|咖啡)'
+    intent: shop.order
+    policy: replace
+    priority: 56
+    guard: '附近|周边|哪里有|哪儿有|哪有|找.{0,3}(店|家|咖啡)|推荐|好喝|咖啡店|咖啡馆'
+    slots: {size: "$2", item: "$3"}
+
 requires_permissions:
   - network.external          # 外部服务出站
   - payment.invoke            # 写操作涉钱时经 payment-gateway（Agent 不持凭证）

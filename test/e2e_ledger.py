@@ -77,15 +77,42 @@ def ledger_rows(kind: str = "research") -> list[dict]:
         return []
 
 
+def ledger_count(kind: str = "research") -> int:
+    """全表计数。开单断言不能用 ledger_rows()——它带 LIMIT 5，历史任务积到 5 条后
+    「before+1」恒败、「不变」恒真（假绿），计数必须走真 count。"""
+    raw = sql(f"SELECT count(*) FROM task_ledger WHERE kind='{kind}'")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
+def cleanup_stale_e2e_tasks() -> None:
+    """把上次运行遗留的 e2e 专属任务置终态。残留 running 任务会让本轮①的新受理
+    直接命中幂等（话术变「已经在查了」），①②③连锁失真。只动 e2e 固定语料的 goal，
+    不碰真实用户任务（探针清空误删真实数据是有过前科的坑）。
+
+    LIKE 按关键词对收窄而非整句：goal 来自 planner 的 query 槽改写，同一句话真栈
+    实测出过「钠离子电池的产业化进展 / 钠离子电池产业化进展 / 慢慢查一下…查完告诉我」
+    三种形态（改写不稳定=幂等键漂移的同族现象，验收已立卡）——整句 LIKE 清不干净，
+    残留照样污染下一轮。"""
+    sql("UPDATE task_ledger SET status='cancelled' WHERE kind='research' "
+        "AND status IN ('accepted','running') "
+        "AND ((goal LIKE '%钠离子电池%' AND goal LIKE '%产业化%') "
+        "  OR (goal LIKE '%固态电池%' AND goal LIKE '%封装%'))")
+
+
 async def main() -> int:
     print("=== M2 Task Ledger 真栈验证 ===")
-    before = len(ledger_rows())
+    cleanup_stale_e2e_tasks()
+    before = ledger_count()
 
     # ① 受理：开单 + 承诺可停可问
     r1 = await ask("慢慢查一下钠离子电池的产业化进展，查完告诉我",
                    "① 异步深调研受理（应开单 + 承诺可停可问）")
     rows = ledger_rows()
-    check(len(rows) == before + 1, "账本新增一条任务", f"{before} → {len(rows)}")
+    after = ledger_count()   # 与 before 同口径（真 count）；rows 只取 top-5 供字段断言
+    check(after == before + 1, "账本新增一条任务", f"{before} → {after}")
     task = rows[0] if rows else {}
     check(task.get("status") in ("accepted", "running"),
           "任务状态为在跑", str(task.get("status")))
@@ -107,11 +134,11 @@ async def main() -> int:
     if prog and "还在查" in sp2:
         check(prog in sp2, "话术里的进度与账本逐字一致（没让 LLM 编）", prog)
 
-    # ③ 幂等：连说两遍不双跑
-    n_before = len(ledger_rows())
+    # ③ 幂等：连说两遍不双跑（计数走真 count——LIMIT 5 封顶后「不变」恒真=假绿）
+    n_before = ledger_count()
     r3 = await ask("慢慢查一下钠离子电池的产业化进展，查完告诉我",
                    "③ 重复受理（应命中幂等、不新开任务）")
-    check(len(ledger_rows()) == n_before, "账本未新增任务（幂等命中）")
+    check(ledger_count() == n_before, "账本未新增任务（幂等命中）")
     check("已经在查" in (r3.get("speech") or ""), "话术是「已经在查了」",
           (r3.get("speech") or "")[:50])
 

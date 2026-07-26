@@ -176,3 +176,31 @@ def test_default_mode_is_full_injection(monkeypatch):
                                      PlanContext(session_id="t")))
     assert any(s.startswith("full:") for s in plan.skills)
     assert "== 规划知识" in seen["user"] and "多日出行必出行程规划" in seen["user"]
+
+
+def test_migrated_domain_knowledge_never_returns_to_central_base():
+    """Full Migration 契约的另一半（验收补口）：「零领域字面量」此前没有任何源码级
+    护栏——skills 里的领域知识若被人顺手抄回 `_PLANNER_BASE`，行为测试全绿、
+    双份知识静默漂移。动态取每个 skill 文件 knowledge 的实句做指纹查中央：
+    新 skill 落库即自动纳入保护，不维护硬编码黑名单（那挡不住增量）。
+    """
+    import pathlib
+    import yaml
+    from orchestrator.cloud import planning as planning_mod
+    import inspect
+
+    central = inspect.getsource(planning_mod)
+    root = pathlib.Path(__file__).resolve().parents[3] / "skills"
+    checked = 0
+    for f in sorted(root.glob("*/*.yaml")):
+        doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+        for line in (doc.get("knowledge") or "").splitlines():
+            line = line.strip().lstrip("-•").strip()
+            if len(line) < 12:            # 短句/空行没有指纹价值
+                continue
+            assert line not in central, (
+                f"skill「{f.name}」的知识句回潮进了 planning.py：{line[:40]}…——"
+                "加规划知识只投 skill 文件，中央不得倒灌（M0b Full Migration 契约）")
+            checked += 1
+            break                          # 每文件取第一条实句即可（存在性指纹）
+    assert checked >= 5, f"指纹句仅 {checked} 条——skills 目录结构变了请更新本测试"

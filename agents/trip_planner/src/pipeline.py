@@ -51,7 +51,7 @@ def per_day_count(prefs: str) -> int:
 
 # ──────────────────────────── pool ────────────────────────────
 
-async def build_poi_pool(poi_provider, fallback, dest: str, prefs: str,
+async def build_poi_pool(poi_provider, dest: str, prefs: str,
                          near, meta) -> list[POI]:
     """搜目的地候选景点/美食池（供 propose 选名字、ground 复用坐标）。去重按名。"""
     keywords = [f"{dest} 景点", f"{dest} 美食"]
@@ -63,11 +63,10 @@ async def build_poi_pool(poi_provider, fallback, dest: str, prefs: str,
         try:
             results = await poi_provider.search(kw, near=near, limit=8, meta=meta)
         except ProviderError as e:
-            logger.warning("pool search '%s' failed, fallback: %s", kw, e)
-            try:
-                results = await fallback.search(kw, near=near, limit=8, meta=meta)
-            except ProviderError:
-                results = []
+            # 铁律③（M0a 同款，此处曾漏网）：运行期真实源失败绝不回退 mock 假 POI——
+            # 假景点会被写进行程并被用户导航过去。该关键词记空，池子不足由上层诚实降级。
+            logger.warning("pool search '%s' failed（诚实降级，无 mock 回退）: %s", kw, e)
+            results = []
         is_attraction = "景点" in kw or "乐园" in kw
         for p in results:
             nm = (p.name or "").strip()
@@ -278,7 +277,7 @@ def _city_center(pool: list[POI]):
                     lng=sum(b for _, b in pts) / len(pts))
 
 
-async def ground(poi_provider, fallback, skeleton: dict, pool: list[POI],
+async def ground(poi_provider, skeleton: dict, pool: list[POI],
                  meta, *, dest: str, days: str = "", prefs: str = "",
                  raw_text: str = "", llm=None) -> Trip:
     """把骨架接地为结构化 Trip：每个 stop 映射真实 POI。"""
@@ -299,7 +298,7 @@ async def ground(poi_provider, fallback, skeleton: dict, pool: list[POI],
                         dwell_min=_DWELL_BY_TYPE.get(stype, 90), source="llm")
             poi = pool_by_name.get(nm)
             if poi is None:
-                poi = await _ground_one(poi_provider, fallback, nm, center, meta, llm)
+                poi = await _ground_one(poi_provider, nm, center, meta, llm)
             # 景点接地到住宿类（泛地点经 ground 新搜索易把民宿/别墅当景点）→ 整条丢弃，不进行程
             if (stype == "attraction" and poi is not None
                     and any(m in (poi.name or "") for m in _LODGING_MARKERS)):
@@ -313,17 +312,16 @@ async def ground(poi_provider, fallback, skeleton: dict, pool: list[POI],
     return trip
 
 
-async def _ground_one(poi_provider, fallback, name: str, near, meta, llm=None) -> POI | None:
+async def _ground_one(poi_provider, name: str, near, meta, llm=None) -> POI | None:
     """搜索接地单个名字：name_matches 校验，拒「挂错名的非空结果」；有 llm 时经 landmark 解析官方名。"""
     async def _search(kw, n):
         try:
             return await poi_provider.search(kw, near=n, limit=1, meta=meta)
         except ProviderError as e:
-            logger.warning("ground search '%s' failed: %s", kw, e)
-            try:
-                return await fallback.search(kw, near=n, limit=1, meta=meta)
-            except ProviderError:
-                return []
+            # 铁律③：接地失败返回空 → 该站保留 LLM 名字、grounded=False（不臆造地址），
+            # 绝不用 mock 假 POI 充数（「示例{i}」冒充真实景点正是被验收点名的形态）。
+            logger.warning("ground search '%s' failed（诚实降级，无 mock 回退）: %s", kw, e)
+            return []
 
     results = await _search(name, near)
     if results and name_matches(name, results[0].name):
@@ -339,7 +337,7 @@ async def _ground_one(poi_provider, fallback, name: str, near, meta, llm=None) -
 
 # ──────────────────────────── solve ────────────────────────────
 
-async def solve(poi_provider, fallback, trip: Trip, start_soc_pct: float, meta,
+async def solve(poi_provider, trip: Trip, start_soc_pct: float, meta,
                 *, full_range_km: float = None, day_cap_min: int = None) -> Trip:
     """确定性：算相邻 stop 车程 → 按日上限顺延 → 沿路线按 SoC 编织充电点 → 递推 SoC。"""
     full_range = float(full_range_km or FULL_RANGE_KM)
@@ -396,7 +394,7 @@ async def solve(poi_provider, fallback, trip: Trip, start_soc_pct: float, meta,
                       distance_km=dist, drive_min=drive_min, soc_before=round(running))
             targets = weave_charging_targets(points, dist, running, full_range)
             for t in targets:
-                st = await _ground_station(poi_provider, fallback, t, meta)
+                st = await _ground_station(poi_provider, t, meta)
                 if st:
                     leg.charging_stops.append(st)
             if leg.charging_stops:                       # 中途补电 → 抵达约 80% 减末段
@@ -409,7 +407,7 @@ async def solve(poi_provider, fallback, trip: Trip, start_soc_pct: float, meta,
     return trip
 
 
-async def _ground_station(poi_provider, fallback, target: dict, meta) -> dict | None:
+async def _ground_station(poi_provider, target: dict, meta) -> dict | None:
     """把充电目标点接地为真实站（near=该坐标搜「充电站」）。接不到返回 None（不臆造）。"""
     lat, lng = target.get("lat"), target.get("lng")
     if not lat or not lng:

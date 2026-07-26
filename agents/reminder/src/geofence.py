@@ -80,11 +80,16 @@ class GeofenceWatcher:
                   "actions": [{"label": "完成", "send_text": f"完成提醒：{r.title}"}]}
                  for r in items]
         from runtime.proactive import P_USER_CONTRACT
+        fired_ts = int(self._now() * 1000)
         return {"type": "reminder_fired", "speech": speech,
                 "card": cards[0] if len(cards) == 1 else
                 {"type": "card_group", "items": cards},
-                "agent_id": "reminder", "ts": int(self._now() * 1000),
+                "agent_id": "reminder", "ts": fired_ts,
                 "user_id": items[0].user_id,
-                # 用户显式约定：治理器只做合并，不做抑制（到地必响，同到点必响）
+                # 用户显式约定：治理器只做合并，不做抑制（到地必响，同到点必响）。
+                # 去重键带触发时刻（同 scheduler）：改期后重进围栏的再触发不能被
+                # 治理器去重窗吞掉——只有同一次触发的重投才该判重。
                 "priority": P_USER_CONTRACT,
-                "dedup_key": "reminder.fired|" + ",".join(sorted(r.id for r in items))}
+                "dedup_key": ("reminder.fired|"
+                              + ",".join(sorted(r.id for r in items))
+                              + f"|{fired_ts}")}

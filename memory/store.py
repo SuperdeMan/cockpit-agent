@@ -26,12 +26,17 @@ _MOCK_CONTEXT = {
 # 敏感 scope（上云需脱敏）
 _SENSITIVE_SCOPES = {"vehicle.location", "vehicle.state", "profile.taste"}
 
+# 会话轮次原文 TTL（默认 7 天）：对话原文是个人数据，不设 TTL 等于永久留存。
+# 近 N 轮上下文与巩固抽取都只用最近轮次，7 天远超任何消费方需要。
+_SESSION_TTL_S = int(os.getenv("MEMORY_SESSION_TTL_S", "604800") or "604800")
+
 
 class MemoryStore:
     def __init__(self):
         self.url = os.getenv("REDIS_URL", "")
         self._r = None
         self._mem: dict[str, list] = {}
+        self._mem_user_sessions: dict[str, set] = {}  # user_id -> {session_id}（内存兜底的 GDPR 索引）
         self._profiles: dict[str, dict] = {}  # user_id -> profile data
         # 分层记忆（语义画像/情景）——PG+pgvector，无 PG 内存兜底；首用懒初始化。
         self._vstore = MemoryVectorStore()
@@ -50,15 +55,26 @@ class MemoryStore:
                 self._r = None
         return self._r
 
-    async def append_turn(self, session_id: str, role: str, text: str):
+    async def append_turn(self, session_id: str, role: str, text: str,
+                          user_id: str = ""):
+        """会话轮次原文。**有 TTL、有 user 索引**——两者都是 GDPR 侧的硬要求：
+        无 TTL 的对话原文会永久留存；无 user→session 索引则 ForgetUser 只能删
+        长期记忆、删不到原始对话（假删除的一半，验收抓到）。"""
         turn = {"role": role, "text": text, "ts": int(time.time())}
         r = await self._redis()
         key = f"sess:{session_id}"
         if r:
             await r.rpush(key, json.dumps(turn))
             await r.ltrim(key, -50, -1)
+            await r.expire(key, _SESSION_TTL_S)
+            if user_id:
+                idx = f"user_sessions:{user_id}"
+                await r.sadd(idx, session_id)
+                await r.expire(idx, _SESSION_TTL_S)
         else:
             self._mem.setdefault(session_id, []).append(turn)
+            if user_id:
+                self._mem_user_sessions.setdefault(user_id, set()).add(session_id)
 
     async def get_session(self, session_id: str, last_n: int) -> list[dict]:
         r = await self._redis()
@@ -209,11 +225,31 @@ class MemoryStore:
 
     async def forget_user(self, user_id: str, occupant_id: str = "",
                           scopes: list[str] | None = None) -> int:
-        """合规：删除用户记忆。occupant/scope 都为空时连画像一并清（删全量）。"""
+        """合规：删除用户记忆。occupant/scope 都为空时连画像一并清（删全量）。
+
+        全量删同时清会话原文（`sess:*`）：长期记忆删了、原始对话还躺在 Redis 里，
+        那不是删除是搬家。occupant 级删除动不了会话原文——轮次不带说话人标注，
+        无法选择性删（已知限制，与巩固窗口说话人盲同根）。
+        """
         deleted = await (await self._vec()).forget(user_id, occupant_id, scopes)
         if not occupant_id and not scopes:
             await self.delete_profile(user_id)
+            await self._forget_sessions(user_id)
         return deleted
+
+    async def _forget_sessions(self, user_id: str) -> None:
+        r = await self._redis()
+        if r:
+            idx = f"user_sessions:{user_id}"
+            try:
+                sids = await r.smembers(idx)
+                if sids:
+                    await r.delete(*[f"sess:{s}" for s in sids])
+                await r.delete(idx)
+            except Exception as e:
+                logger.warning("forget sessions failed for %s: %s", user_id, e)
+        for sid in self._mem_user_sessions.pop(user_id, set()):
+            self._mem.pop(sid, None)
 
     async def export_user(self, user_id: str) -> dict:
         """合规：导出用户画像 + 全量记忆 + 关系边。

@@ -102,3 +102,34 @@ def test_migrate_places_from_legacy_kv():
     n, got = asyncio.run(go())
     assert n == 1
     assert json.loads(got["profile.places"])["company"]["name"] == "华润大厦"
+
+
+def test_forget_user_purges_session_transcripts():
+    """GDPR 全量删必须连会话原文一起清（验收抓到：长期记忆删了、对话原文永久留存
+    且无 TTL——那不是删除是搬家）。内存兜底路径验 user→sessions 索引 + 级联删。"""
+    store = _store()
+
+    async def go():
+        await store.append_turn("sess-a", "user", "我家在阳光小区", user_id="u9")
+        await store.append_turn("sess-b", "user", "我爱吃辣", user_id="u9")
+        await store.append_turn("sess-c", "user", "别人的会话", user_id="u8")
+        await store.forget_user("u9")
+        return (await store.get_session("sess-a", 10),
+                await store.get_session("sess-b", 10),
+                await store.get_session("sess-c", 10))
+
+    a, b, c = asyncio.run(go())
+    assert a == [] and b == [], "u9 的会话原文必须随 ForgetUser 清除"
+    assert len(c) == 1, "别人的会话不受影响（无爆炸半径）"
+
+
+def test_forget_user_scoped_delete_keeps_sessions():
+    """scope 定向删（如清一条偏好）不该把会话原文整个端掉。"""
+    store = _store()
+
+    async def go():
+        await store.append_turn("sess-d", "user", "你好", user_id="u9")
+        await store.forget_user("u9", scopes=["profile.taste"])
+        return await store.get_session("sess-d", 10)
+
+    assert len(asyncio.run(go())) == 1

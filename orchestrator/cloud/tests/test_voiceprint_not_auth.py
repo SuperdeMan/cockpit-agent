@@ -69,9 +69,16 @@ def test_build_context_keeps_occupant_out_of_permission_branch():
     断言其中不含 occupant。
     """
     src = _src("orchestrator", "cloud", "context.py")
+    # 验收修正：裸切片在锚点顺序被改后会得到空串 → 断言恒真且静默空转（守红线的
+    # 测试自己被一次无害重排改废）。先钉两锚点存在与顺序，再断内容非空。
+    assert "raw_scopes = meta.get" in src, "granted 计算锚点丢失——重构后请更新本测试"
+    assert "# M4 P4：本轮说话人" in src, "occupant 赋值锚点丢失——重构后请更新本测试"
     start = src.index("raw_scopes = meta.get")
     end = src.index("# M4 P4：本轮说话人")
+    assert start < end, ("occupant 赋值被移到 granted 计算之前——顺序是本红线测试的"
+                         "前提，移动后请人工确认 granted 段不读 occupant 再更新锚点")
     granted_block = src[start:end]
+    assert granted_block.strip(), "切片为空——锚点漂移，测试已不覆盖任何代码"
     assert "occupant" not in granted_block, (
         "granted_scopes 计算段出现 occupant——权限不得随说话人变化")
 

@@ -25,6 +25,12 @@ $steps = @(
     @{ Name = "e2e_degrade";                Cmd = { python test/e2e_degrade.py } }
     @{ Name = "e2e_voice_loop";             Cmd = { python test/e2e_voice_loop.py } }
     @{ Name = "e2e_reminder";               Cmd = { python test/e2e_reminder.py } }
+    # M2：Task Ledger（受理/幂等/取消/orphaned 诚实报告）+ Outcome Verifier 对账 +
+    # 记忆图谱（偏好加权/关系边/GDPR 级联删红线）。验收补口：sh 版早挂了、ps1 曾漏
+    # ——Windows 本机跑 `make e2e` 等价物时 M2 三条真栈验证被静默跳过。
+    @{ Name = "e2e_ledger";                 Cmd = { python test/e2e_ledger.py } }
+    @{ Name = "e2e_verify";                 Cmd = { python test/e2e_verify.py } }
+    @{ Name = "e2e_memory_graph";           Cmd = { python test/e2e_memory_graph.py } }
     # M3 P1：位置提醒围栏（建单→播种→进围栏触达→不重复）
     @{ Name = "e2e_geofence";               Cmd = { python test/e2e_geofence.py } }
     @{ Name = "e2e_scene";                  Cmd = { python test/e2e_scene.py } }

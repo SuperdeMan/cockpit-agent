@@ -273,7 +273,12 @@ class Governor:
             await self._publish(out)
         except Exception as e:
             logger.warning("主动消息投递失败：%s", e)
-            return                                # 没打扰到用户 → 不计入频控
+            # 验收补口：投递失败也要发裁决事件——否则这条消息在 obs 上既非 delivered
+            # 也非 dropped，直接从观测面消失，dashboard 查无此案。不计频控照旧
+            # （没打扰到用户）。
+            for it in items:
+                await self._decide(it, DROPPED, "publish_error")
+            return
         self._delivered_at.append(self._now())
         decision = DELIVERED if len(items) == 1 else MERGED
         for it in items:

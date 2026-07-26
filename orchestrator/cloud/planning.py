@@ -551,6 +551,16 @@ class PlanBuilder:
                 invalid = True
                 continue
 
+            # slots 是唯一「宽进」的 LLM 输出通道——但宽进不等于不设防：模型偶发输出
+            # list（如 ["item>拿铁"]）时 .items() 直接 AttributeError 崩掉整个 Handle
+            # （验收真栈抓到：空响应、确认挂起蒸发）。非 dict 按无效步走原子拒绝→重试。
+            raw_slots = s.get("slots") or {}
+            if not isinstance(raw_slots, dict):
+                logger.warning("Step slots is %s (not dict), dropping plan for retry: %r",
+                               type(raw_slots).__name__, raw_slots)
+                invalid = True
+                continue
+
             manifest = agent_map[aid].manifest
             step = Step(
                 id=s.get("id", f"s{len(steps)+1}"),
@@ -559,9 +569,14 @@ class PlanBuilder:
                 kind=getattr(manifest, "kind", "") or "agent",
                 deployment=getattr(manifest, "deployment", "") or "cloud",
                 intent=intent,
-                slots={k: str(v) for k, v in (s.get("slots") or {}).items()},
-                depends_on=s.get("depends_on") or [],
-                slot_refs=s.get("slot_refs") or {},
+                slots={k: str(v) for k, v in raw_slots.items()},
+                # 同族防御：模型会把这两个字段输出成 ""（真栈日志实证）。depends_on 非
+                # list 会被逐字符迭代、slot_refs 非 dict 在 executor._resolve_slot_refs
+                # 处 .items() 同款崩——都归一为空（依赖丢失顶多退化为顺序执行）。
+                depends_on=(s.get("depends_on")
+                            if isinstance(s.get("depends_on"), list) else []),
+                slot_refs=(s.get("slot_refs")
+                           if isinstance(s.get("slot_refs"), dict) else {}),
                 latency_budget_ms=int(manifest.latency_budget_ms or 5000),
                 required_permissions=list(
                     getattr(manifest, "requires_permissions", []) or []),

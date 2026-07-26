@@ -17,8 +17,8 @@ import re
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, NEED_CONFIRM
 from agents._sdk.shared_state import TRIP_ACTIVE
 from agents._sdk.location import current_location_from_meta
+from agents._sdk.provenance import attach
 from agents.navigation.src.providers import build_poi_provider
-from agents.navigation.src.providers.mock import MockPOIProvider
 from agents.info.src.providers import build_weather_provider
 from .models import Trip, Stop
 from .pipeline import (build_poi_pool, propose, ground, solve, narrate,
@@ -51,9 +51,9 @@ class TripPlannerAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
         # 进程内复用 navigation 的 POI provider（接地景点/充电站 + 算 leg 路线），
-        # 跟随 charging_planner 先例，避免每 leg 跨 gRPC。真实 provider 抖动降级 mock。
+        # 跟随 charging_planner 先例，避免每 leg 跨 gRPC。铁律③（M0a 同款，此处曾漏网）：
+        # 运行期真实源失败诚实降级，**无 mock 回退**——假景点会被写进行程被导航过去。
         self.poi = build_poi_provider()
-        self._fallback = MockPOIProvider()
         # 天气联动（#3）：进程内复用 info 的和风 provider，规划时结合目的地多日预报。
         # 无凭据/抖动时 forecast 抛错 → plan_weather 静默降级（天气非行程硬依赖）。
         self.weather = build_weather_provider()
@@ -108,18 +108,18 @@ class TripPlannerAgent(BaseAgent):
                             raw_text: str) -> Trip:
         """propose → ground → solve，产出结构化 Trip。"""
         # 目的地是行程城市（非当前位置）→ pool 搜索 near=None，靠关键词「{dest} 景点」定位。
-        pool = await build_poi_pool(self.poi, self._fallback, dest, prefs, None, meta)
+        pool = await build_poi_pool(self.poi, dest, prefs, None, meta)
         # 天气联动：先取目的地多日预报对齐到行程各天，织进 propose（雨天优先室内/就近景点）。
         weather = await plan_weather(self.weather, dest, raw_text,
                                      _norm_days(days) or 2, meta)
         skeleton = await propose(self.llm, dest, days, prefs,
                                  [p.name for p in pool], raw_text,
                                  weather_hint=_weather_hint(weather))
-        trip = await ground(self.poi, self._fallback, skeleton, pool, meta,
+        trip = await ground(self.poi, skeleton, pool, meta,
                             dest=dest, days=days, prefs=prefs, raw_text=raw_text,
                             llm=self.llm)
         soc = await self._soc_pct(ctx, meta)
-        trip = await solve(self.poi, self._fallback, trip, soc, meta)
+        trip = await solve(self.poi, trip, soc, meta)
         # 每天填天气（卡片/话术展示；按 day_index 对齐，超预报窗口的天保持 None）
         for day in trip.itinerary:
             wi = day.day_index - 1
@@ -149,6 +149,7 @@ class TripPlannerAgent(BaseAgent):
         trip = await self._run_pipeline(ctx, meta, dest, days, prefs, intent.raw_text)
         await self._save_trip(ctx, trip)
         speech, card = narrate(trip)
+        attach(card, self.poi)  # trip_itinerary 卡盖 _prov 章（验收补口：此前全族无标）
         return AgentResult(
             status=NEED_CONFIRM,
             speech=f"{speech}\n\n确认按此方案出行吗？",
@@ -189,17 +190,17 @@ class TripPlannerAgent(BaseAgent):
 
         # ① 结构化编辑优先：加/删某个具体停靠点（只动受影响项，跨天去重）。
         if await self._apply_structural_edit(trip, modification, meta):
-            trip = await solve(self.poi, self._fallback, trip, soc, meta)
+            trip = await solve(self.poi, trip, soc, meta)
         else:
             n = self._modify_day(modification)
             if n and trip.day(n):
                 # ② 只重规划第 n 天：其余 Day 原样保留（结构化天然不漂移）。
-                pool = await build_poi_pool(self.poi, self._fallback, dest, prefs, None, meta)
+                pool = await build_poi_pool(self.poi, dest, prefs, None, meta)
                 # 跨天去重：重规划某天时排除其它天已用景点，避免改完与别天撞车。
                 used = {s.name for d in trip.itinerary if d.day_index != n for s in d.stops}
                 names = [p.name for p in pool if p.name not in used]
                 sk = await propose(self.llm, dest, "1", prefs, names, modification)
-                oneday = await ground(self.poi, self._fallback, sk, pool, meta,
+                oneday = await ground(self.poi, sk, pool, meta,
                                       dest=dest, prefs=prefs, raw_text=modification,
                                       llm=self.llm)
                 if oneday.itinerary and oneday.itinerary[0].stops:
@@ -209,7 +210,7 @@ class TripPlannerAgent(BaseAgent):
                         if d.day_index == n:
                             trip.itinerary[idx] = newday
                             break
-                trip = await solve(self.poi, self._fallback, trip, soc, meta)
+                trip = await solve(self.poi, trip, soc, meta)
             else:
                 # ③ 定位不到具体天 → 整程重规划（把修改并入偏好上下文）。
                 trip = await self._run_pipeline(
@@ -218,6 +219,7 @@ class TripPlannerAgent(BaseAgent):
 
         await self._save_trip(ctx, trip)
         speech, card = narrate(trip)
+        attach(card, self.poi)  # trip_itinerary 卡盖 _prov 章（验收补口：此前全族无标）
         return AgentResult(
             status=NEED_CONFIRM,
             speech=f"{speech}\n\n确认按此调整吗？",
@@ -233,7 +235,7 @@ class TripPlannerAgent(BaseAgent):
         if not rainy:
             return AgentResult(
                 speech=f"看了下预报，{dest}这几天都没有雨，行程不用调整。")
-        pool = await build_poi_pool(self.poi, self._fallback, dest, prefs, None, meta)
+        pool = await build_poi_pool(self.poi, dest, prefs, None, meta)
         # 全部雨天**合并成一次** propose+ground（批次3 真栈：逐天各跑一轮 85.9s 撑爆
         # 90s 网关窗口→「处理超时」）；产出的第 i 天映射回第 i 个雨天。
         used = {s.name for d in trip.itinerary
@@ -242,7 +244,7 @@ class TripPlannerAgent(BaseAgent):
         ask = ("这几天有雨，全部改成室内安排：只选博物馆/展览馆/科技馆/商场/"
                "剧院/水族馆等室内场馆，禁止海滨/泳场/沙滩/公园/登山等户外露天景点")
         sk = await propose(self.llm, dest, str(len(rainy)), prefs, names, ask)
-        redone = await ground(self.poi, self._fallback, sk, pool, meta,
+        redone = await ground(self.poi, sk, pool, meta,
                               dest=dest, prefs=prefs, raw_text=ask, llm=self.llm)
         for i, n in enumerate(rainy):
             if i >= len(redone.itinerary) or not redone.itinerary[i].stops:
@@ -255,9 +257,10 @@ class TripPlannerAgent(BaseAgent):
                 if d.day_index == n:
                     trip.itinerary[idx] = newday
                     break
-        trip = await solve(self.poi, self._fallback, trip, soc, meta)
+        trip = await solve(self.poi, trip, soc, meta)
         await self._save_trip(ctx, trip)
         speech, card = narrate(trip)
+        attach(card, self.poi)  # trip_itinerary 卡盖 _prov 章（验收补口：此前全族无标）
         rainy_txt = "、".join(f"第{n}天" for n in rainy)
         return AgentResult(
             status=NEED_CONFIRM,
@@ -303,7 +306,7 @@ class TripPlannerAgent(BaseAgent):
                 nm = s.name or ""
                 if nm and (name in nm or nm in name):
                     return True
-        poi = await _ground_one(self.poi, self._fallback, name, None, meta, self.llm)
+        poi = await _ground_one(self.poi, name, None, meta, self.llm)
         if not (poi and poi.lat and poi.lng):
             return False
         nstops = sum(len(d.stops) for d in trip.itinerary)
@@ -328,10 +331,10 @@ class TripPlannerAgent(BaseAgent):
         used = {s.name for d in trip.itinerary for s in d.stops}
         tm = _REPLACE_TARGET_RE.search(modification)
         if tm:                                   # 指定换成 X → 接地 X
-            poi = await _ground_one(self.poi, self._fallback,
+            poi = await _ground_one(self.poi,
                                     tm.group(1).strip(), None, meta, self.llm)
         else:                                    # 没指定 → 池里挑一个没用过的不同景点
-            pool = await build_poi_pool(self.poi, self._fallback, trip.destination,
+            pool = await build_poi_pool(self.poi, trip.destination,
                                         "、".join(trip.preferences), None, meta)
             poi = next((p for p in pool if p.name not in used and p.lat and p.lng), None)
         if not (poi and poi.lat and poi.lng):
@@ -479,9 +482,10 @@ class TripPlannerAgent(BaseAgent):
                 speech="行程已经很精简了，没有可再删减的安排啦。",
                 ui_card=trip.card_dict())
         soc = await self._soc_pct(ctx, meta)
-        trip = await solve(self.poi, self._fallback, trip, soc, meta)
+        trip = await solve(self.poi, trip, soc, meta)
         await self._save_trip(ctx, trip)
         speech, card = narrate(trip)
+        attach(card, self.poi)  # trip_itinerary 卡盖 _prov 章（验收补口：此前全族无标）
         return AgentResult(
             status=NEED_CONFIRM,
             speech=f"已为您精简行程：{speech}\n\n确认按此调整吗？",

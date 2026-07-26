@@ -230,13 +230,39 @@ async def test_write_after_confirm_passes_request_fingerprint_as_idempotency_key
 
 @pytest.mark.asyncio
 async def test_write_timeout_is_reported_as_uncertain_not_as_failure():
-    """超时不等于没下单——**诚实说不确定**并给核对路径，绝不假装失败或成功。"""
+    """超时不等于没下单——诚实说不确定，**不承诺不存在的核对入口**（验收修正：
+    旧话术让用户「说『查一下我的订单』」，而订单查询能力根本没接入——把不确定
+    包装成「有办法查清楚」比不说更伤信任）。账目 result_ref 落 outcome=uncertain，
+    将来接查询入口时按它回答，不照 failed 状态说「上次下单失败了」。"""
     a, _ = await _agent(boom=True)
     try:
         res = await run_handle(a, "shop.order", slots={"item": "拿铁"},
                                raw_text="点一杯拿铁", meta={"confirmed": "true"})
-        assert "没有拿到确认结果" in res.speech and "核对" in res.speech
-        assert a.ledger.closed[0][1] == "failed"
+        assert "没有拿到确认结果" in res.speech
+        assert "查一下我的订单" not in res.speech, "不得承诺不存在的核对入口"
+        assert "重复下单" in res.speech, "要提醒别重复下单（防用户自己造成双扣）"
+        tid, status, ref = a.ledger.closed[0]
+        assert status == "failed" and ref.get("outcome") == "uncertain"
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_write_non_timeout_error_is_reported_as_definite_failure():
+    """非超时异常（子进程没起/协议错）= 确定没发出去——按失败说，不装不确定
+    （过度不确定会让用户白跑一趟核实）。"""
+    class _Boom(FakeClient):
+        async def call_tool(self, name, args, timeout_s=None):
+            raise RuntimeError("proc not started")
+
+    a, _ = await _agent()
+    for b in a._bindings.values():
+        b.client = _Boom()
+    try:
+        res = await run_handle(a, "shop.order", slots={"item": "拿铁"},
+                               raw_text="点一杯拿铁", meta={"confirmed": "true"})
+        assert "没有发出去" in res.speech
+        assert "可能" not in res.speech, "确定失败不得说「可能已受理」"
     finally:
         await a.shutdown()
 

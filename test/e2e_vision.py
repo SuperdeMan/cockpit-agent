@@ -97,6 +97,7 @@ async def main() -> int:
         # ② 真图进真模型
         print("\n[② 真图 → 真模型 → 真答案（纯绿图，答案唯一可断言）]")
         res = await ask("这是什么颜色", {"vision_frame_id": fid})
+        res_with_image = res     # 留给 ⑥：泄漏探针必须查**带图**的这轮（验收修正）
         speech = res.get("speech") or ""
         print(f"   ⇒ {speech[:80]}")
         check("绿" in speech, "模型真的看见了这张图（答出绿色）", speech[:40])
@@ -135,9 +136,22 @@ async def main() -> int:
 
         # ⑥ 图像不进对话链
         print("\n[⑥ 图像不进对话链]")
+        # 验收修正：此前探针跑在 ⑤（帧过期）那轮的 res 上——那轮**根本没有图**，
+        # 「不含图像字节」平凡成立。要查就查唯一可能泄漏的对象：②那轮真的把图
+        # 交给了 VL 模型，它的响应体才是「图像会不会流回对话链」的判据。
         for probe in ("data:image", "base64,"):
-            leaked = probe in json.dumps(res, ensure_ascii=False)
-            check(not leaked, f"响应体不含 {probe}")
+            leaked = probe in json.dumps(res_with_image, ensure_ascii=False)
+            check(not leaked, f"带图轮次的响应体不含 {probe}")
+        # docstring 声称「obs 里只有 frame_id 无图像字节」——补上真查（此前从未查过）。
+        try:
+            obs = (await client.get("http://localhost:8092/api/turns",
+                                    params={"session": SESSION, "limit": 5},
+                                    timeout=5)).json()
+            blob = json.dumps(obs, ensure_ascii=False)
+            check("data:image" not in blob and "iVBORw0KGgo" not in blob,
+                  "obs 轮次记录不含图像字节（只有 frame_id）")
+        except Exception as e:
+            print(f"   （obs 校验跳过：collector 不可达 {e}）")
 
     print("\n" + "=" * 46)
     if _fails:

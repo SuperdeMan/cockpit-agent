@@ -13,6 +13,7 @@ capability 是**启动期从准入清单合成**的（`bootstrap()` 在 `serve()
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -182,15 +183,28 @@ class McpBridgeAgent(BaseAgent):
         try:
             res = await b.client.call_tool(b.tool.name, args,
                                            timeout_s=b.tool.timeout_ms / 1000.0)
+        except asyncio.TimeoutError:
+            logger.warning("[mcp:%s] 写操作超时（结局不确定）", b.server.id)
+            if task:
+                # 账本状态机没有 uncertain 态（加终态动全仓消费方，本轮不动）；
+                # 先在 result_ref 落 outcome=uncertain——将来接订单查询入口时按它
+                # 回答，绝不能照 failed 状态说「上次下单失败了」（可能商户已受理）。
+                await self.ledger.close(task.task_id, LEDGER_FAILED,
+                                        result_ref={"error": "timeout",
+                                                    "outcome": "uncertain"})
+            # 超时不等于没下单：诚实说「不确定」。验收修正：此前话术承诺「说『查一下
+            # 我的订单』我帮你核对」，但订单查询入口并不存在（准入清单只有 menu/order）
+            # ——把不确定包装成「有办法查清楚」比不说更伤信任。改为不承诺不存在的能力。
+            return AgentResult(
+                speech="下单没有拿到确认结果，可能没成功也可能已经受理。"
+                       "为避免重复下单，请先在商家处核实，别急着再下一单。")
         except Exception as e:
+            # 非超时异常（子进程没起/协议错）= 确定没发出去，按失败说，不装不确定
             logger.warning("[mcp:%s] 写操作失败：%s", b.server.id, e)
             if task:
                 await self.ledger.close(task.task_id, LEDGER_FAILED,
                                         result_ref={"error": str(e)[:200]})
-            # 超时不等于没下单：诚实说「不确定」，并给出核对路径，绝不假装失败或成功
-            return AgentResult(
-                speech="下单没有拿到确认结果，可能没成功也可能已经受理，"
-                       "稍后说「查一下我的订单」我帮你核对。")
+            return AgentResult(speech="下单没成功，这一单没有发出去，请稍后再试。")
         if not res["ok"]:
             if task:
                 await self.ledger.close(task.task_id, LEDGER_FAILED,

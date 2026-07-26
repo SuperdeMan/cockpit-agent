@@ -231,10 +231,19 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           setMessages((m) => m.map((msg) => (msg.id === id ? { ...msg, text: msg.text + t } : msg)))
         }
       },
-      onS2sTurnEnd: () => {
+      onS2sTurnEnd: (r?: { reason?: string; detail?: string }) => {
         const id = s2sBubbleRef.current
         s2sBubbleRef.current = ''
         if (id) setMessages((m) => m.map((msg) => (msg.id === id ? { ...msg, streaming: false } : msg)))
+        // RFC §6.3 的诚实降级话术（网关早就把 reason/detail 递到这里，此前被吞掉）：
+        // 异常收束（provider 静默/报错、断线掐轮）用户必须能感知——否则体验是
+        // 「说了话，无声无息什么都没发生」，与假装无事等价。用户主动打断（barge-in
+        // 的 cancelled）不提示，那是正常交互。
+        if (r?.reason === 'error') {
+          setHandsFreeNotice('刚才那句没处理成功，你可以再说一遍')
+        } else if (r?.reason === 'cancelled' && r?.detail === 'disconnected') {
+          setHandsFreeNotice('刚才说到一半断了，你可以再说一遍')
+        }
       },
       // 逃逸轮：按既有 send 全流程走（端侧 fast_intent 秒回车控 / 上云 R4.4→planner→VAL→确认闸）。
       // 记 turn_id，待主链回答落地后回传 S2S 会话保上下文连续（RFC §3.2 escalated_result）。
@@ -488,10 +497,15 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           // 网关把原始 NATS type 透传成 advisory（scene_suggest / scene_verify / reminder_fired…）
           proactiveKind: typeof data.advisory === 'string' ? data.advisory : undefined,
         } as Msg])
-        // 仅异步深调研完成（带报告卡）时朗读结论——兑现「查完语音通知你」；其余主动播报维持气泡（不改既有行为）。
-        // queueTTS：空闲即刻播；正在播回复则排在其后（旧 finishTTSReply 空闲时静默不响、
-        // 忙时会把文本灌进已收尾的会话丢失）。
-        if (s.ttsEnabled && s.autoplay && text && card) {
+        // 带卡主动消息才朗读（提醒到点/到地、场景建议、低电量建议、深调研完成都带卡——
+        // 不是「只有深调研」，判据就是 text && card）。S2S 交互进行中不出声只出气泡：
+        // 主动 TTS 与 S2S 模型音频是两个互不知情的播放器，同放=混音，且其生命周期回调
+        // 会把 FSM 从 SPEAKING 误推 FOLLOWUP（验收抓到）。classic 的互斥由 queueTTS 保障。
+        if (s.ttsEnabled && s.autoplay && text && card
+            && !handsFreeRef.current?.proactiveTtsBlocked) {
+          // 回声指纹：主动播报的文本也要喂 FSM——否则 FOLLOWUP/LISTENING 期这段声音被
+          // 麦克风采回去时，_overlapsTts 比对的还是上一轮回复的陈旧文本，拦不住自听。
+          handsFreeRef.current?.setTtsText(text)
           queueTTS(AUDIO_API, text, s.voiceId, s.ttsProvider).catch(() => {/* 播放失败静默 */})
         }
       }

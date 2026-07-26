@@ -250,3 +250,52 @@ def test_fingerprint_is_slot_ref_aware():
     r1 = _run_one(DagExecutor(dispatcher=d), s1, done={"p": prior_a})
     _run_one(DagExecutor(dispatcher=d), s2, done={"p": prior_b, "s1": r1})
     assert d.calls == 2          # 目的地不同 → 不是重复
+
+
+# ── 超时 ≠ 失败：部分成功场景的防重发（验收 P0）────────────────────────────
+
+class _SlowDispatcher:
+    """睡过 step 预算 → executor 侧 asyncio.wait_for 超时。"""
+    def __init__(self):
+        self.calls = 0
+
+    async def dispatch(self, step, ctx):
+        self.calls += 1
+        await asyncio.sleep(0.2)
+        return _Resp(actions=[_Action()])
+
+
+def test_timeout_result_gets_fingerprint():
+    """超时步也打指纹：Agent 可能已经执行完、只是响应没回来（副作用已发生）。"""
+    d = _SlowDispatcher()
+    step = _step("s1")
+    step.latency_budget_ms = 20
+    res = _run_one(DagExecutor(dispatcher=d), step)
+    assert res.status == StepStatus.FAILED and res.error == "step_timeout"
+    assert res.fingerprint, "超时结果必须带指纹，否则 replan 重出同一动作会被原样重发"
+
+
+def test_timed_out_prior_is_not_redispatched():
+    """超时前序同指纹 → 同轮内不重发，回填诚实的「不确定」话术。
+
+    对照 test_failed_prior_is_not_deduped：真失败（Agent 明确报错=确定没做成）必须
+    重跑；超时（可能已生效）绝不能盲目重发——「明早提醒我」超时后 replan 重出，
+    盲发就是两条提醒。
+    """
+    d = _Dispatcher(_Resp(actions=[_Action()]))
+    prior = StepResult(step_id="s1", status=StepStatus.FAILED, error="step_timeout",
+                       fingerprint=DagExecutor._fingerprint(_step("s1")))
+    second = _run_one(DagExecutor(dispatcher=d), _step("r1"), done={"s1": prior})
+    assert d.calls == 0, "超时前序同指纹不得再下发"
+    assert second.status == StepStatus.OK       # R9 契约：话术用 OK 承载
+    assert second.actions == []
+    assert "没拿到结果" in second.speech and "没有重复执行" in second.speech
+
+
+def test_non_timeout_failure_still_reruns():
+    """Agent 明确报错（error 非 step_timeout）→ 照旧允许重跑，防抖不拦。"""
+    d = _Dispatcher(_Resp(actions=[_Action()]))
+    prior = StepResult(step_id="s1", status=StepStatus.FAILED, error="agent boom",
+                       fingerprint=DagExecutor._fingerprint(_step("s1")))
+    _run_one(DagExecutor(dispatcher=d), _step("r1"), done={"s1": prior})
+    assert d.calls == 1

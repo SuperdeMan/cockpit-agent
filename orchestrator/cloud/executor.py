@@ -107,6 +107,11 @@ class DagExecutor:
         # 只给「真产生了副作用」的成功结果打指纹：纯查询步重复执行无害（还可能要刷新数据）
         if result.status == StepStatus.OK and result.actions:
             result.fingerprint = fingerprint
+        # 超时也打指纹：超时 ≠ 失败——Agent 可能已经执行完、只是响应没回来（副作用已
+        # 发生）。不打指纹的话 T2 replan 重出同一动作会被原样重发（「明早提醒我」变两条
+        # 提醒）。真失败（Agent 明确报错）仍不打——那要允许重跑，见 _find_duplicate。
+        elif result.status == StepStatus.FAILED and result.error == "step_timeout":
+            result.fingerprint = fingerprint
         return result
 
     @staticmethod
@@ -130,23 +135,45 @@ class DagExecutor:
         if not fingerprint or not _dedup_enabled():
             return None
         for prior in done.values():
-            if (getattr(prior, "fingerprint", "") == fingerprint
-                    and prior.status == StepStatus.OK):
+            if getattr(prior, "fingerprint", "") != fingerprint:
+                continue
+            if prior.status == StepStatus.OK:
+                return prior
+            # 超时前序也算命中：副作用可能已发生，同轮内绝不盲目重发（验收抓到的 P0：
+            # 超时→FAILED→replan 重出同一动作→重复执行）。其他 FAILED（Agent 明确报错
+            # =确定没做成）不命中——那必须允许重跑，否则失败被「复用」成假成功。
+            if (prior.status == StepStatus.FAILED
+                    and getattr(prior, "error", "") == "step_timeout"):
                 return prior
         return None
 
     async def _replay_prior(self, step: Step, prior: StepResult,
                             ctx: PlanContext) -> StepResult:
-        """以既有结果回填：**动作不重发**（重发才是要防的那件事），话术/卡片沿用。"""
-        logger.info("Step %s(%s): duplicate side-effect suppressed (fingerprint=%s)",
-                    step.id, step.intent, prior.fingerprint)
+        """以既有结果回填：**动作不重发**（重发才是要防的那件事），话术/卡片沿用。
+
+        超时前序的回填是「不确定」的诚实版本：不沿用话术（上次没有话术）、不假装成功，
+        告诉用户没有重复执行、请核实状态。话术按 R9 契约用 OK 承载（FAILED 会被聚合器
+        吞成裸「处理失败」）。
+        """
+        timed_out = (prior.status == StepStatus.FAILED
+                     and getattr(prior, "error", "") == "step_timeout")
+        logger.info("Step %s(%s): duplicate side-effect suppressed (fingerprint=%s%s)",
+                    step.id, step.intent, prior.fingerprint,
+                    ", prior=timeout" if timed_out else "")
         try:
             await obs_events.get_emitter("cloud").emit_span(
                 getattr(ctx, "trace_id", ""), "step.dedup",
                 attrs={"step_id": step.id, "intent": step.intent,
-                       "prior_step_id": prior.step_id})
+                       "prior_step_id": prior.step_id,
+                       "prior_timeout": timed_out})
         except Exception:
             pass
+        if timed_out:
+            return StepResult(
+                step_id=step.id, status=StepStatus.OK,
+                speech="刚才这个操作没拿到结果，可能已经生效；我没有重复执行，"
+                       "请稍后确认一下状态再决定要不要重试。",
+                actions=[], fingerprint=prior.fingerprint)
         return StepResult(
             step_id=step.id, status=StepStatus.OK, speech=prior.speech,
             ui_card=prior.ui_card, actions=[],       # ← 副作用不重放

@@ -77,7 +77,7 @@ def test_ground_uses_pool_coords_no_research():
     sk = {"days": [{"day_index": 1, "theme": "",
                     "stops": [{"name": "西湖", "type": "attraction"}]}]}
     prov = FakePOI()
-    trip = asyncio.run(pipeline.ground(prov, prov, sk, pool, {}, dest="杭州"))
+    trip = asyncio.run(pipeline.ground(prov, sk, pool, {}, dest="杭州"))
     s = trip.itinerary[0].stops[0]
     assert s.grounded and s.poi["lat"] == 30.25
     assert prov.calls == []      # 池内命中，零搜索
@@ -88,7 +88,7 @@ def test_ground_rejects_mismatched_name():
     sk = {"days": [{"day_index": 1,
                     "stops": [{"name": "天坛公园", "type": "attraction"}]}]}
     prov = FakePOI(default=lambda kw: [_poi("V东滨店", lat=22.5, lng=114.0)])
-    trip = asyncio.run(pipeline.ground(prov, prov, sk, [], {}, dest="北京"))
+    trip = asyncio.run(pipeline.ground(prov, sk, [], {}, dest="北京"))
     s = trip.itinerary[0].stops[0]
     assert not s.grounded and s.poi is None
 
@@ -107,7 +107,7 @@ def test_solve_weaves_charging_into_leg():
     points = [{"lat": 30 + i * 0.01, "lng": 120, "cum_km": i * 20} for i in range(60)]
     route = {"distance_km": 1180.0, "duration_min": 600, "points": points}
     prov = FakePOI(search_map={"充电站": [_poi("沿途充电站", 30.5, 120.5)]}, route=route)
-    out = asyncio.run(pipeline.solve(prov, prov, trip, 50, {},
+    out = asyncio.run(pipeline.solve(prov, trip, 50, {},
                                      full_range_km=500, day_cap_min=100000))
     leg = out.itinerary[0].legs[0]
     assert leg.distance_km == 1180.0 and leg.drive_min == 600
@@ -123,7 +123,7 @@ def test_solve_sufficient_range_no_charge():
         Stop(stop_id="s2", name="B", grounded=True, poi={"name": "B", "lat": 30.1, "lng": 120.1})])
     trip.itinerary = [d]
     prov = FakePOI(route={"distance_km": 12.0, "duration_min": 20, "points": []})
-    out = asyncio.run(pipeline.solve(prov, prov, trip, 80, {}, full_range_km=500))
+    out = asyncio.run(pipeline.solve(prov, trip, 80, {}, full_range_km=500))
     assert out.itinerary[0].legs[0].charging_stops == []
 
 
@@ -136,7 +136,7 @@ def test_solve_reflow_day_cap():
         for i in range(4)])
     trip.itinerary = [d]
     prov = FakePOI(route={"distance_km": 5.0, "duration_min": 60, "points": []})
-    out = asyncio.run(pipeline.solve(prov, prov, trip, 80, {},
+    out = asyncio.run(pipeline.solve(prov, trip, 80, {},
                                      full_range_km=500, day_cap_min=300))
     assert len(out.itinerary) >= 2
     assert len(out.itinerary[0].stops) < 4
@@ -199,3 +199,17 @@ def test_plan_weather_no_provider_or_error():
     class _Boom:
         async def forecast(self, **k): raise RuntimeError("no key")
     assert asyncio.run(pipeline.plan_weather(_Boom(), "杭州", "明天", 2, {})) == [None, None]
+
+
+def test_no_mock_fallback_field():
+    """M0a 铁律③回归锁（navigation/charging 同款，trip-planner 曾漏网）：
+    运行期 mock 回退已结构性根除——`_fallback` 字段不存在即无法悄悄复活。
+    2026-07-25 badcase「红军长征路线图×4」正是假 POI 充数一族的产物形态。"""
+    import inspect
+    from agents.trip_planner.src import pipeline as pl
+    import agents.trip_planner.src.agent as agent_mod
+    text = inspect.getsource(agent_mod)
+    assert "MockPOIProvider" not in text, "agent 不得再引用 MockPOIProvider"
+    assert "self._fallback" not in text
+    ptext = inspect.getsource(pl)
+    assert "fallback.search" not in ptext, "pipeline 不得保留 provider 级 mock 回退"

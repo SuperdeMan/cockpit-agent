@@ -320,3 +320,46 @@ test('客户端不持任何会话状态机（用户可感知状态归 voiceLoop�
     assert.ok(!code.includes(bad), `客户端不得出现 FSM 态 ${bad}`)
   }
 })
+
+// ─── M4 P4 补口：occupant 帧（S2S 自答轮记忆隔离的身份通道）───
+// 不用 harness（它自带 start+open）：测「open 前合并进 start 帧」需要掌控 open 时机。
+
+function bareClient() {
+  const wss = []
+  const c = new S2SClient({
+    wsFactory: (u) => { const w = new FakeWS(u); wss.push(w); return w },
+    playerFactory: () => null,
+    timers: fakeTimers(),
+  })
+  return { c, wss }
+}
+
+test('setOccupant after open sends occupant frame', () => {
+  const { c, wss } = bareClient()
+  c.start('ws://x', { session_id: 's1' })
+  wss[0]._open()
+  c.setOccupant('occ-2', '小雨')
+  const f = wss[0].sent.find((m) => m.type === UP.OCCUPANT)
+  assert.ok(f, 'occupant 帧未发出')
+  assert.equal(f.occupant_id, 'occ-2')
+  assert.equal(f.display_name, '小雨')
+})
+
+test('setOccupant before open merges into session.start', () => {
+  const { c, wss } = bareClient()
+  c.start('ws://x', { session_id: 's1' })
+  c.setOccupant('occ-3', '')       // ws 未 open：并进 start 帧，开门即生效
+  wss[0]._open()
+  const start = wss[0].sent.find((m) => m.type === UP.START)
+  assert.equal(start.occupant_id, 'occ-3')
+  assert.equal(wss[0].sent.filter((m) => m.type === UP.OCCUPANT).length, 0)
+})
+
+test('setOccupant empty falls back to primary', () => {
+  const { c, wss } = bareClient()
+  c.start('ws://x', { session_id: 's1' })
+  wss[0]._open()
+  c.setOccupant('', '')
+  const f = wss[0].sent.find((m) => m.type === UP.OCCUPANT)
+  assert.equal(f.occupant_id, 'primary')
+})

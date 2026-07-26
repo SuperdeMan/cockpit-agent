@@ -42,15 +42,21 @@ class ReminderScheduler:
                       {"label": "完成", "send_text": f"完成提醒：{r.title}"},
                       {"label": "稍后10分钟", "send_text": f"10分钟后再提醒我{r.title}"},
                   ]} for r in due]
+        fired_ts = int(self._now() * 1000)
         payload = {"type": "reminder_fired", "speech": speech,
                    "card": cards[0] if len(cards) == 1 else
                    {"type": "card_group", "items": cards},
-                   "agent_id": "reminder", "ts": int(self._now() * 1000),
+                   "agent_id": "reminder", "ts": fired_ts,
                    "user_id": due[0].user_id,
                    # 用户显式约定 → 治理器免打扰/负荷/频控全豁免（仅参与合并）。
-                   # 去重键带条目 id：同一条提醒不会因重投而说两遍，不同条目互不遮蔽。
+                   # 去重键 = 条目 id + 触发时刻：同一次触发重投不说两遍；**必须带触发
+                   # 时刻**——snooze 保留原条目 id，只按 id 去重会把「过5分钟再叫我」
+                   # 的第二次触发在治理器 10 分钟去重窗里静默吞掉（验收抓到，直接违反
+                   # conventions §9.8「绝不静默吞掉用户显式约定的提醒」）。
                    "priority": P_USER_CONTRACT,
-                   "dedup_key": "reminder.fired|" + ",".join(sorted(r.id for r in due))}
+                   "dedup_key": ("reminder.fired|"
+                                 + ",".join(sorted(r.id for r in due))
+                                 + f"|{fired_ts}")}
         try:
             await self._publish(payload)
             logger.info("reminder fired x%d: %s", len(due), "、".join(titles)[:60])
