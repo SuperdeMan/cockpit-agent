@@ -573,7 +573,7 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | 写操作强制项 | `write: true` 必须同时有 `require_confirm: true`、`idempotency_key_arg`、`compensate_tool`——**没有补偿路径的写操作 admission 直接拒载**（§4.F 生命周期五项） |
 | 幂等键 | = **请求指纹** `idem_key(user_id, kind, 归一化 goal)`，与账本 `idempotency_key` 列同源。**不得用 task_id**（每次调用都新 = 等于没有幂等，重说一遍就双扣） |
 | 订单状态机 | 复用 `task_ledger`（kind=`mcp_order`），**不新建表**——它是 M2 Ledger 的第二个载体 |
-| 超时口径 | 调用超时 **≠ 没下单**：诚实说「不确定，稍后帮你核对」并把账目落 `failed`，绝不假装失败或成功 |
+| 超时口径 | 调用超时 **≠ 没下单**：诚实说「不确定」并提醒别急着重复下单，账目落 `failed` 且 `result_ref.outcome=uncertain`（状态机无 uncertain 终态，将来接订单查询入口须按 result_ref 回答，不得照 failed 说「上次失败了」）。**话术不承诺不存在的核对入口**（2026-07-26 验收修正：旧话术让用户「查一下我的订单」，而查询能力未接入）。非超时异常=确定没发出去，按失败说，不装不确定 |
 | 演示商户 | `demo: true` → 卡片 `demo`/`demo_label` 角标 + `_prov.mode=mock`+note + 话术前缀「（演示商户）」**三重冗余**。演示不是问题，把演示装成真实才是 |
 | 能力合成 | capability 由 `bootstrap()` 在 `serve()` **之前**从准入清单合成（注册在 serve 里发生，晚一步注册中心就看到空能力表）；manifest.yaml 的 `capabilities` 故意留空 |
 | 权限 | 一律 `trust_level: third_party`（硬上限表自动禁高危车控/精确位置/摄像头麦克风）+ `network.external`；涉钱走 payment-gateway，Agent 不持凭证 |

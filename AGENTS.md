@@ -95,6 +95,17 @@ frame_id）。子 RFC `docs/design/2026-07-25-m4-p4-voiceprint-vision-rfc.md` **
   的模型是**静默回落 primary**——故视觉必须走独立 `qwen-vl` 档 + 请求级 pin，否则会静默打到
   看不了图的模型上且毫无报错。
 
+**总体验收（2026-07-26）**：M0a→M4 全线过了一次跨阶段组合验收——七路深查（S2S×危险
+动作 / 声纹×记忆×ForgetUser / MCP写×确认×T2×Verifier / Skill×submit_plan×Provider /
+geofence×负荷×免打扰 / S2S×主动 / provider 部分成功）+ 测试真实性抽查。**结论：六期主体
+真实落地；组合面抓出 2 个确认链 P0（补槽恢复跳过二次确认 / S2S 挡位「确认·取消」被模型
+自答成假承诺）与一批隔离/降级 P1，当日修复 21 项代码 + 15 项测试**；结构性遗留（记忆写侧
+说话人盲、places 无 occupant、MCP 查单/补偿入口、主动×S2S 治理器侧方案等）已立卡。
+全文见 `docs/reviews/2026-07-26-acceptance-review-m0a-m4.md`（§6 修复清单 / §7 立卡）。
+两条更正：AGENTS.md 此前引用的「journeys regression 15/15」是历史时点值（canonical 基线
+一度陈旧 20 commit，当前口径见验收报告 §8）；「主动消息唯一会出声的是深调研」评估不属实
+（朗读判据是 text&&card，提醒/场景/低电量都恒带卡）。
+
 **下一站：M4 已收官，没有既定的下一期。** 可选方向（都不阻塞，按需取用）：
 - `sim.adas.*` 演示域——**低优先 backlog，非 M4 DoD**（2026-07-24 §8-6 拍板）。
 - 真麦声学验收（S2S 打断手感 / 声纹识别率与误认率）——浏览器声学层 CI 测不了，同 R4.3 惯例留泓舟。
