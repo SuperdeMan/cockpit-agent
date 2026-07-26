@@ -64,11 +64,14 @@ class Clients:
         return channel_pb2_grpc.EdgeCloudChannelStub(self._ch_edge)
 
     async def append_turn(self, session_id: str, role: str, text: str,
-                          user_id: str = "", vehicle_id: str = ""):
-        """写入一轮对话到 memory（指代消解的数据来源）。带 user_id 时 memory 侧据此触发异步抽取。"""
+                          user_id: str = "", vehicle_id: str = "",
+                          occupant_id: str = "primary"):
+        """写入一轮对话到 memory（指代消解的数据来源）。带 user_id 时 memory 侧据此触发异步抽取。
+        occupant_id 决定抽取出的偏好归属哪个乘员（M4 P4；proto 字段 2026-06 就有，一直没人传）。"""
         await self._memory_stub().AppendTurn(
             memory_pb2.AppendTurnRequest(session_id=session_id, role=role, text=text,
-                                         user_id=user_id, vehicle_id=vehicle_id),
+                                         user_id=user_id, vehicle_id=vehicle_id,
+                                         occupant_id=occupant_id or "primary"),
             timeout=_DEFAULT_TIMEOUT)
 
     async def get_session(self, session_id: str, last_n: int = 6) -> list[dict]:

@@ -204,6 +204,13 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         voice: settingsRef.current.s2sVoice,
       }),
       getSessionMeta: () => ({ sessionId: SESSION, userId: 'u1' }),
+      // ── M4 P4 声纹（默认关；开了才在唤醒后首句识别，识别不到恒 primary）──
+      getVoiceprintConfig: () => ({ enabled: settingsRef.current.voiceprintEnabled }),
+      onVoiceprintResult: (r) => {
+        // 只在**认出别的乘员**时提示一次，认不出/是主驾都不打扰（那是常态）。
+        if (r.decision === 'accept' && r.display_name)
+          setHandsFreeNotice(`已识别为 ${r.display_name}`)
+      },
       // 自答轮：用户气泡 + 助手气泡逐字（S2S 不走 WS，消息由本地组装；回灌在网关侧完成）
       onS2sUserUtterance: (t) => setMessages((m) => [...m, { id: uid(), role: 'user', text: t }]),
       onS2sAnswerDelta: (t) => {
@@ -562,6 +569,9 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           locationOverride !== undefined ? locationOverride : currentLocation,
         ),
         ...(metaExtra || {}),
+        // M4 P4：本轮说话人（声纹，唤醒窗内锁定）。未开/认不出恒 'primary' = P4 之前的行为。
+        // 记忆按它隔离；**权限与确认不看它**（声纹不是鉴权因子，RFC §6.1 红线）。
+        occupant_id: handsFreeRef.current?.occupantId || 'primary',
         trace_id: traceId,
       },
     })

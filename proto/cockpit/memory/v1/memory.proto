@@ -19,6 +19,15 @@ service Memory {
   // （按实体查边 / 人称→地点一跳），开放多跳会长出没人验证的推理路径。
   rpc QueryRelations (QueryRelationsRequest) returns (QueryRelationsResponse);
   rpc ResolvePersonPlace (ResolvePersonPlaceRequest) returns (ResolvePersonPlaceResponse);
+
+  // M4 P4 声纹多用户：模板的**存储与比对**归记忆域（生物特征数据；GDPR 级联删是红线），
+  // 「音频→向量」归 llm-gateway（模型面，架构承诺=模型调用唯一出口）。分工与理由见
+  // docs/design/2026-07-25-m4-p4-voiceprint-vision-rfc.md §2.1。
+  // **红线：occupant_id 只进记忆域，绝不作鉴权因子**（§6.1，源码级断言测试钉死）。
+  rpc EnrollVoiceprint (EnrollVoiceprintRequest) returns (EnrollVoiceprintResponse);
+  rpc IdentifySpeaker (IdentifySpeakerRequest) returns (IdentifySpeakerResponse);
+  rpc ListVoiceprints (ListVoiceprintsRequest) returns (ListVoiceprintsResponse);
+  rpc DeleteVoiceprint (DeleteVoiceprintRequest) returns (DeleteVoiceprintResponse);
 }
 
 message GetContextRequest {
@@ -160,4 +169,78 @@ message ResolvePersonPlaceResponse {
   string person = 2;         // 解析到的实体名（"小雨"）
   string place = 3;          // 地点（"XX小学"）
   string object_ref = 4;
+}
+
+// ── M4 P4：声纹模板（生物特征，契约见 docs/conventions.md §9.11）─────────────
+// 只传向量不传音频：原始音频在网关提完 embedding 即弃，永不跨服务、永不落库。
+message VoiceVector { repeated float values = 1; }
+
+message EnrollVoiceprintRequest {
+  string user_id = 1;
+  // 空=服务端分配。**首个注册者分配到 "primary"**——存量记忆全在该 occupant 名下，
+  // 若首个注册者拿到 occ-1，他自己过去说过的一切当场失联（RFC §3.4，本设计最大的回归点）。
+  string occupant_id = 2;
+  string display_name = 3;
+  repeated VoiceVector samples = 4;  // 每段录音一条，已 L2 归一；服务端取均值再归一为模板
+  string model = 5;                  // 提取模型标识；与识别期不一致的模板视为 stale，提示重录
+  string tenant_id = 6;
+}
+message EnrollVoiceprintResponse {
+  bool ok = 1;
+  string occupant_id = 2;
+  string display_name = 3;
+  uint32 sample_count = 4;
+  float self_consistency = 5;   // 各段两两余弦均值；过低=录音里混了别人/噪声 → 拒绝建模板
+  string error = 6;             // ok=false 时非空，如 "low_consistency" / "dim_mismatch"
+}
+
+message IdentifySpeakerRequest {
+  string user_id = 1;
+  VoiceVector probe = 2;
+  string model = 3;             // 与模板 model 不一致的模板一律跳过（跨模型比余弦没有意义）
+  string tenant_id = 4;
+}
+message IdentifySpeakerResponse {
+  // 判定结果。**认不出一律回 "primary"**（诚实降级）——不是 guest/unknown：primary 是存量
+  // 语义，降到它=逐字回落今天；造一个新身份等于让用户体感「车失忆了」（RFC §3.3）。
+  string occupant_id = 1;
+  string display_name = 2;
+  string decision = 3;          // accept | below_threshold | ambiguous | no_templates | stale_model
+  float score = 4;              // top1 余弦
+  float runner_up = 5;          // top2 余弦（ambiguous 判据：top1-top2 < margin 即分不开）
+}
+
+message ListVoiceprintsRequest {
+  string user_id = 1;
+  string tenant_id = 2;
+  string model = 3;             // 非空则据此标记 stale；空=不计算
+}
+message VoiceprintInfo {
+  string occupant_id = 1;
+  string display_name = 2;
+  uint32 sample_count = 3;
+  float self_consistency = 4;
+  int64 updated_at = 5;
+  string model = 6;
+  bool stale = 7;
+}
+message ListVoiceprintsResponse {
+  repeated VoiceprintInfo occupants = 1;
+  // 判定阈值随清单一起回：判定在 memory 侧（模板在这儿），但 /api/voiceprint/info 要能如实报出来。
+  float threshold = 2;
+  float margin = 3;
+}
+
+message DeleteVoiceprintRequest {
+  string user_id = 1;
+  string occupant_id = 2;
+  // true=同时删该乘员的 memory_item 与 memory_relation。用户说「删掉小雨」时的预期是
+  // 「忘掉这个人」，不是「留着记忆但认不出他」（RFC §3.4）。
+  bool purge_memory = 3;
+  string tenant_id = 4;
+}
+message DeleteVoiceprintResponse {
+  bool ok = 1;
+  uint32 deleted_templates = 2;
+  uint32 deleted_memories = 3;
 }

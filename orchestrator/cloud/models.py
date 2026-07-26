@@ -110,6 +110,10 @@ class PlanContext:
     session_id: str = ""
     user_id: str = ""
     vehicle_id: str = ""
+    # M4 P4 声纹多用户：本轮说话人。默认 "primary"=今天的行为（未注册声纹/认不出都落它）。
+    # **只进记忆域**（recall/remember/AppendTurn/relation），绝不参与权限与确认判定——
+    # 声纹不是鉴权因子（RFC §6.1 红线，`test_voiceprint_not_auth.py` 源码级钉死）。
+    occupant_id: str = "primary"
     granted_permissions: list[str] = field(default_factory=list)
     is_confirmation: bool = False
     trace_id: str = ""

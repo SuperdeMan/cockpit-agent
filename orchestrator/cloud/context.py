@@ -356,16 +356,24 @@ class ContextManager:
             logger.debug("update_focus failed: %s", e)
 
     async def append_turn(self, session_id: str, role: str, text: str,
-                          user_id: str = "", vehicle_id: str = ""):
+                          user_id: str = "", vehicle_id: str = "",
+                          occupant_id: str = ""):
         """写入一轮对话到 memory（指代/抽取的数据来源）。memory 不可用或 clients 未提供
-        该能力时静默跳过（不阻塞主链路）。user_id 透传给 memory 触发异步偏好抽取。"""
+        该能力时静默跳过（不阻塞主链路）。user_id 透传给 memory 触发异步偏好抽取。
+
+        occupant_id 决定**抽取出的偏好写给谁**（M4 P4）——这一步漏了，多用户隔离就只在
+        读侧成立、写侧全部堆在 primary 名下，越用越错。"""
         fn = getattr(self.clients, "append_turn", None)
         if not fn:
             return
         try:
-            await fn(session_id, role, text, user_id=user_id, vehicle_id=vehicle_id)
+            await fn(session_id, role, text, user_id=user_id, vehicle_id=vehicle_id,
+                     occupant_id=occupant_id or "primary")
         except TypeError:
-            await fn(session_id, role, text)  # 兼容只接受 3 参的旧 stub
+            try:
+                await fn(session_id, role, text, user_id=user_id, vehicle_id=vehicle_id)
+            except TypeError:
+                await fn(session_id, role, text)  # 兼容只接受 3 参的旧 stub
         except Exception as e:
             logger.debug("append_turn failed: %s", e)
 
@@ -425,7 +433,10 @@ class ContextManager:
         if not fn or not getattr(ctx, "user_id", ""):
             return []
         try:
+            # M4 P4：按乘员召回。memory 侧 recall 本来就是 occupant 精确过滤，
+            # 传进去隔离即自动成立（缺的从来不是记忆能力，是这个参数）。
             mems = await fn(ctx.user_id, text, kinds=["semantic"],
+                            occupant_id=getattr(ctx, "occupant_id", "") or "primary",
                             top_k=3, min_confidence=0.5)
             if mems:
                 logger.info("memory recall for %s: %d items %s", ctx.user_id,
@@ -465,6 +476,10 @@ def build_context(request) -> PlanContext:
                 "(only no-permission agents reachable).")
 
     # HMI 会话级偏好（透传给 Agent，见 hmi/src/settings.tsx buildMeta）
+    # M4 P4：本轮说话人（声纹识别结果，HMI 在唤醒窗内锁定后随每轮 meta 上来）。
+    # 缺省/空 → "primary" = 逐字回落到 P4 之前。**刻意不参与 granted 的任何分支**（§6.1）。
+    occupant = (meta.get("occupant_id") or "").strip() or "primary"
+
     prefs = {k: meta[k] for k in
              ("model_pref", "answer_length", "assistant_name", "memory_enabled",
               "poi_page",          # "换一批"翻页页码，透传给 navigation
@@ -481,11 +496,16 @@ def build_context(request) -> PlanContext:
                        "current_location_at", "current_location_source")
                       if meta.get(k)})
 
+    # 声纹结果随 prefs 下发给全部 Agent（同 thinking/llm pin 的既有惯例：改一处全 Agent 覆盖），
+    # SDK 侧据此构造 Context.occupant_id，Agent 的 recall/remember 自动按乘员隔离。
+    prefs["occupant_id"] = occupant
+
     return PlanContext(
         request_id=getattr(request, "request_id", ""),
         session_id=getattr(request, "session_id", ""),
         user_id=getattr(request.context, "user_id", "") if hasattr(request, "context") and request.context else "",
         vehicle_id=getattr(request.context, "vehicle_id", "") if hasattr(request, "context") and request.context else "",
+        occupant_id=occupant,
         is_confirmation=getattr(request, "is_confirmation", False),
         granted_permissions=granted,
         trace_id=meta.get("trace_id", ""),

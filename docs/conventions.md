@@ -598,3 +598,24 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | 型号红线 | 必须支持 tools。`qwen3-omni-flash-realtime`（无 `.5`）**静默丢弃 tools**（P0 探针 ★T 实测）→ 工厂 fail-fast 拒绝，别绕过；文档上两个型号都写「支持函数调用」，只有实测能分辨 |
 | 韧性 | turn 悬挂看门狗 `S2S_TURN_TIMEOUT_S=45` → 诚实收 `turn.end(error, provider_silent)`；重连 ≤3 次退避后 DEGRADED（HMI 回落三段式）；长会话 `S2S_SESSION_MAX_TURNS=20` 主动重建 + 摘要重注入 |
 | 隐私口径变化点 | s2s 挡位**上行原始音频**（三段式只上行定稿文本），且仅在唤醒后的交互窗内。设置默认 `classic`，须用户显式选择 |
+
+### 9.11 声纹多用户契约（M4 P4）
+
+设计：`docs/design/2026-07-25-m4-p4-voiceprint-vision-rfc.md`。端点 `/api/voiceprint/*`
+（llm-gateway 音频面 50059）。表 `voiceprint`（memory 服务，`memory/schema.sql`）。
+
+| 项 | 契约 |
+|---|---|
+| **提取与存储分家** | 网关做「音频→192 维向量」（`llm-gateway/speaker_embed.py`，模型面）；memory 做「向量→是谁」（`memory/voiceprint.py` 判定 + `voiceprint` 表）。**模板绝不下发到网关**——生物特征扩散到无状态服务就删不干净 |
+| **不旁路 ASR/S2S 流** | 走独立端点，两条语音链路零侵入（S2S 会话层刚踩过端点死锁，可选增强件不该焊进关键件）。代价=唤醒首句 ≤96KB 重复上行 |
+| 识别时机 | **边说边识别**：累计 1.5s 有效语音即发（用户还在说），send 前软等 ≤150ms。**一次唤醒锁一次**，续问窗内不重识——轮内改判会让同一段对话的前后半截落进不同乘员，比认错更糟 |
+| 判定四态 | `accept` / `below_threshold` / `ambiguous`(top1-top2<margin) / `too_short`；**accept 之外一律回 `primary`**。不是 guest 不是 unknown——primary 是存量语义，降到它=逐字回落今天；造新身份=凭空多一个空记忆空间 |
+| 阈值来源 | `test/e2e_voiceprint_probe.py` 实测钉死。实测结论：**真正起作用的控制量是 margin 不是 threshold**（thr∈[0.45,0.70] 结果完全相同）；认错率恒 0，混淆对（同性别音色）由 ambiguous 档兜住 |
+| **首个注册者绑 `primary`** | 存量记忆全在 primary 名下，首个注册者若拿 occ-1，他自己过去说过的一切当场失联。堵在分配这一步，不做事后迁移 |
+| 坏模板拒收 | 注册三段两两余弦 < `VOICEPRINT_MIN_CONSISTENCY` → 409 拒绝建模板（混了别人/噪声的模板此后谁都认不准） |
+| stale 模板 | `model` 与当前提取模型不符即跳过并提示重录——**绝不拿旧模型的向量跟新模型的比余弦**，那个数字没有意义 |
+| **红线：不作鉴权因子** | `occupant_id` 只进记忆域（recall/remember/AppendTurn/relation）。**不得进** granted_scopes/权限判定/VAL/require_confirm 合成/payment。源码级断言 `orchestrator/cloud/tests/test_voiceprint_not_auth.py`。理由不止「声纹可被录音重放」——身份识别与授权是两件事，识别错了只该损失个性化 |
+| GDPR | `ForgetUser` 同事务级联删 `voiceprint`（同 `memory_relation` 先例）。删单个乘员默认连带删其记忆（「忘掉这个人」），**但 primary 永不 purge**——删单个乘员不该有清空全车的爆炸半径 |
+| 透传管道 | HMI `buildMeta.occupant_id` → edge-gateway（原样透传）→ `build_context` → `PlanContext.occupant_id` → `prefs` → `ExecuteRequest.meta` → `_sdk.Context.occupant_id`。**memory 侧零改动**——recall 本来就是 occupant 精确过滤，缺的只是这个参数 |
+| 隔离边界（v1） | 只做硬隔离，**不做跨乘员共享**。`memory_level` 现状只写不读且恒为 `user`，做读侧共享=全部共享=隔离归零；真共享层要改抽取分类，是独立一期 |
+| 降级 | 模型缺失/依赖缺失 → `provider[voiceprint]=disabled`，`/api/voiceprint/*` 返回 `enabled:false`，HMI 隐藏入口，occupant_id 恒 primary。**这一档是常态之一不是异常**（模型 28MB 且下载不稳） |

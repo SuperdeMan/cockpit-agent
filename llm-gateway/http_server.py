@@ -552,6 +552,163 @@ def create_http_app() -> web.Application:
             logger.warning("memory forget error: %s", e)
             return web.json_response({"ok": False, "error": str(e)}, status=500)
 
+    # ── 声纹（M4 P4）──────────────────────────────────────────────────────
+    # 刻意**不旁路** /api/asr/stream 与 /api/s2s 的上行 PCM，而是独立端点：那两条是刚验完的
+    # 关键路径（S2S 上批次才踩出端点死锁），为一个可选增强件去动它们，风险与收益不成比例；
+    # 且独立端点一处实现同时覆盖 classic 与 s2s 两个挡位。代价是唤醒首句 ≤96KB 重复上行。
+    # 详见 RFC §2.2。
+    def _vp_provider():
+        import speaker_embed as vp_mod
+        return vp_mod, vp_mod.resolve_provider()
+
+    @routes.get("/api/voiceprint/info")
+    async def handle_vp_info(request: web.Request):
+        """能力探测 + 乘员清单（HMI 设置页「乘员与声纹」据此渲染）。"""
+        vp_mod, prov = _vp_provider()
+        if prov is None:
+            return web.json_response({"enabled": False, "provider": "disabled",
+                                      "reason": vp_mod.disabled_reason(),
+                                      "occupants": []})
+        uid = (request.query.get("user_id") or "").strip()
+        occupants, threshold, margin_ = [], 0.0, 0.0
+        if uid:
+            try:
+                resp = await _memory_stub().ListVoiceprints(
+                    memory_pb2.ListVoiceprintsRequest(user_id=uid, model=prov.model),
+                    timeout=5)
+                occupants = [{"occupant_id": o.occupant_id, "display_name": o.display_name,
+                              "sample_count": o.sample_count, "stale": o.stale,
+                              "self_consistency": round(o.self_consistency, 3),
+                              "updated_at": o.updated_at} for o in resp.occupants]
+                threshold, margin_ = resp.threshold, resp.margin
+            except Exception as e:
+                logger.warning("voiceprint list error: %s", e)
+        return web.json_response({
+            "enabled": True, "provider": prov.name, "model": prov.model, "dim": prov.dim,
+            "occupants": occupants, "threshold": threshold, "margin": margin_,
+            "min_speech_ms": vp_mod.min_speech_ms(),
+        })
+
+    @routes.post("/api/voiceprint/identify")
+    async def handle_vp_identify(request: web.Request):
+        """首句 PCM → occupant_id。query: user_id。body: 二进制 PCM（16k mono s16le）。
+
+        **认不出一律回 primary**（诚实降级）——判定见 memory/voiceprint.py::decide。
+        HMI 在唤醒后累计 1.5s 有效语音时就调本端点（用户还在说），故本路径要短平快。
+        """
+        vp_mod, prov = _vp_provider()
+        if prov is None:
+            return web.json_response({"occupant_id": "primary", "decision": "disabled"})
+        uid = (request.query.get("user_id") or "").strip()
+        pcm = await request.read()
+        dur = vp_mod.pcm_duration_ms(pcm)
+        if dur < vp_mod.min_speech_ms():
+            return web.json_response({"occupant_id": "primary", "decision": "too_short",
+                                      "duration_ms": dur})
+        if not uid:
+            return web.json_response({"occupant_id": "primary", "decision": "no_user"})
+        try:
+            vec = await asyncio.get_running_loop().run_in_executor(None, prov.embed, pcm)
+            resp = await _memory_stub().IdentifySpeaker(memory_pb2.IdentifySpeakerRequest(
+                user_id=uid, probe=memory_pb2.VoiceVector(values=vec),
+                model=prov.model), timeout=5)
+        except Exception as e:
+            # 声纹是可选增强：任何失败都退回 primary，绝不让它把一轮对话拖死。
+            logger.warning("voiceprint identify error: %s", e)
+            return web.json_response({"occupant_id": "primary", "decision": "error"})
+        out = {"occupant_id": resp.occupant_id, "display_name": resp.display_name,
+               "decision": resp.decision, "score": round(resp.score, 4),
+               "runner_up": round(resp.runner_up, 4), "duration_ms": dur}
+        if _obs is not None:
+            # 四态全进 obs：阈值不靠拍脑袋，靠线上分布（供 M1b nightly 挖掘调优）。
+            # 走 metric 而非 span——识别发生在**本轮 trace 建立之前**（HMI 在用户还在说的时候
+            # 就发了），没有 trace_id 可挂；硬造一个反而会在轮次详情里变成孤儿 span。
+            try:
+                await _obs.emit_metric(
+                    "voiceprint", count=1, avg_ms=dur,
+                    error_rate=0.0 if resp.decision == "accept" else 1.0,
+                    vp_decision=resp.decision, vp_score=round(resp.score, 4),
+                    vp_runner_up=round(resp.runner_up, 4),
+                    vp_occupant=resp.occupant_id)
+            except Exception:
+                pass
+        return web.json_response(out)
+
+    @routes.post("/api/voiceprint/enroll")
+    async def handle_vp_enroll(request: web.Request):
+        """注册/更新一个乘员的声纹。query: user_id, display_name, occupant_id?。
+        body: multipart 的多段 PCM（字段名 sample），或单段二进制（自洽度=1）。
+
+        **第一个注册的人由 memory 侧分配到 primary**（RFC §3.4）——不在这里判，
+        避免两处各有一套「谁是第一个」的逻辑。
+        """
+        vp_mod, prov = _vp_provider()
+        if prov is None:
+            return web.json_response({"ok": False, "error": "disabled"}, status=503)
+        uid = (request.query.get("user_id") or "").strip()
+        if not uid:
+            return web.json_response({"ok": False, "error": "missing user_id"}, status=400)
+        # 注册走 multipart（每段一个 sample 字段）。format=webm 时经既有 ffmpeg 转码——
+        # 注册是低频操作，让 HMI 复用已验证的 MediaRecorder 路径比新写一套 PCM 采集稳。
+        # 识别路径**不转码**（它在唤醒窗内、要短平快，HMI 那边本来就有 16k PCM 帧）。
+        src_fmt = (request.query.get("format") or "pcm16le").strip().lower()
+        segments: list[bytes] = []
+        if request.content_type and "multipart" in request.content_type:
+            reader = await request.multipart()
+            async for part in reader:
+                if part.name == "sample":
+                    segments.append(await part.read(decode=False))
+        else:
+            raw = await request.read()
+            if raw:
+                segments.append(raw)
+        if src_fmt not in _PCM_STREAM_FORMATS:
+            decoded = []
+            for s in segments:
+                wav = await _transcode_to_wav(s, src_fmt)
+                decoded.append(wav[44:] if wav[:4] == b"RIFF" else wav)   # 去 WAV 头留裸 PCM
+            segments = decoded
+        segments = [s for s in segments if vp_mod.pcm_duration_ms(s) >= vp_mod.min_speech_ms()]
+        if not segments:
+            return web.json_response({"ok": False, "error": "no_valid_samples"}, status=400)
+        try:
+            loop = asyncio.get_running_loop()
+            vecs = [await loop.run_in_executor(None, prov.embed, s) for s in segments]
+            resp = await _memory_stub().EnrollVoiceprint(memory_pb2.EnrollVoiceprintRequest(
+                user_id=uid, occupant_id=(request.query.get("occupant_id") or "").strip(),
+                display_name=(request.query.get("display_name") or "").strip(),
+                samples=[memory_pb2.VoiceVector(values=v) for v in vecs],
+                model=prov.model), timeout=10)
+        except Exception as e:
+            logger.warning("voiceprint enroll error: %s", e)
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+        if not resp.ok:
+            # low_consistency：三段互不像 → 拒绝建模板（建了此后谁都认不准）。
+            return web.json_response(
+                {"ok": False, "error": resp.error,
+                 "self_consistency": round(resp.self_consistency, 3)}, status=409)
+        return web.json_response({"ok": True, "occupant_id": resp.occupant_id,
+                                  "display_name": resp.display_name,
+                                  "sample_count": resp.sample_count,
+                                  "self_consistency": round(resp.self_consistency, 3)})
+
+    @routes.delete("/api/voiceprint/{occupant_id}")
+    async def handle_vp_delete(request: web.Request):
+        """删除一个乘员。query: user_id, purge_memory=1|0（默认 1=连同其记忆一起忘掉）。"""
+        uid = (request.query.get("user_id") or "").strip()
+        occ = request.match_info.get("occupant_id", "").strip()
+        if not uid or not occ:
+            return web.json_response({"ok": False}, status=400)
+        purge = (request.query.get("purge_memory") or "1").strip() not in ("0", "false")
+        try:
+            resp = await _memory_stub().DeleteVoiceprint(memory_pb2.DeleteVoiceprintRequest(
+                user_id=uid, occupant_id=occ, purge_memory=purge), timeout=10)
+        except Exception as e:
+            logger.warning("voiceprint delete error: %s", e)
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return web.json_response({"ok": resp.ok, "deleted_templates": resp.deleted_templates,
+                                  "deleted_memories": resp.deleted_memories})
+
     @routes.get("/api/llm/providers")
     async def handle_llm_providers(request: web.Request):
         """列出已装配的 LLM 厂商 + 各自模型 + 可用性 + 当前 active（HMI 设置页两级选择据此渲染）。"""

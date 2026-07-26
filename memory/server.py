@@ -11,6 +11,7 @@ import time
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 from runtime.proactive import P_ADVISORY, publish_proactive
 
+import voiceprint
 from store import MemoryStore
 
 logger = logging.getLogger("memory.server")
@@ -204,6 +205,64 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         return memory_pb2.ResolvePersonPlaceResponse(
             found=True, person=hit["person"], place=hit["place"],
             object_ref=hit.get("object_ref", ""))
+
+    # ── 声纹（M4 P4）：只收向量不收音频；判定见 memory/voiceprint.py ──────────────
+    async def EnrollVoiceprint(self, request, context):
+        if not request.user_id or not request.samples:
+            return memory_pb2.EnrollVoiceprintResponse(ok=False, error="no_samples")
+        res = await self.store.enroll_voiceprint(
+            request.user_id, [list(s.values) for s in request.samples],
+            occupant_id=request.occupant_id, display_name=request.display_name,
+            model=request.model, tenant_id=request.tenant_id or "default")
+        if not res.get("ok"):
+            return memory_pb2.EnrollVoiceprintResponse(
+                ok=False, error=res.get("error", ""),
+                self_consistency=float(res.get("self_consistency", 0.0)))
+        logger.info("voiceprint enrolled: user=%s occupant=%s samples=%d consistency=%.3f",
+                    request.user_id, res["occupant_id"], res["sample_count"],
+                    res["self_consistency"])
+        return memory_pb2.EnrollVoiceprintResponse(
+            ok=True, occupant_id=res["occupant_id"], display_name=res["display_name"],
+            sample_count=int(res["sample_count"]),
+            self_consistency=float(res["self_consistency"]))
+
+    async def IdentifySpeaker(self, request, context):
+        if not request.user_id or not request.probe.values:
+            return memory_pb2.IdentifySpeakerResponse(
+                occupant_id="primary", decision="no_templates")
+        res = await self.store.identify_speaker(
+            request.user_id, list(request.probe.values), model=request.model,
+            tenant_id=request.tenant_id or "default")
+        return memory_pb2.IdentifySpeakerResponse(
+            occupant_id=res["occupant_id"], display_name=res.get("display_name", ""),
+            decision=res["decision"], score=float(res["score"]),
+            runner_up=float(res["runner_up"]))
+
+    async def ListVoiceprints(self, request, context):
+        rows = await self.store.list_voiceprints(
+            request.user_id, model=request.model,
+            tenant_id=request.tenant_id or "default") if request.user_id else []
+        return memory_pb2.ListVoiceprintsResponse(
+            occupants=[memory_pb2.VoiceprintInfo(
+                occupant_id=r["occupant_id"], display_name=r.get("display_name", ""),
+                sample_count=int(r.get("sample_count") or 0),
+                self_consistency=float(r.get("self_consistency") or 0.0),
+                updated_at=int(r.get("updated_at") or 0), model=r.get("model", ""),
+                stale=bool(r.get("stale"))) for r in rows],
+            threshold=voiceprint.threshold(), margin=voiceprint.margin())
+
+    async def DeleteVoiceprint(self, request, context):
+        if not request.user_id or not request.occupant_id:
+            return memory_pb2.DeleteVoiceprintResponse(ok=False)
+        res = await self.store.delete_voiceprint(
+            request.user_id, request.occupant_id, purge_memory=request.purge_memory,
+            tenant_id=request.tenant_id or "default")
+        logger.info("voiceprint deleted: user=%s occupant=%s templates=%d memories=%d",
+                    request.user_id, request.occupant_id,
+                    res["deleted_templates"], res["deleted_memories"])
+        return memory_pb2.DeleteVoiceprintResponse(
+            ok=res["ok"], deleted_templates=int(res["deleted_templates"]),
+            deleted_memories=int(res["deleted_memories"]))
 
 
 def _item_to_dict(m) -> dict:

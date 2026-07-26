@@ -12,7 +12,8 @@ import {
 import {
   fetchVoices, fetchTtsProviders, fetchLlmProviders, setLlmProvider,
   fetchMemory, fetchMemoryProfile, forgetMemory, fetchPlaces, playTTS,
-  type MemoryView, type MemoryProfile, type NamedPlaces,
+  MicController, fetchVoiceprints, enrollVoiceprint, deleteVoiceprint,
+  type MemoryView, type MemoryProfile, type NamedPlaces, type VoiceprintInfo,
 } from '../audio'
 import { PLACE_DEFS, isPlaceSet, formatPlace } from '../places.mjs'
 import { AuroraOrb } from './aurora'
@@ -25,6 +26,8 @@ const FG2 = 'var(--au-text-2)'
 const FG3 = 'var(--au-text-3)'
 const DIV = 'var(--au-line)'
 const MONO = 'var(--au-font-mono)'
+// PoC 单用户：与 MemorySection 的 forgetMemory(audioApi,'u1') 同口径（真实身份由网关注入）
+const USER_ID = 'u1'
 
 // ─── 内联线性图标 ───
 function Svg({ size = 14, color = 'currentColor', sw = 2, style, children }: { size?: number; color?: string; sw?: number; style?: CSSProperties; children: ReactNode }) {
@@ -170,7 +173,7 @@ export function SettingsPanel({
         <div style={{ flex: 1, height: '100%', overflowY: 'auto' }}>
           <Glass style={{ minHeight: '100%' }}>
             {section === 'tts' && <TtsSection audioApi={audioApi} />}
-            {section === 'asr' && <AsrSection />}
+            {section === 'asr' && <AsrSection audioApi={audioApi} />}
             {section === 'display' && <DisplaySection />}
             {section === 'location' && <LocationSection location={location} enabled={locationEnabled} status={locationStatus} onRequest={onRequestLocation} onEnabledChange={onLocationEnabledChange} />}
             {section === 'places' && <PlacesSection audioApi={audioApi} />}
@@ -312,7 +315,7 @@ function TtsSection({ audioApi }: { audioApi: string }) {
 }
 
 // ─── 2 · 语音输入 ───
-function AsrSection() {
+function AsrSection({ audioApi }: { audioApi: string }) {
   const { settings, update } = useSettings()
   const isDash = settings.asrProvider === 'dashscope'
   return (
@@ -393,7 +396,142 @@ function AsrSection() {
           </SettingRow>
         )}
       </SettingGroup>
+      <HR />
+      <OccupantSection audioApi={audioApi} />
     </div>
+  )
+}
+
+// ─── 2.5 · 乘员与声纹（M4 P4）───
+// 每个乘员各自的口味/习惯/常去地点互相独立；认不出时一律按主驾走（= 开这个开关之前的行为）。
+const ENROLL_PROMPTS = [
+  '你好，我是这辆车的常用乘客',
+  '今天天气不错，路上应该不太堵',
+  '帮我把空调调到二十四度',
+]
+
+function OccupantSection({ audioApi }: { audioApi: string }) {
+  const { settings, update } = useSettings()
+  const [info, setInfo] = useState<VoiceprintInfo | null>(null)
+  const [name, setName] = useState('')
+  const [step, setStep] = useState(-1)          // -1=未开始；0..2=正在录第 N 段
+  const [samples, setSamples] = useState<Blob[]>([])
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [mic] = useState(() => new MicController())
+
+  const refresh = useCallback(async () => {
+    setInfo(await fetchVoiceprints(audioApi, USER_ID))
+  }, [audioApi])
+  useEffect(() => { void refresh() }, [refresh])
+
+  const recordOne = async () => {
+    if (mic.active) return
+    setMsg('')
+    try {
+      await mic.start(4000, (r) => {
+        if (!r?.blob) { setMsg('这段没录到声音，再来一次'); return }
+        setSamples((s) => [...s, r.blob])
+        setStep((n) => (n + 1 >= ENROLL_PROMPTS.length ? -2 : n + 1))
+      })
+    } catch {
+      setMsg('拿不到麦克风权限')
+    }
+  }
+
+  const submit = async () => {
+    setBusy(true)
+    const r = await enrollVoiceprint(audioApi, USER_ID, name.trim() || '乘客', samples)
+    setBusy(false)
+    if (r.ok) {
+      // 首个注册者会被服务端分配到 primary——他继承全部既有记忆（不然一注册就全失联）。
+      setMsg(r.occupant_id === 'primary' ? '已记住（作为主驾，保留你已有的全部记忆）' : '已记住')
+      setStep(-1); setSamples([]); setName('')
+      void refresh()
+    } else if (r.error === 'low_consistency') {
+      setMsg(`三段听起来不像同一个人（相似度 ${(r.self_consistency ?? 0).toFixed(2)}），`
+        + '请在安静环境里由同一个人重录')
+      setStep(-1); setSamples([])
+    } else {
+      setMsg('注册失败：' + (r.error || '未知原因'))
+      setStep(-1); setSamples([])
+    }
+  }
+
+  const remove = async (occ: string, display: string) => {
+    if (!window.confirm(`删除「${display || occ}」并忘掉 TA 的全部记忆？此操作不可撤销。`)) return
+    const r = await deleteVoiceprint(audioApi, USER_ID, occ, true)
+    setMsg(r.ok ? `已删除，同时忘掉 ${r.deleted_memories ?? 0} 条记忆` : '删除失败')
+    void refresh()
+  }
+
+  if (info && !info.enabled) {
+    return (
+      <SettingGroup title="乘员与声纹">
+        <SettingRow label="声纹识别不可用" sub={'服务端未加载声纹模型，本功能已自动停用（其余语音功能不受影响）。'
+          + '管理员可执行 scripts/fetch-voice-models 拉取模型后重启网关。'} noBorder>
+          <span style={{ color: FG3, fontSize: 12 }}>未启用</span>
+        </SettingRow>
+      </SettingGroup>
+    )
+  }
+
+  return (
+    <SettingGroup title="乘员与声纹">
+      <SettingRow
+        label="按声音区分乘员"
+        sub={'开启后，唤醒时的第一句话用来判断是谁在说话，每个人的口味、习惯、常去地点各自独立。'
+          + '认不出时一律按主驾处理（和不开这个开关一样）。'
+          + '声纹只用于区分记忆，不作为任何权限或支付的凭证。'}
+      >
+        <Toggle on={settings.voiceprintEnabled}
+          onChange={(v) => update({ voiceprintEnabled: v })} />
+      </SettingRow>
+
+      {(info?.occupants ?? []).map((o) => (
+        <SettingRow key={o.occupant_id}
+          label={o.display_name || o.occupant_id}
+          sub={(o.occupant_id === 'primary' ? '主驾 · ' : '')
+            + `${o.sample_count} 段样本`
+            + (o.stale ? ' · 模型已更新，建议重录' : '')}>
+          <DangerBtn onClick={() => remove(o.occupant_id, o.display_name)}>删除</DangerBtn>
+        </SettingRow>
+      ))}
+
+      {step === -1 && (
+        <SettingRow label="添加乘员"
+          sub={(info?.occupants ?? []).length === 0
+            ? '第一个录入的人会被当作主驾，保留目前已有的全部记忆。'
+            : '需要在安静环境里念 3 句话（每句约 3 秒）。'}
+          noBorder={!msg}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <TextInput value={name} onChange={setName} placeholder="称呼，如「小雨」" />
+            <GhostBtn onClick={() => { setSamples([]); setStep(0); setMsg('') }}>开始录入</GhostBtn>
+          </div>
+        </SettingRow>
+      )}
+
+      {step >= 0 && (
+        <SettingRow label={`第 ${step + 1} / ${ENROLL_PROMPTS.length} 句`}
+          sub={`请念：「${ENROLL_PROMPTS[step]}」`} noBorder={!msg}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <GhostBtn onClick={recordOne}>{mic.active ? '录音中…' : '录这一句'}</GhostBtn>
+            <GhostBtn onClick={() => { setStep(-1); setSamples([]) }}>取消</GhostBtn>
+          </div>
+        </SettingRow>
+      )}
+
+      {step === -2 && (
+        <SettingRow label="三段都录好了" sub="确认后建立声纹模板" noBorder={!msg}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <GhostBtn onClick={submit}>{busy ? '处理中…' : '保存'}</GhostBtn>
+            <GhostBtn onClick={() => { setStep(-1); setSamples([]) }}>重来</GhostBtn>
+          </div>
+        </SettingRow>
+      )}
+
+      {msg && <SettingRow label="" sub={msg} noBorder><span /></SettingRow>}
+    </SettingGroup>
   )
 }
 

@@ -236,6 +236,19 @@ class MemoryStore:
             user_id, occupant_id=occupant_id, subject=subject, rel=rel,
             object_=object_, limit=limit)
 
+    # ── 声纹模板（M4 P4）：纯委托，判定逻辑在 voiceprint.py，存取在 pg_store ──────
+    async def enroll_voiceprint(self, user_id: str, samples, **kw) -> dict:
+        return await (await self._vec()).enroll_voiceprint(user_id, samples, **kw)
+
+    async def identify_speaker(self, user_id: str, probe, **kw) -> dict:
+        return await (await self._vec()).identify_speaker(user_id, probe, **kw)
+
+    async def list_voiceprints(self, user_id: str, **kw) -> list[dict]:
+        return await (await self._vec()).list_voiceprints(user_id, **kw)
+
+    async def delete_voiceprint(self, user_id: str, occupant_id: str, **kw) -> dict:
+        return await (await self._vec()).delete_voiceprint(user_id, occupant_id, **kw)
+
     async def resolve_person_place(self, user_id: str, person_word: str, *,
                                    occupant_id: str = "primary") -> dict | None:
         """**一跳解析**：人称词 → family 边找实体 → place_of 边找地点。

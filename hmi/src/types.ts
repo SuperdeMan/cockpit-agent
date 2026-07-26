@@ -537,6 +537,9 @@ export type Settings = {
   // 需要执行或查实时信息的请求由模型 escalate 交回确定性主链——车控绝不经 S2S 下发。
   voicePipeline: VoicePipeline
   s2sVoice: string              // S2S 音色（provider 侧音色，与 TTS 音色分开——尽量选同系减少割裂感）
+  // M4 P4 声纹多用户：默认关。开启后唤醒后首句识别说话人 → 记忆按乘员隔离。
+  // **只影响记忆归属，不影响任何权限**（声纹不是鉴权因子）；认不出恒回主驾。
+  voiceprintEnabled: boolean
   // 显示与主题
   theme: Theme
   fontScale: FontScale
@@ -725,6 +728,7 @@ export const DEFAULT_SETTINGS: Settings = {
   silenceTailMs: 800,
   voicePipeline: 'classic', // M4 opt-in：默认三段式。s2s 上行原始音频，须用户显式选择
   s2sVoice: 'Tina',         // qwen3.5-omni 默认音色
+  voiceprintEnabled: false, // M4 P4 opt-in：默认关，行为与 P4 之前逐字一致
   theme: 'dark',
   fontScale: 'normal',
   largeTouch: false,

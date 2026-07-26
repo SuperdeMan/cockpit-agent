@@ -30,10 +30,14 @@ class IntentView:
 
 class Context:
     """会话上下文句柄。按需向 Memory 拉取声明的 scopes（隐私最小化）。"""
-    def __init__(self, session_id: str, user_id: str, vehicle_id: str, memory: MemoryClient):
+    def __init__(self, session_id: str, user_id: str, vehicle_id: str, memory: MemoryClient,
+                 occupant_id: str = "primary"):
         self.session_id = session_id
         self.user_id = user_id
         self.vehicle_id = vehicle_id
+        # M4 P4：本轮说话人（声纹）。默认 "primary"=P4 之前的行为。记忆读写自动按它隔离。
+        # **只用于记忆归属**——权限判定在编排层按 granted_scopes，与本字段无关（RFC §6.1 红线）。
+        self.occupant_id = occupant_id or "primary"
         self._memory = memory
 
     async def fetch(self, *scopes: str) -> dict:
@@ -83,7 +87,8 @@ class Context:
         if not self.user_id:
             return []
         return await self._memory.recall(
-            self.user_id, query, scopes=scopes, kinds=kinds, top_k=top_k,
+            self.user_id, query, occupant_id=self.occupant_id, scopes=scopes,
+            kinds=kinds, top_k=top_k,
             predicate_prefix=predicate_prefix, min_score=min_score,
             min_confidence=min_confidence, max_age_days=max_age_days)
 
@@ -96,7 +101,8 @@ class Context:
         if not self.user_id or not person_word:
             return None
         try:
-            return await self._memory.resolve_person_place(self.user_id, person_word)
+            return await self._memory.resolve_person_place(
+                self.user_id, person_word, occupant_id=self.occupant_id)
         except Exception as e:
             import logging
             logging.getLogger("agent.sdk").debug("resolve_person_place skipped: %s", e)
@@ -113,7 +119,8 @@ class Context:
         if not self.user_id or not text:
             return False
         import json
-        item = {"user_id": self.user_id, "kind": kind, "predicate": predicate,
+        item = {"user_id": self.user_id, "occupant_id": self.occupant_id,
+                "kind": kind, "predicate": predicate,
                 "text": text, "scope": scope, "provenance": provenance,
                 "confidence": confidence, "privacy_level": privacy_level,
                 "vehicle_id": vehicle_id, "memory_level": memory_level,

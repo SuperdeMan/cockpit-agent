@@ -20,6 +20,7 @@ import time
 import uuid
 
 import relation
+import voiceprint as vp
 import weighting
 
 logger = logging.getLogger("memory.pg_store")
@@ -157,6 +158,7 @@ class MemoryVectorStore:
         self._embed_source = None  # "llm" | "local" | None（决定能否真实语义召回）
         self._mem: dict[str, dict] = {}  # id -> item（PG 不可用时兜底）
         self._rel: dict[str, dict] = {}  # id -> 关系边（同上兜底；M2 P1）
+        self._vp: dict[str, dict] = {}   # id -> 声纹模板（同上兜底；M4 P4）
 
     @property
     def pg_ok(self) -> bool:
@@ -516,6 +518,12 @@ class MemoryVectorStore:
                             DELETE FROM memory_relation WHERE user_id=$1
                               AND ($2='' OR occupant_id=$2)
                         """, user_id, occupant_id or "")
+                        # M4 P4：声纹模板同级联（生物特征留在库里比关系边更严重）。
+                        # 同 relation：scope 定向删除时不参与——声纹没有 scope 维度。
+                        await conn.execute("""
+                            DELETE FROM voiceprint WHERE user_id=$1
+                              AND ($2='' OR occupant_id=$2)
+                        """, user_id, occupant_id or "")
             try:
                 return int(res.split()[-1])
             except Exception:
@@ -531,6 +539,10 @@ class MemoryVectorStore:
                       if v["user_id"] == user_id
                       and (not occupant_id or v["occupant_id"] == occupant_id)]:
                 del self._rel[k]
+            for k in [k for k, v in self._vp.items()
+                      if v["user_id"] == user_id
+                      and (not occupant_id or v["occupant_id"] == occupant_id)]:
+                del self._vp[k]
         return len(to_del)
 
     async def export(self, user_id: str) -> list[dict]:
@@ -618,6 +630,145 @@ class MemoryVectorStore:
                and (not object_ or v["object"] == object_)]
         out.sort(key=lambda v: (v["confidence"], v["valid_from"]), reverse=True)
         return out[:limit]
+
+    # ── 声纹模板（M4 P4）：存向量、比余弦、三态判定；音频从不到这一层 ──────────
+    async def _vp_rows(self, user_id: str, tenant_id: str = "default") -> list[dict]:
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT * FROM voiceprint WHERE tenant_id=$1 AND user_id=$2 "
+                    "ORDER BY occupant_id", tenant_id or "default", user_id)
+            return [dict(r) for r in rows]
+        return sorted([dict(v) for v in self._vp.values()
+                       if v["user_id"] == user_id
+                       and v["tenant_id"] == (tenant_id or "default")],
+                      key=lambda v: v["occupant_id"])
+
+    async def enroll_voiceprint(self, user_id: str, samples: list[list[float]], *,
+                                occupant_id: str = "", display_name: str = "",
+                                model: str = "", tenant_id: str = "default") -> dict:
+        """建/更新一个乘员的声纹模板。样本自洽度过低即拒绝——见 voiceprint.min_consistency。"""
+        samples = [s for s in (samples or []) if s]
+        if not samples:
+            return {"ok": False, "error": "no_samples"}
+        dims = {len(s) for s in samples}
+        if len(dims) != 1:
+            return {"ok": False, "error": "dim_mismatch"}
+        cons = vp.self_consistency(samples)
+        if cons < vp.min_consistency():
+            # 不建坏模板：这三段互相都不像，建出来此后谁都认不准（RFC §3.1）。
+            return {"ok": False, "error": "low_consistency", "self_consistency": cons}
+        tpl = vp.mean_template(samples)
+        existing = await self._vp_rows(user_id, tenant_id)
+        occ = occupant_id or vp.allocate_occupant_id([r["occupant_id"] for r in existing])
+        now = _now()
+        row = {
+            "id": uuid.uuid4().hex, "tenant_id": tenant_id or "default", "user_id": user_id,
+            "occupant_id": occ, "display_name": display_name or "", "embedding": tpl,
+            "dim": len(tpl), "model": model or "", "sample_count": len(samples),
+            "self_consistency": cons, "created_at": now, "updated_at": now,
+        }
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO voiceprint
+                      (id,tenant_id,user_id,occupant_id,display_name,embedding,dim,model,
+                       sample_count,self_consistency,created_at,updated_at)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                    ON CONFLICT (tenant_id,user_id,occupant_id) DO UPDATE SET
+                      display_name=EXCLUDED.display_name, embedding=EXCLUDED.embedding,
+                      dim=EXCLUDED.dim, model=EXCLUDED.model,
+                      sample_count=EXCLUDED.sample_count,
+                      self_consistency=EXCLUDED.self_consistency,
+                      updated_at=EXCLUDED.updated_at
+                """, row["id"], row["tenant_id"], row["user_id"], row["occupant_id"],
+                     row["display_name"], row["embedding"], row["dim"], row["model"],
+                     row["sample_count"], row["self_consistency"], row["created_at"],
+                     row["updated_at"])
+        else:
+            key = f'{row["tenant_id"]}|{user_id}|{occ}'
+            prev = self._vp.get(key)
+            if prev:
+                row["id"], row["created_at"] = prev["id"], prev["created_at"]
+            self._vp[key] = row
+        return {"ok": True, "occupant_id": occ, "display_name": row["display_name"],
+                "sample_count": len(samples), "self_consistency": cons}
+
+    async def identify_speaker(self, user_id: str, probe: list[float], *,
+                               model: str = "", tenant_id: str = "default") -> dict:
+        """向量 → occupant_id。判定见 voiceprint.decide（accept 之外一律回 primary）。"""
+        rows = await self._vp_rows(user_id, tenant_id)
+        if not rows:
+            out = vp.decide([])
+            out["display_name"] = ""
+            return out
+        # 跨模型的余弦不在同一个尺度上，stale 模板一律不参与比对（宁可回 primary）。
+        usable = [r for r in rows if not model or not r["model"] or r["model"] == model]
+        if not usable:
+            return {"occupant_id": "primary", "decision": "stale_model",
+                    "score": 0.0, "runner_up": 0.0, "display_name": ""}
+        p = vp.l2_normalize(probe)
+        scored = [(r["occupant_id"], vp.cosine(p, list(r["embedding"]))) for r in usable]
+        out = vp.decide(scored)
+        names = {r["occupant_id"]: r["display_name"] for r in usable}
+        out["display_name"] = names.get(out["occupant_id"], "")
+        return out
+
+    async def list_voiceprints(self, user_id: str, *, model: str = "",
+                               tenant_id: str = "default") -> list[dict]:
+        rows = await self._vp_rows(user_id, tenant_id)
+        for r in rows:
+            r["stale"] = bool(model and r["model"] and r["model"] != model)
+        return rows
+
+    async def delete_voiceprint(self, user_id: str, occupant_id: str, *,
+                                purge_memory: bool = True,
+                                tenant_id: str = "default") -> dict:
+        """删一个乘员。`purge_memory` 默认真——用户说「删掉小雨」的预期是「忘掉这个人」，
+        不是「留着他的记忆但认不出他」（RFC §3.4）。**primary 不允许 purge**：那等于把全车
+        存量记忆一键清空，删除单个乘员的操作不该有这种爆炸半径（要清空走 ForgetUser）。"""
+        if not occupant_id:
+            return {"ok": False, "deleted_templates": 0, "deleted_memories": 0}
+        purge = purge_memory and occupant_id != "primary"
+        n_tpl = n_mem = 0
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                async with conn.transaction():
+                    r1 = await conn.execute(
+                        "DELETE FROM voiceprint WHERE tenant_id=$1 AND user_id=$2 "
+                        "AND occupant_id=$3", tenant_id or "default", user_id, occupant_id)
+                    n_tpl = _affected(r1)
+                    if purge:
+                        r2 = await conn.execute(
+                            "DELETE FROM memory_item WHERE user_id=$1 AND occupant_id=$2",
+                            user_id, occupant_id)
+                        n_mem = _affected(r2)
+                        await conn.execute(
+                            "DELETE FROM memory_relation WHERE user_id=$1 AND occupant_id=$2",
+                            user_id, occupant_id)
+        else:
+            for k in [k for k, v in self._vp.items()
+                      if v["user_id"] == user_id and v["occupant_id"] == occupant_id
+                      and v["tenant_id"] == (tenant_id or "default")]:
+                del self._vp[k]
+                n_tpl += 1
+            if purge:
+                for k in [k for k, v in self._mem.items()
+                          if v["user_id"] == user_id and v["occupant_id"] == occupant_id]:
+                    del self._mem[k]
+                    n_mem += 1
+                for k in [k for k, v in self._rel.items()
+                          if v["user_id"] == user_id and v["occupant_id"] == occupant_id]:
+                    del self._rel[k]
+        return {"ok": True, "deleted_templates": n_tpl, "deleted_memories": n_mem}
+
+
+def _affected(status: str) -> int:
+    """asyncpg execute() 返回 'DELETE n' 形式的状态串。"""
+    try:
+        return int(str(status).split()[-1])
+    except Exception:
+        return 0
 
 
 def _row_to_item(row) -> dict:

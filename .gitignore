@@ -33,6 +33,14 @@ hmi/public/models/*
 !hmi/public/models/.gitkeep
 # R4.3 P0 探针（sherpa-onnx WASM 11MB + 探针页）——本地临时、不合入（设计卡 §5.1）
 hmi/public/voice-probe/
+# M4 P4 服务端声纹模型（CAM++ ONNX 28MB）——同 scripts/fetch-voice-models.* 下载，切勿提交。
+# 缺失时 llm-gateway 声纹面决议为 disabled、整链逐字回落（RFC §2.3），故不阻塞构建。
+# **目录必须留在版本库**（.gitkeep）：llm-gateway/Dockerfile 有 `COPY models`，
+# 目录不存在则新克隆构建直接失败。故逐层排除——Git 无法在已排除的父目录里重新包含文件。
+models/*
+!models/voiceprint/
+models/voiceprint/*
+!models/voiceprint/.gitkeep
 
 # IDE / OS
 .idea/

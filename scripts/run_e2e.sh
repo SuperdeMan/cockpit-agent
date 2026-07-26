@@ -68,6 +68,10 @@ run_step "e2e_tts_stream"             python test/e2e_tts_stream.py
 # 与韧性（宿主内 WS 代理注入断连 → 重连+摘要重注入 / DEGRADED 回落）——均需 DashScope key
 run_step "e2e_s2s"                    python test/e2e_s2s.py
 run_step "e2e_s2s_resilience"         python test/e2e_s2s_resilience.py
+# M4 P4：声纹多用户（**母提案 M4 最后一条 DoD「多用户记忆隔离旅程」**）——
+# 首个注册者绑 primary / 识别 / 诚实降级 / 隔离 / 不提权红线 / 删除即忘掉这个人。
+# 声纹模型缺失时自动 SKIP（模型 28MB 且 gitignore，见 scripts/fetch-voice-models.*）。
+run_step "e2e_voiceprint"             python test/e2e_voiceprint.py
 # 旅程级（L3）：回归级必须绿；目标级红灯是能力标尺不拦退出码（--strict-target 才拦）
 run_step "e2e_journeys"               python test/e2e_journeys.py
 run_step "e2e_real_providers"         python -m pytest test/e2e_real_providers.py -q -s

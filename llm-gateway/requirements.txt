@@ -7,3 +7,8 @@ aiohttp==3.11.18
 nats-py>=2.6.0
 # active provider 选择持久化（llm:active；缺包时 llm_runtime 降级内存态，仅告警）
 redis>=5.0,<7
+# M4 P4 声纹提取（CAM++ ONNX 推理 + 配套 Kaldi fbank 特征）。
+# **为什么不是裸 onnxruntime**：CAM++ 吃的是 Kaldi 口径 80 维 fbank，自己复刻特征稍有偏差，
+# 模型照样吐 192 维向量、同人余弦却会掉到异人水平——错得完全看不出来。sherpa-onnx 是该模型
+# 配套的特征实现，且仓库已在用它的模型族（R4.3 KWS/VAD）。缺包时声纹面决议 disabled，不影响其余。
+sherpa-onnx>=1.12,<2

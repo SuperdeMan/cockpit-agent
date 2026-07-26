@@ -1175,6 +1175,64 @@ export async function forgetMemory(apiBase: string, userId: string, scope = ''):
   }
 }
 
+// ─── 声纹多用户（M4 P4）：乘员清单 / 注册 / 删除 ───
+// 识别本身不在这里——它在 handsFreeController 的语音链路里「边说边识别」。
+
+export type VoiceprintOccupant = {
+  occupant_id: string; display_name: string; sample_count: number
+  self_consistency: number; stale: boolean; updated_at: number
+}
+export type VoiceprintInfo = {
+  enabled: boolean; provider: string; reason?: string; model?: string
+  occupants: VoiceprintOccupant[]; min_speech_ms?: number
+}
+
+export async function fetchVoiceprints(apiBase: string, userId: string): Promise<VoiceprintInfo> {
+  try {
+    const r = await fetch(
+      `${apiBase}/api/voiceprint/info?user_id=${encodeURIComponent(userId)}`)
+    return await r.json()
+  } catch {
+    // 声纹面不可达 = 该能力不存在，不是错误：整链逐字回落到 P4 之前。
+    return { enabled: false, provider: 'disabled', occupants: [] }
+  }
+}
+
+/**
+ * 注册一个乘员。samples 是浏览器录到的音频段（MediaRecorder 的 webm blob）。
+ * 服务端转码后建模板；三段互不像会被 409 拒绝（宁可不建，也不要建个坏模板）。
+ */
+export async function enrollVoiceprint(
+  apiBase: string, userId: string, displayName: string, samples: Blob[], mime = 'webm',
+): Promise<{ ok: boolean; occupant_id?: string; error?: string; self_consistency?: number }> {
+  const fd = new FormData()
+  for (const s of samples) fd.append('sample', s)
+  try {
+    const r = await fetch(
+      `${apiBase}/api/voiceprint/enroll?user_id=${encodeURIComponent(userId)}`
+      + `&display_name=${encodeURIComponent(displayName)}&format=${mime}`,
+      { method: 'POST', body: fd })
+    return await r.json()
+  } catch (e) {
+    return { ok: false, error: String(e) }
+  }
+}
+
+/** 删除乘员。purgeMemory 默认真——「删掉小雨」的预期是「忘掉这个人」。 */
+export async function deleteVoiceprint(
+  apiBase: string, userId: string, occupantId: string, purgeMemory = true,
+): Promise<{ ok: boolean; deleted_memories?: number }> {
+  try {
+    const r = await fetch(
+      `${apiBase}/api/voiceprint/${encodeURIComponent(occupantId)}`
+      + `?user_id=${encodeURIComponent(userId)}&purge_memory=${purgeMemory ? 1 : 0}`,
+      { method: 'DELETE' })
+    return await r.json()
+  } catch {
+    return { ok: false }
+  }
+}
+
 // ─── 常用地点（家/公司）回显：读 memory 画像 profile.places ───
 
 import { parsePlacesValue } from './places.mjs'

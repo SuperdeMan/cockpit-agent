@@ -102,11 +102,12 @@ class PlannerEngine:
         # R4.4：拒识轮 user+assistant 均不落库——不污染指代消解、不触发 memory 画像抽取
         # （母卡 D3；落库本就在编排循环之后，时序天然支持）。
         if mem_on and text and not rejected:
+            occ = getattr(ctx, "occupant_id", "") or "primary"
             await self.context.append_turn(ctx.session_id, "user", text,
-                                           ctx.user_id, ctx.vehicle_id)
+                                           ctx.user_id, ctx.vehicle_id, occ)
             if assistant_speech:
                 await self.context.append_turn(ctx.session_id, "assistant", assistant_speech,
-                                               ctx.user_id, ctx.vehicle_id)
+                                               ctx.user_id, ctx.vehicle_id, occ)
 
     async def _orchestrate(self, request, ctx: PlanContext, text: str,
                            mem_on: bool) -> AsyncIterator[dict]:

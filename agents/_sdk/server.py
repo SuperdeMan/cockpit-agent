@@ -59,8 +59,11 @@ def _intent_view(req) -> IntentView:
 
 
 def _context(req, memory) -> Context:
+    """构造 Agent 侧上下文。occupant_id 走 meta（编排层随 prefs 下发，同 thinking/llm pin
+    的既有惯例）——**改这一处，全部 Agent 的 recall/remember 自动按乘员隔离**（M4 P4）。"""
     c = req.context
-    return Context(c.session_id, c.user_id, c.vehicle_id, memory)
+    occ = (dict(getattr(req, "meta", {}) or {}).get("occupant_id") or "").strip()
+    return Context(c.session_id, c.user_id, c.vehicle_id, memory, occ or "primary")
 
 
 class _Servicer(agent_pb2_grpc.AgentServicer):

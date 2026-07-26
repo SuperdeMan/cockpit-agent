@@ -26,6 +26,11 @@ async def serve():
     await server.start()
     print(f"[llm-gateway] LLM + Audio(ASR/TTS) gRPC on :{port}", flush=True)
 
+    # 声纹面决议前置到启动期：§9.4 的审计口径是「起栈后 grep provider[ 就能看全」，
+    # 惰性决议会让这一行等到第一次有人说话才出现，且严格栈的 mock 闸也要到那时才炸。
+    import speaker_embed
+    speaker_embed.resolve_provider()
+
     # HTTP proxy（HMI 前端调用 ASR/TTS）
     await start_http_server()
 

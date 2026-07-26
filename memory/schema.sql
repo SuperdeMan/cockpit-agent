@@ -78,6 +78,33 @@ CREATE TABLE IF NOT EXISTS memory_relation (
 );
 CREATE INDEX IF NOT EXISTS idx_rel_subject ON memory_relation (user_id, occupant_id, subject);
 CREATE INDEX IF NOT EXISTS idx_rel_object  ON memory_relation (user_id, occupant_id, object);
+-- ── M4 P4：声纹模板（2026-07-25，契约见 docs/conventions.md §9.11）──────────
+-- 存的是**向量不是音频**：原始音频在 llm-gateway 提完 embedding 即弃，永不跨服务、永不落库。
+-- **为什么独立成表而不是塞 memory_item**（对照过字段）：与偏好加权那次的结论相反——声纹与
+-- 记忆条目**没有一个共用字段**（无 predicate/text/confidence/supersede/召回语义），且
+-- memory_item.embedding 服务于语义召回、维度与模型都不同，混进去必然污染召回。同 memory_relation。
+-- **用 REAL[] 而不是 vector(N)**：模板数量以「一辆车的乘员」计（个位数），全表余弦是微秒级，
+-- 不需要 ANN 索引；而 vector 的维度写死在 DDL 里，换 provider（维度不同）就要迁表，
+-- REAL[] + dim 列让换模型只是数据失效、不是 schema 变更。
+-- **红线**：GDPR forget() 必须同事务级联删本表——声纹是生物特征，留着比留关系边更严重。
+-- 契约测试 memory/tests/test_voiceprint.py 直接锁。
+CREATE TABLE IF NOT EXISTS voiceprint (
+    id               TEXT PRIMARY KEY,
+    tenant_id        TEXT NOT NULL DEFAULT 'default',
+    user_id          TEXT NOT NULL,
+    occupant_id      TEXT NOT NULL,                     -- 'primary'（首个注册者）| 'occ-N'
+    display_name     TEXT NOT NULL DEFAULT '',
+    embedding        REAL[] NOT NULL,                   -- L2 归一后的均值模板
+    dim              INT  NOT NULL,
+    model            TEXT NOT NULL DEFAULT '',          -- 提取模型；与识别期不一致即 stale，跳过并提示重录
+    sample_count     INT  NOT NULL DEFAULT 0,
+    self_consistency REAL NOT NULL DEFAULT 0,
+    created_at       BIGINT NOT NULL,
+    updated_at       BIGINT NOT NULL,
+    UNIQUE (tenant_id, user_id, occupant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_vp_user ON voiceprint (tenant_id, user_id);
+
 -- pgvector ivfflat（与 registry 一致，需先有数据再建索引才高效；PoC 数据量小可暂不建）
 -- CREATE INDEX IF NOT EXISTS idx_mem_embedding ON memory_item
 --     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 10);

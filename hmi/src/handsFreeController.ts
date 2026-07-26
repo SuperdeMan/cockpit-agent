@@ -6,6 +6,7 @@ import { VadEngine } from './vadEngine'
 import { KwsEngine, DEFAULT_KEYWORDS } from './kwsEngine'
 import { StreamingRecognizer, asrStreamUrl, prepareCueSet, playCue, clearCues, makeS2sPlayer } from './audio'
 import { PcmRing } from './pcmRing.mjs'
+import { VoiceprintIdentifier, postIdentify } from './voiceprintIdentifier.mjs'
 import { stripLeadingWakeWord, isFiller } from './utteranceHeuristics.mjs'
 import { bumpVoiceMetric } from './voiceMetrics.mjs'
 import { RejectPolicy } from './rejectPolicy.mjs'
@@ -49,6 +50,9 @@ export type HandsFreeDeps = {
   onS2sAnswerDelta?: (text: string) => void   // S2S 自答的回答增量（气泡/字幕）
   onS2sEscalated?: (utterance: string, turnId: string) => void // 逃逸 → App 按既有 send 走
   onS2sTurnEnd?: (r: { turnId: string; reason: string; detail: string }) => void
+  // ── M4 P4 声纹（不传即完全不识别，occupantId 恒 primary）──
+  getVoiceprintConfig?: () => { enabled: boolean }
+  onVoiceprintResult?: (r: { decision?: string; display_name?: string }) => void
 }
 
 export class HandsFreeController {
@@ -79,6 +83,8 @@ export class HandsFreeController {
   // 而不拆会话——网关后台探活恢复后下一轮自动回 S2S（RFC §6.3 三种「离开 S2S」共用一条处理）。
   private s2s: any = null
   private s2sPendingUser = '' // 已过 FSM 本地治理、待确定归属（自答/逃逸）的用户话
+  // M4 P4 声纹：唤醒后首句边说边识别，结果锁定整个唤醒窗（null=该面禁用/未开）。
+  private vp: VoiceprintIdentifier | null = null
 
   constructor(deps: HandsFreeDeps) {
     this.deps = deps
@@ -90,7 +96,12 @@ export class HandsFreeController {
         silenceTailMs: deps.config?.silenceTailMs ?? 800,
         endpointGraceMs: deps.config?.endpointGraceMs ?? 700, // U5b 端点宽限合并窗
       },
-      onState: (orb: string) => this.deps.onOrbState(orb),
+      onState: (orb: string, fsm: string) => {
+        // M4 P4：回 ARMED/IDLE = 本次唤醒窗结束 → 解锁说话人，下次唤醒重识。
+        // 用 onState 既有的第二参（fsmState），**不给 voiceLoop 加回调**（同 S2S 期的纪律）。
+        if (fsm === 'ARMED' || fsm === 'IDLE') this.vp?.reset()
+        this.deps.onOrbState(orb)
+      },
       onOpenAsr: (o: { resume?: boolean; sinceSpeechStartMs?: number }) => this.openAsr(o),
       onCloseAsr: () => this.closeAsr(),
       // 端点判定权在**本侧 VAD**（S2S 与 classic 同构）：classic 请引擎定稿，S2S 提交音频段
@@ -105,9 +116,12 @@ export class HandsFreeController {
       // 用户气泡**不在此刻上屏**：本轮还不知道是自答还是逃逸，逃逸轮的用户气泡由 send() 自己插，
       // 这里插就成双份。暂存，等 answer_delta 首包（=确定自答）再 flush。实测两者互斥：
       // 逃逸轮零文本零音频、自答轮无 tool_call（RFC §3.5）。
+      // M4 P4：send 前软等声纹结果（上限 150ms，超时用当前值）。**绝不为了认人拖慢首字**——
+      // 边说边识别（1.5s 即发）意味着绝大多数情况结果早就回来了，这里只是收口。
       onSend: (t: string, vm?: { source: string; utteranceMs: number }) => {
         if (this.useS2s()) { this.s2sPendingUser = t; return }
-        this.deps.onSend(t, vm)
+        if (!this.vp) { this.deps.onSend(t, vm); return }
+        void this.vp.settle().then(() => this.deps.onSend(t, vm))
       },
       onStopTts: () => { this.s2s?.bargeIn(); this.deps.onStopTts() },
       onWakeChime: () => this.chime(),
@@ -176,8 +190,12 @@ export class HandsFreeController {
     // P2：VAD 帧旁路——持续入前滚缓冲，且若 PCM 直传 ASR 已开则同帧喂入（保帧序）。
     // M4：S2S 挡位下同一帧喂 S2S 会话（其内部按 LISTENING 门控决定是否上行）。
     this.pcmRing.clear()
-    this.vad.onFrame = (f) => { this.pcmRing.push(f); this.asr?.pushFrame(f); this.s2s?.pushFrame(f) }
+    // M4 P4：同一帧再旁路一份给声纹识别器（它自己按 arm 门控决定收不收——未唤醒不采集）。
+    this.vad.onFrame = (f) => {
+      this.pcmRing.push(f); this.asr?.pushFrame(f); this.s2s?.pushFrame(f); this.vp?.pushFrame(f)
+    }
     this.on = true
+    this.openVoiceprintIfEnabled()
     this.openS2sIfSelected()
     this.vl.handsFreeOn()
     this.refreshWakeCue() // 唤醒提示音预合成（best-effort，失败自动回退 beep）
@@ -193,6 +211,8 @@ export class HandsFreeController {
     this.vad.onFrame = null // 停 VAD 帧旁路（前滚缓冲 + PCM 直传）
     this.vad.stop()
     this.kws.stop()
+    this.vp?.reset()
+    this.vp = null
     this.closeS2s()
     this.closeAsr()
     this.pcmRing.clear()
@@ -384,6 +404,33 @@ export class HandsFreeController {
     return this.useS2s()
   }
 
+  /**
+   * 本轮说话人（M4 P4）。未开声纹/未识别/认不出一律 'primary' = P4 之前的行为。
+   * App 在 buildMeta 时读它，随每轮 meta 上云 → 记忆按乘员隔离。
+   */
+  get occupantId(): string {
+    return this.vp?.occupantId ?? 'primary'
+  }
+
+  /** 本轮说话人的显示名（HMI 可视化用，如「小雨」；未识别为空串）。 */
+  get occupantName(): string {
+    return this.vp?.displayName ?? ''
+  }
+
+  // 声纹面：设置里开了才建。**它必须可以随时死掉**——识别器不存在时 occupantId 恒 primary，
+  // 整条语音链路逐字回落到 P4 之前（同 M3 给主动引擎选落点的判据）。
+  private openVoiceprintIfEnabled(): void {
+    this.vp = null
+    if (!this.deps.getVoiceprintConfig?.()?.enabled) return
+    const uid = this.deps.getSessionMeta?.().userId || ''
+    this.vp = new VoiceprintIdentifier({
+      identify: postIdentify(this.deps.audioApi, uid),
+      onResult: (r: { decision?: string; display_name?: string }) => {
+        this.deps.onVoiceprintResult?.(r)
+      },
+    })
+  }
+
   // ─── 内部 ───
   // P2 PCM 直传（U4 根治）：不用 MediaRecorder，用 vadEngine.onFrame 喂帧 + 前滚缓冲；partial/final 剥唤醒词残留。
   // P4 真麦修复：仅续说路径（resume=true：续问/打断/宽限续说，无唤醒词）注入 pre-roll 补 VAD 判定延迟首字；
@@ -391,6 +438,9 @@ export class HandsFreeController {
   // barge-in 修复：FSM 带 sinceSpeechStartMs（打断确认窗耗时）→ pre-roll 动态回取到 speech 起点，
   // 固定 200ms 盖不住 300ms+ 确认窗导致的「打断漏首字」在此根治。
   private openAsr(opts: { resume?: boolean; sinceSpeechStartMs?: number } = {}): void {
+    // M4 P4：唤醒后首句才识别（resume=true 是续说/续问/打断，同一唤醒窗不重识——
+    // 轮内改判会让同一段对话的前后半截落进不同乘员的记忆里）。两个挡位共用这一处。
+    this.vp?.arm(!opts.resume)
     // S2S：会话常驻，进 LISTENING 只是开收音门（省掉 ASR 建连——全双工的第一份红利）。
     // pre-roll 口径与 classic 逐字一致：唤醒进入注 0（否则唤醒词自己被识别成同音字上屏），
     // 续说/打断按 speech 起点回取（真麦「小周」误上屏的同一根因，别在 S2S 上重犯）。
