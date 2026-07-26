@@ -277,6 +277,9 @@ services:
       # M0b Skill 层：full|canary|shadow|off（默认 full=注入——Full Migration 后中央 base
       # 不含领域知识，shadow/off 仅作研究/debug 档，会缺规划知识）
       SKILLS_MODE: ${SKILLS_MODE:-full}
+      # Skill 检索双通道（2026-07-26）：hybrid=词法∪语义预筛（经 llm-gateway Embed，
+      # fail-open 回词法）｜lexical=纯词法回退档。阈值/预算等调优项见 .env.example 注释。
+      SKILLS_RETRIEVAL: ${SKILLS_RETRIEVAL:-hybrid}
       # M1a submit_plan 结构化规划输出：on|off（默认 on——2026-07-24 泓舟拍板翻正，
       # A/B 材料 RFC §11；off=JSON 纯文本回退档。规划轮经原生 function calling 强制
       # 输出合法 Plan，协议失败轮内回退 JSON 路径）

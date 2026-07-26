@@ -128,6 +128,10 @@ jobs:
           python test/eval_fast_intent.py --corpus full \
             --out-json docs/reviews/eval/_ci-run-coverage_fast_intent.json \
             --out-md docs/reviews/eval/_ci-run-coverage_fast_intent.md
+          # M0b Skill 层离线车道（2026-07-26 验收关卡「eval_skills 不在 GitHub CI」）：
+          # 检索 golden 召回 + 反例噪声 + golden expect_* 契约静态校验（词法档零网络）；
+          # paraphrase/live 车道需 llm-gateway，归 evolve nightly 与人工触发
+          python test/eval_skills.py
 
       - name: Upload fresh eval report
         if: always()

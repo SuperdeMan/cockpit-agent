@@ -14,6 +14,10 @@ if _root not in sys.path:
 if _gen_py not in sys.path and os.path.isdir(_gen_py):
     sys.path.insert(0, _gen_py)
 
+# 单测钉死 skill 检索词法档：语义通道要打 llm-gateway Embed（网络），单测必须离线
+# 确定；语义通道自身的行为用假 embed 在 test_skills.py 单独测（monkeypatch 可覆盖此值）。
+os.environ["SKILLS_RETRIEVAL"] = "lexical"
+
 
 def pytest_configure(config):
     """注册自定义 marker，避免 PytestUnknownMarkWarning。"""

@@ -12,7 +12,10 @@ knowledge: |
   绝不要硬套相近的查询意图（例如把『电量/续航』套成 tire_pressure.query/胎压查询）。
   此时输出 {"steps":[]} 交系统兜底，宁可不答也不要张冠李戴。
 golden:
+  # expect_any=任一命中即对（三个 intent 都是「我冷」的合法落法）；此前误用 expect_intents
+  # （AND 语义）——三个互斥意图不可能同时出现，字段落地消费方后按真实语义迁移
   - text: 我有点冷
-    expect_intents: [hvac.inc, hvac.set, hvac.dec]
+    expect_any: [hvac.inc, hvac.set, hvac.dec]
+    expect_not: [chitchat.talk]
 owner: orchestrator
 version: 1

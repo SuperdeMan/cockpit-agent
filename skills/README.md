@@ -1,9 +1,12 @@
-# skills/ — 规划知识的声明式载体（M0a 契约定稿，M0b 实装）
+# skills/ — 规划知识的声明式载体（M0a 契约定稿，M0b 实装，2026-07-26 补全）
 
 > 依据：`docs/design/2026-07-24-eva-benchmark-intelligence-upgrade.md` §4.A（v1.2，两轮评审后）。
 > 定位：**Skill 是扩展智能的机制，不是运行时**——Agent 仍是部署/隔离/信任边界；skill 只
 > 供给 Planner 的规划知识，与 `route_hints`（LLM 后确定性纠错）互补：一个 badcase 先问
 > 「是路由错还是知识缺」，再决定投 hint 还是投 skill。**新增可执行能力仍需 Capability/Agent。**
+> 实例：2026-07-26 live 首跑抓到「快没电了附近找个快充」被 nearby 的 replace hint 在 LLM
+> **之后**踩掉 charging.find——知识层教对了也会被 hint 盖掉，那就是 hint guard 的 bug，
+> 修 nearby manifest 而不是加知识。
 
 ## 三型对象与目录
 
@@ -16,9 +19,24 @@ skills/
 
 | 型 | 职责 | 装配 | 例 |
 |---|---|---|---|
-| **PlanningGuide** | 告诉 Planner 何时/如何组合能力（判据+few-shot） | `description` 参与 embedding 语义预筛，top-N（默认 3）在 `_SKILL_BUDGET` 内注入 | 多日行程、导航顺路停靠、条件提醒 |
+| **PlanningGuide** | 告诉 Planner 何时/如何组合能力（判据+few-shot） | 检索双通道预筛 top-N（默认 3），`SKILL_BUDGET` 内注入 | 多日行程、导航顺路停靠、条件提醒、充电分流 |
 | **PlannerPolicyPack** | 跨域规划指导（**软约束**） | 常驻注入，不预筛 | 时效性判据、禁编造/留空追问、状态查询不硬套 |
-| **WorkflowTemplate**（v2） | 可版本化 DAG 模板，LLM 只填槽、engine 确定性展开 | 命中后展开（scene compiler 哲学） | 接人→顺路用餐→导航→到达提醒 |
+| **WorkflowTemplate**（v2） | 可版本化 DAG 模板，LLM 只填槽、engine 确定性展开 | 命中后展开（scene compiler 哲学）——**未实装** | 接人→顺路用餐→导航→到达提醒 |
+
+## 检索双通道（`SKILLS_RETRIEVAL`，2026-07-26 起）
+
+- **lexical**：keywords 命中（各 10 分）+ 中文 bigram 重合，零网络、离线确定。**盲区**：
+  keywords 没写到的说法一律漏召（paraphrase 语料实测 0/11）。
+- **hybrid（默认）**：词法命中**恒保留**（keywords 是作者显式设计的高精度信号），语义只
+  **补位**——guide `description` 向量与用户话术余弦 ≥ `SKILL_SEM_THRESHOLD`（默认 0.40）
+  的补进剩余 top-K 空位。Embedding 经 llm-gateway `Embed`（与 registry 语义路由/memory
+  同源，百炼 text-embedding-v4）。**fail-open**：Embed 不可用/超时（`SKILL_EMBED_TIMEOUT`，
+  默认 1.0s）→ 该轮纯词法 + 30s 冷却，绝不堵规划。
+- 默认档与阈值由 paraphrase 语料阈值扫描拍板（eval 先行，2026-07-26）：thr=0.40 召回
+  0/11→**11/11** 且语义通道**零新增**案例噪声；0.45 掉到 9/11；0.35 噪声 1/8→3/8。
+  语料在 `test/eval_corpus/skills_paraphrase_cases.yaml`，新 guide 落库补 2-4 条真改写。
+- `description` 因此身兼**语义索引**：写成「判据 + 典型表面形态」（例：充电 guide 的
+  description 点出「路上电够不够」）能显著提升语义召回——这是索引优化，不是知识双写。
 
 ## 权威链（硬边界，skill 永远在软层）
 
@@ -32,38 +50,60 @@ VAL / payment-gateway / Runtime Policy（context_scopes 过滤等）
 
 确认、权限、隐私、行驶状态的最终执行权在硬层；prompt 层 policy 不承载安全语义。
 
-## Schema（guide；policy 同形去 few_shots 可选）
+## Schema（guide；policy 同形，few_shots/keywords 可省）
 
 ```yaml
-name: multi-day-trip            # 唯一 ID = 文件名
+name: charging-strategy         # 唯一 ID = 文件名
 type: guide                     # guide | policy | workflow
-description: 多日出行/N日游/带家人出游的规划知识   # 常驻语义索引（预筛用，一句话）
-priority: 60                    # 预算内注入排序（高者先）
-keywords: [日游, 两天, 带老人]   # 词法检索触发词（v1 检索=keywords 命中+bigram 重合；
-                                #   embedding 升级由 shadow 召回数据决定，eval 先行）
+description: 充电找桩与长途补能策略的分流判据（附近找桩补电/跨城怎么充电…）
+                                # 常驻语义索引：词法 bigram 底分 + hybrid 语义预筛都用它
+priority: 55                    # 预算内注入排序（高者先）
+keywords: [充电, 快充, 没电]     # 词法检索触发词（高精度显式信号，命中恒保留）
 knowledge: |                    # 注入 planner 的领域判据（markdown，预算裁剪）
-  「去X玩N天/N日游/带老人/带娃」是行程规划意图，必须出 trip.plan 步…
-few_shots:                      # 可选：输入→计划片段示例
-  - user: 帮我规划周末去杭州两天
-    plan: {steps: [{agent_id: trip-planner, intent: trip.plan, slots: {...}}]}
-golden:                         # 必填：自带黄金用例，接 eval CI（test/eval_skills.py，M0b）
-  - text: 下周去成都玩三天带爸妈
-    expect_intents: [trip.plan]
-owner: trip-planner             # 治理归属；跨域知识用 orchestrator
+  **充电分流**……
+few_shots:                      # 可选（2026-07-26 实装）：渲染进注入块，紧跟 knowledge；
+  - user: 去惠州怎么充电         #   plan 为 dict 时紧凑 JSON 序列化（输出形态示范）
+    plan: {"steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.plan",...}]}
+golden:                         # 必填（guide）：自带黄金用例，接 eval 双车道（见「治理」）
+  - text: 去惠州怎么充电
+    expect_intents: [charging.plan]   # AND：全部必须出现；单项支持 "a|b" 双容忍
+    expect_any: []                    # 可选：至少一个出现（如 hvac.inc/set/dec 任一）
+    expect_not: [charging.find]       # 可选：一个都不许出现（知识的「另一半」）
+owner: charging-planner         # 治理归属；跨域知识用 orchestrator
 version: 1
 ```
 
+未知顶层键（如 `few_shot` 拼写错误）**告警不拒载**——静默忽略会让作者以为知识生效了。
+
 ## 治理
 
-- golden 进 eval CI；`obs.turn` 记录本轮注入的 skill 名单（badcase 归因：知识没进上下文
-  还是进了没用对）。
+- **eval 三车道**（`test/eval_skills.py`）：
+  1. 离线-检索（GitHub CI `intent-eval-baseline` + evolve nightly 门禁）：golden 检回自身
+     + 反例噪声 ≤ 半 + **golden expect_\* 契约静态校验**（intent 必须真实存在于
+     manifests/端侧意图集——typo 守卫）。
+  2. 离线-paraphrase（数据车道，信息性）：`--retrieval both` 双档对比 + 阈值扫描。
+  3. **live**（`--live`，真 PlanBuilder + 真 LLM）：golden expect_\* 的**消费方**——逐条
+     断言计划意图；`--ab` 附 `SKILLS_MODE=off` 对照出知识有效性 Δ（2026-07-26 首跑：
+     full 10/10 vs off 5/10，Δ=+5）。基线 `docs/reviews/eval/baseline_skills.json`
+     （`--write-baseline` 刷新）。live 烧钱+需真栈，人工/里程碑触发，不进 nightly。
+- **obs 归因**：`plan.skills` 名单（cloud.planning span / obs.turn）契约——guide 记
+  `mode:name@通道`（`@lex` 词法命中 / `@vec` 语义补位），**超预算被裁记 `!clipped`**
+  （名单绝不谎称已注入）；policy 记 `mode:name`。badcase 先看名单：知识没进上下文
+  （没检回/被裁）还是进了没用对。
 - 热更新：文件加载 + mtime（v1 不动 registry schema；多实例时再议注册中心索引）。
+  `SKILLS_MODE`/`SKILLS_RETRIEVAL`/阈值超时每轮实时读；`SKILL_BUDGET`/`SKILL_TOP_K`/
+  `SKILL_MIN_SCORE` 重启生效。env 全表见 `.env.example`。
 - 自进化流水线（M1b）允许的自动提案修改面 = guide / route_hint / eval 语料；
   **禁止**自动生成或修改 policy、VAL、权限、确认等级、payment（设计稿 §4.G）。
 
-## M0b 实装清单（Shadow Retrieval → Canary Injection → Full Migration）
+## 实装记录
 
-首批迁移（出自 `orchestrator/cloud/planning.py` `_PLANNER_BASE`）：
-guides = `multi-day-trip`（131-136 行）、`navigation-with-stop`（134-136）、
-`conditional-reminder`（37-39/74-79）；policies = `freshness-and-depth`（116-127）、
-`implicit-vehicle-control`（145-151，其安全语义仍由 manifest/VAL 承担）。
+- **M0b（2026-07-24）**：Shadow Retrieval → Canary Injection → Full Migration。首批迁移
+  （出自 `orchestrator/cloud/planning.py` `_PLANNER_BASE`）：guides = `multi-day-trip`、
+  `navigation-with-stop`、`conditional-reminder`；policies = `freshness-and-depth`、
+  `implicit-vehicle-control`（其安全语义仍由 manifest/VAL 硬层承担）。
+- **2026-07-26 补全**（对应总体验收立卡）：`few_shots` 实装（此前文档有代码不读）；
+  golden `expect_intents` 落地消费方（live 车道）+ `expect_any`/`expect_not`/`a|b` 契约；
+  检索升级 hybrid（paraphrase 0/11→11/11，eval 数据拍板）；`plan.skills` 归因诚实化
+  （`!clipped`/`@通道`）；eval 进 GitHub CI；新增首个净增知识 guide `charging-strategy`
+  （charging 无 route_hints、路由纯 LLM，live A/B 证实两条 golden 均为知识翻正）。

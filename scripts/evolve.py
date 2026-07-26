@@ -343,10 +343,13 @@ def cmd_propose(args) -> Path:
             body = (f"# PlanningGuide 草案（自进化提案；skills/README.md 契约）\n"
                     f"# 治理④：golden 须用改写句（原句已归 eval 语料候选，不同源）\n"
                     f"name: TODO-kebab-name\ntype: guide\n"
-                    f"description: TODO（供词法检索的一句话）\npriority: 50\n"
+                    f"description: TODO（一句话=语义索引：判据+典型表面形态，"
+                    f"词法 bigram 与 hybrid 语义预筛都用它）\npriority: 50\n"
+                    f"keywords: [TODO 高精度触发词]\n"
                     f"knowledge: |\n  TODO：从下列案例归纳组合知识\n"
                     + "".join(f"  # 案例：{t}\n" for t in texts[:5])
-                    + "golden:\n  - text: TODO 改写句\n    expect_intents: [TODO]\n")
+                    + "golden:\n  - text: TODO 改写句\n    expect_intents: [TODO]"
+                    "   # AND；可加 expect_any/expect_not，项支持 \"a|b\"\n")
             kind = "guide"
         elif cause in ("slot_error", "phrasing") and texts:
             body = ("# eval 语料候选（mode_routing_cases.yaml 追加行草案）\n"

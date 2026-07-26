@@ -1,6 +1,6 @@
 name: conditional-reminder
 type: guide
-description: 查询结果决定后续动作的条件句（如果/要是…就…）只规划查询步并标 adaptive
+description: 查询结果决定后续动作的条件句（如果/要是…就…，如下雨就提醒带伞、降温就提醒加衣）只规划查询步并标 adaptive
 priority: 65
 keywords: [如果, 要是, 的话, 就提醒, 下雨就, 提醒我带]
 knowledge: |
@@ -15,7 +15,9 @@ knowledge: |
   {"id":"s1","agent_id":"info","intent":"info.weather","slots":{"date":"明天"},"depends_on":[],"slot_refs":{}}
   ]}
 golden:
+  # expect_not 是这条知识的另一半：条件句首轮绝不能把提醒无条件排进计划
   - text: 查下明天会不会下雨，要是下雨就提醒我带伞
     expect_intents: [info.weather]
+    expect_not: [reminder.create]
 owner: orchestrator
 version: 1

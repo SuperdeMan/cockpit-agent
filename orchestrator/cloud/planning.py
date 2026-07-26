@@ -302,9 +302,10 @@ class PlanBuilder:
         agent_map = {a.manifest.agent_id: a for a in agents}
 
         # M0b Skill 层（Full Migration 后默认 full）：canary/full=注入块；shadow=只检索
-        # 记录；off=注入关（debug 档，无领域知识）。纯词法同步计算，不增加规划轮网络调用；
-        # 名单落 plan.skills 供 cloud.planning span 归因。
-        sk_mode, sk_names, sk_block = _skills.plan_skills(text)
+        # 记录；off=注入关（debug 档，无领域知识）。词法档零网络同步计算；hybrid 档一次
+        # Embed 语义预筛（fail-open 回词法，见 skills.py）。名单落 plan.skills 供
+        # cloud.planning span 归因（@lex/@vec=检索通道，!clipped=超预算未注入）。
+        sk_mode, sk_names, sk_block = await _skills.plan_skills(text)
 
         # M1a（RFC §4）：PLANNER_TOOLCALL=on 且注入了 llm_tool_fn → 第 1 轮走 submit_plan
         # 工具通道；协议失败（异常/无 tool_calls）同轮内容抢救、第 2 轮直接 JSON 路径——

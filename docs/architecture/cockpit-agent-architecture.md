@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.9（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-07-26（v1.9 定稿归档——M0a→M4 总体验收的架构级修正合入）
+> 版本：v1.10（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-07-26（v1.10 定稿归档——Skill 层闭环补全合入）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -357,11 +357,14 @@ flowchart LR
 - **结果聚合**：多 Agent 结果由 LLM 改写成连贯的口语化播报 + 结构化卡片，保证体验一致。
 - **多轮与澄清**：缺槽位（`NEED_SLOT`）或需确认（`NEED_CONFIRM`）时，生成追问，挂起任务状态等待用户回复。
 
-### 5.2.1 规划知识 Skill 层与结构化规划输出（2026-07-24 定稿归档）
+### 5.2.1 规划知识 Skill 层与结构化规划输出（2026-07-24 定稿归档；2026-07-26 Skill 层闭环补全合入）
 
 Planner 的两种"智能供给"均已声明式化（设计详见 `docs/design/2026-07-24-eva-benchmark-intelligence-upgrade.md` 与两份子 RFC）：
 
-1. **规划知识 Skill 层（`skills/`，M0b）**：领域组合知识与跨域判据从中央 system prompt 外迁为声明式文件——`guides/`（领域组合知识+few-shot，纯词法检索 top-K 按需注入）、`policies/`（跨域规划**软约束**，常驻注入）、`workflows/`（v2 预留）。`SKILLS_MODE=off|shadow|canary|full`（默认 full）；中央 `_PLANNER_BASE` 只余通用规划契约。**加规划知识=投 skill 文件，不改编排核心**——与 route_hints（LLM 之后的确定性纠错）互补：skill 是 LLM 之前的知识供给。权威链（软硬分层）：VAL/payment/Runtime Policy > Capability Manifest > Plan Validator > PlannerPolicyPack（软）> PlanningGuide（软）。
+1. **规划知识 Skill 层（`skills/`，M0b；2026-07-26 补全闭环）**：领域组合知识与跨域判据从中央 system prompt 外迁为声明式文件——`guides/`（领域组合知识+few_shots，预筛 top-K 按需注入）、`policies/`（跨域规划**软约束**，常驻注入）、`workflows/`（v2 预留）。`SKILLS_MODE=off|shadow|canary|full`（默认 full）；中央 `_PLANNER_BASE` 只余通用规划契约。**加规划知识=投 skill 文件，不改编排核心**——与 route_hints（LLM 之后的确定性纠错）互补：skill 是 LLM 之前的知识供给。权威链（软硬分层）：VAL/payment/Runtime Policy > Capability Manifest > Plan Validator > PlannerPolicyPack（软）> PlanningGuide（软）。
+   - **检索双通道（2026-07-26）**：`SKILLS_RETRIEVAL=lexical|hybrid`（默认 hybrid）——词法命中（keywords 显式信号）恒保留，语义通道以 guide `description` 向量余弦**补位** paraphrase（经 llm-gateway Embed，与 registry 语义路由同源；**fail-open** 回词法不堵规划）。档位与阈值（0.40）由 paraphrase 语料阈值扫描拍板（词法 0/11 → hybrid 11/11、零新增噪声），兑现 M0b「embedding 升级由召回数据决定」的悬空承诺。
+   - **知识必须可证有效**：skill 自带 golden（`expect_intents` AND/`expect_any`/`expect_not`，项支持 `a|b` 容忍）经 `eval_skills` 三车道消费——离线检索门禁进 GitHub CI，live 车道（真 planner+真 LLM）以 `SKILLS_MODE=off` A/B 对照量化知识增益（首跑 Δ=+5/10）。`plan.skills` 归因名单反映**真实注入**（检索通道 `@lex`/`@vec`、超预算 `!clipped`）。
+   - **分层边界的实证**：skill（LLM 前知识）教对了也会被 `policy: replace` 的 route_hint（LLM 后纠错）盖掉——live 车道首跑即抓到 nearby 设施发现 hint 的 guard 缺口踩掉 charging.find。凡「知识不生效」的 badcase，先查 hint 层再改知识。
 2. **结构化规划输出（`submit_plan`，M1a）**：规划轮经原生 function calling 强制输出合法 Plan JSON（单一 `submit_plan` 工具、named tool_choice，`PLANNER_TOOLCALL=on|off` 默认 on），替代文本补全+脆弱 JSON 截取。schema 顶层=既有计划协议、**不含 `require_confirm`**（确认权在 capability manifest ∨ action ∨ VAL 硬层，LLM 无权降级）；协议失败轮内降级（同轮文本抢救→JSON 路径→兜底），最坏调用数与旧路径持平。承载走既有 `CompleteRequest.tools`/`CompleteResponse.tool_calls` Struct 字段（V1 不改 proto；V2 真 agentic tool loop 需 proto 演进）。
    - 实施教训（V2 设计约束）：tool schema 与输出指令会三向改变模型输出分布（可选字段诱发多填、无说明 object 诱发少填、"写全"指令诱发编造占位值）——凡改 schema 必过旅程级行为对照。
 
@@ -1007,6 +1010,7 @@ agents/<name>/
 | v1.1 | 2026-06-15 | 定为当前架构基线（Phase 1 实施基线） |
 | v1.2 | 2026-07-17 | 内容性合入：§8.1 LLM 网关多模型运行时、§9.5 数据真实性（provider 决议契约与卡片 provenance）两主题定稿归档 |
 | v1.3 | 2026-07-24 | 内容性合入：§5.2.1 规划知识 Skill 层（M0b）与结构化规划输出 submit_plan（M1a）定稿归档 |
+| v1.10 | 2026-07-26 | 内容性合入：§5.2.1 Skill 层闭环补全——检索双通道（词法恒保留+语义补位 paraphrase、fail-open 回词法；档位与阈值由 paraphrase 语料扫描拍板=兑现「embedding 升级由召回数据决定」）、知识可证有效（golden expect 三键经 eval 三车道消费、live A/B 对照 Δ=+5、`plan.skills` 归因诚实 `@通道`/`!clipped`、few_shots 实装）、**分层边界实证**（skill 教对了会被 replace hint 盖掉——「知识不生效」先查 hint 层） |
 | v1.4 | 2026-07-25 | 内容性合入：§5.2.2 执行治理——Task Ledger（跨轮持久任务账本、拉模式 cancel、预算强制、中断诚实报告）与 Outcome Verifier（声明式执行后对账、三态不定罪）定稿归档，含 T2 分档与重复副作用防抖 |
 | v1.6 | 2026-07-25 | 内容性合入：§7.2 主动服务治理——唯一裁决点（fail-open 可随时死掉、单条字节级兼容、零领域字面量、六道闸与**两处 unknown 判据方向相反的理由**）+ §7.3 受控 MCP 桥（三重锁定准入、写操作生命周期五项、演示数据诚实标注）定稿归档 |
 | v1.8 | 2026-07-26 | 内容性合入：§7.5 形态接入——身份与视觉（**身份识别与授权是两件事**=声纹不作鉴权因子红线、模型面与数据面分家=生物特征模板不下发无状态服务、**降级目标应是能力上线前的行为**、感知门控在采集侧、**引用而非内容穿越系统边界**、拿不到就说拿不到不静默降级成另一件事、能力性 pin 优先于会话级偏好）定稿归档 |

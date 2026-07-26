@@ -25,11 +25,13 @@ def test_store_loads_repo_skills():
     docs = store.load()
     names = {d.name for d in docs}
     assert {"multi-day-trip", "navigation-with-stop", "conditional-reminder",
-            "freshness-and-depth", "implicit-vehicle-control"} <= names
-    assert len(store.guides()) >= 3 and len(store.policies()) >= 2
+            "charging-strategy", "freshness-and-depth",
+            "implicit-vehicle-control"} <= names
+    assert len(store.guides()) >= 4 and len(store.policies()) >= 2
     for d in docs:
         assert d.type in ("guide", "policy", "workflow")
         assert d.description and d.knowledge
+        assert d.body.startswith(d.knowledge)   # body=注入文本（knowledge+few_shots 渲染）
 
 
 # ── 词法检索（零网络、确定性；embedding 升级由 shadow 召回数据决定） ─────────────
@@ -58,10 +60,145 @@ def test_retrieval_stays_quiet_on_plain_queries():
 def test_render_block_has_policies_and_guides_within_budget():
     store = sk.SkillStore()
     guides = sk.top_guides("周末去杭州玩两天带老人", store.guides(), k=3)
-    block = sk.render_skills_block(store.policies(), guides)
+    block, injected, clipped = sk.render_skills_block(store.policies(), guides)
     assert "时效判据" in block                      # policy 常驻
     assert "多日出行必出行程规划" in block          # 命中 guide 的 knowledge
     assert len(block) <= sk.SKILL_BUDGET + 200      # 预算约束（含区头小富余）
+    assert [d.name for d in injected] and not clipped
+
+
+def test_few_shots_field_renders_into_block(tmp_path):
+    """few_shots 实装（2026-07-26 验收立卡关卡）：照 README 写的 few_shots 必须进注入块
+    ——此前是「文档有、代码不读」的空契约，作者以为示例生效了，实际被静默丢弃。"""
+    gdir = tmp_path / "guides"
+    gdir.mkdir()
+    (gdir / "demo-shots.yaml").write_text(
+        "name: demo-shots\ntype: guide\ndescription: few_shots 渲染契约样例\n"
+        "keywords: [示例词]\nknowledge: |\n  规则正文。\n"
+        "few_shots:\n"
+        "  - user: 来个示例词\n"
+        "    plan: {\"steps\":[{\"id\":\"s1\",\"agent_id\":\"demo\",\"intent\":\"demo.run\"}]}\n"
+        "owner: orchestrator\nversion: 1\n", encoding="utf-8")
+    store = sk.SkillStore(root=str(tmp_path))
+    doc = store.guides()[0]
+    assert doc.few_shots and "示例——用户：『来个示例词』" in doc.body
+    assert '"intent":"demo.run"' in doc.body        # plan dict → 紧凑 JSON（输出形态示范）
+    block, injected, _ = sk.render_skills_block([], [doc])
+    assert "示例——用户：『来个示例词』" in block and injected == [doc]
+
+
+def test_unknown_top_level_key_warns_not_silent(tmp_path, caplog):
+    """未知顶层键（few_shot/keyword 等拼写错误）必须告警——静默忽略会让作者以为知识生效。"""
+    import logging
+    gdir = tmp_path / "guides"
+    gdir.mkdir()
+    (gdir / "typo.yaml").write_text(
+        "name: typo\ntype: guide\ndescription: 拼写错误告警样例\n"
+        "knowledge: |\n  正文。\nfew_shot:\n  - user: x\n    plan: y\n"
+        "owner: o\nversion: 1\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="cloud.skills"):
+        docs = sk.SkillStore(root=str(tmp_path)).load()
+    assert len(docs) == 1                            # fail-open：仍加载
+    assert any("未知顶层字段" in r.message and "few_shot" in r.message
+               for r in caplog.records)
+
+
+def test_clipped_guides_reported_honestly(tmp_path):
+    """归因诚实（2026-07-26 修）：超预算被裁的 guide 绝不能出现在「已注入」名单里。"""
+    gdir = tmp_path / "guides"
+    gdir.mkdir()
+    (gdir / "big.yaml").write_text(
+        "name: big\ntype: guide\ndescription: 超长知识样例\npriority: 90\n"
+        "keywords: [超长]\nknowledge: |\n  " + "长" * 300 + "\n"
+        "owner: o\nversion: 1\n", encoding="utf-8")
+    (gdir / "small.yaml").write_text(
+        "name: small\ntype: guide\ndescription: 短知识样例\npriority: 10\n"
+        "keywords: [超长]\nknowledge: |\n  短规则。\n"
+        "owner: o\nversion: 1\n", encoding="utf-8")
+    store = sk.SkillStore(root=str(tmp_path))
+    guides = store.guides()
+    block, injected, clipped = sk.render_skills_block([], guides, budget=120)
+    assert [d.name for d in injected] == ["small"]   # big 超预算被裁、small 补上
+    assert [d.name for d in clipped] == ["big"]
+    assert "短规则" in block and "长长长" not in block
+
+
+# ── 语义通道（hybrid）：fail-open 回词法 / 语义补位词法漏召 ────────────────────
+
+def _mini_skill_dir(tmp_path):
+    gdir = tmp_path / "guides"
+    gdir.mkdir()
+    (gdir / "charge.yaml").write_text(
+        "name: charge\ntype: guide\ndescription: 长途补能策略的分流判据\n"
+        "keywords: [充电]\nknowledge: |\n  补能规则。\nowner: o\nversion: 1\n",
+        encoding="utf-8")
+    (gdir / "fish.yaml").write_text(
+        "name: fish\ntype: guide\ndescription: 钓鱼出行的组合规划知识\n"
+        "keywords: [钓鱼]\nknowledge: |\n  钓鱼规则。\nowner: o\nversion: 1\n",
+        encoding="utf-8")
+    return sk.SkillStore(root=str(tmp_path))
+
+
+def test_hybrid_semantic_supplements_lexical_miss(monkeypatch, tmp_path):
+    """paraphrase（keywords 盲区）：词法漏召、语义按 description 余弦补位，通道记 @vec。"""
+    monkeypatch.setenv("SKILLS_RETRIEVAL", "hybrid")
+    monkeypatch.setattr(sk, "_embed_fail_ts", 0.0)
+    store = _mini_skill_dir(tmp_path)
+    query = "去惠州中间要不要补个电"                 # 无「充电/钓鱼」字面 → 词法双漏
+
+    async def fake_embed(texts):
+        table = {query: (1.0, 0.0),
+                 "长途补能策略的分流判据": (0.9, 0.1),
+                 "钓鱼出行的组合规划知识": (0.0, 1.0)}
+        return [table[t] for t in texts], "fake-embed"
+
+    monkeypatch.setattr(sk, "_embed_texts", fake_embed)
+    assert sk.top_guides(query, store.guides()) == []          # 词法确实漏
+    pairs = asyncio.run(sk.retrieve_guides(query, store))
+    assert [(d.name, ch) for d, ch in pairs] == [("charge", "vec")]
+
+
+def test_hybrid_fails_open_to_lexical(monkeypatch, tmp_path):
+    """embedding 不可用（超时/无源）→ 该轮纯词法，绝不堵规划。"""
+    monkeypatch.setenv("SKILLS_RETRIEVAL", "hybrid")
+    monkeypatch.setattr(sk, "_embed_fail_ts", 0.0)
+    store = _mini_skill_dir(tmp_path)
+
+    async def dead_embed(texts):
+        return None
+
+    monkeypatch.setattr(sk, "_embed_texts", dead_embed)
+    pairs = asyncio.run(sk.retrieve_guides("附近找个充电桩", store))
+    assert [(d.name, ch) for d, ch in pairs] == [("charge", "lex")]   # 词法命中原样保留
+
+
+def test_plan_skills_names_carry_channel_and_clip_markers(monkeypatch, tmp_path):
+    """plan.skills 名单契约：guide 记 mode:name@通道、被裁加 !clipped、policy 记 mode:name。"""
+    monkeypatch.setenv("SKILLS_MODE", "full")
+    monkeypatch.setenv("SKILLS_RETRIEVAL", "lexical")
+    monkeypatch.setenv("SKILLS_DIR", "")               # 防宿主 env 泄漏
+    gdir = tmp_path / "guides"
+    pdir = tmp_path / "policies"
+    gdir.mkdir()
+    pdir.mkdir()
+    (gdir / "big.yaml").write_text(
+        "name: big\ntype: guide\ndescription: 超长知识\npriority: 90\n"
+        "keywords: [充电]\nknowledge: |\n  " + "长" * 3000 + "\nowner: o\nversion: 1\n",
+        encoding="utf-8")
+    (gdir / "small.yaml").write_text(
+        "name: small\ntype: guide\ndescription: 短知识\npriority: 10\n"
+        "keywords: [充电]\nknowledge: |\n  短规则。\nowner: o\nversion: 1\n",
+        encoding="utf-8")
+    (pdir / "pol.yaml").write_text(
+        "name: pol\ntype: policy\ndescription: 常驻策略\n"
+        "knowledge: |\n  策略正文。\nowner: o\nversion: 1\n", encoding="utf-8")
+    monkeypatch.setattr(sk, "_default_store", sk.SkillStore(root=str(tmp_path)))
+    mode, names, block = asyncio.run(sk.plan_skills("附近找个充电桩"))
+    assert mode == "full"
+    assert "full:small@lex" in names
+    assert "full:big@lex!clipped" in names             # 被裁诚实标注，不谎称已注入
+    assert "full:pol" in names
+    assert "短规则" in block and "策略正文" in block and "长长长" not in block
 
 
 # ── 即插即用契约：加规划知识=只投一个文件 ─────────────────────────────────────

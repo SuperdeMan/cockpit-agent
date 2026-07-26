@@ -16,8 +16,11 @@ knowledge: |
   X是什么/X怎么样）→ 搜索类能力；要系统性了解/全面对比/评估一个主题 → 深度调研类能力。
   不要把普通查询升级成调研，也不要把调研请求降级成单次搜索。
 golden:
+  # 本 policy 的主张是「时效问题必须联网、禁凭记忆直答」——golden 断言到「落在联网
+  # 检索族且不落闲聊」为止；sports/search 族内怎么选是 mode_routing 语料的事，不在此苛求
   - text: 今年世界杯什么时候开赛
-    expect_intents: [info.sports]
+    expect_intents: ["info.sports|info.search"]
+    expect_not: [chitchat.talk]
   - text: 系统性了解一下固态电池的产业格局
     expect_intents: [research.run]
 owner: orchestrator

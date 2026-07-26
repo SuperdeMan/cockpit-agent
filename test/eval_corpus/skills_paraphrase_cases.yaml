@@ -1,0 +1,36 @@
+# Skill 检索 paraphrase 语料（test/eval_skills.py 离线数据车道）
+#
+# 定位：量化「keywords 没写到的说法」的召回。每条都刻意避开对应 guide 的 keywords
+# 字面（真 paraphrase）——词法通道按设计会漏，语义通道（SKILLS_RETRIEVAL=hybrid，
+# guide description 向量余弦）应接住。这正是 M0b「embedding 升级由 shadow 召回数据
+# 决定（eval 先行）」承诺的数据车道：档位与 SKILL_SEM_THRESHOLD 默认值由这里的
+# 召回/噪声数据拍板，不拍脑袋。
+#
+# 维护约定：新 guide 落库时补 2-4 条真改写；改 keywords 后若某条不再避开字面，
+# 换一条（本语料只对「词法盲区」有测量价值）。policy 常驻注入无检索环节，不进本语料。
+
+- skill: multi-day-trip
+  text: 五一想带媳妇去趟大理，来回四天，帮我安排一下
+- skill: multi-day-trip
+  text: 下个月和爸妈自驾去桂林住四晚，怎么玩比较好
+- skill: multi-day-trip
+  text: 国庆去趟潮汕玩个四五日，吃吃喝喝为主
+
+- skill: navigation-with-stop
+  text: 带我去会展中心，半道上想喝杯热的
+- skill: navigation-with-stop
+  text: 去机场的路上找家饭馆先垫口饭
+- skill: navigation-with-stop
+  text: 送我到高铁站，中间找个地方歇歇脚
+
+- skill: conditional-reminder
+  text: 查查明天有没有雨，有雨就叫我带伞
+- skill: conditional-reminder
+  text: 看下周六会不会降温，要真降温记得叫我多穿点
+
+- skill: charging-strategy
+  text: 去趟惠州中间要不要补个电
+- skill: charging-strategy
+  text: 明天开去广州，路上电够不够帮我看看
+- skill: charging-strategy
+  text: 电不太多了，找个地方给车充上

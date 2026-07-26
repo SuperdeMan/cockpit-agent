@@ -1,0 +1,33 @@
+name: charging-strategy
+type: guide
+description: 充电找桩与长途补能策略的分流判据（附近找桩补电/跨城长途怎么充电、路上电够不够/目的地附近充电）
+priority: 55
+keywords: [充电, 充电桩, 充电站, 快充, 补能, 没电, 电量不, 怎么充]
+# 依据：charging-planner manifest 三能力语义 + journeys target_b B2 族校准记录
+# （「去X怎么充电」真栈探针 6/6 稳定走 charging.plan；charging 无 route_hints，路由纯 LLM
+# ——这正是本 guide 存在的原因）。「去X的路上找个充电站」形态刻意不写死：校准记录认定
+# navigation 途经点流对该句也是合理体验，知识只分流清晰形态。
+knowledge: |
+  **充电分流**（能力语义不同，按出行形态选，别混用）：
+  - 电量驱动的找桩（『快没电了找个快充』『电量不多了就近补个电』——话里带电量/续航
+  焦虑）→ charging.find（按车辆真实电量就近推荐；快充/慢充偏好放 prefer 槽）。
+  纯设施发现（『附近有没有充电站』，只是看看有什么）→ 周边发现能力（nearby）。
+  - 跨城/长途补能策略（『去惠州怎么充电』『明天去广州电够不够』）→ charging.plan 带
+  destination——要的是沿途分段策略，不是找一个桩，**不要**落成 charging.find 或导航。
+  - 导航去某地并在那附近充（『导航去深圳湾，附近找个充电桩』）→ navigation.navigate_to
+  与 charging.find(destination=深圳湾) 并列两步。
+  只问电量/续航本身（『现在电量多少』『还能跑多远』）→ charging.status，不要出找桩步。
+few_shots:
+  - user: 去惠州怎么充电
+    plan: {"steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.plan","slots":{"destination":"惠州"},"depends_on":[],"slot_refs":{}}]}
+  - user: 快没电了，附近找个快充
+    plan: {"steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.find","slots":{"prefer":"快充"},"depends_on":[],"slot_refs":{}}]}
+golden:
+  - text: 去惠州怎么充电
+    expect_intents: [charging.plan]
+    expect_not: [charging.find]
+  - text: 快没电了，附近找个快充
+    expect_intents: [charging.find]
+    expect_not: [navigation.navigate_to, nearby.search]
+owner: charging-planner
+version: 1
