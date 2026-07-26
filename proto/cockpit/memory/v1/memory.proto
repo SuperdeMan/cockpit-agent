@@ -28,6 +28,9 @@ service Memory {
   rpc IdentifySpeaker (IdentifySpeakerRequest) returns (IdentifySpeakerResponse);
   rpc ListVoiceprints (ListVoiceprintsRequest) returns (ListVoiceprintsResponse);
   rpc DeleteVoiceprint (DeleteVoiceprintRequest) returns (DeleteVoiceprintResponse);
+  // 改名单独成 RPC（2026-07-26 真机反馈）：名字是随时会改的元数据，把它和「重录三段声纹」
+  // 绑在一起，用户为了改个称呼就得重走注册流程——真机上正是这一步把已存的名字丢了。
+  rpc RenameVoiceprint (RenameVoiceprintRequest) returns (RenameVoiceprintResponse);
 }
 
 message GetContextRequest {
@@ -180,6 +183,8 @@ message EnrollVoiceprintRequest {
   // 空=服务端分配。**首个注册者分配到 "primary"**——存量记忆全在该 occupant 名下，
   // 若首个注册者拿到 occ-1，他自己过去说过的一切当场失联（RFC §3.4，本设计最大的回归点）。
   string occupant_id = 2;
+  // **空=保留该乘员已有的名字**，不是「置空」（2026-07-26 真机反馈）：重录声纹时前端
+  // 若没重填称呼就发空串，无条件覆盖会把之前存对的名字冲掉——而调用方本来就没打算改名。
   string display_name = 3;
   repeated VoiceVector samples = 4;  // 每段录音一条，已 L2 归一；服务端取均值再归一为模板
   string model = 5;                  // 提取模型标识；与识别期不一致的模板视为 stale，提示重录
@@ -241,6 +246,19 @@ message DeleteVoiceprintRequest {
 }
 message DeleteVoiceprintResponse {
   bool ok = 1;
+  // 0 = 库里本来就没有这条（如已在别处删过）。**调用方据此如实回话，别一律报「已删除」**。
   uint32 deleted_templates = 2;
   uint32 deleted_memories = 3;
+}
+
+message RenameVoiceprintRequest {
+  string user_id = 1;
+  string occupant_id = 2;
+  string display_name = 3;      // 必填且非空——空名不是「改名」，是调用方漏传
+  string tenant_id = 4;
+}
+message RenameVoiceprintResponse {
+  bool ok = 1;
+  string display_name = 2;
+  string error = 3;             // "not_found" / "empty_name"
 }

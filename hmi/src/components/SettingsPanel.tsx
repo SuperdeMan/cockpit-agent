@@ -13,6 +13,7 @@ import {
   fetchVoices, fetchTtsProviders, fetchLlmProviders, setLlmProvider,
   fetchMemory, fetchMemoryProfile, forgetMemory, fetchPlaces, playTTS,
   MicController, fetchVoiceprints, enrollVoiceprint, deleteVoiceprint, identifySpeaker,
+  renameVoiceprint,
   type MemoryView, type MemoryProfile, type NamedPlaces, type VoiceprintInfo,
 } from '../audio'
 import { PLACE_DEFS, isPlaceSet, formatPlace } from '../places.mjs'
@@ -412,6 +413,11 @@ function AsrSection({ audioApi }: { audioApi: string }) {
 //    否则不知道该说多久、说完了没有，只能靠猜；
 // ② **录完要能当场验证**——「试一试」录 2 秒立刻回答「听出来是谁」。不然用户唯一的
 //    验证手段是去对话框问一句，失败了也不知道是哪一环出的问题。
+//
+// 第二轮真机反馈（2026-07-26）又补了两条，都属于「静默地把事情办错」：
+// ③ **称呼必填**——原来空着就悄悄写死「乘客」，重录一次就把上次填对的名字冲掉（库里
+//    留下 4 条 superseded 的「泓舟」和 1 条现行的「乘客」就是这么来的）；
+// ④ **改名不该重录三段**——名字是元数据。没有改名入口正是用户反复重录的原因。
 const ENROLL_PROMPTS = [
   '你好，我是这辆车的常用乘客',
   '今天天气不错，路上应该不太堵',
@@ -430,6 +436,8 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [trying, setTrying] = useState(false)
+  const [editing, setEditing] = useState('')                // 正在改名的 occupant_id
+  const [draftName, setDraftName] = useState('')
   const [mic] = useState(() => new MicController())
 
   const refresh = useCallback(async () => {
@@ -446,6 +454,7 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
 
   const done = clips.filter(Boolean).length
   const ready = done === ENROLL_PROMPTS.length
+  const canSave = ready && !!name.trim()
 
   const recordAt = async (i: number) => {
     if (mic.active || recIdx !== -1) return
@@ -463,8 +472,10 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
   }
 
   const submit = async () => {
+    // 称呼必填：空名兜底成「乘客」等于替用户瞎起一个名，而且会覆盖上次填对的。
+    const who = name.trim()
+    if (!who) { setMsg('先填一个称呼——助手要靠它称呼你、也靠它回答「你知道我是谁」。'); return }
     setBusy(true)
-    const who = name.trim() || '乘客'
     const r = await enrollVoiceprint(audioApi, USER_ID, who, clips.filter(Boolean) as Blob[])
     setBusy(false)
     if (r.ok) {
@@ -510,10 +521,31 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
     }
   }
 
+  // 删除。**文案按 primary 与否分开写**：服务端对 primary 永不 purge 记忆（删单个乘员不该
+  // 有清空全车的爆炸半径），原来一律说「并忘掉 TA 的全部记忆」是在承诺一件不会发生的事。
   const remove = async (occ: string, display: string) => {
-    if (!window.confirm(`删除「${display || occ}」并忘掉 TA 的全部记忆？此操作不可撤销。`)) return
+    const who = display || occ
+    const ask = occ === 'primary'
+      ? `删除「${who}」的声纹？记忆会保留（主驾名下就是全车既有记忆，清空请用「忘掉全部记忆」），`
+        + '删除后将认不出说话人，一律按主驾处理。'
+      : `删除「${who}」并忘掉 TA 的全部记忆？此操作不可撤销。`
+    if (!window.confirm(ask)) return
     const r = await deleteVoiceprint(audioApi, USER_ID, occ, true)
-    setMsg(r.ok ? `已删除，同时忘掉 ${r.deleted_memories ?? 0} 条记忆` : '删除失败')
+    if (!r.ok) setMsg('删除失败')
+    else if (!r.deleted_templates) setMsg('没有找到这条声纹记录（可能已经被删掉了）')
+    else setMsg(r.deleted_memories
+      ? `已删除「${who}」，同时忘掉 ${r.deleted_memories} 条记忆`
+      : `已删除「${who}」的声纹，记忆保留`)
+    void refresh()
+  }
+
+  // 改名：只改称呼不动模板。没有这个入口，用户改个名字就得重录三段——正是名字被冲掉的成因。
+  const saveName = async (occ: string) => {
+    const next = draftName.trim()
+    if (!next) { setMsg('称呼不能为空'); return }
+    const r = await renameVoiceprint(audioApi, USER_ID, occ, next)
+    setEditing(''); setDraftName('')
+    setMsg(r.ok ? `已改名为「${next}」` : `改名失败：${r.error || '未知原因'}`)
     void refresh()
   }
 
@@ -544,11 +576,27 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
 
       {occupants.map((o) => (
         <SettingRow key={o.occupant_id}
-          label={o.display_name || o.occupant_id}
+          label={editing === o.occupant_id ? '改称呼' : (o.display_name || o.occupant_id)}
           sub={(o.occupant_id === 'primary' ? '主驾 · ' : '')
             + `${o.sample_count} 段样本`
             + (o.stale ? ' · 模型已更新，建议重录' : '')}>
-          <DangerBtn onClick={() => remove(o.occupant_id, o.display_name)}>删除</DangerBtn>
+          {editing === o.occupant_id ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <TextInput value={draftName} onChange={setDraftName} width={140}
+                placeholder={o.display_name || '如「阿段」'} />
+              <GhostBtn sm onClick={() => void saveName(o.occupant_id)}>保存</GhostBtn>
+              <GhostBtn sm onClick={() => { setEditing(''); setDraftName('') }}>取消</GhostBtn>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <GhostBtn sm onClick={() => {
+                setMsg(''); setEditing(o.occupant_id); setDraftName(o.display_name || '')
+              }}>改名</GhostBtn>
+              <div style={{ width: 76 }}>
+                <DangerBtn onClick={() => remove(o.occupant_id, o.display_name)}>删除</DangerBtn>
+              </div>
+            </div>
+          )}
         </SettingRow>
       ))}
 
@@ -562,8 +610,8 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
       {!open && (
         <SettingRow label="添加乘员"
           sub={occupants.length === 0
-            ? '第一个录入的人会被当作主驾，保留目前已有的全部记忆。'
-            : `在安静环境里念 3 句话，每句约 ${ENROLL_SECONDS} 秒。`}
+            ? '第一个录入的人会被当作主驾，保留目前已有的全部记忆。填个称呼、念 3 句话即可。'
+            : `填个称呼，在安静环境里念 3 句话，每句约 ${ENROLL_SECONDS} 秒。`}
           noBorder={!msg}>
           <GhostBtn onClick={() => { setOpen(true); setClips([null, null, null]); setMsg('') }}>
             开始录入
@@ -573,8 +621,9 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
 
       {open && (
         <>
-          <SettingRow label="称呼" sub="助手会这样叫你；问「你知道我是谁」时也用它回答">
-            <TextInput value={name} onChange={setName} placeholder="如「阿段」" />
+          <SettingRow label="称呼（必填）"
+            sub="助手会这样叫你；问「你知道我是谁」时也用它回答。录完之后随时可以改。">
+            <TextInput value={name} onChange={setName} placeholder="如「阿段」" maxLength={16} />
           </SettingRow>
           {ENROLL_PROMPTS.map((line, i) => (
             <SettingRow key={i}
@@ -587,10 +636,11 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
             </SettingRow>
           ))}
           <SettingRow label={`已录 ${done} / ${ENROLL_PROMPTS.length} 段`}
-            sub={ready ? '可以保存了' : '三段都录完才能保存'} noBorder={!msg}>
+            sub={!ready ? '三段都录完才能保存'
+              : !name.trim() ? '还差一个称呼' : '可以保存了'} noBorder={!msg}>
             <div style={{ display: 'flex', gap: 8 }}>
-              <GhostBtn onClick={() => { if (ready && !busy) void submit() }}
-                style={ready ? undefined : { opacity: 0.45 }}>
+              <GhostBtn onClick={() => { if (canSave && !busy) void submit() }}
+                style={canSave ? undefined : { opacity: 0.45 }}>
                 {busy ? '处理中…' : '保存'}
               </GhostBtn>
               <GhostBtn onClick={() => { setOpen(false); setClips([null, null, null]) }}>取消</GhostBtn>
@@ -612,7 +662,8 @@ function VisionSection() {
       <SettingRow
         label="问「那是什么」时看一眼"
         sub={'开启后，当你说「那是什么」「这是什么车」这类话时，会拍下当前画面的一帧交给 AI 识别。'
-          + '**只在说这类话时拍，其余时候一帧都不采集**；画面用完即弃，不保存、不进记忆。'
+          // sub 是纯文本直出，不渲染 markdown——星号会原样显示给用户（2026-07-26 截图发现）
+          + '只在说这类话时拍，其余时候一帧都不采集；画面用完即弃，不保存、不进记忆。'
           + '当前演示环境没有车外摄像头，用设备摄像头代替，结果卡片会标注「模拟车外摄像头」。默认关。'}
         noBorder
       >

@@ -266,6 +266,20 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
             ok=res["ok"], deleted_templates=int(res["deleted_templates"]),
             deleted_memories=int(res["deleted_memories"]))
 
+    async def RenameVoiceprint(self, request, context):
+        """只改称呼不动模板：名字是元数据，不该和「重录三段声纹」绑一起。"""
+        if not request.user_id or not request.occupant_id:
+            return memory_pb2.RenameVoiceprintResponse(ok=False, error="empty_name")
+        res = await self.store.rename_voiceprint(
+            request.user_id, request.occupant_id, request.display_name,
+            tenant_id=request.tenant_id or "default")
+        if res.get("ok"):
+            logger.info("voiceprint renamed: user=%s occupant=%s name=%s",
+                        request.user_id, request.occupant_id, res["display_name"])
+        return memory_pb2.RenameVoiceprintResponse(
+            ok=bool(res.get("ok")), display_name=res.get("display_name", ""),
+            error=res.get("error", ""))
+
 
 def _item_to_dict(m) -> dict:
     return {

@@ -56,8 +56,12 @@ HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 H
 - `GET /api/asr/stream`（**WebSocket**）流式识别上屏 + `GET /api/asr/stream/info` 引擎能力探测（见下节）。
 - `GET /api/tts/stream`（**WebSocket**）服务端流式 TTS + `GET /api/tts/stream/info` 引擎+音色+可用性探测（见下节）。
 - `GET /api/s2s`（**WebSocket**）端到端语音会话 + `GET /api/s2s/info` 能力探测（见下节）。
-- `POST /api/voiceprint/identify|enroll` / `GET /api/voiceprint/info` / `DELETE /api/voiceprint/{occ}`
+- `POST /api/voiceprint/identify|enroll` / `GET /api/voiceprint/info` /
+  `PATCH /api/voiceprint/{occ}`（改称呼，不重录） / `DELETE /api/voiceprint/{occ}`
   声纹面（M4 P4，见下节）。
+  > **跨域方法白名单**：HMI 永远跨域调本面，新增非 GET/POST 端点必须同步 `CORS_METHODS`——
+  > 漏了浏览器 preflight 会直接挡下，服务端零日志（2026-07-26 声纹删除真机 P0）。
+  > 契约测试 `tests/test_http_cors.py` 按「注册了什么方法就必须允许什么方法」自动比对。
 - `POST /api/vision/frame` / `GET /api/vision/info` 视觉单帧面（M4 P4，见下节）。
 - `GET /api/llm/providers` 列出已装配的 LLM 厂商+模型+可用性+当前 active+**health 被动健康块**（供 HMI 设置页两级选择与健康点）；`POST /api/llm/provider` `{provider,model?}` 全局切换 active（**持久化 Redis**）；`POST /api/llm/probe` `{provider?}` 按需体检指定厂商（1 条小请求回 ok/latency 并记入 health）。
 - `GET /api/memory/session` / `GET /api/memory/context` 只读记忆（转发 memory gRPC，供 HMI 记忆视图）。

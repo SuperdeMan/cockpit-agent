@@ -627,6 +627,10 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | 音频格式 | 识别主链路走 HMI 现成的 16k mono s16le PCM **不转码**（唤醒窗内要短平快）；设置页的注册与「试一试」用 MediaRecorder 的 webm，经 `format=webm` 走既有 ffmpeg 转码（低频操作） |
 | 隔离边界（v1） | 只做硬隔离，**不做跨乘员共享**。`memory_level` 现状只写不读且恒为 `user`，做读侧共享=全部共享=隔离归零；真共享层要改抽取分类，是独立一期 |
 | 降级 | 模型缺失/依赖缺失 → `provider[voiceprint]=disabled`，`/api/voiceprint/*` 返回 `enabled:false`，HMI 隐藏入口，occupant_id 恒 primary。**这一档是常态之一不是异常**（模型 28MB 且下载不稳） |
+| **改名不重录**（2026-07-26） | 称呼是元数据，独立 RPC `RenameVoiceprint` + `PATCH /api/voiceprint/{occupant_id}`，只改 `voiceprint.display_name` 并同步重写 `identity.name` 记忆（只改表则助手嘴里还是旧名）。**把改名绑在「重录三段」上，用户就会为了改名反复走注册流程**——真机上的名字丢失正是这么发生的 |
+| **空 `display_name`=不改名，不是清空**（2026-07-26） | `EnrollVoiceprint` 收到空名时**保留该乘员已有的名字**；同名重录不再重复写 `identity.name`（真机上重录 4 次攒了 4 条同名记忆）。HMI 侧称呼**必填**，不再空着就兜底成「乘客」——静默兜底会把上次填对的名字冲掉 |
+| **删除必须能从浏览器发出**（2026-07-26 真机 P0） | 声纹删除是全 HMI 唯一的 `DELETE`。`Access-Control-Allow-Methods` 漏了它 → 浏览器 preflight 直接挡下，**请求根本没发出来**，服务端零日志、e2e 也看不见（e2e 从服务端发，不过 CORS）。白名单常量 `http_server.CORS_METHODS`，契约测试 `llm-gateway/tests/test_http_cors.py` 按「app 注册了什么方法就必须允许什么方法」自动比对 |
+| 删除的诚实口径 | primary 删除**只删模板不 purge 记忆**，但会撤回注册自己写的那条 `identity.name`（逐字匹配 `_identity_text`，不误伤用户在对话里说过的别的身份陈述）——模板都删了还留着名字，助手会继续管一个已经认不出的人叫那个名字。HMI 按返回的 `deleted_templates`/`deleted_memories` 如实回话，确认框不再对 primary 承诺「忘掉全部记忆」 |
 
 ### 9.12 视觉单帧入口契约（M4 P4）
 

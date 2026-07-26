@@ -1236,10 +1236,14 @@ export async function identifySpeaker(
   }
 }
 
-/** 删除乘员。purgeMemory 默认真——「删掉小雨」的预期是「忘掉这个人」。 */
+/**
+ * 删除乘员。purgeMemory 默认真——「删掉小雨」的预期是「忘掉这个人」。
+ * 注意 **primary 服务端永不 purge**（删单个乘员不该有清空全车记忆的爆炸半径），
+ * 调用方要按返回的 deleted_* 如实回话，别照着自己发的参数报结果。
+ */
 export async function deleteVoiceprint(
   apiBase: string, userId: string, occupantId: string, purgeMemory = true,
-): Promise<{ ok: boolean; deleted_memories?: number }> {
+): Promise<{ ok: boolean; deleted_templates?: number; deleted_memories?: number }> {
   try {
     const r = await fetch(
       `${apiBase}/api/voiceprint/${encodeURIComponent(occupantId)}`
@@ -1248,6 +1252,22 @@ export async function deleteVoiceprint(
     return await r.json()
   } catch {
     return { ok: false }
+  }
+}
+
+/** 改称呼，不动声纹模板——名字是元数据，改个称呼不该重录三段。 */
+export async function renameVoiceprint(
+  apiBase: string, userId: string, occupantId: string, displayName: string,
+): Promise<{ ok: boolean; display_name?: string; error?: string }> {
+  try {
+    const r = await fetch(
+      `${apiBase}/api/voiceprint/${encodeURIComponent(occupantId)}`
+      + `?user_id=${encodeURIComponent(userId)}`
+      + `&display_name=${encodeURIComponent(displayName)}`,
+      { method: 'PATCH' })
+    return await r.json()
+  } catch (e) {
+    return { ok: false, error: String(e) }
   }
 }
 

@@ -661,10 +661,15 @@ class MemoryVectorStore:
         tpl = vp.mean_template(samples)
         existing = await self._vp_rows(user_id, tenant_id)
         occ = occupant_id or vp.allocate_occupant_id([r["occupant_id"] for r in existing])
+        # **空名保留旧名**（2026-07-26 真机反馈）：重录时前端若没重填称呼就发空串，
+        # 无条件覆盖会把之前存对的名字冲掉——而调用方本来就没打算改名。改名有专门的
+        # rename_voiceprint，走 enroll 的空名一律按「没传」处理。
+        prev = next((r for r in existing if r["occupant_id"] == occ), None)
+        name = (display_name or "").strip() or (prev or {}).get("display_name", "") or ""
         now = _now()
         row = {
             "id": uuid.uuid4().hex, "tenant_id": tenant_id or "default", "user_id": user_id,
-            "occupant_id": occ, "display_name": display_name or "", "embedding": tpl,
+            "occupant_id": occ, "display_name": name, "embedding": tpl,
             "dim": len(tpl), "model": model or "", "sample_count": len(samples),
             "self_consistency": cons, "created_at": now, "updated_at": now,
         }
@@ -687,25 +692,64 @@ class MemoryVectorStore:
                      row["updated_at"])
         else:
             key = f'{row["tenant_id"]}|{user_id}|{occ}'
-            prev = self._vp.get(key)
-            if prev:
-                row["id"], row["created_at"] = prev["id"], prev["created_at"]
+            kept = self._vp.get(key)
+            if kept:
+                row["id"], row["created_at"] = kept["id"], kept["created_at"]
             self._vp[key] = row
-        # 名字也写一条记忆（M4 P4 补）：只存在声纹表里的话，「你知道我是谁」答不上来——
-        # 那张表没有任何消费方会去读。写进记忆则天然获得召回、导出、GDPR 删除与
-        # 「记忆」面板可见性，且**删除该乘员时随其记忆一起没**（delete_voiceprint 已覆盖）。
-        # 重复注册走 supersede：同 predicate 同 occupant 只保留现行一条。
-        if row["display_name"]:
-            await self._supersede_identity(user_id, occ, row["tenant_id"])
-            await self.remember([{
-                "user_id": user_id, "occupant_id": occ, "kind": "semantic",
-                "predicate": "identity.name", "text": f"这位乘员的名字是{row['display_name']}",
-                "value_json": json.dumps({"name": row["display_name"]}, ensure_ascii=False),
-                "scope": "profile.identity", "provenance": "user_stated", "confidence": 1.0,
-                "memory_level": "occupant", "tenant_id": row["tenant_id"],
-            }])
+        # 名字变了才重写身份记忆。**重录同一个人不该再写一条**——真机上一个人重录 4 次就
+        # 攒了 4 条同名 identity.name（3 条 superseded），记忆面板里全是噪声。
+        # 注意比的是 `prev`（写库前查到的旧行），别拿写完的 self._vp 比——那已经是新值了。
+        if name and name != (prev or {}).get("display_name", ""):
+            await self._write_identity_name(user_id, occ, name, row["tenant_id"])
         return {"ok": True, "occupant_id": occ, "display_name": row["display_name"],
                 "sample_count": len(samples), "self_consistency": cons}
+
+    async def _write_identity_name(self, user_id: str, occ: str, name: str,
+                                   tenant: str = "default") -> None:
+        """名字也写一条记忆（M4 P4 补）：只存在声纹表里的话，「你知道我是谁」答不上来——
+        那张表没有任何消费方会去读。写进记忆则天然获得召回、导出、GDPR 删除与
+        「记忆」面板可见性，且**删除该乘员时随其记忆一起没**（delete_voiceprint 已覆盖）。
+        改名走 supersede：同 predicate 同 occupant 只保留现行一条。"""
+        await self._supersede_identity(user_id, occ, tenant)
+        await self.remember([{
+            "user_id": user_id, "occupant_id": occ, "kind": "semantic",
+            "predicate": "identity.name", "text": _identity_text(name),
+            "value_json": json.dumps({"name": name}, ensure_ascii=False),
+            "scope": "profile.identity", "provenance": "user_stated", "confidence": 1.0,
+            "memory_level": "occupant", "tenant_id": tenant or "default",
+        }])
+
+    async def rename_voiceprint(self, user_id: str, occupant_id: str, display_name: str, *,
+                                tenant_id: str = "default") -> dict:
+        """只改称呼，不动模板（2026-07-26 真机反馈）。
+
+        **为什么不复用 enroll**：enroll 要三段录音。名字是随时会改的元数据，把改名和「重录
+        三段声纹」绑一起，用户为了改个称呼就得重走注册流程——真机上正是这一步把已存的名字
+        丢了。表和记忆两处一起改：只改表的话助手嘴里还是旧名（identity.name 才是消费方）。
+        """
+        name = (display_name or "").strip()
+        if not occupant_id or not name:
+            return {"ok": False, "error": "empty_name", "display_name": ""}
+        rows = await self._vp_rows(user_id, tenant_id)
+        row = next((r for r in rows if r["occupant_id"] == occupant_id), None)
+        if row is None:
+            return {"ok": False, "error": "not_found", "display_name": ""}
+        now = _now()
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE voiceprint SET display_name=$4, updated_at=$5 "
+                    "WHERE tenant_id=$1 AND user_id=$2 AND occupant_id=$3",
+                    tenant_id or "default", user_id, occupant_id, name, now)
+        else:
+            key = f'{tenant_id or "default"}|{user_id}|{occupant_id}'
+            if key in self._vp:
+                self._vp[key]["display_name"] = name
+                self._vp[key]["updated_at"] = now
+        if name != row.get("display_name", ""):
+            await self._write_identity_name(user_id, occupant_id, name,
+                                            tenant_id or "default")
+        return {"ok": True, "display_name": name}
 
     async def _supersede_identity(self, user_id: str, occ: str, tenant: str) -> None:
         """改名时让旧的 identity.name 失效（不删——记忆的既有口径是时序 supersede）。"""
@@ -757,6 +801,11 @@ class MemoryVectorStore:
         if not occupant_id:
             return {"ok": False, "deleted_templates": 0, "deleted_memories": 0}
         purge = purge_memory and occupant_id != "primary"
+        # primary 不 purge，但注册时写的那条名字记忆必须跟着模板走：模板都删了还留着
+        # 「这位乘员的名字是乘客」，助手会继续管一个已经认不出的人叫那个名字。
+        rows = await self._vp_rows(user_id, tenant_id)
+        gone_name = next((r.get("display_name", "") for r in rows
+                          if r["occupant_id"] == occupant_id), "")
         n_tpl = n_mem = 0
         if self._pg_ok:
             async with self._pool.acquire() as conn:
@@ -787,7 +836,32 @@ class MemoryVectorStore:
                 for k in [k for k, v in self._rel.items()
                           if v["user_id"] == user_id and v["occupant_id"] == occupant_id]:
                     del self._rel[k]
+        if n_tpl and not purge and gone_name:
+            # 只撤回注册自己写的那一条（按 _identity_text 逐字匹配），不碰用户在对话里
+            # 说过的别的身份陈述——删声纹不该顺手抹掉一句「我叫泓舟」。
+            await self._retract_identity_name(user_id, occupant_id, gone_name)
         return {"ok": True, "deleted_templates": n_tpl, "deleted_memories": n_mem}
+
+    async def _retract_identity_name(self, user_id: str, occ: str, name: str) -> None:
+        text = _identity_text(name)
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE memory_item SET superseded_by='voiceprint_deleted' "
+                    "WHERE user_id=$1 AND occupant_id=$2 AND predicate='identity.name' "
+                    "AND superseded_by IS NULL AND text=$3", user_id, occ, text)
+            return
+        for v in self._mem.values():
+            if (v["user_id"] == user_id and v["occupant_id"] == occ
+                    and v.get("predicate") == "identity.name"
+                    and v.get("text") == text and not v.get("superseded_by")):
+                v["superseded_by"] = "voiceprint_deleted"
+
+
+def _identity_text(name: str) -> str:
+    """注册/改名写进记忆的那句话。**写与撤回共用一个函数**——删除时要逐字匹配它才能
+    只撤回注册自己写的那条，不误伤用户在对话里说过的别的身份陈述。"""
+    return f"这位乘员的名字是{name}"
 
 
 def _affected(status: str) -> int:

@@ -39,6 +39,10 @@ except Exception:  # observability 不在 path（如精简镜像）→ log-only
     _gate_content = None
     _set_obs_session = None
 
+# 跨域允许的方法。加新方法的端点时必须同步这里，否则浏览器 preflight 会挡在门外
+# （见 create_http_app 的 cors_middleware；契约测试 test_http_cors.py 会自动比对）。
+CORS_METHODS = "GET, POST, PATCH, DELETE, OPTIONS"
+
 _WAV_FORMATS = frozenset({"wav", "pcm", "pcm16"})
 # R4.3b P2 B1：流式 ASR 的「前端直传 s16le PCM」格式（跳过 ffmpeg，支持前滚缓冲注入根治漏字 U4）
 _PCM_STREAM_FORMATS = frozenset({"pcm16le", "s16le", "pcm", "pcm16"})
@@ -698,6 +702,24 @@ def create_http_app() -> web.Application:
                                   "sample_count": resp.sample_count,
                                   "self_consistency": round(resp.self_consistency, 3)})
 
+    @routes.patch("/api/voiceprint/{occupant_id}")
+    async def handle_vp_rename(request: web.Request):
+        """改称呼。query: user_id, display_name。**不重录三段**——名字是元数据。"""
+        uid = (request.query.get("user_id") or "").strip()
+        occ = request.match_info.get("occupant_id", "").strip()
+        name = (request.query.get("display_name") or "").strip()
+        if not uid or not occ or not name:
+            return web.json_response({"ok": False, "error": "empty_name"}, status=400)
+        try:
+            resp = await _memory_stub().RenameVoiceprint(memory_pb2.RenameVoiceprintRequest(
+                user_id=uid, occupant_id=occ, display_name=name), timeout=5)
+        except Exception as e:
+            logger.warning("voiceprint rename error: %s", e)
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return web.json_response({"ok": resp.ok, "display_name": resp.display_name,
+                                  "error": resp.error},
+                                 status=200 if resp.ok else 404)
+
     @routes.delete("/api/voiceprint/{occupant_id}")
     async def handle_vp_delete(request: web.Request):
         """删除一个乘员。query: user_id, purge_memory=1|0（默认 1=连同其记忆一起忘掉）。"""
@@ -926,7 +948,10 @@ def create_http_app() -> web.Application:
     app = web.Application()
     app.add_routes(routes)
 
-    # CORS：允许 HMI 跨域调用
+    # CORS：允许 HMI 跨域调用（HMI 在 :5173/:3000，本面在 :50059，永远是跨域）。
+    # **白名单必须覆盖本 app 注册的每一个方法**——2026-07-26 真机：声纹删除是全 HMI 唯一的
+    # DELETE，方法漏在白名单外 → 浏览器 preflight 直接挡下，请求根本没发出来，服务端零日志、
+    # e2e 也测不出来（e2e 从服务端发请求，不过 CORS）。契约测试 `test_http_cors.py` 钉死。
     @web.middleware
     async def cors_middleware(request, handler):
         if request.method == "OPTIONS":
@@ -934,7 +959,7 @@ def create_http_app() -> web.Application:
         else:
             resp = await handler(request)
         resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Methods"] = CORS_METHODS
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp
 

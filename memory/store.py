@@ -285,6 +285,11 @@ class MemoryStore:
     async def delete_voiceprint(self, user_id: str, occupant_id: str, **kw) -> dict:
         return await (await self._vec()).delete_voiceprint(user_id, occupant_id, **kw)
 
+    async def rename_voiceprint(self, user_id: str, occupant_id: str,
+                                display_name: str, **kw) -> dict:
+        return await (await self._vec()).rename_voiceprint(
+            user_id, occupant_id, display_name, **kw)
+
     async def resolve_person_place(self, user_id: str, person_word: str, *,
                                    occupant_id: str = "primary") -> dict | None:
         """**一跳解析**：人称词 → family 边找实体 → place_of 边找地点。
