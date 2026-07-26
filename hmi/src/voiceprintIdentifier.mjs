@@ -13,23 +13,19 @@
 
 /** 默认最短有效语音（与网关 VOICEPRINT_MIN_SPEECH_MS 同口径；网关会再判一次，这里只是别白发）。 */
 export const DEFAULT_MIN_SPEECH_MS = 1500
-/** send 前最多等识别结果多久。超时就用上一次结果/primary——**绝不为了认人而拖慢首字**。 */
-export const DEFAULT_WAIT_MS = 150
 
 export class VoiceprintIdentifier {
   /**
    * @param {object} deps
    *  - identify(pcmInt16: Int16Array): Promise<{occupant_id, display_name?, decision?}>
    *  - minSpeechMs?  累计多少毫秒有效语音就发请求（默认 1500）
-   *  - waitMs?       send 前的软等待上限（默认 150）
-   *  - sampleRate?   默认 16000
+     *  - sampleRate?   默认 16000
    *  - now?          注入时钟（测试用）
    *  - onResult?     (result) => void   识别落地回调（观测/调试）
    */
   constructor(deps = {}) {
     this.deps = deps
     this.minSpeechMs = deps.minSpeechMs ?? DEFAULT_MIN_SPEECH_MS
-    this.waitMs = deps.waitMs ?? DEFAULT_WAIT_MS
     this.sampleRate = deps.sampleRate ?? 16000
     this.reset()
   }
@@ -46,7 +42,14 @@ export class VoiceprintIdentifier {
     this._decision = ''
   }
 
-  /** 当前锁定的说话人（未识别/认不出 → 'primary'，即 P4 之前的行为）。 */
+  /**
+   * 当前锁定的说话人（未识别/认不出 → 'primary'，即 P4 之前的行为）。
+   *
+   * **刻意是同步取值，没有「等一下识别结果」的接口。** 曾经有过一个 150ms 软等待，
+   * 它把 FSM 的 onSend 变成异步，破坏了「用户气泡由 send 同步接管」的不变量。
+   * 而它几乎赚不到东西：识别在用户说到 1.5s 时就发出，端点还要再等一个静音尾
+   * （默认 800ms）——`onSend` 触发时结果早就回来了。
+   */
   get occupantId() { return this._occupantId }
   get displayName() { return this._displayName }
   get decision() { return this._decision }
@@ -73,17 +76,6 @@ export class VoiceprintIdentifier {
     this._fired = true
     this._pending = this._identify(this._flatten())
     this._buf = []
-  }
-
-  /**
-   * send 前调用：最多等 waitMs 拿结果，超时就用当前值（上一次结果或 primary）。
-   * **永不 reject**——声纹是可选增强，不能因为它把一轮对话弄失败。
-   */
-  async settle() {
-    if (!this._pending) return this._occupantId
-    const timeout = new Promise((r) => setTimeout(r, this.waitMs))
-    await Promise.race([this._pending.catch(() => {}), timeout])
-    return this._occupantId
   }
 
   _flatten() {

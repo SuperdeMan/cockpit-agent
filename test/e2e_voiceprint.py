@@ -119,11 +119,11 @@ async def identify(client, uid, pcm: bytes) -> dict:
     return r.json()
 
 
-async def ask(text: str, occupant: str, session: str) -> dict:
+async def ask(text: str, occupant: str, session: str, extra: dict | None = None) -> dict:
     """带 occupant_id 的一轮（HMI 同款 WS + 同款 meta 键）。"""
     async with websockets.connect(WS) as ws:
         await ws.send(json.dumps({"text": text, "session_id": session,
-                                  "meta": {"occupant_id": occupant}}))
+                                  "meta": {"occupant_id": occupant, **(extra or {})}}))
         while True:
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=TIMEOUT))
             if msg.get("type") in ("final", "error"):
@@ -169,17 +169,24 @@ async def main() -> int:
 
         # ① 首个注册者绑 primary，且存量记忆一条不少
         print("\n[① 首个注册者绑定 primary（本设计最大的回归点）]")
-        before = int(sql(f"SELECT count(*) FROM memory_item WHERE user_id='{uid}' "
-                         "AND occupant_id='primary'") or 0)
+        # 口径：注册**会**多写一条 identity.name（助手靠它回答「你知道我是谁」），
+        # 故这里数的是「除名字之外的既有记忆」——它守的是「不搬家、不失联」，不是总数不变。
+        def _other_mem() -> int:
+            return int(sql(f"SELECT count(*) FROM memory_item WHERE user_id='{uid}' "
+                           "AND occupant_id='primary' "
+                           "AND (predicate IS NULL OR predicate<>'identity.name')") or 0)
+        before = _other_mem()
         ra = await enroll(client, uid, "泓舟", VOICE_A)
         check(ra.get("ok") is True, "主驾注册成功",
               json.dumps(ra, ensure_ascii=False)[:110])
         check(ra.get("occupant_id") == "primary", "首个注册者拿到 primary",
               str(ra.get("occupant_id")))
-        after = int(sql(f"SELECT count(*) FROM memory_item WHERE user_id='{uid}' "
-                        "AND occupant_id='primary'") or 0)
-        check(after == before, "主驾原有记忆一条不少（注册不搬家、不失联）",
-              f"{before} → {after}")
+        check(_other_mem() == before, "主驾原有记忆一条不少（注册不搬家、不失联）",
+              f"{before} → {_other_mem()}")
+        name_rows = sql(f"SELECT text FROM memory_item WHERE user_id='{uid}' "
+                        "AND occupant_id='primary' AND predicate='identity.name' "
+                        "AND superseded_by IS NULL")
+        check("泓舟" in name_rows, "名字已写进记忆（「你知道我是谁」的数据来源）", name_rows[:40])
 
         # ② 第二乘员
         print("\n[② 第二乘员]")
@@ -222,6 +229,14 @@ async def main() -> int:
     n_p = mem_rows("u1", "primary", "草莓")
     check(n_b >= 1, "偏好落在说话人名下（occupant_id 全链路透传成立）", f"occ={n_b} 条")
     check(n_p == 0, "**主驾名下查不到 B 的偏好（隔离成立）**", f"primary={n_p} 条")
+
+    # ⑤b 助手知道我是谁——用户验证声纹是否生效的第一句话，必须确定性答得上
+    print("\n[⑤b 「你知道我是谁」]")
+    r = await ask("你知道我是谁吗", OCC_B, f"{SESSION}-who",
+                  extra={"occupant_name": "小雨"})
+    sp = (r.get("speech") or "")
+    print(f"   ⇒ {sp[:60]}")
+    check("小雨" in sp, "助手叫得出说话人的名字（不是「不知道」）", sp[:50])
 
     # ⑥ 声纹不提权（红线）：换个 occupant 说危险动作，确认闸照旧
     print("\n[⑥ 声纹不提权（红线）]")

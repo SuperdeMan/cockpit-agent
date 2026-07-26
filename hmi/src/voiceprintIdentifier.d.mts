@@ -1,5 +1,4 @@
 export const DEFAULT_MIN_SPEECH_MS: number
-export const DEFAULT_WAIT_MS: number
 
 export interface VoiceprintResult {
   occupant_id: string
@@ -12,7 +11,6 @@ export class VoiceprintIdentifier {
   constructor(deps: {
     identify: (pcm: Int16Array) => Promise<VoiceprintResult>
     minSpeechMs?: number
-    waitMs?: number
     sampleRate?: number
     onResult?: (r: VoiceprintResult) => void
   })
@@ -22,7 +20,6 @@ export class VoiceprintIdentifier {
   reset(): void
   arm(isWakeEntry: boolean): void
   pushFrame(frame: Float32Array): void
-  settle(): Promise<string>
 }
 
 export function postIdentify(

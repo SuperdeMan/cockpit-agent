@@ -601,6 +601,12 @@ def create_http_app() -> web.Application:
             return web.json_response({"occupant_id": "primary", "decision": "disabled"})
         uid = (request.query.get("user_id") or "").strip()
         pcm = await request.read()
+        # 主链路（HMI 语音回路）直传 16k PCM 帧，不转码——它在唤醒窗内要短平快。
+        # 设置页「试一试」用 MediaRecorder 录的是 webm，经既有 ffmpeg 转一次（低频操作）。
+        src_fmt = (request.query.get("format") or "pcm16le").strip().lower()
+        if src_fmt not in _PCM_STREAM_FORMATS:
+            wav = await _transcode_to_wav(pcm, src_fmt)
+            pcm = wav[44:] if wav[:4] == b"RIFF" else wav
         dur = vp_mod.pcm_duration_ms(pcm)
         if dur < vp_mod.min_speech_ms():
             return web.json_response({"occupant_id": "primary", "decision": "too_short",

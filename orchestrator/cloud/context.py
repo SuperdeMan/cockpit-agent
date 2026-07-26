@@ -490,6 +490,8 @@ def build_context(request) -> PlanContext:
               "input_source",      # R4.4：hands-free 语音来源（voice_wake|voice_followup|voice_bargein）
               "voice_utterance_ms",  # R4.4：本轮 speech 累计时长（数字字符串）
               "clarify_resume",    # R4.4：澄清续接标记（"1"）——engine 据此深度=1 抑制再澄清
+              "occupant_name",     # M4 P4：说话人称呼（声纹识别出的显示名）——「你知道我是谁」
+                                   # 靠它确定性答出；与 occupant_id 同样**不参与权限判定**
               "vision_frame_id",   # M4 P4：车外单帧的**引用**（图像本体只在网关内存里）。
                                    # 按 _SENSITIVE_SCOPE 最小化下发——只有声明了 vision
                                    # context_scope 的 Agent 收得到，其余 Agent 连引用都看不见。

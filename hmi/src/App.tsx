@@ -580,6 +580,9 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         // M4 P4：本轮说话人（声纹，唤醒窗内锁定）。未开/认不出恒 'primary' = P4 之前的行为。
         // 记忆按它隔离；**权限与确认不看它**（声纹不是鉴权因子，RFC §6.1 红线）。
         occupant_id: handsFreeRef.current?.occupantId || 'primary',
+        // 说话人的**称呼**（声纹注册时用户自己填的）。有它「你知道我是谁」才答得上来。
+        // 与 occupant_id 同性质：只做个性化，**不参与任何权限判定**。
+        occupant_name: handsFreeRef.current?.occupantName || '',
         trace_id: traceId,
       },
     })

@@ -218,8 +218,9 @@ def test_delete_occupant_purges_their_memories_by_default():
         res = await store.delete_voiceprint("u1", "occ-2")
         return res, await vs.export("u1"), await store.list_voiceprints("u1")
     res, memories, rows = asyncio.run(go())
-    assert res["deleted_templates"] == 1 and res["deleted_memories"] == 1
-    assert [m["occupant_id"] for m in memories] == ["primary"]   # 主驾的记忆没被误伤
+    # 2 条 = 草莓偏好 + 注册时写的 identity.name（「忘掉这个人」当然包括忘掉他的名字）
+    assert res["deleted_templates"] == 1 and res["deleted_memories"] == 2
+    assert {m["occupant_id"] for m in memories} == {"primary"}   # 主驾的记忆没被误伤
     assert [r["occupant_id"] for r in rows] == ["primary"]
 
 
@@ -281,3 +282,66 @@ def test_scoped_forget_keeps_voiceprints():
         await store.forget_user("u1", scopes=["profile.taste"])
         return await store.list_voiceprints("u1")
     assert len(asyncio.run(go())) == 1
+
+
+# ── 身份名字进记忆（M4 P4 真机反馈补）───────────────────────────────────────
+
+def test_enroll_writes_identity_name_memory():
+    """**只存在声纹表里的名字答不出「你知道我是谁」**——那张表没有任何消费方会去读。
+    写进记忆则天然获得召回、导出、GDPR 删除与记忆面板可见性。"""
+    async def go():
+        store = _store()
+        await store.enroll_voiceprint("u1", [_basis(0), _near(0, 0.05)],
+                                      display_name="阿段", model="m1")
+        vs = await store._vec()
+        return await vs.export("u1")
+    items = asyncio.run(go())
+    hit = [m for m in items if m.get("predicate") == "identity.name"]
+    assert len(hit) == 1, "注册没有把名字写进记忆"
+    assert "阿段" in hit[0]["text"]
+    assert hit[0]["occupant_id"] == "primary"
+
+
+def test_rename_supersedes_old_identity_memory():
+    """改名不该留下两条现行的名字——旧的走 supersede（记忆的既有时序口径）。"""
+    async def go():
+        store = _store()
+        await store.enroll_voiceprint("u1", [_basis(0), _near(0, 0.05)],
+                                      occupant_id="primary", display_name="阿段", model="m1")
+        await store.enroll_voiceprint("u1", [_basis(0), _near(0, 0.03)],
+                                      occupant_id="primary", display_name="泓舟", model="m1")
+        vs = await store._vec()
+        return [m for m in await vs.export("u1")
+                if m.get("predicate") == "identity.name" and not m.get("superseded_by")]
+    live = asyncio.run(go())
+    assert len(live) == 1 and "泓舟" in live[0]["text"]
+
+
+def test_identity_memory_is_isolated_per_occupant():
+    """两个乘员各自的名字互不串（隔离对身份同样成立）。"""
+    async def go():
+        store = _store()
+        await store.enroll_voiceprint("u1", [_basis(0), _near(0, 0.05)],
+                                      display_name="阿段", model="m1")
+        await store.enroll_voiceprint("u1", [_basis(3), _near(3, 0.05)],
+                                      display_name="小雨", model="m1")
+        vs = await store._vec()
+        return {m["occupant_id"]: m["text"] for m in await vs.export("u1")
+                if m.get("predicate") == "identity.name"}
+    names = asyncio.run(go())
+    assert "阿段" in names["primary"] and "小雨" in names["occ-2"]
+
+
+def test_deleting_occupant_removes_their_identity_memory():
+    async def go():
+        store = _store()
+        await store.enroll_voiceprint("u1", [_basis(0), _near(0, 0.05)],
+                                      display_name="阿段", model="m1")
+        await store.enroll_voiceprint("u1", [_basis(3), _near(3, 0.05)],
+                                      display_name="小雨", model="m1")
+        await store.delete_voiceprint("u1", "occ-2")
+        vs = await store._vec()
+        return [m["text"] for m in await vs.export("u1")
+                if m.get("predicate") == "identity.name"]
+    left = asyncio.run(go())
+    assert len(left) == 1 and "阿段" in left[0]

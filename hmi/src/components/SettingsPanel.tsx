@@ -12,7 +12,7 @@ import {
 import {
   fetchVoices, fetchTtsProviders, fetchLlmProviders, setLlmProvider,
   fetchMemory, fetchMemoryProfile, forgetMemory, fetchPlaces, playTTS,
-  MicController, fetchVoiceprints, enrollVoiceprint, deleteVoiceprint,
+  MicController, fetchVoiceprints, enrollVoiceprint, deleteVoiceprint, identifySpeaker,
   type MemoryView, type MemoryProfile, type NamedPlaces, type VoiceprintInfo,
 } from '../audio'
 import { PLACE_DEFS, isPlaceSet, formatPlace } from '../places.mjs'
@@ -406,20 +406,30 @@ function AsrSection({ audioApi }: { audioApi: string }) {
 
 // ─── 2.5 · 乘员与声纹（M4 P4）───
 // 每个乘员各自的口味/习惯/常去地点互相独立；认不出时一律按主驾走（= 开这个开关之前的行为）。
+//
+// 交互上最要紧的两件事（首版都缺，泓舟真机反馈）：
+// ① **录音过程要可见**——用户对着麦克风说话时屏幕上必须有「正在录、还剩几秒」，
+//    否则不知道该说多久、说完了没有，只能靠猜；
+// ② **录完要能当场验证**——「试一试」录 2 秒立刻回答「听出来是谁」。不然用户唯一的
+//    验证手段是去对话框问一句，失败了也不知道是哪一环出的问题。
 const ENROLL_PROMPTS = [
   '你好，我是这辆车的常用乘客',
   '今天天气不错，路上应该不太堵',
   '帮我把空调调到二十四度',
 ]
+const ENROLL_SECONDS = 4
 
 function OccupantSection({ audioApi }: { audioApi: string }) {
   const { settings, update } = useSettings()
   const [info, setInfo] = useState<VoiceprintInfo | null>(null)
   const [name, setName] = useState('')
-  const [step, setStep] = useState(-1)          // -1=未开始；0..2=正在录第 N 段
-  const [samples, setSamples] = useState<Blob[]>([])
+  const [open, setOpen] = useState(false)                 // 录入面板是否展开
+  const [clips, setClips] = useState<(Blob | null)[]>([null, null, null])
+  const [recIdx, setRecIdx] = useState(-1)                // 正在录第几段；-2=试一试；-1=空闲
+  const [left, setLeft] = useState(0)                     // 倒计时秒
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
+  const [trying, setTrying] = useState(false)
   const [mic] = useState(() => new MicController())
 
   const refresh = useCallback(async () => {
@@ -427,36 +437,76 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
   }, [audioApi])
   useEffect(() => { void refresh() }, [refresh])
 
-  const recordOne = async () => {
-    if (mic.active) return
-    setMsg('')
+  // 录音倒计时：这是「正在录」的唯一可见反馈（MicController 到点自动停）
+  useEffect(() => {
+    if (recIdx === -1 || left <= 0) return
+    const t = setTimeout(() => setLeft((n) => n - 1), 1000)
+    return () => clearTimeout(t)
+  }, [recIdx, left])
+
+  const done = clips.filter(Boolean).length
+  const ready = done === ENROLL_PROMPTS.length
+
+  const recordAt = async (i: number) => {
+    if (mic.active || recIdx !== -1) return
+    setMsg(''); setRecIdx(i); setLeft(ENROLL_SECONDS)
     try {
-      await mic.start(4000, (r) => {
-        if (!r?.blob) { setMsg('这段没录到声音，再来一次'); return }
-        setSamples((s) => [...s, r.blob])
-        setStep((n) => (n + 1 >= ENROLL_PROMPTS.length ? -2 : n + 1))
+      await mic.start(ENROLL_SECONDS * 1000, (r) => {
+        setRecIdx(-1); setLeft(0)
+        if (!r?.blob) { setMsg('这段没录到声音——确认麦克风可用、离近一点再试'); return }
+        setClips((c) => c.map((v, k) => (k === i ? r.blob : v)))
       })
     } catch {
-      setMsg('拿不到麦克风权限')
+      setRecIdx(-1); setLeft(0)
+      setMsg('拿不到麦克风权限：请在浏览器地址栏允许本站使用麦克风')
     }
   }
 
   const submit = async () => {
     setBusy(true)
-    const r = await enrollVoiceprint(audioApi, USER_ID, name.trim() || '乘客', samples)
+    const who = name.trim() || '乘客'
+    const r = await enrollVoiceprint(audioApi, USER_ID, who, clips.filter(Boolean) as Blob[])
     setBusy(false)
     if (r.ok) {
-      // 首个注册者会被服务端分配到 primary——他继承全部既有记忆（不然一注册就全失联）。
-      setMsg(r.occupant_id === 'primary' ? '已记住（作为主驾，保留你已有的全部记忆）' : '已记住')
-      setStep(-1); setSamples([]); setName('')
+      // 首个注册者由服务端分配到 primary——他继承全部既有记忆（不然一注册就全失联）。
+      setMsg(r.occupant_id === 'primary'
+        ? `已记住「${who}」，作为主驾——你之前的记忆一条都没丢。可以点上面的「试一试」验证。`
+        : `已记住「${who}」。可以点上面的「试一试」验证。`)
+      setOpen(false); setClips([null, null, null]); setName('')
       void refresh()
     } else if (r.error === 'low_consistency') {
-      setMsg(`三段听起来不像同一个人（相似度 ${(r.self_consistency ?? 0).toFixed(2)}），`
-        + '请在安静环境里由同一个人重录')
-      setStep(-1); setSamples([])
+      // 宁可不建也不建坏模板：建出来此后谁都认不准。
+      setMsg(`这三段听起来不像同一个人（相似度 ${(r.self_consistency ?? 0).toFixed(2)}）。`
+        + '请在安静环境里、由同一个人重录三段。')
+      setClips([null, null, null])
+    } else if (r.error === 'no_valid_samples') {
+      setMsg(`每段都要说满约 ${ENROLL_SECONDS} 秒——太短提不出稳定声纹，请重录。`)
+      setClips([null, null, null])
     } else {
       setMsg('注册失败：' + (r.error || '未知原因'))
-      setStep(-1); setSamples([])
+    }
+  }
+
+  // 「试一试」：录 2 秒立刻问后端「这是谁」——用户验证声纹真的生效的唯一直接手段。
+  const tryIt = async () => {
+    if (mic.active || recIdx !== -1) return
+    setMsg(''); setTrying(true); setRecIdx(-2); setLeft(2)
+    try {
+      await mic.start(2000, async (r) => {
+        setRecIdx(-1); setLeft(0)
+        if (!r?.blob) { setTrying(false); setMsg('没录到声音，再试一次'); return }
+        const res = await identifySpeaker(audioApi, USER_ID, r.blob)
+        setTrying(false)
+        const who = res.display_name || res.occupant_id
+        if (res.decision === 'accept') setMsg(`听出来了：这是「${who}」`)
+        else if (res.decision === 'too_short') setMsg('说得太短了，多说一句再试')
+        else if (res.decision === 'ambiguous') setMsg('两位乘员的声音太接近，这次没敢下结论——按主驾处理')
+        else if (res.decision === 'no_templates') setMsg('还没有人录过声纹')
+        else setMsg('没认出来，按主驾处理（认不出时不会乱猜）')
+      })
+    } catch {
+      setTrying(false); setRecIdx(-1); setLeft(0)
+      setMsg('拿不到麦克风权限')
     }
   }
 
@@ -478,6 +528,8 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
     )
   }
 
+  const occupants = info?.occupants ?? []
+
   return (
     <SettingGroup title="乘员与声纹">
       <SettingRow
@@ -490,7 +542,7 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
           onChange={(v) => update({ voiceprintEnabled: v })} />
       </SettingRow>
 
-      {(info?.occupants ?? []).map((o) => (
+      {occupants.map((o) => (
         <SettingRow key={o.occupant_id}
           label={o.display_name || o.occupant_id}
           sub={(o.occupant_id === 'primary' ? '主驾 · ' : '')
@@ -500,36 +552,51 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
         </SettingRow>
       ))}
 
-      {step === -1 && (
+      {occupants.length > 0 && (
+        <SettingRow label="试一试"
+          sub={recIdx === -2 ? `正在听…${left}` : '说一句话，看它能不能认出你是谁'}>
+          <GhostBtn onClick={tryIt}>{trying ? '识别中…' : '开始'}</GhostBtn>
+        </SettingRow>
+      )}
+
+      {!open && (
         <SettingRow label="添加乘员"
-          sub={(info?.occupants ?? []).length === 0
+          sub={occupants.length === 0
             ? '第一个录入的人会被当作主驾，保留目前已有的全部记忆。'
-            : '需要在安静环境里念 3 句话（每句约 3 秒）。'}
+            : `在安静环境里念 3 句话，每句约 ${ENROLL_SECONDS} 秒。`}
           noBorder={!msg}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <TextInput value={name} onChange={setName} placeholder="称呼，如「小雨」" />
-            <GhostBtn onClick={() => { setSamples([]); setStep(0); setMsg('') }}>开始录入</GhostBtn>
-          </div>
+          <GhostBtn onClick={() => { setOpen(true); setClips([null, null, null]); setMsg('') }}>
+            开始录入
+          </GhostBtn>
         </SettingRow>
       )}
 
-      {step >= 0 && (
-        <SettingRow label={`第 ${step + 1} / ${ENROLL_PROMPTS.length} 句`}
-          sub={`请念：「${ENROLL_PROMPTS[step]}」`} noBorder={!msg}>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <GhostBtn onClick={recordOne}>{mic.active ? '录音中…' : '录这一句'}</GhostBtn>
-            <GhostBtn onClick={() => { setStep(-1); setSamples([]) }}>取消</GhostBtn>
-          </div>
-        </SettingRow>
-      )}
-
-      {step === -2 && (
-        <SettingRow label="三段都录好了" sub="确认后建立声纹模板" noBorder={!msg}>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <GhostBtn onClick={submit}>{busy ? '处理中…' : '保存'}</GhostBtn>
-            <GhostBtn onClick={() => { setStep(-1); setSamples([]) }}>重来</GhostBtn>
-          </div>
-        </SettingRow>
+      {open && (
+        <>
+          <SettingRow label="称呼" sub="助手会这样叫你；问「你知道我是谁」时也用它回答">
+            <TextInput value={name} onChange={setName} placeholder="如「阿段」" />
+          </SettingRow>
+          {ENROLL_PROMPTS.map((line, i) => (
+            <SettingRow key={i}
+              label={`${clips[i] ? '✓' : `${i + 1}.`} 「${line}」`}
+              sub={recIdx === i ? `正在录…还剩 ${left} 秒，请照着念`
+                : clips[i] ? '已录好，可以重录' : `点右侧按钮后照着念，约 ${ENROLL_SECONDS} 秒`}>
+              <GhostBtn onClick={() => recordAt(i)}>
+                {recIdx === i ? `${left}s` : clips[i] ? '重录' : '录这句'}
+              </GhostBtn>
+            </SettingRow>
+          ))}
+          <SettingRow label={`已录 ${done} / ${ENROLL_PROMPTS.length} 段`}
+            sub={ready ? '可以保存了' : '三段都录完才能保存'} noBorder={!msg}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <GhostBtn onClick={() => { if (ready && !busy) void submit() }}
+                style={ready ? undefined : { opacity: 0.45 }}>
+                {busy ? '处理中…' : '保存'}
+              </GhostBtn>
+              <GhostBtn onClick={() => { setOpen(false); setClips([null, null, null]) }}>取消</GhostBtn>
+            </div>
+          </SettingRow>
+        </>
       )}
 
       {msg && <SettingRow label="" sub={msg} noBorder><span /></SettingRow>}

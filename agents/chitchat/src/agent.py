@@ -99,6 +99,10 @@ def _length(meta: dict) -> tuple[int, str]:
 
 def _system(meta: dict) -> str:
     name = (meta or {}).get("assistant_name") or "小舟"
+    # M4 P4：声纹识别出的说话人称呼。**没有它「你知道我是谁」只能靠语义召回碰运气**——
+    # 而这类身份问句恰恰是用户验证声纹是否生效的第一句话，必须确定性答得上。
+    # 只影响称呼与口吻，不参与任何权限判定（声纹不作鉴权因子，RFC §6.1）。
+    who = (meta or {}).get("occupant_name", "").strip()
     _, hint = _length(meta)
     now = shanghai_now()
     # 锚点带星期与时刻：纯钟点问句已被 _clock_answer 确定性拦下，这里供「该吃午饭了吗」
@@ -106,7 +110,9 @@ def _system(meta: dict) -> str:
     return (
         f"你是车载语音助手「{name}」。今天是{now:%Y年%m月%d日}"
         f"（星期{_WEEKDAY[now.weekday()]}），现在{now:%H:%M}。"
-        f"风格简洁、口语化、温暖、安全。{hint}"
+        + (f"当前跟你说话的是「{who}」——他问「我是谁/你知道我是谁吗」时直接叫出这个名字，"
+           "别说不知道；平时不必每句都称呼。" if who else "")
+        + f"风格简洁、口语化、温暖、安全。{hint}"
         "适合驾车时收听；不输出列表、代码或长文。"
         "若用户表达负面情绪，先共情、再轻轻给出建议或陪伴，不要说教。"
         "涉及实时或近期事实时，如果你不确定就明说无法确认并建议联网查询，绝不编造。"

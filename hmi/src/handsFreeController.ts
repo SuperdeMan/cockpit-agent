@@ -116,12 +116,15 @@ export class HandsFreeController {
       // 用户气泡**不在此刻上屏**：本轮还不知道是自答还是逃逸，逃逸轮的用户气泡由 send() 自己插，
       // 这里插就成双份。暂存，等 answer_delta 首包（=确定自答）再 flush。实测两者互斥：
       // 逃逸轮零文本零音频、自答轮无 tool_call（RFC §3.5）。
-      // M4 P4：send 前软等声纹结果（上限 150ms，超时用当前值）。**绝不为了认人拖慢首字**——
-      // 边说边识别（1.5s 即发）意味着绝大多数情况结果早就回来了，这里只是收口。
+      // **必须同步调用 deps.onSend**：`_finalizeSend` 是「先 onSend 再进 THINKING」，而
+      // App 的 onOrbState 在离开 LISTENING 时清 partial ghost，靠的正是「真实用户气泡已由
+      // send 同步接管」这个不变量。一旦这里改成异步（我曾为等声纹结果加过 150ms 软等待），
+      // 气泡插入就落到状态迁移之后，与并发的另一次 send 交错时会出现气泡与回答错位。
+      // 声纹也根本不需要这个等待：识别在用户说到 1.5s 时就发出，而端点还要再等一个静音尾
+      // （默认 800ms），结果早就回来了——**为一个几乎不生效的优化牺牲一条不变量是亏的**。
       onSend: (t: string, vm?: { source: string; utteranceMs: number }) => {
         if (this.useS2s()) { this.s2sPendingUser = t; return }
-        if (!this.vp) { this.deps.onSend(t, vm); return }
-        void this.vp.settle().then(() => this.deps.onSend(t, vm))
+        this.deps.onSend(t, vm)
       },
       onStopTts: () => { this.s2s?.bargeIn(); this.deps.onStopTts() },
       onWakeChime: () => this.chime(),

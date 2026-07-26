@@ -691,8 +691,35 @@ class MemoryVectorStore:
             if prev:
                 row["id"], row["created_at"] = prev["id"], prev["created_at"]
             self._vp[key] = row
+        # 名字也写一条记忆（M4 P4 补）：只存在声纹表里的话，「你知道我是谁」答不上来——
+        # 那张表没有任何消费方会去读。写进记忆则天然获得召回、导出、GDPR 删除与
+        # 「记忆」面板可见性，且**删除该乘员时随其记忆一起没**（delete_voiceprint 已覆盖）。
+        # 重复注册走 supersede：同 predicate 同 occupant 只保留现行一条。
+        if row["display_name"]:
+            await self._supersede_identity(user_id, occ, row["tenant_id"])
+            await self.remember([{
+                "user_id": user_id, "occupant_id": occ, "kind": "semantic",
+                "predicate": "identity.name", "text": f"这位乘员的名字是{row['display_name']}",
+                "value_json": json.dumps({"name": row["display_name"]}, ensure_ascii=False),
+                "scope": "profile.identity", "provenance": "user_stated", "confidence": 1.0,
+                "memory_level": "occupant", "tenant_id": row["tenant_id"],
+            }])
         return {"ok": True, "occupant_id": occ, "display_name": row["display_name"],
                 "sample_count": len(samples), "self_consistency": cons}
+
+    async def _supersede_identity(self, user_id: str, occ: str, tenant: str) -> None:
+        """改名时让旧的 identity.name 失效（不删——记忆的既有口径是时序 supersede）。"""
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE memory_item SET superseded_by='renamed' "
+                    "WHERE user_id=$1 AND occupant_id=$2 AND predicate='identity.name' "
+                    "AND superseded_by IS NULL", user_id, occ)
+            return
+        for v in self._mem.values():
+            if (v["user_id"] == user_id and v["occupant_id"] == occ
+                    and v.get("predicate") == "identity.name" and not v.get("superseded_by")):
+                v["superseded_by"] = "renamed"
 
     async def identify_speaker(self, user_id: str, probe: list[float], *,
                                model: str = "", tenant_id: str = "default") -> dict:

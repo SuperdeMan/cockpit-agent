@@ -1218,6 +1218,24 @@ export async function enrollVoiceprint(
   }
 }
 
+/**
+ * 「试一试」：录一小段问后端「这是谁」。**这是用户验证声纹是否真的生效的唯一直接手段**——
+ * 没有它，用户只能去对话框问一句，失败了还不知道是哪一环出的问题。
+ * 走与注册相同的 webm→服务端转码路径（识别主链路用的是 HMI 侧现成的 16k PCM 帧，不经转码）。
+ */
+export async function identifySpeaker(
+  apiBase: string, userId: string, clip: Blob, mime = 'webm',
+): Promise<{ occupant_id: string; display_name?: string; decision?: string; score?: number }> {
+  try {
+    const r = await fetch(
+      `${apiBase}/api/voiceprint/identify?user_id=${encodeURIComponent(userId)}&format=${mime}`,
+      { method: 'POST', body: clip })
+    return await r.json()
+  } catch {
+    return { occupant_id: 'primary', decision: 'error' }
+  }
+}
+
 /** 删除乘员。purgeMemory 默认真——「删掉小雨」的预期是「忘掉这个人」。 */
 export async function deleteVoiceprint(
   apiBase: string, userId: string, occupantId: string, purgeMemory = true,
