@@ -72,3 +72,17 @@ src/
 npx tsc --noEmit -p tsconfig.json   # 类型检查
 npx vite build                      # 生产构建
 ```
+
+
+## 声纹与视觉（M4 P4）
+
+- `voiceprintIdentifier.mjs`：唤醒后首句**边说边识别**（累计 1.5s 有效语音即发请求，
+  此刻用户还在说；send 前软等 ≤150ms，超时就用当前值——**绝不为了认人拖慢首字**）。
+  **一次唤醒锁一次**：续问窗内不重识，回 ARMED/IDLE 才解锁。识别不到恒 `primary`。
+  纯逻辑 + 依赖注入，13 个 node 测试；**voiceLoop 一字未改**（用 `onState` 既有的第二参
+  拿 FSM 态，不给它加回调——同 S2S 期的纪律）。
+- `visionFrame.mjs`：`needsFrame(text)` 端侧触发词判定（与 `agents/vision/manifest.yaml`
+  的 route_hints **同口径，两侧同步改**）+ `captureFrame()` 抓一帧上传换 `frame_id`。
+  **默认一帧都不采**，命中触发词才抓；抓完立刻关摄像头；任何失败返回空串
+  （由 vision Agent 诚实说「没拿到画面」，不在这里弹错打断对话）。
+- 设置页新增「乘员与声纹」（注册 3 段 / 改名 / 删除）与「看一看」两组，**均默认关**。

@@ -56,6 +56,9 @@ HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 H
 - `GET /api/asr/stream`（**WebSocket**）流式识别上屏 + `GET /api/asr/stream/info` 引擎能力探测（见下节）。
 - `GET /api/tts/stream`（**WebSocket**）服务端流式 TTS + `GET /api/tts/stream/info` 引擎+音色+可用性探测（见下节）。
 - `GET /api/s2s`（**WebSocket**）端到端语音会话 + `GET /api/s2s/info` 能力探测（见下节）。
+- `POST /api/voiceprint/identify|enroll` / `GET /api/voiceprint/info` / `DELETE /api/voiceprint/{occ}`
+  声纹面（M4 P4，见下节）。
+- `POST /api/vision/frame` / `GET /api/vision/info` 视觉单帧面（M4 P4，见下节）。
 - `GET /api/llm/providers` 列出已装配的 LLM 厂商+模型+可用性+当前 active+**health 被动健康块**（供 HMI 设置页两级选择与健康点）；`POST /api/llm/provider` `{provider,model?}` 全局切换 active（**持久化 Redis**）；`POST /api/llm/probe` `{provider?}` 按需体检指定厂商（1 条小请求回 ok/latency 并记入 health）。
 - `GET /api/memory/session` / `GET /api/memory/context` 只读记忆（转发 memory gRPC，供 HMI 记忆视图）。
 - ASR/TTS Provider 同样在无 `LLM_API_KEY` 时走 mock。
@@ -120,3 +123,40 @@ realtime 会话 → 回转写/回答增量/PCM 音频（24kHz）/turn 生命周�
 - 将 `security/` 内容审核/注入防护钩子接入统一网关请求链。
 - proto 已预留 `tools/tool_calls`，Provider 的原生工具调用透传尚未实现；当前确定性工具
   由 Cloud Planner 的 `ToolRegistry` 调度。
+
+
+## 声纹（`speaker_embed.py`，M4 P4）
+
+设计见 `docs/design/2026-07-25-m4-p4-voiceprint-vision-rfc.md`，契约登记 `docs/conventions.md` §9.11。
+
+**这一侧只做「音频→192 维向量」，不持有任何模板**——模板存储与比对在 memory 服务
+（生物特征扩散到无状态服务就删不干净，而 GDPR 硬删级联是已立的红线）。
+
+三档决议（对齐 §9.4，启动期输出 `provider[voiceprint]=...` 一行）：
+
+| 档 | 触发 | 行为 |
+|---|---|---|
+| `campplus` | 模型文件在且 sherpa-onnx 可导入 | 真实推理（CAM++ 192 维） |
+| `mock` | 显式 `VOICEPRINT_PROVIDER=mock` | 确定性伪向量（离线单测/CI）；严格栈 fail-fast |
+| `disabled` | 模型/依赖缺失 | **整面诚实禁用**，`occupant_id` 恒 primary = 逐字回落 P4 之前 |
+
+模型 28MB 且 gitignore：`bash scripts/fetch-voice-models.sh voiceprint-campplus`
+（本机实测 GitHub 约 25KB/s、要十几分钟，脚本支持 `curl -C -` 续传，**可重跑**）。
+**拉不到不阻塞构建**——`models/voiceprint/.gitkeep` 保证目录存在，Dockerfile 的 `COPY models` 照常。
+
+> 为什么模块叫 `speaker_embed` 而不是 `voiceprint`：`memory/voiceprint.py` 是模板与判定层，
+> 两边同名会在跑全量单测时互相劫持 `sys.modules`（本仓库在 providers 通用包名上有前科）。
+
+## 视觉单帧（`vision_frames.py`，M4 P4）
+
+契约登记 `docs/conventions.md` §9.12。HMI 命中视觉触发词时抓一帧 POST 到 `/api/vision/frame`，
+拿一个短 TTL 的 `frame_id`；**图像本体只在本进程内存 LRU 里活 120s，不落 Redis 不落盘**
+（Redis 会持久化到磁盘=把车内外图像写进存储）。
+
+`Complete/CompleteStream` 见到 `meta.vision_frame_id` 时把**最后一条 user 消息**升级为
+OpenAI 多模态 content 数组；**帧过期/不存在则显式 `FAILED_PRECONDITION`**，绝不静默只发文本
+——那样 VL 模型会答「看不清，画面有点模糊」，**它在假装看到了一张模糊的图**。
+
+看图走 `llm_runtime` 的**独立 `qwen-vl` 档**（`internal: True`，不进 HMI「AI 大脑」切换列表），
+调用方用请求级 pin 指定。**不要指向聊天大脑**：实测 `qwen3.7-max` 对多模态 content 直接 400，
+而档位解析对不认识的模型是**静默回落 primary**——指错了不会报错，只会看不见图。

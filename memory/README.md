@@ -34,3 +34,22 @@
 - 单点单测：`tests/test_pg_store.py`、`test_store.py`、`test_extract.py`、`test_server_rpc.py`、`test_routine.py`（内存兜底，不连 PG/Redis）。
 - 复杂场景集：`tests/test_scenarios.py`（8 例：偏好演化/多乘员隔离/隐私三档/过期/routine/抽取纵深/合规/召回契约）。
 - 全栈断言 E2E：`../test/e2e_memory.py`（6 链路，连真栈，自清理可重入）。
+
+
+## 声纹模板（`voiceprint.py` + `voiceprint` 表，M4 P4）
+
+契约登记 `docs/conventions.md` §9.11。**存的是向量不是音频**——原始音频在 llm-gateway
+提完 embedding 即弃，永不跨服务、永不落库。
+
+- `voiceprint.py` 是**纯计算层**（归一/余弦/模板合成/三态判定/occupant_id 分配），
+  同 `weighting.py`/`relation.py`，可脱离 PG 单测。
+- **判定四态**：`accept` / `below_threshold` / `ambiguous`（top1-top2 < margin）/ `no_templates`，
+  **accept 之外一律回 `primary`**——不是 guest 也不是 unknown。primary 是存量语义，降到它
+  等于逐字回落到 P4 之前；造新身份等于凭空多一个空记忆空间，用户体感是「车失忆了」。
+- **首个注册者拿 `primary`**：存量记忆全在它名下，若首个注册者拿 occ-1，他自己过去说过的
+  一切当场失联。堵在分配这一步，不做事后迁移。
+- **红线**：`ForgetUser` 必须同事务级联删本表（声纹是生物特征，留着比留关系边更严重）；
+  删单个乘员默认连带删其记忆（「忘掉这个人」），但 **`primary` 永不 purge**——
+  删单个乘员不该有清空全车的爆炸半径，要清空走 `ForgetUser`。
+- 阈值由 `test/e2e_voiceprint_probe.py` 实测钉死。实测结论：**真正起作用的控制量是 margin
+  不是 threshold**（thr∈[0.45,0.70] 端到端结果完全相同）。
