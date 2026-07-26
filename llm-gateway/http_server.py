@@ -743,11 +743,11 @@ def create_http_app() -> web.Application:
         `VISION_PROVIDER`/`VISION_MODEL`，本端点只回答「那个型号配没配、可不可用」。
         """
         import vision_frames
-        prov = os.getenv("VISION_PROVIDER", "qwen-vl").strip()
+        prov = (os.getenv("VISION_PROVIDER") or "").strip() or "qwen-vl"
         ok = get_runtime().provider_available(prov)
         return web.json_response({
             "enabled": ok, "provider": prov,
-            "model": os.getenv("VISION_MODEL", "qwen3-vl-plus"),
+            "model": (os.getenv("VISION_MODEL") or "").strip() or "qwen3-vl-plus",
             "reason": "" if ok else f"{prov} 未配置 key",
             "cached_frames": len(vision_frames.store()), "ttl_s": vision_frames.ttl_s(),
         })

@@ -43,6 +43,26 @@ gen/
 
 ---
 
+## 2.5 本地推理模型（可选，缺了不阻塞）
+
+两处**本地跑的模型**是 gitignore 的二进制，需要单独拉一次；**拉不到不影响其余功能**，
+对应能力会自动诚实禁用（不是报错，是"这个能力没上线"）：
+
+```bash
+bash scripts/fetch-voice-models.sh                      # 全部
+bash scripts/fetch-voice-models.sh voiceprint-campplus  # 只拉声纹（28MB）
+```
+
+| 模型 | 落点 | 缺失时 |
+|---|---|---|
+| KWS 唤醒词 + silero VAD | `hmi/public/models/` | HMI 免唤醒/唤醒词不可用，push-to-talk 照常 |
+| 声纹 CAM++ ONNX（28MB） | `models/voiceprint/` | 网关决议 `provider[voiceprint]=disabled`，HMI 隐藏「乘员与声纹」入口，`occupant_id` 恒 primary |
+
+> 声纹模型只有 sherpa-onnx 的 GitHub release 有 ONNX 版（ModelScope 官方仓库只有 PyTorch 权重）。
+> 本机实测约 25KB/s、28MB 要十几分钟——**脚本支持 `curl -C -` 续传，中断了直接重跑**。
+> `models/voiceprint/.gitkeep` 必须在版本库里：`llm-gateway/Dockerfile` 有 `COPY models`，
+> 目录不存在会直接构建失败。
+
 ## 3. 整栈运行
 
 ```bash
@@ -165,6 +185,24 @@ dashboard 四视图见 `docs/conventions.md` §8 与 `dashboard/README.md`；真
 | 某容器起不来报 `ports are not available … forbidden by its access permissions`（Windows）| Windows **winnat 动态保留区间**吞了该宿主端口（`netsh int ipv4 show excludedportrange protocol=tcp` 查；实测 50063-50162 覆盖了 `edge-orchestrator` 的 50070）。**容器一直在跑时不会暴露**——一旦停掉，端口立刻被区间吸收，就再也起不来。<br>① 治本要管理员：`net stop winnat` → `docker compose up -d` → `net start winnat`（**改系统服务状态，先问机主**）。<br>② 无管理员的应急（有先例、已验证）：**临时去掉宿主端口发布**，容器间调用走 docker DNS 不受影响——先确认宿主侧无脚本依赖该端口，然后叠一个不进仓库的 override：<br>`services: {<svc>: {ports: !reset []}}` + `docker compose -f compose.yaml -f <override> up -d --no-deps <svc>`。<br>**`ports: []` 不管用**——compose 的 ports 是追加语义，必须 `!reset`（需 compose ≥2.24）。<br>③ 连带提醒：`docker compose up --build <svc>` 会顺着 `depends_on` 重启依赖服务，可能把本来健在的容器停掉后起不来；只想重建一个服务时加 `--no-deps`。|
 
 ---
+
+### 改了 `.env` 却不生效？两道关都要过
+
+1. **compose 必须显式列名**。根 `compose.yaml` 的 `env_file: .env` 只作用于**变量插值**
+   （让 compose 文件里的 `${VAR}` 取到值），**不会把 `.env` 自动注入容器**。
+   服务的 `environment:` 块里没有那一行，改 `.env` 就是白改。
+   ```bash
+   docker exec car-agent-<svc>-1 sh -c 'echo $YOUR_VAR'   # 空 = 没接线
+   ```
+2. **代码要把空串当「未设置」**。`${VAR:-}` 显式列名注入的是**空字符串**，
+   而 `os.getenv(name, default)` 只在「键不存在」时给默认值——键存在但为空就返回空串，
+   默认值形同虚设。写法照 `orchestrator/cloud/loop.py::_env_int`：
+   ```python
+   (os.getenv(name) or "").strip() or default      # 对
+   os.getenv(name, default)                        # 错（空串会漏过去）
+   ```
+   > 2026-07-26 实例：给声纹旋钮接线 compose 后 `VOICEPRINT_MODEL_PATH` 变成空串，
+   > `os.path.exists("")` 为假 → 整个声纹面 disabled。**接线本身把功能关掉了。**
 
 ## 7. 提交前自检
 

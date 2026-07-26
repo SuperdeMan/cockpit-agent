@@ -33,8 +33,16 @@ _DEFAULT_MODEL_PATH = "/app/models/voiceprint/campplus_zh-cn_16k-common.onnx"
 _SAMPLE_RATE = 16000
 
 
+# **空串按「未设置」处理**（仓库既有惯例，见 `loop.py::_env_int`）：compose 用
+# `${VAR:-}` 显式列名时注入的是**空字符串**，而 `os.getenv(name, default)` 只在
+# 「键不存在」时给默认值——键存在但为空就返回空串，默认值形同虚设。
+# 2026-07-26 洁癖盘点接线 compose 时当场踩到：模型路径被置空 → 声纹面直接 disabled。
+def _env(name: str, default: str = "") -> str:
+    return (os.getenv(name) or "").strip() or default
+
+
 def min_speech_ms() -> int:
-    return int(os.getenv("VOICEPRINT_MIN_SPEECH_MS", str(DEFAULT_MIN_SPEECH_MS)))
+    return int(_env("VOICEPRINT_MIN_SPEECH_MS", str(DEFAULT_MIN_SPEECH_MS)))
 
 
 def pcm_duration_ms(pcm: bytes) -> int:
@@ -70,7 +78,7 @@ class CampPlusProvider(BaseVoiceprintProvider):
         self._extractor = sherpa_onnx.SpeakerEmbeddingExtractor(
             sherpa_onnx.SpeakerEmbeddingExtractorConfig(
                 model=model_path,
-                num_threads=int(os.getenv("VOICEPRINT_THREADS", "1")),
+                num_threads=int(_env("VOICEPRINT_THREADS", "1")),
                 provider="cpu"))
         self.dim = int(self._extractor.dim)
 
@@ -122,7 +130,7 @@ def resolve_provider() -> BaseVoiceprintProvider | None:
     if _resolved:
         return _provider
     _resolved = True
-    want = os.getenv("VOICEPRINT_PROVIDER", "auto").strip().lower()
+    want = _env("VOICEPRINT_PROVIDER", "auto").lower()
 
     if want in ("off", "disabled"):
         _disabled_reason = "disabled by VOICEPRINT_PROVIDER"
@@ -137,7 +145,7 @@ def resolve_provider() -> BaseVoiceprintProvider | None:
         print("provider[voiceprint]=mock", flush=True)
         return _provider
 
-    path = os.getenv("VOICEPRINT_MODEL_PATH", _DEFAULT_MODEL_PATH)
+    path = _env("VOICEPRINT_MODEL_PATH", _DEFAULT_MODEL_PATH)
     if not os.path.exists(path):
         # **不是 fail-fast**：模型缺失属「未配置真实源」，与 ASR/TTS 的 off 档同口径。
         # 显式要求真实源的场合由 REQUIRE_REAL_PROVIDERS 那一闸管（见 health.py）。

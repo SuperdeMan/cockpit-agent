@@ -81,6 +81,8 @@ python test/e2e_obs.py                     # 断言型：badcase 排查观测链
 python test/e2e_voice_loop.py              # 断言型：语音回路后端契约（/api/asr/stream PCM 直传 partial→final→done + vad_silence_ms 透传 + TTS round-trip）——浏览器声学层 CI 测不了，留真麦
 python test/e2e_tts_stream.py              # 断言型：R4.2 服务端流式 TTS（cosyvoice 首帧延迟 G1 门槛 + cancel 收尾）——需 DashScope key
 python test/e2e_s2s.py                     # 断言型：M4 S2S 全双工最小闭环（自答闭环/多轮上下文/escalate 逃逸零音频/①听感打断零残包/③工具调用中打断不播报/unsupported 回落/回灌 memory+obs 且逃逸轮不重复写）——需 DashScope key（2026-07-25）
+python test/e2e_voiceprint.py              # 断言型：M4 P4 声纹多用户（**M4 最后一条 DoD「多用户记忆隔离旅程」**）——首个注册者绑 primary 且存量记忆一条不少/识别/太短与静音诚实降级/B 的偏好主驾查不到/「你知道我是谁」叫得出名字/换乘员后危险动作照样确认/删除即忘掉这个人。声纹模型缺失自动 SKIP（2026-07-26）
+python test/e2e_vision.py                  # 断言型：M4 P4 视觉入口——纯色图进真模型出真颜色（正确答案唯一可断言，比拿风景照让它描述强）/没帧与帧过期一律诚实降级不编造/响应体零图像字节。需 DashScope key（2026-07-26）
 python test/e2e_s2s_resilience.py          # 断言型：M4 S2S 韧性（宿主内 WS 代理注入断连→重连+摘要重注入/IN_TURN 断连诚实收束/持续不可达→DEGRADED 回落）——需 DashScope key；不改 .env 不给生产协议加后门（2026-07-25）
 python test/e2e_degrade.py                 # 断言型：架构 §3.3 降级矩阵四行（单 Agent 故障/LLM 超时/云 Planner 故障/断网）——docker 级故障注入 + 严格 try/finally 恢复，务必放在其它 e2e 脚本之后跑
 python test/e2e_auth.py                    # 断言型：会话鉴权（需 AUTH_REQUIRED=true + token，非默认栈配置）
@@ -89,6 +91,7 @@ python test/e2e_journeys.py                # 旅程级（L3）：跨 Agent 自�
 python -m pytest test/e2e_real_providers.py -q -s   # 无需 docker：真实三方 provider 冒烟（按 key 自动 skip）
 python test/e2e_strict_stack.py            # 断言型：数据真实性——严格栈冒烟 + mock 泄漏探针（三问外源卡 _prov 全 real；active=mock 自动 SKIP，属 live 车道）（2026-07-17）
 python test/e2e_planner_toolcall.py        # 协议探针：各 provider tool-calling 真实行为矩阵（M1a submit_plan；named tool_choice/arguments 合法性/finish_reason，--providers 指定逐家 pin）（2026-07-24）
+python test/e2e_voiceprint_probe.py        # 模型探针：M4 P4 声纹可分性——同人/异人余弦分布、混淆对、端到端识别率与**阈值扫描**、最短有效语音、分布外音频。**产出是三个阈值的实测值**（改阈值前必重跑）；需宿主 pip install sherpa-onnx（2026-07-26）
 python test/e2e_s2s_probe.py               # 协议探针：M4 S2S provider（omni realtime）行为矩阵——tools 支持度/escalate 分流/cancel 残包/回注不双播/多轮上下文/首音频时延；--case 单跑、--model 换厂商验证「锁协议不锁厂商」（2026-07-25）
 ```
 

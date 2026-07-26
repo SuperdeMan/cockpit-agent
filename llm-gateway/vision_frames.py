@@ -22,16 +22,24 @@ DEFAULT_MAX_FRAMES = 16
 DEFAULT_MAX_BYTES = 4 * 1024 * 1024
 
 
+# **空串按「未设置」处理**（仓库既有惯例，见 `loop.py::_env_int`）：compose 用
+# `${VAR:-}` 显式列名时注入的是**空字符串**，而 `os.getenv(name, default)` 只在
+# 「键不存在」时给默认值——键存在但为空就返回空串，默认值形同虚设。
+# 2026-07-26 洁癖盘点接线 compose 时当场踩到：模型路径被置空 → 声纹面直接 disabled。
+def _env(name: str, default: str) -> str:
+    return (os.getenv(name) or "").strip() or default
+
+
 def ttl_s() -> int:
-    return int(os.getenv("VISION_FRAME_TTL_S", str(DEFAULT_TTL_S)))
+    return int(_env("VISION_FRAME_TTL_S", str(DEFAULT_TTL_S)))
 
 
 def max_frames() -> int:
-    return int(os.getenv("VISION_FRAME_MAX", str(DEFAULT_MAX_FRAMES)))
+    return int(_env("VISION_FRAME_MAX", str(DEFAULT_MAX_FRAMES)))
 
 
 def max_bytes() -> int:
-    return int(os.getenv("VISION_FRAME_MAX_BYTES", str(DEFAULT_MAX_BYTES)))
+    return int(_env("VISION_FRAME_MAX_BYTES", str(DEFAULT_MAX_BYTES)))
 
 
 class FrameStore:

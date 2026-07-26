@@ -32,16 +32,24 @@ DEFAULT_MIN_CONSISTENCY = 0.50
 _OCC_RE = re.compile(r"^occ-(\d+)$")
 
 
+# **空串按「未设置」处理**（仓库既有惯例，见 `loop.py::_env_int`）：compose 用
+# `${VAR:-}` 显式列名时注入的是**空字符串**，而 `os.getenv(name, default)` 只在
+# 「键不存在」时给默认值——键存在但为空就返回空串，默认值形同虚设。
+# 2026-07-26 洁癖盘点接线 compose 时当场踩到：模型路径被置空 → 声纹面直接 disabled。
+def _env(name: str, default: str) -> str:
+    return (os.getenv(name) or "").strip() or default
+
+
 def threshold() -> float:
-    return float(os.getenv("VOICEPRINT_THRESHOLD", str(DEFAULT_THRESHOLD)))
+    return float(_env("VOICEPRINT_THRESHOLD", str(DEFAULT_THRESHOLD)))
 
 
 def margin() -> float:
-    return float(os.getenv("VOICEPRINT_MARGIN", str(DEFAULT_MARGIN)))
+    return float(_env("VOICEPRINT_MARGIN", str(DEFAULT_MARGIN)))
 
 
 def min_consistency() -> float:
-    return float(os.getenv("VOICEPRINT_MIN_CONSISTENCY", str(DEFAULT_MIN_CONSISTENCY)))
+    return float(_env("VOICEPRINT_MIN_CONSISTENCY", str(DEFAULT_MIN_CONSISTENCY)))
 
 
 def l2_normalize(vec) -> list[float]:

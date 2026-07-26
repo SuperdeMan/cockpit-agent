@@ -47,8 +47,9 @@ class VisionAgent(BaseAgent):
                 speech="我这会儿没拿到画面。你对着要问的东西再说一次「那是什么」，我就能看了。",
                 data={"_prov": {"mode": "unavailable", "reason": "no_frame"}})
 
-        provider = os.getenv("VISION_PROVIDER", "qwen-vl")
-        model = os.getenv("VISION_MODEL", "")
+        # 空串按未设置处理：compose 的 `${VAR:-}` 注入的是空字符串，不是「键不存在」。
+        provider = (os.getenv("VISION_PROVIDER") or "").strip() or "qwen-vl"
+        model = (os.getenv("VISION_MODEL") or "").strip()
         try:
             answer = await self.llm.complete(
                 [{"role": "system", "content": _SYSTEM},

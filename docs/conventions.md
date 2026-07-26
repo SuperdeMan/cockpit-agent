@@ -620,6 +620,9 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | **红线：不作鉴权因子** | `occupant_id` 只进记忆域（recall/remember/AppendTurn/relation）。**不得进** granted_scopes/权限判定/VAL/require_confirm 合成/payment。源码级断言 `orchestrator/cloud/tests/test_voiceprint_not_auth.py`。理由不止「声纹可被录音重放」——身份识别与授权是两件事，识别错了只该损失个性化 |
 | GDPR | `ForgetUser` 同事务级联删 `voiceprint`（同 `memory_relation` 先例）。删单个乘员默认连带删其记忆（「忘掉这个人」），**但 primary 永不 purge**——删单个乘员不该有清空全车的爆炸半径 |
 | 透传管道 | HMI `buildMeta.occupant_id` → edge-gateway（原样透传）→ `build_context` → `PlanContext.occupant_id` → `prefs` → `ExecuteRequest.meta` → `_sdk.Context.occupant_id`。**memory 侧零改动**——recall 本来就是 occupant 精确过滤，缺的只是这个参数 |
+| **名字有两个落点，缺一不可** | ①`identity.name` 记忆（注册时由 `EnrollVoiceprint` 写入，改名走 supersede，删乘员时随其记忆一起没）——**只写 `voiceprint` 表答不出「你知道我是谁」，那张表除了比对没有任何消费方会读**；写进记忆才获得召回/导出/GDPR 删除/记忆面板可见性。②`occupant_name` meta 键（沿 occupant_id 同一条管道下发，chitchat system 注入）——**身份问句是用户验证声纹是否生效的第一句话，必须确定性答得上，不能靠语义召回碰运气**。两者同样不参与权限判定 |
+| **识别取值必须同步** | HMI 侧 `occupantId` 是同步 getter，**刻意没有「等一下识别结果」的接口**。曾加过 150ms 软等待，它把 `voiceLoop._finalizeSend`（先 onSend 再进 THINKING）的 `onSend` 变成异步，破坏了「真实用户气泡由 send 同步接管」的不变量→气泡与回答错位。而它几乎赚不到东西：识别在说到 1.5s 时发出，端点还要再等一个静音尾（默认 800ms）。node 测试有回归护栏挡它被加回来 |
+| 音频格式 | 识别主链路走 HMI 现成的 16k mono s16le PCM **不转码**（唤醒窗内要短平快）；设置页的注册与「试一试」用 MediaRecorder 的 webm，经 `format=webm` 走既有 ffmpeg 转码（低频操作） |
 | 隔离边界（v1） | 只做硬隔离，**不做跨乘员共享**。`memory_level` 现状只写不读且恒为 `user`，做读侧共享=全部共享=隔离归零；真共享层要改抽取分类，是独立一期 |
 | 降级 | 模型缺失/依赖缺失 → `provider[voiceprint]=disabled`，`/api/voiceprint/*` 返回 `enabled:false`，HMI 隐藏入口，occupant_id 恒 primary。**这一档是常态之一不是异常**（模型 28MB 且下载不稳） |
 

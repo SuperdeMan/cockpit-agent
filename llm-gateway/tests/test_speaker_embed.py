@@ -165,3 +165,32 @@ def test_audio_is_never_persisted_or_logged():
     block = src[start:end]
     for lit in ("open(", "write(", "b64encode(pcm", "base64.b64encode"):
         assert lit not in block, f"声纹端点出现 {lit!r}——原始音频不得落盘/外传"
+
+
+# ── compose `${VAR:-}` 空串（2026-07-26 洁癖盘点当场踩到）─────────────────────
+
+def test_empty_env_is_treated_as_unset(monkeypatch):
+    """**空字符串必须按「未设置」处理**。
+
+    根 compose 的 `env_file` 只作用于变量插值，不会把 `.env` 自动注入容器——旋钮想生效
+    必须在服务的 `environment:` 里显式列名。而 `${VAR:-}` 列名注入的是**空字符串**，
+    `os.getenv(name, default)` 只在「键不存在」时给默认值，键存在但为空就返回空串。
+    首次接线时就是这样把 `VOICEPRINT_MODEL_PATH` 置空 → `os.path.exists("")` 为假
+    → 声纹面直接 disabled。仓库既有惯例见 `orchestrator/cloud/loop.py::_env_int`。
+    """
+    for name, getter, expect in (
+        ("VOICEPRINT_MIN_SPEECH_MS", V.min_speech_ms, V.DEFAULT_MIN_SPEECH_MS),
+    ):
+        monkeypatch.setenv(name, "")
+        assert getter() == expect, f"{name} 空串没有回落默认值"
+        monkeypatch.setenv(name, "   ")
+        assert getter() == expect, f"{name} 全空白没有回落默认值"
+
+
+def test_empty_model_path_env_falls_back_to_default(monkeypatch):
+    """空的 VOICEPRINT_MODEL_PATH 必须回落内置路径，而不是把声纹面整个关掉。"""
+    monkeypatch.setenv("VOICEPRINT_MODEL_PATH", "")
+    monkeypatch.setenv("VOICEPRINT_PROVIDER", "")     # 空串 → auto
+    V.resolve_provider()
+    # 本机无模型时 reason 应指向**默认路径**（说明回落生效），而不是空路径
+    assert V.disabled_reason() == "" or V._DEFAULT_MODEL_PATH in V.disabled_reason()

@@ -187,6 +187,30 @@ services:
       DASHSCOPE_ASR_INFERENCE_WS_URL: ${DASHSCOPE_ASR_INFERENCE_WS_URL:-wss://dashscope.aliyuncs.com/api-ws/v1/inference}
       ASR_STREAM_MODEL: ${ASR_STREAM_MODEL:-qwen3-asr-flash-realtime-2026-02-10}
       ASR_MODEL: ${ASR_MODEL:-mimo-v2.5-asr}
+      # M4 S2S / P4 声纹 / P4 视觉的运行期旋钮。**必须在这里显式列名**——
+      # 根 compose 的 `env_file` 只作用于变量插值，不会把 .env 自动注入容器；
+      # 不列名的话 `.env.example` 里写的「S2S_PROVIDER=off 一键停用」根本不生效
+      # （2026-07-26 洁癖盘点发现的上批欠账）。留空一律回落代码内默认。
+      S2S_PROVIDER: ${S2S_PROVIDER:-}
+      S2S_MODEL: ${S2S_MODEL:-}
+      S2S_API_KEY: ${S2S_API_KEY:-}
+      S2S_WS_URL: ${S2S_WS_URL:-}
+      S2S_VAD_SILENCE_MS: ${S2S_VAD_SILENCE_MS:-}
+      S2S_VAD_THRESHOLD: ${S2S_VAD_THRESHOLD:-}
+      S2S_SESSION_MAX_TURNS: ${S2S_SESSION_MAX_TURNS:-}
+      S2S_TURN_TIMEOUT_S: ${S2S_TURN_TIMEOUT_S:-}
+      S2S_ESCALATE_DESC: ${S2S_ESCALATE_DESC:-}
+      S2S_PERSONA: ${S2S_PERSONA:-}
+      VOICEPRINT_PROVIDER: ${VOICEPRINT_PROVIDER:-}
+      VOICEPRINT_MODEL_PATH: ${VOICEPRINT_MODEL_PATH:-}
+      VOICEPRINT_MIN_SPEECH_MS: ${VOICEPRINT_MIN_SPEECH_MS:-}
+      VOICEPRINT_THREADS: ${VOICEPRINT_THREADS:-}
+      VISION_PROVIDER: ${VISION_PROVIDER:-}
+      VISION_MODEL: ${VISION_MODEL:-}
+      VISION_MODEL_FALLBACK: ${VISION_MODEL_FALLBACK:-}
+      VISION_FRAME_TTL_S: ${VISION_FRAME_TTL_S:-}
+      VISION_FRAME_MAX: ${VISION_FRAME_MAX:-}
+      VISION_FRAME_MAX_BYTES: ${VISION_FRAME_MAX_BYTES:-}
       AUDIO_HTTP_PORT: "50059"
       # 批处理 ASR/TTS 引擎（/api/asr、/api/tts + gRPC 面，启动时装配）：auto=LLM_PROVIDER 为
       # MiMo 系→MiMo，否则桥接对应流式引擎（不用 MiMo 时批处理不再哑成 mock）。
@@ -222,6 +246,13 @@ services:
       # 合成会话（eval/e2e/badcase 重放/探针）按 session_id 前缀跳过 LLM 抽取巩固：
       # 不烧 token、不污染真实用户画像；记忆管线自测用 memtest- 前缀（不在此列）
       MEMORY_EXTRACT_SKIP_PREFIXES: ${MEMORY_EXTRACT_SKIP_PREFIXES:-eval-,e2e-,ctxe2e-,central-,review-,nightly-,replay-,probe-,smoke-}
+      # M2 记忆图谱：偏好加权（off=逐字回加权前）
+      MEMORY_WEIGHTING: ${MEMORY_WEIGHTING:-on}
+      # M4 P4 声纹判定阈值（判定在 memory 侧，模板在这儿）。**留空一律用代码内默认**——
+      # 那些默认值是 test/e2e_voiceprint_probe.py 实测钉死的，改之前先重跑探针。
+      VOICEPRINT_THRESHOLD: ${VOICEPRINT_THRESHOLD:-}
+      VOICEPRINT_MARGIN: ${VOICEPRINT_MARGIN:-}
+      VOICEPRINT_MIN_CONSISTENCY: ${VOICEPRINT_MIN_CONSISTENCY:-}
     ports: ["50053:50053"]
     depends_on:
       redis:
