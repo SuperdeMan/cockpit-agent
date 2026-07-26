@@ -239,6 +239,7 @@
 | `API_FOOTBALL_KEY` / `API_FOOTBALL_HOST` | api-football 赛事比分/赛程（info.sports）| 否（无 key 走 mock）|
 | `TUSHARE_TOKEN` | Tushare 股票行情（info.stock）| 否（无 key 走 mock）|
 | `MEMORY_WEIGHTING` | 偏好加权与衰减（M2 记忆图谱 P0）：`on`/默认=巩固期算 weight、召回按有效强度排序（重复出现的偏好压过只说过一次的）；`off`=逐字回加权前（weight 恒 0 → 召回用 confidence）| 否（默认 `on`）|
+| `MEMORY_SESSION_TTL_S` | 会话轮次原文（Redis `sess:*`）TTL 秒数（2026-07-26 验收补口：对话原文是个人数据，无 TTL=永久留存；ForgetUser 全量删同时级联清会话原文）| 否（默认 `604800`=7 天）|
 | `PLANNER_EMOTION` | 会话级情绪信号（M2 记忆图谱 P2）：`on`/默认=planner 同轮标注 happy/tired/urgent/frustrated（**prompt-only 不进 tool schema**），随 final 透传 HMI 选 TTS 语气；`off`=不拼该 prompt 段 | 否（默认 `on`）|
 | `LEDGER_ORPHAN_TTL_S` | Task Ledger（§9.6）孤儿判定阈值秒：active 态超此时长无心跳即惰性改判 `orphaned`（≈9 个心跳的余量）| 否（默认 90）|
 | `RESEARCH_TASK_DEADLINE_S` / `_LLM_MAX` / `_EXT_MAX` | 后台深调研任务预算（Background 守卫①③）：截止时长 / LLM 调用次数上限 / 外部检索次数上限；超限由心跳就地截停并主动告知 | 否（默认 900 / 6 / 40）|
@@ -547,7 +548,7 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | 信封 | 今天的 payload 原样 + 全可选治理键：`priority` / `conditions` / `dedup_key` / `ttl_ms` |
 | `priority` 四档 | `critical` 安全播报（全豁免、窗口 0 立即发）；`user_contract` 用户显式约定（免打扰/负荷/频控豁免，仍参与合并）；`advisory` 建议类（全套治理）；`ambient` 环境类（全套治理）。**缺省/不认识 = `advisory`**——不认识不等于豁免 |
 | `conditions` | 投递时刻的**再证实**，三态求值：`unsat` 与 **`unknown` 一律丢**。生产方声称的前提无法证实就不替它说；顺带解决「产出时成立、延后后已不成立」的陈旧建议 |
-| `dedup_key` | 去重窗（默认 600s）内同键只说一次，**跨生产方生效**（各自进程内节流做不到的那一半）。缺省 = `agent_id|type`。治理器**接手即打标**（不是投递时）——语义是「同一件事窗口内只说一次」 |
+| `dedup_key` | 去重窗（默认 600s）内同键只说一次，**跨生产方生效**（各自进程内节流做不到的那一半）。缺省 = `agent_id|type`。治理器**接手即打标**（不是投递时）——语义是「同一件事窗口内只说一次」。**「同一件事」的粒度是触发实例，不是条目**（2026-07-26 验收修正）：提醒 snooze 保留原条目 id，key 只含 id 会把「过 5 分钟再叫我」的第二次触发在窗内静默吞掉——生产方对「同一条目会合法地再次触发」的消息，key 必须拼入触发时刻（同次触发重投判重，跨次触发必不同；reminder 到点/到地两处已按此实现） |
 | `ttl_ms` | 被负荷/免打扰抑制时「攒着说」的上限；**缺省 0 = 现在说不了就算了**，不做无限期堆积 |
 | 驾驶负荷闸 | `speed_kmh >= PROACTIVE_HIGH_LOAD_SPEED` 判高负荷。**读不到车速 → 放行**（唯一故意背离「unknown 不打扰」处：镜像冷启动最长一个快照周期全空，用缺数据定罪等于把主动链路静默掐死一分钟） |
 | 单条输出 | **剥掉治理键后原样转发**——字节级兼容保证 |
@@ -588,7 +589,8 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | 项 | 契约 |
 |---|---|
 | 两端两个契约 | 对上=本侧事件协议（`llm-gateway/s2s/protocol.py`，HMI 只认这层，**永不随厂商变**）；对下=`BaseS2SProvider`（每厂商一实现）。换厂商只加 `provider.py` 的子类 |
-| 上行 | `session.start` / `audio`(+二进制 PCM 16k mono s16le) / **`audio_done`** / `barge_in` / `cancel_turn` / `escalated_result{turn_id,text}` / `session.end` |
+| 上行 | `session.start` / `audio`(+二进制 PCM 16k mono s16le) / **`audio_done`** / `barge_in` / `cancel_turn` / `escalated_result{turn_id,text}` / **`occupant{occupant_id,display_name}`** / `session.end` |
+| **`occupant` 帧（M4 P4 验收补口）** | 本唤醒窗说话人——声纹识别落地即发（HMI 侧），唤醒窗结束归位 `primary` 也发（防上一个人残留到下一窗）；ws 未 open 时并进 `session.start`。网关就地更新回灌器的 `occupant_id`，**自答轮的 AppendTurn 按它隔离**（不发则会话级静态快照恒 primary=乘员闲聊全进主驾记忆）。escalated/classic 轮走请求 meta，不经此帧。**身份是唤醒粒度，不是会话粒度** |
 | **`audio_done` 不能省** | 本侧 VAD 判到端点后必须发它请 provider 收尾。server VAD 靠**连续静音**判「说完了」，而 HMI 端点后即停推流——不发就是死锁（provider 等静音 ↔ HMI 等定稿才进 THINKING 才关收音），表现为 turn 永久悬挂、**用户说什么都没有回复**。端点判定权在本侧，与 classic 的 `onEndpoint → asr.stop()` 同构；静音尾长度由 `commit_audio()` 按 `silence_duration_ms` 放大，HMI 不碰 provider VAD 参数 |
 | 下行 | `turn.transcript{final}` / `turn.answer_delta` / `turn.audio_meta{sample_rate}`(+二进制 PCM) / `turn.end{reason,detail?}` / `turn.escalated{utterance}` / `session.state{ready\|reconnecting\|degraded}` / `unsupported` |
 | turn_id | **网关生成**（uuid4 前 16）。provider 的 response id 只在会话层对账，不透传上层——「provider session=可丢弃缓存」的协议面 |

@@ -248,6 +248,8 @@ services:
       MEMORY_EXTRACT_SKIP_PREFIXES: ${MEMORY_EXTRACT_SKIP_PREFIXES:-eval-,e2e-,ctxe2e-,central-,review-,nightly-,replay-,probe-,smoke-}
       # M2 记忆图谱：偏好加权（off=逐字回加权前）
       MEMORY_WEIGHTING: ${MEMORY_WEIGHTING:-on}
+      # 会话原文 TTL（验收补口）：留空用代码默认 7 天；ForgetUser 全量删级联清会话原文
+      MEMORY_SESSION_TTL_S: ${MEMORY_SESSION_TTL_S:-}
       # M4 P4 声纹判定阈值（判定在 memory 侧，模板在这儿）。**留空一律用代码内默认**——
       # 那些默认值是 test/e2e_voiceprint_probe.py 实测钉死的，改之前先重跑探针。
       VOICEPRINT_THRESHOLD: ${VOICEPRINT_THRESHOLD:-}
