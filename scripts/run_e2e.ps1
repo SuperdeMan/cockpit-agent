@@ -40,6 +40,8 @@ $steps = @(
     @{ Name = "e2e_s2s_resilience";         Cmd = { python test/e2e_s2s_resilience.py } }
     # M4 P4 声纹多用户（M4 最后一条 DoD）；模型缺失自动 SKIP
     @{ Name = "e2e_voiceprint";             Cmd = { python test/e2e_voiceprint.py } }
+    # M4 P4 视觉入口；无 DashScope key 自动 SKIP
+    @{ Name = "e2e_vision";                 Cmd = { python test/e2e_vision.py } }
     # 旅程级（L3）：回归级必须绿；目标级红灯是能力标尺不拦退出码（--strict-target 才拦）。
     @{ Name = "e2e_journeys";               Cmd = { python test/e2e_journeys.py } }
     @{ Name = "e2e_real_providers";         Cmd = { python -m pytest test/e2e_real_providers.py -q -s } }

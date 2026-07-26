@@ -204,6 +204,9 @@ class Clients:
         "current_lat": "location", "current_lng": "location",
         "current_accuracy_m": "location", "current_location_at": "location",
         "current_location_source": "location", "vehicle_battery": "vehicle_state",
+        # M4 P4：车外单帧的引用。只有 manifest 声明 context_scopes: [vision] 的 Agent 收得到
+        # ——图像引用属敏感上下文，不该随每轮广播给全部 Agent。
+        "vision_frame_id": "vision",
     }
 
     @classmethod

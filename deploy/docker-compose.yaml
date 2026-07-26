@@ -456,6 +456,21 @@ services:
       AGENT_PORT: "50072"
     depends_on: [registry, llm-gateway]
 
+  # M4 P4 视觉入口：「那是什么」单帧图片问答。图像不进对话链——只传 frame_id，
+  # 网关从内存帧库取图拼多模态请求（契约见 docs/conventions.md §9.12）。
+  vision-agent:
+    <<: *restart
+    build: { context: .., dockerfile: agents/vision/Dockerfile }
+    volumes: *certs-vol
+    environment:
+      <<: *python-env
+      AGENT_PORT: "50077"
+      # 看图必须打到 VL 档：聊天大脑（如 qwen3.7-max）对多模态 content 直接 400，
+      # 而档位解析对不认识的模型是静默回落——留空即用 llm_runtime 的 qwen-vl 档默认。
+      VISION_PROVIDER: ${VISION_PROVIDER:-qwen-vl}
+      VISION_MODEL: ${VISION_MODEL:-}
+    depends_on: [registry, llm-gateway]
+
   observability-collector:
     <<: *restart
     build: { context: .., dockerfile: observability/collector/Dockerfile }

@@ -398,6 +398,8 @@ function AsrSection({ audioApi }: { audioApi: string }) {
       </SettingGroup>
       <HR />
       <OccupantSection audioApi={audioApi} />
+      <HR />
+      <VisionSection />
     </div>
   )
 }
@@ -531,6 +533,24 @@ function OccupantSection({ audioApi }: { audioApi: string }) {
       )}
 
       {msg && <SettingRow label="" sub={msg} noBorder><span /></SettingRow>}
+    </SettingGroup>
+  )
+}
+
+// ─── 2.6 · 看一看（M4 P4 视觉入口）───
+function VisionSection() {
+  const { settings, update } = useSettings()
+  return (
+    <SettingGroup title="看一看">
+      <SettingRow
+        label="问「那是什么」时看一眼"
+        sub={'开启后，当你说「那是什么」「这是什么车」这类话时，会拍下当前画面的一帧交给 AI 识别。'
+          + '**只在说这类话时拍，其余时候一帧都不采集**；画面用完即弃，不保存、不进记忆。'
+          + '当前演示环境没有车外摄像头，用设备摄像头代替，结果卡片会标注「模拟车外摄像头」。默认关。'}
+        noBorder
+      >
+        <Toggle on={settings.visionEnabled} onChange={(v) => update({ visionEnabled: v })} />
+      </SettingRow>
     </SettingGroup>
   )
 }

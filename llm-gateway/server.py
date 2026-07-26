@@ -30,6 +30,19 @@ from observability.events import get_emitter
 logger = logging.getLogger("llm.server")
 
 
+class FrameUnavailable(RuntimeError):
+    """M4 P4：请求声明了 vision_frame_id 但帧已过期/不存在。
+
+    **这是错误，不是「那就只发文字吧」**——静默降级会让 VL 模型对着空气答
+    「看不清，画面有点模糊」（真栈 e2e ⑤ 实测原话），它在假装看到了一张模糊的图。
+    那比说不出更糟：用户没有任何办法判断真假。故显式 FAILED_PRECONDITION，
+    由调用方（vision Agent）诚实说「画面已经过期了，再问我一次」。
+    """
+
+    def __init__(self, frame_id: str):
+        super().__init__(f"vision frame unavailable (expired or unknown): {frame_id}")
+
+
 class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
     def __init__(self):
         # 多 LLM 源：provider 注册表 + 全局 active 切换 + 档位解析统一收归 llm_runtime（gRPC 与
@@ -85,7 +98,27 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
 
     @staticmethod
     def _msgs(request):
-        return [{"role": m.role, "content": m.content} for m in request.messages]
+        msgs = [{"role": m.role, "content": m.content} for m in request.messages]
+        # M4 P4 视觉：meta 只带 frame_id（16 字节），图像本体在网关内存里活最多两分钟。
+        # 命中即把**最后一条 user 消息**升级为 OpenAI 多模态 content 数组。
+        # 拿不到帧（过期/不存在）→ **显式失败**（见 FrameUnavailable），不静默退化成
+        # 文本问答让模型编一个「那可能是一座写字楼」（铁律③）。
+        fid = (dict(request.meta).get("vision_frame_id") or "").strip() if request.meta else ""
+        if not fid:
+            return msgs
+        import vision_frames
+        url = vision_frames.store().data_url(fid)
+        if not url:
+            # **声明了要看图却拿不到图 = 错误，不是「那就只发文字吧」**。
+            # 静默降级会让 VL 模型对着空气答「看不清，画面有点模糊」——它在假装看到了
+            # 一张模糊的图（真栈 e2e ⑤ 实测原话）。那比说不出更糟：用户没法判断真假。
+            raise FrameUnavailable(fid)
+        for m in reversed(msgs):
+            if m["role"] == "user":
+                m["content"] = [{"type": "text", "text": m["content"]},
+                                {"type": "image_url", "image_url": {"url": url}}]
+                break
+        return msgs
 
     @staticmethod
     def _thinking(request):
@@ -111,7 +144,11 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         return spec if isinstance(spec, dict) and spec.get("tools") else None
 
     async def Complete(self, request, context):
-        msgs = self._msgs(request)
+        try:
+            msgs = self._msgs(request)
+        except FrameUnavailable as e:
+            # 调用方（vision Agent）据此诚实说「画面已过期」，而不是让模型对着空气编。
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(e))
         temp = request.temperature or 0.7
         max_tokens = request.max_tokens or 512
         thinking = self._thinking(request)
@@ -238,12 +275,17 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         await context.abort(grpc.StatusCode.UNAVAILABLE, f"all models failed: {last_err}")
 
     async def CompleteStream(self, request, context):
-        msgs = self._msgs(request)
+        try:
+            msgs = self._msgs(request)
+        except FrameUnavailable as e:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(e))
         thinking = self._thinking(request)
         try:
             provider_obj, aid, models, pinned = self._serving(request)   # 请求级 pin（D2）
         except ValueError as e:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        except FrameUnavailable as e:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(e))
 
         # 流式不走缓存。**首 token 前**失败按档位链降级到下一模型（D4，兑现 R3.5 记录的
         # 「CompleteStream 无备用模型重试」缺口）；**首 token 后**不切——半段话术不可拼接，

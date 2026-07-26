@@ -72,6 +72,9 @@ run_step "e2e_s2s_resilience"         python test/e2e_s2s_resilience.py
 # 首个注册者绑 primary / 识别 / 诚实降级 / 隔离 / 不提权红线 / 删除即忘掉这个人。
 # 声纹模型缺失时自动 SKIP（模型 28MB 且 gitignore，见 scripts/fetch-voice-models.*）。
 run_step "e2e_voiceprint"             python test/e2e_voiceprint.py
+# M4 P4 视觉入口：真图进真模型出真答案 + 没帧/过期一律诚实降级（绝不编造）。
+# 无 DashScope key 时自动 SKIP。
+run_step "e2e_vision"                 python test/e2e_vision.py
 # 旅程级（L3）：回归级必须绿；目标级红灯是能力标尺不拦退出码（--strict-target 才拦）
 run_step "e2e_journeys"               python test/e2e_journeys.py
 run_step "e2e_real_providers"         python -m pytest test/e2e_real_providers.py -q -s

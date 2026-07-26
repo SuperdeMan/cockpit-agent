@@ -27,6 +27,7 @@ import { wakeKeywordsFor, DEFAULT_SETTINGS, type Msg, type Settings } from './ty
 import { poiSelectionIndex, ordinalSelectIn, isRefreshRequest } from './nav.mjs'
 import { ResilientWebSocket, appendToken } from './ws.mjs'
 import { HandsFreeController } from './handsFreeController'
+import { needsFrame, captureFrame } from './visionFrame.mjs'
 import { bumpVoiceMetric } from './voiceMetrics.mjs'
 
 const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://localhost:8090'
@@ -34,6 +35,13 @@ const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://loc
 const WS_TOKEN = (import.meta.env.VITE_WS_TOKEN as string) || ''
 const WS_URL = appendToken(GATEWAY.replace(/^http/, 'ws') + '/ws', WS_TOKEN)
 const AUDIO_API = (import.meta.env.VITE_AUDIO_API_URL as string) || 'http://localhost:50059'
+
+// `__` 前缀的键是 HMI 内部流转标记（如视觉抓帧的 __bubbled），不上行——
+// 上行 meta 会整条进 obs 采集，塞进去的每个键都是后续排查时的噪声。
+function stripInternalMeta(m?: Record<string, string>): Record<string, string> {
+  if (!m) return {}
+  return Object.fromEntries(Object.entries(m).filter(([k, v]) => !k.startsWith('__') && v !== ''))
+}
 const SESSION = 'demo-' + Math.random().toString(36).slice(2, 8)
 setObsSession(SESSION) // 观测贯通：ASR 流 span 归属本会话（audio.ts 模块级注入，免逐调用点管道）
 // 请求看门狗：插入"思考中"占位后，若此时长内仍无 final/error 抵达，转超时提示，
@@ -568,7 +576,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           locationOverride !== undefined || s.locationEnabled,
           locationOverride !== undefined ? locationOverride : currentLocation,
         ),
-        ...(metaExtra || {}),
+        ...stripInternalMeta(metaExtra),
         // M4 P4：本轮说话人（声纹，唤醒窗内锁定）。未开/认不出恒 'primary' = P4 之前的行为。
         // 记忆按它隔离；**权限与确认不看它**（声纹不是鉴权因子，RFC §6.1 红线）。
         occupant_id: handsFreeRef.current?.occupantId || 'primary',
@@ -584,7 +592,19 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   }
 
   const send = (text: string, metaExtra?: Record<string, string>) => {
-    setMessages((m) => [...m, { id: uid(), role: 'user', text }])
+    // M4 P4 视觉：端侧触发词命中才抓一帧（默认一帧都不采——隐私门控必须在采集侧）。
+    // 抓帧是异步的，故先抓再走完整 send。**用「键存不存在」判是否已处理**，不能用值判空：
+    // 抓失败时值就是空串，用值判会无限递归。抓不到照常发，由 vision Agent 诚实说没拿到画面。
+    const visionDone = metaExtra ? 'vision_frame_id' in metaExtra : false
+    if (settingsRef.current.visionEnabled && !visionDone && needsFrame(text)) {
+      setMessages((m) => [...m, { id: uid(), role: 'user', text }])
+      setAwaitConfirm(false)
+      setHandsFreeNotice('已拍摄一帧用于识别')
+      void captureFrame(AUDIO_API).then((fid) =>
+        send(text, { ...(metaExtra || {}), vision_frame_id: fid, __bubbled: '1' }))
+      return
+    }
+    if (!metaExtra?.__bubbled) setMessages((m) => [...m, { id: uid(), role: 'user', text }])
     setAwaitConfirm(false)
     // 行程内导航/修改整句（含『下一站』或『第N天…』）：整句交编排器路由到 trip.navigate/modify，
     // 不被上一条 poi_list 候选的「第N个」就近选择劫持（如「第二天第一个」≠ 上一条候选第1个）。

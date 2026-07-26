@@ -81,6 +81,16 @@ export type UiCard =
   | SceneCard
   | SceneListCard
   | IntentChoiceCard
+  | VisionAnswerCard
+
+// M4 P4 看一看卡：单帧图片问答的结果。**simulated 恒为真**——PoC 没有车外摄像头，
+// 画面来自设备摄像头，卡片角标必须如实说（同 sim.adas / MCP 演示商户的诚实标注惯例）。
+export type VisionAnswerCard = {
+  type: 'vision_answer'
+  answer: string
+  question?: string
+  simulated?: boolean
+}
 
 // R4.4 路由歧义澄清卡：一句提问 + 2~3 个消歧选项（点/说「第N个」→ 回发 send_text 作新指令）
 export type IntentChoiceCard = {
@@ -540,6 +550,9 @@ export type Settings = {
   // M4 P4 声纹多用户：默认关。开启后唤醒后首句识别说话人 → 记忆按乘员隔离。
   // **只影响记忆归属，不影响任何权限**（声纹不是鉴权因子）；认不出恒回主驾。
   voiceprintEnabled: boolean
+  // M4 P4 视觉入口：默认关。开启后说「那是什么」会抓一帧车外画面上传识别；
+  // 未命中触发词时一帧都不采集。PoC 用设备摄像头模拟车外摄像头（卡片恒显「模拟」）。
+  visionEnabled: boolean
   // 显示与主题
   theme: Theme
   fontScale: FontScale
@@ -729,6 +742,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voicePipeline: 'classic', // M4 opt-in：默认三段式。s2s 上行原始音频，须用户显式选择
   s2sVoice: 'Tina',         // qwen3.5-omni 默认音色
   voiceprintEnabled: false, // M4 P4 opt-in：默认关，行为与 P4 之前逐字一致
+  visionEnabled: false,     // M4 P4 opt-in：默认关（它会采集图像，须用户显式开）
   theme: 'dark',
   fontScale: 'normal',
   largeTouch: false,

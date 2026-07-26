@@ -128,6 +128,7 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
     case 'scene_card': return <SceneCardView card={card} onAction={onAction} />
     case 'scene_list': return <SceneListCardView card={card} onAction={onAction} />
     case 'intent_choice': return <IntentChoiceCardView card={card} onAction={onAction} />
+    case 'vision_answer': return <VisionAnswerCardView card={card} />
     default: return null
   }
 }
@@ -1472,6 +1473,26 @@ function PlaceDetailCardView({ card, onAction }: { card: PlaceDetailCard; onActi
           >拨打电话</a>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── M4 P4 看一看卡 ───
+// 极简：一行问题 + 答案 + **模拟摄像头角标**。角标不是装饰——PoC 的画面来自设备摄像头，
+// 不说清楚就是拿演示当真实（铁律③）。
+function VisionAnswerCardView({ card }: { card: any }) {
+  return (
+    <div className="au-card" style={{ padding: '12px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 12, color: 'var(--au-text-3)' }}>{card.question || '看一看'}</span>
+        {card.simulated && (
+          <span style={{
+            fontSize: 10, padding: '1px 6px', borderRadius: 6,
+            background: 'var(--au-fill-2)', color: 'var(--au-text-3)',
+          }}>模拟车外摄像头</span>
+        )}
+      </div>
+      <div style={{ fontSize: 14, lineHeight: 1.6, color: 'var(--au-text)' }}>{card.answer}</div>
     </div>
   )
 }

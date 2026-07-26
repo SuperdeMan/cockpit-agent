@@ -33,6 +33,9 @@ _POC_DEFAULT_SCOPES = [
     "location.read", "navigation.control",
     "network.external", "payment.invoke",
     "profile.read", "profile.write",
+    # M4 P4 视觉：**单帧**（用户显式问「那是什么」时抓一张），不是 camera.read 连续流——
+    # 后者在 conventions §3 维持 ❌ 禁。采集门控在端侧（默认不采），这里只是让能力可路由。
+    "camera.frame",
 ]
 # 敏感上下文键：默认按值广播，Phase 4 起按 manifest context_scopes 最小化下发。
 _SENSITIVE_CONTEXT_KEYS = (
@@ -487,6 +490,9 @@ def build_context(request) -> PlanContext:
               "input_source",      # R4.4：hands-free 语音来源（voice_wake|voice_followup|voice_bargein）
               "voice_utterance_ms",  # R4.4：本轮 speech 累计时长（数字字符串）
               "clarify_resume",    # R4.4：澄清续接标记（"1"）——engine 据此深度=1 抑制再澄清
+              "vision_frame_id",   # M4 P4：车外单帧的**引用**（图像本体只在网关内存里）。
+                                   # 按 _SENSITIVE_SCOPE 最小化下发——只有声明了 vision
+                                   # context_scope 的 Agent 收得到，其余 Agent 连引用都看不见。
               "llm_provider", "llm_model")  # 运行时硬化 D2：请求级 LLM pin（评测/重放 A/B），
                                             # 随 prefs 下发全部 Agent + engine 设 planner 侧 pin
              if meta.get(k)}

@@ -81,7 +81,8 @@ class LLMClient:
 
     async def complete(self, messages: list[dict], model: str = "",
                        temperature: float = 0.7, max_tokens: int = 512,
-                       timeout: float = DEFAULT_TIMEOUT, thinking=None) -> str:
+                       timeout: float = DEFAULT_TIMEOUT, thinking=None,
+                       extra_meta: dict | None = None) -> str:
         think = _resolve_thinking(thinking)
         if think:
             max_tokens = max(max_tokens, _THINK_MAX_TOKENS)
@@ -93,6 +94,11 @@ class LLMClient:
         if think:
             req.meta["thinking"] = "on"
         _stamp_obs_meta(req)
+        # extra_meta 在 _stamp_obs_meta 之后写 → **能力性 pin 覆盖会话级 pin**。
+        # 视觉就靠这条：看图必须打到 VL 型号，不能跟着用户切的聊天大脑走（M4 P4）。
+        for k, v in (extra_meta or {}).items():
+            if v:
+                req.meta[k] = str(v)
         for attempt in (1, 2):
             try:
                 resp = await self._stub().Complete(req, timeout=timeout)

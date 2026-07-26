@@ -23,9 +23,10 @@
 | deep-research | deep_research | ecosystem | first_party | cloud | 50073 | research.run, research.status, research.cancel |
 | reminder | reminder | core | first_party | cloud | 50074 | reminder.create, reminder.list, reminder.complete, reminder.cancel, reminder.update |
 | mcp-bridge | mcp_bridge | ecosystem | third_party | cloud | 50076 | 由 `servers.yaml` 准入清单**启动期合成**（首批 shop.menu / shop.order）——manifest 里 capabilities 故意留空，见 §9.9 |
+| vision | vision | core | first_party | cloud | 50077 | vision.describe（单帧图片问答，M4 P4；契约见 §9.12）|
 
 > 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent。
-> 端口已用到 **50076**（50075=主动治理器 HTTP 健康口，见 §5），新 Agent 从 **50077** 起。
+> 端口已用到 **50077**（50075=主动治理器 HTTP 健康口，见 §5），新 Agent 从 **50078** 起。
 > 新增时按本表分配端口与 intent 命名空间。
 
 ---
@@ -105,7 +106,8 @@
 | `payment.invoke` | 发起支付 | 经支付网关 + 强制确认 |
 | `network.external` | 访问外部网络 | 仅白名单 |
 | `profile.read` / `profile.write` | 读写用户画像 | 受限 |
-| `microphone.read` / `camera.read` | 原始音视频流 | ❌ 禁 |
+| `microphone.read` / `camera.read` | 原始音视频**流** | ❌ 禁 |
+| `camera.frame` | **单帧**：用户显式问「那是什么」时抓一张（M4 P4） | 可授（first_party；third_party 强制禁） |
 
 有效权限 = `min(trust_level 上限, 用户授权, 会话 token scope)`。
 
@@ -154,6 +156,7 @@
 | payment-gateway | 50071 | gRPC |
 | proactive（统一主动引擎，纯 NATS 消费者）| 50075 | HTTP（仅 /healthz）|
 | mcp-bridge | 50076 | gRPC |
+| vision | 50077 | gRPC |
 | cloud-gateway | 8080 | gRPC (EdgeCloudChannel bidi) |
 | edge-gateway | 8090 | HTTP/WS |
 | observability-collector | 8092 | HTTP/WS |
@@ -162,7 +165,7 @@
 | hmi | 5173 | HTTP |
 | dashboard | 5174 | HTTP |
 
-> Agent 端口段已用到 **50076**（mcp-bridge；50068 charging/50069 scene/50072 road-safety/50073 deep-research/50074 reminder 已用，50070/50071 为 edge-orchestrator/payment-gateway，50075 为主动治理器健康口），新 Agent 从 **50077** 起。端口在 `deploy/docker-compose.yaml` 与各 Agent `Dockerfile` 的 `AGENT_PORT` 两处，保持一致。
+> Agent 端口段已用到 **50077**（vision；mcp-bridge=50076；50068 charging/50069 scene/50072 road-safety/50073 deep-research/50074 reminder 已用，50070/50071 为 edge-orchestrator/payment-gateway，50075 为主动治理器健康口），新 Agent 从 **50078** 起。端口在 `deploy/docker-compose.yaml` 与各 Agent `Dockerfile` 的 `AGENT_PORT` 两处，保持一致。
 
 ---
 
@@ -619,3 +622,20 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | 透传管道 | HMI `buildMeta.occupant_id` → edge-gateway（原样透传）→ `build_context` → `PlanContext.occupant_id` → `prefs` → `ExecuteRequest.meta` → `_sdk.Context.occupant_id`。**memory 侧零改动**——recall 本来就是 occupant 精确过滤，缺的只是这个参数 |
 | 隔离边界（v1） | 只做硬隔离，**不做跨乘员共享**。`memory_level` 现状只写不读且恒为 `user`，做读侧共享=全部共享=隔离归零；真共享层要改抽取分类，是独立一期 |
 | 降级 | 模型缺失/依赖缺失 → `provider[voiceprint]=disabled`，`/api/voiceprint/*` 返回 `enabled:false`，HMI 隐藏入口，occupant_id 恒 primary。**这一档是常态之一不是异常**（模型 28MB 且下载不稳） |
+
+### 9.12 视觉单帧入口契约（M4 P4）
+
+设计：`docs/design/2026-07-25-m4-p4-voiceprint-vision-rfc.md` §5。
+端点 `/api/vision/frame`、`/api/vision/info`（llm-gateway 音频面 50059）；
+Agent `agents/vision/`（50077，capability `vision.describe`）。
+
+| 项 | 契约 |
+|---|---|
+| **图像不进对话链** | proto 里流动的只有 16 字节的 `frame_id`；图像本体在网关进程内存 LRU（TTL 120s / ≤16 帧），**不落 Redis 不落盘**（Redis 会持久化到磁盘=把车内外图像写进存储）。meta 塞 base64 会撑爆 gRPC meta 且整条进 obs 采集——那是隐私事故不是性能问题 |
+| 采集门控在端侧 | HMI 命中视觉触发词（`hmi/src/visionFrame.mjs::needsFrame`，与 manifest route_hints 同口径）才抓**一帧**，默认一帧都不采；抓帧有可见提示；用完立刻关摄像头 |
+| **拿不到帧 = 显式失败** | 网关 `FrameUnavailable` → `FAILED_PRECONDITION`。**不静默只发文本**——真栈实测那样 VL 模型会答「看不清，画面有点模糊」，它在假装看到了一张模糊的图，比说不出更糟。Agent 侧再把「帧过期」与「模型挂了」分开说（前者再问一次就好） |
+| **看图走独立 VL 档** | `llm_runtime` 的 `qwen-vl`（`internal: True`，不进 HMI「AI 大脑」切换列表），Agent 用请求级 pin（D2）指定。**不赌当前 active 大脑能看图**：P4b 探针实测 `qwen3.7-max` 对多模态 content 直接 400，而档位解析对不认识的模型是**静默回落 primary**——不独立成档，一次瞬时失败就会打到看不了图的模型上且毫无报错。降级链整条都是 VL 型号 |
+| 权限 | 新 scope **`camera.frame`**（用户显式问一句时的单帧）≠ `camera.read`（连续流，conventions §3 维持 ❌ 禁）。沿 `location.read`/`location.precise` 的精度分级先例；third_party 强制禁 |
+| 上下文最小化 | `vision_frame_id` 进 `_SENSITIVE_SCOPE`，只下发给 manifest 声明 `context_scopes: [vision]` 的 Agent——图像引用不随每轮广播给全部 Agent |
+| 诚实标注（三重） | `_prov.source=simulated_camera` + 卡片角标「模拟车外摄像头」+ 设置文案。PoC 没有车外摄像头，画面来自设备摄像头（同 `sim.adas.` 与 MCP 演示商户惯例） |
+| 不做 | 视频流实时理解、连续帧、人脸/视觉身份判定（与「声纹不作鉴权因子」同源）、多轮视觉追问（需帧的会话级驻留，v2） |

@@ -1,0 +1,45 @@
+agent_id: vision
+version: 0.1.0
+display_name: 看一看
+category: core
+trust_level: first_party
+deployment: cloud
+latency_budget_ms: 15000
+fallback: chitchat
+
+# M4 P4 视觉入口：「那是什么」单帧图片问答（子 RFC 2026-07-25-m4-p4 §5）。
+# **图像不进对话链**——HMI 抓帧后 POST 到 llm-gateway 拿一个短 TTL 的 frame_id，
+# 请求里流动的只有这个 id；本 Agent 也拿不到图，只是把 id 转给网关（RFC §5.1）。
+# v1 只做单帧问答；视频流实时理解是 v2（成本与隐私都另议）。
+capabilities:
+  - intent: vision.describe
+    description: 看摄像头当前画面，回答关于眼前实物的问题——那是什么建筑/什么车/什么花/什么牌子
+    slots: [question, frame_id]
+    examples: ["那是什么", "这是什么", "前面那个建筑是什么", "这是什么车",
+               "这是什么花", "看看这个是什么", "那是什么牌子的车"]
+    # 出了卡但 answer 为空 = 假完成（同 nearby.search 的空 items）。
+    # on_fail: report——看图没有「重试就会有」的性质，重试只是再烧一次视觉 token。
+    verification:
+      mode: schema
+      on_fail: report
+      expect: { data_keys: [answer] }
+
+# 确定性路由（R2.1）：「那是什么」是极短的指代句，语义路由容易落到 chitchat。
+# guard 让路两类近似说法：POI 详情（「这家怎么样」归 nearby）、卡片序号指代（归既有链路）。
+route_hints:
+  - pattern: '(那|这|前面(那个|这个)?|左边(那个)?|右边(那个)?|路边(那个)?).{0,4}(是什么|是啥|什么东西|什么牌子|什么车|什么花|什么树|什么建筑|什么标志)|看看(这个|那个|前面)|帮我看看'
+    intent: vision.describe
+    policy: replace
+    priority: 58
+    guard: '这家|那家|第[一二三四五六七八九十\d]+个|详情|评分|人均|营业|怎么样|好不好'
+    slots: { question: "$text" }
+
+# 敏感上下文最小化下发：不声明就收不到 vision_frame_id（编排层按此过滤）。
+context_scopes:
+  - vision
+
+requires_permissions:
+  # camera.frame ≠ camera.read：前者是「用户显式问一句时的单帧」，后者是连续流（维持 ❌ 禁）。
+  # third_party 一律拿不到（THIRD_PARTY_DENY_PREFIXES），本 Agent 是 first_party。
+  - camera.frame
+  - network.external

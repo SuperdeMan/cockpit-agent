@@ -87,6 +87,20 @@ _PROVIDER_SPECS: dict[str, dict] = {
         "fast_env": "QWEN_MODEL_FAST", "fast": "qwen3.7-plus",
         "models": [("qwen3.7-max", "通义千问 3.7 Max"), ("qwen3.7-plus", "通义千问 3.7 Plus")],
     },
+    # M4 P4 视觉：**独立成一档，而不是往 qwen 里塞 VL 型号**——降级链必须整条都能看图。
+    # P4b 探针实测：`qwen3.7-max`（qwen 档的 primary）对多模态 content 直接 400
+    # （Unexpected item type in content），若它当 fallback，看图请求一次瞬时失败就会被打到
+    # 一个看不了图的模型上；而 `resolve_models_for` 对不认识的模型名是**静默回落 primary**，
+    # 那样连报错都不会有。`internal` = 不进 HMI「AI 大脑」切换列表（它不是聊天大脑）。
+    "qwen-vl": {
+        "label": "阿里百炼 · 通义千问 VL（视觉）", "key_env": "DASHSCOPE_LLM_KEY",
+        "base_url_env": "QWEN_BASE_URL", "internal": True,
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "auth_style": "bearer", "token_param": "max_tokens", "thinking_style": "qwen",
+        "primary_env": "VISION_MODEL", "primary": "qwen3-vl-plus",
+        "fast_env": "VISION_MODEL_FALLBACK", "fast": "qwen-vl-max",
+        "models": [("qwen3-vl-plus", "通义千问 VL Plus"), ("qwen-vl-max", "通义千问 VL Max")],
+    },
 }
 
 
@@ -97,7 +111,7 @@ def _norm_id(pid: str) -> str:
 
 def _provider_key(pid: str, spec: dict) -> str:
     """取该 provider 的 key。qwen 复用现有百炼 key（DASHSCOPE_ASR_KEY / LLM_EMBED_API_KEY，同一 DashScope 账号）。"""
-    if pid == "qwen":
+    if pid in ("qwen", "qwen-vl"):      # 同一个 DashScope 账号，视觉档不另配 key
         return (os.getenv("DASHSCOPE_LLM_KEY") or os.getenv("DASHSCOPE_ASR_KEY")
                 or os.getenv("LLM_EMBED_API_KEY", ""))
     return os.getenv(spec["key_env"], "")
@@ -152,6 +166,8 @@ class LLMRuntime:
             cfg = {
                 "id": pid, "label": spec["label"], "available": bool(key),
                 "primary": primary, "fast": fast,
+                # internal=True 的档只供请求级 pin（如视觉），不进 HMI「AI 大脑」切换列表
+                "internal": bool(spec.get("internal")),
                 "models": [{"id": m, "label": lbl} for m, lbl in spec["models"]],
             }
             self._catalog.append(cfg)
@@ -290,10 +306,16 @@ class LLMRuntime:
         return {
             "active": {"provider": self._active_id,
                        "model": self._active_model or self.active_config()["primary"]},
-            "providers": [dict(c) for c in self._catalog],
+            # internal 档（视觉）不出现在切换入口：它不是聊天大脑，切过去会让整个座舱变哑。
+            # 需要看它可用性的地方（/api/vision/info）走 internal_providers()。
+            "providers": [dict(c) for c in self._catalog if not c.get("internal")],
             # 被动健康（D5）：available=配了 key，health=最近真的答得上来（滚动窗口）
             "health": health_tracker.snapshot(),
         }
+
+    def provider_available(self, pid: str) -> bool:
+        """含 internal 档的可用性查询（切换列表看不到它们，但 pin 得到）。"""
+        return _norm_id(pid) in self._registry
 
     async def probe(self, provider: str = "") -> dict:
         """按需体检（D5）：对指定（缺省=active）provider 的 primary 模型发一条小请求。

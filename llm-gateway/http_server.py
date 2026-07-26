@@ -709,6 +709,43 @@ def create_http_app() -> web.Application:
         return web.json_response({"ok": resp.ok, "deleted_templates": resp.deleted_templates,
                                   "deleted_memories": resp.deleted_memories})
 
+    # ── 视觉单帧（M4 P4）────────────────────────────────────────────────────
+    # 帧只在网关内存里活 TTL 秒，不落 Redis 不落盘；对话链里流动的只有 frame_id。
+    @routes.post("/api/vision/frame")
+    async def handle_vision_frame(request: web.Request):
+        """HMI 命中视觉触发词时抓的一帧。body=二进制图像；query: mime。返回短 TTL frame_id。"""
+        import vision_frames
+        data = await request.read()
+        if not data:
+            return web.json_response({"error": "empty frame"}, status=400)
+        if len(data) > vision_frames.max_bytes():
+            # 超限直接拒绝而不是静默截断——半张图会让模型一本正经地答错。
+            return web.json_response({"error": "frame too large",
+                                      "max_bytes": vision_frames.max_bytes()}, status=413)
+        mime = (request.query.get("mime") or "image/jpeg").strip()
+        fid = vision_frames.store().put(data, mime)
+        logger.info("vision frame stored: %s %d bytes %s", fid, len(data), mime)
+        return web.json_response({"frame_id": fid, "ttl_s": vision_frames.ttl_s(),
+                                  "bytes": len(data)})
+
+    @routes.get("/api/vision/info")
+    async def handle_vision_info(request: web.Request):
+        """能力探测（HMI 据此决定要不要抓帧）。
+
+        **不赌当前 active 大脑能看图**：能看图的是特定的 VL 型号，而 active 是用户随时会切的
+        （切到 DeepSeek 就完全没有视觉）。故视觉走**请求级 pin**（D2 既有机制）显式指定
+        `VISION_PROVIDER`/`VISION_MODEL`，本端点只回答「那个型号配没配、可不可用」。
+        """
+        import vision_frames
+        prov = os.getenv("VISION_PROVIDER", "qwen-vl").strip()
+        ok = get_runtime().provider_available(prov)
+        return web.json_response({
+            "enabled": ok, "provider": prov,
+            "model": os.getenv("VISION_MODEL", "qwen3-vl-plus"),
+            "reason": "" if ok else f"{prov} 未配置 key",
+            "cached_frames": len(vision_frames.store()), "ttl_s": vision_frames.ttl_s(),
+        })
+
     @routes.get("/api/llm/providers")
     async def handle_llm_providers(request: web.Request):
         """列出已装配的 LLM 厂商 + 各自模型 + 可用性 + 当前 active（HMI 设置页两级选择据此渲染）。"""
