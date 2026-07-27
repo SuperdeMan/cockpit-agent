@@ -376,7 +376,8 @@ def _live_cases(docs: list[sk.SkillDoc]) -> list[dict]:
                               "expect_any": list(g.get("expect_any") or []),
                               "expect_not": list(g.get("expect_not") or []),
                               "expect_complexity": str(g.get("expect_complexity") or ""),
-                              "holdout": bool(g.get("holdout"))})
+                              "holdout": bool(g.get("holdout")),
+                              "expect_ablation_effect": bool(g.get("expect_ablation_effect"))})
     return cases
 
 
