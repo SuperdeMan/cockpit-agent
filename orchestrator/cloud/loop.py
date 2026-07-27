@@ -135,6 +135,8 @@ class LoopController:
                         ctx,
                         granted_permissions=ctx.granted_permissions,
                         working_set=working_set,
+                        # T2 知识继承：再规划带上初规划实际注入的 skill 名单（plan.skills）
+                        skill_names=list(getattr(initial_plan, "skills", []) or []),
                     )
                 except Exception:
                     break

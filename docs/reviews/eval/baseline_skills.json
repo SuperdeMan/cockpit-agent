@@ -1,71 +1,99 @@
 {
   "meta": {
     "subject": "skills",
-    "generated_at": "2026-07-26T13:40:30.472191+00:00",
-    "commit": "6548fa5"
+    "generated_at": "2026-07-27T05:10:09.203362+00:00",
+    "commit": "953e9b6"
   },
   "corpus_sources": [
     {
       "path": "skills/*/*.yaml#golden",
-      "count": 10
+      "count": 14
     }
   ],
   "buckets": {
     "live_full": {
-      "total": 10,
-      "passed": 10,
+      "total": 14,
+      "passed": 14,
       "failures": [],
       "pass_rate": 1.0
     },
     "live_off": {
-      "total": 10,
-      "passed": 5,
+      "total": 14,
+      "passed": 8,
       "failures": [
         {
-          "id": "live_off::去惠州怎么充电",
+          "id": "live_off::查下明天会不会下雨，要是下雨就提醒我带伞",
           "bucket": "live_off",
-          "text": "去惠州怎么充电",
+          "text": "查下明天会不会下雨，要是下雨就提醒我带伞",
           "expected": {
             "expect_intents": [
-              "charging.plan"
+              "info.weather"
             ],
             "expect_not": [
-              "charging.find"
-            ]
+              "reminder.create"
+            ],
+            "expect_complexity": "adaptive"
           },
           "actual": [
-            "info.search"
+            "info.weather",
+            "reminder.create"
           ],
           "passed": false,
-          "detail": "缺 ['charging.plan']",
+          "detail": "出现禁排 ['reminder.create']；complexity=simple≠adaptive",
           "tags": [
-            "skill:charging-strategy",
+            "skill:conditional-reminder",
             "type:guide",
+            "in-sample",
             "inj:"
           ],
           "source": ""
         },
         {
-          "id": "live_off::快没电了，附近找个快充",
+          "id": "live_off::看下明晚会不会下雨，要下就叫我收衣服",
           "bucket": "live_off",
-          "text": "快没电了，附近找个快充",
+          "text": "看下明晚会不会下雨，要下就叫我收衣服",
           "expected": {
             "expect_intents": [
-              "charging.find"
+              "info.weather"
             ],
             "expect_not": [
-              "navigation.navigate_to",
-              "nearby.search"
+              "reminder.create"
+            ],
+            "expect_complexity": "adaptive"
+          },
+          "actual": [
+            "info.weather",
+            "reminder.create"
+          ],
+          "passed": false,
+          "detail": "出现禁排 ['reminder.create']；complexity=simple≠adaptive",
+          "tags": [
+            "skill:conditional-reminder",
+            "type:guide",
+            "holdout",
+            "inj:"
+          ],
+          "source": ""
+        },
+        {
+          "id": "live_off::周末去杭州两天带老人不要太累，顺便看看天气",
+          "bucket": "live_off",
+          "text": "周末去杭州两天带老人不要太累，顺便看看天气",
+          "expected": {
+            "expect_intents": [
+              "trip.plan",
+              "info.forecast|info.weather"
             ]
           },
           "actual": [
-            "nearby.search"
+            "trip.plan"
           ],
           "passed": false,
-          "detail": "缺 ['charging.find']；出现禁排 ['nearby.search']",
+          "detail": "缺 ['info.forecast|info.weather']",
           "tags": [
-            "skill:charging-strategy",
+            "skill:multi-day-trip",
             "type:guide",
+            "in-sample",
             "inj:"
           ],
           "source": ""
@@ -87,6 +115,7 @@
           "tags": [
             "skill:navigation-with-stop",
             "type:guide",
+            "in-sample",
             "inj:"
           ],
           "source": ""
@@ -102,51 +131,51 @@
             ]
           },
           "actual": [
-            "navigation.search_poi"
+            "charging.find"
           ],
           "passed": false,
-          "detail": "缺 ['navigation.navigate_to', 'charging.find']",
+          "detail": "缺 ['navigation.navigate_to']",
           "tags": [
             "skill:navigation-with-stop",
             "type:guide",
+            "in-sample",
             "inj:"
           ],
           "source": ""
         },
         {
-          "id": "live_off::我有点冷",
+          "id": "live_off::送我去宝安机场，路上找地方吃个饭",
           "bucket": "live_off",
-          "text": "我有点冷",
+          "text": "送我去宝安机场，路上找地方吃个饭",
           "expected": {
-            "expect_any": [
-              "hvac.inc",
-              "hvac.set",
-              "hvac.dec"
+            "expect_intents": [
+              "navigation.navigate_to"
             ],
             "expect_not": [
-              "chitchat.talk"
+              "nearby.search"
             ]
           },
           "actual": [
-            "chitchat.talk"
+            "nearby.search"
           ],
           "passed": false,
-          "detail": "expect_any 全缺 ['hvac.inc', 'hvac.set', 'hvac.dec']；出现禁排 ['chitchat.talk']",
+          "detail": "缺 ['navigation.navigate_to']；出现禁排 ['nearby.search']",
           "tags": [
-            "skill:implicit-vehicle-control",
-            "type:policy",
+            "skill:navigation-with-stop",
+            "type:guide",
+            "holdout",
             "inj:"
           ],
           "source": ""
         }
       ],
-      "pass_rate": 0.5
+      "pass_rate": 0.5714
     }
   },
   "overall": {
-    "total": 20,
-    "passed": 15,
-    "pass_rate": 0.75
+    "total": 28,
+    "passed": 22,
+    "pass_rate": 0.7857
   },
   "cases": {
     "live_full::去惠州怎么充电": {
@@ -169,6 +198,7 @@
       "tags": [
         "skill:charging-strategy",
         "type:guide",
+        "in-sample",
         "inj:full:charging-strategy@lex,full:navigation-with-stop@vec!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
@@ -194,7 +224,33 @@
       "tags": [
         "skill:charging-strategy",
         "type:guide",
+        "in-sample",
         "inj:full:charging-strategy@lex,full:navigation-with-stop@lex!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
+      ],
+      "source": ""
+    },
+    "live_full::电快见底了，就近找个地方充上": {
+      "id": "live_full::电快见底了，就近找个地方充上",
+      "bucket": "live_full",
+      "text": "电快见底了，就近找个地方充上",
+      "expected": {
+        "expect_intents": [
+          "charging.find"
+        ],
+        "expect_not": [
+          "nearby.search"
+        ]
+      },
+      "actual": [
+        "charging.find"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:charging-strategy",
+        "type:guide",
+        "holdout",
+        "inj:full:conditional-reminder@vec,full:charging-strategy@vec,full:navigation-with-stop@vec!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -208,7 +264,8 @@
         ],
         "expect_not": [
           "reminder.create"
-        ]
+        ],
+        "expect_complexity": "adaptive"
       },
       "actual": [
         "info.weather"
@@ -218,7 +275,34 @@
       "tags": [
         "skill:conditional-reminder",
         "type:guide",
+        "in-sample",
         "inj:full:conditional-reminder@lex,full:navigation-with-stop@vec,full:freshness-and-depth,full:implicit-vehicle-control"
+      ],
+      "source": ""
+    },
+    "live_full::看下明晚会不会下雨，要下就叫我收衣服": {
+      "id": "live_full::看下明晚会不会下雨，要下就叫我收衣服",
+      "bucket": "live_full",
+      "text": "看下明晚会不会下雨，要下就叫我收衣服",
+      "expected": {
+        "expect_intents": [
+          "info.weather"
+        ],
+        "expect_not": [
+          "reminder.create"
+        ],
+        "expect_complexity": "adaptive"
+      },
+      "actual": [
+        "info.weather"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:conditional-reminder",
+        "type:guide",
+        "holdout",
+        "inj:full:conditional-reminder@vec,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -239,6 +323,7 @@
       "tags": [
         "skill:multi-day-trip",
         "type:guide",
+        "in-sample",
         "inj:full:multi-day-trip@lex,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
@@ -255,14 +340,37 @@
       },
       "actual": [
         "trip.plan",
-        "info.forecast"
+        "info.weather"
       ],
       "passed": true,
       "detail": "",
       "tags": [
         "skill:multi-day-trip",
         "type:guide",
+        "in-sample",
         "inj:full:multi-day-trip@lex,full:freshness-and-depth,full:implicit-vehicle-control"
+      ],
+      "source": ""
+    },
+    "live_full::陪爸妈去趟昆明玩四天，帮我安排下": {
+      "id": "live_full::陪爸妈去趟昆明玩四天，帮我安排下",
+      "bucket": "live_full",
+      "text": "陪爸妈去趟昆明玩四天，帮我安排下",
+      "expected": {
+        "expect_intents": [
+          "trip.plan"
+        ]
+      },
+      "actual": [
+        "trip.plan"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:multi-day-trip",
+        "type:guide",
+        "holdout",
+        "inj:full:multi-day-trip@vec,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -283,6 +391,7 @@
       "tags": [
         "skill:navigation-with-stop",
         "type:guide",
+        "in-sample",
         "inj:full:navigation-with-stop@lex,full:charging-strategy@vec!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
@@ -306,7 +415,33 @@
       "tags": [
         "skill:navigation-with-stop",
         "type:guide",
+        "in-sample",
         "inj:full:navigation-with-stop@lex,full:charging-strategy@lex!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
+      ],
+      "source": ""
+    },
+    "live_full::送我去宝安机场，路上找地方吃个饭": {
+      "id": "live_full::送我去宝安机场，路上找地方吃个饭",
+      "bucket": "live_full",
+      "text": "送我去宝安机场，路上找地方吃个饭",
+      "expected": {
+        "expect_intents": [
+          "navigation.navigate_to"
+        ],
+        "expect_not": [
+          "nearby.search"
+        ]
+      },
+      "actual": [
+        "navigation.navigate_to"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:navigation-with-stop",
+        "type:guide",
+        "holdout",
+        "inj:full:multi-day-trip@vec,full:navigation-with-stop@vec,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -330,6 +465,7 @@
       "tags": [
         "skill:freshness-and-depth",
         "type:policy",
+        "holdout",
         "inj:full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
@@ -351,6 +487,7 @@
       "tags": [
         "skill:freshness-and-depth",
         "type:policy",
+        "in-sample",
         "inj:full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
@@ -377,6 +514,7 @@
       "tags": [
         "skill:implicit-vehicle-control",
         "type:policy",
+        "in-sample",
         "inj:full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
@@ -394,13 +532,14 @@
         ]
       },
       "actual": [
-        "info.search"
+        "charging.plan"
       ],
-      "passed": false,
-      "detail": "缺 ['charging.plan']",
+      "passed": true,
+      "detail": "",
       "tags": [
         "skill:charging-strategy",
         "type:guide",
+        "in-sample",
         "inj:"
       ],
       "source": ""
@@ -419,13 +558,39 @@
         ]
       },
       "actual": [
-        "nearby.search"
+        "charging.find"
       ],
-      "passed": false,
-      "detail": "缺 ['charging.find']；出现禁排 ['nearby.search']",
+      "passed": true,
+      "detail": "",
       "tags": [
         "skill:charging-strategy",
         "type:guide",
+        "in-sample",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::电快见底了，就近找个地方充上": {
+      "id": "live_off::电快见底了，就近找个地方充上",
+      "bucket": "live_off",
+      "text": "电快见底了，就近找个地方充上",
+      "expected": {
+        "expect_intents": [
+          "charging.find"
+        ],
+        "expect_not": [
+          "nearby.search"
+        ]
+      },
+      "actual": [
+        "charging.find"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:charging-strategy",
+        "type:guide",
+        "holdout",
         "inj:"
       ],
       "source": ""
@@ -440,16 +605,46 @@
         ],
         "expect_not": [
           "reminder.create"
-        ]
+        ],
+        "expect_complexity": "adaptive"
       },
       "actual": [
-        "info.weather"
+        "info.weather",
+        "reminder.create"
       ],
-      "passed": true,
-      "detail": "",
+      "passed": false,
+      "detail": "出现禁排 ['reminder.create']；complexity=simple≠adaptive",
       "tags": [
         "skill:conditional-reminder",
         "type:guide",
+        "in-sample",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::看下明晚会不会下雨，要下就叫我收衣服": {
+      "id": "live_off::看下明晚会不会下雨，要下就叫我收衣服",
+      "bucket": "live_off",
+      "text": "看下明晚会不会下雨，要下就叫我收衣服",
+      "expected": {
+        "expect_intents": [
+          "info.weather"
+        ],
+        "expect_not": [
+          "reminder.create"
+        ],
+        "expect_complexity": "adaptive"
+      },
+      "actual": [
+        "info.weather",
+        "reminder.create"
+      ],
+      "passed": false,
+      "detail": "出现禁排 ['reminder.create']；complexity=simple≠adaptive",
+      "tags": [
+        "skill:conditional-reminder",
+        "type:guide",
+        "holdout",
         "inj:"
       ],
       "source": ""
@@ -471,6 +666,7 @@
       "tags": [
         "skill:multi-day-trip",
         "type:guide",
+        "in-sample",
         "inj:"
       ],
       "source": ""
@@ -486,14 +682,36 @@
         ]
       },
       "actual": [
-        "trip.plan",
-        "info.weather"
+        "trip.plan"
+      ],
+      "passed": false,
+      "detail": "缺 ['info.forecast|info.weather']",
+      "tags": [
+        "skill:multi-day-trip",
+        "type:guide",
+        "in-sample",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::陪爸妈去趟昆明玩四天，帮我安排下": {
+      "id": "live_off::陪爸妈去趟昆明玩四天，帮我安排下",
+      "bucket": "live_off",
+      "text": "陪爸妈去趟昆明玩四天，帮我安排下",
+      "expected": {
+        "expect_intents": [
+          "trip.plan"
+        ]
+      },
+      "actual": [
+        "trip.plan"
       ],
       "passed": true,
       "detail": "",
       "tags": [
         "skill:multi-day-trip",
         "type:guide",
+        "holdout",
         "inj:"
       ],
       "source": ""
@@ -515,6 +733,7 @@
       "tags": [
         "skill:navigation-with-stop",
         "type:guide",
+        "in-sample",
         "inj:"
       ],
       "source": ""
@@ -530,13 +749,39 @@
         ]
       },
       "actual": [
-        "navigation.search_poi"
+        "charging.find"
       ],
       "passed": false,
-      "detail": "缺 ['navigation.navigate_to', 'charging.find']",
+      "detail": "缺 ['navigation.navigate_to']",
       "tags": [
         "skill:navigation-with-stop",
         "type:guide",
+        "in-sample",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::送我去宝安机场，路上找地方吃个饭": {
+      "id": "live_off::送我去宝安机场，路上找地方吃个饭",
+      "bucket": "live_off",
+      "text": "送我去宝安机场，路上找地方吃个饭",
+      "expected": {
+        "expect_intents": [
+          "navigation.navigate_to"
+        ],
+        "expect_not": [
+          "nearby.search"
+        ]
+      },
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": false,
+      "detail": "缺 ['navigation.navigate_to']；出现禁排 ['nearby.search']",
+      "tags": [
+        "skill:navigation-with-stop",
+        "type:guide",
+        "holdout",
         "inj:"
       ],
       "source": ""
@@ -561,6 +806,7 @@
       "tags": [
         "skill:freshness-and-depth",
         "type:policy",
+        "holdout",
         "inj:"
       ],
       "source": ""
@@ -582,6 +828,7 @@
       "tags": [
         "skill:freshness-and-depth",
         "type:policy",
+        "in-sample",
         "inj:"
       ],
       "source": ""
@@ -601,13 +848,14 @@
         ]
       },
       "actual": [
-        "chitchat.talk"
+        "hvac.inc"
       ],
-      "passed": false,
-      "detail": "expect_any 全缺 ['hvac.inc', 'hvac.set', 'hvac.dec']；出现禁排 ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
       "tags": [
         "skill:implicit-vehicle-control",
         "type:policy",
+        "in-sample",
         "inj:"
       ],
       "source": ""

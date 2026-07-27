@@ -36,9 +36,11 @@ import yaml
 
 logger = logging.getLogger("cloud.skills")
 
-SKILL_BUDGET = int(os.getenv("SKILL_BUDGET", "2400"))       # 注入块字符预算
-SKILL_TOP_K = int(os.getenv("SKILL_TOP_K", "3"))            # guide 预筛条数
-_MIN_SCORE = int(os.getenv("SKILL_MIN_SCORE", "10"))        # 词法命中阈值（一个关键词=10）
+# `or` 兜底：compose 以 ${VAR:-} 透传（不带默认值，避免默认值在 compose 与代码两处漂移），
+# 未设置时容器收到空串——int("") 会炸 import。
+SKILL_BUDGET = int(os.getenv("SKILL_BUDGET") or "2400")     # 注入块字符预算
+SKILL_TOP_K = int(os.getenv("SKILL_TOP_K") or "3")          # guide 预筛条数
+_MIN_SCORE = int(os.getenv("SKILL_MIN_SCORE") or "10")      # 词法命中阈值（一个关键词=10）
 _RESCAN_S = 30.0                                            # 目录重扫最小间隔（热更新）
 _EMBED_COOLDOWN_S = 30.0                                    # 语义通道失败冷却（防抖打日志）
 
@@ -101,6 +103,7 @@ class SkillStore:
         self._last_scan = 0.0
         self._desc_vecs: dict[str, tuple[float, ...]] = {}   # guide description 向量缓存
         self._desc_model = ""                                # 缓存向量的 embedding 模型
+        self._last_good: dict[str, SkillDoc] = {}            # path → 上一版好文档（LKG）
 
     def load(self, force: bool = False) -> list[SkillDoc]:
         now = time.monotonic()
@@ -116,21 +119,53 @@ class SkillStore:
                 continue
         if not force and mtimes == self._mtimes and self._docs:
             return self._docs
-        docs = []
+        docs, seen = [], {}
         for p in paths:
-            doc = self._parse(p)
-            if doc:
-                docs.append(doc)
+            try:
+                doc = self._parse(p)
+            except Exception as e:      # 任何单文件异常都不许崩规划（fail-open 兜底闸）
+                logger.warning("skill %s 解析异常，跳过: %s", p.name, e)
+                doc = None
+            if doc is None:
+                # last-known-good：热更新改坏文件时沿用上一版好文档（文件被删除则
+                # 不在 paths 里、自然下线——删除是意图，改坏不是）
+                doc = self._last_good.get(str(p))
+                if doc is not None:
+                    logger.warning("skill %s 本次加载失败，沿用上一版（LKG）", p.name)
+            if doc is None:
+                continue
+            if doc.name in seen:        # 重名：先到者胜（glob 有序=确定性），后到跳过
+                logger.warning("skill 重名 %s（%s 与 %s）——后者跳过",
+                               doc.name, seen[doc.name], p.name)
+                continue
+            seen[doc.name] = p.name
+            self._last_good[str(p)] = doc
+            docs.append(doc)
         self._docs, self._mtimes = docs, mtimes
         self._desc_vecs, self._desc_model = {}, ""      # 文件变了，向量缓存整体失效
         return self._docs
 
     @staticmethod
-    def _parse(path: Path) -> SkillDoc | None:
+    def _coerce_int(raw_val, default: int, path_name: str, field: str) -> int:
+        """priority/version 宽容取整：非法值回默认并告警（运行时知识可用性 > 整洁；
+        eval_skills 契约车道对同类问题是**硬失败**，坏文件到不了主干）。"""
+        try:
+            return int(raw_val if raw_val is not None else default)
+        except (TypeError, ValueError):
+            logger.warning("skill %s 字段 %s=%r 非整数——按默认 %d 处理（修文件！）",
+                           path_name, field, raw_val, default)
+            return default
+
+    @classmethod
+    def _parse(cls, path: Path) -> SkillDoc | None:
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         except Exception as e:                     # 坏文件跳过不崩规划（fail-open + 告警）
             logger.warning("skill %s 解析失败，跳过: %s", path.name, e)
+            return None
+        if not isinstance(raw, dict):              # 顶层写成数组/标量：结构性坏文件
+            logger.warning("skill %s 顶层必须是映射（实际 %s），跳过",
+                           path.name, type(raw).__name__)
             return None
         name = str(raw.get("name") or "").strip()
         stype = str(raw.get("type") or "").strip()
@@ -139,6 +174,10 @@ class SkillStore:
         if not (name and desc and knowledge and stype in ("guide", "policy", "workflow")):
             logger.warning("skill %s 缺必填字段（name/type/description/knowledge），跳过", path.name)
             return None
+        expected_dir = {"guide": "guides", "policy": "policies", "workflow": "workflows"}[stype]
+        if path.parent.name != expected_dir:       # 目录/type 不一致：按 type 生效但告警
+            logger.warning("skill %s type=%s 应放 %s/（实际在 %s/）——语义按 type 生效，请归位",
+                           path.name, stype, expected_dir, path.parent.name)
         unknown = set(raw) - _KNOWN_KEYS
         if unknown:
             logger.warning("skill %s 含未知顶层字段 %s——已忽略，检查拼写（契约见 skills/README.md）",
@@ -146,16 +185,21 @@ class SkillStore:
         few_shots = tuple(s for s in (raw.get("few_shots") or []) if isinstance(s, dict))
         shots_txt = _render_few_shots(few_shots)
         body = knowledge + (f"\n\n{shots_txt}" if shots_txt else "")
+        kw_raw = raw.get("keywords") or []
+        if not isinstance(kw_raw, list):           # 写成字符串会被逐字符迭代成噪声关键词
+            logger.warning("skill %s keywords 必须是列表（实际 %s）——忽略",
+                           path.name, type(kw_raw).__name__)
+            kw_raw = []
         return SkillDoc(
             name=name, type=stype, description=desc, knowledge=knowledge,
             body=body,
-            priority=int(raw.get("priority") or 50),
-            keywords=tuple(str(k) for k in (raw.get("keywords") or [])),
+            priority=cls._coerce_int(raw.get("priority"), 50, path.name, "priority"),
+            keywords=tuple(str(k) for k in kw_raw),
             few_shots=few_shots,
             golden=tuple((g or {}) for g in (raw.get("golden") or [])
                          if isinstance(g, dict)),
             owner=str(raw.get("owner") or ""),
-            version=int(raw.get("version") or 1),
+            version=cls._coerce_int(raw.get("version"), 1, path.name, "version"),
             path=str(path),
         )
 
@@ -194,11 +238,11 @@ _embed_fail_ts = 0.0
 def _sem_threshold() -> float:
     """默认 0.40 由 paraphrase 语料阈值扫描拍板（2026-07-26，eval_skills --retrieval both）：
     0.40 召回 10/11 且语义通道零新增噪声；0.45 掉到 6/11；0.35 噪声不再降。"""
-    return float(os.getenv("SKILL_SEM_THRESHOLD", "0.40"))
+    return float(os.getenv("SKILL_SEM_THRESHOLD") or "0.40")
 
 
 def _embed_timeout() -> float:
-    return float(os.getenv("SKILL_EMBED_TIMEOUT", "1.0"))
+    return float(os.getenv("SKILL_EMBED_TIMEOUT") or "1.0")
 
 
 async def _embed_texts(texts: list[str]) -> tuple[list[tuple[float, ...]], str] | None:
@@ -348,3 +392,27 @@ async def plan_skills(text: str) -> tuple[str, list[str], str]:
     names += [f"{mode}:{d.name}@{ch[d.name]}!clipped" for d in clipped]
     names += [f"{mode}:{d.name}" for d in policies]
     return mode, names, block
+
+
+def render_for_names(names: list[str] | None) -> str:
+    """T2 再规划的知识继承（2026-07-27，评审缺口 4）：按初规划**实际注入**的名单重渲染。
+
+    不重新检索——再规划的输入是观察结果不是用户话术，检索无锚；shadow/off 轮与被裁
+    （`!clipped`）项本来就没进初规划上下文，同样不进再规划。文件按当前版本重渲染
+    （mtime 热更新窗 30s，replan 与初规划相隔秒级，刻意不做版本 hash 钉扎——为一个
+    几乎不会发生的漂移引入快照管理不值得；若未来出现跨小时长任务再议）。"""
+    if not names:
+        return ""
+    wanted = []
+    for n in names:
+        mode, _, rest = n.partition(":")
+        if mode not in ("canary", "full") or not rest or rest.endswith("!clipped"):
+            continue
+        wanted.append(rest.split("@", 1)[0])
+    if not wanted:
+        return ""
+    docs = {d.name: d for d in default_store().load()}
+    policies = [docs[n] for n in wanted if n in docs and docs[n].type == "policy"]
+    guides = [docs[n] for n in wanted if n in docs and docs[n].type == "guide"]
+    block, _, _ = render_skills_block(policies, guides)
+    return block

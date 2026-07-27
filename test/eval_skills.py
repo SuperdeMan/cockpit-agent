@@ -72,7 +72,12 @@ NEGATIVES = [
     "今天有什么科技新闻",
 ]
 
-_GOLDEN_KEYS = {"text", "expect_intents", "expect_any", "expect_not"}
+_GOLDEN_KEYS = {"text", "expect_intents", "expect_any", "expect_not",
+                "expect_complexity",   # 断言 plan.complexity（adaptive 类知识的核心主张）
+                "holdout"}             # true=词法盲区句（检索 golden 车道跳过；live 车道
+                                       #   跑，报告按 in-sample/holdout 拆分——防 few-shot
+                                       #   原句自证把 10/10 读成泛化能力）
+_DIR_OF_TYPE = {"guide": "guides", "policy": "policies", "workflow": "workflows"}
 
 
 # ── 语料 ──────────────────────────────────────────────────────────────────────
@@ -98,6 +103,49 @@ def _known_intents() -> set[str]:
 
 
 # ── 车道 1：检索 golden + 反例 + 契约静态校验 ────────────────────────────────
+
+def _lane_files(root) -> list[str]:
+    """文件级严格校验（2026-07-27 评审缺口 1）：loader 对坏文件是 fail-open 宽容跳过/
+    回默认（运行时知识可用性优先），这里是**硬失败**——坏文件到不了主干。
+    校验面：YAML 可解析、顶层是映射、必填字段齐、type 合法、目录与 type 一致、
+    priority/version 是整数、keywords 是列表、全局重名。"""
+    errs, seen = [], {}
+    files = sorted(root.glob("*/*.yaml")) if root.is_dir() else []
+    if not files:
+        return ["skills/ 下没有任何 yaml 文件"]
+    for p in files:
+        rel = f"{p.parent.name}/{p.name}"
+        try:
+            raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        except Exception as e:
+            errs.append(f"{rel}: YAML 解析失败——{e}")
+            continue
+        if not isinstance(raw, dict):
+            errs.append(f"{rel}: 顶层必须是映射（实际 {type(raw).__name__}）")
+            continue
+        name = str(raw.get("name") or "").strip()
+        stype = str(raw.get("type") or "").strip()
+        for field in ("name", "type", "description", "knowledge"):
+            if not str(raw.get(field) or "").strip():
+                errs.append(f"{rel}: 缺必填字段 {field}")
+        if stype and stype not in _DIR_OF_TYPE:
+            errs.append(f"{rel}: type={stype!r} 非法（guide|policy|workflow）")
+        elif stype and p.parent.name != _DIR_OF_TYPE[stype]:
+            errs.append(f"{rel}: type={stype} 应放 {_DIR_OF_TYPE[stype]}/ 目录")
+        if name and p.stem != name:
+            errs.append(f"{rel}: 文件名应等于 name（{name}）——name 是唯一 ID")
+        for field, default in (("priority", 50), ("version", 1)):
+            v = raw.get(field)
+            if v is not None and not isinstance(v, int):
+                errs.append(f"{rel}: {field}={v!r} 必须是整数")
+        if raw.get("keywords") is not None and not isinstance(raw.get("keywords"), list):
+            errs.append(f"{rel}: keywords 必须是列表")
+        if name:
+            if name in seen:
+                errs.append(f"{rel}: 与 {seen[name]} 重名（name={name}）")
+            seen[name] = rel
+    return errs
+
 
 def _lane_contract(docs: list[sk.SkillDoc]) -> list[str]:
     """golden expect_* 静态校验：键合法、intent 真实存在（含 a|b 拆开验）。"""
@@ -130,6 +178,8 @@ def _lane_retrieval(store: sk.SkillStore) -> tuple[list[CaseResult], list[str]]:
         for c in g.golden:
             text = str(c.get("text") or "").strip()
             if not text:
+                continue
+            if c.get("holdout"):    # 词法盲区句：按设计词法检不回，归 live 车道（hybrid）
                 continue
             hits = [d.name for d in sk.top_guides(text, guides)]
             ok = g.name in hits
@@ -315,16 +365,19 @@ def _live_cases(docs: list[sk.SkillDoc]) -> list[dict]:
                 cases.append({"skill": d.name, "stype": d.type, "text": text,
                               "expect_intents": list(g.get("expect_intents") or []),
                               "expect_any": list(g.get("expect_any") or []),
-                              "expect_not": list(g.get("expect_not") or [])})
+                              "expect_not": list(g.get("expect_not") or []),
+                              "expect_complexity": str(g.get("expect_complexity") or ""),
+                              "holdout": bool(g.get("holdout"))})
     return cases
 
 
-def _judge(intents: list[str], c: dict) -> tuple[bool, str]:
+def _judge(intents: list[str], complexity: str, c: dict) -> tuple[bool, str]:
     miss = [tok for tok in c["expect_intents"]
             if not any(alt.strip() in intents for alt in str(tok).split("|"))]
     any_ok = (not c["expect_any"]) or any(a in intents for a in c["expect_any"])
     hit_not = [t for t in c["expect_not"] if t in intents]
-    ok = not miss and any_ok and not hit_not
+    cx_ok = (not c.get("expect_complexity")) or complexity == c["expect_complexity"]
+    ok = not miss and any_ok and not hit_not and cx_ok
     why = []
     if miss:
         why.append(f"缺 {miss}")
@@ -332,6 +385,8 @@ def _judge(intents: list[str], c: dict) -> tuple[bool, str]:
         why.append(f"expect_any 全缺 {c['expect_any']}")
     if hit_not:
         why.append(f"出现禁排 {hit_not}")
+    if not cx_ok:
+        why.append(f"complexity={complexity}≠{c['expect_complexity']}")
     return ok, "；".join(why)
 
 
@@ -346,18 +401,34 @@ async def _drive_live(cases: list[dict], agents: list, bucket: str) -> list[Case
         try:
             plan = await builder.build(c["text"], WorkingSet(catalog=agents), PlanContext())
             intents = [s.intent for s in plan.steps]
+            complexity = str(getattr(plan, "complexity", "") or "")
             injected = ",".join(getattr(plan, "skills", []) or [])
-            ok, why = _judge(intents, c)
+            ok, why = _judge(intents, complexity, c)
         except Exception as e:                    # 硬失败诚实记 error，不中断全场
             intents, injected, ok, why = [], "", False, f"error:{type(e).__name__}: {e}"
+        sample = "holdout" if c.get("holdout") else "in-sample"
         results.append(CaseResult(
             id=f"{bucket}::{c['text']}", bucket=bucket, text=c["text"],
             expected={k: v for k, v in c.items() if k.startswith("expect_") and v},
             actual=intents, passed=ok, detail=why,
-            tags=[f"skill:{c['skill']}", f"type:{c['stype']}", f"inj:{injected}"]))
-        print(f"  [{i}/{len(cases)}] {'PASS' if ok else 'FAIL'} {c['text']!r} → {intents}"
-              + (f"  ({why})" if why else ""))
+            tags=[f"skill:{c['skill']}", f"type:{c['stype']}", sample,
+                  f"inj:{injected}"]))
+        print(f"  [{i}/{len(cases)}] {'PASS' if ok else 'FAIL'}[{sample}] "
+              f"{c['text']!r} → {intents}" + (f"  ({why})" if why else ""))
     return results
+
+
+def _sample_split(results: list[CaseResult]) -> str:
+    """in-sample（golden 文本≈skill body/few-shot 原句）与 holdout 分开报——
+    合并成一个 10/10 会把「原句自证」读成泛化能力（2026-07-27 评审缺口 3）。"""
+    ins = [r for r in results if "in-sample" in r.tags]
+    hold = [r for r in results if "holdout" in r.tags]
+    parts = []
+    if ins:
+        parts.append(f"in-sample {sum(r.passed for r in ins)}/{len(ins)}")
+    if hold:
+        parts.append(f"holdout {sum(r.passed for r in hold)}/{len(hold)}")
+    return "；".join(parts)
 
 
 def _run_live(args, docs: list[sk.SkillDoc]) -> int:
@@ -389,11 +460,11 @@ def _run_live(args, docs: list[sk.SkillDoc]) -> int:
     lock.check("live 跑完")
 
     n_pass = sum(1 for r in results if r.passed)
-    print(f"\nlive_full：{n_pass}/{len(results)}")
+    print(f"\nlive_full：{n_pass}/{len(results)}（{_sample_split(results)}）")
     if ab_results:
         off_pass = sum(1 for r in ab_results if r.passed)
         print(f"live_off ：{off_pass}/{len(ab_results)}（Δ={n_pass - off_pass:+d}——"
-              f"知识注入带来的意图级增益）")
+              f"知识注入带来的意图级增益；{_sample_split(ab_results)}）")
 
     all_cases = results + ab_results
     report = build_report("skills", [
@@ -434,9 +505,10 @@ def main() -> int:
     print(f"=== Skill 检索 golden（guides={len(guides)}，policies={len(store.policies())}，"
           f"top_k={sk.SKILL_TOP_K}）===")
 
-    errs = _lane_contract(docs)
+    # 文件级严格校验先行：loader 宽容跳过/回默认的坏文件，在这里硬失败（CI 即 lint 门）
+    errs = _lane_files(store.root) + _lane_contract(docs)
     if errs:
-        print("✗ golden 契约静态校验失败：\n  " + "\n  ".join(errs))
+        print("✗ skill 契约静态校验失败：\n  " + "\n  ".join(errs))
         return 1
 
     ret_cases, failures = _lane_retrieval(store)

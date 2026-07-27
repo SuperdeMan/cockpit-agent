@@ -1,32 +1,32 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-07-25T02:34:23.892316+00:00",
-    "commit": "e743ee8"
+    "generated_at": "2026-07-27T05:08:18.330532+00:00",
+    "commit": "953e9b6"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 98
+      "count": 105
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 61,
-      "passed": 61,
+      "total": 67,
+      "passed": 67,
       "failures": [],
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 37,
-      "passed": 37,
+      "total": 38,
+      "passed": 38,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 98,
-    "passed": 98,
+    "total": 105,
+    "passed": 105,
     "pass_rate": 1.0
   },
   "cases": {
@@ -330,6 +330,76 @@
         "conditional"
       ],
       "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R6"
+    },
+    "route::看下明晚会不会下雨，要下就叫我收衣服": {
+      "id": "route::看下明晚会不会下雨，要下就叫我收衣服",
+      "bucket": "route_guardrail",
+      "text": "看下明晚会不会下雨，要下就叫我收衣服",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "guard",
+        "conditional"
+      ],
+      "source": "eval_skills live holdout 2026-07-27（叫我 劫持条件句）"
+    },
+    "route::去惠州怎么充电": {
+      "id": "route::去惠州怎么充电",
+      "bucket": "route_recall",
+      "text": "去惠州怎么充电",
+      "expected": [
+        "charging.plan"
+      ],
+      "actual": [
+        "charging.plan"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "replace"
+      ],
+      "source": "eval_skills live 2026-07-27（canonical 形态 hint 化，R2.1 惯例）"
+    },
+    "route::快没电了，附近找个快充": {
+      "id": "route::快没电了，附近找个快充",
+      "bucket": "route_recall",
+      "text": "快没电了，附近找个快充",
+      "expected": [
+        "charging.find"
+      ],
+      "actual": [
+        "charging.find"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "replace"
+      ],
+      "source": "eval_skills live 2026-07-27"
+    },
+    "route::附近有没有充电站": {
+      "id": "route::附近有没有充电站",
+      "bucket": "route_recall",
+      "text": "附近有没有充电站",
+      "expected": [
+        "nearby.search"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "nearby",
+        "guard"
+      ],
+      "source": "eval_skills live 2026-07-27（纯设施发现仍归 nearby，charging.find guard 不越界）"
     },
     "route::那附近有停车场吗": {
       "id": "route::那附近有停车场吗",
@@ -1743,6 +1813,60 @@
         "run"
       ],
       "source": "反向护栏：发起调研不被 cancel/status 抢（run=100 > 95，且 pattern 不重叠）"
+    },
+    "route::到公司提醒我拿文件": {
+      "id": "route::到公司提醒我拿文件",
+      "bucket": "route_recall",
+      "text": "到公司提醒我拿文件",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "location"
+      ],
+      "source": "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
+    },
+    "route::离开公司提醒我买菜": {
+      "id": "route::离开公司提醒我买菜",
+      "bucket": "route_recall",
+      "text": "离开公司提醒我买菜",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "location"
+      ],
+      "source": "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
+    },
+    "route::到公司之前提醒我交周报": {
+      "id": "route::到公司之前提醒我交周报",
+      "bucket": "route_recall",
+      "text": "到公司之前提醒我交周报",
+      "expected": [
+        "reminder.create"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder",
+        "eta"
+      ],
+      "source": "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
     }
   }
 }

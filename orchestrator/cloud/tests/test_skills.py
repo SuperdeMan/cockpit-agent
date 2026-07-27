@@ -172,6 +172,103 @@ def test_hybrid_fails_open_to_lexical(monkeypatch, tmp_path):
     assert [(d.name, ch) for d, ch in pairs] == [("charge", "lex")]   # 词法命中原样保留
 
 
+# ── 运行时容错（2026-07-27 评审缺口 1）：坏文件绝不崩规划 ──────────────────────
+
+def test_toplevel_list_and_bad_priority_do_not_crash(tmp_path):
+    """评审复现的两个真崩溃：顶层数组 AttributeError / priority 非数字 ValueError——
+    都发生在 fail-open try 之外，一个坏文件就打穿「坏文件跳过不崩规划」承诺。"""
+    gdir = tmp_path / "guides"
+    gdir.mkdir()
+    (gdir / "bad-list.yaml").write_text("- a\n- b\n", encoding="utf-8")
+    (gdir / "bad-pri.yaml").write_text(
+        "name: bad-pri\ntype: guide\ndescription: d\npriority: high\n"
+        "keywords: [x]\nknowledge: |\n  k\n", encoding="utf-8")
+    docs = sk.SkillStore(root=str(tmp_path)).load()      # 不得 raise
+    by_name = {d.name: d for d in docs}
+    assert "bad-list" not in str(by_name)                # 结构性坏文件跳过
+    assert by_name["bad-pri"].priority == 50             # 非法 priority 宽容回默认（知识保活）
+
+
+def test_duplicate_names_first_wins(tmp_path, caplog):
+    import logging
+    gdir = tmp_path / "guides"
+    gdir.mkdir()
+    body = "name: dup\ntype: guide\ndescription: d{i}\nkeywords: [关键词]\nknowledge: |\n  k{i}\n"
+    (gdir / "a-dup.yaml").write_text(body.format(i=1), encoding="utf-8")
+    (gdir / "b-dup.yaml").write_text(body.format(i=2), encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="cloud.skills"):
+        docs = sk.SkillStore(root=str(tmp_path)).load()
+    assert len(docs) == 1 and docs[0].description == "d1"   # glob 有序=先到者胜，确定性
+    assert any("重名" in r.message for r in caplog.records)
+
+
+def test_last_known_good_survives_broken_reload(tmp_path):
+    """热更新改坏文件 → 沿用上一版好文档（LKG）；删除文件 → 正常下线（删除是意图）。"""
+    gdir = tmp_path / "guides"
+    gdir.mkdir()
+    f = gdir / "lkg.yaml"
+    f.write_text("name: lkg\ntype: guide\ndescription: 好版本\nkeywords: [钓鱼]\n"
+                 "knowledge: |\n  好知识。\n", encoding="utf-8")
+    store = sk.SkillStore(root=str(tmp_path))
+    assert [d.name for d in store.load(force=True)] == ["lkg"]
+    f.write_text("- 顶层写成了数组\n", encoding="utf-8")     # 改坏
+    docs = store.load(force=True)
+    assert [d.name for d in docs] == ["lkg"] and docs[0].knowledge == "好知识。"
+    f.unlink()                                              # 删除=下线
+    assert store.load(force=True) == []
+
+
+def test_dir_type_mismatch_warns_but_honors_type(tmp_path, caplog):
+    import logging
+    gdir = tmp_path / "guides"
+    gdir.mkdir()
+    (gdir / "misplaced.yaml").write_text(
+        "name: misplaced\ntype: policy\ndescription: 放错目录的 policy\n"
+        "knowledge: |\n  正文。\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="cloud.skills"):
+        store = sk.SkillStore(root=str(tmp_path))
+        docs = store.load()
+    assert docs[0].type == "policy" and store.policies()    # 语义按 type 生效
+    assert any("应放" in r.message for r in caplog.records)  # 但告警要求归位
+
+
+# ── T2 再规划知识继承（2026-07-27 评审缺口 4） ────────────────────────────────
+
+def test_render_for_names_reinjects_only_actually_injected(monkeypatch):
+    monkeypatch.setattr(sk, "_default_store", sk.SkillStore())   # 真仓库 skills/
+    names = ["full:freshness-and-depth",                 # policy：应注入
+             "full:multi-day-trip@lex!clipped",          # 初规划被裁：不注入
+             "shadow:navigation-with-stop@vec"]          # shadow 轮：从未注入
+    block = sk.render_for_names(names)
+    assert "时效判据" in block                            # freshness 的 knowledge
+    assert "多日出行必出行程规划" not in block
+    assert "单个" not in block                            # navigation 的 knowledge 不在
+    assert sk.render_for_names([]) == "" and sk.render_for_names(None) == ""
+
+
+def test_replan_inherits_skill_block(monkeypatch):
+    """replan 的 user prompt 必须带初规划注入的知识块（conditional-reminder 类
+    「看结果再决定」的决策恰好发生在再规划轮——那一轮失忆等于知识白教）。"""
+    monkeypatch.setattr(sk, "_default_store", sk.SkillStore())
+    seen = {}
+
+    async def mock_llm(messages, **kw):
+        seen["user"] = messages[-1]["content"]
+        return '{"done": true}'
+
+    async def mock_resolve(query, top_k):
+        return []
+
+    builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
+    asyncio.run(builder.replan(
+        "查天气并视结果决定是否建提醒", [{"step": "s1", "ok": True}],
+        [_mock_agent("info", ["info.weather"])], PlanContext(session_id="t"),
+        skill_names=["full:conditional-reminder@lex", "full:freshness-and-depth"]))
+    assert "条件依赖" in seen["user"]                     # guide knowledge 进了再规划
+    assert "时效判据" in seen["user"]                     # policy 同样继承
+    assert seen["user"].index("当前日期") < seen["user"].index("条件依赖")  # 顺序契约
+
+
 def test_plan_skills_names_carry_channel_and_clip_markers(monkeypatch, tmp_path):
     """plan.skills 名单契约：guide 记 mode:name@通道、被裁加 !clipped、policy 记 mode:name。"""
     monkeypatch.setenv("SKILLS_MODE", "full")

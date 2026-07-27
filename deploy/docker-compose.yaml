@@ -265,7 +265,12 @@ services:
   cloud-planner:
     <<: *restart
     build: { context: .., dockerfile: orchestrator/cloud/Dockerfile }
-    volumes: *certs-vol
+    volumes:
+      - ../certs:/certs:ro
+      # skills/ 只读挂载（2026-07-27 评审缺口 5）：让「加规划知识=投 skill 文件」在容器里
+      # 真实成立——mtime 热更新（30s 窗）直接感知仓库文件变化，投文件/合并 evolve 提案后
+      # 不再需要重建镜像。镜像内仍 COPY 一份（挂载缺席时自持，行为不变）。
+      - ../skills:/app/skills:ro
     environment:
       <<: *python-env
       # R4.4 拒识/澄清门控：REJECT 默认 on（作用域被 hands-free + input_source 双重限定，
@@ -278,8 +283,16 @@ services:
       # 不含领域知识，shadow/off 仅作研究/debug 档，会缺规划知识）
       SKILLS_MODE: ${SKILLS_MODE:-full}
       # Skill 检索双通道（2026-07-26）：hybrid=词法∪语义预筛（经 llm-gateway Embed，
-      # fail-open 回词法）｜lexical=纯词法回退档。阈值/预算等调优项见 .env.example 注释。
+      # fail-open 回词法）｜lexical=纯词法回退档。
       SKILLS_RETRIEVAL: ${SKILLS_RETRIEVAL:-hybrid}
+      # Skill 调优项透传（2026-07-27 评审缺口 5：.env 可调但容器收不到）。刻意 ${VAR:-}
+      # 不带默认值——默认值只活在 skills.py 一处（.env.example 活跃行压死代码默认的老教训），
+      # 未设置时容器收到空串、代码侧 `or` 兜底。
+      SKILL_SEM_THRESHOLD: ${SKILL_SEM_THRESHOLD:-}
+      SKILL_EMBED_TIMEOUT: ${SKILL_EMBED_TIMEOUT:-}
+      SKILL_BUDGET: ${SKILL_BUDGET:-}
+      SKILL_TOP_K: ${SKILL_TOP_K:-}
+      SKILL_MIN_SCORE: ${SKILL_MIN_SCORE:-}
       # M1a submit_plan 结构化规划输出：on|off（默认 on——2026-07-24 泓舟拍板翻正，
       # A/B 材料 RFC §11；off=JSON 纯文本回退档。规划轮经原生 function calling 强制
       # 输出合法 Plan，协议失败轮内回退 JSON 路径）

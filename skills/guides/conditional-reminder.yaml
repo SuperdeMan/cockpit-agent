@@ -15,9 +15,17 @@ knowledge: |
   {"id":"s1","agent_id":"info","intent":"info.weather","slots":{"date":"明天"},"depends_on":[],"slot_refs":{}}
   ]}
 golden:
-  # expect_not 是这条知识的另一半：条件句首轮绝不能把提醒无条件排进计划
+  # expect_not 是这条知识的另一半：条件句首轮绝不能把提醒无条件排进计划；
+  # expect_complexity 是核心主张本身——条件依赖必须 adaptive（看结果再决定）
   - text: 查下明天会不会下雨，要是下雨就提醒我带伞
     expect_intents: [info.weather]
     expect_not: [reminder.create]
+    expect_complexity: adaptive
+  # holdout：避开 knowledge 原句与全部 keywords 字面（测泛化不测自证）
+  - text: 看下明晚会不会下雨，要下就叫我收衣服
+    expect_intents: [info.weather]
+    expect_not: [reminder.create]
+    expect_complexity: adaptive
+    holdout: true
 owner: orchestrator
 version: 1

@@ -74,6 +74,10 @@ jobs:
           run_group registry/tests/
           run_group llm-gateway/tests/
           run_group observability/collector/tests/
+          # 2026-07-27 评审补漏：这两组此前不在任何 CI 分组里（evolve/shadow-nlu 与主动
+          # 治理器的测试只在本地跑）。按既有「各裸 import 服务各自隔离」惯例各占一组。
+          run_group scripts/tests/
+          run_group proactive/tests/
           exit $fail
 
   intent-eval-baseline:
@@ -128,10 +132,13 @@ jobs:
           python test/eval_fast_intent.py --corpus full \
             --out-json docs/reviews/eval/_ci-run-coverage_fast_intent.json \
             --out-md docs/reviews/eval/_ci-run-coverage_fast_intent.md
-          # M0b Skill 层离线车道（2026-07-26 验收关卡「eval_skills 不在 GitHub CI」）：
-          # 检索 golden 召回 + 反例噪声 + golden expect_* 契约静态校验（词法档零网络）；
-          # paraphrase/live 车道需 llm-gateway，归 evolve nightly 与人工触发
-          python test/eval_skills.py
+
+      # M0b Skill 层离线门禁（2026-07-27 评审：从上面 continue-on-error 观测步拆出——
+      # 「跌破基线告警不阻塞」的哲学只适用于会随语料漂移的意图基线；skill 契约校验
+      # （文件 schema/golden 召回/反例噪声/expect 意图存在性）是确定性检查，失败必须红）。
+      # paraphrase/live 车道需 llm-gateway，归 evolve nightly 与人工触发。
+      - name: Skill contract gate (blocking)
+        run: python test/eval_skills.py
 
       - name: Upload fresh eval report
         if: always()

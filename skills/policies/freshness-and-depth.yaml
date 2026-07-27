@@ -21,6 +21,7 @@ golden:
   - text: 今年世界杯什么时候开赛
     expect_intents: ["info.sports|info.search"]
     expect_not: [chitchat.talk]
+    holdout: true
   - text: 系统性了解一下固态电池的产业格局
     expect_intents: [research.run]
 owner: orchestrator

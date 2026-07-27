@@ -29,5 +29,10 @@ golden:
   - text: 快没电了，附近找个快充
     expect_intents: [charging.find]
     expect_not: [navigation.navigate_to, nearby.search]
+  # holdout：避开 few-shot 原句与全部 keywords 字面（测泛化不测自证）
+  - text: 电快见底了，就近找个地方充上
+    expect_intents: [charging.find]
+    expect_not: [nearby.search]
+    holdout: true
 owner: charging-planner
 version: 1

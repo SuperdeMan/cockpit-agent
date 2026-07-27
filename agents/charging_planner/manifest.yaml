@@ -24,3 +24,21 @@ capabilities:
 
 requires_permissions: [location.read, navigation.control, network.external]
 context_scopes: [location, vehicle_state]   # 按位置找站 + 按真实电量规划
+
+# 确定性路由（R2.1；2026-07-27 eval_skills live 采样方差实证）：「去X怎么充电」「快没电了
+# 找桩」是本域教科书形态，LLM@0.3 温度下偶发翻面到 nearby/导航——canonical 形态按惯例
+# hint 钉死；paraphrase 泛化（「补个电」「电够不够」）仍由 skill 知识层（charging-strategy
+# guide）承担。guard 互斥：plan 形态不吃 find 的「附近/就近」，find 形态不吃 plan 的
+# 「怎么充/长途」与导航动词。
+route_hints:
+  - pattern: '去([^，。！？]{1,12}?)(?:的路上)?怎么充电?'
+    intent: charging.plan
+    policy: replace
+    priority: 55
+    guard: '附近|就近|旁边|这边|是什么|什么意思'
+    slots: {destination: "$1"}
+  - pattern: '(?:快?没电|没什么电|电量(?:不多|不足|不够|低)|电快?(?:见底|不多|不够))[^。！？]{0,10}(?:找|充|补)'
+    intent: charging.find
+    policy: replace
+    priority: 55
+    guard: '怎么充|够不够|能不能到|沿途|一路|长途|导航|带我去|规划|是什么|什么意思'

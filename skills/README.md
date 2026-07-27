@@ -6,7 +6,10 @@
 > 「是路由错还是知识缺」，再决定投 hint 还是投 skill。**新增可执行能力仍需 Capability/Agent。**
 > 实例：2026-07-26 live 首跑抓到「快没电了附近找个快充」被 nearby 的 replace hint 在 LLM
 > **之后**踩掉 charging.find——知识层教对了也会被 hint 盖掉，那就是 hint guard 的 bug，
-> 修 nearby manifest 而不是加知识。
+> 修 nearby manifest 而不是加知识。次日 holdout 车道又抓到同族：「要下就叫我收衣服」被
+> reminder 的「叫我」hint 劫持（guard 只认「要是/如果」不认无标记条件句）。
+> **分工口径（2026-07-27 采样方差实证）**：教科书形态（「去X怎么充电」）用 route_hints
+> 钉死——canonical 不该靠温度采样；skill 知识管 paraphrase 泛化（「补个电」「电够不够」）。
 
 ## 三型对象与目录
 
@@ -69,30 +72,54 @@ golden:                         # 必填（guide）：自带黄金用例，接 e
     expect_intents: [charging.plan]   # AND：全部必须出现；单项支持 "a|b" 双容忍
     expect_any: []                    # 可选：至少一个出现（如 hvac.inc/set/dec 任一）
     expect_not: [charging.find]       # 可选：一个都不许出现（知识的「另一半」）
+    expect_complexity: adaptive       # 可选：断言 plan.complexity（条件依赖类知识的核心主张）
+  - text: 电快见底了，就近找个地方充上
+    expect_intents: [charging.find]
+    holdout: true                     # 词法盲区真改写句：检索 golden 车道跳过（词法按设计
+                                      #   检不回）、live 车道跑并按 in-sample/holdout 拆分
+                                      #   报告——防 few-shot 原句自证把满分读成泛化能力。
+                                      #   每个 guide 至少配一条。
 owner: charging-planner         # 治理归属；跨域知识用 orchestrator
 version: 1
 ```
 
-未知顶层键（如 `few_shot` 拼写错误）**告警不拒载**——静默忽略会让作者以为知识生效了。
+**运行时容错 vs CI 严格**（2026-07-27）：loader 对坏文件 fail-open——顶层非映射/YAML 坏
+→ 跳过；`priority: high` 等非法标量 → 回默认并告警；**重名先到者胜**；目录与 type 不一致
+→ 按 type 生效并告警；热更新把文件改坏 → **沿用上一版好文档（last-known-good）**，删除
+文件才下线。同样这些问题在 `eval_skills` 文件级校验车道里是**硬失败**（CI 阻断）——
+运行时保知识可用性，门禁保主干整洁，坏文件到不了 main。未知顶层键（如 `few_shot`
+拼写错误）告警不拒载——静默忽略会让作者以为知识生效了。
 
 ## 治理
 
 - **eval 三车道**（`test/eval_skills.py`）：
-  1. 离线-检索（GitHub CI `intent-eval-baseline` + evolve nightly 门禁）：golden 检回自身
-     + 反例噪声 ≤ 半 + **golden expect_\* 契约静态校验**（intent 必须真实存在于
+  1. 离线-契约与检索（**GitHub CI 阻断步** `Skill contract gate` + evolve nightly 门禁；
+     2026-07-27 从 continue-on-error 观测步拆出——「跌破基线不阻塞」只适用于会漂移的
+     意图基线，契约校验是确定性检查）：文件级严格校验（可解析/顶层映射/必填/type 合法
+     且与目录一致/文件名=name/priority·version 整数/keywords 列表/全局无重名）+ golden
+     检回自身 + 反例噪声 ≤ 半 + **expect_\* 契约静态校验**（intent 必须真实存在于
      manifests/端侧意图集——typo 守卫）。
   2. 离线-paraphrase（数据车道，信息性）：`--retrieval both` 双档对比 + 阈值扫描。
   3. **live**（`--live`，真 PlanBuilder + 真 LLM）：golden expect_\* 的**消费方**——逐条
-     断言计划意图；`--ab` 附 `SKILLS_MODE=off` 对照出知识有效性 Δ（2026-07-26 首跑：
-     full 10/10 vs off 5/10，Δ=+5）。基线 `docs/reviews/eval/baseline_skills.json`
-     （`--write-baseline` 刷新）。live 烧钱+需真栈，人工/里程碑触发，不进 nightly。
+     断言计划意图/复杂度；报告按 **in-sample / holdout** 拆分；`--ab` 附 `SKILLS_MODE=off`
+     对照出知识有效性 Δ（2026-07-27 hint 补强后：full **14/14**（holdout 5/5）vs off
+     8/14，Δ=+6）。基线 `docs/reviews/eval/baseline_skills.json`（`--write-baseline`
+     刷新）。live 烧钱+需真栈+LLM 采样有方差（temp 0.3 与生产同源），人工/里程碑触发，
+     不进 nightly；翻面的 canonical 形态应按上方分工口径沉到 route_hints，不追跑分。
 - **obs 归因**：`plan.skills` 名单（cloud.planning span / obs.turn）契约——guide 记
   `mode:name@通道`（`@lex` 词法命中 / `@vec` 语义补位），**超预算被裁记 `!clipped`**
   （名单绝不谎称已注入）；policy 记 `mode:name`。badcase 先看名单：知识没进上下文
   （没检回/被裁）还是进了没用对。
 - 热更新：文件加载 + mtime（v1 不动 registry schema；多实例时再议注册中心索引）。
   `SKILLS_MODE`/`SKILLS_RETRIEVAL`/阈值超时每轮实时读；`SKILL_BUDGET`/`SKILL_TOP_K`/
-  `SKILL_MIN_SCORE` 重启生效。env 全表见 `.env.example`。
+  `SKILL_MIN_SCORE` 重启生效。env 全表见 `.env.example`（compose 对 cloud-planner 以
+  `${VAR:-}` 空默认透传——默认值只活在 skills.py 一处）。**容器内热更新真实成立**
+  （2026-07-27）：compose 把 `skills/` 只读挂载进 cloud-planner——投文件/合并 evolve
+  提案后 30s 内生效，不再需要重建镜像（镜像仍 COPY 一份自持，挂载缺席行为不变）。
+- **T2 再规划继承**（2026-07-27）：`replan()` 按 `plan.skills` 名单重渲染同一份知识注入
+  （`render_for_names`；shadow/被裁项不进）——条件依赖类知识的决策恰好发生在再规划轮，
+  只注初规划等于知识白教。刻意不做版本 hash 钉扎：replan 与初规划相隔秒级，30s mtime
+  窗内漂移概率可忽略，出现跨小时长任务再议。
 - 自进化流水线（M1b）允许的自动提案修改面 = guide / route_hint / eval 语料；
   **禁止**自动生成或修改 policy、VAL、权限、确认等级、payment（设计稿 §4.G）。
 
@@ -107,3 +134,13 @@ version: 1
   检索升级 hybrid（paraphrase 0/11→11/11，eval 数据拍板）；`plan.skills` 归因诚实化
   （`!clipped`/`@通道`）；eval 进 GitHub CI；新增首个净增知识 guide `charging-strategy`
   （charging 无 route_hints、路由纯 LLM，live A/B 证实两条 golden 均为知识翻正）。
+- **2026-07-27 评审补强**（外部评审六项裁决后采纳四项半）：loader 容错闭合（顶层数组/
+  非法 priority 两个真崩溃修复 + 重名/目录一致性 + last-known-good）；eval 文件级严格
+  车道 + CI 升为阻断步；golden 增 `holdout`/`expect_complexity`，live 报告拆
+  in-sample/holdout；**T2 replan 知识继承**；compose 挂载 skills/ 让容器内投文件即生效
+  + SKILL_\* 调优项空默认透传。holdout 车道当场抓到 reminder「叫我」hint 劫持无标记
+  条件句（guard 补 会不会/有没有/下不下）；采样方差实证后把充电教科书形态沉到
+  charging manifest route_hints（canonical 归 hint、paraphrase 归知识）。
+  未采纳：Pydantic（stdlib 校验够用不加依赖）、skill 版本 hash 钉进 Plan（秒级窗口
+  YAGNI）、步骤级/槽位级全断言（provider 方差下过脆——只收 complexity 断言）、
+  WorkflowTemplate 现在就建（维持「badcase 证据三条件」后置，见 AGENTS §4.0）。

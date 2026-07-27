@@ -192,7 +192,8 @@ class _Planner:
         self.decisions = list(decisions)
 
     async def replan(self, goal, observations, agents, ctx,
-                     granted_permissions=None, working_set=None):
+                     granted_permissions=None, working_set=None,
+                     skill_names=None):
         return self.decisions.pop(0)
 
 

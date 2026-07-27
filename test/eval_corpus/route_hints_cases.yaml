@@ -140,6 +140,31 @@
   source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R6"
   tags: [reminder, guard, conditional]
 
+# 2026-07-27 条件形态扩面（eval_skills live holdout 抓到）：不带「要是/如果」的条件句
+# （「要下就叫我」）同样必须让给 LLM 走 adaptive——guard 补查询式标记 会不会/有没有/下不下
+- text: 看下明晚会不会下雨，要下就叫我收衣服
+  initial_intents: []
+  expect_final_intents: []
+  source: "eval_skills live holdout 2026-07-27（叫我 劫持条件句）"
+  tags: [reminder, guard, conditional]
+
+# 2026-07-27 charging 教科书形态钉死（eval_skills live 采样方差）：paraphrase 归 skill 层
+- text: 去惠州怎么充电
+  initial_intents: []
+  expect_final_intents: [charging.plan]
+  source: "eval_skills live 2026-07-27（canonical 形态 hint 化，R2.1 惯例）"
+  tags: [charging, replace]
+- text: 快没电了，附近找个快充
+  initial_intents: []
+  expect_final_intents: [charging.find]
+  source: "eval_skills live 2026-07-27"
+  tags: [charging, replace]
+- text: 附近有没有充电站
+  initial_intents: []
+  expect_final_intents: [nearby.search]
+  source: "eval_skills live 2026-07-27（纯设施发现仍归 nearby，charging.find guard 不越界）"
+  tags: [charging, nearby, guard]
+
 # R3（旅程 B1-3）：焦点指代「那附近」让给 LLM 规划（replace 灌整句会剥 location 槽）
 - text: 那附近有停车场吗
   initial_intents: []

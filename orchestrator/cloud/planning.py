@@ -412,20 +412,26 @@ class PlanBuilder:
 
     async def replan(self, goal: str, observations: list[dict], agents: list,
                      ctx: PlanContext, granted_permissions: list[str] = None,
-                     working_set: WorkingSet = None) -> ReplanDecision:
+                     working_set: WorkingSet = None,
+                     skill_names: list[str] | None = None) -> ReplanDecision:
         """Decide completion and optionally produce the next validated batch.
 
         working_set: 复用初规划的同一装配——再规划也注入历史(+焦点)，消除初规划与
         再规划上下文不一致（见 docs/design/2026-06-25-context-system-redesign.md P3）。
+        skill_names: 初规划实际注入的 skill 名单（plan.skills）——T2 再规划继承同一份
+        规划知识（2026-07-27 评审缺口：conditional-reminder 类「看结果再决定」的知识
+        若只在初规划在场，再规划轮恰好是决策发生的地方却失忆）。
         """
         if granted_permissions is not None:
             agents = self._filter_by_permission(agents, granted_permissions)
         agent_map = {a.manifest.agent_id: a for a in agents}
         ctx_block = working_set.render_context() if working_set is not None else ""
+        sk_block = _skills.render_for_names(skill_names)
+        sk_part = f"{sk_block}\n\n" if sk_block else ""   # 位置同初规划：紧跟日期锚（顺序契约）
         prompt = (
             f"目标：{goal}\n"
             f"{_date_line()}\n"
-            f"{ctx_block}最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
+            f"{sk_part}{ctx_block}最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
             f"可用能力：{WorkingSet.render_catalog(agents)}"
         )
         try:

@@ -22,5 +22,9 @@ golden:
   # 天气族双容忍（a|b 语法）：知识只要求「天气步并列存在」，不苛求 LLM 在族内选哪个
   - text: 周末去杭州两天带老人不要太累，顺便看看天气
     expect_intents: [trip.plan, "info.forecast|info.weather"]
+  # holdout：不与 knowledge/few-shot 原句重合、避开全部 keywords 字面（测泛化不测自证）
+  - text: 陪爸妈去趟昆明玩四天，帮我安排下
+    expect_intents: [trip.plan]
+    holdout: true
 owner: trip-planner
 version: 1
