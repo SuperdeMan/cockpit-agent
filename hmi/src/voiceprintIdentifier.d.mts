@@ -18,7 +18,11 @@ export class VoiceprintIdentifier {
   readonly displayName: string
   readonly decision: string
   reset(): void
-  arm(isWakeEntry: boolean): void
+  arm(isWakeEntry: boolean, speakingNow?: boolean): void
+  /** VAD 语音段状态（controller 转发）——只有 true 期间的帧计入探针。 */
+  setSpeaking(on: boolean): void
+  /** VAD 端点：没攒够也用已有的发一次（短问句否则永远不识别）。 */
+  flush(): void
   pushFrame(frame: Float32Array): void
 }
 

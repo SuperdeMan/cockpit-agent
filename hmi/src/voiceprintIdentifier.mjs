@@ -10,6 +10,12 @@
 //
 // 纯逻辑 + 依赖注入（fetch/时钟都注入），与 voiceLoop/utteranceHeuristics 同款——
 // 声学层测不了，这一层必须能离线测。
+//
+// **只收 VAD 判定为语音的帧**（2026-07-26 真机修）：喂进来的 `vad.onFrame` 是**原始帧旁路**
+// （给 pcmRing/PCM 直传用，不做门控）。首版直接按帧数累计 1.5s，而唤醒后的头一秒恰恰是
+// 「在呢」提示音 + 用户还没开口的静音——探针里大半不是人声，嵌入被稀释到谁都认不出，
+// 于是**永远回 primary**：用户看到的现象是「换了个人说话还是同一个人」。
+// 累计的必须是「有效语音」而不是「墙钟时间」，两者在唤醒窗开头差得最远。
 
 /** 默认最短有效语音（与网关 VOICEPRINT_MIN_SPEECH_MS 同口径；网关会再判一次，这里只是别白发）。 */
 export const DEFAULT_MIN_SPEECH_MS = 1500
@@ -36,11 +42,18 @@ export class VoiceprintIdentifier {
     this._samples = 0
     this._armed = false
     this._fired = false
+    this._speaking = false
     this._pending = null
     this._occupantId = 'primary'
     this._displayName = ''
     this._decision = ''
   }
+
+  /**
+   * VAD 的语音段状态（controller 从 `onSpeechStart`/`onSpeechEnd` 转发）。
+   * 只有 true 期间的帧才计入探针——静音、提示音尾巴、段间停顿一概不进。
+   */
+  setSpeaking(on) { this._speaking = !!on }
 
   /**
    * 当前锁定的说话人（未识别/认不出 → 'primary'，即 P4 之前的行为）。
@@ -57,21 +70,42 @@ export class VoiceprintIdentifier {
   /**
    * 唤醒进入 LISTENING 时调用。
    * @param {boolean} isWakeEntry true=唤醒后首句（才识别）；false=续说/续问（不重识）
+   * @param {boolean} speakingNow 此刻 VAD 是否已在语音段中（唤醒词连着说完就接下一句时为真）
    */
-  arm(isWakeEntry) {
+  arm(isWakeEntry, speakingNow = false) {
     // 一次唤醒窗只识别一次：续问窗内的后续句子不再重识（见文件头）。
     if (!isWakeEntry || this._fired) return
     this._armed = true
+    this._speaking = !!speakingNow
     this._buf = []
     this._samples = 0
   }
 
-  /** VAD 帧（Float32Array，16k）。够长就 fire-and-forget 发识别请求——此刻用户还在说。 */
+  /**
+   * VAD 帧（Float32Array，16k）。**非语音段的帧直接丢弃**——累计的是有效语音不是墙钟时间
+   * （见文件头：混进静音会把嵌入稀释到谁都认不出）。攒够就 fire-and-forget 发请求，
+   * 此刻用户还在说。
+   */
   pushFrame(frame) {
-    if (!this._armed || !frame || !frame.length) return
+    if (!this._armed || !this._speaking || !frame || !frame.length) return
     this._buf.push(frame)
     this._samples += frame.length
     if (this._samples * 1000 / this.sampleRate < this.minSpeechMs) return
+    this._armed = false
+    this._fired = true
+    this._pending = this._identify(this._flatten())
+    this._buf = []
+  }
+
+  /**
+   * 说完了（VAD 端点）还没攒够 → 用已有的这段发一次。
+   *
+   * 门控之后必须有这一手：**第一句往往就是短问句**（「你知道我是谁」约 1.2 秒），
+   * 按 1.5 秒的门槛它永远攒不够——那就从「认错人」退化成「永远不识别」，症状一模一样。
+   * 够不够格由网关判（不足回 `too_short` 并诚实降级 primary），这里只负责别把话憋着。
+   */
+  flush() {
+    if (!this._armed || this._samples <= 0) return
     this._armed = false
     this._fired = true
     this._pending = this._identify(this._flatten())
@@ -96,7 +130,11 @@ export class VoiceprintIdentifier {
       const r = await this.deps.identify(pcm)
       if (r && r.occupant_id) {
         this._occupantId = r.occupant_id
-        this._displayName = r.display_name || ''
+        // **认不出就不叫名字**（2026-07-26 泓舟拍板）：后端在降级回 primary 时照样回
+        // primary 的称呼，助手于是会对着一个没认出来的人一口咬定「你是泓舟」。
+        // occupant_id 仍回落 primary（记忆归属逐字回落到声纹上线之前，那是对的），
+        // 但**称呼是一句断言**，没认出来就不该断言。
+        this._displayName = r.decision === 'accept' ? (r.display_name || '') : ''
         this._decision = r.decision || ''
         this.deps.onResult?.(r)
       }

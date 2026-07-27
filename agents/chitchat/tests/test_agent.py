@@ -4,6 +4,7 @@ import os
 from unittest.mock import AsyncMock
 
 from agents._sdk.testing import make_context, run_handle
+from agents.chitchat.src import agent as A
 from agents.chitchat.src.agent import ChitchatAgent, _resolve_model, _length, _system
 
 
@@ -216,3 +217,32 @@ def test_handle_stream_short_reply_flushed_at_end():
     events = _collect_stream(agent, "帮我记住这件事")
     speech = "".join(p for k, p in events if k == "speech")
     assert speech == "好"
+
+
+# ── 身份问句确定性直答（真机 2026-07-27：换人说话后仍答上一个人的名字）──────────
+
+def test_identity_answer_uses_voiceprint_name():
+    """系统持有的事实不交给 LLM——同墙钟一族。"""
+    assert A._identity_answer("我是谁？", {"occupant_name": "泓舟"}) == "你是泓舟呀。"
+    assert A._identity_answer("你知道我是谁吗", {"occupant_name": "阿灵"}) == "你是阿灵呀。"
+    assert A._identity_answer("我叫什么名字", {"occupant_name": "泓舟"}) == "你是泓舟呀。"
+
+
+def test_identity_answer_silent_when_not_identified():
+    """认不出就别硬答——降级由 LLM 按 system 里没有名字自然处理，不能瞎猜一个。"""
+    assert A._identity_answer("我是谁？", {}) == ""
+    assert A._identity_answer("我是谁？", {"occupant_name": "  "}) == ""
+
+
+def test_identity_answer_does_not_hijack_other_sentences():
+    """正则须占据整句：含「我是谁」字样的别的意图不能被劫持。"""
+    meta = {"occupant_name": "泓舟"}
+    for t in ("我是谁的乘客", "你猜我是谁的朋友", "帮我查一下我是谁的会员",
+              "我是谁都不认识的人", "他是谁"):
+        assert A._identity_answer(t, meta) == "" or t == "你猜我是谁"
+
+
+def test_identity_answer_survives_polite_prefix_and_particles():
+    meta = {"occupant_name": "泓舟"}
+    assert A._identity_answer("请问我是谁呀？", meta) == "你是泓舟呀。"
+    assert A._identity_answer("那我是谁嘛", meta) == "你是泓舟呀。"

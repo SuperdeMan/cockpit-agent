@@ -81,7 +81,7 @@ python test/e2e_obs.py                     # 断言型：badcase 排查观测链
 python test/e2e_voice_loop.py              # 断言型：语音回路后端契约（/api/asr/stream PCM 直传 partial→final→done + vad_silence_ms 透传 + TTS round-trip）——浏览器声学层 CI 测不了，留真麦
 python test/e2e_tts_stream.py              # 断言型：R4.2 服务端流式 TTS（cosyvoice 首帧延迟 G1 门槛 + cancel 收尾）——需 DashScope key
 python test/e2e_s2s.py                     # 断言型：M4 S2S 全双工最小闭环（自答闭环/多轮上下文/escalate 逃逸零音频/①听感打断零残包/③工具调用中打断不播报/unsupported 回落/回灌 memory+obs 且逃逸轮不重复写）——需 DashScope key（2026-07-25）
-python test/e2e_voiceprint.py              # 断言型：M4 P4 声纹多用户（**M4 最后一条 DoD「多用户记忆隔离旅程」**）——首个注册者绑 primary 且存量记忆一条不少/识别/太短与静音诚实降级/B 的偏好主驾查不到/「你知道我是谁」叫得出名字/换乘员后危险动作照样确认/删除即忘掉这个人。声纹模型缺失自动 SKIP（2026-07-26）
+python test/e2e_voiceprint.py              # 断言型：M4 P4 声纹多用户（**M4 最后一条 DoD「多用户记忆隔离旅程」**）——首个注册者绑 primary 且存量记忆一条不少/识别/太短与静音诚实降级/B 的偏好主驾查不到/「你知道我是谁」叫得出名字/换乘员后危险动作照样确认/删除即忘掉这个人。声纹模型缺失自动 SKIP。**⚠️ 它跑的是真实 `uid=u1` 且开头会清空该用户的全部声纹模板**（净初态），有真人已录入的机器上别随手跑——会把真人的三段样本换成 TTS 音色（2026-07-27 补注）
 python test/e2e_vision.py                  # 断言型：M4 P4 视觉入口——纯色图进真模型出真颜色（正确答案唯一可断言，比拿风景照让它描述强）/没帧与帧过期一律诚实降级不编造/响应体零图像字节。需 DashScope key（2026-07-26）
 python test/e2e_s2s_resilience.py          # 断言型：M4 S2S 韧性（宿主内 WS 代理注入断连→重连+摘要重注入/IN_TURN 断连诚实收束/持续不可达→DEGRADED 回落）——需 DashScope key；不改 .env 不给生产协议加后门（2026-07-25）
 python test/e2e_degrade.py                 # 断言型：架构 §3.3 降级矩阵四行（单 Agent 故障/LLM 超时/云 Planner 故障/断网）——docker 级故障注入 + 严格 try/finally 恢复，务必放在其它 e2e 脚本之后跑
@@ -117,6 +117,12 @@ node test/hmi_cdp/run_cases.mjs                   # L4：HMI 二次交互 CDP �
   超时等）按语料内 `skip_journey_if_speech_any` 约定判 SKIP 不判 FAIL。
 - L4 前置：宿主装有 Edge/Chrome（`CDP_BROWSER` 可指定路径）、宿主 5173 未被本地 vite 占用；
   截图证据落 `test/hmi_cdp/shots/`（gitignore）。
+- **⚠️ CDP 假麦克风只能验接线，验不了音质**（2026-07-27 实测）：
+  `--use-file-for-fake-audio-capture` 喂 WAV 时**装置本身不保真**——同一段 TTS 文件直取的
+  三段自洽度 0.83/0.73/0.81，经假麦采进浏览器后 ASR 只能转出零星几个字、与源文件的声纹余弦
+  仅 **-0.03**（换 48kHz / 降 12dB / 关 EC-NS-AGC 都不救）。故它可用于「请求有没有按预期
+  发出去、格式对不对」这类接线断言，**识别率/音质类结论一律以真麦为准**。
+  **测试装置也要先被验证**，否则它会以产品缺陷的面目出现（差点据此继续改产品）。
 
 ### 5.2 灰度门槛评测（M4 S2S）
 

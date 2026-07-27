@@ -614,17 +614,25 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | **提取与存储分家** | 网关做「音频→192 维向量」（`llm-gateway/speaker_embed.py`，模型面）；memory 做「向量→是谁」（`memory/voiceprint.py` 判定 + `voiceprint` 表）。**模板绝不下发到网关**——生物特征扩散到无状态服务就删不干净 |
 | **不旁路 ASR/S2S 流** | 走独立端点，两条语音链路零侵入（S2S 会话层刚踩过端点死锁，可选增强件不该焊进关键件）。代价=唤醒首句 ≤96KB 重复上行 |
 | 识别时机 | **边说边识别**：累计 1.5s 有效语音即发（用户还在说），send 前软等 ≤150ms。**一次唤醒锁一次**，续问窗内不重识——轮内改判会让同一段对话的前后半截落进不同乘员，比认错更糟 |
+| **「有效语音」是字面意思**（2026-07-26 真机 P0） | 喂给识别器的 `vad.onFrame` 是**原始帧旁路不做门控**（它同时供 pcmRing/PCM 直传）。识别器必须自己按 VAD 语音段收帧：唤醒后头一秒是提示音「在呢」+ 用户还没开口的静音，按墙钟累计的话探针里大半不是人声，嵌入被稀释到**谁都认不出→恒回 primary**，用户看到的现象是「换个人说话还是同一个人」。配套：VAD 端点处**补发一次**（短问句「你知道我是谁」约 1.2s，按 1.5s 门槛永远攒不够=从认错退化成永不识别，症状一样）；够不够格由网关判（`too_short` 诚实降级） |
+| **判定必须留痕** | 网关 identify 每次打一行 INFO（occupant/decision/score/runner_up/probe_ms/src）。**obs 那条 metric 指望不上**——collector 的 `apply_metric` 是固定键白名单，`vp_*` 全被丢掉（2026-07-26 排查时发现，RFC 承诺的「四态全进 obs 供 M1b 挖掘」实际未落地，已立卡）。阈值本就是拿合成音色标定的、对真人多半要重调（`VOICEPRINT_THRESHOLD`/`MARGIN`/`MIN_SPEECH_MS` 三个 env 可调），**没有分数就无从调起** |
 | 判定四态 | `accept` / `below_threshold` / `ambiguous`(top1-top2<margin) / `too_short`；**accept 之外一律回 `primary`**。不是 guest 不是 unknown——primary 是存量语义，降到它=逐字回落今天；造新身份=凭空多一个空记忆空间 |
-| 阈值来源 | `test/e2e_voiceprint_probe.py` 实测钉死。实测结论：**真正起作用的控制量是 margin 不是 threshold**（thr∈[0.45,0.70] 结果完全相同）；认错率恒 0，混淆对（同性别音色）由 ambiguous 档兜住 |
+| 阈值来源 | `test/e2e_voiceprint_probe.py` 合成音色实测 + **2026-07-26 真人真麦复标**。结论：**真正起作用的控制量是 margin 不是 threshold**（thr∈[0.45,0.70] 结果完全相同）；认错率恒 0，混淆对由 ambiguous 档兜住 |
+| **代理数据会把常量标反**（2026-07-26） | threshold **0.62 → 0.45**：真人真麦同人余弦 0.52 / 异人 0.12，0.62 把同人一并卡掉（现象=录了两个人谁说话都认成同一个）。**合成音色标反了方向**——TTS 音色共享信道特征、异人高达 0.65 逼阈值上抬，而真人的异人分离度好得多，阈值反而该下放。真人实测值已钉成回归测试（`test_real_mic_measurement_is_accepted`）。margin 不动：一个数据点上不同时拧两个旋钮 |
+| **认不出就不叫名字**（2026-07-26 拍板） | 后端降级回 primary 时照样回 primary 的 `display_name`（它确实是 primary 的名字），但 HMI 拿它当「你」的称呼下发，助手就会对着没认出来的人一口咬定「你是泓舟」。**`occupant_id` 照旧回落 primary**（记忆归属逐字回落=对的），但**称呼是一句断言**，只有 `accept` 才下发（`voiceprintIdentifier` 一处收口，classic 与 S2S 共用） |
 | **首个注册者绑 `primary`** | 存量记忆全在 primary 名下，首个注册者若拿 occ-1，他自己过去说过的一切当场失联。堵在分配这一步，不做事后迁移 |
 | 坏模板拒收 | 注册三段两两余弦 < `VOICEPRINT_MIN_CONSISTENCY` → 409 拒绝建模板（混了别人/噪声的模板此后谁都认不准） |
 | stale 模板 | `model` 与当前提取模型不符即跳过并提示重录——**绝不拿旧模型的向量跟新模型的比余弦**，那个数字没有意义 |
 | **红线：不作鉴权因子** | `occupant_id` 只进记忆域（recall/remember/AppendTurn/relation）。**不得进** granted_scopes/权限判定/VAL/require_confirm 合成/payment。源码级断言 `orchestrator/cloud/tests/test_voiceprint_not_auth.py`。理由不止「声纹可被录音重放」——身份识别与授权是两件事，识别错了只该损失个性化 |
 | GDPR | `ForgetUser` 同事务级联删 `voiceprint`（同 `memory_relation` 先例）。删单个乘员默认连带删其记忆（「忘掉这个人」），**但 primary 永不 purge**——删单个乘员不该有清空全车的爆炸半径 |
 | 透传管道 | HMI `buildMeta.occupant_id` → edge-gateway（原样透传）→ `build_context` → `PlanContext.occupant_id` → `prefs` → `ExecuteRequest.meta` → `_sdk.Context.occupant_id`。**memory 侧零改动**——recall 本来就是 occupant 精确过滤，缺的只是这个参数 |
+| **身份问句确定性直答**（2026-07-27 真机 P0） | 「我是谁 / 你知道我是谁吗 / 我叫什么」由 `chitchat._identity_answer` 按 `occupant_name` **直答，零 LLM**（同 `_clock_answer` 一族：**系统自己持有的事实不交给 LLM**）。原因：车里只有一个会话而说话人会换，**上文的称呼比 system 提示更近、更像既成事实**——上一轮管别人叫过「阿灵」，这一轮 system 明写泓舟，模型照样答「你是阿灵呀，刚才不是说了嘛」。**加强提示词实测无效**（两个方向各两次全错），靠改 prompt 是在跟采样赌。未识别出人（`occupant_name` 空）时不直答，回落 LLM 诚实处理；正则须占据整句，不劫持「我是谁的乘客」 |
 | **名字有两个落点，缺一不可** | ①`identity.name` 记忆（注册时由 `EnrollVoiceprint` 写入，改名走 supersede，删乘员时随其记忆一起没）——**只写 `voiceprint` 表答不出「你知道我是谁」，那张表除了比对没有任何消费方会读**；写进记忆才获得召回/导出/GDPR 删除/记忆面板可见性。②`occupant_name` meta 键（沿 occupant_id 同一条管道下发，chitchat system 注入）——**身份问句是用户验证声纹是否生效的第一句话，必须确定性答得上，不能靠语义召回碰运气**。两者同样不参与权限判定 |
 | **识别取值必须同步** | HMI 侧 `occupantId` 是同步 getter，**刻意没有「等一下识别结果」的接口**。曾加过 150ms 软等待，它把 `voiceLoop._finalizeSend`（先 onSend 再进 THINKING）的 `onSend` 变成异步，破坏了「真实用户气泡由 send 同步接管」的不变量→气泡与回答错位。而它几乎赚不到东西：识别在说到 1.5s 时发出，端点还要再等一个静音尾（默认 800ms）。node 测试有回归护栏挡它被加回来 |
-| 音频格式 | 识别主链路走 HMI 现成的 16k mono s16le PCM **不转码**（唤醒窗内要短平快）；设置页的注册与「试一试」用 MediaRecorder 的 webm，经 `format=webm` 走既有 ffmpeg 转码（低频操作） |
+| **注册与识别必须同信道**（2026-07-27 真机 P0） | 三条路（注册 / 「试一试」/ 主链路识别）**全部走 16k mono s16le PCM + 同一组 EC/NS/AGC 约束**（`hmi/src/pcmRecorder.mjs`，与 `vadEngine` 逐字对齐；契约测试 `pcmRecorder.test.mjs` 源码级钉死）。**曾经注册走 MediaRecorder/webm（opus 有损）而识别走原始 PCM**：真机同一批人实测 webm 探针 0.73/0.74 vs PCM 探针 0.48/0.53，**系统性差 0.2，足以把「谁在说话」判反**（两人都被认成同一个）。声纹嵌入吃的是信道特征，模板与探针不同源就不在一个空间里比余弦 |
+| **自证必须走被证的那条路** | 「试一试」此前走 webm，于是在主链路已经认错人的情况下照样显示「听出来了」——**唯一的自证手段成了假证人**，真机上正是它先报的平安。自证的前提是它证的和跑的是同一件事 |
+| **重录 ≠ 新增** | 已录乘员重录必须带原 `occupant_id`（HMI 行内「重录」按钮），否则服务端分配新 `occ-N`，**这个人的记忆当场分家成两半**。换模型/换信道后的批量重录尤其要走这条路 |
+| 头尾静音 | 注册是「按下按钮→定时 N 秒」，开口前的犹豫与念完的尾巴都在录音里 → 录完切头尾（`trimSilence`）。**只切头尾不逐帧筛**：按峰值比例逐帧丢会把辅音/弱元音连同停顿一起丢掉，剩一串爆发音——实测那样的音频喂 ASR 只能转出零星几个字，而声纹嵌入吃同一份信号却不会报错，只会悄悄变得谁都认不准 |
 | 隔离边界（v1） | 只做硬隔离，**不做跨乘员共享**。`memory_level` 现状只写不读且恒为 `user`，做读侧共享=全部共享=隔离归零；真共享层要改抽取分类，是独立一期 |
 | 降级 | 模型缺失/依赖缺失 → `provider[voiceprint]=disabled`，`/api/voiceprint/*` 返回 `enabled:false`，HMI 隐藏入口，occupant_id 恒 primary。**这一档是常态之一不是异常**（模型 28MB 且下载不稳） |
 | **改名不重录**（2026-07-26） | 称呼是元数据，独立 RPC `RenameVoiceprint` + `PATCH /api/voiceprint/{occupant_id}`，只改 `voiceprint.display_name` 并同步重写 `identity.name` 记忆（只改表则助手嘴里还是旧名）。**把改名绑在「重录三段」上，用户就会为了改名反复走注册流程**——真机上的名字丢失正是这么发生的 |

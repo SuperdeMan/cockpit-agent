@@ -101,6 +101,24 @@ def test_no_decision_ever_returns_guest_or_unknown():
         assert V.decide(scored)["occupant_id"] in ("primary", "occ-2")
 
 
+def test_real_mic_measurement_is_accepted():
+    """**真人真麦实测钉死**（2026-07-26，泓舟/阿灵两位已注册乘员）：
+    同人 0.5243 / 异人 0.1157。旧阈值 0.62 把同人一并卡掉 → 谁说话都认成同一个。
+
+    合成音色把这件事标反了：TTS 音色共享信道特征、异人余弦高达 0.65，逼阈值上抬；
+    真人真麦的异人分离度好得多（0.12），阈值反而该下放。
+    **代理数据标定的常量，必须在真实分布上复标一次。**"""
+    out = V.decide([("occ-2", 0.5243), ("primary", 0.1157)])
+    assert out["decision"] == "accept" and out["occupant_id"] == "occ-2", (
+        f"真人实测的这组数必须认得出来（当前 threshold={V.threshold()}）")
+
+
+def test_pure_noise_is_still_rejected():
+    """下调阈值不能把噪声也放进来：实测正弦+白噪探针余弦 -0.0585。"""
+    out = V.decide([("primary", -0.0585), ("occ-2", -0.1025)])
+    assert out["occupant_id"] == "primary" and out["decision"] == "below_threshold"
+
+
 # ── occupant_id 分配 ──────────────────────────────────────────────────────
 
 def test_first_enrollee_takes_primary():

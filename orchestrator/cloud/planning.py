@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from security.permission import check_permission
 from .models import Plan, Step, PlanContext, ReplanDecision
@@ -42,6 +43,23 @@ def _verification_dict(cap) -> dict:
         "max_attempts": int(raw.get("max_attempts") or 0),
         "expect": raw.get("expect") if isinstance(raw.get("expect"), dict) else {},
     }
+
+
+# R4.4 修正（2026-07-27 真机）：**祈使式指令一律视为「在跟助手说话」，不问模型**。
+# 真机现象：「记住，我女儿叫小满」被 planner 判 `addressed=false`（当成乘客间闲聊）→ 静默
+# 短路，用户**说了、没回、也没记**（拒识轮按设计不落库不进画像）。而它是间歇的——同一句
+# 某次 3/3 被拒、换一批 6 条又只拒 1 条，是 LLM 判定的方差，不是判据问题。
+# 同「系统持有的事实不交给 LLM 答」一族：**用户用祈使句直接对你下指令，这件事不需要模型
+# 判断**。只覆盖无歧义的祈使前缀（记忆类指令，误判代价最大的一类），其余仍由模型判。
+# 须**锚在句首**（去礼貌前缀后）：「我不记得了」「他记住了」不是指令，不能劫持。
+_POLITE_PREFIX_RE = re.compile(r"^[\s，,。.、]*(那|哎|诶|嘿|嗯|请|麻烦|你好|喂)*[\s，,、]*")
+_DIRECTIVE_RE = re.compile(
+    r"^(帮我|给我|你|请)?(记住|记一下|记下来|记下|记着|记得|别忘了|别忘记|别忘)")
+
+
+def _is_directive_to_assistant(text: str) -> bool:
+    """句首是显式祈使指令（「记住…」）→ 必然是对助手说的，不接受模型的 not_addressed 判定。"""
+    return bool(_DIRECTIVE_RE.match(_POLITE_PREFIX_RE.sub("", (text or "").strip())))
 
 
 # M2 P2（子 RFC §2.3）：会话级情绪信号的封闭词表。**不进记忆层**——短 TTL 且不入画像的
@@ -336,6 +354,15 @@ class PlanBuilder:
                 last_raw = raw or last_raw
                 parsed = self._parse_and_validate(raw, agent_map, text)
                 mode = "toolcall_fallback" if toolcall else "json"
+            # 祈使指令不接受 not_addressed（2026-07-27 真机）：置为「本次没解析出计划」，
+            # 走既有的重试→fallback 机制。**刻意不直接改判成 chitchat**——重试有机会拿到
+            # 正确的计划（「记住，明天八点提醒我开会」该进提醒域而不是闲聊），只有两次都判
+            # 不受话才落 chitchat 兜底。代价仅在误判时多一次规划调用。
+            if (parsed is not None and not parsed.addressed and not parsed.steps
+                    and _is_directive_to_assistant(text)):
+                logger.info("planner said not_addressed on a directive, overriding: %s",
+                            text[:40])
+                parsed = None
             # R4.4：放行「合法的空 steps 计划」——受话判定 addressed=false / 澄清 clarify
             # 的正确输出 steps 恰为空，不能当解析失败去重试+fallback（母卡实施计划 §0-1/§0-2）。
             if parsed and (parsed.steps or not parsed.addressed or parsed.clarify):

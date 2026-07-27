@@ -1199,18 +1199,26 @@ export async function fetchVoiceprints(apiBase: string, userId: string): Promise
 }
 
 /**
- * 注册一个乘员。samples 是浏览器录到的音频段（MediaRecorder 的 webm blob）。
- * 服务端转码后建模板；三段互不像会被 409 拒绝（宁可不建，也不要建个坏模板）。
+ * 注册一个乘员。samples 是 **16k 单声道 s16le PCM 段**（`PcmRecorder`，与主链路识别同一条
+ * 音频通路）。三段互不像会被 409 拒绝（宁可不建，也不要建个坏模板）。
+ *
+ * **不要改回 MediaRecorder/webm**（2026-07-26 真机第三批）：opus 有损压缩会把模板挪到另一个
+ * 信道上，主链路的原始 PCM 探针跟它比余弦会系统性低约 0.2——实测同人 0.73→0.48，足以把
+ * 「谁在说话」判反（两个人都被认成同一个）。**注册与识别必须同源。**
  */
 export async function enrollVoiceprint(
-  apiBase: string, userId: string, displayName: string, samples: Blob[], mime = 'webm',
+  apiBase: string, userId: string, displayName: string,
+  samples: (Blob | Int16Array)[], mime = 'pcm16le', occupantId = '',
 ): Promise<{ ok: boolean; occupant_id?: string; error?: string; self_consistency?: number }> {
   const fd = new FormData()
-  for (const s of samples) fd.append('sample', s)
+  for (const s of samples) fd.append('sample', s instanceof Blob ? s : new Blob([s]))
   try {
     const r = await fetch(
       `${apiBase}/api/voiceprint/enroll?user_id=${encodeURIComponent(userId)}`
-      + `&display_name=${encodeURIComponent(displayName)}&format=${mime}`,
+      + `&display_name=${encodeURIComponent(displayName)}&format=${mime}`
+      // 带 occupant_id = **重录已有乘员**（更新模板保留身份与记忆）；不带 = 新增一位。
+      // 少了它，已录的人想重录只能新建一个 occ-N，记忆当场分家。
+      + (occupantId ? `&occupant_id=${encodeURIComponent(occupantId)}` : ''),
       { method: 'POST', body: fd })
     return await r.json()
   } catch (e) {
@@ -1221,15 +1229,18 @@ export async function enrollVoiceprint(
 /**
  * 「试一试」：录一小段问后端「这是谁」。**这是用户验证声纹是否真的生效的唯一直接手段**——
  * 没有它，用户只能去对话框问一句，失败了还不知道是哪一环出的问题。
- * 走与注册相同的 webm→服务端转码路径（识别主链路用的是 HMI 侧现成的 16k PCM 帧，不经转码）。
+ *
+ * **必须与主链路走同一条音频通路**（16k PCM，2026-07-26 真机第三批）：它此前走 webm，
+ * 于是在主链路已经认错人的情况下照样显示「听出来了」——**唯一的自证手段变成了假证人**。
+ * 自证的前提是它证的和跑的是同一件事。
  */
 export async function identifySpeaker(
-  apiBase: string, userId: string, clip: Blob, mime = 'webm',
+  apiBase: string, userId: string, clip: Blob | Int16Array, mime = 'pcm16le',
 ): Promise<{ occupant_id: string; display_name?: string; decision?: string; score?: number }> {
   try {
     const r = await fetch(
       `${apiBase}/api/voiceprint/identify?user_id=${encodeURIComponent(userId)}&format=${mime}`,
-      { method: 'POST', body: clip })
+      { method: 'POST', body: clip instanceof Blob ? clip : new Blob([clip]) })
     return await r.json()
   } catch {
     return { occupant_id: 'primary', decision: 'error' }

@@ -783,6 +783,13 @@ class MemoryVectorStore:
         out = vp.decide(scored)
         names = {r["occupant_id"]: r["display_name"] for r in usable}
         out["display_name"] = names.get(out["occupant_id"], "")
+        # **降级时要留下「差一点的是谁」**：decide 一旦回落 primary，top1 的身份就丢了——
+        # 网关那行日志只能看到 score=0.52 却不知道那是谁，正好是调阈值最需要的一个数
+        # （2026-07-26 真人复标时踩到）。全量排名按分数降序打一行，别再丢。
+        logger.info("identify: user=%s decision=%s -> %s | ranked=%s",
+                    user_id, out["decision"], out["occupant_id"],
+                    ", ".join(f"{o}:{s:.4f}"
+                              for o, s in sorted(scored, key=lambda t: t[1], reverse=True)))
         return out
 
     async def list_voiceprints(self, user_id: str, *, model: str = "",

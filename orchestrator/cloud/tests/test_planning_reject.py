@@ -11,6 +11,7 @@ import os
 
 from unittest.mock import MagicMock
 
+from orchestrator.cloud import planning as P
 from orchestrator.cloud.planning import PlanBuilder, _planner_system
 from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.context import WorkingSet
@@ -246,3 +247,20 @@ def test_planner_system_mode_criteria_live_in_policy_skill(monkeypatch):
     pol = {d.name: d for d in sk.SkillStore().policies()}
     assert "freshness-and-depth" in pol
     assert "禁止凭你的记忆直答" in pol["freshness-and-depth"].knowledge
+
+
+# ── 祈使指令不接受 not_addressed（2026-07-27 真机：说了、没回、也没记）────────────
+
+def test_directive_prefixes_are_always_addressed():
+    """用户用祈使句直接对助手下指令——是不是在跟你说话不需要模型判断。"""
+    for t in ("记住，我女儿叫小满", "记一下我最喜欢吃辣", "帮我记住停车位在B2",
+              "别忘了我妈住杭州", "请记住我的口味", "那记着我不吃香菜",
+              "记得我下周要出差"):
+        assert P._is_directive_to_assistant(t), t
+
+
+def test_directive_guard_does_not_hijack_non_directives():
+    """须锚在句首：陈述里出现「记」字的不是指令，不能借此绕过拒识。"""
+    for t in ("我不记得了", "他记住了我的名字", "这事你还记不记得都行",
+              "我女儿叫小满", "今天天气不错", ""):
+        assert not P._is_directive_to_assistant(t), t

@@ -40,6 +40,26 @@ def _spoken_time(now: datetime) -> str:
     return f"{seg}{h12}点" + ("整" if m == 0 else f"{m}分")
 
 
+# ── 身份问句确定性直答（真机 2026-07-27：换人说话后仍答上一个人的名字）──────────
+# 同墙钟一族：**系统自己持有的事实不交给 LLM 答**。声纹已经告诉我们这轮是谁，
+# 而车里只有一个会话、说话人会换——上一轮刚管别人叫过「阿灵」，这一轮 system 明写着泓舟，
+# 模型照样答「你是阿灵呀，刚才不是说了嘛」。**加强提示词无效**（实测两个方向各两次全错）：
+# 对话历史里的称呼比 system 提示更近、更像既成事实，靠改 prompt 是在跟采样赌。
+# 正则同样须**占据整句**（去礼貌前缀与语气尾词后锚 ^$），防劫持「我是谁的乘客」这类。
+_WHOAMI_RE = re.compile(
+    r"^(你知道|你还记得|还记得|你猜)?(我是谁|我叫什么(名字)?|我的名字(是什么|叫什么)?|"
+    r"知道我是谁)(吗|嘛)?$")
+
+
+def _identity_answer(text: str, meta: dict) -> str:
+    """「我是谁」→ 按声纹认定的乘员称呼直答；非此类或未识别出人返回空串（走 LLM）。"""
+    who = (meta or {}).get("occupant_name", "").strip()
+    if not who:
+        return ""      # 认不出就别硬答——诚实降级由 LLM 按 system 里没有名字来处理
+    t = _Q_PREFIX_RE.sub("", (text or "").strip()).strip(_Q_SUFFIX)
+    return f"你是{who}呀。" if t and _WHOAMI_RE.match(t) else ""
+
+
 def _clock_answer(text: str) -> str:
     """纯钟点/日期/星期问句 → 按系统墙钟直答；非此类返回空串（走 LLM）。"""
     t = _Q_PREFIX_RE.sub("", (text or "").strip()).strip(_Q_SUFFIX)
@@ -110,8 +130,14 @@ def _system(meta: dict) -> str:
     return (
         f"你是车载语音助手「{name}」。今天是{now:%Y年%m月%d日}"
         f"（星期{_WEEKDAY[now.weekday()]}），现在{now:%H:%M}。"
-        + (f"当前跟你说话的是「{who}」——他问「我是谁/你知道我是谁吗」时直接叫出这个名字，"
-           "别说不知道；平时不必每句都称呼。" if who else "")
+        # **必须压过对话历史**（2026-07-27 真机）：车里只有一个会话而说话人会换。
+        # 上一轮刚管别人叫过「阿灵」，这一轮声纹已认出是泓舟、system 也注了泓舟，
+        # 模型照样答「你是阿灵呀，刚才不是说了嘛」——**历史里的称呼比 system 提示更近、更像事实**。
+        # 光说「他是谁」不够，得显式告诉模型「历史里的称呼可能是别人」。
+        + (f"当前跟你说话的是「{who}」。**车内会换人说话**：上文出现过的其他称呼指的是别人，"
+           f"不是现在这位——一律以「{who}」为准，别沿用上文的称呼。"
+           f"他问「我是谁/你知道我是谁吗」时直接叫出「{who}」，别说不知道；"
+           "平时不必每句都称呼。" if who else "")
         + f"风格简洁、口语化、温暖、安全。{hint}"
         "适合驾车时收听；不输出列表、代码或长文。"
         "若用户表达负面情绪，先共情、再轻轻给出建议或陪伴，不要说教。"
@@ -156,9 +182,13 @@ class ChitchatAgent(BaseAgent):
         return msgs
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
-        clock = _clock_answer(intent.raw_text or intent.slots.get("text", ""))
+        text = intent.raw_text or intent.slots.get("text", "")
+        clock = _clock_answer(text)
         if clock:               # 钟点/日期/星期：系统墙钟直答，零 LLM 零编造
             return AgentResult(speech=clock)
+        who = _identity_answer(text, meta)
+        if who:                 # 「我是谁」：声纹已认定，同样不交给 LLM（历史会盖过 system）
+            return AgentResult(speech=who)
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta, intent.slots)
         msgs = await self._build_messages(intent, ctx, meta)
@@ -174,10 +204,16 @@ class ChitchatAgent(BaseAgent):
         """流式直答。头部缓冲：在确定回复不是 <search> 改派标记前不放流任何 delta——
         escalate 的前提是「零播报」（engine 端 streamed=True 会忽略改派，双保险）。
         判定窗口 ≤ len("<search>")+空白，普通回复只延迟一个包级别，无感。"""
-        clock = _clock_answer(intent.raw_text or intent.slots.get("text", ""))
+        text = intent.raw_text or intent.slots.get("text", "")
+        clock = _clock_answer(text)
         if clock:               # 钟点/日期/星期：系统墙钟直答，零 LLM 零编造
             yield ("speech", clock)
             yield ("final", AgentResult(speech=clock))
+            return
+        who = _identity_answer(text, meta)
+        if who:                 # 「我是谁」：声纹已认定，同样不交给 LLM
+            yield ("speech", who)
+            yield ("final", AgentResult(speech=who))
             return
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta, intent.slots)

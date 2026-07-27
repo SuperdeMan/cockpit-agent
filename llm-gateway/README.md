@@ -136,6 +136,15 @@ realtime 会话 → 回转写/回答增量/PCM 音频（24kHz）/turn 生命周�
 **这一侧只做「音频→192 维向量」，不持有任何模板**——模板存储与比对在 memory 服务
 （生物特征扩散到无状态服务就删不干净，而 GDPR 硬删级联是已立的红线）。
 
+**注册与识别必须同信道**（2026-07-27 真机 P0）：`enroll` / `identify` 默认格式都是
+`pcm16le`，HMI 三条路（注册 / 「试一试」/ 主链路识别）走同一个采集管线。曾经注册走
+webm(opus 有损)、识别走原始 PCM，真机实测同人余弦 **0.73→0.48** 且探针会塌向别人的模板。
+`format=webm` 仍受支持（经 ffmpeg 转码），但**不要拿它建模板**。
+
+**每次 identify 打一行 INFO**（occupant/decision/score/runner_up/probe_ms/src），memory 侧
+再打一行全量排名——「认不出」是静默降级，没有分数就无从调阈值；obs 那条 metric 指望不上
+（collector 的 `apply_metric` 是固定键白名单，`vp_*` 全被丢掉，已立卡）。
+
 三档决议（对齐 §9.4，启动期输出 `provider[voiceprint]=...` 一行）：
 
 | 档 | 触发 | 行为 |

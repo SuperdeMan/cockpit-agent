@@ -86,6 +86,8 @@ export class HandsFreeController {
   private needConfirm = false // 主链挂起确认镜像（S2S 分支 onSend 判「必须上主链」用）
   // M4 P4 声纹：唤醒后首句边说边识别，结果锁定整个唤醒窗（null=该面禁用/未开）。
   private vp: VoiceprintIdentifier | null = null
+  // VAD 当前是否在语音段中——声纹探针只收这段里的帧（arm 时也要带上它，见 openAsr）。
+  private vadInSpeech = false
 
   constructor(deps: HandsFreeDeps) {
     this.deps = deps
@@ -114,6 +116,9 @@ export class HandsFreeController {
       // 了」，而我们在端点后就停推流，它永远等不到静音，turn 永不收束＝用户永远没有回复
       // （真机首验的死锁：provider 等静音、HMI 等定稿才进 THINKING 才关收音）。
       onEndpoint: () => {
+        // M4 P4：说完了还没攒够 1.5s 有效语音 → 用已有的这段发一次（短问句「你知道我是谁」
+        // 约 1.2s，不补发就永远不识别，症状与认错人一模一样）。够不够格由网关判。
+        this.vp?.flush()
         if (this.useS2s()) { this.s2s.commitAudio(); return }
         try { this.asr?.stop() } catch { /* ignore */ }
       },
@@ -185,8 +190,10 @@ export class HandsFreeController {
     this.sharedStream = stream
     try {
       await this.vad.start({
-        onSpeechStart: () => this.vl.vadSpeechStart(),
-        onSpeechEnd: () => this.vl.vadSpeechEnd(),
+        // M4 P4：语音段状态同步给声纹识别器——`onFrame` 是**原始帧旁路不做门控**，
+        // 识别器若按墙钟累计，唤醒后那一秒的提示音+静音会把探针稀释到谁都认不出。
+        onSpeechStart: () => { this.vadInSpeech = true; this.vp?.setSpeaking(true); this.vl.vadSpeechStart() },
+        onSpeechEnd: () => { this.vadInSpeech = false; this.vp?.setSpeaking(false); this.vl.vadSpeechEnd() },
         onError: (m) => this.deps.onNotice?.('VAD：' + m),
       }, stream)
     } catch (e) {
@@ -455,7 +462,9 @@ export class HandsFreeController {
         // S2S 挡位：识别一落地就告诉网关本窗说话人——自答轮的记忆回灌按它隔离
         // （classic/逃逸轮由 send() meta 带，不经此路）。认不出也发（=primary），
         // 语义与 meta 口径逐字一致。
-        if (this.useS2s()) this.s2s.setOccupant(r.occupant_id || 'primary', r.display_name || '')
+        // 称呼取识别器的（它对非 accept 一律给空串——认不出不叫名字），不取原始响应，
+        // 否则 S2S 挡位会绕过这条口径、对没认出来的人直接喊 primary 的名字。
+        if (this.useS2s()) this.s2s.setOccupant(r.occupant_id || 'primary', this.vp?.displayName || '')
         this.deps.onVoiceprintResult?.(r)
       },
     })
@@ -470,7 +479,9 @@ export class HandsFreeController {
   private openAsr(opts: { resume?: boolean; sinceSpeechStartMs?: number } = {}): void {
     // M4 P4：唤醒后首句才识别（resume=true 是续说/续问/打断，同一唤醒窗不重识——
     // 轮内改判会让同一段对话的前后半截落进不同乘员的记忆里）。两个挡位共用这一处。
-    this.vp?.arm(!opts.resume)
+    // 带上当前 VAD 语音段状态：唤醒词连着说完就接下一句时（「小舟，我是谁」）此刻已在语音段中，
+    // 不带的话要等下一次 speechStart 才开始收，第一句就白等了。
+    this.vp?.arm(!opts.resume, this.vadInSpeech)
     // S2S：会话常驻，进 LISTENING 只是开收音门（省掉 ASR 建连——全双工的第一份红利）。
     // pre-roll 口径与 classic 逐字一致：唤醒进入注 0（否则唤醒词自己被识别成同音字上屏），
     // 续说/打断按 speech 起点回取（真麦「小周」误上屏的同一根因，别在 S2S 上重犯）。

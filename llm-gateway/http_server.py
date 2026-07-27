@@ -629,6 +629,14 @@ def create_http_app() -> web.Application:
         out = {"occupant_id": resp.occupant_id, "display_name": resp.display_name,
                "decision": resp.decision, "score": round(resp.score, 4),
                "runner_up": round(resp.runner_up, 4), "duration_ms": dur}
+        # **判定必须留下痕迹**：「认不出→回 primary」是静默降级，用户侧只表现为「换了个人
+        # 还是同一个人」，服务端此前一行日志都没有。obs 那条 metric 也指望不上——collector
+        # 的 apply_metric 是固定键白名单，vp_* 全被丢掉（2026-07-26 排查时发现）。
+        # 阈值本来就是拿合成音色标定的、对真人多半要重调，没有分数就无从调起。
+        logger.info("voiceprint identify: user=%s occupant=%s decision=%s "
+                    "score=%.4f runner_up=%.4f probe_ms=%d src=%s",
+                    uid, resp.occupant_id, resp.decision, resp.score, resp.runner_up,
+                    dur, src_fmt)
         if _obs is not None:
             # 四态全进 obs：阈值不靠拍脑袋，靠线上分布（供 M1b nightly 挖掘调优）。
             # 走 metric 而非 span——识别发生在**本轮 trace 建立之前**（HMI 在用户还在说的时候
