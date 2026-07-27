@@ -1,8 +1,8 @@
 {
   "meta": {
     "subject": "skills",
-    "generated_at": "2026-07-27T07:17:40.687012+00:00",
-    "commit": "f7f7cab",
+    "generated_at": "2026-07-27T07:58:22.699715+00:00",
+    "commit": "378ae2c",
     "provider": "minimax:MiniMax-M3",
     "temperature": 0.3,
     "skills_mode": "full",
@@ -19,40 +19,41 @@
   "buckets": {
     "live_full": {
       "total": 16,
-      "passed": 15,
-      "failures": [
-        {
-          "id": "live_full::去趟惠州中间要不要补个电",
-          "bucket": "live_full",
-          "text": "去趟惠州中间要不要补个电",
-          "expected": {
-            "expect_intents": [
-              "charging.plan"
-            ],
-            "expect_not": [
-              "nearby.search"
-            ]
-          },
-          "actual": [
-            "trip.plan"
-          ],
-          "passed": false,
-          "detail": "缺 ['charging.plan']",
-          "tags": [
-            "skill:charging-strategy",
-            "type:guide",
-            "holdout",
-            "inj:full:multi-day-trip@vec,full:charging-strategy@vec,full:navigation-with-stop@vec!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
-          ],
-          "source": ""
-        }
-      ],
-      "pass_rate": 0.9375
+      "passed": 16,
+      "failures": [],
+      "pass_rate": 1.0
     },
     "live_off": {
       "total": 16,
-      "passed": 13,
+      "passed": 11,
       "failures": [
+        {
+          "id": "live_off::看下明晚会不会下雨，要下就叫我收衣服",
+          "bucket": "live_off",
+          "text": "看下明晚会不会下雨，要下就叫我收衣服",
+          "expected": {
+            "expect_intents": [
+              "info.weather|info.forecast"
+            ],
+            "expect_not": [
+              "reminder.create"
+            ],
+            "expect_complexity": "adaptive"
+          },
+          "actual": [
+            "info.weather",
+            "reminder.create"
+          ],
+          "passed": false,
+          "detail": "出现禁排 ['reminder.create']；complexity=simple≠adaptive",
+          "tags": [
+            "skill:conditional-reminder",
+            "type:guide",
+            "holdout",
+            "inj:"
+          ],
+          "source": ""
+        },
         {
           "id": "live_off::导航去东方之门，附近找个吃饭的地方",
           "bucket": "live_off",
@@ -86,10 +87,10 @@
             ]
           },
           "actual": [
-            "nearby.search"
+            "charging.find"
           ],
           "passed": false,
-          "detail": "缺 ['navigation.navigate_to', 'charging.find']",
+          "detail": "缺 ['navigation.navigate_to']",
           "tags": [
             "skill:navigation-with-stop",
             "type:guide",
@@ -112,8 +113,7 @@
             "expect_ablation_effect": true
           },
           "actual": [
-            "nearby.search",
-            "navigation.search_poi"
+            "nearby.search"
           ],
           "passed": false,
           "detail": "缺 ['navigation.navigate_to']；出现禁排 ['nearby.search']",
@@ -124,15 +124,42 @@
             "inj:"
           ],
           "source": ""
+        },
+        {
+          "id": "live_off::我有点冷",
+          "bucket": "live_off",
+          "text": "我有点冷",
+          "expected": {
+            "expect_any": [
+              "hvac.inc",
+              "hvac.set",
+              "hvac.dec"
+            ],
+            "expect_not": [
+              "chitchat.talk"
+            ]
+          },
+          "actual": [
+            "hvac.on"
+          ],
+          "passed": false,
+          "detail": "expect_any 全缺 ['hvac.inc', 'hvac.set', 'hvac.dec']",
+          "tags": [
+            "skill:implicit-vehicle-control",
+            "type:policy",
+            "in-sample",
+            "inj:"
+          ],
+          "source": ""
         }
       ],
-      "pass_rate": 0.8125
+      "pass_rate": 0.6875
     }
   },
   "overall": {
     "total": 32,
-    "passed": 28,
-    "pass_rate": 0.875
+    "passed": 27,
+    "pass_rate": 0.8438
   },
   "cases": {
     "live_full::去惠州怎么充电": {
@@ -156,7 +183,7 @@
         "skill:charging-strategy",
         "type:guide",
         "in-sample",
-        "inj:full:charging-strategy@lex,full:navigation-with-stop@vec!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:charging-strategy@lex:23,full:navigation-with-stop@vec:0.45!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -182,7 +209,7 @@
         "skill:charging-strategy",
         "type:guide",
         "in-sample",
-        "inj:full:charging-strategy@lex,full:navigation-with-stop@lex!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:charging-strategy@lex:24,full:navigation-with-stop@lex:13!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -207,7 +234,7 @@
         "skill:charging-strategy",
         "type:guide",
         "holdout",
-        "inj:full:conditional-reminder@vec,full:charging-strategy@vec,full:navigation-with-stop@vec!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:charging-strategy@vec:0.57,full:conditional-reminder@vec:0.44,full:navigation-with-stop@vec:0.44!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -224,15 +251,15 @@
         ]
       },
       "actual": [
-        "trip.plan"
+        "charging.plan"
       ],
-      "passed": false,
-      "detail": "缺 ['charging.plan']",
+      "passed": true,
+      "detail": "",
       "tags": [
         "skill:charging-strategy",
         "type:guide",
         "holdout",
-        "inj:full:multi-day-trip@vec,full:charging-strategy@vec,full:navigation-with-stop@vec!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:charging-strategy@vec:0.53,full:multi-day-trip@vec:0.44,full:navigation-with-stop@vec:0.47!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -247,7 +274,7 @@
         ]
       },
       "actual": [
-        "chitchat.talk"
+        "nearby.search"
       ],
       "passed": true,
       "detail": "",
@@ -255,7 +282,7 @@
         "skill:charging-strategy",
         "type:guide",
         "holdout",
-        "inj:full:navigation-with-stop@lex,full:charging-strategy@lex!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:navigation-with-stop@lex:16,full:charging-strategy@lex:13!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -281,7 +308,7 @@
         "skill:conditional-reminder",
         "type:guide",
         "in-sample",
-        "inj:full:conditional-reminder@lex,full:navigation-with-stop@vec,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:conditional-reminder@lex:48,full:navigation-with-stop@vec:0.44,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -307,7 +334,7 @@
         "skill:conditional-reminder",
         "type:guide",
         "holdout",
-        "inj:full:conditional-reminder@vec,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:conditional-reminder@vec:0.45,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -329,7 +356,7 @@
         "skill:multi-day-trip",
         "type:guide",
         "in-sample",
-        "inj:full:multi-day-trip@lex,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:multi-day-trip@lex:24,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -353,7 +380,7 @@
         "skill:multi-day-trip",
         "type:guide",
         "in-sample",
-        "inj:full:multi-day-trip@lex,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:multi-day-trip@lex:38,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -375,7 +402,7 @@
         "skill:multi-day-trip",
         "type:guide",
         "holdout",
-        "inj:full:multi-day-trip@vec,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:multi-day-trip@vec:0.52,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -397,7 +424,7 @@
         "skill:navigation-with-stop",
         "type:guide",
         "in-sample",
-        "inj:full:navigation-with-stop@lex,full:charging-strategy@vec!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:navigation-with-stop@lex:50,full:charging-strategy@vec:0.41!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -421,7 +448,7 @@
         "skill:navigation-with-stop",
         "type:guide",
         "in-sample",
-        "inj:full:navigation-with-stop@lex,full:charging-strategy@lex!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:navigation-with-stop@lex:48,full:charging-strategy@lex:24!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -447,7 +474,7 @@
         "skill:navigation-with-stop",
         "type:guide",
         "holdout",
-        "inj:full:multi-day-trip@vec,full:navigation-with-stop@vec,full:freshness-and-depth,full:implicit-vehicle-control"
+        "inj:full:navigation-with-stop@vec:0.46,full:multi-day-trip@vec:0.40,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -689,10 +716,11 @@
         "expect_complexity": "adaptive"
       },
       "actual": [
-        "info.weather"
+        "info.weather",
+        "reminder.create"
       ],
-      "passed": true,
-      "detail": "",
+      "passed": false,
+      "detail": "出现禁排 ['reminder.create']；complexity=simple≠adaptive",
       "tags": [
         "skill:conditional-reminder",
         "type:guide",
@@ -735,8 +763,7 @@
       },
       "actual": [
         "trip.plan",
-        "info.weather",
-        "info.forecast"
+        "info.weather"
       ],
       "passed": true,
       "detail": "",
@@ -803,10 +830,10 @@
         ]
       },
       "actual": [
-        "nearby.search"
+        "charging.find"
       ],
       "passed": false,
-      "detail": "缺 ['navigation.navigate_to', 'charging.find']",
+      "detail": "缺 ['navigation.navigate_to']",
       "tags": [
         "skill:navigation-with-stop",
         "type:guide",
@@ -829,8 +856,7 @@
         "expect_ablation_effect": true
       },
       "actual": [
-        "nearby.search",
-        "navigation.search_poi"
+        "nearby.search"
       ],
       "passed": false,
       "detail": "缺 ['navigation.navigate_to']；出现禁排 ['nearby.search']",
@@ -904,10 +930,10 @@
         ]
       },
       "actual": [
-        "hvac.set"
+        "hvac.on"
       ],
-      "passed": true,
-      "detail": "",
+      "passed": false,
+      "detail": "expect_any 全缺 ['hvac.inc', 'hvac.set', 'hvac.dec']",
       "tags": [
         "skill:implicit-vehicle-control",
         "type:policy",
@@ -929,7 +955,7 @@
         },
         {
           "text": "去趟惠州中间要不要补个电",
-          "full_pass": false,
+          "full_pass": true,
           "without_pass": true,
           "causal_effect": false,
           "expect_ablation_effect": false
