@@ -1,32 +1,32 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-07-27T07:06:14.241905+00:00",
-    "commit": "dc96fe1"
+    "generated_at": "2026-07-27T07:54:49.949947+00:00",
+    "commit": "1c8860f"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 113
+      "count": 116
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 68,
-      "passed": 68,
+      "total": 69,
+      "passed": 69,
       "failures": [],
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 45,
-      "passed": 45,
+      "total": 47,
+      "passed": 47,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 113,
-    "passed": 113,
+    "total": 116,
+    "passed": 116,
     "pass_rate": 1.0
   },
   "cases": {
@@ -504,6 +504,54 @@
         "replace"
       ],
       "source": "评审三批 2026-07-27（「车」主语正锚）"
+    },
+    "route::剃须刀坏了，快没电了，找地方充一下": {
+      "id": "route::剃须刀坏了，快没电了，找地方充一下",
+      "bucket": "route_guardrail",
+      "text": "剃须刀坏了，快没电了，找地方充一下",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "guard",
+        "device"
+      ],
+      "source": "评审四批 2026-07-27（分句首锚绕过面）"
+    },
+    "route::助听器坏了，快没电了，找地方充一下": {
+      "id": "route::助听器坏了，快没电了，找地方充一下",
+      "bucket": "route_guardrail",
+      "text": "助听器坏了，快没电了，找地方充一下",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "guard",
+        "device"
+      ],
+      "source": "评审四批 2026-07-27"
+    },
+    "route::糟了快没电了，赶紧找个充电桩": {
+      "id": "route::糟了快没电了，赶紧找个充电桩",
+      "bucket": "route_recall",
+      "text": "糟了快没电了，赶紧找个充电桩",
+      "expected": [
+        "charging.find"
+      ],
+      "actual": [
+        "charging.find"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "replace"
+      ],
+      "source": "评审四批 2026-07-27（感叹前缀白名单）"
     },
     "route::附近有没有充电站": {
       "id": "route::附近有没有充电站",

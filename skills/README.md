@@ -60,7 +60,8 @@ name: charging-strategy         # 唯一 ID = 文件名
 type: guide                     # guide | policy | workflow
 description: 充电找桩与长途补能策略的分流判据（附近找桩补电/跨城怎么充电…）
                                 # 常驻语义索引：词法 bigram 底分 + hybrid 语义预筛都用它
-priority: 55                    # 预算内注入排序（高者先）
+priority: 55                    # 检索同分时的定序（2026-07-27 四批起：注入与预算裁剪
+                                #   按检索相关度序——高 priority 弱相关不得挤掉强相关）
 keywords: [充电, 快充, 没电]     # 词法检索触发词（高精度显式信号，命中恒保留）
 knowledge: |                    # 注入 planner 的领域判据（markdown，预算裁剪）
   **充电分流**……
@@ -104,9 +105,10 @@ version: 1
   2. 离线-paraphrase（数据车道，信息性）：`--retrieval both` 双档对比 + 阈值扫描。
   3. **live**（`--live`，真 PlanBuilder + 真 LLM）：golden expect_\* 的**消费方**——逐条
      断言计划意图/复杂度；报告按 **in-sample / holdout** 拆分；`--ab` 附 `SKILLS_MODE=off`
-     对照出整层有效性 Δ（2026-07-27 二批：full **16/16** vs off 12/16）。基线
-     `docs/reviews/eval/baseline_skills.json`（`--write-baseline` 刷新）。live 烧钱+
+     对照出整层有效性 Δ。**当前数字以 `docs/reviews/eval/baseline_skills.json` 为准**
+     （meta 含跑批条件与 commit；文档里冻结数字会过期——评审四批教训）。live 烧钱+
      需真栈+LLM 采样有方差（temp 0.3 与生产同源），人工/里程碑触发，不进 nightly；
+     边界句用 `--only 子串 --repeat 3` 先分类「稳定失败还是方差」再决定动机制；
      翻面的 canonical 形态应按上方分工口径沉到 route_hints，不追跑分。
   4. **逐 skill 消融**（`--live --ablate`；三批重做为独立因果指标）：full − 单个 skill
      跑其 holdout，per-holdout 记 `full_pass / without_pass / causal_effect =
@@ -123,9 +125,10 @@ version: 1
      数据**——退役判定要看跨 run 重复证据。每 guide **≥1 条 holdout 是静态门禁**
      （缺了 CI 红），其中至少一条应在 hint 够不到的形态上（因果增益的载体）。
 - **obs 归因**：`plan.skills` 名单（cloud.planning span / obs.turn）契约——guide 记
-  `mode:name@通道`（`@lex` 词法命中 / `@vec` 语义补位），**超预算被裁记 `!clipped`**
-  （名单绝不谎称已注入）；policy 记 `mode:name`。badcase 先看名单：知识没进上下文
-  （没检回/被裁）还是进了没用对。
+  `mode:name@通道:分数`（`@lex:23` 词法分 / `@vec:0.52` 余弦，四批起带分——边缘语义
+  共召回的取证靠它，没有分数只能靠复跑分类），**超预算被裁记 `!clipped`**（名单绝不
+  谎称已注入）；policy 记 `mode:name`。badcase 先看名单：知识没进上下文（没检回/被裁）
+  还是进了没用对（弱相关共召回干扰看 `@vec` 分数是 0.41 边缘还是 0.70 强召回）。
 - 热更新：文件加载 + mtime（v1 不动 registry schema；多实例时再议注册中心索引）。
   `SKILLS_MODE`/`SKILLS_RETRIEVAL`/阈值超时每轮实时读；`SKILL_BUDGET`/`SKILL_TOP_K`/
   `SKILL_MIN_SCORE` 重启生效。env 全表见 `.env.example`（compose 对 cloud-planner 以
@@ -177,3 +180,12 @@ version: 1
   钳制（阈值 [0,1]/超时 ≥0.1/min_score ≥0——越界不崩但**静默**改行为，比崩溃更难
   发现）；④消融重做为独立因果指标（见治理车道 4）+ **归因更正**：conditional 首轮
   Δ=+1 在族容忍下不成立，仅 navigation 有跨 run 因果证据。
+- **2026-07-27 四批**（评审三项：两项采纳、一项按其判定树先分类）：①惠州边界句
+  `--only/--repeat` 固定 provider 复跑 3/3 全过——**分类为采样方差**（历史 6 轮 1 败）
+  非稳定失败，重排序类干预不强制；仍采纳其取证与秩序建议：**归因带检索分**
+  （`@lex:23`/`@vec:0.52`）+ **渲染/裁剪改检索相关度序**（priority 只在同分定序——
+  高 priority 弱相关 guide 不再排到强相关前面放大干扰）；②三批的**分句首锚被绕过**
+  （「剃须刀坏了，快没电了」前一分句藏主语）——收紧为句首（白名单感叹前缀：糟了/
+  哎呀…）或「车」后，倒装句让给 LLM+知识层，负例进阻断 pytest 与语料；③env 钳制
+  收尾——`min_score` 下限 1 不是 0（score≥0 恒真，钳 0 仍全量放行）+ `math.isfinite`
+  拒 nan/inf（nan 穿过上下限比较、inf 让超时失效）。

@@ -155,7 +155,8 @@ def test_hybrid_semantic_supplements_lexical_miss(monkeypatch, tmp_path):
     monkeypatch.setattr(sk, "_embed_texts", fake_embed)
     assert sk.top_guides(query, store.guides()) == []          # 词法确实漏
     pairs = asyncio.run(sk.retrieve_guides(query, store))
-    assert [(d.name, ch) for d, ch in pairs] == [("charge", "vec")]
+    assert [(d.name, ch) for d, ch, _ in pairs] == [("charge", "vec")]
+    assert pairs[0][2] > 0.9                                   # 归因带余弦分（取证用）
 
 
 def test_hybrid_fails_open_to_lexical(monkeypatch, tmp_path):
@@ -169,7 +170,7 @@ def test_hybrid_fails_open_to_lexical(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sk, "_embed_texts", dead_embed)
     pairs = asyncio.run(sk.retrieve_guides("附近找个充电桩", store))
-    assert [(d.name, ch) for d, ch in pairs] == [("charge", "lex")]   # 词法命中原样保留
+    assert [(d.name, ch) for d, ch, _ in pairs] == [("charge", "lex")]  # 词法命中原样保留
 
 
 # ── 运行时容错（2026-07-27 评审缺口 1）：坏文件绝不崩规划 ──────────────────────
@@ -309,10 +310,25 @@ def test_plan_skills_names_carry_channel_and_clip_markers(monkeypatch, tmp_path)
     monkeypatch.setattr(sk, "_default_store", sk.SkillStore(root=str(tmp_path)))
     mode, names, block = asyncio.run(sk.plan_skills("附近找个充电桩"))
     assert mode == "full"
-    assert "full:small@lex" in names
-    assert "full:big@lex!clipped" in names             # 被裁诚实标注，不谎称已注入
+    # 归因带检索分（评审四批：@lex:整数 / @vec:两位小数——边缘共召回的取证靠它）
+    assert any(n.startswith("full:small@lex:") and not n.endswith("!clipped")
+               for n in names)
+    assert any(n.startswith("full:big@lex:") and n.endswith("!clipped")
+               for n in names)                         # 被裁诚实标注，不谎称已注入
     assert "full:pol" in names
     assert "短规则" in block and "策略正文" in block and "长长长" not in block
+
+
+def test_render_preserves_caller_relevance_order():
+    """渲染/裁剪按调用方传入的检索相关度序（评审四批）：高 priority 但弱相关的 guide
+    不得排到强相关 guide 前面——priority 只在检索同分时定序。"""
+    strong = sk.SkillDoc(name="strong", type="guide", description="d1",
+                         knowledge="强相关知识", body="强相关知识", priority=10)
+    weak = sk.SkillDoc(name="weak", type="guide", description="d2",
+                       knowledge="弱相关知识", body="弱相关知识", priority=90)
+    block, injected, _ = sk.render_skills_block([], [strong, weak])
+    assert block.index("强相关知识") < block.index("弱相关知识")
+    assert [d.name for d in injected] == ["strong", "weak"]
 
 
 # ── 即插即用契约：加规划知识=只投一个文件 ─────────────────────────────────────

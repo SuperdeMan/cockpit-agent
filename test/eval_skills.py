@@ -512,6 +512,10 @@ def _run_live(args, docs: list[sk.SkillDoc]) -> int:
         print(f"::warning::active provider={provider}——mock 不做规划，--live 结果无意义。")
     agents = _load_agents()
     cases = _live_cases(docs)
+    if args.only:
+        cases = [c for c in cases if args.only in c["text"]]
+    if args.repeat > 1:
+        cases = [c for c in cases for _ in range(args.repeat)]
     print(f"\n=== live：golden → 真 planner（{len(cases)} 例，SKILLS_MODE="
           f"{os.environ['SKILLS_MODE']}，retrieval={sk.skills_retrieval()}）===")
     results = asyncio.run(_drive_live(cases, agents, "live_full"))
@@ -576,6 +580,9 @@ def main() -> int:
                          "per-guide 因果归因；hint 覆盖的 case Δ=0 会现形）")
     ap.add_argument("--skills-mode", default="full", help="live 档 SKILLS_MODE（默认 full）")
     ap.add_argument("--provider", default="", help="ProviderLock 期望 provider（默认取 active）")
+    ap.add_argument("--only", default="", help="live 用例 text 子串过滤（边界句复跑分类用）")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="live 每例重复次数（n=1 方差句的稳定性分类，配 --only 用）")
     ap.add_argument("--write-baseline", action="store_true")
     args = ap.parse_args()
 

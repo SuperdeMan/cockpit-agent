@@ -64,6 +64,9 @@ def _env_float(name: str, default: float, min_val: float | None = None,
     except ValueError:
         logger.warning("env %s=%r 非数值——回默认 %s（修配置！）", name, raw, default)
         return default
+    if not math.isfinite(v):     # nan 能穿过上下限比较、inf 让超时失效（2026-07-27 四批）
+        logger.warning("env %s=%r 非有限值——回默认 %s（修配置！）", name, raw, default)
+        return default
     # 范围钳制（2026-07-27 评审三批）：越界值不崩但会**静默**改变行为——阈值>1=语义
     # 召回全关、超时<0=embedding 必超时、min_score<0=词法全量放行，都比崩溃更难发现
     if min_val is not None and v < min_val:
@@ -77,8 +80,9 @@ def _env_float(name: str, default: float, min_val: float | None = None,
 
 SKILL_BUDGET = _env_int("SKILL_BUDGET", 2400, min_val=0)    # 注入块字符预算
 SKILL_TOP_K = _env_int("SKILL_TOP_K", 3, min_val=1)         # guide 预筛条数
-_MIN_SCORE = _env_int("SKILL_MIN_SCORE", 10, min_val=0)     # 词法命中阈值（一个关键词=10；
-                                                            #   负值=全量放行，钳 0）
+_MIN_SCORE = _env_int("SKILL_MIN_SCORE", 10, min_val=1)     # 词法命中阈值（一个关键词=10）。
+                                                            # 下限 1 不是 0：score≥0 恒真，
+                                                            # 钳 0 仍等于全量放行（评审四批）
 _RESCAN_S = 30.0                                            # 目录重扫最小间隔（热更新）
 _EMBED_COOLDOWN_S = 30.0                                    # 语义通道失败冷却（防抖打日志）
 
@@ -346,17 +350,22 @@ def skills_retrieval() -> str:
 
 
 async def retrieve_guides(text: str, store: SkillStore, k: int = SKILL_TOP_K,
-                          min_score: int = _MIN_SCORE) -> list[tuple[SkillDoc, str]]:
-    """guide 预筛 → [(doc, 通道)]。词法命中恒保留（keywords 是作者显式设计的高精度
-    信号）；hybrid 下语义只**补位**词法漏召的 paraphrase，不与词法争排序。"""
+                          min_score: int = _MIN_SCORE
+                          ) -> list[tuple[SkillDoc, str, float]]:
+    """guide 预筛 → [(doc, 通道, 分数)]，**按检索相关度降序**（词法命中在前、语义补位
+    在后；组内各按分数）。词法命中恒保留（keywords 是作者显式设计的高精度信号）；
+    hybrid 下语义只**补位**词法漏召的 paraphrase。分数随归因名单外发（`@lex:23`/
+    `@vec:0.52`）——边缘共召回的取证靠它，没有分数只能靠复跑分类（评审四批）。"""
     guides = store.guides()
-    pairs: list[tuple[SkillDoc, str]] = [(d, "lex") for d in top_guides(text, guides, k, min_score)]
+    lex_hits = top_guides(text, guides, k, min_score)
+    pairs: list[tuple[SkillDoc, str, float]] = [
+        (d, "lex", float(score(text, d))) for d in lex_hits]
     if skills_retrieval() != "hybrid" or not guides or len(pairs) >= k:
         return pairs
     sem = await _semantic_scores(text, guides, store)
     if not sem:
         return pairs
-    have = {d.name for d, _ in pairs}
+    have = {d.name for d, _, _ in pairs}
     thr = _sem_threshold()
     extras = sorted(((s, d) for d in guides
                      if (s := sem.get(d.name, 0.0)) >= thr and d.name not in have),
@@ -364,7 +373,7 @@ async def retrieve_guides(text: str, store: SkillStore, k: int = SKILL_TOP_K,
     for s, d in extras:
         if len(pairs) >= k:
             break
-        pairs.append((d, "vec"))
+        pairs.append((d, "vec", s))
     return pairs
 
 
@@ -373,7 +382,10 @@ async def retrieve_guides(text: str, store: SkillStore, k: int = SKILL_TOP_K,
 def render_skills_block(policies: list[SkillDoc], guides: list[SkillDoc],
                         budget: int = SKILL_BUDGET
                         ) -> tuple[str, list[SkillDoc], list[SkillDoc]]:
-    """policies 常驻在前（小而全量，治理层控总量）；guides 按 priority 在预算内注入。
+    """policies 常驻在前（小而全量，治理层控总量）；guides **按调用方传入顺序**注入与
+    裁剪——plan_skills 传的是检索相关度序（2026-07-27 四批：此前按 priority 重排，
+    边缘语义共召回的高 priority guide 会排到强相关 guide 前面放大干扰，且预算裁剪
+    裁掉的反而是更相关的；priority 只在检索同分时定序）。
     返回 (注入块, 实际注入的 guides, 超预算被裁的 guides)——名单必须反映真实注入，
     「说注入了实际被裁」会让 badcase 归因说谎（2026-07-26 修）。"""
     if not policies and not guides:
@@ -384,7 +396,7 @@ def render_skills_block(policies: list[SkillDoc], guides: list[SkillDoc],
         parts.append(d.body)
         used += len(d.body)
     injected, clipped = [], []
-    for d in sorted(guides, key=lambda d: -d.priority):
+    for d in guides:
         if used + len(d.body) > budget:
             logger.info("skill %s 超预算被裁（used=%d）", d.name, used)
             clipped.append(d)
@@ -422,13 +434,18 @@ async def plan_skills(text: str) -> tuple[str, list[str], str]:
         return mode, [], ""
     store = default_store()
     pairs = await retrieve_guides(text, store)
+
+    def _tag(name: str) -> str:
+        ch, s = tags[name]
+        return f"@lex:{int(s)}" if ch == "lex" else f"@vec:{s:.2f}"
+
+    tags = {d.name: (ch, s) for d, ch, s in pairs}
     if mode == "shadow":
-        return mode, [f"{mode}:{d.name}@{ch}" for d, ch in pairs], ""
+        return mode, [f"{mode}:{d.name}{_tag(d.name)}" for d, _, _ in pairs], ""
     policies = store.policies()
-    block, injected, clipped = render_skills_block(policies, [d for d, _ in pairs])
-    ch = {d.name: c for d, c in pairs}
-    names = [f"{mode}:{d.name}@{ch[d.name]}" for d in injected]
-    names += [f"{mode}:{d.name}@{ch[d.name]}!clipped" for d in clipped]
+    block, injected, clipped = render_skills_block(policies, [d for d, _, _ in pairs])
+    names = [f"{mode}:{d.name}{_tag(d.name)}" for d in injected]
+    names += [f"{mode}:{d.name}{_tag(d.name)}!clipped" for d in clipped]
     names += [f"{mode}:{d.name}" for d in policies]
     return mode, names, block
 

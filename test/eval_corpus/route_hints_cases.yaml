@@ -202,6 +202,22 @@
   expect_final_intents: [charging.find]
   source: "评审三批 2026-07-27（「车」主语正锚）"
   tags: [charging, replace]
+# 2026-07-27 四批：分句首锚被「前一分句藏主语」绕过——锚收紧为句首（含感叹前缀）或「车」后
+- text: 剃须刀坏了，快没电了，找地方充一下
+  initial_intents: []
+  expect_final_intents: []
+  source: "评审四批 2026-07-27（分句首锚绕过面）"
+  tags: [charging, guard, device]
+- text: 助听器坏了，快没电了，找地方充一下
+  initial_intents: []
+  expect_final_intents: []
+  source: "评审四批 2026-07-27"
+  tags: [charging, guard, device]
+- text: 糟了快没电了，赶紧找个充电桩
+  initial_intents: []
+  expect_final_intents: [charging.find]
+  source: "评审四批 2026-07-27（感叹前缀白名单）"
+  tags: [charging, replace]
 - text: 附近有没有充电站
   initial_intents: []
   expect_final_intents: [nearby.search]
