@@ -118,10 +118,11 @@ version: 1
      （provider/温度/检索档/阈值/SKILLS_MODE）全进 `meta`——缺了跨 run 对比就是
      拿苹果比橘子。golden 可标 `expect_ablation_effect: true` 声明「该 holdout 应体现
      知识因果增益」，未兑现打 ⚠（报告型不 gate——n=1 有采样方差）。
-     **归因现状（更正 2026-07-27 三批）**：navigation 有跨 run 因果证据（两轮消融
-     without 都翻错）；conditional 首轮的 Δ=+1 在天气族容忍下**不再成立**（当时的
-     失败是严格钉 info.weather 所致，族内选择方差被记成了知识功劳）；charging
-     canonical/multi-day/freshness 被 hint 或能力清单覆盖。**单次消融 n=1 是信息性
+     **归因现状（更正 2026-07-27 三批，四批复核）**：navigation 有跨 run 因果证据
+     （连续五轮消融 without 都翻错，expect_ablation_effect 持续兑现）；conditional
+     首轮的 Δ=+1 在天气族容忍下**不再成立**（当时的失败是严格钉 info.weather 所致，
+     族内选择方差被记成了知识功劳）；charging canonical/multi-day/freshness 被 hint
+     或能力清单覆盖。**单次消融 n=1 是信息性
      数据**——退役判定要看跨 run 重复证据。每 guide **≥1 条 holdout 是静态门禁**
      （缺了 CI 红），其中至少一条应在 hint 够不到的形态上（因果增益的载体）。
 - **obs 归因**：`plan.skills` 名单（cloud.planning span / obs.turn）契约——guide 记

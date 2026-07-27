@@ -34,6 +34,9 @@ llm-gateway/    LLM 多模型网关（所有 LLM 调用的唯一出口）；音�
 registry/       Agent 注册中心
 memory/         记忆/画像服务
 agents/         所有 Agent；_sdk/ 是公共 SDK，每个 Agent 一个子目录
+skills/         Planner 规划知识声明式载体（M0b）：guides/ 领域组合判据（双通道检索注入）、
+                policies/ 跨域软约束（常驻）。**加规划知识=投 skill 文件不改编排核心**；
+                golden 必填进 CI 门禁（含 holdout），契约见 skills/README.md（唯一真相源）
 security/       权限引擎、scope 定义、内容审核、注入防护
 payment-gateway/  统一支付网关（Agent 不持支付凭证）
 proactive/      统一主动引擎：主动消息的全局治理器（频控/免打扰/驾驶负荷/同类合并）

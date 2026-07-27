@@ -141,6 +141,8 @@ Agent 的接入完全声明式：manifest 声明能力与权限、`route_hints` 
 
 回答模式判据化路由：一句话精确落到**直答 / 联网查询 / 新闻 / 深度调研**四模式（常识不联网、时效必联网、浏览一批走新闻、系统了解升调研），评测先行（五桶语料 + 混淆矩阵，基线准确率 98.9%）；Agent 误接时经 `_escalate` 机制零播报自动改派。
 
+规划知识按需供给（`skills/`）：多日行程、导航顺路、条件依赖、充电分流这类**组合判据**以声明式文件供给 Planner——词法+语义双通道检索注入（fail-open 回词法），每份知识自带 golden 经 CI 门禁与真栈 A/B、逐 skill 消融验证「真的让规划变对了」；加规划知识=投一个文件，不改编排核心。
+
 ### 记忆、上下文与个性化
 
 - **语义记忆**（pgvector）：自动从对话抽取偏好与个人实体，语义召回注入规划与闲聊；隐私分级、可查可删。
@@ -226,6 +228,7 @@ proto/            gRPC 契约——所有接口的唯一真相源
 gateway/          Go 接入网关（edge/ 端侧、cloud/ 云侧）
 orchestrator/     edge/ 端侧编排 + FastIntent + VAL（PoC 模拟）；cloud/ 云端 LLM Planner
 agents/           14 个领域 Agent；_sdk/ 公共 SDK（BaseAgent / 检索与接地内核 / 任务账本）
+skills/           Planner 规划知识声明式载体（guides/ 领域组合判据、policies/ 跨域软约束）——投文件即生效，golden 进 CI 门禁
 llm-gateway/      LLM 多模型网关——LLM / Embedding / ASR / TTS 的唯一出口
 registry/         Agent 注册中心（manifest + 能力语义检索）
 memory/           记忆 / 画像服务（pgvector）
