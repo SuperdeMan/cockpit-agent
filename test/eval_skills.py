@@ -22,6 +22,7 @@
   python test/eval_skills.py --retrieval both       # 车道 2 双档+阈值扫描（需 llm-gateway 可达）
   python test/eval_skills.py --live                 # 车道 3（需 make up + 真 provider）
   python test/eval_skills.py --live --ab --write-baseline
+  python test/eval_skills.py --live --ablate        # 逐 skill 消融（per-guide 因果归因）
 """
 from __future__ import annotations
 
@@ -154,6 +155,9 @@ def _lane_contract(docs: list[sk.SkillDoc]) -> list[str]:
     for d in docs:
         if d.type == "guide" and not d.golden:
             errs.append(f"{d.name}: guide 缺 golden（skills/README.md 规定必填）")
+        if d.type == "guide" and d.golden and not any(g.get("holdout") for g in d.golden):
+            errs.append(f"{d.name}: guide 缺 holdout golden（≥1 条词法盲区真改写——"
+                        f"没有它满分只是原句自证，README「治理」）")
         for g in d.golden:
             bad_keys = set(g) - _GOLDEN_KEYS
             if bad_keys:
@@ -431,6 +435,43 @@ def _sample_split(results: list[CaseResult]) -> str:
     return "；".join(parts)
 
 
+class _ExcludingStore(sk.SkillStore):
+    """逐 skill 消融（2026-07-27 评审二批）：full − 单个 skill。full/off 对照分不清
+    「知识的功」还是「hint 的功」（charging canonical 被 hint 覆盖后 off 也过）——
+    消融才是 per-guide 因果归因。"""
+
+    def __init__(self, exclude: str):
+        super().__init__()
+        self._exclude = exclude
+
+    def load(self, force: bool = False):
+        return [d for d in super().load(force) if d.name != self._exclude]
+
+
+def _run_ablation(docs, cases, agents, results) -> list[CaseResult]:
+    out: list[CaseResult] = []
+    orig = sk._default_store
+    try:
+        for d in docs:
+            holds = [c for c in cases if c["skill"] == d.name and c.get("holdout")]
+            if not holds:
+                continue
+            sk._default_store = _ExcludingStore(d.name)
+            print(f"\n  -- 消融 without {d.name}（holdout ×{len(holds)}）--")
+            rs = asyncio.run(_drive_live(holds, agents, f"ablate_wo_{d.name}"))
+            out += rs
+            texts = {c["text"] for c in holds}
+            full_pass = sum(1 for r in results
+                            if r.text in texts and r.passed)
+            wo_pass = sum(1 for r in rs if r.passed)
+            print(f"  {d.name}: holdout full {full_pass}/{len(holds)} vs "
+                  f"without {wo_pass}/{len(holds)}（Δ={full_pass - wo_pass:+d}"
+                  f"{'——该知识对 holdout 无归因增益，检查是否被 hint 覆盖' if full_pass - wo_pass <= 0 else ''}）")
+    finally:
+        sk._default_store = orig
+    return out
+
+
 def _run_live(args, docs: list[sk.SkillDoc]) -> int:
     os.environ.setdefault("LLM_GATEWAY_ADDR", "localhost:50052")
     os.environ["SKILLS_MODE"] = args.skills_mode
@@ -457,6 +498,11 @@ def _run_live(args, docs: list[sk.SkillDoc]) -> int:
         print(f"\n=== live A/B 对照：SKILLS_MODE=off（无知识基线，信息性）===")
         ab_results = asyncio.run(_drive_live(cases, agents, "live_off"))
         os.environ["SKILLS_MODE"] = args.skills_mode
+    abl_results: list[CaseResult] = []
+    if args.ablate:
+        print(f"\n=== 逐 skill 消融（full − 该 skill，holdout 专测；per-guide 因果归因，"
+              f"信息性）===")
+        abl_results = _run_ablation(docs, cases, agents, results)
     lock.check("live 跑完")
 
     n_pass = sum(1 for r in results if r.passed)
@@ -466,7 +512,7 @@ def _run_live(args, docs: list[sk.SkillDoc]) -> int:
         print(f"live_off ：{off_pass}/{len(ab_results)}（Δ={n_pass - off_pass:+d}——"
               f"知识注入带来的意图级增益；{_sample_split(ab_results)}）")
 
-    all_cases = results + ab_results
+    all_cases = results + ab_results + abl_results
     report = build_report("skills", [
         {"path": "skills/*/*.yaml#golden", "count": len(cases)}], all_cases)
     md = render_markdown(report)
@@ -491,6 +537,9 @@ def main() -> int:
                          "（缺省跟随 SKILLS_RETRIEVAL 环境/代码默认——live 证据应反映生产形态）")
     ap.add_argument("--live", action="store_true", help="planner 意图级 golden（真栈+真 LLM）")
     ap.add_argument("--ab", action="store_true", help="live 附带 SKILLS_MODE=off 对照")
+    ap.add_argument("--ablate", action="store_true",
+                    help="live 附带逐 skill 消融（full − 该 skill 跑其 holdout——"
+                         "per-guide 因果归因；hint 覆盖的 case Δ=0 会现形）")
     ap.add_argument("--skills-mode", default="full", help="live 档 SKILLS_MODE（默认 full）")
     ap.add_argument("--provider", default="", help="ProviderLock 期望 provider（默认取 active）")
     ap.add_argument("--write-baseline", action="store_true")

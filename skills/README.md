@@ -102,10 +102,18 @@ version: 1
   2. 离线-paraphrase（数据车道，信息性）：`--retrieval both` 双档对比 + 阈值扫描。
   3. **live**（`--live`，真 PlanBuilder + 真 LLM）：golden expect_\* 的**消费方**——逐条
      断言计划意图/复杂度；报告按 **in-sample / holdout** 拆分；`--ab` 附 `SKILLS_MODE=off`
-     对照出知识有效性 Δ（2026-07-27 hint 补强后：full **14/14**（holdout 5/5）vs off
-     8/14，Δ=+6）。基线 `docs/reviews/eval/baseline_skills.json`（`--write-baseline`
-     刷新）。live 烧钱+需真栈+LLM 采样有方差（temp 0.3 与生产同源），人工/里程碑触发，
-     不进 nightly；翻面的 canonical 形态应按上方分工口径沉到 route_hints，不追跑分。
+     对照出整层有效性 Δ（2026-07-27 二批：full **16/16** vs off 12/16）。基线
+     `docs/reviews/eval/baseline_skills.json`（`--write-baseline` 刷新）。live 烧钱+
+     需真栈+LLM 采样有方差（temp 0.3 与生产同源），人工/里程碑触发，不进 nightly；
+     翻面的 canonical 形态应按上方分工口径沉到 route_hints，不追跑分。
+  4. **逐 skill 消融**（`--live --ablate`，2026-07-27 二批）：full − 单个 skill 跑其
+     holdout——**per-guide 因果归因**。full/off 分不清「知识的功」还是「hint 的功」
+     （charging canonical 被 hint 钉死后 off 也过）；消融 Δ=0 且车道会自动标注
+     「检查是否被 hint 覆盖」。首跑归因：conditional/navigation Δ=+1（真知识增益）、
+     charging canonical/multi-day/freshness Δ=0（hint 或能力清单已覆盖）。**单次消融
+     n=1 是信息性数据**——判一个 guide 该不该退役要看跨 run 的重复证据，不看单发。
+     每 guide **≥1 条 holdout 是静态门禁**（缺了 CI 红），其中至少一条应在 hint 够不到
+     的形态上（消融 Δ 的载体）。
 - **obs 归因**：`plan.skills` 名单（cloud.planning span / obs.turn）契约——guide 记
   `mode:name@通道`（`@lex` 词法命中 / `@vec` 语义补位），**超预算被裁记 `!clipped`**
   （名单绝不谎称已注入）；policy 记 `mode:name`。badcase 先看名单：知识没进上下文
@@ -118,8 +126,9 @@ version: 1
   提案后 30s 内生效，不再需要重建镜像（镜像仍 COPY 一份自持，挂载缺席行为不变）。
 - **T2 再规划继承**（2026-07-27）：`replan()` 按 `plan.skills` 名单重渲染同一份知识注入
   （`render_for_names`；shadow/被裁项不进）——条件依赖类知识的决策恰好发生在再规划轮，
-  只注初规划等于知识白教。刻意不做版本 hash 钉扎：replan 与初规划相隔秒级，30s mtime
-  窗内漂移概率可忽略，出现跨小时长任务再议。
+  只注初规划等于知识白教。**跨挂起同样成立**（同日二批补齐）：`plan.skills` 随
+  `pending_plan` 持久化，补槽/确认恢复后的再规划不失忆。刻意不做版本 hash 钉扎：
+  replan 与初规划相隔秒级，30s mtime 窗内漂移概率可忽略，出现跨小时长任务再议。
 - 自进化流水线（M1b）允许的自动提案修改面 = guide / route_hint / eval 语料；
   **禁止**自动生成或修改 policy、VAL、权限、确认等级、payment（设计稿 §4.G）。
 
@@ -144,3 +153,9 @@ version: 1
   未采纳：Pydantic（stdlib 校验够用不加依赖）、skill 版本 hash 钉进 Plan（秒级窗口
   YAGNI）、步骤级/槽位级全断言（provider 方差下过脆——只收 complexity 断言）、
   WorkflowTemplate 现在就建（维持「badcase 证据三条件」后置，见 AGENTS §4.0）。
+- **2026-07-27 二批**（评审四项全采纳）：①charging.find hint 误接**设备充电**回归
+  （「手机快没电了找地方充一下」被劫持成车辆找桩）——guard 补设备词 + 语料负例 ×3 +
+  guide 知识边界（「只有车的补能归充电域」）+ 设备负例 holdout golden；②T2 继承补
+  **挂起恢复链**（`plan.skills` 随 `pending_plan` 序列化/恢复，round-trip 测试）；
+  ③env 垃圾值不崩启动（`_env_int/_env_float` 回默认+告警，`SKILL_BUDGET=oops` 只警不炸）；
+  ④**逐 skill 消融车道**（见治理车道 4——full/off 分不清知识与 hint 的功）。

@@ -17,13 +17,16 @@ knowledge: |
 golden:
   # expect_not 是这条知识的另一半：条件句首轮绝不能把提醒无条件排进计划；
   # expect_complexity 是核心主张本身——条件依赖必须 adaptive（看结果再决定）
+  # 天气族容忍（同 multi-day 先例）：本知识的主张是「只出查询步+adaptive」，
+  # weather/forecast 族内怎么选归 mode_routing 管——严格钉 weather 会把族内方差
+  # 记成知识功劳（2026-07-27 消融车道实测）
   - text: 查下明天会不会下雨，要是下雨就提醒我带伞
-    expect_intents: [info.weather]
+    expect_intents: ["info.weather|info.forecast"]
     expect_not: [reminder.create]
     expect_complexity: adaptive
   # holdout：避开 knowledge 原句与全部 keywords 字面（测泛化不测自证）
   - text: 看下明晚会不会下雨，要下就叫我收衣服
-    expect_intents: [info.weather]
+    expect_intents: ["info.weather|info.forecast"]
     expect_not: [reminder.create]
     expect_complexity: adaptive
     holdout: true

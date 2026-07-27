@@ -362,3 +362,22 @@ def test_slot_pending_question_not_eaten_as_answer():
     assert PlannerEngine._is_topic_change("外面冷吗") is True
     assert PlannerEngine._is_topic_change("晚上九点") is False      # 真答案不误判
     assert PlannerEngine._is_topic_change("明天早上八点") is False
+
+
+def test_pending_plan_preserves_skills_across_suspend_restore():
+    """T2 知识继承跨挂起（2026-07-27 评审二批）：plan.skills 必须随 pending_plan 持久化
+    ——补槽/确认恢复后的再规划按它重渲染知识（loop.py→replan skill_names），
+    不存=恢复轮失忆，「全生命周期闭合」在挂起链上是假的。"""
+    from orchestrator.cloud.models import Plan, SessionState, Step
+
+    plan = Plan(steps=[Step(id="s1", agent_id="info", intent="info.weather",
+                            slots={}, depends_on=[], slot_refs={})],
+                raw_text="查天气", complexity="adaptive", goal="g")
+    plan.skills = ["full:conditional-reminder@vec", "full:freshness-and-depth"]
+    data = PlannerEngine._serialize_plan(plan)
+    assert data["skills"] == plan.skills
+
+    state = SessionState(phase="wait_slot", pending_plan=data, pending_step_id="s1")
+    restored, _seeds = PlannerEngine._restore(None, state, inject_confirmed=False)
+    assert restored is not None
+    assert restored.skills == plan.skills

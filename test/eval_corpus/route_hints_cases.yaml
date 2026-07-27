@@ -159,6 +159,22 @@
   expect_final_intents: [charging.find]
   source: "eval_skills live 2026-07-27"
   tags: [charging, replace]
+# 2026-07-27 评审二批：非车辆设备的「没电/找地方充」不归车辆充电域（guard 设备词）
+- text: 手机快没电了，附近找个地方充一下
+  initial_intents: []
+  expect_final_intents: []
+  source: "评审二批 2026-07-27（设备充电误接回归）"
+  tags: [charging, guard, device]
+- text: 笔记本电量不够了，找个地方补电
+  initial_intents: []
+  expect_final_intents: []
+  source: "评审二批 2026-07-27"
+  tags: [charging, guard, device]
+- text: 耳机快没电了，找个充电宝
+  initial_intents: []
+  expect_final_intents: []
+  source: "评审二批 2026-07-27"
+  tags: [charging, guard, device]
 - text: 附近有没有充电站
   initial_intents: []
   expect_final_intents: [nearby.search]

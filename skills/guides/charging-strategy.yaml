@@ -17,6 +17,9 @@ knowledge: |
   - 导航去某地并在那附近充（『导航去深圳湾，附近找个充电桩』）→ navigation.navigate_to
   与 charging.find(destination=深圳湾) 并列两步。
   只问电量/续航本身（『现在电量多少』『还能跑多远』）→ charging.status，不要出找桩步。
+  **只有车的补能归充电域**：手机/耳机/笔记本/充电宝等随身设备快没电，不是车辆充电意图
+  ——绝不要出 charging.find/charging.plan 步（那是找商场咖啡馆或买充电宝的场景，
+  交给周边发现或闲聊应答）。
 few_shots:
   - user: 去惠州怎么充电
     plan: {"steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.plan","slots":{"destination":"惠州"},"depends_on":[],"slot_refs":{}}]}
@@ -29,10 +32,20 @@ golden:
   - text: 快没电了，附近找个快充
     expect_intents: [charging.find]
     expect_not: [navigation.navigate_to, nearby.search]
-  # holdout：避开 few-shot 原句与全部 keywords 字面（测泛化不测自证）
+  # holdout：避开 few-shot 原句与全部 keywords 字面（测泛化不测自证）。
+  # 「电快见底」句已被 charging.find hint 覆盖（canonical 哨兵，知识归因看下面两条）
   - text: 电快见底了，就近找个地方充上
     expect_intents: [charging.find]
     expect_not: [nearby.search]
+    holdout: true
+  # hint 够不到的真 paraphrase（消融车道的知识归因载体：无 SOC 词形、无「怎么充电」）
+  - text: 去趟惠州中间要不要补个电
+    expect_intents: [charging.plan]
+    expect_not: [nearby.search]
+    holdout: true
+  # 知识边界负例：设备充电绝不出车辆充电步（hint guard 挡确定性层，这条守 LLM 层）
+  - text: 手机快没电了，附近找个地方充一下
+    expect_not: [charging.find, charging.plan]
     holdout: true
 owner: charging-planner
 version: 1

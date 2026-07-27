@@ -1,53 +1,26 @@
 {
   "meta": {
     "subject": "skills",
-    "generated_at": "2026-07-27T05:10:09.203362+00:00",
-    "commit": "953e9b6"
+    "generated_at": "2026-07-27T06:29:40.379369+00:00",
+    "commit": "990de34"
   },
   "corpus_sources": [
     {
       "path": "skills/*/*.yaml#golden",
-      "count": 14
+      "count": 16
     }
   ],
   "buckets": {
     "live_full": {
-      "total": 14,
-      "passed": 14,
+      "total": 16,
+      "passed": 16,
       "failures": [],
       "pass_rate": 1.0
     },
     "live_off": {
-      "total": 14,
-      "passed": 8,
+      "total": 16,
+      "passed": 12,
       "failures": [
-        {
-          "id": "live_off::查下明天会不会下雨，要是下雨就提醒我带伞",
-          "bucket": "live_off",
-          "text": "查下明天会不会下雨，要是下雨就提醒我带伞",
-          "expected": {
-            "expect_intents": [
-              "info.weather"
-            ],
-            "expect_not": [
-              "reminder.create"
-            ],
-            "expect_complexity": "adaptive"
-          },
-          "actual": [
-            "info.weather",
-            "reminder.create"
-          ],
-          "passed": false,
-          "detail": "出现禁排 ['reminder.create']；complexity=simple≠adaptive",
-          "tags": [
-            "skill:conditional-reminder",
-            "type:guide",
-            "in-sample",
-            "inj:"
-          ],
-          "source": ""
-        },
         {
           "id": "live_off::看下明晚会不会下雨，要下就叫我收衣服",
           "bucket": "live_off",
@@ -71,29 +44,6 @@
             "skill:conditional-reminder",
             "type:guide",
             "holdout",
-            "inj:"
-          ],
-          "source": ""
-        },
-        {
-          "id": "live_off::周末去杭州两天带老人不要太累，顺便看看天气",
-          "bucket": "live_off",
-          "text": "周末去杭州两天带老人不要太累，顺便看看天气",
-          "expected": {
-            "expect_intents": [
-              "trip.plan",
-              "info.forecast|info.weather"
-            ]
-          },
-          "actual": [
-            "trip.plan"
-          ],
-          "passed": false,
-          "detail": "缺 ['info.forecast|info.weather']",
-          "tags": [
-            "skill:multi-day-trip",
-            "type:guide",
-            "in-sample",
             "inj:"
           ],
           "source": ""
@@ -156,6 +106,7 @@
             ]
           },
           "actual": [
+            "nearby.search",
             "nearby.search"
           ],
           "passed": false,
@@ -169,13 +120,96 @@
           "source": ""
         }
       ],
-      "pass_rate": 0.5714
+      "pass_rate": 0.75
+    },
+    "ablate_wo_charging-strategy": {
+      "total": 3,
+      "passed": 3,
+      "failures": [],
+      "pass_rate": 1.0
+    },
+    "ablate_wo_conditional-reminder": {
+      "total": 1,
+      "passed": 0,
+      "failures": [
+        {
+          "id": "ablate_wo_conditional-reminder::看下明晚会不会下雨，要下就叫我收衣服",
+          "bucket": "ablate_wo_conditional-reminder",
+          "text": "看下明晚会不会下雨，要下就叫我收衣服",
+          "expected": {
+            "expect_intents": [
+              "info.weather"
+            ],
+            "expect_not": [
+              "reminder.create"
+            ],
+            "expect_complexity": "adaptive"
+          },
+          "actual": [
+            "info.forecast"
+          ],
+          "passed": false,
+          "detail": "缺 ['info.weather']",
+          "tags": [
+            "skill:conditional-reminder",
+            "type:guide",
+            "holdout",
+            "inj:full:freshness-and-depth,full:implicit-vehicle-control"
+          ],
+          "source": ""
+        }
+      ],
+      "pass_rate": 0.0
+    },
+    "ablate_wo_multi-day-trip": {
+      "total": 1,
+      "passed": 1,
+      "failures": [],
+      "pass_rate": 1.0
+    },
+    "ablate_wo_navigation-with-stop": {
+      "total": 1,
+      "passed": 0,
+      "failures": [
+        {
+          "id": "ablate_wo_navigation-with-stop::送我去宝安机场，路上找地方吃个饭",
+          "bucket": "ablate_wo_navigation-with-stop",
+          "text": "送我去宝安机场，路上找地方吃个饭",
+          "expected": {
+            "expect_intents": [
+              "navigation.navigate_to"
+            ],
+            "expect_not": [
+              "nearby.search"
+            ]
+          },
+          "actual": [
+            "navigation.search_poi"
+          ],
+          "passed": false,
+          "detail": "缺 ['navigation.navigate_to']",
+          "tags": [
+            "skill:navigation-with-stop",
+            "type:guide",
+            "holdout",
+            "inj:full:freshness-and-depth,full:implicit-vehicle-control"
+          ],
+          "source": ""
+        }
+      ],
+      "pass_rate": 0.0
+    },
+    "ablate_wo_freshness-and-depth": {
+      "total": 1,
+      "passed": 1,
+      "failures": [],
+      "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 28,
-    "passed": 22,
-    "pass_rate": 0.7857
+    "total": 39,
+    "passed": 33,
+    "pass_rate": 0.8462
   },
   "cases": {
     "live_full::去惠州怎么充电": {
@@ -251,6 +285,54 @@
         "type:guide",
         "holdout",
         "inj:full:conditional-reminder@vec,full:charging-strategy@vec,full:navigation-with-stop@vec!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
+      ],
+      "source": ""
+    },
+    "live_full::去趟惠州中间要不要补个电": {
+      "id": "live_full::去趟惠州中间要不要补个电",
+      "bucket": "live_full",
+      "text": "去趟惠州中间要不要补个电",
+      "expected": {
+        "expect_intents": [
+          "charging.plan"
+        ],
+        "expect_not": [
+          "nearby.search"
+        ]
+      },
+      "actual": [
+        "charging.plan"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:charging-strategy",
+        "type:guide",
+        "holdout",
+        "inj:full:multi-day-trip@vec,full:charging-strategy@vec,full:navigation-with-stop@vec!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
+      ],
+      "source": ""
+    },
+    "live_full::手机快没电了，附近找个地方充一下": {
+      "id": "live_full::手机快没电了，附近找个地方充一下",
+      "bucket": "live_full",
+      "text": "手机快没电了，附近找个地方充一下",
+      "expected": {
+        "expect_not": [
+          "charging.find",
+          "charging.plan"
+        ]
+      },
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:charging-strategy",
+        "type:guide",
+        "holdout",
+        "inj:full:navigation-with-stop@lex,full:charging-strategy@lex!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
       ],
       "source": ""
     },
@@ -340,7 +422,7 @@
       },
       "actual": [
         "trip.plan",
-        "info.weather"
+        "info.forecast"
       ],
       "passed": true,
       "detail": "",
@@ -595,6 +677,54 @@
       ],
       "source": ""
     },
+    "live_off::去趟惠州中间要不要补个电": {
+      "id": "live_off::去趟惠州中间要不要补个电",
+      "bucket": "live_off",
+      "text": "去趟惠州中间要不要补个电",
+      "expected": {
+        "expect_intents": [
+          "charging.plan"
+        ],
+        "expect_not": [
+          "nearby.search"
+        ]
+      },
+      "actual": [
+        "charging.plan"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:charging-strategy",
+        "type:guide",
+        "holdout",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::手机快没电了，附近找个地方充一下": {
+      "id": "live_off::手机快没电了，附近找个地方充一下",
+      "bucket": "live_off",
+      "text": "手机快没电了，附近找个地方充一下",
+      "expected": {
+        "expect_not": [
+          "charging.find",
+          "charging.plan"
+        ]
+      },
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:charging-strategy",
+        "type:guide",
+        "holdout",
+        "inj:"
+      ],
+      "source": ""
+    },
     "live_off::查下明天会不会下雨，要是下雨就提醒我带伞": {
       "id": "live_off::查下明天会不会下雨，要是下雨就提醒我带伞",
       "bucket": "live_off",
@@ -609,11 +739,10 @@
         "expect_complexity": "adaptive"
       },
       "actual": [
-        "info.weather",
-        "reminder.create"
+        "info.weather"
       ],
-      "passed": false,
-      "detail": "出现禁排 ['reminder.create']；complexity=simple≠adaptive",
+      "passed": true,
+      "detail": "",
       "tags": [
         "skill:conditional-reminder",
         "type:guide",
@@ -682,10 +811,11 @@
         ]
       },
       "actual": [
-        "trip.plan"
+        "trip.plan",
+        "info.weather"
       ],
-      "passed": false,
-      "detail": "缺 ['info.forecast|info.weather']",
+      "passed": true,
+      "detail": "",
       "tags": [
         "skill:multi-day-trip",
         "type:guide",
@@ -774,6 +904,7 @@
         ]
       },
       "actual": [
+        "nearby.search",
         "nearby.search"
       ],
       "passed": false,
@@ -857,6 +988,177 @@
         "type:policy",
         "in-sample",
         "inj:"
+      ],
+      "source": ""
+    },
+    "ablate_wo_charging-strategy::电快见底了，就近找个地方充上": {
+      "id": "ablate_wo_charging-strategy::电快见底了，就近找个地方充上",
+      "bucket": "ablate_wo_charging-strategy",
+      "text": "电快见底了，就近找个地方充上",
+      "expected": {
+        "expect_intents": [
+          "charging.find"
+        ],
+        "expect_not": [
+          "nearby.search"
+        ]
+      },
+      "actual": [
+        "charging.find"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:charging-strategy",
+        "type:guide",
+        "holdout",
+        "inj:full:freshness-and-depth,full:implicit-vehicle-control"
+      ],
+      "source": ""
+    },
+    "ablate_wo_charging-strategy::去趟惠州中间要不要补个电": {
+      "id": "ablate_wo_charging-strategy::去趟惠州中间要不要补个电",
+      "bucket": "ablate_wo_charging-strategy",
+      "text": "去趟惠州中间要不要补个电",
+      "expected": {
+        "expect_intents": [
+          "charging.plan"
+        ],
+        "expect_not": [
+          "nearby.search"
+        ]
+      },
+      "actual": [
+        "charging.plan"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:charging-strategy",
+        "type:guide",
+        "holdout",
+        "inj:full:freshness-and-depth,full:implicit-vehicle-control"
+      ],
+      "source": ""
+    },
+    "ablate_wo_charging-strategy::手机快没电了，附近找个地方充一下": {
+      "id": "ablate_wo_charging-strategy::手机快没电了，附近找个地方充一下",
+      "bucket": "ablate_wo_charging-strategy",
+      "text": "手机快没电了，附近找个地方充一下",
+      "expected": {
+        "expect_not": [
+          "charging.find",
+          "charging.plan"
+        ]
+      },
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:charging-strategy",
+        "type:guide",
+        "holdout",
+        "inj:full:navigation-with-stop@lex,full:freshness-and-depth,full:implicit-vehicle-control"
+      ],
+      "source": ""
+    },
+    "ablate_wo_conditional-reminder::看下明晚会不会下雨，要下就叫我收衣服": {
+      "id": "ablate_wo_conditional-reminder::看下明晚会不会下雨，要下就叫我收衣服",
+      "bucket": "ablate_wo_conditional-reminder",
+      "text": "看下明晚会不会下雨，要下就叫我收衣服",
+      "expected": {
+        "expect_intents": [
+          "info.weather"
+        ],
+        "expect_not": [
+          "reminder.create"
+        ],
+        "expect_complexity": "adaptive"
+      },
+      "actual": [
+        "info.forecast"
+      ],
+      "passed": false,
+      "detail": "缺 ['info.weather']",
+      "tags": [
+        "skill:conditional-reminder",
+        "type:guide",
+        "holdout",
+        "inj:full:freshness-and-depth,full:implicit-vehicle-control"
+      ],
+      "source": ""
+    },
+    "ablate_wo_multi-day-trip::陪爸妈去趟昆明玩四天，帮我安排下": {
+      "id": "ablate_wo_multi-day-trip::陪爸妈去趟昆明玩四天，帮我安排下",
+      "bucket": "ablate_wo_multi-day-trip",
+      "text": "陪爸妈去趟昆明玩四天，帮我安排下",
+      "expected": {
+        "expect_intents": [
+          "trip.plan"
+        ]
+      },
+      "actual": [
+        "trip.plan"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:multi-day-trip",
+        "type:guide",
+        "holdout",
+        "inj:full:freshness-and-depth,full:implicit-vehicle-control"
+      ],
+      "source": ""
+    },
+    "ablate_wo_navigation-with-stop::送我去宝安机场，路上找地方吃个饭": {
+      "id": "ablate_wo_navigation-with-stop::送我去宝安机场，路上找地方吃个饭",
+      "bucket": "ablate_wo_navigation-with-stop",
+      "text": "送我去宝安机场，路上找地方吃个饭",
+      "expected": {
+        "expect_intents": [
+          "navigation.navigate_to"
+        ],
+        "expect_not": [
+          "nearby.search"
+        ]
+      },
+      "actual": [
+        "navigation.search_poi"
+      ],
+      "passed": false,
+      "detail": "缺 ['navigation.navigate_to']",
+      "tags": [
+        "skill:navigation-with-stop",
+        "type:guide",
+        "holdout",
+        "inj:full:freshness-and-depth,full:implicit-vehicle-control"
+      ],
+      "source": ""
+    },
+    "ablate_wo_freshness-and-depth::今年世界杯什么时候开赛": {
+      "id": "ablate_wo_freshness-and-depth::今年世界杯什么时候开赛",
+      "bucket": "ablate_wo_freshness-and-depth",
+      "text": "今年世界杯什么时候开赛",
+      "expected": {
+        "expect_intents": [
+          "info.sports|info.search"
+        ],
+        "expect_not": [
+          "chitchat.talk"
+        ]
+      },
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "skill:freshness-and-depth",
+        "type:policy",
+        "holdout",
+        "inj:full:implicit-vehicle-control"
       ],
       "source": ""
     }

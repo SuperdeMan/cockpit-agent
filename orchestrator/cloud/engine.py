@@ -742,12 +742,14 @@ class PlannerEngine:
                     continue
                 seeds.append(StepResult(**d))
 
-            return Plan(
+            restored = Plan(
                 steps=steps,
                 raw_text=state.pending_plan.get("raw_text", ""),
                 complexity=state.pending_plan.get("complexity", "simple"),
                 goal=state.pending_plan.get("goal", ""),
-            ), seeds
+            )
+            restored.skills = list(state.pending_plan.get("skills") or [])
+            return restored, seeds
         except Exception as e:
             logger.warning("Failed to restore plan: %s", e)
             return None, []
@@ -799,6 +801,9 @@ class PlannerEngine:
             "raw_text": plan.raw_text,
             "complexity": plan.complexity,
             "goal": plan.goal,
+            # T2 知识继承跨挂起（2026-07-27 评审二批）：不存 skills 的话，补槽/确认恢复后
+            # 的再规划会丢初规划注入的规划知识（replan 按 plan.skills 重渲染，见 loop.py）
+            "skills": list(plan.skills or []),
         }
 
     async def _needs_replan(self, plan: Plan, results: list[StepResult]) -> bool:

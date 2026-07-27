@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.11（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-07-27（v1.11 定稿归档——Skill 层全生命周期闭合合入）
+> 版本：v1.12（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-07-27（v1.12 定稿归档——Skill 层挂起链继承与逐 skill 消融归因合入）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -365,7 +365,7 @@ Planner 的两种"智能供给"均已声明式化（设计详见 `docs/design/20
    - **检索双通道（2026-07-26）**：`SKILLS_RETRIEVAL=lexical|hybrid`（默认 hybrid）——词法命中（keywords 显式信号）恒保留，语义通道以 guide `description` 向量余弦**补位** paraphrase（经 llm-gateway Embed，与 registry 语义路由同源；**fail-open** 回词法不堵规划）。档位与阈值（0.40）由 paraphrase 语料阈值扫描拍板（词法 0/11 → hybrid 11/11、零新增噪声），兑现 M0b「embedding 升级由召回数据决定」的悬空承诺。
    - **知识必须可证有效**：skill 自带 golden（`expect_intents` AND/`expect_any`/`expect_not`，项支持 `a|b` 容忍）经 `eval_skills` 三车道消费——离线检索门禁进 GitHub CI，live 车道（真 planner+真 LLM）以 `SKILLS_MODE=off` A/B 对照量化知识增益（首跑 Δ=+5/10）。`plan.skills` 归因名单反映**真实注入**（检索通道 `@lex`/`@vec`、超预算 `!clipped`）。
    - **分层边界的实证**：skill（LLM 前知识）教对了也会被 `policy: replace` 的 route_hint（LLM 后纠错）盖掉——live 车道首跑即抓到 nearby 设施发现 hint 的 guard 缺口踩掉 charging.find；holdout 车道次日再抓到 reminder「叫我」hint 劫持无「要是/如果」标记的条件句。凡「知识不生效」的 badcase，先查 hint 层再改知识。**分工口径（2026-07-27 采样方差实证）**：教科书形态用 route_hints 钉死（canonical 不该靠温度采样），skill 知识管 paraphrase 泛化。
-   - **全生命周期闭合（2026-07-27 评审补强）**：T2 再规划按 `plan.skills` 名单**继承**初规划注入的同一份知识（条件依赖类知识的决策恰发生在再规划轮）；loader 对坏文件全面 fail-open（结构性坏文件跳过、非法标量回默认、重名先到者胜、改坏沿用 last-known-good）而 eval 文件级校验在 CI 是**阻断步**——运行时保知识可用性、门禁保主干整洁；golden 增 `holdout`（防 few-shot 原句自证）与 `expect_complexity`（adaptive 类知识的核心主张可断言），live 报告按 in-sample/holdout 拆分。
+   - **全生命周期闭合（2026-07-27 评审补强；同日二批补齐挂起链与归因）**：T2 再规划按 `plan.skills` 名单**继承**初规划注入的同一份知识（条件依赖类知识的决策恰发生在再规划轮），且**跨挂起成立**——`plan.skills` 随 `pending_plan` 持久化，补槽/确认恢复后的再规划不失忆；loader 对坏文件全面 fail-open（结构性坏文件跳过、非法标量回默认、重名先到者胜、改坏沿用 last-known-good；env 垃圾值回默认告警不崩启动）而 eval 文件级校验在 CI 是**阻断步**——运行时保知识可用性、门禁保主干整洁；golden 增 `holdout`（防 few-shot 原句自证）与 `expect_complexity`（adaptive 类知识的核心主张可断言），live 报告按 in-sample/holdout 拆分，**逐 skill 消融车道**做 per-guide 因果归因（full/off 分不清「知识的功」还是「hint 的功」；Δ=0 自动提示查 hint 覆盖）。hint 层教训沉淀：SOC 词形对手机/耳机等**设备**同样成立——replace hint 的 guard 必须排除非车辆主语（评审二批抓到的回归）。
 2. **结构化规划输出（`submit_plan`，M1a）**：规划轮经原生 function calling 强制输出合法 Plan JSON（单一 `submit_plan` 工具、named tool_choice，`PLANNER_TOOLCALL=on|off` 默认 on），替代文本补全+脆弱 JSON 截取。schema 顶层=既有计划协议、**不含 `require_confirm`**（确认权在 capability manifest ∨ action ∨ VAL 硬层，LLM 无权降级）；协议失败轮内降级（同轮文本抢救→JSON 路径→兜底），最坏调用数与旧路径持平。承载走既有 `CompleteRequest.tools`/`CompleteResponse.tool_calls` Struct 字段（V1 不改 proto；V2 真 agentic tool loop 需 proto 演进）。
    - 实施教训（V2 设计约束）：tool schema 与输出指令会三向改变模型输出分布（可选字段诱发多填、无说明 object 诱发少填、"写全"指令诱发编造占位值）——凡改 schema 必过旅程级行为对照。
 
@@ -1013,6 +1013,7 @@ agents/<name>/
 | v1.3 | 2026-07-24 | 内容性合入：§5.2.1 规划知识 Skill 层（M0b）与结构化规划输出 submit_plan（M1a）定稿归档 |
 | v1.10 | 2026-07-26 | 内容性合入：§5.2.1 Skill 层闭环补全——检索双通道（词法恒保留+语义补位 paraphrase、fail-open 回词法；档位与阈值由 paraphrase 语料扫描拍板=兑现「embedding 升级由召回数据决定」）、知识可证有效（golden expect 三键经 eval 三车道消费、live A/B 对照 Δ=+5、`plan.skills` 归因诚实 `@通道`/`!clipped`、few_shots 实装）、**分层边界实证**（skill 教对了会被 replace hint 盖掉——「知识不生效」先查 hint 层） |
 | v1.11 | 2026-07-27 | 内容性合入（外部评审六项裁决后采纳）：§5.2.1 Skill 层全生命周期闭合——**T2 再规划知识继承**（按 `plan.skills` 名单重渲染，条件依赖类知识的决策恰发生在再规划轮）、运行时/门禁双轨（loader 全面 fail-open+last-known-good vs eval 文件级校验 CI 阻断）、golden `holdout`/`expect_complexity`（in-sample/holdout 拆分报告防原句自证）、**canonical 归 hint / paraphrase 归知识的分工口径**（采样方差实证：教科书形态不该靠温度采样） |
+| v1.12 | 2026-07-27 | 内容性合入（评审二批四项全采纳，同日）：§5.2.1——T2 继承**跨挂起**（`plan.skills` 随 `pending_plan` 持久化，v1.11「全生命周期」宣称在挂起链上补真）、**逐 skill 消融车道**（per-guide 因果归因：full/off 分不清知识与 hint 的功，Δ=0 自动提示查 hint 覆盖；n=1 信息性）、env 垃圾值不崩启动、**replace hint guard 须排除非车辆主语**（SOC 词形对设备同样成立——「手机快没电找地方充」误接车辆找桩的回归教训） |
 | v1.4 | 2026-07-25 | 内容性合入：§5.2.2 执行治理——Task Ledger（跨轮持久任务账本、拉模式 cancel、预算强制、中断诚实报告）与 Outcome Verifier（声明式执行后对账、三态不定罪）定稿归档，含 T2 分档与重复副作用防抖 |
 | v1.6 | 2026-07-25 | 内容性合入：§7.2 主动服务治理——唯一裁决点（fail-open 可随时死掉、单条字节级兼容、零领域字面量、六道闸与**两处 unknown 判据方向相反的理由**）+ §7.3 受控 MCP 桥（三重锁定准入、写操作生命周期五项、演示数据诚实标注）定稿归档 |
 | v1.8 | 2026-07-26 | 内容性合入：§7.5 形态接入——身份与视觉（**身份识别与授权是两件事**=声纹不作鉴权因子红线、模型面与数据面分家=生物特征模板不下发无状态服务、**降级目标应是能力上线前的行为**、感知门控在采集侧、**引用而非内容穿越系统边界**、拿不到就说拿不到不静默降级成另一件事、能力性 pin 优先于会话级偏好）定稿归档 |

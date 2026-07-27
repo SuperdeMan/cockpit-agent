@@ -36,11 +36,38 @@ import yaml
 
 logger = logging.getLogger("cloud.skills")
 
-# `or` 兜底：compose 以 ${VAR:-} 透传（不带默认值，避免默认值在 compose 与代码两处漂移），
-# 未设置时容器收到空串——int("") 会炸 import。
-SKILL_BUDGET = int(os.getenv("SKILL_BUDGET") or "2400")     # 注入块字符预算
-SKILL_TOP_K = int(os.getenv("SKILL_TOP_K") or "3")          # guide 预筛条数
-_MIN_SCORE = int(os.getenv("SKILL_MIN_SCORE") or "10")      # 词法命中阈值（一个关键词=10）
+def _env_int(name: str, default: int, min_val: int | None = None) -> int:
+    """环境变量取整（2026-07-27 评审二批）：compose 以 ${VAR:-} 空默认透传（默认值只活
+    这里一处），空串/垃圾值（SKILL_BUDGET=oops）一律回默认并告警——配置错误不该让
+    Planner 起不来。"""
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        v = int(raw)
+    except ValueError:
+        logger.warning("env %s=%r 非整数——回默认 %d（修配置！）", name, raw, default)
+        return default
+    if min_val is not None and v < min_val:
+        logger.warning("env %s=%d 低于下限 %d——按下限处理", name, v, min_val)
+        return min_val
+    return v
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("env %s=%r 非数值——回默认 %s（修配置！）", name, raw, default)
+        return default
+
+
+SKILL_BUDGET = _env_int("SKILL_BUDGET", 2400, min_val=0)    # 注入块字符预算
+SKILL_TOP_K = _env_int("SKILL_TOP_K", 3, min_val=1)         # guide 预筛条数
+_MIN_SCORE = _env_int("SKILL_MIN_SCORE", 10)                # 词法命中阈值（一个关键词=10）
 _RESCAN_S = 30.0                                            # 目录重扫最小间隔（热更新）
 _EMBED_COOLDOWN_S = 30.0                                    # 语义通道失败冷却（防抖打日志）
 
@@ -238,11 +265,11 @@ _embed_fail_ts = 0.0
 def _sem_threshold() -> float:
     """默认 0.40 由 paraphrase 语料阈值扫描拍板（2026-07-26，eval_skills --retrieval both）：
     0.40 召回 10/11 且语义通道零新增噪声；0.45 掉到 6/11；0.35 噪声不再降。"""
-    return float(os.getenv("SKILL_SEM_THRESHOLD") or "0.40")
+    return _env_float("SKILL_SEM_THRESHOLD", 0.40)
 
 
 def _embed_timeout() -> float:
-    return float(os.getenv("SKILL_EMBED_TIMEOUT") or "1.0")
+    return _env_float("SKILL_EMBED_TIMEOUT", 1.0)
 
 
 async def _embed_texts(texts: list[str]) -> tuple[list[tuple[float, ...]], str] | None:

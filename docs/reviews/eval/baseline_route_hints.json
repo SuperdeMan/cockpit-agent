@@ -1,13 +1,13 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-07-27T05:08:18.330532+00:00",
-    "commit": "953e9b6"
+    "generated_at": "2026-07-27T06:27:04.989508+00:00",
+    "commit": "990de34"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 105
+      "count": 108
     }
   ],
   "buckets": {
@@ -18,15 +18,15 @@
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 38,
-      "passed": 38,
+      "total": 41,
+      "passed": 41,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 105,
-    "passed": 105,
+    "total": 108,
+    "passed": 108,
     "pass_rate": 1.0
   },
   "cases": {
@@ -381,6 +381,51 @@
         "replace"
       ],
       "source": "eval_skills live 2026-07-27"
+    },
+    "route::手机快没电了，附近找个地方充一下": {
+      "id": "route::手机快没电了，附近找个地方充一下",
+      "bucket": "route_guardrail",
+      "text": "手机快没电了，附近找个地方充一下",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "guard",
+        "device"
+      ],
+      "source": "评审二批 2026-07-27（设备充电误接回归）"
+    },
+    "route::笔记本电量不够了，找个地方补电": {
+      "id": "route::笔记本电量不够了，找个地方补电",
+      "bucket": "route_guardrail",
+      "text": "笔记本电量不够了，找个地方补电",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "guard",
+        "device"
+      ],
+      "source": "评审二批 2026-07-27"
+    },
+    "route::耳机快没电了，找个充电宝": {
+      "id": "route::耳机快没电了，找个充电宝",
+      "bucket": "route_guardrail",
+      "text": "耳机快没电了，找个充电宝",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "guard",
+        "device"
+      ],
+      "source": "评审二批 2026-07-27"
     },
     "route::附近有没有充电站": {
       "id": "route::附近有没有充电站",

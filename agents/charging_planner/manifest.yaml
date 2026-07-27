@@ -9,11 +9,11 @@ fallback: chitchat
 
 capabilities:
   - intent: charging.find
-    description: 找附近的充电站，根据电量推荐
+    description: 给车找附近的充电站，按车辆电量推荐；手机/耳机等随身设备充电不归此能力
     slots: [destination, soc, prefer]
     examples: ["找个充电站", "附近有充电桩吗", "快充在哪"]
   - intent: charging.plan
-    description: 规划长途充能策略（沿途分段充电）
+    description: 规划车辆长途充能策略（沿途分段充电）
     slots: [destination, soc, departure_time]
     heavy: true    # 长途充能沿途分段规划 → 开思考+过程区
     examples: ["去杭州怎么充电", "帮我规划充电"]
@@ -37,8 +37,11 @@ route_hints:
     priority: 55
     guard: '附近|就近|旁边|这边|是什么|什么意思'
     slots: {destination: "$1"}
+  # guard 首段=非车辆设备（2026-07-27 评审二批抓到的回归：「手机快没电了找个地方充一下」
+  # 被劫持成车辆找桩——SOC 焦虑词形对设备同样成立，主语必须排除）；设备句让给 LLM
+  # （周边发现/闲聊），负例钉在 eval_route_hints 语料。
   - pattern: '(?:快?没电|没什么电|电量(?:不多|不足|不够|低)|电快?(?:见底|不多|不够))[^。！？]{0,10}(?:找|充|补)'
     intent: charging.find
     policy: replace
     priority: 55
-    guard: '怎么充|够不够|能不能到|沿途|一路|长途|导航|带我去|规划|是什么|什么意思'
+    guard: '手机|手表|耳机|电脑|笔记本|平板|相机|无人机|充电宝|电瓶车|怎么充|够不够|能不能到|沿途|一路|长途|导航|带我去|规划|是什么|什么意思'
