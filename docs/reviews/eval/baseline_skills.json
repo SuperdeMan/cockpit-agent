@@ -1,8 +1,8 @@
 {
   "meta": {
     "subject": "skills",
-    "generated_at": "2026-07-27T07:13:16.508700+00:00",
-    "commit": "59e3209",
+    "generated_at": "2026-07-27T07:17:40.687012+00:00",
+    "commit": "f7f7cab",
     "provider": "minimax:MiniMax-M3",
     "temperature": 0.3,
     "skills_mode": "full",
@@ -22,25 +22,27 @@
       "passed": 15,
       "failures": [
         {
-          "id": "live_full::导航去深圳湾，在附近找个充电桩",
+          "id": "live_full::去趟惠州中间要不要补个电",
           "bucket": "live_full",
-          "text": "导航去深圳湾，在附近找个充电桩",
+          "text": "去趟惠州中间要不要补个电",
           "expected": {
             "expect_intents": [
-              "navigation.navigate_to",
-              "charging.find"
+              "charging.plan"
+            ],
+            "expect_not": [
+              "nearby.search"
             ]
           },
           "actual": [
-            "charging.find"
+            "trip.plan"
           ],
           "passed": false,
-          "detail": "缺 ['navigation.navigate_to']",
+          "detail": "缺 ['charging.plan']",
           "tags": [
-            "skill:navigation-with-stop",
+            "skill:charging-strategy",
             "type:guide",
-            "in-sample",
-            "inj:full:navigation-with-stop@lex,full:charging-strategy@lex!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
+            "holdout",
+            "inj:full:multi-day-trip@vec,full:charging-strategy@vec,full:navigation-with-stop@vec!clipped,full:freshness-and-depth,full:implicit-vehicle-control"
           ],
           "source": ""
         }
@@ -49,58 +51,8 @@
     },
     "live_off": {
       "total": 16,
-      "passed": 10,
+      "passed": 13,
       "failures": [
-        {
-          "id": "live_off::手机快没电了，附近找个地方充一下",
-          "bucket": "live_off",
-          "text": "手机快没电了，附近找个地方充一下",
-          "expected": {
-            "expect_not": [
-              "charging.find",
-              "charging.plan"
-            ]
-          },
-          "actual": [
-            "charging.find"
-          ],
-          "passed": false,
-          "detail": "出现禁排 ['charging.find']",
-          "tags": [
-            "skill:charging-strategy",
-            "type:guide",
-            "holdout",
-            "inj:"
-          ],
-          "source": ""
-        },
-        {
-          "id": "live_off::查下明天会不会下雨，要是下雨就提醒我带伞",
-          "bucket": "live_off",
-          "text": "查下明天会不会下雨，要是下雨就提醒我带伞",
-          "expected": {
-            "expect_intents": [
-              "info.weather|info.forecast"
-            ],
-            "expect_not": [
-              "reminder.create"
-            ],
-            "expect_complexity": "adaptive"
-          },
-          "actual": [
-            "info.forecast",
-            "reminder.create"
-          ],
-          "passed": false,
-          "detail": "出现禁排 ['reminder.create']；complexity=simple≠adaptive",
-          "tags": [
-            "skill:conditional-reminder",
-            "type:guide",
-            "in-sample",
-            "inj:"
-          ],
-          "source": ""
-        },
         {
           "id": "live_off::导航去东方之门，附近找个吃饭的地方",
           "bucket": "live_off",
@@ -111,8 +63,7 @@
             ]
           },
           "actual": [
-            "nearby.search",
-            "trip.navigate"
+            "nearby.search"
           ],
           "passed": false,
           "detail": "缺 ['navigation.navigate_to']",
@@ -135,11 +86,10 @@
             ]
           },
           "actual": [
-            "navigation.search_poi",
-            "charging.find"
+            "nearby.search"
           ],
           "passed": false,
-          "detail": "缺 ['navigation.navigate_to']",
+          "detail": "缺 ['navigation.navigate_to', 'charging.find']",
           "tags": [
             "skill:navigation-with-stop",
             "type:guide",
@@ -158,11 +108,12 @@
             ],
             "expect_not": [
               "nearby.search"
-            ]
+            ],
+            "expect_ablation_effect": true
           },
           "actual": [
-            "trip.navigate",
-            "nearby.search"
+            "nearby.search",
+            "navigation.search_poi"
           ],
           "passed": false,
           "detail": "缺 ['navigation.navigate_to']；出现禁排 ['nearby.search']",
@@ -173,42 +124,15 @@
             "inj:"
           ],
           "source": ""
-        },
-        {
-          "id": "live_off::我有点冷",
-          "bucket": "live_off",
-          "text": "我有点冷",
-          "expected": {
-            "expect_any": [
-              "hvac.inc",
-              "hvac.set",
-              "hvac.dec"
-            ],
-            "expect_not": [
-              "chitchat.talk"
-            ]
-          },
-          "actual": [
-            "chitchat.talk"
-          ],
-          "passed": false,
-          "detail": "expect_any 全缺 ['hvac.inc', 'hvac.set', 'hvac.dec']；出现禁排 ['chitchat.talk']",
-          "tags": [
-            "skill:implicit-vehicle-control",
-            "type:policy",
-            "in-sample",
-            "inj:"
-          ],
-          "source": ""
         }
       ],
-      "pass_rate": 0.625
+      "pass_rate": 0.8125
     }
   },
   "overall": {
     "total": 32,
-    "passed": 25,
-    "pass_rate": 0.7812
+    "passed": 28,
+    "pass_rate": 0.875
   },
   "cases": {
     "live_full::去惠州怎么充电": {
@@ -300,10 +224,10 @@
         ]
       },
       "actual": [
-        "charging.plan"
+        "trip.plan"
       ],
-      "passed": true,
-      "detail": "",
+      "passed": false,
+      "detail": "缺 ['charging.plan']",
       "tags": [
         "skill:charging-strategy",
         "type:guide",
@@ -488,10 +412,11 @@
         ]
       },
       "actual": [
+        "navigation.navigate_to",
         "charging.find"
       ],
-      "passed": false,
-      "detail": "缺 ['navigation.navigate_to']",
+      "passed": true,
+      "detail": "",
       "tags": [
         "skill:navigation-with-stop",
         "type:guide",
@@ -510,7 +435,8 @@
         ],
         "expect_not": [
           "nearby.search"
-        ]
+        ],
+        "expect_ablation_effect": true
       },
       "actual": [
         "navigation.navigate_to"
@@ -711,10 +637,10 @@
         ]
       },
       "actual": [
-        "charging.find"
+        "nearby.search"
       ],
-      "passed": false,
-      "detail": "出现禁排 ['charging.find']",
+      "passed": true,
+      "detail": "",
       "tags": [
         "skill:charging-strategy",
         "type:guide",
@@ -737,11 +663,10 @@
         "expect_complexity": "adaptive"
       },
       "actual": [
-        "info.forecast",
-        "reminder.create"
+        "info.weather"
       ],
-      "passed": false,
-      "detail": "出现禁排 ['reminder.create']；complexity=simple≠adaptive",
+      "passed": true,
+      "detail": "",
       "tags": [
         "skill:conditional-reminder",
         "type:guide",
@@ -764,7 +689,7 @@
         "expect_complexity": "adaptive"
       },
       "actual": [
-        "info.forecast"
+        "info.weather"
       ],
       "passed": true,
       "detail": "",
@@ -810,7 +735,8 @@
       },
       "actual": [
         "trip.plan",
-        "info.weather"
+        "info.weather",
+        "info.forecast"
       ],
       "passed": true,
       "detail": "",
@@ -854,8 +780,7 @@
         ]
       },
       "actual": [
-        "nearby.search",
-        "trip.navigate"
+        "nearby.search"
       ],
       "passed": false,
       "detail": "缺 ['navigation.navigate_to']",
@@ -878,11 +803,10 @@
         ]
       },
       "actual": [
-        "navigation.search_poi",
-        "charging.find"
+        "nearby.search"
       ],
       "passed": false,
-      "detail": "缺 ['navigation.navigate_to']",
+      "detail": "缺 ['navigation.navigate_to', 'charging.find']",
       "tags": [
         "skill:navigation-with-stop",
         "type:guide",
@@ -901,11 +825,12 @@
         ],
         "expect_not": [
           "nearby.search"
-        ]
+        ],
+        "expect_ablation_effect": true
       },
       "actual": [
-        "trip.navigate",
-        "nearby.search"
+        "nearby.search",
+        "navigation.search_poi"
       ],
       "passed": false,
       "detail": "缺 ['navigation.navigate_to']；出现禁排 ['nearby.search']",
@@ -979,10 +904,10 @@
         ]
       },
       "actual": [
-        "chitchat.talk"
+        "hvac.set"
       ],
-      "passed": false,
-      "detail": "expect_any 全缺 ['hvac.inc', 'hvac.set', 'hvac.dec']；出现禁排 ['chitchat.talk']",
+      "passed": true,
+      "detail": "",
       "tags": [
         "skill:implicit-vehicle-control",
         "type:policy",
@@ -1004,7 +929,7 @@
         },
         {
           "text": "去趟惠州中间要不要补个电",
-          "full_pass": true,
+          "full_pass": false,
           "without_pass": true,
           "causal_effect": false,
           "expect_ablation_effect": false
@@ -1025,12 +950,12 @@
         {
           "text": "看下明晚会不会下雨，要下就叫我收衣服",
           "full_pass": true,
-          "without_pass": true,
-          "causal_effect": false,
+          "without_pass": false,
+          "causal_effect": true,
           "expect_ablation_effect": false
         }
       ],
-      "causal_count": 0,
+      "causal_count": 1,
       "expectation_unmet": []
     },
     "multi-day-trip": {
@@ -1053,7 +978,7 @@
           "full_pass": true,
           "without_pass": false,
           "causal_effect": true,
-          "expect_ablation_effect": false
+          "expect_ablation_effect": true
         }
       ],
       "causal_count": 1,
