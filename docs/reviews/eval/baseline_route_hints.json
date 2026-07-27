@@ -1,32 +1,32 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-07-27T06:27:04.989508+00:00",
-    "commit": "990de34"
+    "generated_at": "2026-07-27T07:06:14.241905+00:00",
+    "commit": "dc96fe1"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 108
+      "count": 113
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 67,
-      "passed": 67,
+      "total": 68,
+      "passed": 68,
       "failures": [],
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 41,
-      "passed": 41,
+      "total": 45,
+      "passed": 45,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 108,
-    "passed": 108,
+    "total": 113,
+    "passed": 113,
     "pass_rate": 1.0
   },
   "cases": {
@@ -426,6 +426,84 @@
         "device"
       ],
       "source": "评审二批 2026-07-27"
+    },
+    "route::游戏机快没电了，找个地方充一下": {
+      "id": "route::游戏机快没电了，找个地方充一下",
+      "bucket": "route_guardrail",
+      "text": "游戏机快没电了，找个地方充一下",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "guard",
+        "device"
+      ],
+      "source": "评审三批 2026-07-27（正向锚兜未枚举设备）"
+    },
+    "route::电动牙刷快没电了，找地方充下": {
+      "id": "route::电动牙刷快没电了，找地方充下",
+      "bucket": "route_guardrail",
+      "text": "电动牙刷快没电了，找地方充下",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "guard",
+        "device"
+      ],
+      "source": "评审三批 2026-07-27"
+    },
+    "route::去露营手机怎么充电": {
+      "id": "route::去露营手机怎么充电",
+      "bucket": "route_guardrail",
+      "text": "去露营手机怎么充电",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "guard",
+        "device"
+      ],
+      "source": "评审三批 2026-07-27（plan 形态设备劫持）"
+    },
+    "route::去露营怎么充电宝": {
+      "id": "route::去露营怎么充电宝",
+      "bucket": "route_guardrail",
+      "text": "去露营怎么充电宝",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "guard",
+        "device"
+      ],
+      "source": "评审三批 2026-07-27"
+    },
+    "route::车快没电了，帮我找个充电桩": {
+      "id": "route::车快没电了，帮我找个充电桩",
+      "bucket": "route_recall",
+      "text": "车快没电了，帮我找个充电桩",
+      "expected": [
+        "charging.find"
+      ],
+      "actual": [
+        "charging.find"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging",
+        "replace"
+      ],
+      "source": "评审三批 2026-07-27（「车」主语正锚）"
     },
     "route::附近有没有充电站": {
       "id": "route::附近有没有充电站",

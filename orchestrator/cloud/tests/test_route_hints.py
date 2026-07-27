@@ -132,3 +132,44 @@ def test_empty_hints_noop():
     hit = _engine().apply(plan, "随便聊聊", amap)
     assert hit is False
     assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+
+
+def test_charging_hints_never_hijack_device_charging():
+    """评审二/三批回归钉死（阻断 pytest——eval_route_hints 语料在 continue-on-error
+    观测步，语料回归 CI 不红）：SOC/充电词形对手机等设备同样成立，charging 两条 hint
+    绝不接管非车辆主语。防线=正向锚（SOC 短语须在句首/分句首或「车」后）+ 设备 guard
+    保险带；用**真实 manifest** 断言，guard 词表漂移即红。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    m = load_manifest(str(root / "agents" / "charging_planner" / "manifest.yaml"))
+    amap = {"charging-planner": SimpleNamespace(manifest=m, endpoint="x:0")}
+    eng = RouteHintEngine(_validate)
+
+    negatives = [
+        "手机快没电了，附近找个地方充一下",
+        "笔记本电量不够了，找个地方补电",
+        "耳机快没电了，找个充电宝",
+        "游戏机快没电了，找个地方充一下",      # 黑名单枚举不到 → 正向锚兜住
+        "电动牙刷快没电了，找地方充下",
+        "去露营手机怎么充电",                  # plan 形态的设备劫持（评审三批）
+        "去露营怎么充电宝",
+        "电动车快没电了，找个地方充",          # 以「车」结尾的非本车主语 → guard 保险带
+    ]
+    for t in negatives:
+        plan = Plan(steps=[], raw_text=t)
+        eng.apply(plan, t, amap)
+        assert not plan.steps, f"{t!r} 被 charging hint 接管: {[s.intent for s in plan.steps]}"
+
+    positives = {
+        "快没电了，附近找个快充": "charging.find",
+        "车快没电了，帮我找个充电桩": "charging.find",
+        "去惠州怎么充电": "charging.plan",
+    }
+    for t, intent in positives.items():
+        plan = Plan(steps=[], raw_text=t)
+        eng.apply(plan, t, amap)
+        assert [s.intent for s in plan.steps] == [intent], (
+            f"{t!r} → {[s.intent for s in plan.steps]}（应为 {intent}）")

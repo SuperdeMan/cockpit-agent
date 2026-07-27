@@ -144,6 +144,10 @@ class LoopController:
                 if decision.done or not decision.steps:
                     break
                 current = decision.to_plan(goal)
+                # T2 知识继承贯通挂起链（2026-07-27 评审三批）：to_plan 新建的 Plan
+                # skills=[]——若这个再规划步 NEED_SLOT/NEED_CONFIRM 挂起，loop 传给
+                # suspend 的正是 current，序列化空 skills → 恢复后再规划失忆。
+                current.skills = list(getattr(initial_plan, "skills", []) or [])
 
             done_seed = {result.step_id: result for result in results}
 

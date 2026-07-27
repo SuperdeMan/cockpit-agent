@@ -79,6 +79,8 @@ golden:                         # 必填（guide）：自带黄金用例，接 e
                                       #   检不回）、live 车道跑并按 in-sample/holdout 拆分
                                       #   报告——防 few-shot 原句自证把满分读成泛化能力。
                                       #   每个 guide 至少配一条。
+    # 可选 expect_ablation_effect: true——声明消融应显因果增益（报告型）；只标在
+    # hint 够不到的 holdout 上（被 hint 覆盖的句子 causal 恒 false，标了必 ⚠）
 owner: charging-planner         # 治理归属；跨域知识用 orchestrator
 version: 1
 ```
@@ -106,14 +108,20 @@ version: 1
      `docs/reviews/eval/baseline_skills.json`（`--write-baseline` 刷新）。live 烧钱+
      需真栈+LLM 采样有方差（temp 0.3 与生产同源），人工/里程碑触发，不进 nightly；
      翻面的 canonical 形态应按上方分工口径沉到 route_hints，不追跑分。
-  4. **逐 skill 消融**（`--live --ablate`，2026-07-27 二批）：full − 单个 skill 跑其
-     holdout——**per-guide 因果归因**。full/off 分不清「知识的功」还是「hint 的功」
-     （charging canonical 被 hint 钉死后 off 也过）；消融 Δ=0 且车道会自动标注
-     「检查是否被 hint 覆盖」。首跑归因：conditional/navigation Δ=+1（真知识增益）、
-     charging canonical/multi-day/freshness Δ=0（hint 或能力清单已覆盖）。**单次消融
-     n=1 是信息性数据**——判一个 guide 该不该退役要看跨 run 的重复证据，不看单发。
-     每 guide **≥1 条 holdout 是静态门禁**（缺了 CI 红），其中至少一条应在 hint 够不到
-     的形态上（消融 Δ 的载体）。
+  4. **逐 skill 消融**（`--live --ablate`；三批重做为独立因果指标）：full − 单个 skill
+     跑其 holdout，per-holdout 记 `full_pass / without_pass / causal_effect =
+     full_pass ∧ ¬without_pass`——**绝不混进 pass/fail 汇总**（「消融后失败」恰是知识
+     有因果价值的好结果，计成普通失败会拉低总通过率、基线 diff 还会把「消融变通过」
+     当 improvement，方向全反）。结果落 baseline 的 `ablation` 键；跑批条件
+     （provider/温度/检索档/阈值/SKILLS_MODE）全进 `meta`——缺了跨 run 对比就是
+     拿苹果比橘子。golden 可标 `expect_ablation_effect: true` 声明「该 holdout 应体现
+     知识因果增益」，未兑现打 ⚠（报告型不 gate——n=1 有采样方差）。
+     **归因现状（更正 2026-07-27 三批）**：navigation 有跨 run 因果证据（两轮消融
+     without 都翻错）；conditional 首轮的 Δ=+1 在天气族容忍下**不再成立**（当时的
+     失败是严格钉 info.weather 所致，族内选择方差被记成了知识功劳）；charging
+     canonical/multi-day/freshness 被 hint 或能力清单覆盖。**单次消融 n=1 是信息性
+     数据**——退役判定要看跨 run 重复证据。每 guide **≥1 条 holdout 是静态门禁**
+     （缺了 CI 红），其中至少一条应在 hint 够不到的形态上（因果增益的载体）。
 - **obs 归因**：`plan.skills` 名单（cloud.planning span / obs.turn）契约——guide 记
   `mode:name@通道`（`@lex` 词法命中 / `@vec` 语义补位），**超预算被裁记 `!clipped`**
   （名单绝不谎称已注入）；policy 记 `mode:name`。badcase 先看名单：知识没进上下文
@@ -159,3 +167,13 @@ version: 1
   **挂起恢复链**（`plan.skills` 随 `pending_plan` 序列化/恢复，round-trip 测试）；
   ③env 垃圾值不崩启动（`_env_int/_env_float` 回默认+告警，`SKILL_BUDGET=oops` 只警不炸）；
   ④**逐 skill 消融车道**（见治理车道 4——full/off 分不清知识与 hint 的功）。
+- **2026-07-27 三批**（评审四项全采纳）：①T2 继承补最后一条漏链——`to_plan` 新建
+  Plan skills=[]，**replan 产物挂起再恢复仍失忆**；修=loop 里 to_plan 产物继承
+  `initial_plan.skills`，全链集成测试（initial→replan→NEED_SLOT→序列化/恢复）；
+  ②charging hint 边界补全——plan 形态同样有设备劫持面（「去露营手机怎么充电」），
+  find 的设备黑名单枚举不完（游戏机/牙刷）→ 换**正向锚**（SOC 短语须在句首/分句首或
+  「车」后，黑名单降级保险带），负例钉进**阻断 pytest**（`test_route_hints.py` 真
+  manifest 断言——eval 语料在 continue-on-error 步，语料回归 CI 不红）；③env 范围
+  钳制（阈值 [0,1]/超时 ≥0.1/min_score ≥0——越界不崩但**静默**改行为，比崩溃更难
+  发现）；④消融重做为独立因果指标（见治理车道 4）+ **归因更正**：conditional 首轮
+  Δ=+1 在族容忍下不成立，仅 navigation 有跨 run 因果证据。

@@ -232,6 +232,23 @@ def test_dir_type_mismatch_warns_but_honors_type(tmp_path, caplog):
     assert any("应放" in r.message for r in caplog.records)  # 但告警要求归位
 
 
+def test_env_range_clamps(monkeypatch):
+    """越界 env 不崩但会**静默**改行为（阈值>1=语义全关/超时<0=必超时/min_score<0=
+    词法全量放行）——钳制+告警（2026-07-27 评审三批）。"""
+    monkeypatch.setenv("SKILL_SEM_THRESHOLD", "1.5")
+    assert sk._sem_threshold() == 1.0
+    monkeypatch.setenv("SKILL_SEM_THRESHOLD", "-0.2")
+    assert sk._sem_threshold() == 0.0
+    monkeypatch.setenv("SKILL_EMBED_TIMEOUT", "-2")
+    assert sk._embed_timeout() == 0.1
+    monkeypatch.setenv("X_SKILL_TEST_INT", "-5")
+    assert sk._env_int("X_SKILL_TEST_INT", 10, min_val=0) == 0
+    monkeypatch.setenv("X_SKILL_TEST_INT", "oops")
+    assert sk._env_int("X_SKILL_TEST_INT", 10, min_val=0) == 10
+    monkeypatch.setenv("X_SKILL_TEST_INT", "")
+    assert sk._env_int("X_SKILL_TEST_INT", 10) == 10        # compose ${VAR:-} 空串透传
+
+
 # ── T2 再规划知识继承（2026-07-27 评审缺口 4） ────────────────────────────────
 
 def test_render_for_names_reinjects_only_actually_injected(monkeypatch):

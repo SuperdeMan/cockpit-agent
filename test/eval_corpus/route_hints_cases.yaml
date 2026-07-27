@@ -175,6 +175,33 @@
   expect_final_intents: []
   source: "评审二批 2026-07-27"
   tags: [charging, guard, device]
+# 2026-07-27 三批：黑名单枚举不完（游戏机/牙刷）→ find 换正向锚（句首/「车」后才认）；
+# plan 形态同样有设备劫持面（露营手机/充电宝）。阻断面在 test_route_hints.py（真 manifest）
+- text: 游戏机快没电了，找个地方充一下
+  initial_intents: []
+  expect_final_intents: []
+  source: "评审三批 2026-07-27（正向锚兜未枚举设备）"
+  tags: [charging, guard, device]
+- text: 电动牙刷快没电了，找地方充下
+  initial_intents: []
+  expect_final_intents: []
+  source: "评审三批 2026-07-27"
+  tags: [charging, guard, device]
+- text: 去露营手机怎么充电
+  initial_intents: []
+  expect_final_intents: []
+  source: "评审三批 2026-07-27（plan 形态设备劫持）"
+  tags: [charging, guard, device]
+- text: 去露营怎么充电宝
+  initial_intents: []
+  expect_final_intents: []
+  source: "评审三批 2026-07-27"
+  tags: [charging, guard, device]
+- text: 车快没电了，帮我找个充电桩
+  initial_intents: []
+  expect_final_intents: [charging.find]
+  source: "评审三批 2026-07-27（「车」主语正锚）"
+  tags: [charging, replace]
 - text: 附近有没有充电站
   initial_intents: []
   expect_final_intents: [nearby.search]

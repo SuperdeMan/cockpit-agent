@@ -75,9 +75,11 @@ NEGATIVES = [
 
 _GOLDEN_KEYS = {"text", "expect_intents", "expect_any", "expect_not",
                 "expect_complexity",   # 断言 plan.complexity（adaptive 类知识的核心主张）
-                "holdout"}             # true=词法盲区句（检索 golden 车道跳过；live 车道
+                "holdout",             # true=词法盲区句（检索 golden 车道跳过；live 车道
                                        #   跑，报告按 in-sample/holdout 拆分——防 few-shot
                                        #   原句自证把 10/10 读成泛化能力）
+                "expect_ablation_effect"}  # true=该 holdout 应体现知识因果增益（消融
+                                           #   full过∧without不过；报告型预期，不 gate）
 _DIR_OF_TYPE = {"guide": "guides", "policy": "policies", "workflow": "workflows"}
 
 
@@ -168,6 +170,9 @@ def _lane_contract(docs: list[sk.SkillDoc]) -> list[str]:
                        *(g.get("expect_not") or [])]
             if not expects:
                 errs.append(f"{d.name}: golden 『{g.get('text')}』无任何 expect_*")
+            if g.get("expect_ablation_effect") and not g.get("holdout"):
+                errs.append(f"{d.name}: expect_ablation_effect 只能标在 holdout golden 上"
+                            f"（消融车道只跑 holdout）")
             for tok in expects:
                 for alt in str(tok).split("|"):
                     if alt.strip() and alt.strip() not in known:
@@ -448,8 +453,16 @@ class _ExcludingStore(sk.SkillStore):
         return [d for d in super().load(force) if d.name != self._exclude]
 
 
-def _run_ablation(docs, cases, agents, results) -> list[CaseResult]:
-    out: list[CaseResult] = []
+def _run_ablation(docs, cases, agents, results) -> dict:
+    """逐 skill 消融 → **独立因果指标**，绝不混进 pass/fail 汇总（评审三批：
+    「消融后失败」恰是知识有因果价值的好结果，计成普通失败会拉低总通过率、
+    基线 diff 还会把「消融变通过」当 improvement——方向全反）。
+
+    per-holdout：full_pass（live_full 同句结果）/ without_pass（去掉该 skill 重跑）/
+    causal_effect = full_pass ∧ ¬without_pass。expect_ablation_effect 标注的句子
+    causal 未兑现 → ⚠ 提示（报告型，不 gate——n=1 有采样方差）。"""
+    summary: dict = {}
+    full_by_text = {r.text: r.passed for r in results}
     orig = sk._default_store
     try:
         for d in docs:
@@ -459,17 +472,26 @@ def _run_ablation(docs, cases, agents, results) -> list[CaseResult]:
             sk._default_store = _ExcludingStore(d.name)
             print(f"\n  -- 消融 without {d.name}（holdout ×{len(holds)}）--")
             rs = asyncio.run(_drive_live(holds, agents, f"ablate_wo_{d.name}"))
-            out += rs
-            texts = {c["text"] for c in holds}
-            full_pass = sum(1 for r in results
-                            if r.text in texts and r.passed)
-            wo_pass = sum(1 for r in rs if r.passed)
-            print(f"  {d.name}: holdout full {full_pass}/{len(holds)} vs "
-                  f"without {wo_pass}/{len(holds)}（Δ={full_pass - wo_pass:+d}"
-                  f"{'——该知识对 holdout 无归因增益，检查是否被 hint 覆盖' if full_pass - wo_pass <= 0 else ''}）")
+            entries = []
+            for c, r in zip(holds, rs):
+                full_p = bool(full_by_text.get(c["text"]))
+                causal = full_p and not r.passed
+                entries.append({"text": c["text"], "full_pass": full_p,
+                                "without_pass": r.passed, "causal_effect": causal,
+                                "expect_ablation_effect": bool(c.get("expect_ablation_effect"))})
+            causal_n = sum(1 for e in entries if e["causal_effect"])
+            unmet = [e["text"] for e in entries
+                     if e["expect_ablation_effect"] and not e["causal_effect"]]
+            summary[d.name] = {"holdouts": entries, "causal_count": causal_n,
+                               "expectation_unmet": unmet}
+            note = (f"因果增益 {causal_n}/{len(entries)}"
+                    if causal_n else "无归因增益（hint/能力清单已覆盖，或 n=1 方差）")
+            print(f"  {d.name}: {note}")
+            for t in unmet:
+                print(f"    ⚠ expect_ablation_effect 未兑现：{t!r}（n=1，跨 run 观察）")
     finally:
         sk._default_store = orig
-    return out
+    return summary
 
 
 def _run_live(args, docs: list[sk.SkillDoc]) -> int:
@@ -498,11 +520,11 @@ def _run_live(args, docs: list[sk.SkillDoc]) -> int:
         print(f"\n=== live A/B 对照：SKILLS_MODE=off（无知识基线，信息性）===")
         ab_results = asyncio.run(_drive_live(cases, agents, "live_off"))
         os.environ["SKILLS_MODE"] = args.skills_mode
-    abl_results: list[CaseResult] = []
+    ablation: dict = {}
     if args.ablate:
         print(f"\n=== 逐 skill 消融（full − 该 skill，holdout 专测；per-guide 因果归因，"
               f"信息性）===")
-        abl_results = _run_ablation(docs, cases, agents, results)
+        ablation = _run_ablation(docs, cases, agents, results)
     lock.check("live 跑完")
 
     n_pass = sum(1 for r in results if r.passed)
@@ -512,9 +534,20 @@ def _run_live(args, docs: list[sk.SkillDoc]) -> int:
         print(f"live_off ：{off_pass}/{len(ab_results)}（Δ={n_pass - off_pass:+d}——"
               f"知识注入带来的意图级增益；{_sample_split(ab_results)}）")
 
-    all_cases = results + ab_results + abl_results
+    # 消融不进 cases（pass/fail 语义相反）；跑批条件全进 meta（评审三批：baseline 必须
+    # 可复现——provider/检索档/阈值缺一样，跨 run 对比就是拿苹果比橘子）
     report = build_report("skills", [
-        {"path": "skills/*/*.yaml#golden", "count": len(cases)}], all_cases)
+        {"path": "skills/*/*.yaml#golden", "count": len(cases)}], results + ab_results)
+    report["meta"].update({
+        "provider": provider,
+        "temperature": 0.3,
+        "skills_mode": os.environ.get("SKILLS_MODE", "full"),
+        "retrieval": sk.skills_retrieval(),
+        "sem_threshold": sk._sem_threshold(),
+        "top_k": sk.SKILL_TOP_K,
+    })
+    if ablation:
+        report["ablation"] = ablation
     md = render_markdown(report)
     if args.write_baseline:
         write_report(report, md, _BASELINE, _BASELINE.with_suffix(".md"))

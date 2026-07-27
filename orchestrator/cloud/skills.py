@@ -54,20 +54,31 @@ def _env_int(name: str, default: int, min_val: int | None = None) -> int:
     return v
 
 
-def _env_float(name: str, default: float) -> float:
+def _env_float(name: str, default: float, min_val: float | None = None,
+               max_val: float | None = None) -> float:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
         return default
     try:
-        return float(raw)
+        v = float(raw)
     except ValueError:
         logger.warning("env %s=%r 非数值——回默认 %s（修配置！）", name, raw, default)
         return default
+    # 范围钳制（2026-07-27 评审三批）：越界值不崩但会**静默**改变行为——阈值>1=语义
+    # 召回全关、超时<0=embedding 必超时、min_score<0=词法全量放行，都比崩溃更难发现
+    if min_val is not None and v < min_val:
+        logger.warning("env %s=%s 低于下限 %s——按下限处理", name, v, min_val)
+        return min_val
+    if max_val is not None and v > max_val:
+        logger.warning("env %s=%s 高于上限 %s——按上限处理", name, v, max_val)
+        return max_val
+    return v
 
 
 SKILL_BUDGET = _env_int("SKILL_BUDGET", 2400, min_val=0)    # 注入块字符预算
 SKILL_TOP_K = _env_int("SKILL_TOP_K", 3, min_val=1)         # guide 预筛条数
-_MIN_SCORE = _env_int("SKILL_MIN_SCORE", 10)                # 词法命中阈值（一个关键词=10）
+_MIN_SCORE = _env_int("SKILL_MIN_SCORE", 10, min_val=0)     # 词法命中阈值（一个关键词=10；
+                                                            #   负值=全量放行，钳 0）
 _RESCAN_S = 30.0                                            # 目录重扫最小间隔（热更新）
 _EMBED_COOLDOWN_S = 30.0                                    # 语义通道失败冷却（防抖打日志）
 
@@ -264,12 +275,13 @@ _embed_fail_ts = 0.0
 
 def _sem_threshold() -> float:
     """默认 0.40 由 paraphrase 语料阈值扫描拍板（2026-07-26，eval_skills --retrieval both）：
-    0.40 召回 10/11 且语义通道零新增噪声；0.45 掉到 6/11；0.35 噪声不再降。"""
-    return _env_float("SKILL_SEM_THRESHOLD", 0.40)
+    0.40 召回 10/11 且语义通道零新增噪声；0.45 掉到 6/11；0.35 噪声不再降。
+    钳 [0,1]：余弦域外的阈值=语义通道静默全关/全开。"""
+    return _env_float("SKILL_SEM_THRESHOLD", 0.40, min_val=0.0, max_val=1.0)
 
 
 def _embed_timeout() -> float:
-    return _env_float("SKILL_EMBED_TIMEOUT", 1.0)
+    return _env_float("SKILL_EMBED_TIMEOUT", 1.0, min_val=0.1)
 
 
 async def _embed_texts(texts: list[str]) -> tuple[list[tuple[float, ...]], str] | None:

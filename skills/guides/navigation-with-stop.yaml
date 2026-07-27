@@ -30,10 +30,13 @@ golden:
   - text: 导航去深圳湾，在附近找个充电桩
     expect_intents: [navigation.navigate_to, charging.find]
   # holdout：不与 knowledge 示例原句重合、避开全部 keywords 字面（测泛化不测自证）；
-  # expect_not 是知识的另一半——不要再拆 nearby.search
+  # expect_not 是知识的另一半——不要再拆 nearby.search。
+  # expect_ablation_effect：消融两轮实测 without→search_poi/nearby（唯一有跨 run
+  # 因果证据的 holdout），预期知识增益应持续兑现（报告型，不 gate）
   - text: 送我去宝安机场，路上找地方吃个饭
     expect_intents: [navigation.navigate_to]
     expect_not: [nearby.search]
     holdout: true
+    expect_ablation_effect: true
 owner: navigation
 version: 1

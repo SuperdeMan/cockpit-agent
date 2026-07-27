@@ -355,3 +355,68 @@ def test_no_stream_fn_keeps_existing_behavior():
 
     assert executor.runs == [["s1"]]
     assert events[-1]["speech"] == "best effort"
+
+
+def test_replan_plan_inherits_skills_through_suspend_chain():
+    """T2 知识继承贯通挂起链（2026-07-27 评审三批）：initial → replan（to_plan 新 Plan）
+    → 该步 NEED_SLOT 挂起 → 序列化/恢复 → 再规划。此前 to_plan 产物 skills=[]，
+    挂起序列化的正是它——恢复后再规划失忆。"""
+    from orchestrator.cloud.engine import PlannerEngine
+    from orchestrator.cloud.models import SessionState
+
+    skills = ["full:conditional-reminder@vec", "full:freshness-and-depth"]
+    planner = _Planner([
+        ReplanDecision(done=False, steps=[
+            Step(id="r1", agent_id="reminder", intent="reminder.create"),
+        ]),
+    ])
+    executor = _Executor({
+        "s1": StepResult("s1", StepStatus.OK, speech="明天有雨",
+                         data={"replan": True}),
+        "r1": StepResult("r1", StepStatus.NEED_SLOT, speech="几点提醒？",
+                         missing_slots=["time_text"]),
+    })
+    suspended_plans = []
+
+    async def suspend(step_result, results, plan, ctx, prior=None):
+        suspended_plans.append(plan)
+        return {"kind": "final", "speech": "suspended"}
+
+    controller = LoopController(
+        _wrap_planner(planner), executor, _Aggregator(), suspend,
+        max_iters=3, budget_ms=8000,
+    )
+    initial = Plan(steps=[Step(id="s1", agent_id="info", intent="info.weather")],
+                   raw_text="查明天下雨吗，下雨提醒我", complexity="adaptive", goal="g")
+    initial.skills = list(skills)
+    _collect(controller, goal="g", initial_plan=initial,
+             agents=[], ctx=PlanContext(session_id="t"),
+             user_text="查明天下雨吗，下雨提醒我")
+
+    # ① replan 收到初规划的 skill 名单
+    assert planner.skill_names_seen == [skills]
+    # ② to_plan 产物（挂起序列化的就是它）继承 skills
+    assert suspended_plans and suspended_plans[0].skills == skills
+    # ③ 序列化 → 恢复 round-trip 后名单仍在（恢复计划将作为下一轮 initial_plan 进 loop）
+    data = PlannerEngine._serialize_plan(suspended_plans[0])
+    state = SessionState(phase="wait_slot", pending_plan=data, pending_step_id="r1")
+    restored, _ = PlannerEngine._restore(None, state, inject_confirmed=False)
+    assert restored is not None and restored.skills == skills
+
+
+def _wrap_planner(planner):
+    """记录 replan 收到的 skill_names（不改共享 _Planner 契约面）。"""
+    class _Rec:
+        def __init__(self, inner):
+            self._inner = inner
+            inner.skill_names_seen = []
+
+        async def replan(self, goal, observations, agents, ctx,
+                         granted_permissions=None, working_set=None,
+                         skill_names=None):
+            self._inner.skill_names_seen.append(list(skill_names or []))
+            return await self._inner.replan(
+                goal, observations, agents, ctx,
+                granted_permissions=granted_permissions,
+                working_set=working_set, skill_names=skill_names)
+    return _Rec(planner)
