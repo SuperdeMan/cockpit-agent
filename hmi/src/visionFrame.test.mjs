@@ -18,6 +18,14 @@ test('POI 详情句让路（归 nearby，不该抓帧）', () => {
   }
 })
 
+test('LBS 句不抓帧（数据飞轮 P0 收窄：「帮我看看」单独出现≠视觉意图）', () => {
+  // badcase 2026-07-26/27：过宽分支「帮我看看」曾让这些句触发抓帧+上传并劫持路由
+  for (const t of ['帮我看看附近有什么咖啡店', '帮我看看我附近有什么好吃的',
+    '帮我看看路况']) {
+    assert.equal(needsFrame(t), false, t)
+  }
+})
+
 test('普通句不抓帧（默认一帧都不采）', () => {
   for (const t of ['今天天气怎么样', '打开空调', '导航去公司', '播放音乐', '']) {
     assert.equal(needsFrame(t), false, t)

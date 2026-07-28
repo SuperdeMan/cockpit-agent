@@ -740,3 +740,43 @@
   expect_final_intents: [reminder.create]
   source: "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
   tags: [reminder, eta]
+
+# ── vision 触发收窄（数据飞轮 P0 C5，badcase 2026-07-26/27）────────────────────
+# 过宽分支「帮我看看」曾把 LBS 句整句劫持进 vision.describe（replace + 端侧抓帧上传）。
+# 收窄后：LBS 句由 nearby 自己的 hint 确定性接住；真视觉句仍由指代分支覆盖。
+
+- text: 帮我看看附近有什么咖啡店
+  initial_intents: []
+  expect_final_intents: [nearby.search]
+  source: "badcase 2026-07-27 trace 3ba64a65（连续两天被 vision 劫持族）；agents/vision/manifest.yaml 收窄"
+  tags: [vision, nearby, guardrail, hijack]
+
+- text: 帮我看看我附近有什么好吃的
+  initial_intents: []
+  expect_final_intents: [nearby.search]
+  source: "badcase 2026-07-26 trace 0941ec4f（同族）"
+  tags: [vision, nearby, guardrail, hijack]
+
+- text: 那是什么
+  initial_intents: []
+  expect_final_intents: [vision.describe]
+  source: "vision hint 的出生 badcase（极短指代句语义路由落 chitchat）——收窄不回归"
+  tags: [vision, recall]
+
+- text: 帮我看看这个是什么
+  initial_intents: []
+  expect_final_intents: [vision.describe]
+  source: "数据飞轮 P0 C5 收窄回归：删「帮我看看」后真视觉句仍由指代分支覆盖"
+  tags: [vision, recall]
+
+- text: 看看前面那个建筑是什么
+  initial_intents: []
+  expect_final_intents: [vision.describe]
+  source: "数据飞轮 P0 C5 收窄回归"
+  tags: [vision, recall]
+
+- text: 帮我看看前面
+  initial_intents: []
+  expect_final_intents: [vision.describe]
+  source: "hmi/src/visionFrame.test.mjs 同款句：两侧同口径（触发词=路由 hint）"
+  tags: [vision, recall]
