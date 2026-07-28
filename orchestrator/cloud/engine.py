@@ -249,6 +249,17 @@ class PlannerEngine:
                     **({"skills": ",".join(plan.skills)} if plan.skills else {}),
                     # M1a：本轮规划输出通道（toolcall|toolcall_salvage|…|json），A/B 聚合用
                     "plan_mode": getattr(plan, "plan_mode", "json"),
+                    # 数据飞轮 P0 落域可观测：意图名是系统枚举值（非用户内容），紧凑发射
+                    # 不过内容门控——collector 据此把落域合并进 turns 行（SQL 可聚合）。
+                    "intents": ",".join(s.intent for s in plan.steps),
+                    **({"hint_effect": plan.hint_effect}
+                       if getattr(plan, "hint_effect", "") else {}),
+                    # D1 裁剪可观测：目录渲染长度 + 被裁 agent（静默丢域从此有痕迹）
+                    **({"catalog_chars": plan.catalog_stats.get("chars_final", 0),
+                        **({"catalog_dropped":
+                            ",".join(plan.catalog_stats.get("dropped", []))}
+                           if plan.catalog_stats.get("dropped") else {})}
+                       if getattr(plan, "catalog_stats", None) else {}),
                 },
             )
             await self._resolve_endpoints(plan)
@@ -275,6 +286,12 @@ class PlannerEngine:
         # D-T2. Adaptive plans enter the bounded loop. Confirmation resumes keep
         # their adaptive metadata and continue from the saved result seeds.
         metrics.record_intent(f"complexity.{plan.complexity}", 0, True)
+        # 数据飞轮 P0：record_intent 此前从不记真实意图（只记 complexity./t2_loop 元标签）、
+        # record_route 零调用——WS9「意图/路由」指标名存实亡。此处按步记真实意图分布；
+        # 持久可查的尺子在 obs turns.intents 列（本内存计数供 snapshot/日志侧参考）。
+        metrics.record_route("cloud")
+        for s in plan.steps:
+            metrics.record_intent(s.intent, 0, True)
         if plan.complexity == "adaptive":
             if not agents:
                 agents = await self.clients.list_agents()

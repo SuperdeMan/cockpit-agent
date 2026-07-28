@@ -46,7 +46,12 @@ _SENSITIVE_CONTEXT_KEYS = (
 # 装配预算（字符近似，避免引入 tokenizer 依赖；沿用既有 block[:400] 的 char-proxy 思路）。
 _CTX_BUDGET = int(os.getenv("PLANNER_CTX_BUDGET_CHARS", "1400"))   # 记忆+历史(+焦点)合计
 _MEMORY_BUDGET = 400                                              # 记忆块上限（同旧 _format_memory）
-_CATALOG_BUDGET = int(os.getenv("PLANNER_CATALOG_BUDGET_CHARS", "8000"))
+# 数据飞轮 P0 D1 应急：8000 时代的假设「正常情况下根本不触发裁剪」已随 M3/M4 新增
+# mcp-bridge/vision 失效——16 agent 全量渲染约 9.7k 字符，超算后从尾部裁非受保护 agent，
+# 而保护判据（有无 route_hints）与领域重要性无关，navigation 等 4 个无 hint agent 会被
+# 整域裁出 prompt（planner 从此看不见它们）。16k 下当前全量放得下；catalog 再长该走
+# 检索化预筛（P2），不是继续抬预算。裁剪统计随 cloud.planning span 出观测。
+_CATALOG_BUDGET = int(os.getenv("PLANNER_CATALOG_BUDGET_CHARS", "16000"))
 
 # 全局兜底 Agent（LLM 抽风/规划失败时降级）由 env 指定，不再硬编码 agent_id（R2.1 P5）。
 _FALLBACK_AGENT = os.environ.get("PLANNER_FALLBACK_AGENT", "chitchat")
@@ -95,6 +100,8 @@ class WorkingSet:
     history: list[dict] = field(default_factory=list)  # [{role, text, ts}]
     memories: list[dict] = field(default_factory=list) # [{text, scope, predicate, provenance, confidence}]
     focus: "Focus | None" = None                       # 结构化焦点态（指代消解）
+    # 落域可观测（数据飞轮 P0）：render_catalog 回填 {chars_full, chars_final, dropped}
+    catalog_stats: dict = field(default_factory=dict)
 
     def render_context(self) -> str:
         """焦点 + 记忆 + 历史块，统一字符预算、按优先级裁剪。
@@ -108,24 +115,43 @@ class WorkingSet:
         return focus_block + mem_block + hist_block
 
     @staticmethod
-    def render_catalog(agents: list) -> str:
+    def render_catalog(agents: list, stats: dict | None = None) -> str:
         """能力清单 JSON；超 catalog 预算时优先丢相关性最低的**非受保护** agent（从尾部找）。
 
         受保护 = edge 车控核心（edge-vehicle/edge-media）∪ 兜底 Agent（env）∪ 有 route_hints 的 Agent（见 _always_include）。
         根因修复：edge-vehicle 有几十个 caps、渲染体积大，旧逻辑无差别 pop 尾部会把它或
         chitchat 丢掉——丢 edge 车控→危险动作规划空计划退化（dangerous_trunk_confirm）；丢
-        chitchat→开放域兜底缺席、误路由到 info（cloud_chitchat_streaming）。叠加 edge 紧凑
-        渲染（见 _catalog_item），正常情况下根本不触发裁剪。"""
+        chitchat→开放域兜底缺席、误路由到 info（cloud_chitchat_streaming）。
+
+        ⚠️ 裁剪不是理论分支（数据飞轮 P0 D1）：能力面长到 16 agent 后全量渲染已超过旧
+        8000 预算，被裁的是「无 route_hints」的 agent（navigation/manual-rag/parking/
+        road-safety）——保护资格与领域重要性无关。被裁 agent 对 planner 完全不可见且
+        步骤校验会拒绝它的 intent。故：①默认预算提到 16k；②每次裁剪回填 stats 并
+        warning（cloud.planning span 可查），静默丢域从此可见。根治=P2 catalog 检索化。
+
+        stats（可选 dict，原地回填）：{chars_full, chars_final, dropped: [agent_id]}。"""
         items = [_catalog_item(a) for a in agents]
         protected = [_is_edge_core(a) or _always_include(a) for a in agents]
+        ids = [getattr(a.manifest, "agent_id", "") for a in agents]
         out = json.dumps(items, ensure_ascii=False)
+        if stats is not None:
+            stats.clear()
+            stats["chars_full"] = len(out)
+        dropped: list[str] = []
         while len(out) > _CATALOG_BUDGET and len(items) > 1:
             idx = next((i for i in range(len(items) - 1, -1, -1) if not protected[i]), None)
             if idx is None:
                 break  # 只剩受保护项 → 宁可略超预算也不丢
             items.pop(idx)
             protected.pop(idx)
+            dropped.append(ids.pop(idx))
             out = json.dumps(items, ensure_ascii=False)
+        if dropped:
+            logger.warning("catalog over budget (%d chars): dropped agents %s",
+                           _CATALOG_BUDGET, dropped)
+        if stats is not None:
+            stats["chars_final"] = len(out)
+            stats["dropped"] = dropped
         return out
 
 

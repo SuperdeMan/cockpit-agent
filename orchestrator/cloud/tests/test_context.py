@@ -298,7 +298,7 @@ def test_render_catalog_keeps_edge_core_over_budget():
     cat = WorkingSet.render_catalog(agents)
     assert "edge-vehicle" in cat          # 安全核心保住
     assert "edge-vehicle.act0" in cat     # 其能力（trunk 类比）随之可见
-    assert "cloud-0" not in cat or len(cat) <= 8000  # 非核心被从尾部裁剪以让位
+    assert "cloud-39" not in cat          # 非核心从尾部被裁剪以让位（不再绑死具体预算值）
 
 
 def test_render_catalog_no_trim_under_budget():
@@ -324,3 +324,25 @@ def test_render_catalog_edge_core_compact():
         [_agent_dep("edge-vehicle", 3, deployment="edge", kind="edge_fast")])
     assert "edge-vehicle.act0" in item   # 意图名在
     assert "slots" not in item and "desc" not in item  # 不带 slots/desc
+
+
+# ── 裁剪可观测（数据飞轮 P0 D1）──
+
+def test_render_catalog_stats_no_trim():
+    stats: dict = {}
+    WorkingSet.render_catalog([_agent_dep("a", 2), _agent_dep("b", 2)], stats)
+    assert stats["dropped"] == []
+    assert stats["chars_full"] == stats["chars_final"] > 0
+
+
+def test_render_catalog_stats_records_dropped_from_tail(monkeypatch):
+    """裁剪不再静默：stats 回填被裁 agent 名单（尾部优先），cloud.planning span 可查。"""
+    import orchestrator.cloud.context as ctxmod
+    monkeypatch.setattr(ctxmod, "_CATALOG_BUDGET", 120)
+    stats: dict = {}
+    agents = [_agent_dep(f"ag-{i}", 2) for i in range(6)]
+    WorkingSet.render_catalog(agents, stats)
+    assert stats["chars_full"] > 120
+    assert len(stats["dropped"]) == 5            # 裁到只剩 1 个（至少留 1）
+    assert stats["dropped"][0] == "ag-5"         # 从尾部开始裁
+    assert stats["chars_final"] < stats["chars_full"]

@@ -187,6 +187,9 @@ def cmd_mine(args) -> Path | None:
 
     restates = find_restatements(turns)
     mined: list[dict] = []
+    # 落域分布（数据飞轮 P0 尺子）：窗口全量轮次的 path / plan_mode / 落域域计数——
+    # 「系统这个月变聪明了吗」从此有日粒度数据（turns.intents/plan_mode 列由 collector 合并）
+    dist: dict = {"turns": len(turns), "path": {}, "plan_mode": {}, "domains": {}}
     for t in turns:
         signals = []
         if t.get("badcase"):
@@ -207,6 +210,13 @@ def cmd_mine(args) -> Path | None:
                     _http_json(f"{base}/api/turns/{t.get('trace_id')}"))
             except Exception:
                 pass
+        for key, val in (("path", t.get("path") or "?"),
+                         ("plan_mode", plan_mode or "?")):
+            dist[key][val] = dist[key].get(val, 0) + 1
+        for it in str(t.get("intents") or "").split(","):
+            domain = it.strip().split(".")[0]
+            if domain:
+                dist["domains"][domain] = dist["domains"].get(domain, 0) + 1
         if plan_mode.endswith("_degraded"):
             signals.append("plan_degraded")
         if not signals:
@@ -229,6 +239,8 @@ def cmd_mine(args) -> Path | None:
         })
     out = _work_dir(date) / "mined.jsonl"
     _write_jsonl(out, mined)
+    (_work_dir(date) / "distribution.json").write_text(
+        json.dumps(dist, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"mine：命中 {len(mined)} 轮 → {_rel(out)}")
     for sig in ("badcase_mark", "fallback_speech", "clarify_card", "restatement",
                 "plan_degraded"):
@@ -477,8 +489,20 @@ def cmd_report(args) -> Path:
         *(f"- {k}: {v}" for k, v in sorted(sig_dist.items(), key=lambda kv: -kv[1])),
         "", "## 归因分布", "",
         *(f"- {k}: {v}" for k, v in sorted(cause_dist.items(), key=lambda kv: -kv[1])),
-        "", "## 案族卡片（脱敏；同句合并，×N=窗口内出现次数）", "",
     ]
+    dist = (json.loads((work / "distribution.json").read_text(encoding="utf-8"))
+            if (work / "distribution.json").exists() else {})
+    if dist:
+        lines += ["", "## 落域分布（窗口全量，非仅命中轮）", "",
+                  f"- 轮次：{dist.get('turns', 0)}"]
+        for key, title in (("path", "路径"), ("plan_mode", "plan_mode"),
+                           ("domains", "落域（按步计域）")):
+            m = dist.get(key) or {}
+            if m:
+                top = "、".join(f"{k}×{v}" for k, v in
+                                sorted(m.items(), key=lambda kv: -kv[1])[:8])
+                lines.append(f"- {title}：{top}")
+    lines += ["", "## 案族卡片（脱敏；同句合并，×N=窗口内出现次数）", ""]
     merged: dict[tuple, dict] = {}
     for t in triaged:
         key = (t["cause"], t["user_text"])

@@ -91,6 +91,14 @@ class Plan:
     # M2 P2：本轮用户情绪（会话级，不入记忆）。planner 同轮附带输出（R4.4 addressed/
     # clarify 同款 fail-open），随 final 透传给 HMI 选 TTS 情感参数。空=neutral。
     emotion: str = ""
+    # 数据飞轮 P0 落域可观测（仅供 cloud.planning span，不参与编排逻辑）：
+    # hint_effect=route_hints 对本轮计划的实际作用（""=未命中 / noop=命中但 LLM 已对 /
+    # fill=空计划补步 / fill_over_clarify=盖掉澄清补步 / replace / append）——D3「replace
+    # 绕过澄清」的裁决数据从这里来。
+    hint_effect: str = ""
+    # catalog_stats=能力目录渲染统计 {chars_full, chars_final, dropped:[agent_id]}——
+    # D1「预算裁剪静默丢域」从此可见；空 dict=本轮未采集。
+    catalog_stats: dict = field(default_factory=dict)
 
 
 @dataclass

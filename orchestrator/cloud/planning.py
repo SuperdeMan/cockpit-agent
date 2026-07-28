@@ -287,6 +287,24 @@ _REPLAN_SYSTEM = (
 )
 
 
+def _hint_effect(hit: bool, before: list, after: list, had_clarify: bool) -> str:
+    """RouteHintEngine 对计划的实际作用分类（纯观测，数据飞轮 P0）。
+
+    "" = 未命中任何 hint；noop = 命中但计划未变（LLM 已正确路由 / append 目标已存在）；
+    fill = 空计划被 hint 补出步骤；fill_over_clarify = 补步同时盖掉了待出的澄清卡
+    （D3：hint 在澄清之前生效，是否合意待数据裁决）；append = 在既有步骤上并列补步；
+    replace = 非空计划被整条改写。"""
+    if not hit:
+        return ""
+    if after == before:
+        return "noop"
+    if not before:
+        return "fill_over_clarify" if had_clarify else "fill"
+    if len(after) > len(before) and after[:len(before)] == before:
+        return "append"
+    return "replace"
+
+
 class PlanBuilder:
     def __init__(self, llm_fn, registry_fn, llm_tool_fn=None):
         """
@@ -384,7 +402,14 @@ class PlanBuilder:
         # 按各 Agent manifest.route_hints（priority 降序）施加。research.run 与 trip.*（含
         # trip.plan append 新出行兜底）全部为各 Agent 声明式 route_hints——编排核心不含任何
         # 领域 Agent/意图字面量（恢复「新增 Agent 不改编排核心」铁律）。
-        self._route_hints.apply(plan, text, agent_map)
+        # 落域可观测（数据飞轮 P0）：记录 hint 对计划的实际作用——「hint 改写率」是规则
+        # 依赖率（北极星 N2）的分子，「盖掉澄清」是 D3 行为裁决的数据。仅观测不改行为。
+        had_clarify = plan.clarify is not None
+        before = [(s.agent_id, s.intent) for s in plan.steps]
+        hit = self._route_hints.apply(plan, text, agent_map)
+        plan.hint_effect = _hint_effect(
+            hit, before, [(s.agent_id, s.intent) for s in plan.steps], had_clarify)
+        plan.catalog_stats = dict(working_set.catalog_stats)
         step_summary = [(s.id, s.agent_id, s.intent) for s in plan.steps]
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan
@@ -393,7 +418,7 @@ class PlanBuilder:
     def _planner_user_msg(text: str, agents: list, working_set: WorkingSet,
                           skills_block: str = "") -> str:
         """双路径共用的 user message（逐字一致=A/B 单变量，RFC §3.3）。"""
-        catalog = WorkingSet.render_catalog(agents)
+        catalog = WorkingSet.render_catalog(agents, working_set.catalog_stats)
         ctx_block = working_set.render_context()  # 记忆 +（焦点）+ 历史，统一预算
         # skills 块紧跟日期锚之后（policy 文本引用「上方『当前日期』」，顺序是契约）
         sk_part = f"{skills_block}\n\n" if skills_block else ""
