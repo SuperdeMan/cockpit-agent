@@ -1,7 +1,7 @@
 # 意图理解与落域规划的系统性升级：从规则工厂到数据飞轮
 
 > 日期：2026-07-28
-> 状态：方向已获泓舟确认（2026-07-28），P0 落地中（分支 `feat/m5-p0-data-flywheel`）；P1-P4 待逐期开工
+> 状态：方向已获泓舟确认（2026-07-28）；**P0 已落地**（分支 `feat/m5-p0-data-flywheel`，全量 2347 passed / 7 skipped，基线 2323+24 零回归；五件清单与证据见 §5-P0）；P1-P4 待逐期开工
 > 交付对象：`scripts/evolve.py`、`observability/` + `dashboard/`、`orchestrator/cloud/`（planner 上下文工程）、`skills/`（新增 exemplars 通道）、`orchestrator/edge/`（P3 端侧 NLU）
 > 关联：母提案 [`2026-07-24-eva-benchmark-intelligence-upgrade.md`](2026-07-24-eva-benchmark-intelligence-upgrade.md)（C1/C2/E7）；[`2026-07-04-r4.1b-edge-objectification-and-nlu-decision.md`](2026-07-04-r4.1b-edge-objectification-and-nlu-decision.md)（识别侧 A/B 决策卡）；[`2026-07-24-m1b-self-evolution-shadow-nlu-rfc.md`](2026-07-24-m1b-self-evolution-shadow-nlu-rfc.md)（自进化 v1）；`skills/README.md`（检索注入范式，本方案的机制母版）；`docs/reviews/eval/shadow_nlu_report.md`
 > 触发：泓舟 2026-07-28 提问——「落域/规划准确率永远在靠 badcase 改 manifest，偏规则式；这还算 agent 吗？是架构不好吗？如何系统性解决？」本文以全链路机制调查（三路并行盘点 + 关键断点逐一亲证）回答这三问。
@@ -19,7 +19,7 @@
 判据不在「用不用 manifest」，在**修一个 badcase 的产物是正则还是数据**。今天的答案是正则（§1.3）。
 
 **问 2：是架构不好导致的吗？**
-运行时架构不是。分层混合编排 / 规划执行分离 / 声明式扩展与对标对象同构（母提案 §2.1），不需要推翻。真正缺的是架构文档自己许诺过、但从未兑现的那一层：§15 R5「建标注与回流闭环」，以及 §10 的「意图识别准确率 / 路由命中率」指标——`observability/metrics.py:36` 的 `record_intent`/`record_route` 至今是**死代码**（全仓零业务调用）。「数据 → 智能」的回路在五个断点上断路（§2），于是「人写规则」成了准确率唯一的增长通路。**这是数据基础设施缺位，不是编排范式错误。**
+运行时架构不是。分层混合编排 / 规划执行分离 / 声明式扩展与对标对象同构（母提案 §2.1），不需要推翻。真正缺的是架构文档自己许诺过、但从未兑现的那一层：§15 R5「建标注与回流闭环」，以及 §10 的「意图识别准确率 / 路由命中率」指标——`observability/metrics.py` 的 `record_route` 全仓零调用、`record_intent` 只被用作元标签计数（`complexity.*`/`t2_loop`/`reactive_upgrade`），**从不记录真实意图**（P0 已接活，见 §5）。「数据 → 智能」的回路在五个断点上断路（§2），于是「人写规则」成了准确率唯一的增长通路。**这是数据基础设施缺位，不是编排范式错误。**
 
 **问 3：系统性解法？**
 把「修 badcase 的标准产物」从规则换成数据：一次标注同时生成三种资产——**评测用例**（尺子变长）+ **检索范例**（当天泛化）+ **训练标注**（长期泛化）。围绕它建四段飞轮：
@@ -89,7 +89,7 @@ M0b（skills）/M1a（submit_plan）/M1b（自进化+Shadow NLU）方向全对�
 obs schema 没有任何「正确落域」标注载体（`turns` 表只有二元 `badcase` + 自由文本 `note`）；plan 埋在 `spans.attrs` 的 JSON 字符串里（截 1200 字符、默认 7 天过期），SQL 无法按域聚合；`/api/export/{trace_id}` 只能单轮导出；`llm_calls` 只存 `prompt_tail` 尾 500 + `content_head` 头 800——**连一条完整的训练样本都复原不出来**。HMI 侧没有任何用户反馈通道。
 
 **断点③ 线上没有落域指标。**
-`record_intent`/`record_route` 是死代码；四个离线 eval 门禁天天 `exit=0`，与真机日报同日出血并存（07-27：73 轮里 23 轮命中信号，**19 轮 plan_mode=toolcall_degraded ≈ 26%**）。离线 eval 是回归闸（防倒退），不是分布尺（量进步）——「系统这个月变聪明了吗」这个问题今天无法回答。
+`record_route` 零调用、`record_intent` 只记元标签从不记真实意图；四个离线 eval 门禁天天 `exit=0`，与真机日报同日出血并存（07-27：73 轮里 23 轮命中信号，**19 轮 plan_mode=toolcall_degraded ≈ 26%**）。离线 eval 是回归闸（防倒退），不是分布尺（量进步）——「系统这个月变聪明了吗」这个问题今天无法回答。
 
 **断点④ 三笔数据资产在闲置。**
 ① `feishu_intents_full.jsonl` 8590 条（domain/object 金标）只用于覆盖率报告，无训练消费方（全仓零微调/蒸馏钩子）；② Shadow NLU 已给出量化结论——规则 hit 75.9% vs LLM domain 准确率 91.2%，**navi 净增 42.2%、setting（最大流量 4087 条）净增 24.3%**——但报告无任何程序消费方（RFC 明确 v1 不接运行时）；③ manifest 里 199 条 `examples` 例句**不进 planner prompt**（`context.py:140-148` 只渲染 intent/slots/desc），只喂 registry 的逐字符打分。
@@ -102,7 +102,7 @@ obs schema 没有任何「正确落域」标注载体（`turns` 表只有二元 
 ## 3. 顺带发现的四个运行时缺陷（本次调查产物，修复归 P0/P2）
 
 **D1（P0 排查+应急）catalog 预算会把 navigation 整域裁出 prompt。**
-catalog 是**全量注入**不是检索——`PLANNER_CATALOG_TOP_K=20 > agent 数 16`，语义预筛恒 no-op（`context.py:392-393`）；渲染预算 8000 字符（`context.py:49`），超了就从尾部丢**非受保护** agent（`context.py:122-128`），而保护判据是「兜底 Agent ∪ **有 route_hints 的 Agent**」（`_always_include`，`context.py:55-61`）——与领域重要性无关。按当前 manifests 复算：全量渲染 9682 字符 > 8000，四个无 hint 的 agent（road-safety / parking-payment / **navigation** / manual-rag）**全部被裁**后仍 8101 字符，裁无可裁。`render_catalog` 的 docstring 还写着「正常情况下根本不触发裁剪」（`context.py:118`）——那是 M3/M4 新增 mcp-bridge、vision 之前的旧假设。navigation 恰是 Shadow NLU 里缺口最大的域（56.4%）。**真栈实际影响待复核**（可能被 trip-planner 的 navigate hint 部分掩蔽）：当前没有任何 obs 记录 catalog 渲染长度与被裁名单——静默降级完全不可见，这本身就是断点③的又一例。
+catalog 是**全量注入**不是检索——`PLANNER_CATALOG_TOP_K=20 > agent 数 16`，语义预筛恒 no-op（`context.py:392-393`）；渲染预算 8000 字符（`context.py:49`），超了就从尾部丢**非受保护** agent（`context.py:122-128`），而保护判据是「兜底 Agent ∪ **有 route_hints 的 Agent**」（`_always_include`，`context.py:55-61`）——与领域重要性无关。按当前 manifests 复算：全量渲染 9682 字符 > 8000，四个无 hint 的 agent（road-safety / parking-payment / **navigation** / manual-rag）**全部被裁**后仍 8101 字符，裁无可裁。`render_catalog` 的 docstring 还写着「正常情况下根本不触发裁剪」（`context.py:118`）——那是 M3/M4 新增 mcp-bridge、vision 之前的旧假设。navigation 恰是 Shadow NLU 里缺口最大的域（56.4%）。（P0 更新：复算结论已由契约测试 `orchestrator/cloud/tests/test_catalog_budget.py` 用真实 manifests 固化；`catalog_chars`/`catalog_dropped` 已进 `cloud.planning` span——此前静默降级完全不可见，正是断点③的又一例。真栈线上影响与「被 trip-planner navigate hint 掩蔽」假说，合并部署后由 span 数据复核。）
 
 **D2（P2）端云信息断链。** fast_intent 的分类结果不随请求上云（`edge/server.py:602` 原样转发），云侧 planner 不知道端侧已经算出的 domain/object/置信度。这既浪费一次免费信号，也让「端云分歧」这个最有价值的标注线索无从谈起。
 
@@ -153,13 +153,13 @@ catalog 是**全量注入**不是检索——`PLANNER_CATALOG_TOP_K=20 > agent �
                   hint 影子裸跑 → 退役候选（N2 规则净增 ≤0）
 ```
 
-### P0 修断点、立尺子（1-2 天）
+### P0 修断点、立尺子（✅ 已落地，2026-07-28，分支 `feat/m5-p0-data-flywheel`）
 
-1. **evolve 三修**：`forbidden_hit` 改为对提案的**目标字段**（intent、目标文件路径）判定，不再全文子串（回填验证：用 07-26/27 的 `triaged.jsonl` 重跑 propose，必须产出草案）；`plan_degraded` 信号改走 `/api/turns/{id}`（SQLite 持久路径）；triage 批失败重试一次。
-2. **落域可观测**：plan 的 intents 摘要升为 `turns` 列（或 `plan_summary` 表）使 SQL 可按域聚合；`record_intent`/`record_route` 接活；新增计数——hint 命中/改写/跳澄清、catalog 渲染长度与被裁名单（D1/D3 观测）。
-3. **标注载体**：dashboard badcase 视图加「正确落域」结构化标注（下拉 = 47 云 capability + 端侧意图集），`/api/export/labels` 批量导出（utterance → gold intent → 实际 plan）。
-4. **D1 应急**：推荐先把 `PLANNER_CATALOG_BUDGET_CHARS` 提到 16000（16 agent 量级下催化剂成本可忽略，静默丢域的代价远大于 token），保护判据机制化留给 P2 检索化根治；真栈复核 navigation 是否确实被裁及被谁掩蔽。
-5. **示范修复**：vision hint 删过宽分支 `|帮我看看`（规则**收窄**而非增生），「帮我看看附近有什么咖啡店→nearby.search」进 guardrail 语料——新范式第一例。
+1. ✅ **evolve 三修**：`forbidden_hit` 只扫动态内容（案族原话+归因 note）+ 词边界匹配（`eval`/`validate` 不再误伤裸词 `val`）；`plan_degraded` 信号优先读 `turns.plan_mode` 列、旧行回落 `/api/turns/{id}` SQLite 详情（弃 200 条内存环）；triage 批失败重试一次。**回填验证**：用 07-26/27 真实 `triaged.jsonl` 重跑 propose——此前两天 100% 纯报告，现产出 hint/guide/corpus 草案 6 份（「记住」族 8 案正确聚成 guide 草案）。单测 13 组（`scripts/tests/test_evolve.py`）。
+2. ✅ **落域可观测**：`turns` 加 `intents`/`plan_mode` 列（collector 在 `insert_span` 收到 `cloud.planning` 时按 trace_id 合并写入，与 turn 事件顺序无关——顺带绕开了 D2 端云断链对观测的影响）；engine span 新增紧凑 `intents` 属性 + `hint_effect`（noop/fill/fill_over_clarify/append/replace）+ `catalog_chars`/`catalog_dropped`；`record_route("cloud")` 与按步 `record_intent` 接活；evolve mine 落 `distribution.json`、日报新增「落域分布」段。
+3. ✅ **标注载体**：`turns.gold_intents` 列（与 badcase/note 同级：UPSERT 不碰、**保留期豁免**——标注是要长期复利的资产）；`POST /api/turns/{id}/label` + `GET /api/export/labels`（utterance→gold→实际落域批量导出）+ `GET /api/intents/observed`；dashboard 轮次详情加「正确落域」输入（datalist 候选）与 plan_mode 徽记。偏差记录：候选清单 v1=已观测意图（collector 不持 manifests），全量清单随 P1 范例工具链补。
+4. ✅ **D1 应急**：`PLANNER_CATALOG_BUDGET_CHARS` 默认 8000→16000；**模拟结论已升级为契约测试**（`test_catalog_budget.py` 加载全部真实 manifests：8000 下被裁的恰是全部无 hint 的 agent 含 navigation；16000 下零裁剪；该测试兼作预算再被追上时的响铃）。真栈影响复核改由 `catalog_chars`/`catalog_dropped` span 属性持续观测（合并部署后看第一轮真实值）。
+5. ✅ **示范修复**：vision hint 与 HMI 抓帧触发词**两侧同步**删过宽分支 `|帮我看看`（规则收窄而非给 guard 追词；该分支还触发端侧**抓帧+上传**，采集面过宽即隐私面过宽）。真实引擎探测：两句 LBS badcase 现由 nearby 自己的 hint 接住（`nearby.search`），真视觉句全部保持 `vision.describe`；六句钉进语料，eval_route_hints 122/122（基线随语料 116→122 刷新）。
 
 ### P1 范例库 Exemplar Store（3-5 天）——飞轮的核心新机制
 
