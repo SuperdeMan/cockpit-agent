@@ -1,6 +1,6 @@
 # 验收余项 MC：可靠主动投递设计规格
 
-> 状态：设计已获逐节批准，等待书面规格复核
+> 状态：已获用户书面认可，进入实施计划与开发（2026-07-28）
 > 日期：2026-07-28
 > 适用范围：Proactive Governor、Gateway、HMI、位置提醒、S2S 语音仲裁、Deep Research 结果通知、Outcome Verifier
 > 关联基线：`docs/reviews/2026-07-26-acceptance-review-m0a-m4.md`、`docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md`、`docs/design/2026-07-25-m4-s2s-fullduplex-rfc.md`
@@ -107,6 +107,7 @@ proactive_delivery
   priority               TEXT NOT NULL
   payload                JSONB NULL
   conditions             JSONB NULL DEFAULT '[]'
+  condition_revision     BIGINT NOT NULL DEFAULT 0
   required_ack           TEXT NOT NULL DEFAULT 'PRESENTED'
   speech_policy          TEXT NOT NULL
   state                  TEXT NOT NULL
@@ -121,6 +122,9 @@ proactive_delivery
   spoken_at              TIMESTAMPTZ NULL
   dismissed_at           TIMESTAMPTZ NULL
   state_version          BIGINT NOT NULL DEFAULT 0
+  present_lease_hash     TEXT NULL
+  present_lease_expires_at TIMESTAMPTZ NULL
+  present_lease_state_version BIGINT NULL
   shadow_mode            BOOLEAN NOT NULL DEFAULT FALSE
   privacy_state          TEXT NOT NULL DEFAULT 'active'
   redacted_at            TIMESTAMPTZ NULL
@@ -137,9 +141,14 @@ proactive_delivery
 - `speech_policy` 只允许 `interrupt`、`after_idle`、`bubble_only`、`suppress`。
 - reliable 档消息必须提供有限且明确的 `expires_at`；过期后不得重新播放陈旧内容。
 - 状态更新按 `state_version` 或数据库行锁串行化，迟到 ACK 不能让状态倒退。
+- `condition_revision` 在 conditions 或其业务 occurrence 改变时单调递增；present lease 必须同时
+  绑定 delivery、`state_version` 与 `condition_revision`。
+- `present_lease_hash` 只保存随机 opaque lease 的哈希，原 token 只返回给当前 HMI；lease 到期、
+  状态/condition 版本变化、取消或隐私撤销时必须在同一事务清空。该状态在 PostgreSQL 中持久化，
+  不能放在 governor 进程内，因此 present check 与 ACK 可以落到不同实例并跨重启成立。
 - payload 只保存投递所需的短文本、卡片摘要和资源引用，不保存 Deep Research 报告全文。
 - `privacy_state=active` 的行必须有完整 owner、dedupe、payload 和 conditions；只有终态行可进入
-  `redacted`，此时上述个人数据字段必须为 NULL。
+  `redacted`，此时上述个人数据字段必须为 NULL，`last_error` 必须为空串。
 
 ### 5.2 索引
 
@@ -203,14 +212,23 @@ M-C 新增或扩展的个人数据目标在 M-A inventory 中固定分类：
 | HMI durable delivery/cache | `deletable` | 删除该 owner 的本地消息、seen-id 与语音观测 |
 
 `proactive_delivery` 的 redact action 在同一事务中清空 `user_id`、`occupant_id`、dedupe key、
-payload、conditions、原始 error/detail 与任何 session 标识，只保留随机 `delivery_id`、source、
-priority、最终 state、规范化 reason code、attempt count 和粗粒度时间戳，写
-`privacy_state=redacted`。脱敏后不能反查原 owner，也不能再被重投、频控或去重消费。
+payload、conditions、present lease，并把非空约束字段 `last_error` 归一为空串；当前
+`proactive_delivery` 没有 session 列，实现不得更新不存在的列。只保留随机 `delivery_id`、
+source、priority、最终 state、attempt count 和粗粒度时间戳，写 `privacy_state=redacted`。
+以后若增加 error/detail/session 字段，必须同步进入 schema 的 redacted CHECK 与 privacy
+registry。脱敏后不能反查原 owner，也不能再被重投、频控或去重消费。
 
 L3/L4 遇到活跃 delivery 或 task 时先 CAS 到 cancelling/cancelled 并让 worker/研究任务通过
 停手 fence；确认不会晚到写回前返回 pending，不宣称删除完成。L2“清学到的记忆”保留上述任务、
 报告、投递与审计数据。所有动作都进入 M-B 的 preview 与
 planned/deleted/pending/retained/redacted 结果。
+
+privacy adapter 在开始取消目标 owner 的 delivery 时，必须先锁定并返回完整的
+`revoked_delivery_ids`，再把这些行 CAS 为 `CANCELLED`、清空 present lease 并阻止 worker
+继续发布。HMI 在同一个 IndexedDB readwrite transaction 中为这些 ID 写持久 tombstone，再删除
+消息与 ACK facts。插入与清理无论谁先提交都安全：清理先提交时后到 envelope 命中 tombstone 而
+拒绝；插入先提交时清理事务删除它并留下 tombstone。tombstone 至少保留到原
+`expires_at + 24h`，后到 NATS/WebSocket envelope 不能使已删除内容复活。
 
 上条的“取消活跃 task”只适用于系统自身可安全停手的任务。关联非终态 `mcp_operation` 或
 补偿 operation 的 Ledger 行是显式例外：隐私删除本身不授权取消/补偿外部业务，适配器必须返回
@@ -238,6 +256,9 @@ HMI 通过 gateway 发送：
   "type": "proactive_ack",
   "delivery_id": "stable-id",
   "stage": "PRESENTED | SPOKEN | DISMISSED",
+  "state_version": 7,
+  "condition_revision": 3,
+  "present_lease": "opaque-token-required-for-PRESENTED",
   "session_id": "active-hmi-session",
   "state_epoch": 42,
   "observed_at": "RFC3339 timestamp",
@@ -255,14 +276,32 @@ HMI 通过 gateway 发送：
   把未送达消息伪装成用户已处理。
 - 语音被抑制不产生 `SPOKEN`；只要 UI 已呈现，通知合同仍在 `PRESENTED` 完成。
 - gateway 的 WebSocket write 错误不能产生 `PRESENTED`。
-- HMI 对已见过的 `delivery_id` 不重复插入，但必须重发 `PRESENTED`；若音频确已完整播放，再独立重发 `SPOKEN`。
+- HMI 对已见过的 `delivery_id` 不重复插入，但必须重发持久事实集合：`presented=true` 时重发
+  `PRESENTED`，`spoken=true` 时另发 `SPOKEN`，`dismissed=true` 时另发 `DISMISSED`。三者不是
+  一个可比较的“最高 ACK”，任何一个都不能覆盖另一个。
 
 “已见过”不是进程内 Set。HMI 使用 IndexedDB 的单个事务同时持久化
-`delivery_id + owner + rendered message/card + presented/spoken facts + expires_at`，事务提交后
-才把记录挂入 UI 并发送 ACK。进程在提交后、ACK 前崩溃时，重启从 IndexedDB 恢复同一消息，
-重投只触发重发最高已知 ACK，不插入第二条。seen-id 至少保留到
+`delivery_id + owner + rendered message/card + presented/spoken/dismissed booleans + expires_at`。
+`acceptDelivery()` 在同一个 readwrite transaction 中读取 delivery 与 tombstone，并用“新建记录
+成功”作为唯一 UI winner；两个并发相同 ID 只有 winner 能在 transaction complete 后挂入 UI，
+loser 只重放已有 ACK facts。进程在提交后、ACK 前崩溃时，重启从 IndexedDB 恢复同一消息，
+重投只重发各自为真的 ACK facts，不插入第二条。seen-id 至少保留到
 `expires_at + 24h`；服务端在此之后也不得重投。浏览器数据被用户主动清空或整机重置属于新设备
 边界，不宣称跨该边界 exactly-once。L3/L4 按 owner 删除 IndexedDB 记录。
+
+所有 reliable envelope（conditions 为空也包括）在上述 IndexedDB transaction 前都必须调用
+数据库背书的 `proactive_present_check(delivery_id, state_version, condition_revision)`。服务端
+只有在 delivery 仍 active、未过期、未被 privacy 撤销、版本匹配，且所有 conditions 为 TRUE
+时，才在事务中生成/轮换一个短时 opaque `present_lease` 并保存其哈希与到期时间。HMI 把原 token
+带入 `PRESENTED` ACK，服务端以数据库中的 hash/版本/到期时间核验。FALSE、UNKNOWN、请求超时、
+503、token 缺失或过期都必须发生在 IndexedDB/UI 之前，结果为零插入、零 ACK；FALSE 按 condition
+策略取消，UNKNOWN/timeout 保持可重试。
+
+HMI 只有在 IndexedDB 能真实持久化时才宣告 `proactive_ack_v1`：启动时先打开
+`cockpit.proactive.v1`，执行一次可回滚的 readwrite probe，并验证 transaction complete。打开、
+写入、配额或事务失败时，本连接省略该 capability 并上报 degraded reason；不能先宣告能力再让
+reliable envelope 落到易失内存。对已切到 durable 的来源，没有该 capability 的旧/故障 HMI
+只让 delivery 留在 `ACCEPTED` 等待升级或过期，绝不回落 best-effort 后伪装可靠触达。
 
 ## 7. 持久化档位与降级
 
@@ -374,6 +413,10 @@ ARMED_REQUIRES_OUTSIDE
 ```
 
 `ARMED -> DELIVERY_PENDING` 必须是数据库 CAS，确保多个 geofence watcher 只能产生一个 `delivery_id`。
+reminder 行同时持久化 `last_relation=outside|inside|unknown` 与单调
+`observation_revision`；watcher 只能以较新的位置 revision 做 CAS。`UNKNOWN` 不覆盖最后一个合格
+relation，进程重启后也不能把“当前在圈内”误当成新的 outside→inside 边沿，或漏掉重启前 outside、
+重启后 inside 的真实边沿。
 
 只有 HMI `PRESENTED` 才能把 reminder 标成 `FIRED`。`ACCEPTED`、`DISPATCHED`、NATS publish 成功和 gateway WebSocket write 成功均不够。
 
@@ -401,8 +444,8 @@ ARMED_REQUIRES_OUTSIDE
 
 - 每次首次 dispatch 与重试前都重新求值，不能复用上一次 TRUE。
 - `TRUE` 只允许进入呈现握手，不直接授权 HMI 插入 UI。
-- HMI 收到带 conditions 的 envelope 后，在插入 UI 前调用
-  `proactive_present_check(delivery_id, state_version)`；governor 用最新快照再次求值，TRUE 时返回
+- HMI 收到带 conditions 的 envelope 后，沿所有 reliable envelope 共用的插入前路径调用
+  `proactive_present_check(delivery_id, state_version, condition_revision)`；governor 用最新快照再次求值，TRUE 时返回
   绑定 delivery/state/condition revision 的短时 `present_lease`。HMI 只有在 lease 有效期内才能
   插入，并把 lease 写进 `PRESENTED` ACK；条件 delivery 缺 lease 的 ACK 被拒绝。
 - `FALSE` 将 delivery CAS 为 `CANCELLED(reason=conditions_unmet)`，并让 reminder 回到 `ARMED`；
@@ -434,6 +477,21 @@ reminder 与 `proactive_delivery` 不要求跨服务分布式事务：
 `ARMED`。任一方在两步间崩溃时，reminder 对账同一 delivery 的终态补齐状态，已取消 delivery
 不得继续重投。
 
+### 10.4 时间提醒 occurrence
+
+`ARMED_REQUIRES_OUTSIDE` 与 outside rearm 只属于 `kind=location`，不得套用到时间提醒。
+
+- 一次性时间提醒到期后以数据库 CAS 进入 `DELIVERY_PENDING`，为当前
+  `delivery_occurrence` 派生稳定 delivery ID。`PRESENTED` 后进入 `FIRED`；在未呈现前过期则进入
+  `DONE(reason=delivery_expired_unpresented)`，不伪造 FIRED，也不等待 outside。
+- 周期时间提醒的每个计划 occurrence 都有单调 `delivery_occurrence`，dedupe key 必须包含该值。
+  当前 occurrence `PRESENTED` 后，在同一 reminder 事务记录本次 `fired_at`、推进到下一次
+  `fire_at`、递增 occurrence 并回到 `ARMED`。未呈现而过期时记录 missed reason，跳到第一个未来
+  occurrence 并回到 `ARMED`；每个被跳过 occurrence 都不能复用旧 delivery ID。
+- scheduler 重启按 `(reminder_id, delivery_occurrence, delivery_id)` 对账；已建立的 occurrence
+  继续同一 delivery，新 occurrence 才生成新 ID。时间 reminder 永远不因 location snapshot、
+  `last_relation` 或 `ARMED_REQUIRES_OUTSIDE` 改状态。
+
 ## 11. Deep Research
 
 ### 11.1 Task Ledger 与通知分工
@@ -441,6 +499,9 @@ reminder 与 `proactive_delivery` 不要求跨服务分布式事务：
 - Task Ledger 是研究任务是否完成、失败或被截停的事实源。
 - `proactive_delivery` 是“结果通知是否被接管、是否呈现”的事实源，并独立保存是否观察到完整播报。
 - 研究完成后建立 durable `user_contract` delivery，固定 `source=deep-research`；没有持久化成功时，Ledger 的 `notification_state` 保持 pending，恢复任务扫描负责用相同完整业务唯一键重试。该来源禁止 emergency direct。
+- pending 通知由 Deep Research 进程托管的周期恢复 loop 持续扫描并按有界退避重试；它在服务
+  启动时立即跑一轮，随后按配置周期运行并响应 stop event。governor 暂时不可用后恢复时，即使
+  Deep Research 自身没有重启，pending 通知也必须自动收敛到同一 delivery ID。
 - 任何会异步返回或承诺“完成后通知”的 Deep Research 都必须先成功取得非空 Ledger
   `task_id`。Ledger/报告数据库不可用时不启动后台调研、不返回 accepted，也不保留现有空
   task-id best-effort 路径；向用户诚实返回暂时无法接单并允许其稍后重试。
@@ -520,8 +581,10 @@ v1 不新增自动过期策略，`expires_at` 默认 NULL；报告由显式 L3/L
 5. `notification_state` 后续只允许经受限、单调的 notification patch 更新，不能借此重开或
    改写已经终态的 Task Ledger。
 
-读取 API 先以当前账号 `user_id` 授权，再用 `occupant_id` 做 OWNER_ONLY 过滤；occupant 仍不是
-鉴权因子。不存在、已删除或不属于所选 owner 的 ref 统一返回 `not_found`，不泄漏真实 owner。
+读取 API 无条件要求有效 bearer token，并只从 token 对应账号取得 `user_id`；该 route 不受
+`AUTH_REQUIRED=false` 开发档影响，也禁止回落 `AUTH_DEFAULT_USER_ID`。缺失、格式错误、过期或
+未知 token 一律 401。鉴权成功后再用 `occupant_id` 做 OWNER_ONLY 过滤；occupant 仍不是鉴权
+因子。不存在、已删除或不属于所选 owner 的 ref 统一返回 404/`not_found`，不泄漏真实 owner。
 
 `profile.research_active` 继续作为多轮追问缓存，但 key 必须加入 occupant namespace，且仅由
 同 OwnerKey 读取；它不再被描述为报告持久化。`research_report` 登记为 M-A privacy inventory
@@ -575,6 +638,13 @@ refs；其他 occupant 不受影响。
 - schema-valid 的明确拒绝、参数/权限错误仍归 `EXEC_DEFINITE_FAILURE`；畸形响应只有在可证明
   请求未发出时才是 definite failure。dispatch 边界必须由执行器显式记录，Verifier 不靠异常
   文本猜测。
+
+边界状态由一个请求级 `DispatchTracker` 从 executor 贯穿 dispatcher 与 client：stub 构造、
+request 构造和本地序列化全部成功后，client 在真正创建 unary/stream RPC 的最后一刻原子标记
+`started=true`。外层 `asyncio.wait_for` 超时也读取同一 tracker，不能用一个全新的 timeout
+`StepResult` 丢掉边界事实。D0 与 T2 两条直达 `call_agent_stream` 的路径必须接同一 tracker；
+一旦 stream 已越界，任何断线、截断或无 final 都禁止回退 unary 重放副作用，只能进入
+`EXEC_UNKNOWN` 与 readback。
 
 只有 `EXEC_UNKNOWN` 进入失败后核验。`EXEC_DEFINITE_FAILURE` 不允许被 Verifier 覆盖为成功。
 
@@ -630,12 +700,12 @@ EXECUTING
 | worker 取行后崩溃 | lease/`next_attempt_at` 到期后其他 worker 重新领取 |
 | NATS 不可用 | delivery 保持 `ACCEPTED`，按退避时间重试 |
 | gateway 收到后崩溃 | 未收到更高 ACK，重新投递 |
-| gateway 发出、HMI 收到，但 ACK 丢失 | HMI 按 `delivery_id` 不重复插入并重发最高 ACK |
+| gateway 发出、HMI 收到，但 ACK 丢失 | HMI 按 `delivery_id` 不重复插入并分别重发持久的 PRESENTED/SPOKEN/DISMISSED facts |
 | HMI 断线 | delivery 保持未完成；重连后继续，过期消息不播放 |
 | governor 重启 | 从 PostgreSQL 恢复未完成投递与持久频控窗口 |
 | `speech_channel` 状态丢失 | TTL 后转 UNKNOWN；HMI 仍做最终语音仲裁 |
 | 位置快照过旧 | `within_m=UNKNOWN`，不消费 reminder |
-| Deep Research 通知未建立 | Ledger `notification_state=pending`，恢复扫描以相同 ID 重试 |
+| Deep Research 通知未建立 | Ledger `notification_state=pending`，周期恢复 loop 在不依赖进程重启的情况下以相同 ID 重试 |
 | Verifier readback 不可达 | 最终 `UNRESOLVED`，不重复执行副作用 |
 
 worker 使用 `SELECT ... FOR UPDATE SKIP LOCKED` 或等价原子领取，支持多个 governor 实例。重试采用有上限的指数退避，但不能越过 `expires_at`。
@@ -646,29 +716,58 @@ worker 使用 `SELECT ... FOR UPDATE SKIP LOCKED` 或等价原子领取，支持
 
 1. **增加数据层并先切 Ledger owner-v2**：创建 `proactive_delivery`、`research_report`、索引和
    清理机制；为 `task_ledger` 追加默认 primary 的 `occupant_id`、key scheme 与 legacy key。
-   在任何非 primary Ledger 写入前暂停新 `open()`，只转换 `scheme=legacy_v1` 的存量行：
-   copy legacy key → 固定 owner=primary → 计算一次 owner-v2 → 标记 scheme。冲突立即阻断，
-   已是 owner-v2 的行绝不重复 hash。部署只写 owner-v2 的新实例并确认无旧 writer 后恢复
-   `open()`；新表与 Ledger target 同时登记 privacy inventory，不改变现有发布行为。
-2. **影子持久化**：governor 以 `shadow_mode=TRUE` 写入信封并记录治理决策，但仍由现有路径单次发布；worker 和正式去重索引都排除影子行，用于校验 schema、状态计算和容量，且永不被后续重放。
-3. **引入 delivery envelope**：gateway/HMI 接受可选 `delivery_id`、`source`、`user_id`、`occupant_id`、`dedupe_key`、`speech_policy`；旧字段继续可读。
-4. **启用 HMI `proactive_ack`**：新 HMI 宣告 `proactive_ack_v1` 能力。能力存在时启用三级 ACK 阶梯和独立 `SPOKEN` 观测；旧 HMI 继续当前 best-effort 语义，不宣称 reliable。
-5. **切换 durable 来源**：先把 Deep Research 的 open/recent/status/cancel 和
+   Ledger gate trigger 读取 migration-control 行时必须使用 `SELECT ... FOR SHARE` 并把共享行锁
+   持有到 INSERT 事务结束；freeze 的 UPDATE 因而会等待所有已越过 gate 的 legacy INSERT 提交，
+   冻结后到达的 INSERT 则等待后读到 `quiescing` 并被拒绝。双连接 barrier 测试必须证明这一
+   happens-before，不允许只测串行 probe。
+2. **冻结、转换与 writer 激活**：在任何非 primary Ledger 写入前把 control CAS 到
+   `quiescing`，备份后只转换 `scheme=legacy_v1` 的存量行：copy legacy key → 固定
+   owner=primary → 计算一次 owner-v2 → 标记 scheme。冲突立即阻断，已是 owner-v2 的行绝不
+   重复 hash。仍在 `quiescing` 时先部署唯一允许写 Ledger 的
+   `deep-research-agent,mcp-bridge`；运行中 Agent Health 必须回报精确
+   `WRITER_PROTOCOL=owner_v2`，两者 gRPC ready，Compose 声明的 writer 集合与预期集合完全相同，
+   且没有 legacy writer，随后才 CAS activate。任一检查失败都保持 quiescing。
+3. **Reminder 兼容安装窗**：install-gate 只增加 nullable/有默认值的新列，并把状态约束暂时设为
+   同时接受 `pending` 与 `armed/delivery_pending/armed_requires_outside/fired/done/cancelled`；
+   旧 reminder binary 仍可读写。先部署能同时理解 pending 与新状态的 dual-compatible binary，
+   验证 ready 后才在 reminder 来源 cutover 内冻结 reminder writer、把 pending backfill 为
+   armed、修改默认值并收紧最终约束；不得在旧 binary 仍运行时先套最终 schema。
+4. **影子持久化**：governor 以 `shadow_mode=TRUE` 写入信封并记录治理决策，但仍由现有路径单次发布；worker 和正式去重索引都排除影子行，用于校验 schema、状态计算和容量，且永不被后续重放。
+5. **引入 delivery envelope**：gateway/HMI 接受可选 `delivery_id`、`source`、`user_id`、`occupant_id`、`dedupe_key`、`speech_policy`；旧字段继续可读。
+6. **启用 HMI `proactive_ack`**：只有 IDB readwrite probe 成功的新 HMI 才宣告
+   `proactive_ack_v1`。能力存在时启用 ACK facts 与所有 reliable envelope 的 present check；
+   已切 durable 的来源遇到旧/无能力 HMI 保持数据库待投递，等待升级或过期，不走旧
+   best-effort。
+7. **按来源 allowlist 切 durable**：配置固定为
+   `PROACTIVE_DELIVERY_DEFAULT_MODE=legacy` 加互斥的
+   `PROACTIVE_SHADOW_SOURCES`/`PROACTIVE_DURABLE_SOURCES`；未列来源保持 legacy，同一时刻可让
+   Deep Research durable、Reminder shadow、其他来源 legacy。先把 Deep Research 的
+   open/recent/status/cancel 和
    `research_active` 切到 OwnerKey，再切它的 `user_contract`；随后切所有 reminder 通知、
    其他 `user_contract`，最后切 critical。每个来源只在 `PRESENTED` ACK 和恢复测试通过后启用。
-6. **切换正常模式频控**：以 PostgreSQL `PRESENTED` 时间窗替换进程内计数；数据库故障时 advisory 保留 TTL 内进程内延后，ambient 直接抑制。
-7. **切换位置提醒状态机**：将现有未触发提醒保持 `ARMED`，已触发提醒保持 `FIRED`；上线后新触发才进入 `DELIVERY_PENDING`。
-8. **启用失败后 Verifier**：仅对显式
+   两个 allowlist 重叠、非法/空白 source token 或非法 mode/config 垃圾值必须 fail startup；旧
+   `PROACTIVE_GOVERNOR_ENABLED` 只兼容 legacy/shadow，绝不能隐式把所有来源切 durable。
+8. **切换正常模式频控**：以 PostgreSQL `PRESENTED` 时间窗替换进程内计数；数据库故障时 advisory 保留 TTL 内进程内延后，ambient 直接抑制。
+9. **切换位置提醒状态机**：dual-compatible reminder 就绪后，按第 3 步完成 backfill/收紧；持久
+   `last_relation/observation_revision`，上线后新边沿才进入 `DELIVERY_PENDING`。时间提醒按自己的
+   occurrence 语义迁移，不进入 outside rearm。
+10. **启用失败后 Verifier**：仅对显式
    `verify_on_failure=transport_uncertain` 的 `state_match` 能力开放，其他能力行为不变。
 
-迁移期间 dashboard/obs 必须同时显示旧链路 publish 结果和新链路 ACK 阶段，避免把影子记录误认为真实投递。
+迁移期间 dashboard/obs 必须同时显示旧链路 publish 结果和新链路 ACK 阶段，避免把影子记录误认为真实投递。每次 Compose 重建、故障矩阵和 canonical 都必须显式注入上述三项来源配置，并从
+运行中 proactive 的只读 `/config` 回读 effective default/shadow/durable sources；配置与预期
+不逐项相等立即阻断，不能从 `.env` 默认值猜测。任何会重建 `deep-research-agent` 或
+`mcp-bridge` 的调用还必须显式注入 `WRITER_PROTOCOL=owner_v2`；重建后 Health 回报 `none` 或
+未知协议时立即阻断，不能让后续验证把已激活 writer 静默降回未声明状态。
 
 ## 15. 回滚
 
 - Ledger owner-v2 是 forward-only cutover：保留 occupant、scheme 与 legacy key，回滚只能到认识
   owner-v2 的兼容版本，不得恢复 `legacy_v1` writer 或再次 hash 已迁移行。
-- 所有切换由单一功能开关控制；回滚只停止新 delivery 进入 durable worker，不删除表和历史行。
-- 回滚到旧链路后，旧 HMI 忽略新增 envelope 字段；新 HMI 可继续发送 ACK，但服务端忽略未启用链路的 ACK。
+- 回滚按 source allowlist 从 durable 移回 shadow/legacy；只停止该来源的新 delivery 进入
+  durable worker，不删除表和历史行，也不影响仍在 durable allowlist 的其他来源。
+- 回滚到旧链路后，旧 HMI 忽略新增 envelope 字段；新 HMI 可继续发送 ACK，但服务端忽略未启用
+  来源的 ACK。仍在 durable allowlist 的来源绝不因旧/无 reliable HMI 回退 best-effort。
 - durable 来源回滚前停止接收新的 durable 声明；已经 `ACCEPTED` 且未过期的行保留。重新启用后继续投递，过期行只转 `EXPIRED`，不补播。
 - advisory 可回滚到 TTL 内进程内治理和 NATS best-effort；ambient 回滚时仍是命中治理闸即抑制，不得共用 advisory 延后队列。两者都在可观测面标记降级。
 - 位置提醒回滚时：
@@ -717,6 +816,12 @@ dashboard 中的“已投递”只能对应 `PRESENTED`，不能用 NATS publish
 11. ambient 命中不可达或治理闸时为 `SUPPRESSED`，不进入 advisory 延后队列。
 12. 两条消息只有 `dedupe_key` 相同、但 `source`、`user_id` 或 `occupant_id` 任一不同，均可各自
     建立 delivery；四字段全部相同的并发或终态后重放都返回原 delivery，不建立第二条。
+13. 两个 governor 实例分别处理 present check 与 PRESENTED ACK；重启其中任一实例后，数据库中
+    lease hash/版本/到期时间仍可验证，且同一 delivery/version 只有一个当前 lease。
+14. reliable envelope 在 present check 得到 FALSE、UNKNOWN、timeout/503、过期 lease 时，
+    IndexedDB 与 UI 都保持零插入。
+15. IDB readwrite probe 失败时 HMI hello 不含 `proactive_ack_v1`；durable source 保持 ACCEPTED，
+    不走旧 HMI best-effort。
 
 ### 17.2 ACK
 
@@ -727,6 +832,10 @@ dashboard 中的“已投递”只能对应 `PRESENTED`，不能用 NATS publish
 5. `SPOKEN` 先到时只写 `spoken_at`，不得推导 `PRESENTED`；后续仍必须收到真实 `PRESENTED` 才完成通知合同。
 6. 投递 ACK 乱序、重复和迟到时数据库状态单调、不重复计数；重复 `SPOKEN` 也不重复计数。
 7. 用户关闭已呈现通知后只写 `dismissed_at`；未呈现或未知 ID 的 `DISMISSED` 被拒绝。
+8. 已持久 `presented=true, spoken=true, dismissed=true` 的消息重投时分别重发三个 facts，不能只
+   重发一个“最高 ACK”。
+9. 两个相同 delivery 的浏览器事件并发进入时，单个 readwrite transaction 只选出一个 UI winner，
+   最终一个 IDB 记录、一个气泡。
 
 ### 17.3 S2S
 
@@ -755,6 +864,10 @@ dashboard 中的“已投递”只能对应 `PRESENTED`，不能用 NATS publish
 6. 在 `ACCEPTED` 后 reminder 进程崩溃；重启对账后继续同一 delivery，不重复触发。
 7. dispatch 前为 TRUE、HMI present check 前注入 fresh outside 快照：lease 被拒，delivery
    `CANCELLED(conditions_unmet)`，HMI 零插入；对账后 reminder 回到 `ARMED`。
+8. watcher 观察 outside 后崩溃、重启再观察 inside：持久 relation/revision 只产生一次边沿；若
+   崩溃前已在 inside，重启后的第一帧 inside 不产生伪边沿。
+9. 一次性时间提醒未呈现即过期，进入 `DONE(delivery_expired_unpresented)` 而非
+   `ARMED_REQUIRES_OUTSIDE`；周期提醒推进 occurrence，并为下一次使用新 delivery ID。
 
 ### 17.6 Deep Research
 
@@ -772,6 +885,10 @@ dashboard 中的“已投递”只能对应 `PRESENTED`，不能用 NATS publish
 9. Ledger 开单不可用：Deep Research 不启动后台任务、不生成空 task id，也不承诺后续通知。
 10. 预置 `legacy_v1` primary 活跃 Ledger 行后执行迁移：同语义 primary `open()` 命中原 task；
     已是 `owner_v2` 的非 primary 行在迁移重跑后 key 不变，且无旧 writer 可新增 `legacy_v1`。
+11. governor 在报告提交后暂时不可用再恢复，Deep Research 进程不重启；周期恢复 loop 自动用
+    同一 delivery ID 建立通知。
+12. 报告 HTTP route 缺 bearer、坏 bearer 均为 401；有效 bearer 读取自己的报告成功，跨
+    user/occupant 与未知 ref 统一 404。
 
 ### 17.7 Verifier
 
@@ -782,6 +899,24 @@ dashboard 中的“已投递”只能对应 `PRESENTED`，不能用 NATS publish
 5. 未声明 `verify_on_failure` 或非 `state_match` 能力保持现有失败行为。
 6. 请求越过 dispatch 后返回截断/畸形响应：分类为 `EXEC_UNKNOWN` 并进入声明式 readback；
    请求发出前的序列化失败保持 `EXEC_DEFINITE_FAILURE`。
+7. D0 与 T2 stream 在边界后断线不回退 unary，动作次数恒为 1；外层 timeout 仍能读取
+   `DispatchTracker.started=true`。
+
+### 17.8 迁移、来源切换与隐私 fence
+
+1. 连接 A 在 trigger 读到 `legacy_open` 后由 barrier 暂停，连接 B freeze；B 必须等 A 提交后
+   才进入 `quiescing`，之后的新 legacy INSERT 被拒绝。
+2. 最终 Reminder schema 安装前旧 binary 仍可写 pending；dual-compatible binary ready 后才
+   backfill/tighten，切换窗内无写入错误或漏扫。
+3. quiescing 中只部署 deep-research/mcp 两个 writer；两者 gRPC Health 均报告
+   `WRITER_PROTOCOL=owner_v2`，运行 writer 集合精确匹配后才 activate。任一不 ready/协议错误/
+   多出 writer 都保持 quiescing。
+4. Deep Research durable、Reminder shadow、其他来源 legacy 可同时成立；运行时 `/config`
+   回读与显式注入 allowlist 一致。旧 HMI 不接 durable source，升级后同一 delivery 才呈现。
+5. privacy L3 在 worker publish 后、HMI 插入前撤销；server 返回 revoked IDs，HMI tombstone 与
+   清理/插入两种提交顺序都零复活，另一 owner 逐字不变。
+6. 备份 catalog 对 `task_ledger`、`task_ledger_migration_control`、`reminder_item`、
+   `proactive_delivery`、`research_report` 五张表逐一命中后才允许 apply。
 
 ## 18. 完成标准
 
@@ -794,6 +929,8 @@ dashboard 中的“已投递”只能对应 `PRESENTED`，不能用 NATS publish
 - `PRESENTED` 在代码、观测和测试中都是唯一通知合同终态，`SPOKEN` 只作独立观测；
 - `DISMISSED` 独立记录用户关闭动作，不覆盖或伪造 `PRESENTED`；
 - HMI 断线与 ACK 丢失不再造成 durable 消息永久消失或重复插入；
+- 所有 reliable envelope 经过 DB-backed present check；lease、条件版本、隐私撤销与 HMI
+  tombstone 共同阻止过期条件或已删除内容进入 IDB/UI；
 - S2S 下四档消息严格执行 interrupt、after-idle、bubble-only、suppress 策略；
 - advisory 只在 TTL 内延后，ambient 命中治理闸即抑制；
 - 频控按 `PRESENTED` 计数并可跨 governor 重启；
@@ -804,6 +941,8 @@ dashboard 中的“已投递”只能对应 `PRESENTED`，不能用 NATS publish
 - Deep Research 的 Ledger 控制面、报告和多轮缓存使用同一 OwnerKey，删除中的 cancellation
   fence 不允许晚到任务复活数据；
 - Ledger `legacy_v1` 只转换一次并在首个非 primary task 前完成 owner-v2 cutover；
+- writer freeze 与在途 legacy INSERT 有锁顺序证明，activate 前运行 writer 集合、gRPC ready 与
+  `WRITER_PROTOCOL` 全部验证；
 - `EXEC_UNKNOWN + state_match` 能纠正实际已生效的结果，同时不扩大到无 readback 的能力；
-- 迁移可以逐档开启，回滚不删除审计数据、不制造重复通知；
+- source allowlist 允许逐来源开启/回滚且每次从运行时读回，不删除审计数据、不制造重复通知；
 - 全部真栈验收场景有新鲜运行证据，SKIP 不计为通过。

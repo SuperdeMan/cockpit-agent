@@ -1,7 +1,7 @@
 # M-D：外部生态闭环设计
 
 > 日期：2026-07-28
-> 状态：设计已获逐节批准，等待书面规格复核
+> 状态：已获用户书面认可，进入实施计划与开发（2026-07-28）
 > 上位规格：`2026-07-28-acceptance-residuals-program-design.md`
 > 前置：M-A、M-B、M-C 完成
 
@@ -73,11 +73,25 @@ WHERE status IN ('accepted', 'running', 'waiting_external');
 
 ### 3.3 获取执行权
 
-`open()` 使用 INSERT-first：
+`open()` 使用 INSERT-first，但不通过“捕获唯一异常后在同一事务继续查询”实现。PostgreSQL 语句
+抛出唯一冲突后会把当前事务置为 aborted；因此规范 SQL 固定为：
+
+```sql
+INSERT INTO task_ledger (...)
+VALUES (...)
+ON CONFLICT (user_id, idempotency_key)
+WHERE status IN ('accepted', 'running', 'waiting_external')
+DO NOTHING
+RETURNING *;
+```
+
+`RETURNING` 有行表示取得执行权，零行才读取当前活跃赢家。该 conflict target 只匹配
+`uq_task_ledger_active_idem` 的列和 partial predicate；主键冲突、连接失败、语法错误等其他错误
+继续原样抛出，不翻译成 Duplicate，也不使用异常后的失效事务。
 
 1. 尝试插入新任务；
 2. 成功者获得执行权；
-3. 唯一冲突者读取当前活跃赢家；
+3. `ON CONFLICT ... DO NOTHING RETURNING` 返回零行者读取当前活跃赢家；
 4. 赢家仍活跃时返回 `Duplicate` 和赢家状态；
 5. 赢家为 `waiting_external` 时，无论 heartbeat 年龄如何都不得走通用 orphan 接管；它继续占用
    原幂等槽，并由 operation query/reconcile 恢复器收敛；
@@ -85,9 +99,26 @@ WHERE status IN ('accepted', 'running', 'waiting_external');
    `SUBMITTING/SUBMITTED/UNCERTAIN/RECONCILING` operation 时，才可用带旧状态条件的单条
    UPDATE 将其改为 `orphaned`，再重试 INSERT 一次；状态竞争失败则重新读取赢家，不做无界循环。
 
-唯一冲突必须按 partial unique index 的约束名或 SQLSTATE 识别；连接失败、语法错误等其他
-数据库异常不能伪装成 Duplicate。不再使用 SELECT-then-INSERT。验收测试使用两个独立连接池
-并发循环，任何一轮都只能有一个新任务和一条活跃记录。
+验收测试使用两个独立连接池并发循环，任何一轮都只能有一个新任务和一条活跃记录；另用主键
+冲突、连接失败和语法错误证明非目标错误不会被吞掉。
+
+### 3.4 外部 operation 的 connection-bound Ledger API
+
+MCP 不得调用会自行取连接或吞错的通用 Ledger 方法来拼跨表事务。SDK 增加以下
+connection-bound API，调用方传入 connection 时不得另开连接、创建隐式事务或把数据库错误降级为
+`None/False`：
+
+```text
+open_with_idempotency_key(..., connection)
+transition_external(task_id, expected_statuses, status, result_ref, connection)
+close_external(task_id, expected_statuses, terminal_status, result_ref, connection)
+delete_external(task_ids, connection)
+```
+
+首次外部写在同一事务中依次创建 Ledger、创建 `mcp_operation(SUBMITTING)`、把 Ledger CAS 为
+`waiting_external` 并写入只含 operation 摘要的 `result_ref`。operation 终态投影、补偿 task
+绑定和终态 privacy redaction/delete 也必须复用同一 connection。任一步失败回滚整组事实；事务
+提交后才允许越过外部副作用边界。
 
 ## 4. MCP operation journal
 
@@ -126,6 +157,18 @@ redacted_at
 唯一性至少覆盖 `(user_id, occupant_id, server_id, idempotency_key)`。相同完整键、不同 payload
 hash 必须拒绝，不能复用旧订单。该唯一索引只覆盖 `privacy_state=active`；redacted 行的 owner
 和 key 均为 NULL，不参与业务去重。
+
+`operation_seed` 同时是服务器 operation attempt 的稳定身份。活跃行另建部分唯一索引：
+
+```text
+(user_id, occupant_id, server_id, server_version, tool_name, operation_seed)
+WHERE privacy_state = active
+```
+
+创建 operation 时先按该 attempt identity 查询：同 seed、同 payload hash 返回原 journal；同
+seed、不同 payload hash 明确冲突，绝不能因为 payload 变化导致 idempotency key 变化而建立第二笔
+operation。submit idempotency key 的唯一索引仍保留，两个约束分别保护“同 attempt 不漂移”和
+“同商户 key 不复用异 payload”。
 
 仅对 `kind=mcp_operation` 的 Task Ledger 行，`result_ref` 只保存 `operation_id`、外部引用摘要和
 当前业务状态，不复制完整商户响应；Deep Research 等其他 task kind 继续使用各自已冻结的
@@ -166,6 +209,12 @@ Ledger task 一起返回 pending/retained：保留 OwnerKey、task ids 和 journ
 query/reconcile，不把 Ledger 标成 cancelled 或物理删除，也不把本地删行伪装成外部删除。
 外部 operation 达到终态后，同一 privacy operation 重试才删除关联 Ledger 行并脱敏 journal。
 
+`payment_order` 的业务 RPC 与 `PaymentPrivacyAdmin` 必须由同一个 payment-gateway 进程注册，
+并共享同一个显式注入的 `PaymentStore` 实例；不得让两个 servicer 各建一份内存 store。内存与
+Redis variant 走同一 adapter 契约，`Count/Read/Redact/Reconcile` 与
+seed/count/read/redact/reconcile/verify 都必须经真实 gRPC server 证明可达。MCP privacy admin
+同样由 production bridge gRPC server 注册，但不进入 Registry capability。
+
 ## 5. 写工具图契约
 
 每个受控写工具必须声明：
@@ -179,6 +228,20 @@ idempotency_scope
 payload_hash_policy
 terminal_status_mapping
 ```
+
+submit、status、cancel、compensate 每个关联工具还必须分别冻结：
+
+```text
+input_schema_sha
+output_schema_sha
+output_locators.external_ref
+output_locators.status
+output_locators.error
+```
+
+某一阶段不产生 external ref 或 error 时，对应 locator 可以显式为空；`status` locator 对
+status/cancel/compensate 必填。locator 是对 MCP `structuredContent` 的确定性路径，不允许中央
+代码猜字段名或扫描任意 JSON。
 
 `status_lookup` 至少声明：
 
@@ -195,9 +258,11 @@ Admission 在注册写 capability 前验证：
 
 - 所有关联工具由同一 pinned server/version 发布；
 - 工具均位于 allowlist；
-- input/output schema 可读取；
+- input/output schema 可读取，且实际 input/output 指纹分别匹配声明；
 - `status_tool` schema 接受声明的 idempotency-key locator；cancel/compensate 的参数映射可由
   operation journal 中的 external ref 确定性构造；
+- submit/status/cancel/compensate 的 output locator 在对应 output schema 中存在，返回值可由
+  `terminal_status_mapping` 无歧义映射；
 - cancel/compensate 工具名来自声明，不接受 LLM 临时替换；
 - 状态映射覆盖 submit、query、cancel、compensate 四段，至少能区分 submitted、成功、
   失败、取消中、已取消、补偿中、已补偿、not-found 和无法判断。
@@ -205,6 +270,59 @@ Admission 在注册写 capability 前验证：
 任一验证失败时，整个写 capability 不注册；只读 capability 不受影响。
 
 ## 6. 业务状态机
+
+数据库 CHECK、Python `OperationState`、恢复扫描、privacy redaction 和参数化测试必须从同一份
+冻结参数表校验，完整集合为：
+
+```text
+OPERATION_STATE_VALUES =
+  SUBMITTING
+  SUBMITTED
+  UNCERTAIN
+  RECONCILING
+  SUCCEEDED
+  FAILED
+  CANCEL_REQUESTED
+  CANCELLING
+  CANCEL_RECONCILING
+  CANCELLED
+  CANCEL_FAILED
+  COMPENSATE_REQUESTED
+  COMPENSATING
+  COMPENSATE_RECONCILING
+  COMPENSATED
+  COMPENSATE_FAILED
+
+REDACTABLE_TERMINAL_STATES =
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  COMPENSATED
+  COMPENSATE_FAILED
+
+SUBMIT_RECOVERABLE_STATES =
+  SUBMITTING
+  SUBMITTED
+  UNCERTAIN
+  RECONCILING
+
+CANCEL_RECOVERABLE_STATES =
+  CANCEL_REQUESTED
+  CANCELLING
+  CANCEL_RECONCILING
+  CANCEL_FAILED
+
+COMPENSATE_RECOVERABLE_STATES =
+  COMPENSATE_REQUESTED
+  COMPENSATING
+  COMPENSATE_RECONCILING
+```
+
+`CANCEL_FAILED` 不是可脱敏终态：原业务 operation 仍须保留为可查询的
+`waiting_external`。`COMPENSATE_FAILED` 是独立补偿 attempt 的终态，允许在关联 Ledger task
+已关闭后按 retained-audit 契约脱敏。恢复器按三个 `*_RECOVERABLE_STATES` 的并集扫描；
+DB CHECK、Python enum、恢复器和 privacy adapter 都导入或逐项校验这组冻结参数，任何消费方不得
+另写一份状态字面量。
 
 ```text
 WAIT_CONFIRM
@@ -224,7 +342,11 @@ SUBMITTED
   -> CANCEL_REQUESTED
   -> CANCELLING
   -> CANCEL_RECONCILING
-  -> CANCELLING | CANCELLED | CANCEL_FAILED
+  -> SUBMITTED | SUCCEEDED | FAILED | CANCELLING | CANCELLED | CANCEL_FAILED
+
+CANCEL_FAILED
+  -> RECONCILING
+  -> SUBMITTED | SUCCEEDED | FAILED | CANCELLED | CANCEL_FAILED
 
 SUCCEEDED
   -> COMPENSATE_REQUESTED
@@ -307,6 +429,11 @@ toolcall、文本抢救和 JSON fallback 对同一 operation 的同一规范化�
 payload hash 和 key；补槽、确认恢复、timeout reconcile 也必须复用它。用户明确发起第二笔
 同内容订单时是新的 operation attempt，使用新的 seed，不能误命中上一笔终态订单。
 
+首次 dispatch 前允许补槽改变尚未冻结的参数；一旦 journal 已按 seed 建立，该 seed 即绑定
+`payload_hash + idempotency_key`。后续 T2 replan、确认恢复或调用方重试若回显同
+`operation_attempt_id` 却产生不同 payload，Bridge 必须在任何商户调用前返回 attempt conflict，
+不得创建第二行或静默采用新 key。
+
 ## 8. Provider capability
 
 LLM Gateway proto 增加 `GetCapabilities`，返回：
@@ -326,6 +453,17 @@ model 和 capability。`provider_revision` 在 active provider/model 或 provide
 opaque token，Planner 不自行推导。revision 只能覆盖非敏感 provider 身份、模型和能力配置；
 secret 的值、长度、存在性及其 hash 均不得进入 revision、响应、日志或 span。
 
+Gateway 内部冻结的 effective snapshot 还必须包含一次请求实际可用的 immutable model chain、
+provider implementation，以及链中每个候选模型的 `tools_mode/supports_strict_schema`。对
+NATIVE 请求，降级链只能保留同样支持 NATIVE 的候选；不得在 primary 失败后把 tools 发给
+NONE 模型。以上隐藏字段不进入 GetCapabilities 响应，但与六个公开字段在同一锁内生成。
+
+revision 协商是 Planner 请求的显式协议，不是对所有既有 Complete caller 的强制升级。携带
+provider/model/revisions/requested_mode 的 Planner 请求按下述规则校验；未携带协商字段的
+memory、Agent SDK、视觉和其他 legacy 请求继续使用既有 serving 语义。请求级
+`llm_provider/llm_model` pin 必须冻结其 effective pinned snapshot，不能被当前 active provider
+覆盖或误判为 revision 竞争。
+
 `PLANNER_TOOLCALL` 保留为全局总闸。有效模式为：
 
 ```text
@@ -338,7 +476,7 @@ global gate on AND current model tools_mode == NATIVE
 2. Complete 请求通过 `meta` 携带 provider、model、provider revision、capability revision
    和 requested mode；
 3. Gateway 在 Complete 入口一次性冻结 provider/model/capability snapshot，并让整个请求只用
-   这个 snapshot；请求中途热切不改写在飞请求；
+   这个 snapshot，包括已经过滤的 model chain；请求中途热切不改写在飞请求；
 4. 请求 revision 与冻结 snapshot 不匹配时，在任何上游调用前返回 `ABORTED`；
 5. Planner 收到 `ABORTED` 后刷新 capability 并最多重试整个 Complete 一次；第二次仍竞争失败
    则诚实失败，不做无界重试；
@@ -346,6 +484,10 @@ global gate on AND current model tools_mode == NATIVE
 7. effective mode 为 NATIVE 时才携带 `submit_plan` tool；禁止先白打不支持的 tools 再补打一轮
    JSON；
 8. 禁止 BaseProvider 静默退化并返回空 tool calls。
+
+`CompleteResponse` 追加 `upstream_call_count`，由 Gateway 对每次真实 provider HTTP attempt
+递增，包括模型 fallback 和 429 有界重试；缓存命中和 revision `ABORTED` 为 0。Planner planning
+span 使用该字段聚合本轮次数，不能用 Complete gRPC 次数冒充上游次数。
 
 热切竞争的两种时序都必须有明确定义：
 
@@ -364,6 +506,11 @@ effective_mode
 fallback_reason
 upstream_call_count
 ```
+
+M-A 至 M-C canonical 的 capability metadata 来源是 `bootstrap_static`；M-D 上线
+GetCapabilities 后，runner 必须从真实 Gateway RPC 写
+`capability_source=gateway_rpc`，并把 M-D 中仍为 `bootstrap_static`、RPC 字段缺失或 revision
+漂移视为阻断，不能刷新 canonical。
 
 ## 9. 错误语义
 
@@ -384,17 +531,51 @@ upstream_call_count
 
 ## 10. 迁移与回滚
 
-1. 扫描 Ledger 活跃重复项，并断言活跃行全部为 M-C 已迁移的 owner-v2；
-2. 备份 `task_ledger`；
-3. 加 owner-scoped `mcp_operation`、隐私分类与应用兼容逻辑；
-4. 建立 Ledger partial unique index；
-5. 开启 INSERT-first；
-6. 加 MCP status/cancel/compensate capability、operation→Ledger 终态投影与恢复器；
-7. 加 LLM capability RPC 与 Planner 协商。
+M-D 复用 M-C 的 `task_ledger_migration_control` 和 writer trigger，不另造只能由应用进程理解的
+软开关。受保护切换固定为：
+
+1. 只读 preflight 校验控制行存在且
+   `migration_name=owner_v2/schema_version=2/phase=owner_v2`，writer trigger 存在且定义正确；
+   扫描所有活跃行 scheme 和重复项，诊断输出
+   `task_id/user_id/idempotency_key/status/created_at/idempotency_key_scheme`，不输出 goal 或
+   result_ref；
+2. 静态枚举全仓所有 `TaskLedger.open/open_with_idempotency_key` 生产调用者以及绕过 SDK 的
+   `INSERT INTO task_ledger`；后者除 SDK/migration 外一律阻断。把调用点到运行服务的映射冻结为
+   `agents/deep_research/src/agent.py → deep-research-agent` 与
+   `agents/mcp_bridge/src/agent.py → mcp-bridge`；未知 writer 或漏映射使迁移阻断；
+3. 用匹配当前 control row 的 CAS 执行 `owner_v2 → quiescing`，递增并记录本次
+   `freeze_version`；随后 writer trigger 在数据库边界拒绝全部新开单；
+4. writers 已停写后对 `task_ledger` 与 `task_ledger_migration_control` 执行 repo-external
+   `pg_dump -Fc`，用 `pg_restore -l` 解析 catalog 并断言两表的 TABLE/TABLE DATA 对象都存在；
+   路径、catalog 或备份失败均保持 quiescing；
+5. 在一个事务中安装 owner-scoped `mcp_operation`、完整状态/隐私约束、Ledger
+   `waiting_external` 状态约束和 `uq_task_ledger_active_idem`；partial unique 只存在于 migration
+   SQL，不放进 `ledger_schema.sql` 运行时 bootstrap；
+6. 用新代码重建并启动 `deep-research-agent` 与 production `mcp-bridge`。Compose epoch 必须显式
+   注入 `WRITER_PROTOCOL=owner_v2`；由于 Deep Research 同时是主动生产方，还必须在同一次重建
+   显式注入 M-C 的 default/shadow/durable 三项来源配置。运行容器还必须暴露并由容器内探针验证固定
+   `LEDGER_WRITER_PROTOCOL=owner-v2-insert-first-v1`，再分别通过标准 Agent gRPC Health；部署
+   epoch、代码 protocol 或 gRPC ready 任一失败都保持 quiescing；
+7. 在同一 freeze version 下复跑 schema/index/active duplicate/writer protocol verify，全部通过
+   后才 CAS `quiescing → owner_v2`；版本竞争、CAS 失败或 probe 可写均阻断，绝不在 finally
+   自动解冻；CAS 后再执行只读 preflight，精确确认同一 control row 已回到
+   `schema_version=2/phase=owner_v2`；
+8. 激活后再启动两个显式声明 `WRITER_PROTOCOL=owner_v2` 的 acceptance workers，验证共享
+   PostgreSQL、50078/50079、禁用 Registry 注册和 production endpoint 未漂移；随后执行 MCP
+   lifecycle 与 provider capability 真栈；
+9. M-D MCP 镜像必须实际安装 `asyncpg`。容器 probe 同时执行 import、PG transaction 和
+   operation schema read，不能只靠宿主 pytest 证明依赖存在。
+
+M-D 不得把 M-C 的主动来源 cutover 当作隐式容器遗产。任何 M-D non-canonical full 与最终
+canonical 前都要显式注入 M-C 冻结的
+`PROACTIVE_DELIVERY_DEFAULT_MODE=legacy`、空 shadow allowlist 和六来源 durable allowlist，
+至少重建 `proactive` 并从运行中 `/config` 回读；canonical 前后 `config_sha256` 必须一致。
 
 回滚时保留 `mcp_operation`、`waiting_external` 记录、legacy key 和新增索引；旧代码无法消费的
 operation 仍可审计。M-C 的 owner-v2 cutover 后不得回滚到旧 writer，只能回到认识 owner-v2 的
-兼容版本。写 capability 若不完整可由 admission 整体隐藏，不需要删除数据。
+兼容版本。M-D 切换失败时保持 quiescing 和 repo-external backup，修复或部署兼容 writer 后按同一
+freeze version 重验；不得先恢复旧 SELECT-first writer。写 capability 若不完整可由 admission
+整体隐藏，不需要删除数据。
 
 ## 11. 验收
 
@@ -416,6 +597,8 @@ operation 仍可审计。M-C 的 owner-v2 cutover 后不得回滚到旧 writer�
 - 重复补偿确认、确认后崩溃和恢复器重放始终命中 journal 的同一
   `compensation_task_id/idempotency_key`；补偿进行态只更新该 task 的 `waiting_external`；
 - 同 user 两 occupant 的同参写操作具有不同 key，query/cancel/compensate 不可跨 owner；
+- 同 operation seed 在 journal 建立后若 payload 漂移，数据库与 Store 都在商户调用前拒绝；
+- operation 状态 CHECK、Python enum、恢复扫描与 redactable terminal 共用同一参数表；
 - L3/L4 对终态 journal 只保留脱敏审计字段；活跃外部操作没有处置结果时返回
   pending/retained，关联 Ledger 保持可恢复，不自动取消、补偿或删除；
 - existing intent 缺槽时只补缺槽；
@@ -423,8 +606,11 @@ operation 仍可审计。M-C 的 owner-v2 cutover 后不得回滚到旧 writer�
 - toolcall、文本抢救、JSON fallback 产生相同 canonical payload hash 和稳定 key；
 - native/none capability 的 Planner 分支各有契约测试；
 - GetCapabilities 的 provider/model/revisions 来自一个原子 snapshot；
+- effective model chain 和每个候选能力来自同一 snapshot；legacy/pinned caller 行为不变；
 - capability revision 竞争在上游前 ABORTED，刷新后至多重试一次；
-- NONE 或全局 gate off 的整轮恰好一次 JSON 上游调用，且请求中没有 tools。
+- NONE 或全局 gate off 的整轮恰好一次 JSON 上游调用，且请求中没有 tools；
+- `CompleteResponse.upstream_call_count` 与 provider spy 的真实 attempt 数一致；
+- M-D canonical capability source 精确为 `gateway_rpc`。
 
 ### 11.2 真栈
 
@@ -445,6 +631,24 @@ operation 仍可审计。M-C 的 owner-v2 cutover 后不得回滚到旧 writer�
 | GetCapabilities 后热切 | 首次 Complete 在上游前 ABORTED；刷新后命中新 snapshot |
 | Complete 冻结后热切 | 在飞请求使用旧 snapshot 完成，下一轮使用新 snapshot |
 | none provider | 单次 JSON 上游调用，无 tools 白打，`upstream_call_count=1` |
+| legacy / request pin | 不要求 Planner revision；视觉等 pin 继续命中指定 provider/model |
+| payment privacy gRPC | 业务与 admin service 共用同一 store，三种 storage variant 均可验证 |
+| 迁移切换 | quiescing 后旧 writer 零开单；新 writer protocol 与 gRPC ready 后才恢复 owner_v2 |
+
+### 11.3 Canonical 与两提交证据边界
+
+M-D 固定且仅有两个提交：
+
+1. M-D implementation plan 由本轮规划提交先行跟踪，业务执行时只读且不进入下述两提交；
+2. 提交 1 包含实现、测试、proto、migration、Compose 和普通架构/README 文档；不包含 canonical
+   输出、最终验收报告状态、M-D spec 落地记录或 `AGENTS.md` 证据账本。提交后 canonical inputs
+   必须干净；
+3. 从运行时 HTTP 控制面取得 active provider/model，再由完整、无 `--id` 的 M-D runner 调
+   Gateway `GetCapabilities`，以 `capability_source=gateway_rpc` 刷新 canonical；
+4. 提交 2 只允许
+   `journeys_report.json`、`journeys_report.md`、验收报告、M-D spec 和 `AGENTS.md`；
+5. 提交 2 后复算 freshness，再按 2026-07-28 已获得的用户授权直接 push。不得再次停下索要已授
+   权限，也不得产生第三个证据提交。
 
 ## 12. 验收报告原卡回写
 
@@ -472,11 +676,17 @@ M-D 完成后只更新 `docs/reviews/2026-07-26-acceptance-review-m0a-m4.md` 中
 
 - Ledger 多实例执行权由数据库约束裁决；
 - 存量 Ledger key 已安全迁到 owner-v2，`waiting_external` 不会被 orphan 后重复执行；
+- M-D partial unique 只经受保护 migration 安装；owner_v2→quiescing 后只有运行中的新 writer
+  protocol 与 gRPC ready 均通过才重新激活；
 - MCP 的查询、取消和补偿入口真实可用；
 - operation 与 Ledger 终态幂等一致，补偿使用独立任务；
+- 同 operation seed 建立 journal 后 payload 不可漂移；
 - MCP journal、入口、幂等键与隐私动作均按 OwnerKey 隔离；
+- payment business/privacy gRPC 共用真实 store，MCP/HMI privacy 只按逐域真实结果清理；
 - `submitted`、`uncertain`、`cancelled` 口径与商户一致；
-- provider capability 是运行时真相，不靠 Planner 猜测；
+- provider capability 是运行时真相，不靠 Planner 猜测；M-D canonical 来源为 `gateway_rpc`，
+  upstream count 是 Gateway 实际 provider attempt；
 - Orchestrator 中没有新增 MCP 商户、尺寸或模型家族字面量；
 - 原验收卡按 §12 逐项回写，误判项不制造重复实现；
-- M-A runner、全量测试和 M-D 真栈矩阵全部通过。
+- M-A runner、全量测试和 M-D 真栈矩阵全部通过；
+- M-D 精确形成一个实现提交和一个五文件证据提交，并按本轮授权推送。

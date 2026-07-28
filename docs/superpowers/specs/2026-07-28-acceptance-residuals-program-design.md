@@ -1,7 +1,7 @@
 # M0a→M4 验收余项闭环总设计
 
 > 日期：2026-07-28
-> 状态：已获用户逐节批准，等待书面规格复核
+> 状态：已获用户书面认可，进入实施计划与开发（2026-07-28）
 > 基准提交：`77f5e93`
 > 来源：`docs/reviews/2026-07-26-acceptance-review-m0a-m4.md`
 
@@ -25,11 +25,14 @@
 - 验收相关定向测试：`438 passed`；
 - 根 `compose.yaml` 真栈核心服务处于运行态；
 - `main` 与 `origin/main` 均指向 `77f5e93`；
-- 工作区已有两个用户未跟踪文件：
+- 工作区已有四个与本程序无关的并发用户改动：
   - `docs/reviews/badcase/2026-07-26.md`
   - `docs/reviews/badcase/2026-07-27.md`
+  - `docs/design/README.md`
+  - `docs/design/2026-07-28-intent-accuracy-data-flywheel.md`
 
-这两个文件不属于本轮改动，不得删除、覆盖或误暂存。
+四个文件都不属于本轮改动，不得读取、删除、覆盖或误暂存；前两项当前未跟踪，第三项当前为
+tracked 修改，第四项当前未跟踪。
 
 报告发布后的主干已经关闭：
 
@@ -171,13 +174,21 @@ Task Ledger 继续表达“用户任务是否仍在处理”，NATS Core 继续�
 
 ### M-C：可靠触达与执行
 
-以 Postgres durable delivery 接管关键主动消息，补 HMI ACK、断线重投、S2S 延后、location pending 和 Verifier transport-uncertain。
+以 Postgres durable delivery 接管关键主动消息，补 HMI ACK、断线重投、S2S 延后、location
+pending 和 Verifier transport-uncertain；在首个非-primary Ledger 写入前，用数据库 writer
+gate 完成 `legacy_v1 → owner_v2` 的停写、一次性转换、部署和激活，旧 writer 在数据库边界
+fail-closed。主动链只按 source allowlist 从 legacy→shadow→durable 渐进切换；每次重建都显式
+注入并回读来源配置和 `WRITER_PROTOCOL=owner_v2`，不能让后续 Compose 调用静默恢复默认值。
 
 规格：`2026-07-28-acceptance-residuals-mc-reliable-delivery-design.md`
 
 ### M-D：外部生态闭环
 
-完成 Ledger 原子幂等、MCP operation journal、查询/取消/补偿、声明式补槽和 provider tool capability。
+完成 Ledger 原子幂等、MCP operation journal、查询/取消/补偿、声明式补槽和 provider tool
+capability；多实例真栈由两个不注册 Registry 的 acceptance worker 共享 PostgreSQL 验证，
+生产 `mcp-bridge` 仍是唯一 Registry 身份。M-D 复用 M-C 控制行执行
+`owner_v2→quiescing→owner_v2`，在双表 catalog 备份、全部 writer 新协议与 gRPC ready 前不
+恢复写入；canonical 的 capability source 只能是 `gateway_rpc`。
 
 规格：`2026-07-28-acceptance-residuals-md-external-ecosystem-design.md`
 
@@ -185,14 +196,23 @@ Task Ledger 继续表达“用户任务是否仍在处理”，NATS Core 继续�
 
 ## 7. 迁移与回滚
 
-所有 schema 变更执行四阶段：
+所有 schema 变更按服务风险执行同一受保护序列：
 
-1. 只读 preflight，输出冲突和影响行数；
-2. 对受影响表做本地 `pg_dump`，备份不进入 git；
-3. 部署兼容新旧结构的代码和追加式 DDL；
-4. backfill 验证后再建立约束。
+1. 只读 preflight，把发现项明确分类为 fatal 或 reportable，并输出影响行数；
+2. 需要 writer freeze 时，只安装可向后兼容的 additive gate/过渡约束并进入
+   `quiescing`；此时不做业务 backfill 或最终收紧；
+3. 写边界稳定后对受影响表做 repo-external `pg_dump`，并校验 `pg_restore -l` catalog；
+4. 在受保护事务中 apply/backfill 并做结构与数据 verify；
+5. 部署兼容新结构的 writer，验证运行协议和 gRPC ready 后，才建立最终约束或 CAS activate，
+   随后二次 verify。
 
-发现活跃 Ledger 重复项或存量声纹重名时，迁移立即停止并报告，不自动删除、合并或改名。
+不需要 freeze 的 M-B 跳过第 2 步；M-C/M-D 必须完整执行。M-C 的 Ledger writer cutover 使用
+数据库控制行与 `FOR SHARE` trigger barrier，带 freeze version 备份和转换，部署只写 owner-v2
+的 writer，再 CAS 激活并二次 verify。任一步失败都保留停写态与仓库外备份，不自动解冻。
+
+活跃 Ledger 重复项、结构不变量破坏、连接或备份失败属于 fatal，迁移立即停止。存量声纹同名和
+places 冲突属于 reportable：保留原模板与事实，把无法确定的展示名/地点留空或跳过该字段，
+迁移可以继续；不得自动删除、合并、改名或猜 winner。
 
 回滚只回滚应用行为，不执行降级 DDL。新增表、列、索引和 proto 字段保留；places dual-read 和 HMI 末端防线保留至少一个稳定版本。
 
@@ -207,11 +227,34 @@ Task Ledger 继续表达“用户任务是否仍在处理”，NATS Core 继续�
 5. 根 Compose 定向重建；
 6. 真栈 E2E、并发或故障注入；
 7. 架构、conventions、验收报告更新；
-8. 独立提交并推送。
+8. 保持精确路径 checkpoint；各切片不单独提交或推送，统一进入该里程碑的第一次实现提交。
 
 每个里程碑结束运行完整 regression journeys，并只在 provider 锁定、无过滤、相关 tracked inputs 干净时刷新 canonical。
 
-实施分支为 `codex/acceptance-m0a-m4-residuals`。暂存必须使用显式文件路径，不得使用会吸入用户未跟踪文件的宽泛命令。
+里程碑的 `SKIP` 和 `PASS_WITH_SKIPS` 都是阻断态；不得用“环境原因合理”把未执行覆盖写成
+通过。每个里程碑固定使用两提交证据流程：
+
+1. 完成实现、测试和普通文档，显式暂存并提交，使 canonical inputs clean；
+2. 从运行中 `GET http://localhost:50059/api/llm/providers` 读取
+   `active.provider/active.model`，不得把根 `.env` 的启动默认当成当前 active；
+3. 运行完整、无 `--id` 的
+   `scripts/run_e2e.py --milestone M-X --lane milestone --full --canonical
+   --provider ... --model ... --stale-policy error`；
+4. 只提交 canonical、验收报告与新鲜证据作为第二个提交，再推送。
+
+直接运行单个 E2E 或 `test/e2e_journeys.py --level regression` 只能用于诊断，不能刷新
+canonical。M-A 至 M-C 的 capability metadata 使用 `bootstrap_static`；M-D 上线
+`GetCapabilities` 后必须切为 `gateway_rpc`。
+
+总体计划和四份子计划在业务执行前先行跟踪，执行期间保持只读；checkbox 进度使用外部任务状态，
+不得为了记录进度制造计划 diff 或把计划混入任一里程碑业务提交。
+
+实施分支为 `codex/acceptance-m0a-m4-residuals`。暂存必须使用显式文件路径，不得使用会吸入上述
+并发用户改动的宽泛命令。
+
+本程序在 2026-07-28 已取得用户对 schema/data migration、CI 变更、commit、push 和根 Compose
+Docker 真栈验证的明确授权；执行者可按本规格与实施计划直接完成这些动作。该授权不包含删除
+仓库文件或历史、rebase/reset/force-push、修改实际根 `.env`、公开生产部署或计划外数据删除。
 
 ## 9. 程序级完成定义
 
@@ -224,4 +267,4 @@ Task Ledger 继续表达“用户任务是否仍在处理”，NATS Core 继续�
 - 多乘员、主动可靠性、Verifier、MCP 与 provider 热切均有真栈证据；
 - 里程碑 canonical 对应最终 tracked input digest；
 - 验收报告逐项标注“已修、历史已修、误判更正、明确后置”，不遗留含糊状态；
-- 分支提交已推送，工作区用户文件保持原样。
+- 分支提交已推送，四个并发用户文件保持原样。

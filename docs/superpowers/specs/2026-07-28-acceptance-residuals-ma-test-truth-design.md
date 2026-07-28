@@ -1,7 +1,7 @@
 # M-A 可信尺子设计：E2E 结果真实性与验收基线
 
 > 日期：2026-07-28
-> 状态：设计已获逐节批准，等待书面规格复核
+> 状态：已获用户书面认可，进入实施计划与开发（2026-07-28）
 > 上位规格：`docs/superpowers/specs/2026-07-28-acceptance-residuals-program-design.md`
 > 审计来源：`docs/reviews/2026-07-26-acceptance-review-m0a-m4.md`
 > 基准提交：`77f5e93`
@@ -131,6 +131,10 @@ flowchart TD
 
 - `test/e2e_manifest.yaml` 是“有哪些 E2E、如何分类、允许什么环境缺口”的唯一
   真相源。
+- `runtime/privacy_registry.py` 是生产 privacy adapter/target 的唯一注册表；manifest 的
+  `privacy.targets` 只是验收视图，`--check` 必须逐字段校验两者同步。生产服务不得读取
+  `test/e2e_manifest.yaml` 或依赖 `test/` 包；里程碑筛选统一调用
+  `targets_for_milestone("M-A"|"M-B"|"M-C"|"M-D")`，不做字符串大小比较。
 - `scripts/run_e2e.py` 是“怎样选择、执行、归一结果、汇总退出”的唯一实现。
 - 每个 E2E 脚本仍拥有自己的业务断言，但不得自行把 skip 打成 pass。
 - Makefile、CI 可以直接调用 Python runner；人工兼容命令可以经过 PS/sh thin wrapper。
@@ -179,54 +183,78 @@ non_secret_config_keys:
 
 privacy:
   owner_columns: [user_id, occupant_id]
-  sql_sources: ["**/*.sql", "**/migrations/**/*.py", "**/pg_store.py"]
+  personal_content_columns: [user_text, speech, prompt_tail, content_head, msg, attrs, note, error]
+  sql_sources: ["**/*.sql", "**/migrations/**/*.py", "**/pg_store.py", "**/db.py", "**/store.py"]
   registry_symbol: PERSONAL_DATA_TARGETS
   targets:
     - id: memory_item
       backend: postgres
+      adapter_key: memory
       lifecycle: deletable
+      enforced_from: M-A
       owner_fields: [user_id, occupant_id]
-      seed_case: gdpr.seed.memory_item
-      count_probe: gdpr.count.memory_item
-      read_probe: gdpr.read.memory_item
+      seed_case: gdpr_ma_memory_item_seed
+      count_probe: gdpr_ma_memory_item_count
+      read_probe: gdpr_ma_memory_item_read
       delete_action: forget_user
-      verify_case: gdpr.verify.memory_item
+      verify_case: gdpr_ma_memory_item_verify
     - id: memory_relation
       backend: postgres
+      adapter_key: memory
       lifecycle: deletable
+      enforced_from: M-A
       owner_fields: [user_id, occupant_id]
-      seed_case: gdpr.seed.memory_relation
-      count_probe: gdpr.count.memory_relation
-      read_probe: gdpr.read.memory_relation
+      seed_case: gdpr_ma_memory_relation_seed
+      count_probe: gdpr_ma_memory_relation_count
+      read_probe: gdpr_ma_memory_relation_read
       delete_action: forget_user
-      verify_case: gdpr.verify.memory_relation
+      verify_case: gdpr_ma_memory_relation_verify
     - id: voiceprint
       backend: postgres
+      adapter_key: memory
       lifecycle: deletable
+      enforced_from: M-A
       owner_fields: [user_id, occupant_id]
-      seed_case: gdpr.seed.voiceprint
-      count_probe: gdpr.count.voiceprint
-      read_probe: gdpr.read.voiceprint
+      seed_case: gdpr_ma_voiceprint_seed
+      count_probe: gdpr_ma_voiceprint_count
+      read_probe: gdpr_ma_voiceprint_read
       delete_action: forget_user
-      verify_case: gdpr.verify.voiceprint
+      verify_case: gdpr_ma_voiceprint_verify
     - id: profile_identity
       backend: redis_or_memory
+      adapter_key: memory
       lifecycle: deletable
+      enforced_from: M-A
       owner_fields: [user_id, occupant_id]
-      seed_case: gdpr.seed.profile_identity
-      count_probe: gdpr.count.profile_identity
-      read_probe: gdpr.read.profile_identity
+      seed_case: gdpr_ma_profile_identity_seed
+      count_probe: gdpr_ma_profile_identity_count
+      read_probe: gdpr_ma_profile_identity_read
       delete_action: forget_user
-      verify_case: gdpr.verify.profile_identity
+      verify_case: gdpr_ma_profile_identity_verify
     - id: session_history
       backend: redis_or_memory
+      adapter_key: memory
       lifecycle: deletable
+      enforced_from: M-A
       owner_fields: [user_id, occupant_id]
-      seed_case: gdpr.seed.session_history
-      count_probe: gdpr.count.session_history
-      read_probe: gdpr.read.session_history
+      seed_case: gdpr_ma_session_history_seed
+      count_probe: gdpr_ma_session_history_count
+      read_probe: gdpr_ma_session_history_read
       delete_action: forget_user
-      verify_case: gdpr.verify.session_history
+      verify_case: gdpr_ma_session_history_verify
+    - id: observability_raw_content
+      backend: sqlite
+      adapter_key: observability
+      storage_variants: [turns, spans, llm_calls, logs]
+      lifecycle: retained_audit
+      enforced_from: M-B
+      owner_fields: [user_id, occupant_id]
+      seed_case: gdpr_mb_observability_seed
+      count_probe: gdpr_mb_observability_count
+      read_probe: gdpr_mb_observability_read
+      retention_reason: diagnostic_metrics_without_raw_owner_content
+      retain_or_redact_action: observability_redact_owner
+      verify_case: gdpr_mb_observability_verify
 
 canonical_inputs:
   - compose.yaml
@@ -266,9 +294,13 @@ tests:
       reasons: []
     isolation:
       persistent_data: true
+      signed_identity: true
+      memory_sessions: 4
 ```
 
-示例只定义 schema 形态，不代替实施时对全部脚本逐一归类。
+示例只定义 schema 形态，不代替实施时对全部脚本逐一归类。最终 manifest 必须逐项冻结
+每个脚本的 lane、timeout、profile、skip policy、`signed_identity`、`persistent_data`、
+`memory_sessions` 和 nightly child args；不能把这些决定留给 runner 现场推断。
 
 ### 6.2 五个主分组
 
@@ -311,6 +343,9 @@ tests:
 10. `non_secret_config_keys` 不包含名称匹配 `KEY`、`TOKEN`、`SECRET`、`PASSWORD`
     或 manifest secret registry 的变量。
 
+协议 helper 固定放在不命中 inventory glob 的 `test/support/e2e.py`；不得把 helper 放到
+`test/e2e_*.py` 后再新增 exclusion。inventory 的真值集合没有例外。
+
 任一失败都属于清单协议失败，普通 CI 必须硬阻断。
 
 ## 7. `scripts/run_e2e.py` CLI 契约
@@ -323,7 +358,7 @@ python scripts/run_e2e.py --group default
 python scripts/run_e2e.py --lane nightly --full
 python scripts/run_e2e.py --id e2e_voiceprint
 python scripts/run_e2e.py --group security --profile mtls
-python scripts/run_e2e.py --lane milestone --full --canonical \
+python scripts/run_e2e.py --milestone M-A --lane milestone --full --canonical \
   --provider minimax --model MiniMax-M3
 ```
 
@@ -337,6 +372,8 @@ python scripts/run_e2e.py --lane milestone --full --canonical \
 - `--full` 表示把当前 group/lane 选择范围内的全部登记脚本跑完；它不表示
   “忽略环境要求”，也不是主分组。
 - `--profile` 只选择 manifest 已声明兼容的运行 profile。
+- `--milestone M-A|M-B|M-C|M-D` 决定 privacy `enforced_from`、当期必做 case 与报告标签；
+  milestone lane 必须显式提供，普通 CI/nightly 不得假冒某个里程碑。
 - `--canonical` 只影响 journeys canonical 写入资格，不改变选集。
 - `--provider` 传给需要 provider lock 的脚本；manifest 不保存凭证。
 - `--model` 与 `--provider` 共同锁定 canonical 的实际大脑；省略 model 时不能写 canonical。
@@ -377,9 +414,32 @@ runner 不解释脚本打印文本中的“PASS”或“SKIP”。终端文本�
 | `E2E_ARTIFACT_DIR` | 当前脚本独占工件目录 |
 | `E2E_LANE` | 当前选择的 lane；无 lane 时为空 |
 | `E2E_PROFILE` | 当前运行 profile |
+| `E2E_IDENTITY_TOKEN` | runner 为当前 `E2E_USER_ID` 预签的短期 WS token；不得写日志、结果或工件 |
+| `E2E_CONTROL_USER_ID` | 仅需要 WS 对照用户的脚本使用；格式仍在本 run namespace |
+| `E2E_CONTROL_IDENTITY_TOKEN` | runner 为对照用户预签的短期 WS token；child 永远拿不到签名 secret |
+| `E2E_MEMORY_SESSION_IDS` | runner 为 manifest 声明的抽取会话预签的 JSON 数组；child 不得自行扩容 |
+| `E2E_STACK_LEASE_ID` | 当前共享栈 lease 的不透明 ID；只用于并发协调 |
+| `E2E_STACK_LEASE_ROLE` | `owner` 或 `child`；child 检测到 secret 或重建企图必须失败 |
 
 子脚本需要多个用户、occupant 或 session 时，只能在这些值后追加稳定后缀，例如
 `-control`、`-a`、`-b`，不能换成 `u1` 或历史用户。
+
+### 7.4 Profile epoch
+
+单个 `--profile auth|mtls|real` 是局部筛选；`--milestone ... --lane milestone --full` 则必须
+按 manifest 自动串行运行 `root/real`、`auth`、`mtls` epoch，不能因为 profile 不同漏掉
+security case，也不能同时让两个 runner 重建共享栈：
+
+- `root/real` 使用根 Compose 默认服务形态；real 仍逐 entry 做 provider/credential preflight；
+- `auth` 临时设置 `AUTH_REQUIRED=true`、`PERMISSIONS_FAIL_OPEN=false`，生成本 run 的普通
+  auth token 与 channel token；普通 token 必须映射到 synthetic user，不复用 `u1`；
+- `mtls` 先通过 `scripts/gen-certs.ps1` 生成 gitignored 证书，再临时设置 `GRPC_TLS=on`
+  重建全 mesh；其 WebSocket 请求仍使用签名 synthetic identity；
+- epoch secret 只存在进程环境和 ACL 受限临时文件；不得出现在命令回显、结果或工件；
+- auth/mTLS 或 child 失败后仍必须恢复无临时环境的根 Compose 默认栈；恢复失败覆盖原结果。
+
+identity stack lease 是 profile coordinator 的唯一 owner。milestone 不允许通过手工预先切栈来
+绕过 profile 记录，也不把 profile unavailable 变成 skip。
 
 ## 8. 子脚本结果协议
 
@@ -495,6 +555,49 @@ skip 必须来自 manifest 声明的稳定原因，例如：
 测试不得继续借用 `u1`、真实用户、上一轮最新一行或“表里任意一条记录”作为删除目标。
 安全 profile 必须把测试 token 映射到本次 synthetic user，不能为了走鉴权而回用默认用户。
 
+Edge Gateway 的匿名回退身份恒为 `AUTH_DEFAULT_USER_ID`，而 S2S E2E 又直接连接
+llm-gateway；两者都不能靠客户端裸传 `user_id` 承载按 run 动态生成的 synthetic user。M-A
+因此增加一个**默认关闭、只接受签名测试身份**的入口，而不是信任客户端上传 owner：
+
+- `E2E_IDENTITY_ENABLED` 缺省 `false`；关闭时测试 token 与普通未知 token完全等价；
+- `E2E_IDENTITY_SECRET` 是 32 字节随机值，只由本次 identity stack lease owner 与 Gateway
+  进程持有，不交给 child，不写根 `.env`、代码、日志或 artifact；
+- payload 是 UTF-8 canonical JSON（键排序、无多余空白），只含 `run_id`、`user_id`、
+  `vehicle_id`、`scopes`、`iat` 和 `exp`；签名输入是 ASCII
+  `e2e.v1.<payload_base64url>`，签名为 HMAC-SHA256 的无 padding base64url，最终 token 固定为
+  `e2e.v1.<payload_base64url>.<signature_base64url>`；
+- Edge Gateway 与 llm-gateway 共享测试向量并使用常量时间校验 HMAC，拒绝过期、非
+  `e2e-*` user、超长有效期和畸形 token；
+  gate 开启且 token 以 `e2e.v1.` 开头时，任一验证失败必须在 WebSocket upgrade 前返回
+  `401`，不得落回 anonymous/`AUTH_DEFAULT_USER_ID`；
+- manifest 允许的 child `timeout_s` 上限固定为 1800 秒，签名宽限固定为 120 秒，因此 token
+  最大 TTL 固定为 1920 秒；runner 必须在每个 child 真正启动前即时签发
+  `iat=now, exp=iat+timeout_s+120`，不得在排队/选集阶段提前签发，也不得用 `min()` 截掉宽限；
+- verifier 固定检查 `iat<=now+5s`、`now<exp`、`0<exp-iat<=1920`；仅允许 `iat` 因秒级取整最多领先
+  verifier 墙钟 5 秒，超过即拒绝。最大 TTL 必须由签名内的 `exp-iat` 判断，不能用
+  `exp-now`，否则超长 token 等到剩余 1920 秒后会被错误接受；
+- Edge Gateway 与 llm-gateway 的边界向量必须证明 `exp-iat=1920` 可接受、1921 被拒，
+  `issued_at+timeout_s+119` 仍有效、`now==exp` 已过期；fake clock 不依赖墙钟等待；
+- runner 只把当前 user 的 `E2E_IDENTITY_TOKEN` 交给 child；需要对照用户经 WS 时另行预签并
+  注入 `E2E_CONTROL_USER_ID/E2E_CONTROL_IDENTITY_TOKEN`，child 永远拿不到 secret；
+- Edge WebSocket 在 upgrade 时验签；`/api/s2s` 在 `session.start` 创建会话前验签，并以
+  token user 覆盖客户端 `user_id`。gate 开启时只有裸 `user_id` 不构成测试身份；
+- runner 通过根 `compose.yaml` 把随机 secret 注入 Edge Gateway 与 llm-gateway，测试结束后
+  以默认环境重建两者恢复关闭态；恢复失败把整轮升级为
+  `FAIL(identity_cleanup)`，不得修改实际根 `.env`；
+- 单 runner 自己是 identity stack lease owner；并发验收由外层协调进程只生成一次 secret、
+  只重建一次 Gateway，两个 runner 继承同一 lease、各自签不同 run/user，只有 lease owner 在
+  全部 runner 退出后恢复关闭态，避免彼此重建踢掉另一轮；
+- 对外并发入口固定为
+  `python scripts/run_e2e.py --milestone M-A --parallel-isolation 2 --id e2e_memory --id e2e_voiceprint`；
+  内部 child 参数固定为 `--lease-child`、`--lease-id`、`--token-bundle`。bundle 位于 ACL
+  受限的临时目录，只含已签 token/session，不含 secret；child 无权重建或恢复服务；
+- destructive setup 前，child 必须收到 Gateway 返回的 `e2e_identity_ack`，并逐字验证
+  run/user/vehicle 等于预签 payload；没有 owner 自证不得执行任何写入或删除；
+- 普通 `AUTH_TOKENS`、`AUTH_REQUIRED` 与匿名回退行为保持不变。
+
+这样 synthetic identity 仍由 Gateway 裁决，客户端不能靠 meta 伪造 owner 或 scopes。
+
 ### 9.2 生命周期
 
 每个会写持久数据的脚本必须执行：
@@ -519,6 +622,26 @@ MCP operation 或会话原文。
 
 显式测试记忆抽取的脚本仍使用 `e2e-*` namespace。抽取开关必须由测试能力声明控制，
 不能再用“看见 e2e 前缀就一律不抽取”的隐含规则使验收静默失效。
+
+### 9.4 声明式抽取能力
+
+`AppendTurnRequest` 不增加客户端可伪造的测试布尔字段。identity stack lease owner 另生成
+32 字节 `E2E_CAPABILITY_SECRET`，只注入 Memory 进程；runner 为 manifest 声明的
+`memory_sessions` 逐个预签：
+
+```text
+domain = "e2emem.v1"
+payload = canonical JSON(run_id,user_id,session_id,capability="memory_extraction",exp)
+session_id = "e2e-mem.v1." + base64url_no_pad(payload) + "." +
+             base64url_no_pad(HMAC-SHA256(secret, domain + "." + payload_part))
+```
+
+Memory 只有在默认关闭的 `E2E_CAPABILITY_ENABLED=true`、签名有效、未过期且 payload user 与
+`AppendTurnRequest.user_id` 精确一致时，才允许该 synthetic session 进入真实抽取；普通
+`e2e-*` session 继续跳过昂贵抽取。child 只能通过 `E2E_MEMORY_SESSION_IDS` 消费预签 session，
+拿不到 secret。篡改、过期、跨 user/run 重放都保持“未获抽取能力”，不能触发抽取，也不能
+扩大生产调用权限。lease owner 同时负责 Edge Gateway、llm-gateway 与 Memory 的单次重建和
+最终恢复；恢复任一服务失败都升级为 cleanup failure。
 
 ## 10. 声纹真值验收
 
@@ -564,7 +687,8 @@ MCP operation 或会话原文。
 最终验收必须改用 `POST /api/privacy/delete` 的 `level=user_all`，不得继续用旧 RPC 冒充全域
 删除。执行当期声明的 user-all 删除动作前必须证明：
 
-- 遍历本次 manifest 中**全部** `lifecycle=deletable` target，分别执行其 `seed_case`；
+- 遍历本次 manifest 中所有 `lifecycle=deletable` 且 `enforced_from` 不晚于当前里程碑的 target，
+  分别执行其 `seed_case`；
 - 每个 deletable target 对 T 的 `count_probe > 0`，且 `read_probe` 能读到本 target 的唯一 sentinel；
 - 每个 deletable target 对 C 也建立非零记录和不同 sentinel；
 - M-A 初始 inventory 至少包含非零的 `memory_item`、`memory_relation`、`voiceprint`、
@@ -594,17 +718,62 @@ target，也不能执行删除后拿零值通过。
 ### 11.3 个人数据目标 inventory
 
 `test/e2e_manifest.yaml::privacy.targets` 是隐私删除契约的目标清单。每项都必须声明
-`lifecycle=deletable|retained_audit|external_reference`、owner 字段、count/read probe 和
-verify case。字段要求按分类固定：
+`lifecycle=deletable|retained_audit|external_reference`、`enforced_from=M-A|M-B|M-C|M-D`、
+`adapter_key`、owner 字段、count/read probe 和 verify case。`enforced_from` 只决定哪一个里程碑开始执行该
+target 的 seed/delete/retain 验收，**不延后分类义务**：M-A 动态发现的 reminder、scene、
+Ledger 等现存 owner 存储必须立即如实分类，不能因为适配器在后续里程碑才实现而漏登记或假标
+retained。字段要求按分类固定：
 
 | lifecycle | 必需额外字段 | 验收含义 |
 |---|---|---|
-| `deletable` | `seed_case`、`delete_action` | 每个里程碑全部 seed 为非零，并验证删除后持久层归零、消费面不可读 |
+| `deletable` | `seed_case`、`delete_action` | 从 `enforced_from` 起每个里程碑 seed 为非零，并验证删除后持久层归零、消费面不可读 |
 | `retained_audit` | `retention_reason`、`retain_or_redact_action` | 验证只保留获准审计字段，owner 内容按声明脱敏，不伪装成物理删除 |
 | `external_reference` | `retention_reason`、`retain_or_redact_action` | 验证本系统删除 owner 映射/缓存，并明确外部商户数据的用户可见处置口径 |
 
 只有 `deletable` 属于本节“删除前必须全部 seed”的集合；另两类不能悄悄漏掉，必须有明确保留/
 脱敏理由和验证动作，也不能被默认分类用来逃避删除测试。
+
+基准代码中已经存在的目标必须在 M-A 一次性登记如下；下列 case/action id 是跨里程碑稳定
+标识，不在实施时重新命名：
+
+| target | adapter | lifecycle / enforced | seed | count | read | action | verify |
+|---|---|---|---|---|---|---|---|
+| `memory_item` | memory | deletable / M-A | `gdpr_ma_memory_item_seed` | `gdpr_ma_memory_item_count` | `gdpr_ma_memory_item_read` | `forget_user` | `gdpr_ma_memory_item_verify` |
+| `memory_relation` | memory | deletable / M-A | `gdpr_ma_memory_relation_seed` | `gdpr_ma_memory_relation_count` | `gdpr_ma_memory_relation_read` | `forget_user` | `gdpr_ma_memory_relation_verify` |
+| `voiceprint` | memory | deletable / M-A | `gdpr_ma_voiceprint_seed` | `gdpr_ma_voiceprint_count` | `gdpr_ma_voiceprint_read` | `forget_user` | `gdpr_ma_voiceprint_verify` |
+| `profile_identity` | memory | deletable / M-A | `gdpr_ma_profile_identity_seed` | `gdpr_ma_profile_identity_count` | `gdpr_ma_profile_identity_read` | `forget_user` | `gdpr_ma_profile_identity_verify` |
+| `session_history` | memory | deletable / M-A | `gdpr_ma_session_history_seed` | `gdpr_ma_session_history_count` | `gdpr_ma_session_history_read` | `forget_user` | `gdpr_ma_session_history_verify` |
+| `profile_places` | memory | deletable / M-B | `gdpr_mb_profile_places_seed` | `gdpr_mb_profile_places_count` | `gdpr_mb_profile_places_read` | `privacy_user_all` | `gdpr_mb_profile_places_verify` |
+| `reminder_item` | reminder | deletable / M-B | `gdpr_mb_reminder_item_seed` | `gdpr_mb_reminder_item_count` | `gdpr_mb_reminder_item_read` | `privacy_user_all` | `gdpr_mb_reminder_item_verify` |
+| `reminder_shared_state` | reminder | deletable / M-B | `gdpr_mb_reminder_state_seed` | `gdpr_mb_reminder_state_count` | `gdpr_mb_reminder_state_read` | `privacy_user_all` | `gdpr_mb_reminder_state_verify` |
+| `scene_item` | scene | deletable / M-B | `gdpr_mb_scene_item_seed` | `gdpr_mb_scene_item_count` | `gdpr_mb_scene_item_read` | `privacy_user_all` | `gdpr_mb_scene_item_verify` |
+| `observability_raw_content` | observability | retained_audit / M-B | `gdpr_mb_observability_seed` | `gdpr_mb_observability_count` | `gdpr_mb_observability_read` | `observability_redact_owner` | `gdpr_mb_observability_verify` |
+| `task_ledger` | ledger | deletable / M-C | `gdpr_mc_task_ledger_seed` | `gdpr_mc_task_ledger_count` | `gdpr_mc_task_ledger_read` | `privacy_user_all` | `gdpr_mc_task_ledger_verify` |
+| `proactive_process_queue` | proactive | deletable / M-C | `gdpr_mc_proactive_queue_seed` | `gdpr_mc_proactive_queue_count` | `gdpr_mc_proactive_queue_read` | `privacy_user_all` | `gdpr_mc_proactive_queue_verify` |
+| `payment_order` | payment | retained_audit / M-D | `gdpr_md_payment_order_seed` | `gdpr_md_payment_order_count` | `gdpr_md_payment_order_read` | `payment_redact_owner` | `gdpr_md_payment_order_verify` |
+| `mcp_demo_order` | mcp | external_reference / M-D | `gdpr_md_mcp_external_seed` | `gdpr_md_mcp_external_count` | `gdpr_md_mcp_external_read` | `mcp_external_unlink` | `gdpr_md_mcp_external_verify` |
+
+`observability_raw_content` 覆盖 SQLite 的 `turns/spans/llm_calls/logs` 四个 storage
+variant，`retention_reason` 固定为 `diagnostic_metrics_without_raw_owner_content`。M-B 必须：
+
+- 给四表补 `user_id/occupant_id` 归属并从请求上下文贯通事件；任何无法确定 owner 的事件在
+  入库前清空 `user_text/speech/prompt_tail/content_head/msg/attrs/note/error`，不能以空 owner
+  保存原文；
+- 对升级前已存在、owner 为空的 legacy 行一次性清空上述原文字段和直接 `session_id` 引用，
+  只保留时间、状态、耗时、token 数、模型、service 与随机 trace id 等不可反查 owner 的诊断字段；
+- `observability_redact_owner` 对 L3/L4 原子清空目标 owner 的 `user_id/occupant_id`、直接
+  `session_id` 引用和全部原文字段；只保留不能反查原 owner 的聚合诊断字段与随机 trace 关联。
+  `badcase=1` 只豁免普通保留期清理，不得豁免用户删除/脱敏；count/planned/redacted 统一按
+  “四表中至少一个原文字段或 owner 引用非空的行数”计，不按字段数重复计数；每个脱敏行同时
+  计入 redacted 与 retained 并携固定 reason，明示“行保留、owner 映射与原文移除”；
+  seed/count/read/verify 必须覆盖四表并证明目标 owner 已不可反查、对照 owner 原文不变。
+
+`payment_order` 与 `mcp_demo_order` 的 seed 字段用于建立非零保留/外部引用前置，不把它们纳入
+物理删除集合。前者的 `retention_reason` 固定为
+`financial_audit_and_chargeback_window`，后者固定为
+`external_merchant_is_system_of_record`。M-B 以后新增的 `research_report`、
+`proactive_delivery`、`mcp_operation` 等存储必须在创建它们的同一变更中追加 inventory、
+adapter 与稳定 case id。
 
 需要先停手或等待外部终态的 deletable target 可以在第一次 user-all 调用返回 `pending`，但不能
 计入 deleted 或让测试提前通过；验收必须驱动声明的 fence/reconcile 条件，使用同一 privacy
@@ -617,9 +786,12 @@ API 时，manifest 的 program-level 删除动作必须切换为 `/api/privacy/d
 places、reminders、routine 以及其他 OwnerKey/owner-shared state 必须在同一变更中完成 lifecycle
 分类、管理适配器与全局删除/脱敏断言。
 
-完整性门禁同时从两类来源动态发现“待分类候选”：
+完整性门禁同时从三类来源动态发现“待分类候选”：
 
 - SQL、migration 和 Postgres store 中带 `user_id` 或 `occupant_id` 所有权列的表；
+- SQL/SQLite 中即使没有 owner 列、但持久化
+  `personal_content_columns` 任一原文列的表；这类模块还必须暴露 `PERSONAL_DATA_TARGETS`，
+  明确 storage variants、owner 补齐/无 owner 脱敏策略与稳定 probe，不能因为缺 owner 而逃过发现；
 - Redis、内存 KV、对象存储等非 SQL 模块暴露的 `PERSONAL_DATA_TARGETS` 常量。
 
 发现集合中的每个候选都必须在 `privacy.targets` 有且仅有一个分类；新增个人数据表或 key
@@ -629,11 +801,16 @@ family 但未登记时，`scripts/run_e2e.py --check` 退出 `2`，普通 CI 硬
 不能靠把列改名、把 SQL 拼成动态字符串或不声明非 SQL key family 规避 inventory；相应存储
 适配层必须提供可静态读取的注册信息。
 
-每个里程碑必须从 manifest 动态取得当时所有 `lifecycle=deletable` 的目标，对 T 与 C **逐项**
-运行 seed、count、read、delete、verify；程序最终里程碑必须覆盖清单中的全部 deletable 目标。
-任何一个目标未建立非零前置、未执行或仅验证存储/消费面之一，都判 `FAIL(precondition)`。
-因此 M-A 可以先落当前 memory-domain，但不会把未来 reminders 或 owner-shared state 永久留在
-GDPR 验收之外。
+每个里程碑必须从 manifest 动态取得所有 `enforced_from` 不晚于当前里程碑且
+`lifecycle=deletable` 的目标，对 T 与 C **逐项**运行 seed、count、read、delete、verify；
+`retained_audit/external_reference` 同样从其 `enforced_from` 开始执行对应验证。程序最终里程碑
+必须覆盖清单中的全部目标。任何已到 enforcement 里程碑的目标未建立非零前置、未执行或仅验证
+存储/消费面之一，都判 `FAIL(precondition)`。
+
+`scripts/run_e2e.py --check` 从 M-A 起就要求所有动态发现目标有且仅有一个分类、合法的
+`enforced_from` 和精确的未来 case/action 标识；只对已到 enforcement 里程碑的目标要求这些
+case/action 当前可执行。这样 M-A 可以先实测 memory-domain，同时 reminder/scene/Ledger 已被
+清单锁定到 M-B/M-C/M-D，不会永久留在 GDPR 验收之外。
 
 ## 12. 动态 manifest + AST 源码守卫
 
@@ -817,7 +994,7 @@ canonical 输出文件自身不进入 digest，避免自引用。报告必须记
 
 1. 通过 `scripts/run_e2e.py ... --canonical` 发起；
 2. runner 选择精确为 `--lane milestone --full`，不得同时使用 `--group`、`--id` 或其他缩小
-   manifest 选集的参数；
+   manifest 选集的参数，且必须显式提供当前 `--milestone M-A|M-B|M-C|M-D`；
 3. journeys 子脚本最终解析后的 `id/suite/lane/level/other` corpus filter 全为空；不仅检查
    CLI，还必须检查环境变量、默认覆盖和 wrapper 转发后的最终值；
 4. `scope.declared == scope.selected`；
@@ -903,7 +1080,7 @@ nightly 不覆盖 canonical。
 每个 M-A、M-B、M-C、M-D 收官使用：
 
 ```text
-python scripts/run_e2e.py --lane milestone --full \
+python scripts/run_e2e.py --milestone M-X --lane milestone --full \
   --canonical --provider <locked-provider> --model <locked-model> \
   --stale-policy error
 ```
@@ -917,6 +1094,28 @@ python scripts/run_e2e.py --lane milestone --full \
 - provider 无漂移；
 - canonical 写入后立即复算 digest；
 - `--stale-policy error` 检查通过。
+
+`locked-provider/model` 必须从运行中 Gateway 的只读
+`GET http://localhost:50059/api/llm/providers` 响应 `active.provider/active.model` 取得，
+不得从根 `.env` 的启动默认值推断。runner 在 full run 前后重复查询并拒绝漂移。M-A 至 M-C
+的 capability source 是 `bootstrap_static`；M-D `GetCapabilities` 上线后必须是
+`gateway_rpc`。
+
+canonical inputs 本身必须先提交，不能在 dirty 工作区生成 canonical。每个里程碑固定采用
+两提交顺序：
+
+1. 完成实现、测试与普通文档回写，显式暂存并提交；
+2. 证明所有 canonical inputs staged/unstaged 都为空；
+3. 查询 runtime active，执行完整、无 `--id` 的 canonical milestone run；
+4. 只暂存 canonical、验收证据和落地记录并作第二个提交；
+5. 两个提交都成功后才推送。
+
+以下四个受保护用户文件不属于 canonical glob，也不得被读取、改写或进入任一提交：
+`docs/reviews/badcase/2026-07-26.md`、
+`docs/reviews/badcase/2026-07-27.md`、
+`docs/design/README.md`、
+`docs/design/2026-07-28-intent-accuracy-data-flywheel.md`。局部 child 或
+`python test/e2e_journeys.py --level regression` 只能诊断，不能刷新 canonical。
 
 canonical 陈旧、缺失或无法复算时，里程碑状态必须是 blocked，不能引用上一里程碑的数字宣布
 当前里程碑完成。
@@ -976,11 +1175,16 @@ canonical 陈旧、缺失或无法复算时，里程碑状态必须是 blocked�
 | MA-28 | 运行时 metadata | full run 更换公开配置值，secret 保持不变 | model/revision/version 均在报告中，non-secret config digest 改变且无 secret 派生物 |
 | MA-29 | lane/filter 命名空间 | runner 精确用 `--lane milestone --full`，journeys child 的 CLI/环境/默认最终均无 corpus filter | 可取得 canonical 资格；任一来源加入 `id/suite/lane/level/other` filter 后资格被拒 |
 | MA-30 | privacy inventory | 临时新增带 `user_id` 的个人数据表但不登记 | `--check` 退出 `2` 并点名存储目标 |
-| MA-31 | GDPR 全目标 seed | milestone 遍历全部 deletable privacy target | 每项删除前非零、删除后目标为零且对照不变 |
+| MA-31 | GDPR 当期全目标 seed | milestone 遍历所有 enforcement 已生效的 deletable privacy target | 每项删除前非零、删除后目标为零且对照不变；未来目标已分类但不假执行 |
 | MA-32 | 历史更正 | 复核 few_shots、PLANNER_TOOLCALL、gateway retry 三项 | 定向证据通过，只更新验收报告状态，业务实现无重复改动 |
 | MA-33 | canonical dirty input | staged 与 unstaged 各修改一个 canonical input 后请求 canonical | 两次均拒绝覆盖，metadata/诊断点名 dirty path；普通 CI warning、milestone 退出 `3` |
 | MA-34 | canonical untracked scope | 在 canonical glob 内增加未跟踪输入，再仅保留 glob 外用户 badcase 文件 | 前者拒绝 canonical；后者不阻断，且报告的 input state 与独立 git 扫描一致 |
 | MA-35 | privacy lifecycle schema | 分别使用非法 `active`、缺 deletable seed、缺 retained reason | `--check` 均退出 `2` 并点名 target 与缺失字段 |
+| MA-36 | 测试身份 fail-closed | gate 开启后分别篡改 Edge WS 与 S2S `e2e.v1` token | Edge upgrade 前 `401`、S2S 创建 session 前关闭；两者都不落回 `u1` |
+| MA-37 | profile epoch | milestone full 依次运行 root/real、auth、mTLS，并在 auth child 中故意失败 | mTLS 仍按策略执行或明确聚合失败；最终默认栈恢复一次，secret 不出现在工件 |
+| MA-38 | 声明式抽取 | 普通、有效签名、篡改、过期、跨 user 五类 synthetic session | 仅有效签名触发真实抽取，其余继续跳过且不扩大权限 |
+| MA-39 | 无 owner 的原文存储 | 临时增加 SQLite `user_text` 表但不登记 target/归属策略 | `--check` 退出 `2`；登记后必须有 owner 补齐、无 owner 脱敏动作和稳定 probe |
+| MA-40 | 签名 token 寿命边界 | fake clock 运行 timeout=1800 child 的 1920/1921 秒边界 | token 覆盖完整 child timeout+120；`exp-iat=1920` 可签发、1921 拒绝，`now==exp` 过期、未来 iat>5s 拒绝 |
 
 ## 17. 迁移顺序
 
@@ -1058,9 +1262,12 @@ M-A 不改业务 schema 或 proto，回滚以 runner、测试和 CI 为单位：
 4. 默认和 milestone lane 不再把 skip 显示为绿色 PASS；
 5. 所有持久化 E2E 使用 `e2e-*` run namespace，失败后无跨运行残留；
 6. 声纹双 accept、A/B 双向隔离、occupant/user `ForgetUser` 全绿；
-7. privacy inventory 中每个 target 都有合法 lifecycle 与分类必需字段；每个里程碑动态遍历
-   **全部** deletable target，为目标/对照用户逐项建立非零前置并验证消费面不可读与持久层归零，
-   新增个人数据目标漏登记硬失败；
+7. privacy inventory 中每个 target 都有合法 lifecycle、`enforced_from` 与分类必需字段；
+   无 owner 但持久化原文的 SQL/SQLite 同样被动态发现，`observability_raw_content` 已登记
+   M-B 的 OwnerKey、legacy 脱敏和四表 probe 契约；每个
+   里程碑动态遍历所有 enforcement 已生效的 target：deletable 为目标/对照用户逐项建立非零
+   前置并验证消费面不可读与持久层归零，retained/external 执行声明的脱敏/解除映射并验证保留
+   理由；最终里程碑覆盖全部目标；新增个人数据目标漏登记硬失败；
 8. 三条中央零领域字面量守卫由动态 manifest/生产方加 AST 驱动；
 9. journeys 报告显式计入 skip，runner selection、最终 journey filters、canonical input dirty
    状态、runtime revision、metadata 与 digest 均可复算；
@@ -1070,4 +1277,8 @@ M-A 不改业务 schema 或 proto，回滚以 runner、测试和 CI 为单位：
 13. 使用新 runner 取得新鲜全量证据，且 canonical 对应最终 tracked input digest；
 14. 全量 Python、HMI、Dashboard 测试无回归；
 15. few_shots、PLANNER_TOOLCALL、gateway retry 三项完成历史证据复核，只更正验收报告；
-16. 用户已有未跟踪文件保持原样。
+16. Edge WS 与 direct S2S 都由同一签名向量裁决 synthetic owner，错误 token 不回落默认用户；
+17. root/real、auth、mTLS profile epoch 全部执行并在任一失败后恢复默认根 Compose；
+18. 每个 signed child 的 token 在启动前即时签发并严格覆盖 `timeout_s+120`，1920/1921 秒边界
+    经 Python/Go/llm-gateway 共享向量验证；
+19. 用户已有未跟踪文件保持原样。

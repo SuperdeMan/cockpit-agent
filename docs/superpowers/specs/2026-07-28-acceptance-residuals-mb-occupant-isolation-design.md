@@ -1,6 +1,6 @@
 # M0a-M4 验收余项：多乘员数据隔离设计
 
-> 状态：设计已获逐节批准，等待书面规格复核（2026-07-28）
+> 状态：已获用户书面认可，进入实施计划与开发（2026-07-28）
 >
 > 范围：会话轮次、历史注入、记忆抽取、常用地点、提醒、HMI 记忆管理、声纹名称与 Edge
 > 本地/混合路径记账
@@ -33,6 +33,8 @@ M4 P4 已经把本轮 `occupant_id` 从 HMI 贯通到 Cloud、Agent SDK、显式
 4. 把 HMI 的“删一条、清画像、删乘员、删用户”拆成四个准确且不可误解的动作。
 5. 让声纹显示名可稳定定位一个 occupant，并保证模板和身份名称投影原子一致。
 6. 对旧 Turn、旧 reminder 和旧 places 给出确定、可审计、可回滚的数据迁移路径。
+7. 让四级删除管理面只接受已验证的 Edge 会话主体，并把 observability 原文按同一 OwnerKey
+   归属、脱敏和验收。
 
 ## 3. 非目标
 
@@ -44,6 +46,7 @@ M4 P4 已经把本轮 `occupant_id` 从 HMI 贯通到 Cloud、Agent SDK、显式
 - 不删除 legacy `profile.places` KV；本批只停止把它当作真相源。
 - 不保存原始声纹音频，仍只保存 embedding。
 - 不改变 `occupant_id` 只用于个性化、不参与授权的安全红线。
+- 不把 confirmation 当作鉴权；删除管理面仍必须先通过 Edge token 的 fail-closed 主体校验。
 
 ## 4. 核心不变量
 
@@ -330,7 +333,8 @@ owner。本批固定：
 
 #### L1：删除一条记忆
 
-输入：`user_id + occupant_id + memory_item_id`。
+输入：已验证 Edge token + `occupant_id + memory_item_id`；`user_id` 由服务端从 token 派生，
+请求 body 不接受该字段。
 
 行为：
 
@@ -379,19 +383,99 @@ owner。本批固定：
 
 ### 8.3 跨服务删除
 
-L3/L4 由 llm-gateway HTTP 管理面按 M-A privacy target registry 编排；本里程碑首批两个域为：
+L3/L4 由 llm-gateway HTTP 管理面按 `runtime/privacy_registry.py` 的生产 registry 编排。
+M-A manifest 的 `privacy.targets` 只用于验收同步检查，生产进程禁止读取 `test/e2e_manifest.yaml`
+或 import `test/`。`runtime/privacy_registry.py` 固定提供 `PrivacyTargetSpec`、adapter key、
+`count/delete/redact/reconcile` protocol 与 bind/resolve；llm-gateway 启动时绑定具体 adapter，
+未绑定的当期 target 是启动/preview 失败，不得静默略过。`llm-gateway` 镜像已复制 `/app/runtime`，
+构建验收必须在镜像内实际 import registry 并解析 M-B targets。
+
+本里程碑生效域为：
 
 1. 调 memory 的 owner/user 删除 RPC；
 2. 调 reminder 进程在同一 gRPC 端口注册的 `ReminderAdmin` 管理 RPC；
-3. 后续里程碑新增 `deletable` target 时必须同时注册管理适配器；M-C 的报告/调研任务域不能
+3. `scene_item` 仍是 user-level 数据，不猜 occupant；只在 L4 调 scene 进程同端口的
+   `SceneAdmin` user-all 管理 RPC，L2/L3 的 scene 计数与删除均为零；
+4. `profile_places`、`reminder_item`、`reminder_shared_state`、`scene_item` 四个 deletable
+   target 必须同时具备 seed/count/read/delete/verify 消费方；
+   `observability_raw_content` retained-audit target 必须具备
+   seed/count/read/redact/verify 消费方；routine 由
+   `memory_item` target 覆盖，不重复登记；
+5. 后续里程碑新增 `deletable` target 时必须同时注册管理适配器；M-C 的报告/调研任务域不能
    只登记 inventory 而不接删除消费方；
-4. 各域使用同一个 `operation_id`，各自保证幂等；
-5. 每个域返回 `planned/deleted/pending/retained/redacted` 分类计数；retained 项必须带理由；
-6. 任一域失败或仍在停手时 HTTP 返回 `207 Multi-Status` 与逐域结果，不宣称全部完成；
-7. 用户重试同一 `operation_id` 时，已完成域返回幂等成功，失败或 pending 域继续执行。
+6. adapter registry 的接口固定为 `count/delete/redact/reconcile`；saga 不按域名硬编码分支；
+7. 各域使用同一个 `operation_id`，各自保证幂等；
+8. 每个域返回 `planned/deleted/pending/retained/redacted` 分类计数；retained 项必须带理由；
+9. 任一域失败或仍在停手时 HTTP 返回 `207 Multi-Status` 与逐域结果，不宣称全部完成；
+10. 用户重试同一 `operation_id` 时，已完成域返回幂等成功，失败或 pending 域继续执行。
 
 不尝试跨 PostgreSQL/Redis/服务做伪分布式事务。诚实的可重试 partial 结果优于只删一半却返回
 成功。
+
+### 8.4 删除管理面的 fail-closed 鉴权
+
+`DELETE /api/memory/items/{item_id}`、`POST /api/privacy/preview` 与
+`POST /api/privacy/delete` 都是管理面，固定要求 `Authorization: Bearer <edge-token>`：
+
+- llm-gateway 使用 `runtime/auth_identity.py` 按 Edge Gateway 已有 `AUTH_TOKENS`
+  格式和同一测试向量验证生产 token；`E2E_IDENTITY_ENABLED=true` 且 token 以 `e2e.v1.`
+  开头时，复用 M-A 的 llm-gateway 签名 verifier。两条分支都返回同一个
+  `{user_id, vehicle_id, scopes}` 主体对象；即使全局 `AUTH_REQUIRED=false`，这三条管理路由仍
+  不允许匿名；
+- token 缺失、畸形或未知返回 `401`；token 有效但不含 `privacy.manage.self` scope 返回 `403`；
+- 服务端只使用 token 解析出的 `user_id`，body/query 出现 `user_id` 一律返回
+  `400 unexpected_identity_field`，不得比较后再继续，也不得回落 `AUTH_DEFAULT_USER_ID`；
+- occupant 仍只决定已验证 user 内的数据路由，不参与鉴权；confirmation 只防误操作，不能替代
+  token/scope；
+- HMI 复用与 WebSocket 相同的 Edge token 发 `Authorization` header；CORS 明确允许
+  `Authorization, Content-Type`，但不得因为 CORS `*` 放宽服务端校验；
+- 浏览器 `OPTIONS` preflight 只返回 CORS 元数据，可不带 token，但不得执行 preview、
+  解析确认词或调用任何 adapter；实际 GET/DELETE/POST 管理请求仍按上述规则 fail closed；
+- 日志、obs 与 response 不回显 token，adapter 只收到派生后的 `user_id` 和经过范围校验的
+  occupant/level。
+
+验收必须分别覆盖：无/坏 token 为 `401`、有效 token 缺 scope 为 `403`、带
+`privacy.manage.self` 的合法同主体 preview/delete 成功、body 夹带 `user_id` 为 `400` 且
+所有 adapter 零调用。
+
+### 8.5 Observability 原文归属与脱敏
+
+M-A 已把 SQLite `turns/spans/llm_calls/logs` 登记为一个
+`observability_raw_content` target，M-B 落地以下策略：
+
+- 四表追加 `user_id/occupant_id`，EventEmitter 的 owner context 从 Edge/Cloud/S2S 已验证请求
+  上下文贯通；显式事件参数优先，空 occupant 规范化 primary；owner context 使用 token/reset
+  或 context manager 在请求 `finally` 恢复，A/B 并发任务不得继承/泄漏彼此 owner；
+- 入库时只要 user owner 为空，就在持久化前清空
+  `user_text/speech/prompt_tail/content_head/msg/attrs/note/error`；不允许“先存原文、以后再补 owner”；
+- additive migration 对所有 legacy owner 为空的行执行同样清空，并同时清空直接 `session_id`
+  引用；只保留 timestamp、状态、耗时、token 数、model/provider/service 与随机 trace id 等
+  不可反查 owner 的诊断字段；
+- L3 按 OwnerKey、L4 按 user 执行 `observability_redact_owner`，在同一事务清空
+  `user_id/occupant_id`、直接 `session_id` 引用和上述原文字段并返回 planned/redacted；只保留
+  不能反查原 owner 的聚合诊断字段与随机 trace 关联。两者统一按“四表中至少一个原文字段或
+  owner 引用非空的行数”计，不按字段数重复计数；
+  每个被脱敏的行同时计 `redacted=1` 与 `retained=1`，后者带
+  `diagnostic_metrics_without_raw_owner_content`，明确“行保留、原文移除”而非把两列当互斥；
+  `badcase=1` 不得豁免；
+- target 的 seed/count/read/verify 覆盖四表、目标 owner 和对照 owner，使用 seed 时保存的
+  opaque row/trace locator 复查脱敏行，验证目标 owner 不可反查、原文归零、非原文诊断字段仍在、
+  对照原文不变。
+
+Observability adapter 经内部 NATS request/reply 调 collector，固定 subject 与 JSON 契约：
+
+```text
+privacy.observability.count
+privacy.observability.redact
+
+request:
+  {operation_id, level:"owner_all"|"user_all", user_id, occupant_id?}
+response:
+  {ok, error, planned, redacted, retained, retention_reason}
+```
+
+`owner_all` 必须有 occupant，`user_all` 禁止 occupant；消息不得含原文。超时/坏响应在 saga 中
+记为该域 `pending/partial`，不得当作零条成功；collector 不暴露浏览器 HTTP 删除路由。
 
 ## 9. Voiceprint 名称与事务
 
@@ -678,7 +762,33 @@ message OwnerDataResponse {
 
 该服务只供 llm-gateway 管理面调用，不暴露为 planner intent，不允许 LLM 产生删除调用。
 
-### 11.3 HTTP API
+### 11.3 Scene admin proto
+
+新增 `proto/cockpit/scene/v1/scene_admin.proto`，由 scene-orchestrator 在现有 gRPC 端口注册
+不进入 Registry capability catalog 的管理服务：
+
+```proto
+service SceneAdmin {
+  rpc CountUserData(SceneUserDataRequest) returns (SceneUserDataResponse);
+  rpc DeleteUserData(SceneUserDataRequest) returns (SceneUserDataResponse);
+}
+
+message SceneUserDataRequest {
+  string user_id = 1;
+  string operation_id = 2;
+}
+
+message SceneUserDataResponse {
+  bool ok = 1;
+  string error = 2;
+  uint32 planned = 3;
+  uint32 deleted = 4;
+}
+```
+
+Scene Admin 只接受 user-all；不提供 owner RPC，不把当前声纹 occupant 当成 scene 所有者。
+
+### 11.4 HTTP API
 
 现有读取 API增加 occupant：
 
@@ -691,18 +801,21 @@ GET /api/memory/context?user_id=&occupant_id=&scopes=profile.places
 删除 API：
 
 ```text
+Authorization: Bearer <edge-token with privacy.manage.self>
+
 DELETE /api/memory/items/{item_id}
-body: { user_id, occupant_id }
+body: { occupant_id }
 
 POST /api/privacy/preview
-body: { level: "owner_memory"|"owner_all"|"user_all", user_id, occupant_id? }
+body: { level: "owner_memory"|"owner_all"|"user_all", occupant_id? }
 
 POST /api/privacy/delete
-body: { level, user_id, occupant_id?, operation_id, confirmation }
+body: { level, occupant_id?, operation_id, confirmation }
 ```
 
 `preview` 返回逐 data class 的 planned/deletable/retained 计数、保留理由与确认文本。`delete`
-返回 deleted/pending/retained/redacted，并拒绝缺失或不匹配的 confirmation。
+返回 deleted/pending/retained/redacted，并拒绝缺失或不匹配的 confirmation。三条路由的
+`user_id` 都只来自已验证 token；body/query 出现该字段直接拒绝。
 
 范围校验固定为：
 
@@ -726,7 +839,7 @@ HMI 把 `reminder_id` 与 pinned owner 写进本轮内部 meta；reminder agent 
 
 ## 12. Schema 变更
 
-本批持久化 schema 变更只有两组：
+本批持久化 schema 变更有三组：
 
 ```sql
 ALTER TABLE reminder_item
@@ -742,6 +855,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_voiceprint_display_name_norm
   ON voiceprint (tenant_id, user_id, display_name_norm)
   WHERE display_name_norm IS NOT NULL;
 ```
+
+Observability SQLite 由 `ObsDB` 的现有加法式迁移逐表执行：
+
+```text
+turns/spans/llm_calls/logs:
+  ADD user_id TEXT NOT NULL DEFAULT ''
+  ADD occupant_id TEXT NOT NULL DEFAULT ''
+  CREATE INDEX <table>_owner ON (user_id, occupant_id)
+```
+
+加列后、恢复原文采集前，必须先把 owner 为空的 legacy 行的所有原文字段清空；这一步是
+forward-only privacy redaction，不尝试从 session 文本或时间猜 owner。
 
 Turn 继续存 Redis JSON，不新增 SQL 表。places 继续存 `memory_item`，不新增表。HMI 删除复用已有
 memory、relation、voiceprint、reminder 表，不建软删除表。
@@ -759,6 +884,10 @@ memory、relation、voiceprint、reminder 表，不建软删除表。
 
 | 场景 | gRPC / 内部错误 | HTTP | 行为 |
 |---|---|---:|---|
+| privacy 管理面缺失/无效 token | `unauthenticated` | 401 | 零 preview、零 adapter 调用 |
+| token 有效但缺 `privacy.manage.self` | `forbidden` | 403 | 零 preview、零 adapter 调用 |
+| privacy body/query 携 `user_id` | `unexpected_identity_field` | 400 | 不信任客户端主体，零 adapter 调用 |
+| privacy `OPTIONS` preflight | — | 204 | 只返回 CORS 元数据，零 preview、零 adapter 调用 |
 | 缺 user id | `missing_owner` / `INVALID_ARGUMENT` | 400 | 不写、不读、不删 |
 | 普通读写 occupant 空 | 规范化 primary | 200 | 不表示共享 |
 | owner 级删除/导出 occupant 空 | `missing_owner` / `INVALID_ARGUMENT` | 400 | 不推断 primary，更不扩大为 user-all |
@@ -782,13 +911,31 @@ memory、relation、voiceprint、reminder 表，不建软删除表。
 
 ### 14.1 阶段 A：兼容结构
 
+preflight 固定区分两类结果：
+
+- `fatal_errors`：连接/权限失败、必要表或列形态不兼容、已有非 NULL norm 违反唯一性、
+  migration 元数据损坏等无法安全 apply 的问题；存在任一项时退出非零并阻止 apply；
+- `reportable_conflicts`：voiceprint 存量规范名冲突、places 的 KV 与 owner-scoped
+  `memory_item` 值冲突；只输出计数和受限 audit，preflight 仍退出 `0` 并允许 apply。
+
+apply 对 reportable conflicts 逐字执行冻结策略：voiceprint 冲突组全部保留
+`display_name_norm=NULL`，places 冲突 `skipped/conflicted+1` 且 `memory_item` 胜出；不自动改名、
+选赢家、覆盖或删除。verify 接受这些显式未决冲突并校验数量与 preflight 一致，不能把它们重新
+判成 fatal。只有 `fatal_errors` 才阻断里程碑。
+
+真实库 apply 前必须用唯一时间戳在仓库外保存 `memory_item/reminder_item/voiceprint` 的
+`pg_dump -Fc`，并用 `pg_restore -l` 逐表确认 TABLE DATA catalog；dump/catalog 缺失、为空或
+不可解析都按 fatal 处理。voiceprint 冲突 audit 同样使用唯一仓库外路径并收紧 ACL，不覆盖旧
+audit，也不进入 git。
+
 1. 追加 proto 字段并 codegen；
 2. 增加 reminder occupant 列、voiceprint nullable norm 与 partial unique index；
 3. reader 兼容旧 Turn，统一映射 primary；
 4. reminder 旧行由列默认值归 primary；
 5. voiceprint 执行规范名冲突审计，唯一组回填 norm，冲突组保持 NULL；
 6. places 开启 primary dual-read，非 primary 禁止 KV fallback；
-7. 此阶段不接收非 primary places/reminder 新写入。
+7. observability 四表加 owner 列，并在任何新原文入库前先脱敏 owner 为空的 legacy 原文；
+8. 此阶段不接收非 primary places/reminder 新写入。
 
 阶段 A 可回滚到旧二进制：DDL 和 proto 均为追加式，legacy KV 未删除，业务数据没有被重分配到
 非 primary。
@@ -802,6 +949,7 @@ memory、relation、voiceprint、reminder 表，不建软删除表。
 5. HMI 切换 owner 查询、精确 item 删除、卡片 pinned owner；
 6. voiceprint 新写入强制非 NULL norm 与事务锁；
 7. 执行 places backfill，但保留 legacy KV。
+8. 所有请求路径给 observability 事件写入 OwnerKey，无 owner 的新事件只保留非原文诊断字段。
 
 进入阶段 B 并产生非 primary 数据后，禁止回滚到不认识 occupant 的旧业务版本。回滚目标必须是
 阶段 A 的兼容版本，否则旧 reminder scheduler 会再次跨 owner 合并，旧 history 会重新共享，旧
@@ -815,7 +963,8 @@ places 只会看到过期 KV。
 2. 上线 L1/L2；
 3. 注册 ReminderAdmin；
 4. 上线 L3/L4 saga；
-5. 删除旧 HMI 的按 scope 单行删除和无确认“清空全部”入口。
+5. 接入 observability redact adapter；
+6. 删除旧 HMI 的按 scope 单行删除和无确认“清空全部”入口。
 
 任何 L3/L4 删除都不可回滚。发布验收必须先证明 preview 计数与实际删除一致，再开放入口。
 
@@ -832,6 +981,7 @@ places 只会看到过期 KV。
 | Places legacy KV | 本批不删除 | 无删除回滚风险 |
 | Voiceprint norm | 停止应用层强制但保留列/索引 | 原 display name 未自动改写 |
 | 用户人工解冲突改名 | 可再次 rename 到未占用名称 | 不能自动恢复旧冲突状态 |
+| Observability owner/原文脱敏 | 保留 owner 列和已脱敏行 | 原文不可恢复；这是预期 privacy 行为 |
 | HMI L1-L4 硬删除 | 无恢复 | 必须 preview、确认、逐域结果与审计 |
 
 ## 16. 验收矩阵
@@ -866,6 +1016,10 @@ places 只会看到过期 KV。
 | MB-H06 | ReminderAdmin 故障 | HTTP 207，memory/reminder 分域状态真实，同 operation id 重试闭合 |
 | MB-H07 | 确认文本错误 | 所有域删除计数为 0 |
 | MB-H08 | owner 删除缺 occupant | 返回 missing_owner；不得删除 primary 或扩大成 user-all |
+| MB-H09 | privacy 管理面无/坏 token | `401`，所有 adapter 零调用，不能靠 confirmation 绕过 |
+| MB-H10 | token 有效但缺 privacy scope | `403`；带 scope 的同一 token 由服务端派生 user 并成功 preview/delete |
+| MB-H11 | body 夹带 user_id | `400 unexpected_identity_field`，不读取客户端主体、零 adapter 调用 |
+| MB-H12 | observability L3/L4 | 四表目标 owner 原文归零、诊断字段保留、badcase 不豁免、对照 owner 不变 |
 | MB-V01 | “泓舟”与全角/空白/大小写等价名 | 规范化后冲突，第二个 occupant 返回 duplicate_name |
 | MB-V02 | 存量重复名 | norm 保持 NULL，原名不改，冲突审计与 `name_conflict` 可见 |
 | MB-V03 | 同 occupant 空名重录 | 保留原名与 norm，只更新模板 |
@@ -873,6 +1027,8 @@ places 只会看到过期 KV。
 | MB-V05 | identity memory 插入故障 | voiceprint/template/name projection 全部回滚 |
 | MB-V06 | rename 冲突 | voiceprint 与 identity.name 均不改变 |
 | MB-V07 | embedding provider 慢或失败 | 事务与 advisory lock 尚未开启；数据库零写入 |
+| MB-M01 | reportable migration conflicts | voiceprint 冲突留 NULL、places 冲突 skip；preflight/apply/verify 均成功且计数一致 |
+| MB-M02 | fatal migration error | preflight 非零、backup/apply 均未开始 |
 | MB-E01 | full-local 车控 | 形成一个完整 owner exchange；memory 失败不阻塞 VAL 结果 |
 | MB-E02 | mixed 本地+云端成功 | 原始 user text 只记一次；本地/云 assistant 在同 exchange，无 cloud 重复写 |
 | MB-E03 | mixed 云端失败 | 本地成功与失败话术记在同 exchange，owner 正确 |
@@ -889,8 +1045,13 @@ places 只会看到过期 KV。
 - places、reminder 的读写与删除均以 OwnerKey 为最小边界；
 - scheduler/geofence 不再合并不同 user 或 occupant；
 - HMI 不存在“单行按钮按 scope 扩大删除”或“无确认全删”；
+- 所有删除管理 API fail-closed 验证 Edge token/scope，服务端派生 user，客户端无法指定 user；
 - L1-L4 删除的 preview、实际计数、partial 结果与重试一致；
+- production saga 只从 `runtime/privacy_registry.py` 枚举 adapter，镜像 import smoke 与 manifest
+  同步门禁通过，生产不读取 `test/`；
+- observability 四表有 OwnerKey；无 owner/legacy 原文先脱敏，L3/L4 target 与对照 probe 全绿；
 - voiceprint 新数据全部有非 NULL norm，存量冲突全部被审计；
+- reportable migration conflicts 不阻断 apply，fatal errors 才阻断；
 - 并发 enroll、事务回滚、旧数据 primary 迁移均有自动化断言；
 - legacy places KV 在本批结束时仍存在，但生产读取只把它作为 primary dual-read 兼容源；
 - occupant_id 仍未进入任何授权、确认或 VAL 安全判断。
