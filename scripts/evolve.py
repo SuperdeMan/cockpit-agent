@@ -63,9 +63,23 @@ _RESTATE_WINDOW_MS = 60_000    # 相邻轮间隔窗
 _CAUSES = ("route_error", "knowledge_gap", "slot_error", "data_source",
            "phrasing", "false_reject", "false_clarify", "infra", "unknown")
 
-# 治理③修改面白名单的反面清单：提案目标或建议文本命中即拒绝生成结构化草案（降级纯报告）
+# 治理③修改面白名单的反面清单：提案的**动态内容**（案族原话 + 归因 note）命中即拒绝
+# 生成结构化草案（降级纯报告）。三类草案的修改面本身固定合法（skills/guides/ 目录、
+# manifest route_hints、eval 语料），这里防的是「内容把人往禁区引」（如归因建议改支付/确认面）。
+# P0 修复（2026-07-28 数据飞轮 §2-①）：此前对**提案全文**做裸子串匹配——"eval 语料候选"
+# 命中 "val"、治理⑥样板命中 "require_confirm"，三类草案 100% 被自己的模板文案触发降级，
+# 提案半环上线四天零产出。现改为：只扫动态内容 + 词边界匹配（eval/validate 不再误伤）。
 PROPOSAL_FORBIDDEN = ("val", "vehicle-abstraction", "permission", "scope",
                       "require_confirm", "confirm_level", "payment", "policies/")
+
+
+def _forbidden_re(term: str) -> "re.Pattern[str]":
+    # 词边界：前后都不是 [a-z0-9_] 才算命中；term 以非字母数字结尾（如 "policies/"）则不加尾界
+    tail = r"(?![a-z0-9_])" if term[-1].isalnum() else ""
+    return re.compile(rf"(?<![a-z0-9_]){re.escape(term)}{tail}", re.IGNORECASE)
+
+
+_FORBIDDEN_RES = tuple(_forbidden_re(t) for t in PROPOSAL_FORBIDDEN)
 
 
 def _collector() -> str:
@@ -81,6 +95,14 @@ def _work_dir(date: str) -> Path:
     d = _OUT_DIR / ".work" / date
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _rel(p: Path) -> Path:
+    """打印用相对路径；输出目录被测试重定向到 _ROOT 外时回退绝对路径。"""
+    try:
+        return p.relative_to(_ROOT)
+    except ValueError:
+        return p
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -131,14 +153,16 @@ def find_restatements(turns: list[dict]) -> set[str]:
     return hits
 
 
-def _plan_mode_of(trace: dict) -> tuple[str, str]:
-    """trace 详情 → (plan_mode, plan 摘要头)。attrs 是 python-repr 字符串（collector 契约）。"""
-    for s in (trace or {}).get("spans", []) or []:
+def _plan_mode_of(detail: dict) -> tuple[str, str]:
+    """/api/turns/{id}（SQLite 持久）详情 → (plan_mode, plan 摘要头)。attrs 已是 dict
+    （db.turn_detail json.loads 过）。P0 断点②修复：此前走 /api/traces 内存环
+    （上限 200 条、collector 重启即空），历史回溯挖不到 plan_mode。"""
+    for s in (detail or {}).get("spans", []) or []:
         if (s.get("node") or "") == "cloud.planning":
-            a = str(s.get("attrs") or "")
-            m = re.search(r"'plan_mode': '([^']+)'", a)
-            p = re.search(r"'plan': [\"'](.{0,160})", a)
-            return (m.group(1) if m else "", p.group(1) if p else "")
+            a = s.get("attrs") or {}
+            if not isinstance(a, dict):
+                a = {}
+            return (str(a.get("plan_mode") or ""), str(a.get("plan") or "")[:160])
     return "", ""
 
 
@@ -173,18 +197,27 @@ def cmd_mine(args) -> Path | None:
             signals.append("clarify_card")
         if t.get("trace_id") in restates:
             signals.append("restatement")
-        plan_mode, plan_head = "", ""
-        # degraded 信号需 trace 详情；只对「已有信号轮」与「全轮」二选一——v1 全轮拉
-        # （日量级几百轮、本地 HTTP，秒级），未中其他信号的 degraded 也能被发现。
-        try:
-            plan_mode, plan_head = _plan_mode_of(
-                _http_json(f"{base}/api/traces/{t.get('trace_id')}"))
-        except Exception:
-            pass
+        # degraded 判定优先读 turns.plan_mode 列（P0 起 collector 从 cloud.planning
+        # span 合并写入，零额外请求）；旧行无列值再走 /api/turns 详情兜底（SQLite 持久，
+        # 不再读 200 条内存环——那是断点②：collector 重启历史就挖不到）。
+        plan_mode, plan_head = str(t.get("plan_mode") or ""), ""
+        if not plan_mode:
+            try:
+                plan_mode, plan_head = _plan_mode_of(
+                    _http_json(f"{base}/api/turns/{t.get('trace_id')}"))
+            except Exception:
+                pass
         if plan_mode.endswith("_degraded"):
             signals.append("plan_degraded")
         if not signals:
             continue
+        if not plan_head:
+            # 报告案族卡要 plan 摘要头：只对命中信号的轮补拉一次详情（不再全轮 N+1）
+            try:
+                _, plan_head = _plan_mode_of(
+                    _http_json(f"{base}/api/turns/{t.get('trace_id')}"))
+            except Exception:
+                pass
         mined.append({
             "trace_id": t.get("trace_id"), "session_id": t.get("session_id"),
             "ts": t.get("ts"), "signals": signals,
@@ -196,7 +229,7 @@ def cmd_mine(args) -> Path | None:
         })
     out = _work_dir(date) / "mined.jsonl"
     _write_jsonl(out, mined)
-    print(f"mine：命中 {len(mined)} 轮 → {out.relative_to(_ROOT)}")
+    print(f"mine：命中 {len(mined)} 轮 → {_rel(out)}")
     for sig in ("badcase_mark", "fallback_speech", "clarify_card", "restatement",
                 "plan_degraded"):
         n = sum(1 for m in mined if sig in m["signals"])
@@ -281,18 +314,27 @@ def cmd_triage(args) -> Path:
         req.meta["caller_service"] = "evolve-triage"
         if args.provider:
             req.meta["llm_provider"] = args.provider
-        try:
-            raw = stub.Complete(req, timeout=60).content
+        raw = ""
+        for attempt in (0, 1):
+            # P0：批失败重试一次（07-27 实测 8/23 归因 unknown 全因单次瞬时失败整批降级）
+            try:
+                raw = stub.Complete(req, timeout=60).content
+                break
+            except Exception as e:
+                if attempt == 0:
+                    print(f"  [{bi}/{len(batches)}] 批失败 {type(e).__name__}，重试一次")
+                else:
+                    print(f"  [{bi}/{len(batches)}] 重试仍失败 {type(e).__name__}，降级 unknown")
+        if raw:
             triaged.extend(parse_triage_reply(raw, batch))
-        except Exception as e:
-            print(f"  [{bi}/{len(batches)}] 批失败 {type(e).__name__}，降级 unknown")
+        else:
             triaged.extend({**it, "cause": "unknown", "cause_note": "triage LLM 失败",
                             "confidence": 0.0} for it in batch)
     _write_jsonl(out_path, triaged)
     dist: dict[str, int] = {}
     for t in triaged:
         dist[t["cause"]] = dist.get(t["cause"], 0) + 1
-    print(f"triage：{len(triaged)} 条 → {out_path.relative_to(_ROOT)}；归因分布 {dist}")
+    print(f"triage：{len(triaged)} 条 → {_rel(out_path)}；归因分布 {dist}")
     return out_path
 
 
@@ -314,9 +356,12 @@ def _kw_pattern(texts: list[str]) -> str:
     return "|".join(top) if top else "TODO"
 
 
-def forbidden_hit(text: str) -> bool:
-    low = (text or "").lower()
-    return any(k in low for k in PROPOSAL_FORBIDDEN)
+def forbidden_hit(text: str) -> str:
+    """动态内容命中禁区词 → 返回命中词（空串=未命中）。词边界匹配（eval ⊅ val）。"""
+    for term, rx in zip(PROPOSAL_FORBIDDEN, _FORBIDDEN_RES):
+        if rx.search(text or ""):
+            return term
+    return ""
 
 
 def cmd_propose(args) -> Path:
@@ -361,17 +406,20 @@ def cmd_propose(args) -> Path:
             proposals.append({"cause": cause, "kind": "report_only",
                               "count": len(items)})
             continue
-        if forbidden_hit(body):
+        # 治理③：只扫动态内容（原话 + 归因 note），模板样板文案不参与判定（P0 修复）
+        dyn = "\n".join(texts + [str(i.get("cause_note") or "") for i in items])
+        hit_term = forbidden_hit(dyn)
+        if hit_term:
             proposals.append({"cause": cause, "kind": "report_only",
                              "count": len(items),
-                             "note": "命中修改面白名单禁区，降级纯报告（治理③）"})
+                             "note": f"动态内容命中修改面禁区「{hit_term}」，降级纯报告（治理③）"})
             continue
         fname = f"{kind}-{cause}.yaml"
         (prop_dir / fname).write_text(body, encoding="utf-8")
         proposals.append({"cause": cause, "kind": kind, "count": len(items),
                           "file": fname})
     _write_jsonl(work / "proposals.jsonl", proposals)
-    print(f"propose：{len(proposals)} 项 → {prop_dir.relative_to(_ROOT)}")
+    print(f"propose：{len(proposals)} 项 → {_rel(prop_dir)}")
     return work / "proposals.jsonl"
 
 
@@ -455,7 +503,7 @@ def cmd_report(args) -> Path:
     _OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = _OUT_DIR / f"{args.date}.md"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"report → {out.relative_to(_ROOT)}")
+    print(f"report → {_rel(out)}")
     return out
 
 

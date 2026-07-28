@@ -81,3 +81,77 @@ def test_kw_pattern_extracts_repeated_words():
     p = ev._kw_pattern(["打开座椅加热", "帮我把座椅加热开一下", "座椅加热打开"])
     assert "座椅加热" in p or "座椅" in p
     assert ev._kw_pattern(["唯一一句"]) == "TODO"     # 无重复词 → 留 TODO 不硬造
+
+
+# ── P0 断点①修复（2026-07-28 数据飞轮 §2-①）：提案半环必须真闭合 ──────────────
+
+def test_forbidden_word_boundary():
+    """词边界：eval/validate 不再误伤 "val"；独立 VAL/文件名仍命中。"""
+    assert not ev.forbidden_hit("原句已归 eval 语料候选")       # 历史自触发元凶
+    assert not ev.forbidden_hit("validate the plan")
+    assert not ev.forbidden_hit("granted_scopes 里没有")        # 下划线连接不算独立词
+    assert ev.forbidden_hit("车控必须经 VAL 下发") == "val"
+    assert ev.forbidden_hit("orchestrator/edge/val.py") == "val"
+    assert ev.forbidden_hit("payment-gateway 补偿") == "payment"
+
+
+def _args(date: str):
+    class A:
+        pass
+
+    a = A()
+    a.date = date
+    return a
+
+
+def test_propose_templates_do_not_self_trigger(tmp_path, monkeypatch):
+    """回归锁：三类草案模板自带 "eval 语料候选"/"require_confirm" 样板文案，
+    绝不能再触发治理③降级（上线四天 0 结构化提案的根因）。"""
+    monkeypatch.setattr(ev, "_OUT_DIR", tmp_path)
+    work = ev._work_dir("2099-01-01")
+    rows = [
+        {"cause": "route_error", "user_text": "帮我看看附近有什么咖啡店",
+         "cause_note": "被视觉能力劫持"},
+        {"cause": "route_error", "user_text": "附近有什么好吃的", "cause_note": ""},
+        {"cause": "knowledge_gap", "user_text": "记住我喜欢乌龙茶",
+         "cause_note": "未规划记忆写入工具"},
+        {"cause": "slot_error", "user_text": "重新录一遍", "cause_note": "槽位误解析"},
+        {"cause": "infra", "user_text": "今天天气怎么样", "cause_note": "网关超时"},
+    ]
+    ev._write_jsonl(work / "triaged.jsonl", rows)
+    ev.cmd_propose(_args("2099-01-01"))
+    proposals = ev._read_jsonl(work / "proposals.jsonl")
+    kinds = {p["cause"]: p["kind"] for p in proposals}
+    assert kinds["route_error"] == "hint"
+    assert kinds["knowledge_gap"] == "guide"
+    assert kinds["slot_error"] == "corpus"
+    assert kinds["infra"] == "report_only"           # 非可提案类仍纯报告
+    assert (work / "proposals" / "hint-route_error.yaml").exists()
+    assert (work / "proposals" / "guide-knowledge_gap.yaml").exists()
+    assert (work / "proposals" / "corpus-slot_error.yaml").exists()
+
+
+def test_propose_dynamic_forbidden_still_bites(tmp_path, monkeypatch):
+    """治理③仍有效：动态内容（归因 note）指向禁区面 → 降级纯报告并注明命中词。"""
+    monkeypatch.setattr(ev, "_OUT_DIR", tmp_path)
+    work = ev._work_dir("2099-01-02")
+    rows = [{"cause": "route_error", "user_text": "帮我付停车费",
+             "cause_note": "建议直接改 payment-gateway 的补偿流程"}]
+    ev._write_jsonl(work / "triaged.jsonl", rows)
+    ev.cmd_propose(_args("2099-01-02"))
+    proposals = ev._read_jsonl(work / "proposals.jsonl")
+    assert proposals[0]["kind"] == "report_only"
+    assert "payment" in proposals[0]["note"]
+
+
+def test_plan_mode_of_reads_sqlite_detail_shape():
+    """P0 断点②：_plan_mode_of 消费 /api/turns/{id}（attrs 已是 dict），不再依赖内存环 repr。"""
+    detail = {"spans": [
+        {"node": "edge.fast", "attrs": {}},
+        {"node": "cloud.planning",
+         "attrs": {"plan_mode": "toolcall_degraded", "plan": "[{\"intent\": \"x\"}]"}},
+    ]}
+    mode, head = ev._plan_mode_of(detail)
+    assert mode == "toolcall_degraded"
+    assert head.startswith("[{")
+    assert ev._plan_mode_of({"spans": [{"node": "a", "attrs": "junk"}]}) == ("", "")
