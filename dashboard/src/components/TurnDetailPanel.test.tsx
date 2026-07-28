@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { vi } from 'vitest'
 
 import { TurnDetailPanel } from './TurnDetailPanel'
@@ -11,6 +11,7 @@ const detail: TurnDetail = {
     status: 'ok', path: 'cloud', input_source: 'voice_wake',
     is_confirmation: 0, ui_card_type: 'route_plan', actions: 1,
     error: '', badcase: 0, note: '',
+    intents: 'navigation.navigate_to', plan_mode: 'toolcall', gold_intents: '',
   },
   spans: [
     {
@@ -59,4 +60,35 @@ test('renders turn content, plan, llm calls and logs', async () => {
   expect(screen.getByText('Plan ready')).toBeTruthy()
   expect(screen.getByText(/标记 badcase/)).toBeTruthy()
   expect(screen.getByText('#trace1234567')).toBeTruthy()
+  // 数据飞轮 P0：plan_mode 徽记 + 实际落域 + gold 标注入口
+  expect(screen.getByText('toolcall')).toBeTruthy()
+  expect(screen.getByText(/实际: navigation.navigate_to/)).toBeTruthy()
+  expect(screen.getByPlaceholderText(/正确落域标注/)).toBeTruthy()
+})
+
+test('saves gold intent label on enter', async () => {
+  const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
+    const u = String(url)
+    if (u.includes('/api/intents/observed')) {
+      return { ok: true, json: async () => ['nearby.search'] }
+    }
+    if (u.includes('/label')) {
+      return { ok: true, json: async () => ({ ok: true }) }
+    }
+    return { ok: true, json: async () => detail }
+  })
+  vi.stubGlobal('fetch', fetchMock)
+
+  render(<TurnDetailPanel traceId="trace123456789" />)
+  await waitFor(() => expect(screen.getByText('导航去机场')).toBeTruthy())
+
+  const input = screen.getByPlaceholderText(/正确落域标注/) as HTMLInputElement
+  fireEvent.change(input, { target: { value: 'nearby.search' } })
+  fireEvent.keyDown(input, { key: 'Enter' })
+
+  await waitFor(() => {
+    const labelCall = fetchMock.mock.calls.find(([u]) => String(u).includes('/label'))
+    expect(labelCall).toBeTruthy()
+    expect(String(labelCall![1]?.body)).toContain('nearby.search')
+  })
 })

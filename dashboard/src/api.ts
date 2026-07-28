@@ -148,6 +148,25 @@ export async function markBadcase(traceId: string, badcase: boolean, note = ''):
   return !!result?.ok
 }
 
+// ── 落域标注（数据飞轮 P0）：一次标注 = 评测用例 + 范例 + 训练标注的原料 ──
+
+export async function saveLabel(traceId: string, goldIntents: string): Promise<boolean> {
+  const response = await fetch(
+    BASE + `/api/turns/${encodeURIComponent(traceId)}/label`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ gold_intents: goldIntents }),
+    },
+  )
+  const result = await response.json().catch(() => null)
+  return !!result?.ok
+}
+
+export function fetchIntentOptions(): Promise<string[]> {
+  return getJSON('/api/intents/observed')
+}
+
 export function exportUrl(traceId: string): string {
   return BASE + `/api/export/${encodeURIComponent(traceId)}`
 }
