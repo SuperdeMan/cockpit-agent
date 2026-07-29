@@ -298,6 +298,7 @@
 | `PLANNER_CATALOG_BUDGET_CHARS` | catalog JSON 字符预算（超则丢尾部 agent）| 否（默认 8000） |
 | `PLANNER_FALLBACK_AGENT` | LLM 规划失败/抽风时的全局兜底 Agent（R2.1 P5，取代硬编码 chitchat）| 否（默认 `chitchat`） |
 | `SKILLS_MODE` | 规划知识 Skill 层（M0b）：`full`=检索注入（默认）\|`canary`\|`shadow`=只检索记录\|`off`；Full Migration 后中央 base 无领域知识，shadow/off 仅研究/debug 档 | 否（默认 `full`） |
+| `EXEMPLARS_MODE` | **落域范例库**（M5 P1，Planner 第三通道、权威链最软层）：`full`=检索注入（默认）\|`shadow`=只检索记录不注入（A/B 对照）\|`off`=关。语料 `skills/exemplars/<domain>.yaml`，契约见该目录 README；调优项 `EXEMPLARS_RETRIEVAL`/`EXEMPLAR_LEX_THRESHOLD`/`EXEMPLAR_SEM_THRESHOLD`/`EXEMPLAR_TOP_K`/`EXEMPLAR_BUDGET`/`EXEMPLAR_EMBED_TIMEOUT` 见 `.env.example`（**默认值只活在 `exemplars.py` 一处**，compose 以 `${VAR:-}` 空默认透传） | 否（默认 `full`） |
 | `PLANNER_TOOLCALL` | 结构化规划输出（M1a submit_plan）：`on`=原生 function calling 强制合法 Plan（默认）\|`off`=JSON 纯文本回退档（对照/应急） | 否（默认 `on`） |
 | `PERMISSIONS_FAIL_OPEN` | 请求无 `granted_scopes` 时的权限兜底（R2.2）：`true`/默认=PoC 全开保持现状；`false`=fail-closed 仅无权限 Agent 可达 + 记结构化审计 | 否（默认 `true`） |
 
@@ -373,6 +374,9 @@
 | `GET /api/logs?trace_id=&service=&level=&q=` | 结构化日志检索（obs.log 落库） |
 | `POST /api/turns/{trace_id}/badcase` | 标记/取消 badcase（`{badcase, note}`；标记轮豁免保留期清理） |
 | `GET /api/export/{trace_id}` | 单轮全量 JSON 导出（badcase 素材/回归用例） |
+| `POST /api/turns/{trace_id}/label` | **正确落域标注**（`{gold_intents: [] \| "a,b"}`，空=清除）——数据飞轮 M5 P0 的标注载体；写 `turns.gold_intents`，与 badcase 同级**保留期豁免**（标注是长期复利资产，不随 TTL 清理） |
+| `GET /api/export/labels` | 标注批量导出 `{exported_at, count, labels:[…]}`（**注意不是裸数组**）——一次标注三资产的原料：`scripts/exemplars.py from-labels` 转范例、RoutingBench 转评测用例 |
+| `GET /api/intents/observed` | 已观测意图清单（`intents ∪ gold_intents` 展开去重）——dashboard 标注输入的候选数据源 |
 | `GET /api/llm/summary?hours=24` | LLM 消耗归属汇总（caller×model：次数/tokens/错误/时延；窗口夹紧 1h~30d）——dashboard「LLM」视图数据源，「(未归属)」= 未带 caller_service 的盲区（§9.2，应恒为零；2026-07-13）|
 
 > **LLM 网关控制面**（`:50059`，非 collector）：`GET /api/llm/providers`（厂商/模型/可用性/active
@@ -388,6 +392,23 @@ Dashboard 使用 `VITE_COLLECTOR_URL` 与 `VITE_EDGE_GATEWAY_URL`，Compose 已�
 "Cockpit Agents"（Agent 时延/成功率/熔断状态）随 provisioning 自动加载，无需手工导入。
 
 ---
+
+### 8.1 `turns` 表的落域可观测列（数据飞轮 M5）
+
+collector 在 `insert_span` 收到 `cloud.planning` 时按 `trace_id` **合并写入**——turn 事件由端侧
+收口发射、天然不含云侧规划信息，两者在存储层汇合，**与事件到达顺序无关**。
+
+| 列 | 来源 | 用途 |
+|---|---|---|
+| `intents` | span `intents`（紧凑发射，意图名是系统枚举值、不过内容门控） | 落域分布聚合（SQL 可 group by），evolve 日报「落域分布」段 |
+| `plan_mode` | span `plan_mode` | `toolcall_degraded` 率等协议层指标；evolve `plan_degraded` 信号 |
+| `gold_intents` | `POST /api/turns/{id}/label` | 人工标注的正确落域。**UPSERT 不碰、保留期豁免** |
+| `edge_nlu` | span `edge_nlu` + `edge_agree`（`!=` 后缀=端云分歧） | **端云分歧轮是信息量最大的标注样本**；evolve 据此产 `edge_divergence` 信号把该轮拉进日报。存成一列而不是逐轮拉 span 详情——分歧要能当扫描期信号，逐轮补拉是 N+1 |
+
+`cloud.planning` span 另有三组归因属性：`skills`（知识层注入名单）、`exemplars`（范例层，
+契约同 skills：`<mode>:<eid>@lex\|vec:分数`，超预算记 `!clipped`）、`hint_effect` +
+`catalog_chars`/`catalog_dropped`。badcase 先看这三行——**没检回 / 检回了没用对 / 检回了却被裁**
+是三种不同的失败。
 
 ## 9. 跨 Agent 状态键（profile KV）
 

@@ -32,16 +32,6 @@
   source: "orchestrator/cloud/tests/test_route_hints.py::test_replace_keeps_when_intent_already_present"
   tags: [research, replace, already_routed]
 
-- text: 导航去第2天换一个
-  initial_intents: []
-  # 真实 manifest 下不是「guard 拦下=什么都不路由」：trip.navigate(90) 的 guard 命中
-  # "换"被拦下，但同一句话也命中 trip.modify(60，无 guard，"第N天...换"）——guard 的实际
-  # 效果是把编辑意图的话让位给 trip.modify，不是产生空结果。这是比简化单测更真实的行为，
-  # 值得钉进基线防回归。
-  expect_final_intents: [trip.modify]
-  source: "orchestrator/cloud/tests/test_route_hints.py::test_guard_blocks_match（真实 manifest 下改判）"
-  tags: [trip, guard, cross_hint]
-
 - text: 搜一下固态电池
   initial_intents: [info.search]
   expect_final_intents: [info.search]
@@ -61,45 +51,9 @@
   source: "orchestrator/cloud/tests/test_planning.py::test_does_not_inject_trip_when_planner_unavailable"
   tags: [trip, guardrail, agent_absent]
 
-- text: 安排去杭州的行程
-  initial_intents: [info.weather]
-  expect_final_intents: [info.weather, trip.plan]   # append：并列补步，顺序=先有后补
-  source: "orchestrator/cloud/tests/test_route_hints.py::test_append_adds_parallel_step_keeping_existing"
-  tags: [trip, append]
-
-- text: 导航第3天
-  initial_intents: []
-  expect_final_intents: [trip.navigate]
-  source: "orchestrator/cloud/tests/test_route_hints.py::test_slot_templating_text_and_capture_group"
-  tags: [trip, replace]
-
 # 赛事追问 vs 周边发现（真机漏例 2026-07-07：「那一场…详情」被 nearby.detail 劫持）
-- text: 葡萄牙那一场看看详情
-  initial_intents: []
-  expect_final_intents: [info.sports]
-  source: "真机：世界杯赛程后追问某队详情，含「那一场」（非「那场」）不被周边劫持"
-  tags: [sports, nearby, guardrail]
-
-- text: 看看它的详情
-  initial_intents: []
-  expect_final_intents: [nearby.detail]
-  source: "真·周边详情不被赛事修复误伤"
-  tags: [nearby, replace]
-
 # 赛事预测指代句（badcase bfb5d9c7 2026-07-19：「这场比赛你预测谁会赢」无联赛词，
 # 原预测 hint 接不住 → planner 缝合幻觉对阵「决赛 法国vs英格兰」且对已完赛季军赛出预测）
-- text: 这场比赛你预测谁会赢
-  initial_intents: []
-  expect_final_intents: [info.sports]
-  source: "badcase bfb5d9c7：指代×预测词召回，handler 内解析焦点场次"
-  tags: [sports, predictive, replace, recall]
-
-- text: 这场比赛你预测谁会赢
-  initial_intents: [info.search]
-  expect_final_intents: [info.sports]
-  source: "badcase bfb5d9c7：LLM 误路由 info.search 也被取代（handler 带锚点让路检索）"
-  tags: [sports, predictive, replace]
-
 - text: 这场官司你觉得谁会赢
   initial_intents: []
   expect_final_intents: []
@@ -149,16 +103,6 @@
   tags: [reminder, guard, conditional]
 
 # 2026-07-27 charging 教科书形态钉死（eval_skills live 采样方差）：paraphrase 归 skill 层
-- text: 去惠州怎么充电
-  initial_intents: []
-  expect_final_intents: [charging.plan]
-  source: "eval_skills live 2026-07-27（canonical 形态 hint 化，R2.1 惯例）"
-  tags: [charging, replace]
-- text: 快没电了，附近找个快充
-  initial_intents: []
-  expect_final_intents: [charging.find]
-  source: "eval_skills live 2026-07-27"
-  tags: [charging, replace]
 # 2026-07-27 评审二批：非车辆设备的「没电/找地方充」不归车辆充电域（guard 设备词）
 - text: 手机快没电了，附近找个地方充一下
   initial_intents: []
@@ -197,11 +141,6 @@
   expect_final_intents: []
   source: "评审三批 2026-07-27"
   tags: [charging, guard, device]
-- text: 车快没电了，帮我找个充电桩
-  initial_intents: []
-  expect_final_intents: [charging.find]
-  source: "评审三批 2026-07-27（「车」主语正锚）"
-  tags: [charging, replace]
 # 2026-07-27 四批：分句首锚被「前一分句藏主语」绕过——锚收紧为句首（含感叹前缀）或「车」后
 - text: 剃须刀坏了，快没电了，找地方充一下
   initial_intents: []
@@ -213,11 +152,6 @@
   expect_final_intents: []
   source: "评审四批 2026-07-27"
   tags: [charging, guard, device]
-- text: 糟了快没电了，赶紧找个充电桩
-  initial_intents: []
-  expect_final_intents: [charging.find]
-  source: "评审四批 2026-07-27（感叹前缀白名单）"
-  tags: [charging, replace]
 - text: 附近有没有充电站
   initial_intents: []
   expect_final_intents: [nearby.search]
@@ -243,18 +177,6 @@
   source: "docs/design/2026-07-11-reminder-agent-design.md §6"
   tags: [reminder, replace]
 
-- text: 我今天有什么安排
-  initial_intents: []
-  expect_final_intents: [reminder.list]
-  source: "docs/design/2026-07-11-reminder-agent-design.md §6"
-  tags: [reminder, list]
-
-- text: 取消第二条提醒
-  initial_intents: []
-  expect_final_intents: [reminder.cancel]
-  source: "docs/design/2026-07-11-reminder-agent-design.md §6"
-  tags: [reminder, cancel]
-
 - text: 打开限速提醒
   initial_intents: []
   expect_final_intents: []
@@ -274,24 +196,6 @@
   tags: [reminder, guard, manual]
 
 # ── reminder P1a（2026-07-11）：update 改时间 / recur / snooze / 序号续接 ──
-- text: 把接孩子的提醒改到五点
-  initial_intents: []
-  expect_final_intents: [reminder.update]
-  source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
-  tags: [reminder, update]
-
-- text: 买牛奶那条推迟到明天九点
-  initial_intents: []
-  expect_final_intents: [reminder.update]
-  source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
-  tags: [reminder, update]
-
-- text: 改第二条到晚上八点
-  initial_intents: []
-  expect_final_intents: [reminder.update]
-  source: "澄清话术「改第几条」的续接词形"
-  tags: [reminder, update, ordinal]
-
 - text: 空调改到26度
   initial_intents: []
   # 设备量：pattern 要求"改到"后紧跟时间词形 + guard 空调 双保险
@@ -317,19 +221,6 @@
   expect_final_intents: [reminder.create]
   source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a snooze"
   tags: [reminder, snooze]
-
-- text: 取消第二条
-  initial_intents: []
-  # 澄清话术「取消第几条」的续接词形（P1a 给 cancel hint 新增序号形）
-  expect_final_intents: [reminder.cancel]
-  source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
-  tags: [reminder, cancel, ordinal]
-
-- text: 完成第二条
-  initial_intents: []
-  expect_final_intents: [reminder.complete]
-  source: "澄清话术「完成第几条」的续接词形"
-  tags: [reminder, complete, ordinal]
 
 # ── reminder P1c 跨域（2026-07-11）：trace b3ecd195 复现词形 ──
 - text: 第一场提醒我观看
@@ -405,12 +296,6 @@
   expect_final_intents: [nearby.search]
   source: "guard 附近/加油站 让位 → nearby(55) 自己接住"
   tags: [search, guardrail, nearby, cross_hint]
-
-- text: 查一下我的待办
-  initial_intents: []
-  expect_final_intents: [reminder.list]
-  source: "guard 待办 让位 → reminder.list(56) 接住（59 不遮蔽 56）"
-  tags: [search, guardrail, reminder, cross_hint]
 
 - text: 搜一下周杰伦的歌
   initial_intents: []
@@ -494,24 +379,6 @@
 # ── 场景编排（scene-orchestrator v0.2，2026-07-14 重设计）──────────────────
 # 核心是 D8 端云分工：驾驶/动力类模式词是端侧 LOCAL_INTENTS（毫秒级秒回），云端 hint 必须
 # 让路，否则把秒回劫持成 1.5s 云端往返。正例=命名生活场景；反例=端侧模式词/说明书问法。
-- text: 开启午休模式
-  initial_intents: []
-  expect_final_intents: [scene.activate]
-  source: "设计 §6 正例：命名生活场景"
-  tags: [scene, activate, replace]
-
-- text: 来个钓鱼模式
-  initial_intents: []
-  expect_final_intents: [scene.activate]
-  source: "设计 §6 正例：用户自建场景激活"
-  tags: [scene, activate, replace]
-
-- text: 露营模式
-  initial_intents: []
-  expect_final_intents: [scene.activate]
-  source: "设计 §6 正例：裸「X模式」短语（弱 LLM 常漏成 chitchat）"
-  tags: [scene, activate, bare]
-
 - text: 帮我创建一个钓鱼模式：座椅放平，开外循环
   initial_intents: []
   expect_final_intents: [scene.create]
@@ -523,24 +390,6 @@
   expect_final_intents: [scene.create]
   source: "设计 §6 正例"
   tags: [scene, create, replace]
-
-- text: 退出露营模式
-  initial_intents: []
-  expect_final_intents: [scene.deactivate]
-  source: "设计 §6 正例"
-  tags: [scene, deactivate, replace]
-
-- text: 删掉钓鱼模式
-  initial_intents: []
-  expect_final_intents: [scene.delete]
-  source: "设计 §6 正例：delete(56) 高于 activate/deactivate，不能被当成激活"
-  tags: [scene, delete, priority]
-
-- text: 开启午休模式，温度改成26
-  initial_intents: []
-  expect_final_intents: [scene.activate]
-  source: "2026-07-14 评审修复：句首激活动词 guard——这是激活+本次参数覆盖，被 update 抢走会把场景默认温度持久改掉"
-  tags: [scene, activate, update-guard]
 
 - text: 退出性能模式
   initial_intents: []
@@ -577,18 +426,6 @@
   expect_final_intents: []
   source: "D8 反例：系统设置类模式词，不归场景编排"
   tags: [scene, edge-mode, guard]
-
-- text: 把钓鱼模式的温度改成24
-  initial_intents: []
-  expect_final_intents: [scene.update]
-  source: "设计 §5.5：端侧已让路（场景管理句），云端确定性接住改场景定义"
-  tags: [scene, update, replace]
-
-- text: 去掉钓鱼模式里的香氛
-  initial_intents: []
-  expect_final_intents: [scene.update]
-  source: "设计 §5.5：动作级改动。delete 的 guard 含「里的」避免整个场景被删掉"
-  tags: [scene, update, guard]
 
 - text: 创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开
   initial_intents: []
@@ -654,48 +491,6 @@
 # pattern 刻意收窄（「别查了」三字太泛 → 只在整句就是它时认）+ guard 排除有自己取消语义
 # 的域（提醒/导航/日程/场景/订单）。下列 expect 均经 --dump 对真实 manifest 实测校准。
 
-- text: 别查了
-  initial_intents: []
-  expect_final_intents: [research.cancel]
-  source: "M2 P0 拉模式取消入口（RFC §2.4）"
-  tags: [research, ledger, cancel, recall]
-
-- text: 不用查了
-  initial_intents: [chitchat.talk]
-  expect_final_intents: [research.cancel]
-  source: "M2 P0：LLM 误落闲聊时确定性纠偏到取消"
-  tags: [research, ledger, cancel, replace]
-
-- text: 取消那个调研
-  initial_intents: []
-  expect_final_intents: [research.cancel]
-  source: "M2 P0 取消（明确宾语）"
-  tags: [research, ledger, cancel, recall]
-
-- text: 固态电池那个调研不用查了
-  initial_intents: []
-  expect_final_intents: [research.cancel]
-  source: "M2 P0 取消（带主题，供 Agent 侧多条消歧）"
-  tags: [research, ledger, cancel, recall]
-
-- text: 那个调研查得怎么样了
-  initial_intents: []
-  expect_final_intents: [research.status]
-  source: "M2 P0 状态查询（确定性直答，不进 LLM）"
-  tags: [research, ledger, status, recall]
-
-- text: 调研有结果了吗
-  initial_intents: [chitchat.talk]
-  expect_final_intents: [research.status]
-  source: "M2 P0 状态查询：闲聊误路由的确定性纠偏"
-  tags: [research, ledger, status, replace]
-
-- text: 还在查吗
-  initial_intents: []
-  expect_final_intents: [research.status]
-  source: "M2 P0 状态查询（整句锚定，防泛化劫持）"
-  tags: [research, ledger, status, recall]
-
 - text: 取消明天的提醒
   initial_intents: [reminder.cancel]
   expect_final_intents: [reminder.cancel]
@@ -740,3 +535,20 @@
   expect_final_intents: [reminder.create]
   source: "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
   tags: [reminder, eta]
+
+# ── vision 触发收窄（数据飞轮 P0 C5，badcase 2026-07-26/27）────────────────────
+# 过宽分支「帮我看看」曾把 LBS 句整句劫持进 vision.describe（replace + 端侧抓帧上传）。
+# 收窄后：LBS 句由 nearby 自己的 hint 确定性接住；真视觉句仍由指代分支覆盖。
+
+- text: 帮我看看附近有什么咖啡店
+  initial_intents: []
+  expect_final_intents: [nearby.search]
+  source: "badcase 2026-07-27 trace 3ba64a65（连续两天被 vision 劫持族）；agents/vision/manifest.yaml 收窄"
+  tags: [vision, nearby, guardrail, hijack]
+
+- text: 帮我看看我附近有什么好吃的
+  initial_intents: []
+  expect_final_intents: [nearby.search]
+  source: "badcase 2026-07-26 trace 0941ec4f（同族）"
+  tags: [vision, nearby, guardrail, hijack]
+

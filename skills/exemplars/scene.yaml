@@ -1,0 +1,164 @@
+# 范例库 · scene 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: scene
+exemplars:
+- text: 不要观星模式了
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.delete
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 关闭午休模式
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.deactivate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 删掉钓鱼模式
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.delete
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 午休模式
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.activate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 帮我创建一个钓鱼模式：座椅放平、开外循环、氛围灯调到10%
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 开启回家模式
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.activate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 我能用什么模式
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.list
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 打开浪漫模式
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.activate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 把钓鱼模式的温度改成24
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.update
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 新建观星模式：氛围灯关掉，座椅放倒，空调22度
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 有哪些场景模式
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.list
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 来个钓鱼模式
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.activate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 看看我的场景
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.list
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 自定义一个遛狗模式：车窗开一半，空调外循环
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 观星模式去掉座椅放平
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.update
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 退出场景
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.deactivate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 退出露营模式
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.deactivate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 钓鱼模式再加一个开香氛
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.update
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 露营模式
+  plan:
+  - agent: scene-orchestrator
+    intent: scene.activate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical

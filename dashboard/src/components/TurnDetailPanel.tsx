@@ -1,7 +1,7 @@
 // 轮次详情（badcase 排查的"一屏全貌"）：内容检查器 + span 瀑布 + LLM 调用 + 关联日志 + 标记/导出。
 import { useEffect, useState } from 'react'
 
-import { fetchExport, fetchTurnDetail, markBadcase } from '../api'
+import { fetchExport, fetchIntentOptions, fetchTurnDetail, markBadcase, saveLabel } from '../api'
 import type { LlmCall, LogEntry, TurnDetail } from '../types'
 import { SpanWaterfall } from './SpanWaterfall'
 
@@ -84,6 +84,8 @@ export function TurnDetailPanel({
   const [detail, setDetail] = useState<TurnDetail | null>(null)
   const [missing, setMissing] = useState(false)
   const [note, setNote] = useState('')
+  const [gold, setGold] = useState('')
+  const [intentOptions, setIntentOptions] = useState<string[]>([])
   const [copied, setCopied] = useState<'trace' | 'json' | null>(null)
 
   useEffect(() => {
@@ -97,6 +99,7 @@ export function TurnDetailPanel({
         else {
           setDetail(d)
           setNote(d.turn?.note || '')
+          setGold(d.turn?.gold_intents || '')
         }
       })
       .catch(() => !cancelled && setMissing(true))
@@ -104,6 +107,13 @@ export function TurnDetailPanel({
       cancelled = true
     }
   }, [traceId, refreshKey])
+
+  // 标注候选（已观测意图清单）：失败静默为空，输入框仍可自由填写
+  useEffect(() => {
+    fetchIntentOptions()
+      .then((options) => setIntentOptions(Array.isArray(options) ? options : []))
+      .catch(() => setIntentOptions([]))
+  }, [])
 
   if (missing) return <p className="empty">没找到这轮（trace_id: {traceId}）</p>
   if (!detail) return <p className="empty">加载中…</p>
@@ -145,6 +155,14 @@ export function TurnDetailPanel({
       onChanged?.()
     }
   }
+  const saveGold = async () => {
+    if (!turn || gold === (turn.gold_intents || '')) return
+    const ok = await saveLabel(traceId, gold)
+    if (ok) {
+      setDetail({ ...detail, turn: { ...turn, gold_intents: gold } })
+      onChanged?.()
+    }
+  }
 
   return (
     <div className="det">
@@ -158,6 +176,16 @@ export function TurnDetailPanel({
               {statusLabel(turn.status)}
             </span>
             {turn.path && <span className="det-chip">{turn.path}</span>}
+            {turn.plan_mode && (
+              <span
+                className={
+                  'det-chip' + (turn.plan_mode.endsWith('_degraded') ? ' det-chip--warn' : '')
+                }
+                title="规划输出通道"
+              >
+                {turn.plan_mode}
+              </span>
+            )}
             {!!turn.is_confirmation && <span className="det-chip">确认轮</span>}
             <span className="det-ms">{Math.round(turn.duration_ms)}ms</span>
             <span className="det-time">{fmtTime(turn.ts)}</span>
@@ -186,6 +214,29 @@ export function TurnDetailPanel({
             onKeyDown={(e) => e.key === 'Enter' && saveNote()}
             placeholder="备注：哪里不对？（回车/失焦保存）"
           />
+        </div>
+      )}
+
+      {turn && (
+        <div className="det-note det-note--gold">
+          <input
+            list="intent-gold-options"
+            value={gold}
+            onChange={(e) => setGold(e.target.value)}
+            onBlur={saveGold}
+            onKeyDown={(e) => e.key === 'Enter' && saveGold()}
+            placeholder="正确落域标注：如 nearby.search（多个用逗号分隔；回车/失焦保存）"
+          />
+          <datalist id="intent-gold-options">
+            {intentOptions.map((option) => (
+              <option key={option} value={option} />
+            ))}
+          </datalist>
+          {turn.intents && (
+            <span className="det-chip" title="本轮实际落域（cloud.planning）">
+              实际: {turn.intents}
+            </span>
+          )}
         </div>
       )}
 

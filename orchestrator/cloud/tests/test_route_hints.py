@@ -135,10 +135,15 @@ def test_empty_hints_noop():
 
 
 def test_charging_hints_never_hijack_device_charging():
-    """评审二/三批回归钉死（阻断 pytest——eval_route_hints 语料在 continue-on-error
-    观测步，语料回归 CI 不红）：SOC/充电词形对手机等设备同样成立，charging 两条 hint
-    绝不接管非车辆主语。防线=正向锚（SOC 短语须在句首/分句首或「车」后）+ 设备 guard
-    保险带；用**真实 manifest** 断言，guard 词表漂移即红。"""
+    """设备充电句绝不被 charging 接管——**这一半在 hint 退役后反而更重要**。
+
+    原测试是双半结构：负例（护栏）+ 正例（召回，断言 hint 应当补出 charging.find/plan）。
+    charging 两条 hint 已于 2026-07-29 退役（M5 P2，跨两档全覆盖双臂裸跑），**正例半边
+    随之删除**——它断言的机制不存在了；那部分保护已改端到端口径迁入 mode_routing_cases。
+    负例半边保留并加强含义：现在它守的不再是「guard 词表别漂」，而是
+    **「别有人在没有新证据的情况下把 charging hint 加回来、又把设备句抢走」**——
+    评审二/三/四批用真机 badcase 换来的那条边界（手机/笔记本/剃须刀/助听器…）
+    在没有 hint 的世界里由 LLM + 范例承担，这里只保证「规则不会再来抢」。"""
     import pathlib
 
     from agents._sdk.manifest import load_manifest
@@ -165,14 +170,3 @@ def test_charging_hints_never_hijack_device_charging():
         eng.apply(plan, t, amap)
         assert not plan.steps, f"{t!r} 被 charging hint 接管: {[s.intent for s in plan.steps]}"
 
-    positives = {
-        "快没电了，附近找个快充": "charging.find",
-        "车快没电了，帮我找个充电桩": "charging.find",
-        "糟了快没电了，赶紧找个充电桩": "charging.find",   # 感叹前缀白名单（评审四批）
-        "去惠州怎么充电": "charging.plan",
-    }
-    for t, intent in positives.items():
-        plan = Plan(steps=[], raw_text=t)
-        eng.apply(plan, t, amap)
-        assert [s.intent for s in plan.steps] == [intent], (
-            f"{t!r} → {[s.intent for s in plan.steps]}（应为 {intent}）")

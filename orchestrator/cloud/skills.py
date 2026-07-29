@@ -34,6 +34,8 @@ from pathlib import Path
 
 import yaml
 
+from . import embedding as _embedding
+
 logger = logging.getLogger("cloud.skills")
 
 def _env_int(name: str, default: int, min_val: int | None = None) -> int:
@@ -78,15 +80,23 @@ def _env_float(name: str, default: float, min_val: float | None = None,
     return v
 
 
+# 公开别名：exemplars.py 共用同一套取值语义（空串回默认 / 垃圾值不崩 / nan·inf 拒收 /
+# 上下限钳制）——这些是三轮评审换来的教训，复制一份就等于分叉一份（M5 P1）。
+env_int, env_float = _env_int, _env_float
+
+
 SKILL_BUDGET = _env_int("SKILL_BUDGET", 2400, min_val=0)    # 注入块字符预算
 SKILL_TOP_K = _env_int("SKILL_TOP_K", 3, min_val=1)         # guide 预筛条数
 _MIN_SCORE = _env_int("SKILL_MIN_SCORE", 10, min_val=1)     # 词法命中阈值（一个关键词=10）。
                                                             # 下限 1 不是 0：score≥0 恒真，
                                                             # 钳 0 仍等于全量放行（评审四批）
 _RESCAN_S = 30.0                                            # 目录重扫最小间隔（热更新）
-_EMBED_COOLDOWN_S = 30.0                                    # 语义通道失败冷却（防抖打日志）
 
 _WORD_RE = re.compile(r"[一-鿿A-Za-z0-9]")
+
+# 范例库（M5 P1）同处 skills/ 但不是 skill 文档：它没有 name/type/knowledge，被
+# SkillStore 扫到只会刷一屏「缺必填字段」告警。目录级排除，契约见 skills/exemplars/README.md。
+_NON_SKILL_DIRS = ("exemplars",)
 
 # schema 顶层键白名单（skills/README.md）：未知键=大概率拼写错误（few_shot/keyword…），
 # 静默忽略会让作者以为知识生效了——告警但不拒载（fail-open）。
@@ -152,7 +162,8 @@ class SkillStore:
         if not force and self._docs and now - self._last_scan < _RESCAN_S:
             return self._docs
         self._last_scan = now
-        paths = sorted(self.root.glob("*/*.yaml")) if self.root.is_dir() else []
+        paths = sorted(p for p in self.root.glob("*/*.yaml")
+                       if p.parent.name not in _NON_SKILL_DIRS) if self.root.is_dir() else []
         mtimes = {}
         for p in paths:
             try:
@@ -273,9 +284,6 @@ def top_guides(text: str, guides: list[SkillDoc], k: int = SKILL_TOP_K,
 
 # ── 语义通道（hybrid；fail-open 回词法） ──────────────────────────────────────
 
-_embed_stub = None
-_embed_fail_ts = 0.0
-
 
 def _sem_threshold() -> float:
     """默认 0.40 由 paraphrase 语料阈值扫描拍板（2026-07-26，eval_skills --retrieval both）：
@@ -289,35 +297,12 @@ def _embed_timeout() -> float:
 
 
 async def _embed_texts(texts: list[str]) -> tuple[list[tuple[float, ...]], str] | None:
-    """经 llm-gateway Embed（与 registry/memory 同源，百炼 text-embedding-v4）。
-    失败/超时 → None + 冷却（该轮及冷却期内纯词法，不刷日志不堵规划）。"""
-    global _embed_stub, _embed_fail_ts
-    if time.monotonic() - _embed_fail_ts < _EMBED_COOLDOWN_S:
-        return None
-    try:
-        from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
-        if _embed_stub is None:
-            from runtime.grpcio import aio_channel
-            _embed_stub = llm_pb2_grpc.LLMGatewayStub(
-                aio_channel(os.getenv("LLM_GATEWAY_ADDR", "llm-gateway:50052")))
-        resp = await _embed_stub.Embed(
-            llm_pb2.EmbedRequest(texts=texts), timeout=_embed_timeout())
-        vecs = [tuple(e.values) for e in resp.embeddings]
-        if len(vecs) != len(texts) or any(not v for v in vecs):
-            raise ValueError(f"embedding 返回异常（{len(vecs)}/{len(texts)}）")
-        return vecs, str(resp.model_used or "")
-    except Exception as e:
-        _embed_fail_ts = time.monotonic()
-        logger.warning("skill 语义预筛不可用，回落纯词法（%.0fs 冷却）: %s",
-                       _EMBED_COOLDOWN_S, e)
-        return None
+    """经共享 Embed 出口（embedding.py：与 exemplars 同 stub 同冷却，故障一起 fail-open）。
+    失败/超时 → None（该轮及冷却期内纯词法，不刷日志不堵规划）。"""
+    return await _embedding.embed_texts(texts, _embed_timeout())
 
 
-def _cos(a: tuple, b: tuple) -> float:
-    s = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    return s / (na * nb) if na and nb else 0.0
+_cos = _embedding.cos
 
 
 async def _semantic_scores(text: str, guides: list[SkillDoc],

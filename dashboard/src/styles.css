@@ -340,6 +340,10 @@ body {
 .det-btn--on { color: var(--amber); border-color: rgba(251, 191, 36, 0.5); background: rgba(251, 191, 36, 0.08); }
 .det-note input { width: 100%; background: rgba(6, 11, 24, 0.7); border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 9px; padding: 8px 11px; color: var(--ink); font-size: 12px; font-family: var(--sans); outline: none; }
 .det-note input::placeholder { color: var(--ink-3); }
+.det-note--gold { display: flex; align-items: center; gap: 8px; }
+.det-note--gold input { border-color: rgba(45, 212, 191, 0.35); }
+.det-note--gold .det-chip { flex-shrink: 0; }
+.det-chip--warn { color: var(--amber); border-color: rgba(251, 191, 36, 0.5); }
 
 .det-sec { border-top: 1px solid var(--stroke); padding-top: 10px; }
 .det-label { font-family: var(--mono); font-size: 9.5px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--ink-3); margin: 0 0 7px; }

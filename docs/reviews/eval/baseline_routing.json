@@ -1,0 +1,5697 @@
+{
+  "meta": {
+    "subject": "routing",
+    "generated_at": "2026-07-29T08:52:00.532384+00:00",
+    "commit": "b979955",
+    "provider": "minimax:MiniMax-M3",
+    "temperature": 0.3,
+    "layers": {
+      "canonical": {
+        "pass": 106,
+        "total": 106,
+        "rate": 1.0
+      },
+      "paraphrase": {
+        "pass": 83,
+        "total": 86,
+        "rate": 0.9651
+      }
+    },
+    "corpus_stats": {
+      "total": 192,
+      "by_layer": {
+        "canonical": 106,
+        "paraphrase": 86
+      },
+      "by_source": {
+        "mode_routing": 120,
+        "route_hints": 59,
+        "skill": 13
+      },
+      "by_domain": {
+        "chitchat": 36,
+        "info": 67,
+        "research": 32,
+        "reminder": 20,
+        "charging": 8,
+        "nearby": 7,
+        "navigation": 5,
+        "trip": 6,
+        "manual": 2,
+        "scene": 11,
+        "vision": 4,
+        "hvac": 1
+      },
+      "skipped": 56,
+      "conflicts": []
+    },
+    "sample_seed": 20260729
+  },
+  "corpus_sources": [
+    {
+      "path": "eval_corpus + skills golden",
+      "count": 192
+    },
+    {
+      "path": "feishu_intents_full.jsonl(sampled)",
+      "count": 120
+    }
+  ],
+  "buckets": {
+    "n1": {
+      "total": 192,
+      "passed": 189,
+      "failures": [
+        {
+          "id": "n1::麒麟电池和4680电池有什么区别",
+          "bucket": "n1",
+          "text": "麒麟电池和4680电池有什么区别",
+          "expected": [
+            "info"
+          ],
+          "actual": [
+            "chitchat"
+          ],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "paraphrase",
+            "mode_routing"
+          ],
+          "source": "mode_routing"
+        },
+        {
+          "id": "n1::最近有什么好看的电影上映",
+          "bucket": "n1",
+          "text": "最近有什么好看的电影上映",
+          "expected": [
+            "info"
+          ],
+          "actual": [
+            "nearby"
+          ],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "paraphrase",
+            "mode_routing"
+          ],
+          "source": "mode_routing"
+        },
+        {
+          "id": "n1::车道保持辅助怎么打开",
+          "bucket": "n1",
+          "text": "车道保持辅助怎么打开",
+          "expected": [
+            "chitchat",
+            "manual"
+          ],
+          "actual": [
+            "lane_assistance"
+          ],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "paraphrase",
+            "mode_routing"
+          ],
+          "source": "mode_routing"
+        }
+      ],
+      "pass_rate": 0.9844
+    },
+    "domain_base": {
+      "total": 120,
+      "passed": 79,
+      "failures": [
+        {
+          "id": "base::第一页",
+          "bucket": "domain_base",
+          "text": "第一页",
+          "expected": "base",
+          "actual": "unknown",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::取消一下",
+          "bucket": "domain_base",
+          "text": "取消一下",
+          "expected": "base",
+          "actual": "information",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::倒数第2页",
+          "bucket": "domain_base",
+          "text": "倒数第2页",
+          "expected": "base",
+          "actual": "unknown",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::重播",
+          "bucket": "domain_base",
+          "text": "重播",
+          "expected": "base",
+          "actual": "media",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::重新播放",
+          "bucket": "domain_base",
+          "text": "重新播放",
+          "expected": "base",
+          "actual": "media",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::重新播放看看",
+          "bucket": "domain_base",
+          "text": "重新播放看看",
+          "expected": "base",
+          "actual": "media",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::确认一下",
+          "bucket": "domain_base",
+          "text": "确认一下",
+          "expected": "base",
+          "actual": "unknown",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::乘客区切上一个",
+          "bucket": "domain_base",
+          "text": "乘客区切上一个",
+          "expected": "base",
+          "actual": "media",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::取消",
+          "bucket": "domain_base",
+          "text": "取消",
+          "expected": "base",
+          "actual": "unknown",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::取消订阅一下",
+          "bucket": "domain_base",
+          "text": "取消订阅一下",
+          "expected": "base",
+          "actual": "unknown",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::退一退",
+          "bucket": "domain_base",
+          "text": "退一退",
+          "expected": "base",
+          "actual": "media",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::请收藏取消",
+          "bucket": "domain_base",
+          "text": "请收藏取消",
+          "expected": "base",
+          "actual": "unknown",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::航班查询",
+          "bucket": "domain_base",
+          "text": "航班查询",
+          "expected": "information",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::大后年的火车票查询",
+          "bucket": "domain_base",
+          "text": "大后年的火车票查询",
+          "expected": "information",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::请将联系人的号码查一下",
+          "bucket": "domain_base",
+          "text": "请将联系人的号码查一下",
+          "expected": "information",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::请把火车票查询一下",
+          "bucket": "domain_base",
+          "text": "请把火车票查询一下",
+          "expected": "information",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::关电视",
+          "bucket": "domain_base",
+          "text": "关电视",
+          "expected": "media",
+          "actual": "setting",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::请将乘客区USB视频关闭",
+          "bucket": "domain_base",
+          "text": "请将乘客区USB视频关闭",
+          "expected": "media",
+          "actual": "setting",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::乘坐区切上一张图片",
+          "bucket": "domain_base",
+          "text": "乘坐区切上一张图片",
+          "expected": "media",
+          "actual": "unknown",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::把司机区和乘客区的多媒体图片给打开",
+          "bucket": "domain_base",
+          "text": "把司机区和乘客区的多媒体图片给打开",
+          "expected": "media",
+          "actual": "navi",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::播电台主播的国家台电台",
+          "bucket": "domain_base",
+          "text": "播电台主播的国家台电台",
+          "expected": "media",
+          "actual": "unknown",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::查询一下200以内的度假村",
+          "bucket": "domain_base",
+          "text": "查询一下200以内的度假村",
+          "expected": "navi",
+          "actual": "information",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::查询中山路的酒店",
+          "bucket": "domain_base",
+          "text": "查询中山路的酒店",
+          "expected": "navi",
+          "actual": "information",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::路线偏好设置为不走高速",
+          "bucket": "domain_base",
+          "text": "路线偏好设置为不走高速",
+          "expected": "navi",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::查询一下4分以上的度假村",
+          "bucket": "domain_base",
+          "text": "查询一下4分以上的度假村",
+          "expected": "navi",
+          "actual": "information",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::请你把到美亚光电还有多久告诉我",
+          "bucket": "domain_base",
+          "text": "请你把到美亚光电还有多久告诉我",
+          "expected": "navi",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::当前限速多少",
+          "bucket": "domain_base",
+          "text": "当前限速多少",
+          "expected": "navi",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::打开车辆模式设置",
+          "bucket": "domain_base",
+          "text": "打开车辆模式设置",
+          "expected": "setting",
+          "actual": "unknown",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::打开静音",
+          "bucket": "domain_base",
+          "text": "打开静音",
+          "expected": "setting",
+          "actual": "media",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::加入下队列看看",
+          "bucket": "domain_base",
+          "text": "加入下队列看看",
+          "expected": "setting",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::关闭时间设置界面看看",
+          "bucket": "domain_base",
+          "text": "关闭时间设置界面看看",
+          "expected": "setting",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::预测型碰撞报警系统等级调一调最高",
+          "bucket": "domain_base",
+          "text": "预测型碰撞报警系统等级调一调最高",
+          "expected": "setting",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::关闭免唤醒词界面看看",
+          "bucket": "domain_base",
+          "text": "关闭免唤醒词界面看看",
+          "expected": "setting",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::请把WiFi关闭一下",
+          "bucket": "domain_base",
+          "text": "请把WiFi关闭一下",
+          "expected": "setting",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::购买流量",
+          "bucket": "domain_base",
+          "text": "购买流量",
+          "expected": "setting",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::湿度查询",
+          "bucket": "domain_base",
+          "text": "湿度查询",
+          "expected": "weather",
+          "actual": "base",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::查一查1日的风向",
+          "bucket": "domain_base",
+          "text": "查一查1日的风向",
+          "expected": "weather",
+          "actual": "information",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::查一下晚上10点的气象如何",
+          "bucket": "domain_base",
+          "text": "查一下晚上10点的气象如何",
+          "expected": "weather",
+          "actual": "information",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::查询一下台北市花地玛堂区大后年的湿度",
+          "bucket": "domain_base",
+          "text": "查询一下台北市花地玛堂区大后年的湿度",
+          "expected": "weather",
+          "actual": "information",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::查一下广州12月13日气象如何",
+          "bucket": "domain_base",
+          "text": "查一下广州12月13日气象如何",
+          "expected": "weather",
+          "actual": "information",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        },
+        {
+          "id": "base::查询一下澳门特别行政区1日湿度",
+          "bucket": "domain_base",
+          "text": "查询一下澳门特别行政区1日湿度",
+          "expected": "weather",
+          "actual": "information",
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "feishu"
+          ],
+          "source": "feishu_8590"
+        }
+      ],
+      "pass_rate": 0.6583
+    }
+  },
+  "overall": {
+    "total": 312,
+    "passed": 268,
+    "pass_rate": 0.859
+  },
+  "cases": {
+    "n1::给我讲个笑话": {
+      "id": "n1::给我讲个笑话",
+      "bucket": "n1",
+      "text": "给我讲个笑话",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::我今天有点累，陪我说说话": {
+      "id": "n1::我今天有点累，陪我说说话",
+      "bucket": "n1",
+      "text": "我今天有点累，陪我说说话",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::你叫什么名字呀": {
+      "id": "n1::你叫什么名字呀",
+      "bucket": "n1",
+      "text": "你叫什么名字呀",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::光合作用是什么原理": {
+      "id": "n1::光合作用是什么原理",
+      "bucket": "n1",
+      "text": "光合作用是什么原理",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::为什么天空是蓝色的": {
+      "id": "n1::为什么天空是蓝色的",
+      "bucket": "n1",
+      "text": "为什么天空是蓝色的",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::三国演义的作者是谁": {
+      "id": "n1::三国演义的作者是谁",
+      "bucket": "n1",
+      "text": "三国演义的作者是谁",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我想一句结婚祝福语": {
+      "id": "n1::帮我想一句结婚祝福语",
+      "bucket": "n1",
+      "text": "帮我想一句结婚祝福语",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::好无聊啊随便聊点什么": {
+      "id": "n1::好无聊啊随便聊点什么",
+      "bucket": "n1",
+      "text": "好无聊啊随便聊点什么",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::一光年大概是多少公里": {
+      "id": "n1::一光年大概是多少公里",
+      "bucket": "n1",
+      "text": "一光年大概是多少公里",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::你觉得人为什么要工作": {
+      "id": "n1::你觉得人为什么要工作",
+      "bucket": "n1",
+      "text": "你觉得人为什么要工作",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::搜一下固态电池最新进展": {
+      "id": "n1::搜一下固态电池最新进展",
+      "bucket": "n1",
+      "text": "搜一下固态电池最新进展",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我查一下iPhone现在什么价格": {
+      "id": "n1::帮我查一下iPhone现在什么价格",
+      "bucket": "n1",
+      "text": "帮我查一下iPhone现在什么价格",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::昨晚的苹果发布会都发布了什么": {
+      "id": "n1::昨晚的苹果发布会都发布了什么",
+      "bucket": "n1",
+      "text": "昨晚的苹果发布会都发布了什么",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::2026年诺贝尔物理学奖颁给谁了": {
+      "id": "n1::2026年诺贝尔物理学奖颁给谁了",
+      "bucket": "n1",
+      "text": "2026年诺贝尔物理学奖颁给谁了",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::现在黄金什么价": {
+      "id": "n1::现在黄金什么价",
+      "bucket": "n1",
+      "text": "现在黄金什么价",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我查一下特斯拉FSD在中国的落地进展": {
+      "id": "n1::帮我查一下特斯拉FSD在中国的落地进展",
+      "bucket": "n1",
+      "text": "帮我查一下特斯拉FSD在中国的落地进展",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::马拉松世界纪录现在是多少": {
+      "id": "n1::马拉松世界纪录现在是多少",
+      "bucket": "n1",
+      "text": "马拉松世界纪录现在是多少",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::搜索量子计算商业化现状": {
+      "id": "n1::搜索量子计算商业化现状",
+      "bucket": "n1",
+      "text": "搜索量子计算商业化现状",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::今年的高考作文题是什么": {
+      "id": "n1::今年的高考作文题是什么",
+      "bucket": "n1",
+      "text": "今年的高考作文题是什么",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::星舰最近一次试飞成功了吗": {
+      "id": "n1::星舰最近一次试飞成功了吗",
+      "bucket": "n1",
+      "text": "星舰最近一次试飞成功了吗",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::今天有什么新闻": {
+      "id": "n1::今天有什么新闻",
+      "bucket": "n1",
+      "text": "今天有什么新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::来点科技新闻": {
+      "id": "n1::来点科技新闻",
+      "bucket": "n1",
+      "text": "来点科技新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::看看今天的头条": {
+      "id": "n1::看看今天的头条",
+      "bucket": "n1",
+      "text": "看看今天的头条",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::有什么国际新闻吗": {
+      "id": "n1::有什么国际新闻吗",
+      "bucket": "n1",
+      "text": "有什么国际新闻吗",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::最近有啥大事": {
+      "id": "n1::最近有啥大事",
+      "bucket": "n1",
+      "text": "最近有啥大事",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::刷刷新闻": {
+      "id": "n1::刷刷新闻",
+      "bucket": "n1",
+      "text": "刷刷新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::新能源汽车的新闻": {
+      "id": "n1::新能源汽车的新闻",
+      "bucket": "n1",
+      "text": "新能源汽车的新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::英伟达最新动态": {
+      "id": "n1::英伟达最新动态",
+      "bucket": "n1",
+      "text": "英伟达最新动态",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::讲讲今天的要闻": {
+      "id": "n1::讲讲今天的要闻",
+      "bucket": "n1",
+      "text": "讲讲今天的要闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::财经资讯有什么值得看的": {
+      "id": "n1::财经资讯有什么值得看的",
+      "bucket": "n1",
+      "text": "财经资讯有什么值得看的",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::深入调研一下固态电池产业链": {
+      "id": "n1::深入调研一下固态电池产业链",
+      "bucket": "n1",
+      "text": "深入调研一下固态电池产业链",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我全面对比一下增程和纯电的优劣": {
+      "id": "n1::帮我全面对比一下增程和纯电的优劣",
+      "bucket": "n1",
+      "text": "帮我全面对比一下增程和纯电的优劣",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::系统了解一下具身智能这个方向": {
+      "id": "n1::系统了解一下具身智能这个方向",
+      "bucket": "n1",
+      "text": "系统了解一下具身智能这个方向",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::彻底搞懂钠离子电池的商业化前景": {
+      "id": "n1::彻底搞懂钠离子电池的商业化前景",
+      "bucket": "n1",
+      "text": "彻底搞懂钠离子电池的商业化前景",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::好好研究下人形机器人赛道": {
+      "id": "n1::好好研究下人形机器人赛道",
+      "bucket": "n1",
+      "text": "好好研究下人形机器人赛道",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::调研一下车规级芯片的国产化进度": {
+      "id": "n1::调研一下车规级芯片的国产化进度",
+      "bucket": "n1",
+      "text": "调研一下车规级芯片的国产化进度",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::深度分析一下低空经济的机会": {
+      "id": "n1::深度分析一下低空经济的机会",
+      "bucket": "n1",
+      "text": "深度分析一下低空经济的机会",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::我想全面了解一下核聚变的最新进展": {
+      "id": "n1::我想全面了解一下核聚变的最新进展",
+      "bucket": "n1",
+      "text": "我想全面了解一下核聚变的最新进展",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我出一份氢能源汽车的完整调研报告": {
+      "id": "n1::帮我出一份氢能源汽车的完整调研报告",
+      "bucket": "n1",
+      "text": "帮我出一份氢能源汽车的完整调研报告",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::研究一下宁德时代的麒麟电池强在哪": {
+      "id": "n1::研究一下宁德时代的麒麟电池强在哪",
+      "bucket": "n1",
+      "text": "研究一下宁德时代的麒麟电池强在哪",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::英伟达最新消息": {
+      "id": "n1::英伟达最新消息",
+      "bucket": "n1",
+      "text": "英伟达最新消息",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::特斯拉这次降价是怎么回事": {
+      "id": "n1::特斯拉这次降价是怎么回事",
+      "bucket": "n1",
+      "text": "特斯拉这次降价是怎么回事",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::看看AI行业最近的新闻": {
+      "id": "n1::看看AI行业最近的新闻",
+      "bucket": "n1",
+      "text": "看看AI行业最近的新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::苹果新品发布会讲了什么": {
+      "id": "n1::苹果新品发布会讲了什么",
+      "bucket": "n1",
+      "text": "苹果新品发布会讲了什么",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::给我读读今天的国际要闻": {
+      "id": "n1::给我读读今天的国际要闻",
+      "bucket": "n1",
+      "text": "给我读读今天的国际要闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::比亚迪出海最近有什么动作": {
+      "id": "n1::比亚迪出海最近有什么动作",
+      "bucket": "n1",
+      "text": "比亚迪出海最近有什么动作",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::美联储这次降息了没有": {
+      "id": "n1::美联储这次降息了没有",
+      "bucket": "n1",
+      "text": "美联储这次降息了没有",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::有没有关于低空经济的新闻": {
+      "id": "n1::有没有关于低空经济的新闻",
+      "bucket": "n1",
+      "text": "有没有关于低空经济的新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::昨晚科技圈发生了什么大事": {
+      "id": "n1::昨晚科技圈发生了什么大事",
+      "bucket": "n1",
+      "text": "昨晚科技圈发生了什么大事",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::小米汽车最新销量数据": {
+      "id": "n1::小米汽车最新销量数据",
+      "bucket": "n1",
+      "text": "小米汽车最新销量数据",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::固态电池现在发展到什么阶段了": {
+      "id": "n1::固态电池现在发展到什么阶段了",
+      "bucket": "n1",
+      "text": "固态电池现在发展到什么阶段了",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::深入了解一下固态电池": {
+      "id": "n1::深入了解一下固态电池",
+      "bucket": "n1",
+      "text": "深入了解一下固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::增程和纯电哪个更适合北方冬天": {
+      "id": "n1::增程和纯电哪个更适合北方冬天",
+      "bucket": "n1",
+      "text": "增程和纯电哪个更适合北方冬天",
+      "expected": [
+        "info",
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我全面梳理一下智能驾驶的技术路线": {
+      "id": "n1::帮我全面梳理一下智能驾驶的技术路线",
+      "bucket": "n1",
+      "text": "帮我全面梳理一下智能驾驶的技术路线",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::麒麟电池和4680电池有什么区别": {
+      "id": "n1::麒麟电池和4680电池有什么区别",
+      "bucket": "n1",
+      "text": "麒麟电池和4680电池有什么区别",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我查一下磷酸铁锂和三元锂的区别": {
+      "id": "n1::帮我查一下磷酸铁锂和三元锂的区别",
+      "bucket": "n1",
+      "text": "帮我查一下磷酸铁锂和三元锂的区别",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::系统梳理一下自动驾驶的法规现状": {
+      "id": "n1::系统梳理一下自动驾驶的法规现状",
+      "bucket": "n1",
+      "text": "系统梳理一下自动驾驶的法规现状",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::具身智能是不是下一个风口，帮我研究研究": {
+      "id": "n1::具身智能是不是下一个风口，帮我研究研究",
+      "bucket": "n1",
+      "text": "具身智能是不是下一个风口，帮我研究研究",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::查一下固态电池": {
+      "id": "n1::查一下固态电池",
+      "bucket": "n1",
+      "text": "查一下固态电池",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::新能源补贴政策帮我彻底弄懂": {
+      "id": "n1::新能源补贴政策帮我彻底弄懂",
+      "bucket": "n1",
+      "text": "新能源补贴政策帮我彻底弄懂",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::地球为什么是圆的": {
+      "id": "n1::地球为什么是圆的",
+      "bucket": "n1",
+      "text": "地球为什么是圆的",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::增程式电动车是什么原理": {
+      "id": "n1::增程式电动车是什么原理",
+      "bucket": "n1",
+      "text": "增程式电动车是什么原理",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::珠穆朗玛峰有多高": {
+      "id": "n1::珠穆朗玛峰有多高",
+      "bucket": "n1",
+      "text": "珠穆朗玛峰有多高",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::现在人民币兑美元汇率是多少": {
+      "id": "n1::现在人民币兑美元汇率是多少",
+      "bucket": "n1",
+      "text": "现在人民币兑美元汇率是多少",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::什么是钙钛矿电池": {
+      "id": "n1::什么是钙钛矿电池",
+      "bucket": "n1",
+      "text": "什么是钙钛矿电池",
+      "expected": [
+        "chitchat",
+        "info"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::苹果公司的创始人是谁": {
+      "id": "n1::苹果公司的创始人是谁",
+      "bucket": "n1",
+      "text": "苹果公司的创始人是谁",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::苹果现在的CEO是谁": {
+      "id": "n1::苹果现在的CEO是谁",
+      "bucket": "n1",
+      "text": "苹果现在的CEO是谁",
+      "expected": [
+        "chitchat",
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::圆周率小数点后十位是多少": {
+      "id": "n1::圆周率小数点后十位是多少",
+      "bucket": "n1",
+      "text": "圆周率小数点后十位是多少",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::一年有多少个星期": {
+      "id": "n1::一年有多少个星期",
+      "bucket": "n1",
+      "text": "一年有多少个星期",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::最近有什么好看的电影上映": {
+      "id": "n1::最近有什么好看的电影上映",
+      "bucket": "n1",
+      "text": "最近有什么好看的电影上映",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "nearby"
+      ],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::昨晚欧冠决赛谁赢了": {
+      "id": "n1::昨晚欧冠决赛谁赢了",
+      "bucket": "n1",
+      "text": "昨晚欧冠决赛谁赢了",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::现在油价多少钱一升": {
+      "id": "n1::现在油价多少钱一升",
+      "bucket": "n1",
+      "text": "现在油价多少钱一升",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::黄金今天什么价格": {
+      "id": "n1::黄金今天什么价格",
+      "bucket": "n1",
+      "text": "黄金今天什么价格",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::世界首富现在是谁": {
+      "id": "n1::世界首富现在是谁",
+      "bucket": "n1",
+      "text": "世界首富现在是谁",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::最新的iPhone是哪一款": {
+      "id": "n1::最新的iPhone是哪一款",
+      "bucket": "n1",
+      "text": "最新的iPhone是哪一款",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::GPT现在最强的版本是哪个": {
+      "id": "n1::GPT现在最强的版本是哪个",
+      "bucket": "n1",
+      "text": "GPT现在最强的版本是哪个",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::国足最近一场比赛赢了吗": {
+      "id": "n1::国足最近一场比赛赢了吗",
+      "bucket": "n1",
+      "text": "国足最近一场比赛赢了吗",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::比特币现在多少钱": {
+      "id": "n1::比特币现在多少钱",
+      "bucket": "n1",
+      "text": "比特币现在多少钱",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::下周有什么新电影上映": {
+      "id": "n1::下周有什么新电影上映",
+      "bucket": "n1",
+      "text": "下周有什么新电影上映",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::水的沸点是多少度": {
+      "id": "n1::水的沸点是多少度",
+      "bucket": "n1",
+      "text": "水的沸点是多少度",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::光速是多少": {
+      "id": "n1::光速是多少",
+      "bucket": "n1",
+      "text": "光速是多少",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::为什么冬天白天变短": {
+      "id": "n1::为什么冬天白天变短",
+      "bucket": "n1",
+      "text": "为什么冬天白天变短",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::秦始皇哪一年统一六国": {
+      "id": "n1::秦始皇哪一年统一六国",
+      "bucket": "n1",
+      "text": "秦始皇哪一年统一六国",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::给我讲讲相对论是怎么回事": {
+      "id": "n1::给我讲讲相对论是怎么回事",
+      "bucket": "n1",
+      "text": "给我讲讲相对论是怎么回事",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::解释一下什么是通货膨胀": {
+      "id": "n1::解释一下什么是通货膨胀",
+      "bucket": "n1",
+      "text": "解释一下什么是通货膨胀",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::月亮为什么有阴晴圆缺": {
+      "id": "n1::月亮为什么有阴晴圆缺",
+      "bucket": "n1",
+      "text": "月亮为什么有阴晴圆缺",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::一公里等于多少英里": {
+      "id": "n1::一公里等于多少英里",
+      "bucket": "n1",
+      "text": "一公里等于多少英里",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::搜一下你叫什么名字": {
+      "id": "n1::搜一下你叫什么名字",
+      "bucket": "n1",
+      "text": "搜一下你叫什么名字",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::查一下我老婆叫什么名字": {
+      "id": "n1::查一下我老婆叫什么名字",
+      "bucket": "n1",
+      "text": "查一下我老婆叫什么名字",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::搜索引擎是怎么工作的": {
+      "id": "n1::搜索引擎是怎么工作的",
+      "bucket": "n1",
+      "text": "搜索引擎是怎么工作的",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::查理和巧克力工厂是谁写的": {
+      "id": "n1::查理和巧克力工厂是谁写的",
+      "bucket": "n1",
+      "text": "查理和巧克力工厂是谁写的",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::搜狐最近的新闻": {
+      "id": "n1::搜狐最近的新闻",
+      "bucket": "n1",
+      "text": "搜狐最近的新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::提醒我晚上看新闻联播": {
+      "id": "n1::提醒我晚上看新闻联播",
+      "bucket": "n1",
+      "text": "提醒我晚上看新闻联播",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::检索一下宁德时代最新财报要点": {
+      "id": "n1::检索一下宁德时代最新财报要点",
+      "bucket": "n1",
+      "text": "检索一下宁德时代最新财报要点",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::展开第三点": {
+      "id": "n1::展开第三点",
+      "bucket": "n1",
+      "text": "展开第三点",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::第二点再详细讲讲": {
+      "id": "n1::第二点再详细讲讲",
+      "bucket": "n1",
+      "text": "第二点再详细讲讲",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::这部分展开说说": {
+      "id": "n1::这部分展开说说",
+      "bucket": "n1",
+      "text": "这部分展开说说",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::上面那点再深入一下": {
+      "id": "n1::上面那点再深入一下",
+      "bucket": "n1",
+      "text": "上面那点再深入一下",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::详细讲讲第3条": {
+      "id": "n1::详细讲讲第3条",
+      "bucket": "n1",
+      "text": "详细讲讲第3条",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::这条新闻详细说说": {
+      "id": "n1::这条新闻详细说说",
+      "bucket": "n1",
+      "text": "这条新闻详细说说",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::再来点财经新闻": {
+      "id": "n1::再来点财经新闻",
+      "bucket": "n1",
+      "text": "再来点财经新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::换个话题，陪我聊聊天吧": {
+      "id": "n1::换个话题，陪我聊聊天吧",
+      "bucket": "n1",
+      "text": "换个话题，陪我聊聊天吧",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::那明天呢": {
+      "id": "n1::那明天呢",
+      "bucket": "n1",
+      "text": "那明天呢",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::那帮我深入调研一下它": {
+      "id": "n1::那帮我深入调研一下它",
+      "bucket": "n1",
+      "text": "那帮我深入调研一下它",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::查一下明天杭州的天气": {
+      "id": "n1::查一下明天杭州的天气",
+      "bucket": "n1",
+      "text": "查一下明天杭州的天气",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::查一下我的电量还能跑多远": {
+      "id": "n1::查一下我的电量还能跑多远",
+      "bucket": "n1",
+      "text": "查一下我的电量还能跑多远",
+      "expected": [
+        "charging",
+        "chitchat"
+      ],
+      "actual": [
+        "charging"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::搜一下附近的加油站": {
+      "id": "n1::搜一下附近的加油站",
+      "bucket": "n1",
+      "text": "搜一下附近的加油站",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::查一下我的待办": {
+      "id": "n1::查一下我的待办",
+      "bucket": "n1",
+      "text": "查一下我的待办",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我查一下茅台股价": {
+      "id": "n1::帮我查一下茅台股价",
+      "bucket": "n1",
+      "text": "帮我查一下茅台股价",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::明天早上八点提醒我开会": {
+      "id": "n1::明天早上八点提醒我开会",
+      "bucket": "n1",
+      "text": "明天早上八点提醒我开会",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::世界杯下一场比赛什么时候开打": {
+      "id": "n1::世界杯下一场比赛什么时候开打",
+      "bucket": "n1",
+      "text": "世界杯下一场比赛什么时候开打",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我导航到虹桥火车站": {
+      "id": "n1::帮我导航到虹桥火车站",
+      "bucket": "n1",
+      "text": "帮我导航到虹桥火车站",
+      "expected": [
+        "navigation"
+      ],
+      "actual": [
+        "navigation"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::附近有什么好吃的川菜馆": {
+      "id": "n1::附近有什么好吃的川菜馆",
+      "bucket": "n1",
+      "text": "附近有什么好吃的川菜馆",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我规划一个杭州两日游": {
+      "id": "n1::帮我规划一个杭州两日游",
+      "bucket": "n1",
+      "text": "帮我规划一个杭州两日游",
+      "expected": [
+        "trip"
+      ],
+      "actual": [
+        "trip"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::查一下这周末适不适合洗车": {
+      "id": "n1::查一下这周末适不适合洗车",
+      "bucket": "n1",
+      "text": "查一下这周末适不适合洗车",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::今天上证指数怎么样": {
+      "id": "n1::今天上证指数怎么样",
+      "bucket": "n1",
+      "text": "今天上证指数怎么样",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::车道保持辅助怎么打开": {
+      "id": "n1::车道保持辅助怎么打开",
+      "bucket": "n1",
+      "text": "车道保持辅助怎么打开",
+      "expected": [
+        "chitchat",
+        "manual"
+      ],
+      "actual": [
+        "lane_assistance"
+      ],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::打开空调然后来点科技新闻": {
+      "id": "n1::打开空调然后来点科技新闻",
+      "bucket": "n1",
+      "text": "打开空调然后来点科技新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "hvac",
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我查一下去机场的路线": {
+      "id": "n1::帮我查一下去机场的路线",
+      "bucket": "n1",
+      "text": "帮我查一下去机场的路线",
+      "expected": [
+        "navigation"
+      ],
+      "actual": [
+        "navigation"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我查一下车的说明书里怎么除雾": {
+      "id": "n1::帮我查一下车的说明书里怎么除雾",
+      "bucket": "n1",
+      "text": "帮我查一下车的说明书里怎么除雾",
+      "expected": [
+        "manual"
+      ],
+      "actual": [
+        "manual"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "mode_routing"
+      ],
+      "source": "mode_routing"
+    },
+    "n1::帮我深入调研一下固态电池": {
+      "id": "n1::帮我深入调研一下固态电池",
+      "bucket": "n1",
+      "text": "帮我深入调研一下固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::导航去第2天换一个": {
+      "id": "n1::导航去第2天换一个",
+      "bucket": "n1",
+      "text": "导航去第2天换一个",
+      "expected": [
+        "trip"
+      ],
+      "actual": [
+        "trip"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::导航第3天": {
+      "id": "n1::导航第3天",
+      "bucket": "n1",
+      "text": "导航第3天",
+      "expected": [
+        "trip"
+      ],
+      "actual": [
+        "trip"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::葡萄牙那一场看看详情": {
+      "id": "n1::葡萄牙那一场看看详情",
+      "bucket": "n1",
+      "text": "葡萄牙那一场看看详情",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::看看它的详情": {
+      "id": "n1::看看它的详情",
+      "bucket": "n1",
+      "text": "看看它的详情",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::这场比赛你预测谁会赢": {
+      "id": "n1::这场比赛你预测谁会赢",
+      "bucket": "n1",
+      "text": "这场比赛你预测谁会赢",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::明天早上八点提醒我带充电线": {
+      "id": "n1::明天早上八点提醒我带充电线",
+      "bucket": "n1",
+      "text": "明天早上八点提醒我带充电线",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::到时候提醒我什么时候该出发": {
+      "id": "n1::到时候提醒我什么时候该出发",
+      "bucket": "n1",
+      "text": "到时候提醒我什么时候该出发",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::去惠州怎么充电": {
+      "id": "n1::去惠州怎么充电",
+      "bucket": "n1",
+      "text": "去惠州怎么充电",
+      "expected": [
+        "charging"
+      ],
+      "actual": [
+        "charging"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::快没电了，附近找个快充": {
+      "id": "n1::快没电了，附近找个快充",
+      "bucket": "n1",
+      "text": "快没电了，附近找个快充",
+      "expected": [
+        "charging"
+      ],
+      "actual": [
+        "charging"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::车快没电了，帮我找个充电桩": {
+      "id": "n1::车快没电了，帮我找个充电桩",
+      "bucket": "n1",
+      "text": "车快没电了，帮我找个充电桩",
+      "expected": [
+        "charging"
+      ],
+      "actual": [
+        "charging"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::糟了快没电了，赶紧找个充电桩": {
+      "id": "n1::糟了快没电了，赶紧找个充电桩",
+      "bucket": "n1",
+      "text": "糟了快没电了，赶紧找个充电桩",
+      "expected": [
+        "charging"
+      ],
+      "actual": [
+        "charging"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::附近有没有充电站": {
+      "id": "n1::附近有没有充电站",
+      "bucket": "n1",
+      "text": "附近有没有充电站",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::附近有没有停车场": {
+      "id": "n1::附近有没有停车场",
+      "bucket": "n1",
+      "text": "附近有没有停车场",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::半小时后提醒我给客户回电话": {
+      "id": "n1::半小时后提醒我给客户回电话",
+      "bucket": "n1",
+      "text": "半小时后提醒我给客户回电话",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::我今天有什么安排": {
+      "id": "n1::我今天有什么安排",
+      "bucket": "n1",
+      "text": "我今天有什么安排",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::取消第二条提醒": {
+      "id": "n1::取消第二条提醒",
+      "bucket": "n1",
+      "text": "取消第二条提醒",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::把接孩子的提醒改到五点": {
+      "id": "n1::把接孩子的提醒改到五点",
+      "bucket": "n1",
+      "text": "把接孩子的提醒改到五点",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::买牛奶那条推迟到明天九点": {
+      "id": "n1::买牛奶那条推迟到明天九点",
+      "bucket": "n1",
+      "text": "买牛奶那条推迟到明天九点",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::改第二条到晚上八点": {
+      "id": "n1::改第二条到晚上八点",
+      "bucket": "n1",
+      "text": "改第二条到晚上八点",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::每天早上八点提醒我吃药": {
+      "id": "n1::每天早上八点提醒我吃药",
+      "bucket": "n1",
+      "text": "每天早上八点提醒我吃药",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::过10分钟再提醒我": {
+      "id": "n1::过10分钟再提醒我",
+      "bucket": "n1",
+      "text": "过10分钟再提醒我",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::取消第二条": {
+      "id": "n1::取消第二条",
+      "bucket": "n1",
+      "text": "取消第二条",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::完成第二条": {
+      "id": "n1::完成第二条",
+      "bucket": "n1",
+      "text": "完成第二条",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::第一场提醒我观看": {
+      "id": "n1::第一场提醒我观看",
+      "bucket": "n1",
+      "text": "第一场提醒我观看",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::开赛前半小时提醒我": {
+      "id": "n1::开赛前半小时提醒我",
+      "bucket": "n1",
+      "text": "开赛前半小时提醒我",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::帮我查一下并深入调研固态电池": {
+      "id": "n1::帮我查一下并深入调研固态电池",
+      "bucket": "n1",
+      "text": "帮我查一下并深入调研固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::今天天气怎么样，适合出行吗": {
+      "id": "n1::今天天气怎么样，适合出行吗",
+      "bucket": "n1",
+      "text": "今天天气怎么样，适合出行吗",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::适合出门吗，外面天气如何": {
+      "id": "n1::适合出门吗，外面天气如何",
+      "bucket": "n1",
+      "text": "适合出门吗，外面天气如何",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::开启午休模式": {
+      "id": "n1::开启午休模式",
+      "bucket": "n1",
+      "text": "开启午休模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::来个钓鱼模式": {
+      "id": "n1::来个钓鱼模式",
+      "bucket": "n1",
+      "text": "来个钓鱼模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::露营模式": {
+      "id": "n1::露营模式",
+      "bucket": "n1",
+      "text": "露营模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::帮我创建一个钓鱼模式：座椅放平，开外循环": {
+      "id": "n1::帮我创建一个钓鱼模式：座椅放平，开外循环",
+      "bucket": "n1",
+      "text": "帮我创建一个钓鱼模式：座椅放平，开外循环",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::新建一个下雨模式，关窗加除雾": {
+      "id": "n1::新建一个下雨模式，关窗加除雾",
+      "bucket": "n1",
+      "text": "新建一个下雨模式，关窗加除雾",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::退出露营模式": {
+      "id": "n1::退出露营模式",
+      "bucket": "n1",
+      "text": "退出露营模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::删掉钓鱼模式": {
+      "id": "n1::删掉钓鱼模式",
+      "bucket": "n1",
+      "text": "删掉钓鱼模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::开启午休模式，温度改成26": {
+      "id": "n1::开启午休模式，温度改成26",
+      "bucket": "n1",
+      "text": "开启午休模式，温度改成26",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::把钓鱼模式的温度改成24": {
+      "id": "n1::把钓鱼模式的温度改成24",
+      "bucket": "n1",
+      "text": "把钓鱼模式的温度改成24",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::去掉钓鱼模式里的香氛": {
+      "id": "n1::去掉钓鱼模式里的香氛",
+      "bucket": "n1",
+      "text": "去掉钓鱼模式里的香氛",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开": {
+      "id": "n1::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "bucket": "n1",
+      "text": "创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::现在几点了": {
+      "id": "n1::现在几点了",
+      "bucket": "n1",
+      "text": "现在几点了",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::请问现在是什么时间": {
+      "id": "n1::请问现在是什么时间",
+      "bucket": "n1",
+      "text": "请问现在是什么时间",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::今天星期几": {
+      "id": "n1::今天星期几",
+      "bucket": "n1",
+      "text": "今天星期几",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::今天几号": {
+      "id": "n1::今天几号",
+      "bucket": "n1",
+      "text": "今天几号",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::别查了": {
+      "id": "n1::别查了",
+      "bucket": "n1",
+      "text": "别查了",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::取消那个调研": {
+      "id": "n1::取消那个调研",
+      "bucket": "n1",
+      "text": "取消那个调研",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::固态电池那个调研不用查了": {
+      "id": "n1::固态电池那个调研不用查了",
+      "bucket": "n1",
+      "text": "固态电池那个调研不用查了",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::那个调研查得怎么样了": {
+      "id": "n1::那个调研查得怎么样了",
+      "bucket": "n1",
+      "text": "那个调研查得怎么样了",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::还在查吗": {
+      "id": "n1::还在查吗",
+      "bucket": "n1",
+      "text": "还在查吗",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::深入调研一下固态电池": {
+      "id": "n1::深入调研一下固态电池",
+      "bucket": "n1",
+      "text": "深入调研一下固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::到公司提醒我拿文件": {
+      "id": "n1::到公司提醒我拿文件",
+      "bucket": "n1",
+      "text": "到公司提醒我拿文件",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::离开公司提醒我买菜": {
+      "id": "n1::离开公司提醒我买菜",
+      "bucket": "n1",
+      "text": "离开公司提醒我买菜",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::到公司之前提醒我交周报": {
+      "id": "n1::到公司之前提醒我交周报",
+      "bucket": "n1",
+      "text": "到公司之前提醒我交周报",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::帮我看看附近有什么咖啡店": {
+      "id": "n1::帮我看看附近有什么咖啡店",
+      "bucket": "n1",
+      "text": "帮我看看附近有什么咖啡店",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::帮我看看我附近有什么好吃的": {
+      "id": "n1::帮我看看我附近有什么好吃的",
+      "bucket": "n1",
+      "text": "帮我看看我附近有什么好吃的",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::那是什么": {
+      "id": "n1::那是什么",
+      "bucket": "n1",
+      "text": "那是什么",
+      "expected": [
+        "vision"
+      ],
+      "actual": [
+        "vision"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::帮我看看这个是什么": {
+      "id": "n1::帮我看看这个是什么",
+      "bucket": "n1",
+      "text": "帮我看看这个是什么",
+      "expected": [
+        "vision"
+      ],
+      "actual": [
+        "vision"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::看看前面那个建筑是什么": {
+      "id": "n1::看看前面那个建筑是什么",
+      "bucket": "n1",
+      "text": "看看前面那个建筑是什么",
+      "expected": [
+        "vision"
+      ],
+      "actual": [
+        "vision"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::帮我看看前面": {
+      "id": "n1::帮我看看前面",
+      "bucket": "n1",
+      "text": "帮我看看前面",
+      "expected": [
+        "vision"
+      ],
+      "actual": [
+        "vision"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "route_hints"
+      ],
+      "source": "route_hints"
+    },
+    "n1::电快见底了，就近找个地方充上": {
+      "id": "n1::电快见底了，就近找个地方充上",
+      "bucket": "n1",
+      "text": "电快见底了，就近找个地方充上",
+      "expected": [
+        "charging"
+      ],
+      "actual": [
+        "charging"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "skill:charging-strategy"
+      ],
+      "source": "skill:charging-strategy"
+    },
+    "n1::去趟惠州中间要不要补个电": {
+      "id": "n1::去趟惠州中间要不要补个电",
+      "bucket": "n1",
+      "text": "去趟惠州中间要不要补个电",
+      "expected": [
+        "charging"
+      ],
+      "actual": [
+        "charging"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "skill:charging-strategy"
+      ],
+      "source": "skill:charging-strategy"
+    },
+    "n1::查下明天会不会下雨，要是下雨就提醒我带伞": {
+      "id": "n1::查下明天会不会下雨，要是下雨就提醒我带伞",
+      "bucket": "n1",
+      "text": "查下明天会不会下雨，要是下雨就提醒我带伞",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "skill:conditional-reminder"
+      ],
+      "source": "skill:conditional-reminder"
+    },
+    "n1::看下明晚会不会下雨，要下就叫我收衣服": {
+      "id": "n1::看下明晚会不会下雨，要下就叫我收衣服",
+      "bucket": "n1",
+      "text": "看下明晚会不会下雨，要下就叫我收衣服",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "skill:conditional-reminder"
+      ],
+      "source": "skill:conditional-reminder"
+    },
+    "n1::下周去成都玩三天带爸妈": {
+      "id": "n1::下周去成都玩三天带爸妈",
+      "bucket": "n1",
+      "text": "下周去成都玩三天带爸妈",
+      "expected": [
+        "trip"
+      ],
+      "actual": [
+        "trip"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "skill:multi-day-trip"
+      ],
+      "source": "skill:multi-day-trip"
+    },
+    "n1::周末去杭州两天带老人不要太累，顺便看看天气": {
+      "id": "n1::周末去杭州两天带老人不要太累，顺便看看天气",
+      "bucket": "n1",
+      "text": "周末去杭州两天带老人不要太累，顺便看看天气",
+      "expected": [
+        "info",
+        "trip"
+      ],
+      "actual": [
+        "info",
+        "trip"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "skill:multi-day-trip"
+      ],
+      "source": "skill:multi-day-trip"
+    },
+    "n1::陪爸妈去趟昆明玩四天，帮我安排下": {
+      "id": "n1::陪爸妈去趟昆明玩四天，帮我安排下",
+      "bucket": "n1",
+      "text": "陪爸妈去趟昆明玩四天，帮我安排下",
+      "expected": [
+        "trip"
+      ],
+      "actual": [
+        "trip"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "skill:multi-day-trip"
+      ],
+      "source": "skill:multi-day-trip"
+    },
+    "n1::导航去东方之门，附近找个吃饭的地方": {
+      "id": "n1::导航去东方之门，附近找个吃饭的地方",
+      "bucket": "n1",
+      "text": "导航去东方之门，附近找个吃饭的地方",
+      "expected": [
+        "navigation"
+      ],
+      "actual": [
+        "navigation"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "skill:navigation-with-stop"
+      ],
+      "source": "skill:navigation-with-stop"
+    },
+    "n1::导航去深圳湾，在附近找个充电桩": {
+      "id": "n1::导航去深圳湾，在附近找个充电桩",
+      "bucket": "n1",
+      "text": "导航去深圳湾，在附近找个充电桩",
+      "expected": [
+        "charging",
+        "navigation"
+      ],
+      "actual": [
+        "charging",
+        "navigation"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "skill:navigation-with-stop"
+      ],
+      "source": "skill:navigation-with-stop"
+    },
+    "n1::送我去宝安机场，路上找地方吃个饭": {
+      "id": "n1::送我去宝安机场，路上找地方吃个饭",
+      "bucket": "n1",
+      "text": "送我去宝安机场，路上找地方吃个饭",
+      "expected": [
+        "navigation"
+      ],
+      "actual": [
+        "navigation"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "skill:navigation-with-stop"
+      ],
+      "source": "skill:navigation-with-stop"
+    },
+    "n1::今年世界杯什么时候开赛": {
+      "id": "n1::今年世界杯什么时候开赛",
+      "bucket": "n1",
+      "text": "今年世界杯什么时候开赛",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "paraphrase",
+        "skill:freshness-and-depth"
+      ],
+      "source": "skill:freshness-and-depth"
+    },
+    "n1::系统性了解一下固态电池的产业格局": {
+      "id": "n1::系统性了解一下固态电池的产业格局",
+      "bucket": "n1",
+      "text": "系统性了解一下固态电池的产业格局",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "skill:freshness-and-depth"
+      ],
+      "source": "skill:freshness-and-depth"
+    },
+    "n1::我有点冷": {
+      "id": "n1::我有点冷",
+      "bucket": "n1",
+      "text": "我有点冷",
+      "expected": [
+        "hvac"
+      ],
+      "actual": [
+        "hvac"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "canonical",
+        "skill:implicit-vehicle-control"
+      ],
+      "source": "skill:implicit-vehicle-control"
+    },
+    "base::我喜欢这个": {
+      "id": "base::我喜欢这个",
+      "bucket": "domain_base",
+      "text": "我喜欢这个",
+      "expected": "base",
+      "actual": "base",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::收藏一下": {
+      "id": "base::收藏一下",
+      "bucket": "domain_base",
+      "text": "收藏一下",
+      "expected": "base",
+      "actual": "base",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::第一页": {
+      "id": "base::第一页",
+      "bucket": "domain_base",
+      "text": "第一页",
+      "expected": "base",
+      "actual": "unknown",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::取消一下": {
+      "id": "base::取消一下",
+      "bucket": "domain_base",
+      "text": "取消一下",
+      "expected": "base",
+      "actual": "information",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::取消收藏一下": {
+      "id": "base::取消收藏一下",
+      "bucket": "domain_base",
+      "text": "取消收藏一下",
+      "expected": "base",
+      "actual": "base",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::倒数第2页": {
+      "id": "base::倒数第2页",
+      "bucket": "domain_base",
+      "text": "倒数第2页",
+      "expected": "base",
+      "actual": "unknown",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::重播": {
+      "id": "base::重播",
+      "bucket": "domain_base",
+      "text": "重播",
+      "expected": "base",
+      "actual": "media",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::取消订阅": {
+      "id": "base::取消订阅",
+      "bucket": "domain_base",
+      "text": "取消订阅",
+      "expected": "base",
+      "actual": "base",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::订阅": {
+      "id": "base::订阅",
+      "bucket": "domain_base",
+      "text": "订阅",
+      "expected": "base",
+      "actual": "base",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::重新播放": {
+      "id": "base::重新播放",
+      "bucket": "domain_base",
+      "text": "重新播放",
+      "expected": "base",
+      "actual": "media",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::前面一页": {
+      "id": "base::前面一页",
+      "bucket": "domain_base",
+      "text": "前面一页",
+      "expected": "base",
+      "actual": "base",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::重新播放看看": {
+      "id": "base::重新播放看看",
+      "bucket": "domain_base",
+      "text": "重新播放看看",
+      "expected": "base",
+      "actual": "media",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::订阅看看": {
+      "id": "base::订阅看看",
+      "bucket": "domain_base",
+      "text": "订阅看看",
+      "expected": "base",
+      "actual": "base",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::确认一下": {
+      "id": "base::确认一下",
+      "bucket": "domain_base",
+      "text": "确认一下",
+      "expected": "base",
+      "actual": "unknown",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::乘客区切上一个": {
+      "id": "base::乘客区切上一个",
+      "bucket": "domain_base",
+      "text": "乘客区切上一个",
+      "expected": "base",
+      "actual": "media",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::取消": {
+      "id": "base::取消",
+      "bucket": "domain_base",
+      "text": "取消",
+      "expected": "base",
+      "actual": "unknown",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::取消订阅一下": {
+      "id": "base::取消订阅一下",
+      "bucket": "domain_base",
+      "text": "取消订阅一下",
+      "expected": "base",
+      "actual": "unknown",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::退一退": {
+      "id": "base::退一退",
+      "bucket": "domain_base",
+      "text": "退一退",
+      "expected": "base",
+      "actual": "media",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::倒数第2个": {
+      "id": "base::倒数第2个",
+      "bucket": "domain_base",
+      "text": "倒数第2个",
+      "expected": "base",
+      "actual": "base",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请收藏取消": {
+      "id": "base::请收藏取消",
+      "bucket": "domain_base",
+      "text": "请收藏取消",
+      "expected": "base",
+      "actual": "unknown",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查询明天到深圳的航班": {
+      "id": "base::查询明天到深圳的航班",
+      "bucket": "domain_base",
+      "text": "查询明天到深圳的航班",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请给我将国庆日的机票查询一下": {
+      "id": "base::请给我将国庆日的机票查询一下",
+      "bucket": "domain_base",
+      "text": "请给我将国庆日的机票查询一下",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查询一下股票代码的股票信息": {
+      "id": "base::查询一下股票代码的股票信息",
+      "bucket": "domain_base",
+      "text": "查询一下股票代码的股票信息",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::国庆日台北市出发到长沙市的机票查询": {
+      "id": "base::国庆日台北市出发到长沙市的机票查询",
+      "bucket": "domain_base",
+      "text": "国庆日台北市出发到长沙市的机票查询",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一查国庆日福州南站出发的火车票": {
+      "id": "base::查一查国庆日福州南站出发的火车票",
+      "bucket": "domain_base",
+      "text": "查一查国庆日福州南站出发的火车票",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一查标普500指数的信息": {
+      "id": "base::查一查标普500指数的信息",
+      "bucket": "domain_base",
+      "text": "查一查标普500指数的信息",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一下春节到广州南站的火车票": {
+      "id": "base::查一下春节到广州南站的火车票",
+      "bucket": "domain_base",
+      "text": "查一下春节到广州南站的火车票",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查询国庆节去深圳的火车票": {
+      "id": "base::查询国庆节去深圳的火车票",
+      "bucket": "domain_base",
+      "text": "查询国庆节去深圳的火车票",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::航班查询": {
+      "id": "base::航班查询",
+      "bucket": "domain_base",
+      "text": "航班查询",
+      "expected": "information",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::大后年的火车票查询": {
+      "id": "base::大后年的火车票查询",
+      "bucket": "domain_base",
+      "text": "大后年的火车票查询",
+      "expected": "information",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一下今天从广州出发到深圳北站的火车票": {
+      "id": "base::查一下今天从广州出发到深圳北站的火车票",
+      "bucket": "domain_base",
+      "text": "查一下今天从广州出发到深圳北站的火车票",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::麻烦你将国庆日从福州南站出发到台北的火车票查询清楚": {
+      "id": "base::麻烦你将国庆日从福州南站出发到台北的火车票查询清楚",
+      "bucket": "domain_base",
+      "text": "麻烦你将国庆日从福州南站出发到台北的火车票查询清楚",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查询国庆节去深圳宝安机场的航班": {
+      "id": "base::查询国庆节去深圳宝安机场的航班",
+      "bucket": "domain_base",
+      "text": "查询国庆节去深圳宝安机场的航班",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一下今天去广州的火车票": {
+      "id": "base::查一下今天去广州的火车票",
+      "bucket": "domain_base",
+      "text": "查一下今天去广州的火车票",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请将联系人的号码查一下": {
+      "id": "base::请将联系人的号码查一下",
+      "bucket": "domain_base",
+      "text": "请将联系人的号码查一下",
+      "expected": "information",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一下联系人的号码": {
+      "id": "base::查一下联系人的号码",
+      "bucket": "domain_base",
+      "text": "查一下联系人的号码",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请把火车票查询一下": {
+      "id": "base::请把火车票查询一下",
+      "bucket": "domain_base",
+      "text": "请把火车票查询一下",
+      "expected": "information",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一查国庆日去台北市的火车票": {
+      "id": "base::查一查国庆日去台北市的火车票",
+      "bucket": "domain_base",
+      "text": "查一查国庆日去台北市的火车票",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一查1日去福州南站的火车票": {
+      "id": "base::查一查1日去福州南站的火车票",
+      "bucket": "domain_base",
+      "text": "查一查1日去福州南站的火车票",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一下春节到广州白云机场的机票": {
+      "id": "base::查一下春节到广州白云机场的机票",
+      "bucket": "domain_base",
+      "text": "查一下春节到广州白云机场的机票",
+      "expected": "information",
+      "actual": "information",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::播放Let it go英文版": {
+      "id": "base::播放Let it go英文版",
+      "bucket": "domain_base",
+      "text": "播放Let it go英文版",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::播放周星驰的电影": {
+      "id": "base::播放周星驰的电影",
+      "bucket": "domain_base",
+      "text": "播放周星驰的电影",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::播放一下有何不可摇滚版": {
+      "id": "base::播放一下有何不可摇滚版",
+      "bucket": "domain_base",
+      "text": "播放一下有何不可摇滚版",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::孙燕姿的摇滚歌曲播放": {
+      "id": "base::孙燕姿的摇滚歌曲播放",
+      "bucket": "domain_base",
+      "text": "孙燕姿的摇滚歌曲播放",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::放孙燕姿的德语歌曲": {
+      "id": "base::放孙燕姿的德语歌曲",
+      "bucket": "domain_base",
+      "text": "放孙燕姿的德语歌曲",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::关电视": {
+      "id": "base::关电视",
+      "bucket": "domain_base",
+      "text": "关电视",
+      "expected": "media",
+      "actual": "setting",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请将乘客区USB视频关闭": {
+      "id": "base::请将乘客区USB视频关闭",
+      "bucket": "domain_base",
+      "text": "请将乘客区USB视频关闭",
+      "expected": "media",
+      "actual": "setting",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::乘坐区切上一张图片": {
+      "id": "base::乘坐区切上一张图片",
+      "bucket": "domain_base",
+      "text": "乘坐区切上一张图片",
+      "expected": "media",
+      "actual": "unknown",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::电视关闭": {
+      "id": "base::电视关闭",
+      "bucket": "domain_base",
+      "text": "电视关闭",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::乘客区图片暂停播放": {
+      "id": "base::乘客区图片暂停播放",
+      "bucket": "domain_base",
+      "text": "乘客区图片暂停播放",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请帮我把脱口秀继续播放一下": {
+      "id": "base::请帮我把脱口秀继续播放一下",
+      "bucket": "domain_base",
+      "text": "请帮我把脱口秀继续播放一下",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::开调频广播87.5MHz": {
+      "id": "base::开调频广播87.5MHz",
+      "bucket": "domain_base",
+      "text": "开调频广播87.5MHz",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::这个曲艺节目我不喜欢": {
+      "id": "base::这个曲艺节目我不喜欢",
+      "bucket": "domain_base",
+      "text": "这个曲艺节目我不喜欢",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::播放司机区本地音乐": {
+      "id": "base::播放司机区本地音乐",
+      "bucket": "domain_base",
+      "text": "播放司机区本地音乐",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::打开一下音乐": {
+      "id": "base::打开一下音乐",
+      "bucket": "domain_base",
+      "text": "打开一下音乐",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::什么歌曲推荐": {
+      "id": "base::什么歌曲推荐",
+      "bucket": "domain_base",
+      "text": "什么歌曲推荐",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请把网络电台打开": {
+      "id": "base::请把网络电台打开",
+      "bucket": "domain_base",
+      "text": "请把网络电台打开",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::司机区切换上一首": {
+      "id": "base::司机区切换上一首",
+      "bucket": "domain_base",
+      "text": "司机区切换上一首",
+      "expected": "media",
+      "actual": "media",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::把司机区和乘客区的多媒体图片给打开": {
+      "id": "base::把司机区和乘客区的多媒体图片给打开",
+      "bucket": "domain_base",
+      "text": "把司机区和乘客区的多媒体图片给打开",
+      "expected": "media",
+      "actual": "navi",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::播电台主播的国家台电台": {
+      "id": "base::播电台主播的国家台电台",
+      "bucket": "domain_base",
+      "text": "播电台主播的国家台电台",
+      "expected": "media",
+      "actual": "unknown",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::出发去目的地附近的商场": {
+      "id": "base::出发去目的地附近的商场",
+      "bucket": "domain_base",
+      "text": "出发去目的地附近的商场",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请帮我把导航继续": {
+      "id": "base::请帮我把导航继续",
+      "bucket": "domain_base",
+      "text": "请帮我把导航继续",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::规划到深圳北站附近万达广场的路线": {
+      "id": "base::规划到深圳北站附近万达广场的路线",
+      "bucket": "domain_base",
+      "text": "规划到深圳北站附近万达广场的路线",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查询一下200以内的度假村": {
+      "id": "base::查询一下200以内的度假村",
+      "bucket": "domain_base",
+      "text": "查询一下200以内的度假村",
+      "expected": "navi",
+      "actual": "information",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查询中山路的酒店": {
+      "id": "base::查询中山路的酒店",
+      "bucket": "domain_base",
+      "text": "查询中山路的酒店",
+      "expected": "navi",
+      "actual": "information",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::路线偏好设置为不走高速": {
+      "id": "base::路线偏好设置为不走高速",
+      "bucket": "domain_base",
+      "text": "路线偏好设置为不走高速",
+      "expected": "navi",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查询一下4分以上的度假村": {
+      "id": "base::查询一下4分以上的度假村",
+      "bucket": "domain_base",
+      "text": "查询一下4分以上的度假村",
+      "expected": "navi",
+      "actual": "information",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::目的地附近的商场怎么走": {
+      "id": "base::目的地附近的商场怎么走",
+      "bucket": "domain_base",
+      "text": "目的地附近的商场怎么走",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请你把到美亚光电还有多久告诉我": {
+      "id": "base::请你把到美亚光电还有多久告诉我",
+      "bucket": "domain_base",
+      "text": "请你把到美亚光电还有多久告诉我",
+      "expected": "navi",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::继续导航": {
+      "id": "base::继续导航",
+      "bucket": "domain_base",
+      "text": "继续导航",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::当前限速多少": {
+      "id": "base::当前限速多少",
+      "bucket": "domain_base",
+      "text": "当前限速多少",
+      "expected": "navi",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::附近的美食": {
+      "id": "base::附近的美食",
+      "bucket": "domain_base",
+      "text": "附近的美食",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::带我到东环一路18号去不走高速": {
+      "id": "base::带我到东环一路18号去不走高速",
+      "bucket": "domain_base",
+      "text": "带我到东环一路18号去不走高速",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::出发去附近的万达广场": {
+      "id": "base::出发去附近的万达广场",
+      "bucket": "domain_base",
+      "text": "出发去附近的万达广场",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::附近200的意大利菜查询一下": {
+      "id": "base::附近200的意大利菜查询一下",
+      "bucket": "domain_base",
+      "text": "附近200的意大利菜查询一下",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::导航回出发地": {
+      "id": "base::导航回出发地",
+      "bucket": "domain_base",
+      "text": "导航回出发地",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::附近的美亚光电导航到": {
+      "id": "base::附近的美亚光电导航到",
+      "bucket": "domain_base",
+      "text": "附近的美亚光电导航到",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::搜索深圳北站附近的万达广场": {
+      "id": "base::搜索深圳北站附近的万达广场",
+      "bucket": "domain_base",
+      "text": "搜索深圳北站附近的万达广场",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::搜索深南大道附近的海底捞": {
+      "id": "base::搜索深南大道附近的海底捞",
+      "bucket": "domain_base",
+      "text": "搜索深南大道附近的海底捞",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::有什么评分4分以上的美食": {
+      "id": "base::有什么评分4分以上的美食",
+      "bucket": "domain_base",
+      "text": "有什么评分4分以上的美食",
+      "expected": "navi",
+      "actual": "navi",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请帮我把智能远近光灯灵敏度调到最低": {
+      "id": "base::请帮我把智能远近光灯灵敏度调到最低",
+      "bucket": "domain_base",
+      "text": "请帮我把智能远近光灯灵敏度调到最低",
+      "expected": "setting",
+      "actual": "setting",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::调低三智能远近光灯灵敏度": {
+      "id": "base::调低三智能远近光灯灵敏度",
+      "bucket": "domain_base",
+      "text": "调低三智能远近光灯灵敏度",
+      "expected": "setting",
+      "actual": "setting",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::打开车辆模式设置": {
+      "id": "base::打开车辆模式设置",
+      "bucket": "domain_base",
+      "text": "打开车辆模式设置",
+      "expected": "setting",
+      "actual": "unknown",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::打开静音": {
+      "id": "base::打开静音",
+      "bucket": "domain_base",
+      "text": "打开静音",
+      "expected": "setting",
+      "actual": "media",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::加入下队列看看": {
+      "id": "base::加入下队列看看",
+      "bucket": "domain_base",
+      "text": "加入下队列看看",
+      "expected": "setting",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::中控屏亮度调到最大": {
+      "id": "base::中控屏亮度调到最大",
+      "bucket": "domain_base",
+      "text": "中控屏亮度调到最大",
+      "expected": "setting",
+      "actual": "setting",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::远光灯高度高10%": {
+      "id": "base::远光灯高度高10%",
+      "bucket": "domain_base",
+      "text": "远光灯高度高10%",
+      "expected": "setting",
+      "actual": "setting",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::后备箱盖子开启高度调一下到中挡": {
+      "id": "base::后备箱盖子开启高度调一下到中挡",
+      "bucket": "domain_base",
+      "text": "后备箱盖子开启高度调一下到中挡",
+      "expected": "setting",
+      "actual": "setting",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::调到20挡雨刮": {
+      "id": "base::调到20挡雨刮",
+      "bucket": "domain_base",
+      "text": "调到20挡雨刮",
+      "expected": "setting",
+      "actual": "setting",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请帮我把车后尾门开启高度调低一些": {
+      "id": "base::请帮我把车后尾门开启高度调低一些",
+      "bucket": "domain_base",
+      "text": "请帮我把车后尾门开启高度调低一些",
+      "expected": "setting",
+      "actual": "setting",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::天窗打开百分之20前排右边": {
+      "id": "base::天窗打开百分之20前排右边",
+      "bucket": "domain_base",
+      "text": "天窗打开百分之20前排右边",
+      "expected": "setting",
+      "actual": "setting",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::关闭时间设置界面看看": {
+      "id": "base::关闭时间设置界面看看",
+      "bucket": "domain_base",
+      "text": "关闭时间设置界面看看",
+      "expected": "setting",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::预测型碰撞报警系统等级调一调最高": {
+      "id": "base::预测型碰撞报警系统等级调一调最高",
+      "bucket": "domain_base",
+      "text": "预测型碰撞报警系统等级调一调最高",
+      "expected": "setting",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::关闭免唤醒词界面看看": {
+      "id": "base::关闭免唤醒词界面看看",
+      "bucket": "domain_base",
+      "text": "关闭免唤醒词界面看看",
+      "expected": "setting",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请把WiFi关闭一下": {
+      "id": "base::请把WiFi关闭一下",
+      "bucket": "domain_base",
+      "text": "请把WiFi关闭一下",
+      "expected": "setting",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::司机位空调温度试着调到最高": {
+      "id": "base::司机位空调温度试着调到最高",
+      "bucket": "domain_base",
+      "text": "司机位空调温度试着调到最高",
+      "expected": "setting",
+      "actual": "setting",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::关闭一下车内摄像头": {
+      "id": "base::关闭一下车内摄像头",
+      "bucket": "domain_base",
+      "text": "关闭一下车内摄像头",
+      "expected": "setting",
+      "actual": "setting",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::前后行车记录仪录像暂停": {
+      "id": "base::前后行车记录仪录像暂停",
+      "bucket": "domain_base",
+      "text": "前后行车记录仪录像暂停",
+      "expected": "setting",
+      "actual": "setting",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::左位置空调风速到二十挡": {
+      "id": "base::左位置空调风速到二十挡",
+      "bucket": "domain_base",
+      "text": "左位置空调风速到二十挡",
+      "expected": "setting",
+      "actual": "setting",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::购买流量": {
+      "id": "base::购买流量",
+      "bucket": "domain_base",
+      "text": "购买流量",
+      "expected": "setting",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::湿度查询": {
+      "id": "base::湿度查询",
+      "bucket": "domain_base",
+      "text": "湿度查询",
+      "expected": "weather",
+      "actual": "base",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查询一下台北五更天8点的交通指数": {
+      "id": "base::查询一下台北五更天8点的交通指数",
+      "bucket": "domain_base",
+      "text": "查询一下台北五更天8点的交通指数",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一下12月13日下午的空气质量好不好": {
+      "id": "base::查一下12月13日下午的空气质量好不好",
+      "bucket": "domain_base",
+      "text": "查一下12月13日下午的空气质量好不好",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一查1日的风向": {
+      "id": "base::查一查1日的风向",
+      "bucket": "domain_base",
+      "text": "查一查1日的风向",
+      "expected": "weather",
+      "actual": "information",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::四川12月13日10点的温度多少": {
+      "id": "base::四川12月13日10点的温度多少",
+      "bucket": "domain_base",
+      "text": "四川12月13日10点的温度多少",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一下晚上10点的气象如何": {
+      "id": "base::查一下晚上10点的气象如何",
+      "bucket": "domain_base",
+      "text": "查一下晚上10点的气象如何",
+      "expected": "weather",
+      "actual": "information",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一下姑苏区春节的穿衣指数": {
+      "id": "base::查一下姑苏区春节的穿衣指数",
+      "bucket": "domain_base",
+      "text": "查一下姑苏区春节的穿衣指数",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::湿度查询台北市花地玛堂区8时": {
+      "id": "base::湿度查询台北市花地玛堂区8时",
+      "bucket": "domain_base",
+      "text": "湿度查询台北市花地玛堂区8时",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::请帮我把澳门台北1日的湿度查一下": {
+      "id": "base::请帮我把澳门台北1日的湿度查一下",
+      "bucket": "domain_base",
+      "text": "请帮我把澳门台北1日的湿度查一下",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查询一下台北市花地玛堂区大后年的湿度": {
+      "id": "base::查询一下台北市花地玛堂区大后年的湿度",
+      "bucket": "domain_base",
+      "text": "查询一下台北市花地玛堂区大后年的湿度",
+      "expected": "weather",
+      "actual": "information",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一下广州12月13日气象如何": {
+      "id": "base::查一下广州12月13日气象如何",
+      "bucket": "domain_base",
+      "text": "查一下广州12月13日气象如何",
+      "expected": "weather",
+      "actual": "information",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::南山区今天9点风力怎么样": {
+      "id": "base::南山区今天9点风力怎么样",
+      "bucket": "domain_base",
+      "text": "南山区今天9点风力怎么样",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查澳门特别行政区气象": {
+      "id": "base::查澳门特别行政区气象",
+      "bucket": "domain_base",
+      "text": "查澳门特别行政区气象",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::深圳南山区今天上午风力怎么样": {
+      "id": "base::深圳南山区今天上午风力怎么样",
+      "bucket": "domain_base",
+      "text": "深圳南山区今天上午风力怎么样",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查询运动指数澳门特别行政区五更天8点钟的": {
+      "id": "base::查询运动指数澳门特别行政区五更天8点钟的",
+      "bucket": "domain_base",
+      "text": "查询运动指数澳门特别行政区五更天8点钟的",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一查澳门特别行政区台北市的天气": {
+      "id": "base::查一查澳门特别行政区台北市的天气",
+      "bucket": "domain_base",
+      "text": "查一查澳门特别行政区台北市的天气",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::帮我把台北花地玛堂区国庆日的空气质量查一下": {
+      "id": "base::帮我把台北花地玛堂区国庆日的空气质量查一下",
+      "bucket": "domain_base",
+      "text": "帮我把台北花地玛堂区国庆日的空气质量查一下",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查台北市花地玛堂区国庆日的湿度": {
+      "id": "base::查台北市花地玛堂区国庆日的湿度",
+      "bucket": "domain_base",
+      "text": "查台北市花地玛堂区国庆日的湿度",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查询一下澳门特别行政区1日湿度": {
+      "id": "base::查询一下澳门特别行政区1日湿度",
+      "bucket": "domain_base",
+      "text": "查询一下澳门特别行政区1日湿度",
+      "expected": "weather",
+      "actual": "information",
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    },
+    "base::查一下四川春节的天气": {
+      "id": "base::查一下四川春节的天气",
+      "bucket": "domain_base",
+      "text": "查一下四川春节的天气",
+      "expected": "weather",
+      "actual": "weather",
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "feishu"
+      ],
+      "source": "feishu_8590"
+    }
+  }
+}

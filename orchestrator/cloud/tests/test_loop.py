@@ -15,7 +15,7 @@ class _Planner:
         self.observations = []
 
     async def replan(self, goal, observations, agents, ctx, granted_permissions=None,
-                     working_set=None, skill_names=None):
+                     working_set=None, skill_names=None, exemplar_names=None):
         self.observations.append(list(observations))
         return self.decisions.pop(0)
 
@@ -389,34 +389,42 @@ def test_replan_plan_inherits_skills_through_suspend_chain():
     initial = Plan(steps=[Step(id="s1", agent_id="info", intent="info.weather")],
                    raw_text="查明天下雨吗，下雨提醒我", complexity="adaptive", goal="g")
     initial.skills = list(skills)
+    exemplars = ["full:reminder#3@vec:0.68"]      # M5 P1 走同一条继承链
+    initial.exemplars = list(exemplars)
     _collect(controller, goal="g", initial_plan=initial,
              agents=[], ctx=PlanContext(session_id="t"),
              user_text="查明天下雨吗，下雨提醒我")
 
-    # ① replan 收到初规划的 skill 名单
+    # ① replan 收到初规划的 skill / 范例名单
     assert planner.skill_names_seen == [skills]
-    # ② to_plan 产物（挂起序列化的就是它）继承 skills
+    assert planner.exemplar_names_seen == [exemplars]
+    # ② to_plan 产物（挂起序列化的就是它）继承两者
     assert suspended_plans and suspended_plans[0].skills == skills
+    assert suspended_plans[0].exemplars == exemplars
     # ③ 序列化 → 恢复 round-trip 后名单仍在（恢复计划将作为下一轮 initial_plan 进 loop）
     data = PlannerEngine._serialize_plan(suspended_plans[0])
     state = SessionState(phase="wait_slot", pending_plan=data, pending_step_id="r1")
     restored, _ = PlannerEngine._restore(None, state, inject_confirmed=False)
     assert restored is not None and restored.skills == skills
+    assert restored.exemplars == exemplars
 
 
 def _wrap_planner(planner):
-    """记录 replan 收到的 skill_names（不改共享 _Planner 契约面）。"""
+    """记录 replan 收到的 skill_names / exemplar_names（不改共享 _Planner 契约面）。"""
     class _Rec:
         def __init__(self, inner):
             self._inner = inner
             inner.skill_names_seen = []
+            inner.exemplar_names_seen = []
 
         async def replan(self, goal, observations, agents, ctx,
                          granted_permissions=None, working_set=None,
-                         skill_names=None):
+                         skill_names=None, exemplar_names=None):
             self._inner.skill_names_seen.append(list(skill_names or []))
+            self._inner.exemplar_names_seen.append(list(exemplar_names or []))
             return await self._inner.replan(
                 goal, observations, agents, ctx,
                 granted_permissions=granted_permissions,
-                working_set=working_set, skill_names=skill_names)
+                working_set=working_set, skill_names=skill_names,
+                exemplar_names=exemplar_names)
     return _Rec(planner)

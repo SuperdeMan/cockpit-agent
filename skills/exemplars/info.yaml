@@ -1,0 +1,308 @@
+# 范例库 · info 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: info
+exemplars:
+- text: PM2.5多少
+  plan:
+  - agent: info
+    intent: info.air_quality
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 上海现在多少度
+  plan:
+  - agent: info
+    intent: info.weather
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 上证指数多少
+  plan:
+  - agent: info
+    intent: info.stock
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 世界杯比分
+  plan:
+  - agent: info
+    intent: info.sports
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 今天世界杯赛程
+  plan:
+  - agent: info
+    intent: info.sports
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 今天大盘怎么样
+  plan:
+  - agent: info
+    intent: info.stock
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 今天天气怎么样
+  plan:
+  - agent: info
+    intent: info.weather
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 今天有什么新闻
+  plan:
+  - agent: info
+    intent: info.news
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 今天有极端天气吗
+  plan:
+  - agent: info
+    intent: info.alerts
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 今天空气好吗
+  plan:
+  - agent: info
+    intent: info.air_quality
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 今天适合运动吗
+  plan:
+  - agent: info
+    intent: info.indices
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 北京天气如何
+  plan:
+  - agent: info
+    intent: info.weather
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 北京有暴雨预警吗
+  plan:
+  - agent: info
+    intent: info.alerts
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 北京未来三天天气
+  plan:
+  - agent: info
+    intent: info.forecast
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 后天会下雨吗
+  plan:
+  - agent: info
+    intent: info.forecast
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 帮我搜
+  plan:
+  - agent: info
+    intent: info.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 帮我查一下iPhone现在的价格
+  plan:
+  - agent: info
+    intent: info.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 搜一下固态电池最新进展
+  plan:
+  - agent: info
+    intent: info.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 明天可以洗车吗
+  plan:
+  - agent: info
+    intent: info.indices
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 明天天气怎么样
+  plan:
+  - agent: info
+    intent: info.forecast
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 昨晚发布会都发布了什么
+  plan:
+  - agent: info
+    intent: info.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 最新头条
+  plan:
+  - agent: info
+    intent: info.news
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 有没有天气预警
+  plan:
+  - agent: info
+    intent: info.alerts
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 来点财经新闻
+  plan:
+  - agent: info
+    intent: info.news
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 查一下苹果股票
+  plan:
+  - agent: info
+    intent: info.stock
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 欧冠今晚有哪些比赛
+  plan:
+  - agent: info
+    intent: info.sports
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 现在油价多少
+  plan:
+  - agent: info
+    intent: info.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 生活指数
+  plan:
+  - agent: info
+    intent: info.indices
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 看看新闻
+  plan:
+  - agent: info
+    intent: info.news
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 科技新闻
+  plan:
+  - agent: info
+    intent: info.news
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 空气质量
+  plan:
+  - agent: info
+    intent: info.air_quality
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 空气质量怎么样
+  plan:
+  - agent: info
+    intent: info.air_quality
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 紫外线强不强
+  plan:
+  - agent: info
+    intent: info.indices
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 英伟达最新消息
+  plan:
+  - agent: info
+    intent: info.news
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 英超赛果
+  plan:
+  - agent: info
+    intent: info.sports
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 茅台股价
+  plan:
+  - agent: info
+    intent: info.stock
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 西甲对阵
+  plan:
+  - agent: info
+    intent: info.sports
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 这周天气预报
+  plan:
+  - agent: info
+    intent: info.forecast
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical

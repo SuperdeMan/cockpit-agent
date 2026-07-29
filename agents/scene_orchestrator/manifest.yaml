@@ -62,39 +62,42 @@ route_hints:
   # 激活：「开启/打开/进入/来个 X模式」或裸「X模式」。
   # 裸分支的否定前瞻是必需的：没有它，「退出露营模式」里的「退出露营」正好是 2~6 个汉字，
   # 整句会被 `^[一-龥]{2,6}模式$` 吞掉误判成激活（eval 实测命中）。
-  - pattern: '(开启|打开|进入|切换到|来个|来一个|启动)\s*[一-龥]{1,6}模式|^(?!退出|关闭|取消|结束|删|不要|创建|新建|自定义|修改|更改)[一-龥]{2,6}模式$'
-    intent: scene.activate
-    policy: replace
-    priority: 54
-    guard: '驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|性能模式|省电模式|电量模式|动能回收|飞行模式|勿扰模式|静音模式|专注模式|哨兵|是什么|什么意思|怎么(用|开|关)|有哪些|哪些场景'
-    slots: {scene: "$text"}
-  # 退出
-  - pattern: '(退出|关闭|取消|结束)\s*[一-龥]{0,6}模式'
-    intent: scene.deactivate
-    policy: replace
-    priority: 54
-    guard: '驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|性能模式|省电模式|电量模式|勿扰|静音|飞行|是什么|什么意思'
-    slots: {scene: "$text"}
-  # 修改（端侧已把「把X模式的温度改成24」让给云端，这里确定性接住，别掉进 chitchat）。
-  # 与 reminder.update(56) 不冲突：那条的 guard 含「空调|温度|座椅|亮度|音量」会自行让路。
-  # guard 的句首激活动词是关键：「开启午休模式，温度改成26」是**激活+本次参数覆盖**，
-  # 不是改场景定义——被 update 抢走会把场景的默认温度持久改掉，用户下次激活才发现不对。
-  - pattern: '[一-龥]{1,6}模式(的)?[^。]{0,10}(改成|改为|改到|加上|加一个|再加|去掉|删掉)|(去掉|删掉|加上|加一个|再加)[一-龥]{1,6}模式(里|里面|中)的|(修改|更改)[一-龥]{1,6}模式'
-    intent: scene.update
-    policy: replace
-    priority: 57
-    guard: '^(开启|打开|进入|切换到|来个|来一个|启动)|驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|省电模式|电量模式|是什么|什么意思'
-    slots: {scene: "$text", modification: "$text"}
-  # 删除（priority 高于 activate/deactivate：「删掉钓鱼模式」不能被当成激活）。
-  # guard 里的「里的/里面/中的」是关键：「去掉钓鱼模式里的香氛」是改场景（update），
-  # 不是删场景——少了它会把整个场景删掉。
-  - pattern: '(删掉|删除|去掉|不要)\s*[一-龥]{1,6}模式(了)?'
-    intent: scene.delete
-    policy: replace
-    priority: 56
-    guard: '是什么|什么意思|里的|里面|中的'
-    slots: {scene: "$text"}
-
+  # 【scene.activate 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑
+  #   deepseek:deepseek-v4-flash / minimax:MiniMax-M3 各 ×2 轮，其 8 条命中语料**全覆盖**
+  #   （非抽样——抽 3 句会系统性高估，命中面越大的规则越容易被放行）；
+  #   摘掉它之后仍全部落对 → 模型 + 范例已经自己会了。
+  #   ⚠ 证据只覆盖上述两档。本 hint 家族当初是为 **MiMo** 写的
+  #     （route_hints.py 开篇：「弱 LLM（MiMo）常漏/误路由」），而本环境
+  #     MiMo 无可用 key（探针 all models failed），**切回 MiMo 须复验**。
+  #   回归保护未删：命中句已改端到端口径迁入 mode_routing_cases.yaml。
+  #   要恢复：git log -S '(开启|打开|进入|切换到|来个|来一个|启动)' 找回原块。
+  # 【scene.deactivate 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑
+  #   deepseek:deepseek-v4-flash / minimax:MiniMax-M3 各 ×2 轮，其 2 条命中语料**全覆盖**
+  #   （非抽样——抽 3 句会系统性高估，命中面越大的规则越容易被放行）；
+  #   摘掉它之后仍全部落对 → 模型 + 范例已经自己会了。
+  #   ⚠ 证据只覆盖上述两档。本 hint 家族当初是为 **MiMo** 写的
+  #     （route_hints.py 开篇：「弱 LLM（MiMo）常漏/误路由」），而本环境
+  #     MiMo 无可用 key（探针 all models failed），**切回 MiMo 须复验**。
+  #   回归保护未删：命中句已改端到端口径迁入 mode_routing_cases.yaml。
+  #   要恢复：git log -S '(退出|关闭|取消|结束)\s*[一-龥]{0,' 找回原块。
+  # 【scene.update 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑
+  #   deepseek:deepseek-v4-flash / minimax:MiniMax-M3 各 ×2 轮，其 4 条命中语料**全覆盖**
+  #   （非抽样——抽 3 句会系统性高估，命中面越大的规则越容易被放行）；
+  #   摘掉它之后仍全部落对 → 模型 + 范例已经自己会了。
+  #   ⚠ 证据只覆盖上述两档。本 hint 家族当初是为 **MiMo** 写的
+  #     （route_hints.py 开篇：「弱 LLM（MiMo）常漏/误路由」），而本环境
+  #     MiMo 无可用 key（探针 all models failed），**切回 MiMo 须复验**。
+  #   回归保护未删：命中句已改端到端口径迁入 mode_routing_cases.yaml。
+  #   要恢复：git log -S '[一-龥]{1,6}模式(的)?[^。]{0,1' 找回原块。
+  # 【scene.delete 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑
+  #   deepseek:deepseek-v4-flash / minimax:MiniMax-M3 各 ×2 轮，其 2 条命中语料**全覆盖**
+  #   （非抽样——抽 3 句会系统性高估，命中面越大的规则越容易被放行）；
+  #   摘掉它之后仍全部落对 → 模型 + 范例已经自己会了。
+  #   ⚠ 证据只覆盖上述两档。本 hint 家族当初是为 **MiMo** 写的
+  #     （route_hints.py 开篇：「弱 LLM（MiMo）常漏/误路由」），而本环境
+  #     MiMo 无可用 key（探针 all models failed），**切回 MiMo 须复验**。
+  #   回归保护未删：命中句已改端到端口径迁入 mode_routing_cases.yaml。
+  #   要恢复：git log -S '(删掉|删除|去掉|不要)\s*[一-龥]{1,' 找回原块。
 requires_permissions:
   - vehicle.control        # 场景展开为车控动作（真正下发仍由端侧 VAL 门控）
   - media.control          # P1.4 起场景可含媒体动作（浪漫模式 media.play，端侧回流已放开）

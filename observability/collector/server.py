@@ -122,6 +122,31 @@ def create_app(
             bool(body.get("badcase", True)), str(body.get("note", "") or ""))
         return {"ok": ok, "trace_id": trace_id}
 
+    # ── 落域标注载体（数据飞轮 P0）：一次标注 = 评测用例 + 范例 + 训练标注的原料 ──
+
+    @app.post("/api/turns/{trace_id}/label")
+    async def label_turn(trace_id: str, body: dict):
+        """正确落域标注：gold_intents 传 list 或逗号串；空=清除标注。"""
+        raw = body.get("gold_intents", "")
+        parts = raw if isinstance(raw, list) else str(raw or "").split(",")
+        gold = ",".join(str(x).strip() for x in parts if str(x).strip())
+        ok = await asyncio.to_thread(app.state.db.set_gold, trace_id, gold)
+        return {"ok": ok, "trace_id": trace_id, "gold_intents": gold}
+
+    # 注意：必须注册在 /api/export/{trace_id} 之前，否则 "labels" 会被当 trace_id 吞掉
+    @app.get("/api/export/labels")
+    async def export_labels(since: int = 0, until: int = 0, limit: int = 5000):
+        """批量导出标注集（utterance → gold 落域 → 实际落域）。"""
+        rows = await asyncio.to_thread(
+            app.state.db.export_labels, since, until, limit)
+        return {"exported_at": int(time.time() * 1000),
+                "count": len(rows), "labels": rows}
+
+    @app.get("/api/intents/observed")
+    async def intents_observed():
+        """已观测意图清单（实际落域 ∪ 已标注 gold），标注输入的候选源。"""
+        return await asyncio.to_thread(app.state.db.observed_intents)
+
     @app.get("/api/logs")
     async def logs(trace_id: str = "", service: str = "", level: str = "",
                    q: str = "", limit: int = 200):

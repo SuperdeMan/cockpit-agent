@@ -1,0 +1,36 @@
+# 范例库 · manual 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: manual
+exemplars:
+- text: 多久保养一次
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 怎么开启自动泊车
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 怎么连CarPlay
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 胎压多少正常
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical

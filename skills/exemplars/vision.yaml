@@ -1,0 +1,60 @@
+# 范例库 · vision 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: vision
+exemplars:
+- text: 前面那个建筑是什么
+  plan:
+  - agent: vision
+    intent: vision.describe
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 看看这个是什么
+  plan:
+  - agent: vision
+    intent: vision.describe
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 这是什么
+  plan:
+  - agent: vision
+    intent: vision.describe
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 这是什么花
+  plan:
+  - agent: vision
+    intent: vision.describe
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 这是什么车
+  plan:
+  - agent: vision
+    intent: vision.describe
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 那是什么
+  plan:
+  - agent: vision
+    intent: vision.describe
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 那是什么牌子的车
+  plan:
+  - agent: vision
+    intent: vision.describe
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical

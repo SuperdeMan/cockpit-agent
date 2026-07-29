@@ -113,7 +113,11 @@ def _lane_files(root) -> list[str]:
     校验面：YAML 可解析、顶层是映射、必填字段齐、type 合法、目录与 type 一致、
     priority/version 是整数、keywords 是列表、全局重名。"""
     errs, seen = [], {}
-    files = sorted(root.glob("*/*.yaml")) if root.is_dir() else []
+    # 范例库（M5 P1）同处 skills/ 但不是 skill 文档，有自己的契约与门禁
+    # （skills/exemplars/README.md + test/eval_exemplars.py）——目录级排除，与 loader
+    # 的 skills.py::_NON_SKILL_DIRS 同源。
+    files = sorted(p for p in root.glob("*/*.yaml")
+                   if p.parent.name not in sk._NON_SKILL_DIRS) if root.is_dir() else []
     if not files:
         return ["skills/ 下没有任何 yaml 文件"]
     for p in files:

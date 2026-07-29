@@ -1,0 +1,60 @@
+# 范例库 · charging 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: charging
+exemplars:
+- text: 去杭州怎么充电
+  plan:
+  - agent: charging-planner
+    intent: charging.plan
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 帮我规划充电
+  plan:
+  - agent: charging-planner
+    intent: charging.plan
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 快充在哪
+  plan:
+  - agent: charging-planner
+    intent: charging.find
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 找个充电站
+  plan:
+  - agent: charging-planner
+    intent: charging.find
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 现在电量多少
+  plan:
+  - agent: charging-planner
+    intent: charging.status
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 还能跑多远
+  plan:
+  - agent: charging-planner
+    intent: charging.status
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 附近有充电桩吗
+  plan:
+  - agent: charging-planner
+    intent: charging.find
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical

@@ -1,0 +1,6576 @@
+{
+  "meta": {
+    "subject": "hint_retirement",
+    "generated_at": "2026-07-29T12:06:19.121159+00:00",
+    "commit": "553844f",
+    "provider": "minimax:MiniMax-M3",
+    "repeat": 2,
+    "candidates": [
+      "deep-research#2",
+      "deep-research#3",
+      "trip-planner#0",
+      "trip-planner#1",
+      "trip-planner#2",
+      "trip-planner#3",
+      "info#0",
+      "info#3",
+      "scene-orchestrator#3",
+      "mcp-bridge#0",
+      "reminder#1",
+      "reminder#2",
+      "reminder#3",
+      "reminder#4",
+      "scene-orchestrator#4",
+      "charging-planner#0",
+      "charging-planner#1",
+      "nearby#2",
+      "scene-orchestrator#1",
+      "scene-orchestrator#2",
+      "trip-planner#4"
+    ],
+    "ineffective": [
+      "info#1",
+      "nearby#0",
+      "nearby#1",
+      "nearby#2"
+    ],
+    "no_corpus": []
+  },
+  "corpus_sources": [
+    {
+      "path": "route_hints × 判定语料池",
+      "count": 186
+    }
+  ],
+  "buckets": {
+    "hint_dual_arm": {
+      "total": 186,
+      "passed": 168,
+      "failures": [
+        {
+          "id": "deep-research#0::深入了解一下固态电池",
+          "bucket": "hint_dual_arm",
+          "text": "深入了解一下固态电池",
+          "expected": [
+            "research"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "deep-research#0",
+            "research.run",
+            "mode_routing"
+          ],
+          "source": ""
+        },
+        {
+          "id": "deep-research#1::展开第三点",
+          "bucket": "hint_dual_arm",
+          "text": "展开第三点",
+          "expected": [
+            "research"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "deep-research#1",
+            "research.run",
+            "mode_routing"
+          ],
+          "source": ""
+        },
+        {
+          "id": "deep-research#1::第二点再详细讲讲",
+          "bucket": "hint_dual_arm",
+          "text": "第二点再详细讲讲",
+          "expected": [
+            "research"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "deep-research#1",
+            "research.run",
+            "mode_routing"
+          ],
+          "source": ""
+        },
+        {
+          "id": "deep-research#1::这部分展开说说",
+          "bucket": "hint_dual_arm",
+          "text": "这部分展开说说",
+          "expected": [
+            "research"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "deep-research#1",
+            "research.run",
+            "mode_routing"
+          ],
+          "source": ""
+        },
+        {
+          "id": "deep-research#1::上面那点再深入一下",
+          "bucket": "hint_dual_arm",
+          "text": "上面那点再深入一下",
+          "expected": [
+            "research"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "deep-research#1",
+            "research.run",
+            "mode_routing"
+          ],
+          "source": ""
+        },
+        {
+          "id": "deep-research#1::详细讲讲第3条",
+          "bucket": "hint_dual_arm",
+          "text": "详细讲讲第3条",
+          "expected": [
+            "research"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "deep-research#1",
+            "research.run",
+            "mode_routing"
+          ],
+          "source": ""
+        },
+        {
+          "id": "deep-research#1::这条新闻详细说说",
+          "bucket": "hint_dual_arm",
+          "text": "这条新闻详细说说",
+          "expected": [
+            "research"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "deep-research#1",
+            "research.run",
+            "mode_routing"
+          ],
+          "source": ""
+        },
+        {
+          "id": "chitchat#0::请问现在是什么时间",
+          "bucket": "hint_dual_arm",
+          "text": "请问现在是什么时间",
+          "expected": [
+            "chitchat"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "chitchat#0",
+            "chitchat.talk",
+            "route_hints"
+          ],
+          "source": ""
+        },
+        {
+          "id": "info#1::帮我查一下磷酸铁锂和三元锂的区别",
+          "bucket": "hint_dual_arm",
+          "text": "帮我查一下磷酸铁锂和三元锂的区别",
+          "expected": [
+            "info"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "info#1",
+            "info.search",
+            "mode_routing"
+          ],
+          "source": ""
+        },
+        {
+          "id": "info#1::搜一下你叫什么名字",
+          "bucket": "hint_dual_arm",
+          "text": "搜一下你叫什么名字",
+          "expected": [
+            "info"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "info#1",
+            "info.search",
+            "mode_routing"
+          ],
+          "source": ""
+        },
+        {
+          "id": "info#2::打开空调然后来点科技新闻",
+          "bucket": "hint_dual_arm",
+          "text": "打开空调然后来点科技新闻",
+          "expected": [
+            "info"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "info#2",
+            "info.news",
+            "mode_routing"
+          ],
+          "source": ""
+        },
+        {
+          "id": "scene-orchestrator#0::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+          "bucket": "hint_dual_arm",
+          "text": "创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+          "expected": [
+            "scene"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "scene-orchestrator#0",
+            "scene.create",
+            "route_hints"
+          ],
+          "source": ""
+        },
+        {
+          "id": "scene-orchestrator#0::创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开",
+          "bucket": "hint_dual_arm",
+          "text": "创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开",
+          "expected": [
+            "scene"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "scene-orchestrator#0",
+            "scene.create",
+            "exemplar"
+          ],
+          "source": ""
+        },
+        {
+          "id": "info#4::适合出门吗，外面天气如何",
+          "bucket": "hint_dual_arm",
+          "text": "适合出门吗，外面天气如何",
+          "expected": [
+            "info"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "info#4",
+            "info.weather",
+            "route_hints"
+          ],
+          "source": ""
+        },
+        {
+          "id": "reminder#0::第一场提醒我观看",
+          "bucket": "hint_dual_arm",
+          "text": "第一场提醒我观看",
+          "expected": [
+            "reminder"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "reminder#0",
+            "reminder.create",
+            "route_hints"
+          ],
+          "source": ""
+        },
+        {
+          "id": "nearby#0::找个评分高的川菜馆",
+          "bucket": "hint_dual_arm",
+          "text": "找个评分高的川菜馆",
+          "expected": [
+            "navigation"
+          ],
+          "actual": {
+            "with_hint": false,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "nearby#0",
+            "nearby.search",
+            "exemplar"
+          ],
+          "source": ""
+        },
+        {
+          "id": "nearby#1::搜一下附近的加油站",
+          "bucket": "hint_dual_arm",
+          "text": "搜一下附近的加油站",
+          "expected": [
+            "nearby"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "nearby#1",
+            "nearby.search",
+            "mode_routing"
+          ],
+          "source": ""
+        },
+        {
+          "id": "nearby#1::附近有没有充电站",
+          "bucket": "hint_dual_arm",
+          "text": "附近有没有充电站",
+          "expected": [
+            "nearby"
+          ],
+          "actual": {
+            "with_hint": true,
+            "without": false
+          },
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "nearby#1",
+            "nearby.search",
+            "route_hints"
+          ],
+          "source": ""
+        }
+      ],
+      "pass_rate": 0.9032
+    }
+  },
+  "overall": {
+    "total": 186,
+    "passed": 168,
+    "pass_rate": 0.9032
+  },
+  "cases": {
+    "deep-research#0::深入调研一下固态电池产业链": {
+      "id": "deep-research#0::深入调研一下固态电池产业链",
+      "bucket": "hint_dual_arm",
+      "text": "深入调研一下固态电池产业链",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::帮我全面对比一下增程和纯电的优劣": {
+      "id": "deep-research#0::帮我全面对比一下增程和纯电的优劣",
+      "bucket": "hint_dual_arm",
+      "text": "帮我全面对比一下增程和纯电的优劣",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::系统了解一下具身智能这个方向": {
+      "id": "deep-research#0::系统了解一下具身智能这个方向",
+      "bucket": "hint_dual_arm",
+      "text": "系统了解一下具身智能这个方向",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::彻底搞懂钠离子电池的商业化前景": {
+      "id": "deep-research#0::彻底搞懂钠离子电池的商业化前景",
+      "bucket": "hint_dual_arm",
+      "text": "彻底搞懂钠离子电池的商业化前景",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::好好研究下人形机器人赛道": {
+      "id": "deep-research#0::好好研究下人形机器人赛道",
+      "bucket": "hint_dual_arm",
+      "text": "好好研究下人形机器人赛道",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::调研一下车规级芯片的国产化进度": {
+      "id": "deep-research#0::调研一下车规级芯片的国产化进度",
+      "bucket": "hint_dual_arm",
+      "text": "调研一下车规级芯片的国产化进度",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::深度分析一下低空经济的机会": {
+      "id": "deep-research#0::深度分析一下低空经济的机会",
+      "bucket": "hint_dual_arm",
+      "text": "深度分析一下低空经济的机会",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::我想全面了解一下核聚变的最新进展": {
+      "id": "deep-research#0::我想全面了解一下核聚变的最新进展",
+      "bucket": "hint_dual_arm",
+      "text": "我想全面了解一下核聚变的最新进展",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::深入了解一下固态电池": {
+      "id": "deep-research#0::深入了解一下固态电池",
+      "bucket": "hint_dual_arm",
+      "text": "深入了解一下固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::帮我全面梳理一下智能驾驶的技术路线": {
+      "id": "deep-research#0::帮我全面梳理一下智能驾驶的技术路线",
+      "bucket": "hint_dual_arm",
+      "text": "帮我全面梳理一下智能驾驶的技术路线",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::系统梳理一下自动驾驶的法规现状": {
+      "id": "deep-research#0::系统梳理一下自动驾驶的法规现状",
+      "bucket": "hint_dual_arm",
+      "text": "系统梳理一下自动驾驶的法规现状",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::新能源补贴政策帮我彻底弄懂": {
+      "id": "deep-research#0::新能源补贴政策帮我彻底弄懂",
+      "bucket": "hint_dual_arm",
+      "text": "新能源补贴政策帮我彻底弄懂",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::那帮我深入调研一下它": {
+      "id": "deep-research#0::那帮我深入调研一下它",
+      "bucket": "hint_dual_arm",
+      "text": "那帮我深入调研一下它",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#0::帮我深入调研一下固态电池": {
+      "id": "deep-research#0::帮我深入调研一下固态电池",
+      "bucket": "hint_dual_arm",
+      "text": "帮我深入调研一下固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "deep-research#0::帮我查一下并深入调研固态电池": {
+      "id": "deep-research#0::帮我查一下并深入调研固态电池",
+      "bucket": "hint_dual_arm",
+      "text": "帮我查一下并深入调研固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "deep-research#0::深入调研一下固态电池": {
+      "id": "deep-research#0::深入调研一下固态电池",
+      "bucket": "hint_dual_arm",
+      "text": "深入调研一下固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "deep-research#0::全面对比一下增程和纯电": {
+      "id": "deep-research#0::全面对比一下增程和纯电",
+      "bucket": "hint_dual_arm",
+      "text": "全面对比一下增程和纯电",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "deep-research#0::深入调研一下固态电池现状": {
+      "id": "deep-research#0::深入调研一下固态电池现状",
+      "bucket": "hint_dual_arm",
+      "text": "深入调研一下固态电池现状",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "deep-research#0::深度调研这家公司的基本面": {
+      "id": "deep-research#0::深度调研这家公司的基本面",
+      "bucket": "hint_dual_arm",
+      "text": "深度调研这家公司的基本面",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "deep-research#0::系统了解下港股打新规则": {
+      "id": "deep-research#0::系统了解下港股打新规则",
+      "bucket": "hint_dual_arm",
+      "text": "系统了解下港股打新规则",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#0",
+        "research.run",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "deep-research#1::展开第三点": {
+      "id": "deep-research#1::展开第三点",
+      "bucket": "hint_dual_arm",
+      "text": "展开第三点",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "deep-research#1",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#1::第二点再详细讲讲": {
+      "id": "deep-research#1::第二点再详细讲讲",
+      "bucket": "hint_dual_arm",
+      "text": "第二点再详细讲讲",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "deep-research#1",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#1::这部分展开说说": {
+      "id": "deep-research#1::这部分展开说说",
+      "bucket": "hint_dual_arm",
+      "text": "这部分展开说说",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "deep-research#1",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#1::上面那点再深入一下": {
+      "id": "deep-research#1::上面那点再深入一下",
+      "bucket": "hint_dual_arm",
+      "text": "上面那点再深入一下",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "deep-research#1",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#1::详细讲讲第3条": {
+      "id": "deep-research#1::详细讲讲第3条",
+      "bucket": "hint_dual_arm",
+      "text": "详细讲讲第3条",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "deep-research#1",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#1::这条新闻详细说说": {
+      "id": "deep-research#1::这条新闻详细说说",
+      "bucket": "hint_dual_arm",
+      "text": "这条新闻详细说说",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "deep-research#1",
+        "research.run",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "deep-research#2::别查了": {
+      "id": "deep-research#2::别查了",
+      "bucket": "hint_dual_arm",
+      "text": "别查了",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#2",
+        "research.cancel",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "deep-research#2::取消那个调研": {
+      "id": "deep-research#2::取消那个调研",
+      "bucket": "hint_dual_arm",
+      "text": "取消那个调研",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#2",
+        "research.cancel",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "deep-research#2::固态电池那个调研不用查了": {
+      "id": "deep-research#2::固态电池那个调研不用查了",
+      "bucket": "hint_dual_arm",
+      "text": "固态电池那个调研不用查了",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#2",
+        "research.cancel",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "deep-research#2::不用查了": {
+      "id": "deep-research#2::不用查了",
+      "bucket": "hint_dual_arm",
+      "text": "不用查了",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#2",
+        "research.cancel",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "deep-research#2::停掉刚才那个调研": {
+      "id": "deep-research#2::停掉刚才那个调研",
+      "bucket": "hint_dual_arm",
+      "text": "停掉刚才那个调研",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#2",
+        "research.cancel",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "deep-research#2::调研不用继续了": {
+      "id": "deep-research#2::调研不用继续了",
+      "bucket": "hint_dual_arm",
+      "text": "调研不用继续了",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#2",
+        "research.cancel",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "deep-research#3::那个调研查得怎么样了": {
+      "id": "deep-research#3::那个调研查得怎么样了",
+      "bucket": "hint_dual_arm",
+      "text": "那个调研查得怎么样了",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#3",
+        "research.status",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "deep-research#3::还在查吗": {
+      "id": "deep-research#3::还在查吗",
+      "bucket": "hint_dual_arm",
+      "text": "还在查吗",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#3",
+        "research.status",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "deep-research#3::刚才那个调研查得怎么样了": {
+      "id": "deep-research#3::刚才那个调研查得怎么样了",
+      "bucket": "hint_dual_arm",
+      "text": "刚才那个调研查得怎么样了",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#3",
+        "research.status",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "deep-research#3::调研有结果了吗": {
+      "id": "deep-research#3::调研有结果了吗",
+      "bucket": "hint_dual_arm",
+      "text": "调研有结果了吗",
+      "expected": [
+        "research"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "deep-research#3",
+        "research.status",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#0::导航第3天": {
+      "id": "trip-planner#0::导航第3天",
+      "bucket": "hint_dual_arm",
+      "text": "导航第3天",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#0",
+        "trip.navigate",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "trip-planner#0::下一站": {
+      "id": "trip-planner#0::下一站",
+      "bucket": "hint_dual_arm",
+      "text": "下一站",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#0",
+        "trip.navigate",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#0::导航去第二天的西湖": {
+      "id": "trip-planner#0::导航去第二天的西湖",
+      "bucket": "hint_dual_arm",
+      "text": "导航去第二天的西湖",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#0",
+        "trip.navigate",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#0::第三天第一个": {
+      "id": "trip-planner#0::第三天第一个",
+      "bucket": "hint_dual_arm",
+      "text": "第三天第一个",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#0",
+        "trip.navigate",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#1::今天少玩一个": {
+      "id": "trip-planner#1::今天少玩一个",
+      "bucket": "hint_dual_arm",
+      "text": "今天少玩一个",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#1",
+        "trip.reschedule",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#1::太累了精简一下": {
+      "id": "trip-planner#1::太累了精简一下",
+      "bucket": "hint_dual_arm",
+      "text": "太累了精简一下",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#1",
+        "trip.reschedule",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#1::想提前回家": {
+      "id": "trip-planner#1::想提前回家",
+      "bucket": "hint_dual_arm",
+      "text": "想提前回家",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#1",
+        "trip.reschedule",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#1::时间不够了": {
+      "id": "trip-planner#1::时间不够了",
+      "bucket": "hint_dual_arm",
+      "text": "时间不够了",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#1",
+        "trip.reschedule",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#2::我在第几站": {
+      "id": "trip-planner#2::我在第几站",
+      "bucket": "hint_dual_arm",
+      "text": "我在第几站",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#2",
+        "trip.status",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#2::行程到哪了": {
+      "id": "trip-planner#2::行程到哪了",
+      "bucket": "hint_dual_arm",
+      "text": "行程到哪了",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#2",
+        "trip.status",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#2::还剩几站": {
+      "id": "trip-planner#2::还剩几站",
+      "bucket": "hint_dual_arm",
+      "text": "还剩几站",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#2",
+        "trip.status",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "chitchat#0::现在几点了": {
+      "id": "chitchat#0::现在几点了",
+      "bucket": "hint_dual_arm",
+      "text": "现在几点了",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "chitchat#0",
+        "chitchat.talk",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "chitchat#0::请问现在是什么时间": {
+      "id": "chitchat#0::请问现在是什么时间",
+      "bucket": "hint_dual_arm",
+      "text": "请问现在是什么时间",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "chitchat#0",
+        "chitchat.talk",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "chitchat#0::今天星期几": {
+      "id": "chitchat#0::今天星期几",
+      "bucket": "hint_dual_arm",
+      "text": "今天星期几",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "chitchat#0",
+        "chitchat.talk",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "chitchat#0::今天几号": {
+      "id": "chitchat#0::今天几号",
+      "bucket": "hint_dual_arm",
+      "text": "今天几号",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "chitchat#0",
+        "chitchat.talk",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "trip-planner#3::导航去第2天换一个": {
+      "id": "trip-planner#3::导航去第2天换一个",
+      "bucket": "hint_dual_arm",
+      "text": "导航去第2天换一个",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#3",
+        "trip.modify",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "trip-planner#3::删掉第三天的奥林匹克公园": {
+      "id": "trip-planner#3::删掉第三天的奥林匹克公园",
+      "bucket": "hint_dual_arm",
+      "text": "删掉第三天的奥林匹克公园",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#3",
+        "trip.modify",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#3::第二天换成宋城": {
+      "id": "trip-planner#3::第二天换成宋城",
+      "bucket": "hint_dual_arm",
+      "text": "第二天换成宋城",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#3",
+        "trip.modify",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "info#1::搜一下固态电池最新进展": {
+      "id": "info#1::搜一下固态电池最新进展",
+      "bucket": "hint_dual_arm",
+      "text": "搜一下固态电池最新进展",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#1",
+        "info.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#1::帮我查一下iPhone现在什么价格": {
+      "id": "info#1::帮我查一下iPhone现在什么价格",
+      "bucket": "hint_dual_arm",
+      "text": "帮我查一下iPhone现在什么价格",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#1",
+        "info.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#1::帮我查一下特斯拉FSD在中国的落地进展": {
+      "id": "info#1::帮我查一下特斯拉FSD在中国的落地进展",
+      "bucket": "hint_dual_arm",
+      "text": "帮我查一下特斯拉FSD在中国的落地进展",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#1",
+        "info.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#1::搜索量子计算商业化现状": {
+      "id": "info#1::搜索量子计算商业化现状",
+      "bucket": "hint_dual_arm",
+      "text": "搜索量子计算商业化现状",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#1",
+        "info.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#1::帮我查一下磷酸铁锂和三元锂的区别": {
+      "id": "info#1::帮我查一下磷酸铁锂和三元锂的区别",
+      "bucket": "hint_dual_arm",
+      "text": "帮我查一下磷酸铁锂和三元锂的区别",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "info#1",
+        "info.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#1::查一下固态电池": {
+      "id": "info#1::查一下固态电池",
+      "bucket": "hint_dual_arm",
+      "text": "查一下固态电池",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#1",
+        "info.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#1::搜一下你叫什么名字": {
+      "id": "info#1::搜一下你叫什么名字",
+      "bucket": "hint_dual_arm",
+      "text": "搜一下你叫什么名字",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "info#1",
+        "info.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#1::检索一下宁德时代最新财报要点": {
+      "id": "info#1::检索一下宁德时代最新财报要点",
+      "bucket": "hint_dual_arm",
+      "text": "检索一下宁德时代最新财报要点",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#1",
+        "info.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#1::帮我查一下iPhone现在的价格": {
+      "id": "info#1::帮我查一下iPhone现在的价格",
+      "bucket": "hint_dual_arm",
+      "text": "帮我查一下iPhone现在的价格",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#1",
+        "info.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "info#1::查一下这个地点": {
+      "id": "info#1::查一下这个地点",
+      "bucket": "hint_dual_arm",
+      "text": "查一下这个地点",
+      "expected": [
+        "navigation"
+      ],
+      "actual": {
+        "with_hint": false,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#1",
+        "info.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "info#2::今天有什么新闻": {
+      "id": "info#2::今天有什么新闻",
+      "bucket": "hint_dual_arm",
+      "text": "今天有什么新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::来点科技新闻": {
+      "id": "info#2::来点科技新闻",
+      "bucket": "hint_dual_arm",
+      "text": "来点科技新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::看看今天的头条": {
+      "id": "info#2::看看今天的头条",
+      "bucket": "hint_dual_arm",
+      "text": "看看今天的头条",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::有什么国际新闻吗": {
+      "id": "info#2::有什么国际新闻吗",
+      "bucket": "hint_dual_arm",
+      "text": "有什么国际新闻吗",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::刷刷新闻": {
+      "id": "info#2::刷刷新闻",
+      "bucket": "hint_dual_arm",
+      "text": "刷刷新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::新能源汽车的新闻": {
+      "id": "info#2::新能源汽车的新闻",
+      "bucket": "hint_dual_arm",
+      "text": "新能源汽车的新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::英伟达最新动态": {
+      "id": "info#2::英伟达最新动态",
+      "bucket": "hint_dual_arm",
+      "text": "英伟达最新动态",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::讲讲今天的要闻": {
+      "id": "info#2::讲讲今天的要闻",
+      "bucket": "hint_dual_arm",
+      "text": "讲讲今天的要闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::英伟达最新消息": {
+      "id": "info#2::英伟达最新消息",
+      "bucket": "hint_dual_arm",
+      "text": "英伟达最新消息",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::看看AI行业最近的新闻": {
+      "id": "info#2::看看AI行业最近的新闻",
+      "bucket": "hint_dual_arm",
+      "text": "看看AI行业最近的新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::给我读读今天的国际要闻": {
+      "id": "info#2::给我读读今天的国际要闻",
+      "bucket": "hint_dual_arm",
+      "text": "给我读读今天的国际要闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::有没有关于低空经济的新闻": {
+      "id": "info#2::有没有关于低空经济的新闻",
+      "bucket": "hint_dual_arm",
+      "text": "有没有关于低空经济的新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::再来点财经新闻": {
+      "id": "info#2::再来点财经新闻",
+      "bucket": "hint_dual_arm",
+      "text": "再来点财经新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::打开空调然后来点科技新闻": {
+      "id": "info#2::打开空调然后来点科技新闻",
+      "bucket": "hint_dual_arm",
+      "text": "打开空调然后来点科技新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "info#2::来点财经新闻": {
+      "id": "info#2::来点财经新闻",
+      "bucket": "hint_dual_arm",
+      "text": "来点财经新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "info#2::看看新闻": {
+      "id": "info#2::看看新闻",
+      "bucket": "hint_dual_arm",
+      "text": "看看新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "info#2::科技新闻": {
+      "id": "info#2::科技新闻",
+      "bucket": "hint_dual_arm",
+      "text": "科技新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#2",
+        "info.news",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "info#0::葡萄牙那一场看看详情": {
+      "id": "info#0::葡萄牙那一场看看详情",
+      "bucket": "hint_dual_arm",
+      "text": "葡萄牙那一场看看详情",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#0",
+        "info.sports",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "info#3::这场比赛你预测谁会赢": {
+      "id": "info#3::这场比赛你预测谁会赢",
+      "bucket": "hint_dual_arm",
+      "text": "这场比赛你预测谁会赢",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#3",
+        "info.sports",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#0::帮我创建一个钓鱼模式：座椅放平，开外循环": {
+      "id": "scene-orchestrator#0::帮我创建一个钓鱼模式：座椅放平，开外循环",
+      "bucket": "hint_dual_arm",
+      "text": "帮我创建一个钓鱼模式：座椅放平，开外循环",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#0",
+        "scene.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#0::新建一个下雨模式，关窗加除雾": {
+      "id": "scene-orchestrator#0::新建一个下雨模式，关窗加除雾",
+      "bucket": "hint_dual_arm",
+      "text": "新建一个下雨模式，关窗加除雾",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#0",
+        "scene.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#0::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开": {
+      "id": "scene-orchestrator#0::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "bucket": "hint_dual_arm",
+      "text": "创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#0",
+        "scene.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#0::创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开": {
+      "id": "scene-orchestrator#0::创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开",
+      "bucket": "hint_dual_arm",
+      "text": "创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#0",
+        "scene.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#0::帮我创建一个钓鱼模式：座椅放平、开外循环、氛围灯调到10%": {
+      "id": "scene-orchestrator#0::帮我创建一个钓鱼模式：座椅放平、开外循环、氛围灯调到10%",
+      "bucket": "hint_dual_arm",
+      "text": "帮我创建一个钓鱼模式：座椅放平、开外循环、氛围灯调到10%",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#0",
+        "scene.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#0::新建观星模式：氛围灯关掉，座椅放倒，空调22度": {
+      "id": "scene-orchestrator#0::新建观星模式：氛围灯关掉，座椅放倒，空调22度",
+      "bucket": "hint_dual_arm",
+      "text": "新建观星模式：氛围灯关掉，座椅放倒，空调22度",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#0",
+        "scene.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#0::自定义一个遛狗模式：车窗开一半，空调外循环": {
+      "id": "scene-orchestrator#0::自定义一个遛狗模式：车窗开一半，空调外循环",
+      "bucket": "hint_dual_arm",
+      "text": "自定义一个遛狗模式：车窗开一半，空调外循环",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#0",
+        "scene.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "info#4::今天天气怎么样，适合出行吗": {
+      "id": "info#4::今天天气怎么样，适合出行吗",
+      "bucket": "hint_dual_arm",
+      "text": "今天天气怎么样，适合出行吗",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "info#4",
+        "info.weather",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "info#4::适合出门吗，外面天气如何": {
+      "id": "info#4::适合出门吗，外面天气如何",
+      "bucket": "hint_dual_arm",
+      "text": "适合出门吗，外面天气如何",
+      "expected": [
+        "info"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "info#4",
+        "info.weather",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#3::把钓鱼模式的温度改成24": {
+      "id": "scene-orchestrator#3::把钓鱼模式的温度改成24",
+      "bucket": "hint_dual_arm",
+      "text": "把钓鱼模式的温度改成24",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#3",
+        "scene.update",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#3::去掉钓鱼模式里的香氛": {
+      "id": "scene-orchestrator#3::去掉钓鱼模式里的香氛",
+      "bucket": "hint_dual_arm",
+      "text": "去掉钓鱼模式里的香氛",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#3",
+        "scene.update",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#3::观星模式去掉座椅放平": {
+      "id": "scene-orchestrator#3::观星模式去掉座椅放平",
+      "bucket": "hint_dual_arm",
+      "text": "观星模式去掉座椅放平",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#3",
+        "scene.update",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#3::钓鱼模式再加一个开香氛": {
+      "id": "scene-orchestrator#3::钓鱼模式再加一个开香氛",
+      "bucket": "hint_dual_arm",
+      "text": "钓鱼模式再加一个开香氛",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#3",
+        "scene.update",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "mcp-bridge#0::来一杯大杯拿铁": {
+      "id": "mcp-bridge#0::来一杯大杯拿铁",
+      "bucket": "hint_dual_arm",
+      "text": "来一杯大杯拿铁",
+      "expected": [
+        "shop"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mcp-bridge#0",
+        "shop.order",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "mcp-bridge#0::帮我点一杯美式": {
+      "id": "mcp-bridge#0::帮我点一杯美式",
+      "bucket": "hint_dual_arm",
+      "text": "帮我点一杯美式",
+      "expected": [
+        "shop"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mcp-bridge#0",
+        "shop.order",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "reminder#0::提醒我晚上看新闻联播": {
+      "id": "reminder#0::提醒我晚上看新闻联播",
+      "bucket": "hint_dual_arm",
+      "text": "提醒我晚上看新闻联播",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "reminder#0::明天早上八点提醒我开会": {
+      "id": "reminder#0::明天早上八点提醒我开会",
+      "bucket": "hint_dual_arm",
+      "text": "明天早上八点提醒我开会",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "reminder#0::明天早上八点提醒我带充电线": {
+      "id": "reminder#0::明天早上八点提醒我带充电线",
+      "bucket": "hint_dual_arm",
+      "text": "明天早上八点提醒我带充电线",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::到时候提醒我什么时候该出发": {
+      "id": "reminder#0::到时候提醒我什么时候该出发",
+      "bucket": "hint_dual_arm",
+      "text": "到时候提醒我什么时候该出发",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::半小时后提醒我给客户回电话": {
+      "id": "reminder#0::半小时后提醒我给客户回电话",
+      "bucket": "hint_dual_arm",
+      "text": "半小时后提醒我给客户回电话",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::每天早上八点提醒我吃药": {
+      "id": "reminder#0::每天早上八点提醒我吃药",
+      "bucket": "hint_dual_arm",
+      "text": "每天早上八点提醒我吃药",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::过10分钟再提醒我": {
+      "id": "reminder#0::过10分钟再提醒我",
+      "bucket": "hint_dual_arm",
+      "text": "过10分钟再提醒我",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::第一场提醒我观看": {
+      "id": "reminder#0::第一场提醒我观看",
+      "bucket": "hint_dual_arm",
+      "text": "第一场提醒我观看",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::开赛前半小时提醒我": {
+      "id": "reminder#0::开赛前半小时提醒我",
+      "bucket": "hint_dual_arm",
+      "text": "开赛前半小时提醒我",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开": {
+      "id": "reminder#0::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "bucket": "hint_dual_arm",
+      "text": "创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::到公司提醒我拿文件": {
+      "id": "reminder#0::到公司提醒我拿文件",
+      "bucket": "hint_dual_arm",
+      "text": "到公司提醒我拿文件",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::离开公司提醒我买菜": {
+      "id": "reminder#0::离开公司提醒我买菜",
+      "bucket": "hint_dual_arm",
+      "text": "离开公司提醒我买菜",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::到公司之前提醒我交周报": {
+      "id": "reminder#0::到公司之前提醒我交周报",
+      "bucket": "hint_dual_arm",
+      "text": "到公司之前提醒我交周报",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::不用提醒我回电话了": {
+      "id": "reminder#0::不用提醒我回电话了",
+      "bucket": "hint_dual_arm",
+      "text": "不用提醒我回电话了",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#0::到家提醒我收快递": {
+      "id": "reminder#0::到家提醒我收快递",
+      "bucket": "hint_dual_arm",
+      "text": "到家提醒我收快递",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#0::周五下午三点叫我去接孩子": {
+      "id": "reminder#0::周五下午三点叫我去接孩子",
+      "bucket": "hint_dual_arm",
+      "text": "周五下午三点叫我去接孩子",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#0::帮我记个待办周末洗车": {
+      "id": "reminder#0::帮我记个待办周末洗车",
+      "bucket": "hint_dual_arm",
+      "text": "帮我记个待办周末洗车",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#0::创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开": {
+      "id": "reminder#0::创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开",
+      "bucket": "hint_dual_arm",
+      "text": "创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#1::查一下我的待办": {
+      "id": "reminder#1::查一下我的待办",
+      "bucket": "hint_dual_arm",
+      "text": "查一下我的待办",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.list",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "reminder#1::我今天有什么安排": {
+      "id": "reminder#1::我今天有什么安排",
+      "bucket": "hint_dual_arm",
+      "text": "我今天有什么安排",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.list",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#1::我有哪些提醒": {
+      "id": "reminder#1::我有哪些提醒",
+      "bucket": "hint_dual_arm",
+      "text": "我有哪些提醒",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.list",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#1::看看我的待办": {
+      "id": "reminder#1::看看我的待办",
+      "bucket": "hint_dual_arm",
+      "text": "看看我的待办",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.list",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#2::取消第二条提醒": {
+      "id": "reminder#2::取消第二条提醒",
+      "bucket": "hint_dual_arm",
+      "text": "取消第二条提醒",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#2",
+        "reminder.cancel",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#2::取消第二条": {
+      "id": "reminder#2::取消第二条",
+      "bucket": "hint_dual_arm",
+      "text": "取消第二条",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#2",
+        "reminder.cancel",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#2::不用提醒我回电话了": {
+      "id": "reminder#2::不用提醒我回电话了",
+      "bucket": "hint_dual_arm",
+      "text": "不用提醒我回电话了",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#2",
+        "reminder.cancel",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#2::把提醒都清空": {
+      "id": "reminder#2::把提醒都清空",
+      "bucket": "hint_dual_arm",
+      "text": "把提醒都清空",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#2",
+        "reminder.cancel",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#3::把接孩子的提醒改到五点": {
+      "id": "reminder#3::把接孩子的提醒改到五点",
+      "bucket": "hint_dual_arm",
+      "text": "把接孩子的提醒改到五点",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#3",
+        "reminder.update",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#3::买牛奶那条推迟到明天九点": {
+      "id": "reminder#3::买牛奶那条推迟到明天九点",
+      "bucket": "hint_dual_arm",
+      "text": "买牛奶那条推迟到明天九点",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#3",
+        "reminder.update",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#3::改第二条到晚上八点": {
+      "id": "reminder#3::改第二条到晚上八点",
+      "bucket": "hint_dual_arm",
+      "text": "改第二条到晚上八点",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#3",
+        "reminder.update",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#3::把接孩子改到五点": {
+      "id": "reminder#3::把接孩子改到五点",
+      "bucket": "hint_dual_arm",
+      "text": "把接孩子改到五点",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#3",
+        "reminder.update",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#4::完成第二条": {
+      "id": "reminder#4::完成第二条",
+      "bucket": "hint_dual_arm",
+      "text": "完成第二条",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#4",
+        "reminder.complete",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#4::完成提醒：给客户回电话": {
+      "id": "reminder#4::完成提醒：给客户回电话",
+      "bucket": "hint_dual_arm",
+      "text": "完成提醒：给客户回电话",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#4",
+        "reminder.complete",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#4::删掉钓鱼模式": {
+      "id": "scene-orchestrator#4::删掉钓鱼模式",
+      "bucket": "hint_dual_arm",
+      "text": "删掉钓鱼模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#4",
+        "scene.delete",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#4::不要观星模式了": {
+      "id": "scene-orchestrator#4::不要观星模式了",
+      "bucket": "hint_dual_arm",
+      "text": "不要观星模式了",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#4",
+        "scene.delete",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "charging-planner#0::去惠州怎么充电": {
+      "id": "charging-planner#0::去惠州怎么充电",
+      "bucket": "hint_dual_arm",
+      "text": "去惠州怎么充电",
+      "expected": [
+        "charging"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging-planner#0",
+        "charging.plan",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "charging-planner#0::去杭州怎么充电": {
+      "id": "charging-planner#0::去杭州怎么充电",
+      "bucket": "hint_dual_arm",
+      "text": "去杭州怎么充电",
+      "expected": [
+        "charging"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging-planner#0",
+        "charging.plan",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "charging-planner#1::快没电了，附近找个快充": {
+      "id": "charging-planner#1::快没电了，附近找个快充",
+      "bucket": "hint_dual_arm",
+      "text": "快没电了，附近找个快充",
+      "expected": [
+        "charging"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging-planner#1",
+        "charging.find",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "charging-planner#1::车快没电了，帮我找个充电桩": {
+      "id": "charging-planner#1::车快没电了，帮我找个充电桩",
+      "bucket": "hint_dual_arm",
+      "text": "车快没电了，帮我找个充电桩",
+      "expected": [
+        "charging"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging-planner#1",
+        "charging.find",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "charging-planner#1::糟了快没电了，赶紧找个充电桩": {
+      "id": "charging-planner#1::糟了快没电了，赶紧找个充电桩",
+      "bucket": "hint_dual_arm",
+      "text": "糟了快没电了，赶紧找个充电桩",
+      "expected": [
+        "charging"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging-planner#1",
+        "charging.find",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "charging-planner#1::电快见底了，就近找个地方充上": {
+      "id": "charging-planner#1::电快见底了，就近找个地方充上",
+      "bucket": "hint_dual_arm",
+      "text": "电快见底了，就近找个地方充上",
+      "expected": [
+        "charging"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "charging-planner#1",
+        "charging.find",
+        "skill:charging-strategy"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近有什么好吃的川菜馆": {
+      "id": "nearby#0::附近有什么好吃的川菜馆",
+      "bucket": "hint_dual_arm",
+      "text": "附近有什么好吃的川菜馆",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近哪里有咖啡店": {
+      "id": "nearby#0::附近哪里有咖啡店",
+      "bucket": "hint_dual_arm",
+      "text": "附近哪里有咖啡店",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "nearby#0::推荐个好喝的咖啡馆": {
+      "id": "nearby#0::推荐个好喝的咖啡馆",
+      "bucket": "hint_dual_arm",
+      "text": "推荐个好喝的咖啡馆",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "nearby#0::帮我看看附近有什么咖啡店": {
+      "id": "nearby#0::帮我看看附近有什么咖啡店",
+      "bucket": "hint_dual_arm",
+      "text": "帮我看看附近有什么咖啡店",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "nearby#0::帮我看看我附近有什么好吃的": {
+      "id": "nearby#0::帮我看看我附近有什么好吃的",
+      "bucket": "hint_dual_arm",
+      "text": "帮我看看我附近有什么好吃的",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "nearby#0::找个评分高的川菜馆": {
+      "id": "nearby#0::找个评分高的川菜馆",
+      "bucket": "hint_dual_arm",
+      "text": "找个评分高的川菜馆",
+      "expected": [
+        "navigation"
+      ],
+      "actual": {
+        "with_hint": false,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::找家川菜馆": {
+      "id": "nearby#0::找家川菜馆",
+      "bucket": "hint_dual_arm",
+      "text": "找家川菜馆",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近有什么好吃的": {
+      "id": "nearby#0::附近有什么好吃的",
+      "bucket": "hint_dual_arm",
+      "text": "附近有什么好吃的",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近的景点": {
+      "id": "nearby#0::附近的景点",
+      "bucket": "hint_dual_arm",
+      "text": "附近的景点",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近的电影院": {
+      "id": "nearby#0::附近的电影院",
+      "bucket": "hint_dual_arm",
+      "text": "附近的电影院",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近的酒店": {
+      "id": "nearby#0::附近的酒店",
+      "bucket": "hint_dual_arm",
+      "text": "附近的酒店",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近的餐厅": {
+      "id": "nearby#0::附近的餐厅",
+      "bucket": "hint_dual_arm",
+      "text": "附近的餐厅",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近评分高的火锅": {
+      "id": "nearby#0::附近评分高的火锅",
+      "bucket": "hint_dual_arm",
+      "text": "附近评分高的火锅",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#1::搜一下附近的加油站": {
+      "id": "nearby#1::搜一下附近的加油站",
+      "bucket": "hint_dual_arm",
+      "text": "搜一下附近的加油站",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "nearby#1",
+        "nearby.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "nearby#1::附近有没有充电站": {
+      "id": "nearby#1::附近有没有充电站",
+      "bucket": "hint_dual_arm",
+      "text": "附近有没有充电站",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": false
+      },
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "nearby#1",
+        "nearby.search",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "nearby#1::附近有没有停车场": {
+      "id": "nearby#1::附近有没有停车场",
+      "bucket": "hint_dual_arm",
+      "text": "附近有没有停车场",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#1",
+        "nearby.search",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "nearby#1::找个充电站": {
+      "id": "nearby#1::找个充电站",
+      "bucket": "hint_dual_arm",
+      "text": "找个充电站",
+      "expected": [
+        "charging"
+      ],
+      "actual": {
+        "with_hint": false,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#1",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#1::附近有充电桩吗": {
+      "id": "nearby#1::附近有充电桩吗",
+      "bucket": "hint_dual_arm",
+      "text": "附近有充电桩吗",
+      "expected": [
+        "charging"
+      ],
+      "actual": {
+        "with_hint": false,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#1",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#1::最近的加油站在哪": {
+      "id": "nearby#1::最近的加油站在哪",
+      "bucket": "hint_dual_arm",
+      "text": "最近的加油站在哪",
+      "expected": [
+        "navigation"
+      ],
+      "actual": {
+        "with_hint": false,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#1",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#1::附近的充电站": {
+      "id": "nearby#1::附近的充电站",
+      "bucket": "hint_dual_arm",
+      "text": "附近的充电站",
+      "expected": [
+        "navigation"
+      ],
+      "actual": {
+        "with_hint": false,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#1",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#1::找个停车场": {
+      "id": "nearby#1::找个停车场",
+      "bucket": "hint_dual_arm",
+      "text": "找个停车场",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#1",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#2::看看它的详情": {
+      "id": "nearby#2::看看它的详情",
+      "bucket": "hint_dual_arm",
+      "text": "看看它的详情",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#2",
+        "nearby.detail",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "nearby#2::这个地方的详细信息": {
+      "id": "nearby#2::这个地方的详细信息",
+      "bucket": "hint_dual_arm",
+      "text": "这个地方的详细信息",
+      "expected": [
+        "navigation"
+      ],
+      "actual": {
+        "with_hint": false,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#2",
+        "nearby.detail",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#2::它家电话多少": {
+      "id": "nearby#2::它家电话多少",
+      "bucket": "hint_dual_arm",
+      "text": "它家电话多少",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#2",
+        "nearby.detail",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#2::这家怎么样": {
+      "id": "nearby#2::这家怎么样",
+      "bucket": "hint_dual_arm",
+      "text": "这家怎么样",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#2",
+        "nearby.detail",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#1::开启午休模式": {
+      "id": "scene-orchestrator#1::开启午休模式",
+      "bucket": "hint_dual_arm",
+      "text": "开启午休模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#1",
+        "scene.activate",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#1::来个钓鱼模式": {
+      "id": "scene-orchestrator#1::来个钓鱼模式",
+      "bucket": "hint_dual_arm",
+      "text": "来个钓鱼模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#1",
+        "scene.activate",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#1::露营模式": {
+      "id": "scene-orchestrator#1::露营模式",
+      "bucket": "hint_dual_arm",
+      "text": "露营模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#1",
+        "scene.activate",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#1::开启午休模式，温度改成26": {
+      "id": "scene-orchestrator#1::开启午休模式，温度改成26",
+      "bucket": "hint_dual_arm",
+      "text": "开启午休模式，温度改成26",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#1",
+        "scene.activate",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#1::午休模式": {
+      "id": "scene-orchestrator#1::午休模式",
+      "bucket": "hint_dual_arm",
+      "text": "午休模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#1",
+        "scene.activate",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#1::开启回家模式": {
+      "id": "scene-orchestrator#1::开启回家模式",
+      "bucket": "hint_dual_arm",
+      "text": "开启回家模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#1",
+        "scene.activate",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#1::我能用什么模式": {
+      "id": "scene-orchestrator#1::我能用什么模式",
+      "bucket": "hint_dual_arm",
+      "text": "我能用什么模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#1",
+        "scene.activate",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#1::打开浪漫模式": {
+      "id": "scene-orchestrator#1::打开浪漫模式",
+      "bucket": "hint_dual_arm",
+      "text": "打开浪漫模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#1",
+        "scene.activate",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#2::退出露营模式": {
+      "id": "scene-orchestrator#2::退出露营模式",
+      "bucket": "hint_dual_arm",
+      "text": "退出露营模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#2",
+        "scene.deactivate",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "scene-orchestrator#2::关闭午休模式": {
+      "id": "scene-orchestrator#2::关闭午休模式",
+      "bucket": "hint_dual_arm",
+      "text": "关闭午休模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene-orchestrator#2",
+        "scene.deactivate",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::帮我规划一个杭州两日游": {
+      "id": "trip-planner#4::帮我规划一个杭州两日游",
+      "bucket": "hint_dual_arm",
+      "text": "帮我规划一个杭州两日游",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::下周去成都玩三天带爸妈": {
+      "id": "trip-planner#4::下周去成都玩三天带爸妈",
+      "bucket": "hint_dual_arm",
+      "text": "下周去成都玩三天带爸妈",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "skill:multi-day-trip"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::周末去杭州两天带老人不要太累，顺便看看天气": {
+      "id": "trip-planner#4::周末去杭州两天带老人不要太累，顺便看看天气",
+      "bucket": "hint_dual_arm",
+      "text": "周末去杭州两天带老人不要太累，顺便看看天气",
+      "expected": [
+        "info",
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "skill:multi-day-trip"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::陪爸妈去趟昆明玩四天，帮我安排下": {
+      "id": "trip-planner#4::陪爸妈去趟昆明玩四天，帮我安排下",
+      "bucket": "hint_dual_arm",
+      "text": "陪爸妈去趟昆明玩四天，帮我安排下",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "skill:multi-day-trip"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::去成都玩三天轻松点": {
+      "id": "trip-planner#4::去成都玩三天轻松点",
+      "bucket": "hint_dual_arm",
+      "text": "去成都玩三天轻松点",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::去行程里的故宫": {
+      "id": "trip-planner#4::去行程里的故宫",
+      "bucket": "hint_dual_arm",
+      "text": "去行程里的故宫",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::周末去杭州两天带老人不要太累": {
+      "id": "trip-planner#4::周末去杭州两天带老人不要太累",
+      "bucket": "hint_dual_arm",
+      "text": "周末去杭州两天带老人不要太累",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::周末去杭州两天带老人，顺便看看天气和是否需要中途充电": {
+      "id": "trip-planner#4::周末去杭州两天带老人，顺便看看天气和是否需要中途充电",
+      "bucket": "hint_dual_arm",
+      "text": "周末去杭州两天带老人，顺便看看天气和是否需要中途充电",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::周末带娃去近郊玩": {
+      "id": "trip-planner#4::周末带娃去近郊玩",
+      "bucket": "hint_dual_arm",
+      "text": "周末带娃去近郊玩",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::导航去第二天的西湖": {
+      "id": "trip-planner#4::导航去第二天的西湖",
+      "bucket": "hint_dual_arm",
+      "text": "导航去第二天的西湖",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::帮我安排去三亚的行程": {
+      "id": "trip-planner#4::帮我安排去三亚的行程",
+      "bucket": "hint_dual_arm",
+      "text": "帮我安排去三亚的行程",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::行程到哪了": {
+      "id": "trip-planner#4::行程到哪了",
+      "bucket": "hint_dual_arm",
+      "text": "行程到哪了",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "trip-planner#4::规划周末去杭州两日游": {
+      "id": "trip-planner#4::规划周末去杭州两日游",
+      "bucket": "hint_dual_arm",
+      "text": "规划周末去杭州两日游",
+      "expected": [
+        "trip"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "trip-planner#4",
+        "trip.plan",
+        "exemplar"
+      ],
+      "source": ""
+    }
+  },
+  "retirement": {
+    "candidates": [
+      {
+        "key": "deep-research#2",
+        "agent_id": "deep-research",
+        "intent": "research.cancel",
+        "policy": "replace",
+        "priority": 95,
+        "pattern": "^(那|那就|好了|好啦|行了|算了|先|现在|你|你就)?\\s*(别|不用|不要|甭)\\s*(再)?(查|调研|研究)了[吧呀啊哦嘛么]{0,2}$|(取消|停掉|停止|终止|中止|结束)[^，。！？]{0,4}(调研|研究|后台任务)|(调研|研究)[^，。！？]{0,4}(取消|停掉|停下|别查|不用查|不用继续|别继续)",
+        "guard": "提醒|闹钟|日程|待办|导航|路线|场景|模式|订单|支付|音乐|播放|空调|车窗",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "别查了",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "取消那个调研",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "固态电池那个调研不用查了",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "不用查了",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "停掉刚才那个调研",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "调研不用继续了",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "deep-research#3",
+        "agent_id": "deep-research",
+        "intent": "research.status",
+        "policy": "replace",
+        "priority": 95,
+        "pattern": "(调研|研究|报告|后台任务)[^，。！？]{0,6}(怎么样了|怎样了|什么进度|多少进度|有结果|出结果|好了没|好了吗|完了没|完成了吗|查完了吗|查好了吗)|(刚才|之前|上次|那个|昨天)[^，。！？]{0,4}(调研|研究)[^，。！？]{0,6}(怎么样|进度|结果|完了|好了)|^(这个|那个|它|现在|你)?\\s*还在查(吗|么|不|呢)?[吗呢啊]{0,2}$",
+        "guard": "提醒|闹钟|日程|待办|导航|路线|订单|支付|充电",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "那个调研查得怎么样了",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "还在查吗",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "刚才那个调研查得怎么样了",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "调研有结果了吗",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "trip-planner#0",
+        "agent_id": "trip-planner",
+        "intent": "trip.navigate",
+        "policy": "replace",
+        "priority": 90,
+        "pattern": "下一站|下个景点|继续导航|(?:导航|带我去|去|到)[^，。！？]{0,6}第\\s*[一二两三四五六七八九十\\d]+\\s*天|第\\s*[一二两三四五六七八九十\\d]+\\s*天[^，。！？]{0,4}第\\s*[一二两三四五六七八九十\\d]+\\s*个",
+        "guard": "换|改|调整|删|加|不去|不要|重新|规划",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "导航第3天",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "下一站",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "导航去第二天的西湖",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "第三天第一个",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "trip-planner#1",
+        "agent_id": "trip-planner",
+        "intent": "trip.reschedule",
+        "policy": "replace",
+        "priority": 80,
+        "pattern": "时间不够|来不及|赶不及|太累了|好累|累坏|累死|提前回|早点回|早些回|提前结束|精简.{0,2}行程|简化行程|行程太满|玩不完|少玩|少去",
+        "guard": "",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "今天少玩一个",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "太累了精简一下",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "想提前回家",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "时间不够了",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "trip-planner#2",
+        "agent_id": "trip-planner",
+        "intent": "trip.status",
+        "policy": "replace",
+        "priority": 70,
+        "pattern": "行程(到哪|进度|还剩|还有|怎么样)|还剩几[站个]|我在第几[站天]|到第几站|今晚住哪|行程.{0,3}充几次",
+        "guard": "",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "我在第几站",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "行程到哪了",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "还剩几站",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "trip-planner#3",
+        "agent_id": "trip-planner",
+        "intent": "trip.modify",
+        "policy": "replace",
+        "priority": 60,
+        "pattern": "第\\s*[一二两三四五六七八九十\\d]+\\s*天[^，。！？]*?(换|改|调整|替换|更换|删|加|重新|别去|不去)|(行程|景点|目的地|这天|那天)[^，。！？]*?(换|改|调整|替换|更换|重新规划)|(换|改|调整|更换)[^，。！？]{0,4}(行程|景点|目的地|第\\s*[一二两三四五六七八九十\\d]+\\s*天)|(删掉|删除|去掉|加一个|加个|增加|不去)[^，。！？]{0,8}第\\s*[一二两三四五六七八九十\\d]+\\s*天",
+        "guard": "",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "导航去第2天换一个",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "删掉第三天的奥林匹克公园",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "第二天换成宋城",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "info#0",
+        "agent_id": "info",
+        "intent": "info.sports",
+        "policy": "replace",
+        "priority": 58,
+        "pattern": "(那|这|上一?|哪)\\s*一?\\s*场[^，。！？]{0,12}(详情|详细|怎么样|怎样|战报|进球|谁进|射手|得分|集锦|经过|赛况|比分|结果|讲讲|说说)|第\\s*[一二两三四五六七八九十\\d]+\\s*场[^，。！？]{0,10}(详情|怎么样|进球|谁进|射手|战报|赛况|比分)",
+        "guard": "餐厅|饭店|饭馆|美食|火锅|川菜|日料|咖啡|奶茶|甜品|电影|影院|演唱会|音乐会|话剧|舞台剧|展览|展会|酒店|民宿|景点|景区",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "葡萄牙那一场看看详情",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          }
+        ]
+      },
+      {
+        "key": "info#3",
+        "agent_id": "info",
+        "intent": "info.sports",
+        "policy": "replace",
+        "priority": 58,
+        "pattern": "(世界杯|欧冠|欧联|英超|西甲|意甲|德甲|法甲|荷甲|中超|NBA|决赛|半决赛|季军赛|淘汰赛|小组赛)[^。！？]{0,16}(看好|预测|预判|前瞻|谁会赢|谁能赢|谁胜出|夺冠|胜算|赢面|猜一猜|猜猜|你猜|几比几)|(看好|预测|猜一猜|猜猜|你猜)[^。！？]{0,16}(世界杯|欧冠|欧联|英超|西甲|意甲|德甲|法甲|荷甲|中超|NBA|决赛|半决赛|季军赛)|(这|那)\\s*一?\\s*场[^。！？]{0,10}(看好|预测|预判|前瞻|谁会赢|谁能赢|谁胜出|夺冠|胜算|赢面|猜一猜|猜猜|你猜|几比几|怎么看)|(看好|预测|预判|前瞻|猜一猜|猜猜|你猜)[^。！？]{0,8}(这|那)\\s*一?\\s*场",
+        "guard": "电影|影院|演唱会|音乐会|话剧|展览|彩票|股票|股价|大盘|基金|网球|乒乓|羽毛球|排球|电竞|游戏|官司|诉讼|选举|辩论|发布会|演出|雨|雪|事故",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "这场比赛你预测谁会赢",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          }
+        ]
+      },
+      {
+        "key": "scene-orchestrator#3",
+        "agent_id": "scene-orchestrator",
+        "intent": "scene.update",
+        "policy": "replace",
+        "priority": 57,
+        "pattern": "[一-龥]{1,6}模式(的)?[^。]{0,10}(改成|改为|改到|加上|加一个|再加|去掉|删掉)|(去掉|删掉|加上|加一个|再加)[一-龥]{1,6}模式(里|里面|中)的|(修改|更改)[一-龥]{1,6}模式",
+        "guard": "^(开启|打开|进入|切换到|来个|来一个|启动)|驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|省电模式|电量模式|是什么|什么意思",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "把钓鱼模式的温度改成24",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "去掉钓鱼模式里的香氛",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "观星模式去掉座椅放平",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "钓鱼模式再加一个开香氛",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "mcp-bridge#0",
+        "agent_id": "mcp-bridge",
+        "intent": "shop.order",
+        "policy": "replace",
+        "priority": 56,
+        "pattern": "(点|来|买|订|下单).{0,4}杯\\s*(大杯|中杯|小杯)?\\s*(拿铁|美式|摩卡|卡布奇诺|澳白|燕麦拿铁|咖啡)",
+        "guard": "附近|周边|哪里有|哪儿有|哪有|找.{0,3}(店|家|咖啡)|推荐|好喝|咖啡店|咖啡馆",
+        "require_confirm": true,
+        "cases": [
+          {
+            "text": "来一杯大杯拿铁",
+            "expect": [
+              "shop"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我点一杯美式",
+            "expect": [
+              "shop"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          }
+        ]
+      },
+      {
+        "key": "reminder#1",
+        "agent_id": "reminder",
+        "intent": "reminder.list",
+        "policy": "replace",
+        "priority": 56,
+        "pattern": "我(今天|明天|后天|这周|未来.{0,2}天)?(有什么|有哪些|的)(安排|提醒|待办|日程)|看看?(我的)?(提醒|待办|日程)",
+        "guard": "行程|旅行|路线",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "查一下我的待办",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "我今天有什么安排",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "我有哪些提醒",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "看看我的待办",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "reminder#2",
+        "agent_id": "reminder",
+        "intent": "reminder.cancel",
+        "policy": "replace",
+        "priority": 56,
+        "pattern": "(取消|删掉|删除|不用).{0,4}(提醒|待办)|(提醒|待办).{0,4}(清空|全删)|把提醒都?清空|(取消|删掉|删除)\\s*第[一二三四五六七八九十0-9]+[条个]",
+        "guard": "",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "取消第二条提醒",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "取消第二条",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "不用提醒我回电话了",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "把提醒都清空",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "reminder#3",
+        "agent_id": "reminder",
+        "intent": "reminder.update",
+        "policy": "replace",
+        "priority": 56,
+        "pattern": "(改到|改成|推迟到|提前到|延到|换到)\\s*(明天|后天|大后天|今晚|周|星期|礼拜|早上|上午|中午|下午|晚上|凌晨|半?[0-9一二三四五六七八九十两]+点|[0-9]{1,2}[:：][0-9]{2}|[0-9一二三四五六七八九十]+号)|(提醒|待办).{0,4}(推迟|提前|改个?时间)|改\\s*第[一二三四五六七八九十0-9]+条",
+        "guard": "行程|路线|导航|充电|空调|温度|风量|音量|座椅|亮度|第[0-9一二三四五六七八九十]+天",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "把接孩子的提醒改到五点",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "买牛奶那条推迟到明天九点",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "改第二条到晚上八点",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "把接孩子改到五点",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "reminder#4",
+        "agent_id": "reminder",
+        "intent": "reminder.complete",
+        "policy": "replace",
+        "priority": 56,
+        "pattern": "(完成|办完|做完|搞定)了?.{0,4}(第[一二三四五六七八九十0-9]+[条个项]|那[条个]|提醒|待办)|完成提醒[:：]",
+        "guard": "行程|导航|充电",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "完成第二条",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "完成提醒：给客户回电话",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "scene-orchestrator#4",
+        "agent_id": "scene-orchestrator",
+        "intent": "scene.delete",
+        "policy": "replace",
+        "priority": 56,
+        "pattern": "(删掉|删除|去掉|不要)\\s*[一-龥]{1,6}模式(了)?",
+        "guard": "是什么|什么意思|里的|里面|中的",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "删掉钓鱼模式",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "不要观星模式了",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "charging-planner#0",
+        "agent_id": "charging-planner",
+        "intent": "charging.plan",
+        "policy": "replace",
+        "priority": 55,
+        "pattern": "去([^，。！？]{1,12}?)(?:的路上)?怎么充电?",
+        "guard": "手机|手表|耳机|电脑|笔记本|平板|相机|无人机|充电宝|电瓶车|电动车|游戏机|牙刷|附近|就近|旁边|这边|是什么|什么意思",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "去惠州怎么充电",
+            "expect": [
+              "charging"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "去杭州怎么充电",
+            "expect": [
+              "charging"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "charging-planner#1",
+        "agent_id": "charging-planner",
+        "intent": "charging.find",
+        "policy": "replace",
+        "priority": 55,
+        "pattern": "(?:^(?:糟了|糟糕|哎呀|哎哟|完了|不好)?[，、,]?\\s*|车)(?:快?没电|没什么电|电量(?:不多|不足|不够|低)|电快?(?:见底|不多|不够)|续航(?:告急|吃紧|不太?够|不多))[^。！？]{0,10}(?:找|充|补)",
+        "guard": "手机|手表|耳机|电脑|笔记本|平板|相机|无人机|充电宝|电瓶车|电动车|游戏机|牙刷|怎么充|够不够|能不能到|沿途|一路|长途|导航|带我去|规划|是什么|什么意思",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "快没电了，附近找个快充",
+            "expect": [
+              "charging"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "车快没电了，帮我找个充电桩",
+            "expect": [
+              "charging"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "糟了快没电了，赶紧找个充电桩",
+            "expect": [
+              "charging"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "电快见底了，就近找个地方充上",
+            "expect": [
+              "charging"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "skill:charging-strategy"
+          }
+        ]
+      },
+      {
+        "key": "nearby#2",
+        "agent_id": "nearby",
+        "intent": "nearby.detail",
+        "policy": "replace",
+        "priority": 55,
+        "pattern": "(这家|那家|这个|这间|它家?)(怎么样|好不好|好吗|评分|人均|多少钱|电话|几点(关|开)|营业|地址)|看(看|下)?(它的?|这家的?)?详情|详细信息",
+        "guard": "那一?场|这一?场|上一?场|哪一?场|比赛|球赛|赛况|赛程|世界杯|欧冠|欧联|英超|西甲|意甲|德甲|法甲|荷甲|射手|进球|金靴|股价|股票",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "看看它的详情",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "这个地方的详细信息",
+            "expect": [
+              "navigation"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "它家电话多少",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "这家怎么样",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "scene-orchestrator#1",
+        "agent_id": "scene-orchestrator",
+        "intent": "scene.activate",
+        "policy": "replace",
+        "priority": 54,
+        "pattern": "(开启|打开|进入|切换到|来个|来一个|启动)\\s*[一-龥]{1,6}模式|^(?!退出|关闭|取消|结束|删|不要|创建|新建|自定义|修改|更改)[一-龥]{2,6}模式$",
+        "guard": "驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|性能模式|省电模式|电量模式|动能回收|飞行模式|勿扰模式|静音模式|专注模式|哨兵|是什么|什么意思|怎么(用|开|关)|有哪些|哪些场景",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "开启午休模式",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "来个钓鱼模式",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "露营模式",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "开启午休模式，温度改成26",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "午休模式",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "开启回家模式",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "我能用什么模式",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "打开浪漫模式",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "scene-orchestrator#2",
+        "agent_id": "scene-orchestrator",
+        "intent": "scene.deactivate",
+        "policy": "replace",
+        "priority": 54,
+        "pattern": "(退出|关闭|取消|结束)\\s*[一-龥]{0,6}模式",
+        "guard": "驾驶模式|运动模式|舒适模式|经济模式|节能模式|标准模式|雪地模式|越野模式|性能模式|省电模式|电量模式|勿扰|静音|飞行|是什么|什么意思",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "退出露营模式",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "关闭午休模式",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "trip-planner#4",
+        "agent_id": "trip-planner",
+        "intent": "trip.plan",
+        "policy": "append",
+        "priority": 50,
+        "pattern": "(?=.*(?:去|到|赴|游)[一-鿿]{2,6})(?=.*(?:[一二两三四五六七八九十0-9]+\\s*[天日]|带老人|带娃|带孩子|带小孩|不要太累|不累|轻松|悠闲|慢一点|慢点|休闲|日游|行程|自驾游|度假))|[一-鿿]{2,6}[一二两三四五六七八九十0-9]+\\s*[天日]游",
+        "guard": "(?:去|到|赴|游)\\s*(?:公司|家|单位|学校|上班|这里|那里|机场|车站)",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "帮我规划一个杭州两日游",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "下周去成都玩三天带爸妈",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "skill:multi-day-trip"
+          },
+          {
+            "text": "周末去杭州两天带老人不要太累，顺便看看天气",
+            "expect": [
+              "info",
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "skill:multi-day-trip"
+          },
+          {
+            "text": "陪爸妈去趟昆明玩四天，帮我安排下",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "skill:multi-day-trip"
+          },
+          {
+            "text": "去成都玩三天轻松点",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "去行程里的故宫",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "周末去杭州两天带老人不要太累",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "周末去杭州两天带老人，顺便看看天气和是否需要中途充电",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "周末带娃去近郊玩",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "导航去第二天的西湖",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "帮我安排去三亚的行程",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "行程到哪了",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "规划周末去杭州两日游",
+            "expect": [
+              "trip"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      }
+    ],
+    "keep": [
+      {
+        "key": "deep-research#0",
+        "agent_id": "deep-research",
+        "intent": "research.run",
+        "policy": "replace",
+        "priority": 100,
+        "pattern": "深入(调研|研究|分析|了解)|深度(调研|研究|分析)|全面(对比|了解|分析|梳理)|系统(地)?(了解|梳理|学习|分析)|调研一下|彻底(研究|搞懂|弄懂|了解)|好好(研究|调研)",
+        "guard": "",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "深入调研一下固态电池产业链",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我全面对比一下增程和纯电的优劣",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "系统了解一下具身智能这个方向",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "彻底搞懂钠离子电池的商业化前景",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "好好研究下人形机器人赛道",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "调研一下车规级芯片的国产化进度",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "深度分析一下低空经济的机会",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "我想全面了解一下核聚变的最新进展",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "深入了解一下固态电池",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我全面梳理一下智能驾驶的技术路线",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "系统梳理一下自动驾驶的法规现状",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "新能源补贴政策帮我彻底弄懂",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "那帮我深入调研一下它",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我深入调研一下固态电池",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "帮我查一下并深入调研固态电池",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "深入调研一下固态电池",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "全面对比一下增程和纯电",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "深入调研一下固态电池现状",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "深度调研这家公司的基本面",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "系统了解下港股打新规则",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "deep-research#1",
+        "agent_id": "deep-research",
+        "intent": "research.run",
+        "policy": "replace",
+        "priority": 100,
+        "pattern": "(展开|深入|详细|细说|细讲|多讲|多说)[^，。！？]{0,4}第\\s*[一二两三四五六七八九十\\d]+\\s*[点节部条]|第\\s*[一二两三四五六七八九十\\d]+\\s*[点节部条][^，。！？]{0,4}(展开|详细|深入|细说|细讲)|(这部分|那部分|这一?节|这点|这条|那条|这则|上面那?[点段节])[^，。！？]{0,4}(展开|详细|深入|再说|再讲|讲讲)",
+        "guard": "",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "展开第三点",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "第二点再详细讲讲",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "这部分展开说说",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "上面那点再深入一下",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "详细讲讲第3条",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "这条新闻详细说说",
+            "expect": [
+              "research"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          }
+        ]
+      },
+      {
+        "key": "chitchat#0",
+        "agent_id": "chitchat",
+        "intent": "chitchat.talk",
+        "policy": "replace",
+        "priority": 61,
+        "pattern": "^(?:请问|问一下|问下)?(?:(?:现在|当前)?(?:是)?几点(?:钟)?|(?:现在|当前)(?:的)?(?:是)?(?:什么)?时间(?:是多少|是几点)?|今天(?:是)?(?:几号|多少号|几月几号|几月几日|什么日期|星期几|周几|礼拜几))[呀啊呢哦吧了嘛么]{0,2}[？?。！!]?$",
+        "guard": "",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "现在几点了",
+            "expect": [
+              "chitchat"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "请问现在是什么时间",
+            "expect": [
+              "chitchat"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "route_hints"
+          },
+          {
+            "text": "今天星期几",
+            "expect": [
+              "chitchat"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "今天几号",
+            "expect": [
+              "chitchat"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          }
+        ]
+      },
+      {
+        "key": "info#1",
+        "agent_id": "info",
+        "intent": "info.search",
+        "policy": "replace",
+        "priority": 59,
+        "pattern": "^(?:请|麻烦|帮我|帮忙|给我){0,2}(?:上网|联网)?(?:搜索(?!引擎)|搜一下|搜下|搜搜|搜(?!索)|查一下|查下|查查|查一查|查询|检索|百度一下)\\s*([^，。！？]{2,})",
+        "guard": "天气|气温|下雨|降雨|预报|空气质量|洗车|紫外线|指数|限行|股价|股票|大盘|行情|新闻|资讯|头条|要闻|比分|赛程|赛果|对阵|世界杯|欧冠|英超|西甲|中超|NBA|提醒|待办|日程|安排|导航|路线|怎么走|附近|周边|加油站|充电桩|充电站|停车|餐厅|美食|电量|续航|里程|胎压|保养|油耗|说明书|手册|我的|我家|我老婆|我老公|的歌|歌曲|音乐|专辑|播放|深入|调研|研究一下",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "搜一下固态电池最新进展",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我查一下iPhone现在什么价格",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我查一下特斯拉FSD在中国的落地进展",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "搜索量子计算商业化现状",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我查一下磷酸铁锂和三元锂的区别",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "查一下固态电池",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "搜一下你叫什么名字",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "检索一下宁德时代最新财报要点",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我查一下iPhone现在的价格",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "查一下这个地点",
+            "expect": [
+              "navigation"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "info#2",
+        "agent_id": "info",
+        "intent": "info.news",
+        "policy": "replace",
+        "priority": 59,
+        "pattern": "(?:看看|看点|来点|来几条|有什么|有没有|有啥|讲讲|说说|刷刷|读读)[^，。！？]{0,6}(?:新闻|头条|资讯|要闻)|^(?:今天|今日|现在|最近)?(?:有什么|有啥)?(?:新闻|头条|资讯|要闻)$|^(?!.*(?:打开|关闭|订阅|设置))[一-鿿A-Za-z0-9·]{2,10}(?:的)?(?:新闻|资讯|最新消息|最新动态)$",
+        "guard": "播|放|听|联播|提醒|搜|查",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "今天有什么新闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "来点科技新闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "看看今天的头条",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "有什么国际新闻吗",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "刷刷新闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "新能源汽车的新闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "英伟达最新动态",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "讲讲今天的要闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "英伟达最新消息",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "看看AI行业最近的新闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "给我读读今天的国际要闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "有没有关于低空经济的新闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "再来点财经新闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "打开空调然后来点科技新闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "来点财经新闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "看看新闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "科技新闻",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "scene-orchestrator#0",
+        "agent_id": "scene-orchestrator",
+        "intent": "scene.create",
+        "policy": "replace",
+        "priority": 58,
+        "pattern": "(创建|新建|自定义|帮我建|建一个|建个|做一个|做个|存成|存为)[^。]{0,6}模式",
+        "guard": "是什么|什么意思|怎么(用|开|关)",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "帮我创建一个钓鱼模式：座椅放平，开外循环",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "新建一个下雨模式，关窗加除雾",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "route_hints"
+          },
+          {
+            "text": "创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "exemplar"
+          },
+          {
+            "text": "帮我创建一个钓鱼模式：座椅放平、开外循环、氛围灯调到10%",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "新建观星模式：氛围灯关掉，座椅放倒，空调22度",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "自定义一个遛狗模式：车窗开一半，空调外循环",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "info#4",
+        "agent_id": "info",
+        "intent": "info.weather",
+        "policy": "replace",
+        "priority": 57,
+        "pattern": "(天气|下雨|下雪|气温)[^。！？]{0,14}(出行|出门|出去)|(适合|适不适合|能不能|可以)(出行|出门|出去)[^。！？]{0,12}(天气|下雨|下雪|气温)",
+        "guard": "导航|路线|路况|怎么走|驾驶建议|高速",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "今天天气怎么样，适合出行吗",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "适合出门吗，外面天气如何",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "route_hints"
+          }
+        ]
+      },
+      {
+        "key": "reminder#0",
+        "agent_id": "reminder",
+        "intent": "reminder.create",
+        "policy": "replace",
+        "priority": 56,
+        "pattern": "提醒我|叫我(?!.{0,4}(小舟|什么))|别忘了|帮我记(一?下|个)|记个待办|设个提醒",
+        "guard": "限速|车道|碰撞|疲劳|盲区|导航播报|电量提醒|保养提醒|是什么|怎么(开|关|用)|什么意思|什么来着|让你提醒|提醒过|要是|如果|假如|万一|会不会|有没有|下不下",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "提醒我晚上看新闻联播",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "明天早上八点提醒我开会",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "明天早上八点提醒我带充电线",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "到时候提醒我什么时候该出发",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "半小时后提醒我给客户回电话",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "每天早上八点提醒我吃药",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "过10分钟再提醒我",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "第一场提醒我观看",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "route_hints"
+          },
+          {
+            "text": "开赛前半小时提醒我",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "到公司提醒我拿文件",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "离开公司提醒我买菜",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "到公司之前提醒我交周报",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "不用提醒我回电话了",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "到家提醒我收快递",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "周五下午三点叫我去接孩子",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "帮我记个待办周末洗车",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "nearby#0",
+        "agent_id": "nearby",
+        "intent": "nearby.search",
+        "policy": "replace",
+        "priority": 55,
+        "pattern": "附近(有|有没有|有什么|有啥|有点)?.{0,3}(好吃|好玩)|(附近|周边|就近|这边|旁边).{0,4}(餐厅|饭店|餐馆|菜馆|美食|馆子|火锅|川菜|粤菜|湘菜|日料|韩料|烧烤|小吃|快餐|咖啡|奶茶|甜品|面馆|酒店|宾馆|民宿|景点|景区|电影院|影院)|(推荐|找|来|想吃|想去).{0,3}(个|家|点|顿)?.{0,3}(餐厅|饭店|吃的|美食|馆子|火锅|川菜|日料|咖啡|奶茶|甜品|酒店|景点|电影)",
+        "guard": "导航|带我去|回家|回公司|回学校|去哪|路线|怎么走|途经|顺路|接我|送我|设成|设为|[两二三四五六七八九十]\\s*[天日]|[2-9]\\s*[天日]|行程|自驾|度假|规划.{0,2}(路线|行程)|那边|那儿|那附近|目的地附近|终点附近",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "附近有什么好吃的川菜馆",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "附近哪里有咖啡店",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "推荐个好喝的咖啡馆",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我看看附近有什么咖啡店",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "帮我看看我附近有什么好吃的",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "找个评分高的川菜馆",
+            "expect": [
+              "navigation"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": false,
+            "src": "exemplar"
+          },
+          {
+            "text": "找家川菜馆",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近有什么好吃的",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的景点",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的电影院",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的酒店",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的餐厅",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近评分高的火锅",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "nearby#1",
+        "agent_id": "nearby",
+        "intent": "nearby.search",
+        "policy": "replace",
+        "priority": 55,
+        "pattern": "(附近|周边|就近|最近的?|旁边|这边|哪儿?有|哪里有|有没有|找个?|找家).{0,4}(充电站|充电桩|快充|超充|停车场|停车位|车位|停车|加油站|加油|超市|便利店|药店|药房)",
+        "guard": "沿途|途中|一路|路上|规划充电|充电规划|怎么充|够不够|能不能到|能到吗|续航|剩余里程|没电|电量(低|不足|不多|不够)|电不(太)?(多|够)|补能|补个?电|缴费|交费|付款|付.{0,3}停车|导航|带我去|顺路|途经|那边|那儿|那附近|目的地附近|终点附近",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "搜一下附近的加油站",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "附近有没有充电站",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "route_hints"
+          },
+          {
+            "text": "附近有没有停车场",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "找个充电站",
+            "expect": [
+              "charging"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近有充电桩吗",
+            "expect": [
+              "charging"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "最近的加油站在哪",
+            "expect": [
+              "navigation"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的充电站",
+            "expect": [
+              "navigation"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "找个停车场",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      }
+    ],
+    "ineffective": [
+      {
+        "key": "info#1",
+        "agent_id": "info",
+        "intent": "info.search",
+        "policy": "replace",
+        "priority": 59,
+        "pattern": "^(?:请|麻烦|帮我|帮忙|给我){0,2}(?:上网|联网)?(?:搜索(?!引擎)|搜一下|搜下|搜搜|搜(?!索)|查一下|查下|查查|查一查|查询|检索|百度一下)\\s*([^，。！？]{2,})",
+        "guard": "天气|气温|下雨|降雨|预报|空气质量|洗车|紫外线|指数|限行|股价|股票|大盘|行情|新闻|资讯|头条|要闻|比分|赛程|赛果|对阵|世界杯|欧冠|英超|西甲|中超|NBA|提醒|待办|日程|安排|导航|路线|怎么走|附近|周边|加油站|充电桩|充电站|停车|餐厅|美食|电量|续航|里程|胎压|保养|油耗|说明书|手册|我的|我家|我老婆|我老公|的歌|歌曲|音乐|专辑|播放|深入|调研|研究一下",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "搜一下固态电池最新进展",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我查一下iPhone现在什么价格",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我查一下特斯拉FSD在中国的落地进展",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "搜索量子计算商业化现状",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我查一下磷酸铁锂和三元锂的区别",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "查一下固态电池",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "搜一下你叫什么名字",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "检索一下宁德时代最新财报要点",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我查一下iPhone现在的价格",
+            "expect": [
+              "info"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "查一下这个地点",
+            "expect": [
+              "navigation"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ],
+        "arm_a_failed": [
+          "查一下这个地点"
+        ]
+      },
+      {
+        "key": "nearby#0",
+        "agent_id": "nearby",
+        "intent": "nearby.search",
+        "policy": "replace",
+        "priority": 55,
+        "pattern": "附近(有|有没有|有什么|有啥|有点)?.{0,3}(好吃|好玩)|(附近|周边|就近|这边|旁边).{0,4}(餐厅|饭店|餐馆|菜馆|美食|馆子|火锅|川菜|粤菜|湘菜|日料|韩料|烧烤|小吃|快餐|咖啡|奶茶|甜品|面馆|酒店|宾馆|民宿|景点|景区|电影院|影院)|(推荐|找|来|想吃|想去).{0,3}(个|家|点|顿)?.{0,3}(餐厅|饭店|吃的|美食|馆子|火锅|川菜|日料|咖啡|奶茶|甜品|酒店|景点|电影)",
+        "guard": "导航|带我去|回家|回公司|回学校|去哪|路线|怎么走|途经|顺路|接我|送我|设成|设为|[两二三四五六七八九十]\\s*[天日]|[2-9]\\s*[天日]|行程|自驾|度假|规划.{0,2}(路线|行程)|那边|那儿|那附近|目的地附近|终点附近",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "附近有什么好吃的川菜馆",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "附近哪里有咖啡店",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "推荐个好喝的咖啡馆",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我看看附近有什么咖啡店",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "帮我看看我附近有什么好吃的",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "找个评分高的川菜馆",
+            "expect": [
+              "navigation"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": false,
+            "src": "exemplar"
+          },
+          {
+            "text": "找家川菜馆",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近有什么好吃的",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的景点",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的电影院",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的酒店",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的餐厅",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近评分高的火锅",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ],
+        "arm_a_failed": [
+          "找个评分高的川菜馆"
+        ]
+      },
+      {
+        "key": "nearby#1",
+        "agent_id": "nearby",
+        "intent": "nearby.search",
+        "policy": "replace",
+        "priority": 55,
+        "pattern": "(附近|周边|就近|最近的?|旁边|这边|哪儿?有|哪里有|有没有|找个?|找家).{0,4}(充电站|充电桩|快充|超充|停车场|停车位|车位|停车|加油站|加油|超市|便利店|药店|药房)",
+        "guard": "沿途|途中|一路|路上|规划充电|充电规划|怎么充|够不够|能不能到|能到吗|续航|剩余里程|没电|电量(低|不足|不多|不够)|电不(太)?(多|够)|补能|补个?电|缴费|交费|付款|付.{0,3}停车|导航|带我去|顺路|途经|那边|那儿|那附近|目的地附近|终点附近",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "搜一下附近的加油站",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "mode_routing"
+          },
+          {
+            "text": "附近有没有充电站",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": false,
+            "src": "route_hints"
+          },
+          {
+            "text": "附近有没有停车场",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "找个充电站",
+            "expect": [
+              "charging"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近有充电桩吗",
+            "expect": [
+              "charging"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "最近的加油站在哪",
+            "expect": [
+              "navigation"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的充电站",
+            "expect": [
+              "navigation"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "找个停车场",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ],
+        "arm_a_failed": [
+          "找个充电站",
+          "附近有充电桩吗",
+          "最近的加油站在哪",
+          "附近的充电站"
+        ]
+      },
+      {
+        "key": "nearby#2",
+        "agent_id": "nearby",
+        "intent": "nearby.detail",
+        "policy": "replace",
+        "priority": 55,
+        "pattern": "(这家|那家|这个|这间|它家?)(怎么样|好不好|好吗|评分|人均|多少钱|电话|几点(关|开)|营业|地址)|看(看|下)?(它的?|这家的?)?详情|详细信息",
+        "guard": "那一?场|这一?场|上一?场|哪一?场|比赛|球赛|赛况|赛程|世界杯|欧冠|欧联|英超|西甲|意甲|德甲|法甲|荷甲|射手|进球|金靴|股价|股票",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "看看它的详情",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "这个地方的详细信息",
+            "expect": [
+              "navigation"
+            ],
+            "arm_a_pass": false,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "它家电话多少",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "这家怎么样",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ],
+        "arm_a_failed": [
+          "这个地方的详细信息"
+        ]
+      }
+    ],
+    "no_corpus": []
+  }
+}

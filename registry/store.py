@@ -115,16 +115,35 @@ class Store:
         return all(p in granted for p in manifest.requires_permissions)
 
     @staticmethod
+    def _bigrams(s: str) -> set:
+        t = "".join(ch.lower() for ch in (s or "") if ch.strip())
+        return {t[i:i + 2] for i in range(len(t) - 1)}
+
+    @staticmethod
     def _score(manifest, intent: str, query: str) -> float:
+        """关键词层相关性（语义重排在 server 侧另有一层）。
+
+        M5 P2-D4：从**逐单字符命中**换成 **bigram 重合 + 长度归一**。旧算法两个毛病：
+        ①中文单字噪声——「的/我/一/个」在任何 desc 里都能命中，一句话里随便几个虚词就
+        把分抬到 0.3+；②**desc 越长命中越多**，于是产生了长度偏置：deep-research 的
+        manifest 注释白纸黑字写着「desc 刻意不加长，否则把 trip 的流量吸过来」——
+        **描述写法在为打分算法的缺陷让路，倒果为因**。
+        bigram 让「充电桩」这类实词成对匹配、虚词难以偶然成对；除以 query bigram 数做
+        归一，长 desc 不再自动占便宜（分子是重合数，不是 hay 的长度）。
+        """
         score = 0.0
+        qg = Store._bigrams(query) if query else set()
         for cap in manifest.capabilities:
             if intent and cap.intent == intent:
                 return 1.0
-            if query:
-                hay = " ".join([cap.intent, cap.description, *cap.examples])
-                hits = sum(1 for ch in set(query) if ch.strip() and ch in hay)
-                if hits:
-                    score = max(score, 0.3 + 0.05 * hits)
+            if not qg:
+                continue
+            hay = " ".join([cap.intent, cap.description, *cap.examples])
+            overlap = len(qg & Store._bigrams(hay))
+            if overlap:
+                # 归一到 [0.3, 1.0)：0.3 是「有命中」的基线（保持旧口径的下限语义），
+                # 覆盖率 = 命中 bigram / query bigram 总数
+                score = max(score, 0.3 + 0.65 * min(1.0, overlap / max(1, len(qg))))
         if not intent and not query:
             return 0.5  # 全量列举场景
         return score

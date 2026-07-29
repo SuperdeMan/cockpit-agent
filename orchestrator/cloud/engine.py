@@ -59,6 +59,21 @@ def _clarify_enabled() -> bool:
     return os.getenv("CLARIFY_ENABLED", "off").lower() == "on"
 
 
+def _edge_nlu_attrs(ctx, plan) -> dict:
+    """端云分歧观测（M5 P2-D2）。端侧没判 → 不发（少一个恒空字段）。
+
+    比的是**域**不是 intent：端侧的 `hvac.on` 与云侧的 `hvac.set` 是同一个判断的粗细之分，
+    记成分歧只会把噪声灌进标注队列。真正值得人看的是「端侧说车控、云侧说闲聊」这种。"""
+    raw = str(getattr(ctx, "edge_nlu", "") or "")
+    if not raw:
+        return {}
+    edge_intent = raw.split("|", 1)[0]
+    edge_dom = edge_intent.split(".")[0]
+    cloud_doms = {s.intent.split(".")[0] for s in plan.steps if s.intent}
+    return {"edge_nlu": raw,
+            "edge_agree": "1" if (edge_dom and edge_dom in cloud_doms) else "0"}
+
+
 class PlannerEngine:
     """编排主循环。engine 是唯一持有全局状态的地方。"""
 
@@ -249,8 +264,28 @@ class PlannerEngine:
                     "llm_raw": gate_content(plan.raw_llm, 1200),
                     # M0b Skill 层注入名单（"<mode>:<name>"），badcase 归因用
                     **({"skills": ",".join(plan.skills)} if plan.skills else {}),
+                    # M5 P1 范例库注入名单（"<mode>:<eid>@通道:分数"，被裁记 !clipped）：
+                    # 「范例没检回 / 检回了没用对 / 检回了却被裁」三种失败一眼可分
+                    **({"exemplars": ",".join(plan.exemplars)}
+                       if getattr(plan, "exemplars", None) else {}),
                     # M1a：本轮规划输出通道（toolcall|toolcall_salvage|…|json），A/B 聚合用
                     "plan_mode": getattr(plan, "plan_mode", "json"),
+                    # 数据飞轮 P0 落域可观测：意图名是系统枚举值（非用户内容），紧凑发射
+                    # 不过内容门控——collector 据此把落域合并进 turns 行（SQL 可聚合）。
+                    "intents": ",".join(s.intent for s in plan.steps),
+                    # M5 P2-D2 端云分歧：端侧规则臂的初判 + 是否与云侧最终落域一致。
+                    # **分歧轮是信息量最大的标注样本**——两个独立判断打架的地方，人看一眼
+                    # 的边际收益最高。evolve mine 据此产 `edge_divergence` 信号进日报案族卡，
+                    # 人按日报去 dashboard 标 gold（→ 范例 → 飞轮）。
+                    **_edge_nlu_attrs(ctx, plan),
+                    **({"hint_effect": plan.hint_effect}
+                       if getattr(plan, "hint_effect", "") else {}),
+                    # D1 裁剪可观测：目录渲染长度 + 被裁 agent（静默丢域从此有痕迹）
+                    **({"catalog_chars": plan.catalog_stats.get("chars_final", 0),
+                        **({"catalog_dropped":
+                            ",".join(plan.catalog_stats.get("dropped", []))}
+                           if plan.catalog_stats.get("dropped") else {})}
+                       if getattr(plan, "catalog_stats", None) else {}),
                 },
             )
             await self._resolve_endpoints(plan)
@@ -277,6 +312,12 @@ class PlannerEngine:
         # D-T2. Adaptive plans enter the bounded loop. Confirmation resumes keep
         # their adaptive metadata and continue from the saved result seeds.
         metrics.record_intent(f"complexity.{plan.complexity}", 0, True)
+        # 数据飞轮 P0：record_intent 此前从不记真实意图（只记 complexity./t2_loop 元标签）、
+        # record_route 零调用——WS9「意图/路由」指标名存实亡。此处按步记真实意图分布；
+        # 持久可查的尺子在 obs turns.intents 列（本内存计数供 snapshot/日志侧参考）。
+        metrics.record_route("cloud")
+        for s in plan.steps:
+            metrics.record_intent(s.intent, 0, True)
         if plan.complexity == "adaptive":
             if not agents:
                 agents = await self.clients.list_agents()
@@ -751,6 +792,7 @@ class PlannerEngine:
                 goal=state.pending_plan.get("goal", ""),
             )
             restored.skills = list(state.pending_plan.get("skills") or [])
+            restored.exemplars = list(state.pending_plan.get("exemplars") or [])
             return restored, seeds
         except Exception as e:
             logger.warning("Failed to restore plan: %s", e)
@@ -806,6 +848,7 @@ class PlannerEngine:
             # T2 知识继承跨挂起（2026-07-27 评审二批）：不存 skills 的话，补槽/确认恢复后
             # 的再规划会丢初规划注入的规划知识（replan 按 plan.skills 重渲染，见 loop.py）
             "skills": list(plan.skills or []),
+            "exemplars": list(getattr(plan, "exemplars", []) or []),   # 同款（M5 P1）
         }
 
     async def _needs_replan(self, plan: Plan, results: list[StepResult]) -> bool:

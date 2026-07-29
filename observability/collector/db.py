@@ -40,7 +40,11 @@ CREATE TABLE IF NOT EXISTS turns(
   actions INTEGER DEFAULT 0,
   error TEXT DEFAULT '',
   badcase INTEGER DEFAULT 0,
-  note TEXT DEFAULT ''
+  note TEXT DEFAULT '',
+  intents TEXT DEFAULT '',       -- 实际落域（cloud.planning span 合并写入，逗号串）
+  plan_mode TEXT DEFAULT '',     -- 规划输出通道（toolcall|…|toolcall_degraded）
+  gold_intents TEXT DEFAULT '',  -- 人工标注的正确落域（数据飞轮资产；UPSERT 不碰、保留期豁免）
+  edge_nlu TEXT DEFAULT ''       -- 端云分歧（M5 P2-D2）：'<端侧初判>|<conf>' + '!=' 后缀表示与云侧落域不一致
 );
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, ts);
 CREATE INDEX IF NOT EXISTS idx_turns_ts ON turns(ts);
@@ -106,6 +110,35 @@ def _rows_to_dicts(cursor) -> list[dict]:
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
+def _plan_summary_of(attrs: dict) -> tuple[str, str, str]:
+    """cloud.planning span attrs → (intents 逗号串, plan_mode, edge_nlu)。
+
+    edge_nlu 带 `!=` 后缀表示端云**分歧**（M5 P2-D2）——存成一列而不是靠事后逐轮拉 span
+    详情：分歧要能成为「把这一轮拉进日报」的信号，就必须在**扫描时**可见，逐轮补拉详情
+    是 N+1（P0 刚为此把全轮详情拉取砍掉，不能又加回来）。
+
+    优先显式 attrs['intents']（engine 紧凑发射，意图名是系统枚举值、不受内容门控/截断）；
+    旧版 engine 无该键时从 attrs['plan'] JSON 兜底解析——它经 gate_content 截 1200，
+    截断即解析失败则放弃（不产半截意图列表）。"""
+    if not isinstance(attrs, dict):
+        return "", "", ""
+    plan_mode = str(attrs.get("plan_mode") or "")
+    edge_nlu = str(attrs.get("edge_nlu") or "")
+    if edge_nlu and str(attrs.get("edge_agree", "")) == "0":
+        edge_nlu += "!="
+    intents = str(attrs.get("intents") or "")
+    if not intents:
+        raw = attrs.get("plan")
+        if isinstance(raw, str) and raw:
+            try:
+                steps = json.loads(raw)
+                intents = ",".join(
+                    str(s.get("intent") or "") for s in steps if isinstance(s, dict))
+            except (ValueError, AttributeError, TypeError):
+                intents = ""
+    return intents[:400], plan_mode[:40], edge_nlu[:60]
+
+
 class ObsDB:
     """turns/spans/llm_calls/logs 的同步 SQLite 存取（调用方负责 to_thread）。"""
 
@@ -123,6 +156,11 @@ class ObsDB:
             # 加法式迁移：已存在的 obs.db（named volume 跨重启）补新列，
             # CREATE IF NOT EXISTS 不会给旧表加列
             self._ensure_column("llm_calls", "provider", "TEXT DEFAULT ''")
+            # 数据飞轮 P0（2026-07-28）：落域可观测 + 标注载体
+            self._ensure_column("turns", "intents", "TEXT DEFAULT ''")
+            self._ensure_column("turns", "plan_mode", "TEXT DEFAULT ''")
+            self._ensure_column("turns", "gold_intents", "TEXT DEFAULT ''")
+            self._ensure_column("turns", "edge_nlu", "TEXT DEFAULT ''")
             self._conn.commit()
 
     def _ensure_column(self, table: str, column: str, decl: str) -> None:
@@ -161,15 +199,30 @@ class ObsDB:
             self._conn.commit()
 
     def insert_span(self, event: dict) -> None:
+        trace_id = event.get("trace_id", "") or ""
         with self._lock:
             self._conn.execute(
                 "INSERT INTO spans(trace_id, span_id, parent_id, ts, service, node, "
                 "status, duration_ms, attrs) VALUES(?,?,?,?,?,?,?,?,?)",
-                (event.get("trace_id", "") or "", event.get("span_id", "") or "",
+                (trace_id, event.get("span_id", "") or "",
                  event.get("parent_id", "") or "", int(event.get("ts", 0) or 0),
                  event.get("service", "") or "", event.get("node", "") or "",
                  event.get("status", "") or "", float(event.get("duration_ms", 0) or 0),
                  json.dumps(event.get("attrs") or {}, ensure_ascii=False)))
+            # 落域可观测（数据飞轮 P0）：turn 事件由端侧收口发射、天然不含云侧规划信息
+            # （端云信息断链），在存储层按 trace_id 汇合——cloud.planning span 到达时把
+            # intents/plan_mode 合并进 turns 行。顺序无关：span 先到→建骨架行（其余字段
+            # 等 turn UPSERT 补齐）；turn 先到→UPDATE 补两列。intents/plan_mode 不在
+            # _TURN_FIELDS，turn 重复到达不会抹掉。
+            if trace_id and (event.get("node") or "") == "cloud.planning":
+                intents, plan_mode, edge_nlu = _plan_summary_of(event.get("attrs") or {})
+                if intents or plan_mode or edge_nlu:
+                    self._conn.execute(
+                        "INSERT INTO turns(trace_id, intents, plan_mode, edge_nlu) "
+                        "VALUES(?,?,?,?) ON CONFLICT(trace_id) DO UPDATE SET "
+                        "intents=excluded.intents, plan_mode=excluded.plan_mode, "
+                        "edge_nlu=excluded.edge_nlu",
+                        (trace_id, intents, plan_mode, edge_nlu))
             self._conn.commit()
 
     def insert_llm(self, event: dict) -> None:
@@ -292,6 +345,46 @@ class ObsDB:
             self._conn.commit()
             return cur.rowcount > 0
 
+    def set_gold(self, trace_id: str, gold_intents: str) -> bool:
+        """正确落域人工标注（数据飞轮 P0 标注载体）。与 badcase/note 同级人工标记：
+        turn UPSERT 不碰、保留期豁免。空串=清除标注。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE turns SET gold_intents=? WHERE trace_id=?",
+                (gold_intents or "", trace_id))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def export_labels(self, since: int = 0, until: int = 0,
+                      limit: int = 5000) -> list[dict]:
+        """批量导出标注集（utterance → gold 落域 → 实际落域）。数据飞轮的资产出口：
+        RoutingBench 用例生成 / P1 范例草案 / P3 训练语料都从这里取数。"""
+        sql = ("SELECT trace_id, session_id, ts, user_text, intents, plan_mode, "
+               "gold_intents, badcase, note FROM turns WHERE gold_intents != ''")
+        params: list = []
+        if since:
+            sql += " AND ts>=?"
+            params.append(int(since))
+        if until:
+            sql += " AND ts<=?"
+            params.append(int(until))
+        sql += " ORDER BY ts ASC LIMIT ?"
+        params.append(int(limit))
+        with self._lock:
+            return _rows_to_dicts(self._conn.execute(sql, params))
+
+    def observed_intents(self) -> list[str]:
+        """已观测意图清单（intents ∪ gold_intents 展开去重），标注输入的候选数据源。"""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT intents FROM turns WHERE intents != '' "
+                "UNION SELECT gold_intents FROM turns WHERE gold_intents != ''"
+            ).fetchall()
+        out: set[str] = set()
+        for (v,) in rows:
+            out.update(x.strip() for x in str(v).split(",") if x.strip())
+        return sorted(out)
+
     def query_logs(self, trace_id: str = "", service: str = "", level: str = "",
                    q: str = "", limit: int = 200) -> list[dict]:
         sql = "SELECT * FROM logs WHERE 1=1"
@@ -345,15 +438,16 @@ class ObsDB:
     # ── 保留期清理 ──────────────────────────────────────────────────────
 
     def cleanup(self, retention_days: float | None = None) -> int:
-        """删过期数据。badcase 标记的轮次（及其 spans/llm/logs）豁免——排查素材不过期。
-        返回删除的 turn 行数。"""
+        """删过期数据。badcase 标记与 gold 标注的轮次（及其 spans/llm/logs）豁免——
+        排查素材与标注资产不过期（数据飞轮：标注是要长期复利的数据）。返回删除的 turn 行数。"""
         if retention_days is None:
             retention_days = float(os.getenv("OBS_RETENTION_DAYS", "7"))
         cutoff = int((time.time() - retention_days * 86400) * 1000)
         with self._lock:
-            keep = ("SELECT trace_id FROM turns WHERE badcase=1")
+            keep = ("SELECT trace_id FROM turns WHERE badcase=1 OR gold_intents != ''")
             cur = self._conn.execute(
-                f"DELETE FROM turns WHERE ts<? AND badcase=0", (cutoff,))
+                f"DELETE FROM turns WHERE ts<? AND badcase=0 AND gold_intents=''",
+                (cutoff,))
             deleted = cur.rowcount
             for table in ("spans", "llm_calls", "logs"):
                 self._conn.execute(

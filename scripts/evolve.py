@@ -11,8 +11,10 @@ RFC docs/design/2026-07-24-m1b-self-evolution-shadow-nlu-rfc.md §3；母提案 
 安全治理（§4.G 六项落位）：
   ① 文本进 LLM 前过 observability.redact（OBS_CONTENT_CAPTURE 同源脱敏）；
   ② badcase 文本按不可信数据处理（定界区 + 输出封闭集 + 长度截断）；
-  ③ 提案修改面白名单 = guide / route_hint / eval 语料——禁 VAL·权限·确认·payment·policy
-    （PROPOSAL_FORBIDDEN 硬闸，单测锁定）；
+  ③ 提案修改面白名单 = guide / **exemplar（M5 P1 起）** / eval 语料——禁 VAL·权限·确认·
+    payment·policy（PROPOSAL_FORBIDDEN 硬闸，单测锁定）。route_hint 草案随 M5 P1 退役：
+    route_error 默认产范例而不是正则（RFC §5-P1「N4 从 0% 起飞的路径」）；
+    canonical 形态确需钉死的仍按既有分工口径**人工**沉到 manifest route_hints；
   ④ holdout：guide 草案 golden 用改写句（TODO 留人工），原句归 eval 语料候选，不同源；
   ⑤ 不自动改仓库、不自动 git——产物=日报 + .work 建议文件，泓舟审后手动应用；
   ⑥ 涉 require_confirm 能力的 route_hint 提案强制标红「需专项安全回归」。
@@ -63,9 +65,23 @@ _RESTATE_WINDOW_MS = 60_000    # 相邻轮间隔窗
 _CAUSES = ("route_error", "knowledge_gap", "slot_error", "data_source",
            "phrasing", "false_reject", "false_clarify", "infra", "unknown")
 
-# 治理③修改面白名单的反面清单：提案目标或建议文本命中即拒绝生成结构化草案（降级纯报告）
+# 治理③修改面白名单的反面清单：提案的**动态内容**（案族原话 + 归因 note）命中即拒绝
+# 生成结构化草案（降级纯报告）。三类草案的修改面本身固定合法（skills/guides/ 目录、
+# manifest route_hints、eval 语料），这里防的是「内容把人往禁区引」（如归因建议改支付/确认面）。
+# P0 修复（2026-07-28 数据飞轮 §2-①）：此前对**提案全文**做裸子串匹配——"eval 语料候选"
+# 命中 "val"、治理⑥样板命中 "require_confirm"，三类草案 100% 被自己的模板文案触发降级，
+# 提案半环上线四天零产出。现改为：只扫动态内容 + 词边界匹配（eval/validate 不再误伤）。
 PROPOSAL_FORBIDDEN = ("val", "vehicle-abstraction", "permission", "scope",
                       "require_confirm", "confirm_level", "payment", "policies/")
+
+
+def _forbidden_re(term: str) -> "re.Pattern[str]":
+    # 词边界：前后都不是 [a-z0-9_] 才算命中；term 以非字母数字结尾（如 "policies/"）则不加尾界
+    tail = r"(?![a-z0-9_])" if term[-1].isalnum() else ""
+    return re.compile(rf"(?<![a-z0-9_]){re.escape(term)}{tail}", re.IGNORECASE)
+
+
+_FORBIDDEN_RES = tuple(_forbidden_re(t) for t in PROPOSAL_FORBIDDEN)
 
 
 def _collector() -> str:
@@ -81,6 +97,14 @@ def _work_dir(date: str) -> Path:
     d = _OUT_DIR / ".work" / date
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _rel(p: Path) -> Path:
+    """打印用相对路径；输出目录被测试重定向到 _ROOT 外时回退绝对路径。"""
+    try:
+        return p.relative_to(_ROOT)
+    except ValueError:
+        return p
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -131,14 +155,16 @@ def find_restatements(turns: list[dict]) -> set[str]:
     return hits
 
 
-def _plan_mode_of(trace: dict) -> tuple[str, str]:
-    """trace 详情 → (plan_mode, plan 摘要头)。attrs 是 python-repr 字符串（collector 契约）。"""
-    for s in (trace or {}).get("spans", []) or []:
+def _plan_mode_of(detail: dict) -> tuple[str, str]:
+    """/api/turns/{id}（SQLite 持久）详情 → (plan_mode, plan 摘要头)。attrs 已是 dict
+    （db.turn_detail json.loads 过）。P0 断点②修复：此前走 /api/traces 内存环
+    （上限 200 条、collector 重启即空），历史回溯挖不到 plan_mode。"""
+    for s in (detail or {}).get("spans", []) or []:
         if (s.get("node") or "") == "cloud.planning":
-            a = str(s.get("attrs") or "")
-            m = re.search(r"'plan_mode': '([^']+)'", a)
-            p = re.search(r"'plan': [\"'](.{0,160})", a)
-            return (m.group(1) if m else "", p.group(1) if p else "")
+            a = s.get("attrs") or {}
+            if not isinstance(a, dict):
+                a = {}
+            return (str(a.get("plan_mode") or ""), str(a.get("plan") or "")[:160])
     return "", ""
 
 
@@ -163,6 +189,9 @@ def cmd_mine(args) -> Path | None:
 
     restates = find_restatements(turns)
     mined: list[dict] = []
+    # 落域分布（数据飞轮 P0 尺子）：窗口全量轮次的 path / plan_mode / 落域域计数——
+    # 「系统这个月变聪明了吗」从此有日粒度数据（turns.intents/plan_mode 列由 collector 合并）
+    dist: dict = {"turns": len(turns), "path": {}, "plan_mode": {}, "domains": {}}
     for t in turns:
         signals = []
         if t.get("badcase"):
@@ -173,18 +202,40 @@ def cmd_mine(args) -> Path | None:
             signals.append("clarify_card")
         if t.get("trace_id") in restates:
             signals.append("restatement")
-        plan_mode, plan_head = "", ""
-        # degraded 信号需 trace 详情；只对「已有信号轮」与「全轮」二选一——v1 全轮拉
-        # （日量级几百轮、本地 HTTP，秒级），未中其他信号的 degraded 也能被发现。
-        try:
-            plan_mode, plan_head = _plan_mode_of(
-                _http_json(f"{base}/api/traces/{t.get('trace_id')}"))
-        except Exception:
-            pass
+        # degraded 判定优先读 turns.plan_mode 列（P0 起 collector 从 cloud.planning
+        # span 合并写入，零额外请求）；旧行无列值再走 /api/turns 详情兜底（SQLite 持久，
+        # 不再读 200 条内存环——那是断点②：collector 重启历史就挖不到）。
+        plan_mode, plan_head, detail = str(t.get("plan_mode") or ""), "", None
+        # 端云分歧（M5 P2-D2）：collector 已在 turns.edge_nlu 里存好（`!=` 后缀=分歧），
+        # 扫描时即可见——**分歧本身就是信号**，不需要逐轮补拉 span 详情（那是 N+1）。
+        edge_nlu = str(t.get("edge_nlu") or "")
+        if edge_nlu.endswith("!="):
+            signals.append("edge_divergence")
+        if not plan_mode:
+            try:
+                detail = _http_json(f"{base}/api/turns/{t.get('trace_id')}")
+                plan_mode, plan_head = _plan_mode_of(detail)
+            except Exception:
+                pass
+        for key, val in (("path", t.get("path") or "?"),
+                         ("plan_mode", plan_mode or "?")):
+            dist[key][val] = dist[key].get(val, 0) + 1
+        for it in str(t.get("intents") or "").split(","):
+            domain = it.strip().split(".")[0]
+            if domain:
+                dist["domains"][domain] = dist["domains"].get(domain, 0) + 1
         if plan_mode.endswith("_degraded"):
             signals.append("plan_degraded")
         if not signals:
             continue
+        if not plan_head:
+            # 报告案族卡要 plan 摘要头：只对命中信号的轮补拉一次详情（不再全轮 N+1）
+            try:
+                _, plan_head = _plan_mode_of(
+                    detail if detail is not None
+                    else _http_json(f"{base}/api/turns/{t.get('trace_id')}"))
+            except Exception:
+                pass
         mined.append({
             "trace_id": t.get("trace_id"), "session_id": t.get("session_id"),
             "ts": t.get("ts"), "signals": signals,
@@ -193,10 +244,16 @@ def cmd_mine(args) -> Path | None:
             "speech": redact(t.get("speech") or "")[:200],
             "note": (t.get("note") or "")[:200],
             "plan_mode": plan_mode, "plan_head": redact(plan_head)[:160],
+            "edge_nlu": edge_nlu,
+            # 影子分诊要用（M5 P2）：线上实际落域 + 人工标注的正确落域（可空）
+            "intents": str(t.get("intents") or ""),
+            "gold_intents": str(t.get("gold_intents") or ""),
         })
     out = _work_dir(date) / "mined.jsonl"
     _write_jsonl(out, mined)
-    print(f"mine：命中 {len(mined)} 轮 → {out.relative_to(_ROOT)}")
+    (_work_dir(date) / "distribution.json").write_text(
+        json.dumps(dist, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"mine：命中 {len(mined)} 轮 → {_rel(out)}")
     for sig in ("badcase_mark", "fallback_speech", "clarify_card", "restatement",
                 "plan_degraded"):
         n = sum(1 for m in mined if sig in m["signals"])
@@ -281,47 +338,183 @@ def cmd_triage(args) -> Path:
         req.meta["caller_service"] = "evolve-triage"
         if args.provider:
             req.meta["llm_provider"] = args.provider
-        try:
-            raw = stub.Complete(req, timeout=60).content
+        raw = ""
+        for attempt in (0, 1):
+            # P0：批失败重试一次（07-27 实测 8/23 归因 unknown 全因单次瞬时失败整批降级）
+            try:
+                raw = stub.Complete(req, timeout=60).content
+                break
+            except Exception as e:
+                if attempt == 0:
+                    print(f"  [{bi}/{len(batches)}] 批失败 {type(e).__name__}，重试一次")
+                else:
+                    print(f"  [{bi}/{len(batches)}] 重试仍失败 {type(e).__name__}，降级 unknown")
+        if raw:
             triaged.extend(parse_triage_reply(raw, batch))
-        except Exception as e:
-            print(f"  [{bi}/{len(batches)}] 批失败 {type(e).__name__}，降级 unknown")
+        else:
             triaged.extend({**it, "cause": "unknown", "cause_note": "triage LLM 失败",
                             "confidence": 0.0} for it in batch)
     _write_jsonl(out_path, triaged)
     dist: dict[str, int] = {}
     for t in triaged:
         dist[t["cause"]] = dist.get(t["cause"], 0) + 1
-    print(f"triage：{len(triaged)} 条 → {out_path.relative_to(_ROOT)}；归因分布 {dist}")
+    print(f"triage：{len(triaged)} 条 → {_rel(out_path)}；归因分布 {dist}")
     return out_path
+
+
+# ── shadow：强模型影子分诊（M5 P2，RFC §5-P2-3） ─────────────────────────────
+
+# 只对「落域类」根因做影子重规划——phrasing/data_source/infra 换个模型也不会变对，
+# 白烧一次强档调用。
+_SHADOW_CAUSES = ("route_error", "knowledge_gap", "slot_error", "unknown")
+
+
+def shadow_verdict(prod: str, shadow: str, gold: str) -> str:
+    """三态判定。**没有金标时不假装能判对错**——那是这一步最容易骗自己的地方。
+
+    有金标（人在 dashboard 标过）：
+      model_gap   线上错、强档对 → **模型能力问题**，范例/知识治不了，是 P4 蒸馏的收益证据
+      both_wrong  两档都错       → 信息/知识问题，走范例或 skill 提案
+      both_right  两档都对       → 该轮的 badcase 信号来自别处（话术/数据源），落域没问题
+    无金标（绝大多数轮次）：只报**分歧**，把判断留给人——
+      diverges    强档给出了不同落域 → 值得人看一眼（可能线上错，也可能强档错）
+      agrees      两档同答         → 更可能是信息/知识问题（换模型救不了）
+    """
+    p = {i.strip() for i in prod.split(",") if i.strip()}
+    s = {i.strip() for i in shadow.split(",") if i.strip()}
+    g = {i.strip() for i in gold.split(",") if i.strip()}
+    if not g:
+        return "agrees" if p == s else "diverges"
+    p_ok, s_ok = bool(p & g), bool(s & g)
+    if s_ok and not p_ok:
+        return "model_gap"
+    if p_ok and s_ok:
+        return "both_right"
+    if not p_ok and not s_ok:
+        return "both_wrong"
+    return "prod_only_right"       # 强档反而更差：也是有用信号（别急着换档）
+
+
+def cmd_shadow(args) -> Path:
+    """对落域类 badcase 用 `@primary` 强档同 prompt 重规划一次。
+
+    「模型不行还是信息不够」从此不靠猜。同 prompt 是关键——换了 prompt 就变成两个变量，
+    差分定位立刻失效（本仓反复吃过的亏）。"""
+    work = _work_dir(args.date)
+    triaged = _read_jsonl(work / "triaged.jsonl")
+    out_path = work / "shadow.jsonl"
+    rows = [t for t in triaged if t.get("cause") in _SHADOW_CAUSES and t.get("user_text")]
+    if not rows:
+        print("shadow：无落域类案例，跳过")
+        _write_jsonl(out_path, [])
+        return out_path
+    # 复用评测侧的真栈装配（evolve 的 gate 步本就 shell 调 test/eval_*.py，依赖已成立）
+    sys.path.insert(0, str(_ROOT / "test"))
+    try:
+        import asyncio
+
+        import eval_live
+        from orchestrator.cloud.context import WorkingSet
+        from orchestrator.cloud.models import PlanContext
+    except Exception as e:
+        print(f"shadow：装配不可用（{type(e).__name__}: {e}）——跳过，不阻塞流水线")
+        _write_jsonl(out_path, [])
+        return out_path
+
+    async def _go() -> list[dict]:
+        agents = eval_live.load_agents()
+        await eval_live.warm_exemplars()
+        # 强档 pin：@primary。**唯一的变量就是档位**——prompt/catalog/知识/范例全部与生产
+        # 同构，否则差分定位立刻失效（换了两个变量就什么也证明不了）。
+        from orchestrator.cloud.planning import PlanBuilder
+        llm, tools = eval_live.make_llm_fns("evolve-shadow", model="@primary")
+        builder = PlanBuilder(llm_fn=llm, registry_fn=_noop_resolve, llm_tool_fn=tools)
+        got = []
+        for i, t in enumerate(rows, 1):
+            try:
+                plan = await builder.build(t["user_text"], WorkingSet(catalog=agents),
+                                           PlanContext())
+                shadow = ",".join(s.intent for s in plan.steps)
+                err = ""
+            except Exception as e:
+                shadow, err = "", f"{type(e).__name__}: {e}"
+            v = shadow_verdict(t.get("intents", ""), shadow, t.get("gold_intents", ""))
+            got.append({**t, "shadow_intents": shadow, "shadow_verdict": v,
+                        "shadow_error": err})
+            print(f"  [{i}/{len(rows)}] {v:<16} 「{t['user_text'][:24]}」 "
+                  f"线上={t.get('intents') or '-'} 影子={shadow or '-'}")
+        return got
+
+    try:
+        got = asyncio.run(_go())
+    except Exception as e:
+        print(f"shadow：整体失败（{type(e).__name__}: {e}）——跳过，不阻塞流水线")
+        got = []
+    _write_jsonl(out_path, got)
+    dist: dict[str, int] = {}
+    for g in got:
+        dist[g["shadow_verdict"]] = dist.get(g["shadow_verdict"], 0) + 1
+    print(f"shadow：{len(got)} 条 → {_rel(out_path)}；判定分布 {dist}")
+    if dist.get("model_gap"):
+        print(f"  ⚠ model_gap ×{dist['model_gap']}——这些**换范例/知识治不好**，是 P4 蒸馏的收益证据")
+    return out_path
+
+
+async def _noop_resolve(query: str, top_k: int = 1):
+    return []
 
 
 # ── propose ──────────────────────────────────────────────────────────────────
 
-def _kw_pattern(texts: list[str]) -> str:
-    """从案族话术提取跨句重复 bigram 做 hint pattern 骨架（人工 TODO 完善）。
-    滑窗而非贪婪分词——「打开座椅加热」贪婪切出「打开座椅+加热」跨句对不齐；
-    句内去重防单句重复词刷计数。"""
-    grams: dict[str, int] = {}
-    for t in texts:
-        seen: set[str] = set()
-        for i in range(len(t) - 1):
-            g = t[i:i + 2]
-            if re.fullmatch(r"[一-鿿]{2}", g) and g not in seen:
-                seen.add(g)
-                grams[g] = grams.get(g, 0) + 1
-    top = [g for g, c in sorted(grams.items(), key=lambda kv: -kv[1]) if c >= 2][:3]
-    return "|".join(top) if top else "TODO"
+def _exemplar_draft(texts: list[str], date: str, model_gap: list[str] | None = None) -> str:
+    """route_error / slot_error 的**范例草案**（M5 P1 第四类提案，取代 regex 草案）。
+
+    此前这两类产的是 `route_hints` 正则骨架（bigram 拼 pattern，`_kw_pattern` 已随本次
+    退役）——那正是「改进循环的产物是正则不是数据」的自动化版本：提案被采纳一次，全局
+    耦合就深一分，且规则只进不出。范例草案改变的是**产物形态**：
+      - 不改任何运行规则（只进 planner prompt 当 few-shot），天然过 CI 门禁；
+      - 人审只需回答一个问题——「gold 标得对不对」，而不是「这条正则会误伤谁」；
+      - 一条范例同时是 RoutingBench 的评测用例（一次标注两种资产）。
+    这是北极星 N4（提案可应用率）从 0% 起飞的路径。教科书形态确实该钉死的，仍按既有
+    分工口径人工沉到 route_hints（canonical 归 hint、paraphrase 归知识与范例）。"""
+    gap_note = ""
+    if model_gap:
+        gap_note = ("# ⚠ 下列句子影子分诊判为 **model_gap**（强档答对、线上档答错）——\n"
+                    "#    它们是**模型能力**问题，投范例只是拿 few-shot 打补丁，治标；\n"
+                    "#    真正的解在 P4（强档标注 → 快档蒸馏）。先记账，别急着投：\n"
+                    + "".join(f"#      - {t}\n" for t in model_gap[:5]))
+    return (gap_note
+            + "# 范例草案（自进化提案；契约 skills/exemplars/README.md）\n"
+            "# 人审只需确认一件事：plan 里的 intent 是不是这句话的正确落域。\n"
+            "# 落位：skills/exemplars/<domain>.yaml 的 exemplars 末尾**追加**（不要插队，\n"
+            "#       eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。\n"
+            "domain: TODO（=intent 的域，如 nearby / navigation）\n"
+            "exemplars:\n"
+            + "".join(
+                f"  - text: \"{t}\"\n"
+                f"    plan:\n"
+                f"      - agent: TODO\n        intent: TODO.确定正确落域\n"
+                f"    source: trace\n    added: {date}\n    tags: [badcase]\n"
+                for t in texts[:8]))
 
 
-def forbidden_hit(text: str) -> bool:
-    low = (text or "").lower()
-    return any(k in low for k in PROPOSAL_FORBIDDEN)
+def forbidden_hit(text: str) -> str:
+    """动态内容命中禁区词 → 返回命中词（空串=未命中）。词边界匹配（eval ⊅ val）。"""
+    for term, rx in zip(PROPOSAL_FORBIDDEN, _FORBIDDEN_RES):
+        if rx.search(text or ""):
+            return term
+    return ""
 
 
 def cmd_propose(args) -> Path:
     work = _work_dir(args.date)
     triaged = _read_jsonl(work / "triaged.jsonl")
+    # 影子判定回填（M5 P2）：有 shadow.jsonl 时按 trace_id 合并，草案里标出「这条换范例
+    # 治不好」——model_gap 的案子投范例是白投，它该进 P4 蒸馏证据堆。
+    shadow = {s.get("trace_id"): s for s in _read_jsonl(work / "shadow.jsonl")}
+    if shadow:
+        triaged = [{**t, "shadow_verdict": (shadow.get(t.get("trace_id")) or {})
+                    .get("shadow_verdict", "")} for t in triaged]
     prop_dir = work / "proposals"
     prop_dir.mkdir(exist_ok=True)
     families: dict[str, list[dict]] = {}
@@ -331,14 +524,11 @@ def cmd_propose(args) -> Path:
     for cause, items in families.items():
         # 同句去重（重放/重试轮会把同一句灌成 N 条，权重与草案都不该按条数刷）
         texts = list(dict.fromkeys(i["user_text"] for i in items if i.get("user_text")))
-        if cause == "route_error" and texts:
-            body = (f"# route_hint 草案（自进化提案，人工完善后放入目标 Agent manifest）\n"
-                    f"# 来源案族：{len(items)} 条；治理⑥：若目标能力 require_confirm=true"
-                    f" 须先过专项安全回归\nroute_hints:\n"
-                    f"  - pattern: \"(?:{_kw_pattern(texts)})\"   # TODO 人工收窄\n"
-                    f"    intent: TODO.确定目标意图\n    policy: append\n"
-                    f"    priority: 50\n    guard: \"\"          # TODO 防误伤\n")
-            kind = "hint"
+        if cause in ("route_error", "slot_error") and texts:
+            gaps = [i["user_text"] for i in items
+                    if i.get("shadow_verdict") == "model_gap" and i.get("user_text")]
+            body = _exemplar_draft(texts, args.date, model_gap=gaps)
+            kind = "exemplar"
         elif cause == "knowledge_gap" and texts:
             body = (f"# PlanningGuide 草案（自进化提案；skills/README.md 契约）\n"
                     f"# 治理④：golden 须用改写句（原句已归 eval 语料候选，不同源）\n"
@@ -351,7 +541,7 @@ def cmd_propose(args) -> Path:
                     + "golden:\n  - text: TODO 改写句\n    expect_intents: [TODO]"
                     "   # AND；可加 expect_any/expect_not，项支持 \"a|b\"\n")
             kind = "guide"
-        elif cause in ("slot_error", "phrasing") and texts:
+        elif cause == "phrasing" and texts:
             body = ("# eval 语料候选（mode_routing_cases.yaml 追加行草案）\n"
                     + "".join(f"- text: \"{t}\"\n  expect_mode: TODO\n"
                               f"  tags: [mode_boundary]\n  source: evolve-{args.date}\n"
@@ -361,17 +551,20 @@ def cmd_propose(args) -> Path:
             proposals.append({"cause": cause, "kind": "report_only",
                               "count": len(items)})
             continue
-        if forbidden_hit(body):
+        # 治理③：只扫动态内容（原话 + 归因 note），模板样板文案不参与判定（P0 修复）
+        dyn = "\n".join(texts + [str(i.get("cause_note") or "") for i in items])
+        hit_term = forbidden_hit(dyn)
+        if hit_term:
             proposals.append({"cause": cause, "kind": "report_only",
                              "count": len(items),
-                             "note": "命中修改面白名单禁区，降级纯报告（治理③）"})
+                             "note": f"动态内容命中修改面禁区「{hit_term}」，降级纯报告（治理③）"})
             continue
         fname = f"{kind}-{cause}.yaml"
         (prop_dir / fname).write_text(body, encoding="utf-8")
         proposals.append({"cause": cause, "kind": kind, "count": len(items),
                           "file": fname})
     _write_jsonl(work / "proposals.jsonl", proposals)
-    print(f"propose：{len(proposals)} 项 → {prop_dir.relative_to(_ROOT)}")
+    print(f"propose：{len(proposals)} 项 → {_rel(prop_dir)}")
     return work / "proposals.jsonl"
 
 
@@ -381,6 +574,7 @@ _GATE_EVALS = [
     ("eval_fast_intent", [sys.executable, "test/eval_fast_intent.py"]),
     ("eval_route_hints", [sys.executable, "test/eval_route_hints.py"]),
     ("eval_skills", [sys.executable, "test/eval_skills.py"]),
+    ("eval_exemplars", [sys.executable, "test/eval_exemplars.py"]),   # M5 P1
     ("eval_mode_routing_offline", [sys.executable, "test/eval_mode_routing.py"]),
 ]
 
@@ -429,8 +623,20 @@ def cmd_report(args) -> Path:
         *(f"- {k}: {v}" for k, v in sorted(sig_dist.items(), key=lambda kv: -kv[1])),
         "", "## 归因分布", "",
         *(f"- {k}: {v}" for k, v in sorted(cause_dist.items(), key=lambda kv: -kv[1])),
-        "", "## 案族卡片（脱敏；同句合并，×N=窗口内出现次数）", "",
     ]
+    dist = (json.loads((work / "distribution.json").read_text(encoding="utf-8"))
+            if (work / "distribution.json").exists() else {})
+    if dist:
+        lines += ["", "## 落域分布（窗口全量，非仅命中轮）", "",
+                  f"- 轮次：{dist.get('turns', 0)}"]
+        for key, title in (("path", "路径"), ("plan_mode", "plan_mode"),
+                           ("domains", "落域（按步计域）")):
+            m = dist.get(key) or {}
+            if m:
+                top = "、".join(f"{k}×{v}" for k, v in
+                                sorted(m.items(), key=lambda kv: -kv[1])[:8])
+                lines.append(f"- {title}：{top}")
+    lines += ["", "## 案族卡片（脱敏；同句合并，×N=窗口内出现次数）", ""]
     merged: dict[tuple, dict] = {}
     for t in triaged:
         key = (t["cause"], t["user_text"])
@@ -445,6 +651,27 @@ def cmd_report(args) -> Path:
                   f"  - 信号 {','.join(t['signals'])}；trace {', '.join(f'`{x}`' for x in t['traces'])}"
                   + (f"；plan_mode {t['plan_mode']}" if t.get("plan_mode") else "")
                   + (f"；归因：{t['cause_note']}" if t.get("cause_note") else "")]
+    sh = _read_jsonl(work / "shadow.jsonl")
+    if sh:
+        sd: dict[str, int] = {}
+        for s in sh:
+            sd[s["shadow_verdict"]] = sd.get(s["shadow_verdict"], 0) + 1
+        lines += ["", "## 强模型影子分诊（`@primary` 同 prompt 重规划）", "",
+                  "> 「模型不行还是信息不够」不靠猜。**有金标**时判 model_gap（强档对/线上错，"
+                  "换范例治不好，是 P4 蒸馏的收益证据）／both_wrong（信息知识问题）；"
+                  "**无金标**时只报分歧，判断留给人。", "",
+                  *(f"- {k}: {v}" for k, v in sorted(sd.items(), key=lambda kv: -kv[1]))]
+        gaps = [s for s in sh if s["shadow_verdict"] == "model_gap"]
+        if gaps:
+            lines += ["", "**model_gap 明细（P4 证据）**："]
+            lines += [f"- 「{s['user_text']}」线上 `{s.get('intents') or '-'}` → "
+                      f"影子 `{s.get('shadow_intents') or '-'}`（金标 `{s.get('gold_intents')}`）"
+                      for s in gaps[:8]]
+        div = [s for s in sh if s["shadow_verdict"] == "diverges"]
+        if div:
+            lines += ["", f"**强档给出不同落域（无金标，待人判）×{len(div)}**："]
+            lines += [f"- 「{s['user_text']}」线上 `{s.get('intents') or '-'}` → "
+                      f"影子 `{s.get('shadow_intents') or '-'}`" for s in div[:8]]
     lines += ["", "## 提案（.work/proposals/，人工审后应用）", ""]
     for p in proposals:
         lines.append(f"- {p['cause']} × {p['count']} → "
@@ -455,26 +682,33 @@ def cmd_report(args) -> Path:
     _OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = _OUT_DIR / f"{args.date}.md"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"report → {out.relative_to(_ROOT)}")
+    print(f"report → {_rel(out)}")
     return out
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="badcase 自进化流水线（M1b v1）")
-    ap.add_argument("cmd", choices=["mine", "triage", "propose", "gate", "report", "all"])
+    ap.add_argument("cmd", choices=["mine", "triage", "shadow", "propose", "gate",
+                                    "report", "all"])
     ap.add_argument("--since", default=datetime.now(_TZ).strftime("%Y-%m-%d"))
     ap.add_argument("--until", default="")
     ap.add_argument("--date", default="", help="工作目录/报告日期（默认=since）")
     ap.add_argument("--provider", default="", help="triage LLM 请求级 pin")
     ap.add_argument("--include-synthetic", action="store_true",
                     help="包含 eval-/e2e- 等合成会话（演示/验证用，正式 nightly 不加）")
+    ap.add_argument("--with-shadow", action="store_true",
+                    help="all 流程里加跑强模型影子分诊（需真栈，烧强档 token，不进 nightly）")
     args = ap.parse_args()
     args.date = args.date or args.since
-    steps = {"mine": cmd_mine, "triage": cmd_triage, "propose": cmd_propose,
-             "gate": cmd_gate, "report": cmd_report}
+    steps = {"mine": cmd_mine, "triage": cmd_triage, "shadow": cmd_shadow,
+             "propose": cmd_propose, "gate": cmd_gate, "report": cmd_report}
     gate_failed = False
     if args.cmd == "all":
-        for name in ("mine", "triage", "propose", "gate", "report"):
+        # shadow 默认**不进 all**：它要真栈 + 一次强档规划调用/案例（烧钱），且判定对
+        # 采样方差敏感——同 eval_skills live「不进 nightly」的理由。`--with-shadow` 显式开。
+        seq = ("mine", "triage", "shadow", "propose", "gate", "report") if args.with_shadow \
+            else ("mine", "triage", "propose", "gate", "report")
+        for name in seq:
             print(f"── {name} ──")
             out = steps[name](args)
             if name == "mine" and out is None:   # 栈未起 SKIP：后续步全免（nightly 幂等）

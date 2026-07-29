@@ -37,6 +37,10 @@ agents/         所有 Agent；_sdk/ 是公共 SDK，每个 Agent 一个子目�
 skills/         Planner 规划知识声明式载体（M0b）：guides/ 领域组合判据（双通道检索注入）、
                 policies/ 跨域软约束（常驻）。**加规划知识=投 skill 文件不改编排核心**；
                 golden 必填进 CI 门禁（含 holdout），契约见 skills/README.md（唯一真相源）
+                + exemplars/ **范例库**（M5 P1）：`<domain>.yaml` 存「话术→正确落域」，
+                检索后作 few-shot 进 prompt——权威链**最软层**，不做硬路由。
+                **修落域 badcase 的默认产物是范例不是正则**（写错只是噪声，hint 写错是
+                事故）；契约见 skills/exemplars/README.md，门禁 test/eval_exemplars.py
 security/       权限引擎、scope 定义、内容审核、注入防护
 payment-gateway/  统一支付网关（Agent 不持支付凭证）
 proactive/      统一主动引擎：主动消息的全局治理器（频控/免打扰/驾驶负荷/同类合并）
@@ -100,7 +104,7 @@ Windows 无 make 时用 `scripts/gen-proto.ps1`、`scripts/run_e2e.ps1` 等价�
 **工程纪律**：改完主动跑 `make test`；不要注释报错或加绕过标记来"让它跑起来"，找根因；大改动先在设计文档对齐再动手。
 
 ## 7. 当前阶段
-截至 2026-07-25，Phase 1 工程化 PoC 主干、云端中枢 P0-P3、R2-R4 硬化主题（架构还债/
+截至 2026-07-29，Phase 1 工程化 PoC 主干、云端中枢 P0-P3、R2-R4 硬化主题（架构还债/
 安全/语音回路/拒识澄清等）、可观测台（badcase 排查贯通：会话/轮次/日志/LLM + SQLite
 持久化）与**旅程级验证体系**（L3 journeys + L4 HMI CDP）已落地，运行模型为
 T0 端侧快路径 / T1 单次 DAG / T2 有界 Agentic 循环。
@@ -122,9 +126,27 @@ M0a→M4 全部完成**，主线是「把每一种智能供给都声明式化」
 
 **M4 已收官，两条 DoD 都已兑现**（语音双链路可切换 / 多用户记忆隔离旅程）。
 **M0a→M4 已通过总体验收（2026-07-26）**：七路跨阶段组合深查 + 测试真实性抽查，两个确认链
-P0 与一批组合缺陷当日修复（架构文档随之推进到 v1.9），结构性遗留已立卡——验收报告与立卡
-清单见 `docs/reviews/2026-07-26-acceptance-review-m0a-m4.md`。没有既定的下一期；
-可选方向见 `AGENTS.md` §4.0 与三张余项表（`sim.adas.*` 演示域仍是低优先 backlog）。
+P0 与一批组合缺陷当日修复，结构性遗留已立卡——验收报告见
+`docs/reviews/2026-07-26-acceptance-review-m0a-m4.md`。
+
+**M5 数据飞轮 P0-P2 已落地（2026-07-29，架构文档 v1.14）**，主线是把「修落域 badcase 的
+标准产物」从**正则**换成**数据**，并给规则装上出口。母提案
+`docs/design/2026-07-28-intent-accuracy-data-flywheel.md`：
+
+| 期 | 交付 | 一句话 |
+|---|---|---|
+| P0 | 修断点、立尺子 | evolve 提案半环闭合（此前 100% 自触发降级、上线四天零产出）；落域指标接活；`turns.gold_intents` 标注载体；catalog 预算修复（旧值把 navigation 整域裁出 prompt） |
+| P1 | **落域范例库** `skills/exemplars/` | Planner 第三通道、权威链**最软层**——只作 few-shot 不做硬路由。**hint 写错是事故，范例写错只是噪声**，故 badcase 的默认修法是投范例 |
+| P2 | 度量驱动治理 | **RoutingBench**（分布尺 N1，与只防倒退的回归闸分开）+ **hint 退役流水线**（规则第一次有出口，`route_hints` 32→12）+ 强模型影子分诊 + 端云分歧驱动标注 |
+
+**三条会反复用到的判据**（细节见 RFC 与 `docs/reviews/eval/README.md`）：
+- 软层 A/B 的 **Δ 只能在「实际注入」的子集上算**——未注入的两臂 prompt 逐字相同，翻面是采样方差；
+- 规则退役**必须跨 provider 取交集 + 覆盖全部命中句**——抽样的偏差方向固定：命中面越大越容易被放行；
+- **N1 涨不等于系统变好**：语料有隐藏分母、域分布偏斜七成集中在三个域、canonical 高分是 hint 钉出来的。
+
+**P3 端侧 NLU 未开工**（启动判据已满足：端侧 313 分支≈300 触发线、覆盖 76.2%<85%、
+Shadow NLU 已证 LLM 91.2% vs 规则 75.9%）。其余可选方向见 `AGENTS.md` §4.0 与三张余项表
+（`sim.adas.*` 演示域仍是低优先 backlog）。
 
 当前事实、测试证据和待办统一维护在 `AGENTS.md`（§4 顶部有「当前进度与下一步」交接区）；
 设计与落地记录见 `docs/design/`（索引 `docs/design/README.md`）。原始量产级目标和未完成项见

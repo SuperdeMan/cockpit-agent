@@ -1,0 +1,2305 @@
+{
+  "meta": {
+    "subject": "exemplars",
+    "generated_at": "2026-07-29T08:01:09.168584+00:00",
+    "commit": "611351b",
+    "provider": "minimax:MiniMax-M3",
+    "temperature": 0.3,
+    "retrieval": "hybrid",
+    "lex_threshold": 0.34,
+    "sem_threshold": 0.65,
+    "top_k": 3,
+    "budget": 700
+  },
+  "corpus_sources": [
+    {
+      "path": "skills/exemplars/*.yaml",
+      "count": 200
+    }
+  ],
+  "buckets": {
+    "live_full": {
+      "total": 62,
+      "passed": 62,
+      "failures": [],
+      "pass_rate": 1.0
+    },
+    "live_off": {
+      "total": 62,
+      "passed": 61,
+      "failures": [
+        {
+          "id": "live_off::增程和纯电哪个更适合北方冬天",
+          "bucket": "live_off",
+          "text": "增程和纯电哪个更适合北方冬天",
+          "expected": [
+            "info",
+            "research"
+          ],
+          "actual": [
+            "chitchat.talk"
+          ],
+          "passed": false,
+          "detail": "",
+          "tags": [
+            "mode_routing",
+            "inj:"
+          ],
+          "source": ""
+        }
+      ],
+      "pass_rate": 0.9839
+    }
+  },
+  "overall": {
+    "total": 124,
+    "passed": 123,
+    "pass_rate": 0.9919
+  },
+  "cases": {
+    "live_full::给我讲个笑话": {
+      "id": "live_full::给我讲个笑话",
+      "bucket": "live_full",
+      "text": "给我讲个笑话",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:chitchat#6@lex:0.75"
+      ],
+      "source": ""
+    },
+    "live_full::你叫什么名字呀": {
+      "id": "live_full::你叫什么名字呀",
+      "bucket": "live_full",
+      "text": "你叫什么名字呀",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:chitchat#2@lex:0.90"
+      ],
+      "source": ""
+    },
+    "live_full::光合作用是什么原理": {
+      "id": "live_full::光合作用是什么原理",
+      "bucket": "live_full",
+      "text": "光合作用是什么原理",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:chitchat#5@lex:0.42"
+      ],
+      "source": ""
+    },
+    "live_full::好无聊啊随便聊点什么": {
+      "id": "live_full::好无聊啊随便聊点什么",
+      "bucket": "live_full",
+      "text": "好无聊啊随便聊点什么",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:chitchat#4@lex:0.52"
+      ],
+      "source": ""
+    },
+    "live_full::帮我查一下iPhone现在什么价格": {
+      "id": "live_full::帮我查一下iPhone现在什么价格",
+      "bucket": "live_full",
+      "text": "帮我查一下iPhone现在什么价格",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#17@lex:0.84"
+      ],
+      "source": ""
+    },
+    "live_full::昨晚的苹果发布会都发布了什么": {
+      "id": "live_full::昨晚的苹果发布会都发布了什么",
+      "bucket": "live_full",
+      "text": "昨晚的苹果发布会都发布了什么",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#21@lex:0.75"
+      ],
+      "source": ""
+    },
+    "live_full::来点科技新闻": {
+      "id": "live_full::来点科技新闻",
+      "bucket": "live_full",
+      "text": "来点科技新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#30@lex:0.73"
+      ],
+      "source": ""
+    },
+    "live_full::有什么国际新闻吗": {
+      "id": "live_full::有什么国际新闻吗",
+      "bucket": "live_full",
+      "text": "有什么国际新闻吗",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#8@lex:0.39"
+      ],
+      "source": ""
+    },
+    "live_full::英伟达最新动态": {
+      "id": "live_full::英伟达最新动态",
+      "bucket": "live_full",
+      "text": "英伟达最新动态",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#34@lex:0.66"
+      ],
+      "source": ""
+    },
+    "live_full::深入调研一下固态电池产业链": {
+      "id": "live_full::深入调研一下固态电池产业链",
+      "bucket": "live_full",
+      "text": "深入调研一下固态电池产业链",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:research#9@lex:0.76,full:info#18@lex:0.43"
+      ],
+      "source": ""
+    },
+    "live_full::帮我全面对比一下增程和纯电的优劣": {
+      "id": "live_full::帮我全面对比一下增程和纯电的优劣",
+      "bucket": "live_full",
+      "text": "帮我全面对比一下增程和纯电的优劣",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:research#3@lex:0.81"
+      ],
+      "source": ""
+    },
+    "live_full::苹果新品发布会讲了什么": {
+      "id": "live_full::苹果新品发布会讲了什么",
+      "bucket": "live_full",
+      "text": "苹果新品发布会讲了什么",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#21@lex:0.39"
+      ],
+      "source": ""
+    },
+    "live_full::深入了解一下固态电池": {
+      "id": "live_full::深入了解一下固态电池",
+      "bucket": "live_full",
+      "text": "深入了解一下固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:research#9@lex:0.58,full:info#18@lex:0.49"
+      ],
+      "source": ""
+    },
+    "live_full::增程和纯电哪个更适合北方冬天": {
+      "id": "live_full::增程和纯电哪个更适合北方冬天",
+      "bucket": "live_full",
+      "text": "增程和纯电哪个更适合北方冬天",
+      "expected": [
+        "info",
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:research#3@lex:0.35"
+      ],
+      "source": ""
+    },
+    "live_full::查一下固态电池": {
+      "id": "live_full::查一下固态电池",
+      "bucket": "live_full",
+      "text": "查一下固态电池",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#18@lex:0.60,full:research#9@lex:0.57"
+      ],
+      "source": ""
+    },
+    "live_full::最近有什么好看的电影上映": {
+      "id": "live_full::最近有什么好看的电影上映",
+      "bucket": "live_full",
+      "text": "最近有什么好看的电影上映",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:nearby#14@lex:0.40"
+      ],
+      "source": ""
+    },
+    "live_full::现在油价多少钱一升": {
+      "id": "live_full::现在油价多少钱一升",
+      "bucket": "live_full",
+      "text": "现在油价多少钱一升",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#27@lex:0.75"
+      ],
+      "source": ""
+    },
+    "live_full::最新的iPhone是哪一款": {
+      "id": "live_full::最新的iPhone是哪一款",
+      "bucket": "live_full",
+      "text": "最新的iPhone是哪一款",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#17@lex:0.39"
+      ],
+      "source": ""
+    },
+    "live_full::比特币现在多少钱": {
+      "id": "live_full::比特币现在多少钱",
+      "bucket": "live_full",
+      "text": "比特币现在多少钱",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#2@lex:0.41"
+      ],
+      "source": ""
+    },
+    "live_full::下周有什么新电影上映": {
+      "id": "live_full::下周有什么新电影上映",
+      "bucket": "live_full",
+      "text": "下周有什么新电影上映",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#8@lex:0.35,full:reminder#27@lex:0.34"
+      ],
+      "source": ""
+    },
+    "live_full::给我讲讲相对论是怎么回事": {
+      "id": "live_full::给我讲讲相对论是怎么回事",
+      "bucket": "live_full",
+      "text": "给我讲讲相对论是怎么回事",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:chitchat#5@lex:0.34"
+      ],
+      "source": ""
+    },
+    "live_full::搜一下你叫什么名字": {
+      "id": "live_full::搜一下你叫什么名字",
+      "bucket": "live_full",
+      "text": "搜一下你叫什么名字",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:chitchat#2@lex:0.77,full:info#16@vec:0.68"
+      ],
+      "source": ""
+    },
+    "live_full::查一下我老婆叫什么名字": {
+      "id": "live_full::查一下我老婆叫什么名字",
+      "bucket": "live_full",
+      "text": "查一下我老婆叫什么名字",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:chitchat#2@lex:0.52"
+      ],
+      "source": ""
+    },
+    "live_full::提醒我晚上看新闻联播": {
+      "id": "live_full::提醒我晚上看新闻联播",
+      "bucket": "live_full",
+      "text": "提醒我晚上看新闻联播",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#29@lex:0.34"
+      ],
+      "source": ""
+    },
+    "live_full::再来点财经新闻": {
+      "id": "live_full::再来点财经新闻",
+      "bucket": "live_full",
+      "text": "再来点财经新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#24@lex:0.91"
+      ],
+      "source": ""
+    },
+    "live_full::换个话题，陪我聊聊天吧": {
+      "id": "live_full::换个话题，陪我聊聊天吧",
+      "bucket": "live_full",
+      "text": "换个话题，陪我聊聊天吧",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:chitchat#7@lex:0.50"
+      ],
+      "source": ""
+    },
+    "live_full::那帮我深入调研一下它": {
+      "id": "live_full::那帮我深入调研一下它",
+      "bucket": "live_full",
+      "text": "那帮我深入调研一下它",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:research#9@lex:0.48"
+      ],
+      "source": ""
+    },
+    "live_full::查一下我的电量还能跑多远": {
+      "id": "live_full::查一下我的电量还能跑多远",
+      "bucket": "live_full",
+      "text": "查一下我的电量还能跑多远",
+      "expected": [
+        "charging",
+        "chitchat"
+      ],
+      "actual": [
+        "charging.status"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:charging#6@lex:0.56"
+      ],
+      "source": ""
+    },
+    "live_full::搜一下附近的加油站": {
+      "id": "live_full::搜一下附近的加油站",
+      "bucket": "live_full",
+      "text": "搜一下附近的加油站",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:navigation#16@lex:0.55,full:charging#7@vec:0.70"
+      ],
+      "source": ""
+    },
+    "live_full::查一下我的待办": {
+      "id": "live_full::查一下我的待办",
+      "bucket": "live_full",
+      "text": "查一下我的待办",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.list"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:reminder#23@lex:0.57"
+      ],
+      "source": ""
+    },
+    "live_full::帮我查一下茅台股价": {
+      "id": "live_full::帮我查一下茅台股价",
+      "bucket": "live_full",
+      "text": "帮我查一下茅台股价",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.stock"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#36@lex:0.59"
+      ],
+      "source": ""
+    },
+    "live_full::明天早上八点提醒我开会": {
+      "id": "live_full::明天早上八点提醒我开会",
+      "bucket": "live_full",
+      "text": "明天早上八点提醒我开会",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:reminder#18@lex:0.70"
+      ],
+      "source": ""
+    },
+    "live_full::附近有什么好吃的川菜馆": {
+      "id": "live_full::附近有什么好吃的川菜馆",
+      "bucket": "live_full",
+      "text": "附近有什么好吃的川菜馆",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:nearby#14@lex:0.82"
+      ],
+      "source": ""
+    },
+    "live_full::帮我规划一个杭州两日游": {
+      "id": "live_full::帮我规划一个杭州两日游",
+      "bucket": "live_full",
+      "text": "帮我规划一个杭州两日游",
+      "expected": [
+        "trip"
+      ],
+      "actual": [
+        "trip.plan"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:trip#20@lex:0.54,full:charging#2@lex:0.39"
+      ],
+      "source": ""
+    },
+    "live_full::今天上证指数怎么样": {
+      "id": "live_full::今天上证指数怎么样",
+      "bucket": "live_full",
+      "text": "今天上证指数怎么样",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.stock"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#3@lex:0.51"
+      ],
+      "source": ""
+    },
+    "live_full::打开空调然后来点科技新闻": {
+      "id": "live_full::打开空调然后来点科技新闻",
+      "bucket": "live_full",
+      "text": "打开空调然后来点科技新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "hvac.on",
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:full:info#30@lex:0.41"
+      ],
+      "source": ""
+    },
+    "live_full::帮我深入调研一下固态电池": {
+      "id": "live_full::帮我深入调研一下固态电池",
+      "bucket": "live_full",
+      "text": "帮我深入调研一下固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:research#9@lex:0.81,full:info#18@lex:0.46"
+      ],
+      "source": ""
+    },
+    "live_full::导航去第2天换一个": {
+      "id": "live_full::导航去第2天换一个",
+      "bucket": "live_full",
+      "text": "导航去第2天换一个",
+      "expected": [
+        "trip"
+      ],
+      "actual": [
+        "trip.modify"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:trip#12@lex:0.36,full:navigation#6@vec:0.66"
+      ],
+      "source": ""
+    },
+    "live_full::看看它的详情": {
+      "id": "live_full::看看它的详情",
+      "bucket": "live_full",
+      "text": "看看它的详情",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.detail"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:nearby#10@lex:0.38"
+      ],
+      "source": ""
+    },
+    "live_full::去惠州怎么充电": {
+      "id": "live_full::去惠州怎么充电",
+      "bucket": "live_full",
+      "text": "去惠州怎么充电",
+      "expected": [
+        "charging"
+      ],
+      "actual": [
+        "charging.plan"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:charging#1@lex:0.65"
+      ],
+      "source": ""
+    },
+    "live_full::车快没电了，帮我找个充电桩": {
+      "id": "live_full::车快没电了，帮我找个充电桩",
+      "bucket": "live_full",
+      "text": "车快没电了，帮我找个充电桩",
+      "expected": [
+        "charging"
+      ],
+      "actual": [
+        "charging.find"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:charging#4@lex:0.37,full:navigation#22@vec:0.74,full:nearby#8@vec:0.67"
+      ],
+      "source": ""
+    },
+    "live_full::附近有没有充电站": {
+      "id": "live_full::附近有没有充电站",
+      "bucket": "live_full",
+      "text": "附近有没有充电站",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:charging#7@lex:0.57,full:navigation#22@lex:0.44,full:info#23@lex:0.35"
+      ],
+      "source": ""
+    },
+    "live_full::附近有没有停车场": {
+      "id": "live_full::附近有没有停车场",
+      "bucket": "live_full",
+      "text": "附近有没有停车场",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:nearby#8@lex:0.37,full:info#23@lex:0.34,full:charging#7@vec:0.79"
+      ],
+      "source": ""
+    },
+    "live_full::把接孩子的提醒改到五点": {
+      "id": "live_full::把接孩子的提醒改到五点",
+      "bucket": "live_full",
+      "text": "把接孩子的提醒改到五点",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.update"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:reminder#15@lex:0.72"
+      ],
+      "source": ""
+    },
+    "live_full::取消第二条": {
+      "id": "live_full::取消第二条",
+      "bucket": "live_full",
+      "text": "取消第二条",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.cancel"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:reminder#7@lex:0.82"
+      ],
+      "source": ""
+    },
+    "live_full::开赛前半小时提醒我": {
+      "id": "live_full::开赛前半小时提醒我",
+      "bucket": "live_full",
+      "text": "开赛前半小时提醒我",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:reminder#6@lex:0.36"
+      ],
+      "source": ""
+    },
+    "live_full::帮我查一下并深入调研固态电池": {
+      "id": "live_full::帮我查一下并深入调研固态电池",
+      "bucket": "live_full",
+      "text": "帮我查一下并深入调研固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "info.search",
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:research#9@lex:0.56,full:info#18@vec:0.86"
+      ],
+      "source": ""
+    },
+    "live_full::今天天气怎么样，适合出行吗": {
+      "id": "live_full::今天天气怎么样，适合出行吗",
+      "bucket": "live_full",
+      "text": "今天天气怎么样，适合出行吗",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.weather",
+        "safety.driving_advice"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:info#7@lex:0.64,full:safety#1@vec:0.78"
+      ],
+      "source": ""
+    },
+    "live_full::适合出门吗，外面天气如何": {
+      "id": "live_full::适合出门吗，外面天气如何",
+      "bucket": "live_full",
+      "text": "适合出门吗，外面天气如何",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "safety.driving_advice",
+        "info.weather"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:info#12@lex:0.38,full:safety#1@vec:0.68"
+      ],
+      "source": ""
+    },
+    "live_full::开启午休模式": {
+      "id": "live_full::开启午休模式",
+      "bucket": "live_full",
+      "text": "开启午休模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene.activate"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:scene#5@lex:0.71"
+      ],
+      "source": ""
+    },
+    "live_full::帮我创建一个钓鱼模式：座椅放平，开外循环": {
+      "id": "live_full::帮我创建一个钓鱼模式：座椅放平，开外循环",
+      "bucket": "live_full",
+      "text": "帮我创建一个钓鱼模式：座椅放平，开外循环",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:scene#6@lex:0.82"
+      ],
+      "source": ""
+    },
+    "live_full::开启午休模式，温度改成26": {
+      "id": "live_full::开启午休模式，温度改成26",
+      "bucket": "live_full",
+      "text": "开启午休模式，温度改成26",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene.activate"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:scene#10@lex:0.45"
+      ],
+      "source": ""
+    },
+    "live_full::去掉钓鱼模式里的香氛": {
+      "id": "live_full::去掉钓鱼模式里的香氛",
+      "bucket": "live_full",
+      "text": "去掉钓鱼模式里的香氛",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene.update"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:scene#4@lex:0.51"
+      ],
+      "source": ""
+    },
+    "live_full::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开": {
+      "id": "live_full::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "bucket": "live_full",
+      "text": "创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:scene#3@lex:0.93"
+      ],
+      "source": ""
+    },
+    "live_full::固态电池那个调研不用查了": {
+      "id": "live_full::固态电池那个调研不用查了",
+      "bucket": "live_full",
+      "text": "固态电池那个调研不用查了",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.cancel"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:research#1@lex:0.44,full:info#18@vec:0.75"
+      ],
+      "source": ""
+    },
+    "live_full::那个调研查得怎么样了": {
+      "id": "live_full::那个调研查得怎么样了",
+      "bucket": "live_full",
+      "text": "那个调研查得怎么样了",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.status"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:research#4@lex:0.89"
+      ],
+      "source": ""
+    },
+    "live_full::深入调研一下固态电池": {
+      "id": "live_full::深入调研一下固态电池",
+      "bucket": "live_full",
+      "text": "深入调研一下固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:research#9@lex:0.89,full:info#18@lex:0.50"
+      ],
+      "source": ""
+    },
+    "live_full::到公司之前提醒我交周报": {
+      "id": "live_full::到公司之前提醒我交周报",
+      "bucket": "live_full",
+      "text": "到公司之前提醒我交周报",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:reminder#4@lex:0.37"
+      ],
+      "source": ""
+    },
+    "live_full::帮我看看附近有什么咖啡店": {
+      "id": "live_full::帮我看看附近有什么咖啡店",
+      "bucket": "live_full",
+      "text": "帮我看看附近有什么咖啡店",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:nearby#14@lex:0.37"
+      ],
+      "source": ""
+    },
+    "live_full::帮我看看我附近有什么好吃的": {
+      "id": "live_full::帮我看看我附近有什么好吃的",
+      "bucket": "live_full",
+      "text": "帮我看看我附近有什么好吃的",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:nearby#14@lex:0.73,full:navigation#5@vec:0.68"
+      ],
+      "source": ""
+    },
+    "live_full::帮我看看这个是什么": {
+      "id": "live_full::帮我看看这个是什么",
+      "bucket": "live_full",
+      "text": "帮我看看这个是什么",
+      "expected": [
+        "vision"
+      ],
+      "actual": [
+        "vision.describe"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:vision#2@lex:0.85"
+      ],
+      "source": ""
+    },
+    "live_full::看看前面那个建筑是什么": {
+      "id": "live_full::看看前面那个建筑是什么",
+      "bucket": "live_full",
+      "text": "看看前面那个建筑是什么",
+      "expected": [
+        "vision"
+      ],
+      "actual": [
+        "vision.describe"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:full:vision#1@lex:0.89"
+      ],
+      "source": ""
+    },
+    "live_off::给我讲个笑话": {
+      "id": "live_off::给我讲个笑话",
+      "bucket": "live_off",
+      "text": "给我讲个笑话",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::你叫什么名字呀": {
+      "id": "live_off::你叫什么名字呀",
+      "bucket": "live_off",
+      "text": "你叫什么名字呀",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::光合作用是什么原理": {
+      "id": "live_off::光合作用是什么原理",
+      "bucket": "live_off",
+      "text": "光合作用是什么原理",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::好无聊啊随便聊点什么": {
+      "id": "live_off::好无聊啊随便聊点什么",
+      "bucket": "live_off",
+      "text": "好无聊啊随便聊点什么",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::帮我查一下iPhone现在什么价格": {
+      "id": "live_off::帮我查一下iPhone现在什么价格",
+      "bucket": "live_off",
+      "text": "帮我查一下iPhone现在什么价格",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::昨晚的苹果发布会都发布了什么": {
+      "id": "live_off::昨晚的苹果发布会都发布了什么",
+      "bucket": "live_off",
+      "text": "昨晚的苹果发布会都发布了什么",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::来点科技新闻": {
+      "id": "live_off::来点科技新闻",
+      "bucket": "live_off",
+      "text": "来点科技新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::有什么国际新闻吗": {
+      "id": "live_off::有什么国际新闻吗",
+      "bucket": "live_off",
+      "text": "有什么国际新闻吗",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::英伟达最新动态": {
+      "id": "live_off::英伟达最新动态",
+      "bucket": "live_off",
+      "text": "英伟达最新动态",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::深入调研一下固态电池产业链": {
+      "id": "live_off::深入调研一下固态电池产业链",
+      "bucket": "live_off",
+      "text": "深入调研一下固态电池产业链",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::帮我全面对比一下增程和纯电的优劣": {
+      "id": "live_off::帮我全面对比一下增程和纯电的优劣",
+      "bucket": "live_off",
+      "text": "帮我全面对比一下增程和纯电的优劣",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::苹果新品发布会讲了什么": {
+      "id": "live_off::苹果新品发布会讲了什么",
+      "bucket": "live_off",
+      "text": "苹果新品发布会讲了什么",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::深入了解一下固态电池": {
+      "id": "live_off::深入了解一下固态电池",
+      "bucket": "live_off",
+      "text": "深入了解一下固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::增程和纯电哪个更适合北方冬天": {
+      "id": "live_off::增程和纯电哪个更适合北方冬天",
+      "bucket": "live_off",
+      "text": "增程和纯电哪个更适合北方冬天",
+      "expected": [
+        "info",
+        "research"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": false,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::查一下固态电池": {
+      "id": "live_off::查一下固态电池",
+      "bucket": "live_off",
+      "text": "查一下固态电池",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::最近有什么好看的电影上映": {
+      "id": "live_off::最近有什么好看的电影上映",
+      "bucket": "live_off",
+      "text": "最近有什么好看的电影上映",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::现在油价多少钱一升": {
+      "id": "live_off::现在油价多少钱一升",
+      "bucket": "live_off",
+      "text": "现在油价多少钱一升",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::最新的iPhone是哪一款": {
+      "id": "live_off::最新的iPhone是哪一款",
+      "bucket": "live_off",
+      "text": "最新的iPhone是哪一款",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::比特币现在多少钱": {
+      "id": "live_off::比特币现在多少钱",
+      "bucket": "live_off",
+      "text": "比特币现在多少钱",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::下周有什么新电影上映": {
+      "id": "live_off::下周有什么新电影上映",
+      "bucket": "live_off",
+      "text": "下周有什么新电影上映",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::给我讲讲相对论是怎么回事": {
+      "id": "live_off::给我讲讲相对论是怎么回事",
+      "bucket": "live_off",
+      "text": "给我讲讲相对论是怎么回事",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::搜一下你叫什么名字": {
+      "id": "live_off::搜一下你叫什么名字",
+      "bucket": "live_off",
+      "text": "搜一下你叫什么名字",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::查一下我老婆叫什么名字": {
+      "id": "live_off::查一下我老婆叫什么名字",
+      "bucket": "live_off",
+      "text": "查一下我老婆叫什么名字",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::提醒我晚上看新闻联播": {
+      "id": "live_off::提醒我晚上看新闻联播",
+      "bucket": "live_off",
+      "text": "提醒我晚上看新闻联播",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::再来点财经新闻": {
+      "id": "live_off::再来点财经新闻",
+      "bucket": "live_off",
+      "text": "再来点财经新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::换个话题，陪我聊聊天吧": {
+      "id": "live_off::换个话题，陪我聊聊天吧",
+      "bucket": "live_off",
+      "text": "换个话题，陪我聊聊天吧",
+      "expected": [
+        "chitchat"
+      ],
+      "actual": [
+        "chitchat.talk"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::那帮我深入调研一下它": {
+      "id": "live_off::那帮我深入调研一下它",
+      "bucket": "live_off",
+      "text": "那帮我深入调研一下它",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::查一下我的电量还能跑多远": {
+      "id": "live_off::查一下我的电量还能跑多远",
+      "bucket": "live_off",
+      "text": "查一下我的电量还能跑多远",
+      "expected": [
+        "charging",
+        "chitchat"
+      ],
+      "actual": [
+        "charging.status"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::搜一下附近的加油站": {
+      "id": "live_off::搜一下附近的加油站",
+      "bucket": "live_off",
+      "text": "搜一下附近的加油站",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::查一下我的待办": {
+      "id": "live_off::查一下我的待办",
+      "bucket": "live_off",
+      "text": "查一下我的待办",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.list"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::帮我查一下茅台股价": {
+      "id": "live_off::帮我查一下茅台股价",
+      "bucket": "live_off",
+      "text": "帮我查一下茅台股价",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.stock"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::明天早上八点提醒我开会": {
+      "id": "live_off::明天早上八点提醒我开会",
+      "bucket": "live_off",
+      "text": "明天早上八点提醒我开会",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::附近有什么好吃的川菜馆": {
+      "id": "live_off::附近有什么好吃的川菜馆",
+      "bucket": "live_off",
+      "text": "附近有什么好吃的川菜馆",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::帮我规划一个杭州两日游": {
+      "id": "live_off::帮我规划一个杭州两日游",
+      "bucket": "live_off",
+      "text": "帮我规划一个杭州两日游",
+      "expected": [
+        "trip"
+      ],
+      "actual": [
+        "trip.plan"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::今天上证指数怎么样": {
+      "id": "live_off::今天上证指数怎么样",
+      "bucket": "live_off",
+      "text": "今天上证指数怎么样",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.stock"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::打开空调然后来点科技新闻": {
+      "id": "live_off::打开空调然后来点科技新闻",
+      "bucket": "live_off",
+      "text": "打开空调然后来点科技新闻",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "hvac.on",
+        "info.news"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "mode_routing",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::帮我深入调研一下固态电池": {
+      "id": "live_off::帮我深入调研一下固态电池",
+      "bucket": "live_off",
+      "text": "帮我深入调研一下固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::导航去第2天换一个": {
+      "id": "live_off::导航去第2天换一个",
+      "bucket": "live_off",
+      "text": "导航去第2天换一个",
+      "expected": [
+        "trip"
+      ],
+      "actual": [
+        "trip.modify"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::看看它的详情": {
+      "id": "live_off::看看它的详情",
+      "bucket": "live_off",
+      "text": "看看它的详情",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.detail"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::去惠州怎么充电": {
+      "id": "live_off::去惠州怎么充电",
+      "bucket": "live_off",
+      "text": "去惠州怎么充电",
+      "expected": [
+        "charging"
+      ],
+      "actual": [
+        "charging.plan"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::车快没电了，帮我找个充电桩": {
+      "id": "live_off::车快没电了，帮我找个充电桩",
+      "bucket": "live_off",
+      "text": "车快没电了，帮我找个充电桩",
+      "expected": [
+        "charging"
+      ],
+      "actual": [
+        "charging.find"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::附近有没有充电站": {
+      "id": "live_off::附近有没有充电站",
+      "bucket": "live_off",
+      "text": "附近有没有充电站",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::附近有没有停车场": {
+      "id": "live_off::附近有没有停车场",
+      "bucket": "live_off",
+      "text": "附近有没有停车场",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::把接孩子的提醒改到五点": {
+      "id": "live_off::把接孩子的提醒改到五点",
+      "bucket": "live_off",
+      "text": "把接孩子的提醒改到五点",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.update"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::取消第二条": {
+      "id": "live_off::取消第二条",
+      "bucket": "live_off",
+      "text": "取消第二条",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.cancel"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::开赛前半小时提醒我": {
+      "id": "live_off::开赛前半小时提醒我",
+      "bucket": "live_off",
+      "text": "开赛前半小时提醒我",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::帮我查一下并深入调研固态电池": {
+      "id": "live_off::帮我查一下并深入调研固态电池",
+      "bucket": "live_off",
+      "text": "帮我查一下并深入调研固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::今天天气怎么样，适合出行吗": {
+      "id": "live_off::今天天气怎么样，适合出行吗",
+      "bucket": "live_off",
+      "text": "今天天气怎么样，适合出行吗",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.weather",
+        "safety.driving_advice"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::适合出门吗，外面天气如何": {
+      "id": "live_off::适合出门吗，外面天气如何",
+      "bucket": "live_off",
+      "text": "适合出门吗，外面天气如何",
+      "expected": [
+        "info"
+      ],
+      "actual": [
+        "info.weather",
+        "safety.driving_advice"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::开启午休模式": {
+      "id": "live_off::开启午休模式",
+      "bucket": "live_off",
+      "text": "开启午休模式",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene.activate"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::帮我创建一个钓鱼模式：座椅放平，开外循环": {
+      "id": "live_off::帮我创建一个钓鱼模式：座椅放平，开外循环",
+      "bucket": "live_off",
+      "text": "帮我创建一个钓鱼模式：座椅放平，开外循环",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::开启午休模式，温度改成26": {
+      "id": "live_off::开启午休模式，温度改成26",
+      "bucket": "live_off",
+      "text": "开启午休模式，温度改成26",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene.activate",
+        "hvac.set"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::去掉钓鱼模式里的香氛": {
+      "id": "live_off::去掉钓鱼模式里的香氛",
+      "bucket": "live_off",
+      "text": "去掉钓鱼模式里的香氛",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene.update"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开": {
+      "id": "live_off::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "bucket": "live_off",
+      "text": "创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "expected": [
+        "scene"
+      ],
+      "actual": [
+        "scene.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::固态电池那个调研不用查了": {
+      "id": "live_off::固态电池那个调研不用查了",
+      "bucket": "live_off",
+      "text": "固态电池那个调研不用查了",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.cancel"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::那个调研查得怎么样了": {
+      "id": "live_off::那个调研查得怎么样了",
+      "bucket": "live_off",
+      "text": "那个调研查得怎么样了",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.status"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::深入调研一下固态电池": {
+      "id": "live_off::深入调研一下固态电池",
+      "bucket": "live_off",
+      "text": "深入调研一下固态电池",
+      "expected": [
+        "research"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::到公司之前提醒我交周报": {
+      "id": "live_off::到公司之前提醒我交周报",
+      "bucket": "live_off",
+      "text": "到公司之前提醒我交周报",
+      "expected": [
+        "reminder"
+      ],
+      "actual": [
+        "reminder.create"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::帮我看看附近有什么咖啡店": {
+      "id": "live_off::帮我看看附近有什么咖啡店",
+      "bucket": "live_off",
+      "text": "帮我看看附近有什么咖啡店",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::帮我看看我附近有什么好吃的": {
+      "id": "live_off::帮我看看我附近有什么好吃的",
+      "bucket": "live_off",
+      "text": "帮我看看我附近有什么好吃的",
+      "expected": [
+        "nearby"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::帮我看看这个是什么": {
+      "id": "live_off::帮我看看这个是什么",
+      "bucket": "live_off",
+      "text": "帮我看看这个是什么",
+      "expected": [
+        "vision"
+      ],
+      "actual": [
+        "vision.describe"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    },
+    "live_off::看看前面那个建筑是什么": {
+      "id": "live_off::看看前面那个建筑是什么",
+      "bucket": "live_off",
+      "text": "看看前面那个建筑是什么",
+      "expected": [
+        "vision"
+      ],
+      "actual": [
+        "vision.describe"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "route_hints",
+        "inj:"
+      ],
+      "source": ""
+    }
+  }
+}

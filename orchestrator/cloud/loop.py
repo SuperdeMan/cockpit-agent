@@ -137,6 +137,8 @@ class LoopController:
                         working_set=working_set,
                         # T2 知识继承：再规划带上初规划实际注入的 skill 名单（plan.skills）
                         skill_names=list(getattr(initial_plan, "skills", []) or []),
+                        # 同款范例继承（M5 P1）
+                        exemplar_names=list(getattr(initial_plan, "exemplars", []) or []),
                     )
                 except Exception:
                     break
@@ -148,6 +150,7 @@ class LoopController:
                 # skills=[]——若这个再规划步 NEED_SLOT/NEED_CONFIRM 挂起，loop 传给
                 # suspend 的正是 current，序列化空 skills → 恢复后再规划失忆。
                 current.skills = list(getattr(initial_plan, "skills", []) or [])
+                current.exemplars = list(getattr(initial_plan, "exemplars", []) or [])
 
             done_seed = {result.step_id: result for result in results}
 

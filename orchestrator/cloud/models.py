@@ -83,6 +83,9 @@ class Plan:
     # M0b Skill 层：本轮检索/注入的 skill 名单（"<mode>:<name>"），仅供 cloud.planning
     # span 观测（badcase 归因：知识没进上下文还是进了没用对）；不参与编排逻辑。
     skills: list[str] = field(default_factory=list)
+    # M5 P1 范例库：本轮检索/注入的范例名单（"<mode>:<eid>@lex|vec:分数"，超预算记
+    # !clipped），契约与语义逐项对齐 skills。同样只供 span 归因，不参与编排逻辑。
+    exemplars: list[str] = field(default_factory=list)
     # M1a submit_plan 结构化输出：本轮走的输出通道，仅供 cloud.planning span 观测
     # （A/B 协议层指标聚合）。json=纯文本路径（PLANNER_TOOLCALL=off 恒此值）；
     # toolcall=工具 arguments 直入；toolcall_salvage=模型无视工具、同轮文本抢救；
@@ -91,6 +94,14 @@ class Plan:
     # M2 P2：本轮用户情绪（会话级，不入记忆）。planner 同轮附带输出（R4.4 addressed/
     # clarify 同款 fail-open），随 final 透传给 HMI 选 TTS 情感参数。空=neutral。
     emotion: str = ""
+    # 数据飞轮 P0 落域可观测（仅供 cloud.planning span，不参与编排逻辑）：
+    # hint_effect=route_hints 对本轮计划的实际作用（""=未命中 / noop=命中但 LLM 已对 /
+    # fill=空计划补步 / fill_over_clarify=盖掉澄清补步 / replace / append）——D3「replace
+    # 绕过澄清」的裁决数据从这里来。
+    hint_effect: str = ""
+    # catalog_stats=能力目录渲染统计 {chars_full, chars_final, dropped:[agent_id]}——
+    # D1「预算裁剪静默丢域」从此可见；空 dict=本轮未采集。
+    catalog_stats: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -124,6 +135,12 @@ class PlanContext:
     # HMI 会话级偏好（model_pref/answer_length/assistant_name/memory_enabled），
     # 来源 HandleRequest.meta，调用 Agent 时并入 ExecuteRequest.meta 透传。
     prefs: dict[str, str] = field(default_factory=dict)
+    # M5 P2-D2 端云透传：端侧 fast_intent 的初判（"<intent>|<conf>"，无判定则空）。
+    # **只作观测与分歧挖掘，不进 prompt**——Shadow NLU 实测端侧规则臂 domain 准确率
+    # 75.9%、LLM 91.2%，把更差的判断塞进更好的模型的上下文是负期望的赌。
+    # 刻意**不留 env 开关**：那会变成一个没人测过却随时可能被打开的分支；真要开就改代码，
+    # 并且必须附 A/B 数据（性质由 test_edge_nlu_divergence.py 源码级断言守住）。
+    edge_nlu: str = ""
 
 
 @dataclass

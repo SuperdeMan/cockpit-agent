@@ -1,0 +1,164 @@
+# 范例库 · nearby 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: nearby
+exemplars:
+- text: 人均一百以内的川菜
+  plan:
+  - agent: nearby
+    intent: nearby.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 人均多少
+  plan:
+  - agent: nearby
+    intent: nearby.detail
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 几点关门
+  plan:
+  - agent: nearby
+    intent: nearby.detail
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 在这家点单
+  plan:
+  - agent: nearby
+    intent: nearby.order
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 它家电话多少
+  plan:
+  - agent: nearby
+    intent: nearby.detail
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 帮我订一家川菜馆
+  plan:
+  - agent: nearby
+    intent: nearby.order
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 帮我订位
+  plan:
+  - agent: nearby
+    intent: nearby.order
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 找个停车场
+  plan:
+  - agent: nearby
+    intent: nearby.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 找家川菜馆
+  plan:
+  - agent: nearby
+    intent: nearby.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 看第一个的详情
+  plan:
+  - agent: nearby
+    intent: nearby.detail
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 订个餐厅
+  plan:
+  - agent: nearby
+    intent: nearby.order
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 订今晚7点两位
+  plan:
+  - agent: nearby
+    intent: nearby.order
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 这家怎么样
+  plan:
+  - agent: nearby
+    intent: nearby.detail
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 附近有什么好吃的
+  plan:
+  - agent: nearby
+    intent: nearby.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 附近的景点
+  plan:
+  - agent: nearby
+    intent: nearby.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 附近的电影院
+  plan:
+  - agent: nearby
+    intent: nearby.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 附近的酒店
+  plan:
+  - agent: nearby
+    intent: nearby.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 附近的餐厅
+  plan:
+  - agent: nearby
+    intent: nearby.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 附近评分高的火锅
+  plan:
+  - agent: nearby
+    intent: nearby.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 麦当劳在哪
+  plan:
+  - agent: nearby
+    intent: nearby.search
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical

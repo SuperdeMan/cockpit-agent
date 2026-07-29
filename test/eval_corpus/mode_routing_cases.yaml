@@ -619,8 +619,6 @@
 - text: 查一下我的待办
   tags: [mode_guardrail, reminder]
   expect_mode: "other:reminder.list"
-  initial_intents: []
-  expect_det_intents: [reminder.list]
   source: "search hint guard 含待办；reminder.list hint(56) 接住"
 
 - text: 帮我查一下茅台股价
@@ -652,8 +650,6 @@
 - text: 帮我规划一个杭州两日游
   tags: [mode_guardrail, trip]
   expect_mode: "other:trip.plan"
-  initial_intents: []
-  expect_det_intents: [trip.plan]
 
 - text: 查一下这周末适不适合洗车
   tags: [mode_guardrail, weather]
@@ -699,3 +695,256 @@
   initial_intents: []
   expect_det_intents: []
   source: "search hint guard 须含说明书/手册——manual_rag 的地盘"
+
+# ══ vision 端到端护栏（M5 P2）：vision route_hint 于 2026-07-29 退役后，这四句的回归
+#    保护从「施加 hint 后应得 vision.describe」改成「planner 端到端应落 vision.describe」。
+#    **退役的是规则，不是对它的回归保护**——原用例在 route_hints_cases.yaml，hint 没了
+#    那套断言就失去了意义（施加一个不存在的 hint 恒等于什么都没做）。 ═════════════
+
+- text: 那是什么
+  tags: [mode_guardrail, vision]
+  expect_mode: other:vision.describe
+  expect_intents: [vision.describe]
+  source: "vision hint 退役（M5 P2）后的端到端护栏；双臂裸跑 ×4 轮 12/12 全对"
+
+- text: 帮我看看这个是什么
+  tags: [mode_guardrail, vision]
+  expect_mode: other:vision.describe
+  expect_intents: [vision.describe]
+  source: "vision hint 退役（M5 P2）后的端到端护栏；双臂裸跑 ×4 轮 12/12 全对"
+
+- text: 看看前面那个建筑是什么
+  tags: [mode_guardrail, vision]
+  expect_mode: other:vision.describe
+  expect_intents: [vision.describe]
+  source: "vision hint 退役（M5 P2）后的端到端护栏；双臂裸跑 ×4 轮 12/12 全对"
+
+- text: 帮我看看前面
+  tags: [mode_guardrail, vision]
+  expect_mode: other:vision.describe
+  expect_intents: [vision.describe]
+  source: "vision hint 退役（M5 P2）后的端到端护栏；双臂裸跑 ×4 轮 12/12 全对"
+
+# ══ mcp-bridge shop.order 回归护栏（M5 P2）══════════════════════════════════
+#    这条 hint 是 2026-07-26 总体验收「shop.order 与 nearby.search 掷硬币」的修复产物，
+#    但**上线以来零回归保护**——hint_retirement 干跑盘点报「32 条里唯一没有命中语料的」。
+#    根因不是没人写：mcp-bridge 的能力是启动期从 servers.yaml 合成的，静态 manifest 里
+#    capabilities 为空，离线评测里这条 hint **结构性不可证伪**（补出的步会因「intent 不在
+#    能力集」被丢掉）。eval_live 现按同一份准入清单离线合成能力后，它才第一次可测。
+#    ⚠ shop.order 的 require_confirm=true——动它须过专项安全回归（治理⑥）。
+
+- text: 来一杯大杯拿铁
+  tags: [mode_guardrail, shop]
+  expect_mode: other:shop.order
+  expect_intents: [shop.order]
+  source: "点单句式：下单动词+量词杯+品类共现（M5 P2 补：该 hint 上线以来零回归保护）"
+
+- text: 帮我点一杯美式
+  tags: [mode_guardrail, shop]
+  expect_mode: other:shop.order
+  expect_intents: [shop.order]
+  source: "同上，动词换「点」（M5 P2 补：该 hint 上线以来零回归保护）"
+
+- text: 附近哪里有咖啡店
+  tags: [mode_guardrail, shop]
+  expect_mode: other:nearby.search
+  expect_intents: [nearby.search]
+  source: "反向护栏：发现类语义由 guard 让路给 nearby（M5 P2 补：该 hint 上线以来零回归保护）"
+
+- text: 推荐个好喝的咖啡馆
+  tags: [mode_guardrail, shop]
+  expect_mode: other:nearby.search
+  expect_intents: [nearby.search]
+  source: "反向护栏：推荐/好喝 在 guard 里（M5 P2 补：该 hint 上线以来零回归保护）"
+
+- text: 去惠州怎么充电
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:charging.plan
+  expect_intents: [charging.plan]
+  source: "charging.plan 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 快没电了，附近找个快充
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:charging.find
+  expect_intents: [charging.find]
+  source: "charging.find 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 车快没电了，帮我找个充电桩
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:charging.find
+  expect_intents: [charging.find]
+  source: "charging.find 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 糟了快没电了，赶紧找个充电桩
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:charging.find
+  expect_intents: [charging.find]
+  source: "charging.find 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 别查了
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:research.cancel
+  expect_intents: [research.cancel]
+  source: "research.cancel 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 取消那个调研
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:research.cancel
+  expect_intents: [research.cancel]
+  source: "research.cancel 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 固态电池那个调研不用查了
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:research.cancel
+  expect_intents: [research.cancel]
+  source: "research.cancel 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 那个调研查得怎么样了
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:research.status
+  expect_intents: [research.status]
+  source: "research.status 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 还在查吗
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:research.status
+  expect_intents: [research.status]
+  source: "research.status 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 葡萄牙那一场看看详情
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:info.sports
+  expect_intents: [info.sports]
+  source: "info.sports 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 这场比赛你预测谁会赢
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:info.sports
+  expect_intents: [info.sports]
+  source: "info.sports 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 看看它的详情
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:nearby.detail
+  expect_intents: [nearby.detail]
+  source: "nearby.detail 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 我今天有什么安排
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:reminder.list
+  expect_intents: [reminder.list]
+  source: "reminder.list 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 取消第二条提醒
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:reminder.cancel
+  expect_intents: [reminder.cancel]
+  source: "reminder.cancel 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 取消第二条
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:reminder.cancel
+  expect_intents: [reminder.cancel]
+  source: "reminder.cancel 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 把接孩子的提醒改到五点
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:reminder.update
+  expect_intents: [reminder.update]
+  source: "reminder.update 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 买牛奶那条推迟到明天九点
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:reminder.update
+  expect_intents: [reminder.update]
+  source: "reminder.update 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 改第二条到晚上八点
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:reminder.update
+  expect_intents: [reminder.update]
+  source: "reminder.update 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 完成第二条
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:reminder.complete
+  expect_intents: [reminder.complete]
+  source: "reminder.complete 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 开启午休模式
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:scene.activate
+  expect_intents: [scene.activate]
+  source: "scene.activate 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 来个钓鱼模式
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:scene.activate
+  expect_intents: [scene.activate]
+  source: "scene.activate 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 露营模式
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:scene.activate
+  expect_intents: [scene.activate]
+  source: "scene.activate 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 开启午休模式，温度改成26
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:scene.activate
+  expect_intents: [scene.activate]
+  source: "scene.activate 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 退出露营模式
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:scene.deactivate
+  expect_intents: [scene.deactivate]
+  source: "scene.deactivate 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 把钓鱼模式的温度改成24
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:scene.update
+  expect_intents: [scene.update]
+  source: "scene.update 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 去掉钓鱼模式里的香氛
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:scene.update
+  expect_intents: [scene.update]
+  source: "scene.update 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 删掉钓鱼模式
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:scene.delete
+  expect_intents: [scene.delete]
+  source: "scene.delete 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 导航第3天
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:trip.navigate
+  expect_intents: [trip.navigate]
+  source: "trip.navigate 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: 导航去第2天换一个
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:trip.modify
+  expect_intents: [trip.modify]
+  source: "trip.modify 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: ('不用查了', ['research.cancel'])
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:research.cancel
+  expect_intents: [research.cancel]
+  source: "research.cancel 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: ('调研有结果了吗', ['research.status'])
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:research.status
+  expect_intents: [research.status]
+  source: "research.status 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: ('安排去杭州的行程', ['info.weather', 'trip.plan'])
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:trip.plan
+  expect_intents: [trip.plan]
+  source: "trip.plan 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"

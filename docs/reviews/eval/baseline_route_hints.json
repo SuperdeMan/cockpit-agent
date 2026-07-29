@@ -1,19 +1,19 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-07-27T07:54:49.949947+00:00",
-    "commit": "1c8860f"
+    "generated_at": "2026-07-28T07:03:11.354762+00:00",
+    "commit": "0e665f2"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 116
+      "count": 122
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 69,
-      "passed": 69,
+      "total": 75,
+      "passed": 75,
       "failures": [],
       "pass_rate": 1.0
     },
@@ -25,8 +25,8 @@
     }
   },
   "overall": {
-    "total": 116,
-    "passed": 116,
+    "total": 122,
+    "passed": 122,
     "pass_rate": 1.0
   },
   "cases": {
@@ -936,7 +936,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\.worktrees\\m5-p0-data-flywheel\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::检索一下宁德时代最新财报要点": {
       "id": "route::检索一下宁德时代最新财报要点",
@@ -955,7 +955,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\.worktrees\\m5-p0-data-flywheel\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::查一下固态电池": {
       "id": "route::查一下固态电池",
@@ -1148,7 +1148,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\.worktrees\\m5-p0-data-flywheel\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::来点科技新闻": {
       "id": "route::来点科技新闻",
@@ -1167,7 +1167,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\.worktrees\\m5-p0-data-flywheel\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::英伟达最新消息": {
       "id": "route::英伟达最新消息",
@@ -2038,6 +2038,118 @@
         "eta"
       ],
       "source": "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
+    },
+    "route::帮我看看附近有什么咖啡店": {
+      "id": "route::帮我看看附近有什么咖啡店",
+      "bucket": "route_recall",
+      "text": "帮我看看附近有什么咖啡店",
+      "expected": [
+        "nearby.search"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "vision",
+        "nearby",
+        "guardrail",
+        "hijack"
+      ],
+      "source": "badcase 2026-07-27 trace 3ba64a65（连续两天被 vision 劫持族）；agents/vision/manifest.yaml 收窄"
+    },
+    "route::帮我看看我附近有什么好吃的": {
+      "id": "route::帮我看看我附近有什么好吃的",
+      "bucket": "route_recall",
+      "text": "帮我看看我附近有什么好吃的",
+      "expected": [
+        "nearby.search"
+      ],
+      "actual": [
+        "nearby.search"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "vision",
+        "nearby",
+        "guardrail",
+        "hijack"
+      ],
+      "source": "badcase 2026-07-26 trace 0941ec4f（同族）"
+    },
+    "route::那是什么": {
+      "id": "route::那是什么",
+      "bucket": "route_recall",
+      "text": "那是什么",
+      "expected": [
+        "vision.describe"
+      ],
+      "actual": [
+        "vision.describe"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "vision",
+        "recall"
+      ],
+      "source": "vision hint 的出生 badcase（极短指代句语义路由落 chitchat）——收窄不回归"
+    },
+    "route::帮我看看这个是什么": {
+      "id": "route::帮我看看这个是什么",
+      "bucket": "route_recall",
+      "text": "帮我看看这个是什么",
+      "expected": [
+        "vision.describe"
+      ],
+      "actual": [
+        "vision.describe"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "vision",
+        "recall"
+      ],
+      "source": "数据飞轮 P0 C5 收窄回归：删「帮我看看」后真视觉句仍由指代分支覆盖"
+    },
+    "route::看看前面那个建筑是什么": {
+      "id": "route::看看前面那个建筑是什么",
+      "bucket": "route_recall",
+      "text": "看看前面那个建筑是什么",
+      "expected": [
+        "vision.describe"
+      ],
+      "actual": [
+        "vision.describe"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "vision",
+        "recall"
+      ],
+      "source": "数据飞轮 P0 C5 收窄回归"
+    },
+    "route::帮我看看前面": {
+      "id": "route::帮我看看前面",
+      "bucket": "route_recall",
+      "text": "帮我看看前面",
+      "expected": [
+        "vision.describe"
+      ],
+      "actual": [
+        "vision.describe"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "vision",
+        "recall"
+      ],
+      "source": "hmi/src/visionFrame.test.mjs 同款句：两侧同口径（触发词=路由 hint）"
     }
   }
 }

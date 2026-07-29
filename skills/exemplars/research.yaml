@@ -1,0 +1,124 @@
+# 范例库 · research 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: research
+exemplars:
+- text: 不用查了
+  plan:
+  - agent: deep-research
+    intent: research.cancel
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 停掉刚才那个调研
+  plan:
+  - agent: deep-research
+    intent: research.cancel
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 全面对比一下增程和纯电
+  plan:
+  - agent: deep-research
+    intent: research.run
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 刚才那个调研查得怎么样了
+  plan:
+  - agent: deep-research
+    intent: research.status
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 别查了
+  plan:
+  - agent: deep-research
+    intent: research.cancel
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 取消那个调研
+  plan:
+  - agent: deep-research
+    intent: research.cancel
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 后台那个任务什么进度
+  plan:
+  - agent: deep-research
+    intent: research.status
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 帮我研究下理想i8的智驾方案
+  plan:
+  - agent: deep-research
+    intent: research.run
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 深入调研一下固态电池现状
+  plan:
+  - agent: deep-research
+    intent: research.run
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 深度调研这家公司的基本面
+  plan:
+  - agent: deep-research
+    intent: research.run
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 研究一下这个城市值不值得定居
+  plan:
+  - agent: deep-research
+    intent: research.run
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 系统了解下港股打新规则
+  plan:
+  - agent: deep-research
+    intent: research.run
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 调研不用继续了
+  plan:
+  - agent: deep-research
+    intent: research.cancel
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 调研有结果了吗
+  plan:
+  - agent: deep-research
+    intent: research.status
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 还在查吗
+  plan:
+  - agent: deep-research
+    intent: research.status
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical

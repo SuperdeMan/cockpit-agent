@@ -4,6 +4,10 @@
 > 定位：**Skill 是扩展智能的机制，不是运行时**——Agent 仍是部署/隔离/信任边界；skill 只
 > 供给 Planner 的规划知识，与 `route_hints`（LLM 后确定性纠错）互补：一个 badcase 先问
 > 「是路由错还是知识缺」，再决定投 hint 还是投 skill。**新增可执行能力仍需 Capability/Agent。**
+> **M5 P1 起这个问句有第三个答案**：还可能是「说法没见过」——同一件事换个说法就落错，
+> 那该投**范例**（`skills/exemplars/`，契约见该目录 README）。三者的分工：
+> route_hint 在 LLM 后硬改写（写错=事故）／guide 教组合判据／exemplar 只作 few-shot
+> （写错=噪声）。**默认选范例**——它是唯一一个写错了不会伤人的选项。
 > 实例：2026-07-26 live 首跑抓到「快没电了附近找个快充」被 nearby 的 replace hint 在 LLM
 > **之后**踩掉 charging.find——知识层教对了也会被 hint 盖掉，那就是 hint guard 的 bug，
 > 修 nearby manifest 而不是加知识。次日 holdout 车道又抓到同族：「要下就叫我收衣服」被

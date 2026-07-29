@@ -58,6 +58,10 @@ export type Turn = {
   error: string
   badcase: number
   note: string
+  // 数据飞轮 P0（落域可观测 + 标注载体；旧库行迁移前可能缺省）
+  intents?: string // 实际落域（cloud.planning span 合并列，逗号串）
+  plan_mode?: string // 规划输出通道（toolcall|…|toolcall_degraded）
+  gold_intents?: string // 人工标注的正确落域
 }
 
 export type SessionSummary = {

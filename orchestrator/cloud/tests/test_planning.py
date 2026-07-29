@@ -283,30 +283,6 @@ def _trip_agents():
     ]
 
 
-def test_injects_trip_plan_when_llm_misses_it():
-    """『周末去杭州两天带老人…顺便看天气/充电』——LLM 只出了天气+充电，
-    trip.plan route_hint(append)必须补一个并列 trip.plan 步。目的地/天数/偏好由 Agent 侧
-    extract.py 从原话抽取（见 agents/trip_planner/tests/test_extract），编排层步 slots 为空。"""
-    agents = _trip_agents()
-
-    async def mock_llm(messages):
-        return ('{"steps":['
-                '{"id":"s1","agent_id":"info-agent","intent":"info.weather","slots":{}},'
-                '{"id":"s2","agent_id":"charging-planner","intent":"charging.plan",'
-                '"slots":{"destination":"杭州"}}]}')
-
-    async def mock_resolve(query, top_k=1):
-        return []
-
-    builder = PlanBuilder(mock_llm, mock_resolve)
-    plan = asyncio.run(builder.build(
-        "周末去杭州两天，带老人，不要太累，顺便看看天气和是否需要中途充电",
-        WorkingSet(catalog=agents), PlanContext()))
-    trip = [s for s in plan.steps if s.intent == "trip.plan"]
-    assert len(trip) == 1, "应注入一个 trip.plan 步"
-    assert trip[0].agent_id == "trip-planner"
-    assert trip[0].depends_on == []  # 与天气/充电并列
-
 
 def test_does_not_inject_trip_when_llm_already_planned_it():
     """LLM 自己出了 trip.plan，不重复注入。"""
@@ -340,59 +316,6 @@ def test_does_not_inject_trip_for_plain_navigation():
     assert [s for s in plan.steps if s.intent == "trip.plan"] == []
 
 
-def test_ensures_trip_step_even_when_plan_falls_back():
-    """LLM 计划解析失败 → 降级语义路由（top-1=info）时，行程兜底仍要补 trip.plan。
-
-    回归：『去北京三天带老人…看天气』偶发只回天气/充电、漏掉行程，根因是降级路径
-    绕过了行程注入（注入原本只在 _parse_and_validate 内，降级不经过它）。"""
-    agents = [
-        MockAgent("info-agent", ["info.weather"]),
-        MockAgent("trip-planner", ["trip.plan"]),
-    ]
-
-    async def mock_llm(messages):
-        return "我不会规划这个"          # 非法 JSON → 解析失败两次 → 降级
-
-    resolved = [MagicMock()]
-    resolved[0].manifest = agents[0].manifest    # 语义 top-1 命中 info（天气）
-    resolved[0].endpoint = "localhost:50067"
-
-    async def mock_resolve(query, top_k=1):
-        return resolved
-
-    builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
-    plan = asyncio.run(builder.build(
-        "周末去北京三天，带老人，不要太累，顺便看看天气", WorkingSet(catalog=agents), PlanContext()))
-    intents = [s.intent for s in plan.steps]
-    assert "trip.plan" in intents, f"降级路径也应补行程，实际 steps={intents}"
-    trip = [s for s in plan.steps if s.intent == "trip.plan"][0]
-    assert trip.agent_id == "trip-planner"  # 目的地抽取移至 Agent 侧 extract.py
-
-
-def test_modify_pattern_routed_to_trip_modify_replacing_misplan():
-    """『第二天换一个』被弱 LLM 误规划成天气/充电时，确定性兜底改走单步 trip.modify。
-
-    回归：用户报告"第二天换一个"没识别成修改、直接进了充电导航路线。"""
-    agents = [
-        MockAgent("info-agent", ["info.weather"]),
-        MockAgent("charging-planner", ["charging.plan"]),
-        MockAgent("trip-planner", ["trip.plan", "trip.modify"]),
-    ]
-
-    async def mock_llm(messages):
-        return ('{"steps":['
-                '{"id":"s1","agent_id":"info-agent","intent":"info.weather","slots":{}},'
-                '{"id":"s2","agent_id":"charging-planner","intent":"charging.plan",'
-                '"slots":{"destination":"北京"}}]}')
-
-    async def mock_resolve(query, top_k=1):
-        return []
-
-    builder = PlanBuilder(mock_llm, mock_resolve)
-    plan = asyncio.run(builder.build("第二天换一个", WorkingSet(catalog=agents), PlanContext()))
-    intents = [s.intent for s in plan.steps]
-    assert intents == ["trip.modify"], f"应单步 trip.modify，实际 {intents}"
-    assert plan.steps[0].slots.get("modification") == "第二天换一个"
 
 
 def test_modify_pattern_keeps_llm_trip_modify():
@@ -482,3 +405,40 @@ def test_does_not_inject_trip_when_planner_unavailable():
     builder = PlanBuilder(mock_llm, mock_resolve)
     plan = asyncio.run(builder.build("周末去杭州两天带老人看看天气", WorkingSet(catalog=agents), PlanContext()))
     assert [s for s in plan.steps if s.intent == "trip.plan"] == []
+
+# ── M5 P2 退役记录（2026-07-29）────────────────────────────────────────────────
+
+def test_retired_hints_are_gone_by_design():
+    """上方原有的「hint 应当补步/改写」断言已删除——它们描述的机制不存在了。
+
+    退役的 hint（跨 minimax:MiniMax-M3 与 deepseek:deepseek-v4-flash 两档、全部命中语料
+    全覆盖、各 ×2 轮，摘掉后仍全部落对）：trip-planner#0/#2/#3/#4
+
+    **回归保护去哪了，以及它变弱了多少**：命中句已改端到端口径迁入
+    `test/eval_corpus/mode_routing_cases.yaml`，由 `eval_mode_routing --live` 覆盖。
+    但那是 **live 车道、不在 CI**——原来这些断言被刻意写成阻断 pytest，理由白纸黑字：
+    「eval_route_hints 语料在 continue-on-error 观测步，语料回归 CI 不红」。
+    所以退役把这部分**召回保护从「CI 阻断」降级成了「人工触发」**。
+    这是退役的真实代价，不是可以忽略的细节；要补回来得让 live 车道进 CI（真栈 + LLM，
+    成本另议）——已作为余项记在 RFC §5-P2。
+
+    本测试守住两件仍可离线验证的事：①这些 intent 作为**能力**依然存在（域没有消失，
+    只是不再有正则替模型做决定）；②没人在没有新证据的情况下把 hint 悄悄加回来。
+    """
+    import glob as _glob
+    import pathlib as _pl
+
+    import yaml as _yaml
+    root = _pl.Path(__file__).resolve().parents[3]
+    retired = ['trip.plan', 'trip.modify', 'trip.navigate', 'trip.status']
+    caps, hints = set(), {}
+    for p in sorted(_glob.glob(str(root / "agents" / "*" / "manifest.yaml"))):
+        d = _yaml.safe_load(open(p, encoding="utf-8")) or {}
+        caps |= {str(c.get("intent")) for c in (d.get("capabilities") or [])}
+        for h in (d.get("route_hints") or []):
+            hints.setdefault(str(h.get("intent")), []).append(d.get("agent_id"))
+    for i in retired:
+        assert i in caps or i.startswith("shop."), f"{i} 的能力也消失了——退役只该去掉规则"
+        assert i not in hints, (
+            f"{i} 的 route_hint 又回来了（{hints.get(i)}）——恢复规则需要新证据："
+            f"双臂裸跑显示模型自己做不到，且要写进 manifest 注释")
