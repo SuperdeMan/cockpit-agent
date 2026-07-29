@@ -1,0 +1,180 @@
+# 范例库 · navigation 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: navigation
+exemplars:
+- text: 121.47,31.23是哪里
+  plan:
+  - agent: navigation
+    intent: navigation.reverse_geocode
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 公司在杭州西湖区某某大厦
+  plan:
+  - agent: navigation
+    intent: navigation.set_place
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 回家
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 导航去东方之门途经肯德基
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 导航去东方之门，附近找个吃饭的地方
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 导航去公司
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 带我去首都机场
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 当前位置
+  plan:
+  - agent: navigation
+    intent: navigation.locate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 我在什么地方
+  plan:
+  - agent: navigation
+    intent: navigation.locate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 我在哪
+  plan:
+  - agent: navigation
+    intent: navigation.locate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 我家在深圳南山区科技园
+  plan:
+  - agent: navigation
+    intent: navigation.set_place
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 我现在在哪
+  plan:
+  - agent: navigation
+    intent: navigation.locate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 我现在在哪里
+  plan:
+  - agent: navigation
+    intent: navigation.locate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 找个评分高的川菜馆
+  plan:
+  - agent: navigation
+    intent: navigation.search_poi
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 把家设成上海长宁区某某小区
+  plan:
+  - agent: navigation
+    intent: navigation.set_place
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 最近的加油站在哪
+  plan:
+  - agent: navigation
+    intent: navigation.search_poi
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 查一下这个地点
+  plan:
+  - agent: navigation
+    intent: navigation.poi_detail
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 设置公司地址为北京国贸三期
+  plan:
+  - agent: navigation
+    intent: navigation.set_place
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 这个地方的详细信息
+  plan:
+  - agent: navigation
+    intent: navigation.poi_detail
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 这个坐标是什么地方
+  plan:
+  - agent: navigation
+    intent: navigation.reverse_geocode
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 这是哪里
+  plan:
+  - agent: navigation
+    intent: navigation.locate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 附近的充电站
+  plan:
+  - agent: navigation
+    intent: navigation.search_poi
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical

@@ -37,6 +37,10 @@ agents/         所有 Agent；_sdk/ 是公共 SDK，每个 Agent 一个子目�
 skills/         Planner 规划知识声明式载体（M0b）：guides/ 领域组合判据（双通道检索注入）、
                 policies/ 跨域软约束（常驻）。**加规划知识=投 skill 文件不改编排核心**；
                 golden 必填进 CI 门禁（含 holdout），契约见 skills/README.md（唯一真相源）
+                + exemplars/ **范例库**（M5 P1）：`<domain>.yaml` 存「话术→正确落域」，
+                检索后作 few-shot 进 prompt——权威链**最软层**，不做硬路由。
+                **修落域 badcase 的默认产物是范例不是正则**（写错只是噪声，hint 写错是
+                事故）；契约见 skills/exemplars/README.md，门禁 test/eval_exemplars.py
 security/       权限引擎、scope 定义、内容审核、注入防护
 payment-gateway/  统一支付网关（Agent 不持支付凭证）
 proactive/      统一主动引擎：主动消息的全局治理器（频控/免打扰/驾驶负荷/同类合并）

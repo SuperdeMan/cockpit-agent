@@ -11,8 +11,10 @@ RFC docs/design/2026-07-24-m1b-self-evolution-shadow-nlu-rfc.md §3；母提案 
 安全治理（§4.G 六项落位）：
   ① 文本进 LLM 前过 observability.redact（OBS_CONTENT_CAPTURE 同源脱敏）；
   ② badcase 文本按不可信数据处理（定界区 + 输出封闭集 + 长度截断）；
-  ③ 提案修改面白名单 = guide / route_hint / eval 语料——禁 VAL·权限·确认·payment·policy
-    （PROPOSAL_FORBIDDEN 硬闸，单测锁定）；
+  ③ 提案修改面白名单 = guide / **exemplar（M5 P1 起）** / eval 语料——禁 VAL·权限·确认·
+    payment·policy（PROPOSAL_FORBIDDEN 硬闸，单测锁定）。route_hint 草案随 M5 P1 退役：
+    route_error 默认产范例而不是正则（RFC §5-P1「N4 从 0% 起飞的路径」）；
+    canonical 形态确需钉死的仍按既有分工口径**人工**沉到 manifest route_hints；
   ④ holdout：guide 草案 golden 用改写句（TODO 留人工），原句归 eval 语料候选，不同源；
   ⑤ 不自动改仓库、不自动 git——产物=日报 + .work 建议文件，泓舟审后手动应用；
   ⑥ 涉 require_confirm 能力的 route_hint 提案强制标红「需专项安全回归」。
@@ -352,20 +354,29 @@ def cmd_triage(args) -> Path:
 
 # ── propose ──────────────────────────────────────────────────────────────────
 
-def _kw_pattern(texts: list[str]) -> str:
-    """从案族话术提取跨句重复 bigram 做 hint pattern 骨架（人工 TODO 完善）。
-    滑窗而非贪婪分词——「打开座椅加热」贪婪切出「打开座椅+加热」跨句对不齐；
-    句内去重防单句重复词刷计数。"""
-    grams: dict[str, int] = {}
-    for t in texts:
-        seen: set[str] = set()
-        for i in range(len(t) - 1):
-            g = t[i:i + 2]
-            if re.fullmatch(r"[一-鿿]{2}", g) and g not in seen:
-                seen.add(g)
-                grams[g] = grams.get(g, 0) + 1
-    top = [g for g, c in sorted(grams.items(), key=lambda kv: -kv[1]) if c >= 2][:3]
-    return "|".join(top) if top else "TODO"
+def _exemplar_draft(texts: list[str], date: str) -> str:
+    """route_error / slot_error 的**范例草案**（M5 P1 第四类提案，取代 regex 草案）。
+
+    此前这两类产的是 `route_hints` 正则骨架（bigram 拼 pattern，`_kw_pattern` 已随本次
+    退役）——那正是「改进循环的产物是正则不是数据」的自动化版本：提案被采纳一次，全局
+    耦合就深一分，且规则只进不出。范例草案改变的是**产物形态**：
+      - 不改任何运行规则（只进 planner prompt 当 few-shot），天然过 CI 门禁；
+      - 人审只需回答一个问题——「gold 标得对不对」，而不是「这条正则会误伤谁」；
+      - 一条范例同时是 RoutingBench 的评测用例（一次标注两种资产）。
+    这是北极星 N4（提案可应用率）从 0% 起飞的路径。教科书形态确实该钉死的，仍按既有
+    分工口径人工沉到 route_hints（canonical 归 hint、paraphrase 归知识与范例）。"""
+    return ("# 范例草案（自进化提案；契约 skills/exemplars/README.md）\n"
+            "# 人审只需确认一件事：plan 里的 intent 是不是这句话的正确落域。\n"
+            "# 落位：skills/exemplars/<domain>.yaml 的 exemplars 末尾**追加**（不要插队，\n"
+            "#       eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。\n"
+            "domain: TODO（=intent 的域，如 nearby / navigation）\n"
+            "exemplars:\n"
+            + "".join(
+                f"  - text: \"{t}\"\n"
+                f"    plan:\n"
+                f"      - agent: TODO\n        intent: TODO.确定正确落域\n"
+                f"    source: trace\n    added: {date}\n    tags: [badcase]\n"
+                for t in texts[:8]))
 
 
 def forbidden_hit(text: str) -> str:
@@ -388,14 +399,9 @@ def cmd_propose(args) -> Path:
     for cause, items in families.items():
         # 同句去重（重放/重试轮会把同一句灌成 N 条，权重与草案都不该按条数刷）
         texts = list(dict.fromkeys(i["user_text"] for i in items if i.get("user_text")))
-        if cause == "route_error" and texts:
-            body = (f"# route_hint 草案（自进化提案，人工完善后放入目标 Agent manifest）\n"
-                    f"# 来源案族：{len(items)} 条；治理⑥：若目标能力 require_confirm=true"
-                    f" 须先过专项安全回归\nroute_hints:\n"
-                    f"  - pattern: \"(?:{_kw_pattern(texts)})\"   # TODO 人工收窄\n"
-                    f"    intent: TODO.确定目标意图\n    policy: append\n"
-                    f"    priority: 50\n    guard: \"\"          # TODO 防误伤\n")
-            kind = "hint"
+        if cause in ("route_error", "slot_error") and texts:
+            body = _exemplar_draft(texts, args.date)
+            kind = "exemplar"
         elif cause == "knowledge_gap" and texts:
             body = (f"# PlanningGuide 草案（自进化提案；skills/README.md 契约）\n"
                     f"# 治理④：golden 须用改写句（原句已归 eval 语料候选，不同源）\n"
@@ -408,7 +414,7 @@ def cmd_propose(args) -> Path:
                     + "golden:\n  - text: TODO 改写句\n    expect_intents: [TODO]"
                     "   # AND；可加 expect_any/expect_not，项支持 \"a|b\"\n")
             kind = "guide"
-        elif cause in ("slot_error", "phrasing") and texts:
+        elif cause == "phrasing" and texts:
             body = ("# eval 语料候选（mode_routing_cases.yaml 追加行草案）\n"
                     + "".join(f"- text: \"{t}\"\n  expect_mode: TODO\n"
                               f"  tags: [mode_boundary]\n  source: evolve-{args.date}\n"
@@ -441,6 +447,7 @@ _GATE_EVALS = [
     ("eval_fast_intent", [sys.executable, "test/eval_fast_intent.py"]),
     ("eval_route_hints", [sys.executable, "test/eval_route_hints.py"]),
     ("eval_skills", [sys.executable, "test/eval_skills.py"]),
+    ("eval_exemplars", [sys.executable, "test/eval_exemplars.py"]),   # M5 P1
     ("eval_mode_routing_offline", [sys.executable, "test/eval_mode_routing.py"]),
 ]
 

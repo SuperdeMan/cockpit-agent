@@ -1,0 +1,220 @@
+# 范例库 · reminder 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: reminder
+exemplars:
+- text: 不用提醒我回电话了
+  plan:
+  - agent: reminder
+    intent: reminder.cancel
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 买牛奶那条办完了
+  plan:
+  - agent: reminder
+    intent: reminder.complete
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 买牛奶那条推迟到明天九点
+  plan:
+  - agent: reminder
+    intent: reminder.update
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 到公司提醒我拿文件
+  plan:
+  - agent: reminder
+    intent: reminder.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 到家提醒我收快递
+  plan:
+  - agent: reminder
+    intent: reminder.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 半小时后提醒我给客户回电话
+  plan:
+  - agent: reminder
+    intent: reminder.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 取消第二条提醒
+  plan:
+  - agent: reminder
+    intent: reminder.cancel
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 周五下午三点叫我去接孩子
+  plan:
+  - agent: reminder
+    intent: reminder.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 完成提醒：给客户回电话
+  plan:
+  - agent: reminder
+    intent: reminder.complete
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 完成第二条
+  plan:
+  - agent: reminder
+    intent: reminder.complete
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 带充电线的提醒改个时间
+  plan:
+  - agent: reminder
+    intent: reminder.update
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 帮我记个待办周末洗车
+  plan:
+  - agent: reminder
+    intent: reminder.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 我今天有什么安排
+  plan:
+  - agent: reminder
+    intent: reminder.list
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 我有哪些提醒
+  plan:
+  - agent: reminder
+    intent: reminder.list
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 把接孩子改到五点
+  plan:
+  - agent: reminder
+    intent: reminder.update
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 把提醒都清空
+  plan:
+  - agent: reminder
+    intent: reminder.cancel
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 改第二条到晚上八点
+  plan:
+  - agent: reminder
+    intent: reminder.update
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 明天早上八点提醒我带充电线
+  plan:
+  - agent: reminder
+    intent: reminder.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 明天有什么提醒
+  plan:
+  - agent: reminder
+    intent: reminder.list
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 未来三天有什么提醒
+  plan:
+  - agent: reminder
+    intent: reminder.list
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 标记第一个完成
+  plan:
+  - agent: reminder
+    intent: reminder.complete
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 每天早上八点提醒我吃药
+  plan:
+  - agent: reminder
+    intent: reminder.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 看看我的待办
+  plan:
+  - agent: reminder
+    intent: reminder.list
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 离开公司提醒我买菜
+  plan:
+  - agent: reminder
+    intent: reminder.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 记一下要买牛奶
+  plan:
+  - agent: reminder
+    intent: reminder.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 过10分钟再提醒我
+  plan:
+  - agent: reminder
+    intent: reminder.create
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 这周有什么安排
+  plan:
+  - agent: reminder
+    intent: reminder.list
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical

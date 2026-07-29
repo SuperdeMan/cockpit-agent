@@ -1,0 +1,60 @@
+# 范例库 · safety 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: safety
+exemplars:
+- text: 今天适合开车吗
+  plan:
+  - agent: road-safety
+    intent: safety.driving_advice
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 开车去上海安全吗
+  plan:
+  - agent: road-safety
+    intent: safety.driving_advice
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 暴雨预警了吗
+  plan:
+  - agent: road-safety
+    intent: safety.weather_alert
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 有天气预警吗
+  plan:
+  - agent: road-safety
+    intent: safety.weather_alert
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 路上怎么样
+  plan:
+  - agent: road-safety
+    intent: safety.driving_advice
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 路况怎么样
+  plan:
+  - agent: road-safety
+    intent: safety.road_condition
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 高速堵车吗
+  plan:
+  - agent: road-safety
+    intent: safety.road_condition
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical

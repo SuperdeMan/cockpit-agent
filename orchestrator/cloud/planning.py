@@ -3,6 +3,7 @@
 WS3 §4。LLM 把已注册 Agent 能力当工具，输出 JSON DAG 计划。
 """
 from __future__ import annotations
+import asyncio
 import json
 import logging
 import os
@@ -12,6 +13,7 @@ from security.permission import check_permission
 from .models import Plan, Step, PlanContext, ReplanDecision
 from .context import WorkingSet, _FALLBACK_AGENT
 from .route_hints import RouteHintEngine
+from . import exemplars as _exemplars
 from . import skills as _skills
 
 logger = logging.getLogger("planner.planning")
@@ -341,7 +343,11 @@ class PlanBuilder:
         # 记录；off=注入关（debug 档，无领域知识）。词法档零网络同步计算；hybrid 档一次
         # Embed 语义预筛（fail-open 回词法，见 skills.py）。名单落 plan.skills 供
         # cloud.planning span 归因（@lex/@vec=检索通道，!clipped=超预算未注入）。
-        sk_mode, sk_names, sk_block = await _skills.plan_skills(text)
+        # M5 P1 范例库并行检索（第三通道，最软层）：两条通道各要一次 Embed，串行等于把
+        # 规划轮的网络等待翻倍——gather 并发后墙钟仍是一次（共享 embedding.py 的冷却，
+        # 网关挂了两边一起回落词法而不是各超时一次）。
+        (sk_mode, sk_names, sk_block), (_, ex_names, ex_block) = await asyncio.gather(
+            _skills.plan_skills(text), _exemplars.plan_exemplars(text))
 
         # M1a（RFC §4）：PLANNER_TOOLCALL=on 且注入了 llm_tool_fn → 第 1 轮走 submit_plan
         # 工具通道；协议失败（异常/无 tool_calls）同轮内容抢救、第 2 轮直接 JSON 路径——
@@ -357,7 +363,8 @@ class PlanBuilder:
             mode = "json"
             if toolcall and attempt == 0:
                 raw, args = await self._llm_plan_tools(text, agents, working_set,
-                                                       skills_block=sk_block)
+                                                       skills_block=sk_block,
+                                                       exemplars_block=ex_block)
                 last_raw = raw or last_raw
                 if args is not None:
                     parsed = self._parse_and_validate_data(args, agent_map, text)
@@ -368,7 +375,8 @@ class PlanBuilder:
                     mode = "toolcall_salvage"
             else:
                 raw = await self._llm_plan(text, agents, working_set,
-                                           skills_block=sk_block)
+                                           skills_block=sk_block,
+                                           exemplars_block=ex_block)
                 last_raw = raw or last_raw
                 parsed = self._parse_and_validate(raw, agent_map, text)
                 mode = "toolcall_fallback" if toolcall else "json"
@@ -396,6 +404,7 @@ class PlanBuilder:
         # 观测：保留 LLM 最后一次原始输出（fallback 路径保留失败现场），供 planning span 门控采集
         plan.raw_llm = last_raw
         plan.skills = sk_names
+        plan.exemplars = ex_names
         plan.plan_mode = plan_mode
 
         # 确定性路由兜底（覆盖 LLM 解析成功 + 降级语义路由两条路径）：通用 RouteHintEngine
@@ -416,17 +425,22 @@ class PlanBuilder:
 
     @staticmethod
     def _planner_user_msg(text: str, agents: list, working_set: WorkingSet,
-                          skills_block: str = "") -> str:
+                          skills_block: str = "", exemplars_block: str = "") -> str:
         """双路径共用的 user message（逐字一致=A/B 单变量，RFC §3.3）。"""
         catalog = WorkingSet.render_catalog(agents, working_set.catalog_stats)
         ctx_block = working_set.render_context()  # 记忆 +（焦点）+ 历史，统一预算
         # skills 块紧跟日期锚之后（policy 文本引用「上方『当前日期』」，顺序是契约）
         sk_part = f"{skills_block}\n\n" if skills_block else ""
-        return f"可用能力:\n{catalog}\n\n{_date_line()}\n{sk_part}{ctx_block}用户说: {text}"
+        # 范例块在知识块**之后**：权威链上范例是最软层，块内抬头也写明「与上方规划知识
+        # 冲突以知识为准」——位置与文案一起表达同一件事，不靠模型自己揣摩优先级。
+        ex_part = f"{exemplars_block}\n\n" if exemplars_block else ""
+        return (f"可用能力:\n{catalog}\n\n{_date_line()}\n"
+                f"{sk_part}{ex_part}{ctx_block}用户说: {text}")
 
     async def _llm_plan(self, text: str, agents: list, working_set: WorkingSet,
-                        skills_block: str = "") -> str:
-        user_msg = self._planner_user_msg(text, agents, working_set, skills_block)
+                        skills_block: str = "", exemplars_block: str = "") -> str:
+        user_msg = self._planner_user_msg(text, agents, working_set, skills_block,
+                                          exemplars_block)
         try:
             raw = await self._llm([
                 {"role": "system", "content": _planner_system()},
@@ -439,11 +453,13 @@ class PlanBuilder:
             return ""
 
     async def _llm_plan_tools(self, text: str, agents: list, working_set: WorkingSet,
-                              skills_block: str = "") -> tuple[str, dict | None]:
+                              skills_block: str = "", exemplars_block: str = ""
+                              ) -> tuple[str, dict | None]:
         """M1a submit_plan 工具通道（RFC §4）。返回 (raw, args)：args=工具 arguments
         dict（协议成功）；None=协议失败（异常/无 tool_calls），raw 保留 content 供同轮
         文本抢救与 obs raw_llm 采集。"""
-        user_msg = self._planner_user_msg(text, agents, working_set, skills_block)
+        user_msg = self._planner_user_msg(text, agents, working_set, skills_block,
+                                          exemplars_block)
         try:
             content, calls = await self._llm_tools([
                 {"role": "system", "content": _planner_system(toolcall=True)},
@@ -465,7 +481,8 @@ class PlanBuilder:
     async def replan(self, goal: str, observations: list[dict], agents: list,
                      ctx: PlanContext, granted_permissions: list[str] = None,
                      working_set: WorkingSet = None,
-                     skill_names: list[str] | None = None) -> ReplanDecision:
+                     skill_names: list[str] | None = None,
+                     exemplar_names: list[str] | None = None) -> ReplanDecision:
         """Decide completion and optionally produce the next validated batch.
 
         working_set: 复用初规划的同一装配——再规划也注入历史(+焦点)，消除初规划与
@@ -473,6 +490,8 @@ class PlanBuilder:
         skill_names: 初规划实际注入的 skill 名单（plan.skills）——T2 再规划继承同一份
         规划知识（2026-07-27 评审缺口：conditional-reminder 类「看结果再决定」的知识
         若只在初规划在场，再规划轮恰好是决策发生的地方却失忆）。
+        exemplar_names: 同理的范例名单（plan.exemplars，M5 P1）——范例示范的是**落域
+        形态**，再规划正是要再挑一次能力的地方，只注初规划等于范例白给。
         """
         if granted_permissions is not None:
             agents = self._filter_by_permission(agents, granted_permissions)
@@ -480,10 +499,12 @@ class PlanBuilder:
         ctx_block = working_set.render_context() if working_set is not None else ""
         sk_block = _skills.render_for_names(skill_names)
         sk_part = f"{sk_block}\n\n" if sk_block else ""   # 位置同初规划：紧跟日期锚（顺序契约）
+        ex_block = _exemplars.render_for_names(exemplar_names)
+        ex_part = f"{ex_block}\n\n" if ex_block else ""   # 同初规划：范例在知识之后
         prompt = (
             f"目标：{goal}\n"
             f"{_date_line()}\n"
-            f"{sk_part}{ctx_block}最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
+            f"{sk_part}{ex_part}{ctx_block}最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
             f"可用能力：{WorkingSet.render_catalog(agents)}"
         )
         try:

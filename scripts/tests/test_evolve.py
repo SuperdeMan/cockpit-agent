@@ -77,10 +77,15 @@ def test_proposal_forbidden_whitelist():
     assert not ev.forbidden_hit("pattern: (?:导航|路线)  intent: navigation.navigate_to")
 
 
-def test_kw_pattern_extracts_repeated_words():
-    p = ev._kw_pattern(["打开座椅加热", "帮我把座椅加热开一下", "座椅加热打开"])
-    assert "座椅加热" in p or "座椅" in p
-    assert ev._kw_pattern(["唯一一句"]) == "TODO"     # 无重复词 → 留 TODO 不硬造
+def test_exemplar_draft_replaces_regex_generator():
+    """M5 P1：route_error/slot_error 的产物从正则骨架换成范例草案。
+    `_kw_pattern`（bigram 拼 pattern）随之退役——**提案的产物形态**就是这一期要改的东西，
+    留着它等于给规则工厂留了自动化入口。"""
+    assert not hasattr(ev, "_kw_pattern")
+    body = ev._exemplar_draft(["帮我看看附近有什么咖啡店", "附近有什么好吃的"], "2099-01-01")
+    assert "exemplars:" in body and "source: trace" in body
+    assert "帮我看看附近有什么咖啡店" in body
+    assert "pattern" not in body and "guard" not in body      # 不含任何正则面字段
 
 
 # ── P0 断点①修复（2026-07-28 数据飞轮 §2-①）：提案半环必须真闭合 ──────────────
@@ -122,13 +127,13 @@ def test_propose_templates_do_not_self_trigger(tmp_path, monkeypatch):
     ev.cmd_propose(_args("2099-01-01"))
     proposals = ev._read_jsonl(work / "proposals.jsonl")
     kinds = {p["cause"]: p["kind"] for p in proposals}
-    assert kinds["route_error"] == "hint"
+    assert kinds["route_error"] == "exemplar"        # M5 P1：落域类提案产数据不产正则
     assert kinds["knowledge_gap"] == "guide"
-    assert kinds["slot_error"] == "corpus"
+    assert kinds["slot_error"] == "exemplar"
     assert kinds["infra"] == "report_only"           # 非可提案类仍纯报告
-    assert (work / "proposals" / "hint-route_error.yaml").exists()
+    assert (work / "proposals" / "exemplar-route_error.yaml").exists()
     assert (work / "proposals" / "guide-knowledge_gap.yaml").exists()
-    assert (work / "proposals" / "corpus-slot_error.yaml").exists()
+    assert (work / "proposals" / "exemplar-slot_error.yaml").exists()
 
 
 def test_propose_dynamic_forbidden_still_bites(tmp_path, monkeypatch):

@@ -1,0 +1,36 @@
+# 范例库 · parking 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: parking
+exemplars:
+- text: 交停车费
+  plan:
+  - agent: parking-payment
+    intent: parking.pay
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 把停车费付了
+  plan:
+  - agent: parking-payment
+    intent: parking.pay
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 缴费
+  plan:
+  - agent: parking-payment
+    intent: parking.pay
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 出场怎么交钱
+  plan:
+  - agent: parking-payment
+    intent: parking.pay
+  source: trace
+  added: '2026-07-29'
+  tags:
+  - badcase

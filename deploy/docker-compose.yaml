@@ -293,6 +293,16 @@ services:
       SKILL_BUDGET: ${SKILL_BUDGET:-}
       SKILL_TOP_K: ${SKILL_TOP_K:-}
       SKILL_MIN_SCORE: ${SKILL_MIN_SCORE:-}
+      # M5 P1 范例库（第三通道，最软层）：full=注入｜shadow=只检索记录（A/B）｜off=关。
+      # 语料同走上面的 skills/ 只读挂载——投范例文件 30s 内生效。调优项同样 ${VAR:-}
+      # 空默认透传（默认值只活在 exemplars.py 一处）。
+      EXEMPLARS_MODE: ${EXEMPLARS_MODE:-full}
+      EXEMPLARS_RETRIEVAL: ${EXEMPLARS_RETRIEVAL:-hybrid}
+      EXEMPLAR_LEX_THRESHOLD: ${EXEMPLAR_LEX_THRESHOLD:-}
+      EXEMPLAR_SEM_THRESHOLD: ${EXEMPLAR_SEM_THRESHOLD:-}
+      EXEMPLAR_EMBED_TIMEOUT: ${EXEMPLAR_EMBED_TIMEOUT:-}
+      EXEMPLAR_BUDGET: ${EXEMPLAR_BUDGET:-}
+      EXEMPLAR_TOP_K: ${EXEMPLAR_TOP_K:-}
       # M1a submit_plan 结构化规划输出：on|off（默认 on——2026-07-24 泓舟拍板翻正，
       # A/B 材料 RFC §11；off=JSON 纯文本回退档。规划轮经原生 function calling 强制
       # 输出合法 Plan，协议失败轮内回退 JSON 路径）

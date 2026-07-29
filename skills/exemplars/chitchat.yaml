@@ -1,0 +1,60 @@
+# 范例库 · chitchat 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: chitchat
+exemplars:
+- text: 三国演义的作者是谁
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 你叫什么名字
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 地球为什么是圆的
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 好无聊啊
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 给我讲讲光合作用
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 讲个笑话
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 陪我聊聊
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical

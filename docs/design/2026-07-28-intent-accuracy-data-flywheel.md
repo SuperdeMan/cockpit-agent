@@ -1,7 +1,7 @@
 # 意图理解与落域规划的系统性升级：从规则工厂到数据飞轮
 
 > 日期：2026-07-28
-> 状态：方向已获泓舟确认（2026-07-28）；**P0 已落地**（分支 `feat/m5-p0-data-flywheel`，全量 2347 passed / 7 skipped，基线 2323+24 零回归；五件清单与证据见 §5-P0）；P1-P4 待逐期开工
+> 状态：方向已获泓舟确认（2026-07-28）；**P0 已合入 main**（`611351b`，全量 2347 passed / 7 skipped 零回归；五件清单与证据见 §5-P0）；**P1 范例库已落地**（2026-07-29，分支 `feat/m5-p1-exemplar-store`；落地记录与 N3 首测账目见 §5-P1 下方）——**修 badcase 的标准产物自此从正则换成数据**；P2-P4 待逐期开工
 > 交付对象：`scripts/evolve.py`、`observability/` + `dashboard/`、`orchestrator/cloud/`（planner 上下文工程）、`skills/`（新增 exemplars 通道）、`orchestrator/edge/`（P3 端侧 NLU）
 > 关联：母提案 [`2026-07-24-eva-benchmark-intelligence-upgrade.md`](2026-07-24-eva-benchmark-intelligence-upgrade.md)（C1/C2/E7）；[`2026-07-04-r4.1b-edge-objectification-and-nlu-decision.md`](2026-07-04-r4.1b-edge-objectification-and-nlu-decision.md)（识别侧 A/B 决策卡）；[`2026-07-24-m1b-self-evolution-shadow-nlu-rfc.md`](2026-07-24-m1b-self-evolution-shadow-nlu-rfc.md)（自进化 v1）；`skills/README.md`（检索注入范式，本方案的机制母版）；`docs/reviews/eval/shadow_nlu_report.md`
 > 触发：泓舟 2026-07-28 提问——「落域/规划准确率永远在靠 badcase 改 manifest，偏规则式；这还算 agent 吗？是架构不好吗？如何系统性解决？」本文以全链路机制调查（三路并行盘点 + 关键断点逐一亲证）回答这三问。
@@ -175,6 +175,71 @@ catalog 是**全量注入**不是检索——`PLANNER_CATALOG_TOP_K=20 > agent �
 **门禁**：范例文件的 intent 存在性静态校验（照抄 `eval_skills.py` 的 expect_* 校验）；每条范例自动生成 golden 进 RoutingBench；CI 阻断。
 
 **DoD**：「附近咖啡店」badcase 族改由范例修复（vision hint 不加任何 guard 词）；修复泛化率（N3）首测 ≥80%。
+
+---
+
+#### P1 落地记录（2026-07-29，分支 `feat/m5-p1-exemplar-store`）
+
+**交付**：`skills/exemplars/`（契约 README + 13 域 200 条）｜`orchestrator/cloud/exemplars.py`
+（第三通道）｜`orchestrator/cloud/embedding.py`（skills/exemplars 共享的 Embed 出口）｜
+`scripts/exemplars.py`（三来源工具链）｜`test/eval_exemplars.py`（CI 阻断门禁 + 阈值扫描 +
+live A/B）｜evolve 第四类提案（`_kw_pattern` 正则生成器退役）。
+
+**机制要点**（逐项对齐 skills 范式，细节见 `skills/exemplars/README.md`）：
+- 权威链最软层：只进 prompt 作 few-shot，**不做硬路由**——写错是噪声不是事故；
+- 词法用 **IDF 加权 Dice** 而不是裸 Dice：范例文本 5-15 字，裸 Dice 被功能词 bigram 支配
+  （实测「请问现在是什么时间」靠「现在/什么」检回 vision）。**不建停用词表**——那正是这
+  一期要消灭的规则工厂；IDF 是语料自己长出来的权重，投文件即重算；
+- 同域去重**在选取时**生效（选完再删会白空名额）；预算 700 字符 + top-k 3；
+- 归因 `plan.exemplars` 进 `cloud.planning` span，`!clipped` 不谎称已注入；T2 再规划与
+  挂起恢复继承贯通（skills 为这条链补过三次漏，本期一次做全 + 契约测试钉死）。
+
+**阈值由数据拍板**（166 例探针，全部不在语料中）：词法 0.34（0.30 多 1 hit 却多 3 miss、
+0.40 少 3 miss 却丢 15 hit）；语义 0.65（0.70→0.65 是 +8 hit/+2 miss，0.65→0.62 是
++4/+4 不再划算）。合起来 hit 63→81、miss 7→10，**命中时域精度 ~89%**。
+
+**N3 首测（诚实账目，含不达预期的部分）**：走完整飞轮——真机 WS 发一句 → 落 collector
+真 trace（`dfd2853f`，落 `navigation.search_poi`）→ `POST /api/turns/{id}/label` 标 gold →
+`scripts/exemplars.py from-labels --apply` 生成范例。**只加一条，不加 hint 不加 guard。**
+同预热状态前后对照 + 方差句复跑分类后：
+
+| 句子（5 条 paraphrase 均未入语料） | before | after |
+|---|---|---|
+| 停车费在哪儿交 | ✓ | ✓ |
+| 出停车场要付多少钱 | ✓ | ✓（3/3 复跑稳定） |
+| 走的时候停车的钱怎么结 | 3/4 ✓ | 3/4 ✓（**前后同 `inj`、同分布＝方差**） |
+| 停车场出口怎么付款 | ✓ | ✓ |
+| 这边停车怎么收费结算 | ✗ | ✗（稳定失败） |
+| *canonical* 出场怎么交钱 | **空计划 ✗** | **parking.pay ✓** |
+
+→ **N3 = 4/5 = 80%**，达线。但**必须说清这 80% 不是新范例的功劳**：新范例修好的是它
+自己那个形态（`@lex:1.00` 精确锚），paraphrase 的通过靠的是**已有 manifest 范例 + 语义
+通道**（两句词法零命中、纯靠 `parking#2@vec:0.70/0.77` 接住）。结论因此是两条：
+①「一次修复自动传播到同族」**成立的前提是语料密度**，不是单条范例的魔力——这正是飞轮
+要转起来的理由；② 199 条 manifest 死资产盘活确有实效，它们在承接词法够不到的说法。
+
+**live A/B（真栈，向量预热后）**：62 例注入子集，**注入率 62/62**，full **62/62** vs
+off 61/62 → **可归因 Δ=+1、可归因回归 0**（`docs/reviews/eval/baseline_exemplars.json`）。
+**据此把 A/B 记账口径改成「只在注入子集算 Δ」**——未注入的两臂 prompt 逐字相同，跑它们只是
+给 Δ 掺噪声（首轮 60 例里 3 次翻面有 2 次栽在这上面，把方差记成了范例的账，总 Δ 因此显示 -1）。
+默认因此定 `EXEMPLARS_MODE=full`，理由是**零可归因回归 + 机制本身就是这一期的交付物**，
+不是「已证明有增益」——Δ=+1 在 n=62 上没有统计意义，真正的增益应在真实 badcase 范例
+积累后复测。
+
+**DoD 兑现情况**：①「附近咖啡店」族四句真栈全绿——但**这条是 P0 收窄 vision hint 兑现的，
+不是 P1**（诚实更正：P0 已把过宽分支删掉，P1 没有可修的东西了）；② N3 首测 80%，达线，
+附带上面的归因更正。
+
+**顺带修的三个真缺陷**（都是被评测逼出来的）：
+- `embedding._stub` 是 loop-bound 的 grpc aio channel，换事件循环后静默变成「Embed 不可用」
+  → 按 loop 重建（只在评测里现形，但会让 A/B 数据失真）；
+- 短命进程里向量预热跑不完 → 补 `warm_blocking()`，评测 live 车道内置预热；
+- `scripts/exemplars.py from-labels` 把导出当裸数组读，真 endpoint 是 `{count, labels:[…]}`
+  ——**没消费方的契约会潜伏**，这条是接真 collector 当场炸出来的。
+
+**探针加载器的一处口径更正**：`route_hints_cases` 里 `initial_intents` 非空的是**护栏用例**
+（断言「LLM 已规划成 X 时 hint 不许劫持」），不是端到端期望；当端到端用会冤枉系统
+（「别查天气了」裸问 planner 落 chitchat 完全合理却被记 FAIL）。已排除。
 
 ### P2 度量驱动治理（3-5 天）
 

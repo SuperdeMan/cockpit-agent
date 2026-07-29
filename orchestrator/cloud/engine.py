@@ -247,6 +247,10 @@ class PlannerEngine:
                     "llm_raw": gate_content(plan.raw_llm, 1200),
                     # M0b Skill 层注入名单（"<mode>:<name>"），badcase 归因用
                     **({"skills": ",".join(plan.skills)} if plan.skills else {}),
+                    # M5 P1 范例库注入名单（"<mode>:<eid>@通道:分数"，被裁记 !clipped）：
+                    # 「范例没检回 / 检回了没用对 / 检回了却被裁」三种失败一眼可分
+                    **({"exemplars": ",".join(plan.exemplars)}
+                       if getattr(plan, "exemplars", None) else {}),
                     # M1a：本轮规划输出通道（toolcall|toolcall_salvage|…|json），A/B 聚合用
                     "plan_mode": getattr(plan, "plan_mode", "json"),
                     # 数据飞轮 P0 落域可观测：意图名是系统枚举值（非用户内容），紧凑发射
@@ -766,6 +770,7 @@ class PlannerEngine:
                 goal=state.pending_plan.get("goal", ""),
             )
             restored.skills = list(state.pending_plan.get("skills") or [])
+            restored.exemplars = list(state.pending_plan.get("exemplars") or [])
             return restored, seeds
         except Exception as e:
             logger.warning("Failed to restore plan: %s", e)
@@ -821,6 +826,7 @@ class PlannerEngine:
             # T2 知识继承跨挂起（2026-07-27 评审二批）：不存 skills 的话，补槽/确认恢复后
             # 的再规划会丢初规划注入的规划知识（replan 按 plan.skills 重渲染，见 loop.py）
             "skills": list(plan.skills or []),
+            "exemplars": list(getattr(plan, "exemplars", []) or []),   # 同款（M5 P1）
         }
 
     async def _needs_replan(self, plan: Plan, results: list[StepResult]) -> bool:

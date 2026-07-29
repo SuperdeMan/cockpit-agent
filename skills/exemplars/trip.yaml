@@ -1,0 +1,180 @@
+# 范例库 · trip 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+domain: trip
+exemplars:
+- text: 下一站
+  plan:
+  - agent: trip-planner
+    intent: trip.navigate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 不去千岛湖了
+  plan:
+  - agent: trip-planner
+    intent: trip.modify
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 今天少玩一个
+  plan:
+  - agent: trip-planner
+    intent: trip.reschedule
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 删掉第三天的奥林匹克公园
+  plan:
+  - agent: trip-planner
+    intent: trip.modify
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 加一个西湖
+  plan:
+  - agent: trip-planner
+    intent: trip.modify
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 去成都玩三天轻松点
+  plan:
+  - agent: trip-planner
+    intent: trip.plan
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 去行程里的故宫
+  plan:
+  - agent: trip-planner
+    intent: trip.navigate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 周末去杭州两天带老人不要太累
+  plan:
+  - agent: trip-planner
+    intent: trip.plan
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 周末去杭州两天带老人，顺便看看天气和是否需要中途充电
+  plan:
+  - agent: trip-planner
+    intent: trip.plan
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 周末带娃去近郊玩
+  plan:
+  - agent: trip-planner
+    intent: trip.plan
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 太累了精简一下
+  plan:
+  - agent: trip-planner
+    intent: trip.reschedule
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 导航去第二天的西湖
+  plan:
+  - agent: trip-planner
+    intent: trip.navigate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 帮我安排去三亚的行程
+  plan:
+  - agent: trip-planner
+    intent: trip.plan
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 想提前回家
+  plan:
+  - agent: trip-planner
+    intent: trip.reschedule
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 我在第几站
+  plan:
+  - agent: trip-planner
+    intent: trip.status
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 时间不够了
+  plan:
+  - agent: trip-planner
+    intent: trip.reschedule
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 第三天第一个
+  plan:
+  - agent: trip-planner
+    intent: trip.navigate
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 第二天换成宋城
+  plan:
+  - agent: trip-planner
+    intent: trip.modify
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 行程到哪了
+  plan:
+  - agent: trip-planner
+    intent: trip.status
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 规划周末去杭州两日游
+  plan:
+  - agent: trip-planner
+    intent: trip.plan
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 还剩几站
+  plan:
+  - agent: trip-planner
+    intent: trip.status
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical
+- text: 还要充几次电
+  plan:
+  - agent: trip-planner
+    intent: trip.status
+  source: manifest
+  added: '2026-07-29'
+  tags:
+  - canonical

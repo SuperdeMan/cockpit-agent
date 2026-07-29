@@ -198,12 +198,33 @@ charging hint 换正向锚（黑名单枚举不完，设备负例钉进阻断 py
 ③顺带发现脏数据（非代码缺陷）：识别错乱期写下的记忆已互相串（primary 名下有「用户自称阿灵」），
 召回的 occupant 隔离本身是好的——**识别缺陷会在记忆里留下持久痕迹，修好识别不会自动修好数据**。
 
-**下一站：数据飞轮（候选 M5）方向已获泓舟确认、P0 已落地**（2026-07-28，设计
-`docs/design/2026-07-28-intent-accuracy-data-flywheel.md`，分支 `feat/m5-p0-data-flywheel`
-待合并）。定性：准确率的「badcase→改 manifest」治标循环不是架构错，是**改进循环的产物
-是正则不是数据**——后续 P1 范例库 Exemplar Store → P2 RoutingBench 周报 + hint 影子裸跑
-退役 + 强模型影子分诊 → P3 端侧 NLU（R4.1b B 路启动判据已满足：313 分支≈300 触发线、
-覆盖 76.2%<85%、Shadow NLU 已证 LLM 91.2% vs 规则 75.9%）按序开工。其余可选方向
+**当前主线：数据飞轮（M5），P0 已合入 main、P1 已落地**（设计
+`docs/design/2026-07-28-intent-accuracy-data-flywheel.md`）。定性：准确率的
+「badcase→改 manifest」治标循环不是架构错，是**改进循环的产物是正则不是数据**。
+
+**P0（2026-07-28，`611351b`）**：evolve 提案半环闭合（治理③只扫动态内容+词边界，
+degraded 改读 SQLite，triage 批失败重试）／落域可观测接活（`turns.intents`/`plan_mode`
++ `hint_effect`/`catalog_chars`）／gold 标注载体（`turns.gold_intents` + label/export API +
+dashboard 入口）／catalog 预算 8000→16000（旧值把 navigation 整域裁出 prompt）／
+vision「帮我看看」过宽分支两侧同步删除。
+
+**P1 范例库（2026-07-29，分支 `feat/m5-p1-exemplar-store`）**：`skills/exemplars/` 落地
+——**修落域 badcase 的默认产物自此是数据不是正则**。第三通道 `orchestrator/cloud/exemplars.py`
+（骑 skills 的 hybrid 检索/预算/fail-open/归因/继承范式，共享 `embedding.py` 出口与冷却）；
+三来源全通（manifest 199 条死资产盘活 + collector 标注转化 + evolve 第四类提案，
+`_kw_pattern` 正则生成器退役）；门禁 `test/eval_exemplars.py` 进 CI 阻断步。
+**三条最值得记住的**：①阈值全由 166 例探针扫描拍板（lex 0.34 / sem 0.65），词法用
+**IDF 加权 Dice**——裸 Dice 在 5-15 字短文本上被功能词支配，而修法**不是停用词表**
+（那正是这一期要消灭的规则工厂），是让语料自己长出权重；②**A/B 的 Δ 只能在「实际注入」
+子集上算**——未注入的两臂 prompt 逐字相同，首轮 60 例里 3 次翻面有 2 次栽在这上面；
+③N3 首测 4/5=80% 达线，但**80% 不是新范例的功劳**：新范例修好的是它自己那个形态，
+paraphrase 靠的是已有 manifest 范例 + 语义通道接住——「一次修复自动传播」**成立的前提是
+语料密度**。真栈 A/B（预热后 62 例注入子集，注入率 100%）：full 62/62 vs off 61/62，**可归因 Δ=+1、可归因回归 0**；默认 `EXEMPLARS_MODE=full` 的理由
+是「零可归因回归 + 机制本身就是交付物」，不是「已证明有增益」。
+
+后续 **P2** RoutingBench 周报 + hint 影子裸跑退役 + 强模型影子分诊 + catalog 检索化 →
+**P3** 端侧 NLU（R4.1b B 路启动判据已满足：313 分支≈300 触发线、覆盖 76.2%<85%、
+Shadow NLU 已证 LLM 91.2% vs 规则 75.9%）按序开工。其余可选方向
 （都不阻塞，按需取用）：
 - `sim.adas.*` 演示域——**低优先 backlog，非 M4 DoD**（2026-07-24 §8-6 拍板）。
 - 真麦声学验收（S2S 打断手感 / 声纹识别率与误认率）——浏览器声学层 CI 测不了，同 R4.3 惯例留泓舟。

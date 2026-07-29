@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from orchestrator.cloud import embedding as _embedding
 from orchestrator.cloud import skills as sk
 from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.context import WorkingSet
@@ -142,7 +143,7 @@ def _mini_skill_dir(tmp_path):
 def test_hybrid_semantic_supplements_lexical_miss(monkeypatch, tmp_path):
     """paraphrase（keywords 盲区）：词法漏召、语义按 description 余弦补位，通道记 @vec。"""
     monkeypatch.setenv("SKILLS_RETRIEVAL", "hybrid")
-    monkeypatch.setattr(sk, "_embed_fail_ts", 0.0)
+    _embedding.reset_cooldown()      # 冷却已随 M5 P1 移到共享出口 embedding.py
     store = _mini_skill_dir(tmp_path)
     query = "去惠州中间要不要补个电"                 # 无「充电/钓鱼」字面 → 词法双漏
 
@@ -162,7 +163,7 @@ def test_hybrid_semantic_supplements_lexical_miss(monkeypatch, tmp_path):
 def test_hybrid_fails_open_to_lexical(monkeypatch, tmp_path):
     """embedding 不可用（超时/无源）→ 该轮纯词法，绝不堵规划。"""
     monkeypatch.setenv("SKILLS_RETRIEVAL", "hybrid")
-    monkeypatch.setattr(sk, "_embed_fail_ts", 0.0)
+    _embedding.reset_cooldown()      # 冷却已随 M5 P1 移到共享出口 embedding.py
     store = _mini_skill_dir(tmp_path)
 
     async def dead_embed(texts):

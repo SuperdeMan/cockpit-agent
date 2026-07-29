@@ -140,6 +140,12 @@ jobs:
       - name: Skill contract gate (blocking)
         run: python test/eval_skills.py
 
+      # M5 P1 范例库门禁：契约静态校验（intent 存在性/同句冲突/schema）+ 域路由探针
+      # 错配率上限。同 skill 门禁的理由——这两项都是确定性检查，不随 LLM 采样漂移。
+      # 语义扫描与 live A/B 需 llm-gateway，归人工触发。
+      - name: Exemplar contract gate (blocking)
+        run: python test/eval_exemplars.py
+
       - name: Upload fresh eval report
         if: always()
         uses: actions/upload-artifact@v4
