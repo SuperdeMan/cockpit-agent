@@ -699,3 +699,32 @@
   initial_intents: []
   expect_det_intents: []
   source: "search hint guard 须含说明书/手册——manual_rag 的地盘"
+
+# ══ vision 端到端护栏（M5 P2）：vision route_hint 于 2026-07-29 退役后，这四句的回归
+#    保护从「施加 hint 后应得 vision.describe」改成「planner 端到端应落 vision.describe」。
+#    **退役的是规则，不是对它的回归保护**——原用例在 route_hints_cases.yaml，hint 没了
+#    那套断言就失去了意义（施加一个不存在的 hint 恒等于什么都没做）。 ═════════════
+
+- text: 那是什么
+  tags: [mode_guardrail, vision]
+  expect_mode: other:vision.describe
+  expect_intents: [vision.describe]
+  source: "vision hint 退役（M5 P2）后的端到端护栏；双臂裸跑 ×4 轮 12/12 全对"
+
+- text: 帮我看看这个是什么
+  tags: [mode_guardrail, vision]
+  expect_mode: other:vision.describe
+  expect_intents: [vision.describe]
+  source: "vision hint 退役（M5 P2）后的端到端护栏；双臂裸跑 ×4 轮 12/12 全对"
+
+- text: 看看前面那个建筑是什么
+  tags: [mode_guardrail, vision]
+  expect_mode: other:vision.describe
+  expect_intents: [vision.describe]
+  source: "vision hint 退役（M5 P2）后的端到端护栏；双臂裸跑 ×4 轮 12/12 全对"
+
+- text: 帮我看看前面
+  tags: [mode_guardrail, vision]
+  expect_mode: other:vision.describe
+  expect_intents: [vision.describe]
+  source: "vision hint 退役（M5 P2）后的端到端护栏；双臂裸跑 ×4 轮 12/12 全对"

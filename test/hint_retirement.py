@@ -186,16 +186,21 @@ async def _run(hints: list[dict], pool: list[dict], agents: list, args) -> dict:
         rec = {k: row[k] for k in ("key", "agent_id", "intent", "policy", "priority",
                                    "pattern", "guard", "require_confirm")}
         rec["cases"] = entries
-        if not a_ok_all:
-            # A 臂就失败：这条 hint 已经不起作用了（pattern 过时/被更高 priority 抢先/guard 误伤）
-            report["ineffective"].append(rec)
-            print(f"    ⚠ A 臂也失败——这条 hint 已不起作用，另案处理")
-        elif b_ok_all:
+        # 两个判定**互相独立，不是互斥的**（首版写成 elif 是错的：一条 hint 完全可能
+        # 「它自己的句子没它也全对」＋「它还顺手劫持了别域的句子」——实测 vision#0 恰是
+        # 这样，`这个坐标是什么地方` 被其 pattern 命中却该归 navigation）：
+        #   candidates  = 它的命中句**没有它也全对** → 可以退役
+        #   ineffective = 有命中句在 A 臂就错 → 这条 hint 要么失效、要么正在劫持，另案查
+        if b_ok_all:
             report["candidates"].append(rec)
             print(f"    ★ 退役候选：去掉它 {args.repeat} 轮全对")
         else:
             report["keep"].append(rec)
             print(f"    保留：去掉它会翻车")
+        if not a_ok_all:
+            bad = [e["text"] for e in entries if not e["arm_a_pass"]]
+            report["ineffective"].append({**rec, "arm_a_failed": bad})
+            print(f"    ⚠ 带着 hint 也答错：{bad}——失效或正在劫持，另案查")
     report["_cases"] = cases
     return report
 

@@ -229,7 +229,13 @@ paraphrase 靠的是已有 manifest 范例 + 语义通道接住——「一次�
 域偏斜前三域占 70%（navigation 仅 5 例，**N1 涨不等于车控导航变好**）、98.4% 主要说明
 语料已被用来修过系统（canonical 100% 是 hint 钉出来的）。
 `test/hint_retirement.py` 给规则装上了**出口**（双臂裸跑，评测侧过滤 agent 列表零运行时
-改动；provider 必须 pin、n=1 不做判定、产物是提案不改仓库）。
+改动；provider 必须 pin、n=1 不做判定、产物是提案不改仓库）。首跑 32 条里 **23 条是退役
+候选**——**这是发现不是决定**（强档 provider、n=2、范例层刚上线），按 DoD 只退一条。
+**规则存量首次净减 32→31**：`vision#0` 退役（全仓第一条被数据退役的规则）。过程两个教训：
+**证据要加厚到全部命中句**（抽样只取 3 句，实际命中 6 句；补验第 5 句 `这个坐标是什么地方`
+反而暴露该 hint 正在**劫持**导航句——与它当初制造的咖啡店 badcase 同类）；
+**退役的是规则不是回归保护**（四句命中语料降级迁进 mode_routing_cases 改端到端口径，
+因为 hint 没了「施加 hint 后应得 X」的断言恒等于什么都没做）。
 另有四项：`_always_include` 补 `category: core`（**D1 根治**——navigation/road-safety
 首次进保护集；且修掉「hint 退役会顺手删掉 catalog 保护」这个 P2 自造的隐患）／registry
 打分换 bigram 归一（**解除了 deep-research「desc 刻意不加长」那条倒果为因的历史约束**，

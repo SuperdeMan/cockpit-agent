@@ -1,7 +1,7 @@
 # 意图理解与落域规划的系统性升级：从规则工厂到数据飞轮
 
 > 日期：2026-07-28
-> 状态：方向已获泓舟确认（2026-07-28）；**P0 已合入 main**（`611351b`，全量 2347 passed / 7 skipped 零回归；五件清单与证据见 §5-P0）；**P1 范例库已落地**（2026-07-29，分支 `feat/m5-p1-exemplar-store`；落地记录与 N3 首测账目见 §5-P1 下方）——**修 badcase 的标准产物自此从正则换成数据**；P2-P4 待逐期开工
+> 状态：方向已获泓舟确认（2026-07-28）；**P0 已合入 main**（`611351b`，全量 2347 passed / 7 skipped 零回归；五件清单与证据见 §5-P0）；**P1 范例库已落地**（2026-07-29；落地记录与 N3 首测账目见 §5-P1 下方）——**修 badcase 的标准产物自此从正则换成数据**；**P2 度量驱动治理已落地**（同日；N1 尺子首测 189/192=98.4%、**规则存量首次净减 32→31**，见 §5-P2 下方）；P3-P4 待开工
 > 交付对象：`scripts/evolve.py`、`observability/` + `dashboard/`、`orchestrator/cloud/`（planner 上下文工程）、`skills/`（新增 exemplars 通道）、`orchestrator/edge/`（P3 端侧 NLU）
 > 关联：母提案 [`2026-07-24-eva-benchmark-intelligence-upgrade.md`](2026-07-24-eva-benchmark-intelligence-upgrade.md)（C1/C2/E7）；[`2026-07-04-r4.1b-edge-objectification-and-nlu-decision.md`](2026-07-04-r4.1b-edge-objectification-and-nlu-decision.md)（识别侧 A/B 决策卡）；[`2026-07-24-m1b-self-evolution-shadow-nlu-rfc.md`](2026-07-24-m1b-self-evolution-shadow-nlu-rfc.md)（自进化 v1）；`skills/README.md`（检索注入范式，本方案的机制母版）；`docs/reviews/eval/shadow_nlu_report.md`
 > 触发：泓舟 2026-07-28 提问——「落域/规划准确率永远在靠 badcase 改 manifest，偏规则式；这还算 agent 吗？是架构不好吗？如何系统性解决？」本文以全链路机制调查（三路并行盘点 + 关键断点逐一亲证）回答这三问。
@@ -291,6 +291,25 @@ provider 必须 pin、`--repeat` 全通过才算候选（**n=1 不做退役判�
 干跑盘点即有收获：**32 条 hint 里 `mcp-bridge#0`（shop.order）没有任何命中语料**——那正是
 总体验收里「路由掷硬币，修复方式＝再加一条 hint」的那条，**加了规则却没加回归保护，
 连「还需要吗」都问不了**。
+
+**首跑结果：32 条里 23 条是退役候选**（minimax:MiniMax-M3，×2 轮）。**这是发现不是决定**——
+provider 是强档而 hint 当初正是为「弱 LLM 常漏/误路由」写的、n=2 偏薄、范例层刚上线可能
+正在替它们干活。按 DoD **只退役一条**，其余 22 条进队列等更厚的证据（更多轮次 + 跨 provider）。
+
+**规则存量首次净减：32 → 31**（`agents/vision/manifest.yaml` 的 `vision#0` 退役，
+全仓第一条被数据退役的规则）。执行过程有两处值得记住：
+- **把证据加厚到全部命中句再动手**。首轮抽样只取 3 句（×4 轮 12/12 全对），但该 hint 实际
+  命中语料有 6 句——**留一句没验就退役正是不该有的缺口**。补验第 4 句同样全对；
+  而第 5 句 `这个坐标是什么地方` 暴露出更重要的事：**它被 vision 的 pattern 命中并劫持**
+  （该句归 `navigation.reverse_geocode`），与这条 hint 当初制造的「帮我看看附近有什么咖啡店」
+  是同一类负外部性。退役一并消除。（两臂都错 ⇒ 摘除不造成回归；该句本身的落域缺口另记。）
+- **判定逻辑首版写错了**：把「hint 已失效」与「hint 有害」写成了 `elif` 互斥——一条 hint
+  完全可能「它自己的句子没它也全对」**且**「顺手劫持了别域的句子」，vision#0 恰是这样。
+  改为两个独立标记。
+- **退役的是规则，不是对它的回归保护**：四句命中语料从 `route_hints_cases.yaml` 降级迁到
+  `mode_routing_cases.yaml`——hint 没了，「施加 hint 后应得 X」的断言就失去意义
+  （施加一个不存在的 hint 恒等于什么都没做），只能改成「planner 端到端应落 X」。
+  六个离线 eval 全 exit=0。
 
 **④ catalog 保护判据机制化（D1 根治）**：`_always_include` 补上 `category: core`。
 **与 RFC 原设想不同的是「补集」而不是「替换」**——原文说要用显式声明替代「有 hint 就保护」

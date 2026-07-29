@@ -32,13 +32,15 @@ capabilities:
 # 仍由指代分支与「看看(这个|那个|前面)」覆盖。修法是规则收窄而非给 guard 追词（规则准入
 # 判据见 docs/design/2026-07-28-intent-accuracy-data-flywheel.md §4.2）。与 HMI 抓帧触发词
 # hmi/src/visionFrame.mjs 同口径（两侧同步改）。
-route_hints:
-  - pattern: '(那|这|前面(那个|这个)?|左边(那个)?|右边(那个)?|路边(那个)?).{0,4}(是什么|是啥|什么东西|什么牌子|什么车|什么花|什么树|什么建筑|什么标志)|看看(这个|那个|前面)'
-    intent: vision.describe
-    policy: replace
-    priority: 58
-    guard: '这家|那家|第[一二三四五六七八九十\d]+个|详情|评分|人均|营业|怎么样|好不好'
-    slots: { question: "$text" }
+# route_hints: 无。
+# **这条 hint 已退役**（M5 P2，2026-07-29，全仓第一条被数据退役的规则）。
+# 判据：`test/hint_retirement.py --live --only vision` 双臂裸跑——摘掉它之后，它的四句
+# 命中语料在 minimax:MiniMax-M3 下 ×4 轮 12/12 全对（模型 + 范例已经自己会了）。
+# 附带收益：它的 pattern（`这…是什么`）会**劫持** `这个坐标是什么地方` 这类导航句
+# ——与它当初制造的「帮我看看附近有什么咖啡店」是同一类负外部性；退役一并消除。
+# 回归保护没有一起删：四句命中语料已降级为**端到端用例**移进
+# `test/eval_corpus/mode_routing_cases.yaml`（hint 没了，route_hints_cases 里的
+# 「施加 hint 后应得 X」断言就失去了意义，只能改成「planner 端到端应落 X」）。
 
 # 敏感上下文最小化下发：不声明就收不到 vision_frame_id（编排层按此过滤）。
 context_scopes:
