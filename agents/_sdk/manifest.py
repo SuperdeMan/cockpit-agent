@@ -31,7 +31,10 @@ def build_verification(raw) -> agent_pb2.Verification | None:
 
 def load_manifest(path: str) -> agent_pb2.AgentManifest:
     with open(path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        data = yaml.safe_load(f) or {}
+    # 列表字段一律 `or []` 而不是 `.get(k, [])`：YAML 里「键在、值为空」（下面只剩注释）
+    # 解析出来是 **None 不是缺键**，默认值根本不生效。M5 P2 退役 route_hint 后留下一个
+    # 空的 `route_hints:`，loader 当场 TypeError——**Agent 启动即崩**，不只是评测红。
 
     caps = [
         agent_pb2.Capability(
@@ -43,7 +46,7 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
             heavy=c.get("heavy", False),
             verification=build_verification(c.get("verification")),
         )
-        for c in data.get("capabilities", [])
+        for c in (data.get("capabilities") or [])
     ]
     # 确定性路由提示（R2.1）：Agent 声明式路由，编排核心 RouteHintEngine 通用消费。
     route_hints = [
@@ -55,7 +58,7 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
             guard=h.get("guard", ""),
             slots={k: str(v) for k, v in (h.get("slots") or {}).items()},
         )
-        for h in data.get("route_hints", [])
+        for h in (data.get("route_hints") or [])
     ]
     return agent_pb2.AgentManifest(
         agent_id=data["agent_id"],
@@ -67,9 +70,9 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
         latency_budget_ms=int(data.get("latency_budget_ms", 2000)),
         fallback=data.get("fallback", ""),
         capabilities=caps,
-        requires_permissions=data.get("requires_permissions", []),
-        edge_intents=data.get("edge_intents", []),
+        requires_permissions=(data.get("requires_permissions") or []),
+        edge_intents=(data.get("edge_intents") or []),
         kind=data.get("kind", "agent"),
-        context_scopes=data.get("context_scopes", []),
+        context_scopes=(data.get("context_scopes") or []),
         route_hints=route_hints,
     )

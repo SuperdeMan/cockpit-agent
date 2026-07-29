@@ -31,6 +31,7 @@ def load_agents(include_edge: bool = True) -> list:
     agents = []
     for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "manifest.yaml"))):
         m = load_manifest(path)
+        _synth_admitted_caps(m, Path(path).parent)
         agents.append(SimpleNamespace(manifest=m, endpoint=f"{m.agent_id}:0"))
     if not include_edge:
         return agents
@@ -49,6 +50,41 @@ def load_agents(include_edge: bool = True) -> list:
                 capabilities=caps),
             endpoint=f"edge://{aid}"))
     return agents
+
+
+def _synth_admitted_caps(manifest, agent_dir: Path) -> None:
+    """`capabilities: []` + 有 `servers.yaml` 的 Agent（mcp-bridge）：按**同一份准入清单**
+    离线合成能力，与运行时 `_sync_capabilities()` 同源。
+
+    为什么必须补这一步：mcp-bridge 的能力是启动期从 servers.yaml 合成的，静态 manifest 里
+    `capabilities: []`——于是它的 `shop.order` route_hint 在离线评测里**结构性不可证伪**：
+    RouteHintEngine 补出的步会因「intent 不在能力集」被 `_validated_steps` 丢掉，语料写了
+    也永远不通过。`hint_retirement` 干跑盘点报「32 条里唯一没有命中语料的是 mcp-bridge#0」，
+    根因就在这里——**不是没人写语料，是写了也测不了**。
+    只读 YAML、不连任何 MCP server（准入清单本身就是唯一真相源，运行时的握手只做版本与
+    schema 校验，不改变能力集合）。"""
+    if list(getattr(manifest, "capabilities", []) or []):
+        return
+    servers = agent_dir / "servers.yaml"
+    if not servers.is_file():
+        return
+    try:
+        sys.path.insert(0, str(agent_dir / "src"))
+        from admission import load_servers  # type: ignore
+        from cockpit.agent.v1 import agent_pb2
+        caps = []
+        for spec in load_servers(str(servers)):
+            for t in spec.tools:
+                desc = t.description or f"{spec.id} 的 {t.name}"
+                if spec.demo:
+                    desc += "（演示商户，不产生真实交易）"
+                caps.append(agent_pb2.Capability(
+                    intent=t.intent, description=desc, slots=t.slots,
+                    examples=t.examples,
+                    require_confirm=bool(t.require_confirm or t.write)))
+        manifest.capabilities.extend(caps)
+    except Exception:
+        pass          # 合成失败不该带崩评测：退化成「该 Agent 无能力」，与今天行为一致
 
 
 def known_intents() -> set[str]:

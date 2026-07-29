@@ -45,33 +45,8 @@ def _route(text: str, initial=None) -> list[str]:
     return [s.intent for s in plan.steps]
 
 
-def test_sports_followup_with_yi_chang_not_hijacked_by_nearby():
-    """含「那一场」的赛事详情追问 → info.sports（真机漏例，原被 nearby.detail 抢走）。"""
-    assert _route("葡萄牙那一场看看详情") == ["info.sports"]
-    assert _route("葡萄牙那一场的进球") == ["info.sports"]
 
 
-def test_sports_followup_prior_phrasings_still_route():
-    """既有已修措辞（那场/第N场）不回归。"""
-    assert _route("巴西那场帮我看看详情") == ["info.sports"]
-    assert _route("第2场进球详情") == ["info.sports"]
-
-
-def test_real_nearby_detail_still_routes():
-    """真·周边详情不被赛事修复误伤。"""
-    assert _route("这家怎么样") == ["nearby.detail"]
-    assert _route("看看它的详情") == ["nearby.detail"]
-
-
-def test_sports_predictive_anaphor_routes_to_sports():
-    """badcase bfb5d9c7：「这场比赛你预测谁会赢」无联赛词，原预测 hint 接不住 →
-    planner 自由发挥缝合幻觉对阵。补「这场/那场 × 预测词」召回 → info.sports
-    （handler 内解析焦点场次后让路检索或直接报已完赛赛果）。"""
-    assert _route("这场比赛你预测谁会赢") == ["info.sports"]
-    assert _route("你预测一下这场谁能赢") == ["info.sports"]
-    assert _route("那一场你怎么看") == ["info.sports"]
-    # LLM 误路由 info.search 时同样被取代（handler 内部再按需让路检索，语义等价且带锚点）
-    assert _route("这场比赛你预测谁会赢", initial=["info.search"]) == ["info.sports"]
 
 
 def test_predictive_guard_non_sports_not_hijacked():
@@ -79,3 +54,40 @@ def test_predictive_guard_non_sports_not_hijacked():
     assert "info.sports" not in _route("这场官司你觉得谁会赢")
     assert "info.sports" not in _route("这场电影你怎么看")
     assert "info.sports" not in _route("这场雨你怎么看")
+
+# ── M5 P2 退役记录（2026-07-29）────────────────────────────────────────────────
+
+def test_retired_hints_are_gone_by_design():
+    """上方原有的「hint 应当补步/改写」断言已删除——它们描述的机制不存在了。
+
+    退役的 hint（跨 minimax:MiniMax-M3 与 deepseek:deepseek-v4-flash 两档、全部命中语料
+    全覆盖、各 ×2 轮，摘掉后仍全部落对）：info#0/#3（info.sports）、nearby#2（nearby.detail）
+
+    **回归保护去哪了，以及它变弱了多少**：命中句已改端到端口径迁入
+    `test/eval_corpus/mode_routing_cases.yaml`，由 `eval_mode_routing --live` 覆盖。
+    但那是 **live 车道、不在 CI**——原来这些断言被刻意写成阻断 pytest，理由白纸黑字：
+    「eval_route_hints 语料在 continue-on-error 观测步，语料回归 CI 不红」。
+    所以退役把这部分**召回保护从「CI 阻断」降级成了「人工触发」**。
+    这是退役的真实代价，不是可以忽略的细节；要补回来得让 live 车道进 CI（真栈 + LLM，
+    成本另议）——已作为余项记在 RFC §5-P2。
+
+    本测试守住两件仍可离线验证的事：①这些 intent 作为**能力**依然存在（域没有消失，
+    只是不再有正则替模型做决定）；②没人在没有新证据的情况下把 hint 悄悄加回来。
+    """
+    import glob as _glob
+    import pathlib as _pl
+
+    import yaml as _yaml
+    root = _pl.Path(__file__).resolve().parents[1]
+    retired = ['info.sports', 'nearby.detail']
+    caps, hints = set(), {}
+    for p in sorted(_glob.glob(str(root / "agents" / "*" / "manifest.yaml"))):
+        d = _yaml.safe_load(open(p, encoding="utf-8")) or {}
+        caps |= {str(c.get("intent")) for c in (d.get("capabilities") or [])}
+        for h in (d.get("route_hints") or []):
+            hints.setdefault(str(h.get("intent")), []).append(d.get("agent_id"))
+    for i in retired:
+        assert i in caps or i.startswith("shop."), f"{i} 的能力也消失了——退役只该去掉规则"
+        assert i not in hints, (
+            f"{i} 的 route_hint 又回来了（{hints.get(i)}）——恢复规则需要新证据："
+            f"双臂裸跑显示模型自己做不到，且要写进 manifest 注释")

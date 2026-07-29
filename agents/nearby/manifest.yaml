@@ -59,15 +59,15 @@ route_hints:
     priority: 55
     guard: '沿途|途中|一路|路上|规划充电|充电规划|怎么充|够不够|能不能到|能到吗|续航|剩余里程|没电|电量(低|不足|不多|不够)|电不(太)?(多|够)|补能|补个?电|缴费|交费|付款|付.{0,3}停车|导航|带我去|顺路|途经|那边|那儿|那附近|目的地附近|终点附近'
     slots: {keyword: "$text"}
-  - pattern: '(这家|那家|这个|这间|它家?)(怎么样|好不好|好吗|评分|人均|多少钱|电话|几点(关|开)|营业|地址)|看(看|下)?(它的?|这家的?)?详情|详细信息'
-    intent: nearby.detail
-    policy: replace
-    priority: 55
-    # guard 反例：赛事/股票等追问的「那(一)场…详情」「看看详情」不归周边——赛事走 info.sports（见 info manifest）。
-    # 「那一?场」等含可选「一」：兼容「那一场/这一场/哪一场」（真机漏例：葡萄牙那一场看看详情）。
-    guard: '那一?场|这一?场|上一?场|哪一?场|比赛|球赛|赛况|赛程|世界杯|欧冠|欧联|英超|西甲|意甲|德甲|法甲|荷甲|射手|进球|金靴|股价|股票'
-    slots: {name: "$text"}
-
+  # 【nearby.detail 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑
+  #   deepseek:deepseek-v4-flash / minimax:MiniMax-M3 各 ×2 轮，其 4 条命中语料**全覆盖**
+  #   （非抽样——抽 3 句会系统性高估，命中面越大的规则越容易被放行）；
+  #   摘掉它之后仍全部落对 → 模型 + 范例已经自己会了。
+  #   ⚠ 证据只覆盖上述两档。本 hint 家族当初是为 **MiMo** 写的
+  #     （route_hints.py 开篇：「弱 LLM（MiMo）常漏/误路由」），而本环境
+  #     MiMo 无可用 key（探针 all models failed），**切回 MiMo 须复验**。
+  #   回归保护未删：命中句已改端到端口径迁入 mode_routing_cases.yaml。
+  #   要恢复：git log -S '(这家|那家|这个|这间|它家?)(怎么样|好不' 找回原块。
 requires_permissions:
   - location.read
   - network.external

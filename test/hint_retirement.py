@@ -9,15 +9,20 @@ priority 空间靠跨 agent 手工避让，每加一条全局耦合深一分—�
 （评测侧过滤 agent 列表即可，零运行时改动）。B 臂仍然落对 ⇒ 模型 + 范例已经自己会了
 ⇒ 出退役候选提案。
 
-**三条纪律**（都是本仓踩过的坑）：
-- **退役判定必须 pin provider**（ProviderLock）——跨 provider 的通过率不可直比；
+**四条纪律**（都是本仓踩过的坑）：
+- **必须 pin provider**（ProviderLock），且**退役判定要跨 provider 取交集**——单档跑出来的
+  「候选」只证明那一档会，换个模型可能立刻回退。报告按 provider 分文件正是为此
+  （`hint_retirement.<provider>.json`），交集用 `--intersect` 算。
 - **n=1 不做判定**：`--repeat`（默认 2）全部通过才算候选，任一轮翻车即保留。「模型偶尔
   也能答对」不是退役理由；
-- **不自动改仓库**（治理⑤）：产物是提案 + 报告，人审后手动摘除，并把命中句**降级为
-  guardrail 用例保留**——退役的是规则，不是对它的回归保护。
+- **证据要覆盖全部命中句**，不是抽样几句就动手（vision#0 实测教训：抽样 3 句全过，
+  第 5 句反而暴露该 hint 正在劫持别域）；
+- **不自动改仓库**（治理⑤）：产物是提案 + 报告，人审后手动摘除，并把命中句**换成端到端
+  回归用例保留**——退役的是规则，不是对它的回归保护。
 
-副产物同样有价值：A 臂就失败的 hint = **这条 hint 已经不起作用了**（pattern 过时/被更高
-priority 的 hint 抢先/guard 误伤），单列一节。
+两个判定**互相独立**：`candidates`（它的命中句没它也全对 ⇒ 可退役）与 `ineffective`
+（有命中句带着 hint 也答错 ⇒ 这条 hint 要么失效、要么正在**劫持**别域）。一条 hint
+完全可能两者都是——vision#0 恰是。
 
 用法：
   python test/hint_retirement.py                       # 干跑：只列每条 hint 的命中语料（零成本）
@@ -53,8 +58,22 @@ import eval_live  # noqa: E402
 import routing_bench as rb  # noqa: E402
 
 _TZ = timezone(timedelta(hours=8))
-_OUT = _ROOT / "docs" / "reviews" / "eval" / "hint_retirement.json"
-_OUT_MD = _ROOT / "docs" / "reviews" / "eval" / "hint_retirement.md"
+_EVAL_DIR = _ROOT / "docs" / "reviews" / "eval"
+
+
+def _out_paths(provider: str, scoped: str = "") -> tuple[Path, Path]:
+    """报告按 provider 分文件；`--only` 的**局部跑另存**，绝不覆盖全量盘点报告。
+
+    两条都是实测踩出来的：
+    ①跨 provider——退役判定是交集，同名覆盖会让上一档的结论悄悄消失，而「只在一个
+      provider 上成立」恰恰是最该被发现的情况；
+    ②同 provider 内的局部跑——`--only vision` 只跑 1 条 hint，写回同一个文件就把 32 条的
+      全量盘点结果整份换成了 1 条（本次实测真的发生了，交集因此算出 0）。
+      **一份「看起来正常」的报告，内容可能只是上一次局部跑的残留。**"""
+    slug = "".join(ch if ch.isalnum() else "-" for ch in provider).strip("-").lower()
+    tail = f".only-{scoped}" if scoped else ""
+    return (_EVAL_DIR / f"hint_retirement.{slug}{tail}.json",
+            _EVAL_DIR / f"hint_retirement.{slug}{tail}.md")
 
 
 def _hint_key(agent_id: str, idx: int) -> str:
@@ -216,9 +235,12 @@ def write_proposal(report: dict, date: str, repeat: int) -> Path | None:
         f"# 生成：{datetime.now(_TZ).isoformat()}　判定：双臂裸跑 ×{repeat} 轮全通过",
         "# 治理⑤：本文件不改任何运行时行为——摘除动作由人执行。",
         "#",
-        "# 摘除时**必须同时**把下方命中句降级为 guardrail 用例写进",
-        "# test/eval_corpus/route_hints_cases.yaml（initial_intents 模拟 LLM 已规划），",
+        "# 摘除时**必须同时**把下方命中句改写成**端到端回归用例**放进",
+        "# test/eval_corpus/mode_routing_cases.yaml（expect_intents: [该 intent]），",
         "# 否则退役 = 把回归保护也一起删了。",
+        "# ⚠ 不要留在 route_hints_cases.yaml：那里的断言是「施加 hint 后应得 X」，",
+        "#   hint 摘掉之后它恒等于「什么都没做应得 X」——一个永远为真或永远为假的断言，",
+        "#   不再保护任何东西（vision#0 退役时实测确认）。",
         "retire:",
     ]
     for c in cands:
@@ -239,6 +261,49 @@ def write_proposal(report: dict, date: str, repeat: int) -> Path | None:
     return p
 
 
+def cmd_intersect() -> int:
+    """跨 provider 取交集：只有**每一档都通过**的 hint 才是真候选。
+
+    单档跑出来的候选只证明那一档会——hint 的存在理由就是「弱 LLM 会漏/误路由」，
+    换个模型立刻回退是完全可能的。所以判定必须是交集，而且要机械可复算、不靠人眼比对。"""
+    reports = sorted(f for f in _EVAL_DIR.glob("hint_retirement.*.json")
+                     if ".only-" not in f.name)   # 局部跑不参与交集
+    if len(reports) < 2:
+        print(f"✗ 只找到 {len(reports)} 份报告，跨 provider 交集至少要 2 份。"
+              f"先分别跑：--live --provider <A> / --provider <B>")
+        return 1
+    # 只对**当前仍存在**的 hint 取交集：已经退役的（如 vision#0）会留在旧报告里，
+    # 但它不在新报告的枚举范围内——不排掉就会假报「只在一档成立」。
+    alive = {h["key"] for h in enumerate_hints(eval_live.load_agents(include_edge=False))}
+    per: dict[str, dict] = {}
+    for f in reports:
+        d = json.loads(f.read_text(encoding="utf-8"))
+        prov = (d.get("meta") or {}).get("provider") or f.stem
+        r = d.get("retirement") or {}
+        per[prov] = {k: {c["key"] for c in r.get(k, []) if c["key"] in alive}
+                     for k in ("candidates", "keep", "ineffective", "no_corpus")}
+        print(f"  {prov:<28} 候选 {len(per[prov]['candidates']):>2} / "
+              f"保留 {len(per[prov]['keep']):>2} / "
+              f"带 hint 也错 {len(per[prov]['ineffective']):>2}")
+    provs = list(per)
+    inter = set.intersection(*(per[p]["candidates"] for p in provs))
+    union = set.union(*(per[p]["candidates"] for p in provs))
+    print(f"\n★ **跨 {len(provs)} 档交集：{len(inter)} 条可退役**")
+    if inter:
+        print("    " + "、".join(sorted(inter)))
+    only = union - inter
+    if only:
+        print(f"\n⚠ 只在部分档位成立 {len(only)} 条——**不可退役**（换个模型就会回退）：")
+        for k in sorted(only):
+            ok = [p for p in provs if k in per[p]["candidates"]]
+            print(f"    {k:<26} 仅 {'、'.join(ok)} 通过")
+    harmful = set.union(*(per[p]["ineffective"] for p in provs))
+    if harmful:
+        print(f"\n⚠ 任一档「带着 hint 也答错」{len(harmful)} 条（失效或正在劫持，另案查）：")
+        print(f"    {'、'.join(sorted(harmful))}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -248,8 +313,15 @@ def main() -> int:
                     help="每句每臂重复轮次（默认 2；**n=1 不做退役判定**）")
     ap.add_argument("--limit-per-hint", type=int, default=3, help="每条 hint 取几句命中语料")
     ap.add_argument("--provider", default="", help="ProviderLock 期望 provider（退役判定必须 pin）")
+    ap.add_argument("--model", default="", help="档位 pin（如 deepseek-v4-flash）——"
+                                                "不给则用该 provider 的默认档")
     ap.add_argument("--date", default=datetime.now(_TZ).strftime("%Y-%m-%d"))
+    ap.add_argument("--intersect", action="store_true",
+                    help="跨 provider 取交集（读 docs/reviews/eval/hint_retirement.*.json）——"
+                         "**只有每一档都通过的 hint 才是真候选**")
     args = ap.parse_args()
+    if args.intersect:
+        return cmd_intersect()
 
     agents = eval_live.load_agents(include_edge=False)   # 端侧 agent 无 route_hints
     hints = enumerate_hints(agents)
@@ -273,7 +345,7 @@ def main() -> int:
     os.environ.setdefault("LLM_GATEWAY_ADDR", "localhost:50052")
     host = os.getenv("LLM_GATEWAY_HTTP_HOST", "localhost")
     lock = ProviderLock(f"http://{host}:{os.getenv('AUDIO_HTTP_PORT', '50059')}",
-                        args.provider)
+                        args.provider, args.model)
     try:
         provider = lock.pin()
     except RuntimeError as e:
@@ -303,8 +375,9 @@ def main() -> int:
                         "ineffective": [c["key"] for c in report["ineffective"]],
                         "no_corpus": [c["key"] for c in report["no_corpus"]]})
     rep["retirement"] = report
-    write_report(rep, render_markdown(rep), _OUT, _OUT_MD)
-    print(f"  报告 → {_OUT.relative_to(_ROOT)}")
+    out_json, out_md = _out_paths(provider, args.only)
+    write_report(rep, render_markdown(rep), out_json, out_md)
+    print(f"  报告 → {out_json.relative_to(_ROOT)}")
     return 0
 
 

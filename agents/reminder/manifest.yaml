@@ -57,31 +57,42 @@ route_hints:
     # 查询步整句踩掉（比无知识档还差）。补查询式前置标记：会不会/有没有/下不下。
     guard: '限速|车道|碰撞|疲劳|盲区|导航播报|电量提醒|保养提醒|是什么|怎么(开|关|用)|什么意思|什么来着|让你提醒|提醒过|要是|如果|假如|万一|会不会|有没有|下不下'
     slots: {title: "$text"}
-  - pattern: '我(今天|明天|后天|这周|未来.{0,2}天)?(有什么|有哪些|的)(安排|提醒|待办|日程)|看看?(我的)?(提醒|待办|日程)'
-    intent: reminder.list
-    policy: replace
-    priority: 56
-    guard: '行程|旅行|路线'
-    slots: {scope: "$text"}
-  - pattern: '(取消|删掉|删除|不用).{0,4}(提醒|待办)|(提醒|待办).{0,4}(清空|全删)|把提醒都?清空|(取消|删掉|删除)\s*第[一二三四五六七八九十0-9]+[条个]'
-    intent: reminder.cancel
-    policy: replace
-    priority: 56
-    slots: {title: "$text"}
-  # P1a 改时间：要求"改到"后紧跟时间词形（排除"空调改到26度"这类设备量），guard 双保险
-  - pattern: '(改到|改成|推迟到|提前到|延到|换到)\s*(明天|后天|大后天|今晚|周|星期|礼拜|早上|上午|中午|下午|晚上|凌晨|半?[0-9一二三四五六七八九十两]+点|[0-9]{1,2}[:：][0-9]{2}|[0-9一二三四五六七八九十]+号)|(提醒|待办).{0,4}(推迟|提前|改个?时间)|改\s*第[一二三四五六七八九十0-9]+条'
-    intent: reminder.update
-    policy: replace
-    priority: 56
-    guard: '行程|路线|导航|充电|空调|温度|风量|音量|座椅|亮度|第[0-9一二三四五六七八九十]+天'
-    slots: {title: "$text"}
-  - pattern: '(完成|办完|做完|搞定)了?.{0,4}(第[一二三四五六七八九十0-9]+[条个项]|那[条个]|提醒|待办)|完成提醒[:：]'
-    intent: reminder.complete
-    policy: replace
-    priority: 56
-    guard: '行程|导航|充电'
-    slots: {title: "$text"}
-
+  # 【reminder.list 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑
+  #   deepseek:deepseek-v4-flash / minimax:MiniMax-M3 各 ×2 轮，其 4 条命中语料**全覆盖**
+  #   （非抽样——抽 3 句会系统性高估，命中面越大的规则越容易被放行）；
+  #   摘掉它之后仍全部落对 → 模型 + 范例已经自己会了。
+  #   ⚠ 证据只覆盖上述两档。本 hint 家族当初是为 **MiMo** 写的
+  #     （route_hints.py 开篇：「弱 LLM（MiMo）常漏/误路由」），而本环境
+  #     MiMo 无可用 key（探针 all models failed），**切回 MiMo 须复验**。
+  #   回归保护未删：命中句已改端到端口径迁入 mode_routing_cases.yaml。
+  #   要恢复：git log -S '我(今天|明天|后天|这周|未来.{0,2}天)' 找回原块。
+  # 【reminder.cancel 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑
+  #   deepseek:deepseek-v4-flash / minimax:MiniMax-M3 各 ×2 轮，其 4 条命中语料**全覆盖**
+  #   （非抽样——抽 3 句会系统性高估，命中面越大的规则越容易被放行）；
+  #   摘掉它之后仍全部落对 → 模型 + 范例已经自己会了。
+  #   ⚠ 证据只覆盖上述两档。本 hint 家族当初是为 **MiMo** 写的
+  #     （route_hints.py 开篇：「弱 LLM（MiMo）常漏/误路由」），而本环境
+  #     MiMo 无可用 key（探针 all models failed），**切回 MiMo 须复验**。
+  #   回归保护未删：命中句已改端到端口径迁入 mode_routing_cases.yaml。
+  #   要恢复：git log -S '(取消|删掉|删除|不用).{0,4}(提醒|待' 找回原块。
+  # 【reminder.update 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑
+  #   deepseek:deepseek-v4-flash / minimax:MiniMax-M3 各 ×2 轮，其 4 条命中语料**全覆盖**
+  #   （非抽样——抽 3 句会系统性高估，命中面越大的规则越容易被放行）；
+  #   摘掉它之后仍全部落对 → 模型 + 范例已经自己会了。
+  #   ⚠ 证据只覆盖上述两档。本 hint 家族当初是为 **MiMo** 写的
+  #     （route_hints.py 开篇：「弱 LLM（MiMo）常漏/误路由」），而本环境
+  #     MiMo 无可用 key（探针 all models failed），**切回 MiMo 须复验**。
+  #   回归保护未删：命中句已改端到端口径迁入 mode_routing_cases.yaml。
+  #   要恢复：git log -S '(改到|改成|推迟到|提前到|延到|换到)\s*' 找回原块。
+  # 【reminder.complete 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑
+  #   deepseek:deepseek-v4-flash / minimax:MiniMax-M3 各 ×2 轮，其 2 条命中语料**全覆盖**
+  #   （非抽样——抽 3 句会系统性高估，命中面越大的规则越容易被放行）；
+  #   摘掉它之后仍全部落对 → 模型 + 范例已经自己会了。
+  #   ⚠ 证据只覆盖上述两档。本 hint 家族当初是为 **MiMo** 写的
+  #     （route_hints.py 开篇：「弱 LLM（MiMo）常漏/误路由」），而本环境
+  #     MiMo 无可用 key（探针 all models failed），**切回 MiMo 须复验**。
+  #   回归保护未删：命中句已改端到端口径迁入 mode_routing_cases.yaml。
+  #   要恢复：git log -S '(完成|办完|做完|搞定)了?.{0,4}(第[' 找回原块。
 requires_permissions:
   - profile.read        # 提醒属用户数据域 + shared_state 经 profile KV；不新增 scope
   - profile.write
