@@ -149,6 +149,32 @@ python test/eval_s2s_escalation.py --desc "…" # §6.2 灰度调参：换 escal
 过滤掉依赖真实 LLM 路由/embedding 的用例）。两者刻意不同，脚本清单的单一真相源是文件本身，不在
 本 README 手工重复维护第二份列表；细节见 `docs/design/2026-07-03-r3.3-e2e-ci-gate.md`。
 
+## 5.3 离线评测与分布尺（`docs/reviews/eval/README.md` 是口径唯一真相源）
+
+```bash
+# 回归闸（零网络，CI 阻断；「别倒退」）
+python test/eval_fast_intent.py        # 端侧规则
+python test/eval_route_hints.py        # 云侧确定性路由
+python test/eval_mode_routing.py       # 四模式端到端口径 + 确定性子集
+python test/eval_registry_resolve.py   # registry top-1
+python test/eval_skills.py             # 知识层契约 + 检索 golden
+python test/eval_exemplars.py          # 范例层契约 + 域路由探针（M5 P1）
+
+# 分布尺 N1（真栈，回答「这个月变聪明了吗」，**不是**回归闸）
+python test/routing_bench.py                        # 零成本：语料覆盖 + 隐藏分母 + 域偏斜
+python test/routing_bench.py --live --write-baseline # 出 N1 与分域混淆矩阵
+
+# 规则的出口（真栈，退役判定）
+python test/hint_retirement.py                                  # 干跑：盘点每条 hint 的命中语料
+python test/hint_retirement.py --live --provider <A> --model <m> # 双臂裸跑（按 provider 分文件）
+python test/hint_retirement.py --intersect                       # **跨 provider 取交集**才算候选
+python scripts/retire_hints.py --apply                           # 按交集执行退役（默认 dry-run）
+```
+
+**三条最容易踩的**：①`--live` 车道会**全局 pin** active provider，跑完记得还原（脚本末尾有还原步，
+被中止时要手工确认）；②退役判定**必须跨 provider 且覆盖全部命中句**，抽样会系统性高估；
+③软层 A/B 的 Δ **只能在实际注入的子集上算**——未注入的两臂 prompt 逐字相同，翻面是采样方差。
+
 ## 6. Nightly 真实 LLM 语料（默认 skip）
 
 复杂多意图、跨 Agent 组合、多轮指代依赖真实 LLM，单列 nightly，不进普通 PR 门禁：

@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.13（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-07-27（v1.12 定稿归档——Skill 层挂起链继承与逐 skill 消融归因合入）
+> 版本：v1.14（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-07-29（v1.14 定稿归档——落域范例库第三通道、规则退役流水线、RoutingBench 落域指标合入）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -357,16 +357,26 @@ flowchart LR
 - **结果聚合**：多 Agent 结果由 LLM 改写成连贯的口语化播报 + 结构化卡片，保证体验一致。
 - **多轮与澄清**：缺槽位（`NEED_SLOT`）或需确认（`NEED_CONFIRM`）时，生成追问，挂起任务状态等待用户回复。
 
-### 5.2.1 规划知识 Skill 层与结构化规划输出（2026-07-24 定稿归档；2026-07-26 Skill 层闭环补全合入）
+### 5.2.1 Planner 的三条智能供给通道与规则治理（2026-07-24 定稿归档；2026-07-26 Skill 层闭环；2026-07-29 范例库与规则退役合入）
 
-Planner 的两种"智能供给"均已声明式化（设计详见 `docs/design/2026-07-24-eva-benchmark-intelligence-upgrade.md` 与两份子 RFC）：
+Planner 的智能供给全部声明式化，且**规则第一次有了出口**（设计详见 `docs/design/2026-07-24-eva-benchmark-intelligence-upgrade.md` 与 `docs/design/2026-07-28-intent-accuracy-data-flywheel.md`）。三条通道按权威链由硬到软：`route_hints`（LLM **之后**确定性改写）> `skills/`（LLM 之前的**知识**）> `skills/exemplars/`（LLM 之前的**数据**，最软）：
 
 1. **规划知识 Skill 层（`skills/`，M0b；2026-07-26 补全闭环）**：领域组合知识与跨域判据从中央 system prompt 外迁为声明式文件——`guides/`（领域组合知识+few_shots，预筛 top-K 按需注入）、`policies/`（跨域规划**软约束**，常驻注入）、`workflows/`（v2 预留）。`SKILLS_MODE=off|shadow|canary|full`（默认 full）；中央 `_PLANNER_BASE` 只余通用规划契约。**加规划知识=投 skill 文件，不改编排核心**——与 route_hints（LLM 之后的确定性纠错）互补：skill 是 LLM 之前的知识供给。权威链（软硬分层）：VAL/payment/Runtime Policy > Capability Manifest > Plan Validator > PlannerPolicyPack（软）> PlanningGuide（软）。
    - **检索双通道（2026-07-26）**：`SKILLS_RETRIEVAL=lexical|hybrid`（默认 hybrid）——词法命中（keywords 显式信号）恒保留，语义通道以 guide `description` 向量余弦**补位** paraphrase（经 llm-gateway Embed，与 registry 语义路由同源；**fail-open** 回词法不堵规划）。档位与阈值（0.40）由 paraphrase 语料阈值扫描拍板（词法 0/11 → hybrid 11/11、零新增噪声），兑现 M0b「embedding 升级由召回数据决定」的悬空承诺。
    - **知识必须可证有效**：skill 自带 golden（`expect_intents` AND/`expect_any`/`expect_not`，项支持 `a|b` 容忍）经 `eval_skills` 三车道消费——离线检索门禁进 GitHub CI，live 车道（真 planner+真 LLM）以 `SKILLS_MODE=off` A/B 对照量化知识增益（首跑 Δ=+5/10）。`plan.skills` 归因名单反映**真实注入**（检索通道 `@lex`/`@vec`、超预算 `!clipped`）。
    - **分层边界的实证**：skill（LLM 前知识）教对了也会被 `policy: replace` 的 route_hint（LLM 后纠错）盖掉——live 车道首跑即抓到 nearby 设施发现 hint 的 guard 缺口踩掉 charging.find；holdout 车道次日再抓到 reminder「叫我」hint 劫持无「要是/如果」标记的条件句。凡「知识不生效」的 badcase，先查 hint 层再改知识。**分工口径（2026-07-27 采样方差实证）**：教科书形态用 route_hints 钉死（canonical 不该靠温度采样），skill 知识管 paraphrase 泛化。
    - **全生命周期闭合（2026-07-27 评审补强；同日二批补齐挂起链与归因）**：T2 再规划按 `plan.skills` 名单**继承**初规划注入的同一份知识（条件依赖类知识的决策恰发生在再规划轮），且**跨挂起成立**——`plan.skills` 随 `pending_plan` 持久化，补槽/确认恢复后的再规划不失忆；loader 对坏文件全面 fail-open（结构性坏文件跳过、非法标量回默认、重名先到者胜、改坏沿用 last-known-good；env 垃圾值回默认告警不崩启动）而 eval 文件级校验在 CI 是**阻断步**——运行时保知识可用性、门禁保主干整洁；golden 增 `holdout`（防 few-shot 原句自证）与 `expect_complexity`（adaptive 类知识的核心主张可断言），live 报告按 in-sample/holdout 拆分，**逐 skill 消融车道**做 per-guide 因果归因（full/off 分不清「知识的功」还是「hint 的功」；Δ=0 自动提示查 hint 覆盖）。hint 层教训沉淀：SOC 词形对手机/耳机等**设备**同样成立——replace hint 的 guard 必须排除非车辆主语（评审二批抓到的回归）。
-2. **结构化规划输出（`submit_plan`，M1a）**：规划轮经原生 function calling 强制输出合法 Plan JSON（单一 `submit_plan` 工具、named tool_choice，`PLANNER_TOOLCALL=on|off` 默认 on），替代文本补全+脆弱 JSON 截取。schema 顶层=既有计划协议、**不含 `require_confirm`**（确认权在 capability manifest ∨ action ∨ VAL 硬层，LLM 无权降级）；协议失败轮内降级（同轮文本抢救→JSON 路径→兜底），最坏调用数与旧路径持平。承载走既有 `CompleteRequest.tools`/`CompleteResponse.tool_calls` Struct 字段（V1 不改 proto；V2 真 agentic tool loop 需 proto 演进）。
+2. **落域范例库（`skills/exemplars/`，M5 P1；2026-07-29 合入）**：Planner 的**第三条供给通道**，装的不是知识而是**数据**——一条 `话术 → 正确落域` 的记录，检索后作 few-shot 进 prompt。定位是权威链的**最软层**（在 PlanningGuide 之下）：只影响 LLM 判断，**不做任何硬路由**。
+   - **它解决的是「改进循环的产物」问题**：在此之前，修一个落域 badcase 的标准产物是**正则**（`route_hints`），而规则只进不出——没有任何流程会问「这条 hint 模型现在自己会了吗」。范例把标准产物换成数据：**hint 写错是事故**（模型判对了也被 `replace` 踩掉），**范例写错只是噪声**（占了预算，删一行就没了）。故一个 badcase 三选一的默认答案是范例。
+   - **机制整体复用 Skill 层范式**（hybrid 双通道检索 / 预算硬帽 / fail-open / `plan.exemplars` 归因 / T2 与挂起继承），Embed 出口与失败冷却与 skills **共用一份**（`orchestrator/cloud/embedding.py`——网关挂了两条通道一起回落词法，而不是各超时一次）。差异只在词法侧：范例文本仅 5-15 字，裸 Dice 会被功能词 bigram 支配，故用**语料自身的 IDF 加权**——不建停用词表（那是又一个只进不出的手工规则），投一个范例文件权重即自动重算。
+   - **三个来源**：manifest 199 条 `examples` 一次性盘活（此前是死资产：不进 planner prompt，只喂 registry 打分）、badcase 标注一键转化（消费 `turns.gold_intents` 标注载体）、evolve 第四类提案（`route_error`/`slot_error` 默认产**范例草案**而非 regex 草案，原 bigram 拼 pattern 生成器随之退役——这是提案可应用率从 0% 起飞的路径）。
+   - **一条实测出来的限度**：「一次修复自动传播到同族说法」**成立的前提是语料密度，不是单条范例的魔力**。首测中新范例修好的是它自己那个形态（精确锚），paraphrase 是被**已有范例 + 语义通道**接住的。飞轮的价值随条数增长，早期别指望单条见效。
+3. **规则的出口：hint 退役流水线（M5 P2；2026-07-29）**——补上架构此前的结构性缺口「规则只进不出」。对每条 hint 的命中语料做**双臂裸跑**（A 臂全量、B 臂只摘这一条，评测侧过滤 agent 列表实现，**零运行时改动**）；B 臂仍落对 ⇒ 模型+范例已自己会了 ⇒ 退役。首轮把 `route_hints` 从 32 条降到 **12 条**。
+   - **判定纪律（两条都是被数据逼出来的，不是设计时想到的）**：①**证据必须覆盖全部命中句**——抽 3 句时判 27 条可退役，覆盖全部命中语料后降到 21 条；**抽样的偏差方向是固定的：命中面越大越容易被放行，而那恰是风险最高的一批**。②**必须跨 provider 取交集**——单档跑出来的候选只证明那一档会，而 hint 的存在理由正是「弱 LLM 会漏/误路由」；实测两档交集把 3 条单档候选挡在门外。
+   - **退役的代价必须记账**：这些召回断言原本是**阻断 pytest**，退役后保护改为端到端口径进 live 车道——**从「CI 阻断」降级为「人工触发」**。这不是可以忽略的细节，是退役换来的真实成本。
+   - **安全面不由路由评测裁决**：`require_confirm=true` 的能力其 hint 一律不退（治理⑥）——**路由评测不构成安全证据**。
+4. **落域指标 RoutingBench（M5 P2）**——兑现 §10 许诺过的「意图识别准确率/路由命中率」。四个离线 eval 是**回归闸**（防倒退，天天绿），不是**分布尺**（量进步）；RoutingBench 把散落语料统一到「话术→期望落域」口径，出 canonical/paraphrase 拆列与分域混淆矩阵。**读它必须配着三条限制**：语料可用量有限且**被排除的条数是隐藏分母**（每次报告都印）、域分布严重偏斜（前三域占七成，N1 涨不等于车控导航变好）、canonical 高分主要说明语料已被用来修过系统。
+5. **结构化规划输出（`submit_plan`，M1a）**：规划轮经原生 function calling 强制输出合法 Plan JSON（单一 `submit_plan` 工具、named tool_choice，`PLANNER_TOOLCALL=on|off` 默认 on），替代文本补全+脆弱 JSON 截取。schema 顶层=既有计划协议、**不含 `require_confirm`**（确认权在 capability manifest ∨ action ∨ VAL 硬层，LLM 无权降级）；协议失败轮内降级（同轮文本抢救→JSON 路径→兜底），最坏调用数与旧路径持平。承载走既有 `CompleteRequest.tools`/`CompleteResponse.tool_calls` Struct 字段（V1 不改 proto；V2 真 agentic tool loop 需 proto 演进）。
    - 实施教训（V2 设计约束）：tool schema 与输出指令会三向改变模型输出分布（可选字段诱发多填、无说明 object 诱发少填、"写全"指令诱发编造占位值）——凡改 schema 必过旅程级行为对照。
 
 ### 5.2.2 执行治理：Task Ledger 与 Outcome Verifier（2026-07-25 定稿归档）
@@ -1042,5 +1052,7 @@ agents/<name>/
 | v1.9 | 2026-07-26 | 内容性合入（M0a→M4 总体验收的架构级修正，验收报告 `docs/reviews/2026-07-26-acceptance-review-m0a-m4.md`）：§5.2.2 执行治理硬化四条（**确认权只随「确认」注入**=补槽恢复不注 confirmed、**超时≠失败**=超时步防重发且与真失败重试语义相反、**旁路路径与主路径同闸**=流式直通挂点须枚举全部执行路径、挂起态携带防抖指纹）；§7.4 确认链回路侧（**「确认/取消」须有被保证送达确认闸的机制**=确认窗内定稿强制走主链，与「权威靠不给输入实现」同构）与**身份是唤醒粒度不是会话粒度**（occupant 上行帧）；§7.2 dedup_key=触发实例语义 + 投递失败发裁决事件 + HMI 端 S2S 交互中主动消息不出声；§7.3 超时口径不承诺不存在的入口 + 补偿现状诚实标注；§7.5 GDPR 级联边界扩至会话原文（TTL+ForgetUser 级联）；§9.5 铁律③清扫记至第三批（trip-planner）与根除标准形态 |
 | v1.7 | 2026-07-25 | 内容性合入：§7.4 形态接入——端到端语音（S2S）与确定性链的分工（两端两个契约换厂商不动上层、三层状态机本侧权威且**权威靠不给输入实现**、provider session=可丢弃缓存、**单一出口 escalate 不注 capability 清单**、域灰度=收放工具描述、通道拓扑代价须以文本回灌补偿、隐私口径变化点显式呈现）定稿归档，含打断三层语义与「工具调用中被打断≠回滚」 |
 | v1.5 | 2026-07-25 | 内容性合入：§7.1 记忆图谱——带权偏好（加列不建新表、显式偏好不衰减、等价即加权）与关系边（封闭词表、一跳解析、消费面先于存储面）定稿归档，含生命周期强制项与「级联删除红线/导出对称」；情绪信号明确划归会话态不入记忆层 |
+
+| v1.14 | 2026-07-29 | 内容性合入（数据飞轮 M5 P1+P2）：§5.2.1 扩为 Planner 三通道与规则治理——**落域范例库**（把「修 badcase 的产物」从正则换成数据，最软层、hint 写错是事故范例写错只是噪声、IDF 加权而非停用词表、语料密度才是泛化前提）、**hint 退役流水线**（补上「规则只进不出」的结构性缺口，32→12；判定两条纪律=证据覆盖全部命中句·跨 provider 取交集；**退役把召回保护从 CI 阻断降级为人工触发**须记账；require_confirm 不由路由评测裁决）、**RoutingBench 落域指标**（兑现 §10 许诺；读它必须配三条限制=隐藏分母·域偏斜·canonical 高分的来源） |
 
 > 校准记录（不 bump）：2026-07-02/03/10 同步 R1-R3 落地现状；2026-07-18 实现说明、§3.1 T0-T2 运行模型对应、点餐→周边发现、§13 目录映射校准。

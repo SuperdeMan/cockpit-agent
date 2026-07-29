@@ -143,6 +143,8 @@ Agent 的接入完全声明式：manifest 声明能力与权限、`route_hints` 
 
 规划知识按需供给（`skills/`）：多日行程、导航顺路、条件依赖、充电分流这类**组合判据**以声明式文件供给 Planner——词法+语义双通道检索注入（fail-open 回词法），每份知识自带 golden 经 CI 门禁与真栈 A/B、逐 skill 消融验证「真的让规划变对了」；加规划知识=投一个文件，不改编排核心。
 
+落域准确率靠**数据**增长，不靠人写正则：一条 `话术 → 正确落域` 的范例投进 `skills/exemplars/`，检索后作 few-shot 影响 Planner 判断——它是权威链最软层，**不做硬路由**，所以写错只是噪声而不是事故（确定性 `route_hints` 在 LLM 之后硬改写计划，写错会把模型判对的结果踩掉）。配套的是**规则的出口**：对每条 hint 的命中语料做跨模型双臂裸跑，「模型自己已经会了」的规则出退役提案，首轮把确定性路由规则从 32 条降到 12 条——**规则第一次可以减少**。落域质量另有分布级尺子（canonical/paraphrase 拆列 + 分域混淆矩阵），与只防倒退的回归闸分开。
+
 ### 记忆、上下文与个性化
 
 - **语义记忆**（pgvector）：自动从对话抽取偏好与个人实体，语义召回注入规划与闲聊；隐私分级、可查可删。
@@ -228,7 +230,8 @@ proto/            gRPC 契约——所有接口的唯一真相源
 gateway/          Go 接入网关（edge/ 端侧、cloud/ 云侧）
 orchestrator/     edge/ 端侧编排 + FastIntent + VAL（PoC 模拟）；cloud/ 云端 LLM Planner
 agents/           14 个领域 Agent；_sdk/ 公共 SDK（BaseAgent / 检索与接地内核 / 任务账本）
-skills/           Planner 规划知识声明式载体（guides/ 领域组合判据、policies/ 跨域软约束）——投文件即生效，golden 进 CI 门禁
+skills/           Planner 智能供给声明式载体：guides/ 领域组合判据、policies/ 跨域软约束、
+                  exemplars/ **落域范例库**（话术→正确落域的数据，权威链最软层）——投文件即生效，全部进 CI 门禁
 llm-gateway/      LLM 多模型网关——LLM / Embedding / ASR / TTS 的唯一出口
 registry/         Agent 注册中心（manifest + 能力语义检索）
 memory/           记忆 / 画像服务（pgvector）
