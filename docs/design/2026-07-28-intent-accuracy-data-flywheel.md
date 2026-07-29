@@ -251,6 +251,84 @@ off 61/62 → **可归因 Δ=+1、可归因回归 0**（`docs/reviews/eval/basel
 
 **DoD**：第一期周报出数（N1 基线成立）；hint 存量首次净减（≥1 条退役）。
 
+---
+
+#### P2 落地记录（2026-07-29，分支 `feat/m5-p1-exemplar-store` 续）
+
+**交付**：`test/routing_bench.py`（N1 尺子）｜`test/hint_retirement.py`（规则的出口）｜
+`test/eval_live.py`（三个 eval 各抄一份的真栈装配收口）｜evolve `shadow` 步（强模型影子
+分诊）｜`_always_include` 补 `category: core`｜registry 打分换 IDF 无关的 bigram 归一｜
+端云 `_edge_nlu` 透传 + `edge_agree` 分歧信号。
+
+**① N1 基线成立（2026-07-29 首测，`docs/reviews/eval/baseline_routing.json`）**
+
+| 指标 | 数 |
+|---|---|
+| N1 域级准确率 | **189/192 = 98.4%** |
+| canonical | 106/106 = 100% |
+| **paraphrase（主指标）** | **83/86 = 96.5%** |
+
+**这个数要配着三条限制读，否则会读成「已经很好了」**：
+- **语料只有 192 条可用**。逐条登记了未纳入的来源与理由（rejection 47 / clarify 23 /
+  s2s_escalation 24 / registry_resolve 20 / paraphrase 11 / edge_regressions 2 都**没有
+  落域金标**，不是落域尺子）+ 逐条排除 56 例（`live:false` 的端侧域用例、带
+  `initial_intents` 的护栏用例）。**被排除的条数是 N1 的隐藏分母**，报告每次都印。
+- **域偏斜严重**：前三域（info/chitchat/research）占 70%，navigation 只有 5 例、hvac 1 例。
+  现有语料是围绕「四模式路由」长出来的，**N1 涨了不等于车控与导航变好了**。
+- **98.4% 主要说明语料已被用来修过系统**（canonical 100% 尤其如此——那是 hint 钉出来的）。
+  它的价值是**基线与趋势**，不是「当前很准」的证书。
+
+**② 开放分布可服务率（8590 飞书语料分层抽样 120 例）：落对 79/120，其中 9 例落到能力面
+无对应域。** ⚠ **不可与 Shadow NLU 的 91.2% 直比**——那是「LLM 在 9 域封闭集里分类」，
+不受能力面约束；这里是「真 planner 在**我们实际有的能力**里落域」。语料来自另一个产品，
+「第一页」「取消订阅一下」「大后年的火车票查询」「航班查询」这类句子**不可能**落对。
+**所以它衡量的是能力面缺口，不是路由质量。**（原本打算拿它当 domain 底座对照 Shadow NLU，
+实测后否掉了这个口径——两个数测的不是一回事。）
+
+**③ 规则第一次有了出口**：`test/hint_retirement.py` 对每条 hint 的命中语料做**双臂裸跑**
+（A 臂全量、B 臂只摘这一条，评测侧过滤 agent 列表，零运行时改动）。三条纪律：
+provider 必须 pin、`--repeat` 全通过才算候选（**n=1 不做退役判定**）、产物是提案不改仓库。
+干跑盘点即有收获：**32 条 hint 里 `mcp-bridge#0`（shop.order）没有任何命中语料**——那正是
+总体验收里「路由掷硬币，修复方式＝再加一条 hint」的那条，**加了规则却没加回归保护，
+连「还需要吗」都问不了**。
+
+**④ catalog 保护判据机制化（D1 根治）**：`_always_include` 补上 `category: core`。
+**与 RFC 原设想不同的是「补集」而不是「替换」**——原文说要用显式声明替代「有 hint 就保护」
+的巧合耦合，实测那条不能删：RouteHintEngine 从 `agent_map` 读 hints，manifest 被预筛丢掉
+它就看不到，**那是硬约束不是巧合**。补 core 之后 `navigation` 与 `road-safety`（都是
+`core` 却恰好没写 hint）首次进入保护集——它们正是 D1 里被整域裁出 prompt 的两个。
+顺带修掉一个 P2 自己造的隐患：**hint 退役会顺手删掉那个 Agent 的 catalog 保护**，治理
+动作不该有这种远处的副作用。契约测试改断言「核心域一个都不许被裁」。
+
+**⑤ `PLANNER_CATALOG_TOP_K` 刻意不下调**（RFC 原计划调到 8-10）。复算：补 core 后
+16 个 agent 里 14 个受保护（7 core + 4 仅 hint + fallback + 2 端侧核心），预筛能丢的只剩
+`manual-rag` 与 `parking-payment` 两个。**检索化在当前形态下没有空间**，硬调 top_k 只是
+把 registry 语义预筛的质量风险引进来换两个 agent 的字符数。真正的杠杆是**先让受保护集合
+瘦下来**——即 P2-2 的 hint 退役与 core 声明的收紧。这条记为「有意不做」，附判据。
+
+**⑥ registry 打分：逐单字符 → bigram + 长度归一（D4）**。旧算法两个毛病：中文单字噪声
+（「的/我/一/个」在任何 desc 里都命中）、**desc 越长命中越多**。后者的物证是 deep-research
+manifest 里那句注释——「desc 刻意保持原句不加长，否则把 trip 的流量吸过来」：**描述写法
+在为打分算法的缺陷让路，倒果为因**。改完 `eval_registry_resolve` 15/15 零回归，并新增
+性质测试 `test_longer_description_does_not_steal_top1` 钉住「加长描述不得改变 top-1」——
+那条历史约束随之解除（manifest 注释改为记录解除原因，不删）。
+
+**⑦ 端云透传（D2）：只传判断，不进 prompt。** 端侧 fast_intent 的初判随 `meta._edge_nlu`
+上云，engine 算出 `edge_agree` 落 `cloud.planning` span，collector 合并进 `turns.edge_nlu`
+（`!=` 后缀=分歧），evolve mine 据此产 `edge_divergence` 信号——**分歧轮自动进日报**，
+人按日报去 dashboard 标 gold（→ 范例 → 飞轮）。存成一列而不是逐轮拉 span 详情，是因为
+「分歧要能把这一轮拉进日报」就必须在扫描时可见，逐轮补拉是 N+1（P0 刚砍掉的东西不能加回来）。
+**RFC 原文的「planner 上下文加一行端侧初判」有意不做**：Shadow NLU 实测端侧规则臂 75.9%、
+LLM 91.2%，把更差的判断塞进更好的模型的上下文是负期望的赌；且刻意**不留 env 开关**——
+那会变成一个没人测过却随时可能被打开的分支。源码级断言守住（`test_edge_nlu_divergence.py`）。
+
+**⑧ 强模型影子分诊**：`evolve shadow` 用 `@primary` 同 prompt 重规划（**唯一的变量就是
+档位**，换两个变量就什么都证明不了）。判定表最重要的一条是——**没有金标时不假装能判对错**：
+有金标才分 `model_gap`（强档对/线上错，**换范例治不好**，是 P4 蒸馏的收益证据）/
+`both_wrong`（信息知识问题）/`both_right`/`prod_only_right`；无金标只报 `diverges`/`agrees`，
+判断留给人。model_gap 的案子在范例草案里当面标红「投范例只是打补丁」。默认**不进 nightly**
+（要真栈 + 烧强档 token，同 eval_skills live 的理由），`--with-shadow` 显式开。
+
 ### P3 端侧 NLU（1-2 周，可与 R4.1b P1 对象化并行）
 
 R4.1b 决策卡设定的 B 路启动条件**已经满足**：规则表逼近 ~300 条（现 313 个分支）、覆盖率 <85%（现 76.2%，端侧应接子集 80.0%）、且 Shadow NLU 已量化收益（LLM 91.2% vs 规则 75.9%）。「NLU 只解决识别不解决执行」的裁决仍然有效——执行侧对象化（R4.1b P1）并行推进，识别了执行不了的域不切。

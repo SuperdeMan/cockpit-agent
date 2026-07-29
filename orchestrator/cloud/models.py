@@ -132,6 +132,12 @@ class PlanContext:
     # HMI 会话级偏好（model_pref/answer_length/assistant_name/memory_enabled），
     # 来源 HandleRequest.meta，调用 Agent 时并入 ExecuteRequest.meta 透传。
     prefs: dict[str, str] = field(default_factory=dict)
+    # M5 P2-D2 端云透传：端侧 fast_intent 的初判（"<intent>|<conf>"，无判定则空）。
+    # **只作观测与分歧挖掘，不进 prompt**——Shadow NLU 实测端侧规则臂 domain 准确率
+    # 75.9%、LLM 91.2%，把更差的判断塞进更好的模型的上下文是负期望的赌。
+    # 刻意**不留 env 开关**：那会变成一个没人测过却随时可能被打开的分支；真要开就改代码，
+    # 并且必须附 A/B 数据（性质由 test_edge_nlu_divergence.py 源码级断言守住）。
+    edge_nlu: str = ""
 
 
 @dataclass

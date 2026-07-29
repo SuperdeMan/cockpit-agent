@@ -589,6 +589,13 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
 
         # 慢路径：上云编排
         turn["path"] = "cloud"
+        # 端云信息断链修复（M5 P2-D2）：端侧已经算出的分类结果此前**原样不随行**——
+        # 既浪费一次免费信号，也让「端云分歧」这个信息量最大的标注线索无从谈起
+        # （Shadow NLU 实测规则臂 75.9% vs LLM 91.2%，分歧处正是两边最该被人看一眼的地方）。
+        # 只带**判断**不带执行：云侧默认只用于观测与分歧挖掘，不注入 prompt（见 planning.py）。
+        if intent and intent.get("name"):
+            request.meta["_edge_nlu"] = (
+                f"{intent['name']}|{float(intent.get('confidence') or 0):.2f}")
         logger.info("CLOUD route: %s", request.text)
         await self._emit_span(
             trace_id,

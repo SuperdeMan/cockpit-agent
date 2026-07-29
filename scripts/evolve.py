@@ -205,11 +205,16 @@ def cmd_mine(args) -> Path | None:
         # degraded 判定优先读 turns.plan_mode 列（P0 起 collector 从 cloud.planning
         # span 合并写入，零额外请求）；旧行无列值再走 /api/turns 详情兜底（SQLite 持久，
         # 不再读 200 条内存环——那是断点②：collector 重启历史就挖不到）。
-        plan_mode, plan_head = str(t.get("plan_mode") or ""), ""
+        plan_mode, plan_head, detail = str(t.get("plan_mode") or ""), "", None
+        # 端云分歧（M5 P2-D2）：collector 已在 turns.edge_nlu 里存好（`!=` 后缀=分歧），
+        # 扫描时即可见——**分歧本身就是信号**，不需要逐轮补拉 span 详情（那是 N+1）。
+        edge_nlu = str(t.get("edge_nlu") or "")
+        if edge_nlu.endswith("!="):
+            signals.append("edge_divergence")
         if not plan_mode:
             try:
-                plan_mode, plan_head = _plan_mode_of(
-                    _http_json(f"{base}/api/turns/{t.get('trace_id')}"))
+                detail = _http_json(f"{base}/api/turns/{t.get('trace_id')}")
+                plan_mode, plan_head = _plan_mode_of(detail)
             except Exception:
                 pass
         for key, val in (("path", t.get("path") or "?"),
@@ -227,7 +232,8 @@ def cmd_mine(args) -> Path | None:
             # 报告案族卡要 plan 摘要头：只对命中信号的轮补拉一次详情（不再全轮 N+1）
             try:
                 _, plan_head = _plan_mode_of(
-                    _http_json(f"{base}/api/turns/{t.get('trace_id')}"))
+                    detail if detail is not None
+                    else _http_json(f"{base}/api/turns/{t.get('trace_id')}"))
             except Exception:
                 pass
         mined.append({
@@ -238,6 +244,10 @@ def cmd_mine(args) -> Path | None:
             "speech": redact(t.get("speech") or "")[:200],
             "note": (t.get("note") or "")[:200],
             "plan_mode": plan_mode, "plan_head": redact(plan_head)[:160],
+            "edge_nlu": edge_nlu,
+            # 影子分诊要用（M5 P2）：线上实际落域 + 人工标注的正确落域（可空）
+            "intents": str(t.get("intents") or ""),
+            "gold_intents": str(t.get("gold_intents") or ""),
         })
     out = _work_dir(date) / "mined.jsonl"
     _write_jsonl(out, mined)
@@ -352,9 +362,111 @@ def cmd_triage(args) -> Path:
     return out_path
 
 
+# ── shadow：强模型影子分诊（M5 P2，RFC §5-P2-3） ─────────────────────────────
+
+# 只对「落域类」根因做影子重规划——phrasing/data_source/infra 换个模型也不会变对，
+# 白烧一次强档调用。
+_SHADOW_CAUSES = ("route_error", "knowledge_gap", "slot_error", "unknown")
+
+
+def shadow_verdict(prod: str, shadow: str, gold: str) -> str:
+    """三态判定。**没有金标时不假装能判对错**——那是这一步最容易骗自己的地方。
+
+    有金标（人在 dashboard 标过）：
+      model_gap   线上错、强档对 → **模型能力问题**，范例/知识治不了，是 P4 蒸馏的收益证据
+      both_wrong  两档都错       → 信息/知识问题，走范例或 skill 提案
+      both_right  两档都对       → 该轮的 badcase 信号来自别处（话术/数据源），落域没问题
+    无金标（绝大多数轮次）：只报**分歧**，把判断留给人——
+      diverges    强档给出了不同落域 → 值得人看一眼（可能线上错，也可能强档错）
+      agrees      两档同答         → 更可能是信息/知识问题（换模型救不了）
+    """
+    p = {i.strip() for i in prod.split(",") if i.strip()}
+    s = {i.strip() for i in shadow.split(",") if i.strip()}
+    g = {i.strip() for i in gold.split(",") if i.strip()}
+    if not g:
+        return "agrees" if p == s else "diverges"
+    p_ok, s_ok = bool(p & g), bool(s & g)
+    if s_ok and not p_ok:
+        return "model_gap"
+    if p_ok and s_ok:
+        return "both_right"
+    if not p_ok and not s_ok:
+        return "both_wrong"
+    return "prod_only_right"       # 强档反而更差：也是有用信号（别急着换档）
+
+
+def cmd_shadow(args) -> Path:
+    """对落域类 badcase 用 `@primary` 强档同 prompt 重规划一次。
+
+    「模型不行还是信息不够」从此不靠猜。同 prompt 是关键——换了 prompt 就变成两个变量，
+    差分定位立刻失效（本仓反复吃过的亏）。"""
+    work = _work_dir(args.date)
+    triaged = _read_jsonl(work / "triaged.jsonl")
+    out_path = work / "shadow.jsonl"
+    rows = [t for t in triaged if t.get("cause") in _SHADOW_CAUSES and t.get("user_text")]
+    if not rows:
+        print("shadow：无落域类案例，跳过")
+        _write_jsonl(out_path, [])
+        return out_path
+    # 复用评测侧的真栈装配（evolve 的 gate 步本就 shell 调 test/eval_*.py，依赖已成立）
+    sys.path.insert(0, str(_ROOT / "test"))
+    try:
+        import asyncio
+
+        import eval_live
+        from orchestrator.cloud.context import WorkingSet
+        from orchestrator.cloud.models import PlanContext
+    except Exception as e:
+        print(f"shadow：装配不可用（{type(e).__name__}: {e}）——跳过，不阻塞流水线")
+        _write_jsonl(out_path, [])
+        return out_path
+
+    async def _go() -> list[dict]:
+        agents = eval_live.load_agents()
+        await eval_live.warm_exemplars()
+        # 强档 pin：@primary。**唯一的变量就是档位**——prompt/catalog/知识/范例全部与生产
+        # 同构，否则差分定位立刻失效（换了两个变量就什么也证明不了）。
+        from orchestrator.cloud.planning import PlanBuilder
+        llm, tools = eval_live.make_llm_fns("evolve-shadow", model="@primary")
+        builder = PlanBuilder(llm_fn=llm, registry_fn=_noop_resolve, llm_tool_fn=tools)
+        got = []
+        for i, t in enumerate(rows, 1):
+            try:
+                plan = await builder.build(t["user_text"], WorkingSet(catalog=agents),
+                                           PlanContext())
+                shadow = ",".join(s.intent for s in plan.steps)
+                err = ""
+            except Exception as e:
+                shadow, err = "", f"{type(e).__name__}: {e}"
+            v = shadow_verdict(t.get("intents", ""), shadow, t.get("gold_intents", ""))
+            got.append({**t, "shadow_intents": shadow, "shadow_verdict": v,
+                        "shadow_error": err})
+            print(f"  [{i}/{len(rows)}] {v:<16} 「{t['user_text'][:24]}」 "
+                  f"线上={t.get('intents') or '-'} 影子={shadow or '-'}")
+        return got
+
+    try:
+        got = asyncio.run(_go())
+    except Exception as e:
+        print(f"shadow：整体失败（{type(e).__name__}: {e}）——跳过，不阻塞流水线")
+        got = []
+    _write_jsonl(out_path, got)
+    dist: dict[str, int] = {}
+    for g in got:
+        dist[g["shadow_verdict"]] = dist.get(g["shadow_verdict"], 0) + 1
+    print(f"shadow：{len(got)} 条 → {_rel(out_path)}；判定分布 {dist}")
+    if dist.get("model_gap"):
+        print(f"  ⚠ model_gap ×{dist['model_gap']}——这些**换范例/知识治不好**，是 P4 蒸馏的收益证据")
+    return out_path
+
+
+async def _noop_resolve(query: str, top_k: int = 1):
+    return []
+
+
 # ── propose ──────────────────────────────────────────────────────────────────
 
-def _exemplar_draft(texts: list[str], date: str) -> str:
+def _exemplar_draft(texts: list[str], date: str, model_gap: list[str] | None = None) -> str:
     """route_error / slot_error 的**范例草案**（M5 P1 第四类提案，取代 regex 草案）。
 
     此前这两类产的是 `route_hints` 正则骨架（bigram 拼 pattern，`_kw_pattern` 已随本次
@@ -365,7 +477,14 @@ def _exemplar_draft(texts: list[str], date: str) -> str:
       - 一条范例同时是 RoutingBench 的评测用例（一次标注两种资产）。
     这是北极星 N4（提案可应用率）从 0% 起飞的路径。教科书形态确实该钉死的，仍按既有
     分工口径人工沉到 route_hints（canonical 归 hint、paraphrase 归知识与范例）。"""
-    return ("# 范例草案（自进化提案；契约 skills/exemplars/README.md）\n"
+    gap_note = ""
+    if model_gap:
+        gap_note = ("# ⚠ 下列句子影子分诊判为 **model_gap**（强档答对、线上档答错）——\n"
+                    "#    它们是**模型能力**问题，投范例只是拿 few-shot 打补丁，治标；\n"
+                    "#    真正的解在 P4（强档标注 → 快档蒸馏）。先记账，别急着投：\n"
+                    + "".join(f"#      - {t}\n" for t in model_gap[:5]))
+    return (gap_note
+            + "# 范例草案（自进化提案；契约 skills/exemplars/README.md）\n"
             "# 人审只需确认一件事：plan 里的 intent 是不是这句话的正确落域。\n"
             "# 落位：skills/exemplars/<domain>.yaml 的 exemplars 末尾**追加**（不要插队，\n"
             "#       eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。\n"
@@ -390,6 +509,12 @@ def forbidden_hit(text: str) -> str:
 def cmd_propose(args) -> Path:
     work = _work_dir(args.date)
     triaged = _read_jsonl(work / "triaged.jsonl")
+    # 影子判定回填（M5 P2）：有 shadow.jsonl 时按 trace_id 合并，草案里标出「这条换范例
+    # 治不好」——model_gap 的案子投范例是白投，它该进 P4 蒸馏证据堆。
+    shadow = {s.get("trace_id"): s for s in _read_jsonl(work / "shadow.jsonl")}
+    if shadow:
+        triaged = [{**t, "shadow_verdict": (shadow.get(t.get("trace_id")) or {})
+                    .get("shadow_verdict", "")} for t in triaged]
     prop_dir = work / "proposals"
     prop_dir.mkdir(exist_ok=True)
     families: dict[str, list[dict]] = {}
@@ -400,7 +525,9 @@ def cmd_propose(args) -> Path:
         # 同句去重（重放/重试轮会把同一句灌成 N 条，权重与草案都不该按条数刷）
         texts = list(dict.fromkeys(i["user_text"] for i in items if i.get("user_text")))
         if cause in ("route_error", "slot_error") and texts:
-            body = _exemplar_draft(texts, args.date)
+            gaps = [i["user_text"] for i in items
+                    if i.get("shadow_verdict") == "model_gap" and i.get("user_text")]
+            body = _exemplar_draft(texts, args.date, model_gap=gaps)
             kind = "exemplar"
         elif cause == "knowledge_gap" and texts:
             body = (f"# PlanningGuide 草案（自进化提案；skills/README.md 契约）\n"
@@ -524,6 +651,27 @@ def cmd_report(args) -> Path:
                   f"  - 信号 {','.join(t['signals'])}；trace {', '.join(f'`{x}`' for x in t['traces'])}"
                   + (f"；plan_mode {t['plan_mode']}" if t.get("plan_mode") else "")
                   + (f"；归因：{t['cause_note']}" if t.get("cause_note") else "")]
+    sh = _read_jsonl(work / "shadow.jsonl")
+    if sh:
+        sd: dict[str, int] = {}
+        for s in sh:
+            sd[s["shadow_verdict"]] = sd.get(s["shadow_verdict"], 0) + 1
+        lines += ["", "## 强模型影子分诊（`@primary` 同 prompt 重规划）", "",
+                  "> 「模型不行还是信息不够」不靠猜。**有金标**时判 model_gap（强档对/线上错，"
+                  "换范例治不好，是 P4 蒸馏的收益证据）／both_wrong（信息知识问题）；"
+                  "**无金标**时只报分歧，判断留给人。", "",
+                  *(f"- {k}: {v}" for k, v in sorted(sd.items(), key=lambda kv: -kv[1]))]
+        gaps = [s for s in sh if s["shadow_verdict"] == "model_gap"]
+        if gaps:
+            lines += ["", "**model_gap 明细（P4 证据）**："]
+            lines += [f"- 「{s['user_text']}」线上 `{s.get('intents') or '-'}` → "
+                      f"影子 `{s.get('shadow_intents') or '-'}`（金标 `{s.get('gold_intents')}`）"
+                      for s in gaps[:8]]
+        div = [s for s in sh if s["shadow_verdict"] == "diverges"]
+        if div:
+            lines += ["", f"**强档给出不同落域（无金标，待人判）×{len(div)}**："]
+            lines += [f"- 「{s['user_text']}」线上 `{s.get('intents') or '-'}` → "
+                      f"影子 `{s.get('shadow_intents') or '-'}`" for s in div[:8]]
     lines += ["", "## 提案（.work/proposals/，人工审后应用）", ""]
     for p in proposals:
         lines.append(f"- {p['cause']} × {p['count']} → "
@@ -540,20 +688,27 @@ def cmd_report(args) -> Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="badcase 自进化流水线（M1b v1）")
-    ap.add_argument("cmd", choices=["mine", "triage", "propose", "gate", "report", "all"])
+    ap.add_argument("cmd", choices=["mine", "triage", "shadow", "propose", "gate",
+                                    "report", "all"])
     ap.add_argument("--since", default=datetime.now(_TZ).strftime("%Y-%m-%d"))
     ap.add_argument("--until", default="")
     ap.add_argument("--date", default="", help="工作目录/报告日期（默认=since）")
     ap.add_argument("--provider", default="", help="triage LLM 请求级 pin")
     ap.add_argument("--include-synthetic", action="store_true",
                     help="包含 eval-/e2e- 等合成会话（演示/验证用，正式 nightly 不加）")
+    ap.add_argument("--with-shadow", action="store_true",
+                    help="all 流程里加跑强模型影子分诊（需真栈，烧强档 token，不进 nightly）")
     args = ap.parse_args()
     args.date = args.date or args.since
-    steps = {"mine": cmd_mine, "triage": cmd_triage, "propose": cmd_propose,
-             "gate": cmd_gate, "report": cmd_report}
+    steps = {"mine": cmd_mine, "triage": cmd_triage, "shadow": cmd_shadow,
+             "propose": cmd_propose, "gate": cmd_gate, "report": cmd_report}
     gate_failed = False
     if args.cmd == "all":
-        for name in ("mine", "triage", "propose", "gate", "report"):
+        # shadow 默认**不进 all**：它要真栈 + 一次强档规划调用/案例（烧钱），且判定对
+        # 采样方差敏感——同 eval_skills live「不进 nightly」的理由。`--with-shadow` 显式开。
+        seq = ("mine", "triage", "shadow", "propose", "gate", "report") if args.with_shadow \
+            else ("mine", "triage", "propose", "gate", "report")
+        for name in seq:
             print(f"── {name} ──")
             out = steps[name](args)
             if name == "mine" and out is None:   # 栈未起 SKIP：后续步全免（nightly 幂等）

@@ -1,11 +1,15 @@
 """D1 契约测试（数据飞轮 P0）：catalog 预算裁剪对**真实 manifests** 的实际行为。
 
-固化两个事实（docs/design/2026-07-28-intent-accuracy-data-flywheel.md §3-D1）：
-1. 旧默认 8000 字符下，满栈（14 云 manifest + 2 端）渲染超预算，被裁的恰是全部
-   「无 route_hints」的 agent——含核心域 navigation。保护判据（有无 hint）与领域
-   重要性无关，被裁 agent 对 planner 完全不可见且步骤校验会拒它的 intent。
-2. 当前默认 16000 下全量放得下、零裁剪。若能力面继续增长让本测试转红，说明预算
-   又被追上——正确动作是启用 catalog 检索化预筛（P2），不是回到静默丢域。
+固化三个事实（docs/design/2026-07-28-intent-accuracy-data-flywheel.md §3-D1）：
+1. 旧默认 8000 字符下，满栈（14 云 manifest + 2 端）渲染仍超预算——「正常情况下根本
+   不触发裁剪」的旧假设已随 M3/M4 能力面增长失效。
+2. **P0 时被裁的恰是全部「无 route_hints」的 agent，含核心域 navigation**——保护资格
+   是「有没有声明 hint」这个巧合，与领域重要性无关。**M5 P2 已修**：保护判据补上
+   `category: core`（见 `context.py::_always_include`），navigation / road-safety 自此
+   不再被裁；本测试相应改断言「被裁集合 = 非 core 且无 hint 的 agent」，**并显式断言
+   核心域不在其中**——那条才是当初真正想守的性质。
+3. 当前默认 16000 下全量放得下、零裁剪。若能力面继续增长让本测试转红，说明预算
+   又被追上——正确动作是启用 catalog 检索化预筛，不是回到静默丢域。
 """
 from __future__ import annotations
 
@@ -23,7 +27,11 @@ from capabilities import build_edge_manifests
 from orchestrator.cloud.context import WorkingSet
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-_HINTLESS = {"navigation", "manual-rag", "parking-payment", "road-safety"}
+# 既非 core、又没声明 route_hints 的 agent——预算不够时只有它们该被裁
+_UNPROTECTED = {"manual-rag", "parking-payment"}
+# 核心域：无论预算多紧都不许被裁（P0 时 navigation/road-safety 恰恰会被裁，那是 D1 根因）
+_CORE_MUST_SURVIVE = {"navigation", "road-safety", "info", "reminder",
+                      "scene-orchestrator", "vision", "charging-planner"}
 
 
 def _full_stack_agents() -> list:
@@ -36,15 +44,19 @@ def _full_stack_agents() -> list:
     return agents
 
 
-def test_old_8000_budget_drops_all_hintless_agents(monkeypatch):
+def test_tight_budget_only_drops_unprotected_and_never_core(monkeypatch):
+    """预算再紧也只裁「非 core 且无 hint」的 agent；**核心域一个都不许掉**。
+
+    这条断言是 M5 P2 的成果：同样的 8000 预算下，P0 时 navigation 与 road-safety
+    会被整域裁出 prompt（planner 从此看不见它们、步骤校验还会拒它们的 intent），
+    现在它们由 `category: core` 保住。"""
     monkeypatch.setattr(ctxmod, "_CATALOG_BUDGET", 8000)
     stats: dict = {}
     WorkingSet.render_catalog(_full_stack_agents(), stats)
-    # 「正常情况下根本不触发裁剪」的旧假设已随 M3/M4 能力面增长失效
     assert stats["chars_full"] > 8000
-    # 被裁集合 = 全部无 route_hints 的 agent（含核心域 navigation）——保护资格
-    # 是「有没有声明 hint」这个巧合，不是领域重要性
-    assert set(stats["dropped"]) == _HINTLESS
+    dropped = set(stats["dropped"])
+    assert dropped == _UNPROTECTED
+    assert not (dropped & _CORE_MUST_SURVIVE), f"核心域被裁：{dropped & _CORE_MUST_SURVIVE}"
 
 
 def test_current_default_budget_holds_full_stack(monkeypatch):

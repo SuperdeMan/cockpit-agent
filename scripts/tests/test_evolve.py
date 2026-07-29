@@ -3,6 +3,8 @@ evolve.py 是脚本非包——按文件路径独名加载（同 llm-gateway tes
 import importlib.util
 import os
 
+import pytest
+
 _SPEC = importlib.util.spec_from_file_location(
     "evolve_under_test",
     os.path.join(os.path.dirname(__file__), "..", "evolve.py"))
@@ -160,3 +162,35 @@ def test_plan_mode_of_reads_sqlite_detail_shape():
     assert mode == "toolcall_degraded"
     assert head.startswith("[{")
     assert ev._plan_mode_of({"spans": [{"node": "a", "attrs": "junk"}]}) == ("", "")
+
+
+# ── M5 P2 强模型影子分诊 ──────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("prod,shadow,gold,expect", [
+    # 有金标：三态可判
+    ("nearby.search", "parking.pay", "parking.pay", "model_gap"),      # 换范例治不好
+    ("a.x", "b.y", "c.z", "both_wrong"),                               # 信息/知识问题
+    ("parking.pay", "parking.pay", "parking.pay", "both_right"),       # 落域没问题
+    ("parking.pay", "nearby.search", "parking.pay", "prod_only_right"),# 强档反而更差
+    # 无金标：**只报分歧，不假装能判对错**——这是这一步最容易骗自己的地方
+    ("a.x", "a.x", "", "agrees"),
+    ("a.x", "b.y", "", "diverges"),
+    ("a.x,b.y", "b.y,a.x", "", "agrees"),                              # 集合比较不看顺序
+    ("", "", "", "agrees"),
+])
+def test_shadow_verdict_table(prod, shadow, gold, expect):
+    assert ev.shadow_verdict(prod, shadow, gold) == expect
+
+
+def test_exemplar_draft_flags_model_gap():
+    """model_gap 的案子投范例是治标——草案必须当面说清，否则人审会照单全投。"""
+    body = ev._exemplar_draft(["出场怎么交钱"], "2099-01-01", model_gap=["出场怎么交钱"])
+    assert "model_gap" in body and "P4" in body
+    assert "model_gap" not in ev._exemplar_draft(["出场怎么交钱"], "2099-01-01")
+
+
+def test_shadow_not_in_default_all_sequence():
+    """shadow 要真栈 + 烧强档 token，默认不进 nightly（同 eval_skills live 的理由）。"""
+    import inspect
+    src = inspect.getsource(ev.main)
+    assert "args.with_shadow" in src

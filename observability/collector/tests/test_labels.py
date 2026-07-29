@@ -7,10 +7,10 @@ from observability.collector.db import ObsDB, _plan_summary_of
 from observability.collector.server import create_app
 
 
-# ── _plan_summary_of：attrs → (intents, plan_mode) ──────────────────────────
+# ── _plan_summary_of：attrs → (intents, plan_mode, edge_nlu) ────────────────
 
 def test_plan_summary_prefers_explicit_intents():
-    intents, mode = _plan_summary_of(
+    intents, mode, _ = _plan_summary_of(
         {"intents": "nearby.search,info.weather", "plan_mode": "toolcall",
          "plan": '[{"intent": "junk.other"}]'})
     assert intents == "nearby.search,info.weather"
@@ -18,7 +18,7 @@ def test_plan_summary_prefers_explicit_intents():
 
 
 def test_plan_summary_falls_back_to_plan_json():
-    intents, mode = _plan_summary_of(
+    intents, mode, _ = _plan_summary_of(
         {"plan": '[{"intent": "hvac.set"}, {"intent": "media.play"}]',
          "plan_mode": "json"})
     assert intents == "hvac.set,media.play"
@@ -29,7 +29,17 @@ def test_plan_summary_truncated_or_gated_plan_gives_empty():
     # gate_content 截断的半截 JSON / off 档占位符 → 不产半截意图列表
     assert _plan_summary_of({"plan": '[{"intent": "a.b"}, {"inte'})[0] == ""
     assert _plan_summary_of({"plan": "<len=900 sha=abcd1234>"})[0] == ""
-    assert _plan_summary_of("junk") == ("", "")
+    assert _plan_summary_of("junk") == ("", "", "")
+
+
+# ── M5 P2-D2 端云分歧：`!=` 后缀让「分歧」在扫描时可见（不必逐轮拉 span 详情）─────
+
+def test_plan_summary_marks_edge_divergence():
+    agree = {"intents": "hvac.set", "edge_nlu": "hvac.on|0.92", "edge_agree": "1"}
+    diverge = {"intents": "chitchat.talk", "edge_nlu": "hvac.on|0.92", "edge_agree": "0"}
+    assert _plan_summary_of(agree)[2] == "hvac.on|0.92"
+    assert _plan_summary_of(diverge)[2] == "hvac.on|0.92!="     # 分歧才带后缀
+    assert _plan_summary_of({"intents": "a.b"})[2] == ""        # 端侧没判 → 空，不占位
 
 
 # ── span↔turn 合并（顺序无关） ───────────────────────────────────────────────

@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS turns(
   note TEXT DEFAULT '',
   intents TEXT DEFAULT '',       -- 实际落域（cloud.planning span 合并写入，逗号串）
   plan_mode TEXT DEFAULT '',     -- 规划输出通道（toolcall|…|toolcall_degraded）
-  gold_intents TEXT DEFAULT ''   -- 人工标注的正确落域（数据飞轮资产；UPSERT 不碰、保留期豁免）
+  gold_intents TEXT DEFAULT '',  -- 人工标注的正确落域（数据飞轮资产；UPSERT 不碰、保留期豁免）
+  edge_nlu TEXT DEFAULT ''       -- 端云分歧（M5 P2-D2）：'<端侧初判>|<conf>' + '!=' 后缀表示与云侧落域不一致
 );
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, ts);
 CREATE INDEX IF NOT EXISTS idx_turns_ts ON turns(ts);
@@ -101,15 +102,22 @@ def _rows_to_dicts(cursor) -> list[dict]:
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
-def _plan_summary_of(attrs: dict) -> tuple[str, str]:
-    """cloud.planning span attrs → (intents 逗号串, plan_mode)。
+def _plan_summary_of(attrs: dict) -> tuple[str, str, str]:
+    """cloud.planning span attrs → (intents 逗号串, plan_mode, edge_nlu)。
+
+    edge_nlu 带 `!=` 后缀表示端云**分歧**（M5 P2-D2）——存成一列而不是靠事后逐轮拉 span
+    详情：分歧要能成为「把这一轮拉进日报」的信号，就必须在**扫描时**可见，逐轮补拉详情
+    是 N+1（P0 刚为此把全轮详情拉取砍掉，不能又加回来）。
 
     优先显式 attrs['intents']（engine 紧凑发射，意图名是系统枚举值、不受内容门控/截断）；
     旧版 engine 无该键时从 attrs['plan'] JSON 兜底解析——它经 gate_content 截 1200，
     截断即解析失败则放弃（不产半截意图列表）。"""
     if not isinstance(attrs, dict):
-        return "", ""
+        return "", "", ""
     plan_mode = str(attrs.get("plan_mode") or "")
+    edge_nlu = str(attrs.get("edge_nlu") or "")
+    if edge_nlu and str(attrs.get("edge_agree", "")) == "0":
+        edge_nlu += "!="
     intents = str(attrs.get("intents") or "")
     if not intents:
         raw = attrs.get("plan")
@@ -120,7 +128,7 @@ def _plan_summary_of(attrs: dict) -> tuple[str, str]:
                     str(s.get("intent") or "") for s in steps if isinstance(s, dict))
             except (ValueError, AttributeError, TypeError):
                 intents = ""
-    return intents[:400], plan_mode[:40]
+    return intents[:400], plan_mode[:40], edge_nlu[:60]
 
 
 class ObsDB:
@@ -144,6 +152,7 @@ class ObsDB:
             self._ensure_column("turns", "intents", "TEXT DEFAULT ''")
             self._ensure_column("turns", "plan_mode", "TEXT DEFAULT ''")
             self._ensure_column("turns", "gold_intents", "TEXT DEFAULT ''")
+            self._ensure_column("turns", "edge_nlu", "TEXT DEFAULT ''")
             self._conn.commit()
 
     def _ensure_column(self, table: str, column: str, decl: str) -> None:
@@ -198,13 +207,14 @@ class ObsDB:
             # 等 turn UPSERT 补齐）；turn 先到→UPDATE 补两列。intents/plan_mode 不在
             # _TURN_FIELDS，turn 重复到达不会抹掉。
             if trace_id and (event.get("node") or "") == "cloud.planning":
-                intents, plan_mode = _plan_summary_of(event.get("attrs") or {})
-                if intents or plan_mode:
+                intents, plan_mode, edge_nlu = _plan_summary_of(event.get("attrs") or {})
+                if intents or plan_mode or edge_nlu:
                     self._conn.execute(
-                        "INSERT INTO turns(trace_id, intents, plan_mode) VALUES(?,?,?) "
-                        "ON CONFLICT(trace_id) DO UPDATE SET "
-                        "intents=excluded.intents, plan_mode=excluded.plan_mode",
-                        (trace_id, intents, plan_mode))
+                        "INSERT INTO turns(trace_id, intents, plan_mode, edge_nlu) "
+                        "VALUES(?,?,?,?) ON CONFLICT(trace_id) DO UPDATE SET "
+                        "intents=excluded.intents, plan_mode=excluded.plan_mode, "
+                        "edge_nlu=excluded.edge_nlu",
+                        (trace_id, intents, plan_mode, edge_nlu))
             self._conn.commit()
 
     def insert_llm(self, event: dict) -> None:

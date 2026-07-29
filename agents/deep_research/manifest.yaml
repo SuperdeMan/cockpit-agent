@@ -11,10 +11,13 @@ fallback: chitchat
 
 capabilities:
   - intent: research.run
-    # desc 刻意保持原句不加长：registry 离线路由按「query 字符∩capability 文本」打分，
-    # 文本每加长一分，所有 query 对本能力的分都会涨（曾把「自驾游路线安排」从 trip-planner
-    # 吸过来，eval_registry_resolve 回归实测）。「勿把普通查询升级成调研」的边界由
-    # planner prompt 深度判据 + info.search desc 承载。
+    # 【历史约束已解除，M5 P2-D4】此处原写着「desc 刻意保持原句不加长」——因为 registry
+    # 离线路由曾按「query 单字符 ∩ capability 文本」打分，文本每加长一分所有 query 的分
+    # 都会涨（曾把「自驾游路线安排」从 trip-planner 吸过来）。那是**描述写法在为打分算法
+    # 的缺陷让路，倒果为因**。打分已换成 bigram 重合 + 按 query 长度归一，与 hay 长度解耦；
+    # 性质由 registry/tests/test_store_scoring.py::test_longer_description_does_not_steal_top1
+    # 钉死。desc 现在可以按「怎么写最有助于 LLM 判别」来写。
+    # 「勿把普通查询升级成调研」的边界仍由 planner prompt 深度判据 + info.search desc 承载。
     description: 对一个主题做深度调研——拆成多视角子问题、并行联网检索正文级资料、产出带引用的分节报告
       与一段式语音简报。用户说「深入调研/研究一下/全面对比/系统了解/深度分析 X」时走本能力；
       单轮快查仍走 info.search。

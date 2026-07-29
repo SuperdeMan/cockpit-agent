@@ -59,11 +59,23 @@ _FALLBACK_AGENT = os.environ.get("PLANNER_FALLBACK_AGENT", "chitchat")
 
 def _always_include(a) -> bool:
     """catalog 语义预筛/预算裁剪都不得丢的 Agent（取代硬编码 _ALWAYS_INCLUDE，去领域字面量）：
-    ①全局兜底 Agent（env PLANNER_FALLBACK_AGENT）；②声明了 route_hints 的 Agent——其确定性
-    路由兜底依赖该 manifest 在 catalog 中可见（被预筛丢掉后 RouteHintEngine 就看不到其 hints）。"""
+
+    ①全局兜底 Agent（env `PLANNER_FALLBACK_AGENT`）；
+    ②声明了 `route_hints` 的 Agent——**机制依赖**：RouteHintEngine 从 `agent_map` 里读
+      hints，manifest 被预筛丢掉它就看不到（这一条不是巧合耦合，是硬约束）；
+    ③`category: core` 的 Agent——**领域重要性**（M5 P2 补）。
+
+    为什么补③：此前只有①②，于是保护资格与领域重要性无关——`navigation` 与 `road-safety`
+    都是 `core` 却因为**恰好没写 route_hints** 而全程可被裁掉（数据飞轮 D1 的根因，
+    navigation 恰是 Shadow NLU 里缺口最大的域）。而 P2 的 hint 退役流水线会让这件事更糟：
+    摘掉一条 hint 会**顺手删掉那个 Agent 的 catalog 保护**——治理规则的动作不该有这种
+    远处的副作用。`category` 是 manifest/proto/registry 已有的字段，用它即机制化，不新增管道。
+
+    ⚠ 注意②与③是**并集不是替换**（RFC §5-P2-4 原设想是替换，实测会打断 hint 可见性）。"""
     m = getattr(a, "manifest", None)
     return (getattr(m, "agent_id", "") == _FALLBACK_AGENT
-            or bool(getattr(m, "route_hints", [])))
+            or bool(getattr(m, "route_hints", []))
+            or str(getattr(m, "category", "")) == "core")
 
 # 控制类意图域 → (语义对象, 属性)，供焦点抽取（"再调高一点"指代上轮控制对象）。
 _CONTROL_FOCUS = {
@@ -544,4 +556,5 @@ def build_context(request) -> PlanContext:
         granted_permissions=granted,
         trace_id=meta.get("trace_id", ""),
         prefs=prefs,
+        edge_nlu=meta.get("_edge_nlu", ""),   # M5 P2-D2：端侧初判，观测用（不进 prompt）
     )

@@ -59,6 +59,21 @@ def _clarify_enabled() -> bool:
     return os.getenv("CLARIFY_ENABLED", "off").lower() == "on"
 
 
+def _edge_nlu_attrs(ctx, plan) -> dict:
+    """端云分歧观测（M5 P2-D2）。端侧没判 → 不发（少一个恒空字段）。
+
+    比的是**域**不是 intent：端侧的 `hvac.on` 与云侧的 `hvac.set` 是同一个判断的粗细之分，
+    记成分歧只会把噪声灌进标注队列。真正值得人看的是「端侧说车控、云侧说闲聊」这种。"""
+    raw = str(getattr(ctx, "edge_nlu", "") or "")
+    if not raw:
+        return {}
+    edge_intent = raw.split("|", 1)[0]
+    edge_dom = edge_intent.split(".")[0]
+    cloud_doms = {s.intent.split(".")[0] for s in plan.steps if s.intent}
+    return {"edge_nlu": raw,
+            "edge_agree": "1" if (edge_dom and edge_dom in cloud_doms) else "0"}
+
+
 class PlannerEngine:
     """编排主循环。engine 是唯一持有全局状态的地方。"""
 
@@ -256,6 +271,11 @@ class PlannerEngine:
                     # 数据飞轮 P0 落域可观测：意图名是系统枚举值（非用户内容），紧凑发射
                     # 不过内容门控——collector 据此把落域合并进 turns 行（SQL 可聚合）。
                     "intents": ",".join(s.intent for s in plan.steps),
+                    # M5 P2-D2 端云分歧：端侧规则臂的初判 + 是否与云侧最终落域一致。
+                    # **分歧轮是信息量最大的标注样本**——两个独立判断打架的地方，人看一眼
+                    # 的边际收益最高。evolve mine 据此产 `edge_divergence` 信号进日报案族卡，
+                    # 人按日报去 dashboard 标 gold（→ 范例 → 飞轮）。
+                    **_edge_nlu_attrs(ctx, plan),
                     **({"hint_effect": plan.hint_effect}
                        if getattr(plan, "hint_effect", "") else {}),
                     # D1 裁剪可观测：目录渲染长度 + 被裁 agent（静默丢域从此有痕迹）
