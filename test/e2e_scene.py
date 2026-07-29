@@ -12,9 +12,22 @@
 """
 import asyncio
 import json
+import subprocess
 import sys
-import time
 import urllib.request
+from pathlib import Path
+
+from support.e2e import CaseRecorder, assert_persistent_source_contract
+
+
+def _source_contract() -> None:
+    assert_persistent_source_contract(Path(__file__).read_text(encoding="utf-8"))
+
+
+if "--source-contract" in sys.argv:
+    _source_contract()
+    print("source contract: PASS")
+    raise SystemExit(0)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -24,20 +37,29 @@ except Exception:
 try:
     import websockets
 except ImportError:
-    print("请先：pip install websockets")
-    sys.exit(1)
+    websockets = None
 
-URL = "ws://localhost:8090/ws"
+URL = ""
 COLLECTOR = "http://localhost:8092"
 NATS_URL = "nats://localhost:4222"
-SESSION = f"e2e-scene-{int(time.time())}"      # e2e- 前缀：跳过记忆抽取（conventions §9.2）
 TIMEOUT = 90
-_results: list[bool] = []
+PG = ["docker", "exec", "car-agent-postgres-1", "psql", "-U", "cockpit",
+      "-d", "cockpit", "-tAc"]
+_recorder: CaseRecorder | None = None
+_case_index = 0
 
 
 def record(name, ok, detail: str = ""):
+    global _case_index
     ok = bool(ok)                      # 断言表达式可能算出 list/None（如 .get("buttons")）
-    _results.append(ok)
+    _case_index += 1
+    if _recorder is None:
+        raise RuntimeError("CaseRecorder is not initialized")
+    case_id = f"scene-{_case_index:02d}"
+    if ok:
+        _recorder.pass_case(case_id)
+    else:
+        _recorder.fail_case(case_id, "assertion_failed", detail or name)
     print(f"{'✅' if ok else '❌'} {name}  {detail}")
 
 
@@ -56,9 +78,68 @@ def debug_vehicle(key: str, value) -> None:
         r.read()
 
 
+def sql(query: str) -> str:
+    try:
+        out = subprocess.run(
+            PG + [query],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("scene SQL command timed out") from exc
+    if out.returncode != 0:
+        raise RuntimeError("scene SQL command failed")
+    return (out.stdout or "").strip()
+
+
+def quoted(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def parse_count(raw: str) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("scene namespace count is invalid") from exc
+    if value < 0 or str(value) != raw:
+        raise RuntimeError("scene namespace count is invalid")
+    return value
+
+
+def namespace_count(user: str) -> int:
+    return parse_count(sql(
+        f"SELECT count(*) FROM scene_item WHERE user_id={quoted(user)}",
+    ))
+
+
+def cleanup_namespace(user: str, original: dict) -> None:
+    sql(f"DELETE FROM scene_item WHERE user_id={quoted(user)}")
+    for key in (
+        "battery",
+        "gear",
+        "speed_kmh",
+        "hvac_temp",
+        "ambient_light",
+        "ambient_light_brightness",
+        "seat_recline",
+        "volume",
+        "scene_mode",
+    ):
+        if key in original:
+            debug_vehicle(key, original[key])
+    remaining = namespace_count(user)
+    if remaining:
+        raise RuntimeError(f"scene cleanup left {remaining} rows")
+
+
 async def ask(text: str, desc: str) -> dict:
+    if websockets is None:
+        raise RuntimeError("websockets is unavailable")
     async with websockets.connect(URL) as ws:
-        await ws.send(json.dumps({"text": text, "session_id": SESSION}))
+        await ws.send(json.dumps({"text": text, "session_id": _recorder.session_id(1)}))
         while True:
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=TIMEOUT))
             if msg.get("type") in ("final", "error"):
@@ -84,7 +165,7 @@ async def settle(seconds: float = 2.5) -> dict:
     return vehicle_state()
 
 
-async def reset_env() -> dict:
+async def prepare_vehicle() -> dict:
     """把车恢复到一个**已知起点**。VAL 状态跨 e2e 运行是持久的，而 P2 的幂等跳过会
     "跳过已达成的动作"——不归零的话，上一轮留下的灯/座椅/温度会让本轮断言随机翻车。"""
     await ask("关闭氛围灯", "重置")
@@ -96,11 +177,23 @@ async def reset_env() -> dict:
     return vehicle_state()
 
 
-async def main() -> int:
-    print(f"session={SESSION}")
+async def run(recorder: CaseRecorder) -> None:
+    global URL
+    URL = recorder.ws_url()
+    user = recorder.user_id()
+    original = vehicle_state()
+    recorder.register_cleanup(user, lambda: cleanup_namespace(user, original))
+    if namespace_count(user) != 0:
+        recorder.fail_case(
+            "isolation_precondition",
+            "isolation_precondition",
+            "namespace was not empty before setup",
+        )
+        return
+    print(f"session={recorder.session_id(1)}")
 
     # 0) 归零 + 把空调开到 26 度（一个**非默认**的激活前状态，用来证明退出走快照而非默认表）
-    await reset_env()
+    await prepare_vehicle()
     await ask("把空调调到26度", "前置")
     st0 = await settle()
     base_temp = st0.get("hvac_temp")
@@ -214,7 +307,7 @@ async def main() -> int:
 
         await nc.subscribe("agent.proactive", cb=on_msg)
     except Exception as e:
-        print(f"  [警告] NATS 订阅失败，跳过 verify 断言：{e}")
+        print(f"  [警告] NATS 订阅失败，verify 断言将失败：{e}")
 
     await ask("关闭氛围灯", "P2-归零灯")   # 保证氛围灯动作不会被幂等跳过（要它真被门控拒绝）
     debug_vehicle("battery", 5)           # 低电量：VAL 禁高耗电功能（氛围灯）
@@ -238,6 +331,8 @@ async def main() -> int:
         vs = proactive[0].get("speech", "") if proactive else ""
         record("9c.后台诚实汇报", bool(proactive) and "没有生效" in vs and "氛围灯" in vs,
                vs[:70] or "没收到 scene_verify proactive")
+    else:
+        record("9c.后台诚实汇报", False, "NATS 订阅不可用")
 
     debug_vehicle("battery", 72)           # 电量恢复
     await asyncio.sleep(1.5)
@@ -271,7 +366,7 @@ async def main() -> int:
 
         await nc2.subscribe("agent.proactive", cb=on_sug)
     except Exception as e:
-        print(f"  [警告] NATS 订阅失败，跳过触发断言：{e}")
+        print(f"  [警告] NATS 订阅失败，触发断言将失败：{e}")
 
     debug_vehicle("battery", 80)          # 先拉高，保证后面是「从不满足→满足」的变沿
     await asyncio.sleep(1)
@@ -309,11 +404,18 @@ async def main() -> int:
            f"mine={[x['name'] for x in (card.get('mine') or [])]} "
            f"builtin={len(card.get('builtin') or [])}")
 
-    ok = all(_results)
-    print(f"\n{'✅ 全部通过' if ok else '❌ 有失败'}："
-          f"{sum(_results)}/{len(_results)}")
-    return 0 if ok else 1
+
+
+def main() -> int:
+    _source_contract()
+    global _recorder
+    _recorder = CaseRecorder()
+    with _recorder:
+        asyncio.run(run(_recorder))
+    result = _recorder.result
+    print(f"\n{result.counts['passed']}/{result.counts['selected']} passed")
+    return _recorder.exit_code()
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    sys.exit(main())

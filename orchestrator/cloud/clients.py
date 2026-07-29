@@ -65,13 +65,15 @@ class Clients:
 
     async def append_turn(self, session_id: str, role: str, text: str,
                           user_id: str = "", vehicle_id: str = "",
-                          occupant_id: str = "primary"):
+                          occupant_id: str = "primary",
+                          e2e_memory_capability: str = ""):
         """写入一轮对话到 memory（指代消解的数据来源）。带 user_id 时 memory 侧据此触发异步抽取。
         occupant_id 决定抽取出的偏好归属哪个乘员（M4 P4；proto 字段 2026-06 就有，一直没人传）。"""
         await self._memory_stub().AppendTurn(
             memory_pb2.AppendTurnRequest(session_id=session_id, role=role, text=text,
                                          user_id=user_id, vehicle_id=vehicle_id,
-                                         occupant_id=occupant_id or "primary"),
+                                         occupant_id=occupant_id or "primary",
+                                         e2e_memory_capability=e2e_memory_capability),
             timeout=_DEFAULT_TIMEOUT)
 
     async def get_session(self, session_id: str, last_n: int = 6) -> list[dict]:

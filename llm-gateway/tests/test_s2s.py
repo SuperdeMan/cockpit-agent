@@ -13,12 +13,14 @@ import inspect
 import json
 import os
 import re
+from pathlib import Path
 
 import pytest
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from scripts.e2e_contract import assert_architecture_guard  # noqa: E402
 from s2s import protocol as P  # noqa: E402
 from s2s.provider import (  # noqa: E402
     EV_ANSWER_DELTA, EV_AUDIO_DELTA, EV_ERROR, EV_TOOL_CALL, EV_TRANSCRIPT,
@@ -232,6 +234,39 @@ async def test_normal_turn_emits_full_downstream_sequence():
     t = h.reflux_calls[0]
     assert t.transcript == "你好呀" and t.answer == "嗯，我在呢。"
     await h.sess.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_session_without_reflux_has_no_persistence_callback():
+    json_out: list[dict] = []
+
+    async def emit_json(value):
+        json_out.append(value)
+
+    async def emit_audio(_value):
+        return None
+
+    session = S2SSession(
+        provider_factory=MockS2SProvider,
+        emit_json=emit_json,
+        emit_audio=emit_audio,
+        session_id="direct-resilience-probe",
+        max_turns=99,
+    )
+    assert session._reflux is None
+
+    turn = Turn(
+        turn_id="turn-1",
+        transcript="probe transcript",
+        answer="probe answer",
+    )
+    await session._end_turn(turn, P.END_COMPLETE)
+
+    assert json_out == [{
+        "type": P.DOWN_TURN_END,
+        "turn_id": "turn-1",
+        "reason": P.END_COMPLETE,
+    }]
 
 
 @pytest.mark.asyncio
@@ -768,14 +803,9 @@ async def test_context_summary_empty_when_no_session():
 
 # ──────────────────────── 铁律（源码级）────────────────────────
 
-def test_session_layer_has_no_domain_literals():
-    """L-Session 是通用会话层——出现领域字面量就是把编排逻辑漏进了传输层。"""
-    from s2s import session as S
-    src = inspect.getsource(S)
-    body = "\n".join(l for l in src.splitlines()
-                     if not l.strip().startswith("#") and "：" not in l)
-    for bad in ("空调", "导航", "hvac", "navigation", "天气", "媒体", "支付"):
-        assert bad not in body, f"会话层不得出现领域字面量 {bad!r}"
+def test_session_layer_has_no_dynamic_domain_literals():
+    """L-Session 的业务词来自声明面，AST 只查可执行语义，不误扫说明文字。"""
+    assert_architecture_guard(Path(__file__).resolve().parents[2])
 
 
 def test_protocol_defines_exactly_one_tool():
@@ -793,6 +823,18 @@ def test_provider_never_creates_response_after_tool_result():
     src = inspect.getsource(QwenOmniRealtimeProvider.inject_tool_result)
     code = "\n".join(l.split("#", 1)[0] for l in src.splitlines())
     assert "response.create" not in code
+
+
+def test_http_s2s_verifies_identity_before_provider_or_session_creation():
+    """Invalid test identity must close before any provider/session side effect."""
+    path = os.path.join(os.path.dirname(__file__), "..", "http_server.py")
+    source = open(path, encoding="utf-8").read()
+    start_at = source.find("if mtype == UP_SESSION_START:")
+    verify_at = source.find("resolve_s2s_identity(", start_at)
+    provider_at = source.find("build_s2s_provider(", start_at)
+    session_at = source.find("session = S2SSession(", start_at)
+    assert verify_at >= 0, "S2S route does not apply the identity gate"
+    assert verify_at < provider_at < session_at
 
 
 @pytest.mark.asyncio

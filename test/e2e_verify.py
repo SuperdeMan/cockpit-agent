@@ -22,6 +22,8 @@ import sys
 import time
 import uuid
 
+from support.e2e import CaseRecorder
+
 try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
@@ -48,8 +50,15 @@ def check(ok: bool, label: str, detail: str = "") -> bool:
     return ok
 
 
-async def ask(text: str, trace_id: str, session: str) -> dict:
-    async with websockets.connect(WS) as ws:
+async def ask(
+    recorder: CaseRecorder,
+    text: str,
+    trace_id: str,
+    session: str,
+) -> dict:
+    async with websockets.connect(recorder.ws_url()) as ws:
+        ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        recorder.confirm_identity_ack(ack)
         await ws.send(json.dumps({"text": text, "session_id": session,
                                   "meta": {"trace_id": trace_id}}))
         while True:
@@ -66,17 +75,20 @@ async def spans_of(api, trace_id: str, kind: str) -> list[dict]:
     return [s for s in (detail.get("spans") or []) if s.get("node") == kind]
 
 
-async def main() -> int:
+async def _run(recorder: CaseRecorder) -> int:
     print("=== M2 Outcome Verifier / T2 分档 真栈验证 ===")
     # 每例独立 session：焦点态会跨轮影响路由（同 session 里「附近有什么好吃的」之后
     # 问「深圳天气」曾被焦点带成 NEED_SLOT 追问城市——那不是对账的问题，但会让断言失真）
-    stamp = int(time.time())
-
     async with httpx.AsyncClient(base_url=COLLECTOR, timeout=20) as api:
         # ① 车控步 state_match + 列表步 schema。**必须用混合多意图句**——单句「打开空调」
         #    被端侧快路径直接执行、根本不上云，云侧 executor 看不到（T0 设计使然，非缺陷）。
         t1 = uuid.uuid4().hex
-        r1 = await ask("帮我把空调打开，再查一下附近有什么好吃的", t1, f"e2e-verify-{stamp}-a")
+        r1 = await ask(
+            recorder,
+            "帮我把空调打开，再查一下附近有什么好吃的",
+            t1,
+            recorder.session_id(1),
+        )
         print(f"\n[① 车控 + 列表 多意图]\n  回复: {(r1.get('speech') or '')[:70]}")
         await asyncio.sleep(3)
         spans1 = await spans_of(api, t1, "step.verify")
@@ -95,7 +107,12 @@ async def main() -> int:
         # ② 单步查询走 **D0 流式直通**——它不经 executor._exec_step，必须由 engine 显式
         #    调对账，否则声明了却静默不生效（本卡真栈首验实测到的缺口，已修）。
         t2 = uuid.uuid4().hex
-        r2 = await ask("深圳天气怎么样", t2, f"e2e-verify-{stamp}-b")
+        r2 = await ask(
+            recorder,
+            "深圳天气怎么样",
+            t2,
+            recorder.session_id(2),
+        )
         print(f"\n[② 单步查询（D0 流式直通路径）]\n  回复: {(r2.get('speech') or '')[:60]}")
         await asyncio.sleep(3)
         s2 = await spans_of(api, t2, "step.verify")
@@ -107,7 +124,7 @@ async def main() -> int:
 
         # ③ 未声明 verification 的能力：零行为变化
         t3 = uuid.uuid4().hex
-        await ask("讲个笑话", t3, f"e2e-verify-{stamp}-c")
+        await ask(recorder, "讲个笑话", t3, recorder.session_id(3))
         await asyncio.sleep(3)
         s3 = await spans_of(api, t3, "step.verify")
         check(not s3, "未声明 verification 的能力不产生对账 span", f"{len(s3)} 条")
@@ -121,6 +138,21 @@ async def main() -> int:
     for f in _fails:
         print(f"  ✗ {f}")
     return 1 if _fails else 0
+
+
+async def main() -> int:
+    recorder = CaseRecorder()
+    with recorder:
+        rc = await _run(recorder)
+        if rc == 0:
+            recorder.pass_case("outcome_verifier_contract")
+        else:
+            recorder.fail_case(
+                "outcome_verifier_contract",
+                "assertion_failed",
+                "one or more outcome-verifier assertions failed",
+            )
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":

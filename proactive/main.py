@@ -27,6 +27,137 @@ logger = logging.getLogger("proactive.main")
 REQUEST_SUBJECT = "agent.proactive.request"
 OUTPUT_SUBJECT = "agent.proactive"
 DECISION_SUBJECT = "obs.proactive.decision"
+ADMIN_COUNT_SUBJECT = "e2e.proactive.namespace.count"
+ADMIN_PURGE_SUBJECT = "e2e.proactive.namespace.purge"
+ADMIN_MAX_REQUEST_BYTES = 16 * 1024
+
+
+def _strict_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
+    return value
+
+
+def _admin_response(
+    *,
+    ok=False,
+    before=0,
+    deleted=0,
+    after=0,
+    rate_delivered=0,
+    rate_max_per_hour=0,
+    error="",
+):
+    # Rate fields are anonymous global counters only; no other owner identity
+    # or per-owner behavior is exposed through the signed E2E admin plane.
+    return {
+        "ok": bool(ok),
+        "before": int(before),
+        "deleted": int(deleted),
+        "after": int(after),
+        "rate_delivered": int(rate_delivered),
+        "rate_max_per_hour": int(rate_max_per_hour),
+        "error": str(error),
+    }
+
+
+def _admin_owner(data: bytes, *, secret: bytes, now=None) -> str:
+    """Verify one strict signed request without ever returning/logging its token."""
+
+    if not isinstance(data, bytes) or len(data) > ADMIN_MAX_REQUEST_BYTES:
+        raise ValueError("invalid request")
+    try:
+        request = json.loads(
+            data.decode("utf-8"),
+            object_pairs_hook=_strict_object,
+        )
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid request") from exc
+    if not isinstance(request, dict) or set(request) != {
+        "identity_token", "user_id",
+    }:
+        raise ValueError("invalid request")
+    token = request["identity_token"]
+    owner = request["user_id"]
+    if not isinstance(token, str) or not isinstance(owner, str) or not owner:
+        raise ValueError("unauthorized")
+    from scripts.e2e_identity import IdentityTokenError, verify_identity
+    try:
+        claims = verify_identity(token, secret, now=now)
+    except IdentityTokenError as exc:
+        raise PermissionError("unauthorized") from exc
+    expected = f"{claims.run_id}-e2e_proactive"
+    if owner != claims.user_id or owner != expected:
+        raise PermissionError("unauthorized")
+    return owner
+
+
+async def install_namespace_admin(
+    nc,
+    governor: Governor,
+    *,
+    environ=None,
+    now=None,
+) -> bool:
+    """Install signed E2E-only count/purge callbacks; default-off fails closed."""
+
+    source = os.environ if environ is None else environ
+    if str(source.get("E2E_NAMESPACE_ADMIN_ENABLED") or "").lower() != "true":
+        return False
+    raw_secret = source.get("E2E_NAMESPACE_ADMIN_SECRET")
+    if not isinstance(raw_secret, str) or not raw_secret:
+        return False
+    try:
+        from scripts.e2e_identity import decode_secret
+        secret = decode_secret(raw_secret)
+    except Exception:
+        return False
+
+    async def reply(message, operation: str) -> None:
+        response = _admin_response(error="invalid_request")
+        try:
+            owner = _admin_owner(message.data, secret=secret, now=now)
+            if operation == "count":
+                count = governor.count_owner(owner)
+                response = _admin_response(
+                    ok=True,
+                    before=count,
+                    after=count,
+                    **governor.rate_status(),
+                )
+            else:
+                values = governor.purge_owner(owner)
+                response = _admin_response(
+                    ok=True,
+                    **values,
+                    **governor.rate_status(),
+                )
+        except PermissionError:
+            response = _admin_response(error="unauthorized")
+        except Exception:
+            response = _admin_response(error="invalid_request")
+        if getattr(message, "reply", ""):
+            await nc.publish(
+                message.reply,
+                json.dumps(
+                    response,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                ).encode(),
+            )
+
+    await nc.subscribe(
+        ADMIN_COUNT_SUBJECT,
+        cb=lambda message: reply(message, "count"),
+    )
+    await nc.subscribe(
+        ADMIN_PURGE_SUBJECT,
+        cb=lambda message: reply(message, "purge"),
+    )
+    return True
 
 
 def _enabled() -> bool:
@@ -108,6 +239,8 @@ async def main() -> None:
         defer_tick_s=_float_env("PROACTIVE_DEFER_TICK_S", 5.0),
     )
     await gov.start()
+    if await install_namespace_admin(nc, gov):
+        logger.info("E2E proactive namespace admin enabled")
 
     async def on_request(msg) -> None:
         # 先 ack 再裁决：所有权移交与治理解耦，生产方不等合并窗口。

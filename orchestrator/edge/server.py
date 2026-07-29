@@ -502,6 +502,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         is_confirmation=False,
                         meta=request.meta,
                         context=request.context,
+                        e2e_memory_capability=request.e2e_memory_capability,
                     )
                     # 已在端侧给过云段占位时，让云端别再重复"正在为您处理"（避免双占位文案）
                     if local_speeches:

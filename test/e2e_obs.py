@@ -17,6 +17,8 @@ import sys
 import time
 import uuid
 
+from support.e2e import CaseRecorder
+
 try:                                   # Windows 控制台默认 GBK，强制 UTF-8 输出
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
@@ -32,9 +34,16 @@ except ImportError:
 WS_URL = "ws://localhost:8090/ws"
 COLLECTOR = "http://localhost:8092"
 TIMEOUT = 90
-SESSION = f"e2e-obs-{int(time.time())}"
+SESSION = ""
+_RECORDER: CaseRecorder | None = None
 
 RESULTS: list[tuple[str, bool, str]] = []
+
+
+def _e2e() -> CaseRecorder:
+    if _RECORDER is None:
+        raise RuntimeError("CaseRecorder is not initialized")
+    return _RECORDER
 
 
 def check(name: str, ok: bool, note: str = ""):
@@ -44,7 +53,9 @@ def check(name: str, ok: bool, note: str = ""):
 
 async def ask(text: str, trace_id: str) -> dict:
     """HMI 同款请求：自带 trace_id 随 meta 上行。"""
-    async with websockets.connect(WS_URL) as ws:
+    async with websockets.connect(_e2e().ws_url()) as ws:
+        ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        _e2e().confirm_identity_ack(ack)
         await ws.send(json.dumps({
             "text": text, "session_id": SESSION, "is_confirmation": False,
             "meta": {"trace_id": trace_id},
@@ -72,7 +83,7 @@ async def wait_for(fn, timeout=15, interval=0.5):
     return result
 
 
-async def main() -> int:
+async def _run() -> int:
     trace_local = uuid.uuid4().hex[:16]
     trace_cloud = uuid.uuid4().hex[:16]
 
@@ -180,5 +191,23 @@ async def main() -> int:
     return 1 if failed else 0
 
 
+async def main() -> int:
+    global _RECORDER, SESSION
+    recorder = CaseRecorder()
+    _RECORDER = recorder
+    SESSION = recorder.session_id(1)
+    with recorder:
+        rc = await _run()
+        if rc == 0:
+            recorder.pass_case("observability_badcase_workflow")
+        else:
+            recorder.fail_case(
+                "observability_badcase_workflow",
+                "assertion_failed",
+                "one or more observability workflow checks failed",
+            )
+    return recorder.exit_code()
+
+
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    raise SystemExit(asyncio.run(main()))

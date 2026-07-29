@@ -1,18 +1,7 @@
-name: Nightly E2E (assertion suite, mock mode)
+name: Nightly E2E (manifest lane)
 
-# Roadmap T3.3（docs/reviews/2026-07-02-repo-audit-and-roadmap.md §4）。
-# 与 test/nightly/（pytest `nightly` marker、需真实 LLM_API_KEY 的语料回归，见
-# test/nightly/README.md）是两个不相关的概念，只是碰巧都叫 nightly——本 workflow
-# 跑的是 test/e2e_*.py 断言型脚本，全程 Mock 模式、零 GitHub secrets。
-#
-# 为什么是裁剪子集而不是 roadmap 卡片字面提到的 5 个脚本整份跑：MockProvider 返回
-# 非 JSON 文本，planning._parse_and_validate 解析必炸 → 兜底路由到 chitchat，除非
-# 目标 Agent 声明了 route_hints（全仓只有 trip_planner/deep_research 声明了）。所以
-# central_hub_assertions 的导航/媒体两个 case、context 的 battery_query 那个 case、
-# memory 的真 embedding/真 chat 两条链路在纯 Mock 下逻辑上必然失败——用 --case 过滤
-# 跳过前两者，用 e2e_memory.py 自身的 SKIP 惯例跳过后者。反过来 trip/research/
-# research_async 因为有 route_hints + 确定性 fallback 生成器，Mock 下稳定可靠，
-# 一并纳入。详见 docs/design/2026-07-03-r3.3-e2e-ci-gate.md。
+# 选集、子用例参数、结果状态与退出码均由 test/e2e_manifest.yaml 和统一 Python runner 决定。
+# 本 job 只负责准备 disposable mock 栈、执行 nightly lane、留存 runner JSON 与 Compose 日志。
 
 on:
   schedule:
@@ -83,32 +72,22 @@ jobs:
           echo "::error::observability-collector 150s 内未就绪"
           exit 1
 
-      - name: 断言型 e2e 套件（顺序跑，非 fail-fast，跑完全部再汇总退出码）
+      - name: Nightly manifest lane（统一 runner 汇总全部结果）
         run: |
           set +e
-          fail=0
-          run_e2e() {
-            echo "::group::$*"
-            python "$@"
-            rc=$?
-            echo "::endgroup::"
-            if [ $rc -ne 0 ]; then fail=1; echo "::error::e2e FAILED: $*"; fi
-          }
-          run_e2e test/e2e_ws.py
-          run_e2e test/e2e_central_hub_assertions.py --case t0_hvac_local --case safety_window_speed_gate --case cloud_chitchat_streaming
-          run_e2e test/e2e_context.py --case ctx_injection_blocked --case ctx_bare_confirm_no_pending --case ctx_trip_plan_fallback --case ctx_trip_modify_fallback
-          run_e2e test/e2e_memory.py
-          run_e2e test/e2e_resilience.py
-          run_e2e test/e2e_trip.py
-          run_e2e test/e2e_research.py
-          run_e2e test/e2e_research_async.py
-          # 旅程级 mock-safe 子集（--lane mock）：reminder 全链路 / scene 激活等
-          # route_hints 确定性路由 + 零 LLM 依赖的旅程（设计
-          # docs/design/2026-07-14-journey-e2e-test-system.md §4.3）。badcase 收藏
-          # 是本地排查工作流，CI 栈即弃，关掉少一次无意义写库。
-          run_e2e test/e2e_journeys.py --lane mock --no-badcase
-          run_e2e test/e2e_degrade.py
-          exit $fail
+          set -o pipefail
+          python scripts/run_e2e.py --lane nightly --full --stale-policy warn \
+            | tee nightly-e2e-runner.log
+          runner_rc=${PIPESTATUS[0]}
+          tail -n 1 nightly-e2e-runner.log > nightly-e2e-summary.json
+          python -m json.tool nightly-e2e-summary.json >/dev/null
+          summary_rc=$?
+          set -e
+          if [ "$summary_rc" -ne 0 ]; then
+            echo "::error::nightly runner did not emit a valid final JSON summary"
+            exit "$summary_rc"
+          fi
+          exit "$runner_rc"
 
       - name: Dump compose logs（无论成败都留证据）
         if: always()
@@ -119,7 +98,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nightly-e2e-logs-${{ github.run_id }}
-          path: compose-logs.txt
+          path: |
+            nightly-e2e-summary.json
+            nightly-e2e-runner.log
+            compose-logs.txt
           retention-days: 14
 
       - name: Compose down

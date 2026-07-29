@@ -7,6 +7,7 @@ COPY gen/python /app/gen/python
 COPY agents /app/agents
 COPY runtime /app/runtime
 COPY observability /app/observability
+COPY scripts/e2e_identity.py /app/scripts/e2e_identity.py
 ENV PYTHONPATH=/app:/app/gen/python
 # MCP stdio 帧是 UTF-8 JSON——子进程编码不靠环境撞运气
 ENV PYTHONIOENCODING=utf-8

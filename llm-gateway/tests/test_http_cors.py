@@ -76,3 +76,34 @@ def test_voiceprint_routes_exist(path, method):
     got = {(r.resource.canonical, r.method.upper()) for r in app.router.routes()
            if r.resource is not None}
     assert (path, method) in got
+
+
+def test_tts_response_reports_provider_and_model_separately(monkeypatch):
+    class FakeTTS:
+        provider = "fixture-provider"
+
+        async def synthesize(self, **_kwargs):
+            return b"\x01\x02", "wav", 17, "fixture-model-v1", "voice-f"
+
+        async def list_voices(self, language: str, gender: str):
+            return []
+
+    monkeypatch.setattr(HS, "build_tts_provider", FakeTTS)
+
+    async def go():
+        app = HS.create_http_app()
+        async with TestClient(TestServer(app)) as client:
+            response = await client.post(
+                "/api/tts",
+                json={
+                    "text": "fixture",
+                    "voice_id": "voice-f",
+                    "format": "wav",
+                },
+            )
+            return response.status, await response.json()
+
+    status, payload = asyncio.run(go())
+    assert status == 200
+    assert payload["provider"] == "fixture-provider"
+    assert payload["model"] == "fixture-model-v1"

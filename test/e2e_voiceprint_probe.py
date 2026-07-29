@@ -19,8 +19,11 @@
 故本报告给出的阈值是**乐观下界**，真麦验收（§9 余项）可能需要下调。这一条必须写进报告，
 不能拿合成音的漂亮数字当真人指标——那就是「评测把调用失败算成模型判断」那类失真的近亲。
 
-前置：`make up`（要 llm-gateway 的 /api/tts + DashScope key）+ 本机 `pip install sherpa-onnx`
-      + 模型已拉（scripts/fetch-voice-models.* voiceprint-campplus）。缺任一 → SKIP。
+前置：`make up`（llm-gateway 当前 TTS provider 可用且暴露至少两个中文音色）+
+      本机 `pip install sherpa-onnx` + 模型已拉
+      （scripts/fetch-voice-models.* voiceprint-campplus）。
+连接不到 gateway、缺本机运行时/模型或不足两个音色时结构化 SKIP；gateway 已响应后的
+`/api/voices`、TTS 合成或音频协议错误一律 FAIL。只有两个音色时，三人混录对照单独 SKIP。
 用法：python test/e2e_voiceprint_probe.py [--case all|separation|duration|ood|enroll]
 """
 from __future__ import annotations
@@ -35,9 +38,12 @@ import random
 import statistics
 import sys
 import time
+import urllib.error
 import urllib.request
 import wave
 from pathlib import Path
+
+from support.e2e import CaseRecorder, is_network_timeout
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows 控制台 gbk 防崩
@@ -61,9 +67,35 @@ SENTENCES = [
 ]
 
 
-def _skip(msg: str) -> None:
-    print(f"[SKIP] {msg}")
-    sys.exit(0)
+class ProbeSkip(RuntimeError):
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
+def _ensure_gateway_up() -> None:
+    """Skip only connection absence; HTTP responses/timeouts are runtime failures."""
+
+    try:
+        urllib.request.urlopen(f"{LLM_HTTP}/api/health", timeout=5).read()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(
+            f"llm-gateway health returned HTTP {exc.code}",
+        ) from exc
+    except (
+        urllib.error.URLError,
+        ConnectionError,
+        TimeoutError,
+    ) as exc:
+        if is_network_timeout(exc):
+            raise RuntimeError(
+                "llm-gateway health request timed out",
+            ) from exc
+        raise ProbeSkip(
+            "provider_unavailable",
+            "llm-gateway health endpoint is unavailable",
+        ) from exc
 
 
 def discover_speakers() -> list[str]:
@@ -149,22 +181,68 @@ def describe(name: str, vals: list[float]) -> None:
           f"median={statistics.median(vals):.4f} p95={pct(vals,95):.4f} max={max(vals):.4f}")
 
 
-def main() -> None:
+def _record_mixed_enroll_control(
+    recorder: CaseRecorder,
+    speakers: list[str],
+    embs: dict[str, list[list[float]]],
+    normal_consistency: list[float],
+) -> None:
+    """Record the three-speaker mixed-enrollment control as its own result."""
+
+    if len(speakers) < 3:
+        print("  (音色不足 3 个，坏注册对照单独 SKIP)")
+        recorder.skip_case(
+            "voiceprint_mixed_enroll_control",
+            "data_unavailable",
+            "three distinct Chinese TTS voices are required for the mixed-enrollment control",
+        )
+        return
+
+    bad = []
+    n = len(speakers)
+    for i in range(n):
+        trio = [
+            embs[speakers[i]][0],
+            embs[speakers[(i + 1) % n]][0],
+            embs[speakers[(i + 2) % n]][0],
+        ]
+        bad.append(statistics.mean(
+            [cosine(trio[a], trio[b]) for a in range(3) for b in range(a + 1, 3)],
+        ))
+    describe("坏注册（三段不同人）", bad)
+    separated = max(bad) < min(normal_consistency)
+    if separated:
+        recorder.pass_case("voiceprint_mixed_enroll_control")
+        print(f"  → 建议 VOICEPRINT_MIN_CONSISTENCY 落在 "
+              f"{max(bad):.2f} 与 {min(normal_consistency):.2f} 之间")
+    else:
+        recorder.fail_case(
+            "voiceprint_mixed_enroll_control",
+            "assertion_failed",
+            "mixed-speaker enrollment overlaps normal self-consistency",
+        )
+        print("  ✗ 坏注册与正常注册 self_consistency 重叠，无诚实阈值区间")
+
+
+def _run(recorder: CaseRecorder) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--case", default="all",
                     choices=["all", "separation", "duration", "ood", "enroll", "identify"])
     args = ap.parse_args()
 
     if not MODEL_PATH.exists():
-        _skip(f"模型缺失 {MODEL_PATH}（跑 scripts/fetch-voice-models.sh voiceprint-campplus）")
+        raise ProbeSkip(
+            "hardware_unavailable",
+            "voiceprint model is not installed",
+        )
     try:
         import sherpa_onnx
     except ImportError:
-        _skip("本机无 sherpa-onnx（pip install sherpa-onnx）——探针在宿主提向量，不经网关")
-    try:
-        urllib.request.urlopen(f"{LLM_HTTP}/api/health", timeout=5).read()
-    except Exception as e:
-        _skip(f"llm-gateway 不可达（{e}）——需 make up")
+        raise ProbeSkip(
+            "hardware_unavailable",
+            "sherpa-onnx host runtime is unavailable",
+        ) from None
+    _ensure_gateway_up()
 
     # ★1 加载
     t0 = time.monotonic()
@@ -187,20 +265,27 @@ def main() -> None:
     try:
         speakers = discover_speakers()
     except Exception as e:
-        _skip(f"/api/voices 不可用：{e}")
+        raise RuntimeError(
+            "reachable llm-gateway /api/voices provider discovery failed",
+        ) from e
     if len(speakers) < 2:
-        _skip(f"当前 TTS 引擎可用中文音色不足 2 个（{speakers}）——无法构造异人对照")
+        raise ProbeSkip(
+            "data_unavailable",
+            "fewer than two Chinese TTS voices are available",
+        )
     globals()["SPEAKERS"] = speakers
     SPEAKERS = speakers
     print(f"\n合成语料：{len(SPEAKERS)} 音色 × {len(SENTENCES)} 句 …（音色={SPEAKERS}）")
     audio: dict[str, list[bytes]] = {}
-    for v in SPEAKERS:
+    for voice_index, v in enumerate(SPEAKERS):
         audio[v] = []
         for s in SENTENCES:
             try:
                 audio[v].append(synth_pcm16k(s, v))
             except Exception as e:
-                _skip(f"TTS 合成失败（{v}）：{e}")
+                raise RuntimeError(
+                    f"reachable TTS provider synthesis failed for voice index {voice_index}",
+                ) from e
         durs = [len(p) / 2 / 16000 for p in audio[v]]
         print(f"  {v}: {len(audio[v])} 段，时长 {min(durs):.1f}~{max(durs):.1f}s")
 
@@ -318,23 +403,28 @@ def main() -> None:
             vals.append(statistics.mean(
                 [cosine(e[i], e[j]) for i in range(3) for j in range(i + 1, 3)]))
         describe("正常注册（同音色三句）", vals)
-        bad = []
-        n = len(SPEAKERS)
-        if n >= 3:
-            for i in range(n):
-                trio = [embs[SPEAKERS[i]][0], embs[SPEAKERS[(i + 1) % n]][0],
-                        embs[SPEAKERS[(i + 2) % n]][0]]
-                bad.append(statistics.mean(
-                    [cosine(trio[a], trio[b]) for a in range(3) for b in range(a + 1, 3)]))
-            describe("坏注册（三段不同人）", bad)
-            print(f"  → 建议 VOICEPRINT_MIN_CONSISTENCY 落在 "
-                  f"{max(bad):.2f} 与 {min(vals):.2f} 之间")
-        else:
-            print("  (音色不足 3 个，跳过坏注册对照)")
+        _record_mixed_enroll_control(recorder, SPEAKERS, embs, vals)
 
     print("\n【诚实边界】音频源是 TTS 合成音色而非真人。合成音色之间的可分性通常优于真人，"
           "\n故上面的阈值是**乐观下界**，真麦验收后可能需要下调。不要拿它当真人指标。")
 
 
+def main() -> int:
+    recorder = CaseRecorder()
+    with recorder:
+        try:
+            _run(recorder)
+        except ProbeSkip as exc:
+            print(f"[SKIP] {exc.detail}")
+            recorder.skip_case(
+                "voiceprint_acoustic_probe",
+                exc.code,
+                exc.detail,
+            )
+        else:
+            recorder.pass_case("voiceprint_acoustic_probe")
+    return recorder.exit_code()
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

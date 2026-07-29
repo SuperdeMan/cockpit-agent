@@ -37,6 +37,14 @@ logger = logging.getLogger("agent.sdk.ledger")
 
 _SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "ledger_schema.sql")
 
+PERSONAL_DATA_TARGETS = (
+    {
+        "id": "task_ledger",
+        "storage_variants": ("task_ledger",),
+        "sql_variants": ("task_ledger",),
+    },
+)
+
 # 状态机（单向，终态不可逆；orphaned 是**判定**不是结局，见 heartbeat 的复活分支）
 ACCEPTED, RUNNING = "accepted", "running"
 DONE, FAILED, CANCELLED, ORPHANED = "done", "failed", "cancelled", "orphaned"

@@ -114,6 +114,9 @@ class PlanContext:
     # **只进记忆域**（recall/remember/AppendTurn/relation），绝不参与权限与确认判定——
     # 声纹不是鉴权因子（RFC §6.1 红线，`test_voiceprint_not_auth.py` 源码级钉死）。
     occupant_id: str = "primary"
+    # Runner-issued capability for synthetic E2E memory extraction. It stays
+    # outside prefs so it cannot reach Agents as metadata.
+    e2e_memory_capability: str = ""
     granted_permissions: list[str] = field(default_factory=list)
     is_confirmation: bool = False
     trace_id: str = ""

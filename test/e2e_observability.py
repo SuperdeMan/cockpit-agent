@@ -15,8 +15,9 @@ import json
 import sys
 import time
 import uuid
-import urllib.error
 import urllib.request
+
+from support.e2e import CaseRecorder
 
 try:
     import websockets
@@ -44,20 +45,27 @@ def _post_debug(key: str, value):
     req = urllib.request.Request(
         COLLECTOR + "/api/debug/vehicle", data=data,
         headers={"content-type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return json.loads(r.read().decode())
-    except urllib.error.URLError as e:
-        return {"ok": False, "error": str(e)}
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return json.loads(r.read().decode())
 
 
 def _gen_trace() -> str:
     return uuid.uuid4().hex[:16]
 
 
-async def send(text, session, trace_id, is_confirmation=False, quiet=12, total=150):
+async def send(
+    recorder: CaseRecorder,
+    text,
+    session,
+    trace_id,
+    is_confirmation=False,
+    quiet=12,
+    total=150,
+):
     """发指令；收集所有 final（本地+云端可能多个），quiet 秒无新事件即收尾。"""
-    async with websockets.connect(EDGE_WS, max_size=None) as ws:
+    async with websockets.connect(recorder.ws_url(), max_size=None) as ws:
+        ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        recorder.confirm_identity_ack(ack)
         await ws.send(json.dumps({
             "text": text, "session_id": session,
             "is_confirmation": is_confirmation, "meta": {"trace_id": trace_id}}))
@@ -74,6 +82,8 @@ async def send(text, session, trace_id, is_confirmation=False, quiet=12, total=1
             if msg.get("type") in ("final", "error"):
                 finals.append(msg)
                 got = True
+        if not got:
+            raise asyncio.TimeoutError("no terminal response before deadline")
         return finals
 
 
@@ -83,7 +93,7 @@ def _fmt_changes(ch):
     return ",".join(f"{c['key']}:{c['old']}→{c['new']}" for c in ch)
 
 
-async def run_case(case):
+async def run_case(case, recorder: CaseRecorder, session: str):
     print("\n" + "=" * 72)
     print(f"【{case['name']}】\n  指令: {case['text']}")
     for k, v in case.get("setup", {}).items():
@@ -93,16 +103,15 @@ async def run_case(case):
 
     before = _get("/api/vehicle/state")
     tid = _gen_trace()
-    finals = await send(case["text"], "obs-" + case["name"], tid,
+    finals = await send(recorder, case["text"], session, tid,
                         case.get("is_confirmation", False))
     time.sleep(2.5)  # 等 collector best-effort 落库
     after = _get("/api/vehicle/state")
-    try:
-        tr = _get(f"/api/traces/{tid}")
-        spans = sorted(tr.get("spans", []) if isinstance(tr, dict) else [],
-                       key=lambda s: s.get("ts", 0))
-    except Exception:
-        spans = []
+    tr = _get(f"/api/traces/{tid}")
+    spans = sorted(
+        tr.get("spans", []) if isinstance(tr, dict) else [],
+        key=lambda s: s.get("ts", 0),
+    )
 
     speeches = [f.get("speech") or f.get("message", "") for f in finals]
     need = any(f.get("need_confirm") for f in finals)
@@ -148,28 +157,49 @@ CASES = [
 ]
 
 
-async def main():
-    print("=" * 72)
-    print("专项可观测验证：中枢分发 → agent/VAL/tool 执行 → 仪表盘状态变更")
-    try:
-        print(f"collector healthz: {_get('/healthz')}")
-    except Exception as e:
-        print(f"collector 不可达，请先 make up：{e}")
-        return
-
+async def main() -> int:
+    recorder = CaseRecorder()
     results = []
-    for c in CASES:
-        try:
-            results.append((c["name"], await run_case(c)))
-        except Exception as e:
-            print(f"  ✗ 用例异常: {e}")
+    with recorder:
+        print("=" * 72)
+        print("专项可观测验证：中枢分发 → agent/VAL/tool 执行 → 仪表盘状态变更")
+        print(f"collector healthz: {_get('/healthz')}")
 
-    print("\n" + "=" * 72 + "\n汇总（分发节点 | 车辆状态变更数）")
-    for name, r in results:
-        nodes = " → ".join(s["node"] for s in r["spans"]) or "(无 span)"
-        flag = " ⏸需确认" if r["need"] else ""
-        print(f"  • {name}: {len(r['diff'])}项变更{flag}\n      {nodes}")
+        for index, case in enumerate(CASES, start=1):
+            case_id = f"manual_observation_{index}"
+            try:
+                result = await run_case(
+                    case,
+                    recorder,
+                    recorder.session_id(index),
+                )
+            except Exception as exc:  # noqa: BLE001
+                recorder.fail_case(
+                    case_id,
+                    "unhandled_exception",
+                    f"{type(exc).__name__}: {exc}",
+                )
+                print(f"  ✗ 用例异常: {exc}")
+            else:
+                results.append((case["name"], result))
+                recorder.skip_case(
+                    case_id,
+                    "manual_review_required",
+                    "the rendered trace and vehicle diff require human review",
+                )
+
+        print("\n" + "=" * 72 + "\n汇总（分发节点 | 车辆状态变更数）")
+        for name, result in results:
+            nodes = " → ".join(
+                span["node"] for span in result["spans"]
+            ) or "(无 span)"
+            flag = " ⏸需确认" if result["need"] else ""
+            print(
+                f"  • {name}: {len(result['diff'])}项变更{flag}\n"
+                f"      {nodes}",
+            )
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

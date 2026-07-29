@@ -15,6 +15,8 @@ import json
 import sys
 import time
 
+from support.e2e import CaseRecorder
+
 try:                                   # Windows 控制台默认 GBK，强制 UTF-8 输出
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
@@ -30,8 +32,18 @@ URL = "ws://localhost:8090/ws"
 TIMEOUT = 110  # 深调研=拆子问题+并行迭代检索(Exa 18s)+分节合成(开思考)，给足
 
 
-async def ask(payload: dict, desc: str) -> dict:
-    async with websockets.connect(URL, ping_interval=None, close_timeout=3) as ws:
+async def ask(
+    recorder: CaseRecorder,
+    payload: dict,
+    desc: str,
+) -> dict:
+    async with websockets.connect(
+        recorder.ws_url(),
+        ping_interval=None,
+        close_timeout=3,
+    ) as ws:
+        ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        recorder.confirm_identity_ack(ack)
         await ws.send(json.dumps(payload))
         while True:
             raw = await asyncio.wait_for(ws.recv(), timeout=TIMEOUT)
@@ -52,14 +64,13 @@ async def ask(payload: dict, desc: str) -> dict:
                 return msg
 
 
-async def main() -> int:
+async def _run(recorder: CaseRecorder) -> int:
     print("=== deep-research P0+P1 E2E ===")
     failures = []
-    run = int(time.time())
-    sid = f"e2e-research-{run}"
+    sid = recorder.session_id(1)
 
     # 轮1：深度调研（含"电池"——紧前修复后端侧不再误判成电量查询）→ research_report
-    m1 = await ask({"text": "深入调研一下固态电池的现状和量产前景", "session_id": sid},
+    m1 = await ask(recorder, {"text": "深入调研一下固态电池的现状和量产前景", "session_id": sid},
                    "轮1 深调研含『电池』（验证端侧不劫持 + research_report 卡）")
     card1 = m1.get("ui_card") or {}
     sec1 = ""
@@ -74,7 +85,7 @@ async def main() -> int:
 
     # 轮2：多轮深挖（同 session）「展开第1点」→ 聚焦上轮第1节，仍 research_report
     if card1.get("type") == "research_report" and card1.get("sections"):
-        m2 = await ask({"text": "展开第1点", "session_id": sid},
+        m2 = await ask(recorder, {"text": "展开第1点", "session_id": sid},
                        "轮2 多轮深挖『展开第1点』（应聚焦上轮第1节）")
         card2 = m2.get("ui_card") or {}
         q2 = card2.get("question") or ""
@@ -86,7 +97,9 @@ async def main() -> int:
             print(f"  ⚠ 深挖卡 question={q2[:40]}（期望含『{sec1}』；弱 LLM 措辞可能漂移，非硬失败）")
 
     # 轮3：普通搜索不被深调研劫持
-    m3 = await ask({"text": "搜一下什么是固态电池", "session_id": f"plain-{run}"},
+    m3 = await ask(
+        recorder,
+        {"text": "搜一下什么是固态电池", "session_id": recorder.session_id(2)},
                    "轮3 普通搜索（不应是 research_report）")
     if (m3.get("ui_card") or {}).get("type") == "research_report":
         failures.append("轮3 普通『搜一下』被深调研劫持成 research_report")
@@ -101,6 +114,21 @@ async def main() -> int:
         return 1
     print("  ✓ 全部通过")
     return 0
+
+
+async def main() -> int:
+    recorder = CaseRecorder()
+    with recorder:
+        rc = await _run(recorder)
+        if rc == 0:
+            recorder.pass_case("research_multiturn_contract")
+        else:
+            recorder.fail_case(
+                "research_multiturn_contract",
+                "assertion_failed",
+                "one or more deep-research assertions failed",
+            )
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":

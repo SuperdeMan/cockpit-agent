@@ -1,0 +1,234 @@
+{
+  "secret_b64url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "now": 1700000000,
+  "session_vectors": [
+    {
+      "name": "session_one",
+      "user_id": "e2e-run-abc-e2e-memory",
+      "session_id": "e2e-run-abc-e2e-memory-session-1",
+      "valid": true
+    },
+    {
+      "name": "session_many",
+      "user_id": "e2e-run-abc-e2e-memory",
+      "session_id": "e2e-run-abc-e2e-memory-session-17",
+      "valid": true
+    },
+    {
+      "name": "session_safe_ascii_user",
+      "user_id": "e2e-run_1.2:3-e2e_memory",
+      "session_id": "e2e-run_1.2:3-e2e_memory-session-2",
+      "valid": true
+    },
+    {
+      "name": "session_cross_case",
+      "user_id": "e2e-run-abc-e2e-memory",
+      "session_id": "e2e-run-abc-e2e-voiceprint-session-1",
+      "valid": false
+    },
+    {
+      "name": "session_control_owner",
+      "user_id": "e2e-run-abc-e2e-memory-control",
+      "session_id": "e2e-run-abc-e2e-memory-control-session-1",
+      "valid": true
+    },
+    {
+      "name": "session_control_cross_owner",
+      "user_id": "e2e-run-abc-e2e-memory-control",
+      "session_id": "e2e-run-abc-e2e-memory-session-1",
+      "valid": false
+    },
+    {
+      "name": "session_zero",
+      "user_id": "e2e-run-abc-e2e-memory",
+      "session_id": "e2e-run-abc-e2e-memory-session-0",
+      "valid": false
+    },
+    {
+      "name": "session_leading_zero",
+      "user_id": "e2e-run-abc-e2e-memory",
+      "session_id": "e2e-run-abc-e2e-memory-session-01",
+      "valid": false
+    },
+    {
+      "name": "session_negative",
+      "user_id": "e2e-run-abc-e2e-memory",
+      "session_id": "e2e-run-abc-e2e-memory-session--1",
+      "valid": false
+    },
+    {
+      "name": "session_missing",
+      "user_id": "e2e-run-abc-e2e-memory",
+      "session_id": "",
+      "valid": false
+    }
+  ],
+  "vectors": [
+    {
+      "name": "valid",
+      "valid": true,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbIm1lbW9yeS5yZWFkIiwibWVtb3J5LndyaXRlIl0sImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.qHlvLjwCkqZuB3_-1AQnlt-dIkW4dnviuyEET06PsxQ",
+      "claims": {
+        "run_id": "e2e-run-abc",
+        "user_id": "e2e-run-abc-e2e-memory",
+        "vehicle_id": "v1",
+        "scopes": ["memory.read", "memory.write"],
+        "iat": 1700000000,
+        "exp": 1700000120
+      }
+    },
+    {
+      "name": "payload_tamper",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtdm9pY2VwcmludCIsInZlaGljbGVfaWQiOiJ2MSIsInNjb3BlcyI6WyJtZW1vcnkucmVhZCIsIm1lbW9yeS53cml0ZSJdLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDEyMH0.qHlvLjwCkqZuB3_-1AQnlt-dIkW4dnviuyEET06PsxQ",
+      "error": "signature"
+    },
+    {
+      "name": "signature_tamper",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbIm1lbW9yeS5yZWFkIiwibWVtb3J5LndyaXRlIl0sImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.qHlvLjwCkqZuB3_-1AQnlt-dIkW4dnviuyEET06PsxA",
+      "error": "signature"
+    },
+    {
+      "name": "expired",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbIm1lbW9yeS5yZWFkIiwibWVtb3J5LndyaXRlIl0sImlhdCI6MTY5OTk5OTg4MCwiZXhwIjoxNzAwMDAwMDAwfQ.HY38TrCmgz6S9yxUPFb8kFzlVijLm-juIjWwC76qGBY",
+      "error": "expired"
+    },
+    {
+      "name": "ttl_1920",
+      "valid": true,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbIm1lbW9yeS5yZWFkIiwibWVtb3J5LndyaXRlIl0sImlhdCI6MTY5OTk5ODIwMCwiZXhwIjoxNzAwMDAwMTIwfQ.YFcEk1lMT2a6Fyjc8D_REf88iv3oDaLKXURqpJtDgmk",
+      "claims": {
+        "run_id": "e2e-run-abc",
+        "user_id": "e2e-run-abc-e2e-memory",
+        "vehicle_id": "v1",
+        "scopes": ["memory.read", "memory.write"],
+        "iat": 1699998200,
+        "exp": 1700000120
+      }
+    },
+    {
+      "name": "ttl_1921",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbIm1lbW9yeS5yZWFkIiwibWVtb3J5LndyaXRlIl0sImlhdCI6MTY5OTk5ODIwMCwiZXhwIjoxNzAwMDAwMTIxfQ.RtcDVAS1TIQ7G6VSnm7gVXyi6KOfbfu1ZUaS4pelv5Q",
+      "error": "ttl"
+    },
+    {
+      "name": "future_iat_5",
+      "valid": true,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbIm1lbW9yeS5yZWFkIiwibWVtb3J5LndyaXRlIl0sImlhdCI6MTcwMDAwMDAwNSwiZXhwIjoxNzAwMDAwMTI1fQ.2r525Ga94xB_OOyj7YRMUORZ6BSXC7axh_zBHErjxMk",
+      "claims": {
+        "run_id": "e2e-run-abc",
+        "user_id": "e2e-run-abc-e2e-memory",
+        "vehicle_id": "v1",
+        "scopes": ["memory.read", "memory.write"],
+        "iat": 1700000005,
+        "exp": 1700000125
+      }
+    },
+    {
+      "name": "future_iat_6",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbIm1lbW9yeS5yZWFkIiwibWVtb3J5LndyaXRlIl0sImlhdCI6MTcwMDAwMDAwNiwiZXhwIjoxNzAwMDAwMTI2fQ.eMzIKk0ik62ol91GGtEWJySwNvtxH3OjjigLvKfwekA",
+      "error": "future_iat"
+    },
+    {
+      "name": "non_e2e_user",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJ1c2VyLTEiLCJ2ZWhpY2xlX2lkIjoidjEiLCJzY29wZXMiOlsibWVtb3J5LnJlYWQiLCJtZW1vcnkud3JpdGUiXSwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjE3MDAwMDAxMjB9.vUmMcGW4fcb0g-jNqJ1CMNlHWjGzx9JQsl3YBPEWkKM",
+      "error": "namespace"
+    },
+    {
+      "name": "non_e2e_run",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJydW4tYWJjIiwidXNlcl9pZCI6InJ1bi1hYmMtZTJlLW1lbW9yeSIsInZlaGljbGVfaWQiOiJ2MSIsInNjb3BlcyI6WyJtZW1vcnkucmVhZCIsIm1lbW9yeS53cml0ZSJdLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDEyMH0.f9BegBwSshWxmx5PPU94oNcAcIcDgcDiTAqeJTT8j7k",
+      "error": "namespace"
+    },
+    {
+      "name": "malformed_base64",
+      "valid": false,
+      "token": "e2e.v1.***.abc",
+      "error": "malformed"
+    },
+    {
+      "name": "wrong_version",
+      "valid": false,
+      "token": "e2e.v2.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbIm1lbW9yeS5yZWFkIiwibWVtb3J5LndyaXRlIl0sImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.Mreb5_wh9w1P8HXEQk51cqcl670oDCN1XF8ubsx0hTY",
+      "error": "version"
+    },
+    {
+      "name": "missing_iat",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbIm1lbW9yeS5yZWFkIiwibWVtb3J5LndyaXRlIl0sImV4cCI6MTcwMDAwMDEyMH0.So0VA-g9ykhNZR1u914sdaWD1xb8J_o_T0yvKvLq6ng",
+      "error": "claims"
+    },
+    {
+      "name": "missing_vehicle_id",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5Iiwic2NvcGVzIjpbIm1lbW9yeS5yZWFkIiwibWVtb3J5LndyaXRlIl0sImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.ejKv7aIWA1AWp-2suFrWzI9G1UpzO4-zpV5swBMYp-E",
+      "error": "claims"
+    },
+    {
+      "name": "valid_safe_ascii",
+      "valid": true,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuXzEuMjozIiwidXNlcl9pZCI6ImUyZS1ydW5fMS4yOjMtZTJlX21lbW9yeSIsInZlaGljbGVfaWQiOiJWSU46QUJDXzEuMi0zIiwic2NvcGVzIjpbInNjb3BlOnJlYWRfd3JpdGUtMS4yIl0sImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.Thg0XDI9Y32akgz9LrOmONgn1ItzLeE6mDslPwVUQYk",
+      "claims": {
+        "run_id": "e2e-run_1.2:3",
+        "user_id": "e2e-run_1.2:3-e2e_memory",
+        "vehicle_id": "VIN:ABC_1.2-3",
+        "scopes": ["scope:read_write-1.2"],
+        "iat": 1700000000,
+        "exp": 1700000120
+      }
+    },
+    {
+      "name": "vehicle_unsafe_angle_amp",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6Ijx2Jj4iLCJzY29wZXMiOlsibWVtb3J5LnJlYWQiLCJtZW1vcnkud3JpdGUiXSwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjE3MDAwMDAxMjB9.VMc8I9_mCpbSuZff7XY0mE73m6HM8rNAPZNhhAXHHLo",
+      "error": "unsafe_claim"
+    },
+    {
+      "name": "run_line_separator",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVu4oCoYWJjIiwidXNlcl9pZCI6ImUyZS1ydW7igKhhYmMtZTJlLW1lbW9yeSIsInZlaGljbGVfaWQiOiJ2MSIsInNjb3BlcyI6WyJtZW1vcnkucmVhZCIsIm1lbW9yeS53cml0ZSJdLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDEyMH0.pLqvvQPZfaxNPQxbwxjrEWduEF0wLWMgOj0iJd0A2lk",
+      "error": "unsafe_claim"
+    },
+    {
+      "name": "user_paragraph_separator",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmXigKltZW1vcnkiLCJ2ZWhpY2xlX2lkIjoidjEiLCJzY29wZXMiOlsibWVtb3J5LnJlYWQiLCJtZW1vcnkud3JpdGUiXSwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjE3MDAwMDAxMjB9.blpXOeLnqwAADS3CP-8u0NXgLytUrlqyQUgoIKBuLPM",
+      "error": "unsafe_claim"
+    },
+    {
+      "name": "vehicle_non_bmp",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6Inbwn5iAIiwic2NvcGVzIjpbIm1lbW9yeS5yZWFkIiwibWVtb3J5LndyaXRlIl0sImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.ZgFfq8U7r3LWdFnB_L5oTySMdaQ92Xxo1GTHBhQYFI8",
+      "error": "unsafe_claim"
+    },
+    {
+      "name": "scope_control",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbIm1lbW9yeS5cdTAwMDFyZWFkIl0sImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.TGvOZGh3mxHF8db1lmgI4jxIqeTGbmyGrrQmz5WGYyw",
+      "error": "unsafe_claim"
+    },
+    {
+      "name": "scope_whitespace",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbIm1lbW9yeSByZWFkIl0sImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.gf_17KuFbi7-9uUY1fcFdFzQA_SYuDFIbJbpnCb88BM",
+      "error": "unsafe_claim"
+    },
+    {
+      "name": "scope_empty",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbIiJdLCJpYXQiOjE3MDAwMDAwMCwiZXhwIjoxNzAwMDAxMjB9.t1YExa34UOrEmryw00OdU0QlLm1L4YfepXYdVqF3cNI",
+      "error": "unsafe_claim"
+    },
+    {
+      "name": "scopes_empty",
+      "valid": false,
+      "token": "e2e.v1.eyJydW5faWQiOiJlMmUtcnVuLWFiYyIsInVzZXJfaWQiOiJlMmUtcnVuLWFiYy1lMmUtbWVtb3J5IiwidmVoaWNsZV9pZCI6InYxIiwic2NvcGVzIjpbXSwiaWF0IjoxNzAwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.JzOKe6PnxIZH20g12h0BuFVpry4-cONwmFs1v9khbpU",
+      "error": "unsafe_claim"
+    }
+  ]
+}

@@ -10,6 +10,7 @@
 |---|---|
 | `baseline_fast_intent.{json,md}` | `test/eval_fast_intent.py --write-baseline` |
 | `baseline_route_hints.{json,md}` | `test/eval_route_hints.py --write-baseline` |
+| `journeys_report.{json,md}` | `scripts/run_e2e.py --milestone M-A --lane milestone --full --canonical ...` |
 | `_ci-run-*`（gitignore，不入库） | CI 每次跑产生的临时报告，仅供当次 PR 查看，不覆盖基线 |
 
 ## 怎么跑
@@ -31,6 +32,21 @@ git add docs/reviews/eval/baseline_*.json docs/reviews/eval/baseline_*.md
 
 **不要**在没看清失败原因前直接 `--write-baseline` 把一次失败"消音"——先确认是语料标注错了
 还是代码真的引入了回归。
+
+### Journey canonical
+
+journey canonical 不是手工“写基线”。先提交全部 canonical 输入，再从运行中
+`/api/llm/providers` 读取 active provider/model，最后执行：
+
+```bash
+python scripts/run_e2e.py --milestone M-A --lane milestone --full \
+  --canonical --provider <active-provider> --model <active-model> --stale-policy error
+```
+
+runner 会锁定 resolved selection、provider/model/revision、代码提交、输入 digest 与各状态计数，
+写后立即复算 freshness。筛选运行、dirty canonical 输入、provider 漂移、任何 skip 或失败都只能
+留下当次 artifact，不能覆盖这里的 canonical 报告。报告中的历史数据必须连同这些 metadata
+一起引用，不能只摘通过数。
 
 ## 已知限制
 

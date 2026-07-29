@@ -13,6 +13,15 @@ try:
 except ImportError:
     aioredis = None
 
+PERSONAL_DATA_TARGETS = (
+    {
+        # The current write path is process-local.  A Redis client exists but
+        # is not yet consumed by authorize/capture/cancel/get.
+        "id": "payment_order",
+        "storage_variants": ("PaymentStore._mem", "PaymentStore._idem"),
+    },
+)
+
 
 @dataclass
 class PaymentOrder:

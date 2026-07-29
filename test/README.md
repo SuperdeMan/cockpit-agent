@@ -143,11 +143,23 @@ python test/eval_s2s_escalation.py --desc "…" # §6.2 灰度调参：换 escal
   分母**（把调用失败记作「模型选择自答」会让指标朝好看的方向失真）；错误率 >10% 直接判
   「报告作废」，退出码 2。
 
-一次跑全部脚本：`make e2e`（本地全量清单，`scripts/run_e2e.sh` / `run_e2e.ps1`；假定 `.env` 可能
-配了真实 key，未配置时部分用例按记忆系统既有 SKIP 约定优雅跳过或合理失败，非回归）。
-`.github/workflows/nightly-e2e.yml` 跑的是**裁剪、无需任何密钥即可确定性全绿**的子集（`--case`
-过滤掉依赖真实 LLM 路由/embedding 的用例）。两者刻意不同，脚本清单的单一真相源是文件本身，不在
-本 README 手工重复维护第二份列表；细节见 `docs/design/2026-07-03-r3.3-e2e-ci-gate.md`。
+E2E 清单的唯一真相源是 `test/e2e_manifest.yaml`，统一入口是 `scripts/run_e2e.py`；PowerShell、
+shell 与 `make e2e` 都只是参数透传，不再各自维护脚本数组。常用门禁：
+
+```bash
+python scripts/run_e2e.py --check --milestone M-A --lane milestone --stale-policy warn
+python scripts/run_e2e.py --lane ci --full --stale-policy warn
+python scripts/run_e2e.py --lane nightly --full --stale-policy warn
+python scripts/run_e2e.py --milestone M-A --lane milestone --full --stale-policy warn
+```
+
+每个 child 必须原子写入结构化结果；退出码只接受 `0`（已执行）或 `77`（整项跳过），runner 不解析
+stdout 里的“PASS/SKIP”。milestone 与 canonical 禁止 `SKIP`/`PASS_WITH_SKIPS`，因此缺凭证、
+缺硬件或 provider 不可用不会被包装成绿灯。`--id` 是局部诊断，不具备 full/canonical 资格。
+
+canonical 仅在代码输入已提交、provider/model 由运行中控制面锁定、完整 milestone 通过时更新
+`docs/reviews/eval/journeys_report.{json,md}`；dirty、筛选运行、运行时档位漂移或 stale digest
+都会拒绝覆盖基线。真栈必须从根 `compose.yaml` 启动，runner 不读取实际 `.env`。
 
 ## 6. Nightly 真实 LLM 语料（默认 skip）
 

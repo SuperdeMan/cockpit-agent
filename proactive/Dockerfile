@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r /tmp/req.txt
 
 COPY proactive /app/proactive
 COPY observability /app/observability
+COPY scripts/e2e_identity.py /app/scripts/e2e_identity.py
 
 ENV PYTHONPATH=/app
 ENV PROACTIVE_HTTP_PORT=50075

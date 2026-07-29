@@ -51,6 +51,9 @@ message AppendTurnRequest {
   string user_id = 4;
   string vehicle_id = 5;
   string occupant_id = 6;
+  // 专用于 runner-signed synthetic extraction。Memory 必须验 HMAC，并将
+  // claims 的 run/user/session 与本请求逐项绑定；普通调用留空。
+  string e2e_memory_capability = 7;
 }
 message AppendTurnResponse { bool ok = 1; }
 

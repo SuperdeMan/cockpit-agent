@@ -25,6 +25,8 @@ import sys
 import time
 from pathlib import Path
 
+from support.e2e import CaseRecorder
+
 try:
     import websockets
 except ImportError:
@@ -37,12 +39,28 @@ COMPOSE = ["docker", "compose", "-f", "compose.yaml"]
 ASK_TIMEOUT = 60          # 单次请求等待 final 的上限（秒）
 RECOVER_DEADLINE = 120    # 重建后自愈的容忍上限（秒）
 POLL_GAP = 5              # 自愈轮询间隔（秒）
+_RECORDER: CaseRecorder | None = None
+_SESSION_NUMBER = 0
+
+
+def _e2e() -> CaseRecorder:
+    if _RECORDER is None:
+        raise RuntimeError("CaseRecorder is not initialized")
+    return _RECORDER
+
+
+def _next_session() -> str:
+    global _SESSION_NUMBER
+    _SESSION_NUMBER += 1
+    return _e2e().session_id(_SESSION_NUMBER)
 
 
 async def ask(text: str, session: str) -> dict | None:
     """发一条请求并等到 final/error；连接失败或超时返回 None（供轮询继续）。"""
     try:
-        async with websockets.connect(URL, open_timeout=10) as ws:
+        async with websockets.connect(_e2e().ws_url(), open_timeout=10) as ws:
+            ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            _e2e().confirm_identity_ack(ack)
             await ws.send(json.dumps({"text": text, "session_id": session}))
             while True:
                 raw = await asyncio.wait_for(ws.recv(), timeout=ASK_TIMEOUT)
@@ -80,7 +98,7 @@ async def probe_until_ok(text: str, session_prefix: str, deadline: float) -> flo
     n = 0
     while time.monotonic() - start < deadline:
         n += 1
-        msg = await ask(text, f"{session_prefix}-{n}")
+        msg = await ask(text, _next_session())
         if _ok(msg):
             return time.monotonic() - start
         await asyncio.sleep(POLL_GAP)
@@ -109,6 +127,7 @@ async def case_recover_after_recreate(service: str, probe_text: str) -> bool:
 
 
 async def main() -> int:
+    global _RECORDER
     parser = argparse.ArgumentParser()
     parser.add_argument("--service", default="", help="只测某依赖（cloud-planner / chitchat）")
     args = parser.parse_args()
@@ -124,17 +143,28 @@ async def main() -> int:
             print(f"未知 service: {args.service}")
             return 2
 
-    print("=== E2E 韧性测试（依赖重建自愈）===")
-    results = []
-    for service, probe in targets:
-        ok = await case_recover_after_recreate(service, probe)
-        results.append((service, ok))
+    recorder = CaseRecorder()
+    _RECORDER = recorder
+    with recorder:
+        print("=== E2E 韧性测试（依赖重建自愈）===")
+        results = []
+        for service, probe in targets:
+            ok = await case_recover_after_recreate(service, probe)
+            results.append((service, ok))
+            case_id = service.replace("-", "_")
+            if ok:
+                recorder.pass_case(case_id)
+            else:
+                recorder.fail_case(
+                    case_id,
+                    "assertion_failed",
+                    "dependency did not recover within the bounded deadline",
+                )
 
-    print("\n=== 结果 ===")
-    for service, ok in results:
-        print(f"  {'✓ PASS' if ok else '✗ FAIL'}  {service}")
-    failed = [s for s, ok in results if not ok]
-    return 1 if failed else 0
+        print("\n=== 结果 ===")
+        for service, ok in results:
+            print(f"  {'✓ PASS' if ok else '✗ FAIL'}  {service}")
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":

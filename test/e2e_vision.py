@@ -19,6 +19,8 @@ import sys
 import time
 import zlib
 
+from support.e2e import CaseRecorder, is_network_timeout
+
 try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
@@ -34,7 +36,7 @@ except ImportError:
 WS = "ws://localhost:8090/ws"
 AUDIO_API = "http://localhost:50059"
 TIMEOUT = 90
-SESSION = f"e2e-vision-{int(time.time())}"
+SESSION = ""
 
 _fails: list[str] = []
 
@@ -46,9 +48,75 @@ def check(ok: bool, label: str, detail: str = "") -> bool:
     return ok
 
 
-def skip(msg: str) -> None:
-    print(f"[SKIP] {msg}")
-    sys.exit(0)
+class ProbeSkip(RuntimeError):
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
+def _is_vision_timeout(exc: BaseException) -> bool:
+    if is_network_timeout(exc):
+        return True
+    pending: list[BaseException] = [exc]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, httpx.TimeoutException):
+            return True
+        for nested in (current.__cause__, current.__context__):
+            if isinstance(nested, BaseException):
+                pending.append(nested)
+    return False
+
+
+async def _load_vision_info(client) -> dict:
+    """Load capability metadata while preserving fault classification."""
+    try:
+        response = await client.get(
+            f"{AUDIO_API}/api/vision/info",
+            timeout=10,
+        )
+    except Exception as exc:
+        if _is_vision_timeout(exc):
+            raise RuntimeError("vision capability request timed out") from exc
+        if isinstance(exc, httpx.ConnectError):
+            raise ProbeSkip(
+                "provider_unavailable",
+                "llm-gateway vision endpoint is unavailable",
+            ) from exc
+        raise RuntimeError("vision capability request failed") from exc
+
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError("vision capability endpoint returned HTTP failure") from exc
+    try:
+        info = response.json()
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError("vision capability endpoint returned invalid JSON") from exc
+
+    if not isinstance(info, dict) or not isinstance(info.get("enabled"), bool):
+        raise RuntimeError("vision capability response has an invalid shape")
+    if info["enabled"]:
+        ttl_s = info.get("ttl_s")
+        valid_ttl = (
+            isinstance(ttl_s, (int, float))
+            and not isinstance(ttl_s, bool)
+            and ttl_s > 0
+        )
+        if (
+            not isinstance(info.get("provider"), str)
+            or not info["provider"].strip()
+            or not isinstance(info.get("model"), str)
+            or not info["model"].strip()
+            or not valid_ttl
+        ):
+            raise RuntimeError("vision capability response has an invalid shape")
+    return info
 
 
 def solid_png(w: int, h: int, rgb: tuple[int, int, int]) -> bytes:
@@ -65,8 +133,15 @@ def solid_png(w: int, h: int, rgb: tuple[int, int, int]) -> bytes:
             + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
-async def ask(text: str, meta: dict, session: str = SESSION) -> dict:
-    async with websockets.connect(WS) as ws:
+async def ask(
+    recorder: CaseRecorder,
+    text: str,
+    meta: dict,
+    session: str,
+) -> dict:
+    async with websockets.connect(recorder.ws_url()) as ws:
+        ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        recorder.confirm_identity_ack(ack)
         await ws.send(json.dumps({"text": text, "session_id": session, "meta": meta}))
         while True:
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=TIMEOUT))
@@ -74,15 +149,15 @@ async def ask(text: str, meta: dict, session: str = SESSION) -> dict:
                 return msg
 
 
-async def main() -> int:
+async def _run(recorder: CaseRecorder) -> int:
     print("=== M4 P4 视觉入口真栈验证 ===")
     async with httpx.AsyncClient() as client:
-        try:
-            info = (await client.get(f"{AUDIO_API}/api/vision/info", timeout=10)).json()
-        except Exception as e:
-            skip(f"llm-gateway 不可达：{e}")
+        info = await _load_vision_info(client)
         if not info.get("enabled"):
-            skip(f"视觉档不可用（{info.get('reason')}）——需 DashScope key")
+            raise ProbeSkip(
+                "credential_unavailable",
+                f"vision provider is disabled: {info.get('reason')}",
+            )
         print(f"（provider={info['provider']} model={info['model']} ttl={info['ttl_s']}s）")
 
         # ① 帧上传
@@ -96,7 +171,12 @@ async def main() -> int:
 
         # ② 真图进真模型
         print("\n[② 真图 → 真模型 → 真答案（纯绿图，答案唯一可断言）]")
-        res = await ask("这是什么颜色", {"vision_frame_id": fid})
+        res = await ask(
+            recorder,
+            "这是什么颜色",
+            {"vision_frame_id": fid},
+            recorder.session_id(1),
+        )
         res_with_image = res     # 留给 ⑥：泄漏探针必须查**带图**的这轮（验收修正）
         speech = res.get("speech") or ""
         print(f"   ⇒ {speech[:80]}")
@@ -107,7 +187,12 @@ async def main() -> int:
         png2 = solid_png(96, 96, (230, 200, 20))        # 纯黄
         fid2 = (await client.post(f"{AUDIO_API}/api/vision/frame", params={"mime": "image/png"},
                                   content=png2, timeout=30)).json()["frame_id"]
-        res = await ask("那是什么颜色的", {"vision_frame_id": fid2}, f"{SESSION}-r")
+        res = await ask(
+            recorder,
+            "那是什么颜色的",
+            {"vision_frame_id": fid2},
+            recorder.session_id(2),
+        )
         speech = res.get("speech") or ""
         print(f"   ⇒ {speech[:80]}")
         check("黄" in speech, "route_hints 把视觉句路由到了 vision（不是 chitchat 兜走）",
@@ -115,7 +200,7 @@ async def main() -> int:
 
         # ④ 没帧就说没帧
         print("\n[④ 没帧 → 诚实降级（绝不编一个答案）]")
-        res = await ask("那是什么", {}, f"{SESSION}-nf")
+        res = await ask(recorder, "那是什么", {}, recorder.session_id(3))
         speech = res.get("speech") or ""
         print(f"   ⇒ {speech[:80]}")
         check("没拿到画面" in speech or "看不" in speech,
@@ -123,7 +208,12 @@ async def main() -> int:
 
         # ⑤ 帧过期
         print("\n[⑤ 帧已过期/不存在 → 同样诚实降级]")
-        res = await ask("那是什么", {"vision_frame_id": "vf_expired000000"}, f"{SESSION}-ex")
+        res = await ask(
+            recorder,
+            "那是什么",
+            {"vision_frame_id": "vf_expired000000"},
+            recorder.session_id(4),
+        )
         speech = res.get("speech") or ""
         print(f"   ⇒ {speech[:80]}")
         # 首跑发现的诚实度缺口：网关静默只发文本时，VL 模型会答「看不清，画面有点模糊」
@@ -151,7 +241,11 @@ async def main() -> int:
             check("data:image" not in blob and "iVBORw0KGgo" not in blob,
                   "obs 轮次记录不含图像字节（只有 frame_id）")
         except Exception as e:
-            print(f"   （obs 校验跳过：collector 不可达 {e}）")
+            check(
+                False,
+                "obs 轮次记录可达并可验证图像未泄漏",
+                type(e).__name__,
+            )
 
     print("\n" + "=" * 46)
     if _fails:
@@ -159,6 +253,28 @@ async def main() -> int:
         return 1
     print("✓ 全部通过")
     return 0
+
+
+async def main() -> int:
+    global SESSION
+    recorder = CaseRecorder()
+    SESSION = recorder.session_id(1)
+    with recorder:
+        try:
+            rc = await _run(recorder)
+        except ProbeSkip as exc:
+            print(f"[SKIP] {exc.detail}")
+            recorder.skip_case("vision_end_to_end", exc.code, exc.detail)
+        else:
+            if rc == 0:
+                recorder.pass_case("vision_end_to_end")
+            else:
+                recorder.fail_case(
+                    "vision_end_to_end",
+                    "assertion_failed",
+                    "one or more vision assertions failed",
+                )
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":

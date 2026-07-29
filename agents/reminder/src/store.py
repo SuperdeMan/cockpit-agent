@@ -18,6 +18,27 @@ logger = logging.getLogger("agent.reminder.store")
 _SCHEMA_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "schema.sql")
 PENDING, FIRED, DONE, CANCELLED = "pending", "fired", "done", "cancelled"
 ACTIVE = (PENDING, FIRED)     # 默认过滤：用户可见/可操作态
+PERSONAL_DATA_TARGETS = (
+    {
+        "id": "reminder_item",
+        "storage_variants": ("reminder_item", "ReminderStore._mem"),
+        "sql_variants": ("reminder_item",),
+    },
+    {
+        # Reminder owns these key families even though Context writes them
+        # through the shared profile KV.  Bind the inventory to the SDK's
+        # authoritative literals so three metadata copies cannot self-certify.
+        "id": "reminder_shared_state",
+        "storage_variants": (
+            "reminders_active",
+            "reminder_pending",
+        ),
+        "variant_constants": (
+            ("agents/_sdk/shared_state.py", "REMINDERS_ACTIVE"),
+            ("agents/_sdk/shared_state.py", "REMINDER_PENDING"),
+        ),
+    },
+)
 # kind 第三态（M3 P1 位置提醒）：地点数据存 `extra`（place/lat/lon/radius_m/trigger_on）——
 # 它只在按 kind 选出条目后被读，从不参与过滤/排序，JSONB 是正确的家，**不加新列**
 # （M2「字段级对照后否掉建表」的同一条判据）。

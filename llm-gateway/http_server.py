@@ -162,7 +162,7 @@ def create_http_app() -> web.Application:
             logger.info("TTS: %d chars -> %d bytes, voice=%s", len(text), len(audio_bytes), voice)
             return web.json_response({
                 "audio": audio_b64, "format": fmt_out, "duration_ms": dur,
-                "model": model, "voice_id": voice,
+                "provider": tts.provider, "model": model, "voice_id": voice,
             })
         except Exception as e:
             import traceback
@@ -885,6 +885,26 @@ def create_http_app() -> web.Application:
                 if mtype == UP_SESSION_START:
                     if session is not None:
                         continue  # 幂等：一条 WS 一个会话
+                    resolved_user = str(data.get("user_id") or "")
+                    resolved_vehicle = str(data.get("vehicle_id") or "")
+                    if os.getenv("E2E_IDENTITY_ENABLED", "").lower() == "true":
+                        from e2e_identity import (
+                            IdentityTokenError,
+                            resolve_s2s_identity,
+                        )
+                        try:
+                            resolved_user, resolved_vehicle, _ = resolve_s2s_identity(
+                                data,
+                            )
+                        except IdentityTokenError:
+                            # session.start carries the token, so the HTTP Upgrade
+                            # has already happened. Close before provider/session
+                            # construction and never echo the token or secret.
+                            await ws.close(
+                                code=1008,
+                                message=b"unauthorized test identity",
+                            )
+                            break
                     sid = str(data.get("session_id") or "")
                     if _set_obs_session and sid:
                         _set_obs_session(sid)
@@ -904,8 +924,8 @@ def create_http_app() -> web.Application:
                     reflux = Reflux(
                         memory_stub_getter=_memory_stub, obs=_obs,
                         gate_content=_gate_content, session_id=sid,
-                        user_id=str(data.get("user_id") or ""),
-                        vehicle_id=str(data.get("vehicle_id") or ""),
+                        user_id=resolved_user,
+                        vehicle_id=resolved_vehicle,
                         occupant_id=str(data.get("occupant_id") or ""),
                         provider_name=prov_name or os.getenv("S2S_PROVIDER", "dashscope"),
                         model=model or os.getenv("S2S_MODEL", "qwen3.5-omni-flash-realtime"))
@@ -915,7 +935,7 @@ def create_http_app() -> web.Application:
                         emit_json=emit_json, emit_audio=emit_audio,
                         context_provider=lambda: build_context_summary(_memory_stub(), sid),
                         reflux=reflux, session_id=sid,
-                        user_id=str(data.get("user_id") or ""),
+                        user_id=resolved_user,
                         voice=(data.get("voice") or "").strip())
                     try:
                         await session.start()

@@ -151,6 +151,8 @@ services:
     volumes: *certs-vol
     environment:
       <<: *python-env
+      E2E_IDENTITY_ENABLED: ${E2E_IDENTITY_ENABLED:-false}
+      E2E_IDENTITY_SECRET: ${E2E_IDENTITY_SECRET-}
       LLM_PROVIDER: ${LLM_PROVIDER:-xiaomimimo}
       LLM_API_KEY: ${LLM_API_KEY:-}
       # OpenAI 兼容服务商可切换端点/鉴权/思考开关，换服务商只改 .env（详见 .env.example）
@@ -243,9 +245,12 @@ services:
       <<: *python-env
       POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
       EMBED_DIM: ${EMBED_DIM:-1024}   # 须与 LLM_EMBED_DIMENSIONS 一致（百炼 v4 默认 1024）
-      # 合成会话（eval/e2e/badcase 重放/探针）按 session_id 前缀跳过 LLM 抽取巩固：
-      # 不烧 token、不污染真实用户画像；记忆管线自测用 memtest- 前缀（不在此列）
-      MEMORY_EXTRACT_SKIP_PREFIXES: ${MEMORY_EXTRACT_SKIP_PREFIXES:-eval-,e2e-,ctxe2e-,central-,review-,nightly-,replay-,probe-,smoke-}
+      # 合成会话（含旧 memtest- 客户端标记）按 session_id 前缀跳过 LLM 抽取巩固；
+      # 只有 runner 签发、经专用字段传递且绑定 run/user/session 的短时 memory capability
+      # 可绕过；capability 不是业务 session_id（相关 legacy wire 名称仅为兼容保留）。
+      MEMORY_EXTRACT_SKIP_PREFIXES: ${MEMORY_EXTRACT_SKIP_PREFIXES:-eval-,e2e-,ctxe2e-,central-,review-,nightly-,replay-,probe-,smoke-,memtest-}
+      E2E_CAPABILITY_ENABLED: ${E2E_CAPABILITY_ENABLED:-false}
+      E2E_CAPABILITY_SECRET: ${E2E_CAPABILITY_SECRET-}
       # M2 记忆图谱：偏好加权（off=逐字回加权前）
       MEMORY_WEIGHTING: ${MEMORY_WEIGHTING:-on}
       # 会话原文 TTL（验收补口）：留空用代码默认 7 天；ForgetUser 全量删级联清会话原文
@@ -583,6 +588,9 @@ services:
     environment:
       <<: *python-env
       AGENT_PORT: "50076"
+      NATS_URL: nats://nats:4222
+      E2E_NAMESPACE_ADMIN_ENABLED: ${E2E_NAMESPACE_ADMIN_ENABLED:-false}
+      E2E_NAMESPACE_ADMIN_SECRET: ${E2E_NAMESPACE_ADMIN_SECRET-}
       # 写操作订单状态机复用 M2 task_ledger（不新建表）；无 PG → 诚实降级不承诺可查
       POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
     depends_on: [registry, llm-gateway, memory, postgres]
@@ -597,6 +605,8 @@ services:
     environment:
       NATS_URL: nats://nats:4222
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      E2E_NAMESPACE_ADMIN_ENABLED: ${E2E_NAMESPACE_ADMIN_ENABLED:-false}
+      E2E_NAMESPACE_ADMIN_SECRET: ${E2E_NAMESPACE_ADMIN_SECRET-}
       # 一键回退：false → 治理器不订阅 → 全部生产方自动直发老主题
       PROACTIVE_GOVERNOR_ENABLED: ${PROACTIVE_GOVERNOR_ENABLED:-true}
       PROACTIVE_MERGE_WINDOW_MS: ${PROACTIVE_MERGE_WINDOW_MS:-1500}
@@ -642,6 +652,8 @@ services:
       AUTH_TOKENS: ${AUTH_TOKENS:-}
       AUTH_DEFAULT_USER_ID: ${AUTH_DEFAULT_USER_ID:-u1}
       VEHICLE_ID: ${VEHICLE_ID:-v1}
+      E2E_IDENTITY_ENABLED: ${E2E_IDENTITY_ENABLED:-false}
+      E2E_IDENTITY_SECRET: ${E2E_IDENTITY_SECRET-}
       # R3.2 服务间 mTLS（默认关；Go 侧经 gateway/tlscfg 读取）
       GRPC_TLS: ${GRPC_TLS:-off}
       GRPC_TLS_CA: /certs/ca.crt

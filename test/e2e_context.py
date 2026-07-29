@@ -23,6 +23,8 @@ import time
 import urllib.error
 from pathlib import Path
 
+from support.e2e import CaseRecorder
+
 try:
     import websockets
 except ImportError:
@@ -32,7 +34,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent))
 from e2e_central_hub_assertions import (  # noqa: E402
     _get, _post_debug, _trace_id, _wait_trace, _assert_turn,
-    _nodes, _state_diff, EDGE_WS,
+    _nodes, _state_diff,
 )
 
 try:
@@ -41,7 +43,15 @@ except Exception:
     pass
 
 
-async def _send(text, session_id, trace_id, *, is_confirmation=False, meta=None):
+async def _send(
+    recorder: CaseRecorder,
+    text,
+    session_id,
+    trace_id,
+    *,
+    is_confirmation=False,
+    meta=None,
+):
     payload = {
         "text": text,
         "session_id": session_id,
@@ -50,7 +60,13 @@ async def _send(text, session_id, trace_id, *, is_confirmation=False, meta=None)
     }
     # ping_interval=None 模拟浏览器（浏览器不主动发 WS ping，靠服务端 15s ping 保活）；
     # 否则慢 Agent（trip-planner 多日重生成 >20s）期间客户端 ping 等不到 pong 会误判超时断连。
-    async with websockets.connect(EDGE_WS, max_size=None, ping_interval=None) as ws:
+    async with websockets.connect(
+        recorder.ws_url(),
+        max_size=None,
+        ping_interval=None,
+    ) as ws:
+        ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        recorder.confirm_identity_ack(ack)
         await ws.send(json.dumps(payload, ensure_ascii=False))
         finals, started, got_final = [], time.time(), False
         while time.time() - started < 130:
@@ -67,9 +83,8 @@ async def _send(text, session_id, trace_id, *, is_confirmation=False, meta=None)
         return finals
 
 
-async def _run_case(case):
+async def _run_case(case, recorder: CaseRecorder, session_id: str):
     name = case["name"]
-    session_id = f"ctxe2e-{name}-{_trace_id()[:6]}"
     case_meta = case.get("meta", {})
     print(f"\n== {name} ==")
 
@@ -82,6 +97,7 @@ async def _run_case(case):
         trace_id = _trace_id()
         before = _get("/api/vehicle/state")
         finals = await _send(
+            recorder,
             turn["text"], session_id, trace_id,
             is_confirmation=turn.get("is_confirmation", False),
             meta={**case_meta, **turn.get("meta", {})})
@@ -164,36 +180,35 @@ CASES = [
 ]
 
 
-async def _main():
+async def _main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--case", action="append", default=[])
     args = parser.parse_args()
-    try:
+    recorder = CaseRecorder()
+    with recorder:
         print(f"collector healthz: {_get('/healthz')}")
-    except urllib.error.URLError as exc:
-        raise SystemExit(f"collector unavailable; run make up first: {exc}") from exc
+        cases = CASES
+        if args.case:
+            cases = [c for c in CASES if c["name"] in set(args.case)]
+        assert cases, "no cases selected"
 
-    cases = CASES
-    if args.case:
-        cases = [c for c in CASES if c["name"] in set(args.case)]
-    assert cases, "no cases selected"
-
-    failures = []
-    for case in cases:
-        try:
-            await _run_case(case)
-        except AssertionError as exc:
-            failures.append((case["name"], str(exc)))
-            print(f"  FAIL: {exc}")
-        except Exception as exc:  # noqa: BLE001
-            failures.append((case["name"], f"error: {exc}"))
-            print(f"  ERROR: {exc}")
-    print(f"\ncontext e2e: {len(cases) - len(failures)}/{len(cases)} passed")
-    for name, msg in failures:
-        print(f"  ✗ {name}: {msg.splitlines()[0]}")
-    if failures:
-        sys.exit(1)
+        for index, case in enumerate(cases, start=1):
+            try:
+                await _run_case(case, recorder, recorder.session_id(index))
+            except Exception as exc:  # noqa: BLE001
+                recorder.fail_case(
+                    case["name"],
+                    "assertion_failed"
+                    if isinstance(exc, AssertionError)
+                    else "unhandled_exception",
+                    f"{type(exc).__name__}: {exc}",
+                )
+                print(f"  FAIL: {type(exc).__name__}: {exc}")
+            else:
+                recorder.pass_case(case["name"])
+        print(f"\ncontext e2e finished: {len(cases)} case(s)")
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":
-    asyncio.run(_main())
+    raise SystemExit(asyncio.run(_main()))

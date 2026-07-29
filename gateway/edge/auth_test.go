@@ -1,6 +1,17 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"encoding/json"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
 
 func TestParseAuthTokens(t *testing.T) {
 	table := parseAuthTokens(
@@ -92,5 +103,203 @@ func TestStampScopesNilMeta(t *testing.T) {
 	out := stampScopes(nil, "media.control")
 	if out["granted_scopes"] != "media.control" {
 		t.Fatalf("nil meta should be initialized with scopes")
+	}
+}
+
+func TestE2EGateDisabledTreatsSignedPrefixAsOrdinaryUnknown(t *testing.T) {
+	a := authConfig{
+		defaultUserID:  "u1",
+		defaultVehicle: "v1",
+		now:            func() time.Time { return time.Unix(1700000000, 0) },
+	}
+	_, claims, ok, hardReject := a.resolveSession("e2e.v1.not-a-token")
+	if ok || hardReject || claims != nil {
+		t.Fatalf("disabled gate changed existing unknown-token behavior")
+	}
+}
+
+func TestStaticAuthTokenHasPriorityOverE2EGate(t *testing.T) {
+	token := "e2e.v1.normal-auth-token"
+	a := authConfig{
+		tokens: map[string]identity{
+			token: {userID: "normal", vehicleID: "v9", scopes: "normal.scope"},
+		},
+		e2eEnabled:    true,
+		e2eConfigErr:  errE2EIdentityConfig,
+		defaultUserID: "u1",
+		now:           func() time.Time { return time.Unix(1700000000, 0) },
+	}
+	id, claims, ok, hardReject := a.resolveSession(token)
+	if !ok || hardReject || claims != nil || id.userID != "normal" {
+		t.Fatalf("normal auth must win before E2E prefix handling: %+v", id)
+	}
+}
+
+func TestEnabledE2EGateFailsClosedForMissingSecretAndBadToken(t *testing.T) {
+	a := authConfig{
+		e2eEnabled:    true,
+		e2eConfigErr:  errE2EIdentityConfig,
+		defaultUserID: "u1",
+		now:           func() time.Time { return time.Unix(1700000000, 0) },
+	}
+	if _, _, ok, hard := a.resolveSession("e2e.v1.anything"); ok || !hard {
+		t.Fatal("enabled gate with missing secret trusted an E2E prefix")
+	}
+	fixture := loadIdentityFixture(t)
+	secret, _ := decodeE2ESecret(fixture.Secret)
+	a.e2eSecret, a.e2eConfigErr = secret, nil
+	if _, _, ok, hard := a.resolveSession("e2e.v1.malformed"); ok || !hard {
+		t.Fatal("malformed E2E token fell back to anonymous")
+	}
+}
+
+func TestEnabledE2EGateHardRejectsTamperedAndMalformedV1Only(t *testing.T) {
+	fixture := loadIdentityFixture(t)
+	secret, _ := decodeE2ESecret(fixture.Secret)
+	a := authConfig{
+		e2eEnabled:     true,
+		e2eSecret:      secret,
+		defaultUserID:  "u1",
+		defaultVehicle: "v1",
+		now:            func() time.Time { return time.Unix(fixture.Now, 0) },
+	}
+	for _, token := range []string{
+		"e2e.v1.malformed",
+		fixture.Vectors[1].Token,
+		fixture.Vectors[2].Token,
+	} {
+		if _, _, ok, hard := a.resolveSession(token); ok || !hard {
+			t.Fatalf("invalid e2e.v1 token was not hard rejected: %q", token)
+		}
+	}
+}
+
+func TestWrongVersionVerifierRejectsButAuthKeepsUnknownTokenPolicy(t *testing.T) {
+	fixture := loadIdentityFixture(t)
+	secret, _ := decodeE2ESecret(fixture.Secret)
+	if _, err := verifyE2EIdentity(
+		"e2e.v2.payload.signature",
+		secret,
+		time.Unix(fixture.Now, 0),
+	); err == nil {
+		t.Fatal("verifier accepted an unsupported token version")
+	}
+	a := authConfig{
+		e2eEnabled:     true,
+		e2eSecret:      secret,
+		defaultUserID:  "u1",
+		defaultVehicle: "v1",
+		now:            func() time.Time { return time.Unix(fixture.Now, 0) },
+	}
+	if _, claims, ok, hard := a.resolveSession("e2e.v2.payload.signature"); ok ||
+		hard || claims != nil {
+		t.Fatal("wrong-version token did not preserve ordinary unknown-token policy")
+	}
+}
+
+func TestE2EAuthClaimsOnlyExactV1DotPrefix(t *testing.T) {
+	fixture := loadIdentityFixture(t)
+	secret, _ := decodeE2ESecret(fixture.Secret)
+	a := authConfig{
+		e2eEnabled:     true,
+		e2eSecret:      secret,
+		defaultUserID:  "u1",
+		defaultVehicle: "v1",
+		now:            func() time.Time { return time.Unix(fixture.Now, 0) },
+	}
+	for _, token := range []string{
+		"e2e.v1x.payload.signature",
+		"e2e.v10.payload.signature",
+	} {
+		if _, claims, ok, hard := a.resolveSession(token); ok ||
+			hard || claims != nil {
+			t.Fatalf("near-prefix token did not preserve unknown policy: %q", token)
+		}
+	}
+	tampered := fixture.Vectors[1].Token
+	if _, _, ok, hard := a.resolveSession(tampered); ok || !hard {
+		t.Fatal("tampered exact e2e.v1. token was not hard rejected")
+	}
+}
+
+func TestValidE2ETokenOwnsIdentityAndScopes(t *testing.T) {
+	fixture := loadIdentityFixture(t)
+	secret, _ := decodeE2ESecret(fixture.Secret)
+	a := authConfig{
+		e2eEnabled:     true,
+		e2eSecret:      secret,
+		defaultUserID:  "u1",
+		defaultVehicle: "v-default",
+		now:            func() time.Time { return time.Unix(fixture.Now, 0) },
+	}
+	id, claims, ok, hardReject := a.resolveSession(fixture.Vectors[0].Token)
+	if !ok || hardReject || claims == nil {
+		t.Fatal("valid signed identity rejected")
+	}
+	if id.userID != claims.UserID || id.vehicleID != claims.VehicleID {
+		t.Fatalf("identity not taken from signed payload: %+v %#v", id, claims)
+	}
+	if id.scopes != "memory.read,memory.write" {
+		t.Fatalf("scope authority did not come from signed payload: %q", id.scopes)
+	}
+}
+
+func TestInvalidE2ETokenReturns401BeforeUpgradeWithoutLoggingToken(t *testing.T) {
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(previous)
+	a := authConfig{
+		e2eEnabled:    true,
+		e2eConfigErr:  errE2EIdentityConfig,
+		defaultUserID: "u1",
+		now:           time.Now,
+	}
+	request := httptest.NewRequest(http.MethodGet, "/ws?token=e2e.v1.secret-value", nil)
+	response := httptest.NewRecorder()
+	handleWS(response, request, nil, a)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("want pre-upgrade 401, got %d", response.Code)
+	}
+	if strings.Contains(logs.String(), "e2e.v1.secret-value") {
+		t.Fatal("identity token leaked to logs")
+	}
+}
+
+func TestValidE2ETokenReceivesOwnerAckAsFirstUpgradedFrame(t *testing.T) {
+	fixture := loadIdentityFixture(t)
+	secret, _ := decodeE2ESecret(fixture.Secret)
+	a := authConfig{
+		e2eEnabled:     true,
+		e2eSecret:      secret,
+		defaultUserID:  "u1",
+		defaultVehicle: "v-default",
+		now:            func() time.Time { return time.Unix(fixture.Now, 0) },
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleWS(w, r, nil, a)
+	}))
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") +
+		"/?token=" + fixture.Vectors[0].Token
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, raw, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ack map[string]any
+	if err := json.Unmarshal(raw, &ack); err != nil {
+		t.Fatal(err)
+	}
+	if ack["type"] != "e2e_identity_ack" ||
+		ack["run_id"] != fixture.Vectors[0].Claims.RunID ||
+		ack["user_id"] != fixture.Vectors[0].Claims.UserID ||
+		ack["vehicle_id"] != fixture.Vectors[0].Claims.VehicleID {
+		t.Fatalf("first frame is not the signed owner ACK: %#v", ack)
 	}
 }

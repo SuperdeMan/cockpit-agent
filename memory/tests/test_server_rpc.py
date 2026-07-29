@@ -8,6 +8,8 @@ import importlib.util
 import json
 import os
 import sys
+import time
+from types import SimpleNamespace
 
 _MEM_DIR = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, _MEM_DIR)
@@ -20,6 +22,8 @@ _spec = importlib.util.spec_from_file_location(
 _mem_server = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mem_server)
 MemoryServicer = _mem_server.MemoryServicer
+from memory.e2e_capability import sign_memory_capability  # noqa: E402
+from scripts.e2e_identity import encode_secret  # noqa: E402
 
 
 def _servicer() -> MemoryServicer:
@@ -186,7 +190,7 @@ def test_derive_and_emit_publishes_proactive():
 
 def test_synthetic_sessions_skip_consolidation(monkeypatch):
     """合成会话（eval-/e2e-/replay- 等前缀）不触发 LLM 抽取巩固：不烧 token、
-    不把测试对话沉淀进真实画像（conventions §9.2）；正常/memtest- 会话照旧 4 轮一触发。"""
+    不把测试对话沉淀进真实画像；客户端自报 memtest- 也不能绕过。"""
     svc = _servicer()
     calls = []
 
@@ -196,7 +200,7 @@ def test_synthetic_sessions_skip_consolidation(monkeypatch):
     monkeypatch.setattr(svc, "_consolidate_bg", fake_bg)
 
     async def go():
-        for prefix in ("eval-", "e2e-", "replay-", "nightly-"):
+        for prefix in ("eval-", "e2e-", "replay-", "nightly-", "memtest-"):
             for i in range(8):
                 await svc.AppendTurn(memory_pb2.AppendTurnRequest(
                     session_id=f"{prefix}case", role="user", text=f"t{i}", user_id="u1"), None)
@@ -204,14 +208,203 @@ def test_synthetic_sessions_skip_consolidation(monkeypatch):
 
         for i in range(4):
             await svc.AppendTurn(memory_pb2.AppendTurnRequest(
-                session_id="memtest-routine-x", role="user", text=f"t{i}", user_id="u1"), None)
-        await asyncio.sleep(0)  # 让后台 task 执行
-        assert len(calls) == 1  # 抽取自测前缀不受影响
-
-        for i in range(4):
-            await svc.AppendTurn(memory_pb2.AppendTurnRequest(
                 session_id="hmi-normal-1", role="user", text=f"t{i}", user_id="u1"), None)
         await asyncio.sleep(0)
-        assert len(calls) == 2  # 真实会话照旧
+        assert len(calls) == 1  # 真实会话照旧
 
     asyncio.run(go())
+
+
+def test_only_runner_signed_synthetic_session_can_trigger_extraction(monkeypatch):
+    secret = bytes(range(32))
+    monkeypatch.setenv("E2E_CAPABILITY_ENABLED", "true")
+    monkeypatch.setenv("E2E_CAPABILITY_SECRET", encode_secret(secret))
+    svc = _servicer()
+    calls = []
+
+    async def fake_bg(*args):
+        calls.append(args)
+
+    monkeypatch.setattr(svc, "_consolidate_bg", fake_bg)
+    run_id = "e2e-run-abc"
+    user_id = f"{run_id}-e2e_memory"
+    plain_session = f"{user_id}-session-1"
+    signed_capability = sign_memory_capability(
+        secret,
+        run_id=run_id,
+        user_id=user_id,
+        session_id=plain_session,
+        timeout_s=300,
+        now=int(time.time()),
+    )
+    tampered_capability = (
+        signed_capability[:-1]
+        + ("A" if signed_capability[-1] != "A" else "B")
+    )
+    expired_capability = sign_memory_capability(
+        secret,
+        run_id=run_id,
+        user_id=user_id,
+        session_id=f"{user_id}-session-2",
+        timeout_s=300,
+        now=int(time.time()) - 1000,
+    )
+    wrong_secret_capability = sign_memory_capability(
+        b"z" * 32,
+        run_id=run_id,
+        user_id=user_id,
+        session_id=f"{user_id}-session-3",
+        timeout_s=300,
+        now=int(time.time()),
+    )
+
+    async def go():
+        await svc.AppendTurn(memory_pb2.AppendTurnRequest(
+            session_id="e2e-ordinary-session",
+            role="user",
+            text="记住普通 synthetic 仍然不抽取",
+            user_id=user_id,
+        ), None)
+        assert calls == []
+
+        for request_session, capability, request_user in (
+            (plain_session, tampered_capability, user_id),
+            (f"{user_id}-session-2", expired_capability, user_id),
+            (f"{user_id}-session-3", wrong_secret_capability, user_id),
+            (plain_session, signed_capability, f"{run_id}-another-case"),
+        ):
+            await svc.AppendTurn(memory_pb2.AppendTurnRequest(
+                session_id=request_session,
+                role="user",
+                text="记住，这条无权触发抽取",
+                user_id=request_user,
+                e2e_memory_capability=capability,
+            ), None)
+        assert calls == []
+
+        await svc.AppendTurn(memory_pb2.AppendTurnRequest(
+            session_id=plain_session,
+            role="user",
+            text="记住，我喜欢26度",
+            user_id=user_id,
+            e2e_memory_capability=signed_capability,
+        ), None)
+        await asyncio.sleep(0)
+        assert len(calls) == 1
+        assert calls[0][0] == plain_session
+
+    asyncio.run(go())
+
+
+def test_memory_gate_checks_exact_run_derived_from_request_user(monkeypatch):
+    secret = bytes(range(32))
+    monkeypatch.setenv("E2E_CAPABILITY_ENABLED", "true")
+    monkeypatch.setenv("E2E_CAPABILITY_SECRET", encode_secret(secret))
+    svc = _servicer()
+    request = memory_pb2.AppendTurnRequest(
+        session_id="e2e-run-abc-e2e_memory-session-1",
+        role="user",
+        text="remember",
+        user_id="e2e-run-abc-e2e_memory",
+        e2e_memory_capability="e2emem.v1.opaque.signature",
+    )
+
+    monkeypatch.setattr(
+        _mem_server,
+        "verify_memory_capability",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            run_id="e2e-run",
+            user_id=request.user_id,
+            session_id=request.session_id,
+        ),
+    )
+    assert svc._allows_synthetic_extraction(request) is False
+
+    monkeypatch.setattr(
+        _mem_server,
+        "verify_memory_capability",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            run_id="e2e-run-abc",
+            user_id=request.user_id,
+            session_id=request.session_id,
+        ),
+    )
+    assert svc._allows_synthetic_extraction(request) is True
+
+
+def test_memory_gate_accepts_only_capability_bound_to_plain_request_session(
+    monkeypatch,
+):
+    secret = bytes(range(32))
+    monkeypatch.setenv("E2E_CAPABILITY_ENABLED", "true")
+    monkeypatch.setenv("E2E_CAPABILITY_SECRET", encode_secret(secret))
+    svc = _servicer()
+    run_id = "e2e-run-abc"
+    user_id = f"{run_id}-e2e_journeys"
+    session_id = f"{user_id}-session-1"
+    capability = sign_memory_capability(
+        secret,
+        run_id=run_id,
+        user_id=user_id,
+        session_id=session_id,
+        timeout_s=300,
+        now=int(time.time()),
+    )
+
+    valid = SimpleNamespace(
+        session_id=session_id,
+        user_id=user_id,
+        e2e_memory_capability=capability,
+    )
+    assert svc._allows_synthetic_extraction(valid) is True
+
+    wrong_session = SimpleNamespace(
+        session_id=f"{user_id}-session-2",
+        user_id=user_id,
+        e2e_memory_capability=capability,
+    )
+    wrong_user = SimpleNamespace(
+        session_id=session_id,
+        user_id=f"{run_id}-other-case",
+        e2e_memory_capability=capability,
+    )
+    assert svc._allows_synthetic_extraction(wrong_session) is False
+    assert svc._allows_synthetic_extraction(wrong_user) is False
+
+
+def test_memory_gate_rejects_forged_and_expired_dedicated_capabilities(
+    monkeypatch,
+):
+    secret = bytes(range(32))
+    monkeypatch.setenv("E2E_CAPABILITY_ENABLED", "true")
+    monkeypatch.setenv("E2E_CAPABILITY_SECRET", encode_secret(secret))
+    svc = _servicer()
+    run_id = "e2e-run-abc"
+    user_id = f"{run_id}-e2e_journeys"
+    session_id = f"{user_id}-session-1"
+    current = int(time.time())
+    capability = sign_memory_capability(
+        secret,
+        run_id=run_id,
+        user_id=user_id,
+        session_id=session_id,
+        timeout_s=300,
+        now=current,
+    )
+    forged = capability[:-1] + ("A" if capability[-1] != "A" else "B")
+    expired = sign_memory_capability(
+        secret,
+        run_id=run_id,
+        user_id=user_id,
+        session_id=session_id,
+        timeout_s=300,
+        now=current - 1000,
+    )
+
+    for token in (forged, expired):
+        request = SimpleNamespace(
+            session_id=session_id,
+            user_id=user_id,
+            e2e_memory_capability=token,
+        )
+        assert svc._allows_synthetic_extraction(request) is False

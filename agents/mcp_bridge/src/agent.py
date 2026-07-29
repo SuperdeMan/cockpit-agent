@@ -34,6 +34,15 @@ _SERVERS = os.path.join(_HERE, "servers.yaml")
 
 LEDGER_KIND = "mcp_order"           # 契约登记 conventions §9.6 的 kind 全集
 DEMO_PROVIDER = "demo"              # _prov 标记（conventions §9.3）：演示商户永远标出来
+_HIDDEN_ADMIN_TOOL = "__e2e.namespace.admin"
+
+PERSONAL_DATA_TARGETS = (
+    {
+        # The demo MCP server is an external subprocess and owns these maps.
+        "id": "mcp_demo_order",
+        "storage_variants": ("demo_coffee._ORDERS", "demo_coffee._BY_IDEM"),
+    },
+)
 
 
 class _Binding:
@@ -127,6 +136,89 @@ class McpBridgeAgent(BaseAgent):
         return await (self._call_write(b, intent, ctx, meta) if b.tool.write
                       else self._call_read(b, intent, ctx, meta))
 
+    async def namespace_admin(self, request: dict) -> dict:
+        """Run an E2E-only exact-owner lifecycle operation through a write binding.
+
+        The NATS layer verifies the signed owner first. This method remains
+        generic: it discovers the write/compensation pair from admission data,
+        and never adds the hidden operation to business capabilities.
+        """
+
+        if not isinstance(request, dict) or set(request) != {
+            "op", "user_id", "order_id", "intent",
+        }:
+            return self._admin_result(error="invalid_request")
+        op = request.get("op")
+        owner = request.get("user_id")
+        order_id = request.get("order_id")
+        intent = request.get("intent")
+        if (
+            op not in {
+                "count",
+                "status",
+                "compensate",
+                "purge",
+                "lifecycle_cleanup",
+            }
+            or not isinstance(owner, str)
+            or not owner
+            or not isinstance(order_id, str)
+            or not isinstance(intent, str)
+            or not intent
+            or (op in {"status", "compensate"} and not order_id)
+        ):
+            return self._admin_result(op=str(op or ""), error="invalid_request")
+        binding = self._bindings.get(intent)
+        if (
+            binding is None
+            or not binding.tool.write
+            or not binding.tool.compensate_tool
+            or not binding.client.healthy
+            or not binding.client.alive
+        ):
+            return self._admin_result(op=op, order_id=order_id,
+                                      error="binding_unavailable")
+        try:
+            response = await binding.client.call_tool(
+                _HIDDEN_ADMIN_TOOL,
+                {
+                    "op": op,
+                    "_owner_user_id": owner,
+                    "order_id": order_id,
+                    "write_tool": binding.tool.name,
+                    "compensate_tool": binding.tool.compensate_tool,
+                },
+                timeout_s=binding.tool.timeout_ms / 1000.0,
+            )
+        except Exception:
+            return self._admin_result(op=op, order_id=order_id,
+                                      error="admin_unavailable")
+        if not response.get("ok"):
+            return self._admin_result(op=op, order_id=order_id,
+                                      error="admin_rejected")
+        data = response.get("data") or {}
+        return self._admin_result(
+            ok=True,
+            op=op,
+            count=int(data.get("count") or 0),
+            order_id=str(data.get("order_id") or order_id),
+            status=str(data.get("status") or ""),
+            deleted=int(data.get("deleted") or 0),
+        )
+
+    @staticmethod
+    def _admin_result(*, ok=False, op="", count=0, order_id="",
+                      status="", deleted=0, error="") -> dict:
+        return {
+            "ok": bool(ok),
+            "op": str(op),
+            "count": int(count),
+            "order_id": str(order_id),
+            "status": str(status),
+            "deleted": int(deleted),
+            "error": str(error),
+        }
+
     # ── 只读 ──
     async def _call_read(self, b, intent, ctx, meta) -> AgentResult:
         try:
@@ -160,7 +252,9 @@ class McpBridgeAgent(BaseAgent):
                 status=NEED_CONFIRM,
                 speech=self._demo_prefix(b) + f"准备下单：{self._readable(slots)}，确认吗？")
 
-        user_id = getattr(ctx, "user_id", "") or "u1"
+        user_id = str(getattr(ctx, "user_id", "") or "").strip()
+        if not user_id:
+            return AgentResult(speech="当前会话没有可验证的用户身份，不能下单。")
         task = await self.ledger.open(
             user_id, getattr(ctx, "session_id", "") or "", self.manifest.agent_id,
             LEDGER_KIND, goal)
@@ -178,6 +272,9 @@ class McpBridgeAgent(BaseAgent):
         # 账本 `idempotency_key` 列存的正是同一个值（M2 §9.6），两侧同源。
         idem = idem_key(user_id, LEDGER_KIND, goal)
         args = {b.tool.arg_map.get(k, k): v for k, v in slots.items()}
+        # Internal owner is derived only from authenticated Context; it is not
+        # declared as a planner slot and cannot be supplied/overridden by LLM.
+        args["_owner_user_id"] = user_id
         if b.tool.idempotency_key_arg:
             args[b.tool.idempotency_key_arg] = idem
         try:

@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -42,6 +43,58 @@ _SENSITIVE_CONTEXT_KEYS = (
     "current_lat", "current_lng", "current_accuracy_m",
     "current_location_at", "current_location_source", "vehicle_battery",
 )
+
+
+def _adapt_append_turn_call(
+    fn,
+    session_id: str,
+    role: str,
+    text: str,
+    *,
+    user_id: str,
+    vehicle_id: str,
+    occupant_id: str,
+    e2e_memory_capability: str,
+) -> tuple[list, dict]:
+    """Build one compatible call without probing by execution.
+
+    Signature inspection is advisory. If a callable is opaque, make exactly
+    one modern call; in particular, never retry after stripping a capability.
+    """
+
+    args = [session_id, role, text]
+    optional = {
+        "user_id": user_id,
+        "vehicle_id": vehicle_id,
+        "occupant_id": occupant_id or "primary",
+        "e2e_memory_capability": e2e_memory_capability,
+    }
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return args, optional
+
+    accepts_kwargs = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+    kwargs = {}
+    for name, value in optional.items():
+        parameter = parameters.get(name)
+        if accepts_kwargs or (
+            parameter is not None
+            and parameter.kind in {
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            }
+        ):
+            kwargs[name] = value
+        elif (
+            parameter is not None
+            and parameter.kind is inspect.Parameter.POSITIONAL_ONLY
+        ):
+            args.append(value)
+    return args, kwargs
 
 # 装配预算（字符近似，避免引入 tokenizer 依赖；沿用既有 block[:400] 的 char-proxy 思路）。
 _CTX_BUDGET = int(os.getenv("PLANNER_CTX_BUDGET_CHARS", "1400"))   # 记忆+历史(+焦点)合计
@@ -360,7 +413,8 @@ class ContextManager:
 
     async def append_turn(self, session_id: str, role: str, text: str,
                           user_id: str = "", vehicle_id: str = "",
-                          occupant_id: str = ""):
+                          occupant_id: str = "",
+                          e2e_memory_capability: str = ""):
         """写入一轮对话到 memory（指代/抽取的数据来源）。memory 不可用或 clients 未提供
         该能力时静默跳过（不阻塞主链路）。user_id 透传给 memory 触发异步偏好抽取。
 
@@ -370,13 +424,17 @@ class ContextManager:
         if not fn:
             return
         try:
-            await fn(session_id, role, text, user_id=user_id, vehicle_id=vehicle_id,
-                     occupant_id=occupant_id or "primary")
-        except TypeError:
-            try:
-                await fn(session_id, role, text, user_id=user_id, vehicle_id=vehicle_id)
-            except TypeError:
-                await fn(session_id, role, text)  # 兼容只接受 3 参的旧 stub
+            args, kwargs = _adapt_append_turn_call(
+                fn,
+                session_id,
+                role,
+                text,
+                user_id=user_id,
+                vehicle_id=vehicle_id,
+                occupant_id=occupant_id,
+                e2e_memory_capability=e2e_memory_capability,
+            )
+            await fn(*args, **kwargs)
         except Exception as e:
             logger.debug("append_turn failed: %s", e)
 
@@ -514,6 +572,7 @@ def build_context(request) -> PlanContext:
         user_id=getattr(request.context, "user_id", "") if hasattr(request, "context") and request.context else "",
         vehicle_id=getattr(request.context, "vehicle_id", "") if hasattr(request, "context") and request.context else "",
         occupant_id=occupant,
+        e2e_memory_capability=getattr(request, "e2e_memory_capability", ""),
         is_confirmation=getattr(request, "is_confirmation", False),
         granted_permissions=granted,
         trace_id=meta.get("trace_id", ""),

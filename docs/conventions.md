@@ -4,6 +4,22 @@
 
 ---
 
+## 0. E2E 验收契约
+
+- `test/e2e_manifest.yaml` 是脚本、分组、lane、profile、skip policy、超时、身份与持久化需求的
+  唯一 inventory；新增或删除 `test/e2e_*.py` 必须同步 manifest，`--check` 会做无例外集合校验。
+- 主分组固定为 `default/security/provider_probe/acoustic_probe/manual_inspection`；
+  `ci/nightly/milestone` 是 lane，不得复制成分组。milestone 自动排除声学与人工检查工件。
+- child 通过 `test/support/e2e.py` 写结构化结果；`0`=已执行、`77`=整项跳过、其他=失败。
+  `PASS_WITH_SKIPS` 不能充当 milestone/canonical 通过。
+- persistent 用例必须消费 runner 即时签发的短期 `e2e.v1` 身份，owner、session、artifact
+  由 run 派生；不得回退共享 `u1`。并发 runner 共享 stack lease，但各自数据命名空间和清理独立。
+- canonical 必须是已提交输入上的完整 milestone；provider/model 从运行中控制面读取并在前后
+  一致，tracked digest 可复算，dirty/filtered/stale 运行不得覆盖规范报告。
+- 真栈入口仍只有根 `compose.yaml`；PowerShell/shell wrapper 只负责定位仓库与透传 argv/rc。
+
+---
+
 ## 1. Agent 清单总表
 
 | agent_id (kebab) | 包目录 (snake) | 类别 | trust_level | 部署 | 端口 | 提供的 intent |

@@ -24,6 +24,9 @@ message HandleRequest {
   repeated cockpit.common.v1.ModalityRef modalities = 5;
   map<string, string> meta = 6;
   bool is_confirmation = 7;         // 是否为多轮确认/补槽回复
+  // Runner 签发的短时记忆抽取能力。仅 signed E2E 链路可携带；它不是业务
+  // session，也不得塞入 meta 或下发 Agent。
+  string e2e_memory_capability = 8;
 }
 
 message HandleEvent {

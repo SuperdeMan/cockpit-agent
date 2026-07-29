@@ -34,6 +34,13 @@ GOVERNANCE_KEYS = ("priority", "conditions", "dedup_key", "ttl_ms")
 DELIVERED, MERGED, DEFERRED, DROPPED = "delivered", "merged", "deferred", "dropped"
 ACCEPTED = "accepted"          # 进了待发队列，投递决议随后经 _decide 给出
 
+PERSONAL_DATA_TARGETS = (
+    {
+        "id": "proactive_process_queue",
+        "storage_variants": ("Governor._pending", "Governor._deferred"),
+    },
+)
+
 
 @dataclass
 class Item:
@@ -145,8 +152,10 @@ class Governor:
 
         self._pending: list[Item] = []
         self._deferred: list[Item] = []
-        self._dedup: dict[str, float] = {}
-        self._delivered_at: deque[float] = deque()   # 频控滚动窗口（按**投递消息数**计）
+        self._dedup: dict[str, tuple[float, str]] = {}
+        self._delivered_at: deque[
+            tuple[float, tuple[tuple[str, str], ...]]
+        ] = deque()   # timestamp + exact-owner/dedup keys per delivered message
         self._flush_task: asyncio.Task | None = None
         self._tick_task: asyncio.Task | None = None
 
@@ -158,6 +167,74 @@ class Governor:
         for t in (self._tick_task, self._flush_task):
             if t and not t.done():
                 t.cancel()
+
+    # ── E2E exact-owner namespace admin（默认不暴露，由 main 的签名门控接线）──
+    @staticmethod
+    def _require_owner(user_id: str) -> str:
+        owner = str(user_id or "")
+        if not owner:
+            raise ValueError("owner user_id is required")
+        return owner
+
+    def count_owner(self, user_id: str) -> int:
+        """Count exact-owner logical messages across every in-memory state."""
+
+        owner = self._require_owner(user_id)
+        keys = {
+            item.dedup_key
+            for item in (*self._pending, *self._deferred)
+            if item.payload.get("user_id") == owner
+        }
+        keys.update(
+            key for key, (_timestamp, key_owner) in self._dedup.items()
+            if key_owner == owner
+        )
+        keys.update(
+            key
+            for _timestamp, owners in self._delivered_at
+            for key_owner, key in owners
+            if key_owner == owner
+        )
+        return len(keys)
+
+    def rate_status(self) -> dict[str, int]:
+        """Return anonymous global rolling-window usage and its safe cap."""
+
+        self._prune_delivered(self._now())
+        return {
+            "rate_delivered": len(self._delivered_at),
+            "rate_max_per_hour": self._max_per_hour,
+        }
+
+    def purge_owner(self, user_id: str) -> dict[str, int]:
+        """Remove one exact owner from pending/deferred, preserving all others."""
+
+        owner = self._require_owner(user_id)
+        before = self.count_owner(owner)
+        self._pending = [
+            item for item in self._pending
+            if item.payload.get("user_id") != owner
+        ]
+        self._deferred = [
+            item for item in self._deferred
+            if item.payload.get("user_id") != owner
+        ]
+        self._dedup = {
+            key: value
+            for key, value in self._dedup.items()
+            if value[1] != owner
+        }
+        retained_deliveries = deque()
+        for timestamp, owners in self._delivered_at:
+            remaining = tuple(
+                pair for pair in owners
+                if pair[0] != owner
+            )
+            if remaining:
+                retained_deliveries.append((timestamp, remaining))
+        self._delivered_at = retained_deliveries
+        after = self.count_owner(owner)
+        return {"before": before, "deleted": before - after, "after": after}
 
     # ── 入口 ─────────────────────────────────────────────────────────────
     async def submit(self, payload: dict) -> str:
@@ -212,17 +289,23 @@ class Governor:
         return (DEFERRED, reason) if item.ttl_ms > 0 else (DROPPED, reason)
 
     def _dedup_hit(self, item: Item, now: float) -> bool:
-        ts = self._dedup.get(item.dedup_key)
-        return ts is not None and (now - ts) < self._dedup_window_s
+        entry = self._dedup.get(item.dedup_key)
+        return entry is not None and (now - entry[0]) < self._dedup_window_s
 
     def _mark_dedup(self, item: Item) -> None:
         """治理器接手即打标（不是投递时）——去重语义是"同一件事窗口内只说一次"。"""
-        self._dedup[item.dedup_key] = self._now()
+        self._dedup[item.dedup_key] = (
+            self._now(),
+            str(item.payload.get("user_id") or ""),
+        )
+
+    def _prune_delivered(self, now: float) -> None:
+        cutoff = now - 3600
+        while self._delivered_at and self._delivered_at[0][0] < cutoff:
+            self._delivered_at.popleft()
 
     def _rate_exceeded(self, now: float) -> bool:
-        cutoff = now - 3600
-        while self._delivered_at and self._delivered_at[0] < cutoff:
-            self._delivered_at.popleft()
+        self._prune_delivered(now)
         return len(self._delivered_at) >= self._max_per_hour
 
     def _minutes_of_day(self, now: float) -> int:
@@ -279,7 +362,16 @@ class Governor:
             for it in items:
                 await self._decide(it, DROPPED, "publish_error")
             return
-        self._delivered_at.append(self._now())
+        self._delivered_at.append((
+            self._now(),
+            tuple(
+                (
+                    str(item.payload.get("user_id") or ""),
+                    item.dedup_key,
+                )
+                for item in items
+            ),
+        ))
         decision = DELIVERED if len(items) == 1 else MERGED
         for it in items:
             await self._decide(it, decision, f"merged_x{len(items)}" if len(items) > 1 else "")
@@ -298,8 +390,10 @@ class Governor:
     async def tick(self) -> None:
         """延后项复评：可发了就进待发队列，TTL 到期即丢。顺带清理去重表。"""
         now = self._now()
-        self._dedup = {k: ts for k, ts in self._dedup.items()
-                       if (now - ts) < self._dedup_window_s}
+        self._dedup = {
+            key: entry for key, entry in self._dedup.items()
+            if (now - entry[0]) < self._dedup_window_s
+        }
         if not self._deferred:
             return
         still: list[Item] = []

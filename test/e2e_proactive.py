@@ -18,10 +18,22 @@ fail-open（治理器停掉 → 生产方直发老主题）**不在本脚本**�
 """
 import asyncio
 import json
-import subprocess
 import sys
 import time
 import urllib.request
+from pathlib import Path
+
+from support.e2e import CaseRecorder, assert_persistent_source_contract
+
+
+def _source_contract() -> None:
+    assert_persistent_source_contract(Path(__file__).read_text(encoding="utf-8"))
+
+
+if "--source-contract" in sys.argv:
+    _source_contract()
+    print("source contract: PASS")
+    raise SystemExit(0)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -33,37 +45,25 @@ NATS_URL = "nats://localhost:4222"
 REQUEST_SUBJECT = "agent.proactive.request"
 OUTPUT_SUBJECT = "agent.proactive"
 DECISION_SUBJECT = "obs.proactive.decision"
-_results: list[bool] = []
+ADMIN_COUNT_SUBJECT = "e2e.proactive.namespace.count"
+ADMIN_PURGE_SUBJECT = "e2e.proactive.namespace.purge"
+ADMIN_MAX_RESPONSE_BYTES = 16 * 1024
+_recorder: CaseRecorder | None = None
+_case_index = 0
+_probe_index = 0
 
 
 def record(name, ok, detail: str = ""):
-    _results.append(bool(ok))
+    global _case_index
+    if _recorder is None:
+        raise RuntimeError("CaseRecorder is not initialized")
+    _case_index += 1
+    case_id = f"proactive-{_case_index:02d}"
+    if ok:
+        _recorder.pass_case(case_id)
+    else:
+        _recorder.fail_case(case_id, "assertion_failed", detail or name)
     print(f"{'✅' if ok else '❌'} {name}  {detail}")
-
-
-def restart(service: str, wait_s: float) -> None:
-    subprocess.run(["docker", "compose", "restart", service],
-                   capture_output=True, text=True, timeout=180)
-    time.sleep(wait_s)
-
-
-def reset_governor() -> None:
-    """重启治理器 = 净初态。
-
-    它**刻意没有持久化**（待发/延后队列与频控计数的生命周期以秒/小时计，落库不值当，
-    子 RFC §7 明确不做）——所以重启就是最干净的重置，顺带证明了这条设计。
-    不重置的话，全局频控（默认 6 条/小时）会让重复跑的第二遍全被 rate_limited 掐掉。
-    """
-    restart("proactive", 4)
-
-
-def reset_low_battery_producer() -> None:
-    """重启 charging-planner = 清掉它的**生产侧节流**（默认 30 分钟）与电量边沿状态。
-
-    这层节流是产品行为（防读数在阈值附近抖动重复播报），不该为测试调小；
-    它是进程内的，所以重启即净初态。等 15s 覆盖 registry 重注册，避免影响后续 e2e 步骤。
-    """
-    restart("charging-planner-agent", 15)
 
 
 def debug_vehicle(key: str, value) -> None:
@@ -76,24 +76,41 @@ def debug_vehicle(key: str, value) -> None:
         r.read()
 
 
+def vehicle_state() -> dict:
+    with urllib.request.urlopen(f"{COLLECTOR}/api/vehicle/state", timeout=10) as r:
+        return json.loads(r.read().decode())
+
+
+def restore_vehicle(original: dict) -> None:
+    for key in ("battery", "speed_kmh"):
+        if key in original:
+            debug_vehicle(key, original[key])
+
+
 class Bus:
     """收 agent.proactive 与裁决事件的探针。"""
 
-    def __init__(self, nc):
+    def __init__(self, nc, owner: str, agent_prefix: str):
         self.nc = nc
+        self.owner = owner
+        self.agent_prefix = agent_prefix
         self.out: list[dict] = []
         self.decisions: list[dict] = []
 
     async def start(self):
         async def on_out(m):
             try:
-                self.out.append(json.loads(m.data.decode()))
+                payload = json.loads(m.data.decode())
+                if payload.get("user_id") == self.owner:
+                    self.out.append(payload)
             except Exception:
                 pass
 
         async def on_dec(m):
             try:
-                self.decisions.append(json.loads(m.data.decode()))
+                payload = json.loads(m.data.decode())
+                if str(payload.get("agent_id") or "").startswith(self.agent_prefix):
+                    self.decisions.append(payload)
             except Exception:
                 pass
         await self.nc.subscribe(OUTPUT_SUBJECT, cb=on_out)
@@ -125,17 +142,99 @@ class Bus:
 
 
 def probe(kind, **kw):
-    p = {"type": kind, "agent_id": kw.pop("agent_id", "e2e-probe"),
-         "speech": kw.pop("speech", "探针一句话。"), "ts": int(time.time() * 1000)}
+    global _probe_index
+    if _recorder is None:
+        raise RuntimeError("CaseRecorder is not initialized")
+    _probe_index += 1
+    p = {
+        "type": kind,
+        "agent_id": kw.pop("agent_id", _recorder.user_id("probe")),
+        "user_id": _recorder.user_id(),
+        "speech": kw.pop("speech", "探针一句话。"),
+        "ts": int(time.time() * 1000),
+        "dedup_key": kw.pop(
+            "dedup_key",
+            f"{_recorder.run_id()}.probe.{_probe_index}",
+        ),
+    }
     p.update(kw)
     return p
 
 
+async def admin_request(
+    nc,
+    subject: str,
+    *,
+    identity_token: str,
+    user_id: str,
+) -> dict:
+    request = json.dumps({
+        "identity_token": identity_token,
+        "user_id": user_id,
+    }, ensure_ascii=True, separators=(",", ":")).encode()
+    message = await nc.request(subject, request, timeout=3.0)
+    if len(message.data) > ADMIN_MAX_RESPONSE_BYTES:
+        raise RuntimeError("proactive admin response is too large")
+    response = json.loads(message.data.decode("utf-8"))
+    if (
+        not isinstance(response, dict)
+        or set(response) != {
+            "ok",
+            "before",
+            "deleted",
+            "after",
+            "rate_delivered",
+            "rate_max_per_hour",
+            "error",
+        }
+        or type(response.get("ok")) is not bool
+        or any(
+            type(response.get(key)) is not int
+            for key in (
+                "before",
+                "deleted",
+                "after",
+                "rate_delivered",
+                "rate_max_per_hour",
+            )
+        )
+        or not isinstance(response.get("error"), str)
+    ):
+        raise RuntimeError("proactive admin response is invalid")
+    if not response["ok"]:
+        raise RuntimeError(f"proactive admin rejected request: {response['error']}")
+    return response
+
+
+def cleanup_namespace(identity_token: str, user_id: str) -> None:
+    async def cleanup() -> None:
+        import nats
+        nc = await nats.connect(NATS_URL, connect_timeout=5)
+        try:
+            purged = await admin_request(
+                nc,
+                ADMIN_PURGE_SUBJECT,
+                identity_token=identity_token,
+                user_id=user_id,
+            )
+            counted = await admin_request(
+                nc,
+                ADMIN_COUNT_SUBJECT,
+                identity_token=identity_token,
+                user_id=user_id,
+            )
+            if purged["after"] != 0 or counted["after"] != 0:
+                raise RuntimeError("proactive owner queue cleanup is not empty")
+        finally:
+            await nc.close()
+    asyncio.run(cleanup())
+
+
 async def case_single_passthrough(bus):
     bus.clear()
-    payload = probe("probe_single", speech="单条直通探针。", user_id="u1",
+    payload = probe("probe_single", speech="单条直通探针。",
                     card={"type": "probe_card", "n": 1},
-                    priority="advisory", dedup_key=f"e2e.single.{time.time()}",
+                    priority="user_contract",
                     ttl_ms=60000, conditions=[])
     await bus.send(payload)
     out = await bus.wait_out(1)
@@ -148,31 +247,31 @@ async def case_single_passthrough(bus):
     record("单条直通：治理键被剥掉（下游契约不变）", stripped, str(sorted(m.keys())))
     record("单条直通：其余字段逐字保留",
            m.get("speech") == "单条直通探针。" and m.get("card") == {"type": "probe_card", "n": 1}
-           and m.get("user_id") == "u1")
+           and m.get("user_id") == _recorder.user_id())
 
 
 async def case_dod_merge(bus):
-    """DoD：低电量（真实生产方）+ 同窗另一条建议 → **一条**合并消息。"""
+    """DoD：同 owner 的两条用户约定消息在同窗合成**一条**。
+
+    原脚本靠重启 charging-planner 清进程内 30 分钟节流，这会破坏共享栈。
+    这里直接对治理器真实 NATS 入口发两条 exact-owner 信封，验证目标仍是治理器
+    的合并与下游投递；低电量生产方自身由 charging-planner 契约测试覆盖。
+    """
     bus.clear()
-    debug_vehicle("battery", 66)                 # 先回到阈值上，制造干净的变沿
-    await asyncio.sleep(2.0)
-    bus.clear()
-    debug_vehicle("battery", 18)                 # 跌破 20% → charging-planner 变沿触发
-    # 同窗塞入第二条建议（站位真实的 scene 低电量触发：造场景需要一整条 LLM 编译链，
-    # 本用例要验的是治理器的合并，不是场景编译；scene 生产方的迁移由单测覆盖）
-    await asyncio.sleep(0.2)
-    await bus.send(probe("scene_suggest", agent_id="scene-orchestrator",
+    await bus.send(probe("probe_merge_energy",
+                         agent_id=_recorder.user_id("merge-energy"),
+                         speech="电量只剩18%了。",
+                         priority="user_contract"))
+    await bus.send(probe("probe_merge_scene",
+                         agent_id=_recorder.user_id("merge-scene"),
                          speech="要开启省电出行模式吗？",
                          card={"type": "scene_card", "name": "省电出行"},
-                         priority="advisory", dedup_key=f"e2e.scene.{time.time()}",
-                         ttl_ms=120000))
+                         priority="user_contract"))
     out = await bus.wait_out(1, timeout=12.0)
-    charging = [m for m in out if m.get("type") == "charging_advice"]
     merged = [m for m in out if m.get("merged_from")]
-    record("低电量：真实 charging-planner 生产方被车况变沿触发",
-           bool(charging) or bool(merged), f"共收到 {len(out)} 条")
     record("DoD：同窗两条 → HMI 只响一条（不是两个 Agent 各响一次）",
-           len(out) == 1, f"实际 {len(out)} 条：{[m.get('type') for m in out]}")
+           len(out) == 1 and bool(merged),
+           f"实际 {len(out)} 条：{[m.get('type') for m in out]}")
     if len(out) == 1 and out[0].get("merged_from"):
         m = out[0]
         record("DoD：合并后的一条里两件事都在",
@@ -186,12 +285,12 @@ async def case_card_group(bus):
     """卡片合并单独验：DoD 用例里充电建议**可能没有卡**（拿不到位置时按铁律③只说事实、
     不编站点），卡张数不确定，不能拿它当卡片合并的判据。"""
     bus.clear()
-    await bus.send(probe("probe_card_a", agent_id="e2e-a", speech="卡片甲。",
+    await bus.send(probe("probe_card_a", agent_id=_recorder.user_id("card-a"), speech="卡片甲。",
                          card={"type": "probe_card", "n": 1},
-                         priority="advisory", dedup_key=f"e2e.card.a.{time.time()}"))
-    await bus.send(probe("probe_card_b", agent_id="e2e-b", speech="卡片乙。",
+                         priority="user_contract"))
+    await bus.send(probe("probe_card_b", agent_id=_recorder.user_id("card-b"), speech="卡片乙。",
                          card={"type": "probe_card", "n": 2},
-                         priority="advisory", dedup_key=f"e2e.card.b.{time.time()}"))
+                         priority="user_contract"))
     out = await bus.wait_out(1)
     mine = [m for m in out if str(m.get("type")).startswith("probe_card")]
     record("卡片合并：两条各带一张卡 → 一条消息", len(mine) == 1, f"收到 {len(mine)} 条")
@@ -206,11 +305,11 @@ async def case_card_group(bus):
 
 async def case_dedup(bus):
     bus.clear()
-    key = f"e2e.dedup.{time.time()}"
-    await bus.send(probe("probe_dedup", agent_id="e2e-a", speech="第一条。",
-                         priority="advisory", dedup_key=key))
-    await bus.send(probe("probe_dedup2", agent_id="e2e-b", speech="第二条。",
-                         priority="advisory", dedup_key=key))
+    key = f"{_recorder.run_id()}.dedup"
+    await bus.send(probe("probe_dedup", agent_id=_recorder.user_id("dedup-a"), speech="第一条。",
+                         priority="user_contract", dedup_key=key))
+    await bus.send(probe("probe_dedup2", agent_id=_recorder.user_id("dedup-b"), speech="第二条。",
+                         priority="user_contract", dedup_key=key))
     out = await bus.wait_out(1)
     mine = [m for m in out if str(m.get("type")).startswith("probe_dedup")]
     record("同类去重：跨生产方同 dedup_key 只过一条", len(mine) == 1,
@@ -225,7 +324,7 @@ async def case_conditions_recheck(bus):
     await asyncio.sleep(2.0)
     bus.clear()
     await bus.send(probe("probe_cond", speech="电量低，要充电吗？",
-                         priority="advisory", dedup_key=f"e2e.cond.{time.time()}",
+                         priority="advisory",
                          conditions=[{"key": "battery", "op": "lt", "value": 20}]))
     out = await bus.wait_out(1, timeout=4.0)
     mine = [m for m in out if m.get("type") == "probe_cond"]
@@ -242,11 +341,11 @@ async def case_user_contract_exempt(bus):
     await asyncio.sleep(2.0)
     bus.clear()
     await bus.send(probe("probe_advisory", speech="高负荷下的建议。",
-                         priority="advisory", dedup_key=f"e2e.adv.{time.time()}",
+                         priority="advisory",
                          ttl_ms=120000))
-    await bus.send(probe("reminder_fired", agent_id="reminder",
+    await bus.send(probe("reminder_fired", agent_id=_recorder.user_id("contract"),
                          speech="叮，到点了：探针提醒。",
-                         priority="user_contract", dedup_key=f"e2e.rem.{time.time()}"))
+                         priority="user_contract"))
     out = await bus.wait_out(1, timeout=6.0)
     got_contract = [m for m in out if m.get("type") == "reminder_fired"]
     got_advisory = [m for m in out if m.get("type") == "probe_advisory"]
@@ -261,66 +360,170 @@ async def case_user_contract_exempt(bus):
 
 async def case_rate_limit(bus):
     """全局频控：按**投递消息数**计（合并因此天然省额度）；user_contract 豁免。"""
+    token = _recorder.identity_token()
+    owner = _recorder.user_id()
+    await admin_request(
+        bus.nc,
+        ADMIN_PURGE_SUBJECT,
+        identity_token=token,
+        user_id=owner,
+    )
+    status = await admin_request(
+        bus.nc,
+        ADMIN_COUNT_SUBJECT,
+        identity_token=token,
+        user_id=owner,
+    )
+    cap = status["rate_max_per_hour"]
+    clean = (
+        status["after"] == 0
+        and status["rate_delivered"] == 0
+        and cap > 0
+    )
+    record(
+        "频控：全局匿名窗口为空（有他人贡献即 fail closed）",
+        clean,
+        (
+            f"count={status['after']} "
+            f"delivered={status['rate_delivered']} cap={cap}"
+        ),
+    )
+    if not clean:
+        return
+
+    delivered = 0
+    delivered_types: list[str] = []
+    for i in range(cap):
+        bus.clear()
+        kind = f"probe_rate_{i}"
+        await bus.send(probe(
+            kind,
+            speech=f"第{i}条。",
+            priority="advisory",
+        ))
+        out = await bus.wait_out(1, timeout=6.0)
+        if len(out) == 1 and out[0].get("type") == kind:
+            delivered += 1
+            delivered_types.append(kind)
+    status = await admin_request(
+        bus.nc,
+        ADMIN_COUNT_SUBJECT,
+        identity_token=token,
+        user_id=owner,
+    )
+    record(
+        "频控：额度内每条均独立 flush 并投递",
+        delivered == cap and status["rate_delivered"] == cap,
+        (
+            f"delivered={delivered}/{cap} "
+            f"admin={status['rate_delivered']} "
+            f"types={delivered_types}"
+        ),
+    )
+
     bus.clear()
-    cap = 6
-    for i in range(cap + 2):
-        await bus.send(probe(f"probe_rate_{i}", speech=f"第{i}条。",
-                             priority="advisory", dedup_key=f"e2e.rate.{i}.{time.time()}"))
-        await asyncio.sleep(0.05)
-    await asyncio.sleep(3.0)
+    await bus.send(probe(
+        "probe_rate_over_cap",
+        speech="额度外建议。",
+        priority="advisory",
+    ))
+    await asyncio.sleep(0.5)
     limited = [d for d in bus.decisions if d.get("reason") == "rate_limited"]
-    record("频控：超出每小时上限的建议被丢弃", bool(limited), f"{len(limited)} 条被限流")
+    record(
+        "频控：下一条建议被 rate_limited",
+        bool(limited) and not bus.out,
+        f"limited={len(limited)} out={len(bus.out)}",
+    )
     bus.clear()
-    await bus.send(probe("reminder_fired", agent_id="reminder", speech="叮，到点了。",
-                         priority="user_contract",
-                         dedup_key=f"e2e.rate.rem.{time.time()}"))
+    await bus.send(probe("reminder_fired", agent_id=_recorder.user_id("rate-contract"),
+                         priority="user_contract"))
     out = await bus.wait_out(1, timeout=5.0)
     record("频控：user_contract 不受限（到点必响）",
            any(m.get("type") == "reminder_fired" for m in out),
            f"收到 {len(out)} 条")
 
 
-async def main():
+async def run(recorder: CaseRecorder) -> None:
     try:
         import nats
     except ImportError:
-        print("请先：pip install nats-py")
-        return 1
-    reset_governor()                      # 净初态（见 reset_governor 注释）
-    reset_low_battery_producer()          # 清低电量生产方的 30 分钟节流与边沿状态
+        recorder.fail_case(
+            "nats_dependency",
+            "dependency_unavailable",
+            "nats-py is unavailable",
+        )
+        return
+    user = recorder.user_id()
+    token = recorder.identity_token()
+    original = vehicle_state()
+    recorder.register_cleanup(user, lambda: restore_vehicle(original))
+    recorder.register_cleanup(user, lambda: cleanup_namespace(token, user))
     nc = await nats.connect(NATS_URL, connect_timeout=5)
-    bus = Bus(nc)
+    bus = Bus(nc, user, user)
     await bus.start()
+    try:
+        before = await admin_request(
+            nc,
+            ADMIN_COUNT_SUBJECT,
+            identity_token=token,
+            user_id=user,
+        )
+        starts_empty = (
+            before["after"] == 0
+            and before["rate_delivered"] == 0
+        )
+        record(
+            "前置：exact owner 队列为空且全局匿名频控用量为零",
+            starts_empty,
+            (
+                f"count={before['after']} "
+                f"delivered={before['rate_delivered']} "
+                f"cap={before['rate_max_per_hour']}"
+            ),
+        )
+        if not starts_empty:
+            return
 
-    # 前置：治理器必须在（不在则本脚本没有验证对象——这不是 fail-open 的验收点）
-    alive = await bus.send(probe("probe_ping", speech="ping。",
-                                 priority="advisory",
-                                 dedup_key=f"e2e.ping.{time.time()}"))
-    record("前置：主动治理器在线并 ack", alive)
-    if not alive:
-        print("\n治理器未运行 —— 先 `docker compose up -d proactive`")
+        # 前置：用恒不满足条件拿 ack，不消耗投递频控额度。
+        alive = await bus.send(probe(
+            "probe_ping",
+            speech="ping。",
+            priority="advisory",
+            conditions=[{"key": "battery", "op": "lt", "value": -1}],
+        ))
+        record("前置：主动治理器在线并 ack", alive)
+        if not alive:
+            return
+        await asyncio.sleep(0.5)
+
+        print("\n── 1. 单条直通 ──")
+        await case_single_passthrough(bus)
+        print("\n── 2. DoD：同 owner 两条 → 一条 ──")
+        await case_dod_merge(bus)
+        print("\n── 2b. 卡片合并成 card_group ──")
+        await case_card_group(bus)
+        print("\n── 3. 同类去重（跨生产方）──")
+        await case_dedup(bus)
+        print("\n── 4. 情境断言投递期复核 ──")
+        await case_conditions_recheck(bus)
+        print("\n── 5. user_contract 豁免 vs advisory 延后 ──")
+        await case_user_contract_exempt(bus)
+        print("\n── 6. 全局频控与 user_contract 豁免 ──")
+        await case_rate_limit(bus)
+    finally:
         await nc.close()
-        return 1
-    await asyncio.sleep(2.0)
 
-    print("\n── 1. 单条直通 ──")
-    await case_single_passthrough(bus)
-    print("\n── 2. DoD：低电量 + 同窗建议 → 一条 ──")
-    await case_dod_merge(bus)
-    print("\n── 2b. 卡片合并成 card_group ──")
-    await case_card_group(bus)
-    print("\n── 3. 同类去重（跨生产方）──")
-    await case_dedup(bus)
-    print("\n── 4. 情境断言投递期复核 ──")
-    await case_conditions_recheck(bus)
-    print("\n── 5. user_contract 豁免 vs advisory 延后 ──")
-    await case_user_contract_exempt(bus)
 
-    await nc.close()
-    ok = sum(_results)
-    print(f"\n===== e2e_proactive: {ok}/{len(_results)} =====")
-    return 0 if ok == len(_results) else 1
+def main() -> int:
+    _source_contract()
+    global _recorder
+    _recorder = CaseRecorder()
+    with _recorder:
+        asyncio.run(run(_recorder))
+    result = _recorder.result
+    print(f"\n===== e2e_proactive: {result.counts['passed']}/{result.counts['selected']} =====")
+    return _recorder.exit_code()
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    sys.exit(main())

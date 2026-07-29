@@ -6,11 +6,12 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import time
+from pathlib import Path
 
 import pytest
 
+from scripts.e2e_contract import assert_architecture_guard
 from proactive.evaluate import SAT, UNKNOWN, UNSAT, evaluate_all
 from proactive.governor import (ACCEPTED, DEFERRED, DELIVERED, DROPPED, MERGED,
                                 Governor, in_quiet_hours, merge_cards, merge_speech,
@@ -46,6 +47,96 @@ def msg(**kw):
 
 def decisions_of(sink, decision):
     return [d for d in sink.decisions if d["decision"] == decision]
+
+
+# ── E2E exact-owner namespace admin（纯通用队列操作）──────────────────────
+
+@pytest.mark.asyncio
+async def test_namespace_admin_counts_and_purges_only_exact_owner():
+    state = {"speed_kmh": 120}
+    sink = Sink()
+    gov = Governor(
+        sink.publish,
+        state_fn=lambda: dict(state),
+        emit=sink.emit,
+        now_fn=lambda: 1000.0,
+        merge_window_ms=60_000,
+        high_load_speed=80,
+    )
+    await gov.submit(msg(type="a-pending", user_id="owner-a",
+                         priority="user_contract", dedup_key="a-pending"))
+    await gov.submit(msg(type="a-deferred", user_id="owner-a",
+                         priority="advisory", ttl_ms=300_000,
+                         dedup_key="a-deferred"))
+    await gov.submit(msg(type="b-pending", user_id="owner-b",
+                         priority="user_contract", dedup_key="b-pending"))
+    await gov.submit(msg(type="b-deferred", user_id="owner-b",
+                         priority="advisory", ttl_ms=300_000,
+                         dedup_key="b-deferred"))
+
+    assert gov.count_owner("owner-a") == 2
+    assert gov.count_owner("owner-b") == 2
+    assert gov.purge_owner("owner-a") == {
+        "before": 2,
+        "deleted": 2,
+        "after": 0,
+    }
+    assert gov.count_owner("owner-a") == 0
+    assert gov.count_owner("owner-b") == 2
+    await gov.stop()
+
+
+def test_namespace_admin_rejects_empty_owner():
+    sink = Sink()
+    gov = make_gov(sink)
+    with pytest.raises(ValueError):
+        gov.count_owner("")
+    with pytest.raises(ValueError):
+        gov.purge_owner("")
+
+
+@pytest.mark.asyncio
+async def test_namespace_admin_purges_owner_dedup_and_rate_residue():
+    sink = Sink()
+    gov = Governor(
+        sink.publish,
+        state_fn=dict,
+        emit=sink.emit,
+        now_fn=lambda: 1000.0,
+        merge_window_ms=0,
+        max_per_hour=2,
+    )
+    await gov.submit(msg(
+        type="a-delivered",
+        user_id="owner-a",
+        priority="user_contract",
+        dedup_key="a-delivered",
+    ))
+    await gov.submit(msg(
+        type="b-delivered",
+        user_id="owner-b",
+        priority="user_contract",
+        dedup_key="b-delivered",
+    ))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert gov.count_owner("owner-a") == 1
+    assert gov.count_owner("owner-b") == 1
+
+    assert gov.purge_owner("owner-a") == {
+        "before": 1,
+        "deleted": 1,
+        "after": 0,
+    }
+    assert gov.rate_status()["rate_delivered"] == 1
+    assert gov.count_owner("owner-b") == 1
+    assert await gov.submit(msg(
+        type="b-next",
+        user_id="owner-b",
+        priority="advisory",
+        dedup_key="b-next",
+    )) == ACCEPTED
+    await gov.stop()
 
 
 # ── 闸1 情境断言（三态）────────────────────────────────────────────────────
@@ -189,6 +280,40 @@ async def test_rate_limit_counts_delivered_messages_and_exempts_contract():
     assert await gov.submit(msg(type="k10", priority="user_contract")) == ACCEPTED
 
 
+@pytest.mark.asyncio
+async def test_rate_limit_and_report_are_global_while_purge_is_exact_owner():
+    sink = Sink()
+    gov = make_gov(sink, state={}, max_per_hour=2)
+    for i in range(2):
+        assert await gov.submit(
+            msg(type=f"owner-a-{i}", user_id="owner-a"),
+        ) == ACCEPTED
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    assert gov.rate_status() == {
+        "rate_delivered": 2,
+        "rate_max_per_hour": 2,
+    }
+    assert await gov.submit(
+        msg(type="owner-b-0", user_id="owner-b"),
+    ) == DROPPED
+    assert await gov.submit(msg(
+        type="owner-a-contract",
+        user_id="owner-a",
+        priority="user_contract",
+    )) == ACCEPTED
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert gov.rate_status()["rate_delivered"] == 3
+
+    gov.purge_owner("owner-a")
+    assert gov.rate_status()["rate_delivered"] == 0
+    assert await gov.submit(
+        msg(type="owner-b-after-purge", user_id="owner-b"),
+    ) == ACCEPTED
+
+
 # ── 闸6 合并窗口 ──────────────────────────────────────────────────────────
 
 def test_merge_speech_is_deterministic_concat():
@@ -303,24 +428,9 @@ async def test_missing_or_unknown_priority_is_governed_not_exempt():
 
 # ── 零领域字面量（防长成第二个 fast_intent.py）──────────────────────────────
 
-def test_governor_source_has_zero_domain_literals():
-    """治理器源码不得出现任何生产方 agent_id / 消息 type 的具体值。
-
-    新增生产方 = 在信封里声明 priority/conditions/dedup_key，**不改治理器一行**。
-    """
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    forbidden = [
-        # 六路既有生产方 agent_id
-        "road-safety", "scene-orchestrator", "deep-research", "charging-planner",
-        # 既有消息 type
-        "reminder_fired", "routine_suggestion", "scene_suggestion", "weather_safety",
-        "research_done", "research_failed", "research_stopped", "briefing",
-        "charging_advice",
-    ]
-    for name in ("governor.py", "evaluate.py"):
-        src = open(os.path.join(here, name), encoding="utf-8").read()
-        for lit in forbidden:
-            assert lit not in src, f"{name} 出现领域字面量 {lit!r}——治理器必须零 kind 判据"
+def test_governor_source_has_zero_dynamic_domain_literals():
+    """生产方调用图新增 type 后，治理器无需同步维护固定黑名单也会自动受检。"""
+    assert_architecture_guard(Path(__file__).resolve().parents[2])
 
 
 def test_evaluator_matches_scene_three_state_semantics():

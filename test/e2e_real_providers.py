@@ -4,17 +4,27 @@
 API 并解析。无对应 key 时自动 skip（仿 test_asr_e2e.py）。关键断言会识破"静默回退 mock"
 的假通过（名称含『示例』/update_time==mock）。
 
-跑法（把凭证写进 repo 根 .env，本测试会自动加载；无需 source）：
-    python -m pytest test/e2e_real_providers.py -q -s
+跑法（manifest runner 提供结果命名空间；凭证仍只从根 .env 读取）：
+    python test/e2e_real_providers.py
 和风支持 JWT（项目ID+凭据ID+Ed25519 私钥）或 API Key；高德用 AMAP_KEY。
 搜索优先 AnySearch（ANYSEARCH_API_KEY），降级 Bing（BING_SEARCH_KEY）。
 新闻用 SerpApi（SERPAPI_API_KEY）。股票用 Tushare（TUSHARE_TOKEN）。
 全链路（经 Edge 网关 + LLM 规划 + Agent）另见：make up 后 python test/e2e_ws.py
 """
 import asyncio
+import hashlib
 import os
+import sys
+from pathlib import Path
 
 import pytest
+
+_ROOT = Path(__file__).resolve().parents[1]
+for _path in (str(_ROOT), str(_ROOT / "test")):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from support.e2e import CaseRecorder
 
 from agents.navigation.src.providers.amap import AmapPOIProvider
 from agents.navigation.src.providers.base import GeoPoint
@@ -29,20 +39,21 @@ from agents.info.src.providers.mock import (
 )
 
 
-def _load_dotenv():
-    """最小 .env 加载（无 python-dotenv 依赖）：把 repo 根 .env 注入 os.environ（不覆盖已有）。
-    妥善处理含空格/反斜杠的 Windows 路径值（不经 shell，不需要转义）。"""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(root, ".env")
-    if not os.path.exists(path):
+def _load_dotenv() -> None:
+    """Load the repository's one supported runtime env without overwriting."""
+
+    path = _ROOT / ".env"
+    if not path.exists():
         return
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+    for line in path.read_text(
+        encoding="utf-8",
+        errors="ignore",
+    ).splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip())
 
 
 _load_dotenv()
@@ -58,6 +69,142 @@ HAS_BING = bool(os.getenv("BING_SEARCH_KEY"))
 HAS_SEARCH = HAS_ANYSEARCH or HAS_BING
 HAS_SERPAPI = bool(os.getenv("SERPAPI_API_KEY"))
 HAS_TUSHARE = bool(os.getenv("TUSHARE_TOKEN"))
+
+
+class ProviderResultPlugin:
+    """Aggregate pytest collection and reports into one strict E2E result."""
+
+    def __init__(self, recorder: CaseRecorder) -> None:
+        self._recorder = recorder
+        self._selected: list[str] = []
+        self._outcomes: dict[str, tuple[str, str]] = {}
+        self._active = False
+
+    @staticmethod
+    def _case_id(nodeid: str) -> str:
+        raw = nodeid.rsplit("::", 1)[-1].split("[", 1)[0]
+        prefix = "".join(
+            char.lower()
+            if char.isascii() and (char.isalnum() or char == "_")
+            else "_"
+            for char in raw
+        ).strip("_")[:48] or "provider_case"
+        digest = hashlib.sha256(nodeid.encode("utf-8")).hexdigest()[:16]
+        return f"{prefix}_{digest}"
+
+    def pytest_sessionstart(self, session) -> None:
+        del session
+        self._recorder.__enter__()
+        self._active = True
+
+    def pytest_collection_modifyitems(self, session, config, items) -> None:
+        del session, config
+        self._selected = [item.nodeid for item in items]
+        self._outcomes = {
+            item.nodeid: ("pending", "")
+            for item in items
+        }
+
+    def pytest_runtest_logreport(self, report) -> None:
+        if report.nodeid not in self._outcomes:
+            return
+        current, _detail = self._outcomes[report.nodeid]
+        if report.failed:
+            self._outcomes[report.nodeid] = (
+                "fail",
+                f"{report.when} phase failed",
+            )
+        elif report.skipped and current != "fail":
+            self._outcomes[report.nodeid] = (
+                "skip",
+                str(report.longrepr),
+            )
+        elif report.when == "call" and report.passed and current == "pending":
+            self._outcomes[report.nodeid] = ("pass", "")
+
+    def pytest_sessionfinish(self, session, exitstatus) -> None:
+        if not self._active:
+            return
+        original_exitstatus = int(exitstatus)
+        saw_test_failure = any(
+            status == "fail"
+            for status, _detail in self._outcomes.values()
+        )
+        for nodeid in self._selected:
+            status, detail = self._outcomes.get(
+                nodeid,
+                ("fail", "pytest did not report an outcome"),
+            )
+            case_id = self._case_id(nodeid)
+            if status == "pass":
+                self._recorder.pass_case(case_id)
+            elif status == "skip":
+                self._recorder.skip_case(
+                    case_id,
+                    "credential_unavailable",
+                    detail,
+                )
+            else:
+                self._recorder.fail_case(
+                    case_id,
+                    "provider_execution_failed"
+                    if status == "fail"
+                    else "result_protocol",
+                    detail or "pytest did not execute the selected case",
+                )
+
+        session_error: tuple[str, str] | None = None
+        if original_exitstatus in (2, 3, 4):
+            code = {
+                2: "pytest_interrupted_or_collection_error",
+                3: "pytest_internal_error",
+                4: "pytest_usage_error",
+            }[original_exitstatus]
+            session_error = (
+                code,
+                f"pytest session exited with status {original_exitstatus}",
+            )
+        elif not self._selected or original_exitstatus == 5:
+            session_error = (
+                "pytest_no_tests_collected",
+                "pytest selected zero real-provider cases",
+            )
+        elif original_exitstatus == 1 and not saw_test_failure:
+            session_error = (
+                "pytest_session_error",
+                "pytest exited with status 1 without a reported test failure",
+            )
+        elif original_exitstatus not in (0, 1):
+            session_error = (
+                "pytest_session_error",
+                f"pytest session exited with status {original_exitstatus}",
+            )
+
+        if session_error is not None:
+            code, detail = session_error
+            self._recorder.fail_case("pytest_session", code, detail)
+
+        self._recorder.__exit__(None, None, None)
+        self._active = False
+        recorder_exitstatus = self._recorder.exit_code()
+        session.exitstatus = recorder_exitstatus
+
+
+def main(argv: list[str] | None = None) -> int:
+    recorder = CaseRecorder()
+    plugin = ProviderResultPlugin(recorder)
+    extra = list(argv or [])
+    for value in extra:
+        candidate = Path(value)
+        if (
+            value in {".", ".."}
+            or value.endswith(".py")
+            or "::" in value
+            or candidate.exists()
+        ):
+            raise ValueError("additional pytest arguments must not add a test target")
+    args = [__file__, "-q", "-s", *extra]
+    return int(pytest.main(args, plugins=[plugin]))
 
 
 # ── 高德（Amap）────────────────────────────────────────
@@ -162,7 +309,9 @@ def test_qweather_air_quality_returns_real_aqi():
         aq = asyncio.run(p.air_quality("北京"))
     except Exception as e:
         if "403" in str(e) or "Forbidden" in str(e):
-            pytest.skip(f"和风空气质量数据未开通权限（需在控制台申请）: {e}")
+            pytest.fail(
+                "和风空气质量 provider 返回 403；运行期 provider 错误不得记为 skip",
+            )
         raise
     print(f"\n[和风空气质量] AQI {aq.aqi} {aq.category} PM2.5={aq.pm2p5} 首要{aq.primary_pollutant}")
     assert aq.aqi, "缺 AQI"
@@ -207,3 +356,7 @@ def test_tushare_returns_real_quote():
     print(f"\n[Tushare] {q.name} {q.symbol} {q.price} {q.change} ({q.change_pct}) @ {q.market_time}")
     assert q.price, "缺价格"
     assert q.market_time and q.market_time != "mock", "疑似回退 mock"
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

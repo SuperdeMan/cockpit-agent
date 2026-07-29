@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -12,6 +13,12 @@ from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 from runtime.proactive import P_ADVISORY, publish_proactive
 
 import voiceprint
+from e2e_capability import (
+    derive_runner_run_id,
+    MemoryCapabilityError,
+    decode_capability_secret,
+    verify_memory_capability,
+)
 from store import MemoryStore
 
 logger = logging.getLogger("memory.server")
@@ -28,13 +35,13 @@ _REMEMBER_NOW_RE = re.compile(r"记住|记好|别忘了|我(最|比较|还是)?(
 
 # 合成会话（eval/e2e/badcase 重放/探针）跳过 LLM 抽取巩固：不烧 token、不把测试对话
 # 沉淀进真实用户画像（2026-07-13 消耗排查：抽取跟着 active provider 跑且 caller 为空，
-# 是消耗归属盲区之一）。AppendTurnRequest 无 meta 字段，session_id 前缀是零 proto 变更
-# 的显式契约（见 docs/conventions.md §9.2）；短期轮次存取（GetSession）不受影响。
-# 记忆管线自测用 memtest- 前缀（刻意不在此列，e2e_memory 靠它验证抽取链路）。
+# 是消耗归属盲区之一）。session_id 前缀仍标记合成会话；只有 AppendTurnRequest
+# 专用字段里的 runner capability 严格绑定 run/user/session 后才能放行抽取。
+# 短期轮次存取（GetSession）不受影响；memtest- 同样是不可信客户端标记。
 _EXTRACT_SKIP_PREFIXES = tuple(
     p.strip() for p in os.getenv(
         "MEMORY_EXTRACT_SKIP_PREFIXES",
-        "eval-,e2e-,ctxe2e-,central-,review-,nightly-,replay-,probe-,smoke-",
+        "eval-,e2e-,ctxe2e-,central-,review-,nightly-,replay-,probe-,smoke-,memtest-",
     ).split(",") if p.strip())
 
 
@@ -45,6 +52,19 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         self._bg: set = set()                    # 持有后台 consolidate task 引用
         self._nc = None                          # NATS 连接（主动建议投递，懒连）
         self._nats_tried = False
+        self._e2e_capability_enabled = (
+            os.getenv("E2E_CAPABILITY_ENABLED", "").strip().lower()
+            in {"1", "true", "on", "yes"}
+        )
+        self._e2e_capability_secret: bytes | None = None
+        if self._e2e_capability_enabled:
+            try:
+                self._e2e_capability_secret = decode_capability_secret(
+                    os.getenv("E2E_CAPABILITY_SECRET", ""),
+                )
+            except MemoryCapabilityError:
+                # 配置错误必须 fail closed；不要把 secret 或 bearer session 写日志。
+                logger.error("memory E2E capability gate is misconfigured")
 
     async def GetContext(self, request, context):
         values = await self.store.get_context(
@@ -65,8 +85,11 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         if not request.user_id:
             return
         sid = request.session_id
-        if sid.startswith(_EXTRACT_SKIP_PREFIXES):
-            logger.debug("consolidate skipped for synthetic session %s", sid)
+        if (
+            sid.startswith(_EXTRACT_SKIP_PREFIXES)
+            and not self._allows_synthetic_extraction(request)
+        ):
+            logger.debug("consolidate skipped for synthetic session")
             return
         n = self._turn_counts.get(sid, 0) + 1
         self._turn_counts[sid] = n
@@ -79,11 +102,37 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         self._bg.add(task)
         task.add_done_callback(self._bg.discard)
 
+    def _allows_synthetic_extraction(self, request) -> bool:
+        """Fail closed unless a dedicated runner capability binds this request."""
+
+        secret = self._e2e_capability_secret
+        if not self._e2e_capability_enabled or secret is None:
+            return False
+        capability = getattr(request, "e2e_memory_capability", "")
+        if not capability:
+            return False
+        try:
+            claims = verify_memory_capability(
+                capability,
+                secret,
+            )
+        except MemoryCapabilityError:
+            return False
+        try:
+            expected_run_id = derive_runner_run_id(request.user_id)
+        except MemoryCapabilityError:
+            return False
+        return (
+            hmac.compare_digest(claims.user_id, request.user_id)
+            and hmac.compare_digest(claims.run_id, expected_run_id)
+            and hmac.compare_digest(claims.session_id, request.session_id)
+        )
+
     async def _consolidate_bg(self, session_id, user_id, occupant_id, vehicle_id):
         try:
             ids = await self.store.consolidate(session_id, user_id, occupant_id, vehicle_id)
             if ids:
-                logger.info("consolidate %s: +%d memories", session_id, len(ids))
+                logger.info("consolidate: +%d memories", len(ids))
             await self._derive_and_emit(user_id, occupant_id)
         except Exception as e:
             logger.debug("consolidate failed: %s", e)

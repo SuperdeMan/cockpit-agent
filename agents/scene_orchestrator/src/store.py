@@ -20,6 +20,13 @@ _SCHEMA_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "schema.
 
 ENABLED, DISABLED = "enabled", "disabled"
 USER, BUILTIN, DERIVED = "user", "builtin", "derived"
+PERSONAL_DATA_TARGETS = (
+    {
+        "id": "scene_item",
+        "storage_variants": ("scene_item", "SceneStore._mem"),
+        "sql_variants": ("scene_item",),
+    },
+)
 
 
 @dataclass

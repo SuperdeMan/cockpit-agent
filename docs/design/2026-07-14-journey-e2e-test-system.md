@@ -5,7 +5,9 @@
   （记忆三针）/B2-3（前提改语料）各自真栈转绿，顺带修墙钟 badcase；收口后 canonical
   全量重跑 @MiniMax-M3：**回归级 15/15**、目标级 13/18（跨 provider 不可与 @mimo 16/18
   直比，5 红三分类处置见 §10 尾——含 B2-2 暴露的 kind=todo 槽位盲信真缺陷已修）。
-  落地记录在 §10）
+  2026-07-30 M-A 将这套历史脚本接入统一 manifest/runner：canonical 只有在完整 milestone、
+  provider/model 锁定、结构化结果无 skip 且输入 digest 新鲜时才能覆盖；§10 的数字仍是历史
+  落地记录，当前基线以 `docs/reviews/eval/journeys_report.{json,md}` metadata 为准。）
 - **交付对象**：后续执行者（人或 AI agent）
 - **关联**：`test/`（现有 e2e/eval 资产）、`orchestrator/cloud/engine.py`（多轮续接）、
   `hmi/src/App.tsx`+`components/Cards.tsx`（二次交互协议面）、

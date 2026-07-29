@@ -39,6 +39,8 @@ import time
 import uuid
 from pathlib import Path
 
+from support.e2e import CaseRecorder
+
 try:
     import websockets
 except ImportError:
@@ -65,6 +67,20 @@ ASK_TIMEOUT = 60
 RECOVER_DEADLINE = 120        # 换 IP 的一行（llm-gateway --force-recreate）用；对齐 e2e_resilience.py 同名常量
 SHORT_RECOVER_DEADLINE = 60   # 同容器不换 IP 的三行（stop/start、pause/unpause）用，恢复应快得多
 POLL_GAP = 5
+_RECORDER: CaseRecorder | None = None
+_SESSION_NUMBER = 0
+
+
+def _e2e() -> CaseRecorder:
+    if _RECORDER is None:
+        raise RuntimeError("CaseRecorder is not initialized")
+    return _RECORDER
+
+
+def _next_session() -> str:
+    global _SESSION_NUMBER
+    _SESSION_NUMBER += 1
+    return _e2e().session_id(_SESSION_NUMBER)
 
 
 def _compose_env(overrides: dict[str, str] | None = None) -> dict:
@@ -88,7 +104,13 @@ async def ask(text: str, session: str) -> dict | None:
     实跑时就踩过这个坑（network_outage 用例被 1011 keepalive ping timeout 提前掐断）。
     照抄 e2e_central_hub_assertions.py::_send() 已有的同款修复（"模拟浏览器"注释）。"""
     try:
-        async with websockets.connect(URL, open_timeout=10, ping_interval=None) as ws:
+        async with websockets.connect(
+            _e2e().ws_url(),
+            open_timeout=10,
+            ping_interval=None,
+        ) as ws:
+            ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            _e2e().confirm_identity_ack(ack)
             await ws.send(json.dumps({"text": text, "session_id": session}, ensure_ascii=False))
             while True:
                 raw = await asyncio.wait_for(ws.recv(), timeout=ASK_TIMEOUT)
@@ -130,8 +152,39 @@ async def _poll_until(check, deadline: float, gap: float = POLL_GAP) -> bool:
 
 
 async def _quick_recovered(text: str) -> bool:
-    msg = await ask(text, f"degrade-recover-{uuid.uuid4().hex[:6]}")
+    msg = await ask(text, _next_session())
     return _is_healthy_reply(msg)
+
+
+async def _restore_with_retry(
+    restore,
+    healthy,
+    *,
+    attempts: int = 2,
+    gap: float = 2.0,
+) -> bool:
+    """Retry the restoration action, then require a successful health probe."""
+    restored = False
+    for attempt in range(1, attempts + 1):
+        try:
+            restore()
+        except Exception as exc:
+            print(
+                "  restore action failed "
+                f"(attempt {attempt}/{attempts}, {type(exc).__name__})",
+            )
+            if attempt < attempts:
+                await asyncio.sleep(gap)
+        else:
+            restored = True
+            break
+    if not restored:
+        return False
+    try:
+        return bool(await healthy())
+    except Exception as exc:
+        print(f"  restore health probe failed ({type(exc).__name__})")
+        return False
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -142,13 +195,20 @@ async def case_agent_down() -> bool:
     service = "trip-planner-agent"          # docker compose 服务名
     agent_node = "step.agent:trip-planner"  # manifest agent_id（≠ 服务名！）
     text = "周末去杭州两天带老人不要太累"     # 与 e2e_trip.py 同款，route_hints 确定性命中 trip.plan
+    case_ok = False
+    recovered = False
     try:
         try:
             print(f"  → docker compose stop {service}")
             _run(["stop", service])
 
             trace_id = _trace_id()
-            finals = await _send(text, f"degrade-agent-down-{uuid.uuid4().hex[:6]}", trace_id)
+            finals = await _send(
+                text,
+                _next_session(),
+                trace_id,
+                recorder=_e2e(),
+            )
             spans = _wait_trace(trace_id, [agent_node])
             status = _span_status(spans, agent_node)
             completed = bool(finals)   # DAG 不炸：单步 FAILED 仍应给出收尾 final/error
@@ -156,19 +216,18 @@ async def case_agent_down() -> bool:
             print(f"  {'✓' if status == 'err' else '✗'} span {agent_node} status={status!r}"
                   f"（期望 err；spans={_nodes(spans)!r}）")
             print(f"  {'✓' if completed else '✗'} 整轮仍收到 final/error（DAG 未被单步失败拖垮）")
-            return status == "err" and completed
+            case_ok = status == "err" and completed
         except Exception as e:
-            print(f"  ✗ 用例执行异常: {type(e).__name__}: {e}")
-            return False
+            print(f"  ✗ 用例执行异常: {type(e).__name__}")
     finally:
-        try:
-            print(f"  → docker compose start {service}（恢复）")
-            _run(["start", service])
-            recovered = await _agent_recovered(text, agent_node)
-            print("  ✓ 已确认 trip-planner-agent 恢复" if recovered
-                  else "  ✗ 恢复未确认，需人工检查 docker compose ps！")
-        except Exception as e:
-            print(f"  ✗ 恢复步骤异常: {type(e).__name__}: {e}——需人工检查！")
+        print(f"  → docker compose start {service}（恢复）")
+        recovered = await _restore_with_retry(
+            lambda: _run(["start", service]),
+            lambda: _agent_recovered(text, agent_node),
+        )
+        print("  ✓ 已确认 trip-planner-agent 恢复" if recovered
+              else "  ✗ 恢复未确认，需人工检查 docker compose ps！")
+    return case_ok and recovered
 
 
 async def _agent_recovered(text: str, agent_node: str) -> bool:
@@ -176,12 +235,16 @@ async def _agent_recovered(text: str, agent_node: str) -> bool:
     trip.plan 请求——真实 LLM+真实高德 POI 时，完整生成行程可能要 30-60s+（跟"有没有
     恢复"无关，是行程规划这个操作本来就慢；nightly 走 mock 时 trip-planner 自身的
     `_fallback_skeleton` 兜底生成器应该快得多）。放宽到 10+20+30+40=100s 退避重试，
-    容纳本机真实 key 场景下的正常慢速；即便仍未在此窗口内确认，也只是 finally 块的
-    诊断信息，不影响用例本身的通过/失败判定。"""
+    容纳本机真实 key 场景下的正常慢速；窗口内无法确认恢复时，故障注入用例必须失败。"""
     for wait_s in (10, 20, 30, 40):
         await asyncio.sleep(wait_s)
         trace_id = _trace_id()
-        finals = await _send(text, f"degrade-agent-recover-{uuid.uuid4().hex[:6]}", trace_id)
+        finals = await _send(
+            text,
+            _next_session(),
+            trace_id,
+            recorder=_e2e(),
+        )
         spans = _wait_trace(trace_id, [agent_node])
         if _span_status(spans, agent_node) == "ok" and finals:
             return True
@@ -207,6 +270,8 @@ LLM_MOCK_DELAY_MS = "3000"   # 小延迟即可：目的是证明"变慢不致命
 async def case_llm_timeout() -> bool:
     print("\n[降级 2/4] LLM 超时：llm-gateway 注入 mock 延迟（断言仍优雅响应，非精确超时话术）")
     text = "讲个笑话"
+    case_ok = False
+    recovered = False
     try:
         try:
             print(f"  → 用 LLM_MOCK_DELAY_MS={LLM_MOCK_DELAY_MS} 重建 llm-gateway（换 IP，四行里唯一一行）…")
@@ -215,7 +280,7 @@ async def case_llm_timeout() -> bool:
             await asyncio.sleep(8)   # 容器启动 + 下游 channel 重连的基础窗口
 
             t0 = time.monotonic()
-            msg = await ask(text, f"degrade-llm-timeout-{uuid.uuid4().hex[:6]}")
+            msg = await ask(text, _next_session())
             elapsed = time.monotonic() - t0
             speech = _speech_of(msg)
             # 延迟确实生效（耗时明显高于正常秒回）+ 仍然给出连贯、非崩溃的回复（不是 error
@@ -224,21 +289,22 @@ async def case_llm_timeout() -> bool:
             responded_ok = msg is not None and msg.get("type") == "final" and bool(speech)
             print(f"  {'✓' if delay_engaged else '✗'} 耗时 {elapsed:.1f}s（延迟钩子应可观测生效）")
             print(f"  {'✓' if responded_ok else '✗'} 仍收到连贯 final 回复：{speech[:50]!r}")
-            return delay_engaged and responded_ok
+            case_ok = delay_engaged and responded_ok
         except Exception as e:
-            print(f"  ✗ 用例执行异常: {type(e).__name__}: {e}")
-            return False
+            print(f"  ✗ 用例执行异常: {type(e).__name__}")
     finally:
-        try:
-            print("  → 恢复 llm-gateway（去掉延迟 env，recreate 换回默认）…")
-            _run(["up", "-d", "--force-recreate", "--no-deps", "llm-gateway"])
-            # 换 IP 场景，给足 120s（对齐 e2e_resilience.py 同类场景的 RECOVER_DEADLINE）；
-            # 即便轮询期间偶发触发 chitchat 熔断，30s recovery_timeout 后半开探测也能在
-            # 此预算内收敛，见落地文档「方案」一节的分析。
-            recovered = await _poll_until(lambda: _quick_recovered(text), deadline=RECOVER_DEADLINE)
-            print("  ✓ 已确认 llm-gateway 恢复" if recovered else "  ✗ 恢复轮询超时，需人工检查！")
-        except Exception as e:
-            print(f"  ✗ 恢复步骤异常: {type(e).__name__}: {e}——需人工检查！")
+        print("  → 恢复 llm-gateway（去掉延迟 env，recreate 换回默认）…")
+        recovered = await _restore_with_retry(
+            lambda: _run(
+                ["up", "-d", "--force-recreate", "--no-deps", "llm-gateway"],
+            ),
+            lambda: _poll_until(
+                lambda: _quick_recovered(text),
+                deadline=RECOVER_DEADLINE,
+            ),
+        )
+        print("  ✓ 已确认 llm-gateway 恢复" if recovered else "  ✗ 恢复轮询超时，需人工检查！")
+    return case_ok and recovered
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -248,27 +314,31 @@ async def case_planner_down() -> bool:
     print("\n[降级 3/4] 云 Planner 故障：cloud-planner 停机")
     text = "讲个笑话"
     target = "云端处理异常，请稍后重试。"
+    case_ok = False
+    recovered = False
     try:
         try:
             print("  → docker compose stop cloud-planner")
             _run(["stop", "cloud-planner"])
 
-            msg = await ask(text, f"degrade-planner-down-{uuid.uuid4().hex[:6]}")
+            msg = await ask(text, _next_session())
             speech = _speech_of(msg)
             ok = target in speech
             print(f"  {'✓' if ok else '✗'} speech={speech!r}")
-            return ok
+            case_ok = ok
         except Exception as e:
-            print(f"  ✗ 用例执行异常: {type(e).__name__}: {e}")
-            return False
+            print(f"  ✗ 用例执行异常: {type(e).__name__}")
     finally:
-        try:
-            print("  → docker compose start cloud-planner（恢复）")
-            _run(["start", "cloud-planner"])
-            recovered = await _poll_until(lambda: _quick_recovered(text), deadline=SHORT_RECOVER_DEADLINE)
-            print("  ✓ 已确认 cloud-planner 恢复" if recovered else "  ✗ 恢复轮询超时，需人工检查！")
-        except Exception as e:
-            print(f"  ✗ 恢复步骤异常: {type(e).__name__}: {e}——需人工检查！")
+        print("  → docker compose start cloud-planner（恢复）")
+        recovered = await _restore_with_retry(
+            lambda: _run(["start", "cloud-planner"]),
+            lambda: _poll_until(
+                lambda: _quick_recovered(text),
+                deadline=SHORT_RECOVER_DEADLINE,
+            ),
+        )
+        print("  ✓ 已确认 cloud-planner 恢复" if recovered else "  ✗ 恢复轮询超时，需人工检查！")
+    return case_ok and recovered
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -286,13 +356,13 @@ async def case_network_outage() -> bool:
         paused = True
 
         t0 = time.monotonic()
-        local_msg = await ask(local_text, f"degrade-net-local-{uuid.uuid4().hex[:6]}")
+        local_msg = await ask(local_text, _next_session())
         local_elapsed = time.monotonic() - t0
         local_ok = _is_healthy_reply(local_msg) and local_elapsed < 5.0
         print(f"  {'✓' if local_ok else '✗'} 车控本地秒回：{local_elapsed:.1f}s "
               f"speech={_speech_of(local_msg)[:40]!r}")
 
-        cloud_msg = await ask(cloud_text, f"degrade-net-cloud-{uuid.uuid4().hex[:6]}")
+        cloud_msg = await ask(cloud_text, _next_session())
         cloud_speech = _speech_of(cloud_msg)
         cloud_ok = target in cloud_speech
         print(f"  {'✓' if cloud_ok else '✗'} 云端请求降级话术：{cloud_speech!r}")
@@ -331,6 +401,7 @@ _CASES = [
 
 
 async def main() -> int:
+    global _RECORDER
     parser = argparse.ArgumentParser()
     parser.add_argument("--case", action="append", default=[],
                         help="只跑某几行（可重复）：agent_down/llm_timeout/planner_down/network_outage")
@@ -344,17 +415,27 @@ async def main() -> int:
             print(f"未知 --case，可选：{[n for n, _ in _CASES]}")
             return 2
 
-    print("=== E2E 降级矩阵测试（架构 §3.3 四行）===")
-    results = []
-    for name, fn in cases:      # 严格顺序执行，不并发（部分故障爆炸半径重叠）
-        ok = await fn()
-        results.append((name, ok))
+    recorder = CaseRecorder()
+    _RECORDER = recorder
+    with recorder:
+        print("=== E2E 降级矩阵测试（架构 §3.3 四行）===")
+        results = []
+        for name, fn in cases:  # 严格顺序执行，不并发（部分故障爆炸半径重叠）
+            ok = await fn()
+            results.append((name, ok))
+            if ok:
+                recorder.pass_case(name)
+            else:
+                recorder.fail_case(
+                    name,
+                    "assertion_failed",
+                    "degradation behavior did not satisfy the case contract",
+                )
 
-    print("\n=== 结果 ===")
-    for name, ok in results:
-        print(f"  {'✓ PASS' if ok else '✗ FAIL'}  {name}")
-    failed = [n for n, ok in results if not ok]
-    return 1 if failed else 0
+        print("\n=== 结果 ===")
+        for name, ok in results:
+            print(f"  {'✓ PASS' if ok else '✗ FAIL'}  {name}")
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":

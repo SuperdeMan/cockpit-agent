@@ -16,8 +16,11 @@ import argparse
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
+
+from support.e2e import CaseRecorder, is_network_timeout
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows 控制台 gbk 防崩
@@ -56,7 +59,11 @@ def _http_providers() -> dict | None:
         with urllib.request.urlopen(
                 f"http://{host}:{port}/api/llm/providers", timeout=5) as r:
             return json.loads(r.read().decode("utf-8"))
-    except Exception as e:
+    except urllib.error.HTTPError:
+        raise
+    except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+        if is_network_timeout(e):
+            raise
         print(f"SKIP：llm-gateway HTTP 不可达（{e}）——需 make up 后再跑")
         return None
 
@@ -108,64 +115,147 @@ def main() -> int:
     ap.add_argument("--rounds", type=int, default=1, help="每 provider×句 重复轮数")
     args = ap.parse_args()
 
-    info = _http_providers()
-    if info is None:
-        return 0
-    available = [p["id"] for p in info.get("providers", [])
-                 if p.get("available") and p["id"] != "mock"]
-    targets = ([p.strip() for p in args.providers.split(",") if p.strip()]
-               if args.providers else available)
-    bad = [t for t in targets if t not in available]
-    if bad:
-        print(f"⚠ 跳过未配置厂商：{bad}（available={available}）")
-        targets = [t for t in targets if t in available]
-    if not targets:
-        print("SKIP：无可探厂商（全部未配置 key）")
-        return 0
-    print(f"探针目标：{targets}　active={info.get('active')}　rounds={args.rounds}\n")
+    recorder = CaseRecorder()
+    with recorder:
+        inventory_error = False
+        try:
+            info = _http_providers()
+        except urllib.error.HTTPError as exc:
+            inventory_error = True
+            info = None
+            recorder.fail_case(
+                "provider_matrix",
+                "provider_http_error",
+                f"llm-gateway provider inventory returned HTTP {exc.code}",
+            )
+        except Exception as exc:
+            inventory_error = True
+            info = None
+            recorder.fail_case(
+                "provider_matrix",
+                "provider_execution_failed",
+                f"provider inventory failed: {type(exc).__name__}",
+            )
 
-    import grpc
-    from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
-    addr = os.getenv("LLM_GATEWAY_ADDR", "localhost:50052")
-    stub = llm_pb2_grpc.LLMGatewayStub(grpc.insecure_channel(addr))
+        if inventory_error:
+            pass
+        elif info is None:
+            recorder.skip_case(
+                "provider_matrix",
+                "provider_unavailable",
+                "llm-gateway provider inventory is unavailable",
+            )
+        else:
+            available = [p["id"] for p in info.get("providers", [])
+                         if p.get("available") and p["id"] != "mock"]
+            requested = (
+                [p.strip() for p in args.providers.split(",") if p.strip()]
+                if args.providers
+                else available
+            )
+            bad = [target for target in requested if target not in available]
+            for target in bad:
+                recorder.skip_case(
+                    f"provider_{target.replace('-', '_')}",
+                    "credential_unavailable",
+                    "requested provider is not configured",
+                )
+            targets = [target for target in requested if target in available]
+            if not targets and not bad:
+                recorder.skip_case(
+                    "provider_matrix",
+                    "credential_unavailable",
+                    "no real tool-calling provider is configured",
+                )
+            else:
+                print(
+                    f"探针目标：{targets}　active={info.get('active')}　"
+                    f"rounds={args.rounds}\n",
+                )
 
-    rows = []
-    all_ok = True
-    for pid in targets:
-        n = ok_tool = ok_args = ok_fields = 0
-        finishes: dict[str, int] = {}
-        errs: list[str] = []
-        for _ in range(max(1, args.rounds)):
-            for label, text in _PROBES:
-                r = _probe_one(stub, llm_pb2, pid, text)
-                n += 1
-                ok_tool += r["tool"] and r["name_ok"]
-                ok_args += r["args_ok"]
-                ok_fields += r["fields_ok"]
-                finishes[r["finish"] or "-"] = finishes.get(r["finish"] or "-", 0) + 1
-                status = ("✓" if r["fields_ok"] else
-                          "text" if not r["tool"] and not r["err"] else "✗")
-                print(f"  [{pid}] {label}: {status} tool={r['tool']} "
-                      f"finish={r['finish'] or '-'} "
-                      + (f"err={r['err']}" if r["err"] else f"content_len={r['content_len']}"))
-                if r["err"]:
-                    errs.append(f"{label}: {r['err']}")
-        rows.append((pid, n, ok_tool, ok_args, ok_fields, finishes, errs))
-        if ok_fields < n:
-            all_ok = False
+                import grpc
+                from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
+                addr = os.getenv("LLM_GATEWAY_ADDR", "localhost:50052")
+                stub = llm_pb2_grpc.LLMGatewayStub(
+                    grpc.insecure_channel(addr),
+                )
 
-    print("\n## Provider tool-calling 协议矩阵（named tool_choice=submit_plan 强制）\n")
-    print("| provider | tool_calls 返回 | args 合法 | 必填字段齐 | finish_reason 分布 |")
-    print("|---|---|---|---|---|")
-    for pid, n, t, a, f, fin, errs in rows:
-        print(f"| {pid} | {t}/{n} | {a}/{n} | {f}/{n} | "
-              + ", ".join(f"{k}×{v}" for k, v in fin.items()) + " |")
-    for pid, *_rest, errs in rows:
-        for e in errs:
-            print(f"  ! {pid} {e}")
-    print("\n结论口径：tool_calls 返回 < 全数 = named tool_choice 被该家无视/协议失败"
-          "（生产由轮内 salvage/JSON 回退承接，该家 fallback 率照此预估）。")
-    return 0 if all_ok else 1
+                rows = []
+                for pid in targets:
+                    n = ok_tool = ok_args = ok_fields = 0
+                    finishes: dict[str, int] = {}
+                    errs: list[str] = []
+                    for _ in range(max(1, args.rounds)):
+                        for label, text in _PROBES:
+                            result = _probe_one(stub, llm_pb2, pid, text)
+                            n += 1
+                            ok_tool += result["tool"] and result["name_ok"]
+                            ok_args += result["args_ok"]
+                            ok_fields += result["fields_ok"]
+                            finish = result["finish"] or "-"
+                            finishes[finish] = finishes.get(finish, 0) + 1
+                            status = (
+                                "✓" if result["fields_ok"] else
+                                "text" if not result["tool"] and not result["err"]
+                                else "✗"
+                            )
+                            print(
+                                f"  [{pid}] {label}: {status} "
+                                f"tool={result['tool']} finish={finish} "
+                                + (
+                                    f"err={result['err']}"
+                                    if result["err"]
+                                    else f"content_len={result['content_len']}"
+                                ),
+                            )
+                            if result["err"]:
+                                errs.append(f"{label}: {result['err']}")
+                    rows.append((
+                        pid,
+                        n,
+                        ok_tool,
+                        ok_args,
+                        ok_fields,
+                        finishes,
+                        errs,
+                    ))
+                    case_id = f"provider_{pid.replace('-', '_')}"
+                    if ok_fields == n:
+                        recorder.pass_case(case_id)
+                    else:
+                        recorder.fail_case(
+                            case_id,
+                            "provider_protocol_error",
+                            f"valid submit_plan tool calls {ok_fields}/{n}",
+                        )
+
+                print(
+                    "\n## Provider tool-calling 协议矩阵"
+                    "（named tool_choice=submit_plan 强制）\n",
+                )
+                print(
+                    "| provider | tool_calls 返回 | args 合法 | "
+                    "必填字段齐 | finish_reason 分布 |",
+                )
+                print("|---|---|---|---|---|")
+                for pid, n, tool, arg, fields, finishes, _errs in rows:
+                    print(
+                        f"| {pid} | {tool}/{n} | {arg}/{n} | "
+                        f"{fields}/{n} | "
+                        + ", ".join(
+                            f"{key}×{value}"
+                            for key, value in finishes.items()
+                        )
+                        + " |",
+                    )
+                for pid, *_rest, errors in rows:
+                    for error in errors:
+                        print(f"  ! {pid} {error}")
+                print(
+                    "\n结论口径：tool_calls 返回 < 全数 = named tool_choice "
+                    "被该家无视/协议失败。",
+                )
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":

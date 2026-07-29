@@ -16,6 +16,8 @@ import time
 import urllib.error
 import urllib.request
 
+from support.e2e import CaseRecorder, is_network_timeout
+
 try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
@@ -53,7 +55,9 @@ def _service_up() -> bool:
         return True
     except urllib.error.HTTPError:
         return True
-    except Exception:
+    except Exception as exc:
+        if is_network_timeout(exc):
+            raise
         return False
 
 
@@ -106,23 +110,68 @@ async def _stream_tts(provider: str, voice: str = "", cancel_after: int = -1) ->
     return out
 
 
-def _batch_baseline() -> float | None:
-    """同句批处理 /api/tts 整句延迟（首音=全量返回）。失败返回 None。"""
+def _batch_baseline() -> float:
+    """Return batch TTS latency; reachable-provider failures must propagate."""
+
+    t0 = time.monotonic()
+    data = _post_json(
+        "/api/tts",
+        {"text": SENTENCE, "voice_id": "冰糖", "format": "wav"},
+    )
+    if not isinstance(data, dict):
+        raise ValueError("batch TTS response is not an object")
+    if not data.get("audio"):
+        raise RuntimeError("batch TTS response contains no audio")
+    return (time.monotonic() - t0) * 1000
+
+
+def _record_latency_comparison(
+    recorder: CaseRecorder,
+    *,
+    first_ms: float,
+    server_first: bool,
+) -> str | None:
+    """Record one selected-provider batch/stream comparison."""
+
     try:
-        t0 = time.monotonic()
-        data = _post_json("/api/tts", {"text": SENTENCE, "voice_id": "冰糖", "format": "wav"})
-        dt = (time.monotonic() - t0) * 1000
-        return dt if data.get("audio") else None
-    except Exception:
-        return None
+        base = _batch_baseline()
+    except Exception as exc:
+        detail = (
+            "batch TTS baseline failed after provider selection: "
+            f"{type(exc).__name__}"
+        )
+        recorder.fail_case(
+            "tts_latency_comparison",
+            "provider_execution_failed",
+            detail,
+        )
+        return detail
+
+    src = "服务端" if server_first else "客户端"
+    print(
+        f"\n--- 对照 ---\n  批处理整句：{base:.0f}ms   "
+        f"流式首帧（{src}）：{first_ms}ms   "
+        f"提速 {base / max(1, first_ms):.1f}×",
+    )
+    if first_ms >= base * 0.5:
+        detail = (
+            f"流式首帧 {first_ms}ms 未达标"
+            f"（应 < 批处理 {base:.0f}ms×0.5）"
+        )
+        recorder.fail_case(
+            "tts_latency_comparison",
+            "assertion_failed",
+            "streaming first chunk missed the latency target",
+        )
+        return detail
+
+    recorder.pass_case("tts_latency_comparison")
+    print("  ✓ G1 达标：流式首帧 < 批处理 × 0.5")
+    return None
 
 
-async def main() -> int:
+async def _run(recorder: CaseRecorder) -> int:
     print("=== R4.2 流式 TTS e2e（/api/tts/stream）===\n")
-    if not _service_up():
-        print(f"⚠ SKIP：TTS 服务不可达 {AUDIO_API}（先 make up 或本地起 llm-gateway）")
-        return 0
-
     fails: list[str] = []
     info: dict = {}
 
@@ -156,7 +205,7 @@ async def main() -> int:
         # 连 mock 都 unsupported 不该发生（mock 无需 key）
         fails.append("provider=%s 返回 unsupported" % provider)
     elif r["terminal"] == "error":
-        print("  ⚠ provider 运行出错（多为凭据/网络）——协议正常，不校验延迟")
+        fails.append("provider 返回 error 终止消息")
     else:
         if not r["meta"] or r["meta"].get("format") != "pcm":
             fails.append("未收到 meta 或 format≠pcm")
@@ -171,17 +220,29 @@ async def main() -> int:
     #    优先用服务端上报的 first_chunk_ms（真首帧，排除客户端测试链路开销）；缺则用客户端测量。
     server_first = r.get("done_first_chunk_ms")
     first_ms = server_first if server_first else r["first_chunk_ms"]
-    if streaming_available and r["terminal"] == "done" and first_ms:
-        base = _batch_baseline()
-        if base:
-            src = "服务端" if server_first else "客户端"
-            print(f"\n--- 对照 ---\n  批处理整句：{base:.0f}ms   流式首帧（{src}）：{first_ms}ms   提速 {base / max(1, first_ms):.1f}×")
-            if first_ms >= base * 0.5:
-                fails.append(f"流式首帧 {first_ms}ms 未达标（应 < 批处理 {base:.0f}ms×0.5）")
-            else:
-                print(f"  ✓ G1 达标：流式首帧 < 批处理 × 0.5")
-        else:
-            print("  ⚠ 批处理基线不可用（跳过对照）")
+    if not streaming_available:
+        recorder.skip_case(
+            "tts_latency_comparison",
+            "provider_unavailable",
+            "real streaming TTS capability is not configured",
+        )
+    elif r["terminal"] == "done" and first_ms:
+        latency_failure = _record_latency_comparison(
+            recorder,
+            first_ms=first_ms,
+            server_first=bool(server_first),
+        )
+        if latency_failure:
+            fails.append(latency_failure)
+    else:
+        fails.append(
+            "selected streaming provider did not produce a comparable first chunk",
+        )
+        recorder.fail_case(
+            "tts_latency_comparison",
+            "provider_execution_failed",
+            "selected streaming provider did not produce a comparable first chunk",
+        )
 
     # 3) barge-in：cancel 后停止吐帧（发 2 个 delta 后 cancel）
     print(f"\n--- barge-in 取消（provider={provider}）---")
@@ -203,6 +264,29 @@ async def main() -> int:
         return 1
     print("\n=== 通过 ===")
     return 0
+
+
+async def main() -> int:
+    recorder = CaseRecorder()
+    with recorder:
+        if not _service_up():
+            print(f"⚠ SKIP：TTS 服务不可达 {AUDIO_API}")
+            recorder.skip_case(
+                "tts_stream_contract",
+                "provider_unavailable",
+                "TTS HTTP service is unavailable",
+            )
+        else:
+            rc = await _run(recorder)
+            if rc == 0:
+                recorder.pass_case("tts_stream_contract")
+            else:
+                recorder.fail_case(
+                    "tts_stream_contract",
+                    "provider_protocol_error",
+                    "one or more streaming TTS assertions failed",
+                )
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":

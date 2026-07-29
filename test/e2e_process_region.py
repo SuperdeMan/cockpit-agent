@@ -14,6 +14,8 @@ import json
 import sys
 import urllib.request
 
+from support.e2e import CaseRecorder
+
 # Windows 控制台默认 GBK，放不下 ✓/✗ 等字符 → 统一切 UTF-8（失败则忽略）
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -54,12 +56,18 @@ def _reset_vehicle_parked():
             print(f"  (车态复位 {key}={value} 跳过：{type(e).__name__}——干净栈本为泊车态)")
 
 
-async def collect(payload: dict, desc: str) -> list[dict]:
+async def collect(
+    recorder: CaseRecorder,
+    payload: dict,
+    desc: str,
+) -> list[dict]:
     """连一个独立 WS，发一条请求，收集所有事件直到 final/error。"""
     events: list[dict] = []
     # ping_interval=None 模拟浏览器（浏览器不主动发 WS ping）；长任务静默期连接由
     # 服务端保活 ping 维持，不依赖客户端 ping/pong。
-    async with websockets.connect(URL, ping_interval=None) as ws:
+    async with websockets.connect(recorder.ws_url(), ping_interval=None) as ws:
+        ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        recorder.confirm_identity_ack(ack)
         await ws.send(json.dumps(payload))
         while True:
             raw = await asyncio.wait_for(ws.recv(), timeout=TIMEOUT)
@@ -90,7 +98,7 @@ def _assert(cond: bool, msg: str):
 _assert.failed = False
 
 
-async def main():
+async def _run(recorder: CaseRecorder) -> int:
     print("=== E2E：复杂任务过程区 + 动态思考 ===")
 
     # 复位车辆到默认泊车态，隔离长期共享栈的调试态污染（K2）；给 NATS→VAL 传播留出时间。
@@ -98,21 +106,22 @@ async def main():
     await asyncio.sleep(1.0)
 
     # 1) 普通闲聊：单步、不复杂 → 不应出过程区
-    ev = await collect({"text": "讲个笑话", "session_id": "e2e-pr-chat"},
+    ev = await collect(recorder, {"text": "讲个笑话", "session_id": recorder.session_id(1)},
                        "普通闲聊（应无过程区）")
     _assert(not any(e.get("type") == "process" for e in ev),
             "闲聊无 process 事件（零过程零延迟）")
 
     # 2) 普通车控：端侧秒回 → 不应出过程区
-    ev = await collect({"text": "打开空调26度", "session_id": "e2e-pr-hvac"},
+    ev = await collect(recorder, {"text": "打开空调26度", "session_id": recorder.session_id(2)},
                        "普通车控（端侧秒回，应无过程区）")
     _assert(not any(e.get("type") == "process" for e in ev),
             "车控无 process 事件")
 
     # 3) 复杂多日行程（trip.plan + 天气 + 充电）→ 应出过程区 + 最终答案
     ev = await collect(
+        recorder,
         {"text": "周末去杭州两天带老人，顺便看天气和是否需要中途充电",
-         "session_id": "e2e-pr-trip"},
+         "session_id": recorder.session_id(3)},
         "复杂行程（应出过程区 analyze/execute/synthesize）")
     procs = [e for e in ev if e.get("type") == "process"]
     phases = {p.get("phase") for p in procs}
@@ -133,9 +142,25 @@ async def main():
     print("\n=== 结果 ===")
     if _assert.failed:
         print("✗ 有断言失败")
-        sys.exit(1)
+        return 1
     print("✓ 全部通过")
+    return 0
+
+
+async def main() -> int:
+    recorder = CaseRecorder()
+    with recorder:
+        rc = await _run(recorder)
+        if rc == 0:
+            recorder.pass_case("process_region_contract")
+        else:
+            recorder.fail_case(
+                "process_region_contract",
+                "assertion_failed",
+                "one or more process-region assertions failed",
+            )
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

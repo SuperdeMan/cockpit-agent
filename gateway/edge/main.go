@@ -114,19 +114,49 @@ func vehStateSnapshot() map[string]any {
 }
 
 type wsRequest struct {
-	Type           string            `json:"type"`            // R4.3b P2：="cancel" 时取消在飞请求（旧 HMI 不发此字段，向后兼容）
-	Text           string            `json:"text"`
-	SessionID      string            `json:"session_id"`
-	IsConfirmation bool              `json:"is_confirmation"` // HMI 确认/取消按钮回应多轮确认时置 true
-	Meta           map[string]string `json:"meta"`            // HMI 设置透传（answer_length/model_pref 等）
+	Type                string            `json:"type"` // R4.3b P2：="cancel" 时取消在飞请求（旧 HMI 不发此字段，向后兼容）
+	Text                string            `json:"text"`
+	SessionID           string            `json:"session_id"`
+	IsConfirmation      bool              `json:"is_confirmation"` // HMI 确认/取消按钮回应多轮确认时置 true
+	Meta                map[string]string `json:"meta"`            // HMI 设置透传（answer_length/model_pref 等）
+	E2EMemoryCapability string            `json:"e2e_memory_capability"`
+}
+
+func buildHandleRequest(
+	req wsRequest,
+	id identity,
+	e2eClaims *e2eIdentityClaims,
+) (*orchpb.HandleRequest, error) {
+	if e2eClaims != nil {
+		if err := validateE2ESessionID(req.SessionID, e2eClaims.UserID); err != nil {
+			return nil, err
+		}
+	} else if req.E2EMemoryCapability != "" {
+		return nil, fmt.Errorf("memory capability requires signed E2E identity")
+	}
+	if req.SessionID == "" {
+		req.SessionID = "default"
+	}
+	return &orchpb.HandleRequest{
+		Text:                req.Text,
+		SessionId:           req.SessionID,
+		IsConfirmation:      req.IsConfirmation,
+		Meta:                stampScopes(req.Meta, id.scopes),
+		E2EMemoryCapability: req.E2EMemoryCapability,
+		Context: &commonpb.ContextRef{
+			SessionId: req.SessionID,
+			VehicleId: id.vehicleID,
+			UserId:    id.userID,
+		},
+	}, nil
 }
 
 func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestratorClient, auth authConfig) {
 	// 层 1 鉴权：解析 ?token=（命中即用其身份+scope；未命中看 AUTH_REQUIRED）。
 	// 校验须在 WS Upgrade 之前——拒绝时回 401，客户端握手即失败、连接不建立。
-	id, ok := auth.resolve(r.URL.Query().Get("token"))
+	id, e2eClaims, ok, hardReject := auth.resolveSession(r.URL.Query().Get("token"))
 	if !ok {
-		if auth.required {
+		if hardReject || auth.required {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			log.Printf("[edge-gateway] WS rejected: missing/invalid token")
 			return
@@ -141,6 +171,20 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 	defer conn.Close()
 
 	client := &wsClient{conn: conn}
+
+	// Signed E2E children must receive owner proof before any test setup or
+	// destructive request can be sent over this connection. Send it before
+	// hub registration so a concurrent proactive broadcast cannot win the
+	// first-frame race.
+	if e2eClaims != nil {
+		client.send(map[string]any{
+			"type":       "e2e_identity_ack",
+			"run_id":     e2eClaims.RunID,
+			"user_id":    e2eClaims.UserID,
+			"vehicle_id": e2eClaims.VehicleID,
+		})
+	}
+
 	hub.register(client)
 	defer hub.unregister(client)
 
@@ -203,8 +247,17 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 		if req.Text == "" {
 			continue // 向后兼容：空 Text 的非 cancel 消息忽略（同旧行为）
 		}
-		if req.SessionID == "" {
-			req.SessionID = "default"
+		handleReq, err := buildHandleRequest(req, id, e2eClaims)
+		if err != nil {
+			_ = conn.WriteControl(
+				websocket.CloseMessage,
+				websocket.FormatCloseMessage(
+					websocket.ClosePolicyViolation,
+					"invalid signed E2E request",
+				),
+				time.Now().Add(5*time.Second),
+			)
+			return
 		}
 
 		// 起新请求：先 cancel 旧的在飞请求（防御，每连接同时至多一个在飞），登记自己的 cancel。
@@ -219,7 +272,7 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 		myGen := reqGen
 		mu.Unlock()
 
-		go func(req wsRequest, ctx context.Context, cancel context.CancelFunc, myGen uint64) {
+		go func(handleReq *orchpb.HandleRequest, ctx context.Context, cancel context.CancelFunc, myGen uint64) {
 			defer func() {
 				cancel()
 				mu.Lock()
@@ -228,17 +281,7 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 				}
 				mu.Unlock()
 			}()
-			stream, err := orch.Handle(ctx, &orchpb.HandleRequest{
-				Text:           req.Text,
-				SessionId:      req.SessionID,
-				IsConfirmation: req.IsConfirmation,
-				Meta:           stampScopes(req.Meta, id.scopes), // 网关权威注入 granted_scopes
-				Context: &commonpb.ContextRef{
-					SessionId: req.SessionID,
-					VehicleId: id.vehicleID,
-					UserId:    id.userID, // 由 token 解析（匿名回退 AUTH_DEFAULT_USER_ID），去硬编码 "u1"
-				},
-			})
+			stream, err := orch.Handle(ctx, handleReq)
 			if err != nil {
 				// 取消导致的错误（context.Canceled）吞掉，不回发 error（HMI 已收 cancelled）
 				if ctx.Err() == nil {
@@ -254,7 +297,7 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 				}
 				client.send(eventToMap(ev))
 			}
-		}(req, ctx, cancel, myGen)
+		}(handleReq, ctx, cancel, myGen)
 	}
 }
 
@@ -415,8 +458,8 @@ func main() {
 
 	srv := &http.Server{Addr: ":" + port}
 	go func() {
-		log.Printf("[edge-gateway] HTTP/WS serving on :%s -> %s (auth_required=%v, tokens=%d, default_vehicle=%s)",
-			port, orchAddr, auth.required, len(auth.tokens), auth.defaultVehicle)
+		log.Printf("[edge-gateway] HTTP/WS serving on :%s -> %s (auth_required=%v, tokens=%d, e2e_identity=%v, default_vehicle=%s)",
+			port, orchAddr, auth.required, len(auth.tokens), auth.e2eEnabled, auth.defaultVehicle)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}

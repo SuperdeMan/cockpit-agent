@@ -9,9 +9,11 @@
 """
 import asyncio
 import inspect
+from pathlib import Path
 
 import pytest
 
+from scripts.e2e_contract import assert_architecture_guard
 from orchestrator.cloud import verify as V
 from orchestrator.cloud.aggregator import Aggregator
 from orchestrator.cloud.executor import DagExecutor
@@ -162,34 +164,11 @@ def test_max_attempts_defaults_to_one():
     assert V.retry_allowed(v, False, 1) is False
 
 
-# ── 铁律①：中央零领域分支（源码断言）─────────────────────────────────────
+# ── 铁律①：中央零领域分支（动态 manifest + AST 守卫）─────────────────────
 
-_DOMAIN_TOKENS = ("hvac", "info.weather", "nearby", "navigation", "charging",
-                  "trip.", "scene.", "media.", "reminder", "research.")
-
-
-def test_verify_module_has_no_domain_literals():
-    """verify.py 里出现任何域字面量 = 机制破了（会长成下一个 fast_intent.py）。
-
-    注释里出现是允许的（解释来由）；**代码行**里不允许。
-    """
-    src = inspect.getsource(V)
-    code = [ln for ln in src.splitlines()
-            if ln.strip() and not ln.strip().startswith("#")]
-    code = "\n".join(code).split('"""')[0::2]      # 去掉 docstring 段
-    body = "\n".join(code)
-    for token in _DOMAIN_TOKENS:
-        assert token not in body, f"verify.py 代码里出现领域字面量 {token!r}"
-
-
-def test_executor_verify_hook_has_no_domain_literals():
-    src = inspect.getsource(DagExecutor._verify_outcome)
-    src += inspect.getsource(DagExecutor._evaluate)
-    src += inspect.getsource(DagExecutor._should_report)
-    code = "\n".join(ln for ln in src.splitlines()
-                     if ln.strip() and not ln.strip().startswith("#"))
-    for token in _DOMAIN_TOKENS:
-        assert token not in code, f"executor 对账钩子里出现领域字面量 {token!r}"
+def test_verify_and_executor_use_dynamic_architecture_guard():
+    """新增能力/主动类型无需维护第二份固定词表，中央可执行语义仍会自动红。"""
+    assert_architecture_guard(Path(__file__).resolve().parents[3])
 
 
 # ── executor 尾链行为 ────────────────────────────────────────────────────

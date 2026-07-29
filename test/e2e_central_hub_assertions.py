@@ -16,6 +16,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from support.e2e import CaseRecorder
+
 try:
     import websockets
 except ImportError:
@@ -53,7 +55,14 @@ def _trace_id() -> str:
     return uuid.uuid4().hex[:16]
 
 
-async def _send(text: str, session_id: str, trace_id: str, *, is_confirmation=False):
+async def _send(
+    text: str,
+    session_id: str,
+    trace_id: str,
+    *,
+    is_confirmation=False,
+    recorder: CaseRecorder | None = None,
+):
     payload = {
         "text": text,
         "session_id": session_id,
@@ -62,7 +71,14 @@ async def _send(text: str, session_id: str, trace_id: str, *, is_confirmation=Fa
     }
     # ping_interval=None 模拟浏览器（浏览器不主动发 WS ping，靠服务端 15s ping 保活）；
     # 否则慢 Agent（trip-planner 多日重生成 >20s）期间客户端 ping 等不到 pong 会误判超时断连。
-    async with websockets.connect(EDGE_WS, max_size=None, ping_interval=None) as ws:
+    async with websockets.connect(
+        recorder.ws_url() if recorder is not None else EDGE_WS,
+        max_size=None,
+        ping_interval=None,
+    ) as ws:
+        if recorder is not None:
+            ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            recorder.confirm_identity_ack(ack)
         await ws.send(json.dumps(payload, ensure_ascii=False))
         finals = []
         started = time.time()
@@ -188,9 +204,8 @@ def _assert_turn(case_name, turn, before, after, spans, finals, trace_id):
         )
 
 
-async def _run_case(case):
+async def _run_case(case, recorder: CaseRecorder, session_id: str):
     name = case["name"]
-    session_id = f"central-{name}-{uuid.uuid4().hex[:6]}"
     print(f"\n== {name} ==")
 
     for key, value in case.get("setup", {}).items():
@@ -207,6 +222,7 @@ async def _run_case(case):
             session_id,
             trace_id,
             is_confirmation=turn.get("is_confirmation", False),
+            recorder=recorder,
         )
         required_nodes = turn.get("expect_spans", [])
         spans = _wait_trace(trace_id, required_nodes)
@@ -219,29 +235,41 @@ async def _run_case(case):
         )
 
 
-async def _main():
+async def _main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixture", default=str(DEFAULT_FIXTURE))
     parser.add_argument("--case", action="append", default=[])
     args = parser.parse_args()
 
-    try:
+    recorder = CaseRecorder()
+    with recorder:
         health = _get("/healthz")
-    except urllib.error.URLError as exc:
-        raise SystemExit(f"collector unavailable; run make up first: {exc}") from exc
+        print(f"collector healthz: {health}")
+        cases = _load_cases(Path(args.fixture))
+        selected = set(args.case)
+        if selected:
+            cases = [case for case in cases if case["name"] in selected]
+        assert cases, "no cases selected"
 
-    print(f"collector healthz: {health}")
-    cases = _load_cases(Path(args.fixture))
-    selected = set(args.case)
-    if selected:
-        cases = [case for case in cases if case["name"] in selected]
-    assert cases, "no cases selected"
+        for index, case in enumerate(cases, start=1):
+            case_id = case["name"]
+            try:
+                await _run_case(case, recorder, recorder.session_id(index))
+            except Exception as exc:  # noqa: BLE001
+                recorder.fail_case(
+                    case_id,
+                    "assertion_failed"
+                    if isinstance(exc, AssertionError)
+                    else "unhandled_exception",
+                    f"{type(exc).__name__}: {exc}",
+                )
+                print(f"  FAIL: {type(exc).__name__}: {exc}")
+            else:
+                recorder.pass_case(case_id)
 
-    for case in cases:
-        await _run_case(case)
-
-    print(f"\ncentral hub assertions passed: {len(cases)} case(s)")
+        print(f"\ncentral hub assertions finished: {len(cases)} case(s)")
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":
-    asyncio.run(_main())
+    raise SystemExit(asyncio.run(_main()))

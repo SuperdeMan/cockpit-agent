@@ -225,7 +225,8 @@ journeys:
     level: target
     lane: live
     tags: [continuity]
-    session_prefix: memtest-      # 刻意走真实记忆抽取（conventions §9.2 豁免前缀）
+    # Runner 为本旅程签发 dedicated memory capability；业务 session 保持普通 session_id，
+    # capability 只走专用协议字段，不再把鉴权编码进 session 前缀。
     setup:
       say: [把空调调到20度]        # 已知非 26 起点
     turns:

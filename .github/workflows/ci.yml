@@ -7,6 +7,94 @@ on:
     branches: [main]
 
 jobs:
+  e2e-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install E2E contract dependencies
+        run: python -m pip install PyYAML
+
+      - name: Ensure PowerShell is available for wrapper parity
+        run: |
+          if ! command -v pwsh >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y powershell
+          fi
+          pwsh -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion'
+
+      - name: E2E wrapper-parity (Python, PowerShell, Bash)
+        run: |
+          python scripts/run_e2e.py --dry-run --group default >/dev/null
+          pwsh -NoProfile -NonInteractive -File scripts/run_e2e.ps1 --dry-run --group default >/dev/null
+          bash scripts/run_e2e.sh --dry-run --group default >/dev/null
+          python - <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          entries = (
+              ("python", [sys.executable, "scripts/run_e2e.py"]),
+              (
+                  "powershell",
+                  [
+                      "pwsh",
+                      "-NoProfile",
+                      "-NonInteractive",
+                      "-File",
+                      "scripts/run_e2e.ps1",
+                  ],
+              ),
+              ("shell", ["bash", "scripts/run_e2e.sh"]),
+          )
+
+          def invoke(prefix, args):
+              completed = subprocess.run(
+                  [*prefix, *args],
+                  text=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  check=False,
+              )
+              final = next(
+                  json.loads(line)
+                  for line in reversed(completed.stdout.splitlines())
+                  if line.startswith("{")
+              )
+              return completed.returncode, final
+
+          for args, expected_rc in (
+              (["--dry-run", "--group", "default"], 0),
+              (["--dry-run", "--id", "__missing_wrapper_contract__"], 2),
+          ):
+              observed = {
+                  name: invoke(prefix, args)
+                  for name, prefix in entries
+              }
+              reference = observed["python"]
+              if reference[0] != expected_rc:
+                  raise SystemExit(
+                      f"Python runner rc mismatch: {reference[0]} != {expected_rc}"
+                  )
+              for name, value in observed.items():
+                  if value != reference:
+                      raise SystemExit(
+                          f"{name} wrapper mismatch:\n"
+                          f"reference={reference!r}\nobserved={value!r}"
+                      )
+          PY
+
+      - name: E2E manifest, protocol, architecture and stale structure gate
+        run: python scripts/run_e2e.py --check --stale-policy warn
+
+      - name: Deterministic non-Docker E2E CI lane
+        run: python scripts/run_e2e.py --lane ci --full --stale-policy warn
+
   python-tests:
     runs-on: ubuntu-latest
     strategy:

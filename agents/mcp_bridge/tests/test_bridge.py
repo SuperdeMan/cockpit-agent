@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +18,19 @@ from agents.mcp_bridge.src.agent import LEDGER_KIND, McpBridgeAgent
 from agents.mcp_bridge.src.mcp_client import StdioMcpClient
 
 SERVERS_YAML = "agents/mcp_bridge/servers.yaml"
+
+
+def test_e2e_cleanup_uses_atomic_owner_lifecycle_without_captured_ids():
+    source = (
+        Path(__file__).resolve().parents[3] / "test" / "e2e_mcp.py"
+    ).read_text(encoding="utf-8")
+    cleanup = source.split("def cleanup_external(", 1)[1].split(
+        "def bridge_capabilities",
+        1,
+    )[0]
+    assert "order_ids" not in cleanup
+    assert 'op="lifecycle_cleanup"' in cleanup
+    assert 'op="count"' in cleanup
 
 
 # ── 准入清单 ────────────────────────────────────────────────────────────
@@ -77,13 +91,18 @@ def test_write_tool_without_compensation_is_rejected():
 
 def test_demo_server_is_idempotent_and_compensable():
     r1 = demo_coffee._order_create({"sku": "拿铁", "size": "大杯",
-                                    "idempotency_key": "unit-k1"})
+                                    "idempotency_key": "unit-k1",
+                                    "_owner_user_id": "unit-owner"})
     oid = r1["structuredContent"]["order_id"]
     r2 = demo_coffee._order_create({"sku": "拿铁", "size": "大杯",
-                                    "idempotency_key": "unit-k1"})
+                                    "idempotency_key": "unit-k1",
+                                    "_owner_user_id": "unit-owner"})
     assert r2["structuredContent"]["order_id"] == oid, "同幂等键必须复用原单，绝不双扣"
     assert r2["structuredContent"]["duplicate"] is True
-    r3 = demo_coffee._order_cancel({"order_id": oid})
+    r3 = demo_coffee._order_cancel({
+        "order_id": oid,
+        "_owner_user_id": "unit-owner",
+    })
     assert r3["structuredContent"]["status"] == "refunded"
     assert r3["structuredContent"].get("refund_id")
 
@@ -91,6 +110,118 @@ def test_demo_server_is_idempotent_and_compensable():
 def test_demo_server_rejects_missing_idempotency_key():
     r = demo_coffee._order_create({"sku": "拿铁"})
     assert r.get("isError") is True
+
+
+def test_demo_orders_are_owner_bound_and_cross_owner_idempotency_isolated():
+    r1 = demo_coffee._order_create({
+        "sku": "拿铁",
+        "idempotency_key": "same-fingerprint",
+        "_owner_user_id": "owner-a",
+    })
+    r2 = demo_coffee._order_create({
+        "sku": "拿铁",
+        "idempotency_key": "same-fingerprint",
+        "_owner_user_id": "owner-b",
+    })
+    assert r1["structuredContent"]["order_id"] != r2["structuredContent"]["order_id"]
+    assert "owner_user_id" not in r1["structuredContent"]
+    assert "_owner_user_id" not in r1["structuredContent"]
+
+
+def test_demo_hidden_admin_exact_owner_compensate_then_purge():
+    owner = "owner-admin"
+    other = "owner-other"
+    mine = demo_coffee._order_create({
+        "sku": "拿铁", "idempotency_key": "admin-mine",
+        "_owner_user_id": owner,
+    })["structuredContent"]["order_id"]
+    theirs = demo_coffee._order_create({
+        "sku": "拿铁", "idempotency_key": "admin-theirs",
+        "_owner_user_id": other,
+    })["structuredContent"]["order_id"]
+
+    assert "__e2e.namespace.admin" not in {tool["name"] for tool in demo_coffee.TOOLS}
+    denied = demo_coffee._order_cancel({
+        "order_id": mine, "_owner_user_id": other,
+    })
+    assert denied["isError"] is True
+
+    counted = demo_coffee._e2e_namespace_admin({
+        "op": "count", "_owner_user_id": owner,
+        "write_tool": "order.create", "compensate_tool": "order.cancel",
+    })
+    assert counted["structuredContent"]["count"] == 1
+    status = demo_coffee._e2e_namespace_admin({
+        "op": "status", "_owner_user_id": owner, "order_id": mine,
+        "write_tool": "order.create", "compensate_tool": "order.cancel",
+    })
+    assert status["structuredContent"]["status"] == "submitted"
+    compensated = demo_coffee._e2e_namespace_admin({
+        "op": "compensate", "_owner_user_id": owner, "order_id": mine,
+        "write_tool": "order.create", "compensate_tool": "order.cancel",
+    })
+    assert compensated["structuredContent"]["status"] == "refunded"
+    repeated = demo_coffee._e2e_namespace_admin({
+        "op": "compensate", "_owner_user_id": owner, "order_id": mine,
+        "write_tool": "order.create", "compensate_tool": "order.cancel",
+    })
+    assert repeated["structuredContent"]["duplicate"] is True
+    purged = demo_coffee._e2e_namespace_admin({
+        "op": "purge", "_owner_user_id": owner,
+        "write_tool": "order.create", "compensate_tool": "order.cancel",
+    })
+    assert purged["structuredContent"]["deleted"] == 1
+    assert theirs in demo_coffee._ORDERS
+
+
+def test_demo_atomic_lifecycle_cleanup_discovers_unseen_orders_and_is_idempotent():
+    owner = "owner-lost-response"
+    other = "owner-lifecycle-other"
+    first = demo_coffee._order_create({
+        "sku": "拿铁",
+        "idempotency_key": "lost-response-1",
+        "_owner_user_id": owner,
+    })["structuredContent"]["order_id"]
+    second = demo_coffee._order_create({
+        "sku": "美式",
+        "idempotency_key": "lost-response-2",
+        "_owner_user_id": owner,
+    })["structuredContent"]["order_id"]
+    other_order = demo_coffee._order_create({
+        "sku": "摩卡",
+        "idempotency_key": "other-owner-order",
+        "_owner_user_id": other,
+    })["structuredContent"]["order_id"]
+    demo_coffee._order_cancel({
+        "order_id": second,
+        "_owner_user_id": owner,
+    })
+
+    request = {
+        "op": "lifecycle_cleanup",
+        "_owner_user_id": owner,
+        "write_tool": "order.create",
+        "compensate_tool": "order.cancel",
+    }
+    cleaned = demo_coffee._e2e_namespace_admin(request)
+
+    assert cleaned["structuredContent"] == {
+        "op": "lifecycle_cleanup",
+        "count": 0,
+        "deleted": 2,
+    }
+    assert first not in demo_coffee._ORDERS
+    assert second not in demo_coffee._ORDERS
+    assert other_order in demo_coffee._ORDERS
+    assert not any(key[0] == owner for key in demo_coffee._BY_IDEM)
+    assert demo_coffee._e2e_namespace_admin(request)["structuredContent"] == {
+        "op": "lifecycle_cleanup",
+        "count": 0,
+        "deleted": 0,
+    }
+    assert "__e2e.namespace.admin" not in {
+        tool["name"] for tool in demo_coffee.TOOLS
+    }
 
 
 # ── 真子进程：协议往返 ───────────────────────────────────────────────────
@@ -109,6 +240,48 @@ async def test_stdio_client_round_trip_against_real_subprocess():
         assert {t["name"] for t in tools} >= {"menu.list", "order.create"}
         res = await client.call_tool("menu.list", {})
         assert res["ok"] and "拿铁" in res["text"]      # 中文过 stdio 不能乱码
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_stdio_hidden_cleanup_discovers_lost_response_in_same_subprocess():
+    client = StdioMcpClient(
+        "demo-coffee-cleanup",
+        [sys.executable, "-m", "agents.mcp_bridge.demo_servers.demo_coffee"],
+        timeout_s=20,
+    )
+    owner = "owner-stdio-lost-response"
+    admin = {
+        "_owner_user_id": owner,
+        "write_tool": "order.create",
+        "compensate_tool": "order.cancel",
+    }
+    await client.start()
+    try:
+        await client.initialize()
+        tools = await client.list_tools()
+        assert "__e2e.namespace.admin" not in {
+            item["name"] for item in tools
+        }
+        # Simulate a committed order whose response never reached the caller.
+        await client.call_tool("order.create", {
+            "sku": "拿铁",
+            "idempotency_key": "stdio-lost-response",
+            "_owner_user_id": owner,
+        })
+        cleaned = await client.call_tool("__e2e.namespace.admin", {
+            **admin,
+            "op": "lifecycle_cleanup",
+        })
+        counted = await client.call_tool("__e2e.namespace.admin", {
+            **admin,
+            "op": "count",
+        })
+        assert cleaned["ok"] is True
+        assert cleaned["data"]["deleted"] == 1
+        assert cleaned["data"]["count"] == 0
+        assert counted["data"]["count"] == 0
     finally:
         await client.close()
 
@@ -215,6 +388,7 @@ async def test_write_after_confirm_passes_request_fingerprint_as_idempotency_key
         assert name == "order.create"
         # arg_map：规划期的 item → 商户的 sku（桥不含任何领域词，映射在准入清单里）
         assert args["sku"] == "拿铁" and "item" not in args
+        assert args["_owner_user_id"] == ctx.user_id
         key = args["idempotency_key"]
         assert key and key != "t1", "幂等键必须是请求指纹，不能是每次都新的 task_id"
         assert a.ledger.closed[0][1] == "done"
@@ -224,6 +398,38 @@ async def test_write_after_confirm_passes_request_fingerprint_as_idempotency_key
         await run_handle(a, "shop.order", slots={"item": "拿铁", "size": "大杯"},
                          raw_text="点一杯拿铁", ctx=ctx, meta={"confirmed": "true"})
         assert fake.calls[0][1]["idempotency_key"] == key
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_agent_namespace_admin_uses_write_binding_without_registering_hidden_tools():
+    a, fake = await _agent()
+    try:
+        response = await a.namespace_admin({
+            "op": "count",
+            "user_id": "owner-a",
+            "order_id": "",
+            "intent": "shop.order",
+        })
+        assert fake.calls == [("__e2e.namespace.admin", {
+            "op": "count",
+            "_owner_user_id": "owner-a",
+            "order_id": "",
+            "write_tool": "order.create",
+            "compensate_tool": "order.cancel",
+        })]
+        assert response["ok"] is True
+        fake.calls.clear()
+        response = await a.namespace_admin({
+            "op": "lifecycle_cleanup",
+            "user_id": "owner-a",
+            "order_id": "",
+            "intent": "shop.order",
+        })
+        assert fake.calls[0][1]["op"] == "lifecycle_cleanup"
+        assert response["ok"] is True
+        assert {c.intent for c in a.manifest.capabilities} == {"shop.menu", "shop.order"}
     finally:
         await a.shutdown()
 

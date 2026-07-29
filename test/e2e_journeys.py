@@ -4,7 +4,7 @@
 语料：test/journeys/*.yaml
   - level: regression（必须绿，红=回归）| target（能力标尺，允许红——红灯=工程 backlog）
   - lane:  mock（MockProvider 下确定性可跑，nightly 用）| live（需真 LLM/真 provider）
-  - requires: 缺 key 自动 SKIP（key 从根 .env 读**是否存在**，绝不打印值；`A|B` 表示任一即可）
+  - requires: 缺 key 自动 SKIP（仅检查父 runner 传入的进程环境是否存在，绝不读取 .env 或打印值；`A|B` 表示任一即可）
 
 协议事实（runner 的模拟保真度依据，见设计文档 §1.3）：
   - HMI 二次交互 = 合成一句文本发送（Cards.tsx 收口 onAction(text)→send）；仅确认条带
@@ -21,7 +21,7 @@
   python test/e2e_journeys.py --level regression    # 仅回归级
   python test/e2e_journeys.py --id A1-1,B4-1        # 指定旅程
   python test/e2e_journeys.py --list                # 列语料不执行
-报告：docs/reviews/eval/journeys_report.{json,md}（--no-report 关）；
+报告：始终先写 runner 分配的 E2E_ARTIFACT_DIR；canonical 仅由父 runner 原子晋升；
 失败轮自动 POST collector badcase（--no-badcase 关），dashboard 收藏夹可直接重放下钻。
 退出码：回归级有失败 =1；目标级失败不改变退出码（--strict-target 时也算失败）。
 """
@@ -30,12 +30,22 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import statistics
 import sys
 import time
 import urllib.request
 import uuid
+from datetime import datetime
 from pathlib import Path
+
+from scripts.e2e_contract import (
+    ManifestError,
+    atomic_write_report_pair,
+    strict_json_loads,
+    strict_yaml_load,
+)
+from support.e2e import CaseRecorder
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -58,7 +68,6 @@ from eval_common import ProviderLock  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 JOURNEY_DIR = ROOT / "test" / "journeys"
-REPORT_DIR = ROOT / "docs" / "reviews" / "eval"
 
 URL = "ws://localhost:8090/ws"
 COLLECTOR = "http://localhost:8092"
@@ -71,7 +80,7 @@ DEFAULT_SPEECH_NOT = ["<think>", "```", '{"answer"', "**",
 # schema 严格键校验：拼错的断言键静默不生效比断言失败更危险。
 JOURNEY_KEYS = {"id", "title", "level", "lane", "tags", "requires", "retry",
                 "setup", "turns", "cleanup", "final_vehicle", "no_default_not",
-                "session_prefix", "notes"}
+                "notes"}
 TURN_KEYS = {"say", "press", "confirm", "cancel", "wait_push", "env", "sleep",
              "expect", "skip_journey_if_speech_any", "new_session", "name"}
 EXPECT_KEYS = {"speech_any", "speech_all", "speech_not", "cards_any",
@@ -81,6 +90,36 @@ EXPECT_KEYS = {"speech_any", "speech_all", "speech_not", "cards_any",
 PRESS_KEYS = {"button", "text", "from"}
 WAIT_PUSH_KEYS = {"timeout_s", "speech_any", "card_any", "source"}
 SETUP_KEYS = {"vehicle", "say", "location", "docker_stop"}
+_RECORDER: CaseRecorder | None = None
+# B3-3 owns two plain business sessions bound to runner-issued capabilities.
+# General journey sessions start after that reserved range so IDs never collide.
+_SESSION_NUMBER = 2
+
+
+def _e2e() -> CaseRecorder:
+    if _RECORDER is None:
+        raise RuntimeError("CaseRecorder is not initialized")
+    return _RECORDER
+
+
+def _next_session() -> str:
+    global _SESSION_NUMBER
+    _SESSION_NUMBER += 1
+    return _e2e().session_id(_SESSION_NUMBER)
+
+
+def _session_for_journey(journey: dict, number: int) -> str:
+    """Every WS turn uses a plain runner-namespaced business session."""
+    if journey.get("id") == "B3-3":
+        return _e2e().session_id(number)
+    return _next_session()
+
+
+def _memory_capability_for_journey(journey: dict, number: int) -> str:
+    """Only B3-3 receives a runner-issued synthetic-extraction capability."""
+    if journey.get("id") == "B3-3":
+        return _e2e().memory_capability(number)
+    return ""
 
 
 # ───────────────────────── 基础设施（复用 e2e_scene 成熟原语） ─────────────────────────
@@ -103,17 +142,12 @@ def debug_vehicle(key: str, value) -> None:
 
 
 def load_env_keys() -> set[str]:
-    """根 .env 里**值非空**的 key 集合（只看存在性，绝不读值出去）。"""
-    keys: set[str] = set()
-    env = ROOT / ".env"
-    if env.exists():
-        for line in env.read_text(encoding="utf-8", errors="ignore").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, _, v = line.partition("=")
-                if v.strip():
-                    keys.add(k.strip())
-    return keys
+    """Return non-empty process-environment keys without inspecting ``.env``."""
+    return {
+        key
+        for key, value in os.environ.items()
+        if isinstance(key, str) and isinstance(value, str) and value
+    }
 
 
 def active_provider() -> str:
@@ -185,7 +219,9 @@ class PushListener:
     async def start(self) -> None:
         if self._task:
             return
-        self._ws = await websockets.connect(URL)
+        self._ws = await websockets.connect(_e2e().ws_url())
+        ack = json.loads(await asyncio.wait_for(self._ws.recv(), timeout=10))
+        _e2e().confirm_identity_ack(ack)
         self._task = asyncio.create_task(self._run())
 
     async def _run(self) -> None:
@@ -246,7 +282,8 @@ class TurnOutcome:
 
 
 async def run_turn(text: str, session: str, meta: dict,
-                   is_confirmation: bool, recv_timeout: float) -> TurnOutcome:
+                   is_confirmation: bool, recv_timeout: float,
+                   e2e_memory_capability: str = "") -> TurnOutcome:
     """执行一轮并收齐**全部** final。
 
     协议事实：混合意图（部分本地+部分上云）一次请求会发多个 final——端侧先 final
@@ -261,11 +298,16 @@ async def run_turn(text: str, session: str, meta: dict,
     finals: list[dict] = []
     t0 = time.time()
     grace = 2.0
-    async with websockets.connect(URL) as ws:
-        await ws.send(json.dumps({
+    async with websockets.connect(_e2e().ws_url()) as ws:
+        ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        _e2e().confirm_identity_ack(ack)
+        payload = {
             "text": text, "session_id": session,
             "is_confirmation": is_confirmation, "meta": meta,
-        }))
+        }
+        if e2e_memory_capability:
+            payload["e2e_memory_capability"] = e2e_memory_capability
+        await ws.send(json.dumps(payload))
         expecting_more = False     # final 之后又见增量/过程帧 → 云段在路上
         while True:
             timeout = recv_timeout if (not finals or expecting_more) else grace
@@ -444,8 +486,11 @@ def _docker(verb: str, service: str) -> None:
 
 async def _run_once(j: dict, listener: PushListener, enforce_latency: bool,
                     do_badcase: bool, res: JourneyResult) -> bool:
-    prefix = j.get("session_prefix") or "e2e-jrn-"      # memtest- 用于记忆抽取旅程（§9.2）
-    sess = {"id": f"{prefix}{j['id'].lower()}-{int(time.time())}"}
+    sess = {
+        "number": 1,
+        "id": _session_for_journey(j, 1),
+        "memory_capability": _memory_capability_for_journey(j, 1),
+    }
     journey_t0 = time.time()          # wait_push 只认本旅程开始后的推送
     default_not = [] if j.get("no_default_not") else DEFAULT_SPEECH_NOT
     loc = (j.get("setup") or {}).get("location")
@@ -472,7 +517,14 @@ async def _run_once(j: dict, listener: PushListener, enforce_latency: bool,
         # cleanup + 故障恢复：尽力而为、无论旅程结论如何都执行
         for text in j.get("cleanup") or []:
             try:
-                await run_turn(str(text), sess["id"], build_meta(), False, 60)
+                await run_turn(
+                    str(text),
+                    sess["id"],
+                    build_meta(),
+                    False,
+                    60,
+                    sess.get("memory_capability", ""),
+                )
             except Exception:
                 pass
         if _STOPPED["svc"]:
@@ -504,7 +556,14 @@ async def _run_body(j: dict, setup: dict, sess: dict, build_meta, listener,
             mark_stopped(svc)             # 先登记再执行：stop 半途失败也要恢复
             _docker("stop", svc)
         for text in setup.get("say") or []:
-            await run_turn(text, sess["id"], build_meta(), False, 60)
+            await run_turn(
+                text,
+                sess["id"],
+                build_meta(),
+                False,
+                60,
+                sess.get("memory_capability", ""),
+            )
         if setup.get("vehicle") or setup.get("say"):
             await asyncio.sleep(2.0)
     except Exception as e:
@@ -551,7 +610,12 @@ async def _run_body(j: dict, setup: dict, sess: dict, build_meta, listener,
 
             # 文本类：say / press / confirm / cancel
             if turn.get("new_session"):       # 跨会话旅程（如记忆抽取→新会话召回）
-                sess["id"] = f"{sess['id'].rsplit('-', 1)[0]}-{int(time.time())}"
+                sess["number"] += 1
+                sess["id"] = _session_for_journey(j, sess["number"])
+                sess["memory_capability"] = _memory_capability_for_journey(
+                    j,
+                    sess["number"],
+                )
                 rec["new_session"] = True
             if "say" in turn:
                 text, is_conf, meta = str(turn["say"]), False, build_meta()
@@ -586,8 +650,14 @@ async def _run_body(j: dict, setup: dict, sess: dict, build_meta, listener,
                 break
 
             budget = float(expect.get("latency_s", 90))
-            out = await run_turn(text, sess["id"], meta,
-                                 is_conf, recv_timeout=max(budget + 30, 60))
+            out = await run_turn(
+                text,
+                sess["id"],
+                meta,
+                is_conf,
+                recv_timeout=max(budget + 30, 60),
+                e2e_memory_capability=sess.get("memory_capability", ""),
+            )
             last_final = out.final or last_final
             rec.update({"op": text[:50], "elapsed": round(out.elapsed, 1),
                         "trace_id": out.trace_id,
@@ -645,13 +715,26 @@ async def _run_body(j: dict, setup: dict, sess: dict, build_meta, listener,
 
 def load_journeys(suite_filter: str, id_filter: set[str],
                   lane: str, level: str) -> list[dict]:
-    files = sorted(JOURNEY_DIR.glob("*.yaml"))
+    files = sorted({
+        *JOURNEY_DIR.rglob("*.yaml"),
+        *JOURNEY_DIR.rglob("*.yml"),
+    })
     if suite_filter:
-        files = [f for f in files if suite_filter in f.stem]
+        files = [
+            f for f in files
+            if suite_filter in f.relative_to(JOURNEY_DIR).as_posix()
+        ]
     out: list[dict] = []
     seen: set[str] = set()
     for f in files:
-        doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+        relative = f.relative_to(JOURNEY_DIR).as_posix()
+        try:
+            doc = strict_yaml_load(
+                f.read_text(encoding="utf-8"),
+                where=relative,
+            ) or {}
+        except (OSError, UnicodeError, ManifestError) as exc:
+            raise SystemExit(f"[schema] {relative}: {exc}") from exc
         for j in doc.get("journeys") or []:
             errs = validate_journey(j)
             if errs:
@@ -659,7 +742,7 @@ def load_journeys(suite_filter: str, id_filter: set[str],
             if j["id"] in seen:
                 raise SystemExit(f"[schema] 旅程 id 重复: {j['id']}")
             seen.add(j["id"])
-            j["_file"] = f.name
+            j["_file"] = relative
             out.append(j)
     if id_filter:
         out = [j for j in out if j["id"] in id_filter]
@@ -702,40 +785,81 @@ def validate_journey(j: dict) -> list[str]:
 
 def build_report(results: list[JourneyResult], provider: str,
                  lane: str, started: float,
-                 lock_summary: dict | None = None) -> tuple[dict, str]:
-    def bucket(pred):
-        rs = [r for r in results if pred(r)]
-        return sum(1 for r in rs if r.status == "pass"), \
-            sum(1 for r in rs if r.status != "skip")
+                 lock_summary: dict | None = None,
+                 *, metadata: dict | None = None) -> tuple[dict, str]:
+    def summarize(rs: list[JourneyResult]) -> dict:
+        counts = {
+            "selected": len(rs),
+            "executed": sum(1 for r in rs if r.status != "skip"),
+            "pass": sum(1 for r in rs if r.status == "pass"),
+            "fail": sum(1 for r in rs if r.status == "fail"),
+            "skip": sum(1 for r in rs if r.status == "skip"),
+        }
+        counts["summary"] = (
+            f"pass/selected={counts['pass']}/{counts['selected']}; "
+            f"fail={counts['fail']}; skip={counts['skip']}"
+        )
+        return counts
 
-    tags_all = ["autonomy", "continuity", "honesty", "proactive", "interaction", "safety"]
+    def bucket(pred) -> dict:
+        rs = [r for r in results if pred(r)]
+        return summarize(rs)
+
+    tags_all = sorted({
+        str(tag)
+        for result in results
+        for tag in (result.j.get("tags") or [])
+    })
     scorecard = {}
     for tag in tags_all:
-        p, n = bucket(lambda r, t=tag: t in (r.j.get("tags") or []))
-        if n:
-            scorecard[tag] = f"{p}/{n}"
+        status = bucket(lambda r, t=tag: t in (r.j.get("tags") or []))
+        if status["selected"]:
+            scorecard[tag] = status
     lat = [t["elapsed"] for r in results for t in r.turns if "elapsed" in t]
     latency = {"p50": round(statistics.median(lat), 1) if lat else None,
                "p95": round(sorted(lat)[max(0, int(len(lat) * 0.95) - 1)], 1) if lat else None,
                "max": round(max(lat), 1) if lat else None, "n_turns": len(lat)}
 
-    reg_p, reg_n = bucket(lambda r: r.j["level"] == "regression")
-    tgt_p, tgt_n = bucket(lambda r: r.j["level"] == "target")
+    regression = bucket(lambda r: r.j["level"] == "regression")
+    target = bucket(lambda r: r.j["level"] == "target")
+    lanes = {
+        name: bucket(lambda r, value=name: r.j["lane"] == value)
+        for name in sorted({str(r.j["lane"]) for r in results})
+    }
+    suites = {
+        name: bucket(
+            lambda r, value=name: str(r.j.get("_file") or "unknown") == value
+        )
+        for name in sorted({str(r.j.get("_file") or "unknown") for r in results})
+    }
+    overall = summarize(results)
+    summary = str(overall["summary"])
+    counts = {key: value for key, value in overall.items() if key != "summary"}
     data = {
-        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "duration_s": round(time.time() - started, 1),
         "provider": provider, "provider_lock": lock_summary or {},
         "lane": lane or "all",
-        "regression": {"pass": reg_p, "total": reg_n},
-        "target": {"pass": tgt_p, "total": tgt_n},
+        "counts": counts,
+        "summary": summary,
+        "regression": regression,
+        "target": target,
+        "lanes": lanes,
+        "suites": suites,
         "skipped": [{"id": r.id, "reason": r.reason} for r in results if r.status == "skip"],
         "scorecard": scorecard, "latency_s": latency,
         "journeys": [{
             "id": r.id, "title": r.j["title"], "level": r.j["level"],
-            "lane": r.j["lane"], "status": r.status, "reason": r.reason,
+            "lane": r.j["lane"], "suite": r.j.get("_file", ""),
+            "tags": list(r.j.get("tags") or []),
+            "status": r.status, "reason": r.reason,
             "attempts": r.attempts, "turns": r.turns,
         } for r in results],
     }
+    if metadata:
+        data.update(metadata)
+    data["counts"] = counts
+    data["summary"] = summary
 
     locked = bool((lock_summary or {}).get("locked"))
     drifts = (lock_summary or {}).get("drifts") or []
@@ -744,18 +868,31 @@ def build_report(results: list[JourneyResult], provider: str,
         f"- 生成时间：{data['generated_at']}（耗时 {data['duration_s']}s）",
         f"- active LLM：`{provider}`"
         + ("（--provider 已锁定）" if locked else "（跨 provider 结果不可直接对比）"),
+        f"- run_id：`{data.get('run_id', '(unmanaged)')}`",
+        f"- 报告范围：`{data.get('report_scope', 'non_canonical_artifact')}`",
+        f"- 摘要：{summary}",
     ]
     if drifts:
         lines.append("- **⚠️ 评测中途 provider 漂移，本报告作废重跑**："
                      + "；".join(f"`{d['from']}`→`{d['to']}`（@{d['at']}）" for d in drifts))
     lines += [
         f"- 车道：{data['lane']}",
-        f"- **回归级 {reg_p}/{reg_n}**（必须全绿）；目标级 {tgt_p}/{tgt_n}（红灯=工程 backlog）",
+        f"- **回归级 {regression['summary']}**（必须全绿）；"
+        f"目标级 {target['summary']}（红灯=工程 backlog）",
         f"- 时延（全轮）：P50={latency['p50']}s P95={latency['p95']}s max={latency['max']}s n={latency['n_turns']}",
         "", "## 记分卡", "",
         "| 维度 | 通过 |", "|---|---|",
     ]
-    lines += [f"| {k} | {v} |" for k, v in scorecard.items()]
+    lines += [f"| {k} | {v['summary']} |" for k, v in scorecard.items()]
+    lines += [
+        "",
+        "## 车道与语料分桶",
+        "",
+        "| 类型 | 名称 | 结果 |",
+        "|---|---|---|",
+    ]
+    lines += [f"| lane | {name} | {value['summary']} |" for name, value in lanes.items()]
+    lines += [f"| suite | {name} | {value['summary']} |" for name, value in suites.items()]
     lines += ["", "## 旅程明细", "",
               "| id | 级别 | 结果 | 说明 |", "|---|---|---|---|"]
     icon = {"pass": "✅", "fail": "❌", "skip": "⏭️"}
@@ -774,30 +911,136 @@ def build_report(results: list[JourneyResult], provider: str,
     return data, "\n".join(lines) + "\n"
 
 
+def record_journey_results(
+    recorder: CaseRecorder,
+    results: list[JourneyResult],
+) -> None:
+    """Map the actually selected corpus outcomes to strict result counts."""
+
+    for result in results:
+        case_id = "journey_" + "".join(
+            char.lower() if char.isalnum() else "_"
+            for char in result.id
+        ).strip("_")
+        if result.status == "pass":
+            recorder.pass_case(case_id)
+        elif result.status == "skip":
+            code = (
+                "credential_unavailable"
+                if result.reason.startswith("缺 ")
+                else "data_unavailable"
+            )
+            recorder.skip_case(case_id, code, result.reason)
+        else:
+            recorder.fail_case(
+                case_id,
+                "assertion_failed",
+                result.reason,
+            )
+
+
+def _csv_values(raw: str) -> list[str]:
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument(
+        "--suite",
+        default=os.environ.get("E2E_JOURNEY_SUITES", ""),
+        help="按语料文件名过滤（子串）",
+    )
+    ap.add_argument(
+        "--id",
+        default=os.environ.get("E2E_JOURNEY_IDS", ""),
+        help="逗号分隔旅程 id",
+    )
+    ap.add_argument(
+        "--lane",
+        default=os.environ.get("E2E_JOURNEY_LANES", ""),
+        choices=["", "mock", "live"],
+        help="mock=仅确定性子集",
+    )
+    ap.add_argument(
+        "--level",
+        default=os.environ.get("E2E_JOURNEY_LEVELS", ""),
+        choices=["", "regression", "target"],
+    )
+    ap.add_argument("--list", action="store_true", help="只列语料不执行")
+    ap.add_argument(
+        "--enforce-latency",
+        action="store_true",
+        help="时延超预算判失败（默认只记基线）",
+    )
+    ap.add_argument(
+        "--strict-target",
+        action="store_true",
+        help="目标级失败也让退出码=1",
+    )
+    ap.add_argument("--no-report", action="store_true")
+    ap.add_argument("--no-badcase", action="store_true")
+    ap.add_argument(
+        "--provider",
+        default=os.environ.get("E2E_PROVIDER", ""),
+        help="锁定 active LLM 厂商（漂移=报告作废、退出码 1）",
+    )
+    ap.add_argument(
+        "--model",
+        default=os.environ.get("E2E_MODEL", ""),
+        help="与 provider 一起锁定本次实际模型",
+    )
+    return ap.parse_args(argv)
+
+
+def _journey_filters(args: argparse.Namespace) -> dict[str, list[str]]:
+    return {
+        "ids": _csv_values(args.id),
+        "suites": _csv_values(args.suite),
+        "lanes": _csv_values(args.lane),
+        "levels": _csv_values(args.level),
+        "other": [],
+    }
+
+
+def _injected_metadata() -> dict:
+    raw = os.environ.get("E2E_CANONICAL_METADATA", "")
+    if not raw:
+        return {}
+    if len(raw.encode("utf-8", errors="ignore")) > 256 * 1024:
+        raise RuntimeError("E2E_CANONICAL_METADATA is too large")
+    try:
+        payload = strict_json_loads(raw)
+    except (TypeError, json.JSONDecodeError, ManifestError) as exc:
+        raise RuntimeError("E2E_CANONICAL_METADATA is invalid") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("E2E_CANONICAL_METADATA must be an object")
+    return payload
+
+
+def write_report_artifacts(
+    artifact_dir: Path,
+    data: dict,
+    markdown: str,
+) -> tuple[Path, Path]:
+    """Write the JSON/Markdown pair only inside the runner-owned directory."""
+
+    root = Path(artifact_dir).resolve()
+    json_path = root / "journeys_report.json"
+    markdown_path = root / "journeys_report.md"
+    atomic_write_report_pair(json_path, markdown_path, data, markdown)
+    return json_path, markdown_path
+
+
 # ───────────────────────── main ─────────────────────────
 
-async def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--suite", default="", help="按语料文件名过滤（子串）")
-    ap.add_argument("--id", default="", help="逗号分隔旅程 id")
-    ap.add_argument("--lane", default="", choices=["", "mock", "live"],
-                    help="mock=仅确定性子集")
-    ap.add_argument("--level", default="", choices=["", "regression", "target"])
-    ap.add_argument("--list", action="store_true", help="只列语料不执行")
-    ap.add_argument("--enforce-latency", action="store_true",
-                    help="时延超预算判失败（默认只记基线）")
-    ap.add_argument("--strict-target", action="store_true",
-                    help="目标级失败也让退出码=1")
-    ap.add_argument("--no-report", action="store_true")
-    ap.add_argument("--force-report", action="store_true",
-                    help="局部跑（--id/--suite/--lane/--level）也覆盖 canonical 报告")
-    ap.add_argument("--no-badcase", action="store_true")
-    ap.add_argument("--provider", default="",
-                    help="锁定 active LLM 厂商（POST 切换后逐旅程校验漂移；漂移=报告作废、退出码 1）")
-    args = ap.parse_args()
+async def _run() -> int:
+    args = _parse_args()
 
     ids = {x.strip() for x in args.id.split(",") if x.strip()}
+    declared = load_journeys("", set(), "", "")
     journeys = load_journeys(args.suite, ids, args.lane, args.level)
     if not journeys:
         print("没有匹配的旅程语料")
@@ -809,7 +1052,7 @@ async def main() -> int:
         print(f"共 {len(journeys)} 条")
         return 0
 
-    lock = ProviderLock(LLM_HTTP, args.provider)
+    lock = ProviderLock(LLM_HTTP, args.provider, args.model)
     try:
         provider = lock.pin()
     except RuntimeError as e:
@@ -846,24 +1089,48 @@ async def main() -> int:
         print(f"   {icon} {r.status.upper()} {r.reason}\n")
     await listener.close()
 
-    data, md = build_report(results, provider, args.lane, started, lock.summary())
-    # 报告工件纪律：journeys_report.{json,md} 是 canonical 全量基线（入库），只有
-    # **无过滤的全量跑**才默认覆盖——否则一次 --id 局部验证就把 33 条收官报告顶掉
-    # （批次1 踩过）。局部跑要留档用 --force-report。
-    is_full_run = not (ids or args.suite or args.lane or args.level)
-    if not args.no_report and (is_full_run or args.force_report):
-        REPORT_DIR.mkdir(parents=True, exist_ok=True)
-        (REPORT_DIR / "journeys_report.json").write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        (REPORT_DIR / "journeys_report.md").write_text(md, encoding="utf-8")
-        print(f"报告已写 {REPORT_DIR / 'journeys_report.md'}")
-    elif not args.no_report:
-        print("（局部跑不覆盖 canonical 报告；要留档加 --force-report）")
+    filters = _journey_filters(args)
+    metadata = _injected_metadata()
+    report_scope = (
+        "canonical_candidate"
+        if metadata
+        else "non_canonical_artifact"
+    )
+    metadata.update({
+        "run_id": _e2e().run_id(),
+        "model": args.model,
+        "report_scope": report_scope,
+        "scope": {
+            "full": not any(filters.values()) and len(declared) == len(journeys),
+            "journey_filters": filters,
+            "declared": len(declared),
+            "selected": len(journeys),
+        },
+    })
+    data, md = build_report(
+        results,
+        provider,
+        args.lane,
+        started,
+        lock.summary(),
+        metadata=metadata,
+    )
+    if not args.no_report:
+        json_artifact = _e2e().add_artifact(
+            "journeys_report.json",
+            metadata={"kind": "journeys_report", "format": "json"},
+        )
+        markdown_artifact = _e2e().add_artifact(
+            "journeys_report.md",
+            metadata={"kind": "journeys_report", "format": "markdown"},
+        )
+        write_report_artifacts(json_artifact.parent, data, md)
+        print(f"报告工件已写 {markdown_artifact}")
 
     reg_fail = [r for r in results if r.status == "fail" and r.j["level"] == "regression"]
     tgt_fail = [r for r in results if r.status == "fail" and r.j["level"] == "target"]
-    print(f"=== 回归级 {data['regression']['pass']}/{data['regression']['total']}"
-          f" | 目标级 {data['target']['pass']}/{data['target']['total']}"
+    print(f"=== 回归级 {data['regression']['pass']}/{data['regression']['selected']}"
+          f" | 目标级 {data['target']['pass']}/{data['target']['selected']}"
           f" | skip {len(data['skipped'])} ===")
     if reg_fail:
         print("回归级失败: " + ", ".join(r.id for r in reg_fail))
@@ -873,7 +1140,23 @@ async def main() -> int:
     if drifted:
         print("⚠️ 评测中途 active provider 漂移（HMI 切换或网关重启回落），报告作废重跑: "
               + "; ".join(f"{d['from']}→{d['to']}@{d['at']}" for d in lock.drifts))
+    record_journey_results(_e2e(), results)
+    if drifted:
+        _e2e().fail_case(
+            "provider_lock",
+            "provider_drift",
+            "active provider changed during the journey run",
+        )
     return 1 if reg_fail or drifted or (args.strict_target and tgt_fail) else 0
+
+
+async def main() -> int:
+    global _RECORDER
+    recorder = CaseRecorder()
+    _RECORDER = recorder
+    with recorder:
+        await _run()
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":

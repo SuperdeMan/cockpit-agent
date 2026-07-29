@@ -16,6 +16,14 @@ import sqlite3
 import threading
 import time
 
+PERSONAL_DATA_TARGETS = (
+    {
+        "id": "observability_raw_content",
+        "storage_variants": ("turns", "spans", "llm_calls", "logs"),
+        "sql_variants": ("turns", "spans", "llm_calls", "logs"),
+    },
+)
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS turns(
   trace_id TEXT PRIMARY KEY,

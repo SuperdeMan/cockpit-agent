@@ -163,6 +163,30 @@ def test_toolcall_off_is_json_fallback_tier(monkeypatch):
     assert len(plan.steps) == 1
 
 
+def test_same_builder_rereads_toolcall_env_for_each_build(monkeypatch):
+    """同一实例 off→on 热切：build 每轮重读 env，不依赖重建 PlanBuilder/进程。"""
+    spy = _SpyLLM(
+        text_reply=json.dumps(_ARGS_OK, ensure_ascii=False),
+        tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                          "arguments": _ARGS_OK}]),
+    )
+    builder = PlanBuilder(
+        llm_fn=spy.llm,
+        registry_fn=_no_resolve,
+        llm_tool_fn=spy.llm_tools,
+    )
+
+    monkeypatch.setenv("PLANNER_TOOLCALL", "off")
+    first = _build(builder)
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    second = _build(builder)
+
+    assert first.plan_mode == "json"
+    assert second.plan_mode == "toolcall"
+    assert spy.text_calls == 1
+    assert spy.tool_calls_n == 1
+
+
 def test_toolcall_on_without_tool_fn_uses_json(monkeypatch):
     """on 但未注入 llm_tool_fn（存量测试/spy 形态）→ JSON 路径，防御性回退。"""
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")

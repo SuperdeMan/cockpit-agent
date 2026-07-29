@@ -26,6 +26,50 @@ _MOCK_CONTEXT = {
 # 敏感 scope（上云需脱敏）
 _SENSITIVE_SCOPES = {"vehicle.location", "vehicle.state", "profile.taste"}
 
+# Static personal-data candidates consumed by scripts/e2e_contract.py.  Keep
+# SQL and every fallback key family on the same logical target.
+PERSONAL_DATA_TARGETS = (
+    {
+        "id": "memory_item",
+        "storage_variants": ("memory_item", "MemoryVectorStore._mem"),
+        "sql_variants": ("memory_item",),
+    },
+    {
+        "id": "memory_relation",
+        "storage_variants": ("memory_relation", "MemoryVectorStore._rel"),
+        "sql_variants": ("memory_relation",),
+    },
+    {
+        "id": "voiceprint",
+        "storage_variants": ("voiceprint", "MemoryVectorStore._vp"),
+        "sql_variants": ("voiceprint",),
+    },
+    {
+        "id": "profile_identity",
+        "storage_variants": (
+            "redis.profile.identity",
+            "MemoryStore._profiles.identity",
+        ),
+    },
+    {
+        "id": "session_history",
+        "storage_variants": (
+            "redis.sess",
+            "redis.user_sessions",
+            "MemoryStore._mem",
+            "MemoryStore._mem_user_sessions",
+        ),
+    },
+    {
+        "id": "profile_places",
+        "storage_variants": (
+            "memory_item_scope_profile_places",
+            "redis.profile.places",
+            "MemoryStore._profiles.places",
+        ),
+    },
+)
+
 # 会话轮次原文 TTL（默认 7 天）：对话原文是个人数据，不设 TTL 等于永久留存。
 # 近 N 轮上下文与巩固抽取都只用最近轮次，7 天远超任何消费方需要。
 _SESSION_TTL_S = int(os.getenv("MEMORY_SESSION_TTL_S", "604800") or "604800")

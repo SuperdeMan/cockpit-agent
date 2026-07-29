@@ -313,9 +313,31 @@ test('客户端不持任何会话状态机（用户可感知状态归 voiceLoop�
     new URL('./s2sClient.mjs', import.meta.url), 'utf8')
   // 只看**有效代码**——注释里正当地解释着「只在 LISTENING 期推流」等门控语义。
   // 行尾注释也要剥（要求 // 前有空白，免得连 http:// 一起剥掉）。
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
+  const stripComments = (text) => text.replace(/\r\n?/g, '\n')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').filter((l) => !l.trim().startsWith('//'))
     .map((l) => l.replace(/\s\/\/.*$/, '')).join('\n')
+  const code = stripComments(src)
+  for (const [name, eol] of [['LF', '\n'], ['CRLF', '\r\n'], ['CR', '\r']]) {
+    const sample = [
+      '// COMMENT_ONLY_LISTENING',
+      "const state = 'LISTENING' // TAIL_ONLY_SPEAKING",
+      '/* BLOCK_ONLY_THINKING */',
+      'const keep = state',
+    ].join(eol)
+    const stripped = stripComments(sample)
+    assert.ok(
+      stripped.includes("const state = 'LISTENING'") && stripped.includes('const keep = state'),
+      `${name} 注释清洗不得吞掉可执行代码`,
+    )
+    for (const commentOnly of [
+      'COMMENT_ONLY_LISTENING',
+      'TAIL_ONLY_SPEAKING',
+      'BLOCK_ONLY_THINKING',
+    ]) {
+      assert.ok(!stripped.includes(commentOnly), `${name} 必须剔除注释 ${commentOnly}`)
+    }
+  }
   for (const bad of ['LISTENING', 'SPEAKING', 'THINKING', 'FOLLOWUP', 'ARMED']) {
     assert.ok(!code.includes(bad), `客户端不得出现 FSM 态 ${bad}`)
   }

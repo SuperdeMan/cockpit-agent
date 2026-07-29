@@ -959,6 +959,8 @@ def build_streaming_asr_provider(provider: str = "", model: str = "",
 # 官方文档：https://platform.xiaomimimo.com/docs/zh-CN/usage-guide/speech-synthesis-v2.5
 
 class BaseTTSProvider:
+    provider: str
+
     async def synthesize(self, text: str, voice_id: str, model: str,
                          speed: float, fmt: str):
         """returns (audio_bytes, format, duration_ms, model_used, voice_id)"""
@@ -971,6 +973,8 @@ class BaseTTSProvider:
 
 class MockTTSProvider(BaseTTSProvider):
     """无 API key 时的 TTS 兜底。"""
+    provider = "mock"
+
     async def synthesize(self, text: str, voice_id: str, model: str,
                          speed: float, fmt: str):
         return b"", fmt or "wav", 0, "mock", voice_id or "mimo_default"
@@ -989,6 +993,7 @@ class MiMoTTSProvider(BaseTTSProvider):
     目标文本放在 role=assistant 的 content 中，可选 role=user 传风格控制。
     响应：choices[0].message.audio.data 为 Base64 编码音频（wav/pcm16）。
     """
+    provider = "mimo"
     BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1/chat/completions"
 
     # 官方预置音色（mimo-v2.5-tts）
@@ -1081,6 +1086,7 @@ class StreamBridgeTTSProvider(BaseTTSProvider):
 
     def __init__(self, engine: str):
         self.engine = engine
+        self.provider = engine
         cat = TTS_STREAM_CATALOG.get(engine, {})
         self._model = cat.get("model", engine)
         self._default_voice = cat.get("voice", "")

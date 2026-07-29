@@ -11,8 +11,9 @@
 设计卡 `docs/design/2026-07-04-r4.3-wake-vad-fullduplex.md` §9「人工验收单」（真麦）。
 FSM 纯逻辑另有 `hmi/src/voiceLoop.test.mjs`（20 例）覆盖。
 
-前置：`make up` 起全栈；依赖 `websockets`。无 ASR/TTS provider 凭据（如 nightly mock）时
-相关断言优雅 SKIP（退出 0），不误报失败——沿用 r3.3 e2e-ci-gate 口径。
+前置：`make up` 起全栈；依赖 `websockets`。HTTP 服务不可达写结构化 whole-skip；
+ASR provider 明确返回 `unsupported` 时仅跳过对应探针；provider 接受探针后的错误、超时或
+协议损坏一律记 FAIL，不再把运行期错误伪装成缺凭证。
 用法：python test/e2e_voice_loop.py
 """
 import asyncio
@@ -22,6 +23,8 @@ import os
 import sys
 import urllib.error
 import urllib.request
+
+from support.e2e import CaseRecorder, is_network_timeout
 
 try:  # Windows 控制台默认 GBK，强制 UTF-8（否则打印 ⚠/✓ 崩溃）
     sys.stdout.reconfigure(encoding="utf-8")
@@ -43,6 +46,14 @@ PHRASE = "今天天气怎么样"
 RECV_TIMEOUT = 30
 
 
+class AudioConversionUnavailable(RuntimeError):
+    """The local Python runtime cannot perform the probe conversion."""
+
+
+class InvalidProviderAudio(RuntimeError):
+    """The reachable provider returned audio that violates the WAV contract."""
+
+
 def _post_json(path: str, payload: dict) -> dict:
     req = urllib.request.Request(
         AUDIO_API + path, data=json.dumps(payload).encode(),
@@ -58,12 +69,14 @@ def _service_up() -> bool:
         return True
     except urllib.error.HTTPError:
         return True  # 有 HTTP 响应即服务在
-    except Exception:
+    except Exception as exc:
+        if is_network_timeout(exc):
+            raise
         return False
 
 
 def _synth_wav(text: str):
-    """经 /api/tts 合成 wav（供喂回流式 ASR）；失败/无凭据返回 None。"""
+    """经 /api/tts 合成 wav；运行期失败返回 None，由调用方记录 FAIL。"""
     try:
         data = _post_json("/api/tts", {"text": text, "voice_id": "冰糖", "format": "wav"})
         b64 = data.get("audio")
@@ -74,13 +87,21 @@ def _synth_wav(text: str):
 
 
 def _wav_to_s16le_16k_mono(wav_bytes: bytes):
-    """把 TTS 的 wav 转成 16k mono s16le 裸 PCM（供 PCM 直传路径）；audioop 不可用则返回 None。"""
+    """Convert provider WAV to 16-kHz mono s16le PCM."""
     try:
         import audioop
-        import io
-        import wave
+    except ImportError as exc:
+        raise AudioConversionUnavailable(
+            "the local runtime does not provide audioop",
+        ) from exc
+
+    import io
+    import wave
+    try:
         with wave.open(io.BytesIO(wav_bytes), "rb") as w:
             ch, sw, fr, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+            if n <= 0:
+                raise InvalidProviderAudio("the provider WAV contains no audio frames")
             pcm = w.readframes(n)
         if sw != 2:
             pcm = audioop.lin2lin(pcm, sw, 2)
@@ -89,10 +110,13 @@ def _wav_to_s16le_16k_mono(wav_bytes: bytes):
             pcm = audioop.tomono(pcm, sw, 0.5, 0.5)
         if fr != 16000:
             pcm, _ = audioop.ratecv(pcm, sw, 1, fr, 16000, None)
+        if not pcm:
+            raise InvalidProviderAudio("the provider WAV converts to empty PCM")
         return pcm
-    except Exception as e:  # audioop 在 3.13 移除；非 wav 等
-        print(f"  wav→s16le 转换不可用（{e}）——跳过 PCM 直传校验")
-        return None
+    except Exception as exc:
+        raise InvalidProviderAudio(
+            "the provider response is not a convertible WAV payload",
+        ) from exc
 
 
 async def _stream_asr(audio: bytes, fmt: str = "wav", vad_silence_ms=None) -> dict:
@@ -130,22 +154,23 @@ async def _stream_asr(audio: bytes, fmt: str = "wav", vad_silence_ms=None) -> di
     return out
 
 
-async def main() -> int:
+async def _run(recorder: CaseRecorder) -> int:
     print("=== R4.3 语音回路 e2e（后端契约：ASR 流式 + TTS）===\n")
-    if not _service_up():
-        print(f"⚠ SKIP：ASR/TTS 服务不可达 {AUDIO_API}（先 make up）")
-        return 0
-
     fails: list[str] = []
 
     # 1) TTS 唤醒提示音「在呢」（issue①）——顺带确认 TTS provider 可用
     cue = _synth_wav("在呢")
     if cue:
+        recorder.pass_case("tts_wakeup_cue")
         print(f"✓ TTS 唤醒提示音「在呢」：{len(cue)} bytes wav")
     else:
-        print("⚠ SKIP：TTS 不可用（无 provider 凭据？）——跳过流式 ASR round-trip（mock/CI 预期）")
-        print("\n=== 完成（SKIP）===")
-        return 0
+        print("✗ TTS provider 已可达但合成探针音频失败")
+        recorder.fail_case(
+            "tts_wakeup_cue",
+            "provider_execution_failed",
+            "reachable TTS provider could not synthesize the probe audio",
+        )
+        return 1
 
     # 2) 合成 query 音频喂回流式 ASR（round-trip）
     audio = _synth_wav(PHRASE) or cue
@@ -165,12 +190,18 @@ async def main() -> int:
     if r["terminal"] not in ("done", "error", "unsupported"):
         fails.append(f"未收到终止消息（terminal={r['terminal']}）——流式协议挂起/断裂")
 
-    # provider 层（凭据/网络/ffmpeg）问题只 ⚠ 不判失败——沿用 r3.3：CI mock 下优雅降级
+    # 只有 provider 明确声明不支持该探针才 SKIP；已接收后的运行错误必须 FAIL。
     if r["terminal"] == "unsupported":
-        print("  ⚠ provider build 返回 None（检查 ASR_PROVIDER）——协议本身正常")
+        print("  ⚠ 当前 ASR provider 明确不支持流式探针——协议终止正常")
+        recorder.skip_case(
+            "streaming_asr_roundtrip",
+            "provider_unavailable",
+            "ASR provider does not support the streaming probe",
+        )
     elif r["terminal"] == "error":
-        print("  ⚠ provider 运行出错（多为缺凭据/网络/ffmpeg）——协议正常，不校验转写内容")
+        fails.append("ASR provider returned an error terminal")
     elif r["terminal"] == "done":
+        recorder.pass_case("streaming_asr_roundtrip")
         if r["partials"] or r["final_text"]:
             print(f"  ✓ 流式识别产出文本（partial×{r['partials']}, final={r['final_text']!r}）——上屏/定稿通路通")
         else:
@@ -178,18 +209,42 @@ async def main() -> int:
 
     # 3) R4.3b P2 B1：PCM 直传 round-trip（format:pcm16le 跳网关 ffmpeg）
     print("\n--- P2 B1：PCM 直传（format:pcm16le，跳 ffmpeg）---")
-    pcm = _wav_to_s16le_16k_mono(audio)
+    try:
+        pcm = _wav_to_s16le_16k_mono(audio)
+    except AudioConversionUnavailable:
+        pcm = None
+        recorder.skip_case(
+            "pcm_asr_roundtrip",
+            "profile_unavailable",
+            "the local runtime cannot convert WAV probe audio to PCM",
+        )
+    except InvalidProviderAudio:
+        pcm = None
+        recorder.fail_case(
+            "pcm_asr_roundtrip",
+            "provider_protocol_error",
+            "the reachable TTS provider returned invalid WAV audio",
+        )
+        fails.append("TTS provider returned invalid WAV audio")
     if pcm:
         try:
             rp = await _stream_asr(pcm, fmt="pcm16le")
             print(f"  PCM 消息序列：{rp['msgs'][:12]}  terminal：{rp['terminal']}")
             if rp["terminal"] not in ("done", "error", "unsupported"):
                 fails.append(f"PCM 直传未收到终止消息（terminal={rp['terminal']}）——B1 路径挂起/断裂")
+            elif rp["terminal"] == "unsupported":
+                recorder.skip_case(
+                    "pcm_asr_roundtrip",
+                    "provider_unavailable",
+                    "ASR provider does not support PCM streaming",
+                )
+            elif rp["terminal"] == "error":
+                fails.append("PCM ASR provider returned an error terminal")
             else:
+                recorder.pass_case("pcm_asr_roundtrip")
                 print(f"  ✓ PCM 直传协议闭合（terminal={rp['terminal']}）——跳 ffmpeg 通路通")
         except Exception as e:
             fails.append(f"PCM 直传连接/协议异常：{e}")
-
     # 4) R4.3b P2 B2：vad_silence_ms 透传后会话仍正常定稿（值被夹紧，qwen3 session.update 消费）
     print("\n--- P2 B2：vad_silence_ms 透传 ---")
     try:
@@ -197,7 +252,16 @@ async def main() -> int:
         print(f"  透传 vad_silence_ms=1200 → terminal：{rv['terminal']}")
         if rv["terminal"] not in ("done", "error", "unsupported"):
             fails.append(f"vad_silence_ms 透传后未收到终止消息（terminal={rv['terminal']}）")
+        elif rv["terminal"] == "unsupported":
+            recorder.skip_case(
+                "vad_silence_passthrough",
+                "provider_unavailable",
+                "ASR provider does not support the VAD probe",
+            )
+        elif rv["terminal"] == "error":
+            fails.append("VAD ASR provider returned an error terminal")
         else:
+            recorder.pass_case("vad_silence_passthrough")
             print(f"  ✓ 透传后会话仍正常闭合（terminal={rv['terminal']}）")
     except Exception as e:
         fails.append(f"vad_silence_ms 透传异常：{e}")
@@ -209,6 +273,27 @@ async def main() -> int:
         return 1
     print("\n=== 通过 ===")
     return 0
+
+
+async def main() -> int:
+    recorder = CaseRecorder()
+    with recorder:
+        if not _service_up():
+            print(f"⚠ SKIP：ASR/TTS 服务不可达 {AUDIO_API}")
+            recorder.skip_case(
+                "voice_roundtrip",
+                "provider_unavailable",
+                "ASR/TTS HTTP service is unavailable",
+            )
+        else:
+            rc = await _run(recorder)
+            if rc != 0:
+                recorder.fail_case(
+                    "voice_provider_execution",
+                    "provider_protocol_error",
+                    "one or more voice-loop provider assertions failed",
+                )
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":

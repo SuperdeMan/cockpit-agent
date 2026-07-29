@@ -22,6 +22,18 @@ import sys
 import time
 from pathlib import Path
 
+from support.e2e import CaseRecorder, assert_persistent_source_contract
+
+
+def _source_contract() -> None:
+    assert_persistent_source_contract(Path(__file__).read_text(encoding="utf-8"))
+
+
+if "--source-contract" in sys.argv:
+    _source_contract()
+    print("source contract: PASS")
+    raise SystemExit(0)
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -38,13 +50,21 @@ UPSTREAM = os.getenv("S2S_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realt
 #（本仓库前科：50070 被挡需 netsh override 应急）——不固定端口就永不撞。
 PROXY_PORT = int(os.getenv("S2S_PROXY_PORT", "0"))
 
-_fails: list[str] = []
+_recorder: CaseRecorder | None = None
+_case_index = 0
 
 
 def check(name: str, ok: bool, note: str = "") -> None:
+    global _case_index
+    if _recorder is None:
+        raise RuntimeError("CaseRecorder is not initialized")
+    _case_index += 1
+    case_id = f"s2s-resilience-{_case_index:02d}"
     print(f"  [{'✓' if ok else '✗'}] {name}" + (f" —— {note}" if note else ""))
-    if not ok:
-        _fails.append(name)
+    if ok:
+        _recorder.pass_case(case_id)
+    else:
+        _recorder.fail_case(case_id, "assertion_failed", note or name)
 
 
 class KillableProxy:
@@ -74,6 +94,7 @@ class KillableProxy:
         await self.kill()
         if self._runner:
             await self._runner.cleanup()
+            self._runner = None
 
     async def kill(self):
         """切断所有在途连接（双向都关）。"""
@@ -151,20 +172,36 @@ async def drive_turn(sess, out: list, pcm: bytes, *, timeout: float = 60.0) -> d
     return {"answer": answer, "end": end, "types": [o.get("type") for o in frames]}
 
 
-async def main() -> int:
+async def run(recorder: CaseRecorder) -> None:
+    # Secret-free helper validation proves this direct production-session probe
+    # is still owned by the exact signed E2E user, even though it intentionally
+    # bypasses the HTTP session.start transport to inject a provider disconnect.
+    recorder.identity_token()
     if not _api_key():
-        print("SKIP：无 DashScope key")
-        return 0
+        recorder.skip_case(
+            "provider_prerequisite",
+            "credential_unavailable",
+            "DashScope credential is unavailable",
+        )
+        return
     try:
         import aiohttp  # noqa: F401
     except ImportError:
-        print("SKIP：缺 aiohttp")
-        return 0
+        recorder.skip_case(
+            "provider_prerequisite",
+            "provider_unavailable",
+            "aiohttp dependency is unavailable",
+        )
+        return
     try:
         synth_pcm16k("测试")
-    except Exception as e:
-        print(f"SKIP：/api/tts 不可达（{e}）——需 make up")
-        return 0
+    except Exception:
+        recorder.skip_case(
+            "provider_prerequisite",
+            "provider_unavailable",
+            "TTS endpoint is unavailable",
+        )
+        return
 
     from s2s.provider import build_s2s_provider
     from s2s.session import S2SSession, SessionState
@@ -174,6 +211,7 @@ async def main() -> int:
     print(f"S2S 韧性验证  代理 :{proxy.port} → {UPSTREAM}")
 
     out: list[dict] = []
+    check("运行命名空间初始为空", len(out) == 0)
     audio_bytes = [0]
     opened_summaries: list[str] = []
 
@@ -196,7 +234,9 @@ async def main() -> int:
         return p
 
     sess = S2SSession(provider_factory=factory, emit_json=emit_json, emit_audio=emit_audio,
-                      context_provider=context_provider, session_id="e2e-s2s-resil",
+                      context_provider=context_provider,
+                      session_id=recorder.session_id(1),
+                      user_id=recorder.user_id(),
                       reconnect_backoff=(0.3, 0.6, 1.0))
     try:
         print("\n[1] 经代理建会话")
@@ -279,14 +319,22 @@ async def main() -> int:
     finally:
         await sess.close()
         await proxy.stop()
+        check("代理连接与监听器已精确释放",
+              not proxy.conns and proxy._runner is None)
 
     print("\n" + "=" * 68)
-    if _fails:
-        print(f"✗ {len(_fails)} 项失败：{_fails}")
-        return 1
-    print("✓ S2S 韧性（重连/重注入/诚实收束/降级）全部通过")
-    return 0
+
+
+def main() -> int:
+    _source_contract()
+    global _recorder
+    _recorder = CaseRecorder()
+    with _recorder:
+        asyncio.run(run(_recorder))
+    result = _recorder.result
+    print(f"{result.counts['passed']}/{result.counts['selected']} passed")
+    return _recorder.exit_code()
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    raise SystemExit(main())

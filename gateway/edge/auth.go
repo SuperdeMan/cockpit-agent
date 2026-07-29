@@ -8,6 +8,7 @@ package main
 import (
 	"os"
 	"strings"
+	"time"
 )
 
 // identity 是一个 token 解析出的会话身份 + 授权。
@@ -23,15 +24,36 @@ type authConfig struct {
 	tokens         map[string]identity
 	defaultUserID  string
 	defaultVehicle string
+	e2eEnabled     bool
+	e2eSecret      []byte
+	e2eConfigErr   error
+	now            func() time.Time
 }
 
 // loadAuthConfig 从环境变量装配层 1 鉴权配置。
 func loadAuthConfig() authConfig {
+	enabled := strings.EqualFold(os.Getenv("E2E_IDENTITY_ENABLED"), "true")
+	var secret []byte
+	var configErr error
+	if enabled {
+		rawSecret := os.Getenv("E2E_IDENTITY_SECRET")
+		if rawSecret == "" {
+			configErr = errE2EIdentityConfig
+		} else if decoded, err := decodeE2ESecret(rawSecret); err != nil {
+			configErr = errE2EIdentityConfig
+		} else {
+			secret = decoded
+		}
+	}
 	return authConfig{
 		required:       strings.EqualFold(os.Getenv("AUTH_REQUIRED"), "true"),
 		tokens:         parseAuthTokens(os.Getenv("AUTH_TOKENS")),
 		defaultUserID:  getenv("AUTH_DEFAULT_USER_ID", "u1"),
 		defaultVehicle: getenv("VEHICLE_ID", "v1"),
+		e2eEnabled:     enabled,
+		e2eSecret:      secret,
+		e2eConfigErr:   configErr,
+		now:            time.Now,
 	}
 }
 
@@ -79,6 +101,37 @@ func (a authConfig) resolve(token string) (identity, bool) {
 		id.vehicleID = a.defaultVehicle
 	}
 	return id, true
+}
+
+// resolveSession preserves normal auth priority, then optionally recognizes the
+// runner-only signed prefix. hardReject means the prefix was claimed while the
+// gate was enabled but could not be verified, so anonymous fallback is forbidden.
+func (a authConfig) resolveSession(
+	token string,
+) (identity, *e2eIdentityClaims, bool, bool) {
+	if id, ok := a.resolve(token); ok {
+		return id, nil, true, false
+	}
+	if !a.e2eEnabled || !strings.HasPrefix(token, e2eIdentityPrefix) {
+		return identity{}, nil, false, false
+	}
+	if a.e2eConfigErr != nil || len(a.e2eSecret) != 32 {
+		return identity{}, nil, false, true
+	}
+	clock := a.now
+	if clock == nil {
+		clock = time.Now
+	}
+	claims, err := verifyE2EIdentity(token, a.e2eSecret, clock())
+	if err != nil {
+		return identity{}, nil, false, true
+	}
+	id := identity{
+		userID:    claims.UserID,
+		vehicleID: claims.VehicleID,
+		scopes:    strings.Join(claims.Scopes, ","),
+	}
+	return id, &claims, true, false
 }
 
 // anonymous 返回匿名回退身份（AUTH_REQUIRED=false 且无有效 token 时）：user_id=默认、

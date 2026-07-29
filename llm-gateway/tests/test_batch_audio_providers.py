@@ -12,6 +12,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import providers as P
+from scripts.prepare_voiceprint_fixtures import _select_voices, _voice_catalog
 from providers import (
     _wav_header, _wav_pcm_data,
     build_asr_provider, build_tts_provider,
@@ -114,6 +115,21 @@ def test_tts_explicit_mimo_pins(monkeypatch):
     monkeypatch.setenv("LLM_API_KEY", "mk")
     monkeypatch.setenv("TTS_PROVIDER", "mimo")
     assert isinstance(build_tts_provider(), MiMoTTSProvider)
+
+
+def test_batch_tts_providers_expose_the_real_provider_identity():
+    assert MockTTSProvider().provider == "mock"
+    assert MiMoTTSProvider("key").provider == "mimo"
+    assert StreamBridgeTTSProvider("cosyvoice").provider == "cosyvoice"
+
+
+def test_mimo_catalog_selects_real_female_and_male_not_default_alias():
+    selected = _select_voices(
+        _voice_catalog({"voices": MiMoTTSProvider.VOICES}),
+    )
+
+    assert [voice["voice_id"] for voice in selected] == ["冰糖", "苏打"]
+    assert [voice["gender"] for voice in selected] == ["female", "male"]
 
 
 # ── MiMo 端点可配 ──────────────────────────────────────────────────────

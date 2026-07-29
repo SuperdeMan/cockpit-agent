@@ -35,8 +35,11 @@ import statistics
 import sys
 import time
 import urllib.request
+import urllib.error
 import wave
 from pathlib import Path
+
+from support.e2e import CaseRecorder, is_network_timeout
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows 控制台 gbk 防崩
@@ -95,6 +98,41 @@ def _api_key() -> str:
 
 
 # ── 音频源：/api/tts 合成 → 16k mono s16le ──
+def _record_tts_preflight_error(
+    recorder: CaseRecorder,
+    exc: BaseException,
+) -> None:
+    """Classify transport absence separately from TTS runtime failures."""
+
+    if isinstance(exc, urllib.error.HTTPError):
+        recorder.fail_case(
+            "s2s_provider_protocol",
+            "provider_http_error",
+            f"llm-gateway TTS returned HTTP {exc.code}",
+        )
+    elif is_network_timeout(exc):
+        recorder.fail_case(
+            "s2s_provider_protocol",
+            "provider_timeout",
+            "llm-gateway TTS preflight timed out",
+        )
+    elif isinstance(
+        exc,
+        (urllib.error.URLError, ConnectionError),
+    ):
+        recorder.skip_case(
+            "s2s_provider_protocol",
+            "provider_unavailable",
+            "llm-gateway TTS endpoint is unavailable",
+        )
+    else:
+        recorder.fail_case(
+            "s2s_provider_protocol",
+            "provider_execution_failed",
+            f"llm-gateway TTS preflight failed: {type(exc).__name__}",
+        )
+
+
 _pcm_cache: dict[str, bytes] = {}
 
 
@@ -499,42 +537,100 @@ async def main() -> int:
     ap.add_argument("--rounds", type=int, default=3, help="★4 时延采样轮数")
     args = ap.parse_args()
 
-    key = _api_key()
-    if not key:
-        print("SKIP：无 DashScope key（S2S_API_KEY / DASHSCOPE_ASR_KEY / LLM_EMBED_API_KEY 任一）")
-        return 0
-    try:
-        import aiohttp  # noqa: F401
-    except ImportError:
-        print("SKIP：缺 aiohttp")
-        return 0
-    try:
-        synth_pcm16k(UTT_CHAT)
-    except Exception as e:
-        print(f"SKIP：llm-gateway /api/tts 不可达或合成失败（{e}）——需 make up 后再跑")
-        return 0
-
-    print(f"S2S 协议探针  model={args.model}  ws={WS_URL}")
-    rep = Report()
-    want = list(CASES) + ["latency"] if args.case == "all" else [args.case]
-    for name in want:
-        if name == "latency":
-            await case_latency(key, args.model, rep, args.rounds)
-        elif name in CASES:
-            await CASES[name](key, args.model, rep)
+    recorder = CaseRecorder()
+    with recorder:
+        key = _api_key()
+        if not key:
+            print("SKIP：无 DashScope key")
+            recorder.skip_case(
+                "s2s_provider_protocol",
+                "credential_unavailable",
+                "no S2S provider credential is available",
+            )
         else:
-            print(f"未知 case: {name}")
-            return 2
+            try:
+                import aiohttp  # noqa: F401
+            except ImportError:
+                recorder.skip_case(
+                    "s2s_provider_protocol",
+                    "profile_unavailable",
+                    "aiohttp is not installed in the acoustic profile",
+                )
+            else:
+                try:
+                    synth_pcm16k(UTT_CHAT)
+                except Exception as exc:
+                    print(
+                        "S2S TTS preflight failed: "
+                        f"{type(exc).__name__}",
+                    )
+                    _record_tts_preflight_error(recorder, exc)
+                else:
+                    print(
+                        f"S2S 协议探针  model={args.model}  ws={WS_URL}",
+                    )
+                    rep = Report()
+                    want = (
+                        list(CASES) + ["latency"]
+                        if args.case == "all"
+                        else [args.case]
+                    )
+                    for name in want:
+                        if name not in CASES and name != "latency":
+                            recorder.fail_case(
+                                "invalid_probe_selection",
+                                "invalid_argument",
+                                "unknown S2S probe case",
+                            )
+                            continue
+                        before = len(rep.rows)
+                        if name == "latency":
+                            await case_latency(
+                                key,
+                                args.model,
+                                rep,
+                                args.rounds,
+                            )
+                        else:
+                            await CASES[name](key, args.model, rep)
+                        rows = rep.rows[before:]
+                        hard = [ok for _, ok, _ in rows if ok is not None]
+                        if any(ok is False for ok in hard):
+                            recorder.fail_case(
+                                f"s2s_{name}",
+                                "provider_protocol_error",
+                                "one or more provider protocol assertions failed",
+                            )
+                        else:
+                            recorder.pass_case(f"s2s_{name}")
+                        for index, (_label, ok, detail) in enumerate(
+                            rows,
+                            start=1,
+                        ):
+                            if ok is None and "跳过" in detail:
+                                recorder.skip_case(
+                                    f"s2s_{name}_optional_{index}",
+                                    "data_unavailable",
+                                    "optional provider behavior was not observed",
+                                )
 
-    print("\n" + "=" * 72)
-    hard = [(n, ok) for n, ok, _ in rep.rows if ok is not None]
-    print(f"探针结论：{sum(1 for _, ok in hard if ok)}/{len(hard)} 项协议断言通过"
-          f"（另 {len(rep.rows) - len(hard)} 项为量测记录）")
-    if rep.failed:
-        print(f"✗ {rep.failed} 项不符 —— 协议已漂移或该模型不适用，先修 RFC §3 再动实现")
-        return 1
-    print("✓ 协议形态与 RFC §3 一致")
-    return 0
+                    print("\n" + "=" * 72)
+                    hard_rows = [
+                        (name, ok)
+                        for name, ok, _ in rep.rows
+                        if ok is not None
+                    ]
+                    print(
+                        f"探针结论："
+                        f"{sum(1 for _, ok in hard_rows if ok)}/"
+                        f"{len(hard_rows)} 项协议断言通过"
+                        f"（另 {len(rep.rows) - len(hard_rows)} 项为量测记录）",
+                    )
+                    if rep.failed:
+                        print(f"✗ {rep.failed} 项不符")
+                    else:
+                        print("✓ 协议形态与 RFC §3 一致")
+    return recorder.exit_code()
 
 
 if __name__ == "__main__":

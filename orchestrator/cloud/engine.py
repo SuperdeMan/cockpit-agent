@@ -107,10 +107,12 @@ class PlannerEngine:
         if mem_on and text and not rejected:
             occ = getattr(ctx, "occupant_id", "") or "primary"
             await self.context.append_turn(ctx.session_id, "user", text,
-                                           ctx.user_id, ctx.vehicle_id, occ)
+                                           ctx.user_id, ctx.vehicle_id, occ,
+                                           ctx.e2e_memory_capability)
             if assistant_speech:
                 await self.context.append_turn(ctx.session_id, "assistant", assistant_speech,
-                                               ctx.user_id, ctx.vehicle_id, occ)
+                                               ctx.user_id, ctx.vehicle_id, occ,
+                                               ctx.e2e_memory_capability)
 
     async def _orchestrate(self, request, ctx: PlanContext, text: str,
                            mem_on: bool) -> AsyncIterator[dict]:
