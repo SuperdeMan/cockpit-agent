@@ -107,3 +107,50 @@ def test_tts_response_reports_provider_and_model_separately(monkeypatch):
     assert status == 200
     assert payload["provider"] == "fixture-provider"
     assert payload["model"] == "fixture-model-v1"
+
+
+def test_batch_tts_request_can_pin_an_available_real_provider(monkeypatch):
+    built = []
+
+    class FakeTTS:
+        def __init__(self, provider):
+            self.provider = provider or "process-default"
+
+        async def synthesize(self, **kwargs):
+            return (
+                b"\x01\x02",
+                "wav",
+                17,
+                f"{self.provider}-model",
+                kwargs["voice_id"],
+            )
+
+        async def list_voices(self, language: str, gender: str):
+            return []
+
+    def fake_build(provider=""):
+        built.append(provider)
+        return FakeTTS(provider)
+
+    monkeypatch.setattr(HS, "build_tts_provider", fake_build)
+
+    async def go():
+        app = HS.create_http_app()
+        async with TestClient(TestServer(app)) as client:
+            response = await client.post(
+                "/api/tts",
+                json={
+                    "text": "fixture",
+                    "voice_id": "longze_v3",
+                    "format": "wav",
+                    "provider": "cosyvoice",
+                },
+            )
+            return response.status, await response.json()
+
+    status, payload = asyncio.run(go())
+    assert status == 200
+    assert built == ["", "cosyvoice"]
+    assert payload["provider"] == "cosyvoice"
+    assert payload["model"] == "cosyvoice-model"
+    assert payload["voice_id"] == "longze_v3"

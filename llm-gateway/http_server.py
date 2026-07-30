@@ -153,8 +153,28 @@ def create_http_app() -> web.Application:
 
             voice_id = body.get("voice_id", DEFAULT_VOICE)
             fmt = body.get("format", "wav")
+            provider_pin = body.get("provider", "")
+            if not isinstance(provider_pin, str):
+                return web.json_response(
+                    {"error": "provider must be a string"},
+                    status=400,
+                )
+            provider_pin = provider_pin.strip().lower()
+            supported_batch_providers = (
+                set(TTS_STREAM_CATALOG) | {"mimo", "xiaomimimo"}
+            )
+            if provider_pin and provider_pin not in supported_batch_providers:
+                return web.json_response(
+                    {"error": "unsupported TTS provider"},
+                    status=400,
+                )
+            request_tts = (
+                build_tts_provider(provider_pin)
+                if provider_pin
+                else tts
+            )
 
-            audio_bytes, fmt_out, dur, model, voice = await tts.synthesize(
+            audio_bytes, fmt_out, dur, model, voice = await request_tts.synthesize(
                 text=text, voice_id=voice_id, model=DEFAULT_TTS_MODEL,
                 speed=1.0, fmt=fmt)
 
@@ -162,7 +182,9 @@ def create_http_app() -> web.Application:
             logger.info("TTS: %d chars -> %d bytes, voice=%s", len(text), len(audio_bytes), voice)
             return web.json_response({
                 "audio": audio_b64, "format": fmt_out, "duration_ms": dur,
-                "provider": tts.provider, "model": model, "voice_id": voice,
+                "provider": request_tts.provider,
+                "model": model,
+                "voice_id": voice,
             })
         except Exception as e:
             import traceback

@@ -14,6 +14,7 @@ import re
 import stat
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import wave
 from datetime import datetime, timezone
@@ -217,6 +218,48 @@ def _select_voices(
     return language_ordered[0], language_ordered[1]
 
 
+def _discover_stream_provider(
+    base_url: str,
+    *,
+    timeout_s: float,
+) -> str:
+    """Prefer a runtime-advertised real engine with two usable voices.
+
+    Older audio APIs may not expose the capability endpoint; in that case the
+    established process-default batch provider remains the compatibility path.
+    """
+
+    try:
+        payload = _request_json(
+            f"{base_url}/api/tts/stream/info",
+            timeout_s=timeout_s,
+        )
+    except FixtureError:
+        return ""
+    providers = payload.get("providers")
+    if type(providers) is not list:
+        return ""
+    default = payload.get("default")
+    ordered = sorted(
+        (item for item in providers if type(item) is dict),
+        key=lambda item: item.get("id") != default,
+    )
+    for item in ordered:
+        provider = item.get("id")
+        if (
+            item.get("available") is not True
+            or not isinstance(provider, str)
+            or not re.fullmatch(r"[a-z0-9_-]{1,32}", provider)
+        ):
+            continue
+        try:
+            _select_voices(_voice_catalog({"voices": item.get("voices")}))
+        except FixtureError:
+            continue
+        return provider
+    return ""
+
+
 def _decode_audio(
     payload: dict[str, Any],
     *,
@@ -415,10 +458,19 @@ def prepare_fixtures(
     base_url = audio_api_url.rstrip("/")
     if not base_url:
         raise FixtureError("audio API URL is empty")
+    provider_pin = _discover_stream_provider(
+        base_url,
+        timeout_s=timeout_s,
+    )
+    voice_url = f"{base_url}/api/voices"
+    if provider_pin:
+        voice_url += "?" + urllib.parse.urlencode(
+            {"provider": provider_pin},
+        )
     voices = _select_voices(
         _voice_catalog(
             _request_json(
-                f"{base_url}/api/voices",
+                voice_url,
                 timeout_s=timeout_s,
             ),
         ),
@@ -444,13 +496,16 @@ def prepare_fixtures(
     normalized_by_text: dict[str, bytes] = {}
     for voice in selected:
         for text_key, purpose, text in text_matrix:
+            request_body = {
+                "text": text,
+                "voice_id": voice["voice_id"],
+                "format": "wav",
+            }
+            if provider_pin:
+                request_body["provider"] = provider_pin
             response = _request_json(
                 f"{base_url}/api/tts",
-                body={
-                    "text": text,
-                    "voice_id": voice["voice_id"],
-                    "format": "wav",
-                },
+                body=request_body,
                 timeout_s=timeout_s,
             )
             wav_bytes, provider, model = _decode_audio(

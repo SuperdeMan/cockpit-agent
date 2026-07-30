@@ -1123,13 +1123,18 @@ class StreamBridgeTTSProvider(BaseTTSProvider):
                 and (not gender or v.get("gender") == gender)]
 
 
-def build_tts_provider() -> BaseTTSProvider:
+def build_tts_provider(requested_provider: str = "") -> BaseTTSProvider:
     """批处理 TTS 工厂（/api/tts + gRPC Synthesize 共用，启动时装配）。
     TTS_PROVIDER：auto（默认）| mimo | cosyvoice | qwen | minimax | mock。
+    ``requested_provider`` 非空时请求级 pin，优先级高于进程默认；用于需要冻结
+    provider/voice 的验收夹具，也与流式端点的显式 provider 选择保持一致。
     auto：LLM_PROVIDER 为 MiMo 系且有 LLM_API_KEY → MiMo（历史现状）；否则桥接
     TTS_STREAM_PROVIDER 指定的流式引擎（需对应 key）；都不可用 → Mock。
     显式 mimo 复用 LLM_API_KEY（多 LLM 源惯例：该 env 即 MiMo 的 key）。"""
-    choice = os.getenv("TTS_PROVIDER", "auto").strip().lower()
+    choice = (
+        requested_provider.strip().lower()
+        or os.getenv("TTS_PROVIDER", "auto").strip().lower()
+    )
     api_key = os.getenv("LLM_API_KEY", "")
 
     def _mock(why: str):

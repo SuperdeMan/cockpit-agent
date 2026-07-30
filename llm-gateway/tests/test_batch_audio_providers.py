@@ -109,6 +109,18 @@ def test_tts_explicit_engine_without_key_mock(monkeypatch):
     assert isinstance(build_tts_provider(), MockTTSProvider)
 
 
+def test_tts_request_pin_can_override_the_process_default(monkeypatch):
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "xiaomimimo")
+    monkeypatch.setenv("LLM_API_KEY", "mimo-key")
+    monkeypatch.setenv("LLM_EMBED_API_KEY", "bailian-key")
+
+    prov = build_tts_provider("cosyvoice")
+
+    assert isinstance(prov, StreamBridgeTTSProvider)
+    assert prov.engine == "cosyvoice"
+
+
 def test_tts_explicit_mimo_pins(monkeypatch):
     _clean_env(monkeypatch)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")

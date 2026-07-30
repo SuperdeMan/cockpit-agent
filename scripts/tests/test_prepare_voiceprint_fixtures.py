@@ -50,6 +50,7 @@ def _audio_api(
     response_format: str = "wav",
     provider_by_call: dict[int, str] | None = None,
     model_by_call: dict[int, str] | None = None,
+    stream_provider: str | None = None,
 ):
     calls: list[tuple[str, dict | None]] = []
     catalog = voices or [
@@ -80,10 +81,25 @@ def _audio_api(
 
         def do_GET(self):
             calls.append((self.path, None))
-            if self.path != "/api/voices":
+            if self.path == "/api/tts/stream/info" and stream_provider:
+                body = json.dumps({
+                    "streaming": True,
+                    "default": stream_provider,
+                    "providers": [{
+                        "id": stream_provider,
+                        "available": True,
+                        "model": f"{stream_provider}-model",
+                        "voices": catalog,
+                    }],
+                }).encode()
+            elif self.path in {
+                "/api/voices",
+                f"/api/voices?provider={stream_provider}",
+            }:
+                body = json.dumps({"voices": catalog}).encode()
+            else:
                 self.send_error(404)
                 return
-            body = json.dumps({"voices": catalog}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -108,11 +124,15 @@ def _audio_api(
                 "format": response_format,
                 "provider": (provider_by_call or {}).get(
                     call_number,
-                    "fixture-provider",
+                    request.get("provider", "fixture-provider"),
                 ),
                 "model": (model_by_call or {}).get(
                     call_number,
-                    "fixture-model-v1",
+                    (
+                        f"{request['provider']}-model"
+                        if request.get("provider")
+                        else "fixture-model-v1"
+                    ),
                 ),
                 "voice_id": request["voice_id"],
             }).encode()
@@ -192,6 +212,23 @@ def test_prepare_generates_eight_verified_pcm_files_from_distinct_gender_voices(
     assert verify_fixtures(artifact_dir) == manifest_path
     assert "credential" not in json.dumps(manifest).lower()
     assert "token" not in json.dumps(manifest).lower()
+
+
+def test_prepare_pins_the_advertised_real_stream_provider_for_batch_calls(
+    tmp_path: Path,
+):
+    artifact_dir = tmp_path / "run-owned"
+    with _audio_api(stream_provider="cosyvoice") as (base_url, calls):
+        prepare_fixtures(artifact_dir, audio_api_url=base_url)
+
+    manifest = _manifest(artifact_dir)
+    assert manifest["provider"] == "cosyvoice"
+    assert manifest["model"] == "cosyvoice-model"
+    assert ("/api/tts/stream/info", None) in calls
+    assert ("/api/voices?provider=cosyvoice", None) in calls
+    tts_bodies = [body for path, body in calls if path == "/api/tts"]
+    assert len(tts_bodies) == 8
+    assert all(body["provider"] == "cosyvoice" for body in tts_bodies)
 
 
 @pytest.mark.parametrize(
