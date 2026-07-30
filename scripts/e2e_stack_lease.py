@@ -41,6 +41,8 @@ DEFAULT_SCOPES = (
     "payment.invoke",
     "memory.read",
     "memory.write",
+    "profile.read",
+    "profile.write",
 )
 _BUNDLE_KEYS = {
     "schema_version",

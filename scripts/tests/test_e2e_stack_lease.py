@@ -177,6 +177,33 @@ def test_private_bundle_contains_tokens_and_namespace_but_never_secret(tmp_path)
     assert all("SECRET" not in key for key in child_env)
 
 
+def test_default_signed_identity_can_reach_profile_backed_agents(tmp_path):
+    module = require_module()
+    from scripts.e2e_identity import verify_identity
+
+    secret = b"x" * 32
+    bundle_path = module.write_token_bundle(
+        root=tmp_path,
+        lease_id="lease-profile",
+        case_id="e2e_geofence",
+        run_id="e2e-run-profile",
+        user_id="e2e-run-profile-e2e_geofence",
+        vehicle_id="v1",
+        timeout_s=300,
+        secret=secret,
+        now=1700000000,
+        memory_sessions=0,
+    )
+    payload = json.loads(bundle_path.read_text(encoding="utf-8"))
+    claims = verify_identity(
+        payload["identity_token"],
+        secret,
+        now=1700000001,
+    )
+
+    assert {"profile.read", "profile.write"} <= set(claims.scopes)
+
+
 def test_fixture_attestation_overrides_inherited_paths_and_loads_exact_owner_path(
     tmp_path,
 ):
