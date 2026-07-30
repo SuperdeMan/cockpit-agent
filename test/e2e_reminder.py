@@ -104,7 +104,7 @@ def reminder_id(user: str, title: str) -> str:
 
 def reminder_title() -> str:
     """隔离靠签名 owner 命名空间，不把机器 run id 污染进用户话语。"""
-    return "验收演练提醒"
+    return "检查验收结果"
 
 
 def creation_text(title: str) -> str:

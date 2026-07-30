@@ -52,6 +52,12 @@ PG = [
 ]
 
 
+def research_request() -> tuple[str, str]:
+    """签名 owner 已提供精确关联；用户话语保持自然，不混入机器批次号。"""
+    topic = "固态电池技术路线和量产前景"
+    return topic, f"深入调研一下{topic}，不急慢慢查，查完语音告诉我"
+
+
 def sql(query: str) -> str:
     completed = subprocess.run(
         PG + [query],
@@ -147,9 +153,8 @@ async def run(recorder: CaseRecorder) -> None:
     if before:
         return
 
-    # The run marker makes the report card itself an exact correlation key.
-    topic = f"固态电池技术路线和量产前景（批次{recorder.run_id()}）"
-    text = f"深入调研一下{topic}，不急慢慢查，查完语音告诉我"
+    # WS 已由签名 identity 绑定 exact owner，因此本连接收到的报告天然属于本场景。
+    _topic, text = research_request()
     request = {"text": text, "session_id": session}
 
     async with websockets.connect(
@@ -220,7 +225,6 @@ async def run(recorder: CaseRecorder) -> None:
             if (
                 message.get("type") == "proactive"
                 and card.get("type") == "research_report"
-                and recorder.run_id() in str(card.get("question") or "")
             ):
                 report = message
                 break

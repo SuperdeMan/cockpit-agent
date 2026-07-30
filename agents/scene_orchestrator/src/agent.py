@@ -311,6 +311,8 @@ class SceneOrchestratorAgent(BaseAgent):
             logger.warning("scene: 落库失败：%s", e)
             await self._save_kv(ctx, SCENE_PENDING, {})
             return AgentResult(speech="场景没存上，稍后再试一次？")
+        if self.triggers is not None:
+            self.triggers.invalidate_scenes()
         await self._save_kv(ctx, SCENE_PENDING, {})
         verb = "改好了" if overwrite else "建好了"
         return AgentResult(
@@ -628,12 +630,29 @@ class SceneOrchestratorAgent(BaseAgent):
         return actions, changed
 
     async def _delete(self, intent, ctx, meta) -> AgentResult:
-        query = (intent.slots.get("scene") or "").strip() or (intent.raw_text or "")
-        scene = await self._match(ctx, query)
-        if not scene:
-            return AgentResult(speech="没找到这个场景。说「有哪些场景」我给你列一下。")
+        pend = await self._load_kv(ctx, SCENE_PENDING)
         confirmed = str(meta.get("confirmed", "")).lower() == "true"
+        query = (intent.slots.get("scene") or "").strip() or (intent.raw_text or "")
+        scene = None
+        if confirmed and pend.get("delete_scene_id"):
+            scene = await self.store.get(
+                self._uid(ctx),
+                str(pend["delete_scene_id"]),
+            )
+            if scene is None and pend.get("delete_scene_name"):
+                scene = await self._match(ctx, str(pend["delete_scene_name"]))
+        if scene is None:
+            scene = await self._match(ctx, query)
+        if not scene:
+            if confirmed:
+                await self._save_kv(ctx, SCENE_PENDING, {})
+            return AgentResult(speech="没找到这个场景。说「有哪些场景」我给你列一下。")
         if not confirmed:
+            await self._save_kv(ctx, SCENE_PENDING, {
+                "action": "delete",
+                "delete_scene_id": scene.id,
+                "delete_scene_name": scene.name,
+            })
             what = "从列表里隐藏" if scene.source == BUILTIN else "删掉"
             return AgentResult(status=NEED_CONFIRM,
                                speech=f"确定要{what}{scene.name}吗？",
@@ -643,8 +662,14 @@ class SceneOrchestratorAgent(BaseAgent):
             await self.store.save(Scene(
                 user_id=self._uid(ctx), name=scene.name, description=scene.description,
                 source=BUILTIN, status=DISABLED, actions=list(scene.actions)))
+            await self._save_kv(ctx, SCENE_PENDING, {})
+            if self.triggers is not None:
+                self.triggers.invalidate_scenes()
             return AgentResult(speech=f"好的，{scene.name}不再出现在场景列表里了。")
         await self.store.delete(self._uid(ctx), scene.id)
+        await self._save_kv(ctx, SCENE_PENDING, {})
+        if self.triggers is not None:
+            self.triggers.invalidate_scenes()
         return AgentResult(speech=f"已删除{scene.name}。")
 
     # ── scene.list ──────────────────────────────────────────────────────────

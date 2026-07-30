@@ -191,6 +191,44 @@ async def test_cancel_all_needs_confirm_then_executes():
 
 
 @pytest.mark.asyncio
+async def test_cancel_all_confirmation_recovers_pending_when_slots_and_raw_are_gone():
+    """确认轮的「确定」不再含 all 槽；agent 必须保存并恢复清空动作。"""
+    a = await _agent()
+    ctx = make_context()
+    await a.store.add(Reminder(
+        user_id="u1",
+        title="检查验收结果",
+        kind="time",
+        fire_at=10**12,
+    ))
+
+    first = await run_handle(
+        a,
+        "reminder.cancel",
+        raw_text="把提醒都清空",
+        ctx=ctx,
+    )
+    assert first.status == "need_confirm"
+    saved = ctx._memory.upsert_profile.await_args
+    assert saved.args[1] == "reminder_pending"
+    continued = make_context(context_values={
+        "profile.reminder_pending": saved.args[2],
+    })
+
+    confirmed = await run_handle(
+        a,
+        "reminder.cancel",
+        slots={},
+        raw_text="确定",
+        ctx=continued,
+        meta={"confirmed": "true"},
+    )
+    assert confirmed.status == "ok" and "已清空全部" in confirmed.speech
+    times, todos = await a.store.list_split("u1")
+    assert times == [] and todos == []
+
+
+@pytest.mark.asyncio
 async def test_create_past_explicit_time_asks_again():
     a = await _agent()   # 固定时钟 10:00：今天凌晨一点必然已过
     res = await run_handle(a, "reminder.create", raw_text="今天凌晨一点提醒我看球")

@@ -12,6 +12,8 @@
 """
 import asyncio
 import json
+import os
+import re
 import subprocess
 import sys
 import time
@@ -135,9 +137,38 @@ def cleanup_namespace(user: str) -> None:
         raise RuntimeError(f"task ledger cleanup left {remaining} rows")
 
 
+_PROGRESS_RE = re.compile(r"检索中\s*(\d+)/(\d+)\s*个子问题")
+
+
+def progress_snapshot_consistent(speech: str, row: dict) -> bool:
+    """允许后台在状态直答后继续推进，但不允许话术超前或改写总量。"""
+    progress = str(row.get("progress") or "")
+    if progress and progress in speech:
+        return True
+    spoken = _PROGRESS_RE.search(speech)
+    current = _PROGRESS_RE.search(progress)
+    if spoken and current:
+        spoken_done, spoken_total = map(int, spoken.groups())
+        current_done, current_total = map(int, current.groups())
+        return spoken_total == current_total and spoken_done <= current_done
+    return bool(
+        spoken
+        and str(row.get("status") or "") in {
+            "done",
+            "failed",
+            "cancelled",
+            "orphaned",
+        }
+    )
+
+
 def inject_research_crash() -> None:
+    stack_root = Path(
+        os.getenv("E2E_STACK_ROOT") or Path(__file__).resolve().parents[1],
+    ).resolve()
     completed = subprocess.run(
         ["docker", "compose", "restart", "deep-research-agent"],
+        cwd=stack_root,
         capture_output=True,
         text=True,
         timeout=180,
@@ -183,31 +214,29 @@ async def run(recorder: CaseRecorder) -> None:
     if not task_id:
         return
 
-    # ② 状态查询：确定性直答
-    await asyncio.sleep(8)         # 让后台跑出几次心跳
+    # ② 幂等：立即重说，避免真实 provider 快速降级完成后把「新开一单」误判为幂等失败。
+    n_before = ledger_count(user)
+    r3 = await ask("慢慢查一下钠离子电池的产业化进展，查完告诉我",
+                   "② 重复受理（应命中幂等、不新开任务）", first_session)
+    check("task_idempotent", ledger_count(user) == n_before,
+          "账本未新增任务（幂等命中）")
+    check("task_idempotent_speech", "已经在查" in (r3.get("speech") or ""),
+          "话术是「已经在查了」",
+          (r3.get("speech") or "")[:50])
+
+    # ③ 状态查询：确定性直答。后台并发推进时允许账本比回复里的快照更新。
+    await asyncio.sleep(0.5)
     r2 = await ask("那个调研查得怎么样了", "② 状态查询（应确定性直答真实进度）",
                    first_session)
     sp2 = r2.get("speech") or ""
     check("status_truthful", "还在查" in sp2 or "查完" in sp2 or "中断" in sp2,
           "答出了真实任务态", sp2[:60])
     rows = ledger_rows(user, first_session)
-    prog = (rows[0].get("progress") or "") if rows else ""
+    current = rows[0] if rows else {}
+    prog = current.get("progress") or ""
     check("progress_written", bool(prog), "心跳已写入人话进度", prog)
-    if prog and "还在查" in sp2:
-        check("progress_exact", prog in sp2,
-              "话术里的进度与账本逐字一致（没让 LLM 编）", prog)
-    else:
-        check("progress_exact", bool(prog), "账本进度可精确核对", prog)
-
-    # ③ 幂等：同 owner + 同请求不双跑
-    n_before = ledger_count(user)
-    r3 = await ask("慢慢查一下钠离子电池的产业化进展，查完告诉我",
-                   "③ 重复受理（应命中幂等、不新开任务）", first_session)
-    check("task_idempotent", ledger_count(user) == n_before,
-          "账本未新增任务（幂等命中）")
-    check("task_idempotent_speech", "已经在查" in (r3.get("speech") or ""),
-          "话术是「已经在查了」",
-          (r3.get("speech") or "")[:50])
+    check("progress_exact", progress_snapshot_consistent(sp2, current),
+          "话术进度是账本的同一或更早快照（没让 LLM 编）", prog)
 
     # ④ 取消：拉模式
     t0 = time.time()

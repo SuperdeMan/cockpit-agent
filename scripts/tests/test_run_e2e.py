@@ -649,6 +649,38 @@ def test_git_common_dir_decodes_git_path_as_utf8(tmp_path, monkeypatch):
     assert runner._git_common_dir(repo) == common.resolve()
 
 
+def test_shared_stack_profile_reuses_worktree_prebuilt_images(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _runner()
+    calls = []
+    monkeypatch.setattr(
+        runner,
+        "_run_profile_command",
+        lambda argv, **kwargs: calls.append((tuple(argv), kwargs)) or 0,
+    )
+    invoke = runner._profile_compose_runner(tmp_path, build=False)
+
+    invoke(
+        (
+            "docker",
+            "compose",
+            "-f",
+            "compose.yaml",
+            "up",
+            "-d",
+            "--build",
+            "memory",
+        ),
+        {},
+    )
+
+    assert calls
+    assert "--build" not in calls[0][0]
+    assert calls[0][0][-1] == "memory"
+
+
 def _case(
     case_id: str,
     *,
@@ -1811,7 +1843,11 @@ def test_profile_fixture_prestep_precedes_token_owner_proof_and_child(
         }
 
     monkeypatch.setattr(runner, "ProfileCoordinator", FakeCoordinator)
-    monkeypatch.setattr(runner, "_profile_compose_runner", lambda *_args: object())
+    monkeypatch.setattr(
+        runner,
+        "_profile_compose_runner",
+        lambda *_args, **_kwargs: object(),
+    )
     monkeypatch.setattr(
         runner,
         "_profile_compose_with_capability",

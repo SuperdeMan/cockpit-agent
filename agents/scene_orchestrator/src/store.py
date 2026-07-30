@@ -204,6 +204,29 @@ class SceneStore:
                        if s.user_id == user_id and s.status in statuses),
                       key=lambda s: (-s.use_count, s.created_at))
 
+    async def list_triggered(self, statuses: tuple = (ENABLED,)) -> list[Scene]:
+        """枚举所有启用且带触发器的用户场景。
+
+        触发器是后台旁路，没有请求级 Context 可提供 user_id，因此不能沿用 PoC 的
+        单用户默认值；返回的每个 Scene 自带 owner，建议仍按 exact owner 投递。
+        """
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT * FROM scene_item WHERE status=ANY($1) "
+                    "AND jsonb_array_length(triggers) > 0 "
+                    "ORDER BY updated_at ASC",
+                    list(statuses),
+                )
+            return [self._row(r) for r in rows]
+        return sorted(
+            (
+                s for s in self._mem.values()
+                if s.status in statuses and bool(s.triggers)
+            ),
+            key=lambda s: s.updated_at,
+        )
+
     @staticmethod
     def _row(row) -> Scene:
         return Scene(

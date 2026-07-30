@@ -105,6 +105,11 @@ class TriggerWatcher:
         if self._task and not self._task.done():
             self._task.cancel()
 
+    def invalidate_scenes(self) -> None:
+        """场景增删改后立即失效缓存，避免新触发器在首个事件变沿上不可见。"""
+        self._scenes_at = 0.0
+        self._scenes_cached = []
+
     # ── 事件触发（边沿 + 节流）───────────────────────────────────────────────
     async def _on_state(self, changes: list, state: dict) -> None:
         env = enrich_env(state)
@@ -201,11 +206,17 @@ class TriggerWatcher:
         if now - self._scenes_at < _SCENES_CACHE_S:
             return self._scenes_cached
         out = []
-        for uid in self._users:
-            try:
-                out.extend(s for s in await self._store.list(uid) if s.triggers)
-            except Exception as e:
-                logger.debug("scene triggers: 读场景失败：%s", e)
+        try:
+            list_triggered = getattr(self._store, "list_triggered", None)
+            if callable(list_triggered):
+                out = list(await list_triggered())
+            else:
+                for uid in self._users:
+                    out.extend(
+                        s for s in await self._store.list(uid) if s.triggers
+                    )
+        except Exception as e:
+            logger.debug("scene triggers: 读场景失败：%s", e)
         self._scenes_at, self._scenes_cached = now, out
         return out
 

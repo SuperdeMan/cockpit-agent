@@ -87,6 +87,21 @@ def test_event_trigger_suggests_but_never_executes():
     assert p["card"]["buttons"][0]["send_text"] == "开启省电出行模式"   # 回发原话走语音链路
 
 
+def test_event_trigger_discovers_signed_non_default_user():
+    """运行时不能把触发器用户写死成 PoC 的 u1；签名身份创建的场景也必须可触发。"""
+    async def go():
+        bus, mirror = Bus(), FakeMirror()
+        scene = _low_battery_scene()
+        scene.user_id = "e2e-signed-owner"
+        await _watcher([scene], bus, mirror)
+        await mirror.fire({"battery": 15, "gear": "D"})
+        return bus.sent
+
+    sent = _run(go())
+    assert len(sent) == 1
+    assert sent[0]["user_id"] == "e2e-signed-owner"
+
+
 def test_event_trigger_is_edge_not_level():
     """边沿触发：battery 一直低于 20 也只播一次，不是每来一帧状态就播。"""
     async def go():
@@ -285,13 +300,13 @@ def test_enabled_scenes_cached_within_window():
         bus, mirror = Bus(), FakeMirror()
         w = await _watcher([_low_battery_scene()], bus, mirror)
         calls = {"n": 0}
-        orig = w._store.list
+        orig = w._store.list_triggered
 
-        async def counting(uid, **kw):
+        async def counting(**kw):
             calls["n"] += 1
-            return await orig(uid, **kw)
+            return await orig(**kw)
 
-        w._store.list = counting
+        w._store.list_triggered = counting
         await mirror.fire({"speed_kmh": 41})       # 模拟行车中连续车速广播
         await mirror.fire({"speed_kmh": 42})
         await mirror.fire({"speed_kmh": 43})

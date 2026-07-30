@@ -526,17 +526,25 @@ class ReminderAgent(BaseAgent):
 
     async def _cancel(self, intent, ctx, meta) -> AgentResult:
         raw = intent.raw_text or ""
+        pending = await self._load_pending(ctx)
+        confirmed = (meta or {}).get("confirmed") == "true"
         wants_all = (intent.slots.get("all") or "").lower() in ("true", "1", "全部") \
-            or bool(_ALL_RE.search(raw))
+            or bool(_ALL_RE.search(raw)) \
+            or bool(confirmed and pending.get("action") == "cancel_all")
         if wants_all:
             times, todos = await self.store.list_split(self._uid(ctx))
             n = len(times) + len(todos)
             if n == 0:
+                await self._clear_pending(ctx)
                 return AgentResult(speech="现在没有提醒或待办。")
-            if (meta or {}).get("confirmed") == "true":   # engine 确认续接（R2 契约）
+            if confirmed:   # engine 确认续接（R2 契约）
                 await self.store.cancel_all(self._uid(ctx))
                 await self._refresh_active(ctx, [])
+                await self._clear_pending(ctx)
                 return AgentResult(speech=f"好的，已清空全部 {n} 条提醒和待办。")
+            await ctx.save_shared_state(REMINDER_PENDING, {
+                "action": "cancel_all",
+            })
             return AgentResult(status=NEED_CONFIRM,
                                speech=f"确定要清空全部 {n} 条提醒和待办吗？清掉就找不回来了。")
         hits = await self._resolve_targets(ctx, raw, intent.slots)

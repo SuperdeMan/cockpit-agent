@@ -229,9 +229,41 @@ def test_reminder_fixture_keeps_machine_run_id_out_of_user_utterance():
     title = module.reminder_title()
     utterance = module.creation_text(title)
 
-    assert title == "验收演练提醒"
-    assert utterance == "20秒后提醒我验收演练提醒"
+    assert title == "检查验收结果"
+    assert utterance == "20秒后提醒我检查验收结果"
     assert "e2e-" not in utterance.lower()
+
+
+def test_research_fixture_correlates_by_signed_owner_not_spoken_run_id():
+    module = _load("e2e_research_async")
+
+    topic, utterance = module.research_request()
+
+    assert topic == "固态电池技术路线和量产前景"
+    assert "e2e-" not in utterance.lower()
+    assert "批次" not in utterance
+
+
+def test_proactive_rate_budget_accounts_for_other_signed_owners():
+    module = _load("e2e_proactive")
+
+    assert module.available_rate_slots({
+        "rate_delivered": 2,
+        "rate_max_per_hour": 6,
+    }) == 4
+
+
+def test_ledger_progress_allows_only_monotonic_background_race():
+    module = _load("e2e_ledger")
+
+    assert module.progress_snapshot_consistent(
+        "还在查，检索中 4/9 个子问题。",
+        {"status": "running", "progress": "检索中 5/9 个子问题"},
+    )
+    assert not module.progress_snapshot_consistent(
+        "还在查，检索中 6/9 个子问题。",
+        {"status": "running", "progress": "检索中 5/9 个子问题"},
+    )
 
 
 @pytest.mark.parametrize("name", TARGETS)

@@ -1547,10 +1547,15 @@ def _run_profile_command(
 
 def _profile_compose_runner(
     repo_root: Path,
+    *,
+    build: bool = True,
 ) -> Callable[[Sequence[str], Mapping[str, str]], None]:
     def invoke(argv: Sequence[str], environ: Mapping[str, str]) -> None:
+        command = tuple(argv) if build else tuple(
+            item for item in argv if item != "--build"
+        )
         _run_profile_command(
-            argv,
+            command,
             cwd=repo_root,
             environ=environ,
             timeout_s=900,
@@ -3024,7 +3029,10 @@ def _run_profile_epochs(
         return IdentityStackLease(**kwargs)
 
     profile_compose = _profile_compose_with_capability(
-        _profile_compose_runner(operational_root),
+        _profile_compose_runner(
+            operational_root,
+            build=(operational_root == repo_root),
+        ),
         secret=capability_secret,
         enabled=lambda: capability_state["enabled"],
         admin_services=lambda: namespace_admin_state["services"],

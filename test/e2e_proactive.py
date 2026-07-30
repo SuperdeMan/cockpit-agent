@@ -222,6 +222,13 @@ async def admin_request(
     return response
 
 
+def available_rate_slots(status: dict) -> int:
+    """共享全局窗口中可由当前 exact owner 消耗的剩余额度。"""
+    delivered = int(status["rate_delivered"])
+    cap = int(status["rate_max_per_hour"])
+    return max(0, cap - delivered)
+
+
 def cleanup_namespace(identity_token: str, user_id: str) -> None:
     async def cleanup() -> None:
         import nats
@@ -391,17 +398,19 @@ async def case_rate_limit(bus):
         user_id=owner,
     )
     cap = status["rate_max_per_hour"]
+    baseline = status["rate_delivered"]
+    available = available_rate_slots(status)
     clean = (
         status["after"] == 0
-        and status["rate_delivered"] == 0
         and cap > 0
+        and available > 0
     )
     record(
-        "频控：全局匿名窗口为空（有他人贡献即 fail closed）",
+        "频控：exact owner 已清空且全局窗口仍有可用额度",
         clean,
         (
             f"count={status['after']} "
-            f"delivered={status['rate_delivered']} cap={cap}"
+            f"delivered={baseline} available={available} cap={cap}"
         ),
     )
     if not clean:
@@ -409,7 +418,7 @@ async def case_rate_limit(bus):
 
     delivered = 0
     delivered_types: list[str] = []
-    for i in range(cap):
+    for i in range(available):
         bus.clear()
         kind = f"probe_rate_{i}"
         await bus.send(probe(
@@ -429,9 +438,9 @@ async def case_rate_limit(bus):
     )
     record(
         "频控：额度内每条均独立 flush 并投递",
-        delivered == cap and status["rate_delivered"] == cap,
+        delivered == available and status["rate_delivered"] == cap,
         (
-            f"delivered={delivered}/{cap} "
+            f"delivered={delivered}/{available} "
             f"admin={status['rate_delivered']} "
             f"types={delivered_types}"
         ),
@@ -486,10 +495,10 @@ async def run(recorder: CaseRecorder) -> None:
         )
         starts_empty = (
             before["after"] == 0
-            and before["rate_delivered"] == 0
+            and available_rate_slots(before) > 0
         )
         record(
-            "前置：exact owner 队列为空且全局匿名频控用量为零",
+            "前置：exact owner 队列为空且全局匿名频控仍有额度",
             starts_empty,
             (
                 f"count={before['after']} "

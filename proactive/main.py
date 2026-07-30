@@ -149,14 +149,14 @@ async def install_namespace_admin(
                 ).encode(),
             )
 
-    await nc.subscribe(
-        ADMIN_COUNT_SUBJECT,
-        cb=lambda message: reply(message, "count"),
-    )
-    await nc.subscribe(
-        ADMIN_PURGE_SUBJECT,
-        cb=lambda message: reply(message, "purge"),
-    )
+    async def count_callback(message) -> None:
+        await reply(message, "count")
+
+    async def purge_callback(message) -> None:
+        await reply(message, "purge")
+
+    await nc.subscribe(ADMIN_COUNT_SUBJECT, cb=count_callback)
+    await nc.subscribe(ADMIN_PURGE_SUBJECT, cb=purge_callback)
     return True
 
 

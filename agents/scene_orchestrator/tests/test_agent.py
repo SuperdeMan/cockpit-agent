@@ -363,6 +363,40 @@ def test_delete_needs_confirm_then_deletes():
     assert _run(a.store.get_by_name("u1", "钓鱼模式")) is None
 
 
+def test_delete_confirmation_recovers_target_when_planner_drops_slots():
+    """确认轮只说「确认」时，目标必须来自 agent 自己保存的 pending，不依赖 LLM 重填槽。"""
+    kv, a = KV(), _agent()
+    _run(a.store.save(Scene(
+        user_id="u1",
+        name="加班模式",
+        actions=[{
+            "type": "vehicle.control",
+            "command": "hvac.set",
+            "params": {"temperature": "28"},
+        }],
+    )))
+
+    first = _run(run_handle(
+        a,
+        "scene.delete",
+        slots={"scene": "加班模式"},
+        raw_text="删掉加班模式",
+        ctx=_ctx(kv),
+    ))
+    assert first.status == "need_confirm"
+
+    confirmed = _run(run_handle(
+        a,
+        "scene.delete",
+        slots={},
+        raw_text="确认",
+        ctx=_ctx(kv),
+        meta={"confirmed": "true"},
+    ))
+    assert confirmed.status == "ok" and "已删除加班模式" in confirmed.speech
+    assert _run(a.store.get_by_name("u1", "加班模式")) is None
+
+
 def test_delete_builtin_only_disables():
     """预置场景随镜像发版，删不掉——只从列表里隐藏。"""
     kv, a = KV(), _agent()

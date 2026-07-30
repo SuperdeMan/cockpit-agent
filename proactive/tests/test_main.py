@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from pathlib import Path
 
@@ -79,6 +80,18 @@ async def test_namespace_admin_default_off_and_enabled_without_secret_fail_close
     })
     assert enabled is False
     assert nc.callbacks == {}
+
+
+@pytest.mark.asyncio
+async def test_namespace_admin_registers_real_coroutine_callbacks():
+    enabled, nc, gov = await _installed(_env(b"a" * 32))
+
+    assert enabled is True
+    assert all(
+        inspect.iscoroutinefunction(callback)
+        for callback in nc.callbacks.values()
+    )
+    await gov.stop()
 
 
 @pytest.mark.asyncio
