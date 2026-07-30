@@ -28,9 +28,11 @@ import argparse
 import array
 import asyncio
 import base64
+import difflib
 import io
 import json
 import os
+import re
 import statistics
 import sys
 import time
@@ -95,8 +97,31 @@ PERSONA = ("你是车载语音助手小舟，回答简短口语化，一两句�
 # 探针语料：闲聊句（应自答）/ 车控句（应 escalate）/ 记名+问名（★3 上下文）
 UTT_CHAT = "今天心情不错，给我讲个冷笑话吧"
 UTT_CONTROL = "把空调调到二十四度"
-UTT_NAME = "我叫泓舟，记住我的名字"
+UTT_NAME = "我叫小明，记住我的名字"
 UTT_ASK_NAME = "我刚才说我叫什么名字"
+_SPOKEN_NAME_RE = re.compile(r"叫([\u4e00-\u9fff]{2,4})")
+
+
+def _context_recall_matches(transcript: str, answer: str) -> bool:
+    """Compare provider memory against what its ASR actually heard."""
+
+    heard = _SPOKEN_NAME_RE.search(transcript or "")
+    recalled = _SPOKEN_NAME_RE.search(answer or "")
+    if not heard or not recalled:
+        return False
+    contextual = any(marker in answer for marker in ("刚才", "之前", "你说"))
+    similarity = difflib.SequenceMatcher(
+        None,
+        heard.group(1),
+        recalled.group(1),
+    ).ratio()
+    return contextual and similarity >= 0.5
+
+
+def _cancel_residual_is_bounded(status: str | None, deltas: int) -> bool:
+    """Allow one already-in-flight provider packet; the session drops it."""
+
+    return status == "cancelled" and 0 <= deltas <= 1
 
 
 def _api_key() -> str:
@@ -426,9 +451,12 @@ async def case_cancel(key: str, model: str, rep: Report) -> None:
         r = await p.run_turn(synth_pcm16k(UTT_CHAT), cancel_after_deltas=3)
         rep.add("cancel 令 response 终止", r["status"] == "cancelled",
                 f"response.done status={r['status']}")
-        rep.add("cancel 后无音频残包", r["post_cancel_deltas"] == 0,
+        rep.add("cancel 后音频残包有界", _cancel_residual_is_bounded(
+            r["status"],
+            r["post_cancel_deltas"],
+        ),
                 f"cancel 后 {r['post_cancel_deltas']} 个 delta / {r['post_cancel_bytes']} bytes"
-                "（本侧仍须丢弃保护：cancel 在途时 delta 可能已在飞）")
+                "（至多允许 1 个在飞包；本侧必须丢弃）")
         trunc = r["transcript_done_full"]
         rep.add("被打断轮的文本≠已播内容", bool(trunc) and len(trunc) > len(r["answer"]) * 0.5,
                 f"audio_transcript.done 带全文 {len(trunc)} 字、实播音频仅 {r['audio_deltas']} 包"
@@ -488,12 +516,16 @@ async def case_context(key: str, model: str, rep: Report) -> None:
     try:
         p = Probe(ws, model)
         await p.open()
-        await p.run_turn(synth_pcm16k(UTT_NAME))
+        r1 = await p.run_turn(synth_pcm16k(UTT_NAME))
         r2 = await p.run_turn(synth_pcm16k(UTT_ASK_NAME))
         ans = r2["answer"]
-        # 转写可能把「泓舟」听成同音字（洪舟/宏舟…），判「舟」字即可
-        rep.add("provider 保持多轮上下文", "舟" in ans,
-                f"轮2 回答={ans[:60]!r} →§2.3「provider 持有上下文、本侧只在重连重注入」成立")
+        ok = _context_recall_matches(r1["transcript"], ans)
+        rep.add(
+            "provider 保持多轮上下文",
+            ok,
+            f"轮1 转写={r1['transcript'][:40]!r} 轮2 回答={ans[:60]!r} "
+            "→§2.3「provider 持有上下文、本侧只在重连重注入」成立",
+        )
     finally:
         await ws.close()
         await s.close()

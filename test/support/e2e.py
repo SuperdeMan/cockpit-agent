@@ -48,8 +48,13 @@ _SENSITIVE_LABEL = (
 )
 _SENSITIVE_KEY_RE = re.compile(_SENSITIVE_LABEL, re.IGNORECASE)
 _SENSITIVE_ASSIGNMENT_RE = re.compile(
-    rf"\b({_SENSITIVE_LABEL})\b\s*[:=]\s*"
+    rf"\b({_SENSITIVE_LABEL})\b[\"']?\s*[:=]\s*"
     r"(\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+    re.IGNORECASE,
+)
+_SENSITIVE_MAPPING_RE = re.compile(
+    r"([\"'](?:key|api[_ -]?key|x-api-key|authorization)[\"']\s*:\s*)"
+    r"(\"[^\"]*\"|'[^']*'|[^\s,;}]+)",
     re.IGNORECASE,
 )
 _BEARER_RE = re.compile(r"\bBearer\s+[^\s,;]+", re.IGNORECASE)
@@ -658,6 +663,10 @@ def _redact_text(value: str, sensitive_values: Sequence[str]) -> str:
     safe = value
     for secret in sensitive_values:
         safe = safe.replace(secret, "[REDACTED]")
+    safe = _SENSITIVE_MAPPING_RE.sub(
+        lambda match: f"{match.group(1)}[REDACTED]",
+        safe,
+    )
     safe = _BEARER_RE.sub("Bearer [REDACTED]", safe)
     safe = _E2E_TOKEN_RE.sub("[REDACTED]", safe)
     safe = _SENSITIVE_ASSIGNMENT_RE.sub(

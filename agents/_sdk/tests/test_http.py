@@ -47,8 +47,45 @@ class _FakeClient:
 def _client_with(script, **kw):
     c = AsyncHttpClient(vendor="test", service="test", **kw)
     c._client = _FakeClient(script)
+    c._direct_client = None
     c._emitter = None  # 单测不发 span
     return c
+
+
+def test_client_keeps_primary_proxy_and_prepares_direct_fallback(monkeypatch):
+    captured = []
+
+    class _Client:
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+    monkeypatch.setenv("HTTP_PROXY", "http://http-proxy.invalid:8080")
+    monkeypatch.setenv("HTTPS_PROXY", "http://https-proxy.invalid:8443")
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+
+    AsyncHttpClient(vendor="test", service="test")
+
+    assert captured[0]["proxy"] == "http://http-proxy.invalid:8080"
+    assert captured[1]["trust_env"] is False
+
+
+def test_transport_failure_retries_once_without_proxy(monkeypatch):
+    class _Primary:
+        async def get(self, *args, **kwargs):
+            raise httpx.ConnectTimeout("proxy timed out")
+
+    class _Direct:
+        async def get(self, *args, **kwargs):
+            return _Resp(200, {"route": "direct"})
+
+    client = AsyncHttpClient(vendor="test", service="test")
+    client._client = _Primary()
+    client._direct_client = _Direct()
+    client._emitter = None
+
+    data = asyncio.run(client.get_json("https://provider.invalid"))
+
+    assert data == {"route": "direct"}
 
 
 def test_get_json_ok():

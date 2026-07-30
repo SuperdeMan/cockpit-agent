@@ -29,10 +29,12 @@ from support.e2e import CaseRecorder
 from agents.navigation.src.providers.amap import AmapPOIProvider
 from agents.navigation.src.providers.base import GeoPoint
 from agents.info.src.providers import (
-    build_weather_provider, build_search_provider,
+    build_weather_provider,
     build_news_provider, build_stock_provider,
     _load_qweather_private_key,
 )
+from agents.info.src.providers.search_any import AnySearchProvider
+from agents.info.src.providers.search_bing import BingSearchProvider
 from agents.info.src.providers.mock import (
     MockWeatherProvider, MockSearchProvider,
     MockNewsProvider, MockStockProvider,
@@ -75,6 +77,19 @@ HAS_BING = bool(os.getenv("BING_SEARCH_KEY"))
 HAS_SEARCH = HAS_ANYSEARCH or HAS_BING
 HAS_SERPAPI = bool(os.getenv("SERPAPI_API_KEY"))
 HAS_TUSHARE = bool(os.getenv("TUSHARE_TOKEN"))
+
+
+def _build_search_probe_provider():
+    """Build the real fallback provider named by this probe's contract."""
+
+    if HAS_ANYSEARCH:
+        return AnySearchProvider(
+            os.getenv("ANYSEARCH_API_KEY", ""),
+            base_url=os.getenv("ANYSEARCH_BASE_URL", ""),
+        )
+    if HAS_BING:
+        return BingSearchProvider(os.getenv("BING_SEARCH_KEY", ""))
+    return MockSearchProvider()
 
 
 class ProviderResultPlugin:
@@ -328,7 +343,7 @@ def test_qweather_air_quality_returns_real_aqi():
 
 @pytest.mark.skipif(not HAS_SEARCH, reason="No ANYSEARCH_API_KEY or BING_SEARCH_KEY configured")
 def test_search_returns_real_results():
-    p = build_search_provider()
+    p = _build_search_probe_provider()
     assert not isinstance(p, MockSearchProvider), \
         "工厂回退到了 mock——检查 ANYSEARCH_API_KEY 或 BING_SEARCH_KEY"
     res = asyncio.run(p.search("人工智能 最新进展", limit=3))

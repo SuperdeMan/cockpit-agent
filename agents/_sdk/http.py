@@ -86,14 +86,35 @@ class AsyncHttpClient:
         self.vendor = vendor
         self.service = service
         self.max_retries = max_retries
-        # ws8 P1: 检测 HTTP_PROXY 环境变量，自动走代理
+        # ws8 P1: prefer the configured egress proxy. Some provider domains are
+        # directly reachable but unavailable through that proxy, so a transport
+        # failure gets one direct retry instead of becoming a false outage.
         proxy = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
+        timeout = httpx.Timeout(timeout_s, connect=min(timeout_s, 2.0))
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout_s, connect=min(timeout_s, 2.0)),
+            timeout=timeout,
             proxy=proxy if proxy else None,
+        )
+        self._direct_client = (
+            httpx.AsyncClient(timeout=timeout, trust_env=False)
+            if proxy
+            else None
         )
         self._breaker = _CircuitBreaker(fail_threshold, cooldown_s)
         self._emitter = get_emitter(service) if get_emitter else None
+
+    async def _request(self, method: str, url: str, **kwargs):
+        try:
+            return await getattr(self._client, method)(url, **kwargs)
+        except httpx.TransportError:
+            if self._direct_client is None:
+                raise
+            response = await getattr(self._direct_client, method)(url, **kwargs)
+            self._client, self._direct_client = (
+                self._direct_client,
+                self._client,
+            )
+            return response
 
     async def get_json(self, url: str, params: dict | None = None,
                        op: str = "get", headers: dict | None = None,
@@ -111,7 +132,12 @@ class AsyncHttpClient:
         last_exc: ProviderError | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                resp = await self._client.get(url, params=params, headers=headers)
+                resp = await self._request(
+                    "get",
+                    url,
+                    params=params,
+                    headers=headers,
+                )
             except httpx.TimeoutException as e:
                 last_exc = ProviderTimeout(f"{self.vendor} timeout: {e}")
             except httpx.HTTPError as e:
@@ -175,7 +201,12 @@ class AsyncHttpClient:
         last_exc: ProviderError | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                resp = await self._client.post(url, json=json_body, headers=headers)
+                resp = await self._request(
+                    "post",
+                    url,
+                    json=json_body,
+                    headers=headers,
+                )
             except httpx.TimeoutException as e:
                 last_exc = ProviderTimeout(f"{self.vendor} timeout: {e}")
             except httpx.HTTPError as e:
@@ -209,3 +240,5 @@ class AsyncHttpClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+        if self._direct_client is not None:
+            await self._direct_client.aclose()

@@ -446,6 +446,21 @@ def test_secrets_tokens_and_sentinels_are_redacted_from_result_json(
     assert "[REDACTED]" in raw
 
 
+def test_python_mapping_header_secrets_are_redacted_without_known_values(api):
+    raw = (
+        "headers = {'x-api-key': 'provider-secret', "
+        "'Authorization': 'Bearer bearer-secret'} "
+        "params = {'key': 'query-secret'}"
+    )
+
+    safe = api._redact_text(raw, ())
+
+    assert "provider-secret" not in safe
+    assert "bearer-secret" not in safe
+    assert "query-secret" not in safe
+    assert safe.count("[REDACTED]") >= 3
+
+
 def test_artifact_metadata_rejects_arbitrary_object_without_using_repr(
     api,
     protocol_env,

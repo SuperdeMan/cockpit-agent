@@ -807,6 +807,48 @@ def test_s2s_dotenv_uses_shared_stack_root(
     assert module._api_key() == "shared-root-dashscope"
 
 
+@pytest.mark.parametrize(
+    ("transcript", "answer", "expected"),
+    (
+        ("我叫洪舟，记住我的名字。", "你刚才说叫洪州。", True),
+        ("我叫泓舟，记住我的名字。", "你之前说叫泓舟。", True),
+        ("我叫洪舟，记住我的名字。", "你刚才说叫阿灵。", False),
+        ("我叫洪舟，记住我的名字。", "抱歉，我不记得。", False),
+    ),
+)
+def test_s2s_context_recall_uses_the_provider_transcript(
+    transcript,
+    answer,
+    expected,
+    monkeypatch,
+):
+    _block_real_dotenv(monkeypatch)
+    module = _load("e2e_s2s_probe")
+
+    assert module._context_recall_matches(transcript, answer) is expected
+
+
+@pytest.mark.parametrize(
+    ("status", "deltas", "expected"),
+    (
+        ("cancelled", 0, True),
+        ("cancelled", 1, True),
+        ("cancelled", 2, False),
+        ("completed", 0, False),
+    ),
+)
+def test_s2s_cancel_allows_only_one_inflight_provider_packet(
+    status,
+    deltas,
+    expected,
+    monkeypatch,
+):
+    _block_real_dotenv(monkeypatch)
+    module = _load("e2e_s2s_probe")
+
+    assert module._cancel_residual_is_bounded(status, deltas) is expected
+
+
 def test_s2s_tts_preflight_http_error_is_failure_not_skip(
     monkeypatch: pytest.MonkeyPatch,
 ):
