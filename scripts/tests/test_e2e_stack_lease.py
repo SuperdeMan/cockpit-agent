@@ -1213,6 +1213,71 @@ def test_compose_exposes_identity_gate_only_to_edge_and_llm_gateway():
     assert "E2E_IDENTITY_SECRET" not in services["memory"]["environment"]
 
 
+def test_compose_recreate_overlays_runner_gates_on_operational_root(
+    tmp_path,
+    monkeypatch,
+):
+    module = require_module()
+    (tmp_path / "compose.yaml").write_text(
+        "services:\n  edge-gateway: {}\n  llm-gateway: {}\n"
+        "  memory: {}\n  proactive: {}\n  mcp-bridge: {}\n",
+        encoding="utf-8",
+    )
+    observed = {}
+
+    def fake_run(argv, **kwargs):
+        override_path = Path(argv[argv.index("-f", 4) + 1])
+        observed["argv"] = list(argv)
+        observed["override"] = json.loads(
+            override_path.read_text(encoding="utf-8"),
+        )
+        observed["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    module._compose_recreate(
+        tmp_path,
+        {
+            "E2E_IDENTITY_ENABLED": "true",
+            "E2E_IDENTITY_SECRET": "opaque",
+            "E2E_CAPABILITY_ENABLED": "true",
+            "E2E_CAPABILITY_SECRET": "opaque",
+            "E2E_NAMESPACE_ADMIN_ENABLED": "true",
+            "E2E_NAMESPACE_ADMIN_SECRET": "opaque",
+        },
+        extra_services=("proactive", "mcp-bridge"),
+    )
+
+    assert observed["argv"][:5] == [
+        "docker",
+        "compose",
+        "-f",
+        str(tmp_path / "compose.yaml"),
+        "-f",
+    ]
+    services = observed["override"]["services"]
+    for name in ("edge-gateway", "llm-gateway"):
+        assert services[name]["environment"] == {
+            "E2E_IDENTITY_ENABLED": "${E2E_IDENTITY_ENABLED:-false}",
+            "E2E_IDENTITY_SECRET": "${E2E_IDENTITY_SECRET-}",
+        }
+    assert services["memory"]["environment"] == {
+        "E2E_CAPABILITY_ENABLED": "${E2E_CAPABILITY_ENABLED:-false}",
+        "E2E_CAPABILITY_SECRET": "${E2E_CAPABILITY_SECRET-}",
+    }
+    for name in ("proactive", "mcp-bridge"):
+        assert services[name]["environment"][
+            "E2E_NAMESPACE_ADMIN_ENABLED"
+        ] == "${E2E_NAMESPACE_ADMIN_ENABLED:-false}"
+        assert services[name]["environment"][
+            "E2E_NAMESPACE_ADMIN_SECRET"
+        ] == "${E2E_NAMESPACE_ADMIN_SECRET-}"
+    assert services["mcp-bridge"]["environment"]["NATS_URL"] == (
+        "nats://nats:4222"
+    )
+    assert observed["kwargs"]["cwd"] == tmp_path
+
+
 def test_compose_exposes_namespace_admin_only_to_selected_persistent_services():
     root = Path(__file__).resolve().parents[2]
     compose = yaml.safe_load(

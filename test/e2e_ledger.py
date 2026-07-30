@@ -48,6 +48,45 @@ PG = ["docker", "exec", "car-agent-postgres-1", "psql", "-U", "cockpit",
       "-d", "cockpit", "-tAc"]
 
 _recorder: CaseRecorder | None = None
+PRIMARY_RESEARCH_REQUEST = (
+    "深入调研一下钠离子电池的产业化进展，不急慢慢查，查完告诉我"
+)
+_AGENT_CLIENT = r"""
+import json
+import sys
+import uuid
+
+import grpc
+from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
+from cockpit.common.v1 import common_pb2
+
+intent_name, text, session, user = sys.argv[1:]
+request = agent_pb2.ExecuteRequest(
+    request_id=uuid.uuid4().hex,
+    session_id=session,
+    intent=common_pb2.Intent(
+        name=intent_name,
+        slots={"query": text},
+        raw_text=text,
+        confidence=1.0,
+    ),
+    context=common_pb2.ContextRef(
+        session_id=session,
+        user_id=user,
+        vehicle_id="v1",
+    ),
+)
+with grpc.insecure_channel(
+    "127.0.0.1:50073",
+    options=(("grpc.enable_http_proxy", 0),),
+) as channel:
+    response = agent_pb2_grpc.AgentStub(channel).Execute(request, timeout=30)
+print(json.dumps({
+    "type": "final",
+    "speech": response.speech,
+    "follow_up": response.follow_up,
+}, ensure_ascii=True, separators=(",", ":")))
+"""
 
 
 def check(case_id: str, ok: bool, label: str, detail: str = "") -> bool:
@@ -108,6 +147,43 @@ async def ask(text: str, desc: str, session: str) -> dict:
                 return msg
 
 
+def ask_agent(
+    intent_name: str,
+    text: str,
+    desc: str,
+    session: str,
+    user: str,
+) -> dict:
+    """直连真实 Agent 验证账本语义，避免 Planner 延迟盖过秒级降级任务。"""
+    completed = subprocess.run(
+        [
+            "docker", "exec", "car-agent-deep-research-agent-1",
+            "python", "-c", _AGENT_CLIENT,
+            intent_name, text, session, user,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=45,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "deep-research agent client failed: "
+            + (completed.stderr or "").strip()[-500:],
+        )
+    try:
+        result = json.loads((completed.stdout or "").strip())
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("deep-research agent response is invalid") from exc
+    print(
+        f"\n[{desc}]\n  输入: {text}\n  回复: {result.get('speech', '')}",
+    )
+    if result.get("follow_up"):
+        print(f"  追问: {result['follow_up']}")
+    return result
+
+
 def ledger_rows(user: str, session: str) -> list[dict]:
     owner = quoted(user)
     sid = quoted(session)
@@ -140,10 +216,27 @@ def cleanup_namespace(user: str) -> None:
 _PROGRESS_RE = re.compile(r"检索中\s*(\d+)/(\d+)\s*个子问题")
 
 
+def _progress_phase(value: str) -> int:
+    if "正在拆解调研角度" in value:
+        return 1
+    if "已拆成" in value and "开始检索" in value:
+        return 2
+    if _PROGRESS_RE.search(value):
+        return 3
+    return 0
+
+
 def progress_snapshot_consistent(speech: str, row: dict) -> bool:
     """允许后台在状态直答后继续推进，但不允许话术超前或改写总量。"""
     progress = str(row.get("progress") or "")
     if progress and progress in speech:
+        return True
+    status = str(row.get("status") or "")
+    if status == "done" and any(word in speech for word in ("查完", "完成")):
+        return progress in ("", "已完成")
+    if status in {"failed", "orphaned"} and any(
+        word in speech for word in ("失败", "中断")
+    ):
         return True
     spoken = _PROGRESS_RE.search(speech)
     current = _PROGRESS_RE.search(progress)
@@ -151,9 +244,13 @@ def progress_snapshot_consistent(speech: str, row: dict) -> bool:
         spoken_done, spoken_total = map(int, spoken.groups())
         current_done, current_total = map(int, current.groups())
         return spoken_total == current_total and spoken_done <= current_done
+    spoken_phase = _progress_phase(speech)
+    current_phase = _progress_phase(progress)
+    if spoken_phase and current_phase:
+        return spoken_phase <= current_phase
     return bool(
         spoken
-        and str(row.get("status") or "") in {
+        and status in {
             "done",
             "failed",
             "cancelled",
@@ -195,7 +292,7 @@ async def run(recorder: CaseRecorder) -> None:
         return
 
     # ① 受理：开单 + 承诺可停可问
-    r1 = await ask("慢慢查一下钠离子电池的产业化进展，查完告诉我",
+    r1 = await ask(PRIMARY_RESEARCH_REQUEST,
                    "① 异步深调研受理（应开单 + 承诺可停可问）", first_session)
     rows = ledger_rows(user, first_session)
     after = ledger_count(user)
@@ -216,8 +313,13 @@ async def run(recorder: CaseRecorder) -> None:
 
     # ② 幂等：立即重说，避免真实 provider 快速降级完成后把「新开一单」误判为幂等失败。
     n_before = ledger_count(user)
-    r3 = await ask("慢慢查一下钠离子电池的产业化进展，查完告诉我",
-                   "② 重复受理（应命中幂等、不新开任务）", first_session)
+    r3 = ask_agent(
+        "research.run",
+        PRIMARY_RESEARCH_REQUEST,
+        "② 重复受理（真实 Agent 直连，应命中幂等、不新开任务）",
+        first_session,
+        user,
+    )
     check("task_idempotent", ledger_count(user) == n_before,
           "账本未新增任务（幂等命中）")
     check("task_idempotent_speech", "已经在查" in (r3.get("speech") or ""),
@@ -225,9 +327,13 @@ async def run(recorder: CaseRecorder) -> None:
           (r3.get("speech") or "")[:50])
 
     # ③ 状态查询：确定性直答。后台并发推进时允许账本比回复里的快照更新。
-    await asyncio.sleep(0.5)
-    r2 = await ask("那个调研查得怎么样了", "② 状态查询（应确定性直答真实进度）",
-                   first_session)
+    r2 = ask_agent(
+        "research.status",
+        "刚才那个调研查得怎么样了",
+        "③ 状态查询（真实 Agent 直连，应确定性直答真实进度）",
+        first_session,
+        user,
+    )
     sp2 = r2.get("speech") or ""
     check("status_truthful", "还在查" in sp2 or "查完" in sp2 or "中断" in sp2,
           "答出了真实任务态", sp2[:60])
@@ -240,8 +346,13 @@ async def run(recorder: CaseRecorder) -> None:
 
     # ④ 取消：拉模式
     t0 = time.time()
-    r4 = await ask("别查了", "④ 取消（拉模式：置 cancelled，后台下次心跳收尾）",
-                   first_session)
+    r4 = ask_agent(
+        "research.cancel",
+        "取消刚才那个调研",
+        "④ 取消（真实 Agent 直连，拉模式置 cancelled）",
+        first_session,
+        user,
+    )
     check("cancel_speech", "正在停" in (r4.get("speech") or ""), "取消话术",
           (r4.get("speech") or "")[:40])
     status = sql(
@@ -271,8 +382,13 @@ async def run(recorder: CaseRecorder) -> None:
     #   → 惰性判定 orphaned → 查询答「查到一半中断了」。
     # 刻意不用「把 heartbeat_at 改老」模拟：进程还活着时它下一次心跳会把任务复活
     # （这正是防误判的「迟到心跳复活」机制，首跑实测撞到过）——那不是崩溃场景。
-    await ask("慢慢查一下固态电池的封装工艺，查完告诉我",
-              "⑤-a 再开一条任务", second_session)
+    ask_agent(
+        "research.run",
+        "深入调研一下固态电池的封装工艺，不急慢慢查，查完告诉我",
+        "⑤-a 真实 Agent 直连再开一条任务",
+        second_session,
+        user,
+    )
     rows = ledger_rows(user, second_session)
     tid = rows[0].get("task_id", "") if rows else ""
     check("crash_task_created", bool(tid), "崩溃注入目标任务已按session精确取得")
@@ -286,8 +402,13 @@ async def run(recorder: CaseRecorder) -> None:
     # （首跑实测踩到：答的是上一条已取消的调研）。
     sql(f"UPDATE task_ledger SET heartbeat_at=now()-interval '600 seconds' "
         f"WHERE task_id={quoted(tid)} AND user_id={quoted(user)}")
-    r5 = await ask("刚才那个调研怎么样了",
-                   "⑤-c 中断后查询（应诚实说中断，不假装在跑）", second_session)
+    r5 = ask_agent(
+        "research.status",
+        "刚才那个调研怎么样了",
+        "⑤-c 中断后真实 Agent 查询（应诚实说中断，不假装在跑）",
+        second_session,
+        user,
+    )
     sp5 = r5.get("speech") or ""
     check("orphan_speech", "中断" in sp5, "答出了「查到一半中断了」", sp5[:60])
     check("orphan_status", sql(

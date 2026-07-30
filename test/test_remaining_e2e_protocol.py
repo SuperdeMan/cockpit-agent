@@ -257,6 +257,10 @@ def test_ledger_progress_allows_only_monotonic_background_race():
     module = _load("e2e_ledger")
 
     assert module.progress_snapshot_consistent(
+        "还在查，正在拆解调研角度，已经查了 1 分钟。",
+        {"status": "running", "progress": "已拆成 9 个角度，开始检索"},
+    )
+    assert module.progress_snapshot_consistent(
         "还在查，检索中 4/9 个子问题。",
         {"status": "running", "progress": "检索中 5/9 个子问题"},
     )
@@ -264,6 +268,21 @@ def test_ledger_progress_allows_only_monotonic_background_race():
         "还在查，检索中 6/9 个子问题。",
         {"status": "running", "progress": "检索中 5/9 个子问题"},
     )
+    assert module.progress_snapshot_consistent(
+        "这份调研已经查完了。",
+        {"status": "done", "progress": "已完成"},
+    )
+
+
+def test_ledger_uses_real_agent_for_timing_sensitive_ledger_semantics():
+    source = _source("e2e_ledger")
+
+    assert "agent_pb2_grpc.AgentStub" in source
+    assert '"grpc.enable_http_proxy", 0' in source
+    assert '"docker", "exec", "car-agent-deep-research-agent-1"' in source
+    assert '"research.run"' in source
+    assert '"research.status"' in source
+    assert '"research.cancel"' in source
 
 
 @pytest.mark.parametrize("name", TARGETS)

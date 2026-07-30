@@ -798,26 +798,69 @@ def _compose_recreate(
     *,
     extra_services: Sequence[str] = (),
 ) -> None:
-    subprocess.run(
-        [
-            "docker",
-            "compose",
-            "-f",
-            str(repo_root / "compose.yaml"),
-            "up",
-            "-d",
-            "--force-recreate",
-            *IDENTITY_SERVICES,
-            *extra_services,
-        ],
-        cwd=repo_root,
-        env=dict(environ),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=300,
-        check=True,
-    )
+    services: dict[str, dict[str, dict[str, str]]] = {
+        name: {
+            "environment": {
+                "E2E_IDENTITY_ENABLED": "${E2E_IDENTITY_ENABLED:-false}",
+                "E2E_IDENTITY_SECRET": "${E2E_IDENTITY_SECRET-}",
+            },
+        }
+        for name in ("edge-gateway", "llm-gateway")
+    }
+    services["memory"] = {
+        "environment": {
+            "E2E_CAPABILITY_ENABLED": "${E2E_CAPABILITY_ENABLED:-false}",
+            "E2E_CAPABILITY_SECRET": "${E2E_CAPABILITY_SECRET-}",
+        },
+    }
+    for name in extra_services:
+        environment = {
+            "E2E_NAMESPACE_ADMIN_ENABLED": (
+                "${E2E_NAMESPACE_ADMIN_ENABLED:-false}"
+            ),
+            "E2E_NAMESPACE_ADMIN_SECRET": "${E2E_NAMESPACE_ADMIN_SECRET-}",
+        }
+        if name == "mcp-bridge":
+            environment["NATS_URL"] = "nats://nats:4222"
+        services[name] = {"environment": environment}
+
+    # A worktree may deliberately operate the repository root's shared stack.
+    # Overlay the runner-only gates so an older operational checkout cannot
+    # silently discard the lease environment before the source worktree merges.
+    with tempfile.TemporaryDirectory(prefix="e2e-compose-") as temp_dir:
+        override_path = Path(temp_dir) / "identity-gates.json"
+        override_path.write_text(
+            json.dumps(
+                {"services": services},
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(repo_root / "compose.yaml"),
+                "-f",
+                str(override_path),
+                "up",
+                "-d",
+                "--force-recreate",
+                *IDENTITY_SERVICES,
+                *extra_services,
+            ],
+            cwd=repo_root,
+            env=dict(environ),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=300,
+            check=True,
+        )
 
 
 def _http_ready(url: str) -> bool:
