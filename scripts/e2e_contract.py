@@ -3783,6 +3783,8 @@ def _manifest_domain_terms(root: Path) -> set[str]:
         terms.add(agent_id.strip())
         for field in ("capabilities", "route_hints"):
             values = raw.get(field, [])
+            if field == "route_hints" and values is None:
+                values = []
             if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
                 raise ArchitectureGuardError(f"{relative}.{field} must be a list")
             for index, item in enumerate(values):

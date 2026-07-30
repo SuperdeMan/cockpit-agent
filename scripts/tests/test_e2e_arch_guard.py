@@ -163,6 +163,26 @@ async def emit(nc):
     assert "brandnew_notice" in vocabulary.proactive_types
 
 
+def test_manifest_null_route_hints_is_an_empty_retired_hint_list(
+    tmp_path: Path,
+):
+    root = _repo(tmp_path)
+    _write(
+        root,
+        "agents/sample/manifest.yaml",
+        """
+agent_id: sample-agent
+capabilities:
+  - intent: sample.query
+route_hints:
+""",
+    )
+
+    vocabulary = load_architecture_vocabulary(root)
+
+    assert "sample.query" in vocabulary.domain_terms
+
+
 def test_new_manifest_and_executable_central_branch_fail_without_guard_edit(
     tmp_path: Path,
 ):

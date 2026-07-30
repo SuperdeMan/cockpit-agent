@@ -883,7 +883,7 @@ def _emit(
     print(
         json.dumps(
             summary,
-            ensure_ascii=False,
+            ensure_ascii=True,
             allow_nan=False,
             sort_keys=True,
             separators=(",", ":"),

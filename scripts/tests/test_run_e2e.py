@@ -3253,3 +3253,15 @@ def test_cli_entrypoint_exits_with_runner_code_and_emits_json(tmp_path: Path):
     )
     assert completed.returncode == 2
     assert '"exit_code":2' in completed.stdout
+
+
+def test_emit_is_ascii_safe_for_strict_windows_streams():
+    runner = _runner()
+    raw = io.BytesIO()
+    output = io.TextIOWrapper(raw, encoding="ascii", errors="strict")
+
+    runner._emit(output, {"diagnostic": "\ufffd", "exit_code": 1})
+    output.flush()
+
+    payload = json.loads(raw.getvalue().decode("ascii"))
+    assert payload == {"diagnostic": "\ufffd", "exit_code": 1}

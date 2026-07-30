@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
+import sys
 import time
 import traceback
 from collections.abc import Mapping
@@ -20,6 +22,7 @@ from scripts.e2e_identity import (
 
 
 MODULE_PATH = Path(__file__).parent / "support" / "e2e.py"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -71,6 +74,26 @@ def test_recorder_keeps_business_session_separate_from_memory_capability(
     assert recorder.session_id(1) == plain_session
     assert recorder.memory_capability(1) == capability
     assert recorder.memory_capability(1) != recorder.session_id(1)
+
+
+def test_support_bootstraps_repo_imports_for_direct_e2e_scripts():
+    code = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(REPO_ROOT / 'test')!r})\n"
+        "import support.e2e\n"
+        "import scripts.e2e_identity\n"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def read_result(env: dict[str, str]) -> dict:

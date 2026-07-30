@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import sys
 import tempfile
 import traceback as traceback_module
 import warnings
@@ -17,6 +18,11 @@ from types import MappingProxyType
 from typing import Any
 import urllib.error
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 
 SCHEMA_VERSION = 1
