@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import time
@@ -34,7 +35,13 @@ except ImportError:
     sys.exit(1)
 
 URL = "ws://localhost:8090/ws"
-ROOT = Path(__file__).resolve().parent.parent
+_SOURCE_ROOT = Path(__file__).resolve().parent.parent
+_CONFIGURED_STACK_ROOT = Path(os.getenv("E2E_STACK_ROOT", ""))
+ROOT = (
+    _CONFIGURED_STACK_ROOT.resolve()
+    if _CONFIGURED_STACK_ROOT.is_absolute()
+    else _SOURCE_ROOT
+)
 COMPOSE = ["docker", "compose", "-f", "compose.yaml"]
 ASK_TIMEOUT = 60          # 单次请求等待 final 的上限（秒）
 RECOVER_DEADLINE = 120    # 重建后自愈的容忍上限（秒）

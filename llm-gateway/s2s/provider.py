@@ -395,14 +395,25 @@ def build_s2s_provider(provider: str = "", model: str = "", *,
                or os.getenv("LLM_EMBED_API_KEY", ""))
         if not key:
             return None
-        mdl = model or os.getenv("S2S_MODEL", "qwen3.5-omni-flash-realtime")
+        mdl = (
+            model
+            or os.getenv("S2S_MODEL", "")
+            or "qwen3.5-omni-flash-realtime"
+        )
         if mdl.strip().lower() in _TOOLS_UNSUPPORTED:
             raise ValueError(
                 f"S2S 型号 {mdl} 静默丢弃 tools（P0 探针 ★T 实测）——无 escalate 出口，"
                 "车控请求会被口头答应而不执行。请用 qwen3.5-omni-flash-realtime。")
-        ws = os.getenv("S2S_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
+        ws = (
+            os.getenv("S2S_WS_URL", "")
+            or "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+        )
         return QwenOmniRealtimeProvider(
             key, ws, mdl,
-            vad_silence_ms=vad_silence_ms or int(os.getenv("S2S_VAD_SILENCE_MS", "800")),
-            vad_threshold=float(os.getenv("S2S_VAD_THRESHOLD", "0.2")))
+            vad_silence_ms=vad_silence_ms or int(
+                os.getenv("S2S_VAD_SILENCE_MS", "") or "800",
+            ),
+            vad_threshold=float(
+                os.getenv("S2S_VAD_THRESHOLD", "") or "0.2",
+            ))
     return None

@@ -647,6 +647,29 @@ async def test_watchdog_disabled_when_timeout_zero(monkeypatch):
     await h.sess.close()
 
 
+def test_empty_numeric_environment_uses_s2s_defaults(monkeypatch):
+    monkeypatch.setenv("S2S_VAD_SILENCE_MS", "")
+    monkeypatch.setenv("S2S_VAD_THRESHOLD", "")
+    monkeypatch.setenv("S2S_SESSION_MAX_TURNS", "")
+    monkeypatch.setenv("S2S_TURN_TIMEOUT_S", "")
+    monkeypatch.setenv("S2S_MODEL", "")
+    monkeypatch.setenv("S2S_WS_URL", "")
+    monkeypatch.setenv("S2S_API_KEY", "test-key")
+
+    provider = build_s2s_provider("qwen")
+    h = Harness()
+
+    assert provider is not None
+    assert provider.vad_silence_ms == 800
+    assert provider.vad_threshold == 0.2
+    assert provider.model == "qwen3.5-omni-flash-realtime"
+    assert provider.ws_url == (
+        "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+    )
+    assert h.sess.max_turns == 20
+    assert h.sess.turn_timeout_s == 45
+
+
 @pytest.mark.asyncio
 async def test_context_provider_failure_does_not_block_session():
     async def boom():

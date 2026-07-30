@@ -96,14 +96,18 @@ class S2SSession:
         self.now = now
         self.max_reconnects = max_reconnects
         # 长会话累积治理（★3 未钉死上限 → 给旋钮主动重建，复用重连路径，零新机制）
-        self.max_turns = max_turns or int(os.getenv("S2S_SESSION_MAX_TURNS", "20"))
+        self.max_turns = max_turns or int(
+            os.getenv("S2S_SESSION_MAX_TURNS", "") or "20",
+        )
         self.backoff = reconnect_backoff
         self.ring_max = ring_max_bytes  # 重连期音频前滚缓冲（≈2s @16k s16le）
         # turn 悬挂看门狗：turn 开了却迟迟不 done → 诚实收束（同 voiceLoop thinkingMaxMs 与
         # M2 Ledger「可查可停可诚实报告中断」的思想）。**真栈验证时踩到的真实缺口**：客户端
         # 慢读 → 下行 send 背压 → 事件泵阻塞 → provider 侧数据丢 → 该 turn 永不 done，
         # HMI 干等到 100s 兜底才解。不追究具体成因，任何原因导致的悬挂都在此收口。
-        self.turn_timeout_s = turn_timeout_s or float(os.getenv("S2S_TURN_TIMEOUT_S", "45"))
+        self.turn_timeout_s = turn_timeout_s or float(
+            os.getenv("S2S_TURN_TIMEOUT_S", "") or "45",
+        )
 
         self.state = SessionState.CONNECTING
         self.provider: BaseS2SProvider | None = None

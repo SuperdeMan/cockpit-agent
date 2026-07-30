@@ -609,6 +609,45 @@ def test_stack_root_can_point_worktree_runner_at_shared_root_env(
     assert actual == stack.resolve()
 
 
+def test_stack_environment_loads_root_dotenv_without_overwriting_process_env(
+    tmp_path,
+):
+    runner = _runner()
+    (tmp_path / ".env").write_text(
+        "\n".join([
+            "# runtime inputs",
+            "LLM_API_KEY=from-root-env",
+            "AMAP_KEY=from-root-amap",
+            "INVALID-NAME=ignored",
+            "EMPTY_VALUE=",
+        ]),
+        encoding="utf-8",
+    )
+
+    actual = runner._load_stack_environment(
+        tmp_path,
+        {
+            "LLM_API_KEY": "from-process",
+            "E2E_STACK_ROOT": str(tmp_path),
+        },
+    )
+
+    assert actual["LLM_API_KEY"] == "from-process"
+    assert actual["AMAP_KEY"] == "from-root-amap"
+    assert actual["EMPTY_VALUE"] == ""
+    assert "INVALID-NAME" not in actual
+
+
+def test_stack_environment_rejects_oversized_dotenv(tmp_path):
+    runner = _runner()
+    (tmp_path / ".env").write_bytes(
+        b"A" * (runner._MAX_STACK_ENV_BYTES + 1),
+    )
+
+    with pytest.raises(runner.RunnerArgumentError, match="root .env"):
+        runner._load_stack_environment(tmp_path, {})
+
+
 def test_stack_root_rejects_unrelated_repository(tmp_path, monkeypatch):
     runner = _runner()
     source = tmp_path / "source"
@@ -1108,6 +1147,27 @@ def test_general_parent_provider_secret_is_rejected_and_redacted_end_to_end(
         ["--id", "e2e_fake"],
         behaviors={"e2e_fake": "general_secret_leak"},
         extra_env={"LLM_API_KEY": secret},
+    )
+
+    assert rc == 1
+    assert summary["results"][0]["errors"] == ["result_protocol"]
+    assert secret not in text
+    assert secret not in summary["results"][0]["diagnostic"]
+
+
+def test_root_dotenv_reaches_child_and_is_redacted_end_to_end(tmp_path: Path):
+    manifest = _write_repo(tmp_path, [_case("e2e_fake")])
+    secret = "root-dotenv-secret-do-not-print"
+    (tmp_path / ".env").write_text(
+        f"LLM_API_KEY={secret}\n",
+        encoding="utf-8",
+    )
+
+    rc, summary, text = _invoke(
+        tmp_path,
+        manifest,
+        ["--id", "e2e_fake"],
+        behaviors={"e2e_fake": "general_secret_leak"},
     )
 
     assert rc == 1

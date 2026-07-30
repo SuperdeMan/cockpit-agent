@@ -1853,6 +1853,35 @@ class _DegradeRecorder:
         return f"session-{number}"
 
 
+@pytest.mark.parametrize("name", ("e2e_degrade", "e2e_resilience"))
+def test_compose_mutation_e2e_uses_shared_stack_root(
+    name: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    shared_root = tmp_path / "shared-root"
+    shared_root.mkdir()
+    monkeypatch.setenv("E2E_STACK_ROOT", str(shared_root))
+
+    module = _load(name)
+
+    assert module.ROOT == shared_root.resolve()
+
+
+def test_memory_graph_redis_probe_uses_shared_stack_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    shared_root = tmp_path / "shared-root"
+    shared_root.mkdir()
+    monkeypatch.setenv("E2E_STACK_ROOT", str(shared_root))
+
+    module = _load("e2e_memory_graph")
+
+    assert module.STACK_ROOT == shared_root.resolve()
+    assert str(shared_root.resolve() / "compose.yaml") in module.REDIS
+
+
 def test_degrade_restore_helper_retries_before_succeeding(
     monkeypatch: pytest.MonkeyPatch,
 ):

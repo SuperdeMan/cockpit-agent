@@ -183,6 +183,8 @@ _NAMESPACE_ENV = frozenset({
     "E2E_VOICEPRINT_FIXTURE_MANIFEST",
     "E2E_VOICEPRINT_FIXTURE_MANIFEST_SHA256",
 })
+_STACK_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_MAX_STACK_ENV_BYTES = 1024 * 1024
 _FIXTURE_ENV_NAMES = frozenset({
     "E2E_VOICEPRINT_FIXTURE_DIR",
     "E2E_VOICEPRINT_FIXTURE_MANIFEST",
@@ -555,6 +557,40 @@ def _resolve_stack_root(
             "E2E_STACK_ROOT must belong to the same Git repository",
         )
     return candidate
+
+
+def _load_stack_environment(
+    stack_root: Path,
+    environ: Mapping[str, str],
+) -> dict[str, str]:
+    """Load the supported root .env for E2E children without overriding callers."""
+
+    merged = {
+        key: value
+        for key, value in environ.items()
+        if isinstance(key, str) and isinstance(value, str)
+    }
+    path = stack_root / ".env"
+    if not path.is_file():
+        return merged
+    try:
+        if path.stat().st_size > _MAX_STACK_ENV_BYTES:
+            raise RunnerArgumentError("root .env exceeds size limit")
+        text = path.read_text(encoding="utf-8-sig")
+    except RunnerArgumentError:
+        raise
+    except (OSError, UnicodeError) as exc:
+        raise RunnerArgumentError("root .env cannot be read safely") from exc
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if _STACK_ENV_NAME_RE.fullmatch(key) is None:
+            continue
+        merged.setdefault(key, value.strip())
+    return merged
 
 
 def _normalize_audio_api_origin(value: str) -> str:
@@ -3310,6 +3346,7 @@ def main(
 
     try:
         stack_root = _resolve_stack_root(root, source_env)
+        source_env = _load_stack_environment(stack_root, source_env)
     except RunnerArgumentError:
         summary = _base_summary(mode="preflight", args=args)
         summary["errors"] = ["preflight"]

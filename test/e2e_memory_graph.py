@@ -19,6 +19,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+_CONFIGURED_STACK_ROOT = Path(os.getenv("E2E_STACK_ROOT", ""))
+STACK_ROOT = (
+    _CONFIGURED_STACK_ROOT.resolve()
+    if _CONFIGURED_STACK_ROOT.is_absolute()
+    else ROOT
+)
 sys.path.insert(0, str(ROOT))
 
 from runtime import privacy_registry
@@ -68,7 +74,7 @@ REDIS = [
     "docker",
     "compose",
     "-f",
-    str(ROOT / "compose.yaml"),
+    str(STACK_ROOT / "compose.yaml"),
     "exec",
     "-T",
     "redis",

@@ -183,11 +183,16 @@ def _meta_smoke() -> int:
             expected_runner_rc,
         ) in _EXPECTED.items():
             output = io.StringIO()
+            inner_env = {
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith("E2E_")
+            }
             runner_rc = runner.main(
                 ["--id", f"e2e_protocol_{mode}"],
                 repo_root=inner_root,
                 manifest_path=manifest,
-                environ=dict(os.environ),
+                environ=inner_env,
                 stdout=output,
                 staleness_evaluator=lambda _root: {
                     "stale": False,

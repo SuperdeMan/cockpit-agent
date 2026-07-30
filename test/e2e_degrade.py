@@ -59,7 +59,13 @@ try:
 except Exception:
     pass
 
-ROOT = Path(__file__).resolve().parent.parent
+_SOURCE_ROOT = Path(__file__).resolve().parent.parent
+_CONFIGURED_STACK_ROOT = Path(os.getenv("E2E_STACK_ROOT", ""))
+ROOT = (
+    _CONFIGURED_STACK_ROOT.resolve()
+    if _CONFIGURED_STACK_ROOT.is_absolute()
+    else _SOURCE_ROOT
+)
 COMPOSE = ["docker", "compose", "-f", "compose.yaml"]
 
 URL = "ws://localhost:8090/ws"
