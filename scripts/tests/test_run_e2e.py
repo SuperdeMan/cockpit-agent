@@ -2386,6 +2386,7 @@ def test_profile_fixture_prestep_precedes_token_owner_proof_and_child(
         run_root=tmp_path / "run",
         run_id="e2e-profile-fixture",
         lane="milestone",
+        full=False,
         provider=None,
         model=None,
         source_env={
@@ -2400,6 +2401,88 @@ def test_profile_fixture_prestep_precedes_token_owner_proof_and_child(
         "owner",
         "child",
     ]
+
+
+def test_profile_epoch_shards_a_full_milestone_journey_before_parent_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    case_data = _case(
+        "e2e_journeys",
+        profile="auth",
+        lanes=["milestone"],
+    )
+    case_data["signed_identity"] = True
+    manifest = _write_repo(tmp_path, [case_data])
+    runner = _runner()
+    case = runner.load_manifest(manifest, repo_root=tmp_path).cases[0]
+    events: list[str] = []
+
+    class FakeLease:
+        lease_id = "lease-profile-journeys"
+        secret = b"x" * 32
+        environ = {}
+
+    class FakeCoordinator:
+        def __init__(self, **_kwargs):
+            self.epochs = (type("Epoch", (), {"cases": (case,)})(),)
+            self.lease = FakeLease()
+
+        def activate(self, _epoch):
+            return None
+
+        def child_environment(self, _case):
+            return {}
+
+        def restore(self):
+            return None
+
+    monkeypatch.setattr(runner, "ProfileCoordinator", FakeCoordinator)
+    monkeypatch.setattr(
+        runner,
+        "_profile_compose_runner",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_profile_compose_with_capability",
+        lambda compose, **_kwargs: compose,
+    )
+    monkeypatch.setattr(runner, "_profile_cert_generator", lambda *_args: object())
+    monkeypatch.setattr(
+        runner,
+        "canonical_journey_contract",
+        lambda _root: {f"J-{index}": {} for index in range(7)},
+    )
+    monkeypatch.setattr(
+        runner,
+        "write_token_bundle",
+        lambda **_kwargs: pytest.fail("parent journey token must not be signed"),
+    )
+
+    def run_shards(case, **kwargs):
+        events.append("shards")
+        assert "E2E_STACK_ROOT" not in kwargs["source_env"]
+        assert isinstance(kwargs["lease"], FakeLease)
+        return runner._synthetic_subrun_result(case, error="")
+
+    monkeypatch.setattr(runner, "_run_signed_journey_shards", run_shards)
+
+    results, errors = runner._run_profile_epochs(
+        (case,),
+        repo_root=tmp_path,
+        run_root=tmp_path / "run",
+        run_id="e2e-profile-journeys",
+        lane="milestone",
+        full=True,
+        provider="minimax",
+        model="MiniMax-M3",
+        source_env={},
+    )
+
+    assert events == ["shards"]
+    assert results[0]["id"] == "e2e_journeys"
+    assert errors == []
 
 
 class _TreeProbe:

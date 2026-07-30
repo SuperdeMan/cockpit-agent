@@ -3563,6 +3563,7 @@ def _run_profile_epochs(
     run_root: Path,
     run_id: str,
     lane: str | None,
+    full: bool,
     provider: str | None,
     model: str | None,
     source_env: Mapping[str, str],
@@ -3695,6 +3696,45 @@ def _run_profile_epochs(
                         case,
                         artifact_dir=run_root / case.id / "artifacts",
                         fixture_result=fixture_result,
+                    ))
+                    continue
+                journey_count = (
+                    len(canonical_journey_contract(repo_root))
+                    if (
+                        case.id == "e2e_journeys"
+                        and lane == "milestone"
+                        and full
+                    )
+                    else 0
+                )
+                if _should_shard_journey_case(
+                    case_id=case.id,
+                    lane=lane,
+                    lease_child=False,
+                    has_lease=coordinator.lease is not None,
+                    full=full,
+                    journey_count=journey_count,
+                ):
+                    lease = coordinator.lease
+                    if (
+                        lease is None
+                        or not lease.lease_id
+                        or not lease.secret
+                    ):
+                        raise StackLeaseProtocolError(
+                            "profile owner has no identity lease",
+                        )
+                    results.append(_run_signed_journey_shards(
+                        case,
+                        repo_root=repo_root,
+                        run_root=run_root,
+                        run_id=run_id,
+                        lane=lane,
+                        provider=provider,
+                        model=model,
+                        source_env=child_source,
+                        lease=lease,
+                        bundle_root=bundle_root,
                     ))
                     continue
                 if case.signed_identity:
@@ -4097,6 +4137,7 @@ def main(
                 run_root=run_root,
                 run_id=run_id,
                 lane=args.lane,
+                full=args.full,
                 provider=args.provider,
                 model=args.model,
                 source_env=source_env,
