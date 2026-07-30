@@ -152,3 +152,42 @@ def test_geofence_missing_location_fails_before_any_mutation(monkeypatch):
         "vehicle location snapshot is missing",
     )]
     assert recorder.cleanups == []
+
+
+def test_geofence_null_location_is_a_restorable_fresh_stack_snapshot(monkeypatch):
+    module = load_script("e2e_geofence")
+
+    class Recorder:
+        failures: list[tuple[str, str, str]] = []
+        cleanups: list[tuple[str, object]] = []
+
+        def ws_url(self):
+            return "ws://127.0.0.1/ws"
+
+        def user_id(self):
+            return "e2e-run-case"
+
+        def session_id(self, _number):
+            return "e2e-run-case-session-1"
+
+        def run_id(self):
+            return "e2e-run"
+
+        def fail_case(self, case_id, code, detail):
+            self.failures.append((case_id, code, detail))
+
+        def register_cleanup(self, owner, callback):
+            self.cleanups.append((owner, callback))
+
+    recorder = Recorder()
+    monkeypatch.setattr(module, "vehicle_state", lambda: {"location": None})
+    monkeypatch.setattr(module, "namespace_count", lambda _user: 1)
+
+    asyncio.run(module.run(recorder))
+
+    assert recorder.failures == [(
+        "isolation_precondition",
+        "isolation_precondition",
+        "namespace was not empty before setup",
+    )]
+    assert len(recorder.cleanups) == 1

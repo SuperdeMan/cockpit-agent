@@ -164,7 +164,7 @@ async def run(recorder: CaseRecorder) -> None:
     session = recorder.session_id(1)
     title = f"拿文件-{recorder.run_id()}"
     original_state = vehicle_state()
-    if "location" not in original_state or original_state["location"] is None:
+    if "location" not in original_state:
         recorder.fail_case(
             "location_snapshot",
             "isolation_precondition",
