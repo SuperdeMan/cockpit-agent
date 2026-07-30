@@ -48,10 +48,16 @@ NATS_URL = "nats://localhost:4222"
 # 用一个**真实可解析**的 POI：地点坐标由 Agent 经 nearby(高德) 真解析后落库，
 # 脚本再把它读回来当围栏中心——这样验的是真实解析链路，而不是脚本自己编的坐标。
 PLACE = "望京SOHO"
+TITLE = "拿文件"
 CITY_CENTER = {"lat": 39.9950, "lng": 116.4800, "city": "北京市", "name": "北京市朝阳区"}
 PG = ["docker", "exec", "car-agent-postgres-1", "psql", "-U", "cockpit",
       "-d", "cockpit", "-tAc"]
 _recorder: CaseRecorder | None = None
+
+
+def creation_text() -> str:
+    """隔离放在 user/session 命名空间，不把运行标识泄漏进用户自然话术。"""
+    return f"到{PLACE}提醒我{TITLE}"
 
 
 def record(case_id, name, ok, detail=""):
@@ -162,7 +168,7 @@ async def run(recorder: CaseRecorder) -> None:
     WS = recorder.ws_url()
     user = recorder.user_id()
     session = recorder.session_id(1)
-    title = f"拿文件-{recorder.run_id()}"
+    title = TITLE
     original_state = vehicle_state()
     if "location" not in original_state:
         recorder.fail_case(
@@ -215,7 +221,7 @@ async def run(recorder: CaseRecorder) -> None:
     await asyncio.sleep(2)
 
     print("── 1. 创建位置提醒 ──")
-    res = await ask(f"到{PLACE}提醒我{title}", session)
+    res = await ask(creation_text(), session)
     speech = res.get("speech", "")
     ok_create = "提醒你" in speech and title in speech
     record("create_geofence", "建单：到某地提醒我某事（地点经 nearby 真解析出坐标）",

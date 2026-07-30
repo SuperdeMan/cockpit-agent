@@ -191,3 +191,10 @@ def test_geofence_null_location_is_a_restorable_fresh_stack_snapshot(monkeypatch
         "namespace was not empty before setup",
     )]
     assert len(recorder.cleanups) == 1
+
+
+def test_geofence_creation_text_stays_natural_and_run_ids_stay_in_namespace():
+    module = load_script("e2e_geofence")
+
+    assert module.creation_text() == "到望京SOHO提醒我拿文件"
+    assert "e2e-" not in module.creation_text()
