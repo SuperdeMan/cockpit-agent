@@ -26,6 +26,7 @@ from support.e2e import (
     CaseRecorder,
     assert_persistent_source_contract,
 )
+from observability.redact import redact
 
 
 def _source_contract() -> None:
@@ -187,6 +188,11 @@ def planner_logs_since(seconds: int) -> str:
         return f"[log fetch failed: {e}]"
 
 
+def planner_recall_marker(user: str) -> str:
+    """Match the same privacy redaction applied by structured container logs."""
+    return f"memory recall for {redact(user)}"
+
+
 # ════════════════════════════════════════════════════════════════════════
 # 链路 1：真 embedding 语义桥接（百炼 v4）
 # ════════════════════════════════════════════════════════════════════════
@@ -224,7 +230,7 @@ async def check_planner_injection(stub, user: str, session: str) -> bool:
     speech = await ws_ask("我想找个地方吃饭，给点建议", session)
     await asyncio.sleep(1.5)
     logs = planner_logs_since(40)
-    marker = f"memory recall for {user}"
+    marker = planner_recall_marker(user)
     hit = marker in logs and "taste.spicy" in logs
     # 摘录命中日志行
     line = next((ln.strip() for ln in logs.splitlines() if marker in ln), "")

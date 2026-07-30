@@ -71,6 +71,18 @@ def test_memory_e2e_relies_on_stack_capabilities_not_host_secret_presence():
                 violations.append(node.name)
 
     assert violations == []
+
+
+def test_memory_e2e_matches_the_structured_log_redaction_contract():
+    module = _load("e2e_memory")
+
+    marker = module.planner_recall_marker(
+        "e2e-run-20260730021819-dbc357a60d66-e2e_memory"
+    )
+
+    assert marker == (
+        "memory recall for e2e-run-***-dbc357a60d66-e2e_memory"
+    )
 SIGNED_EDGE_WS_TARGETS = (
     "e2e_central_hub_assertions",
     "e2e_context",
