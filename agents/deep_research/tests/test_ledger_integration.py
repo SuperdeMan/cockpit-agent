@@ -39,9 +39,10 @@ class _FakeLedger:
         return self.pg_ok
 
     async def open(self, user_id, session_id, agent_id, kind, goal, *,
-                   budget=None, origin_trace_id=""):
+                   budget=None, origin_trace_id="", idempotency_goal=""):
         self.opened.append({"user_id": user_id, "kind": kind, "goal": goal,
-                            "budget": budget or {}})
+                            "budget": budget or {},
+                            "idempotency_goal": idempotency_goal})
         if not self.pg_ok:
             return None
         if self.duplicate is not None:
@@ -97,6 +98,23 @@ def test_kickoff_opens_ledger_and_promises_control():
     assert res.status == "ok" and res.data["task_id"] == "t-new"
     assert "别查了" in res.follow_up and "怎么样了" in res.follow_up
     assert led.opened and led.opened[0]["kind"] == "research"
+
+
+def test_kickoff_uses_raw_request_for_stable_idempotency():
+    """同一句原话的 Planner query 即使抽取有波动，也不能重复开后台任务。"""
+    led = _FakeLedger()
+    agent = _agent(led)
+    agent._run_deep_async = lambda *a, **k: asyncio.sleep(0)
+    raw = "慢慢查一下钠离子电池的产业化进展，查完告诉我"
+    asyncio.run(run_handle(
+        agent,
+        "research.run",
+        slots={"query": "钠离子电池产业化进展"},
+        raw_text=raw,
+    ))
+
+    assert led.opened[0]["goal"] == "钠离子电池产业化进展"
+    assert led.opened[0]["idempotency_goal"] == raw
 
 
 def test_kickoff_budget_carries_deadline_and_caps():

@@ -167,12 +167,28 @@ async def admin_request(
     *,
     identity_token: str,
     user_id: str,
+    readiness_timeout: float = 30.0,
+    retry_delay: float = 0.25,
 ) -> dict:
+    from nats.errors import NoRespondersError
+
     request = json.dumps({
         "identity_token": identity_token,
         "user_id": user_id,
     }, ensure_ascii=True, separators=(",", ":")).encode()
-    message = await nc.request(subject, request, timeout=3.0)
+    deadline = time.monotonic() + readiness_timeout
+    while True:
+        try:
+            message = await nc.request(
+                subject,
+                request,
+                timeout=max(0.1, min(3.0, deadline - time.monotonic())),
+            )
+            break
+        except NoRespondersError:
+            if time.monotonic() >= deadline:
+                raise
+            await asyncio.sleep(retry_delay)
     if len(message.data) > ADMIN_MAX_RESPONSE_BYTES:
         raise RuntimeError("proactive admin response is too large")
     response = json.loads(message.data.decode("utf-8"))

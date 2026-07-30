@@ -177,7 +177,7 @@ def test_private_bundle_contains_tokens_and_namespace_but_never_secret(tmp_path)
     assert all("SECRET" not in key for key in child_env)
 
 
-def test_default_signed_identity_can_reach_profile_backed_agents(tmp_path):
+def test_default_signed_identity_can_reach_all_manifest_agents(tmp_path):
     module = require_module()
     from scripts.e2e_identity import verify_identity
 
@@ -201,7 +201,14 @@ def test_default_signed_identity_can_reach_profile_backed_agents(tmp_path):
         now=1700000001,
     )
 
-    assert {"profile.read", "profile.write"} <= set(claims.scopes)
+    required_scopes = set()
+    for manifest_path in (
+        Path(__file__).resolve().parents[2] / "agents"
+    ).glob("*/manifest.yaml"):
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        required_scopes.update(manifest.get("requires_permissions") or [])
+
+    assert required_scopes <= set(claims.scopes)
 
 
 def test_fixture_attestation_overrides_inherited_paths_and_loads_exact_owner_path(

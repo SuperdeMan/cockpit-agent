@@ -43,6 +43,7 @@ DEFAULT_SCOPES = (
     "memory.write",
     "profile.read",
     "profile.write",
+    "camera.frame",
 )
 _BUNDLE_KEYS = {
     "schema_version",

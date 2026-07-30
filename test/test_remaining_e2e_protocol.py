@@ -181,6 +181,59 @@ def _block_real_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "exists", guarded_exists)
 
 
+def test_proactive_admin_request_waits_for_recreated_subscription(monkeypatch):
+    module = _load("e2e_proactive")
+    from nats.errors import NoRespondersError
+
+    response = {
+        "ok": True,
+        "before": 0,
+        "deleted": 0,
+        "after": 0,
+        "rate_delivered": 0,
+        "rate_max_per_hour": 5,
+        "error": "",
+    }
+
+    class _NC:
+        def __init__(self):
+            self.calls = 0
+
+        async def request(self, subject, request, timeout):
+            self.calls += 1
+            if self.calls == 1:
+                raise NoRespondersError()
+            return SimpleNamespace(data=json.dumps(response).encode())
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(module.asyncio, "sleep", no_wait)
+    nc = _NC()
+    actual = asyncio.run(module.admin_request(
+        nc,
+        module.ADMIN_COUNT_SUBJECT,
+        identity_token="e2e.v1.payload.signature",
+        user_id="e2e-proactive-owner",
+        readiness_timeout=1.0,
+        retry_delay=0.0,
+    ))
+
+    assert nc.calls == 2
+    assert actual == response
+
+
+def test_reminder_fixture_keeps_machine_run_id_out_of_user_utterance():
+    module = _load("e2e_reminder")
+
+    title = module.reminder_title()
+    utterance = module.creation_text(title)
+
+    assert title == "验收演练提醒"
+    assert utterance == "20秒后提醒我验收演练提醒"
+    assert "e2e-" not in utterance.lower()
+
+
 @pytest.mark.parametrize("name", TARGETS)
 def test_remaining_e2e_writes_case_recorder_result(name: str):
     source = _source(name)

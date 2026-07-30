@@ -159,7 +159,13 @@ class DeepResearchAgent(BaseAgent):
         # 异步分钟级深调研：用户明示「不急/慢慢查/查完告诉我/要详细完整报告」→ 立即受理，后台跑
         # 更深流水线（deep=True，不受 90s 网关上限），查完经 NATS agent.proactive 主动播报+推报告卡。
         if self._is_async_request(raw):
-            return await self._kickoff_async(question, constraints, ctx, meta)
+            return await self._kickoff_async(
+                question,
+                constraints,
+                ctx,
+                meta,
+                idempotency_goal=raw,
+            )
 
         task = ResearchTask(session_id=ctx.session_id or "", user_id=ctx.user_id or "",
                             question=question, constraints=constraints)
@@ -212,8 +218,15 @@ class DeepResearchAgent(BaseAgent):
         """从问题取简短主题（去掉深挖后缀『——…』），用于话术/推送标题。"""
         return question.split("——")[0].split("（")[0].strip()[:24] or "这个主题"
 
-    async def _kickoff_async(self, question: str, constraints: dict, ctx,
-                             meta) -> AgentResult:
+    async def _kickoff_async(
+        self,
+        question: str,
+        constraints: dict,
+        ctx,
+        meta,
+        *,
+        idempotency_goal: str = "",
+    ) -> AgentResult:
         """受理异步深调研：先向 Task Ledger 开单（幂等），再 spawn 后台 task（持引用防 GC），
         立即返回受理话术。
 
@@ -231,7 +244,10 @@ class DeepResearchAgent(BaseAgent):
 
         entry = await self.ledger.open(
             uid, sid, self.manifest.agent_id, LEDGER_KIND, question,
-            budget=self._task_budget(), origin_trace_id=(meta or {}).get("trace_id", ""))
+            budget=self._task_budget(),
+            origin_trace_id=(meta or {}).get("trace_id", ""),
+            idempotency_goal=idempotency_goal,
+        )
         if isinstance(entry, Duplicate):
             prior = entry.existing
             detail = f"，{prior.progress}" if prior.progress else ""

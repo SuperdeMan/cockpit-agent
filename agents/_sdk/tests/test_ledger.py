@@ -249,6 +249,28 @@ async def test_open_generates_uuid_task_id_not_object_id():
 
 
 @pytest.mark.asyncio
+async def test_open_can_separate_display_goal_from_idempotency_source():
+    """Planner 槽位会波动，但同一用户原话必须仍命中同一个任务指纹。"""
+    conn = _FakeConn(fetchrow=[None, _row(task_id="t-new")])
+    led = _ledger(conn)
+    raw = "慢慢查一下钠离子电池的产业化进展，查完告诉我"
+    await led.open(
+        "u1",
+        "s1",
+        "deep-research",
+        "research",
+        "钠离子电池产业化进展",
+        idempotency_goal=raw,
+    )
+
+    select_args = conn.sql[0][1]
+    insert_args = conn.sql[-1][1]
+    assert select_args[1] == idem_key("u1", "research", raw)
+    assert insert_args[5] == "钠离子电池产业化进展"
+    assert insert_args[6] == select_args[1]
+
+
+@pytest.mark.asyncio
 async def test_open_failure_degrades_to_none():
     class _Boom(_FakeConn):
         async def fetchrow(self, q, *args):

@@ -102,6 +102,15 @@ def reminder_id(user: str, title: str) -> str:
     )
 
 
+def reminder_title() -> str:
+    """隔离靠签名 owner 命名空间，不把机器 run id 污染进用户话语。"""
+    return "验收演练提醒"
+
+
+def creation_text(title: str) -> str:
+    return f"20秒后提醒我{title}"
+
+
 async def ask(text: str, desc: str, session: str) -> dict:
     if websockets is None:
         raise RuntimeError("websockets is unavailable")
@@ -119,7 +128,7 @@ async def run(recorder: CaseRecorder) -> None:
     URL = recorder.ws_url()
     user = recorder.user_id()
     session = recorder.session_id(1)
-    title = f"E2E演练提醒-{recorder.run_id()}"
+    title = reminder_title()
     recorder.register_cleanup(user, lambda: cleanup_namespace(user))
     if namespace_count(user) != 0:
         recorder.fail_case(
@@ -130,7 +139,7 @@ async def run(recorder: CaseRecorder) -> None:
         return
 
     # 1) 创建（20秒后）→ 回读确认
-    r = await ask(f"20秒后提醒我{title}", "创建", session)
+    r = await ask(creation_text(title), "创建", session)
     created_id = reminder_id(user, title)
     record("create_readback", "1.创建回读",
            r.get("type") == "final" and title in r.get("speech", "")

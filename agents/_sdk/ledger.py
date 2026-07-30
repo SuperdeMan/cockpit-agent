@@ -261,7 +261,8 @@ class TaskLedger:
     # ── 开单 ──
     async def open(self, user_id: str, session_id: str, agent_id: str, kind: str,
                    goal: str, *, budget: dict | None = None,
-                   origin_trace_id: str = "") -> "LedgerTask | Duplicate | None":
+                   origin_trace_id: str = "",
+                   idempotency_goal: str = "") -> "LedgerTask | Duplicate | None":
         """开一条任务账目。
 
         先查同 (user_id, idempotency_key) 是否已有 active 任务——命中返回 `Duplicate`
@@ -269,7 +270,7 @@ class TaskLedger:
         """
         if not await self._ready():
             return None
-        key = idem_key(user_id, kind, goal)
+        key = idem_key(user_id, kind, idempotency_goal or goal)
         try:
             async with self._pool.acquire() as conn:
                 row = await conn.fetchrow(
