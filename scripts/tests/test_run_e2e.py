@@ -630,6 +630,25 @@ def test_stack_root_rejects_unrelated_repository(tmp_path, monkeypatch):
         )
 
 
+def test_git_common_dir_decodes_git_path_as_utf8(tmp_path, monkeypatch):
+    runner = _runner()
+    repo = tmp_path / "产品" / "worktree"
+    common = tmp_path / "产品" / ".git"
+    repo.mkdir(parents=True)
+    monkeypatch.setattr(
+        runner.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            _args[0],
+            0,
+            stdout=str(common).encode("utf-8"),
+            stderr=b"",
+        ),
+    )
+
+    assert runner._git_common_dir(repo) == common.resolve()
+
+
 def _case(
     case_id: str,
     *,

@@ -507,13 +507,15 @@ def _git_common_dir(repo_root: Path) -> Path | None:
             ["git", "rev-parse", "--git-common-dir"],
             cwd=repo_root,
             capture_output=True,
-            text=True,
             timeout=10,
             check=True,
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    raw = (completed.stdout or "").strip()
+    try:
+        raw = (completed.stdout or b"").decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return None
     if not raw:
         return None
     path = Path(raw)
