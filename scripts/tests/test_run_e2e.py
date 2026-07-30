@@ -3265,3 +3265,33 @@ def test_emit_is_ascii_safe_for_strict_windows_streams():
 
     payload = json.loads(raw.getvalue().decode("ascii"))
     assert payload == {"diagnostic": "\ufffd", "exit_code": 1}
+
+
+def test_child_environment_defaults_to_root_stack_websocket(tmp_path: Path):
+    runner = _runner()
+    manifest = runner.load_manifest(MANIFEST_PATH, repo_root=REPO_ROOT)
+    case = next(item for item in manifest.cases if item.id == "e2e_memory")
+
+    default_env = runner._child_environment(
+        {},
+        case=case,
+        run_id="e2e-run",
+        result_file=tmp_path / "result.json",
+        artifact_dir=tmp_path / "artifacts",
+        lane="milestone",
+        provider=None,
+        model=None,
+    )
+    custom_env = runner._child_environment(
+        {"WS_URL": "wss://example.invalid/ws"},
+        case=case,
+        run_id="e2e-run",
+        result_file=tmp_path / "result-custom.json",
+        artifact_dir=tmp_path / "artifacts-custom",
+        lane="milestone",
+        provider=None,
+        model=None,
+    )
+
+    assert default_env["WS_URL"] == "ws://127.0.0.1:8090/ws"
+    assert custom_env["WS_URL"] == "wss://example.invalid/ws"

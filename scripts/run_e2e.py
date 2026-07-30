@@ -1346,6 +1346,8 @@ def _child_environment(
         and key != "AUDIO_API_URL"
         and key not in {"E2E_IDENTITY_ENABLED", "E2E_IDENTITY_SECRET"}
     }
+    if not env.get("WS_URL"):
+        env["WS_URL"] = "ws://127.0.0.1:8090/ws"
     user = f"{run_id}-{case.id}"
     env.update({
         "E2E_RUN_ID": run_id,
