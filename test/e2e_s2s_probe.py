@@ -40,6 +40,7 @@ import wave
 from pathlib import Path
 
 from support.e2e import CaseRecorder, is_network_timeout
+from support.tts import select_tts_capability
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows 控制台 gbk 防崩
@@ -140,9 +141,20 @@ def synth_pcm16k(text: str) -> bytes:
     """经 llm-gateway /api/tts 合成中文语音，转 16k mono s16le 裸 PCM（探针输入）。"""
     if text in _pcm_cache:
         return _pcm_cache[text]
+    with urllib.request.urlopen(
+        f"{LLM_HTTP}/api/tts/stream/info",
+        timeout=10,
+    ) as response:
+        tts_info = json.loads(response.read())
+    provider, voice_id = select_tts_capability(tts_info)
     req = urllib.request.Request(
         f"{LLM_HTTP}/api/tts", method="POST",
-        data=json.dumps({"text": text, "format": "wav", "voice_id": "冰糖"}).encode("utf-8"),
+        data=json.dumps({
+            "text": text,
+            "format": "wav",
+            "provider": provider,
+            "voice_id": voice_id,
+        }).encode("utf-8"),
         headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=90) as r:
         data = json.loads(r.read())

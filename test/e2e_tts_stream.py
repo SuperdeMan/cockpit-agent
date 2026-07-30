@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 
 from support.e2e import CaseRecorder, is_network_timeout
+from support.tts import select_tts_capability
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -110,13 +111,18 @@ async def _stream_tts(provider: str, voice: str = "", cancel_after: int = -1) ->
     return out
 
 
-def _batch_baseline() -> float:
+def _batch_baseline(provider: str, voice_id: str) -> float:
     """Return batch TTS latency; reachable-provider failures must propagate."""
 
     t0 = time.monotonic()
     data = _post_json(
         "/api/tts",
-        {"text": SENTENCE, "voice_id": "冰糖", "format": "wav"},
+        {
+            "text": SENTENCE,
+            "provider": provider,
+            "voice_id": voice_id,
+            "format": "wav",
+        },
     )
     if not isinstance(data, dict):
         raise ValueError("batch TTS response is not an object")
@@ -130,11 +136,13 @@ def _record_latency_comparison(
     *,
     first_ms: float,
     server_first: bool,
+    provider: str,
+    voice_id: str,
 ) -> str | None:
     """Record one selected-provider batch/stream comparison."""
 
     try:
-        base = _batch_baseline()
+        base = _batch_baseline(provider, voice_id)
     except Exception as exc:
         detail = (
             "batch TTS baseline failed after provider selection: "
@@ -191,10 +199,21 @@ async def _run(recorder: CaseRecorder) -> int:
     streaming_available = bool(info.get("streaming"))
 
     # 1) 真流式（有凭据走 cosyvoice；无凭据回退 mock 验证协议帧序）
-    provider = "cosyvoice" if streaming_available else "mock"
+    voice_id = ""
+    batch_provider = ""
+    batch_voice_id = ""
+    if streaming_available:
+        provider, voice_id = select_tts_capability(
+            info,
+            preferred=("cosyvoice", "qwen", "minimax", "mimo"),
+            require_streaming=True,
+        )
+        batch_provider, batch_voice_id = select_tts_capability(info)
+    else:
+        provider = "mock"
     print(f"\n--- 流式合成 provider={provider} ---")
     try:
-        r = await _stream_tts(provider)
+        r = await _stream_tts(provider, voice_id)
     except Exception as e:
         print(f"✗ 流式 TTS 连接/协议异常：{e}")
         return 1
@@ -231,6 +250,8 @@ async def _run(recorder: CaseRecorder) -> int:
             recorder,
             first_ms=first_ms,
             server_first=bool(server_first),
+            provider=batch_provider,
+            voice_id=batch_voice_id,
         )
         if latency_failure:
             fails.append(latency_failure)
@@ -247,7 +268,7 @@ async def _run(recorder: CaseRecorder) -> int:
     # 3) barge-in：cancel 后停止吐帧（发 2 个 delta 后 cancel）
     print(f"\n--- barge-in 取消（provider={provider}）---")
     try:
-        rc = await _stream_tts(provider, cancel_after=1)
+        rc = await _stream_tts(provider, voice_id, cancel_after=1)
         print(f"  取消后消息：{rc['msgs']}  帧：{rc['chunks']}  terminal：{rc['terminal']}")
         # 取消是硬终止：不应挂起（terminal 须落定为 closed/done/error，非 timeout/None）
         if rc["terminal"] in ("closed", "done", "error"):

@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _path in (str(_ROOT), str(_ROOT / "test")):
+for _path in (str(_ROOT), str(_ROOT / "test"), str(_ROOT / "gen" / "python")):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 

@@ -25,6 +25,7 @@ import urllib.error
 import urllib.request
 
 from support.e2e import CaseRecorder, is_network_timeout
+from support.tts import select_tts_capability
 
 try:  # Windows 控制台默认 GBK，强制 UTF-8（否则打印 ⚠/✓ 崩溃）
     sys.stdout.reconfigure(encoding="utf-8")
@@ -62,6 +63,11 @@ def _post_json(path: str, payload: dict) -> dict:
         return json.loads(r.read().decode())
 
 
+def _get_json(path: str) -> dict:
+    with urllib.request.urlopen(AUDIO_API + path, timeout=5) as r:
+        return json.loads(r.read().decode())
+
+
 def _service_up() -> bool:
     """ASR/TTS 服务是否可达（这是 E2E，需要全栈在跑 make up）。"""
     try:
@@ -78,7 +84,18 @@ def _service_up() -> bool:
 def _synth_wav(text: str):
     """经 /api/tts 合成 wav；运行期失败返回 None，由调用方记录 FAIL。"""
     try:
-        data = _post_json("/api/tts", {"text": text, "voice_id": "冰糖", "format": "wav"})
+        provider, voice_id = select_tts_capability(
+            _get_json("/api/tts/stream/info"),
+        )
+        data = _post_json(
+            "/api/tts",
+            {
+                "text": text,
+                "provider": provider,
+                "voice_id": voice_id,
+                "format": "wav",
+            },
+        )
         b64 = data.get("audio")
         return base64.b64decode(b64) if b64 else None
     except Exception as e:

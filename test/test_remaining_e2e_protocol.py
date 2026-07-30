@@ -792,7 +792,7 @@ def test_tts_batch_baseline_runtime_errors_are_failures(error):
 
     recorder = Recorder()
 
-    def fail_baseline():
+    def fail_baseline(_provider, _voice_id):
         raise error
 
     original = module._batch_baseline
@@ -802,6 +802,8 @@ def test_tts_batch_baseline_runtime_errors_are_failures(error):
             recorder,
             first_ms=100,
             server_first=True,
+            provider="minimax",
+            voice_id="female-tianmei",
         )
     finally:
         module._batch_baseline = original
@@ -810,6 +812,28 @@ def test_tts_batch_baseline_runtime_errors_are_failures(error):
     assert recorder.rows == [
         ("fail", "tts_latency_comparison", "provider_execution_failed"),
     ]
+
+
+def test_tts_capability_selection_prefers_an_available_minimax_voice():
+    module = importlib.import_module("support.tts")
+
+    assert module.select_tts_capability({
+        "default": "mimo",
+        "providers": [
+            {
+                "id": "mimo",
+                "available": True,
+                "streaming": True,
+                "voices": [{"voice_id": "冰糖"}],
+            },
+            {
+                "id": "minimax",
+                "available": True,
+                "streaming": True,
+                "voices": [{"voice_id": "female-tianmei"}],
+            },
+        ],
+    }) == ("minimax", "female-tianmei")
 
 
 @pytest.mark.parametrize(

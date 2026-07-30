@@ -39,6 +39,11 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parents[1]
+for _path in (str(_ROOT), str(_ROOT / "test")):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
 from scripts.e2e_contract import (
     ManifestError,
     atomic_write_report_pair,
