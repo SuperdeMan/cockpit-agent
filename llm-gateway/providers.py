@@ -1287,7 +1287,15 @@ async def _sentence_segments(text_deltas, *, max_chars: int = 60):
 
 
 class BaseStreamingTTSProvider:
-    async def stream(self, text_deltas, *, voice: str = "", sample_rate: int = 0):
+    async def stream(
+        self,
+        text_deltas,
+        *,
+        voice: str = "",
+        sample_rate: int = 0,
+        instruct: str = "",
+        speed: float = 0.0,
+    ):
         """text_deltas：文本分片的异步迭代器（增量进）。
         yield bytes（PCM s16le 音频帧）或 dict（控制事件，如 {'type':'meta','sample_rate':..,'format':'pcm'}）。
         首个 yield 应为 meta（HMI 据此建 AudioContext 播放器）。"""
@@ -1430,9 +1438,18 @@ class DashScopeQwenTTSProvider(BaseStreamingTTSProvider):
         self.voice = voice
         self.sample_rate = sample_rate
 
-    async def stream(self, text_deltas, *, voice="", sample_rate=0):
+    async def stream(
+        self,
+        text_deltas,
+        *,
+        voice="",
+        sample_rate=0,
+        instruct="",
+        speed=0.0,
+    ):
         import base64
         import aiohttp
+        del instruct, speed
         voice = voice or self.voice
         sr = sample_rate or self.sample_rate
         url = f"{self.ws_url}?model={self.model}"
@@ -1508,7 +1525,16 @@ class MockStreamingTTSProvider(BaseStreamingTTSProvider):
     def __init__(self, sample_rate: int = 24000):
         self.sample_rate = sample_rate
 
-    async def stream(self, text_deltas, *, voice="", sample_rate=0):
+    async def stream(
+        self,
+        text_deltas,
+        *,
+        voice="",
+        sample_rate=0,
+        instruct="",
+        speed=0.0,
+    ):
+        del voice, instruct, speed
         sr = sample_rate or self.sample_rate
         yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
         async for delta in text_deltas:
@@ -1531,8 +1557,17 @@ class MiMoStreamingTTSProvider(BaseStreamingTTSProvider):
         self.voice = voice
         self.sample_rate = sample_rate
 
-    async def stream(self, text_deltas, *, voice="", sample_rate=0):
+    async def stream(
+        self,
+        text_deltas,
+        *,
+        voice="",
+        sample_rate=0,
+        instruct="",
+        speed=0.0,
+    ):
         import base64
+        del instruct, speed
         voice = voice or self.voice
         sr = sample_rate or self.sample_rate
         headers = {"api-key": self.api_key, "Content-Type": "application/json",
@@ -1585,7 +1620,16 @@ class MiniMaxStreamingTTSProvider(BaseStreamingTTSProvider):
         self.voice = voice
         self.sample_rate = sample_rate
 
-    async def stream(self, text_deltas, *, voice="", sample_rate=0):
+    async def stream(
+        self,
+        text_deltas,
+        *,
+        voice="",
+        sample_rate=0,
+        instruct="",
+        speed=0.0,
+    ):
+        del instruct, speed
         voice = voice or self.voice
         sr = sample_rate or self.sample_rate
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}

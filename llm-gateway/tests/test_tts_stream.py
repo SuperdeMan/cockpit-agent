@@ -259,7 +259,14 @@ async def test_minimax_stream_sse_hex_parse(monkeypatch):
     fake = _FakeHTTPClient([lines])
     monkeypatch.setattr(P.httpx, "AsyncClient", lambda *a, **k: fake)
     prov = MiniMaxStreamingTTSProvider("mmk", voice="female-tianmei", sample_rate=24000)
-    out = [x async for x in prov.stream(_aiter(["你好世界"]))]
+    out = [
+        x
+        async for x in prov.stream(
+            _aiter(["你好世界"]),
+            instruct="用轻快愉悦的语气说",
+            speed=1.2,
+        )
+    ]
     audio = b"".join(x for x in out if isinstance(x, (bytes, bytearray)))
     assert audio == full                                    # 只增量拼接，status=2 汇总帧被跳过（非 full*2）
     assert fake.bodies[0]["text"] == "你好世界"

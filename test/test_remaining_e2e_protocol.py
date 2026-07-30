@@ -977,6 +977,38 @@ def test_tts_capability_selection_prefers_an_available_minimax_voice():
     }) == ("minimax", "female-tianmei")
 
 
+def test_tts_stream_prefers_native_incremental_provider_for_both_modes():
+    module = _load("e2e_tts_stream")
+    info = {
+        "default": "cosyvoice",
+        "providers": [
+            {
+                "id": "cosyvoice",
+                "available": True,
+                "streaming": True,
+                "voices": [{"voice_id": "longxiaochun_v3"}],
+            },
+            {
+                "id": "qwen",
+                "available": True,
+                "streaming": True,
+                "voices": [{"voice_id": "Cherry"}],
+            },
+            {
+                "id": "minimax",
+                "available": True,
+                "streaming": True,
+                "voices": [{"voice_id": "female-tianmei"}],
+            },
+        ],
+    }
+
+    assert module._select_comparable_tts(info) == (
+        "qwen",
+        "Cherry",
+    )
+
+
 @pytest.mark.parametrize(
     "name,function_name",
     (

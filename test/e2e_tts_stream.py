@@ -178,6 +178,22 @@ def _record_latency_comparison(
     return None
 
 
+def _select_comparable_tts(info: dict) -> tuple[str, str]:
+    """Select one real engine for both streaming and batch measurements.
+
+    The R4.2 latency gate measures true incremental synthesis, so prefer the
+    providers that accept text deltas natively.  Sentence-buffered providers
+    remain valid fallbacks and are still measured honestly when no native
+    incremental provider is available.
+    """
+
+    return select_tts_capability(
+        info,
+        preferred=("qwen", "cosyvoice", "minimax", "mimo"),
+        require_streaming=True,
+    )
+
+
 async def _run(recorder: CaseRecorder) -> int:
     print("=== R4.2 流式 TTS e2e（/api/tts/stream）===\n")
     fails: list[str] = []
@@ -203,12 +219,8 @@ async def _run(recorder: CaseRecorder) -> int:
     batch_provider = ""
     batch_voice_id = ""
     if streaming_available:
-        provider, voice_id = select_tts_capability(
-            info,
-            preferred=("cosyvoice", "qwen", "minimax", "mimo"),
-            require_streaming=True,
-        )
-        batch_provider, batch_voice_id = select_tts_capability(info)
+        provider, voice_id = _select_comparable_tts(info)
+        batch_provider, batch_voice_id = provider, voice_id
     else:
         provider = "mock"
     print(f"\n--- 流式合成 provider={provider} ---")
