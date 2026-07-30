@@ -655,10 +655,21 @@ def test_shared_stack_profile_reuses_worktree_prebuilt_images(
 ):
     runner = _runner()
     calls = []
+
+    def run_profile(argv, **kwargs):
+        command = tuple(argv)
+        override = Path(command[command.index("-f", 4) + 1])
+        calls.append((
+            command,
+            kwargs,
+            json.loads(override.read_text(encoding="utf-8")),
+        ))
+        return 0
+
     monkeypatch.setattr(
         runner,
         "_run_profile_command",
-        lambda argv, **kwargs: calls.append((tuple(argv), kwargs)) or 0,
+        run_profile,
     )
     invoke = runner._profile_compose_runner(tmp_path, build=False)
 
@@ -679,6 +690,16 @@ def test_shared_stack_profile_reuses_worktree_prebuilt_images(
     assert calls
     assert "--build" not in calls[0][0]
     assert calls[0][0][-1] == "memory"
+    services = calls[0][2]["services"]
+    assert services["edge-gateway"]["environment"][
+        "E2E_IDENTITY_ENABLED"
+    ] == "${E2E_IDENTITY_ENABLED:-false}"
+    assert services["memory"]["environment"][
+        "E2E_CAPABILITY_ENABLED"
+    ] == "${E2E_CAPABILITY_ENABLED:-false}"
+    assert services["mcp-bridge"]["environment"]["NATS_URL"] == (
+        "nats://nats:4222"
+    )
 
 
 def _case(
@@ -1775,6 +1796,8 @@ def test_profile_fixture_prestep_precedes_token_owner_proof_and_child(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
+    shared_root = tmp_path / "shared-root"
+    shared_root.mkdir()
     case_data = _case("e2e_voiceprint", profile="auth")
     case_data.update({
         "fixture_pre_step": "voiceprint",
@@ -1878,18 +1901,19 @@ def test_profile_fixture_prestep_precedes_token_owner_proof_and_child(
         "prove_identity_owner",
         lambda **_kwargs: events.append("owner"),
     )
-    monkeypatch.setattr(
-        runner,
-        "_run_child",
-        lambda case, **_kwargs: (
-            events.append("child")
-            or runner._synthetic_subrun_result(case, error="")
-        ),
-    )
+    def run_child(case, **kwargs):
+        assert kwargs["environ"]["E2E_STACK_ROOT"] == str(
+            shared_root.resolve(),
+        )
+        events.append("child")
+        return runner._synthetic_subrun_result(case, error="")
+
+    monkeypatch.setattr(runner, "_run_child", run_child)
 
     runner._run_profile_epochs(
         (case,),
         repo_root=tmp_path,
+        stack_root=shared_root,
         run_root=tmp_path / "run",
         run_id="e2e-profile-fixture",
         lane="milestone",
@@ -3001,9 +3025,10 @@ def test_runner_lane_selects_but_is_not_forwarded_to_children(tmp_path: Path):
     assert "milestone" not in milestone["selection"][0]["argv"]
 
 
-def test_provider_lock_is_forwarded_only_to_the_journeys_child(tmp_path: Path):
+def test_provider_lock_is_forwarded_to_canonical_provider_probes(tmp_path: Path):
     cases = [
         _case("e2e_journeys", lanes=["milestone"]),
+        _case("e2e_planner_toolcall", lanes=["milestone"]),
         _case("e2e_other", lanes=["milestone"]),
     ]
     manifest = _write_repo(tmp_path, cases)
@@ -3034,7 +3059,13 @@ def test_provider_lock_is_forwarded_only_to_the_journeys_child(tmp_path: Path):
         "locked-provider",
         "--strict-target",
     ]
-    assert summary["selection"][1]["argv"] == ["python", "test/e2e_other.py"]
+    assert summary["selection"][1]["argv"] == [
+        "python",
+        "test/e2e_planner_toolcall.py",
+        "--providers",
+        "locked-provider",
+    ]
+    assert summary["selection"][2]["argv"] == ["python", "test/e2e_other.py"]
     assert "locked-model" not in json.dumps(summary["selection"])
 
 

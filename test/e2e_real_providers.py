@@ -42,7 +42,13 @@ from agents.info.src.providers.mock import (
 def _load_dotenv() -> None:
     """Load the repository's one supported runtime env without overwriting."""
 
-    path = _ROOT / ".env"
+    configured_root = Path(os.getenv("E2E_STACK_ROOT", ""))
+    runtime_root = (
+        configured_root
+        if configured_root.is_absolute()
+        else _ROOT
+    )
+    path = runtime_root / ".env"
     if not path.exists():
         return
     for line in path.read_text(

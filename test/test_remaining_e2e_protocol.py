@@ -770,6 +770,43 @@ def test_real_provider_loads_dotenv_before_capability_flags(
     assert module.AMAP_KEY == "loaded-before-flags"
 
 
+def test_real_provider_dotenv_uses_shared_stack_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    shared_root = tmp_path / "shared-root"
+    shared_root.mkdir()
+    (shared_root / ".env").write_text(
+        "AMAP_KEY=shared-root-amap\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("E2E_STACK_ROOT", str(shared_root))
+    monkeypatch.delenv("AMAP_KEY", raising=False)
+
+    module = _load("e2e_real_providers")
+
+    assert module.AMAP_KEY == "shared-root-amap"
+
+
+def test_s2s_dotenv_uses_shared_stack_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    shared_root = tmp_path / "shared-root"
+    shared_root.mkdir()
+    (shared_root / ".env").write_text(
+        "DASHSCOPE_ASR_KEY=shared-root-dashscope\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("E2E_STACK_ROOT", str(shared_root))
+    for name in ("S2S_API_KEY", "DASHSCOPE_ASR_KEY", "LLM_EMBED_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+    module = _load("e2e_s2s_probe")
+
+    assert module._api_key() == "shared-root-dashscope"
+
+
 def test_s2s_tts_preflight_http_error_is_failure_not_skip(
     monkeypatch: pytest.MonkeyPatch,
 ):

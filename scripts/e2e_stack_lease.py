@@ -792,12 +792,11 @@ class _RepositoryIdentityLock:
                 self._registered = False
 
 
-def _compose_recreate(
-    repo_root: Path,
-    environ: Mapping[str, str],
-    *,
+def compose_gate_override(
     extra_services: Sequence[str] = (),
-) -> None:
+) -> dict[str, Any]:
+    """Return the secret-free Compose overlay for runner-only stack gates."""
+
     services: dict[str, dict[str, dict[str, str]]] = {
         name: {
             "environment": {
@@ -823,6 +822,16 @@ def _compose_recreate(
         if name == "mcp-bridge":
             environment["NATS_URL"] = "nats://nats:4222"
         services[name] = {"environment": environment}
+    return {"services": services}
+
+
+def _compose_recreate(
+    repo_root: Path,
+    environ: Mapping[str, str],
+    *,
+    extra_services: Sequence[str] = (),
+) -> None:
+    override = compose_gate_override(extra_services)
 
     # A worktree may deliberately operate the repository root's shared stack.
     # Overlay the runner-only gates so an older operational checkout cannot
@@ -831,7 +840,7 @@ def _compose_recreate(
         override_path = Path(temp_dir) / "identity-gates.json"
         override_path.write_text(
             json.dumps(
-                {"services": services},
+                override,
                 ensure_ascii=False,
                 allow_nan=False,
                 sort_keys=True,

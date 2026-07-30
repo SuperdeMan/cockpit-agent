@@ -50,7 +50,13 @@ _ROOT = Path(__file__).resolve().parents[1]
 
 def _load_dotenv() -> None:
     """最小 .env 加载（同 e2e_real_providers 惯例）：注入 os.environ，不覆盖已有。"""
-    path = _ROOT / ".env"
+    configured_root = Path(os.getenv("E2E_STACK_ROOT", ""))
+    runtime_root = (
+        configured_root
+        if configured_root.is_absolute()
+        else _ROOT
+    )
+    path = runtime_root / ".env"
     if not path.exists():
         return
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():

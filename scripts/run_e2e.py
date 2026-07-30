@@ -55,6 +55,7 @@ from scripts.e2e_stack_lease import (  # noqa: E402
     IdentityStackLease,
     MAX_BUNDLE_BYTES,
     StackLeaseProtocolError,
+    compose_gate_override,
     load_child_bundle,
     load_token_bundle_payload,
     parallel_subrun_argv,
@@ -1063,6 +1064,8 @@ def _child_argv(
         argv.extend(case.nightly.args)
     if case.id == "e2e_journeys" and provider:
         argv.extend(("--provider", provider))
+    if case.id == "e2e_planner_toolcall" and provider:
+        argv.extend(("--providers", provider))
     if case.id == "e2e_journeys" and canonical:
         argv.append("--strict-target")
     return argv
@@ -1551,15 +1554,37 @@ def _profile_compose_runner(
     build: bool = True,
 ) -> Callable[[Sequence[str], Mapping[str, str]], None]:
     def invoke(argv: Sequence[str], environ: Mapping[str, str]) -> None:
-        command = tuple(argv) if build else tuple(
+        command = list(argv) if build else [
             item for item in argv if item != "--build"
-        )
-        _run_profile_command(
-            command,
-            cwd=repo_root,
-            environ=environ,
-            timeout_s=900,
-        )
+        ]
+        try:
+            compose_file_index = command.index("-f")
+        except ValueError as exc:
+            raise RuntimeError("profile_command_failed") from exc
+        with tempfile.TemporaryDirectory(
+            prefix="e2e-profile-compose-",
+        ) as temp_dir:
+            override_path = Path(temp_dir) / "identity-gates.json"
+            override_path.write_text(
+                json.dumps(
+                    compose_gate_override(("proactive", "mcp-bridge")),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                encoding="utf-8",
+            )
+            command[compose_file_index + 2:compose_file_index + 2] = [
+                "-f",
+                str(override_path),
+            ]
+            _run_profile_command(
+                command,
+                cwd=repo_root,
+                environ=environ,
+                timeout_s=900,
+            )
 
     return invoke
 
@@ -3111,6 +3136,8 @@ def _run_profile_epochs(
                         ))
                         continue
                 child_source = coordinator.child_environment(case)
+                if operational_root != repo_root:
+                    child_source["E2E_STACK_ROOT"] = str(operational_root)
                 if case.fixture_pre_step is not None:
                     audio_origin = source_env.get(
                         "E2E_AUDIO_API_ORIGIN",
