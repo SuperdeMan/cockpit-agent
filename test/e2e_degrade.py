@@ -194,7 +194,10 @@ async def case_agent_down() -> bool:
     print("\n[降级 1/4] 单 Agent 故障：trip-planner-agent 停机")
     service = "trip-planner-agent"          # docker compose 服务名
     agent_node = "step.agent:trip-planner"  # manifest agent_id（≠ 服务名！）
-    text = "周末去杭州两天带老人不要太累"     # 与 e2e_trip.py 同款，route_hints 确定性命中 trip.plan
+    # 恢复探针不能用 trip.plan：它包含真实 POI/天气/LLM 重生成，服务已恢复时仍可能
+    # 超过外层预算；且该 route_hint 已退役，LLM 采样也可能不落 trip-planner。
+    # trip.status 是同一 Agent 的只读快能力，无活动行程时仍会确定性返回，适合测存活性。
+    text = "行程到哪了"
     case_ok = False
     recovered = False
     try:
@@ -231,12 +234,8 @@ async def case_agent_down() -> bool:
 
 
 async def _agent_recovered(text: str, agent_node: str) -> bool:
-    """stop/start 同容器不换 IP，进程重启本身数秒内完成；但本恢复探针复用的是完整
-    trip.plan 请求——真实 LLM+真实高德 POI 时，完整生成行程可能要 30-60s+（跟"有没有
-    恢复"无关，是行程规划这个操作本来就慢；nightly 走 mock 时 trip-planner 自身的
-    `_fallback_skeleton` 兜底生成器应该快得多）。放宽到 10+20+30+40=100s 退避重试，
-    容纳本机真实 key 场景下的正常慢速；窗口内无法确认恢复时，故障注入用例必须失败。"""
-    for wait_s in (10, 20, 30, 40):
+    """stop/start 后用同 Agent 的只读快能力确认注册、解析和执行全链均恢复。"""
+    for wait_s in (5, 10, 15, 20):
         await asyncio.sleep(wait_s)
         trace_id = _trace_id()
         finals = await _send(

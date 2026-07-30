@@ -1687,6 +1687,13 @@ def test_degrade_agent_case_fails_when_restore_health_never_recovers(
     assert asyncio.run(module.case_agent_down()) is False
 
 
+def test_degrade_agent_recovery_uses_the_trip_status_fast_path():
+    source = _source("e2e_degrade")
+
+    assert 'text = "行程到哪了"' in source
+    assert 'text = "周末去杭州两天带老人不要太累"' not in source
+
+
 def test_degrade_llm_case_fails_when_restore_health_never_recovers(
     monkeypatch: pytest.MonkeyPatch,
 ):
