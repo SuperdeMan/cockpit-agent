@@ -16,7 +16,7 @@ import wave
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -688,20 +688,38 @@ def test_git_common_dir_decodes_git_path_as_utf8(tmp_path, monkeypatch):
     assert runner._git_common_dir(repo) == common.resolve()
 
 
-def test_shared_stack_profile_reuses_worktree_prebuilt_images(
+def test_shared_stack_profile_builds_worktree_source_before_root_recreate(
     tmp_path,
     monkeypatch,
 ):
     runner = _runner()
+    source_root = tmp_path / "source"
+    stack_root = tmp_path / "stack"
+    (source_root / "deploy").mkdir(parents=True)
+    stack_root.mkdir()
+    (source_root / "deploy" / "docker-compose.yaml").write_text(
+        "services: {}\n",
+        encoding="utf-8",
+    )
+    (stack_root / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    (stack_root / ".env").write_text("TEST_ONLY=1\n", encoding="utf-8")
     calls = []
 
     def run_profile(argv, **kwargs):
         command = tuple(argv)
-        override = Path(command[command.index("-f", 4) + 1])
+        compose_paths = [
+            Path(command[index + 1])
+            for index, item in enumerate(command[:-1])
+            if item == "-f"
+        ]
         calls.append((
             command,
             kwargs,
-            json.loads(override.read_text(encoding="utf-8")),
+            [
+                json.loads(path.read_text(encoding="utf-8"))
+                for path in compose_paths
+                if path.suffix == ".json"
+            ],
         ))
         return 0
 
@@ -710,7 +728,11 @@ def test_shared_stack_profile_reuses_worktree_prebuilt_images(
         "_run_profile_command",
         run_profile,
     )
-    invoke = runner._profile_compose_runner(tmp_path, build=False)
+    invoke = runner._profile_compose_runner(
+        stack_root,
+        build=False,
+        source_root=source_root,
+    )
 
     invoke(
         (
@@ -727,9 +749,28 @@ def test_shared_stack_profile_reuses_worktree_prebuilt_images(
     )
 
     assert calls
-    assert "--build" not in calls[0][0]
-    assert calls[0][0][-1] == "memory"
-    services = calls[0][2]["services"]
+    assert len(calls) == 2
+    build_command, build_kwargs, build_documents = calls[0]
+    assert build_command[:3] == ("docker", "compose", "--project-directory")
+    assert Path(build_command[3]) == stack_root
+    assert build_command[-1:] == ("build",)
+    assert build_kwargs["cwd"] == source_root
+    assert build_kwargs["environ"]["CAR_AGENT_MODELS_ROOT"] == str(
+        stack_root / "models"
+    )
+    include = build_documents[0]["include"][0]
+    assert Path(include["path"]) == source_root / "deploy" / "docker-compose.yaml"
+    assert Path(include["project_directory"]) == source_root / "deploy"
+    assert Path(include["env_file"]) == stack_root / ".env"
+
+    recreate_command, recreate_kwargs, recreate_documents = calls[1]
+    assert "--build" not in recreate_command
+    assert recreate_command[-2:] == ("up", "-d")
+    assert recreate_kwargs["cwd"] == stack_root
+    assert recreate_kwargs["environ"]["CAR_AGENT_SKILLS_ROOT"] == str(
+        source_root / "skills"
+    )
+    services = recreate_documents[0]["services"]
     assert services["edge-gateway"]["environment"][
         "E2E_IDENTITY_ENABLED"
     ] == "${E2E_IDENTITY_ENABLED:-false}"
@@ -738,6 +779,374 @@ def test_shared_stack_profile_reuses_worktree_prebuilt_images(
     ] == "${E2E_CAPABILITY_ENABLED:-false}"
     assert services["mcp-bridge"]["environment"]["NATS_URL"] == (
         "nats://nats:4222"
+    )
+    assert services["cloud-planner"]["volumes"] == [{
+        "type": "bind",
+        "source": str(source_root / "skills"),
+        "target": "/app/skills",
+        "read_only": True,
+    }]
+
+    invoke(
+        (
+            "docker",
+            "compose",
+            "-f",
+            "compose.yaml",
+            "up",
+            "-d",
+            "--build",
+            "memory",
+        ),
+        {},
+    )
+
+    assert len(calls) == 3
+    second_recreate_command = calls[2][0]
+    assert "--build" not in second_recreate_command
+    assert second_recreate_command[-3:] == ("up", "-d", "memory")
+
+
+def test_cloud_planner_skills_mount_has_a_shared_stack_override():
+    root = Path(__file__).resolve().parents[2]
+    compose = (root / "deploy" / "docker-compose.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "${CAR_AGENT_SKILLS_ROOT:-../skills}:/app/skills:ro" in compose
+
+
+def test_journey_shards_preserve_order_without_cross_token_overrun():
+    runner = _runner()
+    ids = tuple(f"J-{number}" for number in range(1, 15))
+
+    shards = runner._partition_journey_ids(ids, shard_size=6)
+
+    assert shards == (
+        ("J-1", "J-2", "J-3", "J-4", "J-5", "J-6"),
+        ("J-7", "J-8", "J-9", "J-10", "J-11", "J-12"),
+        ("J-13", "J-14"),
+    )
+    assert tuple(item for shard in shards for item in shard) == ids
+
+
+def test_journey_sharding_only_expands_an_explicit_full_corpus_request():
+    runner = _runner()
+    common = {
+        "case_id": "e2e_journeys",
+        "lane": "milestone",
+        "lease_child": False,
+        "has_lease": True,
+        "journey_count": runner.JOURNEY_SHARD_SIZE + 1,
+    }
+
+    assert runner._should_shard_journey_case(full=True, **common) is True
+    assert runner._should_shard_journey_case(full=False, **common) is False
+
+
+def test_journey_shard_reports_merge_into_one_full_parent_artifact(tmp_path):
+    runner = _runner()
+    rows = [
+        {
+            "id": "J-1",
+            "title": "first",
+            "level": "regression",
+            "lane": "live",
+            "suite": "regression.yaml",
+            "tags": ["honesty"],
+            "status": "pass",
+            "reason": "",
+            "attempts": 1,
+            "turns": [{"i": 1, "elapsed": 1.0}],
+        },
+        {
+            "id": "J-2",
+            "title": "second",
+            "level": "target",
+            "lane": "live",
+            "suite": "target.yaml",
+            "tags": ["continuity"],
+            "status": "pass",
+            "reason": "",
+            "attempts": 1,
+            "turns": [{"i": 1, "elapsed": 2.0}],
+        },
+    ]
+    shard_results = []
+    for index, row in enumerate(rows, 1):
+        shard_root = tmp_path / f"shard-{index}"
+        artifact_dir = shard_root / "artifacts"
+        artifact_dir.mkdir(parents=True)
+        json_path = artifact_dir / "journeys_report.json"
+        markdown_path = artifact_dir / "journeys_report.md"
+        json_path.write_text(
+            json.dumps({
+                "duration_s": float(index),
+                "provider": "minimax",
+                "provider_lock": {
+                    "provider": "minimax:MiniMax-M3",
+                    "locked": True,
+                    "drift_detected": False,
+                    "drifts": [],
+                },
+                "journeys": [row],
+            }),
+            encoding="utf-8",
+        )
+        markdown_path.write_text("shard\n", encoding="utf-8")
+        shard_results.append({
+            "id": f"e2e_journeys_shard_{index:02d}",
+            "status": "PASS",
+            "returncode": 0,
+            "errors": [],
+            "counts": {
+                "selected": 1,
+                "executed": 1,
+                "passed": 1,
+                "failed": 0,
+                "skipped": 0,
+            },
+            "outcome_case_ids": {"failed": [], "skipped": []},
+            "artifact_dir": str(artifact_dir),
+            "artifacts": [str(json_path), str(markdown_path)],
+            "logs": [],
+            "diagnostic": "",
+            "result_file": str(shard_root / "result.json"),
+            "profile": "root",
+            "timeout_s": 1800,
+        })
+
+    merged = runner._aggregate_journey_shard_results(
+        case=SimpleNamespace(id="e2e_journeys", profile="root", timeout_s=1800),
+        shard_results=shard_results,
+        expected_ids=("J-1", "J-2"),
+        run_root=tmp_path / "run",
+        run_id="e2e-run",
+        provider="minimax",
+        model="MiniMax-M3",
+        canonical_metadata=json.dumps({"schema_version": 2}),
+    )
+
+    assert merged["status"] == "PASS"
+    assert merged["counts"] == {
+        "selected": 2,
+        "executed": 2,
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+    }
+    report_paths = [
+        Path(path)
+        for path in merged["artifacts"]
+        if Path(path).name == "journeys_report.json"
+    ]
+    assert len(report_paths) == 1
+    payload = json.loads(report_paths[0].read_text(encoding="utf-8"))
+    assert payload["scope"] == {
+        "full": True,
+        "journey_filters": {
+            "ids": [],
+            "suites": [],
+            "lanes": [],
+            "levels": [],
+            "other": [],
+        },
+        "declared": 2,
+        "selected": 2,
+    }
+    assert [row["id"] for row in payload["journeys"]] == ["J-1", "J-2"]
+
+
+def test_journey_shards_receive_fresh_bundles_immediately_before_each_child(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _runner()
+    case = runner.E2ECase(
+        id="e2e_journeys",
+        path="test/e2e_journeys.py",
+        command=("python", "test/e2e_journeys.py"),
+        group="default",
+        lanes=("milestone",),
+        timeout_s=1800,
+        profile="root",
+        skip_reasons=("forbid",),
+        signed_identity=True,
+        persistent_data=True,
+        memory_sessions=2,
+        nightly=None,
+    )
+    events = []
+    monkeypatch.setattr(
+        runner,
+        "canonical_journey_contract",
+        lambda _root: {f"J-{number}": {} for number in range(1, 8)},
+    )
+
+    def write_bundle(**kwargs):
+        events.append(("write", kwargs["case_id"], kwargs["user_id"]))
+        path = tmp_path / kwargs["case_id"] / "tokens.json"
+        path.parent.mkdir(parents=True)
+        path.write_text("{}", encoding="utf-8")
+        return path
+
+    def presign(path, **_kwargs):
+        events.append(("presign", path.parent.name))
+        return path
+
+    def load_bundle(path, **kwargs):
+        events.append(("load", path.parent.name))
+        return {
+            **kwargs["inherited"],
+            "E2E_STACK_LEASE_ROLE": "child",
+            "E2E_IDENTITY_TOKEN": f"token-{path.parent.name}",
+        }
+
+    def prove(**kwargs):
+        events.append(("prove", kwargs["user_id"]))
+
+    def run_child(shard_case, **_kwargs):
+        events.append(("run", shard_case.id, shard_case.command[-2:]))
+        return {"id": shard_case.id}
+
+    sentinel = {"id": "e2e_journeys", "status": "PASS"}
+    monkeypatch.setattr(runner, "write_token_bundle", write_bundle)
+    monkeypatch.setattr(runner, "_presign_memory_bundle", presign)
+    monkeypatch.setattr(runner, "load_child_bundle", load_bundle)
+    monkeypatch.setattr(runner, "prove_identity_owner", prove)
+    monkeypatch.setattr(runner, "_run_child", run_child)
+    monkeypatch.setattr(
+        runner,
+        "_aggregate_journey_shard_results",
+        lambda **_kwargs: sentinel,
+    )
+
+    result = runner._run_signed_journey_shards(
+        case,
+        repo_root=tmp_path,
+        run_root=tmp_path / "run",
+        run_id="e2e-run",
+        lane="milestone",
+        provider="minimax",
+        model="MiniMax-M3",
+        source_env={"VEHICLE_ID": "v1", "E2E_CANONICAL_METADATA": "{}"},
+        lease=SimpleNamespace(lease_id="lease-1", secret=b"x" * 32),
+        bundle_root=tmp_path / "bundles",
+    )
+
+    assert result is sentinel
+    assert [event[0] for event in events] == [
+        "write", "presign", "load", "prove", "run",
+        "write", "presign", "load", "prove", "run",
+    ]
+    run_events = [event for event in events if event[0] == "run"]
+    assert run_events == [
+        (
+            "run",
+            "e2e_journeys_shard_01",
+            ("--id", "J-1,J-2,J-3,J-4,J-5,J-6"),
+        ),
+        ("run", "e2e_journeys_shard_02", ("--id", "J-7")),
+    ]
+
+
+def test_journey_owner_proof_reasserts_the_same_lease_once(
+    monkeypatch,
+):
+    runner = _runner()
+    events = []
+    attempts = 0
+
+    def prove(**_kwargs):
+        nonlocal attempts
+        attempts += 1
+        events.append("prove")
+        if attempts == 1:
+            raise runner.IdentityTokenError("identity gate drift")
+
+    lease = SimpleNamespace(
+        environ={"E2E_IDENTITY_ENABLED": "true"},
+        compose=lambda env: events.append(("compose", dict(env))),
+        ready=lambda: events.append("ready") or True,
+    )
+    monkeypatch.setattr(runner, "prove_identity_owner", prove)
+
+    runner._prove_journey_shard_owner(
+        lease=lease,
+        ws_base="ws://127.0.0.1:8090/ws",
+        token="token",
+        run_id="e2e-run",
+        user_id="e2e-run-e2e_journeys_shard_01",
+        vehicle_id="v1",
+    )
+
+    assert events == [
+        "prove",
+        ("compose", {"E2E_IDENTITY_ENABLED": "true"}),
+        "ready",
+        "prove",
+    ]
+
+
+def test_shared_stack_identity_lease_builds_worktree_source_once(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _runner()
+    source_root = tmp_path / "source"
+    stack_root = tmp_path / "stack"
+    source_root.mkdir()
+    stack_root.mkdir()
+    events = []
+
+    class FakeLease:
+        def __init__(self, *, repo_root, environ):
+            self.repo_root = repo_root
+            self.environ = environ
+            self.secret_factory = lambda: b"y" * 32
+            self.extra_services = ()
+            self.compose = lambda env: events.append(("recreate", dict(env)))
+
+    def profile_runner(repo_root, **kwargs):
+        events.append(("runner", repo_root, kwargs))
+
+        def invoke(argv, environ):
+            events.append(("shared-recreate", tuple(argv), dict(environ)))
+
+        return invoke
+
+    monkeypatch.setattr(runner, "_profile_compose_runner", profile_runner)
+
+    lease = runner._identity_capability_lease(
+        repo_root=stack_root,
+        source_root=source_root,
+        environ={},
+        capability_enabled=True,
+        extra_services=("mcp-bridge",),
+        lease_factory=FakeLease,
+    )
+    lease.compose({"E2E_IDENTITY_ENABLED": "true"})
+    lease.compose({"E2E_IDENTITY_ENABLED": "false"})
+
+    assert [event[0] for event in events] == [
+        "runner",
+        "shared-recreate",
+        "shared-recreate",
+    ]
+    assert events[0][1] == stack_root.resolve()
+    assert events[0][2] == {
+        "build": False,
+        "source_root": source_root.resolve(),
+        "gate_services": ("mcp-bridge",),
+    }
+    assert events[1][1] == (
+        "docker",
+        "compose",
+        "-f",
+        "compose.yaml",
+        "up",
+        "-d",
+        "--build",
     )
 
 
@@ -2444,6 +2853,20 @@ def test_canonical_and_milestone_preflight_rejects_ineligible_invocations(
 
     assert rc == 2
     assert "preflight" in summary["errors"]
+
+
+def test_check_allows_milestone_inventory_without_execution_lane(tmp_path: Path):
+    manifest = _write_repo(tmp_path, [_case("e2e_fake")])
+
+    rc, summary, _ = _invoke(
+        tmp_path,
+        manifest,
+        ["--check", "--milestone", "M-A", "--stale-policy", "warn"],
+    )
+
+    assert rc == 0
+    assert summary["mode"] == "check"
+    assert summary["milestone"] == "M-A"
 
 
 def test_eligible_canonical_dry_run_does_not_write_a_report(tmp_path: Path):

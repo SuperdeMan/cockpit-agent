@@ -11,6 +11,7 @@ R2.4：按域拆分为 `handlers/{weather,search,sports,news,stock,briefing}` mi
 from __future__ import annotations
 import logging
 import os
+import re
 
 from agents._sdk import BaseAgent, AgentResult, FAILED
 from agents._sdk.http import ProviderError
@@ -28,6 +29,24 @@ from .handlers import (
 logger = logging.getLogger("agent.info")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
+_DESTINATION_DEICTIC_RE = re.compile(r"那边|那儿|那里|目的地|终点")
+
+
+def _destination_focus_from_meta(intent, meta: dict | None):
+    """地点指代轮才读取上轮导航目的地坐标；普通无城市天气仍使用当前位置。"""
+    if not _DESTINATION_DEICTIC_RE.search(intent.raw_text or ""):
+        return None
+    try:
+        lat = float((meta or {}).get("focus_destination_lat", ""))
+        lng = float((meta or {}).get("focus_destination_lng", ""))
+    except (TypeError, ValueError):
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return None
+    return current_location_from_meta({
+        "current_lat": str(lat),
+        "current_lng": str(lng),
+    })
 
 
 class InfoAgent(WeatherMixin, SearchMixin, SportsMixin, NewsMixin, StockMixin,
@@ -73,7 +92,7 @@ class InfoAgent(WeatherMixin, SearchMixin, SportsMixin, NewsMixin, StockMixin,
     async def _resolve_city(self, intent, ctx, meta: dict | None = None) -> str:
         """从 intent slots 或浏览器定位解析城市名。空串表示无法解析。"""
         city = (intent.slots.get("city") or "").strip()
-        current = current_location_from_meta(meta)
+        current = _destination_focus_from_meta(intent, meta) or current_location_from_meta(meta)
         if not city and current:
             # 和风 GeoAPI 接受 ``lng,lat``，再由 Provider 解析为规范城市与空气接口坐标。
             city = f"{current.lng:.6f},{current.lat:.6f}"
@@ -86,7 +105,7 @@ class InfoAgent(WeatherMixin, SearchMixin, SportsMixin, NewsMixin, StockMixin,
         explicit_city = (intent.slots.get("city") or "").strip()
         if explicit_city:
             return explicit_city
-        current = current_location_from_meta(meta)
+        current = _destination_focus_from_meta(intent, meta) or current_location_from_meta(meta)
         if current:
             try:
                 return await self.location_resolver.reverse(current.lng, current.lat, meta)

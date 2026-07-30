@@ -134,6 +134,80 @@ def test_empty_hints_noop():
     assert [s.intent for s in plan.steps] == ["chitchat.talk"]
 
 
+def test_reminder_hint_does_not_replace_sports_query_before_event_reminder():
+    """Sports must run first so it can publish REMINDABLE_ACTIVE for T2 replan."""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    reminder = load_manifest(str(root / "agents" / "reminder" / "manifest.yaml"))
+    amap = {
+        "reminder": SimpleNamespace(manifest=reminder, endpoint="x:0"),
+    }
+    plan = Plan(
+        steps=[Step(id="s1", agent_id="info", intent="info.sports")],
+        complexity="adaptive",
+    )
+
+    hit = _engine().apply(plan, "明天欧联第一场是谁踢？开赛前提醒我", amap)
+
+    assert hit is True
+    assert [s.intent for s in plan.steps] == ["info.sports", "reminder.create"]
+    assert plan.steps[1].slots["time_text"] == "明天欧联第一场是谁踢？开赛前提醒我"
+    assert plan.complexity == "adaptive"
+
+
+def test_deferred_research_language_recovers_shallow_search_plan():
+    """The Agent itself advertises this phrase as its async task trigger."""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    research = load_manifest(
+        str(root / "agents" / "deep_research" / "manifest.yaml")
+    )
+    amap = {
+        "deep-research": SimpleNamespace(manifest=research, endpoint="x:0"),
+    }
+    plan = Plan(
+        steps=[Step(id="s1", agent_id="info", intent="info.search")],
+    )
+
+    hit = _engine().apply(
+        plan,
+        "慢慢查一下钠离子电池的产业化进展，查完告诉我",
+        amap,
+    )
+
+    assert hit is True
+    assert [s.intent for s in plan.steps] == ["research.run"]
+
+
+def test_research_status_recovers_toolcall_degraded_chitchat_plan():
+    """M-A A6-1：MiniMax toolcall degraded 时把账本状态问句落到 chitchat。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    research = load_manifest(
+        str(root / "agents" / "deep_research" / "manifest.yaml")
+    )
+    amap = {
+        "deep-research": SimpleNamespace(manifest=research, endpoint="x:0"),
+    }
+    plan = Plan(
+        steps=[Step(id="s1", agent_id="chitchat", intent="chitchat.talk")],
+    )
+
+    hit = _engine().apply(plan, "那个调研查得怎么样了", amap)
+
+    assert hit is True
+    assert [s.intent for s in plan.steps] == ["research.status"]
+
+
 def test_charging_hints_never_hijack_device_charging():
     """设备充电句绝不被 charging 接管——**这一半在 hint 退役后反而更重要**。
 

@@ -289,6 +289,7 @@ class PlannerEngine:
                 },
             )
             await self._resolve_endpoints(plan)
+            self._apply_focus_meta(plan, working_set.focus)
             # 权限校验按步在 dispatch 执行期硬拒（与规划期 catalog 过滤同源 check_permission），
             # 此处不再做计划级兜底（原 _enforce_permissions 为空壳，已移除）。
 
@@ -748,9 +749,29 @@ class PlannerEngine:
         _verbs = (
             "讲", "说", "播放", "暂停", "打开", "关闭", "关掉",
             "调高", "调低", "搜", "查", "订", "预订", "帮我",
+            "导航", "带我去", "回家", "回公司", "回学校",
             "今天", "现在", "最近", "有没有", "怎么样", "多少",
         )
         return any(t.startswith(v) for v in _verbs)
+
+    @staticmethod
+    def _apply_focus_meta(plan: Plan, focus) -> None:
+        """把地图已解析的目的地焦点确定性下发给 location Agent。
+
+        焦点原本只进 Planner prompt；弱模型忽略“那边”时，天气 Agent 会退回浏览器当前位置。
+        坐标属于敏感 location 上下文，因此这里只向 manifest 已声明 location scope 的步骤注入，
+        不广播给闲聊等无关 Agent。Agent 仍须按原话是否含地点指代决定是否消费。
+        """
+        if not focus or focus.destination_lat is None or focus.destination_lng is None:
+            return
+        meta = {
+            "focus_destination": str(focus.last_destination or focus.last_poi or ""),
+            "focus_destination_lat": str(focus.destination_lat),
+            "focus_destination_lng": str(focus.destination_lng),
+        }
+        for step in plan.steps:
+            if "location" in (step.context_scopes or []):
+                step.meta = {**step.meta, **meta}
 
     def _restore(self, state: SessionState, *,
                  inject_confirmed: bool) -> tuple[Plan | None, list[StepResult]]:

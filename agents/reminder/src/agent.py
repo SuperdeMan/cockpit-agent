@@ -236,14 +236,26 @@ class ReminderAgent(BaseAgent):
         返回 None=不命中（走原追问，零回归）；AgentResult=终局（多项反问/已开始）；
         dict{fire_at,title,speech}=命中成单。序号按 items 全序（=卡片渲染序，含已开赛占位）；
         无序号需命中指代词形，未来项唯一才直取、多项反问「第几场」。
+
+        同轮多步计划可能并行执行 sports producer 与 reminder consumer。事件指代明确但状态
+        尚未可见时，做 3.5s 有界轮询等待 producer 落 REMINDABLE_ACTIVE；普通提醒不等待。
         """
-        data = await ctx.load_shared_state(REMINDABLE_ACTIVE)
-        try:
-            d = json.loads(data) if isinstance(data, str) else (data or {})
-        except Exception:
-            return None
-        all_items = [it for it in (d.get("items") or [])
-                     if isinstance(it, dict) and it.get("fire_at") and it.get("title")]
+        all_items = []
+        attempts = 8 if _REMINDABLE_REF_RE.search(raw) else 1
+        for attempt in range(attempts):
+            data = await ctx.load_shared_state(REMINDABLE_ACTIVE)
+            try:
+                d = json.loads(data) if isinstance(data, str) else (data or {})
+            except Exception:
+                d = {}
+            all_items = [
+                it for it in (d.get("items") or [])
+                if isinstance(it, dict) and it.get("fire_at") and it.get("title")
+            ]
+            if all_items:
+                break
+            if attempt + 1 < attempts:
+                await asyncio.sleep(0.5)
         if not all_items:
             return None
         now_ts = int(self._now_utc().timestamp())

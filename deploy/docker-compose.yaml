@@ -136,6 +136,11 @@ services:
       GRPC_TLS_KEY: /certs/server.key
       GRPC_TLS_SERVER_NAME: ${GRPC_TLS_SERVER_NAME:-cockpit-mesh}
     ports: ["50051:50051"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',50051),2); s.close()"]
+      interval: 2s
+      timeout: 3s
+      retries: 90
     depends_on:
       nats:
         condition: service_healthy
@@ -147,7 +152,11 @@ services:
 
   llm-gateway:
     <<: *restart
-    build: { context: .., dockerfile: llm-gateway/Dockerfile }
+    build:
+      context: ..
+      dockerfile: llm-gateway/Dockerfile
+      additional_contexts:
+        runtime_models: ${CAR_AGENT_MODELS_ROOT:-../models}
     volumes: *certs-vol
     environment:
       <<: *python-env
@@ -275,7 +284,7 @@ services:
       # skills/ 只读挂载（2026-07-27 评审缺口 5）：让「加规划知识=投 skill 文件」在容器里
       # 真实成立——mtime 热更新（30s 窗）直接感知仓库文件变化，投文件/合并 evolve 提案后
       # 不再需要重建镜像。镜像内仍 COPY 一份（挂载缺席时自持，行为不变）。
-      - ../skills:/app/skills:ro
+      - ${CAR_AGENT_SKILLS_ROOT:-../skills}:/app/skills:ro
     environment:
       <<: *python-env
       # R4.4 拒识/澄清门控：REJECT 默认 on（作用域被 hands-free + input_source 双重限定，
@@ -313,7 +322,13 @@ services:
       # 输出合法 Plan，协议失败轮内回退 JSON 路径）
       PLANNER_TOOLCALL: ${PLANNER_TOOLCALL:-on}
     ports: ["50054:50054"]
-    depends_on: [registry, llm-gateway, memory]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
+      memory:
+        condition: service_started
 
   payment-gateway:
     <<: *restart
@@ -336,7 +351,11 @@ services:
       # 真实 POI provider（高德）；不配 key 走 mock。key 只注入本服务（最小化）。
       POI_VENDOR: ${POI_VENDOR:-mock}
       AMAP_KEY: ${AMAP_KEY:-}
-    depends_on: [registry, llm-gateway]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
 
   chitchat-agent:
     <<: *restart
@@ -345,7 +364,11 @@ services:
     environment:
       <<: *python-env
       AGENT_PORT: "50062"
-    depends_on: [registry, llm-gateway]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
 
   nearby-agent:
     <<: *restart
@@ -361,7 +384,15 @@ services:
       AMAP_KEY: ${AMAP_KEY:-}
       HTTP_PROXY: http://http-proxy:8080
       HTTPS_PROXY: http://http-proxy:8080
-    depends_on: [registry, llm-gateway, memory, http-proxy]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
+      memory:
+        condition: service_started
+      http-proxy:
+        condition: service_started
     # ws8 P1: third-party Agent 沙箱（资源限制 + 只读文件系统 + no-new-privileges + 出站白名单代理）
     read_only: true
     security_opt: [no-new-privileges]
@@ -377,7 +408,15 @@ services:
       AGENT_PORT: "50064"
       HTTP_PROXY: http://http-proxy:8080
       HTTPS_PROXY: http://http-proxy:8080
-    depends_on: [registry, llm-gateway, memory, http-proxy]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
+      memory:
+        condition: service_started
+      http-proxy:
+        condition: service_started
     # ws8 P1: third-party Agent 沙箱
     read_only: true
     security_opt: [no-new-privileges]
@@ -391,7 +430,11 @@ services:
     environment:
       <<: *python-env
       AGENT_PORT: "50065"
-    depends_on: [registry, llm-gateway]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
 
   trip-planner-agent:
     <<: *restart
@@ -411,7 +454,11 @@ services:
       QWEATHER_PRIVATE_KEY: ${QWEATHER_PRIVATE_KEY:-}
       QWEATHER_PRIVATE_KEY_PATH: ${QWEATHER_PRIVATE_KEY_PATH:-}
       QWEATHER_KEY: ${QWEATHER_KEY:-}
-    depends_on: [registry, llm-gateway]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
 
   info-agent:
     <<: *restart
@@ -448,7 +495,11 @@ services:
     # JWT 用文件私钥时取消下面注释，把宿主机 PEM 挂进容器（路径与 QWEATHER_PRIVATE_KEY_PATH 一致）：
     # volumes:
     #   - ${QWEATHER_PRIVATE_KEY_PATH}:${QWEATHER_PRIVATE_KEY_PATH}:ro
-    depends_on: [registry, llm-gateway]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
 
   deep-research-agent:
     <<: *restart
@@ -470,7 +521,13 @@ services:
       RESEARCH_TASK_DEADLINE_S: ${RESEARCH_TASK_DEADLINE_S:-900}
       RESEARCH_TASK_LLM_MAX: ${RESEARCH_TASK_LLM_MAX:-6}
       RESEARCH_TASK_EXT_MAX: ${RESEARCH_TASK_EXT_MAX:-40}
-    depends_on: [registry, llm-gateway, postgres]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   reminder-agent:
     <<: *restart
@@ -483,7 +540,17 @@ services:
       POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
       REMINDER_POLL_S: ${REMINDER_POLL_S:-5}
       REMINDER_TZ: ${REMINDER_TZ:-Asia/Shanghai}
-    depends_on: [registry, llm-gateway, memory, postgres, nats]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
+      memory:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
 
   charging-planner-agent:
     <<: *restart
@@ -497,7 +564,15 @@ services:
       # M3 P0 低电量主动建议：跌破阈值的**变沿**触发一次 + 生产侧节流防读数抖动
       CHARGING_LOW_SOC: ${CHARGING_LOW_SOC:-20}
       CHARGING_LOW_SOC_THROTTLE_S: ${CHARGING_LOW_SOC_THROTTLE_S:-1800}
-    depends_on: [registry, llm-gateway, memory, nats]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
+      memory:
+        condition: service_started
+      nats:
+        condition: service_healthy
 
   scene-orchestrator-agent:
     <<: *restart
@@ -509,7 +584,17 @@ services:
       # 用户自建场景 PG 持久（无 PG 内存降级、重启丢失）；车况镜像/主动建议走 NATS
       # （无 NATS：退出场景改走反向默认表恢复，不影响激活主链路）
       POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
-    depends_on: [registry, llm-gateway, memory, postgres, nats]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
+      memory:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
 
   road-safety-agent:
     <<: *restart
@@ -518,7 +603,11 @@ services:
     environment:
       <<: *python-env
       AGENT_PORT: "50072"
-    depends_on: [registry, llm-gateway]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
 
   # M4 P4 视觉入口：「那是什么」单帧图片问答。图像不进对话链——只传 frame_id，
   # 网关从内存帧库取图拼多模态请求（契约见 docs/conventions.md §9.12）。
@@ -533,7 +622,11 @@ services:
       # 而档位解析对不认识的模型是静默回落——留空即用 llm_runtime 的 qwen-vl 档默认。
       VISION_PROVIDER: ${VISION_PROVIDER:-qwen-vl}
       VISION_MODEL: ${VISION_MODEL:-}
-    depends_on: [registry, llm-gateway]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
 
   observability-collector:
     <<: *restart
@@ -603,7 +696,15 @@ services:
       E2E_NAMESPACE_ADMIN_SECRET: ${E2E_NAMESPACE_ADMIN_SECRET-}
       # 写操作订单状态机复用 M2 task_ledger（不新建表）；无 PG → 诚实降级不承诺可查
       POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
-    depends_on: [registry, llm-gateway, memory, postgres]
+    depends_on:
+      registry:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
+      memory:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   # ── 统一主动引擎（M3 P0）──
   # 「该不该现在打扰驾驶员」的唯一裁决点：订 agent.proactive.request → 六道闸 + 合并窗口

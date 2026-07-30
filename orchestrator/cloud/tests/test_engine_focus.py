@@ -14,6 +14,8 @@ from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.planning import PlanBuilder
 from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.aggregator import Aggregator
+from orchestrator.cloud.context import Focus
+from orchestrator.cloud.models import Plan, Step
 from orchestrator.cloud.session import SessionStore
 
 
@@ -122,3 +124,28 @@ def test_focus_disabled_when_memory_off():
     _run(engine, _req_mem_off("把副驾空调调到26度"))
     # memory_enabled=false → 不读写焦点/历史
     assert asyncio.run(session.load_focus("focus-s")) is None
+
+
+def test_destination_focus_meta_only_reaches_location_scoped_steps():
+    """导航结果的精确目的地坐标属于 location 上下文：只向显式声明该 scope 的 Agent 下发。
+
+    Planner 即使忽略「那边」焦点，天气 Agent 仍能用结构化目的地坐标，而非退回浏览器当前位置。
+    """
+    plan = Plan(steps=[
+        Step(id="weather", agent_id="info", intent="info.weather",
+             context_scopes=["location"]),
+        Step(id="chat", agent_id="chitchat", intent="chitchat.general",
+             context_scopes=[]),
+    ])
+    focus = Focus(
+        last_destination="大梅沙海滨公园",
+        destination_lat=22.596,
+        destination_lng=114.306,
+    )
+
+    PlannerEngine._apply_focus_meta(plan, focus)
+
+    assert plan.steps[0].meta["focus_destination"] == "大梅沙海滨公园"
+    assert plan.steps[0].meta["focus_destination_lat"] == "22.596"
+    assert plan.steps[0].meta["focus_destination_lng"] == "114.306"
+    assert "focus_destination_lat" not in plan.steps[1].meta

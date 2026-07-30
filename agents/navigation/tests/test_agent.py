@@ -52,6 +52,31 @@ def test_search_poi_returns_card():
     assert len(res.ui_card["items"]) >= 1
 
 
+def test_search_poi_treats_highest_as_sort_not_numeric_rating():
+    """LLM may express a superlative in rating_min; it must not crash float()."""
+    agent = NavigationAgent()
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen.update(kwargs)
+        return [
+            POI(id="low", name="普通川菜", rating=4.1, lat=22.51, lng=113.91),
+            POI(id="high", name="高分川菜", rating=4.8, lat=22.52, lng=113.92),
+        ]
+
+    agent.poi.search = search
+    res = asyncio.run(run_handle(
+        agent,
+        "navigation.search_poi",
+        slots={"keyword": "川菜馆", "category": "餐饮", "rating_min": "最高"},
+        raw_text="找一家附近评分最高的川菜馆，直接导航过去",
+    ))
+
+    assert res.status == "ok"
+    assert seen["rating_min"] == 0
+    assert [item["id"] for item in res.data["items"]] == ["high", "low"]
+
+
 def test_search_poi_missing_keyword_asks():
     res = asyncio.run(run_handle(
         NavigationAgent(), "navigation.search_poi", slots={}, raw_text="找个地方"))

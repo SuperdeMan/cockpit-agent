@@ -43,7 +43,10 @@ capabilities:
 # 逐字迁移自原 planning._RESEARCH_RE / _RESEARCH_FOLLOWUP_RE（_ensure_research_step）。
 # replace=命中即取代误规划为单步 research.run；query 传原话，Agent 拆多视角子问题。
 route_hints:
-  - pattern: '深入(调研|研究|分析|了解)|深度(调研|研究|分析)|全面(对比|了解|分析|梳理)|系统(地)?(了解|梳理|学习|分析)|调研一下|彻底(研究|搞懂|弄懂|了解)|好好(研究|调研)'
+  # M-A A6-1 真栈证据：Agent 的异步入口与 follow_up 都主动教用户说「慢慢查/查完告诉我」，
+  # 但路由 hint 不认识这组词，MiniMax 会落到 info.search，Task Ledger 根本没有开单。
+  # 延后交付措辞本身就是深任务的充分信号，与 Agent `_ASYNC_MARK` 口径对齐。
+  - pattern: '深入(调研|研究|分析|了解)|深度(调研|研究|分析)|全面(对比|了解|分析|梳理)|系统(地)?(了解|梳理|学习|分析)|调研一下|彻底(研究|搞懂|弄懂|了解)|好好(研究|调研)|慢慢(查|研究|了解|分析)|慢点查|查完(告诉我|通知我|叫我|跟我说)|查好(告诉我|通知我)|查好了告诉我'
     intent: research.run
     policy: replace
     priority: 100
@@ -68,15 +71,16 @@ route_hints:
   #     MiMo 无可用 key（探针 all models failed），**切回 MiMo 须复验**。
   #   回归保护未删：命中句已改端到端口径迁入 mode_routing_cases.yaml。
   #   要恢复：git log -S '^(那|那就|好了|好啦|行了|算了|先|现在|' 找回原块。
-  # 【research.status 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑
-  #   deepseek:deepseek-v4-flash / minimax:MiniMax-M3 各 ×2 轮，其 4 条命中语料**全覆盖**
-  #   （非抽样——抽 3 句会系统性高估，命中面越大的规则越容易被放行）；
-  #   摘掉它之后仍全部落对 → 模型 + 范例已经自己会了。
-  #   ⚠ 证据只覆盖上述两档。本 hint 家族当初是为 **MiMo** 写的
-  #     （route_hints.py 开篇：「弱 LLM（MiMo）常漏/误路由」），而本环境
-  #     MiMo 无可用 key（探针 all models failed），**切回 MiMo 须复验**。
-  #   回归保护未删：命中句已改端到端口径迁入 mode_routing_cases.yaml。
-  #   要恢复：git log -S '(调研|研究|报告|后台任务)[^，。！？]{0' 找回原块。
+  # research.status 曾于 2026-07-29 按两档双臂裸跑退役；M-A 真栈在 MiniMax
+  # toolcall_degraded 路径重新复现「那个调研查得怎么样了」→ chitchat.talk，且 WebSocket
+  # 无有效 final。新鲜反例推翻退役前提，恢复原窄 pattern；Task Ledger 状态是系统事实，
+  # 不能交给闲聊模型猜。guard 继续挡提醒/导航等同形“进度”问句。
+  - pattern: '(调研|研究|报告|后台任务)[^，。！？]{0,6}(怎么样了|怎样了|什么进度|多少进度|有结果|出结果|好了没|好了吗|完了没|完成了吗|查完了吗|查好了吗)|(刚才|之前|上次|那个|昨天)[^，。！？]{0,4}(调研|研究)[^，。！？]{0,6}(怎么样|进度|结果|完了|好了)|^(这个|那个|它|现在|你)?\s*还在查(吗|么|不|呢)?[吗呢啊]{0,2}$'
+    intent: research.status
+    policy: replace
+    priority: 95
+    guard: '提醒|闹钟|日程|待办|导航|路线|订单|支付|充电'
+    slots: {}
 requires_permissions:
   - network.external
   - location.read

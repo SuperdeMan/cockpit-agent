@@ -364,6 +364,12 @@ def test_slot_pending_question_not_eaten_as_answer():
     assert PlannerEngine._is_topic_change("明天早上八点") is False
 
 
+def test_slot_pending_full_navigation_command_is_topic_change():
+    """B5-1：路况补槽挂起时，「导航去南山科技园」是完整新指令，不是旧 route 槽答案。"""
+    assert PlannerEngine._is_topic_change("导航去南山科技园") is True
+    assert PlannerEngine._is_topic_change("带我去宝安机场") is True
+
+
 def test_pending_plan_preserves_skills_across_suspend_restore():
     """T2 知识继承跨挂起（2026-07-27 评审二批）：plan.skills 必须随 pending_plan 持久化
     ——补槽/确认恢复后的再规划按它重渲染知识（loop.py→replan skill_names），

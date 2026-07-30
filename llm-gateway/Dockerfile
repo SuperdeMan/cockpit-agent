@@ -19,7 +19,7 @@ COPY runtime /app/runtime
 COPY observability /app/observability
 # M4 P4 声纹模型（gitignore，scripts/fetch-voice-models.* 拉取）。目录靠 .gitkeep 恒存在，
 # 故**模型没拉也能构建**——网关启动时决议 voiceprint=disabled，整链逐字回落到 P4 之前。
-COPY models /app/models
+COPY --from=runtime_models . /app/models
 
 ENV PYTHONPATH=/app:/app/gen/python
 ENV LLM_GATEWAY_PORT=50052

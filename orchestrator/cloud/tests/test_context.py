@@ -220,9 +220,15 @@ def test_extract_focus_navigation_poi():
     plan = Plan(steps=[Step(id="s1", agent_id="navigation",
                             intent="navigation.search_poi",
                             slots={"destination": "深圳湾"})])
-    f = extract_focus(plan, [_ok("s1", {"items": [{"name": "海岸城"}]})])
+    f = extract_focus(plan, [_ok("s1", {
+        "items": [{"name": "海岸城"}],
+        "lat": 22.533,
+        "lng": 113.942,
+    })])
     assert f.last_destination == "深圳湾"
     assert f.last_poi == "海岸城"
+    assert f.destination_lat == 22.533
+    assert f.destination_lng == 113.942
 
 
 def test_extract_focus_info_turn_keeps_last_intent():

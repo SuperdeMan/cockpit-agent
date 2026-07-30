@@ -21,6 +21,7 @@ from agents.navigation.src.agent import NavigationAgent, _person_destination
     ("孩子的学校", "孩子"),
     ("女儿学校", "女儿"),
     ("去接女儿放学", "女儿"),
+    ("导航去接孩子放学", "孩子"),
     ("老婆单位", "老婆"),
     # 口语里「接我妈」比「接妈妈」常见——真栈首验漏掉：filler 词表没有「我」，
     # 剥完「妈」剩个「我」被当成实质内容，整条链路静默不触发。
@@ -76,6 +77,31 @@ def test_resolves_to_place_and_navigates():
         ctx=_ctx_with({"person": "小雨", "place": "XX小学", "object_ref": ""})))
     # 解析后的地点进入了既有搜索链路（不再拿「接孩子」去搜 POI）
     assert seen.get("dest") == "XX小学" or "XX小学" in str(res.speech)
+
+
+def test_planner_collapsed_school_slot_still_resolves_person_from_raw_text():
+    """Planner 把「去接孩子放学」压成 destination=学校时，原话仍是人称解析真相源。"""
+    agent = NavigationAgent()
+    seen = {}
+
+    async def _fake_correct(dest, raw, meta):
+        return dest
+    agent._correct_planner_landmark = _fake_correct
+
+    async def _fake_search(*args, **kwargs):
+        seen["dest"] = args[0] if args else kwargs.get("keyword")
+        return []
+    agent.poi.search = _fake_search
+
+    res = asyncio.run(run_handle(
+        agent,
+        "navigation.navigate_to",
+        slots={"destination": "学校"},
+        raw_text="导航去接孩子放学",
+        ctx=_ctx_with({"person": "小雨", "place": "阳光小学", "object_ref": ""}),
+    ))
+
+    assert seen.get("dest") == "阳光小学" or "阳光小学" in str(res.speech)
 
 
 def test_unknown_person_asks_honestly():

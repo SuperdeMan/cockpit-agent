@@ -18,7 +18,7 @@ import uuid
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
@@ -97,6 +97,46 @@ GROUPS = (
     "acoustic_probe",
     "manual_inspection",
 )
+JOURNEY_SHARD_SIZE = 6
+
+
+def _partition_journey_ids(
+    journey_ids: Sequence[str],
+    *,
+    shard_size: int = JOURNEY_SHARD_SIZE,
+) -> tuple[tuple[str, ...], ...]:
+    """Keep each sequential journey child well inside its signed-token TTL."""
+    if type(shard_size) is not int or shard_size < 1:
+        raise RunnerArgumentError("journey shard size must be a positive integer")
+    normalized = tuple(journey_ids)
+    if any(type(item) is not str or not item for item in normalized):
+        raise RunnerArgumentError("journey ids must be non-empty strings")
+    if len(set(normalized)) != len(normalized):
+        raise RunnerArgumentError("journey ids must be unique")
+    return tuple(
+        normalized[index:index + shard_size]
+        for index in range(0, len(normalized), shard_size)
+    )
+
+
+def _should_shard_journey_case(
+    *,
+    case_id: str,
+    lane: str | None,
+    lease_child: bool,
+    has_lease: bool,
+    full: bool,
+    journey_count: int,
+) -> bool:
+    """Only a declared full-corpus request may expand into canonical shards."""
+    return (
+        case_id == "e2e_journeys"
+        and lane == "milestone"
+        and not lease_child
+        and has_lease
+        and full
+        and journey_count > JOURNEY_SHARD_SIZE
+    )
 
 
 def _restore_identity_lease(
@@ -393,6 +433,7 @@ def _memory_sessions_for(case: E2ECase, lane: str | None) -> int:
 def _identity_capability_lease(
     *,
     repo_root: Path,
+    source_root: Path | None = None,
     environ: MutableMapping[str, str],
     capability_enabled: bool = True,
     extra_services: Sequence[str] = (),
@@ -423,6 +464,22 @@ def _identity_capability_lease(
     original_compose = getattr(lease, "compose", None)
     if not callable(original_compose):
         return lease
+    resolved_repo_root = Path(repo_root).resolve()
+    resolved_source_root = (
+        resolved_repo_root
+        if source_root is None
+        else Path(source_root).resolve()
+    )
+    shared_compose = (
+        _profile_compose_runner(
+            resolved_repo_root,
+            build=False,
+            source_root=resolved_source_root,
+            gate_services=tuple(extra_services),
+        )
+        if resolved_source_root != resolved_repo_root
+        else None
+    )
 
     def compose_with_capability(source: Mapping[str, str]) -> Any:
         compose_env = dict(source)
@@ -440,6 +497,19 @@ def _identity_capability_lease(
             secret=secret,
             enabled=bool(extra_services) and enabled,
         )
+        if shared_compose is not None:
+            return shared_compose(
+                (
+                    "docker",
+                    "compose",
+                    "-f",
+                    "compose.yaml",
+                    "up",
+                    "-d",
+                    "--build",
+                ),
+                compose_env,
+            )
         return original_compose(compose_env)
 
     lease.compose = compose_with_capability
@@ -986,7 +1056,9 @@ def _emit(
 
 def _preflight(args: argparse.Namespace) -> None:
     if args.milestone is not None and args.lane is None:
-        if args.parallel_isolation == 2:
+        if args.check:
+            pass
+        elif args.parallel_isolation == 2:
             args.lane = "milestone"
         else:
             raise RunnerArgumentError("--milestone requires an explicit runner --lane")
@@ -1098,13 +1170,19 @@ def _child_argv(
         and not case.nightly.all
     ):
         argv.extend(case.nightly.args)
-    if case.id == "e2e_journeys" and provider:
+    if _is_journey_case_id(case.id) and provider:
         argv.extend(("--provider", provider))
     if case.id == "e2e_planner_toolcall" and provider:
         argv.extend(("--providers", provider))
-    if case.id == "e2e_journeys" and canonical:
+    if _is_journey_case_id(case.id) and canonical:
         argv.append("--strict-target")
     return argv
+
+
+def _is_journey_case_id(case_id: str) -> bool:
+    return case_id == "e2e_journeys" or case_id.startswith(
+        "e2e_journeys_shard_"
+    )
 
 
 def _selection_summary(
@@ -1453,7 +1531,7 @@ def _child_environment(
         "E2E_LANE": lane or "",
         "E2E_PROFILE": case.profile,
     })
-    if case.id == "e2e_journeys":
+    if _is_journey_case_id(case.id):
         if provider:
             env["E2E_PROVIDER"] = provider
         if model:
@@ -1584,12 +1662,76 @@ def _run_profile_command(
                 process_tree.close()
 
 
+def _build_shared_source_images(
+    *,
+    stack_root: Path,
+    source_root: Path,
+    services: Sequence[str],
+    environ: Mapping[str, str],
+) -> None:
+    with tempfile.TemporaryDirectory(
+        prefix="e2e-source-build-",
+    ) as temp_dir:
+        source_compose_path = Path(temp_dir) / "source-build.json"
+        source_compose_path.write_text(
+            json.dumps(
+                {
+                    "include": [{
+                        "path": str(source_root / "deploy" / "docker-compose.yaml"),
+                        "project_directory": str(source_root / "deploy"),
+                        "env_file": str(stack_root / ".env"),
+                    }],
+                },
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
+        _run_profile_command(
+            [
+                "docker",
+                "compose",
+                "--project-directory",
+                str(stack_root),
+                "-f",
+                str(source_compose_path),
+                "build",
+                *services,
+            ],
+            cwd=source_root,
+            environ={
+                **environ,
+                "CAR_AGENT_MODELS_ROOT": str(stack_root / "models"),
+            },
+            timeout_s=900,
+        )
+
+
 def _profile_compose_runner(
     repo_root: Path,
     *,
     build: bool = True,
+    source_root: Path | None = None,
+    gate_services: Sequence[str] = ("proactive", "mcp-bridge"),
 ) -> Callable[[Sequence[str], Mapping[str, str]], None]:
+    resolved_repo_root = Path(repo_root).resolve()
+    resolved_source_root = (
+        resolved_repo_root
+        if source_root is None
+        else Path(source_root).resolve()
+    )
+    source_built = False
+
     def invoke(argv: Sequence[str], environ: Mapping[str, str]) -> None:
+        nonlocal source_built
+        profile_environ = dict(environ)
+        if resolved_source_root != resolved_repo_root:
+            profile_environ["CAR_AGENT_SKILLS_ROOT"] = str(
+                resolved_source_root / "skills"
+            )
+        requested_build = "--build" in argv
         command = list(argv) if build else [
             item for item in argv if item != "--build"
         ]
@@ -1600,10 +1742,41 @@ def _profile_compose_runner(
         with tempfile.TemporaryDirectory(
             prefix="e2e-profile-compose-",
         ) as temp_dir:
+            if (
+                not build
+                and requested_build
+                and resolved_source_root != resolved_repo_root
+                and not source_built
+            ):
+                _build_shared_source_images(
+                    stack_root=resolved_repo_root,
+                    source_root=resolved_source_root,
+                    services=(),
+                    environ=profile_environ,
+                )
+                source_built = True
+                up_index = command.index("up")
+                service_index = up_index + 1
+                while (
+                    service_index < len(command)
+                    and command[service_index].startswith("-")
+                ):
+                    service_index += 1
+                command = command[:service_index]
             override_path = Path(temp_dir) / "identity-gates.json"
+            runtime_override = compose_gate_override(gate_services)
+            if resolved_source_root != resolved_repo_root:
+                runtime_override["services"]["cloud-planner"] = {
+                    "volumes": [{
+                        "type": "bind",
+                        "source": str(resolved_source_root / "skills"),
+                        "target": "/app/skills",
+                        "read_only": True,
+                    }],
+                }
             override_path.write_text(
                 json.dumps(
-                    compose_gate_override(("proactive", "mcp-bridge")),
+                    runtime_override,
                     ensure_ascii=False,
                     allow_nan=False,
                     sort_keys=True,
@@ -1617,8 +1790,8 @@ def _profile_compose_runner(
             ]
             _run_profile_command(
                 command,
-                cwd=repo_root,
-                environ=environ,
+                cwd=resolved_repo_root,
+                environ=profile_environ,
                 timeout_s=900,
             )
 
@@ -2360,6 +2533,334 @@ def _journey_report_artifacts(
     return found[".json"], found[".md"]
 
 
+def _aggregate_journey_shard_results(
+    *,
+    case: E2ECase,
+    shard_results: Sequence[Mapping[str, Any]],
+    expected_ids: Sequence[str],
+    run_root: Path,
+    run_id: str,
+    provider: str | None,
+    model: str | None,
+    canonical_metadata: str = "",
+) -> dict[str, Any]:
+    """Merge sequential journey children without weakening the child protocol."""
+    rows: list[dict[str, Any]] = []
+    duration_s = 0.0
+    locks: list[Mapping[str, Any]] = []
+    child_errors: list[str] = []
+    logs: list[str] = []
+    diagnostics: list[str] = []
+    for shard in shard_results:
+        child_errors.extend(str(item) for item in shard.get("errors", ()))
+        logs.extend(str(item) for item in shard.get("logs", ()))
+        diagnostic = str(shard.get("diagnostic") or "")
+        if diagnostic:
+            diagnostics.append(diagnostic)
+        json_path, _markdown_path = _journey_report_artifacts([{
+            **shard,
+            "id": "e2e_journeys",
+        }])
+        try:
+            payload = strict_json_loads(_read_journey_report_text(json_path))
+        except (
+            OSError,
+            UnicodeError,
+            json.JSONDecodeError,
+            ManifestError,
+        ) as exc:
+            raise RunnerArgumentError(
+                "journey shard report cannot be parsed",
+            ) from exc
+        if not isinstance(payload, Mapping):
+            raise RunnerArgumentError("journey shard report must be an object")
+        report_rows = payload.get("journeys")
+        lock = payload.get("provider_lock")
+        if not isinstance(report_rows, list) or not isinstance(lock, Mapping):
+            raise RunnerArgumentError("journey shard report is incomplete")
+        rows.extend(
+            dict(row)
+            for row in report_rows
+            if isinstance(row, Mapping)
+        )
+        if len(report_rows) != sum(
+            1 for row in report_rows if isinstance(row, Mapping)
+        ):
+            raise RunnerArgumentError("journey shard rows are invalid")
+        duration_s += float(payload.get("duration_s") or 0.0)
+        locks.append(lock)
+
+    expected = tuple(expected_ids)
+    by_id = {
+        str(row.get("id")): row
+        for row in rows
+        if isinstance(row.get("id"), str)
+    }
+    if (
+        len(by_id) != len(rows)
+        or set(by_id) != set(expected)
+        or len(set(expected)) != len(expected)
+    ):
+        raise RunnerArgumentError("journey shard corpus does not match")
+    ordered_rows = [by_id[journey_id] for journey_id in expected]
+
+    drifts = [
+        dict(drift)
+        for lock in locks
+        for drift in (lock.get("drifts") or ())
+        if isinstance(drift, Mapping)
+    ]
+    lock_provider = next(
+        (
+            str(lock.get("provider"))
+            for lock in locks
+            if isinstance(lock.get("provider"), str)
+            and lock.get("provider")
+        ),
+        str(provider or ""),
+    )
+    lock_summary = {
+        "provider": lock_provider,
+        "locked": bool(locks) and all(bool(lock.get("locked")) for lock in locks),
+        "drift_detected": bool(drifts) or any(
+            bool(lock.get("drift_detected")) for lock in locks
+        ),
+        "drifts": drifts,
+    }
+
+    metadata: dict[str, Any] = {}
+    if canonical_metadata:
+        try:
+            parsed = strict_json_loads(canonical_metadata)
+        except (TypeError, json.JSONDecodeError, ManifestError) as exc:
+            raise RunnerArgumentError(
+                "canonical shard metadata is invalid",
+            ) from exc
+        if not isinstance(parsed, Mapping):
+            raise RunnerArgumentError("canonical shard metadata must be an object")
+        metadata.update(parsed)
+    metadata.update({
+        "run_id": run_id,
+        "model": model or "",
+        "report_scope": (
+            "canonical_candidate"
+            if canonical_metadata
+            else "non_canonical_artifact"
+        ),
+        "scope": {
+            "full": True,
+            "journey_filters": {
+                "ids": [],
+                "suites": [],
+                "lanes": [],
+                "levels": [],
+                "other": [],
+            },
+            "declared": len(expected),
+            "selected": len(expected),
+        },
+    })
+
+    from e2e_journeys import build_report_rows  # noqa: PLC0415
+
+    data, markdown = build_report_rows(
+        ordered_rows,
+        lock_provider,
+        "",
+        duration_s,
+        lock_summary,
+        metadata=metadata,
+    )
+    artifact_dir = Path(run_root) / case.id / "artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    json_path = artifact_dir / "journeys_report.json"
+    markdown_path = artifact_dir / "journeys_report.md"
+    atomic_write_report_pair(json_path, markdown_path, data, markdown)
+
+    counts = data["counts"]
+    aggregate_counts = {
+        "selected": int(counts["selected"]),
+        "executed": int(counts["executed"]),
+        "passed": int(counts["pass"]),
+        "failed": int(counts["fail"]),
+        "skipped": int(counts["skip"]),
+    }
+    failed_ids = [
+        journey_result_case_id(str(row["id"]))
+        for row in ordered_rows
+        if row.get("status") == "fail"
+    ]
+    skipped_ids = [
+        journey_result_case_id(str(row["id"]))
+        for row in ordered_rows
+        if row.get("status") == "skip"
+    ]
+    errors = list(dict.fromkeys(child_errors))
+    if failed_ids and "child_failed" not in errors:
+        errors.append("child_failed")
+    display = (
+        "FAIL"
+        if errors or failed_ids
+        else "PASS_WITH_SKIPS"
+        if skipped_ids
+        else "PASS"
+    )
+    return {
+        "id": case.id,
+        "status": display,
+        "returncode": 1 if display == "FAIL" else 0,
+        "errors": errors,
+        "counts": aggregate_counts,
+        "outcome_case_ids": {
+            "failed": failed_ids,
+            "skipped": skipped_ids,
+        },
+        "artifact_dir": str(artifact_dir.absolute()),
+        "artifacts": [*logs, str(json_path.absolute()), str(markdown_path.absolute())],
+        "logs": logs,
+        "diagnostic": "\n".join(diagnostics)[-MAX_DIAGNOSTIC_BYTES:],
+        "result_file": "",
+        "profile": case.profile,
+        "timeout_s": case.timeout_s,
+    }
+
+
+def _run_signed_journey_shards(
+    case: E2ECase,
+    *,
+    repo_root: Path,
+    run_root: Path,
+    run_id: str,
+    lane: str | None,
+    provider: str | None,
+    model: str | None,
+    source_env: Mapping[str, str],
+    lease: IdentityStackLease,
+    bundle_root: Path,
+) -> dict[str, Any]:
+    """Run bounded journey shards sequentially with just-in-time credentials."""
+    expected_ids = tuple(canonical_journey_contract(repo_root))
+    shards = _partition_journey_ids(expected_ids)
+    if len(shards) < 2:
+        raise RunnerArgumentError("journey sharding requires multiple shards")
+    shard_results: list[dict[str, Any]] = []
+    for index, journey_ids in enumerate(shards, 1):
+        shard_id = f"e2e_journeys_shard_{index:02d}"
+        shard_case = replace(
+            case,
+            id=shard_id,
+            command=(
+                *case.command,
+                "--id",
+                ",".join(journey_ids),
+            ),
+        )
+        user_id = f"{run_id}-{shard_id}"
+        bundle = write_token_bundle(
+            root=bundle_root,
+            lease_id=lease.lease_id,
+            case_id=shard_id,
+            run_id=run_id,
+            user_id=user_id,
+            vehicle_id=source_env.get("VEHICLE_ID", "v1"),
+            timeout_s=case.timeout_s,
+            secret=lease.secret,
+            memory_sessions=_memory_sessions_for(case, lane),
+        )
+        bundle = _presign_memory_bundle(
+            bundle,
+            expected_bundle_root=bundle_root,
+            secret=lease.secret,
+            run_id=run_id,
+            user_id=user_id,
+            timeout_s=case.timeout_s,
+            memory_sessions=_memory_sessions_for(case, lane),
+        )
+        child_source = load_child_bundle(
+            bundle,
+            bundle_root=bundle_root,
+            lease_id=lease.lease_id,
+            inherited={
+                key: value
+                for key, value in source_env.items()
+                if key not in {
+                    "E2E_IDENTITY_ENABLED",
+                    "E2E_IDENTITY_SECRET",
+                    "E2E_CAPABILITY_ENABLED",
+                    "E2E_CAPABILITY_SECRET",
+                    "E2E_NAMESPACE_ADMIN_ENABLED",
+                    "E2E_NAMESPACE_ADMIN_SECRET",
+                }
+            },
+        )
+        _prove_journey_shard_owner(
+            lease=lease,
+            ws_base=source_env.get(
+                "WS_URL",
+                "ws://127.0.0.1:8090/ws",
+            ),
+            token=child_source["E2E_IDENTITY_TOKEN"],
+            run_id=run_id,
+            user_id=user_id,
+            vehicle_id=source_env.get("VEHICLE_ID", "v1"),
+        )
+        shard_results.append(_run_child(
+            shard_case,
+            repo_root=repo_root,
+            run_root=run_root / "journey-shards" / f"{index:02d}",
+            run_id=run_id,
+            lane=lane,
+            provider=provider,
+            model=model,
+            environ=child_source,
+        ))
+    return _aggregate_journey_shard_results(
+        case=case,
+        shard_results=shard_results,
+        expected_ids=expected_ids,
+        run_root=run_root,
+        run_id=run_id,
+        provider=provider,
+        model=model,
+        canonical_metadata=str(
+            source_env.get("E2E_CANONICAL_METADATA") or ""
+        ),
+    )
+
+
+def _prove_journey_shard_owner(
+    *,
+    lease: IdentityStackLease,
+    ws_base: str,
+    token: str,
+    run_id: str,
+    user_id: str,
+    vehicle_id: str,
+) -> None:
+    """Reassert a drifting shared gate once; never fall back to anonymous."""
+    arguments = {
+        "ws_base": ws_base,
+        "token": token,
+        "run_id": run_id,
+        "user_id": user_id,
+        "vehicle_id": vehicle_id,
+    }
+    try:
+        prove_identity_owner(**arguments)
+        return
+    except IdentityTokenError:
+        pass
+    try:
+        lease.compose(lease.environ)
+        if not lease.ready():
+            raise RuntimeError("identity services did not recover")
+        prove_identity_owner(**arguments)
+    except (IdentityTokenError, OSError, RuntimeError) as exc:
+        raise StackLeaseProtocolError(
+            "journey shard owner proof failed closed",
+        ) from exc
+
+
 def _runtime_revision_view(runtime: Mapping[str, str]) -> dict[str, str]:
     return {
         key: runtime[key]
@@ -3093,6 +3594,7 @@ def _run_profile_epochs(
         _profile_compose_runner(
             operational_root,
             build=(operational_root == repo_root),
+            source_root=repo_root,
         ),
         secret=capability_secret,
         enabled=lambda: capability_state["enabled"],
@@ -3546,6 +4048,7 @@ def main(
         lease_owner_env = mutable_env
         lease = _identity_capability_lease(
             repo_root=stack_root,
+            source_root=root,
             environ=mutable_env,
             capability_enabled=any(
                 _memory_sessions_for(case, args.lane) > 0
@@ -3614,6 +4117,36 @@ def main(
         else:
             bundle_root = run_root / "lease-bundles"
             for case in selected:
+                journey_count = 0
+                if (
+                    case.id == "e2e_journeys"
+                    and args.lane == "milestone"
+                    and not args.lease_child
+                    and lease is not None
+                    and args.full
+                ):
+                    journey_count = len(canonical_journey_contract(root))
+                if _should_shard_journey_case(
+                    case_id=case.id,
+                    lane=args.lane,
+                    lease_child=args.lease_child,
+                    has_lease=lease is not None,
+                    full=args.full,
+                    journey_count=journey_count,
+                ):
+                    results.append(_run_signed_journey_shards(
+                        case,
+                        repo_root=root,
+                        run_root=run_root,
+                        run_id=run_id,
+                        lane=args.lane,
+                        provider=args.provider,
+                        model=args.model,
+                        source_env=source_env,
+                        lease=lease,
+                        bundle_root=bundle_root,
+                    ))
+                    continue
                 if args.lease_child:
                     child_source = dict(source_env)
                     fixture_result = _attested_fixture_result(

@@ -150,12 +150,16 @@ class Focus:
     attr: str = ""                                      # "温度"/"颜色"...
     last_poi: str = ""                                  # 上个 POI（"还是刚才那家"）
     last_destination: str = ""                          # 上个导航目的地
+    destination_lat: float | None = None                # 已解析目的地坐标（供“那边”确定性续接）
+    destination_lng: float | None = None
 
     def is_empty(self) -> bool:
         # last_intent 也算有效焦点：纯信息轮（查赛程/天气）此前不落焦点，「明天呢」这类
         # 省略式追问就只能靠裸历史猜域（badcase demo-i9c92i 追问被错绑到天气）。
         return not (self.obj or self.positions or self.attr
-                    or self.last_poi or self.last_destination or self.last_intent)
+                    or self.last_poi or self.last_destination or self.last_intent
+                    or self.destination_lat is not None
+                    or self.destination_lng is not None)
 
 
 @dataclass
@@ -395,9 +399,19 @@ def extract_focus(plan, results) -> "Focus | None":
         dest = (step.slots or {}).get("destination")
         if dest:
             focus.last_destination = str(dest)
-        poi = _first_poi(getattr(by_id.get(step.id), "data", None) or {})
+        data = getattr(by_id.get(step.id), "data", None) or {}
+        poi = _first_poi(data)
         if poi:
             focus.last_poi = poi
+        # 导航 Agent 的成功结果带地图已解析坐标。只从 navigation 域消费，避免把天气/
+        # 搜索结果里的同名字段误当成下一轮“那边”的目的地。
+        if domain == "navigation":
+            try:
+                lat, lng = float(data.get("lat")), float(data.get("lng"))
+                if -90 <= lat <= 90 and -180 <= lng <= 180:
+                    focus.destination_lat, focus.destination_lng = lat, lng
+            except (TypeError, ValueError):
+                pass
         if not focus.last_agent_id:
             focus.last_agent_id, focus.last_intent = step.agent_id, step.intent
     return None if focus.is_empty() else focus

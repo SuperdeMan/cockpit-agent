@@ -1882,6 +1882,106 @@ def test_memory_graph_redis_probe_uses_shared_stack_root(
     assert str(shared_root.resolve() / "compose.yaml") in module.REDIS
 
 
+def test_journey_fault_injection_uses_shared_stack_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    shared_root = tmp_path / "shared-root"
+    shared_root.mkdir()
+    monkeypatch.setenv("E2E_STACK_ROOT", str(shared_root))
+    module = _load("e2e_journeys")
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("subprocess.run", run)
+
+    module._docker("stop", "trip-planner-agent")
+
+    argv, kwargs = calls[0]
+    assert argv == [
+        "docker",
+        "compose",
+        "-f",
+        str(shared_root.resolve() / "compose.yaml"),
+        "stop",
+        "trip-planner-agent",
+    ]
+    assert kwargs["cwd"] == shared_root.resolve()
+
+
+def test_journey_report_rows_can_be_recombined_as_one_full_run():
+    module = _load("e2e_journeys")
+    rows = [
+        {
+            "id": "J-1",
+            "title": "first",
+            "level": "regression",
+            "lane": "live",
+            "suite": "regression.yaml",
+            "tags": ["honesty"],
+            "status": "pass",
+            "reason": "",
+            "attempts": 1,
+            "turns": [{"i": 1, "elapsed": 1.0}],
+        },
+        {
+            "id": "J-2",
+            "title": "second",
+            "level": "target",
+            "lane": "live",
+            "suite": "target.yaml",
+            "tags": ["continuity"],
+            "status": "fail",
+            "reason": "expected failure",
+            "attempts": 1,
+            "turns": [{"i": 1, "elapsed": 2.0, "fails": ["expected failure"]}],
+        },
+    ]
+
+    data, markdown = module.build_report_rows(
+        rows,
+        "minimax:MiniMax-M3",
+        "",
+        3.0,
+        {
+            "provider": "minimax:MiniMax-M3",
+            "locked": True,
+            "drift_detected": False,
+            "drifts": [],
+        },
+        metadata={
+            "run_id": "e2e-run",
+            "report_scope": "canonical_candidate",
+            "scope": {
+                "full": True,
+                "journey_filters": {
+                    "ids": [],
+                    "suites": [],
+                    "lanes": [],
+                    "levels": [],
+                    "other": [],
+                },
+                "declared": 2,
+                "selected": 2,
+            },
+        },
+    )
+
+    assert data["counts"] == {
+        "selected": 2,
+        "executed": 2,
+        "pass": 1,
+        "fail": 1,
+        "skip": 0,
+    }
+    assert data["scope"]["full"] is True
+    assert [row["id"] for row in data["journeys"]] == ["J-1", "J-2"]
+    assert data["summary"] in markdown
+
+
 def test_degrade_restore_helper_retries_before_succeeding(
     monkeypatch: pytest.MonkeyPatch,
 ):

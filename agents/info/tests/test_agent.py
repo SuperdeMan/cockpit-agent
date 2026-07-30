@@ -55,6 +55,12 @@ class _LocationResolver:
         return "北京市朝阳区"
 
 
+class _DestinationLocationResolver:
+    async def reverse(self, lng, lat, meta=None):
+        assert (lng, lat) == (114.306, 22.596)
+        return "深圳市盐田区大梅沙"
+
+
 def test_weather_with_city_returns_card():
     res = asyncio.run(run_handle(
         InfoAgent(), "info.weather", slots={"city": "北京"}, raw_text="北京天气"))
@@ -102,6 +108,25 @@ def test_weather_never_shows_raw_coordinates_when_reverse_geocoding_is_unavailab
 
     assert res.ui_card["city"] == "当前位置"
     assert "116.410000" not in res.speech
+
+
+def test_deictic_weather_uses_navigation_destination_before_current_location():
+    """B1-2：「那边」必须查询上轮导航目的地，不能静默退回浏览器当前定位。"""
+    agent = InfoAgent()
+    agent.location_resolver = _DestinationLocationResolver()
+    res = asyncio.run(run_handle(
+        agent, "info.weather", slots={}, raw_text="那边现在天气怎么样",
+        meta={
+            "current_lat": "22.533",
+            "current_lng": "114.055",
+            "focus_destination": "大梅沙海滨公园",
+            "focus_destination_lat": "22.596",
+            "focus_destination_lng": "114.306",
+        }))
+
+    assert res.status == "ok"
+    assert res.ui_card["city"] == "深圳市盐田区大梅沙"
+    assert "福田" not in res.speech
 
 
 def test_mock_weather_varies_by_requested_city():

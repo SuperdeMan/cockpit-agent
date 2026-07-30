@@ -109,6 +109,10 @@ _SYSTEM = (
     "rel 只能是：family（亲属，如 小雨-family-女儿）、place_of（常去地点，如 小雨-place_of-XX小学）、"
     "works_at、lives_at、owns（车辆等）、prefers_brand。**不在这六个里的关系不要抽**。"
     "只有用户明说的才抽（『我女儿叫小雨』『小雨在XX小学上学』），不要从上下文推断亲属关系。"
+    "family 边方向固定：subject 必须是家人成员的名字，object 必须是用户说出的亲属称谓；"
+    "绝不能把 object 写成用户/我。例如『我女儿叫小雨，她在阳光小学上学』必须同时输出"
+    "小雨-family-女儿与小雨-place_of-阳光小学两条 relation。"
+    "一句话有多个明说关系时逐条完整输出。"
     "只输出 JSON，不要解释。"
 )
 

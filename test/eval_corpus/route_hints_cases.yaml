@@ -26,6 +26,12 @@
   source: "orchestrator/cloud/tests/test_route_hints.py::test_replace_on_empty_plan_sets_single_step"
   tags: [research, replace, recall]
 
+- text: 慢慢查一下钠离子电池的产业化进展，查完告诉我
+  initial_intents: [info.search]
+  expect_final_intents: [research.run]
+  source: "M-A journey A6-1 real-stack badcase b8db82fa23174adc"
+  tags: [research, replace, recall, async]
+
 - text: 深入研究一下这个
   initial_intents: [research.run]
   expect_final_intents: [research.run]
@@ -514,6 +520,32 @@
   expect_final_intents: [research.run]
   source: "反向护栏：发起调研不被 cancel/status 抢（run=100 > 95，且 pattern 不重叠）"
   tags: [research, ledger, guardrail, run]
+
+- text: 那个调研查得怎么样了
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [research.status]
+  source: "M-A A6-1：MiniMax toolcall_degraded 把状态问句落到 chitchat，窄 hint 恢复账本确定性读"
+  tags: [research, ledger, status, replace, m-a]
+
+- text: 还在查吗
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [research.status]
+  source: "Task Ledger 状态短问句"
+  tags: [research, ledger, status, replace]
+
+- text: 导航路线查得怎么样了
+  initial_intents: [navigation.navigate_to]
+  expect_final_intents: [navigation.navigate_to]
+  source: "反向护栏：导航进度不被调研状态抢走"
+  tags: [research, ledger, status, guardrail, navigation]
+
+# ── M-A：赛事事实生产者 + 提醒消费者同轮补齐 ───────────────────────────
+
+- text: 明天欧联第一场是谁踢？开赛前提醒我
+  initial_intents: [info.sports]
+  expect_final_intents: [info.sports, reminder.create]
+  source: "M-A A2-2b：MiniMax goal 含提醒但漏 reminder 步；append 保留赛事生产者并补消费者"
+  tags: [sports, reminder, append, continuity, m-a]
 
 # ── M3 P1 位置提醒：路由与 ETA 族不打架（子 RFC §3）──
 # 「到X提醒我Y」走 reminder.create（既有 pattern 已覆盖，此处钉死不被未来 guard 误伤）

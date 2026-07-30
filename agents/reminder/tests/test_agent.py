@@ -416,6 +416,35 @@ async def test_cross_domain_reference_single_direct():
 
 
 @pytest.mark.asyncio
+async def test_cross_domain_reference_waits_for_parallel_producer(monkeypatch):
+    """A same-turn sports step may publish REMINDABLE_ACTIVE concurrently."""
+    a = await _agent()
+    k = _ts(2026, 7, 12, 3, 0)
+    ctx = make_context()
+    ctx.load_shared_state = AsyncMock(side_effect=[
+        None,
+        json.dumps({
+            "source": "info.sports",
+            "items": [{"title": "葡萄牙 vs 西班牙", "fire_at": k}],
+        }, ensure_ascii=False),
+    ])
+    sleep = AsyncMock()
+    monkeypatch.setattr("agents.reminder.src.agent.asyncio.sleep", sleep)
+
+    res = await run_handle(
+        a,
+        "reminder.create",
+        raw_text="欧联第一场是谁踢？开赛前提醒我",
+        ctx=ctx,
+    )
+
+    assert res.status == "ok"
+    assert "葡萄牙 vs 西班牙" in res.speech
+    assert ctx.load_shared_state.await_count == 2
+    sleep.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_cross_domain_reference_multi_asks():
     a = await _agent()
     ctx = make_context(context_values=_remindable(

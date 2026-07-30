@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import struct
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -194,3 +195,14 @@ def test_empty_model_path_env_falls_back_to_default(monkeypatch):
     V.resolve_provider()
     # 本机无模型时 reason 应指向**默认路径**（说明回落生效），而不是空路径
     assert V.disabled_reason() == "" or V._DEFAULT_MODEL_PATH in V.disabled_reason()
+
+
+def test_voiceprint_model_comes_from_a_runtime_build_context():
+    """Worktree source builds must not silently lose the ignored runtime model."""
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "llm-gateway" / "Dockerfile").read_text(encoding="utf-8")
+    compose = (root / "deploy" / "docker-compose.yaml").read_text(encoding="utf-8")
+
+    assert "COPY --from=runtime_models . /app/models" in dockerfile
+    assert "additional_contexts:" in compose
+    assert "runtime_models: ${CAR_AGENT_MODELS_ROOT:-../models}" in compose

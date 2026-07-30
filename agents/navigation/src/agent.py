@@ -57,7 +57,7 @@ _PERSON_RE = re.compile("|".join(sorted(_PERSON_WORDS, key=len, reverse=True)))
 # 含人称代词「我/你/他/她」：「接我妈」里的「我」不是地点信息（真栈首验实测漏掉——
 # 剥完「妈」剩个「我」被当成实质内容，整条链路不触发）。
 _PERSON_FILLER_RE = re.compile(
-    r"接|送|去|到|的|我|你|他|她|那边|那儿|附近|学校|幼儿园|放学|上学|下课|单位|公司|家|"
+    r"导航|接|送|去|到|的|我|你|他|她|那边|那儿|附近|学校|幼儿园|放学|上学|下课|单位|公司|家|"
     r"所在|地方|一下|吧|呢")
 
 
@@ -98,6 +98,20 @@ _PROXIMITY_PREFIX_RE = re.compile(r"^(离我)?\s*(最近|附近|周边|就近)�
 def _strip_proximity(dest: str) -> str:
     stripped = _PROXIMITY_PREFIX_RE.sub("", dest or "").strip()
     return stripped or dest
+
+
+def _rating_policy(value, raw_text: str) -> tuple[float, bool]:
+    """Normalize planner rating slots and retain superlative ordering semantics."""
+    text = str(value or "").strip()
+    try:
+        rating_min = float(text) if text else 0.0
+    except (TypeError, ValueError):
+        rating_min = 0.0
+    prefer_highest = any(
+        marker in f"{text} {raw_text or ''}"
+        for marker in ("最高", "评分高", "高评分", "从高到低")
+    )
+    return rating_min, prefer_highest
 
 
 class NavigationAgent(BaseAgent):
@@ -146,7 +160,11 @@ class NavigationAgent(BaseAgent):
         # 按引用取车辆当前位置（隐私最小化：只取需要的 scope）
         near = await self._current_position(ctx, meta)
 
-        rating_min = float(intent.slots.get("rating_min", 0) or 0)
+        raw_text = (intent.raw_text or "").strip()
+        rating_min, prefer_highest = _rating_policy(
+            intent.slots.get("rating_min"),
+            raw_text,
+        )
         # 真实 provider 运行期失败 → 诚实降级说拿不到（架构 §9.5 铁律③）：绝不改供 mock
         # 假 POI（可能被用户导航过去）。R9 契约：话术用 OK 返回（FAILED 会被聚合器吞成裸报错）。
         try:
@@ -161,7 +179,6 @@ class NavigationAgent(BaseAgent):
         # 设施类目搜索（充电站/加油站/停车场…）按本步关键词如实搜附近，不得被整句多意图
         # 原文的地标解析劫持，也不自动导航到首个结果——否则多意图“导航去X + 找充电桩”里
         # 找充电桩的子步会被整句改写成导航到 X（双 navigate、卡片串味）。
-        raw_text = (intent.raw_text or "").strip()
         is_category = self._is_category_search(keyword, intent.slots.get("category") or "")
 
         # Planner 有时会把“去深圳笋一样的建筑物”误抽成“笋岗”这类普通关键词。
@@ -184,6 +201,9 @@ class NavigationAgent(BaseAgent):
                 if candidate_results and name_matches(candidate, candidate_results[0].name):
                     resolved_keyword, results = candidate, candidate_results
                     break
+
+        if prefer_highest:
+            results = sorted(results, key=lambda item: item.rating or 0, reverse=True)
 
         items = [{"id": r.id, "name": r.name, "rating": r.rating,
                   "distance_km": r.distance_km, "address": r.address,
@@ -278,7 +298,7 @@ class NavigationAgent(BaseAgent):
 
         # M2 记忆图谱 P1：人称目的地一跳解析（「去接孩子放学」→ 孩子=小雨 → 小雨在 XX 小学）。
         # 这是母提案 §1.2-E2 的 Eva 例子，也是关系边唯一非做不可的消费面。
-        person_word = _person_destination(dest)
+        person_word = _person_destination(dest) or _person_destination(raw_text)
         if person_word:
             hit = await ctx.resolve_person_place(person_word)
             if hit and hit.get("place"):

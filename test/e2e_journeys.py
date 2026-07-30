@@ -72,6 +72,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录兄弟模�
 from eval_common import ProviderLock  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+STACK_ROOT = Path(os.getenv("E2E_STACK_ROOT") or ROOT).resolve()
 JOURNEY_DIR = ROOT / "test" / "journeys"
 
 URL = "ws://localhost:8090/ws"
@@ -485,8 +486,20 @@ async def run_journey(j: dict, env_keys: set[str], listener: PushListener,
 def _docker(verb: str, service: str) -> None:
     """A5-1 类故障注入：docker compose stop/start（根 compose.yaml，运维铁律）。"""
     import subprocess
-    subprocess.run(["docker", "compose", "-f", str(ROOT / "compose.yaml"), verb, service],
-                   check=True, capture_output=True, timeout=180)
+    subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(STACK_ROOT / "compose.yaml"),
+            verb,
+            service,
+        ],
+        cwd=STACK_ROOT,
+        check=True,
+        capture_output=True,
+        timeout=180,
+    )
 
 
 async def _run_once(j: dict, listener: PushListener, enforce_latency: bool,
@@ -914,6 +927,52 @@ def build_report(results: list[JourneyResult], provider: str,
                       f"- 现象：{'; '.join(first.get('fails', []))[:300]}",
                       f"- trace_id：`{first.get('trace_id', '')}`（dashboard 搜索直达）", ""]
     return data, "\n".join(lines) + "\n"
+
+
+def build_report_rows(
+    rows: list[dict],
+    provider: str,
+    lane: str,
+    duration_s: float,
+    lock_summary: dict | None = None,
+    *,
+    metadata: dict | None = None,
+) -> tuple[dict, str]:
+    """Rebuild one honest report from sequential, freshly signed shards."""
+    results: list[JourneyResult] = []
+    seen: set[str] = set()
+    for row in rows:
+        journey_id = str(row.get("id") or "")
+        status = str(row.get("status") or "")
+        if not journey_id or journey_id in seen or status not in {
+            "pass",
+            "fail",
+            "skip",
+        }:
+            raise ValueError("invalid journey report row")
+        seen.add(journey_id)
+        journey = {
+            "id": journey_id,
+            "title": str(row.get("title") or ""),
+            "level": str(row.get("level") or ""),
+            "lane": str(row.get("lane") or ""),
+            "_file": str(row.get("suite") or ""),
+            "tags": list(row.get("tags") or []),
+        }
+        result = JourneyResult(journey)
+        result.status = status
+        result.reason = str(row.get("reason") or "")
+        result.attempts = int(row.get("attempts") or 1)
+        result.turns = list(row.get("turns") or [])
+        results.append(result)
+    return build_report(
+        results,
+        provider,
+        lane,
+        time.time() - max(0.0, float(duration_s)),
+        lock_summary,
+        metadata=metadata,
+    )
 
 
 def record_journey_results(

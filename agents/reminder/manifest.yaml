@@ -43,6 +43,14 @@ capabilities:
 # 说明书查询（"限速提醒是什么"归 manual）。pattern 为设计 §6.2 方向性草案，以
 # test/eval_corpus/route_hints_cases.yaml 实测收敛（Task 10）。
 route_hints:
+  # M-A A2-2b：赛事事实与提醒是 producer→consumer 组合。MiniMax 真栈出现「goal 写了设置提醒，
+  # steps 却只给 info.sports」；这里用 append 只补缺失消费者，绝不 replace 掉负责写
+  # REMINDABLE_ACTIVE 的赛事步骤。consumer 对明确事件指代做 3.5s 有界等待，覆盖并行时序。
+  - pattern: '(?=.*(?:提醒我|叫我|别忘了))(?=.*(?:第\s*[一二两三四五六七八九十\d]+\s*场|这场|那场|开赛|开场|比赛开始|开始前)).*'
+    intent: reminder.create
+    policy: append
+    priority: 57
+    slots: {title: "$text", time_text: "$text"}
   # guard 的回忆/疑问式排除（R4，旅程 B5-1 真栈抓到）：「我刚才让你提醒我什么来着」是
   # 在**问**之前的提醒，不是建新提醒——没有排除会把问题本身当标题建单，还覆盖在挂的
   # REMINDER_PENDING。「让你提醒|提醒过」同族；不排「提醒我什么时候」（那是真创建）。
@@ -55,7 +63,9 @@ route_hints:
     # 2026-07-27（eval_skills live holdout 抓到）：不带「要是/如果」的条件形态同族——
     # 「看下明晚会不会下雨，要下就叫我收衣服」被「叫我」劫持成直接建单，把 LLM 规划对的
     # 查询步整句踩掉（比无知识档还差）。补查询式前置标记：会不会/有没有/下不下。
-    guard: '限速|车道|碰撞|疲劳|盲区|导航播报|电量提醒|保养提醒|是什么|怎么(开|关|用)|什么意思|什么来着|让你提醒|提醒过|要是|如果|假如|万一|会不会|有没有|下不下'
+    # 2026-07-30（M-A Journeys）：赛事问句「第一场是谁踢？开赛前提醒我」同理必须先保留
+    # adaptive info.sports，待它写 REMINDABLE_ACTIVE 后再由 T2 决定提醒；不能直接追问时间。
+    guard: '限速|车道|碰撞|疲劳|盲区|导航播报|电量提醒|保养提醒|是什么|怎么(开|关|用)|什么意思|什么来着|让你提醒|提醒过|要是|如果|假如|万一|会不会|有没有|下不下|谁(踢|打)|有(哪些|什么)比赛|哪(两|支|个).{0,2}(队|球队)'
     slots: {title: "$text"}
   # 【reminder.list 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑
   #   deepseek:deepseek-v4-flash / minimax:MiniMax-M3 各 ×2 轮，其 4 条命中语料**全覆盖**

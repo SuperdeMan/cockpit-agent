@@ -257,6 +257,17 @@ def test_export_includes_relations():
 
 # ── 抽取分流 ─────────────────────────────────────────────────────────────
 
+def test_extract_prompt_fixes_family_direction_and_multi_relation_completeness():
+    from extract import _SYSTEM
+
+    assert "subject 必须是家人成员的名字" in _SYSTEM
+    assert "object 必须是用户说出的亲属称谓" in _SYSTEM
+    assert "绝不能把 object 写成用户/我" in _SYSTEM
+    assert "小雨-family-女儿" in _SYSTEM
+    assert "小雨-place_of-阳光小学" in _SYSTEM
+    assert "多个明说关系时逐条完整输出" in _SYSTEM
+
+
 def test_extract_routes_relation_candidates():
     """关系候选走 `_relation` 保留键分流，不混进 memory_item。"""
     from extract import extract
