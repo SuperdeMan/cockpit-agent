@@ -3046,6 +3046,13 @@ def _run_profile_epochs(
                         ))
                         continue
                 child_source = coordinator.child_environment(case)
+                if case.fixture_pre_step is not None:
+                    audio_origin = source_env.get(
+                        "E2E_AUDIO_API_ORIGIN",
+                        "",
+                    )
+                    if audio_origin:
+                        child_source["E2E_AUDIO_API_ORIGIN"] = audio_origin
                 child_source, fixture_result = _prepared_fixture_environment(
                     case,
                     repo_root=repo_root,

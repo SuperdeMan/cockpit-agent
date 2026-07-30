@@ -1709,7 +1709,6 @@ def test_profile_fixture_prestep_precedes_token_owner_proof_and_child(
 
         def child_environment(self, _case):
             return {
-                "E2E_AUDIO_API_ORIGIN": "http://audio.example.test",
                 "E2E_VOICEPRINT_FIXTURE_DIR": str(tmp_path / "attacker"),
                 "E2E_VOICEPRINT_FIXTURE_MANIFEST": str(
                     tmp_path / "attacker" / "voiceprint-fixtures.json"
@@ -1720,8 +1719,11 @@ def test_profile_fixture_prestep_precedes_token_owner_proof_and_child(
         def restore(self):
             return None
 
-    def fixture(*_args, **_kwargs):
+    def fixture(*_args, **kwargs):
         events.append("fixture")
+        assert kwargs["environ"]["E2E_AUDIO_API_ORIGIN"] == (
+            "http://audio.example.test"
+        )
         fixture_dir = (
             tmp_path
             / "run"
