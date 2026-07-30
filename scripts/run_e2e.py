@@ -501,6 +501,59 @@ class RunnerArgumentError(ValueError):
     """The command line cannot be interpreted safely."""
 
 
+def _git_common_dir(repo_root: Path) -> Path | None:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    raw = (completed.stdout or "").strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    return path.resolve() if path.is_absolute() else (repo_root / path).resolve()
+
+
+def _resolve_stack_root(
+    repo_root: Path,
+    environ: Mapping[str, str],
+) -> Path:
+    """Let a clean worktree drive its repository's shared root Compose stack."""
+    raw = str(environ.get("E2E_STACK_ROOT", "") or "").strip()
+    if not raw:
+        return repo_root
+    candidate_path = Path(raw)
+    if not candidate_path.is_absolute():
+        raise RunnerArgumentError("E2E_STACK_ROOT must be absolute")
+    try:
+        candidate = candidate_path.resolve(strict=True)
+    except OSError as exc:
+        raise RunnerArgumentError("E2E_STACK_ROOT does not exist") from exc
+    if not candidate.is_dir():
+        raise RunnerArgumentError("E2E_STACK_ROOT is not a directory")
+    if not (candidate / "compose.yaml").is_file():
+        raise RunnerArgumentError("E2E_STACK_ROOT has no compose.yaml")
+    if not (candidate / ".env").is_file():
+        raise RunnerArgumentError("E2E_STACK_ROOT has no root .env")
+    source_common = _git_common_dir(repo_root)
+    stack_common = _git_common_dir(candidate)
+    if (
+        source_common is None
+        or stack_common is None
+        or source_common != stack_common
+    ):
+        raise RunnerArgumentError(
+            "E2E_STACK_ROOT must belong to the same Git repository",
+        )
+    return candidate
+
+
 def _normalize_audio_api_origin(value: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise RunnerArgumentError("audio API origin is invalid")
@@ -2937,6 +2990,7 @@ def _run_profile_epochs(
     selected: Sequence[E2ECase],
     *,
     repo_root: Path,
+    stack_root: Path | None = None,
     run_root: Path,
     run_id: str,
     lane: str | None,
@@ -2946,6 +3000,7 @@ def _run_profile_epochs(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Run fixed serial epochs under one externally composed identity lease."""
 
+    operational_root = repo_root if stack_root is None else stack_root
     results: list[dict[str, Any]] = []
     summary_errors: list[str] = []
     capability_secret = generate_secret()
@@ -2967,18 +3022,18 @@ def _run_profile_epochs(
         return IdentityStackLease(**kwargs)
 
     profile_compose = _profile_compose_with_capability(
-        _profile_compose_runner(repo_root),
+        _profile_compose_runner(operational_root),
         secret=capability_secret,
         enabled=lambda: capability_state["enabled"],
         admin_services=lambda: namespace_admin_state["services"],
     )
     coordinator = ProfileCoordinator(
-        repo_root=repo_root,
+        repo_root=operational_root,
         environ=source_env,
         run_id=run_id,
         selected=selected,
         compose=profile_compose,
-        cert_generator=_profile_cert_generator(repo_root, source_env),
+        cert_generator=_profile_cert_generator(operational_root, source_env),
         lease_factory=profile_lease_factory,
     )
     bundle_root = run_root / "lease-bundles"
@@ -3216,6 +3271,15 @@ def main(
         _emit(output, summary, human_lines=("E2E preflight: ERROR",))
         return 2
 
+    try:
+        stack_root = _resolve_stack_root(root, source_env)
+    except RunnerArgumentError:
+        summary = _base_summary(mode="preflight", args=args)
+        summary["errors"] = ["preflight"]
+        summary["exit_code"] = 2
+        _emit(output, summary, human_lines=("E2E stack root: ERROR",))
+        return 2
+
     mode = "check" if args.check else "dry_run" if args.dry_run else "run"
     summary = _base_summary(mode=mode, args=args)
     try:
@@ -3407,7 +3471,7 @@ def main(
         )
         lease_owner_env = mutable_env
         lease = _identity_capability_lease(
-            repo_root=root,
+            repo_root=stack_root,
             environ=mutable_env,
             capability_enabled=any(
                 _memory_sessions_for(case, args.lane) > 0
@@ -3452,6 +3516,7 @@ def main(
             results, profile_summary_errors = _run_profile_epochs(
                 selected,
                 repo_root=root,
+                stack_root=stack_root,
                 run_root=run_root,
                 run_id=run_id,
                 lane=args.lane,

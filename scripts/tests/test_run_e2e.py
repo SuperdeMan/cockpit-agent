@@ -587,6 +587,49 @@ def _runner() -> ModuleType:
     return module
 
 
+def test_stack_root_can_point_worktree_runner_at_shared_root_env(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _runner()
+    source = tmp_path / "source"
+    stack = tmp_path / "stack"
+    source.mkdir()
+    stack.mkdir()
+    (stack / "compose.yaml").write_text("name: test\n", encoding="utf-8")
+    (stack / ".env").write_text("TEST_ONLY=1\n", encoding="utf-8")
+    common = tmp_path / "common.git"
+    monkeypatch.setattr(runner, "_git_common_dir", lambda _path: common)
+
+    actual = runner._resolve_stack_root(
+        source,
+        {"E2E_STACK_ROOT": str(stack.resolve())},
+    )
+
+    assert actual == stack.resolve()
+
+
+def test_stack_root_rejects_unrelated_repository(tmp_path, monkeypatch):
+    runner = _runner()
+    source = tmp_path / "source"
+    stack = tmp_path / "stack"
+    source.mkdir()
+    stack.mkdir()
+    (stack / "compose.yaml").write_text("name: test\n", encoding="utf-8")
+    (stack / ".env").write_text("TEST_ONLY=1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        runner,
+        "_git_common_dir",
+        lambda path: tmp_path / ("source.git" if path == source else "stack.git"),
+    )
+
+    with pytest.raises(runner.RunnerArgumentError):
+        runner._resolve_stack_root(
+            source,
+            {"E2E_STACK_ROOT": str(stack.resolve())},
+        )
+
+
 def _case(
     case_id: str,
     *,
