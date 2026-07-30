@@ -1,0 +1,219 @@
+{
+  "meta": {
+    "provider": "minimax",
+    "model": "MiniMax-M3",
+    "provider_lock": {
+      "provider": "minimax:MiniMax-M3",
+      "locked": true,
+      "drift_detected": false,
+      "drifts": []
+    },
+    "generated": "2026-07-30T05:56:27.450347+00:00",
+    "commit": "49335b7"
+  },
+  "denominator": {
+    "edge_owned_rows": 7947,
+    "miss": 1617,
+    "coverage": 0.7965
+  },
+  "sample": {
+    "n_planned": 160,
+    "n_labeled": 160,
+    "executable": 75,
+    "executable_frac": 0.4688,
+    "online_only_among_executable": 23,
+    "locally_executable_frac": 0.325
+  },
+  "ceiling": 0.8919,
+  "ceiling_local_only": 0.8627,
+  "reject_reasons": {
+    "llm_none": 82,
+    "operate_not_allowed": 3
+  },
+  "by_object": {
+    "辅助驾驶": {
+      "executable": 1,
+      "n": 27
+    },
+    "空调模式/功能控制": {
+      "executable": 18,
+      "n": 19
+    },
+    "风况": {
+      "executable": 15,
+      "n": 18
+    },
+    "屏幕": {
+      "executable": 6,
+      "n": 11
+    },
+    "语音助手": {
+      "executable": 1,
+      "n": 8
+    },
+    "能源": {
+      "executable": 0,
+      "n": 5
+    },
+    "图片相册": {
+      "executable": 0,
+      "n": 5
+    },
+    "后视镜": {
+      "executable": 4,
+      "n": 4
+    },
+    "系统": {
+      "executable": 1,
+      "n": 4
+    },
+    "天窗/天窗遮阳帘": {
+      "executable": 2,
+      "n": 4
+    },
+    "美食": {
+      "executable": 0,
+      "n": 3
+    },
+    "媒体控制": {
+      "executable": 1,
+      "n": 3
+    },
+    "界面": {
+      "executable": 1,
+      "n": 3
+    },
+    "湿度": {
+      "executable": 2,
+      "n": 3
+    },
+    "车辆模式": {
+      "executable": 2,
+      "n": 3
+    },
+    "地图": {
+      "executable": 1,
+      "n": 3
+    },
+    "电话": {
+      "executable": 1,
+      "n": 3
+    },
+    "酒店": {
+      "executable": 1,
+      "n": 2
+    },
+    "气象": {
+      "executable": 2,
+      "n": 2
+    },
+    "声音": {
+      "executable": 1,
+      "n": 2
+    },
+    "车内灯": {
+      "executable": 1,
+      "n": 2
+    },
+    "情景模式": {
+      "executable": 0,
+      "n": 2
+    },
+    "音乐点播": {
+      "executable": 1,
+      "n": 1
+    },
+    "工具": {
+      "executable": 0,
+      "n": 1
+    },
+    "曲艺点播": {
+      "executable": 1,
+      "n": 1
+    },
+    "广播点播": {
+      "executable": 1,
+      "n": 1
+    },
+    "车门": {
+      "executable": 1,
+      "n": 1
+    },
+    "曲艺控制": {
+      "executable": 0,
+      "n": 1
+    },
+    "通话记录": {
+      "executable": 1,
+      "n": 1
+    },
+    "视频控制": {
+      "executable": 1,
+      "n": 1
+    },
+    "通讯录": {
+      "executable": 0,
+      "n": 1
+    },
+    "座椅/儿童座椅": {
+      "executable": 1,
+      "n": 1
+    },
+    "视频点播": {
+      "executable": 0,
+      "n": 1
+    },
+    "个人热点": {
+      "executable": 1,
+      "n": 1
+    },
+    "车窗": {
+      "executable": 1,
+      "n": 1
+    },
+    "后备箱": {
+      "executable": 0,
+      "n": 1
+    },
+    "个人中心": {
+      "executable": 0,
+      "n": 1
+    },
+    "应用": {
+      "executable": 0,
+      "n": 1
+    },
+    "队列控制": {
+      "executable": 0,
+      "n": 1
+    },
+    "空调开闭控制": {
+      "executable": 1,
+      "n": 1
+    },
+    "摄像头": {
+      "executable": 1,
+      "n": 1
+    },
+    "车外灯": {
+      "executable": 1,
+      "n": 1
+    },
+    "设置": {
+      "executable": 0,
+      "n": 1
+    },
+    "股票": {
+      "executable": 1,
+      "n": 1
+    },
+    "有声书控制": {
+      "executable": 0,
+      "n": 1
+    },
+    "音乐控制": {
+      "executable": 1,
+      "n": 1
+    }
+  }
+}

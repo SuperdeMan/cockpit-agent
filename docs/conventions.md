@@ -225,7 +225,9 @@
 | `AGENT_REREGISTER_INTERVAL` | Agent/edge/cloud-planner 周期重注册间隔（秒），供 registry 重启后能力自愈补注册 | 否（默认 10）|
 | `REGISTRY_EVICT_FAIL_COUNT` | Registry 长期不健康自动剔除：连续探测失败达此值整体注销（内存+PG 级联），Agent 改名/下线残留不再永生刷告警（如 food-ordering→nearby）；活 Agent 周期重注册自动豁免；0=禁用（2026-07-13）| 否（默认 120 ≈ 10min）|
 | `MEMORY_EXTRACT_SKIP_PREFIXES` | 合成会话（eval/e2e/badcase 重放/探针）跳过 LLM 抽取巩固的 session_id 前缀表（逗号分隔，契约见 §9.2）：不烧 token、不污染真实画像；`memtest-` 刻意不在此列（2026-07-13）| 否（有默认表）|
-| `FAST_INTENT_THRESHOLD_HIGH` / `_LOW` | 快意图路由阈值 | 否（0.85 / 0.5）|
+| `FAST_INTENT_THRESHOLD_HIGH` / `_LOW` | 快意图路由阈值。`_LOW` 从 **M5 P3** 起才真有消费方——此前 `.env`/compose/本表三处都声明了，代码只读 `_HIGH`（架构 §3.2 的双阈值伪码没有真概率可接）；端侧语义 NLU 给出真 softmax 概率后，它成为 θ_low | 否（0.85 / 0.5）|
+| `EDGE_NLU_MODE` | 端侧语义 NLU（M5 P3）挡位：`off` \| `shadow`（默认）。shadow=**只算不用**，把「模型判定 vs 规则判定」三态（`rule_miss`/`agree`/`differ`）打进 `route.cloud` span；只挂上云那一支不挂快路径（不为影子给「秒回」加 3-8ms）。**刻意还没有 `on`**：真在端侧执行还缺「语料 83 个中文 object → VAL 65 个可执行 object」的桥接与 operate 抽取，齐备前不留这个值（避免「没人测过却随时可能被打开的分支」）| 否（shadow）|
+| `EDGE_NLU_DIR` | 覆盖端侧 NLU 模型目录（`edge_nlu.onnx` + `labels.json` + `vocab.json`）。**缺任何一件即决议 disabled、整链回落规则**，同声纹 CAM++ 先例 | 否（`<repo>/models/nlu`）|
 | `AGENT_PORT` | 单个 Agent 端口（各 Dockerfile 设）| — |
 | `POI_VENDOR` / `AMAP_KEY` | 高德 POI / 逆地理编码 / 路线距离时长；注入导航、info、charging-planner（充电站搜索+路线规划+泛目的地候选）| 否（不配走 mock / “当前位置”） |
 | `CHARGING_FULL_RANGE_KM` | 充电规划满电续航假设（按电量估可行驶里程与补电点位置）| 否（默认 500）|

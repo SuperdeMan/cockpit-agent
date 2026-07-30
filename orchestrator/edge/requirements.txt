@@ -2,3 +2,8 @@ grpcio==1.66.2
 protobuf==7.35.0
 PyYAML>=6.0
 nats-py>=2.6.0
+# M5 P3 端侧语义 NLU 推理（4 层 tiny encoder，单条 3-8ms）。
+# **只要 onnxruntime，不要 transformers**：分词是纯 Python WordPiece（nlu.py），由契约测试
+# 对全量语料逐 token 比对 BertTokenizerFast——为一个分词器把 transformers + tokenizers 的
+# Rust 扩展拉进车机镜像不值。缺包时 EdgeNLU 决议 disabled、整链回落规则（声纹先例）。
+onnxruntime>=1.17,<2

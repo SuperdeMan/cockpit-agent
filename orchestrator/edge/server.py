@@ -18,6 +18,7 @@ from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 from runtime.grpcio import aio_channel
 
 from fast_intent import classify, classify_structured, climate_feeling_intents, is_local, split_and_classify, split_and_classify_any, structured_to_legacy
+import nlu as edge_nlu          # M5 P3 端侧语义 NLU（默认 shadow：只算不用）
 from val import VAL
 from edge_agents import edge_execute
 from cloud_client import CloudClient
@@ -206,6 +207,46 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             await self.obs.emit_span(trace_id, node, **kwargs)
         except Exception:
             pass
+
+    async def _nlu_shadow(self, text: str) -> dict:
+        """端侧语义 NLU 影子（M5 P3，`EDGE_NLU_MODE=shadow` 默认）：**只算不用**。
+
+        三个刻意的选择：
+        - **只挂在上云那一支**，不挂快路径。快路径是「毫秒级秒回」，为一次影子推理（实测
+          单条 3-8ms）牺牲它不值；而真正要观察的样本恰恰全在这一支——规则没接住才上云。
+          ⚠ **代价要记账**：规则**误接**（不是漏接）发生在本地那一支，影子看不见——
+          而误接恰恰是最危险的一类（用户说车窗、系统开天窗）。补法是改成「响应后
+          fire-and-forget」，不占关键路径，留 P3b。
+        - **落 span 属性而不是 metric**。P4 声纹的 `vp_*` 指标被 collector 的 `apply_metric`
+          固定键白名单整批丢掉过（RFC 承诺的「四态进 obs」实际没落地），span 属性没有白名单。
+        - **推理放线程池**：onnxruntime 是同步阻塞的 C 扩展，直接在事件循环里跑会顶住整个
+          端侧 orchestrator（它还要同时喂 WS/gRPC 流）。
+        """
+        if edge_nlu.mode() == "off":
+            return {}
+        try:
+            engine = edge_nlu.default()
+            if not engine.available:
+                return {}
+            t0 = time.perf_counter()
+            got = await asyncio.to_thread(engine.classify, text)
+            if not got:
+                return {}
+            rule = classify_structured(text)
+            attrs = {"nlu_domain": got["domain"], "nlu_object": got["object"],
+                     "nlu_conf": got["conf"],
+                     "nlu_ms": round((time.perf_counter() - t0) * 1000, 1)}
+            # 与规则的关系分三态：规则没接住（这才是覆盖率增量的来源）／两边一致／两边分歧
+            if not rule:
+                attrs["nlu_vs_rule"] = "rule_miss"
+            else:
+                same = (rule.get("data", {}) or {}).get("object", "") == got["object"]
+                attrs["nlu_vs_rule"] = "agree" if same else "differ"
+                attrs["rule_object"] = (rule.get("data", {}) or {}).get("object", "")
+            return attrs
+        except Exception as e:      # 影子绝不许影响主链——它的全部价值就是「不生效」
+            logger.debug("edge NLU shadow skipped: %s", e)
+            return {}
 
     async def _execute_val_observed(
         self,
@@ -600,7 +641,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         await self._emit_span(
             trace_id,
             "route.cloud",
-            attrs={"text": request.text[:40]},
+            attrs={"text": request.text[:40], **(await self._nlu_shadow(request.text))},
         )
         cloud_speech = ""
         cloud_has_actions = False
