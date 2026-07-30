@@ -43,6 +43,34 @@ TARGETS = (
     "e2e_voiceprint_probe",
     "e2e_ws",
 )
+
+
+def test_memory_e2e_relies_on_stack_capabilities_not_host_secret_presence():
+    """Root Compose owns provider secrets; the host runner must probe the stack."""
+    tree = ast.parse((REPO_ROOT / "test" / "e2e_memory.py").read_text(encoding="utf-8"))
+    guarded_functions = {
+        "check_semantic_bridge",
+        "check_planner_injection",
+        "check_chitchat_pet",
+    }
+    violations = []
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name not in guarded_functions:
+            continue
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            if (
+                isinstance(child.func, ast.Attribute)
+                and isinstance(child.func.value, ast.Name)
+                and child.func.value.id == "os"
+                and child.func.attr == "getenv"
+            ):
+                violations.append(node.name)
+
+    assert violations == []
 SIGNED_EDGE_WS_TARGETS = (
     "e2e_central_hub_assertions",
     "e2e_context",

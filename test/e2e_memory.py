@@ -193,10 +193,6 @@ def planner_logs_since(seconds: int) -> str:
 async def check_semantic_bridge(stub, user: str) -> bool:
     """种『用户不吃辣』+ 干扰『喜欢摇滚乐』，用与种子**零字面重叠**的 query『饮食偏好』召回。
     lexical 对此 query 必返空；能命中且口味排在音乐之前，证明真向量语义生效。"""
-    if not os.getenv("LLM_EMBED_API_KEY"):
-        record("semantic_bridge", "1.语义桥接(真embedding)", False,
-               "LLM_EMBED_API_KEY is unavailable")
-        return True
     await mem_remember(stub, [
         _item(user_id=user, kind="semantic", text="用户不吃辣", predicate="taste.spicy",
               scope="profile.taste", confidence=0.9),
@@ -221,10 +217,6 @@ async def check_semantic_bridge(stub, user: str) -> bool:
 async def check_planner_injection(stub, user: str, session: str) -> bool:
     """给当前 runner user 种口味偏好 → WS 发请求 → planner 日志出现 recall。
     （路由到哪个 Agent 可能浮动，故以 planner 召回日志为稳健证据。）"""
-    if not os.getenv("LLM_EMBED_API_KEY"):
-        record("planner_injection", "2.planner召回注入", False,
-               "LLM_EMBED_API_KEY is unavailable")
-        return True
     await mem_remember(stub, [
         _item(user_id=user, kind="semantic", text="用户不吃辣，喜欢清淡", predicate="taste.spicy",
               scope="profile.taste", confidence=0.9)])
@@ -245,10 +237,6 @@ async def check_planner_injection(stub, user: str, session: str) -> bool:
 # 链路 3：chitchat 个人实体召回（宠物名）
 # ════════════════════════════════════════════════════════════════════════
 async def check_chitchat_pet(stub, user: str, session: str) -> bool:
-    if not os.getenv("LLM_API_KEY"):
-        record("chitchat_pet", "3.chitchat宠物召回", False,
-               "LLM_API_KEY is unavailable")
-        return True
     await mem_remember(stub, [
         _item(user_id=user, kind="semantic", text="用户的宠物叫旺财", predicate="person.pet",
               scope="profile.person", privacy_level="sensitive", provenance="user_stated",
