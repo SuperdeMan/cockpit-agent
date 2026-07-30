@@ -35,6 +35,27 @@ _CREATE_NOISE_RE = re.compile(
     r"(请|麻烦|帮我|给我|我要|我想|想|要|创建|新建|自定义|建立|建个|建一个|建|做个|做一个|做"
     r"|存成|存为|存|设个|设一个|设|叫做|叫|名为|一个|个|模式)")
 
+_SUPPORTED_FAMILY_MARKERS = {
+    "aircon": ("空调", "制冷", "制热"),
+    "ambient_light": ("氛围灯",),
+    "seat": ("座椅",),
+    "volume": ("音量",),
+    "fragrance": ("香氛",),
+    "window": ("车窗",),
+    "sunroof": ("天窗",),
+}
+_SUPPORTED_FAMILY_LABELS = {
+    "aircon": "空调",
+    "ambient_light": "氛围灯",
+    "seat": "座椅",
+    "volume": "音量",
+    "fragrance": "香氛",
+    "window": "车窗",
+    "sunroof": "天窗",
+    "__trigger__": "触发条件",
+}
+_EXPLICIT_TRIGGER_RE = re.compile(r"(?:提醒|通知)(?:我)?(?:开|开启|启用|启动)")
+
 _SYSTEM = "你是车载场景编译器。把用户的场景需求编译成结构化 JSON，只输出 JSON，不要解释。"
 
 _FEWSHOT = """示例——用户说「建个观星模式：车里灯全关，座椅放倒，空调看情况调，热就制冷、冷就制热」，输出：
@@ -149,6 +170,29 @@ def _extract_json_block(text: str) -> str:
     return t[start:end + 1] if start != -1 and end > start else ""
 
 
+def _missing_supported_families(text: str, draft: Draft) -> tuple[str, ...]:
+    """找出原话明确提到、却被编译结果静默漏掉的可控对象。
+
+    这是编译后的确定性完整性检查，不尝试自己猜参数。漏项时让 LLM 带着明确错误重编；
+    连续两次仍漏就诚实失败，不能让用户确认一个缩水场景。
+    """
+    expected = {
+        family
+        for family, markers in _SUPPORTED_FAMILY_MARKERS.items()
+        if any(marker in (text or "") for marker in markers)
+    }
+    if _EXPLICIT_TRIGGER_RE.search(text or ""):
+        expected.add("__trigger__")
+    provided = set()
+    for action in draft.actions:
+        resolved = resolve_command(str(action.get("command") or ""))
+        if resolved:
+            provided.add(resolved[0])
+    if draft.triggers:
+        provided.add("__trigger__")
+    return tuple(sorted(expected - provided))
+
+
 def _prompt(cat: Catalog, text: str, name_hint: str) -> str:
     hint = f"\n场景名已定：{name_hint}（沿用它，不要改）" if name_hint else ""
     return f"""可用车控白名单（command 只能从这里选；params 只能用列出的参数名与取值范围）：
@@ -182,23 +226,50 @@ async def compile_scene(llm, cat: Catalog, text: str, *, name_hint: str = "",
     """NL → Draft。LLM 产候选、确定性校验裁决（LLM 说了不算）。"""
     raw = ""
     data: dict | None = None
+    missing: tuple[str, ...] = ()
     for attempt in (1, 2):
         try:
+            prompt = _prompt(cat, text, name_hint)
+            if missing:
+                labels = "、".join(
+                    _SUPPORTED_FAMILY_LABELS.get(family, family)
+                    for family in missing
+                )
+                prompt += (
+                    f"\n\n上一次结果静默漏掉了用户明确要求的：{labels}。"
+                    "请重新完整编译，actions 必须覆盖这些要求；若确实做不到，"
+                    "必须逐项写进 unsupported。"
+                )
             raw = await llm.complete(
                 [{"role": "system", "content": _SYSTEM},
-                 {"role": "user", "content": _prompt(cat, text, name_hint)}],
+                 {"role": "user", "content": prompt}],
                 model=model, temperature=0.0 if attempt == 1 else 0.3,
                 max_tokens=900, timeout=timeout, thinking=False)
             parsed = json.loads(_extract_json_block(raw))
             if isinstance(parsed, dict):
                 data = parsed
-                break
+                draft = build_draft(data, cat, text=text, name_hint=name_hint)
+                missing = _missing_supported_families(text, draft)
+                if not missing:
+                    return draft
+                logger.warning(
+                    "scene compile attempt %d omitted supported families: %s",
+                    attempt,
+                    ",".join(missing),
+                )
         except Exception as e:                       # 网络/超时/JSON 均在此收口
             logger.warning("scene compile attempt %d failed: %s", attempt, e)
     if data is None:
         return Draft(ok=False, error="没太听懂这个场景要做什么，换个说法再讲一遍？")
-
-    return build_draft(data, cat, text=text, name_hint=name_hint)
+    labels = "、".join(
+        _SUPPORTED_FAMILY_LABELS.get(family, family)
+        for family in missing
+    )
+    return Draft(
+        ok=False,
+        name=name_hint or extract_scene_name(text),
+        error=f"我两次编译都漏掉了{labels}，这次先不保存。请换个说法再讲一遍？",
+    )
 
 
 def build_draft(data: dict, cat: Catalog, *, text: str = "", name_hint: str = "") -> Draft:

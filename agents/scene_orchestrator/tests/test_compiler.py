@@ -120,6 +120,113 @@ def test_retry_once_then_succeed(cat):
     assert d.ok and llm.calls == 2
 
 
+def test_retry_when_supported_action_is_silently_omitted(cat):
+    """解析成功不等于编译完整：明确说了空调，不能只留下后一句氛围灯。"""
+    missing_hvac = json.dumps({
+        "name": "加班模式",
+        "actions": [
+            {
+                "type": "vehicle.control",
+                "command": "ambient_light.set",
+                "params": {"brightness": "45"},
+            },
+        ],
+        "unsupported": [],
+    }, ensure_ascii=False)
+    complete = json.dumps({
+        "name": "加班模式",
+        "actions": [
+            {
+                "type": "vehicle.control",
+                "command": "hvac.set",
+                "params": {"temperature": "28"},
+            },
+            {
+                "type": "vehicle.control",
+                "command": "ambient_light.set",
+                "params": {"brightness": "45"},
+            },
+        ],
+        "unsupported": [],
+    }, ensure_ascii=False)
+    llm = FakeLLM(missing_hvac, complete)
+
+    d = _run(CP.compile_scene(
+        llm,
+        cat,
+        "用户：把空调调到28度\n用户：氛围灯调到45%",
+        name_hint="加班模式",
+    ))
+
+    assert d.ok and len(d.actions) == 2
+    assert {CP.resolve_command(a["command"])[0] for a in d.actions} == {
+        "aircon",
+        "ambient_light",
+    }
+    assert llm.calls == 2
+
+
+def test_two_incomplete_compiles_fail_honestly(cat):
+    missing_hvac = json.dumps({
+        "name": "加班模式",
+        "actions": [{
+            "type": "vehicle.control",
+            "command": "ambient_light.set",
+            "params": {"brightness": "45"},
+        }],
+        "unsupported": [],
+    }, ensure_ascii=False)
+    d = _run(CP.compile_scene(
+        FakeLLM(missing_hvac, missing_hvac),
+        cat,
+        "空调28度、氛围灯45%",
+        name_hint="加班模式",
+    ))
+
+    assert not d.ok
+    assert "空调" in d.error and "漏掉" in d.error
+
+
+def test_retry_when_explicit_trigger_is_silently_omitted(cat):
+    no_trigger = json.dumps({
+        "name": "省电出行模式",
+        "actions": [{
+            "type": "vehicle.control",
+            "command": "hvac.set",
+            "params": {"temperature": "26"},
+        }],
+        "triggers": [],
+        "unsupported": [],
+    }, ensure_ascii=False)
+    with_trigger = json.dumps({
+        "name": "省电出行模式",
+        "actions": [{
+            "type": "vehicle.control",
+            "command": "hvac.set",
+            "params": {"temperature": "26"},
+        }],
+        "triggers": [{
+            "type": "event",
+            "spec": {"key": "battery", "op": "lt", "value": 20},
+        }],
+        "unsupported": [],
+    }, ensure_ascii=False)
+    llm = FakeLLM(no_trigger, with_trigger)
+
+    d = _run(CP.compile_scene(
+        llm,
+        cat,
+        "空调调到26度，电量低于20%的时候提醒我开",
+        name_hint="省电出行模式",
+    ))
+
+    assert d.ok and d.triggers == [{
+        "type": "event",
+        "spec": {"key": "battery", "op": "lt", "value": 20},
+    }]
+    assert llm.calls == 2
+
+
 def test_two_failures_degrade_honestly(cat):
     llm = FakeLLM("噪声", "还是噪声")
     d = _run(CP.compile_scene(llm, cat, "建个钓鱼模式"))
