@@ -58,3 +58,22 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
+# 2026-07-30 地盘收口：这条原在 navigation.yaml 标 navigation.search_poi（2026-07-19
+# 周边发现重构留下的过期声明）。充电桩发现归本域——读真实 SOC、按空闲优先排序。
+- text: 附近的充电站
+  plan:
+  - agent: charging-planner
+    intent: charging.find
+  source: manifest
+  added: '2026-07-30'
+  tags:
+  - canonical
+  note: 原标 navigation.search_poi，2026-07-30 改判
+- text: 快没电了附近找个快充
+  plan:
+  - agent: charging-planner
+    intent: charging.find
+  source: manifest
+  added: '2026-07-30'
+  tags:
+  - canonical

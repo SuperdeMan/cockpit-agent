@@ -131,10 +131,77 @@ def _load_probes(corpus_texts: set[str]) -> list[dict]:
 
 # ── 车道 1：契约静态校验（硬失败） ───────────────────────────────────────────
 
+def lane_boundaries(root: Path, items: list) -> list[str]:
+    """跨域边界裁定台账门禁（2026-07-30）。契约 `skills/exemplars/boundaries.yaml`。
+
+    拦的是**地盘冲突**：同一族说法被两个域各自声称。它与上面的「同句冲突」是两回事——
+    同句冲突是逐字相同（机械可判），地盘冲突是近重复，而**近重复不等于冲突**：实测
+    假冲突的相似度可以高于真冲突（lex 0.450/cos 0.885 的「搜一下固态电池最新进展 ↔
+    深入调研一下固态电池现状」是四模式路由的核心区分，比 0.483/0.773 的真冲突还高）。
+    所以这里不做「超阈值即错」的判定，只做**「不许悄悄新增」**：≥lex_min 的跨域对必须
+    在台账里被人裁定过一次。判为冲突的必须改金标（改域或改例句），不许登记。
+
+    零网络（语义通道刻意不用）——车道 1 是 CI 阻断步，llm-gateway 不可达不能变红灯。
+    """
+    path = root / "boundaries.yaml"
+    if not path.is_file():
+        return [f"缺 {path.name}——跨域边界裁定台账是范例库契约的一部分"]
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        return [f"boundaries.yaml 解析失败——{e}"]
+    if not isinstance(raw, dict):
+        return ["boundaries.yaml 顶层必须是映射"]
+    try:
+        lex_min = float(raw.get("lex_min"))
+    except (TypeError, ValueError):
+        return ["boundaries.yaml 缺 lex_min（数值）——阈值必须与裁定同文件版本化"]
+    errs: list[str] = []
+    ruled: set[frozenset] = set()
+    for i, r in enumerate(raw.get("rulings") or [], 1):
+        texts = (r or {}).get("texts") if isinstance(r, dict) else None
+        if not isinstance(texts, list) or len(texts) != 2 or not all(
+                isinstance(t, str) and t.strip() for t in texts):
+            errs.append(f"boundaries.yaml#{i}: texts 必须是两条非空文本")
+            continue
+        if not str((r.get("why") or "")).strip():
+            errs.append(f"boundaries.yaml#{i}: 缺 why——裁定的理由就是这份台账的全部价值")
+        ruled.add(frozenset(t.strip() for t in texts))
+
+    by_text = {e.text: e for e in items}
+    # 台账只进不出会腐烂：两端文本已不在语料里的条目必须清掉
+    for pair in sorted(ruled, key=lambda p: sorted(p)):
+        missing = [t for t in pair if t not in by_text]
+        if missing:
+            errs.append(f"boundaries.yaml 有陈旧裁定：{sorted(pair)} 中 {missing} 已不在语料中"
+                        f"——请删掉该条（台账只进不出会腐烂）")
+
+    idf = ex.build_idf(items)
+    unruled: list[tuple[float, object, object]] = []
+    for i, a in enumerate(items):
+        for b in items[i + 1:]:
+            if a.domain == b.domain:
+                continue
+            if frozenset((a.text, b.text)) in ruled:
+                continue
+            s = ex.lex_score(a.text, b, idf)
+            if s >= lex_min:
+                unruled.append((s, a, b))
+    for s, a, b in sorted(unruled, key=lambda x: -x[0]):
+        errs.append(
+            f"跨域近重复未裁定（IDF-Dice {s:.3f} ≥ {lex_min}）："
+            f"{a.text!r}[{a.plan[0].get('intent') if a.plan else '?'}] ↔ "
+            f"{b.text!r}[{b.plan[0].get('intent') if b.plan else '?'}]"
+            f"——判为两回事请登记 skills/exemplars/boundaries.yaml 并写 why；"
+            f"判为地盘冲突请改金标，不许登记")
+    return errs
+
+
 def lane_contract(root: Path) -> list[str]:
     errs: list[str] = []
     known = _known_intents()
-    files = sorted(root.glob("*.yaml")) if root.is_dir() else []
+    files = [p for p in sorted(root.glob("*.yaml"))
+             if p.name not in ex._RESERVED_FILES] if root.is_dir() else []
     if not files:
         return ["skills/exemplars/ 下没有任何 yaml 文件"]
     by_text: dict[str, set[str]] = {}
@@ -525,6 +592,10 @@ def main() -> int:
         print("✗ 范例契约静态校验失败：\n  " + "\n  ".join(errs))
         return 1
     items = store.load()
+    berrs = lane_boundaries(store.root, items)
+    if berrs:
+        print("✗ 跨域边界裁定台账门禁失败：\n  " + "\n  ".join(berrs))
+        return 1
     domains = sorted({e.domain for e in items})
     print(f"=== 范例契约 OK（{len(items)} 条 / {len(domains)} 域：{'、'.join(domains)}）===")
 

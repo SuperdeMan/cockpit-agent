@@ -12,10 +12,17 @@ capabilities:
     description: 综合天气+路况给出驾驶安全建议
     slots: [destination]
     examples: ["路上怎么样", "开车去上海安全吗", "今天适合开车吗"]
+  # 2026-07-30 examples 判别化：原例句「有天气预警吗」「暴雨预警了吗」与 info.alerts 的
+  # 「有没有天气预警」「北京有暴雨预警吗」**只差语气词**——描述是判别的（本条是「对驾驶的
+  # 影响」），但例句一句也不体现驾驶角度，于是两个域在同一批说法上互相声称。这是与
+  # nearby/navigation/charging 同一个病：**manifest examples 是「我这能力能答这句」写出来的，
+  # 天然不判别化**；P1 把它们批量导入范例库当金标，冲突就被激活成了判定尺的自相矛盾。
+  # 裁定：裸问预警本身归 info.alerts；带驾驶影响/上路注意归本条。
   - intent: safety.weather_alert
-    description: 查询天气预警对驾驶的影响
+    description: 查询天气预警**对驾驶的影响**（能不能上路、路上要注意什么）；
+      只问预警本身有没有、几级归 info.alerts
     slots: [city]
-    examples: ["有天气预警吗", "暴雨预警了吗"]
+    examples: ["这天气预警影响开车吗", "有预警的话路上要注意什么"]
   - intent: safety.road_condition
     description: 查询路况（拥堵/事故/施工）
     slots: [route]

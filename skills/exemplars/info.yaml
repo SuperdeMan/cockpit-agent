@@ -306,3 +306,14 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
+# 2026-07-30 地盘收口：这条原在 safety.yaml 标 safety.weather_alert——裸问预警本身归本域，
+# safety 的判别特征是「预警对驾驶的影响」（见 skills/exemplars/safety.yaml 同日注释）。
+- text: 暴雨预警了吗
+  plan:
+  - agent: info
+    intent: info.alerts
+  source: manifest
+  added: '2026-07-30'
+  tags:
+  - canonical
+  note: 原标 safety.weather_alert，2026-07-30 改判

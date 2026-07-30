@@ -54,6 +54,9 @@ _WORD_RE = re.compile(r"[一-鿿A-Za-z0-9]")
 
 # 文件顶层键白名单：未知键=大概率拼写错误，静默忽略会让作者以为范例生效了（同 skills）。
 _KNOWN_FILE_KEYS = {"domain", "exemplars", "version"}
+# 目录下的非范例文件（评测/治理产物，不是 <domain>.yaml）。不排除的话每轮重扫都会为它
+# 打两条 warning（未知顶层字段 + 缺 exemplars），30s 一次刷满日志。
+_RESERVED_FILES = {"boundaries.yaml"}
 _KNOWN_ITEM_KEYS = {"id", "text", "plan", "source", "added", "tags", "note"}
 # source 封闭集：范例的**来路**是治理信息（哪些是死资产盘活、哪些是真实 badcase 转化），
 # 自由文本会让 P2 的「范例来源结构」统计立刻失效。
@@ -125,7 +128,8 @@ class ExemplarStore:
         if not force and self._items and now - self._last_scan < _RESCAN_S:
             return self._items
         self._last_scan = now
-        paths = sorted(self.root.glob("*.yaml")) if self.root.is_dir() else []
+        paths = ([p for p in sorted(self.root.glob("*.yaml"))
+                  if p.name not in _RESERVED_FILES] if self.root.is_dir() else [])
         mtimes = {}
         for p in paths:
             try:

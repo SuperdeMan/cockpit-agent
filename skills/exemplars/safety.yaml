@@ -18,20 +18,23 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
-- text: 暴雨预警了吗
+# 2026-07-30 地盘收口：这两条原来是「暴雨预警了吗」「有天气预警吗」——与 info.alerts 的
+# 例句只差语气词（cos 0.958 / IDF-Dice 0.689，全库跨域相似度最高的一对）。裸问预警本身归
+# info.alerts；本域的判别特征是**对驾驶的影响**，例句必须体现它。
+- text: 这天气预警影响开车吗
   plan:
   - agent: road-safety
     intent: safety.weather_alert
   source: manifest
-  added: '2026-07-29'
+  added: '2026-07-30'
   tags:
   - canonical
-- text: 有天气预警吗
+- text: 有预警的话路上要注意什么
   plan:
   - agent: road-safety
     intent: safety.weather_alert
   source: manifest
-  added: '2026-07-29'
+  added: '2026-07-30'
   tags:
   - canonical
 - text: 路上怎么样

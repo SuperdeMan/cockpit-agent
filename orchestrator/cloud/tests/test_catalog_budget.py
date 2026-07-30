@@ -28,7 +28,18 @@ from orchestrator.cloud.context import WorkingSet
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 # 既非 core、又没声明 route_hints 的 agent——预算不够时只有它们该被裁
-_UNPROTECTED = {"manual-rag", "parking-payment"}
+#
+# 2026-07-30 `nearby` 加入本集合：它的两条 route_hints 已由数据退役（跨两档全覆盖双臂裸跑），
+# 而它是 `category: ecosystem`（trust_level third_party，高德 POI）——**保护是随 hint 一起
+# 没的**。这正是 P2 记过的那个副作用「hint 退役会顺手删掉那个 Agent 的 catalog 保护」，
+# 本次是**预期发生**，故改断言而不是回避：
+#   ① 现默认预算 16000 下全量零裁剪，生产无影响（下一个测试守着）；
+#   ② **绝不为了拿保护而留一条规则**——那就是本期在清理的巧合耦合，方向反了；
+#   ③ 也不把 nearby 改标 `core` 去骗保护：`ecosystem` 是它的诚实分类，为副作用改字段
+#      等于把 category 变成第二个「有 hint 就保护」；
+#   ④ 但要记一笔风险：若预算再被追上，被裁的将包含**周边发现这个高频功能**。
+#      正确动作是启用 catalog 检索化预筛（RFC §5-P2-4），不是回填规则或改分类。
+_UNPROTECTED = {"manual-rag", "parking-payment", "nearby"}
 # 核心域：无论预算多紧都不许被裁（P0 时 navigation/road-safety 恰恰会被裁，那是 D1 根因）
 _CORE_MUST_SURVIVE = {"navigation", "road-safety", "info", "reminder",
                       "scene-orchestrator", "vision", "charging-planner"}

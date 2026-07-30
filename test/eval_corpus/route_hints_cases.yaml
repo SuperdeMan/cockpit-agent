@@ -152,10 +152,17 @@
   expect_final_intents: []
   source: "评审四批 2026-07-27"
   tags: [charging, guard, device]
+# 2026-07-30 金标改判：原断言 [nearby.search]，理由「纯设施发现仍归 nearby」——那条判据
+# 已作废（充电桩发现归 charging.find，它读真实 SOC + 空闲优先排序）。nearby hint 的充电类目
+# 已收窄移除、charging 两条 hint 已在 P2 退役，故本例现在**不该有任何 hint 施加**。
+# ⚠ 顺带记一条方法论：这条 gold 当初就是 nearby#1 的产物——**为某条规则写的语料，它的 gold
+# 就是那条规则的输出，双臂裸跑只能证明「摘掉它 gold 就不满足」，不能证明规则是对的**。
+# 这正是「带着 hint 也答错」那批必须由人裁定、不能自动退役或自动保留的原因。
+# 端到端保护改口径迁入 mode_routing_cases.yaml（expect charging.find）。
 - text: 附近有没有充电站
   initial_intents: []
-  expect_final_intents: [nearby.search]
-  source: "eval_skills live 2026-07-27（纯设施发现仍归 nearby，charging.find guard 不越界）"
+  expect_final_intents: []
+  source: "2026-07-30 改判：充电桩发现归 charging.find；本例改守「不再有 hint 劫持」"
   tags: [charging, nearby, guard]
 
 # R3（旅程 B1-3）：焦点指代「那附近」让给 LLM 规划（replace 灌整句会剥 location 槽）
@@ -164,12 +171,6 @@
   expect_final_intents: []
   source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R3"
   tags: [nearby, guard, focus]
-
-- text: 附近有没有停车场
-  initial_intents: []
-  expect_final_intents: [nearby.search]
-  source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R3"
-  tags: [nearby, replace]
 
 - text: 半小时后提醒我给客户回电话
   initial_intents: []
@@ -293,8 +294,9 @@
 
 - text: 搜一下附近的加油站
   initial_intents: []
-  expect_final_intents: [nearby.search]
-  source: "guard 附近/加油站 让位 → nearby(55) 自己接住"
+  expect_final_intents: []
+  source: "2026-07-30：加油站从 nearby hint 类目里收窄移除（无专属 owner、两档模型自己落
+    navigation.search_poi）——本例仍守 info.search 的 guard 让位，只是不再由 nearby 钉死"
   tags: [search, guardrail, nearby, cross_hint]
 
 - text: 搜一下周杰伦的歌
@@ -539,16 +541,4 @@
 # ── vision 触发收窄（数据飞轮 P0 C5，badcase 2026-07-26/27）────────────────────
 # 过宽分支「帮我看看」曾把 LBS 句整句劫持进 vision.describe（replace + 端侧抓帧上传）。
 # 收窄后：LBS 句由 nearby 自己的 hint 确定性接住；真视觉句仍由指代分支覆盖。
-
-- text: 帮我看看附近有什么咖啡店
-  initial_intents: []
-  expect_final_intents: [nearby.search]
-  source: "badcase 2026-07-27 trace 3ba64a65（连续两天被 vision 劫持族）；agents/vision/manifest.yaml 收窄"
-  tags: [vision, nearby, guardrail, hijack]
-
-- text: 帮我看看我附近有什么好吃的
-  initial_intents: []
-  expect_final_intents: [nearby.search]
-  source: "badcase 2026-07-26 trace 0941ec4f（同族）"
-  tags: [vision, nearby, guardrail, hijack]
 
