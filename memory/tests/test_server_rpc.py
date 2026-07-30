@@ -186,6 +186,30 @@ def test_derive_and_emit_publishes_proactive():
     assert published and published[0][0] == "agent.proactive"
     p = json.loads(published[0][1])
     assert p["type"] == "routine_suggestion" and p["speech"] and p["agent_id"] == "memory"
+    assert p["user_id"] == "u1"
+    assert p["occupant_id"] == "primary"
+
+
+def test_memory_routine_dedup_is_scoped_per_user_and_occupant():
+    svc = _servicer()
+    published = []
+
+    class _FakeNC:
+        async def publish(self, subject, data):
+            published.append(json.loads(data))
+
+    svc._nc = _FakeNC()
+    svc._nats_tried = True
+
+    async def go():
+        await svc._emit_proactive("买咖啡吗", "routine.buy_coffee", "u1", "primary")
+        await svc._emit_proactive("买咖啡吗", "routine.buy_coffee", "u2", "passenger")
+
+    asyncio.run(go())
+
+    assert [item["user_id"] for item in published] == ["u1", "u2"]
+    assert [item["occupant_id"] for item in published] == ["primary", "passenger"]
+    assert published[0]["dedup_key"] != published[1]["dedup_key"]
 
 
 def test_synthetic_sessions_skip_consolidation(monkeypatch):

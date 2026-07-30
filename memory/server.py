@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
@@ -141,7 +142,12 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         """从情景记忆派生 routine，对新沉淀的 routine 发 agent.proactive 主动建议。"""
         routines = await self.store.derive_routines(user_id, occupant_id)
         for r in routines:
-            await self._emit_proactive(r.get("suggestion", ""), r.get("predicate", ""))
+            await self._emit_proactive(
+                r.get("suggestion", ""),
+                r.get("predicate", ""),
+                user_id,
+                occupant_id,
+            )
 
     async def _ensure_nats(self):
         if self._nc is not None:
@@ -160,17 +166,30 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
             self._nc = None
         return self._nc
 
-    async def _emit_proactive(self, suggestion: str, predicate: str):
+    async def _emit_proactive(
+        self,
+        suggestion: str,
+        predicate: str,
+        user_id: str,
+        occupant_id: str,
+    ):
         """向主动治理器发建议（治理器缺席则自动直发老主题，见 runtime/proactive.py）。"""
         nc = await self._ensure_nats()
         if not nc or not suggestion:
             return
+        owner_fingerprint = hashlib.sha256(
+            f"{user_id}\0{occupant_id}".encode("utf-8")
+        ).hexdigest()[:16]
         payload = {"type": "routine_suggestion", "speech": suggestion,
                    "agent_id": "memory", "predicate": predicate,
+                   "user_id": user_id, "occupant_id": occupant_id,
                    "ts": int(time.time() * 1000),
                    "priority": P_ADVISORY,
-                   # 同一条习惯（谓词）在去重窗口内只说一次——跨生产方生效
-                   "dedup_key": f"memory.routine|{predicate}",
+                   # 同一乘员的同一习惯在窗口内只说一次；身份只留不可逆指纹，
+                   # 避免把用户标识塞进去重键与诊断面。
+                   "dedup_key": (
+                       f"memory.routine|{owner_fingerprint}|{predicate}"
+                   ),
                    "ttl_ms": _ROUTINE_TTL_MS}
         await publish_proactive(nc, payload)
         logger.info("memory: 主动建议 %s", suggestion[:40])
