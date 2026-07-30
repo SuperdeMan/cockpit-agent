@@ -1,7 +1,7 @@
 # 意图理解与落域规划的系统性升级：从规则工厂到数据飞轮
 
 > 日期：2026-07-28
-> 状态：方向已获泓舟确认（2026-07-28）；**P0 已合入 main**（`611351b`，全量 2347 passed / 7 skipped 零回归；五件清单与证据见 §5-P0）；**P1 范例库已落地**（2026-07-29；落地记录与 N3 首测账目见 §5-P1 下方）——**修 badcase 的标准产物自此从正则换成数据**；**P2 度量驱动治理已落地**（同日；N1 尺子首测 189/192=98.4%、规则存量 32→12，见 §5-P2 下方）；**P2 余项「nearby 规则群内讧」已收口**（2026-07-30；真根因是**金标自相矛盾**不是规则打规则，规则存量 **12→10**，见 §5-P2 末的「地盘收口」）；**P3a 识别侧已落地、执行侧刻意未接**（同日；天花板/两车道/θ 校准/DoD 未达线的诚实账目见 §5-P3a）；P4 未开工
+> 状态：方向已获泓舟确认（2026-07-28）；**P0 已合入 main**（`611351b`，全量 2347 passed / 7 skipped 零回归；五件清单与证据见 §5-P0）；**P1 范例库已落地**（2026-07-29；落地记录与 N3 首测账目见 §5-P1 下方）——**修 badcase 的标准产物自此从正则换成数据**；**P2 度量驱动治理已落地**（同日；N1 尺子首测 189/192=98.4%、规则存量 32→12，见 §5-P2 下方）；**P2 余项「nearby 规则群内讧」已收口**（2026-07-30；真根因是**金标自相矛盾**不是规则打规则，规则存量 **12→10**，见 §5-P2 末的「地盘收口」）；**P3a 识别侧已落地、执行侧刻意未接**（同日；天花板/两车道/θ 校准/DoD 未达线的诚实账目见 §5-P3a）；P4 未开工。**P0→P3a 已通过全量评审（2026-07-30，14 提交逐项核验零 P0/P1 缺陷，报告 `docs/reviews/2026-07-30-review-m5-data-flywheel.md`）**
 > 交付对象：`scripts/evolve.py`、`observability/` + `dashboard/`、`orchestrator/cloud/`（planner 上下文工程）、`skills/`（新增 exemplars 通道）、`orchestrator/edge/`（P3 端侧 NLU）
 > 关联：母提案 [`2026-07-24-eva-benchmark-intelligence-upgrade.md`](2026-07-24-eva-benchmark-intelligence-upgrade.md)（C1/C2/E7）；[`2026-07-04-r4.1b-edge-objectification-and-nlu-decision.md`](2026-07-04-r4.1b-edge-objectification-and-nlu-decision.md)（识别侧 A/B 决策卡）；[`2026-07-24-m1b-self-evolution-shadow-nlu-rfc.md`](2026-07-24-m1b-self-evolution-shadow-nlu-rfc.md)（自进化 v1）；`skills/README.md`（检索注入范式，本方案的机制母版）；`docs/reviews/eval/shadow_nlu_report.md`
 > 触发：泓舟 2026-07-28 提问——「落域/规划准确率永远在靠 badcase 改 manifest，偏规则式；这还算 agent 吗？是架构不好吗？如何系统性解决？」本文以全链路机制调查（三路并行盘点 + 关键断点逐一亲证）回答这三问。
@@ -173,6 +173,11 @@ catalog 是**全量注入**不是检索——`PLANNER_CATALOG_TOP_K=20 > agent �
 3. **evolve 第四类提案**：route_error/slot_error 默认产**范例草案**而不是 regex 草案（现有的 bigram 拼 pattern 生成器 `_kw_pattern` 随之退役）。范例草案不改任何运行规则、天然过 CI 门禁，人审只看「gold 标得对不对」——这就是 N4 从 0% 起飞的路径。
 
 **门禁**：范例文件的 intent 存在性静态校验（照抄 `eval_skills.py` 的 expect_* 校验）；每条范例自动生成 golden 进 RoutingBench；CI 阻断。
+> ⚠ 演化更正（2026-07-30 评审回写）：「每条范例自动生成 golden 进 RoutingBench」落地时**反转**——
+> 范例**默认不进** N1 分母（范例会被检索注入 prompt，拿它当评测金标是**系统自证**；
+> `routing_bench.py --include-exemplars` 仅作「查找表命中率」诊断）。CI 阻断由
+> `test/eval_exemplars.py` 承担（intent 存在性 + 域路由探针 + boundaries 门禁）。实现比原设计
+> 更正确，理由已注释在 `routing_bench.py::_load_exemplars`。
 
 **DoD**：「附近咖啡店」badcase 族改由范例修复（vision hint 不加任何 guard 词）；修复泛化率（N3）首测 ≥80%。
 

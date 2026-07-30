@@ -352,15 +352,18 @@ def _idf_w(g: str, idf: dict[str, float], default: float) -> float:
     return idf.get(g, default)
 
 
-def lex_score(text: str, ex: Exemplar, idf: dict[str, float] | None = None) -> float:
+def lex_score(text: str, ex: Exemplar, idf: dict[str, float] | None = None,
+              hi: float | None = None) -> float:
     """IDF 加权 Dice = 2·Σw(A∩B) / (Σw(A)+Σw(B))，A/B 为 query 与范例文本的 bigram 集。
-    idf=None 时退化为裸 Dice（单测/离线诊断用）。"""
+    idf=None 时退化为裸 Dice（单测/离线诊断用）。hi=陌生 bigram 的权重（idf 最大值）；
+    批量打分时由调用方算一次传入——每次调用都 max 全表是 O(V)，一轮 200 条就是 200 次全表扫描。"""
     a, b = _bigrams(text), _bigrams(ex.text)
     if not a or not b:
         return 0.0
     if idf is None:
         return 2.0 * len(a & b) / (len(a) + len(b))
-    hi = max(idf.values(), default=1.0)
+    if hi is None:
+        hi = max(idf.values(), default=1.0)
     wa = sum(_idf_w(g, idf, hi) for g in a)
     wb = sum(_idf_w(g, idf, hi) for g in b)
     inter = sum(_idf_w(g, idf, hi) for g in a & b)
@@ -372,7 +375,8 @@ def top_lexical(text: str, items: list[Exemplar], k: int = EXEMPLAR_TOP_K,
                 idf: dict[str, float] | None = None) -> list[tuple[Exemplar, float]]:
     thr = _lex_threshold() if min_score is None else min_score
     table = build_idf(items) if idf is None else idf
-    hits = [(e, s) for e in items if (s := lex_score(text, e, table)) >= thr]
+    hi = max(table.values(), default=1.0)
+    hits = [(e, s) for e in items if (s := lex_score(text, e, table, hi)) >= thr]
     hits.sort(key=lambda x: (-x[1], x[0].eid))
     return hits[:k]
 

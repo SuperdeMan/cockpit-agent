@@ -177,6 +177,7 @@ def lane_boundaries(root: Path, items: list) -> list[str]:
                         f"——请删掉该条（台账只进不出会腐烂）")
 
     idf = ex.build_idf(items)
+    hi = max(idf.values(), default=1.0)   # 全库两两对打分，hi 算一次（O(对数×V) → O(V)）
     unruled: list[tuple[float, object, object]] = []
     for i, a in enumerate(items):
         for b in items[i + 1:]:
@@ -184,7 +185,7 @@ def lane_boundaries(root: Path, items: list) -> list[str]:
                 continue
             if frozenset((a.text, b.text)) in ruled:
                 continue
-            s = ex.lex_score(a.text, b, idf)
+            s = ex.lex_score(a.text, b, idf, hi)
             if s >= lex_min:
                 unruled.append((s, a, b))
     for s, a, b in sorted(unruled, key=lambda x: -x[0]):

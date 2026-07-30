@@ -45,7 +45,9 @@ async def embed_texts(texts: list[str], timeout_s: float = 1.0
         # grpc aio channel 绑定创建它的事件循环：换了 loop（评测里 full/off 两趟各一次
         # asyncio.run；服务侧重启事件循环同理）继续用旧 stub 只会得到「Event loop is
         # closed」，然后被当成「Embed 不可用」静默回落词法——一个只在评测里现形、
-        # 却会让 A/B 数据失真的坑。按 loop 重建。
+        # 却会让 A/B 数据失真的坑。按 loop 重建。旧 channel 不显式 close：它绑定的 loop
+        # 已经关了，跨 loop close 自己就会炸——交给 GC（服务侧仅重启时发生，评测侧每次
+        # asyncio.run 一枚，量级无害；2026-07-30 评审记录在案的「有意不做」）。
         loop = asyncio.get_running_loop()
         if _stub is None or _stub_loop is not loop:
             from runtime.grpcio import aio_channel

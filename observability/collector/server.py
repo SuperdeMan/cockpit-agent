@@ -28,7 +28,7 @@ SUBJECTS = (
     "obs.log",
 )
 DEBUG_KEYS = {"speed_kmh", "battery", "gear", "location"}
-# 保留期清理周期（秒）。清理本体见 db.cleanup（badcase 豁免）。
+# 保留期清理周期（秒）。清理本体见 db.cleanup（badcase 与 gold 标注豁免）。
 _CLEANUP_INTERVAL_S = 6 * 3600
 
 
@@ -288,7 +288,7 @@ async def ingest_loop(app: FastAPI) -> None:
 
 
 async def cleanup_loop(app: FastAPI) -> None:
-    """保留期清理（OBS_RETENTION_DAYS，默认 7 天；badcase 豁免）。启动即清一次。"""
+    """保留期清理（OBS_RETENTION_DAYS，默认 7 天；badcase 与 gold 标注豁免）。启动即清一次。"""
     while True:
         try:
             deleted = await asyncio.to_thread(app.state.db.cleanup)
