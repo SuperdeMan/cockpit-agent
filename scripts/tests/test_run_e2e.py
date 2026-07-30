@@ -2980,6 +2980,37 @@ def test_eligible_canonical_dry_run_does_not_write_a_report(tmp_path: Path):
     assert not list(tmp_path.rglob("*canonical*"))
 
 
+def test_system_awake_lease_uses_process_scoped_windows_contract():
+    runner = _runner()
+    calls: list[int] = []
+    lease = runner._SystemAwakeLease(
+        enabled=True,
+        set_state=lambda flags: calls.append(flags) or 1,
+    )
+
+    lease.acquire()
+    lease.release()
+
+    assert calls == [
+        runner._ES_CONTINUOUS | runner._ES_SYSTEM_REQUIRED,
+        runner._ES_CONTINUOUS,
+    ]
+
+
+def test_system_awake_lease_noops_when_disabled():
+    runner = _runner()
+    calls: list[int] = []
+    lease = runner._SystemAwakeLease(
+        enabled=False,
+        set_state=lambda flags: calls.append(flags) or 1,
+    )
+
+    lease.acquire()
+    lease.release()
+
+    assert calls == []
+
+
 def test_canonical_run_injects_metadata_promotes_pair_and_recomputes_freshness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3000,7 +3031,21 @@ def test_canonical_run_injects_metadata_promotes_pair_and_recomputes_freshness(
             "non_secret_config": non_secret_config,
         }
 
+    awake_events: list[str] = []
+
+    class FakeAwakeLease:
+        def __init__(self, *, enabled):
+            assert enabled is True
+
+        def acquire(self):
+            awake_events.append("acquire")
+
+        def release(self):
+            awake_events.append("release")
+            return True
+
     monkeypatch.setattr(_runner(), "_runtime_state", runtime_state)
+    monkeypatch.setattr(_runner(), "_SystemAwakeLease", FakeAwakeLease)
 
     rc, summary, _ = _invoke(
         tmp_path,
@@ -3026,6 +3071,7 @@ def test_canonical_run_injects_metadata_promotes_pair_and_recomputes_freshness(
     assert len(runtime_calls) == 2
     assert runtime_calls[0] == runtime_calls[1]
     assert summary["canonical_promoted"] is True
+    assert awake_events == ["acquire", "release"]
     assert summary["runtime_freshness"] == "verified"
     assert summary["stale"] == {"stale": False, "reasons": []}
     report_path = tmp_path / "docs" / "reviews" / "eval" / "journeys_report.json"

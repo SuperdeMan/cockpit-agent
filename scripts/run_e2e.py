@@ -177,6 +177,8 @@ MAX_JOURNEY_REPORT_BYTES = 16 * 1024 * 1024
 MAX_LOG_BYTES = 64 * 1024
 MAX_DIAGNOSTIC_BYTES = 4096
 _WINDOWS_CREATE_SUSPENDED = 0x00000004
+_ES_SYSTEM_REQUIRED = 0x00000001
+_ES_CONTINUOUS = 0x80000000
 _SENSITIVE_ENV_TERMS = (
     "TOKEN",
     "SECRET",
@@ -230,6 +232,42 @@ _FIXTURE_ENV_NAMES = frozenset({
     "E2E_VOICEPRINT_FIXTURE_MANIFEST",
     "E2E_VOICEPRINT_FIXTURE_MANIFEST_SHA256",
 })
+
+
+class _SystemAwakeLease:
+    """Keep a canonical run awake without changing persistent system settings."""
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        set_state: Callable[[int], int] | None = None,
+    ):
+        self._enabled = enabled and (
+            os.name == "nt" or set_state is not None
+        )
+        self._set_state = set_state
+        self._acquired = False
+
+    def _setter(self) -> Callable[[int], int]:
+        if self._set_state is not None:
+            return self._set_state
+        return ctypes.windll.kernel32.SetThreadExecutionState
+
+    def acquire(self) -> None:
+        if not self._enabled:
+            return
+        if not self._setter()(_ES_CONTINUOUS | _ES_SYSTEM_REQUIRED):
+            raise OSError("failed to prevent system sleep")
+        self._acquired = True
+
+    def release(self) -> bool:
+        if not self._acquired:
+            return True
+        self._acquired = False
+        return bool(self._setter()(_ES_CONTINUOUS))
+
+
 _CAPABILITY_ENV_NAMES = (
     "E2E_CAPABILITY_ENABLED",
     "E2E_CAPABILITY_SECRET",
@@ -4128,6 +4166,20 @@ def main(
         except BaseException:
             _clear_capability_environment(mutable_env)
             raise
+    awake_lease = _SystemAwakeLease(enabled=args.canonical)
+    try:
+        awake_lease.acquire()
+    except OSError:
+        if lease is not None:
+            _restore_identity_lease(lease)
+            if lease_owner_env is not None:
+                _clear_capability_environment(lease_owner_env)
+        summary["run_id"] = run_id
+        summary["errors"] = ["system_awake"]
+        summary["exit_code"] = 1
+        _emit(output, summary, human_lines=("E2E system awake lease: FAIL",))
+        return 1
+    awake_cleanup_failed = False
     try:
         if profile_path:
             results, profile_summary_errors = _run_profile_epochs(
@@ -4304,6 +4356,21 @@ def main(
                 cleanup_failed = True
             if lease_owner_env is not None:
                 _clear_capability_environment(lease_owner_env)
+        if not awake_lease.release():
+            awake_cleanup_failed = True
+    if awake_cleanup_failed:
+        summary["errors"].append("system_awake")
+        if not results:
+            results = [
+                _synthetic_subrun_result(case, error="system_awake")
+                for case in selected
+            ]
+        else:
+            for result in results:
+                result["errors"] = list(dict.fromkeys(
+                    [*result.get("errors", []), "system_awake"],
+                ))
+                result["status"] = "FAIL"
     if cleanup_failed:
         summary["errors"].append("identity_cleanup")
         if not results:
