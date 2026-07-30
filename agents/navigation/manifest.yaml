@@ -10,10 +10,18 @@ latency_budget_ms: 20000
 fallback: chitchat
 
 capabilities:
+  # 判别化（2026-07-30 地盘收口）：原描述「按关键词/类别/位置搜索 POI（餐厅、充电站、
+  # 加油站、停车场等）」与 nearby.search 几乎逐字重叠——两个等价工具摆在 planner 面前，
+  # 它只能掷硬币，于是 nearby 的两条 replace 正则被拉来当裁判（M5 P2 双臂裸跑坐实）。
+  # 判据换成产出形态：本条**定位一个可导航的目标**，nearby.search **列多个候选让用户挑**。
   - intent: navigation.search_poi
-    description: 按关键词/类别/位置搜索 POI（餐厅、充电站、加油站、停车场等）
+    description: 把一个说法解析成**一个可导航的具体地点**——按名（含官方名/别名）或视觉地标
+      描述定位（「像笋一样的大楼」→中国华润大厦），命中即可直接规划路线；也承接多意图里
+      「导航去X + 顺路找Y」的子步与加油站/服务区这类沿途设施。用户**已经知道要去哪**时用
+      本条；「看看附近有什么」式的多候选发现与比较（餐饮/酒店/景点/影院/停车场/超市）归
+      nearby.search，找充电桩归 charging.find（它按真实电量与空闲状态排序）
     slots: [keyword, category, near, rating_min]
-    examples: ["附近的充电站", "找个评分高的川菜馆", "最近的加油站在哪"]
+    examples: ["最近的加油站在哪", "去深圳像笋一样的那栋大楼", "国贸三期在哪个位置"]
   - intent: navigation.navigate_to
     description: 导航到指定目的地；支持常用地点别名（家/公司/学校，未设置会反问地址并记住）、顺路停靠（stop_category=吃饭/咖啡…→给候选让用户选）、带途经点（waypoint=已选停靠点名）
     slots: [destination, stop_category, waypoint, place_address]

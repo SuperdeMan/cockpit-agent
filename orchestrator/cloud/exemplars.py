@@ -54,6 +54,9 @@ _WORD_RE = re.compile(r"[一-鿿A-Za-z0-9]")
 
 # 文件顶层键白名单：未知键=大概率拼写错误，静默忽略会让作者以为范例生效了（同 skills）。
 _KNOWN_FILE_KEYS = {"domain", "exemplars", "version"}
+# 目录下的非范例文件（评测/治理产物，不是 <domain>.yaml）。不排除的话每轮重扫都会为它
+# 打两条 warning（未知顶层字段 + 缺 exemplars），30s 一次刷满日志。
+_RESERVED_FILES = {"boundaries.yaml"}
 _KNOWN_ITEM_KEYS = {"id", "text", "plan", "source", "added", "tags", "note"}
 # source 封闭集：范例的**来路**是治理信息（哪些是死资产盘活、哪些是真实 badcase 转化），
 # 自由文本会让 P2 的「范例来源结构」统计立刻失效。
@@ -125,7 +128,8 @@ class ExemplarStore:
         if not force and self._items and now - self._last_scan < _RESCAN_S:
             return self._items
         self._last_scan = now
-        paths = sorted(self.root.glob("*.yaml")) if self.root.is_dir() else []
+        paths = ([p for p in sorted(self.root.glob("*.yaml"))
+                  if p.name not in _RESERVED_FILES] if self.root.is_dir() else [])
         mtimes = {}
         for p in paths:
             try:
@@ -348,15 +352,18 @@ def _idf_w(g: str, idf: dict[str, float], default: float) -> float:
     return idf.get(g, default)
 
 
-def lex_score(text: str, ex: Exemplar, idf: dict[str, float] | None = None) -> float:
+def lex_score(text: str, ex: Exemplar, idf: dict[str, float] | None = None,
+              hi: float | None = None) -> float:
     """IDF 加权 Dice = 2·Σw(A∩B) / (Σw(A)+Σw(B))，A/B 为 query 与范例文本的 bigram 集。
-    idf=None 时退化为裸 Dice（单测/离线诊断用）。"""
+    idf=None 时退化为裸 Dice（单测/离线诊断用）。hi=陌生 bigram 的权重（idf 最大值）；
+    批量打分时由调用方算一次传入——每次调用都 max 全表是 O(V)，一轮 200 条就是 200 次全表扫描。"""
     a, b = _bigrams(text), _bigrams(ex.text)
     if not a or not b:
         return 0.0
     if idf is None:
         return 2.0 * len(a & b) / (len(a) + len(b))
-    hi = max(idf.values(), default=1.0)
+    if hi is None:
+        hi = max(idf.values(), default=1.0)
     wa = sum(_idf_w(g, idf, hi) for g in a)
     wb = sum(_idf_w(g, idf, hi) for g in b)
     inter = sum(_idf_w(g, idf, hi) for g in a & b)
@@ -368,7 +375,8 @@ def top_lexical(text: str, items: list[Exemplar], k: int = EXEMPLAR_TOP_K,
                 idf: dict[str, float] | None = None) -> list[tuple[Exemplar, float]]:
     thr = _lex_threshold() if min_score is None else min_score
     table = build_idf(items) if idf is None else idf
-    hits = [(e, s) for e in items if (s := lex_score(text, e, table)) >= thr]
+    hi = max(table.values(), default=1.0)
+    hits = [(e, s) for e in items if (s := lex_score(text, e, table, hi)) >= thr]
     hits.sort(key=lambda x: (-x[1], x[0].eid))
     return hits[:k]
 

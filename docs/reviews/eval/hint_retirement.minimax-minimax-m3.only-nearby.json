@@ -1,0 +1,502 @@
+{
+  "meta": {
+    "subject": "hint_retirement",
+    "generated_at": "2026-07-30T05:17:37.861175+00:00",
+    "commit": "0df51a9",
+    "provider": "minimax:MiniMax-M3",
+    "repeat": 2,
+    "candidates": [
+      "nearby#0",
+      "nearby#1"
+    ],
+    "ineffective": [],
+    "no_corpus": []
+  },
+  "corpus_sources": [
+    {
+      "path": "route_hints × 判定语料池",
+      "count": 15
+    }
+  ],
+  "buckets": {
+    "hint_dual_arm": {
+      "total": 15,
+      "passed": 15,
+      "failures": [],
+      "pass_rate": 1.0
+    }
+  },
+  "overall": {
+    "total": 15,
+    "passed": 15,
+    "pass_rate": 1.0
+  },
+  "cases": {
+    "nearby#0::附近有什么好吃的川菜馆": {
+      "id": "nearby#0::附近有什么好吃的川菜馆",
+      "bucket": "hint_dual_arm",
+      "text": "附近有什么好吃的川菜馆",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近哪里有咖啡店": {
+      "id": "nearby#0::附近哪里有咖啡店",
+      "bucket": "hint_dual_arm",
+      "text": "附近哪里有咖啡店",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "nearby#0::推荐个好喝的咖啡馆": {
+      "id": "nearby#0::推荐个好喝的咖啡馆",
+      "bucket": "hint_dual_arm",
+      "text": "推荐个好喝的咖啡馆",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "nearby#0::帮我看看附近有什么咖啡店": {
+      "id": "nearby#0::帮我看看附近有什么咖啡店",
+      "bucket": "hint_dual_arm",
+      "text": "帮我看看附近有什么咖啡店",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "nearby#0::帮我看看我附近有什么好吃的": {
+      "id": "nearby#0::帮我看看我附近有什么好吃的",
+      "bucket": "hint_dual_arm",
+      "text": "帮我看看我附近有什么好吃的",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "nearby#0::找家川菜馆": {
+      "id": "nearby#0::找家川菜馆",
+      "bucket": "hint_dual_arm",
+      "text": "找家川菜馆",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近有什么好吃的": {
+      "id": "nearby#0::附近有什么好吃的",
+      "bucket": "hint_dual_arm",
+      "text": "附近有什么好吃的",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近的景点": {
+      "id": "nearby#0::附近的景点",
+      "bucket": "hint_dual_arm",
+      "text": "附近的景点",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近的电影院": {
+      "id": "nearby#0::附近的电影院",
+      "bucket": "hint_dual_arm",
+      "text": "附近的电影院",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近的酒店": {
+      "id": "nearby#0::附近的酒店",
+      "bucket": "hint_dual_arm",
+      "text": "附近的酒店",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近的餐厅": {
+      "id": "nearby#0::附近的餐厅",
+      "bucket": "hint_dual_arm",
+      "text": "附近的餐厅",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::附近评分高的火锅": {
+      "id": "nearby#0::附近评分高的火锅",
+      "bucket": "hint_dual_arm",
+      "text": "附近评分高的火锅",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#0::找个评分高的川菜馆": {
+      "id": "nearby#0::找个评分高的川菜馆",
+      "bucket": "hint_dual_arm",
+      "text": "找个评分高的川菜馆",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#0",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "nearby#1::附近有没有停车场": {
+      "id": "nearby#1::附近有没有停车场",
+      "bucket": "hint_dual_arm",
+      "text": "附近有没有停车场",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#1",
+        "nearby.search",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "nearby#1::找个停车场": {
+      "id": "nearby#1::找个停车场",
+      "bucket": "hint_dual_arm",
+      "text": "找个停车场",
+      "expected": [
+        "nearby"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "nearby#1",
+        "nearby.search",
+        "exemplar"
+      ],
+      "source": ""
+    }
+  },
+  "retirement": {
+    "candidates": [
+      {
+        "key": "nearby#0",
+        "agent_id": "nearby",
+        "intent": "nearby.search",
+        "policy": "replace",
+        "priority": 55,
+        "pattern": "附近(有|有没有|有什么|有啥|有点)?.{0,3}(好吃|好玩)|(附近|周边|就近|这边|旁边).{0,4}(餐厅|饭店|餐馆|菜馆|美食|馆子|火锅|川菜|粤菜|湘菜|日料|韩料|烧烤|小吃|快餐|咖啡|奶茶|甜品|面馆|酒店|宾馆|民宿|景点|景区|电影院|影院)|(推荐|找|来|想吃|想去).{0,3}(个|家|点|顿)?.{0,3}(餐厅|饭店|吃的|美食|馆子|火锅|川菜|日料|咖啡|奶茶|甜品|酒店|景点|电影)",
+        "guard": "导航|带我去|回家|回公司|回学校|去哪|路线|怎么走|途经|顺路|接我|送我|设成|设为|[两二三四五六七八九十]\\s*[天日]|[2-9]\\s*[天日]|行程|自驾|度假|规划.{0,2}(路线|行程)|那边|那儿|那附近|目的地附近|终点附近",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "附近有什么好吃的川菜馆",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "附近哪里有咖啡店",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "推荐个好喝的咖啡馆",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "帮我看看附近有什么咖啡店",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "帮我看看我附近有什么好吃的",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "找家川菜馆",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近有什么好吃的",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的景点",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的电影院",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的酒店",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近的餐厅",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "附近评分高的火锅",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "找个评分高的川菜馆",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "nearby#1",
+        "agent_id": "nearby",
+        "intent": "nearby.search",
+        "policy": "replace",
+        "priority": 55,
+        "pattern": "(附近|周边|就近|最近的?|旁边|这边|哪儿?有|哪里有|有没有|找个?|找家).{0,4}(停车场|停车位|车位|停车|超市|便利店|药店|药房)",
+        "guard": "沿途|途中|一路|路上|缴费|交费|付款|付.{0,3}停车|导航|带我去|顺路|途经|那边|那儿|那附近|目的地附近|终点附近",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "附近有没有停车场",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "找个停车场",
+            "expect": [
+              "nearby"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      }
+    ],
+    "keep": [],
+    "ineffective": [],
+    "no_corpus": []
+  }
+}

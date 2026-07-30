@@ -8,10 +8,16 @@ latency_budget_ms: 2000
 fallback: chitchat
 
 capabilities:
+  # 判别化（2026-07-30 地盘收口）：**找充电桩一律归本条，不分「有没有电量语境」**。
+  # 2026-07-19 周边发现重构曾把「纯发现（附近有没有充电站）」判给 nearby.search 出统一富卡，
+  # 该判据本次作废——本条读真实 SOC（context_scopes: vehicle_state）、按**空闲优先**排序、
+  # 支持目的地途经点，而 nearby 的评分/人均对充电桩毫无意义。M5 P2 双臂裸跑两档一致：
+  # 摘掉 nearby 那条 replace 正则后，模型自己就落这里——是规则在 LLM 之后把对的踩成错的。
   - intent: charging.find
-    description: 给车找附近的充电站，按车辆电量推荐；手机/耳机等随身设备充电不归此能力
+    description: 给车找充电站/充电桩（含「附近有充电桩吗」这类纯发现）——读车辆真实电量、
+      按空闲状态与距离排序，可作为导航途经点；手机/耳机等随身设备充电不归此能力
     slots: [destination, soc, prefer]
-    examples: ["找个充电站", "附近有充电桩吗", "快充在哪"]
+    examples: ["找个充电站", "附近有充电桩吗", "快充在哪", "快没电了附近找个快充"]
   - intent: charging.plan
     description: 规划车辆长途充能策略（沿途分段充电）
     slots: [destination, soc, departure_time]

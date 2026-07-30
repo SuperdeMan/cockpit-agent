@@ -106,14 +106,6 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
-- text: 找个评分高的川菜馆
-  plan:
-  - agent: navigation
-    intent: navigation.search_poi
-  source: manifest
-  added: '2026-07-29'
-  tags:
-  - canonical
 - text: 把家设成上海长宁区某某小区
   plan:
   - agent: navigation
@@ -170,11 +162,20 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
-- text: 附近的充电站
+- text: 去深圳像笋一样的那栋大楼
   plan:
   - agent: navigation
     intent: navigation.search_poi
   source: manifest
-  added: '2026-07-29'
+  added: '2026-07-30'
+  tags:
+  - canonical
+  note: 视觉地标解析是 search_poi 的独有路径
+- text: 国贸三期在哪个位置
+  plan:
+  - agent: navigation
+    intent: navigation.search_poi
+  source: manifest
+  added: '2026-07-30'
   tags:
   - canonical

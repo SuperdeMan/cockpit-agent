@@ -173,7 +173,9 @@ async def _run(hints: list[dict], pool: list[dict], agents: list, args) -> dict:
     report: dict = {"candidates": [], "keep": [], "ineffective": [], "no_corpus": []}
     cases: list[CaseResult] = []
     for hi, row in enumerate(hints, 1):
-        texts = firing_texts(row, pool)[:args.limit_per_hint]
+        texts = firing_texts(row, pool)
+        if args.limit_per_hint > 0:            # 0 = 全覆盖（见 --limit-per-hint 的 help）
+            texts = texts[:args.limit_per_hint]
         if not texts:
             report["no_corpus"].append({k: row[k] for k in
                                         ("key", "intent", "pattern", "priority")})
@@ -311,7 +313,10 @@ def main() -> int:
     ap.add_argument("--only", default="", help="只测 agent_id 含该子串的 hint")
     ap.add_argument("--repeat", type=int, default=2,
                     help="每句每臂重复轮次（默认 2；**n=1 不做退役判定**）")
-    ap.add_argument("--limit-per-hint", type=int, default=3, help="每条 hint 取几句命中语料")
+    ap.add_argument("--limit-per-hint", type=int, default=3,
+                    help="每条 hint 取几句命中语料；**0=全覆盖**（退役判定的纪律要求——"
+                         "抽样的偏差方向是固定的：命中面越大越容易被放行，而那正是风险最高的"
+                         "一批。此前 `[:0]` 会切成空列表、把该 hint 静默报成「无命中语料」）")
     ap.add_argument("--provider", default="", help="ProviderLock 期望 provider（退役判定必须 pin）")
     ap.add_argument("--model", default="", help="档位 pin（如 deepseek-v4-flash）——"
                                                 "不给则用该 provider 的默认档")

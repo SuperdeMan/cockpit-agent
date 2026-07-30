@@ -611,10 +611,26 @@
 
 - text: 搜一下附近的加油站
   tags: [mode_guardrail, nearby]
-  expect_mode: "other:nearby.search"
+  expect_mode: "other:nearby.search|other:navigation.search_poi"
   initial_intents: []
-  expect_det_intents: [nearby.search]
-  source: "search hint guard 含附近/加油站→让位；nearby hint(55) 自己接住"
+  expect_det_intents: []
+  source: "search hint guard 含附近/加油站→让位（本例的本职）。2026-07-30：加油站从 nearby
+    hint 类目收窄移除——无专属 owner，发现面(nearby)与地点定位(navigation)都成立，
+    **歧义类目交回模型不由正则钉死**，故 det 断言从 [nearby.search] 改为无 hint 施加"
+
+# 2026-07-30 地盘收口：充电桩发现改判归 charging.find（读真实 SOC + 空闲优先排序 + 可作
+# 途经点），nearby hint 的充电类目随之收窄移除。这两条是「退役/收窄的是规则，不是对它的
+# 回归保护」——原断言在 route_hints_cases 是「hint 施加后应得 X」，规则没了就只能改端到端口径。
+- text: 附近有没有充电站
+  tags: [mode_guardrail, charging]
+  expect_mode: other:charging.find
+  expect_intents: [charging.find]
+  source: "2026-07-30 改判（原 route_hints_cases 断言 nearby.search）：充电桩发现归 charging"
+- text: 找个充电站
+  tags: [mode_guardrail, charging]
+  expect_mode: other:charging.find
+  expect_intents: [charging.find]
+  source: "2026-07-30 改判：双臂裸跑两档一致——摘掉 nearby hint 后模型自己就落 charging.find"
 
 - text: 查一下我的待办
   tags: [mode_guardrail, reminder]
@@ -645,7 +661,9 @@
   tags: [mode_guardrail, nearby]
   expect_mode: "other:nearby.search"
   initial_intents: []
-  expect_det_intents: [nearby.search]
+  # 2026-07-30：nearby 的两条 route_hint 已退役（跨两档全覆盖双臂裸跑），故 det 层不再有
+  # 任何 hint 施加。**端到端期望（expect_mode）不变**——退役的是规则不是落域，模型自己会。
+  expect_det_intents: []
 
 - text: 帮我规划一个杭州两日游
   tags: [mode_guardrail, trip]
@@ -948,3 +966,21 @@
   expect_mode: other:trip.plan
   expect_intents: [trip.plan]
   source: "trip.plan 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: ('帮我看看附近有什么咖啡店', ['nearby.search'])
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:nearby.search
+  expect_intents: [nearby.search]
+  source: "nearby.search 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: ('帮我看看我附近有什么好吃的', ['nearby.search'])
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:nearby.search
+  expect_intents: [nearby.search]
+  source: "nearby.search 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+- text: ('附近有没有停车场', ['nearby.search'])
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:nearby.search
+  expect_intents: [nearby.search]
+  source: "nearby.search 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"

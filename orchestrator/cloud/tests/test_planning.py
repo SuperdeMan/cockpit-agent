@@ -412,7 +412,11 @@ def test_retired_hints_are_gone_by_design():
     """上方原有的「hint 应当补步/改写」断言已删除——它们描述的机制不存在了。
 
     退役的 hint（跨 minimax:MiniMax-M3 与 deepseek:deepseek-v4-flash 两档、全部命中语料
-    全覆盖、各 ×2 轮，摘掉后仍全部落对）：trip-planner#0/#2/#3/#4
+    全覆盖、各 ×2 轮，摘掉后仍全部落对）：trip-planner#0/#2/#3/#4；
+    2026-07-30 追加 **nearby 的两条**（`nearby.search`，13+2 句全覆盖）——它们退役的前提是
+    先把**错标的金标**修掉：判定语料里「找个评分高的川菜馆」被 navigation 声称、
+    「找个充电站」被 nearby hint 从 charging 手里抢走，`ineffective`（带着 hint 也答错）
+    读出来的其实是**金标自相矛盾**，不是规则失效。详见 skills/exemplars/boundaries.yaml。
 
     **回归保护去哪了，以及它变弱了多少**：命中句已改端到端口径迁入
     `test/eval_corpus/mode_routing_cases.yaml`，由 `eval_mode_routing --live` 覆盖。
@@ -430,7 +434,8 @@ def test_retired_hints_are_gone_by_design():
 
     import yaml as _yaml
     root = _pl.Path(__file__).resolve().parents[3]
-    retired = ['trip.plan', 'trip.modify', 'trip.navigate', 'trip.status']
+    retired = ['trip.plan', 'trip.modify', 'trip.navigate', 'trip.status',
+               'nearby.search']
     caps, hints = set(), {}
     for p in sorted(_glob.glob(str(root / "agents" / "*" / "manifest.yaml"))):
         d = _yaml.safe_load(open(p, encoding="utf-8")) or {}

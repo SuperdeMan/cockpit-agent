@@ -778,12 +778,21 @@ services:
     <<: *restart
     # 端侧编排器：内含 Fast Intent + 端侧车控/媒体 Agent + 模拟 VAL（PoC 简化为单进程）
     build: { context: .., dockerfile: orchestrator/edge/Dockerfile }
-    volumes: *certs-vol
+    volumes:
+      - ../certs:/certs:ro
+      # models/ 只读挂载（M5 P3）：端侧语义 NLU 的 ONNX + labels + vocab。**镜像里刻意不
+      # COPY**——它是训练产物、gitignore、每次重训都会变，烤进镜像等于每次重训都要重建。
+      # 挂载缺席（或没训过）时 EdgeNLU 决议 disabled、整链回落规则，与声纹 CAM++ 同款姿态。
+      - ../models:/app/models:ro
     environment:
       CLOUD_GATEWAY_ADDR: cloud-gateway:8080
       NATS_URL: nats://nats:4222
       FAST_INTENT_THRESHOLD_HIGH: ${FAST_INTENT_THRESHOLD_HIGH:-0.85}
+      # `_LOW` 从 M5 P3 起真有消费方（端侧语义 NLU 的 θ_low）；此前只有声明没有调用点。
       FAST_INTENT_THRESHOLD_LOW: ${FAST_INTENT_THRESHOLD_LOW:-0.5}
+      # 端侧语义 NLU 挡位：off | shadow。**不带默认值**——默认只活在 nlu.py::mode() 一处
+      # （.env.example 活跃行压死代码默认的老教训）。
+      EDGE_NLU_MODE: ${EDGE_NLU_MODE:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # R3.1 层 2（通道鉴权）：Hello 携带的 channel token；默认空 → 云侧默认放行。
       VEHICLE_ID: ${VEHICLE_ID:-v1}

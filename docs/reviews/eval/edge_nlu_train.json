@@ -1,0 +1,144 @@
+{
+  "generated": "2026-07-30T06:56:05.579870+00:00",
+  "base_model": "iic/nlp_structbert_backbone_tiny_std",
+  "corpus_rows": 8579,
+  "rule_hit": 6508,
+  "hyper": {
+    "epochs": 8,
+    "batch_size": 32,
+    "lr": 5e-05,
+    "max_len": 32,
+    "seed": 20260730
+  },
+  "lanes": [
+    {
+      "lane": "holdout",
+      "train": 7339,
+      "test": 1240,
+      "domain_acc": 0.9911,
+      "object_acc": 0.9581,
+      "both_acc": 0.954,
+      "unseen_object_classes": [],
+      "unseen_rows_in_test": 0,
+      "theta_scan": {
+        "0.5": {
+          "kept": 1160,
+          "kept_frac": 0.9355,
+          "precision": 0.9879
+        },
+        "0.6": {
+          "kept": 1129,
+          "kept_frac": 0.9105,
+          "precision": 0.9929
+        },
+        "0.7": {
+          "kept": 1076,
+          "kept_frac": 0.8677,
+          "precision": 0.9963
+        },
+        "0.8": {
+          "kept": 995,
+          "kept_frac": 0.8024,
+          "precision": 0.998
+        },
+        "0.9": {
+          "kept": 816,
+          "kept_frac": 0.6581,
+          "precision": 1.0
+        },
+        "0.95": {
+          "kept": 605,
+          "kept_frac": 0.4879,
+          "precision": 1.0
+        }
+      },
+      "worst_objects": [
+        {
+          "object": "地图",
+          "n": 15,
+          "ok": 12,
+          "unseen": false,
+          "acc": 0.8
+        },
+        {
+          "object": "音乐点播",
+          "n": 17,
+          "ok": 14,
+          "unseen": false,
+          "acc": 0.824
+        },
+        {
+          "object": "媒体控制",
+          "n": 9,
+          "ok": 8,
+          "unseen": false,
+          "acc": 0.889
+        },
+        {
+          "object": "车辆模式",
+          "n": 10,
+          "ok": 9,
+          "unseen": false,
+          "acc": 0.9
+        },
+        {
+          "object": "音乐控制",
+          "n": 31,
+          "ok": 28,
+          "unseen": false,
+          "acc": 0.903
+        },
+        {
+          "object": "图片相册",
+          "n": 12,
+          "ok": 11,
+          "unseen": false,
+          "acc": 0.917
+        },
+        {
+          "object": "广播点播",
+          "n": 12,
+          "ok": 11,
+          "unseen": false,
+          "acc": 0.917
+        },
+        {
+          "object": "广播控制",
+          "n": 16,
+          "ok": 15,
+          "unseen": false,
+          "acc": 0.938
+        },
+        {
+          "object": "声音",
+          "n": 18,
+          "ok": 17,
+          "unseen": false,
+          "acc": 0.944
+        },
+        {
+          "object": "语音助手",
+          "n": 22,
+          "ok": 21,
+          "unseen": false,
+          "acc": 0.955
+        },
+        {
+          "object": "视频控制",
+          "n": 25,
+          "ok": 24,
+          "unseen": false,
+          "acc": 0.96
+        },
+        {
+          "object": "导航",
+          "n": 96,
+          "ok": 93,
+          "unseen": false,
+          "acc": 0.969
+        }
+      ],
+      "train_seconds": 919.1
+    }
+  ]
+}

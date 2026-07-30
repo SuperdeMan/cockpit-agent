@@ -223,3 +223,78 @@ def test_lex_threshold_is_clamped(monkeypatch, bad, expected):
     """越界阈值不崩但会**静默**改变行为：钳 0 = 全量放行（skills min_score 同款教训）。"""
     monkeypatch.setenv("EXEMPLAR_LEX_THRESHOLD", bad)
     assert ex._lex_threshold() == pytest.approx(expected)
+
+
+def test_reserved_files_are_not_loaded_as_exemplars(tmp_path):
+    """boundaries.yaml 是治理产物不是范例文件——被当范例文件吃会每 30s 刷两条 warning。"""
+    root = tmp_path / "exemplars"
+    _write(root, "nearby", "domain: nearby\nexemplars:\n  - text: t\n    plan:\n"
+                           "      - intent: nearby.search\n")
+    (root / "boundaries.yaml").write_text("lex_min: 0.35\nrulings: []\n", encoding="utf-8")
+    assert [e.text for e in ex.ExemplarStore(root=root).load()] == ["t"]
+
+
+# ── ⑤ 跨域边界裁定台账门禁（2026-07-30）：守门的机制自己要被守 ────────────────
+#
+# 这个门禁存在的理由是它拦住过真东西——三起地盘冲突（navigation/charging/nearby 抢
+# 「找充电站」、navigation/nearby 抢「找个评分高的川菜馆」、info/safety 抢「有天气预警吗」）
+# 都是 manifest examples 被 P1 批量导入成金标时激活的。下面四条钉住它的四个性质，
+# 缺任何一条这门禁都会退化成安慰剂。
+
+def _ledger(root, rulings: str, lex_min: str = "lex_min: 0.35\n"):
+    (root / "boundaries.yaml").write_text(lex_min + rulings, encoding="utf-8")
+
+
+def _two_domains(tmp_path):
+    """两个域各一条「附近的X」——IDF-Dice 0.35+ 的跨域近重复对。"""
+    root = tmp_path / "exemplars"
+    _write(root, "nearby", "domain: nearby\nexemplars:\n  - text: 附近的餐厅\n    plan:\n"
+                           "      - intent: nearby.search\n")
+    _write(root, "charging", "domain: charging\nexemplars:\n  - text: 附近的充电站\n    plan:\n"
+                             "      - intent: charging.find\n")
+    return root
+
+
+def _run(root):
+    import sys
+    from pathlib import Path
+    _t = str(Path(__file__).resolve().parents[3] / "test")
+    if _t not in sys.path:
+        sys.path.insert(0, _t)
+    import eval_exemplars as ee
+    return ee.lane_boundaries(root, ex.ExemplarStore(root=root).load(force=True))
+
+
+def test_boundaries_gate_blocks_unruled_cross_domain_pair(tmp_path):
+    root = _two_domains(tmp_path)
+    _ledger(root, "rulings: []\n")
+    errs = _run(root)
+    assert any("未裁定" in e for e in errs), errs
+
+
+def test_boundaries_gate_passes_once_ruled(tmp_path):
+    root = _two_domains(tmp_path)
+    _ledger(root, "rulings:\n  - texts: [附近的餐厅, 附近的充电站]\n    why: 两回事\n")
+    assert _run(root) == []
+
+
+def test_boundaries_gate_requires_a_reason(tmp_path):
+    """没有 why 的裁定等于没裁定——这份台账的全部价值就是那句理由。"""
+    root = _two_domains(tmp_path)
+    _ledger(root, "rulings:\n  - texts: [附近的餐厅, 附近的充电站]\n    why: ''\n")
+    assert any("缺 why" in e for e in _run(root))
+
+
+def test_boundaries_gate_rejects_stale_ruling(tmp_path):
+    """台账只进不出会腐烂：两端文本已不在语料里的条目必须被清掉。"""
+    root = _two_domains(tmp_path)
+    _ledger(root, "rulings:\n  - texts: [附近的餐厅, 附近的充电站]\n    why: 两回事\n"
+                  "  - texts: [早就删了的句子, 另一句删了的]\n    why: 陈旧\n")
+    assert any("陈旧裁定" in e for e in _run(root))
+
+
+def test_boundaries_gate_needs_versioned_threshold(tmp_path):
+    """lex_min 必须与裁定同文件——阈值一旦能在别处偷偷改，台账就不再是完备的。"""
+    root = _two_domains(tmp_path)
+    _ledger(root, "rulings: []\n", lex_min="")
+    assert any("lex_min" in e for e in _run(root))

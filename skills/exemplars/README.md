@@ -86,6 +86,11 @@ exemplars:
   规划知识冲突时以规划知识为准」——位置与文案一起表达优先级，不靠模型揣摩。
 - **T2 再规划 / 挂起恢复继承**：按 `plan.exemplars` 实际注入名单重渲染（同 skills
   的 `render_for_names`），不重新检索。
+- ⚠️ **注入面（2026-07-30 评审记账）**：范例 `text` **原样**进 planner prompt（`用户：『…』`
+  格式，不转义）。当前可接受的前提是**每条范例都过人审 + CI 门禁**且范例是权威链最软层
+  （写错只是噪声）；若将来任何来源绕过人审自动入库（如 evolve 提案自动 apply），
+  必须先重估这个注入面——含指令样文本（「忽略以上」类）的范例会随检索进入后续所有相似
+  话术的 prompt。
 
 ## 三个来源
 
@@ -109,13 +114,45 @@ python scripts/evolve.py all           # 草案落 .work/<date>/proposals/exempl
 `source` 是治理信息，不是装饰：`manifest` 是一次性盘活，**`trace` 才是飞轮在转的证据**
 （`python scripts/exemplars.py stats` 看结构）。
 
+## 金标裁定：地盘冲突（2026-07-30 补，台账 `boundaries.yaml`）
+
+199 条初始金标来自 14 份 manifest 的 `examples`，而**manifest examples 是「我这个能力能答
+这句」写出来的，天然不判别化**——写的人不会去想「这句是不是更该归别人」。批量导入时，
+三处过期/重叠的地盘声明被一起激活成了「判定尺自相矛盾」：
+
+| 冲突 | 谁在抢 | 后果 |
+|---|---|---|
+| 找充电站 | navigation.search_poi / charging.find / nearby hint | `nearby#1` 的 replace 把模型判对的 `charging.find` 踩成 `nearby.search`；而**退役判定把「金标错了」读成「规则失效了」**（那 4 条「带着 hint 也答错」） |
+| 找个评分高的川菜馆 | navigation.search_poi / nearby.search | 两条 capability 描述几乎逐字重叠（都写「搜 POI（餐厅/充电站/加油站/停车场）」）→ planner 掷硬币 → **正则被拉来当裁判** |
+| 有天气预警吗 | info.alerts / safety.weather_alert | 描述判别（后者是「对驾驶的影响」）但**例句一句也不体现驾驶角度**，只差语气词 |
+
+三条可复用的判断：
+- **盘活死资产的同时也会把死资产里的错误一起激活**；地盘搬家必须全局收口（旧声明会留在
+  另一个 agent 的 examples 里、留在注释里）。
+- **两个 capability 的描述重叠到分不开时，规则必然被拉来当裁判**——修描述才是修根因，
+  给 guard 追词只是延后。判别化的判据用**产出形态**（给人挑的多候选 vs 给车用的单目标），
+  不用类目枚举。
+- **为某条规则写的语料，它的 gold 就是那条规则的输出**：双臂裸跑只能证明「摘掉它 gold 就
+  不满足」，不能证明规则是对的。所以「带着 hint 也答错」那一档**必须由人裁定**。
+
+裁定台账见 `boundaries.yaml`（含「为什么是台账不是阈值」的实测数据：假冲突的相似度可以
+高于真冲突，词法与语义两个通道都是）。**只登记「判为两回事」；判为冲突的必须改金标。**
+
+**改判（移域/删除）的记账**：范例是「只追加不插入」（eid=`<domain>#序号`），所以从文件
+中间删一条会让其后条目的 eid 全部前移、昨天日报里的归因指向别的条目。改判时在 commit
+里写清移动了哪些 eid；本次改判移动了 `navigation#15..#22`（删掉 #14「找个评分高的川菜馆」
+所致，它已改判到 `nearby`）。
+
 ## 门禁（`test/eval_exemplars.py`，CI 阻断 + evolve nightly）
 
 1. **契约静态校验（硬失败）**：顶层映射 / domain=文件名 / exemplars 非空列表 /
    每条 text·plan 齐 / **intent 真实存在**于 manifests ∪ 端侧意图集（typo 守卫）/
    首步 intent 的域=文件域 / source 封闭集 / tags 是列表 /
-   **全局同句冲突**（同一句话在两处被标成不同落域＝语料自相矛盾，注进 prompt 是纯噪声）。
+   **全局同句冲突**（同一句话在两处被标成不同落域＝语料自相矛盾，注进 prompt 是纯噪声）
+   + **跨域近重复未裁定**（≥`boundaries.yaml` 的 `lex_min` 的跨域对必须在台账里被人裁过一次，
+   且台账里两端文本已消失的陈旧条目也阻断——台账只进不出会腐烂）。
    运行时 loader 对这些一律 fail-open 跳过（保可用性），这里是硬失败（保主干整洁）。
+   零网络：`lex_min` 只用词法通道，llm-gateway 不可达不能把 CI 变红。
 2. **域路由探针**：拿**不在语料里**的句子（`mode_routing_cases` 设计上就「避开 manifest
    examples 原句」+ `route_hints_cases`）问「检回的范例指向的域对不对」，三个数——
    `hit`（域对）/ `miss`（**域错配，这才是伤害面**）/ `silent`（没检回，无害）。

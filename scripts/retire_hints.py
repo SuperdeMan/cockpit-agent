@@ -41,11 +41,27 @@ _MR = _ROOT / "test" / "eval_corpus" / "mode_routing_cases.yaml"
 _TZ = timezone(timedelta(hours=8))
 
 
-def load_intersection() -> tuple[list[str], dict, list[str]]:
-    """→ (交集 key 列表, {key: 证据}, provider 列表)。局部跑（.only-）不参与。"""
-    files = sorted(f for f in _EVAL.glob("hint_retirement.*.json") if ".only-" not in f.name)
+def load_intersection(explicit: list[str] | None = None) -> tuple[list[str], dict, list[str]]:
+    """→ (交集 key 列表, {key: 证据}, provider 列表)。
+
+    默认只认**全量**报告：局部跑（`.only-`）的 candidates 列表不是完整画面，把它当全量用
+    会让「这一档根本没测到」被读成「这一档也判可退役」。
+    `explicit`（`--from`）是显式例外——**改完一条 hint 只复验它**是常规动作（本次 nearby
+    类目收窄即如此），此时按名给出每一档的局部报告，交集仍要求跨 provider，纪律不降级。
+    """
+    if explicit:
+        files = []
+        for s in explicit:
+            p = Path(s)
+            p = p if p.is_file() else _EVAL / s
+            if not p.is_file():
+                raise SystemExit(f"✗ 找不到报告 {s}")
+            files.append(p)
+    else:
+        files = sorted(f for f in _EVAL.glob("hint_retirement.*.json")
+                       if ".only-" not in f.name)
     if len(files) < 2:
-        raise SystemExit(f"✗ 只有 {len(files)} 份全量报告，跨 provider 交集至少 2 份")
+        raise SystemExit(f"✗ 只有 {len(files)} 份报告，跨 provider 交集至少 2 份")
     per, ev, provs = {}, {}, []
     for f in files:
         d = json.loads(f.read_text(encoding="utf-8"))
@@ -151,14 +167,41 @@ def migrate_cases(intent: str, pattern: str, apply: bool) -> tuple[int, list[str
     return len(moved), [t for t, _ in moved]
 
 
+def dependent_det_cases(intent: str, pattern: str) -> list[str]:
+    """`mode_routing_cases.yaml` 里**确定性子集**（`expect_det_intents`）对该 hint 的依赖。
+
+    这是 2026-07-30 nearby 退役时发现的工具缺口：`migrate_cases` 只看
+    `route_hints_cases.yaml`，而 `mode_routing_cases.yaml` 的 det 子集**也是断言 hint 行为
+    的**（`initial_intents: []` + `expect_det_intents: [X]` = 「hint 应当把空计划补成 X」）。
+    hint 一退役这类断言就变成「施加一个不存在的 hint 应得 X」——恒假，离线 eval 当场变红，
+    而工具一声不响（P2 那批 19 条侥幸没撞上，纯属运气）。
+
+    刻意**只报不改**：新期望值该是多少取决于**剩余 hints 的共同作用**，重算等于在这里
+    复刻一份 RouteHintEngine 的语义——两份实现迟早会漂。让人跑一次 eval_mode_routing
+    看真实结果再填，是更短也更诚实的路径。
+    """
+    rx = re.compile(pattern)
+    out = []
+    for c in (yaml.safe_load(_MR.read_text(encoding="utf-8")) or []):
+        if not isinstance(c, dict) or "expect_det_intents" not in c:
+            continue
+        if intent in list(c.get("expect_det_intents") or []) and rx.search(str(c.get("text") or "")):
+            out.append(str(c["text"]))
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--apply", action="store_true", help="真正落盘（缺省 dry-run）")
     ap.add_argument("--only", default="", help="逗号分隔 agent_id 子串过滤")
+    ap.add_argument("--from", dest="from_reports", default="",
+                    help="逗号分隔的报告文件名（可含 .only- 局部跑）——用于「只改了某条 hint、"
+                         "只复验它」的场景；仍要求 ≥2 档，交集纪律不变")
     args = ap.parse_args()
 
-    inter, ev, provs = load_intersection()
+    inter, ev, provs = load_intersection(
+        [s.strip() for s in args.from_reports.split(",") if s.strip()] or None)
     if args.only:
         pats = [s.strip() for s in args.only.split(",") if s.strip()]
         inter = [k for k in inter if any(p in k for p in pats)]
@@ -189,6 +232,14 @@ def main() -> int:
         if n:
             print(f"      语料迁移 {n} 条：{'、'.join(moved[:3])}"
                   + ("…" if n > 3 else ""))
+        dep = dependent_det_cases(intent, pattern)
+        if dep:
+            print(f"      ⚠ mode_routing_cases.yaml 还有 {len(dep)} 条 **det 断言**依赖这条 hint："
+                  f"{'、'.join(dep[:3])}{'…' if len(dep) > 3 else ''}\n"
+                  f"        它们现在断言的是「施加一个不存在的 hint 应得 X」＝恒假。"
+                  f"请跑 `python test/eval_mode_routing.py` 看真实结果并改 expect_det_intents"
+                  f"（本工具刻意不代改：新值取决于剩余 hints 的共同作用，重算等于复刻一份"
+                  f"RouteHintEngine）。")
         print()
     # 报**实际执行数**不是候选数：交集 20 条里有 1 条被 require_confirm 挡下，
     # 汇总行写 20 就是在谎报——这类「数字对不上实际动作」的报数正是本期一路在防的东西。

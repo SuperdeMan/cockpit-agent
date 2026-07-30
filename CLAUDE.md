@@ -54,8 +54,10 @@ docs/           架构与设计文档
 test/           端到端场景测试
 gen/            codegen 产出（gitignore，不要手动编辑）
 certs/          服务间 mTLS 证书（gitignore；scripts/gen-certs.* 生成，仅 .gitkeep 入库）
-models/         本地推理模型（gitignore，scripts/fetch-voice-models.* 拉取，仅 .gitkeep 入库）：
-                voiceprint/ 声纹 CAM++ ONNX。**缺失不阻塞**——网关决议 disabled、整链回落
+models/         本地推理模型（gitignore，scripts/fetch-*.* 拉取或本地训练，仅 .gitkeep 入库）：
+                voiceprint/ 声纹 CAM++ ONNX；nlu/ 端侧语义 NLU（M5 P3a，`scripts/train_edge_nlu.py`
+                产出 edge_nlu.onnx + labels.json + vocab.json；底座经 scripts/fetch-edge-nlu-base.*
+                从 **ModelScope** 拉——HF 在国内拉不动）。**缺失不阻塞**——决议 disabled、整链回落
 ```
 
 > 注：`vehicle-abstraction/` 在架构文档中规划，当前 PoC 阶段 VAL 实现位于 `orchestrator/edge/val.py`（Python 模拟）。
@@ -104,7 +106,7 @@ Windows 无 make 时用 `scripts/gen-proto.ps1`、`scripts/run_e2e.ps1` 等价�
 **工程纪律**：改完主动跑 `make test`；不要注释报错或加绕过标记来"让它跑起来"，找根因；大改动先在设计文档对齐再动手。
 
 ## 7. 当前阶段
-截至 2026-07-29，Phase 1 工程化 PoC 主干、云端中枢 P0-P3、R2-R4 硬化主题（架构还债/
+截至 2026-07-30，Phase 1 工程化 PoC 主干、云端中枢 P0-P3、R2-R4 硬化主题（架构还债/
 安全/语音回路/拒识澄清等）、可观测台（badcase 排查贯通：会话/轮次/日志/LLM + SQLite
 持久化）与**旅程级验证体系**（L3 journeys + L4 HMI CDP）已落地，运行模型为
 T0 端侧快路径 / T1 单次 DAG / T2 有界 Agentic 循环。
@@ -129,7 +131,7 @@ M0a→M4 全部完成**，主线是「把每一种智能供给都声明式化」
 P0 与一批组合缺陷当日修复，结构性遗留已立卡——验收报告见
 `docs/reviews/2026-07-26-acceptance-review-m0a-m4.md`。
 
-**M5 数据飞轮 P0-P2 已落地（2026-07-29，架构文档 v1.14）**，主线是把「修落域 badcase 的
+**M5 数据飞轮 P0-P2 + P3a 已落地（2026-07-29/30，架构文档 v1.15）**，主线是把「修落域 badcase 的
 标准产物」从**正则**换成**数据**，并给规则装上出口。母提案
 `docs/design/2026-07-28-intent-accuracy-data-flywheel.md`：
 
@@ -144,9 +146,20 @@ P0 与一批组合缺陷当日修复，结构性遗留已立卡——验收报�
 - 规则退役**必须跨 provider 取交集 + 覆盖全部命中句**——抽样的偏差方向固定：命中面越大越容易被放行；
 - **N1 涨不等于系统变好**：语料有隐藏分母、域分布偏斜七成集中在三个域、canonical 高分是 hint 钉出来的。
 
-**P3 端侧 NLU 未开工**（启动判据已满足：端侧 313 分支≈300 触发线、覆盖 76.2%<85%、
-Shadow NLU 已证 LLM 91.2% vs 规则 75.9%）。其余可选方向见 `AGENTS.md` §4.0 与三张余项表
-（`sim.adas.*` 演示域仍是低优先 backlog）。
+**P2 余项「nearby 规则群内讧」已收口 + P3a 端侧 NLU 识别侧已落地（2026-07-30）**：
+
+| 期 | 交付 | 一句话 |
+|---|---|---|
+| P2 收口 | 地盘裁定台账 | 「内讧」真根因是**金标自相矛盾**（P1 把过期的地盘声明批量导入成了金标）而非规则打规则；规则存量 **12→10**；机制修复=`skills/exemplars/boundaries.yaml` 跨域边界裁定台账 + CI 阻断门禁（**相似度不能机械判定冲突**——假冲突可以比真冲突更像，故人裁一次、机器只管「不许悄悄新增」） |
+| P3a | 端侧语义 NLU（**只到 shadow**） | 4 层中文 encoder（35MB/4.8ms）给出真概率，θ_high/θ_low 第一次可接。**DoD 未达线且刻意不追**：到 85% 需 θ=0.8，代价是约 1% 请求在端侧识别成**错的对象**（三闸挡危险动作，挡不住「合法但不是用户要的动作」）——产品决策，不是技术选择 |
+
+**三条新判据**：**先测天花板再训模型**（可行性判据先行，且测量本身要人工抽查上偏）／
+**校准的单调性是同分布性质**（transfer 车道 θ≥0.95 精度反低于 0.9——输入一偏，最自信那档最不可信）／
+**两个评测口径都要印**（holdout 95.8% vs transfer 64.9%，差 31 点就是「同分布」的含金量）。
+
+**M5 P0→P3a 已通过全量评审（2026-07-30）**：14 提交逐项核验，零 P0/P1 缺陷、零红线违规，
+报告 `docs/reviews/2026-07-30-review-m5-data-flywheel.md`。余项与下一步见 `AGENTS.md` §4.0
+（P3b 开工判据、78 个端侧 capability 只有 2 句描述等）。
 
 当前事实、测试证据和待办统一维护在 `AGENTS.md`（§4 顶部有「当前进度与下一步」交接区）；
 设计与落地记录见 `docs/design/`（索引 `docs/design/README.md`）。原始量产级目标和未完成项见
