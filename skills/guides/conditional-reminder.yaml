@@ -4,6 +4,11 @@ description: 查询结果决定后续动作的条件句（如果/要是…就…
 priority: 65
 keywords: [如果, 要是, 的话, 就提醒, 下雨就, 提醒我带]
 knowledge: |
+  先判定「提醒是否依赖查询结果」，不要只凭同一句里同时出现『提醒』和『天气』就当条件句：
+  - **条件**：『查X，如果/要是结果Y就提醒Z』，提醒做不做由查询结果决定。
+  - **并列**：提醒本身已经有**明确时间**，再用『再/顺便/另外』查询天气；两件事都要做，
+    reminder.create 与天气查询是两个独立步骤，不能把提醒吞掉。
+
   **条件依赖**（『查X，如果/要是…就Y』——后半件事做不做取决于前一步查询结果）必须选
   adaptive：先只规划查询步，看到结果再决定是否执行 Y；不要把 Y 无条件排进计划，
   也不要只查不管 Y。
@@ -30,5 +35,8 @@ golden:
     expect_not: [reminder.create]
     expect_complexity: adaptive
     holdout: true
+  # M-A A1-3 真栈反例：明确八点的提醒不依赖天气，『再看下』是并列连接词。
+  - text: 明天早上八点提醒我带伞，再看下明天深圳会不会下雨
+    expect_intents: [reminder.create, "info.weather|info.forecast"]
 owner: orchestrator
-version: 1
+version: 2

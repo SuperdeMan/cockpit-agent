@@ -218,3 +218,20 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
+- text: 明天早上八点提醒我带伞，再看下明天深圳会不会下雨
+  plan:
+  - agent: reminder
+    intent: reminder.create
+    slots:
+      title: 带伞
+      time_text: 明天早上八点
+  - agent: info
+    intent: info.weather
+    slots:
+      city: 深圳
+      date: 明天
+  source: trace
+  added: '2026-07-31'
+  tags:
+  - badcase
+  note: M-A A1-3 曾被条件提醒 guide 误读为只查天气；明确时间加“再看下”是并列双意图

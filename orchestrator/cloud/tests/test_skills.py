@@ -56,6 +56,24 @@ def test_retrieval_stays_quiet_on_plain_queries():
     assert sk.top_guides("把空调调到24度", store.guides(), k=3) == []
 
 
+def test_conditional_reminder_guide_covers_parallel_unconditional_boundary():
+    """A1-3 真栈：『八点提醒我…再看天气』是并列，不是『下雨就提醒』。
+    同一 guide 必须把边界和双 intent 金标一起交给 planner。"""
+    store = sk.SkillStore()
+    guide = next(d for d in store.guides() if d.name == "conditional-reminder")
+    parallel = next(
+        g for g in guide.golden
+        if g.get("text") == "明天早上八点提醒我带伞，再看下明天深圳会不会下雨"
+    )
+
+    assert "明确时间" in guide.knowledge
+    assert parallel["expect_intents"] == [
+        "reminder.create",
+        "info.weather|info.forecast",
+    ]
+    assert "expect_not" not in parallel
+
+
 # ── 渲染 ──────────────────────────────────────────────────────────────────────
 
 def test_render_block_has_policies_and_guides_within_budget():

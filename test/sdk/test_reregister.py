@@ -39,3 +39,14 @@ def test_reregister_loop_survives_registry_failure():
     _drive(_reregister_loop(reg, object(), "host:50060", interval=0.01))
     # registry 一直失败也持续重试、不崩溃，恢复后下个周期即补注册
     assert reg.calls >= 2
+
+
+def test_reregister_loop_retries_immediately_before_long_steady_interval():
+    """profile 重建时首次注册可能撞上 registry 启动窗；自愈循环不能先睡完整
+    10 秒，否则这段时间 registry 仍返回旧容器 endpoint。"""
+    reg = _FakeRegistry()
+    _drive(
+        _reregister_loop(reg, object(), "host:50060", interval=60),
+        seconds=0.02,
+    )
+    assert reg.calls == 1

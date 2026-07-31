@@ -218,6 +218,19 @@ def test_real_corpus_loads_and_all_intents_exist():
     assert all(e.intents() for e in items)
 
 
+def test_a1_3_parallel_reminder_weather_badcase_is_an_exemplar():
+    """M5 数据飞轮：A1-3 的落域修复产物必须是范例数据，不是新 route hint。"""
+    items = ex.ExemplarStore().load()
+    row = next(
+        e for e in items
+        if e.text == "明天早上八点提醒我带伞，再看下明天深圳会不会下雨"
+    )
+
+    assert row.domain == "reminder"
+    assert row.source == "trace"
+    assert row.intents() == ["reminder.create", "info.weather"]
+
+
 @pytest.mark.parametrize("bad,expected", [("0", 0.01), ("2.5", 1.0), ("oops", 0.34)])
 def test_lex_threshold_is_clamped(monkeypatch, bad, expected):
     """越界阈值不崩但会**静默**改变行为：钳 0 = 全量放行（skills min_score 同款教训）。"""

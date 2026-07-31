@@ -173,6 +173,32 @@ def test_resolve_slot_refs_expands_exact_placeholders_in_existing_slots():
     }
 
 
+def test_resolve_slot_refs_expands_minimax_ref_alias_in_existing_slot():
+    """MiniMax 真栈会把自由对象编码成 $text，并把下游槽写成
+    destination="$ref.poi_id" + slot_refs.poi_id。两段信息合起来是完整引用，
+    不能让字面量 ``$ref.poi_id`` 漏进导航 Agent。"""
+    done = {
+        "s1": StepResult(
+            step_id="s1",
+            status=StepStatus.OK,
+            data={"items": [{"id": "poi-1", "name": "灯花·川小馆"}]},
+        )
+    }
+    step = Step(
+        id="s2",
+        agent_id="navigation",
+        slots={"destination": "$ref.poi_id"},
+        slot_refs={"poi_id": "s1.data.items.0.id"},
+    )
+
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(step, done)
+
+    assert step.slots == {
+        "destination": "poi-1",
+        "poi_id": "poi-1",
+    }
+
+
 # ─── to_result 测试 ───
 
 class MockResponse:

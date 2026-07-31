@@ -345,6 +345,23 @@ class DagExecutor:
             else:
                 logger.warning("slot_ref %s -> %s resolved to None", slot_name, ref_path)
 
+        # MiniMax 的自由对象 wire format 会把「目标槽引用另一个 slot_refs 槽」写成
+        # destination="$ref.poi_id"。上面的显式引用先把 poi_id 解析成真实值，再在本步
+        # 槽集合内做一次严格的**整值别名**替换；不接受任意路径/字符串插值，避免扩大
+        # LLM 可解释语法面。
+        for slot_name, raw_value in list(step.slots.items()):
+            if not isinstance(raw_value, str):
+                continue
+            match = re.fullmatch(r"\$ref\.([A-Za-z_][A-Za-z0-9_]*)", raw_value.strip())
+            if not match:
+                continue
+            alias = match.group(1)
+            value = step.slots.get(alias)
+            if value is not None and value != raw_value:
+                step.slots[slot_name] = str(value)
+            else:
+                logger.warning("slot alias %s -> %s resolved to None", slot_name, alias)
+
     @staticmethod
     def _resolve_ref(ref_path: str, done: dict) -> object:
         """解析 slot_ref 路径，如 's1.data.items.0.id'。"""

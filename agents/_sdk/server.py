@@ -122,15 +122,20 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
 async def _reregister_loop(registry, manifest, endpoint: str, interval: float):
     """周期重注册：registry 重启/暂不可达后，agent 在一个周期内自动补注册。
 
-    Register 是幂等 upsert，重复调用安全；失败静默、下个周期重试，不影响 Agent
-    自身服务（守住"registry 重启不应让运行中的 agent 永久失联"）。
+    Register 是幂等 upsert，重复调用安全。启动时立即补一次：serve() 的首次注册若
+    撞上 registry 启动窗，不能先留下完整 interval 的旧 endpoint 空窗；失败时按短
+    间隔重试，成功后再回到正常周期。不影响 Agent 自身服务。
     """
+    delay = 0.0
+    retry_delay = min(max(interval, 0.01), 0.5)
     while True:
-        await asyncio.sleep(interval)
+        if delay:
+            await asyncio.sleep(delay)
         try:
             await registry.register(manifest, endpoint)
+            delay = interval
         except Exception:
-            pass
+            delay = retry_delay
 
 
 async def serve(agent: BaseAgent):
