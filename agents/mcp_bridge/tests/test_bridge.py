@@ -24,10 +24,12 @@ def test_e2e_cleanup_uses_atomic_owner_lifecycle_without_captured_ids():
     source = (
         Path(__file__).resolve().parents[3] / "test" / "e2e_mcp.py"
     ).read_text(encoding="utf-8")
-    cleanup = source.split("def cleanup_external(", 1)[1].split(
-        "def bridge_capabilities",
-        1,
-    )[0]
+    start = "def cleanup_external("
+    end = "def bridge_registration("
+    assert start in source
+    assert end in source
+    assert source.index(start) < source.index(end)
+    cleanup = source.split(start, 1)[1].split(end, 1)[0]
     assert "order_ids" not in cleanup
     assert 'op="lifecycle_cleanup"' in cleanup
     assert 'op="count"' in cleanup
