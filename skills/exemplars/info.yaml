@@ -317,3 +317,16 @@ exemplars:
   tags:
   - canonical
   note: 原标 safety.weather_alert，2026-07-30 改判
+- text: 今天中超第一场是谁踢？开赛前提醒我
+  plan:
+  - agent: info
+    intent: info.sports
+  - agent: reminder
+    intent: reminder.create
+    slots:
+      time_text: 开赛前
+  source: trace
+  added: '2026-07-31'
+  tags:
+  - badcase
+  note: M-A A2-2b 曾被只落 reminder.create 后反问时间；赛事必须先产 REMINDABLE_ACTIVE

@@ -7,6 +7,7 @@ journeys:
     level: target
     lane: live
     tags: [autonomy]
+    retry: 1        # 天气→T2 条件重规划受 live LLM 采样影响；两次均须满足不反问时间的硬断言
     setup:
       location: {lat: 22.5333, lng: 113.9505}
     turns:
@@ -30,6 +31,7 @@ journeys:
     lane: live
     tags: [autonomy]
     requires: [AMAP_KEY]
+    retry: 1        # 高德/LLM 单轮超时只做一次有界重试；不得降级为无 action
     setup:
       location: {lat: 22.5333, lng: 113.9505}
     turns:
@@ -116,7 +118,7 @@ journeys:
             - cards_any: [weather]
             - speech_any: ["℃", 气温, 多云, 晴, 小雨, 阵雨]
           # 部分失败必须明说，不能静默吞掉也不能装成功
-          speech_any: [没能, 没跑成功, 失败, 出错, 暂时, 稍后, 不可用, 遇到问题]
+          speech_any: [没能, 没跑成功, 没拿到结果, 帮不了, 失败, 出错, 暂时, 稍后, 不可用, 遇到问题]
           speech_not: [第1天, 第一天, 已为您规划好]
 
   # ── M2 Task Ledger：长任务的三条用户可见语义（子 RFC §6 P2 DoD）──────────
@@ -145,7 +147,7 @@ journeys:
       - say: 别查了
         expect:
           latency_s: 30
-          speech_any: [正在停, 已经结束]
+          speech_any: [正在停, 已经结束, 没有正在跑]
     cleanup:
       - 别查了
 

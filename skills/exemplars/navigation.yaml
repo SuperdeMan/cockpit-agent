@@ -199,3 +199,14 @@ exemplars:
   tags:
   - badcase
   note: M-A B5-1 曾只落 shop.menu 丢路线；当前目的地由会话焦点确定性继承
+- text: 就去第二家
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      destination: 上一轮列表的第二项
+  source: trace
+  added: '2026-07-31'
+  tags:
+  - badcase
+  note: M-A B1-1 长会话中曾回落 nearby.search；列表内容由会话历史解析

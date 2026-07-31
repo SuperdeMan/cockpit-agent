@@ -384,6 +384,26 @@ def test_slot_pending_ordinal_selection_is_topic_change():
     assert PlannerEngine._is_topic_change("三号方案") is True
 
 
+def test_slot_pending_ordinal_resumes_its_own_choice_card():
+    """B2-3：挂起步骤自身刚给出选择卡时，插话后的裸序号仍应补回该步骤。"""
+    from orchestrator.cloud.models import SessionState
+
+    pending = SessionState(
+        phase="wait_slot",
+        pending_step_id="charge",
+        missing_slots=["destination"],
+        completed_results={
+            "charge": {
+                "step_id": "charge",
+                "ui_card": {"type": "poi_list", "purpose": "dest_choice"},
+            },
+        },
+    )
+
+    assert PlannerEngine._is_topic_change("第一个", pending) is False
+    assert PlannerEngine._is_topic_change("第3家", pending) is False
+
+
 def test_slot_pending_conditional_reminder_is_topic_change():
     """B5-1：条件在前、动作在后的完整提醒不能被旧 route 槽吞掉。"""
     assert PlannerEngine._is_topic_change("到公司之前提醒我交周报") is True

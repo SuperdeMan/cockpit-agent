@@ -173,7 +173,7 @@ class PlannerEngine:
                 await self.session.clear(ctx.session_id)
                 yield {"kind": "final", "speech": "好的，已为您取消。"}
                 return
-            if self._is_topic_change(text):
+            if self._is_topic_change(text, pending):
                 # 答非所问：用户插话——保留挂起按新请求处理（R2，下轮裸答案仍可续接）
                 held_pending = pending
                 plan, seed_results = None, []
@@ -733,7 +733,7 @@ class PlannerEngine:
         return PlannerEngine._confirm_reply(text, False) is not None
 
     @staticmethod
-    def _is_topic_change(text: str) -> bool:
+    def _is_topic_change(text: str, pending: SessionState | None = None) -> bool:
         """判定 wait_slot 状态下用户是否换了话题（答非所问）。
 
         典型场景：Agent 追问"您要去哪里？"，用户回答"讲个笑话"——这不是在补槽。
@@ -747,11 +747,22 @@ class PlannerEngine:
             return False
         # 裸序号是对最近列表/候选的选择，不是任意历史 NEED_SLOT 的自然语言答案。
         # 旧挂起若抢占“第二个”，会把咖啡候选选择错误填进数轮前的 route 槽。
+        # 唯一例外是挂起步骤自身刚给出了 *_choice 选择卡：此时序号正是该槽位的
+        # 合法答案（B2-3：充电 dest_choice → 插问时间 → “第一个”）。
         if re.fullmatch(
             r"(?:第[一二三四五六七八九十\d]+(?:个|家|项|条|种)?|"
             r"[一二三四五六七八九十\d]+号(?:方案|选项|路线|店)?)",
             t,
         ):
+            current = (
+                (pending.completed_results or {}).get(pending.pending_step_id, {})
+                if pending is not None
+                else {}
+            )
+            card = current.get("ui_card") if isinstance(current, dict) else None
+            purpose = card.get("purpose", "") if isinstance(card, dict) else ""
+            if isinstance(purpose, str) and purpose.endswith("_choice"):
+                return False
             return True
         # 条件式提醒常把触发条件放在句首，动作词位于中后部；仍是完整新意图。
         if any(k in t for k in ("提醒我", "叫我", "通知我", "别忘了")):

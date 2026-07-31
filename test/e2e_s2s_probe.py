@@ -124,6 +124,19 @@ def _cancel_residual_is_bounded(status: str | None, deltas: int) -> bool:
     return status == "cancelled" and 0 <= deltas <= 1
 
 
+def _is_empty_acoustic_transport_failure(result: dict) -> bool:
+    """Retry only when the provider produced no usable acoustic observation.
+
+    A completed turn with no escalate is a real protocol verdict and must fail.
+    A transcript or tool call is also evidence, even if the socket later errors.
+    """
+
+    if result.get("transcript") or result.get("tool_call"):
+        return False
+    status = result.get("status")
+    return status is None or status == "error" or str(status).startswith("ws_closed:")
+
+
 def _api_key() -> str:
     return (os.getenv("S2S_API_KEY") or os.getenv("DASHSCOPE_ASR_KEY")
             or os.getenv("LLM_EMBED_API_KEY") or "")
@@ -421,6 +434,20 @@ async def case_escalate(key: str, model: str, rep: Report) -> None:
         rep.add("闲聊句自答不误触发", r1["tool_call"] is None and bool(r1["answer"]),
                 f"转写={r1['transcript']!r} 回答={r1['answer'][:40]!r} tool_call={r1['tool_call']}")
         r2 = await p.run_turn(synth_pcm16k(UTT_CONTROL))
+        if _is_empty_acoustic_transport_failure(r2):
+            # Real-time provider occasionally closes an otherwise healthy session before
+            # ASR emits anything. One fresh-session retry distinguishes transport/acoustic
+            # loss from a completed model decision; completed wrong routing is never retried.
+            print(
+                "  车控轮无转写/工具事件，使用新 session 有界重试一次："
+                f"status={r2.get('status')} error={r2.get('error', '')[:120]}"
+            )
+            await ws.close()
+            await s.close()
+            s, ws = await _session(key, model)
+            p = Probe(ws, model)
+            await p.open()
+            r2 = await p.run_turn(synth_pcm16k(UTT_CONTROL))
         tc = r2["tool_call"]
         ok = bool(tc) and tc.get("name") == "escalate"
         args_ok = False

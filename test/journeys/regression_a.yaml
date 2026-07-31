@@ -146,6 +146,7 @@ journeys:
     lane: live
     tags: [autonomy, continuity]
     requires: [EXA_API_KEY|SERPAPI_API_KEY]
+    retry: 1        # 首轮外部新闻偶发空列表时整条重跑；第二轮仍必须真实产 research_report
     turns:
       - say: 今天有什么科技新闻
         expect:

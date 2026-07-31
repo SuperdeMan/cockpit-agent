@@ -850,6 +850,28 @@ def test_s2s_cancel_allows_only_one_inflight_provider_packet(
     assert module._cancel_residual_is_bounded(status, deltas) is expected
 
 
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    (
+        ({"status": "error", "transcript": "", "tool_call": None}, True),
+        ({"status": "ws_closed:1006", "transcript": "", "tool_call": None}, True),
+        ({"status": None, "transcript": "", "tool_call": None}, True),
+        ({"status": "completed", "transcript": "", "tool_call": None}, False),
+        ({"status": "error", "transcript": "把空调调到二十四度", "tool_call": None}, False),
+        ({"status": "error", "transcript": "", "tool_call": {"name": "escalate"}}, False),
+    ),
+)
+def test_s2s_only_retries_empty_acoustic_transport_failures(
+    result,
+    expected,
+    monkeypatch,
+):
+    _block_real_dotenv(monkeypatch)
+    module = _load("e2e_s2s_probe")
+
+    assert module._is_empty_acoustic_transport_failure(result) is expected
+
+
 def test_s2s_tts_preflight_http_error_is_failure_not_skip(
     monkeypatch: pytest.MonkeyPatch,
 ):
