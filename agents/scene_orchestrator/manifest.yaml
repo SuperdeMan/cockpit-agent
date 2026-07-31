@@ -21,9 +21,12 @@ capabilities:
                "自定义一个遛狗模式：车窗开一半，空调外循环",
                "创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开"]
   - intent: scene.activate
-    description: 开启场景模式（自建的或内置的）
+    description: 开启场景模式（自建的或内置的）。用户同句给出的温度、灯光等覆盖参数属于
+      custom_params，必须与场景激活保留在同一个 scene.activate 步骤里，不要拆成独立车控步骤，
+      否则场景默认值与覆盖值会发生并发覆盖。
     slots: [scene, custom_params]
-    examples: ["开启回家模式", "露营模式", "午休模式", "来个钓鱼模式", "打开浪漫模式"]
+    examples: ["开启回家模式", "露营模式", "午休模式", "来个钓鱼模式", "打开浪漫模式",
+               "开启午休模式，温度26"]
   - intent: scene.deactivate
     description: 退出当前场景模式，把座椅/空调/灯光恢复到开启前的样子
     slots: [scene]

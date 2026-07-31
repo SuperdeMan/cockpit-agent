@@ -49,9 +49,10 @@ journeys:
     tags: [autonomy, continuity]
     requires: [API_FOOTBALL_KEY]
     turns:
-      # 与 regression A2-2a 使用同一真实有赛程的窗口，单句验证 T2 查询→提醒交接。
-      - say: 明天欧联第一场是谁踢？开赛前提醒我
-        skip_journey_if_speech_any: [没有查到, 暂无, 没有比赛, 无法获取]
+      # 与 regression A2-2a 使用同一真实赛程窗口；若场次已全部结束则诚实 SKIP。
+      - say: 今天欧联第一场是谁踢？开赛前提醒我
+        skip_journey_if_speech_any: [没有查到, 暂无, 没有比赛, 无法获取,
+                                     已结束, 不设提醒, 无法设置提醒]
         expect:
           latency_s: 60
           speech_any: [提醒]

@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import urllib.error
 
 import pytest
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1350,6 +1351,42 @@ def test_planner_toolcall_whole_skip_writes_skip_and_returns_77(
         "failed": 0,
         "skipped": 1,
     }
+
+
+def test_planner_toolcall_host_endpoint_ignores_container_service_address(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    module = _load("e2e_planner_toolcall")
+    monkeypatch.setenv("LLM_GATEWAY_ADDR", "llm-gateway:50052")
+    monkeypatch.delenv("E2E_LLM_GATEWAY_ADDR", raising=False)
+
+    assert module._grpc_address() == "localhost:50052"
+
+
+def test_ws_confirmation_probe_names_a_concrete_merchant():
+    module = _load("e2e_ws")
+
+    assert "海底捞" in module.CONFIRM_ORDER_TEXT
+
+
+def test_schedule_to_reminder_journeys_skip_finished_match_windows():
+    finished_markers = {"已结束", "不设提醒", "无法设置提醒"}
+    for name, journey_id in (
+        ("regression_a.yaml", "A2-2a"),
+        ("target_a.yaml", "A2-2b"),
+    ):
+        suite = yaml.safe_load(
+            (REPO_ROOT / "test" / "journeys" / name).read_text(
+                encoding="utf-8",
+            ),
+        )
+        journey = next(
+            item for item in suite["journeys"] if item["id"] == journey_id
+        )
+        markers = set(
+            journey["turns"][0]["skip_journey_if_speech_any"]
+        )
+        assert finished_markers <= markers
 
 
 def test_planner_toolcall_partial_skip_writes_pass_with_skips(

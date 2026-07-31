@@ -61,6 +61,11 @@ _PREFLIGHT_SENSITIVE_RE = re.compile(
 )
 _MAX_PREFLIGHT_FAMILIES = 8
 _MAX_CERT_BYTES = 1024 * 1024
+_S2S_CASE_IDS = frozenset({
+    "e2e_s2s",
+    "e2e_s2s_probe",
+    "e2e_s2s_resilience",
+})
 _COMPOSE_BASE = (
     "docker",
     "compose",
@@ -400,6 +405,10 @@ class ProfileCoordinator:
         self._lease_factory = lease_factory
         self._entry_preflights = {
             "e2e_real_providers": self._real_providers_preflight,
+            **{
+                case_id: self._s2s_preflight
+                for case_id in _S2S_CASE_IDS
+            },
             **({} if entry_preflights is None else entry_preflights),
         }
         self._owner_env: MutableMapping[str, str] = dict(self._base_env)
@@ -422,6 +431,9 @@ class ProfileCoordinator:
         "BING_SEARCH_KEY",
         "SERPAPI_API_KEY",
         "TUSHARE_TOKEN",
+        "S2S_API_KEY",
+        "DASHSCOPE_ASR_KEY",
+        "LLM_EMBED_API_KEY",
     })
 
     def _configured_credential_names(self) -> frozenset[str]:
@@ -493,6 +505,22 @@ class ProfileCoordinator:
             ok=not missing,
             error="" if not missing else "credential_preflight",
             missing=missing,
+        )
+
+    @staticmethod
+    def _s2s_preflight(
+        _case: Any,
+        configured: frozenset[str],
+    ) -> EntryPreflightResult:
+        available = bool({
+            "S2S_API_KEY",
+            "DASHSCOPE_ASR_KEY",
+            "LLM_EMBED_API_KEY",
+        }.intersection(configured))
+        return EntryPreflightResult(
+            ok=available,
+            error="" if available else "credential_preflight",
+            missing=() if available else ("s2s",),
         )
 
     def preflight_entry(self, case: Any) -> EntryPreflightResult:
@@ -710,6 +738,13 @@ class ProfileCoordinator:
     def _epoch_environment(self, epoch: ProfileEpoch) -> dict[str, str]:
         if epoch.name == "default":
             env = dict(self._base_env)
+            if any(case.id in _S2S_CASE_IDS for case in epoch.cases):
+                if str(env.get("S2S_PROVIDER") or "").strip().lower() in {
+                    "",
+                    "off",
+                    "none",
+                }:
+                    env["S2S_PROVIDER"] = "dashscope"
             if epoch.identity_enabled:
                 self._identity_env(env)
             return env

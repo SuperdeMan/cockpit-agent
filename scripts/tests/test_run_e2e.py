@@ -1121,7 +1121,7 @@ def test_shared_stack_identity_lease_builds_worktree_source_once(
         repo_root=stack_root,
         source_root=source_root,
         environ={},
-        capability_enabled=True,
+        capability_enabled=False,
         extra_services=("mcp-bridge",),
         lease_factory=FakeLease,
     )
@@ -1148,6 +1148,9 @@ def test_shared_stack_identity_lease_builds_worktree_source_once(
         "-d",
         "--build",
     )
+    assert events[1][2]["E2E_CAPABILITY_ENABLED"] == "false"
+    assert events[1][2]["E2E_NAMESPACE_ADMIN_ENABLED"] == "true"
+    assert events[2][2]["E2E_NAMESPACE_ADMIN_ENABLED"] == "false"
 
 
 def _case(

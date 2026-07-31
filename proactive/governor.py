@@ -257,8 +257,12 @@ class Governor:
         now = self._now()
         env = enrich(self._state_fn())
 
-        # 闸1 情境断言复核：UNSAT / UNKNOWN 一律丢——生产方声称的前提无法证实就不替它说。
+        # 闸1 情境断言复核：生产方与治理器并行消费同一车况事件，request 可能先于
+        # 治理器镜像到达。带 TTL 的首轮请求先短暂延后，复评仍 UNSAT/UNKNOWN 才丢；
+        # 无 TTL 的请求仍 fail-closed，绝不把读不到当满足。
         if evaluate_all(item.conditions, env) != SAT:
+            if first_pass and item.ttl_ms > 0:
+                return DEFERRED, "conditions_pending"
             return DROPPED, "conditions_unmet"
 
         # 闸2 同类去重（**跨生产方**，这是各自进程内节流做不到的那一半）

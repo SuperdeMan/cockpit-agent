@@ -22,6 +22,7 @@ except ImportError:
 
 URL = "ws://localhost:8090/ws"
 TIMEOUT = 60  # 秒
+CONFIRM_ORDER_TEXT = "帮我预订海底捞今晚7点两位"
 
 
 async def ask(
@@ -129,7 +130,7 @@ async def _run(recorder: CaseRecorder) -> int:
     confirm_session = recorder.session_id(4)
     first = await ask(
         recorder,
-        {"text": "订川菜馆今晚7点两位", "session_id": confirm_session},
+        {"text": CONFIRM_ORDER_TEXT, "session_id": confirm_session},
         "链路4a 交易类意图（应返回 need_confirm=true）",
     )
     if first.get("need_confirm"):

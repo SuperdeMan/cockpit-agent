@@ -6,9 +6,11 @@ v1 断言（list / activate / NEED_CONFIRM / payload 带 command）**必须继�
 import asyncio
 import json
 import os
+from pathlib import Path
 import sys
 
 import pytest
+import yaml
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if _ROOT not in sys.path:
@@ -19,6 +21,23 @@ from agents._sdk.testing import make_context, run_handle
 from agents.scene_orchestrator.src import catalog as C
 from agents.scene_orchestrator.src.agent import SceneOrchestratorAgent
 from agents.scene_orchestrator.src.store import USER, Scene
+
+
+def test_activate_manifest_keeps_parameter_overrides_in_one_scene_step():
+    manifest = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "manifest.yaml").read_text(
+            encoding="utf-8",
+        ),
+    )
+    capability = next(
+        item
+        for item in manifest["capabilities"]
+        if item["intent"] == "scene.activate"
+    )
+
+    assert "custom_params" in capability["slots"]
+    assert "不要拆" in capability["description"]
+    assert "开启午休模式，温度26" in capability["examples"]
 
 
 # ── 夹具：内存 store + 可控 shared_state + mock LLM ─────────────────────────

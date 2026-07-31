@@ -447,6 +447,32 @@ def test_profile_envs_commands_and_auth_token_scope_are_frozen_and_secret_free_f
     assert module.ProfileCoordinator.RESTORE_LABEL == "default"
 
 
+def test_real_s2s_profile_temporarily_enables_dashscope_and_restores_default(
+    tmp_path: Path,
+):
+    selected = [_case("e2e_s2s", "real", signed_identity=True)]
+    calls: list[tuple[list[str], dict[str, str]]] = []
+    coordinator = _coordinator(
+        tmp_path,
+        selected,
+        compose=lambda argv, env: calls.append((list(argv), dict(env))),
+        environ={
+            "S2S_PROVIDER": "",
+            "S2S_MODEL": "",
+            "DASHSCOPE_ASR_KEY": "configured",
+        },
+    )
+
+    active = coordinator.activate(coordinator.epochs[0])
+    preflight = coordinator.preflight_entry(selected[0])
+    coordinator.restore()
+
+    assert preflight.ok is True
+    assert active["S2S_PROVIDER"] == "dashscope"
+    assert calls[0][1]["S2S_PROVIDER"] == "dashscope"
+    assert calls[-1][1]["S2S_PROVIDER"] == ""
+
+
 def test_mtls_missing_certificates_are_generated_before_compose_or_fail_preflight(
     tmp_path: Path,
 ):
@@ -1434,6 +1460,7 @@ def _run_real_profile_entries(
         run_root=tmp_path / "run",
         run_id="e2e-real-preflight",
         lane="milestone",
+        full=False,
         provider=None,
         model=None,
         source_env=environ,

@@ -52,6 +52,11 @@ _PROBES = [
 ]
 
 
+def _grpc_address() -> str:
+    """Host-side probe address; never inherit Docker's service DNS name."""
+    return os.getenv("E2E_LLM_GATEWAY_ADDR", "localhost:50052")
+
+
 def _http_providers() -> dict | None:
     host = os.getenv("LLM_GATEWAY_HTTP_HOST", "localhost")
     port = os.getenv("AUDIO_HTTP_PORT", "50059")
@@ -175,7 +180,7 @@ def main() -> int:
 
                 import grpc
                 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
-                addr = os.getenv("LLM_GATEWAY_ADDR", "localhost:50052")
+                addr = _grpc_address()
                 stub = llm_pb2_grpc.LLMGatewayStub(
                     grpc.insecure_channel(addr),
                 )

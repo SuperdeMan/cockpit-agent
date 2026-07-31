@@ -166,6 +166,26 @@ async def test_conditions_unmet_dropped_and_unknown_also_dropped():
     assert sink.out == [] and sink2.out == []
 
 
+@pytest.mark.asyncio
+async def test_first_pass_condition_with_ttl_waits_for_mirror_convergence():
+    state = {"battery": 80}
+    sink = Sink()
+    gov = make_gov(sink, state=state)
+    payload = msg(
+        conditions=[{"key": "battery", "op": "lt", "value": 20}],
+        ttl_ms=300_000,
+    )
+
+    assert await gov.submit(payload) == DEFERRED
+    state["battery"] = 15
+    await gov.tick()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert sink.out and sink.out[0]["speech"] == "话术一。"
+    assert decisions_of(sink, DEFERRED)[0]["reason"] == "conditions_pending"
+
+
 # ── 单条路径：字节级兼容 ──────────────────────────────────────────────────
 
 @pytest.mark.asyncio

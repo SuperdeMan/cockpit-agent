@@ -521,19 +521,18 @@ def _identity_capability_lease(
 
     def compose_with_capability(source: Mapping[str, str]) -> Any:
         compose_env = dict(source)
-        enabled = (
-            capability_enabled
-            and compose_env.get("E2E_IDENTITY_ENABLED") == "true"
+        identity_enabled = (
+            compose_env.get("E2E_IDENTITY_ENABLED") == "true"
         )
         _configure_capability_environment(
             compose_env,
             secret=secret,
-            enabled=enabled,
+            enabled=capability_enabled and identity_enabled,
         )
         _configure_namespace_admin_environment(
             compose_env,
             secret=secret,
-            enabled=bool(extra_services) and enabled,
+            enabled=bool(extra_services) and identity_enabled,
         )
         if shared_compose is not None:
             return shared_compose(
