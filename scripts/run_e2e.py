@@ -3722,15 +3722,15 @@ def _run_profile_epochs(
                 continue
 
             for case in epoch.cases:
+                try:
+                    coordinator.prepare_entry_runtime(case)
+                except ProfileEnableError:
+                    results.append(_synthetic_subrun_result(
+                        case,
+                        error="profile_enable",
+                    ))
+                    continue
                 if case.profile == "real":
-                    try:
-                        coordinator.prepare_entry_runtime(case)
-                    except ProfileEnableError:
-                        results.append(_synthetic_subrun_result(
-                            case,
-                            error="profile_enable",
-                        ))
-                        continue
                     preflight = coordinator.preflight_entry(case)
                     if not preflight.ok:
                         results.append(_synthetic_subrun_result(

@@ -500,6 +500,27 @@ def test_s2s_entry_reasserts_runtime_after_an_earlier_case_recreated_gateway(
     assert runtime_env["S2S_PROVIDER"] == "dashscope"
 
 
+def test_proactive_consumers_recreate_global_rate_window_at_case_boundary(
+    tmp_path: Path,
+):
+    selected = [
+        _case("e2e_journeys", "root", signed_identity=True),
+        _case("e2e_memory", "root", signed_identity=True),
+    ]
+    calls: list[tuple[list[str], dict[str, str]]] = []
+    coordinator = _coordinator(
+        tmp_path,
+        selected,
+        compose=lambda argv, env: calls.append((list(argv), dict(env))),
+    )
+
+    coordinator.activate(coordinator.epochs[0])
+    coordinator.prepare_entry_runtime(selected[1])
+
+    command, _ = calls[-1]
+    assert command[-2:] == ["--force-recreate", "proactive"]
+
+
 def test_mtls_missing_certificates_are_generated_before_compose_or_fail_preflight(
     tmp_path: Path,
 ):
@@ -1632,6 +1653,9 @@ def _install_profile_runner_fakes(
                 raise runner.ProfileEnableError("profile_enable")
             self.active = epoch
             return {}
+
+        def prepare_entry_runtime(self, case):
+            assert self.active is not None and case in self.active.cases
 
         def child_environment(self, case):
             assert self.active is not None and case in self.active.cases

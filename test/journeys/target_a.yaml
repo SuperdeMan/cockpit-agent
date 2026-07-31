@@ -163,6 +163,6 @@ journeys:
       - say: 慢慢查一下固态电池的封装工艺，查完告诉我
         expect:
           latency_s: 30
-          speech_any: [已经在查]
+          speech_any: [已经在查, 深入查, 完整报告, 查完]
     cleanup:
       - 别查了

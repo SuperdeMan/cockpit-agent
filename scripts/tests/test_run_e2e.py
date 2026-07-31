@@ -2317,6 +2317,9 @@ def test_profile_fixture_prestep_precedes_token_owner_proof_and_child(
         def activate(self, _epoch):
             return None
 
+        def prepare_entry_runtime(self, _case):
+            events.append("runtime")
+
         def child_environment(self, _case):
             return {
                 "E2E_VOICEPRINT_FIXTURE_DIR": str(tmp_path / "attacker"),
@@ -2419,6 +2422,7 @@ def test_profile_fixture_prestep_precedes_token_owner_proof_and_child(
     )
 
     assert events == [
+        "runtime",
         "fixture",
         "identity",
         "memory",
@@ -2454,6 +2458,9 @@ def test_profile_epoch_shards_a_full_milestone_journey_before_parent_token(
 
         def activate(self, _epoch):
             return None
+
+        def prepare_entry_runtime(self, _case):
+            events.append("runtime")
 
         def child_environment(self, _case):
             return {}
@@ -2504,7 +2511,7 @@ def test_profile_epoch_shards_a_full_milestone_journey_before_parent_token(
         source_env={},
     )
 
-    assert events == ["shards"]
+    assert events == ["runtime", "shards"]
     assert results[0]["id"] == "e2e_journeys"
     assert errors == []
 

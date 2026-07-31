@@ -689,6 +689,20 @@ async def run(recorder: CaseRecorder) -> None:
         "SELECT string_agg(subject||'-'||rel||'-'||object, ' | ') "
         f"FROM memory_relation WHERE user_id={owner}",
     )
+    if not edges:
+        # 关系抽取走真实 LLM，单次可能返回空结构；用同一 signed owner 做一次有界
+        # 重试，仍要求最终真实落库，不能把采样空响应当成 GDPR/图谱通过。
+        await append_extract(
+            session=recorder.session_id(2),
+            user=user,
+            text=relation_text,
+            e2e_memory_capability=recorder.memory_capability(2),
+        )
+        await asyncio.sleep(8)
+        edges = sql(
+            "SELECT string_agg(subject||'-'||rel||'-'||object, ' | ') "
+            f"FROM memory_relation WHERE user_id={owner}",
+        )
     check("relations_stored", bool(edges), "关系边已入图", edges[:120])
     if edges:
         check("family_relation", "family" in edges, "亲属边存在")

@@ -66,6 +66,11 @@ _S2S_CASE_IDS = frozenset({
     "e2e_s2s_probe",
     "e2e_s2s_resilience",
 })
+_PROACTIVE_ISOLATION_CASE_IDS = frozenset({
+    "e2e_memory",
+    "e2e_proactive",
+    "e2e_scene",
+})
 _COMPOSE_BASE = (
     "docker",
     "compose",
@@ -562,9 +567,23 @@ class ProfileCoordinator:
         epoch = self._active_epoch
         if epoch is None or case not in epoch.cases:
             raise ProfileEnableError("profile_enable")
+        env = self._epoch_environment(epoch)
+        if case.id in _PROACTIVE_ISOLATION_CASE_IDS:
+            # Governor hourly delivery accounting is intentionally global, while
+            # manifest cases must be independently reproducible. Recreate only
+            # the proactive service at each consumer-case boundary so an earlier
+            # journey cannot exhaust the next case's budget.
+            try:
+                self._mutated = True
+                self._compose(_COMPOSE_BASE + ("--force-recreate", "proactive"), env)
+                if not self._ready():
+                    raise RuntimeError("proactive entry runtime did not become ready")
+            except ProfileError:
+                raise
+            except Exception as exc:
+                raise ProfileEnableError("profile_enable") from exc
         if case.id not in _S2S_CASE_IDS or self._s2s_runtime_prepared:
             return
-        env = self._epoch_environment(epoch)
         try:
             self._mutated = True
             self._compose(_COMPOSE_BASE + ("llm-gateway",), env)

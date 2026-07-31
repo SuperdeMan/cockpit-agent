@@ -173,3 +173,18 @@ exemplars:
   tags:
   - canonical
   note: 原标 navigation.search_poi，2026-07-30 改判
+- text: 找一家附近评分最高的川菜馆，直接导航过去
+  plan:
+  - agent: nearby
+    intent: nearby.search
+    slots:
+      category: 餐饮
+      cuisine: 川菜
+      sort: rating
+  - agent: navigation
+    intent: navigation.navigate_to
+  source: trace
+  added: '2026-07-30'
+  tags:
+  - badcase
+  note: M-A A2-1 曾只落附近搜索；导航步骤从前序 items 取目的地

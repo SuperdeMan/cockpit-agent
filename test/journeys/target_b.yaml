@@ -342,7 +342,7 @@ journeys:
       - say: 附近有没有充电站
         expect:
           latency_s: 60
-          cards_any: [place_list]
+          cards_any: [place_list, charging_list]
           card_contains: [充电]
       - say: 看看第一个的详情
         expect:

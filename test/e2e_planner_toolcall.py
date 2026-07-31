@@ -95,6 +95,24 @@ def _probe_one(stub, llm_pb2, provider: str, text: str) -> dict:
     out["finish"] = resp.finish_reason
     out["content_len"] = len(resp.content or "")
     if not resp.HasField("tool_calls"):
+        # MiniMax 对 addressed=false 偶发忽略 named tool_choice，但会返回与
+        # PlanBuilder toolcall_fallback 同形的完整 JSON。验收协议应同时验证生产
+        # 可消费的文本抢救形态，而不是把诚实拒识误报成不可用。
+        try:
+            args = json.loads(resp.content or "")
+        except (TypeError, ValueError):
+            return out
+        if isinstance(args, dict):
+            out["args_ok"] = True
+            steps = args.get("steps")
+            out["fields_ok"] = (
+                isinstance(args.get("addressed"), bool)
+                and isinstance(steps, list)
+                and all(
+                    isinstance(s, dict) and s.get("agent_id") and s.get("intent")
+                    for s in steps
+                )
+            )
         return out
     from google.protobuf.json_format import MessageToDict
     data = MessageToDict(resp.tool_calls)
