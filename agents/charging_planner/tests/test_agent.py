@@ -14,6 +14,19 @@ from agents._sdk.testing import make_context, run_handle, assert_result_valid
 from agents.charging_planner.src.agent import ChargingPlannerAgent
 
 
+def test_manifest_budget_covers_real_external_route_roundtrip():
+    """Charging plan/find may call Amap more than once; 2s cancels valid routes."""
+    from pathlib import Path
+
+    from agents._sdk.manifest import load_manifest
+
+    manifest = load_manifest(
+        str(Path(__file__).resolve().parents[1] / "manifest.yaml"),
+    )
+
+    assert manifest.latency_budget_ms >= 10_000
+
+
 def test_find_returns_list():
     """charging.find → OK + ui_card.charging_list"""
     ctx = make_context(context_values={"vehicle.battery": "72%", "vehicle.location": "科技园"})

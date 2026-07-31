@@ -872,6 +872,71 @@ def test_s2s_only_retries_empty_acoustic_transport_failures(
     assert module._is_empty_acoustic_transport_failure(result) is expected
 
 
+def test_s2s_empty_transport_retry_reopens_session(monkeypatch):
+    _block_real_dotenv(monkeypatch)
+    module = _load("e2e_s2s_probe")
+    events = []
+
+    class Resource:
+        async def close(self):
+            events.append(("close", id(self)))
+
+    class Probe:
+        def __init__(self, result):
+            self.result = result
+
+        async def run_turn(self, pcm):
+            events.append(("turn", pcm))
+            return self.result
+
+    old_session, old_ws = Resource(), Resource()
+    old_probe = Probe({"status": "ws_closed:1007", "transcript": "", "tool_call": None})
+    new_session, new_ws = Resource(), Resource()
+    new_result = {
+        "status": "completed",
+        "transcript": "今天心情不错",
+        "tool_call": None,
+    }
+    new_probe = Probe(new_result)
+
+    async def fresh_session(_key, _model):
+        events.append(("session", _key, _model))
+        return new_session, new_ws
+
+    class FreshProbe:
+        def __init__(self, ws, model):
+            assert ws is new_ws
+            assert model == "model"
+
+        async def open(self):
+            events.append(("open",))
+
+        async def run_turn(self, pcm):
+            return await new_probe.run_turn(pcm)
+
+    monkeypatch.setattr(module, "_session", fresh_session)
+    monkeypatch.setattr(module, "Probe", FreshProbe)
+
+    result, session, ws, probe = asyncio.run(
+        module._run_turn_with_empty_transport_retry(
+            "key",
+            "model",
+            old_session,
+            old_ws,
+            old_probe,
+            b"pcm",
+            label="闲聊",
+        ),
+    )
+
+    assert result is new_result
+    assert (session, ws) == (new_session, new_ws)
+    assert isinstance(probe, FreshProbe)
+    assert ("close", id(old_ws)) in events
+    assert ("close", id(old_session)) in events
+    assert events.count(("turn", b"pcm")) == 2
+
+
 def test_s2s_tts_preflight_http_error_is_failure_not_skip(
     monkeypatch: pytest.MonkeyPatch,
 ):

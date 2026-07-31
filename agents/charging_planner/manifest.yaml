@@ -4,7 +4,10 @@ display_name: 充能助手
 category: core
 trust_level: first_party
 deployment: cloud
-latency_budget_ms: 2000
+# Real Amap charging plans may require more than one provider round-trip.
+# Keep the budget aligned with other external-route agents so a valid ordinal
+# selection is not cancelled before route planning returns.
+latency_budget_ms: 20000
 fallback: chitchat
 
 capabilities:
