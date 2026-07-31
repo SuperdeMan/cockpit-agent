@@ -370,6 +370,27 @@ def test_slot_pending_full_navigation_command_is_topic_change():
     assert PlannerEngine._is_topic_change("带我去宝安机场") is True
 
 
+def test_slot_pending_enroute_search_command_is_topic_change():
+    """B5-1：句首带场景状语的完整搜索请求不能被旧 route 槽吞掉。"""
+    assert PlannerEngine._is_topic_change("路上帮我找家咖啡店，顺路买一杯") is True
+    assert PlannerEngine._is_topic_change("途中搜一个充电站") is True
+    assert PlannerEngine._is_topic_change("路上经过深南大道") is False
+
+
+def test_slot_pending_ordinal_selection_is_topic_change():
+    """B5-1：最新列表的裸序号选择不能被更早的 wait_slot 抢占。"""
+    assert PlannerEngine._is_topic_change("第二个") is True
+    assert PlannerEngine._is_topic_change("第3家") is True
+    assert PlannerEngine._is_topic_change("三号方案") is True
+
+
+def test_slot_pending_conditional_reminder_is_topic_change():
+    """B5-1：条件在前、动作在后的完整提醒不能被旧 route 槽吞掉。"""
+    assert PlannerEngine._is_topic_change("到公司之前提醒我交周报") is True
+    assert PlannerEngine._is_topic_change("电量低于20%时叫我充电") is True
+    assert PlannerEngine._is_topic_change("到公司") is False
+
+
 def test_pending_plan_preserves_skills_across_suspend_restore():
     """T2 知识继承跨挂起（2026-07-27 评审二批）：plan.skills 必须随 pending_plan 持久化
     ——补槽/确认恢复后的再规划按它重渲染知识（loop.py→replan skill_names），

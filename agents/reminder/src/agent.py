@@ -32,6 +32,16 @@ _CMD_STRIP_RE = re.compile(
 _ORDINAL_RE = re.compile(r"第([一二三四五六七八九十0-9]+)\s*[条个项场]?")   # 场：跨域「第N场」
 _ALL_RE = re.compile(r"全部|所有|都|清空|全删")
 _AGAIN_RE = re.compile(r"再(提醒|叫)")   # P1a：显式 snooze 标记（「过10分钟再提醒我」）
+_TIME_SIGNAL_RE = re.compile(
+    r"今天|今晚|今早|明天|明早|明晚|后天|大后天|"
+    r"周末|月底|月初|年末|年初|饭点|睡前|起床|稍后|待会|一会儿|"
+    r"(?:周|星期|礼拜)[一二三四五六日天末]|"
+    r"凌晨|早上|早晨|上午|中午|下午|傍晚|晚上|夜里|"
+    r"(?:\d+|[一两二三四五六七八九十]+)\s*"
+    r"(?:年|月|日|号|点|分|分钟|小时|钟头|秒|秒钟)|"
+    r"(?:[01]?\d|2[0-3])[:：][0-5]\d|"
+    r"开赛前|开始前|到达前|抵达前|到[^，。,]{0,6}之?前",
+)
 # P1c 跨域：无序号时的事件指代词形（含"赛/场/开始"语素，刻意收窄防泛指误命中）
 # R7 扩词形：navigation 产 ETA 事件后，「到之前/快到（的时候）/到达前/到X之前」也是对
 # REMINDABLE 事件的指代（「到之前一刻钟提醒我给张姐打电话」「到公司之前提醒我交周报」——
@@ -41,6 +51,11 @@ _REMINDABLE_REF_RE = re.compile(
     r"到[^，。,]{0,6}之?前|到达前|抵达前|快到(的时候|时)?")
 _CN_IDX = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+
+
+def _has_time_signal(text: str) -> bool:
+    """Whether the user's own wording contains a temporal anchor."""
+    return bool(_TIME_SIGNAL_RE.search(text or ""))
 
 
 class ReminderAgent(BaseAgent):
@@ -169,8 +184,12 @@ class ReminderAgent(BaseAgent):
         if pp.ok:
             return await self._create_location(pp, title, ctx, meta)
         now = self._now_utc()
-        pt = parse_time_text(time_text, now=now, tz=self._tz) if time_text \
+        user_time_signal = _has_time_signal(raw or time_text)
+        pt = (
+            parse_time_text(time_text, now=now, tz=self._tz)
+            if time_text and user_time_signal
             else ParsedTime(T_FAIL)
+        )
         if pt.status == T_FAIL:
             pt = parse_time_text(raw, now=now, tz=self._tz)
         if pt.status != T_OK:
@@ -187,7 +206,7 @@ class ReminderAgent(BaseAgent):
                 await self._clear_pending(ctx)
                 return AgentResult(speech=rem["speech"],
                                    ui_card=self._card_single(r, "created"))
-        if pt.status == T_FAIL:
+        if pt.status == T_FAIL and user_time_signal:
             pt = await self._llm_time_fallback(time_text or raw)
         if pt.status != T_OK:
             await self._save_pending(ctx, title, update_id=pend_update_id)
@@ -408,10 +427,15 @@ class ReminderAgent(BaseAgent):
         r = hits[0]
         now = self._now_utc()
         tt = (intent.slots.get("time_text") or "").strip()
-        pt = parse_time_text(tt, now=now, tz=self._tz) if tt else ParsedTime(T_FAIL)
+        user_time_signal = _has_time_signal(raw or tt)
+        pt = (
+            parse_time_text(tt, now=now, tz=self._tz)
+            if tt and user_time_signal
+            else ParsedTime(T_FAIL)
+        )
         if pt.status == T_FAIL:
             pt = parse_time_text(raw, now=now, tz=self._tz)
-        if pt.status == T_FAIL:
+        if pt.status == T_FAIL and user_time_signal:
             pt = await self._llm_time_fallback(tt or raw)
         if pt.status != T_OK or pt.fire_at <= int(now.timestamp()):
             await self._save_pending(ctx, r.title, update_id=r.id)

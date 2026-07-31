@@ -222,6 +222,41 @@ def test_toolcall_numeric_slot_normalized_via_validated_steps(monkeypatch):
     assert plan.steps[0].slots["temperature"] == "24"
 
 
+def test_toolcall_unwraps_provider_freeform_object_text_envelope(monkeypatch):
+    """MiniMax may encode a free-form object in a synthetic ``$text`` field."""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    args = {
+        "addressed": True,
+        "steps": [{
+            "id": "s1",
+            "agent_id": "navigation",
+            "intent": "navigation.search_poi",
+            "slots": {
+                "$text": '{"query":"车规级固态电池量产良率对比","limit":5}',
+            },
+            "slot_refs": {"$text": "{}"},
+        }],
+    }
+    spy = _SpyLLM(tool_reply=("", [{
+        "id": "c1",
+        "name": _SUBMIT_PLAN_NAME,
+        "arguments": args,
+    }]))
+    b = PlanBuilder(
+        llm_fn=spy.llm,
+        registry_fn=_no_resolve,
+        llm_tool_fn=spy.llm_tools,
+    )
+
+    plan = _build(b, "帮我查查车规级固态电池量产良率对比")
+
+    assert plan.steps[0].slots == {
+        "query": "车规级固态电池量产良率对比",
+        "limit": "5",
+    }
+    assert plan.steps[0].slot_refs == {}
+
+
 def test_wrong_tool_name_treated_as_protocol_failure(monkeypatch):
     """返回了别的工具名 → 非 submit_plan 不消费，按协议失败走第 2 轮 JSON。"""
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")

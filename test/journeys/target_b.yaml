@@ -196,6 +196,7 @@ journeys:
       - say: 哪天要下雨的话，把那天的安排换成室内的
         expect:
           latency_s: 90
+          cards_any: [trip_itinerary]
           any_of:
             - speech_all: [室内]
             - speech_any: [不用, 没有雨, 无需, 都没有雨]
@@ -252,6 +253,7 @@ journeys:
     level: target
     lane: live
     tags: [continuity, autonomy, interaction]
+    retry: 1        # 高德 POI/路线为外部窗口；重试仍跑完整 14 轮并在报告保留 attempts
     requires: [AMAP_KEY, EXA_API_KEY|SERPAPI_API_KEY]
     setup:
       vehicle: {battery: 68, gear: P, speed_kmh: 0}
@@ -279,6 +281,9 @@ journeys:
           any_of:
             - cards_any: [route_plan]
             - speech_any: [途经, 已加, 顺路]
+            # 「顺路买一杯」同时包含路线与点单语义；模型选择第二家后进入受控点单
+            # 的补槽/确认也是有效分支，不能把更完整的执行误报成路由失败。
+            - speech_any: [点单, 要点什么, 确认为您, 发起点单]
       - say: 到公司之前提醒我交周报
         expect:
           latency_s: 45

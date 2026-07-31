@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from typing import AsyncIterator
 from collections import defaultdict, deque
 from google.protobuf.json_format import MessageToDict
@@ -314,6 +315,27 @@ class DagExecutor:
 
     def _resolve_slot_refs(self, step: Step, done: dict):
         """用前序 step 的结果填充 slot_refs。"""
+        # Planner/tool-call occasionally emits an exact data reference as the
+        # value of an already-declared slot (for example
+        # destination="${s1.data.items.0.name}"). Resolve that wire format
+        # before applying the explicit slot_refs map; otherwise the literal
+        # placeholder reaches the downstream agent and becomes a bogus POI.
+        for slot_name, raw_value in list(step.slots.items()):
+            if not isinstance(raw_value, str):
+                continue
+            match = re.fullmatch(r"\$\{([^{}]+)\}", raw_value.strip())
+            if not match:
+                continue
+            value = self._resolve_ref(match.group(1), done)
+            if value is not None:
+                step.slots[slot_name] = str(value)
+            else:
+                logger.warning(
+                    "slot placeholder %s -> %s resolved to None",
+                    slot_name,
+                    match.group(1),
+                )
+
         for slot_name, ref_path in step.slot_refs.items():
             if slot_name in step.slots:
                 continue  # 已有值不覆盖

@@ -99,6 +99,36 @@ def test_single_owner_enables_and_restores_exactly_once_without_leaking_secret()
     assert "E2E_IDENTITY_ENABLED" not in process_env
 
 
+def test_identity_enable_retries_one_transient_readiness_failure_before_restore():
+    module = require_module()
+    compose = FakeCompose()
+    readiness = iter((False, True, True))
+    process_env = {"KEEP": "yes"}
+    lease = module.IdentityStackLease(
+        repo_root=Path.cwd(),
+        environ=process_env,
+        compose=compose,
+        ready=lambda: next(readiness),
+        secret_factory=lambda: b"x" * 32,
+        lease_id_factory=lambda: "lease-readiness-retry",
+    )
+
+    lease.enable()
+
+    assert len(compose.calls) == 2
+    assert all(
+        call["E2E_IDENTITY_ENABLED"] == "true"
+        for call in compose.calls
+    )
+    assert (
+        compose.calls[0]["E2E_IDENTITY_SECRET"]
+        == compose.calls[1]["E2E_IDENTITY_SECRET"]
+    )
+    lease.restore()
+    assert len(compose.calls) == 3
+    assert compose.calls[-1]["E2E_IDENTITY_ENABLED"] == "false"
+
+
 def test_optional_namespace_admin_uses_same_secret_and_restores_extra_service(
     tmp_path,
     monkeypatch,
@@ -994,7 +1024,11 @@ def test_enable_cleanup_failure_remains_retryable_with_same_owner_state(
     assert lease.secret == b""
     assert lease._stack_lock is None
     assert lease._restored is True
-    assert len(calls) == 3
+    assert len(calls) == 4
+    assert [
+        call["E2E_IDENTITY_ENABLED"]
+        for call in calls
+    ] == ["true", "true", "false", "false"]
 
 
 def test_runner_retries_identity_restore_once_with_secret_free_off_environment():

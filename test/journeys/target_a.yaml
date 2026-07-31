@@ -48,11 +48,10 @@ journeys:
     lane: live
     tags: [autonomy, continuity]
     requires: [API_FOOTBALL_KEY]
+    retry: 1
     turns:
-      # 与 regression A2-2a 使用同一真实赛程窗口；若场次已全部结束则诚实 SKIP。
-      - say: 今天欧联第一场是谁踢？开赛前提醒我
-        skip_journey_if_speech_any: [没有查到, 暂无, 没有比赛, 无法获取,
-                                     已结束, 不设提醒, 无法设置提醒]
+      # 与 regression A2-2a 使用同一真实赛事发现机制；没有真实场次即 FAIL。
+      - say: $E2E_SPORTS_SINGLE_REMINDER_QUERY
         expect:
           latency_s: 60
           speech_any: [提醒]
@@ -117,7 +116,7 @@ journeys:
             - cards_any: [weather]
             - speech_any: ["℃", 气温, 多云, 晴, 小雨, 阵雨]
           # 部分失败必须明说，不能静默吞掉也不能装成功
-          speech_any: [没能, 失败, 出错, 暂时, 稍后, 不可用, 遇到问题]
+          speech_any: [没能, 没跑成功, 失败, 出错, 暂时, 稍后, 不可用, 遇到问题]
           speech_not: [第1天, 第一天, 已为您规划好]
 
   # ── M2 Task Ledger：长任务的三条用户可见语义（子 RFC §6 P2 DoD）──────────

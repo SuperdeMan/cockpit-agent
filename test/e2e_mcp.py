@@ -199,14 +199,14 @@ def cleanup_external(
     asyncio.run(cleanup())
 
 
-def bridge_capabilities() -> list | None:
-    """直接问注册中心：mcp-bridge 注册了哪些 intent。"""
+def bridge_registration() -> tuple[list | None, str]:
+    """Return the registered capabilities and endpoint for mcp-bridge."""
 
     try:
         import grpc
         from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
     except ImportError:
-        return None
+        return None, ""
     with grpc.insecure_channel(REGISTRY_ADDR) as channel:
         response = registry_pb2_grpc.RegistryStub(channel).ListAgents(
             registry_pb2.ListRequest(),
@@ -214,10 +214,52 @@ def bridge_capabilities() -> list | None:
         )
     for agent in response.agents:
         if agent.manifest.agent_id == "mcp-bridge":
-            return [
-                capability.intent
-                for capability in agent.manifest.capabilities
-            ]
+            return (
+                [
+                    capability.intent
+                    for capability in agent.manifest.capabilities
+                ],
+                str(agent.endpoint or ""),
+            )
+    return None, ""
+
+
+def current_bridge_hostname() -> str:
+    """Resolve the hostname of the container that owns this E2E profile."""
+
+    completed = subprocess.run(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{.Config.Hostname}}",
+            "car-agent-mcp-bridge-1",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return ""
+    return (completed.stdout or "").strip()
+
+
+def wait_bridge_capabilities(timeout_s: float = 30) -> list | None:
+    """Wait until Registry points at the current, not the replaced, container."""
+
+    current = current_bridge_hostname()
+    if not current:
+        return None
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        capabilities, endpoint = bridge_registration()
+        endpoint_host = endpoint.rsplit(":", 1)[0]
+        if capabilities is not None and endpoint_host == current:
+            return capabilities
+        time.sleep(0.5)
     return None
 
 
@@ -275,7 +317,7 @@ async def run(recorder: CaseRecorder) -> None:
         await nc.close()
 
     print("── 1. 准入边界：注册中心只看得到清单里的能力 ──")
-    caps = bridge_capabilities()
+    caps = wait_bridge_capabilities()
     record("mcp-bridge 已注册", caps is not None, "" if caps else "注册中心里没有")
     caps = caps or []
     record("准入的两个工具都在", {"shop.menu", "shop.order"} <= set(caps), str(caps))

@@ -179,3 +179,23 @@ exemplars:
   added: '2026-07-30'
   tags:
   - canonical
+- text: 导航去南山科技园
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+  source: trace
+  added: '2026-07-30'
+  tags:
+  - badcase
+  note: M-A B5-1 长会话中断恢复后 MiniMax 拒识；按 M5 数据飞轮转为精确范例
+- text: 路上帮我找家咖啡店，顺路买一杯
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      stop_category: 咖啡店
+  source: trace
+  added: '2026-07-30'
+  tags:
+  - badcase
+  note: M-A B5-1 曾只落 shop.menu 丢路线；当前目的地由会话焦点确定性继承

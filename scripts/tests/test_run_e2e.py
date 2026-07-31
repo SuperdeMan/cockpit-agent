@@ -844,6 +844,27 @@ def test_journey_sharding_only_expands_an_explicit_full_corpus_request():
     assert runner._should_shard_journey_case(full=False, **common) is False
 
 
+def test_journey_shard_retries_only_expired_websocket_authorization():
+    runner = _runner()
+
+    assert runner._journey_shard_needs_fresh_token_retry({
+        "status": "FAIL",
+        "diagnostic": (
+            "server rejected WebSocket connection: HTTP 401"
+        ),
+    })
+    assert not runner._journey_shard_needs_fresh_token_retry({
+        "status": "FAIL",
+        "diagnostic": "provider request failed: HTTP 401",
+    })
+    assert not runner._journey_shard_needs_fresh_token_retry({
+        "status": "PASS",
+        "diagnostic": (
+            "server rejected WebSocket connection: HTTP 401"
+        ),
+    })
+
+
 def test_journey_shard_reports_merge_into_one_full_parent_artifact(tmp_path):
     runner = _runner()
     rows = [

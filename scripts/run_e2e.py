@@ -139,6 +139,15 @@ def _should_shard_journey_case(
     )
 
 
+def _journey_shard_needs_fresh_token_retry(result: Mapping[str, Any]) -> bool:
+    """Retry one shard after a suspend/resume expired its signed WS token."""
+    return (
+        result.get("status") == "FAIL"
+        and "server rejected WebSocket connection: HTTP 401"
+        in str(result.get("diagnostic") or "")
+    )
+
+
 def _restore_identity_lease(
     lease: IdentityStackLease,
     *,
@@ -2793,64 +2802,75 @@ def _run_signed_journey_shards(
             ),
         )
         user_id = f"{run_id}-{shard_id}"
-        bundle = write_token_bundle(
-            root=bundle_root,
-            lease_id=lease.lease_id,
-            case_id=shard_id,
-            run_id=run_id,
-            user_id=user_id,
-            vehicle_id=source_env.get("VEHICLE_ID", "v1"),
-            timeout_s=case.timeout_s,
-            secret=lease.secret,
-            memory_sessions=_memory_sessions_for(case, lane),
-        )
-        bundle = _presign_memory_bundle(
-            bundle,
-            expected_bundle_root=bundle_root,
-            secret=lease.secret,
-            run_id=run_id,
-            user_id=user_id,
-            timeout_s=case.timeout_s,
-            memory_sessions=_memory_sessions_for(case, lane),
-        )
-        child_source = load_child_bundle(
-            bundle,
-            bundle_root=bundle_root,
-            lease_id=lease.lease_id,
-            inherited={
-                key: value
-                for key, value in source_env.items()
-                if key not in {
-                    "E2E_IDENTITY_ENABLED",
-                    "E2E_IDENTITY_SECRET",
-                    "E2E_CAPABILITY_ENABLED",
-                    "E2E_CAPABILITY_SECRET",
-                    "E2E_NAMESPACE_ADMIN_ENABLED",
-                    "E2E_NAMESPACE_ADMIN_SECRET",
-                }
-            },
-        )
-        _prove_journey_shard_owner(
-            lease=lease,
-            ws_base=source_env.get(
-                "WS_URL",
-                "ws://127.0.0.1:8090/ws",
-            ),
-            token=child_source["E2E_IDENTITY_TOKEN"],
-            run_id=run_id,
-            user_id=user_id,
-            vehicle_id=source_env.get("VEHICLE_ID", "v1"),
-        )
-        shard_results.append(_run_child(
-            shard_case,
-            repo_root=repo_root,
-            run_root=run_root / "journey-shards" / f"{index:02d}",
-            run_id=run_id,
-            lane=lane,
-            provider=provider,
-            model=model,
-            environ=child_source,
-        ))
+        shard_result = None
+        for attempt in range(2):
+            bundle = write_token_bundle(
+                root=bundle_root,
+                lease_id=lease.lease_id,
+                case_id=shard_id,
+                run_id=run_id,
+                user_id=user_id,
+                vehicle_id=source_env.get("VEHICLE_ID", "v1"),
+                timeout_s=case.timeout_s,
+                secret=lease.secret,
+                memory_sessions=_memory_sessions_for(case, lane),
+            )
+            bundle = _presign_memory_bundle(
+                bundle,
+                expected_bundle_root=bundle_root,
+                secret=lease.secret,
+                run_id=run_id,
+                user_id=user_id,
+                timeout_s=case.timeout_s,
+                memory_sessions=_memory_sessions_for(case, lane),
+            )
+            child_source = load_child_bundle(
+                bundle,
+                bundle_root=bundle_root,
+                lease_id=lease.lease_id,
+                inherited={
+                    key: value
+                    for key, value in source_env.items()
+                    if key not in {
+                        "E2E_IDENTITY_ENABLED",
+                        "E2E_IDENTITY_SECRET",
+                        "E2E_CAPABILITY_ENABLED",
+                        "E2E_CAPABILITY_SECRET",
+                        "E2E_NAMESPACE_ADMIN_ENABLED",
+                        "E2E_NAMESPACE_ADMIN_SECRET",
+                    }
+                },
+            )
+            _prove_journey_shard_owner(
+                lease=lease,
+                ws_base=source_env.get(
+                    "WS_URL",
+                    "ws://127.0.0.1:8090/ws",
+                ),
+                token=child_source["E2E_IDENTITY_TOKEN"],
+                run_id=run_id,
+                user_id=user_id,
+                vehicle_id=source_env.get("VEHICLE_ID", "v1"),
+            )
+            shard_result = _run_child(
+                shard_case,
+                repo_root=repo_root,
+                run_root=run_root / "journey-shards" / f"{index:02d}",
+                run_id=run_id,
+                lane=lane,
+                provider=provider,
+                model=model,
+                environ=child_source,
+            )
+            if (
+                attempt == 0
+                and _journey_shard_needs_fresh_token_retry(shard_result)
+            ):
+                continue
+            break
+        if shard_result is None:  # pragma: no cover - loop always executes
+            raise RunnerArgumentError("journey shard did not execute")
+        shard_results.append(shard_result)
     return _aggregate_journey_shard_results(
         case=case,
         shard_results=shard_results,
@@ -3703,6 +3723,14 @@ def _run_profile_epochs(
 
             for case in epoch.cases:
                 if case.profile == "real":
+                    try:
+                        coordinator.prepare_entry_runtime(case)
+                    except ProfileEnableError:
+                        results.append(_synthetic_subrun_result(
+                            case,
+                            error="profile_enable",
+                        ))
+                        continue
                     preflight = coordinator.preflight_entry(case)
                     if not preflight.ok:
                         results.append(_synthetic_subrun_result(

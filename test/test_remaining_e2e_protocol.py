@@ -1369,8 +1369,11 @@ def test_ws_confirmation_probe_names_a_concrete_merchant():
     assert "海底捞" in module.CONFIRM_ORDER_TEXT
 
 
-def test_schedule_to_reminder_journeys_skip_finished_match_windows():
-    finished_markers = {"已结束", "不设提醒", "无法设置提醒"}
+def test_schedule_to_reminder_journeys_require_a_real_scheduled_fixture():
+    expected_tokens = {
+        "A2-2a": "$E2E_SPORTS_SCHEDULE_QUERY",
+        "A2-2b": "$E2E_SPORTS_SINGLE_REMINDER_QUERY",
+    }
     for name, journey_id in (
         ("regression_a.yaml", "A2-2a"),
         ("target_a.yaml", "A2-2b"),
@@ -1383,10 +1386,54 @@ def test_schedule_to_reminder_journeys_skip_finished_match_windows():
         journey = next(
             item for item in suite["journeys"] if item["id"] == journey_id
         )
-        markers = set(
-            journey["turns"][0]["skip_journey_if_speech_any"]
-        )
-        assert finished_markers <= markers
+        first_turn = journey["turns"][0]
+        assert first_turn["say"] == expected_tokens[journey_id]
+        assert "skip_journey_if_speech_any" not in first_turn
+
+
+def test_runtime_sports_query_uses_a_supported_scheduled_fixture():
+    module = _load("e2e_journeys")
+    fixtures = [
+        SimpleNamespace(status="finished", league_id=169),
+        SimpleNamespace(status="scheduled", league_id=999),
+        SimpleNamespace(status="scheduled", league_id=169),
+    ]
+
+    context = module.select_runtime_sports_context(fixtures, day_offset=1)
+
+    assert context == {"date_word": "明天", "league": "中超"}
+    assert module.render_runtime_say(
+        "$E2E_SPORTS_SCHEDULE_QUERY",
+        context,
+    ) == "明天中超有哪些比赛"
+    assert module.render_runtime_say(
+        "$E2E_SPORTS_SINGLE_REMINDER_QUERY",
+        context,
+    ) == "明天中超第一场是谁踢？开赛前提醒我"
+
+
+def test_mcp_waits_for_registry_endpoint_from_current_container(monkeypatch):
+    module = _load("e2e_mcp")
+    snapshots = iter((
+        (["shop.menu", "shop.order"], "stale-container:50076"),
+        (["shop.menu", "shop.order"], "current-container:50076"),
+    ))
+    monkeypatch.setattr(
+        module,
+        "bridge_registration",
+        lambda: next(snapshots),
+    )
+    monkeypatch.setattr(
+        module,
+        "current_bridge_hostname",
+        lambda: "current-container",
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    assert module.wait_bridge_capabilities(timeout_s=1) == [
+        "shop.menu",
+        "shop.order",
+    ]
 
 
 def test_planner_toolcall_partial_skip_writes_pass_with_skips(

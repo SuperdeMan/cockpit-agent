@@ -36,11 +36,15 @@ import sys
 import time
 import urllib.request
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _path in (str(_ROOT), str(_ROOT / "test")):
+for _path in (
+    str(_ROOT),
+    str(_ROOT / "test"),
+    str(_ROOT / "gen" / "python"),
+):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
@@ -100,6 +104,23 @@ _RECORDER: CaseRecorder | None = None
 # B3-3 owns two plain business sessions bound to runner-issued capabilities.
 # General journey sessions start after that reserved range so IDs never collide.
 _SESSION_NUMBER = 2
+_RUNTIME_SPORTS_CONTEXT: dict[str, str] | None = None
+_RUNTIME_SPORTS_TOKENS = {
+    "$E2E_SPORTS_SCHEDULE_QUERY",
+    "$E2E_SPORTS_SINGLE_REMINDER_QUERY",
+}
+_SPORTS_LEAGUE_QUERIES = {
+    1: "世界杯",
+    2: "欧冠",
+    3: "欧联",
+    39: "英超",
+    61: "法甲",
+    78: "德甲",
+    88: "荷甲",
+    135: "意甲",
+    140: "西甲",
+    169: "中超",
+}
 
 
 def _e2e() -> CaseRecorder:
@@ -112,6 +133,70 @@ def _next_session() -> str:
     global _SESSION_NUMBER
     _SESSION_NUMBER += 1
     return _e2e().session_id(_SESSION_NUMBER)
+
+
+def select_runtime_sports_context(
+    fixtures: list,
+    *,
+    day_offset: int,
+) -> dict[str, str] | None:
+    """Select a real, future fixture that the product can query structurally."""
+    date_word = "今天" if day_offset == 0 else "明天"
+    for fixture in fixtures:
+        if str(getattr(fixture, "status", "")) != "scheduled":
+            continue
+        league = _SPORTS_LEAGUE_QUERIES.get(
+            int(getattr(fixture, "league_id", 0) or 0),
+        )
+        if league:
+            return {"date_word": date_word, "league": league}
+    return None
+
+
+def render_runtime_say(text: str, context: dict[str, str]) -> str:
+    """Render only declared runtime tokens; ordinary journey text is untouched."""
+    prefix = f"{context['date_word']}{context['league']}"
+    if text == "$E2E_SPORTS_SCHEDULE_QUERY":
+        return f"{prefix}有哪些比赛"
+    if text == "$E2E_SPORTS_SINGLE_REMINDER_QUERY":
+        return f"{prefix}第一场是谁踢？开赛前提醒我"
+    return text
+
+
+async def _discover_runtime_sports_context() -> dict[str, str]:
+    """Probe the real provider for today/tomorrow; lack of data is a hard failure."""
+    from agents.info.src.providers import build_sports_provider
+
+    provider = build_sports_provider()
+    now = datetime.now(timezone(timedelta(hours=8)))
+    errors: list[str] = []
+    for day_offset in (0, 1):
+        date = (now + timedelta(days=day_offset)).strftime("%Y-%m-%d")
+        try:
+            fixtures = await provider.fixtures(date=date)
+        except Exception as exc:
+            errors.append(f"{date}: {type(exc).__name__}")
+            continue
+        context = select_runtime_sports_context(
+            fixtures,
+            day_offset=day_offset,
+        )
+        if context:
+            return context
+    detail = f"；provider errors={errors}" if errors else ""
+    raise RuntimeError(
+        "真实赛事窗口（今天/明天）没有可提醒的已支持联赛场次"
+        + detail,
+    )
+
+
+async def resolve_runtime_say(text: str) -> str:
+    global _RUNTIME_SPORTS_CONTEXT
+    if text not in _RUNTIME_SPORTS_TOKENS:
+        return text
+    if _RUNTIME_SPORTS_CONTEXT is None:
+        _RUNTIME_SPORTS_CONTEXT = await _discover_runtime_sports_context()
+    return render_runtime_say(text, _RUNTIME_SPORTS_CONTEXT)
 
 
 def _session_for_journey(journey: dict, number: int) -> str:
@@ -636,7 +721,8 @@ async def _run_body(j: dict, setup: dict, sess: dict, build_meta, listener,
                 )
                 rec["new_session"] = True
             if "say" in turn:
-                text, is_conf, meta = str(turn["say"]), False, build_meta()
+                text = await resolve_runtime_say(str(turn["say"]))
+                is_conf, meta = False, build_meta()
             elif "press" in turn:
                 spec = turn["press"] or {}
                 pool = card_buttons(last_push.get("card") if spec.get("from") == "push"

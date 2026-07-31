@@ -50,3 +50,14 @@ def test_modify_rainy_days_swapped_indoor():
         raw_text="哪天要下雨的话，把那天的安排换成室内的", ctx=ctx))
     assert res.status == "need_confirm"
     assert "第1天" in res.speech and "室内" in res.speech
+
+    # Planner 可能把原句扩写，雨/室内标记相距超过旧的 15 字窗口；仍须走同一确定性路径。
+    kv["trip_active"] = _trip(rain_day1=True).to_dict()
+    res = asyncio.run(run_handle(
+        agent, "trip.modify",
+        slots={"modification": (
+            "把下雨那天的户外景点（珠海日月贝、珠海渔女、爱情邮局）换成室内活动"
+        )},
+        raw_text="哪天要下雨的话，把那天的安排换成室内的", ctx=ctx))
+    assert res.status == "need_confirm"
+    assert "第1天" in res.speech and "室内" in res.speech

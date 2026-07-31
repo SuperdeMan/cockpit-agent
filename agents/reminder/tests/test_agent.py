@@ -49,10 +49,18 @@ async def test_create_relative_time():
 @pytest.mark.asyncio
 async def test_create_without_time_asks_and_saves_pending():
     a = await _agent()
+    a._llm_time_fallback = AsyncMock(
+        return_value=ParsedTime(
+            "ok",
+            int(_NOW.timestamp()),
+            "今天 10:00",
+        ),
+    )
     ctx = make_context()
     res = await run_handle(a, "reminder.create", raw_text="提醒我开会", ctx=ctx)
     assert res.status == "need_slot" and "time_text" in res.missing_slots
     assert "什么时候" in res.speech
+    a._llm_time_fallback.assert_not_awaited()
     # NEED_SLOT 时把标题存进 REMINDER_PENDING（经 profile KV）
     args = ctx._memory.upsert_profile.call_args
     assert args.args[1] == "reminder_pending" and "开会" in args.args[2]

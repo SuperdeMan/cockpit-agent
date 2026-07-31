@@ -178,3 +178,14 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
+- text: 哪天要下雨的话，把那天的安排换成室内的
+  plan:
+  - agent: trip-planner
+    intent: trip.modify
+    slots:
+      modification: 哪天要下雨的话，把那天的安排换成室内的
+  source: trace
+  added: '2026-07-31'
+  tags:
+  - badcase
+  note: 旅程 B3-1 曾降级成 chitchat/info 天气卡并口头假称已改行程

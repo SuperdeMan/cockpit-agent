@@ -47,6 +47,19 @@ _RAIN_INDOOR_RE = re.compile(
     r"(下雨|有雨|雨天|要下雨)的?话?.{0,10}(换|改|调)")
 
 
+def _is_rain_indoor_modification(text: str) -> bool:
+    """Recognize the closed rain + indoor + edit concept after planner paraphrase."""
+    value = text or ""
+    return (
+        _RAIN_INDOOR_RE.search(value) is not None
+        or (
+            any(word in value for word in ("下雨", "有雨", "雨天", "要下雨"))
+            and any(word in value for word in ("室内", "屋里"))
+            and any(word in value for word in ("换", "改", "调"))
+        )
+    )
+
+
 class TripPlannerAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
@@ -184,7 +197,7 @@ class TripPlannerAgent(BaseAgent):
         # 雨天判定用行程已存的 Day.weather（plan_weather 对齐的预报）**确定性**定位目标天，
         # 逐天走单天重规划（路径②同机制）+ 强室内约束；无雨天诚实说不用改。
         # 原路径③把这句并进偏好整程重规划，LLM 软约束压不住，原样端回（假重排）。
-        if _RAIN_INDOOR_RE.search(modification):
+        if _is_rain_indoor_modification(modification):
             return await self._modify_rainy_days_indoor(
                 ctx, meta, trip, dest, prefs, soc, modification)
 

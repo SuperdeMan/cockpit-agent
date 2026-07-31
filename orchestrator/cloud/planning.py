@@ -605,6 +605,26 @@ class PlanBuilder:
         return {"question": question.strip(), "options": options[:3]}
 
     @staticmethod
+    def _unwrap_freeform_object(raw):
+        """Unwrap providers' synthetic envelope for free-form JSON objects.
+
+        Some OpenAI-compatible tool-call implementations cannot represent an
+        unconstrained object directly and return ``{"$text": "{...}"}``.
+        Accept only the exact one-field envelope and only when its payload is a
+        JSON object; all other shapes keep the existing fail-closed behavior.
+        """
+        if not isinstance(raw, dict) or set(raw) != {"$text"}:
+            return raw
+        payload = raw.get("$text")
+        if not isinstance(payload, str):
+            return raw
+        try:
+            decoded = json.loads(payload.strip())
+        except (json.JSONDecodeError, ValueError):
+            return raw
+        return decoded if isinstance(decoded, dict) else raw
+
+    @staticmethod
     def _validated_steps(raw_steps: list, agent_map: dict) -> list[Step]:
         # F4：按 agent 校验 intent（不是全局集合），防止 LLM 错配 agent/intent
         agent_intents: dict[str, set[str]] = {
@@ -634,7 +654,9 @@ class PlanBuilder:
             # slots 是唯一「宽进」的 LLM 输出通道——但宽进不等于不设防：模型偶发输出
             # list（如 ["item>拿铁"]）时 .items() 直接 AttributeError 崩掉整个 Handle
             # （验收真栈抓到：空响应、确认挂起蒸发）。非 dict 按无效步走原子拒绝→重试。
-            raw_slots = s.get("slots") or {}
+            raw_slots = PlanBuilder._unwrap_freeform_object(
+                s.get("slots") or {},
+            )
             if not isinstance(raw_slots, dict):
                 logger.warning("Step slots is %s (not dict), dropping plan for retry: %r",
                                type(raw_slots).__name__, raw_slots)
@@ -655,8 +677,16 @@ class PlanBuilder:
                 # 处 .items() 同款崩——都归一为空（依赖丢失顶多退化为顺序执行）。
                 depends_on=(s.get("depends_on")
                             if isinstance(s.get("depends_on"), list) else []),
-                slot_refs=(s.get("slot_refs")
-                           if isinstance(s.get("slot_refs"), dict) else {}),
+                slot_refs=(
+                    normalized_slot_refs
+                    if isinstance(
+                        normalized_slot_refs := PlanBuilder._unwrap_freeform_object(
+                            s.get("slot_refs") or {},
+                        ),
+                        dict,
+                    )
+                    else {}
+                ),
                 latency_budget_ms=int(manifest.latency_budget_ms or 5000),
                 required_permissions=list(
                     getattr(manifest, "requires_permissions", []) or []),

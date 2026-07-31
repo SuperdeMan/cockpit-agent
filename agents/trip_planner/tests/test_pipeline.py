@@ -127,6 +127,43 @@ def test_solve_sufficient_range_no_charge():
     assert out.itinerary[0].legs[0].charging_stops == []
 
 
+def test_solve_weaves_charging_from_current_location_to_first_stop():
+    """The deterministic solver includes the inbound road-trip leg."""
+    trip = Trip(destination="杭州", days=1)
+    trip.itinerary = [Day(day_index=1, stops=[
+        Stop(
+            stop_id="s1",
+            name="西湖",
+            grounded=True,
+            poi={"name": "西湖", "lat": 30.25, "lng": 120.16},
+        ),
+    ])]
+    points = [
+        {"lat": 22.53 + i * 0.1, "lng": 113.95, "cum_km": i * 20}
+        for i in range(60)
+    ]
+    provider = FakePOI(
+        search_map={"充电站": [_poi("沿途充电站", 24.5, 114.0)]},
+        route={"distance_km": 1180.0, "duration_min": 780, "points": points},
+    )
+
+    out = asyncio.run(pipeline.solve(
+        provider,
+        trip,
+        30,
+        {"current_lat": "22.5333", "current_lng": "113.9505"},
+        full_range_km=500,
+        day_cap_min=100000,
+    ))
+
+    inbound = out.itinerary[0].legs[0]
+    assert inbound.from_stop_id == "__origin__"
+    assert inbound.to_stop_id == "s1"
+    assert inbound.distance_km == 1180.0
+    assert inbound.charging_stops[0]["name"] == "沿途充电站"
+    assert out.ev["start_soc"] == 30
+
+
 def test_solve_reflow_day_cap():
     """单日（驾驶+游览）超上限 → 尾部 stop 顺延次日。"""
     trip = Trip(destination="X", days=1)

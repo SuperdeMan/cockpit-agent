@@ -144,6 +144,35 @@ def test_resolve_ref_invalid_path():
     assert result is None
 
 
+def test_resolve_slot_refs_expands_exact_placeholders_in_existing_slots():
+    done = {
+        "s1": StepResult(
+            step_id="s1",
+            status=StepStatus.OK,
+            data={"items": [{"id": "poi-1", "name": "云栖咖啡", "address": "科技园路 1 号"}]},
+        )
+    }
+    step = Step(
+        id="s2",
+        agent_id="navigation",
+        slots={
+            "destination": "${s1.data.items.0.name}",
+            "place_address": "${s1.data.items.0.address}",
+            "literal": "保留原值",
+        },
+        slot_refs={"poi_id": "s1.data.items.0.id"},
+    )
+
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(step, done)
+
+    assert step.slots == {
+        "destination": "云栖咖啡",
+        "place_address": "科技园路 1 号",
+        "literal": "保留原值",
+        "poi_id": "poi-1",
+    }
+
+
 # ─── to_result 测试 ───
 
 class MockResponse:

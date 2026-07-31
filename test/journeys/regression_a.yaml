@@ -84,14 +84,9 @@ journeys:
     requires: [API_FOOTBALL_KEY]
     retry: 1                     # api-football 偶发超时（P0 首跑实测）
     turns:
-      # 「处理失败」入 skip 表：本旅程主题是交接，数据源断供（provider timeout）按 SKIP 处理；
-      # 「provider 故障应优雅降级而非裸报失败」已单列目标级工作项（见红灯清单）。
-      # 2026-07-31 M-A 校准：世界杯已于 7/19 结束，「明天世界杯」必然数据空窗；
-      # 欧联当天有真实赛程：有未开赛场次就验证 provider → REMINDABLE_ACTIVE；若已全部结束则
-      # 诚实 SKIP，不能让「不设提醒」因含有「提醒」二字而假绿。
-      - say: 今天欧联有哪些比赛
-        skip_journey_if_speech_any: [没有查到, 没有查询到, 暂无, 没有比赛, 无法获取, 拿不到, 处理失败,
-                                     已结束, 不设提醒, 无法设置提醒]
+      # runner 先从真实 Provider 的今天/明天窗口选一个确有未开赛场次的已支持联赛，
+      # 再把本 token 渲染成正常用户话术；无真实场次直接 FAIL，不再用 SKIP 假绿。
+      - say: $E2E_SPORTS_SCHEDULE_QUERY
         expect:
           latency_s: 45
           any_of:

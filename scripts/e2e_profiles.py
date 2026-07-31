@@ -419,6 +419,7 @@ class ProfileCoordinator:
         self._auth_case_id = ""
         self._mutated = False
         self._restored = False
+        self._s2s_runtime_prepared = False
 
     _CREDENTIAL_NAMES = frozenset({
         "AMAP_KEY",
@@ -555,6 +556,25 @@ class ProfileCoordinator:
             error=error,
             missing=missing,
         )
+
+    def prepare_entry_runtime(self, case: Any) -> None:
+        """Reassert temporary runtime gates that earlier shared-stack tests may reset."""
+        epoch = self._active_epoch
+        if epoch is None or case not in epoch.cases:
+            raise ProfileEnableError("profile_enable")
+        if case.id not in _S2S_CASE_IDS or self._s2s_runtime_prepared:
+            return
+        env = self._epoch_environment(epoch)
+        try:
+            self._mutated = True
+            self._compose(_COMPOSE_BASE + ("llm-gateway",), env)
+            if not self._ready():
+                raise RuntimeError("S2S entry runtime did not become ready")
+        except ProfileError:
+            raise
+        except Exception as exc:
+            raise ProfileEnableError("profile_enable") from exc
+        self._s2s_runtime_prepared = True
 
     def _ensure_lease(self) -> None:
         if self.lease is not None:

@@ -149,3 +149,37 @@ def test_destination_focus_meta_only_reaches_location_scoped_steps():
     assert plan.steps[0].meta["focus_destination_lat"] == "22.596"
     assert plan.steps[0].meta["focus_destination_lng"] == "114.306"
     assert "focus_destination_lat" not in plan.steps[1].meta
+
+
+def test_waypoint_plan_inherits_current_destination_from_focus():
+    """裸序号选途经点时，Planner 可能只给 waypoint；目的地应取系统持有的会话焦点。"""
+    plan = Plan(steps=[
+        Step(
+            id="navigate",
+            agent_id="navigation",
+            intent="navigation.navigate_to",
+            slots={"waypoint": "挪瓦咖啡"},
+            context_scopes=["location"],
+        ),
+        Step(
+            id="keep-explicit",
+            agent_id="navigation",
+            intent="navigation.navigate_to",
+            slots={"destination": "深圳湾公园", "waypoint": "便利店"},
+            context_scopes=["location"],
+        ),
+        Step(
+            id="stop-choice",
+            agent_id="navigation",
+            intent="navigation.navigate_to",
+            slots={"stop_category": "咖啡店"},
+            context_scopes=["location"],
+        ),
+    ])
+    focus = Focus(last_destination="南山科技园")
+
+    PlannerEngine._apply_focus_meta(plan, focus)
+
+    assert plan.steps[0].slots["destination"] == "南山科技园"
+    assert plan.steps[1].slots["destination"] == "深圳湾公园"
+    assert plan.steps[2].slots["destination"] == "南山科技园"

@@ -338,11 +338,30 @@ async def _ground_one(poi_provider, name: str, near, meta, llm=None) -> POI | No
 # ──────────────────────────── solve ────────────────────────────
 
 async def solve(poi_provider, trip: Trip, start_soc_pct: float, meta,
-                *, full_range_km: float = None, day_cap_min: int = None) -> Trip:
+                 *, full_range_km: float = None, day_cap_min: int = None) -> Trip:
     """确定性：算相邻 stop 车程 → 按日上限顺延 → 沿路线按 SoC 编织充电点 → 递推 SoC。"""
     full_range = float(full_range_km or FULL_RANGE_KM)
     cap = int(day_cap_min or DAY_MAX_MIN)
     cache: dict = {}
+    origin = None
+    try:
+        origin_lat = float((meta or {}).get("current_lat") or 0)
+        origin_lng = float((meta or {}).get("current_lng") or 0)
+        if origin_lat and origin_lng:
+            origin = Stop(
+                stop_id="__origin__",
+                name="当前位置",
+                poi={
+                    "name": "当前位置",
+                    "lat": origin_lat,
+                    "lng": origin_lng,
+                },
+                dwell_min=0,
+                grounded=True,
+                source="vehicle",
+            )
+    except (TypeError, ValueError):
+        origin = None
 
     async def route(a: Stop, b: Stop):
         """相邻已接地 stop 的路线（distance_km, drive_min, points），按 id 对缓存。"""
@@ -385,10 +404,16 @@ async def solve(poi_provider, trip: Trip, start_soc_pct: float, meta,
 
     # 2) 逐 leg 建结构化驾驶段 + 充电编织 + SoC 递推。
     running = float(start_soc_pct or 0) or 50.0
-    for day in trip.itinerary:
+    trip.ev["start_soc"] = round(running)
+    for day_index, day in enumerate(trip.itinerary):
         gs = day.grounded_stops()
         day.legs = []
-        for a, b in zip(gs, gs[1:]):
+        route_stops = (
+            [origin, *gs]
+            if day_index == 0 and origin is not None and gs
+            else gs
+        )
+        for a, b in zip(route_stops, route_stops[1:]):
             dist, drive_min, points = await route(a, b)
             leg = Leg(from_stop_id=a.stop_id, to_stop_id=b.stop_id,
                       distance_km=dist, drive_min=drive_min, soc_before=round(running))

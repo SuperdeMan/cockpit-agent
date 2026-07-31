@@ -248,6 +248,10 @@ class PlannerEngine:
                 yield {"kind": "final", "speech": "抱歉，我没听清您想让我做什么，可以换个说法吗。"}
                 return
 
+            # 用系统持有的会话焦点补全 Planner 省略的结构化上下文，再记录 trace；
+            # 这样观测到的是下游真正执行的计划，不是补全前的半成品。
+            self._apply_focus_meta(plan, working_set.focus)
+
             # C. 解析 endpoint（Registry）
             # badcase 排查内容级采集（OBS_CONTENT_CAPTURE 门控）：plan 结构 + LLM 原始输出。
             # 此前 LLM raw 只进 stdout 截 500 字符（planning.py），与 trace 无关联。
@@ -289,7 +293,6 @@ class PlannerEngine:
                 },
             )
             await self._resolve_endpoints(plan)
-            self._apply_focus_meta(plan, working_set.focus)
             # 权限校验按步在 dispatch 执行期硬拒（与规划期 catalog 过滤同源 check_permission），
             # 此处不再做计划级兜底（原 _enforce_permissions 为空壳，已移除）。
 
@@ -742,8 +745,24 @@ class PlannerEngine:
         t = (text or "").strip()
         if not t:
             return False
+        # 裸序号是对最近列表/候选的选择，不是任意历史 NEED_SLOT 的自然语言答案。
+        # 旧挂起若抢占“第二个”，会把咖啡候选选择错误填进数轮前的 route 槽。
+        if re.fullmatch(
+            r"(?:第[一二三四五六七八九十\d]+(?:个|家|项|条|种)?|"
+            r"[一二三四五六七八九十\d]+号(?:方案|选项|路线|店)?)",
+            t,
+        ):
+            return True
+        # 条件式提醒常把触发条件放在句首，动作词位于中后部；仍是完整新意图。
+        if any(k in t for k in ("提醒我", "叫我", "通知我", "别忘了")):
+            return True
         # 疑问/回忆式不是槽位答案
         if any(k in t for k in ("什么来着", "来着")) or t.endswith(("吗", "？", "?", "呢")):
+            return True
+        # 完整的新搜索请求可能以行程状语开头（“路上帮我找…”），不能被旧 wait_slot
+        # 当成 route 等槽位答案吞掉。这里只识别“途中语境 + 找/搜”组合，避免把
+        # “路上经过深南大道”这类真实路线答案误判为换话题。
+        if re.search(r"(?:路上|途中|沿途|顺路).{0,8}(?:帮我)?(?:找|搜)", t):
             return True
         # 以动作动词开头 → 大概率是新意图（不是在回答补槽追问）
         _verbs = (
@@ -762,7 +781,21 @@ class PlannerEngine:
         坐标属于敏感 location 上下文，因此这里只向 manifest 已声明 location scope 的步骤注入，
         不广播给闲聊等无关 Agent。Agent 仍须按原话是否含地点指代决定是否消费。
         """
-        if not focus or focus.destination_lat is None or focus.destination_lng is None:
+        if not focus:
+            return
+        # 顺路停靠/“第二个”候选选择轮里，Planner 可能只给 stop_category/waypoint，
+        # 省略已经确立的目的地。destination 是系统焦点中的事实，确定性补齐比让 LLM
+        # 重猜安全；仅限这两类续接计划，绝不覆盖用户本轮显式目的地。
+        if focus.last_destination:
+            for step in plan.steps:
+                if (
+                    step.intent == "navigation.navigate_to"
+                    and (step.slots.get("waypoint") or step.slots.get("stop_category"))
+                    and not step.slots.get("destination")
+                ):
+                    step.slots["destination"] = str(focus.last_destination)
+
+        if focus.destination_lat is None or focus.destination_lng is None:
             return
         meta = {
             "focus_destination": str(focus.last_destination or focus.last_poi or ""),

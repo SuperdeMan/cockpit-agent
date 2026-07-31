@@ -473,6 +473,33 @@ def test_real_s2s_profile_temporarily_enables_dashscope_and_restores_default(
     assert calls[-1][1]["S2S_PROVIDER"] == ""
 
 
+def test_s2s_entry_reasserts_runtime_after_an_earlier_case_recreated_gateway(
+    tmp_path: Path,
+):
+    """Default-epoch fault tests may recreate llm-gateway from root env."""
+    selected = [
+        _case("e2e_degrade", "root", signed_identity=True),
+        _case("e2e_s2s", "real", signed_identity=True),
+    ]
+    calls: list[tuple[list[str], dict[str, str]]] = []
+    coordinator = _coordinator(
+        tmp_path,
+        selected,
+        compose=lambda argv, env: calls.append((list(argv), dict(env))),
+        environ={
+            "S2S_PROVIDER": "",
+            "DASHSCOPE_ASR_KEY": "configured",
+        },
+    )
+
+    coordinator.activate(coordinator.epochs[0])
+    coordinator.prepare_entry_runtime(selected[1])
+
+    command, runtime_env = calls[-1]
+    assert command[-1] == "llm-gateway"
+    assert runtime_env["S2S_PROVIDER"] == "dashscope"
+
+
 def test_mtls_missing_certificates_are_generated_before_compose_or_fail_preflight(
     tmp_path: Path,
 ):

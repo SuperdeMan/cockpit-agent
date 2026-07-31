@@ -129,6 +129,26 @@ def test_deictic_weather_uses_navigation_destination_before_current_location():
     assert "福田" not in res.speech
 
 
+def test_deictic_weather_focus_coordinates_override_planner_landmark_slot():
+    """Planner may copy a POI into ``city`` although QWeather needs city/coordinates."""
+    agent = InfoAgent()
+    agent.location_resolver = _DestinationLocationResolver()
+    res = asyncio.run(run_handle(
+        agent, "info.weather", slots={"city": "大梅沙"},
+        raw_text="那边现在天气怎么样",
+        meta={
+            "current_lat": "22.533",
+            "current_lng": "114.055",
+            "focus_destination": "大梅沙海滨公园",
+            "focus_destination_lat": "22.596",
+            "focus_destination_lng": "114.306",
+        }))
+
+    assert res.status == "ok"
+    assert res.ui_card["city"] == "深圳市盐田区大梅沙"
+    assert "福田" not in res.speech
+
+
 def test_mock_weather_varies_by_requested_city():
     provider = MockWeatherProvider()
     beijing = asyncio.run(provider.overview("北京"))
@@ -908,6 +928,12 @@ def test_sports_followup_resolves_league_from_history():
     assert res.status == "ok"
     assert res.ui_card["fixtures"][0]["home"] == "阿根廷"
     assert "L. Messi" in res.speech
+
+
+def test_sports_detects_chinese_super_league_declared_by_manifest():
+    from agents.info.src.handlers.sports import _detect_league
+
+    assert _detect_league("明天中超有哪些比赛") == (169, "中超")
 
 
 def test_sports_list_request_with_team_stays_list():

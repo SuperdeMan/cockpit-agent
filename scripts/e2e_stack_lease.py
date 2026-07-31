@@ -997,9 +997,16 @@ class IdentityStackLease:
             self.environ.pop("E2E_NAMESPACE_ADMIN_SECRET", None)
         self._enabled = True
         try:
-            self.compose(self.environ)
-            if not self.ready():
-                raise IdentityEnableError("identity_enable")
+            for attempt in range(2):
+                try:
+                    self.compose(self.environ)
+                    if not self.ready():
+                        raise IdentityEnableError("identity_enable")
+                    return
+                except Exception:
+                    if attempt == 0:
+                        continue
+                    raise
         except BaseException as exc:
             try:
                 self.restore()
