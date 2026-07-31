@@ -159,7 +159,9 @@ stdout 里的“PASS/SKIP”。milestone 与 canonical 禁止 `SKIP`/`PASS_WITH_
 
 canonical 仅在代码输入已提交、provider/model 由运行中控制面锁定、完整 milestone 通过时更新
 `docs/reviews/eval/journeys_report.{json,md}`；dirty、筛选运行、运行时档位漂移或 stale digest
-都会拒绝覆盖基线。真栈必须从根 `compose.yaml` 启动，runner 不读取实际 `.env`。
+都会拒绝覆盖基线。真栈必须从根 `compose.yaml` 启动；在 worktree 验收时，runner 只从
+`E2E_STACK_ROOT` 指向的根 `.env` 补齐子进程运行变量（显式进程变量优先），新增敏感值立即进入
+脱敏集合，既不打印也不写工件。runner 不修改 `.env`，子脚本也不得自行读取第二份环境文件。
 
 ## 5.3 离线评测与分布尺（`docs/reviews/eval/README.md` 是口径唯一真相源）
 
