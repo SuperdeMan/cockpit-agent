@@ -10,9 +10,12 @@ import types
 from server import EdgeOrchestratorServicer, _MemoryClient
 
 
-def _request(session_id="s1", meta=None):
-    # _record_local_turn 只读 request.session_id 与 request.meta
-    return types.SimpleNamespace(session_id=session_id, meta=meta or {})
+def _request(session_id="s1", meta=None, *, user_id="u1", vehicle_id="v1",
+             request_id="req-1"):
+    # _record_local_turn 读 session_id / meta / context.{user_id,vehicle_id} / request_id
+    return types.SimpleNamespace(
+        session_id=session_id, meta=meta or {}, request_id=request_id,
+        context=types.SimpleNamespace(user_id=user_id, vehicle_id=vehicle_id))
 
 
 def _service(monkeypatch):
@@ -24,8 +27,8 @@ def test_local_turn_writes_user_and_assistant(monkeypatch):
     service = _service(monkeypatch)
     calls = []
 
-    async def fake_append(session_id, role, text):
-        calls.append((session_id, role, text))
+    async def fake_append(session_id, role, text, **kw):
+        calls.append((session_id, role, text, kw))
 
     service.memory.append = fake_append
 
@@ -35,10 +38,56 @@ def test_local_turn_writes_user_and_assistant(monkeypatch):
 
     asyncio.run(run())
 
-    assert calls == [
+    assert [(c[0], c[1], c[2]) for c in calls] == [
         ("s1", "user", "空调调到24度"),
         ("s1", "assistant", "已设为24度"),
     ]
+
+
+def test_local_turn_carries_owner_and_one_exchange(monkeypatch):
+    """M-B：端侧轮次必须带 OwnerKey，且一次本地请求只构成**一个** exchange。
+
+    此前只传 session/role/text——端侧每一轮都是无主的，云端切 OWNER_ONLY 后会全部
+    落进 primary 桶，乘员 B 的本地轮次被记成主驾说的。
+    """
+    service = _service(monkeypatch)
+    calls = []
+
+    async def fake_append(session_id, role, text, **kw):
+        calls.append((role, kw))
+
+    service.memory.append = fake_append
+
+    async def run():
+        service._record_local_turn(
+            _request(meta={"occupant_id": "occ-2"}, request_id="req-9"),
+            "空调调到24度", "已设为24度")
+        await asyncio.gather(*service._bg)
+
+    asyncio.run(run())
+
+    assert [k["occupant_id"] for _, k in calls] == ["occ-2", "occ-2"]
+    assert [k["user_id"] for _, k in calls] == ["u1", "u1"]
+    assert [k["vehicle_id"] for _, k in calls] == ["v1", "v1"]
+    assert {k["exchange_id"] for _, k in calls} == {"req-9"}
+    assert [k["turn_id"] for _, k in calls] == ["req-9:user", "req-9:assistant:0"]
+
+
+def test_local_turn_without_occupant_falls_back_to_primary(monkeypatch):
+    service = _service(monkeypatch)
+    calls = []
+
+    async def fake_append(session_id, role, text, **kw):
+        calls.append(kw["occupant_id"])
+
+    service.memory.append = fake_append
+
+    async def run():
+        service._record_local_turn(_request(), "空调调到24度", "已设为24度")
+        await asyncio.gather(*service._bg)
+
+    asyncio.run(run())
+    assert calls == ["primary", "primary"]
 
 
 def test_local_turn_skips_when_memory_disabled(monkeypatch):

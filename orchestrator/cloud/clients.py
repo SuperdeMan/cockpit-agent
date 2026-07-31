@@ -66,22 +66,35 @@ class Clients:
     async def append_turn(self, session_id: str, role: str, text: str,
                           user_id: str = "", vehicle_id: str = "",
                           occupant_id: str = "primary",
-                          e2e_memory_capability: str = ""):
+                          e2e_memory_capability: str = "",
+                          turn_id: str = "", exchange_id: str = ""):
         """写入一轮对话到 memory（指代消解的数据来源）。带 user_id 时 memory 侧据此触发异步抽取。
-        occupant_id 决定抽取出的偏好归属哪个乘员（M4 P4；proto 字段 2026-06 就有，一直没人传）。"""
+        occupant_id 决定抽取出的偏好归属哪个乘员（M4 P4；proto 字段 2026-06 就有，一直没人传）。
+        turn_id/exchange_id 让重试是重放而不是追加一轮新对话（M-B）。"""
         await self._memory_stub().AppendTurn(
             memory_pb2.AppendTurnRequest(session_id=session_id, role=role, text=text,
                                          user_id=user_id, vehicle_id=vehicle_id,
                                          occupant_id=occupant_id or "primary",
-                                         e2e_memory_capability=e2e_memory_capability),
+                                         e2e_memory_capability=e2e_memory_capability,
+                                         turn_id=turn_id, exchange_id=exchange_id),
             timeout=_DEFAULT_TIMEOUT)
 
-    async def get_session(self, session_id: str, last_n: int = 6) -> list[dict]:
-        """取最近 N 轮对话（供 planner 注入上下文）。"""
+    async def get_session(self, session_id: str, last_n: int = 6, *,
+                          user_id: str = "", occupant_id: str = "") -> list[dict]:
+        """取最近 N 轮对话（供 planner 注入上下文）。
+
+        M-B：默认 OWNER_ONLY——车里只有一个会话而说话人会换，不按 owner 过滤时
+        planner 会拿到别人的对话当指代来源。scope 不传即 OWNER_ONLY，跨乘员读取
+        必须显式声明，且不走这条规划路径。
+        """
         resp = await self._memory_stub().GetSession(
-            memory_pb2.GetSessionRequest(session_id=session_id, last_n=last_n),
+            memory_pb2.GetSessionRequest(
+                session_id=session_id, last_n=last_n, user_id=user_id,
+                occupant_id=occupant_id or "primary",
+                scope=memory_pb2.HISTORY_SCOPE_OWNER_ONLY),
             timeout=_DEFAULT_TIMEOUT)
-        return [{"role": t.role, "text": t.text, "ts": t.ts} for t in resp.turns]
+        return [{"role": t.role, "text": t.text, "ts": t.ts,
+                 "occupant_id": t.occupant_id} for t in resp.turns]
 
     async def recall(self, user_id: str, query: str = "", *, occupant_id: str = "",
                      scopes: list[str] | None = None, kinds: list[str] | None = None,

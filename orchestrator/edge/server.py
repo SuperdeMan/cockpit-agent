@@ -7,6 +7,7 @@ import os
 import asyncio
 import logging
 import time
+import uuid
 
 import grpc
 from google.protobuf import struct_pb2
@@ -116,11 +117,21 @@ class _MemoryClient:
             self._ch = aio_channel(self.addr)
         return memory_pb2_grpc.MemoryStub(self._ch)
 
-    async def append(self, session_id: str, role: str, text: str):
+    async def append(self, session_id: str, role: str, text: str, *,
+                     user_id: str = "", occupant_id: str = "", vehicle_id: str = "",
+                     turn_id: str = "", exchange_id: str = ""):
+        """M-B：端侧轮次也带 OwnerKey。
+
+        此前这里只传 session/role/text——于是端侧处理的每一轮都是**无主**的，
+        云端切到 OWNER_ONLY 后它们会全部落进 primary 桶。车控/媒体本身没有偏好可抽，
+        但「谁说的」这一维在端侧丢掉后，乘员 B 的本地轮次会被记成主驾说的。
+        """
         try:
             await self._stub().AppendTurn(
                 memory_pb2.AppendTurnRequest(
-                    session_id=session_id, role=role, text=text),
+                    session_id=session_id, role=role, text=text,
+                    user_id=user_id, occupant_id=occupant_id or "primary",
+                    vehicle_id=vehicle_id, turn_id=turn_id, exchange_id=exchange_id),
                 timeout=5)
         except Exception as e:  # 离线/记忆不可用 → 静默跳过
             logger.debug("edge memory append failed: %s", e)
@@ -293,11 +304,21 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             return
         if not request.session_id or not user_text:
             return
+        ctxp = getattr(request, "context", None)
+        uid = getattr(ctxp, "user_id", "") or ""
+        vid = getattr(ctxp, "vehicle_id", "") or ""
+        occ = (meta.get("occupant_id") or "").strip() or "primary"
+        # 一次本地请求 = 一个完整 exchange（user + 本地最终话术）。请求 id 就是 exchange 键。
+        exch = getattr(request, "request_id", "") or f"edge-{uuid.uuid4().hex[:16]}"
 
         async def _write():
-            await self.memory.append(request.session_id, "user", user_text)
+            await self.memory.append(request.session_id, "user", user_text,
+                                     user_id=uid, occupant_id=occ, vehicle_id=vid,
+                                     turn_id=f"{exch}:user", exchange_id=exch)
             if assistant_speech:
-                await self.memory.append(request.session_id, "assistant", assistant_speech)
+                await self.memory.append(request.session_id, "assistant", assistant_speech,
+                                         user_id=uid, occupant_id=occ, vehicle_id=vid,
+                                         turn_id=f"{exch}:assistant:0", exchange_id=exch)
 
         task = asyncio.create_task(_write())
         self._bg.add(task)

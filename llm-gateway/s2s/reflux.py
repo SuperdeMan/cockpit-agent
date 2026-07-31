@@ -33,18 +33,25 @@ def detect_false_promise(answer: str, *, escalated: bool) -> bool:
     return bool(_DONE_MARK.search(answer) and _ACTION_WORD.search(answer))
 
 
-async def build_context_summary(memory_stub, session_id: str, *, last_n: int = 4) -> str:
+async def build_context_summary(memory_stub, session_id: str, *, last_n: int = 4,
+                                user_id: str = "", occupant_id: str = "") -> str:
     """重注入材料：memory 近 N 轮摘要（§2.3）。
 
     N=4 与 planner 口径一致；**不逐字回放全部历史**（token 成本 + 厂商兼容性，摘要粒度
     足够 chitchat 域连续性）。取不到 → 空串（fail-open，会话照开）。
+
+    M-B：按 OwnerKey 取。语音大模型直接听直接答，摘要就是它唯一的上下文来源——
+    混进另一位乘员的对话，它会拿着别人的事实回答这一位。
     """
     if memory_stub is None or not session_id:
         return ""
     try:
         from cockpit.memory.v1 import memory_pb2
         resp = await memory_stub.GetSession(
-            memory_pb2.GetSessionRequest(session_id=session_id, last_n=last_n), timeout=3.0)
+            memory_pb2.GetSessionRequest(
+                session_id=session_id, last_n=last_n, user_id=user_id,
+                occupant_id=occupant_id or "primary",
+                scope=memory_pb2.HISTORY_SCOPE_OWNER_ONLY), timeout=3.0)
     except Exception as e:
         logger.debug("s2s 取近 N 轮失败（继续开会话）: %s", e)
         return ""
@@ -90,25 +97,32 @@ class Reflux:
 
         # 1) memory —— escalated 轮由主链自己 AppendTurn，此处不重复（§7-3）
         if not escalated and transcript:
-            await self._append_turns(transcript, answer)
+            await self._append_turns(transcript, answer, turn_key=turn.turn_id or "")
 
         # 2) obs —— 轮次记录 + span。escalated 轮只补 span 关联（不重复出 obs.turn）
         await self._emit_obs(turn, transcript=transcript, answer=answer,
                              escalated=escalated, false_promise=fp)
 
-    async def _append_turns(self, transcript: str, answer: str) -> None:
+    async def _append_turns(self, transcript: str, answer: str,
+                            *, turn_key: str = "") -> None:
         if self._stub_getter is None:
             return
         try:
             from cockpit.memory.v1 import memory_pb2
             stub = self._stub_getter()
-            for role, text in (("user", transcript), ("assistant", answer)):
+            # S2S 的 exchange 就是它自己的 turn（M-B）；缺 id 时不编一个，
+            # 留空走服务端旧行为，重放保护退化但绝不写错归属。
+            for role, text, tid in (
+                ("user", transcript, f"{turn_key}:user" if turn_key else ""),
+                ("assistant", answer, f"{turn_key}:assistant:0" if turn_key else ""),
+            ):
                 if not text:
                     continue
                 await stub.AppendTurn(memory_pb2.AppendTurnRequest(
                     session_id=self.session_id, role=role, text=text,
                     user_id=self.user_id, vehicle_id=self.vehicle_id,
-                    occupant_id=self.occupant_id or "primary"), timeout=5.0)
+                    occupant_id=self.occupant_id or "primary",
+                    turn_id=tid, exchange_id=turn_key), timeout=5.0)
         except Exception as e:
             # 记忆断代是真损失 → warning 级留痕（obs 里能看到缺口），但不拖死会话
             logger.warning("s2s AppendTurn 回灌失败: %s", e)

@@ -231,3 +231,69 @@ def test_default_complete_request_carries_caller_service():
     assert req.meta["caller_service"] == "memory-extract"
     assert "caller" not in req.meta
     assert req.messages[0].content == "hi"
+
+
+# ── owner 归属（M-B）──────────────────────────────────────
+def test_consolidate_window_excludes_the_other_occupant():
+    """巩固窗口在进 extractor **之前**就按 OwnerKey 切好。
+
+    此前是取整段混合历史、再用触发本次巩固的 occupant 给全部候选盖章——
+    「A 说不吃辣、B 触发巩固」会把不吃辣记到 B 头上，而且是持久脏数据。
+    归属判定不能交给 LLM：它看到的只是一段文本。
+    """
+    store = _store()
+    seen: dict = {}
+
+    def _spy(payload):
+        async def fn(messages):
+            seen["convo"] = messages[-1]["content"]
+            return payload
+        return fn
+
+    async def go():
+        await store.append_turn("s1", "user", "我不吃辣", user_id="u1",
+                                occupant_id="primary", turn_id="e1:user",
+                                exchange_id="e1")
+        await store.append_turn("s1", "user", "我要大杯冰美式", user_id="u1",
+                                occupant_id="occ-2", turn_id="e2:user",
+                                exchange_id="e2")
+        j = json.dumps([{"category": "explicit_preference", "kind": "semantic",
+                         "predicate": "drink.temp", "text": "用户喜欢冰饮",
+                         "scope": "profile.taste", "confidence": 0.9}])
+        ids = await store.consolidate("s1", "u1", "occ-2", complete_fn=_spy(j))
+        items = await store.recall(user_id="u1", occupant_id="occ-2", query="")
+        return ids, items
+
+    ids, items = asyncio.run(go())
+    assert "我不吃辣" not in seen["convo"], "另一位乘员的原话不得进入本 owner 的抽取输入"
+    assert "我要大杯冰美式" in seen["convo"]
+    assert len(ids) == 1
+    assert items and items[0][0]["occupant_id"] == "occ-2"
+
+
+def test_consolidate_records_real_turn_ids_as_evidence():
+    """`source_turn_ids` 存真实 turn id，不再拿 session_id 顶替。
+
+    它是 `weighting.evidence_count` 的输入——填 session_id 时永远数出 1，
+    「说过一次」和「每周三次」的区分从来没生效过。
+    """
+    store = _store()
+
+    async def go():
+        await store.append_turn("s1", "user", "我不吃辣", user_id="u1",
+                                occupant_id="primary", turn_id="e1:user",
+                                exchange_id="e1")
+        await store.append_turn("s1", "assistant", "记住了", user_id="u1",
+                                occupant_id="primary", turn_id="e1:assistant:0",
+                                exchange_id="e1")
+        j = _mock(json.dumps([{"category": "explicit_preference", "kind": "semantic",
+                               "predicate": "taste.spicy", "text": "用户不吃辣",
+                               "scope": "profile.taste", "confidence": 0.9}]))
+        await store.consolidate("s1", "u1", complete_fn=j)
+        return await store.recall(user_id="u1", query="")
+
+    items = asyncio.run(go())
+    assert items
+    evidence = items[0][0]["source_turn_ids"]
+    assert "e1:user" in evidence and "e1:assistant:0" in evidence
+    assert "s1" not in evidence.split(",")

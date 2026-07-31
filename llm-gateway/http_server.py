@@ -955,7 +955,12 @@ def create_http_app() -> web.Application:
                         provider_factory=lambda: build_s2s_provider(
                             prov_name, model, vad_silence_ms=vad_ms),
                         emit_json=emit_json, emit_audio=emit_audio,
-                        context_provider=lambda: build_context_summary(_memory_stub(), sid),
+                        # owner 在调用时现取（M-B）：说话人是**唤醒粒度**的，
+                        # `occupant` 上行帧会热更 reflux——重注入必须跟着同一个 owner 走，
+                        # 否则换人后回灌归属对了、重注入材料还是上一位的对话。
+                        context_provider=lambda: build_context_summary(
+                            _memory_stub(), sid, user_id=reflux.user_id,
+                            occupant_id=reflux.occupant_id),
                         reflux=reflux, session_id=sid,
                         user_id=resolved_user,
                         voice=(data.get("voice") or "").strip())
