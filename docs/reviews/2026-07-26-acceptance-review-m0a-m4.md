@@ -208,3 +208,42 @@ toolcall provider 能力位。
   （受理开单/状态直答/幂等/取消 14s 停手/orphaned 诚实报告）、mcp 稳定 8/10（残余
   =provider 输出方差，定性见 §6 已知残余）；`eval_route_hints` 101/101 无回归。
 - M1b nightly：计划任务在位（今晚 23:30 下次运行）、07-25 日报已入库（随本提交）。
+
+---
+
+## 9. M-A 余项收口（2026-07-31）
+
+M-A 后续批次把本报告 §5 的“测试真实性”遗留落实为统一 manifest runner、签名隔离、
+privacy inventory、真实 provider/语音/安全 profile 以及可复算 canonical 协议，并同步吸收
+main 的 M5 数据飞轮（`87edc13` 是当前分支祖先）。落域问题的处理原则已经切换为：
+说法漏召优先追加 `skills/exemplars/`，跨轮组合知识进入 `skills/guides/`，结构化事实缺失
+补 context/focus；不为验收回添已退役 `route_hints`。
+
+最后一轮全量 canonical `e2e-20260731134142-36ed01d2643c` 在提交 `62e980d` 上得到
+**31/34 entries PASS、0 SKIP**，未获得 promotion；三条失败分别是 journeys B5-2 最新列表
+详情、scene verify 主动汇报、vision 短视觉问句。其后没有用重复全量跑“抽到一次全绿”：
+
+- `66e4af7` 修复最新列表首项回填、scene verify 全局去重键（改为 user+activation 实例，
+  `priority=user_contract`），并把视觉 badcase 作为 trace exemplar 进入 M5 数据车道；
+- 定向真栈 `e2e-20260731143444-07fa95a42836`：**scene 26/26、vision 全通过、B5-2 通过**；
+- `8f02ca5` 让 focus 持久化地图已解析目的地及 waypoint 候选，并升级
+  `navigation-with-stop` guide，修复顺路候选后的裸序号续接；
+- 定向真栈 `e2e-20260731145952-48c4da9d937f`：journeys **target 20/20**，B5-1 与 B5-2
+  同时通过；总计 34/35，唯一红灯是无关的 B1-4 杭州天气省略追问采样回落深圳。
+  B1-4 在上一轮全量已经通过，且本轮改动不触及天气链，故分类为既有 LLM 方差，不重新打开
+  本批范围。
+
+产品负责人在 2026-07-31 明确裁决：停止为了满足初始重型流程而反复执行同一套用例，以
+**全量覆盖证据 + 失败项定向复验 + 相关单测**完成 M-A。这个裁决只豁免本次 M-A 的“必须再抽
+一次 34/34 canonical promotion”手续，不改变 runner 的真实性协议，也不允许把未 promotion
+写成 canonical 全绿。最终证据口径因此是：
+
+- 全仓回归（最后一次业务改动前）：Python **3493 passed / 13 skipped**，HMI **215/215**
+  并 build，Dashboard **17/17** 并 build，Go 全过；
+- 最后一批相关回归：场景/上下文/E2E 协议 **384 passed**，focus **34 passed**，
+  skill golden 8/8，exemplar 契约 **212 条 / 13 域**；
+- 最后一批真栈：scene 26/26、vision 全通过、journeys target 20/20；真实 provider、
+  S2S、声纹、auth、mTLS 的通过证据来自上述最后一次全量 canonical。
+
+**M-A 状态：按负责人裁决完成。** 未生成新的 canonical promotion，B1-4 继续作为普通
+RoutingBench/journeys badcase 进入后续数据飞轮，不阻塞 M-A，也不在本次收口里加规则。

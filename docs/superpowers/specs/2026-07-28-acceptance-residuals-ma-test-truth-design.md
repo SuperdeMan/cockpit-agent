@@ -1282,3 +1282,15 @@ M-A 不改业务 schema 或 proto，回滚以 runner、测试和 CI 为单位：
 18. 每个 signed child 的 token 在启动前即时签发并严格覆盖 `timeout_s+120`，1920/1921 秒边界
     经 Python/Go/llm-gateway 共享向量验证；
 19. 用户已有未跟踪文件保持原样。
+
+### 19.1 2026-07-31 一次性收口裁决
+
+上面的完成定义是 M-A 设计时采用的最高强度流程。实际执行已多次覆盖同一全量选集，最后一个
+全量 run 为 31/34、0 skip；三条残项随后分别取得定向真栈证据，且 journeys 的目标级最终
+20/20。修复后的 journeys 仍有一条与本批无关、前一轮曾通过的天气省略追问采样红灯。
+
+产品负责人明确要求停止继续重复重型全量流程，按“最后全量覆盖 + 失败项定向复验 + 相关单测”
+结束 M-A。因此本次仅豁免第 13 条的“最终再取得一次 canonical promotion”，不回写或伪造
+canonical，不削弱 runner 对今后 canonical 的资格判断，也不把这个一次性裁决外推到 M-B
+以后。实际证据和未 promotion 事实记录在
+`docs/reviews/2026-07-26-acceptance-review-m0a-m4.md` §9。

@@ -106,6 +106,14 @@ geofence×负荷×免打扰 / S2S×主动 / provider 部分成功）+ 测试真�
 一度陈旧 20 commit，当前口径见验收报告 §8）；「主动消息唯一会出声的是深调研」评估不属实
 （朗读判据是 text&&card，提醒/场景/低电量都恒带卡）。
 
+**M-A 余项已按负责人裁决收口（2026-07-31）**：当前分支已包含 main 的 M5 数据飞轮，
+最终三项 residual 分别按 M5 exemplar、Skill guide 与结构化 focus 修复；定向真栈
+scene **26/26**、vision 全通过、journeys **target 20/20**（B5-1/B5-2 同轮通过）。
+最后一次完整 canonical 为 31/34、0 skip，后续未再为了“抽到全绿”重复整套流程，也**没有**
+伪造 promotion；唯一新红 B1-4 是前轮已绿的天气省略追问采样方差，留给后续数据飞轮。
+负责人明确接受“最后全量覆盖 + 失败项定向复验 + 相关单测”作为本次 M-A 完成证据，详情见
+验收报告 §9。后续落域/意图问题继续走 exemplars/guides/boundaries，不恢复退役 hint。
+
 **声纹面真机第二批（2026-07-26，泓舟反馈「删除失效 + 名字变成乘客」）**：两个都不在声纹
 逻辑里。①**删除失效的根因是 CORS**——`Access-Control-Allow-Methods` 只有 `GET, POST,
 OPTIONS`，而声纹删除是全 HMI 唯一的 `DELETE`，浏览器 preflight 直接把请求挡在门外，
