@@ -231,6 +231,36 @@ def test_extract_focus_navigation_poi():
     assert f.destination_lng == 113.942
 
 
+def test_extract_focus_waypoint_choice_keeps_resolved_destination_and_candidates():
+    """顺路候选卡的 data 是协议事实：下一轮裸序号要知道选什么、仍去哪里。
+
+    原始 step.destination 可能是「南山科技园」，地图已解析结果却是具体的腾讯滨海大厦；
+    下一轮必须继承后者，不能拿原始模糊词重新搜索后漂到另一个城市。
+    """
+    plan = Plan(steps=[Step(
+        id="s1",
+        agent_id="navigation",
+        intent="navigation.navigate_to",
+        slots={"destination": "南山科技园", "stop_category": "咖啡"},
+    )])
+    f = extract_focus(plan, [_ok("s1", {
+        "destination": "腾讯滨海大厦",
+        "stops": [
+            {"name": "戴言咖啡"},
+            {"name": "Something For"},
+            {"name": "迈理咖啡"},
+        ],
+    })])
+
+    assert f.last_destination == "腾讯滨海大厦"
+    assert f.last_poi == "戴言咖啡"
+    assert f.last_choice_purpose == "waypoint"
+    assert f.last_choices == ["戴言咖啡", "Something For", "迈理咖啡"]
+    rendered = WorkingSet(focus=f).render_context()
+    assert "最新候选用途=顺路途经点选择" in rendered
+    assert "2:Something For" in rendered
+
+
 def test_extract_focus_info_turn_keeps_last_intent():
     """纯信息轮（无对象/POI/目的地）也落焦点：last_intent 供「明天呢」省略式追问延续判域
     （badcase demo-i9c92i：赛程问句后「明天呢」被错绑到天气）。"""

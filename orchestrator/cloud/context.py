@@ -150,6 +150,8 @@ class Focus:
     attr: str = ""                                      # "温度"/"颜色"...
     last_poi: str = ""                                  # 上个 POI（"还是刚才那家"）
     last_destination: str = ""                          # 上个导航目的地
+    last_choice_purpose: str = ""                       # list | waypoint（最新候选卡的语义）
+    last_choices: list[str] = field(default_factory=list)  # 最新候选名，按卡片顺序（最多 5 个）
     destination_lat: float | None = None                # 已解析目的地坐标（供“那边”确定性续接）
     destination_lng: float | None = None
 
@@ -158,6 +160,7 @@ class Focus:
         # 省略式追问就只能靠裸历史猜域（badcase demo-i9c92i 追问被错绑到天气）。
         return not (self.obj or self.positions or self.attr
                     or self.last_poi or self.last_destination or self.last_intent
+                    or self.last_choice_purpose or self.last_choices
                     or self.destination_lat is not None
                     or self.destination_lng is not None)
 
@@ -349,6 +352,12 @@ def _render_focus(focus) -> str:
         parts.append(f"上个地点={focus.last_poi}")
     if focus.last_destination:
         parts.append(f"上个目的地={focus.last_destination}")
+    if focus.last_choices:
+        purpose = ("顺路途经点选择"
+                   if focus.last_choice_purpose == "waypoint" else "列表选择")
+        parts.append(f"最新候选用途={purpose}")
+        parts.append("最新候选=" + "/".join(
+            f"{idx}:{name}" for idx, name in enumerate(focus.last_choices, 1)))
     if not parts:
         return ""
     return ("当前对话焦点（用于指代消解，仅在用户话术含指代/省略式追问时参考）：\n"
@@ -370,7 +379,7 @@ def _first_poi(data: dict) -> str:
     """从结果 data 里尽力取第一个 POI/地点名（供"还是刚才那家"指代）。"""
     if not isinstance(data, dict):
         return ""
-    items = data.get("items")
+    items = data.get("items") or data.get("stops")
     if isinstance(items, list) and items and isinstance(items[0], dict):
         it = items[0]
         return str(it.get("name") or it.get("title") or it.get("poi_name") or "")
@@ -403,9 +412,25 @@ def extract_focus(plan, results) -> "Focus | None":
         poi = _first_poi(data)
         if poi:
             focus.last_poi = poi
+        choice_items = data.get("stops") or data.get("items")
+        if isinstance(choice_items, list):
+            choices = [
+                str(item.get("name") or item.get("title") or item.get("poi_name") or "")
+                for item in choice_items[:5]
+                if isinstance(item, dict)
+            ]
+            focus.last_choices = [name for name in choices if name]
+            if focus.last_choices:
+                focus.last_choice_purpose = (
+                    "waypoint" if isinstance(data.get("stops"), list) else "list"
+                )
         # 导航 Agent 的成功结果带地图已解析坐标。只从 navigation 域消费，避免把天气/
         # 搜索结果里的同名字段误当成下一轮“那边”的目的地。
         if domain == "navigation":
+            resolved_destination = data.get("destination")
+            if resolved_destination:
+                # 地图已解析的具体地点比 Planner 原始模糊槽（如「南山科技园」）更权威。
+                focus.last_destination = str(resolved_destination)
             try:
                 lat, lng = float(data.get("lat")), float(data.get("lng"))
                 if -90 <= lat <= 90 and -180 <= lng <= 180:
