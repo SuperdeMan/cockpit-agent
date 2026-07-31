@@ -6,6 +6,8 @@ import pytest
 
 from datetime import datetime, timedelta, timezone
 
+from agents._sdk.shared_state import (REMINDERS_ACTIVE, REMINDER_PENDING,
+                                      owner_scoped)
 from agents._sdk.testing import make_context, run_handle, assert_manifest_consistent
 from agents.reminder.src.agent import ReminderAgent
 from agents.reminder.src.store import Reminder, ReminderStore
@@ -13,6 +15,13 @@ from agents.reminder.src.timeparse import FAIL, ParsedTime
 
 _TZ = timezone(timedelta(hours=8))
 _NOW = datetime(2026, 7, 11, 10, 0, tzinfo=_TZ).astimezone(timezone.utc)  # 周六 10:00
+
+# M-B：per-speaker 会话态（列表序号 / 待补槽）按 OwnerKey 收窄——底层 profile KV 是
+# user 级的，放裸 key 就是两位乘员共用一份：A 列了表，B 说「取消第二个」会命中 A 的第二条。
+_PENDING_KEY = owner_scoped(REMINDER_PENDING, "u1", "primary")
+_ACTIVE_KEY = owner_scoped(REMINDERS_ACTIVE, "u1", "primary")
+_PENDING_SCOPE = f"profile.{_PENDING_KEY}"
+_ACTIVE_SCOPE = f"profile.{_ACTIVE_KEY}"
 
 
 async def _agent() -> ReminderAgent:
@@ -63,14 +72,14 @@ async def test_create_without_time_asks_and_saves_pending():
     a._llm_time_fallback.assert_not_awaited()
     # NEED_SLOT 时把标题存进 REMINDER_PENDING（经 profile KV）
     args = ctx._memory.upsert_profile.call_args
-    assert args.args[1] == "reminder_pending" and "开会" in args.args[2]
+    assert args.args[1] == _PENDING_KEY and "开会" in args.args[2]
 
 
 @pytest.mark.asyncio
 async def test_create_resumes_pending_title():
     a = await _agent()
     ctx = make_context(context_values={
-        "profile.reminder_pending": json.dumps({"title": "买牛奶"}, ensure_ascii=False)})
+        _PENDING_SCOPE: json.dumps({"title": "买牛奶"}, ensure_ascii=False)})
     res = await run_handle(a, "reminder.create", raw_text="晚上八点", ctx=ctx)
     assert res.status == "ok" and "买牛奶" in res.speech
 
@@ -119,7 +128,7 @@ async def test_list_today_writes_active_and_card():
     assert card["type"] == "reminder_list" and card["view"] == "day"
     assert card["items"][0]["title"] == "取快递"
     keys = [c.args[1] for c in ctx._memory.upsert_profile.call_args_list]
-    assert "reminders_active" in keys
+    assert _ACTIVE_KEY in keys
 
 
 @pytest.mark.asyncio
@@ -152,7 +161,7 @@ async def test_complete_by_ordinal_via_active_state():
     a = await _agent()
     r = await a.store.add(Reminder(user_id="u1", title="回电话", kind="time",
                                    fire_at=10 ** 12))
-    ctx = make_context(context_values={"profile.reminders_active": json.dumps(
+    ctx = make_context(context_values={_ACTIVE_SCOPE: json.dumps(
         {"items": [{"id": r.id, "title": "回电话"}]}, ensure_ascii=False)})
     res = await run_handle(a, "reminder.complete", raw_text="完成第一条", ctx=ctx)
     assert res.status == "ok" and "回电话" in res.speech
@@ -218,9 +227,9 @@ async def test_cancel_all_confirmation_recovers_pending_when_slots_and_raw_are_g
     )
     assert first.status == "need_confirm"
     saved = ctx._memory.upsert_profile.await_args
-    assert saved.args[1] == "reminder_pending"
+    assert saved.args[1] == _PENDING_KEY
     continued = make_context(context_values={
-        "profile.reminder_pending": saved.args[2],
+        _PENDING_SCOPE: saved.args[2],
     })
 
     confirmed = await run_handle(
@@ -297,7 +306,7 @@ async def test_update_two_turn_via_pending_action():
     assert res.status == "need_slot" and "改到什么时候" in res.speech
     pend_json = ctx._memory.upsert_profile.call_args.args[2]
     assert json.loads(pend_json) == {"title": "带充电线", "action": "update", "id": rid}
-    ctx2 = make_context(context_values={"profile.reminder_pending": pend_json})
+    ctx2 = make_context(context_values={_PENDING_SCOPE: pend_json})
     res2 = await run_handle(a, "reminder.create", raw_text="晚上八点", ctx=ctx2)
     assert res2.status == "ok" and "改到" in res2.speech
     times, _ = await a.store.list_split("u1")
@@ -482,7 +491,7 @@ async def test_cross_domain_pending_continuation_keeps_title():
     k = _ts(2026, 7, 12, 3, 0)
     ctx = make_context(context_values={
         **_remindable([{"title": "葡萄牙 vs 西班牙", "fire_at": k}]),
-        "profile.reminder_pending": json.dumps({"title": "观看世界杯第一场比赛"},
+        _PENDING_SCOPE: json.dumps({"title": "观看世界杯第一场比赛"},
                                                ensure_ascii=False)})
     res = await run_handle(a, "reminder.create", raw_text="开赛的时候", ctx=ctx)
     assert res.status == "ok"
@@ -515,7 +524,7 @@ async def test_ordinal_continuation_after_clarify():
     a = await _agent()
     r1 = await a.store.add(Reminder(user_id="u1", title="喝水", kind="time", fire_at=10 ** 12))
     r2 = await a.store.add(Reminder(user_id="u1", title="喝水", kind="time", fire_at=10 ** 12 + 1))
-    ctx = make_context(context_values={"profile.reminders_active": json.dumps(
+    ctx = make_context(context_values={_ACTIVE_SCOPE: json.dumps(
         {"items": [{"id": r1.id, "title": "喝水"}, {"id": r2.id, "title": "喝水"}]},
         ensure_ascii=False)})
     res = await run_handle(a, "reminder.cancel", raw_text="取消第二条", ctx=ctx)

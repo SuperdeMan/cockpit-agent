@@ -133,3 +133,67 @@ def test_forget_user_scoped_delete_keeps_sessions():
         return await store.get_session("sess-d", 10)
 
     assert len(asyncio.run(go())) == 1
+
+
+# ── places 的 owner 维度（M-B）────────────────────────────
+def test_two_occupants_each_have_their_own_home():
+    """乘员 B 设「家」不得覆盖主驾的家。
+
+    此前 places 读写两侧都是 user 级：`get_places` 恒取 primary、写侧是共享 KV，
+    于是 RFC 宣传的「常去地点各自独立」在代码里根本不成立。
+    """
+    store = _store()
+
+    async def go():
+        await store.upsert_profile("u1", "places", {"home": {"name": "阳光小区", "lat": 1, "lng": 2}})
+        await store.upsert_profile("u1", "places", {"home": {"name": "翠竹苑", "lat": 3, "lng": 4}},
+                                   occupant_id="occ-2")
+        a = await store.get_context("s", "u1", "v", ["profile.places"])
+        b = await store.get_context("s", "u1", "v", ["profile.places"], occupant_id="occ-2")
+        return a, b
+
+    a, b = asyncio.run(go())
+    assert json.loads(a["profile.places"])["home"]["name"] == "阳光小区"
+    assert json.loads(b["profile.places"])["home"]["name"] == "翠竹苑"
+
+
+def test_non_primary_never_reads_legacy_kv_places():
+    """非 primary 永不读 legacy KV——那是主驾的地址，泄漏比查不到更糟。"""
+    store = _store()
+    store._profiles["u1"] = {"places": {"home": {"name": "主驾的家", "lat": 1, "lng": 2}}}
+
+    async def go():
+        return (
+            await store.get_context("s", "u1", "v", ["profile.places"]),
+            await store.get_context("s", "u1", "v", ["profile.places"], occupant_id="occ-2"),
+        )
+
+    a, b = asyncio.run(go())
+    assert json.loads(a["profile.places"])["home"]["name"] == "主驾的家"  # primary dual-read
+    assert "profile.places" not in b
+
+
+def test_primary_dual_read_only_fills_missing_keys():
+    """dual-read 只补新表**缺失**的 key，不用整块 KV 覆盖新表。"""
+    store = _store()
+    store._profiles["u1"] = {"places": {"home": {"name": "旧的家"}, "company": {"name": "旧的公司"}}}
+
+    async def go():
+        await store.upsert_profile("u1", "places", {"home": {"name": "新的家", "lat": 1, "lng": 2}})
+        return await store.get_context("s", "u1", "v", ["profile.places"])
+
+    places = json.loads(asyncio.run(go())["profile.places"])
+    assert places["home"]["name"] == "新的家"       # memory_item 胜出
+    assert places["company"]["name"] == "旧的公司"  # KV 只补缺失的
+
+
+def test_places_upsert_is_a_patch_not_a_replace():
+    store = _store()
+
+    async def go():
+        await store.upsert_profile("u1", "places", {"home": {"name": "家", "lat": 1, "lng": 2}})
+        await store.upsert_profile("u1", "places", {"company": {"name": "公司", "lat": 3, "lng": 4}})
+        return await store.get_context("s", "u1", "v", ["profile.places"])
+
+    places = json.loads(asyncio.run(go())["profile.places"])
+    assert set(places) == {"home", "company"}

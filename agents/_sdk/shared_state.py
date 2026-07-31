@@ -45,6 +45,21 @@ SCENE_PENDING = "scene_pending"
 # 引擎补槽回填的是字面「第一个」，agent 侧须能解序号，否则拿字面去搜 POI）。消费即清。
 CHARGING_DEST_CHOICES = "charging_dest_choices"
 
+
+def owner_scoped(key: str, user_id: str, occupant_id: str = "") -> str:
+    """把状态键收窄到 OwnerKey（M-B）。
+
+    底层 profile KV 是 **user 级**的，所以「当前提醒列表」「待补槽的提醒」这类
+    per-speaker 会话态放裸 key 就是两位乘员共用一份：A 列了表，B 说「取消第二个」
+    会命中 A 的第二条。key 里同时保留 user 与 occupant——外层 profile 命名空间只是
+    分区，**不能靠进程局部上下文补全 owner**。
+
+    只用于确实 per-speaker 的键；跨域共享态（如 remindable_active 由别的域写）不套。
+    """
+    return f"{key}:{user_id}:{(occupant_id or '').strip() or 'primary'}"
+
+
 __all__ = ["NEWS_ACTIVE", "RESEARCH_ACTIVE", "TRIP_ACTIVE",
            "REMINDERS_ACTIVE", "REMINDER_PENDING", "REMINDABLE_ACTIVE",
-           "SCENE_ACTIVE", "SCENE_PENDING", "CHARGING_DEST_CHOICES"]
+           "SCENE_ACTIVE", "SCENE_PENDING", "CHARGING_DEST_CHOICES",
+           "owner_scoped"]

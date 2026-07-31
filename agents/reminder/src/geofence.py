@@ -16,6 +16,7 @@ import logging
 import time
 
 from .placeparse import ARRIVE, arrived
+from .store import group_by_owner
 
 logger = logging.getLogger("agent.reminder.geofence")
 
@@ -59,12 +60,15 @@ class GeofenceWatcher:
         claimed = await self._store.claim_location([r.id for r in hits], now)
         if not claimed:
             return 0
-        await self._publish(self._payload(claimed))
-        logger.info("位置提醒触达 x%d：%s", len(claimed),
-                    "、".join(r.title for r in claimed)[:60])
+        # 围栏判定跨 owner（车况驱动），但触达必须按 OwnerKey 分组（M-B）：
+        # 同一个地点同时命中两位乘员的提醒时，各说各的，不合成一张卡。
+        for (uid, occ), group in group_by_owner(claimed).items():
+            await self._publish(self._payload(uid, occ, group))
+            logger.info("位置提醒触达 x%d owner=%s/%s：%s", len(group), uid, occ,
+                        "、".join(r.title for r in group)[:60])
         return len(claimed)
 
-    def _payload(self, items) -> dict:
+    def _payload(self, user_id: str, occupant_id: str, items) -> dict:
         def phrase(r):
             place = str((r.extra or {}).get("place") or "")
             verb = "离开" if (r.extra or {}).get("trigger_on") == "leave" else "到"
@@ -77,7 +81,9 @@ class GeofenceWatcher:
             speech = f"{phrase(items[0])}，有 {len(items)} 条提醒：{titles}。"
         cards = [{"type": "reminder_card", "context": "fired",
                   "item": r.to_card_item(tz=self._tz),
-                  "actions": [{"label": "完成", "send_text": f"完成提醒：{r.title}"}]}
+                  "actions": [{"label": "完成", "send_text": f"完成提醒：{r.title}",
+                               "reminder_id": r.id,
+                               "owner_occupant_id": r.occupant_id}]}
                  for r in items]
         from runtime.proactive import P_USER_CONTRACT
         fired_ts = int(self._now() * 1000)
@@ -85,7 +91,7 @@ class GeofenceWatcher:
                 "card": cards[0] if len(cards) == 1 else
                 {"type": "card_group", "items": cards},
                 "agent_id": "reminder", "ts": fired_ts,
-                "user_id": items[0].user_id,
+                "user_id": user_id, "owner_occupant_id": occupant_id,
                 # 用户显式约定：治理器只做合并，不做抑制（到地必响，同到点必响）。
                 # 去重键带触发时刻（同 scheduler）：改期后重进围栏的再触发不能被
                 # 治理器去重窗吞掉——只有同一次触发的重投才该判重。

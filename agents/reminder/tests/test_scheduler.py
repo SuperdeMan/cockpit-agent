@@ -119,3 +119,55 @@ async def test_snooze_refire_gets_fresh_dedup_key():
     k2 = pub.sent[1]["dedup_key"]
     assert k1 != k2, "跨次触发的 dedup_key 必须不同，否则被治理器去重窗吞掉"
     assert k1.rsplit("|", 1)[0] == k2.rsplit("|", 1)[0], "同一条目的 id 部分保持稳定"
+
+
+# ── OwnerKey 分组（M-B）──────────────────────────────────
+@pytest.mark.asyncio
+async def test_two_users_due_in_the_same_tick_get_separate_payloads():
+    """全局扫描可以跨 owner 原子领取，但**消费必须先分组**。
+
+    此前整批共用一条 speech/card 且 `user_id` 取 due[0]——一个人会听到另一个人的
+    提醒，而整条消息还被记在第一个人名下。
+    """
+    pub = Pub()
+    s = await _store_with(
+        Reminder(user_id="u1", title="U1的会", kind="time", fire_at=100),
+        Reminder(user_id="u2", title="U2的药", kind="time", fire_at=100))
+    n = await ReminderScheduler(s, pub, now_fn=lambda: 200.0).tick()
+
+    assert n == 2 and len(pub.sent) == 2
+    by_user = {p["user_id"]: p for p in pub.sent}
+    assert set(by_user) == {"u1", "u2"}
+    assert "U1的会" in by_user["u1"]["speech"] and "U2的药" not in by_user["u1"]["speech"]
+    assert "U2的药" in by_user["u2"]["speech"] and "U1的会" not in by_user["u2"]["speech"]
+
+
+@pytest.mark.asyncio
+async def test_two_occupants_of_one_user_also_get_separate_payloads():
+    pub = Pub()
+    s = await _store_with(
+        Reminder(user_id="u1", occupant_id="primary", title="主驾的会",
+                 kind="time", fire_at=100),
+        Reminder(user_id="u1", occupant_id="occ-2", title="乘客的药",
+                 kind="time", fire_at=100))
+    n = await ReminderScheduler(s, pub, now_fn=lambda: 200.0).tick()
+
+    assert n == 2 and len(pub.sent) == 2
+    by_occ = {p["owner_occupant_id"]: p for p in pub.sent}
+    assert set(by_occ) == {"primary", "occ-2"}
+    assert "主驾的会" in by_occ["primary"]["speech"]
+    assert "乘客的药" in by_occ["occ-2"]["speech"]
+
+
+@pytest.mark.asyncio
+async def test_card_actions_pin_reminder_id_and_owner():
+    """卡片 action 带精确 id + pinned owner：HMI 点「完成」不拿点击时的声纹身份去猜，
+    也不按标题模糊匹配跨乘员操作同名提醒。**pin 只是数据路由，不是权限凭据。**"""
+    pub = Pub()
+    s = await _store_with(Reminder(user_id="u1", occupant_id="occ-2", title="吃药",
+                                   kind="time", fire_at=100))
+    await ReminderScheduler(s, pub, now_fn=lambda: 200.0).tick()
+
+    actions = pub.sent[0]["card"]["actions"]
+    assert all(a["owner_occupant_id"] == "occ-2" for a in actions)
+    assert all(a["reminder_id"] for a in actions)

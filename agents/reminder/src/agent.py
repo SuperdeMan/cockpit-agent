@@ -12,7 +12,8 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from agents._sdk import BaseAgent, AgentResult, NEED_CONFIRM, NEED_SLOT, FAILED
-from agents._sdk.shared_state import REMINDABLE_ACTIVE, REMINDERS_ACTIVE, REMINDER_PENDING
+from agents._sdk.shared_state import (REMINDABLE_ACTIVE, REMINDERS_ACTIVE,
+                                      REMINDER_PENDING, owner_scoped)
 from runtime.proactive import publish_proactive
 
 from .placeparse import ARRIVE, parse_place_text
@@ -138,6 +139,17 @@ class ReminderAgent(BaseAgent):
     def _uid(ctx) -> str:
         return ctx.user_id or "u1"
 
+    @staticmethod
+    def _occ(ctx) -> str:
+        """本轮说话人（M-B）。提醒的 owner 是 (user_id, occupant_id)——此前全域零
+        occupant，两位乘员的提醒混在一张表、序号互相污染、触达不区分人。
+        认不出时回落 primary（既定兼容行为），**occupant 永不参与鉴权**。"""
+        return (getattr(ctx, "occupant_id", "") or "").strip() or "primary"
+
+    def _state_key(self, ctx, key: str) -> str:
+        """per-speaker 会话态键（列表序号 / 待补槽）收窄到 OwnerKey。"""
+        return owner_scoped(key, self._uid(ctx), self._occ(ctx))
+
     # ── create（含 P1a：update 续接 / snooze 收编 / 重复规则）──
     async def _create(self, intent, ctx, meta) -> AgentResult:
         raw = intent.raw_text or ""
@@ -155,7 +167,8 @@ class ReminderAgent(BaseAgent):
                 pend_update_id = pend.get("id") or ""
         snooze_target = None
         if not title and _AGAIN_RE.search(raw):  # 「过10分钟再叫我」无标题 → 最近 fired
-            fired, _ = await self.store.list_split(self._uid(ctx), statuses=(FIRED,))
+            fired, _ = await self.store.list_split(self._uid(ctx), statuses=(FIRED,),
+                                                  occupant_id=self._occ(ctx))
             if fired:
                 snooze_target = max(fired, key=lambda r: r.fired_at)
                 title = snooze_target.title
@@ -171,7 +184,8 @@ class ReminderAgent(BaseAgent):
             intent.slots.get("kind") == "todo" or bool(_TODO_RE.search(raw)))
         if is_todo:
             r = await self.store.add(Reminder(
-                user_id=self._uid(ctx), vehicle_id=ctx.vehicle_id or "",
+                user_id=self._uid(ctx), occupant_id=self._occ(ctx),
+                vehicle_id=ctx.vehicle_id or "",
                 title=title, kind="todo"))
             await self._refresh_active(ctx)
             await self._clear_pending(ctx)
@@ -200,7 +214,8 @@ class ReminderAgent(BaseAgent):
                 return rem                       # 多项反问 / 已开始诚实告知
             if rem:
                 r = await self.store.add(Reminder(
-                    user_id=self._uid(ctx), vehicle_id=ctx.vehicle_id or "",
+                    user_id=self._uid(ctx), occupant_id=self._occ(ctx),
+                vehicle_id=ctx.vehicle_id or "",
                     title=rem["title"], kind="time", fire_at=rem["fire_at"]))
                 await self._refresh_active(ctx)
                 await self._clear_pending(ctx)
@@ -233,14 +248,17 @@ class ReminderAgent(BaseAgent):
         #   显式「再提醒」时同名 pending 也改期不重建 —— 根治 P0 的 fired 尸体堆积
         target = snooze_target or await self._reschedule_target(ctx, title, raw)
         if target:
-            await self.store.update_fire_at(self._uid(ctx), target.id, fire_at)
+            await self.store.update_fire_at(self._uid(ctx), target.id, fire_at,
+                                            occupant_id=self._occ(ctx))
             await self._refresh_active(ctx)
             await self._clear_pending(ctx)
-            r2 = await self.store.get(self._uid(ctx), target.id)
+            r2 = await self.store.get(self._uid(ctx), target.id,
+                                      occupant_id=self._occ(ctx))
             return AgentResult(speech=f"好的，{display}再提醒你：{target.title}。",
                                ui_card=self._card_single(r2, "updated"))
         r = await self.store.add(Reminder(
-            user_id=self._uid(ctx), vehicle_id=ctx.vehicle_id or "",
+            user_id=self._uid(ctx), occupant_id=self._occ(ctx),
+                vehicle_id=ctx.vehicle_id or "",
             title=title, kind="time", fire_at=fire_at, recur=recur))
         await self._refresh_active(ctx)
         await self._clear_pending(ctx)
@@ -326,8 +344,9 @@ class ReminderAgent(BaseAgent):
 
     async def _reschedule_target(self, ctx, title: str, raw: str) -> Reminder | None:
         """同名 fired 尸体一律收编改期；显式「再提醒/再叫」时同名 pending 也改期不重建。"""
-        uid = self._uid(ctx)
-        exact = [h for h in await self.store.find_by_title(uid, title)
+        uid, occ = self._uid(ctx), self._occ(ctx)
+        exact = [h for h in await self.store.find_by_title(uid, title,
+                                                          occupant_id=occ)
                  if h.title == title]
         fired = [h for h in exact if h.status == FIRED]
         if fired:
@@ -338,14 +357,15 @@ class ReminderAgent(BaseAgent):
 
     async def _apply_update(self, ctx, rid: str, title: str, pt: ParsedTime) -> AgentResult:
         """改期落地（update 直达轮与缺时间续接轮共用）。"""
-        ok = await self.store.update_fire_at(self._uid(ctx), rid, pt.fire_at)
+        ok = await self.store.update_fire_at(self._uid(ctx), rid, pt.fire_at,
+                                             occupant_id=self._occ(ctx))
         await self._refresh_active(ctx)
         await self._clear_pending(ctx)
         if not ok:
             # R9：诚实降级话术用 OK（FAILED 会被聚合器吞）
             return AgentResult(
                 speech="这条提醒不在了，说「看看我的提醒」我给你列一下。")
-        r2 = await self.store.get(self._uid(ctx), rid)
+        r2 = await self.store.get(self._uid(ctx), rid, occupant_id=self._occ(ctx))
         return AgentResult(speech=f"好的，「{title}」改到{pt.display}。",
                            ui_card=self._card_single(r2, "updated"))
 
@@ -365,7 +385,8 @@ class ReminderAgent(BaseAgent):
                 follow_up=f"比如「我{pp.place}在XX路X号」，以后{verb}{pp.place}我就能提醒你。",
                 missing_slots=["place_address"])
         r = await self.store.add(Reminder(
-            user_id=self._uid(ctx), vehicle_id=ctx.vehicle_id or "",
+            user_id=self._uid(ctx), occupant_id=self._occ(ctx),
+                vehicle_id=ctx.vehicle_id or "",
             title=title, kind=LOCATION,
             extra={"place": pp.place, "trigger_on": pp.trigger_on, **resolved}))
         await self._refresh_active(ctx)
@@ -524,7 +545,8 @@ class ReminderAgent(BaseAgent):
             label, frm, to = f"这个月 · {day0.month}月", ep(now_utc), ep(nxt)
         # 词表外区间：诚实回退"全部"（frm=0 含过期未办项）
 
-        times, todos = await self.store.list_split(self._uid(ctx), from_ts=frm, to_ts=to)
+        times, todos = await self.store.list_split(self._uid(ctx), from_ts=frm, to_ts=to,
+                                                   occupant_id=self._occ(ctx))
         if todo_only:
             times = []
         total = len(times) + len(todos)
@@ -556,7 +578,8 @@ class ReminderAgent(BaseAgent):
             nxt = r.to_card_item(now=self._now_utc(), tz=self._tz).get("time_display", "")
             return AgentResult(speech=f"好，这次完成了。「{r.title}」{recur_label(r.recur)}"
                                       f"还会提醒，下次{nxt}；不需要了说「取消{r.title}」。")
-        await self.store.set_status(self._uid(ctx), r.id, DONE)
+        await self.store.set_status(self._uid(ctx), r.id, DONE,
+                                    occupant_id=self._occ(ctx))
         await self._refresh_active(ctx)
         return AgentResult(speech=f"「{r.title}」已完成。")
 
@@ -568,17 +591,18 @@ class ReminderAgent(BaseAgent):
             or bool(_ALL_RE.search(raw)) \
             or bool(confirmed and pending.get("action") == "cancel_all")
         if wants_all:
-            times, todos = await self.store.list_split(self._uid(ctx))
+            times, todos = await self.store.list_split(self._uid(ctx),
+                                                   occupant_id=self._occ(ctx))
             n = len(times) + len(todos)
             if n == 0:
                 await self._clear_pending(ctx)
                 return AgentResult(speech="现在没有提醒或待办。")
             if confirmed:   # engine 确认续接（R2 契约）
-                await self.store.cancel_all(self._uid(ctx))
+                await self.store.cancel_all(self._uid(ctx), occupant_id=self._occ(ctx))
                 await self._refresh_active(ctx, [])
                 await self._clear_pending(ctx)
                 return AgentResult(speech=f"好的，已清空全部 {n} 条提醒和待办。")
-            await ctx.save_shared_state(REMINDER_PENDING, {
+            await ctx.save_shared_state(self._state_key(ctx, REMINDER_PENDING), {
                 "action": "cancel_all",
             })
             return AgentResult(status=NEED_CONFIRM,
@@ -591,14 +615,15 @@ class ReminderAgent(BaseAgent):
         if len(hits) > 1:
             return await self._clarify_multi(ctx, hits, "取消")
         r = hits[0]
-        await self.store.set_status(self._uid(ctx), r.id, CANCELLED)
+        await self.store.set_status(self._uid(ctx), r.id, CANCELLED,
+                                    occupant_id=self._occ(ctx))
         await self._refresh_active(ctx)
         return AgentResult(speech=f"好的，取消了「{r.title}」。")
 
     async def _resolve_targets(self, ctx, raw: str, slots: dict) -> list[Reminder]:
         """序号经 REMINDERS_ACTIVE（须本会话列过/建过）→ 唯一命中；
         标题走 store 子串匹配 → 可能多条，全部返回由调用方决定（单条直接执行、多条反问澄清）。"""
-        uid = self._uid(ctx)
+        uid, occ = self._uid(ctx), self._occ(ctx)
         idx = None
         idx_slot = (slots.get("index") or "").strip()
         if idx_slot.isdigit():
@@ -609,14 +634,14 @@ class ReminderAgent(BaseAgent):
                 v = m.group(1)
                 idx = int(v) if v.isdigit() else _CN_IDX.get(v)
         if idx:
-            data = await ctx.load_shared_state(REMINDERS_ACTIVE)
+            data = await ctx.load_shared_state(self._state_key(ctx, REMINDERS_ACTIVE))
             try:
                 d = json.loads(data) if isinstance(data, str) else (data or {})
                 items = d.get("items", [])
             except Exception:
                 items = []
             if 0 < idx <= len(items):
-                r = await self.store.get(uid, items[idx - 1]["id"])
+                r = await self.store.get(uid, items[idx - 1]["id"], occupant_id=occ)
                 return [r] if r else []
             return []
         q = (slots.get("title") or "").strip()
@@ -625,7 +650,7 @@ class ReminderAgent(BaseAgent):
                 r"完成提醒[:：]|完成|办完|做完|搞定|取消|删掉|删除|不用|那条|这条"
                 r"|把|改到|改成|推迟到?|提前到?|延到|换到|改个?时间|的提醒|的待办|了",
                 "", raw))
-        return await self.store.find_by_title(uid, q) if q else []
+        return await self.store.find_by_title(uid, q, occupant_id=occ) if q else []
 
     async def _clarify_multi(self, ctx, hits: list[Reminder], action: str) -> AgentResult:
         """标题命中多条时不擅自操作（P0 单条语义）：反问澄清，并把候选写入 active，
@@ -648,9 +673,10 @@ class ReminderAgent(BaseAgent):
     # ── shared_state（conventions §9）──
     async def _refresh_active(self, ctx, items: list | None = None) -> None:
         if items is None:
-            times, todos = await self.store.list_split(self._uid(ctx))
+            times, todos = await self.store.list_split(self._uid(ctx),
+                                                   occupant_id=self._occ(ctx))
             items = times + todos
-        await ctx.save_shared_state(REMINDERS_ACTIVE, {
+        await ctx.save_shared_state(self._state_key(ctx, REMINDERS_ACTIVE), {
             "items": [{"id": r.id, "title": r.title} for r in items[:10]]})
 
     async def _save_pending(self, ctx, title: str, update_id: str = "") -> None:
@@ -658,13 +684,13 @@ class ReminderAgent(BaseAgent):
         pend = {"title": title}
         if update_id:
             pend.update(action="update", id=update_id)
-        await ctx.save_shared_state(REMINDER_PENDING, pend)
+        await ctx.save_shared_state(self._state_key(ctx, REMINDER_PENDING), pend)
 
     async def _clear_pending(self, ctx) -> None:
-        await ctx.save_shared_state(REMINDER_PENDING, {})
+        await ctx.save_shared_state(self._state_key(ctx, REMINDER_PENDING), {})
 
     async def _load_pending(self, ctx) -> dict:
-        data = await ctx.load_shared_state(REMINDER_PENDING)
+        data = await ctx.load_shared_state(self._state_key(ctx, REMINDER_PENDING))
         try:
             d = json.loads(data) if isinstance(data, str) else (data or {})
             return d if isinstance(d, dict) else {}

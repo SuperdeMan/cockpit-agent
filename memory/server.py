@@ -69,7 +69,8 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
 
     async def GetContext(self, request, context):
         values = await self.store.get_context(
-            request.session_id, request.user_id, request.vehicle_id, list(request.scopes))
+            request.session_id, request.user_id, request.vehicle_id,
+            list(request.scopes), occupant_id=request.occupant_id)
         return memory_pb2.GetContextResponse(values=values)
 
     async def AppendTurn(self, request, context):
@@ -235,7 +236,8 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
             logger.warning("UpsertProfile bad json (%s/%s): %s",
                            request.user_id, request.key, e)
             return memory_pb2.UpsertProfileResponse(ok=False)
-        await self.store.upsert_profile(request.user_id, request.key, value)
+        await self.store.upsert_profile(request.user_id, request.key, value,
+                                        occupant_id=request.occupant_id)
         return memory_pb2.UpsertProfileResponse(ok=True)
 
     # ── 分层记忆（语义画像 / 情景）──────────────────────────

@@ -314,17 +314,28 @@ class MemoryStore:
             await r.set(self._profile_key(user_id),
                         json.dumps(profile, ensure_ascii=False))
 
-    async def get_context(self, session_id, user_id, vehicle_id, scopes) -> dict:
-        """按 scope 取上下文。敏感 scope 走脱敏路径。"""
+    async def get_context(self, session_id, user_id, vehicle_id, scopes,
+                          occupant_id: str = "") -> dict:
+        """按 scope 取上下文。敏感 scope 走脱敏路径。
+
+        M-B：`profile.places` 按 OwnerKey 取。此前读侧恒取 primary、写侧是共享 KV
+        ——乘员 B 说「把这里设成我家」会覆盖主驾的家，而且非 primary 永远读不到自己的。
+        """
         result = {}
+        _uid, occ = owner_of(user_id, occupant_id)
         profile = await self._load_profile(user_id) if user_id else {}
         for scope in scopes:
-            # profile.places：优先读分层记忆新表（P1 收敛），无则回退旧 KV
+            # profile.places：唯一真相源是 owner-scoped `memory_item place.*`。
+            # primary 在 backfill 完成前 dual-read——**只补新表缺失的 key**，不整块覆盖；
+            # 非 primary **永不**读 legacy KV（那是 primary 的地址，泄漏比查不到更糟）。
             if scope == "profile.places" and user_id:
-                places = await (await self._vec()).get_places(user_id)
+                places = await (await self._vec()).get_places(user_id, occ)
+                if occ == PRIMARY:
+                    for k, v in (profile.get("places") or {}).items():
+                        places.setdefault(k, v)
                 if places:
                     result[scope] = json.dumps(places, ensure_ascii=False)
-                    continue
+                continue
             # 用户画像优先从持久化画像取（如 profile.places 常用地点）
             if scope.startswith("profile.") and user_id:
                 key = scope.split(".", 1)[1] if "." in scope else scope
@@ -345,15 +356,20 @@ class MemoryStore:
         return await self._load_profile(user_id)
 
     async def delete_profile(self, user_id: str) -> bool:
-        """删除用户画像（合规接口）。删除后不可再被检索。"""
+        """删除用户画像（合规接口）。删除后不可再被检索。
+
+        `existed` 按「**真的删掉了什么**」算：places 自 M-B 起只住 memory_item，
+        只看 legacy KV 会在刚设完家的用户身上返回「本来就没有」。
+        """
         existed = bool(await self._load_profile(user_id))
         self._profiles.pop(user_id, None)
         r = await self._redis()
         if r:
             await r.delete(self._profile_key(user_id))
-        # 一并清掉镜像的常用地点（profile.places），保持画像删除一致
+        # 一并清掉 owner-scoped 常用地点（profile.places），保持画像删除一致
         try:
-            await (await self._vec()).forget(user_id, scopes=["profile.places"])
+            existed = bool(await (await self._vec()).forget(
+                user_id, scopes=["profile.places"])) or existed
         except Exception as e:
             logger.debug("delete places mirror failed: %s", e)
         if existed:
@@ -366,17 +382,23 @@ class MemoryStore:
         profile.update(data)
         await self._save_profile(user_id, profile)
 
-    async def upsert_profile(self, user_id: str, key: str, value):
+    async def upsert_profile(self, user_id: str, key: str, value,
+                             occupant_id: str = ""):
         """写单个画像字段（如 places），value 为已解析对象。持久化。
-        places 额外镜像到分层记忆 memory_item（高敏，P1 双写收敛）。"""
+
+        M-B：places **只写 owner-scoped memory_item，不再回写 legacy KV**——KV 是
+        user 级的，往里写就等于让乘员 B 覆盖主驾。按 key 做 supersede-or-insert
+        （patch 语义）：出现的 key 更新，未出现的保持不变；删除走精确接口。
+        legacy KV 保留只读兼容，本批不删。
+        """
+        _uid, occ = owner_of(user_id, occupant_id)
+        if key == "places":
+            if isinstance(value, dict):
+                await self._mirror_places(user_id, value, occ)
+            return
         profile = await self._load_profile(user_id)
         profile[key] = value
         await self._save_profile(user_id, profile)
-        if key == "places" and isinstance(value, dict):
-            try:
-                await self._mirror_places(user_id, value)
-            except Exception as e:
-                logger.debug("mirror places failed: %s", e)
 
     async def _mirror_places(self, user_id: str, places: dict, occupant_id: str = "primary"):
         """把常用地点镜像为 memory_item（predicate place.*，highly_sensitive，用户显式设置）。
