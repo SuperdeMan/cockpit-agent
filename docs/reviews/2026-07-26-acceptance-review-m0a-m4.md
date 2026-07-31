@@ -191,6 +191,9 @@ occupant 维度（proto 演进）；③ MCP 订单查询/取消入口（兑现�
 全量重跑机制化（基线曾陈旧 20 commit 无人发现——建议每里程碑收官强制刷新；本轮改动
 编排核心后已按铁律重跑 regression 集，见 §8）。
 
+> **进度（2026-08-01）**：⑥ 由 M-A 收口（§9）；①② 与 §3 一批 occupant 卡由 M-B 收口
+> （§10）；③④⑤ 仍开放。
+
 **P2**：HMI 记忆面板 identity/删除语义重做；enroll 原子性与重名检查；SKIP 第三态显示；
 源码铁律黑名单改白名单/AST；location 提醒补 conditions；`few_shots` 契约实现或从文档删除；
 toolcall provider 能力位。
@@ -247,3 +250,49 @@ main 的 M5 数据飞轮（`87edc13` 是当前分支祖先）。落域问题的�
 
 **M-A 状态：按负责人裁决完成。** 未生成新的 canonical promotion，B1-4 继续作为普通
 RoutingBench/journeys badcase 进入后续数据飞轮，不阻塞 M-A，也不在本次收口里加规则。
+
+---
+
+## 10. M-B 多乘员数据隔离收口（2026-08-01）
+
+M-A 关的是 §5「测试真实性」；M-B 关的是 §3 与 §7 P1-01/P1-02 这一族 **occupant 缺口**。
+一句话定性：**M4 P4 让系统知道「谁在说话」，但那只到请求控制面——数据面存不下来，
+等于没识别**。Redis 里的 Turn 只有 `role/text/ts`，于是同一 cabin session 换个人说话，
+上一位的话会按当前说话人归档，而且在记忆里留下持久脏数据。
+
+### 10.1 已修（本批）
+
+| # | 缺口 | 修复 |
+|---|---|---|
+| 1 | 巩固窗口 session 级、说话人盲（§3 立卡） | Turn 存完整 OwnerKey + `turn_id`/`exchange_id`；**抽取窗口在进 extractor 之前按 owner 切好**（归属不交给 LLM）；节流键从 session 级改 `(session,user,occupant)`——否则「A 说三轮、B 说第四轮」会在只说过一句的 B 名下触发 |
+| 2 | 历史跨乘员共享 | `GetSession.scope` 缺省 OWNER_ONLY，`ALL_OCCUPANTS` 须显式且只供管理视图；`last_n` 是**过滤后**上限，切中 exchange 时整体舍弃最旧的半个（只留 assistant 半句会让抽取把助手的话当用户偏好） |
+| 3 | `source_turn_ids` 拿 session_id 顶替 | 改存真实 turn id。它是 `weighting.evidence_count` 的输入——填 session_id 时永远数出 1，「说过一次 vs 每周三次」的区分**从未生效过** |
+| 4 | `profile.places` 无 occupant 维度（P1-02） | 唯一真相源改 owner-scoped `memory_item place.*`；upsert 变 per-key patch（不再整块 map 覆盖）；primary dual-read legacy KV **只补新表缺失的 key**，非 primary 永不读 KV |
+| 5 | reminder 全域零 occupant（§3 同根） | `reminder_item.occupant_id` + owner 索引（加法式 DDL）；CRUD/list/序号态全按 OwnerKey；**`claim_due`/`claim_location` 仍跨 owner 原子领取但消费必须先分组**——此前整批共用一条 speech 且 `user_id` 取 `due[0]`，两人同秒到点时一个人会听到另一个人的提醒 |
+| 6 | 端侧快路径轮次不带身份 | `_record_local_turn` 从 `request.context`/`meta` 取 OwnerKey，一次本地请求写成一个完整 exchange |
+| 7 | 重复注册同名必生成新乘员（§3 立卡） | 显示名同账户唯一（NFKC/trim/折叠/casefold + partial unique index）。**重名＝同一个人被分成两个 occupant，两条相似模板互相顶成 `ambiguous`、判定恒回 primary**——真机反馈过的「谁说话都认成同一个」有这一层。存量冲突组只报不改（`name_conflict`），系统不自动加后缀选赢家 |
+| 8 | HMI 记忆面板单行删除按 scope 扩大（§3 立卡） | 新增 `DeleteMemoryItem`（OwnerKey+item id）：跨 owner 回 `not_found`（回「不是你的」会泄露它属于谁），缺 occupant 回 `missing_owner`（绝不推断 primary、更不扩大成 user-all），`identity.name` 回 `managed_memory`，同事务清悬空关系边。面板默认只列当前乘员 |
+
+契约登记 `docs/conventions.md` §9.13；proto 纯追加、`buf breaking` 对 main 通过。
+
+### 10.2 明确未做（本批范围裁决）
+
+原 superpowers M-B 计划是 15 个 task（跨域 saga、privacy registry 协议、observability
+脱敏、Reminder/Scene admin gRPC、迁移 CLI + `pg_dump` 备份仪式、真栈全矩阵）。
+产品负责人 2026-08-01 裁决简化执行，按「**先修真的会产生错误行为的缺陷**」切分：
+
+| 未做项 | 为什么不做 |
+|---|---|
+| L2/L3/L4 跨域删除 saga + `runtime/privacy_registry.py` | GDPR 完备性，不是当前错误行为。单行删除的爆炸半径（真 bug）已由 L1 关掉 |
+| observability 四表 owner 列与原文脱敏 | 同上；且 obs 原文已有保留期与 `gate_content` 兜底 |
+| ReminderAdmin / SceneAdmin 管理 gRPC | 只为 L3/L4 saga 服务，随之后置 |
+| 独立迁移 CLI + preflight/备份流程 | 两处 schema 变更都是加法式 `ALTER ... IF NOT EXISTS`，随服务启动幂等应用；建独立 CLI 是为「有损重分配」准备的仪式，而本批**不重分配任何数据**（旧行一律归 primary） |
+| 真栈多乘员 E2E 矩阵 | 隔离契约已由单测钉在**行为**上（A/B 双向、跨 owner 拒绝、同名不串、分组不合卡）。真栈矩阵是覆盖面证据，价值在回归而非发现 |
+| 声纹注册单事务（advisory lock） | 故障窗＝两次写之间的毫秒级崩溃，后果「模板在、名字没有」且用户可用改名自愈；做成单事务须把 conn 穿透 `remember()`（它当前还在事务内等 embedding provider），风险大于收益 |
+
+### 10.3 一条值得记住的判据
+
+**兼容的方向永远是收窄，不是放开。** 旧 Turn、旧 reminder、无主写入统一归 `primary`
+——这是有损归属迁移，归了就不可自动恢复；但它绝不能变成「谁都能读」。
+同理：普通读写缺 occupant 落 primary，而 **owner 级删除缺 occupant 一律拒绝**——
+读错一次只是少看到东西，删错一次是把别人的数据一起删了。

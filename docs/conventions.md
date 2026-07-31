@@ -434,6 +434,16 @@ Agent 无状态化：一次会话的临时状态落 **memory profile KV**，供�
 > 底层 profile KV 无独立 TTL（随用户画像存储，无 user_id 时静默跳过）。改 key/换存储只需改
 > `shared_state.py` 与本表——不再散落字面量导致静默断链（审计 A5）。
 
+**owner 收窄（M-B，2026-08-01）**：底层 profile KV 是 **user 级**的，所以确实 per-speaker 的
+会话态放裸 key 就是两位乘员共用一份——A 列了提醒表，B 说「取消第二个」会命中 A 的第二条。
+这类键经 `shared_state.owner_scoped(key, user_id, occupant_id)` 收窄成
+`<key>:<user_id>:<occupant_id>`（外层 profile 命名空间只是分区，**不能靠进程局部上下文补全
+owner**）。当前已收窄：`REMINDERS_ACTIVE`、`REMINDER_PENDING`。
+其余键**有意保持裸 key**：`REMINDABLE_ACTIVE` 由别的域写、是跨域交接面；
+`NEWS_ACTIVE`/`RESEARCH_ACTIVE`/`TRIP_ACTIVE`/`SCENE_*`/`CHARGING_DEST_CHOICES` 的多轮续接
+跨唤醒时 occupant 可能翻到 primary，收窄会让续接状态凭空消失——收益不抵这个风险，
+要动须先有多乘员真机数据。
+
 ### 9.1 Agent→编排 结果保留键（`AgentResult.data` 命名空间）
 
 `AgentResult.data` 里 **`_` 前缀键保留给「Agent→编排」协议**，编排消费后剥离、不进聚合，
@@ -678,6 +688,9 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | **空 `display_name`=不改名，不是清空**（2026-07-26） | `EnrollVoiceprint` 收到空名时**保留该乘员已有的名字**；同名重录不再重复写 `identity.name`（真机上重录 4 次攒了 4 条同名记忆）。HMI 侧称呼**必填**，不再空着就兜底成「乘客」——静默兜底会把上次填对的名字冲掉 |
 | **删除必须能从浏览器发出**（2026-07-26 真机 P0） | 声纹删除是全 HMI 唯一的 `DELETE`。`Access-Control-Allow-Methods` 漏了它 → 浏览器 preflight 直接挡下，**请求根本没发出来**，服务端零日志、e2e 也看不见（e2e 从服务端发，不过 CORS）。白名单常量 `http_server.CORS_METHODS`，契约测试 `llm-gateway/tests/test_http_cors.py` 按「app 注册了什么方法就必须允许什么方法」自动比对 |
 | 删除的诚实口径 | primary 删除**只删模板不 purge 记忆**，但会撤回注册自己写的那条 `identity.name`（逐字匹配 `_identity_text`，不误伤用户在对话里说过的别的身份陈述）——模板都删了还留着名字，助手会继续管一个已经认不出的人叫那个名字。HMI 按返回的 `deleted_templates`/`deleted_memories` 如实回话，确认框不再对 primary 承诺「忘掉全部记忆」 |
+| **显示名同账户唯一**（M-B，2026-08-01） | 规范形 = NFKC → trim → 连续空白折叠 → casefold（`voiceprint.normalize_display_name`），`(tenant_id,user_id,display_name_norm)` partial unique index。**允许两个「泓舟」＝同一个人被分成两个 occupant**，两条很像的模板在识别期互相顶成 `ambiguous`、判定恒回 primary——真机反馈过的「谁说话都认成同一个」有这一层。判重**实时重算原名的规范形**，不能只查 `display_name_norm` 列：存量冲突行的 norm 是 NULL，只查列会让 NULL 成为绕过唯一约束的入口。冲突时 enroll/rename 返回 `duplicate_name`（HTTP 409）且**表与 `identity.name` 都不动**——改一半比没改更糟 |
+| **存量重名只报不改** | 迁移只保证「不再新增冲突」：冲突组保持 `display_name_norm=NULL`、原显示名**不自动改写**，经 `VoiceprintInfo.name_conflict` 如实报给用户。**系统不自动加数字或座位后缀选赢家**——那是替用户决定他该被怎么称呼（同 `boundaries.yaml`「人裁一次、机器只管不许悄悄新增」的判据） |
+| 未做：注册事务原子性 | enroll 的「写模板」与「写 `identity.name`」仍是两次独立写。故障窗＝两次写之间的毫秒级崩溃，后果是「模板在、名字没有」且用户可用改名自愈；要做成单事务须把 conn 穿透 `remember()`（且它当前在事务内等 embedding provider），风险大于收益。**已立卡** |
 
 ### 9.12 视觉单帧入口契约（M4 P4）
 
@@ -695,3 +708,36 @@ Agent `agents/vision/`（50077，capability `vision.describe`）。
 | 上下文最小化 | `vision_frame_id` 进 `_SENSITIVE_SCOPE`，只下发给 manifest 声明 `context_scopes: [vision]` 的 Agent——图像引用不随每轮广播给全部 Agent |
 | 诚实标注（三重） | `_prov.source=simulated_camera` + 卡片角标「模拟车外摄像头」+ 设置文案。PoC 没有车外摄像头，画面来自设备摄像头（同 `sim.adas.` 与 MCP 演示商户惯例） |
 | 不做 | 视频流实时理解、连续帧、人脸/视觉身份判定（与「声纹不作鉴权因子」同源）、多轮视觉追问（需帧的会话级驻留，v2） |
+
+### 9.13 OwnerKey：多乘员数据归属契约（M-B，2026-08-01）
+
+设计：`docs/superpowers/specs/2026-07-28-acceptance-residuals-mb-occupant-isolation-design.md`。
+M4 P4 把 `occupant_id` 贯到了**请求控制面**，M-B 把它落到**数据面**——识别得出「谁在
+说话」而数据存不下来，等于没识别。
+
+```text
+OwnerKey = (user_id, occupant_id)
+```
+
+| 项 | 契约 |
+|---|---|
+| **空 occupant = primary，绝不等于共享** | 缺省/空串一律规范化 `primary`。共享必须由独立数据类型或显式 scope 表达——**靠缺省表达共享正是这批缺陷的成因** |
+| **owner 级删除不许从空值推断范围** | 普通读写缺 occupant 落 primary，但 owner 级删除/导出缺 occupant 一律 `missing_owner`。漏传一个参数就把「删这一条」升级成「删全部乘员」，这条闸专门堵它 |
+| Turn 归属 | Redis Turn 存 `{turn_id, exchange_id, user_id, vehicle_id, occupant_id, role, text, ts}`。`vehicle_id` 只描述环境，**不参与 OwnerKey** |
+| Exchange 完整性 | 一次用户请求 + 它可见的回复 = 一个 exchange，共用 `exchange_id`（cloud/edge 用 request_id，S2S 用 s2s turn_id）；`turn_id = <exchange_id>:user` / `<exchange_id>:assistant:<i>` |
+| 幂等与冲突 | 同 `(session_id, turn_id)` 同内容＝重放，静默成功；异内容抛 `turn_conflict` 并**保留原 Turn**——重试可以重放，不能改写已经发生过的对话 |
+| **历史默认 OWNER_ONLY** | `GetSession.scope` 不传即 OWNER_ONLY；`ALL_OCCUPANTS` 只供 HMI 管理视图与合规导出，**不作为 planner/S2S 历史来源**。`last_n` 是**过滤后**的上限，切中 exchange 时整体舍弃最旧的半个——只留 assistant 半句会让抽取把助手的话当成用户偏好 |
+| **抽取窗口先切 owner 再进 LLM** | 归属判定不交给模型（它看到的只是一段文本）。巩固节流键是 `(session_id, user_id, occupant_id)`——session 级计数会让「A 说三轮、B 说第四轮」在只说过一句的 B 名下触发 |
+| `source_turn_ids` 存真实 turn id | 它是 `weighting.evidence_count` 的输入。此前填 session_id → 永远数出 1，「说过一次」与「每周三次」的区分从未生效 |
+| 旧数据统一归 primary | 旧 Turn / 旧 reminder **不按文本、时间或声纹猜真实 owner**，统一归 primary 并生成稳定 legacy id（材料只用 session_id+序号+ts+role，多次读取不漂移）。这是**有损归属迁移**，归 primary 后不可自动恢复——但方向永远是收窄，不是放开 |
+| **places 唯一真相源** | owner-scoped `memory_item place.*`。`UpsertProfile(key="places")` 是 **per-key patch**（出现的 key supersede-or-insert，未出现的不动），不再整块 map 覆盖；primary 在 backfill 前 dual-read legacy KV 但**只补新表缺失的 key**，**非 primary 永不读 legacy KV**（那是主驾的地址，泄漏比查不到更糟）。legacy KV 保留只读兼容，本批不删 |
+| reminder owner | `reminder_item.occupant_id`（加法式 DDL，随启动幂等应用）。全部 CRUD/list/cancel 按 OwnerKey 过滤 |
+| **全局扫描可跨 owner，消费必须先分组** | `claim_due`/`claim_location` 由时钟与围栏驱动、与会话无关，可以跨 owner 原子领取；但**一条 speech/card 只能属于一个人**，`items[0].user_id` 不能代表混合 owner 集合。分组后每组独立构造 payload |
+| 卡片 action pin owner | 触达卡片每个 action 带 `reminder_id` + `owner_occupant_id`，HMI 点击固定用卡片上的 owner，不拿点击那一刻的声纹身份或标题模糊匹配去猜（同名提醒是最危险的形态）。**pin 只是数据路由，occupant 不是权限凭据** |
+| L1 精确删除 | `DeleteMemoryItem(user_id, occupant_id, item_id)`：跨 owner 一律 `not_found`（回「不是你的」会泄露它属于谁），`identity.name` 返回 `managed_memory`，同事务清掉指向该条目的关系边。**取代「单行删除复用 scope 删」**——后者会清掉该 scope 下所有乘员的条目 |
+| **红线不变** | `occupant_id` 仍**只进记忆域**，不进 granted_scopes / 权限判定 / VAL / `require_confirm` / 支付。源码级断言 `orchestrator/cloud/tests/test_voiceprint_not_auth.py` 继续钉死 |
+
+**本批明确未做**（都不阻塞，理由在案）：跨域 L2/L3/L4 删除 saga 与 privacy registry
+协议、observability 四表 owner 列与原文脱敏、ReminderAdmin/SceneAdmin 管理服务、
+独立迁移 CLI 与 `pg_dump` 备份流程、真栈多乘员 E2E 矩阵、声纹注册单事务。
+它们是 GDPR 完备性与验收仪式，不是当前会产生错误行为的缺陷。

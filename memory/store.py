@@ -524,7 +524,21 @@ class MemoryStore:
         return await (await self._vec()).list_voiceprints(user_id, **kw)
 
     async def delete_voiceprint(self, user_id: str, occupant_id: str, **kw) -> dict:
-        return await (await self._vec()).delete_voiceprint(user_id, occupant_id, **kw)
+        """删一个乘员。`purge_memory` 时**连会话原文一起清**（M-B）。
+
+        与 ForgetUser 同一条判据：长期记忆删了、原始对话还躺在 Redis 里，那不是删除
+        是搬家。此前做不到是因为轮次不带说话人标注、无法选择性删；现在可以了。
+        primary 仍不 purge（删单个乘员不该有清空全车的爆炸半径）。
+        """
+        res = await (await self._vec()).delete_voiceprint(user_id, occupant_id, **kw)
+        if kw.get("purge_memory", True) and occupant_id and occupant_id != PRIMARY:
+            try:
+                res["deleted_turns"] = await self.forget_owner_sessions(
+                    user_id, occupant_id)
+            except Exception as e:
+                logger.warning("purge owner sessions failed for %s/%s: %s",
+                               user_id, occupant_id, e)
+        return res
 
     async def rename_voiceprint(self, user_id: str, occupant_id: str,
                                 display_name: str, **kw) -> dict:

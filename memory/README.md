@@ -6,7 +6,7 @@
 [`docs/design/2026-06-25-memory-system-redesign.md`](../docs/design/2026-06-25-memory-system-redesign.md)。
 
 ## 分层
-- **L0 会话**：`AppendTurn` / `GetSession`（Redis，连不上自动降级内存）。
+- **L0 会话**：`AppendTurn` / `GetSession`（Redis，连不上自动降级内存）。**轮次带 OwnerKey**（M-B）。
 - **L1 车辆上下文**：`GetContext(scopes)` 按 scope 返回片段（敏感 scope 脱敏，如 `vehicle.location` 只给城市级）。
 - **L2 语义画像**：稳定偏好/个人实体（`taste.*`、`person.pet` 等），带 `predicate`、向量化、`superseded_by` 时序-lite。
 - **L3 情景**：显著事件，聚合源。
@@ -15,8 +15,9 @@
 ## 接口（见 `proto/cockpit/memory/v1/memory.proto`）
 | RPC | 用途 |
 |---|---|
-| `GetContext` / `AppendTurn` / `GetSession` | 车辆上下文 + 会话短期记忆（`AppendTurn` 带 `user_id` 时每 4 轮触发异步抽取巩固） |
-| `UpsertProfile` | 写画像字段（如常用地点 `places`，镜像为 highly_sensitive memory_item） |
+| `GetContext` / `AppendTurn` / `GetSession` | 车辆上下文 + 会话短期记忆（`AppendTurn` 带 `user_id` 时每 4 轮触发异步抽取巩固；三者均按 OwnerKey，`GetSession.scope` 缺省 OWNER_ONLY） |
+| `UpsertProfile` | 写画像字段；`places` 按 OwnerKey 落 highly_sensitive `memory_item place.*`，**per-key patch 不整块覆盖** |
+| `DeleteMemoryItem` | L1 精确删除：OwnerKey + item id 删一条，同事务清派生关系边 |
 | `Remember` | 写语义/情景记忆（抽取管线或 Agent 显式） |
 | `Recall` | 语义召回（向量 + scope/occupant + 时序融合；`predicate_prefix` 精确优先，`min_score/min_confidence/max_age_days` 阈值） |
 | `ForgetUser` / `ExportUser` | 合规：被遗忘权（硬删）/ 数据导出 |
@@ -59,3 +60,29 @@
   **空名按「不改名」处理**，保留已有的，且同名重录不再重复写记忆；③删除乘员时**撤回注册
   自己写的那条名字**（逐字匹配 `_identity_text`，不误伤对话里说过的别的身份陈述）——
   primary 不 purge 记忆，但模板都删了还留着名字，助手会继续管一个认不出的人叫旧名。
+
+## 多乘员数据归属（OwnerKey，M-B）
+
+契约登记 `docs/conventions.md` §9.13。一句话：**M4 P4 让系统知道「谁在说话」，
+M-B 让数据面记得下来**——识别对了却存不下来，等于没识别。
+
+```text
+OwnerKey = (user_id, occupant_id)      # 空 occupant = primary，绝不等于共享
+```
+
+- **Turn 存完整 owner + exchange**：`{turn_id, exchange_id, user_id, vehicle_id,
+  occupant_id, role, text, ts}`。一次请求 + 它可见的回复共用一个 `exchange_id`
+  （cloud/edge 用 request_id、S2S 用 s2s turn_id），所以**重试是重放不是新一轮**；
+  同 turn_id 异内容抛 `TurnConflict` 并保留原 Turn。
+- **读默认 OWNER_ONLY**：`last_n` 是过滤后的上限，切中 exchange 时整体舍弃最旧的
+  半个——只留 assistant 那半句会让抽取把助手说的话当成用户偏好归档。
+- **抽取窗口在进 extractor 之前就按 owner 切好**：归属判定不交给 LLM，它看到的只是
+  一段文本。巩固节流键也带 owner，否则「A 说三轮、B 说第四轮」会在只说过一句的 B
+  名下触发一次巩固。
+- **places 的唯一真相源是 owner-scoped `memory_item place.*`**：primary 在 backfill
+  完成前 dual-read legacy KV 但只补新表缺失的 key；**非 primary 永不读 legacy KV**。
+- **旧数据统一归 primary**，不按文本/时间/声纹猜 —— 有损但方向永远是收窄不是放开。
+- 删除：owner 级删除**缺 occupant 一律 `missing_owner`**，绝不推断 primary、更不扩大
+  成 user-all。L1 走 `DeleteMemoryItem`，跨 owner 回 `not_found`（回「不是你的」本身
+  会泄露它属于谁），`identity.name` 回 `managed_memory`。
+- 红线不变：`occupant_id` 只进记忆域，不参与任何鉴权/确认/VAL 判定。

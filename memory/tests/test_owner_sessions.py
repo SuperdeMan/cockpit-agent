@@ -198,3 +198,36 @@ def test_ownerless_writes_fall_back_to_primary_not_to_shared():
     a, b = asyncio.run(go())
     assert [t["text"] for t in a] == ["端侧说的话"]
     assert b == []
+
+
+def test_deleting_an_occupant_also_purges_their_transcripts():
+    """删一个乘员＝忘掉这个人：长期记忆删了、对话原文还在，那不是删除是搬家。
+
+    此前做不到（轮次不带说话人标注、无法选择性删），轮次带 owner 之后才成立。
+    """
+    store = _store()
+
+    async def go():
+        await _say(store, "primary", "主驾说的话", exch="e1")
+        await _say(store, "occ-2", "乘客说的话", exch="e2")
+        res = await store.delete_voiceprint("u1", "occ-2")
+        return res, json.dumps(store._mem["s1"], ensure_ascii=False)
+
+    res, raw = asyncio.run(go())
+    assert res.get("deleted_turns") == 1
+    assert "乘客说的话" not in raw
+    assert "主驾说的话" in raw
+
+
+def test_deleting_primary_never_purges_transcripts():
+    """primary 不 purge——删单个乘员不该有清空全车的爆炸半径。"""
+    store = _store()
+
+    async def go():
+        await _say(store, "primary", "主驾说的话", exch="e1")
+        res = await store.delete_voiceprint("u1", "primary")
+        return res, json.dumps(store._mem["s1"], ensure_ascii=False)
+
+    res, raw = asyncio.run(go())
+    assert "deleted_turns" not in res
+    assert "主驾说的话" in raw

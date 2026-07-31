@@ -1055,3 +1055,58 @@ places 只会看到过期 KV。
 - 并发 enroll、事务回滚、旧数据 primary 迁移均有自动化断言；
 - legacy places KV 在本批结束时仍存在，但生产读取只把它作为 primary dual-read 兼容源；
 - occupant_id 仍未进入任何授权、确认或 VAL 安全判断。
+
+---
+
+## 18. 落地记录（2026-08-01）
+
+**执行口径变更**：本规格与配套实施计划（`docs/superpowers/plans/2026-07-28-acceptance-residuals-mb-occupant-isolation.md`，15 个 task）
+按产品负责人 2026-08-01 裁决**简化执行**——原流程的验证仪式（独立迁移 CLI + `pg_dump`
+备份/catalog 校验、跨域 saga、production privacy registry 协议、真栈全矩阵）体量远超它要
+关闭的缺陷本身。切分判据是「**先修真的会产生错误行为的缺陷**」。
+
+### 18.1 已落地（分支 `codex/acceptance-mb-occupant-isolation`）
+
+| 规格章节 | 落地情况 |
+|---|---|
+| §5 Turn 与历史模型 | ✅ 完整落地。Turn 存 `{turn_id, exchange_id, user_id, vehicle_id, occupant_id, role, text, ts}`；`GetSession.scope` 缺省 OWNER_ONLY、`last_n` 过滤后计数且不切开 exchange；同 turn_id 同内容幂等、异内容 `TurnConflict` 保留原文；旧 Turn 归 primary + 稳定 legacy id |
+| §5.4 自动巩固 | ✅ 窗口进 extractor 前按 owner 切好；节流键改 `(session,user,occupant)`；`source_turn_ids` 存真实 turn id |
+| §6 Places | ✅ 唯一真相源改 owner-scoped `memory_item place.*`；per-key patch；primary dual-read 只补缺失 key、非 primary 永不读 KV；legacy KV 保留 |
+| §7.1-7.3 Reminder | ✅ `occupant_id` 列 + owner 索引 + 全部 CRUD 过滤；shared state 经 `owner_scoped()` 收窄 |
+| §7.2 调度分组 | ✅ `claim_due`/`claim_location` 跨 owner 领取后按 OwnerKey 分组独立发 payload；卡片 action 带 `reminder_id` + `owner_occupant_id` |
+| §7.5 Routine 信封 | ✅ 已由 main 的 `4e889a7` 完成（payload 带 owner + owner-scoped dedup_key） |
+| §9.1-9.2 声纹名唯一 | ✅ 规范化 + partial unique index + 判重（实时重算原名规范形，NULL 不可绕过）+ `name_conflict` 上报 + 409/404/400 分野 |
+| §10.1 Edge full-local | ✅ 一次本地请求写成一个完整 owner exchange |
+| §11.1 Memory proto | ✅ 纯追加（Turn owner/exchange、GetSession scope、GetContext/UpsertProfile occupant、`DeleteMemoryItem`、`name_conflict`）；`buf breaking` 对 main 通过 |
+| §8.2 L1 | ✅ `DeleteMemoryItem`（OwnerKey+item id；跨 owner `not_found`、缺 occupant `missing_owner`、`identity.name` `managed_memory`、同事务清悬空关系边）+ HMI 单行删除改走它 |
+
+**规格偏差一处（必须记账）**：§11.1 把 `AppendTurnRequest.turn_id/exchange_id` 排在字段号
+**7/8**，但字段 7 已被 M-A 的 `e2e_memory_capability` 占用——本规格写于 M-A 之前。按
+「只追加不重用字段号」实际落在 **8/9**。
+
+**顺带收口一项（规格未列）**：删除乘员时**连会话原文一起清**（`purge_memory` 且非 primary）。
+与 ForgetUser 同判据——长期记忆删了、对话原文还在 Redis 里，那不是删除是搬家。
+此前做不到是因为轮次不带说话人标注，轮次带 owner 之后才成立。
+
+### 18.2 明确未做（后置，理由在案）
+
+| 规格章节 | 未做项 | 判据 |
+|---|---|---|
+| §8.2 L2/L3/L4、§8.3 跨服务删除、§11.2/11.3 Reminder/Scene Admin proto | 四级删除 saga 与两个管理服务 | GDPR **完备性**，不是当前会产生错误行为的缺陷。真 bug 是「单行删除按 scope 扩大」，已由 L1 关掉 |
+| §8.4 privacy 管理面 fail-closed 鉴权、§11.4 HTTP 删除 API | Edge token/scope 校验、preview/delete 路由 | 只为 L3/L4 saga 服务，随之后置 |
+| §8.5 Observability owner 与脱敏 | 四表 owner 列、NATS `privacy.observability.*` | 同上；obs 原文已有保留期与 `gate_content` 兜底 |
+| §9.3 原子事务 | enroll/rename 的 advisory lock 单事务 | 故障窗＝两次写之间的毫秒级崩溃，后果「模板在、名字没有」且用户可用改名自愈；做成单事务须把 conn 穿透 `remember()`（它当前还在事务内等 embedding provider），风险大于收益 |
+| §10.2 Mixed 记账 | Edge 固定 writer + `suppress_turn_append` | full-local 已单 writer；mixed 的重复记账在当前实现里未观察到，改动要动 Edge→Cloud 内部通道与 Gateway reserved meta，成本不匹配 |
+| §12 迁移、§14 发布顺序 | 独立迁移 CLI + preflight/备份/verify 三段 | 两处 schema 变更都是加法式 `ALTER ... IF NOT EXISTS`，随服务启动幂等应用。这套仪式是为「**有损重分配**」准备的，而本批不重分配任何数据（旧行一律归 primary，见 §5.5/§7.4） |
+| §16 验收矩阵 | 真栈多乘员 E2E（MB-T/P/R/H/V/E 全系列） | 隔离契约已由单测钉在**行为**上（A/B 双向、跨 owner 拒绝、同名不串、分组不合卡）。真栈矩阵的价值在回归覆盖而非发现 |
+
+### 18.3 §17「通过标准」对照
+
+达成：四条生产路径带 OwnerKey（classic/S2S/Edge full-local ✅，Edge mixed 见 §18.2）／
+planner 与 S2S 无跨 occupant 历史 ✅／places 与 reminder 以 OwnerKey 为最小边界 ✅／
+scheduler/geofence 不再合并不同 user 或 occupant ✅／HMI 无「单行按 scope 扩大删除」✅／
+voiceprint 新数据非 NULL norm、存量冲突被审计 ✅／legacy places KV 保留只作 primary
+dual-read ✅／`occupant_id` 未进任何授权判定 ✅。
+
+未达成（对应 §18.2）：L1-L4 全套删除与 preview 计数、删除管理 API 的 token/scope
+fail-closed、observability 四表 OwnerKey、production privacy registry 枚举。
