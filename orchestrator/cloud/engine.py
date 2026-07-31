@@ -806,6 +806,21 @@ class PlannerEngine:
                 ):
                     step.slots["destination"] = str(focus.last_destination)
 
+        # 最新列表后的指代详情（B5-2：「附近火锅」→「附近充电站」→「看第一个详情」）。
+        # Planner 已正确落 nearby.detail，但弱模型常不产 name；焦点里的 last_poi 是上一轮
+        # **最新成功列表**首项，属于系统持有的结构化事实，应确定性回填而不是再让 LLM 猜。
+        # 用户明确给出的 id/name 永远优先，避免覆盖「看麦当劳详情」这类本轮实体。
+        if focus.last_poi:
+            for step in plan.steps:
+                slots = step.slots or {}
+                if (
+                    step.intent == "nearby.detail"
+                    and not any(slots.get(k) for k in
+                                ("poi_id", "id", "name", "restaurant_name"))
+                ):
+                    slots["name"] = str(focus.last_poi)
+                    step.slots = slots
+
         if focus.destination_lat is None or focus.destination_lng is None:
             return
         meta = {

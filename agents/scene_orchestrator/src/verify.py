@@ -29,6 +29,8 @@ import asyncio
 import logging
 import time
 
+from runtime.proactive import P_USER_CONTRACT
+
 from .catalog import derive_assert
 from .compiler import action_desc
 from .solve import unmet
@@ -134,6 +136,10 @@ class VerifyManager:
                      "buttons": buttons},
             "agent_id": "scene-orchestrator",
             "user_id": ctx_ids[1],
+            # 对账是用户显式激活场景后的完成合同，不应被免打扰/负荷/频控静默吞掉。
+            # 去重粒度必须是**激活实例**；缺省 agent_id|type 会跨用户、跨激活共用 600s 键。
+            "priority": P_USER_CONTRACT,
+            "dedup_key": f"scene.verify|{ctx_ids[1]}|{activation_id}",
             "ts": int(time.time() * 1000),
         })
         logger.info("scene verify: %s 有 %d 个动作未生效（skip=%d retry=%d defer=%d）；"

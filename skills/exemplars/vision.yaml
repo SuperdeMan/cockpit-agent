@@ -58,3 +58,12 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
+- text: 那是什么颜色的
+  plan:
+  - agent: vision
+    intent: vision.describe
+  source: trace
+  added: '2026-07-31'
+  tags:
+  - badcase
+  note: M-A 视觉真栈偶发空计划；保留旧 vision hint 退役后的数据化回归保护

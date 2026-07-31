@@ -3,7 +3,7 @@
 场景：
   ① 帧上传 → 拿到短 TTL frame_id
   ② **真图进真模型出真答案**：一张纯色图 → 模型说得出颜色（不是编的）
-  ③ 路由：「那是什么」经 route_hints 落 vision.describe（不被 chitchat 兜走）
+  ③ 路由：「那是什么」经 M5 exemplar 数据车道落 vision.describe（不被 chitchat 兜走）
   ④ **没帧就说没帧**：不带 frame_id 问同一句 → 诚实降级，绝不编一个答案
   ⑤ 帧过期 → 同样诚实降级（不静默退化成文本问答）
   ⑥ **图像不进对话链**：obs 里查不到图像字节，只有 frame_id
@@ -195,7 +195,7 @@ async def _run(recorder: CaseRecorder) -> int:
         )
         speech = res.get("speech") or ""
         print(f"   ⇒ {speech[:80]}")
-        check("黄" in speech, "route_hints 把视觉句路由到了 vision（不是 chitchat 兜走）",
+        check("黄" in speech, "M5 exemplar 把视觉句路由到了 vision（不是 chitchat 兜走）",
               speech[:40])
 
         # ④ 没帧就说没帧

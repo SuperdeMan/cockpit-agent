@@ -91,6 +91,30 @@ def test_unmet_action_reported_honestly():
     assert "座椅" in sent[0]["speech"] and "没有生效" in sent[0]["speech"]
     assert "行车" not in sent[0]["speech"], "别猜原因——可能是低电量/儿童锁"
     assert sent[0]["card"]["type"] == "scene_card"
+    assert sent[0]["priority"] == "user_contract"
+    assert sent[0]["dedup_key"] == "scene.verify|u1|g1"
+
+
+def test_each_activation_has_an_owner_scoped_dedup_key():
+    """去重粒度是激活实例，不是全局消息类型。
+
+    缺省键 ``scene-orchestrator|scene_verify`` 会让任一用户一次对账把随后 10 分钟内所有
+    用户的新激活汇报静默吞掉；canonical 连跑同样会被上次运行的 governor 状态污染。
+    """
+    async def go(ids, activation_id):
+        bus = Bus({"activation_id": activation_id})
+        m = _mgr(FakeMirror({"seat_recline": 90}), bus)
+        m.schedule(ids, "午休模式", activation_id,
+                   [_act("seat.recline", {"angle": "160"})])
+        await _settle()
+        return bus.sent[0]
+
+    first = _run(go(("s1", "u1", "v1"), "g1"))
+    second = _run(go(("s2", "u2", "v1"), "g2"))
+
+    assert first["dedup_key"] != second["dedup_key"]
+    assert first["dedup_key"] == "scene.verify|u1|g1"
+    assert second["dedup_key"] == "scene.verify|u2|g2"
 
 
 def test_report_is_merged_not_spammed():

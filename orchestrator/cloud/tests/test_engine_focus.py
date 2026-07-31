@@ -183,3 +183,33 @@ def test_waypoint_plan_inherits_current_destination_from_focus():
     assert plan.steps[0].slots["destination"] == "南山科技园"
     assert plan.steps[1].slots["destination"] == "深圳湾公园"
     assert plan.steps[2].slots["destination"] == "南山科技园"
+
+
+def test_deictic_detail_inherits_latest_list_item_from_focus():
+    """列表叠加后，裸指代详情必须消费最新列表焦点，而不是向用户追问店名。
+
+    M-A B5-2 真栈抓到：先搜火锅、再搜充电站后说「看看第一个的详情」，Planner 已正确
+    落 nearby.detail，但不产 name 槽；结构化焦点持有最新充电站首项，执行前应确定性回填。
+    """
+    plan = Plan(steps=[
+        Step(
+            id="detail",
+            agent_id="nearby",
+            intent="nearby.detail",
+            slots={},
+            context_scopes=["location"],
+        ),
+        Step(
+            id="explicit",
+            agent_id="nearby",
+            intent="nearby.detail",
+            slots={"name": "用户明确指定的店"},
+            context_scopes=["location"],
+        ),
+    ])
+    focus = Focus(last_intent="charging.find", last_poi="深圳湾超级充电站")
+
+    PlannerEngine._apply_focus_meta(plan, focus)
+
+    assert plan.steps[0].slots["name"] == "深圳湾超级充电站"
+    assert plan.steps[1].slots["name"] == "用户明确指定的店"
