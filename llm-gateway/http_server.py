@@ -494,12 +494,21 @@ def create_http_app() -> web.Application:
         """读会话对话记忆（HMI 记忆视图）。?session_id=&last_n=20"""
         sid = request.query.get("session_id", "")
         last_n = int(request.query.get("last_n", "20") or 20)
+        uid = (request.query.get("user_id") or "").strip()
+        occ = (request.query.get("occupant_id") or "").strip()
+        # scope=all 是**显式**管理视图（设置页「全部乘员会话」），缺省一律 OWNER_ONLY。
+        all_occ = (request.query.get("scope") or "").strip().lower() == "all"
         if not sid:
             return web.json_response({"turns": []})
         try:
             resp = await _memory_stub().GetSession(
-                memory_pb2.GetSessionRequest(session_id=sid, last_n=last_n), timeout=5)
-            turns = [{"role": t.role, "text": t.text, "ts": t.ts} for t in resp.turns]
+                memory_pb2.GetSessionRequest(
+                    session_id=sid, last_n=last_n, user_id=uid,
+                    occupant_id=occ or "primary",
+                    scope=(memory_pb2.HISTORY_SCOPE_ALL_OCCUPANTS if all_occ
+                           else memory_pb2.HISTORY_SCOPE_OWNER_ONLY)), timeout=5)
+            turns = [{"role": t.role, "text": t.text, "ts": t.ts,
+                      "occupant_id": t.occupant_id} for t in resp.turns]
             return web.json_response({"turns": turns})
         except Exception as e:
             logger.warning("memory session read error: %s", e)
@@ -515,7 +524,9 @@ def create_http_app() -> web.Application:
             ["profile.taste", "vehicle.state", "vehicle.location"]
         try:
             resp = await _memory_stub().GetContext(memory_pb2.GetContextRequest(
-                session_id=sid, user_id=uid, vehicle_id=vid, scopes=scopes), timeout=5)
+                session_id=sid, user_id=uid, vehicle_id=vid, scopes=scopes,
+                occupant_id=(request.query.get("occupant_id") or "").strip() or "primary"),
+                timeout=5)
             return web.json_response({"values": dict(resp.values)})
         except Exception as e:
             logger.warning("memory context read error: %s", e)
@@ -526,6 +537,10 @@ def create_http_app() -> web.Application:
         """读用户**真实学到的**记忆（HMI 记忆视图）：偏好/常去地点/情景。
         走分层记忆 ExportUser（非 mock context），只取现行（未被取代）。?user_id="""
         uid = request.query.get("user_id", "")
+        # 缺省只看当前乘员（M-B）：面板此前把全部乘员的记忆混在一起列，
+        # 而「删除」按钮又是按 scope 删的——看到的是别人的，删掉的是所有人的。
+        occ = (request.query.get("occupant_id") or "").strip() or "primary"
+        all_occ = (request.query.get("scope") or "").strip().lower() == "all"
         empty = {"preferences": [], "places": [], "episodes": []}
         if not uid:
             return web.json_response(empty)
@@ -540,6 +555,8 @@ def create_http_app() -> web.Application:
         for m in data.get("memories", []):
             if m.get("superseded_by"):
                 continue  # 只展示现行
+            if not all_occ and (m.get("occupant_id") or "primary") != occ:
+                continue
             pred = m.get("predicate") or ""
             if m.get("kind") == "episodic":
                 episodes.append({"text": m.get("text", ""),
@@ -550,14 +567,48 @@ def create_http_app() -> web.Application:
                 except (json.JSONDecodeError, TypeError):
                     v = {}
                 places.append({"key": pred.split(".", 1)[1],
+                               "id": m.get("id", ""),
+                               "occupant_id": m.get("occupant_id") or "primary",
                                "name": v.get("name") or v.get("address") or m.get("text", ""),
                                "address": v.get("address", ""), "scope": m.get("scope", "")})
             elif m.get("kind") == "semantic":
-                prefs.append({"predicate": pred, "text": m.get("text", ""),
+                # id/owner/predicate 一并回传：L1 精确删除按 item id 走，
+                # 面板不再需要（也不允许）用 scope 去删「这一行」。
+                prefs.append({"id": m.get("id", ""), "predicate": pred,
+                              "occupant_id": m.get("occupant_id") or "primary",
+                              "managed": pred in ("identity.name",),
+                              "text": m.get("text", ""),
                               "scope": m.get("scope", ""),
                               "provenance": m.get("provenance", ""),
                               "confidence": m.get("confidence", 0)})
         return web.json_response({"preferences": prefs, "places": places, "episodes": episodes})
+
+    @routes.delete("/api/memory/items/{item_id}")
+    async def handle_mem_delete_item(request: web.Request):
+        """L1：删一条记忆。query: user_id, occupant_id。
+
+        取代「单行删除走 `POST /api/memory/forget` + scope」——那是按 scope 删，
+        会连带清掉该 scope 下所有乘员的条目（删自己的名字＝删光全车的名字）。
+        occupant 必填：owner 级动作绝不从空值推断范围。
+        """
+        uid = (request.query.get("user_id") or "").strip()
+        occ = (request.query.get("occupant_id") or "").strip()
+        item_id = request.match_info.get("item_id", "").strip()
+        if not uid or not occ or not item_id:
+            return web.json_response({"ok": False, "error": "missing_owner"}, status=400)
+        try:
+            resp = await _memory_stub().DeleteMemoryItem(
+                memory_pb2.DeleteMemoryItemRequest(
+                    user_id=uid, occupant_id=occ, item_id=item_id), timeout=5)
+        except Exception as e:
+            logger.warning("memory item delete error: %s", e)
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+        status = 200 if resp.ok else {"missing_owner": 400, "not_found": 404,
+                                      "managed_memory": 409}.get(resp.error, 500)
+        return web.json_response({"ok": resp.ok, "error": resp.error,
+                                  "deleted": resp.deleted,
+                                  "deleted_relations": resp.deleted_relations},
+                                 status=status)
 
     @routes.post("/api/memory/forget")
     async def handle_mem_forget(request: web.Request):
@@ -746,9 +797,12 @@ def create_http_app() -> web.Application:
         except Exception as e:
             logger.warning("voiceprint rename error: %s", e)
             return web.json_response({"ok": False, "error": str(e)}, status=500)
+        # 失败码要能区分「没这个人」和「这个名字被占了」（M-B）：都回 404 时，
+        # 前端只能说「改名失败」，用户不知道换个称呼就能成。
+        fail_status = {"duplicate_name": 409, "empty_name": 400}.get(resp.error, 404)
         return web.json_response({"ok": resp.ok, "display_name": resp.display_name,
                                   "error": resp.error},
-                                 status=200 if resp.ok else 404)
+                                 status=200 if resp.ok else fail_status)
 
     @routes.delete("/api/voiceprint/{occupant_id}")
     async def handle_vp_delete(request: web.Request):

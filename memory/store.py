@@ -453,6 +453,11 @@ class MemoryStore:
             predicate_prefix=predicate_prefix, min_score=min_score,
             min_confidence=min_confidence, max_age_days=max_age_days)
 
+    async def delete_memory_item(self, user_id: str, occupant_id: str,
+                                 item_id: str) -> dict:
+        """L1：按 OwnerKey + item id 精确删一条（M-B）。取代「单行删除走 scope 扩大删除」。"""
+        return await (await self._vec()).delete_memory_item(user_id, occupant_id, item_id)
+
     async def forget_user(self, user_id: str, occupant_id: str = "",
                           scopes: list[str] | None = None) -> int:
         """合规：删除用户记忆。occupant/scope 都为空时连画像一并清（删全量）。

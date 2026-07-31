@@ -226,6 +226,19 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
             for t in turns
         ])
 
+    async def DeleteMemoryItem(self, request, context):
+        """L1 精确删除：按 OwnerKey + item id 删一条。
+
+        `occupant_id` 必填（primary 也要显式传）——owner 级动作绝不从空值推断范围，
+        否则「漏传 occupant」会静默升级成「删全部乘员」，那正是这条 RPC 要终结的行为。
+        """
+        res = await self.store.delete_memory_item(
+            request.user_id, request.occupant_id, request.item_id)
+        return memory_pb2.DeleteMemoryItemResponse(
+            ok=bool(res.get("ok")), error=res.get("error", ""),
+            deleted=int(res.get("deleted") or 0),
+            deleted_relations=int(res.get("deleted_relations") or 0))
+
     async def UpsertProfile(self, request, context):
         """写用户画像字段（如常用地点 places）。value_json 非法则拒绝，不写脏数据。"""
         if not request.user_id or not request.key:
@@ -345,7 +358,8 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
                 sample_count=int(r.get("sample_count") or 0),
                 self_consistency=float(r.get("self_consistency") or 0.0),
                 updated_at=int(r.get("updated_at") or 0), model=r.get("model", ""),
-                stale=bool(r.get("stale"))) for r in rows],
+                stale=bool(r.get("stale")),
+                name_conflict=bool(r.get("name_conflict"))) for r in rows],
             threshold=voiceprint.threshold(), margin=voiceprint.margin())
 
     async def DeleteVoiceprint(self, request, context):

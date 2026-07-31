@@ -1127,16 +1127,30 @@ export async function syncLlmProvider(apiBase: string, provider: string, model =
 export type MemoryTurn = { role: string; text: string; ts: number }
 export type MemoryView = { turns: MemoryTurn[] }
 export type MemoryPref = {
+  // id/owner 是 M-B 补的：单行删除按 item id 走精确删除，不再用 scope 删「这一行」
+  // （那会连带清掉该 scope 下**所有乘员**的条目）。managed=受管投影，只读。
+  id?: string; occupant_id?: string; managed?: boolean
   predicate: string; text: string; scope: string; provenance: string; confidence: number
 }
-export type MemoryPlace = { key: string; name: string; address: string; scope: string }
+export type MemoryPlace = {
+  id?: string; occupant_id?: string
+  key: string; name: string; address: string; scope: string
+}
 export type MemoryEpisode = { text: string; ts: number }
 export type MemoryProfile = {
   preferences: MemoryPref[]; places: MemoryPlace[]; episodes: MemoryEpisode[]
 }
 
-export async function fetchMemory(apiBase: string, sessionId: string): Promise<MemoryView> {
-  const q = new URLSearchParams({ session_id: sessionId, last_n: '30' }).toString()
+export async function fetchMemory(
+  apiBase: string, sessionId: string,
+  opts: { userId?: string; occupantId?: string; allOccupants?: boolean } = {},
+): Promise<MemoryView> {
+  // 缺省只看当前乘员；「全部乘员会话」是显式管理视图，不作为规划历史来源。
+  const q = new URLSearchParams({
+    session_id: sessionId, last_n: '30',
+    user_id: opts.userId || '', occupant_id: opts.occupantId || 'primary',
+    ...(opts.allOccupants ? { scope: 'all' } : {}),
+  }).toString()
   try {
     const s = await fetch(`${apiBase}/api/memory/session?${q}`).then((r) => r.json())
     return { turns: Array.isArray(s.turns) ? s.turns : [] }
@@ -1146,9 +1160,15 @@ export async function fetchMemory(apiBase: string, sessionId: string): Promise<M
 }
 
 // 真实学到的记忆：走分层记忆 ExportUser（非 mock 上下文）。
-export async function fetchMemoryProfile(apiBase: string, userId = 'u1'): Promise<MemoryProfile> {
+export async function fetchMemoryProfile(
+  apiBase: string, userId = 'u1',
+  opts: { occupantId?: string; allOccupants?: boolean } = {},
+): Promise<MemoryProfile> {
   const empty: MemoryProfile = { preferences: [], places: [], episodes: [] }
-  const q = new URLSearchParams({ user_id: userId }).toString()
+  const q = new URLSearchParams({
+    user_id: userId, occupant_id: opts.occupantId || 'primary',
+    ...(opts.allOccupants ? { scope: 'all' } : {}),
+  }).toString()
   try {
     const j = await fetch(`${apiBase}/api/memory/profile?${q}`).then((r) => r.json())
     return {
@@ -1161,7 +1181,30 @@ export async function fetchMemoryProfile(apiBase: string, userId = 'u1'): Promis
   }
 }
 
-// 删除某类记忆（scope 空=清空全部）。
+/** 删一条记忆（L1，M-B）。按 OwnerKey + item id 精确删。
+ *
+ * 记忆面板的「删除这一行」必须走这里，**不能**走 `forgetMemory(scope)`——后者是
+ * 按 scope 删，会连带清掉该 scope 下所有乘员的条目（删自己的名字＝删光全车的名字）。
+ * 返回错误码而不是布尔：`managed_memory` 要引导用户去声纹设置改名，
+ * `not_found` 则说明列表已过期，两种情况的话术完全不同。
+ */
+export async function deleteMemoryItem(
+  apiBase: string, userId: string, occupantId: string, itemId: string,
+): Promise<{ ok: boolean; error: string }> {
+  const q = new URLSearchParams({
+    user_id: userId, occupant_id: occupantId || 'primary',
+  }).toString()
+  try {
+    const r = await fetch(`${apiBase}/api/memory/items/${encodeURIComponent(itemId)}?${q}`,
+      { method: 'DELETE' })
+    const j = await r.json().catch(() => ({}))
+    return { ok: !!j.ok, error: String(j.error || (r.ok ? '' : 'request_failed')) }
+  } catch {
+    return { ok: false, error: 'request_failed' }
+  }
+}
+
+// 删除某类记忆（scope 空=清空全部）。**不是单行删除的实现**——见 deleteMemoryItem。
 export async function forgetMemory(apiBase: string, userId: string, scope = ''): Promise<boolean> {
   try {
     const r = await fetch(`${apiBase}/api/memory/forget`, {
@@ -1289,8 +1332,13 @@ import { parsePlacesValue } from './places.mjs'
 export type NamedPlace = { name?: string; address?: string; lat?: number; lng?: number }
 export type NamedPlaces = Record<string, NamedPlace>
 
-export async function fetchPlaces(apiBase: string, userId = 'u1'): Promise<NamedPlaces> {
-  const q = new URLSearchParams({ user_id: userId, scopes: 'profile.places' }).toString()
+export async function fetchPlaces(
+  apiBase: string, userId = 'u1', occupantId = 'primary',
+): Promise<NamedPlaces> {
+  // 常用地点按 OwnerKey 取：每位乘员的「家」各自独立（M-B）。
+  const q = new URLSearchParams({
+    user_id: userId, scopes: 'profile.places', occupant_id: occupantId || 'primary',
+  }).toString()
   try {
     const r = await fetch(`${apiBase}/api/memory/context?${q}`)
     const j = await r.json()
