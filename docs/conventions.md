@@ -731,7 +731,8 @@ OwnerKey = (user_id, occupant_id)
 | `source_turn_ids` 存真实 turn id | 它是 `weighting.evidence_count` 的输入。此前填 session_id → 永远数出 1，「说过一次」与「每周三次」的区分从未生效 |
 | 旧数据统一归 primary | 旧 Turn / 旧 reminder **不按文本、时间或声纹猜真实 owner**，统一归 primary 并生成稳定 legacy id（材料只用 session_id+序号+ts+role，多次读取不漂移）。这是**有损归属迁移**，归 primary 后不可自动恢复——但方向永远是收窄，不是放开 |
 | **places 唯一真相源** | owner-scoped `memory_item place.*`。`UpsertProfile(key="places")` 是 **per-key patch**（出现的 key supersede-or-insert，未出现的不动），不再整块 map 覆盖；primary 在 backfill 前 dual-read legacy KV 但**只补新表缺失的 key**，**非 primary 永不读 legacy KV**（那是主驾的地址，泄漏比查不到更糟）。legacy KV 保留只读兼容，本批不删 |
-| reminder owner | `reminder_item.occupant_id`（加法式 DDL，随启动幂等应用）。全部 CRUD/list/cancel 按 OwnerKey 过滤 |
+| reminder owner | `reminder_item.occupant_id`（加法式 DDL）。全部 CRUD/list/cancel 按 OwnerKey 过滤 |
+| **两处 DDL 的应用时机不同** | reminder 的 `schema.sql` 由 `ReminderStore.init()` 在**进程启动时**执行；memory 的由 `MemoryVectorStore._ensure_schema()` 执行，而它挂在 `_vec()` 的**懒初始化**上——**第一次用到向量存储时才应用**。重启 memory 容器后 `\d voiceprint` 看不到新列是正常的，发一次任意读写即生效（真栈实测，2026-08-01；本条是文档最初写错后按实测更正的） |
 | **全局扫描可跨 owner，消费必须先分组** | `claim_due`/`claim_location` 由时钟与围栏驱动、与会话无关，可以跨 owner 原子领取；但**一条 speech/card 只能属于一个人**，`items[0].user_id` 不能代表混合 owner 集合。分组后每组独立构造 payload |
 | 卡片 action pin owner | 触达卡片每个 action 带 `reminder_id` + `owner_occupant_id`，HMI 点击固定用卡片上的 owner，不拿点击那一刻的声纹身份或标题模糊匹配去猜（同名提醒是最危险的形态）。**pin 只是数据路由，occupant 不是权限凭据** |
 | L1 精确删除 | `DeleteMemoryItem(user_id, occupant_id, item_id)`：跨 owner 一律 `not_found`（回「不是你的」会泄露它属于谁），`identity.name` 返回 `managed_memory`，同事务清掉指向该条目的关系边。**取代「单行删除复用 scope 删」**——后者会清掉该 scope 下所有乘员的条目 |
