@@ -690,3 +690,29 @@ M-D 完成后只更新 `docs/reviews/2026-07-26-acceptance-review-m0a-m4.md` 中
 - 原验收卡按 §12 逐项回写，误判项不制造重复实现；
 - M-A runner、全量测试和 M-D 真栈矩阵全部通过；
 - M-D 精确形成一个实现提交和一个五文件证据提交，并按本轮授权推送。
+
+---
+
+## 14. 落地记录（2026-08-01）
+
+**执行口径变更**：本规格与实施计划（13 个 task）按产品负责人裁决**简化执行**，同 M-B/M-C。
+切分判据是「先修真的会产生错误行为的缺陷」。
+
+### 14.1 已落地
+
+| 规格章节 | 落地情况 |
+|---|---|
+| §3 Task Ledger 原子幂等 | ✅ 活跃态 partial unique + `ON CONFLICT DO NOTHING` + 竞争输了按 Duplicate。**未做** owner-v2 cutover 控制行与冻结备份仪式——那套是为有损重分配准备的，本批只加了一个索引 |
+| §4 MCP operation journal | ⚠️ **明确不做**。**商户是订单状态的真相源**，本地镜像就是第二真相源。「有哪些单」用 Ledger 已有记录，「状态如何」问商户（`order.get`）。这是本批最重要的减法 |
+| §5 写工具图契约 | ⚠️ 部分：`compensate_tool` 现在指向一个**同样在准入清单里**的工具（此前不在，所以运行期不可达），并加了契约测试。未做完整工具图与 admission 阻断扩展 |
+| §6 业务状态机 | ⚠️ 只取可达的一半：submitted/refunded 由商户维护并经 `order.get` 如实回答；不建本地状态机 |
+| §7 声明式补槽与枚举 | ❌ 未做。验收 §6「已知残余」记的是 provider 输出方差，本批未观察到它阻断查单取消链路；真要做应在通用引擎侧而不是 MCP 桥 |
+| §8 Provider capability | ✅ `supports_toolcall` 声明式能力位 + 网关短路 + 每请求现读。**未做** `GetCapabilities` RPC 与 revision 协商——本地静态声明已经消除了白打上游，RPC 协商解决的是「provider 自己会变」，当前 provider 集是仓库内声明的 |
+| §10 GDPR retained-audit / external_reference | ❌ 未做，与 M-B/M-C 后置的跨域 saga 同批 |
+| §11 双 bridge acceptance profile / 真栈矩阵 | ❌ 未做，覆盖面证据 |
+
+### 14.2 一条判据
+
+**「声明存在」不等于「能用」。** `compensate_tool` 被准入校验查了存在性、写进了文档的
+「写操作生命周期五项」、还有测试断言——唯独没有一条路径能真的调到它，因为那个工具
+自己不在准入清单里。**校验的是声明，没人校验可达性。**

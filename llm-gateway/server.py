@@ -165,6 +165,15 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
         except ValueError as e:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
 
+        # M-D 能力协商：这一档不支持 tool calling 就**当场退回纯文本**，不要拿着 tools
+        # 去打上游。此前没有能力位也没有熔断，不支持的 provider 每轮白打 2 次
+        # （primary 一次 400、fast 再一次 400），然后 planner 还要再走一遍 JSON 路径。
+        # 能力在**每次请求**读（provider 是可热切的），所以热切之后不会沿用旧能力。
+        _cap = getattr(self.runtime, "supports_toolcall", None)
+        if tools_spec and _cap is not None and not _cap(aid):
+            logger.info("provider %s 不支持 tool calling，本次退回纯文本（不打上游）", aid)
+            tools_spec = None
+
         # 缓存查找（serving provider + thinking 并入 key，避免切换/pin/开关思考结果串味）。
         # 带 tools 的请求跳过缓存：tools 不进缓存键会串味（同 messages 不同工具面），而
         # planner 上下文轮轮不同命中率≈0——跳过换正确性（RFC §8-4；键改造留 V2）。

@@ -40,8 +40,39 @@ servers:
         compensate_tool: order.cancel  # 缺它 → admission 拒载
         schema_sha: "041a13dc1703"
         description: 下单一杯咖啡（演示商户，不产生真实交易）
+        confirm_prompt: "准备下单：{args}，确认吗？"
         # 规划期槽位用自然词（LLM 会填 item/size），经 arg_map 翻成商户的参数名
         slots: [item, size]
         arg_map: {item: sku, size: size}
         examples: ["点一杯拿铁", "来杯大杯美式", "帮我买杯咖啡"]
         timeout_ms: 15000
+      # ── 查单（只读）──
+      # M-D：**「查一下我的订单」此前是一句空话**——话术承诺过它，而准入清单里
+      # 只有 menu/order（验收抓到后先把话术改成不承诺）。这条补上真入口。
+      # 它同时是「超时到底下没下成」的核对手段：下单超时那一单我们没有 order_id
+      # （响应没回来），但幂等键是我们自己生成的、商户按它索引。
+      - name: order.get
+        intent: shop.order_status
+        write: false
+        schema_sha: "df8761c5f320"
+        description: 查询咖啡订单的状态（演示商户）
+        slots: [order_id]
+        examples: ["查一下我的订单", "我那杯咖啡好了吗", "刚才的单子怎么样了"]
+        timeout_ms: 8000
+      # ── 取消（可确认写入）──
+      # `order.cancel` 从一开始就在商户侧存在、也被 order.create 声明为
+      # compensate_tool，但**从没进过准入清单**——于是补偿只在准入期被校验存在性，
+      # 运行期零调用、用户零入口（验收原话）。放进来它才成为真实可达的能力。
+      # 仍是写操作：走 require_confirm，中央闸兜底；**不做未经确认的自动补偿**。
+      - name: order.cancel
+        intent: shop.order_cancel
+        write: true
+        require_confirm: true
+        idempotency_key_arg: ""
+        compensate_tool: order.cancel   # 取消自身幂等（再取消返回 duplicate）
+        schema_sha: "943700876d93"
+        description: 取消咖啡订单并退款（演示商户，不产生真实交易）
+        confirm_prompt: "准备取消订单 {args} 并退款，确认吗？"
+        slots: [order_id]
+        examples: ["取消我的咖啡订单", "那杯咖啡不要了", "帮我把订单退了"]
+        timeout_ms: 12000

@@ -303,3 +303,37 @@ def test_server_tools_spec_malformed_falls_to_plain():
     resp = asyncio.run(s.Complete(req, _Ctx()))
     assert resp.content == "plain"
     assert p.tool_calls_n == 0
+
+
+# ── provider tool-calling 能力协商（M-D）──────────────────
+def test_capability_defaults_to_supported_for_every_shipped_provider():
+    """缺省 True：既有全部档位都支持 tool calling，**零行为变化**。"""
+    from llm_runtime import LLMRuntime
+    rt = LLMRuntime()
+    assert rt.supports_toolcall("mimo") is True
+    assert rt.supports_toolcall("minimax") is True
+    assert rt.supports_toolcall("deepseek") is True
+
+
+def test_unknown_provider_is_not_convicted():
+    """不认识的档不定罪：照旧尝试，失败走既有降级——**缺能力位不等于没能力**。"""
+    from llm_runtime import LLMRuntime
+    assert LLMRuntime().supports_toolcall("no-such-provider") is True
+
+
+def test_declared_unsupported_provider_short_circuits():
+    """声明式：在 _PROVIDER_SPECS 里写一行即可，不改判定代码。"""
+    from llm_runtime import LLMRuntime
+    rt = LLMRuntime()
+    rt._catalog.append({"id": "toyprov", "supports_toolcall": False})
+    assert rt.supports_toolcall("toyprov") is False
+
+
+def test_capability_is_read_per_request_so_hot_switch_is_not_stale():
+    """provider 可热切——把能力缓存下来就会在切换后沿用旧能力。"""
+    from llm_runtime import LLMRuntime
+    rt = LLMRuntime()
+    rt._catalog.append({"id": "toyprov", "supports_toolcall": True})
+    assert rt.supports_toolcall("toyprov") is True
+    rt._catalog[-1]["supports_toolcall"] = False
+    assert rt.supports_toolcall("toyprov") is False

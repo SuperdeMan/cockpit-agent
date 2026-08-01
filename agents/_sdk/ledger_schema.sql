@@ -20,3 +20,12 @@ CREATE TABLE IF NOT EXISTS task_ledger (
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_user_active ON task_ledger (user_id, status);
 CREATE INDEX IF NOT EXISTS idx_ledger_idem ON task_ledger (user_id, idempotency_key, status);
+
+-- M-D：同一 (user_id, idempotency_key) 在**活跃态**下唯一。
+-- `open()` 此前是「先 SELECT 再 INSERT」——两个实例可以同时查不到、同时插入，
+-- 于是**同一个幂等请求有两个实例都拿到了执行权**（对写操作就是双下单）。
+-- 判定权交给数据库：谁的 INSERT 成功谁执行，另一个拿到冲突并按 Duplicate 处理。
+-- partial 是必须的：终态行要能共存（同一件事可以再做一次），只约束「在跑」的那些。
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ledger_active_idem
+  ON task_ledger (user_id, idempotency_key)
+  WHERE status IN ('accepted', 'running');
