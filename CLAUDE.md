@@ -110,8 +110,12 @@ Windows 无 make 时用 `scripts/gen-proto.ps1`、`scripts/run_e2e.ps1` 等价�
 **最新（2026-08-01）**：2026-07-26 总体验收报告 §7 的 **13 张主卡全部收口**——
 M-A 测试真实性 / M-B 多乘员隔离（OwnerKey）/ M-C 可靠触达（`publish 成功 ≠ 用户收到`）/
 M-D 外部生态（`声明存在 ≠ 能用`），四批全部合入 main。每批的「明确未做」逐条附判据
-在验收报告 §9/§10.2/§11.2/§12.2。**⚠ GitHub CI 仍红**（根因是 M-A 那批测试写死了
-Windows 假设，已修 4 类剩 6 条，交接见 `AGENTS.md` §4「CI / nightly 现状」）。
+在验收报告 §9/§10.2/§11.2/§12.2。**✅ GitHub CI 已收口**（`176dd20` / run #232 七个 job
+全绿，`#217` 之后第一次）——破点是 M-A 那批把 **Windows 假设写死了**，但最后 7 条里
+**两条是真代码缺陷**：首次 canonical 晋升在 Linux 上必崩、go wrapper 的 `\"` 转义只对
+Windows PowerShell 的 Legacy 传参成立。**它们能躲这么久，都是因为一段
+`if os.name == "nt": return` 把校验整层跳过了**——判据、Linux 复现步骤见
+`AGENTS.md` §4「CI / nightly 现状」。**nightly 仍红**（自 `#30`，未定位）。
 
 截至 2026-07-30，Phase 1 工程化 PoC 主干、云端中枢 P0-P3、R2-R4 硬化主题（架构还债/
 安全/语音回路/拒识澄清等）、可观测台（badcase 排查贯通：会话/轮次/日志/LLM + SQLite

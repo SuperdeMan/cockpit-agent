@@ -72,10 +72,12 @@ dashboard 16）——各主题的测试增量与提交散列见 §4 对应行，
 （判别化描述的收益在 registry 兜底路径不在 planner，跨两档 Δ=0）、修掉了一个
 **让影子 `agree` 状态从未出现过**的比较口径缺陷。
 
-**⚠ 唯一未收口的是 GitHub CI**（见 §4.0 末「CI/nightly 现状」）：本地全绿而 CI 红，
-根因是 M-A 那批测试把 **Windows 假设写死了**，Ubuntu 上必红。已修 4 类、**剩 7 条**
-（2026-08-01 逐条核过 annotation，此前记的 6 条漏了 stack_lease 那条）。
-**与 M5 P3 收尾无关**：run #228（收尾前）与 #229（收尾后）失败集合逐条相同。
+**✅ GitHub CI 已收口（2026-08-01，`176dd20` / run #232 七个 job 全绿）**，是 `#217`
+之后第一次绿。最后 7 条里**有两条是真代码缺陷不是测试问题**——首次 canonical 晋升在
+Linux 上必崩（先恢复事务、后建目录）、go wrapper 在 Linux 上一直是坏的（`\"` 转义只对
+Windows PowerShell 的 Legacy 传参成立）。**它们能躲这么久，都是因为一段
+`if os.name == "nt": return` 把校验整层跳过了。** 复现步骤与三条判据见 §4.0 末
+「CI/nightly 现状」。**nightly 仍红**（自 `#30` 起，早于本轮工作，未定位）。
 
 **智能化升级 M0a→M4 全部完成**（母提案
 `docs/design/2026-07-24-eva-benchmark-intelligence-upgrade.md` §6 分期，各期落地记录逐条在案）。
@@ -681,24 +683,53 @@ badcase 排查观测贯通=2026-07-10[见「可观测」行]。）
 
 ---
 
-### CI / nightly 现状（2026-08-01，**唯一未收口项**）
+### CI / nightly 现状（2026-08-01，**CI 已全绿；nightly 仍红**）
 
-**判据先行：本地全绿 ≠ CI 绿。** 本地习惯单进程跑全量（3597 passed），CI 是
-**Ubuntu + 分组跑**——两个差异各自藏着一类缺陷。
+**✅ CI 已收口**：run **#232**（`176dd20`）**七个 job 全绿**（含此前被 fail-fast 取消的
+python-tests 3.12），是 `#217` 之后的第一次绿。破点到收口共 15 次红。
+
+**判据先行：本地全绿 ≠ CI 绿。** 本地习惯单进程跑全量，CI 是 **Ubuntu + 分组跑**
+——两个差异各自藏着一类缺陷。这轮最后 7 条里，**有两条是真代码缺陷不是测试问题**
+（首次 canonical 晋升在 Linux 上必崩、go wrapper 在 Linux 上一直是坏的），
+它们能在 Windows 上躲这么久，都是因为一段 `if os.name == "nt": return` 把校验整层跳过了。
+
+**怎么复现 Linux CI（下次直接照做，比读 annotation 快得多）**：
+```bash
+git bundle create /tmp/repo.bundle --all          # 要带真历史，git archive 不含 .git
+docker run -d --name ci-repro python:3.12 sleep infinity   # 用完整镜像，slim 没有 git
+docker cp /tmp/repo.bundle ci-repro:/tmp/ && docker exec ci-repro sh -c \
+  'git clone -q /tmp/repo.bundle /repo && pip install -q pytest pytest-asyncio pyyaml cryptography websockets'
+docker exec ci-repro sh -c 'cd /repo && python -m pytest scripts/tests/ -q --import-mode=importlib'
+```
+`test_run_go_tests_wrapper` 还需要 pwsh（`_powershell()` 找不到就 skip，**skip 会伪装成绿**）：
+从 GitHub Releases 拉 `powershell-7.4.6-linux-x64.tar.gz` 解到 `/opt/microsoft/powershell/7`
+（国内约 35KB/s，用 `curl -C -` 断点续传分多次拉）。
+⚠ 容器里有 5 条会假红（无 init 收割僵尸进程的三条 reap 用例 + 两条缺 test 支撑模块），
+**它们不在 CI 失败集里**——比对时以 CI 的清单为准，别追容器自己的噪声。
 
 | 项 | 状态 |
 |---|---|
-| CI 破点 | `#217` 绿（`87edc13`）→ `#218` 红（`449c5d1`），中间是 **M-A 那 20 个提交**。与 M-B/M-C/M-D 无关 |
+| CI 破点 | `#217` 绿（`87edc13`）→ `#218` 红（`449c5d1`），中间是 **M-A 那 20 个提交**。与 M-B/M-C/M-D 无关；**`#232`（`176dd20`）收口** |
 | 已修 ① 环境泄漏 | `test_remaining_e2e_protocol._load()` 加载 `e2e_real_providers.py` 时，后者 **import 期** `os.environ.setdefault` 把 .env 灌进同进程；monkeypatch 还原不了它。后续 charging-planner 用例把 provider 决议从 mock 翻成 real → 真调用拿假 key 失败 → 无卡 → 红。**group 1 已由 CI 确认转绿** |
 | 已修 ② 平台假设 | `test_run_go_tests_wrapper` 硬编码 `%SystemRoot%\System32\WindowsPowerShell`（Ubuntu `KeyError`）；假 docker 只写 `docker.cmd`（Linux 上打到真 docker，`go: downloading` + pwsh 超时）；`test_e2e_stack_lease` 用 `mkdir()` 建 0o755 目录，而 Linux 侧先校验 0o700/0o600 → **那两条断言在 Windows 上从来没被真正执行过** |
 | 已修 ③ CI 可诊断性 | 此前只报「pytest group FAILED: <组名>」，而 **job 日志需要 admin 权限**（`/actions/runs/{id}/logs` 返回 "Must have admin rights"）。改成把 `FAILED/ERROR` 行逐条升成 `::error::` annotation（公开可读）。**没有这一步就只能靠本地复现去猜** |
-| **剩余 7 条**（⚠ 此前记作 6，**漏了 stack_lease 那条**） | 全在 `scripts/tests/`：`test_run_e2e.py` **四条** canonical 晋升（`assert 'report_counts_invalid' in ['canonical_promotion_failed']`、`assert 3 == 0` 等——**具体理由被 `except` 吞成了泛化的 `canonical_promotion_failed`**）；`test_run_go_tests_wrapper` 一条 argv 比对；`test_e2e_identity` 一条 `memory capability bundle rewr...`；`test_e2e_stack_lease::test_child_bundle_rejects_nonregular_file_and_expected_root_escape` 一条 `Regex pattern did not match`。**「已修②平台假设」那一栏提到修过 stack_lease，但修的是另一条用例**，本条仍红 |
-| 逐条比对基线（2026-08-01） | run **#228**（`399046f`，M5 P3 收尾**之前**）与 run **#229**（`d6fbca3`，收尾**之后**）的失败集合**逐条相同**——M5 P3 收尾（4 个新测试文件、新增 ~40 条用例，含无依赖的分词 golden）在 Ubuntu 上全过，**零新增红**。留这行是为了下一个人不必再自己比一次 |
-| 下一步怎么查 | `python scripts/ci_annotations.py [run_id]` 读 annotation（**免 admin**；不带参数=最新一次 run，注意刚 push 时最新那次可能还在跑，要显式给 id）；或在 Linux 容器里跑 `scripts/tests/`。⚠ **不要把诊断细节塞进 `canonical_rejection_reasons`**——那是契约字段，已有测试锁死「只有这一项」，我试过一次被三条测试拦下（改走 stderr 也撞了 runner 的输出契约，已回退） |
+| 已修 ④ **首次 canonical 晋升在 Linux 上必崩**（真缺陷，4 条） | `_promote_canonical_report` 是**先恢复事务、后建目录**（mkdir 在 `write_report_pair` 里），首次晋升时 `docs/reviews/eval` 还不存在 → `_cleanup_report_transaction` 末尾的 `_fsync_directory` 对不存在的目录 `os.open` → `FileNotFoundError` → 被 `main` 的宽 `except OSError` 吞成泛化的 `canonical_promotion_failed`，**四条用例的具体拒绝理由全部丢失**。修在 `recover_report_transaction`：**目录不存在 ⇒ 从来没有过事务，无操作返回**；刻意**不**让 `_fsync_directory` 容忍 ENOENT（事务目录在写入过程中消失是真事故）。带反验过的回归测试 |
+| 已修 ⑤ **go wrapper 在 Linux 上一直是坏的**（真缺陷） | `run_go_tests.ps1` 写死 `go test \"$@\"`。**Windows PowerShell 5.1 是 Legacy 传参**（参数拼进命令行串、接收方 `CommandLineToArgvW` 反解），`\"` 正好还原成 `"`；**pwsh 7 在非 Windows 上默认 Standard**，逐字经 argv 交出去 → 反斜杠原样进容器 → sh 里 `\"` 是字面量引号 → `go test` 收到带引号的包名。判据改成「**怎么传参**」（`$PSNativeCommandArgumentPassing`）而不是「什么系统」——pwsh 7 在 Windows 上默认也是 Standard |
+| 已修 ⑥ 又两条写死 Windows 假设 | `test_e2e_identity` 用 `mkdir()` 建 0o755，而 `replace_private_file` 头一件事就是校验父目录 0o700；`test_e2e_stack_lease` 期望 `match="regular"`，但 POSIX 上是 `_require_posix_private_metadata` **先判类型再判权限**先开的火。⚠ 上一版试图 `chmod 0o600`「绕过权限层去够 S_ISREG」——**绕不过去**：对目录而言那条 S_ISREG 在 POSIX 上不可达，它是 Windows 侧的岗哨。改成按平台断言真正开火的那一层，**不把 match 放宽成谁拒的都行**（放宽等于不再钉住是哪一层在守） |
+| 逐条比对基线（2026-08-01） | run **#228**（`399046f`，M5 P3 收尾**之前**）与 **#229**（`d6fbca3`）／**#230**／**#231** 的失败集合**四次逐条相同**——M5 P3 收尾（4 个新测试文件、~40 条用例，含无依赖的分词 golden）在 Ubuntu 上全过，**零新增红**。留这行是为了下一个人不必再自己比一次 |
+| 怎么查（仍然有效） | `python scripts/ci_annotations.py [run_id]` 读 annotation（**免 admin**；不带参数=最新一次 run，刚 push 时那次可能还在跑，要显式给 id）。⚠ **annotation 只有 pytest 的摘要行，长断言会被截断**（go wrapper 那条的 argv diff 就看不全）——**真要定位就起 Linux 容器**（上方复现步骤），在容器里加一行 `traceback.print_exc` 三秒就看见了。⚠ **不要把诊断细节塞进 `canonical_rejection_reasons`**——那是契约字段，已有测试锁死「只有这一项」，前人试过被三条测试拦下（改走 stderr 也撞了 runner 的输出契约） |
 | nightly | 自 `#30`（2026-07-29）起红，**同样早于本轮工作**。它跑 mock 全栈 + `--lane nightly --full`，失败原因尚未定位（需要读 artifact 或本地起 mock 栈复现） |
 
-**一条可复用判据**：跨平台 CI 里，被 `os.name == "nt"` 提前 return 掉的校验，
-正是另一边会先触发的那一层——**「本地绿」只证明本地那条分支绿**。
+**三条可复用判据**：
+1. 跨平台 CI 里，被 `os.name == "nt"` 提前 return 掉的校验，正是另一边会先触发的那一层
+   ——**「本地绿」只证明本地那条分支绿**。这轮 7 条里有 6 条是这个形状。
+2. **一段「吞掉整类异常」的兼容代码，会连它不该吞的那一种一起吞掉。**
+   `_fsync_directory` 对 nt 吞 `OSError` 本意是「Windows 没有目录 fd」，结果把
+   「目录根本不存在」也吞了——于是一个顺序缺陷（先恢复后建目录）在 Windows 上
+   永远不可见。吞异常要按**具体错误码**吞，不按平台整段吞。
+3. **拿不到失败理由时，先问「是没有诊断通道，还是没有那个环境」。** 这批红了半个月，
+   期间试过往契约字段塞理由、试过走 stderr，都被拦下；真正的解法是花二十分钟起一个
+   Linux 容器——**在能复现的地方，`traceback.print_exc` 就够了**。
 
 ---
 
