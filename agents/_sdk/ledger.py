@@ -265,8 +265,15 @@ class TaskLedger:
                    idempotency_goal: str = "") -> "LedgerTask | Duplicate | None":
         """开一条任务账目。
 
-        先查同 (user_id, idempotency_key) 是否已有 active 任务——命中返回 `Duplicate`
-        （Agent 据此出「已经在查了」话术，不重复开跑）。PG 不可达 → None（诚实降级）。
+        同 (user_id, idempotency_key) 已有 active 任务 → `Duplicate`（Agent 据此出
+        「已经在查了」话术，不重复开跑）。PG 不可达 → None（诚实降级）。
+
+        **判定权在数据库**（M-D）：此前是「先 SELECT 再 INSERT」，两个实例可以同时
+        查不到、同时插入，于是同一个幂等请求有两个实例都拿到了执行权——对写操作
+        就是双下单。改为 INSERT ... ON CONFLICT DO NOTHING：谁插入成功谁执行，
+        另一个拿到冲突后回读并按 Duplicate 处理。
+        前置的 SELECT 保留，但它只干一件事——**清理孤儿**（上次崩了没销单的尸体
+        会一直占着唯一键，用户永远被它挡住重试）。
         """
         if not await self._ready():
             return None
@@ -291,10 +298,25 @@ class TaskLedger:
                 row = await conn.fetchrow(
                     "INSERT INTO task_ledger (task_id,user_id,session_id,agent_id,kind,"
                     "goal,idempotency_key,status,budget,origin_trace_id,heartbeat_at) "
-                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,now()) RETURNING *",
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,now()) "
+                    "ON CONFLICT DO NOTHING RETURNING *",
                     task_id, user_id, session_id or "", agent_id, kind, goal, key,
                     ACCEPTED, json.dumps(budget or {}, ensure_ascii=False),
                     origin_trace_id or "")
+                if row is None:
+                    # 竞争输了：另一个实例已经拿到执行权。回读它的账目当 Duplicate
+                    # ——**不能当失败**，那一单正在被别人执行。
+                    lost = await conn.fetchrow(
+                        "SELECT * FROM task_ledger WHERE user_id=$1 "
+                        "AND idempotency_key=$2 AND status=ANY($3) "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        user_id, key, list(ACTIVE))
+                    if lost is not None:
+                        return Duplicate(existing=row_to_task(lost))
+                    # 极窄的窗：对方刚插入又立刻收尾了。既然已经没有活跃任务，
+                    # 说明那件事做完了，照常返回 None（诚实降级，不假装开单成功）。
+                    logger.info("TaskLedger.open 竞争后对方已收尾，本次不重复开单")
+                    return None
             return row_to_task(row)
         except Exception as e:
             logger.warning("TaskLedger.open 失败（任务照常执行，不承诺可查询）：%s", e)

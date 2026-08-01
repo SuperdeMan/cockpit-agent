@@ -411,3 +411,33 @@ async def test_mark_orphaned_reconfirms_ttl_in_where():
     q, args = conn.sql[0]
     assert "heartbeat_at, created_at" in q and "seconds" in q
     assert set(args[2]) == set(ACTIVE)
+
+
+# ── 原子幂等（M-D）────────────────────────────────────────
+def test_schema_declares_a_partial_unique_index_on_active_idempotency():
+    """判定权必须在数据库：应用层「先 SELECT 再 INSERT」允许两个实例同时查不到、
+    同时插入——**同一个幂等请求两个实例都拿到执行权**，对写操作就是双下单。
+
+    partial 是必须的：终态行要能共存（同一件事可以再做一次），只约束「在跑」的。
+    """
+    import pathlib
+    sql = pathlib.Path(__file__).resolve().parents[1] / "ledger_schema.sql"
+    text = sql.read_text(encoding="utf-8")
+    assert "uq_ledger_active_idem" in text
+    assert "UNIQUE INDEX" in text.upper()
+    assert "(user_id, idempotency_key)" in text
+    idx = text.index("uq_ledger_active_idem")
+    tail = text[idx:idx + 400]
+    assert "WHERE" in tail.upper(), "必须是 partial——不能约束终态行"
+    assert "'accepted'" in tail and "'running'" in tail
+
+
+def test_open_inserts_with_conflict_guard_not_check_then_insert():
+    """源码级断言：INSERT 必须带冲突守卫。这条防的是「改回先查再插」——
+    那个写法在单实例下永远测不出问题，只有并发才暴露。"""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1] / "ledger.py").read_text(
+        encoding="utf-8")
+    head = src[src.index("async def open("):src.index("async def heartbeat(")]
+    assert "ON CONFLICT DO NOTHING" in head
+    assert "Duplicate(existing=row_to_task(lost))" in head, "竞争输了要当 Duplicate 不是失败"

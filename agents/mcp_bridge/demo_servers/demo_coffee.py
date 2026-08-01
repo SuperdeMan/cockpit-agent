@@ -102,6 +102,32 @@ def _order_cancel(args: dict) -> dict:
             "structuredContent": _public_order(order)}
 
 
+def _order_get(args: dict) -> dict:
+    """查单：按 order_id **或 idempotency_key** 定位（只读，owner 严格隔离）。
+
+    支持幂等键查是关键的一半：**下单超时那一单我们根本没有 order_id**（响应没回来），
+    但幂等键是我们自己生成的、商户侧也按它索引。有了这条路，「超时后到底下没下成」
+    才第一次可以**核对**，而不是让用户「先去商家处核实，别急着再下一单」。
+    """
+    oid = str(args.get("order_id") or "").strip()
+    idem = str(args.get("idempotency_key") or "").strip()
+    owner = str(args.get("_owner_user_id") or "").strip()
+    if not owner:
+        return {"isError": True,
+                "content": [{"type": "text", "text": "缺少受认证订单归属"}]}
+    if not oid and idem:
+        oid = _BY_IDEM.get((owner, idem), "")
+    order = _ORDERS.get(oid)
+    if not order or order.get("_owner_user_id") != owner:
+        # **查无此单不是错误**：超时那一单本来就可能没到商户，这正是要区分的信息。
+        return {"content": [{"type": "text", "text": "没有查到这一单"}],
+                "structuredContent": {"found": False, "demo": True}}
+    return {"content": [{"type": "text",
+                         "text": f"订单 {order['order_id']}：{order['name']}"
+                                 f"{order['size']}，{order['status']}"}],
+            "structuredContent": _public_order(order, found=True)}
+
+
 def _e2e_namespace_admin(args: dict) -> dict:
     """Hidden exact-owner lifecycle handler; never appears in ``TOOLS``."""
 
@@ -213,11 +239,17 @@ TOOLS = [
          "size": {"type": "string", "description": "中杯 | 大杯"},
          "idempotency_key": {"type": "string", "description": "幂等键，重试必须复用"},
      }, "required": ["sku", "idempotency_key"]}},
+    {"name": "order.get",
+     "description": "查询订单状态（按订单号或幂等键）",
+     "inputSchema": {"type": "object",
+                     "properties": {"order_id": {"type": "string"},
+                                    "idempotency_key": {"type": "string"}}}},
     {"name": "order.cancel", "description": "取消订单并退款（补偿路径）",
      "inputSchema": {"type": "object", "properties": {
          "order_id": {"type": "string"}}, "required": ["order_id"]}},
 ]
-_HANDLERS = {"menu.list": _menu_list, "order.create": _order_create,
+_HANDLERS = {
+    "order.get": _order_get,"menu.list": _menu_list, "order.create": _order_create,
              "order.cancel": _order_cancel,
              _HIDDEN_ADMIN_TOOL: _e2e_namespace_admin}
 

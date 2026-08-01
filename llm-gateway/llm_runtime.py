@@ -168,6 +168,12 @@ class LLMRuntime:
                 "primary": primary, "fast": fast,
                 # internal=True 的档只供请求级 pin（如视觉），不进 HMI「AI 大脑」切换列表
                 "internal": bool(spec.get("internal")),
+                # M-D：**这一档支不支持 tool calling**。缺省 True（既有全部档位都支持，
+                # 保持零行为变化）；声明 False 的档，网关直接走纯文本、planner 也不
+                # 再试 toolcall——此前不支持的 provider 每轮要白打 2 次上游
+                # （primary + fast 各一次 400），既没有能力位也没有熔断。
+                # **声明式**：新增 provider 只在 _PROVIDER_SPECS 里写一行，不改判定代码。
+                "supports_toolcall": bool(spec.get("supports_toolcall", True)),
                 "models": [{"id": m, "label": lbl} for m, lbl in spec["models"]],
             }
             self._catalog.append(cfg)
@@ -301,6 +307,18 @@ class LLMRuntime:
         self._persist_active()
         logger.info("LLM active switched -> %s model=%s", pid, self._active_model or "(primary)")
         return self.status()
+
+    def supports_toolcall(self, provider_id: str = "") -> bool:
+        """该档支不支持 tool calling（M-D）。缺省 True——既有全部档位都支持，
+        零行为变化；只有在 `_PROVIDER_SPECS` 里显式声明 False 的档才短路。
+
+        **每次请求现读**：provider 可热切，缓存下来就会在切换后沿用旧能力。
+        """
+        pid = (provider_id or self.active_id or "").strip().lower()
+        for cfg in self._catalog:
+            if cfg.get("id") == pid:
+                return bool(cfg.get("supports_toolcall", True))
+        return True                     # 不认识的档不定罪：照旧尝试，失败走既有降级
 
     def status(self) -> dict:
         return {

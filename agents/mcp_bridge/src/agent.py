@@ -224,6 +224,12 @@ class McpBridgeAgent(BaseAgent):
         try:
             args = {b.tool.arg_map.get(k, k): v
                     for k, v in (intent.slots or {}).items() if v}
+            user_id = str(getattr(ctx, "user_id", "") or "").strip()
+            if user_id:
+                # owner 由已验证 Context 派生，**不是 planner 槽位**（同写路径）：
+                # 让 LLM 能指定查谁的订单就是把越权做成了一个可填的字段。
+                args["_owner_user_id"] = user_id
+                args = await self._resolve_order_ref(b, args, user_id)
             res = await b.client.call_tool(b.tool.name, args,
                                            timeout_s=b.tool.timeout_ms / 1000.0)
         except Exception as e:
@@ -236,11 +242,56 @@ class McpBridgeAgent(BaseAgent):
         return AgentResult(speech=self._demo_prefix(b) + (res["text"] or "查到了。"),
                            ui_card=card, data=res["data"])
 
+    async def _backfill_write_slots(self, declared: list, ctx) -> dict:
+        """补偿类写操作的槽位回填（只回填订单号，只从账本，只取确定完成的那单）。"""
+        if "order_id" not in declared or not self.ledger:
+            return {}
+        user_id = str(getattr(ctx, "user_id", "") or "").strip()
+        if not user_id:
+            return {}
+        try:
+            recent = await self.ledger.recent(user_id, kind=LEDGER_KIND, limit=1)
+        except Exception as e:
+            logger.debug("[mcp] 取最近订单失败（照常追问）：%s", e)
+            return {}
+        oid = ((recent[0].result_ref or {}).get("order_id") if recent else "") or ""
+        return {"order_id": oid} if oid else {}
+
+    async def _resolve_order_ref(self, b, args: dict, user_id: str) -> dict:
+        """用户说「查一下我的订单」时没有订单号——从账本取他最近这一单的引用。
+
+        **两种引用都要给**：正常完成的单有 `order_id`；而**下单超时那一单根本没有
+        order_id**（响应没回来，账本里只有 `outcome=uncertain`），但幂等键是我们
+        自己生成的、商户按它索引。给幂等键，「到底下没下成」才第一次可以核对
+        ——此前只能让用户「先去商家处核实，别急着再下一单」。
+        """
+        if not self.ledger or args.get("order_id") or args.get("idempotency_key"):
+            return args
+        try:
+            recent = await self.ledger.recent(user_id, kind=LEDGER_KIND, limit=1)
+        except Exception as e:
+            logger.debug("[mcp] 取最近订单失败（按无引用查）：%s", e)
+            return args
+        if not recent:
+            return args
+        task = recent[0]
+        ref = task.result_ref or {}
+        if ref.get("order_id"):
+            args["order_id"] = ref["order_id"]
+        elif getattr(task, "idempotency_key", ""):
+            args["idempotency_key"] = task.idempotency_key
+        return args
+
     # ── 可确认写入（生命周期五项）──
     async def _call_write(self, b, intent, ctx, meta) -> AgentResult:
         confirmed = str((meta or {}).get("confirmed", "")).lower() == "true"
         declared = list(b.tool.slots or [])
         slots = {k: v for k, v in (intent.slots or {}).items() if v and k in declared}
+        if declared and not slots:
+            # 补偿类写操作（取消）用户往往不报订单号——从账本取他最近这一单。
+            # 只补**已完成**那一单的 order_id：outcome=uncertain 的单连订单号都没有，
+            # 拿它去取消等于对着一个不知道存不存在的单执行写操作。
+            slots = await self._backfill_write_slots(declared, ctx)
         if declared and not slots:
             return AgentResult(status=NEED_SLOT, speech="要点什么？",
                                missing_slots=declared[:1])
@@ -289,12 +340,15 @@ class McpBridgeAgent(BaseAgent):
                 await self.ledger.close(task.task_id, LEDGER_FAILED,
                                         result_ref={"error": "timeout",
                                                     "outcome": "uncertain"})
-            # 超时不等于没下单：诚实说「不确定」。验收修正：此前话术承诺「说『查一下
-            # 我的订单』我帮你核对」，但订单查询入口并不存在（准入清单只有 menu/order）
-            # ——把不确定包装成「有办法查清楚」比不说更伤信任。改为不承诺不存在的能力。
+            # 超时不等于没下单：诚实说「不确定」，并给出**真的存在**的核对入口。
+            # 这句话的历史值得留着：验收发现它当时承诺「说『查一下我的订单』我帮你
+            # 核对」而入口并不存在（准入清单只有 menu/order），于是先改成不承诺；
+            # M-D 把 order.get 接进清单后才把承诺加回来。**先有能力再有话术**，
+            # 反过来就是把不确定包装成「有办法查清楚」。
+            # 核对靠的是幂等键而不是订单号——超时这一单我们根本没拿到订单号。
             return AgentResult(
                 speech="下单没有拿到确认结果，可能没成功也可能已经受理。"
-                       "为避免重复下单，请先在商家处核实，别急着再下一单。")
+                       "先别再下一单——说「查一下我的订单」，我按幂等键跟商户核对。")
         except Exception as e:
             # 非超时异常（子进程没起/协议错）= 确定没发出去，按失败说，不装不确定
             logger.warning("[mcp:%s] 写操作失败：%s", b.server.id, e)
