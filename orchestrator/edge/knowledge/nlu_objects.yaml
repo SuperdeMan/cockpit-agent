@@ -1,0 +1,157 @@
+# nlu_objects.yaml — 端侧语义 NLU 的**对象桥接表**（M5 P3 收尾，2026-08-01）
+#
+# ## 它解决什么
+#
+# 系统里同一个「对象」有**三套命名**：
+#   ① 语料标签空间（端侧 NLU 的输出）：`空调模式/功能控制`、`座椅/儿童座椅`——83 个中文标签；
+#   ② VAL 可执行对象（`commands.yaml`）：`aircon`、`seat`——65 个英文 object；
+#   ③ 规则侧对象（`fast_intent.classify_structured` 的输出）：**95 个**，其中 38 个
+#      压根不在 ②里（`humidity`/`air_quality`/`navigation_route`/`high_beam`…
+#      ——R4.1b P0「端侧对象化」加的，识别得了但 VAL 执行不了，走云）。
+#
+# 没有这张表时，`server.py::_nlu_shadow` 拿 ① 和 ③ **直接比字符串**，于是规则一命中就
+# 恒为 `differ`——`agree` 这个状态在生产里从来没有出现过，而 P3b 的错对象率正要拿这一档
+# 当分母。接上表之后 600 条真实语料抽样：agree 49.5% / differ 24.8% / rule_miss 24.2%
+# / unmapped 1.5%。
+#
+# ## 契约
+#
+# `<语料标签>: [<指同一件事的对象名，②与③混列>]`
+#   - **影子比对**：`agree` ⟺ 规则给出的 object 落在这个列表里；
+#   - **P3b 执行桥接**：可执行子集 = 列表 ∩ `commands.yaml` 的 objects（交集为空
+#     ⇒ VAL 没有这个对象，如商用车的取力器/踏步取暖/编队）。**两个用途一张表，
+#     靠交集派生，不靠再写一列**——两列会各自漂移。
+#   - 空列表 = 连规则侧都没有对应名字。
+#
+# ## 收录判据（严，宁可多报 differ）
+#
+# 只收**同一指称**的别名，不收粒度不同的（`应用` 不收 `map`/`video`：「打开高德地图」
+# 语料标 `应用`、规则给 `map`，两边说的不是一个粒度）。理由：影子的价值就是**发现分歧**，
+# 把 agree 判宽会把真分歧藏起来，而藏起来的分歧没人会去看；判严只会多几条查完没事的。
+#
+# ## 判据来源
+#
+# 每条都对着**语料原文**核过，并用「规则对象 ↔ 语料标签」在全量 8590 条上的共现校准，
+# 不按名字相似度猜。⚠ 有过一次教训：`声音` 看着像「声音设置界面」（列表**头部** 4 条
+# 恰好都是），全量看 62% 是音量（导航音量/媒体音量/静音）——**只看头部的抽样偏差方向
+# 是固定的**，同 P2 hint 退役那次「抽样→全覆盖」。
+#
+# ## 谁维护
+#
+# 人裁一次、机器守「不许悄悄漏」：`tests/test_nlu_bridge.py` 断言语料里出现的每个标签
+# 都被裁定过、引用的每个名字都真的存在（VAL object 或规则真能吐出的名字），
+# 以及语料已消失的标签不许滞留（只进不出会腐烂——boundaries 台账同款）。
+
+objects:
+  # ── 车身开闭 ──
+  车窗: [window]
+  天窗/天窗遮阳帘: [sunroof, sunshade]        # 语料把天窗与遮阳帘并成一个标签
+  车门: [door_lock]                          # 「打开车门锁」
+  后备箱: [trunk]
+  前备箱: [frunk]
+  油箱盖: [fuel_tank_cover]
+  充电口盖: [charging_port]
+
+  # ── 座舱 ──
+  座椅/儿童座椅: [seat]
+  方向盘: [steering_wheel]
+  后视镜: [rear_view_mirror]                 # 语料是镜面方向调节
+  香氛: [fragrance]
+  空气净化: [air_purifier]
+  雨刮器: [wiper]                            # 「雨刮灵敏度调到高挡」
+
+  # ── 空调 ──
+  空调开闭控制: [aircon]
+  空调模式/功能控制: [aircon]                 # 语料量最大的车控标签（525 条）
+
+  # ── 灯光 ──
+  车内灯: [ambient_light]                    # 语料是氛围灯
+  车外灯: [low_beam, headlight, high_beam, warning_light, fog_light]
+
+  # ── 驾驶辅助与能量 ──
+  辅助驾驶: [lane_departure_assistance, lane_assistance, blind_spot_warning,
+           forward_collision_warning, fatigue_detection, body_stability,
+           hill_descent, speed_limit_assistance, creep_mode]
+  车辆模式: [driving_mode, power_mode]        # 「设置车辆混动模式/舒适模式」
+  能源: [energy_recovery, v2v_charging, energy_consumption]
+  制动: [auto_hold]                          # 「打开自动驻车 / AHV打开」
+  轮胎: [tire_pressure_monitoring, tire_pressure, tire_temperature]
+  情景模式: [scene_mode]                     # 「打开小憩模式」
+
+  # ── 座舱交互与界面 ──
+  屏幕: [screen]                             # 「打开主驾屏/中控屏屏幕」
+  仪表: [dashboard]
+  交互: [interaction]                        # 「取消」
+  语音助手: [voice_assistant]
+  系统: [system, language, time_format, network_data, remaining_network_data,
+        factory_settings, memory]           # 系统语言/剩余流量/时间设置/恢复出厂
+  设置: [system]                             # 「查看权限管理」
+  界面: [page]                               # 各类设置页面（「打开整车设置界面」）
+  设置界面: [page]
+  个人中心: [page]
+  主菜单: [page, launcher]                   # 「返回桌面」
+  声音: [volume, key_tone, page]             # ⚠ 主要是音量（导航/媒体/电话音量、静音）
+  360环视: [surround_view]
+  摄像头: [dashcam, camera]                  # 「开始行车记录仪录像」
+
+  # ── 连接 ──
+  蓝牙: [bluetooth]
+  蓝牙电话界面: [bluetooth, phone]
+  WiFi: [wifi]
+  个人热点: [hotspot]
+  电话: [phone]                              # 「接听」
+  通讯录: [contacts]
+  通话记录: [call_log]
+  应用: [app]                                # 「打开同听/腾讯视频」——不收 map/video（粒度不同）
+
+  # ── 媒体 ──
+  媒体控制: [media]                          # 「打开媒体播放列表」
+  音乐控制: [music]
+  音乐点播: [music]
+  音乐查询: [music]
+  广播控制: [radio, online_radio]            # 「打开喜马拉雅电台」既有 FM 也有网络台
+  广播点播: [radio, online_radio]
+  网络电台控制: [online_radio]
+  网络电台点播: [online_radio, radio]
+  有声书控制: [audiobook]
+  有声书点播: [audiobook]
+  曲艺控制: [opera]
+  曲艺点播: [opera]
+  新闻控制: [news]
+  新闻搜索: [news]
+  视频控制: [video]
+  视频点播: [video]
+  电视: [TV]
+  均衡器: [equalizer, sound_effect]          # 「打开音效设置」
+
+  # ── 出行与信息 ──
+  导航: [navigation, navi, navi_broadcast, navigation_route, search,
+        remaining_time, remaining_distance, current_position]
+  地图: [map]
+  路况: [navigation, road_condition]         # 「查询实时路况」
+  美食: [food]
+  酒店: [hotel]
+  火车票: [train]
+  航班: [flight]
+  股票: [stock]
+
+  # ── 天气族（VAL 只有一个 weather 对象，语料按测量量拆成 7 个标签；
+  #     规则侧也各有专名，两边都收）──
+  天气: [weather]
+  气象: [weather]
+  温度: [weather, temperature]               # ⚠ 不是 aircon：188 条全是「查深圳市的温度」
+  湿度: [weather, humidity]
+  空气: [weather, air_quality]               # 「查深圳的空气质量」
+  风况: [weather, wind_force]                # 「查深圳市的风力」
+  指数: [weather]                            # 「穿衣/紫外线/洗车指数」
+  # ⚠ 指数**刻意不收规则给出的 `stock`**：规则把「查深圳的穿衣指数」当成了股指
+  # （179 条 100% 命中 stock），那是规则的错，不是命名差异。收进来就等于把一个真 badcase
+  # 洗成 agree。已另立卡。
+
+  # ── VAL 没有可执行对象（交集为空即得，不必另标；这里是商用车/车机互联能力）──
+  工具: []                                   # 「打开取力器控制界面」——PTO，商用车专有
+  图片相册: []                               # 「切换U盘图片」——VAL media 是音视频播放器
+  风扇: [fan]                                # 「打开司机区风扇」——驾驶室独立风扇，非空调风速
+  采暖: [step_heating]                       # 「打开踏步取暖」
+  队列控制: [team]                           # 「创建队列」——编队行驶
+  车机互联: [car_link]                       # CarPlay/HiCar 一类

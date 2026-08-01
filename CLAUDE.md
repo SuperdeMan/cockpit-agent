@@ -165,8 +165,16 @@ P0 与一批组合缺陷当日修复，结构性遗留已立卡——验收报�
 **两个评测口径都要印**（holdout 95.8% vs transfer 64.9%，差 31 点就是「同分布」的含金量）。
 
 **M5 P0→P3a 已通过全量评审（2026-07-30）**：14 提交逐项核验，零 P0/P1 缺陷、零红线违规，
-报告 `docs/reviews/2026-07-30-review-m5-data-flywheel.md`。余项与下一步见 `AGENTS.md` §4.0
-（P3b 开工判据、78 个端侧 capability 只有 2 句描述等）。
+报告 `docs/reviews/2026-07-30-review-m5-data-flywheel.md`。
+
+**P3 收尾已合入（2026-08-01）**——评审两条 INFO 项 + P3a 三张卡收口，**不改路由行为**，
+两条判据入册：**「A 与 B 一致吗」先问「A 和 B 是同一个空间里的量吗」**（影子拿语料中文标签
+与规则英文 object 直接比，`agree` 从来没出现过，而 P3b 的错对象率正要拿这档当分母；
+补 `orchestrator/edge/knowledge/nlu_objects.yaml` 等价类台账后 agree 0%→68.8%）／
+**「多给点信息总不会更差」不是证据**（78 条判别化描述渲进 planner catalog，跨 minimax +
+deepseek 两档 25 条语料 ×2 轮 **Δ=0 零翻面**，代价 +1462 字符/次规划 → 否掉；真正有效应的
+是 registry 语义兜底——泛化描述下「打开空调」的 top-1 竟是 scene-orchestrator，
+而那是 LLM 失败时的兜底规划路径）。余项与下一步见 `AGENTS.md` §4.0。
 
 当前事实、测试证据和待办统一维护在 `AGENTS.md`（§4 顶部有「当前进度与下一步」交接区）；
 设计与落地记录见 `docs/design/`（索引 `docs/design/README.md`）。原始量产级目标和未完成项见

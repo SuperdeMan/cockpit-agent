@@ -44,6 +44,22 @@
   forbid_top1: parking-payment
   tags: [chitchat]
 
+# ── 车控 query 必须落到车控 Agent（M5 P3 收尾新增；离线跳过——离线只装 agents/*，无端侧 manifest）
+#
+# 上面那两条同话术的反例桶只断言「不是 parking-payment」，于是一个真缺陷在它眼皮底下待了很久：
+# 端侧 78 个 capability 共用两句泛化描述时，registry 按 capability 粒度 embed 出来的向量
+# 毫无判别力——`打开空调` 的 top-1 是 **scene-orchestrator（0.517）**、edge-vehicle 只有
+# 0.483；`把音量调大一点` 的 edge-vehicle 连前三都没进。registry Resolve 是 **LLM 失败时的
+# 兜底规划路径**，也就是说主链一抽风，一句纯车控指令会被兜到场景编排 Agent。
+# 改成由 VAL 知识库机械生成的判别化描述后：0.675 / 0.670，两条都回到 top-1。
+# **断言一个否定命题守不住一个肯定性质**——这里补上肯定的那一半。
+- text: 打开空调
+  expect_top1: edge-vehicle
+  requires_embed: true
+- text: 把音量调大一点                    # 音量归车控 VAL（edge-vehicle 的 volume.*），不是媒体播放控制
+  expect_top1: edge-vehicle
+  requires_embed: true
+
 # ── 语义需求：关键词 top-1 落到无关 Agent，需 P0 真语义纠正（离线跳过，--semantic 验证）──
 - text: 找个停车场                       # 停车场发现归 nearby（真高德 POI）；parking-payment 只做缴费
   expect_top1: nearby

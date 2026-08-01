@@ -3,6 +3,7 @@
 
 objects:
   seat:
+    display_name: 座椅
     operates:
     - open
     - close
@@ -37,6 +38,7 @@ objects:
     - G91
     - 重汽航天
   window:
+    display_name: 车窗
     operates:
     - open
     - close
@@ -58,6 +60,7 @@ objects:
     - G91
     - 重汽航天
   sunroof:
+    display_name: 天窗
     operates:
     - open
     - close
@@ -79,6 +82,7 @@ objects:
     - G91
     - 重汽航天
   sunshade:
+    display_name: 遮阳帘
     operates:
     - open
     - close
@@ -100,6 +104,7 @@ objects:
     - G91
     - 重汽航天
   aircon:
+    display_name: 空调
     operates:
     - open
     - close
@@ -143,6 +148,7 @@ objects:
     - G91
     - 重汽航天
   ambient_light:
+    display_name: 氛围灯
     operates:
     - open
     - close
@@ -166,6 +172,7 @@ objects:
     - G91
     - 重汽航天
   low_beam:
+    display_name: 近光灯
     operates:
     - open
     - close
@@ -182,6 +189,7 @@ objects:
     - G91
     - 重汽航天
   headlight:
+    display_name: 大灯
     operates:
     - open
     - close
@@ -199,6 +207,7 @@ objects:
     - G91
     - 重汽航天
   trunk:
+    display_name: 后备箱
     operates:
     - open
     - close
@@ -215,6 +224,7 @@ objects:
     - G91
     - 重汽航天
   door_lock:
+    display_name: 车门锁
     operates:
     - open
     - close
@@ -231,6 +241,7 @@ objects:
     - G91
     - 重汽航天
   fuel_tank_cover:
+    display_name: 油箱盖
     operates:
     - open
     - close
@@ -247,6 +258,7 @@ objects:
     - G91
     - 重汽航天
   charging_port:
+    display_name: 充电口盖
     operates:
     - open
     - close
@@ -263,6 +275,7 @@ objects:
     - G91
     - 重汽航天
   rear_view_mirror:
+    display_name: 后视镜
     operates:
     - open
     - close
@@ -287,6 +300,7 @@ objects:
     - G91
     - 重汽航天
   steering_wheel:
+    display_name: 方向盘
     operates:
     - set
     - inc
@@ -307,6 +321,7 @@ objects:
     - G91
     - 重汽航天
   wiper:
+    display_name: 雨刮
     operates:
     - open
     - close
@@ -328,6 +343,7 @@ objects:
     - G91
     - 重汽航天
   fragrance:
+    display_name: 香氛
     operates:
     - open
     - close
@@ -345,6 +361,7 @@ objects:
     - DeepWay
     - G91
   tire_pressure_monitoring:
+    display_name: 胎压监测
     operates:
     - query
     attrs: []
@@ -360,6 +377,7 @@ objects:
     - G91
     - 重汽航天
   dashcam:
+    display_name: 行车记录仪
     operates:
     - open
     - close
@@ -378,6 +396,7 @@ objects:
     - 重汽航天
   # ── R4.1b P0：端侧对象化（空气净化 / 导航播报 / 按键音）──
   air_purifier:
+    display_name: 空气净化
     operates: [open, close]
     attrs: []
     modes: []
@@ -389,6 +408,7 @@ objects:
     voice_forbidden: false
     projects: []
   navi_broadcast:
+    display_name: 导航播报
     operates: [open, close, set]
     attrs: []
     modes: [concise, detailed, ai, standard]
@@ -400,6 +420,7 @@ objects:
     voice_forbidden: false
     projects: []
   key_tone:
+    display_name: 按键音
     operates: [open, close]
     attrs: []
     modes: []
@@ -411,6 +432,7 @@ objects:
     voice_forbidden: false
     projects: []
   scene_mode:
+    display_name: 情景模式
     operates:
     - set
     - switch
@@ -433,6 +455,7 @@ objects:
     - G91
     - 重汽航天
   driving_mode:
+    display_name: 驾驶模式
     operates:
     - set
     - close
@@ -462,6 +485,7 @@ objects:
     - G91
     - 重汽航天
   power_mode:
+    display_name: 动力模式
     operates:
     - set
     - switch
@@ -484,6 +508,7 @@ objects:
     - G91
     - 重汽航天
   energy_recovery:
+    display_name: 能量回收
     operates:
     - set
     - inc
@@ -503,6 +528,7 @@ objects:
     - G91
     - 重汽航天
   lane_departure_assistance:
+    display_name: 车道偏离预警
     operates:
     - open
     - close
@@ -519,6 +545,7 @@ objects:
     - G91
     - 重汽航天
   lane_assistance:
+    display_name: 车道保持辅助
     operates:
     - open
     - close
@@ -535,6 +562,7 @@ objects:
     - G91
     - 重汽航天
   accompany_home:
+    display_name: 伴我回家灯光
     operates:
     - open
     - close
@@ -554,6 +582,7 @@ objects:
     - G91
     - 重汽航天
   volume:
+    display_name: 音量
     operates:
     - set
     - inc
@@ -573,6 +602,7 @@ objects:
     - G91
     - 重汽航天
   page:
+    display_name: 界面页面
     operates:
     - open
     - close
@@ -589,6 +619,7 @@ objects:
     - G91
     - 重汽航天
   screen:
+    display_name: 屏幕
     operates:
     - open
     - close
@@ -609,6 +640,7 @@ objects:
     - G91
     - 重汽航天
   app:
+    display_name: 应用
     operates:
     - open
     - close
@@ -626,6 +658,7 @@ objects:
     - G91
     - 重汽航天
   weather:
+    display_name: 天气
     operates:
     - query
     attrs: []
@@ -641,6 +674,7 @@ objects:
     - G91
     - 重汽航天
   bluetooth:
+    display_name: 蓝牙
     operates:
     - open
     - close
@@ -657,6 +691,7 @@ objects:
     voice_forbidden: false
     projects: []
   wifi:
+    display_name: WiFi
     operates:
     - open
     - close
@@ -672,6 +707,7 @@ objects:
     voice_forbidden: false
     projects: []
   hotspot:
+    display_name: 个人热点
     operates:
     - open
     - close
@@ -685,6 +721,7 @@ objects:
     voice_forbidden: false
     projects: []
   phone:
+    display_name: 电话
     operates:
     - open
     - close
@@ -699,6 +736,7 @@ objects:
     voice_forbidden: false
     projects: []
   contacts:
+    display_name: 通讯录
     operates:
     - open
     - close
@@ -713,6 +751,7 @@ objects:
     voice_forbidden: false
     projects: []
   call_log:
+    display_name: 通话记录
     operates:
     - open
     - close
@@ -726,6 +765,7 @@ objects:
     voice_forbidden: false
     projects: []
   radio:
+    display_name: 收音机
     operates:
     - open
     - close
@@ -743,6 +783,7 @@ objects:
     voice_forbidden: false
     projects: []
   online_radio:
+    display_name: 网络电台
     operates:
     - open
     - close
@@ -757,6 +798,7 @@ objects:
     voice_forbidden: false
     projects: []
   music:
+    display_name: 音乐
     operates:
     - play
     - pause
@@ -775,6 +817,7 @@ objects:
     voice_forbidden: false
     projects: []
   audiobook:
+    display_name: 有声书
     operates:
     - play
     - pause
@@ -790,6 +833,7 @@ objects:
     voice_forbidden: false
     projects: []
   opera:
+    display_name: 戏曲
     operates:
     - play
     - stop
@@ -804,6 +848,7 @@ objects:
     voice_forbidden: false
     projects: []
   news:
+    display_name: 新闻
     operates:
     - play
     - stop
@@ -818,6 +863,7 @@ objects:
     voice_forbidden: false
     projects: []
   video:
+    display_name: 视频
     operates:
     - play
     - pause
@@ -836,6 +882,7 @@ objects:
     voice_forbidden: false
     projects: []
   TV:
+    display_name: 电视
     operates:
     - open
     - close
@@ -849,6 +896,7 @@ objects:
     voice_forbidden: false
     projects: []
   equalizer:
+    display_name: 均衡器
     operates:
     - set
     - switch
@@ -872,6 +920,7 @@ objects:
     voice_forbidden: false
     projects: []
   voice_assistant:
+    display_name: 语音助手
     operates:
     - open
     - close
@@ -886,6 +935,7 @@ objects:
     voice_forbidden: false
     projects: []
   system:
+    display_name: 系统
     operates:
     - open
     - close
@@ -901,6 +951,7 @@ objects:
     voice_forbidden: false
     projects: []
   surround_view:
+    display_name: 360环视
     operates:
     - open
     - close
@@ -914,6 +965,7 @@ objects:
     voice_forbidden: false
     projects: []
   dashboard:
+    display_name: 仪表
     operates:
     - open
     - close
@@ -929,6 +981,7 @@ objects:
     voice_forbidden: false
     projects: []
   auto_hold:
+    display_name: 自动驻车
     operates:
     - open
     - close
@@ -942,6 +995,7 @@ objects:
     voice_forbidden: false
     projects: []
   epb:
+    display_name: 电子手刹
     operates:
     - open
     - close
@@ -955,6 +1009,7 @@ objects:
     voice_forbidden: false
     projects: []
   frunk:
+    display_name: 前备箱
     operates:
     - open
     - close
@@ -968,6 +1023,7 @@ objects:
     voice_forbidden: false
     projects: []
   interaction:
+    display_name: 交互
     operates:
     - confirm
     - cancel
@@ -984,6 +1040,7 @@ objects:
     voice_forbidden: false
     projects: []
   navigation:
+    display_name: 导航
     operates:
     - plan
     - cancel
@@ -1004,6 +1061,7 @@ objects:
     voice_forbidden: false
     projects: []
   map:
+    display_name: 地图
     operates:
     - open
     - close
@@ -1021,6 +1079,7 @@ objects:
     voice_forbidden: false
     projects: []
   food:
+    display_name: 美食
     operates:
     - query
     attrs: []
@@ -1033,6 +1092,7 @@ objects:
     voice_forbidden: false
     projects: []
   hotel:
+    display_name: 酒店
     operates:
     - query
     attrs: []
@@ -1045,6 +1105,7 @@ objects:
     voice_forbidden: false
     projects: []
   flight:
+    display_name: 航班
     operates:
     - query
     attrs: []
@@ -1057,6 +1118,7 @@ objects:
     voice_forbidden: false
     projects: []
   train:
+    display_name: 火车票
     operates:
     - query
     attrs: []
@@ -1069,6 +1131,7 @@ objects:
     voice_forbidden: false
     projects: []
   stock:
+    display_name: 股票
     operates:
     - query
     attrs: []
@@ -1081,6 +1144,7 @@ objects:
     voice_forbidden: false
     projects: []
   media:
+    display_name: 媒体
     operates:
     - start
     - pause
@@ -1099,6 +1163,7 @@ objects:
     voice_forbidden: false
     projects: []
   battery:
+    display_name: 电量
     operates:
     - query
     attrs: []

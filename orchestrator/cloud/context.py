@@ -263,9 +263,19 @@ def _is_edge_core(a) -> bool:
 
 def _catalog_item(a) -> dict:
     if _is_edge_core(a):
-        # edge 车控核心 caps 多（几十个）；只渲染意图名（trunk.open 等），不带 slots/desc——
-        # 否则其体积（数千字符）撑爆 catalog 预算、挤掉 chitchat 等 → 路由退化/偏置。
+        # edge 车控核心 caps 多（78 个）；只渲染意图名（trunk.open 等），不带 slots/desc。
         # slot 由 planner 从用户原话推断（如"26度"→temp），无需 catalog 提示。
+        #
+        # ⚠ 2026-08-01 实测过「把判别化描述也渲进来」并**否掉了**（M5 P3 收尾）：
+        # `capabilities.py` 已把 78 条描述从泛化改成判别化，理论上该让 planner 看见。
+        # 双臂差分（唯一变量就是这一行，25 条口语+canonical 语料 ×2 轮 ×2 provider）：
+        # minimax 22/25→22/25、deepseek 23/25→23/25，**Δ=0 且 100 次对照零翻面**。
+        # 代价却是每次规划 +1462 字符。**intent 名本身就是判别性文本**
+        # （`lane_departure_assistance.open` 与 `lane_assistance.open` 两档都分得开），
+        # 所以「74 个文本等价的工具」这个说法对 planner 这一侧不成立。
+        # 判别化描述真正的受益方是 **registry 语义兜底**（按 capability 粒度 embed），
+        # 那条路上同一改动把「打开空调」的 top-1 从 scene-orchestrator 掰回 edge-vehicle
+        # ——见 `test/eval_registry_resolve.py` 的车控 guardrail。
         caps = [{"intent": c.intent} for c in a.manifest.capabilities]
     else:
         caps = [{"intent": c.intent, "slots": list(c.slots), "desc": c.description}

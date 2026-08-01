@@ -42,15 +42,58 @@ _DIR = Path(os.getenv("EDGE_NLU_DIR", "")) if os.getenv("EDGE_NLU_DIR") else \
 def mode() -> str:
     """`off` | `shadow`（默认，只算不用）。每次读——放量不需要重启。
 
-    ⚠ **刻意还没有 `on`**。要真正在端侧执行，光有 (domain, object) 不够，还缺两件：
-    ①**分类体系桥接**——语料的 83 个中文 object（「座椅/儿童座椅」）与 VAL 的 65 个可执行
-      object（`seat`）是两套命名，中间那张表还没有；②**operate 抽取**（开/关/调到 N/加/减），
-      它属于准入判据②的确定形态、该走规则，但也还没接上。
-    在两件齐备之前**不留 `on` 这个值**——留了就是「一个没人测过却随时可能被打开的分支」
+    ⚠ **刻意还没有 `on`**。要真正在端侧执行，光有 (domain, object) 不够，还缺一件：
+    **operate 抽取**（开/关/调到 N/加/减）——它属于准入判据②的确定形态、该走规则，
+    但还没接上。（另一件「分类体系桥接」已由 `knowledge/nlu_objects.yaml` 补上，
+    见 `to_val_objects`；但那张表只解决**识别侧对得上号**，不等于能执行。）
+    在齐备之前**不留 `on` 这个值**——留了就是「一个没人测过却随时可能被打开的分支」
     （P2 对端侧初判进 prompt 的同款裁决）。放量路径见 RFC §5-P3 的后续。
     """
     m = os.getenv("EDGE_NLU_MODE", "shadow").strip().lower()
     return m if m in ("off", "shadow") else "shadow"
+
+
+# ── 对象桥接（语料中文标签 → VAL 可执行 object）─────────────────────────────────
+
+_BRIDGE_PATH = Path(__file__).resolve().parent / "knowledge" / "nlu_objects.yaml"
+_bridge: dict[str, list[str]] | None = None
+_bridge_lock = threading.Lock()
+
+
+def _load_bridge() -> dict[str, list[str]]:
+    global _bridge
+    if _bridge is not None:
+        return _bridge
+    with _bridge_lock:
+        if _bridge is None:
+            try:
+                import yaml
+                raw = yaml.safe_load(_BRIDGE_PATH.read_text(encoding="utf-8")) or {}
+                _bridge = {k: list(v or [])
+                           for k, v in (raw.get("objects") or {}).items()}
+            except Exception as e:       # 表缺失/损坏 → 全部 unmapped，影子少说一句而已
+                logger.warning("对象桥接表不可用（影子按 unmapped 处理）：%s", e)
+                _bridge = {}
+    return _bridge
+
+
+def equivalent_objects(label: str) -> list[str] | None:
+    """语料中文对象标签 → **指同一件事的对象名集合**（VAL 的 + 规则侧的）。
+
+    返回 `None` = 表里没有这个标签（新语料引入了没人裁过的对象，门禁会红）；
+    返回 `[]` = 表里明确记着「连规则侧都没有对应名字」。两者影子都报 `unmapped`，
+    但含义不同，别合并——前者是待办，后者是结论。
+    """
+    return _load_bridge().get((label or "").strip())
+
+
+def val_objects(label: str, known: set[str]) -> list[str]:
+    """可执行子集 = 等价名集合 ∩ VAL 的 objects（P3b 执行桥接用）。
+
+    **派生而不是另写一列**：两列会各自漂移，而这种漂移不报错只变差
+    （同「要比对的两端必须同源」）。`known` 由调用方从 VAL 知识库取，避免本模块反向依赖 VAL。
+    """
+    return [o for o in (equivalent_objects(label) or []) if o in known]
 
 
 def theta_high() -> float:

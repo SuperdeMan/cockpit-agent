@@ -181,6 +181,19 @@ def action_to_structured(
     return structured
 
 
+def decode_intent(intent_name: str,
+                  known_objects: set[str] | None = None) -> dict | None:
+    """intent 名 → VAL 结构化命令（**只解码不执行**）。
+
+    存在的理由只有一个：让**能力描述与执行语义同源**。`capabilities.py` 生成
+    catalog 里那 78 条判别化描述时走这个函数，拿到的 (object/operate/attr/mode)
+    与 `EdgeCallExecutor.execute` 待会儿真拿去校验、门控、执行的**是同一组值**。
+    自己另写一份 intent→object 的映射表，就是「注册与识别不同信道」那一课的翻版：
+    两边各自漂移，而描述写错只会让 planner 悄悄选错工具、不会报错。
+    """
+    return _to_structured(intent_name, {}, known_objects=known_objects)
+
+
 class EdgeCallExecutor:
     """Translate an EdgeCall to a VAL command and return Agent response semantics."""
 

@@ -78,15 +78,39 @@ cleanup 注释漏提 gold 豁免；`embedding.py` 补「旧 channel 不显式 cl
 
 ## 5. INFO 级观察项（不要求动作，已留痕）
 
-- **tokenizer parity 在 CI 上条件性 skip**（无模型/无 transformers 即整体 skip）——守
+> **2026-08-01 收口**：前两条已落地，见 §7。
+
+- ~~**tokenizer parity 在 CI 上条件性 skip**~~（无模型/无 transformers 即整体 skip）——守
   「训练/推理分词同源」的硬测试只在有模型的开发机站岗；第二层防护是训练导出时
-  `_assert_onnx_parity` + vocab.json 同源落盘。→ **已立卡** AGENTS.md §4.0（与「live 车道
-  进 CI」同议）。
-- **`nlu.theta_high/theta_low` 运行时零消费方**（shadow 不 gating，属 P3b 脚手架）——正是
-  本仓「没消费方的契约会潜伏」教训的形态。→ 已并入 P3b 卡（接线前先验 clamp）。
+  `_assert_onnx_parity` + vocab.json 同源落盘。→ **已收口（`fc88a21`）**：冻结 golden
+  进库，CI 零依赖必跑。
+- ~~**`nlu.theta_high/theta_low` 运行时零消费方**~~（shadow 不 gating，属 P3b 脚手架）——正是
+  本仓「没消费方的契约会潜伏」教训的形态。→ **已收口**：影子落 `nlu_gate` 三档
+  （high/mid/low），**只记不用**，同时把 P3b 开工判据要的数据现在就开始攒。
 - 语料漂移：RFC 记探针 166 例/范例 200 条，现为 161/204——历史时点记录不改，下次校准对齐。
+  → 2026-08-01 复核仍为 161/204，已在 RFC §5-P1 落地记录处加日期注。
 - evolve 07-29 日报里两条 badcase 是 mock 回显（当时栈处 mock 态的评测流量）——归因诚实
   （unknown 不硬编），非缺陷。
+
+---
+
+## 7. 评审后续（2026-08-01，分支 `feat/m5-p3-closeout`）
+
+§5 的两条 INFO 项收口，外加 M5 待办里的 P3 收尾三件。**其中一件把本报告放行过的一个
+归因证伪了**，记在这里而不是只记在 AGENTS.md——评审自己也要被审计。
+
+| 项 | 结果 |
+|---|---|
+| 78 个端侧 capability 判别化描述 | 描述改了，但**卡片的归因不成立**：把描述渲进 planner catalog，跨 minimax/deepseek 两档、25 条语料 ×2 轮 **Δ=0 零翻面**，代价 +1462 字符/次规划 → **否掉渲染**。真正有效应的是 **registry 语义兜底**：泛化描述下「打开空调」的 top-1 是 `scene-orchestrator`(0.517)，而那正是 LLM 失败时的兜底规划路径。证据 `docs/reviews/eval/edge_capability_desc_ab.md` |
+| 影子 `agree` 状态从未出现过 | **本报告 §2-P3a 写「P2-D2 的 `meta._edge_nlu` 与 P3a 影子职责分明」时没有核对影子内部的比较口径**：它拿语料中文标签与规则英文 object 直接 `==`，规则一命中就恒为 `differ`。补对象桥接表后 agree 0%→68.8%、differ 24.8%→6.3% |
+| 影子盲区（规则误接看不见） | 四条路径全挂（响应后 fire-and-forget），`path` 属性让误接与漏接分得开；顺带修掉多意图路径上的结构性假 `differ`（单标签模型 vs 多意图句） |
+| tokenizer parity CI | 冻结 golden（260 例 + 行为等价词表子集），反验三种注入缺陷都能抓到 |
+| θ 零消费方 | 影子落 `nlu_gate` 三档，只记不用 |
+
+**评审视角的教训一条**：§2 的核验方式是「声称 ↔ 代码对照」，对**跨模块口径**天生偏弱
+——`_nlu_shadow` 的每一行单看都对，错的是它比较的两个值来自两套命名空间，而那两套
+命名空间分别定义在另外两个文件里。**下次对「A 与 B 一致吗」这类判定，要单独问一句
+「A 和 B 是同一个空间里的量吗」**，同「要比对的两端必须同源」。
 
 ## 6. 方法论小结（评审视角）
 
