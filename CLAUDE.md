@@ -115,7 +115,10 @@ M-D 外部生态（`声明存在 ≠ 能用`），四批全部合入 main。每�
 **两条是真代码缺陷**：首次 canonical 晋升在 Linux 上必崩、go wrapper 的 `\"` 转义只对
 Windows PowerShell 的 Legacy 传参成立。**它们能躲这么久，都是因为一段
 `if os.name == "nt": return` 把校验整层跳过了**——判据、Linux 复现步骤见
-`AGENTS.md` §4「CI / nightly 现状」。**nightly 仍红**（自 `#30`，未定位）。
+`AGENTS.md` §4「CI / nightly 现状」。**nightly 同日收口**（`c75df13`）：连红三次的根因是
+M5 P2 的 **hint 退役抽掉了 mock 车道的确定性基础**——mock 里没有模型，那些「端到端
+路由」断言一直是正则在撑。判据改写为「**mock-safe ⟺ 这条路径不经过模型判断**」
+（端侧快路径／兜底 Agent／确定性解析／协议层四类），**「有 hint 撑着」不算**。
 
 截至 2026-07-30，Phase 1 工程化 PoC 主干、云端中枢 P0-P3、R2-R4 硬化主题（架构还债/
 安全/语音回路/拒识澄清等）、可观测台（badcase 排查贯通：会话/轮次/日志/LLM + SQLite

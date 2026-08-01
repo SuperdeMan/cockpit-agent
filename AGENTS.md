@@ -77,7 +77,9 @@ dashboard 16）——各主题的测试增量与提交散列见 §4 对应行，
 Linux 上必崩（先恢复事务、后建目录）、go wrapper 在 Linux 上一直是坏的（`\"` 转义只对
 Windows PowerShell 的 Legacy 传参成立）。**它们能躲这么久，都是因为一段
 `if os.name == "nt": return` 把校验整层跳过了。** 复现步骤与三条判据见 §4.0 末
-「CI/nightly 现状」。**nightly 仍红**（自 `#30` 起，早于本轮工作，未定位）。
+「CI/nightly 现状」。**nightly 也已收口**（`c75df13`）：连红三次的根因是
+**M5 P2 的 hint 退役抽掉了 mock 车道的确定性基础**——那些「端到端路由」断言一直是
+正则在撑；判据已改写为「**mock-safe ⟺ 不经过模型判断**」。
 
 **智能化升级 M0a→M4 全部完成**（母提案
 `docs/design/2026-07-24-eva-benchmark-intelligence-upgrade.md` §6 分期，各期落地记录逐条在案）。
@@ -683,10 +685,12 @@ badcase 排查观测贯通=2026-07-10[见「可观测」行]。）
 
 ---
 
-### CI / nightly 现状（2026-08-01，**CI 已全绿；nightly 仍红**）
+### CI / nightly 现状（2026-08-01，**两条都已收口**）
 
 **✅ CI 已收口**：run **#232**（`176dd20`）**七个 job 全绿**（含此前被 fail-fast 取消的
 python-tests 3.12），是 `#217` 之后的第一次绿。破点到收口共 15 次红。
+**✅ nightly 已收口**：`c75df13`，mock 全栈实跑 **9/9 PASS**（此前 4 红）——⚠ 下一次
+定时跑（UTC 18:00 ≈ 次日 02:00 CST）才会在 CI 上得到确认。
 
 **判据先行：本地全绿 ≠ CI 绿。** 本地习惯单进程跑全量，CI 是 **Ubuntu + 分组跑**
 ——两个差异各自藏着一类缺陷。这轮最后 7 条里，**有两条是真代码缺陷不是测试问题**
@@ -718,9 +722,19 @@ docker exec ci-repro sh -c 'cd /repo && python -m pytest scripts/tests/ -q --imp
 | 已修 ⑥ 又两条写死 Windows 假设 | `test_e2e_identity` 用 `mkdir()` 建 0o755，而 `replace_private_file` 头一件事就是校验父目录 0o700；`test_e2e_stack_lease` 期望 `match="regular"`，但 POSIX 上是 `_require_posix_private_metadata` **先判类型再判权限**先开的火。⚠ 上一版试图 `chmod 0o600`「绕过权限层去够 S_ISREG」——**绕不过去**：对目录而言那条 S_ISREG 在 POSIX 上不可达，它是 Windows 侧的岗哨。改成按平台断言真正开火的那一层，**不把 match 放宽成谁拒的都行**（放宽等于不再钉住是哪一层在守） |
 | 逐条比对基线（2026-08-01） | run **#228**（`399046f`，M5 P3 收尾**之前**）与 **#229**（`d6fbca3`）／**#230**／**#231** 的失败集合**四次逐条相同**——M5 P3 收尾（4 个新测试文件、~40 条用例，含无依赖的分词 golden）在 Ubuntu 上全过，**零新增红**。留这行是为了下一个人不必再自己比一次 |
 | 怎么查（仍然有效） | `python scripts/ci_annotations.py [run_id]` 读 annotation（**免 admin**；不带参数=最新一次 run，刚 push 时那次可能还在跑，要显式给 id）。⚠ **annotation 只有 pytest 的摘要行，长断言会被截断**（go wrapper 那条的 argv diff 就看不全）——**真要定位就起 Linux 容器**（上方复现步骤），在容器里加一行 `traceback.print_exc` 三秒就看见了。⚠ **不要把诊断细节塞进 `canonical_rejection_reasons`**——那是契约字段，已有测试锁死「只有这一项」，前人试过被三条测试拦下（改走 stderr 也撞了 runner 的输出契约） |
-| nightly | 自 `#30`（2026-07-29）起红，**同样早于本轮工作**。它跑 mock 全栈 + `--lane nightly --full`，失败原因尚未定位（需要读 artifact 或本地起 mock 栈复现） |
+| nightly | **✅ 已收口（2026-08-01，`c75df13`）**：自 `#30`（2026-07-29）连红三次，根因**一个**——M5 P2 那批 route_hints 退役（32→12→10）把 mock 车道的确定性基础抽掉了，而退役判据是在**真 LLM 双臂**下取的证，从没覆盖 mock 车道。mock 全栈里 MockProvider 只回显原话 → 规划必走 `_fallback` → 兜底 chitchat，于是 5 个脚本同时失效（trip / context 2 例 / degrade agent_down / journeys A4-2+B4-2 / ws 链路4a）。**那些「端到端路由」断言此前一直是正则在撑。** 修法=按新判据收窄（下方），mock 全栈实跑 **9/9 PASS**。⚠ 下一次定时跑（UTC 18:00）才会在 CI 上确认 |
+| nightly 复现法 | 不要动 `.env`（红线）。**把空 key `export` 给跑 runner 的那个 shell**——子进程继承，而 compose 插值里 shell 优先于 `.env`：`export LLM_API_KEY= LLM_EMBED_API_KEY= MINIMAX_API_KEY= DEEPSEEK_API_KEY= DASHSCOPE_ASR_KEY=` → 重建 llm-gateway（`--force-recreate --no-deps`）→ `python scripts/run_e2e.py --lane nightly --full --stale-policy warn`。⚠ **只在 `docker compose` 那一行加前缀是不够的**：`e2e_degrade` 自己会重建 llm-gateway，会把真 key 读回来（我第一次就栽在这，跑出三条假绿）。跑完再 `--force-recreate` 一次即恢复真 provider |
 
-**三条可复用判据**：
+**mock 车道的判据（2026-08-01 被推翻并改写，nightly 收口的核心产物）**：
+原判据是「确定性路由：**route_hints 可达**」（旅程体系设计文档 2026-07-14 §4.3）
+——它把「有规则撑着」当成了「不依赖模型」，而 route_hints 是**会被数据退役的**。
+**新判据：mock-safe ⟺ 这条路径不经过模型判断。** 只有四类：①端侧快路径
+（`fast_intent` + VAL，零 LLM）②兜底 Agent（`PLANNER_FALLBACK_AGENT`，
+`planning._fallback` 第一分支由**结构**保证被路由到）③确定性解析与流程态短路
+（timeparse / 挂起态裸确认 / 注入检测）④协议传输层。**「它有 hint 撑着」不算。**
+更一般的一条：**在 mock 栈上断言「模型选对了 Agent」，测的永远是规则不是系统。**
+
+**四条可复用判据**：
 1. 跨平台 CI 里，被 `os.name == "nt"` 提前 return 掉的校验，正是另一边会先触发的那一层
    ——**「本地绿」只证明本地那条分支绿**。这轮 7 条里有 6 条是这个形状。
 2. **一段「吞掉整类异常」的兼容代码，会连它不该吞的那一种一起吞掉。**
@@ -730,6 +744,10 @@ docker exec ci-repro sh -c 'cd /repo && python -m pytest scripts/tests/ -q --imp
 3. **拿不到失败理由时，先问「是没有诊断通道，还是没有那个环境」。** 这批红了半个月，
    期间试过往契约字段塞理由、试过走 stderr，都被拦下；真正的解法是花二十分钟起一个
    Linux 容器——**在能复现的地方，`traceback.print_exc` 就够了**。
+4. **一个治理动作（退役规则、改判据、收窄清单）要问一句「谁在靠它」。** M5 P2 退役
+   hint 时记了「离线 eval 的召回保护降级为人工触发」这笔账，但**没人问 nightly 靠不靠
+   这些 hint**——结果它当晚就红，连红三次没定位。退役/收窄之前，先 grep 一遍谁把它
+   当前提写进了注释里（A4-2 的「mock-safe：route_hints 确定性路由」就明写着）。
 
 ---
 
