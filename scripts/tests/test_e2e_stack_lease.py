@@ -851,6 +851,10 @@ def test_child_bundle_rejects_nonregular_file_and_expected_root_escape(tmp_path)
     directory_path = _private_dir(private_root / "lease-dir-e2e_memory" / "tokens.json")
     if os.name != "nt":
         os.chmod(directory_path.parent, 0o700)
+        # 目标本身是个**目录**，但校验顺序是 parent(0o700) → candidate(0o600) →
+        # 「必须是普通文件」。不给它 0o600，Linux 上就停在权限那一层，
+        # 走不到本用例真正要断言的 S_ISREG 分支。
+        os.chmod(directory_path, 0o600)
     with pytest.raises(module.StackLeaseProtocolError, match="regular"):
         module.load_child_bundle(
             directory_path.resolve(),
