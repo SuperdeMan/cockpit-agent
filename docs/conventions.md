@@ -645,12 +645,28 @@ cutover、真栈故障注入矩阵、位置提醒的「是否还在围栏内」�
 | 写操作强制项 | `write: true` 必须同时有 `require_confirm: true`、`idempotency_key_arg`、`compensate_tool`——**没有补偿路径的写操作 admission 直接拒载**（§4.F 生命周期五项） |
 | 幂等键 | = **请求指纹** `idem_key(user_id, kind, 归一化 goal)`，与账本 `idempotency_key` 列同源。**不得用 task_id**（每次调用都新 = 等于没有幂等，重说一遍就双扣） |
 | 订单状态机 | 复用 `task_ledger`（kind=`mcp_order`），**不新建表**——它是 M2 Ledger 的第二个载体 |
-| 超时口径 | 调用超时 **≠ 没下单**：诚实说「不确定」并提醒别急着重复下单，账目落 `failed` 且 `result_ref.outcome=uncertain`（状态机无 uncertain 终态，将来接订单查询入口须按 result_ref 回答，不得照 failed 说「上次失败了」）。**话术不承诺不存在的核对入口**（2026-07-26 验收修正：旧话术让用户「查一下我的订单」，而查询能力未接入）。非超时异常=确定没发出去，按失败说，不装不确定 |
+| 超时口径 | 调用超时 **≠ 没下单**：诚实说「不确定」并提醒别急着重复下单，账目落 `failed` 且 `result_ref.outcome=uncertain`（状态机无 uncertain 终态，查询入口按 result_ref 回答，不得照 failed 说「上次失败了」）。非超时异常=确定没发出去，按失败说，不装不确定。**话术与能力的顺序**：2026-07-26 验收发现它承诺「说『查一下我的订单』我帮你核对」而查询能力根本没接入，于是先改成不承诺；M-D 接入 `order.get` 后才把承诺加回来——**先有能力再有话术**，反过来就是把不确定包装成「有办法查清楚」 |
 | 演示商户 | `demo: true` → 卡片 `demo`/`demo_label` 角标 + `_prov.mode=mock`+note + 话术前缀「（演示商户）」**三重冗余**。演示不是问题，把演示装成真实才是 |
 | 能力合成 | capability 由 `bootstrap()` 在 `serve()` **之前**从准入清单合成（注册在 serve 里发生，晚一步注册中心就看到空能力表）；manifest.yaml 的 `capabilities` 故意留空 |
 | 权限 | 一律 `trust_level: third_party`（硬上限表自动禁高危车控/精确位置/摄像头麦克风）+ `network.external`；涉钱走 payment-gateway，Agent 不持凭证 |
 | 故障隔离 | 一台 server 起不来/版本不符 → **只让它自己的工具缺席**，桥照常服务其余；绝不静默降级成假数据 |
-| 不做 | resources/prompts/sampling、HTTP/SSE transport、动态放行注册（子 RFC §7） |
+| **查单**（M-D） | `order.get` 按**订单号或幂等键**查。幂等键那条是关键的一半：**下单超时那一单根本没有订单号**（响应没回来），但幂等键是我们自己生成的、商户按它索引——「到底下没下成」由此第一次可以核对。用户不带订单号时从 Task Ledger 取最近一单的引用；owner 由已验证 Context 派生，**不是 planner 槽位**（让 LLM 能指定查谁的订单＝把越权做成可填字段） |
+| **取消与补偿**（M-D） | `order.cancel` 从一开始就在商户侧存在、也被 `order.create` 声明为 `compensate_tool`，但**从没进过准入清单**——补偿因此只在准入期被校验存在性，运行期零调用、用户零入口。放进清单它才是能力：**声明存在 ≠ 能用**。取消仍是写操作走确认闸；**不做未经用户确认的自动补偿**。回填订单号时**只认确定完成那一单**——`outcome=uncertain` 那单连订单号都没有，拿它去取消等于对着一个不知道存不存在的单执行写操作 |
+| 不做 | resources/prompts/sampling、HTTP/SSE transport、动态放行注册（子 RFC §7）；**未经确认的自动补偿**；`mcp_operation` 独立业务状态表（M-D 裁决：商户是状态的真相源，本地镜像是第二真相源） |
+
+**Task Ledger 原子幂等（M-D）**：`open()` 此前是「先 SELECT 再 INSERT」，两个实例可以
+同时查不到、同时插入——**同一个幂等请求两个实例都拿到执行权**，对写操作就是双下单。
+判定权交给数据库：`(user_id, idempotency_key)` 在活跃态下 partial unique
+（**partial 是必须的**——终态行要能共存，同一件事可以再做一次），`INSERT ... ON CONFLICT
+DO NOTHING`；竞争输了回读对方账目按 `Duplicate` 处理，**不能当失败**（那一单正在被
+别人执行）。前置 SELECT 保留但只负责清理孤儿——尸体会一直占着唯一键挡住重试。
+
+**Provider tool-calling 能力位（M-D）**：`llm_runtime._PROVIDER_SPECS` 的
+`supports_toolcall`（**声明式**，新增 provider 写一行、不改判定代码），缺省 `True`
+——既有全部档位都支持，零行为变化；不认识的档**不定罪**，照旧尝试并走既有降级。
+声明 `False` 的档在网关当场退回纯文本，不拿着 tools 去打上游：此前没有能力位也没有
+熔断，不支持的 provider 每轮白打 2 次（primary 与 fast 各一次 400），planner 还要
+再走一遍 JSON。**每次请求现读**——provider 可热切，缓存能力就会在切换后沿用旧的。
 
 ### 9.10 S2S 对上事件协议与分工契约（M4 P0/P1）
 

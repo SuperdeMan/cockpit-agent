@@ -380,6 +380,25 @@ Agent 明确报的错是确定失败不许被状态翻案；只认 state_match�
 `PRIVACY_TARGETS` / manifest / 测试里的硬编码期望与计数），顺序与计数都比——
 那是防元数据自证的设计，摩擦是有意的。
 
+**M-D 外部生态已落地（2026-08-01，分支 `codex/acceptance-md-external-ecosystem`）
+——2026-07-26 验收报告 §7 的 13 张主卡至此全部有归属**。三张卡里只有一张是用户真的
+缺能力：**下了单之后没有任何办法查它或取消它**。
+①`order.cancel` 从一开始就在商户侧存在、也被 `order.create` 声明为 `compensate_tool`，
+但**从没进过准入清单**——补偿因此只在准入期被校验存在性、运行期零调用、用户零入口。
+放进清单它才是能力（**声明存在 ≠ 能用**），仍走确认闸，不做未经确认的自动补偿。
+②新增 `order.get`，按订单号**或幂等键**查——幂等键那条是关键的一半：下单超时那一单
+根本没有订单号，但幂等键是我们生成的、商户按它索引，「到底下没下成」由此第一次可以
+核对。③超时话术把承诺加回来了，顺序是**先有能力再有话术**。
+④**Ledger 原子幂等**：`open()` 的「先查再插」允许两个实例同时拿到执行权（对写操作
+就是双下单），改为活跃态 partial unique + `ON CONFLICT DO NOTHING`，竞争输了按
+Duplicate 而非失败处理。⑤**provider `supports_toolcall` 能力位**：声明式、缺省 True、
+不认识的档不定罪、每次请求现读（热切不沿用旧能力）——此前不支持的 provider 每轮
+白打 2 次上游。
+**本批明确未做**：`mcp_operation` 独立业务状态表（**商户是订单状态的真相源，本地镜像
+就是第二真相源**——本批最重要的一个减法）、Ledger owner-v2 cutover 仪式（不重分配任何
+数据，只加了一个索引）、HMI operation card、双 bridge profile、GDPR retained-audit、
+声明式 patch_missing。契约见 `docs/conventions.md` §9.9。
+
 **M4 P4 的已知余项**
 
 | 余项 | 出处 | 说明 |
