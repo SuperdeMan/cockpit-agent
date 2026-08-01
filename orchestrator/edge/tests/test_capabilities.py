@@ -69,8 +69,13 @@ def test_descriptions_are_pairwise_distinct():
 
 
 def test_description_count_matches_executable_surface():
+    """能力面与可执行面必须一一对应。
+
+    只钉「两边相等」这个不变式，**不钉具体数字**——新增车控意图是正常演进，
+    为数字报红是假警报（真要守的两条在上面：不许有泛化描述、不许有重复描述）。
+    """
     caps = _all_caps()
-    assert len(caps) == len(VEHICLE_INTENTS | MEDIA_INTENTS) == 78
+    assert len(caps) == len(VEHICLE_INTENTS | MEDIA_INTENTS)
 
 
 @pytest.mark.parametrize("intent,expect", [
@@ -112,8 +117,12 @@ def test_descriptions_are_decoded_by_the_executor_decoder():
 
 
 def test_every_val_object_declares_a_display_name():
-    """display_name 是对象自己的属性，跟着对象放在 commands.yaml——**只准有一处**。"""
+    """display_name 是对象自己的属性，跟着对象放在 commands.yaml——**只准有一处**。
+
+    不钉死对象总数：新增一个对象（并给了 display_name）是正常演进，为它报红是假警报。
+    真正要守的是下一行——**新对象不许不带名字进来**，否则它的描述会静默回落泛化句。
+    """
     objects, _ = _knowledge()
-    assert len(objects) == 65
+    assert len(objects) >= 60, "VAL 知识库没加载到？"
     missing = [k for k, v in objects.items() if not (v or {}).get("display_name")]
     assert not missing, f"这些对象缺 display_name：{missing}"
