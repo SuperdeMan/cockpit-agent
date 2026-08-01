@@ -374,6 +374,11 @@ Agent 明确报的错是确定失败不许被状态翻案；只认 state_match�
 一个 HMI，量级个位数）、HMI IndexedDB 收件箱、影子与分来源灰度、`research_report` 表
 （报告正文早在记忆里）、Ledger owner-v2 cutover、真栈故障注入矩阵、位置提醒的地理谓词
 （求值器算子集与 scene solver 有等价契约，本批用 ttl 兜住陈旧补播这个真实风险）。
+**过程记账**：实现完先跑了受影响子集全绿就提交，全量跑出来 **33 failed**——新表存了
+个人数据没登记进 M-A 隐私清单，而守卫在 `scripts/tests/`，恰好在「相关子集」之外。
+**动 schema 的批次，守卫多半不在被动的那几个包里。** 清单要改三处（runtime
+`PRIVACY_TARGETS` / manifest / 测试里的硬编码期望与计数），顺序与计数都比——
+那是防元数据自证的设计，摩擦是有意的。
 
 **M4 P4 的已知余项**
 
