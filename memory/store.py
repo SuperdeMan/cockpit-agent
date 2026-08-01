@@ -74,6 +74,43 @@ PERSONAL_DATA_TARGETS = (
 # 近 N 轮上下文与巩固抽取都只用最近轮次，7 天远超任何消费方需要。
 _SESSION_TTL_S = int(os.getenv("MEMORY_SESSION_TTL_S", "604800") or "604800")
 
+# ── 轮次归属（M-B）────────────────────────────────────────────────────────
+# OwnerKey=(user_id, occupant_id)。**空 occupant 一律规范化为 primary，绝不表示共享**
+# ——共享必须由独立数据类型或显式 scope 表达，靠缺省表达共享正是这批缺陷的成因。
+PRIMARY = "primary"
+OWNER_ONLY = "owner_only"          # 默认：只见当前 OwnerKey 的 exchange
+ALL_OCCUPANTS = "all_occupants"    # 管理视图专用（HMI 设置页 / 合规导出），须显式传
+
+
+class TurnConflict(Exception):
+    """同 (session_id, turn_id) 写入了不同内容。
+
+    保留原 Turn 并让调用方知道——静默覆盖会让「重试」变成「篡改已发生的对话」。
+    """
+
+
+def owner_of(user_id: str = "", occupant_id: str = "") -> tuple[str, str]:
+    return (user_id or ""), (occupant_id or "").strip() or PRIMARY
+
+
+def _tail_whole_exchanges(turns: list[dict], last_n: int) -> list[dict]:
+    """取末尾 `last_n` 条，但**不切开 exchange**：切中就整体舍弃最旧的那半个。
+
+    半个 exchange 比没有更糟——只留下 assistant 那半句时，抽取会把助手说的话
+    当成用户的偏好归档。
+    """
+    if last_n <= 0:
+        return []
+    if len(turns) <= last_n:
+        return list(turns)
+    cut = len(turns) - last_n
+    head_exchange = turns[cut].get("exchange_id")
+    # 被切掉的那部分里还有同一个 exchange 的兄弟 → 这半个不要了
+    if head_exchange and any(t.get("exchange_id") == head_exchange for t in turns[:cut]):
+        while cut < len(turns) and turns[cut].get("exchange_id") == head_exchange:
+            cut += 1
+    return turns[cut:]
+
 
 class MemoryStore:
     def __init__(self):
@@ -100,32 +137,159 @@ class MemoryStore:
         return self._r
 
     async def append_turn(self, session_id: str, role: str, text: str,
-                          user_id: str = ""):
-        """会话轮次原文。**有 TTL、有 user 索引**——两者都是 GDPR 侧的硬要求：
-        无 TTL 的对话原文会永久留存；无 user→session 索引则 ForgetUser 只能删
-        长期记忆、删不到原始对话（假删除的一半，验收抓到）。"""
-        turn = {"role": role, "text": text, "ts": int(time.time())}
+                          user_id: str = "", occupant_id: str = "",
+                          vehicle_id: str = "", turn_id: str = "",
+                          exchange_id: str = "") -> bool:
+        """会话轮次原文。**有 TTL、有 user 索引、有 OwnerKey**。
+
+        TTL 与 user 索引是 GDPR 侧的硬要求（无 TTL＝永久留存；无索引则 ForgetUser
+        只删得掉长期记忆、删不到原始对话）。OwnerKey 是 M-B 补的第三样：识别得出
+        「谁在说话」而数据面存不下来，等于没识别。
+
+        `turn_id` 是幂等键。同 id 同内容＝重放，静默成功；同 id 异内容抛
+        `TurnConflict`——重试可以重放，但不能改写已经发生过的对话。
+        """
+        uid, occ = owner_of(user_id, occupant_id)
+        turn = {"role": role, "text": text, "ts": int(time.time()),
+                "user_id": uid, "occupant_id": occ, "vehicle_id": vehicle_id or "",
+                "turn_id": turn_id or "", "exchange_id": exchange_id or turn_id or ""}
         r = await self._redis()
         key = f"sess:{session_id}"
         if r:
-            await r.rpush(key, json.dumps(turn))
+            if turn_id:
+                existing = [json.loads(i) for i in await r.lrange(key, 0, -1)]
+                dup = self._find_turn(existing, turn_id)
+                if dup is not None:
+                    self._assert_same_payload(dup, turn, session_id, turn_id)
+                    return True
+            await r.rpush(key, json.dumps(turn, ensure_ascii=False))
             await r.ltrim(key, -50, -1)
             await r.expire(key, _SESSION_TTL_S)
-            if user_id:
-                idx = f"user_sessions:{user_id}"
+            if uid:
+                idx = f"user_sessions:{uid}"
                 await r.sadd(idx, session_id)
                 await r.expire(idx, _SESSION_TTL_S)
         else:
-            self._mem.setdefault(session_id, []).append(turn)
-            if user_id:
-                self._mem_user_sessions.setdefault(user_id, set()).add(session_id)
+            bucket = self._mem.setdefault(session_id, [])
+            if turn_id:
+                dup = self._find_turn(bucket, turn_id)
+                if dup is not None:
+                    self._assert_same_payload(dup, turn, session_id, turn_id)
+                    return True
+            bucket.append(turn)
+            del bucket[:-50]
+            if uid:
+                self._mem_user_sessions.setdefault(uid, set()).add(session_id)
+        return True
 
-    async def get_session(self, session_id: str, last_n: int) -> list[dict]:
+    @staticmethod
+    def _find_turn(turns: list[dict], turn_id: str) -> dict | None:
+        for t in turns:
+            if t.get("turn_id") == turn_id:
+                return t
+        return None
+
+    @staticmethod
+    def _assert_same_payload(existing: dict, incoming: dict, session_id: str,
+                             turn_id: str) -> None:
+        same = all(existing.get(k) == incoming.get(k)
+                   for k in ("role", "text", "user_id", "occupant_id", "exchange_id"))
+        if not same:
+            logger.warning("turn_conflict session=%s turn=%s", session_id, turn_id)
+            raise TurnConflict(f"{session_id}/{turn_id}")
+
+    async def _raw_session(self, session_id: str) -> list[dict]:
         r = await self._redis()
         if r:
-            items = await r.lrange(f"sess:{session_id}", -last_n, -1)
-            return [json.loads(i) for i in items]
-        return self._mem.get(session_id, [])[-last_n:]
+            return [json.loads(i) for i in await r.lrange(f"sess:{session_id}", 0, -1)]
+        return list(self._mem.get(session_id, []))
+
+    @staticmethod
+    def _hydrate(session_id: str, raw: list[dict]) -> list[dict]:
+        """把旧 JSON（只有 role/text/ts）补成完整 Turn。
+
+        **不猜真实 owner**——旧数据本来就没有，统一归 primary 并生成稳定 legacy id
+        （材料只用 session_id+序号+ts+role，故多次读取不漂移）。这是一次有损归属迁移，
+        归 primary 后不可自动恢复，但方向是收窄而不是放开。
+        """
+        out: list[dict] = []
+        for i, t in enumerate(raw):
+            turn = dict(t)
+            turn.setdefault("user_id", "")
+            turn["occupant_id"] = (turn.get("occupant_id") or "").strip() or PRIMARY
+            turn.setdefault("vehicle_id", "")
+            if not turn.get("turn_id"):
+                turn["turn_id"] = (f"legacy:{session_id}:{i}:"
+                                   f"{turn.get('ts', 0)}:{turn.get('role', '')}")
+            if not turn.get("exchange_id"):
+                turn["exchange_id"] = turn["turn_id"]
+            out.append(turn)
+        return out
+
+    @staticmethod
+    def _owns(turn: dict, uid: str, occ: str) -> bool:
+        """Turn 是否属于该 OwnerKey。
+
+        无主轮次（端侧快路径 / 合成会话 / 旧数据）按兼容规则落到 primary——它们本来
+        就属于这个 session 的用户，只是那时没人记下是谁说的。
+
+        **隔离轴是 occupant，user 只是纵深防御**：一个 session 归一个用户，所以查询
+        侧不传 user_id 时不按 user 过滤（否则管理/调试读取会静默返回空）；两侧都有
+        值时才比对。
+        """
+        t_uid = turn.get("user_id") or ""
+        t_occ = turn.get("occupant_id") or PRIMARY
+        user_ok = (not t_uid) or (not uid) or t_uid == uid
+        return user_ok and t_occ == occ
+
+    async def get_session(self, session_id: str, last_n: int, *, user_id: str = "",
+                          occupant_id: str = "", scope: str = OWNER_ONLY) -> list[dict]:
+        """取最近 N 轮。**默认 OWNER_ONLY**，`last_n` 是过滤后的上限。
+
+        跨乘员读取必须显式传 `scope=ALL_OCCUPANTS`，且只供管理视图/合规导出。
+        """
+        turns = self._hydrate(session_id, await self._raw_session(session_id))
+        if scope != ALL_OCCUPANTS:
+            uid, occ = owner_of(user_id, occupant_id)
+            turns = [t for t in turns if self._owns(t, uid, occ)]
+        return _tail_whole_exchanges(turns, last_n)
+
+    async def forget_owner_sessions(self, user_id: str, occupant_id: str) -> int:
+        """物理删除该 OwnerKey 的会话原文（读时隐藏不叫删除）。
+
+        occupant 必填：owner 级删除绝不从空值推断范围，否则漏传会静默升级成删全部。
+        """
+        uid, occ = owner_of(user_id, occupant_id)
+        if not uid or not (occupant_id or "").strip():
+            raise ValueError("missing_owner")
+        removed = 0
+        r = await self._redis()
+        sids = await self._session_ids(uid)
+        for sid in sids:
+            raw = self._hydrate(sid, await self._raw_session(sid))
+            keep = [t for t in raw if not self._owns(t, uid, occ)]
+            removed += len(raw) - len(keep)
+            if len(keep) == len(raw):
+                continue
+            if r:
+                key = f"sess:{sid}"
+                await r.delete(key)
+                if keep:
+                    await r.rpush(key, *[json.dumps(t, ensure_ascii=False) for t in keep])
+                    await r.expire(key, _SESSION_TTL_S)
+            else:
+                self._mem[sid] = keep
+        return removed
+
+    async def _session_ids(self, user_id: str) -> list[str]:
+        r = await self._redis()
+        if r:
+            try:
+                return sorted(await r.smembers(f"user_sessions:{user_id}"))
+            except Exception as e:
+                logger.warning("session index read failed for %s: %s", user_id, e)
+                return []
+        return sorted(self._mem_user_sessions.get(user_id, set()))
 
     def _profile_key(self, user_id: str) -> str:
         return f"profile:{user_id}"
@@ -150,17 +314,28 @@ class MemoryStore:
             await r.set(self._profile_key(user_id),
                         json.dumps(profile, ensure_ascii=False))
 
-    async def get_context(self, session_id, user_id, vehicle_id, scopes) -> dict:
-        """按 scope 取上下文。敏感 scope 走脱敏路径。"""
+    async def get_context(self, session_id, user_id, vehicle_id, scopes,
+                          occupant_id: str = "") -> dict:
+        """按 scope 取上下文。敏感 scope 走脱敏路径。
+
+        M-B：`profile.places` 按 OwnerKey 取。此前读侧恒取 primary、写侧是共享 KV
+        ——乘员 B 说「把这里设成我家」会覆盖主驾的家，而且非 primary 永远读不到自己的。
+        """
         result = {}
+        _uid, occ = owner_of(user_id, occupant_id)
         profile = await self._load_profile(user_id) if user_id else {}
         for scope in scopes:
-            # profile.places：优先读分层记忆新表（P1 收敛），无则回退旧 KV
+            # profile.places：唯一真相源是 owner-scoped `memory_item place.*`。
+            # primary 在 backfill 完成前 dual-read——**只补新表缺失的 key**，不整块覆盖；
+            # 非 primary **永不**读 legacy KV（那是 primary 的地址，泄漏比查不到更糟）。
             if scope == "profile.places" and user_id:
-                places = await (await self._vec()).get_places(user_id)
+                places = await (await self._vec()).get_places(user_id, occ)
+                if occ == PRIMARY:
+                    for k, v in (profile.get("places") or {}).items():
+                        places.setdefault(k, v)
                 if places:
                     result[scope] = json.dumps(places, ensure_ascii=False)
-                    continue
+                continue
             # 用户画像优先从持久化画像取（如 profile.places 常用地点）
             if scope.startswith("profile.") and user_id:
                 key = scope.split(".", 1)[1] if "." in scope else scope
@@ -181,15 +356,20 @@ class MemoryStore:
         return await self._load_profile(user_id)
 
     async def delete_profile(self, user_id: str) -> bool:
-        """删除用户画像（合规接口）。删除后不可再被检索。"""
+        """删除用户画像（合规接口）。删除后不可再被检索。
+
+        `existed` 按「**真的删掉了什么**」算：places 自 M-B 起只住 memory_item，
+        只看 legacy KV 会在刚设完家的用户身上返回「本来就没有」。
+        """
         existed = bool(await self._load_profile(user_id))
         self._profiles.pop(user_id, None)
         r = await self._redis()
         if r:
             await r.delete(self._profile_key(user_id))
-        # 一并清掉镜像的常用地点（profile.places），保持画像删除一致
+        # 一并清掉 owner-scoped 常用地点（profile.places），保持画像删除一致
         try:
-            await (await self._vec()).forget(user_id, scopes=["profile.places"])
+            existed = bool(await (await self._vec()).forget(
+                user_id, scopes=["profile.places"])) or existed
         except Exception as e:
             logger.debug("delete places mirror failed: %s", e)
         if existed:
@@ -202,17 +382,23 @@ class MemoryStore:
         profile.update(data)
         await self._save_profile(user_id, profile)
 
-    async def upsert_profile(self, user_id: str, key: str, value):
+    async def upsert_profile(self, user_id: str, key: str, value,
+                             occupant_id: str = ""):
         """写单个画像字段（如 places），value 为已解析对象。持久化。
-        places 额外镜像到分层记忆 memory_item（高敏，P1 双写收敛）。"""
+
+        M-B：places **只写 owner-scoped memory_item，不再回写 legacy KV**——KV 是
+        user 级的，往里写就等于让乘员 B 覆盖主驾。按 key 做 supersede-or-insert
+        （patch 语义）：出现的 key 更新，未出现的保持不变；删除走精确接口。
+        legacy KV 保留只读兼容，本批不删。
+        """
+        _uid, occ = owner_of(user_id, occupant_id)
+        if key == "places":
+            if isinstance(value, dict):
+                await self._mirror_places(user_id, value, occ)
+            return
         profile = await self._load_profile(user_id)
         profile[key] = value
         await self._save_profile(user_id, profile)
-        if key == "places" and isinstance(value, dict):
-            try:
-                await self._mirror_places(user_id, value)
-            except Exception as e:
-                logger.debug("mirror places failed: %s", e)
 
     async def _mirror_places(self, user_id: str, places: dict, occupant_id: str = "primary"):
         """把常用地点镜像为 memory_item（predicate place.*，highly_sensitive，用户显式设置）。
@@ -267,18 +453,29 @@ class MemoryStore:
             predicate_prefix=predicate_prefix, min_score=min_score,
             min_confidence=min_confidence, max_age_days=max_age_days)
 
+    async def delete_memory_item(self, user_id: str, occupant_id: str,
+                                 item_id: str) -> dict:
+        """L1：按 OwnerKey + item id 精确删一条（M-B）。取代「单行删除走 scope 扩大删除」。"""
+        return await (await self._vec()).delete_memory_item(user_id, occupant_id, item_id)
+
     async def forget_user(self, user_id: str, occupant_id: str = "",
                           scopes: list[str] | None = None) -> int:
         """合规：删除用户记忆。occupant/scope 都为空时连画像一并清（删全量）。
 
         全量删同时清会话原文（`sess:*`）：长期记忆删了、原始对话还躺在 Redis 里，
-        那不是删除是搬家。occupant 级删除动不了会话原文——轮次不带说话人标注，
-        无法选择性删（已知限制，与巩固窗口说话人盲同根）。
+        那不是删除是搬家。
+
+        M-B：occupant 级删除**现在也能删到会话原文**了——轮次带了说话人标注，
+        选择性删有了依据（此前是「与巩固窗口说话人盲同根」的已知限制）。
+        scope 定向删仍不动原文：那是「删某一类偏好」，不是「忘掉这个人」。
         """
         deleted = await (await self._vec()).forget(user_id, occupant_id, scopes)
-        if not occupant_id and not scopes:
-            await self.delete_profile(user_id)
-            await self._forget_sessions(user_id)
+        if not scopes:
+            if occupant_id:
+                await self.forget_owner_sessions(user_id, occupant_id)
+            else:
+                await self.delete_profile(user_id)
+                await self._forget_sessions(user_id)
         return deleted
 
     async def _forget_sessions(self, user_id: str) -> None:
@@ -327,7 +524,21 @@ class MemoryStore:
         return await (await self._vec()).list_voiceprints(user_id, **kw)
 
     async def delete_voiceprint(self, user_id: str, occupant_id: str, **kw) -> dict:
-        return await (await self._vec()).delete_voiceprint(user_id, occupant_id, **kw)
+        """删一个乘员。`purge_memory` 时**连会话原文一起清**（M-B）。
+
+        与 ForgetUser 同一条判据：长期记忆删了、原始对话还躺在 Redis 里，那不是删除
+        是搬家。此前做不到是因为轮次不带说话人标注、无法选择性删；现在可以了。
+        primary 仍不 purge（删单个乘员不该有清空全车的爆炸半径）。
+        """
+        res = await (await self._vec()).delete_voiceprint(user_id, occupant_id, **kw)
+        if kw.get("purge_memory", True) and occupant_id and occupant_id != PRIMARY:
+            try:
+                res["deleted_turns"] = await self.forget_owner_sessions(
+                    user_id, occupant_id)
+            except Exception as e:
+                logger.warning("purge owner sessions failed for %s/%s: %s",
+                               user_id, occupant_id, e)
+        return res
 
     async def rename_voiceprint(self, user_id: str, occupant_id: str,
                                 display_name: str, **kw) -> dict:
@@ -372,7 +583,11 @@ class MemoryStore:
         if not user_id:
             return []
         from extract import extract, predicate_class
-        turns = await self.get_session(session_id, 12)
+        # **owner 窗口在进 extractor 之前就切好**（M-B）：此前这里取整段混合历史、
+        # 再用触发本次巩固的那个 occupant 给全部候选盖章——同一 session 换人说话时，
+        # 上一位的偏好会被记在当前说话人名下，而且会在记忆里留下持久脏数据。
+        turns = await self.get_session(session_id, 12, user_id=user_id,
+                                       occupant_id=occupant_id)
         cands = await extract(turns, user_id=user_id, occupant_id=occupant_id,
                               vehicle_id=vehicle_id, session_id=session_id,
                               complete_fn=complete_fn)

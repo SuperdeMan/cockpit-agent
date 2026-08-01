@@ -14,6 +14,10 @@ service Memory {
   rpc Remember (RememberRequest) returns (RememberResponse);   // 写语义/情景记忆（抽取管线或 Agent 显式）
   rpc Recall (RecallRequest) returns (RecallResponse);         // 语义召回（向量 + scope/occupant + 时序融合）
   rpc ForgetUser (ForgetUserRequest) returns (ForgetUserResponse); // 合规：删除用户全量记忆
+  // M-B L1：按 OwnerKey + item id **精确**删一条。存在的理由是 HMI 记忆面板此前用
+  // `ForgetUser(scopes=[scope])` 实现「删这一行」——那会删掉该 scope 下所有乘员的条目
+  // （删一个人的名字＝删光全车的名字）。精确删除必须有自己的入口，不能复用 scope 删。
+  rpc DeleteMemoryItem (DeleteMemoryItemRequest) returns (DeleteMemoryItemResponse);
   rpc ExportUser (ExportUserRequest) returns (ExportUserResponse); // 合规：导出用户全量记忆
   // M2 记忆图谱 P1：关系边一跳查询。**刻意不做通用图遍历 RPC**——v1 只有两种消费形态
   // （按实体查边 / 人称→地点一跳），开放多跳会长出没人验证的推理路径。
@@ -38,6 +42,7 @@ message GetContextRequest {
   string user_id = 2;
   string vehicle_id = 3;
   repeated string scopes = 4;       // e.g. "vehicle.location","profile.taste"
+  string occupant_id = 5;           // M-B：profile.* 按 OwnerKey 取；空=primary
 }
 message GetContextResponse {
   map<string, string> values = 1;   // scope -> JSON 字符串
@@ -54,24 +59,55 @@ message AppendTurnRequest {
   // 专用于 runner-signed synthetic extraction。Memory 必须验 HMAC，并将
   // claims 的 run/user/session 与本请求逐项绑定；普通调用留空。
   string e2e_memory_capability = 7;
+  // M-B：Turn 归属与 exchange 完整性。`turn_id` 是幂等键（同 id 同 payload=幂等成功，
+  // 同 id 异 payload=turn_conflict）；`exchange_id` 把一轮 user 请求与其可见 assistant
+  // 回复绑成一个不可拆的账目单元。**规格偏差记账**：设计文档 §11.1 把它们排在 7/8，
+  // 但 7 已被 M-A 的 `e2e_memory_capability` 占用，按「只追加不重用字段号」顺延到 8/9。
+  string turn_id = 8;
+  string exchange_id = 9;
 }
-message AppendTurnResponse { bool ok = 1; }
+message AppendTurnResponse {
+  bool ok = 1;
+  string error = 2;   // "missing_owner" / "turn_conflict"；ok=true 时为空
+}
+
+// 历史读取范围。**默认（UNSPECIFIED）按 OWNER_ONLY**——共享绝不能是缺省行为，
+// 想跨乘员必须显式声明，且只供 HMI 管理视图与合规导出使用。
+enum HistoryScope {
+  HISTORY_SCOPE_UNSPECIFIED = 0;
+  HISTORY_SCOPE_OWNER_ONLY = 1;
+  HISTORY_SCOPE_ALL_OCCUPANTS = 2;
+}
 
 message GetSessionRequest {
   string session_id = 1;
-  uint32 last_n = 2;
+  uint32 last_n = 2;          // owner 过滤**之后**的最大 Turn 数
+  string user_id = 3;
+  string occupant_id = 4;     // 空=primary（不表示共享）
+  HistoryScope scope = 5;
 }
 message Turn {
   string role = 1;
   string text = 2;
   int64 ts = 3;
+  // M-B：owner 与 exchange 落到数据面。旧 Turn 没有这些字段，读取时统一补 primary
+  // 与稳定 legacy id——**不按文本、时间或声纹猜真实 owner**。
+  string user_id = 4;
+  string vehicle_id = 5;      // 只描述 Turn 的车辆环境，不参与 OwnerKey
+  string occupant_id = 6;
+  string turn_id = 7;
+  string exchange_id = 8;
 }
 message GetSessionResponse { repeated Turn turns = 1; }
 
 message UpsertProfileRequest {
   string user_id = 1;
   string key = 2;          // 画像字段名，如 "places"
-  string value_json = 3;   // 该字段的完整 JSON 值（如 places map 全量）
+  string value_json = 3;   // 该字段的值；places 按 key 解释为 **patch**（见 occupant_id 注）
+  // M-B：places 的唯一真相源是 owner-scoped `memory_item place.*`。带 occupant 后
+  // `key="places"` 只对**出现的 key** 做 supersede-or-insert，未出现的 key 保持不变
+  // ——整块 user 级 map 覆盖正是「乘员 B 设了家把主驾的家冲掉」的成因。
+  string occupant_id = 4;  // 空=primary
 }
 message UpsertProfileResponse { bool ok = 1; }
 
@@ -138,6 +174,22 @@ message ForgetUserRequest {
   repeated string scopes = 3;      // 空=全部 scope
 }
 message ForgetUserResponse { bool ok = 1; uint32 deleted = 2; }
+
+// M-B L1：精确删除。occupant_id **必填**（primary 也要显式传）——owner 级动作绝不
+// 从空值推断范围，否则「漏传 occupant」会静默升级成「删全部乘员」。
+message DeleteMemoryItemRequest {
+  string user_id = 1;
+  string occupant_id = 2;
+  string item_id = 3;
+}
+message DeleteMemoryItemResponse {
+  bool ok = 1;
+  // "missing_owner" | "not_found"（含跨 owner——不泄露该 item 属于谁）
+  // | "managed_memory"（identity.name 是声纹的受管投影，只能去声纹设置改名/删乘员）
+  string error = 2;
+  uint32 deleted = 3;
+  uint32 deleted_relations = 4;   // 同事务清掉的、以该 item 为端点的派生关系边
+}
 
 message ExportUserRequest { string user_id = 1; }
 message ExportUserResponse { string json = 1; } // 全量记忆 + 画像的 JSON
@@ -231,6 +283,9 @@ message VoiceprintInfo {
   int64 updated_at = 5;
   string model = 6;
   bool stale = 7;
+  // M-B：存量重名组保持 `display_name_norm=NULL` 且原名不自动改写，这里如实标出来
+  // ——**不自动加数字/座位后缀选赢家**，由用户自己挑一个能区分的称呼。
+  bool name_conflict = 8;
 }
 message ListVoiceprintsResponse {
   repeated VoiceprintInfo occupants = 1;

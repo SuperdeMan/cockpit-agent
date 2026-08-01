@@ -11,7 +11,7 @@ import {
 } from '../types'
 import {
   fetchVoices, fetchTtsProviders, fetchLlmProviders, setLlmProvider,
-  fetchMemory, fetchMemoryProfile, forgetMemory, fetchPlaces, playTTS,
+  fetchMemory, fetchMemoryProfile, forgetMemory, deleteMemoryItem, fetchPlaces, playTTS,
   fetchVoiceprints, enrollVoiceprint, deleteVoiceprint, identifySpeaker,
   renameVoiceprint,
   type MemoryView, type MemoryProfile, type NamedPlaces, type VoiceprintInfo,
@@ -114,10 +114,12 @@ function SettingRow({ label, sub, children, noBorder = false }: { label: string;
 }
 
 export function SettingsPanel({
-  audioApi, sessionId, location, locationEnabled, locationStatus, onRequestLocation, onLocationEnabledChange, onClose,
+  audioApi, sessionId, occupantId, location, locationEnabled, locationStatus, onRequestLocation, onLocationEnabledChange, onClose,
 }: {
   audioApi: string
   sessionId: string
+  /** 当前识别到的乘员（M-B）。记忆页按它过滤——认不出时是 'primary'，与主链一致。 */
+  occupantId?: string
   location: { lat: number; lng: number; accuracyM: number; capturedAt: number } | null
   locationEnabled: boolean
   locationStatus: string
@@ -183,7 +185,7 @@ export function SettingsPanel({
             {section === 'places' && <PlacesSection audioApi={audioApi} />}
             {section === 'assistant' && <AssistantSection audioApi={audioApi} />}
             {section === 'agents' && <AgentsSection />}
-            {section === 'memory' && <MemorySection audioApi={audioApi} sessionId={sessionId} />}
+            {section === 'memory' && <MemorySection audioApi={audioApi} sessionId={sessionId} occupantId={occupantId || 'primary'} />}
           </Glass>
         </div>
       </div>
@@ -1008,21 +1010,41 @@ const _PLACE_LABEL: Record<string, string> = { home: '家', company: '公司', s
 const _PROV_LABEL: Record<string, string> = { user_stated: '你说的', agent_inferred: '推断' }
 const _EMPTY_PROFILE: MemoryProfile = { preferences: [], places: [], episodes: [] }
 
-function MemorySection({ audioApi, sessionId }: { audioApi: string; sessionId: string }) {
+function MemorySection({ audioApi, sessionId, occupantId }: { audioApi: string; sessionId: string; occupantId: string }) {
   const { settings, update } = useSettings()
   const [mem, setMem] = useState<MemoryView>({ turns: [] })
   const [profile, setProfile] = useState<MemoryProfile>(_EMPTY_PROFILE)
   const [loading, setLoading] = useState(false)
 
+  // 默认只看当前乘员（M-B）。此前面板把全部乘员的记忆混在一起列，而「删除」按钮
+  // 又是按 scope 删的——看到的是别人的，删掉的是所有人的。
+  const [delErr, setDelErr] = useState('')
+
   const load = useCallback(() => {
     setLoading(true)
-    Promise.all([fetchMemory(audioApi, sessionId), fetchMemoryProfile(audioApi)])
+    Promise.all([
+      fetchMemory(audioApi, sessionId, { userId: 'u1', occupantId }),
+      fetchMemoryProfile(audioApi, 'u1', { occupantId }),
+    ])
       .then(([m, p]) => { setMem(m); setProfile(p) })
       .catch(() => {/* 离线 */}).finally(() => setLoading(false))
-  }, [audioApi, sessionId])
+  }, [audioApi, sessionId, occupantId])
   useEffect(() => { load() }, [load])
 
   const forget = useCallback(async (scope: string) => { await forgetMemory(audioApi, 'u1', scope); load() }, [audioApi, load])
+  /** 删这一行：按 item id 精确删（L1）。受管条目引导去声纹设置，不在这里删。 */
+  const delItem = useCallback(async (item: { id?: string; managed?: boolean }) => {
+    setDelErr('')
+    if (item.managed) { setDelErr('这是「乘员与声纹」里的称呼，改名或删除请到那里操作'); return }
+    if (!item.id) { setDelErr('这条记忆缺少标识，请刷新后重试'); return }
+    const r = await deleteMemoryItem(audioApi, 'u1', occupantId, item.id)
+    if (!r.ok) {
+      setDelErr(r.error === 'managed_memory'
+        ? '这是「乘员与声纹」里的称呼，改名或删除请到那里操作'
+        : r.error === 'not_found' ? '这条记忆已经不在了，正在刷新' : '删除失败，请稍后再试')
+    }
+    load()
+  }, [audioApi, occupantId, load])
   const clearLocal = () => {
     try { Object.keys(localStorage).filter((k) => k.startsWith('cockpit.') && k !== 'cockpit.settings.v1').forEach((k) => localStorage.removeItem(k)) } catch {/* ignore */}
   }
@@ -1066,9 +1088,10 @@ function MemorySection({ audioApi, sessionId }: { audioApi: string; sessionId: s
             <div style={{ padding: '14px 0', fontSize: 13, color: FG3 }}>还没记住什么。多聊聊偏好（如「我不吃辣」），助手会慢慢学到。</div>
           ) : (
             <>
-              {profile.preferences.length > 0 && <MemCat title="偏好" items={profile.preferences.map((p) => ({ text: p.text, meta: _PROV_LABEL[p.provenance] || p.provenance, onDel: () => forget(p.scope) }))} />}
-              {profile.places.length > 0 && <MemCat title="常去地点" items={profile.places.map((pl) => ({ text: `${_PLACE_LABEL[pl.key] || pl.key}：${pl.name}`, meta: '高敏', onDel: () => forget(pl.scope || 'profile.places') }))} />}
+              {profile.preferences.length > 0 && <MemCat title="偏好" items={profile.preferences.map((p) => ({ text: p.text, meta: p.managed ? '声纹称呼（只读）' : (_PROV_LABEL[p.provenance] || p.provenance), onDel: () => delItem(p) }))} />}
+              {profile.places.length > 0 && <MemCat title="常去地点" items={profile.places.map((pl) => ({ text: `${_PLACE_LABEL[pl.key] || pl.key}：${pl.name}`, meta: '高敏', onDel: () => delItem(pl) }))} />}
               {profile.episodes.length > 0 && <MemCat title="经历" items={profile.episodes.map((ep) => ({ text: `📍 ${ep.text}`, meta: '经历', onDel: () => forget('episodic.general') }))} />}
+              {delErr && <div style={{ fontSize: 12, color: FG3, padding: '6px 0' }}>{delErr}</div>}
             </>
           )}
         </div>

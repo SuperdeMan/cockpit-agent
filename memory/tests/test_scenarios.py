@@ -293,7 +293,11 @@ def test_scenario_gdpr_export_then_forget_isolated():
 
     exported, deleted, after_recall, after_places, u2_intact = asyncio.run(go())
     # 导出全可见
-    assert exported["profile"]["places"]["home"]["name"] == "阳光小区"
+    # M-B：places 的真相源是 owner-scoped memory_item，不再是 user 级 KV，
+    # 故导出里它在 memories 而不是 profile 下——导出与删除仍然对称（两侧都是 memory_item）。
+    exported_places = [m for m in exported["memories"]
+                       if (m.get("predicate") or "").startswith("place.")]
+    assert exported_places and "阳光小区" in exported_places[0]["value_json"]
     ex_preds = {m["predicate"] for m in exported["memories"]}
     assert {"taste.spicy", "person.pet", "place.home"} <= ex_preds  # 含 places 镜像
     # 被遗忘权：全清

@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from typing import AsyncIterator
 
 from .models import Plan, Step, StepResult, StepStatus, PlanContext, SessionState
@@ -121,13 +122,19 @@ class PlannerEngine:
         # （母卡 D3；落库本就在编排循环之后，时序天然支持）。
         if mem_on and text and not rejected:
             occ = getattr(ctx, "occupant_id", "") or "primary"
+            # 一轮请求与它可见的回复共用一个 exchange（M-B）：请求 id 就是天然的
+            # exchange 键，缺失时才生成——重试因此是重放，不是又追加一轮新对话。
+            exch = getattr(ctx, "request_id", "") or f"x-{uuid.uuid4().hex[:16]}"
             await self.context.append_turn(ctx.session_id, "user", text,
                                            ctx.user_id, ctx.vehicle_id, occ,
-                                           ctx.e2e_memory_capability)
+                                           ctx.e2e_memory_capability,
+                                           turn_id=f"{exch}:user", exchange_id=exch)
             if assistant_speech:
                 await self.context.append_turn(ctx.session_id, "assistant", assistant_speech,
                                                ctx.user_id, ctx.vehicle_id, occ,
-                                               ctx.e2e_memory_capability)
+                                               ctx.e2e_memory_capability,
+                                               turn_id=f"{exch}:assistant:0",
+                                               exchange_id=exch)
 
     async def _orchestrate(self, request, ctx: PlanContext, text: str,
                            mem_on: bool) -> AsyncIterator[dict]:

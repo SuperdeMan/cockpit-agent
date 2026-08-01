@@ -152,7 +152,7 @@ def _has_coords(text: str) -> bool:
 
 
 def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
-            session_id: str) -> dict | None:
+            session_id: str, source_turn_ids: str = "") -> dict | None:
     """把一条 LLM 候选治理成可入库的 MemoryItem dict；不合规返回 None（丢弃）。"""
     category = (c.get("category") or "").strip()
     # M2 P1 关系边：**必须在 text 空检查之前分流**——关系候选是 (subject, rel, object)
@@ -163,7 +163,8 @@ def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
         if _has_coords(probe) or _PII_RE.search(probe):
             logger.debug("extract drop (relation coords/pii): %s", probe[:40])
             return None
-        edge = relation.normalize_candidate(dict(c, source_turn_ids=session_id))
+        edge = relation.normalize_candidate(
+            dict(c, source_turn_ids=source_turn_ids or session_id))
         if not edge:      # 词表外 / 残缺 → 丢弃，绝不猜
             logger.debug("extract drop (bad relation): %s", str(c)[:60])
             return None
@@ -195,6 +196,9 @@ def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
         "vehicle_id": vehicle_id, "kind": kind, "predicate": predicate,
         "text": text, "scope": scope, "review_status": "auto_extracted",
         "source_session": session_id, "source_ts": _now(), "valid_from": _now(),
+        # 真实证据轮次（M-B）。此前这里是空的、关系边填的是 session_id——于是
+        # `weighting.evidence_count` 永远数出 1，「说过一次 vs 每周三次」分不出来。
+        "source_turn_ids": source_turn_ids,
     }
     if category == "explicit_preference":
         item.update(provenance="user_stated", confidence=max(conf, 0.7))
@@ -241,6 +245,9 @@ async def extract(turns: list[dict], *, user_id: str, occupant_id: str = "primar
     if not user_id or not turns:
         return []
     window = [t for t in turns[-_CONSOLIDATE_LOOKBACK:] if t.get("text")]
+    # 证据轮次用真实 turn id。**owner 过滤是调用方的责任**（consolidate 先按 OwnerKey
+    # 取窗口再进来）——归属判定不能交给 LLM，它看到的只是一段文本。
+    turn_ids = ",".join(t["turn_id"] for t in window if t.get("turn_id"))
     convo = "\n".join(f'{t.get("role","user")}: {t.get("text","")}' for t in window)
     if not convo.strip():
         return []
@@ -261,7 +268,8 @@ async def extract(turns: list[dict], *, user_id: str, occupant_id: str = "primar
             logger.debug("extract drop (scene config): %s", (c.get("text") or "")[:40])
             continue
         item = _govern(c, user_id=user_id, occupant_id=occupant_id,
-                       vehicle_id=vehicle_id, session_id=session_id)
+                       vehicle_id=vehicle_id, session_id=session_id,
+                       source_turn_ids=turn_ids)
         if item:
             out.append(item)
     return out

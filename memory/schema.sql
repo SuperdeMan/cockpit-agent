@@ -105,6 +105,19 @@ CREATE TABLE IF NOT EXISTS voiceprint (
 );
 CREATE INDEX IF NOT EXISTS idx_vp_user ON voiceprint (tenant_id, user_id);
 
+-- M-B：同一 (tenant,user) 下规范化显示名唯一。允许两个「泓舟」＝同一个人被分成两个
+-- occupant，两个很像的模板在识别期互相顶成 ambiguous、判定恒回 primary，表现是
+-- 「谁说话都认成同一个」。nullable + partial unique：**存量重名组保持 NULL 并原样保留
+-- 显示名**（不自动改名/选赢家），只保证新数据不再制造冲突。
+-- ⚠️ 本文件由 `MemoryVectorStore._ensure_schema()` 执行，而它挂在 `_vec()` 的**懒初始化**
+-- 上——**不是进程启动时应用，是第一次用到向量存储时**。重启容器后 `\d voiceprint` 看不到
+-- 新列是正常的，发一次任意读写即生效（真栈实测，2026-08-01）。
+ALTER TABLE voiceprint
+  ADD COLUMN IF NOT EXISTS display_name_norm TEXT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_voiceprint_display_name_norm
+  ON voiceprint (tenant_id, user_id, display_name_norm)
+  WHERE display_name_norm IS NOT NULL;
+
 -- pgvector ivfflat（与 registry 一致，需先有数据再建索引才高效；PoC 数据量小可暂不建）
 -- CREATE INDEX IF NOT EXISTS idx_mem_embedding ON memory_item
 --     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 10);

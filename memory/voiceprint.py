@@ -137,6 +137,24 @@ def decide(scored: list[tuple[str, float]], *, thr: float | None = None,
     return {"occupant_id": top_id, "decision": "accept", "score": top, "runner_up": runner}
 
 
+def normalize_display_name(name: str) -> str:
+    """称呼的比较用规范形（M-B）。
+
+    NFKC → 去首尾空白 → 连续空白折叠为一个半角空格 → casefold。
+
+    存在的理由：同一 `(tenant, user)` 下允许两个「泓舟」时，第二次注册会分配到一个
+    **新的 occupant**，于是同一个人有了两个互相很像的模板——识别期它们把彼此顶成
+    `ambiguous`，判定恒回 primary，表现是「谁说话都认成同一个」。这不是识别算法的
+    问题，是身份分配放进了两条本该是一个人的记录。
+
+    规范形只用于**判重**，`display_name` 原样保留展示；系统不自动加数字或座位后缀
+    选赢家——那是替用户决定他该被怎么称呼。
+    """
+    import unicodedata
+    s = unicodedata.normalize("NFKC", name or "").strip()
+    return " ".join(s.split()).casefold()
+
+
 def allocate_occupant_id(existing: list[str]) -> str:
     """分配 occupant_id。
 

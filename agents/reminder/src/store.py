@@ -45,10 +45,34 @@ PERSONAL_DATA_TARGETS = (
 LOCATION = "location"
 
 
+PRIMARY = "primary"
+
+
+def owner_of(user_id: str, occupant_id: str = "") -> tuple[str, str]:
+    """OwnerKey=(user_id, occupant_id)。空 occupant 规范化 primary，**不表示共享**。"""
+    return user_id, (occupant_id or "").strip() or PRIMARY
+
+
+def group_by_owner(reminders) -> dict[tuple[str, str], list]:
+    """按 OwnerKey 分组，保持组内原有顺序。
+
+    全局 due/location 扫描可以跨 owner 原子领取（围栏与时钟由车况驱动，与会话无关），
+    但**消费必须先分组**：一条 speech/card 只能属于一个人，`items[0].user_id`
+    不能代表混合 owner 集合。
+    """
+    out: dict[tuple[str, str], list] = {}
+    for r in reminders or []:
+        out.setdefault(owner_of(r.user_id, r.occupant_id), []).append(r)
+    return out
+
+
 @dataclass
 class Reminder:
     user_id: str
     title: str
+    # M-B：提醒的 owner 是 (user_id, occupant_id)。此前全域零 occupant——两位乘员的
+    # 提醒混在一张表、触达不区分人。vehicle_id 只是环境，不参与 owner 判定。
+    occupant_id: str = PRIMARY
     kind: str = "time"                 # time | todo
     fire_at: int = 0                   # epoch 秒（UTC）；todo 恒 0
     status: str = PENDING
@@ -111,47 +135,58 @@ class ReminderStore:
     async def add(self, r: Reminder) -> Reminder:
         r.id = r.id or uuid.uuid4().hex
         r.created_at = r.created_at or int(time.time())
+        r.occupant_id = (r.occupant_id or "").strip() or PRIMARY
         if self._pg_ok:
             import json
             async with self._pool.acquire() as conn:
                 await conn.execute(
-                    "INSERT INTO reminder_item (id,user_id,vehicle_id,title,kind,fire_at,"
-                    "status,created_at,fired_at,source,recur,extra) "
-                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)",
-                    r.id, r.user_id, r.vehicle_id, r.title, r.kind, r.fire_at,
-                    r.status, r.created_at, r.fired_at, r.source, r.recur,
-                    json.dumps(r.extra, ensure_ascii=False))
+                    "INSERT INTO reminder_item (id,user_id,occupant_id,vehicle_id,title,"
+                    "kind,fire_at,status,created_at,fired_at,source,recur,extra) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)",
+                    r.id, r.user_id, r.occupant_id or PRIMARY, r.vehicle_id, r.title,
+                    r.kind, r.fire_at, r.status, r.created_at, r.fired_at, r.source,
+                    r.recur, json.dumps(r.extra, ensure_ascii=False))
         else:
             self._mem[r.id] = r
         return r
 
     # ── 读取 ──
-    async def get(self, user_id: str, rid: str) -> Reminder | None:
+    async def get(self, user_id: str, rid: str, *,
+                  occupant_id: str = "") -> Reminder | None:
+        _u, occ = owner_of(user_id, occupant_id)
         if self._pg_ok:
             async with self._pool.acquire() as conn:
                 row = await conn.fetchrow(
-                    "SELECT * FROM reminder_item WHERE id=$1 AND user_id=$2", rid, user_id)
+                    "SELECT * FROM reminder_item WHERE id=$1 AND user_id=$2 "
+                    "AND occupant_id=$3", rid, user_id, occ)
             return self._row(row) if row else None
         r = self._mem.get(rid)
-        return r if r and r.user_id == user_id else None
+        return r if r and r.user_id == user_id and r.occupant_id == occ else None
 
     async def list_split(self, user_id: str, *, from_ts: int = 0, to_ts: int = 0,
-                         statuses: tuple = ACTIVE,
+                         statuses: tuple = ACTIVE, occupant_id: str = "",
                          limit: int = 50) -> tuple[list[Reminder], list[Reminder]]:
-        """(定时项按 fire_at 升序, 待办按 created_at 升序)。to_ts=0 表示无上界。"""
+        """(定时项按 fire_at 升序, 待办按 created_at 升序)。to_ts=0 表示无上界。
+
+        按 OwnerKey 过滤：列表序号是「第 N 个」的语义基础，混进另一位乘员的提醒
+        会让序号指向别人的条目。"""
+        _u, occ = owner_of(user_id, occupant_id)
         if self._pg_ok:
             async with self._pool.acquire() as conn:
                 trs = await conn.fetch(
-                    "SELECT * FROM reminder_item WHERE user_id=$1 AND kind='time' "
+                    "SELECT * FROM reminder_item WHERE user_id=$1 AND occupant_id=$6 "
+                    "AND kind='time' "
                     "AND status=ANY($2) AND fire_at>=$3 AND ($4=0 OR fire_at<$4) "
                     "ORDER BY fire_at ASC LIMIT $5",
-                    user_id, list(statuses), from_ts, to_ts, limit)
+                    user_id, list(statuses), from_ts, to_ts, limit, occ)
                 tds = await conn.fetch(
-                    "SELECT * FROM reminder_item WHERE user_id=$1 AND kind='todo' "
+                    "SELECT * FROM reminder_item WHERE user_id=$1 AND occupant_id=$4 "
+                    "AND kind='todo' "
                     "AND status=ANY($2) ORDER BY created_at ASC LIMIT $3",
-                    user_id, list(statuses), limit)
+                    user_id, list(statuses), limit, occ)
             return [self._row(x) for x in trs], [self._row(x) for x in tds]
-        rs = [r for r in self._mem.values() if r.user_id == user_id and r.status in statuses]
+        rs = [r for r in self._mem.values() if r.user_id == user_id
+              and r.occupant_id == occ and r.status in statuses]
         times = sorted((r for r in rs if r.kind == "time"
                         and r.fire_at >= from_ts and (to_ts == 0 or r.fire_at < to_ts)),
                        key=lambda r: r.fire_at)[:limit]
@@ -160,78 +195,91 @@ class ReminderStore:
         return times, todos
 
     async def find_by_title(self, user_id: str, q: str,
-                            statuses: tuple = ACTIVE) -> list[Reminder]:
+                            statuses: tuple = ACTIVE,
+                            occupant_id: str = "") -> list[Reminder]:
         q = (q or "").strip()
         if not q:
             return []
+        _u, occ = owner_of(user_id, occupant_id)
         if self._pg_ok:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(
-                    "SELECT * FROM reminder_item WHERE user_id=$1 AND status=ANY($2) "
+                    "SELECT * FROM reminder_item WHERE user_id=$1 AND occupant_id=$4 "
+                    "AND status=ANY($2) "
                     "AND title LIKE $3 ORDER BY fire_at ASC", user_id, list(statuses),
-                    f"%{q}%")
+                    f"%{q}%", occ)
             return [self._row(x) for x in rows]
         return sorted((r for r in self._mem.values() if r.user_id == user_id
+                       and r.occupant_id == occ
                        and r.status in statuses and q in r.title),
                       key=lambda r: r.fire_at)
 
     # ── 状态转移 ──
-    async def set_status(self, user_id: str, rid: str, status: str) -> bool:
+    async def set_status(self, user_id: str, rid: str, status: str, *,
+                         occupant_id: str = "") -> bool:
+        _u, occ = owner_of(user_id, occupant_id)
         if self._pg_ok:
             async with self._pool.acquire() as conn:
                 tag = await conn.execute(
-                    "UPDATE reminder_item SET status=$1 WHERE id=$2 AND user_id=$3",
-                    status, rid, user_id)
+                    "UPDATE reminder_item SET status=$1 WHERE id=$2 AND user_id=$3 "
+                    "AND occupant_id=$4", status, rid, user_id, occ)
             return tag.endswith("1")
         r = self._mem.get(rid)
-        if not r or r.user_id != user_id:
+        if not r or r.user_id != user_id or r.occupant_id != occ:
             return False
         r.status = status
         return True
 
-    async def update_fire_at(self, user_id: str, rid: str, fire_at: int) -> bool:
+    async def update_fire_at(self, user_id: str, rid: str, fire_at: int, *,
+                             occupant_id: str = "") -> bool:
         """改期 / snooze：新时间并回到 pending 等下一次触发（fired 尸体由此收编）。"""
+        _u, occ = owner_of(user_id, occupant_id)
         if self._pg_ok:
             async with self._pool.acquire() as conn:
                 tag = await conn.execute(
                     "UPDATE reminder_item SET fire_at=$1, status='pending' "
-                    "WHERE id=$2 AND user_id=$3 AND status=ANY($4)",
-                    fire_at, rid, user_id, list(ACTIVE))
+                    "WHERE id=$2 AND user_id=$3 AND status=ANY($4) AND occupant_id=$5",
+                    fire_at, rid, user_id, list(ACTIVE), occ)
             return tag.endswith("1")
         r = self._mem.get(rid)
-        if not r or r.user_id != user_id or r.status not in ACTIVE:
+        if not r or r.user_id != user_id or r.occupant_id != occ or r.status not in ACTIVE:
             return False
         r.fire_at, r.status = fire_at, PENDING
         return True
 
-    async def roll_recurring(self, user_id: str, rid: str, next_fire: int) -> bool:
+    async def roll_recurring(self, user_id: str, rid: str, next_fire: int, *,
+                             occupant_id: str = "") -> bool:
         """重复系列触发后滚动到下一次（fired→pending；fired_at 保留为上次触发时刻）。"""
+        _u, occ = owner_of(user_id, occupant_id)
         if self._pg_ok:
             async with self._pool.acquire() as conn:
                 tag = await conn.execute(
                     "UPDATE reminder_item SET fire_at=$1, status='pending' "
-                    "WHERE id=$2 AND user_id=$3 AND status='fired'",
-                    next_fire, rid, user_id)
+                    "WHERE id=$2 AND user_id=$3 AND status='fired' AND occupant_id=$4",
+                    next_fire, rid, user_id, occ)
             return tag.endswith("1")
         r = self._mem.get(rid)
-        if not r or r.user_id != user_id or r.status != FIRED:
+        if not r or r.user_id != user_id or r.occupant_id != occ or r.status != FIRED:
             return False
         r.fire_at, r.status = next_fire, PENDING
         return True
 
-    async def cancel_all(self, user_id: str) -> int:
+    async def cancel_all(self, user_id: str, *, occupant_id: str = "") -> int:
+        """「全部取消」只作用于当前 OwnerKey——一位乘员说「都取消吧」不该清掉另一位的提醒。"""
+        _u, occ = owner_of(user_id, occupant_id)
         if self._pg_ok:
             async with self._pool.acquire() as conn:
                 tag = await conn.execute(
                     "UPDATE reminder_item SET status='cancelled' "
-                    "WHERE user_id=$1 AND status=ANY($2)", user_id, list(ACTIVE))
+                    "WHERE user_id=$1 AND status=ANY($2) AND occupant_id=$3",
+                    user_id, list(ACTIVE), occ)
             try:
                 return int(tag.split()[-1])
             except Exception:
                 return 0
         n = 0
         for r in self._mem.values():
-            if r.user_id == user_id and r.status in ACTIVE:
+            if r.user_id == user_id and r.occupant_id == occ and r.status in ACTIVE:
                 r.status = CANCELLED
                 n += 1
         return n
@@ -293,7 +341,10 @@ class ReminderStore:
                 extra = json.loads(extra)
             except Exception:
                 extra = {}
-        return Reminder(id=row["id"], user_id=row["user_id"], vehicle_id=row["vehicle_id"],
+        return Reminder(id=row["id"], user_id=row["user_id"],
+                        occupant_id=(row["occupant_id"] if "occupant_id" in row.keys()
+                                     else PRIMARY) or PRIMARY,
+                        vehicle_id=row["vehicle_id"],
                         title=row["title"], kind=row["kind"], fire_at=row["fire_at"],
                         status=row["status"], created_at=row["created_at"],
                         fired_at=row["fired_at"], source=row["source"],

@@ -55,6 +55,8 @@ def _adapt_append_turn_call(
     vehicle_id: str,
     occupant_id: str,
     e2e_memory_capability: str,
+    turn_id: str = "",
+    exchange_id: str = "",
 ) -> tuple[list, dict]:
     """Build one compatible call without probing by execution.
 
@@ -68,6 +70,8 @@ def _adapt_append_turn_call(
         "vehicle_id": vehicle_id,
         "occupant_id": occupant_id or "primary",
         "e2e_memory_capability": e2e_memory_capability,
+        "turn_id": turn_id,
+        "exchange_id": exchange_id,
     }
     try:
         parameters = inspect.signature(fn).parameters
@@ -95,6 +99,28 @@ def _adapt_append_turn_call(
         ):
             args.append(value)
     return args, kwargs
+
+
+async def _call_with_owner(fn, session_id: str, last_n: int, *,
+                           user_id: str, occupant_id: str):
+    """调 `get_session` 并在被调方支持时带上 OwnerKey。
+
+    与 `_adapt_append_turn_call` 同一思路：签名探测只是**建议**——测试替身与旧客户端
+    仍是 `(session_id, last_n)` 两参，给它们塞 kwargs 会直接 TypeError。不支持 owner
+    的被调方退回旧行为（读到的仍是混合历史），但生产 `Clients.get_session` 支持，
+    所以生产路径是隔离的。
+    """
+    optional = {"user_id": user_id, "occupant_id": occupant_id}
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return await fn(session_id, last_n, **optional)
+    accepts_kwargs = any(p.kind is inspect.Parameter.VAR_KEYWORD
+                         for p in parameters.values())
+    kwargs = {k: v for k, v in optional.items()
+              if accepts_kwargs or k in parameters}
+    return await fn(session_id, last_n, **kwargs)
+
 
 # 装配预算（字符近似，避免引入 tokenizer 依赖；沿用既有 block[:400] 的 char-proxy 思路）。
 _CTX_BUDGET = int(os.getenv("PLANNER_CTX_BUDGET_CHARS", "1400"))   # 记忆+历史(+焦点)合计
@@ -458,7 +484,7 @@ class ContextManager:
     async def assemble(self, text: str, ctx, *, mem_on: bool = True,
                        granted_permissions: list[str] | None = None) -> WorkingSet:
         """装配一次规划轮的工作上下文。失败的子项各自降级为空/全量，绝不阻塞规划。"""
-        history = await self._history(ctx.session_id) if mem_on else []
+        history = await self._history(ctx) if mem_on else []
         memories = await self._recall(text, ctx) if mem_on else []
         focus = await self._load_focus(ctx.session_id) if (mem_on and self.session) else None
         catalog = await self._catalog(text)
@@ -491,7 +517,8 @@ class ContextManager:
     async def append_turn(self, session_id: str, role: str, text: str,
                           user_id: str = "", vehicle_id: str = "",
                           occupant_id: str = "",
-                          e2e_memory_capability: str = ""):
+                          e2e_memory_capability: str = "",
+                          turn_id: str = "", exchange_id: str = ""):
         """写入一轮对话到 memory（指代/抽取的数据来源）。memory 不可用或 clients 未提供
         该能力时静默跳过（不阻塞主链路）。user_id 透传给 memory 触发异步偏好抽取。
 
@@ -510,6 +537,8 @@ class ContextManager:
                 vehicle_id=vehicle_id,
                 occupant_id=occupant_id,
                 e2e_memory_capability=e2e_memory_capability,
+                turn_id=turn_id,
+                exchange_id=exchange_id,
             )
             await fn(*args, **kwargs)
         except Exception as e:
@@ -553,13 +582,21 @@ class ContextManager:
                     len(picked), len(full), self.top_k)
         return list(picked.values())
 
-    async def _history(self, session_id: str) -> list[dict]:
-        """取最近对话历史（供指代消解）。失败返回空，不阻塞规划。"""
+    async def _history(self, ctx) -> list[dict]:
+        """取最近对话历史（供指代消解）。失败返回空，不阻塞规划。
+
+        M-B：按 OwnerKey 取，默认 OWNER_ONLY。车里只有一个会话而说话人会换——
+        不按 owner 过滤时，上一位的称呼会比 system 提示更近，把当前这位的答案盖掉
+        （P4 真机第四批实测：先聊过阿灵再问「我是谁」会答成阿灵）。
+        """
         fn = getattr(self.clients, "get_session", None)
         if not fn:
             return []
         try:
-            return await fn(session_id, self.history_n)
+            return await _call_with_owner(
+                fn, ctx.session_id, self.history_n,
+                user_id=getattr(ctx, "user_id", "") or "",
+                occupant_id=getattr(ctx, "occupant_id", "") or "primary")
         except Exception as e:
             logger.debug("get_session failed: %s", e)
             return []

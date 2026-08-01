@@ -146,6 +146,14 @@ def _strip(item: dict) -> dict:
     return {k: v for k, v in item.items() if k not in ("embedding", "sim")}
 
 
+def _rowcount(tag) -> int:
+    """asyncpg 的 `DELETE 3` 状态串 → 行数。解析不出按 0 算，不虚报删除量。"""
+    try:
+        return int(str(tag).split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
 class MemoryVectorStore:
     """语义/情景记忆存储。PG(pgvector) 优先，无 PG 纯内存（lexical）。"""
 
@@ -496,6 +504,65 @@ class MemoryVectorStore:
         return out
 
     # ── 合规 ───────────────────────────────────────────────
+    # 受管记忆：不是「学到的」，是别的域投影过来的。删它必须回到那个域的入口去，
+    # 否则会出现「模板还在、名字没了」这种半截状态。
+    MANAGED_PREDICATES = ("identity.name",)
+
+    async def delete_memory_item(self, user_id: str, occupant_id: str,
+                                 item_id: str) -> dict:
+        """L1：按 OwnerKey + item id **精确**删一条（M-B）。
+
+        存在的理由：HMI 记忆面板此前用 `ForgetUser(scopes=[scope])` 实现「删这一行」
+        ——那会删掉该 scope 下**所有乘员**的条目（删一个人的名字＝删光全车的名字）。
+
+        跨 owner 一律 `not_found`，不区分「不存在」和「不是你的」——后者会泄露
+        这条记忆属于谁。
+        """
+        occ = (occupant_id or "").strip()
+        if not user_id or not occ or not item_id:
+            return {"ok": False, "error": "missing_owner", "deleted": 0,
+                    "deleted_relations": 0}
+        row = await self._item_by_id(user_id, occ, item_id)
+        if row is None:
+            return {"ok": False, "error": "not_found", "deleted": 0,
+                    "deleted_relations": 0}
+        if (row.get("predicate") or "") in self.MANAGED_PREDICATES:
+            return {"ok": False, "error": "managed_memory", "deleted": 0,
+                    "deleted_relations": 0}
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                async with conn.transaction():      # 同事务：不能只删一半
+                    res = await conn.execute(
+                        "DELETE FROM memory_item WHERE id=$1 AND user_id=$2 "
+                        "AND occupant_id=$3", item_id, user_id, occ)
+                    # 以该 item 为端点的派生关系边同删——留着就是指向已删数据的悬空边。
+                    rel = await conn.execute(
+                        "DELETE FROM memory_relation WHERE user_id=$1 AND occupant_id=$2 "
+                        "AND object_ref=$3", user_id, occ, item_id)
+            n = _rowcount(res)
+            return {"ok": True, "error": "", "deleted": n,
+                    "deleted_relations": _rowcount(rel)}
+        self._mem.pop(item_id, None)
+        gone = [k for k, v in self._rel.items()
+                if v.get("user_id") == user_id and v.get("occupant_id") == occ
+                and v.get("object_ref") == item_id]
+        for k in gone:
+            self._rel.pop(k, None)
+        return {"ok": True, "error": "", "deleted": 1, "deleted_relations": len(gone)}
+
+    async def _item_by_id(self, user_id: str, occupant_id: str,
+                          item_id: str) -> dict | None:
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT * FROM memory_item WHERE id=$1 AND user_id=$2 "
+                    "AND occupant_id=$3", item_id, user_id, occupant_id)
+            return dict(row) if row else None
+        v = self._mem.get(item_id)
+        if v and v.get("user_id") == user_id and v.get("occupant_id") == occupant_id:
+            return dict(v)
+        return None
+
     async def forget(self, user_id: str, occupant_id: str = "",
                      scopes: list[str] | None = None) -> int:
         """合规硬删。**必须级联删关系边**（子 RFC §5 红线）——只删 memory_item 的话，
@@ -644,6 +711,37 @@ class MemoryVectorStore:
                        and v["tenant_id"] == (tenant_id or "default")],
                       key=lambda v: v["occupant_id"])
 
+    @staticmethod
+    def _name_taken_by(rows: list[dict], name: str, occ: str) -> str:
+        """规范名是否已被**别的** occupant 占用；是则返回那个 occupant_id。
+
+        存量冲突行的 `display_name_norm` 是 NULL，所以判重必须**实时对原显示名重算
+        规范形**——只查 norm 列会让存量冲突成为绕过唯一约束的入口。
+        """
+        want = vp.normalize_display_name(name)
+        if not want:
+            return ""
+        for r in rows:
+            if r["occupant_id"] == occ:
+                continue
+            if vp.normalize_display_name(r.get("display_name") or "") == want:
+                return r["occupant_id"]
+        return ""
+
+    @staticmethod
+    def _conflicted_occupants(rows: list[dict]) -> set:
+        """存量重名组的 occupant 集合（供 ListVoiceprints 如实标 name_conflict）。"""
+        seen: dict = {}
+        for r in rows:
+            norm = vp.normalize_display_name(r.get("display_name") or "")
+            if norm:
+                seen.setdefault(norm, []).append(r["occupant_id"])
+        out = set()
+        for occs in seen.values():
+            if len(occs) > 1:
+                out.update(occs)
+        return out
+
     async def enroll_voiceprint(self, user_id: str, samples: list[list[float]], *,
                                 occupant_id: str = "", display_name: str = "",
                                 model: str = "", tenant_id: str = "default") -> dict:
@@ -666,10 +764,18 @@ class MemoryVectorStore:
         # rename_voiceprint，走 enroll 的空名一律按「没传」处理。
         prev = next((r for r in existing if r["occupant_id"] == occ), None)
         name = (display_name or "").strip() or (prev or {}).get("display_name", "") or ""
+        # 注：「新乘员必须有称呼」由 HTTP 注册入口把关（2026-07-26 真机批次已修：
+        # 称呼必填、空名按「这次不改名」处理）。这里不再加第二道空名闸——重复的
+        # 强制点只会打断合法的无名调用方（探针/迁移），不产生新的保护。
+        clash = self._name_taken_by(existing, name, occ)
+        if clash:
+            return {"ok": False, "error": "duplicate_name", "occupant_id": clash}
         now = _now()
         row = {
             "id": uuid.uuid4().hex, "tenant_id": tenant_id or "default", "user_id": user_id,
-            "occupant_id": occ, "display_name": name, "embedding": tpl,
+            "occupant_id": occ, "display_name": name,
+            "display_name_norm": vp.normalize_display_name(name) or None,
+            "embedding": tpl,
             "dim": len(tpl), "model": model or "", "sample_count": len(samples),
             "self_consistency": cons, "created_at": now, "updated_at": now,
         }
@@ -677,11 +783,14 @@ class MemoryVectorStore:
             async with self._pool.acquire() as conn:
                 await conn.execute("""
                     INSERT INTO voiceprint
-                      (id,tenant_id,user_id,occupant_id,display_name,embedding,dim,model,
+                      (id,tenant_id,user_id,occupant_id,display_name,display_name_norm,
+                       embedding,dim,model,
                        sample_count,self_consistency,created_at,updated_at)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                    VALUES ($1,$2,$3,$4,$5,$13,$6,$7,$8,$9,$10,$11,$12)
                     ON CONFLICT (tenant_id,user_id,occupant_id) DO UPDATE SET
-                      display_name=EXCLUDED.display_name, embedding=EXCLUDED.embedding,
+                      display_name=EXCLUDED.display_name,
+                      display_name_norm=EXCLUDED.display_name_norm,
+                      embedding=EXCLUDED.embedding,
                       dim=EXCLUDED.dim, model=EXCLUDED.model,
                       sample_count=EXCLUDED.sample_count,
                       self_consistency=EXCLUDED.self_consistency,
@@ -689,7 +798,7 @@ class MemoryVectorStore:
                 """, row["id"], row["tenant_id"], row["user_id"], row["occupant_id"],
                      row["display_name"], row["embedding"], row["dim"], row["model"],
                      row["sample_count"], row["self_consistency"], row["created_at"],
-                     row["updated_at"])
+                     row["updated_at"], row["display_name_norm"])
         else:
             key = f'{row["tenant_id"]}|{user_id}|{occ}'
             kept = self._vp.get(key)
@@ -734,17 +843,25 @@ class MemoryVectorStore:
         row = next((r for r in rows if r["occupant_id"] == occupant_id), None)
         if row is None:
             return {"ok": False, "error": "not_found", "display_name": ""}
+        clash = self._name_taken_by(rows, name, occupant_id)
+        if clash:
+            # 冲突时**表和 identity.name 都不动**：改了一半比没改更糟。
+            return {"ok": False, "error": "duplicate_name", "display_name": "",
+                    "occupant_id": clash}
+        norm = vp.normalize_display_name(name) or None
         now = _now()
         if self._pg_ok:
             async with self._pool.acquire() as conn:
                 await conn.execute(
-                    "UPDATE voiceprint SET display_name=$4, updated_at=$5 "
+                    "UPDATE voiceprint SET display_name=$4, display_name_norm=$6, "
+                    "updated_at=$5 "
                     "WHERE tenant_id=$1 AND user_id=$2 AND occupant_id=$3",
-                    tenant_id or "default", user_id, occupant_id, name, now)
+                    tenant_id or "default", user_id, occupant_id, name, now, norm)
         else:
             key = f'{tenant_id or "default"}|{user_id}|{occupant_id}'
             if key in self._vp:
                 self._vp[key]["display_name"] = name
+                self._vp[key]["display_name_norm"] = norm
                 self._vp[key]["updated_at"] = now
         if name != row.get("display_name", ""):
             await self._write_identity_name(user_id, occupant_id, name,
@@ -795,8 +912,12 @@ class MemoryVectorStore:
     async def list_voiceprints(self, user_id: str, *, model: str = "",
                                tenant_id: str = "default") -> list[dict]:
         rows = await self._vp_rows(user_id, tenant_id)
+        # 存量重名组如实标出来（M-B）：迁移只保证不再**新增**冲突，历史行原名不动、
+        # norm 留 NULL。用户看得见才有机会自己挑一个能区分的称呼——系统不替他选。
+        conflicted = self._conflicted_occupants(rows)
         for r in rows:
             r["stale"] = bool(model and r["model"] and r["model"] != model)
+            r["name_conflict"] = r["occupant_id"] in conflicted
         return rows
 
     async def delete_voiceprint(self, user_id: str, occupant_id: str, *,

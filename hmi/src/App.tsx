@@ -797,6 +797,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         <SettingsPanel
           audioApi={AUDIO_API}
           sessionId={SESSION}
+          occupantId={handsFreeRef.current?.occupantId || 'primary'}
           location={currentLocation}
           locationEnabled={settings.locationEnabled}
           locationStatus={locationStatus}

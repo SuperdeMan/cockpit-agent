@@ -20,7 +20,7 @@ from e2e_capability import (
     decode_capability_secret,
     verify_memory_capability,
 )
-from store import MemoryStore
+from store import ALL_OCCUPANTS, MemoryStore, OWNER_ONLY, TurnConflict, owner_of
 
 logger = logging.getLogger("memory.server")
 
@@ -69,13 +69,23 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
 
     async def GetContext(self, request, context):
         values = await self.store.get_context(
-            request.session_id, request.user_id, request.vehicle_id, list(request.scopes))
+            request.session_id, request.user_id, request.vehicle_id,
+            list(request.scopes), occupant_id=request.occupant_id)
         return memory_pb2.GetContextResponse(values=values)
 
     async def AppendTurn(self, request, context):
         # user_id 一并入库：维护 user→sessions 索引，ForgetUser 才能删到原始对话
-        await self.store.append_turn(request.session_id, request.role, request.text,
-                                     user_id=request.user_id)
+        # occupant/turn/exchange 一并入库（M-B）：识别得出「谁在说话」而数据面存不下来，
+        # 等于没识别——巩固会按触发者给整段混合历史归属。
+        try:
+            await self.store.append_turn(
+                request.session_id, request.role, request.text,
+                user_id=request.user_id, occupant_id=request.occupant_id,
+                vehicle_id=request.vehicle_id, turn_id=request.turn_id,
+                exchange_id=request.exchange_id)
+        except TurnConflict:
+            # 重放可以，改写不行：保留原 Turn 并如实报错，不静默覆盖已发生的对话。
+            return memory_pb2.AppendTurnResponse(ok=False, error="turn_conflict")
         self._maybe_consolidate(request)
         return memory_pb2.AppendTurnResponse(ok=True)
 
@@ -92,14 +102,18 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         ):
             logger.debug("consolidate skipped for synthetic session")
             return
-        n = self._turn_counts.get(sid, 0) + 1
-        self._turn_counts[sid] = n
+        # 节流键带 OwnerKey（M-B）：session 级计数会让「A 说三轮、B 说第四轮」在 B 名下
+        # 触发一次，而 B 只说过一句——各自数各自的轮数，谁攒够谁巩固。
+        uid, occ = owner_of(request.user_id, request.occupant_id)
+        key = (sid, uid, occ)
+        n = self._turn_counts.get(key, 0) + 1
+        self._turn_counts[key] = n
         if request.role == "user" and _REMEMBER_NOW_RE.search(request.text or ""):
-            self._turn_counts[sid] = 0   # 立即触发后重新计数，防紧邻的周期触发双跑
+            self._turn_counts[key] = 0   # 立即触发后重新计数，防紧邻的周期触发双跑
         elif n % _CONSOLIDATE_EVERY != 0:
             return
         task = asyncio.create_task(self._consolidate_bg(
-            sid, request.user_id, request.occupant_id or "primary", request.vehicle_id))
+            sid, uid, occ, request.vehicle_id))
         self._bg.add(task)
         task.add_done_callback(self._bg.discard)
 
@@ -195,10 +209,35 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         logger.info("memory: 主动建议 %s", suggestion[:40])
 
     async def GetSession(self, request, context):
-        turns = await self.store.get_session(request.session_id, request.last_n or 6)
+        # scope 未指定 = OWNER_ONLY：**共享绝不是缺省行为**，跨乘员必须显式声明，
+        # 且只供 HMI 管理视图与合规导出。
+        scope = (ALL_OCCUPANTS
+                 if request.scope == memory_pb2.HISTORY_SCOPE_ALL_OCCUPANTS
+                 else OWNER_ONLY)
+        turns = await self.store.get_session(
+            request.session_id, request.last_n or 6,
+            user_id=request.user_id, occupant_id=request.occupant_id, scope=scope)
         return memory_pb2.GetSessionResponse(turns=[
-            memory_pb2.Turn(role=t["role"], text=t["text"], ts=t["ts"]) for t in turns
+            memory_pb2.Turn(
+                role=t["role"], text=t["text"], ts=t["ts"],
+                user_id=t.get("user_id", ""), vehicle_id=t.get("vehicle_id", ""),
+                occupant_id=t.get("occupant_id", ""), turn_id=t.get("turn_id", ""),
+                exchange_id=t.get("exchange_id", ""))
+            for t in turns
         ])
+
+    async def DeleteMemoryItem(self, request, context):
+        """L1 精确删除：按 OwnerKey + item id 删一条。
+
+        `occupant_id` 必填（primary 也要显式传）——owner 级动作绝不从空值推断范围，
+        否则「漏传 occupant」会静默升级成「删全部乘员」，那正是这条 RPC 要终结的行为。
+        """
+        res = await self.store.delete_memory_item(
+            request.user_id, request.occupant_id, request.item_id)
+        return memory_pb2.DeleteMemoryItemResponse(
+            ok=bool(res.get("ok")), error=res.get("error", ""),
+            deleted=int(res.get("deleted") or 0),
+            deleted_relations=int(res.get("deleted_relations") or 0))
 
     async def UpsertProfile(self, request, context):
         """写用户画像字段（如常用地点 places）。value_json 非法则拒绝，不写脏数据。"""
@@ -210,7 +249,8 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
             logger.warning("UpsertProfile bad json (%s/%s): %s",
                            request.user_id, request.key, e)
             return memory_pb2.UpsertProfileResponse(ok=False)
-        await self.store.upsert_profile(request.user_id, request.key, value)
+        await self.store.upsert_profile(request.user_id, request.key, value,
+                                        occupant_id=request.occupant_id)
         return memory_pb2.UpsertProfileResponse(ok=True)
 
     # ── 分层记忆（语义画像 / 情景）──────────────────────────
@@ -318,7 +358,8 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
                 sample_count=int(r.get("sample_count") or 0),
                 self_consistency=float(r.get("self_consistency") or 0.0),
                 updated_at=int(r.get("updated_at") or 0), model=r.get("model", ""),
-                stale=bool(r.get("stale"))) for r in rows],
+                stale=bool(r.get("stale")),
+                name_conflict=bool(r.get("name_conflict"))) for r in rows],
             threshold=voiceprint.threshold(), margin=voiceprint.margin())
 
     async def DeleteVoiceprint(self, request, context):

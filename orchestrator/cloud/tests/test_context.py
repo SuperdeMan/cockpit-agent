@@ -382,3 +382,43 @@ def test_render_catalog_stats_records_dropped_from_tail(monkeypatch):
     assert len(stats["dropped"]) == 5            # 裁到只剩 1 个（至少留 1）
     assert stats["dropped"][0] == "ag-5"         # 从尾部开始裁
     assert stats["chars_final"] < stats["chars_full"]
+
+
+# ── 历史归属（M-B）──────────────────────────────────────────
+def test_history_is_fetched_with_the_owner_key():
+    """planner 历史按 OwnerKey 取。
+
+    车里只有一个会话而说话人会换：不按 owner 过滤时，上一位的称呼比 system 提示更近，
+    会把当前这位的答案盖掉（P4 真机第四批实测：先聊过阿灵再问「我是谁」答成阿灵）。
+    """
+    seen = {}
+
+    class _OwnerAware(_Clients):
+        async def get_session(self, session_id, last_n, *, user_id="", occupant_id=""):
+            seen["owner"] = (user_id, occupant_id)
+            return []
+
+    cm = ContextManager(_OwnerAware([_agent("a", ["a.x"])]))
+    ctx = SimpleNamespace(session_id="sess", user_id="u1", occupant_id="occ-2")
+    asyncio.run(cm.assemble("hi", ctx))
+    assert seen["owner"] == ("u1", "occ-2")
+
+
+def test_history_falls_back_to_primary_when_occupant_unknown():
+    seen = {}
+
+    class _OwnerAware(_Clients):
+        async def get_session(self, session_id, last_n, *, user_id="", occupant_id=""):
+            seen["owner"] = (user_id, occupant_id)
+            return []
+
+    cm = ContextManager(_OwnerAware([_agent("a", ["a.x"])]))
+    asyncio.run(cm.assemble("hi", _ctx()))
+    assert seen["owner"] == ("u1", "primary")
+
+
+def test_legacy_two_arg_get_session_still_works():
+    """签名探测只是**建议**：旧客户端/测试替身仍是两参，不能给它们塞 kwargs。"""
+    cm = ContextManager(_Clients([_agent("a", ["a.x"])], history=[{"role": "user", "text": "hi"}]))
+    ws = asyncio.run(cm.assemble("hi", _ctx()))
+    assert ws.history == [{"role": "user", "text": "hi"}]

@@ -455,3 +455,108 @@ def test_deleting_occupant_removes_their_identity_memory():
                 if m.get("predicate") == "identity.name"]
     left = asyncio.run(go())
     assert len(left) == 1 and "阿段" in left[0]
+
+
+# ── 显示名唯一（M-B）──────────────────────────────────────
+def test_normalize_display_name_folds_width_case_and_whitespace():
+    from voiceprint import normalize_display_name as n
+    assert n("  泓舟 ") == n("泓舟")
+    assert n("Ling") == n("ling") == n("ＬＩＮＧ")     # casefold + NFKC 全角
+    assert n("A  B") == n("A B") == "a b"             # 连续空白折叠
+    assert n("   ") == ""
+
+
+def test_second_occupant_cannot_take_an_equivalent_name():
+    """同一个人被分成两个 occupant 是「谁说话都认成同一个」的成因之一。
+
+    两条很像的模板在识别期互相顶成 ambiguous → 判定恒回 primary。这不是识别算法的
+    问题，是身份分配把本该是一条的记录开成了两条。
+    """
+    store = _store()
+
+    async def go():
+        a = await store.enroll_voiceprint("u1", [_basis(0), _near(0, 0.05)],
+                                          display_name="泓舟", model="m1")
+        b = await store.enroll_voiceprint("u1", [_basis(1), _near(1, 0.05)],
+                                          display_name=" 泓舟 ", model="m1")
+        return a, b, await store.list_voiceprints("u1")
+
+    a, b, rows = asyncio.run(go())
+    assert a["ok"] is True
+    assert b["ok"] is False and b["error"] == "duplicate_name"
+    assert b["occupant_id"] == a["occupant_id"]     # 告诉调用方是谁占了
+    assert len(rows) == 1                           # 冲突时不建第二个模板
+
+
+def test_same_occupant_may_keep_its_own_name_on_re_record():
+    """同乘员重录原名不算冲突——否则「重录」这个入口自己会被判重挡住。"""
+    store = _store()
+
+    async def go():
+        first = await store.enroll_voiceprint("u1", [_basis(0), _near(0, 0.05)],
+                                              display_name="泓舟", model="m1")
+        again = await store.enroll_voiceprint(
+            "u1", [_basis(0), _near(0, 0.04)], occupant_id=first["occupant_id"],
+            display_name="泓舟", model="m1")
+        return first, again
+
+    first, again = asyncio.run(go())
+    assert again["ok"] is True and again["occupant_id"] == first["occupant_id"]
+
+
+def test_rename_into_an_occupied_name_changes_nothing():
+    store = _store()
+
+    async def go():
+        a = await store.enroll_voiceprint("u1", [_basis(0), _near(0, 0.05)],
+                                          display_name="泓舟", model="m1")
+        b = await store.enroll_voiceprint("u1", [_basis(1), _near(1, 0.05)],
+                                          display_name="阿灵", model="m1")
+        res = await store.rename_voiceprint("u1", b["occupant_id"], "泓舟")
+        return res, await store.list_voiceprints("u1")
+
+    res, rows = asyncio.run(go())
+    assert res["ok"] is False and res["error"] == "duplicate_name"
+    names = {r["occupant_id"]: r["display_name"] for r in rows}
+    assert sorted(names.values()) == ["泓舟", "阿灵"]     # 两边都没被改
+
+
+def test_legacy_duplicate_rows_are_reported_not_rewritten():
+    """存量重名组：原名不动、norm 留 NULL，但如实标 name_conflict。
+
+    机器只负责「不许悄悄新增冲突」，选哪个称呼是用户的事——自动加数字或座位后缀
+    等于替用户决定他该被怎么称呼。
+    """
+    store = _store()
+
+    async def go():
+        a = await store.enroll_voiceprint("u1", [_basis(0), _near(0, 0.05)],
+                                          display_name="泓舟", model="m1")
+        b = await store.enroll_voiceprint("u1", [_basis(1), _near(1, 0.05)],
+                                          display_name="阿灵", model="m1")
+        # 模拟迁移前就并存的同名行（绕过应用层判重直接改底层）
+        for v in store._vstore._vp.values():
+            if v["occupant_id"] == b["occupant_id"]:
+                v["display_name"], v["display_name_norm"] = "泓舟", None
+        return a, b, await store.list_voiceprints("u1")
+
+    a, b, rows = asyncio.run(go())
+    flags = {r["occupant_id"]: r["name_conflict"] for r in rows}
+    assert flags[a["occupant_id"]] is True and flags[b["occupant_id"]] is True
+    assert [r["display_name"] for r in rows] == ["泓舟", "泓舟"]   # 原名未被改写
+
+
+def test_legacy_null_norm_cannot_be_used_to_bypass_uniqueness():
+    """存量冲突行的 norm 是 NULL——判重必须实时重算原名的规范形，
+    只查 norm 列会让 NULL 成为绕过唯一约束的入口。"""
+    store = _store()
+
+    async def go():
+        await store.enroll_voiceprint("u1", [_basis(0), _near(0, 0.05)],
+                                      display_name="泓舟", model="m1")
+        for v in store._vstore._vp.values():
+            v["display_name_norm"] = None          # 模拟未回填 norm 的存量行
+        return await store.enroll_voiceprint("u1", [_basis(1), _near(1, 0.05)],
+                                             display_name="泓舟", model="m1")
+
+    assert asyncio.run(go())["error"] == "duplicate_name"

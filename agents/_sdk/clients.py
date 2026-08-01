@@ -157,13 +157,15 @@ class MemoryClient:
         return memory_pb2_grpc.MemoryStub(self._channel())
 
     async def get_context(self, session_id: str, user_id: str, vehicle_id: str,
-                          scopes: list[str]) -> dict:
+                          scopes: list[str], occupant_id: str = "") -> dict:
+        # occupant 决定 profile.* 读哪个乘员（M-B）：不传时服务端规范化为 primary。
         for attempt in (1, 2):
             try:
                 resp = await self._stub().GetContext(
                     memory_pb2.GetContextRequest(
                         session_id=session_id, user_id=user_id,
-                        vehicle_id=vehicle_id, scopes=scopes),
+                        vehicle_id=vehicle_id, scopes=scopes,
+                        occupant_id=occupant_id or "primary"),
                     timeout=DEFAULT_TIMEOUT)
                 return dict(resp.values)
             except grpc.aio.AioRpcError as e:
@@ -172,21 +174,30 @@ class MemoryClient:
                     continue
                 raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
 
-    async def get_session(self, session_id: str, last_n: int = 6) -> list[dict]:
+    async def get_session(self, session_id: str, last_n: int = 6, *,
+                          user_id: str = "", occupant_id: str = "") -> list[dict]:
         try:
             resp = await self._stub().GetSession(
-                memory_pb2.GetSessionRequest(session_id=session_id, last_n=last_n),
+                memory_pb2.GetSessionRequest(
+                    session_id=session_id, last_n=last_n, user_id=user_id,
+                    occupant_id=occupant_id or "primary",
+                    scope=memory_pb2.HISTORY_SCOPE_OWNER_ONLY),
                 timeout=DEFAULT_TIMEOUT)
             return [{"role": t.role, "text": t.text, "ts": t.ts} for t in resp.turns]
         except grpc.aio.AioRpcError as e:
             raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
 
-    async def upsert_profile(self, user_id: str, key: str, value_json: str) -> bool:
-        """写用户画像字段（如常用地点 places）。失败抛 RuntimeError，调用方决定容错。"""
+    async def upsert_profile(self, user_id: str, key: str, value_json: str,
+                             occupant_id: str = "") -> bool:
+        """写用户画像字段（如常用地点 places）。失败抛 RuntimeError，调用方决定容错。
+
+        places 按 OwnerKey 落 memory_item（M-B）——不带 occupant 就是让乘员 B
+        覆盖主驾的家。"""
         try:
             resp = await self._stub().UpsertProfile(
                 memory_pb2.UpsertProfileRequest(
-                    user_id=user_id, key=key, value_json=value_json),
+                    user_id=user_id, key=key, value_json=value_json,
+                    occupant_id=occupant_id or "primary"),
                 timeout=DEFAULT_TIMEOUT)
             return resp.ok
         except grpc.aio.AioRpcError as e:

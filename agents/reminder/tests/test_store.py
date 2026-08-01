@@ -121,3 +121,68 @@ def test_to_card_item_contract():
                     "fire_at_ms": fire * 1000}
     todo = Reminder(id="rid2", user_id="u1", title="买牛奶", kind="todo")
     assert todo.to_card_item(now=now, tz=tz)["time_display"] == ""
+
+
+# ── OwnerKey（M-B）────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_same_user_two_occupants_do_not_see_each_other():
+    """同 user 两位乘员各自的提醒互不可见。
+
+    此前 reminder 全域零 occupant：两个人的提醒混在一张表，列表序号互相污染
+    （A 列了表，B 说「取消第二个」会命中 A 的第二条）。
+    """
+    s = await _store()
+    await s.add(Reminder(user_id="u1", occupant_id="primary", title="主驾的会", fire_at=100))
+    await s.add(Reminder(user_id="u1", occupant_id="occ-2", title="乘客的药", fire_at=200))
+
+    a, _ = await s.list_split("u1")                              # 缺省=primary
+    b, _ = await s.list_split("u1", occupant_id="occ-2")
+    assert [r.title for r in a] == ["主驾的会"]
+    assert [r.title for r in b] == ["乘客的药"]
+
+
+@pytest.mark.asyncio
+async def test_cross_owner_get_update_and_cancel_are_all_denied():
+    s = await _store()
+    mine = await s.add(Reminder(user_id="u1", occupant_id="primary", title="X", fire_at=100))
+
+    assert await s.get("u1", mine.id, occupant_id="occ-2") is None
+    assert await s.set_status("u1", mine.id, "done", occupant_id="occ-2") is False
+    assert await s.update_fire_at("u1", mine.id, 999, occupant_id="occ-2") is False
+    assert (await s.get("u1", mine.id)).status == "pending"      # 原状不变
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_stays_inside_one_owner():
+    """「都取消吧」只作用当前 OwnerKey——不该清掉同车另一位的提醒。"""
+    s = await _store()
+    await s.add(Reminder(user_id="u1", occupant_id="primary", title="A", fire_at=100))
+    await s.add(Reminder(user_id="u1", occupant_id="occ-2", title="B", fire_at=100))
+
+    n = await s.cancel_all("u1", occupant_id="occ-2")
+    assert n == 1
+    a, _ = await s.list_split("u1")
+    assert [r.title for r in a] == ["A"]
+
+
+@pytest.mark.asyncio
+async def test_find_by_title_does_not_cross_owner_on_same_title():
+    """同名提醒是最危险的形态：按标题模糊匹配会跨乘员操作到别人那条。"""
+    s = await _store()
+    await s.add(Reminder(user_id="u1", occupant_id="primary", title="吃药", fire_at=100))
+    await s.add(Reminder(user_id="u1", occupant_id="occ-2", title="吃药", fire_at=200))
+
+    hits = await s.find_by_title("u1", "吃药", occupant_id="occ-2")
+    assert [r.fire_at for r in hits] == [200]
+
+
+@pytest.mark.asyncio
+async def test_legacy_rows_without_occupant_belong_to_primary():
+    """存量行归 primary——不按标题、创建时间或当前声纹猜真实 owner。"""
+    s = await _store()
+    r = Reminder(user_id="u1", title="旧提醒", fire_at=100)
+    r.occupant_id = ""                       # 模拟迁移前写入的无 owner 行
+    await s.add(r)
+    a, _ = await s.list_split("u1")
+    b, _ = await s.list_split("u1", occupant_id="occ-2")
+    assert [x.title for x in a] == ["旧提醒"] and b == []

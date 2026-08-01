@@ -43,11 +43,16 @@ class Context:
     async def fetch(self, *scopes: str) -> dict:
         if not scopes:
             return {}
+        # M-B：带上本轮 owner——每个 Agent 早就持有 ctx.occupant_id，缺的一直是
+        # 把它传下去这一步，于是 profile.* 读写恒落 primary。
         return await self._memory.get_context(
-            self.session_id, self.user_id, self.vehicle_id, list(scopes))
+            self.session_id, self.user_id, self.vehicle_id, list(scopes),
+            occupant_id=self.occupant_id)
 
     async def history(self, last_n: int = 6) -> list[dict]:
-        return await self._memory.get_session(self.session_id, last_n)
+        return await self._memory.get_session(
+            self.session_id, last_n, user_id=self.user_id,
+            occupant_id=self.occupant_id)
 
     async def save_profile(self, key: str, value) -> bool:
         """写用户画像字段（如常用地点 places）。value 为可 JSON 序列化对象。
@@ -56,7 +61,8 @@ class Context:
             return False
         import json
         return await self._memory.upsert_profile(
-            self.user_id, key, json.dumps(value, ensure_ascii=False))
+            self.user_id, key, json.dumps(value, ensure_ascii=False),
+            occupant_id=self.occupant_id)
 
     async def save_shared_state(self, key: str, value) -> bool:
         """写跨 Agent 会话状态（Agent 无状态化，临时会话态落 profile KV）。
