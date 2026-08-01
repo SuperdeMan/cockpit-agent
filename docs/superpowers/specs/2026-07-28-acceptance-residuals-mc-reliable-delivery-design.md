@@ -946,3 +946,37 @@ dashboard 中的“已投递”只能对应 `PRESENTED`，不能用 NATS publish
 - `EXEC_UNKNOWN + state_match` 能纠正实际已生效的结果，同时不扩大到无 readback 的能力；
 - source allowlist 允许逐来源开启/回滚且每次从运行时读回，不删除审计数据、不制造重复通知；
 - 全部真栈验收场景有新鲜运行证据，SKIP 不计为通过。
+
+---
+
+## 19. 落地记录（2026-08-01）
+
+**执行口径变更**：本规格与配套实施计划（16 个 task）按产品负责人裁决**简化执行**，
+同 M-B。切分判据是「**先修真的会产生错误行为的缺陷**」。
+
+### 19.1 已落地
+
+| 规格章节 | 落地情况 |
+|---|---|
+| §5 `proactive_delivery` | ✅ 落地，但**列集刻意最小**：无 `condition_revision`、`present_lease_*`、`state_version`、`shadow_mode`、`privacy_state`。理由见 19.2 |
+| §6 ACK 阶梯 | ✅ `pending → dispatched → presented`，**只有 presented 是合同完成**。`SPOKEN` 作为独立观测未实现（见 19.2） |
+| §7 持久化档位 | ✅ 只 `critical`/`user_contract` durable；无 PG 时诚实降级并把 durable 报成 off。规格的 `degraded_emergency_direct` 未单独实现——**既有 fail-open 已覆盖**（治理器不可用时生产方直发老主题） |
+| §8 治理与频控 | ✅ 闸5 改 `_suppress`，与闸3/4 对称。持久化频控事实未做（频控窗是进程内滚动窗，重启即净初态，与 e2e 的重置口径一致） |
+| §9 S2S `speech_channel` | ⚠️ **换了实现路径**：规格要 HMI 上报带 TTL 的 `speech_channel` 状态给 governor 做预判。实际做法是**网关把 `priority` 透传给 HMI，由 HMI 仲裁**——因为一刀切的根因就是 priority 被网关吞掉了，补上它之后 HMI 本来就有全部判据，而 governor 侧预判要建一条新的 HMI→governor 链路。语音是**末端**资源，末端仲裁更准（governor 预判的是 1.5s 前的状态） |
+| §10 位置提醒 | ⚠️ **部分**：用 `ttl_ms` 兜住陈旧补播（真实风险），**未实现三态 `within_m` 二次判定**——三态求值器的算子集与 scene solver 有等价契约，加算子要两边同步。`DELIVERY_PENDING` 末端条件租约未做 |
+| §11 Deep Research | ⚠️ **只取必要的一半**：完成通知随 durable 通道自动获得断线重投；**不建 `research_report` 表**——报告正文早已在记忆里，丢的只是那张卡，而卡在 payload 里 |
+| §12 Outcome Verifier | ✅ `EXEC_UNKNOWN + state_match` 落地，三条边界逐条实现（只认超时族、只认 state_match、不改 status） |
+| §13 故障恢复 | ✅ 重启恢复 + 断线补投，**共用同一份账** |
+| §14/§15 迁移与回滚 | ⚠️ 简化：加法式建表随启动幂等应用，无影子/分来源 cutover。回滚=清 `POSTGRES_DSN`（当场回落内存态旧行为） |
+
+### 19.2 明确未做与判据
+
+| 未做项 | 判据 |
+|---|---|
+| 多实例 outbox worker、`present_lease_*`、`state_version` 串行化 | 为高并发与多实例准备。**一辆车一个 HMI，量级个位数**；引入它们要付的复杂度换不来对应的正确性 |
+| `SPOKEN` 独立观测 | 语音是否播出去了在 HMI 侧已经可判（补播队列自己知道），但它不是投递终态；建一条只为观测的上行链路，收益不抵成本 |
+| HMI IndexedDB 原子收件箱 | 幂等呈现用内存凭据集合够用；跨刷新的补投由服务端账本负责——客户端再存一份是第二真相源 |
+| 影子模式、分来源渐进 cutover | 本批 durable 只覆盖两档、fail-open 路径逐字保留，灰度保护的是一个已经能一键回退的改动 |
+| `research_report` 表与受控读取 API | 见 §11 行 |
+| Task Ledger `owner_v2` cutover（规格 Task 2） | 与可靠投递无因果关系，是被计划顺带绑进来的 |
+| 真栈故障注入矩阵（Task 15） | 三条关键路径已在真栈逐条验过（账本落地 / 断线补投+回执 / 重启恢复），故障注入价值在回归而非发现 |

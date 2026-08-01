@@ -354,6 +354,27 @@ L2/L3/L4 删除 saga 与 privacy registry 协议、observability 四表 owner �
 ReminderAdmin/SceneAdmin 管理服务、独立迁移 CLI 与 pg_dump 备份流程、真栈多乘员 E2E
 矩阵、声纹注册单事务。原 superpowers 计划的 15-task 重流程按产品负责人裁决简化执行。
 
+**M-C 可靠触达已落地（2026-08-01，分支 `codex/acceptance-mc-reliable-delivery`）**：
+关的是 §4-6 与 §7 P1-04/P1-05、§4-3 P2-05。核心命题一句话：**`publish 成功 ≠ 用户收到`**。
+生产方到用户之间有三处会静默丢——①治理器 ack 后进程死（待发/延后队列全在内存；M3 RFC
+写的「生命周期以秒计」描述的是 advisory，被当成了全部四档的性质）；②HMI 断线时
+`broadcast` 的返回值只进了一行日志，n==0 即蒸发；③S2S 说话时主动语音被一刀切成只出气泡，
+**而一刀切的根因是网关把 `priority` 吞掉了**，HMI 分不出哪条该抢话。
+修法：`proactive_delivery` 账本（只给 critical/user_contract）+ **落库后才 ack** +
+`delivery_id` 随信封走 + HMI 回执销账 + 连上补投 + 重启恢复（与补投共用同一份账）；
+网关透传 priority 后 HMI 按档仲裁（critical 抢话 / user_contract 排队待空闲补播）。
+另两件：**Verifier 对 transport-uncertain 失败查世界状态**（三条边界：只认超时族——
+Agent 明确报的错是确定失败不许被状态翻案；只认 state_match；**不改 status**，聚合器换
+一句诚实话术但不伪造成功话术）；**闸5 频控改延后**（与闸3/4 对称——原注释「窗口是小时级
+延后没意义」不成立，窗口是滑动的）。契约见 `docs/conventions.md` §9.8 可靠投递段。
+**真栈已验**：断线时消息停在 `dispatched`（已发出仍算没送到）→ 补投携带原凭据 → 回执后
+`presented` → 再补投 0 条；重启日志「投递账本恢复 1 条未送达消息」；缺 DSN/缺 asyncpg
+两种降级都如实报 `durable=off`。
+**本批明确未做**：多实例 outbox worker 与 present lease/state_version 并发协议（一辆车
+一个 HMI，量级个位数）、HMI IndexedDB 收件箱、影子与分来源灰度、`research_report` 表
+（报告正文早在记忆里）、Ledger owner-v2 cutover、真栈故障注入矩阵、位置提醒的地理谓词
+（求值器算子集与 scene solver 有等价契约，本批用 ttl 兜住陈旧补播这个真实风险）。
+
 **M4 P4 的已知余项**
 
 | 余项 | 出处 | 说明 |
