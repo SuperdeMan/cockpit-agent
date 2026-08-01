@@ -64,10 +64,12 @@ async def _drain(service, request, order=None):
     async for event in service.Handle(request, None):
         if event.HasField("final") and order is not None:
             order.append("final")
-    # fire-and-forget：让已排队的影子任务跑完再断言
+    # fire-and-forget：让已排队的任务跑完再断言。
+    # `_bg` 里不只有影子（还有记忆写入等），且那些在无栈环境下本就会失败——
+    # `return_exceptions=True` 免得别人的失败把本用例带红。
     pending = [t for t in service._bg if not t.done()]
     if pending:
-        await asyncio.gather(*pending)
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 def _req(text, trace_id):

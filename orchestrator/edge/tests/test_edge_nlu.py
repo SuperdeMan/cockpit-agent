@@ -4,7 +4,9 @@
   ① **分词 parity**：纯 Python WordPiece 必须与训练时用的 `BertTokenizerFast` 逐 token 相同。
      自己写分词器最大的风险不是慢，是**和训练时悄悄不一致**——模型会在线上系统性变差而
      毫无报错（同「注册与识别不同信道」那一课：要比对的两端必须同源采集）。
-     transformers 装不上时 skip（CI 不装 ML 栈），但**装了就必须逐条过**。
+     分两层：**冻结 golden 无依赖、CI 必跑**；全量语料对 transformers 实跑需底座+ML 栈，
+     装了就必须逐条过。（分层是 2026-07-30 评审 INFO 项的收口——此前只有后者，CI 上
+     整体 skip，守这条性质的岗哨只在开发机。）
   ② **缺模型即 disabled**：models/nlu/ 缺任何一件都不许崩、不许抛——整链回落 1727 行规则
      （声纹 CAM++ 缺失时网关决议 disabled 的同款姿态）。
   ③ **阈值钳制**：垃圾/越界 env 不崩，也不许静默变成「全量放行」（skills min_score 钳 0 那一课）。
@@ -28,6 +30,36 @@ _CORPUS = os.path.join(_ROOT, "test", "eval_corpus", "feishu_intents_full.jsonl"
 
 
 # ── ① 分词 parity ────────────────────────────────────────────────────────────
+#
+# 两层，一层在 CI 站岗、一层在开发机加厚：
+#   ①a 冻结 golden（**无依赖，CI 必跑**）：参考答案与行为等价词表子集都在库里；
+#   ①b 全量语料对 transformers 实跑（需底座 + ML 栈，开发机）。
+# 分层的理由是 2026-07-30 评审的 INFO 项：①b 在 CI 上**整体 skip**，于是这条
+# 「错了会很贵」的性质唯一的岗哨在开发机上——而开发机不是每次改动都会跑。
+
+_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "wordpiece_parity.json")
+
+
+def test_tokenizer_parity_against_frozen_golden():
+    """冻结 golden：无 transformers、无底座模型也能跑，**CI 上真正站岗的那一层**。
+
+    ⚠ 它守的是**算法**（basic + wordpiece 贪心最长匹配与 transformers 逐 token 相同），
+    不是「生产用的那份词表是对的」——后者由训练导出时落 `vocab.json`（tokenizer 自己的
+    映射，不按行号推）+ `_assert_onnx_parity` 守。两件事别混：换底座后本测试仍会绿，
+    该做的是重新生成 fixture 并人审 diff（`scripts/gen_wordpiece_parity_fixture.py`）。
+    """
+    with open(_FIXTURE, encoding="utf-8") as f:
+        fx = json.load(f)
+    mine = nlu_mod.WordPiece(fx["vocab"])
+    bad = []
+    for case in fx["cases"]:
+        got, mask = mine.encode(case["text"], fx["max_len"])
+        if got != case["ids"]:
+            bad.append((case["text"], got[:12], case["ids"][:12]))
+    assert len(fx["cases"]) >= 200, "golden 用例太少，覆盖不住边界形态"
+    assert not bad, "分词与冻结 golden 不一致：" + "; ".join(
+        f"{t!r} mine={a} golden={b}" for t, a, b in bad[:5])
+
 
 @pytest.mark.skipif(not os.path.isfile(_VOCAB),
                     reason="底座 vocab 未拉取（scripts/fetch-edge-nlu-base.*）")
