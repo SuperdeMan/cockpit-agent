@@ -99,11 +99,23 @@ def _run_with_fake_docker(tmp_path, packages):
         "json.dumps(sys.argv[1:]), encoding='utf-8')\n",
         encoding="utf-8",
     )
-    docker_cmd = tmp_path / "docker.cmd"
-    docker_cmd.write_text(
-        f'@"{sys.executable}" "{fake}" %*\r\n',
-        encoding="utf-8",
-    )
+    # 假 docker 要按平台造：此前只写 `docker.cmd`（Windows 批处理），
+    # **Linux 上它根本不会被当成可执行的 docker**，于是 wrapper 打到了真 docker
+    # ——CI 上表现为 `go: downloading ...` 与 pwsh 超时。不是断言错了，
+    # 是这条用例在那儿根本没被隔离起来跑。
+    if os.name == "nt":
+        shim = tmp_path / "docker.cmd"
+        shim.write_text(
+            '@"' + sys.executable + '" "' + str(fake) + '" %*\r\n',
+            encoding="utf-8",
+        )
+    else:
+        shim = tmp_path / "docker"
+        shim.write_text(
+            "#!/bin/sh\nexec \"" + sys.executable + "\" \"" + str(fake) + "\" \"$@\"\n",
+            encoding="utf-8",
+        )
+        shim.chmod(0o755)
     powershell = _powershell()
     env = dict(os.environ)
     env["PATH"] = str(tmp_path) + os.pathsep + env.get("PATH", "")
