@@ -355,7 +355,13 @@ def test_render_catalog_keeps_always_include_over_budget():
 
 
 def test_render_catalog_edge_core_compact():
-    """edge 车控核心紧凑渲染（仅意图名，不带 slots/desc），避免体积撑爆预算偏置路由。"""
+    """edge 车控核心紧凑渲染（仅意图名，不带 slots/desc）。
+
+    ⚠ M5 P3 收尾试过把 `capabilities.py` 新生成的判别化描述也渲进来，**双臂差分否掉了**：
+    25 条语料 ×2 轮 ×2 provider（minimax/deepseek）Δ=0、零翻面，代价是每次规划 +1462
+    字符。intent 名本身就是判别性文本，planner 这一侧不缺信息。故本断言保留原样——
+    它现在守的是「不要在没有证据的情况下往每次规划里加 1.4k 字符」。
+    """
     item = WorkingSet.render_catalog(
         [_agent_dep("edge-vehicle", 3, deployment="edge", kind="edge_fast")])
     assert "edge-vehicle.act0" in item   # 意图名在
