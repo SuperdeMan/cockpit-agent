@@ -2217,6 +2217,7 @@ def test_privacy_manifest_has_exact_staged_inventory_and_runtime_mirror():
         "observability_raw_content",
         "task_ledger",
         "proactive_process_queue",
+        "proactive_delivery",
         "payment_order",
         "mcp_demo_order",
     ]
@@ -2233,7 +2234,8 @@ def test_privacy_manifest_has_exact_staged_inventory_and_runtime_mirror():
         "profile_identity",
         "session_history",
     ]
-    assert len(runtime_registry.targets_for_milestone("M-D")) == 14
+    # M-C 追加 proactive_delivery（可靠投递账本，payload 存话术与卡片摘要=个人数据）
+    assert len(runtime_registry.targets_for_milestone("M-D")) == 15
 
 
 def test_voiceprint_case_declares_the_only_fixture_pre_step():
