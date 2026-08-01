@@ -151,10 +151,20 @@ jobs:
           fail=0
           run_group() {
             echo "::group::pytest $*"
-            python -m pytest "$@" --import-mode=importlib -v --tb=short
-            rc=$?
+            python -m pytest "$@" --import-mode=importlib -v --tb=short 2>&1 | tee /tmp/pytest-group.log
+            rc=${PIPESTATUS[0]}
             echo "::endgroup::"
-            if [ $rc -ne 0 ]; then fail=1; echo "::error::pytest group FAILED: $*"; fi
+            if [ $rc -ne 0 ]; then
+              fail=1
+              echo "::error::pytest group FAILED: $*"
+              # 逐条把失败用例升成 annotation。**没有 admin 权限读不到 job 日志**，
+              # 而 annotation 是公开可读的——只报组名等于「知道它红了，不知道哪红」。
+              # 2026-07-31 起 CI 连红五次，定位靠的是本地按同样分组复跑而不是看 CI，
+              # 那说明 CI 的失败输出本身不可用。
+              grep -E '^(FAILED|ERROR) ' /tmp/pytest-group.log | head -40 | while IFS= read -r line; do
+                echo "::error::$line"
+              done
+            fi
           }
           run_group test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ agents/
           run_group orchestrator/edge/tests/
