@@ -39,6 +39,17 @@ _OPEN_STATES = (PENDING, DISPATCHED)
 # 需要 durable 保证的档位。其余档位不落库——它们可以不说。
 DURABLE_PRIORITIES = ("critical", "user_contract")
 
+# 个人数据清单登记（M-A 隐私清单机制）。**payload 里存着话术与卡片摘要**——
+# 那是个人数据，删记忆却留着投递账本与「删了长期记忆但对话原文还在」是同一种假删除。
+# 未登记的新 SQL 表会被 `scripts/e2e_contract.py` 的清单守卫直接拦下（本批实测被拦）。
+PERSONAL_DATA_TARGETS = (
+    {
+        "id": "proactive_delivery",
+        "storage_variants": ("proactive_delivery", "DeliveryStore._mem"),
+        "sql_variants": ("proactive_delivery",),
+    },
+)
+
 
 def is_durable(priority: str) -> bool:
     return (priority or "") in DURABLE_PRIORITIES

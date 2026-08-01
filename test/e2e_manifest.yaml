@@ -241,6 +241,21 @@ privacy:
       verify_case: gdpr_mc_proactive_queue_verify
       policy_flags: []
 
+    - id: proactive_delivery
+      backend: postgres
+      adapter_key: proactive
+      adapter: proactive.governor:Governor
+      storage_variants: [proactive_delivery, DeliveryStore._mem]
+      lifecycle: deletable
+      enforced_from: M-C
+      owner_fields: [user_id, occupant_id]
+      seed_case: gdpr_mc_proactive_delivery_seed
+      count_probe: gdpr_mc_proactive_delivery_count
+      read_probe: gdpr_mc_proactive_delivery_read
+      delete_action: privacy_user_all
+      verify_case: gdpr_mc_proactive_delivery_verify
+      policy_flags: []
+
     - id: payment_order
       backend: process_memory
       adapter_key: payment
