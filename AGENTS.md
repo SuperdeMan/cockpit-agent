@@ -73,7 +73,9 @@ dashboard 16）——各主题的测试增量与提交散列见 §4 对应行，
 **让影子 `agree` 状态从未出现过**的比较口径缺陷。
 
 **⚠ 唯一未收口的是 GitHub CI**（见 §4.0 末「CI/nightly 现状」）：本地全绿而 CI 红，
-根因是 M-A 那批测试把 **Windows 假设写死了**，Ubuntu 上必红。已修 4 类、**剩 6 条**。
+根因是 M-A 那批测试把 **Windows 假设写死了**，Ubuntu 上必红。已修 4 类、**剩 7 条**
+（2026-08-01 逐条核过 annotation，此前记的 6 条漏了 stack_lease 那条）。
+**与 M5 P3 收尾无关**：run #228（收尾前）与 #229（收尾后）失败集合逐条相同。
 
 **智能化升级 M0a→M4 全部完成**（母提案
 `docs/design/2026-07-24-eva-benchmark-intelligence-upgrade.md` §6 分期，各期落地记录逐条在案）。
@@ -690,8 +692,9 @@ badcase 排查观测贯通=2026-07-10[见「可观测」行]。）
 | 已修 ① 环境泄漏 | `test_remaining_e2e_protocol._load()` 加载 `e2e_real_providers.py` 时，后者 **import 期** `os.environ.setdefault` 把 .env 灌进同进程；monkeypatch 还原不了它。后续 charging-planner 用例把 provider 决议从 mock 翻成 real → 真调用拿假 key 失败 → 无卡 → 红。**group 1 已由 CI 确认转绿** |
 | 已修 ② 平台假设 | `test_run_go_tests_wrapper` 硬编码 `%SystemRoot%\System32\WindowsPowerShell`（Ubuntu `KeyError`）；假 docker 只写 `docker.cmd`（Linux 上打到真 docker，`go: downloading` + pwsh 超时）；`test_e2e_stack_lease` 用 `mkdir()` 建 0o755 目录，而 Linux 侧先校验 0o700/0o600 → **那两条断言在 Windows 上从来没被真正执行过** |
 | 已修 ③ CI 可诊断性 | 此前只报「pytest group FAILED: <组名>」，而 **job 日志需要 admin 权限**（`/actions/runs/{id}/logs` 返回 "Must have admin rights"）。改成把 `FAILED/ERROR` 行逐条升成 `::error::` annotation（公开可读）。**没有这一步就只能靠本地复现去猜** |
-| **剩余 6 条** | 全在 `scripts/tests/`：`test_run_e2e.py` 四条 canonical 晋升（`assert 'report_counts_invalid' in ['canonical_promotion_failed']`、`assert 3 == 0` 等——**具体理由被 `except` 吞成了泛化的 `canonical_promotion_failed`**）；`test_run_go_tests_wrapper` 一条 argv 比对；`test_e2e_identity` 一条 `memory capability bundle rewr...` |
-| 下一步怎么查 | `python scripts/tests/../ci_ann.py` 那类脚本读 annotation 即可（**免 admin**）；或在 Linux 容器里跑 `scripts/tests/`。⚠ **不要把诊断细节塞进 `canonical_rejection_reasons`**——那是契约字段，已有测试锁死「只有这一项」，我试过一次被三条测试拦下（改走 stderr 也撞了 runner 的输出契约，已回退） |
+| **剩余 7 条**（⚠ 此前记作 6，**漏了 stack_lease 那条**） | 全在 `scripts/tests/`：`test_run_e2e.py` **四条** canonical 晋升（`assert 'report_counts_invalid' in ['canonical_promotion_failed']`、`assert 3 == 0` 等——**具体理由被 `except` 吞成了泛化的 `canonical_promotion_failed`**）；`test_run_go_tests_wrapper` 一条 argv 比对；`test_e2e_identity` 一条 `memory capability bundle rewr...`；`test_e2e_stack_lease::test_child_bundle_rejects_nonregular_file_and_expected_root_escape` 一条 `Regex pattern did not match`。**「已修②平台假设」那一栏提到修过 stack_lease，但修的是另一条用例**，本条仍红 |
+| 逐条比对基线（2026-08-01） | run **#228**（`399046f`，M5 P3 收尾**之前**）与 run **#229**（`d6fbca3`，收尾**之后**）的失败集合**逐条相同**——M5 P3 收尾（4 个新测试文件、新增 ~40 条用例，含无依赖的分词 golden）在 Ubuntu 上全过，**零新增红**。留这行是为了下一个人不必再自己比一次 |
+| 下一步怎么查 | `python scripts/ci_annotations.py [run_id]` 读 annotation（**免 admin**；不带参数=最新一次 run，注意刚 push 时最新那次可能还在跑，要显式给 id）；或在 Linux 容器里跑 `scripts/tests/`。⚠ **不要把诊断细节塞进 `canonical_rejection_reasons`**——那是契约字段，已有测试锁死「只有这一项」，我试过一次被三条测试拦下（改走 stderr 也撞了 runner 的输出契约，已回退） |
 | nightly | 自 `#30`（2026-07-29）起红，**同样早于本轮工作**。它跑 mock 全栈 + `--lane nightly --full`，失败原因尚未定位（需要读 artifact 或本地起 mock 栈复现） |
 
 **一条可复用判据**：跨平台 CI 里，被 `os.name == "nt"` 提前 return 掉的校验，
