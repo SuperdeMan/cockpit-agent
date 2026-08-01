@@ -197,9 +197,25 @@ journeys:
 
 | 车道 | 内容 | 触发 | LLM/provider |
 |---|---|---|---|
-| mock 子集 | `lane: mock` 旅程（确定性路由：route_hints 可达 + 无真实外部数据依赖） | nightly CI（挂进 `nightly-e2e.yml`，沿用 `--case` 先例） | MockProvider |
+| mock 子集 | `lane: mock` 旅程（判据见下方⚠） | ~~nightly CI~~ **2026-08-01 起该车道为空，`e2e_journeys` 已退出 nightly** | MockProvider |
 | live 全量 | 全部旅程 | 本地手动 / release 前（`make e2e-journeys`） | 声明 active provider；**禁与 docker build 并发**（IO 打满→LLM 超时假失败，2026-07-12 实证） |
 | CDP | C 组 | 本地手动 / release 前 | 同 live |
+
+> ⚠ **「mock-safe」的判据在 2026-08-01 被推翻并改写。**
+> 原判据是「确定性路由：**route_hints 可达** + 无真实外部数据依赖」。这条判据把「有规则撑着」
+> 当成了「不依赖模型」——而 route_hints 是**会被数据退役的**：M5 P2 于 2026-07-29 按跨
+> provider 双臂证据退役 19 条（32→12），A4-2 的 `reminder.list`、B4-2 的 `scene.activate`
+> 都在其中，**nightly 当晚即红并连红 3 次**（#30/#31/#32），根因直到 2026-08-01 才定位。
+>
+> **新判据：mock-safe ⟺ 这条路径不经过模型判断。** 具体只有四类：
+> ①端侧快路径（车控/媒体，`fast_intent` + VAL，全程零 LLM）；②兜底 Agent
+> （`PLANNER_FALLBACK_AGENT`，`planning._fallback` 第一分支由**结构**保证被路由到）；
+> ③确定性解析与流程态短路（timeparse、挂起态裸确认、注入检测）；④协议/传输层。
+> **「它有 hint 撑着」不算**——那是借来的确定性，出借方随时会收回。
+>
+> 更一般的一条：**在 mock 栈上断言「模型选对了 Agent」，测的永远是规则不是系统。**
+> 这类断言的归宿是 live 车道（`mode_routing_cases.yaml` / RoutingBench），
+> 或者等「live 车道进 CI」那张卡兑现（`AGENTS.md` §4.0）。
 
 前置纪律（写进 runner 启动检查）：全栈起后 settle ≥40s（registry 重注册 10s + 车况快照 30s）；宿主 5173 未被占（CDP 用例）；`reset_env` 每旅程必跑。
 

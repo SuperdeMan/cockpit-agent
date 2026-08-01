@@ -60,7 +60,10 @@ journeys:
   - id: B4-2
     title: 场景激活句不被端侧劫持 + custom_params 覆盖
     level: regression
-    lane: mock
+    # 2026-08-01 由 mock 改判 live：`scene.activate` 的 route_hint 已于 2026-07-29 退役
+    # （M5 P2，跨 provider 双臂证据），mock 全栈下「开启午休模式，温度26」只会落 chitchat，
+    # 终态 hvac_temp 停在 22。判据同 A4-2：**mock-safe 是「不经过模型判断」，不是「有 hint」**。
+    lane: live
     tags: [continuity, autonomy]
     setup:
       vehicle: {gear: P, speed_kmh: 0}

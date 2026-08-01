@@ -852,6 +852,16 @@ def load_journeys(suite_filter: str, id_filter: set[str],
         out = [j for j in out if j["id"] in id_filter]
     if lane == "mock":
         out = [j for j in out if j.get("lane") == "mock"]
+        if not out and not id_filter and not level:
+            # **空选集不算绿。** 2026-08-01 起 mock 车道为空（原有两条的「mock-safe」
+            # 判据是「有 route_hints 确定性路由」，那些 hint 已按数据退役），若这里静默
+            # 返回空列表，跑出来就是「0/0 通过」——一个看着像绿的洞。要重新填充 mock
+            # 车道，判据是**这条旅程不经过模型判断**（端侧快路径 / 兜底 Agent /
+            # 确定性时间解析 / 协议层），不是「它有没有 hint 撑着」。
+            raise SystemExit(
+                "[lane] --lane mock 选不出任何旅程：mock 车道当前为空。\n"
+                "  空选集不算通过——要么改回 milestone/live 车道跑，"
+                "要么先把旅程标成 lane: mock（判据见 e2e_manifest.yaml 的 e2e_journeys 条目）。")
     if level:
         out = [j for j in out if j.get("level") == level]
     return out

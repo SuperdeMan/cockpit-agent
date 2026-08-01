@@ -345,15 +345,16 @@ cases:
     persistent_data: true
     memory_sessions: 0
     nightly:
+      # 只留**不经过模型判断**的两例：注入拦截走确定性检测、裸确认走挂起态短路。
+      # `ctx_trip_plan_fallback` / `ctx_trip_modify_fallback` 于 2026-08-01 移出 nightly
+      # ——它们断言 `step.agent:trip-planner`，而 mock 全栈下规划只会落 chitchat；
+      # 此前靠 trip 那四条 route_hints 撑着，hint 已按数据退役（见 e2e_trip 条目的判据）。
+      # 两例在 milestone 车道（真 provider）仍全量跑。
       args:
         - --case
         - ctx_injection_blocked
         - --case
         - ctx_bare_confirm_no_pending
-        - --case
-        - ctx_trip_plan_fallback
-        - --case
-        - ctx_trip_modify_fallback
 
   - id: e2e_degrade
     path: test/e2e_degrade.py
@@ -380,20 +381,25 @@ cases:
     persistent_data: true
     memory_sessions: 0
 
+  # 2026-08-01 移出 nightly：mock 车道原有两条旅程（A4-2 提醒触达 / B4-2 场景激活），
+  # **它们的「mock-safe」判据白纸黑字写的就是「route_hints 确定性路由」**
+  # （见 regression_a.yaml A4-2 原注释）。那些 hint 已按跨 provider 数据退役，判据随之落空
+  # ——A4-2 的「我有哪些提醒」（reminder.list）与 B4-2 的「开启午休模式」（scene.activate）
+  # 在 mock 下都只能落 chitchat。两条已改判 `lane: live`，mock 车道随之为空，
+  # 故整个脚本退出 nightly（**空选集不算绿**：`e2e_journeys.py` 已加门禁，
+  # `--lane mock` 选不出旅程会直接失败而不是报 0/0 通过）。
+  # 覆盖去向：milestone 车道（真 provider）跑全量旅程，与此前一致。
   - id: e2e_journeys
     path: test/e2e_journeys.py
     command: [python, test/e2e_journeys.py]
     group: default
-    lanes: [nightly, milestone]
+    lanes: [milestone]
     timeout_s: 1800
     profile: root
     skip_reasons: [forbid]
     signed_identity: true
     persistent_data: true
     memory_sessions: 2
-    nightly:
-      args: [--lane, mock, --no-badcase]
-      memory_sessions: 0
 
   - id: e2e_ledger
     path: test/e2e_ledger.py
@@ -654,18 +660,25 @@ cases:
     persistent_data: true
     memory_sessions: 0
 
+  # 2026-08-01 移出 nightly：本脚本每一轮都要求规划落到 trip-planner，而 nightly 是
+  # **mock 全栈**——MockProvider 只回显原话，规划必然走 `_fallback` 而 `_fallback` 优先
+  # 兜底到 chitchat。它此前之所以能过，全靠 `trip.plan/.navigate/.status/.modify` 四条
+  # route_hints 在 LLM 之后 replace 整条计划；那四条已于 2026-07-29 按跨 provider 双臂
+  # 证据退役（M5 P2）。**也就是说这个脚本在 mock 车道里测的一直是正则，不是系统。**
+  # 判据（随本次收窄入册）：**mock-safe 的条件是「这条路径不经过模型判断」**
+  # ——端侧快路径 / 兜底 Agent / 确定性时间解析 / 协议层——**不是「有没有 hint」**。
+  # 覆盖去向：milestone 车道（真 provider）仍跑全量；不恢复 hint（那是把规则工厂请回来）。
   - id: e2e_trip
     path: test/e2e_trip.py
     command: [python, test/e2e_trip.py]
     group: default
-    lanes: [nightly, milestone]
+    lanes: [milestone]
     timeout_s: 600
     profile: root
     skip_reasons: [forbid]
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
-    nightly: {all: true}
 
   - id: e2e_tts_stream
     path: test/e2e_tts_stream.py

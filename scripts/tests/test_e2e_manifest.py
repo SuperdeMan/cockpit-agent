@@ -70,13 +70,16 @@ EXPECTED: dict[
             "--case", "cloud_chitchat_streaming",
         ),
     ),
+    # 2026-08-01 nightly 子集由 4 例收窄到 2 例：ctx_trip_* 两例断言
+    # `step.agent:trip-planner`，而 nightly 是 mock 全栈——MockProvider 只回显原话，
+    # 规划必落兜底 chitchat。它们此前靠 trip 的 route_hints 撑着，那些 hint 已按跨
+    # provider 数据退役（M5 P2）。**判据：mock-safe ⟺ 不经过模型判断，不是「有 hint」。**
+    # 两例在 milestone 车道（真 provider）仍全量跑。
     "e2e_context": (
         "default", ("nightly", "milestone"), 300, "root", F, True, True, 0,
         (
             "--case", "ctx_injection_blocked",
             "--case", "ctx_bare_confirm_no_pending",
-            "--case", "ctx_trip_plan_fallback",
-            "--case", "ctx_trip_modify_fallback",
         ),
     ),
     "e2e_degrade": (
@@ -86,9 +89,12 @@ EXPECTED: dict[
     "e2e_geofence": (
         "default", ("milestone",), 600, "root", F, True, True, 0, None,
     ),
+    # 2026-08-01 退出 nightly：mock 车道原有两条旅程（A4-2/B4-2）的「mock-safe」判据
+    # 白纸黑字写的就是「route_hints 确定性路由」，那些 hint 已按数据退役，两条已改判
+    # lane: live，mock 车道随之为空。`e2e_journeys.py` 另加门禁：`--lane mock` 选不出
+    # 旅程直接失败——**空选集不算绿**。
     "e2e_journeys": (
-        "default", ("nightly", "milestone"), 1800, "root", F, True, True, 2,
-        ("--lane", "mock", "--no-badcase"),
+        "default", ("milestone",), 1800, "root", F, True, True, 2, None,
     ),
     "e2e_ledger": (
         "default", ("milestone",), 600, "root", F, True, True, 0, None,
@@ -164,9 +170,11 @@ EXPECTED: dict[
         "provider_probe", ("milestone",), 600, "real", P,
         True, True, 0, None,
     ),
+    # 2026-08-01 退出 nightly：每一轮都要求规划落到 trip-planner，mock 全栈做不到
+    # （同 e2e_context 的判据）。milestone 车道仍跑全量。
     "e2e_trip": (
-        "default", ("nightly", "milestone"), 600, "root", F,
-        True, True, 0, "all",
+        "default", ("milestone",), 600, "root", F,
+        True, True, 0, None,
     ),
     "e2e_tts_stream": (
         "provider_probe", ("milestone",), 600, "real", P,
@@ -872,8 +880,11 @@ def test_manifest_has_exact_inventory_and_schema():
     real_providers = manifest.by_id["e2e_real_providers"]
     assert real_providers.command == ("python", "test/e2e_real_providers.py")
     journeys = manifest.by_id["e2e_journeys"]
-    assert journeys.nightly is not None
-    assert journeys.nightly.memory_sessions == 0
+    # 2026-08-01 起 e2e_journeys 不在 nightly 车道（mock 车道为空，见上方清单注释），
+    # 故不再有 nightly 覆写块。改断言「确实没有」而不是删掉这条——**它现在守的是
+    # 「别在没有 mock-safe 旅程的情况下把它悄悄加回 nightly」**。
+    assert journeys.nightly is None
+    assert "nightly" not in journeys.lanes
 
 
 def test_contract_freezes_exact_provider_profile_skip_policy():

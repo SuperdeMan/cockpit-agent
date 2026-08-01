@@ -177,9 +177,15 @@ journeys:
   - id: A4-2
     title: 分钟级提醒到点触达 + 卡按钮改期原条目
     level: regression
-    # mock-safe：reminder 全链路 route_hints 确定性路由 + timeparse 零 LLM + NATS 触达，
-    # 进 nightly 子集（B4-2 同）。
-    lane: mock
+    # 2026-08-01 由 mock 改判 live。原判据写的是「reminder 全链路 **route_hints 确定性
+    # 路由** + timeparse 零 LLM + NATS 触达」——**把「有 hint」当成了「mock-safe」**。
+    # `reminder.list` 等四条 hint 已于 2026-07-29 按跨 provider 双臂证据退役（M5 P2），
+    # 判据随之落空：mock 全栈里 MockProvider 只回显原话，末轮「我有哪些提醒」直接落 chitchat。
+    # **新判据：mock-safe 的条件是「这条路径不经过模型判断」**（端侧快路径 / 兜底 Agent /
+    # 确定性时间解析 / 协议层），**不是「有没有 hint」**——hint 是会被数据退役的，
+    # 押在它上面的「确定性」是借来的。
+    # 末轮的「不出现 fired 尸体导致的双条」是本旅程最锋利的断言，故整条转 live 而不是砍轮次。
+    lane: live
     tags: [proactive, interaction]
     turns:
       - say: 过2分钟提醒我接水

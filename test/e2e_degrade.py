@@ -22,7 +22,8 @@ docs/design/2026-07-03-r3.5-degrade-matrix-e2e.md）：
 服务不可用，即便 try/finally 严格恢复，也不应该冒险排在其它 e2e 脚本前面。
 
 顺序（小→大爆炸半径 / 快→慢探测，四行严格顺序执行，不并发）：
-  1. 单 Agent 故障（trip-planner-agent stop/start，同容器不换 IP）
+  1. 单 Agent 故障（chitchat-agent stop/start，同容器不换 IP；
+     2026-08-01 由 trip-planner 换成 chitchat——见 case_agent_down 内注释）
   2. LLM 超时（llm-gateway 注入 mock 延迟，换 env 须 --force-recreate，唯一换 IP 的一行）
   3. 云 Planner 故障（cloud-planner stop/start，同容器不换 IP）
   4. 断网（pause/unpause cloud-gateway——真正的黑洞而非 stop 的即时拒绝，最慢探测，放最后）
@@ -197,13 +198,24 @@ async def _restore_with_retry(
 # Row 3：单 Agent 故障
 # ════════════════════════════════════════════════════════════════════════
 async def case_agent_down() -> bool:
-    print("\n[降级 1/4] 单 Agent 故障：trip-planner-agent 停机")
-    service = "trip-planner-agent"          # docker compose 服务名
-    agent_node = "step.agent:trip-planner"  # manifest agent_id（≠ 服务名！）
-    # 恢复探针不能用 trip.plan：它包含真实 POI/天气/LLM 重生成，服务已恢复时仍可能
-    # 超过外层预算；且该 route_hint 已退役，LLM 采样也可能不落 trip-planner。
-    # trip.status 是同一 Agent 的只读快能力，无活动行程时仍会确定性返回，适合测存活性。
-    text = "行程到哪了"
+    print("\n[降级 1/4] 单 Agent 故障：chitchat-agent 停机")
+    service = "chitchat-agent"          # docker compose 服务名
+    agent_node = "step.agent:chitchat"  # manifest agent_id（≠ 服务名！）
+    # 本行验的是「单步失败不拖垮整条 DAG」，**打哪个 Agent 是无关变量**——要紧的是
+    # 请求必须**确定性地**路由到被打停的那一个，否则测的就不是降级而是路由。
+    #
+    # 2026-08-01 从 trip-planner 换成 chitchat。原选择的理由写在本文件下方注释里：
+    # 「换**唯一有 route_hints（mock 下路由确定）**的 trip-planner」——也就是说这一行的
+    # 确定性是**借 hint 借来的**。trip 那四条 hint 已于 2026-07-29 按跨 provider 双臂
+    # 证据退役（M5 P2），nightly 的 mock 全栈里这一行随即失效：MockProvider 只回显原话，
+    # 规划落 chitchat，`step.agent:trip-planner` 这个 span 压根不存在。
+    #
+    # chitchat 是 `PLANNER_FALLBACK_AGENT`，`planning._fallback` 的第一分支就把原话交给它
+    # ——**mock 下它是唯一由结构保证被路由到的云侧 Agent**，真 LLM 下「讲个笑话」同样
+    # 稳定落它。两个车道同一条路径，不依赖任何可被退役的规则。
+    # 副作用是这一行现在打的是**兜底 Agent** 本身（最坏情况），断言不变：
+    # 该步 status='err'，且整轮仍收到 final/error。
+    text = "讲个笑话"
     case_ok = False
     recovered = False
     try:
@@ -234,7 +246,7 @@ async def case_agent_down() -> bool:
             lambda: _run(["start", service]),
             lambda: _agent_recovered(text, agent_node),
         )
-        print("  ✓ 已确认 trip-planner-agent 恢复" if recovered
+        print(f"  ✓ 已确认 {service} 恢复" if recovered
               else "  ✗ 恢复未确认，需人工检查 docker compose ps！")
     return case_ok and recovered
 
@@ -264,7 +276,9 @@ async def _agent_recovered(text: str, agent_node: str) -> bool:
 # 了，请稍后再试。」。真实跑（本地手工验证，见 docs/design/2026-07-03-r3.5-degrade-matrix-e2e.md
 # §6）发现不成立：chitchat 走 engine.py 的 D0 单步流式直通，不受该包裹管辖——8000ms 延迟
 # 下请求仍在 ~16s（≈规划 2 次重试各记一次延迟）内正常收到完整回复，从未挂起或降级；换
-# 唯一有 route_hints（mock 下路由确定）的 trip-planner 试过 45000ms 延迟，其"heavy"任务
+# 当时"唯一有 route_hints（mock 下路由确定）"的 trip-planner 试过 45000ms 延迟，其"heavy"任务
+# （⚠ 那批 hint 已于 2026-07-29 按数据退役，这句只作历史记录——**别再拿"有没有 hint"
+#   当 mock 下的确定性依据**，判据见 case_agent_down 注释）
 # 时间预算（为容纳"思考"被放宽）比预期大得多，200s 耐心等待仍未收尾，作为 e2e 用例不实际。
 # 故本行改为断言一个更朴实但同样真实的性质：**LLM 变慢时系统仍保持响应、给出连贯回复，
 # 不会挂起或崩溃**——顺带验证 LLM_MOCK_DELAY_MS 钩子本身真的在生效（用耗时下限印证延迟被

@@ -23,6 +23,25 @@ except ImportError:
 URL = "ws://localhost:8090/ws"
 TIMEOUT = 60  # 秒
 CONFIRM_ORDER_TEXT = "帮我预订海底捞今晚7点两位"
+LLM_HTTP = "http://localhost:50059"
+
+
+def _llm_is_mock() -> bool:
+    """active LLM 是不是 MockProvider（决定链路4 能不能被验证）。
+
+    探测失败一律返回 False——**宁可把用例判红，也不要因为探针不通而静默跳过**：
+    跳过看起来跟通过一模一样，而那正是缺陷藏身的地方。
+    """
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{LLM_HTTP}/api/llm/providers", timeout=5) as resp:
+            state = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return False
+    active = state.get("active") if isinstance(state, dict) else None
+    if isinstance(active, dict):
+        return str(active.get("provider", "")).lower() == "mock"
+    return str(active or "").lower().startswith("mock")
 
 
 async def ask(
@@ -147,6 +166,17 @@ async def _run(recorder: CaseRecorder) -> int:
         else:
             print(f"\n  ✗ 确认后结果: {second_speech[:60]}")
             ok = False
+    elif _llm_is_mock():
+        # **mock 栈路由不到交易类 Agent，这一条在这里没有被验证过。**
+        # MockProvider 只回显原话 → 规划走 `planning._fallback` → 兜底到 chitchat，
+        # 永远不会 need_confirm。此前它之所以能过，是 nearby 的 route_hints 在 LLM 之后
+        # replace 整条计划；那些 hint 已于 2026-07-30 按跨 provider 双臂证据退役（M5 P2 收口）。
+        # 判据：**mock-safe ⟺ 这条路径不经过模型判断**——本链路不满足，故显式跳过。
+        # ⚠ 打印成醒目的 SKIP 而不是静默放行：**skip 长得跟绿一样**是本仓踩过的坑
+        # （CI 上没装 pwsh 时 `_powershell()` 一 skip，一条真缺陷藏了半个月）。
+        # 本链路的真实覆盖在 milestone/live 车道（真 provider）——那里它照常断言。
+        print("\n  ○ SKIP 链路4a/4b：active LLM 是 mock，交易类意图无法路由"
+              "（mock 下规划必落兜底 chitchat）。真实覆盖在 live 车道。")
     else:
         print("\n  ⚠ 未触发 need_confirm，跳过确认测试")
         ok = False

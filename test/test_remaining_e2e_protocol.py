@@ -1725,8 +1725,12 @@ def test_journey_manifest_issues_two_memory_sessions_only_for_milestone():
     case = manifest.by_id["e2e_journeys"]
 
     assert case.memory_sessions == 2
-    assert case.nightly is not None
-    assert case.nightly.memory_sessions == 0
+    # 2026-08-01：e2e_journeys 退出 nightly（mock 车道为空——原有两条旅程的
+    # 「mock-safe」判据是「route_hints 确定性路由」，那些 hint 已按跨 provider 数据退役）。
+    # 断言从「nightly 覆写成 0 个会话」改成「压根没有 nightly 覆写」——**守的性质没变**：
+    # 两个记忆会话只发给 milestone 车道。
+    assert case.nightly is None
+    assert "nightly" not in case.lanes
 
 
 def test_b3_3_uses_two_runner_issued_memory_sessions(
@@ -2237,10 +2241,28 @@ def test_degrade_agent_case_fails_when_restore_health_never_recovers(
     assert asyncio.run(module.case_agent_down()) is False
 
 
-def test_degrade_agent_recovery_uses_the_trip_status_fast_path():
+def test_degrade_agent_down_targets_a_structurally_routable_agent():
+    """降级 Row 3 打的那个 Agent，必须是**不靠规则**就能被路由到的。
+
+    原断言钉的是 `text = "行程到哪了"`（trip.status 快能力）——它的确定性来自
+    `trip.status` 的 route_hint，而那条 hint 已于 2026-07-29 按跨 provider 双臂证据
+    退役（M5 P2）。nightly 是 mock 全栈，hint 一没，`step.agent:trip-planner` 这个
+    span 压根不出现，这一行随即失效（nightly #30 起连红三次的四个根因之一）。
+
+    改打 chitchat：它是 `PLANNER_FALLBACK_AGENT`，`planning._fallback` 第一分支由
+    **结构**保证把原话交给它——mock 下唯一必然被路由到的云侧 Agent，真 LLM 下
+    「讲个笑话」同样稳定落它。**本行验的是「单步失败不拖垮 DAG」，打哪个 Agent 是
+    无关变量；要紧的是那个 Agent 一定会被路由到，否则测的是路由不是降级。**
+
+    所以这条测试现在守的是：别再把目标换回任何「靠 hint 才路由得到」的 Agent。
+    """
     source = _source("e2e_degrade")
 
-    assert 'text = "行程到哪了"' in source
+    assert 'service = "chitchat-agent"' in source
+    assert 'agent_node = "step.agent:chitchat"' in source
+    assert 'text = "讲个笑话"' in source
+    # 历史目标不许悄悄回来（两者的确定性都是借 route_hints 借的）
+    assert 'service = "trip-planner-agent"' not in source
     assert 'text = "周末去杭州两天带老人不要太累"' not in source
 
 
