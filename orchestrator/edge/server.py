@@ -219,6 +219,23 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         except Exception:
             pass
 
+    @staticmethod
+    def _theta_band(conf: float) -> str:
+        """θ 双阈值落在哪一档：`high`（会本地执行）/`mid`（会带初判上云）/`low`（裸句上云）。
+
+        **只记不用**——挡位仍是 shadow，这里一个字都不影响路由。它存在的理由是把
+        `theta_high`/`theta_low` 从「运行时零消费方」变成有读者的契约（2026-07-30 评审
+        的 INFO 项：本仓「没消费方的契约会潜伏」教训的形态；同一个 `theta_low` 在 P3a 之前
+        就已经在 .env/compose/conventions 里躺了三处而代码只读 _HIGH）。
+
+        更实际的收益是：P3b 的开工判据要的是「θ=0.9 时会有多少请求被本地执行、其中多少
+        与规则分歧」——这两个数只有把档位和四态一起落盘才算得出来，事后从 conf 反推要
+        重跑全部历史。
+        """
+        if conf >= edge_nlu.theta_high():
+            return "high"
+        return "mid" if conf >= edge_nlu.theta_low() else "low"
+
     def _nlu_shadow_bg(self, trace_id: str, text: str, path: str,
                        rule_objects: list[str] | None = None) -> None:
         """把影子推理**排到响应之后**跑，落独立的 `nlu.shadow` span。
@@ -287,7 +304,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 rule_objects = [o for o in rule_objects if o]
             attrs = {"nlu_domain": got["domain"], "nlu_object": got["object"],
                      "nlu_conf": got["conf"],
-                     "nlu_ms": round((time.perf_counter() - t0) * 1000, 1)}
+                     "nlu_ms": round((time.perf_counter() - t0) * 1000, 1),
+                     "nlu_gate": self._theta_band(got["conf"])}
             # 与规则的关系分四态：规则没接住（覆盖率增量的来源）／两边一致／两边分歧／
             # 对不上号（模型给的对象在 VAL 里没有可执行对应物，或还没人裁过）。
             #

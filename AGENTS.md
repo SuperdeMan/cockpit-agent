@@ -67,6 +67,11 @@ dashboard 16）——各主题的测试增量与提交散列见 §4 对应行，
 每批的「明确未做」逐条附判据在验收报告 §9/§10.2/§11.2/§12.2——**未做不等于没账**。
 全量 3597 passed / 11 skipped / 0 failed；HMI 225/225 + build；Go 网关 vet+test 通过。
 
+**M5 P3 收尾已合入（2026-08-01）**：P3a 三张卡 + 2026-07-30 评审两条 INFO 项收口
+（详见下方「M5 P3 收尾」段）。**本批不改路由行为**，但证伪了 P3a 的一条归因
+（判别化描述的收益在 registry 兜底路径不在 planner，跨两档 Δ=0）、修掉了一个
+**让影子 `agree` 状态从未出现过**的比较口径缺陷。
+
 **⚠ 唯一未收口的是 GitHub CI**（见 §4.0 末「CI/nightly 现状」）：本地全绿而 CI 红，
 根因是 M-A 那批测试把 **Windows 假设写死了**，Ubuntu 上必红。已修 4 类、**剩 6 条**。
 
@@ -313,16 +318,47 @@ span 落 `nlu_vs_rule` 三态），**影子第一条观测就抓到一个真 bad
 全量 2408 passed / 7 skipped、无 P0/P1 级缺陷、无红线违规；3 条记账缺陷（本节此前引用的
 两个提交号是 `wip/m5-p3-rescue` 救援分支的旧 hash、架构文档缺 P3a 版本注、RFC 一处
 设计→实现演化未回写）当日修复。报告 `docs/reviews/2026-07-30-review-m5-data-flywheel.md`
-（含 INFO 级观察项与立卡清单）。
+（含 INFO 级观察项与立卡清单；**§7 记 2026-08-01 的评审后续**——其中一条把本报告放行过的
+归因证伪了，评审自身的教训是：「A 与 B 一致吗」这类判定要单独问一句
+**「A 和 B 是同一个空间里的量吗」**，声称↔代码对照对跨模块口径天生偏弱）。
+
+**M5 P3 收尾已合入（2026-08-01，分支 `feat/m5-p3-closeout`）**：P3a 三张卡 + 评审两条
+INFO 项一起收口。**本批没有一行改变路由行为**，全部是让「已经在发生的事」变得可测；
+但过程中**证伪了 P3a 的一条归因，并修掉一个让影子数据整体失真的缺陷**。四句话：
+
+- **判别化描述的收益在 registry 不在 planner**。78 条描述改成从 VAL 知识库机械生成
+  （`display_name` × intent 名末段 × 中间段，解码走 `edge_call.decode_intent`——
+  **与 executor 真执行同一个解码器**）。但「planner 看到 74 个文本等价的工具」这条归因
+  **被双臂差分推翻**：渲进 catalog 后跨 minimax/deepseek 两档、25 条语料 ×2 轮
+  **Δ=0 且 100 次对照零翻面**，代价 +1462 字符/次规划 → 否掉渲染，并把这条负结果写成
+  护栏（`test_catalog_budget.py`，要推翻请附跨 provider 双臂数据）。真正有效应的是
+  **registry 语义兜底**（按 capability 粒度 embed）：泛化描述下「打开空调」的 top-1 是
+  `scene-orchestrator`(0.517)、「把音量调大一点」edge-vehicle 连前三都没进——而那正是
+  **LLM 失败时的兜底规划路径**；换判别化描述后 0.675/0.670 回到 top-1。
+  ⚠ 这缺陷一直躲在弱断言后面：那两条 golden 只有 `forbid_top1: parking-payment`，
+  **断言否定命题守不住肯定性质**（已补 `expect_top1`，语义层 20/22→21/22）。
+  原始 badcase 的真根因另有其人：**能力面根本没有除雾意图**，描述治不了缺能力。
+  证据 `docs/reviews/eval/edge_capability_desc_ab.md`。
+- **影子的 `agree` 状态在生产里从来没出现过**。三套对象命名（语料 83 中文标签／VAL 65
+  英文 object／规则 95 个、38 个连 VAL 都没有），`_nlu_shadow` 拿第一套和第三套直接
+  `==`，规则一命中就恒 `differ`——**而 P3b 的错对象率正要拿这一档当分母**。补
+  `knowledge/nlu_objects.yaml` 等价类台账后：**agree 0%→68.8%、differ 24.8%→6.3%**，
+  中间 18.5pp 全是命名差异被记成分歧。
+- **影子挂满四条路径**（响应后 fire-and-forget，落独立 `nlu.shadow` span）。`path`
+  让**误接与漏接分得开**。顺带修掉多意图路径的第二类结构性假分歧（单标签模型 vs 多意图句）。
+- **两条 INFO 项收口**：分词 parity 冻结 golden 进库（CI 零依赖必跑，启用前反验注入缺陷
+  都能抓到）；θ 从零消费方变成有读者（影子落 `nlu_gate` 三档，只记不用，同时攒 P3b 判据）。
 
 **M5 待办（都不阻塞）**：
 
 | 待办 | 出处 | 说明 |
 |---|---|---|
-| **78 个端侧 capability 只有 2 句描述** | P3a 影子第一条观测 | `capabilities.py` 把 74 个车控 intent 压成同一句「通过车端 VAL 执行确定性车控意图」、examples 全空 → planner 看到 74 个**文本等价**的工具只能靠 intent 名字猜。实证：`关闭强力前除雾` 被规划成 `accompany_home.close` 并执行。**与「两条描述逐字重叠→正则当裁判」同一个病，规模大 37 倍**。正解=按 object+operate 从 VAL 知识库机械生成判别化描述（不手写 74 条），但一次改 74 个工具描述需 mode_routing live + journeys 护航 |
-| **P3b：对象桥接 + operate 抽取 + 放量** | P3a | 「语料 83 个中文 object（座椅/儿童座椅）→ VAL 65 个可执行 object（seat）」的表 + operate 抽取（准入判据②该走规则）。开工判据：**错对象率压到 <0.3%** 再谈按域放量。压它的手段不是调阈值，是补 R4.1b P1 执行侧对象化（object 数长上去，天花板与精度一起涨）。⚠ 接线注意：`nlu.theta_high/theta_low` 当前**运行时零消费方**（shadow 不 gating），首次接线前先验 clamp 行为——「没消费方的契约会潜伏」同课（2026-07-30 评审） |
-| **影子盲区：规则误接看不见** | P3a | 影子只挂上云那一支；规则**误接**（不是漏接）发生在本地快路径。补法=响应后 fire-and-forget（不占关键路径的 4.8ms）|
-| **tokenizer parity 在 CI 上条件性 skip** | 2026-07-30 评审 | `test_edge_nlu.py` 的 parity 测试在无模型/无 transformers 环境整体 skip（CI 不装 ML 栈）——守「训练/推理分词同源」的硬测试在 CI 不站岗，只在有模型的开发机上跑。现有第二层防护：训练导出时 `_assert_onnx_parity` + vocab.json 同源落盘。补法（CI 拉底座词表或最小 vocab fixture 跑 parity）与「live 车道进 CI」同议 |
+| ~~**78 个端侧 capability 只有 2 句描述**~~ | P3a 影子第一条观测 | **已收口（`627f34c`）**，但**卡片归因不成立**：planner 侧 Δ=0 跨两档零翻面，收益在 registry 兜底路径。详见上方与 `docs/reviews/eval/edge_capability_desc_ab.md` |
+| **能力面缺除雾意图** | P3 收尾（原 badcase 真根因） | `commands.yaml` 的 aircon 有 除雾/除霜/内外循环 等 mode，但 `VEHICLE_INTENTS` 里**没有任何除雾 intent**——`关闭强力前除雾` 无论哪一臂都只能在错误答案之间抖（实测 A 臂 `hvac.off`×3/`chitchat`×1，B 臂 `accompany_home.close`×3/`hvac.off`×1）。**这是缺能力不是缺描述**。补它要动 fast_intent + LOCAL_INTENTS + VAL 三处，属新增车控能力，非 P3 范围 |
+| **P3b：operate 抽取 + 放量** | P3a | ~~对象桥接~~ 已落地（`nlu_objects.yaml`，`603127b`）。剩 operate 抽取（开/关/调到 N，准入判据②该走规则）+ 放量。开工判据不变：**错对象率压到 <0.3%**；压它的手段是补 R4.1b P1 执行侧对象化，不是调阈值。**新变化：这个数第一次可以从真实流量算出来**——`nlu.shadow` span 现在同时落 `path`（误接/漏接）、`nlu_vs_rule` 四态、`nlu_gate` 三档，`path!=cloud ∧ gate=high ∧ differ` 就是错对象率的上界 |
+| ~~**影子盲区：规则误接看不见**~~ | P3a | **已收口（`0944659`）**：四条路径全挂，响应后 fire-and-forget |
+| ~~**tokenizer parity 在 CI 上条件性 skip**~~ | 2026-07-30 评审 | **已收口（`fc88a21`）**：冻结 golden（260 例 + 行为等价词表子集 1096 条）进库，CI 零依赖必跑。⚠ 它守的是**算法**；生产词表正确性仍由导出时 `vocab.json` 同源 + `_assert_onnx_parity` 守——**换底座后本测试仍会绿**，该做的是重生成 fixture 并人审 diff |
+| **规则把「穿衣指数」判成股指** | P3 收尾扫出 | `指数` 标签 179 条 100% 被 `fast_intent` 判成 `stock`（「查深圳的穿衣指数」→ 股指）。桥接表**刻意不收**这条等价（收进去等于把真 badcase 洗成 agree）。按 M5 范式修法是投范例/收窄规则，不是加 guard 词 |
 
 | 待办 | 出处 | 说明 |
 |---|---|---|

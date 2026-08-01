@@ -188,6 +188,28 @@ def test_shadow_task_keeps_a_strong_reference(monkeypatch):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("conf,expect", [
+    (0.99, "high"), (0.85, "high"), (0.84, "mid"), (0.5, "mid"), (0.49, "low"), (0.0, "low"),
+])
+def test_theta_band_records_which_gate_would_have_fired(monkeypatch, conf, expect):
+    """θ 双阈值从「运行时零消费方」变成有读者的契约（2026-07-30 评审 INFO 项）。
+
+    **只记不用**：挡位仍是 shadow，本档位一个字都不影响路由。它是 P3b 开工判据的原料
+    ——「θ=0.9 时多少请求会被本地执行、其中多少与规则分歧」，这两个数只有把档位与四态
+    一起落盘才算得出来，事后从 conf 反推要重跑全部历史。
+    """
+    monkeypatch.delenv("FAST_INTENT_THRESHOLD_HIGH", raising=False)   # 默认 0.85
+    monkeypatch.delenv("FAST_INTENT_THRESHOLD_LOW", raising=False)    # 默认 0.5
+    assert EdgeOrchestratorServicer._theta_band(conf) == expect
+
+
+def test_theta_band_follows_env(monkeypatch):
+    monkeypatch.setenv("FAST_INTENT_THRESHOLD_HIGH", "0.9")
+    assert EdgeOrchestratorServicer._theta_band(0.87) == "mid"
+    monkeypatch.setenv("FAST_INTENT_THRESHOLD_HIGH", "0.8")
+    assert EdgeOrchestratorServicer._theta_band(0.87) == "high"
+
+
 def test_mode_off_schedules_nothing(monkeypatch):
     service, spans, _ = _service(monkeypatch)
     monkeypatch.setenv("EDGE_NLU_MODE", "off")
