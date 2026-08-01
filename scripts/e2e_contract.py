@@ -3313,6 +3313,19 @@ def recover_report_transaction(
     directory = json_file.parent.resolve()
     if markdown_file.parent.resolve() != directory:
         raise ManifestError("canonical report pair must share one directory")
+    if not directory.exists():
+        # 目录还不存在 ⇒ 这里从来没有过事务，没有东西可恢复。
+        #
+        # ⚠ 这条分支在 Windows 上**永远走不到**，所以它缺席了很久也没人发现：
+        # `_fsync_directory` 对 `os.name == "nt"` 把 **所有** OSError 都吞掉
+        # （Windows 没有目录 fd，本该吞的是 EACCES），连「目录不存在」一起吞了。
+        # 而 `_promote_canonical_report` 是**先恢复、后建目录**的顺序
+        # （`write_report_pair` 才 mkdir），于是 Linux 上首次晋升必然
+        # `FileNotFoundError` → 被上游宽 `except OSError` 吞成泛化的
+        # `canonical_promotion_failed`，具体理由全部丢失。
+        # 修在这里而不是让 `_fsync_directory` 容忍 ENOENT：**事务目录在写入过程中
+        # 消失是真事故**，不能一并放行。
+        return
     _safe_report_destination(json_file, directory)
     _safe_report_destination(markdown_file, directory)
     journal = directory / _REPORT_TXN_FILES["journal"]

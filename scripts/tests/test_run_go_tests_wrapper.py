@@ -26,7 +26,17 @@ def test_wrapper_uses_read_only_bookworm_copy_tidy_and_default_package():
     assert "cd /work && go mod tidy" in source
     assert "go mod tidy" in source
     assert "go test" in source
-    assert 'go test \\"$@\\"' in source
+    # 命令串必须是 `go test "<引号>$@<引号>"`，且引号形态按 **PowerShell 的传参方式**
+    # 分支——不是按操作系统。Legacy（Windows PowerShell 5.1）要写 `\"` 才能让 docker
+    # 收到 `"`；Standard（pwsh 7 非 Windows 默认）逐字传参，必须写真引号，否则反斜杠
+    # 会原样进容器、`go test` 收到带引号的包名。此前只有 `\"` 一种写法，
+    # **于是这条 wrapper 在 Linux 上一直是坏的**（CI argv 比对红的根因）。
+    assert "go test $quote`$@$quote" in source
+    assert "PSNativeCommandArgumentPassing" in source
+    legacy_quote = "'" + "\\" + '"' + "'"          # 源码里的 '\"'
+    standard_quote = "'" + '"' + "'"               # 源码里的 '"'
+    assert legacy_quote in source, "Legacy 传参分支不见了"
+    assert standard_quote in source, "Standard 传参分支不见了"
     assert "$packageText" not in source
     assert "'./...'" in source or '"./..."' in source
 
@@ -41,7 +51,7 @@ def test_wrapper_hashes_go_mod_and_sum_before_and_after():
 
 
 def _powershell() -> str:
-    """解析当前平台的 PowerShell 可执行文件。
+    r"""解析当前平台的 PowerShell 可执行文件。
 
     此前硬编码 `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`
     ——那在 Ubuntu 上直接 `KeyError: 'SystemRoot'`（CI 装的是跨平台的 `pwsh`）。

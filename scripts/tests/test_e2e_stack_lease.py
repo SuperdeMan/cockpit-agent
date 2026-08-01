@@ -851,11 +851,19 @@ def test_child_bundle_rejects_nonregular_file_and_expected_root_escape(tmp_path)
     directory_path = _private_dir(private_root / "lease-dir-e2e_memory" / "tokens.json")
     if os.name != "nt":
         os.chmod(directory_path.parent, 0o700)
-        # 目标本身是个**目录**，但校验顺序是 parent(0o700) → candidate(0o600) →
-        # 「必须是普通文件」。不给它 0o600，Linux 上就停在权限那一层，
-        # 走不到本用例真正要断言的 S_ISREG 分支。
-        os.chmod(directory_path, 0o600)
-    with pytest.raises(module.StackLeaseProtocolError, match="regular"):
+    # 守的性质是「非普通文件必须被拒」，**但两个平台是被不同的那一层拒的**：
+    #   - POSIX：`_verify_private_posix_path(candidate, kind="file")` 先跑，而
+    #     `_require_posix_private_metadata` 内部**先判类型再判权限** → "invalid file type"；
+    #   - Windows：POSIX 元数据校验整段 return，落到 `_read_bounded_regular_bundle`
+    #     的 `S_ISREG` 前置检查 → "must be a regular file"。
+    # ⚠ 上一版试图用 `os.chmod(directory_path, 0o600)`「绕过权限那一层去够到 S_ISREG 分支」
+    # ——**绕不过去**：类型判定在权限判定之前，chmod 多少都没用。对目录而言
+    # `_read_bounded_regular_bundle` 的那条 S_ISREG 在 POSIX 上是**不可达**的，它是
+    # Windows 侧的岗哨（POSIX 侧由更早的元数据校验 + 打开后的 fstat 双重覆盖）。
+    # 所以这里按平台断言真正开火的那一层，而不是把 match 放宽成谁拒的都行——
+    # **放宽等于不再钉住是哪一层在守**。
+    expected = "must be a regular file" if os.name == "nt" else "invalid file type"
+    with pytest.raises(module.StackLeaseProtocolError, match=expected):
         module.load_child_bundle(
             directory_path.resolve(),
             bundle_root=private_root,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -492,6 +493,15 @@ def test_owner_presign_requires_root_and_explicit_loader_for_missing_fake_bundle
         )
 
     missing.parent.mkdir()
+    if os.name != "nt":
+        # `replace_private_file` 头一件事就是校验父目录必须是 **0o700**，而
+        # `mkdir()` 建出来的是 0o755。Windows 上 `_verify_private_posix_path` 整段
+        # return，所以这条用例在 Windows 上跑的是**另一条路径**——它从来没有真正
+        # 执行过「私有目录权限」这一层，到 Linux CI 上就直接
+        # `memory capability bundle rewrite failed`。
+        # 与 `test_e2e_stack_lease.py::_private_dir` 是同一课，只是那边已经收口、
+        # 这边漏了一处。
+        os.chmod(missing.parent, 0o700)
     payload = {
         "schema_version": 1,
         "lease_id": "lease-owner-fake",

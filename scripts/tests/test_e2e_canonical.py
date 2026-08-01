@@ -853,6 +853,36 @@ def test_duplicate_key_transaction_journal_is_fail_closed(tmp_path: Path):
     assert markdown_path.read_text(encoding="utf-8") == "old\n"
 
 
+def test_recover_on_missing_directory_is_a_noop_not_a_crash(tmp_path: Path):
+    """目录还不存在 ⇒ 从来没有过事务，恢复必须是**无操作**而不是抛异常。
+
+    这条守的是一个只在 POSIX 上会爆的缺陷：`_promote_canonical_report` 的顺序是
+    **先恢复、后建目录**（`write_report_pair` 才 mkdir），首次晋升时
+    `docs/reviews/eval` 根本不存在。`_cleanup_report_transaction` 末尾的
+    `_fsync_directory` 在 Linux 上 `os.open` 一个不存在的目录 → `FileNotFoundError`
+    → 被 `run_e2e.main` 的宽 `except OSError` 吞成泛化的 `canonical_promotion_failed`，
+    **四条 canonical 用例的具体拒绝理由全部丢失**（CI 上红了很久、本地永远绿）。
+
+    ⚠ 之所以在 Windows 上永远看不见：`_fsync_directory` 对 `os.name == "nt"` 把
+    **所有** OSError 都吞掉（本该只吞「Windows 没有目录 fd」那一种），连
+    「目录不存在」一起吞了。**「本地绿」只证明本地那条分支绿。**
+
+    也顺带钉住修的是哪一层：不许改成让 `_fsync_directory` 容忍 ENOENT——
+    **事务目录在写入过程中消失是真事故**，不能一并放行。
+    """
+    contract = _contract()
+    missing_dir = tmp_path / "docs" / "reviews" / "eval"
+    assert not missing_dir.exists()
+
+    contract.recover_report_transaction(
+        missing_dir / "journeys_report.json",
+        missing_dir / "journeys_report.md",
+    )
+
+    # 无操作：既不抛，也不顺手把目录建出来（建目录是 write_report_pair 的职责）
+    assert not missing_dir.exists()
+
+
 def test_atomic_pair_rejects_oversized_new_report_before_touching_old_pair(
     tmp_path: Path,
 ):
