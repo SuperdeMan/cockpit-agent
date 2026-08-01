@@ -18,6 +18,10 @@
 | `baseline_routing.json` + `routing_bench.md` | `test/routing_bench.py --live --write-baseline` | **分布尺 N1**（不是回归闸） |
 | `hint_retirement.<provider>.{json,md}` | `test/hint_retirement.py --live --provider …` | 规则退役判定（**按 provider 分文件**） |
 | `journeys_report.{json,md}` | `scripts/run_e2e.py --milestone M-A --lane milestone --full --canonical ...` | 真栈 milestone canonical |
+| `shadow_nlu_report.{json,md}` + `shadow_nlu_results.jsonl` | `scripts/evolve.py`（M1b Shadow NLU） | 离线对照：规则臂 75.9% vs LLM 91.2% |
+| `edge_coverage_ceiling.{json,md}` + `_samples.jsonl` | `test/eval_edge_coverage_ceiling.py` | **可行性判据**（M5 P3a「先测天花板再训模型」） |
+| `edge_nlu_train.{json,md}` + `edge_nlu_preds_<lane>.jsonl` | `scripts/train_edge_nlu.py` | 端侧 NLU 两车道结果 + θ 扫描（**两个口径都要印**） |
+| `edge_capability_desc_ab.md` | 人工双臂差分（M5 P3 收尾） | **负结果**：判别化描述进 planner catalog 跨两档 Δ=0；收益在 registry 语义兜底 |
 | `_ci-run-*`（gitignore，不入库） | CI 每次跑产生的临时报告 | 仅供当次 PR 查看，不覆盖基线 |
 
 ## 回归闸 vs 分布尺——别把两者混着读

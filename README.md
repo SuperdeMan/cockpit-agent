@@ -197,13 +197,13 @@ docker compose -f compose.yaml up --build -d
 
 | 层 | 是什么 | 现状 |
 |---|---|---|
-| 单测 / 契约 | 全服务 pytest（编排 / Agent / 安全 / 记忆 / 网关）单命令一次跑通 | 2287 passed（2026-07-26） |
+| 单测 / 契约 | 全服务 pytest（编排 / Agent / 安全 / 记忆 / 网关）单命令一次跑通 | 3647 passed（2026-08-02） |
 | 前端 | HMI `node --test` / Dashboard vitest | 195 / 16 |
 | 评测基线 | 端侧意图覆盖（8k+ 真实说法语料）、云侧路由、四模式路由、拒识/澄清 | 报告型，CI 非阻塞门禁 |
 | 单链路 e2e | WS 全链路 / 记忆 / 上下文 / 韧性自愈 / TTS 流 / 语音回路 / 降级矩阵 / 任务账本 / 执行对账 / 主动治理 / 声纹 / 视觉 / S2S | 真栈脚本，接入 `run_e2e`（Windows/Linux 清单一致） |
 | L3 旅程级 | 35 条语料：跨 Agent 自主执行（把事办完）× 全场景连续对话 | 回归级常绿（红灯单条重跑定性制） |
 | L4 HMI CDP | 真浏览器渲染 / 点击 → WS 帧断言 | 二次交互用例 |
-| CI | push 全量（绿 = 本地全量绿）；nightly 断言型 e2e（mock 车道）+ nightly 自进化流水线（badcase 挖掘 → 归因 → 门禁） | GitHub Actions + Task Scheduler |
+| CI | push 全量（绿 = 本地全量绿）；nightly 断言型 e2e（**mock 车道 = 不经过模型判断的那部分**——端侧快路径 / 兜底 Agent / 确定性解析 / 协议层；模型路由类断言归 live 车道）+ nightly 自进化流水线（badcase 挖掘 → 归因 → 门禁） | GitHub Actions + Task Scheduler |
 
 ```bash
 make test                          # = python -m pytest --import-mode=importlib -q

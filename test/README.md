@@ -103,7 +103,7 @@ python test/e2e_s2s_probe.py               # 协议探针：M4 S2S provider（om
 python test/e2e_journeys.py                       # 全部旅程（live 栈，真 key）
 python test/e2e_journeys.py --level regression    # 仅回归级（必须 100% 绿，红=回归）
 python test/e2e_journeys.py --level target        # 仅目标级（能力标尺，允许红——红灯=工程 backlog）
-python test/e2e_journeys.py --lane mock           # mock-safe 子集（nightly 跑的就是它）
+python test/e2e_journeys.py --lane mock           # ⚠ 2026-08-01 起 mock 车道为空，直接失败（见下）
 python test/e2e_journeys.py --id A4-2,B4-2        # 指定旅程
 python test/e2e_journeys.py --list                # 列语料不执行
 node test/hmi_cdp/run_cases.mjs                   # L4：HMI 二次交互 CDP 用例（渲染/点击→WS 帧断言）
@@ -111,6 +111,12 @@ node test/hmi_cdp/run_cases.mjs                   # L4：HMI 二次交互 CDP �
 
 - 语料在 `test/journeys/*.yaml`（regression=保护存量 / target=定义目标能力）；新增旅程改语料
   不改 runner，schema 严格校验（拼错断言键直接拒跑）。
+- ⚠ **`lane: mock` 当前为空，`e2e_journeys` 已退出 nightly（2026-08-01）**。原有两条
+  （A4-2/B4-2）的「mock-safe」判据写的是「**route_hints 确定性路由**」——把「有规则撑着」
+  当成了「不依赖模型」，而那些 hint 已按跨 provider 数据退役（M5 P2），nightly 随即连红三次。
+  **新判据：mock-safe ⟺ 这条路径不经过模型判断**（端侧快路径 / 兜底 Agent / 确定性解析与
+  流程态短路 / 协议传输层四类），**「它有 hint 撑着」不算**。要重新填充 mock 车道请按此判据。
+  `--lane mock` 选不出旅程会**直接失败**——空选集不算绿。
 - 报告落 `docs/reviews/eval/journeys_report.{json,md}`（含 active LLM 声明与时延基线——
   **跨 provider 结果不可直接对比**）；失败轮自动标 collector badcase，dashboard 收藏夹可重放下钻。
 - 运行纪律：全栈起后 settle ≥40s；**禁与 docker build 并发**；外部数据源断供（api-football

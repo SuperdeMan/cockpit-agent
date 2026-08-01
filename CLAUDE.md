@@ -26,7 +26,11 @@
 ```
 proto/          gRPC 契约——所有接口的唯一真相源，改接口先改这里再 codegen
 gateway/        Go 接入网关（edge/ 端侧，cloud/ 云侧）
-orchestrator/   edge/ 端侧编排+FastIntent；cloud/ 云端 Planner
+orchestrator/   edge/ 端侧编排+FastIntent（+ knowledge/ VAL 车控知识库：commands/entities/
+                responses.yaml，对象含 display_name——端侧 capability 描述由它机械生成；
+                + nlu_objects.yaml **对象等价类台账**：语料中文标签／VAL object／规则
+                object 三套命名归并，人裁一次机器守「不许悄悄漏」，同 boundaries 形态）；
+                cloud/ 云端 Planner
 llm-gateway/    LLM 多模型网关（所有 LLM 调用的唯一出口）；音频面同门：批/流式 ASR·TTS
                 + s2s/ 端到端语音会话（M4；协议/provider/会话/回灌四层，换厂商只加 provider 子类）
                 + speaker_embed.py 声纹提取（音频→向量，**不持模板**）

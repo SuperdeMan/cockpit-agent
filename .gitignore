@@ -80,3 +80,9 @@ hmi/public/kws/
 # 本机 compose 应急 override（winnat 端口保留区等，见文件头注释）
 compose.*.local.yaml
 docs/reviews/badcase/.work/
+
+# AI 协作者的会话级续跑交接（codex agent 产出）。它记的是**某一次会话**的暂停/恢复
+# 状态（当前分支、跑到哪一步、下次从哪继续），不是项目事实——项目事实的唯一去处是
+# AGENTS.md §4 交接区与 docs/。留在仓库里只会与 AGENTS.md 争夺「谁是真相源」，
+# 且过期得比谁都快。2026-08-02 取消跟踪（文件保留在工作树，历史不动）。
+.codex-resume.md
