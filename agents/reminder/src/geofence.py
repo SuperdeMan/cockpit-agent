@@ -13,10 +13,17 @@ PoC 边界（诚实留档）：`location` 今天只能由 debug 通道注入（`
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 from .placeparse import ARRIVE, arrived
 from .store import group_by_owner
+
+# 到地提醒的投递有效期（M-C）比到点更短：「到公司了，记得拿文件」在离开半小时后
+# 补播就是错的。**真正的「是否还在围栏内」二次判定需要一个地理谓词**，而三态求值器
+# 的算子集与 scene solver 有等价契约（`proactive/evaluate.py` 开篇），加算子要两边
+# 同步——本批用 ttl 兜住陈旧补播这个真实风险，地理谓词记账后置。
+_DELIVERY_TTL_MS = int(os.getenv("REMINDER_GEO_DELIVERY_TTL_MS", "900000") or "900000")
 
 logger = logging.getLogger("agent.reminder.geofence")
 
@@ -96,6 +103,7 @@ class GeofenceWatcher:
                 # 去重键带触发时刻（同 scheduler）：改期后重进围栏的再触发不能被
                 # 治理器去重窗吞掉——只有同一次触发的重投才该判重。
                 "priority": P_USER_CONTRACT,
+                "ttl_ms": _DELIVERY_TTL_MS,
                 "dedup_key": ("reminder.fired|"
                               + ",".join(sorted(r.id for r in items))
                               + f"|{fired_ts}")}

@@ -431,6 +431,12 @@ export class HandsFreeController {
    *  dispatch()，那个前提恒空 → 主动 TTS 会与模型音频直接混音（两个播放器共用
    *  AudioContext 互不知情），且其 onplay/onend 会把 FSM 从 SPEAKING 误推 FOLLOWUP。
    *  此时降级为只出气泡——信息不丢，只是不抢话。 */
+  /** 主动消息抢话（M-C）：安全档播报前先取消 provider 在飞生成，否则仍是混音。
+   *  只对 S2S 挡位有意义；classic 下 queueTTS 自己就互斥。 */
+  bargeInForProactive(): void {
+    if (this.useS2s()) this.s2s?.bargeIn()
+  }
+
   get proactiveTtsBlocked(): boolean {
     if (!this.useS2s()) return false
     const st = this.vl.state

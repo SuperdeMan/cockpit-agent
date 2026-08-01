@@ -727,7 +727,11 @@ services:
       # 默认空 = 免打扰闸不启用（M3 §9-3 拍板：车机夜间场景与手机不同，不预设口径）
       PROACTIVE_QUIET_HOURS: ${PROACTIVE_QUIET_HOURS:-}
       PROACTIVE_DEFER_TICK_S: ${PROACTIVE_DEFER_TICK_S:-5}
-    depends_on: [nats]
+      # M-C 可靠投递账本（proactive_delivery）。**留空即诚实降级**：治理器启动时打
+      # WARNING 并把 durable 报成 off，用户合同消息退回「重启即丢」的旧行为——
+      # 不假装持久接管。同一 PG 实例、独立表，不触碰别的服务的表。
+      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+    depends_on: [nats, postgres]
 
   # ── 接入层 ──
   cloud-gateway:

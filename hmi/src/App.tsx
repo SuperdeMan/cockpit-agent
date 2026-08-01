@@ -12,6 +12,7 @@ import { StatusBar } from './components/StatusBar'
 import { ChatView } from './components/ChatView'
 import { Composer } from './components/Composer'
 import { SettingsPanel } from './components/SettingsPanel'
+import { DEFER, INTERRUPT, PendingSpeech, SPEAK, decideSpeech, deliveryIdsOf } from './proactiveSpeech.mjs'
 import { ContextualStage } from './components/ContextualStage'
 import {
   appendTTSDelta,
@@ -78,6 +79,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const [pendingLocationText, setPendingLocationText] = useState<string | null>(null)
 
   const wsRef = useRef<any>(null) // ResilientWebSocket（见 ws.mjs，untyped 边界）
+  // M-C：已呈现的投递凭据（幂等）与 S2S 忙时攒下的待补播语音。
+  const presentedRef = useRef<Set<string>>(new Set())
+  const pendingSpeechRef = useRef(new PendingSpeech())
+  const drainPendingSpeechRef = useRef<() => void>(() => {})
   // 请求看门狗计时器：后端真卡死时兜底，杜绝气泡永久"思考中"
   const watchdogRef = useRef<number | undefined>(undefined)
   const locationRefreshRequestedRef = useRef(false)
@@ -194,7 +199,13 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         : undefined),
       onStopTts: () => stopTTS(),
       // 离开 LISTENING（发送/静默回收/打断）即清 partial——真实用户气泡由 send 接管，避免重影
-      onOrbState: (orb) => { setHandsFreeOrb(orb); if (orb !== 'listening') setHandsFreePartial('') },
+      onOrbState: (orb) => {
+        setHandsFreeOrb(orb)
+        if (orb !== 'listening') setHandsFreePartial('')
+        // S2S 交互结束（orb 回 null = FSM 回 IDLE）→ 补播攒下的用户合同语音。
+        // 「到点提醒我」被 S2S 挡住时只出气泡，那条语音此前永远补不回来。
+        if (orb === null) drainPendingSpeechRef.current()
+      },
       onPartialText: (t) => setHandsFreePartial(t),
       onCancelTurn: () => cancelCurrentTurn(), // U2：THINKING 期唤醒词打断 → 发网关取消 + 本地标「已打断」
       onNotice: (m) => setHandsFreeNotice(m),
@@ -490,6 +501,12 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       // 异步深调研完成会带 card（可读分节报告卡）→ 一并挂到该消息上渲染；其余主动播报无 card。
       const text = (data.speech || '').toString().trim()
       const card = data.card || undefined
+      const deliveryIds = deliveryIdsOf(data)
+      // 幂等呈现（M-C）：断线补投与重启恢复都会重发同一条，凭据相同即已呈现过。
+      if (deliveryIds.length && deliveryIds.every((d: string) => presentedRef.current.has(d))) {
+        return
+      }
+      deliveryIds.forEach((d: string) => presentedRef.current.add(d))
       if (text || card) {
         setMessages((m) => [...m, {
           id: uid(), role: 'assistant',
@@ -497,16 +514,26 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           // 网关把原始 NATS type 透传成 advisory（scene_suggest / scene_verify / reminder_fired…）
           proactiveKind: typeof data.advisory === 'string' ? data.advisory : undefined,
         } as Msg])
-        // 带卡主动消息才朗读（提醒到点/到地、场景建议、低电量建议、深调研完成都带卡——
-        // 不是「只有深调研」，判据就是 text && card）。S2S 交互进行中不出声只出气泡：
-        // 主动 TTS 与 S2S 模型音频是两个互不知情的播放器，同放=混音，且其生命周期回调
-        // 会把 FSM 从 SPEAKING 误推 FOLLOWUP（验收抓到）。classic 的互斥由 queueTTS 保障。
-        if (s.ttsEnabled && s.autoplay && text && card
-            && !handsFreeRef.current?.proactiveTtsBlocked) {
-          // 回声指纹：主动播报的文本也要喂 FSM——否则 FOLLOWUP/LISTENING 期这段声音被
-          // 麦克风采回去时，_overlapsTts 比对的还是上一轮回复的陈旧文本，拦不住自听。
-          handsFreeRef.current?.setTtsText(text)
-          queueTTS(AUDIO_API, text, s.voiceId, s.ttsProvider).catch(() => {/* 播放失败静默 */})
+        // 呈现即回执——**这是通知合同唯一的完成条件**。网关 write 成功不算，
+        // 治理器要等这条才销账；不回执则下次连上还会补投。
+        if (deliveryIds.length) {
+          wsRef.current?.send({ type: 'proactive_ack', session_id: SESSION,
+                                delivery_ids: deliveryIds })
+        }
+        // 语音仲裁（M-C）。此前 S2S 忙时一刀切「全都只出气泡」——信息不丢，但那条
+        // 语音永远补不回来。网关透传 priority 之后按档分流：安全抢话、用户合同排队
+        // 待空闲补播、其余只出气泡。classic 的互斥仍由 queueTTS 保障。
+        const verdict = decideSpeech(
+          { priority: typeof data.priority === 'string' ? data.priority : '',
+            hasText: !!text, hasCard: !!card },
+          { ttsEnabled: s.ttsEnabled, autoplay: s.autoplay,
+            s2sBusy: !!handsFreeRef.current?.proactiveTtsBlocked })
+        if (verdict === DEFER) {
+          pendingSpeechRef.current.push({ text, deliveryId: deliveryIds[0] || '' })
+        } else if (verdict === SPEAK || verdict === INTERRUPT) {
+          // 安全档抢话：先取消 provider 在飞生成，再说——否则仍是混音。
+          if (verdict === INTERRUPT) handsFreeRef.current?.bargeInForProactive()
+          speakProactive(text)
         }
       }
       return
@@ -554,6 +581,27 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       handsFreeRef.current?.turnEnded() // U2：看门狗超时也放 FSM 出 THINKING
     }, REQUEST_TIMEOUT_MS)
   }, [])
+
+  // ── 主动消息播报（M-C）────────────────────────────────────────────
+  /** 播一条主动语音。回声指纹必须一起喂——否则 FOLLOWUP/LISTENING 期这段声音被
+   *  麦克风采回去时，`_overlapsTts` 比对的还是上一轮回复的陈旧文本，拦不住自听。 */
+  const speakProactive = useCallback((text: string) => {
+    if (!text) return
+    const s = settingsRef.current
+    handsFreeRef.current?.setTtsText(text)
+    queueTTS(AUDIO_API, text, s.voiceId, s.ttsProvider).catch(() => {/* 播放失败静默 */})
+  }, [])
+
+  /** S2S 交互结束后补播攒下的用户合同语音。**只在真空闲时补**——刚回 IDLE 又被
+   *  新一轮占用时不硬插队，下次回 IDLE 还有机会（队列是有界去重的）。 */
+  const drainPendingSpeech = useCallback(() => {
+    if (handsFreeRef.current?.proactiveTtsBlocked) return
+    const s = settingsRef.current
+    if (!s.ttsEnabled || !s.autoplay) { pendingSpeechRef.current.drain(); return }
+    for (const it of pendingSpeechRef.current.drain()) speakProactive(it.text)
+  }, [speakProactive])
+
+  useEffect(() => { drainPendingSpeechRef.current = drainPendingSpeech }, [drainPendingSpeech])
 
   // U2/P2 THINKING 真打断：发网关取消在飞请求 + 本地把当前轮气泡标「已打断」。FSM 已并行进 LISTENING。
   const cancelCurrentTurn = useCallback(() => {

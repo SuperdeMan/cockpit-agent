@@ -18,6 +18,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 
+from .delivery_store import EXPIRED as LEDGER_EXPIRED, is_durable
 from .evaluate import SAT, enrich, evaluate_all
 
 logger = logging.getLogger("proactive.governor")
@@ -51,6 +52,10 @@ class Item:
     ttl_ms: int
     accepted_at: float
     request_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    # M-C：durable 档在**落库之后**才拿到它；非 durable 档恒空。
+    # 它随信封走到 HMI，HMI 按它幂等呈现并回 ACK——`publish 成功 ≠ 用户收到`，
+    # 只有那条 ACK 才是通知合同完成的凭据。
+    delivery_id: str = ""
 
     @property
     def agent_id(self) -> str:
@@ -68,8 +73,16 @@ class Item:
         return self.ttl_ms > 0 and (now - self.accepted_at) * 1000 >= self.ttl_ms
 
     def forwardable(self) -> dict:
-        """剥掉治理键后的原始 payload——单条路径的字节级兼容保证。"""
-        return {k: v for k, v in self.payload.items() if k not in GOVERNANCE_KEYS}
+        """剥掉治理键后的原始 payload——单条路径的字节级兼容保证。
+
+        M-C 例外：durable 档追加 `delivery_id`。它不是治理键（不剥），是**投递凭据**
+        ——没有它 HMI 就没法回 ACK，也就无从区分「发出去了」和「用户看见了」。
+        非 durable 档不带该键，字节级兼容保证对它们逐字不变。
+        """
+        out = {k: v for k, v in self.payload.items() if k not in GOVERNANCE_KEYS}
+        if self.delivery_id:
+            out["delivery_id"] = self.delivery_id
+        return out
 
 
 def parse_quiet_hours(spec: str):
@@ -137,8 +150,10 @@ class Governor:
                  localtime_fn=time.localtime,
                  merge_window_ms: int = 1500, dedup_window_s: int = 600,
                  max_per_hour: int = 6, high_load_speed: float = 80.0,
-                 quiet_hours: str = "", defer_tick_s: float = 5.0):
+                 quiet_hours: str = "", defer_tick_s: float = 5.0, store=None):
         self._publish = publish                 # async (payload: dict) -> None
+        # M-C 投递账本（可空=退回纯内存的旧行为，advisory/ambient 本来就不落库）
+        self._store = store
         self._state_fn = state_fn or (lambda: {})
         self._emit = emit                       # async (event: dict) -> None，可空
         self._now = now_fn
@@ -161,7 +176,88 @@ class Governor:
 
     # ── 生命周期 ──────────────────────────────────────────────────────────
     async def start(self) -> None:
+        await self.restore()
         self._tick_task = asyncio.create_task(self._tick_forever())
+
+    async def restore(self) -> int:
+        """重启后把账上还没送到的消息接回来。返回恢复条数。
+
+        这是 durable 的另一半：只落库不恢复，等于把消息存进了一个没人读的表。
+        恢复出来的 item **不重新过闸**——它们当初已经通过了；直接进待发队列，
+        由正常的合并窗投出去。TTL 仍然生效（`accepted_at` 用原始创建时刻），
+        所以停机久到消息过期的，恢复时就会被 tick 判掉，不会突然播一句陈旧内容。
+        """
+        if self._store is None:
+            return 0
+        try:
+            await self._store.expire_stale()
+            rows = await self._store.undelivered()
+        except Exception as e:
+            logger.warning("投递账本恢复失败（继续启动）：%s", e)
+            return 0
+        n = 0
+        for row in rows:
+            payload = row.get("payload") or {}
+            if not isinstance(payload, dict) or not payload:
+                continue
+            item = self._to_item(payload)
+            item.delivery_id = row.get("delivery_id") or ""
+            created_ms = row.get("created_at") or 0
+            if created_ms:
+                item.accepted_at = created_ms / 1000.0   # TTL 按原始时刻算，不重新计时
+            self._pending.append(item)
+            n += 1
+        if n:
+            logger.info("投递账本恢复 %d 条未送达消息", n)
+            self._flush_task = self._spawn(
+                self._flush_after(self._merge_window_ms / 1000.0))
+        return n
+
+    async def acknowledge(self, delivery_ids) -> int:
+        """HMI 回执：**唯一的通知合同完成条件**。返回销掉的条数。
+
+        接受一个列表是因为合并组会把整组凭据一起带给 HMI，HMI 原样回传。
+        凭据随消息走而不是留在治理器内存里——重启后 ACK 仍然对得上账。
+        """
+        if self._store is None:
+            return 0
+        ids = [delivery_ids] if isinstance(delivery_ids, str) else list(delivery_ids or [])
+        n = 0
+        for did in ids:
+            try:
+                if await self._store.mark_presented(did):
+                    n += 1
+            except Exception as e:
+                logger.warning("回执处理失败 %s：%s", did, e)
+        return n
+
+    async def replay_undelivered(self, user_id: str = "") -> int:
+        """HMI（重新）连上时补投还没送到的消息。返回补投条数。
+
+        与「重启恢复」共用同一份账——**「什么算没送到」不该有两套判据**。
+        走正常 publish 路径，故合并窗、dispatched 标记与观测一并复用。
+        """
+        if self._store is None:
+            return 0
+        try:
+            await self._store.expire_stale()
+            rows = await self._store.undelivered(user_id=user_id)
+        except Exception as e:
+            logger.warning("补投读取失败：%s", e)
+            return 0
+        n = 0
+        for row in rows:
+            payload = row.get("payload") or {}
+            if not isinstance(payload, dict) or not payload:
+                continue
+            item = self._to_item(payload)
+            item.delivery_id = row.get("delivery_id") or ""
+            self._pending.append(item)
+            n += 1
+        if n:
+            logger.info("HMI 上线，补投 %d 条未送达消息", n)
+            await self._flush()
+        return n
 
     async def stop(self) -> None:
         for t in (self._tick_task, self._flush_task):
@@ -237,12 +333,36 @@ class Governor:
         return {"before": before, "deleted": before - after, "after": after}
 
     # ── 入口 ─────────────────────────────────────────────────────────────
+    async def take_ownership(self, payload: dict) -> tuple[object, bool]:
+        """接管一条请求：durable 档**先落库**，返回 (item, durable)。
+
+        存在的理由是所有权移交的时机：治理器一旦回 accepted，生产方就不再重发。
+        此前 ack 发生在落任何盘之前——ack 与真正投出去之间隔着合并窗（默认 1.5s）
+        与最长 ttl 的延后队列，进程在这段里死掉，那条「到点提醒我」就永远没了。
+        所以 durable 档必须先有账再认领；落库失败时**如实返回 durable=False**，
+        不假装已持久接管。
+        """
+        item = self._to_item(payload)
+        durable = False
+        if self._store is not None and is_durable(item.priority):
+            did = await self._store.persist(
+                item.payload, priority=item.priority,
+                ttl_ms=item.ttl_ms, dedup_key=item.dedup_key)
+            if did:
+                item.delivery_id, durable = did, True
+        return item, durable
+
     async def submit(self, payload: dict) -> str:
         """裁决一条主动请求。返回 delivered|merged|deferred|dropped（e2e/测试读）。"""
-        item = self._to_item(payload)
+        item, _durable = await self.take_ownership(payload)
+        return await self.govern(item)
+
+    async def govern(self, item) -> str:
+        """对已接管的 item 走六道闸。与 submit 分开，是为了让调用方能在
+        「落库完成」与「裁决完成」之间插入 ACK。"""
         verdict, reason = self._gate(item, first_pass=True)
         if verdict == DROPPED:
-            await self._decide(item, DROPPED, reason)
+            await self._settle(item, DROPPED, reason)
             return DROPPED
         if verdict == DEFERRED:
             self._deferred.append(item)
@@ -282,9 +402,12 @@ class Governor:
                         return self._suppress(item, "driving_load")
                 except (TypeError, ValueError):
                     pass
-            # 闸5 全局频控：超限即丢（延后也没意义——窗口是小时级）
+            # 闸5 全局频控。**与闸3/4 对称**：声明了 ttl 的就攒着等窗口滚出去，
+            # 没声明 ttl 的照旧即丢。原注释说「延后也没意义——窗口是小时级」，
+            # 但窗口是**滑动**的：一小时前那条一滚出去就有名额了，而 tick 每几秒
+            # 复评一次。一条带 5 分钟 ttl 的建议不该因为「此刻恰好满了」永远消失。
             if self._rate_exceeded(now):
-                return DROPPED, "rate_limited"
+                return self._suppress(item, "rate_limited")
         return "pass", ""
 
     @staticmethod
@@ -356,6 +479,11 @@ class Governor:
             else:
                 out.pop("card", None)
             out["merged_from"] = [{"agent_id": i.agent_id, "type": i.type} for i in items]
+        # 合并组把整组凭据一起带走：HMI 原样回传，一次 ACK 销掉整组。
+        # 让凭据随消息走而不是留在治理器内存里，重启后 ACK 仍然对得上账。
+        dids = [i.delivery_id for i in items if i.delivery_id]
+        if dids:
+            out["delivery_ids"] = dids
         try:
             await self._publish(out)
         except Exception as e:
@@ -363,6 +491,8 @@ class Governor:
             # 验收补口：投递失败也要发裁决事件——否则这条消息在 obs 上既非 delivered
             # 也非 dropped，直接从观测面消失，dashboard 查无此案。不计频控照旧
             # （没打扰到用户）。
+            # **不销账**：投递失败的 durable 消息要留在账上等 HMI 连上时重投
+            # ——这正是「n==0 即丢」那个缺口的另一半。
             for it in items:
                 await self._decide(it, DROPPED, "publish_error")
             return
@@ -376,6 +506,9 @@ class Governor:
                 for item in items
             ),
         ))
+        if self._store is not None:
+            # dispatched ≠ presented：发出去只是发出去了，账要等 HMI 的 ACK 才销。
+            await self._store.mark_dispatched([i.delivery_id for i in items])
         decision = DELIVERED if len(items) == 1 else MERGED
         for it in items:
             await self._decide(it, decision, f"merged_x{len(items)}" if len(items) > 1 else "")
@@ -403,11 +536,12 @@ class Governor:
         still: list[Item] = []
         for item in self._deferred:
             if item.expired(now):
-                await self._decide(item, DROPPED, "ttl_expired")
+                await self._settle(item, DROPPED, "ttl_expired",
+                                   ledger_state=LEDGER_EXPIRED)
                 continue
             verdict, reason = self._gate(item, first_pass=False)
             if verdict == DROPPED:
-                await self._decide(item, DROPPED, reason)
+                await self._settle(item, DROPPED, reason)
             elif verdict == DEFERRED:
                 still.append(item)
             else:
@@ -435,6 +569,19 @@ class Governor:
             ttl = 0
         return Item(payload=p, priority=priority, conditions=conds, dedup_key=dedup,
                     ttl_ms=max(0, ttl), accepted_at=self._now())
+
+    async def _settle(self, item: Item, decision: str, reason: str,
+                      *, ledger_state: str = "") -> None:
+        """终态：发裁决事件 + 销账。**账本不能只进不出**——判丢的消息还留在账上，
+        HMI 一连上就会被重投一堆已经作废的内容。
+
+        `ledger_state` 只在账本内部区分终态（过期 vs 判丢）；**对外裁决词表不变**
+        ——obs 与 dashboard 消费的是 decision，给它加一个新值等于改既有契约。
+        """
+        await self._decide(item, decision, reason)
+        if self._store is not None and item.delivery_id:
+            await self._store.mark_final(item.delivery_id, ledger_state or decision,
+                                         reason)
 
     async def _decide(self, item: Item, decision: str, reason: str) -> None:
         logger.info("proactive %s: %s/%s (%s) %s", decision, item.agent_id,

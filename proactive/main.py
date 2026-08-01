@@ -3,7 +3,10 @@
 订 `agent.proactive.request`（生产方经 `runtime/proactive.py` 发）→ 六道闸 + 合并窗口 →
 发既有 `agent.proactive`（网关与 HMI 零改动）。
 
-**收到即 ack**：ack 是投递所有权移交，合并/延后在 ack 之后异步做，生产方不被窗口阻塞。
+**ack 是投递所有权移交**：合并/延后在 ack 之后异步做，生产方不被窗口阻塞。
+M-C 起，`user_contract`/`critical` 档**先落库再 ack**——ack 之后生产方就不再重发，
+而 ack 与真正投出去之间隔着合并窗与延后队列，进程在这段里死掉那条「到点提醒我」
+就永远没了。落库失败时 ack 里如实带 `durable=false`，不假装已持久接管。
 `PROACTIVE_GOVERNOR_ENABLED=false` → 不订阅 → 生产方的 request 拿不到响应 → 自动直发老主题
 （`runtime/proactive.py` 的 fail-open），行为逐字回落到治理器上线前。**这就是一键回退。**
 """
@@ -18,6 +21,7 @@ from threading import Thread
 
 from observability import setup_structured_logging
 
+from .delivery_store import DeliveryStore
 from .governor import Governor
 from .mirror import VehicleMirror, nats_url
 
@@ -26,6 +30,10 @@ logger = logging.getLogger("proactive.main")
 
 REQUEST_SUBJECT = "agent.proactive.request"
 OUTPUT_SUBJECT = "agent.proactive"
+# HMI 回执与上线补投（M-C）。**这两条是「发出去了」与「用户收到了」之间缺的那一跳**：
+# 此前网关 broadcast 的返回值（在线 HMI 数）只进了一行日志，n==0 时消息直接蒸发。
+ACK_SUBJECT = "agent.proactive.ack"
+REPLAY_SUBJECT = "agent.proactive.replay"
 DECISION_SUBJECT = "obs.proactive.decision"
 ADMIN_COUNT_SUBJECT = "e2e.proactive.namespace.count"
 ADMIN_PURGE_SUBJECT = "e2e.proactive.namespace.purge"
@@ -218,6 +226,8 @@ async def main() -> None:
     nc = await nats.connect(url, max_reconnect_attempts=-1)
     mirror = VehicleMirror()
     await mirror.subscribe(nc)
+    store = DeliveryStore()
+    await store.init()
 
     async def publish(payload: dict) -> None:
         await nc.publish(OUTPUT_SUBJECT,
@@ -237,18 +247,13 @@ async def main() -> None:
         high_load_speed=_float_env("PROACTIVE_HIGH_LOAD_SPEED", 80.0),
         quiet_hours=os.getenv("PROACTIVE_QUIET_HOURS", ""),
         defer_tick_s=_float_env("PROACTIVE_DEFER_TICK_S", 5.0),
+        store=store,
     )
     await gov.start()
     if await install_namespace_admin(nc, gov):
         logger.info("E2E proactive namespace admin enabled")
 
     async def on_request(msg) -> None:
-        # 先 ack 再裁决：所有权移交与治理解耦，生产方不等合并窗口。
-        if msg.reply:
-            try:
-                await nc.publish(msg.reply, b'{"accepted":true}')
-            except Exception as e:
-                logger.debug("ack 失败（继续裁决）：%s", e)
         try:
             payload = json.loads(msg.data.decode())
         except Exception:
@@ -256,17 +261,71 @@ async def main() -> None:
             return
         if not isinstance(payload, dict):
             return
+        # 先接管（durable 档在此落库）再 ack，然后才裁决：ack 一旦发出生产方就不再
+        # 重发，所以它必须晚于「有账」这一步；但仍早于合并窗与延后队列，生产方
+        # 照旧不被窗口阻塞。
         try:
-            await gov.submit(payload)
+            item, durable = await gov.take_ownership(payload)
         except Exception as e:
-            logger.warning("裁决异常，回落直发：%s", e)
+            logger.warning("接管异常，回落直发：%s", e)
+            if msg.reply:
+                try:
+                    await nc.publish(msg.reply, b'{"accepted":true,"durable":false}')
+                except Exception:
+                    pass
             await publish({k: v for k, v in payload.items()
                            if k not in ("priority", "conditions", "dedup_key", "ttl_ms")})
+            return
+        if msg.reply:
+            try:
+                ack = {"accepted": True, "durable": durable}
+                if item.delivery_id:
+                    ack["delivery_id"] = item.delivery_id
+                await nc.publish(msg.reply,
+                                 json.dumps(ack, ensure_ascii=False).encode())
+            except Exception as e:
+                logger.debug("ack 失败（继续裁决）：%s", e)
+        try:
+            await gov.govern(item)
+        except Exception as e:
+            logger.warning("裁决异常，回落直发：%s", e)
+            await publish(item.forwardable())
+
+    async def on_ack(msg) -> None:
+        """HMI 回执——**唯一的通知合同完成条件**。"""
+        try:
+            data = json.loads(msg.data.decode())
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+        ids = data.get("delivery_ids") or data.get("delivery_id") or []
+        try:
+            n = await gov.acknowledge(ids)
+            if n:
+                logger.info("投递回执：%d 条已呈现", n)
+        except Exception as e:
+            logger.warning("回执处理异常：%s", e)
+
+    async def on_replay(msg) -> None:
+        """HMI（重新）连上——补投还没送到的消息。"""
+        try:
+            data = json.loads(msg.data.decode())
+        except Exception:
+            data = {}
+        user_id = str((data or {}).get("user_id") or "")
+        try:
+            await gov.replay_undelivered(user_id)
+        except Exception as e:
+            logger.warning("补投异常：%s", e)
 
     await nc.subscribe(REQUEST_SUBJECT, cb=on_request)
+    await nc.subscribe(ACK_SUBJECT, cb=on_ack)
+    await nc.subscribe(REPLAY_SUBJECT, cb=on_replay)
     _Health.ready = True
-    logger.info("主动治理器就绪：%s → %s（合并窗口 %sms / 频控 %s 条每小时 / "
+    logger.info("主动治理器就绪：%s → %s（durable=%s / 合并窗口 %sms / 频控 %s 条每小时 / "
                 "免打扰 %s / 高负荷车速 %s）", REQUEST_SUBJECT, OUTPUT_SUBJECT,
+                "on" if store.pg_ok else "off(内存兜底)",
                 os.getenv("PROACTIVE_MERGE_WINDOW_MS", "1500"),
                 os.getenv("PROACTIVE_MAX_PER_HOUR", "6"),
                 os.getenv("PROACTIVE_QUIET_HOURS", "") or "未启用",

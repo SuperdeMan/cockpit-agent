@@ -362,6 +362,23 @@ PRIVACY_TARGETS = (
         verify_case="gdpr_mc_proactive_queue_verify",
     ),
     PrivacyTargetSpec(
+        # M-C 可靠投递账本。**payload 里存着话术与卡片摘要**——那是个人数据；
+        # 删记忆却留着投递账本，与「删了长期记忆但对话原文还在」是同一种假删除。
+        id="proactive_delivery",
+        backend="postgres",
+        adapter_key="proactive",
+        adapter=PRIVACY_ADAPTERS["proactive"],
+        storage_variants=("proactive_delivery", "DeliveryStore._mem"),
+        lifecycle="deletable",
+        enforced_from="M-C",
+        owner_fields=OWNER_FIELDS,
+        seed_case="gdpr_mc_proactive_delivery_seed",
+        count_probe="gdpr_mc_proactive_delivery_count",
+        read_probe="gdpr_mc_proactive_delivery_read",
+        delete_action="privacy_user_all",
+        verify_case="gdpr_mc_proactive_delivery_verify",
+    ),
+    PrivacyTargetSpec(
         id="payment_order",
         backend="process_memory",
         adapter_key="payment",

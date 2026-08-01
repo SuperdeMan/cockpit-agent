@@ -12,6 +12,12 @@ import time
 from runtime.proactive import P_USER_CONTRACT
 
 from .store import ReminderStore, group_by_owner
+
+# 投递有效期（M-C）。durable 投递让消息可以在账上躺到 HMI 下次连上——**这让
+# 「陈旧内容被补播」从理论风险变成真风险**（此前投递路径只有 1.5s 合并窗，
+# 所以「不声明 ttl」侥幸没出过事）。到点提醒隔两小时补播还有意义（卡片仍是用户
+# 要的东西），隔一天就没有了。
+_DELIVERY_TTL_MS = int(os.getenv("REMINDER_DELIVERY_TTL_MS", "7200000") or "7200000")
 from .timeparse import business_tz, next_recur_fire
 
 logger = logging.getLogger("agent.reminder.scheduler")
@@ -85,6 +91,7 @@ class ReminderScheduler:
                 # 的第二次触发在治理器 10 分钟去重窗里静默吞掉（验收抓到，直接违反
                 # conventions §9.8「绝不静默吞掉用户显式约定的提醒」）。
                 "priority": P_USER_CONTRACT,
+                "ttl_ms": _DELIVERY_TTL_MS,
                 "dedup_key": ("reminder.fired|"
                               + ",".join(sorted(r.id for r in due))
                               + f"|{fired_ts}")}

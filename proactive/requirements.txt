@@ -1,2 +1,8 @@
-# 纯 NATS 消费者：不开 gRPC，不连 PG/Redis（待发/延后队列生命周期以秒计，落库不值当）。
+# NATS 消费者 + 可靠投递账本。
+#
+# 原注释写的是「不连 PG/Redis（待发/延后队列生命周期以秒计，落库不值当）」——
+# 那句话对 advisory/ambient 成立，对 user_contract 不成立：「到点提醒我」的生命周期
+# 不是秒，是「直到我看见」。M-C 起 critical/user_contract 落 proactive_delivery；
+# 无 POSTGRES_DSN 或缺 asyncpg 时诚实降级回内存态并打 WARNING，不假装持久接管。
 nats-py>=2.6.0
+asyncpg>=0.29

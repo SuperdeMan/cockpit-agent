@@ -598,12 +598,34 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | `priority` 四档 | `critical` 安全播报（全豁免、窗口 0 立即发）；`user_contract` 用户显式约定（免打扰/负荷/频控豁免，仍参与合并）；`advisory` 建议类（全套治理）；`ambient` 环境类（全套治理）。**缺省/不认识 = `advisory`**——不认识不等于豁免 |
 | `conditions` | 投递时刻的**再证实**，三态求值：`unsat` 与 **`unknown` 一律丢**。生产方声称的前提无法证实就不替它说；顺带解决「产出时成立、延后后已不成立」的陈旧建议 |
 | `dedup_key` | 去重窗（默认 600s）内同键只说一次，**跨生产方生效**（各自进程内节流做不到的那一半）。缺省 = `agent_id|type`。治理器**接手即打标**（不是投递时）——语义是「同一件事窗口内只说一次」。**「同一件事」的粒度是触发实例，不是条目**（2026-07-26 验收修正）：提醒 snooze 保留原条目 id，key 只含 id 会把「过 5 分钟再叫我」的第二次触发在窗内静默吞掉——生产方对「同一条目会合法地再次触发」的消息，key 必须拼入触发时刻（同次触发重投判重，跨次触发必不同；reminder 到点/到地两处已按此实现） |
-| `ttl_ms` | 被负荷/免打扰抑制时「攒着说」的上限；**缺省 0 = 现在说不了就算了**，不做无限期堆积 |
+| `ttl_ms` | 被负荷/免打扰/**频控**抑制时「攒着说」的上限；**缺省 0 = 现在说不了就算了**，不做无限期堆积。M-C 起它还是**投递有效期**：durable 消息过期后不再补投（durable 重投让「陈旧内容被补播」从理论风险变成真风险——此前投递路径只有 1.5s 合并窗，「不声明 ttl」侥幸没出过事） |
 | 驾驶负荷闸 | `speed_kmh >= PROACTIVE_HIGH_LOAD_SPEED` 判高负荷。**读不到车速 → 放行**（唯一故意背离「unknown 不打扰」处：镜像冷启动最长一个快照周期全空，用缺数据定罪等于把主动链路静默掐死一分钟） |
 | 单条输出 | **剥掉治理键后原样转发**——字节级兼容保证 |
 | 合并输出 | `type`/`agent_id` 取最高优先级那条；`speech` 确定性拼接「A。另外，B」（零 LLM，不改写事实）；多张卡 → `card_group`；追加 `merged_from` |
 | 零领域字面量 | 治理器源码**不得出现任何生产方 agent_id / 消息 type 的具体值**。新增生产方 = 在信封里声明，**不改治理器一行**。由源码断言测试 `proactive/tests/test_governor.py::test_governor_source_has_zero_domain_literals` 钉死 |
 | 迁移护栏 | 全仓（除客户端与治理器输出端）不得再出现 `"agent.proactive"` 字面量——`proactive/tests/test_client_contract.py` 断言 |
+
+**可靠投递（M-C，2026-08-01）**。核心命题一句话：**`publish 成功 ≠ 用户收到`**。
+
+| 项 | 约定 |
+|---|---|
+| durable 档 | 只有 `critical` 与 `user_contract` 落 `proactive_delivery`（`proactive/schema.sql`）。advisory/ambient **本来就可以不说**，为它们付持久化代价不划算 |
+| **落库后才 ack** | ack 是所有权移交——一旦回 `accepted` 生产方就不再重发，而 ack 与真正投出去之间隔着合并窗与延后队列。落库失败时 ack 里如实带 `durable=false`，**不假装已持久接管**；无 `POSTGRES_DSN`/缺 asyncpg 时启动即 WARNING 并把 durable 报成 off |
+| 投递生命周期 | `pending → dispatched → presented`；`dropped`/`expired` 是终态。**只有 `presented` 是通知合同完成**——网关 WebSocket write 成功不能被提升为「用户看见了」 |
+| 投递凭据 | durable 档的信封追加 `delivery_id`（合并组另带 `delivery_ids` 整组）。它**不是治理键**（不剥）；非 durable 档不带该键，单条路径的字节级兼容保证逐字不变 |
+| 回执 | HMI 呈现后经网关发 `agent.proactive.ack`（`{delivery_ids:[...]}`）。凭据**随消息走**而不是留在治理器内存里——重启后 ACK 仍然对得上账。重复/迟到 ACK 幂等成功；迟到的销账不能让已完成的合同倒退 |
+| 断线补投 | HMI 连上时网关发 `agent.proactive.replay`（`{user_id}`）。此前网关只把在线 HMI 数写进一行日志，n==0 时消息直接蒸发。**与「重启恢复」共用同一份账**——「什么算没送到」不该有两套判据 |
+| 重启恢复 | 治理器启动时把账上未送达的接回待发队列（**只落库不恢复＝存进一个没人读的表**）。恢复项**不重新过闸**（当初已经通过了），TTL 按**原始创建时刻**算——停机久到消息过期的会被判掉，不会突然播一句陈旧内容 |
+| 投递失败不销账 | publish 抛错时仍发 `dropped/publish_error` 裁决事件（观测面照旧），但**账不销**，留着等 HMI 上线补投 |
+| 语音仲裁 | 网关透传 `priority` 给 HMI。S2S 忙时：`critical` 抢话（先 bargeIn 取消 provider 在飞生成）、`user_contract` 排队待空闲补播、其余只出气泡。判定是纯函数 `hmi/src/proactiveSpeech.mjs`；队列有界且按 `delivery_id` 去重 |
+| 闸5 频控改延后 | 与闸3/4 对称：声明了 ttl 的攒着，没声明的即丢。原注释「窗口是小时级，延后没意义」不成立——窗口是**滑动**的，tick 每几秒复评一次 |
+| 合规 | `payload` 里的话术与卡片摘要是个人数据，`forget_owner(user_id, occupant_id)` 按 M-B 的 OwnerKey 删——删记忆却留着投递账本是假删除 |
+
+**本批明确未做**（判据在验收报告 §11）：多实例 outbox worker 与 present lease/
+`state_version` 并发协议（一辆车一个 HMI、量级个位数）、HMI IndexedDB 收件箱、
+影子模式与分来源灰度、`research_report` 表（报告正文已在记忆里）、Ledger owner-v2
+cutover、真栈故障注入矩阵、位置提醒的「是否还在围栏内」地理谓词（三态求值器的算子集
+与 scene solver 有等价契约，加算子要两边同步；本批用 ttl 兜住陈旧补播这个真实风险）。
 
 > 新增主动生产方：拿到 NATS 连接后调 `publish_proactive(nc, payload)`，在 payload 里声明
 > `priority`（+ 按需 `conditions`/`dedup_key`/`ttl_ms`）即可，**治理器与网关都不用改**。

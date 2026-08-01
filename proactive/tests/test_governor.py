@@ -472,3 +472,170 @@ def test_evaluator_matches_scene_three_state_semantics():
     for actual, op, expect in cases:
         assert compare(actual, op, expect) == mapping[_cmp(actual, op, expect)], \
             f"三态语义与 scene 不一致：{actual!r} {op} {expect!r}"
+
+
+# ── 可靠投递（M-C）────────────────────────────────────────
+async def _settled():
+    """让 _accept 派生的 flush 任务跑完（沿用本文件既有惯例）。"""
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+
+async def _durable_gov(sink, **kw):
+    from proactive.delivery_store import DeliveryStore
+    store = DeliveryStore(dsn="")
+    await store.init()
+    return make_gov(sink, store=store, **kw), store
+
+
+def _contract(text="到点了：吃药", user="u1"):
+    return {"type": "reminder_fired", "speech": text, "agent_id": "reminder",
+            "user_id": user, "priority": "user_contract",
+            "dedup_key": f"k|{text}"}
+
+
+@pytest.mark.asyncio
+async def test_contract_message_is_persisted_before_ownership_is_taken():
+    """所有权移交的时机就是本期的核心：ack 之后生产方不再重发，
+    所以 durable 档必须**先有账**才认领。"""
+    sink = Sink()
+    gov, store = await _durable_gov(sink)
+
+    item, durable = await gov.take_ownership(_contract())
+    assert durable is True and item.delivery_id
+    assert [r["delivery_id"] for r in await store.undelivered()] == [item.delivery_id]
+
+
+@pytest.mark.asyncio
+async def test_advisory_is_not_persisted():
+    """advisory 本来就可以不说——为它付持久化代价不划算。"""
+    sink = Sink()
+    gov, store = await _durable_gov(sink)
+    _item, durable = await gov.take_ownership(
+        {"type": "t", "speech": "路况还行", "agent_id": "a1", "priority": "advisory"})
+    assert durable is False
+    assert await store.undelivered() == []
+
+
+@pytest.mark.asyncio
+async def test_delivery_id_travels_to_the_consumer_and_ack_settles_the_ledger():
+    sink = Sink()
+    gov, store = await _durable_gov(sink)
+    await gov.submit(_contract())
+    await _settled()
+
+    assert sink.out and sink.out[0]["delivery_id"]
+    did = sink.out[0]["delivery_id"]
+    # **发出去仍然算没送到**：网关 write 成功不是用户看见了
+    assert [r["delivery_id"] for r in await store.undelivered()] == [did]
+
+    assert await gov.acknowledge(did) == 1
+    assert await store.undelivered() == []
+
+
+@pytest.mark.asyncio
+async def test_publish_failure_keeps_the_message_on_the_ledger():
+    """「broadcast n==0 即丢」的另一半：投递失败不销账，等 HMI 上线补投。"""
+    sink = Sink()
+
+    async def boom(_payload):
+        raise RuntimeError("nats down")
+
+    from proactive.delivery_store import DeliveryStore
+    store = DeliveryStore(dsn="")
+    await store.init()
+    gov = Governor(boom, emit=sink.emit, now_fn=lambda: 1000.0,
+                   merge_window_ms=0, store=store)
+    await gov.submit(_contract())
+    await _settled()
+
+    assert len(await store.undelivered()) == 1
+    assert [d["decision"] for d in sink.decisions] == [DROPPED]   # 观测面仍如实记
+
+
+@pytest.mark.asyncio
+async def test_replay_on_reconnect_resends_undelivered_only():
+    sink = Sink()
+    gov, store = await _durable_gov(sink)
+    await gov.submit(_contract("到点了：吃药"))
+    await _settled()
+    await gov.submit(_contract("到点了：开会"))
+    await _settled()
+    await gov.acknowledge(sink.out[0]["delivery_id"])      # 第一条用户已看见
+
+    sink.out.clear()
+    assert await gov.replay_undelivered() == 1
+    assert "开会" in sink.out[0]["speech"] and "吃药" not in sink.out[0]["speech"]
+
+
+@pytest.mark.asyncio
+async def test_restart_recovers_undelivered_messages():
+    """只落库不恢复，等于把消息存进了一个没人读的表。"""
+    sink1 = Sink()
+    gov1, store = await _durable_gov(sink1)
+    await gov1.submit(_contract())
+    await _settled()
+    did = sink1.out[0]["delivery_id"]
+
+    sink2 = Sink()                                    # 新进程，共用同一份账
+    gov2 = make_gov(sink2, store=store)
+    assert await gov2.restore() == 1
+    await gov2._flush()
+    assert sink2.out and sink2.out[0]["delivery_id"] == did
+
+
+@pytest.mark.asyncio
+async def test_restart_does_not_replay_expired_content():
+    """停机久到消息过期的，恢复时判掉——半小时后突然播「到点了」比不播更糟。"""
+    sink = Sink()
+    gov, store = await _durable_gov(sink)
+    await gov.take_ownership(dict(_contract(), ttl_ms=1))
+    for row in store._mem.values():
+        row["expires_at"] = row["created_at"] - 1
+
+    sink2 = Sink()
+    gov2 = make_gov(sink2, store=store)
+    assert await gov2.restore() == 0
+    assert sink2.out == []
+
+
+@pytest.mark.asyncio
+async def test_merged_group_carries_every_credential_and_one_ack_settles_all():
+    """合并组把整组凭据一起带走，HMI 原样回传，一次 ACK 销掉整组——
+    让凭据随消息走而不是留在治理器内存里，重启后 ACK 仍然对得上账。"""
+    sink = Sink()
+    gov, store = await _durable_gov(sink, merge_window_ms=1)
+    await gov.submit(_contract("到点了：吃药"))
+    await _settled()
+    await gov.submit(_contract("到点了：开会"))
+    await _settled()
+    await asyncio.sleep(0.05)
+
+    assert len(sink.out) == 1
+    dids = sink.out[0]["delivery_ids"]
+    assert len(dids) == 2
+    assert await gov.acknowledge(dids) == 2
+    assert await store.undelivered() == []
+
+
+@pytest.mark.asyncio
+async def test_dropped_message_leaves_the_ledger_so_reconnect_does_not_replay_it():
+    """账本不能只进不出：判丢的消息还留在账上，HMI 一连上就会被重投一堆废内容。"""
+    sink = Sink()
+    gov, store = await _durable_gov(sink)
+    await gov.submit(dict(_contract(),
+                          conditions=[{"key": "speed_kmh", "op": "lt", "value": 10}]))
+    await _settled()
+    # 读不到车速 → UNKNOWN → 无 ttl 的请求 fail-closed 判丢
+    assert await store.undelivered() == []
+
+
+@pytest.mark.asyncio
+async def test_governor_without_store_keeps_the_old_in_memory_behaviour():
+    """账本可空：不接 store 时逐字回落旧行为，且信封里不多一个键。"""
+    sink = Sink()
+    gov = make_gov(sink)
+    assert await gov.submit(_contract()) in (DELIVERED, ACCEPTED)
+    await _settled()
+    assert "delivery_id" not in sink.out[0]
+    assert await gov.acknowledge("whatever") == 0
