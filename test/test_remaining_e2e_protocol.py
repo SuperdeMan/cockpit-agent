@@ -109,6 +109,29 @@ def _source(name: str) -> str:
 
 
 def _load(name: str):
+    """按路径加载一个 e2e 脚本模块，并**还原它在 import 期对 os.environ 的写入**。
+
+    `e2e_real_providers.py` 在 import 期就 `os.environ.setdefault` 把 .env 灌进来
+    （凭证检测要在模块级完成）。monkeypatch 只还原它自己改的键，还原不了被导入
+    模块写进 os.environ 的东西——于是这些用例跑完，`AMAP_KEY=shared-root-amap`
+    这类**假凭证**就留在了同一个 pytest 进程里，后面 charging-planner 的用例
+    把 provider 决议从 mock 翻成 real，真调用拿假 key 失败、诚实降级成无卡，
+    断言随即红掉。
+
+    单跑每个文件都绿，只有**同进程按 CI 的分组跑**才暴露——CI 正是这么跑的
+    （2026-07-31 起连续 5 次红，根因就是这条）。
+    """
+    module, _probe = _load_probed(name)
+    return module
+
+
+def _load_probed(name: str, probe=None):
+    """同 `_load`，但允许在**还原 os.environ 之前**对模块取一次值。
+
+    有些断言读的是运行时 env（如 `_api_key()` 现读 `os.environ`），它们此前是靠
+    import 残留才通过的——那正是本次 CI 红灯的同一个泄漏。给它一个显式的取值窗口，
+    比让泄漏留着更诚实。
+    """
     for path in (str(REPO_ROOT), str(REPO_ROOT / "test")):
         if path not in sys.path:
             sys.path.insert(0, path)
@@ -118,8 +141,20 @@ def _load(name: str):
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    before = dict(os.environ)
+    probed = None
+    try:
+        spec.loader.exec_module(module)
+        if probe is not None:
+            probed = probe(module)
+    finally:
+        # 恢复到 import 之前的快照：新增的键删掉、被改的键改回去。
+        for key in set(os.environ) - set(before):
+            os.environ.pop(key, None)
+        for key, value in before.items():
+            if os.environ.get(key) != value:
+                os.environ[key] = value
+    return module, probed
 
 
 def _load_runner():
@@ -803,9 +838,9 @@ def test_s2s_dotenv_uses_shared_stack_root(
     for name in ("S2S_API_KEY", "DASHSCOPE_ASR_KEY", "LLM_EMBED_API_KEY"):
         monkeypatch.delenv(name, raising=False)
 
-    module = _load("e2e_s2s_probe")
+    _module, api_key = _load_probed("e2e_s2s_probe", lambda m: m._api_key())
 
-    assert module._api_key() == "shared-root-dashscope"
+    assert api_key == "shared-root-dashscope"
 
 
 @pytest.mark.parametrize(
@@ -2460,3 +2495,19 @@ def test_voice_loop_zero_frame_wav_is_provider_protocol_failure(
         "pcm_asr_roundtrip",
         "provider_protocol_error",
     ) in recorder.rows
+
+
+def test_loading_an_e2e_script_never_leaks_env_into_the_pytest_process():
+    """加载 e2e 脚本不得把 .env 灌进同进程的 os.environ（2026-07-31 CI 红灯根因）。
+
+    `e2e_real_providers.py` 在 import 期 `os.environ.setdefault` 把 .env 读进来
+    （凭证检测要在模块级完成）。monkeypatch 还原不了被导入模块写的 env，于是这些
+    用例跑完，`AMAP_KEY=<假凭证>` 留在进程里，后面 charging-planner 的用例把
+    provider 决议从 mock 翻成 real，真调用拿假 key 失败、诚实降级成无卡 → 断言红。
+
+    **单跑每个文件都绿，只有同进程按 CI 的分组跑才暴露**——CI 正是这么跑的。
+    这条护栏盯的就是「跑完之后」的状态，那是普通断言看不到的地方。
+    """
+    before = dict(os.environ)
+    _load("e2e_real_providers")
+    assert dict(os.environ) == before, "加载 e2e 脚本泄漏了 env（会翻掉别的用例的 provider 决议）"
