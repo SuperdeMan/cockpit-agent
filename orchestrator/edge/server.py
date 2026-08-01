@@ -247,13 +247,27 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             attrs = {"nlu_domain": got["domain"], "nlu_object": got["object"],
                      "nlu_conf": got["conf"],
                      "nlu_ms": round((time.perf_counter() - t0) * 1000, 1)}
-            # 与规则的关系分三态：规则没接住（这才是覆盖率增量的来源）／两边一致／两边分歧
+            # 与规则的关系分四态：规则没接住（覆盖率增量的来源）／两边一致／两边分歧／
+            # 对不上号（模型给的对象在 VAL 里没有可执行对应物，或还没人裁过）。
+            #
+            # ⚠ 这里原来是三态，且**比错了东西**：模型输出的是语料标签空间的中文
+            # （`空调模式/功能控制`），规则输出的是它自己那套 object（`aircon`、
+            # `humidity`、`navigation_route`——95 种，38 种连 VAL 里都没有），
+            # 直接 `==` 的结果是**规则一命中就恒为 differ**——`agree` 这个状态在生产里
+            # 从来没有出现过，而 P3b 的错对象率正要拿这一档当分母。桥接表
+            # （`knowledge/nlu_objects.yaml`）补上后两边才在同一个空间里比。
             if not rule:
                 attrs["nlu_vs_rule"] = "rule_miss"
             else:
-                same = (rule.get("data", {}) or {}).get("object", "") == got["object"]
-                attrs["nlu_vs_rule"] = "agree" if same else "differ"
-                attrs["rule_object"] = (rule.get("data", {}) or {}).get("object", "")
+                rule_obj = (rule.get("data", {}) or {}).get("object", "")
+                attrs["rule_object"] = rule_obj
+                equiv = edge_nlu.equivalent_objects(got["object"])
+                if not equiv:
+                    # None=表里没这个标签（待裁定）／[]=已裁定连规则侧也无对应名。
+                    # 两种都不下「模型错了」的结论——**无金标不装懂**。
+                    attrs["nlu_vs_rule"] = "unmapped"
+                else:
+                    attrs["nlu_vs_rule"] = "agree" if rule_obj in equiv else "differ"
             return attrs
         except Exception as e:      # 影子绝不许影响主链——它的全部价值就是「不生效」
             logger.debug("edge NLU shadow skipped: %s", e)
