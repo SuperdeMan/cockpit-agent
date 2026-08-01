@@ -446,3 +446,76 @@ def test_aggregator_note_survives_multi_step_llm_rewrite():
     out = _compose(rs)
     assert out["speech"].startswith("合成话术")
     assert "没确认到" in out["speech"]
+
+
+# ── 传输不确定的失败：查世界状态（M-C）─────────────────────
+def _timeout_result(step_id="s1", error="step_timeout"):
+    return StepResult(step_id=step_id, status=StepStatus.FAILED,
+                      speech="", error=error)
+
+
+def _state_step(expect=None):
+    return _step(verification={"mode": "state_match",
+                               "expect": {"keys": expect or {"trunk": "open"}}})
+
+
+@pytest.mark.asyncio
+async def test_timeout_failure_confirmed_by_state_is_reported_honestly():
+    """M2 就记着的缺口：对账只验「声称成功」的步，于是「动作已经生效、响应却丢了」
+    这一族永远报失败——用户听到「抱歉，处理超时」，而后备箱确实开了。"""
+    ex = DagExecutor(dispatcher=_Dispatcher(_Resp(data={})), state_mirror=_Mirror({"trunk": "open"}))
+    out = await ex._verify_outcome(_state_step(), _timeout_result(), PlanContext())
+
+    assert out.status == StepStatus.FAILED          # **不改 status**
+    v = out.data["_verify"]
+    assert v["verdict"] == "sat" and v["exec"] == "uncertain_confirmed"
+
+
+@pytest.mark.asyncio
+async def test_definite_failure_is_never_overturned_by_world_state():
+    """Agent 明确报的错是**确定失败**——那个状态可能是别的原因造成的
+    （用户自己按了按钮、上一条指令的余波）。不许翻案。"""
+    ex = DagExecutor(dispatcher=_Dispatcher(_Resp(data={})), state_mirror=_Mirror({"trunk": "open"}))
+    out = await ex._verify_outcome(
+        _state_step(), _timeout_result(error="device_rejected"), PlanContext())
+    assert "_verify" not in (out.data or {})
+
+
+@pytest.mark.asyncio
+async def test_schema_mode_is_not_used_to_judge_a_lost_response():
+    """schema 验的是本次响应的内容，而响应根本没回来——拿它判定等于无中生有。"""
+    step = _step(verification={"mode": "schema",
+                               "expect": {"non_empty": ["items"]}})
+    ex = DagExecutor(dispatcher=_Dispatcher(_Resp(data={})), state_mirror=_Mirror({"trunk": "open"}))
+    out = await ex._verify_outcome(step, _timeout_result(), PlanContext())
+    assert "_verify" not in (out.data or {})
+
+
+@pytest.mark.asyncio
+async def test_state_that_does_not_match_leaves_the_failure_alone():
+    ex = DagExecutor(dispatcher=_Dispatcher(_Resp(data={})), state_mirror=_Mirror({"trunk": "closed"}))
+    out = await ex._verify_outcome(_state_step(), _timeout_result(), PlanContext())
+    assert "_verify" not in (out.data or {})
+
+
+@pytest.mark.asyncio
+async def test_blind_mirror_leaves_the_failure_alone():
+    """读不到镜像 → UNKNOWN → 不定罪也不翻案（沿用既有三态口径）。"""
+    ex = DagExecutor(dispatcher=_Dispatcher(_Resp(data={})), state_mirror=None)
+    out = await ex._verify_outcome(_state_step(), _timeout_result(), PlanContext())
+    assert "_verify" not in (out.data or {})
+
+
+def test_aggregator_stops_saying_a_known_false_apology():
+    """继续说「抱歉，处理超时」是一句**已知为假**的话；但也不伪造成功话术
+    ——合成「后备箱已打开」需要领域知识，而编排核心零领域字面量。"""
+    from orchestrator.cloud.aggregator import Aggregator
+    confirmed = StepResult(
+        step_id="s1", status=StepStatus.FAILED, speech="", error="step_timeout",
+        data={"_verify": {"verdict": "sat", "mode": "state_match",
+                          "exec": "uncertain_confirmed"}})
+    assert Aggregator._exec_confirmed_by_state(confirmed) is True
+
+    plain = StepResult(step_id="s1", status=StepStatus.FAILED, speech="",
+                       error="step_timeout")
+    assert Aggregator._exec_confirmed_by_state(plain) is False

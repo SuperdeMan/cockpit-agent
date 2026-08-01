@@ -100,6 +100,36 @@ func mergeVehState(changes []map[string]any) (map[string]any, bool) {
 	return snap, changed
 }
 
+// 主动投递回路（M-C）。此前网关只做单向广播：`hub.broadcast` 的返回值（在线 HMI 数）
+// 只进了一行日志，n==0 时消息直接蒸发。回执与上线补投是「发出去了」与「用户收到了」
+// 之间缺的那一跳，两者都要能从 WS 处理器发回治理器，故句柄提到包级。
+var proactiveBus struct {
+	mu sync.Mutex
+	nc *natsgo.Conn
+}
+
+func setProactiveBus(nc *natsgo.Conn) {
+	proactiveBus.mu.Lock()
+	proactiveBus.nc = nc
+	proactiveBus.mu.Unlock()
+}
+
+func publishProactiveControl(subject string, payload map[string]any) {
+	proactiveBus.mu.Lock()
+	nc := proactiveBus.nc
+	proactiveBus.mu.Unlock()
+	if nc == nil {
+		return // 无 NATS：主动链路本就禁用，静默（同既有降级口径）
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	if err := nc.Publish(subject, b); err != nil {
+		log.Printf("[edge-gateway] proactive control publish failed (%s): %v", subject, err)
+	}
+}
+
 func vehStateSnapshot() map[string]any {
 	vehState.mu.Lock()
 	defer vehState.mu.Unlock()
@@ -120,6 +150,9 @@ type wsRequest struct {
 	IsConfirmation      bool              `json:"is_confirmation"` // HMI 确认/取消按钮回应多轮确认时置 true
 	Meta                map[string]string `json:"meta"`            // HMI 设置透传（answer_length/model_pref 等）
 	E2EMemoryCapability string            `json:"e2e_memory_capability"`
+	// M-C 投递回执：HMI 呈现主动消息后回传凭据（合并组回整组）。
+	DeliveryID          string            `json:"delivery_id"`
+	DeliveryIDs         []string          `json:"delivery_ids"`
 }
 
 func buildHandleRequest(
@@ -193,6 +226,12 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 		client.send(map[string]any{"type": "vehicle_state", "state": snap})
 	}
 
+	// 连上即请求补投未送达的主动消息（M-C）。车况镜像早就在用「连上即推」这个
+	// 机制，只是从没用在主动消息上——断线期间到点的提醒此前直接蒸发。
+	publishProactiveControl("agent.proactive.replay", map[string]any{
+		"user_id": id.userID,
+	})
+
 	// WS 保活：复杂任务开思考时执行期可能 30s+ 无应用层流量，期间不读 WS 控制帧
 	// （主循环阻塞在 stream.Recv）。服务端周期 Ping 维持连接，避免浏览器/代理 idle 掐断
 	// 导致过程区与最终答案丢失。WriteControl 可与 WriteMessage 并发（gorilla 明确允许）。
@@ -236,6 +275,20 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 		}
 		var req wsRequest
 		if json.Unmarshal(msg, &req) != nil {
+			continue
+		}
+		if req.Type == "proactive_ack" {
+			// HMI 已呈现——**唯一的通知合同完成条件**。网关只转发不判定：
+			// WebSocket write 成功不能被提升为「用户看见了」。
+			ids := req.DeliveryIDs
+			if len(ids) == 0 && req.DeliveryID != "" {
+				ids = []string{req.DeliveryID}
+			}
+			if len(ids) > 0 {
+				publishProactiveControl("agent.proactive.ack", map[string]any{
+					"delivery_ids": ids,
+				})
+			}
 			continue
 		}
 		if req.Type == "cancel" {
@@ -412,6 +465,7 @@ func main() {
 		if nc, err := natsgo.Connect(natsURL, natsgo.MaxReconnects(-1)); err != nil {
 			log.Printf("[edge-gateway] NATS connect failed, proactive disabled: %v", err)
 		} else {
+			setProactiveBus(nc)
 			if _, err := nc.Subscribe("agent.proactive", func(m *natsgo.Msg) {
 				var p map[string]any
 				if json.Unmarshal(m.Data, &p) != nil {
@@ -419,11 +473,21 @@ func main() {
 				}
 				// card 透传：异步深调研完成时带可读分节报告卡（p["card"]）；
 				// 普通主动播报（路况/早报）无该键 → nil → HMI 端忽略，不影响既有行为。
-				n := hub.broadcast(map[string]any{
+				// delivery_id/delivery_ids：投递凭据，HMI 按它幂等呈现并回执（M-C）。
+				// priority：**HMI 要靠它仲裁语音**——此前这个键被网关吞掉，于是
+				// S2S 说话时 HMI 只能一刀切「全都只出气泡」，分不出哪条该抢话、
+				// 哪条该等空闲补播。
+				out := map[string]any{
 					"type": "proactive", "speech": p["speech"],
 					"advisory": p["type"], "source": p["agent_id"],
 					"card": p["card"],
-				})
+				}
+				for _, k := range []string{"delivery_id", "delivery_ids", "priority"} {
+					if v, ok := p[k]; ok && v != nil {
+						out[k] = v
+					}
+				}
+				n := hub.broadcast(out)
 				log.Printf("[edge-gateway] proactive(nats) -> %d HMI: %v", n, p["speech"])
 			}); err != nil {
 				log.Printf("[edge-gateway] NATS subscribe failed: %v", err)

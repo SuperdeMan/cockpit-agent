@@ -19,6 +19,14 @@ from observability import events as obs_events
 
 logger = logging.getLogger("planner.executor")
 
+# 传输不确定的失败：**响应没回来，不等于事情没发生**。这一族（且只有这一族）
+# 允许拿世界状态翻案；Agent 明确报的错是**确定失败**，确定失败不许被状态翻案
+# ——那个状态可能是别的原因造成的（M-C 不变量）。
+# 这些是编排层自己产生的内部错误码，不是领域词汇（同 aggregator._ERROR_FRIENDLY）。
+_UNCERTAIN_ERRORS = ("step_timeout", "timeout")
+# `data["_verify"].exec` 的取值：世界状态证实了「它发生了」，但证明不了「这一步成功了」。
+_EXEC_UNCERTAIN = "uncertain_confirmed"
+
 
 def _dedup_enabled() -> bool:
     """重复副作用防抖总开关（M2 P2）。off = 回到 T2 放宽前的行为。"""
@@ -217,10 +225,12 @@ class DagExecutor:
           会被聚合器吞成裸「抱歉，处理失败」），落 `data["_verify"]` 保留键供聚合器加口径
         """
         verification = step.verification or {}
-        if not verification.get("mode") or result.status != StepStatus.OK:
+        if not verification.get("mode"):
             return result
         if not _verify.enabled():
             return result
+        if result.status != StepStatus.OK:
+            return await self._verify_uncertain(step, result, ctx)
 
         attempts = 0
         verdict = await self._evaluate(step, result, ctx, attempts)
@@ -247,6 +257,41 @@ class DagExecutor:
                 follow_up=result.follow_up, data=data,
                 missing_slots=result.missing_slots, error=result.error)
         return result
+
+    async def _verify_uncertain(self, step: Step, result: StepResult,
+                                ctx: PlanContext) -> StepResult:
+        """对**传输不确定**的失败查一次世界状态（M-C）。
+
+        缺口是 M2 就记着的：对账只验「声称成功」的步，于是「动作已经生效、响应却丢了」
+        这一族永远报失败——用户听到「抱歉，处理超时」，而后备箱确实开了。
+
+        三条边界，一条都不能松：
+        - **只认传输不确定**（`_UNCERTAIN_ERRORS`）。Agent 明确报错是**确定失败**，
+          确定失败不许被世界状态翻案：那个状态可能是别的原因造成的。
+        - **只认声明式 state_match**。schema 模式验的是本次响应的内容，而响应根本没回来，
+          拿它判定等于无中生有。
+        - **不改 status**。世界状态能证明「它发生了」，证明不了「这一步成功了」；
+          真正落到用户耳朵里的差别由聚合器用一句通用话术表达，**不伪造成功话术**
+          （合成它需要领域知识，而这里必须零领域字面量）。
+        """
+        if result.status != StepStatus.FAILED:
+            return result
+        if (result.error or "") not in _UNCERTAIN_ERRORS:
+            return result
+        if (step.verification or {}).get("mode") != _verify.MODE_STATE_MATCH:
+            return result
+        verdict = await self._evaluate(step, result, ctx, 0)
+        if verdict != _verify.SAT:
+            return result
+        data = dict(result.data or {})
+        data["_verify"] = {"verdict": _verify.SAT,
+                           "mode": _verify.MODE_STATE_MATCH,
+                           "exec": _EXEC_UNCERTAIN, "attempts": 0}
+        return StepResult(
+            step_id=result.step_id, status=result.status, speech=result.speech,
+            ui_card=result.ui_card, actions=result.actions,
+            follow_up=result.follow_up, data=data,
+            missing_slots=result.missing_slots, error=result.error)
 
     @staticmethod
     def _should_report(result: StepResult) -> bool:

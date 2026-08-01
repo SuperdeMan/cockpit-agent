@@ -171,3 +171,13 @@ async def test_card_actions_pin_reminder_id_and_owner():
     actions = pub.sent[0]["card"]["actions"]
     assert all(a["owner_occupant_id"] == "occ-2" for a in actions)
     assert all(a["reminder_id"] for a in actions)
+
+
+@pytest.mark.asyncio
+async def test_fired_payload_declares_a_delivery_ttl():
+    """durable 投递让消息可以在账上躺到 HMI 下次连上——**陈旧补播因此从理论风险
+    变成真风险**。此前投递路径只有 1.5s 合并窗，「不声明 ttl」侥幸没出过事。"""
+    pub = Pub()
+    s = await _store_with(Reminder(user_id="u1", title="吃药", kind="time", fire_at=100))
+    await ReminderScheduler(s, pub, now_fn=lambda: 200.0).tick()
+    assert pub.sent[0]["ttl_ms"] > 0

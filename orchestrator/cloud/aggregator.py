@@ -84,6 +84,11 @@ _VERIFY_NOTE = {
 }
 _VERIFY_NOTE_DEFAULT = "不过我没确认到结果真的达成，你留意一下。"
 
+# M-C：传输不确定的失败被世界状态证实「其实已经生效」时的诚实口径。
+# **不伪造成功话术**——合成「后备箱已打开」需要领域知识，而编排核心零领域字面量；
+# 但也不能继续说「抱歉，处理超时」，那是**已知为假**的一句话。
+_EXEC_UNCERTAIN_SPEECH = "刚才没收到确认回执，不过我查了车辆状态，这个操作其实已经生效了。"
+
 
 class Aggregator:
     def __init__(self, llm_fn):
@@ -96,6 +101,16 @@ class Aggregator:
         "timeout": "处理超时了，请稍后再试",
         "circuit_open": "该服务暂时不可用，请稍后再试",
     }
+
+    @staticmethod
+    def _exec_confirmed_by_state(r: StepResult) -> bool:
+        """这一步虽然报了失败，但世界状态证实它其实生效了（M-C）。
+
+        判据来自 executor 落的 `data["_verify"]` 保留键，通用、零领域字面量。
+        """
+        v = (r.data or {}).get("_verify") if isinstance(r.data, dict) else None
+        return (isinstance(v, dict) and v.get("verdict") == "sat"
+                and v.get("exec") == "uncertain_confirmed")
 
     @staticmethod
     def _verify_note(results: list[StepResult]) -> str:
@@ -152,6 +167,8 @@ class Aggregator:
         if len(results) == 1:
             r = results[0]
             if r.status == StepStatus.FAILED:
+                if self._exec_confirmed_by_state(r):
+                    return {"speech": _EXEC_UNCERTAIN_SPEECH, "actions": []}
                 friendly = self._ERROR_FRIENDLY.get(r.error or "", r.error or "处理失败")
                 return {"speech": f"抱歉，{friendly}。", "actions": []}
             return {

@@ -81,3 +81,16 @@ async def test_geofence_card_actions_pin_owner_and_id():
 
     action = pub.sent[0]["card"]["actions"][0]
     assert action["owner_occupant_id"] == "occ-2" and action["reminder_id"]
+
+
+@pytest.mark.asyncio
+async def test_geofence_payload_declares_a_shorter_delivery_ttl():
+    """「到公司了，记得拿文件」在离开半小时后补播就是错的——到地比到点更短。"""
+    from agents.reminder.src import geofence as gf, scheduler as sch
+    pub = Pub()
+    w, _ = await _watcher_with(pub, _loc_reminder("u1", "primary", "拿文件", 31.2, 121.4))
+    await w.on_state([], {"location": _FAR})
+    await w.on_state([], {"location": _NEAR})
+    ttl = pub.sent[0]["ttl_ms"]
+    assert 0 < ttl < sch._DELIVERY_TTL_MS
+    assert ttl == gf._DELIVERY_TTL_MS
