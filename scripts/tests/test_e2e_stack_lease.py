@@ -735,14 +735,29 @@ def test_child_bundle_rejects_duplicate_sensitive_json_keys(
         )
 
 
+def _private_dir(path: Path) -> Path:
+    """建一个满足 lease 私有目录契约（POSIX 0o700）的目录。
+
+    `_verify_private_posix_path` 在 Windows 上直接 return，在 Linux 上会先校验
+    权限位——用 `mkdir()` 建出来的是 0o755，于是这些用例在 Linux 上**先撞权限错误、
+    根本走不到它们要断言的那个分支**（CI 报 "Regex pattern did not match"）。
+    换句话说：**这些断言在 Windows 上从来没被真正执行过。**
+    """
+    path.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        os.chmod(path, 0o700)
+    return path
+
+
 def test_child_bundle_rejects_16mib_unknown_payload_before_json_load(tmp_path):
     module = require_module()
-    directory = tmp_path / "lease-huge-e2e_memory"
-    directory.mkdir()
+    directory = _private_dir(tmp_path / "lease-huge-e2e_memory")
     bundle = directory / "tokens.json"
     bundle.write_bytes(
         b'{"unknown":"' + b"x" * (16 * 1024 * 1024) + b'"}',
     )
+    if os.name != "nt":
+        os.chmod(bundle, 0o600)      # 同私有目录：不满足权限契约就走不到大小检查
 
     with pytest.raises(module.StackLeaseProtocolError, match="large"):
         module.load_child_bundle(
@@ -832,10 +847,10 @@ def test_child_bundle_rejects_inherited_identity_enabled_owner_key(
 
 def test_child_bundle_rejects_nonregular_file_and_expected_root_escape(tmp_path):
     module = require_module()
-    private_root = tmp_path / "private"
-    private_root.mkdir()
-    directory_path = private_root / "lease-dir-e2e_memory" / "tokens.json"
-    directory_path.mkdir(parents=True)
+    private_root = _private_dir(tmp_path / "private")
+    directory_path = _private_dir(private_root / "lease-dir-e2e_memory" / "tokens.json")
+    if os.name != "nt":
+        os.chmod(directory_path.parent, 0o700)
     with pytest.raises(module.StackLeaseProtocolError, match="regular"):
         module.load_child_bundle(
             directory_path.resolve(),

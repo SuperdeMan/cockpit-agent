@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -39,11 +40,33 @@ def test_wrapper_hashes_go_mod_and_sum_before_and_after():
     assert "changed" in source.lower()
 
 
+def _powershell() -> str:
+    """解析当前平台的 PowerShell 可执行文件。
+
+    此前硬编码 `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`
+    ——那在 Ubuntu 上直接 `KeyError: 'SystemRoot'`（CI 装的是跨平台的 `pwsh`）。
+    **一条只能在一个平台跑的测试，写死那个平台的路径就等于在别处必红。**
+    解析不到就 skip：本仓库既有惯例（同 `test_e2e_wrappers_ci._powershell`），
+    诚实跳过好过假装通过，也好过让整组红掉。
+    """
+    if os.name == "nt":
+        system_root = os.environ.get("SystemRoot") or os.environ.get("SYSTEMROOT")
+        if system_root:
+            candidate = (Path(system_root) / "System32"
+                         / "WindowsPowerShell" / "v1.0" / "powershell.exe")
+            if candidate.is_file():
+                return str(candidate)
+        found = shutil.which("powershell.exe") or shutil.which("pwsh")
+    else:
+        found = shutil.which("pwsh") or shutil.which("powershell")
+    if not found:
+        pytest.skip("PowerShell runtime unavailable on this platform")
+    return found
+
+
 def test_wrapper_fails_nonzero_when_docker_is_unavailable():
     assert WRAPPER.is_file(), "Go test wrapper is missing"
-    powershell = Path(os.environ["SystemRoot"]) / "System32" / (
-        "WindowsPowerShell/v1.0/powershell.exe"
-    )
+    powershell = _powershell()
     env = dict(os.environ)
     env["PATH"] = ""
     completed = subprocess.run(
@@ -81,9 +104,7 @@ def _run_with_fake_docker(tmp_path, packages):
         f'@"{sys.executable}" "{fake}" %*\r\n',
         encoding="utf-8",
     )
-    powershell = Path(os.environ["SystemRoot"]) / "System32" / (
-        "WindowsPowerShell/v1.0/powershell.exe"
-    )
+    powershell = _powershell()
     env = dict(os.environ)
     env["PATH"] = str(tmp_path) + os.pathsep + env.get("PATH", "")
     env["FAKE_DOCKER_CAPTURE"] = str(capture)
