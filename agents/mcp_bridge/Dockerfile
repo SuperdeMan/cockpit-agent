@@ -2,7 +2,8 @@
 FROM python:3.11-slim
 WORKDIR /app
 COPY agents/_sdk/requirements.txt /tmp/req.txt
-RUN pip install --no-cache-dir -r /tmp/req.txt
+COPY agents/mcp_bridge/requirements.txt /tmp/req-mcp.txt
+RUN pip install --no-cache-dir -r /tmp/req.txt -r /tmp/req-mcp.txt
 COPY gen/python /app/gen/python
 COPY agents /app/agents
 COPY runtime /app/runtime

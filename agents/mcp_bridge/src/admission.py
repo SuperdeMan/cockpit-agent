@@ -33,7 +33,11 @@ class ToolSpec:
     schema_sha: str = ""         # 声明的 inputSchema 指纹（空=首次接入，不校验只记录）
     timeout_ms: int = 15000
     idempotency_key_arg: str = ""
-    compensate_tool: str = ""    # 补偿工具（退款/取消）；写操作没有它就不许标 write
+    compensate_tool: str = ""
+    # 二次确认时给用户看的那句话（`{args}` 占位）。**用户正要点头同意的就是这句**，
+    # 说错动作比说得笨拙严重得多——真栈实测抓到取消订单被问成「准备下单：DC…」。
+    # 放在声明里而不是桥核心：动词是领域语义，桥不该认识「下单」和「取消」。
+    confirm_prompt: str = ""    # 补偿工具（退款/取消）；写操作没有它就不许标 write
     # 槽位名 → 工具参数名。**规划期看到的词表与工具的参数名解耦**：LLM 自然会填
     # `item`（"点一杯拿铁"），而商户的参数叫 `sku`——硬要求 LLM 用商户词表是自找的
     # 槽位缺失。映射写在准入清单里，桥不含任何领域词。
@@ -73,6 +77,7 @@ def load_servers(path: str) -> list:
             description=t.get("description", ""), examples=t.get("examples", []) or [],
             slots=t.get("slots", []) or [],
             schema_sha=str(t.get("schema_sha", "") or ""),
+            confirm_prompt=str(t.get("confirm_prompt", "") or ""),
             timeout_ms=int(t.get("timeout_ms", 15000) or 15000),
             idempotency_key_arg=str(t.get("idempotency_key_arg", "") or ""),
             compensate_tool=str(t.get("compensate_tool", "") or ""),

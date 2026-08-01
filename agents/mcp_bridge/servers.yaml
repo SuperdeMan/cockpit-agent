@@ -40,6 +40,7 @@ servers:
         compensate_tool: order.cancel  # 缺它 → admission 拒载
         schema_sha: "041a13dc1703"
         description: 下单一杯咖啡（演示商户，不产生真实交易）
+        confirm_prompt: "准备下单：{args}，确认吗？"
         # 规划期槽位用自然词（LLM 会填 item/size），经 arg_map 翻成商户的参数名
         slots: [item, size]
         arg_map: {item: sku, size: size}
@@ -71,6 +72,7 @@ servers:
         compensate_tool: order.cancel   # 取消自身幂等（再取消返回 duplicate）
         schema_sha: "943700876d93"
         description: 取消咖啡订单并退款（演示商户，不产生真实交易）
+        confirm_prompt: "准备取消订单 {args} 并退款，确认吗？"
         slots: [order_id]
         examples: ["取消我的咖啡订单", "那杯咖啡不要了", "帮我把订单退了"]
         timeout_ms: 12000

@@ -636,3 +636,55 @@ async def test_compensation_is_now_reachable_at_runtime():
         assert create.tool.compensate_tool in admitted, "补偿工具自己必须也在准入清单里"
     finally:
         await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_missing_slot_prompt_follows_the_slot_not_the_order_flow():
+    """取消复用写路径后，追问词不能还是下单的「要点什么？」。
+
+    真栈实测抓到：「取消我的咖啡订单」→「要点什么？」。判据按**槽位名**而不是
+    intent——intent 是领域字面量（桥核心的既有铁律），槽位名来自 capability 声明。
+    """
+    a, fake = await _agent(reply={"ok": True, "text": "x", "data": {}})
+    a.ledger = FakeLedger(history=[])
+    try:
+        res = await run_handle(a, "shop.order_cancel", raw_text="取消订单",
+                               meta={"confirmed": "true"})
+        assert res.status == "need_slot"
+        assert "要点什么" not in res.speech, "那是下单的追问词"
+        assert "订单号" in res.speech
+        assert fake.calls == []
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_confirm_prompt_is_declared_per_tool_not_hardcoded_as_ordering():
+    """**用户正要点头同意的就是这句**——说错动作比说得笨拙严重得多。
+    真栈实测抓到：「取消我的咖啡订单」被问成「准备下单：DC03…，确认吗？」。
+    动词是领域语义，放声明里；桥核心不认识「下单」和「取消」。"""
+    a, fake = await _agent(reply={"ok": True, "text": "x", "data": {}})
+    a.ledger = FakeLedger(history=[_ledger_task(order_id="DC1")])
+    try:
+        res = await run_handle(a, "shop.order_cancel", raw_text="取消我的咖啡订单")
+        assert res.status == "need_confirm"
+        assert "取消" in res.speech and "下单" not in res.speech
+        assert "DC1" in res.speech, "确认词要说清楚动的是哪一单"
+        assert fake.calls == []
+    finally:
+        await a.shutdown()
+
+
+def test_bridge_core_has_no_domain_verbs_in_confirm_wording():
+    """源码断言：确认话术的动词只能来自声明。这条防的是「顺手写死一句」——
+    那在只有下单一个写工具时永远看不出问题。"""
+    import ast
+    import pathlib
+    path = pathlib.Path(__file__).resolve().parents[1] / "src" / "agent.py"
+    src = path.read_text(encoding="utf-8")
+    # 只看**可执行代码**里的字符串常量——注释里引用这个词是在解释缺陷，不是在犯它
+    # （同 `scripts/e2e_contract.py` 的架构守卫：AST 选节点，不做全文 grep）。
+    literals = {node.value for node in ast.walk(ast.parse(src))
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+    assert not any("准备下单" in lit for lit in literals),         "下单动词必须来自 servers.yaml 的 confirm_prompt"
+    assert "confirm_prompt" in src

@@ -28,6 +28,14 @@ from .mcp_client import McpError, StdioMcpClient
 
 logger = logging.getLogger("agent.mcp_bridge")
 
+# 缺槽追问词：按**槽位名**索引。此前 NEED_SLOT 恒说「要点什么？」——那是下单的词，
+# 取消复用同一条写路径后就会对着「取消订单」问「要点什么？」。
+# 槽位名来自 capability 声明（servers.yaml），不是 intent 字面量。
+_SLOT_PROMPTS = {
+    "item": "要点什么？",
+    "order_id": "要操作哪一单？说个订单号，或者先说「查一下我的订单」。",
+}
+
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MANIFEST = os.path.join(_HERE, "manifest.yaml")
 _SERVERS = os.path.join(_HERE, "servers.yaml")
@@ -293,15 +301,24 @@ class McpBridgeAgent(BaseAgent):
             # 拿它去取消等于对着一个不知道存不存在的单执行写操作。
             slots = await self._backfill_write_slots(declared, ctx)
         if declared and not slots:
-            return AgentResult(status=NEED_SLOT, speech="要点什么？",
-                               missing_slots=declared[:1])
+            # 追问词按缺的那个槽位来。此前恒说「要点什么？」——那是**下单**的词，
+            # 取消复用同一条写路径后就会对着「取消订单」问「要点什么？」。
+            # 判据不引入领域字面量：拿 capability 声明的槽位名做 key，缺声明就用通用词。
+            missing = declared[0]
+            return AgentResult(status=NEED_SLOT,
+                               speech=_SLOT_PROMPTS.get(missing, "还差点信息，说说具体是哪一个？"),
+                               missing_slots=[missing])
         goal = json.dumps({"tool": b.tool.name, **slots}, ensure_ascii=False,
                           sort_keys=True)
         if not confirmed:
             # 二次确认由中央闸兜底（M0a），这里自己也返回一次——把**要花的钱**说清楚
+            # 确认词由工具**自己声明**：用户正要点头同意的就是这句，说错动作
+            # （取消订单被问成「准备下单」）比说得笨拙严重得多。缺声明时用中性词，
+            # 桥核心不认识「下单」「取消」这些动词。
+            tmpl = b.tool.confirm_prompt or "准备执行：{args}，确认吗？"
             return AgentResult(
                 status=NEED_CONFIRM,
-                speech=self._demo_prefix(b) + f"准备下单：{self._readable(slots)}，确认吗？")
+                speech=self._demo_prefix(b) + tmpl.format(args=self._readable(slots)))
 
         user_id = str(getattr(ctx, "user_id", "") or "").strip()
         if not user_id:

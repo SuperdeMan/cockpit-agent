@@ -1,0 +1,10 @@
+# MCP 桥在 _sdk 公共依赖之外还要 asyncpg：写操作的**幂等受理**靠 Task Ledger
+# （`(user_id, idempotency_key)` 活跃态唯一 → Duplicate → 连说两遍不双下单），
+# 查单/取消回填订单号也从账本取。
+#
+# **这条依赖从 M3 上线起就漏了**（M-D 真栈验证时发现）：`_sdk/requirements.txt` 没有
+# asyncpg，而 deep-research/reminder/scene 各自在自己的 requirements 里补了，
+# 只有 mcp-bridge 没有——于是它启动即打「TaskLedger: PG 不可用，任务账本禁用」，
+# 幂等受理一直是关着的。降级本身是诚实的（日志 WARNING + 代码容忍 task is None），
+# 但**没人读那行 WARNING**，所以它安静地少了一个安全特性。
+asyncpg>=0.29
