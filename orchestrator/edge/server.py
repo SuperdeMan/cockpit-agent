@@ -219,19 +219,57 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         except Exception:
             pass
 
-    async def _nlu_shadow(self, text: str) -> dict:
+    def _nlu_shadow_bg(self, trace_id: str, text: str, path: str,
+                       rule_objects: list[str] | None = None) -> None:
+        """把影子推理**排到响应之后**跑，落独立的 `nlu.shadow` span。
+
+        M5 P3a 时影子只挂在上云那一支，理由是「快路径毫秒级秒回，为一次 3-8ms 的推理
+        牺牲它不值」。当时就记了账：**规则误接发生在本地那一支，影子看不见——而误接
+        恰恰是最危险的一类**（用户说车窗、系统开天窗；漏接顶多是上云绕一圈）。
+        本方法就是那笔账的补法——**不是把推理搬到关键路径上，是搬到关键路径后面**：
+        `create_task` 在 `yield final` 之后才拿到事件循环，秒回一毫秒都不让。
+
+        ⚠ 两个必须记住的实现细节：
+        - **任务要留强引用**（复用既有的 `self._bg`）。`asyncio.create_task` 的返回值
+          没人持有时任务可能被 GC 在半路收走，表现是「影子有时候有数据有时候没有」
+          ——这种缺陷不报错，只让数据悄悄变稀。
+        - **进程收尾时未完成的影子会被取消**，这是可接受的：它是诊断不是账本。
+          真要一条不丢就得落队列，那是另一个量级的东西，当前没有需求撑它。
+        """
+        if edge_nlu.mode() == "off":
+            return
+        try:
+            task = asyncio.create_task(
+                self._nlu_shadow_emit(trace_id, text, path, rule_objects))
+        except RuntimeError:            # 无运行中的 loop（同步测试路径）——影子不生效即可
+            return
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+
+    async def _nlu_shadow_emit(self, trace_id: str, text: str, path: str,
+                               rule_objects: list[str] | None = None) -> None:
+        attrs = await self._nlu_shadow(text, rule_objects)
+        if attrs:
+            await self._emit_span(trace_id, "nlu.shadow", attrs={"path": path, **attrs})
+
+    async def _nlu_shadow(self, text: str,
+                          rule_objects: list[str] | None = None) -> dict:
         """端侧语义 NLU 影子（M5 P3，`EDGE_NLU_MODE=shadow` 默认）：**只算不用**。
 
-        三个刻意的选择：
-        - **只挂在上云那一支**，不挂快路径。快路径是「毫秒级秒回」，为一次影子推理（实测
-          单条 3-8ms）牺牲它不值；而真正要观察的样本恰恰全在这一支——规则没接住才上云。
-          ⚠ **代价要记账**：规则**误接**（不是漏接）发生在本地那一支，影子看不见——
-          而误接恰恰是最危险的一类（用户说车窗、系统开天窗）。补法是改成「响应后
-          fire-and-forget」，不占关键路径，留 P3b。
+        两个刻意的选择：
         - **落 span 属性而不是 metric**。P4 声纹的 `vp_*` 指标被 collector 的 `apply_metric`
           固定键白名单整批丢掉过（RFC 承诺的「四态进 obs」实际没落地），span 属性没有白名单。
         - **推理放线程池**：onnxruntime 是同步阻塞的 C 扩展，直接在事件循环里跑会顶住整个
           端侧 orchestrator（它还要同时喂 WS/gRPC 流）。
+
+        `path` 由调用方给（local/multi/mixed/cloud）——**误接与漏接必须分得开**：
+        `path=cloud` 是「规则没接住」，`path=local|multi|mixed` 是「规则接住并且已经执行了」，
+        后者的 `differ` 才是真正要人看一眼的那一档。
+
+        `rule_objects`：多意图路径必须传。**模型是单标签分类器，一句多意图它只能选一个**
+        ——「打开空调，把车窗关上」模型给「车窗」、规则给 `aircon`，直接比就是一条**结构性
+        的假 differ**（与桥接表要消除的「命名差异被记成分歧」是同一类错，只是换了个成因）。
+        传进来之后判据变成「模型选中的那个在不在规则执行的这一组里」。
         """
         if edge_nlu.mode() == "off":
             return {}
@@ -243,7 +281,10 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             got = await asyncio.to_thread(engine.classify, text)
             if not got:
                 return {}
-            rule = classify_structured(text)
+            if rule_objects is None:
+                rule = classify_structured(text)
+                rule_objects = [(rule.get("data", {}) or {}).get("object", "")] if rule else []
+                rule_objects = [o for o in rule_objects if o]
             attrs = {"nlu_domain": got["domain"], "nlu_object": got["object"],
                      "nlu_conf": got["conf"],
                      "nlu_ms": round((time.perf_counter() - t0) * 1000, 1)}
@@ -256,18 +297,18 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             # 直接 `==` 的结果是**规则一命中就恒为 differ**——`agree` 这个状态在生产里
             # 从来没有出现过，而 P3b 的错对象率正要拿这一档当分母。桥接表
             # （`knowledge/nlu_objects.yaml`）补上后两边才在同一个空间里比。
-            if not rule:
+            if not rule_objects:
                 attrs["nlu_vs_rule"] = "rule_miss"
             else:
-                rule_obj = (rule.get("data", {}) or {}).get("object", "")
-                attrs["rule_object"] = rule_obj
+                attrs["rule_object"] = "|".join(rule_objects)
                 equiv = edge_nlu.equivalent_objects(got["object"])
                 if not equiv:
                     # None=表里没这个标签（待裁定）／[]=已裁定连规则侧也无对应名。
                     # 两种都不下「模型错了」的结论——**无金标不装懂**。
                     attrs["nlu_vs_rule"] = "unmapped"
                 else:
-                    attrs["nlu_vs_rule"] = "agree" if rule_obj in equiv else "differ"
+                    hit = any(o in equiv for o in rule_objects)
+                    attrs["nlu_vs_rule"] = "agree" if hit else "differ"
             return attrs
         except Exception as e:      # 影子绝不许影响主链——它的全部价值就是「不生效」
             logger.debug("edge NLU shadow skipped: %s", e)
@@ -486,6 +527,10 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 final = orchestrator_pb2.FinalResult(speech=combined)
                 final.actions.extend(actions)
                 yield orchestrator_pb2.HandleEvent(final=final)
+                self._nlu_shadow_bg(
+                    trace_id, request.text, "multi",
+                    rule_objects=[o for o in
+                                  ((m.get("data") or {}).get("object", "") for m in multi) if o])
                 self._record_local_turn(request, request.text, combined)
                 return
 
@@ -559,6 +604,11 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     final = orchestrator_pb2.FinalResult(speech=combined)
                     final.actions.extend(local_actions)
                     yield orchestrator_pb2.HandleEvent(final=final)
+                    self._nlu_shadow_bg(
+                        trace_id, request.text, "mixed",
+                        rule_objects=[o for o in
+                                      ((m.get("data") or {}).get("object", "")
+                                       for m in mixed_intents) if o])
                     # R6：本地 final 会清空 HMI 占位气泡；立刻补一个云段占位，
                     # 让慢意图气泡即时出现（配合 HMI 对 speech_delta 新建气泡），
                     # 消除规划期~1s 盲等。
@@ -608,6 +658,11 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     final = orchestrator_pb2.FinalResult(speech=combined)
                     final.actions.extend(local_actions)
                     yield orchestrator_pb2.HandleEvent(final=final)
+                    self._nlu_shadow_bg(
+                        trace_id, request.text, "local",
+                        rule_objects=[o for o in
+                                      ((m.get("data") or {}).get("object", "")
+                                       for m in mixed_intents) if o])
                 return
 
         # 快路径 B：高置信本地意图，端侧秒回（离线可用，不依赖网络）
@@ -660,6 +715,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     },
                 )
                 yield orchestrator_pb2.HandleEvent(final=final)
+                # 秒回之后才排影子——这一支是**规则已经执行了**的那一支，`differ` 在这里
+                # 意味着「模型认为你说的是另一个对象，而车已经动了」，是最该被人看的一档。
+                self._nlu_shadow_bg(trace_id, request.text, "local")
                 self._record_local_turn(request, request.text, speech)
                 return
             logger.info("LOCAL confirm-required %s -> route to cloud", intent["name"])
@@ -677,8 +735,13 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         await self._emit_span(
             trace_id,
             "route.cloud",
-            attrs={"text": request.text[:40], **(await self._nlu_shadow(request.text))},
+            attrs={"text": request.text[:40]},
         )
+        # 影子从 `route.cloud` 的属性里搬了出来，落独立的 `nlu.shadow` span：
+        # 它现在四条路径都挂（local/multi/mixed/cloud），寄生在某一条路径的 span 上
+        # 就意味着**数据分散在四个 node 里**，查一次分歧要 union 四张表。
+        # 顺带把这 3-8ms 从上云路径的关键段也摘了出去。
+        self._nlu_shadow_bg(trace_id, request.text, "cloud")
         cloud_speech = ""
         cloud_has_actions = False
         try:
