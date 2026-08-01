@@ -59,8 +59,16 @@ dashboard 16）——各主题的测试增量与提交散列见 §4 对应行，
 
 ### 4.0 当前进度与下一步（新会话从这里开始）
 
-> 截至 **2026-07-30**。下方长表是逐批次的历史流水（**只进不出**，查证据用）；这一小节是
+> 截至 **2026-08-01**。下方长表是逐批次的历史流水（**只进不出**，查证据用）；这一小节是
 > **交接摘要**——接手者先读这里，再按需下钻。
+
+**最新状态（2026-08-01）**：2026-07-26 验收报告 §7 的 **13 张主卡全部收口**
+（M-A 测试真实性 / M-B 多乘员隔离 / M-C 可靠触达 / M-D 外部生态，四批全部合入 main）。
+每批的「明确未做」逐条附判据在验收报告 §9/§10.2/§11.2/§12.2——**未做不等于没账**。
+全量 3597 passed / 11 skipped / 0 failed；HMI 225/225 + build；Go 网关 vet+test 通过。
+
+**⚠ 唯一未收口的是 GitHub CI**（见 §4.0 末「CI/nightly 现状」）：本地全绿而 CI 红，
+根因是 M-A 那批测试把 **Windows 假设写死了**，Ubuntu 上必红。已修 4 类、**剩 6 条**。
 
 **智能化升级 M0a→M4 全部完成**（母提案
 `docs/design/2026-07-24-eva-benchmark-intelligence-upgrade.md` §6 分期，各期落地记录逐条在案）。
@@ -632,6 +640,26 @@ badcase 排查观测贯通=2026-07-10[见「可观测」行]。）
 记忆系统测试：复杂场景集 `memory/tests/test_scenarios.py`（8 例，确定性）+ 断言型全栈
 跨轮回放 `test/e2e_memory.py`（6 链路，真栈实测 6/6 通过、自清理可重入）已落地；
 后续：把定稿并入架构 §7、自动抽取确定性兜底、把 `e2e_memory.py` 纳入 nightly 门禁。）
+
+---
+
+### CI / nightly 现状（2026-08-01，**唯一未收口项**）
+
+**判据先行：本地全绿 ≠ CI 绿。** 本地习惯单进程跑全量（3597 passed），CI 是
+**Ubuntu + 分组跑**——两个差异各自藏着一类缺陷。
+
+| 项 | 状态 |
+|---|---|
+| CI 破点 | `#217` 绿（`87edc13`）→ `#218` 红（`449c5d1`），中间是 **M-A 那 20 个提交**。与 M-B/M-C/M-D 无关 |
+| 已修 ① 环境泄漏 | `test_remaining_e2e_protocol._load()` 加载 `e2e_real_providers.py` 时，后者 **import 期** `os.environ.setdefault` 把 .env 灌进同进程；monkeypatch 还原不了它。后续 charging-planner 用例把 provider 决议从 mock 翻成 real → 真调用拿假 key 失败 → 无卡 → 红。**group 1 已由 CI 确认转绿** |
+| 已修 ② 平台假设 | `test_run_go_tests_wrapper` 硬编码 `%SystemRoot%\System32\WindowsPowerShell`（Ubuntu `KeyError`）；假 docker 只写 `docker.cmd`（Linux 上打到真 docker，`go: downloading` + pwsh 超时）；`test_e2e_stack_lease` 用 `mkdir()` 建 0o755 目录，而 Linux 侧先校验 0o700/0o600 → **那两条断言在 Windows 上从来没被真正执行过** |
+| 已修 ③ CI 可诊断性 | 此前只报「pytest group FAILED: <组名>」，而 **job 日志需要 admin 权限**（`/actions/runs/{id}/logs` 返回 "Must have admin rights"）。改成把 `FAILED/ERROR` 行逐条升成 `::error::` annotation（公开可读）。**没有这一步就只能靠本地复现去猜** |
+| **剩余 6 条** | 全在 `scripts/tests/`：`test_run_e2e.py` 四条 canonical 晋升（`assert 'report_counts_invalid' in ['canonical_promotion_failed']`、`assert 3 == 0` 等——**具体理由被 `except` 吞成了泛化的 `canonical_promotion_failed`**）；`test_run_go_tests_wrapper` 一条 argv 比对；`test_e2e_identity` 一条 `memory capability bundle rewr...` |
+| 下一步怎么查 | `python scripts/tests/../ci_ann.py` 那类脚本读 annotation 即可（**免 admin**）；或在 Linux 容器里跑 `scripts/tests/`。⚠ **不要把诊断细节塞进 `canonical_rejection_reasons`**——那是契约字段，已有测试锁死「只有这一项」，我试过一次被三条测试拦下（改走 stderr 也撞了 runner 的输出契约，已回退） |
+| nightly | 自 `#30`（2026-07-29）起红，**同样早于本轮工作**。它跑 mock 全栈 + `--lane nightly --full`，失败原因尚未定位（需要读 artifact 或本地起 mock 栈复现） |
+
+**一条可复用判据**：跨平台 CI 里，被 `os.name == "nt"` 提前 return 掉的校验，
+正是另一边会先触发的那一层——**「本地绿」只证明本地那条分支绿**。
 
 ---
 
