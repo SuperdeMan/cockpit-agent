@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """生成 test/eval_corpus/feishu_intents_full.jsonl —— R4.1 P2 覆盖率评测语料资产。
 
-从飞书《同行者公版语音指令表 6.1》意图表（tblN5NfQff850L5O）经 lark-cli 重拉全量 ~1465 行，
+从飞书《公版语音指令表 6.1》意图表（tblN5NfQff850L5O）经 lark-cli 重拉全量 ~1465 行，
 把「标准说法」+「高频说法」（换行分隔的多条真实用户说法）拆行、全局去重，产出每行：
   {"text": <说法>, "domain": <domain>, "object": <三级对象>, "edge_expected": null}
 

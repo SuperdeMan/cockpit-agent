@@ -1,4 +1,4 @@
-# commands.yaml — 车控命令 schema（来源：同行者公版语音指令表 6.1）
+# commands.yaml — 车控命令 schema（来源：公版语音指令表 6.1）
 # 每个 object 声明：operates/attrs/modes/positions/units/online/drive_restricted/require_confirm/voice_forbidden
 
 objects:

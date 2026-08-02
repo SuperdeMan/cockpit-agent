@@ -4,7 +4,7 @@
 用法: python scripts/export_commands.py [--base-token TOKEN] [--table-id TID] [--output PATH]
 
 前置: lark-cli 已安装且已认证（LARK_TOKEN 环境变量）
-参考源: 同行者公版语音指令表 6.1 分类表(tblMPZYYAzV8YVUp) + 意图表(tblN5NfQff850L5O)
+参考源: 公版语音指令表 6.1 分类表(tblMPZYYAzV8YVUp) + 意图表(tblN5NfQff850L5O)
 
 映射规则:
   意图表「data」(JSON) → object / operate / mode / positions / unit / attr

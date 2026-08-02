@@ -1,4 +1,4 @@
-# responses.yaml — 响应话术模板（来源：同行者公版语音指令表 6.1 具体响应表+兜底表）
+# responses.yaml — 响应话术模板（来源：公版语音指令表 6.1 具体响应表+兜底表）
 # 按 object → operate → 执行结果组织；每条含 scene/status/speech_full/speech_brief
 
 hvac_on_success:

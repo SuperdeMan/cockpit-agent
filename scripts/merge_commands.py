@@ -46,7 +46,7 @@ for name, defn in new_objects.items():
 
 c['objects'] = objects
 with open('orchestrator/edge/knowledge/commands.yaml', 'w', encoding='utf-8') as f:
-    f.write('# commands.yaml — 车控命令 schema（来源：同行者公版语音指令表 6.1）\n')
+    f.write('# commands.yaml — 车控命令 schema（来源：公版语音指令表 6.1）\n')
     f.write('# 每个 object 声明：operates/attrs/modes/positions/units/online/drive_restricted/require_confirm/voice_forbidden\n\n')
     yaml.dump(c, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 

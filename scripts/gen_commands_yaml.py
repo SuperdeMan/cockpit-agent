@@ -529,7 +529,7 @@ def format_list(items):
 def build_yaml_content(objects_data):
     """Build the YAML content string."""
     lines = []
-    lines.append("# commands.yaml — 车控命令 schema（来源：同行者公版语音指令表 6.1 分类表+意图表）")
+    lines.append("# commands.yaml — 车控命令 schema（来源：公版语音指令表 6.1 分类表+意图表）")
     lines.append("# 自动生成自 Feishu 意图表，覆盖全部意图记录")
     lines.append("# 每个 object 声明：operates/attrs/modes/positions/units/online/drive_restricted/require_confirm/voice_forbidden")
     lines.append("# positions=true 表示支持位置选择（主驾/副驾/前排/后排/全车）")

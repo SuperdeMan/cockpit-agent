@@ -3,7 +3,7 @@
 
 用法: python scripts/export_entities.py [--base-token TOKEN] [--table-id TID] [--output PATH]
 
-参考源: 同行者公版语音指令表 6.1 词库(tblDLspoGsO4Iu4w)
+参考源: 公版语音指令表 6.1 词库(tblDLspoGsO4Iu4w)
 
 字段映射:
   「主词」→ entity key（如 <车道位置>、<主路>）

@@ -8,15 +8,14 @@
 
 ## 1. 背景
 
-`docs/design/2026-06-13-vehicle-control-command-architecture.md` 记录了飞书 Base《同行者
-公版语音指令表 6.1》的完整数据源（链接见 §2），并说明 P1（知识库三件套 + VAL + `fast_intent`
+`docs/design/2026-06-13-vehicle-control-command-architecture.md` 记录了飞书 Base《公版语音指令表 6.1》的完整数据源（链接见 §2），并说明 P1（知识库三件套 + VAL + `fast_intent`
 150 条 pattern）已落地，P2（端侧轻量 NLU / 触发域）待做。T3.4（意图路由评测基线）工作中确认
 `fast_intent.py` 当前 `LOCAL_INTENTS` 只有 153 条规则，而飞书原始意图表全量 1465 条——但
 "153 vs 1465" 只是行数对比，不代表真实识别缺口的大小或分布，需要实测才知道。
 
 ## 2. 数据源
 
-Base《同行者公版语音指令表 6.1》：内部飞书知识库（2026-08-02 卫生脱敏：链接与 app_token 退出仓库，见 `.env` 的 `FEISHU_BASE_TOKEN`）；意图表-基线版 table_id `tblN5NfQff850L5O`。
+Base《公版语音指令表 6.1》：内部飞书知识库（2026-08-02 卫生脱敏：链接与 app_token 退出仓库，见 `.env` 的 `FEISHU_BASE_TOKEN`）；意图表-基线版 table_id `tblN5NfQff850L5O`。
 
 拉取方式（`+data-query` 聚合接口对该 Base 返回 `91403` 权限错误，user/bot 两种身份均如此，
 故改用 `+record-list` 分页拉取原始行、本地聚合，见 §7 已知限制）：
