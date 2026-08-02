@@ -529,6 +529,8 @@ def main(argv: list[str] | None = None) -> int:
         results, infra = _execute(selected, args, suite, agents, builder,
                                   confirm_intents, provider_model, lock)
         infrastructure_errors.extend(infra)
+        l3_selected, l3_statuses = _l3_evidence(selected, args, provider_model)
+        results.extend(_l3_results(selected, args, l3_statuses, provider_model))
     except RuntimeError as exc:
         print(f"[intent-adversarial] infrastructure error: {exc}", file=sys.stderr)
         return 2
@@ -536,7 +538,6 @@ def main(argv: list[str] | None = None) -> int:
         if lock is not None:
             lock.restore()
 
-    l3_selected, l3_statuses = _l3_evidence(selected, args, provider_model)
     meta = {
         "suite": args.suite, "layer": args.layer,
         "retrieval_state": args.retrieval_state, "warmed_exemplars": warmed,
@@ -761,6 +762,55 @@ def _admitted_intents(case, agents) -> tuple[str, ...]:
         str(cap.intent) for agent in catalog
         for cap in (getattr(agent.manifest, "capabilities", None) or [])
         if getattr(cap, "intent", "")))
+
+
+def _l3_results(selected, args, l3_statuses, provider_model) -> list[AdversarialResult]:
+    """把 journey 逐条状态回填成 `case_id@l3` 证据单元。
+
+    只看子进程退出码等于没读结构化结果——一个 journey 红、另一个绿会被压成同一个
+    非零码。链接到同一条 case 的每个 journey 都必须通过，才算这条 case 的 L3 证据通过。
+    """
+    if args.layer not in {"l3", "all"} or not l3_statuses:
+        return []
+    links = load_journey_links()
+    rows: list[AdversarialResult] = []
+    for case in selected:
+        if "l3" not in layers_for(case, args.layer):
+            continue
+        journeys = links.get(case.id) or []
+        if not journeys:
+            continue
+        statuses = {j: l3_statuses.get(j, "missing") for j in journeys}
+        passed = all(value == "pass" for value in statuses.values())
+        rows.append(AdversarialResult(
+            result_id=f"{case.id}@l3", case_id=case.id, layer="l3",
+            title=case.title, passed=passed,
+            repeat_status="pass" if passed else "stable_fail",
+            cohort=case.cohort, risk=case.risk, status=case.status,
+            provenance_kind=str(case.provenance.get("kind") or ""),
+            provider_model=provider_model,
+            dimensions={
+                "intent": (), "domain": tuple(str(d) for d in
+                                              (case.tags.get("domains") or [])),
+                "boundary": (), "attack": tuple(str(a) for a in
+                                                (case.tags.get("attacks") or [])),
+                "risk": (case.risk,), "ingress": ("cloud",),
+                "cohort": (case.cohort,), "layer": ("l3",),
+                "provider": (provider_model,), "status": (case.status,),
+                "provenance": (str(case.provenance.get("kind") or ""),)},
+            metrics={"exact_plan_set": float(passed)},
+            expected={"utterance": case.turns[0].utterance,
+                      "journeys": journeys,
+                      "repro": "python scripts/run_e2e.py --id e2e_journeys "
+                               f"--provider {args.provider} --model {args.model} "
+                               f"（E2E_JOURNEY_IDS={','.join(journeys)}）"},
+            actual={"journey_statuses": statuses},
+            admitted_intents=(), actual_intents=(),
+            assertions=tuple({"name": f"journey:{j}", "passed": s == "pass",
+                              "expected": "pass", "actual": s}
+                             for j, s in statuses.items()),
+            repetitions=(), divergence="" if passed else "PLANNER_DIVERGENCE"))
+    return rows
 
 
 def _arm_passed(ablations: list[dict], arm: str) -> bool:
