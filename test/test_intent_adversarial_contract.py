@@ -111,3 +111,155 @@ suites:
     assert (suites["gate"].min_cases, suites["gate"].max_cases) == (120, 160)
     assert suites["discovery"].attack_minimums["A4"] == 60
     assert suites["gate"].failure_repeats == 3
+
+
+# ── 严格契约：未知键、状态/来源、relation 与 family 泄漏 ────────────────────
+from dataclasses import replace  # noqa: E402
+
+import pytest  # noqa: E402
+
+from support.intent_adversarial_contract import (  # noqa: E402
+    AdversarialCase, CaseTurn, IntentGroup, PlanExpectation, RelationSpec,
+    TurnExpectation, validate_cases,
+)
+
+
+@pytest.fixture
+def contract_case():
+    return AdversarialCase(
+        id="boundary.weather_alert.info",
+        title="裸问天气预警",
+        family_id="boundary.weather_alert",
+        cohort="unseen_transfer",
+        risk="medium",
+        status="reviewed",
+        tags={"attacks": ["A1"], "mechanisms": ["domain_collision"],
+              "domains": ["info", "safety"],
+              "boundary": "weather-alert",
+              "boundary_ledger": "info-safety.weather-alert",
+              "boundary_side": "left",
+              "layers": ["l0", "l1"]},
+        provenance={"kind": "boundary_ledger", "reviewed_by": "human",
+                    "reviewed_at": "2026-08-02"},
+        turns=(CaseTurn(
+            utterance="有没有天气预警",
+            context={},
+            expected=TurnExpectation(plan=PlanExpectation(
+                assert_plan=True,
+                required_groups=(IntentGroup(("info.alerts",)),),
+            )),
+        ),),
+    )
+
+
+def test_duplicate_ids_are_rejected(contract_case):
+    errors = validate_cases([contract_case, contract_case], {"info.alerts"})
+    assert any("duplicate id" in e for e in errors)
+
+
+def test_unknown_required_intent_is_rejected(contract_case):
+    errors = validate_cases([contract_case], set())
+    assert any("unknown intent info.alerts" in e for e in errors)
+
+
+def test_required_and_forbidden_conflict_is_rejected(contract_case):
+    plan = replace(contract_case.turns[0].expected.plan,
+                   forbidden_intents=("info.alerts",))
+    expected = replace(contract_case.turns[0].expected, plan=plan)
+    turn = replace(contract_case.turns[0], expected=expected)
+    errors = validate_cases([replace(contract_case, turns=(turn,))], {"info.alerts"})
+    assert any("required and forbidden" in e for e in errors)
+
+
+def test_stable_requires_human_review(contract_case):
+    case = replace(contract_case, status="stable",
+                   provenance={"kind": "llm_candidate", "reviewed_by": "model"})
+    errors = validate_cases([case], {"info.alerts"})
+    assert any("stable requires reviewed_by=human" in e for e in errors)
+
+
+def test_relation_base_must_exist(contract_case):
+    relation = RelationSpec("missing.base", "invariant", {})
+    errors = validate_cases([replace(contract_case, relation=relation)], {"info.alerts"})
+    assert any("missing relation base" in e for e in errors)
+
+
+def test_family_cannot_mix_seen_and_unseen(contract_case):
+    seen = replace(contract_case, id="seen", cohort="seen_regression")
+    unseen = replace(contract_case, id="unseen", cohort="unseen_transfer")
+    errors = validate_cases([seen, unseen], {"info.alerts"})
+    assert any("family leakage" in e for e in errors)
+
+
+def test_reviewed_turn_requires_absolute_gold(contract_case):
+    empty = replace(contract_case.turns[0], expected=TurnExpectation())
+    errors = validate_cases(
+        [replace(contract_case, turns=(empty,))], {"info.alerts"})
+    assert any("reviewed turn requires absolute gold" in e for e in errors)
+
+
+def test_unknown_relation_expectation_key_is_rejected(contract_case):
+    relation = RelationSpec(
+        contract_case.id, "route_flip", {"forbiden_after": ["info.alerts"]})
+    errors = validate_cases(
+        [contract_case, replace(contract_case, id="variant", relation=relation)],
+        {"info.alerts"})
+    assert any("unknown relation expectation keys" in e for e in errors)
+
+
+def test_relation_pair_must_declare_the_same_layers(contract_case):
+    variant = replace(
+        contract_case, id="variant",
+        tags={**contract_case.tags, "layers": ["l2"]},
+        relation=RelationSpec(contract_case.id, "invariant", {}))
+    errors = validate_cases(
+        [contract_case, variant], {"info.alerts"})
+    assert any("relation pair must share layers" in e for e in errors)
+
+
+def test_stable_relation_requires_stable_base(contract_case):
+    variant = replace(
+        contract_case, id="variant", status="stable",
+        relation=RelationSpec(contract_case.id, "invariant", {}))
+    errors = validate_cases(
+        [contract_case, variant], {"info.alerts"})
+    assert any("stable relation requires stable base" in e for e in errors)
+
+
+def test_relation_cannot_reference_itself(contract_case):
+    case = replace(
+        contract_case,
+        relation=RelationSpec(contract_case.id, "invariant", {}))
+    errors = validate_cases([case], {"info.alerts"})
+    assert any("relation base must be a distinct root case" in e for e in errors)
+
+
+def test_unknown_plan_key_is_rejected(tmp_path):
+    root = tmp_path / "corpus"
+    root.mkdir()
+    (root / "bad.yaml").write_text("""
+schema_version: 1
+cases:
+  - id: bad
+    title: bad
+    family_id: bad
+    cohort: unseen_transfer
+    risk: low
+    status: candidate
+    tags: {attacks: [expression], domains: [info]}
+    provenance: {kind: authored}
+    turns:
+      - input: {utterance: 查天气, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather]}], typo_key: true}
+""", encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown keys.*typo_key"):
+        load_cases(root)
+
+
+def test_duplicate_yaml_key_is_rejected(tmp_path):
+    path = tmp_path / "suites.yaml"
+    path.write_text("schema_version: 1\nschema_version: 1\nsuites: {}\n",
+                    encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate YAML key schema_version"):
+        load_suites(path)
