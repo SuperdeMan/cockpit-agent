@@ -159,7 +159,7 @@ hybrid），所以同一条 `forbidden_skills` 断言在两层可以一绿一红
 
 ---
 
-## 3. 本套件自身在首跑中被抓到的两个缺陷（已当批修）
+## 3. 本套件自身在首跑中被抓到的 7 个缺陷（已当批修，不需再修）
 
 这两条不是产品缺陷，是**测试自己**的缺陷，按「守红线的测试自己要被审计」当批修掉：
 
@@ -184,3 +184,45 @@ hybrid），所以同一条 `forbidden_skills` 断言在两层可以一绿一红
 
 五条里有三条（1、3、4）的共同形态是**失败被记成了别的东西**：不稳定、无证据、
 基础设施错误。这类缺陷比误判更危险——它们让报告看起来正常。
+
+---
+
+## 4. 不在本清单、但属于同一批待办的三类
+
+本文件只装**产品缺陷**。接手修复前先看这三类，它们不在上面：
+
+### 4.1 需要产品拍板才能定 gold 的 9 条（已降回 `candidate`）
+
+降级理由逐条写在语料的 `provenance.gold_revision_reason` 里。**不是测试写错了，是产品
+还没定**——测试不该替产品拍板，所以宁可降级也不猜。
+
+| case id | 原话 | 要定的事 |
+|---|---|---|
+| `nq.landmark.bare` / `nq.landmark.explicit` / `nq.city.bare` / `nq.city.explicit` | 「华润大厦」「上海」「导航到华润大厦」 | `CLARIFY_ENABLED` 生产默认 off，裸地名当前落 `navigation.search_poi`、裸城市名被判非受话走 `reject`。**这个开关翻不翻？**另外「导航到 X」落 `search_poi` 而非 `navigate_to`，需要确认 navigation 两个 intent 的分工 |
+| `tu.nav.search-vs-detail` / `tu.nav.detail-vs-search` | 「搜一下附近的地铁站有哪些」 | `nearby.search` 与 `navigation.search_poi` 抢地盘，**台账里没有这条裁定** |
+| `bd.manual-search.left` / `bd.manual-search.right` | 「车里这个黄色警告灯是什么意思」 | `manual.query` 与 `vision.describe` 抢地盘，**台账里也没有** |
+| `ex.colloquial.dark` | 「有点看不清路了」 | 该开大灯还是开雨刷 |
+
+中间两组建议直接补进 `skills/exemplars/boundaries.yaml`，与已有 18 条同一形态：
+**人裁一次并登记，机器只负责「不许悄悄新增」**。裁完把对应 case 改回 `reviewed`
+并补 `reviewed_by: human` / `reviewed_at`。
+
+### 4.2 测试体系自身的未达项 → 见规格 §21.8
+
+`docs/design/2026-08-02-intent-routing-adversarial-testing.md` §21.8 逐条列了 5 项：
+
+1. **L3 证据未取得**——`scripts/run_e2e.py` 在本机以 `lease_protocol` /
+   `identity_cleanup` 失败。这是既有 e2e 运行器的环境路径，本批次没改过它，
+   **修它属于 e2e 运行器的账，不属于对抗套件**；
+2. **正式 baseline 未生成**——被资格闸正当拒绝（连带 1）；
+3. **stable 113 < 设计要求的 120**；
+4. 9 条 candidate（即 4.1）；
+5. **发现轨主跑用了 `--ablations off`**，红灯只有首偏离点、尚未逐条建立因果证据。
+   要归因先跑：`--layer l1 --live … --ablations on-failure --case <id>`。
+
+### 4.3 接手修复时的两条纪律
+
+1. **修落域 badcase 的默认产物是范例与知识，不是正则**（`skills/exemplars/`、
+   `skills/guides/`、`boundaries.yaml`）——hint 写错是事故，范例写错只是噪声。
+2. **改完先跑发现轨对照，别只跑被修的那几条**。本批次的 seen 98.0% / unseen 86.0%
+   就是基线：如果修完 seen 涨了而 unseen 没动，那修的是记忆不是能力。
