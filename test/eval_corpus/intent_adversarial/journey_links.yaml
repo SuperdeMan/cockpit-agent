@@ -1,0 +1,4 @@
+schema_version: 1
+# 对抗 case → 现有 journey id 的链接。只链接，不复制旅程 gold。
+# 只有「必须跨进程/协议才能复现」的案例才配进这里；普通单轮落域句不新建 journey。
+links: {}

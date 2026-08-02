@@ -209,6 +209,12 @@ class ProviderLock:
         self.locked = False         # 显式 pin 成功
         self.available = True       # 网关可达；False 时 check 全跳过
         self.drifts: list[dict] = []
+        # 显式 pin 前的 active（"provider:model"）——评测结束要还原回去。
+        # Ctrl+C / 异常路径下不还原，会把 HMI 的全局 active 永久留在评测档。
+        self.original = ""
+        self.target = ""            # 本次 pin 的目标
+        self.restore_note = ""      # ""|restored|noop|skipped_external_change|failed
+        self.restore_errors: list[str] = []
 
     # 独立方法便于单测注入替身（monkeypatch 实例 _http 即可，不起真 HTTP）。
     def _http(self, method: str, path: str, payload: dict | None = None) -> dict | None:
@@ -232,6 +238,11 @@ class ProviderLock:
 
     def pin(self) -> str:
         if self.want:
+            # 先读原 active：读不到就拒绝 pin——进入一个还原不回去的评测，比不评测更糟。
+            self.original = self._active()
+            if not self.original:
+                raise RuntimeError(
+                    "ProviderLock: 读不到原 active provider，拒绝 pin（无法还原）")
             body = {"provider": self.want}
             if self.model:
                 body["model"] = self.model
@@ -241,6 +252,8 @@ class ProviderLock:
                     f"ProviderLock: 钉住 {self.want} 失败（网关不可达或 provider 未配置）")
             self.locked = True
         cur = self._active()
+        if self.want:
+            self.target = cur
         if not cur:
             self.available = False
             return "unknown"
@@ -255,6 +268,43 @@ class ProviderLock:
             self.drifts.append({"at": label, "from": self.baseline, "to": cur})
             self.baseline = cur
 
+    def restore(self) -> str:
+        """幂等还原原 active。返回还原后（或当前实际的）"provider:model"。
+
+        还原前再 GET 一次：只有当前仍等于本次 pin 的目标才 POST 回去。评测期间用户在
+        HMI 主动切走了 provider，那是用户的新选择——把它覆盖掉是评测越界。
+        """
+        if not self.locked or not self.original:
+            self.restore_note = self.restore_note or "noop"
+            return self.original or self.baseline or "unknown"
+        if self.restore_note in {"restored", "noop", "skipped_external_change"}:
+            return self.original                      # 幂等：finally + 显式调用各一次
+        current = self._active()
+        if not current:
+            self.restore_note = "failed"
+            self.restore_errors.append("restore_read_failed")
+            return "unknown"
+        if self.target and current != self.target:
+            self.restore_note = "skipped_external_change"
+            return current
+        if current == self.original:
+            self.restore_note = "noop"
+            return self.original
+        provider, _, model = self.original.partition(":")
+        body = {"provider": provider}
+        if model and model != "?":
+            body["model"] = model
+        st = self._http("POST", "/api/llm/provider", body)
+        if not isinstance(st, dict) or "active" not in st:
+            self.restore_note = "failed"
+            self.restore_errors.append("restore_post_failed")
+            return "unknown"
+        self.restore_note = "restored"
+        return self.original
+
     def summary(self) -> dict:
         return {"provider": self.baseline or "unknown", "locked": self.locked,
-                "drift_detected": bool(self.drifts), "drifts": list(self.drifts)}
+                "drift_detected": bool(self.drifts), "drifts": list(self.drifts),
+                "original": self.original, "target": self.target,
+                "restore": self.restore_note,
+                "restore_errors": list(self.restore_errors)}

@@ -83,11 +83,68 @@ from eval_common import ProviderLock  # noqa: E402
 
 def test_provider_lock_pin_explicit_success():
     lock = ProviderLock("http://x", want="mimo")
-    seq = [{"active": {"provider": "mimo", "model": "m1"}},   # POST 返回
-           {"active": {"provider": "mimo", "model": "m1"}}]   # GET 复核
+    seq = [{"active": {"provider": "deepseek", "model": "deep-model"}},  # GET 原 active
+           {"active": {"provider": "mimo", "model": "m1"}},              # POST 返回
+           {"active": {"provider": "mimo", "model": "m1"}}]              # GET 复核
     lock._http = lambda m, p, payload=None: seq.pop(0)
     assert lock.pin() == "mimo:m1"
     assert lock.locked and lock.available
+    assert lock.original == "deepseek:deep-model"
+
+
+def test_provider_lock_refuses_to_pin_when_the_original_is_unreadable():
+    lock = ProviderLock("http://x", want="mimo")
+    lock._http = lambda m, p, payload=None: (
+        None if m == "GET" else {"active": {"provider": "mimo", "model": "m1"}})
+    try:
+        lock.pin()
+        raise AssertionError("读不到原 active 时必须拒绝 pin")
+    except RuntimeError:
+        pass
+
+
+def test_provider_lock_restores_original_provider_and_model(monkeypatch):
+    active = {"provider": "deepseek", "model": "deep-model"}
+    lock = ProviderLock("http://llm", want="mimo", model="mimo-model")
+
+    def fake_http(method, _path, payload=None):
+        if method == "POST":
+            active.update(payload or {})
+        return {"active": dict(active)}
+
+    monkeypatch.setattr(lock, "_http", fake_http)
+    assert lock.pin() == "mimo:mimo-model"
+    assert lock.restore() == "deepseek:deep-model"
+    assert active == {"provider": "deepseek", "model": "deep-model"}
+    assert lock.restore() == "deepseek:deep-model"      # 幂等
+
+
+def test_provider_restore_does_not_clobber_external_change(monkeypatch):
+    active = {"provider": "deepseek", "model": "deep-model"}
+    posts = []
+    lock = ProviderLock("http://llm", want="mimo", model="mimo-model")
+
+    def fake_http(method, _path, payload=None):
+        if method == "POST":
+            posts.append(dict(payload or {}))
+            active.update(payload or {})
+        return {"active": dict(active)}
+
+    monkeypatch.setattr(lock, "_http", fake_http)
+    lock.pin()
+    active.update(provider="minimax", model="user-model")
+    assert lock.restore() == "minimax:user-model"
+    assert posts == [{"provider": "mimo", "model": "mimo-model"}]
+    assert lock.summary()["restore"] == "skipped_external_change"
+
+
+def test_provider_lock_without_explicit_want_never_posts_on_restore():
+    lock = ProviderLock("http://x")
+    lock._http = lambda m, p, payload=None: {
+        "active": {"provider": "mimo", "model": "a"}}
+    lock.pin()
+    assert lock.restore() == "mimo:a"
+    assert lock.summary()["restore"] == "noop"
 
 
 def test_provider_lock_pin_explicit_gateway_down_raises():
