@@ -1,0 +1,268 @@
+"""决策 trace：Hint 前后计划、校验前后候选、资产指纹与首偏离点。
+
+只包裹实例、不改生产类：`RecordingPlanner` 代理 `PlanBuilder`，`TracingRouteHints`
+代理 `RouteHintEngine`，`attach_validation_trace()` 换掉实例上的绑定方法。生产 span
+schema 与 `Plan` 结构一个字段都不动——被测对象被测试改形状，测的就不是它了。
+
+首偏离点是**执行顺序上的第一个不一致边界**，不是根因。检索/历史命中只标 suspect；
+只有相同 provider、相同资产指纹、规定重复次数下的受控消融稳定翻转才升级为 causal。
+"""
+from __future__ import annotations
+
+import hashlib
+from copy import deepcopy
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from support.intent_adversarial_judge import PlanSnapshot, StepSnapshot
+
+
+def snapshot_plan(plan) -> PlanSnapshot:
+    """Plan → 不可变快照。用 getattr 兜底：replan 产出的 Plan 没有 skills/hint_effect。"""
+    return PlanSnapshot(
+        steps=tuple(StepSnapshot(
+            id=str(step.id), agent_id=str(step.agent_id), intent=str(step.intent),
+            slots=dict(step.slots or {}), depends_on=tuple(step.depends_on or []),
+            slot_refs=dict(step.slot_refs or {}),
+            require_confirm=bool(getattr(step, "require_confirm", False)),
+        ) for step in (getattr(plan, "steps", None) or [])),
+        complexity=str(getattr(plan, "complexity", "") or ""),
+        goal=str(getattr(plan, "goal", "") or ""),
+        skills=tuple(getattr(plan, "skills", None) or []),
+        exemplars=tuple(getattr(plan, "exemplars", None) or []),
+        hint_effect=str(getattr(plan, "hint_effect", "") or ""),
+        catalog_stats=dict(getattr(plan, "catalog_stats", None) or {}),
+        raw_llm=str(getattr(plan, "raw_llm", "") or ""),
+        plan_mode=str(getattr(plan, "plan_mode", "") or ""),
+    )
+
+
+@dataclass(frozen=True)
+class HintMatch:
+    agent_id: str
+    intent: str
+    policy: str
+    priority: int
+
+
+@dataclass(frozen=True)
+class HintTrace:
+    text: str
+    matches: tuple[HintMatch, ...]
+    before: PlanSnapshot
+    after: PlanSnapshot
+    hit: bool
+
+
+@dataclass(frozen=True)
+class PlannerTrace:
+    stage: str
+    plan: PlanSnapshot
+    done: bool = False
+
+
+@dataclass(frozen=True)
+class ValidationTrace:
+    raw_intents: tuple[str, ...]
+    raw_candidate: PlanSnapshot
+    admitted_intents: tuple[str, ...]
+    accepted: PlanSnapshot
+    result: str
+
+
+@dataclass
+class TraceSink:
+    hints: list[HintTrace] = field(default_factory=list)
+    plans: list[PlannerTrace] = field(default_factory=list)
+    validations: list[ValidationTrace] = field(default_factory=list)
+
+
+class TracingRouteHints:
+    """先算命中名单再委派，于是 before/after 两份证据都留得下来。
+
+    命中枚举逐字复刻 `RouteHintEngine.apply()` 的短路语义：replace 命中即停，
+    append 继续。复刻而不是改造引擎——引擎为了观测而改行为，观测的就不是生产了。
+    """
+
+    def __init__(self, delegate, sink: TraceSink):
+        self.delegate = delegate
+        self.sink = sink
+
+    def apply(self, plan, text: str, agent_map: dict) -> bool:
+        matches: list[HintMatch] = []
+        for agent_id, hint in self.delegate._ordered_hints(agent_map):
+            if self.delegate._match(hint, text) is None:
+                continue
+            policy = (hint.policy or "replace").lower()
+            matches.append(HintMatch(agent_id, str(hint.intent), policy,
+                                     int(hint.priority or 0)))
+            if policy != "append":
+                break
+        before = snapshot_plan(plan)
+        hit = self.delegate.apply(plan, text, agent_map)
+        self.sink.hints.append(HintTrace(
+            text=text, matches=tuple(matches), before=before,
+            after=snapshot_plan(plan), hit=hit))
+        return hit
+
+
+class RecordingPlanner:
+    """代理 PlanBuilder，记录 build/replan 产出。其余属性透传给被代理实例。"""
+
+    def __init__(self, delegate, sink: TraceSink):
+        self.delegate = delegate
+        self.sink = sink
+
+    def __getattr__(self, name):
+        return getattr(self.delegate, name)
+
+    async def build(self, *args, **kwargs):
+        plan = await self.delegate.build(*args, **kwargs)
+        self.sink.plans.append(PlannerTrace("build", snapshot_plan(plan)))
+        return plan
+
+    async def replan(self, goal, *args, **kwargs):
+        decision = await self.delegate.replan(goal, *args, **kwargs)
+        self.sink.plans.append(PlannerTrace(
+            "replan", snapshot_plan(decision.to_plan(goal)), done=decision.done))
+        return decision
+
+
+def snapshot_raw_candidate(data: dict[str, Any]) -> PlanSnapshot:
+    """把已解析但尚未 capability validation 的结构转成可裁判快照。
+
+    只比较 raw_intents 不够：依赖、槽位和额外步在校验前是否正确，同样要用 judge_plan
+    裁一次，否则「校验前就错了」和「校验把对的丢了」分不开。
+    """
+    rows = data.get("steps") if isinstance(data, dict) else []
+    steps = []
+    for index, row in enumerate(rows or [], 1):
+        if not isinstance(row, dict):
+            continue
+        steps.append(StepSnapshot(
+            id=str(row.get("id") or f"raw-{index}"),
+            agent_id=str(row.get("agent_id") or ""),
+            intent=str(row.get("intent") or ""),
+            slots=dict(row.get("slots") or {}),
+            depends_on=tuple(row.get("depends_on") or []),
+            slot_refs=dict(row.get("slot_refs") or {}),
+            require_confirm=bool(row.get("require_confirm", False)),
+        ))
+    return PlanSnapshot(
+        steps=tuple(steps), complexity=str(data.get("complexity") or "simple"),
+        goal=str(data.get("goal") or ""), skills=(), exemplars=(),
+        hint_effect="", catalog_stats={})
+
+
+def attach_validation_trace(builder, sink: TraceSink) -> None:
+    original = builder._parse_and_validate_data
+
+    def traced(data, agent_map, text):
+        raw = deepcopy(data) if isinstance(data, dict) else {}
+        raw_intents = tuple(str(step.get("intent") or "")
+                            for step in raw.get("steps") or []
+                            if isinstance(step, dict) and step.get("intent"))
+        admitted = tuple(sorted(
+            str(cap.intent)
+            for agent in agent_map.values()
+            for cap in (getattr(agent.manifest, "capabilities", None) or [])))
+        plan = original(data, agent_map, text)
+        sink.validations.append(ValidationTrace(
+            raw_intents=raw_intents, admitted_intents=admitted,
+            raw_candidate=snapshot_raw_candidate(raw),
+            accepted=snapshot_plan(plan) if plan is not None else PlanSnapshot.empty(),
+            result="accepted" if plan is not None else "rejected"))
+        return plan
+
+    builder._parse_and_validate_data = traced
+
+
+def asset_digest(root: Path, paths: list[Path]) -> str:
+    """相对路径 + 内容的稳定摘要。顺序无关、内容敏感——换个 glob 顺序不该换指纹。"""
+    digest = hashlib.sha256()
+    root = Path(root).resolve()
+    for path in sorted({Path(p).resolve() for p in paths},
+                       key=lambda p: p.relative_to(root).as_posix()):
+        relative = path.relative_to(root).as_posix()
+        digest.update(relative.encode("utf-8") + b"\0")
+        digest.update(path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class DivergenceEvidence:
+    full_entry_pass: bool = False
+    engine_direct_pass: bool = False
+    planner_post_hint_pass: bool = False
+    empty_history_pass: bool = False
+    retrieval_ablation_pass: bool = False
+    raw_planner_pass: bool = False
+    pre_hint_pass: bool = False
+
+
+def first_divergence(evidence: DivergenceEvidence) -> str:
+    """按执行顺序找**最早**的不一致边界。
+
+    顺序即语义：Edge 先于 Engine 状态恢复，恢复先于上下文，上下文先于检索，检索先于
+    Hint，Hint 先于校验，都对上了才轮到 Planner 自己。
+    """
+    if evidence.full_entry_pass:
+        return "NONE"
+    if evidence.engine_direct_pass:
+        return "EDGE_DIVERGENCE"
+    if evidence.planner_post_hint_pass:
+        return "STATE_RESTORE_DIVERGENCE"
+    if evidence.empty_history_pass:
+        return "CONTEXT_DIVERGENCE"
+    if evidence.retrieval_ablation_pass:
+        return "RETRIEVAL_SUSPECT"
+    if evidence.pre_hint_pass:
+        return "HINT_DIVERGENCE"
+    if evidence.raw_planner_pass:
+        return "VALIDATION_DIVERGENCE"
+    return "PLANNER_DIVERGENCE"
+
+
+# ── 指纹输入：只纳入真实参与落域决策的资产 ────────────────────────────────
+# 代码版本另由 git commit 记录。glob 一个都没命中 / 必选路径缺失 → 记 missing_assets，
+# 不允许「静默跳过但仍称指纹完整」。
+ASSET_GLOBS = (
+    "test/eval_corpus/intent_adversarial/**/*.yaml",
+    "agents/*/manifest.yaml",
+    "agents/*/servers.yaml",
+    "skills/guides/*.yaml",
+    "skills/exemplars/*.yaml",
+)
+ASSET_FILES = (
+    "orchestrator/edge/knowledge/commands.yaml",
+    "orchestrator/edge/fast_intent.py",
+)
+
+
+def collect_assets(root: Path) -> tuple[list[Path], list[str]]:
+    root = Path(root).resolve()
+    paths: list[Path] = []
+    missing: list[str] = []
+    for pattern in ASSET_GLOBS:
+        hits = sorted(root.glob(pattern))
+        if not hits:
+            missing.append(pattern)
+        paths.extend(hits)
+    for relative in ASSET_FILES:
+        path = root / relative
+        if path.is_file():
+            paths.append(path)
+        else:
+            missing.append(relative)
+    return paths, missing
+
+
+def asset_fingerprint(root: Path) -> dict[str, Any]:
+    paths, missing = collect_assets(root)
+    return {
+        "digest": asset_digest(root, paths) if paths else "",
+        "file_count": len(set(paths)),
+        "missing_assets": missing,
+        "complete": not missing and bool(paths),
+    }
