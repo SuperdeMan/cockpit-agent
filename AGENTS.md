@@ -63,9 +63,28 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 > 整体在 [`docs/agents-history.md`](docs/agents-history.md)**——新批次收口时把完整记录追加到
 > 那边、在这里刷新摘要，不要再往本文件堆流水。
 
-**全量测试基线**：后端 `python -m pytest --import-mode=importlib` **3655 passed / 11 skipped /
-0 failed**（2026-08-02 单进程实测 11m38s，含容器名守卫 +1）；HMI `node --test` **225/225**；
+**全量测试基线**：后端 `python -m pytest --import-mode=importlib` **3783 passed / 11 skipped /
+0 failed**（2026-08-02 单进程实测 14m02s；对抗测试体系 +128，零回归）；HMI `node --test` **225/225**；
 Dashboard vitest **17/17**；端侧 smoke 13/13；Go 网关 vet+test 通过。
+
+**意图落域对抗测试体系（2026-08-02 当日建成，框架与语料全落地、门禁与 baseline 部分落地）**：
+规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`（§21 落地记录）、
+实施计划同名 `-implementation-plan.md`、**产品缺陷清单另册**
+`docs/design/2026-08-02-intent-routing-adversarial-findings.md`。入口
+`test/eval_intent_adversarial.py`，语料 `test/eval_corpus/intent_adversarial/`（519 条 /
+九类攻击 / 138 组最小对照 / 18 条 boundaries 台账双向覆盖 / 云侧 129 个 active intent
+覆盖清零 + 61 条端侧原子车控逐条豁免）。**113 条晋级 stable**（设计要求 120–160，
+未达线）；L0 70→65、L1 458→400（87.3%）、L2 7→7、gate all 119→113（95.0%，6 条全是
+`unstable`）；**L3 证据未取得**（既有 e2e 运行器在本机 `lease_protocol` 失败），正式
+baseline 被资格闸正当拒绝、文件未生成。
+
+四条判据先记住：① **`domain_hit_rate` ≠ `exact_plan_set_rate`**——前者是 RoutingBench
+的历史交集口径（期望两域只命中一域照样绿），后者要求必要组全满足 + 无禁选 + 无未授权
+额外项，两者不可直比；② **seen 98.0% vs unseen 86.0%**，修复原句上的表现证明不了泛化，
+读任何「落域涨了」先问哪一档涨了；③ **两次独立进程滤不干净噪声**——两趟都绿的案例第三趟
+仍有 5.9% 落进 `unstable`，门禁红一条先看 `repeat_status`；④ 本套件自身首轮被抓到 7 个
+缺陷，其中 4 个是同一形态——**失败被记成了别的东西**（不稳定 / 无证据 / 基础设施错误 /
+把运行器故障折算成产品失败）。
 
 **最新（2026-08-02）三件事**：
 ① **验收报告实现结果复核：13/13 张主卡为真**（逐卡核到 file:line + 抽跑 224 测试；无实现缺失、
