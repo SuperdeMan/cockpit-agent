@@ -179,7 +179,11 @@ _CLARIFY_SECTION = (
     "\"options\":[{\"label\":\"不超过10字\",\"send_text\":\"消歧后的完整第一人称指令\"}]}}\n"
     "- options 2~3 个；send_text 必须可直接当用户新指令执行（如『帮我找附近的川菜馆』）\n"
     "- **绝大多数请求是明确的，明确请求绝不允许反问**\n"
-    "- **缺槽位不算歧义**（『导航』缺目的地→照常输出 step，由对应 agent 追问）\n"
+    "- **整句只有一个名词、动词完全缺失**（如『上海』『华润大厦』『稻香』）是典型歧义："
+    "用户给了对象却没说要拿它做什么，导航/查天气/查限行/播放都讲得通且结果差异很大"
+    "——**必须澄清，不要替用户选一个动作**\n"
+    "- **缺槽位不算歧义**（『导航』缺目的地→照常输出 step，由对应 agent 追问）；"
+    "缺的是**槽位**才照常执行，缺的是**动词**要澄清\n"
     "- 多意图句只要主意图清楚就正常拆 step，不因次要成分歧义而澄清"
 )
 
@@ -273,7 +277,11 @@ def _planner_system(toolcall: bool = False) -> str:
     prompt = _PLANNER_BASE + _ADDRESSED_SECTION
     if os.getenv("PLANNER_EMOTION", "on").strip().lower() != "off":
         prompt += _EMOTION_SECTION
-    if os.getenv("CLARIFY_ENABLED", "off").lower() == "on":
+    # 缺省 on = 与部署缺省同源。`.env.example` 与 compose 自 2026-07-08 真栈 CDP 验收后
+    # 就是 `${CLARIFY_ENABLED:-on}`，只有**代码兜底**还停在 off——于是任何不经 compose
+    # 起的进程（评测/单测/CLI）测的都不是生产装配。对抗测试 §4.1 那四条 candidate 正是
+    # 在这个错位下被记成「生产默认 off」的（findings 的这句话是读代码兜底读出来的）。
+    if os.getenv("CLARIFY_ENABLED", "on").lower() == "on":
         prompt += _CLARIFY_SECTION
     if toolcall:
         prompt += _TOOLCALL_SECTION
@@ -631,6 +639,11 @@ class PlanBuilder:
             aid: {c.intent for c in a.manifest.capabilities}
             for aid, a in agent_map.items()
         }
+        # intent → 拥有它的 agent 集合。用于「intent 对、agent_id 猜错」的归位（见下）。
+        intent_owners: dict[str, list[str]] = {}
+        for aid, intents in agent_intents.items():
+            for intent in intents:
+                intent_owners.setdefault(intent, []).append(aid)
 
         steps = []
         invalid = False
@@ -644,12 +657,25 @@ class PlanBuilder:
                 invalid = True
                 continue
 
-            # F4：intent 必须属于该 agent 的能力集，否则丢弃该 step（不替换）
+            # F4：intent 必须属于该 agent 的能力集。
+            # 但**「丢一步」和「幻觉一步」对用户是同一件事**——都没做成。对抗测试实测：
+            # 「调高音量」计划是对的 `volume.inc`，只是被派给了 edge-media（它属 edge-vehicle），
+            # 整步被静默丢掉、计划退化成 chitchat.talk（findings §2 簇 F）。
+            # 判据：**intent 在全清单里唯一归属时归位，否则仍然丢**——
+            # 归位不发明能力（intent 必须真实存在于某个已注册且已过权限过滤的 agent），
+            # 归属有歧义（≥2 家）时不猜，能力集校验挡幻觉的作用一分不减。
             if intent not in agent_intents.get(aid, set()):
-                logger.warning("Intent %s not in agent %s capabilities, dropping step",
-                               intent, aid)
-                invalid = True
-                continue
+                owners = intent_owners.get(intent, [])
+                if len(owners) == 1:
+                    logger.info("Intent %s misattributed to %s, re-homing to %s",
+                                intent, aid, owners[0])
+                    aid = owners[0]
+                else:
+                    logger.warning(
+                        "Intent %s not in agent %s capabilities (owners=%s), dropping step",
+                        intent, aid, owners or "none")
+                    invalid = True
+                    continue
 
             # slots 是唯一「宽进」的 LLM 输出通道——但宽进不等于不设防：模型偶发输出
             # list（如 ["item>拿铁"]）时 .items() 直接 AttributeError 崩掉整个 Handle

@@ -539,24 +539,25 @@
     - {role: user, text: 深入调研一下固态电池}
     - {role: assistant, text: 已完成调研：固态电池现状报告共5节，要点是……}
 
+# 裁定变更（2026-08-02，泓舟）：新闻列表后的「第N条/这条 详细讲讲」= **就地展开**，
+# 不再升级成分钟级异步深调研——用户要的是「这条多说两句」，开一张后台调研单是过度升级。
+# 「第N点/节/部」（报告章节量词）仍归 research，deep-research#1 的量词集已相应收窄。
+# 同一裁定同时解掉对抗语料 cs.more.news 与本文件之间的自相矛盾。
 - text: 详细讲讲第3条
   tags: [mode_followup, news_active]
-  expect_mode: research
-  initial_intents: []
-  expect_det_intents: [research.run]
+  expect_mode: "news|search"
   history:
     - {role: user, text: 今天有什么新闻}
     - {role: assistant, text: 今天值得关注的新闻有10条：1. …… 2. …… 3. ……}
-  source: "新闻深挖桥接：路由到 research.run，由 deep-research 读 news_active 取该条标题"
+  source: "2026-08-02 裁定：「条」是列表项量词，就地展开；原为 research.run 深挖桥接"
 
 - text: 这条新闻详细说说
   tags: [mode_followup, news_active]
-  expect_mode: research
-  initial_intents: []
-  expect_det_intents: [research.run]
+  expect_mode: "news|search"
   history:
     - {role: user, text: 今天有什么新闻}
     - {role: assistant, text: 今天值得关注的新闻有10条：1. …… 2. …… 3. ……}
+  source: "2026-08-02 裁定：「条」是列表项量词，就地展开；原为 research.run 深挖桥接"
 
 - text: 再来点财经新闻
   tags: [mode_followup, news_active]
@@ -888,6 +889,27 @@
   expect_mode: other:reminder.complete
   expect_intents: [reminder.complete]
   source: "reminder.complete 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+# reminder.create 的 replace hint 于 2026-08-02 退役（意图落域对抗测试：它在踩掉
+# planner 已经规划对的计划）。退役的是规则不是对它的回归保护——18 条命中句里取
+# 三类代表形态（绝对时点 / 地理触发 / 周期）留在这里守「没有规则也要落对」。
+- text: 明天早上八点提醒我带充电线
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:reminder.create
+  expect_intents: [reminder.create]
+  source: "reminder.create 的 route_hint 已退役（2026-08-02）——回归保护改端到端口径"
+
+- text: 到公司提醒我拿文件
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:reminder.create
+  expect_intents: [reminder.create]
+  source: "reminder.create 的 route_hint 已退役（2026-08-02）——回归保护改端到端口径"
+
+- text: 每天早上八点提醒我吃药
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:reminder.create
+  expect_intents: [reminder.create]
+  source: "reminder.create 的 route_hint 已退役（2026-08-02）——回归保护改端到端口径"
 
 - text: 开启午休模式
   tags: [mode_guardrail, retired_hint]

@@ -207,7 +207,29 @@ def _l1_expectation(expected):
 async def run_l1_case(case, agents, builder):
     turn = case.turns[0]
     snapshot = await runtime.run_planner_turn(turn, agents, builder)
+    _reject_unreached_planner(case, snapshot)
     return snapshot, judge_turn(_l1_expectation(turn.expected), snapshot)
+
+
+def _reject_unreached_planner(case, snapshot) -> None:
+    """模型压根没被够着 → 基础设施错误，不许算成产品失败。
+
+    2026-08-03 实测：一次全量发现轨中途撞上网关 `all models failed`，`_fallback` 按设计
+    兜底成 `chitchat.talk`，于是**6 条组合意图用例被记成 `stable_fail`**——重跑全绿。
+    这与本套件首跑自查的 3.1/3.4 是同一形态：**失败被记成了别的东西**。
+    首跑时只在范例预热那一处防住了（发现清单 §3-2），逐轮的规划调用没防。
+
+    判据用 `raw_llm` 而不是「计划长得像兜底」：只要模型回过话，`raw_llm` 就非空
+    （JSON 路径存原文、toolcall 路径存序列化后的 arguments）。**`raw_llm` 为空且仍出了
+    计划，只可能来自 `_fallback`**——那说明两次调用都没拿到任何输出，是通道问题不是判断问题。
+    模型「回了但答得不好」照常算产品失败，一分不放水。
+    """
+    plan = snapshot.plan
+    if plan.steps and not plan.raw_llm:
+        raise RuntimeError(
+            f"planner_unreached: {case.id} 两次规划调用都没拿到模型输出"
+            f"（plan_mode={plan.plan_mode!r}，计划来自 fallback）——"
+            f"这是网关/额度问题，不是落域缺陷，修好重跑")
 
 
 def run_l2_case(case, agents, builder, confirm_intents):

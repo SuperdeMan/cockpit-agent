@@ -184,9 +184,9 @@ cases:
     family_id: nq.landmark
     cohort: unseen_transfer
     risk: medium
-    status: candidate
+    status: reviewed
     tags: {attacks: [A3], mechanisms: [clarify], domains: [navigation], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, gold_revision_reason: "CLARIFY_ENABLED 生产默认 off，裸地名当前落 navigation.search_poi；「该不该澄清」是产品开关决策，不是落域对错，等开关翻 on 再定 gold", gold_revised_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-02, gold_revision_reason: "2026-08-02 复核：CLARIFY_ENABLED **生产一直是 on**（.env.example / compose 自 2026-07-08 真栈 CDP 验收后即 on），findings 里「生产默认 off」读的是代码兜底值；本批已把 planning/engine 的兜底缺省对齐到 on，评测进程不再测到另一套装配", gold_revised_at: 2026-08-02}
     turns:
       - input: {utterance: 华润大厦, context: {}}
         expected:
@@ -197,23 +197,26 @@ cases:
     family_id: nq.landmark
     cohort: unseen_transfer
     risk: medium
-    status: candidate
+    status: reviewed
     tags: {attacks: [A3], mechanisms: [clarify], domains: [navigation], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, gold_revision_reason: "「导航到华润大厦」实际落 navigation.search_poi 而非 navigate_to；先搜后导是否算正确落域需要产品确认 navigation 两个 intent 的分工", gold_revised_at: 2026-08-02}
+    # 2026-08-02 泓舟裁定：带「导航去/带我去」的句子归 navigation 域；**先搜后导与直接导航
+    # 两条 intent 都算落对**（用户拿到的都是「去这个地方」）。本条真正要守的是另一件事：
+    # 补上动词之后**绝不许再反问**——澄清只作用于动词缺失的裸地名。
+    provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-02, gold_revision_reason: "2026-08-02 裁定：navigate_to 与 search_poi 都算落对；断言收敛到「补上动词后不得澄清」", gold_revised_at: 2026-08-02}
     relation: {base_case: nq.landmark.bare, type: clarify_flip, expectation: {}}
     turns:
       - input: {utterance: 导航到华润大厦, context: {}}
         expected:
           decision: {allowed: [execute], clarify: forbidden}
-          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to, navigation.search_poi]}], allow_extra_intents: false}
   - id: nq.city.bare
     title: 裸城市名应当澄清
     family_id: nq.city
     cohort: unseen_transfer
     risk: medium
-    status: candidate
+    status: reviewed
     tags: {attacks: [A3], mechanisms: [clarify], domains: [info, navigation], layers: [l1]}
-    provenance: {kind: authored, gold_revision_reason: "同上；裸城市名当前被判非受话走 reject，与澄清期望是同一个开关问题", gold_revised_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-02, gold_revision_reason: "同 nq.landmark.bare：开关一直是 on，代码兜底缺省已对齐", gold_revised_at: 2026-08-02}
     turns:
       - input: {utterance: 上海, context: {}}
         expected:
@@ -224,9 +227,9 @@ cases:
     family_id: nq.city
     cohort: unseen_transfer
     risk: medium
-    status: candidate
+    status: reviewed
     tags: {attacks: [A3], mechanisms: [clarify], domains: [info, navigation], layers: [l1]}
-    provenance: {kind: authored, gold_revision_reason: "relation base nq.city.bare 因 CLARIFY_ENABLED 开关未定降回 candidate，成对降级", gold_revised_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-02, gold_revision_reason: "随 base 一并恢复", gold_revised_at: 2026-08-02}
     relation: {base_case: nq.city.bare, type: clarify_flip, expectation: {}}
     turns:
       - input: {utterance: 上海明天天气怎么样, context: {}}
@@ -559,17 +562,42 @@ cases:
         expected:
           plan: {required_intent_groups: [{any_of: [chitchat.talk]}], forbidden_intents: [door_lock.close, door_lock.open], allow_extra_intents: false}
   - id: nq.condition.if-rain
-    title: 条件式提醒不得漏掉条件
+    title: 条件式提醒不得漏掉条件（首轮只查、看到结果再补提醒）
     family_id: nq.condition
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A3], mechanisms: [conditional], domains: [info, reminder], layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    tags: {attacks: [A3], mechanisms: [conditional, adaptive], domains: [info, reminder], layers: [l1]}
+    # gold 修订（2026-08-02）：原 gold 要求**首轮就同时出** info.weather + reminder.create，
+    # 这与两处既有裁定直接冲突——① `skills/guides/conditional-reminder.yaml`（v2，live 验过）
+    # 明确「条件依赖必须 adaptive：先只规划查询步，不要把 Y 无条件排进计划」，其 golden 就是
+    # `expect_not: [reminder.create]`；② 同语料里 **stable** 的 `cp.adaptive.rain-umbrella`
+    # 「明天要是下雨就提醒我带伞」写的正是「首轮只查 + replan 补提醒」。
+    # 实测 planner 的 goal 写的是「查询明天天气，若下雨则创建带伞提醒」——**它做对了**，
+    # 是尺子写反了。改法：按 cp.adaptive.rain-umbrella 的形态补上 replan 段，
+    # 把「条件不许被漏掉」这个真主张断在**该断的地方**（replan 轮必须补出 reminder.create）。
+    provenance:
+      kind: authored
+      reviewed_by: human
+      reviewed_via: blanket_authorisation
+      reviewed_at: 2026-08-02
+      gold_revision_reason: >-
+        原 gold 与 conditional-reminder guide 契约及 stable 案例 cp.adaptive.rain-umbrella
+        自相矛盾（要求首轮无条件出 reminder.create）；按既有裁定改为 adaptive 两段式。
     turns:
       - input: {utterance: 如果明天下雨就提醒我带伞, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [info.weather, info.forecast]}, {any_of: [reminder.create]}], allow_extra_intents: false}
+          plan:
+            required_intent_groups: [{any_of: [info.weather, info.forecast]}]
+            forbidden_intents: [reminder.create]
+            allow_extra_intents: false
+            complexity: {allowed: [adaptive]}
+          replans:
+            - after:
+                result: {step_id: s1, status: ok, data: {condition: 小雨}, speech: 明天有小雨}
+              plan:
+                required_intent_groups: [{any_of: [reminder.create]}]
+                allow_extra_intents: false
   - id: nq.parking-negate
     title: 停车费别交，先看看多少钱
     family_id: nq.parking-negate

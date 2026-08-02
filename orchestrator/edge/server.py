@@ -18,7 +18,7 @@ from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
 from runtime.grpcio import aio_channel
 
-from fast_intent import classify, classify_structured, climate_feeling_intents, is_local, split_and_classify, split_and_classify_any, structured_to_legacy
+from fast_intent import classify, classify_structured, climate_feeling_intents, is_local, is_sequence_connector, split_and_classify, split_and_classify_any, structured_to_legacy
 import nlu as edge_nlu          # M5 P3 端侧语义 NLU（默认 shadow：只算不用）
 from val import VAL
 from edge_agents import edge_execute
@@ -79,8 +79,25 @@ def _ui_card_type(final) -> str:
     return ""
 
 
+def _starts_new_act(intent: dict) -> bool:
+    """这个上云片段是**新的一件事**，不是上一句的补语。
+
+    两个正信号，都只把片段从「粘」推向「独立」，缺证据时仍按保守的粘连处理：
+    ① 端侧认出它属于哪个云侧域（提醒/场景/记忆）——**认得出就说明它自成一句**；
+    ② 分隔它的是顺承连词（然后/再/并且/顺便…）——顺承引出新动作，而补语
+       （「周杰伦的」「走最快的那条路」）跟在**裸逗号**后面。
+    """
+    return bool(intent.get("_cloud_domain")) or is_sequence_connector(intent.get("_sep", ""))
+
+
 def _group_mixed_intents(intents: list[dict]) -> list[list[dict]]:
-    """把无法独立分类的续接片段附着到前一个主意图，避免丢失上下文。"""
+    """把无法独立分类的续接片段附着到前一个主意图，避免丢失上下文。
+
+    ⚠ 只有**续接片段**该被附着。旧实现对所有 `_needs_cloud` 片段一律附着，于是
+    「音量调小一点，提醒我八点开会」「打开座椅加热，再找个充电站」整句上云——端侧秒回
+    退化成整句上云，断网时本地那半条也跟着失效（对抗测试 ei.mixed.volume-reminder /
+    ei.mixed.seat-charging）。判据见 `_starts_new_act`。
+    """
     groups: list[list[dict]] = []
     for intent in intents:
         raw = (intent.get("_raw_text") or "").strip().rstrip("。！？!?")
@@ -97,7 +114,7 @@ def _group_mixed_intents(intents: list[dict]) -> list[list[dict]]:
             else:
                 groups.append([intent])
             continue
-        if intent.get("_needs_cloud") and groups:
+        if intent.get("_needs_cloud") and groups and not _starts_new_act(intent):
             groups[-1].append(intent)
         else:
             groups.append([intent])

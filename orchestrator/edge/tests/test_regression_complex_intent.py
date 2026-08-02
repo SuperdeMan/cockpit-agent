@@ -55,3 +55,47 @@ def test_depart_command_stays_with_cloud_trip_and_hvac_remains_local(monkeypatch
     commands = [action.payload["command"] for action in local_final.actions]
     assert commands == ["ambient_light.set", "hvac.set"]
     assert local_final.actions[1].payload["temp"] == "23"
+
+
+def _mixed(monkeypatch, text: str) -> tuple[list[str], str]:
+    """跑一句混合意图，返回（端侧真执行的命令, 上云的文本）。"""
+    servicer = EdgeOrchestratorServicer()
+    seen = {"text": ""}
+
+    async def fake_cloud_handle(request):
+        seen["text"] = request.text
+        yield orchestrator_pb2.HandleEvent(
+            final=orchestrator_pb2.FinalResult(speech="云端请求已处理"))
+
+    monkeypatch.setattr(servicer.cloud, "handle", fake_cloud_handle)
+    events = _drive(servicer, text)
+    commands = [action.payload["command"]
+                for event in events if event.WhichOneof("event") == "final"
+                for action in event.final.actions]
+    return commands, seen["text"]
+
+
+def test_independent_cloud_request_does_not_swallow_the_local_half(monkeypatch):
+    """findings §1.2：本地那半条必须当场秒回，不能被后半句拖着整句上云。
+
+    风险不在「答错」——云端两件事都会办；在于**端侧秒回退化成整句上云**，断网时
+    这半条本地指令也跟着失效。
+    """
+    commands, cloud_text = _mixed(monkeypatch, "音量调小一点，提醒我八点开会")
+    assert commands == ["volume.dec"]
+    assert cloud_text == "提醒我八点开会"
+
+    commands, cloud_text = _mixed(monkeypatch, "打开座椅加热，再找个充电站")
+    assert commands == ["seat.heating.on"]
+    assert cloud_text == "找个充电站"
+
+
+def test_trailing_qualifier_still_travels_with_its_head(monkeypatch):
+    """反方向：补语被从主意图上撕下来，才是真会答错的那一种。
+
+    「周杰伦的」若不跟着「播一首歌」上云，端侧会先随机放一首歌——用户点的歌没放成，
+    而云端收到的是一个没有主语的片段。
+    """
+    commands, cloud_text = _mixed(monkeypatch, "打开空调，帮我播一首歌，周杰伦的")
+    assert commands == ["hvac.on"]
+    assert cloud_text == "帮我播一首歌，周杰伦的"

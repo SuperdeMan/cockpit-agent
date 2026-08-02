@@ -64,26 +64,35 @@ cases:
     family_id: tu.nav-search-detail
     cohort: unseen_transfer
     risk: medium
-    status: candidate
-    tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation], layers: [l1]}
-    provenance: {kind: authored, gold_revision_reason: "「搜一下附近的地铁站」落 nearby.search 与 navigation.search_poi 之间没有台账裁定；先补 boundaries.yaml 再定 gold", gold_revised_at: 2026-08-02}
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [nearby, navigation], boundary: nearby-navigation, layers: [l1]}
+    # 2026-08-02 泓舟裁定：找地点的边界**按动词划、不按对象划**——「找/搜/附近有什么」
+    # 归 nearby.search（周边发现），「导航去/带我去」才归 navigation（出行）。
+    # 台账 skills/exemplars/boundaries.yaml#nearby-navigation.find-vs-go。
+    provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-02, gold_revision_reason: "2026-08-02 裁定：找=发现归 nearby.search，导航=出行归 navigation；台账 nearby-navigation.find-vs-go", gold_revised_at: 2026-08-02}
     turns:
       - input: {utterance: 帮我搜一下附近的地铁站有哪些, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [navigation.search_poi]}], forbidden_intents: [navigation.poi_detail, navigation.navigate_to], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [navigation.navigate_to, nearby.detail], allow_extra_intents: false}
   - id: tu.nav.detail-vs-search
-    title: 看某个导航 POI 的详情
+    title: 看某个 POI 的详情
     family_id: tu.nav-search-detail
     cohort: unseen_transfer
     risk: medium
-    status: candidate
-    tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation], layers: [l1]}
-    provenance: {kind: authored, gold_revision_reason: "relation base tu.nav.search-vs-detail 因 nearby/navigation 边界未裁定降回 candidate，成对降级", gold_revised_at: 2026-08-02}
-    relation: {base_case: tu.nav.search-vs-detail, type: route_flip, expectation: {forbidden_after: [navigation.search_poi], required_change: true}}
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [nearby, navigation], boundary: nearby-navigation, layers: [l1]}
+    # 本条测的是 **search→detail 的动作翻面**，不是域归属。裁定只覆盖「找地点」那一侧，
+    # 「看某个 POI 的详情」两域各有一个等价 intent 且都讲得通——故 any_of 收两个，
+    # 把断言集中在真正要守的那件事：**详情不许退化成再搜一次**。
+    provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-02, gold_revision_reason: "随 base 一并恢复；detail 侧两域等价 intent 都算对，断言收敛到 search→detail 的翻面", gold_revised_at: 2026-08-02}
+    relation: {base_case: tu.nav.search-vs-detail, type: route_flip, expectation: {forbidden_after: [nearby.search], required_change: true}}
     turns:
       - input: {utterance: 广州东站这个站点的详细信息给我看看, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [navigation.poi_detail]}], forbidden_intents: [navigation.search_poi, nearby.detail], allow_extra_intents: false}
+          # 「先搜到这个站点、再取它的详情」是合法计划——poi_detail 要 poi_id，模型
+          # 补一步检索拿 id 反而更正确。本条真正要守的是**详情步必须在**，不是
+          # 「只许一步」；把 search 列进 forbidden 会把一个更好的计划判成红。
+          plan: {required_intent_groups: [{any_of: [navigation.poi_detail, nearby.detail]}], allow_extra_intents: true}
   - id: tu.nav.setplace-vs-detail
     title: 把当前位置存成常用地点
     family_id: tu.nav-setplace-detail

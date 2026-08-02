@@ -51,22 +51,25 @@ route_hints:
     policy: append
     priority: 57
     slots: {title: "$text", time_text: "$text"}
-  # guard 的回忆/疑问式排除（R4，旅程 B5-1 真栈抓到）：「我刚才让你提醒我什么来着」是
-  # 在**问**之前的提醒，不是建新提醒——没有排除会把问题本身当标题建单，还覆盖在挂的
-  # REMINDER_PENDING。「让你提醒|提醒过」同族；不排「提醒我什么时候」（那是真创建）。
-  - pattern: '提醒我|叫我(?!.{0,4}(小舟|什么))|别忘了|帮我记(一?下|个)|记个待办|设个提醒'
-    intent: reminder.create
-    policy: replace
-    priority: 56
-    # 条件句（要是/如果…就提醒我）是「查询→按结果决定」的 adaptive 任务（R6，旅程 A1-4）：
-    # 整句 replace 会把条件吞成标题直接建单反问时间——让给 LLM 规划走 T2。
-    # 2026-07-27（eval_skills live holdout 抓到）：不带「要是/如果」的条件形态同族——
-    # 「看下明晚会不会下雨，要下就叫我收衣服」被「叫我」劫持成直接建单，把 LLM 规划对的
-    # 查询步整句踩掉（比无知识档还差）。补查询式前置标记：会不会/有没有/下不下。
-    # 2026-07-30（M-A Journeys）：赛事问句「第一场是谁踢？开赛前提醒我」同理必须先保留
-    # adaptive info.sports，待它写 REMINDABLE_ACTIVE 后再由 T2 决定提醒；不能直接追问时间。
-    guard: '限速|车道|碰撞|疲劳|盲区|导航播报|电量提醒|保养提醒|是什么|怎么(开|关|用)|什么意思|什么来着|让你提醒|提醒过|要是|如果|假如|万一|会不会|有没有|下不下|谁(踢|打)|有(哪些|什么)比赛|哪(两|支|个).{0,2}(队|球队)'
-    slots: {title: "$text"}
+  # 【reminder.create 的 replace route_hint 已于 2026-08-02 退役】
+  #   **触发它的不是「还需要吗」，而是「它正在做坏事」**——意图落域对抗测试首轮实测：
+  #   4 条用例里 planner 的 goal 全都写对了（「查询明天的提醒列表」「把那条标记为完成」
+  #   「查询明天的天气」），steps 却被这条 replace 整条改写成 `reminder.create`：
+  #     · 明天要提醒我的事有哪些   goal=查询明天的提醒列表     → s_hint_reminder_create
+  #     · 接下来三天要提醒我什么   （同族）                    → s_hint_reminder_create
+  #     · 那条提醒我已经做完了     goal=把…标记为完成          → s_hint_reminder_create
+  #     · 帮我查下明天的天气，先别提醒我带伞                     → s_hint_reminder_create
+  #   guard 已经补过四轮（回忆式/疑问式/条件式/赛事式），这是**第五类**（列表查询 /
+  #   完成 / 否定）。规则的边界比说法的边界窄，补下去没有尽头——findings §2 簇 B 把这
+  #   现象定性成「reminder 域动词分工分不开」，实测证明**分得开的是模型、踩掉它的是这条规则**。
+  #   判据（M5 P2 流水线，`test/hint_retirement.py`）：双臂裸跑
+  #   minimax:MiniMax-M3 / deepseek:deepseek-v4-flash 各 ×2 轮，其 **18 条命中语料全覆盖**
+  #   （非抽样），B 臂（摘掉本条）**18/18 全对** → 模型 + 范例（reminder 域 23 条，
+  #   list/create/update/complete/cancel 五个动词都有）已经自己会了。
+  #   ⚠ 证据只覆盖上述两档；本 hint 家族当初是为 **MiMo** 写的（`route_hints.py` 开篇），
+  #     本环境 MiMo 无可用 key，**切回 MiMo 须复验**。
+  #   回归保护未删：18 条命中句里的代表形态已改端到端口径迁入 mode_routing_cases.yaml。
+  #   要恢复：git log -S '提醒我|叫我(?!.{0,4}(小舟|什么))' 找回原块。
   # 【reminder.list 的 route_hint 已于 2026-07-29 退役】判据：双臂裸跑
   #   deepseek:deepseek-v4-flash / minimax:MiniMax-M3 各 ×2 轮，其 4 条命中语料**全覆盖**
   #   （非抽样——抽 3 句会系统性高估，命中面越大的规则越容易被放行）；

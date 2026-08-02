@@ -67,16 +67,25 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 0 failed**（2026-08-02 单进程实测 14m02s；对抗测试体系 +128，零回归）；HMI `node --test` **225/225**；
 Dashboard vitest **17/17**；端侧 smoke 13/13；Go 网关 vet+test 通过。
 
-**意图落域对抗测试体系（2026-08-02 当日建成，框架与语料全落地、门禁与 baseline 部分落地）**：
+**意图落域对抗测试体系（2026-08-02 建成，2026-08-03 首轮发现全部修复并复验）**：
 规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`（§21 落地记录）、
-实施计划同名 `-implementation-plan.md`、**产品缺陷清单另册**
-`docs/design/2026-08-02-intent-routing-adversarial-findings.md`。入口
-`test/eval_intent_adversarial.py`，语料 `test/eval_corpus/intent_adversarial/`（519 条 /
-九类攻击 / 138 组最小对照 / 18 条 boundaries 台账双向覆盖 / 云侧 129 个 active intent
+实施计划同名 `-implementation-plan.md`、**发现清单 + 修复批次记录另册**
+`docs/design/2026-08-02-intent-routing-adversarial-findings.md`（**修复批次的单一入口**）。入口
+`test/eval_intent_adversarial.py`，语料 `test/eval_corpus/intent_adversarial/`（527 条 /
+九类攻击 / 143 组最小对照 / **20 条** boundaries 台账双向覆盖 / 云侧 129 个 active intent
 覆盖清零 + 61 条端侧原子车控逐条豁免）。**113 条晋级 stable**（设计要求 120–160，
-未达线）；L0 70→65、L1 458→400（87.3%）、L2 7→7、gate all 119→113（95.0%，6 条全是
-`unstable`）；**L3 证据未取得**（既有 e2e 运行器在本机 `lease_protocol` 失败），正式
+未达线）；**L3 证据未取得**（既有 e2e 运行器在本机 `lease_protocol` 失败），正式
 baseline 被资格闸正当拒绝、文件未生成。
+
+**修复批次读数（2026-08-03，minimax:MiniMax-M3 warm）**：L0 **70/70**（首轮 65/70，5 条全修）；
+L1 发现轨原始 evidence unit **425/468**，扣掉 6 条网关伤亡后 **431/468**（首轮 400/458）；
+**`stable_fail` 27 → 5**。⚠ **只引用这两行**——同日独立评审（见下）判定
+`exact_plan_set_rate` / `seen-unseen` / `capability_hallucination_rate` / `relation_pass_rate` /
+`instability_rate` 口径均不成立，**本批不拿它们当结论**，尤其**不拿 unseen 涨幅当泛化证据**
+（cohort 有原句泄漏）。评审同时认可「原始 evidence unit 结果可用」且「产品缺陷仍按原始
+断言逐条复现」——本批正是这么做的，逐条对照表在 findings §5.5。
+**规则净变化 10 → 9**（退役 1、收窄 1、新增 0，N2 成立）。本批**一行没动尺子**：
+修尺子与修被测对象同批进行正是该体系明令禁止的事，评审的 12 条另开一批（findings §6.4）。
 
 **2026-08-03 独立对抗 review：验收不通过。** 报告
 [`docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`](docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md)

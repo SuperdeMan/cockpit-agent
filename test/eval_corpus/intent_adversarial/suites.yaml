@@ -2,12 +2,16 @@ schema_version: 1
 # 上限 520 而不是设计文档写的 500：设计 §9.4 明确「数字用于估算工作量，不替代覆盖
 # 矩阵」。云侧 129 个 active intent 里逐个补齐 2 正例 + 2 硬负例 + 1 对照后落在 516 条，
 # 为了压回 500 去删掉能证明边界的用例是本末倒置。落地记录里记了这笔偏差。
+# 2026-08-02 再放到 540：同一条理由的第二次适用——泓舟新裁定了两条跨域边界
+# （nearby-navigation.find-vs-go / manual-vision.described-light-vs-unknown-light），
+# 台账契约要求每条**双向各 2 例**，机械地就是 +8。**边界裁定的对照用例是台账的兑现物，
+# 不是可裁的冗余**；上限该跟着裁定数走，不是反过来。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 520
+    max_cases: 540
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

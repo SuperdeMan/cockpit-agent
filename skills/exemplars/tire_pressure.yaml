@@ -1,0 +1,24 @@
+# 范例库 · tire_pressure 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+#
+# 为什么单开一个域文件：对抗测试 os.state.tire「轮胎气压是多少」被 manual#4「胎压多少正常」
+# 以 @vec:0.87 拉进 manual.query——两句表面几乎一样，差别只在**问当前读数**还是**问规格**。
+# 范例库对这种情形的解法是**摆对照**（README：「一条 nearby 和一条 navigation 的对照，比
+# 摆三条 nearby 有用得多」），而不是去改那条本身没写错的 manual 范例。
+domain: tire_pressure
+exemplars:
+- text: 报一下当前胎压
+  plan:
+  - intent: tire_pressure.query
+  source: manual
+  added: '2026-08-02'
+  tags:
+  - badcase
+  note: 问当前读数归车况查询，问规格才归说明书
+- text: 四个轮胎的气压够不够
+  plan:
+  - intent: tire_pressure.query
+  source: manual
+  added: '2026-08-02'
+  tags:
+  - badcase

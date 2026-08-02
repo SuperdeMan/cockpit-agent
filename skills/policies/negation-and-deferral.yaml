@@ -1,0 +1,30 @@
+name: negation-and-deferral
+type: policy
+description: 否定与延缓语义的规划纪律（先别/别/不要/暂时不用——被否定的动作一个 step 都不出）
+priority: 85
+# 依据：意图落域对抗测试首轮 §2 簇 A（docs/design/2026-08-02-intent-routing-adversarial-findings.md）。
+# 四条里三条落在车控/门锁/写操作上，而且失败方向是**朝着执行去的**——「别做 X」被读成「做 X」。
+# 归 policy 不归 guide：否定是跨域语义，hvac / door_lock / scene / reminder / parking 全部命中，
+# 挂不到任何单个领域上。⚠ 它仍是**软层**——确认/权限/VAL 的硬闸不因为有了这条 policy 而放松。
+# ⚠ policy 是**常驻**注入：每一次规划都付它的字符成本，且会挤占 guide 的预算额度
+#   （首版 506 字符实测把 navigation-with-stop 挤成 !clipped）。改这段务必先数字数。
+knowledge: |
+  == 否定与延缓（跨域）==
+  - 『别X/先别X/不要X/不用X/暂时不X』= **不要做 X**：不得规划 X，**也不得规划 X 的反面**
+  （『空调先别关』不是开空调，『车门先别锁』不是解锁）——用户在阻止一个动作，不是下达
+  相反的动作。没有别的诉求就只回一句话（chitchat.talk），不出任何写操作 step。
+  - 一句里肯定与否定并存（『查下明天天气，先别提醒我带伞』）：只规划被肯定的那部分，
+  被否定的那部分一个 step 都不出。延缓+先了解（『先别交费，我想先知道多少钱』）同理，
+  被延缓的写操作（支付/下单/锁车）绝不排进计划。
+golden:
+  # 这里用的都是**语料之外**的说法：把对抗语料的原句写进 golden，等于把 unseen 案例
+  # 洗成 seen，之后"通过率涨了"就再也读不出泛化了（findings §4.3-2）。
+  - text: 空调先别关了
+    expect_intents: [chitchat.talk]
+    expect_not: [hvac.off, hvac.on]
+  - text: 后备箱暂时不用开
+    expect_intents: [chitchat.talk]
+    expect_not: [trunk.open, trunk.close]
+    holdout: true
+owner: orchestrator
+version: 1

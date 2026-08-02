@@ -57,7 +57,9 @@ def _reject_enabled() -> bool:
 
 
 def _clarify_enabled() -> bool:
-    return os.getenv("CLARIFY_ENABLED", "off").lower() == "on"
+    # 兜底缺省与部署缺省对齐（`.env.example` / compose 都是 on）——两处不一致时，
+    # 不经 compose 起的进程会静默测到另一套装配。见 planning.py 同名开关的注释。
+    return os.getenv("CLARIFY_ENABLED", "on").lower() == "on"
 
 
 def _edge_nlu_attrs(ctx, plan) -> dict:

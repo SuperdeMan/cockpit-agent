@@ -58,3 +58,32 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
+# 否定/延缓句：说法都**避开对抗语料原句**——把语料原句写进范例，等于把 unseen 案例
+# 洗成 seen，之后「通过率涨了」就再也读不出泛化了（findings §4.3-2）。
+- text: 天窗暂时别开
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+  source: manual
+  added: '2026-08-02'
+  tags:
+  - badcase
+  note: 否定句被读成执行（先别X ≠ 做X的反面）
+- text: 音响先别关，我还听着呢
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+  source: manual
+  added: '2026-08-02'
+  tags:
+  - badcase
+  note: 阻止一个动作不是下达相反动作
+- text: 先别付款，我再想想
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+  source: manual
+  added: '2026-08-02'
+  tags:
+  - badcase
+  note: 被延缓的写操作不许排进计划（对照 parking#1-#4 的肯定式）

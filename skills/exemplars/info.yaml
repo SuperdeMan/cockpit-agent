@@ -330,3 +330,16 @@ exemplars:
   tags:
   - badcase
   note: M-A A2-2b 曾被只落 reminder.create 后反问时间；赛事必须先产 REMINDABLE_ACTIVE
+# 2026-08-02：对抗测试 ki.hint.no-hijack-sports「昨晚国安打成几比几」在 info.sports 与
+# info.search 之间抖（unstable）。既有赛事范例全是**赛事专名**（世界杯/欧冠/英超/西甲），
+# 没有一条是「中超球队 + 口语比分问法」——**这不是路由错，是说法没见过**，按 M5 分工投范例。
+# 说法避开语料原句（原句用「打成几比几」，这里用「几比几赢的」）。
+- text: 昨天国安几比几赢的
+  plan:
+  - agent: info
+    intent: info.sports
+  source: manual
+  added: '2026-08-02'
+  tags:
+  - badcase
+  note: 中超球队 + 口语比分问法，此前落 info.search

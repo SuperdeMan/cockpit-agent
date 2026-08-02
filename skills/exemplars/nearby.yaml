@@ -215,3 +215,28 @@ exemplars:
   tags:
   - badcase
   note: badcase 4799fb1f——质疑轮是纠错，改推室内，不许原样再推户外
+# 2026-08-02 泓舟裁定「找=发现 / 导航=出行」的载体（台账 nearby-navigation.find-vs-go）。
+# 说法刻意避开对抗语料原句「我要加油」——把语料原句写成范例，那条 unseen 用例就变成
+# seen，之后再读「通过率涨了」就读不出泛化（findings §4.3-2）。
+- text: 油不多了，附近哪儿有加油站
+  plan:
+  - agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 加油站
+  source: manual
+  added: '2026-08-02'
+  tags:
+  - badcase
+  note: 加油是需求不是动作——既不是开油箱盖，也不是直接发起导航
+- text: 这边有地铁站吗
+  plan:
+  - agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 地铁站
+  source: manual
+  added: '2026-08-02'
+  tags:
+  - badcase
+  note: 找/搜/有没有 归发现；导航去/带我去 才归 navigation

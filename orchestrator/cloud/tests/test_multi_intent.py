@@ -126,9 +126,12 @@ class _Spy:
     async def llm(self, messages, **kwargs):
         system = messages[0]["content"]
         if "任务编排器" in system:
-            # 根据 user message 中的关键词返回不同计划
+            # ⚠ 只按**用户原话**分派，不要按整条 user message。user message 里还有能力
+            # 清单、规划知识块、范例块——任何一处新增知识只要提到「天气」，「打开空调」
+            # 这条单意图用例就会掉进「空调+天气」分支，测出一个根本不存在的多意图 bug。
+            # （2026-08-02 实测命中：新增否定 policy 的示例句里有「明天的天气」。）
             user_msg = messages[1]["content"] if len(messages) > 1 else ""
-            return self._plan_for(user_msg)
+            return self._plan_for(user_msg.rsplit("用户说: ", 1)[-1])
         return "好的，已完成。"
 
     def _plan_for(self, user_msg: str) -> str:

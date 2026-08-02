@@ -34,3 +34,14 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
+# 2026-08-02 泓舟裁定的载体（台账 manual-vision.described-light-vs-unknown-light）：
+# 描述已足以定位对象 → 查说明书，不抓帧。对照条在 vision.yaml 末尾。
+- text: 仪表盘上的红色感叹号是什么意思
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: manual
+  added: '2026-08-02'
+  tags:
+  - badcase
+  note: 有颜色/形状描述就不用再看一眼——抓帧是敏感动作，能不抓就不抓

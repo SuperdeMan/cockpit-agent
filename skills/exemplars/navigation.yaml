@@ -114,14 +114,20 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
-- text: 最近的加油站在哪
+# eid navigation#15 **原地改写**（2026-08-02）：原文「最近的加油站在哪」标 navigation.search_poi，
+# 与当日「找=发现归 nearby / 导航=出行归 navigation」的裁定直接冲突——台账规则是
+# 「判为地盘冲突请**改金标**，不许登记」。范例是 few-shot，留一条与裁定相反的金标等于
+# 反过来教模型。改成同一对象的**出行侧**说法，找的那一侧已落 nearby（见 nearby.yaml 末尾）。
+# 之所以原地改而不是删：删会让 navigation#16 之后全部改号，历史 obs 归因指错条目。
+- text: 导航去最近的加油站
   plan:
   - agent: navigation
-    intent: navigation.search_poi
+    intent: navigation.navigate_to
   source: manifest
   added: '2026-07-29'
   tags:
   - canonical
+  note: 2026-08-02 按 find-vs-go 裁定改写；原文「最近的加油站在哪」已归 nearby.search
 - text: 查一下这个地点
   plan:
   - agent: navigation

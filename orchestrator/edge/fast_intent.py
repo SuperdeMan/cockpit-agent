@@ -163,6 +163,72 @@ def _is_reminder_utterance(t: str) -> bool:
     return bool(_REMINDER_UTTER_RE.search(t))
 
 
+# ── 疑问/假设框架否决（对抗测试 ei.noise.question-about-control / .hypothetical）────
+# 端侧认的是「对象 + 动作词」，于是「这车的天窗最大能开多大」命中天窗+开 → 真把天窗打开了。
+# 这一类不是落域偏好问题：**用户根本没有下指令**，行驶中被误开天窗是真实安全问题。
+#
+# 否决面只盖**控制类**结果，不盖查询类——「胎压是多少」「电量还有多少」「温度怎么样」都带
+# 疑问词，但它们要的正是端侧那条确定性查询，一刀切会把好用的秒回一起砍掉。判据是
+# **提问会不会被执行成写操作**，不是「这句话像不像问句」。
+_QUESTION_TAILS = ("吗", "呢", "吗?", "吗？", "呢?", "呢？", "?", "？")
+_CAPABILITY_ASKS = ("能不能", "可不可以", "会不会", "是不是", "支不支持", "行不行", "有没有")
+# 数量/属性疑问词：问的是**参数本身**，构不成指令 → 无条件否决写操作。
+_PROPERTY_ASKS = ("多大", "多高", "多宽", "多长", "多快", "多少", "多久", "多远")
+# 方式/原因疑问词：可以出现在祈使式里（「温度如何调高」要的是调、不是问怎么调），
+# 因此沿用 `_is_env_temp_query` 的同一判据——**带操作动词就仍算指令**。两处判据必须
+# 是同一条，否则同一句话在「让不让给天气查询」与「算不算提问」上会得到相反的结论。
+_MANNER_ASKS = ("怎么", "咋", "如何", "为什么", "为啥", "什么时候")
+_HYPOTHETICAL_FRAMES = ("要是", "如果", "假如", "万一", "假设")
+# 面向助手的祈使标记：带这些词的疑问句是**礼貌请求**（「能帮我关下车窗吗」），是指令不是提问。
+_DIRECTIVE_MARKERS = ("帮我", "帮忙", "给我", "替我", "麻烦", "请")
+
+
+def _is_non_directive_question(t: str) -> bool:
+    """这句话是在**问**，而不是在**下指令**。"""
+    if any(w in t for w in _DIRECTIVE_MARKERS):
+        return False
+    if t.rstrip("。！!.~ ").endswith(_QUESTION_TAILS):
+        return True
+    if any(w in t for w in _HYPOTHETICAL_FRAMES):
+        return True
+    if any(w in t for w in _CAPABILITY_ASKS) or any(w in t for w in _PROPERTY_ASKS):
+        return True
+    return (any(w in t for w in _MANNER_ASKS)
+            and not any(v in t for v in _OPERATION_VERBS))
+
+
+def _is_write_action(result: dict | None) -> bool:
+    """结构化结果是否是一次**写操作**（会改车辆/媒体状态）。查询类不算。"""
+    return bool(result) and result.get("intent") == "control"
+
+
+def _is_memory_statement(t: str) -> bool:
+    """偏好陈述/记忆写入话术——参数在用户画像里，须由云端记忆召回，端侧不当场执行。"""
+    return (any(w in t for w in ("记住", "记一下", "帮我记", "别忘了我"))
+            or ("喜欢" in t and ("温度" in t or "空调" in t))
+            or any(w in t for w in ("常用的温度", "习惯的温度", "老样子")))
+
+
+def cloud_domain_of(text: str) -> str | None:
+    """端侧**认得、但不归自己管**的云侧域；认不出返回 None。
+
+    这是「不知道这是什么」与「知道这是什么、只是不归我管」的分界线。混合意图分组要靠它：
+    前者是续接片段（「周杰伦的」贴着「播一首歌」才有意义），后者是独立请求（「提醒我八点
+    开会」自成一句）。旧实现把两者一律当续接片段贴到前一组，于是「音量调小一点，提醒我
+    八点开会」整句上云——本地那半条秒回没了，断网时它也跟着失效。
+    """
+    t = (text or "").strip()
+    if not t:
+        return None
+    if _is_reminder_utterance(t):
+        return "reminder"
+    if _is_scene_utterance(t):
+        return "scene"
+    if _is_memory_statement(t):
+        return "memory"
+    return None
+
+
 # 显式体感调节词形（空调分支入口白名单）：与分支内 inc/dec 处理一一对应的相对调节说法。
 # 刻意只收旧共现规则的**合理子集**——「有点冷/好热」这类裸体感陈述历史上就走云端
 # 隐式车控（planner 规则），不在此扩大端侧接管面。
@@ -198,8 +264,11 @@ def classify(text: str) -> dict | None:
             name = "hvac.on"
     elif obj == "window":
         name = f"window.{operate}"
+    elif obj == "rear_view_mirror":
+        # 与 _to_legacy_name 同口径：折叠/展开由 mode 决定，不是 operate。
+        name = _to_legacy_name(result) or "rear_view_mirror.fold"
     elif obj in ("seat", "sunroof", "sunshade", "trunk", "door_lock",
-                 "ambient_light", "headlight", "rear_view_mirror",
+                 "ambient_light", "headlight",
                  "fragrance", "volume"):
         name = f"{obj}.{operate}"
         if mode:
@@ -333,7 +402,18 @@ def classify(text: str) -> dict | None:
 
 
 def classify_structured(text: str) -> dict | None:
-    """新接口：返回公版 {domain, intent, data: {operate, object, ...}} 格式。"""
+    """新接口：返回公版 {domain, intent, data: {operate, object, ...}} 格式。
+
+    这层只做一件事：**问句不许被执行成写操作**。分类本身在 `_classify_structured`。
+    收口放在出口而不是散在 30 个 return 上——判据是「结果是不是写操作」，那只有出口知道。
+    """
+    result = _classify_structured(text)
+    if _is_write_action(result) and _is_non_directive_question(text.strip()):
+        return None                       # 整句上云：是提问，交云端如实作答
+    return result
+
+
+def _classify_structured(text: str) -> dict | None:
     t = text.strip()
 
     # ── 提醒类话术一律上云（badcase c9bcf8c2：「再帮我加一个明晚10点提醒我冷萃咖啡过滤」
@@ -384,9 +464,7 @@ def classify_structured(text: str) -> dict | None:
     # 用户画像里，须由云端记忆召回填值（原端侧当「开空调」秒回「开了」）。整句上云。
     # 体感入口收窄（badcase c9bcf8c2）：旧共现规则 (热|冷)×(度|一点|再) 宽到「再帮我…
     # 冷萃咖啡」「这歌太热了再来一遍」都命中——收成显式体感词形白名单，兜底不再误开空调。
-    if any(w in t for w in ("记住", "记一下", "帮我记", "别忘了我")) \
-            or ("喜欢" in t and ("温度" in t or "空调" in t)) \
-            or any(w in t for w in ("常用的温度", "习惯的温度", "老样子")):
+    if _is_memory_statement(t):
         pass                                   # 不进空调分支，落到云端兜底
     elif ("空调" in t and "界面" not in t and "页面" not in t) or \
             ("温度" in t and not _is_env_temp_query(t)) or \
@@ -1359,7 +1437,9 @@ def _extract_level(t: str) -> str | None:
 # 被裸「温度」子条件劫持成开空调——问天气误触车控执行）。
 _ENV_TEMP_CTX = ("体感", "天气", "气温", "外面", "室外", "户外")
 _TEMP_INTERROGATIVES = ("怎么样", "怎样", "如何", "冷不冷", "热不热")
-_AC_ADJUST_VERBS = ("调", "设", "开", "关", "升", "降", "加", "减")
+# 操作动词集：`_is_env_temp_query` 与 `_is_non_directive_question` 共用同一条判据
+# ——「疑问词 + 操作动词」仍算指令。
+_OPERATION_VERBS = ("调", "设", "开", "关", "升", "降", "加", "减")
 
 
 def _is_env_temp_query(t: str) -> bool:
@@ -1372,7 +1452,7 @@ def _is_env_temp_query(t: str) -> bool:
         return True
     if any(k in t for k in _ENV_TEMP_CTX):
         return True
-    if any(v in t for v in _AC_ADJUST_VERBS):
+    if any(v in t for v in _OPERATION_VERBS):
         return False
     return any(k in t for k in _TEMP_INTERROGATIVES)
 
@@ -1432,6 +1512,17 @@ _SPLIT_MARKERS = re.compile(
     r"[，,]\s*再\s*|"
     r"[，,]\s*"
 )
+# 同一套分隔符，带捕获组——re.split 会把分隔符本身也交回来，供分组判「顺承还是补语」。
+_SPLIT_MARKERS_CAPTURING = re.compile(f"({_SPLIT_MARKERS.pattern})")
+
+# 顺承连词：引出的是**新的一件事**。补语（「周杰伦的」「走最快的那条路」）跟在**裸逗号**后面
+# ——这是中文口语里稳定的分工，也是把「新请求」从「上一句的补语」里分出来的免费信号。
+_SEQUENCE_CONNECTORS = ("并且", "同时", "然后", "接着", "顺便", "顺带",
+                        "还有", "另外", "并", "再")
+
+
+def is_sequence_connector(sep: str) -> bool:
+    return any(w in (sep or "") for w in _SEQUENCE_CONNECTORS)
 
 
 def _resplit_on_he(part: str) -> list[str]:
@@ -1462,13 +1553,24 @@ def _split_parts(text: str) -> list[str]:
     整句必须完整交云端 scene-orchestrator。
     这里是两个 split 函数的唯一收口，堵在这里即可（2026-07-14 真栈实测两次命中）。
     """
+    return [part for _sep, part in _split_parts_with_sep(text)]
+
+
+def _split_parts_with_sep(text: str) -> list[tuple[str, str]]:
+    """同 `_split_parts`，但每段附带**分隔它与上一段的那个连词**（首段为空串）。"""
     if _is_scene_utterance(text):
         return []
-    parts: list[str] = []
-    for p in _SPLIT_MARKERS.split(text):
-        if p and p.strip():
-            parts.extend(_resplit_on_he(p.strip()))
-    return parts
+    out: list[tuple[str, str]] = []
+    sep = ""
+    for index, token in enumerate(_SPLIT_MARKERS_CAPTURING.split(text)):
+        if index % 2 == 1:                       # 奇数位是分隔符本身
+            sep += token or ""                   # 连着两个分隔符时累加，别丢掉前一个
+            continue
+        if token and token.strip():
+            for sub in _resplit_on_he(token.strip()):
+                out.append((sep, sub))
+            sep = ""
+    return out
 
 
 def climate_feeling_intents(text: str) -> list[dict] | None:
@@ -1482,6 +1584,8 @@ def climate_feeling_intents(text: str) -> list[dict] | None:
     if "空调" not in t and "冷气" not in t and "暖风" not in t:
         return None
     if not (("温度" in t) and ("风速" in t or "风量" in t)):
+        return None
+    if _is_non_directive_question(t):     # 「温度和风速能自动调吗」是提问，不是指令
         return None
     cold = any(w in t for w in ("冷", "凉"))
     hot = any(w in t for w in ("热", "闷", "燥", "烫"))
@@ -1548,18 +1652,20 @@ def split_and_classify_any(text: str) -> list[dict] | None:
 
     Each returned dict has an extra `_raw_text` field with the original
     sub-clause text, so callers can extract non-local sub-clauses for cloud.
+    `_sep` 是与上一段之间的连词、`_cloud_domain` 是端侧认出的云侧域（认不出为空串）
+    ——分组要靠这两个信号把「独立请求」与「上一句的补语」分开。
 
     Returns:
         list[dict]: 2+ structured intents (may be mixed local/non-local/unclassified).
         None: single intent only.
     """
     t = text.strip()
-    parts = _split_parts(t)
+    parts = _split_parts_with_sep(t)
     if len(parts) < 2:
         return None
 
     intents = []
-    for part in parts:
+    for sep, part in parts:
         part = part.strip()
         if not part:
             continue
@@ -1568,9 +1674,12 @@ def split_and_classify_any(text: str) -> list[dict] | None:
             # Can't classify locally → mark for cloud dispatch
             result = {"_raw_text": part, "_needs_cloud": True,
                       "data": {"object": "unknown", "operate": "unknown"}}
+            result["_cloud_domain"] = cloud_domain_of(part) or ""
         else:
             result["_raw_text"] = part
             result["_needs_cloud"] = False
+            result["_cloud_domain"] = ""
+        result["_sep"] = sep
         intents.append(result)
 
     return intents if len(intents) >= 2 else None
@@ -1613,9 +1722,15 @@ def _to_legacy_name(intent: dict) -> str | None:
     if obj == "frunk":
         return f"frunk.{operate}"
     if obj == "rear_view_mirror":
-        mirror_map = {"fold": "fold", "unfold": "unfold"}
-        op = mirror_map.get(operate, operate)
-        return f"{obj}.{op}"
+        # 名字取自 **mode** 而不是 operate：分类器与 VAL 一致地产出 operate=set + mode=fold|unfold
+        # （val.py `operate == "set" and mode == "fold"`），而 LOCAL_INTENTS 里登记的是
+        # rear_view_mirror.fold/unfold。旧实现按 operate 拼名得到 `rear_view_mirror.set`，
+        # 不在 LOCAL_INTENTS → 「把后视镜收起来」整句上云（对抗测试 ei.local.mirror）。
+        if mode in ("fold", "unfold"):
+            return f"{obj}.{mode}"
+        if operate in ("open", "close"):   # 与 VAL 同源：open=展开、close=折叠
+            return f"{obj}.{'unfold' if operate == 'open' else 'fold'}"
+        return None
     if obj in ("seat", "ambient_light", "headlight", "fragrance"):
         # These use on/off in LOCAL_INTENTS
         op = _on_off_map.get(operate, operate)

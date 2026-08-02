@@ -142,3 +142,19 @@ rulings:
     domains: [info, safety]
     why: 2026-07-30 改判后的**正确**边界——裸问预警本身归 info.alerts，
       问它对驾驶的影响归 safety.weather_alert。改判前这一对是 0.689/cos 0.958 的真冲突
+
+  # ── 2026-08-02 意图落域对抗测试补裁（泓舟）：findings §4.1 点名「台账里没有这条裁定」的两组 ──
+  - id: nearby-navigation.find-vs-go
+    texts: [油不多了，附近哪儿有加油站, 导航去最近的加油站]
+    domains: [nearby, navigation]
+    why: 2026-08-02 裁定——**边界按动词划，不按对象划**：「找/搜/附近有什么」一律
+      nearby.search（周边发现，出富数据卡片），「导航去/带我去」才归 navigation。
+      于是「我要加油」是找加油站（nearby.search），不是开油箱盖、也不是发起导航。
+      这一对对象完全相同、只差动词，正是这条判据的载体
+
+  - id: manual-vision.described-light-vs-unknown-light
+    texts: [仪表盘上的红色感叹号是什么意思, 看看这个是什么]
+    domains: [manual, vision]
+    why: 2026-08-02 裁定——**用户已经把对象描述清楚了就不用再看一眼**：带颜色/类型
+      描述的仪表灯归 manual.query（说明书直接给含义与处置），只有描述不足以定位对象时
+      才走 vision.describe 抓帧。判据是隐私侧的：抓帧是敏感动作，能不抓就不抓

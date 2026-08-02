@@ -1,0 +1,678 @@
+{
+  "meta": {
+    "subject": "hint_retirement",
+    "generated_at": "2026-08-02T15:33:03.733138+00:00",
+    "commit": "de6ef22",
+    "provider": "deepseek:deepseek-v4-flash",
+    "repeat": 2,
+    "candidates": [
+      "reminder#0",
+      "reminder#1"
+    ],
+    "ineffective": [],
+    "no_corpus": []
+  },
+  "corpus_sources": [
+    {
+      "path": "route_hints × 判定语料池",
+      "count": 21
+    }
+  ],
+  "buckets": {
+    "hint_dual_arm": {
+      "total": 21,
+      "passed": 21,
+      "failures": [],
+      "pass_rate": 1.0
+    }
+  },
+  "overall": {
+    "total": 21,
+    "passed": 21,
+    "pass_rate": 1.0
+  },
+  "cases": {
+    "reminder#0::第一场提醒我观看": {
+      "id": "reminder#0::第一场提醒我观看",
+      "bucket": "hint_dual_arm",
+      "text": "第一场提醒我观看",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::开赛前半小时提醒我": {
+      "id": "reminder#0::开赛前半小时提醒我",
+      "bucket": "hint_dual_arm",
+      "text": "开赛前半小时提醒我",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#0::今天中超第一场是谁踢？开赛前提醒我": {
+      "id": "reminder#0::今天中超第一场是谁踢？开赛前提醒我",
+      "bucket": "hint_dual_arm",
+      "text": "今天中超第一场是谁踢？开赛前提醒我",
+      "expected": [
+        "info",
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#0",
+        "reminder.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#1::提醒我晚上看新闻联播": {
+      "id": "reminder#1::提醒我晚上看新闻联播",
+      "bucket": "hint_dual_arm",
+      "text": "提醒我晚上看新闻联播",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "reminder#1::明天早上八点提醒我开会": {
+      "id": "reminder#1::明天早上八点提醒我开会",
+      "bucket": "hint_dual_arm",
+      "text": "明天早上八点提醒我开会",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "mode_routing"
+      ],
+      "source": ""
+    },
+    "reminder#1::明天早上八点提醒我带充电线": {
+      "id": "reminder#1::明天早上八点提醒我带充电线",
+      "bucket": "hint_dual_arm",
+      "text": "明天早上八点提醒我带充电线",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#1::到时候提醒我什么时候该出发": {
+      "id": "reminder#1::到时候提醒我什么时候该出发",
+      "bucket": "hint_dual_arm",
+      "text": "到时候提醒我什么时候该出发",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#1::半小时后提醒我给客户回电话": {
+      "id": "reminder#1::半小时后提醒我给客户回电话",
+      "bucket": "hint_dual_arm",
+      "text": "半小时后提醒我给客户回电话",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#1::每天早上八点提醒我吃药": {
+      "id": "reminder#1::每天早上八点提醒我吃药",
+      "bucket": "hint_dual_arm",
+      "text": "每天早上八点提醒我吃药",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#1::过10分钟再提醒我": {
+      "id": "reminder#1::过10分钟再提醒我",
+      "bucket": "hint_dual_arm",
+      "text": "过10分钟再提醒我",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#1::第一场提醒我观看": {
+      "id": "reminder#1::第一场提醒我观看",
+      "bucket": "hint_dual_arm",
+      "text": "第一场提醒我观看",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#1::开赛前半小时提醒我": {
+      "id": "reminder#1::开赛前半小时提醒我",
+      "bucket": "hint_dual_arm",
+      "text": "开赛前半小时提醒我",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#1::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开": {
+      "id": "reminder#1::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "bucket": "hint_dual_arm",
+      "text": "创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#1::到公司提醒我拿文件": {
+      "id": "reminder#1::到公司提醒我拿文件",
+      "bucket": "hint_dual_arm",
+      "text": "到公司提醒我拿文件",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#1::离开公司提醒我买菜": {
+      "id": "reminder#1::离开公司提醒我买菜",
+      "bucket": "hint_dual_arm",
+      "text": "离开公司提醒我买菜",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#1::到公司之前提醒我交周报": {
+      "id": "reminder#1::到公司之前提醒我交周报",
+      "bucket": "hint_dual_arm",
+      "text": "到公司之前提醒我交周报",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "route_hints"
+      ],
+      "source": ""
+    },
+    "reminder#1::不用提醒我回电话了": {
+      "id": "reminder#1::不用提醒我回电话了",
+      "bucket": "hint_dual_arm",
+      "text": "不用提醒我回电话了",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#1::到家提醒我收快递": {
+      "id": "reminder#1::到家提醒我收快递",
+      "bucket": "hint_dual_arm",
+      "text": "到家提醒我收快递",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#1::周五下午三点叫我去接孩子": {
+      "id": "reminder#1::周五下午三点叫我去接孩子",
+      "bucket": "hint_dual_arm",
+      "text": "周五下午三点叫我去接孩子",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#1::帮我记个待办周末洗车": {
+      "id": "reminder#1::帮我记个待办周末洗车",
+      "bucket": "hint_dual_arm",
+      "text": "帮我记个待办周末洗车",
+      "expected": [
+        "reminder"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "exemplar"
+      ],
+      "source": ""
+    },
+    "reminder#1::创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开": {
+      "id": "reminder#1::创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开",
+      "bucket": "hint_dual_arm",
+      "text": "创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开",
+      "expected": [
+        "scene"
+      ],
+      "actual": {
+        "with_hint": true,
+        "without": true
+      },
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "reminder#1",
+        "reminder.create",
+        "exemplar"
+      ],
+      "source": ""
+    }
+  },
+  "retirement": {
+    "candidates": [
+      {
+        "key": "reminder#0",
+        "agent_id": "reminder",
+        "intent": "reminder.create",
+        "policy": "append",
+        "priority": 57,
+        "pattern": "(?=.*(?:提醒我|叫我|别忘了))(?=.*(?:第\\s*[一二两三四五六七八九十\\d]+\\s*场|这场|那场|开赛|开场|比赛开始|开始前)).*",
+        "guard": "",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "第一场提醒我观看",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "开赛前半小时提醒我",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "今天中超第一场是谁踢？开赛前提醒我",
+            "expect": [
+              "info",
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      },
+      {
+        "key": "reminder#1",
+        "agent_id": "reminder",
+        "intent": "reminder.create",
+        "policy": "replace",
+        "priority": 56,
+        "pattern": "提醒我|叫我(?!.{0,4}(小舟|什么))|别忘了|帮我记(一?下|个)|记个待办|设个提醒",
+        "guard": "限速|车道|碰撞|疲劳|盲区|导航播报|电量提醒|保养提醒|是什么|怎么(开|关|用)|什么意思|什么来着|让你提醒|提醒过|要是|如果|假如|万一|会不会|有没有|下不下|谁(踢|打)|有(哪些|什么)比赛|哪(两|支|个).{0,2}(队|球队)",
+        "require_confirm": false,
+        "cases": [
+          {
+            "text": "提醒我晚上看新闻联播",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "明天早上八点提醒我开会",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "mode_routing"
+          },
+          {
+            "text": "明天早上八点提醒我带充电线",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "到时候提醒我什么时候该出发",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "半小时后提醒我给客户回电话",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "每天早上八点提醒我吃药",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "过10分钟再提醒我",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "第一场提醒我观看",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "开赛前半小时提醒我",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "到公司提醒我拿文件",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "离开公司提醒我买菜",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "到公司之前提醒我交周报",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "route_hints"
+          },
+          {
+            "text": "不用提醒我回电话了",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "到家提醒我收快递",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "周五下午三点叫我去接孩子",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "帮我记个待办周末洗车",
+            "expect": [
+              "reminder"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          },
+          {
+            "text": "创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开",
+            "expect": [
+              "scene"
+            ],
+            "arm_a_pass": true,
+            "arm_b_pass": true,
+            "src": "exemplar"
+          }
+        ]
+      }
+    ],
+    "keep": [],
+    "ineffective": [],
+    "no_corpus": []
+  }
+}

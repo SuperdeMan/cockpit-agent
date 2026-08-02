@@ -168,8 +168,15 @@ def test_clarify_shows_card_when_enabled(monkeypatch):
     assert spy.agent_calls == 0                        # 未执行任何 Agent
 
 
-def test_clarify_ignored_when_disabled():
-    """CLARIFY_ENABLED 默认 off → clarify 被忽略，回空计划话术（回归保护）。"""
+def test_clarify_ignored_when_disabled(monkeypatch):
+    """CLARIFY_ENABLED=off → clarify 被忽略，回空计划话术（回归保护）。
+
+    2026-08-03：本测试原来**靠代码兜底缺省是 off** 来表达「关掉」，而部署缺省一直是 on
+    （`.env.example` / compose 自 2026-07-08 起就是 `${CLARIFY_ENABLED:-on}`）。
+    兜底缺省对齐到 on 之后它就红了——**红得对**：它测的是「关掉时的行为」，
+    那就该把开关显式关掉，而不是赌某个缺省值恰好是 off。
+    """
+    monkeypatch.setenv("CLARIFY_ENABLED", "off")
     engine, _, _ = _make_engine(_CLARIFY_PLAN)
     final = _run(engine, _req("华润大厦"))[-1]
     assert "抱歉" in final["speech"]

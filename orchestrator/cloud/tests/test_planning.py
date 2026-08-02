@@ -239,12 +239,20 @@ def test_ensure_research_followup_routes_deepen():
     async def mock_resolve(query, top_k=1):
         return []
 
-    # 含报告小节深挖 + 新闻深挖（第N条/这条新闻）两类，都应路由 research.run
-    for text in ("展开第2点", "再深入第二节", "这部分详细讲讲",
-                 "详细讲讲第2条", "这条新闻详细讲讲"):
+    # **报告章节量词**（第N点/节/部、这部分）才路由 research.run
+    for text in ("展开第2点", "再深入第二节", "这部分详细讲讲"):
         plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
             text, WorkingSet(catalog=agents), PlanContext()))
         assert any(s.intent == "research.run" for s in plan.steps), text
+
+    # 2026-08-03 泓舟裁定：**「条/则」是列表项量词，不是报告章节量词**。新闻列表后的
+    # 「第二条详细讲讲」要的是就地展开（秒级），不是开一张分钟级异步调研单。
+    # 而 guard 是纯文本正则、看不到焦点——同一句话在报告场景与新闻场景**逐字相同**，
+    # 一条分不开两个相反意图的 replace hint 至少一半时间是错的。故按量词收窄。
+    for text in ("详细讲讲第2条", "这条新闻详细讲讲", "那条详细说说"):
+        plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+            text, WorkingSet(catalog=agents), PlanContext()))
+        assert not any(s.intent == "research.run" for s in plan.steps), text
 
 
 def test_replan_returns_done_or_a_validated_next_batch():

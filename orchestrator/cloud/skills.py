@@ -85,7 +85,12 @@ def _env_float(name: str, default: float, min_val: float | None = None,
 env_int, env_float = _env_int, _env_float
 
 
-SKILL_BUDGET = _env_int("SKILL_BUDGET", 2400, min_val=0)    # 注入块字符预算
+# 2400→2600（2026-08-02）：policy 常驻、guide 按检索序注入，两者**共用这一个预算**——
+# 于是「加一条 policy」会静默把最相关的那条 guide 挤成 !clipped。实测：新增
+# negation-and-deferral（277 字）后 policies 合计 1047 + 头 14 + navigation-with-stop
+# 1428 = 2489 > 2400，对抗用例 ki.navigation-with-stop.hit 当场红。
+# 守卫见 `tests/test_skills_budget_headroom.py`：常驻总量 + 最大 guide 必须放得下。
+SKILL_BUDGET = _env_int("SKILL_BUDGET", 2600, min_val=0)    # 注入块字符预算
 SKILL_TOP_K = _env_int("SKILL_TOP_K", 3, min_val=1)         # guide 预筛条数
 _MIN_SCORE = _env_int("SKILL_MIN_SCORE", 10, min_val=1)     # 词法命中阈值（一个关键词=10）。
                                                             # 下限 1 不是 0：score≥0 恒真，

@@ -338,7 +338,13 @@ def test_boundary_ledger_maps_stable_ids_to_declared_domain_order():
     ledger = load_boundary_ledger(_ROOT / "skills" / "exemplars" / "boundaries.yaml")
     assert ledger["info-safety.weather-alert"] == ("info", "safety")
     assert ledger["navigation-vision.where-vs-what"] == ("navigation", "vision")
-    assert len(ledger) == 18
+    # 2026-08-03 泓舟补裁两条（nearby-navigation.find-vs-go /
+    # manual-vision.described-light-vs-unknown-light），18 → 20。
+    # 条数断言是**故意**的：台账每加一条都要求双向各 2 条对照用例，这里红一次
+    # 就是提醒「裁定加了，兑现物加了吗」。
+    assert ledger["nearby-navigation.find-vs-go"] == ("nearby", "navigation")
+    assert ledger["manual-vision.described-light-vs-unknown-light"] == ("manual", "vision")
+    assert len(ledger) == 20
 
 
 def test_boundary_ledger_rejects_missing_duplicate_id_and_empty_why(tmp_path):
