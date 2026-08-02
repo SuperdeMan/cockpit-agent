@@ -248,3 +248,108 @@ def test_causal_effect_requires_stable_wrong_to_stable_right_flip():
     assert causal_effect("unstable", "pass", True, True) == "suspect"
     assert causal_effect("stable_fail", "pass", False, True) == "invalid"
     assert causal_effect("stable_fail", "stable_fail", True, True) == "none"
+
+
+# ── L2：完整决策链 ────────────────────────────────────────────────────────
+from orchestrator.cloud.models import Plan, ReplanDecision, Step  # noqa: E402
+from support.intent_adversarial_runtime import (  # noqa: E402
+    build_scripted_engine_harness, confirm_intent_inventory, run_full_entry_turn,
+)
+
+
+def _scripted_plan(intent=None, *, complexity="simple", clarify=None, slots=None):
+    steps = [] if intent is None else [Step(
+        id="s1", agent_id=intent.split(".", 1)[0], endpoint="fake:1",
+        intent=intent, slots=dict(slots or {}))]
+    return Plan(steps=steps, complexity=complexity, goal="完成用户目标",
+                clarify=clarify)
+
+
+def _scripted_replan(intent, *, slots=None, step_id="s2"):
+    # step id 必须与初规划不同：executor 按 id 记完成态，复用 s1 会让再规划步被当成
+    # 「已经跑过」直接跳过——那是脚本的错，不是编排的错。
+    return ReplanDecision(done=False, steps=[Step(
+        id=step_id, agent_id=intent.split(".", 1)[0], endpoint="fake:1",
+        intent=intent, slots=dict(slots or {}))])
+
+
+def test_engine_harness_exposes_clarify_without_agent_call(monkeypatch):
+    monkeypatch.setenv("CLARIFY_ENABLED", "on")
+    harness = build_scripted_engine_harness(_scripted_plan(clarify={
+        "question": "您想看详情还是导航？",
+        "options": [{"label": "详情", "send_text": "看详情"},
+                    {"label": "导航", "send_text": "导航过去"}],
+    }))
+    out = harness.run("华润大厦", meta={"memory_enabled": "false"})
+    assert out.decision == "clarify"
+    assert out.agent_calls == ()
+
+
+def test_pending_confirm_cancel_does_not_replan_or_execute():
+    harness = build_scripted_engine_harness(_scripted_plan("trunk.open"))
+    harness.seed_pending_confirm("s1", intent="trunk.open")
+    out = harness.run("取消", session_id="s1", is_confirmation=True)
+    assert out.decision == "cancel"
+    assert out.planner_calls == ()
+    assert out.side_effects == ()
+
+
+def test_high_risk_need_confirm_has_zero_side_effect_before_confirm():
+    harness = build_scripted_engine_harness(
+        _scripted_plan("nearby.order"), agent_status="NEED_CONFIRM",
+        confirm_intents=("nearby.order",),
+        confirmed_responses={"nearby.order": {
+            "speech": "已下单", "actions": [{"type": "payment", "payload": {}}]}})
+    # 刻意不用「帮我下单」：`下单` 在 engine 的 _YES_WORDS 里，整句只比它长两个字，
+    # 会被 _is_bare_confirm_word 判成裸确认词而根本进不了规划——那是生产的既有行为。
+    out = harness.run("帮我订一份宫保鸡丁", meta={"memory_enabled": "false"})
+    assert out.need_confirm is True
+    assert out.side_effects == ()
+
+
+def test_confirmed_turn_is_the_only_path_that_produces_a_side_effect():
+    harness = build_scripted_engine_harness(
+        _scripted_plan("nearby.order"), confirm_intents=("nearby.order",),
+        confirmed_responses={"nearby.order": {
+            "speech": "已下单", "actions": [{"type": "payment", "payload": {}}]}})
+    first = harness.run("帮我订一份宫保鸡丁", session_id="s2")
+    assert first.need_confirm is True and first.side_effects == ()
+    second = harness.run("确认", session_id="s2", is_confirmation=True)
+    assert [row["intent"] for row in second.side_effects] == ["nearby.order"]
+
+
+def test_adaptive_result_is_replanned_and_recorded():
+    harness = build_scripted_engine_harness(
+        _scripted_plan("info.weather", complexity="adaptive"),
+        replans=[_scripted_replan("nearby.search",
+                                  slots={"category": "室内", "weather_context": "雨"})],
+        responses={"info.weather": {"condition": "中雨"}},
+    )
+    out = harness.run("今天的天气适合去哪玩")
+    assert [row["intent"] for row in out.agent_calls] == [
+        "info.weather", "nearby.search"]
+    assert out.planner_calls[0] == "build"
+    assert "replan" in out.planner_calls
+
+
+def test_confirm_inventory_never_trusts_synthetic_edge_require_confirm():
+    agents = eval_live.load_agents(include_edge=True)
+    inventory = confirm_intent_inventory(agents)
+    assert "trunk.open" in inventory, "端侧危险动作必须进确认清单"
+    assert "nearby.order" in inventory
+
+
+def test_full_entry_records_edge_ingress_and_engine_decision():
+    harness = build_scripted_engine_harness(_scripted_plan("info.weather"))
+    edge, engine = run_full_entry_turn("帮我查一下今天的天气", harness)
+    assert edge.ingress == "cloud"
+    assert engine is not None and engine.decision == "execute"
+    assert [row["intent"] for row in engine.agent_calls] == ["info.weather"]
+
+
+def test_full_entry_edge_local_never_reaches_the_engine():
+    harness = build_scripted_engine_harness(_scripted_plan("info.weather"))
+    edge, engine = run_full_entry_turn("打开空调", harness)
+    assert edge.ingress == "edge_local"
+    assert engine is None, "端侧接管的轮次不应产生云端决策证据"
+    assert edge.state_delta.get("hvac_on") is True

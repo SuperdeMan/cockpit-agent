@@ -424,3 +424,325 @@ def causal_effect(full_status: str, ablation_status: str, same_provider: bool,
     if ablation_status == "pass":
         return "suspect"
     return "none"
+
+
+# ── L2：完整 Edge→Engine 决策链 ───────────────────────────────────────────
+# 下游一律 fake/spy：本套件永远不触发真实车控、支付、消息、删除。
+# 只有测试显式注入 `confirmed_response` 时才生成 action，并把它记进 side_effects——
+# 「确认前零副作用」这条断言需要一个真的会被触发的对照物，否则它永远为真。
+
+
+class _FakeResponse:
+    """`agent_pb2.ExecuteResponse` 的结构等价体（不依赖 proto 生成代码即可单测）。"""
+
+    def __init__(self, status=0, speech="", follow_up="", data=None, actions=None):
+        self.status = status
+        self.speech = speech
+        self.follow_up = follow_up
+        self.actions = list(actions or [])
+        self.ui_card = None
+        self.data = data
+        self.missing_slots = []
+
+
+class SafeClients:
+    """Engine 的 clients 替身：真实形状、零真实副作用。"""
+
+    def __init__(self, agents, *, history=(), memories=(), responses=None,
+                 confirm_intents=(), confirmed_responses=None,
+                 default_status: int = 0):
+        self.agents = list(agents)
+        self.history = list(history)
+        self.memories = list(memories)
+        self.responses = dict(responses or {})
+        self.confirm_intents = set(confirm_intents)
+        self.confirmed_responses = dict(confirmed_responses or {})
+        self.default_status = default_status
+        self.agent_calls: list[dict[str, Any]] = []
+        self.side_effects: list[dict[str, Any]] = []
+
+    async def list_agents(self):
+        return list(self.agents)
+
+    async def resolve(self, query="", intent="", top_k=1):
+        if intent:
+            return [a for a in self.agents if any(
+                cap.intent == intent for cap in a.manifest.capabilities)][:top_k]
+        return list(self.agents[:top_k])
+
+    async def get_session(self, *_args, **_kwargs):
+        return list(self.history)
+
+    async def recall(self, *_args, **_kwargs):
+        return list(self.memories)
+
+    async def append_turn(self, *_args, **_kwargs):
+        return None
+
+    async def save_focus(self, *_args, **_kwargs):
+        return None
+
+    async def call_agent_stream(self, *_args, **_kwargs):
+        if False:                      # 永不产出：L2 不测流式直通
+            yield None
+
+    async def call_agent(self, endpoint, intent, slots, ctx=None, meta=None, **_kwargs):
+        self.agent_calls.append({"intent": intent, "slots": dict(slots or {}),
+                                 "meta": dict(meta or {})})
+        return self._response_for(intent, dict(meta or {}))
+
+    def _response_for(self, intent: str, meta: dict[str, str]):
+        confirmed = meta.get("confirmed") == "true"
+        if intent in self.confirm_intents and not confirmed:
+            return _FakeResponse(status=1, speech=f"确认要执行 {intent} 吗？",
+                                 follow_up="说『确认』即可")
+        if confirmed and intent in self.confirmed_responses:
+            spec = self.confirmed_responses[intent]
+            actions = list(spec.get("actions") or [])
+            for action in actions:
+                self.side_effects.append({"intent": intent, "action": dict(action)})
+            return _FakeResponse(speech=spec.get("speech", "已完成"),
+                                 data=spec.get("data"), actions=actions)
+        payload = self.responses.get(intent)
+        return _FakeResponse(status=self.default_status,
+                             speech=f"{intent} 已完成",
+                             data=payload if isinstance(payload, dict) else None)
+
+
+def confirm_intent_inventory(agents: list, extra: set[str] | None = None) -> set[str]:
+    """需要二次确认的 intent 全集 = manifest require_confirm ∪ 端侧危险动作 ∪ 显式补充。
+
+    刻意不信 `eval_live` 合成的 edge capability——那里的 `require_confirm=False` 是
+    占位默认值，拿它当准入清单会让「确认前零副作用」在最危险的一类动作上恒为真。
+    """
+    out = set(extra or ())
+    for agent in agents:
+        for cap in (getattr(agent.manifest, "capabilities", None) or []):
+            if getattr(cap, "require_confirm", False):
+                out.add(str(cap.intent))
+    try:
+        from val import VAL
+        val = VAL()
+        for intent in _edge_intents(agents):
+            obj = intent.split(".", 1)[0]
+            if val._need_confirm(obj):
+                out.add(intent)
+    except Exception:                  # VAL 不可用时只退化成 manifest 口径
+        pass
+    return out
+
+
+def _edge_intents(agents: list) -> set[str]:
+    return {str(cap.intent)
+            for agent in agents
+            if getattr(agent.manifest, "deployment", "") == "edge"
+            for cap in (getattr(agent.manifest, "capabilities", None) or [])}
+
+
+class ScriptedPlanner:
+    """状态机单测用的确定性 planner。准确率证据必须用真实 PlanBuilder，不是它。"""
+
+    def __init__(self, plan, replans=()):
+        self.plan = plan
+        self.replans = list(replans)
+        self.calls: list[str] = []
+
+    async def build(self, *_args, **_kwargs):
+        from copy import deepcopy
+        self.calls.append("build")
+        return deepcopy(self.plan)
+
+    async def replan(self, *_args, **_kwargs):
+        from copy import deepcopy
+        from orchestrator.cloud.models import ReplanDecision
+        self.calls.append("replan")
+        return deepcopy(self.replans.pop(0)) if self.replans else ReplanDecision(done=True)
+
+
+async def _deterministic_aggregate(messages, **_kwargs):
+    """聚合器不产生落域证据，固定返回可预期文本，避免再引入一次模型波动。"""
+    return "已处理"
+
+
+@dataclass(frozen=True)
+class EngineObservation:
+    decision: str
+    speech: str
+    need_confirm: bool
+    events: tuple[dict[str, Any], ...]
+    agent_calls: tuple[dict[str, Any], ...]
+    side_effects: tuple[dict[str, Any], ...]
+    planner_calls: tuple[str, ...]
+    plans: tuple[Any, ...]
+
+
+class EngineHarness:
+    """一案例一 harness：跑完即丢，不复用——session/focus 穿案例是最难查的假绿。"""
+
+    def __init__(self, engine, clients, session, *, planner=None, sink=None):
+        self.engine = engine
+        self.clients = clients
+        self.session = session
+        self.planner = planner
+        self.sink = sink
+
+    def seed_pending_confirm(self, session_id: str, *, intent: str,
+                             step_id: str = "s1") -> None:
+        from orchestrator.cloud.models import SessionState
+        pending = {"steps": [{"id": step_id, "agent_id": intent.split(".", 1)[0],
+                              "endpoint": "fake:1", "intent": intent, "slots": {},
+                              "depends_on": [], "slot_refs": {},
+                              "require_confirm": True, "status": "need_confirm"}],
+                   "complexity": "simple", "goal": ""}
+        asyncio.run(self.session.save(session_id, SessionState(
+            phase="wait_confirm", pending_plan=pending, pending_step_id=step_id)))
+
+    def seed_focus(self, session_id: str, focus: dict[str, Any]) -> None:
+        asyncio.run(self.session.save_focus(session_id, dict(focus)))
+
+    def run(self, text: str, **kwargs) -> EngineObservation:
+        return asyncio.run(self.run_async(text, **kwargs))
+
+    async def run_async(self, text: str, *, session_id: str = "adv-1",
+                        is_confirmation: bool = False,
+                        meta: dict[str, str] | None = None,
+                        granted_permissions: list[str] | None = None
+                        ) -> EngineObservation:
+        """完整入口把 Engine 跑在 Edge 已有的事件循环里，因此必须有 async 形态——
+        在运行中的 loop 里再 `asyncio.run()` 会直接抛，而 Edge 把它吞成「云端不可达」
+        然后静默降级：那正好是一条看起来像产品缺陷的假红。"""
+        from types import SimpleNamespace
+        request_meta = {"memory_enabled": "false", **(meta or {})}
+        if granted_permissions is not None:
+            request_meta["granted_scopes"] = ",".join(granted_permissions)
+        request = SimpleNamespace(
+            text=text, session_id=session_id, request_id="adv-r1",
+            is_confirmation=is_confirmation, meta=request_meta,
+            context=SimpleNamespace(user_id="eval-user", vehicle_id="eval-vehicle"))
+        events = [event async for event in self.engine.run(request)]
+        finals = [e for e in events if e.get("kind") == "final"]
+        final = finals[-1] if finals else {}
+        card_type = str(((final.get("ui_card") or {}) or {}).get("type") or "")
+        need_confirm = bool(final.get("need_confirm"))
+        if card_type == "rejected":
+            decision = "reject"
+        elif card_type == "intent_choice":
+            decision = "clarify"
+        elif is_confirmation and not need_confirm and not self.clients.side_effects \
+                and "取消" in str(final.get("speech") or ""):
+            decision = "cancel"
+        elif need_confirm:
+            decision = "confirm"
+        else:
+            decision = "execute"
+        plans = tuple(trace.plan for trace in (self.sink.plans if self.sink else ()))
+        return EngineObservation(
+            decision=decision, speech=str(final.get("speech") or ""),
+            need_confirm=need_confirm, events=tuple(events),
+            agent_calls=tuple(self.clients.agent_calls),
+            side_effects=tuple(self.clients.side_effects),
+            planner_calls=tuple(self.planner.calls if self.planner else ()),
+            plans=plans)
+
+
+def _new_engine(planner, clients):
+    from orchestrator.cloud.aggregator import Aggregator
+    from orchestrator.cloud.engine import PlannerEngine
+    from orchestrator.cloud.executor import DagExecutor
+    from orchestrator.cloud.session import SessionStore
+    session = SessionStore(redis_url="")
+    engine = PlannerEngine(
+        clients=clients, planner=planner,
+        executor=DagExecutor(call_agent_fn=clients.call_agent),
+        aggregator=Aggregator(llm_fn=_deterministic_aggregate),
+        session=session)
+    return engine, session
+
+
+def build_scripted_engine_harness(plan, *, replans=(), responses=None,
+                                  agent_status: str = "OK",
+                                  confirm_intents=(), confirmed_responses=None,
+                                  agents=()):
+    planner = ScriptedPlanner(plan, replans)
+    clients = SafeClients(agents, responses=responses,
+                          confirm_intents=set(confirm_intents),
+                          confirmed_responses=confirmed_responses,
+                          default_status=1 if agent_status == "NEED_CONFIRM" else 0)
+    engine, session = _new_engine(planner, clients)
+    return EngineHarness(engine, clients, session, planner=planner)
+
+
+def build_engine_harness(builder, agents, safe_clients, trace_sink):
+    """真实 L2：必须传 Task 8 的 live PlanBuilder，scripted plan 不构成准确率证据。"""
+    from support.intent_adversarial_trace import RecordingPlanner
+    planner = RecordingPlanner(builder, trace_sink)
+    engine, session = _new_engine(planner, safe_clients)
+    return EngineHarness(engine, safe_clients, session, sink=trace_sink)
+
+
+def run_full_entry_turn(text: str, engine_harness: EngineHarness, *,
+                        meta: dict[str, str] | None = None,
+                        session_id: str = "adv-1") -> tuple[EdgeObservation,
+                                                            EngineObservation]:
+    """完整入口：真实 Edge servicer 的云端替身直连内进程 Engine。
+
+    只有 cloud-direct 通过而完整入口失败时，首偏离点才是 Edge；反过来推不出
+    「Edge 有问题」——那只说明这句话本来就不该上云。
+    """
+    from cockpit.orchestrator.v1 import orchestrator_pb2
+    from google.protobuf import struct_pb2
+    from server import EdgeOrchestratorServicer
+
+    srv = EdgeOrchestratorServicer()
+    before = dict(srv.val.state)
+    engine_out: dict[str, EngineObservation] = {}
+
+    async def cloud_handle(req):
+        observation = await engine_harness.run_async(
+            req.text, session_id=session_id,
+            is_confirmation=req.is_confirmation, meta=dict(req.meta or {}))
+        engine_out["value"] = observation
+        for event in observation.events:
+            if event.get("kind") != "final":
+                continue
+            final = orchestrator_pb2.FinalResult(
+                speech=str(event.get("speech") or ""),
+                need_confirm=bool(event.get("need_confirm")))
+            for action in event.get("actions") or []:
+                payload = struct_pb2.Struct()
+                payload.update({k: str(v) for k, v in
+                                (action.get("payload") or {}).items()})
+                final.actions.append(_common_action(
+                    str(action.get("type") or ""), payload,
+                    bool(action.get("require_confirm"))))
+            yield orchestrator_pb2.HandleEvent(final=final)
+
+    srv.cloud.handle = cloud_handle
+    srv.obs.emit_turn = _async_noop
+    srv.obs.emit_span = _async_noop
+    srv.obs.emit_state = _async_noop
+    srv.memory.append = _async_noop
+    srv._nlu_shadow_bg = lambda *_args, **_kwargs: None
+    request = orchestrator_pb2.HandleRequest(
+        text=text, session_id=session_id, request_id="adv-r1",
+        meta={"memory_enabled": "false", **(meta or {})})
+    events = asyncio.run(_collect(srv.Handle(request, None)))
+    finals = [event.final for event in events if event.WhichOneof("event") == "final"]
+    state_delta = {key: value for key, value in srv.val.state.items()
+                   if before.get(key) != value}
+    actions = tuple(_action_dict(action) for final in finals for action in final.actions)
+    ingress = ("mixed" if engine_out and state_delta
+               else "cloud" if engine_out else "edge_local")
+    edge = EdgeObservation(
+        ingress=ingress, cloud_text=text if engine_out else "",
+        state_delta=state_delta, actions=actions,
+        need_confirm=any(final.need_confirm for final in finals),
+        side_effects=tuple(action for action in actions
+                           if action["type"] in {"vehicle.control", "media.control"}))
+    return edge, engine_out.get("value")
+
+
+def _common_action(type_: str, payload, require_confirm: bool):
+    from cockpit.common.v1 import common_pb2
+    return common_pb2.AgentAction(type=type_, payload=payload,
+                                  require_confirm=require_confirm)
