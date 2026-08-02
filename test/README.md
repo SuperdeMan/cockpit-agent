@@ -182,7 +182,7 @@ python test/eval_exemplars.py          # 范例层契约 + 域路由探针（M5 
 
 # 分布尺 N1（真栈，回答「这个月变聪明了吗」，**不是**回归闸）
 python test/routing_bench.py                        # 零成本：语料覆盖 + 隐藏分母 + 域偏斜
-python test/routing_bench.py --live --write-baseline # 出 N1 与分域混淆矩阵
+python test/routing_bench.py --live --write-baseline # 出 domain_hit_rate 与分域混淆矩阵
 
 # 规则的出口（真栈，退役判定）
 python test/hint_retirement.py                                  # 干跑：盘点每条 hint 的命中语料

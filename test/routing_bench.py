@@ -286,6 +286,16 @@ def _count_yaml(p: Path) -> int:
 
 # ── 车道 2：N1 live ─────────────────────────────────────────────────────────
 
+def domain_hit(actual_intents: list[str], expected_domains: set[str]) -> bool:
+    """历史趋势口径：任一期望 domain 命中；不代表组合计划完整。
+
+    期望两个域、实际只命中一个域时它仍为真——组合意图的完整性要用对抗套件的
+    `exact_plan_set_rate`（全部必要组 + 无禁选 + 无未授权额外项）来判。两把尺子
+    量的不是同一件事，数值不可直接比大小。
+    """
+    return bool(_domains_of(actual_intents) & set(expected_domains))
+
+
 async def _drive(cases: list[dict], agents: list, bucket: str) -> list[CaseResult]:
     from orchestrator.cloud.context import WorkingSet
     from orchestrator.cloud.models import PlanContext
@@ -299,7 +309,7 @@ async def _drive(cases: list[dict], agents: list, bucket: str) -> list[CaseResul
             plan = await builder.build(c["text"], WorkingSet(catalog=agents), PlanContext())
             intents = [s.intent for s in plan.steps]
             actual = sorted(_domains_of(intents)) or ["<none>"]
-            ok = bool(_domains_of(intents) & c["domains"])
+            ok = domain_hit(intents, c["domains"])
             detail = ""
         except Exception as e:
             intents, actual, ok = [], ["<error>"], False
@@ -458,7 +468,10 @@ def main() -> int:
 
     n = sum(r.passed for r in results)
     layers = _layer_split(results)
-    print(f"\n**N1 域级准确率：{n}/{len(results)} = {n / max(1, len(results)) * 100:.1f}%**")
+    print(f"\n**N1 domain_hit_rate（历史任一期望域命中）："
+          f"{n}/{len(results)} = {n / max(1, len(results)) * 100:.1f}%**")
+    print("  ⚠ 这不是「域级准确率」：期望两个域、实际只命中一个仍算通过。组合计划完整性"
+          "看对抗套件的 `exact_plan_set_rate`（test/eval_intent_adversarial.py），两者不可直比。")
     for k, v in layers.items():
         mark = "（主指标）" if k == "paraphrase" else ""
         print(f"  {k:<11}{v['pass']}/{v['total']} = {v['rate'] * 100:.1f}%{mark}")
@@ -482,7 +495,10 @@ def main() -> int:
     ], results + base_results)
     report["meta"].update({"provider": provider, "temperature": 0.3,
                            "layers": layers, "corpus_stats": stats,
-                           "sample_seed": args.seed})
+                           "sample_seed": args.seed,
+                           # 历史指标正名：交集命中口径显式叫 domain_hit_rate，
+                           # 逐例 pass/fail 与既有基线逐字不变，只是不再自称准确率。
+                           "metrics": {"domain_hit_rate": report["overall"]["pass_rate"]}})
     md = render_markdown(report) + "\n\n## 分域混淆矩阵\n\n```\n" + _confusion(results) + "\n```\n"
     if args.write_baseline:
         write_report(report, md, _BASELINE, _REPORT_MD)
