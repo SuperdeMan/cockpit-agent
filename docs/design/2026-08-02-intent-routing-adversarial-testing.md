@@ -135,14 +135,15 @@
 
 ```mermaid
 flowchart LR
-    U[用户文本与上下文] --> A[addressed 判断]
-    A --> E[Edge 快路径 / 转云]
-    E --> C[Context + Catalog]
+    U[用户文本与上下文] --> E[Edge 快路径 / cloud ingress]
+    E -->|edge_local| D[execute / clarify / reject / confirm]
+    E -->|cloud / mixed| C[Context + Catalog]
     C --> R[Skill / Exemplar 检索]
-    R --> P[Planner 原始计划]
-    P --> H[Route Hint 后验修正]
-    H --> V[能力与计划校验]
-    V --> D[execute / clarify / reject]
+    R --> P[Planner 原始 JSON / tool arguments]
+    P --> V1[解析 addressed / clarify 与 capability 校验]
+    V1 --> H[Route Hint 后验修正]
+    H --> V2[Hint 生成步骤复用 step validator]
+    V2 --> D
 ```
 
 纳入以下判断：
@@ -165,63 +166,74 @@ flowchart LR
 
 ```yaml
 schema_version: 1
+cases:
+  - id: composition.weather_outing.unknown_then_rain
+    title: 天气未知时询问适合去哪玩，结果为中雨
+    family_id: composition.weather_outing
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
 
-id: composition.weather_outing.rain
-title: 下雨天询问适合去哪玩
-family_id: composition.weather_outing
-risk: medium
-status: reviewed
+    tags:
+      attacks: [A4]
+      mechanisms: [composition, dependency]
+      domains: [info, nearby]
+      boundary: weather_to_outing
+      layers: [l1, l2]
 
-tags:
-  attacks: [composition, dependency]
-  domains: [info, nearby]
-  boundary: weather_to_outing
+    provenance:
+      kind: real_badcase
+      source_ref: docs/reviews/2026-08-02-review-acceptance-impl-and-badcase-intelligence.md
+      reviewed_by: human
+      reviewed_at: 2026-08-02
 
-provenance:
-  kind: real_badcase
-  source_ref: docs/reviews/2026-08-02-review-acceptance-impl-and-badcase-intelligence.md
-  reviewed_by: human
-  reviewed_at: 2026-08-02
+    turns:
+      - input:
+          utterance: 今天的天气适合去哪玩
+          context:
+            city: 惠州
 
-turns:
-  - input:
-      utterance: 今天下雨，适合去哪玩
-      context:
-        city: 惠州
+        expected:
+          addressed: true
 
-    expected:
-      addressed: true
+          ingress:
+            allowed: [cloud]
+            forbidden: [edge_local]
 
-      ingress:
-        allowed: [cloud]
-        forbidden: [edge_local]
+          decision:
+            allowed: [execute]
+            clarify: forbidden
 
-      decision:
-        allowed: [execute]
-        clarify: forbidden
+          # 天气未知时首轮只查天气；不能提前无条件推荐地点。
+          plan:
+            required_intent_groups:
+              - any_of: [info.weather, info.forecast]
+            forbidden_intents: [nearby.search, navigation.search_poi]
+            allow_extra_intents: false
+            complexity:
+              allowed: [adaptive]
 
-      plan:
-        required_intent_groups:
-          - any_of: [info.weather, info.forecast]
-          - any_of: [nearby.search]
-
-        forbidden_intents:
-          - navigation.search_poi
-
-        allow_extra_intents: false
-
-        complexity:
-          allowed: [adaptive]
-
-        dependencies:
-          - producer: [info.weather, info.forecast]
-            consumer: nearby.search
-            carries: [weather_context]
-
-      slots:
-        - intent: nearby.search
-          key: category
-          allowed: [室内, 商场, 电影院, 博物馆]
+          # 注入首轮天气结果后，replan 必须消费天气事实并补推荐。
+          replans:
+            - after:
+                result:
+                  step_id: s1
+                  status: ok
+                  data: {condition: 中雨}
+                  speech: 惠州今天有中雨
+              plan:
+                required_intent_groups:
+                  - any_of: [nearby.search]
+                forbidden_intents: [navigation.search_poi]
+                allow_extra_intents: false
+                slots:
+                  - intent: nearby.search
+                    key: category
+                    matcher: one_of
+                    allowed: [室内, 商场, 电影院, 博物馆]
+                  - intent: nearby.search
+                    key: weather_context
+                    matcher: presence
 ```
 
 示例描述契约形态；最终 intent、complexity 与槽位枚举必须以实现时扫描到的真实 manifest 和 Plan 模型为准，不在加载器里复制第二份能力常量。
@@ -233,7 +245,7 @@ turns:
 - `allow_extra_intents`：默认 `false`；
 - `allowed_extra_intents`：仅在业务确有等价辅助步骤时逐项放行；
 - `dependencies`：按 intent 关系检查，不依赖 Planner 临时生成的 step id；
-- `slots`：只允许 exact、set、range、presence 和 source-reference 等确定性 matcher，第一期不引入另一个 LLM 充当裁判；
+- `slots`：只允许 `exact`、`one_of`、`range`、`presence`、`absence`、`source_reference` 等确定性 matcher，第一期不引入另一个 LLM 充当裁判；
 - `decision` 与 `ingress` 独立于 plan，避免最终 intent 正确掩盖 Edge 误接或不必要澄清。
 
 ### 7.3 多轮与 adaptive
@@ -346,6 +358,7 @@ LLM 可以生成 candidate，不能填写 `reviewed_by: human`，不能自动晋
 首期覆盖要求：
 
 - 每个可路由 intent 至少 2 个正例、2 个硬负例、1 组最小对照；
+- `any_of` 多成员组表示可接受的等价落域，但不单独证明其中每个 intent 都被正向覆盖；逐 intent 正例盘点只计单成员必要组，避免一个宽松 OR 组替多项能力制造假覆盖；
 - 每个 boundary 两个方向各至少 2 组对照；
 - 每个高风险本地动作覆盖否定、转述、组合与对象翻转；
 - 组合规划覆盖无依赖并行、有依赖串行、`complexity=adaptive` 和取消其中一项；
@@ -514,7 +527,7 @@ cloud-direct
 
 | 指标 | 定义 |
 |---|---|
-| `exact_plan_set_rate` | 所有必要组齐全，且无 forbidden 或未授权 extra |
+| `exact_plan_set_rate` | 所有必要组、replan、关键槽位与依赖齐全，且无 forbidden 或未授权 extra |
 | `required_group_recall` | 已满足必要意图组 / 全部必要意图组 |
 | `overroute_rate` | 出现未授权额外 intent 的案例比例 |
 | `forbidden_route_rate` | 命中 forbidden intent 的案例比例 |
@@ -536,6 +549,8 @@ cloud-direct
 - execution layer；
 - provider/model；
 - provenance/status。
+
+同一 case 在多个 execution layer 上运行时，每个 `(case_id, layer)` 是独立证据单元，报告键固定为 `case_id@layer`；`--layer all` 的总数是证据单元 micro，不得冒充去重后的案例准确率。门禁要求每个 stable case 在其声明的全部层分别通过，不能让某层的绿覆盖另一层的红。
 
 首页必须展示宏平均、最弱 domain、最弱 boundary 和高风险错误数。微平均总数只能作为附属趋势。
 
@@ -570,7 +585,9 @@ discovery 集新增困难样本后可以降低总体数字，但必须给出固�
 ### 13.3 baseline 规则
 
 - 报告不自动覆盖 baseline；
-- baseline 只来自 provider 锁定、资产指纹完整、选集明确的运行；
+- baseline 只来自 provider 锁定、代码 SHA 已记录且工作树干净、资产指纹完整、选集明确的运行；
+- 当前 gate 的全部声明层必须通过，不能把 stable failure 或 unstable 写成新的正常基线；
+- L3 选集必须非空且结构化结果完整；已有 baseline 存在时不得带着逐例回退覆盖；
 - 更新必须列出新增、晋级、降级、retired 和 gold 修正；
 - 失败时不允许使用 `--update-baseline` 一类绕过参数；
 - reference provider 决定当前门禁，challenger provider 只用于分歧和跨模型证据；
