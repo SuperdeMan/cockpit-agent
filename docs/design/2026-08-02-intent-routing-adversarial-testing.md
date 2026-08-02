@@ -812,6 +812,11 @@ python test/eval_intent_adversarial.py --lane engine --attack context
 > 下面逐项区分「做到了什么」与「明确没做到什么」——framework / discovery / gate /
 > baseline 是四件事，不合并成一个完成结论（DoD 第 17 条）。
 
+> **2026-08-03 独立评审补充：本节是历史落地记录，不再视为验收通过证明。**
+> [`独立评审报告`](../reviews/2026-08-03-review-intent-routing-adversarial-testing.md)
+> 确认 baseline 选集、L2 副作用、多轮执行、指标归因、trace/relation、L3 新鲜度与
+> cohort 隔离仍有 P0/P1 缺陷。下列数字保留为原始运行读数；修复并重跑前不得作为正式 baseline。
+
 ### 21.1 交付物
 
 | 类别 | 文件 |

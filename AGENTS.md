@@ -78,6 +78,13 @@ Dashboard vitest **17/17**；端侧 smoke 13/13；Go 网关 vet+test 通过。
 `unstable`）；**L3 证据未取得**（既有 e2e 运行器在本机 `lease_protocol` 失败），正式
 baseline 被资格闸正当拒绝、文件未生成。
 
+**2026-08-03 独立对抗 review：验收不通过。** 报告
+[`docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`](docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md)
+确认 baseline 完整选集可被正常过滤参数绕过、L2 丢 Edge 副作用、多轮只执行第一轮，以及
+指标/维度/trace/relation/L3 新鲜度/seen-unseen 隔离等问题。上面的 2026-08-02 数字保留为
+**历史原始读数**：L0 65/70 可复现；`exact_plan_set_rate`、最弱域、0% 能力幻觉、L2 7/7、
+seen/unseen 与 instability 暂不作为权威结论。修复 P0 前不得生成正式 baseline。
+
 四条判据先记住：① **`domain_hit_rate` ≠ `exact_plan_set_rate`**——前者是 RoutingBench
 的历史交集口径（期望两域只命中一域照样绿），后者要求必要组全满足 + 无禁选 + 无未授权
 额外项，两者不可直比；② **seen 98.0% vs unseen 86.0%**，修复原句上的表现证明不了泛化，
