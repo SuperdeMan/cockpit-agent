@@ -506,6 +506,8 @@ def main(argv: list[str] | None = None) -> int:
     results: list[AdversarialResult] = []
     provider_model = "deterministic"
     warmed = 0
+    l3_selected: list[str] = []
+    l3_statuses: dict[str, str] = {}
     try:
         agents = eval_live.load_agents(include_edge=True)
         confirm_intents = runtime.confirm_intent_inventory(agents)
@@ -529,7 +531,9 @@ def main(argv: list[str] | None = None) -> int:
         results, infra = _execute(selected, args, suite, agents, builder,
                                   confirm_intents, provider_model, lock)
         infrastructure_errors.extend(infra)
-        l3_selected, l3_statuses = _l3_evidence(selected, args, provider_model)
+        l3_selected, l3_statuses, l3_infra = _l3_evidence(
+            selected, args, provider_model)
+        infrastructure_errors.extend(l3_infra)
         results.extend(_l3_results(selected, args, l3_statuses, provider_model))
     except RuntimeError as exc:
         print(f"[intent-adversarial] infrastructure error: {exc}", file=sys.stderr)
@@ -614,21 +618,31 @@ def _print_summary(report: dict) -> None:
               f"{row['pass_rate'] * 100:.1f}% (n={row['total']})")
 
 
-def _l3_evidence(selected, args, provider_model) -> tuple[list[str], dict[str, str]]:
+def _l3_evidence(selected, args, provider_model
+                 ) -> tuple[list[str], dict[str, str], list[str]]:
     if args.layer not in {"l3", "all"} or not args.live:
-        return [], {}
+        return [], {}, []
     links = load_journey_links()
     ids = sorted({j for case in selected
                   if "l3" in layers_for(case, args.layer) for j in links.get(case.id, [])})
     if not ids:
-        return [], {}
+        return [], {}, []
     artifact_root = ROOT / "docs" / "reviews" / "eval" / "_ci-run-intent-l3-artifacts"
     code = run_l3(ids, provider=args.provider, model=args.model,
                   artifact_root=artifact_root)
     statuses = read_l3_report(artifact_root)
-    if code != 0 and not statuses:
-        statuses = {j: "fail" for j in ids}
-    return ids, statuses
+    infra: list[str] = []
+    if not statuses:
+        # **运行器起不来 ≠ journey 红灯。** 之前这里把「拿不到结构化报告」直接折算成
+        # 全部 fail，于是一次身份租约协议失败就伪装成 6 条产品缺陷。基础设施错误要
+        # 走 infrastructure_errors（退出码 2、baseline 直接不合格），不进产品账。
+        infra.append(
+            f"l3_runner_failed: scripts/run_e2e.py exit={code}，未产出结构化 "
+            f"journeys_report（选集 {','.join(ids)}）——运行器故障不折算成 journey 失败")
+    missing = [j for j in ids if j not in statuses]
+    if statuses and missing:
+        infra.append(f"l3_report_incomplete: 报告里缺 {','.join(missing)}")
+    return ids, statuses, infra
 
 
 def _execute(selected, args, suite, agents, builder, confirm_intents,
