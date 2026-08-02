@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT))
 from support.e2e import (
     CaseRecorder,
     assert_persistent_source_contract,
+    postgres_psql_argv,
 )
 from scripts.prepare_voiceprint_fixtures import (
     ENROLL_TEXTS,
@@ -70,7 +71,7 @@ WS = ""
 AUDIO_API = ""
 MEM_ADDR = os.getenv("MEM_ADDR", "localhost:50053")
 TIMEOUT = 90
-PG = ["docker", "exec", "car-agent-postgres-1", "psql", "-U", "cockpit", "-d", "cockpit", "-tAc"]
+PG = postgres_psql_argv()
 
 _recorder: CaseRecorder | None = None
 A_MARKER = "青釉A7"

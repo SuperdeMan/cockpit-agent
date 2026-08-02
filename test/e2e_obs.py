@@ -17,7 +17,7 @@ import sys
 import time
 import uuid
 
-from support.e2e import CaseRecorder
+from support.e2e import CaseRecorder, compose_argv
 
 try:                                   # Windows 控制台默认 GBK，强制 UTF-8 输出
     sys.stdout.reconfigure(encoding="utf-8")
@@ -166,7 +166,7 @@ async def _run() -> int:
 
     # ── 6. 重启 collector：SQLite 持久化 ──
     print("\n[6] 重启 collector（持久化验证）")
-    subprocess.run(["docker", "restart", "car-agent-observability-collector-1"],
+    subprocess.run(compose_argv("restart", "observability-collector"),
                    check=True, capture_output=True)
     await asyncio.sleep(4)
     async with httpx.AsyncClient(base_url=COLLECTOR, timeout=10) as api:

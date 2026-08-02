@@ -580,6 +580,47 @@ def ws_url(*, env: Mapping[str, str] | None = None) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, encoded, ""))
 
 
+def stack_root(*, env: Mapping[str, str] | None = None) -> Path:
+    """Root that owns the running compose stack (honours the runner's lease)."""
+
+    configured = Path(_environment(env).get("E2E_STACK_ROOT", "") or "")
+    if configured.is_absolute():
+        return configured.resolve()
+    return _REPO_ROOT
+
+
+def compose_argv(*args: str, env: Mapping[str, str] | None = None) -> list[str]:
+    """argv prefix addressing stack services by compose service name.
+
+    容器名派生自 compose 项目名（=启动目录名：本地 `car-agent`、CI checkout
+    `cockpit-agent`），不可写死——一律经根 compose.yaml 按 service 名寻址。
+    """
+
+    return [
+        "docker", "compose",
+        "-f", str(stack_root(env=env) / "compose.yaml"),
+        *args,
+    ]
+
+
+def compose_exec_argv(
+    service: str,
+    *command: str,
+    env: Mapping[str, str] | None = None,
+) -> list[str]:
+    """argv for a one-shot command inside a running stack service."""
+
+    return compose_argv("exec", "-T", service, *command, env=env)
+
+
+def postgres_psql_argv(*, env: Mapping[str, str] | None = None) -> list[str]:
+    """argv prefix for one-shot psql against the stack's postgres service."""
+
+    return compose_exec_argv(
+        "postgres", "psql", "-U", "cockpit", "-d", "cockpit", "-tAc", env=env,
+    )
+
+
 def confirm_identity_ack(
     message: Mapping[str, Any],
     *,

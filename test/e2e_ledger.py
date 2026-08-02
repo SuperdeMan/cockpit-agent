@@ -19,7 +19,12 @@ import sys
 import time
 from pathlib import Path
 
-from support.e2e import CaseRecorder, assert_persistent_source_contract
+from support.e2e import (
+    CaseRecorder,
+    assert_persistent_source_contract,
+    compose_exec_argv,
+    postgres_psql_argv,
+)
 
 
 def _source_contract() -> None:
@@ -44,8 +49,7 @@ except ImportError:
 
 URL = ""
 TIMEOUT = 120
-PG = ["docker", "exec", "car-agent-postgres-1", "psql", "-U", "cockpit",
-      "-d", "cockpit", "-tAc"]
+PG = postgres_psql_argv()
 
 _recorder: CaseRecorder | None = None
 PRIMARY_RESEARCH_REQUEST = (
@@ -157,8 +161,7 @@ def ask_agent(
     """直连真实 Agent 验证账本语义，避免 Planner 延迟盖过秒级降级任务。"""
     completed = subprocess.run(
         [
-            "docker", "exec", "car-agent-deep-research-agent-1",
-            "python", "-c", _AGENT_CLIENT,
+            *compose_exec_argv("deep-research-agent", "python", "-c", _AGENT_CLIENT),
             intent_name, text, session, user,
         ],
         capture_output=True,

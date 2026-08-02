@@ -36,6 +36,7 @@ from scripts.privacy_bootstrap import run_deletion_bootstrap
 from support.e2e import (
     CaseRecorder,
     assert_persistent_source_contract,
+    postgres_psql_argv,
 )
 
 
@@ -69,7 +70,7 @@ WS = ""
 AUDIO_API = "http://localhost:50059"
 MEM_ADDR = os.getenv("MEM_ADDR", "localhost:50053")
 TIMEOUT = 90
-PG = ["docker", "exec", "car-agent-postgres-1", "psql", "-U", "cockpit", "-d", "cockpit", "-tAc"]
+PG = postgres_psql_argv()
 REDIS = [
     "docker",
     "compose",

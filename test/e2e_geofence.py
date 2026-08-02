@@ -20,7 +20,11 @@ import time
 import urllib.request
 from pathlib import Path
 
-from support.e2e import CaseRecorder, assert_persistent_source_contract
+from support.e2e import (
+    CaseRecorder,
+    assert_persistent_source_contract,
+    postgres_psql_argv,
+)
 
 
 def _source_contract() -> None:
@@ -50,8 +54,7 @@ NATS_URL = "nats://localhost:4222"
 PLACE = "望京SOHO"
 TITLE = "拿文件"
 CITY_CENTER = {"lat": 39.9950, "lng": 116.4800, "city": "北京市", "name": "北京市朝阳区"}
-PG = ["docker", "exec", "car-agent-postgres-1", "psql", "-U", "cockpit",
-      "-d", "cockpit", "-tAc"]
+PG = postgres_psql_argv()
 _recorder: CaseRecorder | None = None
 
 

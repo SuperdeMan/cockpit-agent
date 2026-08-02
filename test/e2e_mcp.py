@@ -14,7 +14,12 @@ import sys
 import time
 from pathlib import Path
 
-from support.e2e import CaseRecorder, assert_persistent_source_contract
+from support.e2e import (
+    CaseRecorder,
+    assert_persistent_source_contract,
+    compose_argv,
+    postgres_psql_argv,
+)
 
 
 def _source_contract() -> None:
@@ -45,10 +50,7 @@ REGISTRY_ADDR = "localhost:50051"
 NATS_URL = os.getenv("NATS_URL_LOCAL", "nats://localhost:4222")
 ADMIN_SUBJECT = "e2e.mcp.namespace.admin"
 ADMIN_MAX_RESPONSE_BYTES = 16 * 1024
-PG = [
-    "docker", "exec", "car-agent-postgres-1", "psql", "-U", "cockpit",
-    "-d", "cockpit", "-tAc",
-]
+PG = postgres_psql_argv()
 _recorder: CaseRecorder | None = None
 _case_index = 0
 
@@ -227,13 +229,25 @@ def bridge_registration() -> tuple[list | None, str]:
 def current_bridge_hostname() -> str:
     """Resolve the hostname of the container that owns this E2E profile."""
 
+    resolved = subprocess.run(
+        compose_argv("ps", "-q", "mcp-bridge"),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+        check=False,
+    )
+    container = (resolved.stdout or "").strip().splitlines()
+    if resolved.returncode != 0 or not container or not container[0]:
+        return ""
     completed = subprocess.run(
         [
             "docker",
             "inspect",
             "--format",
             "{{.Config.Hostname}}",
-            "car-agent-mcp-bridge-1",
+            container[0],
         ],
         capture_output=True,
         text=True,

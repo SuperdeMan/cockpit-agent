@@ -25,6 +25,7 @@ from pathlib import Path
 from support.e2e import (
     CaseRecorder,
     assert_persistent_source_contract,
+    compose_argv,
 )
 from observability.redact import redact
 
@@ -56,7 +57,6 @@ except ImportError:
 MEM_ADDR = os.getenv("MEM_ADDR", "localhost:50053")
 WS_URL = ""
 NATS_URL = os.getenv("NATS_URL_LOCAL", "nats://localhost:4222")
-PLANNER_CONTAINER = os.getenv("PLANNER_CONTAINER", "car-agent-cloud-planner-1")
 _recorder: CaseRecorder | None = None
 
 
@@ -181,7 +181,7 @@ def planner_logs_since(seconds: int) -> str:
     """取 cloud-planner 最近 N 秒日志（含 stderr）。"""
     try:
         out = subprocess.run(
-            ["docker", "logs", "--since", f"{seconds}s", PLANNER_CONTAINER],
+            compose_argv("logs", "--no-color", "--since", f"{seconds}s", "cloud-planner"),
             capture_output=True, text=True, timeout=20, encoding="utf-8", errors="replace")
         return (out.stdout or "") + (out.stderr or "")
     except Exception as e:

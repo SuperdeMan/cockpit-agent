@@ -11,7 +11,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from support.e2e import CaseRecorder, assert_persistent_source_contract
+from support.e2e import (
+    CaseRecorder,
+    assert_persistent_source_contract,
+    postgres_psql_argv,
+)
 
 
 def _source_contract() -> None:
@@ -36,8 +40,7 @@ except ImportError:
 URL = ""
 NATS_URL = "nats://localhost:4222"
 TIMEOUT = 60
-PG = ["docker", "exec", "car-agent-postgres-1", "psql", "-U", "cockpit",
-      "-d", "cockpit", "-tAc"]
+PG = postgres_psql_argv()
 _recorder: CaseRecorder | None = None
 
 

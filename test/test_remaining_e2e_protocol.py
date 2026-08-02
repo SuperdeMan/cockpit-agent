@@ -315,7 +315,8 @@ def test_ledger_uses_real_agent_for_timing_sensitive_ledger_semantics():
 
     assert "agent_pb2_grpc.AgentStub" in source
     assert '"grpc.enable_http_proxy", 0' in source
-    assert '"docker", "exec", "car-agent-deep-research-agent-1"' in source
+    # 容器按 compose service 名寻址（项目名派生自启动目录，禁止写死容器名）
+    assert 'compose_exec_argv("deep-research-agent"' in source
     assert '"research.run"' in source
     assert '"research.status"' in source
     assert '"research.cancel"' in source
