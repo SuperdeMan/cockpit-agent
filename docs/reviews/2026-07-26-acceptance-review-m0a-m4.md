@@ -284,7 +284,7 @@ M-A 关的是 §5「测试真实性」；M-B 关的是 §3 与 §7 P1-01/P1-02 �
 
 | 未做项 | 为什么不做 |
 |---|---|
-| L2/L3/L4 跨域删除 saga + `runtime/privacy_registry.py` | GDPR 完备性，不是当前错误行为。单行删除的爆炸半径（真 bug）已由 L1 关掉 |
+| L2/L3/L4 跨域删除 saga + `runtime/privacy_registry.py` | GDPR 完备性，不是当前错误行为。单行删除的爆炸半径（真 bug）已由 L1 关掉。（更正 2026-08-02：`privacy_registry.py` 本体其后已在 M-A 批落地并被 e2e runner 引用——仍未做的是**消费它的删除 saga**，不是该文件） |
 | observability 四表 owner 列与原文脱敏 | 同上；且 obs 原文已有保留期与 `gate_content` 兜底 |
 | ReminderAdmin / SceneAdmin 管理 gRPC | 只为 L3/L4 saga 服务，随之后置 |
 | 独立迁移 CLI + preflight/备份流程 | 两处 schema 变更都是加法式 `ALTER ... IF NOT EXISTS`，随服务启动幂等应用；建独立 CLI 是为「有损重分配」准备的仪式，而本批**不重分配任何数据**（旧行一律归 primary） |

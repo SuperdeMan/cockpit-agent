@@ -175,6 +175,18 @@ P0 与一批组合缺陷当日修复，结构性遗留已立卡——验收报�
 **校准的单调性是同分布性质**（transfer 车道 θ≥0.95 精度反低于 0.9——输入一偏，最自信那档最不可信）／
 **两个评测口径都要印**（holdout 95.8% vs transfer 64.9%，差 31 点就是「同分布」的含金量）。
 
+**验收实现结果复核 + badcase 三连修复（2026-08-02）**：① 13 张主卡收口逐卡核到
+file:line，**13/13 为真**、无测试造假，4 条低危发现中 3 条当批修掉（架构文档 §7.2 S2S
+主动仲裁漂移等），1 条入账（MCP `compensate_tool` 可达性校验未机制化——下个 server
+接入时必须顺手机制化）；② 「天气适合去哪玩」三 badcase 定性为**落域准确 ≠ 智能**的
+标本（planner goal 全写对、步骤只拆单域一步；质疑轮 planner 改对了「室内景点」却被
+nearby 类目子串扫描降级回「景点」）——修复全声明式：`skills/guides/weather-outing.yaml`
+（已知天气单步条件化推荐 / 未知天气 adaptive 先查再推 / 质疑轮改推室内）+ 范例 2 条 +
+nearby **室内扇出**（商场/电影院/博物馆串行检索交错合并）+ `weather_context` 话术承接；
+真栈三句原话全部翻正，冷启动 adaptive 两轮链打通。报告
+`docs/reviews/2026-08-02-review-acceptance-impl-and-badcase-intelligence.md`（判据 §2.4：
+**goal 是免费的对照物**——goal 说推荐而 steps 没有推荐步，就是可检测的缺口信号）。
+
 **M5 P0→P3a 已通过全量评审（2026-07-30）**：14 提交逐项核验，零 P0/P1 缺陷、零红线违规，
 报告 `docs/reviews/2026-07-30-review-m5-data-flywheel.md`。
 
