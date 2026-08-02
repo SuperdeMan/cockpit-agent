@@ -233,3 +233,46 @@ def test_semantic_signature_ignores_step_ids_but_keeps_dependency_semantics():
         catalog_stats={}))
     assert semantic_signature(linked) == semantic_signature(renamed)
     assert semantic_signature(linked) != semantic_signature(unlinked)
+
+
+# ── 检索期望 ───────────────────────────────────────────────────────────────
+from dataclasses import replace as _replace  # noqa: E402
+
+from support.intent_adversarial_contract import RetrievalExpectation  # noqa: E402
+
+
+def test_retrieval_expectation_checks_required_and_forbidden_assets():
+    expected = TurnExpectation(retrieval=RetrievalExpectation(
+        required_skills=("weather-outing",), forbidden_exemplars=("nearby#bad",)))
+    actual = _snapshot("nearby.search")
+    actual = _replace(actual, plan=_replace(
+        actual.plan, skills=("full:weather-outing@lex:1.0",), exemplars=()))
+    assert judge_turn(expected, actual).passed
+
+
+def test_retrieval_names_are_compared_after_stripping_mode_channel_and_score():
+    expected = TurnExpectation(retrieval=RetrievalExpectation(
+        required_exemplars=("nearby#23",)))
+    actual = _snapshot("nearby.search")
+    actual = _replace(actual, plan=_replace(
+        actual.plan, exemplars=("shadow:nearby#23@vec:0.81!clipped",)))
+    assert judge_turn(expected, actual).passed
+
+
+def test_forbidden_retrieval_asset_fails_even_when_the_plan_is_right():
+    expected = TurnExpectation(
+        plan=PlanExpectation(assert_plan=True,
+                             required_groups=(IntentGroup(("nearby.search",)),)),
+        retrieval=RetrievalExpectation(forbidden_skills=("weather-outing",)))
+    actual = _snapshot("nearby.search")
+    actual = _replace(actual, plan=_replace(
+        actual.plan, skills=("full:weather-outing@lex:0.6",)))
+    result = judge_turn(expected, actual)
+    assert not result.passed
+    assert any(a.name == "retrieval.forbidden:weather-outing" and not a.passed
+               for a in result.assertions)
+
+
+def test_empty_retrieval_expectation_produces_no_assertion():
+    result = judge_turn(TurnExpectation(), _snapshot("info.weather"))
+    assert not [a for a in result.assertions if a.name.startswith("retrieval.")]

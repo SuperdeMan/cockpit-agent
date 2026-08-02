@@ -263,3 +263,143 @@ def test_duplicate_yaml_key_is_rejected(tmp_path):
                     encoding="utf-8")
     with pytest.raises(ValueError, match="duplicate YAML key schema_version"):
         load_suites(path)
+
+
+# ── 覆盖盘点、边界台账与检索引用 ─────────────────────────────────────────
+import eval_live  # noqa: E402
+
+from support.intent_adversarial_contract import (  # noqa: E402
+    RetrievalExpectation, load_boundary_ledger, load_coverage_exemptions,
+    validate_boundary_coverage, validate_coverage, validate_retrieval_references,
+)
+
+_ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_active_intent_must_be_covered_or_exempt(contract_case):
+    errors = validate_coverage([contract_case],
+                               active_intents={"info.alerts", "new.intent"},
+                               exemptions={})
+    assert any("new.intent positive has 0, need 2" in error for error in errors)
+
+
+def test_any_of_group_does_not_fake_per_intent_positive_coverage(contract_case):
+    plan = replace(contract_case.turns[0].expected.plan,
+                   required_groups=(IntentGroup(("info.alerts", "info.weather")),))
+    turn = replace(contract_case.turns[0], expected=replace(
+        contract_case.turns[0].expected, plan=plan))
+    errors = validate_coverage(
+        [replace(contract_case, turns=(turn,))],
+        active_intents={"info.alerts", "info.weather"}, exemptions={})
+    assert any("info.alerts positive has 0" in error for error in errors)
+
+
+def test_candidate_cases_do_not_count_towards_authoritative_coverage(contract_case):
+    candidate = replace(contract_case, status="candidate")
+    errors = validate_coverage([candidate], active_intents={"info.alerts"},
+                               exemptions={})
+    assert any("info.alerts positive has 0" in error for error in errors)
+
+
+def test_exemption_only_waives_the_named_requirement(contract_case):
+    errors = validate_coverage([], active_intents={"info.alerts"},
+                               exemptions={"info.alerts": {"positive"}})
+    kinds = {error.split()[3] for error in errors}
+    assert kinds == {"hard_negative", "relation"}
+
+
+def test_active_inventory_includes_admitted_mcp_capabilities():
+    assert "shop.order" in eval_live.known_intents()
+
+
+def test_boundary_requires_two_cases_per_side(contract_case):
+    errors = validate_boundary_coverage(
+        [contract_case],
+        boundaries={"info-safety.weather-alert": ("info", "safety")},
+        minimum_per_side=2)
+    assert any("info-safety.weather-alert" in error and "left" in error
+               for error in errors)
+
+
+def test_boundary_side_needs_required_and_forbidden_to_count(contract_case):
+    plan = replace(contract_case.turns[0].expected.plan,
+                   forbidden_intents=("safety.weather_alert",))
+    proving = replace(contract_case, turns=(replace(
+        contract_case.turns[0], expected=replace(
+            contract_case.turns[0].expected, plan=plan)),))
+    errors = validate_boundary_coverage(
+        [proving],
+        boundaries={"info-safety.weather-alert": ("info", "safety")},
+        minimum_per_side=1)
+    assert not [e for e in errors if "does not prove" in e]
+
+
+def test_boundary_ledger_maps_stable_ids_to_declared_domain_order():
+    ledger = load_boundary_ledger(_ROOT / "skills" / "exemplars" / "boundaries.yaml")
+    assert ledger["info-safety.weather-alert"] == ("info", "safety")
+    assert ledger["navigation-vision.where-vs-what"] == ("navigation", "vision")
+    assert len(ledger) == 18
+
+
+def test_boundary_ledger_rejects_missing_duplicate_id_and_empty_why(tmp_path):
+    missing = tmp_path / "missing.yaml"
+    missing.write_text(
+        "rulings:\n  - texts: [a, b]\n    domains: [info, safety]\n    why: x\n",
+        encoding="utf-8")
+    with pytest.raises(ValueError, match="requires a stable id"):
+        load_boundary_ledger(missing)
+
+    duplicate = tmp_path / "duplicate.yaml"
+    duplicate.write_text(
+        "rulings:\n"
+        "  - id: info-safety.x\n    texts: [a, b]\n    domains: [info, safety]\n    why: x\n"
+        "  - id: info-safety.x\n    texts: [c, d]\n    domains: [info, safety]\n    why: y\n",
+        encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate ruling id"):
+        load_boundary_ledger(duplicate)
+
+    empty_why = tmp_path / "why.yaml"
+    empty_why.write_text(
+        "rulings:\n  - id: info-safety.x\n    texts: [a, b]\n"
+        "    domains: [info, safety]\n    why: '  '\n",
+        encoding="utf-8")
+    with pytest.raises(ValueError, match="requires why"):
+        load_boundary_ledger(empty_why)
+
+
+def test_unknown_retrieval_reference_is_a_contract_error(contract_case):
+    expected = replace(
+        contract_case.turns[0].expected,
+        retrieval=RetrievalExpectation(required_skills=("typo-guide",)))
+    case = replace(contract_case, turns=(replace(
+        contract_case.turns[0], expected=expected),))
+    errors = validate_retrieval_references(
+        [case], skill_names={"weather-outing"}, exemplar_ids={"info#1"})
+    assert any("unknown skill typo-guide" in error for error in errors)
+
+
+def test_coverage_exemptions_reject_wildcards_and_empty_reasons(tmp_path):
+    path = tmp_path / "coverage_exemptions.yaml"
+    path.write_text(
+        "schema_version: 1\nexemptions:\n"
+        "  - intent: info.alerts\n    requirements: [positive]\n"
+        "    reason: ''\n    owner: 泓舟\n    reviewed_at: 2026-08-02\n",
+        encoding="utf-8")
+    with pytest.raises(ValueError, match="reason must not be empty"):
+        load_coverage_exemptions(path, {"info.alerts"})
+
+    path.write_text(
+        "schema_version: 1\nexemptions:\n"
+        "  - intent: info.*\n    requirements: [positive]\n"
+        "    reason: 批量\n    owner: 泓舟\n    reviewed_at: 2026-08-02\n",
+        encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown intent"):
+        load_coverage_exemptions(path, {"info.alerts"})
+
+    path.write_text(
+        "schema_version: 1\nexemptions:\n"
+        "  - intent: info.alerts\n    requirements: [everything]\n"
+        "    reason: 批量\n    owner: 泓舟\n    reviewed_at: 2026-08-02\n",
+        encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid requirements"):
+        load_coverage_exemptions(path, {"info.alerts"})

@@ -552,3 +552,227 @@ def validate_cases(cases: list[AdversarialCase], known_intents: set[str]) -> lis
         if len(cohorts) > 1:
             errors.append(f"family leakage: {family} spans {sorted(cohorts)}")
     return errors
+
+
+# ── 覆盖盘点与边界台账 ────────────────────────────────────────────────────
+# 权威覆盖只计 reviewed/stable。candidate 另报 provisional——未审核的用例可以把缺口
+# 涂绿，那正是「测试自己错了却是绿的」的另一种形态。
+
+_COVERAGE_REQUIREMENTS = {"positive": 2, "hard_negative": 2, "relation": 1}
+_AUTHORITATIVE = {"reviewed", "stable"}
+
+
+def validate_coverage(cases: list[AdversarialCase], active_intents: set[str],
+                      exemptions: dict[str, set[str]]) -> list[str]:
+    matrix = {intent: {"positive": 0, "hard_negative": 0, "relation": 0}
+              for intent in active_intents}
+    eligible_ids = {case.id for case in cases if case.status in _AUTHORITATIVE}
+    relation_members = {
+        member
+        for case in cases
+        if case.relation and case.id in eligible_ids
+        and case.relation.base_case in eligible_ids
+        for member in (case.id, case.relation.base_case)
+    }
+    for case in cases:
+        if case.status not in _AUTHORITATIVE:
+            continue
+        for turn in case.turns:
+            for plan in (turn.expected.plan,) + tuple(
+                    replan.plan for replan in turn.expected.replans):
+                # 多成员 any_of 只证明「这一组至少有一个可接受」，不能替每个成员
+                # 制造独立正例；逐 intent coverage 只计 singleton 必要组。
+                positives = {group.any_of[0] for group in plan.required_groups
+                             if len(group.any_of) == 1}
+                for intent in positives & active_intents:
+                    matrix[intent]["positive"] += 1
+                    if case.id in relation_members:
+                        matrix[intent]["relation"] += 1
+                for intent in set(plan.forbidden_intents) & active_intents:
+                    matrix[intent]["hard_negative"] += 1
+    return [
+        f"active intent {intent} {kind} has {matrix[intent][kind]}, need {minimum}"
+        for intent in sorted(active_intents)
+        for kind, minimum in _COVERAGE_REQUIREMENTS.items()
+        if matrix[intent][kind] < minimum
+        and kind not in exemptions.get(intent, set())
+    ]
+
+
+def coverage_matrix(cases: list[AdversarialCase], active_intents: set[str],
+                    statuses: set[str] | None = None) -> dict[str, dict[str, int]]:
+    """给报告用的原始盘点表；`statuses=None` 时口径同 validate_coverage。"""
+    statuses = statuses or _AUTHORITATIVE
+    matrix = {intent: {"positive": 0, "hard_negative": 0, "relation": 0}
+              for intent in active_intents}
+    eligible_ids = {case.id for case in cases if case.status in statuses}
+    relation_members = {
+        member
+        for case in cases
+        if case.relation and case.id in eligible_ids
+        and case.relation.base_case in eligible_ids
+        for member in (case.id, case.relation.base_case)
+    }
+    for case in cases:
+        if case.status not in statuses:
+            continue
+        for turn in case.turns:
+            for plan in (turn.expected.plan,) + tuple(
+                    replan.plan for replan in turn.expected.replans):
+                positives = {group.any_of[0] for group in plan.required_groups
+                             if len(group.any_of) == 1}
+                for intent in positives & active_intents:
+                    matrix[intent]["positive"] += 1
+                    if case.id in relation_members:
+                        matrix[intent]["relation"] += 1
+                for intent in set(plan.forbidden_intents) & active_intents:
+                    matrix[intent]["hard_negative"] += 1
+    return matrix
+
+
+def validate_boundary_coverage(cases: list[AdversarialCase],
+                               boundaries: dict[str, tuple[str, str]],
+                               minimum_per_side: int = 2) -> list[str]:
+    """双向对照：每个 ledger 的左右两侧各要 N 条「required 本侧 + forbidden 对侧」。
+
+    只数条数不够——一条只写 required 不写 forbidden 的用例证明不了边界，它连对侧被
+    误选都不会红。
+    """
+    counts = {(boundary, side): 0 for boundary in boundaries
+              for side in ("left", "right")}
+    errors = []
+    for case in cases:
+        if case.status not in _AUTHORITATIVE:
+            continue
+        boundary = str(case.tags.get("boundary_ledger") or "")
+        if not boundary:
+            continue
+        if boundary not in boundaries:
+            errors.append(f"case {case.id} references unknown boundary ledger {boundary}")
+            continue
+        side = str(case.tags.get("boundary_side") or "")
+        if side not in {"left", "right"}:
+            errors.append(f"case {case.id} has invalid boundary_side {side!r}")
+            continue
+        wanted, opposite = (boundaries[boundary] if side == "left"
+                            else tuple(reversed(boundaries[boundary])))
+        plans = [turn.expected.plan for turn in case.turns]
+        required_domains = {
+            intent.split(".", 1)[0]
+            for plan in plans for group in plan.required_groups
+            if len(group.any_of) == 1 for intent in group.any_of}
+        forbidden_domains = {
+            intent.split(".", 1)[0]
+            for plan in plans for intent in plan.forbidden_intents}
+        if wanted not in required_domains or opposite not in forbidden_domains:
+            errors.append(
+                f"case {case.id} does not prove {boundary} {side}: "
+                f"need required {wanted} and forbidden {opposite}")
+            continue
+        counts[(boundary, side)] += 1
+    errors.extend(
+        f"boundary {boundary} side {side} has {count}, need {minimum_per_side}"
+        for (boundary, side), count in sorted(counts.items())
+        if count < minimum_per_side)
+    return errors
+
+
+def validate_suite_counts(cases: list[AdversarialCase], suite: SuiteConfig) -> list[str]:
+    selected = [case for case in cases if case.status in suite.statuses]
+    errors = []
+    if not suite.min_cases <= len(selected) <= suite.max_cases:
+        errors.append(
+            f"suite case count {len(selected)} outside "
+            f"[{suite.min_cases}, {suite.max_cases}]")
+    for attack, minimum in sorted(suite.attack_minimums.items()):
+        count = sum(attack in set(case.tags.get("attacks") or [])
+                    for case in selected)
+        if count < minimum:
+            errors.append(f"attack {attack} has {count}, need {minimum}")
+    return errors
+
+
+def validate_gate_candidate_count(cases: list[AdversarialCase],
+                                  target: int = 140) -> list[str]:
+    count = sum(case.status != "retired"
+                and case.tags.get("gate_candidate") is True for case in cases)
+    return [] if count == target else [f"gate candidates {count}, need exactly {target}"]
+
+
+def validate_retrieval_references(cases: list[AdversarialCase], skill_names: set[str],
+                                  exemplar_ids: set[str]) -> list[str]:
+    errors = []
+    for case in cases:
+        for index, turn in enumerate(case.turns):
+            exp = turn.expected.retrieval
+            for name in exp.required_skills + exp.forbidden_skills:
+                if name not in skill_names:
+                    errors.append(f"{case.id}#{index}: unknown skill {name}")
+            for eid in exp.required_exemplars + exp.forbidden_exemplars:
+                if eid not in exemplar_ids:
+                    errors.append(f"{case.id}#{index}: unknown exemplar {eid}")
+            for kind, required, forbidden in (
+                ("skill", set(exp.required_skills), set(exp.forbidden_skills)),
+                ("exemplar", set(exp.required_exemplars),
+                 set(exp.forbidden_exemplars)),
+            ):
+                overlap = required & forbidden
+                if overlap:
+                    errors.append(
+                        f"{case.id}#{index}: {kind} required/forbidden overlap "
+                        f"{sorted(overlap)}")
+    return errors
+
+
+def load_coverage_exemptions(path: Path, active_intents: set[str]
+                             ) -> dict[str, set[str]]:
+    """逐 intent、逐 requirement 的显式豁免。空文件 = 零豁免，不是全量豁免。"""
+    data = _read_yaml(path) if Path(path).is_file() else {}
+    _expect_keys(data, {"schema_version", "exemptions"}, str(path))
+    if data and data.get("schema_version") != 1:
+        raise ValueError(f"{path}: schema_version must be 1")
+    out: dict[str, set[str]] = {}
+    seen: set[tuple[str, str]] = set()
+    for index, row in enumerate(data.get("exemptions") or []):
+        _expect_keys(row, {"intent", "requirements", "reason", "owner", "reviewed_at"},
+                     f"{path}#{index}")
+        intent = str(row.get("intent") or "")
+        if intent not in active_intents:
+            raise ValueError(f"{path}#{index}: unknown intent {intent!r}")
+        requirements = set(_strings(row.get("requirements")))
+        if not requirements or not requirements <= set(_COVERAGE_REQUIREMENTS):
+            raise ValueError(f"{path}#{index}: invalid requirements "
+                             f"{sorted(requirements)}")
+        for key in ("reason", "owner", "reviewed_at"):
+            if not str(row.get(key) or "").strip():
+                raise ValueError(f"{path}#{index}: {key} must not be empty")
+        for requirement in requirements:
+            if (intent, requirement) in seen:
+                raise ValueError(
+                    f"{path}#{index}: duplicate exemption {intent}/{requirement}")
+            seen.add((intent, requirement))
+        out.setdefault(intent, set()).update(requirements)
+    return out
+
+
+def load_boundary_ledger(path: Path) -> dict[str, tuple[str, str]]:
+    """`skills/exemplars/boundaries.yaml` → {ruling id: (left domain, right domain)}。
+
+    左右以 ruling `domains` 的声明顺序为准。id 缺失/重复、why 为空都是契约错误——
+    没有稳定 id 就无法在语料里引用某一条裁定，台账与对抗语料会各说各话。
+    """
+    data = _read_yaml(path)
+    ledger: dict[str, tuple[str, str]] = {}
+    for index, row in enumerate(data.get("rulings") or [], 1):
+        rid = str((row or {}).get("id") or "").strip()
+        if not rid:
+            raise ValueError(f"{path}#{index}: ruling requires a stable id")
+        if rid in ledger:
+            raise ValueError(f"{path}#{index}: duplicate ruling id {rid!r}")
+        domains = _strings((row or {}).get("domains"))
+        if len(domains) != 2:
+            raise ValueError(f"{path}#{index}: ruling {rid!r} needs exactly two domains")
+        if not str((row or {}).get("why") or "").strip():
+            raise ValueError(f"{path}#{index}: ruling {rid!r} requires why")
+        ledger[rid] = (domains[0], domains[1])
+    return ledger

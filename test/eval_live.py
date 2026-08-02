@@ -88,17 +88,19 @@ def _synth_admitted_caps(manifest, agent_dir: Path) -> None:
 
 
 def known_intents() -> set[str]:
-    """真实存在的 intent 全集：manifests ∪ 端侧车控/媒体（expect_* typo 守卫共用）。"""
-    import yaml
-    intents: set[str] = set()
-    for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "manifest.yaml"))):
-        m = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-        for c in m.get("capabilities") or []:
-            if c.get("intent"):
-                intents.add(str(c["intent"]))
-    from edge_agents_mod.media import MEDIA_INTENTS
-    from edge_agents_mod.vehicle import VEHICLE_INTENTS
-    return intents | VEHICLE_INTENTS | MEDIA_INTENTS
+    """真实存在的 intent 全集 = `load_agents()` 实际准入的能力（含端侧车控/媒体）。
+
+    刻意不再直接扫静态 manifest YAML：mcp-bridge 的 `capabilities: []` 是启动期从
+    `servers.yaml` 合成的，静态扫描会把 `shop.*` 整族排除在「active intent」之外——
+    盘点用的分母悄悄变小，覆盖门禁就永远看不到那块盲区。同一份 `_synth_admitted_caps`
+    既供 catalog 也供盘点，两边不会漂移。
+    """
+    return {
+        str(cap.intent)
+        for agent in load_agents(include_edge=True)
+        for cap in (getattr(agent.manifest, "capabilities", None) or [])
+        if getattr(cap, "intent", "")
+    }
 
 
 def make_llm_fns(caller: str, temperature: float = 0.3, timeout: int = 45,

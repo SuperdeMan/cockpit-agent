@@ -47,80 +47,98 @@
 lex_min: 0.35
 
 rulings:
-  - texts: [看看我的待办, 看看我的场景]
+  - id: reminder-scene.todo-list-vs-scene-list
+    texts: [看看我的待办, 看看我的场景]
     domains: [reminder, scene]
     why: 对象不同——待办清单 vs 场景清单；共享的只是「看看我的」这个框架
 
-  - texts: [我有哪些提醒, 有哪些场景模式]
+  - id: reminder-scene.which-reminders-vs-which-scenes
+    texts: [我有哪些提醒, 有哪些场景模式]
     domains: [reminder, scene]
     why: 同上，对象不同
 
-  - texts: [今天有什么新闻, 我今天有什么安排]
+  - id: info-reminder.news-vs-schedule
+    texts: [今天有什么新闻, 我今天有什么安排]
     domains: [info, reminder]
     why: 新闻是外部资讯、安排是用户自己的日程；「今天有什么」是问句框架不是地盘
 
-  - texts: [今天有什么新闻, 明天有什么提醒]
+  - id: info-reminder.news-vs-tomorrow-reminder
+    texts: [今天有什么新闻, 明天有什么提醒]
     domains: [info, reminder]
     why: 同上
 
-  - texts: [今天有什么新闻, 未来三天有什么提醒]
+  - id: info-reminder.news-vs-three-day-reminder
+    texts: [今天有什么新闻, 未来三天有什么提醒]
     domains: [info, reminder]
     why: 同上
 
-  - texts: [北京未来三天天气, 未来三天有什么提醒]
+  - id: info-reminder.forecast-vs-three-day-reminder
+    texts: [北京未来三天天气, 未来三天有什么提醒]
     domains: [info, reminder]
     why: 共享的是时间范围表达（未来三天），对象是天气 vs 提醒
 
-  - texts: [今天适合运动吗, 今天适合开车吗]
+  - id: info-safety.life-index-vs-driving-advice
+    texts: [今天适合运动吗, 今天适合开车吗]
     domains: [info, safety]
     why: 生活指数（运动/洗车/紫外线）vs 驾驶安全建议；「今天适合X吗」是框架
 
-  - texts: [搜一下固态电池最新进展, 深入调研一下固态电池现状]
+  - id: info-research.search-vs-deep-research
+    texts: [搜一下固态电池最新进展, 深入调研一下固态电池现状]
     domains: [info, research]
     why: 四模式路由的**核心区分**——一次检索直答 vs 分钟级深调研流水线。
       同一个主题词是必然的（研究什么就搜什么），区分在动词与深度诉求
 
-  - texts: [这家怎么样, 路上怎么样]
+  - id: nearby-safety.poi-vs-road-condition
+    texts: [这家怎么样, 路上怎么样]
     domains: [nearby, safety]
     why: 「怎么样」是万能问句框架；对象是某个 POI vs 前方路况
 
-  - texts: [这家怎么样, 路况怎么样]
+  - id: nearby-safety.poi-vs-traffic
+    texts: [这家怎么样, 路况怎么样]
     domains: [nearby, safety]
     why: 同上
 
-  - texts: [今天天气怎么样, 这家怎么样]
+  - id: info-nearby.weather-vs-poi
+    texts: [今天天气怎么样, 这家怎么样]
     domains: [info, nearby]
     why: 同上——「怎么样」框架
 
-  - texts: [附近的充电站, 附近的餐厅]
+  - id: charging-nearby.charger-vs-restaurant
+    texts: [附近的充电站, 附近的餐厅]
     domains: [charging, nearby]
     why: 2026-07-30 裁定后的**正确**边界——充电桩归 charging.find（读真实 SOC、
       按空闲优先排序、可作导航途经点），生活服务发现归 nearby.search（评分/人均/营业中富卡）。
       「附近的X」是框架，相似度高是应然
 
-  - texts: [附近的充电站, 附近的景点]
+  - id: charging-nearby.charger-vs-attraction
+    texts: [附近的充电站, 附近的景点]
     domains: [charging, nearby]
     why: 同上
 
-  - texts: [附近的充电站, 附近的酒店]
+  - id: charging-nearby.charger-vs-hotel
+    texts: [附近的充电站, 附近的酒店]
     domains: [charging, nearby]
     why: 同上
 
-  - texts: [回家, 想提前回家]
+  - id: navigation-trip.go-home-vs-reschedule
+    texts: [回家, 想提前回家]
     domains: [navigation, trip]
     why: 裸「回家」是导航到常用地点；「想提前回家」是在既有行程里改期（trip.reschedule）。
       **这一对很近，是真实的易错边界**——留在台账里当提醒
 
-  - texts: [这是哪里, 这是什么]
+  - id: navigation-vision.where-vs-what
+    texts: [这是哪里, 这是什么]
     domains: [navigation, vision]
     why: 问位置 vs 问车外画面里的物体。**历史事故正出在这条边界上**：
       vision 的 route_hint 曾把「这个坐标是什么地方」劫持进视觉问答（M5 P2 首条退役的规则）
 
-  - texts: [这个坐标是什么地方, 看看这个是什么]
+  - id: navigation-vision.coordinate-vs-visual
+    texts: [这个坐标是什么地方, 看看这个是什么]
     domains: [navigation, vision]
     why: 同上——坐标反查 vs 视觉描述。登记它是为了让这条边界一直被看见
 
-  - texts: [有没有天气预警, 这天气预警影响开车吗]
+  - id: info-safety.weather-alert
+    texts: [有没有天气预警, 这天气预警影响开车吗]
     domains: [info, safety]
     why: 2026-07-30 改判后的**正确**边界——裸问预警本身归 info.alerts，
       问它对驾驶的影响归 safety.weather_alert。改判前这一对是 0.689/cos 0.958 的真冲突

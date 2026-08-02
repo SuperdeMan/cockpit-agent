@@ -1,0 +1,4 @@
+schema_version: 1
+# 逐 intent、逐 requirement 的显式豁免。禁止 domain 级通配符；豁免某一 requirement
+# 不顺带豁免另外两项。空列表 = 零豁免（不是全量豁免）。
+exemptions: []
