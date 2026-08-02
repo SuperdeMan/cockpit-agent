@@ -28,7 +28,13 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "test", "eval_corpus", "feishu_intents_full.jsonl")
-BASE_TOKEN = "BmoybN3OnaqCLLsXygocGviknUh"
+# 飞书 Base app_token 是内部资源标识符，不入库（2026-08-02 卫生脱敏）；见 .env.example
+try:
+    from feishu_env import feishu_base_token
+except ImportError:  # 以 scripts.* 包形式导入时
+    from scripts.feishu_env import feishu_base_token
+
+BASE_TOKEN = feishu_base_token()
 TABLE_ID = "tblN5NfQff850L5O"
 
 
@@ -126,6 +132,11 @@ def main() -> int:
         with open(args.raw, encoding="utf-8") as f:
             records = json.load(f)
     else:
+        if not BASE_TOKEN:
+            raise SystemExit(
+                "缺 FEISHU_BASE_TOKEN（飞书 Base app_token，标识符不入库）；"
+                "离线转换请用 --raw dump.json"
+            )
         print(f"经 lark-cli 重拉意图表 {TABLE_ID} ...")
         records = fetch_records(BASE_TOKEN, TABLE_ID)
     print(f"  {len(records)} 条记录")

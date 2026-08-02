@@ -8,18 +8,18 @@
 
 ## 参考源（飞书多维表格，实现时从这里取全量数据）
 
-Base《同行者公版语音指令表 6.1》：<https://c3sz000579.feishu.cn/wiki/HS1VwShCXi4JtdkQ03ncyUWznxf>　app_token `BmoybN3OnaqCLLsXygocGviknUh`
+Base《同行者公版语音指令表 6.1》：内部飞书知识库（2026-08-02 卫生脱敏：链接与 app_token 退出仓库，取值见 `.env` 的 `FEISHU_BASE_TOKEN`；拉取仍需 lark-cli 用户认证）
 
 | 表 | table_id | 链接 | 本设计是否采纳 |
 |---|---|---|---|
-| 意图表-基线版 | `tblN5NfQff850L5O` | [↗](https://c3sz000579.feishu.cn/wiki/HS1VwShCXi4JtdkQ03ncyUWznxf?table=tblN5NfQff850L5O) | ✅ 核心：命令 schema（domain/intent/data） |
-| 分类表-基线版 | `tblMPZYYAzV8YVUp` | [↗](https://c3sz000579.feishu.cn/wiki/HS1VwShCXi4JtdkQ03ncyUWznxf?table=tblMPZYYAzV8YVUp) | ✅ 能力字典/分类层级 + 项目裁剪矩阵 |
-| 基线版-词库 | `tblDLspoGsO4Iu4w` | [↗](https://c3sz000579.feishu.cn/wiki/HS1VwShCXi4JtdkQ03ncyUWznxf?table=tblDLspoGsO4Iu4w) | ✅ 实体→协议标识 归一化字典 |
-| 基线版执行响应-具体响应表 | `tblclodUq24mPqnk` | [↗](https://c3sz000579.feishu.cn/wiki/HS1VwShCXi4JtdkQ03ncyUWznxf?table=tblclodUq24mPqnk) | ✅ 响应/话术层（按意图×执行结果） |
-| 基线版执行响应-通用兜底反馈语 | `tblTlq6fOfrr1M8H` | [↗](https://c3sz000579.feishu.cn/wiki/HS1VwShCXi4JtdkQ03ncyUWznxf?table=tblTlq6fOfrr1M8H) | ✅ 安全门控话术 |
-| 领域表-基线版 | `tblqLtkBHR481W5g` | [↗](https://c3sz000579.feishu.cn/wiki/HS1VwShCXi4JtdkQ03ncyUWznxf?table=tblqLtkBHR481W5g) | 🟡 触发域（唤醒/免唤醒/场景/可见可说），次要维度 |
+| 意图表-基线版 | `tblN5NfQff850L5O` | （内网） | ✅ 核心：命令 schema（domain/intent/data） |
+| 分类表-基线版 | `tblMPZYYAzV8YVUp` | （内网） | ✅ 能力字典/分类层级 + 项目裁剪矩阵 |
+| 基线版-词库 | `tblDLspoGsO4Iu4w` | （内网） | ✅ 实体→协议标识 归一化字典 |
+| 基线版执行响应-具体响应表 | `tblclodUq24mPqnk` | （内网） | ✅ 响应/话术层（按意图×执行结果） |
+| 基线版执行响应-通用兜底反馈语 | `tblTlq6fOfrr1M8H` | （内网） | ✅ 安全门控话术 |
+| 领域表-基线版 | `tblqLtkBHR481W5g` | （内网） | 🟡 触发域（唤醒/免唤醒/场景/可见可说），次要维度 |
 
-> 拉取方式：`lark-cli base +record-list --base-token BmoybN3OnaqCLLsXygocGviknUh --table-id <tid> --limit 200`（翻页直到 `has_more=false`）。
+> 拉取方式：`lark-cli base +record-list --base-token "$FEISHU_BASE_TOKEN" --table-id <tid> --limit 200`（翻页直到 `has_more=false`）。
 
 ---
 

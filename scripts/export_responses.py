@@ -32,6 +32,11 @@ import argparse
 import json
 import os
 import subprocess
+
+try:
+    from feishu_env import feishu_base_token
+except ImportError:  # 以 scripts.* 包形式导入时
+    from scripts.feishu_env import feishu_base_token
 import sys
 
 import yaml
@@ -201,11 +206,17 @@ def records_to_responses(specific_records: list[dict], fallback_records: list[di
 
 def main():
     parser = argparse.ArgumentParser(description="导出 responses.yaml")
-    parser.add_argument("--base-token", default="BmoybN3OnaqCLLsXygocGviknUh")
+    parser.add_argument(
+        "--base-token",
+        default=feishu_base_token(),
+        help="飞书 Base app_token（标识符不入库，默认读 FEISHU_BASE_TOKEN）",
+    )
     parser.add_argument("--specific-table", default="tblclodUq24mPqnk")
     parser.add_argument("--fallback-table", default="tblTlq6fOfrr1M8H")
     parser.add_argument("--output", default="orchestrator/edge/knowledge/responses.yaml")
     args = parser.parse_args()
+    if not args.base_token:
+        parser.error("--base-token 或环境变量 FEISHU_BASE_TOKEN 必填")
 
     print(f"拉取具体响应表 {args.specific_table}...")
     specific = fetch_records(args.base_token, args.specific_table)

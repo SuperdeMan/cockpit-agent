@@ -23,6 +23,11 @@ import argparse
 import json
 import os
 import subprocess
+
+try:
+    from feishu_env import feishu_base_token
+except ImportError:  # 以 scripts.* 包形式导入时
+    from scripts.feishu_env import feishu_base_token
 import sys
 
 import yaml
@@ -240,10 +245,16 @@ def classify_to_objects(intent_records: list[dict]) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="导出 commands.yaml")
-    parser.add_argument("--base-token", default="BmoybN3OnaqCLLsXygocGviknUh")
+    parser.add_argument(
+        "--base-token",
+        default=feishu_base_token(),
+        help="飞书 Base app_token（标识符不入库，默认读 FEISHU_BASE_TOKEN）",
+    )
     parser.add_argument("--intent-table", default="tblN5NfQff850L5O", help="意图表 table_id")
     parser.add_argument("--output", default="orchestrator/edge/knowledge/commands.yaml")
     args = parser.parse_args()
+    if not args.base_token:
+        parser.error("--base-token 或环境变量 FEISHU_BASE_TOKEN 必填")
 
     print(f"拉取意图表 {args.intent_table}...")
     intent_records = fetch_records(args.base_token, args.intent_table)

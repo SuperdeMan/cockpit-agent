@@ -16,15 +16,14 @@
 
 ## 2. 数据源
 
-Base《同行者公版语音指令表 6.1》：<https://c3sz000579.feishu.cn/wiki/HS1VwShCXi4JtdkQ03ncyUWznxf>
-app_token `BmoybN3OnaqCLLsXygocGviknUh`；意图表-基线版 table_id `tblN5NfQff850L5O`。
+Base《同行者公版语音指令表 6.1》：内部飞书知识库（2026-08-02 卫生脱敏：链接与 app_token 退出仓库，见 `.env` 的 `FEISHU_BASE_TOKEN`）；意图表-基线版 table_id `tblN5NfQff850L5O`。
 
 拉取方式（`+data-query` 聚合接口对该 Base 返回 `91403` 权限错误，user/bot 两种身份均如此，
 故改用 `+record-list` 分页拉取原始行、本地聚合，见 §7 已知限制）：
 
 ```bash
 for offset in 0 200 400 600 800 1000 1200 1400; do
-  lark-cli base +record-list --base-token BmoybN3OnaqCLLsXygocGviknUh --table-id tblN5NfQff850L5O \
+  lark-cli base +record-list --base-token "$FEISHU_BASE_TOKEN" --table-id tblN5NfQff850L5O \
     --field-id "三级 对象" --field-id "domain" --field-id "intent" --field-id "标准说法" --field-id "高频说法" \
     --offset $offset --limit 200 --format json --as user
 done
