@@ -1,0 +1,20 @@
+schema_version: 1
+suites:
+  discovery:
+    statuses: [candidate, reviewed, stable]
+    live_statuses: [reviewed, stable]
+    min_cases: 450
+    max_cases: 500
+    attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
+    normal_repeats: 1
+    failure_repeats: 3
+    high_risk_repeats: 3
+  gate:
+    statuses: [stable]
+    live_statuses: [stable]
+    min_cases: 120
+    max_cases: 160
+    attack_minimums: {}
+    normal_repeats: 1
+    failure_repeats: 3
+    high_risk_repeats: 3
