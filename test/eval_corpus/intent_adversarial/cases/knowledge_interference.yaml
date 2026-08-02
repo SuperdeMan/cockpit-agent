@@ -13,9 +13,9 @@ cases:
     family_id: ki.weather-outing
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [skill_recall], domains: [info, nearby], layers: [l0, l1], gate_candidate: true}
-    provenance: {kind: real_badcase, source_ref: skills/guides/weather-outing.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: real_badcase, source_ref: skills/guides/weather-outing.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 今天的天气适合去哪玩, context: {}}
         expected:
@@ -39,9 +39,9 @@ cases:
     family_id: ki.charging-strategy
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [skill_recall], domains: [charging], layers: [l0, l1], gate_candidate: true}
-    provenance: {kind: authored, source_ref: skills/guides/charging-strategy.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, source_ref: skills/guides/charging-strategy.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 附近的充电站, context: {}}
         expected:
@@ -52,9 +52,9 @@ cases:
     family_id: ki.charging-status
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [charging], layers: [l0, l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 现在电量还有多少, context: {}}
         expected:
@@ -64,9 +64,9 @@ cases:
     family_id: ki.multi-day-trip
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [skill_recall], domains: [trip], layers: [l0, l1], gate_candidate: true}
-    provenance: {kind: authored, source_ref: skills/guides/multi-day-trip.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, source_ref: skills/guides/multi-day-trip.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 帮我排一个三天的杭州行程, context: {}}
         expected:
@@ -77,9 +77,9 @@ cases:
     family_id: ki.single-nav
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [navigation, trip], layers: [l0, l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 导航去杭州东站, context: {}}
         expected:
@@ -90,9 +90,9 @@ cases:
     family_id: ki.nav-stop
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [skill_recall], domains: [navigation, charging], layers: [l0, l1], gate_candidate: true}
-    provenance: {kind: authored, source_ref: skills/guides/navigation-with-stop.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, source_ref: skills/guides/navigation-with-stop.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 导航去公司路上找个充电站, context: {}}
         expected:
@@ -141,9 +141,9 @@ cases:
     family_id: ki.hint-research
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [route_hint], domains: [research], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, source_ref: agents/deep-research/manifest.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, source_ref: agents/deep-research/manifest.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 帮我深入调研一下钙钛矿电池的产业化进展, context: {}}
         expected:
@@ -153,9 +153,9 @@ cases:
     family_id: ki.hint-research-guard
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [route_hint, guard], domains: [info, research], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 搜一下钙钛矿电池, context: {}}
         expected:
@@ -177,9 +177,9 @@ cases:
     family_id: ki.hint-weather
     cohort: unseen_transfer
     risk: high
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [info], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 深圳明天会不会下雨, context: {}}
         expected:
@@ -189,9 +189,9 @@ cases:
     family_id: ki.hint-reminder
     cohort: unseen_transfer
     risk: high
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 提醒我下周一去续保, context: {}}
         expected:
@@ -249,9 +249,9 @@ cases:
     family_id: ki.budget-core
     cohort: unseen_transfer
     risk: critical
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [catalog_budget], domains: [hvac], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, source_ref: orchestrator/cloud/context.py, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, source_ref: orchestrator/cloud/context.py, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 把空调调到二十四度, context: {}}
         expected:

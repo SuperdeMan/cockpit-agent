@@ -12,9 +12,9 @@ cases:
     family_id: cs.weather-stale
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [stale_history], domains: [info], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 今天天气怎么样, context: {}}
         expected:
@@ -40,9 +40,9 @@ cases:
     family_id: cs.news-stale
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [stale_history], domains: [info], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 今天有什么新闻, context: {}}
         expected:
@@ -52,9 +52,9 @@ cases:
     family_id: cs.news-stale
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [stale_history, topic_switch], domains: [info], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: cs.news.clean, type: invariant, expectation: {}}
     turns:
       - input:
@@ -124,9 +124,9 @@ cases:
     family_id: cs.reminder-stale
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [stale_history], domains: [reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 提醒我明天九点交周报, context: {}}
         expected:
@@ -136,9 +136,9 @@ cases:
     family_id: cs.reminder-stale
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [stale_history, topic_switch], domains: [reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: cs.reminder.clean, type: invariant, expectation: {}}
     turns:
       - input:
@@ -266,9 +266,9 @@ cases:
     family_id: cs.another
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [focus, anaphora], domains: [trip, nearby], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input:
           utterance: 第二天换一个
@@ -282,9 +282,9 @@ cases:
     family_id: cs.another
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [focus, anaphora], domains: [trip, nearby], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: cs.another.trip, type: context_override, expectation: {must_differ: true}}
     turns:
       - input:
@@ -299,9 +299,9 @@ cases:
     family_id: cs.tomorrow
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [focus, ellipsis], domains: [info, reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input:
           utterance: 明天呢
@@ -315,9 +315,9 @@ cases:
     family_id: cs.tomorrow
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [focus, ellipsis], domains: [info, reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: cs.tomorrow.weather, type: context_override, expectation: {must_differ: true}}
     turns:
       - input:
@@ -332,9 +332,9 @@ cases:
     family_id: cs.that-one
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [focus, ordinal], domains: [nearby, navigation], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input:
           utterance: 第二个的详情
@@ -347,9 +347,9 @@ cases:
     family_id: cs.that-one
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [focus, ordinal], domains: [nearby, navigation], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: cs.that-one.poi, type: context_override, expectation: {must_differ: true}}
     turns:
       - input:
@@ -506,9 +506,9 @@ cases:
     family_id: cs.pending-interject
     cohort: unseen_transfer
     risk: high
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [pending_plan], domains: [trunk, info], layers: [l2], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input:
           utterance: 今天天气怎么样
@@ -521,9 +521,9 @@ cases:
     family_id: cs.pending-dangerous
     cohort: unseen_transfer
     risk: critical
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [pending_plan, dangerous_action], domains: [door_lock], layers: [l2], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input:
           utterance: 把车门锁打开
@@ -535,9 +535,9 @@ cases:
     family_id: cs.pending-order
     cohort: unseen_transfer
     risk: critical
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [pending_plan, write_action], domains: [shop], layers: [l2], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 在演示商户帮我点一份招牌套餐, context: {}}
         expected:
@@ -547,9 +547,9 @@ cases:
     family_id: cs.pending-parking
     cohort: unseen_transfer
     risk: critical
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [pending_plan, write_action], domains: [parking], layers: [l2], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 帮我把停车费交了, context: {}}
         expected:

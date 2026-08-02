@@ -9,9 +9,9 @@ cases:
     family_id: nq.umbrella
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [negation_scope], domains: [info, reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 帮我查下明天的天气，然后提醒我带伞, context: {}}
         expected:
@@ -34,9 +34,9 @@ cases:
     family_id: nq.forecast-add
     cohort: unseen_transfer
     risk: low
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [intent_add], domains: [info, reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 查一下明天的天气, context: {}}
         expected:
@@ -46,9 +46,9 @@ cases:
     family_id: nq.forecast-add
     cohort: unseen_transfer
     risk: low
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [intent_add], domains: [info, reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: nq.forecast.plain, type: intent_add, expectation: {add: [reminder.create]}}
     turns:
       - input: {utterance: 查一下明天的天气，顺便提醒我带伞, context: {}}
@@ -59,9 +59,9 @@ cases:
     family_id: nq.trunk-quote
     cohort: unseen_transfer
     risk: critical
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [quotation, dangerous_action], domains: [trunk, manual], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 打开后备箱, context: {}}
         expected:
@@ -71,9 +71,9 @@ cases:
     family_id: nq.trunk-quote
     cohort: unseen_transfer
     risk: critical
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [quotation, dangerous_action], domains: [trunk, manual], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: nq.trunk.command, type: route_flip, expectation: {forbidden_after: [trunk.open], required_change: true}}
     turns:
       - input: {utterance: 说明书里「打开后备箱」这一节讲的是什么, context: {}}
@@ -84,9 +84,9 @@ cases:
     family_id: nq.hvac-reported
     cohort: unseen_transfer
     risk: high
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [reported_speech], domains: [hvac, chitchat], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 关掉空调, context: {}}
         expected:
@@ -109,9 +109,9 @@ cases:
     family_id: nq.airport
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [negation_scope], domains: [navigation, chitchat], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 导航去机场, context: {}}
         expected:
@@ -134,9 +134,9 @@ cases:
     family_id: nq.dinner-music
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [cancel_one_of], domains: [nearby, media], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 找家川菜馆，再放首歌, context: {}}
         expected:
@@ -146,9 +146,9 @@ cases:
     family_id: nq.dinner-music
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [cancel_one_of], domains: [nearby, media], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: nq.dinner-music.both, type: intent_remove, expectation: {remove: [media.play]}}
     turns:
       - input: {utterance: 找家川菜馆，音乐就不用放了, context: {}}
@@ -159,9 +159,9 @@ cases:
     family_id: nq.match-tense
     cohort: unseen_transfer
     risk: low
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [tense], domains: [info], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 昨天那场比赛结果是多少, context: {}}
         expected:

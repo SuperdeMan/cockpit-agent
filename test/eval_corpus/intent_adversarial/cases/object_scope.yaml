@@ -11,9 +11,9 @@ cases:
     family_id: os.battery
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [subject_flip], domains: [charging, chitchat], layers: [l1], gate_candidate: true}
-    provenance: {kind: real_badcase, source_ref: docs/design/2026-07-28-intent-accuracy-data-flywheel.md, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: real_badcase, source_ref: docs/design/2026-07-28-intent-accuracy-data-flywheel.md, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 车没电了, context: {}}
         expected:
@@ -23,9 +23,9 @@ cases:
     family_id: os.battery
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [subject_flip], domains: [charging, chitchat], layers: [l1], gate_candidate: true}
-    provenance: {kind: real_badcase, source_ref: docs/design/2026-07-28-intent-accuracy-data-flywheel.md, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: real_badcase, source_ref: docs/design/2026-07-28-intent-accuracy-data-flywheel.md, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: os.battery.car, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
     turns:
       - input: {utterance: 手机没电了, context: {}}
@@ -36,9 +36,9 @@ cases:
     family_id: os.charge-place
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [subject_flip], domains: [charging, nearby], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 给车找个充电的地方, context: {}}
         expected:
@@ -48,9 +48,9 @@ cases:
     family_id: os.charge-place
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [subject_flip], domains: [charging, nearby], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: os.charge-place.car, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
     turns:
       - input: {utterance: 给手机找个能充电的店, context: {}}
@@ -61,9 +61,9 @@ cases:
     family_id: os.open-window-sunroof
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [window, sunroof], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 打开车窗, context: {}}
         expected:
@@ -73,9 +73,9 @@ cases:
     family_id: os.open-window-sunroof
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [window, sunroof], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: os.open.window, type: route_flip, expectation: {forbidden_after: [window.open], required_change: true}}
     turns:
       - input: {utterance: 打开天窗, context: {}}
@@ -86,9 +86,9 @@ cases:
     family_id: os.open-trunk-port
     cohort: unseen_transfer
     risk: high
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [object_flip, dangerous_action], domains: [trunk, charging_port], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 打开后备箱, context: {}}
         expected:
@@ -98,9 +98,9 @@ cases:
     family_id: os.open-trunk-port
     cohort: unseen_transfer
     risk: high
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [object_flip, dangerous_action], domains: [trunk, charging_port], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: os.open.trunk, type: route_flip, expectation: {forbidden_after: [trunk.open], required_change: true}}
     turns:
       - input: {utterance: 打开充电口, context: {}}
@@ -111,9 +111,9 @@ cases:
     family_id: os.turn-off-hvac-media
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [hvac, media], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 关掉空调, context: {}}
         expected:
@@ -123,9 +123,9 @@ cases:
     family_id: os.turn-off-hvac-media
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [hvac, media], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: os.turn-off.hvac, type: route_flip, expectation: {forbidden_after: [hvac.off], required_change: true}}
     turns:
       - input: {utterance: 关掉音乐, context: {}}
@@ -136,9 +136,9 @@ cases:
     family_id: os.company
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation, reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 去公司, context: {}}
         expected:
@@ -148,9 +148,9 @@ cases:
     family_id: os.company
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation, reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: os.company.navigate, type: route_flip, expectation: {forbidden_after: [navigation.navigate_to], required_change: true}}
     turns:
       - input: {utterance: 记一下下午三点去公司, context: {}}
@@ -161,9 +161,9 @@ cases:
     family_id: os.cabin-vs-outside
     cohort: unseen_transfer
     risk: low
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [scope_flip], domains: [nearby, manual], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 附近有洗手间吗, context: {}}
         expected:
@@ -186,9 +186,9 @@ cases:
     family_id: os.mine-trip-reminder
     cohort: unseen_transfer
     risk: low
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [object_flip, shared_frame], domains: [trip, reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 看看我的行程, context: {}}
         expected:
@@ -198,9 +198,9 @@ cases:
     family_id: os.mine-trip-reminder
     cohort: unseen_transfer
     risk: low
-    status: reviewed
+    status: stable
     tags: {attacks: [A2], mechanisms: [object_flip, shared_frame], domains: [trip, reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: os.mine.trip, type: route_flip, expectation: {forbidden_after: [trip.status], required_change: true}}
     turns:
       - input: {utterance: 看看我的提醒, context: {}}

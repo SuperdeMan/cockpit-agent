@@ -380,9 +380,9 @@ cases:
     family_id: bd.ires-search-deep.seen
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, depth_word], domains: [info, research], boundary_ledger: info-research.search-vs-deep-research, boundary_side: left, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: info-research.search-vs-deep-research, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: info-research.search-vs-deep-research, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 搜一下固态电池最新进展, context: {}}
         expected:
@@ -392,9 +392,9 @@ cases:
     family_id: bd.ires-search-deep.seen
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, depth_word], domains: [info, research], boundary_ledger: info-research.search-vs-deep-research, boundary_side: right, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: info-research.search-vs-deep-research, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: info-research.search-vs-deep-research, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: bd.ires-search-deep.left.seen, type: route_flip, expectation: {forbidden_after: [info.search], required_change: true}}
     turns:
       - input: {utterance: 深入调研一下固态电池现状, context: {}}
@@ -432,9 +432,9 @@ cases:
     family_id: bd.ns-poi-road.seen
     cohort: seen_regression
     risk: low
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [nearby, safety], boundary_ledger: nearby-safety.poi-vs-road-condition, boundary_side: left, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: nearby-safety.poi-vs-road-condition, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: nearby-safety.poi-vs-road-condition, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 这家怎么样, context: {focus: {last_intent: nearby.search, last_poi: 海底捞（体育中心店）}}}
         expected:
@@ -484,9 +484,9 @@ cases:
     family_id: bd.ns-poi-traffic.seen
     cohort: seen_regression
     risk: low
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [nearby, safety], boundary_ledger: nearby-safety.poi-vs-traffic, boundary_side: left, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: nearby-safety.poi-vs-traffic, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: nearby-safety.poi-vs-traffic, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 这家怎么样, context: {focus: {last_intent: nearby.search, last_poi: 星巴克（金融城店）}}}
         expected:
@@ -496,9 +496,9 @@ cases:
     family_id: bd.ns-poi-traffic.seen
     cohort: seen_regression
     risk: low
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [nearby, safety], boundary_ledger: nearby-safety.poi-vs-traffic, boundary_side: right, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: nearby-safety.poi-vs-traffic, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: nearby-safety.poi-vs-traffic, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: bd.ns-poi-traffic.left.seen, type: route_flip, expectation: {forbidden_after: [nearby.detail], required_change: true}}
     turns:
       - input: {utterance: 路况怎么样, context: {focus: {last_intent: nearby.search, last_poi: 星巴克（金融城店）}}}
@@ -536,9 +536,9 @@ cases:
     family_id: bd.in-weather-poi.seen
     cohort: seen_regression
     risk: low
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [info, nearby], boundary_ledger: info-nearby.weather-vs-poi, boundary_side: left, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: info-nearby.weather-vs-poi, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: info-nearby.weather-vs-poi, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 今天天气怎么样, context: {}}
         expected:
@@ -548,9 +548,9 @@ cases:
     family_id: bd.in-weather-poi.seen
     cohort: seen_regression
     risk: low
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [info, nearby], boundary_ledger: info-nearby.weather-vs-poi, boundary_side: right, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: info-nearby.weather-vs-poi, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: info-nearby.weather-vs-poi, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: bd.in-weather-poi.left.seen, type: route_flip, expectation: {forbidden_after: [info.weather], required_change: true}}
     turns:
       - input: {utterance: 这家怎么样, context: {focus: {last_intent: nearby.search, last_poi: 西贝莜面村（万象城店）}}}
@@ -588,9 +588,9 @@ cases:
     family_id: bd.cn-rest.seen
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-restaurant, boundary_side: left, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-restaurant, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-restaurant, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 附近的充电站, context: {}}
         expected:
@@ -600,9 +600,9 @@ cases:
     family_id: bd.cn-rest.seen
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-restaurant, boundary_side: right, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-restaurant, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-restaurant, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: bd.cn-rest.left.seen, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
     turns:
       - input: {utterance: 附近的餐厅, context: {}}
@@ -640,9 +640,9 @@ cases:
     family_id: bd.cn-attr.seen
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-attraction, boundary_side: left, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-attraction, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-attraction, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 附近的充电站, context: {}}
         expected:
@@ -652,9 +652,9 @@ cases:
     family_id: bd.cn-attr.seen
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-attraction, boundary_side: right, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-attraction, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-attraction, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: bd.cn-attr.left.seen, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
     turns:
       - input: {utterance: 附近的景点, context: {}}
@@ -692,9 +692,9 @@ cases:
     family_id: bd.cn-hotel.seen
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-hotel, boundary_side: left, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-hotel, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-hotel, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     turns:
       - input: {utterance: 附近的充电站, context: {}}
         expected:
@@ -704,9 +704,9 @@ cases:
     family_id: bd.cn-hotel.seen
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-hotel, boundary_side: right, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-hotel, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-hotel, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
     relation: {base_case: bd.cn-hotel.left.seen, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
     turns:
       - input: {utterance: 附近的酒店, context: {}}
