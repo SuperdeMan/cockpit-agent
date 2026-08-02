@@ -1,4 +1,320 @@
 schema_version: 1
 # 逐 intent、逐 requirement 的显式豁免。禁止 domain 级通配符；豁免某一 requirement
 # 不顺带豁免另外两项。空列表 = 零豁免（不是全量豁免）。
-exemptions: []
+#
+# 本表全部是**端侧原子车控/媒体**。判据：它们由端侧 fast_intent 确定性分类后直接经
+# VAL 执行，不经云侧 LLM 落域——对抗套件量的是「模型会不会选错域」，对这一类没有
+# 可测的对象。它们的回归由 eval_fast_intent（端侧规则基线）、
+# orchestrator/edge/tests/corpus/（88 条参数化对象矩阵）与 VAL 安全门控测试承担。
+#
+# **危险动作与核心开关不在此表**：trunk / door_lock / window / sunroof /
+# charging_port / fuel_tank_cover / hvac 主开关与温度 / media 播放控制全部按
+# 2+2+1 正常覆盖——它们既走端侧也可能被云侧规划，且误动作代价高。
+#
+# 授权：泓舟 2026-08-02（概括授权，非逐条人裁；见落地记录「审阅闸」一节）。
+exemptions:
+  - intent: accompany_home.close
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: accompany_home.open
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: aircon.dec
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: aircon.inc
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: aircon.wind_speed.dec
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: aircon.wind_speed.inc
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: aircon.wind_speed.set
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: ambient_light.off
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: ambient_light.on
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: dashcam.close
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: dashcam.open
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: energy_recovery.dec
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: energy_recovery.inc
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: energy_recovery.set
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: fragrance.off
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: fragrance.on
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: fragrance.set
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: fuel_tank_cover.close
+    requirements: [relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: headlight.off
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: headlight.on
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: lane_assistance.close
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: lane_assistance.open
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: lane_departure_assistance.close
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: lane_departure_assistance.open
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: power_mode.set
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: rear_view_mirror.fold
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: rear_view_mirror.unfold
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: scene_mode.set
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: screen.brightness.dec
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: screen.brightness.inc
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: screen.brightness.set
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: seat.heating.off
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: seat.heating.on
+    requirements: [positive, hard_negative]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: seat.lumbar_support.off
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: seat.lumbar_support.on
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: seat.massage.off
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: seat.massage.on
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: seat.ventilation.off
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: seat.ventilation.on
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: steering_wheel.heating.close
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: steering_wheel.heating.open
+    requirements: [positive, hard_negative]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: steering_wheel.height.dec
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: steering_wheel.height.inc
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: steering_wheel.height.set
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: sunroof.close
+    requirements: [positive, hard_negative]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: sunroof.open
+    requirements: [positive, hard_negative]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: sunroof.set
+    requirements: [positive, hard_negative]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: sunshade.close
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: sunshade.open
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: sunshade.set
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: trunk.close
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: volume.dec
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: volume.inc
+    requirements: [positive, hard_negative]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: volume.set
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: window.close
+    requirements: [hard_negative]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: window.set
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: wiper.off
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: wiper.on
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: wiper.speed.dec
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: wiper.speed.inc
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02
+  - intent: wiper.speed.set
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
+    owner: 泓舟
+    reviewed_at: 2026-08-02

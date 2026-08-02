@@ -186,18 +186,34 @@ def judge_plan(expected: PlanExpectation, actual: PlanSnapshot,
                 slot, {"values": values, "refs": refs})
 
 
+def _retrieved_sets(values) -> tuple[set[str], set[str]]:
+    """→ (检索到的, 其中被预算裁掉的)。
+
+    `!clipped` 表示「检索到了但超预算没进 prompt」。required 断言要的是**真的注入了**，
+    所以裁掉的不算命中；forbidden 断言要的是**没干扰模型**，裁掉的也就不算命中。
+    两边都按「是否进了 prompt」判，口径才一致。
+    """
+    injected, clipped = set(), set()
+    for value in values:
+        name = _retrieved_name(value)
+        (clipped if "!clipped" in str(value) else injected).add(name)
+    return injected, clipped
+
+
 def judge_retrieval(expected: RetrievalExpectation, actual: PlanSnapshot,
                     out: TurnJudgement) -> None:
-    skills = {_retrieved_name(value) for value in actual.skills}
-    exemplars = {_retrieved_name(value) for value in actual.exemplars}
-    required = ([(name, name in skills) for name in expected.required_skills]
-                + [(name, name in exemplars)
+    skills, skills_clipped = _retrieved_sets(actual.skills)
+    exemplars, exemplars_clipped = _retrieved_sets(actual.exemplars)
+    required = ([(name, name in skills, name in skills_clipped)
+                 for name in expected.required_skills]
+                + [(name, name in exemplars, name in exemplars_clipped)
                    for name in expected.required_exemplars])
     forbidden = ([(name, name in skills) for name in expected.forbidden_skills]
                  + [(name, name in exemplars)
                     for name in expected.forbidden_exemplars])
-    for name, present in required:
-        _assert(out, f"retrieval.required:{name}", present, True, present)
+    for name, present, clipped in required:
+        _assert(out, f"retrieval.required:{name}", present, True, present,
+                detail="retrieved but clipped by budget" if clipped else "")
     for name, present in forbidden:
         _assert(out, f"retrieval.forbidden:{name}", not present, False, present)
 

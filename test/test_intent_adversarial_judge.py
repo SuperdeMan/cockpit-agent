@@ -255,7 +255,7 @@ def test_retrieval_names_are_compared_after_stripping_mode_channel_and_score():
         required_exemplars=("nearby#23",)))
     actual = _snapshot("nearby.search")
     actual = _replace(actual, plan=_replace(
-        actual.plan, exemplars=("shadow:nearby#23@vec:0.81!clipped",)))
+        actual.plan, exemplars=("shadow:nearby#23@vec:0.81",)))
     assert judge_turn(expected, actual).passed
 
 
@@ -276,3 +276,25 @@ def test_forbidden_retrieval_asset_fails_even_when_the_plan_is_right():
 def test_empty_retrieval_expectation_produces_no_assertion():
     result = judge_turn(TurnExpectation(), _snapshot("info.weather"))
     assert not [a for a in result.assertions if a.name.startswith("retrieval.")]
+
+
+def test_clipped_asset_never_satisfies_a_required_retrieval():
+    expected = TurnExpectation(retrieval=RetrievalExpectation(
+        required_skills=("charging-strategy",)))
+    actual = _snapshot("charging.find")
+    actual = _replace(actual, plan=_replace(
+        actual.plan, skills=("full:charging-strategy@lex:23!clipped",)))
+    result = judge_turn(expected, actual)
+    assert not result.passed
+    failed = [a for a in result.assertions
+              if a.name == "retrieval.required:charging-strategy"]
+    assert failed and "clipped" in failed[0].detail
+
+
+def test_clipped_asset_does_not_count_as_a_forbidden_hit_either():
+    expected = TurnExpectation(retrieval=RetrievalExpectation(
+        forbidden_skills=("weather-outing",)))
+    actual = _snapshot("info.weather")
+    actual = _replace(actual, plan=_replace(
+        actual.plan, skills=("full:weather-outing@lex:3!clipped",)))
+    assert judge_turn(expected, actual).passed

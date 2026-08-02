@@ -1,0 +1,507 @@
+schema_version: 1
+# 覆盖补全：为覆盖矩阵里仍缺正例/硬负例/对照的**云侧全部 intent** 与**端侧危险动作**
+# 补最小对照对。
+#
+# 为什么用 route_flip 对：一对同框架、只换对象的句子，能同时给两个 intent 各补一个
+# 正例、一个硬负例和一次对照参与——比堆三条互不相关的单句既省条数又更能证明边界。
+# 这不是「复制近义句冲条数」：每一对都是一条真实存在、且模型确实会混的边界。
+cases:
+  # ── 充电域：规划 vs 状态 vs 检索 ────────────────────────────────────────
+  - id: tu.charging.plan-vs-status
+    title: 长途补能规划
+    family_id: tu.charging-plan-status
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [charging], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我要开去长沙，帮我把路上补能安排好, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.plan]}], forbidden_intents: [charging.status, charging.find], allow_extra_intents: false}
+  - id: tu.charging.status-vs-plan
+    title: 只问当前电量
+    family_id: tu.charging-plan-status
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [charging], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.charging.plan-vs-status, type: route_flip, expectation: {forbidden_after: [charging.plan], required_change: true}}
+    turns:
+      - input: {utterance: 车现在还剩百分之多少电, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.status]}], forbidden_intents: [charging.plan, charging.find], allow_extra_intents: false}
+  - id: tu.charging.plan-vs-find
+    title: 跨城补能规划（第二正例）
+    family_id: tu.charging-plan-find
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [charging], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 从广州开到南宁，中途该在哪几个服务区补电, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.plan]}], forbidden_intents: [charging.status], allow_extra_intents: true}
+  - id: tu.charging.find-vs-plan
+    title: 就地找一个桩（第二正例的对照）
+    family_id: tu.charging-plan-find
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [charging], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.charging.plan-vs-find, type: route_flip, expectation: {forbidden_after: [charging.plan], required_change: true}}
+    turns:
+      - input: {utterance: 现在就近给我找一个能充电的地方, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [charging.plan], allow_extra_intents: false}
+
+  # ── 导航域：搜 POI vs 看详情 vs 存地点 ──────────────────────────────────
+  - id: tu.nav.search-vs-detail
+    title: 搜索导航 POI
+    family_id: tu.nav-search-detail
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 帮我搜一下附近的地铁站有哪些, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.search_poi]}], forbidden_intents: [navigation.poi_detail, navigation.navigate_to], allow_extra_intents: false}
+  - id: tu.nav.detail-vs-search
+    title: 看某个导航 POI 的详情
+    family_id: tu.nav-search-detail
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.nav.search-vs-detail, type: route_flip, expectation: {forbidden_after: [navigation.search_poi], required_change: true}}
+    turns:
+      - input: {utterance: 广州东站这个站点的详细信息给我看看, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.poi_detail]}], forbidden_intents: [navigation.search_poi, nearby.detail], allow_extra_intents: false}
+  - id: tu.nav.setplace-vs-detail
+    title: 把当前位置存成常用地点
+    family_id: tu.nav-setplace-detail
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把现在这个位置记成我家, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.set_place]}], forbidden_intents: [navigation.poi_detail, navigation.navigate_to], allow_extra_intents: false}
+  - id: tu.nav.detail-vs-setplace
+    title: 看常用地点的详情
+    family_id: tu.nav-setplace-detail
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.nav.setplace-vs-detail, type: route_flip, expectation: {forbidden_after: [navigation.set_place], required_change: true}}
+    turns:
+      - input: {utterance: 我家那个地点的详细信息是什么, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.poi_detail]}], forbidden_intents: [navigation.set_place], allow_extra_intents: false}
+
+  # ── 周边域：下单 vs 看详情 ──────────────────────────────────────────────
+  - id: tu.nearby.order-vs-detail
+    title: 订位（写操作）
+    family_id: tu.nearby-order-detail
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip, write_action], domains: [nearby], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 帮我在这家订今晚七点四位, context: {focus: {last_intent: nearby.search, last_poi: 巴蜀风（珠江新城店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.order]}], forbidden_intents: [nearby.detail, shop.order], allow_extra_intents: false}
+  - id: tu.nearby.detail-vs-order
+    title: 只看详情（读操作）
+    family_id: tu.nearby-order-detail
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [nearby], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.nearby.order-vs-detail, type: route_flip, expectation: {forbidden_after: [nearby.order], required_change: true}}
+    turns:
+      - input: {utterance: 这家营业到几点, context: {focus: {last_intent: nearby.search, last_poi: 巴蜀风（珠江新城店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.detail]}], forbidden_intents: [nearby.order], allow_extra_intents: false}
+
+  # ── 提醒域：改期 vs 完成 ────────────────────────────────────────────────
+  - id: tu.reminder.update-vs-complete
+    title: 提醒改期
+    family_id: tu.reminder-update-complete
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把交周报那条挪到后天下午, context: {focus: {last_intent: reminder.list}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.update]}], forbidden_intents: [reminder.complete, reminder.create], allow_extra_intents: false}
+  - id: tu.reminder.complete-vs-update
+    title: 提醒标记完成
+    family_id: tu.reminder-update-complete
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.reminder.update-vs-complete, type: route_flip, expectation: {forbidden_after: [reminder.update], required_change: true}}
+    turns:
+      - input: {utterance: 交周报那条已经办完了，勾掉吧, context: {focus: {last_intent: reminder.list}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.complete]}], forbidden_intents: [reminder.update], allow_extra_intents: false}
+
+  # ── 场景域：改 vs 停用 vs 删 ────────────────────────────────────────────
+  - id: tu.scene.update-vs-deactivate
+    title: 改场景内容
+    family_id: tu.scene-update-deactivate
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把夜间模式里的氛围灯改成暖白, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.update]}], forbidden_intents: [scene.deactivate, scene.delete], allow_extra_intents: false}
+  - id: tu.scene.deactivate-vs-update
+    title: 停用场景
+    family_id: tu.scene-update-deactivate
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.scene.update-vs-deactivate, type: route_flip, expectation: {forbidden_after: [scene.update], required_change: true}}
+    turns:
+      - input: {utterance: 把夜间模式关掉, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.deactivate]}], forbidden_intents: [scene.update, scene.delete], allow_extra_intents: false}
+  - id: tu.scene.delete-vs-update
+    title: 删除场景
+    family_id: tu.scene-delete-update
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip, write_action], domains: [scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把夜间模式这个场景彻底删掉, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.delete]}], forbidden_intents: [scene.update, scene.deactivate], allow_extra_intents: false}
+  - id: tu.scene.update-vs-delete
+    title: 只改不删
+    family_id: tu.scene-delete-update
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.scene.delete-vs-update, type: route_flip, expectation: {forbidden_after: [scene.delete], required_change: true}}
+    turns:
+      - input: {utterance: 夜间模式先别删，把里面的温度调成二十三度就行, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.update]}], forbidden_intents: [scene.delete], allow_extra_intents: false}
+
+  # ── 行程域：行程内导航 vs 行程状态 / 单点导航 ───────────────────────────
+  - id: tu.trip.navigate-vs-status
+    title: 导航到行程下一站
+    family_id: tu.trip-navigate-status
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [trip], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 出发去行程里的下一个点, context: {focus: {last_intent: trip.plan}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.navigate]}], forbidden_intents: [trip.status, trip.modify], allow_extra_intents: false}
+  - id: tu.trip.status-vs-navigate
+    title: 只问行程进度
+    family_id: tu.trip-navigate-status
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [trip], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.trip.navigate-vs-status, type: route_flip, expectation: {forbidden_after: [trip.navigate], required_change: true}}
+    turns:
+      - input: {utterance: 行程走到第几站了, context: {focus: {last_intent: trip.plan}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.status]}], forbidden_intents: [trip.navigate], allow_extra_intents: false}
+  - id: tu.trip.navigate-vs-plain-nav
+    title: 行程内导航（第二正例）
+    family_id: tu.trip-navigate-plain
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [scope_flip], domains: [trip, navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 按行程带我去今天的第二个景点, context: {focus: {last_intent: trip.plan}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.navigate]}], forbidden_intents: [trip.status, trip.modify], allow_extra_intents: false}
+  - id: tu.trip.plain-nav-vs-trip
+    title: 与行程无关的单点导航
+    family_id: tu.trip-navigate-plain
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [scope_flip], domains: [trip, navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.trip.navigate-vs-plain-nav, type: route_flip, expectation: {forbidden_after: [trip.navigate], required_change: true}}
+    turns:
+      - input: {utterance: 带我去白云机场, context: {focus: {last_intent: trip.plan}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [trip.navigate], allow_extra_intents: false}
+
+  # ── 信息域：空气质量的硬负例 ────────────────────────────────────────────
+  - id: tu.info.air-vs-index
+    title: 空气质量不是生活指数
+    family_id: tu.info-air-index
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天 AQI 是多少, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.air_quality]}], forbidden_intents: [info.indices, info.weather], allow_extra_intents: false}
+  - id: tu.info.index-vs-air
+    title: 生活指数不是空气质量
+    family_id: tu.info-air-index
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.info.air-vs-index, type: route_flip, expectation: {forbidden_after: [info.air_quality], required_change: true}}
+    turns:
+      - input: {utterance: 今天钓鱼指数怎么样, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.indices]}], forbidden_intents: [info.air_quality], allow_extra_intents: false}
+
+  # ── 端侧危险动作：开/关成对 ────────────────────────────────────────────
+  - id: tu.port.open-vs-close
+    title: 打开充电口（第二正例）
+    family_id: tu.port
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, dangerous_action], domains: [charging_port], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把充电口开一下, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging_port.open]}], forbidden_intents: [charging_port.close, fuel_tank_cover.open], allow_extra_intents: false}
+  - id: tu.port.close-vs-open
+    title: 关闭充电口
+    family_id: tu.port
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, dangerous_action], domains: [charging_port], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.port.open-vs-close, type: route_flip, expectation: {forbidden_after: [charging_port.open], required_change: true}}
+    turns:
+      - input: {utterance: 把充电口关上, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging_port.close]}], forbidden_intents: [charging_port.open], allow_extra_intents: false}
+  - id: tu.port.close-second
+    title: 关闭充电口（第二正例）
+    family_id: tu.port-close
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, dangerous_action], domains: [charging_port], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 充电结束了，把充电盖合上, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging_port.close]}], forbidden_intents: [charging_port.open, fuel_tank_cover.close], allow_extra_intents: false}
+  - id: tu.door.open-second
+    title: 解锁车门（第二正例）
+    family_id: tu.door-open
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, dangerous_action], domains: [door_lock], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 车门给我开锁, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [door_lock.open]}], forbidden_intents: [door_lock.close, trunk.open], allow_extra_intents: false}
+  - id: tu.door.close-vs-open
+    title: 落锁车门
+    family_id: tu.door-close
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, dangerous_action], domains: [door_lock], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把车门落锁, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [door_lock.close]}], forbidden_intents: [door_lock.open], allow_extra_intents: false}
+  - id: tu.door.close-second
+    title: 落锁车门（第二正例）
+    family_id: tu.door-close-2
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, dangerous_action], domains: [door_lock], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我下车了，帮我锁上车门, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [door_lock.close]}], forbidden_intents: [door_lock.open, trunk.close], allow_extra_intents: false}
+  - id: tu.fuel.open-second
+    title: 打开油箱盖（第二正例）
+    family_id: tu.fuel-open
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, dangerous_action], domains: [fuel_tank_cover], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 加油了，把油箱盖弹开, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [fuel_tank_cover.open]}], forbidden_intents: [fuel_tank_cover.close, charging_port.open], allow_extra_intents: false}
+  - id: tu.fuel.close-vs-open
+    title: 关闭油箱盖
+    family_id: tu.fuel-close
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, dangerous_action], domains: [fuel_tank_cover], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把油箱盖关上, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [fuel_tank_cover.close]}], forbidden_intents: [fuel_tank_cover.open], allow_extra_intents: false}
+  - id: tu.fuel.close-second
+    title: 关闭油箱盖（第二正例）
+    family_id: tu.fuel-close-2
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, dangerous_action], domains: [fuel_tank_cover], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 加完油了，油箱盖合上吧, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [fuel_tank_cover.close]}], forbidden_intents: [fuel_tank_cover.open, charging_port.close], allow_extra_intents: false}
+
+  # ── 端侧核心：空调升降温、媒体播放控制 ─────────────────────────────────
+  - id: tu.hvac.inc-vs-dec
+    title: 温度调高
+    family_id: tu.hvac-inc-dec
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, vehicle_control], domains: [hvac], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 温度再高两度, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.inc]}], forbidden_intents: [hvac.dec, hvac.set], allow_extra_intents: false}
+  - id: tu.hvac.dec-vs-inc
+    title: 温度调低
+    family_id: tu.hvac-inc-dec
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, vehicle_control], domains: [hvac], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.hvac.inc-vs-dec, type: route_flip, expectation: {forbidden_after: [hvac.inc], required_change: true}}
+    turns:
+      - input: {utterance: 温度再低两度, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.dec]}], forbidden_intents: [hvac.inc, hvac.set], allow_extra_intents: false}
+  - id: tu.hvac.dec-second
+    title: 温度调低（第二正例）
+    family_id: tu.hvac-dec
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, vehicle_control], domains: [hvac], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 空调调凉一点, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.dec]}], forbidden_intents: [hvac.inc], allow_extra_intents: false}
+  - id: tu.hvac.inc-second
+    title: 温度调高（第二正例）
+    family_id: tu.hvac-inc
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, vehicle_control], domains: [hvac], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 空调调暖一点, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.inc]}], forbidden_intents: [hvac.dec], allow_extra_intents: false}
+  - id: tu.media.pause-vs-play
+    title: 暂停播放
+    family_id: tu.media-pause-play
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip], domains: [media], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 先暂停一下, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [media.pause]}], forbidden_intents: [media.play, media.next], allow_extra_intents: false}
+  - id: tu.media.play-vs-pause
+    title: 继续播放
+    family_id: tu.media-pause-play
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip], domains: [media], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.media.pause-vs-play, type: route_flip, expectation: {forbidden_after: [media.pause], required_change: true}}
+    turns:
+      - input: {utterance: 继续放吧, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [media.play]}], forbidden_intents: [media.pause, media.next], allow_extra_intents: false}
+  - id: tu.media.pause-second
+    title: 暂停播放（第二正例）
+    family_id: tu.media-pause
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip], domains: [media], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 音乐停一下, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [media.pause]}], forbidden_intents: [media.play], allow_extra_intents: false}
+  - id: tu.media.prev-second
+    title: 上一首（第二正例）
+    family_id: tu.media-prev
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip], domains: [media], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 回到上一首, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [media.prev]}], forbidden_intents: [media.next, media.pause], allow_extra_intents: false}

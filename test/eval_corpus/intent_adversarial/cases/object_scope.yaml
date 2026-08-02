@@ -1,0 +1,708 @@
+schema_version: 1
+# A2 主体与对象翻转：车/手机、人/地点、同一个动词不同对象。
+#
+# 每对都是**最小语义变化**：句式与动词尽量逐字保持，只换被作用的对象，落域必须翻。
+# 这类用例的价值不在难度，而在**它能把「模型其实只认动词」这件事照出来**。
+#
+# relation 一律只声明 l1：L0 的快照没有 plan，route_flip 在那一层恒为假。
+cases:
+  - id: os.battery.car
+    title: 车没电了
+    family_id: os.battery
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [subject_flip], domains: [charging, chitchat], layers: [l1], gate_candidate: true}
+    provenance: {kind: real_badcase, source_ref: docs/design/2026-07-28-intent-accuracy-data-flywheel.md, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 车没电了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [chitchat.talk, nearby.search], allow_extra_intents: false}
+  - id: os.battery.phone
+    title: 手机没电了
+    family_id: os.battery
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [subject_flip], domains: [charging, chitchat], layers: [l1], gate_candidate: true}
+    provenance: {kind: real_badcase, source_ref: docs/design/2026-07-28-intent-accuracy-data-flywheel.md, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.battery.car, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
+    turns:
+      - input: {utterance: 手机没电了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [chitchat.talk]}], forbidden_intents: [charging.find, charging.plan], allow_extra_intents: false}
+  - id: os.charge-place.car
+    title: 给车找个充电的地方
+    family_id: os.charge-place
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [subject_flip], domains: [charging, nearby], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 给车找个充电的地方, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: os.charge-place.phone
+    title: 给手机找个能充电的店
+    family_id: os.charge-place
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [subject_flip], domains: [charging, nearby], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.charge-place.car, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
+    turns:
+      - input: {utterance: 给手机找个能充电的店, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find], allow_extra_intents: false}
+  - id: os.open.window
+    title: 打开车窗
+    family_id: os.open-window-sunroof
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [window, sunroof], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 打开车窗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [window.open]}], forbidden_intents: [sunroof.open], allow_extra_intents: false}
+  - id: os.open.sunroof
+    title: 打开天窗
+    family_id: os.open-window-sunroof
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [window, sunroof], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.open.window, type: route_flip, expectation: {forbidden_after: [window.open], required_change: true}}
+    turns:
+      - input: {utterance: 打开天窗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [sunroof.open]}], forbidden_intents: [window.open], allow_extra_intents: false}
+  - id: os.open.trunk
+    title: 打开后备箱
+    family_id: os.open-trunk-port
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, dangerous_action], domains: [trunk, charging_port], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 打开后备箱, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trunk.open]}], forbidden_intents: [charging_port.open, fuel_tank_cover.open], allow_extra_intents: false}
+  - id: os.open.charging-port
+    title: 打开充电口
+    family_id: os.open-trunk-port
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, dangerous_action], domains: [trunk, charging_port], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.open.trunk, type: route_flip, expectation: {forbidden_after: [trunk.open], required_change: true}}
+    turns:
+      - input: {utterance: 打开充电口, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging_port.open]}], forbidden_intents: [trunk.open], allow_extra_intents: false}
+  - id: os.turn-off.hvac
+    title: 关掉空调
+    family_id: os.turn-off-hvac-media
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [hvac, media], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 关掉空调, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.off]}], forbidden_intents: [media.pause], allow_extra_intents: false}
+  - id: os.turn-off.media
+    title: 关掉音乐
+    family_id: os.turn-off-hvac-media
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [hvac, media], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.turn-off.hvac, type: route_flip, expectation: {forbidden_after: [hvac.off], required_change: true}}
+    turns:
+      - input: {utterance: 关掉音乐, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [media.pause]}], forbidden_intents: [hvac.off], allow_extra_intents: false}
+  - id: os.company.navigate
+    title: 去公司
+    family_id: os.company
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation, reminder], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 去公司, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [reminder.create], allow_extra_intents: false}
+  - id: os.company.reminder
+    title: 记一下下午三点去公司
+    family_id: os.company
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation, reminder], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.company.navigate, type: route_flip, expectation: {forbidden_after: [navigation.navigate_to], required_change: true}}
+    turns:
+      - input: {utterance: 记一下下午三点去公司, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create]}], forbidden_intents: [navigation.navigate_to], allow_extra_intents: false}
+  - id: os.toilet.nearby
+    title: 附近有洗手间吗
+    family_id: os.cabin-vs-outside
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [scope_flip], domains: [nearby, manual], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 附近有洗手间吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [manual.query], allow_extra_intents: false}
+  - id: os.toilet.manual
+    title: 车上的空气净化怎么开
+    family_id: os.cabin-vs-outside
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [scope_flip], domains: [nearby, manual], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.toilet.nearby, type: route_flip, expectation: {forbidden_after: [nearby.search], required_change: true}}
+    turns:
+      - input: {utterance: 车上的空气净化怎么开, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [manual.query]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: os.mine.trip
+    title: 看看我的行程
+    family_id: os.mine-trip-reminder
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, shared_frame], domains: [trip, reminder], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 看看我的行程, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.status]}], forbidden_intents: [reminder.list, scene.list], allow_extra_intents: false}
+  - id: os.mine.reminder
+    title: 看看我的提醒
+    family_id: os.mine-trip-reminder
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, shared_frame], domains: [trip, reminder], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.mine.trip, type: route_flip, expectation: {forbidden_after: [trip.status], required_change: true}}
+    turns:
+      - input: {utterance: 看看我的提醒, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [trip.status], allow_extra_intents: false}
+  - id: os.seat-heating.seat
+    title: 座椅加热打开
+    family_id: os.heating
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [seat, steering_wheel], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 座椅加热打开, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [seat.heating.on]}], forbidden_intents: [steering_wheel.heating.open], allow_extra_intents: false}
+  - id: os.seat-heating.wheel
+    title: 方向盘加热打开
+    family_id: os.heating
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [seat, steering_wheel], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.seat-heating.seat, type: route_flip, expectation: {forbidden_after: [seat.heating.on], required_change: true}}
+    turns:
+      - input: {utterance: 方向盘加热打开, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [steering_wheel.heating.open]}], forbidden_intents: [seat.heating.on], allow_extra_intents: false}
+  - id: os.raise.temperature
+    title: 调高温度
+    family_id: os.raise
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [hvac, volume], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 调高温度, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.inc]}], forbidden_intents: [volume.inc], allow_extra_intents: false}
+  - id: os.raise.volume
+    title: 调高音量
+    family_id: os.raise
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [hvac, volume], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.raise.temperature, type: route_flip, expectation: {forbidden_after: [hvac.inc], required_change: true}}
+    turns:
+      - input: {utterance: 调高音量, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [volume.inc]}], forbidden_intents: [hvac.inc], allow_extra_intents: false}
+  - id: os.refuel.charge
+    title: 我要充电
+    family_id: os.refuel
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, facility_discovery], domains: [charging, nearby], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我要充电, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: os.refuel.fuel
+    title: 我要加油
+    family_id: os.refuel
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, facility_discovery], domains: [charging, nearby], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.refuel.charge, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
+    turns:
+      - input: {utterance: 我要加油, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find], allow_extra_intents: false}
+  - id: os.order.restaurant
+    title: 帮我订个餐厅位子
+    family_id: os.order
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, write_action], domains: [nearby, shop], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 帮我订个餐厅位子, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.order, nearby.search]}], forbidden_intents: [shop.order], allow_extra_intents: false}
+  - id: os.order.shop
+    title: 帮我在演示商户下一单咖啡
+    family_id: os.order
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, write_action], domains: [nearby, shop], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.order.restaurant, type: route_flip, expectation: {forbidden_after: [nearby.order], required_change: true}}
+    turns:
+      - input: {utterance: 帮我在演示商户下一单咖啡, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [shop.order]}], forbidden_intents: [nearby.order], allow_extra_intents: false}
+  - id: os.state.battery
+    title: 车还剩多少电
+    family_id: os.state
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [charging, manual], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 车还剩多少电, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.status]}], forbidden_intents: [tire_pressure.query], allow_extra_intents: false}
+  - id: os.state.tire
+    title: 轮胎气压是多少
+    family_id: os.state
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [charging, manual], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.state.battery, type: route_flip, expectation: {forbidden_after: [charging.status], required_change: true}}
+    turns:
+      - input: {utterance: 轮胎气压是多少, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [tire_pressure.query]}], forbidden_intents: [charging.status], allow_extra_intents: false}
+  - id: os.close.sunroof
+    title: 关上天窗
+    family_id: os.close-sunroof-window
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [sunroof, window], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 关上天窗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [sunroof.close]}], forbidden_intents: [window.close], allow_extra_intents: false}
+  - id: os.close.window
+    title: 关上车窗
+    family_id: os.close-sunroof-window
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [sunroof, window], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.close.sunroof, type: route_flip, expectation: {forbidden_after: [sunroof.close], required_change: true}}
+    turns:
+      - input: {utterance: 关上车窗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [window.close]}], forbidden_intents: [sunroof.close], allow_extra_intents: false}
+  - id: os.unlock.door
+    title: 把车门锁打开
+    family_id: os.unlock
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, dangerous_action], domains: [door_lock, fuel_tank_cover], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把车门锁打开, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [door_lock.open]}], forbidden_intents: [fuel_tank_cover.open, trunk.open], allow_extra_intents: false}
+  - id: os.unlock.fuel-cover
+    title: 把油箱盖打开
+    family_id: os.unlock
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, dangerous_action], domains: [door_lock, fuel_tank_cover], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.unlock.door, type: route_flip, expectation: {forbidden_after: [door_lock.open], required_change: true}}
+    turns:
+      - input: {utterance: 把油箱盖打开, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [fuel_tank_cover.open]}], forbidden_intents: [door_lock.open], allow_extra_intents: false}
+  - id: os.setvalue.hvac
+    title: 空调开到二十二度
+    family_id: os.setvalue
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [hvac, sunroof], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 空调开到二十二度, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.set]}], forbidden_intents: [sunroof.set, window.set], allow_extra_intents: false}
+  - id: os.setvalue.sunroof
+    title: 天窗开一半
+    family_id: os.setvalue
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [hvac, sunroof], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.setvalue.hvac, type: route_flip, expectation: {forbidden_after: [hvac.set], required_change: true}}
+    turns:
+      - input: {utterance: 天窗开一半, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [sunroof.set]}], forbidden_intents: [hvac.set], allow_extra_intents: false}
+  - id: os.track.prev
+    title: 上一首
+    family_id: os.track
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip], domains: [media], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 上一首, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [media.prev]}], forbidden_intents: [media.next], allow_extra_intents: false}
+  - id: os.track.next
+    title: 下一首
+    family_id: os.track
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip], domains: [media], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.track.prev, type: route_flip, expectation: {forbidden_after: [media.prev], required_change: true}}
+    turns:
+      - input: {utterance: 下一首, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [media.next]}], forbidden_intents: [media.prev], allow_extra_intents: false}
+  - id: os.detail.shop
+    title: 我想看这家店的详情
+    family_id: os.detail
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [nearby, navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我想看这家店的详情, context: {focus: {last_intent: nearby.search, last_poi: 老碗会（天河店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.detail]}], forbidden_intents: [navigation.poi_detail], allow_extra_intents: false}
+  - id: os.detail.poi
+    title: 看看这个导航地点的详情
+    family_id: os.detail
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [nearby, navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.detail.shop, type: route_flip, expectation: {forbidden_after: [nearby.detail], required_change: true}}
+    turns:
+      - input: {utterance: 看看这个导航地点的详情, context: {focus: {last_intent: navigation.search_poi, last_destination: 广州塔}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.poi_detail]}], forbidden_intents: [nearby.detail], allow_extra_intents: false}
+  - id: os.cancel.reminder
+    title: 取消那个提醒
+    family_id: os.cancel
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [reminder, research], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 取消那个提醒, context: {focus: {last_intent: reminder.list}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.cancel]}], forbidden_intents: [research.cancel, shop.order_cancel], allow_extra_intents: false}
+  - id: os.cancel.research
+    title: 取消那个调研
+    family_id: os.cancel
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [reminder, research], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.cancel.reminder, type: route_flip, expectation: {forbidden_after: [reminder.cancel], required_change: true}}
+    turns:
+      - input: {utterance: 取消那个调研, context: {focus: {last_intent: research.run}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [research.cancel]}], forbidden_intents: [reminder.cancel], allow_extra_intents: false}
+  - id: os.progress.research
+    title: 那个调研进行到哪了
+    family_id: os.progress
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, shared_frame], domains: [research, trip], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 那个调研进行到哪了, context: {focus: {last_intent: research.run}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [research.status]}], forbidden_intents: [trip.status, shop.order_status], allow_extra_intents: false}
+  - id: os.progress.trip
+    title: 那个行程进行到哪了
+    family_id: os.progress
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, shared_frame], domains: [research, trip], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.progress.research, type: route_flip, expectation: {forbidden_after: [research.status], required_change: true}}
+    turns:
+      - input: {utterance: 那个行程进行到哪了, context: {focus: {last_intent: trip.plan}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.status]}], forbidden_intents: [research.status], allow_extra_intents: false}
+  - id: os.place.save
+    title: 把这里存成我的公司
+    family_id: os.place
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把这里存成我的公司, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.set_place]}], forbidden_intents: [navigation.navigate_to], allow_extra_intents: false}
+  - id: os.place.navigate
+    title: 导航到我的公司
+    family_id: os.place
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.place.save, type: route_flip, expectation: {forbidden_after: [navigation.set_place], required_change: true}}
+    turns:
+      - input: {utterance: 导航到我的公司, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [navigation.set_place], allow_extra_intents: false}
+  - id: os.menu.shop
+    title: 看一下这家演示商户的菜单
+    family_id: os.menu
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [shop, nearby], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 看一下这家演示商户的菜单, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [shop.menu]}], forbidden_intents: [nearby.search, nearby.detail], allow_extra_intents: false}
+  - id: os.menu.nearby
+    title: 附近有什么好吃的餐厅
+    family_id: os.menu
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [shop, nearby], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.menu.shop, type: route_flip, expectation: {forbidden_after: [shop.menu], required_change: true}}
+    turns:
+      - input: {utterance: 附近有什么好吃的餐厅, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [shop.menu], allow_extra_intents: false}
+  - id: os.order-lifecycle.status
+    title: 我这单到哪了
+    family_id: os.order-lifecycle
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [shop], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我这单到哪了, context: {focus: {last_intent: shop.order}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [shop.order_status]}], forbidden_intents: [shop.order_cancel, shop.order], allow_extra_intents: false}
+  - id: os.order-lifecycle.cancel
+    title: 把这单取消掉
+    family_id: os.order-lifecycle
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip, write_action], domains: [shop], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.order-lifecycle.status, type: route_flip, expectation: {forbidden_after: [shop.order_status], required_change: true}}
+    turns:
+      - input: {utterance: 把这单取消掉, context: {focus: {last_intent: shop.order}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [shop.order_cancel]}], forbidden_intents: [shop.order_status], allow_extra_intents: false}
+  - id: os.scene.activate
+    title: 启动回家模式
+    family_id: os.scene-lifecycle
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 启动回家模式, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.activate]}], forbidden_intents: [scene.create, scene.deactivate, navigation.navigate_to], allow_extra_intents: false}
+  - id: os.scene.deactivate
+    title: 退出回家模式
+    family_id: os.scene-lifecycle
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.scene.activate, type: route_flip, expectation: {forbidden_after: [scene.activate], required_change: true}}
+    turns:
+      - input: {utterance: 退出回家模式, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.deactivate]}], forbidden_intents: [scene.activate], allow_extra_intents: false}
+  - id: os.scene.create
+    title: 新建一个午休模式
+    family_id: os.scene-edit
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 新建一个午休模式, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.create]}], forbidden_intents: [scene.update, scene.delete, scene.activate], allow_extra_intents: false}
+  - id: os.scene.delete
+    title: 把午休模式删掉
+    family_id: os.scene-edit
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip, write_action], domains: [scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.scene.create, type: route_flip, expectation: {forbidden_after: [scene.create], required_change: true}}
+    turns:
+      - input: {utterance: 把午休模式删掉, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.delete]}], forbidden_intents: [scene.create], allow_extra_intents: false}
+  - id: os.reminder.complete
+    title: 那条提醒我已经做完了
+    family_id: os.reminder-lifecycle
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 那条提醒我已经做完了, context: {focus: {last_intent: reminder.list}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.complete]}], forbidden_intents: [reminder.cancel, reminder.update], allow_extra_intents: false}
+  - id: os.reminder.update
+    title: 那条提醒改到明天早上八点
+    family_id: os.reminder-lifecycle
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.reminder.complete, type: route_flip, expectation: {forbidden_after: [reminder.complete], required_change: true}}
+    turns:
+      - input: {utterance: 那条提醒改到明天早上八点, context: {focus: {last_intent: reminder.list}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.update]}], forbidden_intents: [reminder.complete], allow_extra_intents: false}
+  - id: os.parking.pay
+    title: 帮我把停车费交了
+    family_id: os.parking
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, write_action], domains: [parking, nearby], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 帮我把停车费交了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [parking.pay]}], forbidden_intents: [nearby.search, shop.order], allow_extra_intents: false}
+  - id: os.parking.find
+    title: 附近哪里有停车场
+    family_id: os.parking
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [parking, nearby], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.parking.pay, type: route_flip, expectation: {forbidden_after: [parking.pay], required_change: true}}
+    turns:
+      - input: {utterance: 附近哪里有停车场, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [parking.pay], allow_extra_intents: false}
+  - id: os.sports.match
+    title: 今晚的比赛几点开始
+    family_id: os.sports-news
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今晚的比赛几点开始, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.sports]}], forbidden_intents: [info.news, reminder.list], allow_extra_intents: false}
+  - id: os.sports.news
+    title: 今天体育圈有什么新闻
+    family_id: os.sports-news
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: os.sports.match, type: route_flip, expectation: {forbidden_after: [info.sports], required_change: true}}
+    turns:
+      - input: {utterance: 今天体育圈有什么新闻, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.news]}], forbidden_intents: [info.sports], allow_extra_intents: false}

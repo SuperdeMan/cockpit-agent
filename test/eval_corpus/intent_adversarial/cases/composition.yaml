@@ -1,0 +1,840 @@
+schema_version: 1
+# A4 多意图组合：并行、串行依赖、adaptive、换序、取消其中一项。
+#
+# 这一类是「落域准确 ≠ 智能」的主战场：单看域全对、组合不完整照样答不上来
+# （2026-08-02 验收报告 §2.4：goal 说推荐而 steps 无推荐步＝可检测的缺口信号）。
+# 所以这里只用 required_intent_groups 的**全量满足**判定，不看 goal。
+#
+# 依赖断言默认只要求「consumer 依赖 producer」这条边；只有 manifest 里槽位名明确的
+# 才写 carries——把猜的槽位名写进 gold，红灯说明的就不是产品缺陷了。
+cases:
+  # ── 并行换序（clause_commute）────────────────────────────────────────────
+  - id: cp.weather-music.base
+    title: 查天气再放首歌
+    family_id: cp.weather-music
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [info, media], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 查一下今天天气，再放首歌, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather]}, {any_of: [media.play]}], allow_extra_intents: false}
+  - id: cp.weather-music.swapped
+    title: 放首歌再查天气（换序）
+    family_id: cp.weather-music
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [info, media], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: cp.weather-music.base, type: clause_commute, expectation: {}}
+    turns:
+      - input: {utterance: 放首歌，再查一下今天天气, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather]}, {any_of: [media.play]}], allow_extra_intents: false}
+  - id: cp.hvac-news.base
+    title: 开空调并看新闻
+    family_id: cp.hvac-news
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, local_and_online], domains: [hvac, info], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 打开空调，顺便看看今天的新闻, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.on]}, {any_of: [info.news]}], allow_extra_intents: false}
+  - id: cp.hvac-news.swapped
+    title: 看新闻并开空调（换序）
+    family_id: cp.hvac-news
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [hvac, info], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: cp.hvac-news.base, type: clause_commute, expectation: {}}
+    turns:
+      - input: {utterance: 看看今天的新闻，顺便打开空调, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.on]}, {any_of: [info.news]}], allow_extra_intents: false}
+  - id: cp.reminder-weather.base
+    title: 建提醒并查天气
+    family_id: cp.reminder-weather
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [reminder, info], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 提醒我八点开会，再查下明天天气, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create]}, {any_of: [info.weather, info.forecast]}], allow_extra_intents: false}
+  - id: cp.reminder-weather.swapped
+    title: 查天气并建提醒（换序）
+    family_id: cp.reminder-weather
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [reminder, info], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: cp.reminder-weather.base, type: clause_commute, expectation: {}}
+    turns:
+      - input: {utterance: 查下明天天气，再提醒我八点开会, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create]}, {any_of: [info.weather, info.forecast]}], allow_extra_intents: false}
+  - id: cp.charge-food.base
+    title: 找充电站并看附近吃的
+    family_id: cp.charge-food
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [charging, nearby], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 找个充电站，同时看看附近有什么吃的, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}, {any_of: [nearby.search]}], allow_extra_intents: false}
+  - id: cp.charge-food.swapped
+    title: 看附近吃的并找充电站（换序）
+    family_id: cp.charge-food
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [charging, nearby], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: cp.charge-food.base, type: clause_commute, expectation: {}}
+    turns:
+      - input: {utterance: 看看附近有什么吃的，同时找个充电站, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}, {any_of: [nearby.search]}], allow_extra_intents: false}
+  - id: cp.window-stock.base
+    title: 开车窗并查股价
+    family_id: cp.window-stock
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, local_and_online], domains: [window, info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把车窗打开，再查一下宁德时代股价, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [window.open]}, {any_of: [info.stock]}], allow_extra_intents: false}
+  - id: cp.window-stock.swapped
+    title: 查股价并开车窗（换序）
+    family_id: cp.window-stock
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [window, info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: cp.window-stock.base, type: clause_commute, expectation: {}}
+    turns:
+      - input: {utterance: 查一下宁德时代股价，再把车窗打开, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [window.open]}, {any_of: [info.stock]}], allow_extra_intents: false}
+  - id: cp.scene-sports.base
+    title: 开场景并查赛程
+    family_id: cp.scene-sports
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [scene, info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 打开回家模式，再看看今晚比赛几点, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.activate]}, {any_of: [info.sports]}], allow_extra_intents: false}
+  - id: cp.scene-sports.swapped
+    title: 查赛程并开场景（换序）
+    family_id: cp.scene-sports
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [scene, info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: cp.scene-sports.base, type: clause_commute, expectation: {}}
+    turns:
+      - input: {utterance: 看看今晚比赛几点，再打开回家模式, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.activate]}, {any_of: [info.sports]}], allow_extra_intents: false}
+  - id: cp.air-index.base
+    title: 查空气质量并查生活指数
+    family_id: cp.air-index
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 查一下空气质量，再看看今天适不适合运动, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.air_quality]}, {any_of: [info.indices]}], allow_extra_intents: false}
+  - id: cp.air-index.swapped
+    title: 查生活指数并查空气质量（换序）
+    family_id: cp.air-index
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: cp.air-index.base, type: clause_commute, expectation: {}}
+    turns:
+      - input: {utterance: 看看今天适不适合运动，再查一下空气质量, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.air_quality]}, {any_of: [info.indices]}], allow_extra_intents: false}
+  - id: cp.alerts-road.base
+    title: 查预警并查路况
+    family_id: cp.alerts-road
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [info, safety], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 看看有没有天气预警，再看看现在路况, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.alerts]}, {any_of: [safety.road_condition]}], allow_extra_intents: false}
+  - id: cp.alerts-road.swapped
+    title: 查路况并查预警（换序）
+    family_id: cp.alerts-road
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [info, safety], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: cp.alerts-road.base, type: clause_commute, expectation: {}}
+    turns:
+      - input: {utterance: 看看现在路况，再看看有没有天气预警, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.alerts]}, {any_of: [safety.road_condition]}], allow_extra_intents: false}
+
+  # ── 串行依赖（producer → consumer）──────────────────────────────────────
+  - id: cp.dep.search-then-order
+    title: 找川菜馆再订位（带 name 传递）
+    family_id: cp.dep-order
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [nearby], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 找家评分高的川菜馆，然后订今晚七点两位, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}, {any_of: [nearby.order]}]
+            dependencies: [{producer: [nearby.search], consumer: nearby.order}]
+            allow_extra_intents: false
+  - id: cp.dep.charge-then-navigate
+    title: 找充电站再导航过去
+    family_id: cp.dep-charge-nav
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [charging, navigation], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 找个最近的充电站，然后导航过去, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [charging.find]}, {any_of: [navigation.navigate_to]}]
+            dependencies: [{producer: [charging.find], consumer: navigation.navigate_to}]
+            allow_extra_intents: false
+  - id: cp.dep.menu-then-order
+    title: 看菜单再下单
+    family_id: cp.dep-shop
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, dependency, write_action], domains: [shop], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 看看演示商户的菜单，然后点一份招牌, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [shop.menu]}, {any_of: [shop.order]}]
+            dependencies: [{producer: [shop.menu], consumer: shop.order}]
+            allow_extra_intents: false
+  - id: cp.dep.search-then-detail
+    title: 搜完再看第一家详情
+    family_id: cp.dep-detail
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [nearby], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 搜一下附近的火锅店，再看看第一家的详情, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}, {any_of: [nearby.detail]}]
+            dependencies: [{producer: [nearby.search], consumer: nearby.detail}]
+            allow_extra_intents: false
+  - id: cp.dep.poi-then-navigate
+    title: 搜地点再导航
+    family_id: cp.dep-poi-nav
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 搜一下附近的地铁站，然后导航到最近的那个, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [navigation.search_poi]}, {any_of: [navigation.navigate_to]}]
+            dependencies: [{producer: [navigation.search_poi], consumer: navigation.navigate_to}]
+            allow_extra_intents: false
+  - id: cp.dep.locate-then-nearby
+    title: 先定位再找附近
+    family_id: cp.dep-locate
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [navigation, nearby], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我现在在哪，附近有什么咖啡店, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.locate]}, {any_of: [nearby.search]}], allow_extra_intents: false}
+  - id: cp.dep.trip-then-navigate
+    title: 排行程再导航到第一站
+    family_id: cp.dep-trip
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [trip], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 帮我排一个两天的苏州行程，然后导航到第一站, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [trip.plan]}, {any_of: [trip.navigate, navigation.navigate_to]}]
+            allow_extra_intents: false
+  - id: cp.dep.research-then-status
+    title: 起调研并问进度不是同一件事
+    family_id: cp.dep-research
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition], domains: [research], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 帮我深入调研固态电池，查完告诉我, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [research.run]}], forbidden_intents: [research.status, info.search], allow_extra_intents: false}
+  - id: cp.dep.order-then-status
+    title: 下单后问进度
+    family_id: cp.dep-order-status
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition], domains: [shop], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我刚下的那单到哪了，顺便看看菜单, context: {focus: {last_intent: shop.order}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [shop.order_status]}, {any_of: [shop.menu]}], allow_extra_intents: false}
+  - id: cp.dep.weather-then-navigate
+    title: 查天气再导航（无依赖）
+    family_id: cp.dep-weather-nav
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [info, navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 查一下杭州天气，然后导航去杭州东站, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather, info.forecast]}, {any_of: [navigation.navigate_to]}], allow_extra_intents: false}
+  - id: cp.dep.three-way
+    title: 三件事并列，一件都不能少
+    family_id: cp.dep-three
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [hvac, info, media], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 打开空调，放首歌，再查一下今天天气, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.on]}, {any_of: [media.play]}, {any_of: [info.weather]}], allow_extra_intents: false}
+  - id: cp.dep.four-way
+    title: 四件事并列
+    family_id: cp.dep-four
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [window, hvac, info, reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 关上车窗，打开空调，查下明天天气，再提醒我七点起床, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [window.close]}, {any_of: [hvac.on]}, {any_of: [info.weather, info.forecast]}, {any_of: [reminder.create]}], allow_extra_intents: false}
+
+  # ── adaptive：先查前置事实，再消费结果补步 ───────────────────────────────
+  - id: cp.adaptive.weather-outing
+    title: 天气适合去哪玩（落域准确≠智能的标本）
+    family_id: cp.weather-outing
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, adaptive, dependency], domains: [info, nearby], boundary: weather-outing, layers: [l1], gate_candidate: true}
+    provenance: {kind: real_badcase, source_ref: docs/reviews/2026-08-02-review-acceptance-impl-and-badcase-intelligence.md, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天的天气适合去哪玩, context: {}}
+        expected:
+          decision: {allowed: [execute], clarify: forbidden}
+          plan:
+            required_intent_groups: [{any_of: [info.weather, info.forecast]}]
+            forbidden_intents: [navigation.search_poi]
+            allow_extra_intents: false
+            complexity: {allowed: [adaptive]}
+          replans:
+            - after:
+                result: {step_id: s1, status: ok, data: {condition: 中雨}, speech: 惠州今天有中雨}
+              plan:
+                required_intent_groups: [{any_of: [nearby.search]}]
+                forbidden_intents: [navigation.search_poi]
+                allow_extra_intents: false
+                slots:
+                  - {intent: nearby.search, key: weather_context, matcher: presence}
+  - id: cp.adaptive.rain-umbrella
+    title: 明天下雨就提醒带伞
+    family_id: cp.rain-umbrella
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, adaptive, conditional], domains: [info, reminder], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 明天要是下雨就提醒我带伞, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [info.weather, info.forecast]}]
+            allow_extra_intents: true
+          replans:
+            - after:
+                result: {step_id: s1, status: ok, data: {condition: 小雨}, speech: 明天有小雨}
+              plan:
+                required_intent_groups: [{any_of: [reminder.create]}]
+                allow_extra_intents: false
+  - id: cp.adaptive.range-check
+    title: 电量够不够到杭州，不够就找充电站
+    family_id: cp.range-check
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, adaptive, conditional], domains: [charging], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 看看电量够不够开到杭州，不够就找个充电站, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [charging.status, charging.plan]}]
+            allow_extra_intents: true
+          replans:
+            - after:
+                result: {step_id: s1, status: ok, data: {soc: 18, range_km: 90}, speech: 当前电量 18%，续航约 90 公里}
+              plan:
+                required_intent_groups: [{any_of: [charging.find, charging.plan]}]
+                allow_extra_intents: false
+  - id: cp.adaptive.indoor-fanout
+    title: 下雨天推荐室内去处
+    family_id: cp.indoor-fanout
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, adaptive], domains: [info, nearby], boundary: weather-outing, layers: [l1]}
+    provenance: {kind: real_badcase, source_ref: skills/guides/weather-outing.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天下雨，有什么地方可以带孩子去, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}]
+            forbidden_intents: [navigation.search_poi]
+            allow_extra_intents: true
+  - id: cp.adaptive.traffic-then-reroute
+    title: 先看路况再决定要不要改道
+    family_id: cp.traffic-reroute
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, adaptive], domains: [safety, navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 看看去机场堵不堵，堵的话换条路, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [safety.road_condition]}]
+            allow_extra_intents: true
+          replans:
+            - after:
+                result: {step_id: s1, status: ok, data: {congestion: heavy}, speech: 前方拥堵}
+              plan:
+                required_intent_groups: [{any_of: [navigation.navigate_to]}]
+                allow_extra_intents: true
+  - id: cp.adaptive.alerts-then-advice
+    title: 有预警时才给驾驶建议
+    family_id: cp.alerts-advice
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, adaptive], domains: [info, safety], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 看看有没有预警，有的话说下开车要注意什么, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [info.alerts]}]
+            allow_extra_intents: true
+          replans:
+            - after:
+                result: {step_id: s1, status: ok, data: {alert: 暴雨黄色预警}, speech: 当前有暴雨黄色预警}
+              plan:
+                required_intent_groups: [{any_of: [safety.weather_alert, safety.driving_advice]}]
+                allow_extra_intents: true
+  - id: cp.adaptive.stock-then-research
+    title: 股价异动后再决定要不要深调研
+    family_id: cp.stock-research
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, adaptive], domains: [info, research], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 先看看宁德时代今天涨跌，跌超过五个点就帮我深挖一下原因, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [info.stock]}]
+            allow_extra_intents: true
+          replans:
+            - after:
+                result: {step_id: s1, status: ok, data: {change_pct: -6.2}, speech: 今日下跌 6.2%}
+              plan:
+                required_intent_groups: [{any_of: [research.run, info.search]}]
+                allow_extra_intents: true
+  - id: cp.adaptive.sports-then-remind
+    title: 比赛时间确认后再建提醒
+    family_id: cp.sports-remind
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, adaptive], domains: [info, reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 查下今晚国安比赛几点，开赛前半小时提醒我, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [info.sports]}]
+            allow_extra_intents: true
+          replans:
+            - after:
+                result: {step_id: s1, status: ok, data: {kickoff: "19:35"}, speech: 今晚 19:35 开赛}
+              plan:
+                required_intent_groups: [{any_of: [reminder.create]}]
+                allow_extra_intents: false
+
+  # ── 并行集合断言（不得多做、不得漏做）────────────────────────────────────
+  - id: cp.set.no-extra-search
+    title: 只要天气，不要顺手加搜索
+    family_id: cp.set-no-extra
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute], domains: [info], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天广州天气怎么样, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather]}], forbidden_intents: [info.search, info.forecast, nearby.search], allow_extra_intents: false}
+  - id: cp.set.no-extra-navigate
+    title: 只要搜索，不要顺手导航
+    family_id: cp.set-no-nav
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute], domains: [nearby, navigation], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 附近有什么好吃的日料, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [navigation.navigate_to, nearby.order], allow_extra_intents: false}
+  - id: cp.set.no-extra-order
+    title: 只要详情，不要顺手下单
+    family_id: cp.set-no-order
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute, write_action], domains: [nearby], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 这家人均多少钱, context: {focus: {last_intent: nearby.search, last_poi: 鮨割烹（天环店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.detail]}], forbidden_intents: [nearby.order, shop.order], allow_extra_intents: false}
+  - id: cp.set.no-extra-reminder
+    title: 只要查赛程，不要顺手建提醒
+    family_id: cp.set-no-reminder
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute], domains: [info, reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今晚国安几点开赛, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.sports]}], forbidden_intents: [reminder.create], allow_extra_intents: false}
+  - id: cp.set.no-extra-charging
+    title: 只要电量，不要顺手找桩
+    family_id: cp.set-no-charging
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute], domains: [charging], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 现在电量还有多少, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.status]}], forbidden_intents: [charging.find, charging.plan], allow_extra_intents: false}
+  - id: cp.set.no-extra-scene
+    title: 只要列场景，不要顺手启动
+    family_id: cp.set-no-scene
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute], domains: [scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我都建了哪些场景, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.list]}], forbidden_intents: [scene.activate, scene.update], allow_extra_intents: false}
+  - id: cp.set.no-extra-trip
+    title: 只要看行程，不要顺手改
+    family_id: cp.set-no-trip
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute], domains: [trip], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我的行程现在什么样, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.status]}], forbidden_intents: [trip.modify, trip.reschedule], allow_extra_intents: false}
+  - id: cp.set.no-extra-vision
+    title: 只要定位，不要顺手抓一帧
+    family_id: cp.set-no-vision
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute, privacy], domains: [navigation, vision], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我现在到哪了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.locate]}], forbidden_intents: [vision.describe], allow_extra_intents: false}
+  - id: cp.set.no-extra-manual
+    title: 只要说明书，不要顺手联网搜
+    family_id: cp.set-no-manual
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute], domains: [manual, info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 说明书上怎么开启自动泊车, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [manual.query]}], forbidden_intents: [info.search, research.run], allow_extra_intents: false}
+  - id: cp.set.no-extra-parking
+    title: 只要找车位，不要顺手付款
+    family_id: cp.set-no-parking
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute, write_action], domains: [nearby, parking], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 附近哪有便宜的停车场, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [parking.pay], allow_extra_intents: false}
+  - id: cp.set.no-extra-news
+    title: 只要调研进度，不要重新起一轮
+    family_id: cp.set-no-rerun
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute], domains: [research], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 刚才那个调研做完了吗, context: {focus: {last_intent: research.run}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [research.status]}], forbidden_intents: [research.run], allow_extra_intents: false}
+  - id: cp.set.no-extra-forecast
+    title: 只要今天，不要顺手把三天都查了
+    family_id: cp.set-no-forecast
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 现在外面几度, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather]}], forbidden_intents: [info.forecast, info.indices], allow_extra_intents: false}
+
+  # ── 组合补充：依赖方向、结果传递与「多做一步」────────────────────────────
+  - id: cp.dep.weather-then-indoor
+    title: 先天气后室内去处（依赖必须成链）
+    family_id: cp.dep-weather-indoor
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, dependency, adaptive], domains: [info, nearby], boundary: weather-outing, layers: [l1]}
+    provenance: {kind: real_badcase, source_ref: skills/guides/weather-outing.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 看看今天下不下雨，下雨就推荐点室内的地方, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [info.weather, info.forecast]}]
+            allow_extra_intents: true
+          replans:
+            - after:
+                result: {step_id: s1, status: ok, data: {condition: 大雨}, speech: 今天有大雨}
+              plan:
+                required_intent_groups: [{any_of: [nearby.search]}]
+                forbidden_intents: [navigation.search_poi]
+                allow_extra_intents: false
+  - id: cp.dep.charge-then-eat
+    title: 充电顺路吃饭：两步都要，不能只留一步
+    family_id: cp.dep-charge-eat
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [charging, nearby], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 找个充电站，充电的时候我想顺便吃点东西, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}, {any_of: [nearby.search]}], allow_extra_intents: false}
+  - id: cp.dep.trip-then-weather
+    title: 排行程并查目的地天气
+    family_id: cp.dep-trip-weather
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [trip, info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 帮我排个两天的厦门行程，再看看那边天气, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.plan]}, {any_of: [info.weather, info.forecast]}], allow_extra_intents: false}
+  - id: cp.dep.reminder-then-scene
+    title: 建提醒并建场景是两件事
+    family_id: cp.dep-reminder-scene
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [reminder, scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 提醒我七点起床，再建一个早晨模式, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create]}, {any_of: [scene.create]}], allow_extra_intents: false}
+  - id: cp.dep.search-then-navigate-poi
+    title: 找加油站再导航过去
+    family_id: cp.dep-fuel-nav
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [nearby, navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 找个最近的加油站，然后导航过去, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search, navigation.search_poi]}, {any_of: [navigation.navigate_to]}]
+            allow_extra_intents: false
+  - id: cp.dep.alerts-and-forecast
+    title: 预警与预报是两个能力
+    family_id: cp.dep-alerts-forecast
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 有没有预警，另外未来三天天气怎么样, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.alerts]}, {any_of: [info.forecast]}], allow_extra_intents: false}
+  - id: cp.dep.scene-and-media
+    title: 开场景并放歌
+    family_id: cp.dep-scene-media
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [scene, media], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 打开夜间模式，再放首轻音乐, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.activate]}, {any_of: [media.play]}], allow_extra_intents: false}
+  - id: cp.dep.locate-and-weather
+    title: 定位并查当地天气
+    family_id: cp.dep-locate-weather
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [navigation, info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我现在在哪，这边天气怎么样, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.locate]}, {any_of: [info.weather]}], allow_extra_intents: false}
+  - id: cp.dep.manual-and-tire
+    title: 查胎压并问处理办法
+    family_id: cp.dep-manual-tire
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [manual], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 看一下胎压，顺便告诉我胎压低了该怎么办, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [tire_pressure.query]}, {any_of: [manual.query]}], allow_extra_intents: false}
+  - id: cp.dep.four-way-order
+    title: 换序四意图，集合不变
+    family_id: cp.dep-four-order
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [window, hvac, info, reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 提醒我七点起床，查下明天天气，打开空调，关上车窗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [window.close]}, {any_of: [hvac.on]}, {any_of: [info.weather, info.forecast]}, {any_of: [reminder.create]}], allow_extra_intents: false}
+  - id: cp.dep.no-silent-extra-step
+    title: 组合里不得偷偷多一步导航
+    family_id: cp.dep-no-extra
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, overroute], domains: [nearby, info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 附近有什么日料，再看看今天天气, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}, {any_of: [info.weather]}], forbidden_intents: [navigation.navigate_to, nearby.order], allow_extra_intents: false}
+  - id: cp.dep.no-silent-extra-order
+    title: 组合里不得偷偷多一步下单
+    family_id: cp.dep-no-extra-order
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, overroute, write_action], domains: [shop, info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 看看演示商户的菜单，再查下今天天气, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [shop.menu]}, {any_of: [info.weather]}], forbidden_intents: [shop.order], allow_extra_intents: false}

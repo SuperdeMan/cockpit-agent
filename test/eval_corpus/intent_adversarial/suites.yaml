@@ -1,10 +1,13 @@
 schema_version: 1
+# 上限 520 而不是设计文档写的 500：设计 §9.4 明确「数字用于估算工作量，不替代覆盖
+# 矩阵」。云侧 129 个 active intent 里逐个补齐 2 正例 + 2 硬负例 + 1 对照后落在 516 条，
+# 为了压回 500 去删掉能证明边界的用例是本末倒置。落地记录里记了这笔偏差。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 500
+    max_cases: 520
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

@@ -1,0 +1,505 @@
+schema_version: 1
+# A7 知识与规则干扰：Skill / Exemplar / Route Hint 的误召回、覆盖与预算裁剪。
+#
+# `required_skills` 判的是**真的注入了**——被预算裁掉（`!clipped`）不算命中，它压根
+# 没进 prompt。`forbidden_skills` 判的是**没去干扰不相干的句子**：一条领域 guide 被
+# 裸问天气召回，本身就是知识层在制造噪声。
+#
+# 这一类同时声明 l0 与 l1：检索是确定性的（词法档零网络），落域要模型。两层的结论
+# 不互相外推——「知识进去了」不等于「知识用对了」。
+cases:
+  - id: ki.weather-outing.hit
+    title: 天气出游必须召回组合判据 guide
+    family_id: ki.weather-outing
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_recall], domains: [info, nearby], layers: [l0, l1], gate_candidate: true}
+    provenance: {kind: real_badcase, source_ref: skills/guides/weather-outing.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天的天气适合去哪玩, context: {}}
+        expected:
+          retrieval: {required_skills: [weather-outing]}
+          plan: {required_intent_groups: [{any_of: [info.weather, info.forecast]}], allow_extra_intents: true}
+  - id: ki.weather-outing.miss
+    title: 裸问天气不该被出游 guide 干扰
+    family_id: ki.weather-plain
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [info], layers: [l0, l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天天气怎么样, context: {}}
+        expected:
+          retrieval: {forbidden_skills: [weather-outing, multi-day-trip, navigation-with-stop]}
+          plan: {required_intent_groups: [{any_of: [info.weather]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: ki.charging-strategy.hit
+    title: 找充电站必须召回充电策略 guide
+    family_id: ki.charging-strategy
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_recall], domains: [charging], layers: [l0, l1], gate_candidate: true}
+    provenance: {kind: authored, source_ref: skills/guides/charging-strategy.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 附近的充电站, context: {}}
+        expected:
+          retrieval: {required_skills: [charging-strategy]}
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: ki.charging-strategy.miss
+    title: 问电量不该被充电策略 guide 拉去找桩
+    family_id: ki.charging-status
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [charging], layers: [l0, l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 现在电量还有多少, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.status]}], forbidden_intents: [charging.find], allow_extra_intents: false}
+  - id: ki.multi-day-trip.hit
+    title: 多日行程必须召回行程 guide
+    family_id: ki.multi-day-trip
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_recall], domains: [trip], layers: [l0, l1], gate_candidate: true}
+    provenance: {kind: authored, source_ref: skills/guides/multi-day-trip.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 帮我排一个三天的杭州行程, context: {}}
+        expected:
+          retrieval: {required_skills: [multi-day-trip]}
+          plan: {required_intent_groups: [{any_of: [trip.plan]}], allow_extra_intents: false}
+  - id: ki.multi-day-trip.miss
+    title: 单点导航不该被多日行程 guide 拉走
+    family_id: ki.single-nav
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [navigation, trip], layers: [l0, l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 导航去杭州东站, context: {}}
+        expected:
+          retrieval: {forbidden_skills: [multi-day-trip]}
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [trip.plan], allow_extra_intents: false}
+  - id: ki.navigation-with-stop.hit
+    title: 途经点必须召回带途经点 guide
+    family_id: ki.nav-stop
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_recall], domains: [navigation, charging], layers: [l0, l1], gate_candidate: true}
+    provenance: {kind: authored, source_ref: skills/guides/navigation-with-stop.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 导航去公司路上找个充电站, context: {}}
+        expected:
+          retrieval: {required_skills: [navigation-with-stop]}
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], allow_extra_intents: true}
+  - id: ki.conditional-reminder.hit
+    title: 条件提醒必须召回条件提醒 guide
+    family_id: ki.cond-reminder
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_recall], domains: [info, reminder], layers: [l0, l1], gate_candidate: true}
+    provenance: {kind: authored, source_ref: skills/guides/conditional-reminder.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 明天下雨提醒我带伞, context: {}}
+        expected:
+          retrieval: {required_skills: [conditional-reminder]}
+          plan: {required_intent_groups: [{any_of: [info.weather, info.forecast]}], allow_extra_intents: true}
+  - id: ki.conditional-reminder.miss
+    title: 无条件提醒不该被条件 guide 复杂化
+    family_id: ki.plain-reminder
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [reminder], layers: [l0, l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 提醒我明天九点交周报, context: {}}
+        expected:
+          retrieval: {forbidden_skills: [conditional-reminder, weather-outing]}
+          plan: {required_intent_groups: [{any_of: [reminder.create]}], forbidden_intents: [info.weather, info.forecast], allow_extra_intents: false}
+  - id: ki.exemplar.charging-recall
+    title: 充电范例应召回同域范例
+    family_id: ki.ex-charging
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [exemplar_recall], domains: [charging], layers: [l0, l1]}
+    provenance: {kind: authored, source_ref: skills/exemplars/charging.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 车没电了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [chitchat.talk], allow_extra_intents: false}
+  - id: ki.hint.research-replace
+    title: Hint 把浅搜改写成深调研（应当命中）
+    family_id: ki.hint-research
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint], domains: [research], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, source_ref: agents/deep-research/manifest.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 帮我深入调研一下钙钛矿电池的产业化进展, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [research.run]}], forbidden_intents: [info.search, chitchat.talk], allow_extra_intents: false}
+  - id: ki.hint.research-guard
+    title: Hint guard 必须挡住浅搜句
+    family_id: ki.hint-research-guard
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, guard], domains: [info, research], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 搜一下钙钛矿电池, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.search]}], forbidden_intents: [research.run], allow_extra_intents: false}
+  - id: ki.hint.trip-append
+    title: Hint append 不得取代已正确路由的步
+    family_id: ki.hint-trip
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, append], domains: [trip], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 帮我规划一次两天一夜的周边游, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.plan]}], allow_extra_intents: true}
+  - id: ki.hint.no-hijack-weather
+    title: Hint 不得劫持普通天气句
+    family_id: ki.hint-weather
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [info], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 深圳明天会不会下雨, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather, info.forecast]}], forbidden_intents: [research.run, trip.plan, nearby.search], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-reminder
+    title: Hint 不得劫持普通提醒句
+    family_id: ki.hint-reminder
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [reminder], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 提醒我下周一去续保, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create]}], forbidden_intents: [research.run, trip.plan], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-nearby
+    title: Hint 不得劫持普通周边句
+    family_id: ki.hint-nearby
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [nearby], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 附近有没有评分高的日料, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find, trip.plan], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-manual
+    title: Hint 不得劫持说明书句
+    family_id: ki.hint-manual
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [manual], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 说明书里怎么讲胎压监测的, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [manual.query]}], forbidden_intents: [research.run, info.search], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-scene
+    title: Hint 不得劫持场景句
+    family_id: ki.hint-scene
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [scene], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 新建一个夜间驾驶模式, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.create]}], forbidden_intents: [trip.plan, research.run], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-shop
+    title: Hint 不得劫持商户句
+    family_id: ki.hint-shop
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [shop], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 演示商户现在有哪些套餐, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [shop.menu]}], forbidden_intents: [nearby.search, research.run], allow_extra_intents: false}
+  - id: ki.budget.core-survives
+    title: 预算裁剪不得丢掉端侧车控
+    family_id: ki.budget-core
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [catalog_budget], domains: [hvac], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, source_ref: orchestrator/cloud/context.py, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把空调调到二十四度, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.set]}], forbidden_intents: [chitchat.talk], allow_extra_intents: false}
+  - id: ki.budget.chitchat-survives
+    title: 预算裁剪不得丢掉开放域兜底
+    family_id: ki.budget-chitchat
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [catalog_budget], domains: [chitchat], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 你觉得人为什么会做梦, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [chitchat.talk]}], forbidden_intents: [info.search, research.run], allow_extra_intents: false}
+  - id: ki.exemplar.no-cross-domain-drag
+    title: 邻域范例不得把句子拖过界
+    family_id: ki.ex-cross
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [exemplar_false_recall], domains: [nearby, charging], layers: [l0, l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 附近有便利店吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find], allow_extra_intents: false}
+  - id: ki.exemplar.no-scene-drag
+    title: 场景范例不得把提醒句拖走
+    family_id: ki.ex-scene
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [exemplar_false_recall], domains: [reminder, scene], layers: [l0, l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 每天早上七点提醒我吃药, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create]}], forbidden_intents: [scene.create, scene.activate], allow_extra_intents: false}
+  - id: ki.exemplar.no-research-drag
+    title: 调研范例不得把普通问答拖走
+    family_id: ki.ex-research
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [exemplar_false_recall], domains: [chitchat, research], layers: [l0, l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 电池为什么怕冷, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [chitchat.talk, info.search]}], forbidden_intents: [research.run], allow_extra_intents: false}
+  - id: ki.policy.always-present
+    title: 常驻策略必须永远在场
+    family_id: ki.policy
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [policy_always_on], domains: [info], layers: [l0]}
+    provenance: {kind: authored, source_ref: skills/policies, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天空气怎么样, context: {}}
+        expected:
+          retrieval: {required_skills: [freshness-and-depth, implicit-vehicle-control]}
+  - id: ki.policy.present-on-control
+    title: 车控句同样常驻策略在场
+    family_id: ki.policy-control
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [policy_always_on], domains: [hvac], layers: [l0]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 有点冷, context: {}}
+        expected:
+          retrieval: {required_skills: [freshness-and-depth, implicit-vehicle-control]}
+  - id: ki.guide.no-recall-on-chitchat
+    title: 闲聊句不该召回任何领域 guide
+    family_id: ki.guide-chitchat
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [chitchat], layers: [l0, l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 你今天心情怎么样, context: {}}
+        expected:
+          retrieval: {forbidden_skills: [weather-outing, charging-strategy, multi-day-trip, navigation-with-stop, conditional-reminder]}
+          plan: {required_intent_groups: [{any_of: [chitchat.talk]}], allow_extra_intents: false}
+  - id: ki.guide.no-recall-on-media
+    title: 媒体句不该召回领域 guide
+    family_id: ki.guide-media
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [media], layers: [l0, l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 下一首, context: {}}
+        expected:
+          retrieval: {forbidden_skills: [weather-outing, charging-strategy, multi-day-trip]}
+          plan: {required_intent_groups: [{any_of: [media.next]}], allow_extra_intents: false}
+  - id: ki.guide.no-recall-on-vision
+    title: 视觉句不该召回导航 guide
+    family_id: ki.guide-vision
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [vision], layers: [l0, l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 看看窗外那栋楼是什么, context: {}}
+        expected:
+          retrieval: {forbidden_skills: [navigation-with-stop, multi-day-trip]}
+          plan: {required_intent_groups: [{any_of: [vision.describe]}], forbidden_intents: [navigation.locate], allow_extra_intents: false}
+  - id: ki.guide.no-recall-on-stock
+    title: 股价句不该召回出游 guide
+    family_id: ki.guide-stock
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [info], layers: [l0, l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 比亚迪今天涨了多少, context: {}}
+        expected:
+          retrieval: {forbidden_skills: [weather-outing, charging-strategy]}
+          plan: {required_intent_groups: [{any_of: [info.stock]}], allow_extra_intents: false}
+  - id: ki.guide.no-recall-on-alerts
+    title: 预警句不该召回出游 guide
+    family_id: ki.guide-alerts
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [info], layers: [l0, l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 现在有没有暴雨预警, context: {}}
+        expected:
+          retrieval: {forbidden_skills: [weather-outing]}
+          plan: {required_intent_groups: [{any_of: [info.alerts]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-parking
+    title: Hint 不得劫持停车句
+    family_id: ki.hint-parking
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [parking], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 帮我把停车费付一下, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [parking.pay]}], forbidden_intents: [trip.plan, research.run], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-sports
+    title: Hint 不得劫持赛事句
+    family_id: ki.hint-sports
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 昨晚国安打成几比几, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.sports]}], forbidden_intents: [research.run, info.news], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-air
+    title: Hint 不得劫持空气质量句
+    family_id: ki.hint-air
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天 PM2.5 高不高, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.air_quality]}], forbidden_intents: [research.run], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-indices
+    title: Hint 不得劫持生活指数句
+    family_id: ki.hint-indices
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天紫外线强不强, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.indices]}], forbidden_intents: [nearby.search, research.run], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-locate
+    title: Hint 不得劫持定位句
+    family_id: ki.hint-locate
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我现在在哪条路上, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.locate]}], forbidden_intents: [vision.describe, trip.plan], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-order-status
+    title: Hint 不得劫持订单进度句
+    family_id: ki.hint-order
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [shop], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我那单送到哪了, context: {focus: {last_intent: shop.order}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [shop.order_status]}], forbidden_intents: [research.status, trip.status], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-driving-advice
+    title: Hint 不得劫持驾驶建议句
+    family_id: ki.hint-advice
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [safety], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 这种天气开车要注意什么, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.driving_advice, safety.weather_alert]}], forbidden_intents: [research.run, info.indices], allow_extra_intents: false}
+  - id: ki.hint.no-hijack-reverse-geocode
+    title: Hint 不得劫持坐标反查句
+    family_id: ki.hint-geocode
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 北纬三十度东经一百二十度是哪, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.reverse_geocode]}], forbidden_intents: [vision.describe], allow_extra_intents: false}
+
+  - id: ki.guide.no-recall-on-parking
+    title: 停车句不该召回充电 guide
+    family_id: ki.guide-parking
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [parking, charging], layers: [l0, l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 停车场怎么收费, context: {}}
+        expected:
+          retrieval: {forbidden_skills: [charging-strategy, weather-outing]}
+          plan: {forbidden_intents: [charging.find], allow_extra_intents: true}

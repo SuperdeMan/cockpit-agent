@@ -1,2 +1,1049 @@
 schema_version: 1
-cases: []
+# A1 跨域词义碰撞：相似能力描述、共享问句框架、设施发现边界。
+#
+# 18 条 `skills/exemplars/boundaries.yaml` 台账裁定各出 4 条（左/右 × seen/unseen），
+# 每一侧都必须 **required 本侧 + forbidden 对侧**——只写 required 的用例证明不了边界，
+# 它连对侧被误选都不会红。seen 用台账原句（已进范例库），unseen 用同义新句且**另立
+# family**，防止拿修复原句自证泛化。
+#
+# seen 与 unseen 各自成一对 route_flip 最小对照：同一个问句框架、只换对象，落域必须翻。
+cases:
+  # ── 台账 1：reminder-scene.todo-list-vs-scene-list ──────────────────────
+  - id: bd.rs-todo.left.seen
+    title: 看看我的待办
+    family_id: bd.rs-todo.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [reminder, scene], boundary_ledger: reminder-scene.todo-list-vs-scene-list, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: reminder-scene.todo-list-vs-scene-list, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 看看我的待办, context: {}}
+        expected:
+          decision: {allowed: [execute], clarify: forbidden}
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [scene.list], allow_extra_intents: false}
+  - id: bd.rs-todo.right.seen
+    title: 看看我的场景
+    family_id: bd.rs-todo.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [reminder, scene], boundary_ledger: reminder-scene.todo-list-vs-scene-list, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: reminder-scene.todo-list-vs-scene-list, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.rs-todo.left.seen, type: route_flip, expectation: {forbidden_after: [reminder.list], required_change: true}}
+    turns:
+      - input: {utterance: 看看我的场景, context: {}}
+        expected:
+          decision: {allowed: [execute], clarify: forbidden}
+          plan: {required_intent_groups: [{any_of: [scene.list]}], forbidden_intents: [reminder.list], allow_extra_intents: false}
+  - id: bd.rs-todo.left.unseen
+    title: 我还有哪些没做完的事项
+    family_id: bd.rs-todo.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [reminder, scene], boundary_ledger: reminder-scene.todo-list-vs-scene-list, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: reminder-scene.todo-list-vs-scene-list, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我还有哪些没做完的事项, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [scene.list], allow_extra_intents: false}
+  - id: bd.rs-todo.right.unseen
+    title: 我配好的模式都有哪些
+    family_id: bd.rs-todo.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [reminder, scene], boundary_ledger: reminder-scene.todo-list-vs-scene-list, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: reminder-scene.todo-list-vs-scene-list, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.rs-todo.left.unseen, type: route_flip, expectation: {forbidden_after: [reminder.list], required_change: true}}
+    turns:
+      - input: {utterance: 我配好的模式都有哪些, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.list]}], forbidden_intents: [reminder.list], allow_extra_intents: false}
+
+  # ── 台账 2：reminder-scene.which-reminders-vs-which-scenes ──────────────
+  - id: bd.rs-which.left.seen
+    title: 我有哪些提醒
+    family_id: bd.rs-which.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [reminder, scene], boundary_ledger: reminder-scene.which-reminders-vs-which-scenes, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: reminder-scene.which-reminders-vs-which-scenes, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我有哪些提醒, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [scene.list], allow_extra_intents: false}
+  - id: bd.rs-which.right.seen
+    title: 有哪些场景模式
+    family_id: bd.rs-which.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [reminder, scene], boundary_ledger: reminder-scene.which-reminders-vs-which-scenes, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: reminder-scene.which-reminders-vs-which-scenes, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.rs-which.left.seen, type: route_flip, expectation: {forbidden_after: [reminder.list], required_change: true}}
+    turns:
+      - input: {utterance: 有哪些场景模式, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.list]}], forbidden_intents: [reminder.list], allow_extra_intents: false}
+  - id: bd.rs-which.left.unseen
+    title: 帮我念一下待办列表
+    family_id: bd.rs-which.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [reminder, scene], boundary_ledger: reminder-scene.which-reminders-vs-which-scenes, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: reminder-scene.which-reminders-vs-which-scenes, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 帮我念一下待办列表, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [scene.list], allow_extra_intents: false}
+  - id: bd.rs-which.right.unseen
+    title: 帮我念一下场景列表
+    family_id: bd.rs-which.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [reminder, scene], boundary_ledger: reminder-scene.which-reminders-vs-which-scenes, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: reminder-scene.which-reminders-vs-which-scenes, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.rs-which.left.unseen, type: route_flip, expectation: {forbidden_after: [reminder.list], required_change: true}}
+    turns:
+      - input: {utterance: 帮我念一下场景列表, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [scene.list]}], forbidden_intents: [reminder.list], allow_extra_intents: false}
+
+  # ── 台账 3：info-reminder.news-vs-schedule ──────────────────────────────
+  - id: bd.ir-news-sched.left.seen
+    title: 今天有什么新闻
+    family_id: bd.ir-news-sched.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.news-vs-schedule, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-reminder.news-vs-schedule, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天有什么新闻, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.news]}], forbidden_intents: [reminder.list], allow_extra_intents: false}
+  - id: bd.ir-news-sched.right.seen
+    title: 我今天有什么安排
+    family_id: bd.ir-news-sched.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.news-vs-schedule, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-reminder.news-vs-schedule, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ir-news-sched.left.seen, type: route_flip, expectation: {forbidden_after: [info.news], required_change: true}}
+    turns:
+      - input: {utterance: 我今天有什么安排, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [info.news], allow_extra_intents: false}
+  - id: bd.ir-news-sched.left.unseen
+    title: 今天有哪些热点消息
+    family_id: bd.ir-news-sched.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.news-vs-schedule, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-reminder.news-vs-schedule, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天有哪些热点消息, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.news]}], forbidden_intents: [reminder.list], allow_extra_intents: false}
+  - id: bd.ir-news-sched.right.unseen
+    title: 我今天要做的事有哪些
+    family_id: bd.ir-news-sched.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.news-vs-schedule, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-reminder.news-vs-schedule, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ir-news-sched.left.unseen, type: route_flip, expectation: {forbidden_after: [info.news], required_change: true}}
+    turns:
+      - input: {utterance: 我今天要做的事有哪些, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [info.news], allow_extra_intents: false}
+
+  # ── 台账 4：info-reminder.news-vs-tomorrow-reminder ─────────────────────
+  - id: bd.ir-news-tmr.left.seen
+    title: 今天有什么新闻（对照明天的提醒）
+    family_id: bd.ir-news-tmr.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.news-vs-tomorrow-reminder, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-reminder.news-vs-tomorrow-reminder, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天有什么新闻, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.news]}], forbidden_intents: [reminder.list], allow_extra_intents: false}
+  - id: bd.ir-news-tmr.right.seen
+    title: 明天有什么提醒
+    family_id: bd.ir-news-tmr.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.news-vs-tomorrow-reminder, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-reminder.news-vs-tomorrow-reminder, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ir-news-tmr.left.seen, type: route_flip, expectation: {forbidden_after: [info.news], required_change: true}}
+    turns:
+      - input: {utterance: 明天有什么提醒, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [info.news], allow_extra_intents: false}
+  - id: bd.ir-news-tmr.left.unseen
+    title: 最近有什么大事发生
+    family_id: bd.ir-news-tmr.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.news-vs-tomorrow-reminder, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-reminder.news-vs-tomorrow-reminder, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 最近有什么大事发生, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.news]}], forbidden_intents: [reminder.list], allow_extra_intents: false}
+  - id: bd.ir-news-tmr.right.unseen
+    title: 明天要提醒我的事有哪些
+    family_id: bd.ir-news-tmr.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.news-vs-tomorrow-reminder, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-reminder.news-vs-tomorrow-reminder, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ir-news-tmr.left.unseen, type: route_flip, expectation: {forbidden_after: [info.news], required_change: true}}
+    turns:
+      - input: {utterance: 明天要提醒我的事有哪些, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [info.news], allow_extra_intents: false}
+
+  # ── 台账 5：info-reminder.news-vs-three-day-reminder ────────────────────
+  - id: bd.ir-news-3d.left.seen
+    title: 今天有什么新闻（对照未来三天提醒）
+    family_id: bd.ir-news-3d.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.news-vs-three-day-reminder, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-reminder.news-vs-three-day-reminder, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天有什么新闻, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.news]}], forbidden_intents: [reminder.list], allow_extra_intents: false}
+  - id: bd.ir-news-3d.right.seen
+    title: 未来三天有什么提醒
+    family_id: bd.ir-news-3d.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.news-vs-three-day-reminder, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-reminder.news-vs-three-day-reminder, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ir-news-3d.left.seen, type: route_flip, expectation: {forbidden_after: [info.news], required_change: true}}
+    turns:
+      - input: {utterance: 未来三天有什么提醒, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [info.news], allow_extra_intents: false}
+  - id: bd.ir-news-3d.left.unseen
+    title: 今天有什么值得看的报道
+    family_id: bd.ir-news-3d.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.news-vs-three-day-reminder, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-reminder.news-vs-three-day-reminder, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天有什么值得看的报道, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.news]}], forbidden_intents: [reminder.list], allow_extra_intents: false}
+  - id: bd.ir-news-3d.right.unseen
+    title: 接下来三天我有哪些待办
+    family_id: bd.ir-news-3d.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.news-vs-three-day-reminder, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-reminder.news-vs-three-day-reminder, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ir-news-3d.left.unseen, type: route_flip, expectation: {forbidden_after: [info.news], required_change: true}}
+    turns:
+      - input: {utterance: 接下来三天我有哪些待办, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [info.news], allow_extra_intents: false}
+
+  # ── 台账 6：info-reminder.forecast-vs-three-day-reminder ────────────────
+  - id: bd.ir-fc-3d.left.seen
+    title: 北京未来三天天气
+    family_id: bd.ir-fc-3d.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.forecast-vs-three-day-reminder, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-reminder.forecast-vs-three-day-reminder, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 北京未来三天天气, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.forecast]}], forbidden_intents: [reminder.list], allow_extra_intents: false}
+  - id: bd.ir-fc-3d.right.seen
+    title: 未来三天有什么提醒（对照三天天气）
+    family_id: bd.ir-fc-3d.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.forecast-vs-three-day-reminder, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-reminder.forecast-vs-three-day-reminder, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ir-fc-3d.left.seen, type: route_flip, expectation: {forbidden_after: [info.forecast], required_change: true}}
+    turns:
+      - input: {utterance: 未来三天有什么提醒, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [info.forecast], allow_extra_intents: false}
+  - id: bd.ir-fc-3d.left.unseen
+    title: 上海接下来三天冷不冷
+    family_id: bd.ir-fc-3d.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.forecast-vs-three-day-reminder, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-reminder.forecast-vs-three-day-reminder, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 上海接下来三天冷不冷, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.forecast]}], forbidden_intents: [reminder.list], allow_extra_intents: false}
+  - id: bd.ir-fc-3d.right.unseen
+    title: 接下来三天要提醒我什么
+    family_id: bd.ir-fc-3d.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, reminder], boundary_ledger: info-reminder.forecast-vs-three-day-reminder, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-reminder.forecast-vs-three-day-reminder, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ir-fc-3d.left.unseen, type: route_flip, expectation: {forbidden_after: [info.forecast], required_change: true}}
+    turns:
+      - input: {utterance: 接下来三天要提醒我什么, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [info.forecast], allow_extra_intents: false}
+
+  # ── 台账 7：info-safety.life-index-vs-driving-advice ────────────────────
+  - id: bd.is-index-drive.left.seen
+    title: 今天适合运动吗
+    family_id: bd.is-index-drive.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, safety], boundary_ledger: info-safety.life-index-vs-driving-advice, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-safety.life-index-vs-driving-advice, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天适合运动吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.indices]}], forbidden_intents: [safety.driving_advice], allow_extra_intents: false}
+  - id: bd.is-index-drive.right.seen
+    title: 今天适合开车吗
+    family_id: bd.is-index-drive.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, safety], boundary_ledger: info-safety.life-index-vs-driving-advice, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-safety.life-index-vs-driving-advice, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.is-index-drive.left.seen, type: route_flip, expectation: {forbidden_after: [info.indices], required_change: true}}
+    turns:
+      - input: {utterance: 今天适合开车吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.driving_advice]}], forbidden_intents: [info.indices], allow_extra_intents: false}
+  - id: bd.is-index-drive.left.unseen
+    title: 今天适合洗车吗
+    family_id: bd.is-index-drive.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, safety], boundary_ledger: info-safety.life-index-vs-driving-advice, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-safety.life-index-vs-driving-advice, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天适合洗车吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.indices]}], forbidden_intents: [safety.driving_advice], allow_extra_intents: false}
+  - id: bd.is-index-drive.right.unseen
+    title: 今天路上开车要注意什么
+    family_id: bd.is-index-drive.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info, safety], boundary_ledger: info-safety.life-index-vs-driving-advice, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-safety.life-index-vs-driving-advice, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.is-index-drive.left.unseen, type: route_flip, expectation: {forbidden_after: [info.indices], required_change: true}}
+    turns:
+      - input: {utterance: 今天路上开车要注意什么, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.driving_advice]}], forbidden_intents: [info.indices], allow_extra_intents: false}
+
+  # ── 台账 8：info-research.search-vs-deep-research ───────────────────────
+  - id: bd.ires-search-deep.left.seen
+    title: 搜一下固态电池最新进展
+    family_id: bd.ires-search-deep.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, depth_word], domains: [info, research], boundary_ledger: info-research.search-vs-deep-research, boundary_side: left, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: info-research.search-vs-deep-research, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 搜一下固态电池最新进展, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.search]}], forbidden_intents: [research.run], allow_extra_intents: false}
+  - id: bd.ires-search-deep.right.seen
+    title: 深入调研一下固态电池现状
+    family_id: bd.ires-search-deep.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, depth_word], domains: [info, research], boundary_ledger: info-research.search-vs-deep-research, boundary_side: right, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: info-research.search-vs-deep-research, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ires-search-deep.left.seen, type: route_flip, expectation: {forbidden_after: [info.search], required_change: true}}
+    turns:
+      - input: {utterance: 深入调研一下固态电池现状, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [research.run]}], forbidden_intents: [info.search], allow_extra_intents: false}
+  - id: bd.ires-search-deep.left.unseen
+    title: 查一下钠离子电池最近的消息
+    family_id: bd.ires-search-deep.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, depth_word], domains: [info, research], boundary_ledger: info-research.search-vs-deep-research, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-research.search-vs-deep-research, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 查一下钠离子电池最近的消息, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.search]}], forbidden_intents: [research.run], allow_extra_intents: false}
+  - id: bd.ires-search-deep.right.unseen
+    title: 帮我做一份钠离子电池的深度调研
+    family_id: bd.ires-search-deep.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, depth_word], domains: [info, research], boundary_ledger: info-research.search-vs-deep-research, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-research.search-vs-deep-research, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ires-search-deep.left.unseen, type: route_flip, expectation: {forbidden_after: [info.search], required_change: true}}
+    turns:
+      - input: {utterance: 帮我做一份钠离子电池的深度调研, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [research.run]}], forbidden_intents: [info.search], allow_extra_intents: false}
+
+  # ── 台账 9：nearby-safety.poi-vs-road-condition ─────────────────────────
+  - id: bd.ns-poi-road.left.seen
+    title: 这家怎么样（对照路上怎么样）
+    family_id: bd.ns-poi-road.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [nearby, safety], boundary_ledger: nearby-safety.poi-vs-road-condition, boundary_side: left, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: nearby-safety.poi-vs-road-condition, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 这家怎么样, context: {focus: {last_intent: nearby.search, last_poi: 海底捞（体育中心店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.detail]}], forbidden_intents: [safety.road_condition], allow_extra_intents: false}
+  - id: bd.ns-poi-road.right.seen
+    title: 路上怎么样
+    family_id: bd.ns-poi-road.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [nearby, safety], boundary_ledger: nearby-safety.poi-vs-road-condition, boundary_side: right, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: nearby-safety.poi-vs-road-condition, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ns-poi-road.left.seen, type: route_flip, expectation: {forbidden_after: [nearby.detail], required_change: true}}
+    turns:
+      - input: {utterance: 路上怎么样, context: {focus: {last_intent: nearby.search, last_poi: 海底捞（体育中心店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.road_condition]}], forbidden_intents: [nearby.detail], allow_extra_intents: false}
+  - id: bd.ns-poi-road.left.unseen
+    title: 这一家评价好不好
+    family_id: bd.ns-poi-road.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [nearby, safety], boundary_ledger: nearby-safety.poi-vs-road-condition, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: nearby-safety.poi-vs-road-condition, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 这一家评价好不好, context: {focus: {last_intent: nearby.search, last_poi: 海底捞（体育中心店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.detail]}], forbidden_intents: [safety.road_condition], allow_extra_intents: false}
+  - id: bd.ns-poi-road.right.unseen
+    title: 前面一段路好走吗
+    family_id: bd.ns-poi-road.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [nearby, safety], boundary_ledger: nearby-safety.poi-vs-road-condition, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: nearby-safety.poi-vs-road-condition, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ns-poi-road.left.unseen, type: route_flip, expectation: {forbidden_after: [nearby.detail], required_change: true}}
+    turns:
+      - input: {utterance: 前面一段路好走吗, context: {focus: {last_intent: nearby.search, last_poi: 海底捞（体育中心店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.road_condition]}], forbidden_intents: [nearby.detail], allow_extra_intents: false}
+
+  # ── 台账 10：nearby-safety.poi-vs-traffic ───────────────────────────────
+  - id: bd.ns-poi-traffic.left.seen
+    title: 这家怎么样（对照路况怎么样）
+    family_id: bd.ns-poi-traffic.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [nearby, safety], boundary_ledger: nearby-safety.poi-vs-traffic, boundary_side: left, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: nearby-safety.poi-vs-traffic, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 这家怎么样, context: {focus: {last_intent: nearby.search, last_poi: 星巴克（金融城店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.detail]}], forbidden_intents: [safety.road_condition], allow_extra_intents: false}
+  - id: bd.ns-poi-traffic.right.seen
+    title: 路况怎么样
+    family_id: bd.ns-poi-traffic.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [nearby, safety], boundary_ledger: nearby-safety.poi-vs-traffic, boundary_side: right, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: nearby-safety.poi-vs-traffic, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ns-poi-traffic.left.seen, type: route_flip, expectation: {forbidden_after: [nearby.detail], required_change: true}}
+    turns:
+      - input: {utterance: 路况怎么样, context: {focus: {last_intent: nearby.search, last_poi: 星巴克（金融城店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.road_condition]}], forbidden_intents: [nearby.detail], allow_extra_intents: false}
+  - id: bd.ns-poi-traffic.left.unseen
+    title: 这家店口碑如何
+    family_id: bd.ns-poi-traffic.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [nearby, safety], boundary_ledger: nearby-safety.poi-vs-traffic, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: nearby-safety.poi-vs-traffic, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 这家店口碑如何, context: {focus: {last_intent: nearby.search, last_poi: 星巴克（金融城店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.detail]}], forbidden_intents: [safety.road_condition], allow_extra_intents: false}
+  - id: bd.ns-poi-traffic.right.unseen
+    title: 现在堵不堵
+    family_id: bd.ns-poi-traffic.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [nearby, safety], boundary_ledger: nearby-safety.poi-vs-traffic, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: nearby-safety.poi-vs-traffic, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.ns-poi-traffic.left.unseen, type: route_flip, expectation: {forbidden_after: [nearby.detail], required_change: true}}
+    turns:
+      - input: {utterance: 现在堵不堵, context: {focus: {last_intent: nearby.search, last_poi: 星巴克（金融城店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.road_condition]}], forbidden_intents: [nearby.detail], allow_extra_intents: false}
+
+  # ── 台账 11：info-nearby.weather-vs-poi ─────────────────────────────────
+  - id: bd.in-weather-poi.left.seen
+    title: 今天天气怎么样
+    family_id: bd.in-weather-poi.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [info, nearby], boundary_ledger: info-nearby.weather-vs-poi, boundary_side: left, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: info-nearby.weather-vs-poi, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 今天天气怎么样, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather]}], forbidden_intents: [nearby.detail, nearby.search], allow_extra_intents: false}
+  - id: bd.in-weather-poi.right.seen
+    title: 这家怎么样（对照天气怎么样）
+    family_id: bd.in-weather-poi.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [info, nearby], boundary_ledger: info-nearby.weather-vs-poi, boundary_side: right, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: info-nearby.weather-vs-poi, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.in-weather-poi.left.seen, type: route_flip, expectation: {forbidden_after: [info.weather], required_change: true}}
+    turns:
+      - input: {utterance: 这家怎么样, context: {focus: {last_intent: nearby.search, last_poi: 西贝莜面村（万象城店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.detail]}], forbidden_intents: [info.weather], allow_extra_intents: false}
+  - id: bd.in-weather-poi.left.unseen
+    title: 外面现在多少度
+    family_id: bd.in-weather-poi.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [info, nearby], boundary_ledger: info-nearby.weather-vs-poi, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-nearby.weather-vs-poi, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 外面现在多少度, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather]}], forbidden_intents: [nearby.detail], allow_extra_intents: false}
+  - id: bd.in-weather-poi.right.unseen
+    title: 这家店值得去吗
+    family_id: bd.in-weather-poi.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [info, nearby], boundary_ledger: info-nearby.weather-vs-poi, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-nearby.weather-vs-poi, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.in-weather-poi.left.unseen, type: route_flip, expectation: {forbidden_after: [info.weather], required_change: true}}
+    turns:
+      - input: {utterance: 这家店值得去吗, context: {focus: {last_intent: nearby.search, last_poi: 西贝莜面村（万象城店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.detail]}], forbidden_intents: [info.weather], allow_extra_intents: false}
+
+  # ── 台账 12：charging-nearby.charger-vs-restaurant ──────────────────────
+  - id: bd.cn-rest.left.seen
+    title: 附近的充电站
+    family_id: bd.cn-rest.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-restaurant, boundary_side: left, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-restaurant, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 附近的充电站, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: bd.cn-rest.right.seen
+    title: 附近的餐厅
+    family_id: bd.cn-rest.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-restaurant, boundary_side: right, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-restaurant, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.cn-rest.left.seen, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
+    turns:
+      - input: {utterance: 附近的餐厅, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find], allow_extra_intents: false}
+  - id: bd.cn-rest.left.unseen
+    title: 周围哪儿能给车补电
+    family_id: bd.cn-rest.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-restaurant, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: charging-nearby.charger-vs-restaurant, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 周围哪儿能给车补电, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: bd.cn-rest.right.unseen
+    title: 周围有什么好吃的
+    family_id: bd.cn-rest.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-restaurant, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: charging-nearby.charger-vs-restaurant, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.cn-rest.left.unseen, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
+    turns:
+      - input: {utterance: 周围有什么好吃的, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find], allow_extra_intents: false}
+
+  # ── 台账 13：charging-nearby.charger-vs-attraction ──────────────────────
+  - id: bd.cn-attr.left.seen
+    title: 附近的充电站（对照附近的景点）
+    family_id: bd.cn-attr.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-attraction, boundary_side: left, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-attraction, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 附近的充电站, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: bd.cn-attr.right.seen
+    title: 附近的景点
+    family_id: bd.cn-attr.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-attraction, boundary_side: right, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-attraction, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.cn-attr.left.seen, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
+    turns:
+      - input: {utterance: 附近的景点, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find], allow_extra_intents: false}
+  - id: bd.cn-attr.left.unseen
+    title: 就近找个快充桩
+    family_id: bd.cn-attr.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-attraction, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: charging-nearby.charger-vs-attraction, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 就近找个快充桩, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: bd.cn-attr.right.unseen
+    title: 就近找个能逛的地方
+    family_id: bd.cn-attr.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-attraction, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: charging-nearby.charger-vs-attraction, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.cn-attr.left.unseen, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
+    turns:
+      - input: {utterance: 就近找个能逛的地方, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find], allow_extra_intents: false}
+
+  # ── 台账 14：charging-nearby.charger-vs-hotel ───────────────────────────
+  - id: bd.cn-hotel.left.seen
+    title: 附近的充电站（对照附近的酒店）
+    family_id: bd.cn-hotel.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-hotel, boundary_side: left, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-hotel, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 附近的充电站, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: bd.cn-hotel.right.seen
+    title: 附近的酒店
+    family_id: bd.cn-hotel.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-hotel, boundary_side: right, layers: [l1], gate_candidate: true}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-hotel, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.cn-hotel.left.seen, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
+    turns:
+      - input: {utterance: 附近的酒店, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find], allow_extra_intents: false}
+  - id: bd.cn-hotel.left.unseen
+    title: 这边有充电桩吗
+    family_id: bd.cn-hotel.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-hotel, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: charging-nearby.charger-vs-hotel, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 这边有充电桩吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: bd.cn-hotel.right.unseen
+    title: 这边有住的地方吗
+    family_id: bd.cn-hotel.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, facility_discovery], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-hotel, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: charging-nearby.charger-vs-hotel, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.cn-hotel.left.unseen, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
+    turns:
+      - input: {utterance: 这边有住的地方吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find], allow_extra_intents: false}
+
+  # ── 台账 15：navigation-trip.go-home-vs-reschedule ──────────────────────
+  - id: bd.nt-home.left.seen
+    title: 回家
+    family_id: bd.nt-home.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, near_miss], domains: [navigation, trip], boundary_ledger: navigation-trip.go-home-vs-reschedule, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: navigation-trip.go-home-vs-reschedule, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 回家, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [trip.reschedule], allow_extra_intents: false}
+  - id: bd.nt-home.right.seen
+    title: 想提前回家
+    family_id: bd.nt-home.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, near_miss], domains: [navigation, trip], boundary_ledger: navigation-trip.go-home-vs-reschedule, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: navigation-trip.go-home-vs-reschedule, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.nt-home.left.seen, type: route_flip, expectation: {forbidden_after: [navigation.navigate_to], required_change: true}}
+    turns:
+      - input: {utterance: 想提前回家, context: {history: [{role: user, text: 帮我规划一个三天的杭州行程}, {role: assistant, text: 已为您排好三天行程}]}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.reschedule]}], forbidden_intents: [navigation.navigate_to], allow_extra_intents: false}
+  - id: bd.nt-home.left.unseen
+    title: 导航回家
+    family_id: bd.nt-home.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, near_miss], domains: [navigation, trip], boundary_ledger: navigation-trip.go-home-vs-reschedule, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: navigation-trip.go-home-vs-reschedule, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 导航回家, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [trip.reschedule], allow_extra_intents: false}
+  - id: bd.nt-home.right.unseen
+    title: 行程能不能提早一天回
+    family_id: bd.nt-home.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, near_miss], domains: [navigation, trip], boundary_ledger: navigation-trip.go-home-vs-reschedule, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: navigation-trip.go-home-vs-reschedule, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.nt-home.left.unseen, type: route_flip, expectation: {forbidden_after: [navigation.navigate_to], required_change: true}}
+    turns:
+      - input: {utterance: 行程能不能提早一天回, context: {history: [{role: user, text: 帮我规划一个三天的杭州行程}, {role: assistant, text: 已为您排好三天行程}]}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.reschedule]}], forbidden_intents: [navigation.navigate_to], allow_extra_intents: false}
+
+  # ── 台账 16：navigation-vision.where-vs-what ────────────────────────────
+  - id: bd.nv-where-what.left.seen
+    title: 这是哪里
+    family_id: bd.nv-where-what.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, historic_incident], domains: [navigation, vision], boundary_ledger: navigation-vision.where-vs-what, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: navigation-vision.where-vs-what, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 这是哪里, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.locate]}], forbidden_intents: [vision.describe], allow_extra_intents: false}
+  - id: bd.nv-where-what.right.seen
+    title: 这是什么
+    family_id: bd.nv-where-what.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, historic_incident], domains: [navigation, vision], boundary_ledger: navigation-vision.where-vs-what, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: navigation-vision.where-vs-what, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.nv-where-what.left.seen, type: route_flip, expectation: {forbidden_after: [navigation.locate], required_change: true}}
+    turns:
+      - input: {utterance: 这是什么, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [vision.describe]}], forbidden_intents: [navigation.locate], allow_extra_intents: false}
+  - id: bd.nv-where-what.left.unseen
+    title: 我现在在什么位置
+    family_id: bd.nv-where-what.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, historic_incident], domains: [navigation, vision], boundary_ledger: navigation-vision.where-vs-what, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: navigation-vision.where-vs-what, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 我现在在什么位置, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.locate]}], forbidden_intents: [vision.describe], allow_extra_intents: false}
+  - id: bd.nv-where-what.right.unseen
+    title: 窗外那个东西是什么
+    family_id: bd.nv-where-what.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, historic_incident], domains: [navigation, vision], boundary_ledger: navigation-vision.where-vs-what, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: navigation-vision.where-vs-what, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.nv-where-what.left.unseen, type: route_flip, expectation: {forbidden_after: [navigation.locate], required_change: true}}
+    turns:
+      - input: {utterance: 窗外那个东西是什么, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [vision.describe]}], forbidden_intents: [navigation.locate], allow_extra_intents: false}
+
+  # ── 台账 17：navigation-vision.coordinate-vs-visual ─────────────────────
+  - id: bd.nv-coord-visual.left.seen
+    title: 这个坐标是什么地方
+    family_id: bd.nv-coord-visual.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, historic_incident], domains: [navigation, vision], boundary_ledger: navigation-vision.coordinate-vs-visual, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: navigation-vision.coordinate-vs-visual, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 这个坐标是什么地方, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.reverse_geocode]}], forbidden_intents: [vision.describe], allow_extra_intents: false}
+  - id: bd.nv-coord-visual.right.seen
+    title: 看看这个是什么
+    family_id: bd.nv-coord-visual.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, historic_incident], domains: [navigation, vision], boundary_ledger: navigation-vision.coordinate-vs-visual, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: navigation-vision.coordinate-vs-visual, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.nv-coord-visual.left.seen, type: route_flip, expectation: {forbidden_after: [navigation.reverse_geocode], required_change: true}}
+    turns:
+      - input: {utterance: 看看这个是什么, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [vision.describe]}], forbidden_intents: [navigation.reverse_geocode], allow_extra_intents: false}
+  - id: bd.nv-coord-visual.left.unseen
+    title: 把这组经纬度翻成地名
+    family_id: bd.nv-coord-visual.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, historic_incident], domains: [navigation, vision], boundary_ledger: navigation-vision.coordinate-vs-visual, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: navigation-vision.coordinate-vs-visual, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把这组经纬度翻成地名, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.reverse_geocode]}], forbidden_intents: [vision.describe], allow_extra_intents: false}
+  - id: bd.nv-coord-visual.right.unseen
+    title: 帮我看看前面那块牌子写的什么
+    family_id: bd.nv-coord-visual.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, historic_incident], domains: [navigation, vision], boundary_ledger: navigation-vision.coordinate-vs-visual, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: navigation-vision.coordinate-vs-visual, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.nv-coord-visual.left.unseen, type: route_flip, expectation: {forbidden_after: [navigation.reverse_geocode], required_change: true}}
+    turns:
+      - input: {utterance: 帮我看看前面那块牌子写的什么, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [vision.describe]}], forbidden_intents: [navigation.reverse_geocode], allow_extra_intents: false}
+
+  # ── 台账 18：info-safety.weather-alert ──────────────────────────────────
+  - id: bd.is-alert.left.seen
+    title: 有没有天气预警
+    family_id: bd.is-alert.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, driving_angle], domains: [info, safety], boundary_ledger: info-safety.weather-alert, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-safety.weather-alert, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 有没有天气预警, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.alerts]}], forbidden_intents: [safety.weather_alert], allow_extra_intents: false}
+  - id: bd.is-alert.right.seen
+    title: 这天气预警影响开车吗
+    family_id: bd.is-alert.seen
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, driving_angle], domains: [info, safety], boundary_ledger: info-safety.weather-alert, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-safety.weather-alert, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.is-alert.left.seen, type: route_flip, expectation: {forbidden_after: [info.alerts], required_change: true}}
+    turns:
+      - input: {utterance: 这天气预警影响开车吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.weather_alert]}], forbidden_intents: [info.alerts], allow_extra_intents: false}
+  - id: bd.is-alert.left.unseen
+    title: 现在有预警信号吗
+    family_id: bd.is-alert.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, driving_angle], domains: [info, safety], boundary_ledger: info-safety.weather-alert, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-safety.weather-alert, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 现在有预警信号吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.alerts]}], forbidden_intents: [safety.weather_alert], allow_extra_intents: false}
+  - id: bd.is-alert.right.unseen
+    title: 这个预警对我开车有影响吗
+    family_id: bd.is-alert.unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, driving_angle], domains: [info, safety], boundary_ledger: info-safety.weather-alert, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: info-safety.weather-alert, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.is-alert.left.unseen, type: route_flip, expectation: {forbidden_after: [info.alerts], required_change: true}}
+    turns:
+      - input: {utterance: 这个预警对我开车有影响吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.weather_alert]}], forbidden_intents: [info.alerts], allow_extra_intents: false}
+
+  # ── 非台账业务边界（tags.boundary 只做报告分桶，不参与台账双向门禁）──────
+  - id: bd.stock-research.left
+    title: 查一下宁德时代的股价
+    family_id: bd.stock-research
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, depth_word], domains: [info, research], boundary: stock-vs-research, layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 查一下宁德时代的股价, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.stock]}], forbidden_intents: [research.run, info.search], allow_extra_intents: false}
+  - id: bd.stock-research.right
+    title: 帮我深入研究宁德时代的基本面
+    family_id: bd.stock-research
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, depth_word], domains: [info, research], boundary: stock-vs-research, layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.stock-research.left, type: route_flip, expectation: {forbidden_after: [info.stock], required_change: true}}
+    turns:
+      - input: {utterance: 帮我深入研究宁德时代的基本面, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [research.run]}], forbidden_intents: [info.stock], allow_extra_intents: false}
+  - id: bd.manual-search.left
+    title: 车里这个黄色警告灯是什么意思
+    family_id: bd.manual-search
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [manual, info], boundary: manual-vs-search, layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 车里这个黄色警告灯是什么意思, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [manual.query]}], forbidden_intents: [info.search, vision.describe], allow_extra_intents: false}
+  - id: bd.manual-search.right
+    title: 网上查一下别的车主怎么解决这个警告灯
+    family_id: bd.manual-search
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [manual, info], boundary: manual-vs-search, layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.manual-search.left, type: route_flip, expectation: {forbidden_after: [manual.query], required_change: true}}
+    turns:
+      - input: {utterance: 网上查一下别的车主怎么解决这个警告灯, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.search]}], forbidden_intents: [manual.query], allow_extra_intents: false}
+  - id: bd.air-weather.left
+    title: 外面雾霾严重吗
+    family_id: bd.air-weather
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info], boundary: air-quality-vs-weather, layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 外面雾霾严重吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.air_quality]}], forbidden_intents: [info.weather], allow_extra_intents: false}
+  - id: bd.air-weather.right
+    title: 外面下雨了吗
+    family_id: bd.air-weather
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [info], boundary: air-quality-vs-weather, layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.air-weather.left, type: route_flip, expectation: {forbidden_after: [info.air_quality], required_change: true}}
+    turns:
+      - input: {utterance: 外面下雨了吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather]}], forbidden_intents: [info.air_quality], allow_extra_intents: false}
+  - id: bd.tire-manual.left
+    title: 胎压现在多少
+    family_id: bd.tire-manual
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [manual], boundary: tire-state-vs-manual, layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 胎压现在多少, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [tire_pressure.query]}], forbidden_intents: [manual.query], allow_extra_intents: false}
+  - id: bd.tire-manual.right
+    title: 胎压报警了该怎么处理
+    family_id: bd.tire-manual
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [manual], boundary: tire-state-vs-manual, layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: bd.tire-manual.left, type: route_flip, expectation: {forbidden_after: [tire_pressure.query], required_change: true}}
+    turns:
+      - input: {utterance: 胎压报警了该怎么处理, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [manual.query]}], forbidden_intents: [tire_pressure.query], allow_extra_intents: false}

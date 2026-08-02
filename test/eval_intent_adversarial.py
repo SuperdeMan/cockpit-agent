@@ -713,12 +713,24 @@ def _run_case_layer(case, layer, args, suite, agents, builder, confirm_intents,
                                provider_model if layer != "l0" else "deterministic"),
         metrics=_metrics_for(case, judgement, snapshot),
         expected=_expected_dict(case), actual=_snapshot_dict(snapshot),
-        admitted_intents=(), actual_intents=tuple(snapshot.plan.intents),
+        # 准入清单按本案例的 catalog 条件算：A8 把某个能力从 catalog 拿掉后，
+        # 计划里还出现它就是能力幻觉——用全量 inventory 当分母会看不见这件事。
+        admitted_intents=_admitted_intents(case, agents),
+        actual_intents=tuple(snapshot.plan.intents),
         assertions=_assertion_rows(judgement),
         repetitions=tuple({"passed": o.passed, "signature": o.signature[:400],
                            "dangerous": o.dangerous} for o in classification.outcomes),
         divergence=divergence, ablations=tuple(ablations))
     return result, snapshot
+
+
+def _admitted_intents(case, agents) -> tuple[str, ...]:
+    catalog = runtime.filter_unavailable_capabilities(
+        agents, set(case.turns[0].context.get("unavailable_intents") or []))
+    return tuple(sorted(
+        str(cap.intent) for agent in catalog
+        for cap in (getattr(agent.manifest, "capabilities", None) or [])
+        if getattr(cap, "intent", "")))
 
 
 def _arm_passed(ablations: list[dict], arm: str) -> bool:
