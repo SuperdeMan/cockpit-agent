@@ -803,3 +803,173 @@ python test/eval_intent_adversarial.py --lane engine --attack context
 17. 报告明确局限、未覆盖项和模型波动，不把局部证据包装成全域结论。
 
 本规格是设计决策记录，不是运行状态证明。最终实现状态必须由新鲜测试、baseline、报告与提交证据共同确认。
+
+---
+
+## 21. 落地记录（2026-08-02）
+
+> 状态：**框架与语料全落地；发现轨已跑；gate 晋级与正式 baseline 未达成**。
+> 下面逐项区分「做到了什么」与「明确没做到什么」——framework / discovery / gate /
+> baseline 是四件事，不合并成一个完成结论（DoD 第 17 条）。
+
+### 21.1 交付物
+
+| 类别 | 文件 |
+|---|---|
+| 契约 | `test/support/intent_adversarial_contract.py`（dataclass、UniqueKeyLoader、逐层未知键拒绝、`validate_cases`、coverage/boundary/retrieval 校验、豁免与台账加载） |
+| 裁判 | `test/support/intent_adversarial_judge.py`（精确计划集合、依赖、六类槽位 matcher、检索、`semantic_signature` 与七类 relation） |
+| trace | `test/support/intent_adversarial_trace.py`（Hint 前后、校验前后、资产指纹、首偏离点） |
+| 分层运行 | `test/support/intent_adversarial_runtime.py`（L0 Edge/Hint/检索/catalog、L1 Planner、L2 SafeClients+EngineHarness、重复策略、五条消融） |
+| 指标与基线 | `test/support/intent_adversarial_report.py`（11 个主指标、11 个维度、宏平均与最弱 cell、baseline 资格硬闸） |
+| CLI | `test/eval_intent_adversarial.py` |
+| 候选导入器 | `test/build_intent_adversarial_candidates.py`（五类只读来源，只产 candidate） |
+| 语料 | `test/eval_corpus/intent_adversarial/`（README、suites、coverage_exemptions、journey_links、10 个 cases 文件） |
+| 单测 | 7 个新测试文件，共 **120 passed** |
+| 历史指标正名 | `test/routing_bench.py::domain_hit` + `test/test_routing_bench_metric.py` |
+
+### 21.2 语料规模与覆盖
+
+- **516 条 discovery**（reviewed），unseen_transfer 466 / seen_regression 50；
+  138 组最小对照；风险分布 critical 47 / high 61 / medium 258 / low 150。
+- 攻击分布：A1 80 / A2 95 / A3 47 / A4 60 / A5 50 / A6 49 / A7 40 / A8 43 / A9 52。
+- 执行层声明：l0 70 / l1 458 / l2 7 / l3 6。
+- **18 条 `boundaries.yaml` 台账裁定全部双向覆盖**（每侧 ≥2 条，且每条都必须
+  「required 本侧 + forbidden 对侧」才计数——只写 required 的用例证明不了边界）。
+  台账同批补了稳定 `id`（`left-right.slug`），运行时检索与既有门禁结论零变化。
+- **云侧 129 个 active intent 的覆盖缺口清零**；剩余 61 个端侧原子车控/媒体在
+  `coverage_exemptions.yaml` **逐 intent、逐 requirement** 豁免，禁止通配。
+- **gate 候选正好 140**，其中 6 条链到既有 journey 作 L3 证据。
+
+### 21.3 与实施计划的偏差（逐条）
+
+1. **Task 3 与 Task 4 合并为一次提交**。`judge_relation` 与 `judge_plan` 共用
+   `semantic_signature` 与断言容器；拆成两次提交会让第一次提交带上未被测试覆盖的
+   关系代码，反而破坏 TDD 顺序。
+2. **discovery 上限 500 → 520**。设计 §9.4 明确「数字用于估算工作量，不替代覆盖
+   矩阵」。逐个补齐云侧 intent 的 2 正例 + 2 硬负例 + 1 对照后落在 516 条；为压回
+   500 去删掉能证明边界的用例是本末倒置。
+3. **`required_skills` 把 `!clipped` 判为未命中**。计划原文只做名称归一化。被预算
+   裁掉的资产压根没进 prompt，算它「命中」等于把「知识没进上下文」和「进了没用对」
+   混成一件事——那正是 M0b 分层法则要分开的两件事。
+4. **L1 主跑用 `--ablations off`，消融改为对失败子集单独跑**。计划 Step 2 写的是
+   `--ablations on-failure`；主跑同时开消融会让一次失败额外产生 4 arm × 3 次 = 12 次
+   模型调用，对 400+ 案例的首跑不划算。消融能力本身已实现并有单测。
+5. **`--list` 不再要求 `--live`**。计划 Task 17 Step 3 用 `--layer l3 --list` 取
+   journey id，而 `--list` 不跑任何模型；原校验会把这条正常路径堵死。
+6. **AGENTS.md §4.0 一并刷新**，虽然不在 Task 18 的 Files 列表里。项目
+   `CLAUDE.md` 规定当前事实统一维护在那里，漏掉它会让快照过期。
+
+### 21.4 审阅闸：这批的 `reviewed` 是概括授权，不是逐条人裁
+
+设计 §7.5 规定 LLM 只能产 candidate、不能自填 `reviewed_by: human`。本批 516 条
+`reviewed` 是**泓舟 2026-08-02 概括授权**下由实施者按批次自审后标注的
+（`provenance.reviewed_via: blanket_authorisation` 逐条留痕）。
+
+**这一点必须显式记账**：概括授权替代不了逐条人裁。它意味着 gold 的错误率上界由
+自审质量决定，而不是由人裁决定。后续任何一条 gold 被证伪，都应按设计 §11.5 的
+`gold_error` 流程降回 candidate、改完重新取得批准，而不是就地改了继续用。
+
+### 21.5 安全与合规
+
+- 未修改 `.github/workflows/`、CI/CD 配置、根 `.env` 或任何密钥。
+- 未为了让测试变绿而修改任何 Agent / Skill / Exemplar / Route Hint / manifest 的
+  生产路由行为。唯一动到的生产侧文件是 `skills/exemplars/boundaries.yaml` 的
+  `rulings[].id`——纯新增字段，`test/eval_exemplars.py` 仍只消费 `texts/domains/why`，
+  门禁结论零变化（同批实跑 exit 0）。
+- L2 的 Agent 与 VAL 全部是 fake/spy；全程未触发真实车控、支付、消息或删除。
+- 全部工作在专用 worktree `worktree-intent-adversarial` 内完成，逐任务只暂存该任务
+  的文件。
+
+### 21.6 实跑结果（reference provider `minimax:MiniMax-M3`，warm 检索）
+
+| 车道 | 证据单元 | 通过 | 备注 |
+|---|---:|---:|---|
+| L0 discovery（零网络） | 70 | 65 | 5 条红灯全部定性 `product_defect` |
+| L0 gate（stable 子集） | 18 | **18** | 100%，高风险 forbidden=0、确认前副作用=0 |
+| L1 discovery 第一趟 | 458 | 400 | 87.3%；30 条稳定缺陷、14 条 unstable |
+| L1 门禁候选 第二趟（独立进程） | 118 | 104 | 与第一趟交叉后才算晋级证据 |
+| L2 完整 Edge→Engine | 7 | **7** | Agent/VAL 全 fake/spy，确认前零副作用 |
+| L3 精选 journeys | 0 | — | **证据未取得**，见 21.8 |
+| gate `--layer all`（晋级后） | 119 | 113 | 95.0%；6 条全是 `unstable`，**无稳定失败** |
+
+门禁轨的读数值得单列：`forbidden_route_rate` 0%、`capability_hallucination_rate` 0%、
+`relation_pass_rate` 100%（23/23），6 条红灯**全部是 `unstable`**——即三次采样分裂，
+不是稳定缺陷。
+
+**但这 6 条恰恰是两趟都绿才晋级进来的。** 也就是说：两次独立进程能滤掉大部分噪声，
+滤不干净——第三次运行仍有 5.9% 的 live 案例落进不稳定。这条数字应当写进以后读门禁
+红灯的方式里：**门禁红一条，先看 `repeat_status` 是不是 `unstable`，再决定要不要
+当产品问题查**。
+
+L1 首轮的主要读数（逐条证据在 gitignore 的 `_ci-run-intent-adversarial.json`）：
+
+- `exact_plan_set_rate` 91.3%、`required_group_recall` 93.7%、`relation_pass_rate` 87.7%；
+- `capability_hallucination_rate` **0.0%**；`forbidden_route_rate` 1.1%；`instability_rate` 3.1%；
+- **seen 98.0% vs unseen 86.0%**——12 个百分点的落差。
+
+最后这一条是本次最值得单独拿出来的数字：**修复原句上的表现证明不了泛化**。
+以后任何「落域准确率涨了」的说法，第一个问题都该是「哪一档涨了」。
+
+### 21.7 晋级结果
+
+**113 条晋级 stable**（设计要求 120–160，**未达线**）。扣住 25 条：
+
+| 原因 | 条数 | 说明 |
+|---|---:|---|
+| 等 L3 证据 | 6 | 运行器起不来，见 21.8 |
+| 两趟里至少一趟红 | 18 | 其中 **8 条是两趟之间翻面**——单趟跑批会把它们当稳定案例晋级掉 |
+| relation base 未晋级 | 1 | 契约拦下的：stable 用例不能拿未晋级对象当参照系 |
+
+那 8 条翻面案例是「两次独立进程」这条规则唯一的存在理由。少跑一趟，门禁里就会混进
+8 条其实在采样噪声里的用例，之后每次红灯都要重新怀疑一遍是不是产品问题。
+
+### 21.8 明确未达项
+
+1. **L3 证据未取得，正式 baseline 未生成。**
+   `scripts/run_e2e.py` 在本机以 `lease_protocol` / `identity_cleanup` 失败，未产出结构化
+   `journeys_report`。这是既有 e2e 运行器的环境路径问题（本批次未改动 `run_e2e.py`
+   或 `e2e_stack_lease.py`），**不折算成 journey 失败**。
+   连带结果：`baseline_eligibility()` 正当拒绝写入，正式 baseline 文件保持不存在。
+   实跑的拒绝原因逐条为：`l3_empty`、`l3_incomplete`、`unstable_results`、
+   `gate_failures`、`dirty_worktree`（跑批时落地记录尚未提交，闸子如实抓到）。
+   **没有绕过**：CLI 不提供 `--force`/`--accept-failures`，拒绝原因原样打印、
+   退出码 2，诊断另写 `_ci-run-intent-adversarial-rejected-<时间戳>.{json,md}`。
+2. **stable 规模 113 < 设计要求的 120。** 不靠降低判定标准或替换成更容易的新案例来凑数。
+3. **L2 只有 7 条。** 只有真正依赖真实状态（pending/确认闸/副作用）的案例才进 L2；
+   这个数字偏小是事实，后续应把上下文类案例逐步下沉到 L2。
+4. **9 条降回 candidate**，需要产品拍板才能定 gold：CLARIFY_ENABLED 开关（3 条）、
+   nearby/navigation 与 manual/vision 两条**台账里没有裁定**的边界（3 条）、
+   「看不清路」该开灯还是开雨刷（1 条）、成对降级（2 条）。
+5. **定向消融只在门禁轨开了 `on-failure`**，发现轨主跑用 `--ablations off`（见 21.3-4）。
+   因此 21.6 的红灯尚未逐条建立因果证据，只有首偏离点。
+
+### 21.9 这套尺子在首轮就抓到的东西
+
+产品缺陷清单见 `docs/design/2026-08-02-intent-routing-adversarial-findings.md`。
+按本批次不修生产路由的约定，全部另批排期。最该修的三簇：
+
+1. **否定语义没有被消费**：「空调先别关」→ `hvac.on`、「车门先别锁」→
+   `door_lock.close`、「先别提醒我带伞」→ `reminder.create`、「停车费先别交」三次
+   采样里有一次真的规划了 `parking.pay`。**失败方向全部朝着执行去**。
+2. **问功能被端侧当成指令执行**：「这车的天窗最大能开多大」真把天窗打开了
+   （`state_delta={'sunroof': 'open'}` + 1 个 `vehicle.control` 副作用）。
+3. **能力归属错误导致合法步被整条丢弃**：`volume.inc` 被派给 `edge-media`（它属于
+   `edge-vehicle`），校验按「intent ∈ 该 agent 能力集」把整步丢掉，计划退化成闲聊。
+   能力幻觉率 0% 是这道校验挣来的，但「intent 对、agent 猜错」被处理成了什么都不做。
+
+### 21.10 本套件自身被抓到的 7 个缺陷（已当批修）
+
+守红线的测试自己要被审计。首轮跑批抓到 7 条，全部当批修掉并补了守卫断言：
+
+1. 确定性层（L0）不该有 `unstable`——一次红即结论；
+2. 范例检索静默降级成纯词法（`embedding.py` 默认连容器内主机名，宿主跑被
+   `ALL_PROXY` 兜走）——现在记基础设施错误、退出码 2；
+3. 判定失败却只留首轮证据——高风险案例首轮过、二三轮翻车时报告「红灯但断言全绿」；
+4. L2 嵌套事件循环——7 条 L2 全被吞成基础设施错误、`cases=0`；
+5. 取消判定要求 `is_confirmation`——裸「取消」被判成 `execute`；
+6. `_l3_results` 被追加到 `__main__` 守卫之后，模块级先执行 `main()`；
+7. **L3 运行器起不来被折算成 6 条 journey 失败**——运行器故障伪装成产品缺陷。
+
+七条里有四条（1、3、4、7）是同一形态：**失败被记成了别的东西**。这类比误判更危险，
+因为它们让报告看起来正常。判据记一条：**每加一个「拿不到结果」的分支，都要先问
+它会被记成什么**。
