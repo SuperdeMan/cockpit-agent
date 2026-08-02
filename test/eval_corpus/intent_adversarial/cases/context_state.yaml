@@ -492,7 +492,7 @@ cases:
     cohort: unseen_transfer
     risk: critical
     status: reviewed
-    tags: {attacks: [A5], mechanisms: [pending_plan, confirm], domains: [trunk], layers: [l2], gate_candidate: true}
+    tags: {attacks: [A5], mechanisms: [pending_plan, confirm], domains: [trunk], layers: [l2, l3], gate_candidate: true}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     turns:
       - input:

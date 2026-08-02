@@ -152,3 +152,20 @@ def test_eligible_run_writes_the_formal_pair(tmp_path):
         formal_json, formal_md, tmp_path / "r.json", tmp_path / "r.md")
     assert written is True
     assert formal_md.read_text(encoding="utf-8") == "official"
+
+
+def test_list_never_requires_live_because_it_runs_no_model():
+    for layer in ("l1", "l2", "l3", "all"):
+        validate_args(parse_args(["--layer", layer, "--list"]))
+    with pytest.raises(SystemExit):
+        validate_args(parse_args(["--layer", "l3"]))
+
+
+def test_journey_links_resolve_against_the_real_journey_corpus():
+    links = load_journey_links()
+    assert links, "L3 选集为空时 baseline 会被 l3_empty 拒掉，链接不能是空的"
+    known = known_journey_ids()
+    for case_id, journeys in links.items():
+        assert journeys, f"{case_id} 链接了空 journey 列表"
+        for journey in journeys:
+            assert journey in known

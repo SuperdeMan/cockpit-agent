@@ -102,7 +102,9 @@ def validate_args(args: argparse.Namespace) -> argparse.Namespace:
     def die(message: str):
         raise SystemExit(f"[intent-adversarial] {message}")
 
-    needs_live = args.layer in LIVE_LAYERS or args.layer == "all"
+    # `--list` 只做选择与缺口展示，不跑任何模型——它是拿 journey id 的正常入口
+    # （Task 17 Step 3），要求它 --live 会把这条路堵死。
+    needs_live = (args.layer in LIVE_LAYERS or args.layer == "all") and not args.list
     if needs_live and not args.live:
         die(f"--layer {args.layer} 需要 --live（L1/L2/L3 必须真实模型）")
     if args.live and (not args.provider or not args.model):

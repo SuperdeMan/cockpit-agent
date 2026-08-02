@@ -232,7 +232,7 @@ cases:
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [charging, navigation], layers: [l1], gate_candidate: true}
+    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [charging, navigation], layers: [l1, l3], gate_candidate: true}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     turns:
       - input: {utterance: 找个最近的充电站，然后导航过去, context: {}}
@@ -380,7 +380,7 @@ cases:
     cohort: seen_regression
     risk: medium
     status: reviewed
-    tags: {attacks: [A4], mechanisms: [composition, adaptive, dependency], domains: [info, nearby], boundary: weather-outing, layers: [l1], gate_candidate: true}
+    tags: {attacks: [A4], mechanisms: [composition, adaptive, dependency], domains: [info, nearby], boundary: weather-outing, layers: [l1, l3], gate_candidate: true}
     provenance: {kind: real_badcase, source_ref: docs/reviews/2026-08-02-review-acceptance-impl-and-badcase-intelligence.md, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     turns:
       - input: {utterance: 今天的天气适合去哪玩, context: {}}
