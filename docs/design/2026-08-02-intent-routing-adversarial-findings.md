@@ -62,8 +62,100 @@ L0 首跑 70 条证据单元、65 通过。5 条红灯全部定性为 `product_d
 
 ## 2. L1（真实 Planner，reference provider）
 
-见下方「L1 首轮」小节；逐条证据在 `docs/reviews/eval/_ci-run-intent-adversarial.json`
-（gitignore 的运行工件，本地审计用）。
+逐条证据在 `docs/reviews/eval/_ci-run-intent-adversarial.json`（gitignore 的运行工件，本地审计用）。
+
+### 2.1 首轮读数（reference provider `minimax:MiniMax-M3`，warm 检索）
+
+458 条 L1 证据单元，**400 通过（87.3%）**。
+
+| 指标 | 值 | 分子/分母 |
+|---|---:|---|
+| `exact_plan_set_rate` | 91.3% | 418/458 |
+| `required_group_recall` | 93.7% | 429/458 |
+| `overroute_rate` | 5.5% | 25/458 |
+| `forbidden_route_rate` | 1.1% | 5/458 |
+| `dependency_pass_rate` | 99.8% | 457/458 |
+| `relation_pass_rate` | 87.7% | 121/138 |
+| `context_override_rate` | 100.0% | 7/7 |
+| `capability_hallucination_rate` | **0.0%** | 0/458 |
+| `instability_rate` | 3.1% | 14/458 |
+| `clarify_balanced_accuracy` | 50.0% | 6/8 |
+
+重复分类：pass 414 / stable_fail 27 / unstable 14 / critical_fail 3。
+
+**seen 98.0%（49/50）vs unseen 86.0%（351/408）——12 个百分点的落差。**
+这正是设计要量的东西：修复原句上的表现证明不了泛化。以后任何「落域准确率涨了」的
+说法，都要先问是哪一档涨了。
+
+`capability_hallucination_rate` 为 0 是个真结论：`_validated_steps` 那道能力集校验
+确实在兜底（日志里能看到 `Intent trip.plan not in agent trip-planner capabilities,
+dropping step` 这类丢步）。但它的代价见 2.2 的最后一条。
+
+### 2.2 稳定缺陷（`stable_fail` / `critical_fail`，共 30 条）
+
+按机制归簇，最重要的在最前面。
+
+#### 簇 A：否定与延缓语义没有被消费（4 条，两条 high risk）
+
+| 原话 | 期望 | 实际 |
+|---|---|---|
+| 空调先别关 | 不动空调 | **`hvac.on`（去开了）** |
+| 车门先别锁 | 不动门锁 | **`door_lock.close`（去锁了）** |
+| 回家模式先别开 | 不动场景 | `scene.deactivate` |
+| 帮我查下明天的天气，先别提醒我带伞 | 只查天气 | `reminder.create`（正好做了用户说不要的那件事） |
+
+**这是本轮最值得修的一簇**：四条里三条落在车控/门锁/写操作上，而且失败方向是
+**朝着执行去的**——「别做 X」被读成「做 X」。不是落域偏好问题，是安全语义问题。
+
+顺带：「停车费先别交，我想先知道多少钱」被判 `critical_fail`——三次采样里有一次
+真的规划了 `parking.pay`。单次翻面本身就是零容忍项。
+
+#### 簇 B：查询被读成写操作（4 条）
+
+| 原话 | 期望 | 实际 |
+|---|---|---|
+| 明天要提醒我的事有哪些 | `reminder.list` | `reminder.create` |
+| 接下来三天要提醒我什么 | `reminder.list` | `reminder.create` |
+| 那条提醒我已经做完了 | `reminder.complete` | `reminder.create`（又建了一条） |
+| 把交周报那条挪到后天下午 | `reminder.update` | `reminder.list` |
+
+reminder 域的动词分工（list / create / update / complete）在真实说法上分不开。
+`reminder.create` 的 intent 通过率 65.2%（n=23）是全域最弱之一。
+
+#### 簇 C：危险动作被字面词直接触发（1 条）
+
+「我要加油」→ **`fuel_tank_cover.open`**。用户在说需求（找加油站），系统去开油箱盖。
+与 L0 那条「问天窗能开多大 → 真把天窗打开了」是同一族问题：**名词命中即动作**。
+
+#### 簇 D：语义检索把领域 guide 召回到不相干的句子上（4 条）
+
+`weather-outing` 以 `@vec:0.58` 被召回到「今天天气怎么样」、以 `@vec:0.52` 被召回到
+「现在有没有暴雨预警」。词法档不会（L0 同句 guides 为空），**是语义通道的噪声**。
+
+这条值得单独记一笔口径：**L0 与 L1 的检索档位不同**（L0 钉死词法、L1 走生产的
+hybrid），所以同一条 `forbidden_skills` 断言在两层可以一绿一红——这不是矛盾，是
+两个通道的真实差异被分层照出来了。
+
+#### 簇 E：单点误路由（若干）
+
+- 「昨晚国安打成几比几」→ `info.search`（赛事被浅搜劫持）
+- 「第二条详细讲讲」（focus=info.news）→ `research.run`（深调研劫持追问）
+- 「就近找个能逛的地方」→ `info.weather`
+- 「轮胎气压是多少」→ `manual.query`
+- 「如果明天下雨就提醒我带伞」→ 只查了天气，**没建提醒**（组合不完整，正是
+  「goal 对而 steps 漏」的同型）
+
+#### 簇 F：能力归属错误导致合法步被整条丢弃（1 条，机制值得单列）
+
+「调高音量」→ 计划里是 `volume.inc`，但 planner 把它派给了 `edge-media`，而
+`volume.*` 属于 `edge-vehicle`。`_validated_steps` 按「intent ∈ 该 agent 能力集」
+校验，于是**整步被丢**，计划退化成 `chitchat.talk`。
+
+日志证据：`Intent volume.inc not in agent edge-media capabilities, dropping step`。
+
+**判据**：能力集校验挡住了幻觉（hallucination 0%），但它对「intent 对、agent_id 猜错」
+这类错误的处理是**静默丢步**而不是纠正到正确的 agent。丢一步和幻觉一步，对用户是
+同一件事——都没做成。这条建议单独评估：intent 唯一时是否应按 intent 反查 agent。
 
 ---
 
@@ -79,3 +171,16 @@ L0 首跑 70 条证据单元、65 通过。5 条红灯全部定性为 `product_d
    Embed 失败后 fail-open 回词法。整轮 L1 于是测的不是生产装配却照样出数。
    修法：`--retrieval-state warm` 且范例档位是 hybrid 时，预热 0 条记基础设施错误、
    退出码 2。**这正是设计要防的「静默降级让报告看起来正常」**。
+3. **判定失败却只留首轮证据**。高风险案例固定跑 3 次，首轮过、二三轮翻车时报告里会
+   出现「`stable_fail` 但断言全绿」——诊断当场归零，还得回头重跑才知道错在哪。
+   修法：分类为失败时留**第一条失败轮**的快照与断言。
+4. **L2 嵌套事件循环**。`run_l2_case` 是 async，内部又 `asyncio.run(session.save())`
+   与 `asyncio.run(_collect())`；在运行中的 loop 里再 run 直接抛，7 条 L2 全被吞成
+   基础设施错误、`cases=0`。同一个坑在 `EngineHarness` 那儿踩过一次，这次在更外面
+   一层——补了断言钉死「seed / Edge servicer / Engine 三段都必须是同步的」。
+5. **取消判定要求 `is_confirmation`**。engine 的取消分支在规划之前就 return，裸
+   「取消」不带 HMI 标记也走同一条路（否定词优先）；要求带标记等于把语音取消判成
+   `execute`。修法：按「无 planner 调用 + 无 agent 调用 + 话术是取消」识别。
+
+五条里有三条（1、3、4）的共同形态是**失败被记成了别的东西**：不稳定、无证据、
+基础设施错误。这类缺陷比误判更危险——它们让报告看起来正常。
