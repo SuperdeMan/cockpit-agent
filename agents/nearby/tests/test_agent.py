@@ -189,6 +189,103 @@ def test_search_raw_price_band_overrides_llm_price_max_slot():
     assert seen["price_min"] == 60.0 and seen["price_max"] == 140.0
 
 
+# ── 室内组合推荐（badcase 三连 f53d/c0d1/4799：雨天「去哪玩」）────────────────
+
+def test_indoor_category_not_degraded_to_scenic_spot():
+    """『室内景点』含『景点』子串——类目扫描必须归室内组，不能被『景点』抢走
+    （badcase 4799fb1：planner 明确要室内，搜出去的却是户外公园+沙滩）。"""
+    from agents.nearby.src.agent import NearbyAgent, _CATEGORY_KEYWORD, _INDOOR_SENTINEL
+
+    class _I:
+        slots = {"category": "室内景点"}
+        raw_text = "你确定下雨天还推荐我去公园吗"
+    assert _CATEGORY_KEYWORD[NearbyAgent._resolve_category(_I)] == _INDOOR_SENTINEL
+
+
+def test_indoor_search_fans_out_and_mixes_types():
+    """室内组扇出：商场/电影院/博物馆各自检索、交错合并，类型都露脸。"""
+    from agents.nearby.src.providers.base import Place
+
+    agent = NearbyAgent()
+    keywords = []
+
+    class _P:
+        async def search(self, keyword, **kw):
+            keywords.append(keyword)
+            return [Place(id=f"{keyword}-{i}", name=f"{keyword}{i}号",
+                          address="x", lat=22.5, lng=113.9, rating=4.5)
+                    for i in (1, 2)]
+
+    agent.place = _P()
+    res = asyncio.run(run_handle(
+        agent, "nearby.search",
+        slots={"category": "室内", "weather_context": "雨"},
+        raw_text="这样的天气适合去哪玩啊"))
+    assert res.status == "ok"
+    assert keywords == ["商场", "电影院", "博物馆"]          # 全类目扇出（串行）
+    top3 = [it["name"] for it in res.data["items"][:3]]
+    assert top3 == ["商场1号", "电影院1号", "博物馆1号"]      # 交错合并：类型多样性
+
+
+def test_indoor_search_speech_acknowledges_rain():
+    """话术必须承接天气前提——badcase 根源之一是回答与『下雨』语境完全脱节。"""
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"category": "室内", "weather_context": "中雨"},
+        raw_text="这样的天气适合去哪玩啊"))
+    assert res.status == "ok"
+    assert "雨天不太适合户外" in res.speech
+    assert "室内" in res.speech
+    assert res.ui_card["type"] == "place_list" and res.ui_card["items"]
+
+
+def test_indoor_search_partial_provider_failure_still_answers():
+    """扇出某类失败（高德 QPS 超限）→ 其余类目继续，不整轮失败。"""
+    from agents.nearby.src.providers.base import Place
+    from agents._sdk.http import ProviderError
+
+    agent = NearbyAgent()
+
+    class _P:
+        async def search(self, keyword, **kw):
+            if keyword == "电影院":
+                raise ProviderError("CUQPS_HAS_EXCEEDED_THE_LIMIT")
+            return [Place(id=f"{keyword}-1", name=f"{keyword}1号",
+                          address="x", lat=22.5, lng=113.9, rating=4.4)]
+
+    agent.place = _P()
+    res = asyncio.run(run_handle(
+        agent, "nearby.search", slots={"category": "室内"}, raw_text="附近室内玩的"))
+    assert res.status == "ok"
+    assert "商场1号" in res.speech and "博物馆1号" in res.speech
+
+
+def test_outdoor_search_with_good_weather_context_leads_positively():
+    """好天气 + 户外类目：话术带上『天气不错』的承接（planner 按 guide 填 weather_context）。"""
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"category": "景点", "weather_context": "晴"}, raw_text="今天去哪玩好"))
+    assert res.status == "ok"
+    assert res.speech.startswith("天气不错")
+
+
+def test_mall_category_searches_mall_not_food():
+    """『附近有什么商场』不再退化成默认餐饮/美食检索（同族潜伏缺陷）。"""
+    agent, seen = _capture_search()
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={"category": "商场"}, raw_text="附近有什么商场"))
+    assert seen["keyword"] == "商场"
+
+
+def test_parking_in_mall_still_parking():
+    """类目优先级回归：『商场停车场』仍归停车（设施类目在室内组之前）。"""
+    agent, seen = _capture_search()
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={}, raw_text="找个商场停车场"))
+    assert seen["keyword"] == "停车场"
+    assert seen["category"] == "停车"
+
+
 def test_focus_location_name_resolved_near_current_not_nationwide():
     """R3（旅程 B1-3）：location 槽是地名（焦点指代「那附近」）→ 先按当前坐标偏置
     搜该名解析成坐标（含名字包含校验），不交给全国歧义的 geocode（真栈解析到

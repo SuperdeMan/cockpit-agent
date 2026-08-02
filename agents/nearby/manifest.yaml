@@ -15,11 +15,15 @@ capabilities:
   - intent: nearby.search
     description: 周边**发现与比较**——列出多个候选让用户挑（餐饮/酒店/景点/影院/停车场/超市/
       便利店/药店等生活服务），支持菜系/品牌/评分/人均/排序过滤，返回评分·人均·距离·营业信息。
-      用户在「看看附近有什么」时用本条；已经知道要去哪、只需定位一个具体地点归
-      navigation.search_poi；**找充电桩归 charging.find**（它按真实电量+空闲状态排序）
-    slots: [category, keyword, cuisine, brand, rating_min, price_max, price_level, open_now, sort, location, radius]
+      「去哪玩/出去逛」类请求也归本条——雨雪/高温等恶劣天气填 category=室内（自动组合
+      商场/电影院/博物馆等推荐），好天气填 景点/公园；已知天气时把天气词放 weather_context
+      槽（如「雨」），话术会承接天气给出解释。用户在「看看附近有什么」时用本条；已经知道
+      要去哪、只需定位一个具体地点归 navigation.search_poi；**找充电桩归 charging.find**
+      （它按真实电量+空闲状态排序）
+    slots: [category, keyword, cuisine, brand, rating_min, price_max, price_level, open_now, sort, location, radius, weather_context]
     examples: ["附近有什么好吃的", "找家川菜馆", "附近评分高的火锅", "人均一百以内的川菜",
-               "附近的餐厅", "附近的酒店", "附近的电影院", "找个停车场", "麦当劳在哪", "附近的景点"]
+               "附近的餐厅", "附近的酒店", "附近的电影院", "找个停车场", "麦当劳在哪", "附近的景点",
+               "下雨天去哪儿玩", "附近有什么商场"]
     # M2 Outcome Verifier 首批试点（列表面）：出了 place_list 卡但 items 是空列表 = 假完成。
     # on_fail: retry（1 次）——POI 检索的空结果常是瞬时的，重试有真实成功率；
     # 重试只对 require_confirm=false 的步开放（副作用永不重放，verify.retry_allowed 硬约束）。

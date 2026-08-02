@@ -34,3 +34,10 @@
   text: 明天开去广州，路上电够不够帮我看看
 - skill: charging-strategy
   text: 电不太多了，找个地方给车充上
+
+- skill: weather-outing
+  text: 这种天气带娃去哪儿合适
+- skill: weather-outing
+  text: 外面在下雨，附近还有什么地方能逛
+- skill: weather-outing
+  text: 今天这么热，去哪儿凉快凉快

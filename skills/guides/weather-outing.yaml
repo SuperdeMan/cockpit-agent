@@ -1,0 +1,51 @@
+name: weather-outing
+type: guide
+description: 天气决定去哪玩的组合判据（今天天气适合去哪玩/下雨天去哪儿玩/雨雪高温改推室内、好天气推景点公园）
+priority: 55
+keywords: [去哪玩, 去哪儿玩, 去哪里玩, 哪里玩, 玩什么, 出去玩, 适合去哪, 下雨天去, 雨天去哪]
+# 依据：badcase 三连 f53d2e58/c0d1a8d2/4799fb1f（2026-08-01 会话 demo-e0n7go）——
+# 「今天的天气适合去哪玩吗」两次只报天气（planner goal 都写对了「根据天气推荐游玩地点」，
+# 步骤却只拆出 info.weather）；追问后推荐了户外公园；用户质问「下雨天还推荐公园？」
+# 又推了公园+沙滩。三层失因里「组合判据缺失」归本 guide，类目/话术归 nearby agent
+# （室内扇出 + weather_context 承接）。adaptive 形态同 conditional-reminder 先例。
+knowledge: |
+  **天气×去哪玩是一个问题不是两个**：用户问「(这样的)天气适合去哪玩/出去逛吗」，要的是
+  **结合天气的去处推荐**——只报天气等于没回答，只推荐不看天气会把公园推给雨天。
+  - 最近对话已给出天气，或话里自带天气（「下雨天」「这么热」）→ 直接一步 nearby.search，
+    类目按天气选：雨/雪/雷/大风/高温 → category=室内（能力方会给商场/电影院/博物馆等
+    组合推荐）；天气好 → category=景点 或 公园。把天气词填进 weather_context 槽
+    （如「雨」「高温」），话术会承接天气给出解释。
+  - 天气未知 → complexity=adaptive，先只规划天气查询步（info.weather），看到结果再按
+    上面规则补推荐步——不要把未按天气条件化的推荐步无条件排进首轮计划。
+  - 用户质疑推荐与天气矛盾（「下雨你还让我去公园？」）→ 这是纠错不是闲聊：改推
+    category=室内 并带 weather_context，绝不能原样再推户外，也不要只道歉不给新推荐。
+  - 只问天气本身（「今天天气怎么样」「会不会下雨」）不出推荐步，归天气查询。
+few_shots:
+  - user: 今天的天气适合去哪玩吗
+    plan: {"complexity":"adaptive","steps":[{"id":"s1","agent_id":"info","intent":"info.weather","slots":{},"depends_on":[],"slot_refs":{}}]}
+  - user: 下雨天去哪儿玩好
+    plan: {"steps":[{"id":"s1","agent_id":"nearby","intent":"nearby.search","slots":{"category":"室内","weather_context":"雨"},"depends_on":[],"slot_refs":{}}]}
+golden:
+  - text: 今天的天气适合去哪玩吗
+    expect_intents: ["info.weather|info.forecast"]
+    expect_not: [nearby.search]
+    expect_complexity: adaptive
+  - text: 下雨天去哪儿玩好
+    expect_intents: [nearby.search]
+    expect_not: [chitchat.talk]
+  # holdout：质疑轮（keywords 按设计不含「推荐/公园」——词法检不回，考语义+知识泛化）
+  - text: 你确定下雨天还推荐我去公园吗
+    expect_intents: [nearby.search]
+    expect_not: [chitchat.talk]
+    holdout: true
+  # holdout：真 paraphrase（避开全部 keywords 字面）
+  - text: 外面下着雨呢，还能去哪儿逛逛
+    expect_intents: [nearby.search]
+    holdout: true
+  # 知识边界负例：纯天气问句绝不出推荐步（本句同时是 eval_skills 反例——检索也不该召回）
+  - text: 今天天气怎么样
+    expect_intents: ["info.weather|info.forecast"]
+    expect_not: [nearby.search]
+    holdout: true
+owner: orchestrator
+version: 1

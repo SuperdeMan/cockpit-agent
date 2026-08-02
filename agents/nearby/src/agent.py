@@ -21,20 +21,53 @@ logger = logging.getLogger("agent.nearby")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 
-# 类目 → 高德主检索词（关键词优先、稳健；types 精确化留 P1）
+# 室内组哨兵：类目归一为「室内」时不做单关键词检索，走 _search_indoor 多类目扇出——
+# 高德按名称/类目匹配，「室内景点」这种抽象词只会退化成子串命中（badcase 4799fb1：
+# planner 明确要室内，搜出去的却是户外公园）。
+_INDOOR_SENTINEL = "室内"
+# 扇出类目（宝安实测：壹方城4.9 / CGV影城4.7 / 宝安博物馆4.2）。串行检索——高德免费档
+# QPS 紧，并发扇出会 CUQPS_HAS_EXCEEDED_THE_LIMIT。
+_INDOOR_FANOUT = ("商场", "电影院", "博物馆")
+# 户外类目：weather_context 在场时话术按天气承接（好天气鼓励、坏天气提示）
+_OUTDOOR_CATS = {"景点", "景区", "旅游", "公园"}
+
+# 类目 → 高德主检索词（关键词优先、稳健；types 精确化留 P1）。
+# ⚠ 类目扫描按**插入序**取首个命中的子串（_resolve_category），顺序即优先级：
+#   餐饮/住宿/影院/设施（停车/充电/加油）在前——「商场停车场」要归停车不归商场；
+#   室内组必须在「景点」之前——「室内景点」含「景点」子串，后置会被抢走。
 _CATEGORY_KEYWORD = {
     "餐饮": "美食", "美食": "美食", "吃饭": "美食", "餐厅": "美食", "吃的": "美食",
     "酒店": "酒店", "住宿": "酒店", "宾馆": "酒店", "民宿": "民宿",
-    "景点": "景点", "景区": "景点", "旅游": "景点",
     "影院": "电影院", "电影院": "电影院", "电影": "电影院",
     "停车": "停车场", "停车场": "停车场", "车位": "停车场",
     "充电": "充电站", "充电站": "充电站", "充电桩": "充电站",
     "加油": "加油站", "加油站": "加油站",
+    "室内": _INDOOR_SENTINEL,
+    "商场": "商场", "购物中心": "购物中心", "商城": "商场",
+    "博物馆": "博物馆", "美术馆": "美术馆", "科技馆": "科技馆", "展览": "展览馆",
+    "图书馆": "图书馆", "游乐": "游乐场", "KTV": "KTV", "唱歌": "KTV",
+    "温泉": "温泉", "水族馆": "水族馆", "海洋馆": "水族馆",
+    "景点": "景点", "景区": "景点", "旅游": "景点", "公园": "公园",
     "超市": "超市", "便利店": "便利店", "咖啡": "咖啡厅", "奶茶": "奶茶饮品",
     "药店": "药店", "银行": "银行", "医院": "医院",
 }
 # 餐饮类目（口味画像仅此类生效）
 _FOOD_CATS = {"餐饮", "美食", "吃饭", "餐厅", "吃的"}
+
+
+def _weather_word(weather: str) -> str:
+    """weather_context 槽值 → 话术用的天气词（「中雨」「下雨」→「雨天」）。
+    识别不出恶劣天气返回空串（好天气/未知不套坏天气话术）。"""
+    w = (weather or "").strip()
+    if not w:
+        return ""
+    for zi, label in (("雷", "雷雨天"), ("雨", "雨天"), ("雪", "雪天"),
+                      ("雹", "冰雹天"), ("台风", "台风天"), ("高温", "高温天"),
+                      ("酷暑", "高温天"), ("炎热", "高温天"), ("闷热", "闷热天"),
+                      ("沙尘", "沙尘天"), ("霾", "雾霾天"), ("风", "大风天")):
+        if zi in w:
+            return label
+    return ""
 
 
 def _to_float(v) -> float:
@@ -237,6 +270,11 @@ class NearbyAgent(BaseAgent):
 
     async def _search(self, intent, ctx, meta) -> AgentResult:
         category = self._resolve_category(intent)
+        weather = (intent.slots.get("weather_context") or "").strip()
+        # 室内组（「(下雨天)去哪玩」→ planner 填 category=室内 + weather_context）：
+        # 单一关键词表达不了「适合室内玩的地方」，走多类目扇出组合推荐
+        if _CATEGORY_KEYWORD.get(category) == _INDOOR_SENTINEL:
+            return await self._search_indoor(intent, ctx, meta, weather)
         cuisine = (intent.slots.get("cuisine") or "").strip()
         brand = (intent.slots.get("brand") or "").strip()
         kw_slot = (intent.slots.get("keyword") or "").strip()
@@ -281,12 +319,63 @@ class NearbyAgent(BaseAgent):
         names = "、".join(p.name for p in results[:3])
         extra = self._known_attrs(results[0])
         extra_s = f"，{results[0].name}{extra}" if extra else ""
+        # 户外类目 + weather_context 在场：话术承接天气（planner 按 guide 只在天气已知时填）
+        lead = ""
+        if weather and category in _OUTDOOR_CATS:
+            word = _weather_word(weather)
+            lead = f"{word}户外体验会打折扣，" if word else "天气不错，适合出去走走，"
         card = attach({"type": "place_list", "category": category, "keyword": label,
                        "items": items, "display_priority": 1}, self.place)
         return AgentResult(
-            speech=f"为您找到 {len(results)} 家{label}{pref_note}，推荐：{names}{extra_s}。",
+            speech=f"{lead}为您找到 {len(results)} 家{label}{pref_note}，推荐：{names}{extra_s}。",
             ui_card=card,
             data={"items": items},   # 供编排 slot_refs + HMI「第N个」handoff
+            follow_up="说『看第 1 个详情』或『导航去第 2 个』",
+        )
+
+    async def _search_indoor(self, intent, ctx, meta, weather: str) -> AgentResult:
+        """室内组合推荐（雨雪/高温等恶劣天气的「去哪玩」）：按室内组类目逐个检索再交错
+        合并，商场/电影院/博物馆都露脸——比单类目更接近人对「室内去处」的期待。
+        话术必须承接天气前提：badcase 三连的根源之一是回答与「下雨」这个语境完全脱节。"""
+        near = await self._resolve_center(intent, meta)
+        rating_min = _to_float(intent.slots.get("rating_min"))
+        groups: list[list[Place]] = []
+        for kw in _INDOOR_FANOUT:      # 串行：高德免费档 QPS 紧，并发会 CUQPS 超限
+            try:
+                rs = await self.place.search(kw, category=_INDOOR_SENTINEL, near=near,
+                                             rating_min=rating_min, sort="rating",
+                                             limit=4, meta=meta)
+            except ProviderError as e:
+                logger.warning("indoor fanout %s failed（继续其余类目）: %s", kw, e)
+                rs = []
+            if rs:
+                groups.append(rs)
+        if not groups:
+            # 与主路径同款诚实降级：真实源全挂不改供假 POI
+            return AgentResult(speech="周边搜索服务暂时不可用，稍后再试一次？")
+        # 交错合并 + 去重：每类先出评分最高的，保证类型多样性
+        seen: set[str] = set()
+        merged: list[Place] = []
+        for tier in range(max(len(g) for g in groups)):
+            for g in groups:
+                if tier < len(g) and g[tier].id not in seen:
+                    seen.add(g[tier].id)
+                    merged.append(g[tier])
+        merged = merged[:9]
+        items = [self._item(p) for p in merged]
+        names = "、".join(p.name for p in merged[:3])
+        top = max(merged, key=lambda p: p.rating or 0)
+        extra = f"，{top.name}评分{top.rating}" if top.rating else ""
+        word = _weather_word(weather)
+        lead = (f"{word}不太适合户外，" if word
+                else "这种天气更适合室内活动，" if weather else "")
+        card = attach({"type": "place_list", "category": _INDOOR_SENTINEL,
+                       "keyword": "室内好去处", "items": items,
+                       "display_priority": 1}, self.place)
+        return AgentResult(
+            speech=f"{lead}推荐附近这些室内去处：{names}{extra}。",
+            ui_card=card,
+            data={"items": items},
             follow_up="说『看第 1 个详情』或『导航去第 2 个』",
         )
 
