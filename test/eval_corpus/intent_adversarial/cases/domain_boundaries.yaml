@@ -977,9 +977,9 @@ cases:
     family_id: bd.manual-search
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: candidate
     tags: {attacks: [A1], mechanisms: [domain_collision], domains: [manual, info], boundary: manual-vs-search, layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, gold_revision_reason: "「车里这个黄色警告灯是什么意思」落 vision.describe 也讲得通（台账已登记「这是什么」归 vision）；这条边界台账里没有，该先补裁定再写 gold", gold_revised_at: 2026-08-02}
     turns:
       - input: {utterance: 车里这个黄色警告灯是什么意思, context: {}}
         expected:
@@ -989,9 +989,9 @@ cases:
     family_id: bd.manual-search
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: candidate
     tags: {attacks: [A1], mechanisms: [domain_collision], domains: [manual, info], boundary: manual-vs-search, layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, gold_revision_reason: "relation base bd.manual-search.left 因 manual/vision 边界未裁定降回 candidate，成对降级", gold_revised_at: 2026-08-02}
     relation: {base_case: bd.manual-search.left, type: route_flip, expectation: {forbidden_after: [manual.query], required_change: true}}
     turns:
       - input: {utterance: 网上查一下别的车主怎么解决这个警告灯, context: {}}

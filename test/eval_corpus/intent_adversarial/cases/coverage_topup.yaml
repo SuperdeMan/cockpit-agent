@@ -64,9 +64,9 @@ cases:
     family_id: tu.nav-search-detail
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: candidate
     tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation], layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, gold_revision_reason: "「搜一下附近的地铁站」落 nearby.search 与 navigation.search_poi 之间没有台账裁定；先补 boundaries.yaml 再定 gold", gold_revised_at: 2026-08-02}
     turns:
       - input: {utterance: 帮我搜一下附近的地铁站有哪些, context: {}}
         expected:
@@ -76,9 +76,9 @@ cases:
     family_id: tu.nav-search-detail
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: candidate
     tags: {attacks: [A2], mechanisms: [action_flip], domains: [navigation], layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, gold_revision_reason: "relation base tu.nav.search-vs-detail 因 nearby/navigation 边界未裁定降回 candidate，成对降级", gold_revised_at: 2026-08-02}
     relation: {base_case: tu.nav.search-vs-detail, type: route_flip, expectation: {forbidden_after: [navigation.search_poi], required_change: true}}
     turns:
       - input: {utterance: 广州东站这个站点的详细信息给我看看, context: {}}
@@ -439,11 +439,11 @@ cases:
     risk: medium
     status: reviewed
     tags: {attacks: [A2], mechanisms: [direction_flip, vehicle_control], domains: [hvac], layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, gold_revision_reason: "能力面同时存在 hvac.dec 与 aircon.dec 两个同义 intent，gold 只列其一等于替产品在重复能力里挑一个", gold_revised_at: 2026-08-02}
     turns:
       - input: {utterance: 空调调凉一点, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.dec]}], forbidden_intents: [hvac.inc], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.dec, aircon.dec]}], forbidden_intents: [hvac.inc, aircon.inc], allow_extra_intents: false}
   - id: tu.hvac.inc-second
     title: 温度调高（第二正例）
     family_id: tu.hvac-inc
@@ -451,11 +451,11 @@ cases:
     risk: medium
     status: reviewed
     tags: {attacks: [A2], mechanisms: [direction_flip, vehicle_control], domains: [hvac], layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, gold_revision_reason: "同上，与 tu.hvac.dec-second 对称", gold_revised_at: 2026-08-02}
     turns:
       - input: {utterance: 空调调暖一点, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.inc]}], forbidden_intents: [hvac.dec], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.inc, aircon.inc]}], forbidden_intents: [hvac.dec, aircon.dec], allow_extra_intents: false}
   - id: tu.media.pause-vs-play
     title: 暂停播放
     family_id: tu.media-pause-play
@@ -505,3 +505,47 @@ cases:
       - input: {utterance: 回到上一首, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [media.prev]}], forbidden_intents: [media.next, media.pause], allow_extra_intents: false}
+
+  # ── 首轮裁定后的覆盖补口 ────────────────────────────────────────────────
+  # `tu.hvac.dec-second` 的 gold 被放宽成 `any_of: [hvac.dec, aircon.dec]`（能力面有两个
+  # 同义 intent），多成员组按契约不替成员算正例——所以 hvac.dec 需要再补一条单成员正例。
+  - id: tu.hvac.dec-third
+    title: 空调温度调低三度
+    family_id: tu.hvac-dec-explicit
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip, vehicle_control], domains: [hvac], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 把空调温度调低三度, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.dec]}], forbidden_intents: [hvac.inc, aircon.inc], allow_extra_intents: false}
+  # `tu.nav.search-vs-detail` 降回 candidate 后 navigation.search_poi 缺正例与对照。
+  # 这一对刻意换到**已登记的** navigation-vision 台账边界上，不再碰 nearby/navigation
+  # 那条尚未裁定的地盘。
+  - id: tu.nav.search-vs-vision
+    title: 在地图上找一个地标
+    family_id: tu.nav-search-vision
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [navigation, vision], boundary_ledger: navigation-vision.where-vs-what, boundary_side: left, layers: [l1]}
+    provenance: {kind: authored, source_ref: navigation-vision.where-vs-what, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    turns:
+      - input: {utterance: 在地图上帮我找一下广州塔, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.search_poi]}], forbidden_intents: [vision.describe], allow_extra_intents: false}
+  - id: tu.nav.vision-vs-search
+    title: 看窗外那个塔是什么
+    family_id: tu.nav-search-vision
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [navigation, vision], boundary_ledger: navigation-vision.where-vs-what, boundary_side: right, layers: [l1]}
+    provenance: {kind: authored, source_ref: navigation-vision.where-vs-what, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    relation: {base_case: tu.nav.search-vs-vision, type: route_flip, expectation: {forbidden_after: [navigation.search_poi], required_change: true}}
+    turns:
+      - input: {utterance: 看看窗外那个塔是什么, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [vision.describe]}], forbidden_intents: [navigation.search_poi], allow_extra_intents: false}

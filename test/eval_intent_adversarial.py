@@ -710,8 +710,14 @@ def _run_case_layer(case, layer, args, suite, agents, builder, confirm_intents,
                 dangerous=_dangerous(case, judgement, snapshot)))
     classification = runtime.classify_repeats(outcomes, risk,
                                               deterministic=layer == "l0")
-    judgement = judgements[0]
-    snapshot = snapshots[0]
+    # 判定为失败时，留**失败那一轮**的证据。首轮通过、第二三轮翻车的案例（高风险固定
+    # 跑 3 次，这种最常见）如果只存首轮，报告里会出现「stable_fail 但断言全绿」——
+    # 诊断当场归零，反而要人回头重跑一次才知道错在哪。
+    evidence = 0
+    if classification.status != "pass":
+        evidence = next((i for i, o in enumerate(outcomes) if not o.passed), 0)
+    judgement = judgements[evidence]
+    snapshot = snapshots[evidence]
     ablations = _run_ablations(case, layer, args, classification, agents, builder)
     divergence = "" if classification.status == "pass" else first_divergence(
         DivergenceEvidence(
