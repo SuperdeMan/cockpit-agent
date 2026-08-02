@@ -631,12 +631,17 @@ class EngineHarness:
         final = finals[-1] if finals else {}
         card_type = str(((final.get("ui_card") or {}) or {}).get("type") or "")
         need_confirm = bool(final.get("need_confirm"))
+        speech = str(final.get("speech") or "")
+        planned = bool(self.planner.calls if self.planner else self.sink and self.sink.plans)
         if card_type == "rejected":
             decision = "reject"
         elif card_type == "intent_choice":
             decision = "clarify"
-        elif is_confirmation and not need_confirm and not self.clients.side_effects \
-                and "取消" in str(final.get("speech") or ""):
+        elif "取消" in speech and not planned and not self.clients.agent_calls:
+            # engine 的取消分支在**规划之前**就 return 了：没有 planner 调用、没有
+            # agent 调用、话术是取消。刻意不看 is_confirmation——裸「取消」不带 HMI
+            # 标记也会走同一分支（`_confirm_reply` 的否定词优先），要求带标记等于
+            # 把语音取消这条路判成 execute。
             decision = "cancel"
         elif need_confirm:
             decision = "confirm"
@@ -689,8 +694,9 @@ def build_engine_harness(builder, agents, safe_clients, trace_sink):
 
 def run_full_entry_turn(text: str, engine_harness: EngineHarness, *,
                         meta: dict[str, str] | None = None,
-                        session_id: str = "adv-1") -> tuple[EdgeObservation,
-                                                            EngineObservation]:
+                        session_id: str = "adv-1",
+                        is_confirmation: bool = False
+                        ) -> tuple[EdgeObservation, EngineObservation]:
     """完整入口：真实 Edge servicer 的云端替身直连内进程 Engine。
 
     只有 cloud-direct 通过而完整入口失败时，首偏离点才是 Edge；反过来推不出
@@ -732,6 +738,7 @@ def run_full_entry_turn(text: str, engine_harness: EngineHarness, *,
     srv._nlu_shadow_bg = lambda *_args, **_kwargs: None
     request = orchestrator_pb2.HandleRequest(
         text=text, session_id=session_id, request_id="adv-r1",
+        is_confirmation=is_confirmation,
         meta={"memory_enabled": "false", **(meta or {})})
     events = asyncio.run(_collect(srv.Handle(request, None)))
     finals = [event.final for event in events if event.WhichOneof("event") == "final"]

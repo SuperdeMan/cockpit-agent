@@ -210,7 +210,13 @@ async def run_l1_case(case, agents, builder):
     return snapshot, judge_turn(_l1_expectation(turn.expected), snapshot)
 
 
-async def run_l2_case(case, agents, builder, confirm_intents):
+def run_l2_case(case, agents, builder, confirm_intents):
+    """**同步**：L2 的三个部件（seed、Edge servicer、Engine）各自驱动自己的事件循环。
+
+    这里原本是 async，于是 `asyncio.run(run_l2_case(...))` 之后再在里面
+    `asyncio.run(session.save(...))` —— 在运行中的 loop 里再 run 会直接抛，整层被
+    吞成基础设施错误、`cases=0`。同一个坑在 `EngineHarness` 那儿已经踩过一次
+    （见 `run_async` 的注释），这次是在更外面一层。"""
     turn = case.turns[0]
     sink = TraceSink()
     clients = runtime.SafeClients(
@@ -229,6 +235,7 @@ async def run_l2_case(case, agents, builder, confirm_intents):
                                      step_id=str(pending.get("step_id") or "s1"))
     edge, engine = runtime.run_full_entry_turn(
         turn.utterance, harness, session_id=session_id,
+        is_confirmation=bool(turn.context.get("is_confirmation")),
         meta={k: str(v) for k, v in (turn.context.get("meta") or {}).items()})
     plans = [trace.plan for trace in sink.plans]
     snapshot = DecisionSnapshot(
@@ -691,7 +698,7 @@ def _run_case_layer(case, layer, args, suite, agents, builder, confirm_intents,
             raise RuntimeError(f"layer {layer} 需要 live builder")
         if layer == "l1":
             return asyncio.run(run_l1_case(case, agents, builder))
-        return asyncio.run(run_l2_case(case, agents, builder, confirm_intents))
+        return run_l2_case(case, agents, builder, confirm_intents)
 
     for _ in range(repeats):
         snapshot, judgement = once()

@@ -169,3 +169,22 @@ def test_journey_links_resolve_against_the_real_journey_corpus():
         assert journeys, f"{case_id} 链接了空 journey 列表"
         for journey in journeys:
             assert journey in known
+
+
+def test_l2_case_path_never_nests_event_loops():
+    """守住 `cases=0` 那个坑：L2 一条 case 要经 seed → Edge servicer → Engine 三段，
+    每段都自己驱动事件循环。任何一段被包进 async 再 asyncio.run 就整层抛，
+    而调用方会把它吞成基础设施错误——报告看起来像「没有可跑的用例」。"""
+    import inspect
+
+    import eval_intent_adversarial as cli
+    from support import intent_adversarial_runtime as rt
+
+    assert not inspect.iscoroutinefunction(cli.run_l2_case)
+    for name in ("run_full_entry_turn", "run_edge_turn", "run_retrieval_turn"):
+        assert not inspect.iscoroutinefunction(getattr(rt, name)), name
+    for name in ("seed_pending_confirm", "seed_focus", "run"):
+        assert not inspect.iscoroutinefunction(getattr(rt.EngineHarness, name)), name
+    # 反过来，L1 是纯 Planner 调用，必须是 async（由调用方 asyncio.run 驱动）
+    assert inspect.iscoroutinefunction(cli.run_l1_case)
+    assert inspect.iscoroutinefunction(rt.EngineHarness.run_async)
