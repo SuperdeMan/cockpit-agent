@@ -148,9 +148,11 @@ async def _registry_empty(query: str, top_k: int = 1):
     return []
 
 
-def make_builder(caller: str, temperature: float = 0.3):
+def make_builder(caller: str, temperature: float = 0.3,
+                 timeout: int = 45, model: str = ""):
+    """现有两参数调用逐字不变；新增 timeout/model 只在显式传入时改变行为。"""
     from orchestrator.cloud.planning import PlanBuilder
-    llm, llm_tools = make_llm_fns(caller, temperature)
+    llm, llm_tools = make_llm_fns(caller, temperature, timeout, model)
     return PlanBuilder(llm_fn=llm, registry_fn=_registry_empty, llm_tool_fn=llm_tools)
 
 

@@ -137,3 +137,114 @@ def test_split_results_are_unstable_and_any_dangerous_route_is_critical():
     assert classify_repeats([
         _outcome(True), _outcome(False, "danger", dangerous=True), _outcome(True)],
         risk="high").status == "critical_fail"
+
+
+# ── L1 装配与消融 ─────────────────────────────────────────────────────────
+import pytest  # noqa: E402
+
+from support.intent_adversarial_runtime import (  # noqa: E402
+    ABLATION_ARMS, ablation_context, ablation_env, causal_effect,
+    disable_route_hints, filter_unavailable_capabilities, parse_focus,
+    requested_ablations, skill_and_exemplar_inventory,
+)
+
+
+async def _fake_llm(_messages):
+    return "{}"
+
+
+async def _fake_tool_llm(_messages, _tools):
+    return "", []
+
+
+def test_make_builder_forwards_timeout_and_model(monkeypatch):
+    captured = {}
+
+    def fake(caller, temperature=0.3, timeout=45, model=""):
+        captured.update(caller=caller, temperature=temperature,
+                        timeout=timeout, model=model)
+        return _fake_llm, _fake_tool_llm
+
+    monkeypatch.setattr(eval_live, "make_llm_fns", fake)
+    eval_live.make_builder("intent-adversarial", 0.0, timeout=17, model="@primary")
+    assert captured == {"caller": "intent-adversarial", "temperature": 0.0,
+                        "timeout": 17, "model": "@primary"}
+
+
+def test_make_builder_keeps_two_argument_callers_byte_identical(monkeypatch):
+    captured = {}
+
+    def fake(caller, temperature=0.3, timeout=45, model=""):
+        captured.update(caller=caller, temperature=temperature,
+                        timeout=timeout, model=model)
+        return _fake_llm, _fake_tool_llm
+
+    monkeypatch.setattr(eval_live, "make_llm_fns", fake)
+    eval_live.make_builder("routing-bench", 0.3)
+    assert captured == {"caller": "routing-bench", "temperature": 0.3,
+                        "timeout": 45, "model": ""}
+
+
+def test_capability_removal_is_copy_on_write_and_never_leaks():
+    agents = eval_live.load_agents(include_edge=True)
+    trimmed = filter_unavailable_capabilities(agents, {"info.weather"})
+    trimmed_intents = {cap.intent for a in trimmed
+                       for cap in (a.manifest.capabilities or [])}
+    original_intents = {cap.intent for a in agents
+                        for cap in (a.manifest.capabilities or [])}
+    assert "info.weather" not in trimmed_intents
+    assert "info.weather" in original_intents, "原 agent 列表不得被原地污染"
+
+
+def test_focus_rejects_unknown_fields_at_contract_load_time():
+    assert parse_focus({}) is None
+    assert parse_focus({"last_intent": "info.weather"}).last_intent == "info.weather"
+    with pytest.raises(ValueError, match="unknown focus fields"):
+        parse_focus({"lst_intent": "info.weather"})
+
+
+def test_skill_and_exemplar_inventory_comes_from_the_real_stores():
+    names, eids = skill_and_exemplar_inventory()
+    assert "weather-outing" in names
+    assert any(eid.startswith("nearby#") for eid in eids)
+
+
+def test_ablations_only_run_for_failure_or_instability():
+    assert requested_ablations("pass") == ()
+    assert requested_ablations("stable_fail") == ABLATION_ARMS
+    assert requested_ablations("unstable") == ABLATION_ARMS
+
+
+def test_each_ablation_arm_changes_exactly_one_thing():
+    assert ablation_env("no-skills") == {"SKILLS_MODE": "off"}
+    assert ablation_env("no-exemplars") == {"EXEMPLARS_MODE": "off"}
+    assert ablation_env("no-hints") == {}
+    base = {"history": [{"role": "user", "text": "上一轮"}],
+            "memories": [{"text": "偏好"}], "focus": {"last_intent": "info.weather"},
+            "unavailable_intents": ["shop.order"]}
+    cleared = ablation_context("empty-history", base)
+    assert cleared["history"] == [] and cleared["memories"] == []
+    assert cleared["focus"] == {}
+    assert cleared["unavailable_intents"] == ["shop.order"], "catalog 条件不得被顺带改掉"
+    assert ablation_context("no-hints", base) == base
+
+
+def test_no_hints_arm_disables_the_engine_without_touching_the_plan():
+    from orchestrator.cloud.models import Plan, Step
+    from orchestrator.cloud.planning import PlanBuilder
+
+    builder = PlanBuilder(llm_fn=_fake_llm, registry_fn=None,
+                          llm_tool_fn=_fake_tool_llm)
+    disable_route_hints(builder)
+    plan = Plan(steps=[Step(id="s1", agent_id="chitchat", endpoint="c:1",
+                            intent="chitchat.talk")])
+    assert builder._route_hints.apply(plan, "帮我深入调研固态电池", {}) is False
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+
+
+def test_causal_effect_requires_stable_wrong_to_stable_right_flip():
+    assert causal_effect("stable_fail", "pass", same_provider=True,
+                         same_assets=True) == "supported"
+    assert causal_effect("unstable", "pass", True, True) == "suspect"
+    assert causal_effect("stable_fail", "pass", False, True) == "invalid"
+    assert causal_effect("stable_fail", "stable_fail", True, True) == "none"

@@ -269,3 +269,158 @@ async def run_with_repeats(run_once, *, risk: str, failure_repeats: int,
     if target == 1 and not outcomes[0].passed:
         outcomes.extend([await run_once() for _ in range(failure_repeats - 1)])
     return classify_repeats(outcomes, risk)
+
+
+# ── L1：真实 Planner ───────────────────────────────────────────────────────
+
+
+def skill_and_exemplar_inventory() -> tuple[set[str], set[str]]:
+    """真实 store 的资产名单（force=True 绕过 mtime 缓存），供契约引用校验。"""
+    from orchestrator.cloud import exemplars as _exemplars
+    from orchestrator.cloud import skills as _skills
+    names = {doc.name for doc in _skills.default_store().load(force=True)}
+    eids = {item.eid for item in _exemplars.default_store().load(force=True)}
+    return names, eids
+
+
+def filter_unavailable_capabilities(agents: list, unavailable: set[str]) -> list:
+    """深拷贝后过滤能力副本。
+
+    原地过滤会污染同进程后续案例——A8「能力从 catalog 消失」的用例跑完，别人的
+    catalog 也就永远少了那一项，而且悄无声息。
+    """
+    from copy import deepcopy
+    if not unavailable:
+        return list(agents)
+    out = []
+    for agent in agents:
+        clone = deepcopy(agent)
+        caps = [cap for cap in (getattr(clone.manifest, "capabilities", None) or [])
+                if str(getattr(cap, "intent", "")) not in unavailable]
+        try:
+            del clone.manifest.capabilities[:]
+            clone.manifest.capabilities.extend(caps)
+        except (AttributeError, TypeError):
+            clone.manifest.capabilities = caps
+        out.append(clone)
+    return out
+
+
+def parse_focus(raw: dict[str, Any]):
+    """只接受 `Focus` 的真实字段——未知 key 在这里报错，而不是被静默丢掉。"""
+    from dataclasses import fields
+    from orchestrator.cloud.context import Focus
+    if not raw:
+        return None
+    allowed = {f.name for f in fields(Focus)}
+    unknown = set(raw) - allowed
+    if unknown:
+        raise ValueError(f"unknown focus fields {sorted(unknown)}")
+    return Focus(**raw)
+
+
+def build_working_set(turn_context: dict[str, Any], agents: list):
+    from orchestrator.cloud.context import WorkingSet
+    catalog = filter_unavailable_capabilities(
+        agents, set(turn_context.get("unavailable_intents") or []))
+    return WorkingSet(
+        catalog=catalog,
+        history=list(turn_context.get("history") or []),
+        memories=list(turn_context.get("memories") or []),
+        focus=parse_focus(turn_context.get("focus") or {}),
+    )
+
+
+async def run_planner_turn(turn, agents, builder, *, granted_permissions=None):
+    """一条用例的 L1 执行：初规划 +（按契约声明的）replan 序列。"""
+    from orchestrator.cloud.models import PlanContext
+    from support.intent_adversarial_judge import DecisionSnapshot
+    from support.intent_adversarial_trace import snapshot_plan
+
+    working_set = build_working_set(turn.context, agents)
+    catalog = working_set.catalog
+    ctx = PlanContext(
+        request_id="intent-adversarial", session_id="intent-adversarial",
+        user_id="eval-user", vehicle_id="eval-vehicle",
+        granted_permissions=list(granted_permissions or []),
+        raw_text=turn.utterance,
+    )
+    plan = await builder.build(turn.utterance, working_set, ctx,
+                               granted_permissions=granted_permissions)
+    replans = []
+    for expected_replan in turn.expected.replans:
+        observation = dict(expected_replan.after["result"])
+        decision = await builder.replan(
+            plan.goal, [observation], catalog, ctx,
+            granted_permissions=granted_permissions,
+            working_set=working_set,
+            skill_names=list(plan.skills or []),
+            exemplar_names=list(plan.exemplars or []),
+        )
+        replans.append(snapshot_plan(decision.to_plan(plan.goal)))
+    return DecisionSnapshot(
+        ingress="cloud", addressed=bool(plan.addressed),
+        decision=("clarify" if plan.clarify and not plan.steps else
+                  "execute" if plan.steps else
+                  "reject" if not plan.addressed else "degrade"),
+        clarify=bool(plan.clarify and not plan.steps), plan=snapshot_plan(plan),
+        replans=tuple(replans),
+    )
+
+
+# ── 定向消融 ───────────────────────────────────────────────────────────────
+# 默认只跑 full。全库全排列消融的成本是线性乘 arm 数，而绝大多数案例是绿的——
+# 为绿灯付六倍模型开销买不到任何信息。
+
+ABLATION_ARMS = ("no-hints", "no-skills", "no-exemplars", "empty-history",
+                 "cloud-direct")
+
+
+def requested_ablations(repeat_status: str) -> tuple[str, ...]:
+    return () if repeat_status == "pass" else ABLATION_ARMS
+
+
+class _NoRouteHints:
+    """no-hints arm：唯一变量是 Hint 引擎不生效，其余装配逐字不变。"""
+
+    @staticmethod
+    def apply(_plan, _text, _agent_map) -> bool:
+        return False
+
+
+def disable_route_hints(builder) -> None:
+    builder._route_hints = _NoRouteHints()
+
+
+def ablation_env(arm: str) -> dict[str, str]:
+    if arm == "no-skills":
+        return {"SKILLS_MODE": "off"}
+    if arm == "no-exemplars":
+        return {"EXEMPLARS_MODE": "off"}
+    return {}
+
+
+def ablation_context(arm: str, turn_context: dict[str, Any]) -> dict[str, Any]:
+    """empty-history 只清上下文，catalog 保持不变——多动一个变量就归不了因。"""
+    if arm != "empty-history":
+        return dict(turn_context)
+    kept = dict(turn_context)
+    kept["history"] = []
+    kept["memories"] = []
+    kept["focus"] = {}
+    return kept
+
+
+def causal_effect(full_status: str, ablation_status: str, same_provider: bool,
+                  same_assets: bool) -> str:
+    """只有「稳定错 → 稳定对」且 provider/资产逐字相同，才配叫因果证据。
+
+    一次翻转是噪声也解释得通；provider 或资产变了，翻转的原因根本不唯一。
+    """
+    if not (same_provider and same_assets):
+        return "invalid"
+    if full_status == "stable_fail" and ablation_status == "pass":
+        return "supported"
+    if ablation_status == "pass":
+        return "suspect"
+    return "none"
