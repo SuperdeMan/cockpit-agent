@@ -247,16 +247,23 @@ class RepeatClassification:
     outcomes: tuple[RepeatOutcome, ...]
 
 
-def classify_repeats(outcomes: list[RepeatOutcome], risk: str) -> RepeatClassification:
+def classify_repeats(outcomes: list[RepeatOutcome], risk: str,
+                     deterministic: bool = False) -> RepeatClassification:
     """`unstable` 是独立状态：既不算通过，也不冒充稳定缺陷。
 
     三次结果分裂说明这句话本身在采样噪声里，把它当产品缺陷登记会污染修复清单；
     当通过则会把真实的不确定性藏起来。
+
+    `deterministic=True`（L0：无模型参与）时**不存在 unstable**——同代码同输入
+    100% 可复现，跑一次就是结论。不加这个开关，L0 的每一条低风险红灯都会被记成
+    「不稳定」，于是既进不了修复清单也进不了门禁，白白丢掉一条确定的缺陷。
     """
     if any(outcome.dangerous for outcome in outcomes):
         return RepeatClassification("critical_fail", tuple(outcomes))
     if all(outcome.passed for outcome in outcomes):
         return RepeatClassification("pass", tuple(outcomes))
+    if deterministic:
+        return RepeatClassification("stable_fail", tuple(outcomes))
     wrong = Counter(outcome.signature for outcome in outcomes if not outcome.passed)
     status = "stable_fail" if wrong and max(wrong.values()) >= 2 else "unstable"
     return RepeatClassification(status, tuple(outcomes))

@@ -410,6 +410,12 @@ def write_baseline_if_eligible(report: dict, markdown: str, eligibility,
 # ── main ───────────────────────────────────────────────────────────────────
 
 
+def _semantic_retrieval_expected() -> bool:
+    from orchestrator.cloud import exemplars as _exemplars
+    return (_exemplars.mode() != "off"
+            and _exemplars.retrieval_mode() == "hybrid")
+
+
 def _worktree_clean(ignore: set[str]) -> bool:
     try:
         proc = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
@@ -503,6 +509,14 @@ def main(argv: list[str] | None = None) -> int:
                                              timeout=args.timeout, model="")
             if args.retrieval_state == "warm":
                 warmed = asyncio.run(eval_live.warm_exemplars())
+                # 预热返回 0 有两种可能：范例层本来就关着（合法），或者 Embed 打不通
+                # 被静默降级成纯词法（不合法——那样整轮 L1 测的根本不是生产装配）。
+                # 后者必须是基础设施错误：一次「悄悄只跑了词法档」的发现轨会污染
+                # 之后所有关于知识层的结论。
+                if not warmed and _semantic_retrieval_expected():
+                    infrastructure_errors.append(
+                        "exemplar_warmup_failed: 语义检索档位为 hybrid 但预热 0 条"
+                        "（多半是 LLM_GATEWAY_ADDR 未指向可达网关，Embed 被降级）")
         results, infra = _execute(selected, args, suite, agents, builder,
                                   confirm_intents, provider_model, lock)
         infrastructure_errors.extend(infra)
@@ -692,7 +706,8 @@ def _run_case_layer(case, layer, args, suite, agents, builder, confirm_intents,
             outcomes.append(runtime.RepeatOutcome(
                 passed=judgement.passed, signature=repr(semantic_signature(snapshot)),
                 dangerous=_dangerous(case, judgement, snapshot)))
-    classification = runtime.classify_repeats(outcomes, risk)
+    classification = runtime.classify_repeats(outcomes, risk,
+                                              deterministic=layer == "l0")
     judgement = judgements[0]
     snapshot = snapshots[0]
     ablations = _run_ablations(case, layer, args, classification, agents, builder)

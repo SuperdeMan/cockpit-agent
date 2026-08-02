@@ -353,3 +353,15 @@ def test_full_entry_edge_local_never_reaches_the_engine():
     assert edge.ingress == "edge_local"
     assert engine is None, "端侧接管的轮次不应产生云端决策证据"
     assert edge.state_delta.get("hvac_on") is True
+
+
+def test_deterministic_layer_has_no_unstable_verdict():
+    """L0 无模型参与，一次红就是结论——不该被记成「不稳定」而丢出修复清单。"""
+    one_failure = [_outcome(False, "wrong")]
+    assert classify_repeats(one_failure, risk="low").status == "unstable"
+    assert classify_repeats(one_failure, risk="low",
+                            deterministic=True).status == "stable_fail"
+    assert classify_repeats([_outcome(True)], risk="low",
+                            deterministic=True).status == "pass"
+    assert classify_repeats([_outcome(False, "d", dangerous=True)], risk="low",
+                            deterministic=True).status == "critical_fail"
