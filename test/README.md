@@ -195,6 +195,50 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 被中止时要手工确认）；②退役判定**必须跨 provider 且覆盖全部命中句**，抽样会系统性高估；
 ③软层 A/B 的 Δ **只能在实际注入的子集上算**——未注入的两臂 prompt 逐字相同，翻面是采样方差。
 
+## 5.4 意图与落域对抗套件（`test/eval_intent_adversarial.py`）
+
+回答的问题和上面两类都不同：**意图是否完整、落域是否正确、决策链在哪里首次偏离**。
+规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`，语料契约
+`test/eval_corpus/intent_adversarial/README.md`。
+
+```bash
+# ① 零网络 L0：契约 + 覆盖矩阵 + Edge ingress + Hint + 词法检索 + catalog 预算
+python test/eval_intent_adversarial.py --suite discovery --layer l0 --strict
+
+# ② reference-provider L1/L2（真实 Planner / 完整 Edge→Engine 链）
+export LLM_GATEWAY_ADDR=localhost:50052        # 宿主跑必须显式给，见下方第 4 条
+python test/eval_intent_adversarial.py --suite discovery --layer l1 --live \
+    --provider <p> --model <m> --temperature 0.3 --timeout 45 --ablations on-failure
+python test/eval_intent_adversarial.py --suite discovery --layer l2 --live \
+    --provider <p> --model <m>
+
+# ③ 单案例复现（诊断用；每条报告的 expected.repro 里都印了这行）
+python test/eval_intent_adversarial.py --case <case-id> --layer l1 --live \
+    --provider <p> --model <m> --repeat 3 --diagnose
+
+# ④ 选集与缺口速览（不跑模型）
+python test/eval_intent_adversarial.py --suite discovery --layer l0 --list
+```
+
+**六条纪律**：
+
+1. **candidate 永远不进 live 层**。`--live` 只选 `suites.yaml` 的 `live_statuses`
+   （reviewed/stable）——未经人裁的 gold 不配消耗真实模型，更不配进指标。
+2. **seen / unseen 分开报**。同源原句与机械变体共享 `family_id`；凡进过 Skill /
+   Exemplar / Hint 修复资产的 family 一律 `seen_regression`，不得计入泛化。
+3. **普通失败复跑到 3 次，高风险固定 3 次**。2/3 同错才是 `stable_fail`；三次分裂是
+   `unstable`——既不算通过也不算缺陷。**L0 例外**：无模型参与，一次红就是结论。
+4. **`LLM_GATEWAY_ADDR` 必须指向可达网关**。`orchestrator/cloud/embedding.py` 默认连
+   `llm-gateway:50052`（容器内主机名），从宿主跑会被 `ALL_PROXY` 兜走并超时，范例检索
+   静默降级成纯词法。现在这种情况会以基础设施错误退出码 2 结束，不会出一份「看起来
+   正常」的报告。
+5. **真实副作用永不执行**。L2 的 Agent/VAL 全是 fake/spy，写操作只在测试显式注入
+   `confirmed_response` 时才产生并被记进 `side_effects`——「确认前零副作用」这条断言
+   因此有真的对照物，不是恒真。
+6. **`domain_hit_rate` 与 `exact_plan_set_rate` 不可直比**。前者是 RoutingBench 的历史
+   趋势口径（任一期望域命中即通过），后者要求全部必要组 + 无禁选 + 无未授权额外项 +
+   依赖与关键槽位齐全。
+
 ## 6. Nightly 真实 LLM 语料（默认 skip）
 
 复杂多意图、跨 Agent 组合、多轮指代依赖真实 LLM，单列 nightly，不进普通 PR 门禁：

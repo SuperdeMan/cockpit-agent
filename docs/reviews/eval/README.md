@@ -42,6 +42,39 @@
 91.2% 直比**：那是封闭集分类不受能力面约束，这是受能力面约束的真规划，且语料来自另一个
 产品（「第一页」「火车票查询」这类句子不可能落对）。它量化的是**能力面缺口**。
 
+## 意图与落域对抗套件的基线（`baseline_intent_adversarial.{json,md}`）
+
+生成方 `test/eval_intent_adversarial.py --suite gate --layer all --live … --write-baseline`。
+它与上表所有基线的区别是**有一道资格硬闸**：不合格的运行**一个字节都不碰**正式基线，
+诊断改写到带时间戳的 `_ci-run-intent-adversarial-rejected-*`，并以退出码 2 打印全部拒绝原因。
+
+资格要求（`baseline_eligibility()`，全部满足才写）：
+
+| 闸 | 拒绝原因 |
+|---|---|
+| suite=gate、layer=all、retrieval-state=warm | `suite_not_gate` / `layer_not_all` / `cold_start_retrieval` |
+| 选中案例状态全为 stable | `non_stable_cases_selected` |
+| provider 显式 pin 且零漂移 | `provider_not_locked` / `provider_drift` |
+| code SHA 非空、工作树干净 | `unknown_code_sha` / `dirty_worktree` |
+| 资产指纹完整（无 `missing_assets`）| `asset_fingerprint_incomplete` |
+| 声明层的证据单元齐全 | `case_set_incomplete` |
+| 无 `stable_fail` / `critical_fail` / `unstable` | `stable_failures` / `unstable_results` |
+| 无基础设施错误 | `infrastructure_errors` |
+| L3 选集非空且全过 | `l3_empty` / `l3_incomplete` |
+| 相对既有基线无逐例回退 | `baseline_regressions` |
+
+CLI **刻意不提供** `--update-baseline` / `--accept-failures` / `--force`——绕过参数存在本身
+就会被用掉。
+
+**证据单元是 `case_id@layer`**：同一条 case 在 L1 绿、L2 红时是两条独立记录。用裸
+`case_id` 作 key 会让后写的层覆盖先写的层，报告于是替产品把红灯藏起来。因此
+`--layer all` 的 overall 是**证据单元 micro**，不是去重后的案例准确率。
+
+**逐案例复现**：报告里每条 `expected.repro` 直接印了复现命令（`--case <id> --repeat 3
+--diagnose`）。失败条目同时带 `repetitions`（每次的语义签名）、`divergence`（首偏离边界）
+与 `ablations`（定向消融矩阵与因果等级）。**`suspect` 与 `supported` 必须分开读**：只有
+同 provider、同资产指纹下「稳定错 → 消融后稳定对」才配叫 `supported`。
+
 ### `domain_hit_rate` 与 `exact_plan_set_rate` 是两把尺子（2026-08-02 正名）
 
 RoutingBench 的历史 N1 口径是「实际域与期望域**有交集**即通过」，现在按它的真实语义
