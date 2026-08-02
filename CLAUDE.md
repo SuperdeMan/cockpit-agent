@@ -111,95 +111,27 @@ Windows 无 make 时用 `scripts/gen-proto.ps1`、`scripts/run_e2e.ps1` 等价�
 
 ## 7. 当前阶段
 
-**最新（2026-08-01）**：2026-07-26 总体验收报告 §7 的 **13 张主卡全部收口**——
-M-A 测试真实性 / M-B 多乘员隔离（OwnerKey）/ M-C 可靠触达（`publish 成功 ≠ 用户收到`）/
-M-D 外部生态（`声明存在 ≠ 能用`），四批全部合入 main。每批的「明确未做」逐条附判据
-在验收报告 §9/§10.2/§11.2/§12.2。**✅ GitHub CI 已收口**（`176dd20` / run #232 七个 job
-全绿，`#217` 之后第一次）——破点是 M-A 那批把 **Windows 假设写死了**，但最后 7 条里
-**两条是真代码缺陷**：首次 canonical 晋升在 Linux 上必崩、go wrapper 的 `\"` 转义只对
-Windows PowerShell 的 Legacy 传参成立。**它们能躲这么久，都是因为一段
-`if os.name == "nt": return` 把校验整层跳过了**——判据、Linux 复现步骤见
-`AGENTS.md` §4「CI / nightly 现状」。**nightly 同日收口**（`c75df13`）：连红三次的根因是
-M5 P2 的 **hint 退役抽掉了 mock 车道的确定性基础**——mock 里没有模型，那些「端到端
-路由」断言一直是正则在撑。判据改写为「**mock-safe ⟺ 这条路径不经过模型判断**」
-（端侧快路径／兜底 Agent／确定性解析／协议层四类），**「有 hint 撑着」不算**。
+**Phase 1 工程化 PoC（截至 2026-08-02）**，运行模型 T0 端侧快路径 / T1 单次 DAG / T2 有界
+Agentic 循环。已落地并验收的主题：工程化主干与云端中枢（P0-P3）、R2-R4 硬化（架构还债/安全/
+语音回路/拒识澄清）、可观测台（badcase 排查贯通）与旅程级验证体系（L3 journeys + L4 HMI CDP）、
+智能化升级 M0a→M4（数据真实性、Skill 层、submit_plan、自进化 nightly、Task Ledger + Outcome
+Verifier、记忆图谱、统一主动引擎、受控 MCP 桥、S2S 双语音链路、声纹多用户 + 视觉入口）、
+M5 数据飞轮（落域范例库、hint 退役出口、RoutingBench、跨域边界裁定台账、端侧语义 NLU shadow）。
 
-截至 2026-07-30，Phase 1 工程化 PoC 主干、云端中枢 P0-P3、R2-R4 硬化主题（架构还债/
-安全/语音回路/拒识澄清等）、可观测台（badcase 排查贯通：会话/轮次/日志/LLM + SQLite
-持久化）与**旅程级验证体系**（L3 journeys + L4 HMI CDP）已落地，运行模型为
-T0 端侧快路径 / T1 单次 DAG / T2 有界 Agentic 循环。
+三次全量验收留档，均通过：M0a→M4 总体验收
+`docs/reviews/2026-07-26-acceptance-review-m0a-m4.md`（其 §7 的 13 张主卡已于 2026-08-01 全部
+收口）；M5 全量评审 `docs/reviews/2026-07-30-review-m5-data-flywheel.md`（零 P0/P1）；验收实现
+复核 + badcase 智能化评审 `docs/reviews/2026-08-02-review-acceptance-impl-and-badcase-intelligence.md`
+（13/13 为真；「落域准确 ≠ 智能」标本与全声明式修法）。
 
-**智能化升级（对标超级 Eva，母提案 `docs/design/2026-07-24-eva-benchmark-intelligence-upgrade.md`）
-M0a→M4 全部完成**，主线是「把每一种智能供给都声明式化」：
+两条日常工作规则（从上述验收沉淀，做落域/意图类工作先记住）：
+- **修落域 badcase 的默认产物是范例与知识**（`skills/exemplars/`、`skills/guides/`、
+  `boundaries.yaml` 台账），不是正则——hint 写错是事故，范例写错只是噪声。
+- **组合意图先拿 goal 对照 steps**（goal 说推荐而 steps 无推荐步＝可检测的缺口信号，
+  2026-08-02 评审报告 §2.4）。
 
-| 期 | 交付 | 一句话 |
-|---|---|---|
-| M0a | 数据真实性 + 确认兜底 | 运行期 mock 回退按铁律③改诚实降级；`require_confirm` 中央强制落实 |
-| M0b | 规划知识 Skill 层 | 领域知识外迁 `skills/`，**加规划知识=投 skill 文件不改编排核心** |
-| M1a | `submit_plan` 结构化输出 | 原生 function calling 强制合法 Plan，`_extract_json` 工程债退役 |
-| M1b | 自进化 v1 + Shadow NLU | badcase→归因→补丁提案→eval 门禁→人审（nightly）；端侧切换建议出数据 |
-| M2 | 执行治理 + 记忆图谱 | **Task Ledger**（长任务可查可停可诚实报告中断）+ **Outcome Verifier**（声明式执行后对账）+ T2 分档 + **偏好加权与关系边** |
-| M3 | 主动治理 + 生态接入 | **统一主动引擎**（六路主动收敛到一个治理器：情境断言投递期复核/跨生产方去重/驾驶负荷延后/同窗合并成一条，**fail-open**=治理器缺席即回落直发）+ **位置提醒**（围栏边沿）+ **受控 MCP 桥**（人工准入+版本锁定+写操作生命周期五项） |
-
-| M4 S2S 线 | 端到端语音双链路 | **单一出口 `escalate`**——语音大模型直接听直接答（首音频 609ms），需要执行或查实时信息的一律交回确定性链；**S2S 会话内没有任何执行通道**，车控不绕 VAL/确认闸。域灰度=收放工具描述不做运行时拦截 |
-| M4 P4 | 声纹多用户 + 视觉入口 | **声纹**让「谁在说话」真实化（唤醒后首句边说边识别、一次唤醒锁一次、认不出一律回 primary），每个乘员记忆各自独立——**声纹绝不作鉴权因子**；**视觉**让「那是什么」能问，端侧命中触发词才抓一帧，**图像永不进对话链**（proto 里只有 frame_id） |
-
-**M4 已收官，两条 DoD 都已兑现**（语音双链路可切换 / 多用户记忆隔离旅程）。
-**M0a→M4 已通过总体验收（2026-07-26）**：七路跨阶段组合深查 + 测试真实性抽查，两个确认链
-P0 与一批组合缺陷当日修复，结构性遗留已立卡——验收报告见
-`docs/reviews/2026-07-26-acceptance-review-m0a-m4.md`。
-
-**M5 数据飞轮 P0-P2 + P3a 已落地（2026-07-29/30，架构文档 v1.15）**，主线是把「修落域 badcase 的
-标准产物」从**正则**换成**数据**，并给规则装上出口。母提案
-`docs/design/2026-07-28-intent-accuracy-data-flywheel.md`：
-
-| 期 | 交付 | 一句话 |
-|---|---|---|
-| P0 | 修断点、立尺子 | evolve 提案半环闭合（此前 100% 自触发降级、上线四天零产出）；落域指标接活；`turns.gold_intents` 标注载体；catalog 预算修复（旧值把 navigation 整域裁出 prompt） |
-| P1 | **落域范例库** `skills/exemplars/` | Planner 第三通道、权威链**最软层**——只作 few-shot 不做硬路由。**hint 写错是事故，范例写错只是噪声**，故 badcase 的默认修法是投范例 |
-| P2 | 度量驱动治理 | **RoutingBench**（分布尺 N1，与只防倒退的回归闸分开）+ **hint 退役流水线**（规则第一次有出口，`route_hints` 32→12）+ 强模型影子分诊 + 端云分歧驱动标注 |
-
-**三条会反复用到的判据**（细节见 RFC 与 `docs/reviews/eval/README.md`）：
-- 软层 A/B 的 **Δ 只能在「实际注入」的子集上算**——未注入的两臂 prompt 逐字相同，翻面是采样方差；
-- 规则退役**必须跨 provider 取交集 + 覆盖全部命中句**——抽样的偏差方向固定：命中面越大越容易被放行；
-- **N1 涨不等于系统变好**：语料有隐藏分母、域分布偏斜七成集中在三个域、canonical 高分是 hint 钉出来的。
-
-**P2 余项「nearby 规则群内讧」已收口 + P3a 端侧 NLU 识别侧已落地（2026-07-30）**：
-
-| 期 | 交付 | 一句话 |
-|---|---|---|
-| P2 收口 | 地盘裁定台账 | 「内讧」真根因是**金标自相矛盾**（P1 把过期的地盘声明批量导入成了金标）而非规则打规则；规则存量 **12→10**；机制修复=`skills/exemplars/boundaries.yaml` 跨域边界裁定台账 + CI 阻断门禁（**相似度不能机械判定冲突**——假冲突可以比真冲突更像，故人裁一次、机器只管「不许悄悄新增」） |
-| P3a | 端侧语义 NLU（**只到 shadow**） | 4 层中文 encoder（35MB/4.8ms）给出真概率，θ_high/θ_low 第一次可接。**DoD 未达线且刻意不追**：到 85% 需 θ=0.8，代价是约 1% 请求在端侧识别成**错的对象**（三闸挡危险动作，挡不住「合法但不是用户要的动作」）——产品决策，不是技术选择 |
-
-**三条新判据**：**先测天花板再训模型**（可行性判据先行，且测量本身要人工抽查上偏）／
-**校准的单调性是同分布性质**（transfer 车道 θ≥0.95 精度反低于 0.9——输入一偏，最自信那档最不可信）／
-**两个评测口径都要印**（holdout 95.8% vs transfer 64.9%，差 31 点就是「同分布」的含金量）。
-
-**验收实现结果复核 + badcase 三连修复（2026-08-02）**：① 13 张主卡收口逐卡核到
-file:line，**13/13 为真**、无测试造假，4 条低危发现中 3 条当批修掉（架构文档 §7.2 S2S
-主动仲裁漂移等），1 条入账（MCP `compensate_tool` 可达性校验未机制化——下个 server
-接入时必须顺手机制化）；② 「天气适合去哪玩」三 badcase 定性为**落域准确 ≠ 智能**的
-标本（planner goal 全写对、步骤只拆单域一步；质疑轮 planner 改对了「室内景点」却被
-nearby 类目子串扫描降级回「景点」）——修复全声明式：`skills/guides/weather-outing.yaml`
-（已知天气单步条件化推荐 / 未知天气 adaptive 先查再推 / 质疑轮改推室内）+ 范例 2 条 +
-nearby **室内扇出**（商场/电影院/博物馆串行检索交错合并）+ `weather_context` 话术承接；
-真栈三句原话全部翻正，冷启动 adaptive 两轮链打通。报告
-`docs/reviews/2026-08-02-review-acceptance-impl-and-badcase-intelligence.md`（判据 §2.4：
-**goal 是免费的对照物**——goal 说推荐而 steps 没有推荐步，就是可检测的缺口信号）。
-
-**M5 P0→P3a 已通过全量评审（2026-07-30）**：14 提交逐项核验，零 P0/P1 缺陷、零红线违规，
-报告 `docs/reviews/2026-07-30-review-m5-data-flywheel.md`。
-
-**P3 收尾已合入（2026-08-01）**——评审两条 INFO 项 + P3a 三张卡收口，**不改路由行为**，
-两条判据入册：**「A 与 B 一致吗」先问「A 和 B 是同一个空间里的量吗」**（影子拿语料中文标签
-与规则英文 object 直接比，`agree` 从来没出现过，而 P3b 的错对象率正要拿这档当分母；
-补 `orchestrator/edge/knowledge/nlu_objects.yaml` 等价类台账后 agree 0%→68.8%）／
-**「多给点信息总不会更差」不是证据**（78 条判别化描述渲进 planner catalog，跨 minimax +
-deepseek 两档 25 条语料 ×2 轮 **Δ=0 零翻面**，代价 +1462 字符/次规划 → 否掉；真正有效应的
-是 registry 语义兜底——泛化描述下「打开空调」的 top-1 竟是 scene-orchestrator，
-而那是 LLM 失败时的兜底规划路径）。余项与下一步见 `AGENTS.md` §4.0。
-
-当前事实、测试证据和待办统一维护在 `AGENTS.md`（§4 顶部有「当前进度与下一步」交接区）；
-设计与落地记录见 `docs/design/`（索引 `docs/design/README.md`）。原始量产级目标和未完成项见
-`docs/architecture/phase1-implementation-plan.md`，不要把当前 PoC 验收等同于该计划
-全部 DoD 已完成。
+当前事实、测试基线、活跃待办与交接摘要统一维护在 `AGENTS.md` §4.0（新会话从那里开始）；
+逐批历史流水在 `docs/agents-history.md`（只进不出）；设计与落地记录见 `docs/design/`（索引
+`docs/design/README.md`）。原始量产级目标和未完成项见
+`docs/architecture/phase1-implementation-plan.md`，不要把当前 PoC 验收等同于该计划全部 DoD
+已完成。
