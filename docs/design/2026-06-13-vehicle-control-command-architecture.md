@@ -43,7 +43,7 @@ Base《公版语音指令表 6.1》：内部飞书知识库（2026-08-02 卫生�
 | 层 | 来源表 | 作用 | 对应本系统组件 |
 |---|---|---|---|
 | **① 命令 schema** | 意图表 | 每条意图 = `domain+intent+data{operate,object,attr,positions,value,unit,limit,...}` | NLU 产出 + VAL 入参 |
-| **② 能力字典/分类** | 分类表 | 一级模块→五级操作的对象/操作层级 + **各项目（DeepWay/G91/重汽/雅迅徐工/鸿泉/华宝三一/江铃…）是否支持该意图** | `commands.yaml`（VAL 校验 + 车型裁剪） |
+| **② 能力字典/分类** | 分类表 | 一级模块→五级操作的对象/操作层级 + **各合作项目/车型是否支持该意图**（项目代号已脱敏为 project-a/b/c…，列名映射不入库，见 `.env.example` 的 `FEISHU_PROJECT_COLUMNS`） | `commands.yaml`（VAL 校验 + 车型裁剪） |
 | **③ 实体字典** | 词库 | 自然语言实体 → **协议标识 enum**（如 `<主路>`→`main_road`，主词 `主路`、别称 `主干道`；父子库 `<车道位置>`→各子项） | `entities.yaml`（归一化层） |
 | **④ 响应/话术** | 具体响应表 | 每个意图 × **执行结果/场景**（成功/失败/已打开/无此位置/无此空调…）→ 多条「普通话详细 / 普通话简洁」话术 + `执行动作` | `responses.yaml`（VAL 选话术） |
 | **④b 安全兜底话术** | 通用兜底反馈语 | 安全门控场景（车辆未启动 / 行车中限制开/关 / 涉及行车安全需手动）→ 话术（标识 `Car_general_restrictions_1..4`） | `responses.yaml` 的安全分支 |
@@ -116,7 +116,7 @@ objects:
     units:    [degree, level, percent]
     online:   offline_ok
     drive_restricted: false
-    projects: [DeepWay, G91, 重汽航天, ...]   # 哪些项目/车型支持（分类表 per-project 列）
+    projects: [project-a, project-b, project-c, ...]   # 哪些项目/车型支持（分类表 per-project 列，代号已脱敏）
   low_beam:   { operates: [open, close], voice_forbidden: true }
   door_lock:  { operates: [open, close], positions: [基础位置], require_confirm: true }
   driving_mode: { operates: [set, close, switch], modes: [节能, 运动, 舒适], drive_restricted: true }

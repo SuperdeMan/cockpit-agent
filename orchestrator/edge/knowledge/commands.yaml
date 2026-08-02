@@ -34,9 +34,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   window:
     display_name: 车窗
     operates:
@@ -56,9 +56,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   sunroof:
     display_name: 天窗
     operates:
@@ -78,9 +78,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   sunshade:
     display_name: 遮阳帘
     operates:
@@ -100,9 +100,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   aircon:
     display_name: 空调
     operates:
@@ -144,9 +144,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   ambient_light:
     display_name: 氛围灯
     operates:
@@ -168,9 +168,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   low_beam:
     display_name: 近光灯
     operates:
@@ -185,9 +185,9 @@ objects:
     require_confirm: false
     voice_forbidden: true
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   headlight:
     display_name: 大灯
     operates:
@@ -203,9 +203,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   trunk:
     display_name: 后备箱
     operates:
@@ -220,9 +220,9 @@ objects:
     require_confirm: true
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   door_lock:
     display_name: 车门锁
     operates:
@@ -237,9 +237,9 @@ objects:
     require_confirm: true
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   fuel_tank_cover:
     display_name: 油箱盖
     operates:
@@ -254,9 +254,9 @@ objects:
     require_confirm: true
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   charging_port:
     display_name: 充电口盖
     operates:
@@ -271,9 +271,9 @@ objects:
     require_confirm: true
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   rear_view_mirror:
     display_name: 后视镜
     operates:
@@ -296,9 +296,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   steering_wheel:
     display_name: 方向盘
     operates:
@@ -317,9 +317,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   wiper:
     display_name: 雨刮
     operates:
@@ -339,9 +339,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   fragrance:
     display_name: 香氛
     operates:
@@ -358,8 +358,8 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
+    - project-a
+    - project-b
   tire_pressure_monitoring:
     display_name: 胎压监测
     operates:
@@ -373,9 +373,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   dashcam:
     display_name: 行车记录仪
     operates:
@@ -391,9 +391,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   # ── R4.1b P0：端侧对象化（空气净化 / 导航播报 / 按键音）──
   air_purifier:
     display_name: 空气净化
@@ -451,9 +451,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   driving_mode:
     display_name: 驾驶模式
     operates:
@@ -481,9 +481,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   power_mode:
     display_name: 动力模式
     operates:
@@ -504,9 +504,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   energy_recovery:
     display_name: 能量回收
     operates:
@@ -524,9 +524,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   lane_departure_assistance:
     display_name: 车道偏离预警
     operates:
@@ -541,9 +541,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   lane_assistance:
     display_name: 车道保持辅助
     operates:
@@ -558,9 +558,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   accompany_home:
     display_name: 伴我回家灯光
     operates:
@@ -578,9 +578,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   volume:
     display_name: 音量
     operates:
@@ -598,9 +598,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   page:
     display_name: 界面页面
     operates:
@@ -615,9 +615,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   screen:
     display_name: 屏幕
     operates:
@@ -636,9 +636,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   app:
     display_name: 应用
     operates:
@@ -654,9 +654,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   weather:
     display_name: 天气
     operates:
@@ -670,9 +670,9 @@ objects:
     require_confirm: false
     voice_forbidden: false
     projects:
-    - DeepWay
-    - G91
-    - 重汽航天
+    - project-a
+    - project-b
+    - project-c
   bluetooth:
     display_name: 蓝牙
     operates:

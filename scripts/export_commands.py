@@ -14,7 +14,8 @@
   意图表「网络依赖」→ online
   意图表「多意图-指令类型」→ instruction_type
   意图表「前装公版意图」→ is_standard
-  意图表「G91项目」「华宝-三一」→ projects
+  意图表 per-project 支持列 → projects（列名↔脱敏代号映射经 FEISHU_PROJECT_COLUMNS，
+    公司/项目名不入库，见 .env.example）
   危险动作清单(door_lock/fuel_tank_cover/charging_port…) → require_confirm
 
 产物: orchestrator/edge/knowledge/commands.yaml
@@ -25,9 +26,9 @@ import os
 import subprocess
 
 try:
-    from feishu_env import feishu_base_token
+    from feishu_env import feishu_base_token, feishu_project_columns
 except ImportError:  # 以 scripts.* 包形式导入时
-    from scripts.feishu_env import feishu_base_token
+    from scripts.feishu_env import feishu_base_token, feishu_project_columns
 import sys
 
 import yaml
@@ -78,6 +79,9 @@ def fetch_records(base_token: str, table_id: str, limit: int = 200) -> list[dict
 
 # 需要二次确认的危险对象
 CONFIRM_OBJECTS = {"door_lock", "fuel_tank_cover", "charging_port", "trunk", "window"}
+
+# 意图表 per-project 支持列名 → 脱敏项目代号（真实列名不入库，见 .env.example）
+PROJECT_COLUMNS = feishu_project_columns()
 
 
 def parse_restrictions(raw) -> tuple[bool, bool]:
@@ -143,14 +147,12 @@ def classify_to_objects(intent_records: list[dict]) -> dict:
         drive_restricted, voice_forbidden = parse_restrictions(rec.get("限制", []))
         online = parse_network(rec.get("网络依赖", []))
 
-        # 解析项目支持
+        # 解析项目支持（列名↔脱敏代号映射不入库，经 FEISHU_PROJECT_COLUMNS 配置）
         projects = []
-        g91 = rec.get("G91项目", "")
-        if g91 and g91 not in ("", "0", "/", "不支持"):
-            projects.append("G91")
-        hs = rec.get("华宝-三一", "")
-        if hs and hs not in ("", "0", "/", "不支持"):
-            projects.append("华宝-三一")
+        for column, code in PROJECT_COLUMNS.items():
+            cell = rec.get(column, "")
+            if cell and cell not in ("", "0", "/", "不支持"):
+                projects.append(code)
 
         # 解析指令类型
         instruction_type_raw = rec.get("多意图-指令类型", [])

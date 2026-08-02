@@ -166,7 +166,7 @@ class TestCommandValidation:
         assert "暂不支持" in msg
 
     def test_vehicle_model_supported(self, val):
-        val.vehicle_model = "DeepWay"
+        val.vehicle_model = "project-a"
         ok, _ = val._validate_command("aircon", "set", {})
         assert ok
 
