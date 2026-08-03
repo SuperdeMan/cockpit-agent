@@ -92,6 +92,10 @@ class AdversarialResult:
     # **这条证据不能证明落域判断**——兜底产物默认就是 `chitchat.talk`，与一部分 gold
     # 逐字相同，于是「模型答对了」和「模型没答上来」在报告里长得一样。
     plan_from_fallback: bool = False
+    # 这条用例**声明了兜底就是它要的正确答案**（`tags.expects_fallback`）。
+    # A8 能力缺席族的全部意义就是「能力没了别假装有」——那里落兜底是设计如此，
+    # 不是降级。指标仍如实计数（planner 确实没产出可用计划），但资格闸只拦**没声明**的。
+    expects_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -305,6 +309,13 @@ def build_adversarial_report(results: list[AdversarialResult],
         result.result_id for result in results
         if result.plan_from_fallback and result.passed
     ]
+    # **只有「没声明过」的兜底才是问题。** A8 能力缺席族的 gold 就是「别假装有这个
+    # 能力」，那里落兜底是设计如此；把它们一并拦下，资格闸会为了一个错误的理由
+    # 永远红着——而一条永远红的闸，很快就没人再看它说什么。
+    report["unexpected_fallback_plans"] = [
+        result.result_id for result in results
+        if result.plan_from_fallback and not result.expects_fallback
+    ]
     report["ablations"] = {
         result.result_id: [dict(row) for row in result.ablations]
         for result in results if result.ablations
@@ -387,8 +398,8 @@ def baseline_eligibility(report: dict[str, Any]) -> BaselineEligibility:
     # 基线**——后续所有对比都会把「模型什么时候能答上来」当成「落域什么时候是对的」。
     # 它同时是**产品压力**：这一族现在稳定命中（planner 对「先别关空调」返回
     # `{"addressed":true,"steps":[]}`，被 planning.py 当解析失败丢掉），闸红着就一直提醒。
-    if report.get("fallback_plans"):
-        reasons.append("fallback_plans")
+    if report.get("unexpected_fallback_plans"):
+        reasons.append("unexpected_fallback_plans")
     statuses = report.get("repeat_statuses") or {}
     if statuses.get("unstable"):
         reasons.append("unstable_results")
@@ -448,12 +459,14 @@ def render_adversarial_markdown(report: dict[str, Any]) -> str:
     high_risk = report.get("high_risk_failures") or []
     lines.append(f"高风险失败：{len(high_risk)}"
                  + (f"（{', '.join(high_risk)}）" if high_risk else ""))
-    fallback_passes = report.get("fallback_passes") or []
+    unexpected = report.get("unexpected_fallback_plans") or []
     lines.append(
-        f"**兜底计划却判绿**：{len(fallback_passes)}"
-        + (f"（{', '.join(fallback_passes)}）——这些绿由 `PlanBuilder._fallback` "
-           "合成的计划给出，不是 planner 的判断，不能当落域证据"
-           if fallback_passes else ""))
+        f"**未声明的兜底计划**：{len(unexpected)}"
+        + (f"（{', '.join(unexpected)}）——这些计划由 `PlanBuilder._fallback` 合成，"
+           "不是 planner 的判断，判绿也不能当落域证据"
+           if unexpected else "")
+        + f"；另有 {len(report.get('fallback_plans') or []) - len(unexpected)} 条"
+          "是 A8 能力缺席族**声明过**的预期兜底（设计如此）")
     meta = report.get("meta") or {}
     if meta.get("retrieval_degraded"):
         lines.append(

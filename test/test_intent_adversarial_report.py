@@ -45,7 +45,7 @@ def _result(case_id, *, passed=True, repeat_status="pass", domain="info",
             admitted_intents=("info.weather",), raw_intents=None,
             raw_observed=True, divergence="", layer="l1",
             risk="medium", extra_metrics=None, repetitions=(),
-            plan_from_fallback=False):
+            plan_from_fallback=False, expects_fallback=False):
     metrics = {"exact_plan_set": float(passed),
                "required_group_recall": required_recall}
     metrics.update(extra_metrics or {})
@@ -74,6 +74,7 @@ def _result(case_id, *, passed=True, repeat_status="pass", domain="info",
         validation_observed=raw_observed,
         assertions=(), repetitions=tuple(repetitions),
         divergence=divergence, plan_from_fallback=plan_from_fallback,
+        expects_fallback=expects_fallback,
     )
 
 
@@ -339,8 +340,8 @@ def test_a_pass_produced_by_the_fallback_plan_is_reported_as_such():
     assert report["metrics"]["fallback_plan_rate"]["value"] == 0.5
     assert "fallback_plan_rate" in METRICS
     # …但它进不了 baseline：一份基线里有一条是降级路径给的，它就不是基线
-    assert "fallback_plans" in baseline_eligibility(report).reasons
-    assert "兜底计划却判绿" in render_adversarial_markdown(report)
+    assert "unexpected_fallback_plans" in baseline_eligibility(report).reasons
+    assert "未声明的兜底计划" in render_adversarial_markdown(report)
 
 
 def test_fallback_rate_denominator_excludes_layers_without_a_planner():
@@ -455,3 +456,28 @@ def test_softening_a_gold_is_visible_even_when_the_case_still_passes():
     blocked = build_adversarial_report(
         [_result("c")], _meta(gold_changes=["c@l1:a->b"]))
     assert "gold_changed_since_baseline" in baseline_eligibility(blocked).reasons
+
+
+def test_a_declared_fallback_is_not_held_against_the_baseline():
+    """反向构造：A8 能力缺席族——**兜底就是这里的正确答案**。
+
+    实测那一趟 470 单元里 10 条兜底全部落在 `cc.missing.*` / `cc.hallucination.*`：
+    它们的 gold 就是「能力没了别假装有」，`allow_extra_intents: true` 且没有必要组，
+    落 chitchat 是设计如此。把它们一并拦下，资格闸会为一个错误的理由永远红着——
+    **一条永远红的闸，很快就没人再看它说什么。**
+
+    但指标仍如实计数：planner 确实没产出可用计划，这是系统的真实属性。
+    """
+    declared = _result("cc.missing.parking", passed=True,
+                       plan_from_fallback=True, expects_fallback=True)
+    report = build_adversarial_report([declared], _meta())
+    assert report["fallback_plans"] == ["cc.missing.parking@l1"], "指标如实计数"
+    assert report["metrics"]["fallback_plan_rate"]["value"] == 1.0
+    assert report["unexpected_fallback_plans"] == []
+    assert baseline_eligibility(report).reasons == ()
+
+    # 没声明的仍然拦——否则这条豁免就成了万能通行证
+    sneaky = _result("nq.hvac-keep.dont", passed=True, plan_from_fallback=True)
+    blocked = build_adversarial_report([declared, sneaky], _meta())
+    assert blocked["unexpected_fallback_plans"] == ["nq.hvac-keep.dont@l1"]
+    assert "unexpected_fallback_plans" in baseline_eligibility(blocked).reasons

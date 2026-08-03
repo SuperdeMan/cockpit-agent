@@ -816,7 +816,8 @@ def test_a_green_run_still_says_when_the_plan_came_from_the_fallback(
     assert report["fallback_passes"] == ["nq.hvac-keep.dont@l1"]
     assert report["metrics"]["fallback_plan_rate"]["value"] == 1.0
     from support.intent_adversarial_report import baseline_eligibility
-    assert "fallback_plans" in baseline_eligibility(report).reasons
+    assert report["unexpected_fallback_plans"] == ["nq.hvac-keep.dont@l1"]
+    assert "unexpected_fallback_plans" in baseline_eligibility(report).reasons
 
 
 def test_relation_only_failure_triggers_the_failure_expansion(monkeypatch):
@@ -1091,3 +1092,39 @@ def test_two_run_ids_in_one_run_directory_is_not_one_run(tmp_path):
     _, _, identity = read_l3_report(tmp_path, expect_provider="p:m",
                                     expect_ids=["A1-1", "A1-2"])
     assert any("l3_run_id_mixed" in row for row in identity)
+
+
+def test_a_finished_run_is_never_lost_to_a_console_encoding_error(tmp_path, monkeypatch):
+    """反向构造：控制台编不出摘要里的某个字符。
+
+    实测：一趟 470 单元的全量跑完、报告已落盘，`_print_summary` 打 `⚠`（U+26A0）时
+    Windows GBK 控制台抛 `UnicodeEncodeError`，进程带 traceback 退出——**数据在，
+    退出码却成了「运行失败」**。又一次「失败被记成了别的东西」，只是这次失败的是打印。
+    """
+    import io
+
+    class _GbkOut(io.TextIOBase):
+        def __init__(self):
+            self.buf = []
+            self.lossy = False
+
+        def reconfigure(self, *, errors=None, **_kw):
+            if errors == "replace":
+                self.lossy = True
+
+        def write(self, text):
+            if not self.lossy:
+                text.encode("gbk")          # 编不出就抛，与真实控制台一致
+            self.buf.append(text)
+            return len(text)
+
+    out = _GbkOut()
+    monkeypatch.setattr(sys, "stdout", out)
+    cli._make_stdio_lossy()
+    out.write("摘要里有一个 \u26a0 符号\n")     # 不再抛
+    assert out.lossy and out.buf
+
+    # 反向：没调用过降级时，同一句话确实会抛——证明上面那条不是恒真
+    raw = _GbkOut()
+    with pytest.raises(UnicodeEncodeError):
+        raw.write("摘要里有一个 \u26a0 符号\n")

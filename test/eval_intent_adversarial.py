@@ -890,7 +890,25 @@ def _gather_contract_errors(cases, suite, args) -> tuple[list[str], list[str]]:
     return hard, gaps
 
 
+def _make_stdio_lossy() -> None:
+    """控制台编不出某个字符时**降级成 `?`，不要把跑完的结果弄丢**。
+
+    2026-08-03 实测：一趟 470 单元的全量跑完、报告已落盘，随后 `_print_summary` 打
+    `⚠`（U+26A0）时 Windows GBK 控制台抛 `UnicodeEncodeError`，进程带 traceback 退出。
+    数据在，退出码却成了「运行失败」——**又一次「失败被记成了别的东西」**，只不过这次
+    失败的是打印，被记成了跑批。
+
+    摘要是给人看的便利，不是判定面；判定面在 JSON/Markdown 里，全 UTF-8 落盘不受影响。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _make_stdio_lossy()
     args = validate_args(parse_args(argv))
     try:
         all_cases = contract.load_cases(CASES_DIR)
@@ -1153,7 +1171,7 @@ def _print_diagnosis(report: dict) -> None:
         print(f"   检索: skills={row['actual'].get('skills')} "
               f"exemplars={row['actual'].get('exemplars')}")
         if row.get("plan_from_fallback"):
-            print("   ⚠ 计划来自编排兜底（_fallback），**不是 planner 的判断**："
+            print("   [!] 计划来自编排兜底（_fallback），**不是 planner 的判断**："
                   "两次解析都没成。兜底产物恒为 chitchat.talk，"
                   "对『不要做任何动作』这一族 gold 是免费的通过——这条结论不算数。")
         for assertion in row.get("assertions") or []:
@@ -1185,18 +1203,18 @@ def _print_summary(report: dict) -> None:
               f" ({row.get('numerator', 0):g}/{row.get('denominator', 0):g})")
     # 通过但计划来自兜底的那些**必须在摘要里说**：它们在总表里与真正的通过长得一样，
     # 而它们证明不了落域判断。放在指标之后、尾部之前，读的人绕不过去。
-    fallback_passes = report.get("fallback_passes") or []
-    if fallback_passes:
-        print(f"  ⚠ 兜底计划却判绿 {len(fallback_passes)} 条（计划由 _fallback 合成，"
-              f"不是 planner 判断，这些绿不算数）: "
-              f"{', '.join(fallback_passes[:8])}"
-              f"{' …' if len(fallback_passes) > 8 else ''}")
+    unexpected = report.get("unexpected_fallback_plans") or []
+    if unexpected:
+        print(f"  [!] 未声明的兜底计划 {len(unexpected)} 条（由 _fallback 合成，"
+              f"不是 planner 判断，判绿也不算落域证据）: "
+              f"{', '.join(unexpected[:8])}"
+              f"{' ...' if len(unexpected) > 8 else ''}")
     if meta.get("trace_error_count"):
-        print(f"  ⚠ 探针在 {meta['trace_error_count']} 轮上没取到校验前候选"
+        print(f"  [!] 探针在 {meta['trace_error_count']} 轮上没取到校验前候选"
               f"（那些轮 raw_observed=False，不进幻觉率分母）: "
               f"{(meta.get('trace_errors') or [''])[0][:120]}")
     if meta.get("retrieval_degraded"):
-        print(f"  ⚠ 语义检索中途降级 {meta['retrieval_degraded']}/"
+        print(f"  [!] 语义检索中途降级 {meta['retrieval_degraded']}/"
               f"{meta.get('retrieval_calls', 0)} 次调用没拿到向量——"
               f"这些轮只跑了词法档，本次知识层结论不成立")
     for row in (report.get("weakest") or [])[:5]:
@@ -1528,6 +1546,7 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
             # 取**证据那一轮**的兜底标记，与 assertions/metrics 同一轮，
             # 免得报告里出现「这条绿是兜底给的」指向另一次运行的情况。
             plan_from_fallback=outcome.plan_from_fallback,
+            expects_fallback=bool(case.tags.get("expects_fallback")),
             assertions=assertions,
             repetitions=tuple({"passed": o.passed, "signature": o.signature[:400],
                                "dangerous": o.dangerous}
