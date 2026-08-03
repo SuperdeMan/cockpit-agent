@@ -136,6 +136,23 @@ def encode(tok, texts: list[str]):
     return enc["input_ids"], enc["attention_mask"]
 
 
+def _toolchain() -> dict[str, str]:
+    """训练用到的 ML 栈版本进报告 meta。
+
+    2026-08-04 立的账：本脚本此前不记版本，于是「同语料同种子同划分、读数差 9 点」
+    这件事查了半天才归因到版本漂移上（findings §9.5）。项目在 skills eval 上早有同一条
+    纪律——**跑批条件全进 meta，缺了跨 run 对比就是拿苹果比橘子**——训练侧漏了。
+    """
+    import importlib
+    out: dict[str, str] = {}
+    for name in ("torch", "transformers", "onnxruntime", "numpy"):
+        try:
+            out[name] = getattr(importlib.import_module(name), "__version__", "?")
+        except Exception:                    # 缺包不该拦下报告生成
+            out[name] = "absent"
+    return out
+
+
 def run_lane(lane: str, rows: list[dict], args) -> dict:
     import torch
     from torch import nn
@@ -396,12 +413,16 @@ def main() -> int:
                "corpus_rows": len(rows), "rule_hit": hit,
                "hyper": {"epochs": args.epochs, "batch_size": args.batch_size,
                          "lr": args.lr, "max_len": MAX_LEN, "seed": SEED},
+               "toolchain": _toolchain(),
                "lanes": res}
     _REPORT_JSON.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
                             encoding="utf-8")
     md = ["# 端侧 NLU 训练报告（M5 P3）", "",
           f"> 生成 {payload['generated']}　底座 {payload['base_model']}"
           f"（4 层/hidden 256/8.9M 参数）　语料 {len(rows)} 条（规则命中 {hit/len(rows):.1%}）", "",
+          f"> 工具链 {payload['toolchain']}　超参 {payload['hyper']}"
+          "　——**跨 run 比读数之前先对这一行**：同语料同种子同划分，仅 torch/transformers"
+          "版本不同，实测 holdout object 可差 8.9 点（2026-08-04 实证，findings §9.5）。", "",
           "两个口径，**第二个才是决策依据**：随机 holdout 会因 paraphrase 泄漏被抬高，"
           "只当同分布上界；transfer（规则命中→规则漏判）直接回答「模型能不能接住规则接不住的」。",
           "", ("⚠ **本次只跑了 " + "、".join(r["lane"] for r in res) + " 车道**"
