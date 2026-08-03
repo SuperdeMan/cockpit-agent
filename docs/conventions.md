@@ -340,7 +340,7 @@
 | 变量 | 含义 | 必填 |
 |---|---|---|
 | `REJECT_NON_ADDRESSED` | 拒识总开关：`on`/默认=hands-free 语音源 + LLM 判非受话（`addressed=false`）时静默丢弃、不落库；`off`=一键回今天（planner 照常输出 addressed，engine 不消费）| 否（默认 `on`） |
-| `CLARIFY_ENABLED` | 路由歧义澄清总开关：`on`/默认（2026-07-08 真栈 CDP 验收后翻 on）=真歧义句出 `intent_choice` 卡问一句再执行；`off`=解析层丢弃 clarify（一键回今天）。反例误澄清 0/17，明确句绝不反问 | 否（默认 `on`） |
+| `CLARIFY_ENABLED` | 路由歧义澄清总开关：`on`/默认（2026-07-08 真栈 CDP 验收后翻 on）=真歧义句出 `intent_choice` 卡问一句再执行；`off`=解析层丢弃 clarify（一键回今天）。反例误澄清 0/17，明确句绝不反问。**2026-08-03 把 `planning.py`/`engine.py` 的代码兜底缺省也对齐到 `on`**——此前兜底是 `off`，于是任何不经 compose 起的进程（评测/单测/CLI）测的都不是生产装配，对抗测试因此把 4 条用例误记成「产品默认 off」 | 否（默认 `on`） |
 | `CLARIFY_FALLBACK_MIN` | LLM 挂/两次解析失败降级到语义 top-1 时的分数门槛：低于此值诚实降级（不硬执行 `capabilities[0]`），与 `SEMANTIC_PROMOTE_SIM` 对齐 | 否（默认 `0.5`） |
 
 > 卡片类型（`ui_card.type`，走 Struct 免改 proto）：`rejected`（拒识标记，`speech` 空、HMI 标灰留痕不 TTS）、

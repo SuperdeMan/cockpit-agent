@@ -59,13 +59,18 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 
 ### 4.0 当前快照（新会话从这里开始）
 
-> 截至 **2026-08-02**。本节只保留当前事实与最近批次摘要；**逐批次历史流水（只进不出，查证据用）
+> 截至 **2026-08-03**。本节只保留当前事实与最近批次摘要；**逐批次历史流水（只进不出，查证据用）
 > 整体在 [`docs/agents-history.md`](docs/agents-history.md)**——新批次收口时把完整记录追加到
 > 那边、在这里刷新摘要，不要再往本文件堆流水。
 
 **全量测试基线**：后端 `python -m pytest --import-mode=importlib` **3783 passed / 11 skipped /
 0 failed**（2026-08-02 单进程实测 14m02s；对抗测试体系 +128，零回归）；HMI `node --test` **225/225**；
 Dashboard vitest **17/17**；端侧 smoke 13/13；Go 网关 vet+test 通过。
+**2026-08-03 修复批次 +24 用例**（端侧对抗回归 17 / intent 归位 5 / skill 预算头寸 2，另有
+混合分组 2 条并入既有文件）：`test/` + `orchestrator/` + `agents/` 实测 **2521 passed**。
+⚠ **本机当前 `scripts/tests/` 有 32 条红**，但**与 clean HEAD `de6ef22` 逐条一致**
+（既有 e2e 运行器的环境路径问题，非本批引入）——同一命令在本机与 CI 上的分母不同，
+**引用基线前先确认是在哪台机器上跑的**。
 
 **意图落域对抗测试体系（2026-08-02 建成，2026-08-03 首轮发现全部修复并复验）**：
 规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`（§21 落地记录）、
@@ -90,14 +95,14 @@ L1 发现轨原始 evidence unit **425/468**，扣掉 6 条网关伤亡后 **431
 **2026-08-03 独立对抗 review：验收不通过。** 报告
 [`docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`](docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md)
 确认 baseline 完整选集可被正常过滤参数绕过、L2 丢 Edge 副作用、多轮只执行第一轮，以及
-指标/维度/trace/relation/L3 新鲜度/seen-unseen 隔离等问题。上面的 2026-08-02 数字保留为
+指标/维度/trace/relation/L3 新鲜度/seen-unseen 隔离等问题。**2026-08-02 首轮**的数字保留为
 **历史原始读数**：L0 65/70 可复现；`exact_plan_set_rate`、最弱域、0% 能力幻觉、L2 7/7、
 seen/unseen 与 instability 暂不作为权威结论。修复 P0 前不得生成正式 baseline。
 
 四条判据先记住：① **`domain_hit_rate` ≠ `exact_plan_set_rate`**——前者是 RoutingBench
 的历史交集口径（期望两域只命中一域照样绿），后者要求必要组全满足 + 无禁选 + 无未授权
 额外项，两者不可直比；② **seen 98.0% vs unseen 86.0%**，修复原句上的表现证明不了泛化，
-读任何「落域涨了」先问哪一档涨了；③ **两次独立进程滤不干净噪声**——两趟都绿的案例第三趟
+读任何「落域涨了」先问哪一档涨了。**⚠ 2026-08-03 追加：先问那一档本身分得干净吗**——评审 P1-7 查出 3 条完全相同的 utterance+context 同时落在两个 cohort，这两个数字在语料按 canonical fingerprint 去泄漏、重新晋级之前不可引用；③ **两次独立进程滤不干净噪声**——两趟都绿的案例第三趟
 仍有 5.9% 落进 `unstable`，门禁红一条先看 `repeat_status`；④ 本套件自身首轮被抓到 7 个
 缺陷，其中 4 个是同一形态——**失败被记成了别的东西**（不稳定 / 无证据 / 基础设施错误 /
 把运行器故障折算成产品失败）。
@@ -140,7 +145,7 @@ Windows PowerShell Legacy 传参成立），能躲住全因一段 `if os.name ==
 `docs/reviews/2026-07-30-review-m5-data-flywheel.md`）。一句话：修落域 badcase 的标准产物从
 正则换成**数据**——`skills/exemplars/` 范例库（权威链最软层，写错是噪声不是事故）+
 `boundaries.yaml` 跨域边界裁定台账（人裁一次、机器守不许悄悄新增）；规则第一次有出口
-（hint 退役流水线，存量 32→10，退役判据=跨 provider 交集 + 覆盖全部命中句）；RoutingBench
+（hint 退役流水线，存量 **32→9**：M5 P2 退到 10，2026-08-03 对抗测试批再退 `reminder#1`；退役判据=跨 provider 交集 + 覆盖全部命中句）；RoutingBench
 分布尺（读数配三条限制：隐藏分母 / 域偏斜 / canonical 高分是 hint 钉出来的）；端侧语义 NLU
 识别侧建成（**只到 shadow**，`on` 挡位是产品决策刻意不存在——θ=0.8 达 85% 覆盖的代价是约 1%
 请求识别成错对象）。**下一步 P3b：operate 抽取 + 放量**，开工判据=错对象率 <0.3%（`nlu.shadow`
@@ -151,6 +156,19 @@ span 的 `path` × `nlu_gate` × `nlu_vs_rule` 现在能从真实流量算出上
 定稿归档进架构文档（附录 C v1.2→v1.19 按主题索引）。
 
 ### 4.1 活跃待办与已知余项
+
+**意图落域对抗测试（2026-08-03 修复批次收口后的余项，按优先级）**：
+
+| 待办 | 出处 | 说明 |
+|---|---|---|
+| **尺子自身 3 P0 / 7 P1 / 2 P2**（最高优先） | 2026-08-03 独立评审 | `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`。**在第 1 步「封假绿」完成前不得生成正式 baseline**：baseline 资格闸可被 `--case/--repeat` 等正常参数绕过 / L2 丢 Edge 副作用 / 多轮契约只跑第一轮 / L3 可复用旧报告 / seen-unseen 有原句跨 cohort 泄漏 / `exact_plan_set_rate` 等口径错记。修复顺序见评审 §5。**修尺子要单独一批**——与修被测对象同批进行是这套体系明令禁止的 |
+| **`parking` 缺「查停车费」能力** | findings §6.1 | `parking-payment` 只有 `parking.pay` 一个 capability，「我想先知道多少钱」系统答不了，模型被迫选唯一那个（`require_confirm=true` 兜住了钱不会自己出去）。修法是补 `parking.query_fee` 读能力，按 CLAUDE.md §3 流程走，属新增能力 |
+| **「有点看不清路了」该开大灯还是开雨刷** | findings §6.2 | `ex.colloquial.dark` 维持 `candidate`，等泓舟拍板。⚠ 澄清开关兜底翻 on 后这类天然歧义句更可能走澄清卡，定 gold 时要把 `decision.allowed` 一起定 |
+| **`stable` 113 < 设计要求 120** | 规格 §21.8 | 且评审指出 113 条只有 104 个唯一输入——**规模被重复输入放大了**。要等语料按 canonical fingerprint 去重/去泄漏后重新晋级 |
+| **L3 证据仍未取得** | 规格 §21.8 | 既有 e2e 运行器在本机 `lease_protocol` / `identity_cleanup` 失败。**这是 e2e 运行器的账**，不属对抗套件 |
+| **发现轨主跑仍是 `--ablations off`** | 规格 §21.8 | 红灯只有首偏离点、尚未逐条建立因果证据；且评审 P1-4 指出 trace/消融根本没接通主入口 |
+| **`instability_rate` 3.1% → 4.1%** | 2026-08-03 修复批次 | 本批唯一明确变差的指标。新增抖动集中在新恢复/新增的边界用例上（它们本就站在两域分界线）。虽按口径 `unstable` 不登记为缺陷、且该指标只是下界，**方差变大本身要盯着** |
+| **seen 掉的那 1 条** | 2026-08-03 修复批次 | `bd.ns-poi-road.right.seen`「路上怎么样」→ `safety.driving_advice`（gold 要 `safety.road_condition`）。**不能声称与本批无关**——新增常驻 policy 与 `_CLARIFY_SECTION` 判据改变了每一次规划的 prompt。等消融归因 |
 
 **M5 待办（都不阻塞）**：
 
@@ -165,8 +183,8 @@ span 的 `path` × `nlu_gate` × `nlu_vs_rule` 现在能从真实流量算出上
 
 | 待办 | 出处 | 说明 |
 |---|---|---|
-| **召回保护从 CI 阻断降级为人工触发**（⚠ 2026-08-02 **代价变大了**） | P2 退役 | 19 条 hint 的召回断言原本是**阻断 pytest**（理由：语料在 continue-on-error 观测步），退役后保护改端到端口径进 `mode_routing_cases.yaml`，而那是 **live 车道不在 CI**。**追加**：nightly 收口后 `e2e_trip` / `e2e_journeys` 也退出了 nightly、`e2e_context` 子集减半——**同一条 hint 退役，第二次收走自动回归覆盖**。这两笔账现在指向同一张卡：**让 live 车道进 CI**（真栈+LLM，密钥/成本/模型方差另议）。在它兑现之前，trip 多轮闭环 / reminder.list / scene.activate 的自动回归只剩人工触发的 milestone 车道 |
-| **MiMo 第三档复验** | P2 退役 | 这批 hint 当初正是为 MiMo 写的（`route_hints.py` 开篇），但本环境 MiMo 无可用 key（探针 `all models failed`），证据只覆盖 minimax + deepseek。**切回 MiMo 须复验**——每条退役的原位注释都写了这句与 `git log -S` 恢复方法 |
+| **召回保护从 CI 阻断降级为人工触发**（⚠ 2026-08-02 **代价变大了**） | P2 退役 | 19 条 hint 的召回断言原本是**阻断 pytest**（理由：语料在 continue-on-error 观测步），退役后保护改端到端口径进 `mode_routing_cases.yaml`，而那是 **live 车道不在 CI**。**追加**：nightly 收口后 `e2e_trip` / `e2e_journeys` 也退出了 nightly、`e2e_context` 子集减半——**同一条 hint 退役，第二次收走自动回归覆盖**。这两笔账现在指向同一张卡：**让 live 车道进 CI**（真栈+LLM，密钥/成本/模型方差另议）。在它兑现之前，trip 多轮闭环 / reminder.list / scene.activate 的自动回归只剩人工触发的 milestone 车道。**2026-08-03 第三次**：`reminder.create`（最后一条 reminder hint）与 `deep-research#1` 量词收窄同批落地，代表形态已迁入 `mode_routing_cases.yaml`——**同一笔账又厚了一层** |
+| **MiMo 第三档复验** | P2 退役 | 这批 hint 当初正是为 MiMo 写的（`route_hints.py` 开篇），但本环境 MiMo 无可用 key（探针 `all models failed`），证据只覆盖 minimax + deepseek。**切回 MiMo 须复验**——每条退役的原位注释都写了这句与 `git log -S` 恢复方法。**2026-08-03 又添两条**：`reminder#1` 退役、`deep-research#1` 收窄，证据同样只覆盖 minimax + deepseek |
 | ~~**nearby 规则群内讧**~~ | P2 双臂裸跑 | **已收口（2026-07-30，`47eac1c`）**：真根因是金标自相矛盾，不是规则打规则。详见 `docs/agents-history.md` |
 | **`mcp-bridge#0`（shop.order）退役** | P2 交集 | 两档都判可退役，但 `require_confirm=true` → 治理⑥要求专项安全回归，**路由评测不构成安全证据**。等安全回归 |
 | **3 条单档候选** | P2 交集 | `deep-research#0`、`info#4`、`trip-planner#1` 只在单档成立，被交集正确挡下。补第三档 provider 后再判 |

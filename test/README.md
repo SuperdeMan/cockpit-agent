@@ -199,7 +199,17 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 
 回答的问题和上面两类都不同：**意图是否完整、落域是否正确、决策链在哪里首次偏离**。
 规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`，语料契约
-`test/eval_corpus/intent_adversarial/README.md`。
+`test/eval_corpus/intent_adversarial/README.md`，
+**发现清单 + 修复批次记录** `docs/design/2026-08-02-intent-routing-adversarial-findings.md`。
+
+> ⚠ **先读这条再看任何数字**（2026-08-03 独立评审
+> `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`，3 P0 / 7 P1 / 2 P2）：
+> 本套件**目前只能当 discovery 工具，不能当 gate / baseline 尺子**。
+> `exact_plan_set_rate`（实为整轮通过率）、`seen/unseen`（有原句跨 cohort 泄漏）、
+> `capability_hallucination_rate`（实为 post-validation 逃逸率）、`relation_pass_rate`、
+> `instability_rate`（分母含只跑过一次的证据单元）**口径均不成立**。
+> **可用的是**：原始 evidence unit 通过数，以及**逐条按原始断言复现**。
+> 修复顺序见评审 §5；在第 1 步（封假绿）完成前不要生成正式 baseline。
 
 ```bash
 # ① 零网络 L0：契约 + 覆盖矩阵 + Edge ingress + Hint + 词法检索 + catalog 预算

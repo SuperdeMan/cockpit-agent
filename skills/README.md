@@ -27,8 +27,17 @@ skills/
 | 型 | 职责 | 装配 | 例 |
 |---|---|---|---|
 | **PlanningGuide** | 告诉 Planner 何时/如何组合能力（判据+few-shot） | 检索双通道预筛 top-N（默认 3），`SKILL_BUDGET` 内注入 | 多日行程、导航顺路停靠、条件提醒、充电分流 |
-| **PlannerPolicyPack** | 跨域规划指导（**软约束**） | 常驻注入，不预筛 | 时效性判据、禁编造/留空追问、状态查询不硬套 |
+| **PlannerPolicyPack** | 跨域规划指导（**软约束**） | 常驻注入，不预筛，**与 guide 共用 `SKILL_BUDGET`**（见下方⚠） | 时效性判据、禁编造/留空追问、状态查询不硬套、否定与延缓 |
 | **WorkflowTemplate**（v2） | 可版本化 DAG 模板，LLM 只填槽、engine 确定性展开 | 命中后展开（scene compiler 哲学）——**未实装** | 接人→顺路用餐→导航→到达提醒 |
+
+> ⚠ **加一条 policy 会静默挤掉一条 guide**（2026-08-03 实测）。`render_skills_block` 先无条件
+> 铺 policy、再按检索相关度序塞 guide，两者**共用同一个 `SKILL_BUDGET`**——于是「加一条
+> policy」这个看起来纯加法的动作，会把当轮**最相关**的 guide 记成 `!clipped`。
+> 实测：新增 `negation-and-deferral`（277 字）后 policies 合计 1047 + 块头 14 +
+> `navigation-with-stop` 1428 = 2489 > 2400，对抗用例 `ki.navigation-with-stop.hit` 当场红。
+> **policy 是常驻的，它的字数每一轮规划都在付钱**——写之前先数字数，改之后连带看 guide 的头寸。
+> 守卫 `orchestrator/cloud/tests/test_skills_budget_headroom.py`（常驻总量 + 最大 guide
+> 必须放得进预算，已反验）。**能当场发现的唯一原因是注入名单诚实**（`!clipped` 不谎称已注入）。
 
 ## 检索双通道（`SKILLS_RETRIEVAL`，2026-07-26 起）
 
