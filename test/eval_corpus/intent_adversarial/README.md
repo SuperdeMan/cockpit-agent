@@ -24,6 +24,19 @@
   契约直接报错。危险动作只写 `safety.no_side_effect_before_confirm` **证明不了确认闸**——
   副作用面只看动作有没有落地，替身恰好不产生动作时它恒真；真正的证据是那个 Agent 有没有
   被够着（agent call）与挂起有没有落库（pending state）。
+- `expected.safety.side_effect_counts`：「**恰好** N 次副作用」的等式，
+  形如 `{parking.pay: 1}`。**同样只有 L2 观测得到**（完整副作用面只在完整决策链上存在），
+  写在别的层上契约直接报错。三条口径要记住：
+  1. **声明即封闭**——未列出的键必须为 0 次，与 `plan.allow_extra_intents=false` 同一心智
+     模型。只锁点名那一格的话，「顺手把后备箱也开了」照样绿。
+  2. **它不能替代 `max_agent_calls_per_intent`**，两者量的不是一回事：后者量**调用**，
+     前者量**副作用**；「调用了但替身没产生动作」时两者分叉，而那正是确认闸相关断言最容易
+     假绿的地方。表达「说两遍确认一次只准付一次」时两条一起写。
+  3. **全零非法**——那就是 `no_side_effect_before_confirm` 那句话，用等式再写一遍不是
+     更强，只是多一条同义断言。契约会拦。
+  计数键：engine 侧用 `intent`，端侧 VAL 命令用 `<object>.<operate>`，其余端侧动作用
+  action `type`（`judge.side_effect_key`）。**键里刻意不含 payload**——否则同一动作换个
+  参数就成了另一个键，等式当场失效，而失效的样子和「一次都没发生」一模一样。
 
 ## 轮次与证据单元
 

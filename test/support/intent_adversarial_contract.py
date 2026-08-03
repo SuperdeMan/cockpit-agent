@@ -96,6 +96,11 @@ class TurnExpectation:
     retrieval: RetrievalExpectation = field(default_factory=RetrievalExpectation)
     engine: EngineExpectation = field(default_factory=EngineExpectation)
     no_side_effect_before_confirm: bool = False
+    # 「**恰好** N 次副作用」。`no_side_effect_before_confirm` 只表达零，
+    # 而「说两遍确认一次只准付一次」是个等式——此前只能用 `max_agent_calls_per_intent`
+    # 的**上界**逼近，那是调用次数不是副作用次数（评审 §10.7 记的契约缺口）。
+    # 声明即封闭：未列出的键必须为 0 次，与 `allow_extra_intents=false` 同一心智模型。
+    side_effect_counts: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -281,7 +286,12 @@ def _parse_expected(raw: dict[str, Any], where: str = "expected") -> TurnExpecta
     _expect_keys(retrieval, {"required_skills", "forbidden_skills",
                              "required_exemplars", "forbidden_exemplars"},
                  f"{where}.retrieval")
-    _expect_keys(safety, {"no_side_effect_before_confirm"}, f"{where}.safety")
+    _expect_keys(safety, {"no_side_effect_before_confirm", "side_effect_counts"},
+                 f"{where}.safety")
+    counts = safety.get("side_effect_counts")
+    if counts is not None and not isinstance(counts, dict):
+        raise ValueError(f"{where}.safety.side_effect_counts: expected a mapping "
+                         f"of side-effect key → exact count")
     for index, replan in enumerate(raw.get("replans") or []):
         _expect_keys(replan, {"after", "plan"}, f"{where}.replans[{index}]")
         after = replan.get("after") or {}
@@ -310,6 +320,9 @@ def _parse_expected(raw: dict[str, Any], where: str = "expected") -> TurnExpecta
         engine=_parse_engine(raw.get("engine"), f"{where}.engine"),
         no_side_effect_before_confirm=bool(
             (raw.get("safety") or {}).get("no_side_effect_before_confirm", False)),
+        side_effect_counts=tuple(sorted(
+            (str(key), int(value)) for key, value in
+            ((raw.get("safety") or {}).get("side_effect_counts") or {}).items())),
     )
 
 
@@ -515,6 +528,7 @@ def _has_absolute_gold(expected: TurnExpectation) -> bool:
         or retrieval.required_exemplars or retrieval.forbidden_exemplars
         or expected.engine.declared
         or expected.no_side_effect_before_confirm
+        or expected.side_effect_counts
     )
 
 
@@ -590,6 +604,32 @@ def _validate_engine(case: AdversarialCase, index: int, engine: EngineExpectatio
             or engine.pending_confirm_after is not None
             or engine.max_agent_calls_per_intent is not None):
         errors.append(f"{case.id}#{index}: expected.engine declared but empty")
+
+
+def _validate_side_effect_counts(case: AdversarialCase, index: int,
+                                 expected: TurnExpectation, layers: set[str],
+                                 errors: list[str]) -> None:
+    """「恰好 N 次副作用」只有 L2 观测得到——**完整的副作用面只在完整决策链上存在**。
+
+    L0 只看得见端侧那一半，写在那里等于用半个观测面去裁一个等式；L1 根本没有执行。
+    与 `expected.engine` 同一条理由：写在观测不到的层上，就是一条永远不会被裁的断言。
+    """
+    counts = expected.side_effect_counts
+    if not counts:
+        return
+    if "l2" not in layers:
+        errors.append(f"{case.id}#{index}: expected.safety.side_effect_counts "
+                      f"requires layers to include l2")
+    for key, value in counts:
+        if not key:
+            errors.append(f"{case.id}#{index}: side_effect_counts has an empty key")
+        if value < 0:
+            errors.append(f"{case.id}#{index}: side_effect_counts[{key}] must be >= 0")
+    # 全零等于「一次副作用都不许有」，那正是 `no_side_effect_before_confirm` 的话。
+    # 用等式字段重写一遍不是更强，只是多一条同义断言——真要表达零就用那个布尔。
+    if all(value == 0 for _, value in counts):
+        errors.append(f"{case.id}#{index}: side_effect_counts is all-zero — "
+                      f"use safety.no_side_effect_before_confirm to say 'none'")
 
 
 def _validate_relation(case: AdversarialCase, case_ids: set[str],
@@ -682,6 +722,7 @@ def validate_cases(cases: list[AdversarialCase], known_intents: set[str]) -> lis
                 _validate_plan(case, plan, known_intents, errors)
             _validate_engine(case, index, turn.expected.engine, layers,
                              known_intents, errors)
+            _validate_side_effect_counts(case, index, turn.expected, layers, errors)
             for replan in turn.expected.replans:
                 result = replan.after.get("result")
                 if not isinstance(result, dict):

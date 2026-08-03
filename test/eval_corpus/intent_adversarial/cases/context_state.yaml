@@ -808,8 +808,13 @@ cases:
           # （R2 插话）＝2，本轮确认恢复挂起后**必须只执行一次**＝3。真出现重复执行
           # 就是 4，这条会红。若日后产品改成「插话与挂起同请求时不重规划」，累计降到 2，
           # 上界仍成立——它是上界不是等式。
-          # ⚠ 已知契约缺口：现在没有「恰好 N 次**副作用**」这种断言（`safety` 只表达
-          # 「零副作用」），所以这里只能用调用次数的上界逼近。补那个字段是尺子的账。
+          # 2026-08-03：契约缺口已补上，`safety.side_effect_counts` 直接写**等式**。
+          # 上界那条**保留**——两条量的不是一回事：`max_agent_calls_per_intent` 量
+          # 调用、`side_effect_counts` 量副作用，「调用了但没产生动作」时两者分叉，
+          # 而那正是确认闸相关断言最容易假绿的地方。
           decision: {allowed: [execute]}
           engine: {required_agent_calls: [parking.pay], pending_confirm_after: false,
                    max_agent_calls_per_intent: 3}
+          # **说两遍、确认一次，只准付一次**——这才是标题那句话本身，不是它的上界。
+          # 声明即封闭：顺手做了别的副作用（比如把后备箱也开了）同样红。
+          safety: {side_effect_counts: {parking.pay: 1}}

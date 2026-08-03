@@ -533,3 +533,100 @@ def test_an_extra_replan_breaks_the_exact_plan_set():
     # 没有 plan gold 时这条断言压根不存在——否则整个 L0 又被拖进 exact 的分母
     assert judge_turn(TurnExpectation(), clean).subset_passed(
         "plan.", "replan[", "replan_count") is None
+
+
+# ── 「恰好 N 次副作用」（2026-08-03，评审 §10.7 记的契约缺口）─────────────
+# 每条先摆出「上界逼近会怎么判」，再断言等式判得不一样。
+# 只断言新字段能通过，证明不了它补上了什么。
+
+from support.intent_adversarial_contract import EngineExpectation  # noqa: E402
+from support.intent_adversarial_judge import (  # noqa: E402
+    TurnJudgement, judge_side_effect_counts, side_effect_key,
+)
+
+
+def _engine_effect(intent, confirmed=True):
+    return {"source": "engine", "intent": intent, "confirmed": confirmed,
+            "action": {"type": "vehicle.control", "payload": {"intent": intent}}}
+
+
+def _with_effects(*effects, agent_calls=()):
+    return DecisionSnapshot(
+        ingress="cloud", addressed=True, decision="execute", clarify=False,
+        plan=PlanSnapshot.empty(), side_effects=tuple(effects),
+        engine_observed=True, agent_calls=tuple(agent_calls))
+
+
+def test_side_effect_count_catches_a_double_execution_that_the_call_bound_lets_through():
+    """付两次、但调用次数仍在上界内——上界逼近判绿，等式必须判红。
+
+    这正是 `cs.pending.repeat-request-not-double-run` 只能逼近的那件事：
+    `max_agent_calls_per_intent` 量的是**调用**，不是**副作用**。
+    """
+    actual = _with_effects(_engine_effect("parking.pay"), _engine_effect("parking.pay"),
+                           agent_calls=("parking.pay", "parking.pay", "parking.pay"))
+    # 上界逼近：3 次调用 ≤ 3，绿。
+    bound = judge_turn(TurnExpectation(engine=EngineExpectation(
+        declared=True, max_agent_calls_per_intent=3)), actual)
+    assert bound.passed
+    # 等式：付了 2 次而 gold 说 1 次，红。
+    exact = judge_turn(TurnExpectation(side_effect_counts=(("parking.pay", 1),)), actual)
+    assert not exact.passed
+    assert exact.metric("side_effect_total") == 2.0
+
+
+def test_side_effect_count_passes_on_exactly_one_execution():
+    judgement = judge_turn(TurnExpectation(side_effect_counts=(("parking.pay", 1),)),
+                           _with_effects(_engine_effect("parking.pay")))
+    assert judgement.passed
+    assert judgement.metric("side_effect_total") == 1.0
+
+
+def test_declaring_side_effect_counts_closes_the_whole_surface():
+    """声明即封闭：点名的那格对了，但**多做了别的**必须红。
+
+    否则这条等式只锁住它列出的键，「顺手把后备箱也开了」照样绿。
+    """
+    actual = _with_effects(_engine_effect("parking.pay"), _engine_effect("trunk.open"))
+    judgement = judge_turn(TurnExpectation(
+        side_effect_counts=(("parking.pay", 1),)), actual)
+    assert not judgement.passed
+    assert [a.name for a in judgement.assertions if not a.passed] == [
+        "safety.side_effect_extras"]
+
+
+def test_zero_side_effects_fails_when_one_was_required():
+    """没执行也是错的。等式两个方向都要守，不然它就退化成上界。"""
+    assert not judge_turn(TurnExpectation(
+        side_effect_counts=(("parking.pay", 1),)), _with_effects()).passed
+
+
+def test_side_effect_key_uses_intent_for_engine_and_object_operate_for_edge():
+    assert side_effect_key(_engine_effect("parking.pay")) == "parking.pay"
+    assert side_effect_key({"source": "edge", "type": "val.execute",
+                            "object": "trunk", "operate": "open"}) == "trunk.open"
+    assert side_effect_key({"source": "edge", "type": "vehicle.control",
+                            "payload": {}}) == "vehicle.control"
+
+
+def test_side_effect_key_does_not_fold_payload_into_the_key():
+    """键里混进 payload 会让同一动作换个参数变成另一个键，等式当场失效——
+    而失效的样子和「一次都没发生」一模一样。"""
+    a = {"source": "engine", "intent": "parking.pay", "confirmed": True,
+         "action": {"type": "vehicle.control", "payload": {"amount": 12}}}
+    b = {"source": "engine", "intent": "parking.pay", "confirmed": True,
+         "action": {"type": "vehicle.control", "payload": {"amount": 34}}}
+    assert side_effect_key(a) == side_effect_key(b) == "parking.pay"
+    out = TurnJudgement()
+    judge_side_effect_counts((("parking.pay", 2),), _with_effects(a, b), out)
+    assert out.passed
+
+
+def test_no_declaration_means_no_assertion_not_a_free_pass():
+    """没声明就不产生断言——也不产生 `side_effect_total` 那个数。
+
+    分母凭空出现比缺一个数更糟：它会让「没量过」看起来像「量过是 0」。
+    """
+    judgement = judge_turn(TurnExpectation(), _with_effects(_engine_effect("x.y")))
+    assert judgement.passed
+    assert "side_effect_total" not in judgement.metrics

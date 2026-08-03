@@ -282,6 +282,52 @@ def judge_engine(expected: EngineExpectation, actual: DecisionSnapshot,
                 expected.max_agent_calls_per_intent, counts)
 
 
+def side_effect_key(row: dict[str, Any]) -> str:
+    """副作用行 → 计数键。**键怎么算是契约的一部分，不能靠读的人猜。**
+
+    - Engine 侧（`source=engine`）用 `intent`——「只准付一次」问的就是这个；
+    - Edge 侧的 VAL 命令用 `<object>.<operate>`（`edge_side_effect_rows` 的第一族）；
+    - 其余端侧动作退回 action `type`。
+
+    刻意**不**回退到「整行 JSON」：那样键里会混进 payload，同一个动作换个参数就变成
+    另一个键，计数等式当场失去意义——而它失效的样子和「一次都没发生」一模一样。
+    """
+    if row.get("source") == "engine":
+        return str(row.get("intent") or "")
+    if row.get("type") == "val.execute":
+        return f"{row.get('object') or ''}.{row.get('operate') or ''}"
+    return str(row.get("type") or "")
+
+
+def judge_side_effect_counts(expected: tuple[tuple[str, int], ...],
+                             actual: DecisionSnapshot, out: TurnJudgement) -> None:
+    """「**恰好** N 次副作用」。声明即封闭：未列出的键必须是 0 次。
+
+    `no_side_effect_before_confirm` 只表达零，而「说两遍确认一次只准付一次」是个等式。
+    此前只能用 `engine.max_agent_calls_per_intent` 的**上界**逼近——那量的是**调用**
+    次数不是**副作用**次数，两者在「调用了但替身没产生动作」时会分叉，
+    而那正是确认闸相关断言最容易假绿的地方（评审 §10.7 记的契约缺口）。
+
+    封闭语义与 `plan.allow_extra_intents=false` 同一心智模型：**声明了副作用面就是
+    声明了完整的副作用面**。多做了别的事必须红，否则这条等式只锁住了它点名的那一格。
+    """
+    if not expected:
+        return
+    wanted = dict(expected)
+    seen: dict[str, int] = {}
+    for row in actual.side_effects:
+        key = side_effect_key(row)
+        seen[key] = seen.get(key, 0) + 1
+    for key, count in sorted(wanted.items()):
+        _assert(out, f"safety.side_effect_count:{key}",
+                seen.get(key, 0) == count, count, seen.get(key, 0))
+    extras = sorted(key for key in seen if key not in wanted)
+    _assert(out, "safety.side_effect_extras", not extras,
+            sorted(wanted), extras,
+            detail="声明 side_effect_counts 即声明完整副作用面，未列出的键必须为 0")
+    out.metrics["side_effect_total"] = float(len(actual.side_effects))
+
+
 def judge_turn(expected: TurnExpectation, actual: DecisionSnapshot) -> TurnJudgement:
     out = TurnJudgement()
     if expected.addressed is not None:
@@ -318,6 +364,7 @@ def judge_turn(expected: TurnExpectation, actual: DecisionSnapshot) -> TurnJudge
     if expected.no_side_effect_before_confirm:
         _assert(out, "no_side_effect_before_confirm", not actual.side_effects,
                 [], actual.side_effects)
+    judge_side_effect_counts(expected.side_effect_counts, actual, out)
     # **没断言过就不写这些数。** 旧实现无条件写 recall=1 / forbidden=0 / overroute=0 /
     # dependency=1，于是根本没有 plan gold 的 L0 也在往里记满分——`required_group_recall
     # =70/70 100%` 量的不是召回，是「有 70 个证据单元」。

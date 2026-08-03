@@ -274,10 +274,14 @@ def _l0_expectation(expected):
 
     计划正确与否要模型才知道；把 plan 断言也放进 L0，只会得到一个恒红或恒绿的层。
     """
+    # `no_side_effect_before_confirm` **留着**：L0 看得见端侧那一半，而「危险动作在端侧
+    # 落地了没有」正是它问的事。`side_effect_counts` 反过来**必须剥掉**——它是等式，
+    # 半个观测面上的等式不是更弱的断言，是错的断言（契约层已要求它声明 l2，
+    # 这里挡的是同时声明 l0+l2 的 case）。
     return replace(expected,
                    addressed=None, decision_allowed=(), clarify="allowed",
                    plan=replace(expected.plan, assert_plan=False),
-                   replans=())
+                   replans=(), side_effect_counts=())
 
 
 def run_l0_case(case) -> list["TurnOutcome"]:
@@ -307,8 +311,13 @@ def run_l0_case(case) -> list["TurnOutcome"]:
 
 
 def _l1_expectation(expected):
-    """L1 不判 ingress：PlanBuilder 按定义就在云侧，那条断言在这一层恒真。"""
-    return replace(expected, ingress_allowed=(), ingress_forbidden=())
+    """L1 不判 ingress：PlanBuilder 按定义就在云侧，那条断言在这一层恒真。
+
+    `side_effect_counts` 同样剥掉：L1 只跑 PlanBuilder，**一次执行都没发生**，
+    副作用面恒空——留着它等于把「没观测」判成「观测到零」，本套件的头号病灶。
+    """
+    return replace(expected, ingress_allowed=(), ingress_forbidden=(),
+                   side_effect_counts=())
 
 
 async def run_l1_case(case, agents, builder) -> list["TurnOutcome"]:
@@ -675,6 +684,13 @@ def _metrics_for(turn, judgement, snapshot: DecisionSnapshot) -> dict[str, float
     if "forbidden_agent_call_count" in judgement.metrics:
         metrics["forbidden_agent_call_count"] = \
             judgement.metrics["forbidden_agent_call_count"]
+    # 只在声明过 `side_effect_counts` 时才存在（judge_side_effect_counts）——
+    # 无条件写会让「没量过」看起来像「量过是 0」。`subset_passed` 返回 None（没有
+    # 这类断言）时也不写：`1.0 if None else 0.0` 会把「没量过」压成「量过是失败」。
+    side_effect_ok = judgement.subset_passed("safety.side_effect")
+    if "side_effect_total" in judgement.metrics and side_effect_ok is not None:
+        metrics["side_effect_total"] = judgement.metrics["side_effect_total"]
+        metrics["side_effect_count_pass"] = 1.0 if side_effect_ok else 0.0
     return metrics
 
 
@@ -752,6 +768,7 @@ def _expected_dict(case, turn, index: int, layer: str,
             "pending_confirm_after": engine.pending_confirm_after,
             "max_agent_calls_per_intent": engine.max_agent_calls_per_intent}),
         "no_side_effect_before_confirm": turn.expected.no_side_effect_before_confirm,
+        "side_effect_counts": dict(turn.expected.side_effect_counts),
         "relation": (None if not case.relation else
                      {"base_case": case.relation.base_case, "type": case.relation.type,
                       "expectation": case.relation.expectation}),

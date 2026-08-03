@@ -221,6 +221,10 @@ L1 有 `no-hints/no-skills/no-exemplars/empty-history`；L2 另加 `cloud-direct
    必须同时写 `expected.engine`（`forbidden_agent_calls` / `pending_confirm_after` /
    `max_agent_calls_per_intent`）—— 那个 Agent 有没有被够着、挂起有没有落库。
    `expected.engine` **只有 L2 观测得到**，写在别的层上契约直接报错。
+   要说「**恰好** N 次」用 `safety.side_effect_counts`（2026-08-03 新增，同样只在 L2）：
+   `no_side_effect_before_confirm` 只表达零，而「说两遍确认一次只准付一次」是个等式，
+   此前只能用调用次数的上界逼近——**上界量的是调用不是副作用**。
+   声明即封闭（未列出的键必须 0 次）；全零非法（那句话该用布尔字段说）。
 7. **LLM 可以生成 candidate，不能填 `reviewed_by: human`，不能自动晋级 stable。**
 8. **兜底就是正确答案的用例要显式声明** `tags.expects_fallback: true`（A8 能力缺席族）。
    不声明就会被资格闸当成降级拦下；而**形状上它和否定族一模一样**（无必要组 +
@@ -287,14 +291,15 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 
 > **本节截至 2026-08-03 收工时。** 已收口的不再列（完整流水见 `docs/agents-history.md` §5）：
 > 固定 provider 全量（L1+L2 都跑了）· 消融 arm · seen 掉的那条 · 依赖组合漏步 ·
-> `parking.query_fee` 缺能力 ·「看不清路」· 三轮独立复审的全部 P0/P1。
+> `parking.query_fee` 缺能力 ·「看不清路」· 三轮独立复审的全部 P0/P1 ·
+> **`clause_commute` 口径裁定**（评审 §10.12）· **「恰好 N 次副作用」契约字段**
+> （`safety.side_effect_counts`，评审 §10.7 记的缺口）。
 
 | 优先级 | 待办 | 说明 |
 |---|---|---|
 | **P0** | **`stable` 规模 104 → 120** | `--strict` 正确退出非零。补齐要**新写案例**、不能改口径；晋级要**两趟独立进程**的 live 证据（实测有 8 条在两趟之间翻面）。这是唯一挡在正式 baseline 前的语料项 |
 | P1 | **子句间槽位串味（产品侧，新）** | `cp.reminder-weather.swapped`「查下**明天**天气，再提醒我**八点**开会」→ **3/3** 把 `time_text` 写成 `"明天早上八点"`，前一子句的时间限定词串到了后一子句上（base 是 `"八点"`）。评审 §10.12.5。属产品缺陷，按「修尺子和修被测对象不同批」另开 |
 | P1 | **23 条改标 seen 后 unseen 覆盖变薄** | stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条。补法是**新写真正没进过知识的话术**，不是把标签改回去 |
-| P1 | **契约缺「恰好 N 次副作用」断言** | `safety` 只表达「零副作用」，「只准执行一次」现在只能用调用次数**上界**逼近（见评审 §10.7） |
 | P1 | **A4 83.3% / A9 83.0%** | 两个最弱攻击族（其余 ≥89%，A2/A8 已 100%） |
 | P2 | **L3 证据** | 属 e2e 运行器的账（`lease_protocol` / `identity_cleanup`），不是对抗套件的。它是正式 baseline 的另一个前置 |
 | P2 | **「有点热」落 `hvac.inc`** | 方向反了（gold 要 dec/set/on）。`unstable` 不进修复清单，但**体感冷热搞反是用户当场能发现的那种错** |
