@@ -164,9 +164,17 @@ _SQL_SOURCES = (
     "**/store.py",
 )
 _REGISTRY_SYMBOL = "PERSONAL_DATA_TARGETS"
+# 排除的是「**同一个仓库的另一份 checkout**」——扫到第二份拷贝会把隐私清单读两遍，
+# 报出来的却是 `duplicate privacy candidate entries`，读起来像登记表自己出了严重问题。
+# ⚠ 2026-08-03 实测：原表只有 `.worktrees`，而 worktree 实际落在 **`.claude/worktrees/`**
+# （Claude Code 的 EnterWorktree 就建在那儿），于是这道守卫对真实会发生的那种布局无效，
+# `test_journey_manifest_...` 等契约测试凭空变红。判据：**排除名单要按东西实际落在哪写，
+# 不是按它「应该」落在哪写**；`worktrees` 不带点的那一项覆盖任何父目录下的 worktree 根。
 _PRIVACY_EXCLUDED_DIRS = frozenset({
     ".git",
     ".worktrees",
+    "worktrees",
+    ".claude",
     "gen",
     "__pycache__",
     ".pytest_cache",
@@ -541,6 +549,27 @@ def _controlled_privacy_source_paths(
     except (OSError, RuntimeError) as exc:
         raise ManifestError(f"privacy repository root does not resolve: {root}") from exc
     paths: dict[str, Path] = {}
+    nested_roots: dict[str, bool] = {}
+
+    def _inside_nested_checkout(relative: Path) -> bool:
+        """目录名清单之外的第二道闸：任何**自带 `.git` 的子目录**都是另一份 checkout。
+
+        名字清单必然滞后于布局（`.worktrees` 写好了、真实是 `.claude/worktrees/`），
+        而「有没有 `.git`」是 checkout 的**定义**而不是它的命名习惯。
+        worktree 的 `.git` 是文件、clone 的是目录，`exists()` 两者都认。
+        """
+        prefix: list[str] = []
+        for part in relative.parts[:-1]:
+            prefix.append(part)
+            key = "/".join(prefix)
+            marked = nested_roots.get(key)
+            if marked is None:
+                marked = (resolved_root.joinpath(*prefix) / ".git").exists()
+                nested_roots[key] = marked
+            if marked:
+                return True
+        return False
+
     for pattern in patterns:
         for path in resolved_root.glob(pattern):
             relative = path.relative_to(resolved_root)
@@ -548,6 +577,8 @@ def _controlled_privacy_source_paths(
                 part in _PRIVACY_EXCLUDED_DIRS
                 for part in relative.parts[:-1]
             ):
+                continue
+            if _inside_nested_checkout(relative):
                 continue
             if path.is_dir():
                 continue
