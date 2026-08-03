@@ -77,6 +77,8 @@ class TraceSink:
     hints: list[HintTrace] = field(default_factory=list)
     plans: list[PlannerTrace] = field(default_factory=list)
     validations: list[ValidationTrace] = field(default_factory=list)
+    # 探针自己出的错。**不许静默、也不许拿它打死整趟跑批**——见 `attach_validation_trace`。
+    trace_errors: list[str] = field(default_factory=list)
     # `PlanBuilder._fallback` 的调用记录。**这份计划不是 planner 的判断**——
     # 两次解析都没成、由编排兜底合成出来的。见 `probe_builder` 的说明。
     fallbacks: list[str] = field(default_factory=list)
@@ -186,6 +188,32 @@ class RecordingPlanner:
         return decision
 
 
+def _as_mapping(value) -> dict[str, Any]:
+    """**校验前的候选是未经任何清洗的模型输出**，什么形状都可能出现。
+
+    2026-08-03 实测：模型把 `slots` 写成了一个字符串列表，`dict(["mode"])` 直接抛
+    `ValueError: dictionary update sequence element #0 has length 4`——**整趟 L1 全量
+    在跑到一半时被这个观察者杀死**。生产侧的 `_parse_and_validate_data` 已经安全地
+    解析完了，是 trace 探针自己炸的。
+
+    观察者绝不能比被观察的东西更脆弱。畸形结构一律降级成空：它只用于
+    `raw_planner_pass` 这个**辅助**证据，降级只会让该证据更保守（槽位断言裁不过），
+    不会把错的说成对的。
+    """
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _as_sequence(value) -> tuple[str, ...]:
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item) for item in value)
+    return ()
+
+
+def _as_sequence_of_rows(value) -> tuple:
+    """`steps` 不是列表时（模型写成字符串/数字都见过）当空处理，别去迭代它。"""
+    return tuple(value) if isinstance(value, (list, tuple)) else ()
+
+
 def snapshot_raw_candidate(data: dict[str, Any]) -> PlanSnapshot:
     """把已解析但尚未 capability validation 的结构转成可裁判快照。
 
@@ -194,16 +222,16 @@ def snapshot_raw_candidate(data: dict[str, Any]) -> PlanSnapshot:
     """
     rows = data.get("steps") if isinstance(data, dict) else []
     steps = []
-    for index, row in enumerate(rows or [], 1):
+    for index, row in enumerate(rows if isinstance(rows, (list, tuple)) else [], 1):
         if not isinstance(row, dict):
             continue
         steps.append(StepSnapshot(
             id=str(row.get("id") or f"raw-{index}"),
             agent_id=str(row.get("agent_id") or ""),
             intent=str(row.get("intent") or ""),
-            slots=dict(row.get("slots") or {}),
-            depends_on=tuple(row.get("depends_on") or []),
-            slot_refs=dict(row.get("slot_refs") or {}),
+            slots=_as_mapping(row.get("slots")),
+            depends_on=_as_sequence(row.get("depends_on")),
+            slot_refs=_as_mapping(row.get("slot_refs")),
             require_confirm=bool(row.get("require_confirm", False)),
         ))
     return PlanSnapshot(
@@ -216,20 +244,42 @@ def attach_validation_trace(builder, sink: TraceSink) -> None:
     original = builder._parse_and_validate_data
 
     def traced(data, agent_map, text):
-        raw = deepcopy(data) if isinstance(data, dict) else {}
-        raw_intents = tuple(str(step.get("intent") or "")
-                            for step in raw.get("steps") or []
-                            if isinstance(step, dict) and step.get("intent"))
-        admitted = tuple(sorted(
-            str(cap.intent)
-            for agent in agent_map.values()
-            for cap in (getattr(agent.manifest, "capabilities", None) or [])))
+        # 快照必须在生产解析**之前**取：`original` 可能就地改 `data`。
+        # 但取快照本身也可能抛（`data` 是未经清洗的模型输出），所以它也在保护里。
+        raw, failed = {}, ""
+        try:
+            raw = deepcopy(data) if isinstance(data, dict) else {}
+        except Exception as exc:                       # noqa: BLE001
+            failed = f"{type(exc).__name__}: {exc}"
         plan = original(data, agent_map, text)
-        sink.validations.append(ValidationTrace(
-            raw_intents=raw_intents, admitted_intents=admitted,
-            raw_candidate=snapshot_raw_candidate(raw),
-            accepted=snapshot_plan(plan) if plan is not None else PlanSnapshot.empty(),
-            result="accepted" if plan is not None else "rejected"))
+        if failed:
+            sink.trace_errors.append(f"{failed} | text={text[:40]!r}")
+            return plan
+        # 兜底 except 在这里是**有意的**：`raw` 的畸形形状穷举不完，而一次 traceback
+        # 会把整趟全量打死（实测：模型把 `slots` 写成字符串列表，`dict(["mode"])` 抛
+        # `ValueError`，烧掉一次 L1 全量——**而生产侧已经安全解析完了**）。
+        # 观察者不能比被观察的东西更脆弱，也不该改变它的行为或时序。
+        # 但不许静默：这一轮记成「没有 raw 通道」（`raw_observed=False`，如实，不进
+        # 幻觉率分母），异常留进 `trace_errors` 由摘要打出来。
+        try:
+            rows = _as_sequence_of_rows(raw.get("steps"))
+            raw_intents = tuple(str(step.get("intent") or "")
+                                for step in rows
+                                if isinstance(step, dict) and step.get("intent"))
+            admitted = tuple(sorted(
+                str(cap.intent)
+                for agent in agent_map.values()
+                for cap in (getattr(agent.manifest, "capabilities", None) or [])))
+            trace = ValidationTrace(
+                raw_intents=raw_intents, admitted_intents=admitted,
+                raw_candidate=snapshot_raw_candidate(raw),
+                accepted=(snapshot_plan(plan) if plan is not None
+                          else PlanSnapshot.empty()),
+                result="accepted" if plan is not None else "rejected")
+        except Exception as exc:                       # noqa: BLE001
+            sink.trace_errors.append(f"{type(exc).__name__}: {exc} | text={text[:40]!r}")
+            return plan
+        sink.validations.append(trace)
         return plan
 
     builder._parse_and_validate_data = traced

@@ -72,6 +72,11 @@ DEFAULT_MD = ROOT / "docs/reviews/eval/_ci-run-intent-adversarial.md"
 FORMAL_BASELINE_JSON = ROOT / "docs/reviews/eval/baseline_intent_adversarial.json"
 FORMAL_BASELINE_MD = ROOT / "docs/reviews/eval/baseline_intent_adversarial.md"
 
+# 探针自己出的错的累加器。TraceSink 是**每条 case 一个**，而这份计数要横跨整趟跑批：
+# 探针把一批轮次静默降级成「没有 raw 通道」时，幻觉率的分母会无缘无故变小——
+# 那正是本套件存在的理由（失败被记成了别的东西）。跑批开始时清零。
+_TRACE_ERRORS: list[str] = []
+
 LAYERS = ("l0", "l1", "l2", "l3", "all")
 LIVE_LAYERS = ("l1", "l2", "l3")
 LLM_GATEWAY_HTTP = os.getenv("LLM_GATEWAY_HTTP", "http://localhost:50059")
@@ -318,6 +323,7 @@ async def run_l1_case(case, agents, builder) -> list["TurnOutcome"]:
                 sink, before))
             history += [{"role": "user", "text": turn.utterance},
                         {"role": "assistant", "text": snapshot.plan.goal or "已处理"}]
+    _TRACE_ERRORS.extend(sink.trace_errors)
     return outcomes
 
 
@@ -438,6 +444,7 @@ def run_l2_case(case, agents, builder, confirm_intents) -> list["TurnOutcome"]:
             outcomes.append(_turn_outcome(turn, snapshot,
                                           judge_turn(turn.expected, snapshot),
                                           sink, before))
+    _TRACE_ERRORS.extend(sink.trace_errors)
     return outcomes
 
 
@@ -854,6 +861,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     lock = None
+    _TRACE_ERRORS.clear()
     infrastructure_errors: list[str] = []
     results: list[AdversarialResult] = []
     provider_model = "deterministic"
@@ -912,6 +920,8 @@ def main(argv: list[str] | None = None) -> int:
         "suite": args.suite, "layer": args.layer,
         "retrieval_state": args.retrieval_state, "warmed_exemplars": warmed,
         "retrieval_calls": retrieval.calls, "retrieval_degraded": retrieval.degraded,
+        "trace_errors": list(_TRACE_ERRORS[:20]),
+        "trace_error_count": len(_TRACE_ERRORS),
         "provider_locked": bool(lock and lock.locked),
         "provider_drift": bool(lock and lock.drifts),
         "provider_lock": (lock.summary() if lock else {}),
@@ -1109,6 +1119,10 @@ def _print_summary(report: dict) -> None:
               f"不是 planner 判断，这些绿不算数）: "
               f"{', '.join(fallback_passes[:8])}"
               f"{' …' if len(fallback_passes) > 8 else ''}")
+    if meta.get("trace_error_count"):
+        print(f"  ⚠ 探针在 {meta['trace_error_count']} 轮上没取到校验前候选"
+              f"（那些轮 raw_observed=False，不进幻觉率分母）: "
+              f"{(meta.get('trace_errors') or [''])[0][:120]}")
     if meta.get("retrieval_degraded"):
         print(f"  ⚠ 语义检索中途降级 {meta['retrieval_degraded']}/"
               f"{meta.get('retrieval_calls', 0)} 次调用没拿到向量——"
@@ -1609,6 +1623,7 @@ def _run_engine_direct(case, agents, builder, confirm_intents) -> list[TurnOutco
             outcomes.append(_turn_outcome(turn, snapshot,
                                           judge_turn(expected, snapshot),
                                           sink, before))
+    _TRACE_ERRORS.extend(sink.trace_errors)
     return outcomes
 
 

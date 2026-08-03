@@ -289,3 +289,43 @@ def test_l1_can_reach_a_divergence_label_at_all():
     names = [name for name, _ in applicable_boundaries("l1")]
     assert "engine_direct_pass" not in names and "planner_post_hint_pass" not in names
     assert len(applicable_boundaries("l2")) == 6
+
+
+def test_the_probe_never_kills_the_run_on_malformed_model_output():
+    """反向构造：模型把 `slots` 写成字符串列表。
+
+    实测形态：`dict(["mode"])` 抛 `ValueError: dictionary update sequence element #0
+    has length 4`，**整趟 L1 全量在跑到一半时被这个观察者杀死**——而生产侧的
+    `_parse_and_validate_data` 已经安全解析完了。观察者不能比被观察的东西更脆弱。
+
+    降级方向必须是**更保守**：这一轮记成「没有 raw 通道」，不进幻觉率分母，
+    并把异常留进 `trace_errors`——不许静默。
+    """
+    from support.intent_adversarial_trace import (
+        TraceSink, attach_validation_trace, snapshot_raw_candidate,
+    )
+
+    for bad in ({"steps": [{"intent": "hvac.set", "slots": ["mode"]}]},
+                {"steps": [{"intent": "a", "slots": "auto", "depends_on": "s1",
+                            "slot_refs": 5}]},
+                {"steps": "oops"}, {"steps": 7}, {"steps": None}):
+        snap = snapshot_raw_candidate(bad)          # 不抛
+        for step in snap.steps:
+            assert step.slots == {} and step.depends_on == () and step.slot_refs == {}
+
+    class _Builder:
+        def _parse_and_validate_data(self, data, agent_map, text):
+            return SimpleNamespace(steps=[], complexity="", goal="")
+
+    sink = TraceSink()
+    builder = _Builder()
+    attach_validation_trace(builder, sink)
+
+    class _Exploding(dict):
+        def get(self, *_a, **_k):
+            raise TypeError("模型这次的输出形状是穷举不完的")
+
+    plan = builder._parse_and_validate_data(_Exploding(steps=[]), {}, "空调先别关")
+    assert plan is not None, "生产的返回值必须原样透出——观察不该改变被观察的行为"
+    assert sink.validations == [], "取不到候选就记成没观测，不许伪造一份"
+    assert sink.trace_errors and "TypeError" in sink.trace_errors[0]
