@@ -198,6 +198,69 @@ def lane_boundaries(root: Path, items: list) -> list[str]:
     return errs
 
 
+def lane_corpus_agreement(items: list) -> list[str]:
+    """**同一句原话，两处知识不许指向相反。** 零阈值、无歧义。
+
+    2026-08-03 抓到的真事：范例库「路上怎么样」→ `safety.driving_advice`，而对抗语料
+    `bd.ns-poi-road.right.seen` 用**逐字相同**的一句话要求 `safety.road_condition`
+    （它自己是照人裁台账写的）。模型照范例做，那条用例 3/3 全红——
+    **是两份知识在打架，不是模型判错**。
+
+    为什么**不**做相似度闸（先量后改）：同域跨 intent 的近重复对里，排在这次真冲突
+    （IDF-Dice 0.403）**上面的十几对全是合法区分**——「今天天气怎么样」0.845
+    「明天天气怎么样」= weather↔forecast、「退出露营模式」0.712「露营模式」=
+    deactivate↔activate……**相似度分不开真假冲突**，这与 `lane_boundaries` 那段注释
+    是同一条判据。而「同一句原话指向相反」不需要阈值：**它是矛盾，不是相似**。
+
+    口径按对抗语料自己的 gold 读：命中 `forbidden_intents` 一定是矛盾；该轮声明了必要组
+    且不 `allow_extra_intents` 时，范例的 intent 必须落在「必要组成员 ∪ allowed_extra」里
+    ——否则就是在教一个 gold 明确不接受的答案。
+
+    判为矛盾**改金标或改范例，不许登记豁免**——与边界台账同一条纪律。
+    """
+    root = _ROOT / "test" / "eval_corpus" / "intent_adversarial"
+    if not root.is_dir():
+        return []
+    try:
+        from support import intent_adversarial_contract as contract
+        cases = contract.load_cases(root / "cases")
+        canon = contract.canonical_text
+    except Exception as e:                                   # noqa: BLE001
+        return [f"对抗语料读取失败（一致性闸无法执行，**不许当成通过**）——{e}"]
+
+    by_text: dict[str, list] = {}
+    for case in cases:
+        if case.status not in ("reviewed", "stable"):
+            continue
+        for turn in case.turns:
+            by_text.setdefault(canon(turn.utterance), []).append((case, turn))
+
+    errs: list[str] = []
+    for e in items:
+        for case, turn in by_text.get(canon(e.text), ()):
+            intent = (e.plan[0].get("intent") if e.plan else "") or ""
+            plan = turn.expected.plan
+            where = f"{e.domain}.yaml「{e.text}」→ {intent}"
+            # A8 能力缺席族（`cc.missing.*`）把能力从**本用例的 catalog 副本**里摘掉，
+            # 它的 forbidden 是**这一跑的构造**，不是对这句话语义的裁定——
+            # 「这句话该落 info.weather」与「这条用例里 info.weather 不存在」不矛盾。
+            # 不排除它，这条闸开局就带两条假阳；**一条永远红的闸很快没人再看它说什么**。
+            if intent in set(turn.context.get("unavailable_intents") or []):
+                continue
+            if intent in set(plan.forbidden_intents):
+                errs.append(f"同句矛盾：{where}，而 {case.id} 的 gold 把它列为 forbidden"
+                            f"——改金标或改范例，不许登记豁免")
+                continue
+            if not plan.assert_plan or plan.allow_extra_intents:
+                continue
+            allowed = {i for g in plan.required_groups for i in g.any_of}
+            allowed |= set(plan.allowed_extra_intents)
+            if allowed and intent not in allowed:
+                errs.append(f"同句矛盾：{where}，而 {case.id} 的 gold 只接受 "
+                            f"{sorted(allowed)}——改金标或改范例，不许登记豁免")
+    return errs
+
+
 def lane_contract(root: Path) -> list[str]:
     errs: list[str] = []
     known = _known_intents()
@@ -596,6 +659,10 @@ def main() -> int:
     berrs = lane_boundaries(store.root, items)
     if berrs:
         print("✗ 跨域边界裁定台账门禁失败：\n  " + "\n  ".join(berrs))
+        return 1
+    cerrs = lane_corpus_agreement(items)
+    if cerrs:
+        print("✗ 范例与对抗语料金标同句矛盾：\n  " + "\n  ".join(cerrs))
         return 1
     domains = sorted({e.domain for e in items})
     print(f"=== 范例契约 OK（{len(items)} 条 / {len(domains)} 域：{'、'.join(domains)}）===")
