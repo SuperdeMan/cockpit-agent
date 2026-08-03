@@ -1418,11 +1418,19 @@ def _expand_failures(units, partners, suite, args, run_once, infra,
 
 
 def _relation_judgements(units, args) -> tuple[dict[str, dict[int, Any]], list[str]]:
-    """**逐次重复**成对裁 relation；配不成对时报基础设施错误而不是静默跳过。
+    """**逐次**裁 variant，但对照的是 `supp(base)`——base 在本轮观测到的全部行为。
 
     原来 relation 在重复分类之后才追加，只改 `passed` 不改 `repeat_status`——
     第二趟产物里出现过 3 条 `passed=false` 但 `repeat_status=pass` 的自相矛盾行。
     这里把 relation 判定折进每一次 repetition，分类因此看得见它。
+
+    2026-08-03 口径裁定：**base 侧不再按次配对**。旧实现拿 base 的第 i 次对 variant 的
+    第 i 次，实测同句自抖 58.8%，那条比较主要在量采样方差（判据全文见
+    `judge_relation` docstring）。variant 侧仍逐次，于是 variant 自己的抖动照旧由重复
+    分类表达成 `unstable`，不会被伪装成 `stable_fail`。
+
+    「对照跑的次数比 variant 少」因此不再是缺口：supp 用几次就是几次，数字经
+    `relation_base_support` 如实报出来。真正的缺口只剩「对照一次都没跑」。
     """
     out: dict[str, dict[int, Any]] = {}
     gaps: list[str] = []
@@ -1436,17 +1444,17 @@ def _relation_judgements(units, args) -> tuple[dict[str, dict[int, Any]], list[s
             gaps.append(f"relation_base_missing: {key} 的对照 {base_key} 没有结果，"
                         "relation gold 本轮未被裁——不算通过")
             continue
-        pairs = min(len(unit.runs), len(base.runs))
-        if pairs < len(unit.runs):
-            gaps.append(f"relation_pairs_incomplete: {key} 跑了 {len(unit.runs)} 次，"
-                        f"对照只有 {len(base.runs)} 次，只成对裁了 {pairs} 次")
-        for index in range(pairs):
-            variant_turns, base_turns = unit.runs[index], base.runs[index]
-            if not variant_turns or not base_turns:
+        # 契约保证 relation 双方各只有一轮（schema v1）。
+        support = [run[0].snapshot for run in base.runs if run]
+        if not support:
+            gaps.append(f"relation_base_missing: {key} 的对照 {base_key} 一次都没跑出"
+                        "结果，supp(base) 为空——relation gold 本轮未被裁")
+            continue
+        for index, variant_turns in enumerate(unit.runs):
+            if not variant_turns:
                 continue
-            # 契约保证 relation 双方各只有一轮（schema v1）。
             out.setdefault(key, {})[index] = judge_relation(
-                case.relation, base_turns[0].snapshot, variant_turns[0].snapshot)
+                case.relation, support, variant_turns[0].snapshot)
     return out, gaps
 
 
@@ -1490,6 +1498,10 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
         assertions = _assertion_rows(judgement)
         if relation is not None:
             metrics["relation_pass"] = relation.metrics["relation_pass"]
+            # 判定用了几个 base 样本要跟着结论走：supp=1 的结论与旧口径同强度，
+            # supp=3 才真的把采样方差算进去了——读报告的人不该靠猜。
+            metrics["relation_base_support"] = relation.metrics.get(
+                "relation_base_support", 0.0)
             if case.relation and case.relation.type == "context_override":
                 metrics["context_override_pass"] = relation.metrics["relation_pass"]
             assertions = assertions + _assertion_rows(relation)

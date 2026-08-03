@@ -534,7 +534,7 @@ cloud-direct
 | `ingress_accuracy` | Edge 本地/转云决策正确比例。allow 与 deny 两条断言**取 AND**（后写覆盖先写会让这个数整体偏高） |
 | `dependency_pass_rate` | 必要依赖、顺序和结果传递全部满足比例 |
 | `clarify_balanced_accuracy` | 模糊样本召回与明确样本不过度澄清的平衡结果 |
-| `relation_pass_rate` | 最小对照关系满足比例 |
+| `relation_pass_rate` | 最小对照关系满足比例。**对照的是 `supp(base)`——base 这句话在本轮观测到的全部行为，不是它的某一次采样**（§22.6 口径裁定）。variant 侧仍逐次判，于是 variant 自己的抖动照旧被重复分类表达成 `unstable`。同时给 `relation_base_support`（判定用了几个去重后的 base 签名）：`supp=1` 的结论与旧口径同强度 |
 | `context_override_rate` | 当前轮正确覆盖陈旧上下文比例 |
 | `planner_capability_hallucination_rate` | 规划不存在或不可用能力的案例比例。取自 capability 校验**之前**的候选——用校验后的计划算，validator 越严这个数越好看，「模型天天编能力」会被彻底掩盖（§22.1-③，原名 `capability_hallucination_rate`） |
 | `post_validation_escape_rate` | 校验**之后**仍留在计划里的不可用能力比例。这是逃逸率，不是幻觉率，两者不可互相替代 |
@@ -1083,3 +1083,68 @@ coverage 的 P1 同样先补反向构造，再取得 live 新读数。
 因此 §13.3 的 baseline 规则仍未完全实现。L0 当前为 `70/70`，没有 plan/live 证据的指标已正确
 显示 `null`；gate 仍只有 104 个唯一 stable 输入，低于 120。固定 provider 的 L1/L2/L3 新鲜
 全量报告取得前，不得用旧读数证明新口径质量。
+
+### 22.6 relation 口径裁定：对照的是 `supp(base)`，不是 base 的某一次采样（2026-08-03）
+
+评审 §10.11 立的账原本写作「`clause_commute` 因**槽位拼写**系统性红，需要一次单独的口径
+裁定：换序不变式到底该不该比槽位」。**先量，然后这个问题被否掉了——它问错了对象。**
+
+**测量**（`--tag commute`，17 单元，`minimax:MiniMax-M3`，`--repeat 3`）：
+
+| 口径 | 同一句话重复三次、自己就抖的单元 |
+|---|---:|
+| 全签名（含槽位值） | **58.8%**（10/17） |
+| 只到槽位键 | 52.9%（9/17） |
+| 只到 intent 集合 | 23.5%（4/17） |
+
+`cp.window-stock.base` 自己三次里 `symbol` 就在 `"宁德时代"` 与 `"300750"` 之间摇。
+而 relation 的实现是**逐次配对**（base 的第 i 次 vs variant 的第 i 次）——在这个方差下，
+那条断言主要在量采样噪声，**红的原因与换序无关**。
+
+所以真问题不是「签名该不该含槽位」，是**拿一次采样代表一个句子的行为**。
+
+**裁定**：base 侧的证据改为 `supp(base)`——这句话在本轮观测到的全部（去重）行为。
+两个方向统一成同一条判据，而不是两条特例：
+
+- `invariant` / `clause_commute` 主张「variant 没有引入 base 不会有的行为」→ `sig(variant) ∈ supp(base)`；
+- `route_flip` / `context_override` 主张「variant 的行为真的被换掉了」→ `sig(variant) ∉ supp(base)`。
+
+base 抖动对两者影响方向相反，这是**内在正确**的：`invariant` 下 base 抖说明这句话本来就有
+多种合法行为；`route_flip` 下 base 覆盖面变大，「这两句路由不同」这个主张本就更难成立。
+集合类主张（`intent_add`/`intent_remove`/`clarify_flip`）同一条元规则——**主张必须对 base
+的全部观测成立**：要证「新增」，那个 intent 必须是 base 从没出现过的（并集）；要证「移除」，
+必须是 base 每次都有的（交集）；要证「翻面」，base 必须每次都澄清。
+
+**槽位继续留在签名里。** 集合口径已经吸收了它的采样方差；摘掉它会永久失去可见性，
+而 `symbol=300750` vs `symbol=宁德时代` 是真差异——只是它不由换序造成。
+
+**影响面（同一份采样上新旧对照，不是两趟跑批相比）**：
+
+| 子集 | 条数 | 新旧判定不同 | supp 分布 |
+|---|---:|---|---|
+| `--tag object_flip`（route_flip 代表） | 23 | **0**（新旧均 23/23 通过） | 22 条 supp=1，1 条 supp=2 |
+| `--tag commute` | 8 | 2（均 FAIL→PASS，均 supp=2） | 2 条 supp=1，6 条 supp=2 |
+
+退化性质是这个结果的原因：**首跑每边各一次时 `supp` 只有一个元素，判定与旧口径逐字相同**；
+只有首跑失败、`_expand_failures` 把 base 与 variant 一起补到 `failure_repeats` 之后才有差别
+——恰好在需要区分「真缺陷」和「采样噪声」的那一刻。所以这是个**只影响诊断精度、不影响
+首跑成本**的改动。
+
+**它不只是少报噪声，还多报了一个此前被噪声掩埋的真缺陷。**
+`cp.reminder-weather.swapped`：base「提醒我八点开会，再查下明天天气」→ `time_text="八点"`；
+swapped「查下**明天**天气，再提醒我**八点**开会」→ **三次全部** `time_text="明天早上八点"`。
+前一子句的时间限定词串到了后一子句上。旧口径下 base 自己也抖，逐次配对把它冲散成
+`unstable`（既不进修复清单也不进门禁）；新口径吸收 base 抖动后，variant 侧稳定的偏差浮出
+成 `stable_fail`。**这条同时证伪了「把槽位摘出签名」那个提议**——那样做它会永久不可见
+（两侧 intent 集合完全相同）。属产品侧缺陷，按「修尺子和修被测对象不同批」另开一批。
+
+**作废声明（§9 纪律）**：评审 §10.2 的 `relation_pass_rate 90.9%（130/143）` 是**旧口径**
+读数，与本口径不可直比，不得再引用。新口径的全量读数要等一次固定 provider 的 L1 全量。
+
+**新增的可读性字段**：`relation_base_support`（判定用了几个去重后的 base 签名）。
+`supp=1` 的结论与旧口径同强度——读报告的人不该靠猜。
+
+**一条限制要一起写下来**：`n=3` 的 `supp` 仍是对真实行为分布的稀疏估计。口径修对了不等于
+relation 就准了；**要求「变了」的那一类（`route_flip`，占 103/144）在首跑只有一次采样时，
+「两次独立采样必不同」对不同句子几乎恒真——真正的假绿要靠提高 `repeat_coverage` 才抓得住，
+那是成本决策，不是口径问题。** 记在这里，不在本批解决。

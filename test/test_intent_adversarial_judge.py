@@ -170,10 +170,19 @@ from support.intent_adversarial_judge import (  # noqa: E402
 )
 
 
+def _slotted(intent, **slots):
+    """带槽位的单意图快照——槽位差异是本组测试的主角。"""
+    return DecisionSnapshot(
+        ingress="cloud", addressed=True, decision="execute", clarify=False,
+        plan=PlanSnapshot(steps=(_step("s1", intent, slots=dict(slots)),),
+                          complexity="simple", goal="", skills=(), exemplars=(),
+                          hint_effect="", catalog_stats={}))
+
+
 def test_invariant_requires_same_semantic_signature():
     base = _snapshot("info.weather")
     variant = _snapshot("info.weather")
-    assert judge_relation(RelationSpec("base", "invariant", {}), base, variant).passed
+    assert judge_relation(RelationSpec("base", "invariant", {}), [base], variant).passed
 
 
 def test_route_flip_requires_changed_signature_and_declared_forbidden_after():
@@ -181,39 +190,140 @@ def test_route_flip_requires_changed_signature_and_declared_forbidden_after():
     variant = _snapshot("chitchat.talk")
     spec = RelationSpec("base", "route_flip", {"forbidden_after": ["charging.find"],
                                                "required_change": True})
-    assert judge_relation(spec, base, variant).passed
+    assert judge_relation(spec, [base], variant).passed
 
 
 def test_intent_add_requires_set_delta():
     spec = RelationSpec("base", "intent_add", {"add": ["info.weather"]})
-    assert judge_relation(spec, _snapshot("reminder.create"),
+    assert judge_relation(spec, [_snapshot("reminder.create")],
                           _snapshot("reminder.create", "info.weather")).passed
 
 
 def test_intent_remove_requires_set_delta():
     spec = RelationSpec("base", "intent_remove", {"remove": ["info.weather"]})
-    assert judge_relation(spec, _snapshot("reminder.create", "info.weather"),
+    assert judge_relation(spec, [_snapshot("reminder.create", "info.weather")],
                           _snapshot("reminder.create")).passed
 
 
 def test_clarify_flip_requires_decision_change():
     base = DecisionSnapshot("cloud", True, "clarify", True, PlanSnapshot.empty())
     variant = _snapshot("navigation.navigate_to")
-    assert judge_relation(RelationSpec("base", "clarify_flip", {}), base, variant).passed
+    assert judge_relation(RelationSpec("base", "clarify_flip", {}),
+                          [base], variant).passed
 
 
 def test_context_override_uses_variant_absolute_result():
     spec = RelationSpec("base", "context_override", {"must_differ": True})
-    assert judge_relation(spec, _snapshot("info.weather"),
+    assert judge_relation(spec, [_snapshot("info.weather")],
                           _snapshot("nearby.search")).passed
 
 
 def test_clause_commute_ignores_step_order_but_not_intent_set():
     spec = RelationSpec("base", "clause_commute", {})
-    assert judge_relation(spec, _snapshot("info.weather", "reminder.create"),
+    assert judge_relation(spec, [_snapshot("info.weather", "reminder.create")],
                           _snapshot("reminder.create", "info.weather")).passed
-    assert not judge_relation(spec, _snapshot("info.weather", "reminder.create"),
+    assert not judge_relation(spec, [_snapshot("info.weather", "reminder.create")],
                               _snapshot("reminder.create", "info.news")).passed
+
+
+# ── supp(base) 口径（2026-08-03 裁定）─────────────────────────────────────
+# 反向构造的对象是**旧口径**：下面每一条都先摆出「旧的逐次配对会怎么判」，
+# 再断言新口径判得不一样。只断言新口径通过，证明不了这次改动改掉了什么。
+
+
+def test_invariant_accepts_variant_landing_in_any_observed_base_behaviour():
+    """base 自己抖（`symbol` 在公司名与代码之间摇），variant 落在其中一种 → 不算违反。
+
+    这正是 `cp.window-stock.swapped` 的真实形态：旧口径拿 base 的第 i 次比，
+    撞上另一种就红，而红的原因与换序无关。
+    """
+    spec = RelationSpec("base", "clause_commute", {})
+    support = [_slotted("info.stock", symbol="宁德时代"),
+               _slotted("info.stock", symbol="300750"),
+               _slotted("info.stock", symbol="宁德时代")]
+    variant = _slotted("info.stock", symbol="300750")
+    # 旧口径：variant 对 support[0] 逐字不等 → 红。
+    assert semantic_signature(support[0]) != semantic_signature(variant)
+    judgement = judge_relation(spec, support, variant)
+    assert judgement.passed
+    assert judgement.metric("relation_base_support") == 2.0
+
+
+def test_clause_commute_still_catches_a_systematically_dropped_clause():
+    """换序后稳定漏掉第二个子句——新口径必须红。放宽了噪声不等于放过缺陷。"""
+    spec = RelationSpec("base", "clause_commute", {})
+    support = [_snapshot("info.air_quality", "info.indices"),
+               _snapshot("info.indices", "info.air_quality")]
+    assert not judge_relation(spec, support, _snapshot("info.indices")).passed
+
+
+def test_route_flip_fails_when_variant_behaviour_is_one_the_base_also_produces():
+    """要求「变了」的断言在噪声下会**假绿**——比假红危险。
+
+    旧口径只比 base 的那一次：base 第一次给 charging.find、第二次给 charging.plan，
+    variant 给 charging.plan 时旧口径判「变了」通过。可 base 自己就会产生 plan，
+    「这两句路由不同」这个主张根本没被证明。
+    """
+    spec = RelationSpec("base", "route_flip", {"required_change": True})
+    support = [_snapshot("charging.find"), _snapshot("charging.plan")]
+    variant = _snapshot("charging.plan")
+    assert semantic_signature(support[0]) != semantic_signature(variant)   # 旧口径：绿
+    assert not judge_relation(spec, support, variant).passed               # 新口径：红
+
+
+def test_context_override_fails_when_variant_behaviour_is_in_base_support():
+    spec = RelationSpec("base", "context_override", {"must_differ": True})
+    support = [_snapshot("info.weather"), _snapshot("nearby.search")]
+    assert not judge_relation(spec, support, _snapshot("nearby.search")).passed
+
+
+def test_intent_add_requires_the_intent_to_be_absent_from_every_base_run():
+    """base 偶尔自己就会带上那个 intent 时，「variant 新增了它」不成立。"""
+    spec = RelationSpec("base", "intent_add", {"add": ["info.weather"]})
+    support = [_snapshot("reminder.create"),
+               _snapshot("reminder.create", "info.weather")]
+    assert not judge_relation(spec, support,
+                              _snapshot("reminder.create", "info.weather")).passed
+
+
+def test_intent_remove_requires_the_intent_in_every_base_run():
+    """base 时有时无的 intent，variant 没有它证明不了「移除」。"""
+    spec = RelationSpec("base", "intent_remove", {"remove": ["info.weather"]})
+    support = [_snapshot("reminder.create", "info.weather"),
+               _snapshot("reminder.create")]
+    assert not judge_relation(spec, support, _snapshot("reminder.create")).passed
+
+
+def test_clarify_flip_requires_base_to_clarify_every_run():
+    spec = RelationSpec("base", "clarify_flip", {})
+    clarifying = DecisionSnapshot("cloud", True, "clarify", True, PlanSnapshot.empty())
+    support = [clarifying, _snapshot("navigation.navigate_to")]
+    assert not judge_relation(spec, support,
+                              _snapshot("navigation.navigate_to")).passed
+
+
+def test_single_base_run_reproduces_the_old_verdict_exactly():
+    """退化性质：supp 只有一个元素时，新旧口径必须给出同一个结论。
+
+    首跑每边各一次走的正是这条路径——改口径不得让首跑的判定漂移。
+    """
+    for spec_type, base, variant, old in [
+        ("invariant", _snapshot("info.weather"), _snapshot("info.weather"), True),
+        ("invariant", _snapshot("info.weather"), _snapshot("info.news"), False),
+        ("clause_commute", _slotted("info.stock", symbol="A"),
+         _slotted("info.stock", symbol="B"), False),
+    ]:
+        spec = RelationSpec("base", spec_type, {})
+        assert judge_relation(spec, [base], variant).passed is old
+        assert (semantic_signature(base) == semantic_signature(variant)) is old
+
+
+def test_empty_base_support_is_a_failure_not_a_silent_pass():
+    """对照一次都没跑出结果 = 少裁了一条 gold，不是「这条恰好没有 relation 断言」。"""
+    judgement = judge_relation(RelationSpec("base", "invariant", {}), [],
+                               _snapshot("info.weather"))
+    assert not judgement.passed
+    assert judgement.metric("relation_base_support") == 0.0
 
 
 def test_semantic_signature_ignores_step_ids_but_keeps_dependency_semantics():

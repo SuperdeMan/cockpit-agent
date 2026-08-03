@@ -345,6 +345,12 @@ def judge_turn(expected: TurnExpectation, actual: DecisionSnapshot) -> TurnJudge
 # ── 最小对照关系 ───────────────────────────────────────────────────────────
 # 语义签名刻意不含 step id 和自然语言：id 是 Planner 临时生成的，回复文风每轮都不同。
 # 两者任一进签名，invariant 就永远为假、route_flip 就永远为真——断言变成噪声。
+#
+# **槽位是另一回事，它留在签名里**（2026-08-03 裁定）。曾经的提议是「槽位同理，也该
+# 排除」——量过之后否掉了：槽位差异有真有假（`symbol=300750` vs `symbol=宁德时代`
+# 是真的，`date` 缺省与写出来不是），排除它等于把真差异一起变成不可见。噪声的来源不是
+# 槽位进了签名，是**拿一次采样代表一个句子的行为**；修在 `judge_relation` 的 supp(base)
+# 口径上，不修在签名组成上。
 
 
 def _canonical(value) -> str:
@@ -399,18 +405,65 @@ def semantic_signature(snapshot: DecisionSnapshot) -> tuple:
     )
 
 
-def judge_relation(spec, base: DecisionSnapshot,
-                   variant: DecisionSnapshot) -> TurnJudgement:
+def judge_relation(spec, base_support, variant: DecisionSnapshot) -> TurnJudgement:
+    """裁最小对照关系。**base 侧的证据是 `supp(base)`——这句话在本次跑批里观测到的
+    全部行为，不是某一次采样。**
+
+    2026-08-03 口径裁定（评审报告 §10.11 立的账）。原实现拿「base 的第 i 次」对
+    「variant 的第 i 次」逐次比签名——在真实模型上那等于「两次独立采样必须逐字相同」。
+    实测（commute 族 17 单元 ×3 次，`minimax:MiniMax-M3`）：**同一句话重复三次，
+    58.8% 的单元自己就抖**，只收到 intent 集合仍有 23.5%。`cp.window-stock.base`
+    自己三次里 `symbol` 就在「宁德时代」和「300750」之间摇——那条 `clause_commute`
+    红得与换序毫无关系。
+
+    所以「换序不变式该不该比槽位」是问错了问题；真问题是**拿一次采样代表一个句子的
+    行为**。改法是把 base 侧换成分布支撑集，两个方向统一成同一条判据：
+
+    - `invariant` / `clause_commute` 主张「variant 没有引入 base 不会有的行为」
+      → `sig(variant) ∈ supp(base)`；
+    - `route_flip` / `context_override` 主张「variant 的行为真的被换掉了」
+      → `sig(variant) ∉ supp(base)`。
+
+    base 抖动对两者的影响方向相反，而这是**内在正确**的：`invariant` 下 base 抖说明
+    这句话本来就有多种合法行为，variant 落进任一种都算不变；`route_flip` 下 base 的
+    覆盖面变大，「这两句路由不同」这个主张本就更难成立。集合口径不是放宽，是把
+    「用哪些观测来判」写对。
+
+    **槽位继续留在签名里。** 集合口径已经吸收了它的采样方差；把槽位摘出签名会永久
+    失去可见性，而 `symbol=300750` vs `symbol=宁德时代` 是真差异——只是它不由换序造成。
+
+    退化性质：首跑每边各一次时 `supp(base)` 只有一个元素，判定与旧口径逐字相同。
+    只有首跑失败、`_expand_failures` 把 base 与 variant 一起补到 `failure_repeats`
+    之后才有差别——**恰好在需要区分「真缺陷」和「采样噪声」的那一刻**。
+
+    集合类主张（`intent_add`/`intent_remove`/`clarify_flip`）同一条元规则：
+    **主张必须对 base 的全部观测成立。** 要证「新增」，那个 intent 必须是 base
+    从没出现过的（并集）；要证「移除」，它必须是 base 每次都有的（交集）；
+    要证「翻面」，base 必须每次都澄清。
+    """
     out = TurnJudgement()
-    base_intents = set(base.plan.intents)
+    base_runs = tuple(base_support)
+    if not base_runs:
+        # 空 supp 不是「没有这条 gold」——它是**少裁了一条 gold**。静默通过正是本套件
+        # 反复抓到的那一形态：没观测被记成了观测到没问题。
+        _assert(out, "relation.base_support", False, ">=1 base run", 0,
+                detail="supp(base) 为空——对照方没有任何观测，relation gold 未被裁")
+        out.metrics["relation_pass"] = 0.0
+        out.metrics["relation_base_support"] = 0.0
+        return out
+    base_sigs = {semantic_signature(run) for run in base_runs}
+    variant_sig = semantic_signature(variant)
+    in_support = variant_sig in base_sigs
+    base_intent_union = set().union(*(set(run.plan.intents) for run in base_runs))
+    base_intent_common = set(base_runs[0].plan.intents).intersection(
+        *(set(run.plan.intents) for run in base_runs))
     variant_intents = set(variant.plan.intents)
     expected = spec.expectation or {}
     if spec.type == "invariant":
-        _assert(out, "relation.invariant",
-                semantic_signature(base) == semantic_signature(variant),
-                semantic_signature(base), semantic_signature(variant))
+        _assert(out, "relation.invariant", in_support,
+                sorted(map(repr, base_sigs)), repr(variant_sig))
     elif spec.type == "route_flip":
-        changed = semantic_signature(base) != semantic_signature(variant)
+        changed = not in_support
         forbidden = set(expected.get("forbidden_after") or []) & variant_intents
         _assert(out, "relation.route_flip",
                 (changed or not expected.get("required_change", True)) and not forbidden,
@@ -418,27 +471,31 @@ def judge_relation(spec, base: DecisionSnapshot,
     elif spec.type == "intent_add":
         wanted = set(expected.get("add") or [])
         _assert(out, "relation.intent_add",
-                wanted <= (variant_intents - base_intents), wanted,
-                sorted(variant_intents - base_intents))
+                wanted <= (variant_intents - base_intent_union), wanted,
+                sorted(variant_intents - base_intent_union))
     elif spec.type == "intent_remove":
         wanted = set(expected.get("remove") or [])
         _assert(out, "relation.intent_remove",
-                wanted <= (base_intents - variant_intents), wanted,
-                sorted(base_intents - variant_intents))
+                wanted <= (base_intent_common - variant_intents), wanted,
+                sorted(base_intent_common - variant_intents))
     elif spec.type == "clarify_flip":
+        base_clarifies = all(run.clarify for run in base_runs)
         _assert(out, "relation.clarify_flip",
-                base.clarify and not variant.clarify,
-                (True, False), (base.clarify, variant.clarify))
+                base_clarifies and not variant.clarify,
+                (True, False),
+                ([run.clarify for run in base_runs], variant.clarify))
     elif spec.type == "context_override":
-        changed = semantic_signature(base) != semantic_signature(variant)
+        changed = not in_support
         _assert(out, "relation.context_override",
                 changed if expected.get("must_differ", True) else True,
                 expected, changed)
     elif spec.type == "clause_commute":
-        _assert(out, "relation.clause_commute",
-                semantic_signature(base) == semantic_signature(variant),
-                semantic_signature(base), semantic_signature(variant))
+        _assert(out, "relation.clause_commute", in_support,
+                sorted(map(repr, base_sigs)), repr(variant_sig))
     else:
         _assert(out, "relation.unknown", False, spec.type, "unsupported")
     out.metrics["relation_pass"] = 1.0 if out.passed else 0.0
+    # 判定用了几个 base 样本必须看得见：`supp` 只有 1 个元素时结论与旧口径同强度，
+    # 读报告的人不该靠猜。分子分母都要露出来，是本套件从头到尾的同一条纪律。
+    out.metrics["relation_base_support"] = float(len(base_sigs))
     return out
