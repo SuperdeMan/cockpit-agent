@@ -774,9 +774,82 @@ isinstance 照过，一路走到拿它去 hash 才崩；而 `_parse_and_validate
 
 ### 6.8 顺带浮出、未修的产品侧账（都已立卡）
 
+> ✅ **这三条已在同日深夜收口，见 §7**——⚠ 三条的定性**没有一条是对的**，
+> 逐条更正在 §7.2 / §7.3。下面保留立账时的原文，因为错的方向本身是证据。
+
 - **`ex.homophone.aircon`「把空条打开」→ 3/3 落 `sunroof.open`**（说开空调开了天窗）。
   stable，2026-08-02 晋级时通过＝**回归**。
 - **`nq.umbrella.both`「查明天天气然后提醒我带伞」→ 3/3 漏掉提醒步**（§10.8 同族）。
   同为 stable 回归。
 - **`cp.reminder-weather.swapped` 子句间槽位串味**（见 6.2）。
 - 上述两条 stable 稳定红是**正式 baseline 前置里比 L3 更硬的一条**。
+
+---
+
+## 7. 意图落域对抗测试：§6.8 那三条产品账的收口（2026-08-03 深夜，两批）
+
+> 逐条证据在 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§8**；
+> 与本报告结论有出入的部分回填在评审报告 **§10.15**。
+> 两批分开提交：`9d6ae0e` **只动生产**（`skills/` 两个知识资产 + 该 guide 自己的契约测试）、
+> `6eb9bab` **只动语料**。
+
+### 7.1 流水
+
+| 提交 | 批次性质 | 内容 |
+|---|---|---|
+| `9d6ae0e` | 只动生产 | 新建 `skills/exemplars/hvac.yaml`（2 条）；重写 `skills/guides/conditional-reminder.yaml` 的判据为三分 + 时间槽纪律（version 2→3）；`test_skills.py` 的契约断言换掉 |
+| `6eb9bab` | 只动语料 | 补 unseen 侧 10 条（`bd.nn-find-go` 药店一对 / `cs.weather-stale-unseen` / `cs.news-stale-unseen` / `ex.inv-weather-unseen` / `ex.inv-trip-unseen`），唯一输入 502 → **512** |
+
+**读数**：L0 discovery **70/70 exit 0**（551 条 / 512 唯一输入）；`gate --layer l0 --strict`
+**exit 0**；`orchestrator/cloud` **477 passed**；对抗专项单测 **231 passed**；
+`eval_skills` / `eval_exemplars` 门禁均 PASS；**gate 全量 L1 110/116（94.8%）**。
+
+### 7.2 五条判据（都是被证据掰过来的，不是想出来的）
+
+1. **说「回归」之前先证明输入变了。** `nq.umbrella.both` 立账时写的是「昨天晋级时通过、
+   今天两趟各 3/3 红＝回归」。逐条拉证据后，通过的那次与失败的两次**检索名单与范例名单
+   逐字相同**——注进模型的东西一个字节没变，红绿差异只能是采样。**检索名单是免费的对照物**
+   （同「goal 是免费的对照物」）。写成回归会把排查方向指到 `git log` 上去。
+2. **`exemplars=[]` 先问这个域有没有范例文件，别急着调阈值。** 范例库最初 199 条金标全部
+   来自**云侧** manifest 的 `examples`，端侧车控没有 manifest examples ⇒ **整片空白**。
+   平时不要紧（车控走端侧快路径不经 planner），但**同音字恰恰是快路径认不出、必然上云的
+   那一类**——空白正好暴露在最需要它的地方。
+3. **放宽一分之前先列全所有分。** 修「顺承并列被当成条件句」时，只改并列那一分会把
+   `nq.umbrella.negated`「先别提醒我带伞」一起翻正（吃的是同一条 guide）。判据必须写成
+   条件/否定/顺承**三分**，且否定分支单配金标。
+4. **断言跟着措辞走，就会把错的措辞钉死。** 那条守边界的契约测试断言的是 knowledge 里
+   有没有「明确时间」四个字，**而那正是写错了的判据本身**——于是它忠实地守住了 bug。
+   改为钉「三分判据各有金标消费方」，三条断言逐条做了反向构造。
+5. **门禁红也不等于有稳定缺陷。** 这是「规模闸绿 ≠ 门禁绿」（§6）的另一半。
+   修完后 gate 全量仍有 2 条 `stable_fail`，但**逐条独立复跑都翻面**、消融四臂 `causal: none`。
+   一条 `stable` 用例能在两个独立进程之间 3/3 ↔ 0/3 地翻 ⇒ **晋级要的「两趟独立进程都过」
+   是必要不充分条件**。下一步该量分布（gate 全量 `--repeat 3` 连跑三趟看每条 pass 率），
+   而不是继续逐条修 badcase。
+
+### 7.3 两条定性更正
+
+- **§6.2 / 评审 §10.12.5「子句间槽位串味」只对了一半。** 串味说预测的是「明天」，
+  实测拿到的是整串「明天早上八点」——「早上」在原话两个子句里**都不存在**。该串逐字出现在
+  `reminder#28` 的槽位与 reminder manifest 的 capability description（desc 渲进 catalog，
+  每次规划都在）。铁证是 `nq.umbrella.both`：原话**一个时间词都没有**，照样产出
+  `{title:"带伞", time_text:"明天早上八点"}`，两个槽位一起照抄。
+  修完 3/3 红 → 1/3 红、幻影变成「明天八点」——**「早上」是照抄（已修）、「明天」才是真串味**。
+- **「『有点热』落 `hvac.inc`、方向反了」已不成立。** 它现在产出 `aircon.dec`，方向是对的。
+  真相是 `hvac.*` 与 `aircon.*` 是同一个动作的两个 intent 名（`edge_call._to_structured`
+  里 `{"hvac": "aircon"}`，实测两者解出的 `data` 逐字相同），而能力面两套名字都注册、
+  catalog 又只渲染意图名 ⇒ **planner 面对两个无法区分的同义工具只能掷硬币**。
+  **判据：一部分「不稳定」其实是别名分裂，不是模型抖动。** 修法需人裁，未做。
+
+### 7.4 补语料时撞到的、以及自己犯的错
+
+- **不变性关系不能建在会产生自由文本槽位的句子上。** 三条新写的 `relation: invariant` 全红，
+  而绝对 gold 全部满足——同一句话两次调用把 `date` 从「明天」渲成「明天早晨」，
+  `info.news` 自发多出 `limit: "5"`。改用绝对 gold 表达同一机制，理由写进用例注释。
+  这是「换一把尺子，噪声底就得重新量」的第二次适用。
+- **`SKILL_BUDGET` 的裁剪第二次现场现形**：一条新用例的检索名单里 `multi-day-trip@vec:0.45!clipped`
+  与 `conditional-reminder@vec:0.44!clipped` **同时**被裁。评审 §10.8 结尾记的「守卫应该守到
+  top-K 而不是 top-1」再添一个现场，仍不改，但账厚了一层。
+- **自己犯的错：为了看中文给 shell 设了 `PYTHONIOENCODING=utf-8`，跑出三条假红。**
+  `test_eval_intent_adversarial_cli.py` 用 `subprocess(text=True)` 按系统默认编码（GBK）解子进程
+  输出，父进程改了子进程的输出编码 → `UnicodeDecodeError` → `proc.stdout` 为 `None`。
+  去掉该变量后 **231/231**。判据：**为了自己看得舒服而改的环境变量，也是环境变量。**

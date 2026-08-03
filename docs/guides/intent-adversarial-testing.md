@@ -33,6 +33,12 @@ L1 全量 470 证据单元，检索 2040 次调用零降级）——完整表在
 ⚠ **但正式 baseline 反而多了一个前置**：现有 stable 集合里有**两条稳定红**
 （§10.14.4），补规模不等于门禁能跑绿。
 
+**2026-08-03 深夜（产品批 + 语料批，findings §8）**：那两条稳定红**已修完并在 gate 全量里
+复验通过**——`ex.homophone.aircon` 真因是 hvac 域一条范例都没有（`exemplars=[]`），
+`nq.umbrella.both` **不是回归**（检索名单逐字相同，是 guide 判据写窄了）。
+gate 全量 L1 现为 **110/116（94.8%）**；剩下两条 `stable_fail` 逐条独立复跑都翻面，
+**门禁不绿的原因已从「稳定缺陷」变成「方差」**。语料侧补 unseen 10 条（唯一输入 **512**）。
+
 **读任何一个比率之前，先看它的分子分母。** 分母为 0 时值是 `null` 不是 0 ——
 「一侧样本都没有」和「一侧全对」在这份报告里长得不一样，这是刻意的。
 
@@ -201,6 +207,19 @@ L1 有 `no-hints/no-skills/no-exemplars/empty-history`；L2 另加 `cloud-direct
 **语料自相矛盾要先于产品缺陷排查。** 写新用例前先搜同族已有的裁定；
 一条 gold 与 guide golden / `boundaries.yaml` / 另一条 stable 用例打架的情况真实发生过多次。
 
+### 第 5 步：想写「回归」之前，先证明输入变了
+
+**检索名单是现成的、零成本的对照物。** 拿这一跑的 `skills` / `exemplars` 名单去比
+上一次通过时那一跑的——**逐字相同就说明注进模型的东西一个字节没变**，
+那么红绿差异只能是采样，不是「有人改坏了」。
+
+2026-08-03 `nq.umbrella.both` 立账时按「昨天晋级时通过、今天两趟各 3/3 红」写成回归；
+逐条拉证据后两次的名单**逐字相同**（`conditional-reminder@lex:14` +
+`reminder#28@vec:0.80` + `info#23@vec:0.67`）。真相是这句话一直站在判定边界上，
+**之前那次是蒙对的**——知识本身把判据写窄了。写成「回归」会把排查方向指到 git log 上去。
+
+反过来也成立：名单**变了**才轮到问「是谁改的」。
+
 ---
 
 ## 5. 修一条落域 badcase，产物是什么
@@ -216,7 +235,8 @@ L1 有 `no-hints/no-skills/no-exemplars/empty-history`；L2 另加 `cloud-direct
 | 症状 | 落点 |
 |---|---|
 | 单句落错域 | `skills/exemplars/<domain>.yaml` 加范例（**说法必须避开评测语料原句** —— 用原句等于把 unseen 洗成 seen） |
-| 组合意图缺步 / 判据缺失 | `skills/guides/<name>.yaml`（**先拿 goal 对照 steps**：goal 说推荐而 steps 无推荐步＝可检测的缺口） |
+| 诊断行里 `exemplars=[]` | **先问这个域有没有范例文件**，别急着调阈值。范例库最初 199 条金标全部来自**云侧** manifest 的 `examples`，**端侧能力（车控/媒体）没有 manifest examples ⇒ 这些域天然是空白**。2026-08-03 `ex.homophone.aircon` 正是这样：整个 hvac 域一条范例都没有（`skills/exemplars/hvac.yaml` 由此新建） |
+| 组合意图缺步 / 判据缺失 | `skills/guides/<name>.yaml`（**先拿 goal 对照 steps**：goal 说推荐而 steps 无推荐步＝可检测的缺口）。⚠ **改判据前先读旧判据是怎么写的**——2026-08-03 `nq.umbrella.both` 的漏步根因是 guide 把「并列」定义成「提醒本身已有明确时间」，于是「没说时间」成了判条件句的证据。**放宽一分之前先列全所有分**（条件/否定/顺承三分，只修中间一分会把否定句一起翻正） |
 | 两个域反复互抢 | `skills/exemplars/boundaries.yaml` 加裁定，**并按台账契约补双向各 2 例对照** |
 | 弱模型稳定漏/误路由重域 | 才轮到 manifest `route_hints`（确定性路由），且要走跨 provider 交集判据 |
 | 系统根本没有这个能力 | **补能力，不是补描述**。描述治不了缺能力 |
@@ -289,14 +309,20 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 - **L3 选集非空、结构化结果完整、且来自本次调用**（唯一 run 目录 + invocation id + 开始时间核对）；
 - 已有 baseline 时不得带逐例回退。
 
-**当前命令暂未获准执行。** 剩余前置**两条**（2026-08-03 晚更新——评审 §9 的 P0/P1
-与 stable 规模均已收口，唯一输入现为 **122**）：
+**当前命令暂未获准执行。** 剩余前置**两条**（2026-08-03 深夜更新，findings §8.5）：
 
 1. **L3 证据未取得**——既有 e2e 运行器在本机 `lease_protocol` / `identity_cleanup` 失败，
    属运行器的账，不是对抗套件的；
-2. **现有 stable 集合里有两条稳定红**（`ex.homophone.aircon` / `nq.umbrella.both`，
-   评审 §10.14.4）——**这条比 L3 更硬**，它是被测对象自己的红。
-   资格闸的 `无 stable_fail` 一项因此当前必然不满足。
+2. **gate 全量 L1 仍跑不到全绿**：最近一趟 **110/116（94.8%）**，`stable_fail` 2 + `unstable` 4。
+   ⚠ **但这一条的性质已经变了**：`ex.homophone.aircon` / `nq.umbrella.both` 两条稳定红
+   **已修复并复验通过**（findings §8.1/§8.2），当前剩下的两条 `stable_fail`
+   （`cp.adaptive.rain-umbrella` / `cp.dep.menu-then-order`）**逐条独立复跑都翻面**——
+   是边界摇摆不是稳定缺陷。资格闸要求无 `stable_fail` **且**无 `unstable`，所以照样写不出
+   baseline，但排查方向不同：要找的是**为什么这些句子站在判定边界上**，不是「谁改坏了」。
+
+> **判据：门禁跑不绿的原因可以只是方差。** 这是「规模闸绿 ≠ 门禁绿」的另一半——
+> **门禁红也不等于有稳定缺陷**。一条 `stable` 用例能在两个独立进程之间 3/3 ↔ 0/3 地翻，
+> 说明晋级时那「两趟独立进程都过」买到的置信度比想象中低：**它是必要条件，不是充分条件。**
 
 上面的命令是最终形态，不是当前可执行的放行指令。
 
@@ -332,19 +358,23 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 
 | 优先级 | 待办 | 说明 |
 |---|---|---|
-| **P0** | **现有 stable 集合里有稳定红（新）** | **补规模 ≠ 门禁能跑绿**（评审 §10.14.4）。两趟都红：`ex.homophone.aircon`「把空条打开」**3/3 落 `sunroof.open`**（说开空调开了天窗）、`nq.umbrella.both`「查明天天气然后提醒我带伞」3/3 漏掉提醒步（§10.8 同族）。另有 4 条单趟红。两条都是 2026-08-02 晋级时通过的＝**回归**。属产品侧，另开批。**这是正式 baseline 前置里比 L3 更硬的一条** |
-| P1 | **子句间槽位串味（产品侧，新）** | `cp.reminder-weather.swapped`「查下**明天**天气，再提醒我**八点**开会」→ **3/3** 把 `time_text` 写成 `"明天早上八点"`，前一子句的时间限定词串到了后一子句上（base 是 `"八点"`）。评审 §10.12.5。属产品缺陷，按「修尺子和修被测对象不同批」另开 |
-| P1 | **23 条改标 seen 后 unseen 覆盖变薄** | stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条。补法是**新写真正没进过知识的话术**，不是把标签改回去 |
-| P1 | **A4 83.3% / A9 83.0%** | 两个最弱攻击族（其余 ≥89%，A2/A8 已 100%） |
+| ~~**P0**~~ | ~~**现有 stable 集合里有稳定红**~~ | **已收口（2026-08-03 深夜，findings §8.1/§8.2）**。`ex.homophone.aircon` 真因是 **hvac 域一条范例都没有**（诊断行 `exemplars=[]`），新建 `skills/exemplars/hvac.yaml`；`nq.umbrella.both` **不是回归**——检索名单在通过的那次与失败的两次逐字相同，真因是 guide 把并列判据写成「提醒本身已有明确时间」。两条在 gate 全量 L1 里都已通过 |
+| **P0** | **gate 全量仍跑不绿，但原因是方差（新）** | 最近一趟 **110/116（94.8%）**：`stable_fail` 2（`cp.adaptive.rain-umbrella` adaptive 第二轮空转 / `cp.dep.menu-then-order` 漏第二步）+ `unstable` 4。**两条 stable_fail 逐条独立复跑都翻面**，消融四臂 `causal: none`。判据见 §8「门禁红也不等于有稳定缺陷」。要查的是「为什么这些句子站在判定边界上」 |
+| P1 | ~~**子句间槽位串味**~~（定性已更正，部分收口） | 「明天早上八点」**不是子句串味**：它逐字出现在 `reminder#28` 的槽位与 reminder manifest 的 capability description（desc 渲进 catalog，每次规划都在）。铁证是 `nq.umbrella.both` 原话**没有任何时间词**却照样产出同一串。修完 **3/3 红 → 1/3 红**、幻影变成「明天八点」：**「早上」是照抄（已修）、「明天」才是真串味（仍在，`unstable`）**。findings §8.3 |
+| ~~P1~~ | ~~**23 条改标 seen 后 unseen 覆盖变薄**~~ | **已收口（`6eb9bab`）**：新写 10 条 unseen（唯一输入 502 → 512），另起 family 避免下次 family 闭包又把它们卷成 seen。⚠ 其中三条的 `relation: invariant` **写不成**——自由文本槽位让签名逐字相等的口径量到的是渲染方差，已改用绝对 gold（findings §8.6） |
+| P1 | **A4 83.3% / A9 83.0%** | 两个最弱攻击族（其余 ≥89%，A2/A8 已 100%）。本轮两条 P0 修复正落在这两族（A9 同音字 / A4 组合），新读数待一次固定 provider 的 L1 全量 |
 | P2 | **L3 证据** | 属 e2e 运行器的账（`lease_protocol` / `identity_cleanup`），不是对抗套件的。它是正式 baseline 的另一个前置 |
-| P2 | **「有点热」落 `hvac.inc`** | 方向反了（gold 要 dec/set/on）。`unstable` 不进修复清单，但**体感冷热搞反是用户当场能发现的那种错**。2026-08-03 已把 `ex.colloquial.hot` 换出 gate 预选池（用例留在 discovery 继续跑，账没消失） |
+| P2 | ~~**「有点热」落 `hvac.inc`**~~（描述已作废） | **它现在产出 `aircon.dec`——方向是对的**。红在 `hvac.*` 与 `aircon.*` 是同一动作的两个 intent 名（`edge_call._to_structured` 里 `{"hvac": "aircon"}`，实测两者解出的 `data` 逐字相同），而 gold 的 `any_of` 只收 `hvac.*`。**判据：一部分「不稳定」其实是别名分裂不是模型抖动。** 修法需人裁，见 findings §8.4 |
 | P2 | **三条够不上晋级的候选** | `cp.hvac-news.swapped`（B 趟 relation.clause_commute 红）、`nq.hvac.reported`（A 趟红）、`nq.match.lastweek`（A 趟 unstable）。都仍在预选池里，**下次晋级先看它们**——按规矩要两趟独立进程都过 |
 | P2 | **`cp.adaptive.weather-outing` 两趟都过却晋不了** | 它声明了 `l3` 而 L3 证据未取得。L3 那条账一旦还上，这条可直接晋级（唯一输入 122 → 123） |
 
-**下一步最省力的路径**：P0 已从「语料规模」换成「产品侧的两条稳定红」——
-`ex.homophone.aircon`（同音字落到另一个车控对象）按 M5 范式修法是投**范例**
-（`skills/exemplars/`），`nq.umbrella.both`（组合漏第二步）与 §10.8 同族、
-真因很可能同样在 guide。两条都属产品批，与尺子/语料不同批。
+**下一步最省力的路径（2026-08-03 深夜刷新）**：两条稳定红已修完，**门禁不绿的原因换成了方差**。
+所以下一步不是再修一条 badcase，而是先回答一个尺子层面的问题——
+**一条 `stable` 用例能 3/3 ↔ 0/3 地翻，晋级判据要不要加一条「跨进程一致性」？**
+现有判据只要求两趟独立进程**都过**，不要求这两趟的**分布**接近；
+`cp.adaptive.rain-umbrella` 与 `cp.dep.menu-then-order` 都是在这个缝里通过的。
+在改判据之前不要再往 stable 里加东西——先量清楚现有 132 条里有多少条站在边界上
+（做法：gate 全量 `--repeat 3` 连跑三趟，看每条的 pass 率分布，不是看总通过率）。
 
 > **`stable` 规模那条 P0 已收口**（2026-08-03 晚，评审 §10.14）：预选池等量换出换入
 > （换出 8 条带病 / 换入 8 条新案例，池仍是钉死的 140），两趟独立 live 取证后晋级

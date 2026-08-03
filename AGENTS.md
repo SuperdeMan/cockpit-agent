@@ -67,8 +67,11 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 > [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md)
 > §0「现在能引用什么」+ §10「已知残留与下一步优先级」；② 评审报告
 > [`docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`](docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md)
-> **§10–§10.11**（新口径读数与本期全部结论，含一条**已更正的错误定性**在 §10.8）；
-> ③ 本文 §4.1 活跃待办；④ 完整流水 `docs/agents-history.md` **§5**。
+> **§10–§10.11**（新口径读数与本期全部结论，含一条**已更正的错误定性**在 §10.8）
+> **＋ §10.15**（深夜产品批的回填：那里更正了本报告的两条定性，并写下「门禁红也不等于
+> 有稳定缺陷」）；③ 发现与修复的单一入口
+> [`docs/design/2026-08-02-intent-routing-adversarial-findings.md`](docs/design/2026-08-02-intent-routing-adversarial-findings.md)
+> **§7（发现）与 §8（修复）**；④ 本文 §4.1 活跃待办；⑤ 完整流水 `docs/agents-history.md` **§5**。
 > **live 跑批前先看运行手册 §2 的三个环境变量**——少给一个整趟白跑。
 >
 > **2026-08-03 晚追加四批**（评审 §10.12 / §10.13 / §10.14）：`clause_commute`
@@ -77,6 +80,15 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 > **104 → 122**（`--strict` 转绿）+ 一条真栈撞出的生产健壮性修复（`50c2b3f`）。
 > ⚠ **最该先读的是 §10.14.4**：补规模**不等于**门禁能跑绿——现有 stable 里有两条
 > 稳定红，那是比 L3 更硬的 baseline 前置。
+>
+> **2026-08-03 深夜再两批**（产品 `9d6ae0e` + 语料 `6eb9bab`，逐条证据 findings **§8**）：
+> 上面那两条稳定红**已修完**并在 gate 全量 L1 里复验通过。真因都和立账时的猜测不一样——
+> `ex.homophone.aircon` 是 **hvac 域一条范例都没有**（`skills/exemplars/` 的 199 条金标全部
+> 来自云侧 manifest，车控是端侧能力、天然空白）；`nq.umbrella.both` **不是回归**
+> （检索名单在通过的那次与失败的两次逐字相同，是 guide 把并列判据写成「提醒本身已有明确
+> 时间」）。gate 全量现 **110/116（94.8%）**，剩下两条 `stable_fail` 逐条独立复跑**都翻面**
+> ⇒ **门禁不绿的原因已从「稳定缺陷」变成「方差」**（findings §8.5 的新判据）。
+> 语料侧补 unseen 10 条（唯一输入 502 → **512**）。
 
 **全量测试基线**：后端 `python -m pytest --import-mode=importlib` **3783 passed / 11 skipped /
 0 failed**（2026-08-02 单进程实测 14m02s；对抗测试体系 +128，零回归）；HMI `node --test` **225/225**；
@@ -85,7 +97,7 @@ Dashboard vitest **17/17**；端侧 smoke 13/13；Go 网关 vet+test 通过。
 + `test_eval_intent_adversarial_cli.py` + `test_build_intent_adversarial_candidates.py`）；
 新增 `orchestrator/cloud/tests/test_planning_no_action.py` 8 条、`agents/parking_payment/` 9 条；
 `orchestrator/` 全量 **936 passed**（`orchestrator/cloud` 477）；端侧 smoke **13/13**；
-L0 全量 **70/70 exit 0**（541 条 / 502 唯一输入）；
+L0 全量 **70/70 exit 0**（**551 条 / 512 唯一输入**，2026-08-03 深夜补 unseen 10 条后）；
 **`gate --layer l0 --strict` exit 0**（stable 132 条 / 唯一输入 **122** ≥ 120）。
 ⚠ **本机当前 `scripts/tests/` 有 32 条红**，但**与 clean HEAD `de6ef22` 逐条一致**
 （既有 e2e 运行器的环境路径问题，非本批引入）——同一命令在本机与 CI 上的分母不同，
@@ -99,13 +111,15 @@ L0 全量 **70/70 exit 0**（541 条 / 502 唯一输入）；
 规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`（§21 落地记录、§22 尺子硬化）、
 实施计划同名 `-implementation-plan.md`、**发现清单 + 修复批次记录另册**
 `docs/design/2026-08-02-intent-routing-adversarial-findings.md`（**修复批次的单一入口**）。入口
-`test/eval_intent_adversarial.py`，语料 `test/eval_corpus/intent_adversarial/`（**541 条 /
-502 唯一输入** / 九类攻击 / 144 组最小对照 / **20 条** boundaries 台账双向覆盖 /
+`test/eval_intent_adversarial.py`，语料 `test/eval_corpus/intent_adversarial/`（**551 条 /
+512 唯一输入** / 九类攻击 / 144 组最小对照 / **20 条** boundaries 台账双向覆盖 /
 云侧 129 个 active intent 覆盖清零 + 61 条端侧原子车控逐条豁免）。
 **132 条 stable / 唯一输入 122**（设计要求 120–160，**2026-08-03 晚已达线**，
 `--strict` exit 0）；正式 baseline 仍未生成，**前置有两条**：L3 证据未取得（既有 e2e
-运行器在本机 `lease_protocol` 失败）+ **现有 stable 集合里有两条稳定红**（评审 §10.14.4，
-比 L3 更硬）。资格闸正当拒绝、文件未生成。
+运行器在本机 `lease_protocol` 失败）+ **gate 全量 L1 跑不到全绿**——⚠ 但这条的性质
+2026-08-03 深夜变了：原来那两条稳定红**已修完**，当前 **110/116（94.8%）**，剩下的两条
+`stable_fail` 逐条独立复跑**都翻面** ⇒ **门禁不绿的原因已是方差而非稳定缺陷**
+（findings §8.5）。资格闸要求无 `stable_fail` **且**无 `unstable`，故仍正当拒绝、文件未生成。
 
 **修复批次读数（2026-08-03，minimax:MiniMax-M3 warm）**：L0 **70/70**（首轮 65/70，5 条全修）；
 L1 发现轨原始 evidence unit **425/468**，扣掉 6 条网关伤亡后 **431/468**（首轮 400/458）；
@@ -183,8 +197,9 @@ run/code/lock 身份。因此仍不得写“baseline-ready / 第三批全部收�
 **现在能引用什么**：L0 全量 **70/70**（零网络、确定性、exit 0）、当前提交快照的 **231 条**专项单测、
 逐条原始断言复现、评审 §10 的 L1 新口径全表（**`relation_pass_rate` 那一行除外，已作废**）。
 **不能引用什么**：`relation_pass_rate 90.9%`（2026-08-03 晚改口径，评审 §10.12）；
-L2/L3 的新口径全量读数；正式 baseline 仍未生成——**前置从两条变成三条**：
-L3 证据、~~stable 规模~~（已达 122）、**现有 stable 集合里的两条稳定红**（§10.14.4，最硬的一条）。
+L2/L3 的新口径全量读数；正式 baseline 仍未生成——**前置两条**：L3 证据、
+~~stable 规模~~（已达 122）、~~两条稳定红~~（**已修，findings §8.1/§8.2**）、
+**gate 全量跑不绿（现因方差，110/116）**。
 
 四条判据先记住：① **`domain_hit_rate` ≠ `exact_plan_set_rate`**——前者是 RoutingBench
 的历史交集口径（期望两域只命中一域照样绿），后者要求必要组全满足 + 无禁选 + 无未授权
@@ -250,14 +265,16 @@ span 的 `path` × `nlu_gate` × `nlu_vs_rule` 现在能从真实流量算出上
 |---|---|---|
 | **23 条改标 seen 后 unseen 覆盖变薄** | 评审 §7.2-①、§7.3 | 指纹闸抓出 13 条 `unseen_transfer` 的原话字面就在 `skills/exemplars/*.yaml` 里（family 闸对它们全绿），连同 family 闭包共 23 条改标 seen。补法是**新写真正没进过知识的话术**，不是把标签改回去；受影响的是 stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条 |
 | ~~**`stable` 规模实为 104 < 120**~~ | 规格 §21.8 → 评审 **§10.14** | **已收口**：预选池等量换出换入（`gate_candidate` 被钉死在 140，换出 8 条带病 / 换入 8 条新案例），两趟独立 live 取证后晋级 **19 条**——`stable` 113 → **132**、唯一输入 **104 → 122**、`--strict` **exit 0**。两趟抓到 3 条翻面，单跑一趟会多晋级 1–2 条噪声用例 |
-| **现有 stable 集合里有稳定红（新 P0）** | 评审 **§10.14.4** | **补规模 ≠ 门禁能跑绿**，这两件事此前被默认绑在一起。两趟都红：`ex.homophone.aircon`「把空条打开」**3/3 落 `sunroof.open`**（说开空调开了天窗）、`nq.umbrella.both`「查明天天气然后提醒我带伞」3/3 漏提醒步（§10.8 同族）；B 趟另有 4 条单趟红。两条都是 2026-08-02 晋级时通过的＝**回归**。**这是正式 baseline 前置里比 L3 更硬的一条**，属产品侧另开批 |
+| ~~**现有 stable 集合里有稳定红**~~ | 评审 §10.14.4 → findings **§8.1/§8.2** | **已收口（`9d6ae0e`）**，且两条真因都与立账时的猜测不同：`ex.homophone.aircon` 是 **hvac 域一条范例都没有**（`exemplars=[]`；范例库 199 条金标全来自云侧 manifest，端侧车控天然空白）→ 新建 `skills/exemplars/hvac.yaml`，复验两趟独立进程都绿、检回靠 **`@vec:0.69` 语义通道**（词法没够着＝是转移不是背诵）。`nq.umbrella.both` **不是回归**——检索名单在通过的那次与失败的两次**逐字相同**，真因是 guide 把并列判据写成「提醒本身已有明确时间」，「没说时间」于是成了判条件句的证据。修法是判据换成条件/否定/顺承**三分**（⚠ 只修中间一分会把否定句一起翻正） |
+| **gate 全量跑不绿，但原因是方差（新 P0）** | findings **§8.5** | 修完两条后 gate 全量 L1 **110/116（94.8%）**：`stable_fail` 2（`cp.adaptive.rain-umbrella` adaptive 第二轮空转 / `cp.dep.menu-then-order` 漏第二步）+ `unstable` 4。**两条 `stable_fail` 逐条独立复跑都翻面**、消融四臂 `causal: none`（其中「被不相干 guide 干扰」这个假设被 `no-skills` 臂**证伪**）。**判据：门禁红也不等于有稳定缺陷**——晋级要的「两趟独立进程都过」是必要不充分条件。下一步先量分布（gate 全量 `--repeat 3` 连跑三趟看每条 pass 率），别再逐条修 |
 | **畸形模型输出的防御只做到容器层（已修，判据留档）** | 本会话真栈 | 一趟 140 选集的 L1 跑批被一次 `depends_on: [["s0"]]` 整趟打死（`TypeError: unhashable`）。`50c2b3f` 已修两处（`depends_on` 元素 / `slot_refs` value）。判据：**模型输出是不可信输入，防御要一路防到真正会被拿去 hash / 拿去 split 的那个值，不是防到最外层容器为止** |
 | **L3 证据仍未取得** | 规格 §21.8 / 评审 §9 | 唯一目录、mtime、exit、provider 与额外 journey 已核；report 的 run/code/lock 身份仍未闭合，且尚无新鲜完整 L3 产物，不能写“baseline-ready” |
 | **组合漏第二步（原「依赖接线 1/5」，⚠ 定性已更正）** | 评审 **§10.8** | 初版写「两步都规划出来了只是没连起来」——**逐条拉计划后发现只对 1 条成立，而那 1 条恰恰不是接线问题**。真形态：3 条 unstable 是**漏第二步**、1 条是 gold 与 find-vs-go 台账打架（已修，3/3）、1 条通过。`trip-then-navigate` 是唯一 `causal=supported`：**guide 自己在制造漏步**（`multi-day-trip` 只讲「必须出 trip.plan」、示例全是并列步，模型读成「只出」），已补组合判据 + golden，实测 3/3。⚠ **20% 不等于「20% 的时候接不上」**——分母含 3 条 unstable 且报告存的是失败那一次。**全族回归已补跑**（`--tag composition` 51 单元 ×3）：两条修复都不在失败名单、3/3 站住；剩下的 `cp.dep.menu-then-order` 等仍是漏第二步的 unstable，按规矩不进修复清单 |
 | ~~**契约缺「恰好 N 次副作用」断言**~~ | 评审 §10.7 → **§10.13** | **已收口**：`expected.safety.side_effect_counts`（等式、声明即封闭、只在 L2、全零非法）。上界那条**保留**——`max_agent_calls_per_intent` 量调用、新字段量副作用，「调用了但没产生动作」时两者分叉。真栈反验：注入 `gold=2` 精确红在该断言上，恢复 `gold=1` 后 3/3 |
 | ~~**`clause_commute` 族系统性红**~~ | 评审 §10.11 → **§10.12** | **已收口（口径裁定，2026-08-03 晚）**。⚠ 立账时的定性「差的是槽位拼写」**是错的**：只覆盖 6 条红里的 2 条，且其中一条红的是 base。真因是**拿一次采样代表一个句子的行为**——实测同句自抖 58.8%（含槽位）/ 23.5%（仅 intent），而 relation 当时逐次配对比签名。裁定：对照方改成 `supp(base)`，**槽位留在签名里**。`relation_pass_rate 90.9%` 随之作废 |
-| **子句间槽位串味（产品侧，新）** | 评审 §10.12.5 | 上条口径修好后**多报出**的一个此前被噪声掩埋的真缺陷：「查下**明天**天气，再提醒我**八点**开会」→ 3/3 把 `time_text` 写成 `"明天早上八点"`（base 是 `"八点"`），前一子句的时间限定词串到了后一子句。按「修尺子和修被测对象不同批」另开 |
-| **「有点热」落 `hvac.inc`（新）** | 评审 §10.11 | 方向反了（gold 要 dec/set/on）。`unstable` 不进修复清单，但**体感冷热搞反是用户当场能发现的那种错** |
+| **子句间槽位串味（⚠ 定性已更正，部分收口）** | 评审 §10.12.5 → findings **§8.3** | 原定性「前一子句的时间限定词串到后一子句」**只对了一半**。串味说预测的是「明天」，实测拿到的是整串「**明天早上八点**」——而「早上」在原话两个子句里都不存在；同一串**逐字出现在** `reminder#28` 的槽位里，也出现在 `agents/reminder/manifest.yaml` 的 capability description（`_catalog_item` 把 desc 渲进 catalog，**每次规划都在**）。铁证是 `nq.umbrella.both`：原话**一个时间词都没有**，照样产出 `{title:"带伞", time_text:"明天早上八点"}`，两个槽位与 `reminder#28` 一起照抄。修完 **3/3 红 → 1/3 红**，幻影变成「明天八点」——**「早上」是照抄示例字面（已修），「明天」才是真串味（仍在，`unstable` 不进清单）** |
+| ~~**「有点热」落 `hvac.inc`**~~（描述已作废） | 评审 §10.11 → findings **§8.4** | **它现在产出 `aircon.dec`——方向是对的**。红在别处：`hvac.*` 与 `aircon.*` 是同一动作的两个 intent 名（见下条），gold 的 `any_of` 只收 `hvac.*` |
+| **`hvac.*` 与 `aircon.*` 是同一动作的两个名字（新，未修）** | findings **§8.4** | `edge_call._to_structured` 有一行 `{"hvac": "aircon"}`，实测 `hvac.dec` 与 `aircon.dec` 解出的 `data` **逐字相同**（`object=aircon, operate=dec`）；而 `VEHICLE_INTENTS` 把两套名字**都**注册进能力面，端侧 catalog 又**只渲染意图名不渲染描述** → **planner 面对两个无法区分的同义工具只能掷硬币**。判据：**一部分「不稳定」其实是别名分裂不是模型抖动**——查 `repeat_status` 之前先问「这两个不同答案是不是同一件事」。两条修法各有代价需人裁：语料 gold 收两个别名（治标但正确，`fast_intent` 自己产出的就是 `aircon.dec`）/ 端侧能力面去重（治本，须先盘 `aircon.*` 全部消费方） |
 | **A4 83.3% / A9 83.0%** | 评审 §10 | 两个最弱攻击族（其余 ≥89%，A2/A8 已 100%） |
 
 **M5 待办（都不阻塞）**：
