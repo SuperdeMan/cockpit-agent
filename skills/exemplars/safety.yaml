@@ -37,12 +37,25 @@ exemplars:
   added: '2026-07-30'
   tags:
   - canonical
-- text: 路上怎么样
+# 2026-08-03：这条原来是「路上怎么样」→ safety.driving_advice，**与人裁台账直接打架**
+# （`boundaries.yaml#nearby-safety.poi-vs-road-condition` 裁定「路上怎么样」的对象是
+# 前方路况）。它以 `@lex:1.00` 精确命中把语料里同一句拉去 driving_advice，对抗测试消融
+# 给出 `causal=supported`。原句保留、改指向台账那一侧；driving_advice 另补一条**真的
+# 体现驾驶建议角度**的说法（manifest 同步改，那里才是这条范例的来源）。
+- text: 这会儿开车出门合适吗
   plan:
   - agent: road-safety
     intent: safety.driving_advice
   source: manifest
-  added: '2026-07-29'
+  added: '2026-08-03'
+  tags:
+  - canonical
+- text: 路上怎么样
+  plan:
+  - agent: road-safety
+    intent: safety.road_condition
+  source: manual
+  added: '2026-08-03'
   tags:
   - canonical
 - text: 路况怎么样

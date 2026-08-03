@@ -11,7 +11,14 @@ capabilities:
   - intent: safety.driving_advice
     description: 综合天气+路况给出驾驶安全建议
     slots: [destination]
-    examples: ["路上怎么样", "开车去上海安全吗", "今天适合开车吗"]
+    # 2026-08-03：「路上怎么样」从这里移走。它一句也不体现**驾驶建议**这个角度，
+    # 字面就是隔壁 `safety.road_condition`「查询路况」——两条 examples 只差一个字
+    # （路上/路况）却指向不同 intent，**差的不是判据是一个词**，模型分不开、人也分不开。
+    # 与下面那段注释是同一个病的第二例：examples 要写「只有本能力答得了」的说法。
+    # 证据：对抗测试消融给出 `causal=supported`（`no-exemplars` 臂稳定翻正），
+    # 镜像到 `skills/exemplars/safety.yaml` 的这条以 `@lex:1.00` 精确命中把
+    # 「路上怎么样」拉到 driving_advice，而语料 gold 要 road_condition。
+    examples: ["这会儿开车出门合适吗", "开车去上海安全吗", "今天适合开车吗"]
   # 2026-07-30 examples 判别化：原例句「有天气预警吗」「暴雨预警了吗」与 info.alerts 的
   # 「有没有天气预警」「北京有暴雨预警吗」**只差语气词**——描述是判别的（本条是「对驾驶的
   # 影响」），但例句一句也不体现驾驶角度，于是两个域在同一批说法上互相声称。这是与
