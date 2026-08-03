@@ -280,11 +280,22 @@ cases:
     tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [navigation], layers: [l1]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     turns:
+      # ⚠ gold 改过（2026-08-03，L1 新口径首跑抓到，`gold_error`）。原写法要求第一句
+      # 落 `navigation.search_poi`，而它与**已裁定的台账**打架：
+      # `boundaries.yaml#nearby-navigation.find-vs-go`（2026-08-02 泓舟）明确
+      # 「找/搜/附近有什么」一律 `nearby.search`，「导航去/带我去」才归 navigation。
+      # 实测模型给的正是 `nearby.search` + `navigation.navigate_to`，**而且 depends_on
+      # 与 slot_refs 接得完全正确**——它照裁定做了，是 gold 没跟上裁定。
+      # 兄弟用例 `cp.dep.search-then-navigate-poi`（同形态、只差对象）本来就是宽容
+      # any_of 且一直通过，这里对齐它。
+      # 判据：**每条用例只断言自己那个机制**。这条测的是「两步 + 依赖接线」，
+      # 第一句落哪个搜索意图是 `bd.nn-find-go` 四条边界用例的职责——
+      # 把边界回归混进组合用例，红灯会指向错误的方向。
       - input: {utterance: 搜一下附近的地铁站，然后导航到最近的那个, context: {}}
         expected:
           plan:
-            required_intent_groups: [{any_of: [navigation.search_poi]}, {any_of: [navigation.navigate_to]}]
-            dependencies: [{producer: [navigation.search_poi], consumer: navigation.navigate_to}]
+            required_intent_groups: [{any_of: [nearby.search, navigation.search_poi]}, {any_of: [navigation.navigate_to]}]
+            dependencies: [{producer: [nearby.search, navigation.search_poi], consumer: navigation.navigate_to}]
             allow_extra_intents: false
   - id: cp.dep.locate-then-nearby
     title: 先定位再找附近

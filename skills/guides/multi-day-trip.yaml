@@ -8,6 +8,8 @@ knowledge: |
   （带老人/带娃/轻松/不要太累/悠闲/慢一点），即是行程规划意图，**必须**出一个 trip-planner 的
   trip.plan 步——即便同句还顺便问天气/路况/充电，trip.plan 也要与它们**并列成独立 step**，
   **绝不能**只把『去X几天』当成天气/充电的目的地上下文而漏掉行程规划。
+  **反过来同样成立：trip.plan 不替代同句的其它诉求。**『排个行程，**然后**导航到第一站』
+  要出两个 step——后一步依赖前一步的结果，用 depends_on + slot_refs 接线，不是只排行程。
 
   示例——用户：『周末去杭州两天，带老人，不要太累，顺便看看天气和是否需要中途充电』
   → 3 个 step，无依赖并行：
@@ -25,6 +27,15 @@ golden:
   # holdout：不与 knowledge/few-shot 原句重合、避开全部 keywords 字面（测泛化不测自证）
   - text: 陪爸妈去趟昆明玩四天，帮我安排下
     expect_intents: [trip.plan]
+    holdout: true
+  # 2026-08-03：这条 guide 被消融证明**在制造漏步**（`cp.dep.trip-then-navigate`
+  # 四臂里只有 no-skills 稳定翻正，causal=supported）。原文只讲「必须出 trip.plan」、
+  # 示例全是并列步，模型把它读成了「只出 trip.plan」，同句的依赖后继步被吞掉。
+  # 加这两条 golden 把反方向钉住——**guide 自己也会成为漏步的原因**。
+  - text: 帮我订个去厦门玩三天的计划，接着带我去头一个景点
+    expect_intents: [trip.plan, "trip.navigate|navigation.navigate_to"]
+  - text: 安排一下带娃去青岛住两晚，然后出发去第一个地方
+    expect_intents: [trip.plan, "trip.navigate|navigation.navigate_to"]
     holdout: true
 owner: trip-planner
 version: 1

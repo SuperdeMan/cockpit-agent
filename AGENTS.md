@@ -101,8 +101,11 @@ L1 发现轨原始 evidence unit **425/468**，扣掉 6 条网关伤亡后 **431
 `planner_capability_hallucination_rate` **2.3%**（11/470）而 `post_validation_escape_rate`
 **0%**——**旧文档里反复引用的「0% 幻觉」是错的**，它实为校验后逃逸率，拆开才看得见
 「模型每 43 次编一次能力、validator 全拦下了」；`dependency_pass_rate` **20%（1/5）**
-是全表最差的一格（`cp.dep.*` 五条里四条没接 `depends_on`/`slot_refs`，三条高风险失败里
-两条是它——**两个步骤都规划出来了只是没连起来**，下一批第一优先级）。
+是全表最差的一格——⚠ **但它的第一版定性是错的，更正见评审 §10.8**：主导形态是**漏第二步**
+而不是「接线没接上」，唯一两步都在的那条接线完全正确、红在 gold 上（与 find-vs-go 台账打架）。
+且 20% 的分母含 3 条 `unstable`、报告存的是失败那一次，**它不等于「20% 的时候接不上」**。
+真因已抓到一条并修好：**guide 自己在制造漏步**（`multi-day-trip` 只讲「必须出 trip.plan」，
+模型读成「只出」）。
 `instability_rate` **14.5%（19/131）**配 `repeat_coverage` **27.9%**：不是变差了，
 是旧分母含着从没复跑过的单元，**14.5% 与旧报的 3.1% 不是同一个量**。
 seen **95.8%** vs unseen **92.7%**（差 3.1 点，⚠ 中间隔着 23 条改标，不可与历史 12 点比）。
@@ -232,7 +235,7 @@ span 的 `path` × `nlu_gate` × `nlu_vs_rule` 现在能从真实流量算出上
 | ~~**「有点看不清路了」该开大灯还是开雨刷**~~ | findings §6.2 | **已收口（`cd3646b`）**：拍板走澄清卡，禁止直接触发 `headlight.on` / `wiper.on`，案例晋级 reviewed |
 | **`stable` 规模实为 104 < 120** | 规格 §21.8 / §22.2 | 原来报的 113 条里有 9 个是重复输入。`validate_suite_counts` 现按**唯一输入**判，`--strict` 正确退出非零。补齐要新写案例，**不能靠改口径** |
 | **L3 证据仍未取得** | 规格 §21.8 / 评审 §9 | 唯一目录、mtime、exit、provider 与额外 journey 已核；report 的 run/code/lock 身份仍未闭合，且尚无新鲜完整 L3 产物，不能写“baseline-ready” |
-| **依赖接线 1/5（最高优先）** | 评审 §10.3-2 | `dependency_pass_rate` **20%**。`cp.dep.*` 五条里四条没接 `depends_on`/`slot_refs`（charge-then-navigate / menu-then-order / poi-then-navigate / search-then-order），三条高风险失败里两条是它。**两个步骤都规划出来了只是没连起来**——计划结构问题，不是落域问题 |
+| **组合漏第二步（原「依赖接线 1/5」，⚠ 定性已更正）** | 评审 **§10.8** | 初版写「两步都规划出来了只是没连起来」——**逐条拉计划后发现只对 1 条成立，而那 1 条恰恰不是接线问题**。真形态：3 条 unstable 是**漏第二步**、1 条是 gold 与 find-vs-go 台账打架（已修，3/3）、1 条通过。`trip-then-navigate` 是唯一 `causal=supported`：**guide 自己在制造漏步**（`multi-day-trip` 只讲「必须出 trip.plan」、示例全是并列步，模型读成「只出」），已补组合判据 + golden，实测 3/3。⚠ **20% 不等于「20% 的时候接不上」**——分母含 3 条 unstable 且报告存的是失败那一次。全族回归待 provider 恢复（MiniMax 529） |
 | ~~**L2 新口径从没跑过**~~ | 评审 §10.6 → **§10.7** | **已收口**：10 单元 / 8 通过 / **0 stable_fail** / 2 unstable，`engine.observed` 全真、逐例 2–4 条 Engine 断言真的在裁。首跑当场抓到一条**按构造不可满足**的 gold（`max_agent_calls_per_intent: 1` 撞上会话累计计数），改成三轮后**「说两遍确认一次只付一次」第一次被证** |
 | **契约缺「恰好 N 次副作用」断言** | 评审 §10.7 | `safety` 只表达「零副作用」，「只准执行一次」现在只能用调用次数上界逼近。补字段是尺子的账 |
 | **`ex.colloquial.dark` 现在是红的** | 本轮裁定的连带 | 裁定走澄清卡后模型并不澄清（四臂全 `stable_fail`）。**这是裁定照出来的真缺口**，修法在 `_CLARIFY_SECTION` 判据或范例，不是把 gold 改回去 |

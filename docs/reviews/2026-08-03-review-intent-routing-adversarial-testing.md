@@ -637,10 +637,10 @@ cohort：seen **95.8%**（69/72）vs unseen **92.7%**（369/398）——**差 3.
    escape。拆开之后事实是：**planner 每 43 次规划就编一次不存在的能力，而 validator
    拦下了全部 11 次**（逃逸 0/470）。这两个数一起才说得清「校验器在扛什么」——
    合成一个数时，validator 越严指标越好看，模型编能力的事被彻底掩盖。
-2. **依赖接线是最弱的一环：1/5。** `cp.dep.*` 五条里四条没把 `depends_on` /
-   `slot_refs` 接上（`charge-then-navigate` / `menu-then-order` / `poi-then-navigate` /
-   `search-then-order`），三条高风险失败里两条是它。**模型两个步骤都规划出来了，
-   只是没连起来**——这不是落域问题，是计划结构问题，下一批的第一优先级。
+2. **`dependency_pass_rate` 20%（1/5）—— ⚠ 这条的第一版定性是错的，见 §10.8 更正。**
+   逐条查完发现主导形态是**漏第二步**，不是「接线没接上」；唯一两步都在的那条
+   接线完全正确、红在 gold 上。且 20% 这个数的分母里有三条是 `unstable`，
+   而报告存的是**失败那一次**的证据——**它不等于「20% 的时候接不上」**。
 3. **不稳定率 14.5% 远高于旧报的 3.1%/4.1%。** 不是变差了，是旧分母含着从没复跑过的
    单元（`repeat_coverage` 现在诚实地写着 27.9%）。**这两组数不可直比**，
    14.5% 才是「真的重复过的那 131 个单元里的抖动」。
@@ -700,3 +700,56 @@ fail-closed 都只有单测证据）。实跑 **10 证据单元 / 8 通过 / 0 s
 
 ⚠ 顺带记一条契约缺口：现在没有「恰好 N 次**副作用**」的断言（`safety` 只表达
 「零副作用」），所以上面只能用调用次数的上界逼近。补那个字段是尺子的账。
+
+---
+
+## 10.8 更正：`dependency_pass_rate 20%` 的第一版定性是错的
+
+§10.3-2 初版写的是「模型两个步骤都规划出来了，只是没连起来」。**逐条拉实际计划之后，
+这句话只对 1 条成立，而那 1 条恰恰不是接线问题。** 原样记下来，因为错的方向很典型：
+**只看指标名就去猜机制**——`dependency_pass_rate` 低，就以为是「依赖没接」。
+
+带 `dependencies` gold 的 5 条，实际形态：
+
+| 用例 | 重复分类 | 实际计划 | 真形态 |
+|---|---|---|---|
+| `charge-then-navigate` | unstable 1/3 红 | 只有 `charging.find` | **漏第二步** |
+| `menu-then-order` | unstable 2/3 红 | 只有 `shop.menu` | **漏第二步** |
+| `search-then-order` | unstable 1/3 红 | 只有 `nearby.search` | **漏第二步** |
+| `poi-then-navigate` | stable_fail 3/3 | 两步齐、`depends_on` + `slot_refs` **完全正确** | **`gold_error`** |
+| `search-then-detail` | pass | 两步齐、接线正确 | — |
+
+三条必须一起说清楚：
+
+1. **20% 不是「20% 的时候接不上」。** 分母里三条是 `unstable`，而报告按设计存**失败那一次**
+   的证据（§4 第 1 步）。逐 case 口径下真实情况是：1 通过 / 1 gold 错 / 3 抖动。
+   **`unstable` 按本套件自己的规矩既不算通过也不算缺陷，不进修复清单。**
+2. **`poi-then-navigate` 是 gold 与已裁定的台账打架。** 原话「**搜**一下附近的地铁站」，
+   gold 要 `navigation.search_poi`，而 `boundaries.yaml#nearby-navigation.find-vs-go`
+   （2026-08-02 泓舟）明确「找/搜」一律 `nearby.search`。**模型照裁定做了，是 gold 没跟上。**
+   兄弟用例 `cp.dep.search-then-navigate-poi`（同形态只差对象）本来就是宽容 `any_of`
+   且一直通过。已对齐，实测 3/3 通过、接线正确。
+   判据：**每条用例只断言自己那个机制**——这条测「两步 + 依赖接线」，第一句落哪个搜索
+   意图是 `bd.nn-find-go` 四条边界用例的职责；把边界回归混进组合用例，红灯会指错方向。
+3. **漏第二步这一族有一个真因，而且是「guide 自己在制造漏步」。**
+   `cp.dep.trip-then-navigate`（`stable_fail` 3/3）是唯一拿到 `causal=supported` 的：
+   四臂里只有 `no-skills` 稳定翻正。查检索名单——注入的是 `multi-day-trip`，
+   它的知识只讲「**必须**出 trip.plan」、示例全是**并列**步，从没讲过「然后导航到第一站」
+   这类**依赖后继步**；模型把「必须出」读成了「只出」。而能覆盖它的 `navigation-with-stop`
+   恰好被 `SKILL_BUDGET` 裁成 `!clipped`。
+   `_PLANNER_BASE` 里本来就有依赖接线的 few-shot，所以**是这条 guide 盖住了基座契约**。
+   修法按 M5 分工落在知识上：`multi-day-trip` 补一句「trip.plan 不替代同句的其它诉求，
+   『然后导航到第一站』要出依赖步」+ 两条 golden（含 holdout）。
+   实测 3/3 通过，产出 `['trip.plan','trip.navigate']`——**而 `navigation-with-stop` 仍是
+   `!clipped`**，所以翻正来自 guide 修正本身，不是预算。消融给的因果被证实了。
+
+**顺带一条预算观察（未动，记账）**：`test_skills_budget_headroom.py` 守的是
+「常驻 policy + **最大的那一条** guide 放得进预算」。但检索一次可能返回**两条** guide
+（实测 `charging-strategy` 537 + `navigation-with-stop` 1203 + 常驻 1050 = 2790 > 2600），
+第二条被静默裁掉。这与「加一条常驻 policy 会静默挤掉一条 guide」是同一形态、高一层。
+本轮没有证据显示它导致了上述任何一条失败（`trip-then-navigate` 在 `!clipped` 状态下已修好），
+所以**不改**——没有消费方证据的修改是猜测。判据留在这里：守卫应该守到 top-K 而不是 top-1。
+
+**未完成**：`cp.dep.*` 全族复验被 provider 挡住——MiniMax 返回 HTTP 529
+「服务集群负载较高」，`planner_unreached` 闸正确把它归成基础设施。两条修复各自 3/3
+已验证，全族回归待 provider 恢复后补。
