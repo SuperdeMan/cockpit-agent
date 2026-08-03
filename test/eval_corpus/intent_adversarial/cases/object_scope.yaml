@@ -93,6 +93,22 @@ cases:
       - input: {utterance: 打开后备箱, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [trunk.open]}], forbidden_intents: [charging_port.open, fuel_tank_cover.open], allow_extra_intents: false}
+  # `trunk.open` 的第二个正例。原来 `nq.trunk.command` 与 `os.open.trunk` 用的是**同一句**
+  # 「打开后备箱」，按条数记时正例 2 条、按唯一输入记只有 1 条——恰好涂绿 `positive>=2`
+  # 这条最低要求（独立复审 P1-E）。补的是**另一种说法**，不是另一条同句用例：
+  # 覆盖要求要的本来就是「换个说法还认得出」。
+  - id: os.open.trunk-colloquial
+    title: 尾箱是后备箱的口语说法
+    family_id: os.open-trunk-colloquial
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A9], mechanisms: [colloquial, object_flip, dangerous_action], domains: [trunk], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 把尾箱打开, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trunk.open]}], forbidden_intents: [charging_port.open, fuel_tank_cover.open, door_lock.open], allow_extra_intents: false}
   - id: os.open.charging-port
     title: 打开充电口
     family_id: os.open-trunk-port

@@ -57,17 +57,18 @@ cases:
         expected:
           plan: {required_intent_groups: [{any_of: [nearby.search, chitchat.talk]}], forbidden_intents: [shop.order, nearby.order], allow_extra_intents: false}
   - id: ex.colloquial.dark
-    title: 天黑了落到大灯
+    title: 看不清路是天然歧义，该问一句
     family_id: ex.colloquial-dark
     cohort: unseen_transfer
     risk: medium
-    status: candidate
-    tags: {attacks: [A9], mechanisms: [colloquial], domains: [headlight], layers: [l1]}
-    provenance: {kind: authored, gold_revision_reason: "「有点看不清路了」落 wiper.on 是合理推断（雨天看不清）；gold 只列了 headlight/chitchat，属于我把可接受集写窄了，但「看不清=开灯还是开雨刷」需要产品定", gold_revised_at: 2026-08-02}
+    status: reviewed
+    tags: {attacks: [A9], mechanisms: [colloquial, clarify], domains: [headlight, wiper], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-03, gold_revision_reason: "2026-08-03 泓舟裁定：走澄清卡。「看不清路」的成因天黑/起雾/下雨/挡风脏都成立，句子本身信息不足，猜错就是替用户做决定；CLARIFY_ENABLED 兜底已翻 on，判据「缺动词才澄清」正好命中。此前 candidate 的理由是产品未拍板，不是测试写错", gold_revised_at: 2026-08-03}
     turns:
       - input: {utterance: 有点看不清路了, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [headlight.on, chitchat.talk]}], allow_extra_intents: true}
+          decision: {allowed: [clarify], clarify: required}
+          plan: {forbidden_intents: [headlight.on, wiper.on], allow_extra_intents: false}
   - id: ex.colloquial.noisy
     title: 太吵了落到音量
     family_id: ex.colloquial-noisy
