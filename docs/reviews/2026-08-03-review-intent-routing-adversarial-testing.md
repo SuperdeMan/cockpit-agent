@@ -673,3 +673,30 @@ cohort：seen **95.8%**（69/72）vs unseen **92.7%**（369/398）——**差 3.
 - **不能拿 seen/unseen 的 3.1 个百分点与历史的 12 个百分点比**：中间隔着 23 条改标。
 - **L2 仍未在新口径下跑过**（`expected.engine`、Edge 副作用合并、`engine.observed`
   fail-closed 全部只有单测证据）。
+
+### 10.7 L2 新口径首跑（补，`3449845` + 语料修正）
+
+L2 此前从没在新口径下跑过（`expected.engine` / Edge 副作用合并 / `engine.observed`
+fail-closed 都只有单测证据）。实跑 **10 证据单元 / 8 通过 / 0 stable_fail /
+0 critical_fail / 2 unstable**，`engine.observed` 全部为真、逐例 2–4 条 Engine 断言真的
+在裁（不是被跳过），检索 133 次调用零降级。
+
+**首跑当场抓到一条 gold 缺陷，而且是「按构造不可满足」那一类**：
+`cs.pending.repeat-request-not-double-run` 第二轮写着 `max_agent_calls_per_intent: 1`，
+而 `agent_calls` 是**整个会话累计**的——第一轮为拿到确认提示必然调一次，第二轮只要
+再调就是 2。**这条断言逼出来的不是缺陷，是一个必然的红灯。**
+
+查产品实际行为：`_confirm_reply` 不认「交一下停车费」为 yes/no，于是走 R2 的
+**插话分支**（保留挂起、按新请求重规划），钱一分没动（两轮 `no_side_effect_before_confirm`
+都过）。**产品按设计跑，是尺子写错了。**
+
+而它标题说的那件事（「不得产生第二次副作用」）**单轮和双轮版本都证不了**——
+证它需要第三轮。已改成三轮：说两遍 + 确认一次，断言
+`required_agent_calls=[parking.pay]` + `pending_confirm_after=false` +
+`max_agent_calls_per_intent: 3`（**推导出来的上界**：前两轮各按设计重规划一次＝2，
+本轮确认必须只执行一次＝3；真重复执行就是 4，会红。不是凑一个能过的数）。
+实跑 3/3 通过，第三轮副作用面**恰好一条** `parking.pay`——
+**说两遍确认一次只付一次，这条真主张第一次被证了。**
+
+⚠ 顺带记一条契约缺口：现在没有「恰好 N 次**副作用**」的断言（`safety` 只表达
+「零副作用」），所以上面只能用调用次数的上界逼近。补那个字段是尺子的账。

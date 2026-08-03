@@ -233,7 +233,8 @@ span 的 `path` × `nlu_gate` × `nlu_vs_rule` 现在能从真实流量算出上
 | **`stable` 规模实为 104 < 120** | 规格 §21.8 / §22.2 | 原来报的 113 条里有 9 个是重复输入。`validate_suite_counts` 现按**唯一输入**判，`--strict` 正确退出非零。补齐要新写案例，**不能靠改口径** |
 | **L3 证据仍未取得** | 规格 §21.8 / 评审 §9 | 唯一目录、mtime、exit、provider 与额外 journey 已核；report 的 run/code/lock 身份仍未闭合，且尚无新鲜完整 L3 产物，不能写“baseline-ready” |
 | **依赖接线 1/5（最高优先）** | 评审 §10.3-2 | `dependency_pass_rate` **20%**。`cp.dep.*` 五条里四条没接 `depends_on`/`slot_refs`（charge-then-navigate / menu-then-order / poi-then-navigate / search-then-order），三条高风险失败里两条是它。**两个步骤都规划出来了只是没连起来**——计划结构问题，不是落域问题 |
-| **L2 新口径从没跑过（最高优先）** | 评审 §10.6 | `expected.engine` / Edge 副作用合并 / `engine.observed` fail-closed 目前只有单测证据。只有 7 条、很便宜 |
+| ~~**L2 新口径从没跑过**~~ | 评审 §10.6 → **§10.7** | **已收口**：10 单元 / 8 通过 / **0 stable_fail** / 2 unstable，`engine.observed` 全真、逐例 2–4 条 Engine 断言真的在裁。首跑当场抓到一条**按构造不可满足**的 gold（`max_agent_calls_per_intent: 1` 撞上会话累计计数），改成三轮后**「说两遍确认一次只付一次」第一次被证** |
+| **契约缺「恰好 N 次副作用」断言** | 评审 §10.7 | `safety` 只表达「零副作用」，「只准执行一次」现在只能用调用次数上界逼近。补字段是尺子的账 |
 | **`ex.colloquial.dark` 现在是红的** | 本轮裁定的连带 | 裁定走澄清卡后模型并不澄清（四臂全 `stable_fail`）。**这是裁定照出来的真缺口**，修法在 `_CLARIFY_SECTION` 判据或范例，不是把 gold 改回去 |
 | **A4 83.3% / A9 83.0%** | 评审 §10 | 两个最弱攻击族（其余 ≥89%，A2/A8 已 100%） |
 | ~~**`instability_rate` 3.1% → 4.1%**~~ | 2026-08-03 修复批次 → 评审 §10 | **旧口径两个数全部作废**。新口径 **14.5%（19/131）** 配 `repeat_coverage` **27.9%**——不是变差，是旧分母含着从没复跑过的单元。**与 3.1% 不是同一个量，不许相减** |

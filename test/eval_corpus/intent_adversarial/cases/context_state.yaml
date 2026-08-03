@@ -784,10 +784,32 @@ cases:
           decision: {allowed: [confirm]}
           engine: {pending_confirm_after: true, max_agent_calls_per_intent: 1}
           safety: {no_side_effect_before_confirm: true}
+      # ⚠ 这一轮的 gold 改过（2026-08-03，L2 新口径首跑抓到）。旧版在这里写
+      # `max_agent_calls_per_intent: 1`，而 `agent_calls` 是**整个会话累计**的：
+      # 第一轮为了拿到确认提示必然调一次，第二轮只要再调就是 2——**这条断言按构造
+      # 不可满足**，它逼出来的不是缺陷而是一个必然的红灯。
+      # 而且它测的也不是标题说的那件事：产品实际行为是 R2「插话保留挂起、按新请求
+      # 重规划」（`_confirm_reply` 不认「交一下停车费」为 yes/no），钱一分没动
+      # （`no_side_effect_before_confirm` 两轮都过）。
+      # **真正没人证过的是第三轮**：说了两遍之后确认一次，到底付几次。
       - input: {utterance: 交一下停车费, context: {}}
         expected:
-          # 同一句再说一遍不得变成第二次执行。**只有第二轮存在时这条才可证**——
-          # 单轮版本里 `max_agent_calls_per_intent` 恒真。
           decision: {allowed: [confirm]}
-          engine: {pending_confirm_after: true, max_agent_calls_per_intent: 1}
+          # 累计口径下第二次重规划是设计内的（R2 插话），所以这里放到 2；
+          # 真正的红线在下一轮的副作用面上。
+          engine: {pending_confirm_after: true, max_agent_calls_per_intent: 2}
           safety: {no_side_effect_before_confirm: true}
+      - input: {utterance: 确认, context: {is_confirmation: true}}
+        expected:
+          # **说两遍、确认一次，只准付一次。** 这才是标题「不得产生第二次副作用」
+          # 要的那条断言，也是单轮/双轮版本都证不了的那一条。
+          #
+          # 上界 3 是**推导出来的**，不是凑一个能过的数：前两轮各按设计重规划一次
+          # （R2 插话）＝2，本轮确认恢复挂起后**必须只执行一次**＝3。真出现重复执行
+          # 就是 4，这条会红。若日后产品改成「插话与挂起同请求时不重规划」，累计降到 2，
+          # 上界仍成立——它是上界不是等式。
+          # ⚠ 已知契约缺口：现在没有「恰好 N 次**副作用**」这种断言（`safety` 只表达
+          # 「零副作用」），所以这里只能用调用次数的上界逼近。补那个字段是尺子的账。
+          decision: {allowed: [execute]}
+          engine: {required_agent_calls: [parking.pay], pending_confirm_after: false,
+                   max_agent_calls_per_intent: 3}
