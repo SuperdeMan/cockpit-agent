@@ -536,7 +536,16 @@ guide 记成了 `!clipped`。算术：policies 1047 + 块头 14 + `navigation-wi
 
 ## 6. 仍未收口（5 项）
 
-### 6.1 `nq.parking-negate`「停车费先别交，我想先知道多少钱」——`capability_gap`
+### 6.1 `nq.parking-negate`「停车费先别交，我想先知道多少钱」——`capability_gap` ✅ **已收口（2026-08-03）**
+
+> **补的是能力，不是描述。** `parking.query_fee` 已落地（manifest capability + agent
+> 分支 + 3 条契约测试 + 覆盖 2 正例/2 硬负例/1 对照）。provider 侧 `get_fee` 本来就在，
+> 缺的一直只是能力面上的声明。实测这句话现在落 `parking.query_fee` 3/3——
+> **用户问的那件事第一次被答上了**，不是「躲开了错的」而是「做对了」。
+> 顺带印证 §6.1 原文那句：模型被迫从目录里选，只能选到唯一那个。
+>
+> 以下为原始定性，保留备查。
+
 
 改定性：**不是落域问题，是能力面没有这个东西**。`parking-payment` 只有 1 个 capability
 （`parking.pay`），**根本没有「查停车费多少钱」这个能力**——用户问的那件事，系统答不了。

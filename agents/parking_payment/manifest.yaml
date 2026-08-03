@@ -11,8 +11,16 @@ fallback: chitchat
 # 原 parking.find 是与 nearby 重复的 mock（余10/20/30 假空位、无 AMAP 源），已停用以免多意图下
 # LLM 误路由到 mock（真机：多意图里停车走了 mock 数据）。缴费仍归本 Agent。
 capabilities:
+  # 只读查询在前：用户想先知道多少钱是比直接付款更常见的第一步，而**能力清单的顺序
+  # 就是 `_fallback` 语义路由取 `capabilities[0]` 时的顺序**（R4.4 D5-2 记账在案）。
+  - intent: parking.query_fee
+    description: 查询当前停车订单要交多少钱（**只查金额不付款**，不产生任何支付动作）
+    slots: [order_id, plate]
+    # 刻意避开对抗语料原句「停车费先别交，我想先知道多少钱」——把评测原句写进
+    # examples 等于把那条 unseen 用例洗成 seen（M5 纪律，findings §5.3-3）
+    examples: ["停车费多少钱", "这次停车花了多少", "看看停车要交多少"]
   - intent: parking.pay
-    description: 停车缴费（涉及支付，需二次确认）
+    description: 停车缴费（**真的把钱付出去**，涉及支付，需二次确认）
     slots: [order_id, plate, amount]
     examples: ["交停车费", "缴费", "把停车费付了"]
     require_confirm: true

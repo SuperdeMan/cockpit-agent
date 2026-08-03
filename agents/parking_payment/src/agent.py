@@ -21,9 +21,36 @@ class ParkingPaymentAgent(BaseAgent):
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
         # 停车场「发现」已归 nearby（真高德 POI）——本 Agent 只做缴费。
+        if intent.name == "parking.query_fee":
+            return await self._query_fee(intent)
         if intent.name == "parking.pay":
             return await self._pay(intent, meta)
-        return AgentResult(status=FAILED, speech="停车助手只负责缴费；找停车场请说『附近有没有停车场』。")
+        return AgentResult(status=FAILED, speech="停车助手只负责查费与缴费；找停车场请说『附近有没有停车场』。")
+
+    async def _query_fee(self, intent) -> AgentResult:
+        """只查金额，**一分钱都不动**。
+
+        出处：意图落域对抗测试 findings §6.1（`nq.parking-negate`「停车费先别交，
+        我想先知道多少钱」定性为 `capability_gap`）。此前本 Agent 只有 `parking.pay`
+        一个能力，**用户问的那件事系统答不了**，模型被迫从目录里选，只能选到唯一那个。
+        `require_confirm` 兜住了钱不会自己出去，但那只说明严重度是「答非所问」而不是
+        「误付款」——**描述治不了缺能力，补能力才治**。
+
+        provider 侧 `get_fee` 早就存在（`ParkingProvider.get_fee`），缺的一直只是
+        能力面上的声明与这一条分支。
+        """
+        plate = intent.slots.get("plate", "")
+        order_id = intent.slots.get("order_id", "current")
+        fee_cents, err = await self.parking.get_fee(order_id, plate)
+        if err:
+            return AgentResult(status=FAILED, speech=f"查询停车费用失败：{err}")
+        amount = f"{fee_cents / 100:.0f}元"
+        return AgentResult(
+            speech=f"当前停车费是{amount}。需要现在缴费吗？",
+            follow_up="说『交停车费』我就去付",
+            ui_card={"type": "parking_fee", "order_id": order_id,
+                     "plate": plate, "amount": amount},
+        )
 
     async def _pay(self, intent, meta: dict) -> AgentResult:
         amount = intent.slots.get("amount", "")

@@ -231,7 +231,7 @@ span 的 `path` × `nlu_gate` × `nlu_vs_rule` 现在能从真实流量算出上
 | ~~**新口径读数不存在**~~ | 评审 §7.3 / §9 → **§10** | **已收口**：L1 全量已跑（`13e7e3f`，470 单元、检索 2040 次零降级、工作树干净），**读数全表在评审 §10**。⚠ **L2 仍没跑过新口径**，见下 |
 | **23 条改标 seen 后 unseen 覆盖变薄** | 评审 §7.2-①、§7.3 | 指纹闸抓出 13 条 `unseen_transfer` 的原话字面就在 `skills/exemplars/*.yaml` 里（family 闸对它们全绿），连同 family 闭包共 23 条改标 seen。补法是**新写真正没进过知识的话术**，不是把标签改回去；受影响的是 stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条 |
 | ~~**两条消融 arm 未在真实失败上跑过**~~ | 评审 §7.3 → §10.4 | **L1 四臂已跑**（`--ablations on-failure`，`causal=supported` 归因见评审 §10.4）；`cloud-direct`/`planner-only` 属 L2，随下面那条一起等。⚠ **接通它的过程中才发现这条路上躺着一个会打死整趟跑批的缺陷**（`13e7e3f`）——判据入册：**没在真实路径上跑过的分支不算实现过** |
-| **`parking` 缺「查停车费」能力** | findings §6.1 | `parking-payment` 只有 `parking.pay` 一个 capability，「我想先知道多少钱」系统答不了，模型被迫选唯一那个（`require_confirm=true` 兜住了钱不会自己出去）。修法是补 `parking.query_fee` 读能力，按 CLAUDE.md §3 流程走，属新增能力 |
+| ~~**`parking` 缺「查停车费」能力**~~ | findings §6.1 | **已收口（2026-08-03）**：`parking.query_fee` 落地（manifest + agent 分支 + 3 条契约测试），覆盖补 2 正例/2 硬负例/1 对照。实测 `nq.parking-negate` 落 `parking.query_fee` 3/3——**用户问的那件事第一次被答上了**。⚠ 连带：`cp.dep.poi-then-navigate` 改 any_of 后 `navigation.search_poi` 单成员正例掉到 1，已补 `tu.nav.map-locate-landmark` |
 | ~~**「有点看不清路了」该开大灯还是开雨刷**~~ | findings §6.2 | **已收口（`cd3646b`）**：拍板走澄清卡，禁止直接触发 `headlight.on` / `wiper.on`，案例晋级 reviewed |
 | **`stable` 规模实为 104 < 120** | 规格 §21.8 / §22.2 | 原来报的 113 条里有 9 个是重复输入。`validate_suite_counts` 现按**唯一输入**判，`--strict` 正确退出非零。补齐要新写案例，**不能靠改口径** |
 | **L3 证据仍未取得** | 规格 §21.8 / 评审 §9 | 唯一目录、mtime、exit、provider 与额外 journey 已核；report 的 run/code/lock 身份仍未闭合，且尚无新鲜完整 L3 产物，不能写“baseline-ready” |
