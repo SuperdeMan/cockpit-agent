@@ -58,7 +58,15 @@ def test_retrieval_stays_quiet_on_plain_queries():
 
 def test_conditional_reminder_guide_covers_parallel_unconditional_boundary():
     """A1-3 真栈：『八点提醒我…再看天气』是并列，不是『下雨就提醒』。
-    同一 guide 必须把边界和双 intent 金标一起交给 planner。"""
+    同一 guide 必须把边界和双 intent 金标一起交给 planner。
+
+    **2026-08-03 换掉了这里的第一条断言。** 原来钉的是 knowledge 里出现「明确时间」
+    四个字——而那恰恰是**写错了的那句判据**：旧知识把并列定义成「提醒本身已经有明确
+    时间」，于是『查下天气，然后提醒我带伞』（没说时间）落进条件分支、提醒被整个吞掉
+    （对抗语料 `nq.umbrella.both` 两趟独立 live 各 3/3 红，而检索名单与通过的那次逐字
+    相同——不是检不回，是检回了按条件句读了）。**断言跟着措辞走，就会把错的措辞钉死。**
+    改为钉三分判据的**每一分都有金标消费方**：顺承并列（可以没时间）/ 否定 / 条件。
+    """
     store = sk.SkillStore()
     guide = next(d for d in store.guides() if d.name == "conditional-reminder")
     parallel = next(
@@ -66,12 +74,28 @@ def test_conditional_reminder_guide_covers_parallel_unconditional_boundary():
         if g.get("text") == "明天早上八点提醒我带伞，再看下明天深圳会不会下雨"
     )
 
-    assert "明确时间" in guide.knowledge
+    assert "没说时间" in guide.knowledge, "并列判据不得再以「提醒有没有说时间」分流"
     assert parallel["expect_intents"] == [
         "reminder.create",
         "info.weather|info.forecast",
     ]
     assert "expect_not" not in parallel
+
+    def _golden(pred):
+        return [g for g in guide.golden if pred(g)]
+
+    # ① 顺承并列且提醒**没说时间**：本次漏步的正对照
+    assert _golden(lambda g: any(w in g["text"] for w in ("然后", "接着", "回头"))
+                   and "reminder.create" in (g.get("expect_intents") or [])), \
+        "缺少「顺承并列」金标正例——漏步没有消费方就会再漏一次"
+    # ② 否定分支：修好漏步最容易以「该不做的也做了」的形式还回去
+    assert _golden(lambda g: "reminder.create" in (g.get("expect_not") or [])
+                   and any(w in g["text"] for w in ("别提醒", "先别"))), \
+        "缺少否定分支金标——并列规则放宽后否定句会被顺手翻正"
+    # ③ 条件分支必须仍然 adaptive（旧知识唯一没写错的那一分）
+    assert _golden(lambda g: g.get("expect_complexity") == "adaptive"
+                   and "reminder.create" in (g.get("expect_not") or [])), \
+        "缺少条件分支金标"
 
 
 # ── 渲染 ──────────────────────────────────────────────────────────────────────

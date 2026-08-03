@@ -1,0 +1,37 @@
+# 范例库 · hvac 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+#
+# 为什么单开一个域文件：范例库最初的 199 条金标全部来自 14 份**云侧** agent manifest 的
+# examples，车控是端侧能力、从来没有 manifest examples，于是 `skills/exemplars/` 下
+# 一条车控范例都没有。平时这不要紧——车控走端侧快路径，根本不经 planner；但**同音字**
+# 恰恰是快路径认不出、必然上云的那一类，此时云侧 planner 面对的是一个它没见过的词。
+#
+# 触发的 badcase：对抗语料 `ex.homophone.aircon`「把空条打开」两趟独立 live 各 3/3 落到
+# 开窗/开天窗（说开空调开了窗）。诊断里 `exemplars=[]`——不是阈值没够着，是这个域
+# 一条范例都没有。「空条」与「空调」在普通话里完全同音（kōng tiáo），是 ASR 的典型产物。
+#
+# 纪律：这里的说法**刻意避开对抗语料原句**（`unseen_transfer` 的原话字面出现在被注入的
+# 知识里，那条用例就从 unseen 变成 seen，之后再读「落域涨了」就读不出泛化）。
+# 教的是「空条＝空调这个对象」，动作留给模型自己判——转移得过去才算学会。
+domain: hvac
+exemplars:
+- text: 空条开到二十四度
+  plan:
+  - intent: hvac.set
+    slots:
+      temperature: '24'
+  source: manual
+  added: '2026-08-03'
+  tags:
+  - badcase
+  - homophone
+  note: 空条＝空调（同音），对象在设定温度的句式里
+- text: 车里太闷了，先开一下空条
+  plan:
+  - intent: hvac.on
+  source: manual
+  added: '2026-08-03'
+  tags:
+  - badcase
+  - homophone
+  note: 同一个同音对象换一种动作句式，不是「打开」那一句的复述
