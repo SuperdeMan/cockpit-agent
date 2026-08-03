@@ -195,3 +195,66 @@ def test_asset_fingerprint_reports_missing_globs_instead_of_claiming_complete(tm
     assert real["missing_assets"] == []
     assert real["file_count"] > 10
     assert len(real["digest"]) == 64
+
+
+# ── 兜底计划与检索降级（2026-08-03 第二批尺子硬化） ─────────────────────────
+
+
+def test_probe_builder_records_the_fallback_and_restores_it():
+    """兜底计划必须留痕：它与 gold 逐字相同的时候，是这条痕迹撑住了「这条绿不算数」。
+
+    判据用「`_fallback` 被不被调到」，不用「计划长得像兜底」——`chitchat.talk` 本来
+    就是一部分用例的正确答案，按形状判会把真通过一起打掉。
+    """
+    import asyncio
+
+    from support.intent_adversarial_trace import TraceSink, probe_builder
+
+    class _Builder:
+        def __init__(self):
+            self.calls = 0
+
+        async def _fallback(self, text, agents=None):
+            self.calls += 1
+            return f"fallback:{text}"
+
+    builder = _Builder()
+    inner = builder._fallback
+    sink = TraceSink()
+    with probe_builder(builder, sink):
+        assert asyncio.run(builder._fallback("空调先别关")) == "fallback:空调先别关"
+    assert sink.fallbacks == ["空调先别关"]
+    assert builder.calls == 1                    # 仍然真的委派给了被包的那一个
+    assert "_fallback" not in builder.__dict__   # 逐字还原，下一条 case 不会双重记账
+    assert builder._fallback.__func__ is inner.__func__
+
+
+def test_probe_retrieval_counts_only_the_calls_that_wanted_vectors():
+    """空输入返回 None 是契约不是降级；冷却期内被跳过的算降级——那一轮确实只有词法。"""
+    import asyncio
+
+    from orchestrator.cloud import embedding
+    from support.intent_adversarial_trace import probe_retrieval
+
+    original = embedding.embed_texts
+    calls: list[list[str]] = []
+
+    async def fake(texts, timeout_s=1.0):
+        calls.append(list(texts))
+        if not texts:
+            return None
+        return (None if texts[0] == "boom" else ([(1.0,)] * len(texts), "m"))
+
+    embedding.embed_texts = fake
+    try:
+        with probe_retrieval() as probe:
+            asyncio.run(embedding.embed_texts([]))          # 不计
+            asyncio.run(embedding.embed_texts(["ok"]))      # 计，不降级
+            asyncio.run(embedding.embed_texts(["boom"]))    # 计，降级
+        assert probe.calls == 2 and probe.degraded == 1
+        assert probe.as_dict() == {"calls": 2, "degraded": 1}
+        # 探针必须可还原，否则下一个用例还在数上一个用例的账
+        assert embedding.embed_texts is fake
+    finally:
+        embedding.embed_texts = original
+    assert calls == [[], ["ok"], ["boom"]]

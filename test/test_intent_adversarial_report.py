@@ -44,7 +44,8 @@ def _result(case_id, *, passed=True, repeat_status="pass", domain="info",
             expected_intents=("info.weather",),
             admitted_intents=("info.weather",), raw_intents=None,
             raw_observed=True, divergence="", layer="l1",
-            risk="medium", extra_metrics=None, repetitions=()):
+            risk="medium", extra_metrics=None, repetitions=(),
+            plan_from_fallback=False):
     metrics = {"exact_plan_set": float(passed),
                "required_group_recall": required_recall}
     metrics.update(extra_metrics or {})
@@ -69,7 +70,7 @@ def _result(case_id, *, passed=True, repeat_status="pass", domain="info",
         raw_intents=tuple(actual_intents if raw_intents is None else raw_intents),
         raw_observed=raw_observed,
         assertions=(), repetitions=tuple(repetitions),
-        divergence=divergence,
+        divergence=divergence, plan_from_fallback=plan_from_fallback,
     )
 
 
@@ -312,3 +313,59 @@ def test_high_risk_failures_are_named_in_report_and_markdown():
                  repeat_status="critical_fail")], _meta())
     assert report["high_risk_failures"] == ["danger@l1"]
     assert "danger@l1" in render_adversarial_markdown(report)
+
+
+# ── 兜底计划与检索降级（2026-08-03 第二批尺子硬化） ─────────────────────────
+
+
+def test_a_pass_produced_by_the_fallback_plan_is_reported_as_such():
+    """反向构造：一条**通过**的证据单元，计划来自 `_fallback`。
+
+    2026-08-03 实测形态：`nq.hvac-keep.dont`「空调先别关」的 gold 是 `chitchat.talk`，
+    而两次解析都失败后编排合成的兜底计划**恰好也是** `chitchat.talk`。旧口径下它
+    与真正的通过在报告里一个字都不差——通过率、exact、cohort 全一样。
+    """
+    results = [
+        _result("real", passed=True),
+        _result("degraded", passed=True, plan_from_fallback=True),
+    ]
+    report = build_adversarial_report(results, _meta())
+    assert report["overall"]["passed"] == 2          # 断言面确实是绿的，不改判
+    assert report["fallback_plans"] == ["degraded@l1"]
+    assert report["fallback_passes"] == ["degraded@l1"]
+    assert report["metrics"]["fallback_plan_rate"]["value"] == 0.5
+    assert "fallback_plan_rate" in METRICS
+    # …但它进不了 baseline：一份基线里有一条是降级路径给的，它就不是基线
+    assert "fallback_plans" in baseline_eligibility(report).reasons
+    assert "兜底计划却判绿" in render_adversarial_markdown(report)
+
+
+def test_fallback_rate_denominator_excludes_layers_without_a_planner():
+    """L0 没有 planner，把它算进分母只会把这个数稀释成一个好看的假象。"""
+    results = [_result("l0case", layer="l0"),
+               _result("live", layer="l1", plan_from_fallback=True)]
+    report = build_adversarial_report(results, _meta())
+    rate = report["metrics"]["fallback_plan_rate"]
+    assert (rate["numerator"], rate["denominator"], rate["value"]) == (1, 1, 1.0)
+
+
+def test_a_clean_report_stays_eligible_and_says_zero():
+    """反向构造的另一半：没有兜底时这两条闸不许误伤。"""
+    report = build_adversarial_report([_result("ok", passed=True)], _meta())
+    assert report["fallback_plans"] == [] and report["fallback_passes"] == []
+    assert report["metrics"]["fallback_plan_rate"]["value"] == 0.0
+    assert baseline_eligibility(report).reasons == ()
+
+
+def test_mid_run_retrieval_degradation_blocks_the_baseline():
+    """预热成功 ≠ 整跑都在语义档上。降级留痕后必须挡住 baseline。"""
+    report = build_adversarial_report(
+        [_result("ok", passed=True)],
+        _meta(retrieval_calls=880, retrieval_degraded=41))
+    assert "retrieval_degraded_mid_run" in baseline_eligibility(report).reasons
+    assert "语义检索中途降级" in render_adversarial_markdown(report)
+    # 没降级时不许误报
+    clean = build_adversarial_report([_result("ok", passed=True)],
+                                     _meta(retrieval_calls=880, retrieval_degraded=0))
+    assert baseline_eligibility(clean).reasons == ()
+    assert "语义检索中途降级" not in render_adversarial_markdown(clean)

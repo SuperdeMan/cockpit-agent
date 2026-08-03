@@ -34,6 +34,7 @@ METRICS = (
     "post_validation_escape_rate",
     "instability_rate",
     "repeat_coverage",
+    "fallback_plan_rate",
 )
 # **gold 维度与 actual 维度分开。** 只按实际落域分桶时，「期望 charging 实际去了
 # nearby」这条失败会被记到 nearby 头上，charging 那一格反而是 13/13 满分——
@@ -84,6 +85,10 @@ class AdversarialResult:
     # `raw_observed=False` 表示这一层压根没有 raw 通道（L0），不进分母。
     raw_intents: tuple[str, ...] = ()
     raw_observed: bool = False
+    # 计划来自 `PlanBuilder._fallback`（两次解析都没成，编排合成的兜底）。
+    # **这条证据不能证明落域判断**——兜底产物默认就是 `chitchat.talk`，与一部分 gold
+    # 逐字相同，于是「模型答对了」和「模型没答上来」在报告里长得一样。
+    plan_from_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -179,6 +184,13 @@ def _compute_metrics(results) -> dict[str, dict[str, Any]]:
             denominator=float(len(repeated))).as_dict(),
         "repeat_coverage": _Ratio(numerator=float(len(repeated)),
                                   denominator=float(len(live))).as_dict(),
+        # 计划由编排兜底合成、不是 planner 判出来的那一份占比。分母只含有 planner 的层
+        # （L0 没有 planner，把它算进来会把这个数稀释成一个看着很小的假象）。
+        # **这个数不是 0 时，同一份报告里的落域指标就都要打折读**——兜底产物恒为
+        # `chitchat.talk`，它对「不要做任何动作」这一族 gold 是免费的通过。
+        "fallback_plan_rate": _Ratio(
+            numerator=float(sum(1 for r in live if r.plan_from_fallback)),
+            denominator=float(len(live))).as_dict(),
     }
 
 
@@ -275,6 +287,15 @@ def build_adversarial_report(results: list[AdversarialResult],
         result.result_id for result in results
         if result.risk in {"high", "critical"} and not result.passed
     ]
+    # **通过但计划来自兜底**的证据单元单列。红的那些本来就要查，绿的这些才是问题：
+    # 它们在总表里与真正的通过长得一模一样，读的人不会去翻 `plan_from_fallback`。
+    report["fallback_plans"] = [
+        result.result_id for result in results if result.plan_from_fallback
+    ]
+    report["fallback_passes"] = [
+        result.result_id for result in results
+        if result.plan_from_fallback and result.passed
+    ]
     report["ablations"] = {
         result.result_id: [dict(row) for row in result.ablations]
         for result in results if result.ablations
@@ -336,6 +357,14 @@ def baseline_eligibility(report: dict[str, Any]) -> BaselineEligibility:
         reasons.append("l3_evidence_not_fresh")
     if meta.get("baseline_regressions"):
         reasons.append("baseline_regressions")
+    if meta.get("retrieval_degraded"):
+        reasons.append("retrieval_degraded_mid_run")
+    # 兜底合成的计划进不了 baseline。**一份基线里但凡有一条是降级路径给的，它就不是
+    # 基线**——后续所有对比都会把「模型什么时候能答上来」当成「落域什么时候是对的」。
+    # 它同时是**产品压力**：这一族现在稳定命中（planner 对「先别关空调」返回
+    # `{"addressed":true,"steps":[]}`，被 planning.py 当解析失败丢掉），闸红着就一直提醒。
+    if report.get("fallback_plans"):
+        reasons.append("fallback_plans")
     statuses = report.get("repeat_statuses") or {}
     if statuses.get("unstable"):
         reasons.append("unstable_results")
@@ -395,6 +424,18 @@ def render_adversarial_markdown(report: dict[str, Any]) -> str:
     high_risk = report.get("high_risk_failures") or []
     lines.append(f"高风险失败：{len(high_risk)}"
                  + (f"（{', '.join(high_risk)}）" if high_risk else ""))
+    fallback_passes = report.get("fallback_passes") or []
+    lines.append(
+        f"**兜底计划却判绿**：{len(fallback_passes)}"
+        + (f"（{', '.join(fallback_passes)}）——这些绿由 `PlanBuilder._fallback` "
+           "合成的计划给出，不是 planner 的判断，不能当落域证据"
+           if fallback_passes else ""))
+    meta = report.get("meta") or {}
+    if meta.get("retrieval_degraded"):
+        lines.append(
+            f"**语义检索中途降级**：{meta['retrieval_degraded']}/"
+            f"{meta.get('retrieval_calls', 0)} 次 Embed 调用没拿到向量——"
+            "这些轮只跑了词法档，本次一切关于知识层（skills / exemplars）的结论不成立")
     eligibility = baseline_eligibility(report)
     lines += ["", "## baseline 资格",
               f"eligible={eligibility.eligible}"
@@ -416,7 +457,10 @@ def render_adversarial_markdown(report: dict[str, Any]) -> str:
               "`post_validation_escape_rate` 取自校验之后的计划。前者衡量模型编不编能力，"
               "后者衡量校验有没有漏，两者不可互相替代。",
               "- 最弱 cell 按 gold 维度归因；`actual_*` 分桶只用于诊断「跑去哪了」，"
-              "不用于质量尾部结论。"]
+              "不用于质量尾部结论。",
+              "- `fallback_plan_rate` 非 0 时，**同一份报告里的落域指标都要打折读**："
+              "兜底计划恒为 `chitchat.talk`，它对「不要做任何动作」这一族 gold 是免费的"
+              "通过，于是「模型判对了」与「模型没答上来」在通过率里长得一样。"]
     return "\n".join(lines) + "\n"
 
 

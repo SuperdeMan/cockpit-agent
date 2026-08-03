@@ -115,7 +115,17 @@ def test_write_baseline_still_accepts_a_clean_full_run():
 
 
 def test_single_green_case_cannot_write_the_formal_baseline(tmp_path, monkeypatch):
-    """突变测试：把执行器换成「只产出一条全绿证据」，正式基线必须一个字节都不变。"""
+    """突变测试：把执行器换成「只产出一条全绿证据」，正式基线必须一个字节都不变。
+
+    ⚠ **这条测试自己被审计过一次并修过**（2026-08-03 第二批）。旧版把
+    `eval_live.load_agents` 换成空清单，于是 `coverage_exemptions.yaml` 里的意图
+    在能力面上找不到，**整跑在契约校验那一层就 exit 2 了，根本没走到资格闸**——
+    而契约错误的退出码与本条要证的东西恰好相同，两条断言（code==2、文件未变）
+    因此全都恒真。实测 `write_baseline_if_eligible` 一次都没被调到。
+
+    修法是**不替换 `load_agents`**（用真实 manifest 走完契约），并显式断言
+    「资格闸真的被问过、且给出了非空理由」。守红线的测试自己要被审计，这是第三例。
+    """
     formal_json = tmp_path / "baseline.json"
     formal_md = tmp_path / "baseline.md"
     formal_json.write_text("old-json", encoding="utf-8")
@@ -123,20 +133,33 @@ def test_single_green_case_cannot_write_the_formal_baseline(tmp_path, monkeypatc
     monkeypatch.setattr(cli, "FORMAL_BASELINE_JSON", formal_json)
     monkeypatch.setattr(cli, "FORMAL_BASELINE_MD", formal_md)
 
+    asked: dict = {}
+    real_writer = cli.write_baseline_if_eligible
+
+    def _spy(report, markdown, eligibility, *rest, **kw):
+        asked["reasons"] = eligibility.reasons
+        return real_writer(report, markdown, eligibility, *rest, **kw)
+
+    async def _warm():
+        return 0
+
     green = _green_result("only.one@l0")
+    monkeypatch.setattr(cli, "write_baseline_if_eligible", _spy)
     monkeypatch.setattr(cli, "_execute", lambda *a, **k: ([green], []))
     monkeypatch.setattr(cli, "_l3_evidence", lambda *a, **k: ([], {}, [], {}))
     monkeypatch.setattr(cli, "_l3_results", lambda *a, **k: [])
-    monkeypatch.setattr(cli.eval_live, "load_agents", lambda **k: [])
-    monkeypatch.setattr(cli.runtime, "confirm_intent_inventory", lambda agents: set())
+    monkeypatch.setattr(cli.eval_live, "warm_exemplars", _warm)
     monkeypatch.setattr(cli.eval_live, "make_builder", lambda *a, **k: object())
     monkeypatch.setattr(cli.eval_common, "ProviderLock", _FakeLock)
     monkeypatch.setattr(cli, "_semantic_retrieval_expected", lambda: False)
-    monkeypatch.setattr(cli.asyncio, "run", lambda *a, **k: 1)
     monkeypatch.chdir(tmp_path)
 
-    code = cli.main(_baseline_argv())
+    # `--baseline` 缺省就是正式基线本身（对比源与写入目标是同一个文件）；这里已经把
+    # 它换成占位内容，所以显式指开一个不存在的路径，别让「读旧基线」抢在闸前面炸。
+    code = cli.main(_baseline_argv("--baseline", str(tmp_path / "absent.json")))
 
+    assert "reasons" in asked, "资格闸压根没被问到——这一跑在更早的地方就退出了"
+    assert "declared_set_incomplete" in asked["reasons"]
     assert code == 2
     assert formal_json.read_text(encoding="utf-8") == "old-json"
     assert formal_md.read_text(encoding="utf-8") == "old-md"
@@ -685,3 +708,110 @@ def test_l2_case_path_never_nests_event_loops():
     # 反过来，L1 是纯 Planner 调用，必须是 async（由调用方 asyncio.run 驱动）
     assert inspect.iscoroutinefunction(cli.run_l1_case)
     assert inspect.iscoroutinefunction(rt.EngineHarness.run_async)
+
+
+# ── 兜底计划与检索降级（2026-08-03 第二批尺子硬化） ─────────────────────────
+
+
+def _stub_the_live_scaffolding(monkeypatch, execute, *, semantic=True):
+    """把主入口的外部依赖全部换成替身，只留下要被反向构造的那一条路径。"""
+    import asyncio as _asyncio
+
+    async def _warm():
+        return 223                     # 预热**成功**——这正是本条要打的假象
+
+    # **不替换 `load_agents`**：契约校验拿真实 manifest 比对能力面，替成空清单会在
+    # 契约那一层就 exit 2——退出码与本条要证的东西撞车，测试会因为错误的理由变绿。
+    monkeypatch.setattr(cli, "_execute", execute)
+    monkeypatch.setattr(cli, "_l3_evidence", lambda *a, **k: ([], {}, [], {}))
+    monkeypatch.setattr(cli, "_l3_results", lambda *a, **k: [])
+    monkeypatch.setattr(cli.eval_live, "warm_exemplars", _warm)
+    monkeypatch.setattr(cli.eval_live, "make_builder", lambda *a, **k: object())
+    monkeypatch.setattr(cli.eval_common, "ProviderLock", _FakeLock)
+    monkeypatch.setattr(cli, "_semantic_retrieval_expected", lambda: semantic)
+    return _asyncio
+
+
+def _live_argv(tmp_path, *extra):
+    return ["--suite", "discovery", "--layer", "l1", "--live",
+            "--provider", "mimo", "--model", "m",
+            "--out-json", str(tmp_path / "run.json"),
+            "--out-md", str(tmp_path / "run.md"), *extra]
+
+
+def test_mid_run_retrieval_degradation_is_infrastructure_not_a_reading(
+        tmp_path, monkeypatch):
+    """反向构造：**预热成功**、逐轮检索却掉档。
+
+    宿主实测形态：`EXEMPLAR_EMBED_TIMEOUT` 缺省 1.0s 而一次 Embed 要 0.27–1.12s，
+    首次调用超时 → 30s 失败冷却 → 其后整段规划只跑词法档。预热用的是
+    `max(5.0, timeout)`，它成功了，于是报告照写 `retrieval_state=warm`。
+    旧口径下这一跑照样出数、退出 0。
+    """
+    from orchestrator.cloud import embedding
+
+    async def _degraded(_texts, _timeout_s=1.0):
+        return None
+
+    monkeypatch.setattr(embedding, "embed_texts", _degraded)
+
+    def _execute_losing_the_semantic_channel(*_a, **_k):
+        asyncio = __import__("asyncio")
+        asyncio.run(embedding.embed_texts(["附近的充电站"]))
+        return ([_green_result("only.one@l1")], [])
+
+    _stub_the_live_scaffolding(monkeypatch, _execute_losing_the_semantic_channel)
+    monkeypatch.chdir(tmp_path)
+
+    code = cli.main(_live_argv(tmp_path))
+
+    assert code == 2
+    report = json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))
+    assert report["meta"]["warmed_exemplars"] == 223      # 预热确实是「成功」的
+    assert report["meta"]["retrieval_degraded"] == 1
+    assert any("retrieval_degraded_mid_run" in row
+               for row in report["meta"]["infrastructure_errors"])
+
+
+def test_a_healthy_semantic_channel_is_not_reported_as_degraded(tmp_path, monkeypatch):
+    """反向构造的另一半：通道正常时这条闸不许误伤，否则它只是一个永远红的装饰。"""
+    from orchestrator.cloud import embedding
+
+    async def _healthy(texts, _timeout_s=1.0):
+        return ([(1.0,)] * len(texts), "text-embedding-v4")
+
+    monkeypatch.setattr(embedding, "embed_texts", _healthy)
+
+    def _execute(*_a, **_k):
+        asyncio = __import__("asyncio")
+        asyncio.run(embedding.embed_texts(["附近的充电站"]))
+        return ([_green_result("only.one@l1")], [])
+
+    _stub_the_live_scaffolding(monkeypatch, _execute)
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(_live_argv(tmp_path)) == 0
+    report = json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))
+    assert (report["meta"]["retrieval_calls"],
+            report["meta"]["retrieval_degraded"]) == (1, 0)
+    assert report["meta"]["infrastructure_errors"] == []
+
+
+def test_a_green_run_still_says_when_the_plan_came_from_the_fallback(
+        tmp_path, monkeypatch):
+    """通过 + 兜底计划：断言面不改判，但摘要与报告必须说出来，且写不进 baseline。"""
+    from dataclasses import replace as _replace
+
+    def _execute(*_a, **_k):
+        return ([_replace(_green_result("nq.hvac-keep.dont@l1"),
+                          plan_from_fallback=True)], [])
+
+    _stub_the_live_scaffolding(monkeypatch, _execute, semantic=False)
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(_live_argv(tmp_path)) == 0            # 断言面确实全绿
+    report = json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))
+    assert report["fallback_passes"] == ["nq.hvac-keep.dont@l1"]
+    assert report["metrics"]["fallback_plan_rate"]["value"] == 1.0
+    from support.intent_adversarial_report import baseline_eligibility
+    assert "fallback_plans" in baseline_eligibility(report).reasons

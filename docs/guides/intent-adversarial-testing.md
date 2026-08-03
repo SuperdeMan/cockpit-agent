@@ -44,11 +44,19 @@
 # live 层（L1/L2/L3）必须给，否则 embedding 连容器内主机名、被 ALL_PROXY 兜走超时，
 # 范例检索静默降级成纯词法 —— 现在会以退出码 2 拦下，但别浪费一次跑批
 export LLM_GATEWAY_ADDR=localhost:50052
+# **宿主跑必须一起给这两个。** 生产缺省 1.0s 是给容器内网络定的；宿主到网关一次 Embed
+# 实测 0.27–1.12s，首次调用（含建 channel）必然超时 → `embedding` 打 30s 失败冷却
+# → 其后整段规划只跑词法档。而预热用的是 max(5.0, timeout)，它会成功。
+export EXEMPLAR_EMBED_TIMEOUT=8 SKILL_EMBED_TIMEOUT=8
 make up                      # live 层需要全栈
 ```
 
 - `--live` 必须**同时**显式给 `--provider` 与 `--model`，不接受跟随网关默认。
 - L0 零网络，随时可跑，不需要 `make up`。
+
+> **两条只在 live 才现形的假象，现在都已机制化拦下**（2026-08-03 第二批，见 §12）：
+> 检索**中途**掉档 → 基础设施错误退出 2（原来只查预热那一次）；计划来自
+> `PlanBuilder._fallback` → 报告标 `fallback_plan_rate` 并挡住 baseline。
 
 ---
 
@@ -116,6 +124,20 @@ L3 runner 非零退出、relation 配不成对、选集为空。
 
 > 这套件自查累计抓到的缺陷里，超过一半是同一形态：**失败被记成了别的东西**。
 > 每加一个「拿不到结果」的分支，先问它会被记成什么。
+
+### 第 0.5 步：看这一跑有没有降级（**绿灯也要看**）
+
+摘要里出现下面任一行，这一跑的相应结论就不成立——**它们会同时出现在通过的用例上**：
+
+| 行 | 含义 | 该怎么办 |
+|---|---|---|
+| `⚠ 语义检索中途降级 N/M` | 那些轮只跑了词法档 | 调大 `EXEMPLAR_EMBED_TIMEOUT`/`SKILL_EMBED_TIMEOUT` 重跑；本次一切关于 skills/exemplars 的结论作废 |
+| `⚠ 兜底计划却判绿 N 条` | 计划由 `_fallback` 合成，**不是 planner 的判断** | 逐条看 `--diagnose`；这些绿不算落域证据 |
+| `fallback_plan_rate` 非 0 | 同上，报告里的落域指标整体要打折读 | 同上 |
+
+兜底产物恒为 `chitchat.talk`，它对**「不要做任何动作」这一族 gold 是免费的通过**——
+2026-08-03 实测：「空调先别关」的 planner 输出 `{"addressed":true,"steps":[]}`（**答对了**），
+被 `planning.py` 当解析失败丢掉、重试、兜底成 `chitchat.talk`，而 gold 正是 `chitchat.talk`。
 
 ### 第 1 步：看重复分类，不看单次结果
 

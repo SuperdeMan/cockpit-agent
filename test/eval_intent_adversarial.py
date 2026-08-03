@@ -47,8 +47,9 @@ from support.intent_adversarial_report import (  # noqa: E402
     render_adversarial_markdown,
 )
 from support.intent_adversarial_trace import (  # noqa: E402
-    DivergenceEvidence, TraceSink, asset_fingerprint, deterministic_divergence,
-    divergence_candidates, first_divergence, probe_builder,
+    DivergenceEvidence, RetrievalProbe, TraceSink, asset_fingerprint,
+    deterministic_divergence, divergence_candidates, first_divergence,
+    probe_builder, probe_retrieval,
 )
 from support.intent_adversarial_trace import (  # noqa: E402
     evidence_dict as trace_evidence_dict,
@@ -85,6 +86,9 @@ class TurnOutcome:
     raw_observed: bool = False
     raw_planner_pass: bool | None = None
     pre_hint_pass: bool | None = None
+    # 这一轮的计划是不是编排兜底合成的（`PlanBuilder._fallback`）。兜底产物与某些 gold
+    # 逐字相同（默认 `chitchat.talk`），不标出来就分不清「模型判对了」和「模型没答上来」。
+    plan_from_fallback: bool = False
 
 
 @dataclass
@@ -301,7 +305,8 @@ async def run_l1_case(case, agents, builder) -> list["TurnOutcome"]:
             if history:
                 context["history"] = list(context.get("history") or []) + history
             probed = replace(turn, context=context)
-            before = (len(sink.validations), len(sink.hints))
+            before = (len(sink.validations), len(sink.hints), len(sink.plans),
+                      len(sink.fallbacks))
             snapshot = await runtime.run_planner_turn(probed, agents, builder)
             _reject_unreached_planner(case, snapshot)
             outcomes.append(_turn_outcome(
@@ -313,14 +318,19 @@ async def run_l1_case(case, agents, builder) -> list["TurnOutcome"]:
 
 
 def _turn_outcome(turn, snapshot, judgement, sink: TraceSink,
-                  before: tuple[int, int]) -> "TurnOutcome":
-    """把本轮新增的 trace 折成证据：校验前候选、Hint 前计划。
+                  before: tuple[int, ...]) -> "TurnOutcome":
+    """把本轮新增的 trace 折成证据：校验前候选、Hint 前计划、**计划是否来自兜底**。
 
-    这两份证据原来只活在单测里，主入口从不消费——于是「每个 live 失败都有首偏离点」
+    前两份证据原来只活在单测里，主入口从不消费——于是「每个 live 失败都有首偏离点」
     退化成「一律记 PLANNER_DIVERGENCE」。判定用的是**同一个 judge_plan**，不另立口径。
+
+    `before` 是各条 trace 列表在本轮开始前的长度。**新增第 4 位 `fallbacks`**；
+    L2 与 engine-direct 那两处传的是 3 元组（多一位 `plans`），所以按名字取不到，
+    统一按「不够长就当 0」读——加一位证据不该逼所有调用方同时改。
     """
     validations = sink.validations[before[0]:]
     hints = sink.hints[before[1]:]
+    fallbacks_before = before[3] if len(before) > 3 else 0
     assert_plan = turn.expected.plan.assert_plan
     raw = validations[-1] if validations else None
     hint = hints[-1] if hints else None
@@ -331,7 +341,8 @@ def _turn_outcome(turn, snapshot, judgement, sink: TraceSink,
         raw_planner_pass=(_plan_passes(turn.expected.plan, raw.raw_candidate)
                           if raw and assert_plan else None),
         pre_hint_pass=(_plan_passes(turn.expected.plan, hint.before)
-                       if hint and assert_plan else None))
+                       if hint and assert_plan else None),
+        plan_from_fallback=len(sink.fallbacks) > fallbacks_before)
 
 
 def _plan_passes(expectation, plan: PlanSnapshot) -> bool:
@@ -388,7 +399,8 @@ def run_l2_case(case, agents, builder, confirm_intents) -> list["TurnOutcome"]:
     outcomes: list[TurnOutcome] = []
     with probe_builder(builder, sink):
         for turn in case.turns:
-            before = (len(sink.validations), len(sink.hints), len(sink.plans))
+            before = (len(sink.validations), len(sink.hints), len(sink.plans),
+                      len(sink.fallbacks))
             edge, engine = entry.turn(
                 turn.utterance,
                 is_confirmation=bool(turn.context.get("is_confirmation")),
@@ -413,7 +425,7 @@ def run_l2_case(case, agents, builder, confirm_intents) -> list["TurnOutcome"]:
                                        if engine else None))
             outcomes.append(_turn_outcome(turn, snapshot,
                                           judge_turn(turn.expected, snapshot),
-                                          sink, before[:2]))
+                                          sink, before))
     return outcomes
 
 
@@ -793,6 +805,7 @@ def main(argv: list[str] | None = None) -> int:
     results: list[AdversarialResult] = []
     provider_model = "deterministic"
     warmed = 0
+    retrieval = RetrievalProbe()
     l3_selected: list[str] = []
     l3_statuses: dict[str, str] = {}
     l3_meta: dict[str, Any] = {}
@@ -800,25 +813,36 @@ def main(argv: list[str] | None = None) -> int:
         agents = eval_live.load_agents(include_edge=True)
         confirm_intents = runtime.confirm_intent_inventory(agents)
         builder = None
-        if args.live:
-            lock = eval_common.ProviderLock(LLM_GATEWAY_HTTP, want=args.provider,
-                                            model=args.model)
-            provider_model = lock.pin()
-            builder = eval_live.make_builder("intent-adversarial", args.temperature,
-                                             timeout=args.timeout, model="")
-            if args.retrieval_state == "warm":
-                warmed = asyncio.run(eval_live.warm_exemplars())
-                # 预热返回 0 有两种可能：范例层本来就关着（合法），或者 Embed 打不通
-                # 被静默降级成纯词法（不合法——那样整轮 L1 测的根本不是生产装配）。
-                # 后者必须是基础设施错误：一次「悄悄只跑了词法档」的发现轨会污染
-                # 之后所有关于知识层的结论。
-                if not warmed and _semantic_retrieval_expected():
-                    infrastructure_errors.append(
-                        "exemplar_warmup_failed: 语义检索档位为 hybrid 但预热 0 条"
-                        "（多半是 LLM_GATEWAY_ADDR 未指向可达网关，Embed 被降级）")
-        results, infra = _execute(selected, args, suite, agents, builder,
-                                  confirm_intents, provider_model, lock)
-        infrastructure_errors.extend(infra)
+        with probe_retrieval() as retrieval:
+            if args.live:
+                lock = eval_common.ProviderLock(LLM_GATEWAY_HTTP, want=args.provider,
+                                                model=args.model)
+                provider_model = lock.pin()
+                builder = eval_live.make_builder("intent-adversarial", args.temperature,
+                                                 timeout=args.timeout, model="")
+                if args.retrieval_state == "warm":
+                    warmed = asyncio.run(eval_live.warm_exemplars())
+                    # 预热返回 0 有两种可能：范例层本来就关着（合法），或者 Embed 打不通
+                    # 被静默降级成纯词法（不合法——那样整轮 L1 测的根本不是生产装配）。
+                    # 后者必须是基础设施错误：一次「悄悄只跑了词法档」的发现轨会污染
+                    # 之后所有关于知识层的结论。
+                    if not warmed and _semantic_retrieval_expected():
+                        infrastructure_errors.append(
+                            "exemplar_warmup_failed: 语义检索档位为 hybrid 但预热 0 条"
+                            "（多半是 LLM_GATEWAY_ADDR 未指向可达网关，Embed 被降级）")
+            results, infra = _execute(selected, args, suite, agents, builder,
+                                      confirm_intents, provider_model, lock)
+            infrastructure_errors.extend(infra)
+        # **预热成功不等于整跑都在语义档上。** 逐轮检索用的是
+        # `EXEMPLAR_EMBED_TIMEOUT`/`SKILL_EMBED_TIMEOUT`（缺省 1.0s），一次超时就打 30s
+        # 失败冷却，其后整段规划全走纯词法——而预热用的是 `max(5.0, timeout)`，它成功了。
+        # 于是报告照写 `retrieval_state=warm`，量的却不是生产装配。**降级必须留痕。**
+        if (args.retrieval_state == "warm" and retrieval.degraded
+                and _semantic_retrieval_expected()):
+            infrastructure_errors.append(
+                f"retrieval_degraded_mid_run: {retrieval.degraded}/{retrieval.calls} "
+                f"次 Embed 调用没拿到向量，这些轮只跑了词法档（宿主跑请调大 "
+                f"EXEMPLAR_EMBED_TIMEOUT / SKILL_EMBED_TIMEOUT，见运行手册 §2）")
         l3_selected, l3_statuses, l3_infra, l3_meta = _l3_evidence(
             selected, args, provider_model)
         infrastructure_errors.extend(l3_infra)
@@ -834,6 +858,7 @@ def main(argv: list[str] | None = None) -> int:
     meta = {
         "suite": args.suite, "layer": args.layer,
         "retrieval_state": args.retrieval_state, "warmed_exemplars": warmed,
+        "retrieval_calls": retrieval.calls, "retrieval_degraded": retrieval.degraded,
         "provider_locked": bool(lock and lock.locked),
         "provider_drift": bool(lock and lock.drifts),
         "provider_lock": (lock.summary() if lock else {}),
@@ -965,6 +990,10 @@ def _print_diagnosis(report: dict) -> None:
                   f"side_effects={row['actual'].get('side_effects')}")
         print(f"   检索: skills={row['actual'].get('skills')} "
               f"exemplars={row['actual'].get('exemplars')}")
+        if row.get("plan_from_fallback"):
+            print("   ⚠ 计划来自编排兜底（_fallback），**不是 planner 的判断**："
+                  "两次解析都没成。兜底产物恒为 chitchat.talk，"
+                  "对『不要做任何动作』这一族 gold 是免费的通过——这条结论不算数。")
         for assertion in row.get("assertions") or []:
             mark = "OK " if assertion["passed"] else "FAIL"
             print(f"   [{mark}] {assertion['name']}: "
@@ -987,11 +1016,23 @@ def _print_summary(report: dict) -> None:
     for name in ("exact_plan_set_rate", "required_group_recall",
                  "forbidden_route_rate", "planner_capability_hallucination_rate",
                  "post_validation_escape_rate", "instability_rate",
-                 "repeat_coverage"):
+                 "repeat_coverage", "fallback_plan_rate"):
         row = metrics.get(name) or {}
         value = row.get("value")
         print(f"  {name}: {'null' if value is None else f'{value * 100:.1f}%'}"
               f" ({row.get('numerator', 0):g}/{row.get('denominator', 0):g})")
+    # 通过但计划来自兜底的那些**必须在摘要里说**：它们在总表里与真正的通过长得一样，
+    # 而它们证明不了落域判断。放在指标之后、尾部之前，读的人绕不过去。
+    fallback_passes = report.get("fallback_passes") or []
+    if fallback_passes:
+        print(f"  ⚠ 兜底计划却判绿 {len(fallback_passes)} 条（计划由 _fallback 合成，"
+              f"不是 planner 判断，这些绿不算数）: "
+              f"{', '.join(fallback_passes[:8])}"
+              f"{' …' if len(fallback_passes) > 8 else ''}")
+    if meta.get("retrieval_degraded"):
+        print(f"  ⚠ 语义检索中途降级 {meta['retrieval_degraded']}/"
+              f"{meta.get('retrieval_calls', 0)} 次调用没拿到向量——"
+              f"这些轮只跑了词法档，本次知识层结论不成立")
     for row in (report.get("weakest") or [])[:5]:
         print(f"  weakest {row['dimension']}={row['cell']} "
               f"{row['pass_rate'] * 100:.1f}% (n={row['total']})")
@@ -1276,6 +1317,9 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
             admitted_intents=_admitted_intents(turn, agents),
             actual_intents=tuple(outcome.snapshot.plan.intents),
             raw_intents=outcome.raw_intents, raw_observed=outcome.raw_observed,
+            # 取**证据那一轮**的兜底标记，与 assertions/metrics 同一轮，
+            # 免得报告里出现「这条绿是兜底给的」指向另一次运行的情况。
+            plan_from_fallback=outcome.plan_from_fallback,
             assertions=assertions,
             repetitions=tuple({"passed": o.passed, "signature": o.signature[:400],
                                "dangerous": o.dangerous}
@@ -1439,7 +1483,8 @@ def _run_engine_direct(case, agents, builder, confirm_intents) -> list[TurnOutco
     outcomes: list[TurnOutcome] = []
     with probe_builder(builder, sink):
         for turn in case.turns:
-            before = (len(sink.validations), len(sink.hints), len(sink.plans))
+            before = (len(sink.validations), len(sink.hints), len(sink.plans),
+                      len(sink.fallbacks))
             engine = harness.run(
                 turn.utterance, session_id=session_id,
                 is_confirmation=bool(turn.context.get("is_confirmation")),
@@ -1457,7 +1502,7 @@ def _run_engine_direct(case, agents, builder, confirm_intents) -> list[TurnOutco
             expected = replace(turn.expected, ingress_allowed=(), ingress_forbidden=())
             outcomes.append(_turn_outcome(turn, snapshot,
                                           judge_turn(expected, snapshot),
-                                          sink, before[:2]))
+                                          sink, before))
     return outcomes
 
 

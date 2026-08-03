@@ -77,6 +77,62 @@ class TraceSink:
     hints: list[HintTrace] = field(default_factory=list)
     plans: list[PlannerTrace] = field(default_factory=list)
     validations: list[ValidationTrace] = field(default_factory=list)
+    # `PlanBuilder._fallback` 的调用记录。**这份计划不是 planner 的判断**——
+    # 两次解析都没成、由编排兜底合成出来的。见 `probe_builder` 的说明。
+    fallbacks: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RetrievalProbe:
+    """一次跑批里语义检索通道的实际服务情况。
+
+    `calls` 只数**真的要向量的调用**（空输入不算）；`degraded` 数其中没拿到向量的那些
+    —— 超时、网关不可达、以及**失败冷却期内被直接跳过**的都算，因为它们对这一轮的效果
+    是同一件事：该轮只跑了词法档。
+    """
+    calls: int = 0
+    degraded: int = 0
+
+    def as_dict(self) -> dict[str, int]:
+        return {"calls": self.calls, "degraded": self.degraded}
+
+
+@contextlib.contextmanager
+def probe_retrieval():
+    """把「语义检索**跑到一半掉档**」变成可观测事实，跑完逐字还原。
+
+    首跑自查时只在**范例预热**那一处防住了静默降级（发现清单 §3-2），逐轮的检索调用
+    没防——同一条判据没有铺满它该铺的面，这已经是第三次了（另两次：`_reject_unreached_
+    planner`、确定性层的 `unstable`）。
+
+    2026-08-03 宿主实测：`EXEMPLAR_EMBED_TIMEOUT` 缺省 1.0s，而宿主到网关的一次 Embed
+    要 0.27–1.12s，**首次调用（含建 channel）必然超时** → `embedding` 打 30s 失败冷却
+    → 之后整整 30 秒的规划全跑纯词法。而预热用的是 `max(5.0, timeout)`，它成功了，于是
+    报告照写 `retrieval_state=warm / warmed_exemplars=223`。**一份「看起来正常」的报告，
+    量的却不是生产装配。**
+
+    包的是 `embedding.embed_texts` 这个**模块属性**：`exemplars.py` 与 `skills.py` 都用
+    `_embedding.embed_texts(...)` 的形式调用（不是 from-import 绑定），所以换属性就够，
+    不必碰生产源码——这一批只动尺子。
+    """
+    from orchestrator.cloud import embedding
+
+    probe = RetrievalProbe()
+    original = embedding.embed_texts
+
+    async def counted(texts, timeout_s: float = 1.0):
+        out = await original(texts, timeout_s)
+        if texts:                       # 空输入返回 None 是契约，不是降级
+            probe.calls += 1
+            if out is None:
+                probe.degraded += 1
+        return out
+
+    embedding.embed_texts = counted
+    try:
+        yield probe
+    finally:
+        embedding.embed_texts = original
 
 
 class TracingRouteHints:
@@ -191,9 +247,17 @@ def probe_builder(builder, sink: TraceSink):
     还原用 `__dict__` 级别的存取而不是重新赋值：`attach_validation_trace` 写的是实例
     属性，直接写回绑定方法会在实例上留下一个永久遮蔽类方法的副本，下一个案例再包一层
     就是双重 trace。
+
+    **也记 `_fallback`**：两次解析都没成时编排会合成一个兜底计划（默认
+    `chitchat.talk`），而 `plan.raw_llm` 此时**非空**——`_reject_unreached_planner` 那条
+    「模型没被够着」的闸看不见它。于是「计划是模型判断出来的」和「计划是兜底合成的」
+    在报告里长得一模一样。2026-08-03 实测的代价：`nq.hvac-keep.dont`「空调先别关」的
+    gold 恰好就是 `chitchat.talk`，兜底产物与正确答案逐字相同，**这条用例的绿证明不了
+    否定语义有没有被消费**。判据用 `_fallback` 被不被调到，不用「计划长得像兜底」。
     """
     saved_parse = builder.__dict__.get("_parse_and_validate_data")
     saved_hints = getattr(builder, "_route_hints", None)
+    saved_fallback = builder.__dict__.get("_fallback")
     # 没有这个钩子的 builder（脚本化替身）就是**没有 raw 通道**，不是「raw 一切正常」：
     # 上层据此把 `raw_observed=False`，该证据单元不进幻觉率分母。
     traceable = hasattr(builder, "_parse_and_validate_data")
@@ -201,6 +265,15 @@ def probe_builder(builder, sink: TraceSink):
         attach_validation_trace(builder, sink)
     if saved_hints is not None:
         builder._route_hints = TracingRouteHints(saved_hints, sink)
+    fallback_hook = hasattr(builder, "_fallback")
+    if fallback_hook:
+        inner = builder._fallback
+
+        async def traced_fallback(text, agents=None):
+            sink.fallbacks.append(str(text))
+            return await inner(text, agents)
+
+        builder._fallback = traced_fallback
     try:
         yield sink
     finally:
@@ -211,6 +284,11 @@ def probe_builder(builder, sink: TraceSink):
                 builder.__dict__["_parse_and_validate_data"] = saved_parse
         if saved_hints is not None:
             builder._route_hints = saved_hints
+        if fallback_hook:
+            if saved_fallback is None:
+                builder.__dict__.pop("_fallback", None)
+            else:
+                builder.__dict__["_fallback"] = saved_fallback
 
 
 def asset_digest(root: Path, paths: list[Path]) -> str:
