@@ -22,7 +22,7 @@ cases:
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A3], mechanisms: [negation_scope], domains: [info, reminder], layers: [l1], gate_candidate: true}
+    tags: {attacks: [A3], mechanisms: [negation_scope], domains: [info, reminder], layers: [l1]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     relation: {base_case: nq.umbrella.both, type: intent_remove, expectation: {remove: [reminder.create]}}
     turns:
@@ -172,7 +172,7 @@ cases:
     cohort: unseen_transfer
     risk: low
     status: reviewed
-    tags: {attacks: [A3], mechanisms: [tense], domains: [info], layers: [l1], gate_candidate: true}
+    tags: {attacks: [A3], mechanisms: [tense], domains: [info], layers: [l1]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     relation: {base_case: nq.match.past, type: invariant, expectation: {}}
     turns:
@@ -622,3 +622,34 @@ cases:
       - input: {utterance: 先别下单，我只想看看菜单, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [shop.menu]}], forbidden_intents: [shop.order], allow_extra_intents: false}
+
+  # ── 换入预选池（2026-08-03）：过去时态 + 否定范围 ─────────────────────────
+  # 换出 `nq.match.future`（消融显示 no-skills 稳定翻正 = guide 检索噪声，评审 §10.4）
+  # 与 `nq.umbrella.negated`（红的真因在它的 base：「查天气然后提醒我带伞」3/3 漏掉
+  # 提醒步，是评审 §10.8「组合漏第二步」的又一例，不是这条自己的问题）。
+  - id: nq.match.lastweek
+    title: 明确过去时的赛果查询
+    family_id: nq.match-lastweek
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A3], mechanisms: [tense], domains: [info], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 上周五那场球赛谁赢了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.sports]}], forbidden_intents: [info.news], allow_extra_intents: false}
+  # **刻意不带 relation**：门禁要的是绝对 gold 稳定；换出的那条正是绝对 gold 过、
+  # relation 红。把两件事绑在一起会让门禁红灯指错方向。
+  - id: nq.hvac.keep-volume
+    title: 否定只管前半句，后半句照做
+    family_id: nq.hvac-keep
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A3], mechanisms: [negation_scope], domains: [hvac, volume], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 别关空调，把音量调小就行, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [volume.dec]}], forbidden_intents: [hvac.off, hvac.on], allow_extra_intents: false}

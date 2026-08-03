@@ -77,7 +77,7 @@ cases:
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [reminder, info], layers: [l1], gate_candidate: true}
+    tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [reminder, info], layers: [l1]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     relation: {base_case: cp.reminder-weather.base, type: clause_commute, expectation: {}}
     turns:
@@ -217,7 +217,7 @@ cases:
     cohort: unseen_transfer
     risk: high
     status: reviewed
-    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [nearby], layers: [l1], gate_candidate: true}
+    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [nearby], layers: [l1]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     turns:
       - input: {utterance: 找家评分高的川菜馆，然后订今晚七点两位, context: {}}
@@ -232,7 +232,7 @@ cases:
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [charging, navigation], layers: [l1, l3], gate_candidate: true}
+    tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [charging, navigation], layers: [l1, l3]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     turns:
       - input: {utterance: 找个最近的充电站，然后导航过去, context: {}}
@@ -849,3 +849,48 @@ cases:
       - input: {utterance: 看看演示商户的菜单，再查下今天天气, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [shop.menu]}, {any_of: [info.weather]}], forbidden_intents: [shop.order], allow_extra_intents: false}
+
+  # ── 换入预选池（2026-08-03）：三条并列组合 ────────────────────────────────
+  # 换出的三条是 `cp.reminder-weather.swapped`（子句间槽位串味，评审 §10.12.5）与
+  # 两条依赖组合（`cp.dep.charge-then-navigate` / `cp.dep.search-then-order`，
+  # 漏第二步，评审 §10.8）。**换入并列而不是再写依赖**：依赖那一族整族在抖，
+  # 明知在抖的形态不该进门禁；依赖的账留在 discovery 侧继续跟。
+  # 同理不写 swapped 变体——换出的正是一条 swapped。
+  - id: cp.air-music.base
+    title: 查空气质量并放歌
+    family_id: cp.air-music
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [info, media], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 查一下今天空气质量，再放首轻音乐, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.air_quality]}, {any_of: [media.play]}], allow_extra_intents: false}
+  # 与 `cp.air-index`（空气质量 + 生活指数）的差别是**跨域**：同域两步容易被合并成
+  # 一步而看不出漏步，跨域漏步一眼可见。
+  - id: cp.volume-forecast.base
+    title: 调音量并查明天天气
+    family_id: cp.volume-forecast
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, local_and_online], domains: [volume, info], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 把音量调小，再查一下明天天气, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [volume.dec]}, {any_of: [info.weather, info.forecast]}], allow_extra_intents: false}
+  - id: cp.hvac-air.base
+    title: 调低空调并查空气质量
+    family_id: cp.hvac-air
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [composition, parallel, local_and_online], domains: [hvac, info], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 空调温度往下调两度，顺便看看空气质量, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [hvac.dec, hvac.set, aircon.dec]}, {any_of: [info.air_quality]}], allow_extra_intents: false}

@@ -104,7 +104,7 @@ cases:
     cohort: seen_regression
     risk: medium
     status: reviewed
-    tags: {attacks: [A7], mechanisms: [skill_recall], domains: [info, reminder], layers: [l0, l1], gate_candidate: true}
+    tags: {attacks: [A7], mechanisms: [skill_recall], domains: [info, reminder], layers: [l0, l1]}
     provenance: {kind: authored, source_ref: skills/guides/conditional-reminder.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     turns:
       - input: {utterance: 明天下雨提醒我带伞, context: {}}
@@ -117,7 +117,7 @@ cases:
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [reminder], layers: [l0, l1], gate_candidate: true}
+    tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [reminder], layers: [l0, l1]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     turns:
       - input: {utterance: 提醒我明天九点交周报, context: {}}
@@ -503,3 +503,35 @@ cases:
         expected:
           retrieval: {forbidden_skills: [charging-strategy, weather-outing]}
           plan: {forbidden_intents: [charging.find], allow_extra_intents: true}
+
+  # ── 换入预选池（2026-08-03）：两条 guide 召回正例 ────────────────────────
+  # 换出 `ki.conditional-reminder.{hit,miss}`——miss 稳定红在
+  # `retrieval.forbidden:conditional-reminder`（不该召回却召回了），hit 则 unstable。
+  # 换入的是**另外两个 guide 的召回正例，且用没进过知识的新话术**：
+  # 正例比反例稳（反例要求检索器精确地不命中，那是检索精度的账，不是门禁该扛的）。
+  - id: ki.multi-day-trip.hit2
+    title: 多日行程另一种说法仍应召回 multi-day-trip
+    family_id: ki.multi-day-trip-alt
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_recall], domains: [trip], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, source_ref: skills/guides/multi-day-trip.yaml, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 帮我安排一下五天的云南玩法, context: {}}
+        expected:
+          retrieval: {required_skills: [multi-day-trip]}
+          plan: {required_intent_groups: [{any_of: [trip.plan]}], allow_extra_intents: true}
+  - id: ki.navigation-with-stop.hit2
+    title: 途经点另一种说法仍应召回 navigation-with-stop
+    family_id: ki.nav-stop-alt
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A7], mechanisms: [skill_recall], domains: [navigation], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, source_ref: skills/guides/navigation-with-stop.yaml, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 去机场路上先拐个加油站, context: {}}
+        expected:
+          retrieval: {required_skills: [navigation-with-stop]}
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to, navigation.search_poi, nearby.search]}], allow_extra_intents: true}

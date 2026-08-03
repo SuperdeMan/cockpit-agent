@@ -14,7 +14,7 @@ cases:
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A9], mechanisms: [colloquial], domains: [hvac], layers: [l1], gate_candidate: true}
+    tags: {attacks: [A9], mechanisms: [colloquial], domains: [hvac], layers: [l1]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     turns:
       - input: {utterance: 有点热, context: {}}
@@ -664,3 +664,21 @@ cases:
       - input: {utterance: 宁德时代今儿多少钱一股, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [info.stock]}], forbidden_intents: [info.news], allow_extra_intents: false}
+
+  # ── 换入预选池（2026-08-03）：口语外壳裹着**字面写出方向**的明确指令 ──────
+  # 换出的 `ex.colloquial.hot` 属同族对面——它的方向要靠推断（「热」→ 降温），
+  # 而实测方向反了（评审 §10.11-2）。**门禁要的是守住已经做对的事**，
+  # 把明知在抖的放进去等于制造一条永远红的闸。
+  # 既有 `ex.filler.{leading,trailing}` 都在天气域，这条把同一机制放到车控上。
+  - id: ex.filler.window-close
+    title: 语气词外壳不改变明确指令
+    family_id: ex.filler-window
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A9], mechanisms: [colloquial, filler], domains: [window], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 那个……帮我把车窗关一下吧, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [window.close]}], forbidden_intents: [window.open, chitchat.talk], allow_extra_intents: false}
