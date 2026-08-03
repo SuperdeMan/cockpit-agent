@@ -99,11 +99,13 @@ L0 全量 **70/70 exit 0**（541 条 / 502 唯一输入）；
 规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`（§21 落地记录、§22 尺子硬化）、
 实施计划同名 `-implementation-plan.md`、**发现清单 + 修复批次记录另册**
 `docs/design/2026-08-02-intent-routing-adversarial-findings.md`（**修复批次的单一入口**）。入口
-`test/eval_intent_adversarial.py`，语料 `test/eval_corpus/intent_adversarial/`（527 条 /
-九类攻击 / 143 组最小对照 / **20 条** boundaries 台账双向覆盖 / 云侧 129 个 active intent
-覆盖清零 + 61 条端侧原子车控逐条豁免）。**113 条晋级 stable**（设计要求 120–160，
-未达线）；**L3 证据未取得**（既有 e2e 运行器在本机 `lease_protocol` 失败），正式
-baseline 被资格闸正当拒绝、文件未生成。
+`test/eval_intent_adversarial.py`，语料 `test/eval_corpus/intent_adversarial/`（**541 条 /
+502 唯一输入** / 九类攻击 / 144 组最小对照 / **20 条** boundaries 台账双向覆盖 /
+云侧 129 个 active intent 覆盖清零 + 61 条端侧原子车控逐条豁免）。
+**132 条 stable / 唯一输入 122**（设计要求 120–160，**2026-08-03 晚已达线**，
+`--strict` exit 0）；正式 baseline 仍未生成，**前置有两条**：L3 证据未取得（既有 e2e
+运行器在本机 `lease_protocol` 失败）+ **现有 stable 集合里有两条稳定红**（评审 §10.14.4，
+比 L3 更硬）。资格闸正当拒绝、文件未生成。
 
 **修复批次读数（2026-08-03，minimax:MiniMax-M3 warm）**：L0 **70/70**（首轮 65/70，5 条全修）；
 L1 发现轨原始 evidence unit **425/468**，扣掉 6 条网关伤亡后 **431/468**（首轮 400/458）；

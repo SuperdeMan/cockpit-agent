@@ -207,6 +207,12 @@ L1 有 `no-hints/no-skills/no-exemplars/empty-history`；L2 另加 `cloud-direct
 
 **默认产物是范例与知识，不是正则。** 写错一条范例只是噪声，写错一条 hint 是事故。
 
+**换出 gate 预选池 ≠ 缺陷收口**（2026-08-03 立的判据，规格 §22.7）：
+问一句「**这条红是因为用例难，还是因为被测对象错**」。前者留在门禁里；
+后者可以换出预选池（池规模由 `validate_gate_candidate_count` 钉死，只能等量换），
+但**用例必须留在 discovery 继续跑、缺陷必须逐条立卡——账不许消失**。
+禁止的是：删红用例、放宽 gold、下调 `min_cases`、改规模口径。
+
 | 症状 | 落点 |
 |---|---|
 | 单句落错域 | `skills/exemplars/<domain>.yaml` 加范例（**说法必须避开评测语料原句** —— 用原句等于把 unseen 洗成 seen） |
@@ -283,9 +289,16 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 - **L3 选集非空、结构化结果完整、且来自本次调用**（唯一 run 目录 + invocation id + 开始时间核对）；
 - 已有 baseline 时不得带逐例回退。
 
-**当前命令暂未获准执行。** 除 L3 证据与 stable 规模（唯一输入 104 < 120）外，评审 §9 还要求
-先锁死正式 baseline 的比较源、补全 gold 摘要，并闭合 Planner 重试 raw 与 L3 run/code/lock
-身份。上面的命令是最终形态，不是当前可执行的放行指令。
+**当前命令暂未获准执行。** 剩余前置**两条**（2026-08-03 晚更新——评审 §9 的 P0/P1
+与 stable 规模均已收口，唯一输入现为 **122**）：
+
+1. **L3 证据未取得**——既有 e2e 运行器在本机 `lease_protocol` / `identity_cleanup` 失败，
+   属运行器的账，不是对抗套件的；
+2. **现有 stable 集合里有两条稳定红**（`ex.homophone.aircon` / `nq.umbrella.both`，
+   评审 §10.14.4）——**这条比 L3 更硬**，它是被测对象自己的红。
+   资格闸的 `无 stable_fail` 一项因此当前必然不满足。
+
+上面的命令是最终形态，不是当前可执行的放行指令。
 
 ---
 
@@ -324,7 +337,9 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 | P1 | **23 条改标 seen 后 unseen 覆盖变薄** | stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条。补法是**新写真正没进过知识的话术**，不是把标签改回去 |
 | P1 | **A4 83.3% / A9 83.0%** | 两个最弱攻击族（其余 ≥89%，A2/A8 已 100%） |
 | P2 | **L3 证据** | 属 e2e 运行器的账（`lease_protocol` / `identity_cleanup`），不是对抗套件的。它是正式 baseline 的另一个前置 |
-| P2 | **「有点热」落 `hvac.inc`** | 方向反了（gold 要 dec/set/on）。`unstable` 不进修复清单，但**体感冷热搞反是用户当场能发现的那种错** |
+| P2 | **「有点热」落 `hvac.inc`** | 方向反了（gold 要 dec/set/on）。`unstable` 不进修复清单，但**体感冷热搞反是用户当场能发现的那种错**。2026-08-03 已把 `ex.colloquial.hot` 换出 gate 预选池（用例留在 discovery 继续跑，账没消失） |
+| P2 | **三条够不上晋级的候选** | `cp.hvac-news.swapped`（B 趟 relation.clause_commute 红）、`nq.hvac.reported`（A 趟红）、`nq.match.lastweek`（A 趟 unstable）。都仍在预选池里，**下次晋级先看它们**——按规矩要两趟独立进程都过 |
+| P2 | **`cp.adaptive.weather-outing` 两趟都过却晋不了** | 它声明了 `l3` 而 L3 证据未取得。L3 那条账一旦还上，这条可直接晋级（唯一输入 122 → 123） |
 
 **下一步最省力的路径**：P0 已从「语料规模」换成「产品侧的两条稳定红」——
 `ex.homophone.aircon`（同音字落到另一个车控对象）按 M5 范式修法是投**范例**
