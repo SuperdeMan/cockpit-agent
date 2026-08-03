@@ -148,20 +148,40 @@ class TracingRouteHints:
         self.delegate = delegate
         self.sink = sink
 
-    def apply(self, plan, text: str, agent_map: dict) -> bool:
+    def _enumerate(self, text: str, agent_map: dict) -> tuple[HintMatch, ...]:
+        """命中名单。**枚举不出来就交空名单，绝不打断被观察的那次调用。**
+
+        `no-hints` 消融臂把 `_route_hints` 换成 `_NoRouteHints`（只有 `apply`），
+        于是 `delegate._ordered_hints` 直接 `AttributeError`——**又一次把整趟全量打死**
+        （2026-08-03 实测，这条路只在 `--ablations on-failure` 下可达，而发现轨主跑
+        一直是 `off`，所以从没被走到）。那是**合法的替身**，不是错误：它就该报「一条
+        hint 都没有」。同款判据见 `attach_validation_trace` 的兜底段。
+        """
+        if not (hasattr(self.delegate, "_ordered_hints")
+                and hasattr(self.delegate, "_match")):
+            return ()
         matches: list[HintMatch] = []
-        for agent_id, hint in self.delegate._ordered_hints(agent_map):
-            if self.delegate._match(hint, text) is None:
-                continue
-            policy = (hint.policy or "replace").lower()
-            matches.append(HintMatch(agent_id, str(hint.intent), policy,
-                                     int(hint.priority or 0)))
-            if policy != "append":
-                break
+        try:
+            for agent_id, hint in self.delegate._ordered_hints(agent_map):
+                if self.delegate._match(hint, text) is None:
+                    continue
+                policy = (hint.policy or "replace").lower()
+                matches.append(HintMatch(agent_id, str(hint.intent), policy,
+                                         int(hint.priority or 0)))
+                if policy != "append":
+                    break
+        except Exception as exc:                       # noqa: BLE001
+            self.sink.trace_errors.append(
+                f"hint_enumeration {type(exc).__name__}: {exc} | text={text[:40]!r}")
+            return ()
+        return tuple(matches)
+
+    def apply(self, plan, text: str, agent_map: dict) -> bool:
+        matches = self._enumerate(text, agent_map)
         before = snapshot_plan(plan)
         hit = self.delegate.apply(plan, text, agent_map)
         self.sink.hints.append(HintTrace(
-            text=text, matches=tuple(matches), before=before,
+            text=text, matches=matches, before=before,
             after=snapshot_plan(plan), hit=hit))
         return hit
 

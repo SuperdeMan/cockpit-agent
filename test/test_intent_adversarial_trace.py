@@ -329,3 +329,42 @@ def test_the_probe_never_kills_the_run_on_malformed_model_output():
     assert plan is not None, "生产的返回值必须原样透出——观察不该改变被观察的行为"
     assert sink.validations == [], "取不到候选就记成没观测，不许伪造一份"
     assert sink.trace_errors and "TypeError" in sink.trace_errors[0]
+
+
+def test_the_hint_probe_survives_the_no_hints_ablation_stand_in():
+    """反向构造：`no-hints` 消融臂把 `_route_hints` 换成只有 `apply` 的替身。
+
+    实测：`TracingRouteHints` 直接 `delegate._ordered_hints(...)` → `AttributeError`
+    **把整趟 L1 全量打死**。这条路只在 `--ablations on-failure` 下可达，而发现轨主跑
+    一直是 `off`——**没跑过的分支不算实现过**，它已经躺在那儿好几批了。
+
+    替身是**合法**的：它就该报「一条 hint 都没有」，不是错误。
+    """
+    from support.intent_adversarial_runtime import _NoRouteHints
+    from support.intent_adversarial_trace import TraceSink, TracingRouteHints
+
+    plan = Plan(steps=[Step(id="s1", agent_id="chitchat", endpoint="c:1",
+                            intent="chitchat.talk")])
+    sink = TraceSink()
+    wrapped = TracingRouteHints(_NoRouteHints(), sink)
+
+    assert wrapped.apply(plan, "附近的充电站", {}) is False
+    assert len(sink.hints) == 1, "证据仍要留下：before/after 一样是这一轮的事实"
+    assert sink.hints[0].matches == () and sink.hints[0].hit is False
+    assert sink.trace_errors == [], "缺 `_ordered_hints` 是合法替身，不该记成探针出错"
+
+    # 枚举过程真的抛异常时：记 trace_errors，但仍然委派、仍然留证据
+    class _Exploding:
+        def _ordered_hints(self, _agent_map):
+            raise RuntimeError("hint 表这次是坏的")
+
+        def _match(self, _hint, _text):
+            return None
+
+        def apply(self, _plan, _text, _agent_map):
+            return True
+
+    sink2 = TraceSink()
+    assert TracingRouteHints(_Exploding(), sink2).apply(plan, "x", {}) is True
+    assert len(sink2.hints) == 1 and sink2.hints[0].matches == ()
+    assert sink2.trace_errors and "hint_enumeration" in sink2.trace_errors[0]
