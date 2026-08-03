@@ -1128,3 +1128,80 @@ def test_a_finished_run_is_never_lost_to_a_console_encoding_error(tmp_path, monk
     raw = _GbkOut()
     with pytest.raises(UnicodeEncodeError):
         raw.write("摘要里有一个 \u26a0 符号\n")
+
+
+# ── 选集口径（2026-08-03，运行手册 §10 的 P3）─────────────────────────────
+# 「`--tag composition` 会把 cp.adaptive.* 与 *.swapped 一起带进来，读子集报告前
+# 得先看 --list」——修法是让报告自己说，不是改选择语义（那会破坏既有命令）。
+
+from eval_intent_adversarial import (  # noqa: E402
+    format_selection_provenance, selection_provenance,
+)
+
+
+def _prov(cases, argv, suite):
+    return selection_provenance(cases, parse_args(argv), suite)
+
+
+def test_selection_provenance_total_always_equals_the_real_selection():
+    """**口径与实际选集必须同源。**
+
+    这是这类功能最容易腐坏的地方：口径重算一遍过滤逻辑，两边慢慢走样，
+    最后报告说「选了 A」而实际跑的是 B——而那种错没有任何红灯会发现。
+    """
+    cases = [_case("a", tags={"attacks": ["A4"], "mechanisms": ["composition"]}),
+             _case("b", tags={"attacks": ["A1"], "mechanisms": ["parallel"]}),
+             _case("c", status="stable", tags={"attacks": ["A4"]}, risk="high")]
+    suite = _suite(("reviewed", "stable"), ("reviewed", "stable"))
+    for argv in ([], ["--tag", "A4"], ["--risk", "high"], ["--case", "a"],
+                 ["--cohort", "unseen_transfer"], ["--tag", "composition"]):
+        assert (_prov(cases, argv, suite)["selected_total"]
+                == len(select_cases(cases, parse_args(argv), suite))), argv
+
+
+def test_full_run_prints_no_selection_lines():
+    """无过滤器时一行都不打——口径行是给子集用的，全量跑批不该被它加噪声。"""
+    cases = [_case("a"), _case("b")]
+    prov = _prov(cases, [], _suite(("reviewed",), ("reviewed",)))
+    assert prov["is_subset"] is False
+    assert format_selection_provenance(prov) == []
+
+
+def test_relation_bases_pulled_in_are_named_not_just_counted():
+    """选中 variant 会自动带上 base（必须带，否则 relation 裁不了）——
+    但那几条是怎么进来的，读的人此前无从知道。"""
+    base = _case("base", family="fam", tags={"mechanisms": ["parallel"]})
+    variant = _case("variant", family="fam", tags={"mechanisms": ["commute"]},
+                    relation=RelationSpec("base", "clause_commute", {}))
+    suite = _suite(("reviewed",), ("reviewed",))
+    prov = _prov([base, variant], ["--tag", "commute"], suite)
+    assert prov["matched_by_filters"] == 1
+    assert prov["selected_total"] == 2
+    assert prov["relation_bases_added"] == ["base"]
+    rows = "\n".join(format_selection_provenance(prov))
+    assert "这是子集" in rows and "base" in rows
+
+
+def test_mechanism_mix_exposes_that_one_tag_spans_several_sub_families():
+    """P3 抱怨的那件事本身：`composition` 看起来像「组合那一族」，
+    实际 adaptive 与 commute 都在里面。分布摊开就一眼看得见。"""
+    cases = [
+        _case("p", tags={"mechanisms": ["composition", "parallel"]}),
+        _case("a", tags={"mechanisms": ["composition", "adaptive"]}),
+        _case("c", tags={"mechanisms": ["composition", "commute"]}),
+    ]
+    prov = _prov(cases, ["--tag", "composition"], _suite(("reviewed",), ("reviewed",)))
+    assert prov["mechanism_mix"]["composition"] == 3
+    assert prov["mechanism_mix"]["adaptive"] == 1
+    rows = "\n".join(format_selection_provenance(prov))
+    assert "机制分布" in rows and "adaptive" in rows and "commute" in rows
+
+
+def test_a_tag_hitting_several_tag_keys_is_flagged():
+    """同一个词同时命中 mechanisms 与 domains 时要出警告——
+    选中的未必是你以为的那一族。"""
+    cases = [_case("x", tags={"mechanisms": ["safety"], "domains": ["safety"]})]
+    prov = _prov(cases, ["--tag", "safety"], _suite(("reviewed",), ("reviewed",)))
+    assert prov["tag_hits"]["safety"]["matched_tag_keys"] == {"domains": 1,
+                                                             "mechanisms": 1}
+    assert "同时命中了多个 tag 键" in "\n".join(format_selection_provenance(prov))

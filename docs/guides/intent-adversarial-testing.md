@@ -80,6 +80,20 @@ python test/eval_intent_adversarial.py --suite gate --layer l0 --list
 输出里 `distinct_inputs=` 才是**规模**，`selected=` 只是条数。
 两个数差得多说明语料里有重复输入（会列出重复组），**同输入只计一个规模单位**。
 
+**用了任何过滤器时，选集会自报口径**（2026-08-03 新增，`--list` 与跑批摘要都打，
+也进 JSON 的 `meta.selection_provenance`）：
+
+```
+[选集] **这是子集，不是全量** 过滤器={"tag": ["commute"]} 命中 9 条 → 实际选中 17 条
+[选集] 其中 8 条是 relation 对照自动带上的（不带就裁不了 relation）: cp.air-index.base, ...
+[选集] 机制分布（同一个 tag 常被多个子族共用）: {"composition": 51, "parallel": 26, "adaptive": 9, "commute": 9, ...}
+```
+
+三行各回答一个此前只能靠先跑一次 `--list` 才知道的问题：**这是不是子集**、
+**多出来的条目是怎么进来的**、**这个 tag 到底覆盖了几个子族**
+（`--tag composition` 看起来像「组合那一族」，实际 `adaptive` 与 `commute` 都在里面）。
+全量跑批时这几行一个都不打，不给无过滤器的跑批添噪声。
+
 ### 3.2 L0：零网络硬门禁（改任何语料/知识资产后必跑）
 
 ```bash
@@ -293,7 +307,7 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 > 固定 provider 全量（L1+L2 都跑了）· 消融 arm · seen 掉的那条 · 依赖组合漏步 ·
 > `parking.query_fee` 缺能力 ·「看不清路」· 三轮独立复审的全部 P0/P1 ·
 > **`clause_commute` 口径裁定**（评审 §10.12）· **「恰好 N 次副作用」契约字段**
-> （`safety.side_effect_counts`，评审 §10.7 记的缺口）。
+> （`safety.side_effect_counts`，评审 §10.7 记的缺口）· **`--tag` 选集自报口径**（§3.1）。
 
 | 优先级 | 待办 | 说明 |
 |---|---|---|
@@ -303,7 +317,6 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 | P1 | **A4 83.3% / A9 83.0%** | 两个最弱攻击族（其余 ≥89%，A2/A8 已 100%） |
 | P2 | **L3 证据** | 属 e2e 运行器的账（`lease_protocol` / `identity_cleanup`），不是对抗套件的。它是正式 baseline 的另一个前置 |
 | P2 | **「有点热」落 `hvac.inc`** | 方向反了（gold 要 dec/set/on）。`unstable` 不进修复清单，但**体感冷热搞反是用户当场能发现的那种错** |
-| P3 | **`--tag` 选集比看上去宽** | `--tag composition` 会把 `cp.adaptive.*` 与 `*.swapped` 一起带进来。读子集报告前先看 `--list` 的 `selected=` |
 
 **下一步最省力的路径**：P0 只剩语料规模一条——纯写作 + 两趟 live 晋级。
 

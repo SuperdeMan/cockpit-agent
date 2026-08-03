@@ -208,23 +208,42 @@ def validate_args(args: argparse.Namespace) -> argparse.Namespace:
 # ── 选择 ───────────────────────────────────────────────────────────────────
 
 
-def _tag_matches(case, wanted: str) -> bool:
-    """一个 `--tag` 既可命中 list/scalar 的值，也可命中值为真的 tag key。"""
+def _tag_match_keys(case, wanted: str) -> tuple[str, ...]:
+    """一个 `--tag` 命中了哪些 tag 键。
+
+    **同一个词可以同时命中 `mechanisms` 和 `domains`**——`--tag composition` 看起来像
+    「组合那一族」，实际把 `cp.adaptive.*` 与 `*.swapped` 一起带进来了。
+    键名要报出来，读子集报告的人才知道自己选中的到底是什么。
+    """
+    keys = []
     for key, value in (case.tags or {}).items():
         if key == wanted and value is True:
-            return True
-        if isinstance(value, (list, tuple, set)):
+            keys.append(key)
+        elif isinstance(value, (list, tuple, set)):
             if wanted in {str(v) for v in value}:
-                return True
+                keys.append(key)
         elif str(value) == wanted:
-            return True
-    return False
+            keys.append(key)
+    return tuple(keys)
 
 
-def select_cases(cases: list, args: argparse.Namespace,
-                 suite: contract.SuiteConfig) -> list:
+def _tag_matches(case, wanted: str) -> bool:
+    """一个 `--tag` 既可命中 list/scalar 的值，也可命中值为真的 tag key。"""
+    return bool(_tag_match_keys(case, wanted))
+
+
+def _statuses_for(args: argparse.Namespace,
+                  suite: contract.SuiteConfig) -> set[str]:
     live = args.layer in LIVE_LAYERS or args.layer == "all"
-    statuses = set(suite.live_statuses if live else suite.statuses)
+    return set(suite.live_statuses if live else suite.statuses)
+
+
+def _filter_cases(cases: list, args: argparse.Namespace,
+                  suite: contract.SuiteConfig) -> list:
+    """纯过滤，不补 relation base。**选集口径与实际选集必须走同一份代码**——
+    重写一遍过滤逻辑来算口径，两边迟早走样，而走样的样子是「报告说选了 A，实际跑了 B」。
+    """
+    statuses = _statuses_for(args, suite)
     out = []
     for case in cases:
         if case.status not in statuses:
@@ -238,7 +257,89 @@ def select_cases(cases: list, args: argparse.Namespace,
         if args.risk and case.risk not in set(args.risk):
             continue
         out.append(case)
-    return _with_relation_bases(out, cases, statuses)
+    return out
+
+
+def select_cases(cases: list, args: argparse.Namespace,
+                 suite: contract.SuiteConfig) -> list:
+    return _with_relation_bases(_filter_cases(cases, args, suite), cases,
+                                _statuses_for(args, suite))
+
+
+def selection_provenance(cases: list, args: argparse.Namespace,
+                         suite: contract.SuiteConfig) -> dict[str, Any]:
+    """选集是怎么来的。**子集报告最容易被当成全量读。**
+
+    两处让选集比看上去宽：① 一个 `--tag` 会同时命中 `mechanisms`/`domains`/`attacks`
+    里的任一处；② 选中 relation variant 时它的 base 被**自动带上**（必须带，否则
+    relation 根本裁不了，但读的人不知道那几条是怎么进来的）。
+
+    这两件事此前只能靠人先跑一次 `--list` 去发现。现在报告自己说。
+    """
+    filtered = _filter_cases(cases, args, suite)
+    final = select_cases(cases, args, suite)
+    filtered_ids = {case.id for case in filtered}
+    tag_hits = {}
+    for tag in (args.tags or []):
+        keys: dict[str, int] = {}
+        for case in filtered:
+            for key in _tag_match_keys(case, tag):
+                keys[key] = keys.get(key, 0) + 1
+        tag_hits[tag] = {"cases": sum(1 for case in filtered
+                                      if _tag_matches(case, tag)),
+                         "matched_tag_keys": dict(sorted(keys.items()))}
+    filters = {name: value for name, value in (
+        ("case", list(args.cases or [])), ("tag", list(args.tags or [])),
+        ("cohort", args.cohort or ""), ("risk", list(args.risk or [])),
+    ) if value}
+    # 选集内的机制分布。`--tag composition` 的问题不是「命中了多个 tag 键」，而是
+    # **同一个 mechanisms 值被多个子族共用**——它看起来像「组合那一族」，实际把
+    # `cp.adaptive.*` 与 `*.swapped` 一起带进来了。把分布摊开，一眼就看得见。
+    mechanism_mix: dict[str, int] = {}
+    for case in final:
+        for mech in (case.tags.get("mechanisms") or []):
+            mechanism_mix[str(mech)] = mechanism_mix.get(str(mech), 0) + 1
+    return {
+        "is_subset": bool(filters),
+        "filters": filters,
+        "tag_hits": tag_hits,
+        "mechanism_mix": dict(sorted(mechanism_mix.items(),
+                                     key=lambda kv: (-kv[1], kv[0]))),
+        "statuses_in_scope": sorted(_statuses_for(args, suite)),
+        "matched_by_filters": len(filtered),
+        "relation_bases_added": sorted(case.id for case in final
+                                       if case.id not in filtered_ids),
+        "selected_total": len(final),
+    }
+
+
+def format_selection_provenance(provenance: dict[str, Any]) -> list[str]:
+    """→ 人读的行。全量跑批时只有一行，不给无过滤器的跑批添噪声。"""
+    if not provenance.get("is_subset"):
+        return []
+    filters = provenance.get("filters") or {}
+    rows = [f"[选集] **这是子集，不是全量** 过滤器="
+            f"{json.dumps(filters, ensure_ascii=False, sort_keys=True)}"
+            f" 命中 {provenance.get('matched_by_filters', 0)} 条"
+            f" → 实际选中 {provenance.get('selected_total', 0)} 条"]
+    added = provenance.get("relation_bases_added") or []
+    if added:
+        rows.append(f"[选集] 其中 {len(added)} 条是 relation 对照自动带上的"
+                    f"（不带就裁不了 relation）: {', '.join(added[:8])}"
+                    + (" ..." if len(added) > 8 else ""))
+    for tag, hit in (provenance.get("tag_hits") or {}).items():
+        keys = hit.get("matched_tag_keys") or {}
+        if len(keys) > 1:
+            rows.append(f"[选集] ⚠ --tag {tag} 同时命中了多个 tag 键 "
+                        f"{json.dumps(keys, ensure_ascii=False, sort_keys=True)}"
+                        f"——选中的未必是你以为的那一族")
+    mix = provenance.get("mechanism_mix") or {}
+    if len(mix) > 1:
+        head = dict(list(mix.items())[:10])
+        rows.append(f"[选集] 机制分布（同一个 tag 常被多个子族共用）: "
+                    f"{json.dumps(head, ensure_ascii=False)}"
+                    + (f" …共 {len(mix)} 种" if len(mix) > 10 else ""))
+    return rows
 
 
 def _with_relation_bases(selected: list, all_cases: list, statuses: set) -> list:
@@ -865,6 +966,9 @@ def _print_selection(cases, suite, args, contract_errors) -> int:
         return 0
     print(f"suite={args.suite} layer={args.layer} selected={len(cases)} "
           f"distinct_inputs={contract.distinct_input_units(cases)}")
+    for row in format_selection_provenance(selection_provenance(
+            contract.load_cases(CASES_DIR), args, suite)):
+        print(row)
     duplicates = contract.duplicate_input_groups(cases)
     if duplicates:
         print(f"duplicate inputs: {len(duplicates)} 组"
@@ -1030,6 +1134,8 @@ def main(argv: list[str] | None = None) -> int:
         "selected_statuses": sorted({case.status for case in selected}),
         "coverage_gaps": gaps,
         "selection_filters": filters,
+        # 选集口径进报告文件本身：报告会被单独传阅，而「这是子集」是读它的前提。
+        "selection_provenance": selection_provenance(all_cases, args, suite),
         "repeat_override": int(args.repeat or 0),
         "corpus_cases": len(all_cases),
         "selected_cases": len(selected),
@@ -1210,6 +1316,9 @@ def _print_summary(report: dict) -> None:
     print(f"units={report['overall']['total']} passed={report['overall']['passed']} "
           f"cases={meta.get('selected_cases', 0)} "
           f"distinct_inputs={meta.get('distinct_input_units', 0)}")
+    # 子集口径打在指标**前面**：读的人绕不过去。放在后面等于指望人读完再回头改口径。
+    for row in format_selection_provenance(meta.get("selection_provenance") or {}):
+        print(row)
     for name in ("exact_plan_set_rate", "required_group_recall",
                  "forbidden_route_rate", "planner_capability_hallucination_rate",
                  "post_validation_escape_rate", "instability_rate",
