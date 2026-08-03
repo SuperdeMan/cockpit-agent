@@ -1030,11 +1030,11 @@ L1 首轮的主要读数（逐条证据在 gitignore 的 `_ci-run-intent-adversa
 
 | 原未达项 | 现状 |
 |---|---|
-| L3 证据未取得、正式 baseline 未生成 | **仍未取得**；但资格闸本身已修好（P0-1/P1-6），不再依赖「碰巧写不进去」当保护 |
+| L3 证据未取得、正式 baseline 未生成 | **仍未取得**；唯一目录/mtime/exit/provider/selection 已核，但第三批独立复审 §9 确认 baseline 比较源/gold 摘要仍有 P0，L3 run/code/lock 身份仍有 P1，不得写“baseline-ready” |
 | stable 规模 113 < 120 | **实为 104**（按唯一输入算）。原来的 113 掩盖了 9 个重复输入 |
-| L2 只有 7 条 | 条数不变，但 5 条只有 safety gold 的已补齐 intent/decision/agent call/pending state，2 条改成真多轮 |
+| L2 只有 7 条 | 条数不变；Engine 字段、2 条真多轮与 `engine.observed` fail-closed 已由第三批反向测试关闭 |
 | 9 条降回 candidate | 不变 |
-| 定向消融只在门禁轨开 | 不变；新增的 `cloud-direct`/`planner-only` 两条 arm 已接通但未在真实失败上跑过 |
+| 定向消融只在门禁轨开 | layer 适用性已修，`cloud-direct`/`planner-only` 两条 arm 已接通；仍未在固定 provider 的真实失败上形成新鲜证据 |
 
 ### 22.3 §21.10 的判据第二次适用
 
@@ -1045,3 +1045,41 @@ L1 首轮的主要读数（逐条证据在 gitignore 的 `_ci-run-intent-adversa
 
 > 每加一个「拿不到结果」的分支，先问它会被记成什么；
 > **每加一个默认值，先问「没有证据」和「证据为否」会不会被它压成同一个数**。
+
+### 22.4 修复批次独立复审（2026-08-03）
+
+修复提交 `24672f9`（复审同时纳入后续两条 live 假绿守卫 `9219016`）的独立复审见评审报告
+§8。裁定为 **4/12 完整关闭，8/12 部分关闭**，
+仍有 **2 P0 / 5 P1**；因此 §22.2 中“资格闸本身已修好”和“5 条 L2 已补齐证据”的表述
+只记录修复方实现意图，不再作为验收结论。
+
+两个仍可假绿的 P0：
+
+1. baseline 不检查 planner 幻觉率、同 ID gold 削弱和 L3 声明/link 完整性；
+2. `expected.engine` 声明存在但实际没到 Engine 时，judge 跳过整组断言。
+
+在这两条关闭前，`--write-baseline` 必须继续视为未获准使用；不能因 L3 当前碰巧拿不到证据而
+把资格闸当成安全。其余指标分母、L1 首偏离、relation-only 失败复跑、L3 证据身份与唯一输入
+coverage 的 P1 同样先补反向构造，再取得 live 新读数。
+
+### 22.5 第三批修复独立复审（2026-08-03）
+
+第三批 `8f06db5` 处理 §8 的 2 P0 / 5 P1，`cd3646b` 随后按唯一输入补出第二条真实
+`trunk.open` 正例；专项测试为 `201 passed`。独立复审见评审报告 §9，接受以下项目关闭：
+
+- `engine.observed` fail-closed；
+- exact/replan 与 plan/live 指标分母；
+- L1 首偏离的 layer 适用性；
+- relation-only 失败扩跑；
+- L3 声明/link、provider/selection，以及 coverage 唯一输入计数。
+
+当前仍有 **2 P0 / 2 P1**：
+
+1. `--write-baseline` 可用自定义/不存在的 `--baseline` 绕开既有正式基线比较；
+2. `gold_digest` 漏掉 addressed/assert-plan/complexity/dependency/slot/replan/retrieval 等真实裁判字段；
+3. 两次 build attempt 的 `raw_planner_pass` 误取第一次候选；
+4. L3 report 尚未回读核对 run/code/lock 身份。
+
+因此 §13.3 的 baseline 规则仍未完全实现。L0 当前为 `70/70`，没有 plan/live 证据的指标已正确
+显示 `null`；gate 仍只有 104 个唯一 stable 输入，低于 120。固定 provider 的 L1/L2/L3 新鲜
+全量报告取得前，不得用旧读数证明新口径质量。

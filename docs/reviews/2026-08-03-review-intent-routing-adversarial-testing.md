@@ -4,6 +4,9 @@
 > 评审对象：`26f59e1..de6ef22`，重点核对
 > `2026-08-02-intent-routing-adversarial-testing.md`、实施计划、运行器、语料与既有运行产物
 > 结论：**不通过“首期对抗测试体系已完成”的验收；可保留为 discovery 工具，暂不可作为正式 gate / baseline 尺子**
+>
+> **当前裁定入口是 §9**：复审已推进到 `cd3646b`，首轮多数问题已关闭，现存
+> **2 P0 / 2 P1**。§1-§8 保留各时间点证据，不代表当前剩余数量。
 
 ## 1. 结论先行
 
@@ -311,7 +314,7 @@ alias/多断言合并且只计一个规模单位；重新晋级并重算 seen/un
 ## 7. 修复批次（2026-08-03，尺子自身）
 
 本节由修复方回写。**逐条修复都配一个反向构造测试：先注入这条评审描述的缺陷，证明修完
-之后它会红。** 专项单测 120 → 172（+52），全部通过；生产路由/Skill/Exemplar/Hint/manifest/
+之后它会红。** 专项单测 120 → 178（+58），全部通过；生产路由/Skill/Exemplar/Hint/manifest/
 `.env`/CI 一个字节未改——这批只动尺子。
 
 ### 7.1 逐条对照
@@ -352,7 +355,7 @@ alias/多断言合并且只计一个规模单位；重新晋级并重算 seen/un
 
 ### 7.3 仍未收口（诚实清单）
 
-- **L1/L2/L3 未重跑。** 本批全部验证在 L0（零网络、确定性，70/70 通过、退出码 0）与 172 条
+- **L1/L2/L3 未重跑。** 本批全部验证在 L0（零网络、确定性，70/70 通过、退出码 0）与 178 条
   专项单测上完成。`exact_plan_set_rate`、seen/unseen、`instability_rate`、`planner_capability_
   hallucination_rate` 的**新口径读数需要一次固定 provider 的 live 全量**才存在——本报告
   §1 列的那些旧数字**依然不可引用**，修好口径不等于有了新读数。
@@ -368,10 +371,218 @@ alias/多断言合并且只计一个规模单位；重新晋级并重算 seen/un
 ### 7.4 复核方式
 
 ```powershell
-# 专项单测（172）
-python -m pytest test/test_intent_adversarial_*.py test/test_eval_intent_adversarial_cli.py -q
+# 专项单测（178；显式列目录，PowerShell 不展开传给 pytest 的 *）
+python -m pytest test/test_build_intent_adversarial_candidates.py test/test_intent_adversarial_contract.py test/test_intent_adversarial_judge.py test/test_intent_adversarial_report.py test/test_intent_adversarial_runtime.py test/test_intent_adversarial_trace.py test/test_eval_intent_adversarial_cli.py -q --import-mode=importlib
 # L0 全量（零网络，应 70/70、exit 0）
 python test/eval_intent_adversarial.py --suite discovery --layer l0
 # 门禁 strict（应因唯一输入 104 < 120 退出非零，且打印的是唯一输入数不是条数）
 python test/eval_intent_adversarial.py --suite gate --layer l0 --strict
 ```
+
+---
+
+## 8. 修复批次独立复审（2026-08-03）
+
+> 复审对象：尺子修复提交 `24672f9`，并纳入随后补充两条 live 假绿守卫的 `9219016`。
+> 结论：**不接受“12 条全部收口”**。4 条已完整关闭，8 条只关闭了原问题的一部分；
+> 当前仍有 **2 条 P0 / 5 条 P1**。下方 P2 文档问题已在本次复审记录中直接订正。
+
+### 8.1 新鲜证据
+
+| 项 | 结果 |
+|---|---|
+| 当前提交快照专项测试 | `187 passed in 26.49s`（`9219016`） |
+| L0 discovery | `70/70`，exit 0 |
+| strict gate | `18/18`；因唯一输入 `104 < 120` 正确 exit 1 |
+| baseline 反向构造 | 幻觉率 100% 的全绿报告仍 `eligible=True`；削弱同 ID gold 后 baseline diff 仍为空 |
+| L2 反向构造 | 声明 `expected.engine`、实际 `engine_observed=False` 时整组 Engine gold 被跳过，合成 case `passed=True` |
+| relation 反向构造 | medium relation-only 失败只跑 1 次，最终被记成 `unstable` |
+| L3 反向构造 | 新鲜文件内写错 provider/model/code SHA/selection，`read_l3_report()` 仍返回 `pass` |
+| coverage 盘点 | `trunk.open` 正例账面 2 条，唯一输入只有 1 条（同一句“打开后备箱”重复计数） |
+
+`9219016` 新增“语义检索中途降级”与“fallback 计划冒充 planner 判断”两条守卫；专项测试
+从 178 增至 187。本复审在该提交后重放全部反例，下面 2 P0 / 5 P1 结论均未被这两条守卫改变。
+
+### 8.2 Findings
+
+#### P0-A：baseline 闸仍允许“全绿但不合资格”的证据成为正式基线
+
+`baseline_eligibility()` 没有检查 `planner_capability_hallucination_rate`。合成报告的
+overall/repeat/L3/完整性全部为绿、幻觉率为 `1/1` 时，资格结果仍是
+`BaselineEligibility(eligible=True)`，违反 §13.2 的 gate hallucination 必须为 0。
+
+同一条闸还存在两条完整性缺口：
+
+- `diff_against_baseline()` 只比较同 ID 的 `passed` 布尔值；删除 forbidden gold、放宽
+  allow-extra 或改 relation 后仍然看不见，无法兑现“gold 修正必须列出”；
+- `_expected_units()` 只给存在 journey link 的 L3 case 建声明单元。一个 case 仍声明
+  `layers: [l3]` 但 link 被删/写错时，会同时从 expected 与 produced 集合消失；只要还有
+  另一条 L3，`l3_empty` 也不会阻断。
+
+因此 P0-1 的参数过滤、重复策略和写入顺序已修，但“完整 stable 声明集/合格 baseline”仍未闭环。
+
+#### P0-B：`expected.engine` 在最需要它时 fail-open
+
+`judge_engine()` 在 `actual.engine_observed=False` 时直接 return，不生成失败断言。合成 case
+声明 `required_agent_calls` 与 `pending_confirm_after=true`，实际在 Edge 本地结束、没有到
+Engine，仍只留下 decision/replan/safety 三条绿断言，整轮通过。
+
+这使新增的 Engine gold 不能证明“完整链真的被观测到”，并可让补槽轮这类允许
+`decision=execute`、没有 plan gold 的 L2 用例假绿。应先断言 `engine_observed=true`，再裁
+agent calls 与 pending state；未到 Engine 不是“不适用”。
+
+#### P1-A：指标仍把“未断言/未观测”写成绿，且漏掉 replan 数量
+
+- `_metrics_for()` 的 exact 子集只匹配 `plan.` / `replan[`，不含 `replan_count`。实测
+  turn 因多出一次 replan 而失败，`exact_plan_set` 仍为 1；
+- judge 无 plan gold 时仍无条件写入 recall=1、forbidden=0、overroute=0、dependency=1，
+  所以 L0 新鲜输出仍显示 `required_group_recall=70/70`；
+- post-validation escape 没有 `validation_observed`，L0 会进入逃逸率分母；反过来 catalog
+  为空时，真实 raw/accepted 非空却被同时排除在幻觉率和逃逸率分母外；
+- raw/accepted 只各保存一组，含 replan 的案例会把最后一次 validation raw 与初始 plan
+  混在同一结果里。
+
+P1-1/P1-3 只完成了指标改名和部分分母修正，新口径仍不可发布。
+
+#### P1-B：L1 的首偏离标签结构上仍只能是 `UNCLASSIFIED`
+
+`first_divergence()` 固定先检查 L2 专属的 `engine_direct_pass` 与
+`planner_post_hint_pass`；L1 按设计不运行这两臂，所以二者永远是 `None`，函数在看到后续
+`empty_history_pass=True` 之前就返回 `UNCLASSIFIED`。按 layer 选择消融臂已经修好，但首偏离
+排序没有按 layer 跳过“不适用”边界，L1 的 context/retrieval/hint/validation/planner 仍不可达。
+
+#### P1-C：relation-only 失败仍不会触发失败扩展
+
+`_expand_failures()` 在 relation 裁决之前运行，只看绝对 gold。低/中风险 variant 若绝对 gold
+通过、relation 失败，初始 1 次不会补到 3 次；随后单次红被分类为 `unstable`。当前 143 条
+relation variant 中有 129 条是 low/medium，这不是边角路径。应让逐次 relation 裁决参与
+“是否扩展”的判定，再做最终分类。
+
+#### P1-D：L3 只校验文件新鲜度，没有校验证据身份
+
+唯一目录、mtime 与非零 exit 的修复成立；但 `read_l3_report()` 只读 `journeys[].id/status`，
+完全忽略报告内的 provider/model/run_id/code SHA/scope，且不拒绝额外 journey。调用方写进
+`meta.l3_invocation` 的这些字段只是“本次想跑什么”，不是对产物“实际跑了什么”的核对。
+新鲜但错档/错选集的报告仍可成为 L3 pass。
+
+#### P1-E：唯一输入只用于总规模，没有铺到 coverage 账
+
+`validate_suite_counts()` 已按唯一输入计总规模，但 `validate_coverage()` 仍按 case 次数给
+positive/hard-negative/relation 加一。当前 `nq.trunk.command` 与 `os.open.trunk` 用完全相同的
+输入“打开后备箱”把 `trunk.open` 的 positive 从唯一 1 条记成 2 条，恰好涂绿最低要求。
+boundary/attack 子账也应明确是否按唯一输入去重，不能只在总数上防复制冲量。
+
+#### P2-A：复核手册的命令与计数不一致（本次已订正）
+
+§7.4 原 PowerShell 命令把 `test/test_intent_adversarial_*.py` 原样传给 pytest，实测 0 tests
+并报找不到文件；即使手工展开也只有 170 条，提交说明的 178 还包含
+`test_build_intent_adversarial_candidates.py`。本节已改为显式文件列表，并统一为 178。
+
+### 8.3 裁定
+
+| 原发现 | 复审裁定 |
+|---|---|
+| P0-1 baseline 资格闸 | **部分关闭**；参数/重复/顺序已修，幻觉阈值、gold 变化、L3 link 完整性未修 |
+| P0-2 L2 安全证据 | **部分关闭**；Edge/Engine 合并与 spy 已修，Engine 未观测仍 fail-open |
+| P0-3 多轮执行 | **关闭**；三层逐轮、同会话与逐轮证据单元成立 |
+| P1-1 指标口径 | **部分关闭** |
+| P1-2 expected/actual 维度 | **关闭** |
+| P1-3 幻觉/逃逸 | **部分关闭** |
+| P1-4 trace/消融 | **部分关闭** |
+| P1-5 relation/repro | **部分关闭** |
+| P1-6 L3 新鲜度 | **部分关闭** |
+| P1-7 cohort/唯一输入 | **部分关闭** |
+| P2-1 参数退出码 | **关闭** |
+| P2-2 跨盘输出 | **关闭** |
+
+在 P0-A/P0-B 关闭前，套件仍可作为 discovery 工具和 L0 硬回归集；不得恢复
+“gate-ready / baseline-ready / 12 条全部收口”的表述。重新验收必须先加入上述反向构造，
+再跑 187+ 专项测试与固定 provider 的 L1/L2/L3 新鲜全量。
+
+---
+
+## 9. 第三批修复独立复审（2026-08-03）
+
+> 复审对象：`8f06db5`（处理 §8 的 2 P0 / 5 P1）与 `cd3646b`（补唯一输入覆盖缺口）。
+> 结论：**不接受“§8 已全部收口 / baseline-ready”**。Engine、指标分母、L1 层适用性、
+> relation 失败扩跑和唯一输入 coverage 已成立；当前仍有 **2 条 P0 / 2 条 P1**。
+
+### 9.1 新鲜证据
+
+| 项 | 结果 |
+|---|---|
+| 当前提交快照专项测试 | `201 passed in 26.25s`（`cd3646b`） |
+| L0 discovery | `70/70`，528 cases / 489 distinct inputs，exit 0；所有 plan/live 指标分母正确为 `0/0, null` |
+| strict gate | `18/18`，113 cases / 104 distinct inputs；`trunk.open` 重复输入缺口已补，仍因 `104 < 120` 正确 exit 2 |
+| baseline 来源反向构造 | `--write-baseline --baseline <不存在路径>` 仍通过参数校验；比较源与正式写入目标可以不是同一文件 |
+| gold 指纹反向构造 | 仅删除 `retrieval.required_skills` 后 `gold_digest` 逐字不变（`09746bccc4f9078b`） |
+| Planner 重试反向构造 | 第一次候选错、第二次候选正确且被接受时，`raw_planner_pass=False` |
+| L3 身份反向构造 | provider/id 对上，但 `model/code_sha/run_id/provider_lock` 明确互相矛盾的报告仍返回 `pass`，identity errors 为空 |
+
+### 9.2 Findings
+
+#### P0-A：正式 baseline 仍可绕开既有 baseline 做比较
+
+`--baseline` 是任意路径参数（`test/eval_intent_adversarial.py:134`），`validate_args()` 在
+`--write-baseline` 模式没有把它锁到正式 baseline。主流程从 `args.baseline` 读取比较源
+（`:950`），却固定写 `FORMAL_BASELINE_JSON/MD`（`:967-971`）。因此正式 baseline 一旦存在，
+仍可用下面这种正常参数组合绕开逐例回退、删除案例和 gold 变化检查：
+
+```powershell
+python test/eval_intent_adversarial.py ... --write-baseline --baseline missing.json
+```
+
+当前单测本身也在 `test/test_eval_intent_adversarial_cli.py:159` 使用了这条路径，但只验证另一条
+“单 case 不得写 baseline”的闸，没有验证既有正式 baseline 必须是唯一比较源。修法应是：
+`--write-baseline` 时忽略/拒绝自定义 `--baseline`，始终从正式 JSON 读旧基线；首次不存在才按
+“首次建立”处理。
+
+#### P0-B：`gold_digest` 只覆盖了一部分实际裁判字段
+
+`_expected_dict()`（`test/eval_intent_adversarial.py:685-719`）声称指纹覆盖“构成判定的字段”，
+实际遗漏了：
+
+- `expected.addressed` 与 `plan.assert_plan`；
+- `allowed_complexities`、dependencies、slots；
+- 每一轮 replan 的完整 plan gold（只存了数量）；
+- retrieval 的 required/forbidden skills 与 exemplars。
+
+这些字段都被 judge 真正裁判，却不进摘要。反向构造只删除一条 required skill，前后 digest
+完全相同，`_gold_changes()` 因此仍为空。现有新增测试只覆盖 forbidden、allow-extra 与 relation，
+不能证明“gold 修正必须列出”。应从完整的结构化 `TurnExpectation` 生成闭合摘要，而不是手工挑字段。
+
+#### P1-A：Planner 两次尝试的 raw 证据与最终计划没有对齐
+
+`_turn_outcome()` 把本轮所有候选并集用于幻觉率是合理的，但把
+`validations[0]` 当成 `raw_planner_pass` 的比较对象（`test/eval_intent_adversarial.py:345-354`）。
+生产 `PlanBuilder.build()` 明确最多尝试两次（`orchestrator/cloud/planning.py:370-405`）；而
+`replan()` 走 `_validated_steps()`，不会进入这个 validation trace（`:489-531`）。所以注释中
+“选第一次是为了避开 replan”与真实调用图相反：第一次可能只是被拒的失败尝试，最终计划对应的是
+最后一次被接受的候选。该错误会把 validation/planner 首偏离标签归错。幻觉率可继续取所有尝试并集，
+首偏离证据应绑定最后一个 accepted build attempt，并补“首错、次对 / 首对、次错”两向测试。
+
+#### P1-B：L3 只核对 provider 串和额外 journey，产物身份仍未闭合
+
+`read_l3_report()` 已正确拒绝错 provider 和选集外 journey，也保留了唯一目录、mtime、非零 exit
+三道守卫；这些修复成立。但函数仍只消费 `provider` 与 `journeys[].id/status`
+（`test/eval_intent_adversarial.py:496-547`），不校验报告已有的 `model`、`run_id`、
+`provider_lock.locked/drift_detected`，也没有把外层 invocation/code SHA 写入产物后回读核对。
+反向构造中这些字段明确冲突仍被采信。唯一目录降低了误读旧文件的概率，但不能把“本次想跑的身份”
+变成“产物证明的身份”；正式 baseline 的 L3 证据仍应 fail-closed。
+
+### 9.3 裁定
+
+| §8 残留 | 第三批裁定 |
+|---|---|
+| baseline 幻觉阈值与 L3 声明/link | **这两项关闭**；但比较源可绕过、gold 摘要不完整，baseline 总体仍是 P0 |
+| L2 Engine 未观测 fail-open | **关闭**；先断言 `engine.observed` 再裁 calls/pending |
+| 指标分母与 replan exact | **关闭**；L0 已不再制造 plan 指标满分 |
+| raw/accepted trace 对齐 | **仍部分关闭**；多次 build attempt 取错候选 |
+| L1 首偏离适用性 | **关闭** |
+| relation-only 失败扩跑 | **关闭** |
+| L3 新鲜度与身份 | **部分关闭**；provider/selection 已核，run/code/lock 未核 |
+| 唯一输入 coverage | **关闭**；并由 `cd3646b` 补出第二条真实 `trunk.open` 正例 |
+
+因此当前套件可以继续用于 discovery、L0 硬回归和普通 live 诊断；在 P0-A/P0-B 关闭前仍不得
+写正式 baseline。修完后至少要新增四条上述反向构造，再跑 201+ 专项测试与固定 provider 的
+L1/L2/L3 新鲜全量；“代码合入”与“新口径已量过”仍是两件事。

@@ -206,16 +206,18 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`，语料契约
 `test/eval_corpus/intent_adversarial/README.md`，
 **发现清单 + 修复批次记录** `docs/design/2026-08-02-intent-routing-adversarial-findings.md`，
-**尺子硬化记录** `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md` §7。
+**尺子硬化与独立复审记录**
+`docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md` §7 / §8 / §9。
 
-> ⚠ **先读这条再看任何数字**（2026-08-03 独立评审
-> `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`，3 P0 / 7 P1 / 2 P2；
-> **12 条已于同日全部修复**，逐条对照见该报告 §7）：
-> **口径已修，但新口径下的 live 读数还不存在。** 修好尺子不等于量过——
+> ⚠ **先读这条再看任何数字：第三批独立复审仍有 2 P0 / 2 P1。**
+> 2026-08-03 首轮评审为 3 P0 / 7 P1 / 2 P2；修复方对照见 §7，第二轮复审见 §8；
+> `8f06db5` / `cd3646b` 的当前裁定见 §9。
+> **尺子仍不可写正式 baseline，新口径下的完整 live 读数也不存在。** 修过不等于修对，修对也不等于量过——
 > `exact_plan_set_rate`、seen/unseen、`planner_capability_hallucination_rate`、
 > `instability_rate` 都要等一次固定 provider 的 L1/L2/L3 全量才有数。
 > 该报告 §1 与本文件历史版本里的旧数字**依然不可引用**。
-> 现在可用的是：L0 全量（零网络、确定性，70/70）、172 条专项单测、以及逐条按原始断言复现。
+> 现在可用的是：L0 全量（零网络、确定性，70/70，plan/live 指标为 `null`）、当前提交快照的
+> 201 条专项单测、以及逐条按原始断言复现。§9 尚未纳入单测的四条反向构造仍会失败。
 > **stable 规模按唯一输入算只有 104**（< `min_cases=120`），`--strict` 正确退出非零——
 > 原来报的 113 条里有 9 个是重复输入。
 

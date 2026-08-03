@@ -3,7 +3,7 @@
 - **类型**：常青指南（evergreen guide）。这是跑这套对抗测试、读它的数、往里加用例的唯一标准流程。
 - **适用对象**：任何要用这套尺子量落域质量、或要修一条落域 badcase 的人或 Agent。
 - **关联代码**：`test/eval_intent_adversarial.py`（入口）、`test/support/intent_adversarial_*.py`（契约/裁判/trace/运行时/报告）、`test/eval_corpus/intent_adversarial/`（语料）
-- **关联文档**：规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`（唯一真相源）、语料契约 `test/eval_corpus/intent_adversarial/README.md`、发现清单 `docs/design/2026-08-02-intent-routing-adversarial-findings.md`、独立评审与尺子硬化记录 `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`（**§7 是尺子当前形态的唯一入口**）
+- **关联文档**：规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`（唯一真相源）、语料契约 `test/eval_corpus/intent_adversarial/README.md`、发现清单 `docs/design/2026-08-02-intent-routing-adversarial-findings.md`、独立评审与尺子硬化记录 `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`（**§9 是当前裁定入口**）
 
 > **黄金法则**：这套东西回答的是「**意图是否完整、落域是否正确、决策链在哪里首次偏离**」。
 > 它不回答 Agent 业务实现对不对、provider 返回的内容准不准、回复文风好不好。
@@ -13,14 +13,16 @@
 
 ## 0. 先读这一节：现在能引用什么
 
-**尺子已经硬化过一轮**（2026-08-03，独立评审 3 P0 / 7 P1 / 2 P2 逐条修复 + 逐条反向构造测试，
-专项单测 178）。但**修好口径不等于量过**：
+**尺子已经过三批硬化**（2026-08-03：`24672f9`、`9219016`、`8f06db5`；`cd3646b`
+另补唯一输入语料缺口，专项单测增至 201）。第三批独立复审（同一评审报告 §9）仍有
+**2 P0 / 2 P1**：正式 baseline 的比较源与 gold 摘要未闭合，Planner 重试 raw 对齐和 L3
+run/code/lock 身份仍有缺口；所以现在是**大部修完，但还不能写 baseline，也没重新量完**：
 
 | | 状态 |
 |---|---|
-| ✅ **能引用** | L0 全量读数（零网络、确定性、可复现）；专项单测；**逐条按原始断言复现**的单案例结论 |
-| ❌ **不能引用** | `exact_plan_set_rate` / seen-unseen / `planner_capability_hallucination_rate` / `instability_rate` —— **新口径下的读数还不存在**，要等一次固定 provider 的 L1/L2/L3 全量。历史文档里这几个数字全是旧口径，作废 |
-| ❌ **不存在** | 正式 baseline（`docs/reviews/eval/baseline_intent_adversarial.json`）。L3 证据未取得，资格闸正当拒绝 |
+| ✅ **能引用** | L0 `70/70`（零网络、确定性、plan/live 指标 `null`）；当前快照 201 条专项单测；**逐条按原始断言复现**的单案例结论 |
+| ❌ **不能引用** | `exact_plan_set_rate` / seen-unseen / `planner_capability_hallucination_rate` / `instability_rate` 的新 live 数字——固定 provider 的 L1/L2/L3 完整报告尚不存在；历史数字全部作废 |
+| ❌ **不存在** | 正式 baseline（`docs/reviews/eval/baseline_intent_adversarial.json`）。当前运行仍被 L3/规模挡住，且 §9 的两条 P0 尚未关闭，不能称 baseline-ready |
 
 **读任何一个比率之前，先看它的分子分母。** 分母为 0 时值是 `null` 不是 0 ——
 「一侧样本都没有」和「一侧全对」在这份报告里长得不一样，这是刻意的。
@@ -35,6 +37,8 @@
    如果一条用例逼你去改 `route_hints` / `planning.py` 让它变绿，先问「这条 gold 对吗」。
 3. **不许绕过资格闸。** CLI 里没有 `--force` / `--update-baseline` / `--accept-failures`，
    也**不要去加**。`--write-baseline` 拒绝一切选择过滤器与 `--repeat` —— 那些正是等价的绕过。
+   **当前另有一个已知 P0**：自定义 `--baseline` 仍能换掉比较源，所以 §9 修复前不要执行
+   `--write-baseline`，即使其他闸看起来全绿。
 
 ---
 
@@ -243,8 +247,9 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 - **L3 选集非空、结构化结果完整、且来自本次调用**（唯一 run 目录 + invocation id + 开始时间核对）；
 - 已有 baseline 时不得带逐例回退。
 
-**今天还差两样**：L3 证据（e2e 运行器在本机 `lease_protocol` 失败，那是 e2e 的账）
-与 stable 规模（唯一输入 104 < 120）。
+**当前命令暂未获准执行。** 除 L3 证据与 stable 规模（唯一输入 104 < 120）外，评审 §9 还要求
+先锁死正式 baseline 的比较源、补全 gold 摘要，并闭合 Planner 重试 raw 与 L3 run/code/lock
+身份。上面的命令是最终形态，不是当前可执行的放行指令。
 
 ---
 

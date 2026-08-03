@@ -568,7 +568,7 @@ guide 记成了 `!clipped`。算术：policies 1047 + 块头 14 + `navigation-wi
   ——**「先搜到再取详情」是更好的计划**（`poi_detail` 要 `poi_id`），把 search 列进
   forbidden 会把一个更好的计划判成红。
 
-### 6.4 尺子自身的 12 条问题——独立评审另开一批（**已于 2026-08-03 全部落地**）
+### 6.4 尺子自身的 12 条问题——独立评审另开一批（**三批硬化已落地，复审仍未通过**）
 
 `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`（3 条 P0 / 7 条 P1 /
 2 条 P2）审的是「**测试能不能证明结论**」，不是否认它抓到的产品 badcase。
@@ -578,10 +578,14 @@ guide 记成了 `!clipped`。算术：policies 1047 + 块头 14 + `navigation-wi
 再修尺子（plan-only exact、ingress AND、gold 维度归因、raw hallucination、repeat coverage），
 接通诊断，最后清语料账（canonical fingerprint 去 cohort 泄漏、重新晋级）。
 
-> **落地状态（2026-08-03 另批）**：12 条逐条修复 + 逐条反向构造测试，专项单测 120→172；
+> **落地状态（2026-08-03 另批）**：修复方按 12 条逐项处理并补反向构造，专项单测 120→178；
 > 生产路由/Skill/Exemplar/Hint/manifest 一个字节未改（**这批只动尺子**，与上一句的分批
 > 纪律一致）。逐条对照表、四条新发现（含**原句泄漏比评审点名的多 4 倍**、空选集原来是
-> 绿的）与残留清单见该评审报告 **§7**——那是唯一入口，不在本文件重复。
+> 绿的）见该评审报告 **§7**；**独立复审 §8 只接受 4/12 完整关闭，仍有 2 P0 / 5 P1**，
+> 第三批 `8f06db5` 与覆盖补丁 `cd3646b` 又把专项测试增至 201。最新独立复审 **§9**
+> 接受 Engine、指标分母、L1 适用性、relation 扩跑与唯一输入 coverage 已关闭，但仍有
+> **2 P0 / 2 P1**（baseline 比较源/gold 摘要、Planner 重试 raw 对齐、L3 run/code/lock
+> 身份），因此本清单仍不得标“全部收口 / baseline-ready”。
 > 对本清单的影响只有一条需要注意：**本文件 §5.4 的全量对照数字仍是 2026-08-02 的旧口径
 > 读数**，新口径下 `exact_plan_set_rate` / seen-unseen / `instability_rate` 都要等一次
 > 固定 provider 的 live 全量才存在。
