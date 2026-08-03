@@ -170,6 +170,11 @@ from support.intent_adversarial_judge import (  # noqa: E402
 )
 
 
+def _named(judgement):
+    """断言名 → 是否通过。红灯指对地方与否，看的就是这张表。"""
+    return {item.name: item.passed for item in judgement.assertions}
+
+
 def _slotted(intent, **slots):
     """带槽位的单意图快照——槽位差异是本组测试的主角。"""
     return DecisionSnapshot(
@@ -275,6 +280,69 @@ def test_context_override_fails_when_variant_behaviour_is_in_base_support():
     spec = RelationSpec("base", "context_override", {"must_differ": True})
     support = [_snapshot("info.weather"), _snapshot("nearby.search")]
     assert not judge_relation(spec, support, _snapshot("nearby.search")).passed
+
+
+# ── 2026-08-04：一个签名不能同时服务两个方向相反的断言 ──────────────────────
+# 立账证据 `cs.more.research`：它与 base 都落 `research.run`（路由一模一样），
+# `context_override` 的 must_differ 却判绿——只靠 slots 不同过的关。
+
+
+def test_flip_direction_is_judged_on_routing_only_so_slot_noise_cannot_fake_a_change():
+    """`∉` 方向：槽位一抖就算「行为被换掉了」是**假绿**，比假红危险。"""
+    spec = RelationSpec("base", "context_override", {"must_differ": True})
+    support = [_slotted("research.run", query="详细了解第二条新闻")]
+    variant = _slotted("research.run", query="固态电池", question="展开讲讲第二点")
+    # 宽签名确实不同——旧口径据此判「变了」而通过
+    assert semantic_signature(support[0]) != semantic_signature(variant)
+    # 路由签名相同：两句话落的是同一个意图，主张根本没被证明
+    assert (semantic_signature(support[0], with_slots=False)
+            == semantic_signature(variant, with_slots=False))
+    assert not judge_relation(spec, support, variant).passed
+
+
+def test_route_flip_same_reasoning_slot_only_difference_is_not_a_flip():
+    spec = RelationSpec("base", "route_flip", {"required_change": True})
+    support = [_slotted("nearby.search", keyword="药店")]
+    variant = _slotted("nearby.search", keyword="药房", radius="1000")
+    assert not judge_relation(spec, support, variant).passed
+
+
+def test_invariant_main_claim_ignores_slot_rendering_when_the_utterances_differ():
+    """`∈` 方向：换个说法问同一件事，槽位文本本来就不同——不该因此判红。
+
+    实测可复现：同一件事换个说法，`date` 一边空一边写「明天早晨」。
+    """
+    spec = RelationSpec("base", "invariant", {})
+    support = [_slotted("info.weather", date="明天")]
+    variant = _slotted("info.weather", date="明天早晨")
+    assert semantic_signature(support[0]) != semantic_signature(variant)
+    judgement = judge_relation(spec, support, variant, same_utterance=False)
+    assert judgement.passed
+    assert "relation.invariant.slots" not in _named(judgement)
+
+
+def test_invariant_still_compares_slots_when_both_sides_say_the_same_sentence():
+    """同一句话只换上下文——槽位不同说明**历史串进了槽位**，那是真缺陷。"""
+    spec = RelationSpec("base", "invariant", {})
+    support = [_slotted("info.weather", date="明天")]
+    variant = _slotted("info.weather", date="明天", city="上海")
+    assert not judge_relation(spec, support, variant, same_utterance=True).passed
+
+
+def test_clause_commute_keeps_the_slot_assertion_regardless_of_utterance():
+    """换的是子句顺序不是说法，槽位必须逐字相同——§10.12 的成果不许被这次改动丢掉。
+
+    `cp.reminder-weather.swapped` 的「明天早上八点」正是靠这一条现形的。
+    """
+    spec = RelationSpec("base", "clause_commute", {})
+    support = [_slotted("reminder.create", time_text="八点", title="八点开会")]
+    variant = _slotted("reminder.create", time_text="明天早上八点", title="八点开会")
+    judgement = judge_relation(spec, support, variant, same_utterance=False)
+    assert not judgement.passed
+    # 主断言（路由）应当是通过的——红的是槽位那一条，红灯要指对地方
+    named = _named(judgement)
+    assert named["relation.clause_commute"] is True
+    assert named["relation.clause_commute.slots"] is False
 
 
 def test_intent_add_requires_the_intent_to_be_absent_from_every_base_run():

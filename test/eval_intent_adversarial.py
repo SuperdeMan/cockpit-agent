@@ -1579,8 +1579,16 @@ def _relation_judgements(units, args) -> tuple[dict[str, dict[int, Any]], list[s
         for index, variant_turns in enumerate(unit.runs):
             if not variant_turns:
                 continue
+            # 「两侧原话是否相同」决定槽位该不该可比：同一句话换上下文 → 槽位应当相同
+            # （不同＝历史串进了槽位）；换个说法问同一件事 → 槽位本来就不同，不比。
+            # 判定在这里算而不是塞进 RelationSpec：只有这里同时拿得到两侧的 case。
+            same_utterance = (
+                contract.utterance_fingerprint(case.turns[0])
+                == contract.utterance_fingerprint(base.case.turns[0])
+            )
             out.setdefault(key, {})[index] = judge_relation(
-                case.relation, support, variant_turns[0].snapshot)
+                case.relation, support, variant_turns[0].snapshot,
+                same_utterance=same_utterance)
     return out, gaps
 
 

@@ -408,7 +408,7 @@ def _canonical(value) -> str:
         return repr(value)
 
 
-def _plan_semantic_signature(plan: PlanSnapshot) -> tuple:
+def _plan_semantic_signature(plan: PlanSnapshot, *, with_slots: bool = True) -> tuple:
     by_id = {step.id: step.intent for step in plan.steps}
     step_signatures = []
     dependencies = []
@@ -420,7 +420,8 @@ def _plan_semantic_signature(plan: PlanSnapshot) -> tuple:
         step_signatures.append((
             step.intent,
             tuple(sorted((key, _canonical(value))
-                         for key, value in step.slots.items())),
+                         for key, value in step.slots.items()))
+            if with_slots else (),
             tuple(sorted(normalized_refs)),
             step.require_confirm,
         ))
@@ -435,24 +436,30 @@ def _plan_semantic_signature(plan: PlanSnapshot) -> tuple:
     )
 
 
-def semantic_signature(snapshot: DecisionSnapshot) -> tuple:
+def semantic_signature(snapshot: DecisionSnapshot, *,
+                       with_slots: bool = True) -> tuple:
     """Agent 调用与挂起状态进签名：一次调了 trunk.open、一次没调，不是同一个结果。
 
     L0/L1 上这两项恒为 `()`/`None`，签名逐字不变——只有 L2 会因此变严。
+
+    `with_slots=False` 给出**路由签名**（去掉槽位文本，保留意图/依赖/接线/确认位）。
+    它存在的理由见 `judge_relation`：**同一个签名不能同时服务两个方向相反的断言**。
     """
     return (
         snapshot.ingress,
         snapshot.addressed,
         snapshot.decision,
         snapshot.clarify,
-        _plan_semantic_signature(snapshot.plan),
-        tuple(_plan_semantic_signature(plan) for plan in snapshot.replans),
+        _plan_semantic_signature(snapshot.plan, with_slots=with_slots),
+        tuple(_plan_semantic_signature(plan, with_slots=with_slots)
+              for plan in snapshot.replans),
         tuple(sorted(snapshot.agent_calls)),
         snapshot.pending_confirm_after,
     )
 
 
-def judge_relation(spec, base_support, variant: DecisionSnapshot) -> TurnJudgement:
+def judge_relation(spec, base_support, variant: DecisionSnapshot, *,
+                   same_utterance: bool = False) -> TurnJudgement:
     """裁最小对照关系。**base 侧的证据是 `supp(base)`——这句话在本次跑批里观测到的
     全部行为，不是某一次采样。**
 
@@ -479,6 +486,30 @@ def judge_relation(spec, base_support, variant: DecisionSnapshot) -> TurnJudgeme
     **槽位继续留在签名里。** 集合口径已经吸收了它的采样方差；把槽位摘出签名会永久
     失去可见性，而 `symbol=300750` vs `symbol=宁德时代` 是真差异——只是它不由换序造成。
 
+    ⚠ **2026-08-04 追加裁定：一个签名不能同时服务两个方向相反的断言。**
+    上面两组主张对「差异」的要求是反的，而它们此前共用同一个含槽位的宽签名，于是
+    **同一份槽位噪声在一边制造假红、在另一边制造假绿**：
+
+    - `∈` 方向（`invariant`/`clause_commute`）：换个说法问同一件事，槽位文本本来就不同
+      （同句两次调用把 `date` 从「明天」渲成「明天早晨」实测可复现）→ **假红**；
+    - `∉` 方向（`route_flip`/`context_override`）：**槽位一抖就算「行为被换掉了」** → **假绿**。
+      实测确认一例：`cs.more.research`「展开讲讲第二点」与 base「第二条详细讲讲」
+      **都落 `research.run`**（路由一模一样），`context_override` 的 `must_differ`
+      却判绿——它只是靠 slots 不同过的关。发现轨 109 条对照里这样的有 3 条。
+
+    裁定：**主断言一律用路由签名**（`with_slots=False`：意图/顺序/依赖/接线/确认位/
+    ingress/decision/clarify/agent 调用），槽位另立一条断言 `relation.<type>.slots`，
+    **只在槽位本来就该相同的场合生效**：
+
+    | 场合 | 槽位该不该相同 | 断言 |
+    |---|---|---|
+    | `clause_commute`（同样的词换顺序） | **该** | always |
+    | `invariant` 且两侧**原话相同**（换的是上下文） | **该**（历史串进槽位是真缺陷） | on |
+    | `invariant` 且两侧**原话不同**（换的是说法） | 不该 | off |
+
+    这不是放宽：`cp.reminder-weather.swapped` 的「明天早上八点」仍由 `clause_commute`
+    的槽位断言抓住（§10.12 那次裁定的成果一条不丢），而 `route_flip` 反而**变严**了。
+
     退化性质：首跑每边各一次时 `supp(base)` 只有一个元素，判定与旧口径逐字相同。
     只有首跑失败、`_expand_failures` 把 base 与 variant 一起补到 `failure_repeats`
     之后才有差别——**恰好在需要区分「真缺陷」和「采样噪声」的那一刻**。
@@ -500,7 +531,11 @@ def judge_relation(spec, base_support, variant: DecisionSnapshot) -> TurnJudgeme
         return out
     base_sigs = {semantic_signature(run) for run in base_runs}
     variant_sig = semantic_signature(variant)
-    in_support = variant_sig in base_sigs
+    base_routes = {semantic_signature(run, with_slots=False) for run in base_runs}
+    variant_route = semantic_signature(variant, with_slots=False)
+    # 主断言一律用**路由签名**；槽位另立一条，只在它本来就该相同的场合开（见 docstring）。
+    in_support = variant_route in base_routes
+    slots_in_support = variant_sig in base_sigs
     base_intent_union = set().union(*(set(run.plan.intents) for run in base_runs))
     base_intent_common = set(base_runs[0].plan.intents).intersection(
         *(set(run.plan.intents) for run in base_runs))
@@ -508,7 +543,11 @@ def judge_relation(spec, base_support, variant: DecisionSnapshot) -> TurnJudgeme
     expected = spec.expectation or {}
     if spec.type == "invariant":
         _assert(out, "relation.invariant", in_support,
-                sorted(map(repr, base_sigs)), repr(variant_sig))
+                sorted(map(repr, base_routes)), repr(variant_route))
+        if same_utterance:
+            # 同一句话、只换上下文 → 槽位应当逐字相同；不同说明**历史串进了槽位**。
+            _assert(out, "relation.invariant.slots", slots_in_support,
+                    sorted(map(repr, base_sigs)), repr(variant_sig))
     elif spec.type == "route_flip":
         changed = not in_support
         forbidden = set(expected.get("forbidden_after") or []) & variant_intents
@@ -538,6 +577,9 @@ def judge_relation(spec, base_support, variant: DecisionSnapshot) -> TurnJudgeme
                 expected, changed)
     elif spec.type == "clause_commute":
         _assert(out, "relation.clause_commute", in_support,
+                sorted(map(repr, base_routes)), repr(variant_route))
+        # 换的是子句顺序不是说法，槽位必须逐字相同——§10.12 那次裁定的载体就在这一行。
+        _assert(out, "relation.clause_commute.slots", slots_in_support,
                 sorted(map(repr, base_sigs)), repr(variant_sig))
     else:
         _assert(out, "relation.unknown", False, spec.type, "unsupported")
