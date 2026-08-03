@@ -374,3 +374,89 @@ def test_malformed_depends_and_slot_refs_normalized_not_crash():
     steps = PlanBuilder._validated_steps(raw, amap)
     assert len(steps) == 1
     assert steps[0].depends_on == [] and steps[0].slot_refs == {}
+
+
+def test_depends_on_with_unhashable_elements_does_not_crash_the_planner():
+    """`depends_on: [["s1"]]` —— **容器类型守住了，元素类型没守住。**
+
+    上一条测试防的是 `depends_on: ""`（非 list，会被逐字符迭代）。这条是它的下一层：
+    `[["s1"]]` **是** list，isinstance 检查照过，直到 `dep in valid_ids` 拿 list 去
+    hash 才崩 `TypeError: unhashable type: 'list'`。而 `_parse_and_validate_data`
+    在 `build()` 里没有任何异常防护——**一次畸形模型输出就能让整条规划抛出去**。
+    真栈实证：2026-08-03 一次 140 选集的 L1 跑批被它整趟打死。
+
+    模型输出是不可信输入：防御要一路防到**会被拿去 hash / 拿去 split 的那个值**，
+    不是防到最外层容器为止。
+    """
+    from types import SimpleNamespace
+    from orchestrator.cloud.planning import PlanBuilder
+
+    cap = SimpleNamespace(intent="nearby.search", description="", slots=[],
+                          require_confirm=False, heavy=False)
+    manifest = SimpleNamespace(agent_id="nearby", trust_level="first_party",
+                               latency_budget_ms=2000, requires_permissions=[],
+                               capabilities=[cap], kind="agent", deployment="cloud",
+                               context_scopes=[])
+    amap = {"nearby": SimpleNamespace(manifest=manifest, endpoint="stub:1")}
+    raw = [{"id": "s1", "agent_id": "nearby", "intent": "nearby.search",
+            "slots": {"keyword": "川菜"}, "depends_on": [["s0"], {"a": 1}, 7, None],
+            "slot_refs": {}}]
+    steps = PlanBuilder._validated_steps(raw, amap)
+    assert len(steps) == 1
+    # 非 str 元素无论如何都匹配不上 id（id 本身是 str），丢弃与「保留后被过滤掉」
+    # 结果相同——但 str(["s0"]) == "['s0']" 会在日志里留下一个不存在的 id，更误导。
+    assert steps[0].depends_on == []
+
+
+def test_a_real_dependency_survives_the_element_level_normalisation():
+    """收紧不能把正常的依赖一起收掉——否则「防住崩溃」会变成「悄悄丢依赖」。"""
+    from types import SimpleNamespace
+    from orchestrator.cloud.planning import PlanBuilder
+
+    def _agent(agent_id, intent):
+        cap = SimpleNamespace(intent=intent, description="", slots=[],
+                              require_confirm=False, heavy=False)
+        manifest = SimpleNamespace(agent_id=agent_id, trust_level="first_party",
+                                   latency_budget_ms=2000, requires_permissions=[],
+                                   capabilities=[cap], kind="agent",
+                                   deployment="cloud", context_scopes=[])
+        return SimpleNamespace(manifest=manifest, endpoint="stub:1")
+
+    amap = {"nearby": _agent("nearby", "nearby.search")}
+    amap["shop"] = _agent("shop", "shop.order")
+    raw = [{"id": "s1", "agent_id": "nearby", "intent": "nearby.search",
+            "slots": {}, "depends_on": [], "slot_refs": {}},
+           {"id": "s2", "agent_id": "shop", "intent": "shop.order", "slots": {},
+            "depends_on": ["s1", ["junk"]], "slot_refs": {}}]
+    steps = PlanBuilder._validated_steps(raw, amap)
+    assert [s.depends_on for s in steps] == [[], ["s1"]]
+
+
+def test_slot_ref_values_that_are_not_strings_are_dropped_at_plan_time():
+    """同族的第二处，而且更危险——它崩在 **executor 执行期**不是规划期。
+
+    `slot_refs` 只保证是 dict，value 类型没保证；`executor._resolve_ref` 对它做
+    `ref_path.split(".")`，非 str value 直接 AttributeError。JSON object 的 key 恒为
+    str，但 value 可以是任意 JSON 值——所以要防的是 value。
+
+    与 depends_on 同一判据：非 str 直接丢，不做 str() 转换——`"['s1', 'data']"`
+    不是有效引用路径，转了只会让 `_resolve_ref` 返回 None 并打一条误导性日志。
+    """
+    from types import SimpleNamespace
+    from orchestrator.cloud.planning import PlanBuilder
+
+    cap = SimpleNamespace(intent="shop.order", description="", slots=[],
+                          require_confirm=False, heavy=False)
+    manifest = SimpleNamespace(agent_id="shop", trust_level="first_party",
+                               latency_budget_ms=2000, requires_permissions=[],
+                               capabilities=[cap], kind="agent", deployment="cloud",
+                               context_scopes=[])
+    amap = {"shop": SimpleNamespace(manifest=manifest, endpoint="stub:1")}
+    raw = [{"id": "s1", "agent_id": "shop", "intent": "shop.order", "slots": {},
+            "depends_on": [],
+            "slot_refs": {"poi_id": ["s0", "data", "id"], "name": 7,
+                          "ok": "s0.data.name", "nil": None}}]
+    steps = PlanBuilder._validated_steps(raw, amap)
+    assert len(steps) == 1
+    # 合法的那条留下，会让 executor 崩的三条丢掉。
+    assert steps[0].slot_refs == {"ok": "s0.data.name"}

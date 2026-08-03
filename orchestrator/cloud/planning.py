@@ -761,10 +761,23 @@ class PlanBuilder:
                 # 同族防御：模型会把这两个字段输出成 ""（真栈日志实证）。depends_on 非
                 # list 会被逐字符迭代、slot_refs 非 dict 在 executor._resolve_slot_refs
                 # 处 .items() 同款崩——都归一为空（依赖丢失顶多退化为顺序执行）。
-                depends_on=(s.get("depends_on")
-                            if isinstance(s.get("depends_on"), list) else []),
+                #
+                # **元素层也要归一，不只是容器层**（2026-08-03 真栈实证）：`[["s0"]]`
+                # 是 list、isinstance 照过，直到下面 `dep in valid_ids` 拿 list 去 hash
+                # 才崩 TypeError，而 `_parse_and_validate_data` 在 build() 里没有异常
+                # 防护——一次畸形模型输出就把整条规划抛出去（一趟 140 选集的 L1 跑批
+                # 被它整趟打死）。防御要一路防到**真正会被拿去 hash 的那个值**。
+                # 非 str 元素直接丢而不是 str() 转换：id 本身是 str，转出来的
+                # `"['s0']"` 匹配不上任何步骤，却会在日志里留下一个不存在的 id。
+                depends_on=[d for d in (s.get("depends_on") or [])
+                            if isinstance(d, str)]
+                if isinstance(s.get("depends_on"), list) else [],
+                # 同族第二处，而且崩在**执行期**不是规划期：`executor._resolve_ref`
+                # 对 ref_path 做 `.split(".")`，非 str value 直接 AttributeError。
+                # JSON object 的 key 恒为 str，可变的是 value——所以防的是 value。
                 slot_refs=(
-                    normalized_slot_refs
+                    {k: v for k, v in normalized_slot_refs.items()
+                     if isinstance(v, str)}
                     if isinstance(
                         normalized_slot_refs := PlanBuilder._unwrap_freeform_object(
                             s.get("slot_refs") or {},
