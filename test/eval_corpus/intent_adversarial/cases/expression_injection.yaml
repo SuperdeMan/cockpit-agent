@@ -439,6 +439,35 @@ cases:
       - input: {utterance: 今儿个天儿咋样, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [info.weather]}], forbidden_intents: [info.forecast], allow_extra_intents: false}
+  # 2026-08-03 补 unseen 侧：ex.inv-weather / ex.inv-trip 两族原本全员 seen_regression
+  # （标准说法那一句字面就在知识里，口语说法随 family 闭包一并改标）。
+  # 「换个说法落域不变」这条断言因此只有 seen 侧证据——而它测的恰恰是泛化。
+  - id: ex.invariant.weather.plain-unseen
+    title: 天气问句·未见说法（标准）
+    family_id: ex.inv-weather-unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A9], mechanisms: [paraphrase], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 广州现在下雨了吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather]}], forbidden_intents: [info.forecast], allow_extra_intents: false}
+  - id: ex.invariant.weather.colloquial-unseen
+    title: 天气问句·未见说法（口语）
+    family_id: ex.inv-weather-unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A9], mechanisms: [paraphrase], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-03}
+    # 同上不声明 invariant：两种说法都落 info.weather（这正是本条要断言的），
+    # 但 date 槽位一边空一边填，签名口径下会记成"行为不同"。
+    turns:
+      - input: {utterance: 广州这会儿是不是在下雨, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather]}], forbidden_intents: [info.forecast], allow_extra_intents: false}
   - id: ex.invariant.charging.plain
     title: 找充电站（标准说法）
     family_id: ex.inv-charging
@@ -612,6 +641,31 @@ cases:
     relation: {base_case: ex.invariant.trip.plain, type: invariant, expectation: {}}
     turns:
       - input: {utterance: 杭州玩三天你给我安排安排, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.plan]}], forbidden_intents: [navigation.navigate_to], allow_extra_intents: false}
+  - id: ex.invariant.trip.plain-unseen
+    title: 排行程·未见说法（标准）
+    family_id: ex.inv-trip-unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A9], mechanisms: [paraphrase], domains: [trip], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 帮我安排一个成都两天的行程, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.plan]}], forbidden_intents: [navigation.navigate_to], allow_extra_intents: false}
+  - id: ex.invariant.trip.colloquial-unseen
+    title: 排行程·未见说法（口语）
+    family_id: ex.inv-trip-unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A9], mechanisms: [paraphrase], domains: [trip], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-03}
+    relation: {base_case: ex.invariant.trip.plain-unseen, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 成都待两天，你给我捋个路线出来, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [trip.plan]}], forbidden_intents: [navigation.navigate_to], allow_extra_intents: false}
   - id: ex.invariant.vision.plain

@@ -1105,6 +1105,34 @@ cases:
       - input: {utterance: 带我去最近的地铁站, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [nearby.search, nearby.detail], allow_extra_intents: false}
+  # 2026-08-03 补 unseen 侧：这条边界原有 fuel / metro 两对**全是 seen_regression**
+  # （台账 texts 里就写着加油站那句，metro 一对随 family 闭包一并改标），于是「按动词划
+  # 不按对象划」这条人裁判据，在**没进过知识的话术**上一个证据都没有。
+  # 换一个对象、动词照旧——动词才是判据，对象换掉才测得出转移。
+  - id: bd.nn-find-go.left.pharmacy
+    title: 找药店是发现不是出行
+    family_id: bd.nn-find-go.pharmacy
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [nearby, navigation], boundary_ledger: nearby-navigation.find-vs-go, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: nearby-navigation.find-vs-go, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 这附近哪有药店, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [navigation.navigate_to, navigation.search_poi], allow_extra_intents: false}
+  - id: bd.nn-find-go.right.pharmacy
+    title: 导航去药店是出行
+    family_id: bd.nn-find-go.pharmacy
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [nearby, navigation], boundary_ledger: nearby-navigation.find-vs-go, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: nearby-navigation.find-vs-go, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 导航去最近的药店, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [nearby.search, nearby.detail], allow_extra_intents: false}
 
   # ── 台账 20：manual-vision.described-light-vs-unknown-light（2026-08-02 泓舟裁定）──
   # 判据是**描述够不够定位对象**，且判据本身是隐私侧的：抓帧是敏感动作，能不抓就不抓。

@@ -63,6 +63,70 @@ cases:
             history: [{role: user, text: 帮我排一个三天的杭州行程}, {role: assistant, text: 已为您排好三天行程}]
         expected:
           plan: {required_intent_groups: [{any_of: [info.news]}], forbidden_intents: [trip.status, reminder.list], allow_extra_intents: false}
+  # 2026-08-03 补 unseen 侧：cs.weather-stale / cs.news-stale 两族原本**全员
+  # seen_regression**（裸问句「今天天气怎么样」「今天有什么新闻」字面就在被注入的知识里）。
+  # 「陈旧历史不得复用」这条不变性因此只有 seen 侧证据。下面两对换成没进过知识的话术，
+  # 断言的机制一字不改：同一句话，加不加陈旧历史都必须落同一个域。
+  - id: cs.weather.clean-unseen
+    title: 裸问天气·未见说法（无历史）
+    family_id: cs.weather-stale-unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A5], mechanisms: [stale_history], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 明早出门冷不冷, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather, info.forecast]}], forbidden_intents: [nearby.search, nearby.detail], allow_extra_intents: false}
+  - id: cs.weather.stale-charging-unseen
+    title: 裸问天气·未见说法（前面在找充电站）
+    family_id: cs.weather-stale-unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A5], mechanisms: [stale_history, topic_switch], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-03}
+    # 刻意**不**声明 relation invariant：实测同一句话在两次调用之间把 date 从「明天」
+    # 渲成「明天早晨」，而 invariant 比的是签名逐字相等（含槽位）。这是 §10.12
+    # 「尺子不同，噪声底就得重新量」的第二次适用——机制改用绝对 gold 表达：
+    # 带着陈旧的充电站历史，仍须落天气域且不许把旧话题捡回来。
+    turns:
+      - input:
+          utterance: 明早出门冷不冷
+          context:
+            history: [{role: user, text: 附近哪有快充桩}, {role: assistant, text: 为您找到 2 个快充站}]
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather, info.forecast]}], forbidden_intents: [nearby.search, charging.find], allow_extra_intents: false}
+  - id: cs.news.clean-unseen
+    title: 裸问新闻·未见说法（无历史）
+    family_id: cs.news-stale-unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A5], mechanisms: [stale_history], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-03}
+    turns:
+      - input: {utterance: 最近有什么要紧的新闻没, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.news]}], forbidden_intents: [trip.status, reminder.list], allow_extra_intents: false}
+  - id: cs.news.stale-restaurant-unseen
+    title: 裸问新闻·未见说法（前面在聊餐厅）
+    family_id: cs.news-stale-unseen
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A5], mechanisms: [stale_history, topic_switch], domains: [info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-03}
+    # 同上不声明 invariant：实测 info.news 会自发多出 `limit: "5"` 这类模型自己加的槽位，
+    # 签名逐字相等的口径下必抖。机制由绝对 gold 表达。
+    turns:
+      - input:
+          utterance: 最近有什么要紧的新闻没
+          context:
+            history: [{role: user, text: 附近有什么好吃的川菜}, {role: assistant, text: 为您找到 3 家川菜馆}]
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.news]}], forbidden_intents: [nearby.search, nearby.detail], allow_extra_intents: false}
   - id: cs.hvac.clean
     title: 开空调（无历史）
     family_id: cs.hvac-stale
