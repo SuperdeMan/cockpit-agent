@@ -753,3 +753,34 @@ fail-closed 都只有单测证据）。实跑 **10 证据单元 / 8 通过 / 0 s
 **未完成**：`cp.dep.*` 全族复验被 provider 挡住——MiniMax 返回 HTTP 529
 「服务集群负载较高」，`planner_unreached` 闸正确把它归成基础设施。两条修复各自 3/3
 已验证，全族回归待 provider 恢复后补。
+
+---
+
+## 10.9 `safety#5` 归因的下一层：不是范例噪声，是 manifest 与人裁台账打架
+
+§10.4 把 `bd.ns-poi-road.right.seen` 归到「范例 `safety#5` 以 `@lex:1.00` 精确命中」。
+**那是现象不是根因。** 往下查一层：
+
+- 该范例 `source: manifest`——从 `agents/road_safety/manifest.yaml` 的 examples 镜像来的。
+  **只改范例不改 manifest，下次导入会原样回来。**
+- `boundaries.yaml#nearby-safety.poi-vs-road-condition`（人裁台账）明确写着「路上怎么样」
+  的对象是**前方路况**；语料 gold 要 `safety.road_condition` 正是照台账写的。
+- **所以打架的是 manifest 与台账**，模型只是照着镜像出来的范例做。
+
+第二层更值得记：`driving_advice` 的 examples 是「路上怎么样」、`road_condition` 的是
+「路况怎么样」——**两条只差一个字却指向不同 intent**，差的不是判据是一个词
+（「对照范例离对面太近就是干扰」的又一例）。而**该文件上两行的注释里就写着同一个病的
+第一例**（2026-07-30 把「有天气预警吗」从 driving_advice 挪走时记的：
+「manifest examples 是『我这能力能答这句』写出来的」）。判据没能防住第二次，
+**因为它当时只被写成注释，没有变成可执行的闸**。
+
+修法：manifest 的 `driving_advice` examples 换成真体现驾驶建议角度的说法
+（「这会儿开车出门合适吗」），范例同步；「路上怎么样」**保留**但改指台账那一侧——
+台账的 `texts` 需要它在语料里存在，删掉会被 `eval_exemplars` 的「陈旧裁定」闸拦下
+（**实测拦到了，这条闸有效**，也正是它把我从「删掉了事」拉回来的）。
+
+实测：该边界四条 live **4/4**（原 `right.seen` 3/3 全红）。「路上怎么样」仍在知识里，
+所以该用例 `seen_regression` 的标签依然是事实，不用改。
+
+**留下的账**：这条判据（examples 必须体现本能力的判别角度、不许与兄弟能力只差一个词）
+两次都是靠人读出来的。要么写成 `eval_exemplars` 的一条闸，要么它还会有第三次。
