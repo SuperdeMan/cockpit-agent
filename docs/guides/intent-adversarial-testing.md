@@ -13,16 +13,18 @@
 
 ## 0. 先读这一节：现在能引用什么
 
-**尺子已经过三批硬化**（2026-08-03：`24672f9`、`9219016`、`8f06db5`；`cd3646b`
-另补唯一输入语料缺口，专项单测增至 201）。第三批独立复审（同一评审报告 §9）仍有
-**2 P0 / 2 P1**：正式 baseline 的比较源与 gold 摘要未闭合，Planner 重试 raw 对齐和 L3
-run/code/lock 身份仍有缺口；所以现在是**大部修完，但还不能写 baseline，也没重新量完**：
+**尺子已经过六批硬化**（2026-08-03：`24672f9` / `9219016` / `8f06db5` / `5bbc7ef` /
+`2b619c3` / `13e7e3f` / `a60f08b`，语料侧 `cd3646b`，专项单测 **210**）。
+三轮独立复审的 P0/P1 已逐条关闭，每条都配注入式反向构造。
+
+**新口径读数第一次存在了**（`13e7e3f`，`minimax:MiniMax-M3` 锁定，工作树干净，
+L1 全量 470 证据单元，检索 2040 次调用零降级）——完整表在评审报告 **§10**。
 
 | | 状态 |
 |---|---|
-| ✅ **能引用** | L0 `70/70`（零网络、确定性、plan/live 指标 `null`）；当前快照 201 条专项单测；**逐条按原始断言复现**的单案例结论 |
-| ❌ **不能引用** | `exact_plan_set_rate` / seen-unseen / `planner_capability_hallucination_rate` / `instability_rate` 的新 live 数字——固定 provider 的 L1/L2/L3 完整报告尚不存在；历史数字全部作废 |
-| ❌ **不存在** | 正式 baseline（`docs/reviews/eval/baseline_intent_adversarial.json`）。当前运行仍被 L3/规模挡住，且 §9 的两条 P0 尚未关闭，不能称 baseline-ready |
+| ✅ **能引用** | L0 `70/70`；210 条专项单测；**§10 的 L1 新口径全表**（含 93.2% 原始通过、幻觉 2.3% / 逃逸 0%、依赖接线 1/5、不稳定 14.5%@coverage 27.9%、seen 95.8% vs unseen 92.7%） |
+| ⚠ **只能当趋势** | 与 2026-08-02 之前任何 live 数字的**对比**——分母、口径、cohort 标签全都变过，`14.5%` 与旧报的 `3.1%` 不是同一个量 |
+| ❌ **仍不存在** | **L2 新口径读数**（`expected.engine` / Edge 副作用合并 / `engine.observed` fail-closed 目前只有单测证据）；**L3 证据**；正式 baseline |
 
 **读任何一个比率之前，先看它的分子分母。** 分母为 0 时值是 `null` 不是 0 ——
 「一侧样本都没有」和「一侧全对」在这份报告里长得不一样，这是刻意的。
@@ -37,8 +39,9 @@ run/code/lock 身份仍有缺口；所以现在是**大部修完，但还不能�
    如果一条用例逼你去改 `route_hints` / `planning.py` 让它变绿，先问「这条 gold 对吗」。
 3. **不许绕过资格闸。** CLI 里没有 `--force` / `--update-baseline` / `--accept-failures`，
    也**不要去加**。`--write-baseline` 拒绝一切选择过滤器与 `--repeat` —— 那些正是等价的绕过。
-   **当前另有一个已知 P0**：自定义 `--baseline` 仍能换掉比较源，所以 §9 修复前不要执行
-   `--write-baseline`，即使其他闸看起来全绿。
+   自定义 `--baseline` 也已被拒——**比较源必须是正式基线本身**，否则逐例回退/删除案例/
+   gold 变化三道检查全部落空。「没有 `--force`，但正常参数拼得出来一个」这条形态
+   已经出现三次（选集过滤器 / `--repeat` / 比较源），加参数前先问它能不能拼出第四个。
 
 ---
 
@@ -135,13 +138,15 @@ L3 runner 非零退出、relation 配不成对、选集为空。
 
 | 行 | 含义 | 该怎么办 |
 |---|---|---|
-| `⚠ 语义检索中途降级 N/M` | 那些轮只跑了词法档 | 调大 `EXEMPLAR_EMBED_TIMEOUT`/`SKILL_EMBED_TIMEOUT` 重跑；本次一切关于 skills/exemplars 的结论作废 |
-| `⚠ 兜底计划却判绿 N 条` | 计划由 `_fallback` 合成，**不是 planner 的判断** | 逐条看 `--diagnose`；这些绿不算落域证据 |
-| `fallback_plan_rate` 非 0 | 同上，报告里的落域指标整体要打折读 | 同上 |
+| `[!] 语义检索中途降级 N/M` | 那些轮只跑了词法档 | 调大 `EXEMPLAR_EMBED_TIMEOUT`/`SKILL_EMBED_TIMEOUT` 重跑；本次一切关于 skills/exemplars 的结论作废 |
+| `[!] 未声明的兜底计划 N 条` | 计划由 `_fallback` 合成，**不是 planner 的判断** | 逐条看 `--diagnose`；这些绿不算落域证据 |
+| `[!] 探针在 N 轮上没取到校验前候选` | 那些轮 `raw_observed=False`，不进幻觉率分母 | 分母无故变小就是这里；看 `meta.trace_errors` |
+| `fallback_plan_rate` 非 0 | 系统属性（planner 没产出可用计划），**不等于有问题** | 先看它是不是全落在声明过 `expects_fallback` 的 A8 族 |
 
 兜底产物恒为 `chitchat.talk`，它对**「不要做任何动作」这一族 gold 是免费的通过**——
 2026-08-03 实测：「空调先别关」的 planner 输出 `{"addressed":true,"steps":[]}`（**答对了**），
 被 `planning.py` 当解析失败丢掉、重试、兜底成 `chitchat.talk`，而 gold 正是 `chitchat.talk`。
+（该产品缺陷已修，`56e19ff`：两次都说「不需要动作」就认，走 `_no_action` 不走 `_fallback`。）
 
 ### 第 1 步：看重复分类，不看单次结果
 
@@ -216,6 +221,10 @@ L1 有 `no-hints/no-skills/no-exemplars/empty-history`；L2 另加 `cloud-direct
    `max_agent_calls_per_intent`）—— 那个 Agent 有没有被够着、挂起有没有落库。
    `expected.engine` **只有 L2 观测得到**，写在别的层上契约直接报错。
 7. **LLM 可以生成 candidate，不能填 `reviewed_by: human`，不能自动晋级 stable。**
+8. **兜底就是正确答案的用例要显式声明** `tags.expects_fallback: true`（A8 能力缺席族）。
+   不声明就会被资格闸当成降级拦下；而**形状上它和否定族一模一样**（无必要组 +
+   `allow_extra`），机器猜不出来，只能人裁一次。反过来，随手打这个标等于给自己发
+   万能通行证——只在「gold 本来就只说『别做 X』且系统确实没有这个能力」时用。
 
 ---
 
@@ -269,15 +278,22 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 
 ## 10. 已知残留与下一步优先级
 
+> ~~P0 跑一次固定 provider 的全量~~ **L1 已跑**（`13e7e3f`，读数见评审报告 §10）。
+> ~~seen 掉的那 1 条未归因~~ **已归因**（`no-exemplars` 稳定翻正，真因是范例
+> `safety#5` 词法精确命中）。~~「看不清路」等拍板~~ **已裁定走澄清卡**。
+> ~~消融 arm 未在真实失败上跑过~~ L1 四臂**已跑**（`cloud-direct`/`planner-only` 属 L2）。
+
 | 优先级 | 待办 | 说明 |
 |---|---|---|
-| P0 | **跑一次固定 provider 的 L1/L2/L3 全量** | 新口径读数不存在，其余结论都等它 |
-| P1 | **stable 规模 104 → 120** | 补齐要新写案例，**不能靠改口径**；先补 unseen 侧变薄的那几族 |
+| **P0** | **依赖接线 1/5** | `dependency_pass_rate` 20%（评审 §10.3-2）。`cp.dep.*` 五条里四条没接 `depends_on`/`slot_refs`，三条高风险失败里两条是它。**两个步骤都规划出来了只是没连起来**——这是计划结构问题不是落域问题，本表最实的一条 |
+| **P0** | **L2 新口径从没跑过** | `expected.engine` / Edge 副作用合并 / `engine.observed` fail-closed 目前只有单测证据。L2 只有 7 条，便宜，但**没跑过的分支不算实现过**（消融臂那次已经教过一遍） |
+| P1 | **stable 规模 104 → 120** | 补齐要新写案例，**不能靠改口径**；先补 unseen 侧变薄的那几族。晋级要两趟独立进程的 live 证据 |
 | P1 | **23 条改标 seen 后 unseen 覆盖变薄** | stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条。补法是新写真正没进过知识的话术，不是把标签改回去 |
+| P1 | **`ex.colloquial.dark` 现在是红的** | 裁定走澄清卡之后，模型并不澄清（四臂全 `stable_fail`）。**这是裁定照出来的真缺口**，不是 gold 写错——修法在 `_CLARIFY_SECTION` 判据或范例，不是把 gold 改回去 |
+| P1 | **`safety#5` 词法精确命中干扰** | §10.4 已给出 `causal=supported` 证据。修法是范例/边界台账，不是改 planner |
 | P2 | **L3 证据** | 属 e2e 运行器的账（`lease_protocol` / `identity_cleanup`），不是对抗套件的 |
-| P2 | **两条消融 arm 未在真实失败上跑过** | `cloud-direct` / `planner-only` 已接通并有 layer 归属守卫，但要 live 才验证得了 |
-| P3 | **`parking` 缺「查停车费」读能力** | 见 findings §6.1，属新增能力，走 CLAUDE.md §3 流程 |
-| P3 | **「有点看不清路了」该开大灯还是开雨刷** | 见 findings §6.2，等产品拍板 |
+| P2 | **A4 83.3% / A9 83.0%** | 两个最弱攻击族（其余 ≥89%）。A2/A8 已 100% |
+| P3 | **`parking` 缺「查停车费」读能力** | 见 findings §6.1。provider 侧 `get_fee` **已存在**，缺的是 manifest capability + handler 分支 + 契约测试 |
 
 ---
 

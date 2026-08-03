@@ -586,3 +586,90 @@ python test/eval_intent_adversarial.py ... --write-baseline --baseline missing.j
 因此当前套件可以继续用于 discovery、L0 硬回归和普通 live 诊断；在 P0-A/P0-B 关闭前仍不得
 写正式 baseline。修完后至少要新增四条上述反向构造，再跑 201+ 专项测试与固定 provider 的
 L1/L2/L3 新鲜全量；“代码合入”与“新口径已量过”仍是两件事。
+
+---
+
+## 10. 新口径首次读数（2026-08-03，修复方回写）
+
+> **这是 §1 那批「不可引用」数字第一次有了替代品。** 在此之前只有「口径改好了」，
+> 没有「量过了」——两件事从来不是一件事。
+
+### 10.1 这一趟的资格
+
+| 项 | 值 |
+|---|---|
+| code sha / 工作树 | `13e7e3f` / **clean** |
+| provider | `minimax:MiniMax-M3`（锁定，无漂移） |
+| 层 / 选集 | L1 discovery，528 cases / 489 唯一输入 → **470 证据单元** |
+| 消融 | `--ablations on-failure`（**第一次在真实失败上跑起来**） |
+| 检索 | 2040 次 Embed 调用，**降级 0 次**（新装的中途降级闸证明整趟都在语义档上） |
+| 探针错误 / 基础设施错误 | 0 / 0 |
+
+前四批尺子硬化（`9219016` → `13e7e3f`）之前的任何 live 数字，与下表**不可直比**：
+分母、口径、cohort 标签全都变过。
+
+### 10.2 读数
+
+| 指标 | 值 | 分子/分母 | 读法 |
+|---|---:|---|---|
+| 原始 evidence unit 通过 | **93.2%** | 438/470 | 唯一可直接引用的总量 |
+| `exact_plan_set_rate`（plan-only） | 95.5% | 449/470 | 新口径：只由 plan/replan 断言决定 |
+| `required_group_recall` | 96.6% | 412.5/427 | 分母只含真的写过 plan gold 的单元 |
+| `overroute_rate` | 2.8% | 13/470 | |
+| `forbidden_route_rate` | 1.1% | 5/470 | |
+| **`dependency_pass_rate`** | **20.0%** | **1/5** | ⚠ **本表最差的一格**，见 §10.3 |
+| `clarify_balanced_accuracy` | 83.3% | 8/9 | 分母仍小 |
+| `relation_pass_rate` | 90.9% | 130/143 | 新口径：relation 已折进每次重复再分类 |
+| `context_override_rate` | 85.7% | 6/7 | |
+| **`planner_capability_hallucination_rate`** | **2.3%** | 11/470 | ⚠ **旧文档里的「0%」是错的**，见 §10.3 |
+| `post_validation_escape_rate` | **0.0%** | 0/470 | 11 条幻觉被 validator 全部拦下 |
+| **`instability_rate`** | **14.5%** | 19/131 | 分母只含真重复过的；`repeat_coverage` 27.9% |
+| `fallback_plan_rate` | 2.1% | 10/470 | 10 条全是 A8 能力缺席族的**预期兜底** |
+
+重复分类：pass 438 / stable_fail 12 / **critical_fail 1** / unstable 19。
+cohort：seen **95.8%**（69/72）vs unseen **92.7%**（369/398）——**差 3.1 个百分点**。
+首偏离（L1 第一次可达，此前结构上恒为 `UNCLASSIFIED`）：
+`CONTEXT_DIVERGENCE` 14 / `RETRIEVAL_SUSPECT` 11 / `PLANNER_DIVERGENCE` 7。
+
+### 10.3 三条读数本身就是结论
+
+1. **能力幻觉不是 0%，是 2.3%。** 旧文档反复引用的「0% 幻觉」实为 post-validation
+   escape。拆开之后事实是：**planner 每 43 次规划就编一次不存在的能力，而 validator
+   拦下了全部 11 次**（逃逸 0/470）。这两个数一起才说得清「校验器在扛什么」——
+   合成一个数时，validator 越严指标越好看，模型编能力的事被彻底掩盖。
+2. **依赖接线是最弱的一环：1/5。** `cp.dep.*` 五条里四条没把 `depends_on` /
+   `slot_refs` 接上（`charge-then-navigate` / `menu-then-order` / `poi-then-navigate` /
+   `search-then-order`），三条高风险失败里两条是它。**模型两个步骤都规划出来了，
+   只是没连起来**——这不是落域问题，是计划结构问题，下一批的第一优先级。
+3. **不稳定率 14.5% 远高于旧报的 3.1%/4.1%。** 不是变差了，是旧分母含着从没复跑过的
+   单元（`repeat_coverage` 现在诚实地写着 27.9%）。**这两组数不可直比**，
+   14.5% 才是「真的重复过的那 131 个单元里的抖动」。
+
+### 10.4 消融第一次在真实失败上给出因果
+
+`--ablations on-failure` 此前从没在 live 跑起来过（发现轨主跑一直是 `off`），
+这一趟四臂全跑。**`causal=supported`（稳定错→稳定对）的归因**：
+
+| 用例 | 翻正的臂 | 结论 |
+|---|---|---|
+| `bd.ns-poi-road.right.seen`「路上怎么样」 | `no-exemplars` | 范例 `safety#5` 以 `@lex:1.00` 精确命中把它拉到 `safety.driving_advice`——**不是新增 policy 的连带影响**（这条待办由此结掉） |
+| `ki.conditional-reminder.miss` / `ki.guide.no-recall-on-parking` / `ex.colloquial.hot` / `cp.dep.trip-then-navigate` / `nq.match.future` | `no-skills` | guide 检索噪声，五条同一形态 |
+| `cp.reminder-weather.swapped` / `ex.invariant.*.colloquial` | 四臂全翻正 | 四个变量都能翻正 = 一个都不是因，是**方差**；按口径记 `suspect` 不记因果 |
+
+### 10.5 这一趟自己暴露的两条尺子缺陷（已在 `a60f08b` 修掉）
+
+- **跑完的结果被一次打印失败弄丢**：470 单元跑完、报告已落盘，摘要打 `⚠` 时 GBK
+  控制台抛 `UnicodeEncodeError`，退出码成了「运行失败」。又一次「失败被记成了别的
+  东西」，只是这次失败的是打印。
+- **预期内的兜底不该拦 baseline**：10 条 `plan_from_fallback` 全在 A8 能力缺席族，
+  那里落 chitchat 是设计如此。上一批那条闸会为一个错误的理由永远红着，
+  **而一条永远红的闸很快就没人再看它说什么**。已改为语料声明
+  `tags.expects_fallback` + 只拦未声明的；指标本身保持如实计数。
+
+### 10.6 仍然不能说的话
+
+- **不能说「已可写 baseline」**：§9 的 P0 已修，但 L3 证据仍未取得（e2e 运行器的账），
+  `stable` 唯一输入仍 104 < 120。
+- **不能拿 seen/unseen 的 3.1 个百分点与历史的 12 个百分点比**：中间隔着 23 条改标。
+- **L2 仍未在新口径下跑过**（`expected.engine`、Edge 副作用合并、`engine.observed`
+  fail-closed 全部只有单测证据）。

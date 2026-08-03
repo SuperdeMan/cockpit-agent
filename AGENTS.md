@@ -94,6 +94,35 @@ L1 发现轨原始 evidence unit **425/468**，扣掉 6 条网关伤亡后 **431
 **规则净变化 10 → 9**（退役 1、收窄 1、新增 0，N2 成立）。本批**一行没动尺子**：
 修尺子与修被测对象同批进行正是该体系明令禁止的事，评审的 12 条另开一批（findings §6.4）。
 
+**⭐ 新口径读数第一次存在（2026-08-03 晚，`13e7e3f`）。** 固定 provider
+`minimax:MiniMax-M3` 锁定、工作树干净、L1 全量 **470 证据单元**、`--ablations on-failure`
+（消融第一次在真实失败上跑起来）、检索 **2040 次调用零降级**、探针与基础设施错误均为 0。
+**完整表在评审报告 §10，那是唯一入口。** 头三行：原始 evidence unit **438/470（93.2%）**；
+`planner_capability_hallucination_rate` **2.3%**（11/470）而 `post_validation_escape_rate`
+**0%**——**旧文档里反复引用的「0% 幻觉」是错的**，它实为校验后逃逸率，拆开才看得见
+「模型每 43 次编一次能力、validator 全拦下了」；`dependency_pass_rate` **20%（1/5）**
+是全表最差的一格（`cp.dep.*` 五条里四条没接 `depends_on`/`slot_refs`，三条高风险失败里
+两条是它——**两个步骤都规划出来了只是没连起来**，下一批第一优先级）。
+`instability_rate` **14.5%（19/131）**配 `repeat_coverage` **27.9%**：不是变差了，
+是旧分母含着从没复跑过的单元，**14.5% 与旧报的 3.1% 不是同一个量**。
+seen **95.8%** vs unseen **92.7%**（差 3.1 点，⚠ 中间隔着 23 条改标，不可与历史 12 点比）。
+
+**尺子六批硬化 + 一批产品修复（2026-08-03，专项单测 178 → 210）**，三轮独立复审的
+P0/P1 逐条关闭、每条配注入式反向构造：`9219016`（检索中途降级 / 兜底冒充判断）、
+`8f06db5`（复审 §8 的 2 P0+5 P1）、`cd3646b`（语料：澄清裁定 + trunk.open 真缺口）、
+`5bbc7ef`（探针不许比被观察的东西更脆弱）、`2b619c3`（复审 §9 的 2 P0+2 P1）、
+`13e7e3f`（消融臂替身也会打死跑批）、`a60f08b`（打印失败别弄丢跑完的结果 / 预期兜底不拦闸）；
+产品侧 `56e19ff`（「受话了但不该做任何动作」是判断不是解析失败）。
+
+**这一轮最该记住的三条**：① **探针两次把整趟全量打死**（畸形 `slots`、消融替身缺
+`_ordered_hints`），而两次生产侧都安然无恙——**观察者不能比被观察的东西更脆弱**；
+第二条只在 `--ablations on-failure` 下可达而主跑一直是 `off`，于是「已接通」被当成
+「已实现」好几批，判据入册：**没在真实路径上跑过的分支不算实现过**。
+② **两条守红线的测试自己绿得没道理**——P0-1 突变测试在契约层就 exit 2 根本没走到资格闸
+（退出码恰好相同），`_gold_changes` 的 fixture 用 list 而真实格式是 dict。
+③ **一条永远红的闸很快就没人再看它说什么**——预期内的兜底（A8 能力缺席族）被一并拦下，
+修法是语料声明 `tags.expects_fallback` 而不是猜形状（形状上它和否定族一模一样）。
+
 **2026-08-03 独立对抗 review：首轮验收不通过；同日硬化后复审仍不通过。** 报告
 [`docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`](docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md)
 确认 baseline 完整选集可被正常过滤参数绕过、L2 丢 Edge 副作用、多轮只执行第一轮，以及
@@ -195,17 +224,20 @@ span 的 `path` × `nlu_gate` × `nlu_vs_rule` 现在能从真实流量算出上
 
 | 待办 | 出处 | 说明 |
 |---|---|---|
-| **尺子复审残留：2 P0 / 2 P1** | 2026-08-03 独立复审 §9 | **未收口**：baseline 比较源可绕过、gold 摘要漏字段；Planner 重试 raw 对齐与 L3 run/code/lock 身份仍不闭合。Engine/指标分母/L1 适用性/relation/coverage 已接受关闭。先补 §9 四条反向构造，再谈正式 baseline |
-| **新口径读数不存在（最高优先）** | 评审 §7.3 / §9 | 代码口径大部已修，但固定 provider 的 L1/L2/L3 新鲜全量仍未形成可引用报告。在那之前 `exact_plan_set_rate` / seen-unseen / `planner_capability_hallucination_rate` / `instability_rate` 的任何数字都不可引用，包括 findings §5.4 的旧表 |
+| ~~**尺子复审残留：2 P0 / 2 P1**~~ | 2026-08-03 独立复审 §9 | **已收口（`2b619c3`）**：比较源锁死到正式基线 / gold 指纹改从完整 `TurnExpectation` 序列化 / raw 证据改绑最后一个 accepted 尝试 / L3 补 `provider_lock` 与单一 `run_id` 核对。四条各配注入式反向构造 |
+| ~~**新口径读数不存在**~~ | 评审 §7.3 / §9 → **§10** | **已收口**：L1 全量已跑（`13e7e3f`，470 单元、检索 2040 次零降级、工作树干净），**读数全表在评审 §10**。⚠ **L2 仍没跑过新口径**，见下 |
 | **23 条改标 seen 后 unseen 覆盖变薄** | 评审 §7.2-①、§7.3 | 指纹闸抓出 13 条 `unseen_transfer` 的原话字面就在 `skills/exemplars/*.yaml` 里（family 闸对它们全绿），连同 family 闭包共 23 条改标 seen。补法是**新写真正没进过知识的话术**，不是把标签改回去；受影响的是 stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条 |
-| **两条消融 arm 未在真实失败上跑过** | 评审 §7.3 | `cloud-direct`（绕 Edge）与 `planner-only`（不恢复会话状态）已接通并有 layer 归属守卫，但要 live 才跑得起来；在跑起来之前 `EDGE_DIVERGENCE` / `STATE_RESTORE_DIVERGENCE` 只是可达，不是验证过 |
+| ~~**两条消融 arm 未在真实失败上跑过**~~ | 评审 §7.3 → §10.4 | **L1 四臂已跑**（`--ablations on-failure`，`causal=supported` 归因见评审 §10.4）；`cloud-direct`/`planner-only` 属 L2，随下面那条一起等。⚠ **接通它的过程中才发现这条路上躺着一个会打死整趟跑批的缺陷**（`13e7e3f`）——判据入册：**没在真实路径上跑过的分支不算实现过** |
 | **`parking` 缺「查停车费」能力** | findings §6.1 | `parking-payment` 只有 `parking.pay` 一个 capability，「我想先知道多少钱」系统答不了，模型被迫选唯一那个（`require_confirm=true` 兜住了钱不会自己出去）。修法是补 `parking.query_fee` 读能力，按 CLAUDE.md §3 流程走，属新增能力 |
 | ~~**「有点看不清路了」该开大灯还是开雨刷**~~ | findings §6.2 | **已收口（`cd3646b`）**：拍板走澄清卡，禁止直接触发 `headlight.on` / `wiper.on`，案例晋级 reviewed |
 | **`stable` 规模实为 104 < 120** | 规格 §21.8 / §22.2 | 原来报的 113 条里有 9 个是重复输入。`validate_suite_counts` 现按**唯一输入**判，`--strict` 正确退出非零。补齐要新写案例，**不能靠改口径** |
 | **L3 证据仍未取得** | 规格 §21.8 / 评审 §9 | 唯一目录、mtime、exit、provider 与额外 journey 已核；report 的 run/code/lock 身份仍未闭合，且尚无新鲜完整 L3 产物，不能写“baseline-ready” |
-| **发现轨消融仍未形成新鲜证据** | 规格 §21.8 / 评审 §9 | L1 已按 layer 跳过不适用边界，结构可达问题关闭；仍需在固定 provider 的真实失败上取得 `cloud-direct` / `planner-only` 等 arm 结果 |
-| **`instability_rate` 3.1% → 4.1%** | 2026-08-03 修复批次 | 本批唯一明确变差的指标。新增抖动集中在新恢复/新增的边界用例上（它们本就站在两域分界线）。⚠ **这两个数是旧口径**（分母含只跑过一次的证据单元）；新口径分母只含真的重复过的单元并另给 `repeat_coverage`，两组数**不可直比**，要等新的 live 全量 |
-| **seen 掉的那 1 条** | 2026-08-03 修复批次 | `bd.ns-poi-road.right.seen`「路上怎么样」→ `safety.driving_advice`（gold 要 `safety.road_condition`）。**不能声称与本批无关**——新增常驻 policy 与 `_CLARIFY_SECTION` 判据改变了每一次规划的 prompt。等消融归因 |
+| **依赖接线 1/5（最高优先）** | 评审 §10.3-2 | `dependency_pass_rate` **20%**。`cp.dep.*` 五条里四条没接 `depends_on`/`slot_refs`（charge-then-navigate / menu-then-order / poi-then-navigate / search-then-order），三条高风险失败里两条是它。**两个步骤都规划出来了只是没连起来**——计划结构问题，不是落域问题 |
+| **L2 新口径从没跑过（最高优先）** | 评审 §10.6 | `expected.engine` / Edge 副作用合并 / `engine.observed` fail-closed 目前只有单测证据。只有 7 条、很便宜 |
+| **`ex.colloquial.dark` 现在是红的** | 本轮裁定的连带 | 裁定走澄清卡后模型并不澄清（四臂全 `stable_fail`）。**这是裁定照出来的真缺口**，修法在 `_CLARIFY_SECTION` 判据或范例，不是把 gold 改回去 |
+| **A4 83.3% / A9 83.0%** | 评审 §10 | 两个最弱攻击族（其余 ≥89%，A2/A8 已 100%） |
+| ~~**`instability_rate` 3.1% → 4.1%**~~ | 2026-08-03 修复批次 → 评审 §10 | **旧口径两个数全部作废**。新口径 **14.5%（19/131）** 配 `repeat_coverage` **27.9%**——不是变差，是旧分母含着从没复跑过的单元。**与 3.1% 不是同一个量，不许相减** |
+| ~~**seen 掉的那 1 条**~~ | 2026-08-03 修复批次 → 评审 §10.4 | **已归因**：`no-exemplars` 臂稳定翻正（`causal=supported`），真因是范例 `safety#5` 以 `@lex:1.00` 词法精确命中把它拉到 `safety.driving_advice`，**不是新增 policy 的连带影响**。修法是范例/边界台账 |
 
 **M5 待办（都不阻塞）**：
 
