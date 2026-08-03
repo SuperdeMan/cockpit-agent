@@ -278,24 +278,24 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 
 ## 10. 已知残留与下一步优先级
 
-> ~~P0 跑一次固定 provider 的全量~~ **L1 已跑**（`13e7e3f`，读数见评审报告 §10）。
-> ~~seen 掉的那 1 条未归因~~ **已归因**（`no-exemplars` 稳定翻正，真因是范例
-> `safety#5` 词法精确命中）。~~「看不清路」等拍板~~ **已裁定走澄清卡**。
-> ~~消融 arm 未在真实失败上跑过~~ L1 四臂**已跑**（`cloud-direct`/`planner-only` 属 L2）。
+> **本节截至 2026-08-03 收工时。** 已收口的不再列（完整流水见 `docs/agents-history.md` §5）：
+> 固定 provider 全量（L1+L2 都跑了）· 消融 arm · seen 掉的那条 · 依赖组合漏步 ·
+> `parking.query_fee` 缺能力 ·「看不清路」· 三轮独立复审的全部 P0/P1。
 
 | 优先级 | 待办 | 说明 |
 |---|---|---|
-| **P0** | **依赖接线 1/5** | `dependency_pass_rate` 20%（评审 §10.3-2）。`cp.dep.*` 五条里四条没接 `depends_on`/`slot_refs`，三条高风险失败里两条是它。**两个步骤都规划出来了只是没连起来**——这是计划结构问题不是落域问题，本表最实的一条 |
-| **P0** | **L2 新口径从没跑过** | `expected.engine` / Edge 副作用合并 / `engine.observed` fail-closed 目前只有单测证据。L2 只有 7 条，便宜，但**没跑过的分支不算实现过**（消融臂那次已经教过一遍） |
-| P1 | **stable 规模 104 → 120** | 补齐要新写案例，**不能靠改口径**；先补 unseen 侧变薄的那几族。晋级要两趟独立进程的 live 证据 |
-| P1 | **23 条改标 seen 后 unseen 覆盖变薄** | stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条。补法是新写真正没进过知识的话术，不是把标签改回去 |
-| P1 | **`ex.colloquial.dark` 现在是红的** | 裁定走澄清卡之后，模型并不澄清（四臂全 `stable_fail`）。**这是裁定照出来的真缺口**，不是 gold 写错——修法在 `_CLARIFY_SECTION` 判据或范例，不是把 gold 改回去 |
-| P1 | **`safety#5` 词法精确命中干扰** | §10.4 已给出 `causal=supported` 证据。修法是范例/边界台账，不是改 planner |
-| P2 | **L3 证据** | 属 e2e 运行器的账（`lease_protocol` / `identity_cleanup`），不是对抗套件的 |
-| P2 | **A4 83.3% / A9 83.0%** | 两个最弱攻击族（其余 ≥89%）。A2/A8 已 100% |
-| P3 | **`parking` 缺「查停车费」读能力** | 见 findings §6.1。provider 侧 `get_fee` **已存在**，缺的是 manifest capability + handler 分支 + 契约测试 |
+| **P0** | **`stable` 规模 104 → 120** | `--strict` 正确退出非零。补齐要**新写案例**、不能改口径；晋级要**两趟独立进程**的 live 证据（实测有 8 条在两趟之间翻面）。这是唯一挡在正式 baseline 前的语料项 |
+| **P0** | **`clause_commute` 族因槽位拼写系统性红** | 8 条里 4 条以上：intent 完全相同，差的是 `query="今晚比赛"` vs `date="今晚"`。语义签名逐字含 `step.slots`，而它**刻意排除了 step id 与文风**（理由是「进了签名 invariant 就永远为假」）——槽位同理。⚠ **改它会当场作废 `relation_pass_rate 90.9%`**（§9 纪律），且 `query` vs `date` 下游可能真不同。**需要一次单独的口径裁定，别顺手改** |
+| P1 | **23 条改标 seen 后 unseen 覆盖变薄** | stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条。补法是**新写真正没进过知识的话术**，不是把标签改回去 |
+| P1 | **契约缺「恰好 N 次副作用」断言** | `safety` 只表达「零副作用」，「只准执行一次」现在只能用调用次数**上界**逼近（见评审 §10.7） |
+| P1 | **A4 83.3% / A9 83.0%** | 两个最弱攻击族（其余 ≥89%，A2/A8 已 100%） |
+| P2 | **L3 证据** | 属 e2e 运行器的账（`lease_protocol` / `identity_cleanup`），不是对抗套件的。它是正式 baseline 的另一个前置 |
+| P2 | **「有点热」落 `hvac.inc`** | 方向反了（gold 要 dec/set/on）。`unstable` 不进修复清单，但**体感冷热搞反是用户当场能发现的那种错** |
+| P3 | **`--tag` 选集比看上去宽** | `--tag composition` 会把 `cp.adaptive.*` 与 `*.swapped` 一起带进来。读子集报告前先看 `--list` 的 `selected=` |
 
----
+**下一步最省力的路径**：P0 两条互不依赖——语料规模是纯写作 + 两趟 live 晋级；
+`clause_commute` 是一次口径裁定（建议单独开一批，先写清「换序不变式到底该不该比槽位」，
+再改，再重跑 relation 相关读数）。
 
 ## 11. 自查清单（提交前逐条过）
 

@@ -62,17 +62,29 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 > 截至 **2026-08-03**。本节只保留当前事实与最近批次摘要；**逐批次历史流水（只进不出，查证据用）
 > 整体在 [`docs/agents-history.md`](docs/agents-history.md)**——新批次收口时把完整记录追加到
 > 那边、在这里刷新摘要，不要再往本文件堆流水。
+>
+> **接手意图落域对抗测试的新会话，按这个顺序读**：① 运行手册
+> [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md)
+> §0「现在能引用什么」+ §10「已知残留与下一步优先级」；② 评审报告
+> [`docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`](docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md)
+> **§10–§10.11**（新口径读数与本期全部结论，含一条**已更正的错误定性**在 §10.8）；
+> ③ 本文 §4.1 活跃待办；④ 完整流水 `docs/agents-history.md` **§5**。
+> **live 跑批前先看运行手册 §2 的三个环境变量**——少给一个整趟白跑。
 
 **全量测试基线**：后端 `python -m pytest --import-mode=importlib` **3783 passed / 11 skipped /
 0 failed**（2026-08-02 单进程实测 14m02s；对抗测试体系 +128，零回归）；HMI `node --test` **225/225**；
 Dashboard vitest **17/17**；端侧 smoke 13/13；Go 网关 vet+test 通过。
-**2026-08-03 修复批次 +24 用例**（端侧对抗回归 17 / intent 归位 5 / skill 预算头寸 2，另有
-混合分组 2 条并入既有文件）：`test/` + `orchestrator/` + `agents/` 实测 **2521 passed**。
+**2026-08-03 对抗测试期累计**：对抗专项单测 **178 → 210**（`test/test_intent_adversarial_*.py`
++ `test_eval_intent_adversarial_cli.py` + `test_build_intent_adversarial_candidates.py`）；
+新增 `orchestrator/cloud/tests/test_planning_no_action.py` 8 条、`agents/parking_payment/` 9 条；
+`orchestrator/` 全量 **474 passed**；L0 全量 **70/70 exit 0**（533 条 / 494 唯一输入）。
 ⚠ **本机当前 `scripts/tests/` 有 32 条红**，但**与 clean HEAD `de6ef22` 逐条一致**
 （既有 e2e 运行器的环境路径问题，非本批引入）——同一命令在本机与 CI 上的分母不同，
 **引用基线前先确认是在哪台机器上跑的**。
 
 **意图落域对抗测试体系（2026-08-02 建成，2026-08-03 首轮发现全部修复 + 尺子自身 12 条硬化）**：
+
+> 已收口的条目**不再列在这里**（本表只留活的）——完整逐条记录见 [`docs/agents-history.md`](docs/agents-history.md) **§5**，读数与裁定见评审报告 §10–§10.11。
 📘 **接手人从运行手册开始：[`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md)**
 （常青指南：怎么跑 / 红了怎么查 / 修 badcase 的产物 / 加用例自查 / 晋级与 baseline 前置 / 残留优先级）。
 规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`（§21 落地记录、§22 尺子硬化）、
@@ -227,23 +239,14 @@ span 的 `path` × `nlu_gate` × `nlu_vs_rule` 现在能从真实流量算出上
 
 | 待办 | 出处 | 说明 |
 |---|---|---|
-| ~~**尺子复审残留：2 P0 / 2 P1**~~ | 2026-08-03 独立复审 §9 | **已收口（`2b619c3`）**：比较源锁死到正式基线 / gold 指纹改从完整 `TurnExpectation` 序列化 / raw 证据改绑最后一个 accepted 尝试 / L3 补 `provider_lock` 与单一 `run_id` 核对。四条各配注入式反向构造 |
-| ~~**新口径读数不存在**~~ | 评审 §7.3 / §9 → **§10** | **已收口**：L1 全量已跑（`13e7e3f`，470 单元、检索 2040 次零降级、工作树干净），**读数全表在评审 §10**。⚠ **L2 仍没跑过新口径**，见下 |
 | **23 条改标 seen 后 unseen 覆盖变薄** | 评审 §7.2-①、§7.3 | 指纹闸抓出 13 条 `unseen_transfer` 的原话字面就在 `skills/exemplars/*.yaml` 里（family 闸对它们全绿），连同 family 闭包共 23 条改标 seen。补法是**新写真正没进过知识的话术**，不是把标签改回去；受影响的是 stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条 |
-| ~~**两条消融 arm 未在真实失败上跑过**~~ | 评审 §7.3 → §10.4 | **L1 四臂已跑**（`--ablations on-failure`，`causal=supported` 归因见评审 §10.4）；`cloud-direct`/`planner-only` 属 L2，随下面那条一起等。⚠ **接通它的过程中才发现这条路上躺着一个会打死整趟跑批的缺陷**（`13e7e3f`）——判据入册：**没在真实路径上跑过的分支不算实现过** |
-| ~~**`parking` 缺「查停车费」能力**~~ | findings §6.1 | **已收口（2026-08-03）**：`parking.query_fee` 落地（manifest + agent 分支 + 3 条契约测试），覆盖补 2 正例/2 硬负例/1 对照。实测 `nq.parking-negate` 落 `parking.query_fee` 3/3——**用户问的那件事第一次被答上了**。⚠ 连带：`cp.dep.poi-then-navigate` 改 any_of 后 `navigation.search_poi` 单成员正例掉到 1，已补 `tu.nav.map-locate-landmark` |
-| ~~**「有点看不清路了」该开大灯还是开雨刷**~~ | findings §6.2 | **已收口（`cd3646b`）**：拍板走澄清卡，禁止直接触发 `headlight.on` / `wiper.on`，案例晋级 reviewed |
 | **`stable` 规模实为 104 < 120** | 规格 §21.8 / §22.2 | 原来报的 113 条里有 9 个是重复输入。`validate_suite_counts` 现按**唯一输入**判，`--strict` 正确退出非零。补齐要新写案例，**不能靠改口径** |
 | **L3 证据仍未取得** | 规格 §21.8 / 评审 §9 | 唯一目录、mtime、exit、provider 与额外 journey 已核；report 的 run/code/lock 身份仍未闭合，且尚无新鲜完整 L3 产物，不能写“baseline-ready” |
-| **组合漏第二步（原「依赖接线 1/5」，⚠ 定性已更正）** | 评审 **§10.8** | 初版写「两步都规划出来了只是没连起来」——**逐条拉计划后发现只对 1 条成立，而那 1 条恰恰不是接线问题**。真形态：3 条 unstable 是**漏第二步**、1 条是 gold 与 find-vs-go 台账打架（已修，3/3）、1 条通过。`trip-then-navigate` 是唯一 `causal=supported`：**guide 自己在制造漏步**（`multi-day-trip` 只讲「必须出 trip.plan」、示例全是并列步，模型读成「只出」），已补组合判据 + golden，实测 3/3。⚠ **20% 不等于「20% 的时候接不上」**——分母含 3 条 unstable 且报告存的是失败那一次。全族回归待 provider 恢复（MiniMax 529） |
-| ~~**L2 新口径从没跑过**~~ | 评审 §10.6 → **§10.7** | **已收口**：10 单元 / 8 通过 / **0 stable_fail** / 2 unstable，`engine.observed` 全真、逐例 2–4 条 Engine 断言真的在裁。首跑当场抓到一条**按构造不可满足**的 gold（`max_agent_calls_per_intent: 1` 撞上会话累计计数），改成三轮后**「说两遍确认一次只付一次」第一次被证** |
+| **组合漏第二步（原「依赖接线 1/5」，⚠ 定性已更正）** | 评审 **§10.8** | 初版写「两步都规划出来了只是没连起来」——**逐条拉计划后发现只对 1 条成立，而那 1 条恰恰不是接线问题**。真形态：3 条 unstable 是**漏第二步**、1 条是 gold 与 find-vs-go 台账打架（已修，3/3）、1 条通过。`trip-then-navigate` 是唯一 `causal=supported`：**guide 自己在制造漏步**（`multi-day-trip` 只讲「必须出 trip.plan」、示例全是并列步，模型读成「只出」），已补组合判据 + golden，实测 3/3。⚠ **20% 不等于「20% 的时候接不上」**——分母含 3 条 unstable 且报告存的是失败那一次。**全族回归已补跑**（`--tag composition` 51 单元 ×3）：两条修复都不在失败名单、3/3 站住；剩下的 `cp.dep.menu-then-order` 等仍是漏第二步的 unstable，按规矩不进修复清单 |
 | **契约缺「恰好 N 次副作用」断言** | 评审 §10.7 | `safety` 只表达「零副作用」，「只准执行一次」现在只能用调用次数上界逼近。补字段是尺子的账 |
-| ~~**`ex.colloquial.dark` 现在是红的**~~ | 本轮裁定的连带 → 评审 **§10.10** | **已收口**：`_CLARIFY_SECTION` 加一条**两面**判据（程度性缓解照常直接做、绝不反问；只有手段互斥**且猜错有实际代价**才澄清）——只写一面必然把「闷/吵」一起带进反问。先量后改：7 条 `ex.colloquial.*` 各 3 次前后对照，`dark` 1/3→**3/3 真走澄清**、`noisy` 2/3→3/3、零确认回退（`stuffy` 那一下补测 6/6 合计 8/9，判为噪声，**是判断不是结论**）|
 | **`clause_commute` 族系统性红（新）** | 评审 §10.11 | intent 完全相同，差的是**槽位拼写**（`query="今晚比赛"` vs `date="今晚"`）。语义签名逐字含 `step.slots`，而它**刻意排除了 step id 与文风**，理由是「进了签名 invariant 就永远为假」——槽位同理。⚠ **本轮不改**：动 relation 口径会当场作废刚产出的 `relation_pass_rate 90.9%`，且 `query` vs `date` 下游可能真不同。需要单独一次口径裁定 |
 | **「有点热」落 `hvac.inc`（新）** | 评审 §10.11 | 方向反了（gold 要 dec/set/on）。`unstable` 不进修复清单，但**体感冷热搞反是用户当场能发现的那种错** |
 | **A4 83.3% / A9 83.0%** | 评审 §10 | 两个最弱攻击族（其余 ≥89%，A2/A8 已 100%） |
-| ~~**`instability_rate` 3.1% → 4.1%**~~ | 2026-08-03 修复批次 → 评审 §10 | **旧口径两个数全部作废**。新口径 **14.5%（19/131）** 配 `repeat_coverage` **27.9%**——不是变差，是旧分母含着从没复跑过的单元。**与 3.1% 不是同一个量，不许相减** |
-| ~~**seen 掉的那 1 条**~~ | 2026-08-03 → 评审 §10.4 / **§10.9** | **已修好并复验（4/4，原 3/3 全红）**。归因走了两层：消融给 `causal=supported` 指向范例 `safety#5`，但那是**现象**；真根因是 **manifest examples 与人裁台账打架**——范例 `source: manifest`，改范例不改 manifest 会被重新导回，而 `boundaries.yaml` 裁定「路上怎么样」的对象是前方路况。第二层：它与兄弟能力的 examples **只差一个字**（路上/路况），**而同一文件上两行的注释里就记着同一个病的第一例**——判据只写成注释就防不住第二次。**判据已机制化**（`eval_exemplars` 新车道 `lane_corpus_agreement`）：不做相似度闸——**先量过，真冲突 0.403 排在十几对合法区分下面**（0.845「今天/明天天气」= weather↔forecast 等），相似度分不开真假；改判**同一句原话在范例与语料 gold 里指向相反**，零阈值。反验：注入出事前状态精确报 1 条，当前语料零误报 |
 
 **M5 待办（都不阻塞）**：
 
