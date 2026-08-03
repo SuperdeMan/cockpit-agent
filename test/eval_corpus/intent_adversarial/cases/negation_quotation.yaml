@@ -121,9 +121,9 @@ cases:
     family_id: nq.airport
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [negation_scope], domains: [navigation, chitchat], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     relation: {base_case: nq.airport.go, type: route_flip, expectation: {forbidden_after: [navigation.navigate_to], required_change: true}}
     turns:
       - input: {utterance: 先别导航去机场, context: {}}
@@ -184,9 +184,9 @@ cases:
     family_id: nq.landmark
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [clarify], domains: [navigation], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-02, gold_revision_reason: "2026-08-02 复核：CLARIFY_ENABLED **生产一直是 on**（.env.example / compose 自 2026-07-08 真栈 CDP 验收后即 on），findings 里「生产默认 off」读的是代码兜底值；本批已把 planning/engine 的兜底缺省对齐到 on，评测进程不再测到另一套装配", gold_revised_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-02, gold_revision_reason: "2026-08-02 复核：CLARIFY_ENABLED **生产一直是 on**（.env.example / compose 自 2026-07-08 真栈 CDP 验收后即 on），findings 里「生产默认 off」读的是代码兜底值；本批已把 planning/engine 的兜底缺省对齐到 on，评测进程不再测到另一套装配", gold_revised_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 华润大厦, context: {}}
         expected:
@@ -197,12 +197,12 @@ cases:
     family_id: nq.landmark
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [clarify], domains: [navigation], layers: [l1], gate_candidate: true}
     # 2026-08-02 泓舟裁定：带「导航去/带我去」的句子归 navigation 域；**先搜后导与直接导航
     # 两条 intent 都算落对**（用户拿到的都是「去这个地方」）。本条真正要守的是另一件事：
     # 补上动词之后**绝不许再反问**——澄清只作用于动词缺失的裸地名。
-    provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-02, gold_revision_reason: "2026-08-02 裁定：navigate_to 与 search_poi 都算落对；断言收敛到「补上动词后不得澄清」", gold_revised_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-02, gold_revision_reason: "2026-08-02 裁定：navigate_to 与 search_poi 都算落对；断言收敛到「补上动词后不得澄清」", gold_revised_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     relation: {base_case: nq.landmark.bare, type: clarify_flip, expectation: {}}
     turns:
       - input: {utterance: 导航到华润大厦, context: {}}
@@ -646,9 +646,9 @@ cases:
     family_id: nq.hvac-keep
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A3], mechanisms: [negation_scope], domains: [hvac, volume], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 别关空调，把音量调小就行, context: {}}
         expected:

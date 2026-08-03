@@ -26,9 +26,9 @@ cases:
     family_id: ki.weather-plain
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [info], layers: [l0, l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 今天天气怎么样, context: {}}
         expected:
@@ -514,9 +514,9 @@ cases:
     family_id: ki.multi-day-trip-alt
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [skill_recall], domains: [trip], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, source_ref: skills/guides/multi-day-trip.yaml, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    provenance: {kind: authored, source_ref: skills/guides/multi-day-trip.yaml, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 帮我安排一下五天的云南玩法, context: {}}
         expected:
@@ -527,9 +527,9 @@ cases:
     family_id: ki.nav-stop-alt
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A7], mechanisms: [skill_recall], domains: [navigation], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, source_ref: skills/guides/navigation-with-stop.yaml, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    provenance: {kind: authored, source_ref: skills/guides/navigation-with-stop.yaml, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 去机场路上先拐个加油站, context: {}}
         expected:

@@ -24,9 +24,9 @@ cases:
     family_id: cs.weather-stale
     cohort: seen_regression
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [stale_history], domains: [info], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     relation: {base_case: cs.weather.clean, type: invariant, expectation: {}}
     turns:
       - input:
@@ -363,9 +363,9 @@ cases:
     family_id: cs.cancel-it
     cohort: unseen_transfer
     risk: high
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [focus, anaphora], domains: [reminder, research], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input:
           utterance: 那个取消掉
@@ -379,9 +379,9 @@ cases:
     family_id: cs.cancel-it
     cohort: unseen_transfer
     risk: high
-    status: reviewed
+    status: stable
     tags: {attacks: [A5], mechanisms: [focus, anaphora], domains: [reminder, research], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     relation: {base_case: cs.cancel-it.reminder, type: context_override, expectation: {must_differ: true}}
     turns:
       - input:

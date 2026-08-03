@@ -861,9 +861,9 @@ cases:
     family_id: cp.air-music
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A4], mechanisms: [composition, parallel], domains: [info, media], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 查一下今天空气质量，再放首轻音乐, context: {}}
         expected:
@@ -875,9 +875,9 @@ cases:
     family_id: cp.volume-forecast
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A4], mechanisms: [composition, parallel, local_and_online], domains: [volume, info], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 把音量调小，再查一下明天天气, context: {}}
         expected:
@@ -887,9 +887,9 @@ cases:
     family_id: cp.hvac-air
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A4], mechanisms: [composition, parallel, local_and_online], domains: [hvac, info], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 空调温度往下调两度，顺便看看空气质量, context: {}}
         expected:

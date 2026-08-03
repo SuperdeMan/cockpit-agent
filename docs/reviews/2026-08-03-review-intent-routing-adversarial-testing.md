@@ -996,3 +996,65 @@ action `type`。**键里刻意不含 payload**——否则同一动作换个参�
 指标 `side_effect_total` / `side_effect_count_pass` 只在声明过该字段时才写；
 `subset_passed` 返回 `None` 时也不写——`1.0 if None else 0.0` 会把「没量过」压成
 「量过是失败」，那是本套件的头号病灶。
+
+---
+
+## 10.14 P0「stable 唯一输入 104 → 120」收口，以及它顺带证伪的一件事
+
+### 10.14.1 做法：预选池等量换出换入，不是往里加
+
+`gate_candidate` 预选池被 `validate_gate_candidate_count` 钉死在**恰好 140**，所以补规模
+只能等量换。先跑一趟 live 取证（140 选集 / 120 单元）逐条定，**换出 8 条带病候选**
+（只摘 `gate_candidate` 标记，用例留在语料里继续供 discovery 用）、**换入 8 条新案例**，
+攻击族逐一对齐（A4×3 / A3×2 / A7×2 / A9×1）。
+
+两条设计判断：
+
+- **换出依赖组合、换入并列组合。** 依赖那一族整族在抖（§10.8 漏第二步），
+  明知在抖的形态不该进门禁——这批刚吃过「一条永远红的闸很快没人再看」的教训。
+- **换入 guide 召回正例而不是反例。** 反例要求检索器**精确地不命中**，那是检索精度的
+  账（被换出的 `ki.conditional-reminder.miss` 正是稳定红在这里），不该由门禁扛。
+
+其中两条（`ex.colloquial.hot` / `cp.dep.search-then-order`）取证那趟**是绿的仍然换出**：
+评审已记它们的缺陷形态，一次侥幸不构成推翻。
+
+### 10.14.2 两趟独立进程抓到 3 条翻面——这条纪律不是形式主义
+
+| 用例 | A 趟 | B 趟 | 处置 |
+|---|---|---|---|
+| `cp.hvac-news.swapped` | pass | `stable_fail`（relation.clause_commute） | 不晋级 |
+| `nq.hvac.reported` | `stable_fail` | pass | 不晋级 |
+| `nq.match.lastweek`（新写） | `unstable` | pass | 不晋级 |
+
+单跑任意一趟都会多晋级 1–2 条采样噪声里的用例。运行手册 §7 记的「实测有 8 条在两趟
+之间翻面」，这次又添 3 例。
+
+### 10.14.3 结果
+
+A∩B 两趟都过 20 条，其中 `cp.adaptive.weather-outing` 因**声明了 l3 而 L3 证据未取得**
+被挡下，实际晋级 **19 条**。`stable` 113 → **132 条**，**唯一输入 104 → 122 ≥ 120**，
+`--suite gate --layer l0 --strict` **exit 0**（此前恒为 2）。攻击分布仍均衡
+（A1–A9 各 12–18），cohort unseen 103 / seen 29。
+
+`provenance` 记 `stabilized_via: evidence_only` —— **未经单独人裁、仅凭两趟 live 证据晋级**
+（2026-08-03 泓舟本会话授权），与既有 `blanket_authorisation` 区分开，事后可一眼筛出复核。
+
+### 10.14.4 ⚠ 它顺带证伪了一件事：**补规模 ≠ 门禁能跑绿**
+
+这两件事此前被默认绑在一起（「stable 补到 120，正式 baseline 就差 L3 了」）。
+实测**不成立**——现有 stable 集合里两趟都稳定红着两条：
+
+| 用例 | 原话 | 实际 | 性质 |
+|---|---|---|---|
+| `ex.homophone.aircon` | 把空条打开 | **3/3 落 `sunroof.open`** | 说开空调**开了天窗**——同音字被解成了另一个车控对象 |
+| `nq.umbrella.both` | 帮我查下明天的天气，然后提醒我带伞 | 3/3 只出 `info.weather` | §10.8「组合漏第二步」的又一例 |
+
+B 趟另有 4 条 stable 单趟红（`cs.news.stale-trip` / `ex.nopunct.three-intent` /
+`nq.dinner-music.drop-music` / `os.charge-place.phone`）。
+
+两条都是 2026-08-02 晋级时通过的，现在稳定红 = **回归**，而且都是用户当场能发现的那种错。
+按纪律它们属产品侧、与本批（语料）不同批，逐条记账另开。
+
+**判据入册**：**规模闸绿了不等于门禁绿了。** `--strict` 判的是语料规模，
+live 门禁判的是 stable 全绿；把前者的绿读成「baseline 只差 L3」会漏掉一整类回归。
+正式 baseline 的前置因此**多了一条**，且这条比 L3 更硬——它是被测对象自己的红。

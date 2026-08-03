@@ -112,9 +112,9 @@ cases:
     family_id: ex.homophone-navigate
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A9], mechanisms: [homophone], domains: [navigation], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 到航去广州南站, context: {}}
         expected:
@@ -124,9 +124,9 @@ cases:
     family_id: ex.homophone-charging
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A9], mechanisms: [homophone], domains: [charging], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 附近哪里能冲电, context: {}}
         expected:
@@ -232,9 +232,9 @@ cases:
     family_id: ex.selfcorrect
     cohort: unseen_transfer
     risk: high
-    status: reviewed
+    status: stable
     tags: {attacks: [A9], mechanisms: [self_correction], domains: [navigation], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 导航去机场，不对，去广州南站, context: {}}
         expected:
@@ -675,9 +675,9 @@ cases:
     family_id: ex.filler-window
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A9], mechanisms: [colloquial, filler], domains: [window], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-03, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 那个……帮我把车窗关一下吧, context: {}}
         expected:

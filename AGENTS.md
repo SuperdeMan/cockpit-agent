@@ -70,14 +70,23 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 > **§10–§10.11**（新口径读数与本期全部结论，含一条**已更正的错误定性**在 §10.8）；
 > ③ 本文 §4.1 活跃待办；④ 完整流水 `docs/agents-history.md` **§5**。
 > **live 跑批前先看运行手册 §2 的三个环境变量**——少给一个整趟白跑。
+>
+> **2026-08-03 晚追加四批**（评审 §10.12 / §10.13 / §10.14）：`clause_commute`
+> 口径裁定（relation 改对照 `supp(base)`，`relation_pass_rate 90.9%` **作废**）·
+> 「恰好 N 次副作用」契约字段 · `--tag` 选集自报口径 · `stable` 规模
+> **104 → 122**（`--strict` 转绿）+ 一条真栈撞出的生产健壮性修复（`50c2b3f`）。
+> ⚠ **最该先读的是 §10.14.4**：补规模**不等于**门禁能跑绿——现有 stable 里有两条
+> 稳定红，那是比 L3 更硬的 baseline 前置。
 
 **全量测试基线**：后端 `python -m pytest --import-mode=importlib` **3783 passed / 11 skipped /
 0 failed**（2026-08-02 单进程实测 14m02s；对抗测试体系 +128，零回归）；HMI `node --test` **225/225**；
 Dashboard vitest **17/17**；端侧 smoke 13/13；Go 网关 vet+test 通过。
-**2026-08-03 对抗测试期累计**：对抗专项单测 **178 → 210**（`test/test_intent_adversarial_*.py`
+**2026-08-03 对抗测试期累计**：对抗专项单测 **178 → 231**（`test/test_intent_adversarial_*.py`
 + `test_eval_intent_adversarial_cli.py` + `test_build_intent_adversarial_candidates.py`）；
 新增 `orchestrator/cloud/tests/test_planning_no_action.py` 8 条、`agents/parking_payment/` 9 条；
-`orchestrator/` 全量 **474 passed**；L0 全量 **70/70 exit 0**（533 条 / 494 唯一输入）。
+`orchestrator/` 全量 **936 passed**（`orchestrator/cloud` 477）；端侧 smoke **13/13**；
+L0 全量 **70/70 exit 0**（541 条 / 502 唯一输入）；
+**`gate --layer l0 --strict` exit 0**（stable 132 条 / 唯一输入 **122** ≥ 120）。
 ⚠ **本机当前 `scripts/tests/` 有 32 条红**，但**与 clean HEAD `de6ef22` 逐条一致**
 （既有 e2e 运行器的环境路径问题，非本批引入）——同一命令在本机与 CI 上的分母不同，
 **引用基线前先确认是在哪台机器上跑的**。
@@ -169,13 +178,11 @@ run/code/lock 身份。因此仍不得写“baseline-ready / 第三批全部收�
 是对的），口径必须窄到「需要二次确认的对象被端侧执行」，且判定要用生产自己的 `VAL._need_confirm()`。
 **④ 唯一 run 目录光靠时间戳不够**（同微秒两次调用撞 id）。
 
-**现在能引用什么**：L0 全量 **70/70**（零网络、确定性、exit 0）、当前提交快照的 **201 条**专项单测、
-逐条原始断言复现。L0 的 plan/live 指标已正确显示 `0/0, null`；**201 条全绿仍不推翻 §9
-没有被纳入单测的反向构造。**
-**不能引用什么**：`exact_plan_set_rate` / seen-unseen / `planner_capability_hallucination_rate` /
-`instability_rate` 的**新口径读数还不存在**——修好口径不等于量过，要等一次固定 provider 的
-L1/L2/L3 全量。**stable 规模按唯一输入算只有 104**（原报 113 条里 9 个是重复输入），
-`--strict` 正确退出非零；正式 baseline 仍未生成（L3 证据未取得）。
+**现在能引用什么**：L0 全量 **70/70**（零网络、确定性、exit 0）、当前提交快照的 **231 条**专项单测、
+逐条原始断言复现、评审 §10 的 L1 新口径全表（**`relation_pass_rate` 那一行除外，已作废**）。
+**不能引用什么**：`relation_pass_rate 90.9%`（2026-08-03 晚改口径，评审 §10.12）；
+L2/L3 的新口径全量读数；正式 baseline 仍未生成——**前置从两条变成三条**：
+L3 证据、~~stable 规模~~（已达 122）、**现有 stable 集合里的两条稳定红**（§10.14.4，最硬的一条）。
 
 四条判据先记住：① **`domain_hit_rate` ≠ `exact_plan_set_rate`**——前者是 RoutingBench
 的历史交集口径（期望两域只命中一域照样绿），后者要求必要组全满足 + 无禁选 + 无未授权
@@ -240,7 +247,9 @@ span 的 `path` × `nlu_gate` × `nlu_vs_rule` 现在能从真实流量算出上
 | 待办 | 出处 | 说明 |
 |---|---|---|
 | **23 条改标 seen 后 unseen 覆盖变薄** | 评审 §7.2-①、§7.3 | 指纹闸抓出 13 条 `unseen_transfer` 的原话字面就在 `skills/exemplars/*.yaml` 里（family 闸对它们全绿），连同 family 闭包共 23 条改标 seen。补法是**新写真正没进过知识的话术**，不是把标签改回去；受影响的是 stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条 |
-| **`stable` 规模实为 104 < 120** | 规格 §21.8 / §22.2 | 原来报的 113 条里有 9 个是重复输入。`validate_suite_counts` 现按**唯一输入**判，`--strict` 正确退出非零。补齐要新写案例，**不能靠改口径** |
+| ~~**`stable` 规模实为 104 < 120**~~ | 规格 §21.8 → 评审 **§10.14** | **已收口**：预选池等量换出换入（`gate_candidate` 被钉死在 140，换出 8 条带病 / 换入 8 条新案例），两趟独立 live 取证后晋级 **19 条**——`stable` 113 → **132**、唯一输入 **104 → 122**、`--strict` **exit 0**。两趟抓到 3 条翻面，单跑一趟会多晋级 1–2 条噪声用例 |
+| **现有 stable 集合里有稳定红（新 P0）** | 评审 **§10.14.4** | **补规模 ≠ 门禁能跑绿**，这两件事此前被默认绑在一起。两趟都红：`ex.homophone.aircon`「把空条打开」**3/3 落 `sunroof.open`**（说开空调开了天窗）、`nq.umbrella.both`「查明天天气然后提醒我带伞」3/3 漏提醒步（§10.8 同族）；B 趟另有 4 条单趟红。两条都是 2026-08-02 晋级时通过的＝**回归**。**这是正式 baseline 前置里比 L3 更硬的一条**，属产品侧另开批 |
+| **畸形模型输出的防御只做到容器层（已修，判据留档）** | 本会话真栈 | 一趟 140 选集的 L1 跑批被一次 `depends_on: [["s0"]]` 整趟打死（`TypeError: unhashable`）。`50c2b3f` 已修两处（`depends_on` 元素 / `slot_refs` value）。判据：**模型输出是不可信输入，防御要一路防到真正会被拿去 hash / 拿去 split 的那个值，不是防到最外层容器为止** |
 | **L3 证据仍未取得** | 规格 §21.8 / 评审 §9 | 唯一目录、mtime、exit、provider 与额外 journey 已核；report 的 run/code/lock 身份仍未闭合，且尚无新鲜完整 L3 产物，不能写“baseline-ready” |
 | **组合漏第二步（原「依赖接线 1/5」，⚠ 定性已更正）** | 评审 **§10.8** | 初版写「两步都规划出来了只是没连起来」——**逐条拉计划后发现只对 1 条成立，而那 1 条恰恰不是接线问题**。真形态：3 条 unstable 是**漏第二步**、1 条是 gold 与 find-vs-go 台账打架（已修，3/3）、1 条通过。`trip-then-navigate` 是唯一 `causal=supported`：**guide 自己在制造漏步**（`multi-day-trip` 只讲「必须出 trip.plan」、示例全是并列步，模型读成「只出」），已补组合判据 + golden，实测 3/3。⚠ **20% 不等于「20% 的时候接不上」**——分母含 3 条 unstable 且报告存的是失败那一次。**全族回归已补跑**（`--tag composition` 51 单元 ×3）：两条修复都不在失败名单、3/3 站住；剩下的 `cp.dep.menu-then-order` 等仍是漏第二步的 unstable，按规矩不进修复清单 |
 | ~~**契约缺「恰好 N 次副作用」断言**~~ | 评审 §10.7 → **§10.13** | **已收口**：`expected.safety.side_effect_counts`（等式、声明即封闭、只在 L2、全零非法）。上界那条**保留**——`max_agent_calls_per_intent` 量调用、新字段量副作用，「调用了但没产生动作」时两者分叉。真栈反验：注入 `gold=2` 精确红在该断言上，恢复 `gold=1` 后 3/3 |

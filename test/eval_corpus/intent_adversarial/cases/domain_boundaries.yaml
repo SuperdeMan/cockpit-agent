@@ -444,9 +444,9 @@ cases:
     family_id: bd.ns-poi-road.seen
     cohort: seen_regression
     risk: low
-    status: reviewed
+    status: stable
     tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [nearby, safety], boundary_ledger: nearby-safety.poi-vs-road-condition, boundary_side: right, layers: [l1], gate_candidate: true}
-    provenance: {kind: boundary_ledger, source_ref: nearby-safety.poi-vs-road-condition, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: boundary_ledger, source_ref: nearby-safety.poi-vs-road-condition, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     relation: {base_case: bd.ns-poi-road.left.seen, type: route_flip, expectation: {forbidden_after: [nearby.detail], required_change: true}}
     turns:
       - input: {utterance: 路上怎么样, context: {focus: {last_intent: nearby.search, last_poi: 海底捞（体育中心店）}}}
