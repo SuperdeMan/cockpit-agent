@@ -364,14 +364,14 @@ user message 判「再」，暂未命中但同一形态。
 **人裁一次并登记，机器只负责「不许悄悄新增」**。裁完把对应 case 改回 `reviewed`
 并补 `reviewed_by: human` / `reviewed_at`。
 
-**✅ 8/9 已裁定并恢复 `reviewed`**（2026-08-03 泓舟）：
+**✅ 9/9 已裁定并恢复 `reviewed`**（2026-08-03 泓舟；末行那条当日稍晚补裁）：
 
 | 组 | 裁定 | 落地 |
 |---|---|---|
 | `nq.landmark.*` / `nq.city.*` | 澄清开关 **on** | ⚠ **本条的前提是错的**：`CLARIFY_ENABLED` **生产一直是 on**（`.env.example` 与 compose 自 2026-07-08 真栈 CDP 验收后即 `${CLARIFY_ENABLED:-on}`，运行中的容器实测也是 on）。「生产默认 off」读的是**代码兜底值**——而代码兜底与部署缺省不一致，**任何不经 compose 起的进程（评测/单测/CLI）测的都不是生产装配**。已把 `planning.py` / `engine.py` 的兜底缺省对齐到 on。另：模型光有开关还是不澄清，`_CLARIFY_SECTION` 补了一条判据——**缺的是槽位就照常执行，缺的是动词才澄清**（「整句只有一个名词、动词完全缺失」是典型歧义）。「导航到 X」两个 navigation intent **都算落对** |
 | `tu.nav.*` | 找地点归 **`nearby.search`**（找=发现，导航=出行） | 台账 `nearby-navigation.find-vs-go` + 双向各 2 例 + `nearby` 范例 2 条 + 修掉与裁定相反的 `navigation#15` |
 | `bd.manual-search.*` | **`manual.query`**（描述已足以定位对象就不用再看一眼；判据是隐私侧的——抓帧是敏感动作，能不抓就不抓） | 台账 `manual-vision.described-light-vs-unknown-light` + 双向各 2 例 + `manual` 范例 1 条 |
-| `ex.colloquial.dark` | **未裁定** | 仍为 `candidate`，见 §6.3 |
+| `ex.colloquial.dark` | ✅ **已裁定（2026-08-03，`cb21c89`）**：走澄清卡 | 已恢复 `reviewed`，见 §6.2。**至此 9/9 全部裁定完毕，语料里 `candidate` 归零**（132 stable + 419 reviewed） |
 
 台账每新增一条裁定，契约要求**双向各 2 例**——机械地就是 +8 条用例，suite 上限
 随之 520→540。**边界裁定的对照用例是台账的兑现物，不是可裁的冗余**；上限该跟着
@@ -860,3 +860,93 @@ examples——于是「车控」这一整片在范例库里是空白。
    `multi-day-trip@vec:0.45!clipped` 与 `conditional-reminder@vec:0.44!clipped`
    **同时**被裁。评审 §10.8 结尾记过「守卫应该守到 top-K 而不是 top-1」，
    当时没有消费方证据所以没动；这里是第二个现场。仍不改——但账厚了一层。
+
+---
+
+## 9. 尺子批（2026-08-04）：两条都是「这条断言在量它想量的东西吗」
+
+> **只动尺子与测试基础设施**，生产与语料一个字节未改。
+> 提交 `0fac11f`（隐私扫描范围）+ `5575257`（relation 签名分级）。
+
+### 9.1 「本机 32 条既有红」是误判——真因是扫描走进了仓库的第二份 checkout
+
+全量 `pytest` 跑出 **33 failed / 3901 passed**，唯一不在 `scripts/tests/` 的那条报
+`duplicate privacy candidate entries: [memory_item, payment_order, voiceprint, ...]`。
+
+**报错文案听起来像隐私登记表出了严重问题，真实原因只是磁盘上有第二个 checkout。**
+`.claude/worktrees/intent-adversarial/`（Claude Code 的 `EnterWorktree` 建在那儿）里有
+一份完整仓库，而 `_PRIVACY_EXCLUDED_DIRS` 写的是 `.worktrees`（带点）——对真实布局无效，
+于是 `runtime/privacy_registry.py` 被读了两遍。
+
+**同目录差分实证**：`test_e2e_stack_lease.py` 旧排除表 **10 failed** / 新排除表 **61 passed**。
+同文件、同目录、同进程数。修复后全量 **3934 passed / 11 skipped / 0 failed**。
+
+> **判据：差分证明的是「不是这批引入的」，不是「这是环境问题不用管」。**
+> 上一次的对照法（`git stash` 后同目录重跑，对 clean HEAD 得出「32 条逐条一致」）
+> **方法完全正确**，但两边共用同一个环境成因——差分按定义看不见它。
+> 「逐条一致」只排除了「本批引入」这一个假设，它没有排除「两边都坏着」。
+
+修法两道闸：① 名字清单补 `worktrees` / `.claude`；② **任何自带 `.git` 的子目录都按另一份
+checkout 处理**——名字清单必然滞后于布局，而「有没有 `.git`」是 checkout 的**定义**
+不是它的命名习惯（worktree 的 `.git` 是文件、clone 的是目录，`exists()` 两者都认）。
+守卫 `scripts/tests/test_e2e_privacy_scan_scope.py` 5 条，先反验过（旧排除表下 4/5 红）。
+
+### 9.2 一个签名不能同时服务两个方向相反的断言
+
+`relation` 的四种关系共用同一个**含槽位的宽签名**，而它们对「差异」的要求方向相反，
+于是**同一份槽位噪声在一边制造假红、在另一边制造假绿**：
+
+| 方向 | 关系 | 槽位噪声的后果 |
+|---|---|---|
+| `∈`（主张「没变」） | `invariant` / `clause_commute` | **假红**——换个说法问同一件事，槽位文本本来就不同 |
+| `∉`（主张「变了」） | `route_flip`（103 条）/ `context_override`（7 条） | **假绿**——槽位一抖就算「行为被换掉了」 |
+
+**先量再改，假绿实测到一例**：`cs.more.research`「展开讲讲第二点」与 base `cs.more.news`
+「第二条详细讲讲」**都落 `research.run`**——路由一模一样，`context_override` 的
+`must_differ` 却判绿，因为两侧 slots 不同。发现轨 109 条对照里，variant 与 base 意图序列
+完全相同的有 3 条，其中 1 条判了绿。
+
+⚠ **这更正了规格 §22.6 末尾的定性**。那里把 `route_flip` 的假绿归给采样覆盖
+（「要靠提高 `repeat_coverage` 才抓得住，**那是成本决策，不是口径问题**」）——
+实测表明它**也是**口径问题，而且口径这一半是免费修的。
+> **判据：「用采样覆盖兜住」是最后一招，先问这条断言是不是在量它想量的那个东西。**
+
+裁定与影响面见规格 **§22.8**。一句话：主断言用**路由签名**，槽位另立
+`relation.<type>.slots` 且只在「槽位本来就该相同」的场合生效（`clause_commute` 恒开；
+`invariant` 仅当两侧原话相同）。**这不是放宽**——§22.6 的成果（`cp.reminder-weather.swapped`
+的「明天早上八点」必须现形）原样保住，`route_flip` 反而变严，且红灯指得更准
+（主断言与槽位断言分开，一眼看出红的是路由还是槽位）。
+
+### 9.3 §8.6 那条账因此可以销了
+
+§8.6 记的是「三条新写的 `relation: invariant` 因自由文本槽位必抖，已改用绝对 gold」。
+**根因不在那三条用例，在口径**：语料里 22 条 `invariant` 有 **13 条两侧原话不同**，
+它们一直在用一把量渲染方差的尺子量落域不变性。§9.2 修的正是这个。
+那三条用例的绝对 gold 写法仍然成立（更直白地表达了机制），不回退。
+
+### 9.4 自己犯的错：`git worktree remove` 把主仓的 `models/nlu/` 一起清空了
+
+删掉 `.claude/worktrees/intent-adversarial/`（一份已全合入 main、无未提交改动的残留 checkout）
+之后，主仓的 `models/nlu/` 与 `models/voiceprint/` **被清空**，两个 `.gitkeep` 显示为
+`D`（deleted）。
+
+- 全仓 Python 代码**没有任何 `rmtree`**，逐一排除了测试；
+- 时间窗只包含 `git worktree remove` 这一条会做递归删除的命令；
+- worktree **天生缺 `models/`**（运行手册环境坑一节早有此记载），因此此前很可能有人
+  在 worktree 里建了指向主仓 `models/` 的 junction——**Windows 上递归删除会跟着 junction
+  删到目标**。⚠ 机制是**推断**（worktree 已删，无法回验），但结果是确定的。
+
+**实际损失**：`models/nlu/` 的 `edge_nlu.onnx` + `labels.json` + `vocab.json`。
+端侧日志留有铁证它当时在：`edge NLU ready：8 域 / 83 对象`（2026-08-03T04:21:36）。
+`models/voiceprint/` 的 CAM++ 无损——`llm-gateway` **不挂 models bind mount**，
+那 28MB 是烤进镜像的；只有 `edge-orchestrator` 挂了主仓 `models/`。
+
+**影响**：端侧 NLU 只在 shadow 挡位（决议 disabled、不进决策链），**无功能回归**；
+但 M5 P3b 的开工判据「错对象率 <0.3%」正是从 `nlu.shadow` span 算的，这条数据流断了。
+运行中的容器还持着内存里的模型，**重启即失效**。
+恢复＝`scripts/fetch-edge-nlu-base.*` 拉底座 + `scripts/train_edge_nlu.py` 重训导出。
+
+> **判据：删除一个目录之前，先问它里面有没有指向别处的链接。**
+> 「这份 checkout 已全合入、工作树干净」证明的是**它自己**没有未保存的工作，
+> 不证明**删除它的动作**不会波及别处。两次安全检查（`main..branch` 为空、
+> `status --porcelain` 为空）都做了，**而它们都只看仓库内容，不看文件系统形态**。

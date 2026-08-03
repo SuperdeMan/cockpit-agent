@@ -90,18 +90,24 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 > ⇒ **门禁不绿的原因已从「稳定缺陷」变成「方差」**（findings §8.5 的新判据）。
 > 语料侧补 unseen 10 条（唯一输入 502 → **512**）。
 
-**全量测试基线**：后端 `python -m pytest --import-mode=importlib` **3783 passed / 11 skipped /
-0 failed**（2026-08-02 单进程实测 14m02s；对抗测试体系 +128，零回归）；HMI `node --test` **225/225**；
+**全量测试基线**：后端 `python -m pytest --import-mode=importlib` **3934 passed / 11 skipped /
+0 failed**（2026-08-04 单进程实测 17m08s）；HMI `node --test` **225/225**；
 Dashboard vitest **17/17**；端侧 smoke 13/13；Go 网关 vet+test 通过。
-**2026-08-03 对抗测试期累计**：对抗专项单测 **178 → 231**（`test/test_intent_adversarial_*.py`
-+ `test_eval_intent_adversarial_cli.py` + `test_build_intent_adversarial_candidates.py`）；
+⚠ **「本机 32 条既有红」这条历史记载是误判，已修（`0fac11f`）**：真因是
+`.claude/worktrees/` 下留着一份完整 checkout，而隐私清单扫描的排除表只写了 `.worktrees`
+（带点）→ `runtime/privacy_registry.py` 被读两遍 → `duplicate privacy candidate entries`
+→ **33 条契约测试凭空变红**。同目录差分实证：`test_e2e_stack_lease.py` 旧排除表 10 failed /
+新排除表 61 passed。**判据：差分证明的是「不是这批引入的」，不是「这是环境问题不用管」**
+——上次对照 clean HEAD 得出「32 条逐条一致」方法没错，但两边共用同一个环境成因。
+**2026-08-03/04 对抗测试期累计**：对抗专项单测 **178 → 236**（`test/test_intent_adversarial_*.py`
++ `test_eval_intent_adversarial_cli.py` + `test_build_intent_adversarial_candidates.py`；
+2026-08-04 relation 口径第二次裁定 +5）；
 新增 `orchestrator/cloud/tests/test_planning_no_action.py` 8 条、`agents/parking_payment/` 9 条；
 `orchestrator/` 全量 **936 passed**（`orchestrator/cloud` 477）；端侧 smoke **13/13**；
 L0 全量 **70/70 exit 0**（**551 条 / 512 唯一输入**，2026-08-03 深夜补 unseen 10 条后）；
 **`gate --layer l0 --strict` exit 0**（stable 132 条 / 唯一输入 **122** ≥ 120）。
-⚠ **本机当前 `scripts/tests/` 有 32 条红**，但**与 clean HEAD `de6ef22` 逐条一致**
-（既有 e2e 运行器的环境路径问题，非本批引入）——同一命令在本机与 CI 上的分母不同，
-**引用基线前先确认是在哪台机器上跑的**。
+~~⚠ 本机当前 `scripts/tests/` 有 32 条红~~ **已全部消失**（见上方基线注）。
+「同一命令在本机与 CI 上的分母不同，引用基线前先确认是在哪台机器上跑的」这句仍然有效。
 
 **意图落域对抗测试体系（2026-08-02 建成，2026-08-03 首轮发现全部修复 + 尺子自身 12 条硬化）**：
 

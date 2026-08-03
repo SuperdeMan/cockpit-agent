@@ -534,7 +534,7 @@ cloud-direct
 | `ingress_accuracy` | Edge 本地/转云决策正确比例。allow 与 deny 两条断言**取 AND**（后写覆盖先写会让这个数整体偏高） |
 | `dependency_pass_rate` | 必要依赖、顺序和结果传递全部满足比例 |
 | `clarify_balanced_accuracy` | 模糊样本召回与明确样本不过度澄清的平衡结果 |
-| `relation_pass_rate` | 最小对照关系满足比例。**对照的是 `supp(base)`——base 这句话在本轮观测到的全部行为，不是它的某一次采样**（§22.6 口径裁定）。variant 侧仍逐次判，于是 variant 自己的抖动照旧被重复分类表达成 `unstable`。同时给 `relation_base_support`（判定用了几个去重后的 base 签名）：`supp=1` 的结论与旧口径同强度 |
+| `relation_pass_rate` | 最小对照关系满足比例。**对照的是 `supp(base)`——base 这句话在本轮观测到的全部行为，不是它的某一次采样**（§22.6 口径裁定）。**主断言比的是路由签名（不含槽位），槽位另立 `relation.<type>.slots` 且只在两侧槽位本来就该相同的场合生效**（§22.8 第二次裁定——一个签名不能同时服务 `∈` 与 `∉` 两个方向相反的断言）。variant 侧仍逐次判，于是 variant 自己的抖动照旧被重复分类表达成 `unstable`。同时给 `relation_base_support`（判定用了几个去重后的 base 签名）：`supp=1` 的结论与旧口径同强度 |
 | `context_override_rate` | 当前轮正确覆盖陈旧上下文比例 |
 | `planner_capability_hallucination_rate` | 规划不存在或不可用能力的案例比例。取自 capability 校验**之前**的候选——用校验后的计划算，validator 越严这个数越好看，「模型天天编能力」会被彻底掩盖（§22.1-③，原名 `capability_hallucination_rate`） |
 | `post_validation_escape_rate` | 校验**之后**仍留在计划里的不可用能力比例。这是逃逸率，不是幻觉率，两者不可互相替代 |
@@ -1186,3 +1186,49 @@ relation 就准了；**要求「变了」的那一类（`route_flip`，占 103/1
 
 ⚠ 本次收口同时证伪了这句约束隐含的一个前提（「补到 120 就离 baseline 只差 L3 了」）：
 补规模不等于门禁能跑绿，现有 stable 集合里还有两条稳定红（评审 §10.14.4）。
+
+### 22.8 relation 口径第二次裁定：一个签名不能同时服务两个方向相反的断言（2026-08-04）
+
+§22.6 把 base 侧改成 `supp(base)`，解决的是「拿一次采样代表一个句子的行为」。
+**它没有解决的是：`∈` 和 `∉` 两个方向共用同一个含槽位的宽签名。** 于是同一份槽位噪声
+在一边制造假红、在另一边制造假绿：
+
+| 方向 | 关系 | 槽位噪声的后果 |
+|---|---|---|
+| `∈`（主张「没变」） | `invariant` / `clause_commute` | **假红**——换个说法问同一件事，槽位文本本来就不同 |
+| `∉`（主张「变了」） | `route_flip` / `context_override` | **假绿**——槽位一抖就算「行为被换掉了」 |
+
+**⚠ 这同时更正了 §22.6 末尾那条限制的定性。** 那里把 `route_flip` 的假绿归给采样覆盖
+（「真正的假绿要靠提高 `repeat_coverage` 才抓得住，**那是成本决策，不是口径问题**」）。
+实测表明它**也是**口径问题，而且口径这一半是免费修的：
+
+> `cs.more.research`「展开讲讲第二点」与 base `cs.more.news`「第二条详细讲讲」
+> **都落 `research.run`**——路由一模一样，`context_override` 的 `must_differ` 却判绿，
+> 因为两侧 slots 不同（`query=固态电池…` vs `query=详细了解第二条新闻`）。
+> 发现轨 109 条对照里，variant 与 base 意图序列完全相同的有 3 条，其中 1 条判了绿。
+
+判据：**「用采样覆盖兜住」是最后一招，先问这条断言是不是在量它想量的那个东西。**
+
+**裁定**：主断言一律用**路由签名**（`semantic_signature(..., with_slots=False)`——
+意图/顺序/依赖/接线/确认位，以及 `ingress`/`decision`/`clarify`/agent 调用），
+槽位另立一条 `relation.<type>.slots`，**只在槽位本来就该相同的场合生效**：
+
+| 场合 | 槽位该不该相同 | 槽位断言 |
+|---|---|---|
+| `clause_commute`（同样的词换顺序） | **该** | 恒开 |
+| `invariant` 且两侧**原话相同**（换的是上下文） | **该**——不同即「历史串进了槽位」 | 开 |
+| `invariant` 且两侧**原话不同**（换的是说法） | 不该 | 关 |
+
+「两侧原话是否相同」在 CLI 的 relation 装配处判定（只有那里同时拿得到两侧 case），
+不塞进 `RelationSpec`——它是两条用例之间的关系，不是某一条用例的属性。
+
+**这不是放宽**：§22.6 那次裁定的成果（`cp.reminder-weather.swapped` 的「明天早上八点」
+必须现形）由 `clause_commute` 的槽位断言原样保住；`route_flip`/`context_override`
+反而变严。红灯也指得更准——主断言与槽位断言分开，一眼看出红的是路由还是槽位。
+
+**影响面**：语料里 22 条 `invariant` 有 **13 条两侧原话不同**（`ex.invariant.*` 的
+plain/colloquial 对照，以及 `nq.match.future` / `nq.news-week.this`），它们此前一直在
+用一把量渲染方差的尺子量落域不变性。`route_flip` 103 条、`context_override` 7 条转严。
+
+**作废声明（§9 纪律）**：依赖 relation 判定的读数一并作废。`relation_pass_rate` 在
+§22.6 已作废，本次无新增连带；新口径全量读数待一次固定 provider 的 L1 全量。
