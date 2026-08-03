@@ -514,3 +514,35 @@ def test_coverage_exemptions_reject_wildcards_and_empty_reasons(tmp_path):
         encoding="utf-8")
     with pytest.raises(ValueError, match="invalid requirements"):
         load_coverage_exemptions(path, {"info.alerts"})
+
+
+def test_coverage_counts_distinct_inputs_not_case_rows():
+    """反向构造：两条 case 用**完全相同**的一句话给同一个 intent 记正例。
+
+    规模总数早就按唯一输入算了，coverage 账却还在按 case 次数加一——实测
+    `nq.trunk.command` 与 `os.open.trunk` 都是「打开后备箱」，把 `trunk.open` 的
+    正例从唯一 1 条记成 2 条，**恰好涂绿 `positive>=2` 这条最低要求**（评审 P1-E）。
+    """
+    from support.intent_adversarial_contract import coverage_matrix, validate_coverage
+
+    def _positive(case_id, utterance):
+        return AdversarialCase(
+            id=case_id, title=case_id, family_id=case_id,
+            cohort="unseen_transfer", risk="low", status="stable",
+            tags={"attacks": ["A1"], "layers": ["l1"]},
+            provenance={"kind": "authored"},
+            turns=(CaseTurn(utterance=utterance, context={},
+                            expected=TurnExpectation(plan=PlanExpectation(
+                                assert_plan=True,
+                                required_groups=(IntentGroup(("trunk.open",)),)))),))
+
+    same = [_positive("a", "打开后备箱"), _positive("b", "打开后备箱")]
+    assert coverage_matrix(same, {"trunk.open"})["trunk.open"]["positive"] == 1
+    assert any("positive has 1" in row
+               for row in validate_coverage(same, {"trunk.open"}, {}))
+
+    # 反向：真的是两句不同的话就该记 2，别把去重做成一刀切
+    different = [_positive("a", "打开后备箱"), _positive("b", "把尾箱打开")]
+    assert coverage_matrix(different, {"trunk.open"})["trunk.open"]["positive"] == 2
+    assert validate_coverage(different, {"trunk.open"},
+                             {"trunk.open": {"hard_negative", "relation"}}) == []

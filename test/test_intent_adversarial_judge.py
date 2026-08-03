@@ -315,11 +315,31 @@ def _engine_expectation(**changes):
     return TurnExpectation(engine=EngineExpectation(declared=True, **changes))
 
 
-def test_engine_assertions_are_skipped_when_the_layer_cannot_observe_them():
-    """没观测和观测到零是两件事。L0/L1 上跳过，而不是当成「没调用所以通过」。"""
-    expected = _engine_expectation(forbidden_agent_calls=("nearby.order",))
+def test_declaring_engine_gold_but_never_reaching_the_engine_is_a_failure():
+    """**没观测到 Engine 是失败，不是「不适用」。**
+
+    旧实现在 `engine_observed=False` 时直接 return，整组 Engine gold 被静默跳过：
+    一条声明了 `required_agent_calls` + `pending_confirm_after` 的用例，实际在 Edge
+    本地就结束了、根本没到 Engine，仍然只留下 decision/replan/safety 三条绿断言整轮
+    通过——**最需要这组断言的那一刻正好是它失效的那一刻**（评审 P0-B）。
+    """
+    expected = _engine_expectation(forbidden_agent_calls=("nearby.order",),
+                                   pending_confirm_after=True)
     unobserved = _engine_snapshot(agent_calls=("nearby.order",), observed=False)
     result = judge_turn(expected, unobserved)
+    observed = [a for a in result.assertions if a.name == "engine.observed"]
+    assert observed and not observed[0].passed
+    assert not result.passed
+    # 未观测时不再往下裁具体那几条——它们没有事实可依，报「没走到 Engine」就够了
+    assert not [a for a in result.assertions
+                if a.name.startswith("engine.") and a.name != "engine.observed"]
+
+
+def test_no_engine_gold_means_no_engine_assertions_at_all():
+    """反向：没声明 `expected.engine` 的用例不许被这条闸误伤（L0/L1 全在此列）。"""
+    from support.intent_adversarial_contract import TurnExpectation
+
+    result = judge_turn(TurnExpectation(), _engine_snapshot(observed=False))
     assert not [a for a in result.assertions if a.name.startswith("engine.")]
 
 
@@ -355,3 +375,51 @@ def test_semantic_signature_separates_runs_that_called_different_agents():
     quiet = _engine_snapshot(agent_calls=(), pending=True)
     noisy = _engine_snapshot(agent_calls=("nearby.order",), pending=True)
     assert semantic_signature(quiet) != semantic_signature(noisy)
+
+
+# ── 独立复审 §8 P1-A：指标把「未断言」写成绿 ──────────────────────────────
+
+
+def test_no_plan_gold_means_no_plan_metrics_at_all():
+    """反向构造：一条**根本没有 plan gold** 的用例（L0 全在此列）。
+
+    旧实现无条件写 recall=1 / forbidden=0 / overroute=0 / dependency=1，于是 L0 的
+    `required_group_recall=70/70 100%` 量的不是召回，是「有 70 个证据单元」。
+    分母为 0 的地方要显示 null，不是 100%。
+    """
+    bare = judge_turn(TurnExpectation(), _snapshot("info.weather"))
+    for name in ("required_group_recall", "forbidden_route_count",
+                 "overroute_count", "dependency_pass"):
+        assert name not in bare.metrics, f"{name} 不该在没有 gold 时被写出来"
+
+    # 反向：写了 plan gold 就必须有这几个数，否则这条闸只是把指标删光
+    expected = TurnExpectation(plan=PlanExpectation(
+        assert_plan=True, required_groups=(IntentGroup(("info.weather",)),)))
+    with_gold = judge_turn(expected, _snapshot("info.weather"))
+    assert with_gold.metrics["required_group_recall"] == 1.0
+    assert with_gold.metrics["overroute_count"] == 0.0
+    assert with_gold.metrics["forbidden_route_count"] == 0.0
+
+
+def test_an_extra_replan_breaks_the_exact_plan_set():
+    """反向构造：计划集合本身对，但**多规划了一轮 replan**。
+
+    `exact_plan_set` 的子集原来只匹配 `plan.` / `replan[`，不含 `replan_count`——
+    实测有 turn 因多出一次 replan 而失败，这个指标仍记 1。
+    """
+    expected = TurnExpectation(plan=PlanExpectation(
+        assert_plan=True, required_groups=(IntentGroup(("info.weather",)),)))
+    clean = _snapshot("info.weather")
+    extra = DecisionSnapshot(
+        ingress=clean.ingress, addressed=True, decision="execute", clarify=False,
+        plan=clean.plan, replans=(_snapshot("reminder.create").plan,))
+
+    assert judge_turn(expected, clean).subset_passed(
+        "plan.", "replan[", "replan_count") is True
+    judged = judge_turn(expected, extra)
+    assert not judged.passed
+    assert judged.subset_passed("plan.", "replan[", "replan_count") is False
+
+    # 没有 plan gold 时这条断言压根不存在——否则整个 L0 又被拖进 exact 的分母
+    assert judge_turn(TurnExpectation(), clean).subset_passed(
+        "plan.", "replan[", "replan_count") is None

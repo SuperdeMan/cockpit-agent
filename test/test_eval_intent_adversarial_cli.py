@@ -630,9 +630,9 @@ def test_stale_l3_report_is_never_counted_as_this_run(tmp_path):
     import os
     os.utime(report, (old, old))
 
-    fresh, stale = read_l3_report(tmp_path, since=time.time() - 60)
+    fresh, stale, _ = read_l3_report(tmp_path, since=time.time() - 60)
     assert fresh == {} and stale, "目录里曾经成功过一次，之后的失败运行就能读到那份旧 pass"
-    anytime, _ = read_l3_report(tmp_path)
+    anytime, _, _ = read_l3_report(tmp_path)
     assert anytime == {"A1-1": "pass"}
 
 
@@ -643,7 +643,8 @@ def test_l3_runner_nonzero_exit_is_infrastructure_even_with_a_readable_report(
     def _fake_run_l3(ids, *, provider, model, artifact_root=None, env=None):
         Path(artifact_root).mkdir(parents=True, exist_ok=True)
         (Path(artifact_root) / "journeys_report.json").write_text(
-            json.dumps({"journeys": [{"id": "A1-1", "status": "pass"}]}),
+            json.dumps({"provider": "p:m",
+                        "journeys": [{"id": "A1-1", "status": "pass"}]}),
             encoding="utf-8")
         return 2
 
@@ -815,3 +816,97 @@ def test_a_green_run_still_says_when_the_plan_came_from_the_fallback(
     assert report["metrics"]["fallback_plan_rate"]["value"] == 1.0
     from support.intent_adversarial_report import baseline_eligibility
     assert "fallback_plans" in baseline_eligibility(report).reasons
+
+
+def test_relation_only_failure_triggers_the_failure_expansion(monkeypatch):
+    """反向构造：绝对 gold 三次都过、relation 三次都败的 medium variant。
+
+    扩展原来只看绝对 gold，而 relation 裁决在它之后才发生：这类 variant 只跑 1 次，
+    那一次红随后被分类成 `unstable`——既不进修复清单也不进门禁。143 条 relation
+    variant 里 129 条是 low/medium，不是边角路径（评审 P1-C）。
+    """
+    runs = {"count": 0}
+
+    def _run_once(case, layer):
+        runs["count"] += 1
+        return [SimpleNamespace(judgement=SimpleNamespace(passed=True))]
+
+    base = _case("base", risk="medium", layers=("l1",))
+    variant = _case("variant", risk="medium", layers=("l1",),
+                    relation=RelationSpec(base_case="base", type="invariant",
+                                          expectation="same_route"))
+    units = {
+        "base@l1": cli.UnitRuns(case=base, layer="l1", runs=[_run_once(base, "l1")]),
+        "variant@l1": cli.UnitRuns(case=variant, layer="l1",
+                                   runs=[_run_once(variant, "l1")]),
+    }
+    runs["count"] = 0
+    suite = _suite({"reviewed"}, {"reviewed"})
+    args = parse_args(["--layer", "l1", "--live", "--provider", "p", "--model", "m"])
+    partners = {"variant": "base", "base": "variant"}
+    relations = {"variant@l1": {0: SimpleNamespace(passed=False)}}
+
+    cli._expand_failures(units, partners, suite, args, _run_once, [], relations)
+
+    assert len(units["variant@l1"].runs) == suite.failure_repeats
+    assert len(units["base@l1"].runs) == suite.failure_repeats, "成对的两条要同步扩"
+
+    # 反向：relation 也通过时不许平白补跑
+    units2 = {"variant@l1": cli.UnitRuns(case=variant, layer="l1",
+                                         runs=[_run_once(variant, "l1")])}
+    cli._expand_failures(units2, {}, suite, args, _run_once, [],
+                         {"variant@l1": {0: SimpleNamespace(passed=True)}})
+    assert len(units2["variant@l1"].runs) == 1
+
+
+def test_l3_report_from_the_wrong_provider_is_not_this_run_s_evidence(tmp_path):
+    """反向构造：报告是**新写的**，但档位不是本次要的那个。
+
+    只校验 mtime 时，一份新鲜但错档 / 错选集的报告照样成为 L3 pass——调用方写进
+    `meta.l3_invocation` 的 provider/选集只是「本次想跑什么」，不是对产物「实际
+    跑了什么」的核对（评审 P1-D）。
+    """
+    report = tmp_path / "run" / "journeys_report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(json.dumps({
+        "provider": "deepseek:deepseek-v4-flash",
+        "journeys": [{"id": "A1-1", "status": "pass"}]}), encoding="utf-8")
+
+    statuses, _, identity = read_l3_report(tmp_path, expect_provider="minimax:MiniMax-M3")
+    assert statuses == {}, "档位不同的报告不采信，不是「警告一下照样用」"
+    assert any("l3_provider_mismatch" in row for row in identity)
+
+    # 档位对上就照常读
+    ok, _, clean = read_l3_report(tmp_path, expect_provider="deepseek:deepseek-v4-flash")
+    assert ok == {"A1-1": "pass"} and clean == []
+
+
+def test_l3_report_covering_journeys_we_never_selected_is_flagged(tmp_path):
+    """runner 没按 `E2E_JOURNEY_IDS` 走时，读到的 pass 可能压根来自别的用例。"""
+    report = tmp_path / "run" / "journeys_report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(json.dumps({
+        "provider": "p:m",
+        "journeys": [{"id": "A1-1", "status": "pass"},
+                     {"id": "B3-3", "status": "pass"}]}), encoding="utf-8")
+
+    _, _, identity = read_l3_report(tmp_path, expect_provider="p:m",
+                                    expect_ids=["A1-1"])
+    assert any("l3_selection_mismatch" in row and "B3-3" in row for row in identity)
+    _, _, clean = read_l3_report(tmp_path, expect_provider="p:m",
+                                 expect_ids=["A1-1", "B3-3"])
+    assert clean == []
+
+
+def test_an_l3_case_without_a_journey_link_is_a_gap_not_a_disappearance():
+    """反向构造：一条声明了 `layers: [l3]` 的 case，link 表里没有它。
+
+    旧实现只给「有 link」的 case 建 L3 声明单元，于是它同时从 expected 与 produced
+    两个集合里消失——完整性检查看不见，只要还剩另一条 L3，`l3_empty` 也不会拦。
+    **声明了却没链接是缺口，不是「不存在」。**
+    """
+    linked = _case("linked", layers=("l3",))
+    orphan = _case("orphan", layers=("l3",))
+    args = parse_args(["--layer", "l3", "--live", "--provider", "p", "--model", "m"])
+    units = cli._expected_units([linked, orphan], args)
+    assert units == {"linked@l3", "orphan@l3"}

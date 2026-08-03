@@ -749,49 +749,18 @@ _COVERAGE_REQUIREMENTS = {"positive": 2, "hard_negative": 2, "relation": 1}
 _AUTHORITATIVE = {"reviewed", "stable"}
 
 
-def validate_coverage(cases: list[AdversarialCase], active_intents: set[str],
-                      exemptions: dict[str, set[str]]) -> list[str]:
-    matrix = {intent: {"positive": 0, "hard_negative": 0, "relation": 0}
-              for intent in active_intents}
-    eligible_ids = {case.id for case in cases if case.status in _AUTHORITATIVE}
-    relation_members = {
-        member
-        for case in cases
-        if case.relation and case.id in eligible_ids
-        and case.relation.base_case in eligible_ids
-        for member in (case.id, case.relation.base_case)
-    }
-    for case in cases:
-        if case.status not in _AUTHORITATIVE:
-            continue
-        for turn in case.turns:
-            for plan in (turn.expected.plan,) + tuple(
-                    replan.plan for replan in turn.expected.replans):
-                # 多成员 any_of 只证明「这一组至少有一个可接受」，不能替每个成员
-                # 制造独立正例；逐 intent coverage 只计 singleton 必要组。
-                positives = {group.any_of[0] for group in plan.required_groups
-                             if len(group.any_of) == 1}
-                for intent in positives & active_intents:
-                    matrix[intent]["positive"] += 1
-                    if case.id in relation_members:
-                        matrix[intent]["relation"] += 1
-                for intent in set(plan.forbidden_intents) & active_intents:
-                    matrix[intent]["hard_negative"] += 1
-    return [
-        f"active intent {intent} {kind} has {matrix[intent][kind]}, need {minimum}"
-        for intent in sorted(active_intents)
-        for kind, minimum in _COVERAGE_REQUIREMENTS.items()
-        if matrix[intent][kind] < minimum
-        and kind not in exemptions.get(intent, set())
-    ]
+def _coverage_matrix(cases: list[AdversarialCase], active_intents: set[str],
+                     statuses: set[str]) -> dict[str, dict[str, int]]:
+    """逐 intent 的正例 / 硬负例 / 对照盘点。**每一格按唯一输入去重。**
 
-
-def coverage_matrix(cases: list[AdversarialCase], active_intents: set[str],
-                    statuses: set[str] | None = None) -> dict[str, dict[str, int]]:
-    """给报告用的原始盘点表；`statuses=None` 时口径同 validate_coverage。"""
-    statuses = statuses or _AUTHORITATIVE
-    matrix = {intent: {"positive": 0, "hard_negative": 0, "relation": 0}
-              for intent in active_intents}
+    规模总数早就改成按唯一输入算了，但 coverage 账还在按 case 次数加一——于是
+    `nq.trunk.command` 与 `os.open.trunk` 用**完全相同**的一句「打开后备箱」把
+    `trunk.open` 的正例从唯一 1 条记成 2 条，**恰好涂绿 `positive>=2` 这条最低要求**。
+    防复制冲量只防在总数上没有意义：门禁看的是每一格。
+    """
+    matrix: dict[str, dict[str, set[str]]] = {
+        intent: {"positive": set(), "hard_negative": set(), "relation": set()}
+        for intent in active_intents}
     eligible_ids = {case.id for case in cases if case.status in statuses}
     relation_members = {
         member
@@ -804,17 +773,42 @@ def coverage_matrix(cases: list[AdversarialCase], active_intents: set[str],
         if case.status not in statuses:
             continue
         for turn in case.turns:
+            key = input_fingerprint(turn)
             for plan in (turn.expected.plan,) + tuple(
                     replan.plan for replan in turn.expected.replans):
+                # 多成员 any_of 只证明「这一组至少有一个可接受」，不能替每个成员
+                # 制造独立正例；逐 intent coverage 只计 singleton 必要组。
                 positives = {group.any_of[0] for group in plan.required_groups
                              if len(group.any_of) == 1}
                 for intent in positives & active_intents:
-                    matrix[intent]["positive"] += 1
+                    matrix[intent]["positive"].add(key)
                     if case.id in relation_members:
-                        matrix[intent]["relation"] += 1
+                        matrix[intent]["relation"].add(key)
                 for intent in set(plan.forbidden_intents) & active_intents:
-                    matrix[intent]["hard_negative"] += 1
-    return matrix
+                    matrix[intent]["hard_negative"].add(key)
+    return {intent: {kind: len(keys) for kind, keys in row.items()}
+            for intent, row in matrix.items()}
+
+
+def validate_coverage(cases: list[AdversarialCase], active_intents: set[str],
+                      exemptions: dict[str, set[str]]) -> list[str]:
+    matrix = _coverage_matrix(cases, active_intents, _AUTHORITATIVE)
+    return [
+        f"active intent {intent} {kind} has {matrix[intent][kind]}, need {minimum}"
+        for intent in sorted(active_intents)
+        for kind, minimum in _COVERAGE_REQUIREMENTS.items()
+        if matrix[intent][kind] < minimum
+        and kind not in exemptions.get(intent, set())
+    ]
+
+
+def coverage_matrix(cases: list[AdversarialCase], active_intents: set[str],
+                    statuses: set[str] | None = None) -> dict[str, dict[str, int]]:
+    """给报告用的原始盘点表；口径与 `validate_coverage` 逐字相同（按唯一输入去重）。
+
+    两份盘点用同一个实现，否则「报告说 2 条、门禁说 1 条」这种事迟早发生。
+    """
+    return _coverage_matrix(cases, active_intents, statuses or _AUTHORITATIVE)
 
 
 def validate_boundary_coverage(cases: list[AdversarialCase],

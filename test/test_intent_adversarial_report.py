@@ -69,6 +69,9 @@ def _result(case_id, *, passed=True, repeat_status="pass", domain="info",
         actual_intents=tuple(actual_intents),
         raw_intents=tuple(actual_intents if raw_intents is None else raw_intents),
         raw_observed=raw_observed,
+        # 生产里两者同源（同一个 `_parse_and_validate_data` 钩子）：观测到候选
+        # 就说明校验器跑过了。替身跟着它走，免得逃逸率分母恒为 0。
+        validation_observed=raw_observed,
         assertions=(), repetitions=tuple(repetitions),
         divergence=divergence, plan_from_fallback=plan_from_fallback,
     )
@@ -369,3 +372,76 @@ def test_mid_run_retrieval_degradation_blocks_the_baseline():
                                      _meta(retrieval_calls=880, retrieval_degraded=0))
     assert baseline_eligibility(clean).reasons == ()
     assert "语义检索中途降级" not in render_adversarial_markdown(clean)
+
+
+# ── 独立复审 §8 的 2 P0 / 5 P1（2026-08-03 第三批） ────────────────────────
+
+
+def test_hallucination_above_zero_blocks_the_baseline():
+    """反向构造：overall / repeat / L3 / 完整性**全绿**，只有幻觉率是 1/1。
+
+    旧闸里这条阈值根本不存在（规格 §13.2 要求 gate 幻觉必须为 0），合成报告照样
+    `eligible=True`——「全绿但不合资格」的证据能直接成为正式基线。
+    """
+    dirty = _result("h", passed=True, admitted_intents=("info.weather",),
+                    raw_intents=("does.not_exist",))
+    report = build_adversarial_report([dirty], _meta())
+    assert report["metrics"]["planner_capability_hallucination_rate"]["value"] == 1.0
+    assert "planner_capability_hallucination_rate_above_zero" in \
+        baseline_eligibility(report).reasons
+
+
+def test_a_run_that_never_measured_hallucination_is_not_eligible_either():
+    """分母为 0 = **没量过**，不是量到 0。缺证据不放行，与其余各闸同一条纪律。"""
+    report = build_adversarial_report(
+        [_result("l0only", layer="l0", raw_observed=False)], _meta())
+    reasons = baseline_eligibility(report).reasons
+    assert "planner_capability_hallucination_rate_not_measured" in reasons
+    assert "post_validation_escape_rate_not_measured" in reasons
+
+
+def test_escape_denominator_excludes_layers_without_a_validator():
+    """L0 有准入清单却没有校验器：拿清单当门槛会把整个 L0 塞进逃逸率分母。"""
+    results = [_result("l0", layer="l0", raw_observed=False),
+               _result("live", layer="l1", raw_observed=True,
+                       admitted_intents=("info.weather",),
+                       actual_intents=("does.not_exist",))]
+    metrics = build_adversarial_report(results, _meta())["metrics"]
+    escape = metrics["post_validation_escape_rate"]
+    assert (escape["numerator"], escape["denominator"]) == (1, 1)
+
+
+def test_an_empty_admitted_catalog_is_a_real_scenario_not_an_excuse():
+    """A8 把某域能力全摘掉时准入清单为空——此时计划里任何 intent 都是逃逸。
+
+    旧实现用 `bool(admitted)` 当门槛，把最该抓的那一档从分母里摘了出去。
+    """
+    result = _result("a8", layer="l1", admitted_intents=(),
+                     actual_intents=("charging.find",),
+                     raw_intents=("charging.find",))
+    metrics = build_adversarial_report([result], _meta())["metrics"]
+    assert metrics["post_validation_escape_rate"]["value"] == 1.0
+    assert metrics["planner_capability_hallucination_rate"]["value"] == 1.0
+
+
+def test_softening_a_gold_is_visible_even_when_the_case_still_passes():
+    """反向构造：同一条 case 两次都 `passed=True`，但 gold 指纹变了。
+
+    `diff_against_baseline()` 只比同 ID 的 `passed` 布尔值——删一条 forbidden、
+    打开 allow_extra、改一条 relation 都能让红灯变绿而 diff 全空。
+    """
+    import eval_intent_adversarial as cli
+
+    baseline = {"cases": [{"id": "c@l1", "passed": True,
+                           "expected": {"gold_digest": "aaaaaaaaaaaaaaaa"}}]}
+    report = {"cases": [{"id": "c@l1", "passed": True,
+                         "expected": {"gold_digest": "bbbbbbbbbbbbbbbb"}}]}
+    assert cli._gold_changes(report, baseline) == [
+        "c@l1:aaaaaaaaaaaaaaaa->bbbbbbbbbbbbbbbb"]
+    # 指纹没变 / baseline 是更老的无指纹格式 → 都不许冤枉
+    same = {"cases": [{"id": "c@l1", "expected": {"gold_digest": "aaaaaaaaaaaaaaaa"}}]}
+    assert cli._gold_changes(same, baseline) == []
+    assert cli._gold_changes(report, {"cases": [{"id": "c@l1", "expected": {}}]}) == []
+    blocked = build_adversarial_report(
+        [_result("c")], _meta(gold_changes=["c@l1:a->b"]))
+    assert "gold_changed_since_baseline" in baseline_eligibility(blocked).reasons

@@ -258,3 +258,34 @@ def test_probe_retrieval_counts_only_the_calls_that_wanted_vectors():
     finally:
         embedding.embed_texts = original
     assert calls == [[], ["ok"], ["boom"]]
+
+
+def test_l1_can_reach_a_divergence_label_at_all():
+    """反向构造：L1 跑不了 L2 专属的两条 arm，旧实现于是**结构上**只能返回
+    `UNCLASSIFIED`——context/retrieval/hint/validation/planner 五个标签一个都出不来。
+
+    「没观测」与「不适用」都不是「已排除」，但处理方式相反：前者阻断结论，
+    后者必须跳过。把它们压成同一个 `None` 正是上一批反复修的那类默认值错误。
+    """
+    from support.intent_adversarial_trace import applicable_boundaries
+
+    # L1：Edge / 状态恢复两条边界不存在，其余全实测过 → 轮得到 Planner
+    l1 = DivergenceEvidence(full_entry_pass=False, empty_history_pass=False,
+                            retrieval_ablation_pass=False, pre_hint_pass=False,
+                            raw_planner_pass=False)
+    assert first_divergence(l1, "l1") == "PLANNER_DIVERGENCE"
+    assert first_divergence(l1) == "UNCLASSIFIED"      # 不给 layer 时保持保守
+    assert first_divergence(l1, "l2") == "UNCLASSIFIED"
+
+    # L1 上更早的边界翻正了，就该报那一个，而不是被 L2 字段吞掉
+    hinted = DivergenceEvidence(full_entry_pass=False, empty_history_pass=False,
+                                retrieval_ablation_pass=False, pre_hint_pass=True)
+    assert first_divergence(hinted, "l1") == "HINT_DIVERGENCE"
+
+    # L1 上**真的没观测**（没跑消融）仍必须阻断，不能因为跳过了两条就放行
+    thin = DivergenceEvidence(full_entry_pass=False, pre_hint_pass=True)
+    assert first_divergence(thin, "l1") == "UNCLASSIFIED"
+
+    names = [name for name, _ in applicable_boundaries("l1")]
+    assert "engine_direct_pass" not in names and "planner_post_hint_pass" not in names
+    assert len(applicable_boundaries("l2")) == 6

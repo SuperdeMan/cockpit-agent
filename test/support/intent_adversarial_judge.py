@@ -239,12 +239,24 @@ def judge_retrieval(expected: RetrievalExpectation, actual: PlanSnapshot,
 
 def judge_engine(expected: EngineExpectation, actual: DecisionSnapshot,
                  out: TurnJudgement) -> None:
-    """Agent 调用与挂起状态。只有 `engine_observed` 时才裁。
+    """Agent 调用与挂起状态。
 
     `forbidden_agent_calls` 是「确认前零副作用」真正的搭档：副作用面只看动作有没有
     落地，替身恰好不产生动作时它恒真；**调用记录看的是那个 Agent 有没有被够着**。
+
+    **声明了 `expected.engine` 却没观测到 Engine，是失败不是「不适用」。**
+    旧实现在 `engine_observed=False` 时直接 return，于是整组 Engine gold 被静默跳过：
+    一条声明了 `required_agent_calls` + `pending_confirm_after=true` 的用例，实际在
+    Edge 本地就结束了、根本没到 Engine，仍然只留下 decision/replan/safety 三条绿断言
+    整轮通过——**最需要这组断言的那一刻正好是它失效的那一刻**。
+    这是本套件反复出现的同一形态：没观测被当成了观测到「没问题」。
     """
-    if not expected.declared or not actual.engine_observed:
+    if not expected.declared:
+        return
+    _assert(out, "engine.observed", bool(actual.engine_observed),
+            True, bool(actual.engine_observed),
+            detail="声明了 expected.engine 却没走到 Engine——未到 Engine 不是「不适用」")
+    if not actual.engine_observed:
         return
     called = list(actual.agent_calls)
     counts: dict[str, int] = {}
@@ -289,8 +301,14 @@ def judge_turn(expected: TurnExpectation, actual: DecisionSnapshot) -> TurnJudge
         _assert(out, "clarify", actual.clarify is wanted, wanted, actual.clarify)
     if expected.plan.assert_plan:
         judge_plan(expected.plan, actual.plan, out)
-    _assert(out, "replan_count", len(actual.replans) == len(expected.replans),
-            len(expected.replans), len(actual.replans))
+    # `replan_count` 只在**声明过计划形态**时才断言。它原来无条件写：于是 L0（根本没有
+    # plan gold）也带着一条恒真的 `replan_count`，把它算进 `exact_plan_set` 的子集就等于
+    # 把整个 L0 塞进 plan 精确率的分母。反过来，不算它又漏掉「多规划了一轮 replan」——
+    # 实测有 turn 因多出一次 replan 而失败，`exact_plan_set` 仍记 1。两难的出路是让这条
+    # 断言**跟着 plan gold 一起存在或一起不存在**。
+    if expected.plan.assert_plan or expected.replans:
+        _assert(out, "replan_count", len(actual.replans) == len(expected.replans),
+                len(expected.replans), len(actual.replans))
     for index, replan_expected in enumerate(expected.replans):
         if index < len(actual.replans):
             judge_plan(replan_expected.plan, actual.replans[index], out,
@@ -300,6 +318,10 @@ def judge_turn(expected: TurnExpectation, actual: DecisionSnapshot) -> TurnJudge
     if expected.no_side_effect_before_confirm:
         _assert(out, "no_side_effect_before_confirm", not actual.side_effects,
                 [], actual.side_effects)
+    # **没断言过就不写这些数。** 旧实现无条件写 recall=1 / forbidden=0 / overroute=0 /
+    # dependency=1，于是根本没有 plan gold 的 L0 也在往里记满分——`required_group_recall
+    # =70/70 100%` 量的不是召回，是「有 70 个证据单元」。
+    # 分母为 0 的地方要显示 `null`，不是 100%：这是本套件从头到尾的同一条纪律。
     group_hits = sum(value for key, value in out.metrics.items()
                      if key.endswith(".required_group_hits"))
     group_total = sum(value for key, value in out.metrics.items()
@@ -308,16 +330,15 @@ def judge_turn(expected: TurnExpectation, actual: DecisionSnapshot) -> TurnJudge
                    if key.endswith(".dependency_hits"))
     dep_total = sum(value for key, value in out.metrics.items()
                     if key.endswith(".dependency_total"))
-    out.metrics["required_group_recall"] = (
-        group_hits / group_total if group_total else 1.0)
-    out.metrics["forbidden_route_count"] = sum(
-        value for key, value in out.metrics.items()
-        if key.endswith(".forbidden_route_count"))
-    out.metrics["overroute_count"] = sum(
-        value for key, value in out.metrics.items()
-        if key.endswith(".overroute_count"))
-    out.metrics["dependency_pass"] = (
-        dep_hits / dep_total if dep_total else 1.0)
+    if group_total:
+        out.metrics["required_group_recall"] = group_hits / group_total
+    if dep_total:
+        out.metrics["dependency_pass"] = dep_hits / dep_total
+    for name in ("forbidden_route_count", "overroute_count"):
+        rows = [value for key, value in out.metrics.items()
+                if key.endswith(f".{name}")]
+        if rows:                      # judge_plan 跑过才有这两个键
+            out.metrics[name] = sum(rows)
     return out
 
 

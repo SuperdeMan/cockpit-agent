@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -50,6 +51,9 @@ from support.intent_adversarial_trace import (  # noqa: E402
     DivergenceEvidence, RetrievalProbe, TraceSink, asset_fingerprint,
     deterministic_divergence, divergence_candidates, first_divergence,
     probe_builder, probe_retrieval,
+)
+from support.intent_adversarial_trace import (  # noqa: E402
+    applicable_boundaries as trace_applicable_boundaries,
 )
 from support.intent_adversarial_trace import (  # noqa: E402
     evidence_dict as trace_evidence_dict,
@@ -332,14 +336,22 @@ def _turn_outcome(turn, snapshot, judgement, sink: TraceSink,
     hints = sink.hints[before[1]:]
     fallbacks_before = before[3] if len(before) > 3 else 0
     assert_plan = turn.expected.plan.assert_plan
-    raw = validations[-1] if validations else None
     hint = hints[-1] if hints else None
+    # **幻觉要看这一轮的每一次候选，不只是最后一次。** 一轮里可能有初规划的两次尝试
+    # 加上若干次 replan；只留 `validations[-1]` 会把 replan 的候选当成初规划的候选，
+    # 与 `expected.plan` 的 gold 混在同一条结果里（评审 P1-A）。
+    # raw 意图取**并集**（模型在这一轮里有没有编过能力，编在哪一次都算编了）；
+    # 与初规划 gold 对照的候选取**第一次**（那才是 `expected.plan` 描述的那一次）。
+    raw_intents: list[str] = []
+    for row in validations:
+        raw_intents.extend(row.raw_intents)
+    first = validations[0] if validations else None
     return TurnOutcome(
         snapshot=snapshot, judgement=judgement,
-        raw_intents=tuple(raw.raw_intents) if raw else (),
-        raw_observed=raw is not None,
-        raw_planner_pass=(_plan_passes(turn.expected.plan, raw.raw_candidate)
-                          if raw and assert_plan else None),
+        raw_intents=tuple(dict.fromkeys(raw_intents)),
+        raw_observed=bool(validations),
+        raw_planner_pass=(_plan_passes(turn.expected.plan, first.raw_candidate)
+                          if first and assert_plan else None),
         pre_hint_pass=(_plan_passes(turn.expected.plan, hint.before)
                        if hint and assert_plan else None),
         plan_from_fallback=len(sink.fallbacks) > fallbacks_before)
@@ -481,17 +493,31 @@ def run_l3(journey_ids: list[str], *, provider: str, model: str,
     return proc.returncode
 
 
-def read_l3_report(artifact_root: Path, *, since: float | None = None
-                   ) -> tuple[dict[str, str], list[str]]:
+def read_l3_report(artifact_root: Path, *, since: float | None = None,
+                   expect_provider: str = "", expect_ids: list[str] | None = None
+                   ) -> tuple[dict[str, str], list[str], list[str]]:
     """从 runner 产出的结构化 journeys report 读逐条状态；只看退出码等于没读。
 
     `since` 是本次调用的开始时间：**旧报告不许冒充本次证据**。固定目录 + 递归读全部
     `journeys_report.json` 时，只要目录里曾经成功过一次，后面失败的运行就能读到那份
     旧的 `pass`——反向构造里 `exit=2` 配一份陈旧 pass 得到的 `infrastructure_errors`
     是空的。
+
+    **新鲜不等于是这一次的证据。** 只校验 mtime 时，一份**新写的**、但档位错（别的
+    provider）、选集错（跑了别的 journey）的报告照样成为 L3 pass——调用方写进
+    `meta.l3_invocation` 的 provider/model/选集只是「本次想跑什么」，不是对产物
+    「实际跑了什么」的核对。这里拿报告自己声明的 `provider` 与 journey 名单去核：
+
+    - 档位对不上 → 整份报告**不采信**（不是警告，是不用它的 statuses）；
+    - 出现选集之外的 journey → 记身份错误。runner 没按 `E2E_JOURNEY_IDS` 走时，
+      读到的 `pass` 可能压根来自别的用例。
+
+    返回 `(statuses, stale, identity_errors)`。
     """
     statuses: dict[str, str] = {}
     stale: list[str] = []
+    identity: list[str] = []
+    wanted = set(expect_ids or ())
     for path in sorted(Path(artifact_root).glob("**/journeys_report.json")):
         try:
             if since is not None and path.stat().st_mtime < since:
@@ -500,10 +526,25 @@ def read_l3_report(artifact_root: Path, *, since: float | None = None
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        for row in data.get("journeys") or []:
-            if isinstance(row, dict) and row.get("id"):
-                statuses[str(row["id"])] = str(row.get("status") or "")
-    return statuses, stale
+        actual_provider = str(data.get("provider") or "")
+        if expect_provider and actual_provider != expect_provider:
+            identity.append(
+                f"l3_provider_mismatch: {path.name} 声明 provider="
+                f"{actual_provider or '(缺失)'!r}，本次要的是 {expect_provider!r}"
+                "——档位不同的报告不采信")
+            continue
+        rows = {str(row["id"]): str(row.get("status") or "")
+                for row in (data.get("journeys") or [])
+                if isinstance(row, dict) and row.get("id")}
+        if wanted:
+            extra = sorted(set(rows) - wanted)
+            if extra:
+                identity.append(
+                    f"l3_selection_mismatch: {path.name} 含选集之外的 journey "
+                    f"{','.join(extra[:10])}——runner 没按本次选集走，"
+                    "读到的状态可能来自别的用例")
+        statuses.update(rows)
+    return statuses, stale, identity
 
 
 # ── 结果装配 ───────────────────────────────────────────────────────────────
@@ -564,7 +605,10 @@ def _metrics_for(turn, judgement, snapshot: DecisionSnapshot) -> dict[str, float
     这个数既不是 plan 精确率，也不是通过率。
     """
     metrics: dict[str, float] = {}
-    exact = judgement.subset_passed("plan.", "replan[")
+    # `replan_count` 也算进 plan 精确集：多规划一轮 replan 就是计划集合不精确。
+    # 它现在只在声明过 plan gold / replans 时才存在（judge_turn），所以加进来不会
+    # 把没有 plan gold 的层重新拖进分母。
+    exact = judgement.subset_passed("plan.", "replan[", "replan_count")
     if exact is not None:
         metrics["exact_plan_set"] = 1.0 if exact else 0.0
     for key in ("required_group_recall", "forbidden_route_count", "overroute_count",
@@ -642,7 +686,7 @@ def _expected_dict(case, turn, index: int, layer: str,
                    args: argparse.Namespace) -> dict[str, Any]:
     plan = turn.expected.plan
     engine = turn.expected.engine
-    return {
+    row = {
         "turn_index": index,
         "utterance": turn.utterance,
         "context": turn.context,
@@ -653,6 +697,8 @@ def _expected_dict(case, turn, index: int, layer: str,
         "required_intent_groups": [list(g.any_of) for g in plan.required_groups],
         "forbidden_intents": list(plan.forbidden_intents),
         "allow_extra_intents": plan.allow_extra_intents,
+        "allowed_extra_intents": list(plan.allowed_extra_intents),
+        "replan_count": len(turn.expected.replans),
         "engine": ({} if not engine.declared else {
             "required_agent_calls": list(engine.required_agent_calls),
             "forbidden_agent_calls": list(engine.forbidden_agent_calls),
@@ -662,8 +708,15 @@ def _expected_dict(case, turn, index: int, layer: str,
         "relation": (None if not case.relation else
                      {"base_case": case.relation.base_case, "type": case.relation.type,
                       "expectation": case.relation.expectation}),
-        "repro": repro_command(case, layer, args),
     }
+    # gold 指纹：**baseline 对比只看 `passed` 布尔值时，把 gold 改软是隐形的**——
+    # 删一条 forbidden、打开 allow_extra、改一条 relation 都能让红灯变绿而 diff 为空。
+    # 指纹只覆盖「构成判定的那些字段」，不含 repro/utterance 这类展示性内容。
+    row["gold_digest"] = hashlib.sha256(json.dumps(
+        row, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+    row["repro"] = repro_command(case, layer, args)
+    return row
 
 
 # ── baseline 写入 ─────────────────────────────────────────────────────────
@@ -903,9 +956,11 @@ def main(argv: list[str] | None = None) -> int:
         report["meta"]["removed_cases"] = sorted(
             {str(row.get("id") or "") for row in (baseline.get("cases") or [])}
             - produced - {""})[:50]
+        report["meta"]["gold_changes"] = _gold_changes(report, baseline)
     else:
         report["meta"]["baseline_regressions"] = []
         report["meta"]["removed_cases"] = []
+        report["meta"]["gold_changes"] = []
     markdown = render_adversarial_markdown(report)
 
     eligibility = baseline_eligibility(report)
@@ -940,16 +995,41 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _gold_changes(report: dict, baseline: dict) -> list[str]:
+    """逐例 gold 指纹与 baseline 的差异。
+
+    `diff_against_baseline()` 只比同 ID 的 `passed` 布尔值——**gold 被改软了它看不见**。
+    删掉一条 `forbidden_intents`、打开 `allow_extra_intents`、改一条 relation 期望，
+    都能把红灯变绿而 diff 全空，「gold 修正必须列出」这条 DoD 因此从来没兑现过。
+    """
+    old = {str(row.get("id") or ""): ((row.get("expected") or {}).get("gold_digest"))
+           for row in (baseline.get("cases") or [])}
+    changed: list[str] = []
+    for row in report.get("cases") or []:
+        unit = str(row.get("id") or "")
+        before = old.get(unit)
+        now = (row.get("expected") or {}).get("gold_digest")
+        # baseline 里没有指纹（更老的格式）时不冤枉它：那是「无从比较」，
+        # 由 `removed_cases` / `declared_set_complete` 那几条闸各管各的。
+        if before and now and before != now:
+            changed.append(f"{unit}:{before}->{now}")
+    return sorted(changed)[:50]
+
+
 def _expected_units(cases, args) -> set[str]:
-    """一次运行**应当**产出的证据单元全集（含多轮逐轮单元与有链接的 L3 单元）。"""
-    links = load_journey_links()
+    """一次运行**应当**产出的证据单元全集（含多轮逐轮单元与有链接的 L3 单元）。
+
+    L3 声明单元**按 case 自己声明的 layer 记，不按 link 表记**。旧实现只给「有
+    journey link」的 case 建 L3 单元：一条声明了 `layers: [l3]` 但 link 被删掉/写错的
+    case，会同时从 expected 与 produced 两个集合里消失——完整性检查因此看不见它，
+    只要还剩另一条 L3，`l3_empty` 也不会拦。**声明了却没链接是缺口，不是「不存在」。**
+    """
     units: set[str] = set()
     for case in cases:
         turns = len(case.turns)
         for layer in layers_for(case, args.layer):
             if layer == "l3":
-                if links.get(case.id):
-                    units.add(f"{case.id}@l3")
+                units.add(f"{case.id}@l3")
                 continue
             for index in range(turns):
                 units.add(_unit_id(case, layer, index, turns))
@@ -1066,8 +1146,10 @@ def _l3_evidence(selected, args, provider_model
                      / "_ci-run-intent-l3-artifacts" / invocation)
     code = run_l3(ids, provider=args.provider, model=args.model,
                   artifact_root=artifact_root)
-    statuses, stale = read_l3_report(artifact_root, since=started.timestamp())
-    infra: list[str] = []
+    statuses, stale, identity = read_l3_report(
+        artifact_root, since=started.timestamp(),
+        expect_provider=provider_model, expect_ids=list(ids))
+    infra: list[str] = list(identity)
     meta = {
         "invocation_id": invocation, "started_at": started.isoformat(),
         "code_sha": code_sha, "provider_model": provider_model,
@@ -1166,7 +1248,13 @@ def _execute(selected, args, suite, agents, builder, confirm_intents,
     # 失败扩展：首跑失败且只跑了一次 → 补到 failure_repeats。成对的两条同步扩，
     # 否则第 2/3 次没有 base 可配。
     if not args.repeat:
-        _expand_failures(units, partners, suite, args, run_once, infra)
+        # **relation 失败也必须触发扩展。** 扩展原来只看绝对 gold，而 relation 裁决在它
+        # 之后才发生：绝对 gold 过、relation 败的 variant 因此只跑 1 次，那一次红随后被
+        # 分类成 `unstable`——既不进修复清单也不进门禁，一条真缺陷就此消失。
+        # 143 条 relation variant 里 129 条是 low/medium（首跑只跑 1 次），不是边角路径。
+        # 先裁一遍只为决定「要不要补跑」；最终判定仍由扩展后那一遍给出。
+        pre_relations, _ = _relation_judgements(units, args)
+        _expand_failures(units, partners, suite, args, run_once, infra, pre_relations)
     if lock is not None:
         lock.check("final")
 
@@ -1182,10 +1270,19 @@ def _execute(selected, args, suite, agents, builder, confirm_intents,
     return results, infra
 
 
-def _expand_failures(units, partners, suite, args, run_once, infra) -> None:
+def _expand_failures(units, partners, suite, args, run_once, infra,
+                     relations: dict | None = None) -> None:
+    relations = relations or {}
+
+    def _first_run_failed(key: str, unit) -> bool:
+        if any(not outcome.judgement.passed for outcome in unit.runs[0]):
+            return True
+        row = (relations.get(key) or {}).get(0)
+        return row is not None and not row.passed
+
     wanted = {key for key, unit in units.items()
               if unit.layer != "l0" and len(unit.runs) == 1
-              and any(not outcome.judgement.passed for outcome in unit.runs[0])}
+              and _first_run_failed(key, unit)}
     for key in sorted(wanted):
         partner = partners.get(units[key].case.id)
         keys = [key] + ([f"{partner}@{units[key].layer}"] if partner else [])
@@ -1296,9 +1393,15 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
             evidence_dict: dict[str, Any] = {"layer": "l0-deterministic"}
         else:
             divergence = ("" if classification.status == "pass"
-                          else first_divergence(evidence_row))
-            candidates = divergence_candidates(evidence_row)
+                          else first_divergence(evidence_row, layer))
+            candidates = divergence_candidates(evidence_row, layer)
             evidence_dict = trace_evidence_dict(evidence_row)
+            # 台账仍打印全部 7 个字段，但要标出哪些对本层根本不适用——否则读的人
+            # 会把「L1 的 engine_direct_pass 是 null」读成「这条对照没跑」。
+            applicable = {name for name, _ in trace_applicable_boundaries(layer)}
+            evidence_dict = {
+                key: ("n/a" if key not in applicable and value is None else value)
+                for key, value in evidence_dict.items()}
         results.append(AdversarialResult(
             result_id=_unit_id(case, layer, turn_index, turns),
             case_id=case.id, layer=layer,
@@ -1317,6 +1420,9 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
             admitted_intents=_admitted_intents(turn, agents),
             actual_intents=tuple(outcome.snapshot.plan.intents),
             raw_intents=outcome.raw_intents, raw_observed=outcome.raw_observed,
+            # raw 通道与校验通道是同一个钩子（`_parse_and_validate_data`）：观测到候选
+            # 就说明校验器跑过了。没有这个钩子的层（L0 / L3 / 脚本替身）两者一起为假。
+            validation_observed=outcome.raw_observed,
             # 取**证据那一轮**的兜底标记，与 assertions/metrics 同一轮，
             # 免得报告里出现「这条绿是兜底给的」指向另一次运行的情况。
             plan_from_fallback=outcome.plan_from_fallback,

@@ -85,6 +85,9 @@ class AdversarialResult:
     # `raw_observed=False` 表示这一层压根没有 raw 通道（L0），不进分母。
     raw_intents: tuple[str, ...] = ()
     raw_observed: bool = False
+    # 这一层到底有没有跑过 capability 校验。**逃逸率的分母是它，不是「准入清单非空」**：
+    # L0 没有校验器却有准入清单，拿清单当门槛会把整个 L0 塞进逃逸率分母。
+    validation_observed: bool = False
     # 计划来自 `PlanBuilder._fallback`（两次解析都没成，编排合成的兜底）。
     # **这条证据不能证明落域判断**——兜底产物默认就是 `chitchat.talk`，与一部分 gold
     # 逐字相同，于是「模型答对了」和「模型没答上来」在报告里长得一样。
@@ -120,10 +123,15 @@ def _defect_ratio(results, key: str) -> _Ratio:
 
 
 def _escaped(result: AdversarialResult) -> bool:
-    """校验**后**仍留在计划里的不可用能力——这是逃逸，不是幻觉。"""
-    admitted = set(result.admitted_intents)
-    return bool(admitted) and any(intent not in admitted
-                                  for intent in result.actual_intents)
+    """校验**后**仍留在计划里的不可用能力——这是逃逸，不是幻觉。
+
+    **不再用 `bool(admitted)` 当门槛。** 准入清单为空是一个**有效场景**（A8 把某个域
+    的能力全摘掉），此时计划里出现任何 intent 都是逃逸；拿空清单当「无法判定」会把
+    最该抓的那一档从分母里摘出去。进不进分母改由 `validation_observed` 决定——
+    那才是「这一层到底有没有校验器」的事实。
+    """
+    return any(intent not in set(result.admitted_intents)
+               for intent in result.actual_intents)
 
 
 def _hallucinated(result: AdversarialResult) -> bool:
@@ -133,9 +141,8 @@ def _hallucinated(result: AdversarialResult) -> bool:
     不是编出来的能力有没有漏出去。两者混在一起时，validator 越严指标越好看，
     而「模型天天编能力」会被彻底掩盖。
     """
-    admitted = set(result.admitted_intents)
-    return bool(admitted) and any(intent not in admitted
-                                  for intent in result.raw_intents)
+    return any(intent not in set(result.admitted_intents)
+               for intent in result.raw_intents)
 
 
 def _clarify_balanced(results) -> dict[str, Any]:
@@ -160,8 +167,10 @@ def _compute_metrics(results) -> dict[str, dict[str, Any]]:
     # **只有真的重复过的证据才进不稳定率的分母。** 全量 live 当分母时，一次都没复跑的
     # 单元被默默算成「稳定」——那是抽样偏差，不是稳定性。
     repeated = [r for r in live if len(r.repetitions) >= 2]
-    escape_pool = [r for r in results if r.admitted_intents]
-    raw_pool = [r for r in results if r.admitted_intents and r.raw_observed]
+    # 两个池子各按**自己那条通道有没有被观测到**取，不按「准入清单空不空」取。
+    # L0 没有校验器，它的证据单元进逃逸率分母只会把这个数系统性稀释成 0。
+    escape_pool = [r for r in results if r.validation_observed]
+    raw_pool = [r for r in results if r.raw_observed]
     return {
         "exact_plan_set_rate": _mean_ratio(results, "exact_plan_set").as_dict(),
         "required_group_recall": _mean_ratio(results, "required_group_recall").as_dict(),
@@ -359,6 +368,21 @@ def baseline_eligibility(report: dict[str, Any]) -> BaselineEligibility:
         reasons.append("baseline_regressions")
     if meta.get("retrieval_degraded"):
         reasons.append("retrieval_degraded_mid_run")
+    # **规格 §13.2：gate 的能力幻觉必须为 0。** 这条阈值原来根本没进闸——合成报告的
+    # overall / repeat / L3 / 完整性全绿、幻觉率 1/1，资格结果照样是 eligible=True。
+    # 分母为 0（这一跑没有 raw 通道）不放行：那是「没量过」，不是「量到 0」。
+    metrics = report.get("metrics") or {}
+    for name in ("planner_capability_hallucination_rate", "post_validation_escape_rate"):
+        row = metrics.get(name) or {}
+        if not row.get("denominator"):
+            reasons.append(f"{name}_not_measured")
+        elif row.get("value"):
+            reasons.append(f"{name}_above_zero")
+    # gold 被改软了，`passed` 布尔值看不出来。逐例 gold 指纹变化必须列出来——
+    # 「删掉一条 forbidden / 打开 allow_extra / 改一条 relation」全都能让红灯变绿，
+    # 而 diff 只比同 ID 的通过与否时，这类改动在 baseline 面前是隐形的。
+    if meta.get("gold_changes"):
+        reasons.append("gold_changed_since_baseline")
     # 兜底合成的计划进不了 baseline。**一份基线里但凡有一条是降级路径给的，它就不是
     # 基线**——后续所有对比都会把「模型什么时候能答上来」当成「落域什么时候是对的」。
     # 它同时是**产品压力**：这一族现在稳定命中（planner 对「先别关空调」返回

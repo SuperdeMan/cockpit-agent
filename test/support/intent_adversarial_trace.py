@@ -330,17 +330,37 @@ _DIVERGENCE_ORDER = (
     ("pre_hint_pass", "HINT_DIVERGENCE"),
     ("raw_planner_pass", "VALIDATION_DIVERGENCE"),
 )
+# **L2 独有的两个边界。** L1 只跑 Planner：它没有 Edge，也没有要恢复的会话状态——
+# 这两个边界对 L1 不是「没观测」，是**不存在**。
+_L2_ONLY_BOUNDARIES = frozenset({"engine_direct_pass", "planner_post_hint_pass"})
 
 
-def first_divergence(evidence: DivergenceEvidence) -> str:
+def applicable_boundaries(layer: str = "") -> tuple[tuple[str, str], ...]:
+    """本层**存在**的边界，按执行顺序。
+
+    这条区分是 P1-B 的全部内容：`first_divergence` 原来固定从 L2 专属的两个字段开始
+    检查，而 L1 按设计不跑那两条 arm，于是它们永远是 `None`、函数在看到后面任何证据
+    之前就返回 `UNCLASSIFIED`——**L1 的首偏离点结构上不可达**，
+    context/retrieval/hint/validation/planner 五个标签一个都出不来。
+
+    「没观测」与「不适用」都不能当成「已排除」，但它们的处理方式相反：前者必须阻断
+    结论，后者必须跳过。把它们压成同一个 `None` 正是上一批反复修的那类默认值错误。
+    """
+    if layer == "l1":
+        return tuple(row for row in _DIVERGENCE_ORDER
+                     if row[0] not in _L2_ONLY_BOUNDARIES)
+    return _DIVERGENCE_ORDER
+
+
+def first_divergence(evidence: DivergenceEvidence, layer: str = "") -> str:
     """按执行顺序找**最早**的不一致边界；证据不足返回 `UNCLASSIFIED`。
 
-    只要还有一个更早的边界没被观测，就不能声称后面那个是「第一个」——那是在拿沉默
-    当证据。`PLANNER_DIVERGENCE` 只在**前面每一层都实测过且都没翻正**时才成立。
+    只要还有一个更早的**适用**边界没被观测，就不能声称后面那个是「第一个」——那是在
+    拿沉默当证据。`PLANNER_DIVERGENCE` 只在**前面每一层都实测过且都没翻正**时才成立。
     """
     if evidence.full_entry_pass:
         return "NONE"
-    for field_name, label in _DIVERGENCE_ORDER:
+    for field_name, label in applicable_boundaries(layer):
         value = getattr(evidence, field_name)
         if value is None:
             return "UNCLASSIFIED"
@@ -349,7 +369,8 @@ def first_divergence(evidence: DivergenceEvidence) -> str:
     return "PLANNER_DIVERGENCE"
 
 
-def divergence_candidates(evidence: DivergenceEvidence) -> tuple[str, ...]:
+def divergence_candidates(evidence: DivergenceEvidence,
+                          layer: str = "") -> tuple[str, ...]:
     """全部有正向证据的边界（不排序、不声称谁在前）。
 
     首偏离点要求「更早的都被排除」，代价是廉价证据（Hint 前后、校验前后是**免费**
@@ -358,7 +379,7 @@ def divergence_candidates(evidence: DivergenceEvidence) -> tuple[str, ...]:
     """
     if evidence.full_entry_pass:
         return ()
-    return tuple(label for field_name, label in _DIVERGENCE_ORDER
+    return tuple(label for field_name, label in applicable_boundaries(layer)
                  if getattr(evidence, field_name) is True)
 
 
