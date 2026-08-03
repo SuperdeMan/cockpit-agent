@@ -367,6 +367,8 @@ class PlanBuilder:
         plan = None
         plan_mode = "json"
         last_raw = ""
+        no_action = 0        # 「受话了、但不该做任何动作」连续出现的次数，见循环后
+        last_mode = "json"
         for attempt in range(2):
             mode = "json"
             if toolcall and attempt == 0:
@@ -375,18 +377,23 @@ class PlanBuilder:
                                                        exemplars_block=ex_block)
                 last_raw = raw or last_raw
                 if args is not None:
+                    data = args
                     parsed = self._parse_and_validate_data(args, agent_map, text)
                     mode = "toolcall"
                 else:
                     # 模型无视工具直接文本输出（或 named tool_choice 不被支持）→ 同轮抢救
-                    parsed = self._parse_and_validate(raw, agent_map, text)
+                    data = self._extract_data(raw)
+                    parsed = (self._parse_and_validate_data(data, agent_map, text)
+                              if data is not None else None)
                     mode = "toolcall_salvage"
             else:
                 raw = await self._llm_plan(text, agents, working_set,
                                            skills_block=sk_block,
                                            exemplars_block=ex_block)
                 last_raw = raw or last_raw
-                parsed = self._parse_and_validate(raw, agent_map, text)
+                data = self._extract_data(raw)
+                parsed = (self._parse_and_validate_data(data, agent_map, text)
+                          if data is not None else None)
                 mode = "toolcall_fallback" if toolcall else "json"
             # 祈使指令不接受 not_addressed（2026-07-27 真机）：置为「本次没解析出计划」，
             # 走既有的重试→fallback 机制。**刻意不直接改判成 chitchat**——重试有机会拿到
@@ -403,6 +410,30 @@ class PlanBuilder:
                 plan = parsed
                 plan_mode = mode
                 break
+            if parsed is None and self._looks_like_no_action(data):
+                no_action += 1
+                last_mode = mode
+
+        # **第三种合法的空 steps：受话了，而且不该做任何动作。**
+        # 上面那条 R4.4 的放行只白名单了两种（不受话 / 澄清）。可是「空调先别关」这类
+        # 否定句里，`negation-and-deferral` policy 教出来的**正确**输出恰恰是
+        # `{"addressed":true,"steps":[]}`——旧实现把它当解析失败，重试一次后落
+        # `_fallback`，而兜底产物又恰好也是 `chitchat.talk`（这一族的 gold）。
+        # 于是「模型判断对了」与「模型没答上来」在观测上逐字相同：`plan_mode` 记成
+        # `toolcall_degraded`，落域评测那边也分不出这条绿是判断给的还是兜底给的
+        # （2026-08-03 实测，对抗套件 findings §5.5 的「否定簇已修 ✅」因此站不住）。
+        #
+        # 只在**第二次也这么说**时才认：一次空 steps 可能只是模型抽风（「打开空调」
+        # 偶尔也会空手而归），那时重试仍是那条便宜的保险。两次都说「不需要动作」
+        # 就是它的判断，不是失败——再重试一次是在second-guess一个明确答案。
+        # 用户可见行为**一个字都没变**（仍是一条 chitchat.talk），变的只有诚实度。
+        if plan is None and no_action >= 2:
+            talk = self._talk_only_plan(text, agents)
+            if talk is not None:
+                logger.info("planner said 'no action needed' twice, honouring it: %s",
+                            text[:40])
+                plan = talk
+                plan_mode = f"{last_mode}_no_action"
 
         if plan is None:
             logger.warning("Plan parse failed twice, falling back to chitchat/routing")
@@ -530,14 +561,36 @@ class PlanBuilder:
         steps = self._validated_steps(data.get("steps", []), agent_map)
         return ReplanDecision(done=not bool(steps), steps=steps)
 
-    def _parse_and_validate(self, raw: str, agent_map: dict,
-                            fallback_text: str) -> Plan | None:
+    def _extract_data(self, raw: str):
+        """raw 文本 → dict；解析不出来返回 None。
+
+        从 `_parse_and_validate` 里拆出来是因为**「校验后没有计划」有两种原因**，而
+        `Plan | None` 这个返回类型装不下这个区别：JSON 根本没解析出来，与解析出来了、
+        模型明说「不需要做任何动作」。调用方要能分开问这两件事（见 `_looks_like_no_action`）。
+        """
         if not raw:
             return None
         try:
-            data = json.loads(self._extract_json(raw))
+            return json.loads(self._extract_json(raw))
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning("Plan JSON parse failed: %s", e)
+            return None
+
+    @staticmethod
+    def _looks_like_no_action(data) -> bool:
+        """模型说「受话了，但不该做任何动作」的形态。
+
+        判据落在**原始 dict** 上而不是校验结果上，这一点是关键：模型规划了 3 步、
+        但全被能力集校验丢掉时，`steps` 非空 —— 那是「规划错了」，绝不是「不需要动作」。
+        两者的校验结果都是 `None`，只有原始数据分得开。
+        """
+        return (isinstance(data, dict) and data.get("addressed") is not False
+                and not (data.get("steps") or []) and not data.get("clarify"))
+
+    def _parse_and_validate(self, raw: str, agent_map: dict,
+                            fallback_text: str) -> Plan | None:
+        data = self._extract_data(raw)
+        if data is None:
             return None
         return self._parse_and_validate_data(data, agent_map, fallback_text)
 
@@ -745,10 +798,14 @@ class PlanBuilder:
             step.depends_on = [dep for dep in step.depends_on if dep in valid_ids]
         return steps
 
-    async def _fallback(self, text: str, agents: list = None) -> Plan:
-        """规划失败的降级。优先兜底到全局兜底 Agent（env PLANNER_FALLBACK_AGENT，默认
-        chitchat；开放域/LLM 抽风时仍有回应），其次 Registry 语义路由 top-1。"""
-        # 1) 全局兜底 Agent：把原话交给它（已在权限过滤后的 agents 里）
+    def _talk_only_plan(self, text: str, agents: list = None) -> Plan | None:
+        """把原话交给全局兜底 Agent（默认 chitchat）：**只回一句话，不做任何写操作。**
+
+        单独成方法是为了让两个**语义完全不同**的调用方各有各的名字：
+        `_fallback` 是「我们失败了」，`build()` 的空动作分支是「模型判断不该做事」。
+        两者产物相同（一条 `chitchat.talk`），但记成同一件事会让观测说谎——
+        实测代价见 `build()` 里那段注释。找不到兜底 Agent 时返回 None，由调用方决定。
+        """
         for a in (agents or []):
             if a.manifest.agent_id == _FALLBACK_AGENT:
                 intent = a.manifest.capabilities[0].intent if a.manifest.capabilities else "chitchat.talk"
@@ -761,6 +818,15 @@ class PlanBuilder:
                         getattr(a.manifest, "requires_permissions", []) or []),
                     trust_level=getattr(a.manifest, "trust_level", "") or "",
                 )], raw_text=text)
+        return None
+
+    async def _fallback(self, text: str, agents: list = None) -> Plan:
+        """规划失败的降级。优先兜底到全局兜底 Agent（env PLANNER_FALLBACK_AGENT，默认
+        chitchat；开放域/LLM 抽风时仍有回应），其次 Registry 语义路由 top-1。"""
+        # 1) 全局兜底 Agent：把原话交给它（已在权限过滤后的 agents 里）
+        talk = self._talk_only_plan(text, agents)
+        if talk is not None:
+            return talk
 
         # 2) Registry 语义路由 top-1
         try:
