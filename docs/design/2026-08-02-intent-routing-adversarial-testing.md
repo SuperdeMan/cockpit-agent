@@ -527,22 +527,23 @@ cloud-direct
 
 | 指标 | 定义 |
 |---|---|
-| `exact_plan_set_rate` | 所有必要组、replan、关键槽位与依赖齐全，且无 forbidden 或未授权 extra |
+| `exact_plan_set_rate` | 所有必要组、replan、关键槽位与依赖齐全，且无 forbidden 或未授权 extra。**只由 plan 断言决定**——没写 plan gold 的证据单元（如整个 L0）不进分母，分母为 0 时值是 `null`（§22.1-③） |
 | `required_group_recall` | 已满足必要意图组 / 全部必要意图组 |
 | `overroute_rate` | 出现未授权额外 intent 的案例比例 |
 | `forbidden_route_rate` | 命中 forbidden intent 的案例比例 |
-| `ingress_accuracy` | Edge 本地/转云决策正确比例 |
+| `ingress_accuracy` | Edge 本地/转云决策正确比例。allow 与 deny 两条断言**取 AND**（后写覆盖先写会让这个数整体偏高） |
 | `dependency_pass_rate` | 必要依赖、顺序和结果传递全部满足比例 |
 | `clarify_balanced_accuracy` | 模糊样本召回与明确样本不过度澄清的平衡结果 |
 | `relation_pass_rate` | 最小对照关系满足比例 |
 | `context_override_rate` | 当前轮正确覆盖陈旧上下文比例 |
-| `capability_hallucination_rate` | 规划不存在或不可用能力的案例比例 |
-| `instability_rate` | 相同条件重复运行发生语义翻转的案例比例 |
+| `planner_capability_hallucination_rate` | 规划不存在或不可用能力的案例比例。取自 capability 校验**之前**的候选——用校验后的计划算，validator 越严这个数越好看，「模型天天编能力」会被彻底掩盖（§22.1-③，原名 `capability_hallucination_rate`） |
+| `post_validation_escape_rate` | 校验**之后**仍留在计划里的不可用能力比例。这是逃逸率，不是幻觉率，两者不可互相替代 |
+| `instability_rate` | 相同条件重复运行发生语义翻转的案例比例。**分母只含真的重复过（≥2 次）的证据单元**，并同时给 `repeat_coverage`；未复跑的既不算稳定也不算不稳定 |
 
 所有指标必须按以下维度拆分：
 
 - seen regression / unseen transfer；
-- domain / intent；
+- **expected domain / expected intent**（gold 侧）与 **actual domain / actual intent**（实际侧）**分开**；
 - boundary；
 - attack；
 - risk；
@@ -550,7 +551,17 @@ cloud-direct
 - provider/model；
 - provenance/status。
 
-同一 case 在多个 execution layer 上运行时，每个 `(case_id, layer)` 是独立证据单元，报告键固定为 `case_id@layer`；`--layer all` 的总数是证据单元 micro，不得冒充去重后的案例准确率。门禁要求每个 stable case 在其声明的全部层分别通过，不能让某层的绿覆盖另一层的红。
+**质量尾部（最弱 cell）只按 gold 维度归因。** 只按实际落域分桶时，「期望 charging、实际跑去
+nearby」这条失败会记到 nearby 头上，charging 那一格反而满分——最弱 domain 会系统性隐藏
+「完全漏接的目标域」（§22.1-③）。`actual_*` 分桶保留，但只用于诊断「跑去哪了」。
+
+每个 cell 除总体通过率外，还要给 exact / recall / overroute / forbidden / ingress / instability
+**各自的分子分母**——分项的分母各不相同，只给一个总体通过率回答不了「这一格差在哪」。
+
+同一 case 在多个 execution layer 上运行时，每个证据单元独立记账；`--layer all` 的总数是证据单元
+micro，不得冒充去重后的案例准确率。门禁要求每个 stable case 在其声明的全部层分别通过，不能让
+某层的绿覆盖另一层的红。**报告键**：单轮 `case_id@layer`、多轮 `case_id#<轮号>@layer`
+（轮号从 1 起）、L3 `case_id@l3`（journey 覆盖整条场景，不按轮拆）。
 
 首页必须展示宏平均、最弱 domain、最弱 boundary 和高风险错误数。微平均总数只能作为附属趋势。
 
@@ -586,8 +597,16 @@ discovery 集新增困难样本后可以降低总体数字，但必须给出固�
 
 - 报告不自动覆盖 baseline；
 - baseline 只来自 provider 锁定、代码 SHA 已记录且工作树干净、资产指纹完整、选集明确的运行；
+- **选集必须等于完整 stable 声明集**，且**不接受任何选择过滤器或重复次数覆盖**
+  （`--case/--tag/--cohort/--risk/--repeat`）。「当前选集跑齐了」证明不了「选集是完整的」——
+  没有 `--force` 不等于没有等价绕过：一条通过的 stable case 加一条 L3 链接就够覆盖正式基线，
+  `--repeat 1` 还能把高风险三次策略降成一次（§22 P0-1）；
+- 覆盖缺口、被删掉的证据单元、重复次数不达标**均进资格闸**，且**全部资格检查先于写入**；
+- 每一项资格检查**必须显式为真才放行**——缺字段等于「这一项没被证明过」，默认放行会让忘记
+  回填元数据的调用方悄悄拿到写 baseline 的资格；
 - 当前 gate 的全部声明层必须通过，不能把 stable failure 或 unstable 写成新的正常基线；
-- L3 选集必须非空且结构化结果完整；已有 baseline 存在时不得带着逐例回退覆盖；
+- L3 选集必须非空、结构化结果完整、**且来自本次调用**（唯一 run 目录 + invocation id + 开始
+  时间核对；runner 非零退出一律基础设施失败）。已有 baseline 存在时不得带着逐例回退覆盖；
 - 更新必须列出新增、晋级、降级、retired 和 gold 修正；
 - 失败时不允许使用 `--update-baseline` 一类绕过参数；
 - reference provider 决定当前门禁，challenger provider 只用于分歧和跨模型证据；
@@ -978,3 +997,51 @@ L1 首轮的主要读数（逐条证据在 gitignore 的 `_ci-run-intent-adversa
 七条里有四条（1、3、4、7）是同一形态：**失败被记成了别的东西**。这类比误判更危险，
 因为它们让报告看起来正常。判据记一条：**每加一个「拿不到结果」的分支，都要先问
 它会被记成什么**。
+
+---
+
+## 22. 独立评审后的尺子硬化（2026-08-03）
+
+独立评审 `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md` 判定
+**首期不通过 gate-ready 验收**（3 条 P0 / 7 条 P1 / 2 条 P2），并裁定 §21.6 的全部 headline
+数字只能作 2026-08-02 原始读数。本节记这批修复对**规格本身**的影响；逐条修法、反向构造
+测试与残留清单见该报告 §7（唯一入口，不在此重复）。
+
+### 22.1 规格被改写的四处
+
+1. **§7.3 多轮不再是「声明了但不跑」。** 三层运行器逐轮执行、同会话顺序推进；证据单元
+   多轮拆成 `case_id#turn@layer`，单轮保持 `case_id@layer`（§12 的键名规则据此补充）。
+2. **§7.1 契约新增 `expected.engine`**（`required_agent_calls` / `forbidden_agent_calls` /
+   `pending_confirm_after` / `max_agent_calls_per_intent`），**仅 L2 可声明**。理由：
+   `safety.no_side_effect_before_confirm` 只看动作有没有落地，替身恰好不产生动作时它恒真；
+   **确认闸真正的证据是那个 Agent 有没有被够着**。§10.3 的 L2 边界据此从「零副作用」
+   扩到「零副作用 + 未被调用 + 挂起落库」。
+3. **§12 指标口径三处订正**：`exact_plan_set_rate` 只由 plan 断言决定（没有 plan gold 的
+   证据单元不进分母）；`capability_hallucination_rate` 拆成
+   `planner_capability_hallucination_rate`（校验前候选）与 `post_validation_escape_rate`
+   （校验后计划）；`instability_rate` 的分母只含真的重复过的单元，并同时给 `repeat_coverage`。
+   指标拆分维度增加 `expected_*` 与 `actual_*` 两族，**质量尾部只按 gold 维度归因**。
+4. **§9.3 防泄漏从 family 升级到输入指纹。** `family_id` 只防得住「作者记得它们同源」——
+   换一个 family id，同一句原话就能同时进 remediation 与 holdout。新增两条按输入事实判的
+   硬闸（同句跨 cohort、unseen 原话字面出现在被注入的知识里），并把 §9.4 的规模单位从
+   **条数改为唯一输入**。
+
+### 22.2 §21.8 未达项的状态变化
+
+| 原未达项 | 现状 |
+|---|---|
+| L3 证据未取得、正式 baseline 未生成 | **仍未取得**；但资格闸本身已修好（P0-1/P1-6），不再依赖「碰巧写不进去」当保护 |
+| stable 规模 113 < 120 | **实为 104**（按唯一输入算）。原来的 113 掩盖了 9 个重复输入 |
+| L2 只有 7 条 | 条数不变，但 5 条只有 safety gold 的已补齐 intent/decision/agent call/pending state，2 条改成真多轮 |
+| 9 条降回 candidate | 不变 |
+| 定向消融只在门禁轨开 | 不变；新增的 `cloud-direct`/`planner-only` 两条 arm 已接通但未在真实失败上跑过 |
+
+### 22.3 §21.10 的判据第二次适用
+
+首轮自查的 7 条里有 4 条是「失败被记成了别的东西」。这次评审的 12 条里，**至少 5 条是
+同一形态的另一面：「没有证据被记成了某个具体结论」**——没跑消融记成 `PLANNER_DIVERGENCE`、
+没重复过记进不稳定率分母、旧 L3 报告记成本次证据、缺 meta 字段记成资格通过、空选集记成
+全绿。判据因此扩一句：
+
+> 每加一个「拿不到结果」的分支，先问它会被记成什么；
+> **每加一个默认值，先问「没有证据」和「证据为否」会不会被它压成同一个数**。

@@ -198,18 +198,35 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 ## 5.4 意图与落域对抗套件（`test/eval_intent_adversarial.py`）
 
 回答的问题和上面两类都不同：**意图是否完整、落域是否正确、决策链在哪里首次偏离**。
+
+> 📘 **接手人先读运行手册：[`docs/guides/intent-adversarial-testing.md`](../docs/guides/intent-adversarial-testing.md)**
+> ——怎么跑、红了怎么查、修 badcase 的产物是什么、加用例的自查清单、晋级与 baseline 的完整前置。
+> 本节只留命令与口径要点。
+
 规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`，语料契约
 `test/eval_corpus/intent_adversarial/README.md`，
-**发现清单 + 修复批次记录** `docs/design/2026-08-02-intent-routing-adversarial-findings.md`。
+**发现清单 + 修复批次记录** `docs/design/2026-08-02-intent-routing-adversarial-findings.md`，
+**尺子硬化记录** `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md` §7。
 
 > ⚠ **先读这条再看任何数字**（2026-08-03 独立评审
-> `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`，3 P0 / 7 P1 / 2 P2）：
-> 本套件**目前只能当 discovery 工具，不能当 gate / baseline 尺子**。
-> `exact_plan_set_rate`（实为整轮通过率）、`seen/unseen`（有原句跨 cohort 泄漏）、
-> `capability_hallucination_rate`（实为 post-validation 逃逸率）、`relation_pass_rate`、
-> `instability_rate`（分母含只跑过一次的证据单元）**口径均不成立**。
-> **可用的是**：原始 evidence unit 通过数，以及**逐条按原始断言复现**。
-> 修复顺序见评审 §5；在第 1 步（封假绿）完成前不要生成正式 baseline。
+> `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`，3 P0 / 7 P1 / 2 P2；
+> **12 条已于同日全部修复**，逐条对照见该报告 §7）：
+> **口径已修，但新口径下的 live 读数还不存在。** 修好尺子不等于量过——
+> `exact_plan_set_rate`、seen/unseen、`planner_capability_hallucination_rate`、
+> `instability_rate` 都要等一次固定 provider 的 L1/L2/L3 全量才有数。
+> 该报告 §1 与本文件历史版本里的旧数字**依然不可引用**。
+> 现在可用的是：L0 全量（零网络、确定性，70/70）、172 条专项单测、以及逐条按原始断言复现。
+> **stable 规模按唯一输入算只有 104**（< `min_cases=120`），`--strict` 正确退出非零——
+> 原来报的 113 条里有 9 个是重复输入。
+
+口径三条要点（改口径就要回头看所有依赖它的数）：
+
+- **证据单元**：单轮 `case_id@layer`、多轮 `case_id#<轮号>@layer`、L3 `case_id@l3`。
+  `turns` 里每一轮都会被执行，同一条 case 的多轮跑在同一个会话上。
+- **规模单位是唯一输入不是条数**（`utterance+context` 指纹）；报告同时印 `cases=` 与
+  `distinct_inputs=`。
+- **`null` 不是 0**：没有 plan gold 的层不进 `exact_plan_set` 分母，没重复过的单元不进
+  `instability_rate` 分母，没有 raw 通道的层不进幻觉率分母。分母为 0 时值是 `null`。
 
 ```bash
 # ① 零网络 L0：契约 + 覆盖矩阵 + Edge ingress + Hint + 词法检索 + catalog 预算
@@ -234,17 +251,24 @@ python test/eval_intent_adversarial.py --suite discovery --layer l0 --list
 
 1. **candidate 永远不进 live 层**。`--live` 只选 `suites.yaml` 的 `live_statuses`
    （reviewed/stable）——未经人裁的 gold 不配消耗真实模型，更不配进指标。
-2. **seen / unseen 分开报**。同源原句与机械变体共享 `family_id`；凡进过 Skill /
-   Exemplar / Hint 修复资产的 family 一律 `seen_regression`，不得计入泛化。
+2. **seen / unseen 分开报，且按输入事实判**。同源原句与机械变体共享 `family_id`，但
+   `family_id` 只防得住「作者记得它们同源」——换一个 family id，同一句原话就能同时进
+   remediation 与 holdout（实测有 13 条这么漏过）。另有两条硬闸：同句不得跨 cohort、
+   `unseen_transfer` 的原话不得字面出现在 `skills/` 下被注入的知识里。
+   第二条**只证伪不证实**（Route Hint 是正则，对不上字面），所以 seen 一侧不设对称断言。
 3. **普通失败复跑到 3 次，高风险固定 3 次**。2/3 同错才是 `stable_fail`；三次分裂是
    `unstable`——既不算通过也不算缺陷。**L0 例外**：无模型参与，一次红就是结论。
 4. **`LLM_GATEWAY_ADDR` 必须指向可达网关**。`orchestrator/cloud/embedding.py` 默认连
    `llm-gateway:50052`（容器内主机名），从宿主跑会被 `ALL_PROXY` 兜走并超时，范例检索
    静默降级成纯词法。现在这种情况会以基础设施错误退出码 2 结束，不会出一份「看起来
    正常」的报告。
-5. **真实副作用永不执行**。L2 的 Agent/VAL 全是 fake/spy，写操作只在测试显式注入
-   `confirmed_response` 时才产生并被记进 `side_effects`——「确认前零副作用」这条断言
-   因此有真的对照物，不是恒真。
+5. **真实副作用永不执行，但替身必须留得下证据**。L2 的 Agent/VAL 全是 fake/spy；
+   **确认闸内的能力一旦真被调到就自己造副作用**（不再依赖测试显式注入
+   `confirmed_response`——真实 L2 从不注入，那条断言曾因此在最危险的一类动作上恒为真）。
+   Edge 侧另看「需要二次确认的对象有没有被端侧执行」（`VAL._simulate` 探针 +
+   生产自己的 `_need_confirm()` 判定）。
+   仅此还不够：**副作用面只看动作有没有落地**，替身恰好不产生动作时它仍然恒真。
+   所以危险用例必须同时写 `expected.engine`——那个 Agent 有没有被够着、挂起有没有落库。
 6. **`domain_hit_rate` 与 `exact_plan_set_rate` 不可直比**。前者是 RoutingBench 的历史
    趋势口径（任一期望域命中即通过），后者要求全部必要组 + 无禁选 + 无未授权额外项 +
    依赖与关键槽位齐全。

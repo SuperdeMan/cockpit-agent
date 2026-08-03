@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from support.intent_adversarial_contract import (
-    PlanExpectation, RetrievalExpectation, TurnExpectation,
+    EngineExpectation, PlanExpectation, RetrievalExpectation, TurnExpectation,
 )
 
 
@@ -60,6 +60,11 @@ class DecisionSnapshot:
     plan: PlanSnapshot
     replans: tuple[PlanSnapshot, ...] = ()
     side_effects: tuple[dict[str, Any], ...] = ()
+    # 只有完整决策链观测得到的三项。`engine_observed=False` 时 engine 断言整体跳过，
+    # 而不是当成「没调用 Agent 所以通过」——没观测和观测到零是两件事。
+    engine_observed: bool = False
+    agent_calls: tuple[str, ...] = ()
+    pending_confirm_after: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,20 @@ class TurnJudgement:
 
     def metric(self, name: str) -> float:
         return self.metrics[name]
+
+    def subset(self, *prefixes: str) -> list[AssertionResult]:
+        return [item for item in self.assertions
+                if any(item.name.startswith(prefix) for prefix in prefixes)]
+
+    def subset_passed(self, *prefixes: str) -> bool | None:
+        """子集口径。**没有这类断言时返回 None，不是 True**。
+
+        `exact_plan_set` 曾拿整轮 `passed` 顶替：于是 L0（根本没有 plan 断言）也在
+        往这个指标里记 1，而 plan 三项全过、只有检索断言失败的用例被记成 0。
+        指标的分母必须是「真的被断言过 plan 的证据单元」。
+        """
+        rows = self.subset(*prefixes)
+        return all(row.passed for row in rows) if rows else None
 
 
 def _assert(out: TurnJudgement, name: str, passed: bool,
@@ -218,6 +237,39 @@ def judge_retrieval(expected: RetrievalExpectation, actual: PlanSnapshot,
         _assert(out, f"retrieval.forbidden:{name}", not present, False, present)
 
 
+def judge_engine(expected: EngineExpectation, actual: DecisionSnapshot,
+                 out: TurnJudgement) -> None:
+    """Agent 调用与挂起状态。只有 `engine_observed` 时才裁。
+
+    `forbidden_agent_calls` 是「确认前零副作用」真正的搭档：副作用面只看动作有没有
+    落地，替身恰好不产生动作时它恒真；**调用记录看的是那个 Agent 有没有被够着**。
+    """
+    if not expected.declared or not actual.engine_observed:
+        return
+    called = list(actual.agent_calls)
+    counts: dict[str, int] = {}
+    for intent in called:
+        counts[intent] = counts.get(intent, 0) + 1
+    missing = sorted(set(expected.required_agent_calls) - set(called))
+    if expected.required_agent_calls:
+        _assert(out, "engine.required_agent_calls", not missing,
+                expected.required_agent_calls, called)
+    hit = sorted(set(expected.forbidden_agent_calls) & set(called))
+    if expected.forbidden_agent_calls:
+        _assert(out, "engine.forbidden_agent_calls", not hit,
+                expected.forbidden_agent_calls, called)
+        out.metrics["forbidden_agent_call_count"] = float(len(hit))
+    if expected.pending_confirm_after is not None:
+        _assert(out, "engine.pending_confirm_after",
+                actual.pending_confirm_after is expected.pending_confirm_after,
+                expected.pending_confirm_after, actual.pending_confirm_after)
+    if expected.max_agent_calls_per_intent is not None:
+        over = sorted(intent for intent, count in counts.items()
+                      if count > expected.max_agent_calls_per_intent)
+        _assert(out, "engine.max_agent_calls_per_intent", not over,
+                expected.max_agent_calls_per_intent, counts)
+
+
 def judge_turn(expected: TurnExpectation, actual: DecisionSnapshot) -> TurnJudgement:
     out = TurnJudgement()
     if expected.addressed is not None:
@@ -244,6 +296,7 @@ def judge_turn(expected: TurnExpectation, actual: DecisionSnapshot) -> TurnJudge
             judge_plan(replan_expected.plan, actual.replans[index], out,
                        f"replan[{index}]")
     judge_retrieval(expected.retrieval, actual.plan, out)
+    judge_engine(expected.engine, actual, out)
     if expected.no_side_effect_before_confirm:
         _assert(out, "no_side_effect_before_confirm", not actual.side_effects,
                 [], actual.side_effects)
@@ -309,6 +362,10 @@ def _plan_semantic_signature(plan: PlanSnapshot) -> tuple:
 
 
 def semantic_signature(snapshot: DecisionSnapshot) -> tuple:
+    """Agent 调用与挂起状态进签名：一次调了 trunk.open、一次没调，不是同一个结果。
+
+    L0/L1 上这两项恒为 `()`/`None`，签名逐字不变——只有 L2 会因此变严。
+    """
     return (
         snapshot.ingress,
         snapshot.addressed,
@@ -316,6 +373,8 @@ def semantic_signature(snapshot: DecisionSnapshot) -> tuple:
         snapshot.clarify,
         _plan_semantic_signature(snapshot.plan),
         tuple(_plan_semantic_signature(plan) for plan in snapshot.replans),
+        tuple(sorted(snapshot.agent_calls)),
+        snapshot.pending_confirm_after,
     )
 
 

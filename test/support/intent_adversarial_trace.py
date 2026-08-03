@@ -9,6 +9,7 @@ schema 与 `Plan` 结构一个字段都不动——被测对象被测试改形�
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -178,6 +179,40 @@ def attach_validation_trace(builder, sink: TraceSink) -> None:
     builder._parse_and_validate_data = traced
 
 
+@contextlib.contextmanager
+def probe_builder(builder, sink: TraceSink):
+    """把校验前候选与 Hint 前后计划接到**主入口**上，跑完逐字还原 builder。
+
+    这两份证据原本只活在单测里：主 CLI 从不调用 `attach_validation_trace()`，
+    `TracingRouteHints` 也只在 L0 的 hint 门面里用过。于是「每个 live 失败都有首偏离
+    点」实际退化成「凡是失败一律记 PLANNER_DIVERGENCE」——连 L0（根本没有 Planner）
+    的 5 条确定性失败都被贴上了这个标签。
+
+    还原用 `__dict__` 级别的存取而不是重新赋值：`attach_validation_trace` 写的是实例
+    属性，直接写回绑定方法会在实例上留下一个永久遮蔽类方法的副本，下一个案例再包一层
+    就是双重 trace。
+    """
+    saved_parse = builder.__dict__.get("_parse_and_validate_data")
+    saved_hints = getattr(builder, "_route_hints", None)
+    # 没有这个钩子的 builder（脚本化替身）就是**没有 raw 通道**，不是「raw 一切正常」：
+    # 上层据此把 `raw_observed=False`，该证据单元不进幻觉率分母。
+    traceable = hasattr(builder, "_parse_and_validate_data")
+    if traceable:
+        attach_validation_trace(builder, sink)
+    if saved_hints is not None:
+        builder._route_hints = TracingRouteHints(saved_hints, sink)
+    try:
+        yield sink
+    finally:
+        if traceable:
+            if saved_parse is None:
+                builder.__dict__.pop("_parse_and_validate_data", None)
+            else:
+                builder.__dict__["_parse_and_validate_data"] = saved_parse
+        if saved_hints is not None:
+            builder._route_hints = saved_hints
+
+
 def asset_digest(root: Path, paths: list[Path]) -> str:
     """相对路径 + 内容的稳定摘要。顺序无关、内容敏感——换个 glob 顺序不该换指纹。"""
     digest = hashlib.sha256()
@@ -192,36 +227,86 @@ def asset_digest(root: Path, paths: list[Path]) -> str:
 
 @dataclass(frozen=True)
 class DivergenceEvidence:
+    """`None` = **没观测**，与 `False`（观测了、没翻正）是两回事。
+
+    原来这七个字段都是 `bool` 且默认 `False`，于是「一个对照都没跑」和「所有对照都
+    跑了都没翻正」得到同一个结论 `PLANNER_DIVERGENCE`。首偏离点因此变成了失败的同义
+    词——它本该是**排除法的产物**。
+    """
     full_entry_pass: bool = False
-    engine_direct_pass: bool = False
-    planner_post_hint_pass: bool = False
-    empty_history_pass: bool = False
-    retrieval_ablation_pass: bool = False
-    raw_planner_pass: bool = False
-    pre_hint_pass: bool = False
+    engine_direct_pass: bool | None = None
+    planner_post_hint_pass: bool | None = None
+    empty_history_pass: bool | None = None
+    retrieval_ablation_pass: bool | None = None
+    pre_hint_pass: bool | None = None
+    raw_planner_pass: bool | None = None
+
+
+# 执行顺序即语义：Edge 先于 Engine 状态恢复，恢复先于上下文，上下文先于检索，
+# 检索先于 Hint，Hint 先于校验，都排除掉才轮到 Planner 自己。
+_DIVERGENCE_ORDER = (
+    ("engine_direct_pass", "EDGE_DIVERGENCE"),
+    ("planner_post_hint_pass", "STATE_RESTORE_DIVERGENCE"),
+    ("empty_history_pass", "CONTEXT_DIVERGENCE"),
+    ("retrieval_ablation_pass", "RETRIEVAL_SUSPECT"),
+    ("pre_hint_pass", "HINT_DIVERGENCE"),
+    ("raw_planner_pass", "VALIDATION_DIVERGENCE"),
+)
 
 
 def first_divergence(evidence: DivergenceEvidence) -> str:
-    """按执行顺序找**最早**的不一致边界。
+    """按执行顺序找**最早**的不一致边界；证据不足返回 `UNCLASSIFIED`。
 
-    顺序即语义：Edge 先于 Engine 状态恢复，恢复先于上下文，上下文先于检索，检索先于
-    Hint，Hint 先于校验，都对上了才轮到 Planner 自己。
+    只要还有一个更早的边界没被观测，就不能声称后面那个是「第一个」——那是在拿沉默
+    当证据。`PLANNER_DIVERGENCE` 只在**前面每一层都实测过且都没翻正**时才成立。
     """
     if evidence.full_entry_pass:
         return "NONE"
-    if evidence.engine_direct_pass:
-        return "EDGE_DIVERGENCE"
-    if evidence.planner_post_hint_pass:
-        return "STATE_RESTORE_DIVERGENCE"
-    if evidence.empty_history_pass:
-        return "CONTEXT_DIVERGENCE"
-    if evidence.retrieval_ablation_pass:
-        return "RETRIEVAL_SUSPECT"
-    if evidence.pre_hint_pass:
-        return "HINT_DIVERGENCE"
-    if evidence.raw_planner_pass:
-        return "VALIDATION_DIVERGENCE"
+    for field_name, label in _DIVERGENCE_ORDER:
+        value = getattr(evidence, field_name)
+        if value is None:
+            return "UNCLASSIFIED"
+        if value:
+            return label
     return "PLANNER_DIVERGENCE"
+
+
+def divergence_candidates(evidence: DivergenceEvidence) -> tuple[str, ...]:
+    """全部有正向证据的边界（不排序、不声称谁在前）。
+
+    首偏离点要求「更早的都被排除」，代价是廉价证据（Hint 前后、校验前后是**免费**
+    的，跑一次就有）在没跑消融时全被 `UNCLASSIFIED` 吞掉。候选名单把这份免费证据
+    留下来，同时不冒充因果：`divergence` 才是结论，这里只是线索。
+    """
+    if evidence.full_entry_pass:
+        return ()
+    return tuple(label for field_name, label in _DIVERGENCE_ORDER
+                 if getattr(evidence, field_name) is True)
+
+
+def evidence_dict(evidence: DivergenceEvidence) -> dict[str, Any]:
+    """观测台账：`null` = 没观测，`false` = 观测了没翻正。诊断时这两者不能混。"""
+    return {field_name: getattr(evidence, field_name)
+            for field_name, _ in _DIVERGENCE_ORDER}
+
+
+# L0 没有 Planner、没有 Hint、没有校验——那一层的失败断言**自己就是**边界。
+# 拿 L1/L2 的排除法去套 L0，只会得到一个恒为 PLANNER_DIVERGENCE 的标签。
+_L0_ASSERTION_BOUNDARY = (
+    ("no_side_effect_before_confirm", "EDGE_SIDE_EFFECT"),
+    ("ingress", "EDGE_DIVERGENCE"),
+    ("retrieval.", "RETRIEVAL_DIVERGENCE"),
+)
+
+
+def deterministic_divergence(failed_assertions: list[str]) -> str:
+    """L0 的首偏离点：按执行顺序取第一个失败断言所属的边界。"""
+    if not failed_assertions:
+        return "NONE"
+    for prefix, label in _L0_ASSERTION_BOUNDARY:
+        if any(name.startswith(prefix) for name in failed_assertions):
+            return label
+    return "UNCLASSIFIED"
 
 
 # ── 指纹输入：只纳入真实参与落域决策的资产 ────────────────────────────────

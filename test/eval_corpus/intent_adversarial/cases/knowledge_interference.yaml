@@ -24,7 +24,7 @@ cases:
   - id: ki.weather-outing.miss
     title: 裸问天气不该被出游 guide 干扰
     family_id: ki.weather-plain
-    cohort: unseen_transfer
+    cohort: seen_regression
     risk: medium
     status: reviewed
     tags: {attacks: [A7], mechanisms: [skill_false_recall], domains: [info], layers: [l0, l1], gate_candidate: true}

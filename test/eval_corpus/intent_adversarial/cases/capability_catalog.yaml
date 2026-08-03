@@ -21,7 +21,7 @@ cases:
   - id: cc.missing.nearby-search
     title: 周边发现能力缺席
     family_id: cc.missing-nearby
-    cohort: unseen_transfer
+    cohort: seen_regression
     risk: high
     status: stable
     tags: {attacks: [A8], mechanisms: [capability_missing], domains: [nearby], layers: [l1], gate_candidate: true}
@@ -177,7 +177,7 @@ cases:
   - id: cc.missing.weather
     title: 天气能力缺席
     family_id: cc.missing-weather
-    cohort: unseen_transfer
+    cohort: seen_regression
     risk: medium
     status: reviewed
     tags: {attacks: [A8], mechanisms: [capability_missing], domains: [info], layers: [l1]}

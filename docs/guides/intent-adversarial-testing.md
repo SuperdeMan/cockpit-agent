@@ -1,0 +1,266 @@
+# 意图落域对抗测试运行手册 —— 接手人从这里开始
+
+- **类型**：常青指南（evergreen guide）。这是跑这套对抗测试、读它的数、往里加用例的唯一标准流程。
+- **适用对象**：任何要用这套尺子量落域质量、或要修一条落域 badcase 的人或 Agent。
+- **关联代码**：`test/eval_intent_adversarial.py`（入口）、`test/support/intent_adversarial_*.py`（契约/裁判/trace/运行时/报告）、`test/eval_corpus/intent_adversarial/`（语料）
+- **关联文档**：规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`（唯一真相源）、语料契约 `test/eval_corpus/intent_adversarial/README.md`、发现清单 `docs/design/2026-08-02-intent-routing-adversarial-findings.md`、独立评审与尺子硬化记录 `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`（**§7 是尺子当前形态的唯一入口**）
+
+> **黄金法则**：这套东西回答的是「**意图是否完整、落域是否正确、决策链在哪里首次偏离**」。
+> 它不回答 Agent 业务实现对不对、provider 返回的内容准不准、回复文风好不好。
+> 拿它去证明后面那三件事，得到的一定是错结论。
+
+---
+
+## 0. 先读这一节：现在能引用什么
+
+**尺子已经硬化过一轮**（2026-08-03，独立评审 3 P0 / 7 P1 / 2 P2 逐条修复 + 逐条反向构造测试，
+专项单测 178）。但**修好口径不等于量过**：
+
+| | 状态 |
+|---|---|
+| ✅ **能引用** | L0 全量读数（零网络、确定性、可复现）；专项单测；**逐条按原始断言复现**的单案例结论 |
+| ❌ **不能引用** | `exact_plan_set_rate` / seen-unseen / `planner_capability_hallucination_rate` / `instability_rate` —— **新口径下的读数还不存在**，要等一次固定 provider 的 L1/L2/L3 全量。历史文档里这几个数字全是旧口径，作废 |
+| ❌ **不存在** | 正式 baseline（`docs/reviews/eval/baseline_intent_adversarial.json`）。L3 证据未取得，资格闸正当拒绝 |
+
+**读任何一个比率之前，先看它的分子分母。** 分母为 0 时值是 `null` 不是 0 ——
+「一侧样本都没有」和「一侧全对」在这份报告里长得不一样，这是刻意的。
+
+---
+
+## 1. 三条不可越的线
+
+1. **修尺子和修被测对象不同批。** 边建尺子边改被测对象，两边都说不清是谁变了。
+   一批要么只动 `test/`，要么只动生产 —— 提交信息里要能一眼看出是哪种。
+2. **不许改生产路由来制造绿色。** 红灯是产出，不是障碍。
+   如果一条用例逼你去改 `route_hints` / `planning.py` 让它变绿，先问「这条 gold 对吗」。
+3. **不许绕过资格闸。** CLI 里没有 `--force` / `--update-baseline` / `--accept-failures`，
+   也**不要去加**。`--write-baseline` 拒绝一切选择过滤器与 `--repeat` —— 那些正是等价的绕过。
+
+---
+
+## 2. 环境前置（宿主跑必看）
+
+```bash
+# live 层（L1/L2/L3）必须给，否则 embedding 连容器内主机名、被 ALL_PROXY 兜走超时，
+# 范例检索静默降级成纯词法 —— 现在会以退出码 2 拦下，但别浪费一次跑批
+export LLM_GATEWAY_ADDR=localhost:50052
+make up                      # live 层需要全栈
+```
+
+- `--live` 必须**同时**显式给 `--provider` 与 `--model`，不接受跟随网关默认。
+- L0 零网络，随时可跑，不需要 `make up`。
+
+---
+
+## 3. 日常怎么跑
+
+### 3.1 选集与缺口速览（不跑模型，最先跑这个）
+
+```bash
+python test/eval_intent_adversarial.py --suite discovery --layer l0 --list
+python test/eval_intent_adversarial.py --suite gate --layer l0 --list
+```
+
+输出里 `distinct_inputs=` 才是**规模**，`selected=` 只是条数。
+两个数差得多说明语料里有重复输入（会列出重复组），**同输入只计一个规模单位**。
+
+### 3.2 L0：零网络硬门禁（改任何语料/知识资产后必跑）
+
+```bash
+python test/eval_intent_adversarial.py --suite discovery --layer l0
+python test/eval_intent_adversarial.py --suite gate --layer l0 --strict
+```
+
+L0 覆盖：契约 + 覆盖矩阵 + cohort 隔离 + boundary 双向 + Edge ingress + 词法检索 +
+确认前副作用。**L0 无模型参与，一次红就是结论**（不存在 `unstable`）。
+
+当前预期：discovery **70/70 exit 0**；gate `--strict` **退出非零**
+（唯一输入 104 < `min_cases=120`，这是真实未达项，不是 bug）。
+
+### 3.3 L1 / L2：真实模型
+
+```bash
+python test/eval_intent_adversarial.py --suite discovery --layer l1 --live \
+    --provider <p> --model <m> --temperature 0.3 --timeout 45 --ablations on-failure
+python test/eval_intent_adversarial.py --suite discovery --layer l2 --live \
+    --provider <p> --model <m>
+```
+
+- L1 = 真实 PlanBuilder（落域判断本身）。
+- L2 = 完整 Edge→Engine 链（确认闸、挂起状态、Agent 调用、副作用）。
+  下游 Agent/VAL 全是 fake/spy，**永不触发真实车控/支付/消息/删除**。
+- `--ablations on-failure` 只对失败案例跑消融，成本可控；默认 `off`。
+
+### 3.4 单案例复现
+
+每条结果的 `expected.repro` 里就印着可直接粘贴的命令（已带 `--live --provider --model`，
+relation variant 会自动带上 base）。`--diagnose` 打印单案例诊断包：
+输入/上下文 → 实际决策 → Engine 观测 → 检索名单 → 逐条断言 → 三次重复 → 首偏离点与证据台账 → 消融 → 复现命令。
+
+```bash
+python test/eval_intent_adversarial.py --case <id> --suite discovery --layer l1 \
+    --live --provider <p> --model <m> --repeat 3 --diagnose
+```
+
+---
+
+## 4. 红了之后怎么办（诊断顺序，别跳步）
+
+### 第 0 步：先分「拿不到结果」和「结果不对」
+
+退出码就是这条分界：**2 = 契约/参数/基础设施错误，1 = 语义失败**。
+
+看到退出码 2 先读 `[infra]` 行，**不要**去看指标。已机制化的基础设施错误：
+网关不可达（`planner_unreached`，判据是 `raw_llm` 为空）、范例预热 0 条、
+L3 runner 非零退出、relation 配不成对、选集为空。
+
+> 这套件自查累计抓到的缺陷里，超过一半是同一形态：**失败被记成了别的东西**。
+> 每加一个「拿不到结果」的分支，先问它会被记成什么。
+
+### 第 1 步：看重复分类，不看单次结果
+
+- `stable_fail`（2/3 同错）→ 真缺陷，进修复清单。
+- `unstable`（三次分裂）→ **既不算通过也不算缺陷**，别登记，记在备查里。
+- `critical_fail` → 高风险，任何一次危险误路由/绕确认即阻断。
+- 报告存的是**失败那一次**的证据，不是首次 —— 「红灯但断言全绿」不会再出现。
+
+### 第 2 步：看首偏离点，别把它当根因
+
+`divergence` 是**排除法的产物**：只有更早的边界都实测过且都没翻正，才轮得到后面的。
+
+- `UNCLASSIFIED` = 证据不足（多半是没跑消融），**不是**「planner 的锅」。
+- `divergence_candidates` 是免费证据（Hint 前后、校验前后跑一次就有）给的线索，
+  它**不声称谁在前**。
+- `divergence_evidence` 里 `null` = 没观测、`false` = 观测了没翻正，**这两者不能混**。
+
+边界顺序：Edge → 状态恢复 → 上下文 → 检索 → Hint → 校验 → Planner。
+
+### 第 3 步：消融归因，suspect 与 causal 分开
+
+只有「**稳定错 → 稳定对**」且 provider / 资产指纹逐字相同，才配叫 `supported`（因果）。
+一次翻转是噪声也解释得通，记 `suspect`。arm 按 layer 取：
+L1 有 `no-hints/no-skills/no-exemplars/empty-history`；L2 另加 `cloud-direct`（绕 Edge）与
+`planner-only`（不恢复会话状态）。
+
+### 第 4 步：定性之前先怀疑语料
+
+**语料自相矛盾要先于产品缺陷排查。** 写新用例前先搜同族已有的裁定；
+一条 gold 与 guide golden / `boundaries.yaml` / 另一条 stable 用例打架的情况真实发生过多次。
+
+---
+
+## 5. 修一条落域 badcase，产物是什么
+
+**默认产物是范例与知识，不是正则。** 写错一条范例只是噪声，写错一条 hint 是事故。
+
+| 症状 | 落点 |
+|---|---|
+| 单句落错域 | `skills/exemplars/<domain>.yaml` 加范例（**说法必须避开评测语料原句** —— 用原句等于把 unseen 洗成 seen） |
+| 组合意图缺步 / 判据缺失 | `skills/guides/<name>.yaml`（**先拿 goal 对照 steps**：goal 说推荐而 steps 无推荐步＝可检测的缺口） |
+| 两个域反复互抢 | `skills/exemplars/boundaries.yaml` 加裁定，**并按台账契约补双向各 2 例对照** |
+| 弱模型稳定漏/误路由重域 | 才轮到 manifest `route_hints`（确定性路由），且要走跨 provider 交集判据 |
+| 系统根本没有这个能力 | **补能力，不是补描述**。描述治不了缺能力 |
+
+两个反复踩到的坑：
+
+- **加一条常驻 policy 会静默挤掉一条 guide** —— policy 常驻与 guide 检索共用
+  `SKILL_BUDGET`。能当场发现的唯一原因是注入名单诚实（`!clipped` 不谎称已注入）。
+  加 policy 后必跑 L0。
+- **对照范例离对面太近就是干扰** —— 写对照前先问：它和对面差的是**判据**，还是只差一个词。
+
+---
+
+## 6. 往语料里加用例
+
+完整字段契约见 `test/eval_corpus/intent_adversarial/README.md`。加用例时逐条自查：
+
+1. **cohort 按输入事实定，不按记忆。** 两条硬闸会拦：同一句原话不得跨 cohort；
+   `unseen_transfer` 的原话不得字面出现在 `skills/` 下被注入的知识里。
+   `family_id` 只防得住「作者记得它们同源」—— 换个 family id 就漏了，实测漏过 13 条。
+2. **不要靠复制近义句冲条数。** 规模按唯一输入算，同输入只计一个单位。
+3. **多成员 `any_of` 不替成员算正例。** 逐 intent 覆盖只计单成员必要组。
+4. **relation 变体必须同时有自己的绝对 gold。** 只写「和 base 一样」的用例，两个一起错也是绿的。
+   relation 的 gold 成对成立：base 降回 candidate 时 variant 必须一起降。
+5. **只有第二轮存在时才可证的断言，就必须写成两轮。**
+   `max_agent_calls_per_intent: 1`（不得重复执行）在单轮里恒真；
+   「补槽答案不是确认」在单轮里根本没有补槽那一轮。
+6. **危险动作只写 `safety.no_side_effect_before_confirm` 证明不了确认闸。**
+   副作用面只看动作有没有落地，替身恰好不产生动作时它恒真。
+   必须同时写 `expected.engine`（`forbidden_agent_calls` / `pending_confirm_after` /
+   `max_agent_calls_per_intent`）—— 那个 Agent 有没有被够着、挂起有没有落库。
+   `expected.engine` **只有 L2 观测得到**，写在别的层上契约直接报错。
+7. **LLM 可以生成 candidate，不能填 `reviewed_by: human`，不能自动晋级 stable。**
+
+---
+
+## 7. 晋级 stable 的条件
+
+1. `reviewed_by: human` + `reviewed_at` 已填；
+2. 在**固定 provider**、规定重复策略下**两趟独立进程**都通过 ——
+   实测有 8 条在两趟之间翻面，少跑一趟就会混进采样噪声里的用例；
+3. `provenance` 补齐 `stabilized_provider` / `stabilized_at` / `evidence_report`；
+4. relation base 也必须是 stable（契约会拦）。
+
+---
+
+## 8. 生成正式 baseline 的完整前置
+
+`--write-baseline` 只接受**一次干净的完整运行**。资格闸逐条要求（任一不满足就写不进去，
+诊断另写 `_ci-run-intent-adversarial-rejected-<时间戳>.{json,md}`，正式文件一个字节不碰）：
+
+```bash
+python test/eval_intent_adversarial.py --suite gate --layer all --live \
+    --provider <reference-provider> --model <m> --write-baseline
+```
+
+- `--suite gate --layer all --live`，**不接受任何 `--case/--tag/--cohort/--risk/--repeat`**；
+- provider 锁定且无漂移、code SHA 已记录、**工作树干净**、资产指纹完整；
+- 选集 == 完整 stable 声明集（`declared_set_complete`），重复次数达标（`repeat_policy_complete`）；
+- 覆盖缺口为空、无被删掉的证据单元；
+- 无 `stable_fail` / `critical_fail` / `unstable`；
+- **L3 选集非空、结构化结果完整、且来自本次调用**（唯一 run 目录 + invocation id + 开始时间核对）；
+- 已有 baseline 时不得带逐例回退。
+
+**今天还差两样**：L3 证据（e2e 运行器在本机 `lease_protocol` 失败，那是 e2e 的账）
+与 stable 规模（唯一输入 104 < 120）。
+
+---
+
+## 9. 改口径的纪律
+
+**改了口径，所有依赖它的旧数字当场作废。** 这不是形式主义 ——
+`instability_rate` 换了分母之后，新旧两组数不可直比；
+`exact_plan_set` 从「整轮通过」收窄到「plan-only」之后，历史 65/70 那种数字连含义都变了。
+
+改口径时的动作清单：① 改代码 → ② 改规格 §12 的定义 → ③ 回头 grep 所有引用过这个数的文档，
+逐处标注「旧口径，作废」→ ④ 报告的「明确局限」段落同步。
+
+配套一条判据（这批新加的）：
+> **每加一个默认值，先问「没有证据」和「证据为否」会不会被它压成同一个数。**
+
+---
+
+## 10. 已知残留与下一步优先级
+
+| 优先级 | 待办 | 说明 |
+|---|---|---|
+| P0 | **跑一次固定 provider 的 L1/L2/L3 全量** | 新口径读数不存在，其余结论都等它 |
+| P1 | **stable 规模 104 → 120** | 补齐要新写案例，**不能靠改口径**；先补 unseen 侧变薄的那几族 |
+| P1 | **23 条改标 seen 后 unseen 覆盖变薄** | stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条。补法是新写真正没进过知识的话术，不是把标签改回去 |
+| P2 | **L3 证据** | 属 e2e 运行器的账（`lease_protocol` / `identity_cleanup`），不是对抗套件的 |
+| P2 | **两条消融 arm 未在真实失败上跑过** | `cloud-direct` / `planner-only` 已接通并有 layer 归属守卫，但要 live 才验证得了 |
+| P3 | **`parking` 缺「查停车费」读能力** | 见 findings §6.1，属新增能力，走 CLAUDE.md §3 流程 |
+| P3 | **「有点看不清路了」该开大灯还是开雨刷** | 见 findings §6.2，等产品拍板 |
+
+---
+
+## 11. 自查清单（提交前逐条过）
+
+- [ ] 这一批是**只动尺子**还是**只动生产**？提交信息说清楚了吗？
+- [ ] 改了语料/知识资产 → 跑过 `--layer l0`（discovery 与 gate 各一次）了吗？
+- [ ] 改了口径 → 规格 §12 改了吗？引用过旧数的文档标注作废了吗？
+- [ ] 新写的断言，**先注入缺陷验证过它会红**吗？（否定命题守不住肯定性质）
+- [ ] 报出的每个比率，分子分母都看过吗？分母为 0 的地方写的是 `null` 不是 100% 吧？
+- [ ] 全量 `pytest` 有红 → **与 clean HEAD 逐条对照过**吗？
+      对照法是 `git stash` 后**同目录**重跑（先 `git diff > 备份.patch`，pop 后 diff 对拍）；
+      **不能用新建 worktree** —— 它缺 `gen/python` 等 gitignore 产物，分母不同。

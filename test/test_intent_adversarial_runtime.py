@@ -210,9 +210,25 @@ def test_skill_and_exemplar_inventory_comes_from_the_real_stores():
 
 
 def test_ablations_only_run_for_failure_or_instability():
-    assert requested_ablations("pass") == ()
-    assert requested_ablations("stable_fail") == ABLATION_ARMS
-    assert requested_ablations("unstable") == ABLATION_ARMS
+    assert requested_ablations("pass", "l1") == ()
+    assert requested_ablations("pass", "l2") == ()
+    assert set(requested_ablations("stable_fail", "l1")) <= set(ABLATION_ARMS)
+    assert requested_ablations("unstable", "l1") == requested_ablations(
+        "stable_fail", "l1")
+
+
+def test_edge_and_state_restore_arms_only_exist_where_they_have_a_control():
+    """反向构造 P1-4：无论失败来自哪层，消融原来都只跑 L1 那组。
+
+    `cloud-direct`（绕开 Edge）与 `planner-only`（不恢复会话状态）在 L1 上没有对照
+    物，于是 `EDGE_DIVERGENCE` / `STATE_RESTORE_DIVERGENCE` 两个边界结构上不可达——
+    而它们正是 L2 存在的理由。
+    """
+    l1_arms = set(requested_ablations("stable_fail", "l1"))
+    l2_arms = set(requested_ablations("stable_fail", "l2"))
+    assert {"cloud-direct", "planner-only"} & l1_arms == set()
+    assert {"cloud-direct", "planner-only"} <= l2_arms
+    assert l1_arms < l2_arms
 
 
 def test_each_ablation_arm_changes_exactly_one_thing():
@@ -353,6 +369,85 @@ def test_full_entry_edge_local_never_reaches_the_engine():
     assert edge.ingress == "edge_local"
     assert engine is None, "端侧接管的轮次不应产生云端决策证据"
     assert edge.state_delta.get("hvac_on") is True
+
+
+def test_edge_side_effect_rows_ignore_legitimate_local_execution():
+    """口径必须窄：`no_side_effect_before_confirm` 问的是**危险动作**有没有提前落地。
+
+    「打开空调，再把后备箱打开」里 `hvac_on=True` 是完全正确的本地执行；把任何状态
+    变化都算成副作用，会把正确行为判成 critical_fail。
+    """
+    from support.intent_adversarial_runtime import EdgeSession, edge_side_effect_rows
+
+    session = EdgeSession(cloud_need_confirm=True)
+    edge = session.turn("打开空调，再把后备箱打开")
+    assert edge.state_delta.get("hvac_on") is True, "空调该在端侧执行"
+    assert ("aircon", "open") in edge.val_commands
+    assert edge.dangerous_commands == (), "后备箱必须上云，不得端侧执行"
+    assert edge_side_effect_rows(edge) == ()
+
+
+def test_edge_premature_execution_is_caught_once_the_confirm_gate_is_broken():
+    """反向构造 P0-2：把端侧确认闸打掉，让 Edge 本地执行后备箱。
+
+    `run_full_entry_turn()` 一直同时返回 Edge 与 Engine 观测，但 L2 只把
+    `engine.side_effects` 写进快照——最危险的那类回归（Edge 提前执行）因此保持绿灯。
+    """
+    from support.intent_adversarial_runtime import EdgeSession, edge_side_effect_rows
+
+    session = EdgeSession(cloud_need_confirm=True)
+    session.srv._confirm_required = lambda _structured: False   # 注入缺陷
+    edge = session.turn("打开后备箱")
+
+    assert ("trunk", "open") in edge.dangerous_commands
+    rows = edge_side_effect_rows(edge)
+    assert rows and rows[0]["object"] == "trunk", "端侧提前执行必须留下证据"
+
+
+def test_confirm_gated_agent_leaves_evidence_even_without_a_scripted_response():
+    """反向构造 P0-2：Engine 绕过确认闸（注入 confirmed=true）直接执行危险能力。
+
+    原来只有测试显式传了 `confirmed_responses` 才会产生副作用，而真实 L2 从不传——
+    于是「确认前零副作用」在最危险的一类动作上恒为真：替身什么都没做，和确认闸生效，
+    在副作用面上长得一模一样。
+    """
+    import asyncio
+
+    from support.intent_adversarial_runtime import SafeClients
+
+    clients = SafeClients([], confirm_intents={"trunk.open"})
+    gated = asyncio.run(clients.call_agent("fake:1", "trunk.open", {}, meta={}))
+    assert gated.status == 1 and clients.side_effects == []
+
+    asyncio.run(clients.call_agent("fake:1", "trunk.open", {},
+                                   meta={"confirmed": "true"}))
+    assert [row["intent"] for row in clients.side_effects] == ["trunk.open"]
+    assert clients.side_effects[0]["action"]["type"] == "vehicle.control"
+
+
+def test_engine_harness_reports_pending_state_after_the_turn():
+    harness = build_scripted_engine_harness(
+        _scripted_plan("nearby.order"), confirm_intents=("nearby.order",))
+    out = harness.run("帮我订一份宫保鸡丁", session_id="pending-1")
+    assert out.need_confirm is True
+    assert out.pending_confirm_after is True, "决策是 confirm 但挂起没落库，下一轮确认会落空"
+
+
+def test_full_entry_session_carries_state_across_turns():
+    """多轮同 session：第二轮必须看得见第一轮的挂起与历史。"""
+    from support.intent_adversarial_runtime import FullEntrySession
+
+    harness = build_scripted_engine_harness(
+        _scripted_plan("nearby.order"), confirm_intents=("nearby.order",),
+        confirmed_responses={"nearby.order": {
+            "speech": "已下单", "actions": [{"type": "payment", "payload": {}}]}})
+    session = FullEntrySession(harness, session_id="multi-1")
+    _, first = session.turn("帮我订一份宫保鸡丁")
+    assert first.need_confirm is True and first.side_effects == ()
+    _, second = session.turn("确认", is_confirmation=True)
+    assert [row["intent"] for row in second.side_effects] == ["nearby.order"]
+    assert any(row["role"] == "user" for row in harness.clients.history), \
+        "第二轮必须看得见第一轮的对话历史"
 
 
 def test_deterministic_layer_has_no_unstable_verdict():

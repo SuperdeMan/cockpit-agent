@@ -6,6 +6,9 @@
 """
 from __future__ import annotations
 
+import json
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -67,6 +70,21 @@ class ReplanExpectation:
 
 
 @dataclass(frozen=True)
+class EngineExpectation:
+    """只有完整决策链（L2）能观测的状态：Agent 是否被调用、挂起确认是否仍在。
+
+    `no_side_effect_before_confirm` 单独一条断言证明不了「确认前没执行」——它只看
+    动作有没有落地。**危险动作真正的证据是「那个 Agent 压根没被调用」**：调用发生了
+    但下游替身恰好没产生动作，与「确认闸生效」在副作用面上长得一模一样。
+    """
+    declared: bool = False
+    required_agent_calls: tuple[str, ...] = ()
+    forbidden_agent_calls: tuple[str, ...] = ()
+    pending_confirm_after: bool | None = None
+    max_agent_calls_per_intent: int | None = None
+
+
+@dataclass(frozen=True)
 class TurnExpectation:
     addressed: bool | None = None
     ingress_allowed: tuple[str, ...] = ()
@@ -76,6 +94,7 @@ class TurnExpectation:
     plan: PlanExpectation = field(default_factory=PlanExpectation)
     replans: tuple[ReplanExpectation, ...] = ()
     retrieval: RetrievalExpectation = field(default_factory=RetrievalExpectation)
+    engine: EngineExpectation = field(default_factory=EngineExpectation)
     no_side_effect_before_confirm: bool = False
 
 
@@ -233,9 +252,26 @@ def _parse_plan(raw: dict[str, Any] | None, where: str = "plan") -> PlanExpectat
     )
 
 
+def _parse_engine(raw: dict[str, Any] | None,
+                  where: str = "engine") -> EngineExpectation:
+    declared = raw is not None
+    raw = raw or {}
+    _expect_keys(raw, {"required_agent_calls", "forbidden_agent_calls",
+                       "pending_confirm_after", "max_agent_calls_per_intent"}, where)
+    pending = raw.get("pending_confirm_after")
+    limit = raw.get("max_agent_calls_per_intent")
+    return EngineExpectation(
+        declared=declared,
+        required_agent_calls=_strings(raw.get("required_agent_calls")),
+        forbidden_agent_calls=_strings(raw.get("forbidden_agent_calls")),
+        pending_confirm_after=pending if isinstance(pending, bool) else None,
+        max_agent_calls_per_intent=int(limit) if limit is not None else None,
+    )
+
+
 def _parse_expected(raw: dict[str, Any], where: str = "expected") -> TurnExpectation:
     _expect_keys(raw, {"addressed", "ingress", "decision", "plan", "replans",
-                       "retrieval", "safety"}, where)
+                       "retrieval", "engine", "safety"}, where)
     ingress = raw.get("ingress") or {}
     decision = raw.get("decision") or {}
     retrieval = raw.get("retrieval") or {}
@@ -271,6 +307,7 @@ def _parse_expected(raw: dict[str, Any], where: str = "expected") -> TurnExpecta
             required_exemplars=_strings(retrieval.get("required_exemplars")),
             forbidden_exemplars=_strings(retrieval.get("forbidden_exemplars")),
         ),
+        engine=_parse_engine(raw.get("engine"), f"{where}.engine"),
         no_side_effect_before_confirm=bool(
             (raw.get("safety") or {}).get("no_side_effect_before_confirm", False)),
     )
@@ -370,6 +407,87 @@ def load_suites(path: Path) -> dict[str, SuiteConfig]:
     }
 
 
+# ── canonical 输入指纹 ────────────────────────────────────────────────────
+# `family_id` 只能防住「作者记得它们同源」的泄漏：换一个 family id，同一句原话就能同时
+# 进 remediation 与 holdout。指纹按**输入事实**判，与作者的记性无关。
+#
+# 两把尺子刻意不同：
+# - `utterance_fingerprint` 只看原句——句子是被写进 Exemplar/Guide 的那个东西，
+#   换个上下文它照样是「见过的」；跨 cohort 与知识泄漏都用它。
+# - `input_fingerprint` 含上下文——同一句配不同 history/focus 是真的在测不同东西，
+#   规模单位用它，否则会把有效对照当成灌水删掉。
+
+_PUNCT = re.compile(
+    r"[\s　，。！？、；：,.!?;:~～·…—\-_\"'“”‘’()（）\[\]【】《》]+")
+
+
+def canonical_text(text: str) -> str:
+    """NFKC 归一 + 去空白标点 + 小写。全角/半角、带不带问号都算同一句原话。"""
+    return _PUNCT.sub("", unicodedata.normalize("NFKC", str(text or "")).lower())
+
+
+def utterance_fingerprint(turn: CaseTurn) -> str:
+    return canonical_text(turn.utterance)
+
+
+def input_fingerprint(turn: CaseTurn) -> str:
+    context = json.dumps(turn.context, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":"))
+    return f"{canonical_text(turn.utterance)}|{context}"
+
+
+def case_fingerprint(case: AdversarialCase) -> str:
+    """整条 case 的规模指纹：逐轮输入指纹按顺序拼接。"""
+    return "||".join(input_fingerprint(turn) for turn in case.turns)
+
+
+def distinct_input_units(cases: list[AdversarialCase]) -> int:
+    """**规模单位 = 唯一输入**。同输入不同断言合并计一个单位。
+
+    「113 条 stable」里只有 104 个唯一输入时，用条数报规模就是把同一句话数了 4 遍。
+    """
+    return len({case_fingerprint(case) for case in cases})
+
+
+def duplicate_input_groups(cases: list[AdversarialCase]
+                           ) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
+    for case in cases:
+        groups.setdefault(case_fingerprint(case), []).append(case.id)
+    return {key: sorted(ids) for key, ids in sorted(groups.items())
+            if len(ids) > 1}
+
+
+def load_knowledge_utterances(paths: list[Path]) -> set[str]:
+    """从 Skill/Exemplar/边界台账里收集**字面话术**，用于反证 `unseen_transfer`。
+
+    只收字面量：Route Hint 是正则，证不了「这句原话被拿去写过规则」，硬要匹配只会
+    制造假阳性。收不全不是问题——这条闸是**证伪**用的，抓到一条就是一条真泄漏。
+    """
+    texts: set[str] = set()
+
+    def _walk(node: Any, key: str = "") -> None:
+        if isinstance(node, dict):
+            for name, value in node.items():
+                _walk(value, str(name))
+        elif isinstance(node, (list, tuple)):
+            for value in node:
+                _walk(value, key)
+        elif key in {"text", "texts", "utterance", "keywords", "query"}:
+            canonical = canonical_text(node)
+            if canonical:
+                texts.add(canonical)
+
+    for path in paths:
+        if not Path(path).is_file():
+            continue
+        try:
+            _walk(_read_yaml(Path(path)))
+        except (ValueError, OSError):
+            continue
+    return texts
+
+
 # ── 语义校验 ───────────────────────────────────────────────────────────────
 # 返回错误列表而不是抛异常：一次跑完能看到语料里全部问题，逐条修比逐次撞快。
 
@@ -395,6 +513,7 @@ def _has_absolute_gold(expected: TurnExpectation) -> bool:
         or expected.plan.assert_plan or expected.replans
         or retrieval.required_skills or retrieval.forbidden_skills
         or retrieval.required_exemplars or retrieval.forbidden_exemplars
+        or expected.engine.declared
         or expected.no_side_effect_before_confirm
     )
 
@@ -446,6 +565,31 @@ def _validate_plan(case: AdversarialCase, plan: PlanExpectation,
             errors.append(f"{case.id}: slot minimum exceeds maximum")
         if slot.matcher == "source_reference" and not slot.source:
             errors.append(f"{case.id}: source_reference matcher requires source")
+
+
+def _validate_engine(case: AdversarialCase, index: int, engine: EngineExpectation,
+                     layers: set[str], known_intents: set[str],
+                     errors: list[str]) -> None:
+    """engine 期望只有 L2 观测得到；写在别的层上是**永远不会被裁的断言**。"""
+    if not engine.declared:
+        return
+    if "l2" not in layers:
+        errors.append(f"{case.id}#{index}: expected.engine requires layers to include l2")
+    for intent in sorted(set(engine.required_agent_calls)
+                         | set(engine.forbidden_agent_calls)):
+        if intent not in known_intents:
+            errors.append(f"{case.id}#{index}: unknown engine agent call {intent}")
+    overlap = set(engine.required_agent_calls) & set(engine.forbidden_agent_calls)
+    if overlap:
+        errors.append(f"{case.id}#{index}: engine agent call required/forbidden "
+                      f"overlap {sorted(overlap)}")
+    if (engine.max_agent_calls_per_intent is not None
+            and engine.max_agent_calls_per_intent < 1):
+        errors.append(f"{case.id}#{index}: max_agent_calls_per_intent must be >= 1")
+    if not (engine.required_agent_calls or engine.forbidden_agent_calls
+            or engine.pending_confirm_after is not None
+            or engine.max_agent_calls_per_intent is not None):
+        errors.append(f"{case.id}#{index}: expected.engine declared but empty")
 
 
 def _validate_relation(case: AdversarialCase, case_ids: set[str],
@@ -536,6 +680,8 @@ def validate_cases(cases: list[AdversarialCase], known_intents: set[str]) -> lis
             for plan in (turn.expected.plan,) + tuple(
                     replan.plan for replan in turn.expected.replans):
                 _validate_plan(case, plan, known_intents, errors)
+            _validate_engine(case, index, turn.expected.engine, layers,
+                             known_intents, errors)
             for replan in turn.expected.replans:
                 result = replan.after.get("result")
                 if not isinstance(result, dict):
@@ -551,6 +697,47 @@ def validate_cases(cases: list[AdversarialCase], known_intents: set[str]) -> lis
     for family, cohorts in sorted(by_family.items()):
         if len(cohorts) > 1:
             errors.append(f"family leakage: {family} spans {sorted(cohorts)}")
+    # 输入指纹级隔离另走 `validate_cohort_isolation()`：它需要外部知识资产做输入，
+    # 而本函数只依赖语料自身。两条闸都在 CLI 的硬错误集里。
+    return errors
+
+
+def validate_cohort_isolation(cases: list[AdversarialCase],
+                              knowledge_utterances: set[str] | None = None
+                              ) -> list[str]:
+    """按**输入事实**判泄漏，不按作者声明的 family。
+
+    两条独立的闸：
+
+    1. 同一句原话不得同时出现在 `seen_regression` 与 `unseen_transfer`。换个
+       `family_id` 就能绕过 family 闸，换不掉原句。
+    2. `unseen_transfer` 的原话不得字面出现在 Exemplar / Guide / 边界台账里——
+       那句话已经被写进注入给模型的知识，叫它「未见过」是事实错误。
+
+    第 2 条只证伪不证实：知识里没有这句话**不**代表它没被用来改过规则（Hint 是正则，
+    对不上字面）。所以 `seen_regression` 一侧不设对称断言——那会把「我们只是保守地
+    标成 seen」误判成错误。
+    """
+    errors: list[str] = []
+    by_utterance: dict[str, dict[str, set[str]]] = {}
+    for case in cases:
+        if case.status == "retired":
+            continue
+        for turn in case.turns:
+            row = by_utterance.setdefault(utterance_fingerprint(turn), {})
+            row.setdefault(case.cohort, set()).add(case.id)
+    for fingerprint, cohorts in sorted(by_utterance.items()):
+        if len(cohorts) > 1:
+            detail = "; ".join(f"{cohort}={sorted(ids)}"
+                               for cohort, ids in sorted(cohorts.items()))
+            errors.append(f"cohort leakage: utterance {fingerprint!r} spans {detail}")
+    for canonical in sorted(knowledge_utterances or set()):
+        ids = sorted((by_utterance.get(canonical) or {}).get("unseen_transfer")
+                     or set())
+        if ids:
+            errors.append(
+                f"cohort leakage: unseen_transfer {ids} use utterance "
+                f"{canonical!r} that is literally present in the injected knowledge")
     return errors
 
 
@@ -678,11 +865,18 @@ def validate_boundary_coverage(cases: list[AdversarialCase],
 
 
 def validate_suite_counts(cases: list[AdversarialCase], suite: SuiteConfig) -> list[str]:
+    """规模按**唯一输入**判，不按条数。
+
+    同一句「附近的充电站」在 stable 里出现 4 次时，条数会说 113、唯一输入只有 104。
+    用条数当规模等于允许「复制近义句冲条数」——规格 §9.4 明令禁止的那件事，靠人自觉
+    是守不住的。
+    """
     selected = [case for case in cases if case.status in suite.statuses]
+    distinct = distinct_input_units(selected)
     errors = []
-    if not suite.min_cases <= len(selected) <= suite.max_cases:
+    if not suite.min_cases <= distinct <= suite.max_cases:
         errors.append(
-            f"suite case count {len(selected)} outside "
+            f"suite distinct-input count {distinct} (cases={len(selected)}) outside "
             f"[{suite.min_cases}, {suite.max_cases}]")
     for attack, minimum in sorted(suite.attack_minimums.items()):
         count = sum(attack in set(case.tags.get("attacks") or [])

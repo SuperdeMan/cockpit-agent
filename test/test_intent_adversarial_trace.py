@@ -102,17 +102,84 @@ def test_first_divergence_respects_execution_order():
         planner_post_hint_pass=False, empty_history_pass=True)) == "CONTEXT_DIVERGENCE"
     assert first_divergence(DivergenceEvidence(
         full_entry_pass=False, engine_direct_pass=False,
-        planner_post_hint_pass=False, retrieval_ablation_pass=True)) == "RETRIEVAL_SUSPECT"
+        planner_post_hint_pass=False, empty_history_pass=False,
+        retrieval_ablation_pass=True)) == "RETRIEVAL_SUSPECT"
     assert first_divergence(DivergenceEvidence(
         full_entry_pass=False, engine_direct_pass=False,
-        planner_post_hint_pass=False, raw_planner_pass=True,
-        pre_hint_pass=False)) == "VALIDATION_DIVERGENCE"
+        planner_post_hint_pass=False, empty_history_pass=False,
+        retrieval_ablation_pass=False, pre_hint_pass=False,
+        raw_planner_pass=True)) == "VALIDATION_DIVERGENCE"
     assert first_divergence(DivergenceEvidence(
         full_entry_pass=False, engine_direct_pass=False,
-        planner_post_hint_pass=False, raw_planner_pass=False,
+        planner_post_hint_pass=False, empty_history_pass=False,
+        retrieval_ablation_pass=False, raw_planner_pass=False,
         pre_hint_pass=True)) == "HINT_DIVERGENCE"
     assert first_divergence(DivergenceEvidence(full_entry_pass=True)) == "NONE"
-    assert first_divergence(DivergenceEvidence()) == "PLANNER_DIVERGENCE"
+
+
+def test_unobserved_boundaries_never_get_pinned_on_the_planner():
+    """反向构造 P1-4：一个对照都没跑。
+
+    原来七个字段都是默认 `False`，于是「没观测」与「观测了都没翻正」得到同一个结论
+    `PLANNER_DIVERGENCE`——首偏离点因此变成失败的同义词，L0 的 5 条确定性失败也被
+    贴上了这个标签，而 L0 根本没有 Planner。
+    """
+    assert first_divergence(DivergenceEvidence()) == "UNCLASSIFIED"
+    # 更早的边界没观测时，后面的正向证据不能称「第一个」
+    assert first_divergence(DivergenceEvidence(
+        pre_hint_pass=True)) == "UNCLASSIFIED"
+    # 前面每一层都实测过且都没翻正，才轮得到 Planner
+    assert first_divergence(DivergenceEvidence(
+        engine_direct_pass=False, planner_post_hint_pass=False,
+        empty_history_pass=False, retrieval_ablation_pass=False,
+        pre_hint_pass=False, raw_planner_pass=False)) == "PLANNER_DIVERGENCE"
+
+
+def test_candidates_keep_the_free_evidence_without_claiming_it_is_first():
+    from support.intent_adversarial_trace import divergence_candidates, evidence_dict
+
+    evidence = DivergenceEvidence(pre_hint_pass=True, raw_planner_pass=False)
+    assert divergence_candidates(evidence) == ("HINT_DIVERGENCE",)
+    assert first_divergence(evidence) == "UNCLASSIFIED"
+    # null=没观测、false=观测了没翻正，诊断时这两者不能混
+    assert evidence_dict(evidence)["empty_history_pass"] is None
+    assert evidence_dict(evidence)["raw_planner_pass"] is False
+
+
+def test_l0_divergence_comes_from_the_failing_assertion_not_from_ablations():
+    from support.intent_adversarial_trace import deterministic_divergence
+
+    assert deterministic_divergence([]) == "NONE"
+    assert deterministic_divergence(
+        ["no_side_effect_before_confirm"]) == "EDGE_SIDE_EFFECT"
+    assert deterministic_divergence(["ingress_allowed"]) == "EDGE_DIVERGENCE"
+    assert deterministic_divergence(
+        ["retrieval.required:weather-outing"]) == "RETRIEVAL_DIVERGENCE"
+    assert deterministic_divergence(["something_else"]) == "UNCLASSIFIED"
+
+
+def test_probe_builder_restores_the_builder_it_wrapped():
+    """探针必须可还原：每条 case 包一层不还原，第二条就是双重 trace。"""
+    from support.intent_adversarial_trace import TraceSink, probe_builder
+
+    class _Hints:
+        def apply(self, plan, text, agent_map):
+            return False
+
+    class _Builder:
+        def __init__(self):
+            self._route_hints = _Hints()
+
+        def _parse_and_validate_data(self, data, agent_map, text):
+            return None
+
+    builder = _Builder()
+    original_hints = builder._route_hints
+    with probe_builder(builder, TraceSink()):
+        assert builder._route_hints is not original_hints
+        assert "_parse_and_validate_data" in builder.__dict__
+    assert builder._route_hints is original_hints
+    assert "_parse_and_validate_data" not in builder.__dict__
 
 
 def test_asset_fingerprint_reports_missing_globs_instead_of_claiming_complete(tmp_path):

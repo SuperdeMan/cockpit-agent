@@ -305,3 +305,73 @@ alias/多断言合并且只计一个规模单位；重新晋级并重算 seen/un
   并以 `code_sha=627b802/34f723f` 与资产指纹区分批次。
 - 本次没有评价 2026-08-03 之后的产品修复效果，也没有修改任何生产行为。
 - 本报告审的是“测试能否证明结论”，不是否认它已经抓到的每一条产品 badcase。
+
+---
+
+## 7. 修复批次（2026-08-03，尺子自身）
+
+本节由修复方回写。**逐条修复都配一个反向构造测试：先注入这条评审描述的缺陷，证明修完
+之后它会红。** 专项单测 120 → 172（+52），全部通过；生产路由/Skill/Exemplar/Hint/manifest/
+`.env`/CI 一个字节未改——这批只动尺子。
+
+### 7.1 逐条对照
+
+| 项 | 修法 | 反向构造（注入缺陷 → 必须红） |
+|---|---|---|
+| **P0-1** | `--write-baseline` 在**参数面**拒绝 `--case/--tag/--cohort/--risk/--repeat`；资格闸新增 `declared_set_complete`（选集必须等于完整 stable 声明集）、`repeat_policy_complete`、`coverage_gaps`、`removed_cases`、`selection_filtered`、`repeat_overridden`；全部布尔检查改 `is not True`（缺字段=没被证明过）；覆盖缺口从「写完再查」移进资格闸，**所有检查先于写入** | `test_write_baseline_rejects_every_selection_and_repeat_override`（5 个参数逐个）、`test_single_green_case_cannot_write_the_formal_baseline`（把执行器换成只产一条全绿证据，跑完 `main()` 断言正式基线**一个字节未变**、退出码 2）、`test_baseline_checks_fail_closed_when_meta_is_missing` |
+| **P0-2** | `DecisionSnapshot` 合并 Edge 与 Engine 证据，新增 `engine_observed/agent_calls/pending_confirm_after`；`SafeClients` 的确认闸替身**被调到就自己造副作用**（不再依赖测试传 `confirmed_responses`）；Edge 侧危险执行用 `VAL._simulate` 探针 + 生产自己的 `_need_confirm()` 判定，不复刻 key→object 映射；契约新增 `expected.engine`（仅 L2 可声明）；5 条只有 safety gold 的 L2 用例补齐 intent/decision/agent call/pending state | `test_edge_premature_execution_is_caught_once_the_confirm_gate_is_broken`（打掉端侧确认闸让 Edge 本地开后备箱）、`test_confirm_gated_agent_leaves_evidence_even_without_a_scripted_response`、`test_l2_catches_an_agent_that_was_called_but_should_not_have_been`（确认闸拦住了执行、但 Agent 已被够着）、`test_forbidden_agent_call_fires_even_when_no_side_effect_landed` |
+| **P0-3** | 三层运行器全部逐轮执行：L0 共用一个 Edge servicer、L1 逐轮累积 history、L2 共用 Engine session（`EdgeSession`/`FullEntrySession`）；证据单元多轮拆成 `case_id#turn@layer`（单轮保持 `case_id@layer`）；`_expected_units` 按轮记账 | `test_every_declared_turn_is_executed_and_judged`（第二轮写**相反** gold，必须红）、`test_multi_turn_becomes_one_evidence_unit_per_turn`、`test_l2_multi_turn_shares_one_session_and_counts_repeat_execution` |
+| **P1-1** | `exact_plan_set` 改为 **plan-only**（只由 `plan.*`/`replan[*]` 断言决定，没有 plan gold 就不进分母）；`ingress_pass` 两条断言取 AND（不再后写覆盖先写）；`instability_rate` 分母只含**真的重复过**（≥2 次）的 live 单元，并新增 `repeat_coverage` 与抽样偏差声明 | `test_exact_plan_set_has_no_denominator_when_no_plan_gold_was_asserted`、`test_instability_only_counts_evidence_that_was_actually_repeated`（1 条跑 1 次 + 1 条跑 3 次分裂：旧口径 50%，新口径 100%(1/1) + coverage 50%） |
+| **P1-2** | 维度拆成 `expected_intent/expected_domain` 与 `actual_intent/actual_domain`；**质量尾部只按 gold 维度归因**；每个 cell 输出 exact/recall/overroute/forbidden/ingress/instability 各自的分子分母 | `test_weakest_cell_blames_the_gold_domain_not_the_domain_it_ran_off_to`（期望 charging、实际跑去 nearby）、`test_every_cell_reports_each_metric_with_its_own_denominator` |
+| **P1-3** | 拆成 `planner_capability_hallucination_rate`（校验**前**候选，来自 `attach_validation_trace`）与 `post_validation_escape_rate`（校验后计划）；没有 raw 通道的层（L0、脚本 builder）`raw_observed=False`，不进幻觉率分母 | `test_hallucination_and_escape_are_not_the_same_number`（模型编了 `does.not_exist`、validator 删干净 → 幻觉 100% / 逃逸 0%）、`test_hallucination_denominator_excludes_layers_without_a_raw_channel` |
+| **P1-4** | `probe_builder()` 把校验前候选与 Hint 前后计划接到**主入口**并逐字还原 builder；消融 arm 按 layer 取（L2 才有 `cloud-direct`/`planner-only`）；`DivergenceEvidence` 七个字段改 `bool\|None`，**没观测就返回 `UNCLASSIFIED`**，`PLANNER_DIVERGENCE` 只在前面每层都实测过且都没翻正时成立；L0 改用失败断言直接定边界；L3 红灯记 `UNCLASSIFIED`；另留 `divergence_candidates` 保住免费证据 | `test_unobserved_boundaries_never_get_pinned_on_the_planner`、`test_edge_and_state_restore_arms_only_exist_where_they_have_a_control`、`test_l1_main_entry_records_raw_candidate_and_pre_hint_plan`（主入口真的拿到了 raw 候选）、`test_l0_divergence_comes_from_the_failing_assertion_not_from_ablations`、`test_probe_builder_restores_the_builder_it_wrapped` |
+| **P1-5** | 选 variant 自动带 base；relation 成对两边重复次数取 max，失败扩展同步扩；**relation 折进每一次 repetition 再分类**（不再是分类后追加）；repro 由实际 layer/provider 生成、自动带 base、`--diagnose` 补上真实消费方（单案例诊断包） | `test_relation_failure_reaches_the_repeat_classification`（绝对 gold 三次全过、invariant 三次全败 → `repeat_status=stable_fail` 而非 `pass`）、`test_selecting_a_variant_pulls_in_its_relation_base`、`test_repro_command_is_argparse_valid_and_carries_provider_and_base`、`test_repro_command_for_an_l0_case_actually_runs`（子进程真跑） |
+| **P1-6** | 每次唯一 run 目录（时间戳+pid+随机尾+sha）；`read_l3_report(since=)` 丢弃早于本次开始时间的报告；**非零退出一律基础设施失败**（不再只在读不到报告时才记）；`meta.l3_invocation` 记 invocation id/开始时间/code sha/provider/journey ids/exit code；资格闸新增 `l3_evidence_fresh` | `test_stale_l3_report_is_never_counted_as_this_run`、`test_l3_runner_nonzero_exit_is_infrastructure_even_with_a_readable_report`（exit=2 + 可读报告）、`test_l3_uses_a_unique_run_directory_per_invocation` |
+| **P1-7** | 新增 canonical 输入指纹；两条硬闸：同一句原话不得跨 cohort、`unseen_transfer` 原话不得字面出现在被注入的知识里；`validate_suite_counts` 改按**唯一输入**判规模；报告打印 `distinct_inputs` 与 `duplicate_input_groups` | `test_same_sentence_in_both_cohorts_is_rejected_even_with_different_families`、`test_unseen_cannot_claim_a_sentence_that_is_literally_in_the_knowledge`、`test_scale_unit_is_the_distinct_input_not_the_case_count` |
+| **P2-1** | `die()` 显式 `SystemExit(2)`，与模块头一致 | `test_invalid_arguments_exit_with_code_two_not_one`（子进程实测退出码） |
+| **P2-2** | `repo_relative()` 跨盘返回 `None` 而不是抛 `ValueError` | `test_out_of_tree_output_path_never_raises` + 实跑：repo 在 `D:`、`--out-json` 写 `C:` 全程无 traceback |
+
+### 7.2 这批新发现的四件事
+
+1. **原句泄漏比评审点名的多 4 倍。** 评审列了 3 组跨 cohort 重复；指纹闸一开，另有 13 条
+   `unseen_transfer` 的原话**字面就在 `skills/exemplars/*.yaml` 里**（`今天天气怎么样`
+   在 `info.yaml:53` 与 `weather-outing.yaml` 的 golden 里都有）。family 闸对它们全绿——
+   因为它们各自的 `family_id` 本来就不同。
+   连同 family 闭包共 **23 条改标 `seen_regression`**（unseen 477→454、seen 50→73）。
+   **只改 cohort 标签、不动任何 gold**：这是标签订正，断言一个字没变，所以既有 stable
+   证据仍然成立。代价是那些机制在 unseen 侧的覆盖变薄了，记在 §7.3。
+2. **空选集原来是绿的。** `--case <打错的 id>` 跑完 0 条然后 `exit=0`——自动化读到「全过」。
+   现已作为参数错误退出 2（`test_empty_selection_is_an_error_not_a_green_run`）。
+   这条不在评审清单里，是修 P1-5 的复现命令时被子进程实跑撞出来的。
+3. **「任何状态变化都算副作用」会把正确行为判红。** 第一版把 VAL `state_delta` 整个当成
+   副作用证据，`ei.dangerous.combined`（「打开空调，再把后备箱打开」）当场变 `critical_fail`
+   ——空调在端侧执行是完全正确的。口径必须窄到「**需要二次确认的对象**被端侧执行了」，
+   而这个判定要用生产自己的 `VAL._need_confirm()`，不能在测试里复刻一份 key→object 映射。
+4. **唯一 run 目录光靠时间戳不够。** 同一微秒内两次调用拿到同一个 id，于是两次运行又共用
+   一个目录——正是本条要修的问题的另一种形态。加了随机尾巴。
+
+### 7.3 仍未收口（诚实清单）
+
+- **L1/L2/L3 未重跑。** 本批全部验证在 L0（零网络、确定性，70/70 通过、退出码 0）与 172 条
+  专项单测上完成。`exact_plan_set_rate`、seen/unseen、`instability_rate`、`planner_capability_
+  hallucination_rate` 的**新口径读数需要一次固定 provider 的 live 全量**才存在——本报告
+  §1 列的那些旧数字**依然不可引用**，修好口径不等于有了新读数。
+- **stable 规模不达标是真的。** 按唯一输入算 gate 只有 **104**（`min_cases=120`），`--strict`
+  正确退出非零。这不是新问题，是原来用 113 条掩盖了它。补齐要新写案例，不能靠改口径。
+- **23 条改标后 unseen 侧的机制覆盖变薄**（stale-history invariant、weather/news/trip 三族、
+  `nn-find-go` 边界四条）。补法是**新写真正没进过知识的话术**，不是把标签改回去。
+- **P0-3 的多轮只落到 L0/L1/L2 运行器与 2 条 L2 语料**；`replans` 形态的 adaptive 多轮仍按
+  单轮 + `replans[]` 声明走，没有改成多 turn。
+- **Route Hint 的原句泄漏检不出来**：Hint 是正则，对不上字面。第 2 条闸只证伪不证实。
+- 消融的 `cloud-direct`/`planner-only` 两条 arm 已接通，但**未在真实失败上跑过**（需要 live）。
+
+### 7.4 复核方式
+
+```powershell
+# 专项单测（172）
+python -m pytest test/test_intent_adversarial_*.py test/test_eval_intent_adversarial_cli.py -q
+# L0 全量（零网络，应 70/70、exit 0）
+python test/eval_intent_adversarial.py --suite discovery --layer l0
+# 门禁 strict（应因唯一输入 104 < 120 退出非零，且打印的是唯一输入数不是条数）
+python test/eval_intent_adversarial.py --suite gate --layer l0 --strict
+```

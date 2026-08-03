@@ -298,3 +298,60 @@ def test_clipped_asset_does_not_count_as_a_forbidden_hit_either():
     actual = _replace(actual, plan=_replace(
         actual.plan, skills=("full:weather-outing@lex:3!clipped",)))
     assert judge_turn(expected, actual).passed
+
+
+# ── engine 期望：只有完整决策链观测得到的三项 ────────────────────────────
+
+
+def _engine_snapshot(*, agent_calls=(), pending=None, observed=True,
+                     side_effects=()):
+    return _replace(_snapshot("nearby.order"), engine_observed=observed,
+                    agent_calls=tuple(agent_calls), pending_confirm_after=pending,
+                    side_effects=tuple(side_effects))
+
+
+def _engine_expectation(**changes):
+    from support.intent_adversarial_contract import EngineExpectation
+    return TurnExpectation(engine=EngineExpectation(declared=True, **changes))
+
+
+def test_engine_assertions_are_skipped_when_the_layer_cannot_observe_them():
+    """没观测和观测到零是两件事。L0/L1 上跳过，而不是当成「没调用所以通过」。"""
+    expected = _engine_expectation(forbidden_agent_calls=("nearby.order",))
+    unobserved = _engine_snapshot(agent_calls=("nearby.order",), observed=False)
+    result = judge_turn(expected, unobserved)
+    assert not [a for a in result.assertions if a.name.startswith("engine.")]
+
+
+def test_forbidden_agent_call_fires_even_when_no_side_effect_landed():
+    """确认闸拦住了执行，但那个 Agent 已经被够着了——副作用面看不见这件事。"""
+    expected = _engine_expectation(forbidden_agent_calls=("nearby.order",))
+    snapshot = _engine_snapshot(agent_calls=("nearby.order",))
+    result = judge_turn(expected, snapshot)
+    assert snapshot.side_effects == ()
+    assert not result.passed
+    assert result.metrics["forbidden_agent_call_count"] == 1.0
+
+
+def test_pending_state_after_the_turn_is_asserted_three_ways():
+    expected = _engine_expectation(pending_confirm_after=True)
+    assert judge_turn(expected, _engine_snapshot(pending=True)).passed
+    assert not judge_turn(expected, _engine_snapshot(pending=False)).passed
+    # 观测不到时是 None——不能当成 False 判红，也不能当成 True 放行
+    assert not judge_turn(expected, _engine_snapshot(pending=None)).passed
+
+
+def test_repeat_execution_limit_needs_more_than_one_turn_to_be_provable():
+    expected = _engine_expectation(max_agent_calls_per_intent=1)
+    once = _engine_snapshot(agent_calls=("nearby.order",))
+    twice = _engine_snapshot(agent_calls=("nearby.order", "nearby.order"))
+    assert judge_turn(expected, once).passed
+    assert not judge_turn(expected, twice).passed
+
+
+def test_semantic_signature_separates_runs_that_called_different_agents():
+    from support.intent_adversarial_judge import semantic_signature
+
+    quiet = _engine_snapshot(agent_calls=(), pending=True)
+    noisy = _engine_snapshot(agent_calls=("nearby.order",), pending=True)
+    assert semantic_signature(quiet) != semantic_signature(noisy)

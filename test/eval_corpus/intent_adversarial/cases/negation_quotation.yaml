@@ -464,7 +464,7 @@ cases:
   - id: nq.trip-modify.plan
     title: 帮我排一个三天的行程
     family_id: nq.trip-negate
-    cohort: unseen_transfer
+    cohort: seen_regression
     risk: medium
     status: reviewed
     tags: {attacks: [A3], mechanisms: [negation_scope], domains: [trip], layers: [l1]}
@@ -476,7 +476,7 @@ cases:
   - id: nq.trip-modify.change
     title: 第二天别去西湖了换一个
     family_id: nq.trip-negate
-    cohort: unseen_transfer
+    cohort: seen_regression
     risk: medium
     status: reviewed
     tags: {attacks: [A3], mechanisms: [negation_scope], domains: [trip], layers: [l1]}

@@ -157,6 +157,111 @@ def test_duplicate_ids_are_rejected(contract_case):
     assert any("duplicate id" in e for e in errors)
 
 
+# ── P1-7 反向构造：family 之外的泄漏 ─────────────────────────────────────
+
+
+def test_same_sentence_in_both_cohorts_is_rejected_even_with_different_families(
+        contract_case):
+    """family 闸只防住「作者记得它们同源」的那一半：换个 family id 就能绕过。
+
+    实际语料里 `今天天气怎么样` 同时以 seen 和 unseen 出现过 4 次，family 闸全绿。
+    """
+    from support.intent_adversarial_contract import validate_cohort_isolation
+
+    seen = replace(contract_case, id="other.seen", family_id="another.family",
+                   cohort="seen_regression")
+    # family 闸对这一对全绿——两条 family_id 本来就不同
+    assert not [e for e in validate_cases([contract_case, seen], {"info.alerts"})
+                if "family leakage" in e]
+    errors = validate_cohort_isolation([contract_case, seen])
+    assert any("cohort leakage" in e and "有没有天气预警" in e for e in errors)
+
+
+def test_unseen_cannot_claim_a_sentence_that_is_literally_in_the_knowledge(
+        contract_case):
+    from support.intent_adversarial_contract import validate_cohort_isolation
+
+    errors = validate_cohort_isolation([contract_case], {"有没有天气预警"})
+    assert any("literally present in the injected knowledge" in e for e in errors)
+    # seen 一侧不设对称断言：知识里没这句话不代表它没被拿去改过规则（Hint 是正则）
+    seen = replace(contract_case, cohort="seen_regression")
+    assert validate_cohort_isolation([seen], {"有没有天气预警"}) == []
+
+
+def test_fingerprint_normalises_punctuation_and_width(contract_case):
+    from support.intent_adversarial_contract import (
+        canonical_text, utterance_fingerprint,
+    )
+
+    assert canonical_text("有没有天气预警？") == canonical_text("有没有天气预警")
+    assert canonical_text("Ａ Ｂ") == canonical_text("a,b")
+    assert utterance_fingerprint(contract_case.turns[0]) == "有没有天气预警"
+
+
+def test_scale_unit_is_the_distinct_input_not_the_case_count(contract_case):
+    """反向构造 P1-7：同一句话复制 4 遍。
+
+    stable 113 条里只有 104 个唯一输入；用条数报规模等于允许「复制近义句冲条数」。
+    """
+    from support.intent_adversarial_contract import (
+        SuiteConfig, distinct_input_units, duplicate_input_groups,
+        validate_suite_counts,
+    )
+
+    clones = [replace(contract_case, id=f"clone.{i}", family_id=f"fam.{i}")
+              for i in range(4)]
+    assert distinct_input_units(clones) == 1
+    assert list(duplicate_input_groups(clones).values()) == [
+        ["clone.0", "clone.1", "clone.2", "clone.3"]]
+    suite = SuiteConfig(statuses=("reviewed",), live_statuses=("reviewed",),
+                        min_cases=2, max_cases=10, attack_minimums={},
+                        normal_repeats=1, failure_repeats=3, high_risk_repeats=3)
+    errors = validate_suite_counts(clones, suite)
+    assert any("distinct-input count 1" in e and "cases=4" in e for e in errors)
+
+
+# ── P0-2 反向构造：L2 才观测得到的 engine 期望 ──────────────────────────
+
+
+def test_engine_expectation_must_declare_l2(contract_case):
+    engine_case = replace(contract_case, turns=(replace(
+        contract_case.turns[0],
+        expected=replace(contract_case.turns[0].expected,
+                         engine=_engine(forbidden_agent_calls=("trunk.open",)))),))
+    errors = validate_cases([engine_case], {"info.alerts", "trunk.open"})
+    assert any("requires layers to include l2" in e for e in errors)
+
+
+def test_engine_expectation_rejects_unknown_or_contradictory_agent_calls(
+        contract_case):
+    l2_case = replace(contract_case,
+                      tags={**contract_case.tags, "layers": ["l2"]})
+    bad = replace(l2_case, turns=(replace(
+        l2_case.turns[0],
+        expected=replace(l2_case.turns[0].expected,
+                         engine=_engine(required_agent_calls=("trunk.open",),
+                                        forbidden_agent_calls=("trunk.open",
+                                                               "nope.missing")))),))
+    errors = validate_cases([bad], {"info.alerts", "trunk.open"})
+    assert any("unknown engine agent call nope.missing" in e for e in errors)
+    assert any("required/forbidden overlap" in e for e in errors)
+
+
+def test_empty_engine_block_is_a_contract_error(contract_case):
+    l2_case = replace(contract_case,
+                      tags={**contract_case.tags, "layers": ["l2"]})
+    empty = replace(l2_case, turns=(replace(
+        l2_case.turns[0],
+        expected=replace(l2_case.turns[0].expected, engine=_engine())),))
+    errors = validate_cases([empty], {"info.alerts"})
+    assert any("expected.engine declared but empty" in e for e in errors)
+
+
+def _engine(**changes):
+    from support.intent_adversarial_contract import EngineExpectation
+    return EngineExpectation(declared=True, **changes)
+
+
 def test_unknown_required_intent_is_rejected(contract_case):
     errors = validate_cases([contract_case], set())
     assert any("unknown intent info.alerts" in e for e in errors)

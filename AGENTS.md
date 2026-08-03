@@ -72,8 +72,10 @@ Dashboard vitest **17/17**；端侧 smoke 13/13；Go 网关 vet+test 通过。
 （既有 e2e 运行器的环境路径问题，非本批引入）——同一命令在本机与 CI 上的分母不同，
 **引用基线前先确认是在哪台机器上跑的**。
 
-**意图落域对抗测试体系（2026-08-02 建成，2026-08-03 首轮发现全部修复并复验）**：
-规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`（§21 落地记录）、
+**意图落域对抗测试体系（2026-08-02 建成，2026-08-03 首轮发现全部修复 + 尺子自身 12 条硬化）**：
+📘 **接手人从运行手册开始：[`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md)**
+（常青指南：怎么跑 / 红了怎么查 / 修 badcase 的产物 / 加用例自查 / 晋级与 baseline 前置 / 残留优先级）。
+规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`（§21 落地记录、§22 尺子硬化）、
 实施计划同名 `-implementation-plan.md`、**发现清单 + 修复批次记录另册**
 `docs/design/2026-08-02-intent-routing-adversarial-findings.md`（**修复批次的单一入口**）。入口
 `test/eval_intent_adversarial.py`，语料 `test/eval_corpus/intent_adversarial/`（527 条 /
@@ -92,12 +94,31 @@ L1 发现轨原始 evidence unit **425/468**，扣掉 6 条网关伤亡后 **431
 **规则净变化 10 → 9**（退役 1、收窄 1、新增 0，N2 成立）。本批**一行没动尺子**：
 修尺子与修被测对象同批进行正是该体系明令禁止的事，评审的 12 条另开一批（findings §6.4）。
 
-**2026-08-03 独立对抗 review：验收不通过。** 报告
+**2026-08-03 独立对抗 review：验收不通过 → 同日 12 条全部修复（尺子硬化批）。** 报告
 [`docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`](docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md)
 确认 baseline 完整选集可被正常过滤参数绕过、L2 丢 Edge 副作用、多轮只执行第一轮，以及
-指标/维度/trace/relation/L3 新鲜度/seen-unseen 隔离等问题。**2026-08-02 首轮**的数字保留为
-**历史原始读数**：L0 65/70 可复现；`exact_plan_set_rate`、最弱域、0% 能力幻觉、L2 7/7、
-seen/unseen 与 instability 暂不作为权威结论。修复 P0 前不得生成正式 baseline。
+指标/维度/trace/relation/L3 新鲜度/seen-unseen 隔离等问题。
+
+**尺子硬化批（2026-08-03，逐条对照见该报告 §7——唯一入口）**：3 P0 / 7 P1 / 2 P2 逐条修复，
+**每条配一个反向构造测试**（先注入这条评审描述的缺陷，证明修完之后它会红）。
+专项单测 **120 → 172**；**生产路由 / Skill / Exemplar / Hint / manifest / `.env` / CI 一个字节未改**
+——这批只动尺子，与「修尺子和修被测对象不同批」的纪律一致。
+本机全量 `pytest` 与 clean HEAD 逐条对照：**32 条红完全一致**（既有 e2e 运行器环境问题，
+本批零引入；对照法=`git stash` 后同目录重跑，不能用新建 worktree——它缺 `gen/`，分母不同）。
+
+四条新发现（都不在评审清单里）：**① 原句泄漏比评审点名的多 4 倍**——指纹闸一开，另有 13 条
+`unseen_transfer` 的原话字面就在 `skills/exemplars/*.yaml` 里，family 闸对它们全绿；连同 family
+闭包共 **23 条改标 `seen_regression`**（unseen 477→454），只改标签不动 gold。
+**② 空选集原来是绿的**（`--case <打错的 id>` 跑完 0 条 exit=0），现作参数错误退出 2。
+**③「任何状态变化都算副作用」会把正确行为判红**（「打开空调，再把后备箱打开」里空调本地执行
+是对的），口径必须窄到「需要二次确认的对象被端侧执行」，且判定要用生产自己的 `VAL._need_confirm()`。
+**④ 唯一 run 目录光靠时间戳不够**（同微秒两次调用撞 id）。
+
+**现在能引用什么**：L0 全量 **70/70**（零网络、确定性、exit 0）、172 条专项单测、逐条原始断言复现。
+**不能引用什么**：`exact_plan_set_rate` / seen-unseen / `planner_capability_hallucination_rate` /
+`instability_rate` 的**新口径读数还不存在**——修好口径不等于量过，要等一次固定 provider 的
+L1/L2/L3 全量。**stable 规模按唯一输入算只有 104**（原报 113 条里 9 个是重复输入），
+`--strict` 正确退出非零；正式 baseline 仍未生成（L3 证据未取得）。
 
 四条判据先记住：① **`domain_hit_rate` ≠ `exact_plan_set_rate`**——前者是 RoutingBench
 的历史交集口径（期望两域只命中一域照样绿），后者要求必要组全满足 + 无禁选 + 无未授权
@@ -161,13 +182,16 @@ span 的 `path` × `nlu_gate` × `nlu_vs_rule` 现在能从真实流量算出上
 
 | 待办 | 出处 | 说明 |
 |---|---|---|
-| **尺子自身 3 P0 / 7 P1 / 2 P2**（最高优先） | 2026-08-03 独立评审 | `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md`。**在第 1 步「封假绿」完成前不得生成正式 baseline**：baseline 资格闸可被 `--case/--repeat` 等正常参数绕过 / L2 丢 Edge 副作用 / 多轮契约只跑第一轮 / L3 可复用旧报告 / seen-unseen 有原句跨 cohort 泄漏 / `exact_plan_set_rate` 等口径错记。修复顺序见评审 §5。**修尺子要单独一批**——与修被测对象同批进行是这套体系明令禁止的 |
+| ~~**尺子自身 3 P0 / 7 P1 / 2 P2**~~ | 2026-08-03 独立评审 | **已收口（尺子硬化批，逐条对照见评审 §7）**：12 条逐条修 + 逐条反向构造测试，专项单测 120→172，生产侧零改动。**留下的不是修不动的，是量不到的**——见下面三行 |
+| **新口径读数不存在（最高优先）** | 评审 §7.3 | 口径修好了但没量过：`exact_plan_set_rate` / seen-unseen / `planner_capability_hallucination_rate` / `instability_rate` 都要等**一次固定 provider 的 L1/L2/L3 全量**才有数。在那之前**任何这几个指标的数字都不可引用**，包括 findings §5.4 的旧全量对照表 |
+| **23 条改标 seen 后 unseen 覆盖变薄** | 评审 §7.2-①、§7.3 | 指纹闸抓出 13 条 `unseen_transfer` 的原话字面就在 `skills/exemplars/*.yaml` 里（family 闸对它们全绿），连同 family 闭包共 23 条改标 seen。补法是**新写真正没进过知识的话术**，不是把标签改回去；受影响的是 stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条 |
+| **两条消融 arm 未在真实失败上跑过** | 评审 §7.3 | `cloud-direct`（绕 Edge）与 `planner-only`（不恢复会话状态）已接通并有 layer 归属守卫，但要 live 才跑得起来；在跑起来之前 `EDGE_DIVERGENCE` / `STATE_RESTORE_DIVERGENCE` 只是可达，不是验证过 |
 | **`parking` 缺「查停车费」能力** | findings §6.1 | `parking-payment` 只有 `parking.pay` 一个 capability，「我想先知道多少钱」系统答不了，模型被迫选唯一那个（`require_confirm=true` 兜住了钱不会自己出去）。修法是补 `parking.query_fee` 读能力，按 CLAUDE.md §3 流程走，属新增能力 |
 | **「有点看不清路了」该开大灯还是开雨刷** | findings §6.2 | `ex.colloquial.dark` 维持 `candidate`，等泓舟拍板。⚠ 澄清开关兜底翻 on 后这类天然歧义句更可能走澄清卡，定 gold 时要把 `decision.allowed` 一起定 |
-| **`stable` 113 < 设计要求 120** | 规格 §21.8 | 且评审指出 113 条只有 104 个唯一输入——**规模被重复输入放大了**。要等语料按 canonical fingerprint 去重/去泄漏后重新晋级 |
-| **L3 证据仍未取得** | 规格 §21.8 | 既有 e2e 运行器在本机 `lease_protocol` / `identity_cleanup` 失败。**这是 e2e 运行器的账**，不属对抗套件 |
-| **发现轨主跑仍是 `--ablations off`** | 规格 §21.8 | 红灯只有首偏离点、尚未逐条建立因果证据；且评审 P1-4 指出 trace/消融根本没接通主入口 |
-| **`instability_rate` 3.1% → 4.1%** | 2026-08-03 修复批次 | 本批唯一明确变差的指标。新增抖动集中在新恢复/新增的边界用例上（它们本就站在两域分界线）。虽按口径 `unstable` 不登记为缺陷、且该指标只是下界，**方差变大本身要盯着** |
+| **`stable` 规模实为 104 < 120** | 规格 §21.8 / §22.2 | 原来报的 113 条里有 9 个是重复输入。`validate_suite_counts` 现按**唯一输入**判，`--strict` 正确退出非零。补齐要新写案例，**不能靠改口径** |
+| **L3 证据仍未取得** | 规格 §21.8 | 既有 e2e 运行器在本机 `lease_protocol` / `identity_cleanup` 失败。**这是 e2e 运行器的账**，不属对抗套件。资格闸本身已修好（不再依赖「碰巧写不进去」当保护） |
+| **发现轨主跑仍是 `--ablations off`** | 规格 §21.8 | 红灯只有首偏离点、尚未逐条建立因果证据。trace 已接通主入口（校验前候选 / Hint 前计划**免费**就有），但消融要 live |
+| **`instability_rate` 3.1% → 4.1%** | 2026-08-03 修复批次 | 本批唯一明确变差的指标。新增抖动集中在新恢复/新增的边界用例上（它们本就站在两域分界线）。⚠ **这两个数是旧口径**（分母含只跑过一次的证据单元）；新口径分母只含真的重复过的单元并另给 `repeat_coverage`，两组数**不可直比**，要等新的 live 全量 |
 | **seen 掉的那 1 条** | 2026-08-03 修复批次 | `bd.ns-poi-road.right.seen`「路上怎么样」→ `safety.driving_advice`（gold 要 `safety.road_condition`）。**不能声称与本批无关**——新增常驻 policy 与 `_CLARIFY_SECTION` 判据改变了每一次规划的 prompt。等消融归因 |
 
 **M5 待办（都不阻塞）**：

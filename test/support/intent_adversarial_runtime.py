@@ -73,48 +73,133 @@ class EdgeObservation:
     actions: tuple[dict[str, Any], ...]
     need_confirm: bool
     side_effects: tuple[dict[str, Any], ...]
+    # 本轮端侧真正落到 VAL 的 (object, operate)，以及其中需要二次确认的那些。
+    val_commands: tuple[tuple[str, str], ...] = ()
+    dangerous_commands: tuple[tuple[str, str], ...] = ()
+
+
+class EdgeSession:
+    """一条 case 的 Edge 侧会话：**跨轮共用同一个 servicer**。
+
+    每轮新建 servicer 会把 VAL 状态和端侧会话态一起清零——多轮用例里「第二轮不该
+    重复执行」「挂起还在不在」这类断言就永远为真。单轮用例用 `run_edge_turn()`
+    走同一条路，只是会话活一轮。
+    """
+
+    def __init__(self, session_id: str = "intent-adversarial",
+                 *, cloud_need_confirm: bool = False):
+        from server import EdgeOrchestratorServicer
+        self.session_id = session_id
+        self.cloud_need_confirm = cloud_need_confirm
+        self.srv = EdgeOrchestratorServicer()
+        self.cloud_texts: list[str] = []
+        self._turn = 0
+        self._install_probes()
+
+    def _install_probes(self) -> None:
+        from cockpit.orchestrator.v1 import orchestrator_pb2
+        srv = self.srv
+
+        async def fake_cloud_handle(req):
+            self.cloud_texts.append(req.text)
+            self._seen_this_turn = True
+            final = orchestrator_pb2.FinalResult(
+                speech="cloud", need_confirm=self.cloud_need_confirm)
+            yield orchestrator_pb2.HandleEvent(final=final)
+
+        srv.cloud.handle = fake_cloud_handle
+        srv.obs.emit_turn = _async_noop
+        srv.obs.emit_span = _async_noop
+        srv.obs.emit_state = _async_noop
+        srv.memory.append = _async_noop
+        srv._nlu_shadow_bg = lambda *_args, **_kwargs: None
+        self._val_log = install_val_probe(srv.val)
+
+    def turn(self, text: str, *, meta: dict[str, str] | None = None,
+             is_confirmation: bool = False) -> EdgeObservation:
+        from cockpit.orchestrator.v1 import orchestrator_pb2
+        self._turn += 1
+        self._seen_this_turn = False
+        before = dict(self.srv.val.state)
+        self._val_log.clear()
+        request = orchestrator_pb2.HandleRequest(
+            text=text, session_id=self.session_id, request_id=f"r{self._turn}",
+            is_confirmation=is_confirmation,
+            meta={"memory_enabled": "false", **(meta or {})})
+        events = asyncio.run(_collect(self.srv.Handle(request, None)))
+        return _edge_observation(events, before, self.srv.val.state,
+                                 cloud_text=(text if self._seen_this_turn else ""),
+                                 reached_cloud=self._seen_this_turn,
+                                 val=self.srv.val, commands=list(self._val_log))
+
+
+def install_val_probe(val) -> list[tuple[str, str]]:
+    """记录端侧**真的落到 VAL 的** (object, operate)，返回可清空的日志。
+
+    为什么不直接看 `state` 差分：状态键名由 `_simulate` 逐 object 手写（aircon 会写
+    `hvac_on`/`hvac_temp`/`hvac_wind_speed`），在测试里复刻一份 key→object 映射就是
+    第二套口径，改一边忘一边必然发生。这里只观察调用参数，危险与否交给生产自己的
+    `_need_confirm()` 判。
+    """
+    log: list[tuple[str, str]] = []
+    original = val._simulate
+
+    def traced(obj, operate, data):
+        log.append((str(obj), str(operate)))
+        return original(obj, operate, data)
+
+    val._simulate = traced
+    return log
+
+
+def _edge_observation(events, before: dict, after: dict, *, cloud_text: str,
+                      reached_cloud: bool, val=None,
+                      commands: list[tuple[str, str]] | None = None
+                      ) -> EdgeObservation:
+    finals = [event.final for event in events if event.WhichOneof("event") == "final"]
+    state_delta = {key: value for key, value in after.items()
+                   if before.get(key) != value}
+    actions = tuple(_action_dict(action) for final in finals for action in final.actions)
+    ingress = ("mixed" if reached_cloud and state_delta
+               else "cloud" if reached_cloud else "edge_local")
+    executed = tuple(commands or ())
+    dangerous = tuple(row for row in executed
+                      if val is not None and val._need_confirm(row[0]))
+    return EdgeObservation(
+        ingress=ingress, cloud_text=cloud_text, state_delta=state_delta,
+        actions=actions, need_confirm=any(final.need_confirm for final in finals),
+        side_effects=tuple(action for action in actions
+                           if action["type"] in {"vehicle.control", "media.control"}),
+        val_commands=executed, dangerous_commands=dangerous,
+    )
 
 
 def run_edge_turn(text: str, *, cloud_need_confirm: bool = False,
                   meta: dict[str, str] | None = None,
                   is_confirmation: bool = False) -> EdgeObservation:
     """真实 Edge servicer + 真实 VAL + 内进程云端替身 → ingress 与副作用观测。"""
-    from cockpit.orchestrator.v1 import orchestrator_pb2
-    from server import EdgeOrchestratorServicer
+    session = EdgeSession(cloud_need_confirm=cloud_need_confirm)
+    return session.turn(text, meta=meta, is_confirmation=is_confirmation)
 
-    srv = EdgeOrchestratorServicer()
-    before = dict(srv.val.state)
-    seen: dict[str, str] = {}
 
-    async def fake_cloud_handle(req):
-        seen["text"] = req.text
-        final = orchestrator_pb2.FinalResult(
-            speech="cloud", need_confirm=cloud_need_confirm)
-        yield orchestrator_pb2.HandleEvent(final=final)
+def edge_side_effect_rows(edge: EdgeObservation) -> tuple[dict[str, Any], ...]:
+    """Edge 侧「确认前副作用」的证据 = **端侧执行了需要二次确认的对象**。
 
-    srv.cloud.handle = fake_cloud_handle
-    srv.obs.emit_turn = _async_noop
-    srv.obs.emit_span = _async_noop
-    srv.obs.emit_state = _async_noop
-    srv.memory.append = _async_noop
-    srv._nlu_shadow_bg = lambda *_args, **_kwargs: None
-    request = orchestrator_pb2.HandleRequest(
-        text=text, session_id="intent-adversarial", request_id="r1",
-        is_confirmation=is_confirmation,
-        meta={"memory_enabled": "false", **(meta or {})})
-    events = asyncio.run(_collect(srv.Handle(request, None)))
-    finals = [event.final for event in events if event.WhichOneof("event") == "final"]
-    state_delta = {key: value for key, value in srv.val.state.items()
-                   if before.get(key) != value}
-    actions = tuple(_action_dict(action) for final in finals for action in final.actions)
-    ingress = "mixed" if seen and state_delta else (
-        "cloud" if seen else "edge_local")
-    return EdgeObservation(
-        ingress=ingress, cloud_text=seen.get("text", ""), state_delta=state_delta,
-        actions=actions, need_confirm=any(final.need_confirm for final in finals),
-        side_effects=tuple(action for action in actions
-                           if action["type"] in {"vehicle.control", "media.control"}),
-    )
+    口径刻意窄：`no_side_effect_before_confirm` 问的不是「有没有发生任何状态变化」，
+    而是「危险动作有没有在确认前落地」。同一句「打开空调，再把后备箱打开」里
+    `hvac_on=True` 是完全正确的本地执行——把它算成副作用会把正确行为判红。
+
+    危险与否用生产自己的 `VAL._need_confirm()` 判，不在测试里另立一份对象清单。
+    """
+    rows = [{"source": "edge", "type": "val.execute", "object": obj,
+             "operate": operate, "delta": dict(edge.state_delta)}
+            for obj, operate in edge.dangerous_commands]
+    # 端侧回传的车控/媒体动作沿用既有口径（`require_confirm=True` 的那些是**待确认
+    # 提案**不是已落地效果，但它们本来就不该出现在端侧终局里，一并留证）。
+    rows += [{"source": "edge", "type": action["type"], "payload": action["payload"],
+              "require_confirm": action["require_confirm"]}
+             for action in edge.side_effects]
+    return tuple(rows)
 
 
 # ── L0-B：Route Hint ───────────────────────────────────────────────────────
@@ -382,9 +467,21 @@ async def run_planner_turn(turn, agents, builder, *, granted_permissions=None):
 ABLATION_ARMS = ("no-hints", "no-skills", "no-exemplars", "empty-history",
                  "cloud-direct")
 
+# **arm 按 layer 取**。`cloud-direct`（绕开 Edge 直连 Engine）与 `planner-only`
+# （只跑 Planner，不恢复会话状态）在 L1 上没有对照物——L1 本来就没有 Edge、没有
+# Engine 状态。原来无论失败来自哪层都只跑 L1 那组，于是 `EDGE_DIVERGENCE` 与
+# `STATE_RESTORE_DIVERGENCE` 两个边界结构上永远不可达。
+ABLATION_ARMS_BY_LAYER = {
+    "l1": ("no-hints", "no-skills", "no-exemplars", "empty-history"),
+    "l2": ("cloud-direct", "planner-only", "no-hints", "no-skills",
+           "no-exemplars", "empty-history"),
+}
 
-def requested_ablations(repeat_status: str) -> tuple[str, ...]:
-    return () if repeat_status == "pass" else ABLATION_ARMS
+
+def requested_ablations(repeat_status: str, layer: str = "l1") -> tuple[str, ...]:
+    if repeat_status == "pass":
+        return ()
+    return ABLATION_ARMS_BY_LAYER.get(layer, ())
 
 
 class _NoRouteHints:
@@ -483,8 +580,23 @@ class SafeClients:
     async def recall(self, *_args, **_kwargs):
         return list(self.memories)
 
-    async def append_turn(self, *_args, **_kwargs):
-        return None
+    async def append_turn(self, session_id: str = "", role: str = "",
+                          text: str = "", *_args, **_kwargs):
+        """签名逐字对齐生产 `ContextAssembler.append_turn`（session_id, role, text, …）。
+
+        生产侧这一步在 `memory_enabled=false` 时根本不会被调到，所以多轮 history
+        由 `record_turn()` 显式累积——不能靠一个本轮不会执行的分支来串联上下文。
+        """
+        return self.record_turn(str(role or "user"), str(text or ""))
+
+    def record_turn(self, role: str, text: str) -> None:
+        """多轮用例的第二轮必须看得见第一轮。
+
+        `history` 原本只有契约里写死的那份，同 session 连跑两轮也不会增长——
+        「上一轮已经答过了」这类断言于是测不出任何东西。
+        """
+        if text:
+            self.history.append({"role": role, "text": text})
 
     async def save_focus(self, *_args, **_kwargs):
         return None
@@ -503,11 +615,21 @@ class SafeClients:
         if intent in self.confirm_intents and not confirmed:
             return _FakeResponse(status=1, speech=f"确认要执行 {intent} 吗？",
                                  follow_up="说『确认』即可")
-        if confirmed and intent in self.confirmed_responses:
-            spec = self.confirmed_responses[intent]
-            actions = list(spec.get("actions") or [])
-            for action in actions:
-                self.side_effects.append({"intent": intent, "action": dict(action)})
+        spec = self.confirmed_responses.get(intent) or {}
+        actions = list(spec.get("actions") or [])
+        if intent in self.confirm_intents and not actions:
+            # **危险能力一旦真被执行，必须留下证据。**
+            # 原来只有测试显式传了 `confirmed_responses` 才会产生副作用，而真实
+            # L2 从不传——于是「确认前零副作用」在**最危险的那一类动作上恒为真**：
+            # 替身什么都没做，和确认闸生效，在副作用面上长得一模一样。
+            # 这里让替身自己造证据：真被调到就一定看得见。
+            actions = [{"type": "vehicle.control",
+                        "payload": {"intent": intent, "spy": "auto"}}]
+        for action in actions:
+            self.side_effects.append({"source": "engine", "intent": intent,
+                                      "confirmed": confirmed,
+                                      "action": dict(action)})
+        if actions:
             return _FakeResponse(speech=spec.get("speech", "已完成"),
                                  data=spec.get("data"), actions=actions)
         payload = self.responses.get(intent)
@@ -581,6 +703,7 @@ class EngineObservation:
     side_effects: tuple[dict[str, Any], ...]
     planner_calls: tuple[str, ...]
     plans: tuple[Any, ...]
+    pending_confirm_after: bool | None = None
 
 
 class EngineHarness:
@@ -648,13 +771,21 @@ class EngineHarness:
         else:
             decision = "execute"
         plans = tuple(trace.plan for trace in (self.sink.plans if self.sink else ()))
+        # 本轮结束时挂起确认还在不在，是「确认闸没被绕过」的另一半证据：
+        # 决策是 confirm 但挂起没落库，下一轮的「确认」就会落到空处。
+        state = await self.session.load(session_id)
+        pending_after = bool(state and state.phase == "wait_confirm"
+                             and state.pending_plan)
+        self.clients.record_turn("user", text)
+        if speech:
+            self.clients.record_turn("assistant", speech)
         return EngineObservation(
             decision=decision, speech=str(final.get("speech") or ""),
             need_confirm=need_confirm, events=tuple(events),
             agent_calls=tuple(self.clients.agent_calls),
             side_effects=tuple(self.clients.side_effects),
             planner_calls=tuple(self.planner.calls if self.planner else ()),
-            plans=plans)
+            plans=plans, pending_confirm_after=pending_after)
 
 
 def _new_engine(planner, clients):
@@ -692,68 +823,83 @@ def build_engine_harness(builder, agents, safe_clients, trace_sink):
     return EngineHarness(engine, safe_clients, session, sink=trace_sink)
 
 
+class FullEntrySession:
+    """完整入口的一条 case 会话：真实 Edge servicer 的云端替身直连内进程 Engine。
+
+    servicer 与 harness 都**跨轮存活**：Edge 的 VAL 状态、Engine 的 pending plan 与
+    history 只有活过一轮才谈得上「第二轮不许再执行一次」。
+
+    只有 cloud-direct 通过而完整入口失败时，首偏离点才是 Edge；反过来推不出
+    「Edge 有问题」——那只说明这句话本来就不该上云。
+    """
+
+    def __init__(self, engine_harness: EngineHarness, *, session_id: str = "adv-1"):
+        from server import EdgeOrchestratorServicer
+        self.harness = engine_harness
+        self.session_id = session_id
+        self.srv = EdgeOrchestratorServicer()
+        self._turn = 0
+        self._engine_out: dict[str, EngineObservation] = {}
+        self._install_probes()
+
+    def _install_probes(self) -> None:
+        from cockpit.orchestrator.v1 import orchestrator_pb2
+        from google.protobuf import struct_pb2
+        srv = self.srv
+
+        async def cloud_handle(req):
+            observation = await self.harness.run_async(
+                req.text, session_id=self.session_id,
+                is_confirmation=req.is_confirmation, meta=dict(req.meta or {}))
+            self._engine_out["value"] = observation
+            for event in observation.events:
+                if event.get("kind") != "final":
+                    continue
+                final = orchestrator_pb2.FinalResult(
+                    speech=str(event.get("speech") or ""),
+                    need_confirm=bool(event.get("need_confirm")))
+                for action in event.get("actions") or []:
+                    payload = struct_pb2.Struct()
+                    payload.update({k: str(v) for k, v in
+                                    (action.get("payload") or {}).items()})
+                    final.actions.append(_common_action(
+                        str(action.get("type") or ""), payload,
+                        bool(action.get("require_confirm"))))
+                yield orchestrator_pb2.HandleEvent(final=final)
+
+        srv.cloud.handle = cloud_handle
+        srv.obs.emit_turn = _async_noop
+        srv.obs.emit_span = _async_noop
+        srv.obs.emit_state = _async_noop
+        srv.memory.append = _async_noop
+        srv._nlu_shadow_bg = lambda *_args, **_kwargs: None
+
+    def turn(self, text: str, *, meta: dict[str, str] | None = None,
+             is_confirmation: bool = False
+             ) -> tuple[EdgeObservation, EngineObservation | None]:
+        from cockpit.orchestrator.v1 import orchestrator_pb2
+        self._turn += 1
+        self._engine_out.pop("value", None)
+        before = dict(self.srv.val.state)
+        request = orchestrator_pb2.HandleRequest(
+            text=text, session_id=self.session_id,
+            request_id=f"adv-r{self._turn}", is_confirmation=is_confirmation,
+            meta={"memory_enabled": "false", **(meta or {})})
+        events = asyncio.run(_collect(self.srv.Handle(request, None)))
+        reached_cloud = "value" in self._engine_out
+        edge = _edge_observation(events, before, self.srv.val.state,
+                                 cloud_text=text if reached_cloud else "",
+                                 reached_cloud=reached_cloud)
+        return edge, self._engine_out.get("value")
+
+
 def run_full_entry_turn(text: str, engine_harness: EngineHarness, *,
                         meta: dict[str, str] | None = None,
                         session_id: str = "adv-1",
                         is_confirmation: bool = False
                         ) -> tuple[EdgeObservation, EngineObservation]:
-    """完整入口：真实 Edge servicer 的云端替身直连内进程 Engine。
-
-    只有 cloud-direct 通过而完整入口失败时，首偏离点才是 Edge；反过来推不出
-    「Edge 有问题」——那只说明这句话本来就不该上云。
-    """
-    from cockpit.orchestrator.v1 import orchestrator_pb2
-    from google.protobuf import struct_pb2
-    from server import EdgeOrchestratorServicer
-
-    srv = EdgeOrchestratorServicer()
-    before = dict(srv.val.state)
-    engine_out: dict[str, EngineObservation] = {}
-
-    async def cloud_handle(req):
-        observation = await engine_harness.run_async(
-            req.text, session_id=session_id,
-            is_confirmation=req.is_confirmation, meta=dict(req.meta or {}))
-        engine_out["value"] = observation
-        for event in observation.events:
-            if event.get("kind") != "final":
-                continue
-            final = orchestrator_pb2.FinalResult(
-                speech=str(event.get("speech") or ""),
-                need_confirm=bool(event.get("need_confirm")))
-            for action in event.get("actions") or []:
-                payload = struct_pb2.Struct()
-                payload.update({k: str(v) for k, v in
-                                (action.get("payload") or {}).items()})
-                final.actions.append(_common_action(
-                    str(action.get("type") or ""), payload,
-                    bool(action.get("require_confirm"))))
-            yield orchestrator_pb2.HandleEvent(final=final)
-
-    srv.cloud.handle = cloud_handle
-    srv.obs.emit_turn = _async_noop
-    srv.obs.emit_span = _async_noop
-    srv.obs.emit_state = _async_noop
-    srv.memory.append = _async_noop
-    srv._nlu_shadow_bg = lambda *_args, **_kwargs: None
-    request = orchestrator_pb2.HandleRequest(
-        text=text, session_id=session_id, request_id="adv-r1",
-        is_confirmation=is_confirmation,
-        meta={"memory_enabled": "false", **(meta or {})})
-    events = asyncio.run(_collect(srv.Handle(request, None)))
-    finals = [event.final for event in events if event.WhichOneof("event") == "final"]
-    state_delta = {key: value for key, value in srv.val.state.items()
-                   if before.get(key) != value}
-    actions = tuple(_action_dict(action) for final in finals for action in final.actions)
-    ingress = ("mixed" if engine_out and state_delta
-               else "cloud" if engine_out else "edge_local")
-    edge = EdgeObservation(
-        ingress=ingress, cloud_text=text if engine_out else "",
-        state_delta=state_delta, actions=actions,
-        need_confirm=any(final.need_confirm for final in finals),
-        side_effects=tuple(action for action in actions
-                           if action["type"] in {"vehicle.control", "media.control"}))
-    return edge, engine_out.get("value")
+    session = FullEntrySession(engine_harness, session_id=session_id)
+    return session.turn(text, meta=meta, is_confirmation=is_confirmation)
 
 
 def _common_action(type_: str, payload, require_confirm: bool):

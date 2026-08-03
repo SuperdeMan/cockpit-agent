@@ -459,7 +459,7 @@ cases:
   - id: os.cancel.reminder
     title: 取消那个提醒
     family_id: os.cancel
-    cohort: unseen_transfer
+    cohort: seen_regression
     risk: medium
     status: reviewed
     tags: {attacks: [A2], mechanisms: [object_flip], domains: [reminder, research], layers: [l1]}
@@ -471,7 +471,7 @@ cases:
   - id: os.cancel.research
     title: 取消那个调研
     family_id: os.cancel
-    cohort: unseen_transfer
+    cohort: seen_regression
     risk: medium
     status: reviewed
     tags: {attacks: [A2], mechanisms: [object_flip], domains: [reminder, research], layers: [l1]}

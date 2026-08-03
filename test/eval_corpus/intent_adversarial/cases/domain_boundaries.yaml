@@ -1058,7 +1058,7 @@ cases:
   - id: bd.nn-find-go.left.fuel
     title: 找加油站是发现不是出行
     family_id: bd.nn-find-go.fuel
-    cohort: unseen_transfer
+    cohort: seen_regression
     risk: medium
     status: reviewed
     tags: {attacks: [A1], mechanisms: [domain_collision], domains: [nearby, navigation], boundary_ledger: nearby-navigation.find-vs-go, boundary_side: left, layers: [l1]}
@@ -1070,7 +1070,7 @@ cases:
   - id: bd.nn-find-go.right.fuel
     title: 导航去加油站是出行
     family_id: bd.nn-find-go.fuel
-    cohort: unseen_transfer
+    cohort: seen_regression
     risk: medium
     status: reviewed
     tags: {attacks: [A1], mechanisms: [domain_collision], domains: [nearby, navigation], boundary_ledger: nearby-navigation.find-vs-go, boundary_side: right, layers: [l1]}
@@ -1083,7 +1083,7 @@ cases:
   - id: bd.nn-find-go.left.metro
     title: 搜地铁站是发现
     family_id: bd.nn-find-go.metro
-    cohort: unseen_transfer
+    cohort: seen_regression
     risk: medium
     status: reviewed
     tags: {attacks: [A1], mechanisms: [domain_collision], domains: [nearby, navigation], boundary_ledger: nearby-navigation.find-vs-go, boundary_side: left, layers: [l1]}
@@ -1095,7 +1095,7 @@ cases:
   - id: bd.nn-find-go.right.metro
     title: 带我去地铁站是出行
     family_id: bd.nn-find-go.metro
-    cohort: unseen_transfer
+    cohort: seen_regression
     risk: medium
     status: reviewed
     tags: {attacks: [A1], mechanisms: [domain_collision], domains: [nearby, navigation], boundary_ledger: nearby-navigation.find-vs-go, boundary_side: right, layers: [l1]}
