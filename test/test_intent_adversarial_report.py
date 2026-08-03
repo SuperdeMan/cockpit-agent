@@ -432,16 +432,26 @@ def test_softening_a_gold_is_visible_even_when_the_case_still_passes():
     """
     import eval_intent_adversarial as cli
 
-    baseline = {"cases": [{"id": "c@l1", "passed": True,
-                           "expected": {"gold_digest": "aaaaaaaaaaaaaaaa"}}]}
-    report = {"cases": [{"id": "c@l1", "passed": True,
-                         "expected": {"gold_digest": "bbbbbbbbbbbbbbbb"}}]}
+    # ⚠ `cases` 在真实报告里是 **dict**（`{case_id: row}`，见 eval_common.build_report）。
+    # 第一版这条测试用 list 造 fixture，于是实现按 list 遍历也能绿——**fixture 不是真
+    # 形状时，测试会因为错误的理由通过**。这里用真形状，另留一条 list 兼容分支。
+    def _rows(digest):
+        return {"c@l1": {"id": "c@l1", "passed": True,
+                         "expected": {"gold_digest": digest}}}
+
+    baseline = {"cases": _rows("aaaaaaaaaaaaaaaa")}
+    report = {"cases": _rows("bbbbbbbbbbbbbbbb")}
     assert cli._gold_changes(report, baseline) == [
         "c@l1:aaaaaaaaaaaaaaaa->bbbbbbbbbbbbbbbb"]
     # 指纹没变 / baseline 是更老的无指纹格式 → 都不许冤枉
-    same = {"cases": [{"id": "c@l1", "expected": {"gold_digest": "aaaaaaaaaaaaaaaa"}}]}
-    assert cli._gold_changes(same, baseline) == []
-    assert cli._gold_changes(report, {"cases": [{"id": "c@l1", "expected": {}}]}) == []
+    assert cli._gold_changes({"cases": _rows("aaaaaaaaaaaaaaaa")}, baseline) == []
+    assert cli._gold_changes(report, {"cases": {"c@l1": {"id": "c@l1",
+                                                         "expected": {}}}}) == []
+    # list 形状（历史/合成产物）也不能炸
+    assert cli._gold_changes(
+        {"cases": [{"id": "c@l1", "expected": {"gold_digest": "bbbbbbbbbbbbbbbb"}}]},
+        {"cases": [{"id": "c@l1", "expected": {"gold_digest": "aaaaaaaaaaaaaaaa"}}]}
+    ) == ["c@l1:aaaaaaaaaaaaaaaa->bbbbbbbbbbbbbbbb"]
     blocked = build_adversarial_report(
         [_result("c")], _meta(gold_changes=["c@l1:a->b"]))
     assert "gold_changed_since_baseline" in baseline_eligibility(blocked).reasons

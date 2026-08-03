@@ -23,7 +23,7 @@ import os
 import subprocess
 import sys
 import uuid
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -192,6 +192,14 @@ def validate_args(args: argparse.Namespace) -> argparse.Namespace:
         if args.repeat:
             die("--write-baseline 不接受 --repeat：重复策略由 suite 定，"
                 "--repeat 1 会把高风险三次策略降成一次")
+        # **比较源必须就是要被覆盖的那个文件。** 主流程从 `--baseline` 读旧基线做逐例
+        # 回退 / 删除案例 / gold 变化检查，却固定写 `FORMAL_BASELINE_JSON`——两者可以
+        # 不是同一个文件，于是 `--baseline missing.json` 就是又一条等价 `--force`：
+        # 拿一份空基线做比较，三道检查全部落空，然后照样覆盖正式基线。
+        # 这条与上面那几条是同一形态：**没有 `--force`，但正常参数拼得出来一个。**
+        if args.baseline != str(FORMAL_BASELINE_JSON):
+            die("--write-baseline 不接受自定义 --baseline："
+                "比较源必须是正式基线本身，否则逐例回退/删除案例/gold 变化全部落空")
     if args.repeat and args.repeat < 1:
         die("--repeat 必须 >= 1")
     return args
@@ -343,21 +351,29 @@ def _turn_outcome(turn, snapshot, judgement, sink: TraceSink,
     fallbacks_before = before[3] if len(before) > 3 else 0
     assert_plan = turn.expected.plan.assert_plan
     hint = hints[-1] if hints else None
-    # **幻觉要看这一轮的每一次候选，不只是最后一次。** 一轮里可能有初规划的两次尝试
-    # 加上若干次 replan；只留 `validations[-1]` 会把 replan 的候选当成初规划的候选，
-    # 与 `expected.plan` 的 gold 混在同一条结果里（评审 P1-A）。
-    # raw 意图取**并集**（模型在这一轮里有没有编过能力，编在哪一次都算编了）；
-    # 与初规划 gold 对照的候选取**第一次**（那才是 `expected.plan` 描述的那一次）。
+    # **幻觉看这一轮的每一次候选，首偏离只看最终那一次。** 两个问题、两份取法：
+    #
+    # · `raw_intents` 取**并集** —— 模型在这一轮里有没有编过能力，编在哪一次都算编了。
+    # · `raw_planner_pass` 必须绑到**最后一个被接受的 build 尝试** —— 它回答的是
+    #   「最终这份计划在过校验之前就已经对了吗」。取 `validations[0]` 会在第一次被拒
+    #   （解析/校验没过）、第二次才成功时拿一份**被丢弃的**候选去比 gold，首偏离标签
+    #   随之归错（独立复审第三批 P1-A）。
+    #
+    # 顺带纠正上一版注释里一个反了的事实：**replan 不进这条 trace** ——
+    # `PlanBuilder.replan()` 直接走 `_validated_steps()`，不经 `_parse_and_validate_data`。
+    # 所以一轮里的 validation 全部来自 build 的至多两次尝试，「最后一个 accepted」
+    # 就是最终计划的那一次。
     raw_intents: list[str] = []
     for row in validations:
         raw_intents.extend(row.raw_intents)
-    first = validations[0] if validations else None
+    accepted = [row for row in validations if row.result == "accepted"]
+    final = (accepted or validations)[-1] if validations else None
     return TurnOutcome(
         snapshot=snapshot, judgement=judgement,
         raw_intents=tuple(dict.fromkeys(raw_intents)),
         raw_observed=bool(validations),
-        raw_planner_pass=(_plan_passes(turn.expected.plan, first.raw_candidate)
-                          if first and assert_plan else None),
+        raw_planner_pass=(_plan_passes(turn.expected.plan, final.raw_candidate)
+                          if final and assert_plan else None),
         pre_hint_pass=(_plan_passes(turn.expected.plan, hint.before)
                        if hint and assert_plan else None),
         plan_from_fallback=len(sink.fallbacks) > fallbacks_before)
@@ -524,6 +540,7 @@ def read_l3_report(artifact_root: Path, *, since: float | None = None,
     statuses: dict[str, str] = {}
     stale: list[str] = []
     identity: list[str] = []
+    run_ids: set[str] = set()
     wanted = set(expect_ids or ())
     for path in sorted(Path(artifact_root).glob("**/journeys_report.json")):
         try:
@@ -540,6 +557,22 @@ def read_l3_report(artifact_root: Path, *, since: float | None = None,
                 f"{actual_provider or '(缺失)'!r}，本次要的是 {expect_provider!r}"
                 "——档位不同的报告不采信")
             continue
+        # 报告自己带着锁定状态。**没锁住的产物证明不了它跑在哪个档位上**：
+        # provider 串对得上只说明「启动时想跑这个」，`locked=false` 或中途漂移意味着
+        # 实际服务它的可能是别的模型。正式 baseline 的 L3 证据必须 fail-closed。
+        lock = data.get("provider_lock") or {}
+        if isinstance(lock, dict) and expect_provider:
+            if not lock.get("locked"):
+                identity.append(
+                    f"l3_provider_not_locked: {path.name} 的 provider_lock.locked="
+                    f"{lock.get('locked')!r}——未锁定的产物不能当固定档位的证据")
+                continue
+            if lock.get("drift_detected") or lock.get("drifts"):
+                identity.append(
+                    f"l3_provider_drift: {path.name} 记录了跑批中途的 provider 漂移"
+                    f"（{lock.get('drifts')}）——报告自己就说它作废了")
+                continue
+        run_ids.add(str(data.get("run_id") or ""))
         rows = {str(row["id"]): str(row.get("status") or "")
                 for row in (data.get("journeys") or [])
                 if isinstance(row, dict) and row.get("id")}
@@ -551,6 +584,13 @@ def read_l3_report(artifact_root: Path, *, since: float | None = None,
                     f"{','.join(extra[:10])}——runner 没按本次选集走，"
                     "读到的状态可能来自别的用例")
         statuses.update(rows)
+    # runner 的 `run_id` 是它自己生成的、每次调用唯一。我们注入不进去，但**可以要求
+    # 唯一 run 目录里所有报告同属一次调用**——两个 run_id 出现在同一个目录里，
+    # 说明这批状态不是一次运行的产物，拼起来读就是在编一份没发生过的运行。
+    if len(run_ids) > 1:
+        identity.append(
+            f"l3_run_id_mixed: 本次 run 目录里出现了 {len(run_ids)} 个 run_id "
+            f"（{sorted(run_ids)[:4]}）——这批状态不来自同一次调用")
     return statuses, stale, identity
 
 
@@ -716,14 +756,34 @@ def _expected_dict(case, turn, index: int, layer: str,
                      {"base_case": case.relation.base_case, "type": case.relation.type,
                       "expectation": case.relation.expectation}),
     }
-    # gold 指纹：**baseline 对比只看 `passed` 布尔值时，把 gold 改软是隐形的**——
-    # 删一条 forbidden、打开 allow_extra、改一条 relation 都能让红灯变绿而 diff 为空。
-    # 指纹只覆盖「构成判定的那些字段」，不含 repro/utterance 这类展示性内容。
-    row["gold_digest"] = hashlib.sha256(json.dumps(
-        row, ensure_ascii=False, sort_keys=True,
-        separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+    row["gold_digest"] = gold_digest(case, turn)
     row["repro"] = repro_command(case, layer, args)
     return row
+
+
+def gold_digest(case, turn) -> str:
+    """gold 指纹。**从完整的结构化 `TurnExpectation` 生成，不手挑字段。**
+
+    baseline 对比只看 `passed` 布尔值时，把 gold 改软是隐形的——删一条 forbidden、
+    打开 allow_extra、改一条 relation 都能让红灯变绿而 diff 全空。
+
+    第一版手工挑了一批字段进摘要，结果漏掉 `addressed` / `assert_plan` /
+    `allowed_complexities` / dependencies / slots / retrieval 的 required-forbidden /
+    每一轮 replan 的完整 plan gold——**只删掉一条 required skill，前后指纹逐字相同**
+    （独立复审第三批 P0-B）。手挑字段的摘要必然随契约扩张而漏，唯一不漏的做法是
+    **拿整个 dataclass 序列化**：以后往 `TurnExpectation` 加字段会自动进指纹。
+
+    只排除展示性内容（`utterance` / `repro` 不参与判定）；`context` 要进，它是输入
+    事实的一半，换了上下文就是换了一条 gold。
+    """
+    payload = {
+        "context": turn.context,
+        "expected": asdict(turn.expected),
+        "relation": (None if not case.relation else asdict(case.relation)),
+    }
+    return hashlib.sha256(json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, default=str,
+        separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
 
 
 # ── baseline 写入 ─────────────────────────────────────────────────────────
@@ -1012,18 +1072,30 @@ def _gold_changes(report: dict, baseline: dict) -> list[str]:
     删掉一条 `forbidden_intents`、打开 `allow_extra_intents`、改一条 relation 期望，
     都能把红灯变绿而 diff 全空，「gold 修正必须列出」这条 DoD 因此从来没兑现过。
     """
-    old = {str(row.get("id") or ""): ((row.get("expected") or {}).get("gold_digest"))
-           for row in (baseline.get("cases") or [])}
-    changed: list[str] = []
-    for row in report.get("cases") or []:
-        unit = str(row.get("id") or "")
-        before = old.get(unit)
-        now = (row.get("expected") or {}).get("gold_digest")
-        # baseline 里没有指纹（更老的格式）时不冤枉它：那是「无从比较」，
-        # 由 `removed_cases` / `declared_set_complete` 那几条闸各管各的。
-        if before and now and before != now:
-            changed.append(f"{unit}:{before}->{now}")
-    return sorted(changed)[:50]
+    old = _digests(baseline)
+    now = _digests(report)
+    # baseline 里没有指纹（更老的格式）时不冤枉它：那是「无从比较」，
+    # 由 `removed_cases` / `declared_set_complete` 那几条闸各管各的。
+    return sorted(f"{unit}:{old[unit]}->{now[unit]}"
+                  for unit in set(old) & set(now)
+                  if old[unit] and now[unit] and old[unit] != now[unit])[:50]
+
+
+def _digests(report: dict) -> dict[str, str]:
+    """`cases` 在报告里是 **dict**（`{case_id: row}`，见 `eval_common.build_report`），
+    不是 list——按 list 遍历会拿到一串字符串 key，`row.get` 当场炸。
+    这里两种形状都接受：真实格式是 dict，历史/合成产物可能是 list。
+    """
+    rows = report.get("cases") or {}
+    items = rows.values() if isinstance(rows, dict) else rows
+    out: dict[str, str] = {}
+    for row in items:
+        if not isinstance(row, dict):
+            continue
+        out[str(row.get("id") or "")] = str(
+            (row.get("expected") or {}).get("gold_digest") or "")
+    out.pop("", None)
+    return out
 
 
 def _expected_units(cases, args) -> set[str]:
@@ -1132,6 +1204,19 @@ def _print_summary(report: dict) -> None:
               f"{row['pass_rate'] * 100:.1f}% (n={row['total']})")
 
 
+def _report_run_ids(artifact_root: Path, *, since: float | None = None) -> set[str]:
+    """本次 run 目录里所有报告声明的 runner `run_id`。审计用，不做判定。"""
+    out: set[str] = set()
+    for path in sorted(Path(artifact_root).glob("**/journeys_report.json")):
+        try:
+            if since is not None and path.stat().st_mtime < since:
+                continue
+            out.add(str(json.loads(path.read_text(encoding="utf-8")).get("run_id") or ""))
+        except (OSError, json.JSONDecodeError, AttributeError):
+            continue
+    return out
+
+
 def l3_invocation_id(code_sha: str, now: datetime | None = None) -> str:
     """时间戳 + pid + 随机尾巴。
 
@@ -1163,6 +1248,7 @@ def _l3_evidence(selected, args, provider_model
     statuses, stale, identity = read_l3_report(
         artifact_root, since=started.timestamp(),
         expect_provider=provider_model, expect_ids=list(ids))
+    report_run_ids = _report_run_ids(artifact_root, since=started.timestamp())
     infra: list[str] = list(identity)
     meta = {
         "invocation_id": invocation, "started_at": started.isoformat(),
@@ -1171,6 +1257,8 @@ def _l3_evidence(selected, args, provider_model
         "journey_ids": list(ids), "exit_code": code,
         "artifact_root": str(artifact_root.relative_to(ROOT).as_posix()),
         "stale_reports_ignored": stale,
+        # runner 自己生成的 run_id：注入不进去，但记下来可审计（同目录里出现两个即报错）
+        "report_run_ids": sorted(report_run_ids),
     }
     if code != 0:
         # **非零退出一律基础设施失败。** 之前只在「读不到任何 statuses」时才记，于是

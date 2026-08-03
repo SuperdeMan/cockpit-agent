@@ -126,9 +126,11 @@ def test_single_green_case_cannot_write_the_formal_baseline(tmp_path, monkeypatc
     修法是**不替换 `load_agents`**（用真实 manifest 走完契约），并显式断言
     「资格闸真的被问过、且给出了非空理由」。守红线的测试自己要被审计，这是第三例。
     """
+    # 占位内容必须是**合法 JSON**：`--write-baseline` 现在强制以正式基线自身为比较源
+    # （见 P0-A），拿不可解析的占位会让 `load_baseline` 抢在闸前面炸。
     formal_json = tmp_path / "baseline.json"
     formal_md = tmp_path / "baseline.md"
-    formal_json.write_text("old-json", encoding="utf-8")
+    formal_json.write_text('{"cases": {}, "_placeholder": "old"}', encoding="utf-8")
     formal_md.write_text("old-md", encoding="utf-8")
     monkeypatch.setattr(cli, "FORMAL_BASELINE_JSON", formal_json)
     monkeypatch.setattr(cli, "FORMAL_BASELINE_MD", formal_md)
@@ -154,14 +156,12 @@ def test_single_green_case_cannot_write_the_formal_baseline(tmp_path, monkeypatc
     monkeypatch.setattr(cli, "_semantic_retrieval_expected", lambda: False)
     monkeypatch.chdir(tmp_path)
 
-    # `--baseline` 缺省就是正式基线本身（对比源与写入目标是同一个文件）；这里已经把
-    # 它换成占位内容，所以显式指开一个不存在的路径，别让「读旧基线」抢在闸前面炸。
-    code = cli.main(_baseline_argv("--baseline", str(tmp_path / "absent.json")))
+    code = cli.main(_baseline_argv())
 
     assert "reasons" in asked, "资格闸压根没被问到——这一跑在更早的地方就退出了"
     assert "declared_set_incomplete" in asked["reasons"]
     assert code == 2
-    assert formal_json.read_text(encoding="utf-8") == "old-json"
+    assert formal_json.read_text(encoding="utf-8") == '{"cases": {}, "_placeholder": "old"}'
     assert formal_md.read_text(encoding="utf-8") == "old-md"
 
 
@@ -643,7 +643,8 @@ def test_l3_runner_nonzero_exit_is_infrastructure_even_with_a_readable_report(
     def _fake_run_l3(ids, *, provider, model, artifact_root=None, env=None):
         Path(artifact_root).mkdir(parents=True, exist_ok=True)
         (Path(artifact_root) / "journeys_report.json").write_text(
-            json.dumps({"provider": "p:m",
+            json.dumps({"provider": "p:m", "run_id": "e2e-1",
+                        "provider_lock": {"locked": True, "drift_detected": False},
                         "journeys": [{"id": "A1-1", "status": "pass"}]}),
             encoding="utf-8")
         return 2
@@ -869,7 +870,8 @@ def test_l3_report_from_the_wrong_provider_is_not_this_run_s_evidence(tmp_path):
     report = tmp_path / "run" / "journeys_report.json"
     report.parent.mkdir(parents=True)
     report.write_text(json.dumps({
-        "provider": "deepseek:deepseek-v4-flash",
+        "provider": "deepseek:deepseek-v4-flash", "run_id": "e2e-1",
+        "provider_lock": {"locked": True, "drift_detected": False},
         "journeys": [{"id": "A1-1", "status": "pass"}]}), encoding="utf-8")
 
     statuses, _, identity = read_l3_report(tmp_path, expect_provider="minimax:MiniMax-M3")
@@ -886,7 +888,8 @@ def test_l3_report_covering_journeys_we_never_selected_is_flagged(tmp_path):
     report = tmp_path / "run" / "journeys_report.json"
     report.parent.mkdir(parents=True)
     report.write_text(json.dumps({
-        "provider": "p:m",
+        "provider": "p:m", "run_id": "e2e-1",
+        "provider_lock": {"locked": True, "drift_detected": False},
         "journeys": [{"id": "A1-1", "status": "pass"},
                      {"id": "B3-3", "status": "pass"}]}), encoding="utf-8")
 
@@ -910,3 +913,181 @@ def test_an_l3_case_without_a_journey_link_is_a_gap_not_a_disappearance():
     args = parse_args(["--layer", "l3", "--live", "--provider", "p", "--model", "m"])
     units = cli._expected_units([linked, orphan], args)
     assert units == {"linked@l3", "orphan@l3"}
+
+
+# ── 第三批复审（§9）的 2 P0 / 2 P1 ─────────────────────────────────────────
+
+
+def test_write_baseline_refuses_a_custom_comparison_source():
+    """反向构造：`--write-baseline --baseline missing.json`。
+
+    主流程从 `--baseline` 读旧基线做逐例回退 / 删除案例 / gold 变化三道检查，却固定
+    写 `FORMAL_BASELINE_JSON`——两者可以不是同一个文件，于是拿一份空基线做比较、
+    三道检查全部落空，然后照样覆盖正式基线。**没有 `--force`，但正常参数拼得出来一个**
+    （这已经是同一形态的第三条：选集过滤器 / `--repeat` / 比较源）。
+    """
+    with pytest.raises(SystemExit) as exc:
+        validate_args(parse_args(_baseline_argv("--baseline", "missing.json")))
+    assert exc.value.code == 2
+    # 缺省（= 正式基线本身）仍然放行
+    assert validate_args(parse_args(_baseline_argv())).baseline == str(
+        cli.FORMAL_BASELINE_JSON)
+
+
+def test_gold_digest_closes_over_every_field_the_judge_reads():
+    """反向构造：只改一条 judge 真的会读、但第一版摘要漏掉的 gold 字段。
+
+    手挑字段的摘要必然随契约扩张而漏——第一版就漏了 retrieval / addressed /
+    assert_plan / dependencies / slots / 每轮 replan 的完整 plan gold，
+    「只删一条 required skill 前后指纹逐字相同」。
+    """
+    from dataclasses import replace as _replace
+
+    from support.intent_adversarial_contract import (
+        DependencyExpectation, PlanExpectation, RetrievalExpectation,
+        ReplanExpectation, SlotExpectation,
+    )
+
+    base = _case("g", turns=(CaseTurn(
+        utterance="附近的充电站", context={},
+        expected=TurnExpectation(
+            addressed=True,
+            plan=PlanExpectation(assert_plan=True,
+                                 required_groups=(IntentGroup(("charging.find",)),)),
+            retrieval=RetrievalExpectation(required_skills=("charging-route",)))),))
+    original = cli.gold_digest(base, base.turns[0])
+
+    def _mutated(**changes):
+        turn = base.turns[0]
+        return cli.gold_digest(
+            base, _replace(turn, expected=_replace(turn.expected, **changes)))
+
+    mutations = {
+        "retrieval": _mutated(retrieval=RetrievalExpectation(required_skills=())),
+        "addressed": _mutated(addressed=None),
+        "assert_plan": _mutated(plan=_replace(base.turns[0].expected.plan,
+                                              assert_plan=False)),
+        "complexity": _mutated(plan=_replace(base.turns[0].expected.plan,
+                                             allowed_complexities=("simple",))),
+        "dependency": _mutated(plan=_replace(
+            base.turns[0].expected.plan,
+            dependencies=(DependencyExpectation(("a.b",), "c.d", ("x",)),))),
+        "slot": _mutated(plan=_replace(
+            base.turns[0].expected.plan,
+            slots=(SlotExpectation("charging.find", "keyword", "presence"),))),
+        "replan_gold": _mutated(replans=(ReplanExpectation(
+            after={"result": {}},
+            plan=PlanExpectation(assert_plan=True,
+                                 required_groups=(IntentGroup(("nearby.search",)),))),)),
+    }
+    for name, digest in mutations.items():
+        assert digest != original, f"改了 {name} 但 gold 指纹没变"
+    assert len({*mutations.values()}) == len(mutations), "不同改动不该撞成同一个指纹"
+
+
+def test_raw_evidence_binds_to_the_accepted_attempt_not_the_first_one():
+    """反向构造：第一次候选错、第二次候选对且被接受。
+
+    生产 `PlanBuilder.build()` 最多两次尝试，而 `replan()` 直接走 `_validated_steps()`
+    **不进这条 trace**——所以一轮里的 validation 全部来自 build 尝试，最终计划对应的是
+    **最后一个被接受**的那次。取 `validations[0]` 会拿一份被丢弃的候选去比 gold，
+    首偏离标签随之归错。
+    """
+    from support.intent_adversarial_judge import PlanSnapshot, StepSnapshot
+    from support.intent_adversarial_trace import TraceSink, ValidationTrace
+
+    def _snap(intent):
+        return PlanSnapshot(
+            steps=(StepSnapshot(id="s1", agent_id=intent.split(".")[0], intent=intent,
+                                slots={}, depends_on=(), slot_refs={},
+                                require_confirm=False),),
+            complexity="simple", goal="", skills=(), exemplars=(),
+            hint_effect="", catalog_stats={})
+
+    turn = CaseTurn(utterance="附近的充电站", context={},
+                    expected=TurnExpectation(plan=PlanExpectation(
+                        assert_plan=True,
+                        required_groups=(IntentGroup(("charging.find",)),),
+                        allow_extra_intents=True)))
+    good = ValidationTrace(raw_intents=("charging.find",),
+                           raw_candidate=_snap("charging.find"),
+                           admitted_intents=("charging.find",),
+                           accepted=_snap("charging.find"), result="accepted")
+    bad = ValidationTrace(raw_intents=("nearby.search",),
+                          raw_candidate=_snap("nearby.search"),
+                          admitted_intents=("charging.find",),
+                          accepted=PlanSnapshot.empty(), result="rejected")
+
+    def _pass(order):
+        sink = TraceSink()
+        sink.validations.extend(order)
+        snapshot = SimpleNamespace(plan=_snap("charging.find"))
+        outcome = cli._turn_outcome(
+            turn, snapshot, SimpleNamespace(passed=True), sink, (0, 0, 0, 0))
+        return outcome
+
+    # 首错次对：证据必须来自**被接受**的那次，而不是被丢弃的第一次
+    first_wrong = _pass((bad, good))
+    assert first_wrong.raw_planner_pass is True
+    # 幻觉率仍取全部尝试的并集——两个问题两份取法
+    assert set(first_wrong.raw_intents) == {"charging.find", "nearby.search"}
+
+    # 首错次也错（第二次被接受但候选就是错的）→ 如实报 False
+    wrong_accepted = ValidationTrace(
+        raw_intents=("nearby.search",), raw_candidate=_snap("nearby.search"),
+        admitted_intents=("charging.find",), accepted=_snap("nearby.search"),
+        result="accepted")
+    assert _pass((bad, wrong_accepted)).raw_planner_pass is False
+
+    # 两次都没被接受（随后落 `_fallback`）→ 没有 accepted 可绑，退回最后一次
+    assert _pass((bad, bad)).raw_planner_pass is False
+
+    # ⚠ 「首对次错」这个顺序在生产里**到不了**：`build()` 一旦接受就 break，
+    # 不会再有第二次尝试。所以只需保证「取最后一个 accepted」，不必为不可达状态设计。
+    from orchestrator.cloud import planning as _planning
+    import inspect as _inspect
+    build_src = _inspect.getsource(_planning.PlanBuilder.build)
+    assert "break" in build_src, "build() 接受后必须 break，否则上面这条前提不成立"
+
+
+def test_an_unlocked_or_drifted_l3_report_is_not_evidence(tmp_path):
+    """反向构造：provider 串对得上，但报告自己说没锁住 / 中途漂移了。
+
+    provider 串只说明「启动时想跑这个」；`locked=false` 或漂移意味着实际服务它的可能
+    是别的模型。报告自己都声明作废了，不能当固定档位的证据。
+    """
+    def _write(name, lock):
+        path = tmp_path / name / "journeys_report.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "provider": "p:m", "run_id": "e2e-1", "provider_lock": lock,
+            "journeys": [{"id": "A1-1", "status": "pass"}]}), encoding="utf-8")
+
+    _write("unlocked", {"locked": False, "drift_detected": False})
+    statuses, _, identity = read_l3_report(tmp_path, expect_provider="p:m")
+    assert statuses == {} and any("l3_provider_not_locked" in r for r in identity)
+
+    for path in tmp_path.glob("**/journeys_report.json"):
+        path.unlink()
+    _write("drifted", {"locked": True, "drift_detected": True, "drifts": ["a->b"]})
+    statuses, _, identity = read_l3_report(tmp_path, expect_provider="p:m")
+    assert statuses == {} and any("l3_provider_drift" in r for r in identity)
+
+
+def test_two_run_ids_in_one_run_directory_is_not_one_run(tmp_path):
+    """唯一目录里出现两个 runner run_id → 这批状态不来自同一次调用。
+
+    我们注入不进 runner 自己生成的 run_id，但**可以要求同一个 run 目录里只有一个**。
+    把两次运行的状态拼起来读，就是在编一份没发生过的运行。
+    """
+    for index, (name, journey) in enumerate((("a", "A1-1"), ("b", "A1-2"))):
+        path = tmp_path / name / "journeys_report.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "provider": "p:m", "run_id": f"e2e-{index}",
+            "provider_lock": {"locked": True, "drift_detected": False},
+            "journeys": [{"id": journey, "status": "pass"}]}), encoding="utf-8")
+
+    _, _, identity = read_l3_report(tmp_path, expect_provider="p:m",
+                                    expect_ids=["A1-1", "A1-2"])
+    assert any("l3_run_id_mixed" in row for row in identity)
