@@ -822,10 +822,22 @@ examples——于是「车控」这一整片在范例库里是空白。
 - **已是多成员的 `any_of` 补别名（3 处）**，含 `ex.colloquial.{hot,cold}`——
   它们实测产出的正是 `aircon.dec`/`aircon.inc`，方向本来就是对的。
 
-**没做且有理由**：`tu.hvac.{inc-vs-dec,dec-vs-inc}` 的 `any_of` 仍是单成员。
-放宽会把 `hvac.dec` 的单成员正例从 2 掉到 1，打破覆盖矩阵的 `positive: 2`
-——上次放宽 `-second` 时正是为此补了 `-third`。要放宽得先补新的单成员正例，
-那是**加用例**不是改 gold，另开。
+**当时没做**：`tu.hvac.{inc-vs-dec,dec-vs-inc}` 的 `any_of` 仍是单成员——放宽会把
+`hvac.dec` 的单成员正例从 2 掉到 1，打破覆盖矩阵的 `positive: 2`。
+
+**✅ 随后走了 ②（治本，`5d95ceb`），上面这个两难因此消失。**
+删掉 `aircon.inc/dec`、统一到 `hvac.inc/dec`（能力面 78 → **76**；风速
+`aircon.wind_speed.*` 保留，那不是同义词）。语料侧删除对它们的引用**是被迫的**
+（intent 已不存在，契约的 typo 守卫会拦），不是为了绿而改 gold。
+**live 复验**（重建 edge-orchestrator 后 registry 报 72 caps）：
+`ex.colloquial.{hot,cold}` + `tu.hvac.{dec-vs-inc,inc-vs-dec}` **4/4 通过、
+instability 0%**——这四条此前都是随机红（`tu.hvac.dec-vs-inc` 在 3 趟分布里 7/9）。
+⇒ §10 那 18 条不稳定里，**A2 主体翻转那条与 A9 的一部分由此确定性收口**。
+
+> **判据：一个动作只能有一个名字——尤其当能力面只靠名字区分时。**
+> 而且它本来就是历史意外不是设计：`fast_intent` 的 aircon 分支里
+> `close→hvac.off`、`set→hvac.set`、`open→hvac.on`，偏偏 `inc/dec→aircon.*`
+> ——**同一个对象在同一段代码里有两套前缀**。
 
 > 顺带一条元判据：**语料里那条 2026-08-02 的 `gold_revision_reason` 已经写对了根因，
 > 却只改了两条用例。** 「发现了」和「改遍了」是两件事——发现根因时要问一句
