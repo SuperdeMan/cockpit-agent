@@ -1501,3 +1501,29 @@ registry → planner → executor → 车况镜像这一整条，而不只是「
 `B1-2` / `B2-3` / `B5-1` / `B5-2` **本批全部通过** ⇒ 方差，不是稳定缺陷；
 `B3-1` 是**语料问题**（gold 依赖真实天气）＋一次真缺陷（下雨了没改行程）；
 `B3-2` 在**高德侧**。
+
+### 12.12 收尾自查撞到的：`pytest test/`（目录粒度）不是有效基线
+
+全量根跑（`python -m pytest --import-mode=importlib`，项目文档基线命令）**只有 1 条红**
+——而且那条是**门禁按设计拦我的**（台账条数断言 20，我加了一条 ruling；它的原注释就写着
+「这里红一次就是提醒『裁定加了，兑现物加了吗』」。已先证明兑现物在场
+—— `validate_boundary_coverage` 零错误、左右各 2 条 `reviewed` 对照 —— 再改成 21）。
+
+但收尾自查时顺手跑了一次 `pytest test/`，红 **15** 条，差点当成回归。拆开是两件事：
+
+- **3 条是我自己的环境变量**：`test_eval_intent_adversarial_cli.py` 用
+  `subprocess(text=True)` 按系统默认编码解子进程输出，父进程设了 `PYTHONIOENCODING=utf-8`
+  就 `UnicodeDecodeError`。**2026-08-03 记过同一个坑，我又踩了一遍**——
+  **为了自己看得舒服而改的环境变量，也是环境变量。**
+- **12 条是裸名 import 被劫持**：`test/support/intent_adversarial_runtime.py` 的
+  `from server import EdgeOrchestratorServicer` 解析到了 **`llm-gateway/server.py`**
+  （回溯里直接印出「LLM Gateway gRPC 服务」的模块 docstring）。触发方是某条先跑的
+  e2e 模块把 `llm-gateway` 插进 `sys.path`；根跑时收集次序不同、`orchestrator/edge` 先赢。
+  **不是本批引入**——该文件与那行 import 本批一字未动，且单跑该文件 36/36 全过。
+
+> **判据：裸名 import 的胜负由 `sys.path` 次序决定，而次序由选集决定。**
+> 所以「换个选集再跑一遍」不是补跑回归，是**换了一把尺子**。它与既有那条
+> 「对照基线必须与被测环境同分母」是同一条的另一面：那次是分母变小（worktree 缺
+> `gen/python`），这次是**分母变小反而多出红灯**。
+
+已立卡（`AGENTS.md` §4.1），本批不修——修它要动多处共享的 import 管道，属另一批。
