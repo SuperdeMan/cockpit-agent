@@ -10,12 +10,12 @@ priority: 85
 #   （首版 506 字符实测把 navigation-with-stop 挤成 !clipped）。改这段务必先数字数。
 knowledge: |
   == 否定与延缓（跨域）==
-  - 『别X/先别X/不要X/不用X/暂时不X』= **不要做 X**：不得规划 X，**也不得规划 X 的反面**
-  （『空调先别关』不是开空调，『车门先别锁』不是解锁）——用户在阻止一个动作，不是下达
-  相反的动作。没有别的诉求就只回一句话（chitchat.talk），不出任何写操作 step。
-  - 一句里肯定与否定并存（『查下明天天气，先别提醒我带伞』）：只规划被肯定的那部分，
-  被否定的那部分一个 step 都不出。延缓+先了解（『先别交费，我想先知道多少钱』）同理，
-  被延缓的写操作（支付/下单/锁车）绝不排进计划。
+  - 『别/先别/不要/不用/暂时不 X』：**X 与 X 的反面都不出 step**；无其他诉求只回复。
+  - 肯定与否定并存：**只保留肯定部分**，被否定或延缓的动作一步都不出。
+few_shots:
+  # 等价改写，刻意不复制 nq.hvac.keep-volume 的原句，保护 unseen_transfer 身份。
+  - user: 空调别动，声音小点
+    plan: {"steps":[{"id":"s1","agent_id":"edge-vehicle","intent":"volume.dec","slots":{},"depends_on":[],"slot_refs":{}}]}
 golden:
   # 这里用的都是**语料之外**的说法：把对抗语料的原句写进 golden，等于把 unseen 案例
   # 洗成 seen，之后"通过率涨了"就再也读不出泛化了（findings §4.3-2）。
@@ -26,5 +26,8 @@ golden:
     expect_intents: [chitchat.talk]
     expect_not: [trunk.open, trunk.close]
     holdout: true
+  - text: 空调保持现在这样，声音小一点
+    expect_intents: [volume.dec]
+    expect_not: [hvac.off, hvac.on]
 owner: orchestrator
 version: 1

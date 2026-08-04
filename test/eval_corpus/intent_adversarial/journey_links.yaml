@@ -1,13 +1,20 @@
-schema_version: 1
+schema_version: 2
 # 对抗 case → 现有 journey id 的链接。只链接，不复制旅程 gold。
 #
 # 准入判据（设计 §10.4）：必须跨进程/协议才能复现，或必须验证
 # Planner→Executor→Agent→聚合的连续性。普通单轮落域句一条都不加——
 # 低层能等价复现的东西再建一份 journey 只是重复建设。
+# 每条链接还必须声明它获准证明的断言与映射理由；journey 全绿不能自动证明语义不同的 case。
 links:
-  cp.adaptive.weather-outing: [B3-3]
-  cp.dep.charge-then-navigate: [A1-2]
-  cs.pending.cancel: [B2-1]
-  ei.dangerous.combined: [A5-3]
-  ei.mixed.hvac-weather: [A1-1]
-  ei.mixed.volume-reminder: [A2-2a]
+  cp.dep.charge-then-navigate:
+    - journey_id: A1-2
+      assertion: dependency_continuity
+      rationale: 两边都验证 charging.find 的结果被消费进 navigation，而不是两个孤立步骤
+  ei.dangerous.combined:
+    - journey_id: A5-3
+      assertion: dangerous_confirmation_continuity
+      rationale: 两边都验证危险后备箱动作与无害动作并列时仍保留确认闸，确认后才执行
+  ei.mixed.hvac-weather:
+    - journey_id: A1-1
+      assertion: mixed_ingress_continuity
+      rationale: 两边都验证本地车控与在线天气同句时没有被端侧整句吞掉，且两域动作均完成

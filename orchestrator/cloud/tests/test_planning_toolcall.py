@@ -356,6 +356,22 @@ def test_malformed_slots_list_rejects_plan_atomically():
     assert PlanBuilder._validated_steps(raw, amap) == []
 
 
+def test_malformed_step_element_rejects_plan_atomically_instead_of_crashing():
+    """真栈 3-sample gate 抓到：`steps` 外层是 list，但其中混入字符串。
+
+    模型输出是不可信输入；元素不是 object 时整份计划必须原子拒绝并进入既有重试链，
+    不能对字符串调用 `.get()` 把整趟跑批和在线请求一起打死。
+    """
+    amap = {"hvac": MockAgent("hvac", ["hvac.set"])}
+    raw = [
+        {"id": "s1", "agent_id": "hvac", "intent": "hvac.set",
+         "slots": {"temperature": "24"}},
+        "s2: then check the weather",
+    ]
+
+    assert PlanBuilder._validated_steps(raw, amap) == []
+
+
 def test_malformed_depends_and_slot_refs_normalized_not_crash():
     """depends_on/slot_refs 被模型输出成 ""（真栈日志实证）：字符串 depends_on 会被
     逐字符迭代、非 dict slot_refs 在 executor 处同款崩——归一为空后步骤照常成立。"""

@@ -98,6 +98,58 @@ def test_conditional_reminder_guide_covers_parallel_unconditional_boundary():
         "缺少条件分支金标"
 
 
+def test_shop_order_flow_few_shot_demonstrates_dependency_wiring():
+    """正文说「要接线」还不够：真栈会照着 few-shot 的输出骨架模仿。
+
+    2026-08-04 三样本 gate 中，`cp.dep.menu-then-order` 检回了 guide 与 shop#6，
+    仍有 1/3 只输出两个并行 step。原 few-shot 恰好只有「只看菜单」单步，依赖结构只
+    藏在正文示例里。这里钉死最强示范通道必须包含 depends_on + slot_refs 两件套。
+    """
+    store = sk.SkillStore()
+    guide = next(d for d in store.guides() if d.name == "shop-order-flow")
+    wired = [
+        shot for shot in guide.few_shots
+        if len((shot.get("plan") or {}).get("steps") or []) == 2
+    ]
+    assert wired, "点单 guide 缺少两步依赖 few-shot"
+    steps = wired[0]["plan"]["steps"]
+    assert [s["intent"] for s in steps] == ["shop.menu", "shop.order"]
+    assert steps[1]["depends_on"] == [steps[0]["id"]]
+    assert steps[1]["slot_refs"]["item"].startswith(steps[0]["id"] + ".")
+
+    repairs = guide.plan_repairs
+    assert len(repairs) == 1, "软提示仍会被模型忽略，关键接线必须有声明式归一兜底"
+    repair = repairs[0]
+    assert repair.producer_intent == "shop.menu"
+    assert repair.consumer_intent == "shop.order"
+    assert repair.slot == "item"
+    assert repair.source_path == "data.items.0.name"
+    assert "招牌" in repair.trigger_any
+
+
+def test_negation_policy_demonstrates_keep_the_positive_half():
+    """混合句不能只教「被否定的动作不做」，还要示范另一半仍要保留。
+
+    纯否定 golden 全绿不能保护 `别做 X，把 Y 调小`：三样本 gate 实测 1/3 把 X 与 Y
+    一起规划。few-shot 与 golden 分别钉输出骨架和可执行断言，且使用对抗原句之外的话术。
+    """
+    store = sk.SkillStore()
+    policy = next(d for d in store.policies() if d.name == "negation-and-deferral")
+    mixed = [
+        shot for shot in policy.few_shots
+        if any(s.get("intent") == "volume.dec"
+               for s in ((shot.get("plan") or {}).get("steps") or []))
+    ]
+    assert mixed, "否定 policy 缺少「否定一半、保留另一半」few-shot"
+    intents = [s["intent"] for s in mixed[0]["plan"]["steps"]]
+    assert intents == ["volume.dec"]
+    assert any(
+        "volume.dec" in (g.get("expect_intents") or [])
+        and "hvac.off" in (g.get("expect_not") or [])
+        for g in policy.golden
+    ), "混合否定缺少同时断言保留项与禁选项的 golden"
+
+
 # ── 渲染 ──────────────────────────────────────────────────────────────────────
 
 def test_render_block_has_policies_and_guides_within_budget():

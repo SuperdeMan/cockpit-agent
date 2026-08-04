@@ -45,3 +45,12 @@ exemplars:
   tags:
   - badcase
   note: 有颜色/形状描述就不用再看一眼——抓帧是敏感动作，能不抓就不抓
+- text: 车里的净化模式从哪儿开
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: manual
+  added: '2026-08-04'
+  tags:
+  - badcase
+  note: 未接入车控能力的车内功能操作问法归说明书，不落空计划或闲聊

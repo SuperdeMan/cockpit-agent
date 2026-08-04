@@ -307,6 +307,9 @@ class PlannerEngine:
                     "llm_raw": gate_content(plan.raw_llm, 1200),
                     # M0b Skill 层注入名单（"<mode>:<name>"），badcase 归因用
                     **({"skills": ",".join(plan.skills)} if plan.skills else {}),
+                    # 模型原生接对与声明式 skill 归一后接对必须分开观测。
+                    **({"skill_effects": ",".join(plan.skill_effects)}
+                       if getattr(plan, "skill_effects", None) else {}),
                     # M5 P1 范例库注入名单（"<mode>:<eid>@通道:分数"，被裁记 !clipped）：
                     # 「范例没检回 / 检回了没用对 / 检回了却被裁」三种失败一眼可分
                     **({"exemplars": ",".join(plan.exemplars)}
@@ -919,6 +922,7 @@ class PlannerEngine:
                 goal=state.pending_plan.get("goal", ""),
             )
             restored.skills = list(state.pending_plan.get("skills") or [])
+            restored.skill_effects = list(state.pending_plan.get("skill_effects") or [])
             restored.exemplars = list(state.pending_plan.get("exemplars") or [])
             return restored, seeds
         except Exception as e:
@@ -975,6 +979,7 @@ class PlannerEngine:
             # T2 知识继承跨挂起（2026-07-27 评审二批）：不存 skills 的话，补槽/确认恢复后
             # 的再规划会丢初规划注入的规划知识（replan 按 plan.skills 重渲染，见 loop.py）
             "skills": list(plan.skills or []),
+            "skill_effects": list(getattr(plan, "skill_effects", []) or []),
             "exemplars": list(getattr(plan, "exemplars", []) or []),   # 同款（M5 P1）
         }
 

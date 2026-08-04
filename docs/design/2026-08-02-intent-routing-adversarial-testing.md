@@ -581,7 +581,7 @@ micro，不得冒充去重后的案例准确率。门禁要求每个 stable case
 
 第一期提供本地验收命令，不直接修改 CI。
 
-普通 stable 案例首次失败后扩展到 3 次；`stable_fail` 和 `unstable` 都不能算通过。高风险案例固定 3 次，任一次危险错误即阻断。
+普通 stable 与高风险 stable 均固定 3 次；`stable_fail` 和 `unstable` 都不能算通过，任一次危险错误即阻断。失败扩展仍用于 discovery 等允许普通案例首跑 1 次的 suite，不能替代 gate 的基础采样数。
 
 首要阈值：
 
@@ -1216,11 +1216,15 @@ relation 就准了；**要求「变了」的那一类（`route_flip`，占 103/1
 | 场合 | 槽位该不该相同 | 槽位断言 |
 |---|---|---|
 | `clause_commute`（同样的词换顺序） | **该** | 恒开 |
-| `invariant` 且两侧**原话相同**（换的是上下文） | **该**——不同即「历史串进了槽位」 | 开 |
-| `invariant` 且两侧**原话不同**（换的是说法） | 不该 | 关 |
+| `invariant` 显式声明 `expectation.slot_policy: subset` | **该**——作者有来源证据，variant 不得引入 base 支撑集从未观测到的槽位取值 | 开 |
+| `invariant` 未声明槽位策略 | **不能猜**——模型补可选默认槽位不等于历史串味 | 关 |
 
-「两侧原话是否相同」在 CLI 的 relation 装配处判定（只有那里同时拿得到两侧 case），
-不塞进 `RelationSpec`——它是两条用例之间的关系，不是某一条用例的属性。
+**2026-08-04 晚补充裁定**：两侧原话相同也不是槽位来源证据。`cs.news.stale-trip`
+三次都正确落 `info.news`，variant 只因有时补 `limit=10` / `topic=新闻` 被
+`relation.invariant.slots` 判红；这些都是模型默认值，不能证明来自陈旧 trip 历史。
+因此槽位比较改为**显式 gold**，不再从 `same_utterance` 启发式推导。声明了
+`slot_policy: subset` 就执行，与原话是否相同无关；没声明就只守路由不变性。
+契约只接受 `subset`，未知值 fail-closed。
 
 **这不是放宽**：§22.6 那次裁定的成果（`cp.reminder-weather.swapped` 的「明天早上八点」
 必须现形）由 `clause_commute` 的槽位断言原样保住；`route_flip`/`context_override`
@@ -1232,3 +1236,60 @@ plain/colloquial 对照，以及 `nq.match.future` / `nq.news-week.this`），�
 
 **作废声明（§9 纪律）**：依赖 relation 判定的读数一并作废。`relation_pass_rate` 在
 §22.6 已作废，本次无新增连带；新口径全量读数待一次固定 provider 的 L1 全量。
+
+### 22.9 gate 多样本与 L3 证据授权硬化（2026-08-04）
+
+一次独立审计发现两个「配置/文件看起来存在，主路径却没有消费」的问题：
+
+1. `SuiteConfig.normal_repeats` 已有字段，但 `repeat_plan()` 与
+   `_repeat_policy_complete()` 对普通案例仍硬编码 `1`；正式 gate 写着几次都只跑、只核一次。
+2. `journey_links.yaml` 只存 `case → journey_id`。loader 只核 journey id 存在，随后把
+   journey 的整体 pass 直接投影成 `case_id@l3` pass；标题相近但语义不同也能借绿灯。
+
+**裁定与落地：**
+
+- gate 的 `normal_repeats` 固定为 **3**，执行计划与 baseline 资格闸共同消费同一份 suite
+  策略；`gate.normal_repeats < 3` 在加载配置时直接拒绝。普通 stable 不再等首次失败后才补样本。
+- 晋级证据仍要求**两趟独立进程 × 每趟 3 次 = 6 样本**；这是晋级取证与日常 gate
+  观测两个不同层次，不能互相替代。
+- `journey_links.yaml` 升为 schema v2，每条授权必须包含
+  `journey_id + assertion + rationale`；未知 case、未声明 L3 的 case、未知 journey、空理由、
+  未知 assertion 与重复链接全部 fail-closed。L3 报告把授权 claim 原样写进 expected/assertion，
+  不再只显示一个无语义的 journey id。
+- 删除三条错映射：weather-outing→记忆车控、pending cancel→插话后确认、音量+提醒→赛程提醒。
+  保留三条经逐项核对的映射：充电→导航依赖（A1-2）、危险动作确认连续性（A5-3）、
+  本地车控+在线天气混合入口（A1-1）。
+
+`cp.dep.charge-then-navigate` 在固定 `minimax:MiniMax-M3` 下两趟 L1 **6/6**、两趟均
+provider 锁定且检索零降级；新鲜 A1-2 L3 **1/1** 通过后晋级 stable。正式 gate 因而首次拥有
+非空 L3 选集（A1-2），stable **132→133**、唯一输入 **122→123**。
+
+取证时又复现 `lease_protocol`。根因不是身份栈：L3 evaluator 把 `TEMP/TMP` 指到仓库深层
+artifact 目录，run-id + lease-id + 原子写临时名叠加后路径长 **264**，Windows 报
+`FileNotFoundError`，外层压成租约错误。artifact 根改为短系统临时目录并补 MAX_PATH 反向构造；
+相同命令随后 discovery L3 与正式 gate L3 均通过，且新鲜度/provider/run-id/选集核对完整。
+
+### 22.10 完整三样本 gate 的修复验收与新边界（2026-08-04）
+
+§22.9 的元素层崩溃修好后，三趟完整 L1 gate 读数为
+**115/117 → 109/117 → 113/117**。三趟均锁定 `minimax:MiniMax-M3`，无检索降级与
+基础设施错误。中间读数反而变差，是因为 mixed-negation policy 增长后挤掉了
+navigation guide；这证明了一条完整门禁纪律：
+
+> **定向 case 转绿只证明局部修复有效，不证明知识预算和其他 stable 没有回归。**
+
+同批又暴露 `cp.dep.menu-then-order` 的假绿：gold 只要求依赖边，不要求数据接线；
+补 `carries: [item]` 后立即 0/3。修复采用已注入 guide 的受限 `plan_repairs`，
+只能给已有、唯一的 producer/consumer 补 `slot_refs + depends_on`，不能新增 intent、
+覆盖真值或在 `shadow/off/!clipped` 时生效。确定性修改必须单列 `skill_effects`，
+不得冒充 planner 原生正确。
+
+最终完整 L1 为 **113/117**：4 条均为 `unstable`，无 `stable_fail`；706 次检索零降级，
+trace/infra 错误 0，repeat coverage 117/117，post-validation 能力幻觉逃逸 0/117。
+四条在其他完整/定向批次有正确面，说明一进程内 repeat 3 仍是相关样本；
+它解决了单次幸运通过，没有解决跨进程方差。
+
+**验收裁定**：尺子/L3/运行器/已定性产品问题的修复有效；正式 baseline 目标未达成。
+当前资格闸仍因 `unstable_results`、`gate_failures`、非 `--layer all`、工作树不干净与
+raw planner 幻觉率非零而拒绝。本批未生成 baseline；完整验收见
+`docs/reviews/2026-08-04-review-intent-adversarial-finalization.md`。

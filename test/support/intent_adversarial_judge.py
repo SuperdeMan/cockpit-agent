@@ -41,6 +41,7 @@ class PlanSnapshot:
     catalog_stats: dict[str, Any]
     raw_llm: str = ""
     plan_mode: str = ""
+    skill_effects: tuple[str, ...] = ()
 
     @classmethod
     def empty(cls) -> "PlanSnapshot":
@@ -520,8 +521,8 @@ def judge_relation(spec, base_support, variant: DecisionSnapshot, *,
     | 场合 | 槽位该不该相同 | 断言 |
     |---|---|---|
     | `clause_commute`（同样的词换顺序） | **该** | always |
-    | `invariant` 且两侧**原话相同**（换的是上下文） | **该**（历史串进槽位是真缺陷） | on |
-    | `invariant` 且两侧**原话不同**（换的是说法） | 不该 | off |
+    | `invariant` 且 gold 显式声明 `slot_policy: subset` | **该**（有来源证据时守历史串味） | on |
+    | `invariant` 未声明槽位策略 | 不该猜（模型补默认槽位不等于历史串味） | off |
 
     这不是放宽：`cp.reminder-weather.swapped` 的「明天早上八点」仍由 `clause_commute`
     的槽位断言抓住（§10.12 那次裁定的成果一条不丢），而 `route_flip` 反而**变严**了。
@@ -560,8 +561,9 @@ def judge_relation(spec, base_support, variant: DecisionSnapshot, *,
     if spec.type == "invariant":
         _assert(out, "relation.invariant", in_support,
                 sorted(map(repr, base_routes)), repr(variant_route))
-        if same_utterance:
-            # 同一句话、只换上下文 → **不得引入** base 从没产生过的槽位取值。
+        if expected.get("slot_policy") == "subset":
+            # 只有 gold 显式声明时才裁「不得引入 base 从没产生过的槽位取值」。
+            # 同一句话只说明输入文本相同，不能证明模型补出的可选默认值来自历史。
             # 用子集而不是逐字相等：少一个可从原话恢复的可选槽位不是串味（实测
             # `cs.weather.stale-restaurant` 的 `date` 时有时无），**多一个才是**。
             introduced = _slot_pairs(variant) - set().union(

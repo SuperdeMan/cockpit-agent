@@ -22,6 +22,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
@@ -583,22 +584,91 @@ def _engine_side_effects(engine) -> tuple[dict[str, Any], ...]:
 # ── L3 ─────────────────────────────────────────────────────────────────────
 
 
-def load_journey_links(path: Path = JOURNEY_LINKS_PATH) -> dict[str, list[str]]:
+@dataclass(frozen=True)
+class JourneyLink:
+    """一条 case → journey 证据授权。
+
+    journey 通过只能证明这里显式写出的 claim；`rationale` 让人工复审能核两边语义，避免
+    仅凭一个相近标题就把无关旅程的绿灯投影到 case 上。
+    """
+
+    journey_id: str
+    assertion: str
+    rationale: str
+
+
+_JOURNEY_LINK_ASSERTIONS = {
+    "dependency_continuity",
+    "dangerous_confirmation_continuity",
+    "mixed_ingress_continuity",
+}
+
+
+def load_journey_link_specs(
+        path: Path = JOURNEY_LINKS_PATH,
+        cases_dir: Path = CASES_DIR) -> dict[str, tuple[JourneyLink, ...]]:
     if not Path(path).is_file():
         return {}
     data = contract._read_yaml(Path(path))
     contract._expect_keys(data, {"schema_version", "links"}, str(path))
-    if data.get("schema_version") != 1:
-        raise ValueError(f"{path}: schema_version must be 1")
-    known = known_journey_ids()
-    out: dict[str, list[str]] = {}
-    for case_id, journey_ids in (data.get("links") or {}).items():
-        ids = [str(j) for j in (journey_ids or [])]
-        missing = [j for j in ids if j not in known]
+    if data.get("schema_version") != 2:
+        raise ValueError(f"{path}: schema_version must be 2")
+    raw_links = data.get("links") or {}
+    if not isinstance(raw_links, dict):
+        raise ValueError(f"{path}: links must be a mapping")
+
+    known_journeys = known_journey_ids()
+    known_cases = {case.id: case for case in contract.load_cases(Path(cases_dir))}
+    out: dict[str, tuple[JourneyLink, ...]] = {}
+    for raw_case_id, rows in raw_links.items():
+        case_id = str(raw_case_id)
+        case = known_cases.get(case_id)
+        if case is None:
+            raise ValueError(f"{path}: links unknown case {case_id!r}")
+        if "l3" not in set(case.tags.get("layers") or []):
+            raise ValueError(f"{path}: case {case_id} does not declare l3")
+        if not isinstance(rows, list) or not rows:
+            raise ValueError(f"{path}: case {case_id} must link at least one journey")
+
+        specs: list[JourneyLink] = []
+        for index, row in enumerate(rows):
+            where = f"{path}: case {case_id} link[{index}]"
+            if not isinstance(row, dict):
+                raise ValueError(f"{where} must be a mapping")
+            contract._expect_keys(
+                row, {"journey_id", "assertion", "rationale"}, where)
+            journey_id = str(row.get("journey_id") or "").strip()
+            assertion = str(row.get("assertion") or "").strip()
+            rationale = str(row.get("rationale") or "").strip()
+            if not journey_id:
+                raise ValueError(f"{where}.journey_id must not be empty")
+            if not assertion:
+                raise ValueError(f"{where}.assertion must not be empty")
+            if not rationale:
+                raise ValueError(f"{where}.rationale must not be empty")
+            if assertion not in _JOURNEY_LINK_ASSERTIONS:
+                raise ValueError(
+                    f"{where}.assertion must be one of "
+                    f"{sorted(_JOURNEY_LINK_ASSERTIONS)}")
+            specs.append(JourneyLink(journey_id, assertion, rationale))
+
+        ids = [spec.journey_id for spec in specs]
+        if len(ids) != len(set(ids)):
+            raise ValueError(f"{path}: case {case_id} links duplicate journeys")
+        missing = [journey_id for journey_id in ids
+                   if journey_id not in known_journeys]
         if missing:
             raise ValueError(f"{path}: case {case_id} links unknown journeys {missing}")
-        out[str(case_id)] = ids
+        out[case_id] = tuple(specs)
     return out
+
+
+def load_journey_links(path: Path = JOURNEY_LINKS_PATH) -> dict[str, list[str]]:
+    """兼容现有选集/运行接口；审计元数据由 `load_journey_link_specs` 保留。"""
+    return {
+        case_id: [spec.journey_id for spec in specs]
+        for case_id, specs in load_journey_link_specs(path).items()
+    }
 
 
 def known_journey_ids(directory: Path = JOURNEYS_DIR) -> set[str]:
@@ -819,6 +889,7 @@ def _snapshot_dict(snapshot: DecisionSnapshot) -> dict[str, Any]:
                   for s in snapshot.plan.steps],
         "replans": [[s.intent for s in plan.steps] for plan in snapshot.replans],
         "skills": list(snapshot.plan.skills), "exemplars": list(snapshot.plan.exemplars),
+        "skill_effects": list(snapshot.plan.skill_effects),
         "hint_effect": snapshot.plan.hint_effect,
         "catalog_stats": snapshot.plan.catalog_stats,
         "side_effects": list(snapshot.side_effects),
@@ -1267,7 +1338,8 @@ def _repeat_policy_complete(results, suite) -> bool:
     for row in results:
         if row.layer not in LIVE_LAYERS or row.layer == "l3":
             continue
-        need = suite.high_risk_repeats if row.risk in {"high", "critical"} else 1
+        need = (suite.high_risk_repeats if row.risk in {"high", "critical"}
+                else suite.normal_repeats)
         if not row.passed:
             need = max(need, suite.failure_repeats)
         if len(row.repetitions) < need:
@@ -1293,6 +1365,8 @@ def _print_diagnosis(report: dict) -> None:
                   f"side_effects={row['actual'].get('side_effects')}")
         print(f"   检索: skills={row['actual'].get('skills')} "
               f"exemplars={row['actual'].get('exemplars')}")
+        if row["actual"].get("skill_effects"):
+            print(f"   Skill归一: {row['actual']['skill_effects']}")
         if row.get("plan_from_fallback"):
             print("   [!] 计划来自编排兜底（_fallback），**不是 planner 的判断**："
                   "两次解析都没成。兜底产物恒为 chitchat.talk，"
@@ -1371,6 +1445,18 @@ def l3_invocation_id(code_sha: str, now: datetime | None = None) -> str:
     return f"{stamp}-{os.getpid()}-{uuid.uuid4().hex[:6]}-{code_sha or 'nosha'}"
 
 
+def l3_artifact_root(invocation: str, temp_root: Path | None = None) -> Path:
+    """给嵌套的 E2E 私有 bundle 留出 Windows 路径预算。
+
+    `run_e2e.py` 还会追加 run-id、lease-id 与原子写临时文件名。把系统临时目录改到仓库
+    深层 `docs/reviews/eval/...` 会让最终路径越过传统 MAX_PATH；Python 随后把它表现成
+    `FileNotFoundError`，外层只看到 `lease_protocol`。唯一 invocation 仍保留在路径末尾，
+    但根目录改用短的系统临时目录。
+    """
+    base = Path(temp_root) if temp_root is not None else Path(tempfile.gettempdir())
+    return base.resolve() / "car-agent-l3" / invocation
+
+
 def _l3_evidence(selected, args, provider_model
                  ) -> tuple[list[str], dict[str, str], list[str], dict[str, Any]]:
     if args.layer not in {"l3", "all"} or not args.live:
@@ -1385,8 +1471,7 @@ def _l3_evidence(selected, args, provider_model
     code_sha = eval_common.git_short_sha()
     invocation = l3_invocation_id(code_sha)
     started = datetime.now(timezone.utc)
-    artifact_root = (ROOT / "docs" / "reviews" / "eval"
-                     / "_ci-run-intent-l3-artifacts" / invocation)
+    artifact_root = l3_artifact_root(invocation)
     code = run_l3(ids, provider=args.provider, model=args.model,
                   artifact_root=artifact_root)
     statuses, stale, identity = read_l3_report(
@@ -1399,7 +1484,7 @@ def _l3_evidence(selected, args, provider_model
         "code_sha": code_sha, "provider_model": provider_model,
         "provider": args.provider, "model": args.model,
         "journey_ids": list(ids), "exit_code": code,
-        "artifact_root": str(artifact_root.relative_to(ROOT).as_posix()),
+        "artifact_root": artifact_root.as_posix(),
         "stale_reports_ignored": stale,
         # runner 自己生成的 run_id：注入不进去，但记下来可审计（同目录里出现两个即报错）
         "report_run_ids": sorted(report_run_ids),
@@ -1427,13 +1512,14 @@ def _l3_evidence(selected, args, provider_model
 def repeat_plan(selected, args, suite) -> dict[str, int]:
     """每条 case 的重复次数。relation 成对时两边取 max——否则配不成对。
 
-    base 是 medium（1 次）而 variant 是 high（3 次）时，逐次成对裁 relation 就少了
+    base 是 medium（suite.normal_repeats 次）而 variant 是 high（3 次）时，逐次成对裁 relation 就少了
     两个 base 样本；把 base 也提到 3 次是唯一不需要「拿第 1 次凑第 3 次」的做法。
     """
     base_reps = {}
     for case in selected:
         base_reps[case.id] = args.repeat or (
-            suite.high_risk_repeats if case.risk in {"high", "critical"} else 1)
+            suite.high_risk_repeats if case.risk in {"high", "critical"}
+            else suite.normal_repeats)
     by_id = {case.id: case for case in selected}
     for case in selected:
         if not case.relation:
@@ -1720,14 +1806,15 @@ def _l3_results(selected, args, l3_statuses, provider_model) -> list[Adversarial
     """
     if args.layer not in {"l3", "all"} or not l3_statuses:
         return []
-    links = load_journey_links()
+    links = load_journey_link_specs()
     rows: list[AdversarialResult] = []
     for case in selected:
         if "l3" not in layers_for(case, args.layer):
             continue
-        journeys = links.get(case.id) or []
-        if not journeys:
+        journey_links = links.get(case.id) or ()
+        if not journey_links:
             continue
+        journeys = [link.journey_id for link in journey_links]
         statuses = {j: l3_statuses.get(j, "missing") for j in journeys}
         passed = all(value == "pass" for value in statuses.values())
         rows.append(AdversarialResult(
@@ -1752,14 +1839,17 @@ def _l3_results(selected, args, l3_statuses, provider_model) -> list[Adversarial
             metrics={},
             expected={"utterance": case.turns[0].utterance,
                       "journeys": journeys,
+                      "journey_links": [asdict(link) for link in journey_links],
                       "repro": "python scripts/run_e2e.py --id e2e_journeys "
                                f"--provider {args.provider} --model {args.model} "
                                f"（E2E_JOURNEY_IDS={','.join(journeys)}）"},
             actual={"journey_statuses": statuses},
             admitted_intents=(), actual_intents=(),
-            assertions=tuple({"name": f"journey:{j}", "passed": s == "pass",
-                              "expected": "pass", "actual": s}
-                             for j, s in statuses.items()),
+            assertions=tuple({
+                "name": f"journey:{link.journey_id}:{link.assertion}",
+                "passed": statuses[link.journey_id] == "pass",
+                "expected": "pass", "actual": statuses[link.journey_id],
+            } for link in journey_links),
             # journey 红灯没有分层对照物，声称首偏离点是 Planner 只是在编。
             repetitions=(), divergence="" if passed else "UNCLASSIFIED"))
     return rows

@@ -31,6 +31,7 @@ import asyncio
 import glob
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -80,6 +81,8 @@ _GOLDEN_KEYS = {"text", "expect_intents", "expect_any", "expect_not",
                                        #   原句自证把 10/10 读成泛化能力）
                 "expect_ablation_effect"}  # true=该 holdout 应体现知识因果增益（消融
                                            #   full过∧without不过；报告型预期，不 gate）
+_PLAN_REPAIR_KEYS = {"kind", "trigger_any", "producer_intent", "consumer_intent",
+                     "slot", "source_path"}
 _DIR_OF_TYPE = {"guide": "guides", "policy": "policies", "workflow": "workflows"}
 
 
@@ -159,6 +162,29 @@ def _lane_files(root) -> list[str]:
                 errs.append(f"{rel}: {field}={v!r} 必须是整数")
         if raw.get("keywords") is not None and not isinstance(raw.get("keywords"), list):
             errs.append(f"{rel}: keywords 必须是列表")
+        repairs = raw.get("plan_repairs")
+        if repairs is not None and not isinstance(repairs, list):
+            errs.append(f"{rel}: plan_repairs 必须是列表")
+        for index, repair in enumerate(repairs if isinstance(repairs, list) else []):
+            where = f"{rel}: plan_repairs[{index}]"
+            if not isinstance(repair, dict):
+                errs.append(f"{where} 必须是映射")
+                continue
+            bad = set(repair) - _PLAN_REPAIR_KEYS
+            if bad:
+                errs.append(f"{where} 含未知键 {sorted(bad)}")
+            if repair.get("kind") != "dependency_slot_ref":
+                errs.append(f"{where} kind 仅支持 dependency_slot_ref")
+            triggers = repair.get("trigger_any")
+            if (not isinstance(triggers, list) or not triggers
+                    or not all(isinstance(v, str) and v.strip() for v in triggers)):
+                errs.append(f"{where} trigger_any 必须是非空字符串列表")
+            for field in ("producer_intent", "consumer_intent", "slot", "source_path"):
+                if not str(repair.get(field) or "").strip():
+                    errs.append(f"{where} 缺 {field}")
+            source_path = str(repair.get("source_path") or "")
+            if source_path and not re.fullmatch(r"data(?:\.[A-Za-z0-9_]+)+", source_path):
+                errs.append(f"{where} source_path 必须是 data.* 相对路径")
         if name:
             if name in seen:
                 errs.append(f"{rel}: 与 {seen[name]} 重名（name={name}）")
@@ -176,6 +202,10 @@ def _lane_contract(docs: list[sk.SkillDoc]) -> list[str]:
         if d.type == "guide" and d.golden and not any(g.get("holdout") for g in d.golden):
             errs.append(f"{d.name}: guide 缺 holdout golden（≥1 条词法盲区真改写——"
                         f"没有它满分只是原句自证，README「治理」）")
+        for repair in d.plan_repairs:
+            for intent in (repair.producer_intent, repair.consumer_intent):
+                if intent not in known:
+                    errs.append(f"{d.name}: plan_repair 意图 {intent!r} 不存在于能力清单")
         for g in d.golden:
             bad_keys = set(g) - _GOLDEN_KEYS
             if bad_keys:

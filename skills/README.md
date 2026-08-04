@@ -38,6 +38,10 @@ skills/
 > **policy 是常驻的，它的字数每一轮规划都在付钱**——写之前先数字数，改之后连带看 guide 的头寸。
 > 守卫 `orchestrator/cloud/tests/test_skills_budget_headroom.py`（常驻总量 + 最大 guide
 > 必须放得进预算，已反验）。**能当场发现的唯一原因是注入名单诚实**（`!clipped` 不谎称已注入）。
+> 2026-08-04 再次反验：否定 policy 只增 48 字，就在真实
+> `navigation-with-stop + charging-strategy + weather-outing` 候选中挤掉第一条，
+> 两条 stable 契约 3/3 转红。因此守卫已增**真实候选混合**；“最大一条单独放得进”
+> 不再被当成预算安全证明。
 
 ## 检索双通道（`SKILLS_RETRIEVAL`，2026-07-26 起）
 
@@ -81,6 +85,13 @@ knowledge: |                    # 注入 planner 的领域判据（markdown，�
 few_shots:                      # 可选（2026-07-26 实装）：渲染进注入块，紧跟 knowledge；
   - user: 去惠州怎么充电         #   plan 为 dict 时紧凑 JSON 序列化（输出形态示范）
     plan: {"steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.plan",...}]}
+plan_repairs:                    # 可选：软提示被忽略时的窄归一；只连接已存在的唯一两步
+  - kind: dependency_slot_ref   #   不新增 intent、不覆盖真实槽值，多生产/消费步骤时不猜
+    trigger_any: [第一个, 最便宜]
+    producer_intent: nearby.search
+    consumer_intent: nearby.order
+    slot: poi_id
+    source_path: data.items.0.id #   运行时拼成 <producer_step_id>.data.items.0.id
 golden:                         # 必填（guide）：自带黄金用例，接 eval 双车道（见「治理」）
   - text: 去惠州怎么充电
     expect_intents: [charging.plan]   # AND：全部必须出现；单项支持 "a|b" 双容忍
@@ -105,6 +116,11 @@ version: 1
 文件才下线。同样这些问题在 `eval_skills` 文件级校验车道里是**硬失败**（CI 阻断）——
 运行时保知识可用性，门禁保主干整洁，坏文件到不了 main。未知顶层键（如 `few_shot`
 拼写错误）告警不拒载——静默忽略会让作者以为知识生效了。
+
+`plan_repairs` 不是新的安全权威，也不是 route hint：它不能创建或改选 intent，只能在该
+guide **实际注入且未被 `!clipped`**、`trigger_any` 命中、生产/消费步骤各唯一、目标槽无
+真实值与引用时补 `slot_refs + depends_on`。实际作用写入 `plan.skill_effects`；因此报告能
+分开“模型原生接对”和“skill 归一后接对”。确认、权限、能力存在性仍由硬层裁决。
 
 ## 治理
 

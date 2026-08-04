@@ -452,6 +452,10 @@ class PlanBuilder:
         plan.skills = sk_names
         plan.exemplars = ex_names
         plan.plan_mode = plan_mode
+        # guide 的软提示偶尔会被模型忽略。plan_repairs 是同一资产里的声明式窄归一：
+        # 只能给已存在且唯一的两步补数据接线，不新增路由、不覆盖用户真值；实际作用
+        # 单列 skill_effects，不能让「模型原生答对」与「知识层修过」在观测上混成一个。
+        plan.skill_effects = _skills.apply_plan_repairs(plan, text, sk_names)
 
         # 确定性路由兜底（覆盖 LLM 解析成功 + 降级语义路由两条路径）：通用 RouteHintEngine
         # 按各 Agent manifest.route_hints（priority 降序）施加。research.run 与 trip.*（含
@@ -566,7 +570,9 @@ class PlanBuilder:
         if bool(data.get("done")):
             return ReplanDecision(done=True)
         steps = self._validated_steps(data.get("steps", []), agent_map)
-        return ReplanDecision(done=not bool(steps), steps=steps)
+        repair_plan = Plan(steps=steps)
+        effects = _skills.apply_plan_repairs(repair_plan, goal, skill_names)
+        return ReplanDecision(done=not bool(steps), steps=steps, skill_effects=effects)
 
     def _extract_data(self, raw: str):
         """raw 文本 → dict；解析不出来返回 None。
@@ -694,6 +700,10 @@ class PlanBuilder:
 
     @staticmethod
     def _validated_steps(raw_steps: list, agent_map: dict) -> list[Step]:
+        if not isinstance(raw_steps, list):
+            logger.warning("Plan steps is %s (not list), dropping plan for retry",
+                           type(raw_steps).__name__)
+            return []
         # F4：按 agent 校验 intent（不是全局集合），防止 LLM 错配 agent/intent
         agent_intents: dict[str, set[str]] = {
             aid: {c.intent for c in a.manifest.capabilities}
@@ -708,6 +718,14 @@ class PlanBuilder:
         steps = []
         invalid = False
         for s in raw_steps:
+            # 外层是 list 不代表元素就是 JSON object。真栈曾返回合法 step 后混一条
+            # 字符串；直接 `.get()` 会把整个请求/跑批打死。与 slots/depends_on 的防御
+            # 同一原则：一直校验到真正要消费的元素，畸形一步触发整份计划原子拒绝。
+            if not isinstance(s, dict):
+                logger.warning("Plan step is %s (not object), dropping plan for retry: %r",
+                               type(s).__name__, s)
+                invalid = True
+                continue
             aid = s.get("agent_id", "")
             intent = s.get("intent", "")
 

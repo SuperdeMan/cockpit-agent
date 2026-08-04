@@ -163,6 +163,41 @@ async def emit(nc):
     assert "brandnew_notice" in vocabulary.proactive_types
 
 
+def test_skill_plan_repair_source_path_is_not_an_intent_namespace(tmp_path: Path):
+    """`data.items...` 是 StepResult 路径，不能污染业务词表。"""
+    root = _repo(tmp_path)
+    _write(
+        root,
+        "skills/guides/sample.yaml",
+        """
+name: sample
+type: guide
+plan_repairs:
+  - kind: dependency_slot_ref
+    trigger_any: [first]
+    producer_intent: repairproducer.query
+    consumer_intent: repairconsumer.run
+    slot: item
+    source_path: data.items.0.name
+golden:
+  - text: sample
+    expect_intents: [sample.query]
+""",
+    )
+    _write(
+        root,
+        "orchestrator/cloud/verify.py",
+        "def passthrough(data):\n    return data\n",
+    )
+
+    vocabulary = load_architecture_vocabulary(root)
+
+    assert "sample" in vocabulary.identifier_terms
+    assert {"repairproducer", "repairconsumer"} <= vocabulary.identifier_terms
+    assert "data" not in vocabulary.identifier_terms
+    assert guard_architecture(root) == ()
+
+
 def test_manifest_null_route_hints_is_an_empty_retired_hint_list(
     tmp_path: Path,
 ):

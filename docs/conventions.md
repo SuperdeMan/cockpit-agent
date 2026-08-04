@@ -407,7 +407,9 @@ collector 在 `insert_span` 收到 `cloud.planning` 时按 `trace_id` **合并�
 | `gold_intents` | `POST /api/turns/{id}/label` | 人工标注的正确落域。**UPSERT 不碰、保留期豁免** |
 | `edge_nlu` | span `edge_nlu` + `edge_agree`（`!=` 后缀=端云分歧） | **端云分歧轮是信息量最大的标注样本**；evolve 据此产 `edge_divergence` 信号把该轮拉进日报。存成一列而不是逐轮拉 span 详情——分歧要能当扫描期信号，逐轮补拉是 N+1 |
 
-`cloud.planning` span 另有三组归因属性：`skills`（知识层注入名单）、`exemplars`（范例层，
+`cloud.planning` span 另有四组归因属性：`skills`（知识层注入名单）、`skill_effects`
+（已注入 skill 的受限 `plan_repairs` 实际修改记录；空=未修，不得与模型原生正确混读）、
+`exemplars`（范例层，
 契约同 skills：`<mode>:<eid>@lex\|vec:分数`，超预算记 `!clipped`）、`hint_effect` +
 `catalog_chars`/`catalog_dropped`。badcase 先看这三行——**没检回 / 检回了没用对 / 检回了却被裁**
 是三种不同的失败。

@@ -231,9 +231,9 @@ cases:
     family_id: cp.dep-charge-nav
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
+    status: stable
     tags: {attacks: [A4], mechanisms: [composition, dependency], domains: [charging, navigation], layers: [l1, l3]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-04, stabilized_samples: 6, evidence_report: "docs/reviews/2026-08-04-review-intent-adversarial-finalization.md"}
     turns:
       - input: {utterance: 找个最近的充电站，然后导航过去, context: {}}
         expected:
@@ -254,7 +254,7 @@ cases:
         expected:
           plan:
             required_intent_groups: [{any_of: [shop.menu]}, {any_of: [shop.order]}]
-            dependencies: [{producer: [shop.menu], consumer: shop.order}]
+            dependencies: [{producer: [shop.menu], consumer: shop.order, carries: [item]}]
             allow_extra_intents: false
   - id: cp.dep.search-then-detail
     title: 搜完再看第一家详情

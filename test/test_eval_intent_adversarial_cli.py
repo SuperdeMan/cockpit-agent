@@ -240,10 +240,46 @@ def test_l3_uses_existing_runner_and_selected_journey_ids(monkeypatch):
 
 def test_journey_links_reject_unknown_journey_ids(tmp_path):
     path = tmp_path / "journey_links.yaml"
-    path.write_text("schema_version: 1\nlinks:\n  some.case: [NOPE-9]\n",
-                    encoding="utf-8")
+    path.write_text("""schema_version: 2
+links:
+  ei.mixed.hvac-weather:
+    - journey_id: NOPE-9
+      assertion: mixed_ingress_continuity
+      rationale: 同一条混合入口链路
+""", encoding="utf-8")
     with pytest.raises(ValueError, match="unknown journeys"):
         load_journey_links(path)
+
+
+def test_journey_link_contract_requires_assertion_and_rationale(tmp_path):
+    path = tmp_path / "journey_links.yaml"
+    path.write_text("""schema_version: 2
+links:
+  ei.mixed.hvac-weather:
+    - journey_id: A1-1
+      assertion: mixed_ingress_continuity
+""", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="rationale"):
+        cli.load_journey_link_specs(path)
+
+
+@pytest.mark.parametrize(("case_id", "message"), [
+    ("typo.case", "unknown case"),
+    ("cp.dep.search-then-detail", "does not declare l3"),
+])
+def test_journey_links_reject_unknown_or_non_l3_case_ids(tmp_path, case_id, message):
+    path = tmp_path / "journey_links.yaml"
+    path.write_text(f"""schema_version: 2
+links:
+  {case_id}:
+    - journey_id: A1-1
+      assertion: mixed_ingress_continuity
+      rationale: 不能让拼错的 case 静默消失
+""", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        cli.load_journey_link_specs(path)
 
 
 def test_known_journey_ids_reads_the_real_corpus():
@@ -294,6 +330,44 @@ def test_journey_links_resolve_against_the_real_journey_corpus():
         assert journeys, f"{case_id} 链接了空 journey 列表"
         for journey in journeys:
             assert journey in known
+
+
+def test_real_journey_links_are_audited_and_only_cover_matching_claims():
+    specs = cli.load_journey_link_specs()
+
+    assert set(specs) == {
+        "cp.dep.charge-then-navigate",
+        "ei.dangerous.combined",
+        "ei.mixed.hvac-weather",
+    }
+    assert {link.assertion for rows in specs.values() for link in rows} == {
+        "dependency_continuity",
+        "dangerous_confirmation_continuity",
+        "mixed_ingress_continuity",
+    }
+    assert all(link.rationale.strip() for rows in specs.values() for link in rows)
+
+
+def test_l3_result_exposes_the_claim_each_journey_is_allowed_to_prove(monkeypatch):
+    case = _case("c1", layers=("l3",))
+    link = cli.JourneyLink(
+        journey_id="A1-1",
+        assertion="mixed_ingress_continuity",
+        rationale="验证端云混合入口没有吞掉在线域",
+    )
+    monkeypatch.setattr(cli, "load_journey_link_specs", lambda *a, **k: {"c1": (link,)})
+
+    rows = cli._l3_results(
+        [case], parse_args(["--layer", "l3", "--list"]),
+        {"A1-1": "pass"}, "minimax:MiniMax-M3")
+
+    assert rows[0].expected["journey_links"] == [{
+        "journey_id": "A1-1",
+        "assertion": "mixed_ingress_continuity",
+        "rationale": "验证端云混合入口没有吞掉在线域",
+    }]
+    assert rows[0].assertions[0]["name"] == (
+        "journey:A1-1:mixed_ingress_continuity")
 
 
 # ── P0-3 反向构造：第二轮不许被静默忽略 ─────────────────────────────────
@@ -493,6 +567,35 @@ def test_relation_pair_repeats_are_lifted_to_the_same_count():
         "逐次成对裁 relation 时两边次数必须一致，否则得拿第 1 次凑第 3 次"
 
 
+def test_normal_repeat_plan_uses_the_suite_policy():
+    """gate 把普通样本提高到 3 次后，runner 必须真的执行 3 次，不许仍硬编码 1。"""
+    case = _case("normal.stable", status="stable", risk="medium")
+    suite = SuiteConfig(
+        statuses=("stable",), live_statuses=("stable",),
+        min_cases=1, max_cases=999, attack_minimums={},
+        normal_repeats=3, failure_repeats=3, high_risk_repeats=3,
+    )
+
+    plan = cli.repeat_plan([case], parse_args(["--layer", "l1"]), suite)
+
+    assert plan[case.id] == 3
+
+
+def test_repeat_policy_rejects_a_single_lucky_pass_when_gate_requires_three():
+    """一次碰巧成功不能证明 stable；资格闸必须消费与执行器同一份 suite 策略。"""
+    suite = SuiteConfig(
+        statuses=("stable",), live_statuses=("stable",),
+        min_cases=1, max_cases=999, attack_minimums={},
+        normal_repeats=3, failure_repeats=3, high_risk_repeats=3,
+    )
+    row = SimpleNamespace(
+        layer="l1", risk="medium", passed=True,
+        repetitions=({"passed": True},),
+    )
+
+    assert cli._repeat_policy_complete([row], suite) is False
+
+
 def _snapshot(intents):
     from support.intent_adversarial_judge import (
         DecisionSnapshot, PlanSnapshot, StepSnapshot,
@@ -667,6 +770,21 @@ def test_l3_uses_a_unique_run_directory_per_invocation():
     first = cli.l3_invocation_id("abc1234")
     second = cli.l3_invocation_id("abc1234")
     assert first != second and "abc1234" in first
+
+
+def test_l3_artifact_root_leaves_room_for_private_bundle_temp_names():
+    """Windows 传统 MAX_PATH 下，L3 自己的目录不能先吃光 token 原子写的路径预算。"""
+    invocation = cli.l3_invocation_id("abc1234")
+    artifact_root = cli.l3_artifact_root(invocation)
+    worst_case = (
+        artifact_root
+        / "e2e-20260804064933-826534c19f59-1qa_dm0f"
+        / "lease-bundles"
+        / "lease-a47fefc07ab243bd910e88395bf9489e-e2e_journeys"
+        / ".memory-capability-96fsdplc.tmp"
+    )
+
+    assert len(str(worst_case)) < 260, str(worst_case)
 
 
 # ── P2-1/P2-2 反向构造：退出码与跨盘输出 ────────────────────────────────

@@ -321,12 +321,24 @@ def test_invariant_main_claim_ignores_slot_rendering_when_the_utterances_differ(
     assert "relation.invariant.slots" not in _named(judgement)
 
 
-def test_invariant_slots_catch_a_value_the_base_never_produced():
-    """同一句话只换上下文——variant **多**出一个 base 从没有过的取值＝历史串进了槽位。"""
-    spec = RelationSpec("base", "invariant", {})
+def test_invariant_slots_can_explicitly_catch_a_value_the_base_never_produced():
+    """确实要比较槽位时必须显式声明；不能从「原话相同」擅自推导这个 gold。"""
+    spec = RelationSpec("base", "invariant", {"slot_policy": "subset"})
     support = [_slotted("info.weather", date="明天")]
     variant = _slotted("info.weather", date="明天", city="上海")   # 上海只可能来自历史
     assert not judge_relation(spec, support, variant, same_utterance=True).passed
+
+
+def test_explicit_invariant_slot_policy_does_not_depend_on_utterance_heuristic():
+    """显式 gold 是权威来源；`same_utterance` 只能用于旧启发式，不能覆盖作者声明。"""
+    spec = RelationSpec("base", "invariant", {"slot_policy": "subset"})
+    support = [_slotted("info.weather", date="明天")]
+    variant = _slotted("info.weather", date="明天", city="上海")
+
+    judgement = judge_relation(spec, support, variant, same_utterance=False)
+
+    assert not judgement.passed
+    assert "relation.invariant.slots" in _named(judgement)
 
 
 def test_invariant_slots_tolerate_an_optional_slot_going_missing():
@@ -336,10 +348,26 @@ def test_invariant_slots_tolerate_an_optional_slot_going_missing():
     `{date: 今天}`、带陈旧历史的变体给 `{}`，逐字相等口径下会把它判红，
     而那个 date 从原话里就能恢复，没有任何东西被串进来。
     """
-    spec = RelationSpec("base", "invariant", {})
+    spec = RelationSpec("base", "invariant", {"slot_policy": "subset"})
     support = [_slotted("info.weather", date="今天")]
     variant = _slotted("info.weather")
     assert judge_relation(spec, support, variant, same_utterance=True).passed
+
+
+def test_invariant_same_utterance_does_not_guess_that_optional_slots_came_from_history():
+    """`info.news.limit=10` 可能是模型默认值；没有来源证据时不能把它定性成历史串味。
+
+    `cs.news.stale-trip` 三次都正确落 `info.news`，仅因 variant 时有时无地补了
+    `limit=10` 被判 unstable。relation 默认只守路由；要守槽位必须写显式 gold。
+    """
+    spec = RelationSpec("base", "invariant", {})
+    support = [_slotted("info.news")]
+    variant = _slotted("info.news", limit="10")
+
+    judgement = judge_relation(spec, support, variant, same_utterance=True)
+
+    assert judgement.passed
+    assert "relation.invariant.slots" not in _named(judgement)
 
 
 def test_clause_commute_keeps_the_slot_assertion_regardless_of_utterance():

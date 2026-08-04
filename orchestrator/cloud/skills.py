@@ -106,7 +106,20 @@ _NON_SKILL_DIRS = ("exemplars",)
 # schema 顶层键白名单（skills/README.md）：未知键=大概率拼写错误（few_shot/keyword…），
 # 静默忽略会让作者以为知识生效了——告警但不拒载（fail-open）。
 _KNOWN_KEYS = {"name", "type", "description", "knowledge", "priority",
-               "keywords", "few_shots", "golden", "owner", "version"}
+               "keywords", "few_shots", "plan_repairs", "golden", "owner", "version"}
+_PLAN_REPAIR_KEYS = {"kind", "trigger_any", "producer_intent", "consumer_intent",
+                     "slot", "source_path"}
+
+
+@dataclass(frozen=True)
+class PlanRepair:
+    """由已注入 skill 声明的窄计划归一，不新增步骤、不覆盖用户真值。"""
+    kind: str
+    trigger_any: tuple[str, ...]
+    producer_intent: str
+    consumer_intent: str
+    slot: str
+    source_path: str
 
 
 @dataclass(frozen=True)
@@ -119,6 +132,7 @@ class SkillDoc:
     priority: int = 50
     keywords: tuple = ()
     few_shots: tuple = ()
+    plan_repairs: tuple[PlanRepair, ...] = ()
     golden: tuple = ()
     owner: str = ""
     version: int = 1
@@ -147,6 +161,46 @@ def _render_few_shots(shots: tuple) -> str:
             plan, ensure_ascii=False, separators=(",", ":"))
         parts.append(f"示例——用户：『{user}』\n→ {plan_txt}")
     return "\n\n".join(parts)
+
+
+def _parse_plan_repairs(raw, path_name: str) -> tuple[PlanRepair, ...]:
+    """运行时 fail-open：坏声明告警并跳过；CI 的 eval_skills 会硬失败。"""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        logger.warning("skill %s plan_repairs 必须是列表——已忽略", path_name)
+        return ()
+    out = []
+    for index, row in enumerate(raw):
+        where = f"{path_name}.plan_repairs[{index}]"
+        if not isinstance(row, dict):
+            logger.warning("skill %s 必须是映射——已忽略", where)
+            continue
+        unknown = set(row) - _PLAN_REPAIR_KEYS
+        if unknown:
+            logger.warning("skill %s 含未知字段 %s——已忽略该条", where, sorted(unknown))
+            continue
+        triggers = row.get("trigger_any")
+        kind = str(row.get("kind") or "").strip()
+        producer = str(row.get("producer_intent") or "").strip()
+        consumer = str(row.get("consumer_intent") or "").strip()
+        slot = str(row.get("slot") or "").strip()
+        source_path = str(row.get("source_path") or "").strip()
+        if (kind != "dependency_slot_ref" or not isinstance(triggers, list)
+                or not all(isinstance(v, str) and v.strip() for v in triggers)
+                or not triggers or not producer or not consumer or not slot
+                or not re.fullmatch(r"data(?:\.[A-Za-z0-9_]+)+", source_path)):
+            logger.warning("skill %s 声明不完整或不安全——已忽略", where)
+            continue
+        out.append(PlanRepair(
+            kind=kind,
+            trigger_any=tuple(v.strip() for v in triggers),
+            producer_intent=producer,
+            consumer_intent=consumer,
+            slot=slot,
+            source_path=source_path,
+        ))
+    return tuple(out)
 
 
 class SkillStore:
@@ -241,6 +295,7 @@ class SkillStore:
             logger.warning("skill %s 含未知顶层字段 %s——已忽略，检查拼写（契约见 skills/README.md）",
                            path.name, sorted(unknown))
         few_shots = tuple(s for s in (raw.get("few_shots") or []) if isinstance(s, dict))
+        plan_repairs = _parse_plan_repairs(raw.get("plan_repairs"), path.name)
         shots_txt = _render_few_shots(few_shots)
         body = knowledge + (f"\n\n{shots_txt}" if shots_txt else "")
         kw_raw = raw.get("keywords") or []
@@ -254,6 +309,7 @@ class SkillStore:
             priority=cls._coerce_int(raw.get("priority"), 50, path.name, "priority"),
             keywords=tuple(str(k) for k in kw_raw),
             few_shots=few_shots,
+            plan_repairs=plan_repairs,
             golden=tuple((g or {}) for g in (raw.get("golden") or [])
                          if isinstance(g, dict)),
             owner=str(raw.get("owner") or ""),
@@ -462,3 +518,50 @@ def render_for_names(names: list[str] | None) -> str:
     guides = [docs[n] for n in wanted if n in docs and docs[n].type == "guide"]
     block, _, _ = render_skills_block(policies, guides)
     return block
+
+
+def _active_docs_for_names(names: list[str] | None,
+                           store: SkillStore | None = None) -> list[SkillDoc]:
+    """只还原实际注入的 full/canary 资产；shadow/off/!clipped 不得暗中生效。"""
+    wanted = []
+    for tagged in names or []:
+        mode, sep, rest = str(tagged).partition(":")
+        if (not sep or mode not in {"canary", "full"} or not rest
+                or rest.endswith("!clipped")):
+            continue
+        wanted.append(rest.split("@", 1)[0])
+    docs = {d.name: d for d in (store or default_store()).load()}
+    return [docs[name] for name in dict.fromkeys(wanted) if name in docs]
+
+
+def apply_plan_repairs(plan, text: str, skill_names: list[str] | None,
+                       store: SkillStore | None = None) -> list[str]:
+    """执行已注入 skill 的声明式窄归一，并返回可观测 effect 名单。
+
+    安全边界：只连接计划里**已经存在且唯一**的生产/消费步骤；仅在声明触发词命中、
+    目标槽没有真实值也没有引用时补 `slot_refs + depends_on`。不新增 intent，不覆盖值，
+    多生产者/多消费者不猜。安全、权限、确认仍由后面的硬层裁决。
+    """
+    effects: list[str] = []
+    steps = list(getattr(plan, "steps", None) or [])
+    for doc in _active_docs_for_names(skill_names, store):
+        for repair in doc.plan_repairs:
+            if not any(trigger in (text or "") for trigger in repair.trigger_any):
+                continue
+            producers = [s for s in steps if getattr(s, "intent", "") == repair.producer_intent]
+            consumers = [s for s in steps if getattr(s, "intent", "") == repair.consumer_intent]
+            if len(producers) != 1 or len(consumers) != 1:
+                continue
+            producer, consumer = producers[0], consumers[0]
+            real_value = str((getattr(consumer, "slots", None) or {}).get(repair.slot) or "").strip()
+            existing_ref = str((getattr(consumer, "slot_refs", None) or {}).get(repair.slot) or "").strip()
+            if real_value or existing_ref or producer.id == consumer.id:
+                continue
+            consumer.slot_refs[repair.slot] = f"{producer.id}.{repair.source_path}"
+            if producer.id not in consumer.depends_on:
+                consumer.depends_on.append(producer.id)
+            effect = (f"{doc.name}:{repair.kind}:{repair.producer_intent}->"
+                      f"{repair.consumer_intent}.{repair.slot}")
+            effects.append(effect)
+            logger.info("skill plan repair applied: %s", effect)
+    return effects

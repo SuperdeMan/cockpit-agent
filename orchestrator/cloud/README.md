@@ -10,7 +10,8 @@
 
 ## Phase 1 已落地（`engine.py` + 协作模块）
 - `models.py` — Plan/Step/StepResult/PlanContext/SessionState 数据结构
-- `planning.py` — LLM DAG 规划 + complexity/goal 分诊 + replan + 语义路由降级
+- `planning.py` — LLM DAG 规划 + complexity/goal 分诊 + replan + 语义路由降级；
+  已注入 skill 可声明受限 `plan_repairs`，只给已有唯一步骤补数据依赖，不新增 intent/覆盖真值
 - `executor.py` — Kahn 拓扑分层 + asyncio.gather 并行 + 超时 + slot_refs 解析 + 部分失败
 - `dispatch.py` — cloud Agent / edge fast / tool 统一调度，执行层权限与审计
 - `loop.py` — T2 迭代/时间双预算、观察压缩、流式 delta 和挂起恢复
@@ -20,6 +21,11 @@
 - `engine.py` — 编排主循环（串联上述模块）
 - `clients.py` — 连接复用 + 统一超时
 - `observability` — planning/step/T2/aggregate span 与 Agent 调用指标经 NATS best-effort 发出
+
+`plan.skills` 表示本轮真正注入的知识；`plan.skill_effects` 表示哪个声明式
+`plan_repair` 实际修改了计划。两者必须分开：知识在场不等于它生效，确定性归一
+生效也不能冒充模型原生规划正确。该归一仍受 manifest / Plan Validator /
+Runtime Policy / VAL 后续硬层限制。
 
 ## 接口（见 proto/cockpit/orchestrator/v1/orchestrator.proto）
 - `Handle(HandleRequest) returns (stream HandleEvent)` — 流式返回话术/动作/终态。

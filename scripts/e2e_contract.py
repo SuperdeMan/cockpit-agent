@@ -3796,17 +3796,29 @@ def _add_intent_terms(terms: set[str], intent: str) -> None:
     terms.add(intent.split(".", 1)[0])
 
 
-def _walk_scalar_strings(value: Any):
+def _walk_scalar_strings(
+    value: Any,
+    *,
+    excluded_value_keys: frozenset[str] = frozenset(),
+):
     if isinstance(value, str):
         yield value
     elif isinstance(value, Mapping):
         for key, item in value.items():
             if isinstance(key, str):
                 yield key
-            yield from _walk_scalar_strings(item)
+                if key in excluded_value_keys:
+                    continue
+            yield from _walk_scalar_strings(
+                item,
+                excluded_value_keys=excluded_value_keys,
+            )
     elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         for item in value:
-            yield from _walk_scalar_strings(item)
+            yield from _walk_scalar_strings(
+                item,
+                excluded_value_keys=excluded_value_keys,
+            )
 
 
 def _manifest_domain_terms(root: Path) -> set[str]:
@@ -3869,7 +3881,15 @@ def _skills_domain_terms(root: Path) -> set[str]:
     terms: set[str] = set()
     for path in paths:
         raw = _arch_load_yaml(root, path)
-        for text in _walk_scalar_strings(raw):
+        # `plan_repairs[].source_path` 是 StepResult 内的数据路径（例如
+        # `data.items.0.name`），形状恰好像点号 intent。把它收进业务
+        # 词表会反向污染通用机制：`data` 参数名被误判为领域字面量。
+        # 只跳过这个结构字段的值；producer/consumer intent 和其他
+        # skill 文本仍全部参与动态词表。
+        for text in _walk_scalar_strings(
+            raw,
+            excluded_value_keys=frozenset({"source_path"}),
+        ):
             for match in _INTENT_IN_TEXT_RE.finditer(text):
                 _add_intent_terms(terms, match.group(1))
     return terms

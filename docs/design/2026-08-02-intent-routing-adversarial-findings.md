@@ -1527,3 +1527,186 @@ registry → planner → executor → 车况镜像这一整条，而不只是「
 > `gen/python`），这次是**分母变小反而多出红灯**。
 
 已立卡（`AGENTS.md` §4.1），本批不修——修它要动多处共享的 import 管道，属另一批。
+
+## 13. 2026-08-04 晚：门禁采样、relation 槽位与正式 L3 收口
+
+### 13.1 三个“声明存在，但主路径没消费”的阻断
+
+独立复核不是继续数 case，而是沿正式 baseline 路径逐层追：
+
+1. `suites.yaml` 已有 `normal_repeats`，但 `repeat_plan()` 对普通案例硬编码 1，
+   `_repeat_policy_complete()` 也只要求 1。改配置不会改变执行或资格；一次幸运通过仍可过 gate。
+2. `invariant` 只因两侧原话相同就自动比较槽位子集。`cs.news.stale-trip` 三次都落
+   `info.news`，只因模型有时补 `limit=10` / `topic=新闻` 被判红；没有证据说明这些默认值
+   来自陈旧 trip 历史。
+3. `journey_links.yaml` 只写 journey id，loader 只核 id 存在。随后 journey 整体绿灯直接
+   投影到 case；weather-outing→记忆车控、pending cancel→插话确认、音量+提醒→赛程提醒
+   三条语义不对应也能提供 L3 pass。
+
+修法全部先配反向构造：
+
+- gate `normal_repeats: 3`，执行与资格闸共同消费；配置 `<3` 直接拒绝；
+- `invariant` 默认只守路由，槽位比较必须显式写
+  `relation.expectation.slot_policy: subset`，且显式 gold 不再依赖 `same_utterance`；
+- journey link 升 schema v2，逐条必填 `journey_id/assertion/rationale`，同时核 case 存在且
+  声明 L3、journey 存在、assertion 在准入枚举中；报告把授权 claim 原样带出。
+
+> **判据一：配置字段存在，不等于执行器和资格闸消费了它。**
+>
+> **判据二：输入文本相同不是槽位来源证明。** 默认值、规范化值和历史值形状相同，
+> 机器不能靠“多了一个槽位”定性来源，只能由 gold 显式授权。
+>
+> **判据三：journey pass 是一份有边界的证据授权，不是可转借的绿灯。**
+
+### 13.2 正式 gate 首条 L3 证据与晋级
+
+保留的三条映射为：
+
+| case | journey | 获准证明的 claim |
+|---|---|---|
+| `cp.dep.charge-then-navigate` | A1-2 | `dependency_continuity` |
+| `ei.dangerous.combined` | A5-3 | `dangerous_confirmation_continuity` |
+| `ei.mixed.hvac-weather` | A1-1 | `mixed_ingress_continuity` |
+
+`cp.dep.charge-then-navigate` 是唯一同时具备可核 claim 和本期完整取证的候选：
+
+- L1 进程 A：3/3，provider `minimax:MiniMax-M3` 锁定、36 次检索零降级；
+- L1 进程 B：3/3，同档锁定、36 次检索零降级；
+- discovery L3 A1-2：1/1，新鲜 report、唯一 run-id、选集/provider 一致、0 infra；
+- 晋级 stable 后 gate L3 再跑：A1-2 1/1，同样全部身份核对通过。
+
+因此该 case 按新契约记录 `stabilized_samples: 6` 并晋级；gate **132→133**、唯一输入
+**122→123**，`--suite gate --layer l3 --list` 首次输出非空选集 `A1-2`。
+这只证明 A1-2 授权的依赖连续性，不外推为“L3 全量已绿”。
+
+### 13.3 `lease_protocol` 复现：身份栈没坏，是 TEMP 路径 264 字符
+
+第一次新鲜 L3 在执行 0 条前再次报 `lease_protocol`。失败 artifact 有私有 case 目录、没有
+`tokens.json`；单独调用 token 写入在短路径通过，在同一个失败根目录复现：
+
+- case 目录长度 237；
+- `.token-bundle-<random>.tmp` 完整路径长度 264；
+- `tempfile.mkstemp()` 报 `FileNotFoundError`，被包装成
+  `StackLeaseProtocolError: cannot replace private token bundle`。
+
+根因是 evaluator 把 `TEMP/TMP/TMPDIR` 指到仓库深层
+`docs/reviews/eval/_ci-run-intent-l3-artifacts/<invocation>`，而 `run_e2e` 还会继续叠
+run-id、lease-id 与原子写临时名。改为短系统临时根 `car-agent-l3/<invocation>`，并用最坏
+路径反向构造守 `<260`；相同 discovery/gate L3 命令随后两次通过。
+
+> **判据：协议错误名只说明在哪层被包装，不说明根因属于协议。** 看失败目录停在哪一步，
+> 再用同根目录做单变量复现；“以前跑通过”不能否定当前路径组合已经越界。
+
+### 13.4 三样本全量第一次真撞到 `steps` 元素层崩溃
+
+修完 gate 采样后首次全量 L1 实际运行约 16 分钟，在模型返回
+`steps=[{...}, "s2: ..."]` 时崩溃：外层确实是 list，`_validated_steps()` 却对每个元素无条件
+调用 `.get()`。这与 §12 已修的 `depends_on: [["s0"]]` / 非字符串 `slot_refs` 完全同族：
+**只守容器层，没守真正被消费的元素层。**
+
+先以“一条合法 step + 一条字符串”复现 `AttributeError`，再在 production planner 中：
+
+- 非 list 的 `steps` 原子拒绝；
+- list 内任一非 object 元素标记 invalid，整份计划原子拒绝并进入既有重试/fallback；
+- 不保留合法残片，避免用户组合意图被静默丢半句。
+
+同趟还出现两次 provider HTTP 529；既有 `_reject_unreached_planner()` 会把无 raw LLM 的 fallback
+记为 infrastructure，不折算产品失败。由于整趟被元素崩溃中断、没有落完整报告，**本批没有
+全量 gate 通过率可引用**；修复后的完整重跑仍是 baseline 前置。
+
+### 13.5 三趟完整 gate：一趟绿不能代替回归批
+
+元素层崩溃修好后，完整 L1 先后得到 **115/117 → 109/117 → 113/117**。
+三趟均锁定 `minimax:MiniMax-M3`，检索降级与基础设施错误均为 0。
+
+第一趟的两条红灯：
+
+- `cp.dep.menu-then-order`：两步都有，但没有 `depends_on/slot_refs`；
+- `nq.hvac.keep-volume`：多做 `hvac.off`。
+
+定向补知识后两进程各 3/3 看似已绿，但 menu 的 dependency gold 当时没有
+`carries: [item]`：模型只要写了一条空依赖就能过。把“依赖传的是商品”写进 gold 后，
+该用例立即成为 **0/3 `stable_fail`**。
+
+> **判据：路由依赖和数据依赖是两个命题。**
+> “B 在 A 后面”不证明“B 真的消费了 A 的结果”；对组合意图只校验步骤集合，
+> 很容易把“看起来是 DAG”冒充“真的接上了”。
+
+### 13.6 依赖接线的修法：声明式窄归一，且必须留效果账
+
+shop guide 的正文和结构化 few-shot 都在场时，MiniMax-M3 仍会随机漏接。此处没有
+增 route hint，而是在同一 guide 下声明 `plan_repairs`：
+
+- 只在已注入的 `full/canary` guide 上生效；
+- 只连接计划里已有且唯一的 `shop.menu → shop.order`；
+- 只有“招牌/销量第一”这类明确声明从菜单选项的触发词才补第一项引用；
+- 用户或模型已给 `item` 时不覆盖，多生产者/多消费者不猜，被 `!clipped` 的 guide 不暗中生效。
+
+它不新增 intent，不改权限/确认，但仍是确定性修改计划，所以不能冒充模型原生绿灯。
+`Plan.skill_effects` 和 `cloud.planning.skill_effects` 单列记录了
+`shop-order-flow:dependency_slot_ref:shop.menu->shop.order.item`。定向两进程各
+repeat 3 均通过；其中一个样本 raw plan 仍漏接，报告正确显示了 `skill_effects`。
+
+> **判据：修复生效不等于模型学会了。**
+> 任何 LLM 后的确定性归一都要留 effect 账；否则“模型能力”指标会被后处理劫持。
+
+### 13.7 第二趟 109/117 抓到的是知识预算回归
+
+为 mixed negation 增加范例后，policy 净增 48 字，恰好把
+`navigation-with-stop` 从真实三 guide 候选组合里挤成 `!clipped`。两条原本稳定的
+navigation knowledge-injection 契约同时变红。旧预算测试只证明“最大一条 guide 单独放得进”，
+完全看不见实际候选混合。
+
+压缩否定 policy 后，真实组合回归确认 navigation 仍被注入；定向 live 里
+`ki.navigation-with-stop.hit/hit2` 和不相关 `multi-day-trip.miss` 均 3/3。
+
+> **判据：预算是资产集合的属性，不是单文件的属性。**
+> 每条文件单独都“不大”，不能证明它们按真实排序拼在一起时不会挤掉核心知识。
+
+### 13.8 最终读数：113/117，修复有效但 baseline 目标未达成
+
+补 manual 范例后，`os.toilet.manual` 与对照两个独立进程各 repeat 3，合计
+12/12；对抗原句未被写入范例，检回靠 `manual#6@vec:0.87`。随后最终完整 L1：
+
+- **113/117（96.6%）**，4 条全是 `unstable`，无 `stable_fail`；
+- provider `minimax:MiniMax-M3` 锁定，无漂移；706 次检索、0 降级；
+- trace 错误 0，infrastructure 错误 0，repeat coverage 117/117；
+- dependency 3/3，relation 29/29，validator 后能力幻觉逃逸 0/117；
+- raw planner 仍有 6/117 能力幻觉，资格闸按设计不放行。
+
+最终 4 条是 `cs.cancel-it.reminder` / `nq.dinner-music.drop-music` /
+`nq.hvac.keep-volume` / `os.battery.car`。它们的失败形态分别是
+cancel→complete、多 `media.pause`、多 `media.pause`、find→status。原有的 menu 漏接与
+`nq.hvac.keep-volume` 的 `hvac.off` 已不再出现。
+
+这 4 条在其他完整/定向批次都出现过正确面，而当前 gate 的 3 次采样同属一个进程。
+所以三样本契约修好了“只采一次”，却没有把跨进程相关性变成独立样本。
+
+> **判定：本轮修复目标部分达成，正式 baseline 目标未达成。**
+> 不再为追一趟 117/117 追加 route hint；下一个有效问题是“如何把跨进程置信写进 gate”，
+> 然后才是干净快照的 L1+L2+L3 正式资格闸。完整验收表见
+> `docs/reviews/2026-08-04-review-intent-adversarial-finalization.md`。
+
+### 13.9 全量收尾又抓到一条反向污染：数据路径被当成 intent
+
+首次后端全量 3991 passed / 4 failed / 11 skipped，四条红灯共用同一份诊断：
+
+```text
+orchestrator/cloud/verify.py:89:31: executable business term 'data' in arg in eval_schema
+orchestrator/cloud/verify.py:160:40: executable business term 'data' in arg in evaluate
+```
+
+`verify.py` 本批未改，`data` 也显然是结果载体而不是领域政策。继续追动态词表发现：
+`_skills_domain_terms()` 会扫所有 Skill 标量字符串，用点号形状提取 intent。新增
+`plan_repairs[].source_path: data.items.0.name` 恰好命中，于是 `data` 被动态提升为
+“intent namespace”，再反向把两个通用参数名判红。
+
+反向构造在最小仓库里加同样的 `source_path` 与 `def passthrough(data)`，修前稳定复现
+`'data' in vocabulary.identifier_terms`。修法不是改 verifier 参数名，而是让 Skill 词表提取器仅
+跳过 `source_path` 的**值**；键名、其他 Skill 文本与 `producer_intent/consumer_intent` 仍全部收集。
+修后原四条 + 新用例 5/5，架构守卫全文件 89/89。
+随后后端全量重跑 **3996 passed / 11 skipped / 0 failed**，耗时 26m37s。
+
+> **判据：动态守卫的词表本身也是输入管道。**
+> 新 schema 字段如果与旧提取器共用表面形状，会把声明数据反向变成执行策略。
+> 修误报要收窄词表的语义边界，不是改被误报的通用代码躺开它。

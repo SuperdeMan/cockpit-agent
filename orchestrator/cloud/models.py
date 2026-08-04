@@ -81,8 +81,11 @@ class Plan:
     # 门控采集（engine），不参与任何编排逻辑；解析失败走 fallback 时它保留失败现场。
     raw_llm: str = ""
     # M0b Skill 层：本轮检索/注入的 skill 名单（"<mode>:<name>"），仅供 cloud.planning
-    # span 观测（badcase 归因：知识没进上下文还是进了没用对）；不参与编排逻辑。
+    # span 观测（badcase 归因：知识没进上下文还是进了没用对）。
     skills: list[str] = field(default_factory=list)
+    # 声明式 plan_repairs 实际改动记录。它只连接已有步骤，不新增 intent/覆盖槽位；单独
+    # 留痕是为了分开「模型原生接对」与「soft skill 归一后接对」。
+    skill_effects: list[str] = field(default_factory=list)
     # M5 P1 范例库：本轮检索/注入的范例名单（"<mode>:<eid>@lex|vec:分数"，超预算记
     # !clipped），契约与语义逐项对齐 skills。同样只供 span 归因，不参与编排逻辑。
     exemplars: list[str] = field(default_factory=list)
@@ -109,9 +112,11 @@ class ReplanDecision:
     """One bounded-loop decision: stop, or execute the next validated batch."""
     done: bool
     steps: list[Step] = field(default_factory=list)
+    skill_effects: list[str] = field(default_factory=list)
 
     def to_plan(self, goal: str = "") -> Plan:
-        return Plan(steps=self.steps, complexity="adaptive", goal=goal)
+        return Plan(steps=self.steps, complexity="adaptive", goal=goal,
+                    skill_effects=list(self.skill_effects))
 
 
 @dataclass

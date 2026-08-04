@@ -162,7 +162,7 @@ _RELATIONS = {
     "clarify_flip", "context_override", "clause_commute",
 }
 _RELATION_KEYS = {
-    "invariant": set(),
+    "invariant": {"slot_policy"},
     "route_flip": {"forbidden_after", "required_change"},
     "intent_add": {"add"},
     "intent_remove": {"remove"},
@@ -404,6 +404,8 @@ def load_suites(path: Path) -> dict[str, SuiteConfig]:
         for key in ("normal_repeats", "failure_repeats", "high_risk_repeats"):
             if int(raw.get(key, 0)) < 1:
                 raise ValueError(f"{name}.{key} must be >= 1")
+        if name == "gate" and int(raw.get("normal_repeats", 0)) < 3:
+            raise ValueError("gate.normal_repeats must be >= 3")
     return {
         str(name): SuiteConfig(
             statuses=_strings(raw.get("statuses")),
@@ -674,6 +676,9 @@ def _validate_relation(case: AdversarialCase, case_ids: set[str],
         if unknown:
             errors.append(
                 f"{case.id}: unknown relation expectation keys {sorted(unknown)}")
+        if (relation.type == "invariant"
+                and relation.expectation.get("slot_policy") not in {None, "subset"}):
+            errors.append(f"{case.id}: invariant slot_policy must be 'subset'")
     if relation.base_case not in case_ids:
         errors.append(f"{case.id}: missing relation base {relation.base_case!r}")
         return

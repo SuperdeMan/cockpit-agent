@@ -1,0 +1,13 @@
+# 范例库 · volume 域（端侧车控）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号）。
+domain: volume
+exemplars:
+- text: 空调别动，把声音调低一点
+  plan:
+  - agent: edge-vehicle
+    intent: volume.dec
+  source: manual
+  added: '2026-08-04'
+  tags:
+  - badcase
+  note: 混合否定只删除被否定动作，保留肯定的音量调整

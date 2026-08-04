@@ -22,14 +22,21 @@ knowledge: |
   ⚠ **引用了上一步的输出，就必须同时写 `depends_on`。** 只写 `slot_refs` 而
   `depends_on` 留空，等于告诉执行器这两步可以并行——第二步会在第一步还没回来时就发出去。
 
-  示例——用户：『翻一下菜单，再点一杯店里的招牌』
-  {"complexity":"simple","steps":[
-  {"id":"s1","agent_id":"mcp-bridge","intent":"shop.menu","slots":{},"depends_on":[],"slot_refs":{}},
-  {"id":"s2","agent_id":"mcp-bridge","intent":"shop.order","slots":{},"depends_on":["s1"],"slot_refs":{"item":"s1.data.items.0.name"}}
-  ]}
 few_shots:
+  # 依赖骨架必须放在 few-shot，不只埋在正文：模型会优先模仿结构化输出。
+  - user: 先看看店里卖哪些饮料，再把销量第一的来一杯
+    plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"mcp-bridge","intent":"shop.menu","slots":{},"depends_on":[],"slot_refs":{}},{"id":"s2","agent_id":"mcp-bridge","intent":"shop.order","slots":{},"depends_on":["s1"],"slot_refs":{"item":"s1.data.items.0.name"}}]}
   - user: 咖啡有什么
     plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"mcp-bridge","intent":"shop.menu","slots":{},"depends_on":[],"slot_refs":{}}]}
+# 软提示在 MiniMax-M3 三样本真栈中仍会随机漏接线；这里只归一模型已经选出的两步。
+# trigger_any 把「缺商品应追问」与「商品由菜单结果决定」分开，不能无条件挑第一件。
+plan_repairs:
+  - kind: dependency_slot_ref
+    trigger_any: [招牌, 最便宜, 最火, 销量第一, 卖得最好, 第一个]
+    producer_intent: shop.menu
+    consumer_intent: shop.order
+    slot: item
+    source_path: data.items.0.name
 golden:
   # 核心主张：要看过菜单才知道是哪一款 → 两步，缺一不可。
   # 立卡来源 cp.dep.menu-then-order（对抗语料 stable，A4 组合）：5 趟 live **0/5**，

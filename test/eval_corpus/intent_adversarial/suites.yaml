@@ -22,6 +22,6 @@ suites:
     min_cases: 120
     max_cases: 160
     attack_minimums: {}
-    normal_repeats: 1
+    normal_repeats: 3
     failure_repeats: 3
     high_risk_repeats: 3

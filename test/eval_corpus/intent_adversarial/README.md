@@ -6,9 +6,11 @@
 
 ## 文件
 
-- `suites.yaml`：状态选择与重复策略，不保存 provider、model、secret。
+- `suites.yaml`：状态选择与重复策略，不保存 provider、model、secret。`gate.normal_repeats`
+  不得小于 3；runner 与 baseline 资格闸必须消费同一份策略。
 - `coverage_exemptions.yaml`：逐 intent、逐要求的显式豁免。
-- `journey_links.yaml`：链接现有 journey id，不复制旅程 gold。
+- `journey_links.yaml`：schema v2，链接现有 journey id，不复制旅程 gold。每条映射必须有
+  `journey_id` / `assertion` / `rationale`：旅程绿灯只授权显式 claim，不能借给语义相似但不同的 case。
 - `cases/*.yaml`：按攻击机制分文件；每个文件固定 `schema_version: 1` 与 `cases:`。
 
 ## 命名与字段
@@ -17,8 +19,12 @@
 - `family_id`：同源原句、paraphrase、最小变体共享；用于 seen/unseen 防泄漏。
 - `tags.attacks/domains/layers`：attacks 至少含一个 `A1`–`A9` 编号；domains 声明涉及域；layers 声明 L0–L3 执行层。细分机制另放 `tags.mechanisms`。
 - plan：必要组之间 AND、组内 `any_of` OR；默认禁止未声明额外 intent。
+  `dependencies[].carries` 表示 consumer 必须真正通过 `slot_refs` 消费 producer 的数据；
+  只有 `depends_on` 不能证明数据已接线。
 - adaptive：初始 `plan` 与 `replans[].after.result + plan` 分开写，result 形状对齐生产 observation。
-- relation：变体必须同时有自己的 absolute gold，不能只写相对关系。
+- relation：变体必须同时有自己的 absolute gold，不能只写相对关系。`invariant` 默认只守
+  路由不变；只有人审 gold 能证明“variant 不得引入 base 未观测槽位”时，才显式写
+  `relation.expectation.slot_policy: subset`。两边原话相同不是槽位来源证据。
 - `expected.engine`：**只有 L2 观测得到**（`required_agent_calls` / `forbidden_agent_calls` /
   `pending_confirm_after` / `max_agent_calls_per_intent`），写在别的层上是永远不会被裁的断言，
   契约直接报错。危险动作只写 `safety.no_side_effect_before_confirm` **证明不了确认闸**——
@@ -53,6 +59,9 @@ L2 共用 Engine session 与 history）。证据单元命名：
 ## 状态
 
 `candidate → reviewed → stable → retired`。只有 `reviewed_by: human` 的案例可以进入 `reviewed`；只有固定 provider 重复稳定的案例可以进入 `stable`。`retired` 保留原文、原因和替代保护，不删除历史。
+
+`stable` 只是语料生命周期状态，不等于永不失败。gate 必须如实报 `pass / unstable /
+stable_fail`；不得因为一条 stable 当前变红就改 gold、降级状态或移出选集。
 
 ## 数据隔离
 

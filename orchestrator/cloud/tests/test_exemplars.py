@@ -231,6 +231,28 @@ def test_a1_3_parallel_reminder_weather_badcase_is_an_exemplar():
     assert row.intents() == ["reminder.create", "info.weather"]
 
 
+def test_mixed_negation_keeps_only_the_positive_volume_intent():
+    """范例层必须覆盖「否定一个动作、肯定另一个动作」，且不复制对抗原句。"""
+    items = ex.ExemplarStore().load()
+    rows = [
+        e for e in items
+        if e.domain == "volume" and "别" in e.text and e.intents() == ["volume.dec"]
+    ]
+    assert rows, "volume 域缺少混合否定范例"
+    assert all("别关空调" not in e.text for e in rows), "不得把 unseen 对抗原句抄进范例"
+
+
+def test_unsupported_cabin_feature_how_to_routes_to_manual():
+    """车内功能问“怎么开”但无对应车控能力时，应查说明书，不得空计划或闲聊。"""
+    items = ex.ExemplarStore().load()
+    rows = [
+        e for e in items
+        if e.domain == "manual" and "净化" in e.text and e.intents() == ["manual.query"]
+    ]
+    assert rows, "manual 域缺少未接入车内功能的操作说明范例"
+    assert all(e.text != "车上的空气净化怎么开" for e in rows), "不得复制 unseen 原句"
+
+
 @pytest.mark.parametrize("bad,expected", [("0", 0.01), ("2.5", 1.0), ("oops", 0.34)])
 def test_lex_threshold_is_clamped(monkeypatch, bad, expected):
     """越界阈值不崩但会**静默**改变行为：钳 0 = 全量放行（skills min_score 同款教训）。"""

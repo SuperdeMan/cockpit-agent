@@ -13,6 +13,20 @@ sys.path.insert(0, str(Path(__file__).parent))
 from support.intent_adversarial_contract import load_cases, load_suites  # noqa: E402
 
 
+def test_shop_menu_then_order_requires_the_item_to_cross_the_dependency():
+    """仅有拓扑边不够：用户说「招牌」时，商品名必须来自菜单结果。
+
+    2026-08-04 定向 live 的第二独立进程产出 `depends_on=[s1]` 但 `slot_refs={}`，
+    旧 gold 因 carries 为空仍判绿。那会让 executor 排对顺序，却在下单时没有商品。
+    """
+    root = Path(__file__).parent / "eval_corpus" / "intent_adversarial" / "cases"
+    case = next(c for c in load_cases(root) if c.id == "cp.dep.menu-then-order")
+    dep = case.turns[0].expected.plan.dependencies[0]
+    assert dep.producer == ("shop.menu",)
+    assert dep.consumer == "shop.order"
+    assert dep.carries == ("item",)
+
+
 def test_load_cases_parses_one_turn_and_plan_groups(tmp_path: Path):
     root = tmp_path / "corpus"
     root.mkdir()
@@ -99,7 +113,7 @@ suites:
     min_cases: 120
     max_cases: 160
     attack_minimums: {}
-    normal_repeats: 1
+    normal_repeats: 3
     failure_repeats: 3
     high_risk_repeats: 3
 """, encoding="utf-8")
@@ -111,6 +125,37 @@ suites:
     assert (suites["gate"].min_cases, suites["gate"].max_cases) == (120, 160)
     assert suites["discovery"].attack_minimums["A4"] == 60
     assert suites["gate"].failure_repeats == 3
+    assert suites["gate"].normal_repeats == 3
+
+
+def test_gate_suite_rejects_single_sample_normal_policy(tmp_path: Path):
+    """正式 gate 至少要能观测进程内方差；`normal_repeats: 1` 不再是合法配置。"""
+    path = tmp_path / "suites.yaml"
+    path.write_text("""
+schema_version: 1
+suites:
+  discovery:
+    statuses: [candidate, reviewed, stable]
+    live_statuses: [reviewed, stable]
+    min_cases: 1
+    max_cases: 10
+    attack_minimums: {}
+    normal_repeats: 3
+    failure_repeats: 3
+    high_risk_repeats: 3
+  gate:
+    statuses: [stable]
+    live_statuses: [stable]
+    min_cases: 1
+    max_cases: 10
+    attack_minimums: {}
+    normal_repeats: 1
+    failure_repeats: 3
+    high_risk_repeats: 3
+""", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"gate\.normal_repeats must be >= 3"):
+        load_suites(path)
 
 
 # ── 严格契约：未知键、状态/来源、relation 与 family 泄漏 ────────────────────
@@ -310,6 +355,15 @@ def test_unknown_relation_expectation_key_is_rejected(contract_case):
         [contract_case, replace(contract_case, id="variant", relation=relation)],
         {"info.alerts"})
     assert any("unknown relation expectation keys" in e for e in errors)
+
+
+def test_invariant_slot_policy_rejects_unknown_semantics(contract_case):
+    relation = RelationSpec(
+        contract_case.id, "invariant", {"slot_policy": "guess_from_utterance"})
+    errors = validate_cases(
+        [contract_case, replace(contract_case, id="variant", relation=relation)],
+        {"info.alerts"})
+    assert any("slot_policy must be 'subset'" in error for error in errors)
 
 
 def test_relation_pair_must_declare_the_same_layers(contract_case):

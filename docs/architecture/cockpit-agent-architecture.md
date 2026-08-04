@@ -374,7 +374,7 @@ flowchart LR
 - **结果聚合**：多 Agent 结果由 LLM 改写成连贯的口语化播报 + 结构化卡片，保证体验一致。
 - **多轮与澄清**：缺槽位（`NEED_SLOT`）或需确认（`NEED_CONFIRM`）时，生成追问，挂起任务状态等待用户回复。
 
-### 5.2.1 Planner 的三条智能供给通道与规则治理（2026-07-24 定稿归档；2026-07-26 Skill 层闭环；2026-07-29 范例库与规则退役合入）
+### 5.2.1 Planner 的三条智能供给通道与规则治理（2026-07-24 定稿归档；2026-07-26 Skill 层闭环；2026-07-29 范例库与规则退役合入；2026-08-04 依赖归一留账）
 
 Planner 的智能供给全部声明式化，且**规则第一次有了出口**（设计详见 `docs/design/2026-07-24-eva-benchmark-intelligence-upgrade.md` 与 `docs/design/2026-07-28-intent-accuracy-data-flywheel.md`）。三条通道按权威链由硬到软：`route_hints`（LLM **之后**确定性改写）> `skills/`（LLM 之前的**知识**）> `skills/exemplars/`（LLM 之前的**数据**，最软）：
 
@@ -383,6 +383,7 @@ Planner 的智能供给全部声明式化，且**规则第一次有了出口**�
    - **知识必须可证有效**：skill 自带 golden（`expect_intents` AND/`expect_any`/`expect_not`，项支持 `a|b` 容忍）经 `eval_skills` 三车道消费——离线检索门禁进 GitHub CI，live 车道（真 planner+真 LLM）以 `SKILLS_MODE=off` A/B 对照量化知识增益（首跑 Δ=+5/10）。`plan.skills` 归因名单反映**真实注入**（检索通道 `@lex`/`@vec`、超预算 `!clipped`）。
    - **分层边界的实证**：skill（LLM 前知识）教对了也会被 `policy: replace` 的 route_hint（LLM 后纠错）盖掉——live 车道首跑即抓到 nearby 设施发现 hint 的 guard 缺口踩掉 charging.find；holdout 车道次日再抓到 reminder「叫我」hint 劫持无「要是/如果」标记的条件句。凡「知识不生效」的 badcase，先查 hint 层再改知识。**分工口径（2026-07-27 采样方差实证）**：教科书形态用 route_hints 钉死（canonical 不该靠温度采样），skill 知识管 paraphrase 泛化。
    - **全生命周期闭合（2026-07-27 评审补强；同日二批补齐挂起链与归因）**：T2 再规划按 `plan.skills` 名单**继承**初规划注入的同一份知识（条件依赖类知识的决策恰发生在再规划轮），且**跨挂起成立**——`plan.skills` 随 `pending_plan` 持久化，补槽/确认恢复后的再规划不失忆；loader 对坏文件全面 fail-open（结构性坏文件跳过、非法标量回默认、重名先到者胜、改坏沿用 last-known-good；env 垃圾值回默认告警不崩启动）而 eval 文件级校验在 CI 是**阻断步**——运行时保知识可用性、门禁保主干整洁；golden 增 `holdout`（防 few-shot 原句自证）与 `expect_complexity`（adaptive 类知识的核心主张可断言），live 报告按 in-sample/holdout 拆分，**逐 skill 消融车道**做 per-guide 因果归因（full/off 分不清「知识的功」还是「hint 的功」；Δ=0 自动提示查 hint 覆盖）。hint 层教训沉淀：SOC 词形对手机/耳机等**设备**同样成立——replace hint 的 guard 必须排除非车辆主语（评审二批抓到的回归）。
+   - **受限计划归一（2026-08-04）**：对“两步已选对，模型却随机漏 `depends_on/slot_refs`”这一窄类，guide 可声明 `plan_repairs`。它不是第四条路由通道：只能连接计划里已存在且唯一的 producer/consumer，不新增 intent、不覆盖已有槽位值，`shadow/off/!clipped` 资产不生效，多步歧义不猜。实际作用记入 `plan.skill_effects` 与 `cloud.planning.skill_effects`，不得把归一后绿灯计为模型原生正确；后续 manifest / validator / Runtime Policy / VAL 权威链不变。
 2. **落域范例库（`skills/exemplars/`，M5 P1；2026-07-29 合入）**：Planner 的**第三条供给通道**，装的不是知识而是**数据**——一条 `话术 → 正确落域` 的记录，检索后作 few-shot 进 prompt。定位是权威链的**最软层**（在 PlanningGuide 之下）：只影响 LLM 判断，**不做任何硬路由**。
    - **它解决的是「改进循环的产物」问题**：在此之前，修一个落域 badcase 的标准产物是**正则**（`route_hints`），而规则只进不出——没有任何流程会问「这条 hint 模型现在自己会了吗」。范例把标准产物换成数据：**hint 写错是事故**（模型判对了也被 `replace` 踩掉），**范例写错只是噪声**（占了预算，删一行就没了）。故一个 badcase 三选一的默认答案是范例。
    - **机制整体复用 Skill 层范式**（hybrid 双通道检索 / 预算硬帽 / fail-open / `plan.exemplars` 归因 / T2 与挂起继承），Embed 出口与失败冷却与 skills **共用一份**（`orchestrator/cloud/embedding.py`——网关挂了两条通道一起回落词法，而不是各超时一次）。差异只在词法侧：范例文本仅 5-15 字，裸 Dice 会被功能词 bigram 支配，故用**语料自身的 IDF 加权**——不建停用词表（那是又一个只进不出的手工规则），投一个范例文件权重即自动重算。
@@ -1105,5 +1106,6 @@ agents/<name>/
 | v1.17 | 2026-08-01 | 内容性合入（验收余项 M-C 可靠触达）：§6 主动链补投递生命周期——**`publish 成功 ≠ 用户收到`**。`proactive_delivery` 账本 + **落库后才 ack**（ack 是所有权移交，之后生产方不再重发）+ `delivery_id` 随信封走 + HMI 回执销账 + 断线补投 + 重启恢复（与补投共用同一份账）。三条判据入册：**只有 `presented` 是通知合同完成**（网关 write 成功不能被提升为「用户看见了」）／**「注释里的理由要看它依赖的前提还成不成立」**（闸5「窗口是小时级延后没意义」——窗口是滑动的；M3「主动消息生命周期以秒计」——那描述的是 advisory，被当成了四档的性质）／**确定失败不许被世界状态翻案**（Verifier 只纠正 transport-uncertain，且不改 status、不伪造成功话术）。契约 `docs/conventions.md` §9.8 可靠投递段 |
 | v1.18 | 2026-08-01 | 内容性合入（验收余项 M-D 外部生态，13 张主卡清零）：MCP 查单/取消/补偿真实可达 + Task Ledger 原子幂等 + provider tool-calling 能力位。三条判据入册：**「声明存在」不等于「能用」**（`compensate_tool` 被准入校验查了存在性、写进了文档、还有测试断言，唯独没有一条路径能调到它——校验的是声明，没人校验可达性；同族：`nlu.theta_*` 零消费方、skills `few_shots` 文档有代码不读）／**先有能力再有话术**（承诺「查一下我的订单」而入口不存在时先撤承诺，能力接入后才加回来）／**外部系统是它自己状态的真相源**（不建 `mcp_operation` 本地镜像——「有哪些单」问账本、「状态如何」问商户，镜像就是第二真相源）。契约 `docs/conventions.md` §9.9 |
 | v1.19 | 2026-08-01 | 内容性合入（数据飞轮 M5 P3 收尾）：§3.2 影子观测面补完——**四条路径全挂**（`path` 分开误接与漏接，误接发生在本地快路径且危险得多；响应后 fire-and-forget 不占秒回）、`nlu_vs_rule` **三态→四态**（补 `unmapped`：无金标不装懂）、`nlu_gate` 只记不用。**一条判定纪律入册**：「A 与 B 一致吗」先问「**A 和 B 是同一个空间里的量吗**」——影子拿语料中文标签与规则自有 object 直接比字符串，`agree` 状态在生产里从未出现过，而 P3b 的错对象率正要拿这一档当分母；三套命名由 `orchestrator/edge/knowledge/nlu_objects.yaml` 等价类台账归并（人裁一次、机器守不许悄悄漏，同 boundaries 台账形态）。另一条负结果：**「多给点信息总不会更差」不是证据**——78 条端侧判别化描述渲进 planner catalog 跨两档 Δ=0 零翻面而每次规划 +1462 字符，收益实际在 **registry 语义兜底**（泛化描述下「打开空调」的 top-1 是 scene-orchestrator，而那是 LLM 失败时的兜底规划路径），证据 `docs/reviews/eval/edge_capability_desc_ab.md` |
+| v1.20 | 2026-08-04 | 内容性合入：§5.2.1 增 Skill 受限 `plan_repairs`——只给已有唯一步骤补数据依赖，不新增 intent/覆盖真值，不改权威链；`plan.skill_effects` 单列留账，防止确定性后处理冒充模型原生正确。来源为意图落域对抗 gate 中 `cp.dep.menu-then-order` 在 guide/few-shot 在场时仍随机漏接的真栈证据 |
 
 > 校准记录（不 bump）：2026-07-02/03/10 同步 R1-R3 落地现状；2026-07-18 实现说明、§3.1 T0-T2 运行模型对应、点餐→周边发现、§13 目录映射校准；2026-08-02 附录 C 版本表整理（两表合一、按版本排序，无内容变化）。

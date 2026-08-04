@@ -51,3 +51,21 @@ def test_render_actually_injects_the_first_guide():
     _block, injected, clipped = skills.render_skills_block(policies, guides[:1])
     assert [d.name for d in injected] == [guides[0].name], (
         f"最大的 guide {guides[0].name} 没能注入；clipped={[d.name for d in clipped]}")
+
+
+def test_navigation_guide_survives_real_three_guide_mix():
+    """真实检索候选混合里，最相关的 navigation 必须先放得进预算。
+
+    2026-08-04 否定 policy 加 mixed few-shot 后净增 48 字，恰好让两条 stable
+    navigation knowledge-injection 契约 3/3 变红。只守“最大一条能进”看不见第二条。
+    """
+    docs = _docs()
+    policies = [d for d in docs if d.type == "policy"]
+    by_name = {d.name: d for d in docs if d.type == "guide"}
+    _block, injected, clipped = skills.render_skills_block(
+        policies,
+        [by_name["navigation-with-stop"], by_name["charging-strategy"],
+         by_name["weather-outing"]],
+    )
+    assert "navigation-with-stop" in [d.name for d in injected]
+    assert "navigation-with-stop" not in [d.name for d in clipped]

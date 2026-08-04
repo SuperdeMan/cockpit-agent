@@ -1018,3 +1018,45 @@ B1 pass 20 / unstable 3；B2 pass 22 / unstable 1。**18 条里 14 条 6/6，三
 `B3-1` 的 **gold 依赖跑批当天的真实天气**（下雨那次没改行程＝真缺陷；不下雨那次
 「行程不用调整」是**对的**却照样判红）——判据：**断言的可判性不能依赖跑批当天的外部世界**；
 `B3-2` 连续两次卡在「广州塔」地标解析（一次错认成别的公司、一次认不出），**在高德侧**。
+
+## 10. 意图落域对抗测试：正式路径修复验收（2026-08-04 晚）
+
+### 10.1 尺子与运行器
+
+- gate 普通样本从主路径硬编码 1 次修为真正执行/核验 `normal_repeats: 3`，配置 `<3` 拒绝；
+- `invariant` 槽位比较改为显式 `slot_policy: subset`，不再用原话相同猜来源；
+- L3 链接升 schema v2，必须声明 `assertion+rationale`，删除三条语义错映射；
+- `cp.dep.charge-then-navigate` 两进程 L1 6/6 + A1-2 L3 通过后晋级，gate 达
+  133 条 / 123 唯一输入；
+- L3 `lease_protocol` 复现为 Windows 264 字符深 TEMP 路径，改短根后 discovery/gate L3 通过；
+- planner 对 `steps` list 内非 object 元素改为整份计划原子拒绝，不再让 `.get()` 打断整趟。
+
+### 10.2 产品与知识
+
+`cp.dep.menu-then-order` 补 `carries: [item]` 后揭开旧假绿：两步在场不等于商品数据接上。
+guide/few-shot 仍随机漏接时，新增已注入 skill 内的受限 `plan_repairs`：只连接现有唯一
+producer/consumer，不新增 intent/覆盖真值；实际作用单列 `skill_effects`。
+
+否定 policy 增长曾把 navigation guide 挤成 `!clipped`，使完整批从 115/117 掉到
+109/117。压缩 policy 并增真实三 guide 候选预算回归后恢复。另补 mixed-negation
+volume 范例与 manual 范例；manual 对照两进程各 repeat 3，合计 12/12。
+
+### 10.3 最终读数与判定
+
+三趟完整 L1：**115/117 → 109/117 → 113/117**。最终批锁定
+`minimax:MiniMax-M3`，706 次检索零降级，trace/infra 错误 0，repeat coverage 117/117。
+剩 4 条均为 `unstable`，无 `stable_fail`；四条在其他完整/定向批有正确面，说明一进程内
+repeat 3 仍非独立样本。
+
+**判定：已定性问题的修复有效，“可生成正式 baseline”仍未达成。**
+正式 baseline 未生成；资格闸继续因 unstable/gate failures、非 layer-all、工作树不干净与
+raw planner 幻觉率非零而拒绝。完整验收：
+`docs/reviews/2026-08-04-review-intent-adversarial-finalization.md`。
+
+### 10.4 收尾全量抓到的架构守卫词表污染
+
+首次后端全量 3991 passed / 4 failed / 11 skipped，四条同根：Skill 词表提取器把
+`plan_repairs.source_path: data.items.0.name` 误当 `data.*` intent，反向将 verifier 的通用
+`data` 参数判为领域泄漏。新反向构造先稳定红；修复只跳过 `source_path` 值，
+producer/consumer intent 仍收集。原四条 + 新用例 5/5，架构守卫全文件 89/89。
+修后后端全量重跑 **3996 passed / 11 skipped / 0 failed**（单进程 26m37s）。
