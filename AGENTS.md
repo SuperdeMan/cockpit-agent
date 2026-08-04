@@ -91,8 +91,11 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 > ⇒ **门禁不绿的原因已从「稳定缺陷」变成「方差」**（findings §8.5 的新判据）。
 > 语料侧补 unseen 10 条（唯一输入 502 → **512**）。
 
-**全量测试基线**：后端 `python -m pytest --import-mode=importlib` **3948 passed / 11 skipped /
-0 failed**（2026-08-04 单进程实测 15m48s）；HMI `node --test` **225/225**；
+**全量测试基线**：后端 `python -m pytest --import-mode=importlib` **3972 passed / 11 skipped /
+0 failed**（2026-08-04 晚单进程实测 17m00s；本批 +24 条专项单测）。
+⚠ **只有根跑算基线**：`pytest test/`（目录粒度）会红 12 条，因为
+`test/support/intent_adversarial_runtime.py` 的裸名 `from server import …` 在那个选集下
+被 `llm-gateway/server.py` 抢走（见 §4.1 那张卡）——**换个选集不是补跑回归，是换尺子**；HMI `node --test` **225/225**；
 Dashboard vitest **17/17**；端侧 smoke 13/13；Go 网关 vet+test 通过。
 ⚠ **「本机 32 条既有红」这条历史记载是误判，已修（`0fac11f`）**：真因是
 `.claude/worktrees/` 下留着一份完整 checkout，而隐私清单扫描的排除表只写了 `.worktrees`
