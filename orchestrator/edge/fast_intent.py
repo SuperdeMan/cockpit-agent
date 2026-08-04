@@ -8,7 +8,10 @@ from __future__ import annotations
 import re
 
 LOCAL_INTENTS = {
-    "hvac.set", "hvac.on", "hvac.off",
+    # ⚠ `hvac.inc/dec` 2026-08-04 补入：温度增减此前**只以别名 `aircon.inc/dec` 登记**
+    # （见下方风速那一段的注释），于是「一个动作只能有一个名字」这条治本改完之后，
+    # 端侧反而认不出自己产出的规范名了。别名清理会照出这类漏网点，这是第二处。
+    "hvac.set", "hvac.on", "hvac.off", "hvac.inc", "hvac.dec",
     "window.open", "window.close", "window.set", "window.inc", "window.dec",
     "media.play", "media.pause", "media.next", "media.prev",
     # 座椅（open/close 兼容 on/off）
@@ -59,10 +62,12 @@ LOCAL_INTENTS = {
     # 注意：page/app/weather 为 online_only，不进 LOCAL_INTENTS，统一上云
     # 空调风速 / 温度增减
     "aircon.wind_speed.set", "aircon.wind_speed.inc", "aircon.wind_speed.dec",
-    # ⚠ 2026-08-04 删 `aircon.inc/dec`：`_to_structured` 早已改产 `hvac.inc/dec`，
-    # 这两项从此**没有任何产出方**，却仍在这张「端侧自己处理、不上云」的白名单里
-    # ——真收到这个名字会被留在端侧，而 `VEHICLE_INTENTS` 已经不认它，落进死胡同。
-    # 判据：**改了名字要把两头都改**——产出方改完，白名单是它的另一头。
+    # ⚠ 2026-08-04 删 `aircon.inc/dec`，规范名 `hvac.inc/dec` 已补进本表开头。
+    # **我第一版把删除理由写成「这两项没有任何产出方」，那句是没核就写的**：
+    # `_to_legacy_name`（体感冷热复合意图那条路）当时仍在产 `aircon.inc`，删掉它
+    # 直接让「感觉冷，把空调温度和风速都调一下」整句上云。两处已一起改到 `hvac.*`。
+    # 判据：**清理死条目之前先证明它真的死了**——`grep` 一个名字要 grep 全部拼接点，
+    # `f"aircon.{operate}"` 这种拼出来的名字，搜字面量是搜不到的。
     # ── 新增：蓝牙 ──
     "bluetooth.on", "bluetooth.off", "bluetooth.open", "bluetooth.close",
     "bluetooth.connect", "bluetooth.disconnect",
@@ -1708,9 +1713,14 @@ def _to_legacy_name(intent: dict) -> str | None:
 
     if obj == "aircon":
         if mode == "wind_speed":
-            return f"aircon.wind_speed.{operate}"
-        if operate in ("inc", "dec"):
-            return f"aircon.{operate}"
+            return f"aircon.wind_speed.{operate}"     # 风速是独立能力，不是同义词
+        # ⚠ 2026-08-04 第二处：`5d95ceb` 把 `_structured_to_legacy` 的温度增减改成了
+        # `hvac.inc/dec`，**这里漏了**——同一个「aircon 对象 + inc/dec」在两个命名点
+        # 各产一个名字。它长期不显形的原因是 `LOCAL_INTENTS` 两个名字都收着；
+        # 把死条目清掉的那一刻，走这条路的「体感冷热」复合意图当场 `is_local=False`
+        # 整句上云（`test_climate_feeling_*` 红）。
+        # 判据（第二次适用）：**发现根因时要问「同一形态还有几处」**——
+        # 「改遍了」和「发现了」是两件事，而清理死条目正是那个会把漏网处照出来的动作。
         return f"hvac.{_on_off_map.get(operate, operate)}"
     if obj == "window":
         return f"window.{operate}"

@@ -309,7 +309,9 @@ def test_climate_feeling_cold_raises_temp_lowers_wind():
     assert srv.val.state["hvac_temp"] == 23           # 温度调高一点
     assert srv.val.state["hvac_wind_speed"] == 4       # 风速调小一点
     cmds = [a.payload["command"] for a in final.actions]
-    assert "aircon.inc" in cmds and "aircon.wind_speed.dec" in cmds
+    # 2026-08-04：温度增减的规范名统一到 `hvac.*`（风速仍是独立能力 `aircon.wind_speed.*`，
+    # 那不是同义词）。这条断言此前钉的是**别名**，别名删干净的那一刻它才显形。
+    assert "hvac.inc" in cmds and "aircon.wind_speed.dec" in cmds
     # 话术要明确反馈温度+风速都调了（不再是模糊的"好的"）
     assert "度" in final.speech and "风速" in final.speech
 
