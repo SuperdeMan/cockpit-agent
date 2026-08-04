@@ -953,10 +953,20 @@ checkout 处理**——名字清单必然滞后于布局，而「有没有 `.git
   在 worktree 里建了指向主仓 `models/` 的 junction——**Windows 上递归删除会跟着 junction
   删到目标**。⚠ 机制是**推断**（worktree 已删，无法回验），但结果是确定的。
 
-**实际损失**：`models/nlu/` 的 `edge_nlu.onnx` + `labels.json` + `vocab.json`。
-端侧日志留有铁证它当时在：`edge NLU ready：8 域 / 83 对象`（2026-08-03T04:21:36）。
-`models/voiceprint/` 的 CAM++ 无损——`llm-gateway` **不挂 models bind mount**，
-那 28MB 是烤进镜像的；只有 `edge-orchestrator` 挂了主仓 `models/`。
+**实际损失**：`models/nlu/` 的 `edge_nlu.onnx` + `labels.json` + `vocab.json`，
+**以及 `models/voiceprint/` 的 CAM++**。端侧日志留有铁证 NLU 当时在：
+`edge NLU ready：8 域 / 83 对象`（2026-08-03T04:21:36）。
+
+> ⚠ **本节初版写「CAM++ 无损」，那句是错的**，值得留档：当时的依据是
+> `docker exec llm-gateway ls /app/models/voiceprint/` 还能看到那 28MB。
+> 但 `llm-gateway` **不挂 models bind mount**——它那份是 `COPY` 烤进镜像的，
+> 主机上那份**同样已经没了**，只是**下一次 `--build` 才会现形**。
+> **判据：容器里还在，不等于源还在。** 查「有没有丢」要查**构建输入**，
+> 不能查**运行时快照**——尤其当二者一个是 bind mount、一个是 COPY 时。
+> （`hmi/public/models/` 的 KWS/VAD 不在 `models/` 下，确未受影响。）
+
+两者均已恢复：`scripts/fetch-edge-nlu-base.sh` + 重训导出（§9.5）、
+`scripts/fetch-voice-models.sh`（CAM++ 28,281,138 字节，与镜像内那份逐字节同大小）。
 
 **影响**：端侧 NLU 只在 shadow 挡位（决议 disabled、不进决策链），**无功能回归**；
 但 M5 P3b 的开工判据「错对象率 <0.3%」正是从 `nlu.shadow` span 算的，这条数据流断了。
