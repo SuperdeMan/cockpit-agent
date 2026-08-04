@@ -117,7 +117,7 @@ Windows 无 make 时用 `scripts/gen-proto.ps1`、`scripts/run_e2e.ps1` 等价�
 
 ## 7. 当前阶段
 
-**Phase 1 工程化 PoC（截至 2026-08-02）**，运行模型 T0 端侧快路径 / T1 单次 DAG / T2 有界
+**Phase 1 工程化 PoC（截至 2026-08-04）**，运行模型 T0 端侧快路径 / T1 单次 DAG / T2 有界
 Agentic 循环。已落地并验收的主题：工程化主干与云端中枢（P0-P3）、R2-R4 硬化（架构还债/安全/
 语音回路/拒识澄清）、可观测台（badcase 排查贯通）与旅程级验证体系（L3 journeys + L4 HMI CDP）、
 智能化升级 M0a→M4（数据真实性、Skill 层、submit_plan、自进化 nightly、Task Ledger + Outcome
