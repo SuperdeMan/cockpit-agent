@@ -62,6 +62,36 @@ def _clarify_enabled() -> bool:
     return os.getenv("CLARIFY_ENABLED", "on").lower() == "on"
 
 
+_DIGITS_RE = re.compile(r"\d")
+
+
+def _goal_value_dropped(plan) -> bool:
+    """goal 文本里有数字，而计划的槽位里一个数字都没有 → 值在 goal→slots 那一步丢了。
+
+    **只作观测信号，不改任何行为**（发一个 obs 布尔位）。判据刻意是「有没有数字」这种
+    粗粒度：它要抓的形态是「模型明明算出来了却没写进去」，而**误报的代价只是一位观测**，
+    漏报的代价是缺陷继续隐形——journeys `B3-3` 就靠人肉比对 `llm_raw` 才发现。
+
+    零领域字面量：不认识任何 intent，也不认识任何槽名。
+    """
+    steps = getattr(plan, "steps", None) or []
+    if not steps:
+        return False                    # 没有步骤时「丢没丢值」无从谈起，另有检测器管缺步
+    if not _DIGITS_RE.search(_goal_text(plan)):
+        return False
+    return not any(_DIGITS_RE.search(str(v))
+                   for s in steps for v in (s.slots or {}).values())
+
+
+def _goal_text(plan) -> str:
+    """从 `raw_llm` 里取 goal 字段；取不到就返回空串（观测信号，不值得为它抛异常）。"""
+    try:
+        data = json.loads(getattr(plan, "raw_llm", "") or "{}")
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return ""
+    return str(data.get("goal") or "") if isinstance(data, dict) else ""
+
+
 def _edge_nlu_attrs(ctx, plan) -> dict:
     """端云分歧观测（M5 P2-D2）。端侧没判 → 不发（少一个恒空字段）。
 
@@ -286,6 +316,14 @@ class PlannerEngine:
                     # 数据飞轮 P0 落域可观测：意图名是系统枚举值（非用户内容），紧凑发射
                     # 不过内容门控——collector 据此把落域合并进 turns 行（SQL 可聚合）。
                     "intents": ",".join(s.intent for s in plan.steps),
+                    # **goal 是免费的对照物**（第三例，journeys B3-3）：模型在 goal 里
+                    # 把值算出来了（「调到最喜欢的温度（26度）」），plan 却是
+                    # `hvac.set` + `slots:{}`——终态不变、话术渲染成一个单字「度」。
+                    # 前两例（goal 说推荐而 steps 无推荐步 / 组合意图漏第二步）只能判到
+                    # 「缺步」，这一例**机器可判到值一级**：goal 文本里有数字、而全部
+                    # step 的槽位里一个数字都没有。纯算术、零领域字面量，误报的代价只是
+                    # 一个 obs 布尔位。
+                    **({"goal_value_dropped": "true"} if _goal_value_dropped(plan) else {}),
                     # M5 P2-D2 端云分歧：端侧规则臂的初判 + 是否与云侧最终落域一致。
                     # **分歧轮是信息量最大的标注样本**——两个独立判断打架的地方，人看一眼
                     # 的边际收益最高。evolve mine 据此产 `edge_divergence` 信号进日报案族卡，

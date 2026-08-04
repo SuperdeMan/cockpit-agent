@@ -246,3 +246,63 @@ def test_media_object_list_matches_val_knowledge():
     known = set(_objects())
     missing = _MEDIA_OBJECTS - known
     assert missing == set(), f"media objects absent from commands.yaml: {missing}"
+
+
+# ── 「设为 N 度」缺 N 时追问，不猜（2026-08-04 泓舟裁定）────────────────────
+
+def test_set_without_value_asks_instead_of_silently_turning_on():
+    """无温度值的 `hvac.set` 必须 NEED_SLOT。
+
+    旧行为是**静默降级**：VAL 把它当「开空调」执行，温度原地不动，而话术模板
+    `{value}度` 拿到空值渲染成一个单字「度」——journeys `B3-3` 的用户可见形态。
+    判据：**缺值不是「用默认值」的理由**，尤其当它来自记忆召回时（记不得就该问）。
+    """
+    executor = EdgeCallExecutor(VAL())
+    resp = executor.execute(_call("hvac.set"))
+    assert resp.status == agent_pb2.ExecuteResponse.NEED_SLOT
+    assert list(resp.missing_slots) == ["temperature"]
+    assert "度" not in resp.speech.replace("温度", "")   # 不许再渲染出裸单位
+    assert resp.speech and "多少" in resp.speech
+
+
+def test_set_with_value_is_untouched():
+    """有值就照常执行——这条追问闸只吃「缺值」，不改任何既有成功路径。"""
+    executor = EdgeCallExecutor(VAL())
+    resp = executor.execute(_call("hvac.set", {"temperature": "26"}))
+    assert resp.status == agent_pb2.ExecuteResponse.OK
+    assert executor.val.state["hvac_temp"] == 26
+
+
+def test_ask_gate_does_not_leak_into_neighbouring_commands():
+    """三条不触发的边界一起守，防「缺值就追问」扩散成「什么都问」。
+
+    - `hvac.on` 本来就没有值这一说；
+    - `aircon.wind_speed.set` 走的是另一条属性（`attr=speed`），不是默认属性；
+    - `hvac.inc` 是相对调，缺值恰恰是它的正常形态；
+    - `window.set` 所属对象**没有声明** `value_required_operates` —— 要不要追问是
+      逐对象的产品判断，不是一刀切（判据在 commands.yaml 里，不在这段代码里）。
+    """
+    executor = EdgeCallExecutor(VAL())
+    for intent in ("hvac.on", "aircon.wind_speed.set", "hvac.inc", "window.set"):
+        resp = executor.execute(_call(intent))
+        assert resp.status != agent_pb2.ExecuteResponse.NEED_SLOT, intent
+
+
+def test_mode_style_set_is_not_treated_as_missing_value():
+    """『空调开到制冷』设的是模式不是数值——带 mode 的 set 不许被当成缺值。"""
+    executor = EdgeCallExecutor(VAL())
+    resp = executor.execute(_call("hvac.set", {"mode": "制冷"}))
+    assert resp.status != agent_pb2.ExecuteResponse.NEED_SLOT
+
+
+def test_ask_gate_is_declared_in_knowledge_not_hardcoded():
+    """铁律：判据在 `commands.yaml`，代码里零对象字面量。
+
+    反验方式是**把声明拿掉**——拿掉之后闸必须失效；失效不了就说明代码里另有一份硬编码。
+    """
+    executor = EdgeCallExecutor(VAL())
+    assert executor.execute(_call("hvac.set")).status == \
+        agent_pb2.ExecuteResponse.NEED_SLOT
+    executor.val.commands["objects"]["aircon"].pop("value_required_operates")
+    assert executor.execute(_call("hvac.set")).status != \
+        agent_pb2.ExecuteResponse.NEED_SLOT

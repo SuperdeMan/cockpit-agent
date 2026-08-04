@@ -134,3 +134,48 @@ def test_dispatch_emits_wait_step_span_for_pending_response(monkeypatch, status)
     asyncio.run(dispatcher.dispatch(step, context))
 
     assert _statuses_for(spans, "step.agent:navigation") == ["wait"]
+
+
+# ── goal 是免费的对照物：值算出来了却没写进 slots（2026-08-04）────────────
+
+def _plan_with(raw_llm, steps_slots):
+    from orchestrator.cloud.models import Plan, Step
+    steps = [Step(id=f"s{i+1}", agent_id="a", intent="x.y", slots=s)
+             for i, s in enumerate(steps_slots)]
+    p = Plan(steps=steps)
+    p.raw_llm = raw_llm
+    return p
+
+
+def test_goal_value_dropped_flags_the_b3_3_shape():
+    """journeys `B3-3` 的原形：goal 写着 26，plan 是 `hvac.set` + `slots:{}`。"""
+    from orchestrator.cloud.engine import _goal_value_dropped
+    plan = _plan_with('{"goal":"把空调调到用户最喜欢的温度（26度）","steps":[]}', [{}])
+    assert _goal_value_dropped(plan) is True
+
+
+def test_goal_value_dropped_is_quiet_when_the_value_landed():
+    from orchestrator.cloud.engine import _goal_value_dropped
+    plan = _plan_with('{"goal":"把空调调到26度"}', [{"temperature": "26"}])
+    assert _goal_value_dropped(plan) is False
+
+
+def test_goal_value_dropped_needs_a_number_in_the_goal():
+    """goal 里本来就没有数字 → 没有「丢值」这回事，不许报。"""
+    from orchestrator.cloud.engine import _goal_value_dropped
+    assert _goal_value_dropped(_plan_with('{"goal":"打开空调"}', [{}])) is False
+
+
+def test_goal_value_dropped_ignores_empty_and_unparsable_plans():
+    """空计划归「缺步」检测器管；`raw_llm` 解析不了时不猜——观测信号不值得抛异常。"""
+    from orchestrator.cloud.engine import _goal_value_dropped
+    assert _goal_value_dropped(_plan_with('{"goal":"调到26度"}', [])) is False
+    assert _goal_value_dropped(_plan_with("not json at all", [{}])) is False
+    assert _goal_value_dropped(_plan_with("", [{}])) is False
+
+
+def test_goal_value_dropped_counts_any_step_slot():
+    """值落在**任何一步**的槽位里都算落地了——它判的是「丢没丢」不是「填对没填对」。"""
+    from orchestrator.cloud.engine import _goal_value_dropped
+    plan = _plan_with('{"goal":"查明天天气并把空调调到26度"}', [{}, {"temperature": "26"}])
+    assert _goal_value_dropped(plan) is False

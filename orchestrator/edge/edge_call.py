@@ -61,6 +61,12 @@ _FALLBACK_KNOWN_OBJECTS = {
 }
 
 
+# 追问话术里属性名的中文（纯语言表，不是领域策略——策略在 commands.yaml 的
+# `value_required_operates` 里）。缺词条时话术退成「您想设成多少？」，不崩不静默。
+_ATTR_CN = {"temperature": "温度", "speed": "风速", "brightness": "亮度",
+            "height": "高度", "level": "档位"}
+
+
 def _to_structured(intent_name: str, slots: dict[str, str],
                    known_objects: set[str] | None = None) -> dict | None:
     parts = [p for p in intent_name.split(".") if p]
@@ -205,6 +211,32 @@ class EdgeCallExecutor:
         objects = (self.val.commands or {}).get("objects") or {}
         return set(objects) if objects else None
 
+    def _missing_required_value(self, obj: str, data: dict) -> str:
+        """声明了「这个 operate 必须带值」却没带值时，返回缺的那个属性名，否则空串。
+
+        判据全部来自知识库（`commands.yaml` 的 `value_required_operates` + `attrs`），
+        本函数**没有任何对象/意图字面量**——新对象要追问，加一行 YAML 即可。
+
+        三个不触发的情形，缺一不可：
+        - `mode` 在场（『空调开到制冷』设的是模式不是数值）；
+        - `attr` 在场（`aircon.wind_speed.set` 走的是风速那条属性，不是默认属性）；
+        - 对象没声明 `attrs`（它的 set 本来就是选模式）。
+
+        > 为什么只挡云端计划这一路：端侧快路径的 `_to_structured` 只在**有值**时才产
+        > `hvac.set`（无值走 `hvac.on`），压根到不了这里。挡在这里而不是 VAL 里，是因为
+        > VAL 的失败通道是 REJECTED（安全门控），而这里要的是 NEED_SLOT（追问），
+        > 两者对用户是完全不同的两件事。
+        """
+        if data.get("mode") or data.get("attr"):
+            return ""
+        if str(data.get("value") or "").strip():
+            return ""
+        defs = ((self.val.commands or {}).get("objects") or {}).get(obj) or {}
+        if data.get("operate") not in (defs.get("value_required_operates") or []):
+            return ""
+        attrs = defs.get("attrs") or []
+        return str(attrs[0]) if attrs else ""
+
     def execute(self, call) -> agent_pb2.ExecuteResponse:
         from observability.events import change_source
 
@@ -223,6 +255,15 @@ class EdgeCallExecutor:
             )
 
         obj = structured["data"]["object"]
+        missing = self._missing_required_value(obj, structured["data"])
+        if missing:
+            defs = ((self.val.commands or {}).get("objects") or {}).get(obj) or {}
+            noun = f"{defs.get('display_name') or ''}{_ATTR_CN.get(missing, '')}"
+            return agent_pb2.ExecuteResponse(
+                status=agent_pb2.ExecuteResponse.NEED_SLOT,
+                speech=f"您想把{noun}设成多少？" if noun else "您想设成多少？",
+                missing_slots=[missing],
+            )
         confirmed = call.meta.get("confirmed", "").lower() == "true"
         if self.val._need_confirm(obj) and not confirmed:
             return agent_pb2.ExecuteResponse(

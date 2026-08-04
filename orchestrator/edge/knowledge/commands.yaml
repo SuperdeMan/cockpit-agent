@@ -105,6 +105,12 @@ objects:
     - project-c
   aircon:
     display_name: 空调
+    # 「设为 N 度」缺了 N 就不许猜（2026-08-04 泓舟裁定：记忆里有值就直接用，
+    # 记忆里确实没有值就追问几度）。此前无值的 `hvac.set` 会静默降级成「开空调」，
+    # 温度原地不动，而话术模板 `{value}度` 拿到空值渲染成一个单字「度」——
+    # journeys B3-3 就是这个形状。声明放在知识库而不是代码里：要不要追问是产品判断，
+    # 加一个对象＝加一行 YAML，`edge_call` 通用消费（零对象字面量）。
+    value_required_operates: [set]
     operates:
     - open
     - close
