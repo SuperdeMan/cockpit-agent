@@ -199,6 +199,44 @@ def test_resolve_slot_refs_expands_minimax_ref_alias_in_existing_slot():
     }
 
 
+def test_resolve_slot_refs_resolves_a_ref_path_written_into_slots_too():
+    """同一条引用路径被同时写进 `slots` 和 `slot_refs`（真栈实测的第三种 wire 形态）。
+
+    旧逻辑「已有值不覆盖」把它当成已有值直接跳过，于是 `s1.data.items.0.id`
+    这串路径当成真 POI id 发给了下游。判据：**长得和引用一模一样的就是引用，不是值。**
+    """
+    done = {
+        "s1": StepResult(
+            step_id="s1",
+            status=StepStatus.OK,
+            data={"items": [{"id": "poi-1", "name": "灯花·川小馆"}]},
+        )
+    }
+    step = Step(
+        id="s2",
+        agent_id="nearby",
+        slots={"poi_id": "s1.data.items.0.id"},
+        slot_refs={"poi_id": "s1.data.items.0.id"},
+    )
+
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(step, done)
+
+    assert step.slots == {"poi_id": "poi-1"}
+
+
+def test_resolve_slot_refs_still_never_overwrites_a_real_value():
+    """反向护栏：槽里是真值时 `slot_refs` 不许覆盖（上一条放宽的边界不能越界）。"""
+    done = {"s1": StepResult(step_id="s1", status=StepStatus.OK,
+                             data={"items": [{"id": "poi-1"}]})}
+    step = Step(id="s2", agent_id="nearby",
+                slots={"poi_id": "用户指定的那家"},
+                slot_refs={"poi_id": "s1.data.items.0.id"})
+
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(step, done)
+
+    assert step.slots == {"poi_id": "用户指定的那家"}
+
+
 # ─── to_result 测试 ───
 
 class MockResponse:

@@ -460,3 +460,78 @@ def test_slot_ref_values_that_are_not_strings_are_dropped_at_plan_time():
     assert len(steps) == 1
     # 合法的那条留下，会让 executor 崩的三条丢掉。
     assert steps[0].slot_refs == {"ok": "s0.data.name"}
+
+
+def _two_step_amap():
+    """nearby.search（产出方）+ nearby.detail（消费方）的最小 agent_map。"""
+    from types import SimpleNamespace
+    caps = [SimpleNamespace(intent=i, description="", slots=[],
+                            require_confirm=False, heavy=False)
+            for i in ("nearby.search", "nearby.detail")]
+    manifest = SimpleNamespace(agent_id="nearby", trust_level="first_party",
+                               latency_budget_ms=3000, requires_permissions=[],
+                               capabilities=caps, kind="agent", deployment="cloud",
+                               context_scopes=[])
+    return {"nearby": SimpleNamespace(manifest=manifest, endpoint="stub:1")}
+
+
+def test_slot_ref_to_another_step_derives_the_missing_depends_on_edge():
+    """**引用了另一步的输出就是依赖的定义。**
+
+    真栈实测（`cp.dep.search-then-detail`）：模型把引用写全了
+    （`slot_refs={"poi_id": "s1.data.items.0.id"}`），`depends_on` 却是空的。
+    执行侧 `_topo_layers` 只看 `depends_on` → 两步排进同一层**并行下发** →
+    s2 去取 s1 结果时 s1 还没回来 → 引用解析成 None，那串路径当成真 POI id 发下去。
+    这不是路由错，是**计划自相矛盾**，与「depends_on 非 list 归空」同一族归一。
+    """
+    from orchestrator.cloud.planning import PlanBuilder
+
+    raw = [{"id": "s1", "agent_id": "nearby", "intent": "nearby.search",
+            "slots": {"cuisine": "火锅"}, "depends_on": [], "slot_refs": {}},
+           {"id": "s2", "agent_id": "nearby", "intent": "nearby.detail",
+            "slots": {}, "depends_on": [],
+            "slot_refs": {"poi_id": "s1.data.items.0.id"}}]
+    steps = PlanBuilder._validated_steps(raw, _two_step_amap())
+    assert [s.depends_on for s in steps] == [[], ["s1"]]
+
+
+def test_ref_written_into_slots_also_derives_the_edge():
+    """第二种 wire 形态：引用直接写在 `slots` 里（含 `${...}` 包裹）。"""
+    from orchestrator.cloud.planning import PlanBuilder
+
+    raw = [{"id": "s1", "agent_id": "nearby", "intent": "nearby.search"},
+           {"id": "s2", "agent_id": "nearby", "intent": "nearby.detail",
+            "slots": {"poi_id": "${s1.data.items.0.id}"}}]
+    steps = PlanBuilder._validated_steps(raw, _two_step_amap())
+    assert steps[1].depends_on == ["s1"]
+
+
+def test_derivation_never_invents_an_edge():
+    """三条边界一起守：已声明的不重复补、自引用不补、引用不存在的步不补。
+
+    补依赖是**归一**不是发明——被引用的步必须真实存在于本计划。
+    """
+    from orchestrator.cloud.planning import PlanBuilder
+
+    raw = [{"id": "s1", "agent_id": "nearby", "intent": "nearby.search",
+            "slot_refs": {"x": "s1.data.a"}},                    # 自引用
+           {"id": "s2", "agent_id": "nearby", "intent": "nearby.detail",
+            "depends_on": ["s1"], "slot_refs": {"poi_id": "s1.data.items.0.id"}}]
+    steps = PlanBuilder._validated_steps(raw, _two_step_amap())
+    assert steps[0].depends_on == []                              # 自引用不成环
+    assert steps[1].depends_on == ["s1"]                          # 不重复
+
+    raw2 = [{"id": "s2", "agent_id": "nearby", "intent": "nearby.detail",
+             "slot_refs": {"poi_id": "s9.data.items.0.id"}}]      # s9 不在计划里
+    assert PlanBuilder._validated_steps(raw2, _two_step_amap())[0].depends_on == []
+
+
+def test_literal_slot_values_are_not_mistaken_for_refs():
+    """普通槽值不得被当成引用——判据是 `<步骤id>.data.` 这个形状，不是「含点号」。"""
+    from orchestrator.cloud.planning import PlanBuilder
+
+    raw = [{"id": "s1", "agent_id": "nearby", "intent": "nearby.search"},
+           {"id": "s2", "agent_id": "nearby", "intent": "nearby.detail",
+            "slots": {"keyword": "s1.data 咖啡馆", "note": "3.5 分以上"}}]
+    steps = PlanBuilder._validated_steps(raw, _two_step_amap())
+    assert steps[1].depends_on == []

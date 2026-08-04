@@ -50,8 +50,16 @@ logger = logging.getLogger("edge.capabilities")
 # 求值器对 NATS 车况镜像对账；镜像读不到 → UNKNOWN 不定罪。
 # 状态键与 `orchestrator/edge/val.py` 的 `self.state` 同源。
 # on_fail 一律 report：车控是副作用动作，**永不自动重放**（retry 只对查询步开放）。
+#
+# ⚠ 2026-08-04：`hvac.set` 原来只声明 `{"hvac_on": "true"}`——**「设定为 N 度」的验证
+# 核的是「空调开着」**，于是 journeys `B3-3` 里「set 了但没设成」（终态 20、期望 26）
+# 被判 `sat`。**判据：验证的强度必须匹配主张的强度**；核了一个比主张弱的东西等于没核，
+# 而且它比「漏挂执行路径」更难发现——漏挂是没有 span，核错是一路报绿。
+# 修法是 `$slot:` 动态期望（`verify.resolve_expect_keys`）：取本步 `temperature` 槽的值。
+# 该槽缺席时那一键判 UNKNOWN 不判 UNSAT——「这一步没声明温度」是另一条账。
 _VERIFICATION = {
-    "hvac.set": {"mirror": "vehicle_state", "keys": {"hvac_on": "true"}},
+    "hvac.set": {"mirror": "vehicle_state",
+                 "keys": {"hvac_on": "true", "hvac_temp": "$slot:temperature"}},
     "hvac.on": {"mirror": "vehicle_state", "keys": {"hvac_on": "true"}},
     "hvac.off": {"mirror": "vehicle_state", "keys": {"hvac_on": "false"}},
 }
@@ -102,8 +110,10 @@ _MODE_VOCAB_FALLBACK = {"scene_mode": "scene_modes"}   # commands.yaml 里 modes
 # （各自的执行路径在用），但描述必须点明等价——否则 catalog 里会出现两个**文本完全相同**
 # 的工具，那正是本次要消灭的病。契约测试断言**每条描述两两不同**，这里漏一条就红。
 # ⚠ 2026-08-04：`aircon.inc/dec` 已删（与 `hvac.inc/dec` 解出逐字相同的执行数据），
-# 能力面 78 → **76**。
-_ALIAS_OF = {"aircon.inc": "hvac.inc", "aircon.dec": "hvac.dec"}
+# 能力面 78 → **76**，本表随之**空表**。留着表本身而不是删掉整段机制：别名一旦再次
+# 出现（两个 producer 各起一个名字是会复发的历史意外），这里是唯一一处能让 catalog
+# 说清「它俩是一回事」的地方；而空表时它一行都不渲染，零成本。
+_ALIAS_OF: dict[str, str] = {}
 
 
 def _knowledge() -> tuple[dict, dict]:

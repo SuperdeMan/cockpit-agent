@@ -96,6 +96,70 @@ def test_state_match_unknown_when_declaration_incomplete():
     assert V.eval_state_match({}, {"hvac_on": True}) == V.UNKNOWN
 
 
+# ── 动态期望 `$slot:`（2026-08-04）─────────────────────────────────────────
+#
+# 缺陷原形（journeys B3-3）：`hvac.set` 只声明「hvac_on=true」，于是**「设定为 26 度」
+# 的验证核的是「空调开着」**，终态 20 照样 `sat`。判据：**验证的强度必须匹配主张的强度。**
+
+_SET_EXPECT = {"keys": {"hvac_on": "true", "hvac_temp": "$slot:temperature"}}
+
+
+def test_dynamic_expect_takes_the_value_from_this_step_slots():
+    assert V.eval_state_match(_SET_EXPECT, {"hvac_on": True, "hvac_temp": 26},
+                              {"temperature": "26"}) == V.SAT
+
+
+def test_dynamic_expect_catches_set_but_not_set():
+    """B3-3 的世界状态：空调开了、温度还是 20，而这一步主张的是 26。
+
+    ⚠ 这条就是反验——**换回静态声明它会绿**（下一条断言），所以红得起来才算数。
+    """
+    assert V.eval_state_match(_SET_EXPECT, {"hvac_on": True, "hvac_temp": 20},
+                              {"temperature": "26"}) == V.UNSAT
+    assert V.eval_state_match({"keys": {"hvac_on": "true"}},
+                              {"hvac_on": True, "hvac_temp": 20}) == V.SAT
+
+
+def test_dynamic_expect_unresolved_is_unknown_not_sat():
+    """槽缺席 → 这一键**核不了**（UNKNOWN），不是核过了（SAT）。
+
+    旧行为在这里报的是 SAT——「一直在报绿」正是这个形状。
+    """
+    for slots in ({}, None, {"temperature": ""}, {"temperature": "  "}):
+        assert V.eval_state_match(_SET_EXPECT, {"hvac_on": True, "hvac_temp": 20},
+                                  slots) == V.UNKNOWN
+
+
+def test_dynamic_expect_unresolved_never_convicts():
+    """「这一步没声明温度」≠「温度没设成」——缺声明绝不判 UNSAT。
+
+    那是另一条账（planner 把值算进 goal 却没写进 slots），归另一个检测器管；
+    一条断言不能同时服务两个命题。
+    """
+    assert V.eval_state_match({"keys": {"hvac_temp": "$slot:temperature"}},
+                              {"hvac_temp": 20}, {}) == V.UNKNOWN
+
+
+def test_dynamic_expect_unsat_still_beats_unresolved():
+    """一键核不了 + 一键确凿不满足 → 仍然报（硬证据优先，与既有 UNSAT>UNKNOWN 同序）。"""
+    assert V.eval_state_match(_SET_EXPECT, {"hvac_on": False, "hvac_temp": 20},
+                              {}) == V.UNSAT
+
+
+def test_literal_expectations_are_untouched_by_the_resolver():
+    """没写 `$slot:` 的声明逐字不变（零行为变化），含恰好以 $ 开头的字面量。"""
+    assert V.resolve_expect_keys({"a": "true", "b": "$notaslot"}, {"a": "x"}) == {
+        "a": "true", "b": "$notaslot"}
+    assert V.eval_state_match({"keys": {"hvac_temp": "22"}},
+                              {"hvac_temp": 22}, {"temperature": "26"}) == V.SAT
+
+
+def test_slot_ref_is_whole_value_only_not_interpolation():
+    """只认整值引用——期望值要拿去逐值比对，支持插值等于把语法面塞进对账层。"""
+    keys = V.resolve_expect_keys({"k": "prefix $slot:temperature"}, {"temperature": "26"})
+    assert keys == {"k": "prefix $slot:temperature"}
+
+
 # ── 调度与超时轮询 ───────────────────────────────────────────────────────
 
 class _Mirror:
@@ -318,6 +382,30 @@ def test_streaming_path_reports_without_retry():
     out = asyncio.run(ex._verify_outcome(step, sr, PlanContext(), allow_retry=False))
     assert d.calls == 0                       # 一次都不重跑
     assert out.data["_verify"]["verdict"] == "unsat"
+
+
+def test_executor_wires_step_slots_into_the_evaluator():
+    """**接线断言**：动态期望声明了不算数，槽位真的走到求值器才算数。
+
+    同族缺口 M2 首验踩过一次（流式直通没调对账，声明了却静默不生效）——
+    「声明存在 ≠ 能用」，所以这里走真 executor 尾链，不直接调求值器。
+    """
+    d = _Dispatcher(_Resp(data={"ok": 1}, ui_card={"t": 1}))
+    ex = DagExecutor(dispatcher=d, state_mirror=_Mirror({"hvac_on": True,
+                                                         "hvac_temp": 20}))
+    step = _step(slots={"temperature": "26"},
+                 verification={"mode": "state_match", "on_fail": "report",
+                               "timeout_ms": 1, "expect": _SET_EXPECT})
+    res = _run(ex, step)
+    assert res.data["_verify"]["verdict"] == "unsat"     # 26 ≠ 20，核到了
+
+    # 同一步去掉槽位 → 核不了（UNKNOWN），不留 `_verify` 报告，也不误判成功
+    d2 = _Dispatcher(_Resp(data={"ok": 1}, ui_card={"t": 1}))
+    ex2 = DagExecutor(dispatcher=d2, state_mirror=_Mirror({"hvac_on": True,
+                                                           "hvac_temp": 20}))
+    step2 = _step(verification={"mode": "state_match", "on_fail": "report",
+                                "timeout_ms": 1, "expect": _SET_EXPECT})
+    assert "_verify" not in (_run(ex2, step2).data or {})
 
 
 def test_verify_errors_fail_open(monkeypatch):

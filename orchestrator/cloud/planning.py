@@ -816,7 +816,41 @@ class PlanBuilder:
         valid_ids = {step.id for step in steps}
         for step in steps:
             step.depends_on = [dep for dep in step.depends_on if dep in valid_ids]
+        PlanBuilder._derive_depends_on_from_refs(steps, valid_ids)
         return steps
+
+    # 引用了另一步的输出，**就是依赖的定义**。模型经常把引用写全、却把 `depends_on`
+    # 留空（真栈实测：`nearby.detail` 的 `slot_refs={"poi_id": "s1.data.items.0.id"}`
+    # 而 `depends_on: []`）。那不是「路由错」，是**计划自相矛盾**——执行侧
+    # `_topo_layers` 只看 `depends_on`，两步会被排进同一层并行下发；等 s2 去取 s1 的
+    # 结果时 s1 还没回来，`_resolve_slot_refs` 解析成 None，字面量
+    # `s1.data.items.0.id` 就当成真 POI id 发给了下游。
+    #
+    # 归一放在这里，与「`depends_on` 非 list 归空」「intent 唯一归属时归位」同一族：
+    # 把模型输出里**自相矛盾**的部分补成一致，不发明任何路由——被引用的步必须真实
+    # 存在于本计划（`valid_ids`），自引用不补（那是环不是依赖）。
+    _REF_HEAD_RE = re.compile(r"^\$?\{?\s*([A-Za-z_][A-Za-z0-9_]*)\.data\.")
+
+    @staticmethod
+    def _derive_depends_on_from_refs(steps: list, valid_ids: set) -> None:
+        for step in steps:
+            derived = []
+            for raw in list(step.slot_refs.values()) + list(step.slots.values()):
+                if not isinstance(raw, str):
+                    continue
+                m = PlanBuilder._REF_HEAD_RE.match(raw.strip())
+                if not m:
+                    continue
+                producer = m.group(1)
+                if (producer in valid_ids and producer != step.id
+                        and producer not in step.depends_on
+                        and producer not in derived):
+                    derived.append(producer)
+            if derived:
+                logger.info("Step %s references %s but declared depends_on=%s; "
+                            "deriving the missing edge(s)",
+                            step.id, derived, step.depends_on)
+                step.depends_on = list(step.depends_on) + derived
 
     def _talk_only_plan(self, text: str, agents: list = None) -> Plan | None:
         """把原话交给全局兜底 Agent（默认 chitchat）：**只回一句话，不做任何写操作。**

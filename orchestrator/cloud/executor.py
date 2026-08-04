@@ -310,8 +310,11 @@ class DagExecutor:
                         attempts: int) -> str:
         verification = step.verification or {}
         try:
+            # 槽位一并交给求值器：`$slot:` 动态期望要拿它取值（`_resolve_slot_refs`
+            # 已经跑过，所以这里是**真实下发的**槽，不是 planner 的原始输出）。
             verdict = await _verify.evaluate(verification, result.data or {},
-                                             mirror=self._mirror)
+                                             mirror=self._mirror,
+                                             slots=dict(step.slots or {}))
         except Exception as e:      # fail-open：对账是增强，绝不因它炸主链
             logger.warning("Step %s verify errored (ignored): %s", step.id, e)
             return _verify.UNKNOWN
@@ -382,8 +385,14 @@ class DagExecutor:
                 )
 
         for slot_name, ref_path in step.slot_refs.items():
-            if slot_name in step.slots:
-                continue  # 已有值不覆盖
+            existing = step.slots.get(slot_name)
+            # 「已有值不覆盖」——但**同一条引用路径被写了两遍不是「已有值」**。
+            # 真栈实测：`nearby.detail` 同时给 `slots={"poi_id":"s1.data.items.0.id"}`
+            # 和同值的 `slot_refs`；旧逻辑认定槽里已有值就跳过，于是那串路径**当成
+            # 真 POI id 发给了下游**。判据同 `${...}` 那一段：值和引用长得不一样，
+            # 长得一样就说明它是引用。
+            if slot_name in step.slots and str(existing).strip() != str(ref_path).strip():
+                continue
             value = self._resolve_ref(ref_path, done)
             if value is not None:
                 step.slots[slot_name] = str(value)
