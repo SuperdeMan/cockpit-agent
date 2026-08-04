@@ -334,8 +334,15 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 
 **当前命令暂未获准执行。** 剩余前置**两条**（2026-08-03 深夜更新，findings §8.5）：
 
-1. **L3 证据未取得**——既有 e2e 运行器在本机 `lease_protocol` / `identity_cleanup` 失败，
-   属运行器的账，不是对抗套件的；
+1. ~~**L3 证据未取得**~~ **已取得（2026-08-04，findings §11）**。那句「运行器在本机
+   `lease_protocol` / `identity_cleanup` 失败」**已不成立**——直接跑
+   `python scripts/run_e2e.py --id e2e_journeys --provider <p> --model <m>` 跑完了，
+   回归级 15/15、目标级 14/20，**L3 选集 6 条里 5 条通过，唯一红是 `B3-3`**
+   （记忆×车控填值：回复只剩一个「度」字，终态 `hvac_temp=20` 期望 26）。
+   极可能是 §9.1 的隐私扫描修复顺带解开的（`lease_protocol` 归属的
+   `test_e2e_stack_lease.py` 正是被那个 bug 打红的 10 条之一）。
+   > **判据：把一条红归成「别人的账」之后，要留一个复查它的触发器。**
+   > 这条账挂了两天，期间没人再跑过那条命令——**归因一旦写进文档就没人重验**。
 2. **gate 全量 L1 仍跑不到全绿**：最近一趟 **110/116（94.8%）**，`stable_fail` 2 + `unstable` 4。
    ⚠ **但这一条的性质已经变了**：`ex.homophone.aircon` / `nq.umbrella.both` 两条稳定红
    **已修复并复验通过**（findings §8.1/§8.2），当前剩下的两条 `stable_fail`
