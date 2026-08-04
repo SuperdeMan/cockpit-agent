@@ -93,13 +93,25 @@ def _load_paraphrases() -> list[dict]:
 
 
 def _known_intents() -> set[str]:
-    """真实存在的 intent 全集：agents/*/manifest.yaml ∪ 端侧车控/媒体意图集。"""
+    """真实存在的 intent 全集：agents/*/manifest.yaml ∪ **MCP 准入清单** ∪ 端侧意图集。
+
+    ⚠ 准入清单那一路 2026-08-04 才补上，与 `test/eval_exemplars.py` 同一处盲区：
+    `mcp-bridge` 的 `capabilities: []` 是有意的，它的能力由 `servers.yaml` 在启动期
+    合成。清单只认 manifest 一种声明形态时，`shop.*` 会被判成不存在的 intent，
+    于是**整个域既写不了范例也写不了 guide golden**——两道门禁一起把它关在外面。
+    """
     intents: set[str] = set()
     for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "manifest.yaml"))):
         m = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         for c in m.get("capabilities") or []:
             if c.get("intent"):
                 intents.add(str(c["intent"]))
+    for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "servers.yaml"))):
+        s = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+        for server in s.get("servers") or []:
+            for tool in (server or {}).get("tools") or []:
+                if (tool or {}).get("intent"):
+                    intents.add(str(tool["intent"]))
     from edge_agents_mod.media import MEDIA_INTENTS
     from edge_agents_mod.vehicle import VEHICLE_INTENTS
     return intents | VEHICLE_INTENTS | MEDIA_INTENTS

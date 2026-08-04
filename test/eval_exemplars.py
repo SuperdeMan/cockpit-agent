@@ -75,12 +75,29 @@ _MAX_MISS_RATE = 0.20
 # ── 语料加载 ─────────────────────────────────────────────────────────────────
 
 def _known_intents() -> set[str]:
+    """能力面上真实存在的 intent 全集（typo 守卫的判据）。
+
+    ⚠ 只读 `manifest.yaml` 会漏掉**启动期合成能力**的 Agent：`mcp-bridge` 的
+    `capabilities: []` 是有意的，它的能力由 `servers.yaml` 准入清单在 bootstrap 时
+    合成（「改 servers.yaml + 人工审」才是那些 intent 的声明处）。后果不是「少校验
+    一点」，是**整个 shop 域连一条范例都写不进来**——写了就被 typo 守卫判成不存在的
+    intent。而对抗测试里 `cp.dep.menu-then-order` 恰恰是 `exemplars=[]` 的 0/5 稳定红。
+
+    > 判据：**「能力从哪里声明」和「能力写在哪个文件」是两件事。**
+    > 清单只认一种声明形态时，另一种形态的域会安静地失去整层机制。
+    """
     intents: set[str] = set()
     for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "manifest.yaml"))):
         m = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         for c in m.get("capabilities") or []:
             if c.get("intent"):
                 intents.add(str(c["intent"]))
+    for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "servers.yaml"))):
+        s = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+        for server in s.get("servers") or []:
+            for tool in (server or {}).get("tools") or []:
+                if (tool or {}).get("intent"):
+                    intents.add(str(tool["intent"]))
     from edge_agents_mod.media import MEDIA_INTENTS
     from edge_agents_mod.vehicle import VEHICLE_INTENTS
     return intents | VEHICLE_INTENTS | MEDIA_INTENTS
