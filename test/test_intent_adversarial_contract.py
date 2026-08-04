@@ -449,7 +449,13 @@ def test_boundary_ledger_maps_stable_ids_to_declared_domain_order():
     # 就是提醒「裁定加了，兑现物加了吗」。
     assert ledger["nearby-navigation.find-vs-go"] == ("nearby", "navigation")
     assert ledger["manual-vision.described-light-vs-unknown-light"] == ("manual", "vision")
-    assert len(ledger) == 20
+    # 2026-08-04 泓舟再补一条（charging-nearby.charger-vs-gas-station），20 → 21。
+    # **这条断言拦了我一次，拦得对**：它逼我先证明兑现物在场再改数字。
+    # 已证：`validate_boundary_coverage` 对该 ruling 零错误，左右各 2 条 `reviewed`
+    # 对照（`bd.cn-charger-gas.{left.charger,left.fastcharge,right.gas,right.store}`），
+    # 两侧同句式只换对象——句式相同才证明分开它们的是对象的能力耦合，不是措辞。
+    assert ledger["charging-nearby.charger-vs-gas-station"] == ("charging", "nearby")
+    assert len(ledger) == 21
 
 
 def test_boundary_ledger_rejects_missing_duplicate_id_and_empty_why(tmp_path):
