@@ -1187,3 +1187,59 @@ cases:
       - input: {utterance: 帮我看看这里亮的这个灯, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [vision.describe]}], forbidden_intents: [manual.query], allow_extra_intents: false}
+
+  # ── 2026-08-04 补：`charging-nearby.charger-vs-gas-station`（泓舟本会话裁定）──
+  # 这条台账登记的是**两条既有裁定相交处**的那一条：「按动词划」是通则，充电桩是特例。
+  # 两侧刻意用**同一个句式**（『附近哪儿有 X』/『找个 X』），只让对象在充电桩与加油站/
+  # 便利店之间换——句式相同才能证明分开它们的是**对象的能力耦合**（读真实 SOC、
+  # 按空闲排序、可作导航途经点），不是措辞。
+  - id: bd.cn-charger-gas.left.charger
+    title: 附近哪儿有充电桩是充电域
+    family_id: bd.cn-charger-gas.charger
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-gas-station, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-gas-station, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-04}
+    turns:
+      - input: {utterance: 附近哪儿有能给车补电的桩, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search, nearby.detail], allow_extra_intents: false}
+  - id: bd.cn-charger-gas.left.fastcharge
+    title: 找快充也是充电域
+    family_id: bd.cn-charger-gas.fastcharge
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-gas-station, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-gas-station, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-04}
+    turns:
+      - input: {utterance: 这边有没有能快充的地方, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search, nearby.detail], allow_extra_intents: false}
+  - id: bd.cn-charger-gas.right.gas
+    title: 同一句式换成加油站就归周边发现
+    family_id: bd.cn-charger-gas.charger
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-gas-station, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-gas-station, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-04}
+    relation: {base_case: bd.cn-charger-gas.left.charger, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
+    turns:
+      - input: {utterance: 附近哪儿有能加柴油的站, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find, charging.plan], allow_extra_intents: false}
+  - id: bd.cn-charger-gas.right.store
+    title: 同一句式换成便利店同样归周边发现
+    family_id: bd.cn-charger-gas.fastcharge
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [charging, nearby], boundary_ledger: charging-nearby.charger-vs-gas-station, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: charging-nearby.charger-vs-gas-station, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-04}
+    relation: {base_case: bd.cn-charger-gas.left.fastcharge, type: route_flip, expectation: {forbidden_after: [charging.find], required_change: true}}
+    turns:
+      - input: {utterance: 这边有没有能买水的便利店, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find, charging.plan], allow_extra_intents: false}
