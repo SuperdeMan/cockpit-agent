@@ -16,6 +16,8 @@ suites:
     normal_repeats: 1
     failure_repeats: 3
     high_risk_repeats: 3
+    independent_processes: 1
+    independent_layers: []
   gate:
     statuses: [stable]
     live_statuses: [stable]
@@ -25,3 +27,5 @@ suites:
     normal_repeats: 3
     failure_repeats: 3
     high_risk_repeats: 3
+    independent_processes: 2
+    independent_layers: [l1, l2]

@@ -141,6 +141,8 @@ class SuiteConfig:
     normal_repeats: int
     failure_repeats: int
     high_risk_repeats: int
+    independent_processes: int = 1
+    independent_layers: tuple[str, ...] = ()
 
 
 # ── 合法取值表 ─────────────────────────────────────────────────────────────
@@ -386,7 +388,8 @@ def load_suites(path: Path) -> dict[str, SuiteConfig]:
     for name, raw in data["suites"].items():
         _expect_keys(raw, {"statuses", "live_statuses", "min_cases", "max_cases",
                            "attack_minimums", "normal_repeats", "failure_repeats",
-                           "high_risk_repeats"}, f"{path}:{name}")
+                           "high_risk_repeats", "independent_processes",
+                           "independent_layers"}, f"{path}:{name}")
         statuses = set(_strings(raw.get("statuses")))
         live_statuses = set(_strings(raw.get("live_statuses")))
         if not statuses <= _STATUSES:
@@ -406,6 +409,16 @@ def load_suites(path: Path) -> dict[str, SuiteConfig]:
                 raise ValueError(f"{name}.{key} must be >= 1")
         if name == "gate" and int(raw.get("normal_repeats", 0)) < 3:
             raise ValueError("gate.normal_repeats must be >= 3")
+        independent_processes = int(raw.get("independent_processes", 1))
+        independent_layers = _strings(raw.get("independent_layers"))
+        if name == "gate" and independent_processes < 2:
+            raise ValueError("gate.independent_processes must be >= 2")
+        if name == "gate" and not set(independent_layers) <= {"l1", "l2"}:
+            raise ValueError("gate.independent_layers may only contain l1/l2")
+        if name == "discovery" and independent_processes != 1:
+            raise ValueError("discovery.independent_processes must be 1")
+        if name == "discovery" and independent_layers:
+            raise ValueError("discovery.independent_layers must be empty")
     return {
         str(name): SuiteConfig(
             statuses=_strings(raw.get("statuses")),
@@ -417,6 +430,8 @@ def load_suites(path: Path) -> dict[str, SuiteConfig]:
             normal_repeats=int(raw.get("normal_repeats", 1)),
             failure_repeats=int(raw.get("failure_repeats", 3)),
             high_risk_repeats=int(raw.get("high_risk_repeats", 3)),
+            independent_processes=int(raw.get("independent_processes", 1)),
+            independent_layers=_strings(raw.get("independent_layers")),
         )
         for name, raw in (data.get("suites") or {}).items()
     }
@@ -525,14 +540,14 @@ def _plan_intents(plan: PlanExpectation) -> set[str]:
 # 后果实测：3 趟 × repeat 3（9 个样本）下，132 条 stable 里 **18 条（15.5%）** 不稳定。
 #
 # 判据：**「独立跑两趟」说的是进程数，不是样本数；置信度由样本数决定。**
-# 新晋级必须声明 `stabilized_samples`（每趟 `--repeat 3` × 两趟 = 6），机器只校验
-# 这个数被如实填了且达标——它证不了作者真跑过，但能让「跑了几个样本」不再隐身。
+# 新晋级必须声明独立进程数、每进程样本数、唯一 run id 与总样本数。机器证不了作者
+# 真跑过，但能让「几个进程、每个进程跑了几次」不再被一个总数藏起来。
 _STABILIZED_SAMPLES_MIN = 6
 _STABILIZED_SAMPLES_SINCE = "2026-08-04"
 
 
 def _stabilized_samples_errors(case: AdversarialCase) -> list[str]:
-    """`stabilized_at >= 2026-08-04` 的晋级必须声明够数的取证样本。
+    """`stabilized_at >= 2026-08-04` 的晋级必须声明完整跨进程取证。
 
     按日期分段而不是一刀切：存量 132 条是在旧判据下晋级的，**把它们一次性判违约
     既不真实也不可执行**（它们的账另记在 findings §10，按机制逐族处理）。
@@ -540,14 +555,48 @@ def _stabilized_samples_errors(case: AdversarialCase) -> list[str]:
     stabilized_at = str(case.provenance.get("stabilized_at") or "")
     if stabilized_at < _STABILIZED_SAMPLES_SINCE:
         return []
-    raw = case.provenance.get("stabilized_samples")
-    if not isinstance(raw, int) or isinstance(raw, bool):
-        return [f"{case.id}: stable（{_STABILIZED_SAMPLES_SINCE} 起）requires "
-                f"integer provenance.stabilized_samples"]
-    if raw < _STABILIZED_SAMPLES_MIN:
-        return [f"{case.id}: stabilized_samples={raw} < {_STABILIZED_SAMPLES_MIN}"
-                f"——两趟独立进程各 --repeat 3 才够；2 个样本买到的置信度太低"]
-    return []
+    errors: list[str] = []
+
+    processes = case.provenance.get("stabilized_processes")
+    valid_processes = isinstance(processes, int) and not isinstance(processes, bool)
+    if not valid_processes:
+        errors.append(f"{case.id}: stable（{_STABILIZED_SAMPLES_SINCE} 起）requires "
+                      "integer provenance.stabilized_processes")
+    elif processes < 2:
+        errors.append(f"{case.id}: stabilized_processes={processes} < 2")
+
+    samples_per_process = case.provenance.get("stabilized_samples_per_process")
+    valid_samples_per_process = (isinstance(samples_per_process, int)
+                                 and not isinstance(samples_per_process, bool))
+    if not valid_samples_per_process:
+        errors.append(f"{case.id}: stable（{_STABILIZED_SAMPLES_SINCE} 起）requires "
+                      "integer provenance.stabilized_samples_per_process")
+    elif samples_per_process < 3:
+        errors.append(
+            f"{case.id}: stabilized_samples_per_process={samples_per_process} < 3")
+
+    process_runs = case.provenance.get("stabilized_process_runs")
+    if not isinstance(process_runs, list) or not process_runs:
+        errors.append(f"{case.id}: stable（{_STABILIZED_SAMPLES_SINCE} 起）requires "
+                      "non-empty list provenance.stabilized_process_runs")
+    elif (any(not isinstance(run, str) or not run.strip() for run in process_runs)
+          or len(set(process_runs)) != len(process_runs)):
+        errors.append(f"{case.id}: provenance.stabilized_process_runs must contain "
+                      "unique non-empty run ids")
+
+    samples = case.provenance.get("stabilized_samples")
+    if not isinstance(samples, int) or isinstance(samples, bool):
+        errors.append(f"{case.id}: stable（{_STABILIZED_SAMPLES_SINCE} 起）requires "
+                      "integer provenance.stabilized_samples")
+    elif (valid_processes and valid_samples_per_process
+          and samples < processes * samples_per_process):
+        errors.append(
+            f"{case.id}: stabilized_samples={samples} < "
+            f"{processes} * {samples_per_process}")
+    elif samples < _STABILIZED_SAMPLES_MIN:
+        errors.append(f"{case.id}: stabilized_samples={samples} < "
+                      f"{_STABILIZED_SAMPLES_MIN}")
+    return errors
 
 
 def _has_absolute_gold(expected: TurnExpectation) -> bool:

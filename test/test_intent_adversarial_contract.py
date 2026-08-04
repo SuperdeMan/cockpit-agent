@@ -6,6 +6,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 # test/ 无 __init__.py，CI 用 --import-mode=importlib 不会自动把本文件所在目录加入
 # sys.path；同目录兄弟模块导入需显式插入（同 test_eval_common.py 等既有惯例）。
 sys.path.insert(0, str(Path(__file__).parent))
@@ -107,6 +109,8 @@ suites:
     normal_repeats: 1
     failure_repeats: 3
     high_risk_repeats: 3
+    independent_processes: 1
+    independent_layers: []
   gate:
     statuses: [stable]
     live_statuses: [stable]
@@ -116,6 +120,8 @@ suites:
     normal_repeats: 3
     failure_repeats: 3
     high_risk_repeats: 3
+    independent_processes: 2
+    independent_layers: [l1, l2]
 """, encoding="utf-8")
 
     suites = load_suites(path)
@@ -126,6 +132,22 @@ suites:
     assert suites["discovery"].attack_minimums["A4"] == 60
     assert suites["gate"].failure_repeats == 3
     assert suites["gate"].normal_repeats == 3
+    assert suites["gate"].independent_processes == 2
+    assert suites["gate"].independent_layers == ("l1", "l2")
+    assert suites["discovery"].independent_processes == 1
+    assert suites["discovery"].independent_layers == ()
+
+
+def test_formal_suites_declare_the_independent_process_policy():
+    path = (Path(__file__).parent / "eval_corpus" / "intent_adversarial" /
+            "suites.yaml")
+
+    suites = load_suites(path)
+
+    assert suites["gate"].independent_processes == 2
+    assert suites["gate"].independent_layers == ("l1", "l2")
+    assert suites["discovery"].independent_processes == 1
+    assert suites["discovery"].independent_layers == ()
 
 
 def test_gate_suite_rejects_single_sample_normal_policy(tmp_path: Path):
@@ -143,6 +165,8 @@ suites:
     normal_repeats: 3
     failure_repeats: 3
     high_risk_repeats: 3
+    independent_processes: 1
+    independent_layers: []
   gate:
     statuses: [stable]
     live_statuses: [stable]
@@ -152,6 +176,8 @@ suites:
     normal_repeats: 1
     failure_repeats: 3
     high_risk_repeats: 3
+    independent_processes: 2
+    independent_layers: [l1, l2]
 """, encoding="utf-8")
 
     with pytest.raises(ValueError, match=r"gate\.normal_repeats must be >= 3"):
@@ -161,12 +187,92 @@ suites:
 # ── 严格契约：未知键、状态/来源、relation 与 family 泄漏 ────────────────────
 from dataclasses import replace  # noqa: E402
 
-import pytest  # noqa: E402
-
 from support.intent_adversarial_contract import (  # noqa: E402
     AdversarialCase, CaseTurn, IntentGroup, PlanExpectation, RelationSpec,
-    TurnExpectation, validate_cases,
+    SuiteConfig, TurnExpectation, validate_cases,
 )
+
+
+def _write_minimal_suites(path: Path, *, gate_processes: int = 2,
+                          gate_layers: str = "[l1, l2]",
+                          discovery_processes: int = 1,
+                          discovery_layers: str = "[]") -> None:
+    path.write_text(f"""
+schema_version: 1
+suites:
+  discovery:
+    statuses: [candidate, reviewed, stable]
+    live_statuses: [reviewed, stable]
+    min_cases: 1
+    max_cases: 10
+    attack_minimums: {{}}
+    normal_repeats: 1
+    failure_repeats: 3
+    high_risk_repeats: 3
+    independent_processes: {discovery_processes}
+    independent_layers: {discovery_layers}
+  gate:
+    statuses: [stable]
+    live_statuses: [stable]
+    min_cases: 1
+    max_cases: 10
+    attack_minimums: {{}}
+    normal_repeats: 3
+    failure_repeats: 3
+    high_risk_repeats: 3
+    independent_processes: {gate_processes}
+    independent_layers: {gate_layers}
+""", encoding="utf-8")
+
+
+def test_suite_config_process_policy_defaults_are_backward_compatible():
+    suite = SuiteConfig(
+        statuses=("reviewed",), live_statuses=("reviewed",),
+        min_cases=1, max_cases=10, attack_minimums={},
+        normal_repeats=1, failure_repeats=3, high_risk_repeats=3,
+    )
+
+    assert suite.independent_processes == 1
+    assert suite.independent_layers == ()
+
+
+def test_gate_suite_requires_at_least_two_independent_processes(tmp_path: Path):
+    path = tmp_path / "suites.yaml"
+    _write_minimal_suites(path, gate_processes=1)
+
+    with pytest.raises(
+            ValueError, match=r"gate\.independent_processes must be >= 2"):
+        load_suites(path)
+
+
+@pytest.mark.parametrize("layers", ("[l0]", "[l3]", "[l1, l3]"))
+def test_gate_suite_rejects_non_sampling_independent_layers(tmp_path: Path,
+                                                            layers: str):
+    path = tmp_path / "suites.yaml"
+    _write_minimal_suites(path, gate_layers=layers)
+
+    with pytest.raises(
+            ValueError,
+            match=r"gate\.independent_layers may only contain l1/l2"):
+        load_suites(path)
+
+
+def test_discovery_suite_rejects_multiple_independent_processes(tmp_path: Path):
+    path = tmp_path / "suites.yaml"
+    _write_minimal_suites(path, discovery_processes=2)
+
+    with pytest.raises(
+            ValueError, match=r"discovery\.independent_processes must be 1"):
+        load_suites(path)
+
+
+def test_discovery_suite_rejects_independent_layers(tmp_path: Path):
+    path = tmp_path / "suites.yaml"
+    _write_minimal_suites(path, discovery_layers="[l1]")
+
+    with pytest.raises(
+            ValueError, match=r"discovery\.independent_layers must be empty"):
+        load_suites(path)
 
 
 @pytest.fixture
@@ -631,22 +737,102 @@ def _errors_for(case) -> list[str]:
             if case.id in row]
 
 
-def test_new_promotions_must_declare_enough_stabilisation_samples():
+def _independent_process_provenance(**overrides):
+    provenance = {
+        "stabilized_at": "2026-08-04",
+        "stabilized_processes": 2,
+        "stabilized_samples_per_process": 3,
+        "stabilized_process_runs": ["promotion-a", "promotion-b"],
+        "stabilized_samples": 6,
+    }
+    provenance.update(overrides)
+    return provenance
+
+
+@pytest.mark.parametrize(
+    "missing_key",
+    (
+        "stabilized_processes",
+        "stabilized_samples_per_process",
+        "stabilized_process_runs",
+        "stabilized_samples",
+    ),
+)
+def test_new_promotions_require_complete_independent_process_provenance(
+        missing_key: str):
+    provenance = _independent_process_provenance()
+    provenance.pop(missing_key)
+
+    errors = _errors_for(_stable_case("x.missing", **provenance))
+
+    assert any(missing_key in row for row in errors)
+
+
+def test_new_promotions_must_use_at_least_two_independent_processes():
+    case = _stable_case(
+        "x.one-process",
+        **_independent_process_provenance(stabilized_processes=1),
+    )
+
+    assert any("stabilized_processes=1" in row for row in _errors_for(case))
+
+
+def test_new_promotions_must_sample_each_process_at_least_three_times():
+    case = _stable_case(
+        "x.two-samples",
+        **_independent_process_provenance(stabilized_samples_per_process=2),
+    )
+
+    assert any("stabilized_samples_per_process=2" in row
+               for row in _errors_for(case))
+
+
+@pytest.mark.parametrize(
+    "runs",
+    ([], (), "promotion-a", ["promotion-a", "promotion-a"]),
+)
+def test_new_promotions_require_a_non_empty_unique_process_run_list(runs):
+    case = _stable_case(
+        "x.bad-runs",
+        **_independent_process_provenance(stabilized_process_runs=runs),
+    )
+
+    assert any("stabilized_process_runs" in row for row in _errors_for(case))
+
+
+def test_new_promotions_require_total_samples_to_cover_every_process():
+    case = _stable_case(
+        "x.total-too-small",
+        **_independent_process_provenance(stabilized_samples=5),
+    )
+
+    assert any("stabilized_samples=5 < 2 * 3" in row
+               for row in _errors_for(case))
+
+
+def test_complete_independent_process_provenance_is_accepted():
     """「独立跑两趟」说的是**进程数不是样本数**——`normal_repeats: 1` 下那只有 2 个样本。
 
     实测（findings §10）：3 趟 × repeat 3 共 9 个样本下，132 条 stable 里 18 条不稳定，
     而它们全都通过了旧的两趟取证。
     """
-    missing = _stable_case("x.missing", stabilized_at="2026-08-04")
-    assert any("stabilized_samples" in row for row in _errors_for(missing))
+    case = _stable_case("x.ok", **_independent_process_provenance())
 
-    too_few = _stable_case("x.few", stabilized_at="2026-08-04",
-                           stabilized_samples=2)
-    assert any("stabilized_samples=2" in row for row in _errors_for(too_few))
+    assert not any("stabilized_" in row for row in _errors_for(case))
 
-    enough = _stable_case("x.ok", stabilized_at="2026-08-04",
-                          stabilized_samples=6)
-    assert not any("stabilized_samples" in row for row in _errors_for(enough))
+
+def test_formal_charge_then_navigate_records_two_process_runs():
+    root = Path(__file__).parent / "eval_corpus" / "intent_adversarial" / "cases"
+    case = next(c for c in load_cases(root)
+                if c.id == "cp.dep.charge-then-navigate")
+
+    assert case.provenance["stabilized_processes"] == 2
+    assert case.provenance["stabilized_samples_per_process"] == 3
+    assert case.provenance["stabilized_process_runs"] == [
+        "promotion-charge-nav-a",
+        "promotion-charge-nav-b",
+    ]
+    assert case.provenance["stabilized_samples"] == 6
 
 
 def test_legacy_promotions_are_grandfathered_by_date_not_waived_silently():
@@ -662,7 +848,9 @@ def test_legacy_promotions_are_grandfathered_by_date_not_waived_silently():
 def test_stabilized_samples_must_be_an_integer_not_a_bool_or_string():
     """`True` 是 int 的子类——不挡住它，一个手滑的 `yes` 就变成「样本数 1」。"""
     for bad in (True, "6", 6.0):
-        case = _stable_case("x.bad", stabilized_at="2026-08-04",
-                            stabilized_samples=bad)
+        case = _stable_case(
+            "x.bad",
+            **_independent_process_provenance(stabilized_samples=bad),
+        )
         assert any("integer provenance.stabilized_samples" in row
                    for row in _errors_for(case)), bad
