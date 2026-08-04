@@ -516,6 +516,38 @@ def _plan_intents(plan: PlanExpectation) -> set[str]:
     return intents
 
 
+# ── 晋级取证的统计功效 ────────────────────────────────────────────────────
+# 2026-08-04 实测立的账（findings §10）：晋级要求「两趟独立进程都过」，而 `gate` 的
+# `normal_repeats: 1` 意味着**一条通过的用例每趟只跑 1 次**——所以那句话实际只买到
+# **2 个样本**。一条真实通过率 93% 的用例，2 个样本全过的概率是 86%。
+# 后果实测：3 趟 × repeat 3（9 个样本）下，132 条 stable 里 **18 条（15.5%）** 不稳定。
+#
+# 判据：**「独立跑两趟」说的是进程数，不是样本数；置信度由样本数决定。**
+# 新晋级必须声明 `stabilized_samples`（每趟 `--repeat 3` × 两趟 = 6），机器只校验
+# 这个数被如实填了且达标——它证不了作者真跑过，但能让「跑了几个样本」不再隐身。
+_STABILIZED_SAMPLES_MIN = 6
+_STABILIZED_SAMPLES_SINCE = "2026-08-04"
+
+
+def _stabilized_samples_errors(case: AdversarialCase) -> list[str]:
+    """`stabilized_at >= 2026-08-04` 的晋级必须声明够数的取证样本。
+
+    按日期分段而不是一刀切：存量 132 条是在旧判据下晋级的，**把它们一次性判违约
+    既不真实也不可执行**（它们的账另记在 findings §10，按机制逐族处理）。
+    """
+    stabilized_at = str(case.provenance.get("stabilized_at") or "")
+    if stabilized_at < _STABILIZED_SAMPLES_SINCE:
+        return []
+    raw = case.provenance.get("stabilized_samples")
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        return [f"{case.id}: stable（{_STABILIZED_SAMPLES_SINCE} 起）requires "
+                f"integer provenance.stabilized_samples"]
+    if raw < _STABILIZED_SAMPLES_MIN:
+        return [f"{case.id}: stabilized_samples={raw} < {_STABILIZED_SAMPLES_MIN}"
+                f"——两趟独立进程各 --repeat 3 才够；2 个样本买到的置信度太低"]
+    return []
+
+
 def _has_absolute_gold(expected: TurnExpectation) -> bool:
     """relation 不是 gold：只声明「和另一个一样」的用例可以两个一起错还是绿的。"""
     retrieval = expected.retrieval
@@ -690,6 +722,7 @@ def validate_cases(cases: list[AdversarialCase], known_intents: set[str]) -> lis
             for key in ("stabilized_provider", "stabilized_at", "evidence_report"):
                 if not case.provenance.get(key):
                     errors.append(f"{case.id}: stable requires provenance.{key}")
+            errors.extend(_stabilized_samples_errors(case))
         if case.status == "retired" and not case.provenance.get("retired_reason"):
             errors.append(f"{case.id}: retired requires provenance.retired_reason")
         attacks = set(case.tags.get("attacks") or [])

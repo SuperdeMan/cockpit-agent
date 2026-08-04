@@ -436,6 +436,22 @@ def _plan_semantic_signature(plan: PlanSnapshot, *, with_slots: bool = True) -> 
     )
 
 
+def _slot_pairs(snapshot: DecisionSnapshot) -> set[tuple[str, str, str]]:
+    """快照里出现过的全部 `(intent, 槽位名, 取值)`。
+
+    给 `invariant` 的槽位断言用：它要证的是「**上下文没有串进槽位**」，
+    那是一个**引入**命题——variant 不得出现 base 从没产生过的取值。
+    逐字相等在这里过严：同一句话两次调用，可从原话恢复的可选槽位（如
+    「今天天气怎么样」的 `date=今天`）会时有时无，**少一个不是串味**。
+    """
+    out: set[tuple[str, str, str]] = set()
+    for plan in (snapshot.plan, *snapshot.replans):
+        for step in plan.steps:
+            for key, value in step.slots.items():
+                out.add((step.intent, str(key), _canonical(value)))
+    return out
+
+
 def semantic_signature(snapshot: DecisionSnapshot, *,
                        with_slots: bool = True) -> tuple:
     """Agent 调用与挂起状态进签名：一次调了 trunk.open、一次没调，不是同一个结果。
@@ -545,9 +561,13 @@ def judge_relation(spec, base_support, variant: DecisionSnapshot, *,
         _assert(out, "relation.invariant", in_support,
                 sorted(map(repr, base_routes)), repr(variant_route))
         if same_utterance:
-            # 同一句话、只换上下文 → 槽位应当逐字相同；不同说明**历史串进了槽位**。
-            _assert(out, "relation.invariant.slots", slots_in_support,
-                    sorted(map(repr, base_sigs)), repr(variant_sig))
+            # 同一句话、只换上下文 → **不得引入** base 从没产生过的槽位取值。
+            # 用子集而不是逐字相等：少一个可从原话恢复的可选槽位不是串味（实测
+            # `cs.weather.stale-restaurant` 的 `date` 时有时无），**多一个才是**。
+            introduced = _slot_pairs(variant) - set().union(
+                *(_slot_pairs(run) for run in base_runs))
+            _assert(out, "relation.invariant.slots", not introduced,
+                    "⊆ supp(base) 观测到的槽位取值", sorted(introduced))
     elif spec.type == "route_flip":
         changed = not in_support
         forbidden = set(expected.get("forbidden_after") or []) & variant_intents

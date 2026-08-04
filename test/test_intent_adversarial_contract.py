@@ -546,3 +546,63 @@ def test_coverage_counts_distinct_inputs_not_case_rows():
     assert coverage_matrix(different, {"trunk.open"})["trunk.open"]["positive"] == 2
     assert validate_coverage(different, {"trunk.open"},
                              {"trunk.open": {"hard_negative", "relation"}}) == []
+
+
+# ── 晋级取证的统计功效（2026-08-04，findings §10）─────────────────────────
+
+def _stable_case(case_id: str, **provenance):
+    base = {"kind": "authored", "reviewed_by": "human", "reviewed_at": "2026-08-04",
+            "stabilized_provider": "minimax:MiniMax-M3",
+            "evidence_report": "docs/reviews/eval/x.json"}
+    base.update(provenance)
+    return AdversarialCase(
+        id=case_id, title=case_id, family_id=case_id,
+        cohort="unseen_transfer", risk="low", status="stable",
+        tags={"attacks": ["A1"], "layers": ["l1"]},
+        provenance=base,
+        turns=(CaseTurn(utterance="打开后备箱", context={},
+                        expected=TurnExpectation(plan=PlanExpectation(
+                            assert_plan=True,
+                            required_groups=(IntentGroup(("trunk.open",)),)))),))
+
+
+def _errors_for(case) -> list[str]:
+    return [row for row in validate_cases([case], {"trunk.open"})
+            if case.id in row]
+
+
+def test_new_promotions_must_declare_enough_stabilisation_samples():
+    """「独立跑两趟」说的是**进程数不是样本数**——`normal_repeats: 1` 下那只有 2 个样本。
+
+    实测（findings §10）：3 趟 × repeat 3 共 9 个样本下，132 条 stable 里 18 条不稳定，
+    而它们全都通过了旧的两趟取证。
+    """
+    missing = _stable_case("x.missing", stabilized_at="2026-08-04")
+    assert any("stabilized_samples" in row for row in _errors_for(missing))
+
+    too_few = _stable_case("x.few", stabilized_at="2026-08-04",
+                           stabilized_samples=2)
+    assert any("stabilized_samples=2" in row for row in _errors_for(too_few))
+
+    enough = _stable_case("x.ok", stabilized_at="2026-08-04",
+                          stabilized_samples=6)
+    assert not any("stabilized_samples" in row for row in _errors_for(enough))
+
+
+def test_legacy_promotions_are_grandfathered_by_date_not_waived_silently():
+    """存量 132 条在旧判据下晋级——一次性判它们违约既不真实也不可执行。
+
+    按日期分段是**有意的**：它们的账另记在 findings §10（按机制逐族处理），
+    不是被悄悄豁免。
+    """
+    legacy = _stable_case("x.legacy", stabilized_at="2026-08-02")
+    assert not any("stabilized_samples" in row for row in _errors_for(legacy))
+
+
+def test_stabilized_samples_must_be_an_integer_not_a_bool_or_string():
+    """`True` 是 int 的子类——不挡住它，一个手滑的 `yes` 就变成「样本数 1」。"""
+    for bad in (True, "6", 6.0):
+        case = _stable_case("x.bad", stabilized_at="2026-08-04",
+                            stabilized_samples=bad)
+        assert any("integer provenance.stabilized_samples" in row
+                   for row in _errors_for(case)), bad

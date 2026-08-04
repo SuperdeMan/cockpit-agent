@@ -321,12 +321,25 @@ def test_invariant_main_claim_ignores_slot_rendering_when_the_utterances_differ(
     assert "relation.invariant.slots" not in _named(judgement)
 
 
-def test_invariant_still_compares_slots_when_both_sides_say_the_same_sentence():
-    """同一句话只换上下文——槽位不同说明**历史串进了槽位**，那是真缺陷。"""
+def test_invariant_slots_catch_a_value_the_base_never_produced():
+    """同一句话只换上下文——variant **多**出一个 base 从没有过的取值＝历史串进了槽位。"""
     spec = RelationSpec("base", "invariant", {})
     support = [_slotted("info.weather", date="明天")]
-    variant = _slotted("info.weather", date="明天", city="上海")
+    variant = _slotted("info.weather", date="明天", city="上海")   # 上海只可能来自历史
     assert not judge_relation(spec, support, variant, same_utterance=True).passed
+
+
+def test_invariant_slots_tolerate_an_optional_slot_going_missing():
+    """**少**一个可从原话恢复的可选槽位不是串味——子集语义，不是逐字相等。
+
+    实测立账：`cs.weather.stale-restaurant`（两侧都是「今天天气怎么样」）base 给
+    `{date: 今天}`、带陈旧历史的变体给 `{}`，逐字相等口径下会把它判红，
+    而那个 date 从原话里就能恢复，没有任何东西被串进来。
+    """
+    spec = RelationSpec("base", "invariant", {})
+    support = [_slotted("info.weather", date="今天")]
+    variant = _slotted("info.weather")
+    assert judge_relation(spec, support, variant, same_utterance=True).passed
 
 
 def test_clause_commute_keeps_the_slot_assertion_regardless_of_utterance():
