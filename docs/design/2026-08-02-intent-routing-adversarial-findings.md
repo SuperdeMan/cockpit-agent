@@ -832,7 +832,12 @@ examples——于是「车控」这一整片在范例库里是空白。
 **live 复验**（重建 edge-orchestrator 后 registry 报 72 caps）：
 `ex.colloquial.{hot,cold}` + `tu.hvac.{dec-vs-inc,inc-vs-dec}` **4/4 通过、
 instability 0%**——这四条此前都是随机红（`tu.hvac.dec-vs-inc` 在 3 趟分布里 7/9）。
-⇒ §10 那 18 条不稳定里，**A2 主体翻转那条与 A9 的一部分由此确定性收口**。
+⚠ **这四条都不在 §10 那 18 条里**（`tu.hvac.*` 与 `ex.colloquial.hot` 是 `reviewed`，
+根本不进 gate 选集；`ex.colloquial.cold` 是 `stable` 但三趟里本就全绿）——
+它们红在**发现轨**。本节初版写成「§10 的 18 条里 A2 与 A9 的一部分由此收口」，
+**那是没核就写的**，已删。
+> **判据：说「这个修复关掉了那批账里的几条」之前，先核这几条在不在那批账里。**
+> 两个集合都叫「不稳定」，但一个是 gate、一个是 discovery。
 
 > **判据：一个动作只能有一个名字——尤其当能力面只靠名字区分时。**
 > 而且它本来就是历史意外不是设计：`fast_intent` 的 aircon 分支里
