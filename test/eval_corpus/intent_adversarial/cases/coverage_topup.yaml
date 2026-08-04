@@ -427,7 +427,7 @@ cases:
     turns:
       - input: {utterance: 温度再高两度, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.inc]}], forbidden_intents: [hvac.dec, hvac.set], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.inc]}], forbidden_intents: [hvac.dec, hvac.set, aircon.dec], allow_extra_intents: false}
   - id: tu.hvac.dec-vs-inc
     title: 温度调低
     family_id: tu.hvac-inc-dec
@@ -436,11 +436,11 @@ cases:
     status: reviewed
     tags: {attacks: [A2], mechanisms: [direction_flip, vehicle_control], domains: [hvac], layers: [l1]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
-    relation: {base_case: tu.hvac.inc-vs-dec, type: route_flip, expectation: {forbidden_after: [hvac.inc], required_change: true}}
+    relation: {base_case: tu.hvac.inc-vs-dec, type: route_flip, expectation: {forbidden_after: [hvac.inc, aircon.inc], required_change: true}}
     turns:
       - input: {utterance: 温度再低两度, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.dec]}], forbidden_intents: [hvac.inc, hvac.set], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.dec]}], forbidden_intents: [hvac.inc, hvac.set, aircon.inc], allow_extra_intents: false}
   - id: tu.hvac.dec-second
     title: 温度调低（第二正例）
     family_id: tu.hvac-dec

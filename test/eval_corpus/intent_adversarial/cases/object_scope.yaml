@@ -267,11 +267,11 @@ cases:
     status: reviewed
     tags: {attacks: [A2], mechanisms: [object_flip, vehicle_control], domains: [hvac, volume], layers: [l1]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
-    relation: {base_case: os.raise.temperature, type: route_flip, expectation: {forbidden_after: [hvac.inc], required_change: true}}
+    relation: {base_case: os.raise.temperature, type: route_flip, expectation: {forbidden_after: [hvac.inc, aircon.inc], required_change: true}}
     turns:
       - input: {utterance: 调高音量, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [volume.inc]}], forbidden_intents: [hvac.inc], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [volume.inc]}], forbidden_intents: [hvac.inc, aircon.inc], allow_extra_intents: false}
   - id: os.refuel.charge
     title: 我要充电
     family_id: os.refuel

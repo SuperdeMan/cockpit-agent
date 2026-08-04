@@ -649,7 +649,7 @@ cases:
             focus: {last_intent: trip.plan}
             history: [{role: user, text: 帮我排一个三天的行程}, {role: assistant, text: 已排好}]
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.dec, hvac.set]}], forbidden_intents: [trip.modify], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.dec, hvac.set, aircon.dec]}], forbidden_intents: [trip.modify], allow_extra_intents: false}
   - id: cs.topic-switch.mid-research
     title: 调研中途切到导航
     family_id: cs.topic-switch-nav
