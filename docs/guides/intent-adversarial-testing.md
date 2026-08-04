@@ -22,7 +22,7 @@ L1 全量 470 证据单元，检索 2040 次调用零降级）——完整表在
 
 | | 状态 |
 |---|---|
-| ✅ **能引用** | L0 `70/70`；**236 条**专项单测；**§10 的 L1 新口径全表**（含 93.2% 原始通过、幻觉 2.3% / 逃逸 0%、依赖接线 1/5、不稳定 14.5%@coverage 27.9%、seen 95.8% vs unseen 92.7%）——**但 `relation_pass_rate` 那一行除外，见下** |
+| ✅ **能引用** | L0 `70/70`；**240 条**专项单测；**§10 的 L1 新口径全表**（含 93.2% 原始通过、幻觉 2.3% / 逃逸 0%、依赖接线 1/5、不稳定 14.5%@coverage 27.9%、seen 95.8% vs unseen 92.7%）——**但 `relation_pass_rate` 那一行除外，见下** |
 | ⚠ **只能当趋势** | 与 2026-08-02 之前任何 live 数字的**对比**——分母、口径、cohort 标签全都变过，`14.5%` 与旧报的 `3.1%` 不是同一个量 |
 | ❌ **已作废** | `relation_pass_rate 90.9%`——2026-08-03 晚 relation 改为对照 `supp(base)`（评审 §10.12 / 规格 §22.6）。**2026-08-04 又改了一次**（§22.8：主断言用路由签名、槽位另立），`route_flip`/`context_override` 变严 ⇒ **跨这两次改动比任何 relation 相关读数都无效**，含 gate 通过率 |
 | ❌ **仍不存在** | **L2 新口径读数**（`expected.engine` / Edge 副作用合并 / `engine.observed` fail-closed 目前只有单测证据）；**L3 证据**；正式 baseline |
@@ -48,6 +48,12 @@ gate 全量 L1 现为 **110/116（94.8%）**；剩下两条 `stable_fail` 逐条
 ⚠ **`route_flip`（103 条）/ `context_override`（7 条）由此变严**——此前的读数含假绿
 （实测一例 `cs.more.research`：与 base 都落 `research.run`，靠 slots 不同判了绿）。
 **跨这次改动比 gate 通过率无效**：110/116 与其后的读数不是同一把尺子量的。
+
+**2026-08-04 第三批：门禁稳定性分布已量清**（findings §10，3 趟 × repeat 3 = 9 样本/条）。
+稳绿 97（83.6%）· **跨进程翻面 0** · 稳红 0 · **进程内抖 18（15.5%）**。
+根因是算术——`normal_repeats: 1` 让「两趟独立进程」只买到 **2 个样本**（判据与契约
+校验见 §7）。**18 条里 A4 占 7、A9 占 4**，与「两个最弱攻击族」是同一件事。
+**不降级**，理由与代价在 findings §10.3。专项单测 236 → **240**。
 
 **读任何一个比率之前，先看它的分子分母。** 分母为 0 时值是 `null` 不是 0 ——
 「一侧样本都没有」和「一侧全对」在这份报告里长得不一样，这是刻意的。
@@ -294,9 +300,16 @@ L1 有 `no-hints/no-skills/no-exemplars/empty-history`；L2 另加 `cloud-direct
 ## 7. 晋级 stable 的条件
 
 1. `reviewed_by: human` + `reviewed_at` 已填；
-2. 在**固定 provider**、规定重复策略下**两趟独立进程**都通过 ——
-   实测有 8 条在两趟之间翻面，少跑一趟就会混进采样噪声里的用例；
-3. `provenance` 补齐 `stabilized_provider` / `stabilized_at` / `evidence_report`；
+2. 在**固定 provider** 下**两趟独立进程 × 每趟 `--repeat 3`**（＝**6 个样本**）全过 ——
+   ⚠ **2026-08-04 收紧**。原文是「两趟独立进程都通过」，而 `gate.normal_repeats: 1`
+   意味着**一条通过的用例每趟只跑 1 次**，那句话实际只买到 **2 个样本**：
+   一条真实通过率 93% 的用例，2 个样本全过的概率是 **86%**。
+   后果实测（findings §10）：9 个样本下，132 条 stable 里 **18 条（15.5%）不稳定**，
+   而它们全都通过了旧的两趟取证。
+   > **判据：「独立跑两趟」说的是进程数，不是样本数；置信度由样本数决定。**
+3. `provenance` 补齐 `stabilized_provider` / `stabilized_at` / `evidence_report`
+   + **`stabilized_samples`（整数 ≥6）**——契约层硬校验，`stabilized_at >= 2026-08-04`
+   起生效；存量按日期豁免（它们的账在 findings §10.3，按机制逐族处理，不是被悄悄放过）；
 4. relation base 也必须是 stable（契约会拦）。
 
 ---
@@ -369,10 +382,10 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 | 优先级 | 待办 | 说明 |
 |---|---|---|
 | ~~**P0**~~ | ~~**现有 stable 集合里有稳定红**~~ | **已收口（2026-08-03 深夜，findings §8.1/§8.2）**。`ex.homophone.aircon` 真因是 **hvac 域一条范例都没有**（诊断行 `exemplars=[]`），新建 `skills/exemplars/hvac.yaml`；`nq.umbrella.both` **不是回归**——检索名单在通过的那次与失败的两次逐字相同，真因是 guide 把并列判据写成「提醒本身已有明确时间」。两条在 gate 全量 L1 里都已通过 |
-| **P0** | **gate 全量仍跑不绿，但原因是方差（新）** | 最近一趟 **110/116（94.8%）**：`stable_fail` 2（`cp.adaptive.rain-umbrella` adaptive 第二轮空转 / `cp.dep.menu-then-order` 漏第二步）+ `unstable` 4。**两条 stable_fail 逐条独立复跑都翻面**，消融四臂 `causal: none`。判据见 §8「门禁红也不等于有稳定缺陷」。要查的是「为什么这些句子站在判定边界上」 |
+| **P0** | **gate 全量跑不绿：18 条不稳定，集中在 A4/A9（已量清）** | **3 趟 × repeat 3（9 样本/条）实测**（findings §10）：稳绿 97（83.6%）· **跨进程翻面 0** · 稳红 0 · **进程内抖 18（15.5%）**。根因是算术——`normal_repeats: 1` 让「两趟独立进程」只买到 **2 个样本**（判据已收进 §7，契约已机制化）。**18 条不是随机分布的：A4 组合 7 条 + A9 表达攻击 4 条 = 11/18**，正是下面那条「两个最弱攻击族」。**不降级**（降回 reviewed 会让唯一输入 122 → 104、`--strict` 重新变红，且删掉门禁对最有价值那片区域的覆盖）——判据：**`unstable` 是被测对象的属性，不是语料质量的属性**。⇒ baseline 要等这 18 条被**产品修稳**，攻击目标已按机制聚族 |
 | P1 | ~~**子句间槽位串味**~~（定性已更正，部分收口） | 「明天早上八点」**不是子句串味**：它逐字出现在 `reminder#28` 的槽位与 reminder manifest 的 capability description（desc 渲进 catalog，每次规划都在）。铁证是 `nq.umbrella.both` 原话**没有任何时间词**却照样产出同一串。修完 **3/3 红 → 1/3 红**、幻影变成「明天八点」：**「早上」是照抄（已修）、「明天」才是真串味（仍在，`unstable`）**。findings §8.3 |
 | ~~P1~~ | ~~**23 条改标 seen 后 unseen 覆盖变薄**~~ | **已收口（`6eb9bab`）**：新写 10 条 unseen（唯一输入 502 → 512），另起 family 避免下次 family 闭包又把它们卷成 seen。⚠ 其中三条的 `relation: invariant` **写不成**——自由文本槽位让签名逐字相等的口径量到的是渲染方差，已改用绝对 gold（findings §8.6） |
-| P1 | **A4 83.3% / A9 83.0%** | 两个最弱攻击族（其余 ≥89%，A2/A8 已 100%）。本轮两条 P0 修复正落在这两族（A9 同音字 / A4 组合），新读数待一次固定 provider 的 L1 全量 |
+| ~~P1~~ | ~~**A4 83.3% / A9 83.0%**~~（已并入上一行） | **新读数就是上面那张表**：门禁里 18 条不稳定用例中 A4 占 7、A9 占 4。**「A4/A9 最弱」与「门禁抖」是同一件事的两种读法**——前者是分布口径，后者是它在门禁上的表现形式。逐条通过率见 findings §10.2 |
 | P2 | **L3 证据** | 属 e2e 运行器的账（`lease_protocol` / `identity_cleanup`），不是对抗套件的。它是正式 baseline 的另一个前置 |
 | P2 | ~~**「有点热」落 `hvac.inc`**~~（描述已作废） | **它现在产出 `aircon.dec`——方向是对的**。红在 `hvac.*` 与 `aircon.*` 是同一动作的两个 intent 名（`edge_call._to_structured` 里 `{"hvac": "aircon"}`，实测两者解出的 `data` 逐字相同），而 gold 的 `any_of` 只收 `hvac.*`。**判据：一部分「不稳定」其实是别名分裂不是模型抖动。** 修法需人裁，见 findings §8.4 |
 | P2 | **三条够不上晋级的候选** | `cp.hvac-news.swapped`（B 趟 relation.clause_commute 红）、`nq.hvac.reported`（A 趟红）、`nq.match.lastweek`（A 趟 unstable）。都仍在预选池里，**下次晋级先看它们**——按规矩要两趟独立进程都过 |

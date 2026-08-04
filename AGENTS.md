@@ -99,7 +99,7 @@ Dashboard vitest **17/17**；端侧 smoke 13/13；Go 网关 vet+test 通过。
 → **33 条契约测试凭空变红**。同目录差分实证：`test_e2e_stack_lease.py` 旧排除表 10 failed /
 新排除表 61 passed。**判据：差分证明的是「不是这批引入的」，不是「这是环境问题不用管」**
 ——上次对照 clean HEAD 得出「32 条逐条一致」方法没错，但两边共用同一个环境成因。
-**2026-08-03/04 对抗测试期累计**：对抗专项单测 **178 → 236**（`test/test_intent_adversarial_*.py`
+**2026-08-03/04 对抗测试期累计**：对抗专项单测 **178 → 240**（`test/test_intent_adversarial_*.py`
 + `test_eval_intent_adversarial_cli.py` + `test_build_intent_adversarial_candidates.py`；
 2026-08-04 relation 口径第二次裁定 +5）；
 新增 `orchestrator/cloud/tests/test_planning_no_action.py` 8 条、`agents/parking_payment/` 9 条；
@@ -272,7 +272,7 @@ span 的 `path` × `nlu_gate` × `nlu_vs_rule` 现在能从真实流量算出上
 | **23 条改标 seen 后 unseen 覆盖变薄** | 评审 §7.2-①、§7.3 | 指纹闸抓出 13 条 `unseen_transfer` 的原话字面就在 `skills/exemplars/*.yaml` 里（family 闸对它们全绿），连同 family 闭包共 23 条改标 seen。补法是**新写真正没进过知识的话术**，不是把标签改回去；受影响的是 stale-history invariant、weather/news/trip 三族、`nn-find-go` 边界四条 |
 | ~~**`stable` 规模实为 104 < 120**~~ | 规格 §21.8 → 评审 **§10.14** | **已收口**：预选池等量换出换入（`gate_candidate` 被钉死在 140，换出 8 条带病 / 换入 8 条新案例），两趟独立 live 取证后晋级 **19 条**——`stable` 113 → **132**、唯一输入 **104 → 122**、`--strict` **exit 0**。两趟抓到 3 条翻面，单跑一趟会多晋级 1–2 条噪声用例 |
 | ~~**现有 stable 集合里有稳定红**~~ | 评审 §10.14.4 → findings **§8.1/§8.2** | **已收口（`9d6ae0e`）**，且两条真因都与立账时的猜测不同：`ex.homophone.aircon` 是 **hvac 域一条范例都没有**（`exemplars=[]`；范例库 199 条金标全来自云侧 manifest，端侧车控天然空白）→ 新建 `skills/exemplars/hvac.yaml`，复验两趟独立进程都绿、检回靠 **`@vec:0.69` 语义通道**（词法没够着＝是转移不是背诵）。`nq.umbrella.both` **不是回归**——检索名单在通过的那次与失败的两次**逐字相同**，真因是 guide 把并列判据写成「提醒本身已有明确时间」，「没说时间」于是成了判条件句的证据。修法是判据换成条件/否定/顺承**三分**（⚠ 只修中间一分会把否定句一起翻正） |
-| **gate 全量跑不绿，但原因是方差（新 P0）** | findings **§8.5** | 修完两条后 gate 全量 L1 **110/116（94.8%）**：`stable_fail` 2（`cp.adaptive.rain-umbrella` adaptive 第二轮空转 / `cp.dep.menu-then-order` 漏第二步）+ `unstable` 4。**两条 `stable_fail` 逐条独立复跑都翻面**、消融四臂 `causal: none`（其中「被不相干 guide 干扰」这个假设被 `no-skills` 臂**证伪**）。**判据：门禁红也不等于有稳定缺陷**——晋级要的「两趟独立进程都过」是必要不充分条件。下一步先量分布（gate 全量 `--repeat 3` 连跑三趟看每条 pass 率），别再逐条修 |
+| **gate 全量跑不绿：18 条不稳定，集中在 A4/A9（P0，已量清）** | findings **§10** | **3 趟 × repeat 3（9 样本/条）实测**：稳绿 97（83.6%）· **跨进程翻面 0** · 稳红 0 · **进程内抖 18（15.5%）**。⚠ §8.5 立的「跨进程 3/3 ↔ 0/3 翻面」这个机制**不成立**，真根因是**算术**：`gate.normal_repeats: 1` 让「两趟独立进程都过」只买到 **2 个样本**（真实通过率 93% 的用例，2 样本全过概率 86%）。已机制化：`stabilized_at >= 2026-08-04` 的晋级必须声明 `stabilized_samples ≥ 6`，存量按日期豁免。**18 条不是随机分布的：A4 组合 7 + A9 表达攻击 4 = 11/18**。**不降级**——降回 reviewed 会让唯一输入 122 → 104、`--strict` 重新变红，且删掉门禁对最有价值那片区域的覆盖。判据：**`unstable` 是被测对象的属性，不是语料质量的属性**。⇒ baseline 要等这 18 条被产品修稳 |
 | **畸形模型输出的防御只做到容器层（已修，判据留档）** | 本会话真栈 | 一趟 140 选集的 L1 跑批被一次 `depends_on: [["s0"]]` 整趟打死（`TypeError: unhashable`）。`50c2b3f` 已修两处（`depends_on` 元素 / `slot_refs` value）。判据：**模型输出是不可信输入，防御要一路防到真正会被拿去 hash / 拿去 split 的那个值，不是防到最外层容器为止** |
 | **L3 证据仍未取得** | 规格 §21.8 / 评审 §9 | 唯一目录、mtime、exit、provider 与额外 journey 已核；report 的 run/code/lock 身份仍未闭合，且尚无新鲜完整 L3 产物，不能写“baseline-ready” |
 | **组合漏第二步（原「依赖接线 1/5」，⚠ 定性已更正）** | 评审 **§10.8** | 初版写「两步都规划出来了只是没连起来」——**逐条拉计划后发现只对 1 条成立，而那 1 条恰恰不是接线问题**。真形态：3 条 unstable 是**漏第二步**、1 条是 gold 与 find-vs-go 台账打架（已修，3/3）、1 条通过。`trip-then-navigate` 是唯一 `causal=supported`：**guide 自己在制造漏步**（`multi-day-trip` 只讲「必须出 trip.plan」、示例全是并列步，模型读成「只出」），已补组合判据 + golden，实测 3/3。⚠ **20% 不等于「20% 的时候接不上」**——分母含 3 条 unstable 且报告存的是失败那一次。**全族回归已补跑**（`--tag composition` 51 单元 ×3）：两条修复都不在失败名单、3/3 站住；剩下的 `cp.dep.menu-then-order` 等仍是漏第二步的 unstable，按规矩不进修复清单 |
@@ -281,7 +281,7 @@ span 的 `path` × `nlu_gate` × `nlu_vs_rule` 现在能从真实流量算出上
 | **子句间槽位串味（⚠ 定性已更正，部分收口）** | 评审 §10.12.5 → findings **§8.3** | 原定性「前一子句的时间限定词串到后一子句」**只对了一半**。串味说预测的是「明天」，实测拿到的是整串「**明天早上八点**」——而「早上」在原话两个子句里都不存在；同一串**逐字出现在** `reminder#28` 的槽位里，也出现在 `agents/reminder/manifest.yaml` 的 capability description（`_catalog_item` 把 desc 渲进 catalog，**每次规划都在**）。铁证是 `nq.umbrella.both`：原话**一个时间词都没有**，照样产出 `{title:"带伞", time_text:"明天早上八点"}`，两个槽位与 `reminder#28` 一起照抄。修完 **3/3 红 → 1/3 红**，幻影变成「明天八点」——**「早上」是照抄示例字面（已修），「明天」才是真串味（仍在，`unstable` 不进清单）** |
 | ~~**「有点热」落 `hvac.inc`**~~（描述已作废） | 评审 §10.11 → findings **§8.4** | **它现在产出 `aircon.dec`——方向是对的**。红在别处：`hvac.*` 与 `aircon.*` 是同一动作的两个 intent 名（见下条），gold 的 `any_of` 只收 `hvac.*` |
 | **`hvac.*` 与 `aircon.*` 是同一动作的两个名字（新，未修）** | findings **§8.4** | `edge_call._to_structured` 有一行 `{"hvac": "aircon"}`，实测 `hvac.dec` 与 `aircon.dec` 解出的 `data` **逐字相同**（`object=aircon, operate=dec`）；而 `VEHICLE_INTENTS` 把两套名字**都**注册进能力面，端侧 catalog 又**只渲染意图名不渲染描述** → **planner 面对两个无法区分的同义工具只能掷硬币**。判据：**一部分「不稳定」其实是别名分裂不是模型抖动**——查 `repeat_status` 之前先问「这两个不同答案是不是同一件事」。两条修法各有代价需人裁：语料 gold 收两个别名（治标但正确，`fast_intent` 自己产出的就是 `aircon.dec`）/ 端侧能力面去重（治本，须先盘 `aircon.*` 全部消费方） |
-| **A4 83.3% / A9 83.0%** | 评审 §10 | 两个最弱攻击族（其余 ≥89%，A2/A8 已 100%） |
+| ~~**A4 83.3% / A9 83.0%**~~（已并入上一行） | 评审 §10 → findings **§10.2** | **新读数就是上面那张分布表**：门禁 18 条不稳定用例里 A4 占 7、A9 占 4（11/18）。**「A4/A9 最弱」与「门禁抖」是同一件事的两种读法**——前者是分布口径，后者是它在门禁上的表现形式。逐条通过率见 findings §10.2 |
 
 **M5 待办（都不阻塞）**：
 
