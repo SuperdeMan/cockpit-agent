@@ -32,7 +32,12 @@ VEHICLE_INTENTS = {
     "scene_mode.set", "power_mode.set",
     "screen.brightness.set", "screen.brightness.inc", "screen.brightness.dec",
     "aircon.wind_speed.set", "aircon.wind_speed.inc", "aircon.wind_speed.dec",
-    "aircon.inc", "aircon.dec",
+    # ⚠ 这里曾有 `aircon.inc` / `aircon.dec`，2026-08-04 删除：它们与 `hvac.inc` /
+    # `hvac.dec` 解出**逐字相同**的执行数据（`edge_call._to_structured` 把 `hvac` 对象
+    # 改名成 `aircon`），却各自占一个能力名。而端侧 catalog **只渲染意图名不渲染描述**，
+    # 于是云侧 planner 面对两个无法区分的同义工具只能掷硬币。
+    # **一个动作只能有一个名字。** 温度增减统一走 `hvac.inc` / `hvac.dec`；
+    # 风速仍是独立能力（`aircon.wind_speed.*`），那不是同义词。
     "tire_pressure.query", "dashcam.open", "dashcam.close",
     "accompany_home.open", "accompany_home.close",
     "volume.set", "volume.inc", "volume.dec",

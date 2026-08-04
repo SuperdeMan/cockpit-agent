@@ -80,9 +80,9 @@ def test_current_default_budget_holds_full_stack(monkeypatch):
 
 
 def test_edge_capabilities_stay_name_only_in_catalog(monkeypatch):
-    """端侧 78 条能力在 catalog 里**只出名字**——判别化描述有意不进 planner prompt。
+    """端侧能力（2026-08-04 起 76 条）在 catalog 里**只出名字**——判别化描述有意不进 planner prompt。
 
-    这条是 M5 P3 收尾的**负结果护栏**。`capabilities.py` 已经能机械生成 78 条判别化
+    这条是 M5 P3 收尾的**负结果护栏**。`capabilities.py` 已经能机械生成逐条判别化
     描述了，把它们渲进 catalog 看起来天经地义；实测双臂差分（唯一变量=这一个渲染分支，
     25 条 canonical+口语语料 ×2 轮 ×2 provider）**Δ=0、100 次对照零翻面**，而代价是每次
     规划 +1462 字符。判别化描述真正的受益方是 registry 语义兜底（按 capability 粒度

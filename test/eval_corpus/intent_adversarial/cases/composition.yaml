@@ -893,4 +893,4 @@ cases:
     turns:
       - input: {utterance: 空调温度往下调两度，顺便看看空气质量, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.dec, hvac.set, aircon.dec]}, {any_of: [info.air_quality]}], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.dec, hvac.set]}, {any_of: [info.air_quality]}], allow_extra_intents: false}

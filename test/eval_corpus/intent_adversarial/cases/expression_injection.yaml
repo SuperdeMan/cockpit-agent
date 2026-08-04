@@ -19,7 +19,7 @@ cases:
     turns:
       - input: {utterance: 有点热, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.dec, hvac.set, hvac.on, aircon.dec]}], forbidden_intents: [chitchat.talk, window.open], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.dec, hvac.set, hvac.on]}], forbidden_intents: [chitchat.talk, window.open], allow_extra_intents: false}
   - id: ex.colloquial.cold
     title: 有点冷同样落到空调
     family_id: ex.colloquial-cold
@@ -31,7 +31,7 @@ cases:
     turns:
       - input: {utterance: 有点冷, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.inc, hvac.set, hvac.on, aircon.inc]}], forbidden_intents: [chitchat.talk], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.inc, hvac.set, hvac.on]}], forbidden_intents: [chitchat.talk], allow_extra_intents: false}
   - id: ex.colloquial.stuffy
     title: 车里闷落到空调或车窗
     family_id: ex.colloquial-stuffy

@@ -37,8 +37,11 @@ class TestReminderUtteranceYieldsToCloud:
         assert r is not None
 
     def test_feeling_relative_forms_still_local(self):
-        assert classify("温度再热一点")["name"] == "aircon.inc"
-        assert classify("冷一点")["name"] == "aircon.dec"
+        # 名字 2026-08-04 从 `aircon.inc/dec` 统一到 `hvac.inc/dec`：两者解出的执行数据
+        # 逐字相同，而两个名字都进能力面会让云侧 planner 在同义工具之间掷硬币。
+        # 本条真正要证的是「这些说法仍走端侧」，intent 名是顺带断言的。
+        assert classify("温度再热一点")["name"] == "hvac.inc"
+        assert classify("冷一点")["name"] == "hvac.dec"
 
     def test_feeling_with_degree_still_local(self):
         r = classify("太热了，调到24度")

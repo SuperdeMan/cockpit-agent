@@ -3,6 +3,7 @@
 ## 判别化描述（M5 P3 收尾，2026-08-01）
 
 在此之前，78 个 capability 共用**两句**描述（74 个车控一句、4 个媒体一句）。
+（2026-08-04 起是 **76** 个：`aircon.inc/dec` 与 `hvac.inc/dec` 同义，已删前者。）
 修法不是手写 74 条，是从 VAL 知识库（`knowledge/commands.yaml`）机械生成：对象名取
 `display_name`、动作取 intent 名末段、限定语取中间段，解码走 `edge_call.decode_intent`
 ——**与 executor 待会儿真执行的是同一个解码器**。于是描述永远说的是这条 intent 真会
@@ -99,7 +100,9 @@ _MODE_VOCAB_FALLBACK = {"scene_mode": "scene_modes"}   # commands.yaml 里 modes
 # 两个 producer 造成的**真别名**：云端 planner 产 `hvac.*`（架构 2026-06-14「隐式车控」
 # 映射），端侧 fast_intent 产 `aircon.*`，两者解码到同一条 VAL 命令。两个名字都得留着
 # （各自的执行路径在用），但描述必须点明等价——否则 catalog 里会出现两个**文本完全相同**
-# 的工具，那正是本次要消灭的病。契约测试断言 78 条描述两两不同，这里漏一条就红。
+# 的工具，那正是本次要消灭的病。契约测试断言**每条描述两两不同**，这里漏一条就红。
+# ⚠ 2026-08-04：`aircon.inc/dec` 已删（与 `hvac.inc/dec` 解出逐字相同的执行数据），
+# 能力面 78 → **76**。
 _ALIAS_OF = {"aircon.inc": "hvac.inc", "aircon.dec": "hvac.dec"}
 
 

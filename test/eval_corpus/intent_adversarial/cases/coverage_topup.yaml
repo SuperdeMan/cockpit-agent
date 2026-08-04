@@ -427,7 +427,7 @@ cases:
     turns:
       - input: {utterance: 温度再高两度, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.inc]}], forbidden_intents: [hvac.dec, hvac.set, aircon.dec], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.inc]}], forbidden_intents: [hvac.dec, hvac.set], allow_extra_intents: false}
   - id: tu.hvac.dec-vs-inc
     title: 温度调低
     family_id: tu.hvac-inc-dec
@@ -436,11 +436,11 @@ cases:
     status: reviewed
     tags: {attacks: [A2], mechanisms: [direction_flip, vehicle_control], domains: [hvac], layers: [l1]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
-    relation: {base_case: tu.hvac.inc-vs-dec, type: route_flip, expectation: {forbidden_after: [hvac.inc, aircon.inc], required_change: true}}
+    relation: {base_case: tu.hvac.inc-vs-dec, type: route_flip, expectation: {forbidden_after: [hvac.inc], required_change: true}}
     turns:
       - input: {utterance: 温度再低两度, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.dec]}], forbidden_intents: [hvac.inc, hvac.set, aircon.inc], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.dec]}], forbidden_intents: [hvac.inc, hvac.set], allow_extra_intents: false}
   - id: tu.hvac.dec-second
     title: 温度调低（第二正例）
     family_id: tu.hvac-dec
@@ -452,7 +452,7 @@ cases:
     turns:
       - input: {utterance: 空调调凉一点, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.dec, aircon.dec]}], forbidden_intents: [hvac.inc, aircon.inc], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.dec]}], forbidden_intents: [hvac.inc], allow_extra_intents: false}
   - id: tu.hvac.inc-second
     title: 温度调高（第二正例）
     family_id: tu.hvac-inc
@@ -464,7 +464,7 @@ cases:
     turns:
       - input: {utterance: 空调调暖一点, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.inc, aircon.inc]}], forbidden_intents: [hvac.dec, aircon.dec], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.inc]}], forbidden_intents: [hvac.dec], allow_extra_intents: false}
   - id: tu.media.pause-vs-play
     title: 暂停播放
     family_id: tu.media-pause-play
@@ -516,7 +516,7 @@ cases:
           plan: {required_intent_groups: [{any_of: [media.prev]}], forbidden_intents: [media.next, media.pause], allow_extra_intents: false}
 
   # ── 首轮裁定后的覆盖补口 ────────────────────────────────────────────────
-  # `tu.hvac.dec-second` 的 gold 被放宽成 `any_of: [hvac.dec, aircon.dec]`（能力面有两个
+  # `tu.hvac.dec-second` 的 gold 被放宽成 `any_of: [hvac.dec]`（能力面有两个
   # 同义 intent），多成员组按契约不替成员算正例——所以 hvac.dec 需要再补一条单成员正例。
   - id: tu.hvac.dec-third
     title: 空调温度调低三度
@@ -529,7 +529,7 @@ cases:
     turns:
       - input: {utterance: 把空调温度调低三度, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [hvac.dec]}], forbidden_intents: [hvac.inc, aircon.inc], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [hvac.dec]}], forbidden_intents: [hvac.inc], allow_extra_intents: false}
   # `tu.nav.search-vs-detail` 降回 candidate 后 navigation.search_poi 缺正例与对照。
   # 这一对刻意换到**已登记的** navigation-vision 台账边界上，不再碰 nearby/navigation
   # 那条尚未裁定的地盘。

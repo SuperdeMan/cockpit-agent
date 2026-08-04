@@ -254,10 +254,16 @@ def classify(text: str) -> dict | None:
             name = f"aircon.wind_speed.{operate}"
         elif operate == "close":
             name = "hvac.off"
+        # 2026-08-04：这两支原本产出 `aircon.inc/dec`，而同一个分支的其它支产出的是
+        # `hvac.off/set/on`——**同一个对象在同一段代码里有两套前缀，是历史意外不是设计**。
+        # 后果不在端侧（`decode_intent` 把 `hvac` 对象改名成 `aircon`，两者解出的执行数据
+        # 逐字相同），在**云侧**：两个名字都注册进能力面，而端侧 catalog 只渲染意图名不渲染
+        # 描述 ⇒ planner 面对两个无法区分的同义工具只能掷硬币，落在 gold 只列其一的用例上
+        # 就是随机红。判据：**一个动作只能有一个名字——尤其当能力面只靠名字区分时。**
         elif operate == "inc":
-            name = "aircon.inc"
+            name = "hvac.inc"
         elif operate == "dec":
-            name = "aircon.dec"
+            name = "hvac.dec"
         elif operate in ("set", "open") and data.get("value"):
             name = "hvac.set"
         else:

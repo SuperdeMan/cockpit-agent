@@ -23,16 +23,6 @@ exemptions:
     reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
     owner: 泓舟
     reviewed_at: 2026-08-02
-  - intent: aircon.dec
-    requirements: [positive, hard_negative, relation]
-    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
-    owner: 泓舟
-    reviewed_at: 2026-08-02
-  - intent: aircon.inc
-    requirements: [positive, hard_negative, relation]
-    reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
-    owner: 泓舟
-    reviewed_at: 2026-08-02
   - intent: aircon.wind_speed.dec
     requirements: [positive, hard_negative, relation]
     reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。
