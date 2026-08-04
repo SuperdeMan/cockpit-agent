@@ -412,6 +412,13 @@ collector 在 `insert_span` 收到 `cloud.planning` 时按 `trace_id` **合并�
 `catalog_chars`/`catalog_dropped`。badcase 先看这三行——**没检回 / 检回了没用对 / 检回了却被裁**
 是三种不同的失败。
 
+**`goal_value_dropped`（2026-08-04）**：只在 goal 文本里有数字、而**全部 step 的槽位里
+一个数字都没有**时发 `"true"`，其余情况不发这个键（不发 ≠ false，同 §9.x 的稀疏语义）。
+它抓的形态是「模型把值算出来了却没写进 slots」——journeys `B3-3` 的
+`goal:「…最喜欢的温度（26度）」` + `hvac.set slots:{}`。**纯观测不改行为**，判据刻意粗到
+「有没有数字」：误报的代价只是一位观测，漏报的代价是缺陷继续隐形。
+这是「**goal 是免费的对照物**」三例里**第一例机器可判到值一级**的（前两例只判得到缺步）。
+
 ## 9. 跨 Agent 状态键（profile KV）
 
 Agent 无状态化：一次会话的临时状态落 **memory profile KV**，供跨轮或跨 Agent 复用。
@@ -780,3 +787,38 @@ OwnerKey = (user_id, occupant_id)
 协议、observability 四表 owner 列与原文脱敏、ReminderAdmin/SceneAdmin 管理服务、
 独立迁移 CLI 与 `pg_dump` 备份流程、真栈多乘员 E2E 矩阵、声纹注册单事务。
 它们是 GDPR 完备性与验收仪式，不是当前会产生错误行为的缺陷。
+
+---
+
+### 9.14 执行后对账的动态期望与「缺值不猜」（2026-08-04）
+
+两条都属**声明式**：领域判断留在知识/能力声明里，中央通用消费、零领域字面量。
+逐条证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` §12.5。
+
+**① `Verification.expect` 的 `$slot:<槽名>` 动态期望**（M2 Outcome Verifier 协议级扩展）
+
+| 项 | 契约 |
+|---|---|
+| 语法 | `state_match` 的 `expect.keys` 里，值写成 `$slot:<槽名>` ⇒ 求值前用**本步已解析完的 slots**（`_resolve_slot_refs` 之后）替换 |
+| **只认整值引用** | 不做字符串插值。期望值要拿去和世界状态逐值比对，支持插值等于把一个可被模型输出影响的语法面塞进对账层 |
+| **取不到 → UNKNOWN，绝不 UNSAT** | 槽缺失/空串时那一键计入既有的「核不了」通道。**「这一步没声明温度」不等于「温度没设成」**——那是另一条账（planner 把值算进 goal 却没写进 slots），归 `goal_value_dropped` 检测器管。**一条断言不能同时服务两个命题** |
+| 消费方 | `verify.resolve_expect_keys` / `eval_state_match(expect, snapshot, slots)`；executor `_evaluate` 透传 `step.slots` |
+| 首个声明 | `orchestrator/edge/capabilities.py` 的 `hvac.set`：`{"hvac_on":"true","hvac_temp":"$slot:temperature"}` |
+
+> **判据：验证的强度必须匹配主张的强度。** 原声明只核「空调开着」，于是「设定为 N 度」
+> 的「set 了但没设成」被判 `sat`——它比「挂点漏了执行路径」更难发现，**漏挂是没有 span，
+> 核错是一路报绿**。
+
+**② `commands.yaml` 的 `value_required_operates`（VAL 知识库字段）**
+
+| 项 | 契约 |
+|---|---|
+| 声明处 | `objects.<对象>.value_required_operates: [<operate>…]`——「这个 operate 必须带具体值」 |
+| 消费方 | `EdgeCallExecutor._missing_required_value`（零对象/意图字面量），命中 ⇒ `ExecuteResponse.NEED_SLOT` + `missing_slots=[<属性名>]` + 追问话术（`display_name` + 属性中文拼装） |
+| 三个不触发 | 带 `mode`（『空调开到制冷』设的是模式）· 带 `attr`（`aircon.wind_speed.set` 走另一条属性）· 对象没声明 `attrs`（它的 set 本来就是选模式） |
+| **只挡云端计划这一路** | 端侧快路径的 `_to_structured` 只在**有值**时才产 `hvac.set`（无值走 `hvac.on`），到不了这里。挡在 `edge_call` 而不是 VAL，是因为 VAL 的失败通道是 `REJECTED`（安全门控），这里要的是 `NEED_SLOT`（追问）——对用户是两件完全不同的事 |
+| 首个声明 | `aircon: value_required_operates: [set]`（泓舟 2026-08-04 裁定「分情况」：记忆有值→填进 slots 直接做；记忆确实没值→追问几度）|
+
+> **判据：缺值不是「用默认值」的理由**，尤其当值来自记忆召回时——记不得就该问。
+> 此前无值的 `hvac.set` 会静默降级成「开空调」、温度原地不动，而话术模板 `{value}度`
+> 拿到空值渲染成一个**单字「度」**。

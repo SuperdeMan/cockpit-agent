@@ -161,7 +161,8 @@ version: 1
 
 - **M0b（2026-07-24）**：Shadow Retrieval → Canary Injection → Full Migration。首批迁移
   （出自 `orchestrator/cloud/planning.py` `_PLANNER_BASE`）：guides = `multi-day-trip`、
-  `navigation-with-stop`、`conditional-reminder`；policies = `freshness-and-depth`、
+  `navigation-with-stop`、`conditional-reminder`（2026-07-27 后另有 `charging-strategy`、
+  `weather-outing`、`shop-order-flow`，**共 6 条**）；policies = `freshness-and-depth`、
   `implicit-vehicle-control`（其安全语义仍由 manifest/VAL 硬层承担）。
 - **2026-07-26 补全**（对应总体验收立卡）：`few_shots` 实装（此前文档有代码不读）；
   golden `expect_intents` 落地消费方（live 车道）+ `expect_any`/`expect_not`/`a|b` 契约；

@@ -71,8 +71,9 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 > **＋ §10.15**（深夜产品批的回填：那里更正了本报告的两条定性，并写下「门禁红也不等于
 > 有稳定缺陷」）；③ 发现与修复的单一入口
 > [`docs/design/2026-08-02-intent-routing-adversarial-findings.md`](docs/design/2026-08-02-intent-routing-adversarial-findings.md)
-> **§7（发现）· §8（2026-08-03 深夜修复）· §9–§11（2026-08-04 尺子硬化 / 门禁分布 / L3 解封）**；
-> ④ 本文 §4.1 活跃待办；⑤ 完整流水 `docs/agents-history.md` **§5 / §6 / §7 / §8**。
+> **§7（发现）· §8（2026-08-03 深夜修复）· §9–§11（2026-08-04 尺子硬化 / 门禁分布 / L3 解封）
+> · §12（2026-08-04 下午产品批：18 条 unstable 的取证与修复，**当前入口**）**；
+> ④ 本文 §4.1 活跃待办；⑤ 完整流水 `docs/agents-history.md` **§5 / §6 / §7 / §8 / §9**。
 > **live 跑批前先看运行手册 §2 的三个环境变量**——少给一个整趟白跑。
 >
 > **2026-08-03 晚追加四批**（评审 §10.12 / §10.13 / §10.14）：`clause_commute`
@@ -84,6 +85,8 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 >
 > **2026-08-03 深夜再两批**（产品 `9d6ae0e` + 语料 `6eb9bab`，逐条证据 findings **§8**）：
 > 上面那两条稳定红**已修完**并在 gate 全量 L1 里复验通过。真因都和立账时的猜测不一样——
+> ⚠ **本段的 `110/116` 已被 §12 取代**（2026-08-04 下午产品批修掉 14 条，且中间隔了
+> relation 口径第二次裁定——不是同一把尺子量的）。
 > `ex.homophone.aircon` 是 **hvac 域一条范例都没有**（`skills/exemplars/` 的 199 条金标全部
 > 来自云侧 manifest，车控是端侧能力、天然空白）；`nq.umbrella.both` **不是回归**
 > （检索名单在通过的那次与失败的两次逐字相同，是 guide 把并列判据写成「提醒本身已有明确
@@ -108,7 +111,7 @@ Dashboard vitest **17/17**；端侧 smoke 13/13；Go 网关 vet+test 通过。
 2026-08-04 relation 口径第二次裁定 +5）；
 新增 `orchestrator/cloud/tests/test_planning_no_action.py` 8 条、`agents/parking_payment/` 9 条；
 `orchestrator/` 全量 **936 passed**（`orchestrator/cloud` 477）；端侧 smoke **13/13**；
-L0 全量 **70/70 exit 0**（**551 条 / 512 唯一输入**，2026-08-03 深夜补 unseen 10 条后）；
+L0 全量 **70/70 exit 0**（**555 条 / 516 唯一输入**，2026-08-04 补边界对照 4 条后）；
 **`gate --layer l0 --strict` exit 0**（stable 132 条 / 唯一输入 **122** ≥ 120）。
 ~~⚠ 本机当前 `scripts/tests/` 有 32 条红~~ **已全部消失**（见上方基线注）。
 「同一命令在本机与 CI 上的分母不同，引用基线前先确认是在哪台机器上跑的」这句仍然有效。
@@ -121,8 +124,8 @@ L0 全量 **70/70 exit 0**（**551 条 / 512 唯一输入**，2026-08-03 深夜�
 规格 `docs/design/2026-08-02-intent-routing-adversarial-testing.md`（§21 落地记录、§22 尺子硬化）、
 实施计划同名 `-implementation-plan.md`、**发现清单 + 修复批次记录另册**
 `docs/design/2026-08-02-intent-routing-adversarial-findings.md`（**修复批次的单一入口**）。入口
-`test/eval_intent_adversarial.py`，语料 `test/eval_corpus/intent_adversarial/`（**551 条 /
-512 唯一输入** / 九类攻击 / 144 组最小对照 / **20 条** boundaries 台账双向覆盖 /
+`test/eval_intent_adversarial.py`，语料 `test/eval_corpus/intent_adversarial/`（**555 条 /
+516 唯一输入** / 九类攻击 / 144 组最小对照 / **21 条** boundaries 台账双向覆盖 /
 云侧 129 个 active intent 覆盖清零 + 61 条端侧原子车控逐条豁免）。
 **132 条 stable / 唯一输入 122**（设计要求 120–160，**2026-08-03 晚已达线**，
 `--strict` exit 0）；正式 baseline 仍未生成，**前置有两条**：L3 证据未取得（既有 e2e

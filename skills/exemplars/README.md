@@ -151,10 +151,28 @@ python scripts/evolve.py all           # 草案落 .work/<date>/proposals/exempl
 里写清移动了哪些 eid；本次改判移动了 `navigation#15..#22`（删掉 #14「找个评分高的川菜馆」
 所致，它已改判到 `nearby`）。
 
+## ⚠ 启动期合成能力的域（2026-08-04 补）
+
+`mcp-bridge` 的 `manifest.yaml` 写的是 `capabilities: []`——**这是有意的**，它的能力由
+`servers.yaml` 准入清单在 bootstrap 时合成（「改 servers.yaml + 人工审」才是那些 intent
+的声明处）。而下面那道 typo 守卫最初只读 `manifest.yaml`，于是 **`shop.*` 一律被判成
+不存在的 intent，整个 shop 域连一条范例都写不进来**——直到 2026-08-04 才有 `shop.yaml`。
+
+代价是可量的：对抗语料 `cp.dep.menu-then-order`（「看看菜单，然后点一份招牌」）长期 **0/5**，
+诊断行里 `exemplars=[]`。**缺陷和它的修复通道被同一个盲区挡在两头。**
+
+> **判据：「能力从哪里声明」和「能力写在哪个文件」是两件事。**
+> 清单只认一种声明形态时，另一种形态的域会**安静地**失去整层机制——
+> 没有报错，只有「这个域一直没有范例」。
+
+`_known_intents` 现已同时读 `agents/*/servers.yaml`（`test/eval_skills.py` 同步）。
+再出现新的「能力不写在 manifest 里」的 Agent 形态时，**记得同时喂这两道门禁**。
+
 ## 门禁（`test/eval_exemplars.py`，CI 阻断 + evolve nightly）
 
 1. **契约静态校验（硬失败）**：顶层映射 / domain=文件名 / exemplars 非空列表 /
-   每条 text·plan 齐 / **intent 真实存在**于 manifests ∪ 端侧意图集（typo 守卫）/
+   每条 text·plan 齐 / **intent 真实存在**于 manifests ∪ **MCP 准入清单**
+   （`agents/*/servers.yaml`）∪ 端侧意图集（typo 守卫）/
    首步 intent 的域=文件域 / source 封闭集 / tags 是列表 /
    **全局同句冲突**（同一句话在两处被标成不同落域＝语料自相矛盾，注进 prompt 是纯噪声）
    + **跨域近重复未裁定**（≥`boundaries.yaml` 的 `lex_min` 的跨域对必须在台账里被人裁过一次，

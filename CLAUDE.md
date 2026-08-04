@@ -130,11 +130,19 @@ M5 数据飞轮（落域范例库、hint 退役出口、RoutingBench、跨域边
 复核 + badcase 智能化评审 `docs/reviews/2026-08-02-review-acceptance-impl-and-badcase-intelligence.md`
 （13/13 为真；「落域准确 ≠ 智能」标本与全声明式修法）。
 
-两条日常工作规则（从上述验收沉淀，做落域/意图类工作先记住）：
+四条日常工作规则（从上述验收沉淀，做落域/意图类工作先记住）：
 - **修落域 badcase 的默认产物是范例与知识**（`skills/exemplars/`、`skills/guides/`、
   `boundaries.yaml` 台账），不是正则——hint 写错是事故，范例写错只是噪声。
 - **组合意图先拿 goal 对照 steps**（goal 说推荐而 steps 无推荐步＝可检测的缺口信号，
-  2026-08-02 评审报告 §2.4）。
+  2026-08-02 评审报告 §2.4）。`cloud.planning` 的 `goal_value_dropped` 是它**判到值一级**
+  的机器版（goal 里有数字而全部 slots 无数字，见 `docs/conventions.md` §8.1）。
+- **量分布是为了排优先级，不能代替逐条拉证据**（2026-08-04）。`unstable` 是个混装标签：
+  「51% 的边界句」和「10% 通过率的稳定缺陷」在分布口径里长得一模一样——
+  单独跑一遍才看得出哪些其实已经是稳定红。
+- **诊断行里 `exemplars=[]` 有两种意思**：检索没够着 / **这个域压根是空的**。
+  后者真实发生过两次（hvac 域、shop 域），且第二次是**门禁自己造成的**——
+  typo 守卫只读 `manifest.yaml`，而 `mcp-bridge` 的能力由 `servers.yaml` 启动期合成。
+  判据：**「能力从哪里声明」和「能力写在哪个文件」是两件事。**
 
 当前事实、测试基线、活跃待办与交接摘要统一维护在 `AGENTS.md` §4.0（新会话从那里开始）；
 逐批历史流水在 `docs/agents-history.md`（只进不出）；设计与落地记录见 `docs/design/`（索引
