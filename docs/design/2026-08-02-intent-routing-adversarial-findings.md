@@ -1215,3 +1215,185 @@ A4/A9 了——而那正是它该看的。
 
 **顺带**：speech 渲染成单字「度」本身是用户可见缺陷（模板 `{value}度` 拿到空值）。
 它同时是**最便宜的探针**——一个只剩单位没有数值的回复，肯定有一个槽位是空的。
+
+---
+
+## 12. 产品批（2026-08-04 下午）：§10 那 18 条的取证与修复
+
+> §10 把 18 条不稳定用例量清了，但**只量到分布，没量到根因**——它给的是
+> 「A4 占 7、A9 占 4」这种统计口径。本节是逐条拉证据之后的结果：**根因过半不是模型抖，
+> 是那个域压根没有知识**。
+
+### 12.1 先取证：统计口径看不见的三条已经变成稳定红
+
+`--suite gate --layer l1 --live --repeat 5`，18 条 + relation 自动带上的 5 条 base
+（`retrieval_degraded 0/249`，健康跑）：
+
+| 分类 | 条数 |
+|---|---|
+| pass | 13 |
+| **stable_fail** | **3**（`cp.dep.menu-then-order` 0/5 · `nq.dinner-music.drop-music` 3/5 · `os.charge-place.phone` 3/5）|
+| unstable | 7 |
+
+§10 那张表把 `cp.dep.menu-then-order` 记成 ≥5/9、`os.charge-place.phone` 记成 ≥7/9，
+而单独拿 5 个样本跑它们分别是 **0/5** 和 3/5。
+
+> **判据：`unstable` 是一个混装标签，拆开之前不知道里面装的是什么。**
+> 「进程内三次不一致」既可能是 51% 的边界句，也可能是 10% 通过率的稳定缺陷——
+> 前者要等，后者要修，而**分布口径把两者压成了同一个词**。
+> 量分布是为了排优先级，不能代替逐条拉证据。
+
+### 12.2 过半根因是「这个域没有知识」
+
+逐条看诊断行里的 `exemplars=` 与 `skills=`，形态高度一致：
+
+| 用例 | 首偏离 | 根因 | 产物 |
+|---|---|---|---|
+| `cp.dep.menu-then-order` **0/5** | 只出 `shop.menu` 漏第二步 | **整个 shop 域一条范例都没有**（`exemplars=[]`），且没有任何知识讲「要看过菜单才知道点哪款」 | 新建 `skills/exemplars/shop.yaml`（8 条）+ `skills/guides/shop-order-flow.yaml` |
+| `nq.match.past` 1/5 | 落 `info.search` | 7 条赛事范例**要么带赛事专名要么带球队名**，没有一条是「那场比赛」这种**泛指**——而泛指正是时态攻击的载体 | `info#42`「昨天那场球谁赢了」 |
+| `ex.homophone.navigate` | 落 `navigation.search_poi` | 50 条导航范例的动词**一律写作「导航」**，同音字把词法通道整条打断（对既有范例最高 0.167） | `navigation#26`「到航去机场」 |
+| `ex.homophone.charging` | 落 `nearby.search` | 同音字 +**两条台账裁定在这句话上打架**（见 §12.3） | `charging#10/#11` + 新台账条目 |
+| `os.charge-place.phone` 3/5 | **空计划** | 模型看得出「不是给车充电」，但没有任何知识告诉它接下来该干什么 | `nearby#27`「找个能给手机充电的咖啡馆」 |
+| `nq.dinner-music.drop-music` 3/5 | 多出 `media.pause` | policy 已写「不得规划 X 的反面」**且当轮确实注入了**——是「进了没用对」：policy 的例子全是车控 open/close 对，而媒体的反面（`pause`）读起来像「顺手收拾一下」 | `nearby#28`「找家火锅店，歌就不用放了」 |
+
+> **判据：`exemplars=[]` 有两种意思，先分清是「检索没够着」还是「这个域是空的」。**
+> 2026-08-03 `ex.homophone.aircon` 是后者（hvac 域天然空白），本批 `shop` 是同一形态的
+> 第二例，而 `nq.match.past` / `ex.homophone.navigate` 是**第三种**：域里有范例，
+> 但**没有一条覆盖这个说法族**。三种的修法都是投范例，但**投什么完全不同**。
+
+### 12.3 一条边界的真正位置：两条既有裁定的相交处
+
+`ex.homophone.charging`「附近哪里能冲电」落 `nearby.search`，检索名单里最近的是
+`nearby#25`「油不多了，附近哪儿有加油站」——那条教的正是「附近哪儿有 X → nearby」。
+
+台账里两条裁定**各自都对，在这句话上却正面打架**：
+
+| 裁定 | 说的是 |
+|---|---|
+| `nearby-navigation.find-vs-go` | 边界**按动词划**，「找/搜/附近哪儿有」一律 nearby.search（连加油站都归 nearby）|
+| `charging-nearby.charger-vs-*` | 充电桩归 `charging.find` |
+
+**缺的不是任何一条，是它们相交处的那一条。** 2026-08-04 泓舟裁定并登记
+`charging-nearby.charger-vs-gas-station`：**「按动词划」是通则，充电桩是特例**，
+理由是**能力差异不是措辞差异**（charging.find 读真实 SOC、按空闲排序、可作导航途经点；
+加油站没有这层车端状态耦合，所以它留在通则里）。配套双向对照 4 条
+（`bd.cn-charger-gas.*`，两侧刻意同句式只换对象）。
+
+> **判据：两条规则都对，不代表它们的交集有定义。** 台账登记的应该是**边界**，
+> 而边界只在两条规则相遇的地方才存在——各自成立的两条裁定之间可以留着一个洞。
+
+⚠ 这条边界**是被门禁逼出来的**：写下「附近哪儿有冲电的地方」这条范例时，
+`test/eval_exemplars.py` 当场报 IDF-Dice 0.361 ≥ `lex_min` 未裁定并阻断。
+先用规避写法（「哪儿能冲电」，与加油站只有 0.118）跑通，裁定拿到后再改回碰撞写法。
+
+### 12.4 两条真产品缺陷：引用写全了，依赖没声明
+
+`cp.dep.search-then-detail`「搜一下附近的火锅店，再看看第一家的详情」的计划其实是对的：
+`nearby.search` → `nearby.detail{poi_id: s1.data.items.0.id}`。红在 **`depends_on` 是空的**。
+
+这不是断言挑剔，是**执行期真会坏**：`executor._topo_layers` 只看 `depends_on`，
+两步会被排进同一层**并行下发**；s2 去取 s1 结果时 s1 还没回来，引用解析成 None，
+字面量 `s1.data.items.0.id` 当成真 POI id 发给了下游。
+
+同一条链上还有第二个缺陷：那串路径**同时**写在 `slots` 和 `slot_refs` 里，
+而 `_resolve_slot_refs` 的「已有值不覆盖」把它当成已有值**跳过**了。
+
+两处都按归一修（`PlanBuilder._derive_depends_on_from_refs` + executor 的同值判定），
+与「`depends_on` 非 list 归空」「intent 唯一归属时归位」同一族：
+**把模型输出里自相矛盾的部分补成一致，不发明任何路由。**
+
+> **判据：引用了另一步的输出，就是依赖的定义。** 一份计划同时说「我要用 s1 的结果」
+> 和「我不依赖 s1」时，它自相矛盾，不是有歧义——归一有唯一正确解。
+> 判形状用 `<步骤id>.data.` 而不是「含点号」：普通槽值里点号很常见。
+
+### 12.5 「设为 N 度」缺 N 时追问不猜（泓舟裁定）
+
+§11.2 把这条写成「两种修法互斥」。**拆开之后并不互斥**——「planner 把值弄丢了」和
+「记忆里确实没有值」是两件事，B3-3 属前者：
+
+- **记忆里有值** → 值必须落进 `slots`（`implicit-vehicle-control` 补一句：
+  只写在 goal 里等于没写，执行侧只读 slots）；
+- **记忆里确实没有值** → `NEED_SLOT` 追问几度。
+
+落地形态是**知识库声明 + 通用消费**：`commands.yaml` 的 `aircon` 加一行
+`value_required_operates: [set]`，`EdgeCallExecutor._missing_required_value` 通用读取
+（零对象/意图字面量，三个不触发情形：带 `mode`、带 `attr`、对象没声明 `attrs`）。
+B3-3 的 `speech_not: [多少度, 请问, 几度]` 因此**不受影响**——那一轮记忆里有 26。
+
+顺带修掉那个单字「度」：它是 `{value}度` 拿到空值的渲染，现在那条路径根本不会执行。
+
+**并补一个检测器**（只观测不改行为）：`cloud.planning` span 新增
+`goal_value_dropped`——goal 文本里有数字、而全部 step 的槽位里一个数字都没有。
+这是「goal 是免费的对照物」的第三例，也是**第一例机器可判到值一级**的；
+前两例（goal 说推荐而 steps 无推荐步 / 组合意图漏第二步）只判得到「缺步」。
+
+### 12.6 尺子盲区：两道门禁只认 manifest 里写着的能力
+
+写 shop 范例时 `test/eval_exemplars.py` 报「`shop.menu` 不存在于任何 manifest」，
+写 shop guide 时 `test/eval_skills.py` 报同样的话。真相是 `mcp-bridge` 的
+`capabilities: []` **是有意的**——它的能力由 `servers.yaml` 准入清单在启动期合成。
+
+后果不是「少校验一点」，是**整个 shop 域既写不了范例也写不了 guide golden**，
+而 `cp.dep.menu-then-order` 恰恰是那个域里 0/5 的稳定红。两道门禁的 `_known_intents`
+已补读 `agents/*/servers.yaml`。
+
+> **判据：「能力从哪里声明」和「能力写在哪个文件」是两件事。**
+> 清单只认一种声明形态时，另一种形态的域会**安静地**失去整层机制——
+> 没有报错，只有「这个域一直没有范例」。
+
+### 12.7 自己踩的两个坑
+
+**① 一趟降级的跑批差点把结论全带偏。** 修完第一次复验，读数是
+`cp.dep.menu-then-order` 0/5→3/3、而 `cp.adaptive.rain-umbrella` 4/5→**0/3**，
+当时已经开始怀疑是自己改的 guide 把 adaptive 弄坏了。看 `meta` 才发现
+`warmed_exemplars: 0`、`retrieval_degraded: 196/196`——**embed 整趟不可用**，
+那一跑退化成纯词法档，`@vec` 检回的范例一条都没有。套件自己是诚实的：
+两条 `[infra]` 行 + `EXIT=2`，是我的 wrapper 用 `echo "EXIT=$?"` 把退出码吃掉了。
+
+> **判据：读结论之前先读 `meta`，这条对「变好了」和「变坏了」一样适用。**
+> 运行手册 §4 第 0.5 步写的是「绿灯也要看」，这次差点栽在**红灯**上——
+> 降级同样会制造假红，而假红比假绿更容易被当成「我刚才改坏了」。
+
+**② 加知识和加 policy 一样会挤掉知识。** 给 `conditional-reminder` 补完第二轮判据，
+它的 `knowledge` 从 1215 涨到 **1504** 字符，于是在 `SKILL_BUDGET=2600` 下
+**整条被裁出注入**——`ki.conditional-reminder.hit` 当场红（L0，零网络）。
+压回 1202 后恢复。
+
+> **判据：预算是全局的，「我只是把一条知识写清楚点」和「我加了一条常驻 policy」
+> 对预算是同一件事。** 既有教训只记了后者（policy 常驻挤 guide），
+> 这次是**同一条知识把自己挤了出去**。补完知识必须回头量一次注入块长度。
+
+### 12.8 复验读数（两趟独立进程 × `--repeat 3` = 6 样本/条）
+
+两趟都健康（`retrieval_degraded 0`、`warmed_exemplars 239`）：
+
+| | 修前（1 趟 × repeat 5） | 修后 B1 | 修后 B2 |
+|---|---|---|---|
+| pass | 13 | **20** | **22** |
+| stable_fail | **3** | **0** | **0** |
+| unstable | 7 | 3 | 1 |
+
+18 条里 **14 条 6/6 全过**，其中三条原 `stable_fail` 全部转绿
+（`cp.dep.menu-then-order` 0/5 → 6/6、`nq.match.past` 1/5 → 6/6、
+`os.charge-place.phone` 3/5 → 6/6）。**剩 4 条**：
+
+| 用例 | 6 样本 | 现状 |
+|---|---|---|
+| `cp.adaptive.rain-umbrella` | 5/6 | 再规划轮偶发 `done:true`（观察里写着「明天有小雨」却读成条件不成立）|
+| `ex.homophone.charging` | 5/6 | 范例已检回（`charging#10@lex:0.43`）仍偶发选 nearby——**不是检索问题** |
+| `nq.dinner-music.drop-music` | 5/6 | 失败形态**变了**：从「多出 media.pause」变成「空计划」（否定被过度应用）|
+| `cs.news.stale-trip` | 4/6 | ⚠ **修前是 5/5**。红在 `relation.invariant.slots`（`topic:"今天"`，base 没产生过），与本批改动无关——见下 |
+
+⚠ **诚实边界，三条**：
+
+1. **修前 5 样本 / 1 进程，修后 6 样本 / 2 进程，采样不同口径不同。** 三条原
+   `stable_fail`（0/5、1/5、3/5 → 6/6）是强证据；原本就 4/5 的那些转 6/6 是弱证据，
+   其中一部分完全可能是运气。
+2. **`cs.news.stale-trip` 从 5/5 变成 4/6，不许说成「无关」。** 查过：它红在
+   `topic:"今天"`，而「今天」来自用户原话不是陈旧历史——是 planner 在同一句话上的
+   槽位取值方差，本批没有任何改动碰 info.news。但**「查过看起来无关」不是「证明无关」**，
+   这条挂账。它同时暴露 `invariant.slots` 的一个边：`supp(base)` 只有 3 个样本时，
+   base 自己的槽位分布覆盖不全，**变体引入的新取值可能只是 base 没抽到**。
+3. **6 样本是晋级线不是「修好了」。** 按 §10.1 的算术，真实通过率 93% 的用例
+   6 样本全过的概率是 65%——这批读数配得上「可以进 baseline 前置的下一轮」，
+   配不上「这条已经稳了」。

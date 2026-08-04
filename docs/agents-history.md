@@ -928,3 +928,74 @@ L3 唯一的红。失败那次 plan 是 `hvac.set` + **`slots:{}`**，而同一�
 ——**「设定为 N 度」的验证核的是「空调开着」**。
 > **判据：验证的强度必须匹配主张的强度。** 核了个比主张弱的东西等于没核，
 > 而且它比「挂点漏了执行路径」更难发现——**一直在报绿**。
+
+---
+
+## 9. 意图落域对抗测试：18 条 unstable 的取证与修复（2026-08-04 下午，产品批）
+
+> 逐条证据与判据在 findings **§12**。本节只留流水与读数。
+
+### 9.1 这一批做了什么
+
+§10 把 18 条量成了分布（A4 占 7、A9 占 4），本批把它们**逐条拉了证据**。第一件事就
+推翻了一个印象：拿 `--repeat 5` 单独跑一遍，**3 条其实已经是 `stable_fail`**
+（`cp.dep.menu-then-order` **0/5**、`nq.dinner-music.drop-music` 3/5、
+`os.charge-place.phone` 3/5）——分布口径把「51% 的边界句」和「10% 通过率的稳定缺陷」
+压成了同一个词。
+
+逐条根因**过半不是模型抖，是那个域压根没有知识**：
+
+| 形态 | 用例 |
+|---|---|
+| **整个域一条范例都没有** | `cp.dep.menu-then-order`（shop）|
+| **域里有范例，但没有一条覆盖这个说法族** | `nq.match.past`（赛事范例全带专名/球队名，没有「那场比赛」这种泛指）· `ex.homophone.navigate`（50 条导航范例动词一律写作「导航」）|
+| **两条既有裁定在这句话上打架** | `ex.homophone.charging`（「按动词划」通则 vs 充电桩特例）|
+| **知识进了没用对** | `nq.dinner-music.drop-music`（policy 写着「不得规划 X 的反面」且当轮确实注入了，但例子全是车控 open/close 对）|
+| **真产品缺陷** | `cp.dep.search-then-detail`（引用写全了 `depends_on` 却是空的 → 执行期并行下发）|
+
+### 9.2 产物
+
+**知识面**（M5 范式：默认产物是范例与知识，不是正则）：
+`skills/exemplars/shop.yaml` 新建 8 条 · `skills/guides/shop-order-flow.yaml` 新建 ·
+`info#42` / `navigation#26` / `charging#10,#11` / `nearby#27,#28` 六条范例 ·
+`conditional-reminder` 补第二轮判据 · `implicit-vehicle-control` 补「算出来的值要写进 slots」·
+边界台账新增 `charging-nearby.charger-vs-gas-station`（泓舟本会话裁定）+ 双向对照 4 条。
+
+**执行面**：`PlanBuilder._derive_depends_on_from_refs`（引用即依赖）+ executor 的
+「同一条引用路径写了两遍不算已有值」+ `commands.yaml` 的 `value_required_operates`
+（「设为 N 度」缺 N 时 NEED_SLOT 追问，泓舟裁定「分情况」）。
+
+**验证面**：`Verification.expect` 支持 `$slot:` 动态期望，`hvac.set` 从只核「空调开着」
+改成核到温度；槽缺席时判 UNKNOWN 不判 UNSAT。
+
+**尺子面**：`eval_exemplars` / `eval_skills` 的 `_known_intents` 补读
+`agents/*/servers.yaml`——此前两道门禁只认 manifest 声明的能力，**整个 shop 域既写不了
+范例也写不了 guide golden**。
+
+**收尾**：别名统一的两处残留（`LOCAL_INTENTS` 里无产出方的 `aircon.inc/dec`、
+`_ALIAS_OF` 改空表）；`tu.hvac.*-vs-*` 单成员 gold 复核——两难随别名删除已消失，
+`hvac.inc`/`hvac.dec` 各有 3 条单成员正例（要求 2）。
+
+### 9.3 读数
+
+修前 1 趟 × `--repeat 5`（`retrieval_degraded 0/249`）：pass 13 / **stable_fail 3** / unstable 7。
+修后两趟独立进程 × `--repeat 3`（6 样本/条，两趟 `retrieval_degraded 0`）：
+B1 pass 20 / unstable 3；B2 pass 22 / unstable 1。**18 条里 14 条 6/6，三条原
+`stable_fail` 全部转绿。**
+
+剩 4 条：`cp.adaptive.rain-umbrella` 5/6 · `ex.homophone.charging` 5/6 ·
+`nq.dinner-music.drop-music` 5/6 · `cs.news.stale-trip` 4/6（⚠ 修前 5/5，挂账）。
+
+离线门禁：L0 discovery **70/70**（语料 555 条 / 唯一输入 **516**）· `gate --strict` **exit 0**
+（stable 132 / 唯一输入 122）· `eval_skills` PASS · `eval_exemplars` PASS（238 条 / 16 域）。
+
+### 9.4 自己踩的两个坑（都写进了 findings §12.7）
+
+- **一趟降级的跑批差点把结论全带偏**：首次复验读到 `rain-umbrella` 4/5 → 0/3，
+  已经开始怀疑自己改坏了 guide；看 `meta` 才发现 `retrieval_degraded: 196/196`——
+  embed 整趟不可用。套件自己是诚实的（两条 `[infra]` + `EXIT=2`），是我的 wrapper
+  用 `echo "EXIT=$?"` 把退出码吃掉了。**降级会制造假红，假红比假绿更容易被当成「我改坏了」。**
+- **加知识和加 policy 一样会挤掉知识**：给 `conditional-reminder` 补完第二轮判据，
+  `knowledge` 从 1215 涨到 1504 字符，在 `SKILL_BUDGET=2600` 下**整条被裁出注入**，
+  `ki.conditional-reminder.hit` 当场红。压回 1202 后恢复。既有教训只记了「policy 常驻
+  挤 guide」，这次是**同一条知识把自己挤了出去**。
