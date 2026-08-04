@@ -1,0 +1,55 @@
+name: shop-order-flow
+type: guide
+description: 生态商户点单流程的分流与接线判据（看菜单/下单/查单/取消；先看菜单再点某一款是两步且要接线）
+priority: 55
+# 「招牌/最便宜/第一个」这类**指向一件还不知道名字的东西**的说法是本知识的触发面：
+# 它们只有在上一步结果回来之后才有具体值，所以判据必须落在「值从哪来」而不是动词上。
+keywords: [菜单, 点一杯, 点一份, 下单, 招牌, 咖啡有什么, 取消订单, 我的订单]
+knowledge: |
+  **先判「值从哪里来」，再决定几步。** 生态商户的四个能力各管一件事：
+  `shop.menu` 看菜单与价格、`shop.order` 下单、`shop.order_status` 查单、
+  `shop.order_cancel` 取消（补偿路径，不是再下一单）。
+
+  - 用户**已经点名了具体商品**（『点一杯拿铁』『来杯大杯美式』）→ **一步**，
+    item/size 直接从原话填。
+  - 用户点的东西**要看过菜单才知道是哪一款**（『招牌』『最便宜的那个』『你们家最火的』
+    『第一个』）→ **两步**：先 `shop.menu`，再 `shop.order`，且第二步必须
+    `depends_on` 第一步、用 `slot_refs` 从菜单结果里取商品名。
+    **不要因为第二步的槽位现在填不出来就把它省掉**——省掉的结果是用户说了两件事
+    只做成一件，而他要到咖啡没来的时候才发现。槽位缺值正是 `slot_refs` 存在的理由。
+  - 只问菜单、没有下单动词（『咖啡有什么』『咖啡多少钱』）→ 只出 `shop.menu`。
+
+  ⚠ **引用了上一步的输出，就必须同时写 `depends_on`。** 只写 `slot_refs` 而
+  `depends_on` 留空，等于告诉执行器这两步可以并行——第二步会在第一步还没回来时就发出去。
+
+  示例——用户：『翻一下菜单，再点一杯店里的招牌』
+  {"complexity":"simple","steps":[
+  {"id":"s1","agent_id":"mcp-bridge","intent":"shop.menu","slots":{},"depends_on":[],"slot_refs":{}},
+  {"id":"s2","agent_id":"mcp-bridge","intent":"shop.order","slots":{},"depends_on":["s1"],"slot_refs":{"item":"s1.data.items.0.name"}}
+  ]}
+few_shots:
+  - user: 咖啡有什么
+    plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"mcp-bridge","intent":"shop.menu","slots":{},"depends_on":[],"slot_refs":{}}]}
+golden:
+  # 核心主张：要看过菜单才知道是哪一款 → 两步，缺一不可。
+  # 立卡来源 cp.dep.menu-then-order（对抗语料 stable，A4 组合）：5 趟 live **0/5**，
+  # 每次都只出 shop.menu，诊断行 `exemplars=[]`——那时整个 shop 域一条范例都没有。
+  - text: 翻一下菜单，再点一杯店里的招牌
+    expect_intents: [shop.menu, shop.order]
+  # holdout：避开 knowledge 与 keywords 的字面，测泛化不测自证
+  - text: 先瞧瞧他家都卖什么，挑个卖得最好的给我来一份
+    expect_intents: [shop.menu, shop.order]
+    holdout: true
+  # 另一半：已经点名了具体商品就**不许**多插一步查菜单（省一步和多一步都是错）
+  - text: 点一杯大杯美式
+    expect_intents: [shop.order]
+    expect_not: [shop.menu]
+  # 第三分：只问不买——下单动词缺席时不得擅自下单（写操作，宁少勿多）
+  # ⚠ 写成「咖啡多少钱」检不回本 guide（keywords 里没有裸「咖啡」，也**刻意不加**：
+  # 加了会把「附近有什么咖啡店」一起拽进点单流程）。改用带「菜单」的等价问法，
+  # 断言一字未改——**为了让断言可检回而放宽 keywords，是拿劫持面换覆盖面**。
+  - text: 菜单上的美式多少钱
+    expect_intents: [shop.menu]
+    expect_not: [shop.order]
+owner: mcp-bridge
+version: 1

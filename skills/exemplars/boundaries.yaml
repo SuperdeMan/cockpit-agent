@@ -152,6 +152,19 @@ rulings:
       于是「我要加油」是找加油站（nearby.search），不是开油箱盖、也不是发起导航。
       这一对对象完全相同、只差动词，正是这条判据的载体
 
+  # ── 2026-08-04 意图落域对抗测试补裁（泓舟）：`ex.homophone.charging` 落错的真因 ──
+  - id: charging-nearby.charger-vs-gas-station
+    texts: [附近哪儿有冲电的地方, 油不多了，附近哪儿有加油站]
+    domains: [charging, nearby]
+    why: 2026-08-04 裁定——**「边界按动词划」是通则，充电桩是这条通则的特例**。
+      台账里此前有两条裁定，在这一句话上正面打架：`nearby-navigation.find-vs-go` 说
+      「找/搜/附近哪儿有」一律 nearby.search（连加油站都归 nearby），
+      `charging-nearby.charger-vs-*` 说充电桩归 charging.find。实测代价可量：
+      `ex.homophone.charging`「附近哪里能冲电」落 `nearby.search`，检索名单里最近的
+      恰恰是加油站那条范例。特例的理由是**能力差异不是措辞差异**：charging.find 读
+      真实 SOC、按空闲/功率排序、可直接作导航途经点，而 nearby.search 出的是评分/
+      人均富卡——加油站没有这层车端状态耦合，所以它留在通则里。
+      **两条裁定各自都对，缺的是它们相交处的那一条**，这就是它。
   - id: manual-vision.described-light-vs-unknown-light
     texts: [仪表盘上的红色感叹号是什么意思, 看看这个是什么]
     domains: [manual, vision]

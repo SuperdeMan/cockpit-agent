@@ -240,3 +240,40 @@ exemplars:
   tags:
   - badcase
   note: 找/搜/有没有 归发现；导航去/带我去 才归 navigation
+# ── 2026-08-04 补：充电的**对象不是车**时归周边发现 ────────────────────────
+# 立卡来源 os.charge-place.phone（对抗语料 stable，A2 主体翻转）：「给手机找个能充电的
+# 店」5 趟里 3 趟**产出空计划**——模型看得出这不是给车充电，但没有任何知识告诉它接下来
+# 该干什么，于是什么都不做。对照组「给车找个充电的地方」5/5 落 charging.find。
+# 判据：**charging 域的主体恒为车**；充电对象是手机/电脑/随身设备时，用户要的是一个
+# 「能坐下充电的地方」，那是周边发现。
+- text: 找个能给手机充电的咖啡馆
+  plan:
+  - agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 咖啡馆
+  source: manual
+  added: '2026-08-04'
+  tags:
+  - badcase
+  note: 主体是手机不是车 → 不归 charging.find；charging 域的主体恒为车
+# ── 2026-08-04 补：并列句里被取消的那半句**不产生任何 step** ────────────────
+# 立卡来源 nq.dinner-music.drop-music（对抗语料 stable，A3 取消其一）：
+# 「找家川菜馆，音乐就不用放了」5 趟里 2 趟产出 `nearby.search` + **`media.pause`**。
+# `negation-and-deferral` policy 已经写着「不得规划 X 的反面」且**当轮确实注入了**
+# （名单里 `full:negation-and-deferral`，没被裁）——所以这不是「知识没进上下文」，
+# 是**进了没用对**：policy 的例子全是车控 open/close 对，媒体的「反面」长得不像反面
+# （`pause` 读起来像「顺手收拾一下」而不是「做了被禁的那件事」）。
+# 按 M5 分工，这一条投范例而不是往常驻 policy 里加字（policy 每次规划都付字符成本，
+# 首版 506 字符就把 navigation-with-stop 挤成过 `!clipped`）。
+- text: 找家火锅店，歌就不用放了
+  plan:
+  - agent: nearby
+    intent: nearby.search
+    slots:
+      cuisine: 火锅
+  source: manual
+  added: '2026-08-04'
+  tags:
+  - badcase
+  note: 被取消的那半句一个 step 都不出——不是 media.play，也不是 media.pause

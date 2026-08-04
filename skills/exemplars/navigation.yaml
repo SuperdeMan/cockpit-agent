@@ -216,3 +216,19 @@ exemplars:
   tags:
   - badcase
   note: M-A B1-1 长会话中曾回落 nearby.search；列表内容由会话历史解析
+# ── 2026-08-04 补：ASR 同音字「到航」= 导航 ────────────────────────────────
+# 立卡来源 ex.homophone.navigate（对抗语料 stable，A9 同音字）：落 `navigation.search_poi`
+# 而不是 `navigate_to`，诊断行 `exemplars=[]`——50 条导航范例里**动词一律写作「导航」**，
+# 同音字把词法通道整条打断（「到航去广州南站」对既有范例最高只有 0.167）。
+# 同 2026-08-03 `ex.homophone.aircon` 的修法：**同音字要的是范例不是正则**。
+- text: 到航去机场
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      destination: 机场
+  source: manual
+  added: '2026-08-04'
+  tags:
+  - badcase
+  note: 「到航」是「导航」的 ASR 常见错字；带目的地的仍是发起导航，不是搜 POI

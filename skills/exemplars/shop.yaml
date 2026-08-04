@@ -1,0 +1,85 @@
+# 范例库 · shop 域（生态桥 / 演示商户）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+#
+# ⚠ 本文件 2026-08-04 才建，比别的域晚了整整一期，原因值得记：
+# `mcp-bridge` 的 `manifest.yaml` 写的是 `capabilities: []`——它的能力由 `servers.yaml`
+# **准入清单在启动期合成**。而范例库的 typo 守卫（`test/eval_exemplars.py::_known_intents`）
+# 只读 manifest，于是 `shop.*` 一律被判成「不存在的 intent」，**整个域连一条范例都写不进来**。
+# 代价是可测的：对抗语料 `cp.dep.menu-then-order` 长期 0/5，诊断行里 `exemplars=[]`。
+# 判据：**「能力从哪里声明」和「能力写在哪个文件」是两件事**——清单只认一种声明形态时，
+# 另一种形态的域会安静地失去整层机制（同 2026-08-03 hvac 域「天然空白」那条的第二例）。
+domain: shop
+exemplars:
+- text: 咖啡有什么
+  plan:
+  - agent: mcp-bridge
+    intent: shop.menu
+  source: manifest
+  added: '2026-08-04'
+  tags:
+  - canonical
+- text: 看看咖啡菜单
+  plan:
+  - agent: mcp-bridge
+    intent: shop.menu
+  source: manifest
+  added: '2026-08-04'
+  tags:
+  - canonical
+- text: 咖啡多少钱
+  plan:
+  - agent: mcp-bridge
+    intent: shop.menu
+  source: manifest
+  added: '2026-08-04'
+  tags:
+  - canonical
+- text: 点一杯拿铁
+  plan:
+  - agent: mcp-bridge
+    intent: shop.order
+    slots:
+      item: 拿铁
+  source: manifest
+  added: '2026-08-04'
+  tags:
+  - canonical
+- text: 来杯大杯美式
+  plan:
+  - agent: mcp-bridge
+    intent: shop.order
+    slots:
+      item: 美式
+      size: 大杯
+  source: manifest
+  added: '2026-08-04'
+  tags:
+  - canonical
+- text: 翻一下菜单，再点一杯店里的招牌
+  plan:
+  - agent: mcp-bridge
+    intent: shop.menu
+  - agent: mcp-bridge
+    intent: shop.order
+  source: manual
+  added: '2026-08-04'
+  tags:
+  - badcase
+  note: 看完菜单再下单是两步；接线形态归 shop-order-flow guide 讲
+- text: 我那杯咖啡好了吗
+  plan:
+  - agent: mcp-bridge
+    intent: shop.order_status
+  source: manifest
+  added: '2026-08-04'
+  tags:
+  - canonical
+- text: 刚下的那杯不要了，帮我取消
+  plan:
+  - agent: mcp-bridge
+    intent: shop.order_cancel
+  source: manual
+  added: '2026-08-04'
+  tags:
+  - canonical
+  note: 取消走 order_cancel（补偿路径），不是再下一单

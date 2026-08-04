@@ -77,3 +77,34 @@ exemplars:
   added: '2026-07-30'
   tags:
   - canonical
+# ── 2026-08-04 补：ASR 同音字「冲电」= 充电 ────────────────────────────────
+# 立卡来源 ex.homophone.charging（对抗语料 stable，A9 同音字）：落 `nearby.search`
+# （gold 明禁），检索名单里最近的反而是 `nearby#25「油不多了，附近哪儿有加油站」`——
+# 那条教的是「附近哪儿有 X → nearby.search」，正好把这句拉过去。
+# **两条台账裁定在这句话上是打架的**：`nearby-navigation.find-vs-go` 说「找/搜/附近
+# 哪儿有」一律 nearby，`charging-nearby.*` 说充电桩归 charging.find。裁定的真正边界是
+# **充电桩是特例**（读真实 SOC、按空闲排序、可当导航途经点），不是动词。这条范例把
+# 那个特例摆在与加油站同一个说法框架里，让边界可见——**但那句话没能写出来**：
+# 「附近哪儿有冲电的地方」与 `nearby#25` 的 IDF-Dice 是 **0.361 ≥ lex_min**，台账门禁
+# 正当拦下，要求先裁定登记；而登记一条 ruling 又要 4 条 `reviewed_by: human` 的双向
+# 对照用例（`validate_boundary_coverage`），那是泓舟的活不是我的。所以本条退到只教
+# **同音字**，把「附近哪儿有充电桩 vs 加油站」这条边界原样挂账（findings §12.3）。
+- text: 附近哪儿有冲电的地方
+  plan:
+  - agent: charging-planner
+    intent: charging.find
+  source: manual
+  added: '2026-08-04'
+  tags:
+  - badcase
+  note: 与「附近哪儿有加油站」同一说法框架、不同落域——边界见 boundaries.yaml
+    charging-nearby.charger-vs-gas-station
+- text: 哪儿能冲电
+  plan:
+  - agent: charging-planner
+    intent: charging.find
+  source: manual
+  added: '2026-08-04'
+  tags:
+  - badcase
+  note: 「冲电」是「充电」的 ASR 常见错字；充电桩是 find-vs-go 判据的特例，不随「附近哪儿有」归 nearby

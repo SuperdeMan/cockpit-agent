@@ -59,7 +59,10 @@ LOCAL_INTENTS = {
     # 注意：page/app/weather 为 online_only，不进 LOCAL_INTENTS，统一上云
     # 空调风速 / 温度增减
     "aircon.wind_speed.set", "aircon.wind_speed.inc", "aircon.wind_speed.dec",
-    "aircon.inc", "aircon.dec",
+    # ⚠ 2026-08-04 删 `aircon.inc/dec`：`_to_structured` 早已改产 `hvac.inc/dec`，
+    # 这两项从此**没有任何产出方**，却仍在这张「端侧自己处理、不上云」的白名单里
+    # ——真收到这个名字会被留在端侧，而 `VEHICLE_INTENTS` 已经不认它，落进死胡同。
+    # 判据：**改了名字要把两头都改**——产出方改完，白名单是它的另一头。
     # ── 新增：蓝牙 ──
     "bluetooth.on", "bluetooth.off", "bluetooth.open", "bluetooth.close",
     "bluetooth.connect", "bluetooth.disconnect",

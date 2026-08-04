@@ -343,3 +343,18 @@ exemplars:
   tags:
   - badcase
   note: 中超球队 + 口语比分问法，此前落 info.search
+# ── 2026-08-04 补：过去时的**泛指**赛事问法 ─────────────────────────────────
+# 立卡来源 nq.match.past（对抗语料 stable，A3 时态）：5 趟 live 只过 1 趟，其余落
+# `info.search`，诊断行 `exemplars=[]`。既有 7 条赛事范例要么带**赛事专名**
+# （世界杯/欧冠/英超/西甲），要么带**球队名**（国安）——**没有一条是「那场比赛」这种
+# 泛指**。而泛指正是时态攻击的载体：句子里唯一的信息就是「昨天」+「比赛」。
+# 说法避开语料原句（原句问「结果是多少」，这里问「谁赢了」）。
+- text: 昨天那场球谁赢了
+  plan:
+  - agent: info
+    intent: info.sports
+  source: manual
+  added: '2026-08-04'
+  tags:
+  - badcase
+  note: 泛指 + 过去时，此前落 info.search
