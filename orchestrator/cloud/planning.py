@@ -39,8 +39,8 @@ class PlannerCapabilityCatalog:
 
 
 _CAPABILITY_MAPPING_HEAD = (
-    "== 本请求 capability_ref → 可用能力语义映射；"
-    "meaning 仅解释语义，禁止作为 capability_ref 输出值 =="
+    "== 本请求 capability_ref 映射；capabilities 对象的 key 才是 capability_ref；"
+    "数组值只读解释，禁止放入 step 或当作 capability_ref =="
 )
 
 
@@ -88,7 +88,7 @@ def _render_capability_mapping(agents: list) -> str:
     """Render the exact grouped ref mapping exposed to and charged for the LLM."""
     ref_to_pair, _ = _build_ref_maps(agents)
     by_id = _unique_agents_by_id(agents)
-    capabilities_by_agent: dict[str, list[dict]] = {}
+    capabilities_by_agent: dict[str, dict[str, list]] = {}
     for ref, (agent_id, intent) in ref_to_pair.items():
         agent = by_id[agent_id]
         cap = next((candidate for candidate in agent.manifest.capabilities
@@ -97,16 +97,15 @@ def _render_capability_mapping(agents: list) -> str:
         if cap is None:
             raise ValueError(
                 f"planner capability disappeared while rendering: {agent_id}/{intent}")
-        semantics = {
-            "capability_ref": ref,
-            "meaning": intent,
-        }
-        # Preserve the measured edge-core compression: meanings carry their routing
+        semantics = [intent]
+        # Preserve the measured edge-core compression: the semantic name carries its routing
         # semantics, while repeated empty slots/descriptions only add prompt cost.
         if not _is_edge_core(agent):
-            semantics["slots"] = list(getattr(cap, "slots", None) or [])
-            semantics["description"] = str(getattr(cap, "description", "") or "")
-        capabilities_by_agent.setdefault(agent_id, []).append(semantics)
+            semantics.extend([
+                list(getattr(cap, "slots", None) or []),
+                str(getattr(cap, "description", "") or ""),
+            ])
+        capabilities_by_agent.setdefault(agent_id, {})[ref] = semantics
 
     lines = [_CAPABILITY_MAPPING_HEAD]
     for agent_id, capabilities in capabilities_by_agent.items():
@@ -268,10 +267,12 @@ _PLANNER_BASE = (
 
 _CATALOG_ALLOWLIST_SECTION = (
     "\n\n== 本轮动态能力白名单 ==\n"
-    "- 本请求末尾的 capability_ref 映射是唯一调用权；capability_ref 只能逐字复制能力条目的 "
-    "capability_ref 字段值；meaning 只用于解释语义，禁止填入 step.capability_ref\n"
-    "- 抽象正反例：能力条目 {\"capability_ref\":\"cap_0042\","
-    "\"meaning\":\"example.semantic\"}；正确：step.capability_ref=\"cap_0042\"；"
+    "- 本请求末尾映射是唯一调用权；每个 group 的 capabilities 是对象，"
+    "capabilities 的 object key 才是 capability_ref，step.capability_ref 只能逐字复制其中一个 key\n"
+    "- 数组值只读解释，禁止放入 step 或当作 capability_ref；"
+    "每个 step 只能包含 id、capability_ref、slots、depends_on、slot_refs 五个字段\n"
+    "- 抽象正反例：能力条目 {\"cap_0042\":[\"example.semantic\",[\"argument\"],"
+    "\"abstract description\"]}；正确：step.capability_ref=\"cap_0042\"；"
     "错误：step.capability_ref=\"example.semantic\"\n"
     "- 不得编造映射里没有的 ref，不得输出缺席能力，也不得替换用户真正请求但"
     "缺席的能力（包括拿清单中已有的相近能力顶替）\n"
@@ -299,7 +300,7 @@ _CLARIFY_SECTION = (
     "\n\n== 路由歧义澄清（谨慎使用）==\n"
     "仅当这句话确实是对你说的、但在能力清单上存在两种以上合理且结果差异明显的落法、"
     "且从『当前对话焦点』『最近对话』都无法确定用户要哪种时，输出澄清代替 steps：\n"
-    "{\"addressed\":true,\"clarify\":{\"question\":\"口语化一句提问\","
+    "{\"addressed\":true,\"steps\":[],\"clarify\":{\"question\":\"口语化一句提问\","
     "\"options\":[{\"label\":\"不超过10字\",\"send_text\":\"消歧后的完整第一人称指令\"}]}}\n"
     "- options 2~3 个；send_text 必须可直接当用户新指令执行（如『帮我找附近的川菜馆』）\n"
     "- **绝大多数请求是明确的，明确请求绝不允许反问**\n"
@@ -341,6 +342,8 @@ _TOOLCALL_SECTION = (
     "\n\n== 输出通道（工具调用模式）==\n"
     "上述全部输出协议（计划 JSON / addressed / clarify）一律通过调用 submit_plan 工具提交："
     "顶层 JSON 对象即工具参数。不要以文本形式输出 JSON，不要输出任何解释。\n"
+    "arguments 每次必须同时包含 addressed 和 steps；无步骤也必须显式 steps=[]，"
+    "不得只提交 addressed。\n"
     "steps 数组中每一项只能包含 id、capability_ref、slots、depends_on、slot_refs 这五个字段。"
     "这五个字段名必须逐字原样输出，不得转义、增删字符或改变拼写。"
     "属于 step 的字段必须留在对应 step 对象内，不得移到顶层参数。\n"
@@ -373,8 +376,8 @@ def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
     capability_ref_schema = {
         "type": "string",
         "description": (
-            "只能逐字复制本请求映射能力条目的 capability_ref 字段值；"
-            "meaning 只解释语义，禁止作为 capability_ref 输出值；"
+            "只能逐字复制本请求映射中 capabilities 对象的 key；"
+            "数组值只读解释，禁止放入 step 或作为 capability_ref；"
             "请求能力缺席时保持 steps=[]"),
     }
     if refs:
@@ -400,8 +403,9 @@ def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
     steps_schema = {
         "type": "array",
         "description": (
-            "步骤只能使用本请求动态 catalog 的 capability_ref；请求所需能力缺席时"
-            "返回 addressed=true 且 steps=[]，不得编造或用相近能力替换"),
+            "arguments 每次必须同时包含 addressed 和 steps；无步骤也必须显式 steps=[]，"
+            "不得只提交 addressed。步骤只能使用本请求动态 catalog 的 capability_ref；"
+            "请求所需能力缺席时返回 addressed=true 且 steps=[]，不得编造或用相近能力替换"),
         "items": step_item_schema,
     }
     if not refs:
@@ -426,7 +430,9 @@ def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
     return {
         "tools": [{"type": "function", "function": {
             "name": _SUBMIT_PLAN_NAME,
-            "description": "提交本轮规划结果。这是唯一合法的输出通道。",
+            "description": (
+                "提交本轮规划结果。这是唯一合法的输出通道。arguments 每次必须同时包含 "
+                "addressed 和 steps；无步骤也必须显式 steps=[]，不得只提交 addressed。"),
             "parameters": {"type": "object", "properties": props,
                            "required": ["addressed", "steps"]},
         }}],

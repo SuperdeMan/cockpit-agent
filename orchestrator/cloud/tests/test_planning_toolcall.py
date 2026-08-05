@@ -12,7 +12,8 @@ from unittest.mock import MagicMock
 
 from orchestrator.cloud.planning import (
     PlanBuilder, _assemble_capability_catalog, _CAPABILITY_MAPPING_HEAD,
-    _planner_system, _submit_plan_tools, _SUBMIT_PLAN_NAME, _TOOLCALL_SECTION,
+    _planner_system, _submit_plan_tools, _CLARIFY_SECTION, _SUBMIT_PLAN_NAME,
+    _TOOLCALL_SECTION,
 )
 from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.context import WorkingSet
@@ -298,6 +299,24 @@ def test_submit_plan_tools_shape_and_confirm_absent(monkeypatch):
     assert "clarify" not in props          # off 时 schema 不反向引导澄清
 
 
+def test_submit_plan_requires_addressed_and_explicit_steps_on_every_call():
+    spec = _submit_plan_tools()
+    fn = spec["tools"][0]["function"]
+    parameters = fn["parameters"]
+    steps_description = parameters["properties"]["steps"]["description"]
+
+    assert set(parameters["required"]) == {"addressed", "steps"}
+    assert "additionalProperties" not in parameters
+    for contract_text in (
+        _TOOLCALL_SECTION,
+        fn["description"],
+        steps_description,
+    ):
+        assert "arguments 每次必须同时包含 addressed 和 steps" in contract_text
+        assert "无步骤也必须显式 steps=[]" in contract_text
+        assert "不得只提交 addressed" in contract_text
+
+
 def test_submit_plan_schema_enums_match_only_the_current_catalog():
     """动态 schema 只能枚举本轮真实能力；未注册的常识能力不得静态混进来。"""
     agents = [MockAgent("navigation", ["navigation.search_poi", "navigation.navigate"]),
@@ -400,6 +419,11 @@ def test_submit_plan_tools_clarify_never_in_schema(monkeypatch):
     monkeypatch.setenv("CLARIFY_ENABLED", "on")
     props = _submit_plan_tools()["tools"][0]["function"]["parameters"]["properties"]
     assert "clarify" not in props
+
+
+def test_clarify_prompt_example_keeps_required_explicit_empty_steps():
+    assert '{"addressed":true,"steps":[],"clarify":' in _CLARIFY_SECTION
+    assert '{"addressed":true,"clarify":' not in _CLARIFY_SECTION
 
 
 def test_toolcall_clarify_in_arguments_still_consumed(monkeypatch):

@@ -104,12 +104,12 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     assert len(agents) == 17
     assert len(catalog.ref_to_pair) == 131
     assert catalog.catalog_stats["dropped"] == []
-    # 14651 是未完整序列化生产 builtin manifest 的手工估算；完整 cloud tool 字段后为 15092。
-    assert catalog.catalog_stats["chars_full"] == 15092
-    assert catalog.catalog_stats["chars_final"] == 15092
+    # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10375。
+    assert catalog.catalog_stats["chars_full"] == 10375
+    assert catalog.catalog_stats["chars_final"] == 10375
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 908
+    assert 16000 - catalog.catalog_stats["chars_final"] == 5625
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest
@@ -125,13 +125,17 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     assert all(set(group) == {
         "service", "kind", "deployment", "trust", "capabilities",
     } for group in groups)
-    capabilities = [cap for group in groups for cap in group["capabilities"]]
-    assert len(capabilities) == len(catalog.ref_to_pair)
+    assert all(isinstance(group["capabilities"], dict) for group in groups)
+    capability_refs = {
+        ref for group in groups for ref in group["capabilities"]
+    }
+    assert capability_refs == set(catalog.ref_to_pair)
     for group in groups:
-        expected = ({"capability_ref", "meaning"}
-                    if group["service"].startswith("edge-")
-                    else {"capability_ref", "meaning", "slots", "description"})
-        assert all(set(cap) == expected for cap in group["capabilities"])
+        expected_value_length = 1 if group["service"].startswith("edge-") else 3
+        assert all(
+            isinstance(value, list) and len(value) == expected_value_length
+            for value in group["capabilities"].values()
+        )
 
 
 def test_eval_live_inventory_always_has_one_builtin_tools_agent():
@@ -205,8 +209,9 @@ def test_edge_capabilities_stay_name_only_in_catalog(monkeypatch):
                       request_catalog.semantic_mapping_text.splitlines()[1:]]
     request_edge = [group for group in request_groups
                     if group["service"].startswith("edge-")]
-    request_caps = [cap for group in request_edge for cap in group["capabilities"]]
+    request_caps = [value for group in request_edge
+                    for value in group["capabilities"].values()]
     assert len(request_caps) >= 70
-    assert all(set(cap) == {"capability_ref", "meaning"} for cap in request_caps), (
+    assert all(len(value) == 1 for value in request_caps), (
         "请求级 ref mapping 给端侧能力增加了未证明有效的语义字段")
     assert request_catalog.catalog_stats["dropped"] == []

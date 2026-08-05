@@ -179,7 +179,7 @@ def test_duplicate_agent_identity_fails_closed_before_refs_diverge():
         assemble([first, second])
 
 
-def test_mapping_items_separate_copyable_refs_from_semantic_meaning(monkeypatch):
+def test_mapping_object_keys_are_the_only_copyable_refs(monkeypatch):
     _, assemble = _ref_api()
     monkeypatch.setattr(context, "_CATALOG_BUDGET", 100_000)
     edge = _agent("edge-example", "example.edge", protected=True)
@@ -192,18 +192,27 @@ def test_mapping_items_separate_copyable_refs_from_semantic_meaning(monkeypatch)
         )
     }
 
-    edge_capability = groups["edge-example"]["capabilities"][0]
-    cloud_capability = groups["cloud-example"]["capabilities"][0]
-    assert edge_capability == {
-        "capability_ref": catalog.pair_to_ref[("edge-example", "example.edge")],
-        "meaning": "example.edge",
+    edge_ref = catalog.pair_to_ref[("edge-example", "example.edge")]
+    cloud_ref = catalog.pair_to_ref[("cloud-example", "example.semantic")]
+    assert groups["edge-example"]["capabilities"] == {
+        edge_ref: ["example.edge"],
     }
-    assert set(cloud_capability) == {
-        "capability_ref", "meaning", "slots", "description",
+    assert groups["cloud-example"]["capabilities"] == {
+        cloud_ref: ["example.semantic", [], "abstract meaning"],
     }
-    assert cloud_capability["meaning"] == "example.semantic"
-    assert '"ref":' not in catalog.semantic_mapping_text
-    assert '"name":' not in catalog.semantic_mapping_text
+    group_lines = catalog.semantic_mapping_text.splitlines()[1:]
+    assert all('"meaning":' not in line for line in group_lines)
+    assert all('"capability_ref":' not in line for line in group_lines)
+    assert {
+        ref
+        for group in groups.values()
+        for ref in group["capabilities"]
+    } == set(catalog.ref_to_pair)
+    assert [
+        ref
+        for group in groups.values()
+        for ref in group["capabilities"]
+    ] == list(catalog.ref_to_pair)
 
 
 def test_ref_only_schema_static_prompts_and_user_message_tail(monkeypatch):
@@ -226,8 +235,8 @@ def test_ref_only_schema_static_prompts_and_user_message_tail(monkeypatch):
     }
     assert item["properties"]["capability_ref"]["enum"] == list(catalog.ref_to_pair)
     ref_description = item["properties"]["capability_ref"]["description"]
-    assert "逐字复制" in ref_description
-    assert "meaning" in ref_description and "禁止" in ref_description
+    assert "capabilities 对象的 key" in ref_description
+    assert "数组值" in ref_description and "禁止" in ref_description
     assert not _legacy_step_shape(json.dumps(item, ensure_ascii=False))
     empty_steps = (planning._submit_plan_tools(assemble([]))["tools"][0]["function"]
                    ["parameters"]["properties"]["steps"])
@@ -243,14 +252,15 @@ def test_ref_only_schema_static_prompts_and_user_message_tail(monkeypatch):
         assert not _legacy_step_shape(static_prompt)
     assert "capability_ref" in planning._PLANNER_BASE
     assert "capability_ref" in planning._REPLAN_SYSTEM
-    assert "meaning 仅解释语义，禁止作为 capability_ref 输出值" in \
+    assert "capabilities 对象的 key 才是 capability_ref" in \
         planning._CAPABILITY_MAPPING_HEAD
     for abstract_rule in (
-        "capability_ref 只能逐字复制能力条目的 capability_ref 字段值",
-        "meaning 只用于解释语义，禁止填入 step.capability_ref",
-        '{"capability_ref":"cap_0042","meaning":"example.semantic"}',
+        "capabilities 的 object key 才是 capability_ref",
+        "数组值只读解释，禁止放入 step 或当作 capability_ref",
+        '{"cap_0042":["example.semantic",["argument"],"abstract description"]}',
         '正确：step.capability_ref="cap_0042"',
         '错误：step.capability_ref="example.semantic"',
+        "每个 step 只能包含 id、capability_ref、slots、depends_on、slot_refs 五个字段",
     ):
         assert abstract_rule in planning._CATALOG_ALLOWLIST_SECTION
 
