@@ -71,18 +71,22 @@ class _SpyLLM:
         self.tool_calls_n = 0
         self.last_tools = None
         self.last_system = ""
+        self.last_text_user = ""
+        self.last_tool_user = ""
         self._text = text_reply
         self._tool = tool_reply          # (content, calls)
         self._tool_exc = tool_exc
 
     async def llm(self, messages):
         self.text_calls += 1
+        self.last_text_user = messages[1]["content"]
         return self._text
 
     async def llm_tools(self, messages, tools):
         self.tool_calls_n += 1
         self.last_tools = tools
         self.last_system = messages[0]["content"]
+        self.last_tool_user = messages[1]["content"]
         if self._tool_exc:
             raise self._tool_exc
         return self._tool
@@ -289,6 +293,105 @@ def test_submit_plan_tools_shape_and_confirm_absent(monkeypatch):
     assert spec["tool_choice"] == {"type": "function",
                                    "function": {"name": _SUBMIT_PLAN_NAME}}
     assert "clarify" not in props          # off 时 schema 不反向引导澄清
+
+
+def test_submit_plan_schema_enums_match_only_the_current_catalog():
+    """动态 schema 只能枚举本轮真实能力；未注册的常识能力不得静态混进来。"""
+    agents = [MockAgent("navigation", ["navigation.search_poi", "navigation.navigate"]),
+              MockAgent("hvac", ["hvac.set"])]
+
+    spec = _submit_plan_tools(agents)
+    step_schema = spec["tools"][0]["function"]["parameters"]["properties"][
+        "steps"]["items"]
+    step_props = step_schema["properties"]
+
+    assert step_props["agent_id"]["enum"] == ["hvac", "navigation"]
+    assert step_props["intent"]["enum"] == [
+        "hvac.set", "navigation.navigate", "navigation.search_poi",
+    ]
+    assert "nearby.search" not in json.dumps(spec, ensure_ascii=False)
+
+    pairs = {
+        (branch["properties"]["agent_id"]["enum"][0], intent)
+        for branch in step_schema["oneOf"]
+        for intent in branch["properties"]["intent"]["enum"]
+    }
+    assert pairs == {
+        ("hvac", "hvac.set"),
+        ("navigation", "navigation.navigate"),
+        ("navigation", "navigation.search_poi"),
+    }
+
+
+def test_builder_sends_the_permission_filtered_catalog_in_tool_schema(monkeypatch):
+    """调用点必须把权限过滤后的 live catalog 传给 schema，而不是只改 helper。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    monkeypatch.setenv("SKILLS_RETRIEVAL", "lexical")
+    monkeypatch.setenv("EXEMPLARS_RETRIEVAL", "lexical")
+    visible = MockAgent("navigation", ["navigation.search_poi"])
+    hidden = MockAgent("hvac", ["hvac.set"])
+    hidden.manifest.requires_permissions = ["vehicle.control"]
+    spy = _SpyLLM(tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                                      "arguments": _ARGS_OK}]))
+    builder = PlanBuilder(spy.llm, _no_resolve, llm_tool_fn=spy.llm_tools)
+
+    asyncio.run(builder.build(
+        "找家川菜馆", WorkingSet(catalog=[visible, hidden]), PlanContext(session_id="t"),
+        granted_permissions=[],
+    ))
+
+    step_props = spy.last_tools["tools"][0]["function"]["parameters"]["properties"][
+        "steps"]["items"]["properties"]
+    assert step_props["agent_id"]["enum"] == ["navigation"]
+    assert step_props["intent"]["enum"] == ["navigation.search_poi"]
+
+
+def test_toolcall_protocol_retry_reuses_the_same_filtered_catalog(monkeypatch):
+    """工具协议失败转 JSON 时，schema 与重试 user catalog 必须来自同一过滤结果。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    monkeypatch.setenv("SKILLS_RETRIEVAL", "lexical")
+    monkeypatch.setenv("EXEMPLARS_RETRIEVAL", "lexical")
+    visible = MockAgent("navigation", ["navigation.search_poi"])
+    hidden = MockAgent("secret-agent", ["secret.capability"])
+    hidden.manifest.requires_permissions = ["secret.use"]
+    spy = _SpyLLM(
+        text_reply=json.dumps(_ARGS_OK, ensure_ascii=False),
+        tool_reply=("", [{"id": "bad", "name": "other_tool", "arguments": _ARGS_OK}]),
+    )
+    builder = PlanBuilder(spy.llm, _no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = asyncio.run(builder.build(
+        "找家川菜馆", WorkingSet(catalog=[visible, hidden]), PlanContext(session_id="t"),
+        granted_permissions=[],
+    ))
+
+    assert plan.plan_mode == "toolcall_fallback"
+    assert spy.tool_calls_n == 1 and spy.text_calls == 1
+    step_props = spy.last_tools["tools"][0]["function"]["parameters"]["properties"][
+        "steps"]["items"]["properties"]
+    assert step_props["agent_id"]["enum"] == ["navigation"]
+    assert step_props["intent"]["enum"] == ["navigation.search_poi"]
+    for user_message in (spy.last_tool_user, spy.last_text_user):
+        catalog_block = user_message.split("\n\n当前日期", 1)[0]
+        assert "navigation.search_poi" in catalog_block
+        assert "secret-agent" not in catalog_block
+        assert "secret.capability" not in catalog_block
+
+
+def test_dynamic_tool_schemas_do_not_share_mutable_catalog_state():
+    first = _submit_plan_tools([MockAgent("alpha", ["alpha.one"])])
+    second = _submit_plan_tools([MockAgent("beta", ["beta.two"])])
+    first_props = first["tools"][0]["function"]["parameters"]["properties"][
+        "steps"]["items"]["properties"]
+    second_props = second["tools"][0]["function"]["parameters"]["properties"][
+        "steps"]["items"]["properties"]
+
+    assert first_props["agent_id"]["enum"] == ["alpha"]
+    assert first_props["intent"]["enum"] == ["alpha.one"]
+    assert second_props["agent_id"]["enum"] == ["beta"]
+    assert second_props["intent"]["enum"] == ["beta.two"]
+    first_props["agent_id"]["enum"].append("mutated")
+    assert second_props["agent_id"]["enum"] == ["beta"]
 
 
 def test_submit_plan_tools_clarify_never_in_schema(monkeypatch):

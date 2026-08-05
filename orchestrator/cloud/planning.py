@@ -237,34 +237,69 @@ _TOOLCALL_SECTION = (
 _SUBMIT_PLAN_NAME = "submit_plan"
 
 
-def _submit_plan_tools() -> dict:
+def _submit_plan_tools(agents: list | None = None) -> dict:
     """submit_plan 工具定义（线格式 ``{"tools":[...],"tool_choice":named 强制}``，RFC §3.2）。
 
     schema 顶层=现 JSON 协议顶层——语义零漂移，`_parse_and_validate_data` 直接消费；
     **无 require_confirm**（确认权不在 LLM，M0a 已中央落实）；clarify 属性与
     _CLARIFY_SECTION 同门控（off 时 schema 不反向引导模型输出澄清）。named tool_choice
-    强制 + prompt 指令双保险；某家不认 → build() 轮内降级承接（RFC §4）。"""
+    强制 + prompt 指令双保险；某家不认 → build() 轮内降级承接（RFC §4）。
+
+    build() 传入权限过滤后的本轮 catalog 时，agent_id / intent 的 enum 由 manifest 动态
+    生成；不传仅保留给协议形状测试与独立探针，生产规划调用不会退回静态开放字符串。"""
+    catalog_pairs = sorted({
+        (str(getattr(agent.manifest, "agent_id", "") or "").strip(),
+         str(getattr(cap, "intent", "") or "").strip())
+        for agent in (agents or [])
+        for cap in (getattr(agent.manifest, "capabilities", None) or [])
+        if str(getattr(agent.manifest, "agent_id", "") or "").strip()
+        and str(getattr(cap, "intent", "") or "").strip()
+    })
+    agent_id_schema = {"type": "string"}
+    intent_schema = {"type": "string"}
+    if agents is not None and catalog_pairs:
+        agent_id_schema["enum"] = sorted({agent_id for agent_id, _ in catalog_pairs})
+        intent_schema["enum"] = sorted({intent for _, intent in catalog_pairs})
+
+    step_item_schema = {"type": "object", "properties": {
+        "id": {"type": "string"},
+        "agent_id": agent_id_schema,
+        "intent": intent_schema,
+        # 语义必须随字段走（真栈 B1-4：空 object 诱发省略追问丢继承槽）
+        # （date=后天）丢继承槽（city=杭州），执行错落定位城市；JSON 文本路径靠
+        # prompt 规则+few-shot 引导写全、从不丢。
+        "slots": {"type": "object", "description": (
+            "该步骤的全部槽位键值。省略式追问（如『那后天呢』『换成XX呢』）必须把"
+            "从上一轮继承的槽位（城市/对象等）与本轮变化的槽位一起显式写全——"
+            "只写变化的槽位会导致执行错对象")},
+        "depends_on": {"type": "array", "items": {"type": "string"}},
+        "slot_refs": {"type": "object"},
+    }, "required": ["id", "agent_id", "intent"]}
+    if agents is not None and catalog_pairs:
+        intents_by_agent: dict[str, list[str]] = {}
+        for agent_id, intent in catalog_pairs:
+            intents_by_agent.setdefault(agent_id, []).append(intent)
+        # 两个独立 enum 只能挡住 catalog 外值，挡不住合法 agent 配上别家 intent。
+        # oneOf 把 manifest 的真实归属也编码进 schema；validator 仍是消费端第二防线。
+        step_item_schema["oneOf"] = [
+            {"properties": {
+                "agent_id": {"type": "string", "enum": [agent_id]},
+                "intent": {"type": "string", "enum": intents},
+            }, "required": ["agent_id", "intent"]}
+            for agent_id, intents in sorted(intents_by_agent.items())
+        ]
+    steps_schema = {"type": "array", "items": step_item_schema}
+    if agents is not None and not catalog_pairs:
+        # 空 catalog 没有合法 enum（JSON Schema enum 必须非空）；直接约束 steps 为空。
+        steps_schema["maxItems"] = 0
+
     props = {
         "complexity": {"type": "string", "enum": ["simple", "adaptive"],
                        "description": "simple=一次可确定全部步骤；adaptive=须按运行结果决定下一步"},
         "goal": {"type": "string", "description": "一句话目标"},
         "addressed": {"type": "boolean",
                       "description": "这句话是否是对车载助手说的；拿不准必须输出 true"},
-        "steps": {"type": "array", "items": {"type": "object", "properties": {
-            "id": {"type": "string"},
-            "agent_id": {"type": "string"},
-            "intent": {"type": "string"},
-            # 语义必须随字段走（真栈 B1-4 教训，与 clarify 案例同族反向）：无说明的空
-            # object 会放大工具输出形态的「最小化填写」倾向——省略式追问只写变化槽
-            # （date=后天）丢继承槽（city=杭州），执行错落定位城市；JSON 文本路径靠
-            # prompt 规则+few-shot 引导写全、从不丢。
-            "slots": {"type": "object", "description": (
-                "该步骤的全部槽位键值。省略式追问（如『那后天呢』『换成XX呢』）必须把"
-                "从上一轮继承的槽位（城市/对象等）与本轮变化的槽位一起显式写全——"
-                "只写变化的槽位会导致执行错对象")},
-            "depends_on": {"type": "array", "items": {"type": "string"}},
-            "slot_refs": {"type": "object"},
-        }, "required": ["id", "agent_id", "intent"]}},
+        "steps": steps_schema,
     }
     # clarify 刻意**不进 schema**（真栈 B4-1 两轮教训）：schema 把 clarify 变成「摆在
     # 眼前的可选字段」，结构可见性把误澄清率从 0 抬到 ~50-66%（历史追问「我刚才让你调到
@@ -526,7 +561,7 @@ class PlanBuilder:
             content, calls = await self._llm_tools([
                 {"role": "system", "content": _planner_system(toolcall=True)},
                 {"role": "user", "content": user_msg},
-            ], _submit_plan_tools())
+            ], _submit_plan_tools(agents))
         except Exception as e:
             logger.warning("LLM plan toolcall exception: %s", e)
             return "", None
