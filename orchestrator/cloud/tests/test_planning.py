@@ -1,7 +1,7 @@
 """PlanBuilder 测试。"""
 import pytest
 import asyncio
-from orchestrator.cloud.planning import PlanBuilder
+from orchestrator.cloud.planning import PlanBuilder, _REPLAN_SYSTEM, _planner_system
 from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.context import WorkingSet
 from unittest.mock import MagicMock
@@ -279,6 +279,19 @@ def test_replan_returns_done_or_a_validated_next_batch():
         "找到可用充电站", [{"status": "ok"}], agents, PlanContext()))
     assert completed.done is True
     assert completed.steps == []
+
+
+def test_json_and_replan_prompts_treat_the_live_catalog_as_the_only_allowlist():
+    """初规划与再规划都只能消费本轮动态 catalog，不能靠模型常识补能力。"""
+    initial = _planner_system()
+    for clause in ("本轮动态 catalog", "agent_id 和 intent", "唯一白名单",
+                   "不得编造", "不得替换", "缺席"):
+        assert clause in initial
+    assert '{"addressed":true,"steps":[]}' in initial
+
+    for clause in ("本轮动态 catalog", "agent_id 和 intent", "唯一白名单",
+                   "不得编造", "不得替换", "缺席"):
+        assert clause in _REPLAN_SYSTEM
 
 
 # ── 多日出行确定性兜底：弱 LLM 漏掉行程规划时补 trip.plan 步 ──

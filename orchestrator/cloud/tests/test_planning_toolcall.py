@@ -324,6 +324,25 @@ def test_planner_system_toolcall_section_appended():
     assert _planner_system(toolcall=True) == _planner_system() + _TOOLCALL_SECTION
 
 
+def test_toolcall_prompt_keeps_the_live_catalog_allowlist_contract():
+    """换成工具输出通道不能丢掉动态 catalog 白名单及缺能力空计划约束。"""
+    prompt = _planner_system(toolcall=True)
+    for clause in ("本轮动态 catalog", "agent_id 和 intent", "唯一白名单",
+                   "不得编造", "不得替换", "缺席"):
+        assert clause in prompt
+    assert '{"addressed":true,"steps":[]}' in prompt
+
+
+def test_catalog_prompt_is_not_a_replacement_for_step_validation():
+    """Prompt 只降 raw 幻觉；未知 agent/intent 仍必须被确定性第二防线拒绝。"""
+    amap = {"hvac": MockAgent("hvac", ["hvac.set"])}
+    unknown_agent = [{"id": "s1", "agent_id": "invented", "intent": "hvac.set"}]
+    unknown_intent = [{"id": "s1", "agent_id": "hvac", "intent": "hvac.teleport"}]
+
+    assert PlanBuilder._validated_steps(unknown_agent, amap) == []
+    assert PlanBuilder._validated_steps(unknown_intent, amap) == []
+
+
 # ── clients 解码层：Struct 数字还原 ──
 
 def test_destruct_nums_restores_ints():
