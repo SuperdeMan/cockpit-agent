@@ -17,6 +17,10 @@ few_shots:
   # 等价改写，刻意不复制 nq.hvac.keep-volume 的原句，保护 unseen_transfer 身份。
   - user: 空调别动，声音小点
     plan: {"steps":[{"id":"s1","agent_id":"edge-vehicle","intent":"volume.dec","slots":{},"depends_on":[],"slot_refs":{}}]}
+  # 未开始的并列动作被取消：只保留肯定诉求；不用 pause 去“收尾”一个从未开始的动作。
+  # 与 nq.dinner-music.drop-music 的餐厅话术不同，避免把 unseen 原句写进 prompt 资产。
+  - user: 查下天气，音乐先别放
+    plan: {"steps":[{"id":"s1","agent_id":"info","intent":"info.weather","slots":{},"depends_on":[],"slot_refs":{}}]}
 golden:
   # 这里用的都是**语料之外**的说法：把对抗语料的原句写进 golden，等于把 unseen 案例
   # 洗成 seen，之后"通过率涨了"就再也读不出泛化了（findings §4.3-2）。

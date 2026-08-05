@@ -150,6 +150,27 @@ def test_negation_policy_demonstrates_keep_the_positive_half():
     ), "混合否定缺少同时断言保留项与禁选项的 golden"
 
 
+def test_negation_policy_renders_unstarted_parallel_cancel_example():
+    """Golden 不进 prompt；未开始取消的对照必须由真实 few-shot 渲染。"""
+    store = sk.SkillStore()
+    policy = next(d for d in store.policies()
+                  if d.name == "negation-and-deferral")
+    cancelled = [
+        shot for shot in policy.few_shots
+        if shot.get("user") == "查下天气，音乐先别放"
+    ]
+    assert cancelled, "否定 policy 缺少未开始并列动作的取消 few-shot"
+    assert cancelled[0]["user"] != "找家川菜馆，音乐就不用放了"
+    steps = (cancelled[0].get("plan") or {}).get("steps") or []
+    assert [step.get("intent") for step in steps] == ["info.weather"]
+
+    block, injected, clipped = sk.render_skills_block(
+        [policy], [], capability_refs={("info", "info.weather"): "cap_0001"})
+    assert injected == [] and clipped == []
+    assert "示例——用户：『查下天气，音乐先别放』" in block
+    assert '"capability_ref":"cap_0001"' in block
+
+
 # ── 渲染 ──────────────────────────────────────────────────────────────────────
 
 def test_render_block_has_policies_and_guides_within_budget():
