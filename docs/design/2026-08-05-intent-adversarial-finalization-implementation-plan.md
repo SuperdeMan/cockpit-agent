@@ -12,7 +12,7 @@
 
 **Goal:** 把 gate 的 L1/L2 置信证据从“同进程重复三次”升级为“每层至少两个独立进程、每进程三次”，修掉全样本 raw Planner 能力幻觉与仍可跨进程复现的两条产品方差，并只在同一干净快照的 L1+L2+L3 父报告明确 `eligible=True` 时写入首份正式 baseline。
 
-**Architecture:** `test/eval_intent_adversarial.py` 保持唯一公开入口，外层 parent 串行拉起不可递归的 worker；worker 继续复用现有单进程执行路径，系统临时目录保存分片，新的纯函数模块校验身份并聚合结果。L0 与 L3 只在 primary worker 执行一次，L1/L2 各由两个独立进程取样。逐 repetition 保存进程身份与 raw/validator/fallback 证据，父报告按跨进程错误签名分类并 fail-closed 判定 baseline。产品修复仅进入 Planner 通用 catalog 契约与现有 policy/exemplar/manifest 知识层，不新增 route hint。
+**Architecture:** `test/eval_intent_adversarial.py` 保持唯一公开入口，外层 parent 串行拉起不可递归的 worker；worker 继续复用现有单进程执行路径，系统临时目录保存分片，新的纯函数模块校验身份并聚合结果。L0 与 L3 只在 primary worker 执行一次，L1/L2 各由两个独立进程取样。逐 repetition 保存进程身份与 raw/validator/fallback 证据，父报告按跨进程错误签名分类并 fail-closed 判定 baseline。产品侧以请求级 `capability_ref` 隔离 LLM wire 与真实 `agent_id/intent`，宿主在 validator 前解析，现有 Plan/执行/proto 不变；知识与范例只动态示范 ref，不拥有调用权，不新增 route hint。
 
 **Tech Stack:** Python 3.12、pytest、dataclasses、PyYAML、`subprocess`、`tempfile`、现有 `ProviderLock`、PlanBuilder、Skill/Exemplar 检索、L3 journey runner 与 Markdown/JSON 报告器。
 
@@ -26,6 +26,7 @@
 - worker 必须串行执行。`ProviderLock` 改变全局 active provider，并发 worker 会互相覆盖。
 - 每个生产改动必须先运行新增测试并观察预期失败，再写最小实现，再跑相关回归。
 - 不新增或恢复 route hint，不修改 HMI、Dashboard、CI/CD、数据库 schema、`.env` 或通用 `scripts/run_e2e.py`。
+- 不按领域硬编码 capability ref，不放宽 raw 幻觉定义，不从分母移除 invalid ref，不保留生产 legacy LLM 输出旁路。
 - 不删除既有报告或历史证据。worker 临时分片只写系统临时目录；最终父报告按现有报告目录规则落盘。
 - 每项由实施者完成后依次做规格审查、代码质量审查；有问题回到同一实施者修复并复审。
 - 每个任务只暂存本任务列出的路径，提交前检查 `git diff --cached --check` 与 `git status --short`。
@@ -255,47 +256,177 @@
 
   提交：`test: fail closed on incomplete process evidence`
 
-## Task 5：消除能力缺席用例的 raw Planner 幻觉
+## Task 5：以请求级 capability_ref 消除 raw Planner 能力幻觉
+
+前三次通用软约束已经完成但未达到 Task 5 DoD：`af49ffb`（catalog 白名单 prompt）、
+`3387cdd`（运行时 `enum/oneOf` tool schema）、`43ad952`（catalog 尾置）在同六条 A8、
+`minimax:MiniMax-M3`、两个独立 L1 进程 × 每进程每 case 3 次下，都是最终 6/6 pass、escape 0、
+无意外 fallback、process/infra/provider/retrieval/trace 完整，但 raw capability hallucination 仍
+6/6。`strict=true + steps.maxItems=0` 仍返回一步的隔离探针说明不能再把 schema 当模型强制器。
+这些读数只作为协议升级依据，不勾成成功证据。
 
 **Files:**
 
 - Modify: `orchestrator/cloud/planning.py`
+- Modify: `orchestrator/cloud/skills.py`
+- Modify: `orchestrator/cloud/exemplars.py`
 - Modify: `orchestrator/cloud/tests/test_planning.py`
 - Modify: `orchestrator/cloud/tests/test_planning_toolcall.py`
+- Modify: `orchestrator/cloud/tests/test_planning_no_action.py`
+- Modify: `orchestrator/cloud/tests/test_planning_intent_rehome.py`
+- Modify: `orchestrator/cloud/tests/test_planning_reject.py`
+- Modify: `orchestrator/cloud/tests/test_planning_skill_repairs.py`
+- Modify: `orchestrator/cloud/tests/test_catalog_budget.py`
+- Modify: `orchestrator/cloud/tests/test_skills.py`
+- Modify: `orchestrator/cloud/tests/test_exemplars.py`
+- Modify: `test/support/intent_adversarial_trace.py`
+- Modify: `test/test_intent_adversarial_trace.py`
 - Modify: `test/test_intent_adversarial_runtime.py`
+- Modify: `test/eval_skills.py`
+- Modify: `test/eval_exemplars.py`
+- Modify: `skills/policies/negation-and-deferral.yaml`
+- Modify: `skills/guides/conditional-reminder.yaml`
+- Modify: `skills/guides/navigation-with-stop.yaml`
+- Modify: `skills/guides/multi-day-trip.yaml`
+- Modify: `skills/guides/weather-outing.yaml`
+- Modify: `skills/guides/charging-strategy.yaml`
+- Modify: `skills/guides/shop-order-flow.yaml`
 
-- [ ] **Step 1：写 prompt 契约红灯测试**
+### Task 5A：先冻结引用、wire 与 raw 证据契约
 
-  `_planner_system()` 的普通 JSON 与 toolcall 两条路径都必须声明：动态 catalog 是 agent/intent 唯一白名单；不得编造、替换或输出缺席能力；请求只有缺席能力可承接时返回 `addressed=true, steps=[]`。`replan()` 的系统约束同样不得越过当前 catalog。
+- [ ] **Step 1：写请求级 ref 与最终 catalog 可见面的红灯测试**
 
-- [ ] **Step 2：写 validator 第二防线回归**
+  在 `test_planning.py` / `test_catalog_budget.py` 先固定以下断言：
 
-  现有 `_validated_steps()` 对未知 agent/intent 的剔除保持不变；测试明确 prompt 约束不是替代 validator。合法空计划不应因 `addressed=true` 被误判成解析失败后落未声明 fallback。
-
-- [ ] **Step 3：运行红灯**
-
-  ```powershell
-  python -m pytest orchestrator/cloud/tests/test_planning.py orchestrator/cloud/tests/test_planning_toolcall.py test/test_intent_adversarial_runtime.py -q
+  ```python
+  refs = build_refs([("alpha", "alpha.one"), ("beta", "beta.two")])
+  assert refs.by_ref == {
+      "cap_0001": ("alpha", "alpha.one"),
+      "cap_0002": ("beta", "beta.two"),
+  }
+  assert all("alpha" not in ref and "beta" not in ref for ref in refs.by_ref)
   ```
 
-- [ ] **Step 4：先做 prompt-only 最小修复**
+  输入乱序/重复时结果仍按 `(agent_id, intent)` 排序且去重；连续两次 build 各创建独立映射
+  对象，不共享可变状态、不进 module cache。ref 只保证请求内确定，测试不得把某次编号写成跨请求
+  兼容承诺。再把 `PLANNER_CATALOG_BUDGET_CHARS` 压低，证明权限过滤或
+  `WorkingSet.render_catalog()` 预算裁掉的 agent 同时从末尾 ref 映射、tool enum、resolver 与
+  validator `agent_map` 消失；禁止“完整 agents 先建 refs、prompt 后裁剪”的错位。
 
-  在通用 Planner base 与 replan 契约加入 catalog 白名单纪律，不往静态 tool schema 硬编码全量 intent，也不加领域分支。只有真实双进程 A8 仍出现 raw 幻觉时，才允许把“本轮动态 catalog 的 agent/intent 约束”收紧到调用时生成的 tool schema；该升级必须新增 schema 与 catalog 一致性单测。
+- [ ] **Step 2：写普通 JSON、tool schema 与末尾 prompt 的红灯测试**
 
-- [ ] **Step 5：运行两进程 A8 定向真栈**
+  普通 JSON 与 toolcall system prompt 都只描述以下 step wire：
 
-  使用唯一公开 CLI、显式锁定 `minimax:MiniMax-M3`，选择六条能力缺席 case，并检查父报告：raw capability hallucination 0、post-validation escape 0、无未声明 fallback、两个 L1 process run id 各三样本、零 provider/infra/trace/retrieval drift。
+  ```json
+  {"id":"s1","capability_ref":"cap_0001","slots":{},"depends_on":[],"slot_refs":{}}
+  ```
 
-- [ ] **Step 6：验证并提交**
+  `step.properties/required` 只含 `capability_ref`，不得含 `agent_id/intent`；enum 精确等于本请求
+  refs，空映射约束 `steps=[]`。user message 的最后顺序必须是 skill → exemplar → context/history
+  → ref→语义能力映射 → 用户原话。映射只渲染最终 visible catalog，ref 文本不带语义。断言
+  catalog/enum/resolver/validator 四者 pair 集完全相等。
+
+- [ ] **Step 3：写 build、toolcall salvage、retry 与 replan 共图红灯测试**
+
+  用 spy 捕获一次 `build()` 的首轮 toolcall、同轮文本 salvage 与第二轮普通 JSON：三条分支必须
+  收到同一份请求级映射，不能 retry 后重新编号。有效 ref 在 validator 前还原为真实 pair；最终
+  `Plan.steps[*].agent_id/intent`、Executor 输入与 proto 结构保持不变。`replan()` 在权限过滤和
+  catalog 预算后为该次请求创建新映射，prompt 与解析共用它，返回的 `ReplanDecision.steps` 仍是
+  现有 `Step`。所有走模拟 LLM 的 fixture/helper 改为输出 `capability_ref`；只直接测试
+  `_validated_steps()` 的单测可继续构造解析后的内部 pair，生产代码不得保留 legacy wire 旁路。
+
+- [ ] **Step 4：写动态 skill/exemplar 渲染与旧形状禁入红灯测试**
+
+  `exemplars.render_block()` 与 skill `few_shots` 渲染接收本请求 refs：YAML 仍存真实
+  agent/intent 供治理，注入 prompt 时输出 `capability_ref`；任一步不在最终映射中则整条示例
+  不注入，不能留下半条 DAG。`render_for_names()` 的 replan 继承必须用 replan 映射重新渲染。
+  `test/eval_skills.py` / `test/eval_exemplars.py` 新增 fail-closed 扫描，证明实际注入块不存在
+  legacy step 的 `agent_id/intent` 输出形状；上列 7 个 skill YAML 中自由文本 legacy JSON 必须
+  迁成不带 wire 字段的语义规则，需示范输出的移入可动态渲染的结构化 `few_shots`。
+
+- [ ] **Step 5：写 invalid sentinel、no-action 与合法 DAG 回归红灯测试**
+
+  在 `test_intent_adversarial_trace.py` 构造五类 validator 前 wire：有效 ref、未知 ref、缺失 ref、
+  非字符串 ref、继续输出 legacy `agent_id/intent`。有效 ref 的现有 `raw_intents` 必须还原真实
+  intent；其余每个无效 step 都写 `__invalid_capability_reference__`，保留在 raw candidate 与
+  原有幻觉聚合分母，不能静默丢弃或另开不计闸指标。trace 同时覆盖普通 JSON、toolcall、retry、
+  replan；resolver/trace 异常继续使 `raw_observed=False` 并记 `trace_errors`。
+
+  在 `test_planning_no_action.py` 证明连续两次 `addressed=true, steps=[]` 走现有
+  `*_no_action`，不调用 `_fallback`；带 invalid ref 的非空 steps 不得伪装成 no-action。另锁住
+  合法单步与多步 DAG：`depends_on`、`slot_refs`、完整 slots、clarify、skill repairs 以及唯一
+  intent re-home 的 validator 内部行为不回归。
+
+- [ ] **Step 6：运行全部新增测试并记录预期红灯**
 
   ```powershell
-  python -m pytest orchestrator/cloud/tests/test_planning.py orchestrator/cloud/tests/test_planning_toolcall.py test/test_intent_adversarial_runtime.py test/test_intent_adversarial_report.py -q
-  python -m py_compile orchestrator/cloud/planning.py
+  python -m pytest orchestrator/cloud/tests/test_planning.py orchestrator/cloud/tests/test_planning_toolcall.py orchestrator/cloud/tests/test_planning_no_action.py orchestrator/cloud/tests/test_catalog_budget.py orchestrator/cloud/tests/test_skills.py orchestrator/cloud/tests/test_exemplars.py test/test_intent_adversarial_trace.py test/test_intent_adversarial_runtime.py -q
   python test/eval_skills.py
+  python test/eval_exemplars.py
+  ```
+
+  预期失败必须分别落在：没有请求级 ref 类型、schema/prompt 仍暴露 legacy pair、build/retry/replan
+  未共用映射、静态资产仍示范旧形状、trace 未解析 ref/sentinel。若测试在实现前已经通过，先确认
+  断言是否真正穿过 LLM wire，不能把直接调 validator 的绿当协议已存在。
+
+### Task 5B：最小实现引用协议并取得真栈证据
+
+- [ ] **Step 7：实现最终 visible catalog 的请求级映射**
+
+  在 `planning.py` 增加私有不可变 `CapabilityRefMap` 与单一构造器。`build()` / `replan()` 先按
+  granted permissions 过滤，再调用现有 catalog 预算渲染并消费 `catalog_stats.dropped`，只用
+  留下的 agents 构造 refs、semantic catalog、schema、resolver 与 `agent_map`。pair 排序编号为
+  `cap_0001...`；对象只作为调用栈局部变量传递，不挂到 `Plan`、全局、缓存、日志外部契约或
+  proto。ref catalog 在 user message 最后封口。
+
+- [ ] **Step 8：实现统一 wire 解析并保留 validator 第二防线**
+
+  `_submit_plan_tools()`、普通 JSON prompt、toolcall/salvage、第二轮 JSON retry、`replan()` 都只收
+  `capability_ref`。新增单一 resolver 在 `_validated_steps()` 前把有效 ref 复制成内部
+  `agent_id/intent`；legacy key、未知/缺失/错类型 ref 使整份计划按现有原子语义拒绝，但不得在
+  trace 前消失。`_validated_steps()` 继续防御最终 pair、slots、depends_on、slot_refs 与 catalog
+  漂移，不把 ref 解析当 validator 替代品。不增加任何领域分支、route hint 或 legacy 生产旁路。
+
+- [ ] **Step 9：动态渲染软资产并迁移测试 fixture**
+
+  `skills.py` / `exemplars.py` 的规划轮与 `render_for_names()` 都显式接收 refs；结构化语义资产
+  只有在映射命中时才渲染成当前请求的 `capability_ref`。把 7 个已列 YAML 的自由文本输出 JSON
+  改成语义规则或结构化 few-shot，并让 CI scanner 拒绝后来新增的旧形状。迁移所有 build、
+  toolcall、retry、replan 模拟输出；validator 单测的 pair 输入继续明确标注为“resolver 后内部形状”。
+
+- [ ] **Step 10：让 trace 在字段迁移后保持同一 raw 口径**
+
+  `attach_validation_trace()` 在 ref 解析边界保存 wire 快照，并以同一映射构造裁判快照：有效 ref
+  还原真实 raw intent，无效/legacy step 写 sentinel。最终 accepted snapshot 仍来自真实 Plan。
+  build 与 replan 都必须产生可聚合的 validation trace；`RepeatOutcome.raw_intents`、
+  `raw_observed`、raw capability hallucination 与 baseline eligibility 不改字段、不改分母、不放宽。
+
+- [ ] **Step 11：跑受影响回归并确认全部转绿**
+
+  ```powershell
+  python -m py_compile orchestrator/cloud/planning.py orchestrator/cloud/skills.py orchestrator/cloud/exemplars.py test/support/intent_adversarial_trace.py
+  python -m pytest orchestrator/cloud/tests/test_planning.py orchestrator/cloud/tests/test_planning_toolcall.py orchestrator/cloud/tests/test_planning_no_action.py orchestrator/cloud/tests/test_planning_intent_rehome.py orchestrator/cloud/tests/test_planning_reject.py orchestrator/cloud/tests/test_planning_skill_repairs.py orchestrator/cloud/tests/test_catalog_budget.py orchestrator/cloud/tests/test_skills.py orchestrator/cloud/tests/test_exemplars.py test/test_intent_adversarial_trace.py test/test_intent_adversarial_runtime.py test/test_intent_adversarial_report.py -q
+  python test/eval_skills.py
+  python test/eval_exemplars.py
+  python -m pytest scripts/tests/test_e2e_arch_guard.py -q
   git diff --check
   ```
 
-  提交：`fix: constrain planner output to the live catalog`
+  明确检查现有合法多步、`depends_on`、`slot_refs`、slots、no-action 与 replan 回归；不能只跑
+  新增 ref 单测。
+
+- [ ] **Step 12：运行同六条 A8 的 2×3 真栈验收后再进入 Task 6**
+
+  ```powershell
+  python test/eval_intent_adversarial.py --suite gate --layer l1 --live --provider minimax --model MiniMax-M3 --repeat 3 --diagnose --case cc.missing.fallback-still-works --case cc.missing.nearby-search --case cc.missing.reminder --case cc.missing.research --case cc.missing.shop --case cc.missing.trip-plan
+  ```
+
+  父报告必须证明两个独立 L1 process run id、每进程每 case 3 次，且每个 repetition 都有完整
+  raw/validator/process/provider/retrieval/trace 证据。验收值固定为：六条最终 6/6 pass、raw
+  capability hallucination 0、post-validation escape 0、unexpected fallback 0、零 infra/provider/
+  retrieval/trace drift。任一 invalid sentinel、缺 raw 样本或字段迁移导致的分母缩小都算失败；
+  不得用领域硬编码、route hint、放宽 raw 定义或删除 invalid ref 关闭红灯。只有满足上述条件才
+  提交 `feat: enforce referential planner capability contract` 并进入 Task 6。
 
 ## Task 6：收敛 dinner 与 battery 两条跨进程方差
 

@@ -20,6 +20,20 @@
 - 六条能力缺席 A8 用例表面 6/6 通过，但 raw Planner 幻觉率 6/6：全部靠 validator
   丢弃不存在的能力后落 `chitchat`。
 
+Task 5 随后按批准顺序做了三层通用软约束，结果均不足以关闭 raw 幻觉：
+
+| SHA | 单一变化 | 同六条 A8 的 MiniMax-M3 双进程结果 |
+|---|---|---|
+| `af49ffb` | Planner catalog 白名单 prompt | 最终计划 6/6 pass、escape 0、无意外 fallback，但 raw capability hallucination 仍 6/6 |
+| `3387cdd` | 运行时生成 `enum/oneOf` tool schema | 最终计划 6/6 pass、escape 0、无意外 fallback，但 raw capability hallucination 仍 6/6 |
+| `43ad952` | catalog 尾置到知识、范例、上下文之后 | 最终计划 6/6 pass、escape 0、无意外 fallback，但 raw capability hallucination 仍 6/6 |
+
+三次都是真实 `minimax:MiniMax-M3`，两个独立 L1 进程、每进程每 case 3 次；进程身份、
+provider lock、infra、trace、retrieval 证据完整且无漂移。因此这些 SHA/读数是**方案升级依据**，
+不是 Task 5 成功证据。隔离探针还证明该 provider 在 `strict=true` 且 `steps.maxItems=0` 时仍会
+返回 1 个 step；不能把 JSON Schema 当成模型侧强制执行器。继续叠 prompt、schema description
+或排序属于已经被同一反例证伪的路径。
+
 因此收尾不是“继续重跑直到出现一趟全绿”，而是同时修两类可信度缺口：
 
 1. 证据层必须证明 L1/L2 来自至少两个独立进程；
@@ -154,14 +168,97 @@ run id 必须非空且唯一，样本总数必须不小于进程数乘每进程�
 晋级项 `cp.dep.charge-then-navigate` 回填已验收的 A/B 证据名称；更老存量仍按历史契约保留，
 但新的 gate parent 会在当前快照上重新覆盖其运行置信。
 
-### D10：产品修复顺序固定，route hint 不作为收尾工具
+### D10：Task 5 升级为请求级 capability reference 协议
 
-尺子落地后按以下顺序：
+每次 `build()` / `replan()` 都在权限过滤之后、LLM 调用之前生成一份请求级映射：
 
-1. 在 Planner 通用协议中明确“动态 catalog 是 agent/intent 唯一白名单；请求能力缺席时
-   `addressed=true, steps=[]`，不得编造、替代或输出缺席能力”，validator 保持第二道硬防线；
-2. 用双进程 A8 定向批要求 raw 幻觉归零且不走未声明 fallback；
-3. 对 dinner/battery 做 `on-failure` 消融，再只改通用 policy/exemplar/manifest 描述；
+1. 先让现有 catalog 预算逻辑完成裁剪；`WorkingSet.render_catalog()` 记录在
+   `catalog_stats.dropped` 中的 agent 必须先从本轮可见集合移除；
+2. 只对最终实际渲染、模型可见的 agent 取 `(agent_id, intent)`，排序、去重后依次分配
+   `cap_0001`、`cap_0002`……；
+3. ref 不包含领域、agent、intent 或哈希片段，不能从字符串猜出语义；同一请求内排序与编号
+   确定，便于 prompt、schema、retry、trace 复用；
+4. 映射只活在该次 `build()` / `replan()` 调用内，不缓存、不落盘、不进 proto，也不承诺相同
+   catalog 的下次请求仍得到相同 ref。它不是跨请求或外部 API 的稳定标识。
+
+“最终实际渲染”是硬边界：不得先对完整 `agents` 建 refs，再让 `render_catalog()` 把其中 agent
+裁掉。prompt 映射、tool enum、ref 解析表与 validator 的 `agent_map` 必须来自同一个裁剪后的
+visible set；被预算裁掉或权限过滤掉的能力在四处都不可见、不可引用、不可执行。
+
+### D11：LLM wire 只认 ref，宿主恢复现有 Plan
+
+普通 JSON 与 `submit_plan` toolcall 的 step 形状统一改为：
+
+```json
+{
+  "id": "s1",
+  "capability_ref": "cap_0001",
+  "slots": {},
+  "depends_on": [],
+  "slot_refs": {}
+}
+```
+
+- LLM step 只允许 `capability_ref`，不得输出 `agent_id` 或 `intent`；
+- tool schema 的 `capability_ref.enum` 直接由本请求映射生成；空映射仍要求 `steps=[]`；
+- 宿主在现有 `_validated_steps()` 之前把有效 ref 解析成真实 `agent_id/intent` pair；validator
+  继续按最终 visible `agent_map` 做第二道防线；
+- `build()` 的普通 JSON、首轮 toolcall、toolcall salvage、第二轮 JSON retry 共用同一份映射，
+  不能每次调用重新编号；`replan()` 为自己的请求生成一份新映射并使用相同 wire 形状；
+- 解析之后的 `Step`、`Plan`、Executor、Agent gRPC/proto、观测中的最终计划仍使用现有
+  `agent_id/intent`，不修改任何外部契约。
+
+生产路径不保留“LLM 仍可输出 legacy `agent_id/intent`”的兼容旁路。那会使强制引用退化成
+建议。只允许直接测试 validator 的单测继续构造解析后的内部 pair；所有模拟 LLM、toolcall、
+replan helper 与 fixture 必须迁移到 `capability_ref` wire。
+
+### D12：catalog 最后封口，软资产只提供推理知识
+
+user message 的最后两段固定为“本请求 ref → 语义能力说明映射”与用户原话；映射位于 skill、
+exemplar、记忆、焦点、历史之后。语义能力说明可包含能力描述、slots、部署/信任等判断所需信息，
+但不得再把 `agent_id/intent` 填进 LLM 输出示例。skill、exemplar 与历史只帮助判断用户想做什么，
+不拥有调用权；只有末尾映射中的 ref 可被输出。
+
+旧输出形状必须做明确迁移，不能只靠末尾一句 prompt 压制：
+
+- `orchestrator/cloud/exemplars.py` 保留 YAML 中真实 intent 作为治理/检索数据，但渲染时接收本
+  请求映射，把已准入步骤动态输出为 `capability_ref`；映射中缺席任一步时整条 exemplar 不注入；
+- `orchestrator/cloud/skills.py` 的结构化 `few_shots.plan` 同样在注入时动态改写为 ref；
+- 对 `skills/policies/negation-and-deferral.yaml` 以及
+  `skills/guides/{conditional-reminder,navigation-with-stop,multi-day-trip,weather-outing,charging-strategy,shop-order-flow}.yaml`
+  中内嵌的 legacy JSON，最小迁移是移除自由文本里的输出对象，改成不带 wire 字段的语义/DAG
+  规则；需要示范输出形状的内容迁入可动态渲染的结构化 `few_shots`；
+- CI 新增扫描：任何实际注入的 skill/exemplar 块不得出现 legacy step 的 `agent_id/intent`
+  输出形状，避免新资产重新教回旧协议。replan 的继承渲染也必须传入它自己的请求级映射。
+
+### D13：字段迁移不得洗白 raw 证据
+
+raw 指标的语义仍是“模型在 validator 前请求了什么能力”，不因 wire 字段改名而变化：
+
+- 有效 `capability_ref` 在 trace 中先按该请求映射还原真实 intent，写入现有 `raw_intents`；
+- 未知 ref、缺失 ref、非字符串 ref，或 step 继续携带 legacy `agent_id` / `intent`，统一在
+  `raw_intents` 写保留 sentinel `__invalid_capability_reference__`；不得静默丢弃该 step；
+- raw candidate 可用同一解析结果恢复真实 pair 后继续裁判 slots、depends_on、slot_refs；sentinel
+  step 保留为无效候选，确保 `raw_planner_pass` 不会误绿；
+- `attach_validation_trace()` 必须观察 ref 解析前的 wire 与解析后的 pair，并覆盖 build、retry、
+  toolcall/salvage 和 replan；观察失败仍按现有 `raw_observed=False`/trace error fail-closed；
+- sentinel 继续进入现有全样本聚合与 baseline 硬闸，既不从分母移除，也不另开一个“仅供参考”
+  指标。这样 A8 的 raw=0 仍表示模型每个有效调用都只选择了真实准入能力或明确空动作。
+
+### D14：no-action 与 validator 边界不变
+
+当用户请求只能由缺席能力承接时，模型应输出 `addressed=true, steps=[]`。连续两次合法空动作沿用
+现有 `*_no_action` 路径，不调用 `_fallback`。含未知/缺失 ref 或 legacy 字段的非空 steps 不是
+no-action：它们必须先留下 sentinel，再被 resolver/validator 原子拒绝并进入既有 retry/降级语义。
+validator 仍负责防御映射错误、错形状、slots/depends_on/slot_refs 畸形以及最终 catalog 漂移，
+引用协议不替代它。
+
+### D15：产品修复顺序固定，route hint 不作为收尾工具
+
+1. 先用 TDD 落地 D10-D14 的通用 capability reference 协议；
+2. 用同六条 A8 双进程定向批要求逐样本 raw 幻觉归零且不走未声明 fallback；
+3. 只有 Task 5 达到 raw=0、escape=0、unexpected fallback=0 后，才进入 Task 6 对
+   dinner/battery 做 `on-failure` 消融与通用知识修复；
 4. cancel/hvac 已有 6/6 正确面，不因旧单趟红灯追加资产；
 5. 不为追 117/117 恢复或新增 route hint。
 
@@ -205,7 +302,9 @@ run id 必须非空且唯一，样本总数必须不小于进程数乘每进程�
 
 ### 产品与真栈
 
-- A8 双进程 raw capability hallucination 为 0，post-validation escape 仍为 0；
+- 同六条 A8 在 `minimax:MiniMax-M3` 下两个独立 L1 进程、每进程每 case 3 次，逐样本均有效；
+  最终计划 6/6 pass，raw capability hallucination 0、post-validation escape 0、unexpected
+  fallback 0，且 provider/infra/trace/retrieval/process 证据完整；
 - dinner/battery 双进程不再出现已知偏离，cancel/hvac 无回归；
 - L0 discovery 70/70、gate strict 19/19；
 - 同一干净 SHA 上完成 gate L1+L2+L3，无 provider/infra/trace/retrieval/fallback 红灯；
@@ -223,4 +322,6 @@ run id 必须非空且唯一，样本总数必须不小于进程数乘每进程�
 - 不把 L3 重跑两次冒充 L1/L2 采样独立性；
 - 不放宽 raw 幻觉、fallback、L3 或 clean-worktree 资格门限；
 - 不新增 route hint 追单趟全绿；
+- 不按领域硬编码 ref、能力或 A8 话术，不把 ref 做成带语义的稳定 ID；
+- 不保留生产 legacy LLM wire 旁路，不放宽 raw 定义，不把 invalid ref/sentinel 从分母拿掉；
 - 不自动晋级 corpus case，生命周期变化仍需人工批准。
