@@ -604,7 +604,9 @@ def test_negation_policy_distinguishes_unstarted_cancel_from_active_stop():
 
 
 def test_depleted_vehicle_exemplar_routes_to_find_without_copying_badcase():
-    """电量见底是补能求助；不用把对抗原句写进范例来得到这个边界。"""
+    """耗尽求助与明确 status 问句不能被同域单条范例互相劫持。"""
+    from orchestrator.cloud.exemplars import ExemplarStore, top_lexical
+
     data = yaml.safe_load((_ROOT / "skills" / "exemplars" /
                            "charging.yaml").read_text(encoding="utf-8"))
     exemplars = {row["text"]: row for row in data["exemplars"]}
@@ -615,6 +617,32 @@ def test_depleted_vehicle_exemplar_routes_to_find_without_copying_badcase():
         "agent": "charging-planner",
         "intent": "charging.find",
     }]
+    status = exemplars["车现在还有多少电"]
+    assert status["plan"] == [{
+        "agent": "charging-planner",
+        "intent": "charging.status",
+    }]
+
+    store = ExemplarStore(_ROOT / "skills" / "exemplars")
+    items = store.load(force=True)
+
+    def charging_hits(text: str):
+        return [(exemplar, score) for exemplar, score in
+                top_lexical(text, items, k=12, idf=store.idf())
+                if exemplar.domain == "charging"]
+
+    # 四字陈述与只多一个「吗」的状态问句都不该被近乎抄题的单条范例硬拉；
+    # 让 manifest 判据（以及 hybrid 可用时的语义对照）处理这条短边界。
+    assert charging_hits("车没电了") == []
+    assert charging_hits("车没电了吗") == []
+
+    explicit_status = charging_hits("车现在还有多少电")
+    assert explicit_status[0][0].eid == "charging#13"
+    assert explicit_status[0][0].intents() == ["charging.status"]
+
+    canonical_find = charging_hits("快没电了，附近找个快充")
+    assert canonical_find[0][0].eid == "charging#9"
+    assert canonical_find[0][0].intents() == ["charging.find"]
 
 
 def test_dinner_cancel_exemplar_wins_same_domain_without_copying_badcase():

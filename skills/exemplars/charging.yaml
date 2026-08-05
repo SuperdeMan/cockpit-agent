@@ -69,7 +69,9 @@ exemplars:
   tags:
   - canonical
   note: 原标 navigation.search_poi，2026-07-30 改判
-- text: 快没电了附近找个快充
+# 2026-08-05：避免四字耗尽陈述与只多「吗」的 status 问句都被同一 find 范例硬拉；
+# 保留“附近找快充”的 canonical 语义，换掉过宽的「没电了」词形。
+- text: 电量告急，附近找个快充
   plan:
   - agent: charging-planner
     intent: charging.find
@@ -111,6 +113,8 @@ exemplars:
 # ── 2026-08-05 补：电量状态陈述也可能是在求助补能 ─────────────────────────
 # 立卡来源 os.battery.car，但不复制原句；边界是「电量已经耗尽、需要解决」与
 # 「明确查询百分比/续航/充电状态」。前者找补能点，后者才查 status。
+# 近乎抄题的完成体会把相邻 status 问句一起拉向 find，故不在词法层强行钉这条短边界；
+# 本条保留实质不同的求助表达，hybrid 可用时供语义通道补位，纯词法失配则由 manifest 判据处理。
 - text: 续航已经见底，帮我找个补电的地方
   plan:
   - agent: charging-planner
@@ -120,3 +124,13 @@ exemplars:
   tags:
   - badcase
   note: 车辆电量耗尽后的补能求助归 charging.find；不等同于查询当前电量或充电状态
+# 明确 status 对照：与耗尽求助分开，避免语义通道只看到 find 单边样本。
+- text: 车现在还有多少电
+  plan:
+  - agent: charging-planner
+    intent: charging.status
+  source: manual
+  added: '2026-08-05'
+  tags:
+  - boundary
+  note: 明确询问当前电量归 charging.status；不等同于陈述电量耗尽后的补能求助

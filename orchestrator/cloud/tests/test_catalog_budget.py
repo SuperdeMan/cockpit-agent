@@ -106,12 +106,12 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     assert len(agents) == 17
     assert len(catalog.ref_to_pair) == 131
     assert catalog.catalog_stats["dropped"] == []
-    # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10447。
-    assert catalog.catalog_stats["chars_full"] == 10447
-    assert catalog.catalog_stats["chars_final"] == 10447
+    # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10509。
+    assert catalog.catalog_stats["chars_full"] == 10509
+    assert catalog.catalog_stats["chars_final"] == 10509
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 5553
+    assert 16000 - catalog.catalog_stats["chars_final"] == 5491
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest
@@ -153,9 +153,11 @@ def test_charging_catalog_exposes_depleted_help_and_status_boundary():
     assert "补能求助" in find["description"]
     assert "因电量耗尽无法行驶" in find["description"]
     assert "趴窝" not in find["description"]
+    assert "没有询问词" in find["description"]
+    assert "绝不归 charging.status" in find["description"]
     assert all(boundary in status["description"] for boundary in (
         "明确询问", "百分比", "剩余续航", "充电状态",
-        "补能求助不归此能力",
+        "补能求助不归此能力", "禁止归此能力",
     ))
 
     from orchestrator.cloud.planning import _assemble_capability_catalog
@@ -170,7 +172,9 @@ def test_charging_catalog_exposes_depleted_help_and_status_boundary():
     assert "因电量耗尽无法行驶" in charging["capabilities"][find_ref][2]
     assert "趴窝" not in charging["capabilities"][find_ref][2]
     assert all(boundary in charging["capabilities"][status_ref][2]
-               for boundary in ("百分比", "补能求助不归此能力"))
+               for boundary in (
+                   "百分比", "补能求助不归此能力", "禁止归此能力",
+               ))
 
 
 def test_eval_live_inventory_always_has_one_builtin_tools_agent():
