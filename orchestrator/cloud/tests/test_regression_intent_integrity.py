@@ -37,7 +37,7 @@ def test_chitchat_step_always_receives_current_user_text():
     async def llm(messages):
         return (
             '{"steps":[{"id":"s1","capability_ref":"cap_0001",'
-            '"slots":{"text":"stale text"}}]}'
+            '"slots":{"text":"stale text"},"depends_on":[],"slot_refs":{}}]}'
         )
 
     text = "给我讲个笑话。"
@@ -62,12 +62,15 @@ def test_partial_invalid_plan_is_retried_atomically():
     replies = iter([
         (
             '{"steps":['
-            '{"id":"s1","capability_ref":"cap_0001","slots":{}},'
-            '{"id":"s2","capability_ref":"cap_9999","slots":{}}'
+            '{"id":"s1","capability_ref":"cap_0001","slots":{},'
+            '"depends_on":[],"slot_refs":{}},'
+            '{"id":"s2","capability_ref":"cap_9999","slots":{},'
+            '"depends_on":[],"slot_refs":{}}'
             ']}'
         ),
         (
-            '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{}}]}'
+            '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{},'
+            '"depends_on":[],"slot_refs":{}}]}'
         ),
     ])
     calls = 0

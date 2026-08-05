@@ -2105,7 +2105,8 @@ def test_l1_main_entry_records_raw_candidate_and_pre_hint_plan():
 
     async def llm(_messages):
         return json.dumps({"goal": "查天气", "complexity": "simple", "steps": [
-            {"id": "s1", "capability_ref": "cap_9999", "slots": {}}]})
+            {"id": "s1", "capability_ref": "cap_9999", "slots": {},
+             "depends_on": [], "slot_refs": {}}]})
 
     async def tool_llm(_messages, _tools):
         return "", []
@@ -2146,11 +2147,13 @@ def test_l1_main_entry_keeps_replan_trace_out_of_build_pass(monkeypatch):
     replies = iter([
         json.dumps({
             "goal": "weather then outing", "steps": [
-                {"id": "s1", "capability_ref": refs[build_intent], "slots": {}}],
+                {"id": "s1", "capability_ref": refs[build_intent], "slots": {},
+                 "depends_on": [], "slot_refs": {}}],
         }),
         json.dumps({
             "done": False, "steps": [
-                {"id": "r1", "capability_ref": refs[replan_intent], "slots": {}}],
+                {"id": "r1", "capability_ref": refs[replan_intent], "slots": {},
+                 "depends_on": [], "slot_refs": {}}],
         }),
     ])
 

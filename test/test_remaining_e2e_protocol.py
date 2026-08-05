@@ -1486,6 +1486,55 @@ def test_planner_toolcall_host_endpoint_ignores_container_service_address(
     assert module._grpc_address() == "localhost:50052"
 
 
+def test_planner_toolcall_schema_helper_requires_the_exact_closed_step_shape():
+    module = _load("e2e_planner_toolcall")
+    catalog = module._probe_catalog()
+    tools = module._submit_plan_tools(catalog)
+    assert module._schema_is_ref_only(tools, catalog) is True
+
+    missing_required = json.loads(json.dumps(tools))
+    missing_required["tools"][0]["function"]["parameters"]["properties"][
+        "steps"]["items"]["required"] = ["id", "capability_ref"]
+    open_step = json.loads(json.dumps(tools))
+    open_step["tools"][0]["function"]["parameters"]["properties"][
+        "steps"]["items"]["additionalProperties"] = True
+
+    assert [
+        module._schema_is_ref_only(candidate, catalog)
+        for candidate in (missing_required, open_step)
+    ] == [False, False]
+
+
+def test_planner_toolcall_wire_helper_validates_exact_keys_and_field_types():
+    module = _load("e2e_planner_toolcall")
+    catalog = module._probe_catalog()
+    ref = next(iter(catalog.ref_to_pair))
+    valid_step = {
+        "id": "s1",
+        "capability_ref": ref,
+        "slots": {},
+        "depends_on": [],
+        "slot_refs": {},
+    }
+    assert module._wire_fields_ok(
+        {"addressed": True, "steps": [valid_step]}, catalog) is True
+
+    invalid_steps = [
+        {"id": "s1", "capability_ref": ref},
+        {**valid_step, "unexpected": "value"},
+        {**valid_step, "id": 1},
+        {**valid_step, "slots": []},
+        {**valid_step, "depends_on": [1]},
+        {**valid_step, "depends_on": "s0"},
+        {**valid_step, "slot_refs": []},
+    ]
+    assert [
+        module._wire_fields_ok(
+            {"addressed": True, "steps": [step]}, catalog)
+        for step in invalid_steps
+    ] == [False] * len(invalid_steps)
+
+
 def test_ws_confirmation_probe_names_a_concrete_merchant():
     module = _load("e2e_ws")
 

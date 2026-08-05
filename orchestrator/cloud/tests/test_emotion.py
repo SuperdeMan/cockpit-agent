@@ -84,7 +84,8 @@ def _parse(data: dict):
         _assemble_capability_catalog([_Agent()]), "今天天气")
 
 
-_STEP = {"id": "s1", "capability_ref": "cap_0001"}
+_STEP = {"id": "s1", "capability_ref": "cap_0001", "slots": {},
+         "depends_on": [], "slot_refs": {}}
 
 
 def test_plan_carries_emotion():

@@ -220,7 +220,8 @@ def test_toolcall_numeric_slot_normalized_via_validated_steps(monkeypatch):
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
     args = {"addressed": True,
             "steps": [{"id": "s1", "capability_ref": "cap_0001",
-                       "slots": {"temperature": 24}}]}
+                       "slots": {"temperature": 24}, "depends_on": [],
+                       "slot_refs": {}}]}
     spy = _SpyLLM(tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
                                     "arguments": args}]))
     b = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
@@ -239,6 +240,7 @@ def test_toolcall_unwraps_provider_freeform_object_text_envelope(monkeypatch):
             "slots": {
                 "$text": '{"query":"车规级固态电池量产良率对比","limit":5}',
             },
+            "depends_on": [],
             "slot_refs": {"$text": "{}"},
         }],
     }
@@ -433,6 +435,18 @@ def test_toolcall_prompt_keeps_the_live_catalog_allowlist_contract():
         assert clause in prompt
     assert '{"addressed":true,"steps":[]}' in prompt
     assert prompt.rindex("== 本轮动态能力白名单 ==") > prompt.rindex("== 通用规则 ==")
+
+
+def test_toolcall_prompt_locks_each_step_to_the_five_exact_nested_fields():
+    prompt = _planner_system(toolcall=True)
+    for clause in (
+        "steps 数组中每一项只能包含 id、capability_ref、slots、depends_on、slot_refs 这五个字段",
+        "这五个字段名必须逐字原样输出，不得转义、增删字符或改变拼写",
+        "属于 step 的字段必须留在对应 step 对象内，不得移到顶层参数",
+    ):
+        assert clause in prompt
+    for domain_specific in ("shop", "nearby", "cap_010"):
+        assert domain_specific not in _TOOLCALL_SECTION
 
 
 def test_catalog_prompt_is_not_a_replacement_for_step_validation():

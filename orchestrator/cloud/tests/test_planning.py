@@ -58,7 +58,8 @@ def test_build_with_valid_json():
     ]
 
     async def mock_llm(messages):
-        return '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{"keyword":"川菜"}}]}'
+        return ('{"steps":[{"id":"s1","capability_ref":"cap_0001",'
+                '"slots":{"keyword":"川菜"},"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -97,7 +98,8 @@ def test_build_with_unknown_agent_filtered():
     agents = [MockAgent("navigation", ["navigation.search_poi"])]
 
     async def mock_llm(messages):
-        return '{"steps":[{"id":"s1","capability_ref":"cap_9999","slots":{}}]}'
+        return ('{"steps":[{"id":"s1","capability_ref":"cap_9999","slots":{},'
+                '"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -125,7 +127,7 @@ def test_build_parses_complexity_goal_and_manifest_dispatch_metadata():
         return (
             '{"complexity":"adaptive","goal":"保持舒适并继续规划",'
             '"steps":[{"id":"s1","capability_ref":"cap_0001",'
-            '"slots":{"temp":"24"}}]}'
+            '"slots":{"temp":"24"},"depends_on":[],"slot_refs":{}}]}'
         )
 
     async def mock_resolve(query, top_k=1):
@@ -153,7 +155,7 @@ def test_invalid_complexity_defaults_to_simple():
         return (
             '{"complexity":"unbounded","goal":"x",'
             '"steps":[{"id":"s1","capability_ref":"cap_0001",'
-            '"slots":{}}]}'
+            '"slots":{},"depends_on":[],"slot_refs":{}}]}'
         )
 
     async def mock_resolve(query, top_k=1):
@@ -175,7 +177,7 @@ def test_parent_permission_covers_child_scope_during_planning():
         return (
             '{"complexity":"simple","goal":"adjust climate",'
             '"steps":[{"id":"s1","capability_ref":"cap_0001",'
-            '"slots":{"temperature":"24"}}]}'
+            '"slots":{"temperature":"24"},"depends_on":[],"slot_refs":{}}]}'
         )
 
     async def mock_resolve(query, top_k=1):
@@ -197,7 +199,7 @@ def test_ensure_research_step_routes_deep_research():
 
     async def mock_llm(messages):
         return ('{"steps":[{"id":"s1","capability_ref":"cap_0002",'
-                '"slots":{"query":"固态电池"}}]}')
+                '"slots":{"query":"固态电池"},"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -217,7 +219,7 @@ def test_plain_search_not_hijacked_by_research_net():
 
     async def mock_llm(messages):
         return ('{"steps":[{"id":"s1","capability_ref":"cap_0002",'
-                '"slots":{"query":"固态电池"}}]}')
+                '"slots":{"query":"固态电池"},"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -236,7 +238,7 @@ def test_ensure_research_followup_routes_deepen():
 
     async def mock_llm(messages):
         return ('{"steps":[{"id":"s1","capability_ref":"cap_0002",'
-                '"slots":{"query":"x"}}]}')
+                '"slots":{"query":"x"},"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -261,7 +263,7 @@ def test_replan_returns_done_or_a_validated_next_batch():
     agents = [MockAgent("navigation", ["navigation.search_poi"])]
     replies = iter([
         '{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0001",'
-        '"slots":{"keyword":"次近充电站"}}]}',
+        '"slots":{"keyword":"次近充电站"},"depends_on":[],"slot_refs":{}}]}',
         '{"done":true,"steps":[]}',
     ])
 
@@ -337,7 +339,8 @@ def test_does_not_inject_trip_when_llm_already_planned_it():
 
     async def mock_llm(messages):
         return ('{"steps":[{"id":"s1","capability_ref":"cap_0003",'
-                '"slots":{"destination":"杭州","days":"2"}}]}')
+                '"slots":{"destination":"杭州","days":"2"},'
+                '"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -353,7 +356,7 @@ def test_does_not_inject_trip_for_plain_navigation():
 
     async def mock_llm(messages):
         return ('{"steps":[{"id":"s1","capability_ref":"cap_0003",'
-                '"slots":{"destination":"北京南站"}}]}')
+                '"slots":{"destination":"北京南站"},"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -371,7 +374,8 @@ def test_modify_pattern_keeps_llm_trip_modify():
 
     async def mock_llm(messages):
         return ('{"steps":[{"id":"s1","capability_ref":"cap_0001",'
-                '"slots":{"modification":"第二天换成宋城"}}]}')
+                '"slots":{"modification":"第二天换成宋城"},'
+                '"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -392,7 +396,8 @@ def test_fake_agent_gets_deterministic_routing_from_manifest_only():
     agents = [widget, MockAgent("chitchat", ["chitchat.talk"])]
 
     async def mock_llm(messages):     # 弱 LLM 误判成闲聊
-        return '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{}}]}'
+        return ('{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{},'
+                '"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -411,7 +416,8 @@ def test_heavy_capability_marks_step_heavy_and_complex():
     agent.manifest.capabilities[0].heavy = True     # 模拟 manifest 声明 heavy
 
     async def mock_llm(messages):
-        return '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{}}]}'
+        return ('{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{},'
+                '"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -428,7 +434,8 @@ def test_light_capability_step_not_heavy():
     agent = MockAgent("info", ["info.weather"])   # cap.heavy=False（MockAgent 默认）
 
     async def mock_llm(messages):
-        return '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{}}]}'
+        return ('{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{},'
+                '"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -444,7 +451,8 @@ def test_does_not_inject_trip_when_planner_unavailable():
     agents = [MockAgent("info-agent", ["info.weather"])]
 
     async def mock_llm(messages):
-        return '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{}}]}'
+        return ('{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{},'
+                '"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k=1):
         return []

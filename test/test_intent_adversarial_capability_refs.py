@@ -209,6 +209,58 @@ def test_not_addressed_rejects_every_nonempty_action(step, expected_raw):
     assert sink.validations[0].raw_intents == (expected_raw,)
 
 
+@pytest.mark.parametrize(("step", "displaced"), [
+    pytest.param(
+        {"id": "s1", "capability_ref": "cap_0001"},
+        {
+            "item": {"id": "s2", "capability_ref": "cap_0001"},
+            "slots": {"value": "x"},
+            "depends_on": ["s1"],
+            "slot_refs": {"value": "s1.data.value"},
+        },
+        id="required-step-fields-displaced-to-top-level",
+    ),
+    pytest.param(
+        {
+            "id": "s1",
+            "capability_ref": "cap_0001",
+            "slots": {},
+            "depends_on": [],
+            "slot_refs": {},
+            'capability_ref"': "cap_9999",
+            "unexpected": "value",
+        },
+        {},
+        id="complete-step-with-extra-fields",
+    ),
+])
+def test_non_exact_step_shape_is_rejected_without_losing_valid_raw_intent(
+        step, displaced):
+    agent = _agent("alpha", "alpha.one")
+    catalog = _catalog(agent)
+
+    async def noop(_messages):
+        return ""
+
+    builder = planning.PlanBuilder(noop, noop)
+    sink = TraceSink()
+    attach_validation_trace(builder, sink)
+    wire = {
+        "addressed": True,
+        "steps": [step],
+        **displaced,
+    }
+
+    assert builder._parse_and_validate_data(wire, catalog, "test") is None
+    assert builder._looks_like_no_action(wire) is False
+    assert len(sink.validations) == 1
+    trace = sink.validations[0]
+    assert trace.result == "rejected"
+    assert trace.raw_intents == ("alpha.one",)
+    assert trace.raw_candidate.intents == ("alpha.one",)
+    assert trace.accepted.steps == ()
+
+
 def test_two_empty_actions_avoid_fallback_but_invalid_nonempty_does_not(monkeypatch):
     agent = _agent("chitchat", "chitchat.talk")
 

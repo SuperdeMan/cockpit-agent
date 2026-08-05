@@ -27,13 +27,13 @@ from orchestrator.cloud.session import SessionStore
 
 _TWO_STEP_PLAN = json.dumps({"steps": [
     {"id": "s1", "capability_ref": "cap_0001",
-     "slots": {}, "depends_on": []},
+     "slots": {}, "depends_on": [], "slot_refs": {}},
     {"id": "s2", "capability_ref": "cap_0001",
-     "slots": {}, "depends_on": ["s1"]},
+     "slots": {}, "depends_on": ["s1"], "slot_refs": {}},
 ]})
 _SINGLE_PLAN = json.dumps({"steps": [
     {"id": "s1", "capability_ref": "cap_0001",
-     "slots": {}, "depends_on": []},
+     "slots": {}, "depends_on": [], "slot_refs": {}},
 ]})
 
 _WEATHER = "明天深圳有小雨，最高29℃，记得带伞"

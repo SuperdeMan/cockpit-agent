@@ -33,7 +33,7 @@ for p in (str(_ROOT), str(_ROOT / "gen" / "python")):
 
 from orchestrator.cloud.planning import (  # noqa: E402
     _assemble_capability_catalog, _planner_system, _submit_plan_tools,
-    _SUBMIT_PLAN_NAME, _date_line,
+    _PLANNER_STEP_FIELDS, _SUBMIT_PLAN_NAME, _date_line,
 )
 
 
@@ -74,8 +74,9 @@ def _schema_is_ref_only(tools: dict, catalog) -> bool:
         step = tools["tools"][0]["function"]["parameters"]["properties"]["steps"]["items"]
         props = step["properties"]
         return (
-            set(props) == {"id", "capability_ref", "slots", "depends_on", "slot_refs"}
-            and {"id", "capability_ref"}.issubset(step["required"])
+            set(props) == set(_PLANNER_STEP_FIELDS)
+            and set(step["required"]) == set(_PLANNER_STEP_FIELDS)
+            and step.get("additionalProperties") is False
             and props["capability_ref"].get("enum") == list(catalog.ref_to_pair)
             and "agent_id" not in props
             and "intent" not in props
@@ -91,11 +92,15 @@ def _wire_fields_ok(args: dict, catalog) -> bool:
         and isinstance(steps, list)
         and all(
             isinstance(step, dict)
-            and bool(step.get("id"))
+            and set(step) == set(_PLANNER_STEP_FIELDS)
+            and isinstance(step.get("id"), str)
+            and bool(step["id"])
             and isinstance(step.get("capability_ref"), str)
             and step["capability_ref"] in catalog.ref_to_pair
-            and "agent_id" not in step
-            and "intent" not in step
+            and isinstance(step.get("slots"), dict)
+            and isinstance(step.get("depends_on"), list)
+            and all(isinstance(dep, str) for dep in step["depends_on"])
+            and isinstance(step.get("slot_refs"), dict)
             for step in steps
         )
     )

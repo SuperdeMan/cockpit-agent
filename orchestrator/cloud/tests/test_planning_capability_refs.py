@@ -185,10 +185,18 @@ def test_ref_only_schema_static_prompts_and_user_message_tail(monkeypatch):
     catalog = assemble([_agent("alpha", "alpha.one"), _agent("beta", "beta.two")])
 
     item = _step_schema(planning._submit_plan_tools(catalog))
-    assert set(item["properties"]) == {
+    expected_step_fields = {
         "id", "capability_ref", "slots", "depends_on", "slot_refs",
     }
-    assert {"id", "capability_ref"} <= set(item["required"])
+    assert {
+        "properties": set(item["properties"]),
+        "required": set(item["required"]),
+        "additionalProperties": item.get("additionalProperties"),
+    } == {
+        "properties": expected_step_fields,
+        "required": expected_step_fields,
+        "additionalProperties": False,
+    }
     assert item["properties"]["capability_ref"]["enum"] == list(catalog.ref_to_pair)
     assert not _legacy_step_shape(json.dumps(item, ensure_ascii=False))
     empty_steps = (planning._submit_plan_tools(assemble([]))["tools"][0]["function"]

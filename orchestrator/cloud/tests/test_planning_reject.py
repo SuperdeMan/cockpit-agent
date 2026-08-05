@@ -119,7 +119,8 @@ def test_addressed_missing_is_fail_open_true():
     agents = [MockAgent("nearby", ["nearby.search"])]
     catalog = _assemble_capability_catalog(agents)
     plan = b._parse_and_validate(
-        '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{}}]}',
+        ('{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{},'
+         '"depends_on":[],"slot_refs":{}}]}'),
         catalog, "找川菜")
     assert plan.addressed is True
 
@@ -149,7 +150,8 @@ def test_clarify_ignored_when_steps_present():
     agents = [MockAgent("nearby", ["nearby.search"])]
     catalog = _assemble_capability_catalog(agents)
     raw = json.dumps({
-        "steps": [{"id": "s1", "capability_ref": "cap_0001", "slots": {}}],
+        "steps": [{"id": "s1", "capability_ref": "cap_0001", "slots": {},
+                   "depends_on": [], "slot_refs": {}}],
         "clarify": {"question": "?", "options": [{"label": "a", "send_text": "x"},
                                                  {"label": "b", "send_text": "y"}]}})
     plan = b._parse_and_validate(raw, catalog, "找川菜")

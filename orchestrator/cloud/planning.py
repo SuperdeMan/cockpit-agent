@@ -334,6 +334,9 @@ _TOOLCALL_SECTION = (
     "\n\n== 输出通道（工具调用模式）==\n"
     "上述全部输出协议（计划 JSON / addressed / clarify）一律通过调用 submit_plan 工具提交："
     "顶层 JSON 对象即工具参数。不要以文本形式输出 JSON，不要输出任何解释。\n"
+    "steps 数组中每一项只能包含 id、capability_ref、slots、depends_on、slot_refs 这五个字段。"
+    "这五个字段名必须逐字原样输出，不得转义、增删字符或改变拼写。"
+    "属于 step 的字段必须留在对应 step 对象内，不得移到顶层参数。\n"
     "slots 是该步骤的**完整参数表，不是增量**：省略式追问必须把上一轮继承的槽位与本轮"
     "变化的槽位一起写全。例：上一轮『明天A市天气怎么样』该步 slots={\"city\":\"A市\","
     "\"date\":\"明天\"}，本轮用户说『那后天呢』→ 本轮 slots 必须={\"city\":\"A市\","
@@ -344,6 +347,9 @@ _TOOLCALL_SECTION = (
 )
 
 _SUBMIT_PLAN_NAME = "submit_plan"
+_PLANNER_STEP_FIELDS = (
+    "id", "capability_ref", "slots", "depends_on", "slot_refs",
+)
 
 
 def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
@@ -366,7 +372,7 @@ def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
     if refs:
         capability_ref_schema["enum"] = refs
 
-    step_item_schema = {"type": "object", "properties": {
+    step_field_schemas = {
         "id": {"type": "string"},
         "capability_ref": capability_ref_schema,
         # 语义必须随字段走（真栈 B1-4：空 object 诱发省略追问丢继承槽）
@@ -378,7 +384,11 @@ def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
             "只写变化的槽位会导致执行错对象")},
         "depends_on": {"type": "array", "items": {"type": "string"}},
         "slot_refs": {"type": "object"},
-    }, "required": ["id", "capability_ref"]}
+    }
+    step_item_schema = {"type": "object", "properties": {
+        field: step_field_schemas[field] for field in _PLANNER_STEP_FIELDS
+    }, "required": list(_PLANNER_STEP_FIELDS),
+        "additionalProperties": False}
     steps_schema = {
         "type": "array",
         "description": (
@@ -811,6 +821,10 @@ class PlanBuilder:
             if not isinstance(raw_step, dict):
                 logger.warning("Plan step is %s (not object), dropping plan for retry",
                                type(raw_step).__name__)
+                return None
+            if set(raw_step) != set(_PLANNER_STEP_FIELDS):
+                logger.warning(
+                    "Plan step fields differ from the exact wire contract, dropping plan for retry")
                 return None
             if "agent_id" in raw_step or "intent" in raw_step:
                 logger.warning("Legacy planner capability identity rejected")

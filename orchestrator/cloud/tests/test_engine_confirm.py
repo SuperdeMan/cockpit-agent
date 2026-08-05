@@ -18,10 +18,10 @@ from orchestrator.cloud.session import SessionStore
 _PLAN_JSON = json.dumps({
     "steps": [
         {"id": "s1", "capability_ref": "cap_0002",
-         "slots": {"cuisine": "川菜"}, "depends_on": []},
+         "slots": {"cuisine": "川菜"}, "depends_on": [], "slot_refs": {}},
         {"id": "s2", "capability_ref": "cap_0001",
          "slots": {"restaurant_name": "川菜·名店1", "datetime": "今晚7点", "party_size": "2"},
-         "depends_on": ["s1"]},
+         "depends_on": ["s1"], "slot_refs": {}},
     ]
 })
 
@@ -250,7 +250,8 @@ def test_modify_phrase_with_xing_not_mistaken_for_confirm():
 
 _SEARCH_ONLY_PLAN = json.dumps({
     "steps": [{"id": "s1", "capability_ref": "cap_0002",
-               "slots": {"cuisine": "景点"}, "depends_on": []}]
+               "slots": {"cuisine": "景点"}, "depends_on": [],
+               "slot_refs": {}}]
 })
 
 
