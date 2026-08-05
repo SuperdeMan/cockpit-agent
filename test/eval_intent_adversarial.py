@@ -2230,6 +2230,58 @@ class WorkerLaunchError(RuntimeError):
 def _redact_failure_text(value: Any) -> str:
     text = str(value)
 
+    def redact_quoted_authorization(match: re.Match[str]) -> str:
+        quote = match.group("value_quote")
+        return (match.group("prefix") + quote + match.group("scheme")
+                + match.group("spacing") + "[REDACTED]" + quote)
+
+    text = re.sub(
+        r"""(?ix)
+        (?P<prefix>
+            (?<![A-Za-z0-9_-])
+            (?P<key_quote>["']?)authorization(?P=key_quote)
+            \s*[:=]\s*
+        )
+        (?P<value_quote>["'])
+        (?P<scheme>[A-Za-z0-9!#$%&'*+.^_`|~-]+)
+        (?P<spacing>\s+)
+        .*?
+        (?P=value_quote)
+        """,
+        redact_quoted_authorization,
+        text,
+    )
+
+    def redact_unquoted_authorization(match: re.Match[str]) -> str:
+        raw_credential = match.group("credential")
+        if (len(raw_credential) >= 2 and raw_credential[0] in {'"', "'"}
+                and raw_credential[-1] == raw_credential[0]):
+            redacted = raw_credential[0] + "[REDACTED]" + raw_credential[-1]
+        else:
+            redacted = "[REDACTED]"
+        return (match.group("prefix") + match.group("scheme")
+                + match.group("spacing") + redacted)
+
+    text = re.sub(
+        r"""(?ix)
+        (?P<prefix>
+            (?<![A-Za-z0-9_-])
+            (?P<key_quote>["']?)authorization(?P=key_quote)
+            \s*[:=]\s*
+        )
+        (?P<scheme>[A-Za-z0-9!#$%&'*+.^_`|~-]+)
+        (?P<spacing>\s+)
+        (?P<credential>
+            \[REDACTED\]
+            | "(?:\\.|[^"\\])*"
+            | '(?:\\.|[^'\\])*'
+            | [^\s,;}\]]+
+        )
+        """,
+        redact_unquoted_authorization,
+        text,
+    )
+
     def redact_assignment(match: re.Match[str]) -> str:
         raw_value = match.group("value")
         if (len(raw_value) >= 2 and raw_value[0] in {'"', "'"}
@@ -2243,7 +2295,10 @@ def _redact_failure_text(value: Any) -> str:
         (?P<prefix>
             (?<![A-Za-z0-9_-])
             (?P<key_quote>["']?)
-            [A-Za-z0-9_-]*(?:api[_-]?key|token|password|secret)
+            [A-Za-z0-9_-]*(?:
+                api[_-]?key|token|password|secret|credentials?|
+                private[_-]?key|cookie
+            )
             (?P=key_quote)
             \s*[:=]\s*
         )
@@ -2255,6 +2310,13 @@ def _redact_failure_text(value: Any) -> str:
         )
         """,
         redact_assignment,
+        text,
+    )
+
+    text = re.sub(
+        r"(?i)(?P<prefix>\b[A-Za-z][A-Za-z0-9+.-]*://)"
+        r"(?:\[REDACTED\]|[^/@\s]+)@",
+        lambda match: match.group("prefix") + "[REDACTED]@",
         text,
     )
 
@@ -2362,8 +2424,8 @@ def _launch_worker(
         completed = subprocess.run(
             command,
             cwd=ROOT,
-            capture_output=True,
-            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             check=False,
             env=os.environ.copy(),
         )

@@ -425,6 +425,32 @@ def test_launch_worker_keeps_product_red_artifact(tmp_path, monkeypatch):
     assert artifact.report_sha256 == cli.hashlib.sha256(payload).hexdigest()
 
 
+def test_launch_worker_discards_unconsumed_subprocess_output(tmp_path, monkeypatch):
+    args = validate_args(parse_args([
+        "--suite", "gate", "--layer", "l1", "--live",
+        "--provider", "mimo", "--model", "m",
+    ]))
+    spec = cli.process.WorkerSpec("primary", "l1", 1)
+    report = tmp_path / "worker.json"
+    captured = {}
+
+    def _run(*_args, **kwargs):
+        captured.update(kwargs)
+        report.write_bytes(b'{"meta": {}, "results": {}}')
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(cli.subprocess, "run", _run)
+    artifact = cli._launch_worker(
+        args, spec, "bundle-a", "run-a", report)
+
+    assert artifact.exit_code == 0
+    assert captured["stdout"] is subprocess.DEVNULL
+    assert captured["stderr"] is subprocess.DEVNULL
+    assert "capture_output" not in captured
+    assert "text" not in captured
+    assert "timeout" not in captured
+
+
 def test_launch_worker_reads_parseable_exit2_report_before_failing(
         tmp_path, monkeypatch):
     args = validate_args(parse_args([
@@ -907,6 +933,89 @@ def test_parent_failure_redacts_prefixed_sensitive_keys_without_eating_trace(
         'access_token = "[REDACTED]"; trace=after-access',
         "client_secret: '[REDACTED]', trace=after-client",
         "db_password=[REDACTED] trace=after-db",
+    ]
+
+
+def test_parent_failure_redacts_auth_credentials_private_keys_and_userinfo(
+        tmp_path):
+    out_json = tmp_path / "parent.json"
+    out_md = tmp_path / "parent.md"
+    args = validate_args(parse_args([
+        "--out-json", str(out_json), "--out-md", str(out_md),
+    ]))
+    observations = [{
+        "role": "primary", "layer": "l1", "process_run_id": "run-a",
+        "exit_code": 2, "report_sha256": "a" * 64,
+        "infrastructure_errors": [
+            '{"Authorization": "Basic basic sentinel value", '
+            '"trace": "after-auth-json"}',
+            "{'Authorization' : 'Digest digest sentinel value', "
+            "'trace': 'after-auth-dict'}",
+            "Authorization = Custom custom-sentinel-value; "
+            "trace=after-auth-assignment",
+            'Authorization = 42Scheme "quoted auth sentinel value"; '
+            'trace=after-auth-quoted-assignment',
+            '{"AWS_CREDENTIALS":"credentials sentinel value", '
+            '"trace":"after-credentials"}',
+            "{'client_credential': 'credential sentinel value', "
+            "'trace':'after-credential'}",
+            'SERVICE_PRIVATE_KEY = "private key sentinel value"; '
+            'trace=after-private-underscore',
+            "tls-private-key: 'private hyphen sentinel value'; "
+            "trace=after-private-hyphen",
+            "endpoint=https://demo-user:url-sentinel-value@example.test/path "
+            "trace=after-url",
+            '{"Cookie":"session=cookie sentinel value", '
+            '"trace":"after-cookie-json"}',
+            "Set-Cookie: session=set-cookie-sentinel; trace=after-set-cookie",
+        ],
+        "trace_errors": [], "retrieval_degraded": 0,
+        "provider_drift": False,
+    }]
+
+    cli._write_parent_infrastructure_failure(
+        args,
+        bundle_id="bundle-a",
+        specs=(cli.process.WorkerSpec("primary", "l1", 3),),
+        observations=observations,
+        failed_role="primary",
+        reason="worker failed",
+    )
+
+    json_text = out_json.read_text(encoding="utf-8")
+    markdown = out_md.read_text(encoding="utf-8")
+    combined = json_text + markdown
+    for secret in (
+        "basic sentinel value", "digest sentinel value",
+        "custom-sentinel-value", "quoted auth sentinel value",
+        "credentials sentinel value",
+        "credential sentinel value", "private key sentinel value",
+        "private hyphen sentinel value", "url-sentinel-value",
+        "cookie sentinel value", "set-cookie-sentinel",
+    ):
+        assert secret not in combined
+    for marker in (
+        "after-auth-json", "after-auth-dict", "after-auth-assignment",
+        "after-auth-quoted-assignment",
+        "after-credentials", "after-credential", "after-private-underscore",
+        "after-private-hyphen", "after-url", "after-cookie-json",
+        "after-set-cookie",
+    ):
+        assert marker in combined
+    observed = json.loads(json_text)["failure"]["observed_workers"][0]
+    assert observed["infrastructure_errors"] == [
+        '{"Authorization": "Basic [REDACTED]", "trace": "after-auth-json"}',
+        "{'Authorization' : 'Digest [REDACTED]', 'trace': 'after-auth-dict'}",
+        "Authorization = Custom [REDACTED]; trace=after-auth-assignment",
+        'Authorization = 42Scheme "[REDACTED]"; '
+        'trace=after-auth-quoted-assignment',
+        '{"AWS_CREDENTIALS":"[REDACTED]", "trace":"after-credentials"}',
+        "{'client_credential': '[REDACTED]', 'trace':'after-credential'}",
+        'SERVICE_PRIVATE_KEY = "[REDACTED]"; trace=after-private-underscore',
+        "tls-private-key: '[REDACTED]'; trace=after-private-hyphen",
+        "endpoint=https://[REDACTED]@example.test/path trace=after-url",
+        '{"Cookie":"[REDACTED]", "trace":"after-cookie-json"}',
+        "Set-Cookie: [REDACTED]; trace=after-set-cookie",
     ]
 
 
