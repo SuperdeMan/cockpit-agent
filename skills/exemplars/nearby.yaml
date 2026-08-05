@@ -266,12 +266,15 @@ exemplars:
 # （`pause` 读起来像「顺手收拾一下」而不是「做了被禁的那件事」）。
 # 按 M5 分工，这一条投范例而不是往常驻 policy 里加字（policy 每次规划都付字符成本，
 # 首版 506 字符就把 navigation-with-stop 挤成过 `!clipped`）。
-- text: 找家火锅店，歌就不用放了
+# 2026-08-05 跨进程复验发现同域只注入一条：原文本词法分 0.4726，低于普通菜系
+# `nearby#9` 的 0.4967，导致边界范例从未进入 prompt。保留 eid、不追加重复条目，
+# 改用不同菜系和「先不用」的非同句表达；它对同一 case 的词法分 0.6899。
+- text: 找家湘菜馆，音乐就先不用放了
   plan:
   - agent: nearby
     intent: nearby.search
     slots:
-      cuisine: 火锅
+      cuisine: 湘菜
   source: manual
   added: '2026-08-04'
   tags:

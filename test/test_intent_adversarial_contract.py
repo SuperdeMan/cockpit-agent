@@ -617,6 +617,25 @@ def test_depleted_vehicle_exemplar_routes_to_find_without_copying_badcase():
     }]
 
 
+def test_dinner_cancel_exemplar_wins_same_domain_without_copying_badcase():
+    """同域只注入一条：取消语义范例必须排在普通菜系范例之前。"""
+    from orchestrator.cloud.exemplars import ExemplarStore, top_lexical
+
+    cases_root = (_ROOT / "test" / "eval_corpus" /
+                  "intent_adversarial" / "cases")
+    case = next(c for c in load_cases(cases_root)
+                if c.id == "nq.dinner-music.drop-music")
+    utterance = case.turns[0].utterance
+    store = ExemplarStore(_ROOT / "skills" / "exemplars")
+    items = store.load(force=True)
+    ranked = top_lexical(utterance, items, k=12, idf=store.idf())
+    nearby = next(exemplar for exemplar, _score in ranked
+                  if exemplar.domain == "nearby")
+
+    assert nearby.eid == "nearby#28"
+    assert nearby.text != utterance
+
+
 def test_active_intent_must_be_covered_or_exempt(contract_case):
     errors = validate_coverage([contract_case],
                                active_intents={"info.alerts", "new.intent"},
