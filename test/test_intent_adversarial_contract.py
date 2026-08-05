@@ -4,6 +4,7 @@
 语料本身的质量由 coverage/boundary 门禁在同一模块里另行断言。
 """
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -908,6 +909,67 @@ def test_legacy_promotions_are_grandfathered_by_date_not_waived_silently():
     assert not any("stabilized_samples" in row for row in _errors_for(legacy))
 
 
+@pytest.mark.parametrize("stabilized_at", (None, ""))
+def test_missing_or_empty_stabilized_at_does_not_trigger_new_provenance_fields(
+        stabilized_at):
+    case = _stable_case("x.undated", stabilized_at=stabilized_at)
+
+    errors = _errors_for(case)
+
+    assert not any(
+        field in row
+        for field in (
+            "stabilized_processes",
+            "stabilized_samples_per_process",
+            "stabilized_process_runs",
+            "stabilized_samples",
+        )
+        for row in errors
+    )
+
+
+@pytest.mark.parametrize(
+    "stabilized_at",
+    (
+        "08/05/2026",
+        "2026/08/05",
+        "not-a-date",
+        True,
+        20260805,
+        "2026-02-30",
+    ),
+)
+def test_explicit_stabilized_at_must_be_a_real_strict_iso_date(stabilized_at):
+    case = _stable_case("x.bad-date", stabilized_at=stabilized_at)
+
+    assert any(
+        "provenance.stabilized_at must be a date or strict YYYY-MM-DD string"
+        in row
+        for row in _errors_for(case)
+    )
+
+
+def test_valid_old_stabilized_at_string_remains_grandfathered():
+    case = _stable_case("x.old-date", stabilized_at="2026-08-03")
+
+    assert _errors_for(case) == []
+
+
+def test_valid_threshold_stabilized_at_string_enforces_and_accepts_evidence():
+    case = _stable_case("x.threshold", **_independent_process_provenance())
+
+    assert _errors_for(case) == []
+
+
+def test_pyyaml_date_object_is_compared_as_a_date():
+    case = _stable_case(
+        "x.yaml-date",
+        **_independent_process_provenance(stabilized_at=date(2026, 8, 4)),
+    )
+
+    assert _errors_for(case) == []
+
+
 def test_stabilized_samples_must_be_an_integer_not_a_bool_or_string():
     """`True` 是 int 的子类——不挡住它，一个手滑的 `yes` 就变成「样本数 1」。"""
     for bad in (True, "6", 6.0):
@@ -917,3 +979,28 @@ def test_stabilized_samples_must_be_an_integer_not_a_bool_or_string():
         )
         assert any("integer provenance.stabilized_samples" in row
                    for row in _errors_for(case)), bad
+
+
+def test_process_run_ids_are_deduplicated_after_stripping():
+    case = _stable_case(
+        "x.normalized-duplicate",
+        **_independent_process_provenance(
+            stabilized_process_runs=["promotion-a", " promotion-a"],
+        ),
+    )
+
+    errors = _errors_for(case)
+    assert any("must not have surrounding whitespace" in row for row in errors)
+    assert any("must be unique after stripping" in row for row in errors)
+
+
+def test_process_run_ids_reject_trailing_whitespace():
+    case = _stable_case(
+        "x.trailing-space",
+        **_independent_process_provenance(
+            stabilized_process_runs=["promotion-a", "promotion-b "],
+        ),
+    )
+
+    assert any("must not have surrounding whitespace" in row
+               for row in _errors_for(case))

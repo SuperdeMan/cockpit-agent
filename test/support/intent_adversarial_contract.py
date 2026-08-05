@@ -10,6 +10,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -557,7 +558,7 @@ def _plan_intents(plan: PlanExpectation) -> set[str]:
 # 新晋级必须声明独立进程数、每进程样本数、唯一 run id 与总样本数。机器证不了作者
 # 真跑过，但能让「几个进程、每个进程跑了几次」不再被一个总数藏起来。
 _STABILIZED_SAMPLES_MIN = 6
-_STABILIZED_SAMPLES_SINCE = "2026-08-04"
+_STABILIZED_SAMPLES_SINCE = date(2026, 8, 4)
 
 
 def _stabilized_samples_errors(case: AdversarialCase) -> list[str]:
@@ -566,7 +567,25 @@ def _stabilized_samples_errors(case: AdversarialCase) -> list[str]:
     按日期分段而不是一刀切：存量 132 条是在旧判据下晋级的，**把它们一次性判违约
     既不真实也不可执行**（它们的账另记在 findings §10，按机制逐族处理）。
     """
-    stabilized_at = str(case.provenance.get("stabilized_at") or "")
+    raw_stabilized_at = case.provenance.get("stabilized_at")
+    if raw_stabilized_at is None or raw_stabilized_at == "":
+        return []
+    if type(raw_stabilized_at) is date:
+        stabilized_at = raw_stabilized_at
+    elif (isinstance(raw_stabilized_at, str)
+          and re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw_stabilized_at)):
+        try:
+            stabilized_at = date.fromisoformat(raw_stabilized_at)
+        except ValueError:
+            return [
+                f"{case.id}: provenance.stabilized_at must be a date or "
+                f"strict YYYY-MM-DD string; got {raw_stabilized_at!r}"
+            ]
+    else:
+        return [
+            f"{case.id}: provenance.stabilized_at must be a date or "
+            f"strict YYYY-MM-DD string; got {raw_stabilized_at!r}"
+        ]
     if stabilized_at < _STABILIZED_SAMPLES_SINCE:
         return []
     errors: list[str] = []
@@ -593,14 +612,28 @@ def _stabilized_samples_errors(case: AdversarialCase) -> list[str]:
     if not isinstance(process_runs, list) or not process_runs:
         errors.append(f"{case.id}: stable（{_STABILIZED_SAMPLES_SINCE} 起）requires "
                       "non-empty list provenance.stabilized_process_runs")
-    elif (any(not isinstance(run, str) or not run.strip() for run in process_runs)
-          or len(set(process_runs)) != len(process_runs)):
-        errors.append(f"{case.id}: provenance.stabilized_process_runs must contain "
-                      "unique non-empty run ids")
-    elif valid_processes and len(process_runs) != processes:
-        errors.append(
-            f"{case.id}: provenance.stabilized_process_runs has "
-            f"{len(process_runs)} entries; expected {processes}")
+    else:
+        valid_run_ids = all(
+            isinstance(run, str) and bool(run.strip()) for run in process_runs)
+        if not valid_run_ids:
+            errors.append(
+                f"{case.id}: provenance.stabilized_process_runs must contain "
+                "unique non-empty run ids")
+        else:
+            normalized_runs = [run.strip() for run in process_runs]
+            if any(run != normalized for run, normalized
+                   in zip(process_runs, normalized_runs)):
+                errors.append(
+                    f"{case.id}: provenance.stabilized_process_runs run ids "
+                    "must not have surrounding whitespace")
+            if len(set(normalized_runs)) != len(normalized_runs):
+                errors.append(
+                    f"{case.id}: provenance.stabilized_process_runs run ids "
+                    "must be unique after stripping")
+        if valid_processes and len(process_runs) != processes:
+            errors.append(
+                f"{case.id}: provenance.stabilized_process_runs has "
+                f"{len(process_runs)} entries; expected {processes}")
 
     samples = case.provenance.get("stabilized_samples")
     if not isinstance(samples, int) or isinstance(samples, bool):
