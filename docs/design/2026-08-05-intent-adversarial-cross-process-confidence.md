@@ -182,7 +182,8 @@ validator 使用的 `agent_map` 与 `catalog_stats`；prompt、tool schema、res
    ref→语义能力映射块**；catalog budget 对这段全文计数，包括抬头、ref、箭头/标点、能力说明、
    slots 与换行，不能先按旧 `WorkingSet.render_catalog()` 计费，再无预算追加 ref mapping；
 2. `orchestrator/cloud/context.py` 中复用现有 protected 判据和“从尾部丢最低相关非 protected
-   agent”的循环；每次丢 agent 后重新编号并重渲染全文，直到实际 mapping text 入预算；
+   agent”的循环；每次丢 agent 后重新编号并重渲染全文，直到实际 mapping text 入预算，或已
+   无可继续裁的 agent；循环始终至少保留一个 agent，不得把 catalog 裁成空集；
 3. 只对最终实际渲染、模型可见的 agent 取 `(agent_id, intent)`，排序、去重后依次分配
    `cap_0001`、`cap_0002`……；
 4. ref 不包含领域、agent、intent 或哈希片段，不能从字符串猜出语义；同一请求内排序与编号
@@ -192,10 +193,11 @@ validator 使用的 `agent_map` 与 `catalog_stats`；prompt、tool schema、res
 
 “最终实际渲染”是硬边界：不得先对完整 `agents` 建 refs，再让 budget 把其中 agent 裁掉。
 prompt 映射、tool enum、ref 解析表与 validator 的 `agent_map` 必须来自结果对象内同一个
-visible set；被预算裁掉或权限过滤掉的能力在四处都不可见、不可引用、不可执行。若只剩
-protected agents 后全文仍超预算，保留 `WorkingSet.render_catalog()` 现有语义：不裁 protected、
-不截断 mapping text，允许 `chars_final` 大于 budget 并告警；`catalog_stats` 必须如实记录
-`chars_full/chars_final/dropped`，不能通过截字把 ref 与语义说明拆开。
+visible set；被预算裁掉或权限过滤掉的能力在四处都不可见、不可引用、不可执行。若已无可继续
+裁的 agent——候选已全部是 protected，或只剩最后一个 agent（即使它不是 protected）——保留
+`WorkingSet.render_catalog()` 的既有终止语义：至少保留一个 agent，不截断 mapping text，允许
+`chars_final` 大于 budget 并告警；`catalog_stats` 必须如实记录 `chars_full/chars_final/dropped`，
+不能通过截字把 ref 与语义说明拆开，也不能为满足预算返回空 catalog。
 
 ### D11：LLM wire 只认 ref，宿主恢复现有 Plan
 
