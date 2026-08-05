@@ -1544,7 +1544,8 @@ def _relation_partners(selected) -> dict[str, str]:
 
 
 def _execute(selected, args, suite, agents, builder, confirm_intents,
-             provider_model, lock) -> tuple[list[AdversarialResult], list[str]]:
+             provider_model, lock, *, process_run_id: str = ""
+             ) -> tuple[list[AdversarialResult], list[str]]:
     infra: list[str] = []
     reps = repeat_plan(selected, args, suite)
     partners = _relation_partners(selected)
@@ -1598,7 +1599,7 @@ def _execute(selected, args, suite, agents, builder, confirm_intents,
     for key in sorted(units):
         results.extend(_assemble_unit(
             units[key], args, agents, builder, confirm_intents, provider_model,
-            relation_judgements.get(key, {})))
+            relation_judgements.get(key, {}), process_run_id=process_run_id))
     return results, infra
 
 
@@ -1685,7 +1686,8 @@ def _unit_id(case, layer: str, turn_index: int, turns: int) -> str:
 
 
 def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
-                   provider_model, relations: dict[int, Any]
+                   provider_model, relations: dict[int, Any], *,
+                   process_run_id: str = ""
                    ) -> list[AdversarialResult]:
     case, layer = unit.case, unit.layer
     turns = unit.turn_count()
@@ -1702,7 +1704,14 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
                 passed=passed,
                 signature=repr(semantic_signature(outcome.snapshot)),
                 dangerous=_dangerous(case, turn, outcome.judgement,
-                                     outcome.snapshot)))
+                                     outcome.snapshot),
+                process_run_id=process_run_id,
+                sample_index=index,
+                raw_intents=tuple(outcome.raw_intents),
+                raw_observed=outcome.raw_observed,
+                validation_observed=outcome.raw_observed,
+                actual_intents=tuple(outcome.snapshot.plan.intents),
+                plan_from_fallback=outcome.plan_from_fallback))
         classification = runtime.classify_repeats(repeats, case.risk,
                                                   deterministic=layer == "l0")
         # 判定为失败时，留**失败那一轮**的证据。首轮通过、第二三轮翻车的案例（高风险
@@ -1781,7 +1790,14 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
             expects_fallback=bool(case.tags.get("expects_fallback")),
             assertions=assertions,
             repetitions=tuple({"passed": o.passed, "signature": o.signature[:400],
-                               "dangerous": o.dangerous}
+                               "dangerous": o.dangerous,
+                               "process_run_id": o.process_run_id,
+                               "sample_index": o.sample_index,
+                               "raw_intents": o.raw_intents,
+                               "raw_observed": o.raw_observed,
+                               "validation_observed": o.validation_observed,
+                               "actual_intents": o.actual_intents,
+                               "plan_from_fallback": o.plan_from_fallback}
                               for o in classification.outcomes),
             divergence=divergence, divergence_candidates=candidates,
             divergence_evidence=evidence_dict,
@@ -1798,7 +1814,8 @@ def _admitted_intents(turn, agents) -> tuple[str, ...]:
         if getattr(cap, "intent", "")))
 
 
-def _l3_results(selected, args, l3_statuses, provider_model) -> list[AdversarialResult]:
+def _l3_results(selected, args, l3_statuses, provider_model, *,
+                process_run_id: str = "") -> list[AdversarialResult]:
     """把 journey 逐条状态回填成 `case_id@l3` 证据单元。
 
     只看子进程退出码等于没读结构化结果——一个 journey 红、另一个绿会被压成同一个
@@ -1850,8 +1867,20 @@ def _l3_results(selected, args, l3_statuses, provider_model) -> list[Adversarial
                 "passed": statuses[link.journey_id] == "pass",
                 "expected": "pass", "actual": statuses[link.journey_id],
             } for link in journey_links),
+            repetitions=({
+                "passed": passed,
+                "signature": "",
+                "dangerous": False,
+                "process_run_id": process_run_id,
+                "sample_index": 0,
+                "raw_intents": (),
+                "raw_observed": False,
+                "validation_observed": False,
+                "actual_intents": (),
+                "plan_from_fallback": False,
+            },),
             # journey 红灯没有分层对照物，声称首偏离点是 Planner 只是在编。
-            repetitions=(), divergence="" if passed else "UNCLASSIFIED"))
+            divergence="" if passed else "UNCLASSIFIED"))
     return rows
 
 

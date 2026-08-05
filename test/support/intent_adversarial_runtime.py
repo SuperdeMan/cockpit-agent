@@ -324,6 +324,13 @@ class RepeatOutcome:
     passed: bool
     signature: str
     dangerous: bool = False
+    process_run_id: str = ""
+    sample_index: int = 0
+    raw_intents: tuple[str, ...] = ()
+    raw_observed: bool = False
+    validation_observed: bool = False
+    actual_intents: tuple[str, ...] = ()
+    plan_from_fallback: bool = False
 
 
 @dataclass(frozen=True)

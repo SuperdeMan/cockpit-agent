@@ -122,6 +122,20 @@ def _outcome(passed, signature="right", *, dangerous=False):
     return RepeatOutcome(passed=passed, signature=signature, dangerous=dangerous)
 
 
+def test_repeat_outcome_extended_evidence_defaults_are_backward_compatible():
+    outcome = RepeatOutcome(passed=True, signature="right")
+
+    assert outcome.dangerous is False
+    assert outcome.process_run_id == ""
+    assert outcome.sample_index == 0
+    assert outcome.raw_intents == ()
+    assert outcome.raw_observed is False
+    assert outcome.validation_observed is False
+    assert outcome.actual_intents == ()
+    assert outcome.plan_from_fallback is False
+    assert classify_repeats([outcome], risk="medium").outcomes == (outcome,)
+
+
 def test_normal_pass_runs_once_and_failure_replays_to_three():
     assert classify_repeats([_outcome(True)], risk="medium").status == "pass"
     stable = classify_repeats([

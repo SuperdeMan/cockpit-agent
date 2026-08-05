@@ -359,7 +359,7 @@ def test_l3_result_exposes_the_claim_each_journey_is_allowed_to_prove(monkeypatc
 
     rows = cli._l3_results(
         [case], parse_args(["--layer", "l3", "--list"]),
-        {"A1-1": "pass"}, "minimax:MiniMax-M3")
+        {"A1-1": "pass"}, "minimax:MiniMax-M3", process_run_id="run-l3")
 
     assert rows[0].expected["journey_links"] == [{
         "journey_id": "A1-1",
@@ -368,6 +368,18 @@ def test_l3_result_exposes_the_claim_each_journey_is_allowed_to_prove(monkeypatc
     }]
     assert rows[0].assertions[0]["name"] == (
         "journey:A1-1:mixed_ingress_continuity")
+    assert rows[0].repetitions == ({
+        "passed": True,
+        "signature": "",
+        "dangerous": False,
+        "process_run_id": "run-l3",
+        "sample_index": 0,
+        "raw_intents": (),
+        "raw_observed": False,
+        "validation_observed": False,
+        "actual_intents": (),
+        "plan_from_fallback": False,
+    },)
 
 
 # ── P0-3 反向构造：第二轮不许被静默忽略 ─────────────────────────────────
@@ -616,6 +628,125 @@ def _outcome_for(intents, expectation):
     snapshot = _snapshot(intents)
     return cli.TurnOutcome(snapshot=snapshot,
                            judgement=judge_turn(expectation, snapshot))
+
+
+def test_assemble_unit_records_each_repeat_from_its_own_turn_outcome():
+    """逐样本 raw / validator / actual / fallback 不能复制代表样本。"""
+    from support.intent_adversarial_judge import judge_turn
+
+    expectation = TurnExpectation(plan=PlanExpectation(
+        assert_plan=True, required_groups=(IntentGroup(("info.weather",)),)))
+    case = _case("repeat.evidence", layers=("l1",), risk="high")
+    object.__setattr__(case, "turns", (CaseTurn(
+        utterance="今天天气怎么样", context={}, expected=expectation),))
+
+    def turn(actual, raw, *, fallback=False):
+        snapshot = _snapshot(actual)
+        return cli.TurnOutcome(
+            snapshot=snapshot,
+            judgement=judge_turn(expectation, snapshot),
+            raw_intents=tuple(raw),
+            raw_observed=True,
+            plan_from_fallback=fallback,
+        )
+
+    unit = cli.UnitRuns(case=case, layer="l1", runs=[
+        [turn(("info.weather",), ("info.weather",))],
+        [turn(("chitchat.talk",), ("does.not.exist", "info.weather"))],
+        [turn(("info.weather",), ("fallback.raw",), fallback=True)],
+    ])
+    args = parse_args([
+        "--layer", "l1", "--live", "--provider", "p", "--model", "m",
+    ])
+
+    rows = cli._assemble_unit(
+        unit, args, cli.eval_live.load_agents(include_edge=True), None, set(),
+        "p:m", {}, process_run_id="run-a")
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.repeat_status == "unstable"
+    assert [rep["process_run_id"] for rep in row.repetitions] == [
+        "run-a", "run-a", "run-a",
+    ]
+    assert [rep["sample_index"] for rep in row.repetitions] == [0, 1, 2]
+    assert [tuple(rep["raw_intents"]) for rep in row.repetitions] == [
+        ("info.weather",),
+        ("does.not.exist", "info.weather"),
+        ("fallback.raw",),
+    ]
+    assert [rep["raw_observed"] for rep in row.repetitions] == [True] * 3
+    assert [rep["validation_observed"] for rep in row.repetitions] == [True] * 3
+    assert [tuple(rep["actual_intents"]) for rep in row.repetitions] == [
+        ("info.weather",), ("chitchat.talk",), ("info.weather",),
+    ]
+    assert [rep["plan_from_fallback"] for rep in row.repetitions] == [
+        False, False, True,
+    ]
+    assert all(set(rep) == {
+        "passed", "signature", "dangerous", "process_run_id", "sample_index",
+        "raw_intents", "raw_observed", "validation_observed", "actual_intents",
+        "plan_from_fallback",
+    } for rep in row.repetitions)
+    json_rows = json.loads(json.dumps(row.repetitions))
+    assert json_rows[1]["raw_intents"] == ["does.not.exist", "info.weather"]
+    assert json_rows[1]["actual_intents"] == ["chitchat.talk"]
+    assert "info.weather" in row.admitted_intents
+    # 顶层展示仍选失败代表样本，不被 repetition 扩展改变。
+    assert row.actual_intents == ("chitchat.talk",)
+    assert row.raw_intents == ("does.not.exist", "info.weather")
+    assert row.plan_from_fallback is False
+
+
+def test_l0_repetition_marks_raw_and_validation_channels_unobserved():
+    expectation = TurnExpectation(plan=PlanExpectation(
+        assert_plan=True, required_groups=(IntentGroup(("info.weather",)),)))
+    case = _case("repeat.l0", layers=("l0",))
+    object.__setattr__(case, "turns", (CaseTurn(
+        utterance="今天天气怎么样", context={}, expected=expectation),))
+    unit = cli.UnitRuns(case=case, layer="l0", runs=[[
+        _outcome_for(("info.weather",), expectation),
+    ]])
+
+    row = cli._assemble_unit(
+        unit, parse_args(["--layer", "l0"]),
+        cli.eval_live.load_agents(include_edge=True), None, set(), "deterministic", {},
+        process_run_id="run-l0")[0]
+
+    assert row.repetitions[0]["process_run_id"] == "run-l0"
+    assert row.repetitions[0]["sample_index"] == 0
+    assert row.repetitions[0]["raw_intents"] == ()
+    assert row.repetitions[0]["raw_observed"] is False
+    assert row.repetitions[0]["validation_observed"] is False
+    assert row.repetitions[0]["actual_intents"] == ("info.weather",)
+    assert row.repetitions[0]["plan_from_fallback"] is False
+
+
+def test_execute_forwards_process_run_id_to_every_assembled_unit(monkeypatch):
+    expectation = TurnExpectation(plan=PlanExpectation(
+        assert_plan=True, required_groups=(IntentGroup(("info.weather",)),)))
+    case = _case("repeat.execute", layers=("l0",))
+    object.__setattr__(case, "turns", (CaseTurn(
+        utterance="今天天气怎么样", context={}, expected=expectation),))
+    seen = []
+
+    monkeypatch.setattr(
+        cli, "run_l0_case", lambda _case: [_outcome_for(("info.weather",), expectation)])
+
+    def assemble(*_args, process_run_id=""):
+        seen.append(process_run_id)
+        return []
+
+    monkeypatch.setattr(cli, "_assemble_unit", assemble)
+
+    results, infra = cli._execute(
+        [case], parse_args(["--layer", "l0"]),
+        _suite(("stable",), ("stable",)), [], None, set(), "deterministic", None,
+        process_run_id="run-a")
+
+    assert results == []
+    assert infra == []
+    assert seen == ["run-a"]
 
 
 def test_relation_failure_reaches_the_repeat_classification():
