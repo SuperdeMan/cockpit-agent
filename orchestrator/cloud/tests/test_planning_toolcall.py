@@ -309,6 +309,10 @@ def test_submit_plan_schema_enums_match_only_the_current_catalog():
     assert step_props["intent"]["enum"] == [
         "hvac.set", "navigation.navigate", "navigation.search_poi",
     ]
+    assert "缺席" in step_props["agent_id"]["description"]
+    assert "缺席" in step_props["intent"]["description"]
+    assert "addressed=true" in spec["tools"][0]["function"]["parameters"][
+        "properties"]["steps"]["description"]
     assert "nearby.search" not in json.dumps(spec, ensure_ascii=False)
 
     pairs = {
@@ -372,7 +376,8 @@ def test_toolcall_protocol_retry_reuses_the_same_filtered_catalog(monkeypatch):
     assert step_props["agent_id"]["enum"] == ["navigation"]
     assert step_props["intent"]["enum"] == ["navigation.search_poi"]
     for user_message in (spy.last_tool_user, spy.last_text_user):
-        catalog_block = user_message.split("\n\n当前日期", 1)[0]
+        catalog_block = user_message.rsplit("可用能力:\n", 1)[1].split(
+            "\n\n用户说:", 1)[0]
         assert "navigation.search_poi" in catalog_block
         assert "secret-agent" not in catalog_block
         assert "secret.capability" not in catalog_block
@@ -434,6 +439,7 @@ def test_toolcall_prompt_keeps_the_live_catalog_allowlist_contract():
                    "不得编造", "不得替换", "缺席"):
         assert clause in prompt
     assert '{"addressed":true,"steps":[]}' in prompt
+    assert prompt.rindex("== 本轮动态能力白名单 ==") > prompt.rindex("== 通用规则 ==")
 
 
 def test_catalog_prompt_is_not_a_replacement_for_step_validation():

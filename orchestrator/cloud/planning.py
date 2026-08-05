@@ -99,14 +99,6 @@ _PLANNER_BASE = (
     "格式严格为：{\"complexity\":\"simple|adaptive\",\"goal\":\"一句话目标\","
     "\"steps\":[{\"id\":\"s1\",\"agent_id\":\"..\",\"intent\":\"..\","
     "\"slots\":{..},\"depends_on\":[],\"slot_refs\":{}}]}\n"
-    "\n"
-    "== 本轮动态能力白名单 ==\n"
-    "- 下方『可用 Agent 清单』是本轮动态 catalog，也是 agent_id 和 intent 的唯一白名单；"
-    "每个 step 只能原样使用清单中同一能力条目里的 agent_id 与 intent 组合\n"
-    "- 不得编造清单里没有的 agent 或 intent，不得输出缺席能力，也不得替换用户真正请求但"
-    "缺席的能力（包括拿清单中已有的相近能力顶替）\n"
-    "- 如果用户请求只能由本轮 catalog 中缺席的能力承接，仍视为已受话，严格返回"
-    " {\"addressed\":true,\"steps\":[]}；不要为了给出非空 steps 而替换或虚构能力\n"
     "simple 表示一次可确定全部步骤；adaptive 表示必须根据运行结果决定下一步"
     "（例如满了换次近、失败换一家、探索式查询）。普通单域、多意图并行、固定串行都选 simple。\n"
     "**个人偏好指代**（「我喜欢的温度」「常用的那个」「老样子」）：槽位值只能取自上下文里"
@@ -161,6 +153,17 @@ _PLANNER_BASE = (
     "改判到别的领域（如上一轮问比赛赛程，『明天呢』=查明天赛程，不是查天气）\n"
     "- 只输出 JSON，不要任何解释\n"
     "- 无法匹配时输出 {\"steps\":[]}"
+)
+
+
+_CATALOG_ALLOWLIST_SECTION = (
+    "\n\n== 本轮动态能力白名单 ==\n"
+    "- 下方『可用 Agent 清单』是本轮动态 catalog，也是 agent_id 和 intent 的唯一白名单；"
+    "每个 step 只能原样使用清单中同一能力条目里的 agent_id 与 intent 组合\n"
+    "- 不得编造清单里没有的 agent 或 intent，不得输出缺席能力，也不得替换用户真正请求但"
+    "缺席的能力（包括拿清单中已有的相近能力顶替）\n"
+    "- 如果用户请求只能由本轮 catalog 中缺席的能力承接，仍视为已受话，严格返回"
+    " {\"addressed\":true,\"steps\":[]}；不要为了给出非空 steps 而替换或虚构能力"
 )
 
 # R4.4：受话判定段——恒附在 base 之后（消费端 engine 按 input_source 门控，附着无副作用）。
@@ -260,6 +263,10 @@ def _submit_plan_tools(agents: list | None = None) -> dict:
     if agents is not None and catalog_pairs:
         agent_id_schema["enum"] = sorted({agent_id for agent_id, _ in catalog_pairs})
         intent_schema["enum"] = sorted({intent for _, intent in catalog_pairs})
+        agent_id_schema["description"] = (
+            "只能从本轮动态 catalog 的 enum 原样选择；请求能力缺席时保持 steps=[]")
+        intent_schema["description"] = (
+            "只能从本轮动态 catalog 的 enum 原样选择；请求能力缺席时保持 steps=[]")
 
     step_item_schema = {"type": "object", "properties": {
         "id": {"type": "string"},
@@ -288,7 +295,13 @@ def _submit_plan_tools(agents: list | None = None) -> dict:
             }, "required": ["agent_id", "intent"]}
             for agent_id, intents in sorted(intents_by_agent.items())
         ]
-    steps_schema = {"type": "array", "items": step_item_schema}
+    steps_schema = {
+        "type": "array",
+        "description": (
+            "步骤只能使用本轮动态 catalog 的 agent_id/intent 配对；请求所需能力缺席时"
+            "返回 addressed=true 且 steps=[]，不得编造或用相近能力替换"),
+        "items": step_item_schema,
+    }
     if agents is not None and not catalog_pairs:
         # 空 catalog 没有合法 enum（JSON Schema enum 必须非空）；直接约束 steps 为空。
         steps_schema["maxItems"] = 0
@@ -333,6 +346,9 @@ def _planner_system(toolcall: bool = False) -> str:
     # 在这个错位下被记成「生产默认 off」的（findings 的这句话是读代码兜底读出来的）。
     if os.getenv("CLARIFY_ENABLED", "on").lower() == "on":
         prompt += _CLARIFY_SECTION
+    # 放在全部静态示例和行为段之后，避免示例里的 agent/intent 在当前 catalog 缺席时
+    # 被弱模型误当成仍可调用；toolcall 只在其后追加输出通道，不改变能力边界。
+    prompt += _CATALOG_ALLOWLIST_SECTION
     if toolcall:
         prompt += _TOOLCALL_SECTION
     return prompt
@@ -531,8 +547,11 @@ class PlanBuilder:
         # 范例块在知识块**之后**：权威链上范例是最软层，块内抬头也写明「与上方规划知识
         # 冲突以知识为准」——位置与文案一起表达同一件事，不靠模型自己揣摩优先级。
         ex_part = f"{exemplars_block}\n\n" if exemplars_block else ""
-        return (f"可用能力:\n{catalog}\n\n{_date_line()}\n"
-                f"{sk_part}{ex_part}{ctx_block}用户说: {text}")
+        # 软资产与历史可能引用已经从本轮 working set 移除的能力。catalog 若放在它们
+        # 前面，弱模型会把后出现的旧范例当成仍可调用的能力；因此把本轮唯一白名单
+        # 放到全部知识、范例和上下文之后，紧贴用户原话重新封口。
+        return (f"{_date_line()}\n{sk_part}{ex_part}{ctx_block}"
+                f"可用能力:\n{catalog}\n\n用户说: {text}")
 
     async def _llm_plan(self, text: str, agents: list, working_set: WorkingSet,
                         skills_block: str = "", exemplars_block: str = "") -> str:

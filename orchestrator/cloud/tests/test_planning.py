@@ -288,10 +288,33 @@ def test_json_and_replan_prompts_treat_the_live_catalog_as_the_only_allowlist():
                    "不得编造", "不得替换", "缺席"):
         assert clause in initial
     assert '{"addressed":true,"steps":[]}' in initial
+    assert initial.rindex("== 本轮动态能力白名单 ==") > initial.rindex("== 通用规则 ==")
 
     for clause in ("本轮动态 catalog", "agent_id 和 intent", "唯一白名单",
                    "不得编造", "不得替换", "缺席"):
         assert clause in _REPLAN_SYSTEM
+
+
+def test_user_message_reasserts_the_live_catalog_after_soft_assets_and_context():
+    """知识/范例/历史可能提到已下线能力，最终 catalog 必须贴着用户原话重新封口。"""
+    agents = [MockAgent("navigation", ["navigation.search_poi"])]
+    working_set = WorkingSet(
+        catalog=agents,
+        history=[{"role": "user", "text": "CONTEXT_MISSING_INTENT"}],
+    )
+
+    message = PlanBuilder._planner_user_msg(
+        "USER_UTTERANCE", agents, working_set,
+        skills_block="SKILL_MISSING_INTENT",
+        exemplars_block="EXEMPLAR_MISSING_INTENT",
+    )
+
+    catalog_at = message.rindex("可用能力:\n")
+    utterance_at = message.rindex("用户说: USER_UTTERANCE")
+    for soft_evidence in ("SKILL_MISSING_INTENT", "EXEMPLAR_MISSING_INTENT",
+                          "CONTEXT_MISSING_INTENT"):
+        assert message.index(soft_evidence) < catalog_at
+    assert catalog_at < utterance_at
 
 
 # ── 多日出行确定性兜底：弱 LLM 漏掉行程规划时补 trip.plan 步 ──
