@@ -176,10 +176,13 @@ def test_few_shots_field_renders_into_block(tmp_path):
         "owner: orchestrator\nversion: 1\n", encoding="utf-8")
     store = sk.SkillStore(root=str(tmp_path))
     doc = store.guides()[0]
-    assert doc.few_shots and "示例——用户：『来个示例词』" in doc.body
-    assert '"intent":"demo.run"' in doc.body        # plan dict → 紧凑 JSON（输出形态示范）
-    block, injected, _ = sk.render_skills_block([], [doc])
+    # few-shot 的治理 pair 只留在结构化数据中；请求级渲染后才获得调用权。
+    assert doc.few_shots and doc.body == "规则正文。"
+    block, injected, _ = sk.render_skills_block(
+        [], [doc], capability_refs={("demo", "demo.run"): "cap_0001"})
     assert "示例——用户：『来个示例词』" in block and injected == [doc]
+    assert '"capability_ref":"cap_0001"' in block
+    assert '"agent_id"' not in block and '"intent"' not in block
 
 
 def test_unknown_top_level_key_warns_not_silent(tmp_path, caplog):

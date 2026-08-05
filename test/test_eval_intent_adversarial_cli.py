@@ -2105,8 +2105,7 @@ def test_l1_main_entry_records_raw_candidate_and_pre_hint_plan():
 
     async def llm(_messages):
         return json.dumps({"goal": "查天气", "complexity": "simple", "steps": [
-            {"id": "s1", "intent": "info.weather", "slots": {}},
-            {"id": "s2", "intent": "does.not_exist", "slots": {}}]})
+            {"id": "s1", "capability_ref": "cap_9999", "slots": {}}]})
 
     async def tool_llm(_messages, _tools):
         return "", []
@@ -2122,10 +2121,93 @@ def test_l1_main_entry_records_raw_candidate_and_pre_hint_plan():
         case, eval_live.load_agents(include_edge=True), builder))
 
     assert outcomes[0].raw_observed is True
-    assert "does.not_exist" in outcomes[0].raw_intents, \
-        "校验前的候选里有编出来的能力——validator 删掉它之后就再也看不见了"
-    assert "does.not_exist" not in outcomes[0].snapshot.plan.intents
+    sentinel = "__invalid_capability_reference__"
+    assert sentinel in outcomes[0].raw_intents, \
+        "未知请求级 ref 必须在 validator 前留下 sentinel，不能被字段迁移洗白"
+    assert sentinel not in outcomes[0].snapshot.plan.intents
     assert outcomes[0].pre_hint_pass is not None, "Hint 前计划必须留证"
+
+
+def test_l1_main_entry_keeps_replan_trace_out_of_build_pass(monkeypatch):
+    """真实 L1 门面必须给 build/replan 标 stage，而不是只测代理类本身。"""
+    import asyncio
+
+    import eval_live
+    from orchestrator.cloud.planning import PlanBuilder, _assemble_capability_catalog
+    from support.intent_adversarial_contract import ReplanExpectation
+
+    monkeypatch.setenv("PLANNER_TOOLCALL", "off")
+    monkeypatch.setenv("SKILLS_MODE", "off")
+    monkeypatch.setenv("EXEMPLARS_MODE", "off")
+    agents = eval_live.load_agents(include_edge=True)
+    refs = _assemble_capability_catalog(agents).pair_to_ref
+    build_intent = ("info", "info.weather")
+    replan_intent = ("deep-research", "research.run")
+    replies = iter([
+        json.dumps({
+            "goal": "weather then outing", "steps": [
+                {"id": "s1", "capability_ref": refs[build_intent], "slots": {}}],
+        }),
+        json.dumps({
+            "done": False, "steps": [
+                {"id": "r1", "capability_ref": refs[replan_intent], "slots": {}}],
+        }),
+    ])
+
+    async def llm(_messages):
+        return next(replies)
+
+    builder = PlanBuilder(llm_fn=llm, registry_fn=None)
+    case = _case("trace.replan-stage", layers=("l1",), turns=(CaseTurn(
+        utterance="先看天气再找去处", context={},
+        expected=TurnExpectation(
+            plan=PlanExpectation(
+                assert_plan=True,
+                required_groups=(IntentGroup((build_intent[1],)),)),
+            replans=(ReplanExpectation(
+                after={"result": {}},
+                plan=PlanExpectation(
+                    assert_plan=True,
+                    required_groups=(IntentGroup((replan_intent[1],)),)),
+            ),),
+        ),
+    ),))
+
+    outcome = asyncio.run(cli.run_l1_case(case, agents, builder))[0]
+
+    assert outcome.raw_observed is True
+    assert set(outcome.raw_intents) == {build_intent[1], replan_intent[1]}
+    assert outcome.raw_planner_pass is True
+    assert outcome.judgement.passed is True
+
+
+def test_l1_malformed_empty_steps_cannot_report_raw_zero_with_declared_fallback(monkeypatch):
+    import asyncio
+
+    import eval_live
+    from orchestrator.cloud.planning import PlanBuilder
+
+    monkeypatch.setenv("PLANNER_TOOLCALL", "off")
+    monkeypatch.setenv("SKILLS_MODE", "off")
+    monkeypatch.setenv("EXEMPLARS_MODE", "off")
+
+    async def llm(_messages):
+        return '{"addressed":true,"steps":null}'
+
+    builder = PlanBuilder(llm_fn=llm, registry_fn=None)
+    case = _case("trace.malformed-empty", layers=("l1",), turns=(CaseTurn(
+        utterance="给我讲个笑话", context={},
+        expected=TurnExpectation(plan=PlanExpectation(
+            assert_plan=True,
+            required_groups=(IntentGroup(("chitchat.talk",)),))),
+    ),))
+
+    outcome = asyncio.run(cli.run_l1_case(
+        case, eval_live.load_agents(include_edge=True), builder))[0]
+
+    assert outcome.plan_from_fallback is True
+    assert outcome.raw_observed is True
+    assert outcome.raw_intents == ("__invalid_capability_reference__",)
 
 
 # ── P1-5 反向构造：relation 与可执行复现命令 ────────────────────────────
@@ -2811,10 +2893,9 @@ def test_gold_digest_closes_over_every_field_the_judge_reads():
 def test_raw_evidence_binds_to_the_accepted_attempt_not_the_first_one():
     """反向构造：第一次候选错、第二次候选对且被接受。
 
-    生产 `PlanBuilder.build()` 最多两次尝试，而 `replan()` 直接走 `_validated_steps()`
-    **不进这条 trace**——所以一轮里的 validation 全部来自 build 尝试，最终计划对应的是
-    **最后一个被接受**的那次。取 `validations[0]` 会拿一份被丢弃的候选去比 gold，
-    首偏离标签随之归错。
+    Build 最多两次尝试，最终计划对应的是**最后一个被接受**的 build 候选。Replan
+    现在共享同一 resolver/validator trace，因此 raw intent 并集要覆盖它，但
+    `raw_planner_pass` 仍只能绑定 build，不能被后续 replan 候选污染。
     """
     from support.intent_adversarial_judge import PlanSnapshot, StepSnapshot
     from support.intent_adversarial_trace import TraceSink, ValidationTrace
@@ -2865,8 +2946,30 @@ def test_raw_evidence_binds_to_the_accepted_attempt_not_the_first_one():
     # 两次都没被接受（随后落 `_fallback`）→ 没有 accepted 可绑，退回最后一次
     assert _pass((bad, bad)).raw_planner_pass is False
 
+    # Build 已经正确，随后 replan 接受了另一落域：raw 并集如实保留两者，
+    # 但首轮 planner pass 仍绑定 build 的正确候选。
+    replanned = ValidationTrace(
+        raw_intents=("nearby.search",), raw_candidate=_snap("nearby.search"),
+        admitted_intents=("charging.find", "nearby.search"),
+        accepted=_snap("nearby.search"), result="accepted", stage="replan")
+    after_replan = _pass((good, replanned))
+    assert after_replan.raw_planner_pass is True
+    assert set(after_replan.raw_intents) == {"charging.find", "nearby.search"}
+
+    # A previous successful validation cannot mask an observer failure in the
+    # current turn. Even a current validation is not denominator-safe once the
+    # same turn appended a trace error.
+    sink = TraceSink(validations=[good])
+    before = (len(sink.validations), 0, 0, 0, len(sink.trace_errors))
+    sink.validations.append(good)
+    sink.trace_errors.append("current observer failed")
+    unavailable = cli._turn_outcome(
+        turn, SimpleNamespace(plan=_snap("charging.find")),
+        SimpleNamespace(passed=True), sink, before)
+    assert unavailable.raw_observed is False
+
     # ⚠ 「首对次错」这个顺序在生产里**到不了**：`build()` 一旦接受就 break，
-    # 不会再有第二次尝试。所以只需保证「取最后一个 accepted」，不必为不可达状态设计。
+    # 不会再有第二次尝试。所以只需保证「取最后一个 build accepted」，不必为不可达状态设计。
     from orchestrator.cloud import planning as _planning
     import inspect as _inspect
     build_src = _inspect.getsource(_planning.PlanBuilder.build)

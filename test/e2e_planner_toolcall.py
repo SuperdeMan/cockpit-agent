@@ -19,6 +19,7 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 from support.e2e import CaseRecorder, is_network_timeout
 
@@ -31,17 +32,73 @@ for p in (str(_ROOT), str(_ROOT / "gen" / "python")):
         sys.path.insert(0, p)
 
 from orchestrator.cloud.planning import (  # noqa: E402
-    _planner_system, _submit_plan_tools, _SUBMIT_PLAN_NAME, _date_line,
+    _assemble_capability_catalog, _planner_system, _submit_plan_tools,
+    _SUBMIT_PLAN_NAME, _date_line,
 )
 
-_CATALOG = (
-    "可用能力:\n"
-    "- hvac: hvac.set（空调控制：温度/风量/开关）\n"
-    "- media: media.play（播放音乐/电台）\n"
-    "- info: info.weather（天气查询）, info.search（联网搜索）\n"
-    "- nearby: nearby.search（周边搜索餐厅/停车）, nearby.order（下单/订位）\n"
-    "- chitchat: chitchat.talk（闲聊兜底）"
-)
+
+def _agent(agent_id: str, capabilities: list[tuple[str, list[str], str]]):
+    caps = [SimpleNamespace(intent=intent, slots=slots, description=description)
+            for intent, slots, description in capabilities]
+    manifest = SimpleNamespace(
+        agent_id=agent_id,
+        trust_level="first_party",
+        kind="agent",
+        deployment="cloud",
+        category="",
+        route_hints=[],
+        capabilities=caps,
+    )
+    return SimpleNamespace(manifest=manifest, endpoint=f"probe:{agent_id}")
+
+
+def _probe_catalog():
+    """每次探针经生产入口装配独立的请求级 mapping/schema authority。"""
+    return _assemble_capability_catalog([
+        _agent("hvac", [("hvac.set", ["temperature"], "调节空调")]),
+        _agent("media", [("media.play", ["song"], "播放音乐")]),
+        _agent("info", [
+            ("info.weather", ["city", "date"], "查询天气"),
+            ("info.search", ["query"], "联网检索"),
+        ]),
+        _agent("nearby", [
+            ("nearby.search", ["keyword"], "搜索周边地点"),
+            ("nearby.order", ["restaurant_name"], "餐厅订位"),
+        ]),
+        _agent("chitchat", [("chitchat.talk", [], "闲聊回应")]),
+    ])
+
+
+def _schema_is_ref_only(tools: dict, catalog) -> bool:
+    try:
+        step = tools["tools"][0]["function"]["parameters"]["properties"]["steps"]["items"]
+        props = step["properties"]
+        return (
+            set(props) == {"id", "capability_ref", "slots", "depends_on", "slot_refs"}
+            and {"id", "capability_ref"}.issubset(step["required"])
+            and props["capability_ref"].get("enum") == list(catalog.ref_to_pair)
+            and "agent_id" not in props
+            and "intent" not in props
+        )
+    except (KeyError, TypeError, IndexError):
+        return False
+
+
+def _wire_fields_ok(args: dict, catalog) -> bool:
+    steps = args.get("steps")
+    return (
+        isinstance(args.get("addressed"), bool)
+        and isinstance(steps, list)
+        and all(
+            isinstance(step, dict)
+            and bool(step.get("id"))
+            and isinstance(step.get("capability_ref"), str)
+            and step["capability_ref"] in catalog.ref_to_pair
+            and "agent_id" not in step
+            and "intent" not in step
+            for step in steps
+        )
+    )
 
 # 代表形态：单意图 / 多意图并行 / 依赖串行 / 受话 false
 _PROBES = [
@@ -75,14 +132,20 @@ def _http_providers() -> dict | None:
 
 def _probe_one(stub, llm_pb2, provider: str, text: str) -> dict:
     """单次探针：返回 {tool, name_ok, args_ok, fields_ok, finish, err}。"""
-    user_msg = f"{_CATALOG}\n\n{_date_line()}\n用户说: {text}"
+    catalog = _probe_catalog()
+    tools = _submit_plan_tools(catalog)
+    schema_ok = _schema_is_ref_only(tools, catalog)
+    user_msg = (
+        f"{_date_line()}\n\n{catalog.semantic_mapping_text}\n"
+        f"用户说: {text}"
+    )
     req = llm_pb2.CompleteRequest(
         messages=[
             llm_pb2.Message(role="system", content=_planner_system(toolcall=True)),
             llm_pb2.Message(role="user", content=user_msg),
         ],
         temperature=0.3, max_tokens=800)
-    req.tools.update(_submit_plan_tools())
+    req.tools.update(tools)
     req.meta["llm_provider"] = provider          # 请求级 pin（D2）：漂移 fail-closed
     req.meta["caller_service"] = "e2e-planner-toolcall"
     out = {"tool": False, "name_ok": False, "args_ok": False,
@@ -104,15 +167,7 @@ def _probe_one(stub, llm_pb2, provider: str, text: str) -> dict:
             return out
         if isinstance(args, dict):
             out["args_ok"] = True
-            steps = args.get("steps")
-            out["fields_ok"] = (
-                isinstance(args.get("addressed"), bool)
-                and isinstance(steps, list)
-                and all(
-                    isinstance(s, dict) and s.get("agent_id") and s.get("intent")
-                    for s in steps
-                )
-            )
+            out["fields_ok"] = schema_ok and _wire_fields_ok(args, catalog)
         return out
     from google.protobuf.json_format import MessageToDict
     data = MessageToDict(resp.tool_calls)
@@ -123,11 +178,7 @@ def _probe_one(stub, llm_pb2, provider: str, text: str) -> dict:
     out["name_ok"] = args is not None
     if isinstance(args, dict):
         out["args_ok"] = True
-        steps = args.get("steps")
-        out["fields_ok"] = (isinstance(args.get("addressed"), bool)
-                            and isinstance(steps, list)
-                            and all(isinstance(s, dict) and s.get("agent_id")
-                                    and s.get("intent") for s in steps))
+        out["fields_ok"] = schema_ok and _wire_fields_ok(args, catalog)
     return out
 
 

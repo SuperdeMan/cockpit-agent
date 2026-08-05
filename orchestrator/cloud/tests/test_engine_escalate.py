@@ -24,11 +24,11 @@ from orchestrator.cloud.aggregator import Aggregator
 from orchestrator.cloud.session import SessionStore
 
 _SINGLE_PLAN = json.dumps({"steps": [
-    {"id": "s1", "agent_id": "chitchat", "intent": "chitchat.talk", "slots": {}, "depends_on": []},
+    {"id": "s1", "capability_ref": "cap_0001", "slots": {}, "depends_on": []},
 ]})
 _TWO_STEP_PLAN = json.dumps({"steps": [
-    {"id": "s1", "agent_id": "chitchat", "intent": "chitchat.talk", "slots": {}, "depends_on": []},
-    {"id": "s2", "agent_id": "chitchat", "intent": "chitchat.talk", "slots": {}, "depends_on": ["s1"]},
+    {"id": "s1", "capability_ref": "cap_0001", "slots": {}, "depends_on": []},
+    {"id": "s2", "capability_ref": "cap_0001", "slots": {}, "depends_on": ["s1"]},
 ]})
 
 _ESC = {"_escalate": {"intent": "info.search",

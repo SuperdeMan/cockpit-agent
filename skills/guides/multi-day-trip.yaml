@@ -12,12 +12,8 @@ knowledge: |
   要出两个 step——后一步依赖前一步的结果，用 depends_on + slot_refs 接线，不是只排行程。
 
   示例——用户：『周末去杭州两天，带老人，不要太累，顺便看看天气和是否需要中途充电』
-  → 3 个 step，无依赖并行：
-  {"steps":[
-  {"id":"s1","agent_id":"trip-planner","intent":"trip.plan","slots":{"destination":"杭州","days":"2","preferences":"带老人,轻松不累"},"depends_on":[],"slot_refs":{}},
-  {"id":"s2","agent_id":"info","intent":"info.forecast","slots":{"city":"杭州"},"depends_on":[],"slot_refs":{}},
-  {"id":"s3","agent_id":"charging-planner","intent":"charging.plan","slots":{"destination":"杭州"},"depends_on":[],"slot_refs":{}}
-  ]}
+  → 选行程规划、天气预报、长途充电策略三个能力，无依赖并行。行程槽位包含
+  destination=杭州、days=2、preferences=带老人且轻松不累；天气城市与充电目的地也都是杭州。
 golden:
   - text: 下周去成都玩三天带爸妈
     expect_intents: [trip.plan]

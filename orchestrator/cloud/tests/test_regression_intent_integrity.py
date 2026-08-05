@@ -36,14 +36,23 @@ def test_chitchat_step_always_receives_current_user_text():
 
     async def llm(messages):
         return (
-            '{"steps":[{"id":"s1","agent_id":"chitchat",'
-            '"intent":"chitchat.talk","slots":{"text":"stale text"}}]}'
+            '{"steps":[{"id":"s1","capability_ref":"cap_0001",'
+            '"slots":{"text":"stale text"}}]}'
         )
 
     text = "给我讲个笑话。"
-    plan = asyncio.run(PlanBuilder(llm, _no_resolve).build(
+    builder = PlanBuilder(llm, _no_resolve)
+    fallback_calls = []
+
+    async def forbidden_fallback(*_args, **_kwargs):
+        fallback_calls.append(True)
+        raise AssertionError("valid capability ref must not use fallback")
+
+    builder._fallback = forbidden_fallback
+    plan = asyncio.run(builder.build(
         text, WorkingSet(catalog=agents), PlanContext()))
 
+    assert fallback_calls == []
     assert len(plan.steps) == 1
     assert plan.steps[0].slots["text"] == text
 
@@ -53,13 +62,12 @@ def test_partial_invalid_plan_is_retried_atomically():
     replies = iter([
         (
             '{"steps":['
-            '{"id":"s1","agent_id":"chitchat","intent":"chitchat.talk","slots":{}},'
-            '{"id":"s2","agent_id":"ghost","intent":"ghost.unknown","slots":{}}'
+            '{"id":"s1","capability_ref":"cap_0001","slots":{}},'
+            '{"id":"s2","capability_ref":"cap_9999","slots":{}}'
             ']}'
         ),
         (
-            '{"steps":[{"id":"s1","agent_id":"chitchat",'
-            '"intent":"chitchat.talk","slots":{}}]}'
+            '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{}}]}'
         ),
     ])
     calls = 0
@@ -70,10 +78,19 @@ def test_partial_invalid_plan_is_retried_atomically():
         return next(replies)
 
     text = "给我讲个笑话吧，顺便说说北京那边天气怎么样。"
-    plan = asyncio.run(PlanBuilder(llm, _no_resolve).build(
+    builder = PlanBuilder(llm, _no_resolve)
+    fallback_calls = []
+
+    async def forbidden_fallback(*_args, **_kwargs):
+        fallback_calls.append(True)
+        raise AssertionError("atomic retry must not use fallback")
+
+    builder._fallback = forbidden_fallback
+    plan = asyncio.run(builder.build(
         text, WorkingSet(catalog=agents), PlanContext()))
 
     assert calls == 2
+    assert fallback_calls == []
     assert len(plan.steps) == 1
     assert plan.steps[0].agent_id == "chitchat"
     assert plan.steps[0].slots["text"] == text

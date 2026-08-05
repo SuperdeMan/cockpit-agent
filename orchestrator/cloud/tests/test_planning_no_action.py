@@ -18,8 +18,11 @@ planner 两次都返回 `{"addressed":true,"steps":[]}`——**它答对了**：
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
@@ -30,8 +33,8 @@ from orchestrator.cloud.planning import PlanBuilder
 from tests.test_planning import MockAgent
 
 NO_ACTION = '{"addressed":true,"steps":[]}'
-REAL_PLAN = ('{"addressed":true,"steps":[{"id":"s1","agent_id":"hvac",'
-             '"intent":"hvac.set","slots":{},"depends_on":[],"slot_refs":{}}]}')
+REAL_PLAN = ('{"addressed":true,"steps":[{"id":"s1","capability_ref":"cap_0003",'
+             '"slots":{},"depends_on":[],"slot_refs":{}}]}')
 
 
 def _agents():
@@ -131,8 +134,8 @@ def test_steps_that_were_all_dropped_by_validation_are_not_no_action():
     而混淆的方向是最坏的那个——把一次规划失败说成「模型认为不该做事」，
     于是「别做 X」这一族的绿会把真正的漏接一起盖住。
     """
-    hallucinated = ('{"addressed":true,"steps":[{"id":"s1","agent_id":"nope",'
-                    '"intent":"teleport.now","slots":{},"depends_on":[],'
+    hallucinated = ('{"addressed":true,"steps":[{"id":"s1","capability_ref":"cap_9999",'
+                    '"slots":{},"depends_on":[],'
                     '"slot_refs":{}}]}')
     plan, calls = _build([hallucinated, hallucinated])
     assert [s.intent for s in plan.steps] == ["chitchat.talk"]
@@ -144,12 +147,45 @@ def test_the_shape_predicate_reads_the_raw_dict():
     """`_looks_like_no_action` 的边界逐条钉死（它是本次全部行为的唯一判据）。"""
     ok = PlanBuilder._looks_like_no_action
     assert ok({"addressed": True, "steps": []})
-    assert ok({"steps": []}), "addressed 缺省 = fail-open true"
-    assert ok({"addressed": "maybe", "steps": []}), "非显式 false 一律当受话"
+    for addressed in (None, 0, 1, "true", [], {}, False):
+        assert not ok({"addressed": addressed, "steps": []})
+    assert not ok({"steps": []}), "addressed 缺省不是显式 JSON boolean true"
+    for malformed in ("", 0, {}, None, ()):
+        assert not ok({"addressed": True, "steps": malformed})
+    assert not ok({"addressed": True}), "缺失 steps 不是声明 no-action"
     assert not ok({"addressed": False, "steps": []}), "不受话是另一条既有分支"
     assert not ok({"addressed": True, "steps": [{"intent": "x"}]})
     assert not ok({"addressed": True, "steps": [], "clarify": {"question": "?"}})
     assert not ok(None) and not ok("不是 dict") and not ok([])
+
+
+@pytest.mark.parametrize("steps", ["", 0, {}, None])
+def test_falsey_non_list_steps_are_degradation_not_no_action(steps):
+    malformed = json.dumps(
+        {"addressed": True, "steps": steps}, ensure_ascii=False)
+    plan, calls = _build([malformed, malformed])
+
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+    assert calls["fallback"] == 1
+    assert not plan.plan_mode.endswith("_no_action")
+
+
+def test_missing_steps_is_degradation_but_legal_shortcuts_may_omit_it():
+    missing = '{"addressed":true}'
+    plan, calls = _build([missing, missing])
+    assert calls["fallback"] == 1
+    assert not plan.plan_mode.endswith("_no_action")
+
+    clarify = ('{"addressed":true,"clarify":{"question":"开大灯还是开雨刷？",'
+               '"options":[{"label":"大灯","send_text":"打开大灯"},'
+               '{"label":"雨刷","send_text":"打开雨刷"}]}}')
+    plan, calls = _build([clarify, NO_ACTION], text="有点看不清路了")
+    assert calls["llm"] == 1 and calls["fallback"] == 0
+    assert plan.steps == [] and plan.clarify
+
+    plan, calls = _build(['{"addressed":false}', NO_ACTION], text="妈你到哪了")
+    assert calls["llm"] == 1 and calls["fallback"] == 0
+    assert plan.steps == [] and plan.addressed is False
 
 
 def test_one_no_action_plus_one_garbage_is_a_degradation_not_a_judgement():

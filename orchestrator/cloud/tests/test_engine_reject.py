@@ -18,7 +18,7 @@ from orchestrator.cloud.session import SessionStore
 from orchestrator.cloud.models import SessionState
 
 _WEATHER_PLAN = json.dumps({"steps": [
-    {"id": "s1", "agent_id": "info", "intent": "info.weather", "slots": {}, "depends_on": []}]})
+    {"id": "s1", "capability_ref": "cap_0001", "slots": {}, "depends_on": []}]})
 _REJECT_PLAN = json.dumps({"addressed": False, "steps": []})
 _CLARIFY_PLAN = json.dumps({"addressed": True, "clarify": {
     "question": "您是想看详情还是导航过去？",

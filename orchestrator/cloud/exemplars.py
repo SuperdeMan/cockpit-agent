@@ -439,13 +439,33 @@ _BLOCK_HEAD = (
     "与上方「规划知识」冲突时以规划知识为准，与用户实际所说不符时以用户原话为准。")
 
 
-def _render_one(e: Exemplar) -> str:
-    plan = json.dumps([{k: v for k, v in s.items() if v not in ("", {}, None)}
-                       for s in e.plan], ensure_ascii=False, separators=(",", ":"))
+def _render_one(e: Exemplar, capability_refs=None) -> str | None:
+    resolved = []
+    for index, step in enumerate(e.plan, 1):
+        agent_id = str(step.get("agent") or "").strip()
+        intent = str(step.get("intent") or "").strip()
+        ref = (capability_refs.get((agent_id, intent))
+               if capability_refs is not None and agent_id else None)
+        if not agent_id and capability_refs is not None:
+            # Historical edge exemplars govern intent but omit owner.  Resolve only
+            # when the final visible request catalog has exactly one owner; an
+            # ambiguous/missing intent drops the whole exemplar.
+            matches = [candidate for (owner, candidate_intent), candidate
+                       in capability_refs.items() if candidate_intent == intent]
+            ref = matches[0] if len(matches) == 1 else None
+        if not ref:
+            return None
+        resolved.append({
+            "id": f"s{index}",
+            "capability_ref": ref,
+            **({"slots": step["slots"]} if step.get("slots") else {}),
+        })
+    plan = json.dumps(resolved, ensure_ascii=False, separators=(",", ":"))
     return f"- 用户：『{e.text}』→ {plan}"
 
 
-def render_block(items: list[Exemplar], budget: int | None = None
+def render_block(items: list[Exemplar], budget: int | None = None,
+                 capability_refs=None
                  ) -> tuple[str, list[Exemplar], list[Exemplar]]:
     """→ (注入块, 实际注入, 超预算被裁)。名单必须反映**真实注入**——「说注入了实际
     被裁」会让 badcase 归因说谎（skills 2026-07-26 教训同款）。
@@ -458,7 +478,10 @@ def render_block(items: list[Exemplar], budget: int | None = None
     parts, used = [_BLOCK_HEAD], len(_BLOCK_HEAD)
     injected, clipped = [], []
     for e in items:
-        line = _render_one(e)
+        line = _render_one(e, capability_refs)
+        if line is None:
+            logger.info("exemplar %s 的能力不在本请求 catalog，整条省略", e.eid)
+            continue
         if used + len(line) + 1 > budget:
             logger.info("exemplar %s 超预算被裁（used=%d）", e.eid, used)
             clipped.append(e)
@@ -488,7 +511,7 @@ def mode() -> str:
     return m if m in ("off", "shadow", "full") else "full"
 
 
-async def plan_exemplars(text: str) -> tuple[str, list[str], str]:
+async def plan_exemplars(text: str, capability_refs=None) -> tuple[str, list[str], str]:
     """规划轮入口：→ (mode, 归因名单, 注入块)。
 
     名单契约（对齐 `plan.skills`）：`<mode>:<eid>@lex:0.55`／`@vec:0.71`，超预算被裁
@@ -508,13 +531,14 @@ async def plan_exemplars(text: str) -> tuple[str, list[str], str]:
     tags = {e.eid: _tag(ch, s) for e, ch, s in pairs}
     if m == "shadow":
         return m, [f"{m}:{e.eid}{tags[e.eid]}" for e, _, _ in pairs], ""
-    block, injected, clipped = render_block([e for e, _, _ in pairs])
+    block, injected, clipped = render_block(
+        [e for e, _, _ in pairs], capability_refs=capability_refs)
     names = [f"{m}:{e.eid}{tags[e.eid]}" for e in injected]
     names += [f"{m}:{e.eid}{tags[e.eid]}!clipped" for e in clipped]
     return m, names, block
 
 
-def render_for_names(names: list[str] | None) -> str:
+def render_for_names(names: list[str] | None, capability_refs=None) -> str:
     """T2 再规划 / 挂起恢复的范例继承（同 skills.render_for_names 姿态）：按初规划
     **实际注入**的 eid 重渲染，不重新检索——再规划的输入是观察结果不是用户话术。
     shadow 轮与被裁项本来就没进初规划上下文，同样不进再规划。"""
@@ -530,5 +554,5 @@ def render_for_names(names: list[str] | None) -> str:
         return ""
     by_id = {e.eid: e for e in default_store().load()}
     picked = [by_id[i] for i in wanted if i in by_id]
-    block, _, _ = render_block(picked)
+    block, _, _ = render_block(picked, capability_refs=capability_refs)
     return block

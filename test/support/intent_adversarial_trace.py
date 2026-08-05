@@ -71,6 +71,7 @@ class ValidationTrace:
     admitted_intents: tuple[str, ...]
     accepted: PlanSnapshot
     result: str
+    stage: str = "build"
 
 
 @dataclass
@@ -83,6 +84,8 @@ class TraceSink:
     # `PlanBuilder._fallback` 的调用记录。**这份计划不是 planner 的判断**——
     # 两次解析都没成、由编排兜底合成出来的。见 `probe_builder` 的说明。
     fallbacks: list[str] = field(default_factory=list)
+    # Test-only call context used by the shared validation observer.
+    validation_stage: str = "build"
 
 
 @dataclass
@@ -198,12 +201,22 @@ class RecordingPlanner:
         return getattr(self.delegate, name)
 
     async def build(self, *args, **kwargs):
-        plan = await self.delegate.build(*args, **kwargs)
+        previous = self.sink.validation_stage
+        self.sink.validation_stage = "build"
+        try:
+            plan = await self.delegate.build(*args, **kwargs)
+        finally:
+            self.sink.validation_stage = previous
         self.sink.plans.append(PlannerTrace("build", snapshot_plan(plan)))
         return plan
 
     async def replan(self, goal, *args, **kwargs):
-        decision = await self.delegate.replan(goal, *args, **kwargs)
+        previous = self.sink.validation_stage
+        self.sink.validation_stage = "replan"
+        try:
+            decision = await self.delegate.replan(goal, *args, **kwargs)
+        finally:
+            self.sink.validation_stage = previous
         self.sink.plans.append(PlannerTrace(
             "replan", snapshot_plan(decision.to_plan(goal)), done=decision.done))
         return decision
@@ -230,30 +243,56 @@ def _as_sequence(value) -> tuple[str, ...]:
     return ()
 
 
-def _as_sequence_of_rows(value) -> tuple:
-    """`steps` 不是列表时（模型写成字符串/数字都见过）当空处理，别去迭代它。"""
-    return tuple(value) if isinstance(value, (list, tuple)) else ()
+_INVALID_CAPABILITY_REFERENCE = "__invalid_capability_reference__"
 
 
-def snapshot_raw_candidate(data: dict[str, Any]) -> PlanSnapshot:
+def _raw_identity(row, ref_to_pair=None) -> tuple[str, str]:
+    if not isinstance(row, dict):
+        return "", _INVALID_CAPABILITY_REFERENCE
+    if ref_to_pair is None:
+        # Standalone shape-fuzz tests can still snapshot the validator's internal,
+        # already-resolved representation.  Production tracing always supplies the
+        # request catalog below and therefore never treats legacy LLM wire as valid.
+        return (str(row.get("agent_id") or ""), str(row.get("intent") or ""))
+    if "agent_id" in row or "intent" in row:
+        return "", _INVALID_CAPABILITY_REFERENCE
+    ref = row.get("capability_ref")
+    if not isinstance(ref, str):
+        return "", _INVALID_CAPABILITY_REFERENCE
+    pair = ref_to_pair.get(ref)
+    if pair is None:
+        return "", _INVALID_CAPABILITY_REFERENCE
+    return str(pair[0]), str(pair[1])
+
+
+def snapshot_raw_candidate(data: dict[str, Any], ref_to_pair=None,
+                           *, allow_missing_steps: bool = False) -> PlanSnapshot:
     """把已解析但尚未 capability validation 的结构转成可裁判快照。
 
     只比较 raw_intents 不够：依赖、槽位和额外步在校验前是否正确，同样要用 judge_plan
     裁一次，否则「校验前就错了」和「校验把对的丢了」分不开。
     """
-    rows = data.get("steps") if isinstance(data, dict) else []
+    if isinstance(data, dict) and "steps" not in data:
+        rows = [] if allow_missing_steps else [None]
+    elif isinstance(data, dict) and isinstance(data.get("steps"), list):
+        rows = data["steps"]
+    else:
+        # A present non-list container is one invalid raw identity, not an
+        # observed empty plan. This keeps malformed fallback attempts in the
+        # existing hallucination denominator.
+        rows = [None]
     steps = []
-    for index, row in enumerate(rows if isinstance(rows, (list, tuple)) else [], 1):
-        if not isinstance(row, dict):
-            continue
+    for index, row in enumerate(rows, 1):
+        agent_id, intent = _raw_identity(row, ref_to_pair)
+        row_data = row if isinstance(row, dict) else {}
         steps.append(StepSnapshot(
-            id=str(row.get("id") or f"raw-{index}"),
-            agent_id=str(row.get("agent_id") or ""),
-            intent=str(row.get("intent") or ""),
-            slots=_as_mapping(row.get("slots")),
-            depends_on=_as_sequence(row.get("depends_on")),
-            slot_refs=_as_mapping(row.get("slot_refs")),
-            require_confirm=bool(row.get("require_confirm", False)),
+            id=str(row_data.get("id") or f"raw-{index}"),
+            agent_id=agent_id,
+            intent=intent,
+            slots=_as_mapping(row_data.get("slots")),
+            depends_on=_as_sequence(row_data.get("depends_on")),
+            slot_refs=_as_mapping(row_data.get("slot_refs")),
+            require_confirm=bool(row_data.get("require_confirm", False)),
         ))
     return PlanSnapshot(
         steps=tuple(steps), complexity=str(data.get("complexity") or "simple"),
@@ -264,17 +303,23 @@ def snapshot_raw_candidate(data: dict[str, Any]) -> PlanSnapshot:
 def attach_validation_trace(builder, sink: TraceSink) -> None:
     original = builder._parse_and_validate_data
 
-    def traced(data, agent_map, text):
+    def traced(wire, catalog, text):
         # 快照必须在生产解析**之前**取：`original` 可能就地改 `data`。
         # 但取快照本身也可能抛（`data` 是未经清洗的模型输出），所以它也在保护里。
         raw, failed = {}, ""
         try:
-            raw = deepcopy(data) if isinstance(data, dict) else {}
+            raw = deepcopy(wire) if isinstance(wire, dict) else {}
         except Exception as exc:                       # noqa: BLE001
             failed = f"{type(exc).__name__}: {exc}"
-        plan = original(data, agent_map, text)
-        if failed:
             sink.trace_errors.append(f"{failed} | text={text[:40]!r}")
+        try:
+            plan = original(wire, catalog, text)
+        except Exception as exc:                       # noqa: BLE001
+            # A production validator failure must keep its original semantics.
+            sink.trace_errors.append(
+                f"validation_delegate:{type(exc).__name__}: {exc} | text={text[:40]!r}")
+            raise
+        if failed:
             return plan
         # 兜底 except 在这里是**有意的**：`raw` 的畸形形状穷举不完，而一次 traceback
         # 会把整趟全量打死（实测：模型把 `slots` 写成字符串列表，`dict(["mode"])` 抛
@@ -283,20 +328,28 @@ def attach_validation_trace(builder, sink: TraceSink) -> None:
         # 但不许静默：这一轮记成「没有 raw 通道」（`raw_observed=False`，如实，不进
         # 幻觉率分母），异常留进 `trace_errors` 由摘要打出来。
         try:
-            rows = _as_sequence_of_rows(raw.get("steps"))
-            raw_intents = tuple(str(step.get("intent") or "")
-                                for step in rows
-                                if isinstance(step, dict) and step.get("intent"))
+            legal_omission = (
+                "steps" not in raw
+                and plan is not None
+                and (getattr(plan, "addressed", True) is False
+                     or bool(getattr(plan, "clarify", None)))
+            )
+            raw_candidate = snapshot_raw_candidate(
+                raw, catalog.ref_to_pair,
+                allow_missing_steps=legal_omission)
+            raw_intents = tuple(step.intent for step in raw_candidate.steps
+                                if step.intent)
             admitted = tuple(sorted(
                 str(cap.intent)
-                for agent in agent_map.values()
+                for agent in catalog.agent_map.values()
                 for cap in (getattr(agent.manifest, "capabilities", None) or [])))
             trace = ValidationTrace(
                 raw_intents=raw_intents, admitted_intents=admitted,
-                raw_candidate=snapshot_raw_candidate(raw),
+                raw_candidate=raw_candidate,
                 accepted=(snapshot_plan(plan) if plan is not None
                           else PlanSnapshot.empty()),
-                result="accepted" if plan is not None else "rejected")
+                result="accepted" if plan is not None else "rejected",
+                stage=sink.validation_stage)
         except Exception as exc:                       # noqa: BLE001
             sink.trace_errors.append(f"{type(exc).__name__}: {exc} | text={text[:40]!r}")
             return plan

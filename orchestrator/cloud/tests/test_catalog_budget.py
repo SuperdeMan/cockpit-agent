@@ -79,6 +79,38 @@ def test_current_default_budget_holds_full_stack(monkeypatch):
     assert stats["chars_full"] == stats["chars_final"]
 
 
+def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
+    """Ref wire groups agent metadata once and must not evict default live domains."""
+    test_dir = os.path.join(_ROOT, "test")
+    if test_dir not in sys.path:
+        sys.path.insert(0, test_dir)
+    import eval_live
+    from orchestrator.cloud.planning import _assemble_capability_catalog
+
+    monkeypatch.setattr(ctxmod, "_CATALOG_BUDGET", 16000)
+    agents = eval_live.load_agents(include_edge=True)
+    catalog = _assemble_capability_catalog(agents)
+
+    assert catalog.catalog_stats["dropped"] == []
+    assert catalog.catalog_stats["chars_full"] == catalog.catalog_stats["chars_final"]
+    assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
+    assert catalog.catalog_stats["chars_final"] <= 16000
+    assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
+    assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
+
+    groups = [json.loads(line) for line in catalog.semantic_mapping_text.splitlines()[1:]]
+    assert len(groups) == len(agents)
+    assert all(set(group) == {
+        "service", "kind", "deployment", "trust", "capabilities",
+    } for group in groups)
+    capabilities = [cap for group in groups for cap in group["capabilities"]]
+    assert len(capabilities) == len(catalog.ref_to_pair)
+    for group in groups:
+        expected = ({"ref", "name"} if group["service"].startswith("edge-")
+                    else {"ref", "name", "slots", "description"})
+        assert all(set(cap) == expected for cap in group["capabilities"])
+
+
 def test_edge_capabilities_stay_name_only_in_catalog(monkeypatch):
     """端侧能力（2026-08-04 起 76 条）在 catalog 里**只出名字**——判别化描述有意不进 planner prompt。
 
@@ -100,3 +132,15 @@ def test_edge_capabilities_stay_name_only_in_catalog(monkeypatch):
     assert len(caps) >= 70, "端侧能力面塌了？"     # 不钉死数字：新增车控意图是正常演进
     assert all(set(c) == {"intent"} for c in caps), "端侧能力多渲染了字段，请附 A/B 证据"
     assert stats["dropped"] == []
+
+    from orchestrator.cloud.planning import _assemble_capability_catalog
+    request_catalog = _assemble_capability_catalog(_full_stack_agents())
+    request_groups = [json.loads(line) for line in
+                      request_catalog.semantic_mapping_text.splitlines()[1:]]
+    request_edge = [group for group in request_groups
+                    if group["service"].startswith("edge-")]
+    request_caps = [cap for group in request_edge for cap in group["capabilities"]]
+    assert len(request_caps) >= 70
+    assert all(set(cap) == {"ref", "name"} for cap in request_caps), (
+        "请求级 ref mapping 给端侧能力增加了未证明有效的语义字段")
+    assert request_catalog.catalog_stats["dropped"] == []

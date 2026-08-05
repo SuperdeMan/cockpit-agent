@@ -13,7 +13,8 @@ import json
 import pytest
 
 from orchestrator.cloud.planning import (
-    EMOTIONS, PlanBuilder, _parse_emotion, _planner_system, _submit_plan_tools,
+    EMOTIONS, PlanBuilder, _assemble_capability_catalog, _parse_emotion,
+    _planner_system, _submit_plan_tools,
 )
 
 
@@ -79,10 +80,11 @@ class _Agent:
 
 def _parse(data: dict):
     return PlanBuilder._parse_and_validate_data(
-        PlanBuilder.__new__(PlanBuilder), data, {"info": _Agent()}, "今天天气")
+        PlanBuilder.__new__(PlanBuilder), data,
+        _assemble_capability_catalog([_Agent()]), "今天天气")
 
 
-_STEP = {"id": "s1", "agent_id": "info", "intent": "info.weather"}
+_STEP = {"id": "s1", "capability_ref": "cap_0001"}
 
 
 def test_plan_carries_emotion():

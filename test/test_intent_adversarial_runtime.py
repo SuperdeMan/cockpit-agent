@@ -69,6 +69,35 @@ def test_retrieval_is_lexical_offline_and_returns_named_assets():
     assert out.skills, "天气出游应召回组合判据 guide"
     names = " ".join(out.skills)
     assert "weather-outing" in names
+    assert "capability_ref" in out.skills_block
+
+    exemplar = run_retrieval_turn("上海现在多少度")
+    assert exemplar.exemplars, "真实 exemplar 注入不能因缺请求级 refs 静默归零"
+    assert "capability_ref" in exemplar.exemplars_block
+
+
+def test_retrieval_passes_the_final_live_catalog_mapping(monkeypatch):
+    from orchestrator.cloud import exemplars, skills
+    from orchestrator.cloud.planning import _assemble_capability_catalog
+
+    expected = dict(_assemble_capability_catalog(
+        eval_live.load_agents(include_edge=True)).pair_to_ref)
+    seen = []
+
+    async def skill_spy(_text, *, capability_refs):
+        seen.append(dict(capability_refs))
+        return "full", [], ""
+
+    async def exemplar_spy(_text, *, capability_refs):
+        seen.append(dict(capability_refs))
+        return "full", [], ""
+
+    monkeypatch.setattr(skills, "plan_skills", skill_spy)
+    monkeypatch.setattr(exemplars, "plan_exemplars", exemplar_spy)
+    run_retrieval_turn("offline mapping probe")
+
+    assert expected
+    assert seen == [expected, expected]
 
 
 def test_temporary_env_restores_missing_and_existing_values(monkeypatch):

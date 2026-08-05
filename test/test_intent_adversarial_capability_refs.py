@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from types import MappingProxyType, SimpleNamespace
 from pathlib import Path
@@ -14,12 +15,14 @@ from orchestrator.cloud import planning  # noqa: E402
 from orchestrator.cloud.context import WorkingSet  # noqa: E402
 from orchestrator.cloud.models import Plan, PlanContext, Step  # noqa: E402
 from support.intent_adversarial_trace import (  # noqa: E402
+    RecordingPlanner,
     TraceSink,
     attach_validation_trace,
 )
 
 
 _INVALID = "__invalid_capability_reference__"
+_MISSING = object()
 
 
 def _agent(agent_id: str, *intents: str):
@@ -111,6 +114,101 @@ def test_trace_failure_is_explicit_and_cannot_look_like_observed_empty_raw():
     assert sink.trace_errors and "resolver exploded" in sink.trace_errors[-1]
 
 
+def test_trace_records_original_validator_failure_then_reraises_unchanged():
+    agent = _agent("alpha", "alpha.one")
+    catalog = _catalog(agent)
+    marker = RuntimeError("production resolver failed")
+
+    class Builder:
+        def _parse_and_validate_data(self, _wire, _catalog, _text):
+            raise marker
+
+    builder, sink = Builder(), TraceSink()
+    attach_validation_trace(builder, sink)
+    with pytest.raises(RuntimeError) as caught:
+        builder._parse_and_validate_data(
+            {"steps": [{"capability_ref": "cap_0001"}]}, catalog, "test")
+    assert caught.value is marker
+    assert sink.validations == []
+    assert sink.trace_errors and "validation_delegate:RuntimeError" in sink.trace_errors[-1]
+
+
+def test_malformed_or_missing_steps_leave_sentinel_but_legal_omission_is_empty():
+    agent = _agent("alpha", "alpha.one")
+    catalog = _catalog(agent)
+
+    async def noop(_messages):
+        return ""
+
+    builder = planning.PlanBuilder(noop, noop)
+    sink = TraceSink()
+    attach_validation_trace(builder, sink)
+    invalid = [
+        {"addressed": True, "steps": ""},
+        {"addressed": True, "steps": 0},
+        {"addressed": True, "steps": {}},
+        {"addressed": True, "steps": None},
+        {"addressed": True},
+    ]
+    for wire in invalid:
+        assert builder._parse_and_validate_data(wire, catalog, "test") is None
+
+    not_addressed = {"addressed": False}
+    clarify = {
+        "addressed": True,
+        "clarify": {
+            "question": "which?",
+            "options": [
+                {"label": "one", "send_text": "choose one"},
+                {"label": "two", "send_text": "choose two"},
+            ],
+        },
+    }
+    assert builder._parse_and_validate_data(not_addressed, catalog, "test") is not None
+    assert builder._parse_and_validate_data(
+        {"addressed": False, "steps": []}, catalog, "test") is not None
+    assert builder._parse_and_validate_data(clarify, catalog, "test") is not None
+
+    addressed_malformed = {"addressed": False, "steps": None}
+    clarify_malformed = {**clarify, "steps": None}
+    assert builder._parse_and_validate_data(
+        addressed_malformed, catalog, "test") is None
+    assert builder._parse_and_validate_data(
+        clarify_malformed, catalog, "test") is None
+
+    assert [row.raw_intents for row in sink.validations[:5]] == [(_INVALID,)] * 5
+    assert [row.result for row in sink.validations[:5]] == ["rejected"] * 5
+    assert [row.raw_intents for row in sink.validations[5:8]] == [(), (), ()]
+    assert [row.result for row in sink.validations[5:8]] == ["accepted"] * 3
+    assert [row.raw_intents for row in sink.validations[8:]] == [(_INVALID,)] * 2
+    assert [row.result for row in sink.validations[8:]] == ["rejected", "rejected"]
+
+
+@pytest.mark.parametrize(("step", "expected_raw"), [
+    ({"id": "s1", "capability_ref": "cap_9999"}, _INVALID),
+    ({"id": "s1"}, _INVALID),
+    ({"id": "s1", "agent_id": "alpha", "intent": "alpha.one"}, _INVALID),
+    (7, _INVALID),
+    ({"id": "s1", "capability_ref": "cap_0001"}, "alpha.one"),
+])
+def test_not_addressed_rejects_every_nonempty_action(step, expected_raw):
+    agent = _agent("alpha", "alpha.one")
+    catalog = _catalog(agent)
+
+    async def noop(_messages):
+        return ""
+
+    builder = planning.PlanBuilder(noop, noop)
+    sink = TraceSink()
+    attach_validation_trace(builder, sink)
+
+    wire = {"addressed": False, "steps": [step]}
+    assert builder._parse_and_validate_data(wire, catalog, "test") is None
+    assert len(sink.validations) == 1
+    assert sink.validations[0].result == "rejected"
+    assert sink.validations[0].raw_intents == (expected_raw,)
+
+
 def test_two_empty_actions_avoid_fallback_but_invalid_nonempty_does_not(monkeypatch):
     agent = _agent("chitchat", "chitchat.talk")
 
@@ -158,6 +256,95 @@ def test_two_empty_actions_avoid_fallback_but_invalid_nonempty_does_not(monkeypa
         "do missing", WorkingSet(catalog=[agent]), PlanContext(session_id="s")))
     assert fallbacks == [True]
     assert not invalid_plan.plan_mode.endswith("_no_action")
+
+
+@pytest.mark.parametrize(("addressed", "is_no_action", "trace_result"), [
+    pytest.param(_MISSING, False, "rejected", id="missing"),
+    pytest.param(None, False, "rejected", id="null"),
+    pytest.param(0, False, "rejected", id="zero"),
+    pytest.param(1, False, "rejected", id="one"),
+    pytest.param("true", False, "rejected", id="string-true"),
+    pytest.param([], False, "rejected", id="list"),
+    pytest.param({}, False, "rejected", id="object"),
+    pytest.param(False, False, "accepted", id="false"),
+    pytest.param(True, True, "rejected", id="true"),
+])
+def test_no_action_requires_exact_json_true_and_preserves_both_attempts(
+        monkeypatch, addressed, is_no_action, trace_result):
+    agent = _agent("chitchat", "chitchat.talk")
+
+    wire = {"steps": []}
+    if addressed is not _MISSING:
+        wire["addressed"] = addressed
+    raw = json.dumps(wire)
+    calls = {"llm": 0, "fallback": 0}
+
+    async def llm(_messages):
+        calls["llm"] += 1
+        return raw
+
+    async def resolve(_query, top_k=1):
+        return []
+
+    async def fallback(_text, _agents):
+        calls["fallback"] += 1
+        return Plan(steps=[Step(id="fb", agent_id="chitchat",
+                                endpoint=agent.endpoint, intent="chitchat.talk")])
+
+    monkeypatch.setenv("PLANNER_TOOLCALL", "off")
+    monkeypatch.setenv("SKILLS_MODE", "off")
+    monkeypatch.setenv("EXEMPLARS_MODE", "off")
+    builder = planning.PlanBuilder(llm, resolve)
+    sink = TraceSink()
+    attach_validation_trace(builder, sink)
+    builder._fallback = fallback
+
+    # The directive makes addressed=false take the existing retry/fallback
+    # safety path too, so every non-True D14 candidate exercises two attempts.
+    plan = asyncio.run(builder.build(
+        "记住这条信息", WorkingSet(catalog=[agent]), PlanContext(session_id="s")))
+
+    assert calls["llm"] == 2
+    assert len(sink.validations) == 2
+    assert sink.trace_errors == []
+    assert [trace.result for trace in sink.validations] == [trace_result] * 2
+    assert [trace.raw_intents for trace in sink.validations] == [(), ()]
+    assert [trace.raw_candidate.steps for trace in sink.validations] == [(), ()]
+    assert plan.raw_llm == raw
+    if is_no_action:
+        assert calls["fallback"] == 0
+        assert plan.plan_mode.endswith("_no_action")
+    else:
+        assert calls["fallback"] == 1
+        assert not plan.plan_mode.endswith("_no_action")
+
+
+def test_replan_done_with_invalid_nonempty_ref_is_rejected_not_no_action():
+    agent = _agent("alpha", "alpha.one")
+
+    async def llm(_messages):
+        return ('{"done":true,"steps":['
+                '{"id":"r1","capability_ref":"cap_9999","slots":{}}]}')
+
+    async def resolve(_query, top_k=1):
+        return []
+
+    builder = planning.PlanBuilder(llm, resolve)
+    sink = TraceSink()
+    attach_validation_trace(builder, sink)
+    planner = RecordingPlanner(builder, sink)
+    decision = asyncio.run(planner.replan(
+        "finish safely", [], [agent], PlanContext(session_id="s"),
+        working_set=WorkingSet()))
+
+    assert decision.done is True and decision.steps == []
+    assert len(sink.validations) == 1
+    trace = sink.validations[0]
+    assert trace.stage == "replan"
+    assert sink.validation_stage == "build"
+    assert trace.result == "rejected"
+    assert trace.raw_intents == (_INVALID,)
+    assert trace.accepted.steps == ()
 
 
 def test_resolver_preserves_valid_dag_and_validator_rehome_boundary():

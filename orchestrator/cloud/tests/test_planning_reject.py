@@ -12,7 +12,9 @@ import os
 from unittest.mock import MagicMock
 
 from orchestrator.cloud import planning as P
-from orchestrator.cloud.planning import PlanBuilder, _planner_system
+from orchestrator.cloud.planning import (
+    PlanBuilder, _assemble_capability_catalog, _planner_system,
+)
 from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.context import WorkingSet
 from agents._sdk.manifest import load_manifest
@@ -105,7 +107,8 @@ def test_parse_clarify_truncates_to_three():
 
 def test_addressed_false_short_circuits():
     b, _ = _builder("x")
-    plan = b._parse_and_validate('{"addressed":false,"steps":[]}', {}, "妈你到哪了")
+    plan = b._parse_and_validate(
+        '{"addressed":false,"steps":[]}', _assemble_capability_catalog([]), "妈你到哪了")
     assert plan is not None
     assert plan.addressed is False
     assert plan.steps == []
@@ -114,17 +117,18 @@ def test_addressed_false_short_circuits():
 def test_addressed_missing_is_fail_open_true():
     b, _ = _builder("x")
     agents = [MockAgent("nearby", ["nearby.search"])]
-    amap = {a.manifest.agent_id: a for a in agents}
+    catalog = _assemble_capability_catalog(agents)
     plan = b._parse_and_validate(
-        '{"steps":[{"id":"s1","agent_id":"nearby","intent":"nearby.search","slots":{}}]}',
-        amap, "找川菜")
+        '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{}}]}',
+        catalog, "找川菜")
     assert plan.addressed is True
 
 
 def test_addressed_garbage_is_fail_open_true():
     b, _ = _builder("x")
     # addressed 是垃圾字符串（非 bool false）→ 视作 True，且无 steps → None（走重试/fallback）
-    plan = b._parse_and_validate('{"addressed":"maybe","steps":[]}', {}, "嗯")
+    plan = b._parse_and_validate(
+        '{"addressed":"maybe","steps":[]}', _assemble_capability_catalog([]), "嗯")
     assert plan is None      # 非 false + 无 steps + 无 clarify → 解析失败语义（现状）
 
 
@@ -134,7 +138,7 @@ def test_clarify_without_steps_parsed():
         "question": "找附近还是导航？",
         "options": [{"label": "找附近", "send_text": "找附近川菜"},
                     {"label": "导航", "send_text": "导航去川菜馆"}]}})
-    plan = b._parse_and_validate(raw, {}, "华润大厦")
+    plan = b._parse_and_validate(raw, _assemble_capability_catalog([]), "华润大厦")
     assert plan is not None
     assert plan.steps == []
     assert plan.clarify and plan.clarify["question"].startswith("找附近")
@@ -143,12 +147,12 @@ def test_clarify_without_steps_parsed():
 def test_clarify_ignored_when_steps_present():
     b, _ = _builder("x")
     agents = [MockAgent("nearby", ["nearby.search"])]
-    amap = {a.manifest.agent_id: a for a in agents}
+    catalog = _assemble_capability_catalog(agents)
     raw = json.dumps({
-        "steps": [{"id": "s1", "agent_id": "nearby", "intent": "nearby.search", "slots": {}}],
+        "steps": [{"id": "s1", "capability_ref": "cap_0001", "slots": {}}],
         "clarify": {"question": "?", "options": [{"label": "a", "send_text": "x"},
                                                  {"label": "b", "send_text": "y"}]}})
-    plan = b._parse_and_validate(raw, amap, "找川菜")
+    plan = b._parse_and_validate(raw, catalog, "找川菜")
     assert len(plan.steps) == 1
     assert plan.clarify is None      # 互斥：steps 非空则 clarify 忽略
 

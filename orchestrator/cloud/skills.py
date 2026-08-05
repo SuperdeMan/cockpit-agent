@@ -128,7 +128,7 @@ class SkillDoc:
     type: str                      # guide | policy | workflow
     description: str
     knowledge: str
-    body: str = ""                 # 实际注入文本 = knowledge + few_shots 渲染（预算按它算）
+    body: str = ""                 # 静态 knowledge；few_shots 在请求时按 capability refs 渲染
     priority: int = 50
     keywords: tuple = ()
     few_shots: tuple = ()
@@ -148,17 +148,52 @@ def _bigrams(text: str) -> set:
     return {s[i:i + 2] for i in range(len(s) - 1)}
 
 
-def _render_few_shots(shots: tuple) -> str:
-    """few_shots → 注入文本（与既有 knowledge 内嵌示例同风格）。plan 为 dict 时紧凑
-    JSON 序列化——few-shot 的价值恰在输出形态示范，格式必须与要求的输出一致。"""
+def _resolve_few_shot_plan(plan, capability_refs) -> dict | None:
+    """Translate one governed semantic plan to this request's ref-only wire.
+
+    Governance assets keep real pairs so they remain reviewable.  A partial DAG is
+    more misleading than no example, therefore one missing pair drops the whole
+    example instead of leaving the remaining steps behind.
+    """
+    if isinstance(plan, str):
+        try:
+            plan = json.loads(plan)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list):
+        return None
+    resolved_steps = []
+    for step in plan["steps"]:
+        if not isinstance(step, dict):
+            return None
+        agent_id = str(step.get("agent_id") or step.get("agent") or "").strip()
+        intent = str(step.get("intent") or "").strip()
+        ref = capability_refs.get((agent_id, intent)) if capability_refs is not None else None
+        if not ref:
+            return None
+        resolved = {
+            key: value for key, value in step.items()
+            if key not in {"agent_id", "agent", "intent", "capability_ref"}
+        }
+        resolved["capability_ref"] = ref
+        # Identity is easiest to audit first in the compact JSON while dict order
+        # has no semantic effect on the model or validator.
+        resolved = {"id": resolved.pop("id", f"s{len(resolved_steps) + 1}"),
+                    "capability_ref": resolved.pop("capability_ref"), **resolved}
+        resolved_steps.append(resolved)
+    return {**{k: v for k, v in plan.items() if k != "steps"},
+            "steps": resolved_steps}
+
+
+def _render_few_shots(shots: tuple, capability_refs=None) -> str:
+    """Render structured examples through the current request's ref mapping."""
     parts = []
     for s in shots:
         user = str(s.get("user") or "").strip()
-        plan = s.get("plan")
+        plan = _resolve_few_shot_plan(s.get("plan"), capability_refs)
         if not user or plan is None:
             continue
-        plan_txt = plan.strip() if isinstance(plan, str) else json.dumps(
-            plan, ensure_ascii=False, separators=(",", ":"))
+        plan_txt = json.dumps(plan, ensure_ascii=False, separators=(",", ":"))
         parts.append(f"示例——用户：『{user}』\n→ {plan_txt}")
     return "\n\n".join(parts)
 
@@ -296,8 +331,9 @@ class SkillStore:
                            path.name, sorted(unknown))
         few_shots = tuple(s for s in (raw.get("few_shots") or []) if isinstance(s, dict))
         plan_repairs = _parse_plan_repairs(raw.get("plan_repairs"), path.name)
-        shots_txt = _render_few_shots(few_shots)
-        body = knowledge + (f"\n\n{shots_txt}" if shots_txt else "")
+        # Request refs do not exist at load time.  ``body`` remains the static
+        # knowledge portion; structured few-shots are rendered only at injection.
+        body = knowledge
         kw_raw = raw.get("keywords") or []
         if not isinstance(kw_raw, list):           # 写成字符串会被逐字符迭代成噪声关键词
             logger.warning("skill %s keywords 必须是列表（实际 %s）——忽略",
@@ -425,8 +461,13 @@ async def retrieve_guides(text: str, store: SkillStore, k: int = SKILL_TOP_K,
 
 # ── 渲染 ─────────────────────────────────────────────────────────────────────
 
+def _render_doc(doc: SkillDoc, capability_refs=None) -> str:
+    shots = _render_few_shots(doc.few_shots, capability_refs)
+    return doc.knowledge + (f"\n\n{shots}" if shots else "")
+
+
 def render_skills_block(policies: list[SkillDoc], guides: list[SkillDoc],
-                        budget: int = SKILL_BUDGET
+                        budget: int = SKILL_BUDGET, capability_refs=None
                         ) -> tuple[str, list[SkillDoc], list[SkillDoc]]:
     """policies 常驻在前（小而全量，治理层控总量）；guides **按调用方传入顺序**注入与
     裁剪——plan_skills 传的是检索相关度序（2026-07-27 四批：此前按 priority 重排，
@@ -439,16 +480,18 @@ def render_skills_block(policies: list[SkillDoc], guides: list[SkillDoc],
     parts = ["== 规划知识（按需注入）=="]
     used = len(parts[0])
     for d in policies:
-        parts.append(d.body)
-        used += len(d.body)
+        rendered = _render_doc(d, capability_refs)
+        parts.append(rendered)
+        used += len(rendered)
     injected, clipped = [], []
     for d in guides:
-        if used + len(d.body) > budget:
+        rendered = _render_doc(d, capability_refs)
+        if used + len(rendered) > budget:
             logger.info("skill %s 超预算被裁（used=%d）", d.name, used)
             clipped.append(d)
             continue
-        parts.append(d.body)
-        used += len(d.body)
+        parts.append(rendered)
+        used += len(rendered)
         injected.append(d)
     return "\n\n".join(parts), injected, clipped
 
@@ -468,7 +511,7 @@ def skills_mode() -> str:
     return mode if mode in ("off", "shadow", "canary", "full") else "full"
 
 
-async def plan_skills(text: str) -> tuple[str, list[str], str]:
+async def plan_skills(text: str, capability_refs=None) -> tuple[str, list[str], str]:
     """规划轮入口：返回 (mode, 记录名单, 注入块)。
 
     shadow：检索并记录（obs/plan.skills），块为空——零行为变化；
@@ -489,14 +532,15 @@ async def plan_skills(text: str) -> tuple[str, list[str], str]:
     if mode == "shadow":
         return mode, [f"{mode}:{d.name}{_tag(d.name)}" for d, _, _ in pairs], ""
     policies = store.policies()
-    block, injected, clipped = render_skills_block(policies, [d for d, _, _ in pairs])
+    block, injected, clipped = render_skills_block(
+        policies, [d for d, _, _ in pairs], capability_refs=capability_refs)
     names = [f"{mode}:{d.name}{_tag(d.name)}" for d in injected]
     names += [f"{mode}:{d.name}{_tag(d.name)}!clipped" for d in clipped]
     names += [f"{mode}:{d.name}" for d in policies]
     return mode, names, block
 
 
-def render_for_names(names: list[str] | None) -> str:
+def render_for_names(names: list[str] | None, capability_refs=None) -> str:
     """T2 再规划的知识继承（2026-07-27，评审缺口 4）：按初规划**实际注入**的名单重渲染。
 
     不重新检索——再规划的输入是观察结果不是用户话术，检索无锚；shadow/off 轮与被裁
@@ -516,7 +560,8 @@ def render_for_names(names: list[str] | None) -> str:
     docs = {d.name: d for d in default_store().load()}
     policies = [docs[n] for n in wanted if n in docs and docs[n].type == "policy"]
     guides = [docs[n] for n in wanted if n in docs and docs[n].type == "guide"]
-    block, _, _ = render_skills_block(policies, guides)
+    block, _, _ = render_skills_block(
+        policies, guides, capability_refs=capability_refs)
     return block
 
 

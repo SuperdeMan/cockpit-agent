@@ -8,15 +8,138 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from types import MappingProxyType
 from security.permission import check_permission
 from .models import Plan, Step, PlanContext, ReplanDecision
-from .context import WorkingSet, _FALLBACK_AGENT
+from .context import (
+    WorkingSet,
+    _FALLBACK_AGENT,
+    _is_edge_core,
+    assemble_budgeted_catalog,
+)
 from .route_hints import RouteHintEngine
 from . import exemplars as _exemplars
 from . import skills as _skills
 
 logger = logging.getLogger("planner.planning")
+
+
+@dataclass(frozen=True)
+class PlannerCapabilityCatalog:
+    """Immutable, request-local authority shared by every planner wire path."""
+
+    visible_agents: tuple
+    semantic_mapping_text: str
+    ref_to_pair: MappingProxyType
+    pair_to_ref: MappingProxyType
+    agent_map: MappingProxyType
+    catalog_stats: MappingProxyType
+
+
+_CAPABILITY_MAPPING_HEAD = "== 本请求 capability_ref → 可用能力语义映射 =="
+
+
+def _capability_pairs(agents: list) -> list[tuple[str, str]]:
+    return sorted({
+        (agent_id, intent)
+        for agent in (agents or [])
+        if (agent_id := str(getattr(
+            getattr(agent, "manifest", None), "agent_id", "") or "").strip())
+        for cap in (getattr(agent.manifest, "capabilities", None) or [])
+        if (intent := str(getattr(cap, "intent", "") or "").strip())
+    })
+
+
+def _build_ref_maps(agents: list) -> tuple[dict[str, tuple[str, str]],
+                                           dict[tuple[str, str], str]]:
+    ref_to_pair = {
+        f"cap_{index:04d}": pair
+        for index, pair in enumerate(_capability_pairs(agents), 1)
+    }
+    return ref_to_pair, {pair: ref for ref, pair in ref_to_pair.items()}
+
+
+def _unique_agents_by_id(agents: list) -> dict[str, object]:
+    """Index candidates without letting duplicate registry identities diverge.
+
+    A duplicate ID with complementary capabilities cannot be represented by the
+    existing ``agent_map`` without silently discarding one endpoint.  Reject that
+    malformed request catalog before rendering refs which the validator could not
+    later honour.
+    """
+    by_id: dict[str, object] = {}
+    for agent in (agents or []):
+        agent_id = str(getattr(
+            getattr(agent, "manifest", None), "agent_id", "") or "").strip()
+        if not agent_id:
+            continue
+        if agent_id in by_id:
+            raise ValueError(f"duplicate planner agent_id: {agent_id}")
+        by_id[agent_id] = agent
+    return by_id
+
+
+def _render_capability_mapping(agents: list) -> str:
+    """Render the exact grouped ref mapping exposed to and charged for the LLM."""
+    ref_to_pair, _ = _build_ref_maps(agents)
+    by_id = _unique_agents_by_id(agents)
+    capabilities_by_agent: dict[str, list[dict]] = {}
+    for ref, (agent_id, intent) in ref_to_pair.items():
+        agent = by_id[agent_id]
+        cap = next((candidate for candidate in agent.manifest.capabilities
+                    if str(getattr(candidate, "intent", "") or "").strip() == intent),
+                   None)
+        if cap is None:
+            raise ValueError(
+                f"planner capability disappeared while rendering: {agent_id}/{intent}")
+        semantics = {
+            "ref": ref,
+            "name": intent,
+        }
+        # Preserve the measured edge-core compression: names carry their routing
+        # semantics, while repeated empty slots/descriptions only add prompt cost.
+        if not _is_edge_core(agent):
+            semantics["slots"] = list(getattr(cap, "slots", None) or [])
+            semantics["description"] = str(getattr(cap, "description", "") or "")
+        capabilities_by_agent.setdefault(agent_id, []).append(semantics)
+
+    lines = [_CAPABILITY_MAPPING_HEAD]
+    for agent_id, capabilities in capabilities_by_agent.items():
+        agent = by_id[agent_id]
+        semantics = {
+            "service": agent_id,
+            "kind": str(getattr(agent.manifest, "kind", "") or "agent"),
+            "deployment": str(getattr(agent.manifest, "deployment", "") or "cloud"),
+            "trust": str(getattr(agent.manifest, "trust_level", "") or ""),
+            "capabilities": capabilities,
+        }
+        lines.append(json.dumps(
+            semantics, ensure_ascii=False, separators=(",", ":")))
+    if not ref_to_pair:
+        lines.append("（本请求无可用能力；steps 必须为 []）")
+    return "\n".join(lines)
+
+
+def _assemble_capability_catalog(agents: list) -> PlannerCapabilityCatalog:
+    """Build the sole request-local capability authority after permission filtering."""
+    stats: dict = {}
+    visible, mapping_text = assemble_budgeted_catalog(
+        list(agents or []), _render_capability_mapping, stats)
+    ref_to_pair, pair_to_ref = _build_ref_maps(visible)
+    agent_map = {
+        str(getattr(agent.manifest, "agent_id", "") or ""): agent
+        for agent in visible
+    }
+    return PlannerCapabilityCatalog(
+        visible_agents=tuple(visible),
+        semantic_mapping_text=mapping_text,
+        ref_to_pair=MappingProxyType(ref_to_pair),
+        pair_to_ref=MappingProxyType(pair_to_ref),
+        agent_map=MappingProxyType(agent_map),
+        catalog_stats=MappingProxyType(dict(stats)),
+    )
 
 
 def _verification_dict(cap) -> dict:
@@ -97,7 +220,7 @@ def _date_line() -> str:
 _PLANNER_BASE = (
     "你是智能座舱的任务编排器。根据用户话术和可用 agent 能力清单，输出 JSON 调用计划。\n"
     "格式严格为：{\"complexity\":\"simple|adaptive\",\"goal\":\"一句话目标\","
-    "\"steps\":[{\"id\":\"s1\",\"agent_id\":\"..\",\"intent\":\"..\","
+    "\"steps\":[{\"id\":\"s1\",\"capability_ref\":\"从本请求映射选择\","
     "\"slots\":{..},\"depends_on\":[],\"slot_refs\":{}}]}\n"
     "simple 表示一次可确定全部步骤；adaptive 表示必须根据运行结果决定下一步"
     "（例如满了换次近、失败换一家、探索式查询）。普通单域、多意图并行、固定串行都选 simple。\n"
@@ -120,27 +243,11 @@ _PLANNER_BASE = (
     "- 播报类（query）：查询后播报结果，需要联网。如 info.weather、info.news\n"
     "- 不同类型互不阻塞，可并行；同类型也可并行（只要无数据依赖）\n"
     "\n"
-    "== 示例 ==\n"
-    "用户：『打开空调并播放音乐』\n"
-    "→ 2 个 step，无依赖，并行执行：\n"
-    "{\"steps\":["
-    "{\"id\":\"s1\",\"agent_id\":\"hvac\",\"intent\":\"hvac.set\",\"slots\":{\"temperature\":\"24\"},\"depends_on\":[],\"slot_refs\":{}},"
-    "{\"id\":\"s2\",\"agent_id\":\"media\",\"intent\":\"media.play\",\"slots\":{},\"depends_on\":[],\"slot_refs\":{}}"
-    "]}\n"
-    "\n"
-    "用户：『找川菜馆然后帮我订位』\n"
-    "→ 2 个 step，有依赖，串行：\n"
-    "{\"steps\":["
-    "{\"id\":\"s1\",\"agent_id\":\"nearby\",\"intent\":\"nearby.search\",\"slots\":{\"category\":\"餐饮\",\"cuisine\":\"川菜\"},\"depends_on\":[],\"slot_refs\":{}},"
-    "{\"id\":\"s2\",\"agent_id\":\"nearby\",\"intent\":\"nearby.order\",\"slots\":{},\"depends_on\":[\"s1\"],\"slot_refs\":{\"poi_id\":\"s1.data.items.0.id\"}}"
-    "]}\n"
-    "\n"
-    "用户：『打开空调顺便看看今天天气』\n"
-    "→ 2 个 step，无依赖，并行（控制类 + 播报类互不阻塞）：\n"
-    "{\"steps\":["
-    "{\"id\":\"s1\",\"agent_id\":\"hvac\",\"intent\":\"hvac.set\",\"slots\":{\"temperature\":\"24\"},\"depends_on\":[],\"slot_refs\":{}},"
-    "{\"id\":\"s2\",\"agent_id\":\"info\",\"intent\":\"info.weather\",\"slots\":{},\"depends_on\":[],\"slot_refs\":{}}"
-    "]}\n"
+    "== DAG 形态规则 ==\n"
+    "- 两个独立动作：输出两个 step，两者 depends_on 都为空\n"
+    "- 先获取结果再执行：后一步 depends_on 指向前一步，slot_refs 引用它的结果\n"
+    "- 控制与查询没有数据依赖时仍并行，不因领域不同强制串行\n"
+    "- 每个 step 的 capability_ref 只能从本请求末尾映射中选择\n"
     "\n"
     "== 通用规则 ==\n"
     "- 用 slot_refs 引用前序 step 结果，如 {\"poi_id\":\"s1.data.items.0.id\"}\n"
@@ -158,9 +265,8 @@ _PLANNER_BASE = (
 
 _CATALOG_ALLOWLIST_SECTION = (
     "\n\n== 本轮动态能力白名单 ==\n"
-    "- 下方『可用 Agent 清单』是本轮动态 catalog，也是 agent_id 和 intent 的唯一白名单；"
-    "每个 step 只能原样使用清单中同一能力条目里的 agent_id 与 intent 组合\n"
-    "- 不得编造清单里没有的 agent 或 intent，不得输出缺席能力，也不得替换用户真正请求但"
+    "- 本请求末尾的 capability_ref 映射是唯一调用权；每个 step 只能原样选择其中一个 ref\n"
+    "- 不得编造映射里没有的 ref，不得输出缺席能力，也不得替换用户真正请求但"
     "缺席的能力（包括拿清单中已有的相近能力顶替）\n"
     "- 如果用户请求只能由本轮 catalog 中缺席的能力承接，仍视为已受话，严格返回"
     " {\"addressed\":true,\"steps\":[]}；不要为了给出非空 steps 而替换或虚构能力"
@@ -240,7 +346,7 @@ _TOOLCALL_SECTION = (
 _SUBMIT_PLAN_NAME = "submit_plan"
 
 
-def _submit_plan_tools(agents: list | None = None) -> dict:
+def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
     """submit_plan 工具定义（线格式 ``{"tools":[...],"tool_choice":named 强制}``，RFC §3.2）。
 
     schema 顶层=现 JSON 协议顶层——语义零漂移，`_parse_and_validate_data` 直接消费；
@@ -248,30 +354,21 @@ def _submit_plan_tools(agents: list | None = None) -> dict:
     _CLARIFY_SECTION 同门控（off 时 schema 不反向引导模型输出澄清）。named tool_choice
     强制 + prompt 指令双保险；某家不认 → build() 轮内降级承接（RFC §4）。
 
-    build() 传入权限过滤后的本轮 catalog 时，agent_id / intent 的 enum 由 manifest 动态
-    生成；不传仅保留给协议形状测试与独立探针，生产规划调用不会退回静态开放字符串。"""
-    catalog_pairs = sorted({
-        (str(getattr(agent.manifest, "agent_id", "") or "").strip(),
-         str(getattr(cap, "intent", "") or "").strip())
-        for agent in (agents or [])
-        for cap in (getattr(agent.manifest, "capabilities", None) or [])
-        if str(getattr(agent.manifest, "agent_id", "") or "").strip()
-        and str(getattr(cap, "intent", "") or "").strip()
-    })
-    agent_id_schema = {"type": "string"}
-    intent_schema = {"type": "string"}
-    if agents is not None and catalog_pairs:
-        agent_id_schema["enum"] = sorted({agent_id for agent_id, _ in catalog_pairs})
-        intent_schema["enum"] = sorted({intent for _, intent in catalog_pairs})
-        agent_id_schema["description"] = (
-            "只能从本轮动态 catalog 的 enum 原样选择；请求能力缺席时保持 steps=[]")
-        intent_schema["description"] = (
-            "只能从本轮动态 catalog 的 enum 原样选择；请求能力缺席时保持 steps=[]")
+    build() 传入权限过滤且预算裁剪后的请求级 catalog；工具、prompt、解析和
+    validator 因此共用同一可见面。缺 catalog 时只能提交空 steps，不退回开放字符串。"""
+    refs = list(catalog.ref_to_pair) if catalog is not None else []
+    capability_ref_schema = {
+        "type": "string",
+        "description": (
+            "只能从本请求动态映射的 enum 原样选择；"
+            "请求能力缺席时保持 steps=[]"),
+    }
+    if refs:
+        capability_ref_schema["enum"] = refs
 
     step_item_schema = {"type": "object", "properties": {
         "id": {"type": "string"},
-        "agent_id": agent_id_schema,
-        "intent": intent_schema,
+        "capability_ref": capability_ref_schema,
         # 语义必须随字段走（真栈 B1-4：空 object 诱发省略追问丢继承槽）
         # （date=后天）丢继承槽（city=杭州），执行错落定位城市；JSON 文本路径靠
         # prompt 规则+few-shot 引导写全、从不丢。
@@ -281,28 +378,15 @@ def _submit_plan_tools(agents: list | None = None) -> dict:
             "只写变化的槽位会导致执行错对象")},
         "depends_on": {"type": "array", "items": {"type": "string"}},
         "slot_refs": {"type": "object"},
-    }, "required": ["id", "agent_id", "intent"]}
-    if agents is not None and catalog_pairs:
-        intents_by_agent: dict[str, list[str]] = {}
-        for agent_id, intent in catalog_pairs:
-            intents_by_agent.setdefault(agent_id, []).append(intent)
-        # 两个独立 enum 只能挡住 catalog 外值，挡不住合法 agent 配上别家 intent。
-        # oneOf 把 manifest 的真实归属也编码进 schema；validator 仍是消费端第二防线。
-        step_item_schema["oneOf"] = [
-            {"properties": {
-                "agent_id": {"type": "string", "enum": [agent_id]},
-                "intent": {"type": "string", "enum": intents},
-            }, "required": ["agent_id", "intent"]}
-            for agent_id, intents in sorted(intents_by_agent.items())
-        ]
+    }, "required": ["id", "capability_ref"]}
     steps_schema = {
         "type": "array",
         "description": (
-            "步骤只能使用本轮动态 catalog 的 agent_id/intent 配对；请求所需能力缺席时"
+            "步骤只能使用本请求动态 catalog 的 capability_ref；请求所需能力缺席时"
             "返回 addressed=true 且 steps=[]，不得编造或用相近能力替换"),
         "items": step_item_schema,
     }
-    if agents is not None and not catalog_pairs:
+    if not refs:
         # 空 catalog 没有合法 enum（JSON Schema enum 必须非空）；直接约束 steps 为空。
         steps_schema["maxItems"] = 0
 
@@ -357,12 +441,12 @@ def _planner_system(toolcall: bool = False) -> str:
 _REPLAN_SYSTEM = (
     "你是智能座舱有界任务循环的再规划器。根据用户目标、最近观察和可用能力，"
     "一次性判断任务是否完成，并在未完成时给出下一批 JSON DAG。\n"
-    "下方『可用能力』是本轮动态 catalog，也是 agent_id 和 intent 的唯一白名单；"
-    "steps 只能原样使用清单中同一能力条目里的组合。不得编造 catalog 外能力，不得替换"
+    "下方本请求 capability_ref 映射是唯一调用权；steps 只能原样选择映射中的 ref。"
+    "不得编造 catalog 外能力，不得替换"
     "用户请求的缺席能力，也不得输出 catalog 中缺席的能力；没有可承接能力时保持"
     " steps=[]，不得拿相近能力顶替。\n"
     "严格输出 JSON：{\"done\":true|false,\"steps\":[{\"id\":\"r1\","
-    "\"agent_id\":\"..\",\"intent\":\"..\",\"slots\":{},\"depends_on\":[],"
+    "\"capability_ref\":\"从本请求映射选择\",\"slots\":{},\"depends_on\":[],"
     "\"slot_refs\":{}}]}。仅在必要时改变计划；不得输出解释。"
 )
 
@@ -414,8 +498,10 @@ class PlanBuilder:
         # 权限过滤：只保留用户有权调用的 Agent
         if granted_permissions is not None:
             agents = self._filter_by_permission(agents, granted_permissions)
-
-        agent_map = {a.manifest.agent_id: a for a in agents}
+        catalog = _assemble_capability_catalog(agents)
+        agents = list(catalog.visible_agents)
+        agent_map = catalog.agent_map
+        working_set.catalog_stats = dict(catalog.catalog_stats)
 
         # M0b Skill 层（Full Migration 后默认 full）：canary/full=注入块；shadow=只检索
         # 记录；off=注入关（debug 档，无领域知识）。词法档零网络同步计算；hybrid 档一次
@@ -425,7 +511,9 @@ class PlanBuilder:
         # 规划轮的网络等待翻倍——gather 并发后墙钟仍是一次（共享 embedding.py 的冷却，
         # 网关挂了两边一起回落词法而不是各超时一次）。
         (sk_mode, sk_names, sk_block), (_, ex_names, ex_block) = await asyncio.gather(
-            _skills.plan_skills(text), _exemplars.plan_exemplars(text))
+            _skills.plan_skills(text, capability_refs=catalog.pair_to_ref),
+            _exemplars.plan_exemplars(text, capability_refs=catalog.pair_to_ref),
+        )
 
         # M1a（RFC §4）：PLANNER_TOOLCALL=on 且注入了 llm_tool_fn → 第 1 轮走 submit_plan
         # 工具通道；协议失败（异常/无 tool_calls）同轮内容抢救、第 2 轮直接 JSON 路径——
@@ -442,27 +530,27 @@ class PlanBuilder:
         for attempt in range(2):
             mode = "json"
             if toolcall and attempt == 0:
-                raw, args = await self._llm_plan_tools(text, agents, working_set,
+                raw, args = await self._llm_plan_tools(text, catalog, working_set,
                                                        skills_block=sk_block,
                                                        exemplars_block=ex_block)
                 last_raw = raw or last_raw
                 if args is not None:
                     data = args
-                    parsed = self._parse_and_validate_data(args, agent_map, text)
+                    parsed = self._parse_and_validate_data(args, catalog, text)
                     mode = "toolcall"
                 else:
                     # 模型无视工具直接文本输出（或 named tool_choice 不被支持）→ 同轮抢救
                     data = self._extract_data(raw)
-                    parsed = (self._parse_and_validate_data(data, agent_map, text)
+                    parsed = (self._parse_and_validate_data(data, catalog, text)
                               if data is not None else None)
                     mode = "toolcall_salvage"
             else:
-                raw = await self._llm_plan(text, agents, working_set,
+                raw = await self._llm_plan(text, catalog, working_set,
                                            skills_block=sk_block,
                                            exemplars_block=ex_block)
                 last_raw = raw or last_raw
                 data = self._extract_data(raw)
-                parsed = (self._parse_and_validate_data(data, agent_map, text)
+                parsed = (self._parse_and_validate_data(data, catalog, text)
                           if data is not None else None)
                 mode = "toolcall_fallback" if toolcall else "json"
             # 祈使指令不接受 not_addressed（2026-07-27 真机）：置为「本次没解析出计划」，
@@ -537,10 +625,10 @@ class PlanBuilder:
         return plan
 
     @staticmethod
-    def _planner_user_msg(text: str, agents: list, working_set: WorkingSet,
+    def _planner_user_msg(text: str, catalog: PlannerCapabilityCatalog,
+                          working_set: WorkingSet,
                           skills_block: str = "", exemplars_block: str = "") -> str:
         """双路径共用的 user message（逐字一致=A/B 单变量，RFC §3.3）。"""
-        catalog = WorkingSet.render_catalog(agents, working_set.catalog_stats)
         ctx_block = working_set.render_context()  # 记忆 +（焦点）+ 历史，统一预算
         # skills 块紧跟日期锚之后（policy 文本引用「上方『当前日期』」，顺序是契约）
         sk_part = f"{skills_block}\n\n" if skills_block else ""
@@ -551,11 +639,12 @@ class PlanBuilder:
         # 前面，弱模型会把后出现的旧范例当成仍可调用的能力；因此把本轮唯一白名单
         # 放到全部知识、范例和上下文之后，紧贴用户原话重新封口。
         return (f"{_date_line()}\n{sk_part}{ex_part}{ctx_block}"
-                f"可用能力:\n{catalog}\n\n用户说: {text}")
+                f"{catalog.semantic_mapping_text}\n\n用户说: {text}")
 
-    async def _llm_plan(self, text: str, agents: list, working_set: WorkingSet,
+    async def _llm_plan(self, text: str, catalog: PlannerCapabilityCatalog,
+                        working_set: WorkingSet,
                         skills_block: str = "", exemplars_block: str = "") -> str:
-        user_msg = self._planner_user_msg(text, agents, working_set, skills_block,
+        user_msg = self._planner_user_msg(text, catalog, working_set, skills_block,
                                           exemplars_block)
         try:
             raw = await self._llm([
@@ -568,19 +657,20 @@ class PlanBuilder:
             logger.warning("LLM plan exception: %s", e)
             return ""
 
-    async def _llm_plan_tools(self, text: str, agents: list, working_set: WorkingSet,
+    async def _llm_plan_tools(self, text: str, catalog: PlannerCapabilityCatalog,
+                              working_set: WorkingSet,
                               skills_block: str = "", exemplars_block: str = ""
                               ) -> tuple[str, dict | None]:
         """M1a submit_plan 工具通道（RFC §4）。返回 (raw, args)：args=工具 arguments
         dict（协议成功）；None=协议失败（异常/无 tool_calls），raw 保留 content 供同轮
         文本抢救与 obs raw_llm 采集。"""
-        user_msg = self._planner_user_msg(text, agents, working_set, skills_block,
+        user_msg = self._planner_user_msg(text, catalog, working_set, skills_block,
                                           exemplars_block)
         try:
             content, calls = await self._llm_tools([
                 {"role": "system", "content": _planner_system(toolcall=True)},
                 {"role": "user", "content": user_msg},
-            ], _submit_plan_tools(agents))
+            ], _submit_plan_tools(catalog))
         except Exception as e:
             logger.warning("LLM plan toolcall exception: %s", e)
             return "", None
@@ -611,17 +701,20 @@ class PlanBuilder:
         """
         if granted_permissions is not None:
             agents = self._filter_by_permission(agents, granted_permissions)
-        agent_map = {a.manifest.agent_id: a for a in agents}
+        catalog = _assemble_capability_catalog(agents)
+        if working_set is not None:
+            working_set.catalog_stats = dict(catalog.catalog_stats)
         ctx_block = working_set.render_context() if working_set is not None else ""
-        sk_block = _skills.render_for_names(skill_names)
+        sk_block = _skills.render_for_names(
+            skill_names, capability_refs=catalog.pair_to_ref)
         sk_part = f"{sk_block}\n\n" if sk_block else ""   # 位置同初规划：紧跟日期锚（顺序契约）
-        ex_block = _exemplars.render_for_names(exemplar_names)
+        ex_block = _exemplars.render_for_names(
+            exemplar_names, capability_refs=catalog.pair_to_ref)
         ex_part = f"{ex_block}\n\n" if ex_block else ""   # 同初规划：范例在知识之后
         prompt = (
-            f"目标：{goal}\n"
             f"{_date_line()}\n"
             f"{sk_part}{ex_part}{ctx_block}最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
-            f"可用能力：{WorkingSet.render_catalog(agents)}"
+            f"{catalog.semantic_mapping_text}\n\n目标：{goal}"
         )
         try:
             raw = await self._llm([
@@ -633,9 +726,10 @@ class PlanBuilder:
             logger.warning("Replan failed: %s", exc)
             return ReplanDecision(done=True)
 
+        parsed = self._parse_and_validate_data(data, catalog, goal)
         if bool(data.get("done")):
             return ReplanDecision(done=True)
-        steps = self._validated_steps(data.get("steps", []), agent_map)
+        steps = list(parsed.steps) if parsed is not None else []
         repair_plan = Plan(steps=steps)
         effects = _skills.apply_plan_repairs(repair_plan, goal, skill_names)
         return ReplanDecision(done=not bool(steps), steps=steps, skill_effects=effects)
@@ -663,30 +757,78 @@ class PlanBuilder:
         但全被能力集校验丢掉时，`steps` 非空 —— 那是「规划错了」，绝不是「不需要动作」。
         两者的校验结果都是 `None`，只有原始数据分得开。
         """
-        return (isinstance(data, dict) and data.get("addressed") is not False
-                and not (data.get("steps") or []) and not data.get("clarify"))
+        return (isinstance(data, dict) and data.get("addressed") is True
+                and "steps" in data and type(data["steps"]) is list
+                and len(data["steps"]) == 0 and not data.get("clarify"))
 
-    def _parse_and_validate(self, raw: str, agent_map: dict,
+    def _parse_and_validate(self, raw: str, catalog: PlannerCapabilityCatalog,
                             fallback_text: str) -> Plan | None:
         data = self._extract_data(raw)
         if data is None:
             return None
-        return self._parse_and_validate_data(data, agent_map, fallback_text)
+        return self._parse_and_validate_data(data, catalog, fallback_text)
 
-    def _parse_and_validate_data(self, data, agent_map: dict,
+    def _parse_and_validate_data(self, wire, catalog: PlannerCapabilityCatalog,
                                  fallback_text: str) -> Plan | None:
-        """dict 直入的校验主体（M1a：toolcall 的 arguments 与 JSON 文本解析共用同一份
-        校验语义——受话/澄清/steps 原子性单源，RFC §4）。"""
-        if not isinstance(data, dict):
+        """Resolve the ref-only LLM wire, then apply the existing pair validator.
+
+        This is the sole production seam for JSON, toolcall, salvage, retry and
+        replan.  The model cannot bypass request-local authority by emitting the
+        internal ``agent_id``/``intent`` representation directly.
+        """
+        if not isinstance(wire, dict):
             return None
 
-        # R4.4：受话/澄清在 steps 校验之前短路——它们的合法输出 steps 恰为空，若走下面
-        # `if not steps: return None` 会被当解析失败触发重试+fallback（母卡实施计划 §0-1）。
-        if data.get("addressed") is False:      # 仅显式 false 生效；缺省/垃圾值=True（fail-open）
+        # R4.4: accepted non-addressed/clarify responses may omit ``steps``.
+        # Keep these semantic shortcuts ahead of container validation, but do not
+        # let an explicitly malformed ``steps`` value become a legal empty list.
+        if wire.get("addressed") is False:
+            if "steps" in wire:
+                if type(wire["steps"]) is not list:
+                    logger.warning("Plan steps is %s (not list), dropping plan for retry",
+                                   type(wire["steps"]).__name__)
+                    return None
+                if wire["steps"]:
+                    logger.warning(
+                        "Plan addressed=false contradicts nonempty steps, dropping plan for retry")
+                    return None
             return Plan(steps=[], raw_text=fallback_text, addressed=False)
-        clarify = self._parse_clarify(data.get("clarify"))
+        clarify = self._parse_clarify(wire.get("clarify"))
+        if "steps" not in wire:
+            if clarify:
+                return Plan(steps=[], raw_text=fallback_text, clarify=clarify)
+            logger.warning("Plan steps is missing, dropping plan for retry")
+            return None
 
-        steps = self._validated_steps(data.get("steps", []) or [], agent_map)
+        raw_steps = wire["steps"]
+        if not isinstance(raw_steps, list):
+            logger.warning("Plan steps is %s (not list), dropping plan for retry",
+                           type(raw_steps).__name__)
+            return None
+
+        resolved_steps = []
+        for raw_step in raw_steps:
+            if not isinstance(raw_step, dict):
+                logger.warning("Plan step is %s (not object), dropping plan for retry",
+                               type(raw_step).__name__)
+                return None
+            if "agent_id" in raw_step or "intent" in raw_step:
+                logger.warning("Legacy planner capability identity rejected")
+                return None
+            ref = raw_step.get("capability_ref")
+            if not isinstance(ref, str):
+                logger.warning("Missing/non-string capability_ref in plan: %r", ref)
+                return None
+            pair = catalog.ref_to_pair.get(ref)
+            if pair is None:
+                logger.warning("Unknown capability_ref in plan: %s", ref)
+                return None
+            resolved = dict(raw_step)
+            resolved.pop("capability_ref", None)
+            resolved["agent_id"], resolved["intent"] = pair
+            resolved_steps.append(resolved)
+
+        steps = self._validated_steps(resolved_steps, catalog.agent_map)
         if not steps:
             if clarify:      # 是请求但落法歧义：无 steps 但带合法 clarify → 合法计划（P1 消费）
                 return Plan(steps=[], raw_text=fallback_text, clarify=clarify)
@@ -700,11 +842,11 @@ class PlanBuilder:
             if step.agent_id == _FALLBACK_AGENT:
                 step.slots["text"] = fallback_text
 
-        complexity = data.get("complexity", "simple")
+        complexity = wire.get("complexity", "simple")
         if complexity not in ("simple", "adaptive"):
             complexity = "simple"
-        goal = str(data.get("goal", "") or "")
-        emotion = _parse_emotion(data.get("emotion"))
+        goal = str(wire.get("goal", "") or "")
+        emotion = _parse_emotion(wire.get("emotion"))
 
         # 校验 depends_on 引用
         valid_ids = {s.id for s in steps}

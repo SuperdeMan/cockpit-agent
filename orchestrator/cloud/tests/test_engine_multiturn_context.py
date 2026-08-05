@@ -23,8 +23,7 @@ _PLAN_JSON = json.dumps({
     "steps": [
         {
             "id": "s1",
-            "agent_id": "demo",
-            "intent": "demo.do",
+            "capability_ref": "cap_0001",
             "slots": {},
             "depends_on": [],
             "slot_refs": {},

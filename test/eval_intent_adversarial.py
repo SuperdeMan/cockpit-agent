@@ -51,7 +51,7 @@ from support.intent_adversarial_report import (  # noqa: E402
     render_adversarial_markdown,
 )
 from support.intent_adversarial_trace import (  # noqa: E402
-    DivergenceEvidence, RetrievalProbe, TraceSink, asset_fingerprint,
+    DivergenceEvidence, RecordingPlanner, RetrievalProbe, TraceSink, asset_fingerprint,
     deterministic_divergence, divergence_candidates, first_divergence,
     probe_builder, probe_retrieval,
 )
@@ -539,14 +539,15 @@ async def run_l1_case(case, agents, builder) -> list["TurnOutcome"]:
     outcomes: list[TurnOutcome] = []
     history: list[dict] = []
     with probe_builder(builder, sink):
+        planner = RecordingPlanner(builder, sink)
         for turn in case.turns:
             context = dict(turn.context)
             if history:
                 context["history"] = list(context.get("history") or []) + history
             probed = replace(turn, context=context)
             before = (len(sink.validations), len(sink.hints), len(sink.plans),
-                      len(sink.fallbacks))
-            snapshot = await runtime.run_planner_turn(probed, agents, builder)
+                      len(sink.fallbacks), len(sink.trace_errors))
+            snapshot = await runtime.run_planner_turn(probed, agents, planner)
             _reject_unreached_planner(case, snapshot)
             outcomes.append(_turn_outcome(
                 turn, snapshot, judge_turn(_l1_expectation(turn.expected), snapshot),
@@ -564,13 +565,14 @@ def _turn_outcome(turn, snapshot, judgement, sink: TraceSink,
     前两份证据原来只活在单测里，主入口从不消费——于是「每个 live 失败都有首偏离点」
     退化成「一律记 PLANNER_DIVERGENCE」。判定用的是**同一个 judge_plan**，不另立口径。
 
-    `before` 是各条 trace 列表在本轮开始前的长度。**新增第 4 位 `fallbacks`**；
-    L2 与 engine-direct 那两处传的是 3 元组（多一位 `plans`），所以按名字取不到，
-    统一按「不够长就当 0」读——加一位证据不该逼所有调用方同时改。
+    `before` 依次保存 validations / hints / plans / fallbacks / trace_errors
+    在本轮开始前的长度。旧的单测调用仍可少传尾部计数；真实 L1/L2 入口都传完整五元组。
+    只要本轮观察器新增错误，raw 通道就按 fail-closed 记为未观测。
     """
     validations = sink.validations[before[0]:]
     hints = sink.hints[before[1]:]
     fallbacks_before = before[3] if len(before) > 3 else 0
+    trace_errors_before = before[4] if len(before) > 4 else 0
     assert_plan = turn.expected.plan.assert_plan
     hint = hints[-1] if hints else None
     # **幻觉看这一轮的每一次候选，首偏离只看最终那一次。** 两个问题、两份取法：
@@ -581,19 +583,19 @@ def _turn_outcome(turn, snapshot, judgement, sink: TraceSink,
     #   （解析/校验没过）、第二次才成功时拿一份**被丢弃的**候选去比 gold，首偏离标签
     #   随之归错（独立复审第三批 P1-A）。
     #
-    # 顺带纠正上一版注释里一个反了的事实：**replan 不进这条 trace** ——
-    # `PlanBuilder.replan()` 直接走 `_validated_steps()`，不经 `_parse_and_validate_data`。
-    # 所以一轮里的 validation 全部来自 build 的至多两次尝试，「最后一个 accepted」
-    # 就是最终计划的那一次。
+    # Replan 与 build 共享 resolver/validator seam。身份幻觉并集覆盖两者，但
+    # `raw_planner_pass` 只回答初始 build 在校验前是否已正确，不能被后续 replan 污染。
     raw_intents: list[str] = []
     for row in validations:
         raw_intents.extend(row.raw_intents)
-    accepted = [row for row in validations if row.result == "accepted"]
-    final = (accepted or validations)[-1] if validations else None
+    build_validations = [row for row in validations if row.stage == "build"]
+    accepted = [row for row in build_validations if row.result == "accepted"]
+    final = ((accepted or build_validations)[-1] if build_validations else None)
+    trace_failed = len(sink.trace_errors) > trace_errors_before
     return TurnOutcome(
         snapshot=snapshot, judgement=judgement,
         raw_intents=tuple(dict.fromkeys(raw_intents)),
-        raw_observed=bool(validations),
+        raw_observed=bool(validations) and not trace_failed,
         raw_planner_pass=(_plan_passes(turn.expected.plan, final.raw_candidate)
                           if final and assert_plan else None),
         pre_hint_pass=(_plan_passes(turn.expected.plan, hint.before)
@@ -656,7 +658,7 @@ def run_l2_case(case, agents, builder, confirm_intents) -> list["TurnOutcome"]:
     with probe_builder(builder, sink):
         for turn in case.turns:
             before = (len(sink.validations), len(sink.hints), len(sink.plans),
-                      len(sink.fallbacks))
+                      len(sink.fallbacks), len(sink.trace_errors))
             edge, engine = entry.turn(
                 turn.utterance,
                 is_confirmation=bool(turn.context.get("is_confirmation")),
@@ -2176,7 +2178,7 @@ def _run_engine_direct(case, agents, builder, confirm_intents) -> list[TurnOutco
     with probe_builder(builder, sink):
         for turn in case.turns:
             before = (len(sink.validations), len(sink.hints), len(sink.plans),
-                      len(sink.fallbacks))
+                      len(sink.fallbacks), len(sink.trace_errors))
             engine = harness.run(
                 turn.utterance, session_id=session_id,
                 is_confirmation=bool(turn.context.get("is_confirmation")),

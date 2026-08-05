@@ -52,10 +52,10 @@ class _Spy:
             self.planner_prompts.append(user)
             if "调高" in user or "再" in user:
                 return json.dumps({"steps": [
-                    {"id": "s1", "agent_id": "hvac", "intent": "hvac.inc",
+                    {"id": "s1", "capability_ref": "cap_0001",
                      "slots": {}, "depends_on": [], "slot_refs": {}}]})
             return json.dumps({"steps": [
-                {"id": "s1", "agent_id": "hvac", "intent": "hvac.set",
+                {"id": "s1", "capability_ref": "cap_0002",
                  "slots": {"temperature": "26", "position": "副驾"},
                  "depends_on": [], "slot_refs": {}}]})
         return "好的，已完成。"

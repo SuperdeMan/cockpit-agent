@@ -13,6 +13,16 @@ from support.intent_adversarial_trace import (  # noqa: E402
 )
 
 
+def _catalog():
+    capability = SimpleNamespace(intent="info.weather")
+    agent = SimpleNamespace(
+        manifest=SimpleNamespace(capabilities=[capability]))
+    return SimpleNamespace(
+        ref_to_pair={"cap_0001": ("info", "info.weather")},
+        agent_map={"info": agent},
+    )
+
+
 def _validate(rows, _agent_map):
     return [Step(id=row["id"], agent_id=row["agent_id"], endpoint="a:1",
                  intent=row["intent"], slots=row["slots"],
@@ -65,13 +75,13 @@ def test_asset_digest_is_order_independent_and_content_sensitive(tmp_path: Path)
 
 def test_validation_trace_keeps_raw_and_accepted_intents():
     class Builder:
-        def _parse_and_validate_data(self, data, _agent_map, _text):
+        def _parse_and_validate_data(self, data, _catalog, _text):
             return Plan(steps=[Step(id="s1", agent_id="info", endpoint="i:1",
                                     intent="info.weather")])
     builder, sink = Builder(), TraceSink()
     attach_validation_trace(builder, sink)
     builder._parse_and_validate_data(
-        {"steps": [{"intent": "info.weather"}]}, {}, "查天气")
+        {"steps": [{"capability_ref": "cap_0001"}]}, _catalog(), "查天气")
     assert sink.validations[-1].raw_intents == ("info.weather",)
     assert sink.validations[-1].raw_candidate.intents == ("info.weather",)
     assert sink.validations[-1].accepted.intents == ("info.weather",)
@@ -79,15 +89,15 @@ def test_validation_trace_keeps_raw_and_accepted_intents():
 
 def test_validation_trace_marks_rejected_capability_hallucination():
     class Builder:
-        def _parse_and_validate_data(self, _data, _agent_map, _text):
+        def _parse_and_validate_data(self, _data, _catalog, _text):
             return None
     builder, sink = Builder(), TraceSink()
     attach_validation_trace(builder, sink)
     builder._parse_and_validate_data(
-        {"steps": [{"intent": "does.not_exist"}]}, {}, "随便说点什么")
+        {"steps": [{"capability_ref": "cap_9999"}]}, _catalog(), "随便说点什么")
     trace = sink.validations[-1]
     assert trace.result == "rejected"
-    assert trace.raw_intents == ("does.not_exist",)
+    assert trace.raw_intents == ("__invalid_capability_reference__",)
     assert trace.accepted.intents == ()
 
 
@@ -325,7 +335,8 @@ def test_the_probe_never_kills_the_run_on_malformed_model_output():
         def get(self, *_a, **_k):
             raise TypeError("模型这次的输出形状是穷举不完的")
 
-    plan = builder._parse_and_validate_data(_Exploding(steps=[]), {}, "空调先别关")
+    plan = builder._parse_and_validate_data(
+        _Exploding(steps=[]), _catalog(), "空调先别关")
     assert plan is not None, "生产的返回值必须原样透出——观察不该改变被观察的行为"
     assert sink.validations == [], "取不到候选就记成没观测，不许伪造一份"
     assert sink.trace_errors and "TypeError" in sink.trace_errors[0]

@@ -1,7 +1,9 @@
 """PlanBuilder 测试。"""
 import pytest
 import asyncio
-from orchestrator.cloud.planning import PlanBuilder, _REPLAN_SYSTEM, _planner_system
+from orchestrator.cloud.planning import (
+    PlanBuilder, _REPLAN_SYSTEM, _assemble_capability_catalog, _planner_system,
+)
 from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.context import WorkingSet
 from unittest.mock import MagicMock
@@ -56,7 +58,7 @@ def test_build_with_valid_json():
     ]
 
     async def mock_llm(messages):
-        return '{"steps":[{"id":"s1","agent_id":"navigation","intent":"navigation.search_poi","slots":{"keyword":"川菜"}}]}'
+        return '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{"keyword":"川菜"}}]}'
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -95,7 +97,7 @@ def test_build_with_unknown_agent_filtered():
     agents = [MockAgent("navigation", ["navigation.search_poi"])]
 
     async def mock_llm(messages):
-        return '{"steps":[{"id":"s1","agent_id":"unknown-agent","intent":"x","slots":{}}]}'
+        return '{"steps":[{"id":"s1","capability_ref":"cap_9999","slots":{}}]}'
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -122,8 +124,8 @@ def test_build_parses_complexity_goal_and_manifest_dispatch_metadata():
     async def mock_llm(messages):
         return (
             '{"complexity":"adaptive","goal":"保持舒适并继续规划",'
-            '"steps":[{"id":"s1","agent_id":"edge-vehicle",'
-            '"intent":"hvac.set","slots":{"temp":"24"}}]}'
+            '"steps":[{"id":"s1","capability_ref":"cap_0001",'
+            '"slots":{"temp":"24"}}]}'
         )
 
     async def mock_resolve(query, top_k=1):
@@ -150,8 +152,8 @@ def test_invalid_complexity_defaults_to_simple():
     async def mock_llm(messages):
         return (
             '{"complexity":"unbounded","goal":"x",'
-            '"steps":[{"id":"s1","agent_id":"navigation",'
-            '"intent":"navigation.search_poi","slots":{}}]}'
+            '"steps":[{"id":"s1","capability_ref":"cap_0001",'
+            '"slots":{}}]}'
         )
 
     async def mock_resolve(query, top_k=1):
@@ -172,8 +174,8 @@ def test_parent_permission_covers_child_scope_during_planning():
     async def mock_llm(messages):
         return (
             '{"complexity":"simple","goal":"adjust climate",'
-            '"steps":[{"id":"s1","agent_id":"vehicle-agent",'
-            '"intent":"hvac.set","slots":{"temperature":"24"}}]}'
+            '"steps":[{"id":"s1","capability_ref":"cap_0001",'
+            '"slots":{"temperature":"24"}}]}'
         )
 
     async def mock_resolve(query, top_k=1):
@@ -194,7 +196,7 @@ def test_ensure_research_step_routes_deep_research():
               MockAgent("info", ["info.search"])]
 
     async def mock_llm(messages):
-        return ('{"steps":[{"id":"s1","agent_id":"info","intent":"info.search",'
+        return ('{"steps":[{"id":"s1","capability_ref":"cap_0002",'
                 '"slots":{"query":"固态电池"}}]}')
 
     async def mock_resolve(query, top_k=1):
@@ -214,7 +216,7 @@ def test_plain_search_not_hijacked_by_research_net():
               MockAgent("info", ["info.search"])]
 
     async def mock_llm(messages):
-        return ('{"steps":[{"id":"s1","agent_id":"info","intent":"info.search",'
+        return ('{"steps":[{"id":"s1","capability_ref":"cap_0002",'
                 '"slots":{"query":"固态电池"}}]}')
 
     async def mock_resolve(query, top_k=1):
@@ -233,7 +235,7 @@ def test_ensure_research_followup_routes_deepen():
               MockAgent("info", ["info.search"])]
 
     async def mock_llm(messages):
-        return ('{"steps":[{"id":"s1","agent_id":"info","intent":"info.search",'
+        return ('{"steps":[{"id":"s1","capability_ref":"cap_0002",'
                 '"slots":{"query":"x"}}]}')
 
     async def mock_resolve(query, top_k=1):
@@ -258,8 +260,8 @@ def test_ensure_research_followup_routes_deepen():
 def test_replan_returns_done_or_a_validated_next_batch():
     agents = [MockAgent("navigation", ["navigation.search_poi"])]
     replies = iter([
-        '{"done":false,"steps":[{"id":"r1","agent_id":"navigation",'
-        '"intent":"navigation.search_poi","slots":{"keyword":"次近充电站"}}]}',
+        '{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0001",'
+        '"slots":{"keyword":"次近充电站"}}]}',
         '{"done":true,"steps":[]}',
     ])
 
@@ -284,13 +286,13 @@ def test_replan_returns_done_or_a_validated_next_batch():
 def test_json_and_replan_prompts_treat_the_live_catalog_as_the_only_allowlist():
     """初规划与再规划都只能消费本轮动态 catalog，不能靠模型常识补能力。"""
     initial = _planner_system()
-    for clause in ("本轮动态 catalog", "agent_id 和 intent", "唯一白名单",
+    for clause in ("capability_ref", "唯一调用权",
                    "不得编造", "不得替换", "缺席"):
         assert clause in initial
     assert '{"addressed":true,"steps":[]}' in initial
     assert initial.rindex("== 本轮动态能力白名单 ==") > initial.rindex("== 通用规则 ==")
 
-    for clause in ("本轮动态 catalog", "agent_id 和 intent", "唯一白名单",
+    for clause in ("capability_ref", "唯一调用权",
                    "不得编造", "不得替换", "缺席"):
         assert clause in _REPLAN_SYSTEM
 
@@ -303,13 +305,14 @@ def test_user_message_reasserts_the_live_catalog_after_soft_assets_and_context()
         history=[{"role": "user", "text": "CONTEXT_MISSING_INTENT"}],
     )
 
+    catalog = _assemble_capability_catalog(agents)
     message = PlanBuilder._planner_user_msg(
-        "USER_UTTERANCE", agents, working_set,
+        "USER_UTTERANCE", catalog, working_set,
         skills_block="SKILL_MISSING_INTENT",
         exemplars_block="EXEMPLAR_MISSING_INTENT",
     )
 
-    catalog_at = message.rindex("可用能力:\n")
+    catalog_at = message.rindex(catalog.semantic_mapping_text)
     utterance_at = message.rindex("用户说: USER_UTTERANCE")
     for soft_evidence in ("SKILL_MISSING_INTENT", "EXEMPLAR_MISSING_INTENT",
                           "CONTEXT_MISSING_INTENT"):
@@ -333,7 +336,7 @@ def test_does_not_inject_trip_when_llm_already_planned_it():
     agents = _trip_agents()
 
     async def mock_llm(messages):
-        return ('{"steps":[{"id":"s1","agent_id":"trip-planner","intent":"trip.plan",'
+        return ('{"steps":[{"id":"s1","capability_ref":"cap_0003",'
                 '"slots":{"destination":"杭州","days":"2"}}]}')
 
     async def mock_resolve(query, top_k=1):
@@ -349,7 +352,7 @@ def test_does_not_inject_trip_for_plain_navigation():
     agents = _trip_agents() + [MockAgent("navigation", ["navigation.navigate"])]
 
     async def mock_llm(messages):
-        return ('{"steps":[{"id":"s1","agent_id":"navigation","intent":"navigation.navigate",'
+        return ('{"steps":[{"id":"s1","capability_ref":"cap_0003",'
                 '"slots":{"destination":"北京南站"}}]}')
 
     async def mock_resolve(query, top_k=1):
@@ -367,7 +370,7 @@ def test_modify_pattern_keeps_llm_trip_modify():
     agents = [MockAgent("trip-planner", ["trip.plan", "trip.modify"])]
 
     async def mock_llm(messages):
-        return ('{"steps":[{"id":"s1","agent_id":"trip-planner","intent":"trip.modify",'
+        return ('{"steps":[{"id":"s1","capability_ref":"cap_0001",'
                 '"slots":{"modification":"第二天换成宋城"}}]}')
 
     async def mock_resolve(query, top_k=1):
@@ -389,7 +392,7 @@ def test_fake_agent_gets_deterministic_routing_from_manifest_only():
     agents = [widget, MockAgent("chitchat", ["chitchat.talk"])]
 
     async def mock_llm(messages):     # 弱 LLM 误判成闲聊
-        return '{"steps":[{"id":"s1","agent_id":"chitchat","intent":"chitchat.talk","slots":{}}]}'
+        return '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{}}]}'
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -408,7 +411,7 @@ def test_heavy_capability_marks_step_heavy_and_complex():
     agent.manifest.capabilities[0].heavy = True     # 模拟 manifest 声明 heavy
 
     async def mock_llm(messages):
-        return '{"steps":[{"id":"s1","agent_id":"deep-research","intent":"research.run","slots":{}}]}'
+        return '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{}}]}'
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -425,7 +428,7 @@ def test_light_capability_step_not_heavy():
     agent = MockAgent("info", ["info.weather"])   # cap.heavy=False（MockAgent 默认）
 
     async def mock_llm(messages):
-        return '{"steps":[{"id":"s1","agent_id":"info","intent":"info.weather","slots":{}}]}'
+        return '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{}}]}'
 
     async def mock_resolve(query, top_k=1):
         return []
@@ -441,7 +444,7 @@ def test_does_not_inject_trip_when_planner_unavailable():
     agents = [MockAgent("info-agent", ["info.weather"])]
 
     async def mock_llm(messages):
-        return '{"steps":[{"id":"s1","agent_id":"info-agent","intent":"info.weather","slots":{}}]}'
+        return '{"steps":[{"id":"s1","capability_ref":"cap_0001","slots":{}}]}'
 
     async def mock_resolve(query, top_k=1):
         return []

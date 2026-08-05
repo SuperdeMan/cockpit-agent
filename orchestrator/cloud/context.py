@@ -156,6 +156,57 @@ def _always_include(a) -> bool:
             or bool(getattr(m, "route_hints", []))
             or str(getattr(m, "category", "")) == "core")
 
+
+def assemble_budgeted_catalog(agents: list, renderer, stats: dict | None = None
+                              ) -> tuple[list, str]:
+    """Render and prune one capability catalog against the *actual* prompt text.
+
+    ``renderer`` is deliberately supplied by the caller.  The legacy catalog and
+    the planner's request-local capability-reference mapping have different wire
+    shapes, but must share exactly one protection/drop policy.  Re-rendering after
+    every drop also makes character accounting cover ref numbering, headings,
+    punctuation and newlines instead of estimating from a different representation.
+
+    Availability remains fail-open as before: a non-empty candidate set is never
+    reduced below one agent, and an all-protected set may exceed the configured
+    budget.  Entries are never truncated mid-capability.
+    """
+    visible = list(agents or [])
+    protected = [_is_edge_core(a) or _always_include(a) for a in visible]
+    ids = [str(getattr(getattr(a, "manifest", None), "agent_id", "") or "")
+           for a in visible]
+    rendered = renderer(visible)
+    chars_full = len(rendered)
+    dropped: list[str] = []
+
+    while len(rendered) > _CATALOG_BUDGET and len(visible) > 1:
+        idx = next((i for i in range(len(visible) - 1, -1, -1)
+                    if not protected[i]), None)
+        if idx is None:
+            break
+        visible.pop(idx)
+        protected.pop(idx)
+        dropped.append(ids.pop(idx))
+        rendered = renderer(visible)
+
+    if len(rendered) > _CATALOG_BUDGET:
+        logger.warning(
+            "catalog remains over budget (%d > %d chars): no removable agent",
+            len(rendered), _CATALOG_BUDGET,
+        )
+    elif dropped:
+        logger.warning("catalog over budget (%d chars): dropped agents %s",
+                       _CATALOG_BUDGET, dropped)
+
+    if stats is not None:
+        stats.clear()
+        stats.update({
+            "chars_full": chars_full,
+            "chars_final": len(rendered),
+            "dropped": dropped,
+        })
+    return visible, rendered
+
 # 控制类意图域 → (语义对象, 属性)，供焦点抽取（"再调高一点"指代上轮控制对象）。
 _CONTROL_FOCUS = {
     "hvac": ("空调", "温度"), "window": ("车窗", "开度"),
@@ -228,28 +279,12 @@ class WorkingSet:
         warning（cloud.planning span 可查），静默丢域从此可见。根治=P2 catalog 检索化。
 
         stats（可选 dict，原地回填）：{chars_full, chars_final, dropped: [agent_id]}。"""
-        items = [_catalog_item(a) for a in agents]
-        protected = [_is_edge_core(a) or _always_include(a) for a in agents]
-        ids = [getattr(a.manifest, "agent_id", "") for a in agents]
-        out = json.dumps(items, ensure_ascii=False)
-        if stats is not None:
-            stats.clear()
-            stats["chars_full"] = len(out)
-        dropped: list[str] = []
-        while len(out) > _CATALOG_BUDGET and len(items) > 1:
-            idx = next((i for i in range(len(items) - 1, -1, -1) if not protected[i]), None)
-            if idx is None:
-                break  # 只剩受保护项 → 宁可略超预算也不丢
-            items.pop(idx)
-            protected.pop(idx)
-            dropped.append(ids.pop(idx))
-            out = json.dumps(items, ensure_ascii=False)
-        if dropped:
-            logger.warning("catalog over budget (%d chars): dropped agents %s",
-                           _CATALOG_BUDGET, dropped)
-        if stats is not None:
-            stats["chars_final"] = len(out)
-            stats["dropped"] = dropped
+        _, out = assemble_budgeted_catalog(
+            agents,
+            lambda visible: json.dumps(
+                [_catalog_item(a) for a in visible], ensure_ascii=False),
+            stats,
+        )
         return out
 
 

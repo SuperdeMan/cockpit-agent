@@ -32,6 +32,7 @@ import argparse
 import asyncio
 import glob
 import os
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,6 +57,24 @@ from eval_common import (  # noqa: E402
     load_baseline, print_ci_annotations, render_markdown, write_report,
 )
 from orchestrator.cloud import exemplars as ex  # noqa: E402
+
+_LEGACY_STEP_TOKEN = re.compile(
+    r"(?P<open>\{)|(?P<close>\})|"
+    r"(?P<key>(?:[\"'](?:agent_id|intent)[\"']|agent_id|intent))\s*:"
+)
+
+
+def _has_legacy_step_shape(text: str) -> bool:
+    object_keys: list[set[str]] = []
+    for match in _LEGACY_STEP_TOKEN.finditer(text or ""):
+        if match.group("open"):
+            object_keys.append(set())
+        elif match.group("close"):
+            if object_keys and {"agent_id", "intent"} <= object_keys.pop():
+                return True
+        elif object_keys:
+            object_keys[-1].add(match.group("key").strip("\"'"))
+    return any({"agent_id", "intent"} <= keys for keys in object_keys)
 
 _BASELINE = _ROOT / "docs" / "reviews" / "eval" / "baseline_exemplars.json"
 _MODE_ROUTING = _ROOT / "test" / "eval_corpus" / "mode_routing_cases.yaml"
@@ -351,6 +370,26 @@ def lane_contract(root: Path) -> list[str]:
         if len(plans) > 1:
             errs.append(f"同句被标成不同落域（语料自相矛盾）：{text!r} → {sorted(plans)}")
     return errs
+
+
+def lane_injected_wire(items: list[ex.Exemplar]) -> list[str]:
+    """Render every exemplar through request refs and reject legacy step output."""
+    pairs = sorted({
+        (str(step.get("agent") or "").strip() or "__scanner_unique_owner__",
+         str(step.get("intent") or "").strip())
+        for item in items for step in item.plan
+        if str(step.get("intent") or "").strip()
+    })
+    refs = {pair: f"cap_{index:04d}" for index, pair in enumerate(pairs, 1)}
+    block, injected, _ = ex.render_block(
+        items, budget=10_000_000, capability_refs=refs)
+    errors = []
+    if len(injected) != len(items):
+        errors.append(
+            f"实际注入扫描只渲染 {len(injected)}/{len(items)} 条范例，存在无法解析的能力配对")
+    if _has_legacy_step_shape(block):
+        errors.append("实际注入的 exemplar 块仍含 agent_id+intent 旧 step 形状")
+    return errors
 
 
 # ── 车道 2：域路由探针 ───────────────────────────────────────────────────────
@@ -668,11 +707,11 @@ def main() -> int:
     args = ap.parse_args()
 
     store = ex.ExemplarStore()
-    errs = lane_contract(store.root)
+    items = store.load()
+    errs = lane_contract(store.root) + lane_injected_wire(items)
     if errs:
         print("✗ 范例契约静态校验失败：\n  " + "\n  ".join(errs))
         return 1
-    items = store.load()
     berrs = lane_boundaries(store.root, items)
     if berrs:
         print("✗ 跨域边界裁定台账门禁失败：\n  " + "\n  ".join(berrs))

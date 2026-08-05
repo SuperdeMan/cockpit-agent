@@ -36,6 +36,13 @@ def _mini(tmp_path):
     return ex.ExemplarStore(root=root)
 
 
+def _mini_refs():
+    return {
+        ("nearby", "nearby.search"): "cap_0001",
+        ("vision", "vision.describe"): "cap_0002",
+    }
+
+
 # ── ① 最软层：坏文件/异常绝不影响规划 ────────────────────────────────────────
 
 def test_bad_files_never_break_loading(tmp_path):
@@ -72,7 +79,8 @@ def test_off_and_shadow_modes(monkeypatch, tmp_path):
     monkeypatch.setenv("EXEMPLARS_MODE", "off")
     assert asyncio.run(ex.plan_exemplars("附近有什么咖啡店")) == ("off", [], "")
     monkeypatch.setenv("EXEMPLARS_MODE", "shadow")
-    mode, names, block = asyncio.run(ex.plan_exemplars("附近有什么咖啡店"))
+    mode, names, block = asyncio.run(
+        ex.plan_exemplars("附近有什么咖啡店", capability_refs=_mini_refs()))
     assert mode == "shadow" and names and block == ""    # 只记录、零行为变化
 
 
@@ -124,7 +132,8 @@ def test_clipped_entries_are_marked_not_claimed(monkeypatch, tmp_path):
     monkeypatch.setattr(ex, "_default_store", _mini(tmp_path))
     monkeypatch.setenv("EXEMPLARS_RETRIEVAL", "lexical")
     monkeypatch.setattr(ex, "EXEMPLAR_BUDGET", len(ex._BLOCK_HEAD) + 5)
-    mode, names, block = asyncio.run(ex.plan_exemplars("附近有什么咖啡店"))
+    mode, names, block = asyncio.run(
+        ex.plan_exemplars("附近有什么咖啡店", capability_refs=_mini_refs()))
     assert names and all(n.endswith("!clipped") for n in names)
     assert block == ""             # 一条都没进 → 不留只有抬头的空块污染 prompt
 
@@ -132,9 +141,11 @@ def test_clipped_entries_are_marked_not_claimed(monkeypatch, tmp_path):
 def test_names_carry_channel_and_score(monkeypatch, tmp_path):
     monkeypatch.setattr(ex, "_default_store", _mini(tmp_path))
     monkeypatch.setenv("EXEMPLARS_RETRIEVAL", "lexical")
-    _, names, block = asyncio.run(ex.plan_exemplars("附近有什么咖啡店"))
+    _, names, block = asyncio.run(
+        ex.plan_exemplars("附近有什么咖啡店", capability_refs=_mini_refs()))
     assert names[0].startswith("full:nearby#1@lex:")
-    assert "nearby.search" in block and "仅供参考不是规则" in block
+    assert '"capability_ref":"cap_0001"' in block and "仅供参考不是规则" in block
+    assert '"intent"' not in block
 
 
 # ── 语义通道：fail-open + 补位 ──────────────────────────────────────────────
@@ -178,8 +189,10 @@ def test_render_for_names_skips_shadow_and_clipped(monkeypatch, tmp_path):
     assert ex.render_for_names(["shadow:nearby#1@lex:0.9"]) == ""
     assert ex.render_for_names(["full:nearby#1@lex:0.9!clipped"]) == ""
     assert ex.render_for_names([]) == ""
-    block = ex.render_for_names(["full:nearby#1@lex:0.9"])
-    assert "nearby.search" in block
+    block = ex.render_for_names(
+        ["full:nearby#1@lex:0.9"], capability_refs=_mini_refs())
+    assert '"capability_ref":"cap_0001"' in block
+    assert '"intent"' not in block
 
 
 def test_pending_plan_round_trip_keeps_exemplars():

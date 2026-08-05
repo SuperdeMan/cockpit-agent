@@ -254,12 +254,23 @@ class RetrievalObservation:
 
 def run_retrieval_turn(text: str) -> RetrievalObservation:
     """纯词法档检索：语义通道要打网关 Embed，L0 必须零网络确定。"""
+    import eval_live as _eval_live
     from orchestrator.cloud import exemplars as _exemplars
     from orchestrator.cloud import skills as _skills
+    from orchestrator.cloud.planning import _assemble_capability_catalog
+
+    # L0 observes the same request-local asset rendering as production.  Building
+    # the final visible catalog is filesystem-only; it neither calls Embed nor any
+    # provider.  A static mapping would drift whenever manifests or budget pruning
+    # change, so assemble it from the real live inventory on every observation.
+    catalog = _assemble_capability_catalog(
+        _eval_live.load_agents(include_edge=True))
 
     async def _both():
-        return await asyncio.gather(_skills.plan_skills(text),
-                                    _exemplars.plan_exemplars(text))
+        return await asyncio.gather(
+            _skills.plan_skills(text, capability_refs=catalog.pair_to_ref),
+            _exemplars.plan_exemplars(text, capability_refs=catalog.pair_to_ref),
+        )
 
     with temporary_env({"SKILLS_RETRIEVAL": "lexical",
                         "EXEMPLARS_RETRIEVAL": "lexical"}):

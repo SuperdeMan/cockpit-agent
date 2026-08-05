@@ -11,7 +11,7 @@ import os
 from unittest.mock import MagicMock
 
 from orchestrator.cloud.planning import (
-    PlanBuilder, _planner_system, _submit_plan_tools, _SUBMIT_PLAN_NAME,
+    PlanBuilder, _assemble_capability_catalog, _planner_system, _submit_plan_tools, _SUBMIT_PLAN_NAME,
     _TOOLCALL_SECTION,
 )
 from orchestrator.cloud.models import PlanContext
@@ -57,10 +57,12 @@ def _build(builder, text="找家川菜馆"):
 
 _ARGS_OK = {"complexity": "simple", "goal": "找川菜",
             "addressed": True,
-            "steps": [{"id": "s1", "agent_id": "navigation",
-                       "intent": "navigation.search_poi",
+            "steps": [{"id": "s1", "capability_ref": "cap_0002",
                        "slots": {"keyword": "川菜"}, "depends_on": [],
                        "slot_refs": {}}]}
+_ARGS_NAV_ONLY = {**_ARGS_OK, "steps": [
+    {**_ARGS_OK["steps"][0], "capability_ref": "cap_0001"},
+]}
 
 
 class _SpyLLM:
@@ -217,7 +219,7 @@ def test_toolcall_numeric_slot_normalized_via_validated_steps(monkeypatch):
     """工具 arguments 里 slots 给数字 → _validated_steps str() 归一（int 24→"24"）。"""
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
     args = {"addressed": True,
-            "steps": [{"id": "s1", "agent_id": "hvac", "intent": "hvac.set",
+            "steps": [{"id": "s1", "capability_ref": "cap_0001",
                        "slots": {"temperature": 24}}]}
     spy = _SpyLLM(tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
                                     "arguments": args}]))
@@ -233,8 +235,7 @@ def test_toolcall_unwraps_provider_freeform_object_text_envelope(monkeypatch):
         "addressed": True,
         "steps": [{
             "id": "s1",
-            "agent_id": "navigation",
-            "intent": "navigation.search_poi",
+            "capability_ref": "cap_0002",
             "slots": {
                 "$text": '{"query":"车规级固态电池量产良率对比","limit":5}',
             },
@@ -285,7 +286,7 @@ def test_submit_plan_tools_shape_and_confirm_absent(monkeypatch):
     props = fn["parameters"]["properties"]
     assert set(fn["parameters"]["required"]) == {"addressed", "steps"}
     step_props = props["steps"]["items"]["properties"]
-    assert set(step_props) == {"id", "agent_id", "intent", "slots",
+    assert set(step_props) == {"id", "capability_ref", "slots",
                                "depends_on", "slot_refs"}
     # slots 语义随字段走（真栈 B1-4：空 object 诱发省略追问丢继承槽）
     assert "继承的槽位" in step_props["slots"]["description"]
@@ -300,27 +301,21 @@ def test_submit_plan_schema_enums_match_only_the_current_catalog():
     agents = [MockAgent("navigation", ["navigation.search_poi", "navigation.navigate"]),
               MockAgent("hvac", ["hvac.set"])]
 
-    spec = _submit_plan_tools(agents)
+    catalog = _assemble_capability_catalog(agents)
+    spec = _submit_plan_tools(catalog)
     step_schema = spec["tools"][0]["function"]["parameters"]["properties"][
         "steps"]["items"]
     step_props = step_schema["properties"]
 
-    assert step_props["agent_id"]["enum"] == ["hvac", "navigation"]
-    assert step_props["intent"]["enum"] == [
-        "hvac.set", "navigation.navigate", "navigation.search_poi",
+    assert step_props["capability_ref"]["enum"] == [
+        "cap_0001", "cap_0002", "cap_0003",
     ]
-    assert "缺席" in step_props["agent_id"]["description"]
-    assert "缺席" in step_props["intent"]["description"]
+    assert "缺席" in step_props["capability_ref"]["description"]
     assert "addressed=true" in spec["tools"][0]["function"]["parameters"][
         "properties"]["steps"]["description"]
     assert "nearby.search" not in json.dumps(spec, ensure_ascii=False)
 
-    pairs = {
-        (branch["properties"]["agent_id"]["enum"][0], intent)
-        for branch in step_schema["oneOf"]
-        for intent in branch["properties"]["intent"]["enum"]
-    }
-    assert pairs == {
+    assert set(catalog.ref_to_pair.values()) == {
         ("hvac", "hvac.set"),
         ("navigation", "navigation.navigate"),
         ("navigation", "navigation.search_poi"),
@@ -336,7 +331,7 @@ def test_builder_sends_the_permission_filtered_catalog_in_tool_schema(monkeypatc
     hidden = MockAgent("hvac", ["hvac.set"])
     hidden.manifest.requires_permissions = ["vehicle.control"]
     spy = _SpyLLM(tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
-                                      "arguments": _ARGS_OK}]))
+                                      "arguments": _ARGS_NAV_ONLY}]))
     builder = PlanBuilder(spy.llm, _no_resolve, llm_tool_fn=spy.llm_tools)
 
     asyncio.run(builder.build(
@@ -346,8 +341,7 @@ def test_builder_sends_the_permission_filtered_catalog_in_tool_schema(monkeypatc
 
     step_props = spy.last_tools["tools"][0]["function"]["parameters"]["properties"][
         "steps"]["items"]["properties"]
-    assert step_props["agent_id"]["enum"] == ["navigation"]
-    assert step_props["intent"]["enum"] == ["navigation.search_poi"]
+    assert step_props["capability_ref"]["enum"] == ["cap_0001"]
 
 
 def test_toolcall_protocol_retry_reuses_the_same_filtered_catalog(monkeypatch):
@@ -359,8 +353,8 @@ def test_toolcall_protocol_retry_reuses_the_same_filtered_catalog(monkeypatch):
     hidden = MockAgent("secret-agent", ["secret.capability"])
     hidden.manifest.requires_permissions = ["secret.use"]
     spy = _SpyLLM(
-        text_reply=json.dumps(_ARGS_OK, ensure_ascii=False),
-        tool_reply=("", [{"id": "bad", "name": "other_tool", "arguments": _ARGS_OK}]),
+        text_reply=json.dumps(_ARGS_NAV_ONLY, ensure_ascii=False),
+        tool_reply=("", [{"id": "bad", "name": "other_tool", "arguments": _ARGS_NAV_ONLY}]),
     )
     builder = PlanBuilder(spy.llm, _no_resolve, llm_tool_fn=spy.llm_tools)
 
@@ -373,10 +367,9 @@ def test_toolcall_protocol_retry_reuses_the_same_filtered_catalog(monkeypatch):
     assert spy.tool_calls_n == 1 and spy.text_calls == 1
     step_props = spy.last_tools["tools"][0]["function"]["parameters"]["properties"][
         "steps"]["items"]["properties"]
-    assert step_props["agent_id"]["enum"] == ["navigation"]
-    assert step_props["intent"]["enum"] == ["navigation.search_poi"]
+    assert step_props["capability_ref"]["enum"] == ["cap_0001"]
     for user_message in (spy.last_tool_user, spy.last_text_user):
-        catalog_block = user_message.rsplit("可用能力:\n", 1)[1].split(
+        catalog_block = user_message.rsplit("本请求 capability_ref → 可用能力语义映射 ==", 1)[1].split(
             "\n\n用户说:", 1)[0]
         assert "navigation.search_poi" in catalog_block
         assert "secret-agent" not in catalog_block
@@ -384,19 +377,19 @@ def test_toolcall_protocol_retry_reuses_the_same_filtered_catalog(monkeypatch):
 
 
 def test_dynamic_tool_schemas_do_not_share_mutable_catalog_state():
-    first = _submit_plan_tools([MockAgent("alpha", ["alpha.one"])])
-    second = _submit_plan_tools([MockAgent("beta", ["beta.two"])])
+    first = _submit_plan_tools(_assemble_capability_catalog(
+        [MockAgent("alpha", ["alpha.one"])]))
+    second = _submit_plan_tools(_assemble_capability_catalog(
+        [MockAgent("beta", ["beta.two"])]))
     first_props = first["tools"][0]["function"]["parameters"]["properties"][
         "steps"]["items"]["properties"]
     second_props = second["tools"][0]["function"]["parameters"]["properties"][
         "steps"]["items"]["properties"]
 
-    assert first_props["agent_id"]["enum"] == ["alpha"]
-    assert first_props["intent"]["enum"] == ["alpha.one"]
-    assert second_props["agent_id"]["enum"] == ["beta"]
-    assert second_props["intent"]["enum"] == ["beta.two"]
-    first_props["agent_id"]["enum"].append("mutated")
-    assert second_props["agent_id"]["enum"] == ["beta"]
+    assert first_props["capability_ref"]["enum"] == ["cap_0001"]
+    assert second_props["capability_ref"]["enum"] == ["cap_0001"]
+    first_props["capability_ref"]["enum"].append("mutated")
+    assert second_props["capability_ref"]["enum"] == ["cap_0001"]
 
 
 def test_submit_plan_tools_clarify_never_in_schema(monkeypatch):
@@ -435,7 +428,7 @@ def test_planner_system_toolcall_section_appended():
 def test_toolcall_prompt_keeps_the_live_catalog_allowlist_contract():
     """换成工具输出通道不能丢掉动态 catalog 白名单及缺能力空计划约束。"""
     prompt = _planner_system(toolcall=True)
-    for clause in ("本轮动态 catalog", "agent_id 和 intent", "唯一白名单",
+    for clause in ("capability_ref", "唯一调用权",
                    "不得编造", "不得替换", "缺席"):
         assert clause in prompt
     assert '{"addressed":true,"steps":[]}' in prompt

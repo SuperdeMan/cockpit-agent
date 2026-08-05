@@ -18,9 +18,9 @@ def _raw(*, item: str = "") -> str:
     return json.dumps({
         "addressed": True,
         "steps": [
-            {"id": "s1", "agent_id": "mcp-bridge", "intent": "shop.menu",
+            {"id": "s1", "capability_ref": "cap_0001",
              "slots": {}, "depends_on": [], "slot_refs": {}},
-            {"id": "s2", "agent_id": "mcp-bridge", "intent": "shop.order",
+            {"id": "s2", "capability_ref": "cap_0002",
              "slots": slots, "depends_on": [], "slot_refs": {}},
         ],
     })
@@ -33,11 +33,13 @@ def _build(monkeypatch, text: str, *, item: str = "", clipped: bool = False):
     async def resolve(_query, top_k=1):
         return []
 
-    async def plan_skills(_text):
+    async def plan_skills(_text, *, capability_refs):
+        assert capability_refs
         suffix = "!clipped" if clipped else ""
         return "full", [f"full:shop-order-flow@lex:35{suffix}"], "guide block"
 
-    async def plan_exemplars(_text):
+    async def plan_exemplars(_text, *, capability_refs):
+        assert capability_refs
         return "off", [], ""
 
     monkeypatch.setenv("PLANNER_TOOLCALL", "off")

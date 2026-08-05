@@ -170,6 +170,15 @@ def test_request_catalog_is_opaque_immutable_and_budgeted_as_rendered_text(monke
     assert singleton.catalog_stats["dropped"] == []
 
 
+def test_duplicate_agent_identity_fails_closed_before_refs_diverge():
+    _, assemble = _ref_api()
+    first = _agent("duplicate", "duplicate.one")
+    second = _agent("duplicate", "duplicate.two")
+
+    with pytest.raises(ValueError, match="duplicate planner agent_id: duplicate"):
+        assemble([first, second])
+
+
 def test_ref_only_schema_static_prompts_and_user_message_tail(monkeypatch):
     _, assemble = _ref_api()
     monkeypatch.setattr(context, "_CATALOG_BUDGET", 100_000)
@@ -230,10 +239,12 @@ def test_build_retry_and_replan_use_one_catalog_and_one_parse_seam(monkeypatch):
 
     monkeypatch.setattr(planning, "_assemble_capability_catalog", assemble_spy)
 
-    async def no_skills(_text):
+    async def no_skills(_text, *, capability_refs):
+        assert capability_refs is catalog.pair_to_ref
         return "off", [], ""
 
-    async def no_exemplars(_text):
+    async def no_exemplars(_text, *, capability_refs):
+        assert capability_refs is catalog.pair_to_ref
         return "off", [], ""
 
     monkeypatch.setattr(skills, "plan_skills", no_skills)

@@ -140,9 +140,9 @@ class _Spy:
             # 场景1: 纯并行车控
             return json.dumps({
                 "steps": [
-                    {"id": "s1", "agent_id": "hvac", "intent": "hvac.set",
+                    {"id": "s1", "capability_ref": "cap_0001",
                      "slots": {"temperature": "24"}, "depends_on": [], "slot_refs": {}},
-                    {"id": "s2", "agent_id": "media", "intent": "media.play",
+                    {"id": "s2", "capability_ref": "cap_0003",
                      "slots": {}, "depends_on": [], "slot_refs": {}},
                 ]
             })
@@ -150,11 +150,9 @@ class _Spy:
             # 场景2: 串行跨域（搜索 → 预订）
             return json.dumps({
                 "steps": [
-                    {"id": "s1", "agent_id": "nearby",
-                     "intent": "nearby.search",
+                    {"id": "s1", "capability_ref": "cap_0005",
                      "slots": {"cuisine": "川菜"}, "depends_on": [], "slot_refs": {}},
-                    {"id": "s2", "agent_id": "nearby",
-                     "intent": "nearby.order",
+                    {"id": "s2", "capability_ref": "cap_0004",
                      "slots": {}, "depends_on": ["s1"],
                      "slot_refs": {"restaurant_id": "s1.data.items.0.id"}},
                 ]
@@ -163,9 +161,9 @@ class _Spy:
             # 场景3: 控制 + 播报混合（并行）
             return json.dumps({
                 "steps": [
-                    {"id": "s1", "agent_id": "hvac", "intent": "hvac.set",
+                    {"id": "s1", "capability_ref": "cap_0001",
                      "slots": {"temperature": "24"}, "depends_on": [], "slot_refs": {}},
-                    {"id": "s2", "agent_id": "info", "intent": "info.weather",
+                    {"id": "s2", "capability_ref": "cap_0002",
                      "slots": {}, "depends_on": [], "slot_refs": {}},
                 ]
             })
@@ -173,7 +171,7 @@ class _Spy:
             # 场景4: 单意图
             return json.dumps({
                 "steps": [
-                    {"id": "s1", "agent_id": "hvac", "intent": "hvac.set",
+                    {"id": "s1", "capability_ref": "cap_0001",
                      "slots": {"temperature": "24"}, "depends_on": [], "slot_refs": {}},
                 ]
             })

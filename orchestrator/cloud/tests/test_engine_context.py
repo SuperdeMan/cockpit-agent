@@ -24,7 +24,7 @@ def _skills_off(monkeypatch):
     monkeypatch.setenv("SKILLS_MODE", "off")
 
 _PLAN_JSON = json.dumps({"steps": [
-    {"id": "s1", "agent_id": "demo", "intent": "demo.do", "slots": {}, "depends_on": []},
+    {"id": "s1", "capability_ref": "cap_0001", "slots": {}, "depends_on": []},
 ]})
 
 

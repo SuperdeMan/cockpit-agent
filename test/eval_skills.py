@@ -84,6 +84,23 @@ _GOLDEN_KEYS = {"text", "expect_intents", "expect_any", "expect_not",
 _PLAN_REPAIR_KEYS = {"kind", "trigger_any", "producer_intent", "consumer_intent",
                      "slot", "source_path"}
 _DIR_OF_TYPE = {"guide": "guides", "policy": "policies", "workflow": "workflows"}
+_LEGACY_STEP_TOKEN = re.compile(
+    r"(?P<open>\{)|(?P<close>\})|"
+    r"(?P<key>(?:[\"'](?:agent_id|intent)[\"']|agent_id|intent))\s*:"
+)
+
+
+def _has_legacy_step_shape(text: str) -> bool:
+    object_keys: list[set[str]] = []
+    for match in _LEGACY_STEP_TOKEN.finditer(text or ""):
+        if match.group("open"):
+            object_keys.append(set())
+        elif match.group("close"):
+            if object_keys and {"agent_id", "intent"} <= object_keys.pop():
+                return True
+        elif object_keys:
+            object_keys[-1].add(match.group("key").strip("\"'"))
+    return any({"agent_id", "intent"} <= keys for keys in object_keys)
 
 
 # ── 语料 ──────────────────────────────────────────────────────────────────────
@@ -224,6 +241,37 @@ def _lane_contract(docs: list[sk.SkillDoc]) -> list[str]:
                     if alt.strip() and alt.strip() not in known:
                         errs.append(f"{d.name}: expect 意图 {alt.strip()!r} 不存在于任何 manifest/端侧意图集")
     return errs
+
+
+def _lane_injected_wire(docs: list[sk.SkillDoc]) -> list[str]:
+    """Render governed examples as an actual request and reject old LLM wire."""
+    pairs: set[tuple[str, str]] = set()
+    for doc in docs:
+        for shot in doc.few_shots:
+            plan = shot.get("plan")
+            if isinstance(plan, str):
+                try:
+                    plan = json.loads(plan)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+            for step in (plan.get("steps") if isinstance(plan, dict) else []) or []:
+                if not isinstance(step, dict):
+                    continue
+                pair = (str(step.get("agent_id") or step.get("agent") or "").strip(),
+                        str(step.get("intent") or "").strip())
+                if all(pair):
+                    pairs.add(pair)
+    refs = {pair: f"cap_{index:04d}"
+            for index, pair in enumerate(sorted(pairs), 1)}
+    errors = []
+    for doc in docs:
+        policies = [doc] if doc.type == "policy" else []
+        guides = [] if doc.type == "policy" else [doc]
+        block, _, _ = sk.render_skills_block(
+            policies, guides, budget=10_000_000, capability_refs=refs)
+        if _has_legacy_step_shape(block):
+            errors.append(f"{doc.name}: 实际注入块仍含 agent_id+intent 旧 step 形状")
+    return errors
 
 
 def _lane_retrieval(store: sk.SkillStore) -> tuple[list[CaseResult], list[str]]:
@@ -642,7 +690,8 @@ def main() -> int:
           f"top_k={sk.SKILL_TOP_K}）===")
 
     # 文件级严格校验先行：loader 宽容跳过/回默认的坏文件，在这里硬失败（CI 即 lint 门）
-    errs = _lane_files(store.root) + _lane_contract(docs)
+    errs = (_lane_files(store.root) + _lane_contract(docs)
+            + _lane_injected_wire(docs))
     if errs:
         print("✗ skill 契约静态校验失败：\n  " + "\n  ".join(errs))
         return 1

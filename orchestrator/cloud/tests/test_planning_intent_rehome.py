@@ -11,41 +11,30 @@
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-from orchestrator.cloud.context import WorkingSet
-from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.planning import PlanBuilder
 
 from tests.test_planning import MockAgent
 
 
-def _plan(raw: str, agents):
-    async def mock_llm(messages):
-        return raw
-
-    async def mock_resolve(query, top_k=1):
-        return []
-
-    builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
-    return asyncio.run(builder.build("调高音量", WorkingSet(catalog=agents),
-                                     PlanContext(session_id="test")))
-
-
-def _step(agent_id: str, intent: str) -> str:
-    return ('{"steps":[{"id":"s1","agent_id":"%s","intent":"%s",'
-            '"slots":{},"depends_on":[],"slot_refs":{}}]}' % (agent_id, intent))
+def _steps(agent_id: str, intent: str, agents):
+    """Exercise the post-resolver internal pair validator, not the LLM wire."""
+    agent_map = {agent.manifest.agent_id: agent for agent in agents}
+    return PlanBuilder._validated_steps([
+        {"id": "s1", "agent_id": agent_id, "intent": intent,
+         "slots": {}, "depends_on": [], "slot_refs": {}},
+    ], agent_map)
 
 
 def test_unique_owner_gets_the_misattributed_step():
     agents = [MockAgent("edge-vehicle", ["volume.inc", "hvac.set"]),
               MockAgent("edge-media", ["media.play"])]
-    plan = _plan(_step("edge-media", "volume.inc"), agents)
-    assert [(s.agent_id, s.intent) for s in plan.steps] == [("edge-vehicle", "volume.inc")]
+    steps = _steps("edge-media", "volume.inc", agents)
+    assert [(s.agent_id, s.intent) for s in steps] == [("edge-vehicle", "volume.inc")]
 
 
 def test_rehomed_step_carries_the_new_owners_endpoint():
@@ -53,27 +42,25 @@ def test_rehomed_step_carries_the_new_owners_endpoint():
     agents = [MockAgent("edge-vehicle", ["volume.inc"]),
               MockAgent("edge-media", ["media.play"])]
     owner = next(a for a in agents if a.manifest.agent_id == "edge-vehicle")
-    plan = _plan(_step("edge-media", "volume.inc"), agents)
-    assert plan.steps[0].endpoint == owner.endpoint
+    steps = _steps("edge-media", "volume.inc", agents)
+    assert steps[0].endpoint == owner.endpoint
 
 
 def test_ambiguous_owner_is_still_dropped():
     """两家都声称拥有这个 intent → 不猜，仍按原样丢步。"""
     agents = [MockAgent("a", ["shop.order"]), MockAgent("b", ["shop.order"]),
               MockAgent("c", ["chitchat.talk"])]
-    plan = _plan(_step("c", "shop.order"), agents)
-    assert plan.steps == [] or all(s.intent != "shop.order" for s in plan.steps)
+    assert _steps("c", "shop.order", agents) == []
 
 
 def test_unknown_intent_is_still_dropped():
     """能力集校验挡幻觉的作用不许被削弱：没有任何 agent 拥有它就是没有。"""
     agents = [MockAgent("edge-vehicle", ["volume.inc"])]
-    plan = _plan(_step("edge-vehicle", "teleport.now"), agents)
-    assert plan.steps == [] or all(s.intent != "teleport.now" for s in plan.steps)
+    assert _steps("edge-vehicle", "teleport.now", agents) == []
 
 
 def test_correctly_attributed_step_is_untouched():
     agents = [MockAgent("edge-vehicle", ["volume.inc"]),
               MockAgent("edge-media", ["media.play"])]
-    plan = _plan(_step("edge-vehicle", "volume.inc"), agents)
-    assert [(s.agent_id, s.intent) for s in plan.steps] == [("edge-vehicle", "volume.inc")]
+    steps = _steps("edge-vehicle", "volume.inc", agents)
+    assert [(s.agent_id, s.intent) for s in steps] == [("edge-vehicle", "volume.inc")]
