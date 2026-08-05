@@ -409,12 +409,26 @@ def load_suites(path: Path) -> dict[str, SuiteConfig]:
                 raise ValueError(f"{name}.{key} must be >= 1")
         if name == "gate" and int(raw.get("normal_repeats", 0)) < 3:
             raise ValueError("gate.normal_repeats must be >= 3")
-        independent_processes = int(raw.get("independent_processes", 1))
-        independent_layers = _strings(raw.get("independent_layers"))
+        independent_processes = raw.get("independent_processes", 1)
+        if (not isinstance(independent_processes, int)
+                or isinstance(independent_processes, bool)):
+            raise ValueError(
+                f"{name}.independent_processes must be a non-boolean integer")
+        raw_independent_layers = raw.get("independent_layers", [])
+        if (not isinstance(raw_independent_layers, (list, tuple))
+                or any(not isinstance(layer, str) or not layer.strip()
+                       for layer in raw_independent_layers)):
+            raise ValueError(
+                f"{name}.independent_layers must be a list/tuple "
+                "of non-empty strings")
+        independent_layers = tuple(raw_independent_layers)
         if name == "gate" and independent_processes < 2:
             raise ValueError("gate.independent_processes must be >= 2")
-        if name == "gate" and not set(independent_layers) <= {"l1", "l2"}:
-            raise ValueError("gate.independent_layers may only contain l1/l2")
+        if (name == "gate"
+                and (len(independent_layers) != 2
+                     or set(independent_layers) != {"l1", "l2"})):
+            raise ValueError(
+                "gate.independent_layers must contain exactly one l1 and one l2")
         if name == "discovery" and independent_processes != 1:
             raise ValueError("discovery.independent_processes must be 1")
         if name == "discovery" and independent_layers:
@@ -430,8 +444,8 @@ def load_suites(path: Path) -> dict[str, SuiteConfig]:
             normal_repeats=int(raw.get("normal_repeats", 1)),
             failure_repeats=int(raw.get("failure_repeats", 3)),
             high_risk_repeats=int(raw.get("high_risk_repeats", 3)),
-            independent_processes=int(raw.get("independent_processes", 1)),
-            independent_layers=_strings(raw.get("independent_layers")),
+            independent_processes=raw.get("independent_processes", 1),
+            independent_layers=tuple(raw.get("independent_layers", [])),
         )
         for name, raw in (data.get("suites") or {}).items()
     }
@@ -583,6 +597,10 @@ def _stabilized_samples_errors(case: AdversarialCase) -> list[str]:
           or len(set(process_runs)) != len(process_runs)):
         errors.append(f"{case.id}: provenance.stabilized_process_runs must contain "
                       "unique non-empty run ids")
+    elif valid_processes and len(process_runs) != processes:
+        errors.append(
+            f"{case.id}: provenance.stabilized_process_runs has "
+            f"{len(process_runs)} entries; expected {processes}")
 
     samples = case.provenance.get("stabilized_samples")
     if not isinstance(samples, int) or isinstance(samples, bool):

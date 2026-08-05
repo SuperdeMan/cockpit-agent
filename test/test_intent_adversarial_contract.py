@@ -193,10 +193,10 @@ from support.intent_adversarial_contract import (  # noqa: E402
 )
 
 
-def _write_minimal_suites(path: Path, *, gate_processes: int = 2,
-                          gate_layers: str = "[l1, l2]",
-                          discovery_processes: int = 1,
-                          discovery_layers: str = "[]") -> None:
+def _write_minimal_suites(path: Path, *, gate_processes: object = 2,
+                          gate_layers: object = "[l1, l2]",
+                          discovery_processes: object = 1,
+                          discovery_layers: object = "[]") -> None:
     path.write_text(f"""
 schema_version: 1
 suites:
@@ -245,15 +245,59 @@ def test_gate_suite_requires_at_least_two_independent_processes(tmp_path: Path):
         load_suites(path)
 
 
-@pytest.mark.parametrize("layers", ("[l0]", "[l3]", "[l1, l3]"))
-def test_gate_suite_rejects_non_sampling_independent_layers(tmp_path: Path,
-                                                            layers: str):
+@pytest.mark.parametrize(
+    "layers",
+    (
+        "[l0]", "[l3]", "[l1, l3]",
+        "[]", "[l1]", "[l2]",
+        "[l1, l1, l2]", "[l1, l2, l2]",
+    ),
+)
+def test_gate_suite_requires_exactly_one_l1_and_one_l2_independent_layer(
+        tmp_path: Path, layers: str):
     path = tmp_path / "suites.yaml"
     _write_minimal_suites(path, gate_layers=layers)
 
     with pytest.raises(
             ValueError,
-            match=r"gate\.independent_layers may only contain l1/l2"):
+            match=(r"gate\.independent_layers must contain exactly "
+                   r"one l1 and one l2")):
+        load_suites(path)
+
+
+@pytest.mark.parametrize("suite_name", ("gate", "discovery"))
+@pytest.mark.parametrize(
+    "raw_processes",
+    ('"2"', "2.0", "true", "{count: 2}"),
+)
+def test_suite_independent_processes_rejects_coercible_or_structured_values(
+        tmp_path: Path, suite_name: str, raw_processes: str):
+    path = tmp_path / "suites.yaml"
+    kwargs = {f"{suite_name}_processes": raw_processes}
+    _write_minimal_suites(path, **kwargs)
+
+    with pytest.raises(
+            ValueError,
+            match=(rf"{suite_name}\.independent_processes must be a "
+                   r"non-boolean integer")):
+        load_suites(path)
+
+
+@pytest.mark.parametrize("suite_name", ("gate", "discovery"))
+@pytest.mark.parametrize(
+    "raw_layers",
+    ("l1", "{first: l1}", "1", "[l1, 2]", "[l1, '']"),
+)
+def test_suite_independent_layers_rejects_scalars_mappings_and_bad_items(
+        tmp_path: Path, suite_name: str, raw_layers: str):
+    path = tmp_path / "suites.yaml"
+    kwargs = {f"{suite_name}_layers": raw_layers}
+    _write_minimal_suites(path, **kwargs)
+
+    with pytest.raises(
+            ValueError,
+            match=(rf"{suite_name}\.independent_layers must be a list/tuple "
+                   r"of non-empty strings")):
         load_suites(path)
 
 
@@ -798,6 +842,25 @@ def test_new_promotions_require_a_non_empty_unique_process_run_list(runs):
     )
 
     assert any("stabilized_process_runs" in row for row in _errors_for(case))
+
+
+@pytest.mark.parametrize(
+    "runs",
+    (
+        ["promotion-a"],
+        ["promotion-a", "promotion-b", "promotion-c"],
+    ),
+)
+def test_process_run_count_must_equal_declared_process_count(runs):
+    case = _stable_case(
+        "x.run-count",
+        **_independent_process_provenance(stabilized_process_runs=runs),
+    )
+
+    assert any(
+        f"stabilized_process_runs has {len(runs)} entries; expected 2" in row
+        for row in _errors_for(case)
+    )
 
 
 def test_new_promotions_require_total_samples_to_cover_every_process():
