@@ -39,6 +39,7 @@ for _p in (str(ROOT), str(ROOT / "gen" / "python"), str(ROOT / "orchestrator" / 
 import eval_common  # noqa: E402
 import eval_live  # noqa: E402
 from support import intent_adversarial_contract as contract  # noqa: E402
+from support import intent_adversarial_process as process  # noqa: E402
 from support import intent_adversarial_runtime as runtime  # noqa: E402
 from support.intent_adversarial_judge import (  # noqa: E402
     DecisionSnapshot, PlanSnapshot, TurnJudgement, judge_plan, judge_relation,
@@ -140,6 +141,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--baseline", default=str(FORMAL_BASELINE_JSON))
     ap.add_argument("--write-baseline", action="store_true")
     ap.add_argument("--strict", action="store_true")
+    ap.add_argument("--_worker", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--_bundle-id", default="", help=argparse.SUPPRESS)
+    ap.add_argument("--_process-run-id", default="", help=argparse.SUPPRESS)
+    ap.add_argument("--_worker-role", default="", help=argparse.SUPPRESS)
+    ap.add_argument("--_worker-report", default="", help=argparse.SUPPRESS)
     return ap.parse_args(argv)
 
 
@@ -203,6 +209,20 @@ def validate_args(args: argparse.Namespace) -> argparse.Namespace:
                 "比较源必须是正式基线本身，否则逐例回退/删除案例/gold 变化全部落空")
     if args.repeat and args.repeat < 1:
         die("--repeat 必须 >= 1")
+    worker_identity = {
+        "--_bundle-id": args._bundle_id,
+        "--_process-run-id": args._process_run_id,
+        "--_worker-role": args._worker_role,
+        "--_worker-report": args._worker_report,
+    }
+    if args._worker:
+        missing = [flag for flag, value in worker_identity.items() if not value]
+        if missing:
+            die(f"--_worker 缺少身份参数：{', '.join(missing)}")
+        if args.write_baseline:
+            die("worker 不允许 --write-baseline；正式 baseline 只能由 parent 写入")
+    elif any(worker_identity.values()):
+        die("隐藏 worker 身份参数只能与 --_worker 一起使用")
     return args
 
 
@@ -1099,9 +1119,7 @@ def _make_stdio_lossy() -> None:
             pass
 
 
-def main(argv: list[str] | None = None) -> int:
-    _make_stdio_lossy()
-    args = validate_args(parse_args(argv))
+def _run_single(args: argparse.Namespace) -> int:
     try:
         all_cases = contract.load_cases(CASES_DIR)
         suites = contract.load_suites(SUITES_PATH)
@@ -1110,6 +1128,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     suite = suites[args.suite]
     selected = select_cases(all_cases, args, suite)
+    bundle_args = args
+    if args._worker:
+        bundle_values = vars(args).copy()
+        # Worker identity validation compares the selected corpus contract across
+        # shards. Keep that contract layer-neutral; the result matrix separately
+        # proves which L1/L2 units each shard actually ran.
+        bundle_values["layer"] = "all"
+        bundle_args = argparse.Namespace(**bundle_values)
+    bundle_selected = select_cases(all_cases, bundle_args, suite)
     try:
         hard_errors, gaps = _gather_contract_errors(all_cases, suite, args)
     except (ValueError, OSError) as exc:
@@ -1161,8 +1188,9 @@ def main(argv: list[str] | None = None) -> int:
                         infrastructure_errors.append(
                             "exemplar_warmup_failed: 语义检索档位为 hybrid 但预热 0 条"
                             "（多半是 LLM_GATEWAY_ADDR 未指向可达网关，Embed 被降级）")
-            results, infra = _execute(selected, args, suite, agents, builder,
-                                      confirm_intents, provider_model, lock)
+            results, infra = _execute(
+                selected, args, suite, agents, builder, confirm_intents,
+                provider_model, lock, process_run_id=args._process_run_id)
             infrastructure_errors.extend(infra)
         # **预热成功不等于整跑都在语义档上。** 逐轮检索用的是
         # `EXEMPLAR_EMBED_TIMEOUT`/`SKILL_EMBED_TIMEOUT`（缺省 1.0s），一次超时就打 30s
@@ -1177,7 +1205,9 @@ def main(argv: list[str] | None = None) -> int:
         l3_selected, l3_statuses, l3_infra, l3_meta = _l3_evidence(
             selected, args, provider_model)
         infrastructure_errors.extend(l3_infra)
-        results.extend(_l3_results(selected, args, l3_statuses, provider_model))
+        results.extend(_l3_results(
+            selected, args, l3_statuses, provider_model,
+            process_run_id=args._process_run_id))
     except RuntimeError as exc:
         print(f"[intent-adversarial] infrastructure error: {exc}", file=sys.stderr)
         return 2
@@ -1196,22 +1226,24 @@ def main(argv: list[str] | None = None) -> int:
         "provider_drift": bool(lock and lock.drifts),
         "provider_lock": (lock.summary() if lock else {}),
         "provider_model": provider_model,
+        "temperature": args.temperature,
         "code_sha": eval_common.git_short_sha(),
-        "worktree_clean": _worktree_clean(
-            {value for value in (repo_relative(args.out_json),
-                                 repo_relative(args.out_md)) if value}),
+        "worktree_clean": _worktree_clean({
+            value for value in map(repo_relative, map(str, _report_paths(args)))
+            if value
+        }),
         "assets": asset_fingerprint(ROOT),
         "infrastructure_errors": infrastructure_errors,
         "selected_statuses": sorted({case.status for case in selected}),
         "coverage_gaps": gaps,
         "selection_filters": filters,
         # 选集口径进报告文件本身：报告会被单独传阅，而「这是子集」是读它的前提。
-        "selection_provenance": selection_provenance(all_cases, args, suite),
+        "selection_provenance": selection_provenance(all_cases, bundle_args, suite),
         "repeat_override": int(args.repeat or 0),
         "corpus_cases": len(all_cases),
-        "selected_cases": len(selected),
-        "distinct_input_units": contract.distinct_input_units(selected),
-        "duplicate_input_groups": contract.duplicate_input_groups(selected),
+        "selected_cases": len(bundle_selected),
+        "distinct_input_units": contract.distinct_input_units(bundle_selected),
+        "duplicate_input_groups": contract.duplicate_input_groups(bundle_selected),
         "l3_selected": l3_selected,
         "l3_complete": bool(l3_selected) and all(
             l3_statuses.get(j) == "pass" for j in l3_selected),
@@ -1219,6 +1251,14 @@ def main(argv: list[str] | None = None) -> int:
         "l3_invocation": l3_meta,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if args._worker:
+        meta["process_sample"] = {
+            "bundle_id": args._bundle_id,
+            "role": args._worker_role,
+            "layer": args.layer,
+            "process_run_id": args._process_run_id,
+            "pid": os.getpid(),
+        }
     meta["assets_complete"] = bool(meta["assets"].get("complete"))
     produced = {r.result_id for r in results}
     # 「当前选集跑齐了」证明不了「选集等于完整声明集」。两件事分开记：
@@ -1236,8 +1276,7 @@ def main(argv: list[str] | None = None) -> int:
         report["meta"]["baseline_regressions"] = [cid for cid, _, _ in diff.regressions]
         # 旧 baseline 里有、这次不见了的证据单元：删掉难例同样能让门禁变绿。
         report["meta"]["removed_cases"] = sorted(
-            {str(row.get("id") or "") for row in (baseline.get("cases") or [])}
-            - produced - {""})[:50]
+            _baseline_case_ids(baseline) - produced)[:50]
         report["meta"]["gold_changes"] = _gold_changes(report, baseline)
     else:
         report["meta"]["baseline_regressions"] = []
@@ -1257,8 +1296,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[baseline rejected] {reason}", file=sys.stderr)
             return 2
     else:
-        eval_common.write_report(report, markdown, Path(args.out_json),
-                                 Path(args.out_md))
+        json_path, md_path = _report_paths(args)
+        eval_common.write_report(report, markdown, json_path, md_path)
 
     _print_summary(report)
     if args.diagnose:
@@ -1997,6 +2036,292 @@ def _run_engine_direct(case, agents, builder, confirm_intents) -> list[TurnOutco
                                           sink, before))
     _TRACE_ERRORS.extend(sink.trace_errors)
     return outcomes
+
+
+def _needs_parent_bundle(args: argparse.Namespace) -> bool:
+    """Only the public gate L1/L2/all surface expands into worker processes."""
+    return bool(
+        not args._worker
+        and not args.list
+        and args.suite == "gate"
+        and args.layer in {"l1", "l2", "all"}
+    )
+
+
+def _report_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    if args._worker:
+        worker_json = Path(args._worker_report)
+        return worker_json, worker_json.with_suffix(".md")
+    return Path(args.out_json), Path(args.out_md)
+
+
+def _worker_command(
+    args: argparse.Namespace,
+    spec: process.WorkerSpec,
+    bundle_id: str,
+    process_run_id: str,
+    report_path: Path,
+) -> list[str]:
+    """Build one non-recursive worker command without copying output destinations."""
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--suite", args.suite,
+        "--layer", spec.layer,
+        "--provider", args.provider,
+        "--model", args.model,
+        "--temperature", str(args.temperature),
+        "--timeout", str(args.timeout),
+        "--retrieval-state", args.retrieval_state,
+        "--ablations", args.ablations,
+        "--baseline", args.baseline,
+    ]
+    for case_id in args.cases:
+        command.extend(("--case", case_id))
+    for tag in args.tags:
+        command.extend(("--tag", tag))
+    if args.cohort:
+        command.extend(("--cohort", args.cohort))
+    for risk in args.risk:
+        command.extend(("--risk", risk))
+    if args.repeat:
+        command.extend(("--repeat", str(args.repeat)))
+    for enabled, flag in (
+        (args.live, "--live"),
+        (args.diagnose, "--diagnose"),
+        (args.strict, "--strict"),
+    ):
+        if enabled:
+            command.append(flag)
+    command.extend((
+        "--_worker",
+        "--_bundle-id", bundle_id,
+        "--_process-run-id", process_run_id,
+        "--_worker-role", spec.role,
+        "--_worker-report", str(report_path),
+    ))
+    return command
+
+
+class WorkerLaunchError(RuntimeError):
+    """A worker did not produce a trustworthy report artifact."""
+
+
+def _launch_worker(
+    args: argparse.Namespace,
+    spec: process.WorkerSpec,
+    bundle_id: str,
+    process_run_id: str,
+    report_path: Path,
+) -> process.WorkerArtifact:
+    command = _worker_command(
+        args, spec, bundle_id, process_run_id, report_path)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=os.environ.copy(),
+        )
+    except OSError as exc:
+        raise WorkerLaunchError(f"{spec.role}: worker launch failed: {exc}") from exc
+    if completed.returncode not in {0, 1}:
+        raise WorkerLaunchError(
+            f"{spec.role}: worker returned exit code {completed.returncode}")
+    if not report_path.is_file():
+        raise WorkerLaunchError(f"{spec.role}: worker did not create report")
+    try:
+        report_bytes = report_path.read_bytes()
+    except OSError as exc:
+        raise WorkerLaunchError(f"{spec.role}: worker report is unreadable: {exc}") from exc
+    try:
+        report = json.loads(report_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise WorkerLaunchError(
+            f"{spec.role}: worker report must contain valid JSON") from exc
+    if not isinstance(report, dict):
+        raise WorkerLaunchError(f"{spec.role}: worker report JSON must be an object")
+    return process.WorkerArtifact(
+        spec=spec,
+        exit_code=completed.returncode,
+        report=report,
+        report_sha256=hashlib.sha256(report_bytes).hexdigest(),
+        report_bytes=report_bytes,
+        assigned_process_run_id=process_run_id,
+    )
+
+
+def _collect_worker_artifacts(
+    args: argparse.Namespace,
+    suite: Any,
+    bundle_id: str,
+    temp_root: Path,
+) -> tuple[process.WorkerArtifact, ...]:
+    specs = process.worker_specs(args.layer, args.suite, suite)
+    if args.repeat:
+        specs = tuple(replace(spec, samples_per_unit=args.repeat) for spec in specs)
+    artifacts = []
+    for index, spec in enumerate(specs):
+        process_run_id = str(uuid.uuid4())
+        report_path = temp_root / f"{index:02d}-{spec.role}.json"
+        artifacts.append(_launch_worker(
+            args, spec, bundle_id, process_run_id, report_path))
+    return tuple(artifacts)
+
+
+def _run_parent_bundle(args: argparse.Namespace) -> int:
+    """Run serial workers, validate their immutable artifacts, and write one report."""
+    try:
+        all_cases = contract.load_cases(CASES_DIR)
+        suites = contract.load_suites(SUITES_PATH)
+        suite = suites[args.suite]
+        selected = select_cases(all_cases, args, suite)
+        hard_errors, gaps = _gather_contract_errors(all_cases, suite, args)
+    except (ValueError, OSError) as exc:
+        print(f"[intent-adversarial] contract error: {exc}", file=sys.stderr)
+        return 2
+    if hard_errors:
+        for row in hard_errors[:50]:
+            print(f"[contract] {row}", file=sys.stderr)
+        return 2
+    expected_units = _expected_units(selected, args)
+    if not expected_units:
+        print("[intent-adversarial] parent bundle selection is empty", file=sys.stderr)
+        return 2
+
+    bundle_id = str(uuid.uuid4())
+    try:
+        with tempfile.TemporaryDirectory(prefix="intent-adversarial-") as temp_dir:
+            artifacts = _collect_worker_artifacts(
+                args, suite, bundle_id, Path(temp_dir))
+    except (WorkerLaunchError, OSError, ValueError) as exc:
+        print(f"[intent-adversarial] worker infrastructure error: {exc}", file=sys.stderr)
+        return 2
+
+    specs = tuple(artifact.spec for artifact in artifacts)
+    expected_by_layer = _expected_result_ids_by_layer(selected, args)
+    bundle_errors = process.validate_worker_bundle(
+        specs, artifacts, bundle_id, expected_by_layer)
+    if bundle_errors:
+        for row in bundle_errors[:50]:
+            print(f"[process] {row}", file=sys.stderr)
+        return 2
+    try:
+        merged_rows = process.merge_worker_reports(
+            specs, artifacts, bundle_id, expected_by_layer)
+        results = [AdversarialResult(**row) for row in merged_rows.values()]
+    except (TypeError, ValueError) as exc:
+        print(f"[intent-adversarial] worker merge error: {exc}", file=sys.stderr)
+        return 2
+
+    primary = next(a for a in artifacts if a.spec.role == "primary")
+    meta = dict(primary.report.get("meta") or {})
+    meta.pop("process_sample", None)
+    meta.update({
+        "suite": args.suite,
+        "layer": args.layer,
+        "temperature": args.temperature,
+        "process_bundle_role": "parent",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "selection_provenance": selection_provenance(all_cases, args, suite),
+        "selected_cases": len(selected),
+        "distinct_input_units": contract.distinct_input_units(selected),
+        "duplicate_input_groups": contract.duplicate_input_groups(selected),
+    })
+    produced = {result.result_id for result in results}
+    declared_units = _expected_units(
+        [case for case in all_cases if case.status in set(suite.statuses)], args)
+    meta["case_set_complete"] = expected_units <= produced
+    meta["declared_set_complete"] = bool(declared_units) and declared_units <= produced
+    meta["missing_declared_units"] = sorted(declared_units - produced)[:50]
+    meta["repeat_policy_complete"] = _repeat_policy_complete(results, suite)
+
+    baseline = eval_common.load_baseline(Path(args.baseline))
+    report = build_adversarial_report(results, meta)
+    if baseline:
+        diff = eval_common.diff_against_baseline(report, baseline)
+        report["meta"]["baseline_regressions"] = [
+            case_id for case_id, _, _ in diff.regressions]
+        report["meta"]["removed_cases"] = sorted(
+            _baseline_case_ids(baseline) - produced)[:50]
+        report["meta"]["gold_changes"] = _gold_changes(report, baseline)
+    else:
+        report["meta"]["baseline_regressions"] = []
+        report["meta"]["removed_cases"] = []
+        report["meta"]["gold_changes"] = []
+    markdown = render_adversarial_markdown(report)
+    eligibility = baseline_eligibility(report)
+    if args.write_baseline:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        written = write_baseline_if_eligible(
+            report, markdown, eligibility, FORMAL_BASELINE_JSON, FORMAL_BASELINE_MD,
+            ROOT / f"docs/reviews/eval/_ci-run-intent-adversarial-rejected-{stamp}.json",
+            ROOT / f"docs/reviews/eval/_ci-run-intent-adversarial-rejected-{stamp}.md")
+        if not written:
+            for reason in eligibility.reasons:
+                print(f"[baseline rejected] {reason}", file=sys.stderr)
+            return 2
+    else:
+        eval_common.write_report(
+            report, markdown, Path(args.out_json), Path(args.out_md))
+
+    _print_summary(report)
+    if args.diagnose:
+        _print_diagnosis(report)
+    if gaps and (args.strict or args.write_baseline):
+        for row in gaps[:50]:
+            print(f"[coverage] {row}", file=sys.stderr)
+        return 2
+    product_red = report["overall"]["passed"] != report["overall"]["total"]
+    if (
+        product_red
+        or report["meta"]["baseline_regressions"]
+        or meta.get("provider_drift")
+        or any(artifact.exit_code == 1 for artifact in artifacts)
+    ):
+        return 1
+    return 0
+
+
+def _expected_result_ids_by_layer(
+    selected: list[Any], args: argparse.Namespace
+) -> dict[str, tuple[str, ...]]:
+    expected: dict[str, tuple[str, ...]] = {}
+    requested_layers = set(LAYERS[:-1]) if args.layer == "all" else {args.layer}
+    for layer in LAYERS[:-1]:
+        if layer not in requested_layers:
+            expected[layer] = ()
+            continue
+        layer_values = vars(args).copy()
+        layer_values["layer"] = layer
+        expected[layer] = tuple(sorted(
+            _expected_units(selected, argparse.Namespace(**layer_values))))
+    return expected
+
+
+def _baseline_case_ids(report: dict[str, Any]) -> set[str]:
+    rows = report.get("cases") or {}
+    if isinstance(rows, dict):
+        return {str(case_id) for case_id in rows if str(case_id)}
+    if isinstance(rows, list):
+        return {
+            str(row.get("id") or "")
+            for row in rows
+            if isinstance(row, dict) and row.get("id")
+        }
+    return set()
+
+
+def main(argv: list[str] | None = None) -> int:
+    _make_stdio_lossy()
+    args = validate_args(parse_args(argv))
+    if args._worker:
+        return _run_single(args)
+    if _needs_parent_bundle(args):
+        return _run_parent_bundle(args)
+    return _run_single(args)
 
 
 if __name__ == "__main__":
