@@ -5,6 +5,8 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
+from hashlib import sha256
+import json
 from typing import Any
 
 
@@ -21,6 +23,7 @@ class WorkerArtifact:
     exit_code: int
     report: dict
     report_sha256: str = ""
+    report_bytes: bytes = b""
 
 
 @dataclass(frozen=True)
@@ -217,13 +220,74 @@ def _corpus_state(meta: Mapping[str, Any]) -> Any:
     return {key: meta.get(key) for key in keys if key in meta}
 
 
+_RESULT_LAYERS = ("l0", "l1", "l2", "l3")
+
+
+def _validate_expected_result_ids(
+    expected_result_ids_by_layer: Any,
+) -> tuple[dict[str, tuple[str, ...]], list[str], bool]:
+    errors: list[str] = []
+    normalized = {layer: () for layer in _RESULT_LAYERS}
+    if not isinstance(expected_result_ids_by_layer, Mapping):
+        return (
+            normalized,
+            ["expected_result_ids_by_layer must be a mapping"],
+            False,
+        )
+
+    actual_keys = set(expected_result_ids_by_layer)
+    expected_keys = set(_RESULT_LAYERS)
+    for key in sorted(expected_keys - actual_keys):
+        errors.append(f"expected_result_ids_by_layer is missing key {key!r}")
+    for key in sorted(actual_keys - expected_keys, key=repr):
+        errors.append(f"expected_result_ids_by_layer has unexpected key {key!r}")
+
+    all_ids: dict[str, str] = {}
+    for layer in _RESULT_LAYERS:
+        if layer not in expected_result_ids_by_layer:
+            continue
+        raw_ids = expected_result_ids_by_layer[layer]
+        if isinstance(raw_ids, (str, bytes)) or not isinstance(raw_ids, Sequence):
+            errors.append(
+                f"expected_result_ids_by_layer[{layer!r}] must be a sequence"
+            )
+            continue
+        ids = tuple(raw_ids)
+        if any(not isinstance(result_id, str) or not result_id for result_id in ids):
+            errors.append(
+                f"expected_result_ids_by_layer[{layer!r}] must contain non-empty strings"
+            )
+            continue
+        if len(set(ids)) != len(ids):
+            errors.append(
+                f"expected_result_ids_by_layer[{layer!r}] contains duplicate ids"
+            )
+            continue
+        normalized[layer] = ids
+        for result_id in ids:
+            previous_layer = all_ids.get(result_id)
+            if previous_layer is not None:
+                errors.append(
+                    "expected_result_ids_by_layer contains result id "
+                    f"{result_id!r} in both {previous_layer!r} and {layer!r}"
+                )
+            else:
+                all_ids[result_id] = layer
+    return normalized, errors, not errors
+
+
 def validate_worker_bundle(
     expected_specs: Sequence[WorkerSpec],
     artifacts: Sequence[WorkerArtifact],
     bundle_id: str,
+    expected_result_ids_by_layer: Mapping[str, Sequence[str]],
 ) -> tuple[str, ...]:
     """Return every fail-closed identity/evidence error in a worker bundle."""
     errors: list[str] = []
+    expected_result_ids, expected_result_errors, expected_result_ids_valid = (
+        _validate_expected_result_ids(expected_result_ids_by_layer)
+    )
+    errors.extend(expected_result_errors)
     expected_specs = tuple(expected_specs)
     artifacts = tuple(artifacts)
     expected_roles = [spec.role for spec in expected_specs]
@@ -280,6 +344,29 @@ def validate_worker_bundle(
         ):
             errors.append(f"{role}: report_sha256 must be 64 hexadecimal characters")
         report = getattr(artifact, "report", None)
+        report_bytes = getattr(artifact, "report_bytes", None)
+        if not isinstance(report_bytes, bytes) or not report_bytes:
+            errors.append(f"{role}: report_bytes must be non-empty bytes")
+        else:
+            actual_sha256 = sha256(report_bytes).hexdigest()
+            if report_sha256 != actual_sha256:
+                errors.append(f"{role}: report_sha256 does not match report_bytes")
+            parsed_report: Any = None
+            decoded = None
+            try:
+                decoded = report_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                errors.append(f"{role}: report_bytes must be valid UTF-8")
+            if decoded is not None:
+                try:
+                    parsed_report = json.loads(decoded)
+                except (json.JSONDecodeError, ValueError):
+                    errors.append(f"{role}: report_bytes must contain valid JSON")
+                else:
+                    if parsed_report != report:
+                        errors.append(
+                            f"{role}: report_bytes JSON does not equal artifact.report"
+                        )
         if not isinstance(report, Mapping):
             errors.append(f"{role}: report must be a mapping")
             continue
@@ -406,8 +493,8 @@ def validate_worker_bundle(
         else:
             if provider_lock.get("locked") is not True:
                 errors.append(f"{role}: provider_lock.locked must be true")
-            if provider_lock.get("drift") is not False:
-                errors.append(f"{role}: provider_lock.drift must be false")
+            if provider_lock.get("drift_detected") is not False:
+                errors.append(f"{role}: provider_lock.drift_detected must be false")
             if "restore_errors" not in provider_lock:
                 errors.append(f"{role}: provider_lock.restore_errors must be declared")
             elif provider_lock.get("restore_errors"):
@@ -439,35 +526,26 @@ def validate_worker_bundle(
         for result_id, row in results.items():
             units[result_id].append((role, row))
 
-    primary_rows = reports_by_role.get("primary", [])
-    if len(primary_rows) == 1:
-        primary_spec, primary_results = primary_rows[0]
-        if primary_spec.layer == "all":
-            for role, records in reports_by_role.items():
-                if role == "primary" or len(records) != 1:
-                    continue
-                spec, results = records[0]
-                expected_ids = {
-                    result_id
-                    for result_id, row in primary_results.items()
-                    if row.get("layer") == spec.layer
-                }
-                actual_ids = set(results)
-                for result_id in sorted(expected_ids - actual_ids):
-                    errors.append(f"{role}: missing result {result_id!r} from result matrix")
-                for result_id in sorted(actual_ids - expected_ids):
-                    errors.append(f"{role}: extra result {result_id!r} in result matrix")
-        else:
-            expected_ids = set(primary_results)
-            for role, records in reports_by_role.items():
-                if role == "primary" or len(records) != 1:
-                    continue
-                _, results = records[0]
-                actual_ids = set(results)
-                for result_id in sorted(expected_ids - actual_ids):
-                    errors.append(f"{role}: missing result {result_id!r} from result matrix")
-                for result_id in sorted(actual_ids - expected_ids):
-                    errors.append(f"{role}: extra result {result_id!r} in result matrix")
+    if expected_result_ids_valid:
+        all_expected_ids = {
+            result_id
+            for layer in _RESULT_LAYERS
+            for result_id in expected_result_ids[layer]
+        }
+        for role, records in reports_by_role.items():
+            if len(records) != 1:
+                continue
+            spec, results = records[0]
+            expected_ids = (
+                all_expected_ids
+                if spec.layer == "all"
+                else set(expected_result_ids[spec.layer])
+            )
+            actual_ids = set(results)
+            for result_id in sorted(expected_ids - actual_ids):
+                errors.append(f"{role}: missing result {result_id!r} from result matrix")
+            for result_id in sorted(actual_ids - expected_ids):
+                errors.append(f"{role}: extra result {result_id!r} in result matrix")
 
     for result_id, rows in units.items():
         if len(rows) < 2:
@@ -526,10 +604,17 @@ def _bundle_id(artifacts: Sequence[WorkerArtifact]) -> str:
 
 
 def merge_worker_reports(
-    expected_specs: Sequence[WorkerSpec], artifacts: Sequence[WorkerArtifact]
+    expected_specs: Sequence[WorkerSpec],
+    artifacts: Sequence[WorkerArtifact],
+    expected_result_ids_by_layer: Mapping[str, Sequence[str]],
 ) -> dict[str, dict[str, Any]]:
     """Merge already-validated reports without pairing relation evidence."""
-    errors = validate_worker_bundle(expected_specs, artifacts, _bundle_id(artifacts))
+    errors = validate_worker_bundle(
+        expected_specs,
+        artifacts,
+        _bundle_id(artifacts),
+        expected_result_ids_by_layer,
+    )
     if errors:
         raise ValueError("invalid worker bundle: " + "; ".join(errors))
 

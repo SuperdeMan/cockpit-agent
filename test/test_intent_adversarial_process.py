@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from hashlib import sha256
+import json
 import sys
 from pathlib import Path
 
@@ -26,6 +27,14 @@ FORMAL_SUITE = {
     "independent_layers": ["l1", "l2"],
     "normal_repeats": 3,
 }
+LAYERS = ("l0", "l1", "l2", "l3")
+
+
+def _expected_ids(**by_layer: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
+    return {layer: tuple(by_layer.get(layer, ())) for layer in LAYERS}
+
+
+EXPECTED_L1 = _expected_ids(l1=("case-1",))
 
 
 @dataclass(frozen=True)
@@ -141,7 +150,7 @@ def _report(
                 "provider": "minimax",
                 "model": "MiniMax-M3",
                 "locked": True,
-                "drift": False,
+                "drift_detected": False,
                 "restore_errors": [],
             },
             "assets": {
@@ -154,6 +163,8 @@ def _report(
             },
             "retrieval_state": "warm",
             "retrieval_degraded": 0,
+            # Required by the approved future worker-report schema. Task 3 wires
+            # it into the real CLI; Task 2a must not weaken bundle validation.
             "temperature": 0.0,
             "selection_provenance": {
                 "suite": "gate",
@@ -189,11 +200,16 @@ def _artifact(
     exit_code: int = 0,
     pid: int = 1001,
 ) -> WorkerArtifact:
+    report = _report(spec, run_id, results=results, pid=pid)
+    report_bytes = json.dumps(
+        report, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     return WorkerArtifact(
         spec=spec,
         exit_code=exit_code,
-        report=_report(spec, run_id, results=results, pid=pid),
-        report_sha256=sha256(f"{spec.role}:{run_id}".encode()).hexdigest(),
+        report=report,
+        report_sha256=sha256(report_bytes).hexdigest(),
+        report_bytes=report_bytes,
     )
 
 
@@ -410,7 +426,7 @@ def test_validate_worker_bundle_accepts_exit_one_and_complete_bundle():
         _artifact(specs[1], "run-corroboration", pid=102),
     )
 
-    assert validate_worker_bundle(specs, artifacts, BUNDLE_ID) == ()
+    assert validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1) == ()
 
 
 def test_validate_worker_bundle_collects_role_layout_errors_without_short_circuiting():
@@ -423,7 +439,9 @@ def test_validate_worker_bundle_collects_role_layout_errors_without_short_circui
         _artifact(unexpected_spec, "run-unexpected", pid=103),
     )
 
-    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+    errors = validate_worker_bundle(
+        specs, artifacts, BUNDLE_ID, _expected_ids(l1=("case-1",))
+    )
 
     assert any("duplicate role" in error for error in errors)
     assert any("missing role" in error and "corroboration-l1" in error for error in errors)
@@ -500,9 +518,9 @@ def test_validate_worker_bundle_collects_role_layout_errors_without_short_circui
         ),
         (
             lambda artifacts: artifacts[1].report["meta"]["provider_lock"].update(
-                drift=True
+                drift_detected=True
             ),
-            "provider_lock",
+            "drift_detected",
         ),
         (
             lambda artifacts: artifacts[1].report["meta"]["provider_lock"].update(
@@ -600,7 +618,7 @@ def test_validate_worker_bundle_rejects_identity_and_evidence_drift(
     ]
     mutate(artifacts)
 
-    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
 
     assert any(expected_fragment in error for error in errors), errors
 
@@ -612,13 +630,15 @@ def test_validate_worker_bundle_rejects_non_mapping_report_and_exit_two():
         _artifact(specs[1], "run-corroboration", pid=102),
     )
 
-    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
 
     assert any("exit_code" in error for error in errors)
     assert any("report" in error and "mapping" in error for error in errors)
 
 
-@pytest.mark.parametrize("bad_sha", ["", "not-hex", "a" * 63, "g" * 64])
+@pytest.mark.parametrize(
+    "bad_sha", ["", "not-hex", "a" * 63, "g" * 64, "f" * 64]
+)
 def test_validate_worker_bundle_rejects_empty_or_fake_report_sha256(bad_sha):
     specs = worker_specs("l1", "gate", FORMAL_SUITE)
     artifacts = [
@@ -627,9 +647,37 @@ def test_validate_worker_bundle_rejects_empty_or_fake_report_sha256(bad_sha):
     ]
     artifacts[1] = replace(artifacts[1], report_sha256=bad_sha)
 
-    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
 
     assert any("report_sha256" in error for error in errors), errors
+
+
+@pytest.mark.parametrize(
+    ("replacement_bytes", "fragment"),
+    [
+        (b"", "report_bytes"),
+        (b"\xff", "UTF-8"),
+        (b"not-json", "JSON"),
+        (b"{}", "artifact.report"),
+    ],
+)
+def test_validate_worker_bundle_binds_report_bytes_to_parsed_report(
+    replacement_bytes, fragment
+):
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _artifact(specs[0], "run-primary", pid=101),
+        _artifact(specs[1], "run-corroboration", pid=102),
+    ]
+    artifacts[1] = replace(
+        artifacts[1],
+        report_bytes=replacement_bytes,
+        report_sha256=sha256(replacement_bytes).hexdigest(),
+    )
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
+
+    assert any(fragment in error for error in errors), errors
 
 
 def test_validate_worker_bundle_binds_every_repetition_to_its_worker_run_id():
@@ -642,7 +690,7 @@ def test_validate_worker_bundle_binds_every_repetition_to_its_worker_run_id():
         "process_run_id"
     ] = "forged-third-process"
 
-    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
 
     assert any("process_run_id" in error for error in errors), errors
 
@@ -657,7 +705,7 @@ def test_validate_worker_bundle_rejects_one_sample_when_policy_requires_three():
         1
     ].report["results"]["case-1"]["repetitions"][:1]
 
-    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
 
     assert any("samples_per" in error or "sample_index" in error for error in errors), errors
 
@@ -671,7 +719,7 @@ def test_validate_worker_bundle_accepts_real_retrieval_shape_with_zero_degradati
 
     assert all(a.report["meta"]["retrieval_state"] == "warm" for a in artifacts)
     assert all(a.report["meta"]["retrieval_degraded"] == 0 for a in artifacts)
-    assert validate_worker_bundle(specs, artifacts, BUNDLE_ID) == ()
+    assert validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1) == ()
 
 
 @pytest.mark.parametrize(
@@ -715,9 +763,83 @@ def test_validate_worker_bundle_closes_all_layer_result_matrix(mutate, fragment)
     specs, artifacts = _all_layer_bundle()
     mutate(artifacts)
 
-    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+    errors = validate_worker_bundle(
+        specs,
+        artifacts,
+        BUNDLE_ID,
+        _expected_ids(
+            l0=("case-l0",),
+            l1=("case-l1",),
+            l2=("case-l2",),
+            l3=("case-l3",),
+        ),
+    )
 
     assert any(fragment in error for error in errors), errors
+
+
+def test_validate_worker_bundle_rejects_unit_missing_from_every_worker():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _artifact(specs[0], "run-primary", results=[], pid=101),
+        _artifact(specs[1], "run-corroboration", results=[], pid=102),
+    ]
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
+
+    assert any("case-1" in error and "missing" in error for error in errors), errors
+
+
+def test_validate_worker_bundle_rejects_unit_added_by_every_worker():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _artifact(
+            specs[0],
+            "run-primary",
+            results=[
+                _result("case-1", "run-primary"),
+                _result("common-extra", "run-primary"),
+            ],
+            pid=101,
+        ),
+        _artifact(
+            specs[1],
+            "run-corroboration",
+            results=[
+                _result("case-1", "run-corroboration"),
+                _result("common-extra", "run-corroboration"),
+            ],
+            pid=102,
+        ),
+    ]
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
+
+    assert any("common-extra" in error and "extra" in error for error in errors), errors
+
+
+@pytest.mark.parametrize(
+    "expected_ids",
+    [
+        [],
+        {"l0": (), "l1": (), "l2": ()},
+        {"l0": (), "l1": (), "l2": (), "l3": (), "l4": ()},
+        {"l0": (), "l1": "case-1", "l2": (), "l3": ()},
+        {"l0": (), "l1": ("case-1", "case-1"), "l2": (), "l3": ()},
+        {"l0": (), "l1": ("",), "l2": (), "l3": ()},
+        {"l0": ("same",), "l1": ("same",), "l2": (), "l3": ()},
+    ],
+)
+def test_validate_worker_bundle_rejects_invalid_expected_unit_mapping(expected_ids):
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = (
+        _artifact(specs[0], "run-primary", pid=101),
+        _artifact(specs[1], "run-corroboration", pid=102),
+    )
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, expected_ids)
+
+    assert any("expected_result_ids_by_layer" in error for error in errors), errors
 
 
 def test_validate_worker_bundle_requires_equal_units_for_layer_specific_workers():
@@ -740,7 +862,9 @@ def test_validate_worker_bundle_requires_equal_units_for_layer_specific_workers(
         ),
     ]
 
-    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+    errors = validate_worker_bundle(
+        specs, artifacts, BUNDLE_ID, _expected_ids(l1=("case-1", "case-2"))
+    )
 
     assert any("case-2" in error for error in errors), errors
 
@@ -762,9 +886,22 @@ def test_validate_worker_bundle_rejects_wrong_layer_in_non_all_primary():
         ),
     ]
 
-    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+    errors = validate_worker_bundle(
+        specs, artifacts, BUNDLE_ID, _expected_ids(l1=("wrong-layer",))
+    )
 
     assert any("layer" in error for error in errors), errors
+
+
+def test_merge_worker_reports_consumes_external_expected_units():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = (
+        _artifact(specs[0], "run-primary", results=[], pid=101),
+        _artifact(specs[1], "run-corroboration", results=[], pid=102),
+    )
+
+    with pytest.raises(ValueError, match="case-1"):
+        merge_worker_reports(specs, artifacts, EXPECTED_L1)
 
 
 def test_merge_worker_reports_reclassifies_and_aggregates_sample_observations():
@@ -800,7 +937,7 @@ def test_merge_worker_reports_reclassifies_and_aggregates_sample_observations():
         ),
     )
 
-    merged = merge_worker_reports(specs, artifacts)
+    merged = merge_worker_reports(specs, artifacts, EXPECTED_L1)
     result = merged["case-1"]
 
     assert result["passed"] is False
@@ -830,7 +967,7 @@ def test_merge_worker_reports_includes_second_process_only_validation_escape():
         ),
     )
 
-    merged = merge_worker_reports(specs, artifacts)["case-1"]
+    merged = merge_worker_reports(specs, artifacts, EXPECTED_L1)["case-1"]
 
     assert merged["actual_intents"] == ["ghost.escape", "weather.query"]
 
@@ -856,7 +993,7 @@ def test_merge_worker_reports_uses_worker_pass_and_signature_for_relations():
         ),
     )
 
-    merged = merge_worker_reports(specs, artifacts)["case-1"]
+    merged = merge_worker_reports(specs, artifacts, EXPECTED_L1)["case-1"]
 
     assert merged["repeat_status"] == "unstable"
     assert merged["relation"] == corroboration["relation"]
@@ -867,7 +1004,9 @@ def test_merge_worker_reports_passes_through_single_l3_primary():
     original = _result("journey-1", "run-primary", layer="l3")
     artifacts = (_artifact(specs[0], "run-primary", results=[original], pid=101),)
 
-    merged = merge_worker_reports(specs, artifacts)
+    merged = merge_worker_reports(
+        specs, artifacts, _expected_ids(l3=("journey-1",))
+    )
 
     assert merged == {"journey-1": original}
     assert merged["journey-1"] is not original
