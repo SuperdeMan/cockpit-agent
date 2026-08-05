@@ -261,6 +261,36 @@ def test_non_exact_step_shape_is_rejected_without_losing_valid_raw_intent(
     assert trace.accepted.steps == ()
 
 
+def test_semantic_meaning_is_not_normalized_into_a_capability_ref():
+    agent = _agent("alpha", "alpha.one")
+    catalog = _catalog(agent)
+
+    async def noop(_messages):
+        return ""
+
+    builder = planning.PlanBuilder(noop, noop)
+    sink = TraceSink()
+    attach_validation_trace(builder, sink)
+    wire = {
+        "addressed": True,
+        "steps": [{
+            "id": "s1",
+            "capability_ref": "alpha.one",
+            "slots": {},
+            "depends_on": [],
+            "slot_refs": {},
+        }],
+    }
+
+    assert builder._parse_and_validate_data(wire, catalog, "test") is None
+    assert len(sink.validations) == 1
+    trace = sink.validations[0]
+    assert trace.result == "rejected"
+    assert trace.raw_intents == (_INVALID,)
+    assert trace.raw_candidate.intents == (_INVALID,)
+    assert trace.accepted.steps == ()
+
+
 def test_two_empty_actions_avoid_fallback_but_invalid_nonempty_does_not(monkeypatch):
     agent = _agent("chitchat", "chitchat.talk")
 

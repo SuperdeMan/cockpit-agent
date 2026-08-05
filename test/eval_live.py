@@ -22,17 +22,24 @@ for _p in (str(_ROOT), str(_ROOT / "gen" / "python"), str(_ROOT / "orchestrator"
 
 
 def load_agents(include_edge: bool = True) -> list:
-    """真实 `agents/*/manifest.yaml` + 端侧车控/媒体 → ResolvedAgent 形状。
+    """真实云端 inventory（静态 manifests + builtin-tools）及可选端侧能力。
 
     与生产 catalog 同构是刻意的：少了 edge 车控，implicit-vehicle-control 之类的
     policy/范例就失去了断言对象；少了某个 manifest，它的 route_hints 也不参与评测。
-    新增 Agent 落 manifest 自动纳入——不硬编码列表。"""
+    builtin-tools 由生产 `ToolRegistry().manifest` 周期 upsert，因此也必须显式纳入；若未来
+    出现同 ID 静态 manifest，以运行时 ToolRegistry 为准替换且只保留一份。新增 Agent 落
+    manifest 自动纳入。"""
     from agents._sdk.manifest import load_manifest
+    from orchestrator.cloud.tools import ToolRegistry
     agents = []
     for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "manifest.yaml"))):
         m = load_manifest(path)
         _synth_admitted_caps(m, Path(path).parent)
         agents.append(SimpleNamespace(manifest=m, endpoint=f"{m.agent_id}:0"))
+    builtin = ToolRegistry().manifest
+    agents = [agent for agent in agents
+              if agent.manifest.agent_id != builtin.agent_id]
+    agents.append(SimpleNamespace(manifest=builtin, endpoint="tool://builtin"))
     if not include_edge:
         return agents
     from edge_agents_mod.media import MEDIA_INTENTS
@@ -88,12 +95,12 @@ def _synth_admitted_caps(manifest, agent_dir: Path) -> None:
 
 
 def known_intents() -> set[str]:
-    """真实存在的 intent 全集 = `load_agents()` 实际准入的能力（含端侧车控/媒体）。
+    """真实存在的 intent 全集 = `load_agents()` 实际准入的能力。
 
-    刻意不再直接扫静态 manifest YAML：mcp-bridge 的 `capabilities: []` 是启动期从
-    `servers.yaml` 合成的，静态扫描会把 `shop.*` 整族排除在「active intent」之外——
-    盘点用的分母悄悄变小，覆盖门禁就永远看不到那块盲区。同一份 `_synth_admitted_caps`
-    既供 catalog 也供盘点，两边不会漂移。
+    其中既含端侧车控/媒体，也含生产 `ToolRegistry` 注册的 builtin-tools。刻意不再直接扫
+    静态 manifest YAML：mcp-bridge 的能力由 `servers.yaml` 启动期合成，builtin-tools 则根本
+    没有静态 manifest；漏掉任一动态来源都会让 active-intent 分母悄悄变小。统一复用
+    `load_agents()`，让 catalog、L0 盘点与生产 inventory 不漂移。
     """
     return {
         str(cap.intent)

@@ -631,3 +631,90 @@ cases:
       - input: {utterance: 这边哪儿还有空的停车场, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [parking.query_fee, parking.pay], allow_extra_intents: false}
+
+  # ── 生产 builtin-tools：动态 ToolRegistry inventory 的 L0 覆盖 ──────────
+  # 三组各两条原创同义对照；每条 singleton required 本工具，并把另两个工具列为硬负例。
+  # 语料避开 ToolRegistry manifest examples，不靠 route hint 或 exemption 涂绿 active-intent 分母。
+  - id: tu.tools.datetime.standardize
+    title: 把相对日期时间标准化
+    family_id: tu.tools-datetime
+    cohort: unseen_transfer
+    risk: low
+    status: stable
+    tags: {attacks: [A6], mechanisms: [cloud_only, paraphrase], domains: [tools], layers: [l0]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-05, stabilized_provider: deterministic, stabilized_at: 2026-08-05, stabilized_processes: 2, stabilized_samples_per_process: 3, stabilized_process_runs: [task5b-l0-tools-a-594649fc, task5b-l0-tools-b-594649fc], stabilized_samples: 6, evidence_report: "%TEMP%/intent-l0-tools-promotion-{a,b}-594649fc573648b99af9b0a5bcd8b27b.json"}
+    turns:
+      - input: {utterance: 把下周二上午九点转换成标准日期时间, context: {}}
+        expected:
+          ingress: {allowed: [cloud], forbidden: [edge_local]}
+          plan: {required_intent_groups: [{any_of: [datetime.parse]}], forbidden_intents: [unit.convert, math.eval], allow_extra_intents: false}
+  - id: tu.tools.datetime.resolve
+    title: 解析相对时间的具体时刻
+    family_id: tu.tools-datetime
+    cohort: unseen_transfer
+    risk: low
+    status: stable
+    tags: {attacks: [A6], mechanisms: [cloud_only, paraphrase], domains: [tools], layers: [l0]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-05, stabilized_provider: deterministic, stabilized_at: 2026-08-05, stabilized_processes: 2, stabilized_samples_per_process: 3, stabilized_process_runs: [task5b-l0-tools-a-594649fc, task5b-l0-tools-b-594649fc], stabilized_samples: 6, evidence_report: "%TEMP%/intent-l0-tools-promotion-{a,b}-594649fc573648b99af9b0a5bcd8b27b.json"}
+    relation: {base_case: tu.tools.datetime.standardize, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 解析一下三天后傍晚六点对应的具体日期和时间, context: {}}
+        expected:
+          ingress: {allowed: [cloud], forbidden: [edge_local]}
+          plan: {required_intent_groups: [{any_of: [datetime.parse]}], forbidden_intents: [unit.convert, math.eval], allow_extra_intents: false}
+
+  - id: tu.tools.unit.speed
+    title: 换算速度单位
+    family_id: tu.tools-unit
+    cohort: unseen_transfer
+    risk: low
+    status: stable
+    tags: {attacks: [A6], mechanisms: [cloud_only, paraphrase], domains: [tools], layers: [l0]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-05, stabilized_provider: deterministic, stabilized_at: 2026-08-05, stabilized_processes: 2, stabilized_samples_per_process: 3, stabilized_process_runs: [task5b-l0-tools-a-594649fc, task5b-l0-tools-b-594649fc], stabilized_samples: 6, evidence_report: "%TEMP%/intent-l0-tools-promotion-{a,b}-594649fc573648b99af9b0a5bcd8b27b.json"}
+    turns:
+      - input: {utterance: 把七十二公里每小时换算成米每秒, context: {}}
+        expected:
+          ingress: {allowed: [cloud], forbidden: [edge_local]}
+          plan: {required_intent_groups: [{any_of: [unit.convert]}], forbidden_intents: [datetime.parse, math.eval], allow_extra_intents: false}
+  - id: tu.tools.unit.mass
+    title: 换算质量单位
+    family_id: tu.tools-unit
+    cohort: unseen_transfer
+    risk: low
+    status: stable
+    tags: {attacks: [A6], mechanisms: [cloud_only, paraphrase], domains: [tools], layers: [l0]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-05, stabilized_provider: deterministic, stabilized_at: 2026-08-05, stabilized_processes: 2, stabilized_samples_per_process: 3, stabilized_process_runs: [task5b-l0-tools-a-594649fc, task5b-l0-tools-b-594649fc], stabilized_samples: 6, evidence_report: "%TEMP%/intent-l0-tools-promotion-{a,b}-594649fc573648b99af9b0a5bcd8b27b.json"}
+    relation: {base_case: tu.tools.unit.speed, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 三公斤折合成多少克, context: {}}
+        expected:
+          ingress: {allowed: [cloud], forbidden: [edge_local]}
+          plan: {required_intent_groups: [{any_of: [unit.convert]}], forbidden_intents: [datetime.parse, math.eval], allow_extra_intents: false}
+
+  - id: tu.tools.math.square
+    title: 计算平方和
+    family_id: tu.tools-math
+    cohort: unseen_transfer
+    risk: low
+    status: stable
+    tags: {attacks: [A6], mechanisms: [cloud_only, paraphrase], domains: [tools], layers: [l0]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-05, stabilized_provider: deterministic, stabilized_at: 2026-08-05, stabilized_processes: 2, stabilized_samples_per_process: 3, stabilized_process_runs: [task5b-l0-tools-a-594649fc, task5b-l0-tools-b-594649fc], stabilized_samples: 6, evidence_report: "%TEMP%/intent-l0-tools-promotion-{a,b}-594649fc573648b99af9b0a5bcd8b27b.json"}
+    turns:
+      - input: {utterance: 计算二十三的平方再加七, context: {}}
+        expected:
+          ingress: {allowed: [cloud], forbidden: [edge_local]}
+          plan: {required_intent_groups: [{any_of: [math.eval]}], forbidden_intents: [datetime.parse, unit.convert], allow_extra_intents: false}
+  - id: tu.tools.math.divide
+    title: 计算除法和差
+    family_id: tu.tools-math
+    cohort: unseen_transfer
+    risk: low
+    status: stable
+    tags: {attacks: [A6], mechanisms: [cloud_only, paraphrase], domains: [tools], layers: [l0]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-05, stabilized_provider: deterministic, stabilized_at: 2026-08-05, stabilized_processes: 2, stabilized_samples_per_process: 3, stabilized_process_runs: [task5b-l0-tools-a-594649fc, task5b-l0-tools-b-594649fc], stabilized_samples: 6, evidence_report: "%TEMP%/intent-l0-tools-promotion-{a,b}-594649fc573648b99af9b0a5bcd8b27b.json"}
+    relation: {base_case: tu.tools.math.square, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 求一百二十除以八再减三的结果, context: {}}
+        expected:
+          ingress: {allowed: [cloud], forbidden: [edge_local]}
+          plan: {required_intent_groups: [{any_of: [math.eval]}], forbidden_intents: [datetime.parse, unit.convert], allow_extra_intents: false}

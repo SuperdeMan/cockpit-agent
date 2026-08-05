@@ -38,7 +38,10 @@ class PlannerCapabilityCatalog:
     catalog_stats: MappingProxyType
 
 
-_CAPABILITY_MAPPING_HEAD = "== 本请求 capability_ref → 可用能力语义映射 =="
+_CAPABILITY_MAPPING_HEAD = (
+    "== 本请求 capability_ref → 可用能力语义映射；"
+    "meaning 仅解释语义，禁止作为 capability_ref 输出值 =="
+)
 
 
 def _capability_pairs(agents: list) -> list[tuple[str, str]]:
@@ -95,10 +98,10 @@ def _render_capability_mapping(agents: list) -> str:
             raise ValueError(
                 f"planner capability disappeared while rendering: {agent_id}/{intent}")
         semantics = {
-            "ref": ref,
-            "name": intent,
+            "capability_ref": ref,
+            "meaning": intent,
         }
-        # Preserve the measured edge-core compression: names carry their routing
+        # Preserve the measured edge-core compression: meanings carry their routing
         # semantics, while repeated empty slots/descriptions only add prompt cost.
         if not _is_edge_core(agent):
             semantics["slots"] = list(getattr(cap, "slots", None) or [])
@@ -265,7 +268,11 @@ _PLANNER_BASE = (
 
 _CATALOG_ALLOWLIST_SECTION = (
     "\n\n== 本轮动态能力白名单 ==\n"
-    "- 本请求末尾的 capability_ref 映射是唯一调用权；每个 step 只能原样选择其中一个 ref\n"
+    "- 本请求末尾的 capability_ref 映射是唯一调用权；capability_ref 只能逐字复制能力条目的 "
+    "capability_ref 字段值；meaning 只用于解释语义，禁止填入 step.capability_ref\n"
+    "- 抽象正反例：能力条目 {\"capability_ref\":\"cap_0042\","
+    "\"meaning\":\"example.semantic\"}；正确：step.capability_ref=\"cap_0042\"；"
+    "错误：step.capability_ref=\"example.semantic\"\n"
     "- 不得编造映射里没有的 ref，不得输出缺席能力，也不得替换用户真正请求但"
     "缺席的能力（包括拿清单中已有的相近能力顶替）\n"
     "- 如果用户请求只能由本轮 catalog 中缺席的能力承接，仍视为已受话，严格返回"
@@ -366,7 +373,8 @@ def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
     capability_ref_schema = {
         "type": "string",
         "description": (
-            "只能从本请求动态映射的 enum 原样选择；"
+            "只能逐字复制本请求映射能力条目的 capability_ref 字段值；"
+            "meaning 只解释语义，禁止作为 capability_ref 输出值；"
             "请求能力缺席时保持 steps=[]"),
     }
     if refs:

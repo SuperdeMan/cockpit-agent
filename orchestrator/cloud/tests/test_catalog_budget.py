@@ -1,7 +1,7 @@
 """D1 契约测试（数据飞轮 P0）：catalog 预算裁剪对**真实 manifests** 的实际行为。
 
 固化三个事实（docs/design/2026-07-28-intent-accuracy-data-flywheel.md §3-D1）：
-1. 旧默认 8000 字符下，满栈（14 云 manifest + 2 端）渲染仍超预算——「正常情况下根本
+1. 旧默认 8000 字符下，满栈（14 云 manifest + builtin-tools + 2 端）渲染仍超预算——「正常情况下根本
    不触发裁剪」的旧假设已随 M3/M4 能力面增长失效。
 2. **P0 时被裁的恰是全部「无 route_hints」的 agent，含核心域 navigation**——保护资格
    是「有没有声明 hint」这个巧合，与领域重要性无关。**M5 P2 已修**：保护判据补上
@@ -13,18 +13,14 @@
 """
 from __future__ import annotations
 
-import glob
 import json
 import os
 import sys
-from types import SimpleNamespace
 
 # 端侧模块按服务内裸名导入（edge tests 同款惯例）
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "edge"))
 
 import orchestrator.cloud.context as ctxmod
-from agents._sdk.manifest import load_manifest
-from capabilities import build_edge_manifests
 from orchestrator.cloud.context import WorkingSet
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -47,13 +43,26 @@ _CORE_MUST_SURVIVE = {"navigation", "road-safety", "info", "reminder",
 
 
 def _full_stack_agents() -> list:
-    agents = []
-    for path in sorted(glob.glob(os.path.join(_ROOT, "agents", "*", "manifest.yaml"))):
-        agents.append(SimpleNamespace(manifest=load_manifest(path), endpoint="x:1"))
-    for manifest in build_edge_manifests():
-        agents.append(SimpleNamespace(manifest=manifest, endpoint="edge:1"))
-    assert len(agents) >= 16, f"满栈应为 14 云 + 2 端，实际 {len(agents)}"
-    return agents
+    test_dir = os.path.join(_ROOT, "test")
+    if test_dir not in sys.path:
+        sys.path.insert(0, test_dir)
+    import eval_live
+    return eval_live.load_agents(include_edge=True)
+
+
+def test_budget_full_stack_matches_eval_live_runtime_inventory():
+    test_dir = os.path.join(_ROOT, "test")
+    if test_dir not in sys.path:
+        sys.path.insert(0, test_dir)
+    import eval_live
+
+    budget_agents = _full_stack_agents()
+    live_agents = eval_live.load_agents(include_edge=True)
+    budget_ids = [agent.manifest.agent_id for agent in budget_agents]
+    live_ids = [agent.manifest.agent_id for agent in live_agents]
+    assert budget_ids == live_ids
+    assert len(budget_ids) == len(set(budget_ids)) == 17
+    assert "builtin-tools" in budget_ids
 
 
 def test_tight_budget_only_drops_unprotected_and_never_core(monkeypatch):
@@ -86,17 +95,30 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
         sys.path.insert(0, test_dir)
     import eval_live
     from orchestrator.cloud.planning import _assemble_capability_catalog
+    from orchestrator.cloud.tools import ToolRegistry
 
     monkeypatch.setattr(ctxmod, "_CATALOG_BUDGET", 16000)
     agents = eval_live.load_agents(include_edge=True)
     catalog = _assemble_capability_catalog(agents)
 
+    assert len(agents) == 17
+    assert len(catalog.ref_to_pair) == 131
     assert catalog.catalog_stats["dropped"] == []
-    assert catalog.catalog_stats["chars_full"] == catalog.catalog_stats["chars_final"]
+    # 14651 是未完整序列化生产 builtin manifest 的手工估算；完整 cloud tool 字段后为 15092。
+    assert catalog.catalog_stats["chars_full"] == 15092
+    assert catalog.catalog_stats["chars_final"] == 15092
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
+    assert 16000 - catalog.catalog_stats["chars_final"] == 908
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
+    builtin = catalog.agent_map["builtin-tools"].manifest
+    assert builtin == ToolRegistry().manifest
+    assert builtin.kind == "tool"
+    assert builtin.deployment == "cloud"
+    assert {cap.intent for cap in builtin.capabilities} == {
+        "datetime.parse", "unit.convert", "math.eval",
+    }
 
     groups = [json.loads(line) for line in catalog.semantic_mapping_text.splitlines()[1:]]
     assert len(groups) == len(agents)
@@ -106,9 +128,53 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     capabilities = [cap for group in groups for cap in group["capabilities"]]
     assert len(capabilities) == len(catalog.ref_to_pair)
     for group in groups:
-        expected = ({"ref", "name"} if group["service"].startswith("edge-")
-                    else {"ref", "name", "slots", "description"})
+        expected = ({"capability_ref", "meaning"}
+                    if group["service"].startswith("edge-")
+                    else {"capability_ref", "meaning", "slots", "description"})
         assert all(set(cap) == expected for cap in group["capabilities"])
+
+
+def test_eval_live_inventory_always_has_one_builtin_tools_agent():
+    test_dir = os.path.join(_ROOT, "test")
+    if test_dir not in sys.path:
+        sys.path.insert(0, test_dir)
+    import eval_live
+
+    for include_edge, expected_count in ((False, 15), (True, 17)):
+        agents = eval_live.load_agents(include_edge=include_edge)
+        builtin = [agent for agent in agents
+                   if agent.manifest.agent_id == "builtin-tools"]
+        assert len(agents) == expected_count
+        assert len(builtin) == 1
+        assert builtin[0].manifest.deployment == "cloud"
+        assert {cap.intent for cap in builtin[0].manifest.capabilities} == {
+            "datetime.parse", "unit.convert", "math.eval",
+        }
+    assert {"datetime.parse", "unit.convert", "math.eval"} <= eval_live.known_intents()
+
+
+def test_eval_live_tool_registry_replaces_conflicting_static_builtin(monkeypatch):
+    test_dir = os.path.join(_ROOT, "test")
+    if test_dir not in sys.path:
+        sys.path.insert(0, test_dir)
+    import eval_live
+    from agents._sdk import manifest as manifest_module
+    from cockpit.agent.v1 import agent_pb2
+    from orchestrator.cloud.tools import ToolRegistry
+
+    conflicting = agent_pb2.AgentManifest()
+    conflicting.CopyFrom(ToolRegistry().manifest)
+    conflicting.version = "static-conflict"
+    fake_path = os.path.join(_ROOT, "agents", "builtin_tools", "manifest.yaml")
+    monkeypatch.setattr(eval_live.glob, "glob", lambda _pattern: [fake_path])
+    monkeypatch.setattr(manifest_module, "load_manifest", lambda _path: conflicting)
+
+    agents = eval_live.load_agents(include_edge=False)
+    builtin = [agent for agent in agents
+               if agent.manifest.agent_id == "builtin-tools"]
+    assert len(builtin) == 1
+    assert builtin[0].manifest == ToolRegistry().manifest
+    assert builtin[0].endpoint == "tool://builtin"
 
 
 def test_edge_capabilities_stay_name_only_in_catalog(monkeypatch):
@@ -141,6 +207,6 @@ def test_edge_capabilities_stay_name_only_in_catalog(monkeypatch):
                     if group["service"].startswith("edge-")]
     request_caps = [cap for group in request_edge for cap in group["capabilities"]]
     assert len(request_caps) >= 70
-    assert all(set(cap) == {"ref", "name"} for cap in request_caps), (
+    assert all(set(cap) == {"capability_ref", "meaning"} for cap in request_caps), (
         "请求级 ref mapping 给端侧能力增加了未证明有效的语义字段")
     assert request_catalog.catalog_stats["dropped"] == []

@@ -11,8 +11,8 @@ import os
 from unittest.mock import MagicMock
 
 from orchestrator.cloud.planning import (
-    PlanBuilder, _assemble_capability_catalog, _planner_system, _submit_plan_tools, _SUBMIT_PLAN_NAME,
-    _TOOLCALL_SECTION,
+    PlanBuilder, _assemble_capability_catalog, _CAPABILITY_MAPPING_HEAD,
+    _planner_system, _submit_plan_tools, _SUBMIT_PLAN_NAME, _TOOLCALL_SECTION,
 )
 from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.context import WorkingSet
@@ -371,7 +371,7 @@ def test_toolcall_protocol_retry_reuses_the_same_filtered_catalog(monkeypatch):
         "steps"]["items"]["properties"]
     assert step_props["capability_ref"]["enum"] == ["cap_0001"]
     for user_message in (spy.last_tool_user, spy.last_text_user):
-        catalog_block = user_message.rsplit("本请求 capability_ref → 可用能力语义映射 ==", 1)[1].split(
+        catalog_block = user_message.rsplit(_CAPABILITY_MAPPING_HEAD, 1)[1].split(
             "\n\n用户说:", 1)[0]
         assert "navigation.search_poi" in catalog_block
         assert "secret-agent" not in catalog_block
