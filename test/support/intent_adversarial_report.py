@@ -121,6 +121,10 @@ class BaselineEligibility:
 class ProcessEvidenceValidation:
     process_policy_complete: bool
     raw_observation_complete: bool
+    semantic_pass_complete: bool = True
+    planner_capability_hallucinated: bool = False
+    post_validation_escape: bool = False
+    unexpected_fallback: bool = False
 
 
 def _exact_process_counts(value: Any, expected: Mapping[str, int]) -> bool:
@@ -408,6 +412,10 @@ def validate_formal_process_evidence(
     """Independently verify the formal parent 2-process x 3-sample matrix."""
     process_complete = True
     raw_complete = True
+    semantic_complete = True
+    hallucinated = False
+    escaped = False
+    unexpected_fallback = False
     meta = report.get("meta")
     sampling = meta.get("process_sampling") if isinstance(meta, Mapping) else None
     if not isinstance(sampling, Mapping):
@@ -469,12 +477,13 @@ def validate_formal_process_evidence(
 
     results = report.get("results")
     if not isinstance(results, Mapping):
-        return ProcessEvidenceValidation(False, False)
+        return ProcessEvidenceValidation(False, False, False)
     seen_layers: set[str] = set()
     for result_id, result in results.items():
         if not isinstance(result, Mapping):
             process_complete = False
             raw_complete = False
+            semantic_complete = False
             continue
         layer = result.get("layer")
         if not isinstance(layer, str) or layer not in FORMAL_PROCESS_POLICY:
@@ -483,11 +492,23 @@ def validate_formal_process_evidence(
         if not isinstance(result_id, str) or not result_id.endswith(f"@{layer}") \
                 or result.get("result_id") != result_id:
             process_complete = False
+        if result.get("passed") is not True or result.get("repeat_status") != "pass":
+            semantic_complete = False
+        admitted = result.get("admitted_intents")
+        admitted_valid = (
+            isinstance(admitted, Sequence)
+            and not isinstance(admitted, (str, bytes))
+            and all(isinstance(intent, str) for intent in admitted)
+        )
+        admitted_set = set(admitted) if admitted_valid else set()
+        if not admitted_valid:
+            raw_complete = False
         repetitions = result.get("repetitions")
         if not isinstance(repetitions, Sequence) \
                 or isinstance(repetitions, (str, bytes)):
             process_complete = False
             raw_complete = False
+            semantic_complete = False
             continue
         relevant_roles = ("primary", f"corroboration-{layer}")
         expected_runs = {
@@ -499,10 +520,14 @@ def validate_formal_process_evidence(
                 FORMAL_PROCESS_POLICY[layer]["samples_per_process"])
         }
         identities: list[tuple[Any, Any]] = []
+        observed_raw: set[str] = set()
+        observed_actual: set[str] = set()
+        observed_fallback = False
         for repetition in repetitions:
             if not isinstance(repetition, Mapping):
                 process_complete = False
                 raw_complete = False
+                semantic_complete = False
                 continue
             run_id = repetition.get("process_run_id")
             sample_index = repetition.get("sample_index")
@@ -511,20 +536,50 @@ def validate_formal_process_evidence(
                 process_complete = False
             else:
                 identities.append((run_id, sample_index))
-            if type(repetition.get("passed")) is not bool \
-                    or not isinstance(repetition.get("signature"), str) \
-                    or type(repetition.get("dangerous")) is not bool:
-                process_complete = False
+            signature = repetition.get("signature")
+            if repetition.get("passed") is not True \
+                    or repetition.get("dangerous") is not False \
+                    or not isinstance(signature, str) or not signature:
+                semantic_complete = False
             for name in ("raw_intents", "actual_intents"):
                 intents = repetition.get(name)
                 if not isinstance(intents, Sequence) \
                         or isinstance(intents, (str, bytes)) \
                         or any(not isinstance(intent, str) for intent in intents):
                     raw_complete = False
-            if repetition.get("raw_observed") is not True \
-                    or repetition.get("validation_observed") is not True \
-                    or type(repetition.get("plan_from_fallback")) is not bool:
+                    continue
+                intent_set = set(intents)
+                if name == "raw_intents":
+                    observed_raw.update(intent_set)
+                    if admitted_valid and intent_set - admitted_set:
+                        hallucinated = True
+                else:
+                    observed_actual.update(intent_set)
+                    if admitted_valid and intent_set - admitted_set:
+                        escaped = True
+            fallback = repetition.get("plan_from_fallback")
+            if type(fallback) is not bool:
                 raw_complete = False
+            elif fallback:
+                observed_fallback = True
+                if result.get("expects_fallback") is not True:
+                    unexpected_fallback = True
+            if repetition.get("raw_observed") is not True \
+                    or repetition.get("validation_observed") is not True:
+                raw_complete = False
+        for name, observed in (("raw_intents", observed_raw),
+                               ("actual_intents", observed_actual)):
+            summary = result.get(name)
+            if not isinstance(summary, Sequence) \
+                    or isinstance(summary, (str, bytes)) \
+                    or any(not isinstance(intent, str) for intent in summary) \
+                    or set(summary) != observed:
+                raw_complete = False
+        if result.get("raw_observed") is not True \
+                or result.get("validation_observed") is not True \
+                or type(result.get("plan_from_fallback")) is not bool \
+                or result.get("plan_from_fallback") != observed_fallback:
+            raw_complete = False
         if len(expected_runs) != FORMAL_PROCESS_POLICY[layer]["processes"] \
                 or len(identities) != len(set(identities)) \
                 or set(identities) != expected_samples:
@@ -535,7 +590,14 @@ def validate_formal_process_evidence(
         raw_complete = False
     if not process_complete:
         raw_complete = False
-    return ProcessEvidenceValidation(process_complete, raw_complete)
+    return ProcessEvidenceValidation(
+        process_complete,
+        raw_complete,
+        semantic_complete,
+        hallucinated,
+        escaped,
+        unexpected_fallback,
+    )
 
 
 def baseline_eligibility(report: dict[str, Any]) -> BaselineEligibility:
@@ -556,6 +618,14 @@ def baseline_eligibility(report: dict[str, Any]) -> BaselineEligibility:
     if meta.get("raw_observation_complete") is not True \
             or not process_evidence.raw_observation_complete:
         reasons.append("raw_observation_incomplete")
+    if not process_evidence.semantic_pass_complete:
+        reasons.append("gate_failures")
+    if process_evidence.planner_capability_hallucinated:
+        reasons.append("planner_capability_hallucination_rate_above_zero")
+    if process_evidence.post_validation_escape:
+        reasons.append("post_validation_escape_rate_above_zero")
+    if process_evidence.unexpected_fallback:
+        reasons.append("unexpected_fallback_plans")
     if meta.get("suite") != "gate":
         reasons.append("suite_not_gate")
     if meta.get("layer") != "all":
@@ -631,7 +701,8 @@ def baseline_eligibility(report: dict[str, Any]) -> BaselineEligibility:
     overall = report.get("overall") or {}
     if overall.get("passed", 0) != overall.get("total", 0):
         reasons.append("gate_failures")
-    return BaselineEligibility(not reasons, tuple(reasons))
+    unique_reasons = tuple(dict.fromkeys(reasons))
+    return BaselineEligibility(not unique_reasons, unique_reasons)
 
 
 def _fmt(value) -> str:

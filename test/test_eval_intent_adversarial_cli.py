@@ -1794,6 +1794,32 @@ def test_writer_rechecks_fresh_eligibility_before_touching_formal_pair(
     assert (tmp_path / "rejected.md").is_file()
 
 
+@pytest.mark.parametrize("mutation", ["failed", "hallucinated", "fallback"])
+def test_writer_rejects_repetition_semantics_hidden_by_green_report_caches(
+        tmp_path, mutation):
+    formal_json = tmp_path / "baseline.json"
+    formal_md = tmp_path / "baseline.md"
+    formal_json.write_bytes(b"old-json")
+    formal_md.write_bytes(b"old-md")
+    report = _formal_writer_report()
+    supplied = cli.baseline_eligibility(report)
+    repetition = report["results"]["formal-l1@l1"]["repetitions"][0]
+    if mutation == "failed":
+        repetition["passed"] = False
+    elif mutation == "hallucinated":
+        repetition["raw_intents"] = ("info.weather", "does.not.exist")
+    else:
+        repetition["plan_from_fallback"] = True
+
+    written = write_baseline_if_eligible(
+        report, "cached-green", supplied, formal_json, formal_md,
+        tmp_path / "rejected.json", tmp_path / "rejected.md")
+
+    assert written is False
+    assert formal_json.read_bytes() == b"old-json"
+    assert formal_md.read_bytes() == b"old-md"
+
+
 @pytest.mark.parametrize(("original_json", "original_md"), [
     (b"old-json", b"old-md"),
     (None, None),

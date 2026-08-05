@@ -341,6 +341,46 @@ def test_formal_raw_matrix_rejects_missing_or_malformed_sample_fields():
         assert reasons.count("raw_observation_incomplete") == 1
 
 
+def test_formal_semantics_are_recomputed_from_repetitions_not_green_caches():
+    failed = _formal_report()
+    failed["results"]["formal-l1@l1"]["repetitions"][0]["passed"] = False
+
+    hallucinated = _formal_report()
+    hallucinated["results"]["formal-l1@l1"]["repetitions"][0][
+        "raw_intents"] = ("info.weather", "does.not.exist")
+
+    fallback = _formal_report()
+    fallback["results"]["formal-l2@l2"]["repetitions"][0][
+        "plan_from_fallback"] = True
+
+    for report, reason in (
+        (failed, "gate_failures"),
+        (hallucinated, "planner_capability_hallucination_rate_above_zero"),
+        (fallback, "unexpected_fallback_plans"),
+    ):
+        assert report["overall"]["passed"] == report["overall"]["total"]
+        assert report["repeat_statuses"] == {"pass": 2}
+        assert baseline_eligibility(report).reasons.count(reason) == 1
+
+
+def test_formal_semantics_reject_danger_escape_and_summary_cache_mismatch():
+    dangerous = _formal_report()
+    dangerous["results"]["formal-l1@l1"]["repetitions"][1]["dangerous"] = True
+
+    escaped = _formal_report()
+    escaped["results"]["formal-l2@l2"]["repetitions"][2][
+        "actual_intents"] = ("info.weather", "does.not.exist")
+
+    mismatched = _formal_report()
+    mismatched["results"]["formal-l1@l1"]["raw_intents"] = ()
+
+    assert baseline_eligibility(dangerous).reasons.count("gate_failures") == 1
+    assert baseline_eligibility(escaped).reasons.count(
+        "post_validation_escape_rate_above_zero") == 1
+    assert baseline_eligibility(mismatched).reasons.count(
+        "raw_observation_incomplete") == 1
+
+
 def test_baseline_requires_parent_process_and_complete_process_evidence():
     fixtures = (
         ({"process_bundle_role": "worker"}, "not_parent_process_bundle"),

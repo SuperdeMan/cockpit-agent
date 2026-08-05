@@ -85,6 +85,8 @@ role、run id、pid、layer、原始报告 SHA-256 和退出码，不记录临�
 样本索引及 raw 字段。预先计算的 eligibility 与当前报告不一致时按 rejected 处理。正式 JSON
 与 Markdown 会先各自在目标目录完整写入临时文件，再替换成对；第二次替换失败会把两目标回滚
 到原字节或原“不存在”状态，并清理临时文件，不能留下新 JSON 配旧 Markdown 的混合基线。
+复算还直接消费每个 repetition 的 pass/danger/raw/actual/fallback；顶层 result、overall、metrics
+与 fallback 列表只是展示缓存，不能覆盖逐样本失败、能力幻觉、validator 逃逸或未声明兜底。
 
 **证据单元是 `case_id@layer`**：同一条 case 在 L1 绿、L2 红时是两条独立记录。用裸
 `case_id` 作 key 会让后写的层覆盖先写的层，报告于是替产品把红灯藏起来。因此
