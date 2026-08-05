@@ -1691,6 +1691,52 @@ def test_known_journey_ids_reads_the_real_corpus():
     assert "A1-1" in ids and len(ids) > 10
 
 
+def _formal_writer_report():
+    runs = {"l1": ("run-primary", "run-l1"),
+            "l2": ("run-primary", "run-l2")}
+    results = []
+    for layer in ("l1", "l2"):
+        repetitions = tuple({
+            "process_run_id": run_id, "sample_index": sample_index,
+            "passed": True, "signature": "pass", "dangerous": False,
+            "raw_intents": ("info.weather",), "raw_observed": True,
+            "validation_observed": True, "actual_intents": ("info.weather",),
+            "plan_from_fallback": False,
+        } for run_id in runs[layer] for sample_index in range(3))
+        results.append(cli.replace(
+            _green_result(f"formal-{layer}@{layer}"), repetitions=repetitions,
+            raw_intents=("info.weather",), raw_observed=True,
+            validation_observed=True))
+    meta = {
+        "suite": "gate", "layer": "all", "retrieval_state": "warm",
+        "provider_locked": True, "provider_drift": False, "code_sha": "abc1234",
+        "worktree_clean": True, "assets_complete": True,
+        "infrastructure_errors": [], "selected_statuses": ["stable"],
+        "case_set_complete": True, "declared_set_complete": True,
+        "repeat_policy_complete": True, "selection_filters": [],
+        "repeat_override": 0, "coverage_gaps": [], "removed_cases": [],
+        "l3_selected": ["A1-1"], "l3_complete": True,
+        "l3_evidence_fresh": True, "baseline_regressions": [],
+        "process_bundle_role": "parent", "process_policy_complete": True,
+        "raw_observation_complete": True,
+        "process_sampling": {
+            "bundle_id": "bundle-formal",
+            "required": {"l1": 2, "l2": 2},
+            "observed": {"l1": 2, "l2": 2},
+            "samples_per_process": {"l1": 3, "l2": 3},
+            "workers": [
+                {"role": "primary", "process_run_id": "run-primary", "pid": 101,
+                 "layer": "all", "report_sha256": "a" * 64, "exit_code": 0},
+                {"role": "corroboration-l1", "process_run_id": "run-l1", "pid": 102,
+                 "layer": "l1", "report_sha256": "b" * 64, "exit_code": 0},
+                {"role": "corroboration-l2", "process_run_id": "run-l2", "pid": 103,
+                 "layer": "l2", "report_sha256": "c" * 64, "exit_code": 0},
+            ],
+        },
+    }
+    return cli.build_adversarial_report(results, meta)
+
+
 def test_ineligible_run_never_touches_formal_baseline(tmp_path):
     formal_json = tmp_path / "baseline.json"
     formal_md = tmp_path / "baseline.md"
@@ -1712,11 +1758,108 @@ def test_ineligible_run_never_touches_formal_baseline(tmp_path):
 def test_eligible_run_writes_the_formal_pair(tmp_path):
     formal_json = tmp_path / "baseline.json"
     formal_md = tmp_path / "baseline.md"
+    report = _formal_writer_report()
+    eligibility = cli.baseline_eligibility(report)
+    assert eligibility.eligible
     written = write_baseline_if_eligible(
-        {"meta": {}}, "official", BaselineEligibility(True, ()),
+        report, "official", eligibility,
         formal_json, formal_md, tmp_path / "r.json", tmp_path / "r.md")
     assert written is True
     assert formal_md.read_text(encoding="utf-8") == "official"
+
+
+@pytest.mark.parametrize("stale_kind", ["report_changed", "supplied_rejected"])
+def test_writer_rechecks_fresh_eligibility_before_touching_formal_pair(
+        tmp_path, stale_kind):
+    formal_json = tmp_path / "baseline.json"
+    formal_md = tmp_path / "baseline.md"
+    formal_json.write_bytes(b"old-json")
+    formal_md.write_bytes(b"old-md")
+    report = _formal_writer_report()
+    supplied = cli.baseline_eligibility(report)
+    if stale_kind == "report_changed":
+        report["results"]["formal-l1@l1"]["repetitions"] = \
+            report["results"]["formal-l1@l1"]["repetitions"][:-1]
+    else:
+        supplied = BaselineEligibility(False, ("stale",))
+
+    written = write_baseline_if_eligible(
+        report, "new-md", supplied, formal_json, formal_md,
+        tmp_path / "rejected.json", tmp_path / "rejected.md")
+
+    assert written is False
+    assert formal_json.read_bytes() == b"old-json"
+    assert formal_md.read_bytes() == b"old-md"
+    assert (tmp_path / "rejected.json").is_file()
+    assert (tmp_path / "rejected.md").is_file()
+
+
+@pytest.mark.parametrize(("original_json", "original_md"), [
+    (b"old-json", b"old-md"),
+    (None, None),
+    (b"old-json", None),
+    (None, b"old-md"),
+])
+def test_second_formal_replace_failure_restores_original_pair_and_cleans_temps(
+        tmp_path, monkeypatch, original_json, original_md):
+    formal_json = tmp_path / "baseline.json"
+    formal_md = tmp_path / "baseline.md"
+    if original_json is not None:
+        formal_json.write_bytes(original_json)
+    if original_md is not None:
+        formal_md.write_bytes(original_md)
+    report = _formal_writer_report()
+    eligibility = cli.baseline_eligibility(report)
+    real_replace = cli.os.replace
+    calls = []
+
+    def _fail_second(source, target):
+        calls.append((Path(source), Path(target)))
+        if Path(target) == formal_md:
+            raise OSError("second replace failed")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(cli.os, "replace", _fail_second)
+    with pytest.raises(OSError, match="second replace failed"):
+        write_baseline_if_eligible(
+            report, "new-md", eligibility, formal_json, formal_md,
+            tmp_path / "rejected.json", tmp_path / "rejected.md")
+
+    assert [target for _, target in calls[:2]] == [formal_json, formal_md]
+    for target, original in ((formal_json, original_json), (formal_md, original_md)):
+        assert target.exists() is (original is not None)
+        if original is not None:
+            assert target.read_bytes() == original
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_second_temp_stage_failure_cleans_first_temp_without_touching_pair(
+        tmp_path, monkeypatch):
+    formal_json = tmp_path / "baseline.json"
+    formal_md = tmp_path / "baseline.md"
+    formal_json.write_bytes(b"old-json")
+    formal_md.write_bytes(b"old-md")
+    report = _formal_writer_report()
+    eligibility = cli.baseline_eligibility(report)
+    real_stage = cli._stage_formal_text
+    calls = 0
+
+    def _fail_second_stage(target, text):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("second stage failed")
+        return real_stage(target, text)
+
+    monkeypatch.setattr(cli, "_stage_formal_text", _fail_second_stage)
+    with pytest.raises(OSError, match="second stage failed"):
+        write_baseline_if_eligible(
+            report, "new-md", eligibility, formal_json, formal_md,
+            tmp_path / "rejected.json", tmp_path / "rejected.md")
+
+    assert formal_json.read_bytes() == b"old-json"
+    assert formal_md.read_bytes() == b"old-md"
+    assert not list(tmp_path.glob(".*.tmp"))
 
 
 def test_list_never_requires_live_because_it_runs_no_model():

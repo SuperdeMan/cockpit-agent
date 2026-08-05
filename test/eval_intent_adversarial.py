@@ -1089,14 +1089,84 @@ def gold_digest(case, turn) -> str:
 # ── baseline 写入 ─────────────────────────────────────────────────────────
 
 
+def _stage_formal_text(target: Path, text: str) -> Path:
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staged: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", newline="", delete=False,
+            dir=target.parent, prefix=f".{target.name}.", suffix=".tmp",
+        ) as handle:
+            staged = Path(handle.name)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return staged
+    except BaseException:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
+        raise
+
+
+def _write_formal_report_pair(
+    report: dict, markdown: str, formal_json: Path, formal_md: Path,
+) -> None:
+    """Stage both files, then replace them with rollback on a partial commit."""
+    formal_json = Path(formal_json)
+    formal_md = Path(formal_md)
+    if formal_json.resolve(strict=False) == formal_md.resolve(strict=False):
+        raise ValueError("formal JSON and Markdown targets must be different files")
+    payloads = (
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        markdown,
+    )
+    targets = (formal_json, formal_md)
+    originals = tuple(
+        (target.exists(), target.read_bytes() if target.exists() else b"")
+        for target in targets
+    )
+    staged: list[Path] = []
+    try:
+        for target, payload in zip(targets, payloads):
+            staged.append(_stage_formal_text(target, payload))
+        os.replace(staged[0], formal_json)
+        os.replace(staged[1], formal_md)
+    except BaseException as exc:
+        rollback_errors = []
+        for target, (existed, original) in zip(targets, originals):
+            try:
+                if existed:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(original)
+                elif target.exists():
+                    target.unlink()
+            except OSError as rollback_exc:
+                rollback_errors.append(f"{target}: {rollback_exc}")
+        if rollback_errors:
+            raise RuntimeError(
+                "formal baseline rollback failed: " + "; ".join(rollback_errors)
+            ) from exc
+        raise
+    finally:
+        for path in staged:
+            path.unlink(missing_ok=True)
+
+
 def write_baseline_if_eligible(report: dict, markdown: str, eligibility,
                                formal_json: Path, formal_md: Path,
                                rejected_json: Path, rejected_md: Path) -> bool:
     """不合资格时**一个字节都不碰**正式基线，诊断另写 ignored 文件。"""
-    if not eligibility.eligible:
+    fresh = baseline_eligibility(report)
+    supplied = (
+        getattr(eligibility, "eligible", False),
+        tuple(getattr(eligibility, "reasons", ()) or ()),
+    )
+    current = (fresh.eligible, tuple(fresh.reasons))
+    if supplied != current or not fresh.eligible:
         eval_common.write_report(report, markdown, Path(rejected_json), Path(rejected_md))
         return False
-    eval_common.write_report(report, markdown, Path(formal_json), Path(formal_md))
+    _write_formal_report_pair(report, markdown, Path(formal_json), Path(formal_md))
     return True
 
 

@@ -1,4 +1,5 @@
 """对抗报告指标、分维度、baseline 资格与渲染的回归测试。"""
+from copy import deepcopy
 import sys
 from pathlib import Path
 
@@ -250,10 +251,94 @@ def test_baseline_rejects_empty_l3_or_existing_baseline_regression():
 
 
 def test_baseline_accepts_a_fully_clean_gate_run():
-    report = build_adversarial_report([_result("a")], _meta())
+    report = _formal_report()
     eligibility = baseline_eligibility(report)
     assert eligibility.eligible
     assert eligibility.reasons == ()
+
+
+def test_complete_flags_cannot_replace_formal_process_sampling_evidence():
+    mutations = []
+    missing_sampling = _formal_report()
+    missing_sampling["meta"].pop("process_sampling")
+    mutations.append(missing_sampling)
+
+    wrong_policy = _formal_report()
+    wrong_policy["meta"]["process_sampling"]["required"]["l1"] = 1
+    mutations.append(wrong_policy)
+
+    coercible_policy = _formal_report()
+    coercible_policy["meta"]["process_sampling"]["observed"]["l2"] = 2.0
+    mutations.append(coercible_policy)
+
+    bad_worker = _formal_report()
+    bad_worker["meta"]["process_sampling"]["workers"][1]["layer"] = "l2"
+    mutations.append(bad_worker)
+
+    unhashable_role = _formal_report()
+    unhashable_role["meta"]["process_sampling"]["workers"][1]["role"] = []
+    mutations.append(unhashable_role)
+
+    missing_shard = _formal_report()
+    missing_shard["results"]["formal-l1@l1"]["repetitions"] = \
+        missing_shard["results"]["formal-l1@l1"]["repetitions"][:3]
+    mutations.append(missing_shard)
+
+    for report in mutations:
+        reasons = baseline_eligibility(report).reasons
+        assert reasons.count("process_policy_incomplete") == 1
+        assert reasons.count("raw_observation_incomplete") == 1
+
+
+def test_formal_process_matrix_rejects_unknown_duplicate_runs_and_bad_samples():
+    mutations = []
+    unknown_run = _formal_report()
+    unknown_run["results"]["formal-l1@l1"]["repetitions"][3][
+        "process_run_id"] = "run-unknown"
+    mutations.append(unknown_run)
+
+    duplicate_run = _formal_report()
+    duplicate_run["meta"]["process_sampling"]["workers"][1][
+        "process_run_id"] = "run-primary"
+    mutations.append(duplicate_run)
+
+    bad_index = _formal_report()
+    bad_index["results"]["formal-l2@l2"]["repetitions"][5]["sample_index"] = 3
+    mutations.append(bad_index)
+
+    duplicate_sample = _formal_report()
+    repetitions = list(
+        duplicate_sample["results"]["formal-l2@l2"]["repetitions"])
+    repetitions[5] = deepcopy(repetitions[4])
+    duplicate_sample["results"]["formal-l2@l2"]["repetitions"] = tuple(repetitions)
+    mutations.append(duplicate_sample)
+
+    for report in mutations:
+        reasons = baseline_eligibility(report).reasons
+        assert reasons.count("process_policy_incomplete") == 1
+        assert reasons.count("raw_observation_incomplete") == 1
+
+
+def test_formal_raw_matrix_rejects_missing_or_malformed_sample_fields():
+    mutations = []
+    for field, value, delete in (
+        ("raw_observed", None, True),
+        ("validation_observed", False, False),
+        ("raw_intents", "info.weather", False),
+        ("actual_intents", 42, False),
+        ("plan_from_fallback", "false", False),
+    ):
+        report = _formal_report()
+        repetition = report["results"]["formal-l1@l1"]["repetitions"][0]
+        if delete:
+            repetition.pop(field)
+        else:
+            repetition[field] = value
+        mutations.append(report)
+
+    for report in mutations:
+        reasons = baseline_eligibility(report).reasons
+        assert reasons.count("raw_observation_incomplete") == 1
 
 
 def test_baseline_requires_parent_process_and_complete_process_evidence():
@@ -275,6 +360,42 @@ def test_baseline_requires_parent_process_and_complete_process_evidence():
         meta.pop(field)
         report = build_adversarial_report([_result("a")], meta)
         assert reason in baseline_eligibility(report).reasons
+
+
+def _formal_repetitions(layer):
+    runs = ("run-primary", f"run-{layer}")
+    return tuple({
+        "process_run_id": run_id, "sample_index": sample_index,
+        "passed": True, "signature": "pass", "dangerous": False,
+        "raw_intents": ("info.weather",), "raw_observed": True,
+        "validation_observed": True, "actual_intents": ("info.weather",),
+        "plan_from_fallback": False,
+    } for run_id in runs for sample_index in range(3))
+
+
+def _formal_meta(**changes):
+    sampling = {
+        "bundle_id": "bundle-formal",
+        "required": {"l1": 2, "l2": 2},
+        "observed": {"l1": 2, "l2": 2},
+        "samples_per_process": {"l1": 3, "l2": 3},
+        "workers": [
+            {"role": "primary", "process_run_id": "run-primary", "pid": 101,
+             "layer": "all", "report_sha256": "a" * 64, "exit_code": 0},
+            {"role": "corroboration-l1", "process_run_id": "run-l1", "pid": 102,
+             "layer": "l1", "report_sha256": "b" * 64, "exit_code": 0},
+            {"role": "corroboration-l2", "process_run_id": "run-l2", "pid": 103,
+             "layer": "l2", "report_sha256": "c" * 64, "exit_code": 1},
+        ],
+    }
+    return _meta(process_sampling=sampling, **changes)
+
+
+def _formal_report(**meta_changes):
+    return build_adversarial_report([
+        _result("formal-l1", layer="l1", repetitions=_formal_repetitions("l1")),
+        _result("formal-l2", layer="l2", repetitions=_formal_repetitions("l2")),
+    ], _formal_meta(**meta_changes))
 
 
 def test_all_repetitions_contribute_raw_escape_and_fallback_evidence():
@@ -470,7 +591,7 @@ def test_fallback_rate_denominator_excludes_layers_without_a_planner():
 
 def test_a_clean_report_stays_eligible_and_says_zero():
     """反向构造的另一半：没有兜底时这两条闸不许误伤。"""
-    report = build_adversarial_report([_result("ok", passed=True)], _meta())
+    report = _formal_report()
     assert report["fallback_plans"] == [] and report["fallback_passes"] == []
     assert report["metrics"]["fallback_plan_rate"]["value"] == 0.0
     assert baseline_eligibility(report).reasons == ()
@@ -478,14 +599,11 @@ def test_a_clean_report_stays_eligible_and_says_zero():
 
 def test_mid_run_retrieval_degradation_blocks_the_baseline():
     """预热成功 ≠ 整跑都在语义档上。降级留痕后必须挡住 baseline。"""
-    report = build_adversarial_report(
-        [_result("ok", passed=True)],
-        _meta(retrieval_calls=880, retrieval_degraded=41))
+    report = _formal_report(retrieval_calls=880, retrieval_degraded=41)
     assert "retrieval_degraded_mid_run" in baseline_eligibility(report).reasons
     assert "语义检索中途降级" in render_adversarial_markdown(report)
     # 没降级时不许误报
-    clean = build_adversarial_report([_result("ok", passed=True)],
-                                     _meta(retrieval_calls=880, retrieval_degraded=0))
+    clean = _formal_report(retrieval_calls=880, retrieval_degraded=0)
     assert baseline_eligibility(clean).reasons == ()
     assert "语义检索中途降级" not in render_adversarial_markdown(clean)
 
@@ -583,11 +701,17 @@ def test_a_declared_fallback_is_not_held_against_the_baseline():
 
     但指标仍如实计数：planner 确实没产出可用计划，这是系统的真实属性。
     """
-    declared = _result("cc.missing.parking", passed=True,
-                       plan_from_fallback=True, expects_fallback=True)
-    report = build_adversarial_report([declared], _meta())
+    fallback_repetitions = tuple({**row, "plan_from_fallback": True}
+                                 for row in _formal_repetitions("l1"))
+    declared = _result(
+        "cc.missing.parking", passed=True, plan_from_fallback=True,
+        expects_fallback=True, repetitions=fallback_repetitions)
+    report = build_adversarial_report([
+        declared,
+        _result("formal-l2", layer="l2", repetitions=_formal_repetitions("l2")),
+    ], _formal_meta())
     assert report["fallback_plans"] == ["cc.missing.parking@l1"], "指标如实计数"
-    assert report["metrics"]["fallback_plan_rate"]["value"] == 1.0
+    assert report["metrics"]["fallback_plan_rate"]["value"] == 0.5
     assert report["unexpected_fallback_plans"] == []
     assert baseline_eligibility(report).reasons == ()
 

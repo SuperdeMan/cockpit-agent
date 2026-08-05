@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,18 @@ CELL_METRICS = ("exact_plan_set", "required_group_recall", "overroute_count",
 _LIVE_LAYERS = {"l1", "l2", "l3"}
 _BAD_REPEAT_STATUSES = {"stable_fail", "critical_fail", "unstable"}
 _DEFECT_METRICS = {"overroute_count", "forbidden_route_count"}
+FORMAL_PROCESS_POLICY = {
+    "l1": {"processes": 2, "samples_per_process": 3},
+    "l2": {"processes": 2, "samples_per_process": 3},
+}
+FORMAL_WORKER_LAYOUT = {
+    "primary": "all",
+    "corroboration-l1": "l1",
+    "corroboration-l2": "l2",
+}
+_FORMAL_WORKER_FIELDS = frozenset({
+    "role", "process_run_id", "pid", "layer", "report_sha256", "exit_code",
+})
 
 
 @dataclass(frozen=True)
@@ -102,6 +115,21 @@ class AdversarialResult:
 class BaselineEligibility:
     eligible: bool
     reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ProcessEvidenceValidation:
+    process_policy_complete: bool
+    raw_observation_complete: bool
+
+
+def _exact_process_counts(value: Any, expected: Mapping[str, int]) -> bool:
+    return (
+        isinstance(value, Mapping)
+        and set(value) == set(expected)
+        and all(type(value[layer]) is int and value[layer] == count
+                for layer, count in expected.items())
+    )
 
 
 @dataclass
@@ -374,6 +402,142 @@ def build_adversarial_report(results: list[AdversarialResult],
     return report
 
 
+def validate_formal_process_evidence(
+    report: Mapping[str, Any],
+) -> ProcessEvidenceValidation:
+    """Independently verify the formal parent 2-process x 3-sample matrix."""
+    process_complete = True
+    raw_complete = True
+    meta = report.get("meta")
+    sampling = meta.get("process_sampling") if isinstance(meta, Mapping) else None
+    if not isinstance(sampling, Mapping):
+        sampling = {}
+        process_complete = False
+    if not isinstance(sampling.get("bundle_id"), str) \
+            or not sampling.get("bundle_id", "").strip():
+        process_complete = False
+    required_shape = {layer: policy["processes"]
+                      for layer, policy in FORMAL_PROCESS_POLICY.items()}
+    sample_shape = {layer: policy["samples_per_process"]
+                    for layer, policy in FORMAL_PROCESS_POLICY.items()}
+    if not _exact_process_counts(sampling.get("required"), required_shape):
+        process_complete = False
+    if not _exact_process_counts(sampling.get("observed"), required_shape):
+        process_complete = False
+    if not _exact_process_counts(
+        sampling.get("samples_per_process"), sample_shape
+    ):
+        process_complete = False
+
+    workers = sampling.get("workers")
+    runs_by_role: dict[str, str] = {}
+    if not isinstance(workers, Sequence) or isinstance(workers, (str, bytes)) \
+            or len(workers) != len(FORMAL_WORKER_LAYOUT):
+        workers = ()
+        process_complete = False
+    seen_runs: set[str] = set()
+    for worker in workers:
+        if not isinstance(worker, Mapping) or set(worker) != _FORMAL_WORKER_FIELDS:
+            process_complete = False
+            continue
+        role = worker.get("role")
+        layer = worker.get("layer")
+        run_id = worker.get("process_run_id")
+        pid = worker.get("pid")
+        exit_code = worker.get("exit_code")
+        digest = worker.get("report_sha256")
+        known_role = isinstance(role, str) and role in FORMAL_WORKER_LAYOUT
+        if not known_role or layer != FORMAL_WORKER_LAYOUT.get(role):
+            process_complete = False
+        elif role in runs_by_role:
+            process_complete = False
+        if not isinstance(run_id, str) or not run_id.strip() or run_id in seen_runs:
+            process_complete = False
+        else:
+            seen_runs.add(run_id)
+            if known_role:
+                runs_by_role[role] = run_id
+        if type(pid) is not int or pid <= 0:
+            process_complete = False
+        if type(exit_code) is not int or exit_code not in {0, 1}:
+            process_complete = False
+        if not isinstance(digest, str) or len(digest) != 64 \
+                or any(char not in "0123456789abcdefABCDEF" for char in digest):
+            process_complete = False
+    if set(runs_by_role) != set(FORMAL_WORKER_LAYOUT):
+        process_complete = False
+
+    results = report.get("results")
+    if not isinstance(results, Mapping):
+        return ProcessEvidenceValidation(False, False)
+    seen_layers: set[str] = set()
+    for result_id, result in results.items():
+        if not isinstance(result, Mapping):
+            process_complete = False
+            raw_complete = False
+            continue
+        layer = result.get("layer")
+        if not isinstance(layer, str) or layer not in FORMAL_PROCESS_POLICY:
+            continue
+        seen_layers.add(layer)
+        if not isinstance(result_id, str) or not result_id.endswith(f"@{layer}") \
+                or result.get("result_id") != result_id:
+            process_complete = False
+        repetitions = result.get("repetitions")
+        if not isinstance(repetitions, Sequence) \
+                or isinstance(repetitions, (str, bytes)):
+            process_complete = False
+            raw_complete = False
+            continue
+        relevant_roles = ("primary", f"corroboration-{layer}")
+        expected_runs = {
+            runs_by_role[role] for role in relevant_roles if role in runs_by_role}
+        expected_samples = {
+            (run_id, sample_index)
+            for run_id in expected_runs
+            for sample_index in range(
+                FORMAL_PROCESS_POLICY[layer]["samples_per_process"])
+        }
+        identities: list[tuple[Any, Any]] = []
+        for repetition in repetitions:
+            if not isinstance(repetition, Mapping):
+                process_complete = False
+                raw_complete = False
+                continue
+            run_id = repetition.get("process_run_id")
+            sample_index = repetition.get("sample_index")
+            if not isinstance(run_id, str) or not run_id.strip() \
+                    or type(sample_index) is not int or sample_index < 0:
+                process_complete = False
+            else:
+                identities.append((run_id, sample_index))
+            if type(repetition.get("passed")) is not bool \
+                    or not isinstance(repetition.get("signature"), str) \
+                    or type(repetition.get("dangerous")) is not bool:
+                process_complete = False
+            for name in ("raw_intents", "actual_intents"):
+                intents = repetition.get(name)
+                if not isinstance(intents, Sequence) \
+                        or isinstance(intents, (str, bytes)) \
+                        or any(not isinstance(intent, str) for intent in intents):
+                    raw_complete = False
+            if repetition.get("raw_observed") is not True \
+                    or repetition.get("validation_observed") is not True \
+                    or type(repetition.get("plan_from_fallback")) is not bool:
+                raw_complete = False
+        if len(expected_runs) != FORMAL_PROCESS_POLICY[layer]["processes"] \
+                or len(identities) != len(set(identities)) \
+                or set(identities) != expected_samples:
+            process_complete = False
+    required_layers = set(FORMAL_PROCESS_POLICY)
+    if seen_layers != required_layers:
+        process_complete = False
+        raw_complete = False
+    if not process_complete:
+        raw_complete = False
+    return ProcessEvidenceValidation(process_complete, raw_complete)
+
+
 def baseline_eligibility(report: dict[str, Any]) -> BaselineEligibility:
     """正式 baseline 的硬闸。失败原因全部列出，不在第一条就短路。
 
@@ -385,9 +549,12 @@ def baseline_eligibility(report: dict[str, Any]) -> BaselineEligibility:
     reasons: list[str] = []
     if meta.get("process_bundle_role") != "parent":
         reasons.append("not_parent_process_bundle")
-    if meta.get("process_policy_complete") is not True:
+    process_evidence = validate_formal_process_evidence(report)
+    if meta.get("process_policy_complete") is not True \
+            or not process_evidence.process_policy_complete:
         reasons.append("process_policy_incomplete")
-    if meta.get("raw_observation_complete") is not True:
+    if meta.get("raw_observation_complete") is not True \
+            or not process_evidence.raw_observation_complete:
         reasons.append("raw_observation_incomplete")
     if meta.get("suite") != "gate":
         reasons.append("suite_not_gate")

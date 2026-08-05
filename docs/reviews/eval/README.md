@@ -80,6 +80,12 @@ role、run id、pid、layer、原始报告 SHA-256 和退出码，不记录临�
 只看代表样本。缺任一 L1/L2 repetition 的 `raw_observed` 或 `validation_observed` 都会令
 `raw_observation_complete=false`；缺证据不是“0 次幻觉”，不得靠缩小指标分母取得资格。
 
+资格闸不会只相信上述两个 complete flag：写入前会从 `process_sampling` 与
+`results[*].repetitions` 独立复算正式 gate 的 L1/L2 `2×3` 身份矩阵、worker digest/exit、
+样本索引及 raw 字段。预先计算的 eligibility 与当前报告不一致时按 rejected 处理。正式 JSON
+与 Markdown 会先各自在目标目录完整写入临时文件，再替换成对；第二次替换失败会把两目标回滚
+到原字节或原“不存在”状态，并清理临时文件，不能留下新 JSON 配旧 Markdown 的混合基线。
+
 **证据单元是 `case_id@layer`**：同一条 case 在 L1 绿、L2 红时是两条独立记录。用裸
 `case_id` 作 key 会让后写的层覆盖先写的层，报告于是替产品把红灯藏起来。因此
 `--layer all` 的 overall 是**证据单元 micro**，不是去重后的案例准确率。
