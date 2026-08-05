@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from copy import deepcopy
+from dataclasses import dataclass, replace
+from hashlib import sha256
 import sys
 from pathlib import Path
 
@@ -20,6 +21,18 @@ from support.intent_adversarial_process import (  # noqa: E402
 
 BUNDLE_ID = "bundle-001"
 CODE_SHA = "0123456789abcdef"
+FORMAL_SUITE = {
+    "independent_processes": 2,
+    "independent_layers": ["l1", "l2"],
+    "normal_repeats": 3,
+}
+
+
+@dataclass(frozen=True)
+class _SuitePolicy:
+    independent_processes: int = 2
+    independent_layers: tuple[str, ...] = ("l1", "l2")
+    normal_repeats: int = 3
 
 
 def _repetition(
@@ -61,7 +74,10 @@ def _result(
     raw_observed: bool = True,
     validation_observed: bool = True,
     plan_from_fallback: bool = False,
+    samples_per_process: int | None = None,
 ) -> dict:
+    if samples_per_process is None:
+        samples_per_process = 0 if layer in {"l0", "l3"} else 3
     return {
         "result_id": result_id,
         "case_id": result_id,
@@ -85,7 +101,7 @@ def _result(
         "repetitions": [
             _repetition(
                 run_id,
-                1,
+                sample_index,
                 passed=passed,
                 signature=signature,
                 raw_intents=raw_intents,
@@ -94,6 +110,7 @@ def _result(
                 validation_observed=validation_observed,
                 plan_from_fallback=plan_from_fallback,
             )
+            for sample_index in range(samples_per_process)
         ],
     }
 
@@ -120,18 +137,23 @@ def _report(
             "provider_model": "minimax:MiniMax-M3",
             "provider_locked": True,
             "provider_drift": False,
+            "provider_lock": {
+                "provider": "minimax",
+                "model": "MiniMax-M3",
+                "locked": True,
+                "drift": False,
+                "restore_errors": [],
+            },
             "assets": {
                 "complete": True,
+                "digest": "a" * 64,
+                "file_count": 3,
                 "cases_sha256": "cases-sha",
                 "boundaries_sha256": "boundaries-sha",
                 "exemplars_sha256": "exemplars-sha",
             },
-            "retrieval_state": {
-                "provider": "local",
-                "model": "bge-small-zh-v1.5",
-                "index_sha256": "index-sha",
-                "degraded": False,
-            },
+            "retrieval_state": "warm",
+            "retrieval_degraded": 0,
             "temperature": 0.0,
             "selection_provenance": {
                 "suite": "gate",
@@ -171,8 +193,47 @@ def _artifact(
         spec=spec,
         exit_code=exit_code,
         report=_report(spec, run_id, results=results, pid=pid),
-        report_sha256=f"report-{run_id}",
+        report_sha256=sha256(f"{spec.role}:{run_id}".encode()).hexdigest(),
     )
+
+
+def _process_rows(
+    run_id: str,
+    *,
+    passed: bool = True,
+    signature: str = "",
+    samples: int = 3,
+) -> list[dict]:
+    return [
+        _repetition(run_id, index, passed=passed, signature=signature)
+        for index in range(samples)
+    ]
+
+
+def _all_layer_bundle() -> tuple[tuple[WorkerSpec, ...], list[WorkerArtifact]]:
+    specs = worker_specs("all", "gate", FORMAL_SUITE)
+    primary_results = [
+        _result("case-l0", "run-primary", layer="l0"),
+        _result("case-l1", "run-primary", layer="l1"),
+        _result("case-l2", "run-primary", layer="l2"),
+        _result("case-l3", "run-primary", layer="l3"),
+    ]
+    artifacts = [
+        _artifact(specs[0], "run-primary", results=primary_results, pid=101),
+        _artifact(
+            specs[1],
+            "run-corroboration-l1",
+            results=[_result("case-l1", "run-corroboration-l1", layer="l1")],
+            pid=102,
+        ),
+        _artifact(
+            specs[2],
+            "run-corroboration-l2",
+            results=[_result("case-l2", "run-corroboration-l2", layer="l2")],
+            pid=103,
+        ),
+    ]
+    return specs, artifacts
 
 
 @pytest.mark.parametrize(
@@ -195,24 +256,68 @@ def _artifact(
     ],
 )
 def test_worker_specs_layouts(requested_layer, suite_name, expected):
-    suite = {"name": suite_name}
-
-    specs = worker_specs(requested_layer, suite_name, suite)
+    specs = worker_specs(requested_layer, suite_name, FORMAL_SUITE)
 
     assert tuple((spec.role, spec.layer) for spec in specs) == expected
     assert len({spec.role for spec in specs}) == len(specs)
+    assert all(spec.samples_per_unit == 3 for spec in specs)
+
+
+def test_worker_specs_accepts_dataclass_policy_and_expands_more_processes():
+    specs = worker_specs(
+        "all", "gate", _SuitePolicy(independent_processes=3)
+    )
+
+    assert tuple((spec.role, spec.layer) for spec in specs) == (
+        ("primary", "all"),
+        ("corroboration-l1", "l1"),
+        ("corroboration-l1-2", "l1"),
+        ("corroboration-l2", "l2"),
+        ("corroboration-l2-2", "l2"),
+    )
+    assert all(spec.samples_per_unit == 3 for spec in specs)
+
+
+def test_worker_specs_consumes_independent_layers_instead_of_hard_coding_them():
+    suite = {
+        "independent_processes": 2,
+        "independent_layers": ["l2"],
+        "normal_repeats": 4,
+    }
+
+    specs = worker_specs("all", "gate", suite)
+
+    assert tuple((spec.role, spec.layer, spec.samples_per_unit) for spec in specs) == (
+        ("primary", "all", 4),
+        ("corroboration-l2", "l2", 4),
+    )
+
+
+@pytest.mark.parametrize(
+    "suite",
+    [
+        {**FORMAL_SUITE, "independent_processes": 0},
+        {**FORMAL_SUITE, "independent_processes": True},
+        {**FORMAL_SUITE, "independent_layers": ["l1", "l1"]},
+        {**FORMAL_SUITE, "independent_layers": ["l3"]},
+        {**FORMAL_SUITE, "normal_repeats": 0},
+        {**FORMAL_SUITE, "normal_repeats": True},
+    ],
+)
+def test_worker_specs_rejects_invalid_process_policy(suite):
+    with pytest.raises(ValueError):
+        worker_specs("all", "gate", suite)
 
 
 def test_classify_process_repeats_passes_only_when_every_sample_passes():
+    rows = _process_rows("run-a") + _process_rows("run-b")
     classification = classify_process_repeats(
-        [_repetition("run-a", 1), _repetition("run-b", 1)], required_processes=2
+        rows, required_processes=2, samples_per_process=3
     )
 
     assert classification.status == "pass"
-    assert tuple(row["process_run_id"] for row in classification.outcomes) == (
-        "run-a",
-        "run-b",
-    )
+    assert classification.outcomes == tuple(rows)
+    assert classification.outcomes[0]["sample_index"] == 0
 
 
 @pytest.mark.parametrize(
@@ -220,54 +325,72 @@ def test_classify_process_repeats_passes_only_when_every_sample_passes():
     [
         (
             [
-                _repetition(
-                    "run-a", 1, passed=False, signature="danger:door", dangerous=True
-                ),
-                _repetition("run-b", 1),
+                {
+                    **_repetition("run-a", 0),
+                    "passed": False,
+                    "signature": "danger:door",
+                    "dangerous": True,
+                },
+                *_process_rows("run-a")[1:],
+                *_process_rows("run-b"),
             ],
             "critical_fail",
         ),
         (
-            [
-                _repetition("run-a", 1, passed=False, signature="wrong-domain"),
-                _repetition("run-b", 1, passed=False, signature="wrong-domain"),
-            ],
+            _process_rows("run-a", passed=False, signature="wrong-domain")
+            + _process_rows("run-b", passed=False, signature="wrong-domain"),
             "stable_fail",
         ),
         (
-            [
-                _repetition("run-a", 1, passed=False, signature="wrong-domain"),
-                _repetition("run-b", 1),
-            ],
+            _process_rows("run-a", passed=False, signature="wrong-domain")
+            + _process_rows("run-b"),
             "unstable",
         ),
         (
-            [
-                _repetition("run-a", 1, passed=False, signature="sig-a"),
-                _repetition("run-b", 1, passed=False, signature="sig-b"),
-            ],
+            _process_rows("run-a", passed=False, signature="sig-a")
+            + _process_rows("run-b", passed=False, signature="sig-b"),
             "unstable",
         ),
     ],
 )
 def test_classify_process_repeats_failure_classes(rows, expected_status):
-    assert classify_process_repeats(rows, required_processes=2).status == expected_status
+    assert classify_process_repeats(
+        rows, required_processes=2, samples_per_process=3
+    ).status == expected_status
 
 
 @pytest.mark.parametrize(
     ("rows", "required_processes", "match"),
     [
-        ([_repetition("", 1), _repetition("run-b", 1)], 2, "process_run_id"),
-        ([_repetition("run-a", 0), _repetition("run-b", 1)], 2, "sample_index"),
+        ([_repetition("", 0), *_process_rows("run-b")], 2, "process_run_id"),
+        ([_repetition("run-a", -1), *_process_rows("run-b")], 2, "sample_index"),
         (
-            [_repetition("run-a", 1), _repetition("run-a", 1)],
+            [_repetition("run-a", 0), _repetition("run-a", 0)],
             1,
             "duplicate",
         ),
         (
-            [_repetition("run-a", 1), _repetition("run-a", 2)],
+            _process_rows("run-a"),
             2,
             "required_processes",
+        ),
+        (
+            _process_rows("run-a")
+            + _process_rows("run-b")
+            + _process_rows("run-c"),
+            2,
+            "required_processes",
+        ),
+        (
+            _process_rows("run-a", samples=1) + _process_rows("run-b", samples=1),
+            2,
+            "samples_per_process",
+        ),
+        (
+            [_repetition("run-a", 0), _repetition("run-a", 2), _repetition("run-a", 3)]
+            + _process_rows("run-b"),
+            2,
+            "sample_index",
         ),
     ],
 )
@@ -275,11 +398,13 @@ def test_classify_process_repeats_rejects_bad_process_identity(
     rows, required_processes, match
 ):
     with pytest.raises(ValueError, match=match):
-        classify_process_repeats(rows, required_processes=required_processes)
+        classify_process_repeats(
+            rows, required_processes=required_processes, samples_per_process=3
+        )
 
 
 def test_validate_worker_bundle_accepts_exit_one_and_complete_bundle():
-    specs = worker_specs("l1", "gate", {"name": "gate"})
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
     artifacts = (
         _artifact(specs[0], "run-primary", exit_code=1, pid=101),
         _artifact(specs[1], "run-corroboration", pid=102),
@@ -289,7 +414,7 @@ def test_validate_worker_bundle_accepts_exit_one_and_complete_bundle():
 
 
 def test_validate_worker_bundle_collects_role_layout_errors_without_short_circuiting():
-    specs = worker_specs("all", "gate", {"name": "gate"})
+    specs = worker_specs("all", "gate", FORMAL_SUITE)
     duplicate = _artifact(specs[0], "run-primary-2", pid=104)
     unexpected_spec = WorkerSpec("unexpected", "l1")
     artifacts = (
@@ -342,6 +467,10 @@ def test_validate_worker_bundle_collects_role_layout_errors_without_short_circui
             "code_sha",
         ),
         (
+            lambda artifacts: artifacts[1].report["meta"].update(code_sha=""),
+            "code_sha",
+        ),
+        (
             lambda artifacts: artifacts[1].report["meta"].update(worktree_clean=False),
             "worktree_clean",
         ),
@@ -360,6 +489,28 @@ def test_validate_worker_bundle_collects_role_layout_errors_without_short_circui
             "provider_drift",
         ),
         (
+            lambda artifacts: artifacts[1].report["meta"].update(provider_lock={}),
+            "provider_lock",
+        ),
+        (
+            lambda artifacts: artifacts[1].report["meta"]["provider_lock"].update(
+                locked=False
+            ),
+            "provider_lock",
+        ),
+        (
+            lambda artifacts: artifacts[1].report["meta"]["provider_lock"].update(
+                drift=True
+            ),
+            "provider_lock",
+        ),
+        (
+            lambda artifacts: artifacts[1].report["meta"]["provider_lock"].update(
+                restore_errors=["restore failed"]
+            ),
+            "restore_errors",
+        ),
+        (
             lambda artifacts: artifacts[1].report["meta"]["assets"].update(
                 cases_sha256="different"
             ),
@@ -372,10 +523,16 @@ def test_validate_worker_bundle_collects_role_layout_errors_without_short_circui
             "assets",
         ),
         (
-            lambda artifacts: artifacts[1].report["meta"]["retrieval_state"].update(
-                degraded=True
-            ),
-            "retrieval_state",
+            lambda artifacts: artifacts[1].report["meta"]["assets"].update(digest=""),
+            "assets",
+        ),
+        (
+            lambda artifacts: artifacts[1].report["meta"]["assets"].update(file_count=0),
+            "assets",
+        ),
+        (
+            lambda artifacts: artifacts[1].report["meta"].update(retrieval_degraded=1),
+            "retrieval_degraded",
         ),
         (
             lambda artifacts: artifacts[1].report["meta"].update(temperature=0.2),
@@ -414,8 +571,20 @@ def test_validate_worker_bundle_collects_role_layout_errors_without_short_circui
             "gold_digest",
         ),
         (
+            lambda artifacts: artifacts[1].report["results"]["case-1"][
+                "expected"
+            ].pop("gold_digest"),
+            "gold_digest",
+        ),
+        (
             lambda artifacts: artifacts[1].report["results"]["case-1"].update(
                 admitted_intents=["navigation.start"]
+            ),
+            "admitted_intents",
+        ),
+        (
+            lambda artifacts: artifacts[1].report["results"]["case-1"].update(
+                admitted_intents=[]
             ),
             "admitted_intents",
         ),
@@ -424,7 +593,7 @@ def test_validate_worker_bundle_collects_role_layout_errors_without_short_circui
 def test_validate_worker_bundle_rejects_identity_and_evidence_drift(
     mutate, expected_fragment
 ):
-    specs = worker_specs("l1", "gate", {"name": "gate"})
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
     artifacts = [
         _artifact(specs[0], "run-primary", pid=101),
         _artifact(specs[1], "run-corroboration", pid=102),
@@ -437,7 +606,7 @@ def test_validate_worker_bundle_rejects_identity_and_evidence_drift(
 
 
 def test_validate_worker_bundle_rejects_non_mapping_report_and_exit_two():
-    specs = worker_specs("l1", "gate", {"name": "gate"})
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
     artifacts = (
         WorkerArtifact(specs[0], 2, [], "report-a"),
         _artifact(specs[1], "run-corroboration", pid=102),
@@ -449,8 +618,157 @@ def test_validate_worker_bundle_rejects_non_mapping_report_and_exit_two():
     assert any("report" in error and "mapping" in error for error in errors)
 
 
+@pytest.mark.parametrize("bad_sha", ["", "not-hex", "a" * 63, "g" * 64])
+def test_validate_worker_bundle_rejects_empty_or_fake_report_sha256(bad_sha):
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _artifact(specs[0], "run-primary", pid=101),
+        _artifact(specs[1], "run-corroboration", pid=102),
+    ]
+    artifacts[1] = replace(artifacts[1], report_sha256=bad_sha)
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+
+    assert any("report_sha256" in error for error in errors), errors
+
+
+def test_validate_worker_bundle_binds_every_repetition_to_its_worker_run_id():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _artifact(specs[0], "run-primary", pid=101),
+        _artifact(specs[1], "run-corroboration", pid=102),
+    ]
+    artifacts[1].report["results"]["case-1"]["repetitions"][1][
+        "process_run_id"
+    ] = "forged-third-process"
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+
+    assert any("process_run_id" in error for error in errors), errors
+
+
+def test_validate_worker_bundle_rejects_one_sample_when_policy_requires_three():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _artifact(specs[0], "run-primary", pid=101),
+        _artifact(specs[1], "run-corroboration", pid=102),
+    ]
+    artifacts[1].report["results"]["case-1"]["repetitions"] = artifacts[
+        1
+    ].report["results"]["case-1"]["repetitions"][:1]
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+
+    assert any("samples_per" in error or "sample_index" in error for error in errors), errors
+
+
+def test_validate_worker_bundle_accepts_real_retrieval_shape_with_zero_degradation():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = (
+        _artifact(specs[0], "run-primary", pid=101),
+        _artifact(specs[1], "run-corroboration", pid=102),
+    )
+
+    assert all(a.report["meta"]["retrieval_state"] == "warm" for a in artifacts)
+    assert all(a.report["meta"]["retrieval_degraded"] == 0 for a in artifacts)
+    assert validate_worker_bundle(specs, artifacts, BUNDLE_ID) == ()
+
+
+@pytest.mark.parametrize(
+    ("mutate", "fragment"),
+    [
+        (
+            lambda artifacts: artifacts[1].report["results"].pop("case-l1"),
+            "case-l1",
+        ),
+        (
+            lambda artifacts: artifacts[1].report["results"].update(
+                {
+                    "extra-l1": _result(
+                        "extra-l1", "run-corroboration-l1", layer="l1"
+                    )
+                }
+            ),
+            "extra-l1",
+        ),
+        (
+            lambda artifacts: artifacts[1].report["results"]["case-l1"].update(
+                layer="l2"
+            ),
+            "layer",
+        ),
+        (
+            lambda artifacts: artifacts[1].report["results"].update(
+                {
+                    "mixed-l3": _result(
+                        "mixed-l3",
+                        "run-corroboration-l1",
+                        layer="l3",
+                    )
+                }
+            ),
+            "mixed-l3",
+        ),
+    ],
+)
+def test_validate_worker_bundle_closes_all_layer_result_matrix(mutate, fragment):
+    specs, artifacts = _all_layer_bundle()
+    mutate(artifacts)
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+
+    assert any(fragment in error for error in errors), errors
+
+
+def test_validate_worker_bundle_requires_equal_units_for_layer_specific_workers():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _artifact(
+            specs[0],
+            "run-primary",
+            results=[
+                _result("case-1", "run-primary"),
+                _result("case-2", "run-primary"),
+            ],
+            pid=101,
+        ),
+        _artifact(
+            specs[1],
+            "run-corroboration",
+            results=[_result("case-1", "run-corroboration")],
+            pid=102,
+        ),
+    ]
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+
+    assert any("case-2" in error for error in errors), errors
+
+
+def test_validate_worker_bundle_rejects_wrong_layer_in_non_all_primary():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _artifact(
+            specs[0],
+            "run-primary",
+            results=[_result("wrong-layer", "run-primary", layer="l2")],
+            pid=101,
+        ),
+        _artifact(
+            specs[1],
+            "run-corroboration",
+            results=[_result("wrong-layer", "run-corroboration", layer="l2")],
+            pid=102,
+        ),
+    ]
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID)
+
+    assert any("layer" in error for error in errors), errors
+
+
 def test_merge_worker_reports_reclassifies_and_aggregates_sample_observations():
-    specs = worker_specs("l1", "gate", {"name": "gate"})
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
     primary_result = _result(
         "case-1",
         "run-primary",
@@ -490,13 +808,35 @@ def test_merge_worker_reports_reclassifies_and_aggregates_sample_observations():
     assert result["raw_intents"] == ["navigation.start", "weather.query"]
     assert result["raw_observed"] is False
     assert result["validation_observed"] is True
-    assert result["actual_intents"] == ["navigation.start"]
+    assert result["actual_intents"] == ["navigation.start", "weather.query"]
     assert result["plan_from_fallback"] is True
-    assert len(result["repetitions"]) == 2
+    assert len(result["repetitions"]) == 6
+
+
+def test_merge_worker_reports_includes_second_process_only_validation_escape():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    primary = _result("case-1", "run-primary", actual_intents=("weather.query",))
+    corroboration = _result(
+        "case-1", "run-corroboration", actual_intents=("weather.query",)
+    )
+    corroboration["repetitions"][1]["actual_intents"] = ["ghost.escape"]
+    artifacts = (
+        _artifact(specs[0], "run-primary", results=[primary], pid=101),
+        _artifact(
+            specs[1],
+            "run-corroboration",
+            results=[corroboration],
+            pid=102,
+        ),
+    )
+
+    merged = merge_worker_reports(specs, artifacts)["case-1"]
+
+    assert merged["actual_intents"] == ["ghost.escape", "weather.query"]
 
 
 def test_merge_worker_reports_uses_worker_pass_and_signature_for_relations():
-    specs = worker_specs("l1", "gate", {"name": "gate"})
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
     primary = _result("case-1", "run-primary", passed=True)
     corroboration = _result(
         "case-1", "run-corroboration", passed=False, signature="relation:order"
@@ -523,7 +863,7 @@ def test_merge_worker_reports_uses_worker_pass_and_signature_for_relations():
 
 
 def test_merge_worker_reports_passes_through_single_l3_primary():
-    specs = worker_specs("l3", "gate", {"name": "gate"})
+    specs = worker_specs("l3", "gate", FORMAL_SUITE)
     original = _result("journey-1", "run-primary", layer="l3")
     artifacts = (_artifact(specs[0], "run-primary", results=[original], pid=101),)
 
