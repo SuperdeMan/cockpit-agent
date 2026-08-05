@@ -225,6 +225,75 @@ def test_worker_report_rejects_hardlink_to_formal_baseline(
     assert raised.value.code == 2
 
 
+@pytest.mark.parametrize("existing_kind", ["json", "markdown"])
+def test_launch_worker_rejects_preexisting_external_destination_before_start(
+        monkeypatch, existing_kind):
+    with tempfile.TemporaryDirectory(
+            prefix="intent-worker-external-", dir=cli.ROOT.parent) as external_dir:
+        report = Path(external_dir) / "worker.json"
+        existing = report if existing_kind == "json" else report.with_suffix(".md")
+        existing.write_text("external destination sentinel", encoding="utf-8")
+        args = parse_args([
+            "--suite", "gate", "--layer", "l1", "--live",
+            "--provider", "mimo", "--model", "m",
+        ])
+        calls = []
+        monkeypatch.setattr(
+            cli.subprocess, "run",
+            lambda *_args, **_kwargs: calls.append(True) or SimpleNamespace(
+                returncode=0, stdout="", stderr=""),
+        )
+
+        with pytest.raises(ValueError, match="new files"):
+            cli._launch_worker(
+                args, cli.process.WorkerSpec("primary", "l1", 1),
+                "bundle-a", "run-a", report,
+            )
+
+        assert calls == []
+        assert existing.read_text(encoding="utf-8") == (
+            "external destination sentinel")
+
+
+@pytest.mark.parametrize("alias_kind", ["json", "markdown"])
+def test_launch_worker_rejects_external_hardlink_to_repo_before_start(
+        monkeypatch, alias_kind):
+    with (
+        tempfile.TemporaryDirectory(
+            prefix="intent-worker-repo-target-", dir=cli.ROOT) as repo_dir,
+        tempfile.TemporaryDirectory(
+            prefix="intent-worker-external-", dir=cli.ROOT.parent) as external_dir,
+    ):
+        repo_target = Path(repo_dir) / "protected.txt"
+        protected = "controlled repo target must remain unchanged"
+        repo_target.write_text(protected, encoding="utf-8")
+        report = Path(external_dir) / "worker.json"
+        alias = report if alias_kind == "json" else report.with_suffix(".md")
+        try:
+            os.link(repo_target, alias)
+        except OSError as exc:  # pragma: no cover - host filesystem can prohibit links
+            pytest.skip(f"hard-link creation unavailable: {exc}")
+        args = parse_args([
+            "--suite", "gate", "--layer", "l1", "--live",
+            "--provider", "mimo", "--model", "m",
+        ])
+        calls = []
+        monkeypatch.setattr(
+            cli.subprocess, "run",
+            lambda *_args, **_kwargs: calls.append(True) or SimpleNamespace(
+                returncode=0, stdout="", stderr=""),
+        )
+
+        with pytest.raises(ValueError, match="new files"):
+            cli._launch_worker(
+                args, cli.process.WorkerSpec("primary", "l1", 1),
+                "bundle-a", "run-a", report,
+            )
+
+        assert calls == []
+        assert repo_target.read_text(encoding="utf-8") == protected
+
+
 @pytest.mark.parametrize(("suite", "layer", "expected"), [
     ("gate", "all", True),
     ("gate", "l1", True),

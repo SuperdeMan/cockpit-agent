@@ -116,13 +116,27 @@ def _report_paths_conflict(
     )
 
 
+def _path_entry_exists(path: str | Path) -> bool:
+    """Use lstat so regular files, symlinks, and hard-link names all count."""
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise ValueError("unable to verify that worker report destinations are new") from exc
+    return True
+
+
 def _external_worker_report_paths(raw_path: str | Path) -> tuple[Path, Path]:
     """Return canonical worker destinations, rejecting every repository target."""
     requested = Path(raw_path)
     if not requested.is_absolute():
         raise ValueError("worker report path must be absolute")
-    json_path = requested.resolve(strict=False)
-    md_path = requested.with_suffix(".md").resolve(strict=False)
+    requested_paths = (requested, requested.with_suffix(".md"))
+    if any(_path_entry_exists(path) for path in requested_paths):
+        raise ValueError("worker JSON and Markdown reports must be new files")
+    json_path = requested_paths[0].resolve(strict=False)
+    md_path = requested_paths[1].resolve(strict=False)
     if _path_is_within(json_path, ROOT) or _path_is_within(md_path, ROOT):
         raise ValueError("worker JSON and Markdown reports must resolve outside repository")
     if _report_paths_conflict(json_path, md_path):
