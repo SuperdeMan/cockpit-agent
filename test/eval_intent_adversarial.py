@@ -87,6 +87,35 @@ def _path_is_within(path: Path, root: Path) -> bool:
     return True
 
 
+def _same_report_file(first: str | Path, second: str | Path) -> bool:
+    """Compare aliases as well as names; inaccessible existing paths fail closed."""
+    first_path = Path(first).resolve(strict=False)
+    second_path = Path(second).resolve(strict=False)
+    if first_path == second_path:
+        return True
+    try:
+        return os.path.samefile(first_path, second_path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise ValueError("unable to verify that report destinations are distinct") from exc
+
+
+def _report_paths_conflict(
+    json_path: str | Path,
+    md_path: str | Path,
+) -> bool:
+    paths = (Path(json_path), Path(md_path))
+    if _same_report_file(*paths):
+        return True
+    formal_paths = (FORMAL_BASELINE_JSON, FORMAL_BASELINE_MD)
+    return any(
+        _same_report_file(path, formal)
+        for path in paths
+        for formal in formal_paths
+    )
+
+
 def _external_worker_report_paths(raw_path: str | Path) -> tuple[Path, Path]:
     """Return canonical worker destinations, rejecting every repository target."""
     requested = Path(raw_path)
@@ -96,6 +125,10 @@ def _external_worker_report_paths(raw_path: str | Path) -> tuple[Path, Path]:
     md_path = requested.with_suffix(".md").resolve(strict=False)
     if _path_is_within(json_path, ROOT) or _path_is_within(md_path, ROOT):
         raise ValueError("worker JSON and Markdown reports must resolve outside repository")
+    if _report_paths_conflict(json_path, md_path):
+        raise ValueError(
+            "worker JSON and Markdown reports must be distinct and must not "
+            "alias a formal baseline")
     return json_path, md_path
 
 
@@ -211,18 +244,14 @@ def validate_args(args: argparse.Namespace) -> argparse.Namespace:
         die(f"--layer {args.layer} 需要 --live（L1/L2/L3 必须真实模型）")
     if args.live and (not args.provider or not args.model):
         die("--live 必须同时显式给出 --provider 与 --model（不接受跟随网关默认）")
-    if not args.write_baseline:
-        formal_paths = {
-            FORMAL_BASELINE_JSON.resolve(strict=False),
-            FORMAL_BASELINE_MD.resolve(strict=False),
-        }
-        ordinary_paths = {
-            Path(args.out_json).resolve(strict=False),
-            Path(args.out_md).resolve(strict=False),
-        }
-        if formal_paths & ordinary_paths:
-            die("ordinary --out-json/--out-md cannot target a formal baseline; "
-                "formal baseline writes require --write-baseline eligibility")
+    ordinary_paths = (Path(args.out_json), Path(args.out_md))
+    try:
+        ordinary_conflict = _report_paths_conflict(*ordinary_paths)
+    except ValueError as exc:
+        die(str(exc))
+    if ordinary_conflict:
+        die("--out-json/--out-md must be distinct and must not alias a formal "
+            "baseline")
     if args.retrieval_state == "cold" and args.suite != "discovery":
         die("--retrieval-state cold 只允许用于 discovery（冷启动不进门禁与 baseline）")
     if args.write_baseline:
@@ -2186,12 +2215,59 @@ class WorkerLaunchError(RuntimeError):
 
 def _redact_failure_text(value: Any) -> str:
     text = str(value)
+
+    def redact_assignment(match: re.Match[str]) -> str:
+        raw_value = match.group("value")
+        if (len(raw_value) >= 2 and raw_value[0] in {'"', "'"}
+                and raw_value[-1] == raw_value[0]):
+            return (match.group("prefix") + raw_value[0]
+                    + "[REDACTED]" + raw_value[-1])
+        return match.group("prefix") + "[REDACTED]"
+
     text = re.sub(
-        r"(?i)(api[_-]?key|token|password|secret)(\s*[:=]\s*)([^\s,;]+)",
-        r"\1\2[REDACTED]",
+        r"""(?ix)
+        (?P<prefix>
+            (?<![\w-])
+            (?P<key_quote>["']?)
+            (?:api[_-]?key|token|password|secret)
+            (?P=key_quote)
+            \s*[:=]\s*
+        )
+        (?P<value>
+            \[REDACTED\]
+            | "(?:\\.|[^"\\])*"
+            | '(?:\\.|[^'\\])*'
+            | [^\s,;}\]]+
+        )
+        """,
+        redact_assignment,
         text,
     )
-    text = re.sub(r"(?i)bearer\s+[^\s,;]+", "Bearer [REDACTED]", text)
+
+    def redact_outer_bearer(match: re.Match[str]) -> str:
+        quote = match.group("quote")
+        return quote + match.group("label") + "[REDACTED]" + quote
+
+    text = re.sub(
+        r"(?i)(?P<quote>[\"'])(?P<label>bearer\s+).*?(?P=quote)",
+        redact_outer_bearer,
+        text,
+    )
+
+    def redact_quoted_bearer_value(match: re.Match[str]) -> str:
+        quote = match.group("quote")
+        return match.group("label") + quote + "[REDACTED]" + quote
+
+    text = re.sub(
+        r"(?i)(?P<label>\bbearer\s+)(?P<quote>[\"']).*?(?P=quote)",
+        redact_quoted_bearer_value,
+        text,
+    )
+    text = re.sub(
+        r"(?i)(?P<label>\bbearer\s+)(?:\[REDACTED\]|[^\s,;}\]\"']+)",
+        lambda match: match.group("label") + "[REDACTED]",
+        text,
+    )
     return text[:1000]
 
 
@@ -2203,6 +2279,35 @@ def _safe_failure_list(value: Any) -> list[str]:
         for row in value[:20]
         if isinstance(row, str)
     ]
+
+
+def _safe_worker_observation(value: Any) -> dict[str, Any]:
+    """Keep only the report-level worker evidence contract and redact it again."""
+    if not isinstance(value, dict):
+        value = {}
+    exit_code = value.get("exit_code")
+    if type(exit_code) is not int:
+        exit_code = None
+    degraded = value.get("retrieval_degraded")
+    if type(degraded) not in {int, bool}:
+        degraded = None
+    drift = value.get("provider_drift")
+    if type(drift) is not bool:
+        drift = None
+    return {
+        "role": _redact_failure_text(value.get("role") or ""),
+        "layer": _redact_failure_text(value.get("layer") or ""),
+        "process_run_id": _redact_failure_text(
+            value.get("process_run_id") or ""),
+        "exit_code": exit_code,
+        "report_sha256": _redact_failure_text(
+            value.get("report_sha256") or "") or None,
+        "infrastructure_errors": _safe_failure_list(
+            value.get("infrastructure_errors")),
+        "trace_errors": _safe_failure_list(value.get("trace_errors")),
+        "retrieval_degraded": degraded,
+        "provider_drift": drift,
+    }
 
 
 def _artifact_observation(artifact: process.WorkerArtifact) -> dict[str, Any]:
@@ -2347,15 +2452,17 @@ def _parent_failure_report_paths(
         ROOT / f"docs/reviews/eval/_ci-run-intent-adversarial-rejected-{stamp}.json",
         ROOT / f"docs/reviews/eval/_ci-run-intent-adversarial-rejected-{stamp}.md",
     )
-    if args.write_baseline:
-        return rejected
     requested = (Path(args.out_json), Path(args.out_md))
-    if (
-        requested[0].resolve(strict=False) == FORMAL_BASELINE_JSON.resolve(strict=False)
-        or requested[1].resolve(strict=False) == FORMAL_BASELINE_MD.resolve(strict=False)
-    ):
-        return rejected
-    return requested
+    use_rejected = args.write_baseline
+    if not use_rejected:
+        try:
+            use_rejected = _report_paths_conflict(*requested)
+        except ValueError:
+            use_rejected = True
+    selected = rejected if use_rejected else requested
+    if _report_paths_conflict(*selected):
+        raise ValueError("safe parent failure report destinations are unavailable")
+    return selected
 
 
 def _required_spec_evidence(
@@ -2381,6 +2488,7 @@ def _write_parent_infrastructure_failure(
     reason: str,
 ) -> None:
     safe_reason = _redact_failure_text(reason)
+    safe_observations = [_safe_worker_observation(row) for row in observations]
     report = {
         "meta": {
             "process_bundle_role": "parent",
@@ -2392,7 +2500,7 @@ def _write_parent_infrastructure_failure(
             "failed_role": failed_role,
             "reason": safe_reason,
             "required_specs": _required_spec_evidence(specs),
-            "observed_workers": observations,
+            "observed_workers": safe_observations,
         },
     }
     markdown_lines = [
@@ -2410,12 +2518,19 @@ def _write_parent_infrastructure_failure(
         for row in report["failure"]["required_specs"]
     )
     markdown_lines.extend(("", "## Observed worker evidence"))
-    if observations:
-        markdown_lines.extend(
-            f"- {row['role']} / {row['layer']} / run={row['process_run_id']} / "
-            f"exit={row['exit_code']} / sha256={row['report_sha256']}"
-            for row in observations
-        )
+    if safe_observations:
+        for row in safe_observations:
+            markdown_lines.extend((
+                f"- {row['role']} / {row['layer']} / "
+                f"run={row['process_run_id']} / exit={row['exit_code']} / "
+                f"sha256={row['report_sha256']}",
+                "  - infrastructure_errors="
+                + json.dumps(row["infrastructure_errors"], ensure_ascii=False),
+                "  - trace_errors="
+                + json.dumps(row["trace_errors"], ensure_ascii=False),
+                f"  - retrieval_degraded={row['retrieval_degraded']}",
+                f"  - provider_drift={row['provider_drift']}",
+            ))
     else:
         markdown_lines.append("- none")
     json_path, md_path = _parent_failure_report_paths(args)
@@ -2468,7 +2583,7 @@ def _run_parent_bundle(args: argparse.Namespace) -> int:
                 failed_role=exc.spec.role,
                 reason=str(exc),
             )
-        except OSError:
+        except (OSError, ValueError):
             print("[intent-adversarial] parent failure report write failed", file=sys.stderr)
         return 2
     except (OSError, ValueError) as exc:
@@ -2486,7 +2601,7 @@ def _run_parent_bundle(args: argparse.Namespace) -> int:
                     else "worker_bundle_setup_failed"
                 ),
             )
-        except OSError:
+        except (OSError, ValueError):
             print("[intent-adversarial] parent failure report write failed", file=sys.stderr)
         return 2
 
@@ -2504,7 +2619,7 @@ def _run_parent_bundle(args: argparse.Namespace) -> int:
                 failed_role="bundle",
                 reason="bundle_validation_failed: " + "; ".join(bundle_errors[:50]),
             )
-        except OSError:
+        except (OSError, ValueError):
             print("[intent-adversarial] parent failure report write failed", file=sys.stderr)
         return 2
     try:
@@ -2522,7 +2637,7 @@ def _run_parent_bundle(args: argparse.Namespace) -> int:
                 failed_role="bundle",
                 reason=f"bundle_merge_failed: {exc}",
             )
-        except OSError:
+        except (OSError, ValueError):
             print("[intent-adversarial] parent failure report write failed", file=sys.stderr)
         return 2
 

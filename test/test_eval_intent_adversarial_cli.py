@@ -1,5 +1,6 @@
 """CLI 参数、退出码、baseline 硬闸与 L3 子进程的回归测试。"""
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -140,6 +141,88 @@ def test_worker_report_json_and_derived_markdown_resolve_outside_repository(tmp_
     assert markdown_path == report.with_suffix(".md")
     assert not cli._path_is_within(json_path, cli.ROOT)
     assert not cli._path_is_within(markdown_path, cli.ROOT)
+
+
+@pytest.mark.parametrize("suffix", ["worker.md", "nested/../worker.md"])
+def test_worker_report_json_and_markdown_destinations_must_be_distinct(
+        tmp_path, suffix):
+    report = tmp_path / suffix
+    with pytest.raises(SystemExit) as raised:
+        validate_args(parse_args([
+            "--suite", "gate", "--layer", "l1", "--live",
+            "--provider", "mimo", "--model", "m", "--_worker",
+            "--_bundle-id", "bundle-a", "--_process-run-id", "run-a",
+            "--_worker-role", "primary", "--_worker-report", str(report),
+        ]))
+    assert raised.value.code == 2
+
+
+def test_worker_report_rejects_symlink_alias_between_json_and_markdown(tmp_path):
+    markdown = tmp_path / "worker.md"
+    markdown.touch()
+    json_alias = tmp_path / "worker.json"
+    try:
+        json_alias.symlink_to(markdown)
+    except OSError as exc:  # pragma: no cover - host policy can prohibit symlinks
+        pytest.skip(f"symlink creation unavailable: {exc}")
+
+    with pytest.raises(SystemExit) as raised:
+        validate_args(parse_args([
+            "--suite", "gate", "--layer", "l1", "--live",
+            "--provider", "mimo", "--model", "m", "--_worker",
+            "--_bundle-id", "bundle-a", "--_process-run-id", "run-a",
+            "--_worker-role", "primary", "--_worker-report", str(json_alias),
+        ]))
+    assert raised.value.code == 2
+
+
+def test_worker_report_rejects_hardlink_alias_between_json_and_markdown(tmp_path):
+    markdown = tmp_path / "worker.md"
+    markdown.touch()
+    json_alias = tmp_path / "worker.json"
+    try:
+        os.link(markdown, json_alias)
+    except OSError as exc:  # pragma: no cover - host filesystem can prohibit links
+        pytest.skip(f"hard-link creation unavailable: {exc}")
+
+    with pytest.raises(SystemExit) as raised:
+        validate_args(parse_args([
+            "--suite", "gate", "--layer", "l1", "--live",
+            "--provider", "mimo", "--model", "m", "--_worker",
+            "--_bundle-id", "bundle-a", "--_process-run-id", "run-a",
+            "--_worker-role", "primary", "--_worker-report", str(json_alias),
+        ]))
+    assert raised.value.code == 2
+
+
+@pytest.mark.parametrize("target", ["json", "markdown"])
+def test_worker_report_rejects_hardlink_to_formal_baseline(
+        tmp_path, monkeypatch, target):
+    formal_dir = tmp_path / "formal"
+    formal_dir.mkdir()
+    formal_json = formal_dir / "baseline.json"
+    formal_md = formal_dir / "baseline.md"
+    formal_json.touch()
+    formal_md.touch()
+    monkeypatch.setattr(cli, "FORMAL_BASELINE_JSON", formal_json)
+    monkeypatch.setattr(cli, "FORMAL_BASELINE_MD", formal_md)
+    report = tmp_path / "bundle" / "worker.json"
+    report.parent.mkdir()
+    alias = report if target == "json" else report.with_suffix(".md")
+    formal = formal_json if target == "json" else formal_md
+    try:
+        os.link(formal, alias)
+    except OSError as exc:  # pragma: no cover - host filesystem can prohibit links
+        pytest.skip(f"hard-link creation unavailable: {exc}")
+
+    with pytest.raises(SystemExit) as raised:
+        validate_args(parse_args([
+            "--suite", "gate", "--layer", "l1", "--live",
+            "--provider", "mimo", "--model", "m", "--_worker",
+            "--_bundle-id", "bundle-a", "--_process-run-id", "run-a",
+            "--_worker-role", "primary", "--_worker-report", str(report),
+        ]))
+    assert raised.value.code == 2
 
 
 @pytest.mark.parametrize(("suite", "layer", "expected"), [
@@ -629,6 +712,80 @@ def test_parent_exit2_failure_report_keeps_only_safe_worker_evidence(
     assert "intent-adversarial-" not in raw
 
 
+def test_parent_failure_json_and_markdown_redact_structured_secrets(
+        tmp_path):
+    out_json = tmp_path / "parent.json"
+    out_md = tmp_path / "parent.md"
+    args = validate_args(parse_args([
+        "--out-json", str(out_json), "--out-md", str(out_md),
+    ]))
+    observations = [{
+        "role": "primary",
+        "layer": "l1",
+        "process_run_id": "run-a",
+        "exit_code": 2,
+        "report_sha256": "a" * 64,
+        "infrastructure_errors": [
+            '{"api_key" : "top secret value", "after": "json-visible"}',
+            "{'token': 'other secret value', 'after': 'dict-visible'}",
+            'password = "password secret with spaces"; after=password-visible',
+            "secret : 'single secret with spaces', after=secret-visible",
+            "Authorization: Bearer bearer-secret-value, after=bearer-visible",
+        ],
+        "trace_errors": [
+            "Authorization: 'Bearer quoted bearer secret'; "
+            "after=quoted-bearer-visible",
+        ],
+        "retrieval_degraded": 1,
+        "provider_drift": True,
+    }]
+
+    cli._write_parent_infrastructure_failure(
+        args,
+        bundle_id="bundle-a",
+        specs=(cli.process.WorkerSpec("primary", "l1", 3),),
+        observations=observations,
+        failed_role="primary",
+        reason='{"secret": "reason secret value", "after": "reason-visible"}',
+    )
+
+    json_text = out_json.read_text(encoding="utf-8")
+    markdown = out_md.read_text(encoding="utf-8")
+    combined = json_text + markdown
+    for secret in (
+        "top secret value", "other secret value",
+        "password secret with spaces", "single secret with spaces",
+        "bearer-secret-value", "quoted bearer secret",
+        "reason secret value",
+    ):
+        assert secret not in combined
+    for visible in (
+        "json-visible", "dict-visible", "password-visible",
+        "secret-visible", "bearer-visible", "quoted-bearer-visible",
+        "reason-visible",
+    ):
+        assert visible in combined
+    report = json.loads(json_text)
+    observed = report["failure"]["observed_workers"][0]
+    assert observed["infrastructure_errors"] == [
+        '{"api_key" : "[REDACTED]", "after": "json-visible"}',
+        "{'token': '[REDACTED]', 'after': 'dict-visible'}",
+        'password = "[REDACTED]"; after=password-visible',
+        "secret : '[REDACTED]', after=secret-visible",
+        "Authorization: Bearer [REDACTED], after=bearer-visible",
+    ]
+    assert observed["trace_errors"] == [
+        "Authorization: 'Bearer [REDACTED]'; after=quoted-bearer-visible",
+    ]
+    assert report["failure"]["reason"] == (
+        '{"secret": "[REDACTED]", "after": "reason-visible"}')
+    for evidence_name in (
+        "infrastructure_errors", "trace_errors",
+        "retrieval_degraded", "provider_drift",
+    ):
+        assert evidence_name in markdown
+
+
 @pytest.mark.parametrize(("mode", "expected_exit", "has_digest"), [
     ("launch", None, False),
     ("missing", 0, False),
@@ -692,6 +849,41 @@ def test_baseline_parent_failure_destinations_are_rejected_artifacts_only():
         "_ci-run-intent-adversarial-rejected-20260805T000000Z.md")
     assert json_path != cli.FORMAL_BASELINE_JSON
     assert md_path != cli.FORMAL_BASELINE_MD
+
+
+def test_parent_failure_destinations_defend_against_resolved_same_file(tmp_path):
+    shared = tmp_path / "parent.json"
+    args = parse_args([
+        "--out-json", str(shared),
+        "--out-md", str(tmp_path / "nested" / ".." / shared.name),
+    ])
+
+    json_path, md_path = cli._parent_failure_report_paths(
+        args, stamp="20260805T000000Z")
+
+    assert json_path.resolve(strict=False) != md_path.resolve(strict=False)
+    assert "rejected-20260805T000000Z" in json_path.name
+    assert "rejected-20260805T000000Z" in md_path.name
+
+
+def test_parent_failure_destinations_defend_against_hardlink_alias(tmp_path):
+    json_path = tmp_path / "parent.json"
+    json_path.touch()
+    md_path = tmp_path / "parent.md"
+    try:
+        os.link(json_path, md_path)
+    except OSError as exc:  # pragma: no cover - host filesystem can prohibit links
+        pytest.skip(f"hard-link creation unavailable: {exc}")
+    args = parse_args([
+        "--out-json", str(json_path), "--out-md", str(md_path),
+    ])
+
+    safe_json, safe_md = cli._parent_failure_report_paths(
+        args, stamp="20260805T000000Z")
+
+    assert safe_json.resolve(strict=False) != safe_md.resolve(strict=False)
+    assert "rejected-20260805T000000Z" in safe_json.name
+    assert "rejected-20260805T000000Z" in safe_md.name
 
 
 def test_worker_single_run_writes_identity_and_run_id_to_temp_report(
@@ -796,6 +988,90 @@ def test_write_baseline_requires_gate_and_explicit_provider():
 def test_ordinary_outputs_cannot_resolve_to_either_formal_baseline(flag, target):
     with pytest.raises(SystemExit) as raised:
         validate_args(parse_args([flag, str(target)]))
+    assert raised.value.code == 2
+
+
+def test_ordinary_output_destinations_must_resolve_to_distinct_files(tmp_path):
+    shared = tmp_path / "parent.json"
+    with pytest.raises(SystemExit) as raised:
+        validate_args(parse_args([
+            "--out-json", str(shared),
+            "--out-md", str(tmp_path / "nested" / ".." / shared.name),
+        ]))
+    assert raised.value.code == 2
+
+
+def test_ordinary_output_destinations_reject_symlink_alias(tmp_path):
+    target = tmp_path / "parent.json"
+    target.touch()
+    alias = tmp_path / "parent.md"
+    try:
+        alias.symlink_to(target)
+    except OSError as exc:  # pragma: no cover - host policy can prohibit symlinks
+        pytest.skip(f"symlink creation unavailable: {exc}")
+
+    with pytest.raises(SystemExit) as raised:
+        validate_args(parse_args([
+            "--out-json", str(target), "--out-md", str(alias),
+        ]))
+    assert raised.value.code == 2
+
+
+def test_ordinary_output_destinations_reject_hardlink_alias(tmp_path):
+    target = tmp_path / "parent.json"
+    target.touch()
+    alias = tmp_path / "parent.md"
+    try:
+        os.link(target, alias)
+    except OSError as exc:  # pragma: no cover - host filesystem can prohibit links
+        pytest.skip(f"hard-link creation unavailable: {exc}")
+
+    with pytest.raises(SystemExit) as raised:
+        validate_args(parse_args([
+            "--out-json", str(target), "--out-md", str(alias),
+        ]))
+    assert raised.value.code == 2
+
+
+def test_report_alias_probe_error_fails_closed(tmp_path, monkeypatch):
+    json_path = tmp_path / "parent.json"
+    md_path = tmp_path / "parent.md"
+    json_path.touch()
+    md_path.touch()
+    monkeypatch.setattr(
+        cli.os.path, "samefile",
+        lambda *_args: (_ for _ in ()).throw(OSError("probe denied")),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        validate_args(parse_args([
+            "--out-json", str(json_path), "--out-md", str(md_path),
+        ]))
+    assert raised.value.code == 2
+
+
+@pytest.mark.parametrize(("flag", "formal_name"), [
+    ("--out-json", "FORMAL_BASELINE_JSON"),
+    ("--out-json", "FORMAL_BASELINE_MD"),
+    ("--out-md", "FORMAL_BASELINE_JSON"),
+    ("--out-md", "FORMAL_BASELINE_MD"),
+])
+def test_every_ordinary_output_rejects_hardlink_to_either_formal_baseline(
+        tmp_path, monkeypatch, flag, formal_name):
+    formal_json = tmp_path / "formal.json"
+    formal_md = tmp_path / "formal.md"
+    formal_json.touch()
+    formal_md.touch()
+    monkeypatch.setattr(cli, "FORMAL_BASELINE_JSON", formal_json)
+    monkeypatch.setattr(cli, "FORMAL_BASELINE_MD", formal_md)
+    alias = tmp_path / f"alias-{flag[6:]}.txt"
+    try:
+        os.link(getattr(cli, formal_name), alias)
+    except OSError as exc:  # pragma: no cover - host filesystem can prohibit links
+        pytest.skip(f"hard-link creation unavailable: {exc}")
+
+    with pytest.raises(SystemExit) as raised:
+        validate_args(parse_args([flag, str(alias)]))
     assert raised.value.code == 2
 
 
