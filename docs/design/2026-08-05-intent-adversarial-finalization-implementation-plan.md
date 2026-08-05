@@ -268,6 +268,7 @@
 **Files:**
 
 - Modify: `orchestrator/cloud/planning.py`
+- Modify: `orchestrator/cloud/context.py`
 - Modify: `orchestrator/cloud/skills.py`
 - Modify: `orchestrator/cloud/exemplars.py`
 - Modify: `orchestrator/cloud/tests/test_planning.py`
@@ -277,11 +278,23 @@
 - Modify: `orchestrator/cloud/tests/test_planning_reject.py`
 - Modify: `orchestrator/cloud/tests/test_planning_skill_repairs.py`
 - Modify: `orchestrator/cloud/tests/test_catalog_budget.py`
+- Modify: `orchestrator/cloud/tests/test_context.py`
 - Modify: `orchestrator/cloud/tests/test_skills.py`
 - Modify: `orchestrator/cloud/tests/test_exemplars.py`
+- Modify: `orchestrator/cloud/tests/test_engine_confirm.py`
+- Modify: `orchestrator/cloud/tests/test_engine_context.py`
+- Modify: `orchestrator/cloud/tests/test_engine_escalate.py`
+- Modify: `orchestrator/cloud/tests/test_engine_focus.py`
+- Modify: `orchestrator/cloud/tests/test_engine_multiturn_context.py`
+- Modify: `orchestrator/cloud/tests/test_engine_reject.py`
+- Modify: `orchestrator/cloud/tests/test_engine_stream.py`
+- Modify: `orchestrator/cloud/tests/test_multi_intent.py`
+- Modify: `orchestrator/cloud/tests/test_regression_intent_integrity.py`
+- Modify: `orchestrator/cloud/tests/test_suspend_prior.py`
 - Modify: `test/support/intent_adversarial_trace.py`
 - Modify: `test/test_intent_adversarial_trace.py`
 - Modify: `test/test_intent_adversarial_runtime.py`
+- Modify: `test/test_eval_intent_adversarial_cli.py`
 - Modify: `test/eval_skills.py`
 - Modify: `test/eval_exemplars.py`
 - Modify: `skills/policies/negation-and-deferral.yaml`
@@ -292,11 +305,15 @@
 - Modify: `skills/guides/charging-strategy.yaml`
 - Modify: `skills/guides/shop-order-flow.yaml`
 
+以上测试文件不是预留清单：它们来自全仓 `PlanBuilder(` 与 legacy wire fixture 检索，包含 engine、
+context、多意图、回归完整性、挂起恢复及评测 builder 探针。Task 5 的 staged scope 显式允许迁移
+这些测试 fixture；提交时仍只暂存实际发生迁移的上述路径，不把无关工作树改动带入。
+
 ### Task 5A：先冻结引用、wire 与 raw 证据契约
 
 - [ ] **Step 1：写请求级 ref 与最终 catalog 可见面的红灯测试**
 
-  在 `test_planning.py` / `test_catalog_budget.py` 先固定以下断言：
+  在 `test_planning.py` / `test_catalog_budget.py` / `test_context.py` 先固定以下断言：
 
   ```python
   refs = build_refs([("alpha", "alpha.one"), ("beta", "beta.two")])
@@ -309,9 +326,16 @@
 
   输入乱序/重复时结果仍按 `(agent_id, intent)` 排序且去重；连续两次 build 各创建独立映射
   对象，不共享可变状态、不进 module cache。ref 只保证请求内确定，测试不得把某次编号写成跨请求
-  兼容承诺。再把 `PLANNER_CATALOG_BUDGET_CHARS` 压低，证明权限过滤或
-  `WorkingSet.render_catalog()` 预算裁掉的 agent 同时从末尾 ref 映射、tool enum、resolver 与
-  validator `agent_map` 消失；禁止“完整 agents 先建 refs、prompt 后裁剪”的错位。
+  兼容承诺。再把 `PLANNER_CATALOG_BUDGET_CHARS` 压低，预算对象必须是最终注入 prompt 的
+  ref→语义能力映射**全文**，计入抬头、ref、箭头/标点、能力说明、slots 与换行。测试一个不可变
+  `PlannerCapabilityCatalog` 同时产出 `visible_agents`、`semantic_mapping_text`、双向 refs、
+  schema/resolver/validator 共用的 `agent_map` 与 `catalog_stats`；权限过滤或预算裁掉的 agent 在
+  这些视图中同时消失。禁止“旧 catalog 先计费、完整 agents 先建 refs、prompt 再无预算追加
+  mapping”的错位。
+
+  增加只剩 protected agents 仍超预算的反例：沿用现有行为，不再裁 protected、不截断 mapping，
+  允许 `chars_final > PLANNER_CATALOG_BUDGET_CHARS` 并告警；stats 的 full/final/dropped 必须与
+  实际注入文本及 visible set 一致。
 
 - [ ] **Step 2：写普通 JSON、tool schema 与末尾 prompt 的红灯测试**
 
@@ -321,18 +345,28 @@
   {"id":"s1","capability_ref":"cap_0001","slots":{},"depends_on":[],"slot_refs":{}}
   ```
 
-  `step.properties/required` 只含 `capability_ref`，不得含 `agent_id/intent`；enum 精确等于本请求
+  step `properties` 精确包含 `id`、`capability_ref`、`slots`、`depends_on`、`slot_refs`；
+  `required` 至少包含 `id`、`capability_ref`。两处均不得含 `agent_id/intent`；enum 精确等于本请求
   refs，空映射约束 `steps=[]`。user message 的最后顺序必须是 skill → exemplar → context/history
   → ref→语义能力映射 → 用户原话。映射只渲染最终 visible catalog，ref 文本不带语义。断言
   catalog/enum/resolver/validator 四者 pair 集完全相等。
 
+  同时静态锁住 `_PLANNER_BASE`、`_CATALOG_ALLOWLIST_SECTION`、`_REPLAN_SYSTEM`：删掉当前顶层
+  legacy step 与“并行独立 / 串行依赖 / 混合关系”三组 pair 示例，改成无能力身份的语义/DAG
+  规则；若展示 wire，只能写 `capability_ref:"<从本请求映射选择>"`，不得把 `cap_0001` 静态
+  绑定 HVAC/media/nearby 等领域。规划/replan system prompt 均不得再含 legacy step 输出形状。
+
 - [ ] **Step 3：写 build、toolcall salvage、retry 与 replan 共图红灯测试**
 
-  用 spy 捕获一次 `build()` 的首轮 toolcall、同轮文本 salvage 与第二轮普通 JSON：三条分支必须
-  收到同一份请求级映射，不能 retry 后重新编号。有效 ref 在 validator 前还原为真实 pair；最终
+  将 `_parse_and_validate_data(wire, catalog: PlannerCapabilityCatalog, fallback_text)` 固定为唯一
+  解析 seam。用 spy 捕获一次 `build()` 的首轮 toolcall、同轮文本 salvage 与第二轮普通 JSON：
+  三条分支必须收到同一个不可变 catalog，不能 retry 后重新编号。有效 ref 在 validator 前还原
+  为真实 pair；最终
   `Plan.steps[*].agent_id/intent`、Executor 输入与 proto 结构保持不变。`replan()` 在权限过滤和
-  catalog 预算后为该次请求创建新映射，prompt 与解析共用它，返回的 `ReplanDecision.steps` 仍是
-  现有 `Step`。所有走模拟 LLM 的 fixture/helper 改为输出 `capability_ref`；只直接测试
+  catalog 预算后为该次请求创建新 catalog，且包括 `done=true` 空 steps 在内的每个 replan wire
+  都经过同一 seam，不得直接调用 `_validated_steps()`；prompt 与解析共用它，返回的
+  `ReplanDecision.steps` 仍是现有 `Step`。所有走模拟 LLM 的 fixture/helper 改为输出
+  `capability_ref`；只直接测试
   `_validated_steps()` 的单测可继续构造解析后的内部 pair，生产代码不得保留 legacy wire 旁路。
 
 - [ ] **Step 4：写动态 skill/exemplar 渲染与旧形状禁入红灯测试**
@@ -350,7 +384,9 @@
   非字符串 ref、继续输出 legacy `agent_id/intent`。有效 ref 的现有 `raw_intents` 必须还原真实
   intent；其余每个无效 step 都写 `__invalid_capability_reference__`，保留在 raw candidate 与
   原有幻觉聚合分母，不能静默丢弃或另开不计闸指标。trace 同时覆盖普通 JSON、toolcall、retry、
-  replan；resolver/trace 异常继续使 `raw_observed=False` 并记 `trace_errors`。
+  replan。`attach_validation_trace()` 只包装上述 seam，显式拿到解析前 wire、同一不可变 refs、
+  解析后 pair 与 validator 结果；resolver/trace 异常继续使 `raw_observed=False` 并记
+  `trace_errors`，不能用空 raw 列表冒充完整观测。
 
   在 `test_planning_no_action.py` 证明连续两次 `addressed=true, steps=[]` 走现有
   `*_no_action`，不调用 `_fallback`；带 invalid ref 的非空 steps 不得伪装成 no-action。另锁住
@@ -373,19 +409,26 @@
 
 - [ ] **Step 7：实现最终 visible catalog 的请求级映射**
 
-  在 `planning.py` 增加私有不可变 `CapabilityRefMap` 与单一构造器。`build()` / `replan()` 先按
-  granted permissions 过滤，再调用现有 catalog 预算渲染并消费 `catalog_stats.dropped`，只用
-  留下的 agents 构造 refs、semantic catalog、schema、resolver 与 `agent_map`。pair 排序编号为
-  `cap_0001...`；对象只作为调用栈局部变量传递，不挂到 `Plan`、全局、缓存、日志外部契约或
-  proto。ref catalog 在 user message 最后封口。
+  在 `planning.py` 增加私有不可变 `PlannerCapabilityCatalog` 与唯一入口
+  `_assemble_capability_catalog()`；在 `context.py` 抽出复用现有 protected/drop 规则、以调用方
+  提供的**实际 mapping renderer** 逐轮计费的预算装配函数。`build()` / `replan()` 先按 granted
+  permissions 过滤，再只调用该入口。每轮候选变化都重新按 pair 排序编号、渲染全文并计 budget；
+  最终对象一次性提供 visible agents、mapping text、双向 refs、`agent_map` 与 stats，
+  `_submit_plan_tools()`、resolver、validator、prompt 不得另读原始 agents。只剩 protected 时允许
+  既有略超预算语义，不截断能力条目。对象只作为调用栈局部变量传递，不挂到 `Plan`、全局、缓存、
+  日志外部契约或 proto；ref catalog 在 user message 最后封口。
 
 - [ ] **Step 8：实现统一 wire 解析并保留 validator 第二防线**
 
   `_submit_plan_tools()`、普通 JSON prompt、toolcall/salvage、第二轮 JSON retry、`replan()` 都只收
-  `capability_ref`。新增单一 resolver 在 `_validated_steps()` 前把有效 ref 复制成内部
+  `capability_ref`。迁移 `_PLANNER_BASE` 三组 legacy pair 示例、`_CATALOG_ALLOWLIST_SECTION` 与
+  `_REPLAN_SYSTEM`，静态 prompt 只留无能力身份规则。统一
+  `_parse_and_validate_data(wire, catalog, fallback_text)` 在 `_validated_steps()` 前把有效 ref
+  复制成内部
   `agent_id/intent`；legacy key、未知/缺失/错类型 ref 使整份计划按现有原子语义拒绝，但不得在
-  trace 前消失。`_validated_steps()` 继续防御最终 pair、slots、depends_on、slot_refs 与 catalog
-  漂移，不把 ref 解析当 validator 替代品。不增加任何领域分支、route hint 或 legacy 生产旁路。
+  trace 前消失。build/replan 的全部 wire 分支只能走该 seam，replan 删除直调 validator 的旁路。
+  `_validated_steps()` 继续防御最终 pair、slots、depends_on、slot_refs 与 catalog 漂移，不把 ref
+  解析当 validator 替代品。不增加任何领域分支、route hint 或 legacy 生产旁路。
 
 - [ ] **Step 9：动态渲染软资产并迁移测试 fixture**
 
@@ -396,16 +439,17 @@
 
 - [ ] **Step 10：让 trace 在字段迁移后保持同一 raw 口径**
 
-  `attach_validation_trace()` 在 ref 解析边界保存 wire 快照，并以同一映射构造裁判快照：有效 ref
-  还原真实 raw intent，无效/legacy step 写 sentinel。最终 accepted snapshot 仍来自真实 Plan。
+  `attach_validation_trace()` 包装统一 `_parse_and_validate_data` seam，在 ref 解析前保存 wire 快照，
+  并以传入的同一不可变 catalog 构造裁判快照：有效 ref 还原真实 raw intent，无效/legacy step
+  写 sentinel。最终 accepted snapshot 仍来自真实 Plan。
   build 与 replan 都必须产生可聚合的 validation trace；`RepeatOutcome.raw_intents`、
   `raw_observed`、raw capability hallucination 与 baseline eligibility 不改字段、不改分母、不放宽。
 
 - [ ] **Step 11：跑受影响回归并确认全部转绿**
 
   ```powershell
-  python -m py_compile orchestrator/cloud/planning.py orchestrator/cloud/skills.py orchestrator/cloud/exemplars.py test/support/intent_adversarial_trace.py
-  python -m pytest orchestrator/cloud/tests/test_planning.py orchestrator/cloud/tests/test_planning_toolcall.py orchestrator/cloud/tests/test_planning_no_action.py orchestrator/cloud/tests/test_planning_intent_rehome.py orchestrator/cloud/tests/test_planning_reject.py orchestrator/cloud/tests/test_planning_skill_repairs.py orchestrator/cloud/tests/test_catalog_budget.py orchestrator/cloud/tests/test_skills.py orchestrator/cloud/tests/test_exemplars.py test/test_intent_adversarial_trace.py test/test_intent_adversarial_runtime.py test/test_intent_adversarial_report.py -q
+  python -m py_compile orchestrator/cloud/planning.py orchestrator/cloud/context.py orchestrator/cloud/skills.py orchestrator/cloud/exemplars.py test/support/intent_adversarial_trace.py
+  python -m pytest orchestrator/cloud/tests/test_planning.py orchestrator/cloud/tests/test_planning_toolcall.py orchestrator/cloud/tests/test_planning_no_action.py orchestrator/cloud/tests/test_planning_intent_rehome.py orchestrator/cloud/tests/test_planning_reject.py orchestrator/cloud/tests/test_planning_skill_repairs.py orchestrator/cloud/tests/test_catalog_budget.py orchestrator/cloud/tests/test_context.py orchestrator/cloud/tests/test_skills.py orchestrator/cloud/tests/test_exemplars.py orchestrator/cloud/tests/test_engine_confirm.py orchestrator/cloud/tests/test_engine_context.py orchestrator/cloud/tests/test_engine_escalate.py orchestrator/cloud/tests/test_engine_focus.py orchestrator/cloud/tests/test_engine_multiturn_context.py orchestrator/cloud/tests/test_engine_reject.py orchestrator/cloud/tests/test_engine_stream.py orchestrator/cloud/tests/test_multi_intent.py orchestrator/cloud/tests/test_regression_intent_integrity.py orchestrator/cloud/tests/test_suspend_prior.py test/test_intent_adversarial_trace.py test/test_intent_adversarial_runtime.py test/test_intent_adversarial_report.py test/test_eval_intent_adversarial_cli.py -q
   python test/eval_skills.py
   python test/eval_exemplars.py
   python -m pytest scripts/tests/test_e2e_arch_guard.py -q

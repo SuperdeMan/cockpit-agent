@@ -170,20 +170,32 @@ run id 必须非空且唯一，样本总数必须不小于进程数乘每进程�
 
 ### D10：Task 5 升级为请求级 capability reference 协议
 
-每次 `build()` / `replan()` 都在权限过滤之后、LLM 调用之前生成一份请求级映射：
+每次 `build()` / `replan()` 都在权限过滤之后、LLM 调用之前，且只经
+`_assemble_capability_catalog()` 一条装配路径生成不可变 `PlannerCapabilityCatalog`。该结果对象
+同时持有 `visible_agents`、最终注入的 `semantic_mapping_text`、`ref_to_pair/pair_to_ref`、供
+validator 使用的 `agent_map` 与 `catalog_stats`；prompt、tool schema、resolver、validator 只能
+消费这个对象，禁止各自从原始 `agents` 重算能力面。
 
-1. 先让现有 catalog 预算逻辑完成裁剪；`WorkingSet.render_catalog()` 记录在
-   `catalog_stats.dropped` 中的 agent 必须先从本轮可见集合移除；
-2. 只对最终实际渲染、模型可见的 agent 取 `(agent_id, intent)`，排序、去重后依次分配
+装配顺序固定：
+
+1. 对权限过滤后的候选 agents 生成临时 refs，并渲染**最终实际要注入 prompt 的完整
+   ref→语义能力映射块**；catalog budget 对这段全文计数，包括抬头、ref、箭头/标点、能力说明、
+   slots 与换行，不能先按旧 `WorkingSet.render_catalog()` 计费，再无预算追加 ref mapping；
+2. `orchestrator/cloud/context.py` 中复用现有 protected 判据和“从尾部丢最低相关非 protected
+   agent”的循环；每次丢 agent 后重新编号并重渲染全文，直到实际 mapping text 入预算；
+3. 只对最终实际渲染、模型可见的 agent 取 `(agent_id, intent)`，排序、去重后依次分配
    `cap_0001`、`cap_0002`……；
-3. ref 不包含领域、agent、intent 或哈希片段，不能从字符串猜出语义；同一请求内排序与编号
+4. ref 不包含领域、agent、intent 或哈希片段，不能从字符串猜出语义；同一请求内排序与编号
    确定，便于 prompt、schema、retry、trace 复用；
-4. 映射只活在该次 `build()` / `replan()` 调用内，不缓存、不落盘、不进 proto，也不承诺相同
+5. 映射只活在该次 `build()` / `replan()` 调用内，不缓存、不落盘、不进 proto，也不承诺相同
    catalog 的下次请求仍得到相同 ref。它不是跨请求或外部 API 的稳定标识。
 
-“最终实际渲染”是硬边界：不得先对完整 `agents` 建 refs，再让 `render_catalog()` 把其中 agent
-裁掉。prompt 映射、tool enum、ref 解析表与 validator 的 `agent_map` 必须来自同一个裁剪后的
-visible set；被预算裁掉或权限过滤掉的能力在四处都不可见、不可引用、不可执行。
+“最终实际渲染”是硬边界：不得先对完整 `agents` 建 refs，再让 budget 把其中 agent 裁掉。
+prompt 映射、tool enum、ref 解析表与 validator 的 `agent_map` 必须来自结果对象内同一个
+visible set；被预算裁掉或权限过滤掉的能力在四处都不可见、不可引用、不可执行。若只剩
+protected agents 后全文仍超预算，保留 `WorkingSet.render_catalog()` 现有语义：不裁 protected、
+不截断 mapping text，允许 `chars_final` 大于 budget 并告警；`catalog_stats` 必须如实记录
+`chars_full/chars_final/dropped`，不能通过截字把 ref 与语义说明拆开。
 
 ### D11：LLM wire 只认 ref，宿主恢复现有 Plan
 
@@ -200,7 +212,9 @@ visible set；被预算裁掉或权限过滤掉的能力在四处都不可见、
 ```
 
 - LLM step 只允许 `capability_ref`，不得输出 `agent_id` 或 `intent`；
-- tool schema 的 `capability_ref.enum` 直接由本请求映射生成；空映射仍要求 `steps=[]`；
+- tool schema 的 step `properties` 精确为 `id/capability_ref/slots/depends_on/slot_refs`，
+  `required` 至少为 `id/capability_ref`；两处都不得出现 `agent_id/intent`；
+- `capability_ref.enum` 直接由本请求结果对象生成；空映射仍要求 `steps=[]`；
 - 宿主在现有 `_validated_steps()` 之前把有效 ref 解析成真实 `agent_id/intent` pair；validator
   继续按最终 visible `agent_map` 做第二道防线；
 - `build()` 的普通 JSON、首轮 toolcall、toolcall salvage、第二轮 JSON retry 共用同一份映射，
@@ -219,6 +233,17 @@ exemplar、记忆、焦点、历史之后。语义能力说明可包含能力描
 但不得再把 `agent_id/intent` 填进 LLM 输出示例。skill、exemplar 与历史只帮助判断用户想做什么，
 不拥有调用权；只有末尾映射中的 ref 可被输出。
 
+`planning.py` 的静态 prompt 也必须迁移完整，不能只改动态资产：
+
+- `_PLANNER_BASE` 当前顶层 step 形状以及“并行独立 / 串行依赖 / 混合关系”三组 legacy
+  `agent_id/intent` 示例，改为不带能力身份的语义/DAG 规则；若保留 wire 形状，只能使用
+  `capability_ref:"<从本请求映射选择>"` 这类无领域占位，不得静态把 `cap_0001` 绑定到 HVAC、
+  media、nearby 或任何领域；
+- `_CATALOG_ALLOWLIST_SECTION` 改为“本请求 ref 是唯一调用权”，不得继续要求输出 pair；
+- `_REPLAN_SYSTEM` 使用同一 `capability_ref` wire 与无能力身份 DAG 规则，不得保留 legacy step；
+- 对 `_PLANNER_BASE`、`_CATALOG_ALLOWLIST_SECTION`、`_REPLAN_SYSTEM` 做静态扫描：规划与 replan
+  system prompt 均不得出现 legacy step 输出形状。真实 ref→语义绑定只允许来自本请求末尾映射。
+
 旧输出形状必须做明确迁移，不能只靠末尾一句 prompt 压制：
 
 - `orchestrator/cloud/exemplars.py` 保留 YAML 中真实 intent 作为治理/检索数据，但渲染时接收本
@@ -231,17 +256,25 @@ exemplar、记忆、焦点、历史之后。语义能力说明可包含能力描
 - CI 新增扫描：任何实际注入的 skill/exemplar 块不得出现 legacy step 的 `agent_id/intent`
   输出形状，避免新资产重新教回旧协议。replan 的继承渲染也必须传入它自己的请求级映射。
 
-### D13：字段迁移不得洗白 raw 证据
+### D13：统一解析 seam，字段迁移不得洗白 raw 证据
 
 raw 指标的语义仍是“模型在 validator 前请求了什么能力”，不因 wire 字段改名而变化：
+
+`_parse_and_validate_data(wire, catalog: PlannerCapabilityCatalog, fallback_text)` 固定为唯一 seam：
+普通 JSON、首轮 toolcall、toolcall 文本 salvage、第二轮 JSON retry，以及 `replan()`（包括
+`done=true` 的空 steps）全部把**解析前 wire**与同一个不可变 catalog 传入；该 seam 先解析 ref，
+再以 `catalog.agent_map` 调 `_validated_steps()`。`replan()` 不得再直接调用 `_validated_steps()`。
+trace 只包这一处，因此显式同时拿到解析前 wire、同一 `ref_to_pair`、解析后 pair 与 validator
+结果，不需要从 prompt 或最终 Plan 反推。
 
 - 有效 `capability_ref` 在 trace 中先按该请求映射还原真实 intent，写入现有 `raw_intents`；
 - 未知 ref、缺失 ref、非字符串 ref，或 step 继续携带 legacy `agent_id` / `intent`，统一在
   `raw_intents` 写保留 sentinel `__invalid_capability_reference__`；不得静默丢弃该 step；
 - raw candidate 可用同一解析结果恢复真实 pair 后继续裁判 slots、depends_on、slot_refs；sentinel
   step 保留为无效候选，确保 `raw_planner_pass` 不会误绿；
-- `attach_validation_trace()` 必须观察 ref 解析前的 wire 与解析后的 pair，并覆盖 build、retry、
-  toolcall/salvage 和 replan；观察失败仍按现有 `raw_observed=False`/trace error fail-closed；
+- `attach_validation_trace()` 包装上述 seam 并覆盖 build、retry、toolcall/salvage 和 replan；
+  resolver 或 trace 自身异常时明确 `raw_observed=False` 并记录 trace error，不能用空
+  `raw_intents` 冒充“观测到且无幻觉”；
 - sentinel 继续进入现有全样本聚合与 baseline 硬闸，既不从分母移除，也不另开一个“仅供参考”
   指标。这样 A8 的 raw=0 仍表示模型每个有效调用都只选择了真实准入能力或明确空动作。
 
