@@ -90,6 +90,58 @@ def test_worker_cannot_write_baseline():
     assert exc.value.code == 2
 
 
+@pytest.mark.parametrize("report_path", [
+    cli.FORMAL_BASELINE_JSON,
+    cli.ROOT / "docs" / "reviews" / "eval" / "worker-shard.json",
+    Path("docs") / "reviews" / "eval" / ".." / "worker-shard.json",
+])
+def test_worker_report_path_must_resolve_outside_repository(report_path):
+    with pytest.raises(SystemExit) as exc:
+        validate_args(parse_args([
+            "--suite", "gate", "--layer", "l1", "--live",
+            "--provider", "mimo", "--model", "m", "--_worker",
+            "--_bundle-id", "bundle-a", "--_process-run-id", "run-a",
+            "--_worker-role", "primary", "--_worker-report", str(report_path),
+        ]))
+    assert exc.value.code == 2
+
+
+def test_worker_report_path_rejects_external_symlink_parent_into_repository(
+        tmp_path):
+    link = tmp_path / "repo-link"
+    try:
+        link.symlink_to(cli.ROOT, target_is_directory=True)
+    except OSError as exc:  # pragma: no cover - host policy can prohibit symlinks
+        pytest.skip(f"symlink creation unavailable: {exc}")
+
+    with pytest.raises(SystemExit) as raised:
+        validate_args(parse_args([
+            "--suite", "gate", "--layer", "l1", "--live",
+            "--provider", "mimo", "--model", "m", "--_worker",
+            "--_bundle-id", "bundle-a", "--_process-run-id", "run-a",
+            "--_worker-role", "primary",
+            "--_worker-report", str(link / "worker.json"),
+        ]))
+    assert raised.value.code == 2
+
+
+def test_worker_report_json_and_derived_markdown_resolve_outside_repository(tmp_path):
+    report = (tmp_path / "bundle" / "worker.json").resolve()
+    report.parent.mkdir()
+    args = validate_args(parse_args([
+        "--suite", "gate", "--layer", "l1", "--live",
+        "--provider", "mimo", "--model", "m", "--_worker",
+        "--_bundle-id", "bundle-a", "--_process-run-id", "run-a",
+        "--_worker-role", "primary", "--_worker-report", str(report),
+    ]))
+
+    json_path, markdown_path = cli._report_paths(args)
+    assert json_path == report
+    assert markdown_path == report.with_suffix(".md")
+    assert not cli._path_is_within(json_path, cli.ROOT)
+    assert not cli._path_is_within(markdown_path, cli.ROOT)
+
+
 @pytest.mark.parametrize(("suite", "layer", "expected"), [
     ("gate", "all", True),
     ("gate", "l1", True),
@@ -221,6 +273,40 @@ def test_launch_worker_keeps_product_red_artifact(tmp_path, monkeypatch):
     assert artifact.report_sha256 == cli.hashlib.sha256(payload).hexdigest()
 
 
+def test_launch_worker_reads_parseable_exit2_report_before_failing(
+        tmp_path, monkeypatch):
+    args = validate_args(parse_args([
+        "--suite", "gate", "--layer", "l1", "--live",
+        "--provider", "mimo", "--model", "m",
+    ]))
+    spec = cli.process.WorkerSpec("primary", "l1", 1)
+    report_path = tmp_path / "worker.json"
+    source = _trusted_worker_artifact(
+        spec, "run-a", bundle_id="bundle-a", exit_code=2,
+        infrastructure_errors=["network unavailable"],
+        trace_errors=["trace unavailable"], retrieval_degraded=1,
+        provider_drift=True)
+
+    def _run(*_args, **_kwargs):
+        report_path.write_bytes(source.report_bytes)
+        return SimpleNamespace(
+            returncode=2, stdout="must-not-be-recorded", stderr="secret-stderr")
+
+    monkeypatch.setattr(cli.subprocess, "run", _run)
+    with pytest.raises(cli.WorkerLaunchError, match="exit code 2") as raised:
+        cli._launch_worker(args, spec, "bundle-a", "run-a", report_path)
+
+    artifact = raised.value.failing_artifact
+    assert artifact is not None
+    assert artifact.exit_code == 2
+    assert artifact.report_bytes == source.report_bytes
+    assert raised.value.observation["report_sha256"] == source.report_sha256
+    assert raised.value.observation["infrastructure_errors"] == [
+        "network unavailable"]
+    assert "must-not-be-recorded" not in str(raised.value.observation)
+    assert "secret-stderr" not in str(raised.value.observation)
+
+
 def test_launch_worker_converts_startup_error_to_infrastructure_exit(tmp_path, monkeypatch):
     args = validate_args(parse_args([
         "--suite", "gate", "--layer", "l1", "--live",
@@ -254,7 +340,8 @@ def test_collect_all_workers_is_serial_and_l3_is_primary_only(tmp_path, monkeypa
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(cli.subprocess, "run", _run)
-    artifacts = cli._collect_worker_artifacts(args, suite, "bundle-a", tmp_path)
+    specs = cli._planned_worker_specs(args, suite)
+    artifacts = cli._collect_worker_artifacts(args, specs, "bundle-a", tmp_path)
 
     assert [a.spec.role for a in artifacts] == [
         "primary", "corroboration-l1", "corroboration-l2"]
@@ -265,6 +352,59 @@ def test_collect_all_workers_is_serial_and_l3_is_primary_only(tmp_path, monkeypa
     assert len({a.assigned_process_run_id for a in artifacts}) == 3
     assert all(Path(command[command.index("--_worker-report") + 1]).parent == tmp_path
                for command in commands)
+
+
+def test_collector_rejects_repository_temp_root_before_worker_launch(monkeypatch):
+    args = validate_args(parse_args([
+        "--suite", "gate", "--layer", "l1", "--live",
+        "--provider", "mimo", "--model", "m",
+    ]))
+    suite = _suite(("stable",), ("stable",))
+    suite_values = vars(suite).copy()
+    suite_values.update(independent_processes=2, independent_layers=("l1",),
+                        normal_repeats=1)
+    suite = SimpleNamespace(**suite_values)
+    specs = cli.process.worker_specs("l1", "gate", suite)
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: calls.append((a, k)))
+
+    with pytest.raises(ValueError, match="temporary root"):
+        cli._collect_worker_artifacts(
+            args, specs, "bundle-a", cli.ROOT / "worker-temp")
+    assert calls == []
+
+
+def test_parent_rejects_repository_temp_root_before_subprocess(
+        tmp_path, monkeypatch):
+    args = validate_args(parse_args([
+        "--suite", "gate", "--layer", "l1", "--live",
+        "--provider", "mimo", "--model", "m",
+        "--out-json", str(tmp_path / "parent.json"),
+        "--out-md", str(tmp_path / "parent.md"),
+    ]))
+    case = _case("only.one", status="stable", layers=("l1",))
+    suite = _suite(("stable",), ("stable",))
+    suite_values = vars(suite).copy()
+    suite_values.update(independent_processes=2, independent_layers=("l1",),
+                        normal_repeats=1)
+    suite = SimpleNamespace(**suite_values)
+    calls = []
+
+    class _RepoTemp:
+        def __enter__(self):
+            return str(cli.ROOT / "worker-temp")
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(cli.contract, "load_cases", lambda _path: [case])
+    monkeypatch.setattr(cli.contract, "load_suites", lambda _path: {"gate": suite})
+    monkeypatch.setattr(cli, "_gather_contract_errors", lambda *_a: ([], []))
+    monkeypatch.setattr(cli.tempfile, "TemporaryDirectory", lambda **_k: _RepoTemp())
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: calls.append((a, k)))
+
+    assert cli._run_parent_bundle(args) == 2
+    assert calls == []
 
 
 def test_baseline_case_ids_accept_mapping_and_legacy_list_shapes():
@@ -351,7 +491,7 @@ def test_parent_rebuilds_report_without_worker_identity_and_preserves_red_exit(
 
 
 @pytest.mark.parametrize("failure", ["validation", "merge"])
-def test_parent_bundle_validation_or_merge_error_is_exit2_without_final_report(
+def test_parent_bundle_validation_or_merge_error_writes_parent_failure_report(
         tmp_path, monkeypatch, failure):
     args = validate_args(parse_args([
         "--suite", "gate", "--layer", "l1", "--live",
@@ -382,9 +522,176 @@ def test_parent_bundle_validation_or_merge_error_is_exit2_without_final_report(
             cli.process, "merge_worker_reports",
             lambda *_a: (_ for _ in ()).throw(ValueError("bad bundle")))
     monkeypatch.setattr(
-        cli.eval_common, "write_report", lambda *_a, **_k: writes.append(True))
+        cli.eval_common, "write_report",
+        lambda report, markdown, json_path, md_path: writes.append(
+            (report, markdown, json_path, md_path)))
     assert cli._run_parent_bundle(args) == 2
-    assert writes == []
+    assert len(writes) == 1
+    report, markdown, json_path, md_path = writes[0]
+    assert report["meta"]["process_bundle_role"] == "parent"
+    assert report["meta"]["infrastructure_failure"] is True
+    assert report["failure"]["failed_role"] == "bundle"
+    assert failure in report["failure"]["reason"]
+    assert "process_bundle_role=parent" in markdown
+    assert json_path == Path(args.out_json)
+    assert md_path == Path(args.out_md)
+
+
+def test_parent_uses_precomputed_worker_plan_and_real_validator_rejects_missing_role(
+        tmp_path, monkeypatch):
+    out_json = tmp_path / "parent.json"
+    out_md = tmp_path / "parent.md"
+    args = validate_args(parse_args([
+        "--suite", "gate", "--layer", "l1", "--live",
+        "--provider", "mimo", "--model", "m",
+        "--out-json", str(out_json), "--out-md", str(out_md),
+    ]))
+    case = _case("only.one", status="stable", layers=("l1",))
+    suite = _suite(("stable",), ("stable",))
+    suite_values = vars(suite).copy()
+    suite_values.update(independent_processes=2, independent_layers=("l1",),
+                        normal_repeats=1)
+    suite = SimpleNamespace(**suite_values)
+    primary = cli.process.WorkerSpec("primary", "l1", 1)
+
+    monkeypatch.setattr(cli.contract, "load_cases", lambda _path: [case])
+    monkeypatch.setattr(cli.contract, "load_suites", lambda _path: {"gate": suite})
+    monkeypatch.setattr(cli, "_gather_contract_errors", lambda *_a: ([], []))
+    monkeypatch.setattr(
+        cli, "_collect_worker_artifacts",
+        lambda *_a: (_trusted_worker_artifact(
+            primary, "run-primary", bundle_id=_a[2]),))
+    monkeypatch.setattr(cli.eval_common, "load_baseline", lambda _path: {})
+
+    assert cli._run_parent_bundle(args) == 2
+    report = json.loads(out_json.read_text(encoding="utf-8"))
+    assert report["meta"]["process_bundle_role"] == "parent"
+    assert [row["role"] for row in report["failure"]["required_specs"]] == [
+        "primary", "corroboration-l1"]
+    assert report["failure"]["failed_role"] == "bundle"
+    assert "missing role" in report["failure"]["reason"]
+
+
+def test_parent_exit2_failure_report_keeps_only_safe_worker_evidence(
+        tmp_path, monkeypatch):
+    out_json = tmp_path / "parent.json"
+    out_md = tmp_path / "parent.md"
+    args = validate_args(parse_args([
+        "--suite", "gate", "--layer", "l1", "--live",
+        "--provider", "mimo", "--model", "m",
+        "--out-json", str(out_json), "--out-md", str(out_md),
+    ]))
+    case = _case("only.one", status="stable", layers=("l1",))
+    suite = _suite(("stable",), ("stable",))
+    suite_values = vars(suite).copy()
+    suite_values.update(independent_processes=2, independent_layers=("l1",),
+                        normal_repeats=1)
+    suite = SimpleNamespace(**suite_values)
+    def _run(command, **_kwargs):
+        role = command[command.index("--_worker-role") + 1]
+        layer = command[command.index("--layer") + 1]
+        bundle_id = command[command.index("--_bundle-id") + 1]
+        run_id = command[command.index("--_process-run-id") + 1]
+        report_path = Path(command[command.index("--_worker-report") + 1])
+        artifact = _trusted_worker_artifact(
+            cli.process.WorkerSpec(role, layer, 1), run_id,
+            bundle_id=bundle_id, exit_code=2,
+            infrastructure_errors=[
+                "api_key=top-secret-value", "worker network unavailable"],
+            trace_errors=["trace unavailable"], retrieval_degraded=1,
+            provider_drift=True)
+        report_path.write_bytes(artifact.report_bytes)
+        return SimpleNamespace(
+            returncode=2, stdout="stdout-top-secret-value",
+            stderr="stderr-top-secret-value")
+
+    monkeypatch.setattr(cli.contract, "load_cases", lambda _path: [case])
+    monkeypatch.setattr(cli.contract, "load_suites", lambda _path: {"gate": suite})
+    monkeypatch.setattr(cli, "_gather_contract_errors", lambda *_a: ([], []))
+    monkeypatch.setattr(cli.subprocess, "run", _run)
+
+    assert cli._run_parent_bundle(args) == 2
+    raw = out_json.read_text(encoding="utf-8")
+    report = json.loads(raw)
+    assert report["meta"]["process_bundle_role"] == "parent"
+    assert report["failure"]["failed_role"] == "primary"
+    observed = report["failure"]["observed_workers"]
+    assert len(observed) == 1
+    assert observed[0]["role"] == "primary"
+    assert observed[0]["exit_code"] == 2
+    assert len(observed[0]["report_sha256"]) == 64
+    assert observed[0]["retrieval_degraded"] == 1
+    assert observed[0]["provider_drift"] is True
+    assert observed[0]["trace_errors"] == ["trace unavailable"]
+    assert "top-secret-value" not in raw
+    assert "stdout" not in raw
+    assert "stderr" not in raw
+    assert "intent-adversarial-" not in raw
+
+
+@pytest.mark.parametrize(("mode", "expected_exit", "has_digest"), [
+    ("launch", None, False),
+    ("missing", 0, False),
+    ("bad-json", 0, True),
+])
+def test_parent_worker_infrastructure_failures_always_write_safe_evidence(
+        tmp_path, monkeypatch, mode, expected_exit, has_digest):
+    out_json = tmp_path / f"parent-{mode}.json"
+    args = validate_args(parse_args([
+        "--suite", "gate", "--layer", "l1", "--live",
+        "--provider", "mimo", "--model", "m",
+        "--out-json", str(out_json),
+        "--out-md", str(tmp_path / f"parent-{mode}.md"),
+    ]))
+    case = _case("only.one", status="stable", layers=("l1",))
+    suite = _suite(("stable",), ("stable",))
+    suite_values = vars(suite).copy()
+    suite_values.update(independent_processes=2, independent_layers=("l1",),
+                        normal_repeats=1)
+    suite = SimpleNamespace(**suite_values)
+
+    def _run(command, **_kwargs):
+        if mode == "launch":
+            raise OSError("private-temp-path")
+        if mode == "bad-json":
+            report_path = Path(command[command.index("--_worker-report") + 1])
+            report_path.write_bytes(b"not-json")
+        return SimpleNamespace(
+            returncode=0, stdout="stdout-private", stderr="stderr-private")
+
+    monkeypatch.setattr(cli.contract, "load_cases", lambda _path: [case])
+    monkeypatch.setattr(cli.contract, "load_suites", lambda _path: {"gate": suite})
+    monkeypatch.setattr(cli, "_gather_contract_errors", lambda *_a: ([], []))
+    monkeypatch.setattr(cli.subprocess, "run", _run)
+
+    assert cli._run_parent_bundle(args) == 2
+    raw = out_json.read_text(encoding="utf-8")
+    report = json.loads(raw)
+    observed = report["failure"]["observed_workers"]
+    assert report["meta"]["process_bundle_role"] == "parent"
+    assert report["failure"]["failed_role"] == "primary"
+    assert len(observed) == 1
+    assert observed[0]["role"] == "primary"
+    assert observed[0]["layer"] == "l1"
+    assert observed[0]["process_run_id"]
+    assert observed[0]["exit_code"] == expected_exit
+    assert bool(observed[0]["report_sha256"]) is has_digest
+    assert "stdout-private" not in raw
+    assert "stderr-private" not in raw
+    assert "private-temp-path" not in raw
+    assert "intent-adversarial-" not in raw
+
+
+def test_baseline_parent_failure_destinations_are_rejected_artifacts_only():
+    args = validate_args(parse_args(_baseline_argv()))
+    json_path, md_path = cli._parent_failure_report_paths(
+        args, stamp="20260805T000000Z")
+    assert json_path.name == (
+        "_ci-run-intent-adversarial-rejected-20260805T000000Z.json")
+    assert md_path.name == (
+        "_ci-run-intent-adversarial-rejected-20260805T000000Z.md")
+    assert json_path != cli.FORMAL_BASELINE_JSON
+    assert md_path != cli.FORMAL_BASELINE_MD
 
 
 def test_worker_single_run_writes_identity_and_run_id_to_temp_report(
@@ -477,6 +784,19 @@ def test_write_baseline_requires_gate_and_explicit_provider():
             "--write-baseline", "--suite", "gate", "--live",
             "--provider", "mimo", "--model", "mimo-model",
             "--layer", "l1"]))
+
+
+@pytest.mark.parametrize(("flag", "target"), [
+    ("--out-json", cli.FORMAL_BASELINE_JSON),
+    ("--out-json", cli.FORMAL_BASELINE_MD),
+    ("--out-md", cli.FORMAL_BASELINE_JSON),
+    ("--out-md", cli.FORMAL_BASELINE_MD.parent / ".." / "eval" /
+     cli.FORMAL_BASELINE_MD.name),
+])
+def test_ordinary_outputs_cannot_resolve_to_either_formal_baseline(flag, target):
+    with pytest.raises(SystemExit) as raised:
+        validate_args(parse_args([flag, str(target)]))
+    assert raised.value.code == 2
 
 
 def test_cold_start_never_reaches_gate():
@@ -611,6 +931,74 @@ def _green_result(unit):
         metrics={"exact_plan_set": 1.0}, expected={}, actual={},
         admitted_intents=("info.weather",), actual_intents=("info.weather",),
         assertions=(), repetitions=({"passed": True},))
+
+
+def _trusted_worker_artifact(spec, run_id, result_id="only.one@l1", *,
+                             bundle_id="bundle-a", exit_code=0,
+                             infrastructure_errors=None, trace_errors=None,
+                             retrieval_degraded=0, provider_drift=False):
+    layer = result_id.rsplit("@", 1)[-1]
+    repetitions = [{
+        "process_run_id": run_id,
+        "sample_index": sample_index,
+        "passed": True,
+        "signature": "pass",
+        "dangerous": False,
+        "raw_intents": ["info.weather"],
+        "raw_observed": True,
+        "validation_observed": True,
+        "actual_intents": ["info.weather"],
+        "plan_from_fallback": False,
+    } for sample_index in range(spec.samples_per_unit)]
+    report = {
+        "meta": {
+            "process_sample": {
+                "bundle_id": bundle_id, "role": spec.role, "layer": spec.layer,
+                "process_run_id": run_id, "pid": 1001,
+            },
+            "code_sha": "0123456789abcdef", "worktree_clean": True,
+            "suite": "gate", "provider_model": "mimo:m",
+            "provider_locked": True, "provider_drift": provider_drift,
+            "provider_lock": {
+                "provider": "mimo", "model": "m", "locked": True,
+                "drift_detected": provider_drift, "restore_errors": [],
+            },
+            "assets": {"complete": True, "digest": "a" * 64, "file_count": 1},
+            "retrieval_state": "warm", "retrieval_degraded": retrieval_degraded,
+            "temperature": 0.3,
+            "selection_provenance": {"suite": "gate", "digest": "selection"},
+            "corpus": {"complete": True, "digest": "corpus"},
+            "infrastructure_errors": list(infrastructure_errors or ()),
+            "trace_errors": list(trace_errors or ()),
+            "trace_error_count": len(trace_errors or ()),
+        },
+        "results": {
+            result_id: {
+                "result_id": result_id,
+                "case_id": result_id.rsplit("@", 1)[0],
+                "layer": layer,
+                "expected": {"gold_digest": "gold"},
+                "admitted_intents": ["info.weather"],
+                "passed": True,
+                "repeat_status": "pass",
+                "raw_intents": ["info.weather"],
+                "actual_intents": ["info.weather"],
+                "raw_observed": True,
+                "validation_observed": True,
+                "plan_from_fallback": False,
+                "relation": {"passed": True, "signature": "pass",
+                             "worker_local_pairing": True},
+                "repetitions": repetitions,
+            },
+        },
+    }
+    report_bytes = json.dumps(
+        report, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return cli.process.WorkerArtifact(
+        spec=spec, exit_code=exit_code, report=report,
+        report_sha256=cli.hashlib.sha256(report_bytes).hexdigest(),
+        report_bytes=report_bytes, assigned_process_run_id=run_id)
 
 
 def test_candidates_never_reach_a_live_layer():

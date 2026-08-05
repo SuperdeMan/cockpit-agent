@@ -20,6 +20,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -73,6 +74,37 @@ DEFAULT_JSON = ROOT / "docs/reviews/eval/_ci-run-intent-adversarial.json"
 DEFAULT_MD = ROOT / "docs/reviews/eval/_ci-run-intent-adversarial.md"
 FORMAL_BASELINE_JSON = ROOT / "docs/reviews/eval/baseline_intent_adversarial.json"
 FORMAL_BASELINE_MD = ROOT / "docs/reviews/eval/baseline_intent_adversarial.md"
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    """Compare resolved paths so ``..`` and existing symlink parents cannot escape."""
+    candidate = Path(path).resolve(strict=False)
+    boundary = Path(root).resolve(strict=False)
+    try:
+        candidate.relative_to(boundary)
+    except ValueError:
+        return False
+    return True
+
+
+def _external_worker_report_paths(raw_path: str | Path) -> tuple[Path, Path]:
+    """Return canonical worker destinations, rejecting every repository target."""
+    requested = Path(raw_path)
+    if not requested.is_absolute():
+        raise ValueError("worker report path must be absolute")
+    json_path = requested.resolve(strict=False)
+    md_path = requested.with_suffix(".md").resolve(strict=False)
+    if _path_is_within(json_path, ROOT) or _path_is_within(md_path, ROOT):
+        raise ValueError("worker JSON and Markdown reports must resolve outside repository")
+    return json_path, md_path
+
+
+def _external_temp_root(path: Path) -> Path:
+    """Canonicalize a parent-owned temp root and reject repository-local TEMP/TMP."""
+    root = Path(path).resolve(strict=False)
+    if _path_is_within(root, ROOT):
+        raise ValueError("worker temporary root must resolve outside repository")
+    return root
 
 # 探针自己出的错的累加器。TraceSink 是**每条 case 一个**，而这份计数要横跨整趟跑批：
 # 探针把一批轮次静默降级成「没有 raw 通道」时，幻觉率的分母会无缘无故变小——
@@ -179,6 +211,18 @@ def validate_args(args: argparse.Namespace) -> argparse.Namespace:
         die(f"--layer {args.layer} 需要 --live（L1/L2/L3 必须真实模型）")
     if args.live and (not args.provider or not args.model):
         die("--live 必须同时显式给出 --provider 与 --model（不接受跟随网关默认）")
+    if not args.write_baseline:
+        formal_paths = {
+            FORMAL_BASELINE_JSON.resolve(strict=False),
+            FORMAL_BASELINE_MD.resolve(strict=False),
+        }
+        ordinary_paths = {
+            Path(args.out_json).resolve(strict=False),
+            Path(args.out_md).resolve(strict=False),
+        }
+        if formal_paths & ordinary_paths:
+            die("ordinary --out-json/--out-md cannot target a formal baseline; "
+                "formal baseline writes require --write-baseline eligibility")
     if args.retrieval_state == "cold" and args.suite != "discovery":
         die("--retrieval-state cold 只允许用于 discovery（冷启动不进门禁与 baseline）")
     if args.write_baseline:
@@ -221,6 +265,10 @@ def validate_args(args: argparse.Namespace) -> argparse.Namespace:
             die(f"--_worker 缺少身份参数：{', '.join(missing)}")
         if args.write_baseline:
             die("worker 不允许 --write-baseline；正式 baseline 只能由 parent 写入")
+        try:
+            _external_worker_report_paths(args._worker_report)
+        except ValueError as exc:
+            die(str(exc))
     elif any(worker_identity.values()):
         die("隐藏 worker 身份参数只能与 --_worker 一起使用")
     return args
@@ -2050,8 +2098,7 @@ def _needs_parent_bundle(args: argparse.Namespace) -> bool:
 
 def _report_paths(args: argparse.Namespace) -> tuple[Path, Path]:
     if args._worker:
-        worker_json = Path(args._worker_report)
-        return worker_json, worker_json.with_suffix(".md")
+        return _external_worker_report_paths(args._worker_report)
     return Path(args.out_json), Path(args.out_md)
 
 
@@ -2106,6 +2153,81 @@ def _worker_command(
 class WorkerLaunchError(RuntimeError):
     """A worker did not produce a trustworthy report artifact."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        spec: process.WorkerSpec,
+        process_run_id: str,
+        exit_code: int | None = None,
+        report_sha256: str | None = None,
+        failing_artifact: process.WorkerArtifact | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.spec = spec
+        self.process_run_id = process_run_id
+        self.failing_artifact = failing_artifact
+        self.completed_artifacts: tuple[process.WorkerArtifact, ...] = ()
+        if failing_artifact is not None:
+            self.observation = _artifact_observation(failing_artifact)
+        else:
+            self.observation = {
+                "role": spec.role,
+                "layer": spec.layer,
+                "process_run_id": process_run_id,
+                "exit_code": exit_code,
+                "report_sha256": report_sha256,
+                "infrastructure_errors": [],
+                "trace_errors": [],
+                "retrieval_degraded": None,
+                "provider_drift": None,
+            }
+
+
+def _redact_failure_text(value: Any) -> str:
+    text = str(value)
+    text = re.sub(
+        r"(?i)(api[_-]?key|token|password|secret)(\s*[:=]\s*)([^\s,;]+)",
+        r"\1\2[REDACTED]",
+        text,
+    )
+    text = re.sub(r"(?i)bearer\s+[^\s,;]+", "Bearer [REDACTED]", text)
+    return text[:1000]
+
+
+def _safe_failure_list(value: Any) -> list[str]:
+    if type(value) is not list:
+        return []
+    return [
+        _redact_failure_text(row)
+        for row in value[:20]
+        if isinstance(row, str)
+    ]
+
+
+def _artifact_observation(artifact: process.WorkerArtifact) -> dict[str, Any]:
+    meta = artifact.report.get("meta") if isinstance(artifact.report, dict) else {}
+    if not isinstance(meta, dict):
+        meta = {}
+    degraded = meta.get("retrieval_degraded")
+    if not (type(degraded) in {int, bool}):
+        degraded = None
+    drift = meta.get("provider_drift")
+    if type(drift) is not bool:
+        drift = None
+    return {
+        "role": artifact.spec.role,
+        "layer": artifact.spec.layer,
+        "process_run_id": artifact.assigned_process_run_id,
+        "exit_code": artifact.exit_code,
+        "report_sha256": artifact.report_sha256 or None,
+        "infrastructure_errors": _safe_failure_list(
+            meta.get("infrastructure_errors")),
+        "trace_errors": _safe_failure_list(meta.get("trace_errors")),
+        "retrieval_degraded": degraded,
+        "provider_drift": drift,
+    }
+
 
 def _launch_worker(
     args: argparse.Namespace,
@@ -2114,6 +2236,7 @@ def _launch_worker(
     process_run_id: str,
     report_path: Path,
 ) -> process.WorkerArtifact:
+    report_path, _ = _external_worker_report_paths(report_path)
     command = _worker_command(
         args, spec, bundle_id, process_run_id, report_path)
     try:
@@ -2126,49 +2249,184 @@ def _launch_worker(
             env=os.environ.copy(),
         )
     except OSError as exc:
-        raise WorkerLaunchError(f"{spec.role}: worker launch failed: {exc}") from exc
-    if completed.returncode not in {0, 1}:
         raise WorkerLaunchError(
-            f"{spec.role}: worker returned exit code {completed.returncode}")
+            f"{spec.role}: worker launch failed",
+            spec=spec,
+            process_run_id=process_run_id,
+        ) from exc
     if not report_path.is_file():
-        raise WorkerLaunchError(f"{spec.role}: worker did not create report")
+        raise WorkerLaunchError(
+            f"{spec.role}: worker did not create report",
+            spec=spec,
+            process_run_id=process_run_id,
+            exit_code=completed.returncode,
+        )
     try:
         report_bytes = report_path.read_bytes()
     except OSError as exc:
-        raise WorkerLaunchError(f"{spec.role}: worker report is unreadable: {exc}") from exc
+        raise WorkerLaunchError(
+            f"{spec.role}: worker report is unreadable",
+            spec=spec,
+            process_run_id=process_run_id,
+            exit_code=completed.returncode,
+        ) from exc
+    report_sha256 = hashlib.sha256(report_bytes).hexdigest()
     try:
         report = json.loads(report_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise WorkerLaunchError(
-            f"{spec.role}: worker report must contain valid JSON") from exc
+            f"{spec.role}: worker report must contain valid JSON",
+            spec=spec,
+            process_run_id=process_run_id,
+            exit_code=completed.returncode,
+            report_sha256=report_sha256,
+        ) from exc
     if not isinstance(report, dict):
-        raise WorkerLaunchError(f"{spec.role}: worker report JSON must be an object")
-    return process.WorkerArtifact(
+        raise WorkerLaunchError(
+            f"{spec.role}: worker report JSON must be an object",
+            spec=spec,
+            process_run_id=process_run_id,
+            exit_code=completed.returncode,
+            report_sha256=report_sha256,
+        )
+    artifact = process.WorkerArtifact(
         spec=spec,
         exit_code=completed.returncode,
         report=report,
-        report_sha256=hashlib.sha256(report_bytes).hexdigest(),
+        report_sha256=report_sha256,
         report_bytes=report_bytes,
         assigned_process_run_id=process_run_id,
     )
+    if completed.returncode not in {0, 1}:
+        raise WorkerLaunchError(
+            f"{spec.role}: worker returned exit code {completed.returncode}",
+            spec=spec,
+            process_run_id=process_run_id,
+            exit_code=completed.returncode,
+            report_sha256=report_sha256,
+            failing_artifact=artifact,
+        )
+    return artifact
+
+
+def _planned_worker_specs(
+    args: argparse.Namespace, suite: Any
+) -> tuple[process.WorkerSpec, ...]:
+    specs = process.worker_specs(args.layer, args.suite, suite)
+    if args.repeat:
+        specs = tuple(replace(spec, samples_per_unit=args.repeat) for spec in specs)
+    return tuple(specs)
 
 
 def _collect_worker_artifacts(
     args: argparse.Namespace,
-    suite: Any,
+    specs: tuple[process.WorkerSpec, ...],
     bundle_id: str,
     temp_root: Path,
 ) -> tuple[process.WorkerArtifact, ...]:
-    specs = process.worker_specs(args.layer, args.suite, suite)
-    if args.repeat:
-        specs = tuple(replace(spec, samples_per_unit=args.repeat) for spec in specs)
+    temp_root = _external_temp_root(temp_root)
     artifacts = []
     for index, spec in enumerate(specs):
         process_run_id = str(uuid.uuid4())
         report_path = temp_root / f"{index:02d}-{spec.role}.json"
-        artifacts.append(_launch_worker(
-            args, spec, bundle_id, process_run_id, report_path))
+        try:
+            artifacts.append(_launch_worker(
+                args, spec, bundle_id, process_run_id, report_path))
+        except WorkerLaunchError as exc:
+            exc.completed_artifacts = tuple(artifacts)
+            raise
     return tuple(artifacts)
+
+
+def _parent_failure_report_paths(
+    args: argparse.Namespace, *, stamp: str | None = None
+) -> tuple[Path, Path]:
+    if stamp is None:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    rejected = (
+        ROOT / f"docs/reviews/eval/_ci-run-intent-adversarial-rejected-{stamp}.json",
+        ROOT / f"docs/reviews/eval/_ci-run-intent-adversarial-rejected-{stamp}.md",
+    )
+    if args.write_baseline:
+        return rejected
+    requested = (Path(args.out_json), Path(args.out_md))
+    if (
+        requested[0].resolve(strict=False) == FORMAL_BASELINE_JSON.resolve(strict=False)
+        or requested[1].resolve(strict=False) == FORMAL_BASELINE_MD.resolve(strict=False)
+    ):
+        return rejected
+    return requested
+
+
+def _required_spec_evidence(
+    specs: tuple[process.WorkerSpec, ...],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "role": spec.role,
+            "layer": spec.layer,
+            "samples_per_unit": spec.samples_per_unit,
+        }
+        for spec in specs
+    ]
+
+
+def _write_parent_infrastructure_failure(
+    args: argparse.Namespace,
+    *,
+    bundle_id: str,
+    specs: tuple[process.WorkerSpec, ...],
+    observations: list[dict[str, Any]],
+    failed_role: str,
+    reason: str,
+) -> None:
+    safe_reason = _redact_failure_text(reason)
+    report = {
+        "meta": {
+            "process_bundle_role": "parent",
+            "infrastructure_failure": True,
+            "bundle_id": bundle_id,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        "failure": {
+            "failed_role": failed_role,
+            "reason": safe_reason,
+            "required_specs": _required_spec_evidence(specs),
+            "observed_workers": observations,
+        },
+    }
+    markdown_lines = [
+        "# Intent adversarial process infrastructure failure",
+        "",
+        "- process_bundle_role=parent",
+        f"- bundle_id={bundle_id}",
+        f"- failed_role={failed_role}",
+        f"- reason={safe_reason}",
+        "",
+        "## Required worker plan",
+    ]
+    markdown_lines.extend(
+        f"- {row['role']} / {row['layer']} / samples={row['samples_per_unit']}"
+        for row in report["failure"]["required_specs"]
+    )
+    markdown_lines.extend(("", "## Observed worker evidence"))
+    if observations:
+        markdown_lines.extend(
+            f"- {row['role']} / {row['layer']} / run={row['process_run_id']} / "
+            f"exit={row['exit_code']} / sha256={row['report_sha256']}"
+            for row in observations
+        )
+    else:
+        markdown_lines.append("- none")
+    json_path, md_path = _parent_failure_report_paths(args)
+    eval_common.write_report(
+        report, "\n".join(markdown_lines), json_path, md_path)
+
+
+def _launch_error_observations(exc: WorkerLaunchError) -> list[dict[str, Any]]:
+    observations = [_artifact_observation(row) for row in exc.completed_artifacts]
+    observations.append(dict(exc.observation))
+    return observations
 
 
 def _run_parent_bundle(args: argparse.Namespace) -> int:
@@ -2190,23 +2448,64 @@ def _run_parent_bundle(args: argparse.Namespace) -> int:
     if not expected_units:
         print("[intent-adversarial] parent bundle selection is empty", file=sys.stderr)
         return 2
+    specs = _planned_worker_specs(args, suite)
+    expected_by_layer = _expected_result_ids_by_layer(selected, args)
 
     bundle_id = str(uuid.uuid4())
     try:
         with tempfile.TemporaryDirectory(prefix="intent-adversarial-") as temp_dir:
+            temp_root = _external_temp_root(Path(temp_dir))
             artifacts = _collect_worker_artifacts(
-                args, suite, bundle_id, Path(temp_dir))
-    except (WorkerLaunchError, OSError, ValueError) as exc:
+                args, specs, bundle_id, temp_root)
+    except WorkerLaunchError as exc:
         print(f"[intent-adversarial] worker infrastructure error: {exc}", file=sys.stderr)
+        try:
+            _write_parent_infrastructure_failure(
+                args,
+                bundle_id=bundle_id,
+                specs=specs,
+                observations=_launch_error_observations(exc),
+                failed_role=exc.spec.role,
+                reason=str(exc),
+            )
+        except OSError:
+            print("[intent-adversarial] parent failure report write failed", file=sys.stderr)
+        return 2
+    except (OSError, ValueError) as exc:
+        print("[intent-adversarial] worker bundle setup failed", file=sys.stderr)
+        try:
+            _write_parent_infrastructure_failure(
+                args,
+                bundle_id=bundle_id,
+                specs=specs,
+                observations=[],
+                failed_role="bundle",
+                reason=(
+                    f"worker_bundle_setup_failed: {exc}"
+                    if isinstance(exc, ValueError)
+                    else "worker_bundle_setup_failed"
+                ),
+            )
+        except OSError:
+            print("[intent-adversarial] parent failure report write failed", file=sys.stderr)
         return 2
 
-    specs = tuple(artifact.spec for artifact in artifacts)
-    expected_by_layer = _expected_result_ids_by_layer(selected, args)
     bundle_errors = process.validate_worker_bundle(
         specs, artifacts, bundle_id, expected_by_layer)
     if bundle_errors:
         for row in bundle_errors[:50]:
             print(f"[process] {row}", file=sys.stderr)
+        try:
+            _write_parent_infrastructure_failure(
+                args,
+                bundle_id=bundle_id,
+                specs=specs,
+                observations=[_artifact_observation(row) for row in artifacts],
+                failed_role="bundle",
+                reason="bundle_validation_failed: " + "; ".join(bundle_errors[:50]),
+            )
+        except OSError:
+            print("[intent-adversarial] parent failure report write failed", file=sys.stderr)
         return 2
     try:
         merged_rows = process.merge_worker_reports(
@@ -2214,6 +2513,17 @@ def _run_parent_bundle(args: argparse.Namespace) -> int:
         results = [AdversarialResult(**row) for row in merged_rows.values()]
     except (TypeError, ValueError) as exc:
         print(f"[intent-adversarial] worker merge error: {exc}", file=sys.stderr)
+        try:
+            _write_parent_infrastructure_failure(
+                args,
+                bundle_id=bundle_id,
+                specs=specs,
+                observations=[_artifact_observation(row) for row in artifacts],
+                failed_role="bundle",
+                reason=f"bundle_merge_failed: {exc}",
+            )
+        except OSError:
+            print("[intent-adversarial] parent failure report write failed", file=sys.stderr)
         return 2
 
     primary = next(a for a in artifacts if a.spec.role == "primary")
