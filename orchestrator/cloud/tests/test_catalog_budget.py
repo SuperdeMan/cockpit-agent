@@ -17,6 +17,8 @@ import json
 import os
 import sys
 
+import yaml
+
 # 端侧模块按服务内裸名导入（edge tests 同款惯例）
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "edge"))
 
@@ -104,12 +106,12 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     assert len(agents) == 17
     assert len(catalog.ref_to_pair) == 131
     assert catalog.catalog_stats["dropped"] == []
-    # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10375。
-    assert catalog.catalog_stats["chars_full"] == 10375
-    assert catalog.catalog_stats["chars_final"] == 10375
+    # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10447。
+    assert catalog.catalog_stats["chars_full"] == 10447
+    assert catalog.catalog_stats["chars_final"] == 10447
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 5625
+    assert 16000 - catalog.catalog_stats["chars_final"] == 5553
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest
@@ -136,6 +138,39 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
             isinstance(value, list) and len(value) == expected_value_length
             for value in group["capabilities"].values()
         )
+
+
+def test_charging_catalog_exposes_depleted_help_and_status_boundary():
+    manifest_path = os.path.join(
+        _ROOT, "agents", "charging_planner", "manifest.yaml")
+    with open(manifest_path, encoding="utf-8") as stream:
+        manifest = yaml.safe_load(stream)
+    capabilities = {row["intent"]: row for row in manifest["capabilities"]}
+
+    find = capabilities["charging.find"]
+    status = capabilities["charging.status"]
+    assert "见底" in find["description"]
+    assert "补能求助" in find["description"]
+    assert "因电量耗尽无法行驶" in find["description"]
+    assert "趴窝" not in find["description"]
+    assert all(boundary in status["description"] for boundary in (
+        "明确询问", "百分比", "剩余续航", "充电状态",
+        "补能求助不归此能力",
+    ))
+
+    from orchestrator.cloud.planning import _assemble_capability_catalog
+    catalog = _assemble_capability_catalog(_full_stack_agents())
+    groups = [json.loads(line) for line in
+              catalog.semantic_mapping_text.splitlines()[1:]]
+    charging = next(group for group in groups
+                    if group["service"] == "charging-planner")
+    find_ref = catalog.pair_to_ref[("charging-planner", "charging.find")]
+    status_ref = catalog.pair_to_ref[("charging-planner", "charging.status")]
+    assert "见底" in charging["capabilities"][find_ref][2]
+    assert "因电量耗尽无法行驶" in charging["capabilities"][find_ref][2]
+    assert "趴窝" not in charging["capabilities"][find_ref][2]
+    assert all(boundary in charging["capabilities"][status_ref][2]
+               for boundary in ("百分比", "补能求助不归此能力"))
 
 
 def test_eval_live_inventory_always_has_one_builtin_tools_agent():

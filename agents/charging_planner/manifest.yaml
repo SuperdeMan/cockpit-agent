@@ -18,16 +18,17 @@ capabilities:
   # 摘掉 nearby 那条 replace 正则后，模型自己就落这里——是规则在 LLM 之后把对的踩成错的。
   - intent: charging.find
     description: 给车找充电站/充电桩（含「附近有充电桩吗」这类纯发现）——读车辆真实电量、
-      按空闲状态与距离排序，可作为导航途经点；手机/耳机等随身设备充电不归此能力
+      按空闲状态与距离排序，可作为导航途经点；车辆电量见底或因电量耗尽无法行驶等没有明说「找」的补能求助也归此能力；
+      手机/耳机等随身设备充电不归此能力
     slots: [destination, soc, prefer]
-    examples: ["找个充电站", "附近有充电桩吗", "快充在哪", "快没电了附近找个快充"]
+    examples: ["找个充电站", "附近有充电桩吗", "快充在哪", "快没电了附近找个快充", "续航见底了帮我找补能点"]
   - intent: charging.plan
     description: 规划车辆长途充能策略（沿途分段充电）
     slots: [destination, soc, departure_time]
     heavy: true    # 长途充能沿途分段规划 → 开思考+过程区
     examples: ["去杭州怎么充电", "帮我规划充电"]
   - intent: charging.status
-    description: 查询当前充电状态
+    description: 仅承接明确询问车辆当前电量百分比、剩余续航或充电状态；车辆电量见底后的补能求助不归此能力
     slots: []
     examples: ["现在电量多少", "还能跑多远"]
 

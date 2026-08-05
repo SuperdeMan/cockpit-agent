@@ -108,3 +108,15 @@ exemplars:
   tags:
   - badcase
   note: 「冲电」是「充电」的 ASR 常见错字；充电桩是 find-vs-go 判据的特例，不随「附近哪儿有」归 nearby
+# ── 2026-08-05 补：电量状态陈述也可能是在求助补能 ─────────────────────────
+# 立卡来源 os.battery.car，但不复制原句；边界是「电量已经耗尽、需要解决」与
+# 「明确查询百分比/续航/充电状态」。前者找补能点，后者才查 status。
+- text: 续航已经见底，帮我找个补电的地方
+  plan:
+  - agent: charging-planner
+    intent: charging.find
+  source: manual
+  added: '2026-08-05'
+  tags:
+  - badcase
+  note: 车辆电量耗尽后的补能求助归 charging.find；不等同于查询当前电量或充电状态

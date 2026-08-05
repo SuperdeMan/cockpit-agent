@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import yaml
 
 # test/ 无 __init__.py，CI 用 --import-mode=importlib 不会自动把本文件所在目录加入
 # sys.path；同目录兄弟模块导入需显式插入（同 test_eval_common.py 等既有惯例）。
@@ -584,6 +585,36 @@ from support.intent_adversarial_contract import (  # noqa: E402
 )
 
 _ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_negation_policy_distinguishes_unstarted_cancel_from_active_stop():
+    """取消尚未执行的并列动作不能被改写成 pause/stop 等反向动作。"""
+    policy = yaml.safe_load((_ROOT / "skills" / "policies" /
+                             "negation-and-deferral.yaml").read_text(
+                                 encoding="utf-8"))
+    golden = {row["text"]: row for row in policy["golden"]}
+
+    cancelled = golden["查下天气，音乐先别放"]
+    assert cancelled["expect_intents"] == ["info.weather"]
+    assert set(cancelled["expect_not"]) >= {"media.play", "media.pause"}
+
+    active_stop = golden["音乐已经在放了，帮我暂停一下"]
+    assert active_stop["expect_intents"] == ["media.pause"]
+    assert "media.play" in active_stop["expect_not"]
+
+
+def test_depleted_vehicle_exemplar_routes_to_find_without_copying_badcase():
+    """电量见底是补能求助；不用把对抗原句写进范例来得到这个边界。"""
+    data = yaml.safe_load((_ROOT / "skills" / "exemplars" /
+                           "charging.yaml").read_text(encoding="utf-8"))
+    exemplars = {row["text"]: row for row in data["exemplars"]}
+
+    assert "车没电了" not in exemplars
+    depleted = exemplars["续航已经见底，帮我找个补电的地方"]
+    assert depleted["plan"] == [{
+        "agent": "charging-planner",
+        "intent": "charging.find",
+    }]
 
 
 def test_active_intent_must_be_covered_or_exempt(contract_case):

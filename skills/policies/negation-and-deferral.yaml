@@ -12,6 +12,7 @@ knowledge: |
   == 否定与延缓（跨域）==
   - 『别/先别/不要/不用/暂时不 X』：**X 与 X 的反面都不出 step**；无其他诉求只回复。
   - 肯定与否定并存：**只保留肯定部分**，被否定或延缓的动作一步都不出。
+  - 尚未执行的动作被取消时，不得把「别播放」改写成 pause/stop/close；只有明确说动作正在进行并要求停止，才生成停止类 step。
 few_shots:
   # 等价改写，刻意不复制 nq.hvac.keep-volume 的原句，保护 unseen_transfer 身份。
   - user: 空调别动，声音小点
@@ -29,5 +30,11 @@ golden:
   - text: 空调保持现在这样，声音小一点
     expect_intents: [volume.dec]
     expect_not: [hvac.off, hvac.on]
+  - text: 查下天气，音乐先别放
+    expect_intents: [info.weather]
+    expect_not: [media.play, media.pause]
+  - text: 音乐已经在放了，帮我暂停一下
+    expect_intents: [media.pause]
+    expect_not: [media.play]
 owner: orchestrator
 version: 1
