@@ -2227,9 +2227,9 @@ def _redact_failure_text(value: Any) -> str:
     text = re.sub(
         r"""(?ix)
         (?P<prefix>
-            (?<![\w-])
+            (?<![A-Za-z0-9_-])
             (?P<key_quote>["']?)
-            (?:api[_-]?key|token|password|secret)
+            [A-Za-z0-9_-]*(?:api[_-]?key|token|password|secret)
             (?P=key_quote)
             \s*[:=]\s*
         )

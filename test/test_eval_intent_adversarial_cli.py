@@ -786,6 +786,61 @@ def test_parent_failure_json_and_markdown_redact_structured_secrets(
         assert evidence_name in markdown
 
 
+def test_parent_failure_redacts_prefixed_sensitive_keys_without_eating_trace(
+        tmp_path):
+    out_json = tmp_path / "parent.json"
+    out_md = tmp_path / "parent.md"
+    args = validate_args(parse_args([
+        "--out-json", str(out_json), "--out-md", str(out_md),
+    ]))
+    observations = [{
+        "role": "primary", "layer": "l1", "process_run_id": "run-a",
+        "exit_code": 2, "report_sha256": "a" * 64,
+        "infrastructure_errors": [
+            '{"MINIMAX_API_KEY": "minimax sentinel value", '
+            '"trace": "after-json"}',
+            "{'LLM_API_KEY' : 'llm sentinel value', "
+            "'trace': 'after-dict'}",
+            'access_token = "access sentinel value"; trace=after-access',
+            "client_secret: 'client sentinel value', trace=after-client",
+            "db_password=db-sentinel-value trace=after-db",
+        ],
+        "trace_errors": [], "retrieval_degraded": 0,
+        "provider_drift": False,
+    }]
+
+    cli._write_parent_infrastructure_failure(
+        args,
+        bundle_id="bundle-a",
+        specs=(cli.process.WorkerSpec("primary", "l1", 3),),
+        observations=observations,
+        failed_role="primary",
+        reason="worker failed",
+    )
+
+    json_text = out_json.read_text(encoding="utf-8")
+    markdown = out_md.read_text(encoding="utf-8")
+    combined = json_text + markdown
+    for secret in (
+        "minimax sentinel value", "llm sentinel value",
+        "access sentinel value", "client sentinel value",
+        "db-sentinel-value",
+    ):
+        assert secret not in combined
+    for marker in (
+        "after-json", "after-dict", "after-access", "after-client", "after-db",
+    ):
+        assert marker in combined
+    observed = json.loads(json_text)["failure"]["observed_workers"][0]
+    assert observed["infrastructure_errors"] == [
+        '{"MINIMAX_API_KEY": "[REDACTED]", "trace": "after-json"}',
+        "{'LLM_API_KEY' : '[REDACTED]', 'trace': 'after-dict'}",
+        'access_token = "[REDACTED]"; trace=after-access',
+        "client_secret: '[REDACTED]', trace=after-client",
+        "db_password=[REDACTED] trace=after-db",
+    ]
+
+
 @pytest.mark.parametrize(("mode", "expected_exit", "has_digest"), [
     ("launch", None, False),
     ("missing", 0, False),
