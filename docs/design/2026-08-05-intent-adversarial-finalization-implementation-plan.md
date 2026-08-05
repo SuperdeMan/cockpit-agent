@@ -91,7 +91,7 @@
 
   ```powershell
   python -m pytest test/test_intent_adversarial_contract.py test/test_eval_intent_adversarial_cli.py -q
-  python test/eval_intent_adversarial.py --suite discovery --layer l0 --strict --report docs/reviews/eval/_ci-run-intent-finalization-l0-contract.json
+  python test/eval_intent_adversarial.py --suite discovery --layer l0 --strict --out-json docs/reviews/eval/_ci-run-intent-finalization-l0-contract.json
   git diff --check
   ```
 
@@ -201,7 +201,7 @@
 
   ```powershell
   python -m pytest test/test_eval_intent_adversarial_cli.py test/test_intent_adversarial_process.py -q
-  python test/eval_intent_adversarial.py --suite discovery --layer l0 --strict --report docs/reviews/eval/_ci-run-intent-finalization-l0-parent.json
+  python test/eval_intent_adversarial.py --suite discovery --layer l0 --strict --out-json docs/reviews/eval/_ci-run-intent-finalization-l0-parent.json
   git diff --check
   ```
 
@@ -368,8 +368,8 @@
 - [ ] **Step 2：跑确定性门禁**
 
   ```powershell
-  python test/eval_intent_adversarial.py --suite discovery --layer l0 --strict --report docs/reviews/eval/_ci-run-intent-finalization-discovery-l0.json
-  python test/eval_intent_adversarial.py --suite gate --layer l0 --strict --report docs/reviews/eval/_ci-run-intent-finalization-gate-l0.json
+  python test/eval_intent_adversarial.py --suite discovery --layer l0 --strict --out-json docs/reviews/eval/_ci-run-intent-finalization-discovery-l0.json
+  python test/eval_intent_adversarial.py --suite gate --layer l0 --strict --out-json docs/reviews/eval/_ci-run-intent-finalization-gate-l0.json
   ```
 
   要求 discovery 70/70、555 条/516 唯一输入；gate strict 19/19、133 stable/123 唯一输入，且契约计数若因有意新增资产变化，先解释再同步文档。
