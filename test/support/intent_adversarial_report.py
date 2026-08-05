@@ -126,6 +126,26 @@ def _defect_ratio(results, key: str) -> _Ratio:
                   denominator=float(len(rows)))
 
 
+def _evidence_repetitions(result: AdversarialResult) -> tuple[dict[str, Any], ...]:
+    """Return every sampled observation while keeping legacy rows diagnostic.
+
+    Older fixtures and historical reports either have no ``repetitions`` or only
+    record pass/signature there.  In that shape the representative fields remain
+    the only available raw evidence.  New process bundles carry the complete
+    per-sample fields, which always win when explicitly present.
+    """
+    representative = {
+        "raw_intents": result.raw_intents,
+        "raw_observed": result.raw_observed,
+        "validation_observed": result.validation_observed,
+        "actual_intents": result.actual_intents,
+        "plan_from_fallback": result.plan_from_fallback,
+    }
+    if not result.repetitions:
+        return (representative,)
+    return tuple({**representative, **dict(row)} for row in result.repetitions)
+
+
 def _escaped(result: AdversarialResult) -> bool:
     """校验**后**仍留在计划里的不可用能力——这是逃逸，不是幻觉。
 
@@ -134,8 +154,13 @@ def _escaped(result: AdversarialResult) -> bool:
     最该抓的那一档从分母里摘出去。进不进分母改由 `validation_observed` 决定——
     那才是「这一层到底有没有校验器」的事实。
     """
-    return any(intent not in set(result.admitted_intents)
-               for intent in result.actual_intents)
+    admitted = set(result.admitted_intents)
+    return any(
+        intent not in admitted
+        for repetition in _evidence_repetitions(result)
+        if repetition.get("validation_observed") is True
+        for intent in (repetition.get("actual_intents") or ())
+    )
 
 
 def _hallucinated(result: AdversarialResult) -> bool:
@@ -145,8 +170,32 @@ def _hallucinated(result: AdversarialResult) -> bool:
     不是编出来的能力有没有漏出去。两者混在一起时，validator 越严指标越好看，
     而「模型天天编能力」会被彻底掩盖。
     """
-    return any(intent not in set(result.admitted_intents)
-               for intent in result.raw_intents)
+    admitted = set(result.admitted_intents)
+    return any(
+        intent not in admitted
+        for repetition in _evidence_repetitions(result)
+        if repetition.get("raw_observed") is True
+        for intent in (repetition.get("raw_intents") or ())
+    )
+
+
+def _channel_observed(result: AdversarialResult, field: str) -> bool:
+    return any(row.get(field) is True for row in _evidence_repetitions(result))
+
+
+def _channel_denominator_unit(result: AdversarialResult, field: str) -> bool:
+    # A sampled L1/L2 unit was required to expose both channels.  Missing evidence
+    # stays in the denominator; raw_observation_complete separately blocks baseline.
+    return _channel_observed(result, field) or (
+        result.layer in {"l1", "l2"} and bool(result.repetitions)
+    )
+
+
+def _used_fallback(result: AdversarialResult) -> bool:
+    return any(
+        row.get("plan_from_fallback") is True
+        for row in _evidence_repetitions(result)
+    )
 
 
 def _clarify_balanced(results) -> dict[str, Any]:
@@ -173,8 +222,9 @@ def _compute_metrics(results) -> dict[str, dict[str, Any]]:
     repeated = [r for r in live if len(r.repetitions) >= 2]
     # 两个池子各按**自己那条通道有没有被观测到**取，不按「准入清单空不空」取。
     # L0 没有校验器，它的证据单元进逃逸率分母只会把这个数系统性稀释成 0。
-    escape_pool = [r for r in results if r.validation_observed]
-    raw_pool = [r for r in results if r.raw_observed]
+    escape_pool = [
+        r for r in results if _channel_denominator_unit(r, "validation_observed")]
+    raw_pool = [r for r in results if _channel_denominator_unit(r, "raw_observed")]
     return {
         "exact_plan_set_rate": _mean_ratio(results, "exact_plan_set").as_dict(),
         "required_group_recall": _mean_ratio(results, "required_group_recall").as_dict(),
@@ -202,7 +252,7 @@ def _compute_metrics(results) -> dict[str, dict[str, Any]]:
         # **这个数不是 0 时，同一份报告里的落域指标就都要打折读**——兜底产物恒为
         # `chitchat.talk`，它对「不要做任何动作」这一族 gold 是免费的通过。
         "fallback_plan_rate": _Ratio(
-            numerator=float(sum(1 for r in live if r.plan_from_fallback)),
+            numerator=float(sum(1 for r in live if _used_fallback(r))),
             denominator=float(len(live))).as_dict(),
     }
 
@@ -303,18 +353,18 @@ def build_adversarial_report(results: list[AdversarialResult],
     # **通过但计划来自兜底**的证据单元单列。红的那些本来就要查，绿的这些才是问题：
     # 它们在总表里与真正的通过长得一模一样，读的人不会去翻 `plan_from_fallback`。
     report["fallback_plans"] = [
-        result.result_id for result in results if result.plan_from_fallback
+        result.result_id for result in results if _used_fallback(result)
     ]
     report["fallback_passes"] = [
         result.result_id for result in results
-        if result.plan_from_fallback and result.passed
+        if _used_fallback(result) and result.passed
     ]
     # **只有「没声明过」的兜底才是问题。** A8 能力缺席族的 gold 就是「别假装有这个
     # 能力」，那里落兜底是设计如此；把它们一并拦下，资格闸会为了一个错误的理由
     # 永远红着——而一条永远红的闸，很快就没人再看它说什么。
     report["unexpected_fallback_plans"] = [
         result.result_id for result in results
-        if result.plan_from_fallback and not result.expects_fallback
+        if _used_fallback(result) and not result.expects_fallback
     ]
     report["ablations"] = {
         result.result_id: [dict(row) for row in result.ablations]
@@ -333,6 +383,12 @@ def baseline_eligibility(report: dict[str, Any]) -> BaselineEligibility:
     """
     meta = report.get("meta") or {}
     reasons: list[str] = []
+    if meta.get("process_bundle_role") != "parent":
+        reasons.append("not_parent_process_bundle")
+    if meta.get("process_policy_complete") is not True:
+        reasons.append("process_policy_incomplete")
+    if meta.get("raw_observation_complete") is not True:
+        reasons.append("raw_observation_incomplete")
     if meta.get("suite") != "gate":
         reasons.append("suite_not_gate")
     if meta.get("layer") != "all":
@@ -468,6 +524,38 @@ def render_adversarial_markdown(report: dict[str, Any]) -> str:
         + f"；另有 {len(report.get('fallback_plans') or []) - len(unexpected)} 条"
           "是 A8 能力缺席族**声明过**的预期兜底（设计如此）")
     meta = report.get("meta") or {}
+    sampling = meta.get("process_sampling") or {}
+    process_sample = meta.get("process_sample") or {}
+    if process_sample:
+        lines += ["", "## 独立进程证据",
+                  "- process_bundle_role=worker",
+                  f"- bundle_id={process_sample.get('bundle_id')}",
+                  f"- role={process_sample.get('role')}",
+                  f"- layer={process_sample.get('layer')}",
+                  f"- process_run_id={process_sample.get('process_run_id')}",
+                  f"- pid={process_sample.get('pid')}"]
+    elif (meta.get("process_bundle_role") is not None or sampling):
+        lines += ["", "## 独立进程证据",
+                  f"- process_bundle_role={meta.get('process_bundle_role')}",
+                  f"- process_policy_complete={meta.get('process_policy_complete')}",
+                  f"- raw_observation_complete={meta.get('raw_observation_complete')}"]
+    required = sampling.get("required") or {}
+    observed = sampling.get("observed") or {}
+    samples = sampling.get("samples_per_process") or {}
+    for layer in ("l1", "l2"):
+        if layer in required or layer in observed or layer in samples:
+            lines.append(
+                f"- {layer.upper()} {observed.get(layer, 0)}×{samples.get(layer, 0)} "
+                f"(required_processes={required.get(layer, 0)})")
+    workers = sampling.get("workers") or []
+    if workers:
+        lines += ["", "| role | layer | process_run_id | pid | exit | report_sha256 |",
+                  "|---|---|---|---:|---:|---|"]
+        for worker in workers:
+            lines.append(
+                f"| {worker.get('role')} | {worker.get('layer')} | "
+                f"{worker.get('process_run_id')} | {worker.get('pid')} | "
+                f"exit={worker.get('exit_code')} | {worker.get('report_sha256')} |")
     if meta.get("retrieval_degraded"):
         lines.append(
             f"**语义检索中途降级**：{meta['retrieval_degraded']}/"

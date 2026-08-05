@@ -623,31 +623,35 @@ def test_parent_rebuilds_report_without_worker_identity_and_preserves_red_exit(
     suite_values.update(independent_processes=2, independent_layers=("l1",),
                         normal_repeats=1)
     suite = SimpleNamespace(**suite_values)
-    green = _green_result("only.one@l1")
-    primary_report = {
-        "meta": {
-            "process_sample": {"role": "primary"},
-            "provider_drift": False,
-            "selection_filters": [],
-        },
-        "results": {},
-    }
     specs = (
         cli.process.WorkerSpec("primary", "l1", 1),
         cli.process.WorkerSpec("corroboration-l1", "l1", 1),
     )
-    artifacts = tuple(
-        cli.process.WorkerArtifact(
-            spec=spec, exit_code=code, report=primary_report,
-            assigned_process_run_id=f"run-{index}")
-        for index, (spec, code) in enumerate(zip(specs, worker_codes))
+    def _artifacts(_args, planned_specs, bundle_id, _temp_root):
+        assert planned_specs == specs
+        return tuple(
+            _trusted_worker_artifact(
+                spec, f"run-{index}", bundle_id=bundle_id, exit_code=code)
+            for index, (spec, code) in enumerate(zip(specs, worker_codes))
+        )
+    repetitions = tuple(
+        {"process_run_id": f"run-{index}", "sample_index": 0,
+         "passed": True, "signature": "pass", "dangerous": False,
+         "raw_intents": ("info.weather",), "raw_observed": True,
+         "validation_observed": True, "actual_intents": ("info.weather",),
+         "plan_from_fallback": False}
+        for index in range(2)
     )
+    green = cli.replace(
+        _green_result("only.one@l1"), repetitions=repetitions,
+        raw_intents=("info.weather",), raw_observed=True,
+        validation_observed=True)
     written = {}
 
     monkeypatch.setattr(cli.contract, "load_cases", lambda _path: [case])
     monkeypatch.setattr(cli.contract, "load_suites", lambda _path: {"gate": suite})
     monkeypatch.setattr(cli, "_gather_contract_errors", lambda *_a: ([], []))
-    monkeypatch.setattr(cli, "_collect_worker_artifacts", lambda *_a: artifacts)
+    monkeypatch.setattr(cli, "_collect_worker_artifacts", _artifacts)
     monkeypatch.setattr(cli.process, "validate_worker_bundle", lambda *_a: ())
     monkeypatch.setattr(
         cli.process, "merge_worker_reports",
@@ -666,6 +670,10 @@ def test_parent_rebuilds_report_without_worker_identity_and_preserves_red_exit(
     assert written["md_path"] == out_md
     assert written["report"]["meta"]["process_bundle_role"] == "parent"
     assert "process_sample" not in written["report"]["meta"]
+    assert written["report"]["meta"]["process_policy_complete"] is True
+    assert written["report"]["meta"]["raw_observation_complete"] is True
+    assert written["report"]["meta"]["process_sampling"]["required"] == {"l1": 2}
+    assert len(written["report"]["meta"]["process_sampling"]["workers"]) == 2
 
 
 @pytest.mark.parametrize("failure", ["validation", "merge"])
@@ -1508,6 +1516,96 @@ def _trusted_worker_artifact(spec, run_id, result_id="only.one@l1", *,
         spec=spec, exit_code=exit_code, report=report,
         report_sha256=cli.hashlib.sha256(report_bytes).hexdigest(),
         report_bytes=report_bytes, assigned_process_run_id=run_id)
+
+
+def test_parent_process_summary_is_derived_from_specs_artifacts_and_samples():
+    specs = (
+        cli.process.WorkerSpec("primary", "l1", 3),
+        cli.process.WorkerSpec("corroboration-l1", "l1", 3),
+    )
+    artifacts = (
+        _trusted_worker_artifact(specs[0], "run-primary"),
+        _trusted_worker_artifact(specs[1], "run-corroboration"),
+    )
+    repetitions = tuple(
+        {"process_run_id": run_id, "sample_index": index,
+         "passed": True, "signature": "pass", "dangerous": False,
+         "raw_intents": ("info.weather",), "raw_observed": True,
+         "validation_observed": True, "actual_intents": ("info.weather",),
+         "plan_from_fallback": False}
+        for run_id in ("run-primary", "run-corroboration")
+        for index in range(3)
+    )
+    result = cli.replace(
+        _green_result("only.one@l1"), repetitions=repetitions,
+        raw_intents=("info.weather",), raw_observed=True,
+        validation_observed=True)
+    expected = {
+        "l0": (), "l1": ("only.one@l1",), "l2": (), "l3": ()}
+
+    summary = cli._process_evidence_summary(
+        specs, artifacts, [result], expected, "bundle-a")
+
+    assert summary["process_policy_complete"] is True
+    assert summary["raw_observation_complete"] is True
+    assert summary["process_sampling"]["bundle_id"] == "bundle-a"
+    assert summary["process_sampling"]["required"] == {"l1": 2}
+    assert summary["process_sampling"]["observed"] == {"l1": 2}
+    assert summary["process_sampling"]["samples_per_process"] == {"l1": 3}
+    workers = summary["process_sampling"]["workers"]
+    assert [row["role"] for row in workers] == [
+        "primary", "corroboration-l1"]
+    assert all(set(row) == {
+        "role", "process_run_id", "pid", "layer", "report_sha256", "exit_code",
+    } for row in workers)
+    assert all("path" not in key for row in workers for key in row)
+
+    missing_sample = cli.replace(result, repetitions=repetitions[:-1])
+    incomplete = cli._process_evidence_summary(
+        specs, artifacts, [missing_sample], expected, "bundle-a")
+    assert incomplete["process_policy_complete"] is False
+    assert incomplete["raw_observation_complete"] is False
+
+    missing_raw = list(repetitions)
+    missing_raw[-1] = {**missing_raw[-1], "raw_observed": False}
+    incomplete = cli._process_evidence_summary(
+        specs, artifacts, [cli.replace(result, repetitions=tuple(missing_raw))],
+        expected, "bundle-a")
+    assert incomplete["process_policy_complete"] is True
+    assert incomplete["raw_observation_complete"] is False
+
+    for missing_field in ("raw_observed", "validation_observed"):
+        missing_channel = list(repetitions)
+        missing_channel[-1] = dict(missing_channel[-1])
+        missing_channel[-1].pop(missing_field)
+        incomplete = cli._process_evidence_summary(
+            specs, artifacts,
+            [cli.replace(result, repetitions=tuple(missing_channel))],
+            expected, "bundle-a")
+        assert incomplete["process_policy_complete"] is True
+        assert incomplete["raw_observation_complete"] is False
+
+
+def test_process_summary_does_not_require_raw_channels_from_l0_or_l3():
+    specs = (cli.process.WorkerSpec("primary", "all", 1),)
+    artifact = _trusted_worker_artifact(
+        specs[0], "run-primary", result_id="only.one@l0")
+    result = cli.replace(
+        _green_result("only.one@l0"), raw_observed=False,
+        validation_observed=False,
+        repetitions=({"process_run_id": "run-primary", "sample_index": 0,
+                      "passed": True, "signature": "pass", "dangerous": False,
+                      "raw_intents": (), "raw_observed": False,
+                      "validation_observed": False, "actual_intents": (),
+                      "plan_from_fallback": False},))
+    expected = {
+        "l0": ("only.one@l0",), "l1": (), "l2": (), "l3": ()}
+
+    summary = cli._process_evidence_summary(
+        specs, (artifact,), [result], expected, "bundle-a")
+
+    assert summary["process_policy_complete"] is True
+    assert summary["raw_observation_complete"] is True
 
 
 def test_candidates_never_reach_a_live_layer():

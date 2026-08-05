@@ -25,6 +25,9 @@ def _meta(**changes):
         "case_set_complete": True,
         "declared_set_complete": True,
         "repeat_policy_complete": True,
+        "process_bundle_role": "parent",
+        "process_policy_complete": True,
+        "raw_observation_complete": True,
         "selection_filters": [],
         "repeat_override": 0,
         "coverage_gaps": [],
@@ -251,6 +254,118 @@ def test_baseline_accepts_a_fully_clean_gate_run():
     eligibility = baseline_eligibility(report)
     assert eligibility.eligible
     assert eligibility.reasons == ()
+
+
+def test_baseline_requires_parent_process_and_complete_process_evidence():
+    fixtures = (
+        ({"process_bundle_role": "worker"}, "not_parent_process_bundle"),
+        ({"process_policy_complete": False}, "process_policy_incomplete"),
+        ({"raw_observation_complete": False}, "raw_observation_incomplete"),
+    )
+    for changes, reason in fixtures:
+        report = build_adversarial_report([_result("a")], _meta(**changes))
+        assert reason in baseline_eligibility(report).reasons
+
+    for field, reason in (
+        ("process_bundle_role", "not_parent_process_bundle"),
+        ("process_policy_complete", "process_policy_incomplete"),
+        ("raw_observation_complete", "raw_observation_incomplete"),
+    ):
+        meta = _meta()
+        meta.pop(field)
+        report = build_adversarial_report([_result("a")], meta)
+        assert reason in baseline_eligibility(report).reasons
+
+
+def test_all_repetitions_contribute_raw_escape_and_fallback_evidence():
+    repetitions = (
+        {"passed": True, "raw_intents": ("info.weather",),
+         "raw_observed": True, "validation_observed": True,
+         "actual_intents": ("info.weather",), "plan_from_fallback": False},
+        {"passed": True, "raw_intents": ("does.not.exist",),
+         "raw_observed": True, "validation_observed": True,
+         "actual_intents": ("does.not.exist",), "plan_from_fallback": True},
+    )
+    representative_is_clean = _result(
+        "mixed", passed=True, raw_intents=("info.weather",),
+        actual_intents=("info.weather",), plan_from_fallback=False,
+        repetitions=repetitions)
+
+    report = build_adversarial_report([representative_is_clean], _meta())
+
+    assert report["metrics"]["planner_capability_hallucination_rate"] == {
+        "numerator": 1.0, "denominator": 1.0, "value": 1.0}
+    assert report["metrics"]["post_validation_escape_rate"]["value"] == 1.0
+    assert report["metrics"]["fallback_plan_rate"]["value"] == 1.0
+    assert report["fallback_plans"] == ["mixed@l1"]
+    assert report["unexpected_fallback_plans"] == ["mixed@l1"]
+
+
+def test_missing_sample_observation_cannot_disappear_from_metric_denominators():
+    repetitions = ({
+        "passed": True, "raw_intents": (), "raw_observed": False,
+        "validation_observed": False, "actual_intents": (),
+        "plan_from_fallback": False,
+    },)
+    missing = _result(
+        "missing", raw_intents=(), raw_observed=False, actual_intents=(),
+        repetitions=repetitions)
+
+    report = build_adversarial_report(
+        [missing], _meta(raw_observation_complete=False))
+
+    assert report["metrics"]["planner_capability_hallucination_rate"][
+        "denominator"] == 1.0
+    assert report["metrics"]["post_validation_escape_rate"]["denominator"] == 1.0
+    assert "raw_observation_incomplete" in baseline_eligibility(report).reasons
+
+
+def test_markdown_exposes_parent_process_sampling_and_worker_identity():
+    meta = _meta(process_sampling={
+        "bundle_id": "bundle-a",
+        "required": {"l1": 2, "l2": 2},
+        "observed": {"l1": 2, "l2": 2},
+        "samples_per_process": {"l1": 3, "l2": 3},
+        "workers": [
+            {"role": "primary", "process_run_id": "run-primary", "pid": 101,
+             "layer": "all", "report_sha256": "a" * 64, "exit_code": 0},
+            {"role": "corroboration-l1", "process_run_id": "run-l1", "pid": 102,
+             "layer": "l1", "report_sha256": "b" * 64, "exit_code": 0},
+            {"role": "corroboration-l2", "process_run_id": "run-l2", "pid": 103,
+             "layer": "l2", "report_sha256": "c" * 64, "exit_code": 1},
+        ],
+    })
+    markdown = render_adversarial_markdown(
+        build_adversarial_report([_result("a")], meta))
+
+    assert "process_bundle_role=parent" in markdown
+    assert "process_policy_complete=True" in markdown
+    assert "raw_observation_complete=True" in markdown
+    assert "L1 2×3" in markdown and "L2 2×3" in markdown
+    for value in ("run-primary", "corroboration-l1", "run-l2", "a" * 64,
+                  "exit=1"):
+        assert value in markdown
+
+
+def test_worker_markdown_uses_process_sample_without_parent_completion_claims():
+    meta = _meta()
+    for field in ("process_bundle_role", "process_policy_complete",
+                  "raw_observation_complete"):
+        meta.pop(field)
+    meta["process_sample"] = {
+        "bundle_id": "bundle-worker", "role": "corroboration-l1",
+        "layer": "l1", "process_run_id": "run-worker", "pid": 321,
+    }
+
+    markdown = render_adversarial_markdown(
+        build_adversarial_report([_result("a")], meta))
+
+    assert "process_bundle_role=worker" in markdown
+    for value in ("bundle-worker", "corroboration-l1", "run-worker",
+                  "layer=l1", "pid=321"):
+        assert value in markdown
+    assert "process_policy_complete=" not in markdown
+    assert "raw_observation_complete=" not in markdown
 
 
 def test_baseline_rejects_a_filtered_or_repeat_capped_run():

@@ -2554,6 +2554,135 @@ def _required_spec_evidence(
     ]
 
 
+def _process_evidence_summary(
+    specs: tuple[process.WorkerSpec, ...],
+    artifacts: tuple[process.WorkerArtifact, ...],
+    results: list[AdversarialResult],
+    expected_result_ids_by_layer: dict[str, tuple[str, ...]],
+    bundle_id: str,
+) -> dict[str, Any]:
+    """Derive parent process/raw completeness from the validated evidence itself."""
+    specs = tuple(specs)
+    artifacts = tuple(artifacts)
+    by_role: dict[str, process.WorkerArtifact] = {}
+    identity_complete = bool(bundle_id) and len(artifacts) == len(specs)
+    for artifact in artifacts:
+        role = artifact.spec.role
+        if role in by_role:
+            identity_complete = False
+        by_role[role] = artifact
+
+    workers: list[dict[str, Any]] = []
+    valid_runs: dict[str, str] = {}
+    for spec in specs:
+        artifact = by_role.get(spec.role)
+        if artifact is None or artifact.spec != spec:
+            identity_complete = False
+            continue
+        sample = (artifact.report.get("meta") or {}).get("process_sample") or {}
+        run_id = artifact.assigned_process_run_id
+        pid = sample.get("pid")
+        identity_valid = (
+            isinstance(run_id, str) and bool(run_id.strip())
+            and sample.get("bundle_id") == bundle_id
+            and sample.get("role") == spec.role
+            and sample.get("layer") == spec.layer
+            and sample.get("process_run_id") == run_id
+            and type(pid) is int and pid > 0
+            and artifact.exit_code in {0, 1}
+            and isinstance(artifact.report_sha256, str)
+            and len(artifact.report_sha256) == 64
+        )
+        if run_id in valid_runs:
+            identity_valid = False
+        if identity_valid:
+            valid_runs[run_id] = spec.role
+        else:
+            identity_complete = False
+        workers.append({
+            "role": spec.role,
+            "process_run_id": run_id,
+            "pid": pid,
+            "layer": spec.layer,
+            "report_sha256": artifact.report_sha256,
+            "exit_code": artifact.exit_code,
+        })
+    if set(by_role) != {spec.role for spec in specs}:
+        identity_complete = False
+
+    required: dict[str, int] = {}
+    observed: dict[str, int] = {}
+    samples_per_process: dict[str, int] = {}
+    results_by_id = {row.result_id: row for row in results}
+    expected_all = {
+        result_id
+        for layer_ids in expected_result_ids_by_layer.values()
+        for result_id in layer_ids
+    }
+    process_complete = identity_complete and set(results_by_id) == expected_all
+    raw_complete = process_complete
+
+    for layer in ("l1", "l2"):
+        expected_ids = tuple(expected_result_ids_by_layer.get(layer) or ())
+        if not expected_ids:
+            continue
+        relevant = tuple(spec for spec in specs if spec.layer in {layer, "all"})
+        required[layer] = len(relevant)
+        layer_artifacts = [by_role.get(spec.role) for spec in relevant]
+        run_ids = {
+            artifact.assigned_process_run_id
+            for artifact in layer_artifacts
+            if artifact is not None
+            and artifact.assigned_process_run_id in valid_runs
+        }
+        observed[layer] = len(run_ids)
+        sample_counts = {spec.samples_per_unit for spec in relevant}
+        samples_per_process[layer] = (
+            next(iter(sample_counts)) if len(sample_counts) == 1 else 0)
+        if not relevant or len(run_ids) != len(relevant) or len(sample_counts) != 1:
+            process_complete = False
+        expected_samples = {
+            (run_id, sample_index)
+            for run_id in run_ids
+            for sample_index in range(samples_per_process[layer])
+        }
+        for result_id in expected_ids:
+            result = results_by_id.get(result_id)
+            if result is None or result.layer != layer:
+                process_complete = False
+                raw_complete = False
+                continue
+            repetitions = tuple(result.repetitions)
+            identities = [
+                (row.get("process_run_id"), row.get("sample_index"))
+                for row in repetitions
+            ]
+            if len(identities) != len(set(identities)) \
+                    or set(identities) != expected_samples:
+                process_complete = False
+                raw_complete = False
+            if not repetitions or any(
+                row.get("raw_observed") is not True
+                or row.get("validation_observed") is not True
+                for row in repetitions
+            ):
+                raw_complete = False
+
+    if not process_complete:
+        raw_complete = False
+    return {
+        "process_policy_complete": process_complete,
+        "raw_observation_complete": raw_complete,
+        "process_sampling": {
+            "bundle_id": bundle_id,
+            "required": required,
+            "observed": observed,
+            "samples_per_process": samples_per_process,
+            "workers": workers,
+        },
+    }
+
+
 def _write_parent_infrastructure_failure(
     args: argparse.Namespace,
     *,
@@ -2738,6 +2867,8 @@ def _run_parent_bundle(args: argparse.Namespace) -> int:
     meta["declared_set_complete"] = bool(declared_units) and declared_units <= produced
     meta["missing_declared_units"] = sorted(declared_units - produced)[:50]
     meta["repeat_policy_complete"] = _repeat_policy_complete(results, suite)
+    meta.update(_process_evidence_summary(
+        specs, artifacts, results, expected_by_layer, bundle_id))
 
     baseline = eval_common.load_baseline(Path(args.baseline))
     report = build_adversarial_report(results, meta)

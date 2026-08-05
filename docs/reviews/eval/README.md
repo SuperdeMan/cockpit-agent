@@ -58,6 +58,9 @@
 | code SHA 非空、工作树干净 | `unknown_code_sha` / `dirty_worktree` |
 | 资产指纹完整（无 `missing_assets`）| `asset_fingerprint_incomplete` |
 | 声明层的证据单元齐全 | `case_set_incomplete` |
+| 报告是 parent 聚合产物 | `not_parent_process_bundle` |
+| L1/L2 独立进程数与每进程样本索引齐全 | `process_policy_incomplete` |
+| L1/L2 每个应观测样本都有 raw 与 validator 证据 | `raw_observation_incomplete` |
 | 无 `stable_fail` / `critical_fail` / `unstable` | `stable_failures` / `unstable_results` |
 | 无基础设施错误 | `infrastructure_errors` |
 | L3 选集非空且全过 | `l3_empty` / `l3_incomplete` |
@@ -65,6 +68,17 @@
 
 CLI **刻意不提供** `--update-baseline` / `--accept-failures` / `--force`——绕过参数存在本身
 就会被用掉。
+
+gate 的公开 CLI 会串行启动独立 worker，再由 parent 校验并合并不可变报告。正式资格要求
+L1、L2 各 **2 个独立进程 × 每进程 3 个样本**；同一进程内重复 3 次不能替代第二个进程。
+parent JSON 的 `meta.process_sampling` 记录 bundle、required/observed 进程数以及每个 worker 的
+role、run id、pid、layer、原始报告 SHA-256 和退出码，不记录临时文件路径。worker JSON 只记录
+`meta.process_sample`，其 Markdown 明确标成 `process_bundle_role=worker`，因此即使其余读数全绿
+也不能写正式 baseline。
+
+能力幻觉、validator 后逃逸与 fallback 均按 `results[*].repetitions` 的**全部样本**聚合，不再
+只看代表样本。缺任一 L1/L2 repetition 的 `raw_observed` 或 `validation_observed` 都会令
+`raw_observation_complete=false`；缺证据不是“0 次幻觉”，不得靠缩小指标分母取得资格。
 
 **证据单元是 `case_id@layer`**：同一条 case 在 L1 绿、L2 红时是两条独立记录。用裸
 `case_id` 作 key 会让后写的层覆盖先写的层，报告于是替产品把红灯藏起来。因此
