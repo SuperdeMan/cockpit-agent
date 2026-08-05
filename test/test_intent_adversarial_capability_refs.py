@@ -121,7 +121,10 @@ def test_two_empty_actions_avoid_fallback_but_invalid_nonempty_does_not(monkeypa
     monkeypatch.setenv("SKILLS_MODE", "off")
     monkeypatch.setenv("EXEMPLARS_MODE", "off")
 
+    empty_calls = []
+
     async def empty_llm(_messages):
+        empty_calls.append(True)
         return '{"addressed":true,"steps":[]}'
 
     empty_builder = planning.PlanBuilder(empty_llm, resolve)
@@ -135,6 +138,7 @@ def test_two_empty_actions_avoid_fallback_but_invalid_nonempty_does_not(monkeypa
     plan = asyncio.run(empty_builder.build(
         "先不用做", WorkingSet(catalog=[agent]), PlanContext(session_id="s")))
     assert plan.plan_mode.endswith("_no_action")
+    assert empty_calls == [True, True]
     assert empty_fallbacks == []
 
     async def invalid_llm(_messages):

@@ -64,30 +64,64 @@ def _step_schema(tool_spec: dict) -> dict:
             ["steps"]["items"])
 
 
+_LEGACY_SHAPE_TOKEN = re.compile(
+    r"(?P<open>\{)|(?P<close>\})|"
+    r"(?P<key>(?:[\"'](?:agent_id|intent)[\"']|agent_id|intent))\s*:"
+)
+
+
 def _legacy_step_shape(text: str) -> bool:
-    return bool(re.search(r'["\'](?:agent_id|intent)["\']\s*:', text))
+    """Whether one object contains both legacy planner identity keys.
+
+    Tracking brace depth avoids treating prose or two unrelated objects that mention
+    one key each as an old LLM step shape.  Quotes are optional because the asset
+    scanner must also reject YAML-ish/unquoted examples.
+    """
+    object_keys: list[set[str]] = []
+    for match in _LEGACY_SHAPE_TOKEN.finditer(text):
+        if match.group("open"):
+            object_keys.append(set())
+        elif match.group("close"):
+            if object_keys and {"agent_id", "intent"} <= object_keys.pop():
+                return True
+        elif object_keys:
+            object_keys[-1].add(match.group("key").strip("\"'"))
+    return any({"agent_id", "intent"} <= keys for keys in object_keys)
+
+
+def test_legacy_step_shape_scanner_requires_both_keys_in_one_object():
+    assert _legacy_step_shape('{"id":"s1","agent_id":"a","intent":"a.one"}')
+    assert _legacy_step_shape("{'agent_id':'a','intent':'a.one'}")
+    assert _legacy_step_shape("{agent_id: a, intent: a.one}")
+    assert not _legacy_step_shape('prose says "agent_id": then "intent":')
+    assert not _legacy_step_shape('{"agent_id":"a"} {"intent":"a.one"}')
+    assert not _legacy_step_shape('{"agent_id":"a","slots":{"intent":"note"}}')
 
 
 def test_request_catalog_is_opaque_immutable_and_budgeted_as_rendered_text(monkeypatch):
     catalog_type, assemble = _ref_api()
-    agents = [
-        _agent("beta", "beta.two", description="B" * 80),
-        _agent("alpha", "alpha.one", "alpha.extra", "alpha.one",
-               description="A" * 80),
-    ]
+    beta = _agent("beta", "beta.two", description="B" * 80)
+    alpha = _agent("alpha", "alpha.one", "alpha.extra", "alpha.one",
+                   description="A" * 80)
+    agents = [beta, alpha]
     monkeypatch.setattr(context, "_CATALOG_BUDGET", 100_000)
 
     first = assemble(agents)
     second = assemble(list(reversed(agents)))
 
     assert isinstance(first, catalog_type)
-    assert dict(first.ref_to_pair) == {
-        "cap_0001": ("alpha", "alpha.extra"),
-        "cap_0002": ("alpha", "alpha.one"),
-        "cap_0003": ("beta", "beta.two"),
-    }
-    assert dict(first.ref_to_pair) == dict(second.ref_to_pair)
     assert first is not second and first.ref_to_pair is not second.ref_to_pair
+    # Each request applies the same sort/dedupe construction rule.  This does not
+    # promise that refs are externally stable or reusable across requests.
+    for built, candidates in ((first, agents), (second, list(reversed(agents)))):
+        expected = sorted({
+            (agent.manifest.agent_id, cap.intent)
+            for agent in candidates for cap in agent.manifest.capabilities
+        })
+        assert list(built.ref_to_pair.values()) == expected
+        assert list(built.ref_to_pair) == [
+            f"cap_{index:04d}" for index in range(1, len(expected) + 1)
+        ]
     assert all(re.fullmatch(r"cap_\d{4}", ref) for ref in first.ref_to_pair)
     assert all(not any(token in ref for token in ("alpha", "beta", "one", "two"))
                for ref in first.ref_to_pair)
@@ -98,19 +132,23 @@ def test_request_catalog_is_opaque_immutable_and_budgeted_as_rendered_text(monke
         first.ref_to_pair["cap_9999"] = ("x", "x.y")
 
     full_chars = len(first.semantic_mapping_text)
-    monkeypatch.setattr(context, "_CATALOG_BUDGET", full_chars - 1)
+    beta_only = assemble([beta])
+    budget = len(beta_only.semantic_mapping_text)
+    assert budget < full_chars
+    monkeypatch.setattr(context, "_CATALOG_BUDGET", budget)
     cropped = assemble(agents)
-    assert cropped.catalog_stats == {
-        "chars_full": full_chars,
-        "chars_final": len(cropped.semantic_mapping_text),
-        "dropped": cropped.catalog_stats["dropped"],
-    }
-    assert cropped.catalog_stats["dropped"]
+    assert set(cropped.catalog_stats) == {"chars_full", "chars_final", "dropped"}
+    assert cropped.catalog_stats["chars_full"] == full_chars
+    assert cropped.catalog_stats["chars_final"] == len(cropped.semantic_mapping_text)
+    assert cropped.catalog_stats["chars_final"] <= budget < full_chars
+    assert cropped.catalog_stats["dropped"] == ["alpha"]
     visible_ids = {a.manifest.agent_id for a in cropped.visible_agents}
     expected_pairs = {
         (a.manifest.agent_id, cap.intent)
         for a in cropped.visible_agents for cap in a.manifest.capabilities
     }
+    assert visible_ids == {"beta"}
+    assert expected_pairs == {("beta", "beta.two")}
     assert _pairs(cropped) == expected_pairs
     assert set(cropped.agent_map) == visible_ids
     assert set(cropped.pair_to_ref) == expected_pairs
@@ -280,11 +318,12 @@ def test_dynamic_skill_and_exemplar_render_refs_and_drop_partial_dags(monkeypatc
         name="ref-contract", type="guide", description="test", knowledge="knowledge",
         body="knowledge", few_shots=({"user": "skill-example", "plan": {"steps": two_steps}},),
     )
-    exemplar_steps = (
-        {"id": "s1", "agent": "alpha", "intent": "alpha.one", "slots": {}},
-        {"id": "s2", "agent": "beta", "intent": "beta.two", "slots": {},
-         "depends_on": ["s1"], "slot_refs": {"value": "s1.data.value"}},
-    )
+    exemplar_steps = tuple(exemplars.ExemplarStore._parse_plan([
+        {"agent": "alpha", "intent": "alpha.one", "slots": {}},
+        {"agent": "beta", "intent": "beta.two", "slots": {}},
+    ]))
+    assert all(set(step) == {"agent", "intent", "slots"}
+               for step in exemplar_steps)
     exemplar = exemplars.Exemplar(
         eid="test#1", domain="test", text="exemplar-example",
         plan=exemplar_steps, source="manual",
