@@ -24,6 +24,7 @@ class WorkerArtifact:
     report: dict
     report_sha256: str = ""
     report_bytes: bytes = b""
+    assigned_process_run_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -284,6 +285,8 @@ def validate_worker_bundle(
 ) -> tuple[str, ...]:
     """Return every fail-closed identity/evidence error in a worker bundle."""
     errors: list[str] = []
+    if not isinstance(bundle_id, str) or not bundle_id.strip():
+        errors.append("bundle_id must be a non-empty externally assigned string")
     expected_result_ids, expected_result_errors, expected_result_ids_valid = (
         _validate_expected_result_ids(expected_result_ids_by_layer)
     )
@@ -336,6 +339,17 @@ def validate_worker_bundle(
         exit_code = getattr(artifact, "exit_code", None)
         if type(exit_code) is not int or exit_code not in {0, 1}:
             errors.append(f"{role}: exit_code must be 0 or 1")
+        artifact_run_id = getattr(artifact, "assigned_process_run_id", None)
+        if not isinstance(artifact_run_id, str) or not artifact_run_id.strip():
+            errors.append(f"{role}: assigned_process_run_id must be non-empty")
+            artifact_run_id = ""
+        elif artifact_run_id in run_ids:
+            errors.append(
+                f"{role}: assigned_process_run_id duplicates role "
+                f"{run_ids[artifact_run_id]!r}"
+            )
+        else:
+            run_ids[artifact_run_id] = role
         report_sha256 = getattr(artifact, "report_sha256", None)
         if (
             not isinstance(report_sha256, str)
@@ -388,12 +402,11 @@ def validate_worker_bundle(
         if not isinstance(process_run_id, str) or not process_run_id.strip():
             errors.append(f"{role}: process_sample.process_run_id must be non-empty")
             process_run_id = ""
-        elif process_run_id in run_ids:
+        elif process_run_id != artifact_run_id:
             errors.append(
-                f"{role}: process_run_id duplicates role {run_ids[process_run_id]!r}"
+                f"{role}: process_sample.process_run_id does not match parent-assigned "
+                "assigned_process_run_id"
             )
-        else:
-            run_ids[process_run_id] = role
         pid = sample.get("pid")
         if type(pid) is not int or pid <= 0:
             errors.append(f"{role}: process_sample.pid must be a positive integer")
@@ -432,10 +445,62 @@ def validate_worker_bundle(
                         )
                         repetitions_valid = False
                         continue
-                    if repetition.get("process_run_id") != process_run_id:
+                    prefix = f"{role}: {result_id} repetition[{repeat_index}]"
+                    bool_fields = (
+                        "passed",
+                        "dangerous",
+                        "raw_observed",
+                        "validation_observed",
+                        "plan_from_fallback",
+                    )
+                    for field in bool_fields:
+                        if (
+                            field not in repetition
+                            or type(repetition.get(field)) is not bool
+                        ):
+                            errors.append(f"{prefix}.{field} must be a boolean")
+                            repetitions_valid = False
+                    if (
+                        "signature" not in repetition
+                        or not isinstance(repetition.get("signature"), str)
+                    ):
+                        errors.append(f"{prefix}.signature must be a string")
+                        repetitions_valid = False
+                    if (
+                        "process_run_id" not in repetition
+                        or not isinstance(repetition.get("process_run_id"), str)
+                        or not repetition.get("process_run_id", "").strip()
+                    ):
                         errors.append(
-                            f"{role}: {result_id} repetition[{repeat_index}]."
-                            "process_run_id does not match worker process_run_id"
+                            f"{prefix}.process_run_id must be a non-empty string"
+                        )
+                        repetitions_valid = False
+                    sample_index = repetition.get("sample_index")
+                    if (
+                        "sample_index" not in repetition
+                        or type(sample_index) is not int
+                        or sample_index < 0
+                    ):
+                        errors.append(
+                            f"{prefix}.sample_index must be a non-negative integer"
+                        )
+                        repetitions_valid = False
+                    for field in ("raw_intents", "actual_intents"):
+                        intents = repetition.get(field)
+                        if (
+                            field not in repetition
+                            or isinstance(intents, (str, bytes))
+                            or not isinstance(intents, Sequence)
+                            or any(not isinstance(intent, str) for intent in intents)
+                        ):
+                            errors.append(
+                                f"{prefix}.{field} must be a non-string sequence of strings"
+                            )
+                            repetitions_valid = False
+                    if repetition.get("process_run_id") != artifact_run_id:
+                        errors.append(
+                            f"{prefix}.process_run_id does not match parent-assigned "
+                            "assigned_process_run_id"
                         )
                         repetitions_valid = False
                 if repetitions_valid and (layer in {"l1", "l2"} or repetitions):
@@ -514,10 +579,27 @@ def validate_worker_bundle(
         degraded = meta.get("retrieval_degraded")
         if not (degraded is False or (type(degraded) is int and degraded == 0)):
             errors.append(f"{role}: retrieval_degraded must be 0 or false")
-        if meta.get("infrastructure_errors"):
+        infrastructure_errors = meta.get("infrastructure_errors")
+        if "infrastructure_errors" not in meta or type(infrastructure_errors) is not list:
+            errors.append(f"{role}: infrastructure_errors must be a declared list")
+        elif infrastructure_errors:
             errors.append(f"{role}: infrastructure_errors must be empty")
-        if meta.get("trace_errors") or meta.get("trace_error_count", 0):
+        trace_errors = meta.get("trace_errors")
+        if "trace_errors" not in meta or type(trace_errors) is not list:
+            errors.append(f"{role}: trace_errors must be a declared list")
+        elif trace_errors:
             errors.append(f"{role}: trace_errors must be empty")
+        trace_error_count = meta.get("trace_error_count")
+        if (
+            "trace_error_count" not in meta
+            or type(trace_error_count) is not int
+            or trace_error_count < 0
+        ):
+            errors.append(
+                f"{role}: trace_error_count must be a declared non-negative integer"
+            )
+        elif trace_error_count != 0:
+            errors.append(f"{role}: trace_error_count must be zero")
 
     units: dict[str, list[tuple[str, dict[str, Any]]]] = defaultdict(list)
     reports_by_role: dict[str, list[tuple[WorkerSpec, dict[str, dict[str, Any]]]]] = defaultdict(list)
@@ -590,29 +672,17 @@ def validate_worker_bundle(
     return tuple(errors)
 
 
-def _bundle_id(artifacts: Sequence[WorkerArtifact]) -> str:
-    for artifact in artifacts:
-        report = getattr(artifact, "report", None)
-        if not isinstance(report, Mapping):
-            continue
-        meta = report.get("meta")
-        sample = meta.get("process_sample") if isinstance(meta, Mapping) else None
-        bundle_id = sample.get("bundle_id") if isinstance(sample, Mapping) else None
-        if isinstance(bundle_id, str) and bundle_id:
-            return bundle_id
-    return ""
-
-
 def merge_worker_reports(
     expected_specs: Sequence[WorkerSpec],
     artifacts: Sequence[WorkerArtifact],
+    bundle_id: str,
     expected_result_ids_by_layer: Mapping[str, Sequence[str]],
 ) -> dict[str, dict[str, Any]]:
     """Merge already-validated reports without pairing relation evidence."""
     errors = validate_worker_bundle(
         expected_specs,
         artifacts,
-        _bundle_id(artifacts),
+        bundle_id,
         expected_result_ids_by_layer,
     )
     if errors:
