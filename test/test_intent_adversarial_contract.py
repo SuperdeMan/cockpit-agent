@@ -1020,6 +1020,53 @@ def test_declared_replans_require_an_adaptive_initial_plan(contract_case):
                for row in errors)
 
 
+def test_declared_replans_require_a_closed_initial_plan(contract_case):
+    """An open initial gold can hide a conditional consumer executed too early."""
+    initial = replace(
+        contract_case.turns[0].expected.plan,
+        allowed_complexities=("adaptive",),
+        allow_extra_intents=True,
+    )
+    expected = replace(
+        contract_case.turns[0].expected,
+        plan=initial,
+        replans=(ReplanExpectation(
+            after={"result": {"step_id": "s1", "status": "ok", "data": {}}},
+            plan=PlanExpectation(
+                assert_plan=True,
+                required_groups=(IntentGroup(("trunk.open",)),),
+            ),
+        ),),
+    )
+    case = replace(contract_case, turns=(replace(
+        contract_case.turns[0], expected=expected),))
+
+    errors = validate_cases([case], {"info.alerts", "trunk.open"})
+
+    assert any("replans require a closed initial plan" in row for row in errors)
+
+
+def test_formal_conditional_cases_keep_producers_and_consumers_on_separate_rounds():
+    root = Path(__file__).parent / "eval_corpus" / "intent_adversarial" / "cases"
+    by_id = {case.id: case for case in load_cases(root)}
+
+    rain = by_id["cp.adaptive.rain-umbrella"].turns[0].expected
+    assert [group.any_of for group in rain.plan.required_groups] == [
+        ("info.weather", "info.forecast"),
+    ]
+    assert "reminder.create" in rain.plan.forbidden_intents
+    assert rain.plan.allowed_complexities == ("adaptive",)
+
+    range_check = by_id["cp.adaptive.range-check"].turns[0].expected
+    assert [group.any_of for group in range_check.plan.required_groups] == [
+        ("charging.status",),
+    ]
+    assert {"charging.find", "charging.plan"} <= set(
+        range_check.plan.forbidden_intents)
+    assert range_check.plan.allowed_complexities == ("adaptive",)
+    assert "charging.status" in range_check.replans[0].plan.forbidden_intents
+
+
 def test_clause_commute_accepts_only_audited_slot_policies(contract_case):
     relation = RelationSpec("base", "clause_commute", {"slot_policy": "route_only"})
     base = replace(contract_case, id="base", family_id="family", relation=None)

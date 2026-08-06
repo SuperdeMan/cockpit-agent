@@ -420,13 +420,14 @@ cases:
     risk: medium
     status: stable
     tags: {attacks: [A4], mechanisms: [composition, adaptive, conditional], domains: [info, reminder], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json", gold_revised_at: 2026-08-06, gold_revision_reason: "生产语义复核：声明 replan 必须首轮 adaptive 且封闭为 producer-only；旧 allow_extra=true 会掩盖 reminder 提前执行"}
     turns:
       - input: {utterance: 明天要是下雨就提醒我带伞, context: {}}
         expected:
           plan:
             required_intent_groups: [{any_of: [info.weather, info.forecast]}]
-            allow_extra_intents: true
+            forbidden_intents: [reminder.create]
+            allow_extra_intents: false
             complexity: {allowed: [adaptive]}
           replans:
             - after:
@@ -441,19 +442,21 @@ cases:
     risk: medium
     status: stable
     tags: {attacks: [A4], mechanisms: [composition, adaptive, conditional], domains: [charging], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json", gold_revised_at: 2026-08-06, gold_revision_reason: "生产语义复核：SOC/range observation 只能来自 charging.status；旧 gold 同时容忍 charging.plan 后再注入虚构 status 结果，制造了生产不会发生的 replan"}
     turns:
       - input: {utterance: 看看电量够不够开到杭州，不够就找个充电站, context: {}}
         expected:
           plan:
-            required_intent_groups: [{any_of: [charging.status, charging.plan]}]
-            allow_extra_intents: true
+            required_intent_groups: [{any_of: [charging.status]}]
+            forbidden_intents: [charging.find, charging.plan]
+            allow_extra_intents: false
             complexity: {allowed: [adaptive]}
           replans:
             - after:
                 result: {step_id: s1, status: ok, data: {soc: 18, range_km: 90}, speech: 当前电量 18%，续航约 90 公里}
               plan:
                 required_intent_groups: [{any_of: [charging.find, charging.plan]}]
+                forbidden_intents: [charging.status]
                 allow_extra_intents: false
   - id: cp.adaptive.indoor-fanout
     title: 下雨天推荐室内去处
@@ -477,13 +480,14 @@ cases:
     risk: medium
     status: reviewed
     tags: {attacks: [A4], mechanisms: [composition, adaptive], domains: [safety, navigation], layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, gold_revised_at: 2026-08-06, gold_revision_reason: "生产语义复核：声明 replan 必须首轮 adaptive 且封闭为 producer-only；旧 allow_extra=true 会掩盖条件 consumer 提前执行"}
     turns:
       - input: {utterance: 看看去机场堵不堵，堵的话换条路, context: {}}
         expected:
           plan:
             required_intent_groups: [{any_of: [safety.road_condition]}]
-            allow_extra_intents: true
+            forbidden_intents: [navigation.navigate_to]
+            allow_extra_intents: false
             complexity: {allowed: [adaptive]}
           replans:
             - after:
@@ -498,13 +502,14 @@ cases:
     risk: medium
     status: reviewed
     tags: {attacks: [A4], mechanisms: [composition, adaptive], domains: [info, safety], layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, gold_revised_at: 2026-08-06, gold_revision_reason: "生产语义复核：声明 replan 必须首轮 adaptive 且封闭为 producer-only；旧 allow_extra=true 会掩盖条件 consumer 提前执行"}
     turns:
       - input: {utterance: 看看有没有预警，有的话说下开车要注意什么, context: {}}
         expected:
           plan:
             required_intent_groups: [{any_of: [info.alerts]}]
-            allow_extra_intents: true
+            forbidden_intents: [safety.weather_alert, safety.driving_advice]
+            allow_extra_intents: false
             complexity: {allowed: [adaptive]}
           replans:
             - after:
@@ -519,13 +524,14 @@ cases:
     risk: low
     status: reviewed
     tags: {attacks: [A4], mechanisms: [composition, adaptive], domains: [info, research], layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, gold_revised_at: 2026-08-06, gold_revision_reason: "生产语义复核：声明 replan 必须首轮 adaptive 且封闭为 producer-only；旧 allow_extra=true 会掩盖条件 consumer 提前执行"}
     turns:
       - input: {utterance: 先看看宁德时代今天涨跌，跌超过五个点就帮我深挖一下原因, context: {}}
         expected:
           plan:
             required_intent_groups: [{any_of: [info.stock]}]
-            allow_extra_intents: true
+            forbidden_intents: [research.run, info.search]
+            allow_extra_intents: false
             complexity: {allowed: [adaptive]}
           replans:
             - after:
@@ -540,13 +546,14 @@ cases:
     risk: low
     status: reviewed
     tags: {attacks: [A4], mechanisms: [composition, adaptive], domains: [info, reminder], layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, gold_revised_at: 2026-08-06, gold_revision_reason: "生产语义复核：声明 replan 必须首轮 adaptive 且封闭为 producer-only；旧 allow_extra=true 会掩盖条件 consumer 提前执行"}
     turns:
       - input: {utterance: 查下今晚国安比赛几点，开赛前半小时提醒我, context: {}}
         expected:
           plan:
             required_intent_groups: [{any_of: [info.sports]}]
-            allow_extra_intents: true
+            forbidden_intents: [reminder.create]
+            allow_extra_intents: false
             complexity: {allowed: [adaptive]}
           replans:
             - after:
@@ -709,13 +716,14 @@ cases:
     risk: medium
     status: reviewed
     tags: {attacks: [A4], mechanisms: [composition, dependency, adaptive], domains: [info, nearby], boundary: weather-outing, layers: [l1]}
-    provenance: {kind: real_badcase, source_ref: skills/guides/weather-outing.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
+    provenance: {kind: real_badcase, source_ref: skills/guides/weather-outing.yaml, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, gold_revised_at: 2026-08-06, gold_revision_reason: "生产语义复核：声明 replan 必须首轮 adaptive 且封闭为 producer-only；旧 allow_extra=true 会掩盖条件 consumer 提前执行"}
     turns:
       - input: {utterance: 看看今天下不下雨，下雨就推荐点室内的地方, context: {}}
         expected:
           plan:
             required_intent_groups: [{any_of: [info.weather, info.forecast]}]
-            allow_extra_intents: true
+            forbidden_intents: [nearby.search]
+            allow_extra_intents: false
             complexity: {allowed: [adaptive]}
           replans:
             - after:

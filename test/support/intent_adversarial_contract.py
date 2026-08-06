@@ -867,6 +867,11 @@ def validate_cases(cases: list[AdversarialCase], known_intents: set[str]) -> lis
                     and set(turn.expected.plan.allowed_complexities) != {"adaptive"}):
                 errors.append(
                     f"{case.id}: replans require initial plan complexity=adaptive")
+            if turn.expected.replans and turn.expected.plan.allow_extra_intents:
+                errors.append(
+                    f"{case.id}: replans require a closed initial plan; "
+                    "declare allowed_extra_intents explicitly instead of "
+                    "allow_extra_intents=true")
             _validate_engine(case, index, turn.expected.engine, layers,
                              known_intents, errors)
             _validate_side_effect_counts(case, index, turn.expected, layers, errors)
