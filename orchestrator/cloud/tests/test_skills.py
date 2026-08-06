@@ -88,6 +88,20 @@ def test_charging_guide_separates_conditional_status_from_one_shot_plan():
     assert conditional, "电量条件分支缺少 status-only adaptive 的非原句 golden"
 
 
+def test_charging_guide_demonstrates_conditional_replan_observation_contract():
+    """目的地只是续航判据；第二轮不能把它误读成直接导航指令。"""
+    guide = next(d for d in sk.SkillStore().guides()
+                 if d.name == "charging-strategy")
+
+    for marker in (
+        "最近观察", "status=ok", "intent=charging.status", "data.range_km",
+        "done=false", "done=true", "charging.find/charging.plan",
+        "navigation.navigate_to",
+    ):
+        assert marker in guide.knowledge
+    assert "看看电量够不够开到杭州" not in guide.knowledge
+
+
 def test_charging_guide_demonstrates_implicit_depletion_as_find_not_status():
     """A depletion statement asks for help; status is only for an explicit query."""
     guide = next(d for d in sk.SkillStore().guides()

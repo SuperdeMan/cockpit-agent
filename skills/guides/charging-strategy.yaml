@@ -15,9 +15,11 @@ knowledge: |
   纯设施发现（『附近有没有充电站』，只是看看有什么）→ 周边发现能力（nearby）。
   - 一次性询问跨城/长途怎么补能（『去惠州怎么充电』『去外地要不要中途补能』）→
   charging.plan 带 destination——要的是现在就给沿途分段策略，不是找一个桩。
-  **条件补能必须分两轮**：『先看电够不够到 X，不够再找/安排补能』的初始计划只输出
-  charging.status，且 complexity=adaptive；拿到实际续航 observation 后才 replan，决定是否
-  charging.find/charging.plan。不得在未观察电量前提前执行条件分支。
+  **条件补能分两轮**：『先看电够不够到 X，不够再补能』首轮只出 charging.status，且
+  complexity=adaptive。第二轮只读最近观察：例目标『续航不足到南京就补能』，观察
+  `status=ok, intent=charging.status, data.range_km=45` 已明确不足时，必须 `done=false` 且只出
+  charging.find/charging.plan；目的地只是续航判据，绝不扩成 navigation.navigate_to。
+  只有观察明确够用才 `done=true`；不要重查状态，也不要提前执行条件分支。
   - 导航去某地并在那附近充（『导航去深圳湾，附近找个充电桩』）→ navigation.navigate_to
   与 charging.find(destination=深圳湾) 并列两步。
   只问电量/续航本身（『现在电量多少』『还能跑多远』）→ charging.status，不要出找桩步。
