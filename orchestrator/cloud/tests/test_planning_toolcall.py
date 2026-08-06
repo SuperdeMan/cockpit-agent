@@ -114,6 +114,22 @@ def test_toolcall_args_direct(monkeypatch):
     assert "工具调用模式" in spy.last_system
 
 
+def test_planner_prompt_checks_every_affirmative_clause_before_submit(monkeypatch):
+    """多意图不能只写进 goal；提交前须逐分句核对，同时保留否定/条件例外。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    spy = _SpyLLM(tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                                     "arguments": _ARGS_OK}]))
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    _build(builder, "查天气，再放首歌")
+
+    assert "逐个核对每个肯定诉求" in spy.last_system
+    assert "goal 写到了但 steps 没有" in spy.last_system
+    assert "明确否定" in spy.last_system
+    assert "条件分支" in spy.last_system
+
+
 def test_toolcall_salvage_when_model_ignores_tool(monkeypatch):
     """模型无视工具直接文本 JSON → 同轮抢救成功，plan_mode=toolcall_salvage。"""
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
