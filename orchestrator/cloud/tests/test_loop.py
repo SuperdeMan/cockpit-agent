@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 
-from orchestrator.cloud.loop import LoopController
+from orchestrator.cloud.loop import LoopController, summarize
 from orchestrator.cloud.models import (
     Plan, PlanContext, ReplanDecision, Step, StepResult, StepStatus,
 )
@@ -46,6 +46,14 @@ def _collect(controller, **kwargs):
     async def run():
         return [event async for event in controller.run(**kwargs)]
     return asyncio.run(run())
+
+
+def test_observation_summary_carries_known_step_intent():
+    """Replanner needs the completed capability identity, not only an opaque step id."""
+    result = StepResult("s1", StepStatus.OK, speech="明天有雨")
+
+    assert summarize(result, intent="info.weather")["intent"] == "info.weather"
+    assert "intent" not in summarize(result)
 
 
 def test_adaptive_loop_executes_initial_batch_then_replans_until_done():

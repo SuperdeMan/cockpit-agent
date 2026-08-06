@@ -57,18 +57,21 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def summarize(result: StepResult) -> dict:
+def summarize(result: StepResult, *, intent: str = "") -> dict:
     """Keep only bounded, decision-relevant observation fields."""
     data = dict(result.data or {})
     if len(data) > 12:
         data = dict(list(data.items())[:12])
-    return {
+    observation = {
         "step_id": result.step_id,
         "status": result.status.value,
         "data": data,
         "speech": (result.speech or "")[:160],
         "error": (result.error or "")[:120],
     }
+    if intent:
+        observation["intent"] = intent
+    return observation
 
 
 class LoopController:
@@ -102,7 +105,13 @@ class LoopController:
         results = list(seed_results or [])
         n_seed = len(results)      # 种子（确认续接带入，上轮已播报）不进挂起前缀
         spoken: set[int] = set()   # 已流式播报过的结果（id()）——挂起前缀不再复读
-        observations = [summarize(r) for r in results][-self.observation_limit:]
+        initial_intents = {
+            step.id: step.intent for step in (getattr(initial_plan, "steps", []) or [])
+        }
+        observations = [
+            summarize(r, intent=initial_intents.get(r.step_id, ""))
+            for r in results
+        ][-self.observation_limit:]
         # M2 P2 分档：本轮预算按计划复杂度取（adaptive=Complex 档、其余=Interactive 档）
         complexity = getattr(initial_plan, "complexity", "") or _DEFAULT_TIER
         self.max_iters, self.budget_ms = self._budget_for(complexity)
@@ -215,7 +224,7 @@ class LoopController:
                     results.append(final_sr)
                     if did_speak:
                         spoken.add(id(final_sr))   # 话术已流出，前缀不复读
-                    observations.append(summarize(final_sr))
+                    observations.append(summarize(final_sr, intent=step.intent))
                     observations = observations[-self.observation_limit:]
                     if show_process and final_sr.status == StepStatus.OK:
                         yield make_progress(
@@ -234,17 +243,18 @@ class LoopController:
                     empty_sr = StepResult(
                         step_id=step.id, status=StepStatus.OK, speech="")
                     results.append(empty_sr)
-                    observations.append(summarize(empty_sr))
+                    observations.append(summarize(empty_sr, intent=step.intent))
 
             if not streamed:
                 async for step_result in self.executor.run(
                         current, ctx, done=done_seed):
                     results.append(step_result)
-                    observations.append(summarize(step_result))
+                    step = next((s for s in current.steps
+                                 if s.id == step_result.step_id), None)
+                    observations.append(summarize(
+                        step_result, intent=step.intent if step is not None else ""))
                     observations = observations[-self.observation_limit:]
                     if show_process and step_result.status == StepStatus.OK:
-                        step = next((s for s in current.steps
-                                     if s.id == step_result.step_id), None)
                         if step is not None:
                             yield make_progress(
                                 "execute", phase_label(step.intent),

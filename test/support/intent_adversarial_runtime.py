@@ -467,6 +467,13 @@ async def run_planner_turn(turn, agents, builder, *, granted_permissions=None):
     if plan.complexity == "adaptive":
         for expected_replan in turn.expected.replans:
             observation = dict(expected_replan.after["result"])
+            completed = next(
+                (step for step in plan.steps
+                 if step.id == observation.get("step_id")),
+                None,
+            )
+            if completed is not None and completed.intent:
+                observation.setdefault("intent", completed.intent)
             # Production enters the bounded loop with ``plan.goal or text``. Goal
             # is optional on the model wire and is commonly blank, so preserve the
             # same fallback or the user's conditional request disappears.

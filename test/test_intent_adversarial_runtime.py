@@ -287,6 +287,42 @@ def test_l1_replan_falls_back_to_original_utterance_when_plan_goal_is_blank():
     assert builder.replan_goals == [turn.utterance]
 
 
+def test_l1_replan_observation_carries_the_completed_initial_intent():
+    """L1 mirrors production: an observation identifies which capability completed."""
+    import asyncio
+    from types import SimpleNamespace
+
+    class _Builder:
+        def __init__(self):
+            self.observations = []
+
+        async def build(self, text, *_args, **_kwargs):
+            return Plan(
+                steps=[Step(id="s1", agent_id="info", intent="info.weather")],
+                complexity="adaptive", goal=text, raw_text=text,
+            )
+
+        async def replan(self, _goal, observations, *_args, **_kwargs):
+            self.observations.append(observations)
+            return ReplanDecision(done=True)
+
+    turn = SimpleNamespace(
+        utterance="明天下雨就提醒我",
+        context={},
+        expected=SimpleNamespace(replans=[SimpleNamespace(
+            after={"result": {"step_id": "s1", "status": "ok",
+                                "data": {"condition": "小雨"}}})]),
+    )
+    builder = _Builder()
+
+    asyncio.run(run_planner_turn(turn, [], builder))
+
+    assert builder.observations == [[{
+        "step_id": "s1", "status": "ok", "data": {"condition": "小雨"},
+        "intent": "info.weather",
+    }]]
+
+
 def test_l1_does_not_fabricate_a_replan_for_a_simple_initial_plan():
     """Production only enters the bounded loop for ``complexity=adaptive``.
 
