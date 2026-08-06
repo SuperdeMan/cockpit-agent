@@ -837,8 +837,9 @@ class PlanBuilder:
         ex_part = f"{ex_block}\n\n" if ex_block else ""   # 同初规划：范例在知识之后
         prompt = (
             f"{_date_line()}\n"
-            f"{sk_part}{ex_part}{ctx_block}最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
-            f"{catalog.semantic_mapping_text}\n\n目标：{goal}"
+            f"{sk_part}{ex_part}{ctx_block}{catalog.semantic_mapping_text}\n\n"
+            f"最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
+            f"目标：{goal}"
         )
         completed = _completed_observation_steps(observations)
         correction = ""
