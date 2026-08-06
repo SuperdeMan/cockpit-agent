@@ -831,13 +831,16 @@ class PlanBuilder:
         ctx_block = working_set.render_context() if working_set is not None else ""
         sk_block = _skills.render_for_names(
             skill_names, capability_refs=catalog.pair_to_ref)
-        sk_part = f"{sk_block}\n\n" if sk_block else ""   # 位置同初规划：紧跟日期锚（顺序契约）
+        # 再规划继承资产已按本轮 catalog refs 重渲染，缺席能力会整条阻断；因此把它们
+        # 放在 mapping 之后、观察之前，既不引入旧能力身份，又让第二轮判据贴近证据与目标。
+        sk_part = f"{sk_block}\n\n" if sk_block else ""
         ex_block = _exemplars.render_for_names(
             exemplar_names, capability_refs=catalog.pair_to_ref)
-        ex_part = f"{ex_block}\n\n" if ex_block else ""   # 同初规划：范例在知识之后
+        ex_part = f"{ex_block}\n\n" if ex_block else ""   # 范例仍在知识之后
         prompt = (
             f"{_date_line()}\n"
-            f"{sk_part}{ex_part}{ctx_block}{catalog.semantic_mapping_text}\n\n"
+            f"{ctx_block}{catalog.semantic_mapping_text}\n\n"
+            f"{sk_part}{ex_part}"
             f"最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
             f"目标：{goal}"
         )

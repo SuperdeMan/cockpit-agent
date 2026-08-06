@@ -401,6 +401,43 @@ def test_replan_fails_closed_when_retry_still_only_repeats_completed_intent():
     assert decision.steps == []
 
 
+def test_replan_keeps_ref_rendered_knowledge_next_to_observation_and_goal(monkeypatch):
+    agents = [MockAgent("info", ["info.weather"])]
+    users = []
+
+    monkeypatch.setattr(
+        "orchestrator.cloud.planning._skills.render_for_names",
+        lambda *_args, **_kwargs: "skill-marker",
+    )
+    monkeypatch.setattr(
+        "orchestrator.cloud.planning._exemplars.render_for_names",
+        lambda *_args, **_kwargs: "exemplar-marker",
+    )
+
+    async def mock_llm(messages):
+        users.append(messages[1]["content"])
+        return '{"done":true,"steps":[]}'
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "按天气结果继续",
+        [{"step_id": "s1", "status": "ok", "intent": "info.weather"}],
+        agents, PlanContext(),
+        working_set=WorkingSet(history=[{"role": "user", "text": "history-marker"}]),
+        skill_names=["full:test"], exemplar_names=["full:test#1"],
+    ))
+
+    assert decision.done is True and len(users) == 1
+    user = users[0]
+    positions = [user.index(marker) for marker in (
+        "history-marker", '"capabilities"', "skill-marker", "exemplar-marker",
+        "最近观察：", "目标：",
+    )]
+    assert positions == sorted(positions)
+
+
 def test_json_and_replan_prompts_treat_the_live_catalog_as_the_only_allowlist():
     """初规划与再规划都只能消费本轮动态 catalog，不能靠模型常识补能力。"""
     initial = _planner_system()
