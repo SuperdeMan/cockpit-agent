@@ -3,7 +3,7 @@ type: guide
 description: 充电找桩与长途补能策略的分流判据（附近找桩补电/跨城长途怎么充电、路上电够不够/目的地附近充电）
 priority: 55
 capability_dependencies: [charging.find, charging.plan, charging.status, navigation.navigate_to]
-keywords: [充电, 充电桩, 充电站, 快充, 补能, 没电, 电量不, 怎么充]
+keywords: [充电, 充电桩, 充电站, 快充, 补能, 没电, 耗尽, 耗空, 电量不, 怎么充]
 # 依据：charging-planner manifest 三能力语义 + journeys target_b B2 族校准记录
 # （「去X怎么充电」真栈探针 6/6 稳定走 charging.plan；charging 无 route_hints，路由纯 LLM
 # ——这正是本 guide 存在的原因）。「去X的路上找个充电站」形态刻意不写死：校准记录认定
@@ -27,8 +27,8 @@ knowledge: |
 few_shots:
   - user: 去惠州怎么充电
     plan: {"steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.plan","slots":{"destination":"惠州"},"depends_on":[],"slot_refs":{}}]}
-  - user: 续航完全耗尽了，得马上补能
-    plan: {"steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.find","slots":{"prefer":"快充"},"depends_on":[],"slot_refs":{}}]}
+  - user: 动力电池已经耗尽
+    plan: {"steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.find","slots":{},"depends_on":[],"slot_refs":{}}]}
 golden:
   - text: 去惠州怎么充电
     expect_intents: [charging.plan]
@@ -36,6 +36,9 @@ golden:
   - text: 快没电了，附近找个快充
     expect_intents: [charging.find]
     expect_not: [navigation.navigate_to, nearby.search]
+  - text: 动力电池彻底耗空了
+    expect_intents: [charging.find]
+    expect_not: [charging.status, nearby.search]
   # holdout：避开 few-shot 原句与全部 keywords 字面（测泛化不测自证）。
   # 「电快见底」句已被 charging.find hint 覆盖（canonical 哨兵，知识归因看下面两条）
   - text: 电快见底了，就近找个地方充上
@@ -58,4 +61,4 @@ golden:
     expect_not: [charging.find, charging.plan]
     holdout: true
 owner: charging-planner
-version: 2
+version: 3

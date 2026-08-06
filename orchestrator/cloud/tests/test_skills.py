@@ -100,6 +100,20 @@ def test_charging_guide_demonstrates_implicit_depletion_as_find_not_status():
     ]
     assert implicit, "缺少不带显式找桩动词的低电量求助示范"
 
+    pure_state = [
+        shot for shot in implicit
+        if not any(word in str(shot.get("user") or "")
+                   for word in ("帮", "得", "要", "需要", "补", "充"))
+    ]
+    assert pure_state, "缺少纯车辆耗尽陈述 → charging.find 的正例"
+    assert any(
+        g.get("expect_intents") == ["charging.find"]
+        and "charging.status" in set(g.get("expect_not") or [])
+        and not any(word in str(g.get("text") or "")
+                    for word in ("找", "哪", "附近", "多少", "多远"))
+        for g in guide.golden
+    ), "纯耗尽陈述缺少 live golden 消费方"
+
 
 # ── 词法检索（零网络、确定性；embedding 升级由 shadow 召回数据决定） ─────────────
 
@@ -235,6 +249,33 @@ def test_negation_policy_renders_unstarted_parallel_cancel_example():
     assert injected == [] and clipped == []
     assert "示例——用户：『查下天气，音乐先别放』" in block
     assert '"capability_ref":"cap_0001"' in block
+
+
+def test_negation_policy_pairs_cancelled_media_with_affirmative_parallel_control():
+    """常驻否定示例不能把相邻的“天气 + 音乐”肯定句一起拉成单步。"""
+    store = sk.SkillStore()
+    policy = next(d for d in store.policies()
+                  if d.name == "negation-and-deferral")
+    positive = [
+        shot for shot in policy.few_shots
+        if {"info.weather", "media.play"} <= {
+            step.get("intent")
+            for step in ((shot.get("plan") or {}).get("steps") or [])
+        }
+    ]
+    assert positive, "否定 policy 缺少天气 + 音乐肯定并列的对照 few-shot"
+    assert all(
+        not any(word in str(shot.get("user") or "")
+                for word in ("别", "不放", "暂停", "取消"))
+        for shot in positive
+    )
+    assert any(
+        {"media.play"} <= set(g.get("expect_intents") or [])
+        and any(str(intent).startswith("info.weather")
+                or str(intent).startswith("info.forecast")
+                for intent in (g.get("expect_intents") or []))
+        for g in policy.golden
+    ), "肯定并列 few-shot 缺少 live golden 消费方"
 
 
 # ── 渲染 ──────────────────────────────────────────────────────────────────────

@@ -21,6 +21,9 @@ few_shots:
   # 与 nq.dinner-music.drop-music 的餐厅话术不同，避免把 unseen 原句写进 prompt 资产。
   - user: 查下天气，音乐先别放
     plan: {"steps":[{"id":"s1","agent_id":"info","intent":"info.weather","slots":{},"depends_on":[],"slot_refs":{}}]}
+  # 与上一条构成最小正反对照：没有否定词时，两个独立诉求必须都保留。
+  - user: 看看明早天气，接着播放轻音乐
+    plan: {"steps":[{"id":"s1","agent_id":"info","intent":"info.weather","slots":{},"depends_on":[],"slot_refs":{}},{"id":"s2","agent_id":"edge-media","intent":"media.play","slots":{},"depends_on":[],"slot_refs":{}}]}
 golden:
   # 这里用的都是**语料之外**的说法：把对抗语料的原句写进 golden，等于把 unseen 案例
   # 洗成 seen，之后"通过率涨了"就再也读不出泛化了（findings §4.3-2）。
@@ -37,8 +40,10 @@ golden:
   - text: 查下天气，音乐先别放
     expect_intents: [info.weather]
     expect_not: [media.play, media.pause]
+  - text: 瞧瞧今晚天气，接着播点舒缓音乐
+    expect_intents: ["info.weather|info.forecast", media.play]
   - text: 音乐已经在放了，帮我暂停一下
     expect_intents: [media.pause]
     expect_not: [media.play]
 owner: orchestrator
-version: 1
+version: 2
