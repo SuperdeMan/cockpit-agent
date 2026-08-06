@@ -488,6 +488,9 @@ _REPLAN_SYSTEM = (
     "重试（retry_same_intent=true），否则不得重复 observation.intent 指向的同一查询或动作；"
     "先用观察中的 data/speech 判断用户目标里的"
     "条件分支，再只规划尚未完成的后续步骤。\n"
+    "条件目标必须先拆成条件前件与条件后件：观察满足前件时，steps 只执行后件；"
+    "观察明确不满足前件时才 done=true。条件参数里的地点、对象或查询目标只是判定素材，"
+    "不得扩成用户没要求的导航、搜索或其他额外动作。\n"
     "下方本请求 capability_ref 映射是唯一调用权；steps 只能原样选择映射中的 ref。"
     "不得编造 catalog 外能力，不得替换"
     "用户请求的缺席能力，也不得输出 catalog 中缺席的能力；没有可承接能力时保持"
@@ -495,6 +498,13 @@ _REPLAN_SYSTEM = (
     "严格输出 JSON：{\"done\":true|false,\"steps\":[{\"id\":\"r1\","
     "\"capability_ref\":\"从本请求映射选择\",\"slots\":{},\"depends_on\":[],"
     "\"slot_refs\":{}}]}。仅在必要时改变计划；不得输出解释。"
+)
+
+
+_CONDITIONAL_GOAL_RE = re.compile(
+    r"(?:如果|要是|假如|若|只要|除非|不够|不足|超过|低于|高于|达到|满足|"
+    r"\bif\b|\bwhen\b|\bunless\b)",
+    re.IGNORECASE,
 )
 
 
@@ -845,6 +855,7 @@ class PlanBuilder:
             f"目标：{goal}"
         )
         completed = _completed_observation_steps(observations)
+        conditional_goal = bool(_CONDITIONAL_GOAL_RE.search(goal or ""))
         correction = ""
         steps: list[Step] = []
         for attempt in range(2):
@@ -862,6 +873,13 @@ class PlanBuilder:
                 data, catalog, goal, stage="replan", attempt=attempt,
                 wire_mode="json")
             if bool(data.get("done")):
+                if attempt == 0 and conditional_goal:
+                    correction = (
+                        "\n\n校验反馈：目标含条件前件与条件后件，第一版直接判定 done。"
+                        "请逐项比较 observation.data/speech 与条件前件；满足时只规划后件，"
+                        "只有明确不满足时才返回 done=true、steps=[]。"
+                    )
+                    continue
                 return ReplanDecision(done=True)
             candidate = list(parsed.steps) if parsed is not None else []
             candidate, repeated, unresolved = _drop_completed_replan_steps(

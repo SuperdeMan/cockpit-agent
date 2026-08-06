@@ -438,6 +438,56 @@ def test_replan_keeps_ref_rendered_knowledge_next_to_observation_and_goal(monkey
     assert positions == sorted(positions)
 
 
+def test_replan_rechecks_the_first_done_decision_for_a_conditional_goal():
+    agents = [MockAgent("reminder", ["reminder.create"])]
+    replies = iter([
+        '{"done":true,"steps":[]}',
+        '{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0001",'
+        '"slots":{"title":"带伞"},"depends_on":[],"slot_refs":{}}]}',
+    ])
+    calls = 0
+
+    async def mock_llm(_messages):
+        nonlocal calls
+        calls += 1
+        return next(replies)
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "若下雨则提醒带伞",
+        [{"step_id": "s1", "status": "ok", "intent": "info.weather",
+          "data": {"condition": "小雨"}}],
+        agents, PlanContext(),
+    ))
+
+    assert calls == 2
+    assert [step.intent for step in decision.steps] == ["reminder.create"]
+
+
+def test_replan_accepts_first_done_for_a_nonconditional_goal():
+    agents = [MockAgent("info", ["info.weather"])]
+    calls = 0
+
+    async def mock_llm(_messages):
+        nonlocal calls
+        calls += 1
+        return '{"done":true,"steps":[]}'
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "查询明天天气",
+        [{"step_id": "s1", "status": "ok", "intent": "info.weather"}],
+        agents, PlanContext(),
+    ))
+
+    assert calls == 1
+    assert decision.done is True
+
+
 def test_json_and_replan_prompts_treat_the_live_catalog_as_the_only_allowlist():
     """初规划与再规划都只能消费本轮动态 catalog，不能靠模型常识补能力。"""
     initial = _planner_system()

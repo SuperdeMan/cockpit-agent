@@ -304,6 +304,8 @@ def test_replan_prompt_consumes_completed_observations_instead_of_repeating_them
         "条件分支",
         "retry_same_intent=true",
         "observation.intent",
+        "条件后件",
+        "条件参数",
     ):
         assert clause in prompt
 
