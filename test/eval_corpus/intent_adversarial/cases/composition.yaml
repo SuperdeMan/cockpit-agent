@@ -29,7 +29,9 @@ cases:
     status: stable
     tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [info, media], layers: [l1], gate_candidate: true}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
-    relation: {base_case: cp.weather-music.base, type: clause_commute, expectation: {}}
+    # info.weather 同时消费 date 槽与 raw_text；「今天」、当日绝对日期、缺省但原话含
+    # 「今天」三种形态在能力侧归一为同一天。本关系只主张换序不改落域，不比较等价表示。
+    relation: {base_case: cp.weather-music.base, type: clause_commute, expectation: {slot_policy: route_only}}
     turns:
       - input: {utterance: 放首歌，再查一下今天天气, context: {}}
         expected:

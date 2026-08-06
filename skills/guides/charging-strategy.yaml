@@ -27,7 +27,7 @@ knowledge: |
 few_shots:
   - user: 去惠州怎么充电
     plan: {"steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.plan","slots":{"destination":"惠州"},"depends_on":[],"slot_refs":{}}]}
-  - user: 快没电了，附近找个快充
+  - user: 续航完全耗尽了，得马上补能
     plan: {"steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.find","slots":{"prefer":"快充"},"depends_on":[],"slot_refs":{}}]}
 golden:
   - text: 去惠州怎么充电

@@ -294,6 +294,53 @@ def test_catalog_prompt_requires_a_pre_submit_ref_self_check():
         assert clause in prompt
 
 
+def test_replan_prompt_consumes_completed_observations_instead_of_repeating_them():
+    """An OK observation is evidence for the remaining branch, not a retry request."""
+    prompt = planning._REPLAN_SYSTEM
+    for clause in (
+        "status=ok",
+        "已经完成",
+        "不得重复",
+        "条件分支",
+    ):
+        assert clause in prompt
+
+
+def test_bare_object_clarification_cannot_degrade_into_empty_no_action():
+    """Bare names need a question; an empty answer is interpreted as no action."""
+    prompt = planning._CLARIFY_SECTION
+    for clause in (
+        "只有一个名词",
+        "不得输出 addressed=true、steps=[]",
+        "不得当作闲聊复述",
+    ):
+        assert clause in prompt
+
+
+def test_cyclic_wire_plan_is_rejected_before_it_reaches_the_executor():
+    """The planner seam must fail closed on a graph the executor cannot schedule."""
+    _, assemble = _ref_api()
+    catalog = assemble([_agent("nearby", "nearby.search", "nearby.detail")])
+    search_ref = catalog.pair_to_ref[("nearby", "nearby.search")]
+    detail_ref = catalog.pair_to_ref[("nearby", "nearby.detail")]
+    builder = planning.PlanBuilder(None, None)
+
+    cyclic = {
+        "addressed": True,
+        "steps": [
+            {"id": "s1", "capability_ref": search_ref, "slots": {},
+             "depends_on": ["s2"], "slot_refs": {}},
+            {"id": "s2", "capability_ref": detail_ref, "slots": {},
+             "depends_on": ["s1"], "slot_refs": {}},
+        ],
+    }
+    assert builder._parse_and_validate_data(cyclic, catalog, "query") is None
+
+    acyclic = json.loads(json.dumps(cyclic))
+    acyclic["steps"][0]["depends_on"] = []
+    assert builder._parse_and_validate_data(acyclic, catalog, "query") is not None
+
+
 def test_build_retry_and_replan_use_one_catalog_and_one_parse_seam(monkeypatch):
     _, assemble = _ref_api()
     alpha = _agent("alpha", "alpha.one")

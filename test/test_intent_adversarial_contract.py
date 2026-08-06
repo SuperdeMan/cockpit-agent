@@ -1077,6 +1077,16 @@ def test_formal_conditional_cases_keep_producers_and_consumers_on_separate_round
     assert "charging.status" in range_check.replans[0].plan.forbidden_intents
 
 
+def test_weather_music_commute_audits_equivalent_today_slot_representations():
+    """The info agent recovers today's date from raw text, so routing is the claim."""
+    root = Path(__file__).parent / "eval_corpus" / "intent_adversarial" / "cases"
+    by_id = {case.id: case for case in load_cases(root)}
+
+    relation = by_id["cp.weather-music.swapped"].relation
+    assert relation is not None
+    assert relation.expectation == {"slot_policy": "route_only"}
+
+
 def test_clause_commute_accepts_only_audited_slot_policies(contract_case):
     relation = RelationSpec("base", "clause_commute", {"slot_policy": "route_only"})
     base = replace(contract_case, id="base", family_id="family", relation=None)

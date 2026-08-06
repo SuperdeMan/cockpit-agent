@@ -321,6 +321,8 @@ _CLARIFY_SECTION = (
     "- **整句只有一个名词、动词完全缺失**（如某个城市名、建筑名或歌曲名）是典型歧义："
     "用户给了对象却没说要拿它做什么，导航/查天气/查限行/播放都讲得通且结果差异很大"
     "——**必须澄清，不要替用户选一个动作**\n"
+    "- 上述单名词/对象名歧义不得输出 addressed=true、steps=[]（这表示无需动作），"
+    "也不得当作闲聊复述；必须输出带问题和选项的 clarify\n"
     "- **缺槽位不算歧义**（『导航』缺目的地→照常输出 step，由对应 agent 追问）；"
     "缺的是**槽位**才照常执行，缺的是**动词**要澄清\n"
     # 2026-08-03 泓舟拍板。判据刻意写成**两面**：只写「状态句要澄清」会把「有点闷」
@@ -479,6 +481,9 @@ def _planner_system(toolcall: bool = False) -> str:
 _REPLAN_SYSTEM = (
     "你是智能座舱有界任务循环的再规划器。根据用户目标、最近观察和可用能力，"
     "一次性判断任务是否完成，并在未完成时给出下一批 JSON DAG。\n"
+    "最近观察是已经执行过的步骤结果：status=ok 表示该步骤已经完成，除非观察明确要求"
+    "重试，否则不得重复同一查询或动作；先用观察中的 data/speech 判断用户目标里的"
+    "条件分支，再只规划尚未完成的后续步骤。\n"
     "下方本请求 capability_ref 映射是唯一调用权；steps 只能原样选择映射中的 ref。"
     "不得编造 catalog 外能力，不得替换"
     "用户请求的缺席能力，也不得输出 catalog 中缺席的能力；没有可承接能力时保持"
@@ -915,6 +920,14 @@ class PlanBuilder:
         for s in steps:
             s.depends_on = [d for d in s.depends_on if d in valid_ids]
 
+        # Executor 会对环形 DAG fail closed，但不能让一个确定不可调度的计划先穿过
+        # Planner seam、再到执行期才暴露。模型偶发输出 s1→s2→s1；这既不是可归一的
+        # 缺边，也不能靠删任意一条边猜用户意图。把整份候选原子拒绝，交给现有重试。
+        ids = [step.id for step in steps]
+        if len(set(ids)) != len(ids) or not self._is_acyclic(steps):
+            logger.warning("Plan contains duplicate step ids or a dependency cycle; retrying")
+            return None
+
         return Plan(
             steps=steps,
             raw_text=fallback_text,
@@ -922,6 +935,29 @@ class PlanBuilder:
             goal=goal,
             emotion=emotion,
         )
+
+    @staticmethod
+    def _is_acyclic(steps: list[Step]) -> bool:
+        """Return whether the already-normalised dependency graph is schedulable."""
+        by_id = {step.id: step for step in steps}
+        in_degree = {step_id: 0 for step_id in by_id}
+        children = {step_id: [] for step_id in by_id}
+        for step in steps:
+            for dependency in step.depends_on:
+                if dependency not in by_id:
+                    continue
+                in_degree[step.id] += 1
+                children[dependency].append(step.id)
+        ready = [step_id for step_id, degree in in_degree.items() if degree == 0]
+        visited = 0
+        while ready:
+            step_id = ready.pop()
+            visited += 1
+            for child in children[step_id]:
+                in_degree[child] -= 1
+                if in_degree[child] == 0:
+                    ready.append(child)
+        return visited == len(by_id)
 
     @staticmethod
     def _parse_clarify(raw) -> dict | None:

@@ -106,12 +106,13 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     assert len(agents) == 17
     assert len(catalog.ref_to_pair) == 131
     assert catalog.catalog_stats["dropped"] == []
-    # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10509。
-    assert catalog.catalog_stats["chars_full"] == 10509
-    assert catalog.catalog_stats["chars_final"] == 10509
+    # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10676。
+    # nearby search/detail 的发现边界说明增加 167 字符；仍完整落在 16k 预算内。
+    assert catalog.catalog_stats["chars_full"] == 10676
+    assert catalog.catalog_stats["chars_final"] == 10676
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 5491
+    assert 16000 - catalog.catalog_stats["chars_final"] == 5324
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

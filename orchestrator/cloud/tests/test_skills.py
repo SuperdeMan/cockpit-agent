@@ -88,6 +88,19 @@ def test_charging_guide_separates_conditional_status_from_one_shot_plan():
     assert conditional, "电量条件分支缺少 status-only adaptive 的非原句 golden"
 
 
+def test_charging_guide_demonstrates_implicit_depletion_as_find_not_status():
+    """A depletion statement asks for help; status is only for an explicit query."""
+    guide = next(d for d in sk.SkillStore().guides()
+                 if d.name == "charging-strategy")
+    implicit = [
+        shot for shot in guide.few_shots
+        if "charging.find" in str(shot.get("plan") or {})
+        and not any(word in str(shot.get("user") or "")
+                    for word in ("找", "哪", "附近", "多少", "多远"))
+    ]
+    assert implicit, "缺少不带显式找桩动词的低电量求助示范"
+
+
 # ── 词法检索（零网络、确定性；embedding 升级由 shadow 召回数据决定） ─────────────
 
 @pytest.mark.parametrize("text,expect", [
