@@ -120,6 +120,8 @@ def test_charging_guide_demonstrates_implicit_depletion_as_find_not_status():
                    for word in ("帮", "得", "要", "需要", "补", "充"))
     ]
     assert pure_state, "缺少纯车辆耗尽陈述 → charging.find 的正例"
+    assert "耗尽陈述" in guide.knowledge
+    assert "不是 charging.status" in guide.knowledge
     assert any(
         g.get("expect_intents") == ["charging.find"]
         and "charging.status" in set(g.get("expect_not") or [])

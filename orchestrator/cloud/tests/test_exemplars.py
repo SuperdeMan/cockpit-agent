@@ -255,6 +255,19 @@ def test_mixed_negation_keeps_only_the_positive_volume_intent():
     assert all("别关空调" not in e.text for e in rows), "不得把 unseen 对抗原句抄进范例"
 
 
+def test_nearby_public_facility_discovery_has_a_non_corpus_exemplar():
+    """公共设施的「附近有没有」是周边发现，不应被车辆状态能力随机吸走。"""
+    items = ex.ExemplarStore().load()
+    rows = [
+        e for e in items
+        if e.domain == "nearby"
+        and e.intents() == ["nearby.search"]
+        and any(word in e.text for word in ("公厕", "厕所", "卫生间"))
+    ]
+    assert rows, "nearby 域缺少公共卫生设施发现范例"
+    assert all(e.text != "附近有洗手间吗" for e in rows), "不得复制 unseen 对抗原句"
+
+
 def test_unsupported_cabin_feature_how_to_routes_to_manual():
     """车内功能问“怎么开”但无对应车控能力时，应查说明书，不得空计划或闲聊。"""
     items = ex.ExemplarStore().load()

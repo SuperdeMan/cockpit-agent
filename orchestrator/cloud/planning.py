@@ -363,6 +363,8 @@ _TOOLCALL_SECTION = (
     "顶层 JSON 对象即工具参数。不要以文本形式输出 JSON，不要输出任何解释。\n"
     "arguments 每次必须同时包含 addressed 和 steps；无步骤也必须显式 steps=[]，"
     "不得只提交 addressed。\n"
+    "steps 的每个元素必须是 JSON 对象，绝不能是字符串；能力缺席时只能提交 steps=[]，"
+    "不能把解释、候选能力名或自然语言写进数组。\n"
     "steps 数组中每一项只能包含 id、capability_ref、slots、depends_on、slot_refs 这五个字段。"
     "这五个字段名必须逐字原样输出，不得转义、增删字符或改变拼写。"
     "属于 step 的字段必须留在对应 step 对象内，不得移到顶层参数。\n"
@@ -415,7 +417,9 @@ def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
         "depends_on": {"type": "array", "items": {"type": "string"}},
         "slot_refs": {"type": "object"},
     }
-    step_item_schema = {"type": "object", "properties": {
+    step_item_schema = {"type": "object", "description": (
+        "每个元素必须是 JSON 对象，绝不能是字符串；能力缺席时只能提交 steps=[]，"
+        "不得把解释或候选能力名写成数组元素"), "properties": {
         field: step_field_schemas[field] for field in _PLANNER_STEP_FIELDS
     }, "required": list(_PLANNER_STEP_FIELDS),
         "additionalProperties": False}

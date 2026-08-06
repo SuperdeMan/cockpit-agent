@@ -485,6 +485,11 @@ def test_toolcall_prompt_locks_each_step_to_the_five_exact_nested_fields():
         "属于 step 的字段必须留在对应 step 对象内，不得移到顶层参数",
     ):
         assert clause in prompt
+    item = _submit_plan_tools()["tools"][0]["function"]["parameters"][
+        "properties"]["steps"]["items"]
+    for contract_text in (_TOOLCALL_SECTION, item["description"]):
+        assert "每个元素必须是 JSON 对象，绝不能是字符串" in contract_text
+        assert "能力缺席时只能提交 steps=[]" in contract_text
     for domain_specific in ("shop", "nearby", "cap_010"):
         assert domain_specific not in _TOOLCALL_SECTION
 

@@ -280,3 +280,18 @@ exemplars:
   tags:
   - badcase
   note: 被取消的那半句一个 step 都不出——不是 media.play，也不是 media.pause
+# ── 2026-08-05 补：公共卫生设施仍是周边发现 ────────────────────────────────
+# 立卡来源 os.toilet.nearby 的跨进程方差，但不复制对抗原句。已有「这边有地铁站吗」只教
+# 交通设施，语义检索反而把「附近有洗手间吗」拉到 charging 的「附近有充电桩吗」；这里
+# 用另一种设施名与问法示范通用的公共设施发现，不在核心路由层加设施词表。
+- text: 这附近能找到公共厕所吗
+  plan:
+  - agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 公共厕所
+  source: manual
+  added: '2026-08-05'
+  tags:
+  - badcase
+  note: 附近公共设施查询归 nearby.search，不归任何车辆状态能力
