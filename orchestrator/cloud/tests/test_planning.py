@@ -314,6 +314,7 @@ def test_replan_retries_once_when_first_answer_only_repeats_completed_intent():
     assert [step.intent for step in decision.steps] == ["reminder.create"]
     assert "info.weather" in messages_seen[1][1]["content"]
     assert "已经完成" in messages_seen[1][1]["content"]
+    assert "只有观察明确证明条件不成立" in messages_seen[1][1]["content"]
 
 
 def test_replan_drops_completed_repeat_when_answer_also_has_remaining_step():

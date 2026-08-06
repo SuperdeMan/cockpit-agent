@@ -874,8 +874,9 @@ class PlanBuilder:
                 correction = (
                     "\n\n校验反馈：上一版重复选择了已经完成的 capability："
                     f"{repeated_text}。这些 intent 在最近观察中 status=ok，"
-                    "不得再次查询或执行；请只规划尚未完成的条件分支。"
-                    "若没有剩余步骤，返回 done=true、steps=[]。"
+                    "不得再次查询或执行；请逐项比较目标条件与 observation.data/speech，"
+                    "只规划尚未完成的条件分支。只有观察明确证明条件不成立时，"
+                    "才返回 done=true、steps=[]。"
                 )
                 continue
             logger.warning(
