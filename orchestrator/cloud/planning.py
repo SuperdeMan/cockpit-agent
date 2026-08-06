@@ -246,6 +246,8 @@ _PLANNER_BASE = (
     "- 提交前逐个核对每个肯定诉求（含『并/再/顺便/然后/接着』连接的分句）是否都有对应 step；"
     "goal 写到了但 steps 没有也算漏步，必须补齐。只有明确否定的动作，或 adaptive 计划中"
     "等待观察结果再决定的条件分支，才允许暂不输出 step\n"
+    "- 标点缺失不等于单意图；按明确动词切分，每个肯定动作恰好一个 step，"
+    "不得漏项或重复，也不得补出反向动作\n"
     "\n"
     "== 并行 vs 串行 ==\n"
     "- 无数据依赖的步骤 → 各自 depends_on=[]，执行器会自动并行\n"
@@ -302,6 +304,8 @@ _ADDRESSED_SECTION = (
     "\n\n== 受话判定（必须输出）==\n"
     "输出顶层布尔字段 \"addressed\"：这句话是否是对你（车载助手）说的。\n"
     "- true：请求/问题/指令/情绪表达也需要你回应\n"
+    "- 混合否定句：一个分句否定动作、另一个肯定请求时，必须 addressed=true；"
+    "否定只影响 steps，不影响是否受话\n"
     "- false：明显不是对助手说的——乘客间对话片段（『妈你到哪了』）、自言自语、"
     "电台/视频/新闻播报腔（『本台记者报道…』『欢迎收听今天的节目』）、"
     "称呼他人姓名的交谈（『王总我马上发您』）、无法构成请求且并非对助手发出的残句\n"
@@ -1232,7 +1236,7 @@ class PlanBuilder:
                 # JSON object 的 key 恒为 str，可变的是 value——所以防的是 value。
                 slot_refs=(
                     {k: v for k, v in normalized_slot_refs.items()
-                     if isinstance(v, str)}
+                     if isinstance(v, str) and v.strip()}
                     if isinstance(
                         normalized_slot_refs := PlanBuilder._unwrap_freeform_object(
                             s.get("slot_refs") or {},

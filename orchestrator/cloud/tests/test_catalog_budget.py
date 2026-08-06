@@ -106,13 +106,13 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     assert len(agents) == 17
     assert len(catalog.ref_to_pair) == 131
     assert catalog.catalog_stats["dropped"] == []
-    # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10676。
-    # nearby search/detail 的发现边界说明增加 167 字符；仍完整落在 16k 预算内。
-    assert catalog.catalog_stats["chars_full"] == 10676
-    assert catalog.catalog_stats["chars_final"] == 10676
+    # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10725。
+    # info.sports 新增过去赛果/泛指赛事边界后增加 49 字符，仍完整落在 16k 预算内。
+    assert catalog.catalog_stats["chars_full"] == 10725
+    assert catalog.catalog_stats["chars_final"] == 10725
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 5324
+    assert 16000 - catalog.catalog_stats["chars_final"] == 5275
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest
@@ -176,6 +176,18 @@ def test_charging_catalog_exposes_depleted_help_and_status_boundary():
                for boundary in (
                    "百分比", "补能求助不归此能力", "禁止归此能力",
                ))
+
+
+def test_sports_catalog_owns_generic_completed_match_results():
+    manifest_path = os.path.join(_ROOT, "agents", "info", "manifest.yaml")
+    with open(manifest_path, encoding="utf-8") as stream:
+        manifest = yaml.safe_load(stream)
+    capabilities = {row["intent"]: row for row in manifest["capabilities"]}
+    description = capabilities["info.sports"]["description"]
+
+    for boundary in ("已结束", "昨天/前天/昨晚", "那场比赛", "没说联赛或球队"):
+        assert boundary in description
+    assert "通用联网搜索不是替代路由" in description
 
 
 def test_eval_live_inventory_always_has_one_builtin_tools_agent():

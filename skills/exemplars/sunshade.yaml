@@ -1,0 +1,18 @@
+# 范例库 · sunshade 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入。
+domain: sunshade
+exemplars:
+# 用不同车控/媒体/信息域示范三步，避开对抗原句的车窗+音乐+新闻组合。
+- text: 关上遮阳帘放点音乐顺便查查股价
+  plan:
+  - agent: edge-vehicle
+    intent: sunshade.close
+  - agent: edge-media
+    intent: media.play
+  - agent: info
+    intent: info.stock
+  source: manual
+  added: '2026-08-05'
+  tags:
+  - badcase
+  note: 无标点三个明确动作各一步，不重复不补反向动作

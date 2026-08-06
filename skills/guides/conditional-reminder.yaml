@@ -34,12 +34,13 @@ knowledge: |
   『明天/后天』是**查询**的日期限定词，不属于提醒；能力描述与范例里的『明天早上八点』
   是**格式示范不是默认值**。用户没说时间就留空。
 
-  示例一——『查下明天会不会下雨，要是下雨就提醒我带伞』是条件依赖：
-  首轮只选天气查询能力，查询日期为明天，计划标为 adaptive；提醒留到观察结果后决定。
-
-  示例二——『看下今天空气质量，然后提醒我出门戴口罩』是顺承并列：
+  顺承示例——『看下今天空气质量，然后提醒我出门戴口罩』：
   同一份 simple 计划中选空气质量查询与提醒创建两个独立能力；提醒标题为「出门戴口罩」，
   因用户没说时间，time_text 留空。
+few_shots:
+  # 首轮结构必须可模仿：只查条件前件，后件留给 observation replan。
+  - user: 先看看今晚会不会降温，若降温就叫我加件衣服
+    plan: {"complexity":"adaptive","steps":[{"id":"s1","agent_id":"info","intent":"info.weather","slots":{"date":"今晚"},"depends_on":[],"slot_refs":{}}]}
 golden:
   # expect_not 是这条知识的另一半：条件句首轮绝不能把提醒无条件排进计划；
   # expect_complexity 是核心主张本身——条件依赖必须 adaptive（看结果再决定）
@@ -75,4 +76,4 @@ golden:
     expect_intents: ["info.air_quality|info.weather"]
     expect_not: [reminder.create]
 owner: orchestrator
-version: 4
+version: 5

@@ -358,3 +358,13 @@ exemplars:
   tags:
   - badcase
   note: 泛指 + 过去时，此前落 info.search
+# 第一条泛指过去赛果已被注入仍有跨进程方差；再补一个不同时态/问法的非语料变体。
+- text: 前天那场球赛最后谁拿下了
+  plan:
+  - agent: info
+    intent: info.sports
+  source: manual
+  added: '2026-08-05'
+  tags:
+  - badcase
+  note: 泛指 + 过去赛果的第二个非原句形态

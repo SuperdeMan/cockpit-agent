@@ -207,6 +207,51 @@ def test_conditional_reminder_guide_demonstrates_the_replan_observation_contract
     assert "明天要是下雨就提醒我带伞" not in guide.knowledge
 
 
+def test_conditional_reminder_guide_demonstrates_initial_adaptive_shape():
+    """Prose alone did not reliably preserve the deferred branch in fresh processes."""
+    guide = next(d for d in sk.SkillStore().guides()
+                 if d.name == "conditional-reminder")
+    adaptive = []
+    for shot in guide.few_shots:
+        plan = shot.get("plan") or {}
+        steps = plan.get("steps") or []
+        intents = [step.get("intent") for step in steps]
+        if (plan.get("complexity") == "adaptive"
+                and any(intent in {"info.weather", "info.forecast"}
+                        for intent in intents)
+                and "reminder.create" not in intents):
+            adaptive.append(shot)
+
+    assert adaptive, "条件提醒缺少「首轮只查询 + adaptive」结构化 few-shot"
+    assert all(shot.get("user") != "明天要是下雨就提醒我带伞"
+               for shot in adaptive), "不得复制对抗原句"
+
+
+def test_charging_guide_demonstrates_candidate_to_navigation_handoff():
+    """Finding a candidate and going there is a data handoff, not parallel intent co-occurrence."""
+    guide = next(d for d in sk.SkillStore().guides()
+                 if d.name == "charging-strategy")
+    wired = []
+    for shot in guide.few_shots:
+        steps = (shot.get("plan") or {}).get("steps") or []
+        if [step.get("intent") for step in steps] == [
+                "charging.find", "navigation.navigate_to"]:
+            wired.append(steps)
+
+    assert wired, "先找充电候选再导航缺少结构化 few-shot"
+    producer, consumer = wired[0]
+    assert consumer["depends_on"] == [producer["id"]]
+    assert consumer["slot_refs"]["destination"].startswith(
+        producer["id"] + ".data.")
+
+    repairs = [repair for repair in guide.plan_repairs
+               if repair.producer_intent == "charging.find"
+               and repair.consumer_intent == "navigation.navigate_to"]
+    assert len(repairs) == 1, "软提示外必须有声明式接线归一"
+    assert repairs[0].slot == "destination"
+    assert repairs[0].source_path == "data.items.0.name"
+
+
 def test_shop_order_flow_few_shot_demonstrates_dependency_wiring():
     """正文说「要接线」还不够：真栈会照着 few-shot 的输出骨架模仿。
 

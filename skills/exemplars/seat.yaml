@@ -1,0 +1,16 @@
+# 范例库 · seat 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入。
+domain: seat
+exemplars:
+# 无标点不会消除明确动词；避开对抗原句的空调+天气组合。
+- text: 把座椅通风开起来顺便查查今天AQI
+  plan:
+  - agent: edge-vehicle
+    intent: seat.ventilation.on
+  - agent: info
+    intent: info.air_quality
+  source: manual
+  added: '2026-08-05'
+  tags:
+  - badcase
+  note: 无标点两个明确动作仍要两步

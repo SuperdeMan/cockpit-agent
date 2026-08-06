@@ -249,6 +249,15 @@ def test_lone_named_object_is_addressed_before_it_is_clarified(monkeypatch):
     assert "addressed=true" in sys_text
 
 
+def test_mixed_negative_and_positive_command_is_still_addressed(monkeypatch):
+    """Negating one action must not reject the positive request in another clause."""
+    monkeypatch.setenv("CLARIFY_ENABLED", "on")
+    sys_text = _planner_system()
+    assert "另一个肯定请求" in sys_text
+    assert "必须 addressed=true" in sys_text
+    assert "否定只影响 steps" in sys_text
+
+
 def test_planner_system_mode_criteria_live_in_policy_skill(monkeypatch):
     """M0b Full Migration 后：四模式判据（时效/常识/深度）唯一来源=policy skill
     `freshness-and-depth`，中央 base 不得倒灌回判据文本；受话段仍恒附在 system。

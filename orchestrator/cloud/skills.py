@@ -681,7 +681,8 @@ def apply_plan_repairs(plan, text: str, skill_names: list[str] | None,
     """执行已注入 skill 的声明式窄归一，并返回可观测 effect 名单。
 
     安全边界：只连接计划里**已经存在且唯一**的生产/消费步骤；仅在声明触发词命中、
-    目标槽没有真实值也没有引用时补 `slot_refs + depends_on`。不新增 intent，不覆盖值，
+    目标槽没有真实值也没有指向已声明生产步的有效引用时，补
+    `slot_refs + depends_on`。不新增 intent，不覆盖用户真值，
     多生产者/多消费者不猜。安全、权限、确认仍由后面的硬层裁决。
     """
     effects: list[str] = []
@@ -697,7 +698,11 @@ def apply_plan_repairs(plan, text: str, skill_names: list[str] | None,
             producer, consumer = producers[0], consumers[0]
             real_value = str((getattr(consumer, "slots", None) or {}).get(repair.slot) or "").strip()
             existing_ref = str((getattr(consumer, "slot_refs", None) or {}).get(repair.slot) or "").strip()
-            if real_value or existing_ref or producer.id == consumer.id:
+            # 真栈出现过 `{"item":"item"}`：非空 token 不等于引用。声明已经
+            # 给出唯一 producer，只有指向它 `.data.*` 的值才能阻止归一；
+            # 不指向它的字符串是模型格式噪声，不是用户槽位值。
+            valid_existing_ref = existing_ref.startswith(f"{producer.id}.data.")
+            if real_value or valid_existing_ref or producer.id == consumer.id:
                 continue
             consumer.slot_refs[repair.slot] = f"{producer.id}.{repair.source_path}"
             if producer.id not in consumer.depends_on:

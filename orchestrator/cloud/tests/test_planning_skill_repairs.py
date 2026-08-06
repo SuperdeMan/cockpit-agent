@@ -13,7 +13,7 @@ from orchestrator.cloud.planning import PlanBuilder
 from tests.test_planning import MockAgent
 
 
-def _raw(*, item: str = "") -> str:
+def _raw(*, item: str = "", slot_refs: dict | None = None) -> str:
     slots = {"item": item} if item else {}
     return json.dumps({
         "addressed": True,
@@ -21,14 +21,16 @@ def _raw(*, item: str = "") -> str:
             {"id": "s1", "capability_ref": "cap_0001",
              "slots": {}, "depends_on": [], "slot_refs": {}},
             {"id": "s2", "capability_ref": "cap_0002",
-             "slots": slots, "depends_on": [], "slot_refs": {}},
+             "slots": slots, "depends_on": [],
+             "slot_refs": dict(slot_refs or {})},
         ],
     })
 
 
-def _build(monkeypatch, text: str, *, item: str = "", clipped: bool = False):
+def _build(monkeypatch, text: str, *, item: str = "", clipped: bool = False,
+           slot_refs: dict | None = None):
     async def llm(_messages):
-        return _raw(item=item)
+        return _raw(item=item, slot_refs=slot_refs)
 
     async def resolve(_query, top_k=1):
         return []
@@ -53,6 +55,27 @@ def _build(monkeypatch, text: str, *, item: str = "", clipped: bool = False):
 
 def test_declared_skill_repair_connects_existing_steps(monkeypatch):
     plan = _build(monkeypatch, "看看菜单，然后点一份招牌")
+    order = plan.steps[1]
+    assert order.depends_on == ["s1"]
+    assert order.slot_refs == {"item": "s1.data.items.0.name"}
+    assert plan.skill_effects == [
+        "shop-order-flow:dependency_slot_ref:shop.menu->shop.order.item"
+    ]
+
+
+def test_declared_skill_repair_replaces_malformed_model_ref(monkeypatch):
+    """A non-empty token is not necessarily a reference.
+
+    MiniMax once emitted ``{"item":"item","s1.data.items.0.name":""}``:
+    the old truthiness check treated ``item`` as valid and skipped the trusted
+    declaration, leaving a data-dependent order disconnected from its menu.
+    """
+    plan = _build(
+        monkeypatch,
+        "先看看菜单，再点一杯店里的招牌",
+        slot_refs={"item": "item", "s1.data.items.0.name": ""},
+    )
+
     order = plan.steps[1]
     assert order.depends_on == ["s1"]
     assert order.slot_refs == {"item": "s1.data.items.0.name"}

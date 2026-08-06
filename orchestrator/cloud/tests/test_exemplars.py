@@ -268,6 +268,40 @@ def test_nearby_public_facility_discovery_has_a_non_corpus_exemplar():
     assert all(e.text != "附近有洗手间吗" for e in rows), "不得复制 unseen 对抗原句"
 
 
+def test_unpunctuated_multi_action_has_two_and_three_step_exemplars():
+    """Missing punctuation must not collapse explicit verbs into one intent."""
+    items = ex.ExemplarStore().load()
+    punctuation = set("，。！？；、,.!?;")
+    rows = [
+        item for item in items
+        if len(item.intents()) >= 2
+        and not any(char in punctuation for char in item.text)
+    ]
+
+    assert any(len(item.intents()) == 2 for item in rows), \
+        "缺少无标点两动作范例"
+    assert any(len(item.intents()) >= 3 for item in rows), \
+        "缺少无标点三动作范例"
+    assert all(item.text not in {
+        "打开空调查一下天气",
+        "关车窗放首歌顺便看看新闻",
+    } for item in rows), "不得复制对抗原句"
+
+
+def test_generic_past_match_result_has_more_than_one_non_corpus_exemplar():
+    """One selected soft example still lost to generic search in two fresh processes."""
+    items = ex.ExemplarStore().load()
+    rows = [
+        item for item in items
+        if item.domain == "info"
+        and item.intents() == ["info.sports"]
+        and any(word in item.text for word in ("昨天", "前天", "昨晚"))
+        and any(word in item.text for word in ("那场", "比赛", "球赛", "那场球"))
+    ]
+    assert len(rows) >= 2, "泛指的过去赛果只有一条软范例，跨进程仍会抖到通用搜索"
+    assert all(item.text != "昨天那场比赛结果是多少" for item in rows)
+
+
 def test_unsupported_cabin_feature_how_to_routes_to_manual():
     """车内功能问“怎么开”但无对应车控能力时，应查说明书，不得空计划或闲聊。"""
     items = ex.ExemplarStore().load()

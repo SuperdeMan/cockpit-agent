@@ -130,6 +130,22 @@ def test_planner_prompt_checks_every_affirmative_clause_before_submit(monkeypatc
     assert "条件分支" in spy.last_system
 
 
+def test_planner_prompt_splits_unpunctuated_actions_without_inventing_inverse(monkeypatch):
+    """Clause boundaries come from explicit predicates, not punctuation alone."""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    spy = _SpyLLM(tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                                     "arguments": _ARGS_OK}]))
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    _build(builder, "打开座椅加热查一下空气质量")
+
+    assert "标点缺失不等于单意图" in spy.last_system
+    assert "按明确动词切分" in spy.last_system
+    assert "每个肯定动作恰好一个 step" in spy.last_system
+    assert "不得补出反向动作" in spy.last_system
+
+
 def test_toolcall_salvage_when_model_ignores_tool(monkeypatch):
     """模型无视工具直接文本 JSON → 同轮抢救成功，plan_mode=toolcall_salvage。"""
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
