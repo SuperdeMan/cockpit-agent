@@ -9,6 +9,15 @@ from hashlib import sha256
 import json
 from typing import Any
 
+from .intent_adversarial_trace import (
+    RAW_CAPABILITY_REF_STATUSES,
+    RAW_VALIDATION_STAGES,
+    RAW_VALIDATION_WIRE_MODES,
+    normalize_request_capability_catalog,
+    raw_capability_ref_matches_catalog,
+    raw_capability_ref_value_matches_status,
+)
+
 
 @dataclass(frozen=True)
 class WorkerSpec:
@@ -433,6 +442,23 @@ def validate_worker_bundle(
                 if role != "primary" and layer == "l3":
                     errors.append(f"{role}: {result_id} illegally contains L3 evidence")
 
+                result_catalog: tuple[tuple[str, str, str], ...] = ()
+                if layer in {"l1", "l2"}:
+                    normalized = normalize_request_capability_catalog(
+                        row.get("request_capability_catalog"))
+                    admitted = row.get("admitted_intents")
+                    if normalized is None:
+                        errors.append(
+                            f"{role}: {result_id} request_capability_catalog is invalid")
+                    else:
+                        result_catalog = normalized
+                        if (not isinstance(admitted, (list, tuple))
+                                or sorted(intent for _, _, intent in normalized)
+                                != sorted(admitted)):
+                            errors.append(
+                                f"{role}: {result_id} request_capability_catalog "
+                                "does not match admitted_intents")
+
                 repetitions = row.get("repetitions")
                 if not isinstance(repetitions, (list, tuple)):
                     errors.append(f"{role}: {result_id} repetitions must be a sequence")
@@ -496,6 +522,84 @@ def validate_worker_bundle(
                             errors.append(
                                 f"{prefix}.{field} must be a non-string sequence of strings"
                             )
+                            repetitions_valid = False
+                    repetition_catalog = result_catalog
+                    if layer in {"l1", "l2"}:
+                        normalized = normalize_request_capability_catalog(
+                            repetition.get("request_capability_catalog"))
+                        if normalized is None or normalized != result_catalog:
+                            errors.append(
+                                f"{prefix}.request_capability_catalog does not "
+                                "match result catalog")
+                            repetitions_valid = False
+                            repetition_catalog = ()
+                    raw_refs = repetition.get("raw_capability_refs")
+                    if ("raw_capability_refs" not in repetition
+                            or isinstance(raw_refs, (str, bytes))
+                            or not isinstance(raw_refs, Sequence)):
+                        errors.append(
+                            f"{prefix}.raw_capability_refs must be a non-string sequence")
+                        repetitions_valid = False
+                    else:
+                        raw_intents = repetition.get("raw_intents")
+                        for ref_index, raw_ref in enumerate(raw_refs):
+                            ref_prefix = f"{prefix}.raw_capability_refs[{ref_index}]"
+                            if not isinstance(raw_ref, Mapping):
+                                errors.append(f"{ref_prefix} must be a mapping")
+                                repetitions_valid = False
+                                continue
+                            for field in (
+                                "value", "status", "stage", "wire_mode",
+                                "resolved_agent_id", "resolved_intent",
+                            ):
+                                if not isinstance(raw_ref.get(field), str):
+                                    errors.append(f"{ref_prefix}.{field} must be a string")
+                                    repetitions_valid = False
+                            if (not isinstance(raw_ref.get("value"), str)
+                                    or len(raw_ref.get("value", "")) > 81):
+                                    errors.append(f"{ref_prefix}.value exceeds bounded identity")
+                                    repetitions_valid = False
+                            if not raw_capability_ref_value_matches_status(
+                                raw_ref.get("value"), raw_ref.get("status")
+                            ):
+                                errors.append(
+                                    f"{ref_prefix}.value/status are inconsistent")
+                                repetitions_valid = False
+                            if raw_ref.get("status") not in RAW_CAPABILITY_REF_STATUSES:
+                                errors.append(f"{ref_prefix}.status is not recognized")
+                                repetitions_valid = False
+                            if raw_ref.get("stage") not in RAW_VALIDATION_STAGES:
+                                errors.append(f"{ref_prefix}.stage is not recognized")
+                                repetitions_valid = False
+                            if raw_ref.get("wire_mode") not in RAW_VALIDATION_WIRE_MODES:
+                                errors.append(f"{ref_prefix}.wire_mode is not recognized")
+                                repetitions_valid = False
+                            if type(raw_ref.get("attempt")) is not int \
+                                    or raw_ref.get("attempt", -1) < 0:
+                                errors.append(
+                                    f"{ref_prefix}.attempt must be a non-negative integer")
+                                repetitions_valid = False
+                            raw_intent = (
+                                raw_intents[ref_index]
+                                if isinstance(raw_intents, Sequence)
+                                and not isinstance(raw_intents, (str, bytes))
+                                and ref_index < len(raw_intents)
+                                else None
+                            )
+                            if not raw_capability_ref_matches_catalog(
+                                raw_ref, raw_intent, repetition_catalog
+                            ):
+                                errors.append(
+                                    f"{ref_prefix} does not match "
+                                    "request_capability_catalog")
+                                repetitions_valid = False
+                        if (isinstance(raw_intents, Sequence)
+                                and not isinstance(raw_intents, (str, bytes))
+                                and all(isinstance(value, str) for value in raw_intents)
+                                and len(raw_refs) != len(raw_intents)):
+                            errors.append(
+                                f"{prefix}.raw_capability_refs must match "
+                                "raw_intents one-for-one")
                             repetitions_valid = False
                     if repetition.get("process_run_id") != artifact_run_id:
                         errors.append(
@@ -641,6 +745,8 @@ def validate_worker_bundle(
         )
         reference_admitted_raw = reference.get("admitted_intents")
         reference_admitted = tuple(reference_admitted_raw or ())
+        reference_catalog = normalize_request_capability_catalog(
+            reference.get("request_capability_catalog"))
         for role, row in rows:
             expected = row.get("expected")
             digest = expected.get("gold_digest") if isinstance(expected, Mapping) else None
@@ -663,6 +769,13 @@ def validate_worker_bundle(
             if tuple(row.get("admitted_intents") or ()) != reference_admitted:
                 errors.append(
                     f"{role}: {result_id} admitted_intents differs from {reference_role}"
+                )
+            if normalize_request_capability_catalog(
+                row.get("request_capability_catalog")
+            ) != reference_catalog:
+                errors.append(
+                    f"{role}: {result_id} request_capability_catalog differs "
+                    f"from {reference_role}"
                 )
             for field in ("case_id", "layer"):
                 if row.get(field) != reference.get(field):
@@ -752,6 +865,11 @@ def merge_worker_reports(
                 for intent in (row.get("raw_intents") or ())
             }
         )
+        result["raw_capability_refs"] = [
+            deepcopy(raw_ref)
+            for row in classification.outcomes
+            for raw_ref in (row.get("raw_capability_refs") or ())
+        ]
         result["raw_observed"] = bool(classification.outcomes) and all(
             row.get("raw_observed") is True for row in classification.outcomes
         )

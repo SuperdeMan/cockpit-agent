@@ -18,11 +18,29 @@ from eval_intent_adversarial import (  # noqa: E402
 )
 from support.intent_adversarial_contract import (  # noqa: E402
     AdversarialCase, CaseTurn, IntentGroup, PlanExpectation, RelationSpec,
-    SuiteConfig, TurnExpectation,
+    SuiteConfig, TurnExpectation, canonical_text, load_cases,
+    validate_cohort_isolation,
 )
 from support.intent_adversarial_report import BaselineEligibility  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _raw_ref():
+    return {
+        "value": "cap_0001",
+        "status": "admitted",
+        "stage": "build",
+        "attempt": 0,
+        "wire_mode": "json",
+        "resolved_agent_id": "info",
+        "resolved_intent": "info.weather",
+    }
+
+
+def _request_catalog():
+    return ({"ref": "cap_0001", "agent_id": "info",
+             "intent": "info.weather"},)
 
 
 def _suite(statuses, live_statuses):
@@ -49,6 +67,29 @@ def test_default_is_offline_l0_discovery():
     assert args.layer == "l0"
     assert args.live is False
     assert args.retrieval_state == "warm"
+
+
+def test_static_planner_prompt_substring_participates_in_cohort_isolation_without_format_contract(
+        monkeypatch):
+    from orchestrator.cloud import planning
+
+    marker = "仅存在于基础提示词的泄漏句"
+    monkeypatch.setattr(planning, "_PLANNER_BASE", f"前缀较长示例{marker}后缀仍有内容")
+    cases = [_case(
+        "prompt.leak", cohort="unseen_transfer",
+        turns=(CaseTurn(utterance=marker, context={}, expected=TurnExpectation()),),
+    )]
+
+    utterances = cli.knowledge_utterances(cases)
+    assert canonical_text(marker) in utterances
+    assert validate_cohort_isolation(cases, utterances)
+
+
+def test_current_unseen_inputs_do_not_appear_verbatim_in_any_injected_asset():
+    cases = load_cases(ROOT / "test" / "eval_corpus" / "intent_adversarial" / "cases")
+    errors = validate_cohort_isolation(cases, cli.knowledge_utterances(cases))
+
+    assert not [row for row in errors if "literally present" in row]
 
 
 def test_worker_arguments_are_hidden_and_require_a_complete_identity(capsys):
@@ -1447,6 +1488,7 @@ def _green_result(unit):
                     "provenance": ("authored",)},
         metrics={"exact_plan_set": 1.0}, expected={}, actual={},
         admitted_intents=("info.weather",), actual_intents=("info.weather",),
+        request_capability_catalog=_request_catalog(),
         assertions=(), repetitions=({"passed": True},))
 
 
@@ -1462,6 +1504,8 @@ def _trusted_worker_artifact(spec, run_id, result_id="only.one@l1", *,
         "signature": "pass",
         "dangerous": False,
         "raw_intents": ["info.weather"],
+        "raw_capability_refs": [_raw_ref()],
+        "request_capability_catalog": list(_request_catalog()),
         "raw_observed": True,
         "validation_observed": True,
         "actual_intents": ["info.weather"],
@@ -1496,9 +1540,15 @@ def _trusted_worker_artifact(spec, run_id, result_id="only.one@l1", *,
                 "layer": layer,
                 "expected": {"gold_digest": "gold"},
                 "admitted_intents": ["info.weather"],
+                "request_capability_catalog": list(_request_catalog()),
                 "passed": True,
                 "repeat_status": "pass",
                 "raw_intents": ["info.weather"],
+                "raw_capability_refs": [
+                    dict(raw_ref)
+                    for repetition in repetitions
+                    for raw_ref in repetition["raw_capability_refs"]
+                ],
                 "actual_intents": ["info.weather"],
                 "raw_observed": True,
                 "validation_observed": True,
@@ -1530,7 +1580,9 @@ def test_parent_process_summary_is_derived_from_specs_artifacts_and_samples():
     repetitions = tuple(
         {"process_run_id": run_id, "sample_index": index,
          "passed": True, "signature": "pass", "dangerous": False,
-         "raw_intents": ("info.weather",), "raw_observed": True,
+         "raw_intents": ("info.weather",), "raw_capability_refs": (_raw_ref(),),
+         "request_capability_catalog": _request_catalog(),
+         "raw_observed": True,
          "validation_observed": True, "actual_intents": ("info.weather",),
          "plan_from_fallback": False}
         for run_id in ("run-primary", "run-corroboration")
@@ -1539,6 +1591,11 @@ def test_parent_process_summary_is_derived_from_specs_artifacts_and_samples():
     result = cli.replace(
         _green_result("only.one@l1"), repetitions=repetitions,
         raw_intents=("info.weather",), raw_observed=True,
+        raw_capability_refs=tuple(
+            dict(raw_ref)
+            for repetition in repetitions
+            for raw_ref in repetition["raw_capability_refs"]),
+        request_capability_catalog=_request_catalog(),
         validation_observed=True)
     expected = {
         "l0": (), "l1": ("only.one@l1",), "l2": (), "l3": ()}
@@ -1596,6 +1653,7 @@ def test_process_summary_does_not_require_raw_channels_from_l0_or_l3():
         repetitions=({"process_run_id": "run-primary", "sample_index": 0,
                       "passed": True, "signature": "pass", "dangerous": False,
                       "raw_intents": (), "raw_observed": False,
+                      "raw_capability_refs": (),
                       "validation_observed": False, "actual_intents": (),
                       "plan_from_fallback": False},))
     expected = {
@@ -1700,12 +1758,19 @@ def _formal_writer_report():
             "process_run_id": run_id, "sample_index": sample_index,
             "passed": True, "signature": "pass", "dangerous": False,
             "raw_intents": ("info.weather",), "raw_observed": True,
+            "raw_capability_refs": (_raw_ref(),),
+            "request_capability_catalog": _request_catalog(),
             "validation_observed": True, "actual_intents": ("info.weather",),
             "plan_from_fallback": False,
         } for run_id in runs[layer] for sample_index in range(3))
         results.append(cli.replace(
             _green_result(f"formal-{layer}@{layer}"), repetitions=repetitions,
             raw_intents=("info.weather",), raw_observed=True,
+            raw_capability_refs=tuple(
+                dict(raw_ref)
+                for repetition in repetitions
+                for raw_ref in repetition["raw_capability_refs"]),
+            request_capability_catalog=_request_catalog(),
             validation_observed=True))
     meta = {
         "suite": "gate", "layer": "all", "retrieval_state": "warm",
@@ -1948,6 +2013,7 @@ def test_l3_result_exposes_the_claim_each_journey_is_allowed_to_prove(monkeypatc
         "process_run_id": "run-l3",
         "sample_index": 0,
         "raw_intents": (),
+        "raw_capability_refs": (),
         "raw_observed": False,
         "validation_observed": False,
         "actual_intents": (),
@@ -2146,7 +2212,7 @@ def test_l1_main_entry_keeps_replan_trace_out_of_build_pass(monkeypatch):
     replan_intent = ("deep-research", "research.run")
     replies = iter([
         json.dumps({
-            "goal": "weather then outing", "steps": [
+            "complexity": "adaptive", "goal": "weather then outing", "steps": [
                 {"id": "s1", "capability_ref": refs[build_intent], "slots": {},
                  "depends_on": [], "slot_refs": {}}],
         }),
@@ -2210,7 +2276,20 @@ def test_l1_malformed_empty_steps_cannot_report_raw_zero_with_declared_fallback(
 
     assert outcome.plan_from_fallback is True
     assert outcome.raw_observed is True
-    assert outcome.raw_intents == ("__invalid_capability_reference__",)
+    assert outcome.raw_intents == (
+        "__invalid_capability_reference__",
+        "__invalid_capability_reference__",
+    )
+    assert outcome.raw_capability_refs == (
+        {"value": "<malformed-steps:list-required>", "status": "malformed_steps",
+         "stage": "build", "attempt": 0, "wire_mode": "json",
+         "resolved_agent_id": "",
+         "resolved_intent": "__invalid_capability_reference__"},
+        {"value": "<malformed-steps:list-required>", "status": "malformed_steps",
+         "stage": "build", "attempt": 1, "wire_mode": "json",
+         "resolved_agent_id": "",
+         "resolved_intent": "__invalid_capability_reference__"},
+    )
 
 
 # ── P1-5 反向构造：relation 与可执行复现命令 ────────────────────────────
@@ -2342,9 +2421,10 @@ def test_assemble_unit_records_each_repeat_from_its_own_turn_outcome():
         False, False, True,
     ]
     assert all(set(rep) == {
-        "passed", "signature", "dangerous", "process_run_id", "sample_index",
-        "raw_intents", "raw_observed", "validation_observed", "actual_intents",
-        "plan_from_fallback",
+            "passed", "signature", "dangerous", "process_run_id", "sample_index",
+            "raw_intents", "raw_capability_refs", "request_capability_catalog",
+            "raw_observed",
+        "validation_observed", "actual_intents", "plan_from_fallback",
     } for rep in row.repetitions)
     json_rows = json.loads(json.dumps(row.repetitions))
     assert json_rows[1]["raw_intents"] == ["does.not.exist", "info.weather"]

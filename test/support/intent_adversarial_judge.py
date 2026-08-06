@@ -532,12 +532,13 @@ def judge_relation(spec, base_support, variant: DecisionSnapshot, *,
 
     | 场合 | 槽位该不该相同 | 断言 |
     |---|---|---|
-    | `clause_commute`（同样的词换顺序） | **该** | always |
+    | `clause_commute`（同样的词换顺序） | 默认**该**；仅审计过的下游等价恢复可例外 | 默认 `exact`；gold 可显式 `route_only` |
     | `invariant` 且 gold 显式声明 `slot_policy: subset` | **该**（有来源证据时守历史串味） | on |
     | `invariant` 未声明槽位策略 | 不该猜（模型补默认槽位不等于历史串味） | off |
 
-    这不是放宽：`cp.reminder-weather.swapped` 的「明天早上八点」仍由 `clause_commute`
-    的槽位断言抓住（§10.12 那次裁定的成果一条不丢），而 `route_flip` 反而**变严**了。
+    这不是全局放宽：`cp.reminder-weather.swapped` 的「明天早上八点」仍由默认 `exact`
+    槽位断言抓住；只有 gold 明示 `route_only` 的已审计能力跳过槽位逐字比较，而
+    `route_flip` 反而**变严**了。
 
     退化性质：首跑每边各一次时 `supp(base)` 只有一个元素，判定与旧口径逐字相同。
     只有首跑失败、`_expand_failures` 把 base 与 variant 一起补到 `failure_repeats`

@@ -51,7 +51,8 @@ from support.intent_adversarial_report import (  # noqa: E402
     render_adversarial_markdown,
 )
 from support.intent_adversarial_trace import (  # noqa: E402
-    DivergenceEvidence, RecordingPlanner, RetrievalProbe, TraceSink, asset_fingerprint,
+    INVALID_CAPABILITY_REFERENCE, DivergenceEvidence, RecordingPlanner,
+    RetrievalProbe, TraceSink, asset_fingerprint,
     deterministic_divergence, divergence_candidates, first_divergence,
     probe_builder, probe_retrieval,
 )
@@ -173,6 +174,8 @@ class TurnOutcome:
     snapshot: DecisionSnapshot
     judgement: Any
     raw_intents: tuple[str, ...] = ()
+    raw_capability_refs: tuple[dict[str, Any], ...] = ()
+    request_capability_catalog: tuple[dict[str, str], ...] = ()
     raw_observed: bool = False
     raw_planner_pass: bool | None = None
     pre_hint_pass: bool | None = None
@@ -577,7 +580,8 @@ def _turn_outcome(turn, snapshot, judgement, sink: TraceSink,
     hint = hints[-1] if hints else None
     # **幻觉看这一轮的每一次候选，首偏离只看最终那一次。** 两个问题、两份取法：
     #
-    # · `raw_intents` 取**并集** —— 模型在这一轮里有没有编过能力，编在哪一次都算编了。
+    # · `raw_intents` 保留逐 step/attempt 身份 —— 模型在哪一次编过能力都算编，且与
+    #   `raw_capability_refs` 一一对账，不能用去重掩盖丢失的诊断事件。
     # · `raw_planner_pass` 必须绑到**最后一个被接受的 build 尝试** —— 它回答的是
     #   「最终这份计划在过校验之前就已经对了吗」。取 `validations[0]` 会在第一次被拒
     #   （解析/校验没过）、第二次才成功时拿一份**被丢弃的**候选去比 gold，首偏离标签
@@ -586,16 +590,45 @@ def _turn_outcome(turn, snapshot, judgement, sink: TraceSink,
     # Replan 与 build 共享 resolver/validator seam。身份幻觉并集覆盖两者，但
     # `raw_planner_pass` 只回答初始 build 在校验前是否已正确，不能被后续 replan 污染。
     raw_intents: list[str] = []
+    raw_capability_refs: list[dict[str, Any]] = []
+    catalogs = [row.request_capability_catalog for row in validations]
+    catalog_consistent = bool(catalogs) and all(
+        catalog == catalogs[0] for catalog in catalogs[1:])
+    request_catalog = catalogs[0] if catalog_consistent else ()
+    event_shapes_complete = True
     for row in validations:
         raw_intents.extend(row.raw_intents)
+        raw_steps = row.raw_candidate.steps
+        if len(raw_steps) != len(row.raw_capability_refs):
+            event_shapes_complete = False
+        for index, ref in enumerate(row.raw_capability_refs):
+            step = raw_steps[index] if index < len(raw_steps) else None
+            raw_capability_refs.append({
+                "value": ref.value,
+                "status": ref.status,
+                "stage": row.stage,
+                "attempt": row.attempt,
+                "wire_mode": row.wire_mode,
+                "resolved_agent_id": str(step.agent_id if step else ""),
+                "resolved_intent": str(
+                    step.intent if step else
+                    INVALID_CAPABILITY_REFERENCE),
+            })
     build_validations = [row for row in validations if row.stage == "build"]
     accepted = [row for row in build_validations if row.result == "accepted"]
     final = ((accepted or build_validations)[-1] if build_validations else None)
     trace_failed = len(sink.trace_errors) > trace_errors_before
     return TurnOutcome(
         snapshot=snapshot, judgement=judgement,
-        raw_intents=tuple(dict.fromkeys(raw_intents)),
-        raw_observed=bool(validations) and not trace_failed,
+        # Keep one identity per raw step (including duplicates) so the formal
+        # evidence gate can require a one-for-one opaque-ref diagnostic event.
+        raw_intents=tuple(raw_intents),
+        raw_capability_refs=tuple(raw_capability_refs),
+        request_capability_catalog=tuple({
+            "ref": ref, "agent_id": agent_id, "intent": intent,
+        } for ref, agent_id, intent in request_catalog),
+        raw_observed=(bool(validations) and not trace_failed
+                      and catalog_consistent and event_shapes_complete),
         raw_planner_pass=(_plan_passes(turn.expected.plan, final.raw_candidate)
                           if final and assert_plan else None),
         pre_hint_pass=(_plan_passes(turn.expected.plan, hint.before)
@@ -1241,10 +1274,39 @@ def _print_selection(cases, suite, args, contract_errors) -> int:
     return 2 if (contract_errors and (args.strict or args.write_baseline)) else 0
 
 
-def knowledge_utterances() -> set[str]:
-    """注入给模型的知识里出现过的字面话术（Skill guide / Exemplar / 边界台账）。"""
+def knowledge_utterances(cases=None) -> set[str]:
+    """注入给模型的资产里出现过的字面话术（YAML 资产 + 静态 Planner 示例）。"""
     paths = sorted((ROOT / "skills").glob("**/*.yaml"))
-    return contract.load_knowledge_utterances(paths)
+    utterances = contract.load_knowledge_utterances(paths)
+
+    # 静态 prompt 与 YAML 一样会被逐轮注入。过去只扫 YAML，让基础 prompt 里逐字出现的
+    # 「华润大厦」「明天呢」仍能被标作 unseen。书名号是 prompt 中用户示例的显式边界；
+    # 动态从模块取值，使测试 monkeypatch 和未来新增常量都走同一份守卫。
+    from orchestrator.cloud import planning
+    prompt_values = []
+    for name, value in vars(planning).items():
+        if (not re.fullmatch(r"_[A-Z][A-Z0-9_]+", name)
+                or not isinstance(value, str)):
+            continue
+        prompt_values.append(value)
+        utterances.update(
+            contract.canonical_text(example)
+            for example in re.findall(r"『([^』]+)』", value)
+            if contract.canonical_text(example)
+        )
+    # Example punctuation is presentation, not a security boundary.  Compare
+    # every current case utterance against the complete canonical static prompt
+    # so an unquoted/plain-text example cannot silently remain "unseen".
+    if cases is not None:
+        prompt_blob = contract.canonical_text("\n".join(prompt_values))
+        for case in cases:
+            if case.status == "retired":
+                continue
+            for turn in case.turns:
+                canonical = contract.utterance_fingerprint(turn)
+                if canonical and canonical in prompt_blob:
+                    utterances.add(canonical)
+    return utterances
 
 
 def _gather_contract_errors(cases, suite, args) -> tuple[list[str], list[str]]:
@@ -1253,7 +1315,7 @@ def _gather_contract_errors(cases, suite, args) -> tuple[list[str], list[str]]:
     hard = contract.validate_cases(cases, active)
     # 原句泄漏按**输入事实**判：`unseen_transfer` 的话术不得字面出现在被注入的知识里。
     # family_id 只能防住「作者记得它们同源」的那一半。
-    hard += contract.validate_cohort_isolation(cases, knowledge_utterances())
+    hard += contract.validate_cohort_isolation(cases, knowledge_utterances(cases))
     exemptions = contract.load_coverage_exemptions(EXEMPTIONS_PATH, active)
     skills, exemplars = runtime.skill_and_exemplar_inventory()
     hard += contract.validate_retrieval_references(cases, skills, exemplars)
@@ -1910,6 +1972,9 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
                 process_run_id=process_run_id,
                 sample_index=index,
                 raw_intents=tuple(outcome.raw_intents),
+                raw_capability_refs=tuple(outcome.raw_capability_refs),
+                request_capability_catalog=tuple(
+                    outcome.request_capability_catalog),
                 raw_observed=outcome.raw_observed,
                 validation_observed=outcome.raw_observed,
                 actual_intents=tuple(outcome.snapshot.plan.intents),
@@ -1983,6 +2048,8 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
             admitted_intents=_admitted_intents(turn, agents),
             actual_intents=tuple(outcome.snapshot.plan.intents),
             raw_intents=outcome.raw_intents, raw_observed=outcome.raw_observed,
+            raw_capability_refs=outcome.raw_capability_refs,
+            request_capability_catalog=outcome.request_capability_catalog,
             # raw 通道与校验通道是同一个钩子（`_parse_and_validate_data`）：观测到候选
             # 就说明校验器跑过了。没有这个钩子的层（L0 / L3 / 脚本替身）两者一起为假。
             validation_observed=outcome.raw_observed,
@@ -1996,6 +2063,9 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
                                "process_run_id": o.process_run_id,
                                "sample_index": o.sample_index,
                                "raw_intents": o.raw_intents,
+                               "raw_capability_refs": o.raw_capability_refs,
+                               "request_capability_catalog":
+                                   o.request_capability_catalog,
                                "raw_observed": o.raw_observed,
                                "validation_observed": o.validation_observed,
                                "actual_intents": o.actual_intents,
@@ -2010,10 +2080,10 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
 def _admitted_intents(turn, agents) -> tuple[str, ...]:
     catalog = runtime.filter_unavailable_capabilities(
         agents, set(turn.context.get("unavailable_intents") or []))
+    from orchestrator.cloud.planning import _assemble_capability_catalog
+    request_catalog = _assemble_capability_catalog(catalog)
     return tuple(sorted(
-        str(cap.intent) for agent in catalog
-        for cap in (getattr(agent.manifest, "capabilities", None) or [])
-        if getattr(cap, "intent", "")))
+        str(intent) for _, intent in request_catalog.ref_to_pair.values()))
 
 
 def _l3_results(selected, args, l3_statuses, provider_model, *,
@@ -2076,6 +2146,7 @@ def _l3_results(selected, args, l3_statuses, provider_model, *,
                 "process_run_id": process_run_id,
                 "sample_index": 0,
                 "raw_intents": (),
+                "raw_capability_refs": (),
                 "raw_observed": False,
                 "validation_observed": False,
                 "actual_intents": (),

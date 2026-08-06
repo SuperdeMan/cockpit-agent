@@ -3,12 +3,36 @@ from copy import deepcopy
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from support.intent_adversarial_report import (  # noqa: E402
     METRICS, AdversarialResult, baseline_eligibility, build_adversarial_report,
     render_adversarial_markdown,
 )
+
+
+def _raw_ref(value="cap_0001", status="admitted"):
+    return {
+        "value": value,
+        "status": status,
+        "stage": "build",
+        "attempt": 0,
+        "wire_mode": "json",
+        "resolved_agent_id": "info" if status == "admitted" else "",
+        "resolved_intent": (
+            "info.weather" if status == "admitted"
+            else "__invalid_capability_reference__"
+        ),
+    }
+
+
+def _request_catalog(*entries):
+    pairs = entries or (("info", "info.weather"),)
+    return tuple({
+        "ref": f"cap_{index:04d}", "agent_id": agent_id, "intent": intent,
+    } for index, (agent_id, intent) in enumerate(pairs, 1))
 
 
 def _meta(**changes):
@@ -53,6 +77,11 @@ def _result(case_id, *, passed=True, repeat_status="pass", domain="info",
     metrics = {"exact_plan_set": float(passed),
                "required_group_recall": required_recall}
     metrics.update(extra_metrics or {})
+    raw_capability_refs = tuple(
+        dict(raw_ref)
+        for repetition in repetitions
+        for raw_ref in (repetition.get("raw_capability_refs") or ())
+    )
     return AdversarialResult(
         result_id=f"{case_id}@{layer}", case_id=case_id, layer=layer,
         title=case_id, passed=passed,
@@ -72,6 +101,8 @@ def _result(case_id, *, passed=True, repeat_status="pass", domain="info",
         expected={}, actual={}, admitted_intents=tuple(admitted_intents),
         actual_intents=tuple(actual_intents),
         raw_intents=tuple(actual_intents if raw_intents is None else raw_intents),
+        raw_capability_refs=raw_capability_refs,
+        request_capability_catalog=_request_catalog(),
         raw_observed=raw_observed,
         # 生产里两者同源（同一个 `_parse_and_validate_data` 钩子）：观测到候选
         # 就说明校验器跑过了。替身跟着它走，免得逃逸率分母恒为 0。
@@ -341,6 +372,138 @@ def test_formal_raw_matrix_rejects_missing_or_malformed_sample_fields():
         assert reasons.count("raw_observation_incomplete") == 1
 
 
+def test_formal_raw_matrix_rejects_missing_capability_identity_events():
+    """Semantic raw steps without their opaque wire identities are incomplete evidence."""
+    report = _formal_report()
+    assert report["results"]["formal-l1@l1"]["repetitions"][0][
+        "raw_intents"] == ("info.weather",)
+    report["results"]["formal-l1@l1"]["repetitions"][0][
+        "raw_capability_refs"] = ()
+
+    reasons = baseline_eligibility(report).reasons
+
+    assert reasons.count("raw_observation_incomplete") == 1
+
+
+def test_formal_raw_matrix_consumes_unknown_ref_status_as_hallucination():
+    report = _formal_report()
+    unknown = _raw_ref("cap_9999", "unknown")
+    report["results"]["formal-l1@l1"]["repetitions"][0][
+        "raw_capability_refs"] = (unknown,)
+    report["results"]["formal-l1@l1"]["repetitions"][0][
+        "raw_intents"] = ("__invalid_capability_reference__",)
+    report["results"]["formal-l1@l1"][
+        "raw_intents"] = ("__invalid_capability_reference__",)
+    summary = list(report["results"]["formal-l1@l1"]["raw_capability_refs"])
+    summary[0] = unknown
+    report["results"]["formal-l1@l1"]["raw_capability_refs"] = tuple(summary)
+
+    reasons = baseline_eligibility(report).reasons
+
+    assert reasons.count("planner_capability_hallucination_rate_above_zero") == 1
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("status", "invented"),
+    ("stage", "other"),
+    ("wire_mode", "magic"),
+])
+def test_formal_raw_matrix_rejects_unknown_diagnostic_enums(field, value):
+    report = _formal_report()
+    report["results"]["formal-l1@l1"]["repetitions"][0][
+        "raw_capability_refs"][0][field] = value
+    report["results"]["formal-l1@l1"]["raw_capability_refs"][0][field] = value
+
+    assert baseline_eligibility(report).reasons.count(
+        "raw_observation_incomplete") == 1
+
+
+@pytest.mark.parametrize(("value", "status"), [
+    ("", "admitted"),
+    ("   ", "admitted"),
+    ("weather.query", "admitted"),
+    ("cap_0001", "missing"),
+    ("<capability_ref:missing>", "admitted"),
+])
+def test_formal_raw_matrix_rejects_inconsistent_ref_value_and_status(value, status):
+    """A declared status cannot make an empty or mismatched identity trustworthy."""
+    report = _formal_report()
+    replacement = _raw_ref(value, status)
+    report["results"]["formal-l1@l1"]["repetitions"][0][
+        "raw_capability_refs"] = (replacement,)
+    summary = list(report["results"]["formal-l1@l1"]["raw_capability_refs"])
+    summary[0] = replacement
+    report["results"]["formal-l1@l1"]["raw_capability_refs"] = tuple(summary)
+
+    assert baseline_eligibility(report).reasons.count(
+        "raw_observation_incomplete") == 1
+
+
+@pytest.mark.parametrize(("value", "status"), [
+    ("cap_9999", "admitted"),
+    ("cap_0001", "unknown"),
+])
+def test_formal_raw_matrix_binds_status_to_request_catalog(value, status):
+    report = _formal_report()
+    replacement = _raw_ref(value, status)
+    if status == "admitted":
+        replacement.update(
+            resolved_agent_id="info", resolved_intent="info.weather")
+    report["results"]["formal-l1@l1"]["repetitions"][0][
+        "raw_capability_refs"] = (replacement,)
+    summary = list(report["results"]["formal-l1@l1"]["raw_capability_refs"])
+    summary[0] = replacement
+    report["results"]["formal-l1@l1"]["raw_capability_refs"] = tuple(summary)
+
+    assert baseline_eligibility(report).reasons.count(
+        "raw_observation_incomplete") == 1
+
+
+def test_formal_raw_matrix_rejects_swapped_legal_ref_semantics():
+    """Membership alone cannot prove which admitted capability was observed."""
+    report = _formal_report()
+    catalog = _request_catalog(("info", "info.weather"),
+                               ("nearby", "nearby.search"))
+    result = report["results"]["formal-l1@l1"]
+    result["admitted_intents"] = ("info.weather", "nearby.search")
+    result["request_capability_catalog"] = catalog
+    for repetition in result["repetitions"]:
+        repetition["request_capability_catalog"] = catalog
+    swapped = _raw_ref("cap_0002", "admitted")
+    # Keep cap_0001's resolved pair.  Membership-only validation would miss it.
+    result["repetitions"][0]["raw_capability_refs"] = (swapped,)
+    summary = list(result["raw_capability_refs"])
+    summary[0] = swapped
+    result["raw_capability_refs"] = tuple(summary)
+
+    assert baseline_eligibility(report).reasons.count(
+        "raw_observation_incomplete") == 1
+
+
+def test_formal_raw_matrix_requires_catalog_summary_and_each_sample_copy():
+    missing_summary = _formal_report()
+    missing_summary["results"]["formal-l1@l1"].pop(
+        "request_capability_catalog")
+
+    drifting_sample = _formal_report()
+    drifting_sample["results"]["formal-l2@l2"]["repetitions"][0][
+        "request_capability_catalog"] = _request_catalog(
+            ("other", "info.weather"))
+
+    for report in (missing_summary, drifting_sample):
+        assert baseline_eligibility(report).reasons.count(
+            "raw_observation_incomplete") == 1
+
+
+def test_formal_raw_matrix_keeps_duplicate_step_identity_count():
+    report = _formal_report()
+    report["results"]["formal-l1@l1"]["repetitions"][0][
+        "raw_intents"] = ("info.weather", "info.weather")
+
+    assert baseline_eligibility(report).reasons.count(
+        "raw_observation_incomplete") == 1
+
+
 def test_formal_semantics_are_recomputed_from_repetitions_not_green_caches():
     failed = _formal_report()
     failed["results"]["formal-l1@l1"]["repetitions"][0]["passed"] = False
@@ -407,7 +570,9 @@ def _formal_repetitions(layer):
     return tuple({
         "process_run_id": run_id, "sample_index": sample_index,
         "passed": True, "signature": "pass", "dangerous": False,
-        "raw_intents": ("info.weather",), "raw_observed": True,
+        "raw_intents": ("info.weather",), "raw_capability_refs": (_raw_ref(),),
+        "request_capability_catalog": _request_catalog(),
+        "raw_observed": True,
         "validation_observed": True, "actual_intents": ("info.weather",),
         "plan_from_fallback": False,
     } for run_id in runs for sample_index in range(3))
@@ -432,18 +597,23 @@ def _formal_meta(**changes):
 
 
 def _formal_report(**meta_changes):
-    return build_adversarial_report([
+    report = build_adversarial_report([
         _result("formal-l1", layer="l1", repetitions=_formal_repetitions("l1")),
         _result("formal-l2", layer="l2", repetitions=_formal_repetitions("l2")),
     ], _formal_meta(**meta_changes))
+    for result in report["results"].values():
+        result["request_capability_catalog"] = _request_catalog()
+    return report
 
 
 def test_all_repetitions_contribute_raw_escape_and_fallback_evidence():
     repetitions = (
         {"passed": True, "raw_intents": ("info.weather",),
+         "raw_capability_refs": (),
          "raw_observed": True, "validation_observed": True,
          "actual_intents": ("info.weather",), "plan_from_fallback": False},
         {"passed": True, "raw_intents": ("does.not.exist",),
+         "raw_capability_refs": (),
          "raw_observed": True, "validation_observed": True,
          "actual_intents": ("does.not.exist",), "plan_from_fallback": True},
     )

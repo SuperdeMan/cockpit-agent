@@ -1,4 +1,6 @@
-"""Hint 前后计划、资产指纹与首偏离点的回归测试（不连 LLM）。"""
+"""Hint 前后计划、资产指纹与首偏离点的回归测试（不连真实 LLM）。"""
+import asyncio
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -6,10 +8,16 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).parent))
 
 from orchestrator.cloud.models import Plan, Step  # noqa: E402
+from orchestrator.cloud.context import WorkingSet  # noqa: E402
+from orchestrator.cloud.models import PlanContext  # noqa: E402
+from orchestrator.cloud.planning import (  # noqa: E402
+    PlanBuilder, _assemble_capability_catalog, _SUBMIT_PLAN_NAME,
+)
 from orchestrator.cloud.route_hints import RouteHintEngine  # noqa: E402
 from support.intent_adversarial_trace import (  # noqa: E402
     DivergenceEvidence, TraceSink, TracingRouteHints, asset_digest,
     attach_validation_trace, first_divergence,
+    probe_builder,
 )
 
 
@@ -85,6 +93,8 @@ def test_validation_trace_keeps_raw_and_accepted_intents():
     assert sink.validations[-1].raw_intents == ("info.weather",)
     assert sink.validations[-1].raw_candidate.intents == ("info.weather",)
     assert sink.validations[-1].accepted.intents == ("info.weather",)
+    assert sink.validations[-1].request_capability_catalog == (
+        ("cap_0001", "info", "info.weather"),)
 
 
 def test_validation_trace_marks_rejected_capability_hallucination():
@@ -99,6 +109,102 @@ def test_validation_trace_marks_rejected_capability_hallucination():
     assert trace.result == "rejected"
     assert trace.raw_intents == ("__invalid_capability_reference__",)
     assert trace.accepted.intents == ()
+    assert [row.value for row in trace.raw_capability_refs] == ["cap_9999"]
+    assert [row.status for row in trace.raw_capability_refs] == ["unknown"]
+    assert trace.request_capability_catalog == (
+        ("cap_0001", "info", "info.weather"),)
+    assert trace.stage == "build"
+    assert trace.attempt == 0
+    assert trace.wire_mode == "direct"
+
+
+def test_validation_trace_identifies_toolcall_attempt_and_json_fallback(monkeypatch):
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    monkeypatch.setenv("SKILLS_MODE", "off")
+    monkeypatch.setenv("EXEMPLARS_MODE", "off")
+    capability = SimpleNamespace(
+        intent="info.weather", slots=[], description="天气", examples=[],
+        heavy=False, require_confirm=False)
+    manifest = SimpleNamespace(
+        agent_id="info", capabilities=[capability], latency_budget_ms=5000,
+        kind="agent", deployment="cloud", requires_permissions=[],
+        trust_level="first_party", route_hints=[], context_scopes=[])
+    agent = SimpleNamespace(manifest=manifest, endpoint="info:1")
+    admitted_ref = _assemble_capability_catalog([agent]).pair_to_ref[
+        ("info", "info.weather")]
+    valid = {
+        "addressed": True, "complexity": "simple", "goal": "查天气",
+        "steps": [{"id": "s1", "capability_ref": admitted_ref, "slots": {},
+                   "depends_on": [], "slot_refs": {}}],
+    }
+    invalid = {**valid, "steps": [
+        {**valid["steps"][0], "capability_ref": "cap_9999"},
+    ]}
+
+    async def llm(_messages):
+        return json.dumps(valid, ensure_ascii=False)
+
+    async def llm_tools(_messages, _tools):
+        return "", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                      "arguments": invalid}]
+
+    async def no_resolve(_query, top_k=1):
+        return []
+
+    builder = PlanBuilder(
+        llm_fn=llm, registry_fn=no_resolve, llm_tool_fn=llm_tools)
+    sink = TraceSink()
+    with probe_builder(builder, sink):
+        plan = asyncio.run(builder.build(
+            "查天气", WorkingSet(catalog=[agent]), PlanContext(session_id="t")))
+
+    assert plan.plan_mode == "toolcall_fallback"
+    assert [(row.stage, row.attempt, row.wire_mode) for row in sink.validations] == [
+        ("build", 0, "toolcall"),
+        ("build", 1, "toolcall_fallback"),
+    ]
+    assert [(ref.value, ref.status)
+            for ref in sink.validations[0].raw_capability_refs] == [
+                ("cap_9999", "unknown"),
+            ]
+
+
+def test_validation_trace_preserves_non_object_wire_identity_on_real_build(monkeypatch):
+    monkeypatch.setenv("PLANNER_TOOLCALL", "off")
+    monkeypatch.setenv("SKILLS_MODE", "off")
+    monkeypatch.setenv("EXEMPLARS_MODE", "off")
+    capability = SimpleNamespace(
+        intent="info.weather", slots=[], description="天气", examples=[],
+        heavy=False, require_confirm=False)
+    manifest = SimpleNamespace(
+        agent_id="info", capabilities=[capability], latency_budget_ms=5000,
+        kind="agent", deployment="cloud", requires_permissions=[],
+        trust_level="first_party", route_hints=[], context_scopes=[])
+    agent = SimpleNamespace(manifest=manifest, endpoint="info:1")
+
+    async def malformed_llm(_messages):
+        return "[]"
+
+    async def no_resolve(_query, top_k=1):
+        return []
+
+    builder = PlanBuilder(llm_fn=malformed_llm, registry_fn=no_resolve)
+    sink = TraceSink()
+    with probe_builder(builder, sink):
+        asyncio.run(builder.build(
+            "查天气", WorkingSet(catalog=[agent]), PlanContext(session_id="t")))
+
+    assert [(row.attempt, row.wire_mode) for row in sink.validations] == [
+        (0, "json"), (1, "json"),
+    ]
+    assert [
+        (ref.value, ref.status)
+        for row in sink.validations
+        for ref in row.raw_capability_refs
+    ] == [
+        ("<wire:not-object>", "malformed_wire"),
+        ("<wire:not-object>", "malformed_wire"),
+    ]
 
 
 def test_first_divergence_respects_execution_order():

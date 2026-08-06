@@ -338,6 +338,8 @@ class RepeatOutcome:
     process_run_id: str = ""
     sample_index: int = 0
     raw_intents: tuple[str, ...] = ()
+    raw_capability_refs: tuple[dict[str, Any], ...] = ()
+    request_capability_catalog: tuple[dict[str, str], ...] = ()
     raw_observed: bool = False
     validation_observed: bool = False
     actual_intents: tuple[str, ...] = ()

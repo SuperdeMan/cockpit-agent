@@ -30,6 +30,28 @@ FORMAL_SUITE = {
 LAYERS = ("l0", "l1", "l2", "l3")
 
 
+def _raw_ref(value="cap_0001", status="admitted") -> dict:
+    return {
+        "value": value,
+        "status": status,
+        "stage": "build",
+        "attempt": 0,
+        "wire_mode": "json",
+        "resolved_agent_id": "weather" if status == "admitted" else "",
+        "resolved_intent": (
+            "weather.query" if status == "admitted"
+            else "__invalid_capability_reference__"
+        ),
+    }
+
+
+def _request_catalog(*entries) -> list[dict]:
+    pairs = entries or (("weather", "weather.query"),)
+    return [{
+        "ref": f"cap_{index:04d}", "agent_id": agent_id, "intent": intent,
+    } for index, (agent_id, intent) in enumerate(pairs, 1)]
+
+
 def _expected_ids(**by_layer: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
     return {layer: tuple(by_layer.get(layer, ())) for layer in LAYERS}
 
@@ -56,7 +78,10 @@ def _repetition(
     raw_observed: bool = True,
     validation_observed: bool = True,
     plan_from_fallback: bool = False,
+    raw_capability_refs: tuple[dict, ...] | None = None,
 ) -> dict:
+    if raw_capability_refs is None:
+        raw_capability_refs = (_raw_ref(),) if raw_intents else ()
     return {
         "process_run_id": run_id,
         "sample_index": sample_index,
@@ -64,6 +89,8 @@ def _repetition(
         "signature": signature,
         "dangerous": dangerous,
         "raw_intents": list(raw_intents),
+        "raw_capability_refs": list(raw_capability_refs),
+        "request_capability_catalog": _request_catalog(),
         "actual_intents": list(actual_intents),
         "raw_observed": raw_observed,
         "validation_observed": validation_observed,
@@ -84,9 +111,25 @@ def _result(
     validation_observed: bool = True,
     plan_from_fallback: bool = False,
     samples_per_process: int | None = None,
+    raw_capability_refs: tuple[dict, ...] | None = None,
 ) -> dict:
     if samples_per_process is None:
         samples_per_process = 0 if layer in {"l0", "l3"} else 3
+    repetitions = [
+        _repetition(
+            run_id,
+            sample_index,
+            passed=passed,
+            signature=signature,
+            raw_intents=raw_intents,
+            actual_intents=actual_intents,
+            raw_observed=raw_observed,
+            validation_observed=validation_observed,
+            plan_from_fallback=plan_from_fallback,
+            raw_capability_refs=raw_capability_refs,
+        )
+        for sample_index in range(samples_per_process)
+    ]
     return {
         "result_id": result_id,
         "case_id": result_id,
@@ -95,9 +138,15 @@ def _result(
             "gold_digest": f"gold-{result_id}",
         },
         "admitted_intents": ["weather.query"],
+        "request_capability_catalog": _request_catalog(),
         "passed": passed,
         "repeat_status": "pass" if passed else "unstable",
         "raw_intents": list(raw_intents),
+        "raw_capability_refs": [
+            dict(raw_ref)
+            for repetition in repetitions
+            for raw_ref in repetition["raw_capability_refs"]
+        ],
         "actual_intents": list(actual_intents),
         "raw_observed": raw_observed,
         "validation_observed": validation_observed,
@@ -107,20 +156,7 @@ def _result(
             "signature": signature,
             "worker_local_pairing": True,
         },
-        "repetitions": [
-            _repetition(
-                run_id,
-                sample_index,
-                passed=passed,
-                signature=signature,
-                raw_intents=raw_intents,
-                actual_intents=actual_intents,
-                raw_observed=raw_observed,
-                validation_observed=validation_observed,
-                plan_from_fallback=plan_from_fallback,
-            )
-            for sample_index in range(samples_per_process)
-        ],
+        "repetitions": repetitions,
     }
 
 
@@ -533,6 +569,79 @@ def test_validate_worker_bundle_rejects_missing_or_malformed_repetition_fields(
     assert any(field in error for error in errors), errors
 
 
+@pytest.mark.parametrize(("value", "status"), [
+    ("", "admitted"),
+    ("   ", "admitted"),
+    ("weather.query", "unknown"),
+    ("cap_0001", "missing"),
+    ("<capability_ref:missing>", "admitted"),
+])
+def test_validate_worker_bundle_rejects_inconsistent_ref_value_and_status(
+    value, status
+):
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _artifact(specs[0], "run-primary", pid=101),
+        _artifact(specs[1], "run-corroboration", pid=102),
+    ]
+    raw_ref = artifacts[1].report["results"]["case-1"]["repetitions"][0][
+        "raw_capability_refs"][0]
+    raw_ref.update(value=value, status=status)
+    artifacts[1] = _with_reserialized_report(artifacts[1])
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
+
+    assert any("value/status" in error for error in errors), errors
+
+
+@pytest.mark.parametrize(("value", "status"), [
+    ("cap_9999", "admitted"),
+    ("cap_0001", "unknown"),
+])
+def test_validate_worker_bundle_binds_ref_status_to_request_catalog(value, status):
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _artifact(specs[0], "run-primary", pid=101),
+        _artifact(specs[1], "run-corroboration", pid=102),
+    ]
+    raw_ref = artifacts[1].report["results"]["case-1"]["repetitions"][0][
+        "raw_capability_refs"][0]
+    raw_ref.update(value=value, status=status)
+    if status != "admitted":
+        raw_ref.update(resolved_agent_id="",
+                       resolved_intent="__invalid_capability_reference__")
+    artifacts[1] = _with_reserialized_report(artifacts[1])
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
+
+    assert any("request_capability_catalog" in error for error in errors), errors
+
+
+def test_validate_worker_bundle_rejects_cross_process_catalog_drift():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _artifact(specs[0], "run-primary", pid=101),
+        _artifact(specs[1], "run-corroboration", pid=102),
+    ]
+    result = artifacts[1].report["results"]["case-1"]
+    drifted = _request_catalog(("weather-alt", "weather.query"))
+    result["request_capability_catalog"] = drifted
+    for repetition in result["repetitions"]:
+        repetition["request_capability_catalog"] = drifted
+        for raw_ref in repetition["raw_capability_refs"]:
+            raw_ref["resolved_agent_id"] = "weather-alt"
+    result["raw_capability_refs"] = [
+        dict(raw_ref)
+        for repetition in result["repetitions"]
+        for raw_ref in repetition["raw_capability_refs"]
+    ]
+    artifacts[1] = _with_reserialized_report(artifacts[1])
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
+
+    assert any("request_capability_catalog differs" in error for error in errors), errors
+
+
 def test_validate_worker_bundle_preserves_empty_intents_and_unobserved_flags():
     specs = worker_specs("l1", "gate", FORMAL_SUITE)
     artifacts = [
@@ -541,7 +650,8 @@ def test_validate_worker_bundle_preserves_empty_intents_and_unobserved_flags():
     ]
     repetition = artifacts[1].report["results"]["case-1"]["repetitions"][0]
     repetition.update(
-        raw_intents=[""],
+        raw_intents=[],
+        raw_capability_refs=[],
         actual_intents=[],
         raw_observed=False,
         validation_observed=False,
@@ -1094,7 +1204,8 @@ def test_merge_worker_reports_reclassifies_and_aggregates_sample_observations():
         "run-corroboration",
         passed=False,
         signature="wrong-domain",
-        raw_intents=("navigation.start",),
+        raw_intents=("__invalid_capability_reference__",),
+        raw_capability_refs=(_raw_ref("cap_9999", "unknown"),),
         actual_intents=("navigation.start",),
         raw_observed=False,
         validation_observed=True,
@@ -1116,7 +1227,8 @@ def test_merge_worker_reports_reclassifies_and_aggregates_sample_observations():
 
     assert result["passed"] is False
     assert result["repeat_status"] == "unstable"
-    assert result["raw_intents"] == ["navigation.start", "weather.query"]
+    assert result["raw_intents"] == [
+        "__invalid_capability_reference__", "weather.query"]
     assert result["raw_observed"] is False
     assert result["validation_observed"] is True
     assert result["actual_intents"] == ["navigation.start", "weather.query"]

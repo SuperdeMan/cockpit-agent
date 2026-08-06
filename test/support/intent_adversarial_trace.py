@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import re
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,6 +67,115 @@ class PlannerTrace:
 
 
 @dataclass(frozen=True)
+class RawCapabilityReference:
+    """One bounded capability identity exactly as it appeared on the LLM wire."""
+    value: str
+    status: str
+
+
+RAW_CAPABILITY_REF_STATUSES = frozenset({
+    "admitted", "unknown", "legacy_identity", "missing", "invalid_type",
+    "malformed_wire", "missing_steps", "malformed_steps", "malformed_step",
+})
+RAW_VALIDATION_STAGES = frozenset({"build", "replan"})
+RAW_VALIDATION_WIRE_MODES = frozenset({
+    "direct", "json", "toolcall", "toolcall_salvage", "toolcall_fallback",
+})
+INVALID_CAPABILITY_REFERENCE = "__invalid_capability_reference__"
+
+_REQUEST_CAPABILITY_REF = re.compile(r"cap_[0-9]{4,}\Z")
+_EXACT_RAW_REF_SENTINELS = {
+    "missing": "<capability_ref:missing>",
+    "malformed_wire": "<wire:not-object>",
+    "missing_steps": "<steps:missing>",
+    "malformed_steps": "<malformed-steps:list-required>",
+}
+
+
+def raw_capability_ref_value_matches_status(value: Any, status: Any) -> bool:
+    """Validate the bounded wire identity independently of its claimed status.
+
+    Formal reports are untrusted inputs.  A status label therefore cannot turn
+    a blank value, a semantic intent, or the wrong sentinel into admitted raw
+    evidence.
+    """
+    if (not isinstance(value, str) or not value.strip() or len(value) > 81
+            or status not in RAW_CAPABILITY_REF_STATUSES):
+        return False
+    if status in {"admitted", "unknown"}:
+        return _REQUEST_CAPABILITY_REF.fullmatch(value) is not None
+    exact = _EXACT_RAW_REF_SENTINELS.get(status)
+    if exact is not None:
+        return value == exact
+    if status == "legacy_identity":
+        return value.startswith("agent_id=") and (
+            ";intent=" in value or len(value) == 81
+        )
+    if status == "invalid_type":
+        return (value.startswith("<capability_ref:") and value.endswith(">")
+                and bool(value[len("<capability_ref:"):-1]))
+    if status == "malformed_step":
+        return (value.startswith("<step:") and value.endswith(">")
+                and bool(value[len("<step:"):-1]))
+    return False
+
+
+def normalize_request_capability_catalog(
+    value: Any,
+) -> tuple[tuple[str, str, str], ...] | None:
+    """Return a canonical request-local ref map or reject an untrusted shape."""
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        return None
+    normalized: list[tuple[str, str, str]] = []
+    for index, entry in enumerate(value, 1):
+        if not isinstance(entry, Mapping) or set(entry) != {
+            "ref", "agent_id", "intent"
+        }:
+            return None
+        ref = entry.get("ref")
+        agent_id = entry.get("agent_id")
+        intent = entry.get("intent")
+        if any(not isinstance(item, str) or not item.strip()
+               for item in (ref, agent_id, intent)):
+            return None
+        if ref != f"cap_{index:04d}":
+            return None
+        normalized.append((ref, agent_id, intent))
+    pairs = [(agent_id, intent) for _, agent_id, intent in normalized]
+    if pairs != sorted(set(pairs)):
+        return None
+    return tuple(normalized)
+
+
+def raw_capability_ref_matches_catalog(
+    raw_ref: Any,
+    raw_intent: Any,
+    catalog: tuple[tuple[str, str, str], ...],
+) -> bool:
+    """Bind one raw wire event to the exact catalog entry it resolved through."""
+    if not isinstance(raw_ref, Mapping) or not isinstance(raw_intent, str):
+        return False
+    resolved_agent_id = raw_ref.get("resolved_agent_id")
+    resolved_intent = raw_ref.get("resolved_intent")
+    if not isinstance(resolved_agent_id, str) or not isinstance(resolved_intent, str):
+        return False
+    by_ref = {ref: (agent_id, intent) for ref, agent_id, intent in catalog}
+    value = raw_ref.get("value")
+    status = raw_ref.get("status")
+    if status == "admitted":
+        pair = by_ref.get(value)
+        return (pair is not None
+                and pair == (resolved_agent_id, resolved_intent)
+                and raw_intent == resolved_intent)
+    if status == "unknown":
+        if value in by_ref:
+            return False
+    return (resolved_agent_id == ""
+            and resolved_intent == INVALID_CAPABILITY_REFERENCE
+            and raw_intent == INVALID_CAPABILITY_REFERENCE)
+
+
+@dataclass(frozen=True)
 class ValidationTrace:
     raw_intents: tuple[str, ...]
     raw_candidate: PlanSnapshot
@@ -72,6 +183,10 @@ class ValidationTrace:
     accepted: PlanSnapshot
     result: str
     stage: str = "build"
+    attempt: int = 0
+    wire_mode: str = "direct"
+    raw_capability_refs: tuple[RawCapabilityReference, ...] = ()
+    request_capability_catalog: tuple[tuple[str, str, str], ...] = ()
 
 
 @dataclass
@@ -243,7 +358,49 @@ def _as_sequence(value) -> tuple[str, ...]:
     return ()
 
 
-_INVALID_CAPABILITY_REFERENCE = "__invalid_capability_reference__"
+_INVALID_CAPABILITY_REFERENCE = INVALID_CAPABILITY_REFERENCE
+_RAW_REF_LIMIT = 80
+
+
+def _bounded_ref(value: str) -> str:
+    """Keep diagnostic identity useful without letting arbitrary wire text bloat reports."""
+    clean = "".join(ch if ch.isprintable() else "?" for ch in str(value))
+    return clean if len(clean) <= _RAW_REF_LIMIT else clean[:_RAW_REF_LIMIT] + "…"
+
+
+def _raw_capability_references(data: Any, ref_to_pair=None,
+                               *, allow_missing_steps: bool = False
+                               ) -> tuple[RawCapabilityReference, ...]:
+    if not isinstance(data, dict):
+        return (RawCapabilityReference("<wire:not-object>", "malformed_wire"),)
+    if "steps" not in data:
+        return (() if allow_missing_steps else
+                (RawCapabilityReference("<steps:missing>", "missing_steps"),))
+    rows = data.get("steps")
+    if not isinstance(rows, list):
+        return (RawCapabilityReference(
+            "<malformed-steps:list-required>", "malformed_steps"),)
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            out.append(RawCapabilityReference(
+                f"<step:{type(row).__name__}>", "malformed_step"))
+            continue
+        if "agent_id" in row or "intent" in row:
+            legacy = f"agent_id={row.get('agent_id', '')};intent={row.get('intent', '')}"
+            out.append(RawCapabilityReference(_bounded_ref(legacy), "legacy_identity"))
+            continue
+        if "capability_ref" not in row:
+            out.append(RawCapabilityReference("<capability_ref:missing>", "missing"))
+            continue
+        ref = row.get("capability_ref")
+        if not isinstance(ref, str):
+            out.append(RawCapabilityReference(
+                f"<capability_ref:{type(ref).__name__}>", "invalid_type"))
+            continue
+        status = "admitted" if ref_to_pair is not None and ref in ref_to_pair else "unknown"
+        out.append(RawCapabilityReference(_bounded_ref(ref), status))
+    return tuple(out)
 
 
 def _raw_identity(row, ref_to_pair=None) -> tuple[str, str]:
@@ -265,7 +422,7 @@ def _raw_identity(row, ref_to_pair=None) -> tuple[str, str]:
     return str(pair[0]), str(pair[1])
 
 
-def snapshot_raw_candidate(data: dict[str, Any], ref_to_pair=None,
+def snapshot_raw_candidate(data: Any, ref_to_pair=None,
                            *, allow_missing_steps: bool = False) -> PlanSnapshot:
     """把已解析但尚未 capability validation 的结构转成可裁判快照。
 
@@ -294,9 +451,10 @@ def snapshot_raw_candidate(data: dict[str, Any], ref_to_pair=None,
             slot_refs=_as_mapping(row_data.get("slot_refs")),
             require_confirm=bool(row_data.get("require_confirm", False)),
         ))
+    data_map = data if isinstance(data, dict) else {}
     return PlanSnapshot(
-        steps=tuple(steps), complexity=str(data.get("complexity") or "simple"),
-        goal=str(data.get("goal") or ""), skills=(), exemplars=(),
+        steps=tuple(steps), complexity=str(data_map.get("complexity") or "simple"),
+        goal=str(data_map.get("goal") or ""), skills=(), exemplars=(),
         hint_effect="", catalog_stats={})
 
 
@@ -306,9 +464,9 @@ def attach_validation_trace(builder, sink: TraceSink) -> None:
     def traced(wire, catalog, text):
         # 快照必须在生产解析**之前**取：`original` 可能就地改 `data`。
         # 但取快照本身也可能抛（`data` 是未经清洗的模型输出），所以它也在保护里。
-        raw, failed = {}, ""
+        raw, failed = None, ""
         try:
-            raw = deepcopy(wire) if isinstance(wire, dict) else {}
+            raw = deepcopy(wire)
         except Exception as exc:                       # noqa: BLE001
             failed = f"{type(exc).__name__}: {exc}"
             sink.trace_errors.append(f"{failed} | text={text[:40]!r}")
@@ -329,12 +487,16 @@ def attach_validation_trace(builder, sink: TraceSink) -> None:
         # 幻觉率分母），异常留进 `trace_errors` 由摘要打出来。
         try:
             legal_omission = (
-                "steps" not in raw
+                isinstance(raw, dict)
+                and "steps" not in raw
                 and plan is not None
                 and (getattr(plan, "addressed", True) is False
                      or bool(getattr(plan, "clarify", None)))
             )
             raw_candidate = snapshot_raw_candidate(
+                raw, catalog.ref_to_pair,
+                allow_missing_steps=legal_omission)
+            raw_refs = _raw_capability_references(
                 raw, catalog.ref_to_pair,
                 allow_missing_steps=legal_omission)
             raw_intents = tuple(step.intent for step in raw_candidate.steps
@@ -343,13 +505,22 @@ def attach_validation_trace(builder, sink: TraceSink) -> None:
                 str(cap.intent)
                 for agent in catalog.agent_map.values()
                 for cap in (getattr(agent.manifest, "capabilities", None) or [])))
+            from orchestrator.cloud.planning import _VALIDATION_TRACE_CONTEXT
+            context = dict(_VALIDATION_TRACE_CONTEXT.get() or {})
             trace = ValidationTrace(
                 raw_intents=raw_intents, admitted_intents=admitted,
                 raw_candidate=raw_candidate,
                 accepted=(snapshot_plan(plan) if plan is not None
                           else PlanSnapshot.empty()),
                 result="accepted" if plan is not None else "rejected",
-                stage=sink.validation_stage)
+                stage=str(context.get("stage") or sink.validation_stage),
+                attempt=int(context.get("attempt", 0)),
+                wire_mode=str(context.get("wire_mode") or "direct"),
+                raw_capability_refs=raw_refs,
+                request_capability_catalog=tuple(
+                    (str(ref), str(pair[0]), str(pair[1]))
+                    for ref, pair in catalog.ref_to_pair.items()
+                ))
         except Exception as exc:                       # noqa: BLE001
             sink.trace_errors.append(f"{type(exc).__name__}: {exc} | text={text[:40]!r}")
             return plan

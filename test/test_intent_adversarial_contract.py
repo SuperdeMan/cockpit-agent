@@ -31,6 +31,16 @@ def test_shop_menu_then_order_requires_the_item_to_cross_the_dependency():
     assert dep.carries == ("item",)
 
 
+def test_search_then_navigation_requires_destination_to_cross_the_dependency():
+    root = Path(__file__).parent / "eval_corpus" / "intent_adversarial" / "cases"
+    case = next(c for c in load_cases(root) if c.id == "cp.dep.poi-then-navigate")
+    dep = case.turns[0].expected.plan.dependencies[0]
+
+    assert dep.producer == ("nearby.search", "navigation.search_poi")
+    assert dep.consumer == "navigation.navigate_to"
+    assert dep.carries == ("destination",)
+
+
 def test_load_cases_parses_one_turn_and_plan_groups(tmp_path: Path):
     root = tmp_path / "corpus"
     root.mkdir()

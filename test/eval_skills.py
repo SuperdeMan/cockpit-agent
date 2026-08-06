@@ -5,7 +5,8 @@
      （召回下限，纯词法确定性）+ 反例句误召回≤半（噪声上限）+ golden expect_* 契约
      静态校验（每个 intent 必须真实存在于 agents/*/manifest.yaml ∪ 端侧意图集——
      typo 守卫，杜绝「黄金用例断言一个不存在的意图」）。
-  2) 离线-paraphrase（数据车道，信息性不 gate）：keywords 盲区召回测量
+  2) 离线-paraphrase（默认信息性；显式 per-guide floor 后该 guide 阻断）：
+     keywords 盲区召回测量
      （eval_corpus/skills_paraphrase_cases.yaml，每条都避开 keywords 字面）。
      `--retrieval both` 双档对比 + 语义阈值扫描——SKILLS_RETRIEVAL 与
      SKILL_SEM_THRESHOLD 的默认值由这份数据拍板（eval 先行），不拍脑袋。
@@ -28,13 +29,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import glob
 import json
+import math
 import os
 import re
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import yaml
 
@@ -55,6 +55,7 @@ from eval_common import (  # noqa: E402
     CaseResult, ProviderLock, build_report, diff_against_baseline,
     load_baseline, print_ci_annotations, render_markdown, write_report,
 )
+import eval_live  # noqa: E402
 from orchestrator.cloud import skills as sk  # noqa: E402
 
 _PARAPHRASE_PATH = _ROOT / "test" / "eval_corpus" / "skills_paraphrase_cases.yaml"
@@ -113,28 +114,8 @@ def _load_paraphrases() -> list[dict]:
 
 
 def _known_intents() -> set[str]:
-    """真实存在的 intent 全集：agents/*/manifest.yaml ∪ **MCP 准入清单** ∪ 端侧意图集。
-
-    ⚠ 准入清单那一路 2026-08-04 才补上，与 `test/eval_exemplars.py` 同一处盲区：
-    `mcp-bridge` 的 `capabilities: []` 是有意的，它的能力由 `servers.yaml` 在启动期
-    合成。清单只认 manifest 一种声明形态时，`shop.*` 会被判成不存在的 intent，
-    于是**整个域既写不了范例也写不了 guide golden**——两道门禁一起把它关在外面。
-    """
-    intents: set[str] = set()
-    for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "manifest.yaml"))):
-        m = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-        for c in m.get("capabilities") or []:
-            if c.get("intent"):
-                intents.add(str(c["intent"]))
-    for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "servers.yaml"))):
-        s = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-        for server in s.get("servers") or []:
-            for tool in (server or {}).get("tools") or []:
-                if (tool or {}).get("intent"):
-                    intents.add(str(tool["intent"]))
-    from edge_agents_mod.media import MEDIA_INTENTS
-    from edge_agents_mod.vehicle import VEHICLE_INTENTS
-    return intents | VEHICLE_INTENTS | MEDIA_INTENTS
+    """Reuse the one live inventory facade (static, MCP, builtin and edge)."""
+    return eval_live.known_intents()
 
 
 # ── 车道 1：检索 golden + 反例 + 契约静态校验 ────────────────────────────────
@@ -143,8 +124,10 @@ def _lane_files(root) -> list[str]:
     """文件级严格校验（2026-07-27 评审缺口 1）：loader 对坏文件是 fail-open 宽容跳过/
     回默认（运行时知识可用性优先），这里是**硬失败**——坏文件到不了主干。
     校验面：YAML 可解析、顶层是映射、必填字段齐、type 合法、目录与 type 一致、
-    priority/version 是整数、keywords 是列表、全局重名。"""
+    priority/version 是整数、semantic_min_score 是 [0,1] 有限数值、keywords 是列表、
+    全局重名。"""
     errs, seen = [], {}
+    known_intents = _known_intents()
     # 范例库（M5 P1）同处 skills/ 但不是 skill 文档，有自己的契约与门禁
     # （skills/exemplars/README.md + test/eval_exemplars.py）——目录级排除，与 loader
     # 的 skills.py::_NON_SKILL_DIRS 同源。
@@ -177,8 +160,44 @@ def _lane_files(root) -> list[str]:
             v = raw.get(field)
             if v is not None and not isinstance(v, int):
                 errs.append(f"{rel}: {field}={v!r} 必须是整数")
+        semantic_min_score = raw.get("semantic_min_score")
+        if (semantic_min_score is not None
+                and (isinstance(semantic_min_score, bool)
+                     or not isinstance(semantic_min_score, (int, float))
+                     or not math.isfinite(float(semantic_min_score))
+                     or not 0.0 <= float(semantic_min_score) <= 1.0)):
+            errs.append(
+                f"{rel}: semantic_min_score={semantic_min_score!r} "
+                "必须是 [0,1] 内有限数值")
         if raw.get("keywords") is not None and not isinstance(raw.get("keywords"), list):
             errs.append(f"{rel}: keywords 必须是列表")
+        deps = raw.get("capability_dependencies")
+        declared_dependencies: set[str] = set()
+        if deps is not None:
+            if (not isinstance(deps, list)
+                    or any(not isinstance(value, str) or not value.strip()
+                           for value in deps)):
+                errs.append(f"{rel}: capability_dependencies 必须是非空字符串列表")
+            else:
+                declared_dependencies = {value.strip() for value in deps}
+                if len(declared_dependencies) != len(deps):
+                    errs.append(f"{rel}: capability_dependencies 不得重复")
+                unknown_dependencies = sorted(declared_dependencies - known_intents)
+                if unknown_dependencies:
+                    errs.append(
+                        f"{rel}: capability_dependencies 含未知 intent "
+                        f"{unknown_dependencies}")
+        knowledge = str(raw.get("knowledge") or "")
+        mentioned = {
+            intent for intent in known_intents
+            if re.search(
+                rf"(?<![A-Za-z0-9_.-]){re.escape(intent)}(?![A-Za-z0-9_.-])",
+                knowledge)
+        }
+        undeclared = sorted(mentioned - declared_dependencies)
+        if undeclared:
+            errs.append(
+                f"{rel}: knowledge 引用的能力未列入 capability_dependencies {undeclared}")
         repairs = raw.get("plan_repairs")
         if repairs is not None and not isinstance(repairs, list):
             errs.append(f"{rel}: plan_repairs 必须是列表")
@@ -245,30 +264,20 @@ def _lane_contract(docs: list[sk.SkillDoc]) -> list[str]:
 
 def _lane_injected_wire(docs: list[sk.SkillDoc]) -> list[str]:
     """Render governed examples as an actual request and reject old LLM wire."""
-    pairs: set[tuple[str, str]] = set()
-    for doc in docs:
-        for shot in doc.few_shots:
-            plan = shot.get("plan")
-            if isinstance(plan, str):
-                try:
-                    plan = json.loads(plan)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-            for step in (plan.get("steps") if isinstance(plan, dict) else []) or []:
-                if not isinstance(step, dict):
-                    continue
-                pair = (str(step.get("agent_id") or step.get("agent") or "").strip(),
-                        str(step.get("intent") or "").strip())
-                if all(pair):
-                    pairs.add(pair)
-    refs = {pair: f"cap_{index:04d}"
-            for index, pair in enumerate(sorted(pairs), 1)}
+    from orchestrator.cloud.planning import _assemble_capability_catalog
+    refs = _assemble_capability_catalog(
+        eval_live.load_agents(include_edge=True)).pair_to_ref
     errors = []
     for doc in docs:
         policies = [doc] if doc.type == "policy" else []
         guides = [] if doc.type == "policy" else [doc]
         block, _, _ = sk.render_skills_block(
             policies, guides, budget=10_000_000, capability_refs=refs)
+        rendered = sk._render_doc(doc, refs)
+        if rendered is None or rendered not in block:
+            errors.append(
+                f"{doc.name}: capability_dependencies 未满足，文档未实际注入")
+            continue
         if _has_legacy_step_shape(block):
             errors.append(f"{doc.name}: 实际注入块仍含 agent_id+intent 旧 step 形状")
     return errors
@@ -313,7 +322,10 @@ def _hybrid_hits(text: str, guides: list[sk.SkillDoc], sem: dict[str, float],
     """离线复算 hybrid 合并（与 sk.retrieve_guides 同规则：词法恒保留，语义补位）。"""
     names = [d.name for d in sk.top_guides(text, guides, k)]
     extras = sorted(((s, d) for d in guides
-                     if (s := sem.get(d.name, 0.0)) >= thr and d.name not in names),
+                     if (s := sem.get(d.name, 0.0))
+                     >= max(thr, d.semantic_min_score
+                            if d.semantic_min_score is not None else thr)
+                     and d.name not in names),
                     key=lambda x: (-x[0], -x[1].priority, x[1].name))
     return names + [d.name for _, d in extras[: max(0, k - len(names))]]
 
@@ -381,6 +393,24 @@ def _lane_paraphrase(store: sk.SkillStore, retrieval: str) -> list[CaseResult]:
     return cases
 
 
+def _semantic_floor_failures(cases: list[CaseResult], guides) -> list[str]:
+    """Make the evidence used to tune a per-guide floor a blocking contract."""
+    configured = {
+        guide.name for guide in guides
+        if getattr(guide, "semantic_min_score", None) is not None
+    }
+    failures = []
+    for name in sorted(configured):
+        rows = [case for case in cases
+                if case.bucket == "paraphrase_hybrid" and case.expected == name]
+        if not rows:
+            failures.append(f"{name} ← <no hybrid paraphrase evidence>")
+            continue
+        failures.extend(
+            f"{name} ← {case.text}" for case in rows if not case.passed)
+    return failures
+
+
 # ── 车道 3：live planner（golden expect_* 消费方） ───────────────────────────
 
 def _make_llm_fn():
@@ -435,28 +465,8 @@ async def _registry_empty(query: str, top_k: int = 1):
 
 
 def _load_agents() -> list:
-    """真实 agents/*/manifest.yaml + 端侧车控/媒体（与生产 catalog 同构——implicit-
-    vehicle-control 等 policy 的 golden 需要 hvac.* 在能力清单上才有意义）。"""
-    from agents._sdk.manifest import load_manifest
-    agents = []
-    for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "manifest.yaml"))):
-        m = load_manifest(path)
-        agents.append(SimpleNamespace(manifest=m, endpoint=f"{m.agent_id}:0"))
-    from edge_agents_mod.media import MEDIA_INTENTS
-    from edge_agents_mod.vehicle import VEHICLE_INTENTS
-    for aid, intents, perm in (("edge-vehicle", VEHICLE_INTENTS, "vehicle.control"),
-                               ("edge-media", MEDIA_INTENTS, "media.control")):
-        caps = [SimpleNamespace(intent=i, description="", slots=[], examples=[],
-                                heavy=False, require_confirm=False)
-                for i in sorted(intents)]
-        agents.append(SimpleNamespace(
-            manifest=SimpleNamespace(
-                agent_id=aid, kind="edge_fast", deployment="edge", category="core",
-                trust_level="system", latency_budget_ms=800,
-                requires_permissions=[perm], context_scopes=[], route_hints=[],
-                capabilities=caps),
-            endpoint=f"edge://{aid}"))
-    return agents
+    """Production-shaped inventory through the shared live evaluation facade."""
+    return eval_live.load_agents(include_edge=True)
 
 
 def _live_cases(docs: list[sk.SkillDoc]) -> list[dict]:
@@ -666,7 +676,8 @@ def main() -> int:
     ap.add_argument("--retrieval", choices=["lexical", "hybrid", "both"], default=None,
                     help="离线 paraphrase 车道档位（缺省 lexical；hybrid/both 需 llm-gateway "
                          "可达）。--live 时仅在显式给出 lexical/hybrid 才覆盖 planner 检索档"
-                         "（缺省跟随 SKILLS_RETRIEVAL 环境/代码默认——live 证据应反映生产形态）")
+                         "（缺省跟随 SKILLS_RETRIEVAL 环境/代码默认——live 证据应反映生产形态）；"
+                         "显式 per-guide floor 的 paraphrase 在 hybrid/both 下阻断")
     ap.add_argument("--live", action="store_true", help="planner 意图级 golden（真栈+真 LLM）")
     ap.add_argument("--ab", action="store_true", help="live 附带 SKILLS_MODE=off 对照")
     ap.add_argument("--ablate", action="store_true",
@@ -701,12 +712,20 @@ def main() -> int:
 
     offline_retrieval = args.retrieval or "lexical"
     print(f"\n=== paraphrase 数据车道（retrieval={offline_retrieval}）===")
-    _lane_paraphrase(store, offline_retrieval)
+    paraphrase_cases = _lane_paraphrase(store, offline_retrieval)
+    semantic_floor_failures = (
+        _semantic_floor_failures(paraphrase_cases, guides)
+        if offline_retrieval in {"hybrid", "both"} else []
+    )
 
     print(f"\n召回：{sum(c.passed for c in ret_cases)}/{len(ret_cases)}；"
           f"反例误召回：{len(noise)}/{len(NEGATIVES)}")
     if failures:
         print("✗ 召回失败：\n  " + "\n  ".join(failures))
+        return 1
+    if semantic_floor_failures:
+        print("✗ per-guide 语义门槛损伤真实改写召回：\n  "
+              + "\n  ".join(semantic_floor_failures))
         return 1
     if noise:
         if len(noise) > len(NEGATIVES) // 2:

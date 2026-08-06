@@ -17,6 +17,15 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .intent_adversarial_trace import (
+    RAW_CAPABILITY_REF_STATUSES,
+    RAW_VALIDATION_STAGES,
+    RAW_VALIDATION_WIRE_MODES,
+    normalize_request_capability_catalog,
+    raw_capability_ref_matches_catalog,
+    raw_capability_ref_value_matches_status,
+)
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import eval_common  # noqa: E402
@@ -97,6 +106,10 @@ class AdversarialResult:
     # plan——不存在的能力早被删掉了，拿它算「幻觉率」结构上趋近 0。
     # `raw_observed=False` 表示这一层压根没有 raw 通道（L0），不进分母。
     raw_intents: tuple[str, ...] = ()
+    # 有界的原始 capability_ref 身份与其 build/replan、尝试号、wire 模式；用于把
+    # sentinel 还原成可诊断事实，不参与语义判定。
+    raw_capability_refs: tuple[dict[str, Any], ...] = ()
+    request_capability_catalog: tuple[dict[str, str], ...] = ()
     raw_observed: bool = False
     # 这一层到底有没有跑过 capability 校验。**逃逸率的分母是它，不是「准入清单非空」**：
     # L0 没有校验器却有准入清单，拿清单当门槛会把整个 L0 塞进逃逸率分母。
@@ -168,6 +181,8 @@ def _evidence_repetitions(result: AdversarialResult) -> tuple[dict[str, Any], ..
     """
     representative = {
         "raw_intents": result.raw_intents,
+        "raw_capability_refs": result.raw_capability_refs,
+        "request_capability_catalog": result.request_capability_catalog,
         "raw_observed": result.raw_observed,
         "validation_observed": result.validation_observed,
         "actual_intents": result.actual_intents,
@@ -503,6 +518,14 @@ def validate_formal_process_evidence(
         admitted_set = set(admitted) if admitted_valid else set()
         if not admitted_valid:
             raw_complete = False
+        result_catalog = normalize_request_capability_catalog(
+            result.get("request_capability_catalog"))
+        if result_catalog is None:
+            raw_complete = False
+            result_catalog = ()
+        elif admitted_valid and sorted(intent for _, _, intent in result_catalog) \
+                != sorted(admitted):
+            raw_complete = False
         repetitions = result.get("repetitions")
         if not isinstance(repetitions, Sequence) \
                 or isinstance(repetitions, (str, bytes)):
@@ -522,6 +545,7 @@ def validate_formal_process_evidence(
         identities: list[tuple[Any, Any]] = []
         observed_raw: set[str] = set()
         observed_actual: set[str] = set()
+        observed_raw_refs: list[dict[str, Any]] = []
         observed_fallback = False
         for repetition in repetitions:
             if not isinstance(repetition, Mapping):
@@ -541,6 +565,7 @@ def validate_formal_process_evidence(
                     or repetition.get("dangerous") is not False \
                     or not isinstance(signature, str) or not signature:
                 semantic_complete = False
+            repetition_raw_intents: tuple[str, ...] | None = None
             for name in ("raw_intents", "actual_intents"):
                 intents = repetition.get(name)
                 if not isinstance(intents, Sequence) \
@@ -550,6 +575,7 @@ def validate_formal_process_evidence(
                     continue
                 intent_set = set(intents)
                 if name == "raw_intents":
+                    repetition_raw_intents = tuple(intents)
                     observed_raw.update(intent_set)
                     if admitted_valid and intent_set - admitted_set:
                         hallucinated = True
@@ -557,6 +583,59 @@ def validate_formal_process_evidence(
                     observed_actual.update(intent_set)
                     if admitted_valid and intent_set - admitted_set:
                         escaped = True
+            repetition_catalog = normalize_request_capability_catalog(
+                repetition.get("request_capability_catalog"))
+            if repetition_catalog is None or repetition_catalog != result_catalog:
+                raw_complete = False
+                repetition_catalog = ()
+            raw_refs = repetition.get("raw_capability_refs")
+            if (not isinstance(raw_refs, Sequence)
+                    or isinstance(raw_refs, (str, bytes))):
+                raw_complete = False
+            else:
+                for ref_index, raw_ref in enumerate(raw_refs):
+                    if (not isinstance(raw_ref, Mapping)
+                            or any(not isinstance(raw_ref.get(field), str)
+                                   for field in (
+                                       "value", "status", "stage", "wire_mode",
+                                       "resolved_agent_id", "resolved_intent"))
+                            or len(str(raw_ref.get("value") or "")) > 81
+                            or type(raw_ref.get("attempt")) is not int
+                            or raw_ref.get("attempt", -1) < 0):
+                        raw_complete = False
+                        continue
+                    if (raw_ref.get("status") not in RAW_CAPABILITY_REF_STATUSES
+                            or raw_ref.get("stage") not in RAW_VALIDATION_STAGES
+                            or raw_ref.get("wire_mode") not in RAW_VALIDATION_WIRE_MODES):
+                        raw_complete = False
+                        continue
+                    if not raw_capability_ref_value_matches_status(
+                        raw_ref.get("value"), raw_ref.get("status")
+                    ):
+                        raw_complete = False
+                        continue
+                    raw_intent = (
+                        repetition_raw_intents[ref_index]
+                        if repetition_raw_intents is not None
+                        and ref_index < len(repetition_raw_intents)
+                        else None
+                    )
+                    if not raw_capability_ref_matches_catalog(
+                        raw_ref, raw_intent, repetition_catalog
+                    ):
+                        raw_complete = False
+                        continue
+                    observed_raw_refs.append(dict(raw_ref))
+                    if raw_ref.get("status") != "admitted":
+                        hallucinated = True
+                # Each distinct semantic identity came from at least one raw
+                # planner step, so it must have at least one wire-ref event.
+                # This lower bound still permits duplicate steps/retries while
+                # preventing an empty or truncated diagnostic channel from
+                # qualifying a baseline.
+                if (repetition_raw_intents is not None
+                        and len(raw_refs) != len(repetition_raw_intents)):
+                    raw_complete = False
             fallback = repetition.get("plan_from_fallback")
             if type(fallback) is not bool:
                 raw_complete = False
@@ -575,6 +654,11 @@ def validate_formal_process_evidence(
                     or any(not isinstance(intent, str) for intent in summary) \
                     or set(summary) != observed:
                 raw_complete = False
+        summary_refs = result.get("raw_capability_refs")
+        if (not isinstance(summary_refs, Sequence)
+                or isinstance(summary_refs, (str, bytes))
+                or list(summary_refs) != observed_raw_refs):
+            raw_complete = False
         if result.get("raw_observed") is not True \
                 or result.get("validation_observed") is not True \
                 or type(result.get("plan_from_fallback")) is not bool \

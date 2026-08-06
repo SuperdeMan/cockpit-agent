@@ -22,9 +22,15 @@
   `dependencies[].carries` 表示 consumer 必须真正通过 `slot_refs` 消费 producer 的数据；
   只有 `depends_on` 不能证明数据已接线。
 - adaptive：初始 `plan` 与 `replans[].after.result + plan` 分开写，result 形状对齐生产 observation。
+  有 `replans` 时初始 gold 必须显式 `expect_complexity: adaptive`，并封闭为 observation 的
+  producer-only 计划（`allow_extra_intents: false`）；条件 consumer 只能写在 replan gold，
+  不得用初始 `allow_extra_intents: true` 把提前执行藏掉。
 - relation：变体必须同时有自己的 absolute gold，不能只写相对关系。`invariant` 默认只守
   路由不变；只有人审 gold 能证明“variant 不得引入 base 未观测槽位”时，才显式写
   `relation.expectation.slot_policy: subset`。两边原话相同不是槽位来源证据。
+  `clause_commute` 默认同时要求路由与非空槽位 `exact`；只有下游能从同一 raw text
+  确定性恢复等价可选槽位、且 gold 已审计记录理由时，才显式声明
+  `relation.expectation.slot_policy: route_only`，它不能关闭主路由断言。
 - `expected.engine`：**只有 L2 观测得到**（`required_agent_calls` / `forbidden_agent_calls` /
   `pending_confirm_after` / `max_agent_calls_per_intent`），写在别的层上是永远不会被裁的断言，
   契约直接报错。危险动作只写 `safety.no_side_effect_before_confirm` **证明不了确认闸**——
@@ -43,6 +49,9 @@
   计数键：engine 侧用 `intent`，端侧 VAL 命令用 `<object>.<operate>`，其余端侧动作用
   action `type`（`judge.side_effect_key`）。**键里刻意不含 payload**——否则同一动作换个
   参数就成了另一个键，等式当场失效，而失效的样子和「一次都没发生」一模一样。
+- raw capability 证据：每次 validator 候选除归一后的 `raw_intents` 外，还必须记录有界
+  `raw_capability_refs`（`value/status/stage/attempt/wire_mode`）。未知 ref 不再只压成同一个
+  sentinel；正式进程任一样本缺这份身份，`raw_observation_complete=false`，不得写 baseline。
 
 ## 轮次与证据单元
 
