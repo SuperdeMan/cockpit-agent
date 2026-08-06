@@ -104,7 +104,9 @@ cases:
     status: stable
     tags: {attacks: [A4], mechanisms: [composition, parallel, commute], domains: [charging, nearby], layers: [l1], gate_candidate: true}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json"}
-    relation: {base_case: cp.charge-food.base, type: clause_commute, expectation: {}}
+    # nearby.search 会在 category 槽缺省时从 raw_text 确定性恢复「餐饮」（agent.py
+    # _resolve_category）；本关系裁路由组合，不把等价的可选槽表示当成换序缺陷。
+    relation: {base_case: cp.charge-food.base, type: clause_commute, expectation: {slot_policy: route_only}}
     turns:
       - input: {utterance: 看看附近有什么吃的，同时找个充电站, context: {}}
         expected:
@@ -425,6 +427,7 @@ cases:
           plan:
             required_intent_groups: [{any_of: [info.weather, info.forecast]}]
             allow_extra_intents: true
+            complexity: {allowed: [adaptive]}
           replans:
             - after:
                 result: {step_id: s1, status: ok, data: {condition: 小雨}, speech: 明天有小雨}
@@ -445,6 +448,7 @@ cases:
           plan:
             required_intent_groups: [{any_of: [charging.status, charging.plan]}]
             allow_extra_intents: true
+            complexity: {allowed: [adaptive]}
           replans:
             - after:
                 result: {step_id: s1, status: ok, data: {soc: 18, range_km: 90}, speech: 当前电量 18%，续航约 90 公里}
@@ -480,6 +484,7 @@ cases:
           plan:
             required_intent_groups: [{any_of: [safety.road_condition]}]
             allow_extra_intents: true
+            complexity: {allowed: [adaptive]}
           replans:
             - after:
                 result: {step_id: s1, status: ok, data: {congestion: heavy}, speech: 前方拥堵}
@@ -500,6 +505,7 @@ cases:
           plan:
             required_intent_groups: [{any_of: [info.alerts]}]
             allow_extra_intents: true
+            complexity: {allowed: [adaptive]}
           replans:
             - after:
                 result: {step_id: s1, status: ok, data: {alert: 暴雨黄色预警}, speech: 当前有暴雨黄色预警}
@@ -520,6 +526,7 @@ cases:
           plan:
             required_intent_groups: [{any_of: [info.stock]}]
             allow_extra_intents: true
+            complexity: {allowed: [adaptive]}
           replans:
             - after:
                 result: {step_id: s1, status: ok, data: {change_pct: -6.2}, speech: 今日下跌 6.2%}
@@ -540,6 +547,7 @@ cases:
           plan:
             required_intent_groups: [{any_of: [info.sports]}]
             allow_extra_intents: true
+            complexity: {allowed: [adaptive]}
           replans:
             - after:
                 result: {step_id: s1, status: ok, data: {kickoff: "19:35"}, speech: 今晚 19:35 开赛}
@@ -708,6 +716,7 @@ cases:
           plan:
             required_intent_groups: [{any_of: [info.weather, info.forecast]}]
             allow_extra_intents: true
+            complexity: {allowed: [adaptive]}
           replans:
             - after:
                 result: {step_id: s1, status: ok, data: {condition: 大雨}, speech: 今天有大雨}

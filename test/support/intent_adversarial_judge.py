@@ -409,6 +409,16 @@ def _canonical(value) -> str:
         return repr(value)
 
 
+def _slot_is_present(value: Any) -> bool:
+    """Whether a slot carries a semantic value rather than an omission marker.
+
+    Planner providers use both an absent key and ``null``/blank text for optional
+    values.  They are the same input to downstream agents and must not create a
+    synthetic relation difference.  Numeric zero and ``False`` remain real values.
+    """
+    return value is not None and not (isinstance(value, str) and not value.strip())
+
+
 def _plan_semantic_signature(plan: PlanSnapshot, *, with_slots: bool = True) -> tuple:
     by_id = {step.id: step.intent for step in plan.steps}
     step_signatures = []
@@ -421,7 +431,8 @@ def _plan_semantic_signature(plan: PlanSnapshot, *, with_slots: bool = True) -> 
         step_signatures.append((
             step.intent,
             tuple(sorted((key, _canonical(value))
-                         for key, value in step.slots.items()))
+                         for key, value in step.slots.items()
+                         if _slot_is_present(value)))
             if with_slots else (),
             tuple(sorted(normalized_refs)),
             step.require_confirm,
@@ -449,7 +460,8 @@ def _slot_pairs(snapshot: DecisionSnapshot) -> set[tuple[str, str, str]]:
     for plan in (snapshot.plan, *snapshot.replans):
         for step in plan.steps:
             for key, value in step.slots.items():
-                out.add((step.intent, str(key), _canonical(value)))
+                if _slot_is_present(value):
+                    out.add((step.intent, str(key), _canonical(value)))
     return out
 
 
@@ -600,9 +612,12 @@ def judge_relation(spec, base_support, variant: DecisionSnapshot, *,
     elif spec.type == "clause_commute":
         _assert(out, "relation.clause_commute", in_support,
                 sorted(map(repr, base_routes)), repr(variant_route))
-        # 换的是子句顺序不是说法，槽位必须逐字相同——§10.12 那次裁定的载体就在这一行。
-        _assert(out, "relation.clause_commute.slots", slots_in_support,
-                sorted(map(repr, base_sigs)), repr(variant_sig))
+        # 默认保持 §10.12 的严格口径：换的是子句顺序，不是说法，非空槽位应相同。
+        # 只有 gold 明示 route_only 时例外；该例外用于下游按 raw_text 确定性恢复可选槽位的
+        # 已审计能力，不能由 runner 猜测，也不能关闭主路由断言。
+        if expected.get("slot_policy", "exact") == "exact":
+            _assert(out, "relation.clause_commute.slots", slots_in_support,
+                    sorted(map(repr, base_sigs)), repr(variant_sig))
     else:
         _assert(out, "relation.unknown", False, spec.type, "unsupported")
     out.metrics["relation_pass"] = 1.0 if out.passed else 0.0

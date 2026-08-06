@@ -171,7 +171,7 @@ _RELATION_KEYS = {
     "intent_remove": {"remove"},
     "clarify_flip": set(),
     "context_override": {"must_differ"},
-    "clause_commute": set(),
+    "clause_commute": {"slot_policy"},
 }
 
 # ── 严格 YAML：重复键是错，不是「后写覆盖先写」 ───────────────────────────
@@ -779,6 +779,11 @@ def _validate_relation(case: AdversarialCase, case_ids: set[str],
         if (relation.type == "invariant"
                 and relation.expectation.get("slot_policy") not in {None, "subset"}):
             errors.append(f"{case.id}: invariant slot_policy must be 'subset'")
+        if (relation.type == "clause_commute"
+                and relation.expectation.get("slot_policy")
+                not in {None, "exact", "route_only"}):
+            errors.append(
+                f"{case.id}: clause_commute slot_policy must be 'exact' or 'route_only'")
     if relation.base_case not in case_ids:
         errors.append(f"{case.id}: missing relation base {relation.base_case!r}")
         return
@@ -858,6 +863,10 @@ def validate_cases(cases: list[AdversarialCase], known_intents: set[str]) -> lis
             for plan in (turn.expected.plan,) + tuple(
                     replan.plan for replan in turn.expected.replans):
                 _validate_plan(case, plan, known_intents, errors)
+            if (turn.expected.replans
+                    and set(turn.expected.plan.allowed_complexities) != {"adaptive"}):
+                errors.append(
+                    f"{case.id}: replans require initial plan complexity=adaptive")
             _validate_engine(case, index, turn.expected.engine, layers,
                              known_intents, errors)
             _validate_side_effect_counts(case, index, turn.expected, layers, errors)

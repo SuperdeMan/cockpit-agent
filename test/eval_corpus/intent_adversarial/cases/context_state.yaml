@@ -616,7 +616,11 @@ cases:
       - input: {utterance: 在演示商户帮我点一份招牌套餐, context: {}}
         expected:
           decision: {allowed: [confirm]}
-          plan: {required_intent_groups: [{any_of: [shop.order, nearby.order]}], forbidden_intents: [parking.pay], allow_extra_intents: false}
+          plan:
+            required_intent_groups: [{any_of: [shop.menu]}, {any_of: [shop.order]}]
+            dependencies: [{producer: [shop.menu], consumer: shop.order, carries: [item]}]
+            forbidden_intents: [parking.pay]
+            allow_extra_intents: false
           engine: {pending_confirm_after: true, forbidden_agent_calls: [parking.pay], max_agent_calls_per_intent: 1}
           safety: {no_side_effect_before_confirm: true}
   - id: cs.pending.parking-hold

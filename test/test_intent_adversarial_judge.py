@@ -386,6 +386,43 @@ def test_clause_commute_keeps_the_slot_assertion_regardless_of_utterance():
     assert named["relation.clause_commute.slots"] is False
 
 
+def test_clause_commute_treats_blank_optional_slot_as_not_provided():
+    """An empty optional value and an absent key encode the same planner input.
+
+    The full gate observed ``city=""`` on one side and no ``city`` key on the
+    other while both retained the explicit ``date=今天``.  Counting that as a
+    clause-order effect is a representation false positive; non-empty slot
+    differences remain covered by the test above.
+    """
+    spec = RelationSpec("base", "clause_commute", {})
+    support = [_slotted("info.weather", city="", date="今天")]
+    variant = _slotted("info.weather", date="今天")
+
+    judgement = judge_relation(spec, support, variant)
+
+    assert judgement.passed
+    assert _named(judgement)["relation.clause_commute.slots"] is True
+
+
+def test_clause_commute_can_explicitly_compare_routing_only_when_agent_recovers_slots():
+    """A corpus author may waive representation equality without waiving routing.
+
+    ``nearby.search`` deterministically recovers a food category from ``raw_text``
+    when the optional planner slot is absent.  For such an audited case, a missing
+    planner slot and an explicit equivalent value are the same downstream input.
+    The exception must be explicit; the default exact-slot regression above stays.
+    """
+    spec = RelationSpec(
+        "base", "clause_commute", {"slot_policy": "route_only"})
+    support = [_slotted("nearby.search", category="餐饮")]
+    variant = _slotted("nearby.search")
+
+    judgement = judge_relation(spec, support, variant)
+
+    assert judgement.passed
+    assert "relation.clause_commute.slots" not in _named(judgement)
+
+
 def test_intent_add_requires_the_intent_to_be_absent_from_every_base_run():
     """base 偶尔自己就会带上那个 intent 时，「variant 新增了它」不成立。"""
     spec = RelationSpec("base", "intent_add", {"add": ["info.weather"]})

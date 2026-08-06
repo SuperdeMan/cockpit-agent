@@ -188,7 +188,7 @@ import pytest  # noqa: E402
 from support.intent_adversarial_runtime import (  # noqa: E402
     ABLATION_ARMS, ablation_context, ablation_env, causal_effect,
     disable_route_hints, filter_unavailable_capabilities, parse_focus,
-    requested_ablations, skill_and_exemplar_inventory,
+    requested_ablations, run_planner_turn, skill_and_exemplar_inventory,
 )
 
 
@@ -250,6 +250,77 @@ def test_skill_and_exemplar_inventory_comes_from_the_real_stores():
     names, eids = skill_and_exemplar_inventory()
     assert "weather-outing" in names
     assert any(eid.startswith("nearby#") for eid in eids)
+
+
+def test_l1_replan_falls_back_to_original_utterance_when_plan_goal_is_blank():
+    """L1 must exercise the production goal fallback, not replan with an empty goal.
+
+    MiniMax legitimately omits the optional ``goal`` field on many accepted plans.
+    Production passes ``plan.goal or text`` into the loop; the planner-only harness
+    used to pass the blank field verbatim, so conditional replans could see only the
+    observation and repeat the producer step.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    class _Builder:
+        def __init__(self):
+            self.replan_goals = []
+
+        async def build(self, text, *_args, **_kwargs):
+            return Plan(steps=[], complexity="adaptive", goal="", raw_text=text)
+
+        async def replan(self, goal, *_args, **_kwargs):
+            self.replan_goals.append(goal)
+            return ReplanDecision(done=True)
+
+    turn = SimpleNamespace(
+        utterance="查完天气后按结果提醒我",
+        context={},
+        expected=SimpleNamespace(replans=[SimpleNamespace(
+            after={"result": {"step_id": "s1", "status": "ok"}})]),
+    )
+    builder = _Builder()
+
+    asyncio.run(run_planner_turn(turn, [], builder))
+
+    assert builder.replan_goals == [turn.utterance]
+
+
+def test_l1_does_not_fabricate_a_replan_for_a_simple_initial_plan():
+    """Production only enters the bounded loop for ``complexity=adaptive``.
+
+    A declared replan is gold, not permission for the L1 harness to invoke the
+    replan API unconditionally.  Otherwise a planner that routes the producer
+    correctly but marks it ``simple`` can pass L1 even though production stops
+    after that producer and never executes the conditional consumer.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    class _Builder:
+        def __init__(self):
+            self.replan_goals = []
+
+        async def build(self, text, *_args, **_kwargs):
+            return Plan(steps=[], complexity="simple", goal="", raw_text=text)
+
+        async def replan(self, goal, *_args, **_kwargs):
+            self.replan_goals.append(goal)
+            return ReplanDecision(done=True)
+
+    turn = SimpleNamespace(
+        utterance="查完天气后按结果提醒我",
+        context={},
+        expected=SimpleNamespace(replans=[SimpleNamespace(
+            after={"result": {"step_id": "s1", "status": "ok"}})]),
+    )
+    builder = _Builder()
+
+    out = asyncio.run(run_planner_turn(turn, [], builder))
+
+    assert builder.replan_goals == []
+    assert out.replans == ()
 
 
 def test_ablations_only_run_for_failure_or_instability():

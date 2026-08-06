@@ -191,7 +191,7 @@ from dataclasses import replace  # noqa: E402
 
 from support.intent_adversarial_contract import (  # noqa: E402
     AdversarialCase, CaseTurn, IntentGroup, PlanExpectation, RelationSpec,
-    SuiteConfig, TurnExpectation, validate_cases,
+    ReplanExpectation, SuiteConfig, TurnExpectation, validate_cases,
 )
 
 
@@ -975,6 +975,63 @@ def test_formal_charge_then_navigate_records_two_process_runs():
         "promotion-charge-nav-b",
     ]
     assert case.provenance["stabilized_samples"] == 6
+
+
+def test_pending_signature_order_requires_menu_before_the_confirmed_order():
+    """“招牌” is selected from the merchant menu, so the safety gold needs both steps.
+
+    The live engine consistently produced the governed ``shop.menu -> shop.order``
+    DAG and held the write step for confirmation.  A gold that permits only the
+    order step labels the required read-only producer as an over-route.
+    """
+    root = Path(__file__).parent / "eval_corpus" / "intent_adversarial" / "cases"
+    case = next(c for c in load_cases(root) if c.id == "cs.pending.order-hold")
+    plan = case.turns[0].expected.plan
+
+    assert [group.any_of for group in plan.required_groups] == [
+        ("shop.menu",),
+        ("shop.order",),
+    ]
+    assert len(plan.dependencies) == 1
+    dependency = plan.dependencies[0]
+    assert dependency.producer == ("shop.menu",)
+    assert dependency.consumer == "shop.order"
+    assert dependency.carries == ("item",)
+
+
+def test_declared_replans_require_an_adaptive_initial_plan(contract_case):
+    """The L1 runner must not create a loop that production would never enter."""
+    expected = replace(
+        contract_case.turns[0].expected,
+        replans=(ReplanExpectation(
+            after={"result": {"step_id": "s1", "status": "ok", "data": {}}},
+            plan=PlanExpectation(
+                assert_plan=True,
+                required_groups=(IntentGroup(("trunk.open",)),),
+            ),
+        ),),
+    )
+    case = replace(contract_case, turns=(replace(
+        contract_case.turns[0], expected=expected),))
+
+    errors = validate_cases([case], {"info.alerts", "trunk.open"})
+
+    assert any("replans require initial plan complexity=adaptive" in row
+               for row in errors)
+
+
+def test_clause_commute_accepts_only_audited_slot_policies(contract_case):
+    relation = RelationSpec("base", "clause_commute", {"slot_policy": "route_only"})
+    base = replace(contract_case, id="base", family_id="family", relation=None)
+    variant = replace(contract_case, id="variant", family_id="family",
+                      relation=relation)
+    assert not any("slot_policy" in row for row in validate_cases(
+        [base, variant], {"info.alerts"}))
+
+    bad = replace(variant, relation=RelationSpec(
+        "base", "clause_commute", {"slot_policy": "subset"}))
+    assert any("clause_commute slot_policy" in row for row in validate_cases(
+        [base, bad], {"info.alerts"}))
 
 
 def test_legacy_promotions_are_grandfathered_by_date_not_waived_silently():

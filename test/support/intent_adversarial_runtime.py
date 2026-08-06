@@ -458,16 +458,25 @@ async def run_planner_turn(turn, agents, builder, *, granted_permissions=None):
     plan = await builder.build(turn.utterance, working_set, ctx,
                                granted_permissions=granted_permissions)
     replans = []
-    for expected_replan in turn.expected.replans:
-        observation = dict(expected_replan.after["result"])
-        decision = await builder.replan(
-            plan.goal, [observation], catalog, ctx,
-            granted_permissions=granted_permissions,
-            working_set=working_set,
-            skill_names=list(plan.skills or []),
-            exemplar_names=list(plan.exemplars or []),
-        )
-        replans.append(snapshot_plan(decision.to_plan(plan.goal)))
+    # Mirror Engine._run_new_or_restored_plan exactly: a ``simple`` plan never
+    # enters the bounded loop.  Gold may describe the replan that should happen,
+    # but it must not grant the harness permission to manufacture that production
+    # behavior when the initial planner classification is wrong.
+    if plan.complexity == "adaptive":
+        for expected_replan in turn.expected.replans:
+            observation = dict(expected_replan.after["result"])
+            # Production enters the bounded loop with ``plan.goal or text``. Goal
+            # is optional on the model wire and is commonly blank, so preserve the
+            # same fallback or the user's conditional request disappears.
+            replan_goal = plan.goal or turn.utterance
+            decision = await builder.replan(
+                replan_goal, [observation], catalog, ctx,
+                granted_permissions=granted_permissions,
+                working_set=working_set,
+                skill_names=list(plan.skills or []),
+                exemplar_names=list(plan.exemplars or []),
+            )
+            replans.append(snapshot_plan(decision.to_plan(replan_goal)))
     return DecisionSnapshot(
         ingress="cloud", addressed=bool(plan.addressed),
         decision=("clarify" if plan.clarify and not plan.steps else
