@@ -2,6 +2,7 @@ name: conditional-reminder
 type: guide
 description: 查询结果决定后续动作的条件句（如果/要是…就…，如下雨就提醒带伞、降温就提醒加衣）只规划查询步并标 adaptive；顺承并列（查完然后提醒）两步都要
 priority: 65
+capability_dependencies: [info.weather, reminder.create]
 # 「然后提醒 / 别提醒」是 2026-08-03 补的：这条知识的职责是判「提醒该不该做」，
 # 而它此前只被条件句形态的词检回。顺承句与否定句检不回它，等于把三分判据里的两分
 # 关在门外——nq.umbrella.both 的漏步正发生在检回了却按条件句读的那一档。

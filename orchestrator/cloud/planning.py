@@ -4,6 +4,7 @@ WS3 §4。LLM 把已注册 Agent 能力当工具，输出 JSON DAG 计划。
 """
 from __future__ import annotations
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -24,6 +25,15 @@ from . import exemplars as _exemplars
 from . import skills as _skills
 
 logger = logging.getLogger("planner.planning")
+
+# Request-local metadata for non-invasive validator tracing.  The production
+# validator does not consume this value; the adversarial harness reads it only
+# while wrapping the shared ref resolver. ContextVar keeps concurrent builds
+# isolated without adding test-only fields to PlanBuilder instances.
+_VALIDATION_TRACE_CONTEXT = contextvars.ContextVar(
+    "planner_validation_trace_context",
+    default={"stage": "build", "attempt": 0, "wire_mode": "direct"},
+)
 
 
 @dataclass(frozen=True)
@@ -231,7 +241,7 @@ _PLANNER_BASE = (
     "直接执行（把空调猜成 22 度打开比多问一句糟糕得多）。\n"
     "\n"
     "== 意图拆分 ==\n"
-    "- 用户一句话包含多个意图时（如『打开空调并播放音乐』），必须拆成多个 step\n"
+    "- 用户一句话包含多个不同领域诉求时，必须按诉求拆成多个 step\n"
     "- 单意图只输出一个 step，不要过度拆分\n"
     "\n"
     "== 并行 vs 串行 ==\n"
@@ -256,10 +266,10 @@ _PLANNER_BASE = (
     "- 若用户话术含指代（如『再调高一点』『还是刚才那家』『换个颜色』），"
     "优先结合下方『当前对话焦点』（对象/位置/属性/上个地点）、再参考『最近对话』"
     "补全对象/槽位后再规划\n"
-    "- **省略式追问延续上一轮**：用户只说『明天呢』『那后天呢』『换成XX呢』这类省略句，"
+    "- **省略式追问延续上一轮**：用户只说『换个日期呢』『再往后一天呢』『换成某地呢』这类省略句，"
     "是把**最近对话里最后一轮**的问题换个时间/对象重问——必须沿用上一轮的意图与能力"
     "（『当前对话焦点』的上一轮意图可参考），只替换对应槽位；不得凭省略句里的零星词"
-    "改判到别的领域（如上一轮问比赛赛程，『明天呢』=查明天赛程，不是查天气）\n"
+    "改判到别的领域（如上一轮问比赛赛程，省略追问=换日期查赛程，不是查天气）\n"
     "- 只输出 JSON，不要任何解释\n"
     "- 无法匹配时输出 {\"steps\":[]}"
 )
@@ -276,6 +286,8 @@ _CATALOG_ALLOWLIST_SECTION = (
     "错误：step.capability_ref=\"example.semantic\"\n"
     "- 不得编造映射里没有的 ref，不得输出缺席能力，也不得替换用户真正请求但"
     "缺席的能力（包括拿清单中已有的相近能力顶替）\n"
+    "- 提交前逐个复核每个 step.capability_ref：它必须逐字等于当前映射的 key；"
+    "不存在就删除该 step，不得先编造再依赖重试修正\n"
     "- 如果用户请求只能由本轮 catalog 中缺席的能力承接，仍视为已受话，严格返回"
     " {\"addressed\":true,\"steps\":[]}；不要为了给出非空 steps 而替换或虚构能力"
 )
@@ -286,10 +298,12 @@ _CATALOG_ALLOWLIST_SECTION = (
 _ADDRESSED_SECTION = (
     "\n\n== 受话判定（必须输出）==\n"
     "输出顶层布尔字段 \"addressed\"：这句话是否是对你（车载助手）说的。\n"
-    "- true：请求/问题/指令/情绪表达（如『好烦啊』『我有点冷』也需要你回应）\n"
+    "- true：请求/问题/指令/情绪表达也需要你回应\n"
     "- false：明显不是对助手说的——乘客间对话片段（『妈你到哪了』）、自言自语、"
     "电台/视频/新闻播报腔（『本台记者报道…』『欢迎收听今天的节目』）、"
-    "称呼他人姓名的交谈（『王总我马上发您』）、无法构成请求的残句\n"
+    "称呼他人姓名的交谈（『王总我马上发您』）、无法构成请求且并非对助手发出的残句\n"
+    "- 整句只有一个名词或对象名、但明显是用户发给助手时，仍是对助手说的，必须先输出"
+    " addressed=true；动作缺失属于后续路由澄清，不得在受话判定阶段误拒绝\n"
     "- **拿不准时必须输出 true**（宁可处理，不可误丢）\n"
     "- addressed 为 false 时输出 {\"addressed\":false,\"steps\":[]}，不要输出其他内容"
 )
@@ -304,7 +318,7 @@ _CLARIFY_SECTION = (
     "\"options\":[{\"label\":\"不超过10字\",\"send_text\":\"消歧后的完整第一人称指令\"}]}}\n"
     "- options 2~3 个；send_text 必须可直接当用户新指令执行（如『帮我找附近的川菜馆』）\n"
     "- **绝大多数请求是明确的，明确请求绝不允许反问**\n"
-    "- **整句只有一个名词、动词完全缺失**（如『上海』『华润大厦』『稻香』）是典型歧义："
+    "- **整句只有一个名词、动词完全缺失**（如某个城市名、建筑名或歌曲名）是典型歧义："
     "用户给了对象却没说要拿它做什么，导航/查天气/查限行/播放都讲得通且结果差异很大"
     "——**必须澄清，不要替用户选一个动作**\n"
     "- **缺槽位不算歧义**（『导航』缺目的地→照常输出 step，由对应 agent 追问）；"
@@ -560,12 +574,16 @@ class PlanBuilder:
                 last_raw = raw or last_raw
                 if args is not None:
                     data = args
-                    parsed = self._parse_and_validate_data(args, catalog, text)
+                    parsed = self._parse_with_context(
+                        args, catalog, text, stage="build", attempt=attempt,
+                        wire_mode="toolcall")
                     mode = "toolcall"
                 else:
                     # 模型无视工具直接文本输出（或 named tool_choice 不被支持）→ 同轮抢救
                     data = self._extract_data(raw)
-                    parsed = (self._parse_and_validate_data(data, catalog, text)
+                    parsed = (self._parse_with_context(
+                              data, catalog, text, stage="build", attempt=attempt,
+                              wire_mode="toolcall_salvage")
                               if data is not None else None)
                     mode = "toolcall_salvage"
             else:
@@ -574,7 +592,9 @@ class PlanBuilder:
                                            exemplars_block=ex_block)
                 last_raw = raw or last_raw
                 data = self._extract_data(raw)
-                parsed = (self._parse_and_validate_data(data, catalog, text)
+                parsed = (self._parse_with_context(
+                          data, catalog, text, stage="build", attempt=attempt,
+                          wire_mode="toolcall_fallback" if toolcall else "json")
                           if data is not None else None)
                 mode = "toolcall_fallback" if toolcall else "json"
             # 祈使指令不接受 not_addressed（2026-07-27 真机）：置为「本次没解析出计划」，
@@ -750,7 +770,8 @@ class PlanBuilder:
             logger.warning("Replan failed: %s", exc)
             return ReplanDecision(done=True)
 
-        parsed = self._parse_and_validate_data(data, catalog, goal)
+        parsed = self._parse_with_context(
+            data, catalog, goal, stage="replan", attempt=0, wire_mode="json")
         if bool(data.get("done")):
             return ReplanDecision(done=True)
         steps = list(parsed.steps) if parsed is not None else []
@@ -791,6 +812,19 @@ class PlanBuilder:
         if data is None:
             return None
         return self._parse_and_validate_data(data, catalog, fallback_text)
+
+    def _parse_with_context(self, wire, catalog: PlannerCapabilityCatalog,
+                            fallback_text: str, *, stage: str, attempt: int,
+                            wire_mode: str) -> Plan | None:
+        """Call the one validator seam with request-local diagnostic identity."""
+        token = _VALIDATION_TRACE_CONTEXT.set({
+            "stage": str(stage), "attempt": int(attempt),
+            "wire_mode": str(wire_mode),
+        })
+        try:
+            return self._parse_and_validate_data(wire, catalog, fallback_text)
+        finally:
+            _VALIDATION_TRACE_CONTEXT.reset(token)
 
     def _parse_and_validate_data(self, wire, catalog: PlannerCapabilityCatalog,
                                  fallback_text: str) -> Plan | None:

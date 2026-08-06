@@ -240,6 +240,15 @@ def test_planner_system_clarify_gated_by_env(monkeypatch):
     assert "路由歧义澄清" in _planner_system()
 
 
+def test_lone_named_object_is_addressed_before_it_is_clarified(monkeypatch):
+    """A place/name fragment must not be rejected by the earlier addressed rule."""
+    monkeypatch.setenv("CLARIFY_ENABLED", "on")
+    sys_text = _planner_system()
+    assert "整句只有一个名词" in sys_text
+    assert "仍是对助手说的" in sys_text
+    assert "addressed=true" in sys_text
+
+
 def test_planner_system_mode_criteria_live_in_policy_skill(monkeypatch):
     """M0b Full Migration 后：四模式判据（时效/常识/深度）唯一来源=policy skill
     `freshness-and-depth`，中央 base 不得倒灌回判据文本；受话段仍恒附在 system。

@@ -2,6 +2,7 @@ name: charging-strategy
 type: guide
 description: 充电找桩与长途补能策略的分流判据（附近找桩补电/跨城长途怎么充电、路上电够不够/目的地附近充电）
 priority: 55
+capability_dependencies: [charging.find, charging.plan, charging.status, navigation.navigate_to]
 keywords: [充电, 充电桩, 充电站, 快充, 补能, 没电, 电量不, 怎么充]
 # 依据：charging-planner manifest 三能力语义 + journeys target_b B2 族校准记录
 # （「去X怎么充电」真栈探针 6/6 稳定走 charging.plan；charging 无 route_hints，路由纯 LLM
@@ -12,8 +13,11 @@ knowledge: |
   - 电量驱动的找桩（『快没电了找个快充』『电量不多了就近补个电』——话里带电量/续航
   焦虑）→ charging.find（按车辆真实电量就近推荐；快充/慢充偏好放 prefer 槽）。
   纯设施发现（『附近有没有充电站』，只是看看有什么）→ 周边发现能力（nearby）。
-  - 跨城/长途补能策略（『去惠州怎么充电』『明天去广州电够不够』）→ charging.plan 带
-  destination——要的是沿途分段策略，不是找一个桩，**不要**落成 charging.find 或导航。
+  - 一次性询问跨城/长途怎么补能（『去惠州怎么充电』『去外地要不要中途补能』）→
+  charging.plan 带 destination——要的是现在就给沿途分段策略，不是找一个桩。
+  **条件补能必须分两轮**：『先看电够不够到 X，不够再找/安排补能』的初始计划只输出
+  charging.status，且 complexity=adaptive；拿到实际续航 observation 后才 replan，决定是否
+  charging.find/charging.plan。不得在未观察电量前提前执行条件分支。
   - 导航去某地并在那附近充（『导航去深圳湾，附近找个充电桩』）→ navigation.navigate_to
   与 charging.find(destination=深圳湾) 并列两步。
   只问电量/续航本身（『现在电量多少』『还能跑多远』）→ charging.status，不要出找桩步。
@@ -43,9 +47,15 @@ golden:
     expect_intents: [charging.plan]
     expect_not: [nearby.search]
     holdout: true
+  # 条件补能：非对抗原句；初始轮只查状态，消费分支由 observation 后的 replan 决定。
+  - text: 先看当前续航能不能撑到苏州，撑不到再找地方补上
+    expect_intents: [charging.status]
+    expect_not: [charging.find, charging.plan]
+    expect_complexity: adaptive
+    holdout: true
   # 知识边界负例：设备充电绝不出车辆充电步（hint guard 挡确定性层，这条守 LLM 层）
   - text: 手机快没电了，附近找个地方充一下
     expect_not: [charging.find, charging.plan]
     holdout: true
 owner: charging-planner
-version: 1
+version: 2

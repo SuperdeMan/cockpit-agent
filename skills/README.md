@@ -52,6 +52,10 @@ skills/
   的补进剩余 top-K 空位。Embedding 经 llm-gateway `Embed`（与 registry 语义路由/memory
   同源，百炼 text-embedding-v4）。**fail-open**：Embed 不可用/超时（`SKILL_EMBED_TIMEOUT`，
   默认 1.0s）→ 该轮纯词法 + 30s 冷却，绝不堵规划。
+- 个别 guide 若有跨进程假召证据，可声明 `semantic_min_score` 抬高**自己的**语义补位门槛；
+  生效值为 `max(SKILL_SEM_THRESHOLD, semantic_min_score)`，不影响词法命中，也不抬其它
+  guide 的全局阈值。值必须是 `[0,1]` 内有限数值：运行时非法值告警并回全局门槛，CI 严格
+  车道硬失败。该字段必须由命中/误召分数共同拍板，不能凭单条 badcase 猜阈值。
 - 默认档与阈值由 paraphrase 语料阈值扫描拍板（eval 先行，2026-07-26）：thr=0.40 召回
   0/11→**11/11** 且语义通道**零新增**案例噪声；0.45 掉到 9/11；0.35 噪声 1/8→3/8。
   语料在 `test/eval_corpus/skills_paraphrase_cases.yaml`，新 guide 落库补 2-4 条真改写。
@@ -79,6 +83,9 @@ description: 充电找桩与长途补能策略的分流判据（附近找桩补�
                                 # 常驻语义索引：词法 bigram 底分 + hybrid 语义预筛都用它
 priority: 55                    # 检索同分时的定序（2026-07-27 四批起：注入与预算裁剪
                                 #   按检索相关度序——高 priority 弱相关不得挤掉强相关）
+semantic_min_score: 0.50        # 可选；仅抬高本 guide 的语义补位门槛，词法命中不受影响
+capability_dependencies:        # 可选；knowledge 直接/间接依赖的真实 intent
+  [charging.find, charging.plan] #   每轮必须各自唯一映射到当前 opaque ref，否则整条不注入
 keywords: [充电, 快充, 没电]     # 词法检索触发词（高精度显式信号，命中恒保留）
 knowledge: |                    # 注入 planner 的领域判据（markdown，预算裁剪）
   **充电分流**……
@@ -111,11 +118,19 @@ version: 1
 ```
 
 **运行时容错 vs CI 严格**（2026-07-27）：loader 对坏文件 fail-open——顶层非映射/YAML 坏
-→ 跳过；`priority: high` 等非法标量 → 回默认并告警；**重名先到者胜**；目录与 type 不一致
+→ 跳过；`priority: high` 等非法标量 → 回默认并告警；非法 `semantic_min_score` → 回全局
+语义门槛并告警；**重名先到者胜**；目录与 type 不一致
 → 按 type 生效并告警；热更新把文件改坏 → **沿用上一版好文档（last-known-good）**，删除
 文件才下线。同样这些问题在 `eval_skills` 文件级校验车道里是**硬失败**（CI 阻断）——
 运行时保知识可用性，门禁保主干整洁，坏文件到不了 main。未知顶层键（如 `few_shot`
 拼写错误）告警不拒载——静默忽略会让作者以为知识生效了。
+
+**能力感知渲染**：`knowledge` 不拥有调用权。声明在 `capability_dependencies` 中的语义
+intent 只有在本请求 catalog 中存在**唯一**映射时才会被替换为对应 opaque
+`capability_ref`；任一依赖缺席或出现多 owner 歧义，整条文档本轮不注入，并在
+`plan.skills` 记 `!capability-blocked`。再规划与 `plan_repairs` 同样忽略该标记，不能把初轮
+被挡掉的知识暗中恢复。CI 会校验依赖都是已注册 intent，且 `knowledge` 中出现的真实 intent
+全部已声明。这样 A8 能力裁剪不会出现“catalog 已删除能力，Skill 正文却继续教模型调用它”。
 
 `plan_repairs` 不是新的安全权威，也不是 route hint：它不能创建或改选 intent，只能在该
 guide **实际注入且未被 `!clipped`**、`trigger_any` 命中、生产/消费步骤各唯一、目标槽无
@@ -128,7 +143,9 @@ guide **实际注入且未被 `!clipped`**、`trigger_any` 命中、生产/消�
   1. 离线-契约与检索（**GitHub CI 阻断步** `Skill contract gate` + evolve nightly 门禁；
      2026-07-27 从 continue-on-error 观测步拆出——「跌破基线不阻塞」只适用于会漂移的
      意图基线，契约校验是确定性检查）：文件级严格校验（可解析/顶层映射/必填/type 合法
-     且与目录一致/文件名=name/priority·version 整数/keywords 列表/全局无重名）+ golden
+     且与目录一致/文件名=name/priority·version 整数/`semantic_min_score` 为 `[0,1]` 有限
+     数值/`capability_dependencies` 全部已注册且覆盖 knowledge 中的 intent/keywords 列表/
+     全局无重名）+ golden
      检回自身 + 反例噪声 ≤ 半 + **expect_\* 契约静态校验**（intent 必须真实存在于
      manifests/端侧意图集——typo 守卫）。
   2. 离线-paraphrase（数据车道，信息性）：`--retrieval both` 双档对比 + 阈值扫描。
@@ -156,8 +173,9 @@ guide **实际注入且未被 `!clipped`**、`trigger_any` 命中、生产/消�
      （缺了 CI 红），其中至少一条应在 hint 够不到的形态上（因果增益的载体）。
 - **obs 归因**：`plan.skills` 名单（cloud.planning span / obs.turn）契约——guide 记
   `mode:name@通道:分数`（`@lex:23` 词法分 / `@vec:0.52` 余弦，四批起带分——边缘语义
-  共召回的取证靠它，没有分数只能靠复跑分类），**超预算被裁记 `!clipped`**（名单绝不
-  谎称已注入）；policy 记 `mode:name`。badcase 先看名单：知识没进上下文（没检回/被裁）
+  共召回的取证靠它，没有分数只能靠复跑分类），**超预算被裁记 `!clipped`**，能力依赖
+  不齐记 `!capability-blocked`（名单绝不谎称已注入）；policy 记 `mode:name`。badcase 先看
+  名单：知识没进上下文（没检回/被裁/被能力面阻断）
   还是进了没用对（弱相关共召回干扰看 `@vec` 分数是 0.41 边缘还是 0.70 强召回）。
 - 热更新：文件加载 + mtime（v1 不动 registry schema；多实例时再议注册中心索引）。
   `SKILLS_MODE`/`SKILLS_RETRIEVAL`/阈值超时每轮实时读；`SKILL_BUDGET`/`SKILL_TOP_K`/

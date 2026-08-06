@@ -106,7 +106,8 @@ _NON_SKILL_DIRS = ("exemplars",)
 # schema 顶层键白名单（skills/README.md）：未知键=大概率拼写错误（few_shot/keyword…），
 # 静默忽略会让作者以为知识生效了——告警但不拒载（fail-open）。
 _KNOWN_KEYS = {"name", "type", "description", "knowledge", "priority",
-               "keywords", "few_shots", "plan_repairs", "golden", "owner", "version"}
+               "semantic_min_score", "capability_dependencies", "keywords",
+               "few_shots", "plan_repairs", "golden", "owner", "version"}
 _PLAN_REPAIR_KEYS = {"kind", "trigger_any", "producer_intent", "consumer_intent",
                      "slot", "source_path"}
 
@@ -130,6 +131,8 @@ class SkillDoc:
     knowledge: str
     body: str = ""                 # 静态 knowledge；few_shots 在请求时按 capability refs 渲染
     priority: int = 50
+    semantic_min_score: float | None = None  # guide 可按实测噪声抬高自己的语义补位门槛
+    capability_dependencies: tuple[str, ...] = ()  # knowledge 可引用的受治理语义能力
     keywords: tuple = ()
     few_shots: tuple = ()
     plan_repairs: tuple[PlanRepair, ...] = ()
@@ -303,6 +306,26 @@ class SkillStore:
                            path_name, field, raw_val, default)
             return default
 
+    @staticmethod
+    def _coerce_optional_unit_float(raw_val, path_name: str,
+                                    field: str) -> float | None:
+        """可选 [0,1] 浮点：运行时非法值告警并回到全局默认门槛。
+
+        字符串和 bool 都拒绝；否则 YAML 中 ``"0.5"``/``true`` 会静默改变检索行为。
+        严格 CI 车道会把同一问题升级为硬失败。
+        """
+        if raw_val is None:
+            return None
+        if (isinstance(raw_val, bool)
+                or not isinstance(raw_val, (int, float))
+                or not math.isfinite(float(raw_val))
+                or not 0.0 <= float(raw_val) <= 1.0):
+            logger.warning(
+                "skill %s 字段 %s=%r 必须是 [0,1] 内有限数值——按全局门槛处理（修文件！）",
+                path_name, field, raw_val)
+            return None
+        return float(raw_val)
+
     @classmethod
     def _parse(cls, path: Path) -> SkillDoc | None:
         try:
@@ -331,6 +354,22 @@ class SkillStore:
                            path.name, sorted(unknown))
         few_shots = tuple(s for s in (raw.get("few_shots") or []) if isinstance(s, dict))
         plan_repairs = _parse_plan_repairs(raw.get("plan_repairs"), path.name)
+        deps_value = raw.get("capability_dependencies")
+        # Missing/null means the optional field is absent.  Other falsy values
+        # (notably ``false`` and ``""``) are malformed and must not silently
+        # disable capability-aware rendering during a hot reload.
+        deps_raw = [] if deps_value is None else deps_value
+        if (not isinstance(deps_raw, list)
+                or any(not isinstance(value, str) or not value.strip()
+                       for value in deps_raw)):
+            # An invalid allowlist must not silently turn capability-aware
+            # rendering off. Skip this version; hot reload can retain its LKG.
+            logger.warning(
+                "skill %s capability_dependencies 必须是非空字符串列表——跳过",
+                path.name)
+            return None
+        capability_dependencies = tuple(dict.fromkeys(
+            value.strip() for value in deps_raw))
         # Request refs do not exist at load time.  ``body`` remains the static
         # knowledge portion; structured few-shots are rendered only at injection.
         body = knowledge
@@ -343,6 +382,9 @@ class SkillStore:
             name=name, type=stype, description=desc, knowledge=knowledge,
             body=body,
             priority=cls._coerce_int(raw.get("priority"), 50, path.name, "priority"),
+            semantic_min_score=cls._coerce_optional_unit_float(
+                raw.get("semantic_min_score"), path.name, "semantic_min_score"),
+            capability_dependencies=capability_dependencies,
             keywords=tuple(str(k) for k in kw_raw),
             few_shots=few_shots,
             plan_repairs=plan_repairs,
@@ -450,7 +492,10 @@ async def retrieve_guides(text: str, store: SkillStore, k: int = SKILL_TOP_K,
     have = {d.name for d, _, _ in pairs}
     thr = _sem_threshold()
     extras = sorted(((s, d) for d in guides
-                     if (s := sem.get(d.name, 0.0)) >= thr and d.name not in have),
+                     if (s := sem.get(d.name, 0.0))
+                     >= max(thr, d.semantic_min_score
+                            if d.semantic_min_score is not None else thr)
+                     and d.name not in have),
                     key=lambda x: (-x[0], -x[1].priority, x[1].name))
     for s, d in extras:
         if len(pairs) >= k:
@@ -461,9 +506,43 @@ async def retrieve_guides(text: str, store: SkillStore, k: int = SKILL_TOP_K,
 
 # ── 渲染 ─────────────────────────────────────────────────────────────────────
 
-def _render_doc(doc: SkillDoc, capability_refs=None) -> str:
+def _dependency_ref_map(doc: SkillDoc, capability_refs=None) -> dict[str, str] | None:
+    """Resolve every declared semantic dependency to exactly one request ref.
+
+    ``None`` means the document is blocked for this request. Multiple refs for
+    one semantic intent are also blocked: choosing an owner is a routing decision,
+    not something a knowledge renderer may guess.
+    """
+    if not doc.capability_dependencies:
+        return {}
+    if capability_refs is None:
+        return None
+    by_intent: dict[str, list[str]] = {}
+    for pair, ref in capability_refs.items():
+        if (not isinstance(pair, tuple) or len(pair) != 2
+                or not isinstance(ref, str) or not ref):
+            continue
+        by_intent.setdefault(str(pair[1]), []).append(ref)
+    resolved = {}
+    for intent in doc.capability_dependencies:
+        refs = list(dict.fromkeys(by_intent.get(intent, ())))
+        if len(refs) != 1:
+            return None
+        resolved[intent] = refs[0]
+    return resolved
+
+
+def _render_doc(doc: SkillDoc, capability_refs=None) -> str | None:
+    dependency_refs = _dependency_ref_map(doc, capability_refs)
+    if dependency_refs is None:
+        return None
+    knowledge = doc.knowledge
+    for intent, ref in dependency_refs.items():
+        knowledge = re.sub(
+            rf"(?<![A-Za-z0-9_.-]){re.escape(intent)}(?![A-Za-z0-9_.-])",
+            ref, knowledge)
     shots = _render_few_shots(doc.few_shots, capability_refs)
-    return doc.knowledge + (f"\n\n{shots}" if shots else "")
+    return knowledge + (f"\n\n{shots}" if shots else "")
 
 
 def render_skills_block(policies: list[SkillDoc], guides: list[SkillDoc],
@@ -481,11 +560,19 @@ def render_skills_block(policies: list[SkillDoc], guides: list[SkillDoc],
     used = len(parts[0])
     for d in policies:
         rendered = _render_doc(d, capability_refs)
+        if rendered is None:
+            logger.info("skill policy %s 的 capability_dependencies 本轮不完整——不注入",
+                        d.name)
+            continue
         parts.append(rendered)
         used += len(rendered)
     injected, clipped = [], []
     for d in guides:
         rendered = _render_doc(d, capability_refs)
+        if rendered is None:
+            logger.info("skill guide %s 的 capability_dependencies 本轮不完整——不注入",
+                        d.name)
+            continue
         if used + len(rendered) > budget:
             logger.info("skill %s 超预算被裁（used=%d）", d.name, used)
             clipped.append(d)
@@ -532,11 +619,20 @@ async def plan_skills(text: str, capability_refs=None) -> tuple[str, list[str], 
     if mode == "shadow":
         return mode, [f"{mode}:{d.name}{_tag(d.name)}" for d, _, _ in pairs], ""
     policies = store.policies()
+    blocked_policies = [d for d in policies
+                        if _dependency_ref_map(d, capability_refs) is None]
+    policies = [d for d in policies if d not in blocked_policies]
+    blocked_guides = [d for d, _, _ in pairs
+                      if _dependency_ref_map(d, capability_refs) is None]
+    available_guides = [d for d, _, _ in pairs if d not in blocked_guides]
     block, injected, clipped = render_skills_block(
-        policies, [d for d, _, _ in pairs], capability_refs=capability_refs)
+        policies, available_guides, capability_refs=capability_refs)
     names = [f"{mode}:{d.name}{_tag(d.name)}" for d in injected]
     names += [f"{mode}:{d.name}{_tag(d.name)}!clipped" for d in clipped]
     names += [f"{mode}:{d.name}" for d in policies]
+    names += [f"{mode}:{d.name}{_tag(d.name)}!capability-blocked"
+              for d in blocked_guides]
+    names += [f"{mode}:{d.name}!capability-blocked" for d in blocked_policies]
     return mode, names, block
 
 
@@ -552,7 +648,8 @@ def render_for_names(names: list[str] | None, capability_refs=None) -> str:
     wanted = []
     for n in names:
         mode, _, rest = n.partition(":")
-        if mode not in ("canary", "full") or not rest or rest.endswith("!clipped"):
+        if (mode not in ("canary", "full") or not rest
+                or rest.endswith(("!clipped", "!capability-blocked"))):
             continue
         wanted.append(rest.split("@", 1)[0])
     if not wanted:
@@ -572,7 +669,7 @@ def _active_docs_for_names(names: list[str] | None,
     for tagged in names or []:
         mode, sep, rest = str(tagged).partition(":")
         if (not sep or mode not in {"canary", "full"} or not rest
-                or rest.endswith("!clipped")):
+                or rest.endswith(("!clipped", "!capability-blocked"))):
             continue
         wanted.append(rest.split("@", 1)[0])
     docs = {d.name: d for d in (store or default_store()).load()}

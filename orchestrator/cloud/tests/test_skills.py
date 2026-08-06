@@ -16,7 +16,13 @@ from orchestrator.cloud import embedding as _embedding
 from orchestrator.cloud import skills as sk
 from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.context import WorkingSet
-from orchestrator.cloud.planning import PlanBuilder
+from orchestrator.cloud.planning import PlanBuilder, _assemble_capability_catalog
+
+
+def _refs_for_docs(docs):
+    intents = sorted({intent for doc in docs for intent in doc.capability_dependencies})
+    return {("test-catalog", intent): f"cap_{index:04d}"
+            for index, intent in enumerate(intents, 1)}
 
 
 # ── 加载 ──────────────────────────────────────────────────────────────────────
@@ -33,6 +39,53 @@ def test_store_loads_repo_skills():
         assert d.type in ("guide", "policy", "workflow")
         assert d.description and d.knowledge
         assert d.body.startswith(d.knowledge)   # body=注入文本（knowledge+few_shots 渲染）
+
+
+def test_multi_day_guide_uses_its_measured_semantic_floor():
+    guide = next(d for d in sk.SkillStore().guides() if d.name == "multi-day-trip")
+    # Current embedding distribution: false recall=0.440283; three true
+    # paraphrases=0.465659/0.490590/0.518949.  Keep a margin on both sides.
+    assert guide.semantic_min_score == 0.45
+
+
+def test_implicit_temperature_policy_never_maps_cold_to_temperature_down():
+    policy = next(
+        d for d in sk.SkillStore().policies()
+        if d.name == "implicit-vehicle-control")
+    cold = next(g for g in policy.golden if g.get("text") == "我有点冷")
+
+    assert "hvac.dec" not in cold.get("expect_any", [])
+    assert "hvac.dec" in cold.get("expect_not", [])
+    assert {"hvac.inc", "hvac.set"} <= set(cold.get("expect_any", []))
+    assert "冷" in policy.knowledge and "调高" in policy.knowledge
+    assert "热" in policy.knowledge and "调低" in policy.knowledge
+
+
+def test_navigation_guide_preserves_candidate_to_navigation_handoff():
+    guide = next(d for d in sk.SkillStore().guides()
+                 if d.name == "navigation-with-stop")
+    assert "depends_on" in guide.knowledge and "slot_refs" in guide.knowledge
+    handoff = [
+        g for g in guide.golden
+        if "navigation.navigate_to" in set(g.get("expect_intents") or [])
+        and any("search" in str(intent)
+                for intent in (g.get("expect_intents") or []))
+    ]
+    assert handoff, "先找候选再去选中结果的通用两步契约没有 golden 消费方"
+
+
+def test_charging_guide_separates_conditional_status_from_one_shot_plan():
+    guide = next(d for d in sk.SkillStore().guides()
+                 if d.name == "charging-strategy")
+
+    conditional = [
+        g for g in guide.golden
+        if g.get("expect_complexity") == "adaptive"
+        and g.get("expect_intents") == ["charging.status"]
+        and {"charging.find", "charging.plan"}
+        <= set(g.get("expect_not") or [])
+    ]
+    assert conditional, "电量条件分支缺少 status-only adaptive 的非原句 golden"
 
 
 # ── 词法检索（零网络、确定性；embedding 升级由 shadow 召回数据决定） ─────────────
@@ -176,7 +229,9 @@ def test_negation_policy_renders_unstarted_parallel_cancel_example():
 def test_render_block_has_policies_and_guides_within_budget():
     store = sk.SkillStore()
     guides = sk.top_guides("周末去杭州玩两天带老人", store.guides(), k=3)
-    block, injected, clipped = sk.render_skills_block(store.policies(), guides)
+    docs = [*store.policies(), *guides]
+    block, injected, clipped = sk.render_skills_block(
+        store.policies(), guides, capability_refs=_refs_for_docs(docs))
     assert "时效判据" in block                      # policy 常驻
     assert "多日出行必出行程规划" in block          # 命中 guide 的 knowledge
     assert len(block) <= sk.SKILL_BUDGET + 200      # 预算约束（含区头小富余）
@@ -278,6 +333,42 @@ def test_hybrid_semantic_supplements_lexical_miss(monkeypatch, tmp_path):
     assert pairs[0][2] > 0.9                                   # 归因带余弦分（取证用）
 
 
+def test_per_guide_semantic_floor_filters_only_the_noisy_guide(monkeypatch, tmp_path):
+    """A measured false-recall floor must not raise the global threshold."""
+    monkeypatch.setenv("SKILLS_RETRIEVAL", "hybrid")
+    gdir = tmp_path / "guides"
+    gdir.mkdir()
+    (gdir / "strict.yaml").write_text(
+        "name: strict\ntype: guide\ndescription: 多日家庭行程编排\n"
+        "semantic_min_score: 0.50\nkeywords: [多日]\nknowledge: |\n  严格规则。\n",
+        encoding="utf-8")
+    (gdir / "default.yaml").write_text(
+        "name: default\ntype: guide\ndescription: 海钓行程知识\n"
+        "keywords: [海钓]\nknowledge: |\n  默认规则。\n",
+        encoding="utf-8")
+    store = sk.SkillStore(root=str(tmp_path))
+    by_name = {d.name: d for d in store.guides()}
+    assert by_name["strict"].semantic_min_score == 0.50
+    assert by_name["default"].semantic_min_score is None
+
+    scores = {"strict": 0.49, "default": 0.49}
+
+    async def fake_scores(_text, _guides, _store):
+        return dict(scores)
+
+    monkeypatch.setattr(sk, "_semantic_scores", fake_scores)
+    pairs = asyncio.run(sk.retrieve_guides("火星信号", store))
+    assert [(d.name, channel) for d, channel, _ in pairs] == [
+        ("default", "vec"),
+    ]
+
+    scores.update(strict=0.51, default=0.39)
+    pairs = asyncio.run(sk.retrieve_guides("火星信号", store))
+    assert [(d.name, channel) for d, channel, _ in pairs] == [
+        ("strict", "vec"),
+    ]
+
+
 def test_hybrid_fails_open_to_lexical(monkeypatch, tmp_path):
     """embedding 不可用（超时/无源）→ 该轮纯词法，绝不堵规划。"""
     monkeypatch.setenv("SKILLS_RETRIEVAL", "hybrid")
@@ -338,6 +429,33 @@ def test_last_known_good_survives_broken_reload(tmp_path):
     assert store.load(force=True) == []
 
 
+def test_false_capability_dependencies_cannot_disable_guard_on_reload(tmp_path):
+    """A falsy non-list is still malformed and must retain the last good version."""
+    gdir = tmp_path / "guides"
+    gdir.mkdir()
+    skill_file = gdir / "guarded.yaml"
+    skill_file.write_text(
+        "name: guarded\ntype: guide\ndescription: good\n"
+        "capability_dependencies: [charging.find]\nkeywords: [充电]\n"
+        "knowledge: |\n  只能调用 charging.find。\n",
+        encoding="utf-8",
+    )
+    store = sk.SkillStore(root=str(tmp_path))
+    first = store.load(force=True)
+    assert first[0].capability_dependencies == ("charging.find",)
+
+    skill_file.write_text(
+        "name: guarded\ntype: guide\ndescription: broken\n"
+        "capability_dependencies: false\nkeywords: [充电]\n"
+        "knowledge: |\n  只能调用 charging.find。\n",
+        encoding="utf-8",
+    )
+    current = store.load(force=True)
+
+    assert current[0].description == "good"
+    assert current[0].capability_dependencies == ("charging.find",)
+
+
 def test_dir_type_mismatch_warns_but_honors_type(tmp_path, caplog):
     import logging
     gdir = tmp_path / "guides"
@@ -376,7 +494,10 @@ def test_render_for_names_reinjects_only_actually_injected(monkeypatch):
     names = ["full:freshness-and-depth",                 # policy：应注入
              "full:multi-day-trip@lex!clipped",          # 初规划被裁：不注入
              "shadow:navigation-with-stop@vec"]          # shadow 轮：从未注入
-    block = sk.render_for_names(names)
+    freshness = next(
+        doc for doc in sk.default_store().policies()
+        if doc.name == "freshness-and-depth")
+    block = sk.render_for_names(names, capability_refs=_refs_for_docs([freshness]))
     assert "时效判据" in block                            # freshness 的 knowledge
     assert "多日出行必出行程规划" not in block
     assert "单个" not in block                            # navigation 的 knowledge 不在
@@ -397,9 +518,15 @@ def test_replan_inherits_skill_block(monkeypatch):
         return []
 
     builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
+    agents = [
+        _mock_agent("info", ["info.weather", "info.news", "info.search"]),
+        _mock_agent("reminder", ["reminder.create"]),
+        _mock_agent("deep-research", ["research.run"]),
+        _mock_agent("chitchat", ["chitchat.talk"]),
+    ]
     asyncio.run(builder.replan(
         "查天气并视结果决定是否建提醒", [{"step": "s1", "ok": True}],
-        [_mock_agent("info", ["info.weather"])], PlanContext(session_id="t"),
+        agents, PlanContext(session_id="t"),
         skill_names=["full:conditional-reminder@lex", "full:freshness-and-depth"]))
     assert "条件依赖" in seen["user"]                     # guide knowledge 进了再规划
     assert "时效判据" in seen["user"]                     # policy 同样继承
@@ -436,6 +563,27 @@ def test_plan_skills_names_carry_channel_and_clip_markers(monkeypatch, tmp_path)
                for n in names)                         # 被裁诚实标注，不谎称已注入
     assert "full:pol" in names
     assert "短规则" in block and "策略正文" in block and "长长长" not in block
+
+
+def test_plan_skills_marks_and_omits_capability_blocked_knowledge(monkeypatch, tmp_path):
+    monkeypatch.setenv("SKILLS_MODE", "full")
+    monkeypatch.setenv("SKILLS_RETRIEVAL", "lexical")
+    guide_dir = tmp_path / "guides"
+    guide_dir.mkdir()
+    (guide_dir / "guarded.yaml").write_text(
+        "name: guarded\ntype: guide\ndescription: guarded rule\n"
+        "keywords: [触发词]\ncapability_dependencies: [charging.find]\n"
+        "knowledge: |\n  只能调用 charging.find。\n",
+        encoding="utf-8")
+    monkeypatch.setattr(sk, "_default_store", sk.SkillStore(root=str(tmp_path)))
+
+    _mode, names, block = asyncio.run(
+        sk.plan_skills("触发词", capability_refs={}))
+
+    assert len(names) == 1
+    assert names[0].startswith("full:guarded@lex:")
+    assert names[0].endswith("!capability-blocked")
+    assert "charging.find" not in block and "只能调用" not in block
 
 
 def test_render_preserves_caller_relevance_order():
@@ -497,19 +645,26 @@ def _mock_agent(agent_id, intents):
 def _run_build(monkeypatch, mode, text="周末去杭州玩两天带老人"):
     monkeypatch.setenv("SKILLS_MODE", mode)
     seen = {}
+    agents = [
+        _mock_agent("trip-planner", ["trip.plan"]),
+        _mock_agent("info", ["info.news", "info.search"]),
+        _mock_agent("deep-research", ["research.run"]),
+        _mock_agent("chitchat", ["chitchat.talk"]),
+    ]
+    trip_ref = _assemble_capability_catalog(agents).pair_to_ref[
+        ("trip-planner", "trip.plan")]
 
     async def mock_llm(messages, **kw):
         seen["system"] = messages[0]["content"]
         seen["user"] = messages[-1]["content"]
         return ('{"complexity":"simple","goal":"g","steps":[{"id":"s1",'
-                '"agent_id":"trip-planner","intent":"trip.plan","slots":{},'
+                f'"capability_ref":"{trip_ref}","slots":{{}},'
                 '"depends_on":[],"slot_refs":{}}]}')
 
     async def mock_resolve(query, top_k):
         return []
 
     builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
-    agents = [_mock_agent("trip-planner", ["trip.plan"])]
     plan = asyncio.run(builder.build(text, WorkingSet(catalog=agents),
                                      PlanContext(session_id="t")))
     return plan, seen

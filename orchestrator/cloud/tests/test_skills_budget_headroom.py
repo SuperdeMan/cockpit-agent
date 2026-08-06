@@ -41,6 +41,12 @@ def _governed_capability_refs(docs):
                 )
                 assert all(pair), (doc.name, step)
                 pairs.add(pair)
+    governed_intents = {intent for _, intent in pairs}
+    for doc in docs:
+        for intent in doc.capability_dependencies:
+            if intent not in governed_intents:
+                pairs.add(("declared", intent))
+                governed_intents.add(intent)
     refs = {pair: f"cap_{index:04d}"
             for index, pair in enumerate(sorted(pairs), 1)}
     for doc in docs:

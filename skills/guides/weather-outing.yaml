@@ -7,6 +7,7 @@ type: guide
 # 这是索引优化，知识本身一字未动。量表在 docs/design/…-adversarial-findings.md §5.4。
 description: 出游去处推荐的组合判据（去哪玩/去哪逛/有什么好玩的/适合去哪——按户外条件在室内场馆与景点公园之间选类目，含「你确定还推荐户外」的纠错轮）
 priority: 55
+capability_dependencies: [info.weather, nearby.search]
 keywords: [去哪玩, 去哪儿玩, 去哪里玩, 哪里玩, 玩什么, 出去玩, 适合去哪, 下雨天去, 雨天去哪]
 # 依据：badcase 三连 f53d2e58/c0d1a8d2/4799fb1f（2026-08-01 会话 demo-e0n7go）——
 # 「今天的天气适合去哪玩吗」两次只报天气（planner goal 都写对了「根据天气推荐游玩地点」，

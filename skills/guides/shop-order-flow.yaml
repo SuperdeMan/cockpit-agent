@@ -2,6 +2,7 @@ name: shop-order-flow
 type: guide
 description: 生态商户点单流程的分流与接线判据（看菜单/下单/查单/取消；先看菜单再点某一款是两步且要接线）
 priority: 55
+capability_dependencies: [shop.menu, shop.order, shop.order_status, shop.order_cancel]
 # 「招牌/最便宜/第一个」这类**指向一件还不知道名字的东西**的说法是本知识的触发面：
 # 它们只有在上一步结果回来之后才有具体值，所以判据必须落在「值从哪来」而不是动词上。
 keywords: [菜单, 点一杯, 点一份, 下单, 招牌, 咖啡有什么, 取消订单, 我的订单]

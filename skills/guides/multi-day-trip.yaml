@@ -2,6 +2,8 @@ name: multi-day-trip
 type: guide
 description: 多日出行/N日游/带家人出游必须出行程规划步的组合知识
 priority: 60
+semantic_min_score: 0.45
+capability_dependencies: [trip.plan]
 keywords: [日游, 两天, 三天, 几天, 住一晚, 玩几天, 带老人, 带娃, 带爸妈, 带家人, 不要太累, 行程]
 knowledge: |
   **多日出行必出行程规划**：用户话术含『去X玩/住N天』『N日游/两日游』或带出行偏好

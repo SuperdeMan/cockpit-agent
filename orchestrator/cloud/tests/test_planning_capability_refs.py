@@ -283,6 +283,17 @@ def test_ref_only_schema_static_prompts_and_user_message_tail(monkeypatch):
     }
 
 
+def test_catalog_prompt_requires_a_pre_submit_ref_self_check():
+    prompt = planning._CATALOG_ALLOWLIST_SECTION
+    for clause in (
+        "提交前逐个复核",
+        "当前映射的 key",
+        "不存在就删除该 step",
+        "不得先编造再依赖重试",
+    ):
+        assert clause in prompt
+
+
 def test_build_retry_and_replan_use_one_catalog_and_one_parse_seam(monkeypatch):
     _, assemble = _ref_api()
     alpha = _agent("alpha", "alpha.one")
@@ -422,3 +433,31 @@ def test_dynamic_skill_and_exemplar_render_refs_and_drop_partial_dags(monkeypatc
         ["full:ref-contract@lex:10"], capability_refs=refs)
     assert "cap_0001" in exemplars.render_for_names(
         ["full:test#1@lex:1.00"], capability_refs=refs)
+
+
+def test_skill_knowledge_uses_current_refs_or_is_capability_blocked():
+    skill = skills.SkillDoc(
+        name="aware", type="guide", description="test",
+        knowledge="先 alpha.one，再 beta.two。", body="先 alpha.one，再 beta.two。",
+        capability_dependencies=("alpha.one", "beta.two"),
+    )
+    refs = MappingProxyType({
+        ("alpha", "alpha.one"): "cap_0001",
+        ("beta", "beta.two"): "cap_0002",
+    })
+    block, injected, clipped = skills.render_skills_block(
+        [], [skill], capability_refs=refs, budget=10_000)
+    assert injected == [skill] and clipped == []
+    assert "cap_0001" in block and "cap_0002" in block
+    assert "alpha.one" not in block and "beta.two" not in block
+
+    partial = MappingProxyType({("alpha", "alpha.one"): "cap_0001"})
+    block, injected, clipped = skills.render_skills_block(
+        [], [skill], capability_refs=partial, budget=10_000)
+    assert injected == [] and clipped == []
+    assert "先 alpha.one" not in block and "beta.two" not in block
+
+    block, injected, clipped = skills.render_skills_block(
+        [], [skill], capability_refs=None, budget=10_000)
+    assert injected == [] and clipped == []
+    assert "alpha.one" not in block and "beta.two" not in block

@@ -2,11 +2,14 @@ name: implicit-vehicle-control
 type: policy
 description: 隐式车控识别与状态查询不硬套的规划纪律（安全语义由 manifest/VAL 硬层承担）
 priority: 80
+capability_dependencies: [hvac.dec, hvac.inc, hvac.on, hvac.set, tire_pressure.query, window.open]
 knowledge: |
   - **隐式车控必须识别**：若最近对话含车控操作（如 hvac.set、window.open），
   用户说『再高/低一点』『打开/关掉』『我冷/热』等，必须映射为对应车控 step
   （如 hvac.inc/hvac.dec/hvac.set），不得输出空 steps 或当作闲聊。
-  不确定具体值时用合理的默认值（如温度调高/低 1 度）。
+  **冷热极性不得反转**：冷/太凉 → 调高设定温度（hvac.inc/hvac.set，必要时先 hvac.on）；
+  热/太暖/温度往下调 → 调低设定温度（hvac.dec/hvac.set，必要时先 hvac.on）。
+  不确定具体值时用合理的默认值（如沿正确方向调 1 度）。
   - **算出来的值要写进 slots**：从记忆/上文推出的温度、档位等必须落在对应 step 的
   `slots` 里，只写在 goal 里等于没写。
   - 状态/查询类（query）意图必须与某个 capability 语义精确对应；
@@ -14,10 +17,13 @@ knowledge: |
   绝不要硬套相近的查询意图（例如把『电量/续航』套成 tire_pressure.query/胎压查询）。
   此时输出 {"steps":[]} 交系统兜底，宁可不答也不要张冠李戴。
 golden:
-  # expect_any=任一命中即对（三个 intent 都是「我冷」的合法落法）；此前误用 expect_intents
-  # （AND 语义）——三个互斥意图不可能同时出现，字段落地消费方后按真实语义迁移
+  # expect_any=任一命中即对；冷热方向相反，禁止把「冷」许可成降温。
   - text: 我有点冷
-    expect_any: [hvac.inc, hvac.set, hvac.dec]
-    expect_not: [chitchat.talk]
+    expect_any: [hvac.inc, hvac.set, hvac.on]
+    expect_not: [hvac.dec, chitchat.talk]
+  - text: 车厢里太热了
+    expect_any: [hvac.dec, hvac.set, hvac.on]
+    expect_not: [hvac.inc, chitchat.talk]
+    holdout: true
 owner: orchestrator
-version: 1
+version: 2
