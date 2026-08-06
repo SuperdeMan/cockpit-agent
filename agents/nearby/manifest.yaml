@@ -19,7 +19,8 @@ capabilities:
       商场/电影院/博物馆等推荐），好天气填 景点/公园；已知天气时把天气词放 weather_context
       槽（如「雨」），话术会承接天气给出解释。用户在「看看附近有什么」时用本条；已经知道
       要去哪、只需定位一个具体地点归 navigation.search_poi；**找充电桩归 charging.find**
-      （它按真实电量+空闲状态排序）
+      （它按真实电量+空闲状态排序）。用户已经说出设施/品类时，不得让 category 和 keyword
+      同时为空：通用品类填 category，具体名称/品牌/设施词填 keyword。
     slots: [category, keyword, cuisine, brand, rating_min, price_max, price_level, open_now, sort, location, radius, weather_context]
     examples: ["附近有什么好吃的", "找家川菜馆", "附近评分高的火锅", "人均一百以内的川菜",
                "附近的餐厅", "附近的酒店", "附近的电影院", "找个停车场", "麦当劳在哪", "附近的景点",
@@ -35,7 +36,9 @@ capabilities:
       max_attempts: 1
       expect: { data_keys: [items] }
   - intent: nearby.detail
-    description: 查看某个地点的详情——评分、人均、电话、营业时间、特色、图片、地址
+    description: 仅查看对话中**已选中或已引用**的某一个地点详情——评分、人均、电话、营业时间、
+      特色、图片、地址；「附近是否有/附近有哪些 X」仍是多候选发现，必须用 nearby.search，
+      不能因为用户只说一个品类就改用 nearby.detail
     slots: [poi_id, name]
     examples: ["看第一个的详情", "这家怎么样", "它家电话多少", "几点关门", "人均多少"]
   - intent: nearby.order

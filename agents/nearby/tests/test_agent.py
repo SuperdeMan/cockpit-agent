@@ -1,5 +1,6 @@
 """nearby（周边发现）契约测试。"""
 import asyncio
+from types import SimpleNamespace
 
 from agents._sdk.testing import make_context, run_handle, assert_manifest_consistent
 from agents.nearby.src.agent import NearbyAgent
@@ -7,6 +8,50 @@ from agents.nearby.src.agent import NearbyAgent
 
 def test_manifest_consistent():
     assert assert_manifest_consistent(NearbyAgent()) is True
+
+
+def test_manifest_separates_discovery_from_selected_place_detail():
+    caps = {cap.intent: cap for cap in NearbyAgent().manifest.capabilities}
+    search = caps["nearby.search"].description
+    detail = caps["nearby.detail"].description
+
+    assert "category" in search and "keyword" in search
+    assert "已选中" in detail or "已引用" in detail
+    assert "附近是否有" in detail and "nearby.search" in detail
+
+
+def test_missing_food_slot_is_semantically_recovered_from_raw_text():
+    intent = SimpleNamespace(slots={}, raw_text="看看附近有什么吃的")
+    recovered = NearbyAgent._resolve_category(intent)
+
+    assert NearbyAgent._build_keyword(recovered, "", "", "") == \
+        NearbyAgent._build_keyword("餐饮", "", "", "")
+
+
+def test_missing_restroom_slot_never_falls_back_to_food():
+    for raw_text in ("附近有洗手间吗", "帮我找个卫生间", "最近的厕所在哪"):
+        intent = SimpleNamespace(slots={}, raw_text=raw_text)
+        recovered = NearbyAgent._resolve_category(intent)
+
+        assert NearbyAgent._build_keyword(recovered, "", "", "") == "公共厕所"
+
+
+def test_coarse_category_still_uses_restroom_semantics_from_raw_text():
+    for category in ("公共设施", "生活服务"):
+        intent = SimpleNamespace(
+            slots={"category": category}, raw_text="附近有洗手间吗")
+        recovered = NearbyAgent._resolve_category(intent)
+
+        assert NearbyAgent._build_keyword(recovered, "", "", "") == "公共厕所"
+
+
+def test_unknown_explicit_category_never_silently_becomes_food():
+    intent = SimpleNamespace(
+        slots={"category": "公共设施"}, raw_text="帮我找公共服务设施")
+    recovered = NearbyAgent._resolve_category(intent)
+
+    assert recovered == "公共设施"
+    assert NearbyAgent._build_keyword(recovered, "", "", "") == "公共设施"
 
 
 def test_search_returns_place_list_card():

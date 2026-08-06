@@ -42,6 +42,8 @@ _CATEGORY_KEYWORD = {
     "停车": "停车场", "停车场": "停车场", "车位": "停车场",
     "充电": "充电站", "充电站": "充电站", "充电桩": "充电站",
     "加油": "加油站", "加油站": "加油站",
+    "公共厕所": "公共厕所", "洗手间": "公共厕所", "卫生间": "公共厕所",
+    "厕所": "公共厕所",
     "室内": _INDOOR_SENTINEL,
     "商场": "商场", "购物中心": "购物中心", "商城": "商场",
     "博物馆": "博物馆", "美术馆": "美术馆", "科技馆": "科技馆", "展览": "展览馆",
@@ -229,10 +231,15 @@ class NearbyAgent(BaseAgent):
     def _resolve_category(intent) -> str:
         """类目：category 槽位优先；否则从原话+keyword 槽扫类目词（route_hint 把整句灌进 keyword）。"""
         raw = (intent.slots.get("category") or "").strip()
-        hay = raw or ((intent.raw_text or "") + " " + (intent.slots.get("keyword") or ""))
-        for key in _CATEGORY_KEYWORD:
-            if key in hay:
-                return key
+        # A recognized explicit category wins.  A coarse/unknown category
+        # ("公共设施"/"生活服务") must still let the user's actual words refine
+        # it; otherwise an empty keyword falls through to the historic food
+        # default even for an explicit restroom request.
+        for hay in (raw, (intent.raw_text or "") + " "
+                    + (intent.slots.get("keyword") or "")):
+            for key in _CATEGORY_KEYWORD:
+                if key in hay:
+                    return key
         return raw or "餐饮"
 
     @staticmethod
@@ -249,7 +256,10 @@ class NearbyAgent(BaseAgent):
         cleaned = _strip_qualifiers(kw_slot)           # 餐饮：剥掉价位/评分/动词后的具体词（火锅/川菜）
         if cleaned and cleaned not in ("地点", "的"):
             return cleaned
-        return cat_kw or "美食"
+        # Preserve an explicit unknown/coarse category as the provider query;
+        # silently rewriting it to food is a semantic corruption.  Only a
+        # genuinely absent category keeps the legacy nearby-food default.
+        return cat_kw or _strip_qualifiers(category) or "美食"
 
     @staticmethod
     def _item(p: Place) -> dict:
