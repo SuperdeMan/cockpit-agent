@@ -178,6 +178,19 @@ def test_conditional_reminder_guide_covers_parallel_unconditional_boundary():
         "缺少条件分支金标"
 
 
+def test_conditional_reminder_guide_demonstrates_the_replan_observation_contract():
+    """第二轮必须有具体正反 wire；只写抽象“按结果决定”会随机直接 done。"""
+    guide = next(d for d in sk.SkillStore().guides()
+                 if d.name == "conditional-reminder")
+
+    for marker in (
+        "最近观察", "status=ok", "data.condition", "done=false", "done=true",
+        "info.weather", "reminder.create",
+    ):
+        assert marker in guide.knowledge
+    assert "明天要是下雨就提醒我带伞" not in guide.knowledge
+
+
 def test_shop_order_flow_few_shot_demonstrates_dependency_wiring():
     """正文说「要接线」还不够：真栈会照着 few-shot 的输出骨架模仿。
 
