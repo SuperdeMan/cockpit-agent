@@ -71,6 +71,8 @@ def summarize(result: StepResult, *, intent: str = "") -> dict:
     }
     if intent:
         observation["intent"] = intent
+    if data.get("retry_same_intent") is True:
+        observation["retry_same_intent"] = True
     return observation
 
 

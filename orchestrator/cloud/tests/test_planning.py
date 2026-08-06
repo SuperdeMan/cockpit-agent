@@ -285,6 +285,117 @@ def test_replan_returns_done_or_a_validated_next_batch():
     assert completed.steps == []
 
 
+def test_replan_retries_once_when_first_answer_only_repeats_completed_intent():
+    agents = [MockAgent("info", ["info.weather"]),
+              MockAgent("reminder", ["reminder.create"])]
+    replies = iter([
+        '{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0001",'
+        '"slots":{},"depends_on":[],"slot_refs":{}}]}',
+        '{"done":false,"steps":[{"id":"r2","capability_ref":"cap_0002",'
+        '"slots":{"title":"带伞"},"depends_on":[],"slot_refs":{}}]}',
+    ])
+    messages_seen = []
+
+    async def mock_llm(messages):
+        messages_seen.append(messages)
+        return next(replies)
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "明天下雨就提醒带伞",
+        [{"step_id": "s1", "status": "ok", "intent": "info.weather",
+          "data": {"condition": "小雨"}}],
+        agents, PlanContext(),
+    ))
+
+    assert len(messages_seen) == 2
+    assert [step.intent for step in decision.steps] == ["reminder.create"]
+    assert "info.weather" in messages_seen[1][1]["content"]
+    assert "已经完成" in messages_seen[1][1]["content"]
+
+
+def test_replan_drops_completed_repeat_when_answer_also_has_remaining_step():
+    agents = [MockAgent("info", ["info.weather"]),
+              MockAgent("reminder", ["reminder.create"])]
+    calls = 0
+
+    async def mock_llm(_messages):
+        nonlocal calls
+        calls += 1
+        return ('{"done":false,"steps":['
+                '{"id":"r1","capability_ref":"cap_0001","slots":{},'
+                '"depends_on":[],"slot_refs":{}},'
+                '{"id":"r2","capability_ref":"cap_0002","slots":{},'
+                '"depends_on":["r1"],'
+                '"slot_refs":{"weather":"r1.data.condition"}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "明天下雨就提醒带伞",
+        [{"step_id": "s1", "status": "ok", "intent": "info.weather"}],
+        agents, PlanContext(),
+    ))
+
+    assert calls == 1
+    assert [step.intent for step in decision.steps] == ["reminder.create"]
+    assert decision.steps[0].depends_on == ["s1"]
+    assert decision.steps[0].slot_refs == {"weather": "s1.data.condition"}
+
+
+def test_replan_allows_explicit_same_intent_retry_signal():
+    agents = [MockAgent("navigation", ["navigation.search_poi"])]
+    calls = 0
+
+    async def mock_llm(_messages):
+        nonlocal calls
+        calls += 1
+        return ('{"done":false,"steps":[{"id":"r1",'
+                '"capability_ref":"cap_0001","slots":{"keyword":"次近"},'
+                '"depends_on":[],"slot_refs":{}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "找到可用充电站",
+        [{"step_id": "s1", "status": "ok", "intent": "navigation.search_poi",
+          "retry_same_intent": True, "data": {"available": False}}],
+        agents, PlanContext(),
+    ))
+
+    assert calls == 1
+    assert [step.intent for step in decision.steps] == ["navigation.search_poi"]
+
+
+def test_replan_fails_closed_when_retry_still_only_repeats_completed_intent():
+    agents = [MockAgent("info", ["info.weather"])]
+    calls = 0
+
+    async def mock_llm(_messages):
+        nonlocal calls
+        calls += 1
+        return ('{"done":false,"steps":[{"id":"r1",'
+                '"capability_ref":"cap_0001","slots":{},'
+                '"depends_on":[],"slot_refs":{}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "查询天气后按结果继续",
+        [{"step_id": "s1", "status": "ok", "intent": "info.weather"}],
+        agents, PlanContext(),
+    ))
+
+    assert calls == 2
+    assert decision.done is True
+    assert decision.steps == []
+
+
 def test_json_and_replan_prompts_treat_the_live_catalog_as_the_only_allowlist():
     """初规划与再规划都只能消费本轮动态 catalog，不能靠模型常识补能力。"""
     initial = _planner_system()

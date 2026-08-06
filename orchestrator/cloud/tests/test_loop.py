@@ -56,6 +56,17 @@ def test_observation_summary_carries_known_step_intent():
     assert "intent" not in summarize(result)
 
 
+def test_observation_summary_promotes_explicit_same_intent_retry_signal():
+    result = StepResult(
+        "s1", StepStatus.OK,
+        data={"available": False, "retry_same_intent": True},
+    )
+
+    observation = summarize(result, intent="navigation.search_poi")
+
+    assert observation["retry_same_intent"] is True
+
+
 def test_adaptive_loop_executes_initial_batch_then_replans_until_done():
     planner = _Planner([
         ReplanDecision(done=False, steps=[

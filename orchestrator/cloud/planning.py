@@ -485,7 +485,8 @@ _REPLAN_SYSTEM = (
     "你是智能座舱有界任务循环的再规划器。根据用户目标、最近观察和可用能力，"
     "一次性判断任务是否完成，并在未完成时给出下一批 JSON DAG。\n"
     "最近观察是已经执行过的步骤结果：status=ok 表示该步骤已经完成，除非观察明确要求"
-    "重试，否则不得重复同一查询或动作；先用观察中的 data/speech 判断用户目标里的"
+    "重试（retry_same_intent=true），否则不得重复 observation.intent 指向的同一查询或动作；"
+    "先用观察中的 data/speech 判断用户目标里的"
     "条件分支，再只规划尚未完成的后续步骤。\n"
     "下方本请求 capability_ref 映射是唯一调用权；steps 只能原样选择映射中的 ref。"
     "不得编造 catalog 外能力，不得替换"
@@ -495,6 +496,77 @@ _REPLAN_SYSTEM = (
     "\"capability_ref\":\"从本请求映射选择\",\"slots\":{},\"depends_on\":[],"
     "\"slot_refs\":{}}]}。仅在必要时改变计划；不得输出解释。"
 )
+
+
+def _completed_observation_steps(observations: list[dict]) -> dict[str, list[str]]:
+    """Map completed intents to their step ids unless the result explicitly allows retry."""
+    completed: dict[str, list[str]] = {}
+    for observation in observations or []:
+        if not isinstance(observation, dict):
+            continue
+        status = getattr(observation.get("status"), "value", observation.get("status"))
+        intent = observation.get("intent")
+        if (str(status).lower() != "ok" or not isinstance(intent, str)
+                or not intent.strip() or observation.get("retry_same_intent") is True):
+            continue
+        completed.setdefault(intent.strip(), []).append(
+            str(observation.get("step_id") or ""))
+    return completed
+
+
+def _rewrite_completed_ref(value, replacements: dict[str, str]):
+    if not isinstance(value, str):
+        return value
+    for old, new in replacements.items():
+        if value == old:
+            return new
+        if value.startswith(f"{old}."):
+            return f"{new}{value[len(old):]}"
+    return value
+
+
+def _drop_completed_replan_steps(
+        steps: list[Step], completed: dict[str, list[str]]) -> tuple[list[Step], list[str], bool]:
+    """Remove completed capability repeats and rewire unique prior-result references.
+
+    Returns ``(remaining, repeated_intents, unresolved_reference)``.  A consumer that
+    depended on the repeated producer may still consume the already completed result:
+    the loop passes prior StepResults as ``done`` into the executor.
+    """
+    repeated = [step for step in steps if step.intent in completed]
+    if not repeated:
+        return steps, [], False
+
+    repeated_ids = {step.id for step in repeated}
+    replacements: dict[str, str] = {}
+    for step in repeated:
+        prior_ids = [step_id for step_id in completed[step.intent] if step_id]
+        if len(set(prior_ids)) == 1:
+            replacements[step.id] = prior_ids[0]
+
+    unresolved = False
+    remaining = [step for step in steps if step.id not in repeated_ids]
+    for step in remaining:
+        dependencies = []
+        for dependency in step.depends_on:
+            if dependency in repeated_ids and dependency not in replacements:
+                unresolved = True
+                continue
+            rewritten = replacements.get(dependency, dependency)
+            if rewritten not in dependencies:
+                dependencies.append(rewritten)
+        step.depends_on = dependencies
+        for values in (step.slots, step.slot_refs):
+            for key, value in list(values.items()):
+                rewritten = _rewrite_completed_ref(value, replacements)
+                if value in repeated_ids and value not in replacements:
+                    unresolved = True
+                elif (isinstance(value, str)
+                      and any(value.startswith(f"{rid}.") for rid in repeated_ids)
+                      and rewritten == value):
+                    unresolved = True
+                values[key] = rewritten
+    return remaining, sorted({step.intent for step in repeated}), unresolved
 
 
 def _hint_effect(hit: bool, before: list, after: list, had_clarify: bool) -> str:
@@ -768,21 +840,50 @@ class PlanBuilder:
             f"{sk_part}{ex_part}{ctx_block}最近观察：{json.dumps(observations, ensure_ascii=False)}\n"
             f"{catalog.semantic_mapping_text}\n\n目标：{goal}"
         )
-        try:
-            raw = await self._llm([
-                {"role": "system", "content": _REPLAN_SYSTEM},
-                {"role": "user", "content": prompt},
-            ])
-            data = json.loads(self._extract_json(raw))
-        except Exception as exc:
-            logger.warning("Replan failed: %s", exc)
+        completed = _completed_observation_steps(observations)
+        correction = ""
+        steps: list[Step] = []
+        for attempt in range(2):
+            try:
+                raw = await self._llm([
+                    {"role": "system", "content": _REPLAN_SYSTEM},
+                    {"role": "user", "content": f"{prompt}{correction}"},
+                ])
+                data = json.loads(self._extract_json(raw))
+            except Exception as exc:
+                logger.warning("Replan failed: %s", exc)
+                return ReplanDecision(done=True)
+
+            parsed = self._parse_with_context(
+                data, catalog, goal, stage="replan", attempt=attempt,
+                wire_mode="json")
+            if bool(data.get("done")):
+                return ReplanDecision(done=True)
+            candidate = list(parsed.steps) if parsed is not None else []
+            candidate, repeated, unresolved = _drop_completed_replan_steps(
+                candidate, completed)
+            if not repeated:
+                steps = candidate
+                break
+            if candidate and not unresolved:
+                logger.info("Replan dropped completed capability repeats: %s", repeated)
+                steps = candidate
+                break
+            if attempt == 0:
+                repeated_text = ", ".join(repeated)
+                correction = (
+                    "\n\n校验反馈：上一版重复选择了已经完成的 capability："
+                    f"{repeated_text}。这些 intent 在最近观察中 status=ok，"
+                    "不得再次查询或执行；请只规划尚未完成的条件分支。"
+                    "若没有剩余步骤，返回 done=true、steps=[]。"
+                )
+                continue
+            logger.warning(
+                "Replan repeated completed capabilities after retry; failing closed: %s",
+                repeated,
+            )
             return ReplanDecision(done=True)
 
-        parsed = self._parse_with_context(
-            data, catalog, goal, stage="replan", attempt=0, wire_mode="json")
-        if bool(data.get("done")):
-            return ReplanDecision(done=True)
-        steps = list(parsed.steps) if parsed is not None else []
         repair_plan = Plan(steps=steps)
         effects = _skills.apply_plan_repairs(repair_plan, goal, skill_names)
         return ReplanDecision(done=not bool(steps), steps=steps, skill_effects=effects)
