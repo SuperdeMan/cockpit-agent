@@ -439,28 +439,25 @@ cases:
                 required_intent_groups: [{any_of: [reminder.create]}]
                 allow_extra_intents: false
   - id: cp.adaptive.range-check
-    title: 电量够不够到杭州，不够就找充电站
+    # 历史 ID 保留以延续 r19-r35 证据链；2026-08-08 能力契约复核后不再属于 adaptive。
+    title: 目的地续航由路线充能规划一次判定
     family_id: cp.range-check
     cohort: unseen_transfer
     risk: medium
     status: stable
-    tags: {attacks: [A4], mechanisms: [composition, adaptive, conditional], domains: [charging], layers: [l1], gate_candidate: true}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-02, evidence_report: "docs/reviews/eval/_ci-run-intent-adversarial{-l0,,-l2}.json + _ci-run-intent-gate-candidates{-l0,,-l2}-r2.json", gold_revised_at: 2026-08-06, gold_revision_reason: "生产语义复核：SOC/range observation 只能来自 charging.status；旧 gold 同时容忍 charging.plan 后再注入虚构 status 结果，制造了生产不会发生的 replan"}
+    tags: {attacks: [A4], mechanisms: [composition, conditional], domains: [charging], layers: [l1], gate_candidate: true}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-08, stabilized_processes: 2, stabilized_samples_per_process: 3, stabilized_process_runs: [34eab4a4-55fa-420d-90eb-e06f9deacd4e, 2748d721-66f7-481a-b12c-ec91c939cf23], stabilized_samples: 6, evidence_report: "docs/reviews/eval/_ci-run-intent-finalization-range-old-gold-r35.json", gold_revised_at: 2026-08-08, gold_revision_reason: "二次生产契约复核：charging.status 无 destination 槽且真实数据仅含 battery；charging.plan 才读取车辆状态、位置与路线距离并按需生成补电点。r35 在旧 gold 下两进程 6/6 稳定输出 simple charging.plan(destination=杭州)，证明旧 status→虚构 range_km→replan 不是生产链路"}
     turns:
       - input: {utterance: 看看电量够不够开到杭州，不够就找个充电站, context: {}}
         expected:
+          decision: {allowed: [execute], clarify: forbidden}
           plan:
-            required_intent_groups: [{any_of: [charging.status]}]
-            forbidden_intents: [charging.find, charging.plan]
+            required_intent_groups: [{any_of: [charging.plan]}]
+            forbidden_intents: [charging.find, charging.status]
             allow_extra_intents: false
-            complexity: {allowed: [adaptive]}
-          replans:
-            - after:
-                result: {step_id: s1, status: ok, data: {soc: 18, range_km: 90}, speech: 当前电量 18%，续航约 90 公里}
-              plan:
-                required_intent_groups: [{any_of: [charging.find, charging.plan]}]
-                forbidden_intents: [charging.status]
-                allow_extra_intents: false
+            complexity: {allowed: [simple]}
+            slots:
+              - {intent: charging.plan, key: destination, matcher: exact, value: 杭州}
   - id: cp.adaptive.indoor-fanout
     title: 下雨天推荐室内去处
     family_id: cp.indoor-fanout

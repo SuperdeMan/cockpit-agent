@@ -1056,10 +1056,12 @@ def test_declared_replans_require_a_closed_initial_plan(contract_case):
     assert any("replans require a closed initial plan" in row for row in errors)
 
 
-def test_formal_conditional_cases_keep_producers_and_consumers_on_separate_rounds():
+def test_formal_conditional_cases_follow_the_production_capability_boundary():
     root = Path(__file__).parent / "eval_corpus" / "intent_adversarial" / "cases"
     by_id = {case.id: case for case in load_cases(root)}
 
+    # Weather and reminder are separate capabilities, so their condition crosses
+    # the planner's adaptive boundary.
     rain = by_id["cp.adaptive.rain-umbrella"].turns[0].expected
     assert [group.any_of for group in rain.plan.required_groups] == [
         ("info.weather", "info.forecast"),
@@ -1067,14 +1069,17 @@ def test_formal_conditional_cases_keep_producers_and_consumers_on_separate_round
     assert "reminder.create" in rain.plan.forbidden_intents
     assert rain.plan.allowed_complexities == ("adaptive",)
 
+    # charging.plan itself reads vehicle state plus route distance and decides
+    # whether stops are needed.  charging.status returns battery only; inventing a
+    # range observation and a second planner round would not mirror production.
     range_check = by_id["cp.adaptive.range-check"].turns[0].expected
     assert [group.any_of for group in range_check.plan.required_groups] == [
-        ("charging.status",),
+        ("charging.plan",),
     ]
-    assert {"charging.find", "charging.plan"} <= set(
+    assert {"charging.find", "charging.status"} <= set(
         range_check.plan.forbidden_intents)
-    assert range_check.plan.allowed_complexities == ("adaptive",)
-    assert "charging.status" in range_check.replans[0].plan.forbidden_intents
+    assert range_check.plan.allowed_complexities == ("simple",)
+    assert range_check.replans == ()
 
 
 def test_weather_music_commute_audits_equivalent_today_slot_representations():
