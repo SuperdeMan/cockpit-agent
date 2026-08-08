@@ -37,7 +37,8 @@ def test_chitchat_step_always_receives_current_user_text():
     async def llm(messages):
         return (
             '{"steps":[{"id":"s1","capability_ref":"cap_0001",'
-            '"slots":{"text":"stale text"},"depends_on":[],"slot_refs":{}}]}'
+            '"slots":{"text":"stale text"},"depends_on":[],"slot_refs":{}}],'
+            '"goal":"响应给我讲个笑话。"}'
         )
 
     text = "给我讲个笑话。"

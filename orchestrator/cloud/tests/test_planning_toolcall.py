@@ -193,23 +193,24 @@ def test_toolcall_retries_a_plan_whose_goal_says_clarify_but_steps_execute(monke
             ],
         },
     }
-    spy = _SpyLLM(
-        text_reply=json.dumps(clarified, ensure_ascii=False),
-        tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
-                           "arguments": contradictory}]),
-    )
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                "arguments": contradictory}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME,
+                "arguments": clarified}]),
+    ])
     builder = PlanBuilder(
         llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
 
     plan = _build(builder, "云岚国际中心")
 
-    assert plan.plan_mode == "toolcall_fallback"
+    assert plan.plan_mode == "toolcall"
     assert plan.steps == [] and plan.clarify == clarified["clarify"]
-    assert spy.tool_calls_n == 1 and spy.text_calls == 1
-    assert "决策与计划矛盾" in spy.last_text_user
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
+    assert "决策与计划矛盾" in spy.last_tool_user
 
 
-def test_toolcall_expands_empty_clarification_marker_via_json_retry(monkeypatch):
+def test_toolcall_expands_empty_marker_via_structured_clarification_retry(monkeypatch):
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
     marker = {
         "addressed": True,
@@ -227,20 +228,93 @@ def test_toolcall_expands_empty_clarification_marker_via_json_retry(monkeypatch)
             ],
         },
     }
-    spy = _SpyLLM(
-        text_reply=json.dumps(clarified, ensure_ascii=False),
-        tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
-                           "arguments": marker}]),
-    )
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                "arguments": marker}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME,
+                "arguments": clarified}]),
+    ])
     builder = PlanBuilder(
         llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
 
     plan = _build(builder, "云岚国际中心")
 
-    assert plan.plan_mode == "toolcall_fallback"
+    assert plan.plan_mode == "toolcall"
     assert plan.steps == [] and plan.clarify == clarified["clarify"]
-    assert spy.tool_calls_n == 1 and spy.text_calls == 1
-    assert "工具提交已正确判断需要澄清" in spy.last_text_user
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
+    assert "工具提交已正确判断需要澄清" in spy.last_tool_user
+
+
+def test_bare_object_sole_slot_uses_on_demand_structured_clarification(monkeypatch):
+    """整句被模型原样塞进唯一槽位，说明 action 是模型补的；第二轮才暴露澄清 schema。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    action = {
+        "complexity": "simple", "goal": "搜索华润大厦这个可导航地点",
+        "addressed": True,
+        "steps": [{
+            "id": "s1", "capability_ref": "cap_0002",
+            "slots": {"keyword": "华润大厦"}, "depends_on": [], "slot_refs": {},
+        }],
+    }
+    clarified = {
+        "addressed": True,
+        "steps": [],
+        "clarify": {
+            "question": "你希望我怎么处理华润大厦？",
+            "options": [
+                {"label": "路线引导", "send_text": "请导航到华润大厦"},
+                {"label": "地点资料", "send_text": "请介绍华润大厦"},
+            ],
+        },
+    }
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": action}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME, "arguments": clarified}]),
+    ])
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "华润大厦")
+
+    assert plan.plan_mode == "toolcall"
+    assert plan.steps == [] and plan.clarify == clarified["clarify"]
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
+    parameters = spy.last_tools["tools"][0]["function"]["parameters"]
+    assert set(parameters["required"]) == {"addressed", "steps", "clarify"}
+    assert parameters["properties"]["steps"]["maxItems"] == 0
+    assert parameters["properties"]["clarify"]["properties"]["options"][
+        "minItems"] == 2
+
+
+def test_specialized_clarification_retry_rejects_returned_action(monkeypatch):
+    """宿主必须验证专用 schema 的语义，不能假设 provider 一定执行 maxItems=0。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    marker = {
+        "addressed": True,
+        "goal": "需要澄清：用户只给了对象名",
+        "steps": [],
+    }
+    action = {
+        "addressed": True,
+        "goal": "规划路线",
+        "steps": [{
+            "id": "s1", "capability_ref": "cap_0001",
+            "slots": {"destination": "华润大厦"},
+            "depends_on": [], "slot_refs": {},
+        }],
+    }
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": marker}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME, "arguments": action}]),
+    ])
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "华润大厦")
+
+    assert plan.plan_mode == "toolcall_degraded"
+    assert plan.steps == [] and plan.clarify is None
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
 
 
 def test_repeated_clarification_marker_is_not_misreported_as_no_action(monkeypatch):

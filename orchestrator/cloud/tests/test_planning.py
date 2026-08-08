@@ -692,7 +692,8 @@ def test_modify_pattern_keeps_llm_trip_modify():
     async def mock_llm(messages):
         return ('{"steps":[{"id":"s1","capability_ref":"cap_0001",'
                 '"slots":{"modification":"第二天换成宋城"},'
-                '"depends_on":[],"slot_refs":{}}]}')
+                '"depends_on":[],"slot_refs":{}}],'
+                '"goal":"执行第二天换成宋城的行程修改"}')
 
     async def mock_resolve(query, top_k=1):
         return []

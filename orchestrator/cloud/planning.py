@@ -243,6 +243,10 @@ _DEFERRED_CONDITION_RE = re.compile(
 )
 _QUOTE_PAIRS = (("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"),
                 ("「", "」"), ("『", "』"))
+_UTTERANCE_PASSTHROUGH_SLOT_KEYS = frozenset({
+    "command", "content", "description", "instruction", "message",
+    "modification", "query", "request", "text", "utterance",
+})
 
 
 def _is_directive_to_assistant(text: str) -> bool:
@@ -296,6 +300,38 @@ def _goal_requires_clarification(wire, text: str = "") -> bool:
         )
     )
     return explicit_clarification or recasts_whole_input or wraps_whole_input
+
+
+def _bare_object_plan_invents_action(plan: Plan | None, text: str) -> bool:
+    """Detect an action wrapped around a bare object using two identities.
+
+    The check knows no place, media, search, or navigation vocabulary.  It only
+    fires when the entire utterance is copied into the sole non-empty, entity-like
+    string slot of a sole step *and* the model's goal wraps that same utterance in
+    extra text.  The goal and slot-kind conditions matter because some legitimate
+    capabilities intentionally receive a complete directive in a generic
+    text/modification passthrough slot.
+    """
+    if plan is None or len(plan.steps) != 1:
+        return False
+    normalized_text = re.sub(r"\s+", "", str(text or "")).strip()
+    if not normalized_text:
+        return False
+    normalized_goal = re.sub(r"\s+", "", str(plan.goal or "")).strip()
+    if (normalized_goal == normalized_text
+            or normalized_text not in normalized_goal):
+        return False
+    values = [
+        (str(key).strip().lower(), re.sub(r"\s+", "", value).strip())
+        for key, value in plan.steps[0].slots.items()
+        if isinstance(value, str) and value.strip()
+    ]
+    if len(values) != 1:
+        return False
+    slot_key, slot_value = values[0]
+    if slot_key in _UTTERANCE_PASSTHROUGH_SLOT_KEYS:
+        return False
+    return slot_value == normalized_text
 
 
 def _simple_goal_omits_multi_action_step(
@@ -564,9 +600,9 @@ _TOOLCALL_SECTION = (
     "每次先创建这两个键并从 {\"addressed\":true,\"steps\":[]} 骨架开始；"
     "有合法步骤时再往 steps 数组添加对象，其余顶层字段最后补。\n"
     "触发上文澄清规则时，首轮不要在工具 arguments 中提交 clarify（schema 未列出"
-    " clarify）；goal 必须以“需要澄清：”开头并简述原因，同时保持 steps=[]。宿主会在"
-    "下一轮 JSON 通道索取完整 question/options；不得为了迁就 schema 猜测一个动作，也不得"
-    "把 question/options 塞进 steps。\n"
+    " clarify）；goal 必须以“需要澄清：”开头并简述原因，同时保持 steps=[]。不得为了"
+    "迁就 schema 猜测一个动作，也不得把 question/options 塞进 steps；宿主会在下一轮"
+    "切换到专用澄清工具 schema 索取完整 question/options。\n"
     "单步骤也必须放在数组中，使用 steps=[{...}]；严禁把单个对象直接写成 steps={...}，"
     "也严禁把数组编码成字符串。\n"
     "steps 的每个元素必须是 JSON 对象，绝不能是字符串；能力缺席时只能提交 steps=[]，"
@@ -588,17 +624,75 @@ _PLANNER_STEP_FIELDS = (
     "id", "capability_ref", "slots", "depends_on", "slot_refs",
 )
 
+_CLARIFICATION_TOOLCALL_SECTION = (
+    "\n\n== 输出通道（澄清卡专用工具调用）==\n"
+    "上一版已经确定当前请求必须澄清。本轮只调用 submit_plan 一次，严格提交 "
+    "addressed=true、steps=[] 和 clarify；不得再输出执行步骤或只有 goal 的标记。\n"
+    "clarify.question 必须是针对当前用户原话的口语化问题；options 必须有 2~3 项，"
+    "每项只含 label 与 send_text，send_text 必须是消歧后可直接重新发送的完整指令。"
+)
 
-def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
+
+def _submit_plan_tools(
+        catalog: PlannerCapabilityCatalog | None = None, *,
+        clarification: bool = False) -> dict:
     """submit_plan 工具定义（线格式 ``{"tools":[...],"tool_choice":named 强制}``，RFC §3.2）。
 
     schema 顶层=现 JSON 协议顶层——语义零漂移，`_parse_and_validate_data` 直接消费；
-    **无 require_confirm**（确认权不在 LLM，M0a 已中央落实）；clarify 属性与
-    _CLARIFY_SECTION 同门控（off 时 schema 不反向引导模型输出澄清）。named tool_choice
-    强制 + prompt 指令双保险；某家不认 → build() 轮内降级承接（RFC §4）。
+    **无 require_confirm**（确认权不在 LLM，M0a 已中央落实）。普通首轮仍不暴露 clarify；
+    仅当首轮已经证明需要澄清时，第二轮 ``clarification=True`` 才使用专用 schema，避免
+    可选字段诱发普通请求误澄清。named tool_choice 强制 + prompt 指令双保险；某家不认
+    → build() 轮内降级承接（RFC §4）。
 
     build() 传入权限过滤且预算裁剪后的请求级 catalog；工具、prompt、解析和
     validator 因此共用同一可见面。缺 catalog 时只能提交空 steps，不退回开放字符串。"""
+    if clarification:
+        option_schema = {
+            "type": "object",
+            "description": "一个可直接选择的消歧动作。",
+            "properties": {
+                "label": {"type": "string", "description": "不超过十个字的按钮文案"},
+                "send_text": {
+                    "type": "string",
+                    "description": "选择后可直接作为用户新输入发送的完整指令",
+                },
+            },
+            "required": ["label", "send_text"],
+            "additionalProperties": False,
+        }
+        clarify_schema = {
+            "type": "object",
+            "description": "当前歧义请求的澄清卡。",
+            "properties": {
+                "question": {"type": "string", "description": "口语化澄清问题"},
+                "options": {
+                    "type": "array", "items": option_schema,
+                    "minItems": 2, "maxItems": 3,
+                    "description": "两个或三个互斥、可执行的选择",
+                },
+            },
+            "required": ["question", "options"],
+            "additionalProperties": False,
+        }
+        return {
+            "tools": [{"type": "function", "function": {
+                "name": _SUBMIT_PLAN_NAME,
+                "description": (
+                    "提交已确认需要的澄清卡；addressed 必须为 true，steps 必须为空数组。"),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "addressed": {"type": "boolean"},
+                        "steps": {"type": "array", "items": {}, "maxItems": 0},
+                        "clarify": clarify_schema,
+                    },
+                    "required": ["addressed", "steps", "clarify"],
+                },
+            }}],
+            "tool_choice": {
+                "type": "function", "function": {"name": _SUBMIT_PLAN_NAME}},
+        }
+
     refs = list(catalog.ref_to_pair) if catalog is not None else []
     capability_ref_schema = {
         "type": "string",
@@ -669,7 +763,7 @@ def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
     }
 
 
-def _planner_system(toolcall: bool = False) -> str:
+def _planner_system(toolcall: bool = False, clarification: bool = False) -> str:
     """每次 build() 实时拼 Planner system prompt：base + 受话段（恒附）+ 澄清段（CLARIFY_ENABLED=on）。
     os.getenv 实时读——env 翻转即刻生效，且让 monkeypatch 单测可行（母卡实施计划 §0-10）。
     Full Migration 后 base 唯一（领域知识由 skill 注入块承载，见 skills.py）。
@@ -688,7 +782,8 @@ def _planner_system(toolcall: bool = False) -> str:
     # 被弱模型误当成仍可调用；toolcall 只在其后追加输出通道，不改变能力边界。
     prompt += _CATALOG_ALLOWLIST_SECTION
     if toolcall:
-        prompt += _TOOLCALL_SECTION
+        prompt += (_CLARIFICATION_TOOLCALL_SECTION
+                   if clarification else _TOOLCALL_SECTION)
     return prompt
 
 
@@ -888,6 +983,7 @@ class PlanBuilder:
         last_mode = "json"
         correction = ""
         retry_with_tool = False
+        clarification_tool_retry = False
         for attempt in range(2):
             mode = "json"
             use_tool = toolcall and (attempt == 0 or retry_with_tool)
@@ -895,7 +991,8 @@ class PlanBuilder:
                 raw, args = await self._llm_plan_tools(text, catalog, working_set,
                                                        skills_block=sk_block,
                                                        exemplars_block=ex_block,
-                                                       correction=correction)
+                                                       correction=correction,
+                                                       clarification=clarification_tool_retry)
                 last_raw = raw or last_raw
                 if args is not None:
                     retry_with_tool = True
@@ -931,7 +1028,20 @@ class PlanBuilder:
                     text[:40],
                 )
             semantic_guard_retry = False
-            if (attempt == 0 and _focus_dependent_plan_conflicts(
+            if (clarification_tool_retry and not (
+                    isinstance(data, dict)
+                    and data.get("addressed") is True
+                    and type(data.get("steps")) is list
+                    and data["steps"] == []
+                    and parsed is not None
+                    and parsed.addressed
+                    and not parsed.steps
+                    and parsed.clarify)):
+                semantic_guard_retry = True
+                parsed = None
+                logger.warning(
+                    "Specialized clarification retry violated its host contract")
+            elif (attempt == 0 and _focus_dependent_plan_conflicts(
                     text, working_set, parsed, catalog)):
                 semantic_guard_retry = True
                 parsed = None
@@ -954,9 +1064,12 @@ class PlanBuilder:
             # The model can state the correct decision in ``goal`` yet still emit
             # executable steps.  In tool mode it can instead follow the intentional
             # two-stage protocol: a valid empty-steps marker first, then full
-            # prompt-only clarify details through schema-free JSON.  Both shapes
-            # spend the existing second attempt; only the former is contradictory.
-            goal_requires_clarification = _goal_requires_clarification(data, text)
+            # clarify details through an on-demand schema. Both shapes spend the
+            # existing second attempt; only the former is contradictory.
+            goal_requires_clarification = bool(
+                _goal_requires_clarification(data, text)
+                or _bare_object_plan_invents_action(parsed, text)
+            )
             clarification_marker = bool(
                 goal_requires_clarification and self._looks_like_no_action(data)
             )
@@ -964,7 +1077,8 @@ class PlanBuilder:
                     (parsed is not None and parsed.steps)
                     or clarification_marker)):
                 parsed = None
-                retry_with_tool = False
+                retry_with_tool = bool(toolcall and attempt == 0)
+                clarification_tool_retry = retry_with_tool
                 if clarification_marker:
                     logger.info(
                         "Planner tool marker requires clarification details; retrying")
@@ -981,7 +1095,7 @@ class PlanBuilder:
                     )
                 correction = (
                     correction_head
-                    + "不要替用户选择或猜测任何动作；请输出 "
+                    + "不要替用户选择或猜测任何动作；请通过 submit_plan 输出 "
                     "{\"addressed\":true,\"steps\":[],\"clarify\":{"
                     "\"question\":\"针对当前对象的口语化问题\",\"options\":["
                     "{\"label\":\"明确动作一\",\"send_text\":\"包含当前对象的完整指令\"},"
@@ -1145,7 +1259,7 @@ class PlanBuilder:
     async def _llm_plan_tools(self, text: str, catalog: PlannerCapabilityCatalog,
                               working_set: WorkingSet,
                               skills_block: str = "", exemplars_block: str = "",
-                              correction: str = ""
+                              correction: str = "", clarification: bool = False
                               ) -> tuple[str, dict | None]:
         """M1a submit_plan 工具通道（RFC §4）。返回 (raw, args)：args=工具 arguments
         dict（协议成功）；None=协议失败（异常/无 tool_calls），raw 保留 content 供同轮
@@ -1156,9 +1270,10 @@ class PlanBuilder:
             user_msg += correction
         try:
             content, calls = await self._llm_tools([
-                {"role": "system", "content": _planner_system(toolcall=True)},
+                {"role": "system", "content": _planner_system(
+                    toolcall=True, clarification=clarification)},
                 {"role": "user", "content": user_msg},
-            ], _submit_plan_tools(catalog))
+            ], _submit_plan_tools(catalog, clarification=clarification))
         except Exception as e:
             logger.warning("LLM plan toolcall exception: %s", e)
             return "", None
