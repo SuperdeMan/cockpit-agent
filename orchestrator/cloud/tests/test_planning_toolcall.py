@@ -612,6 +612,44 @@ def test_complete_conditional_retries_instead_of_clarifying_future_outcome(monke
     assert plan.complexity == "adaptive" and plan.clarify is None
     assert spy.tool_calls_n == 2 and spy.text_calls == 0
     assert "未来条件尚未知不是歧义" in spy.last_tool_user
+    parameters = spy.last_tools["tools"][0]["function"]["parameters"]
+    assert parameters["additionalProperties"] is False
+    assert set(parameters["required"]) == {
+        "complexity", "goal", "addressed", "steps",
+    }
+    assert "clarify" not in parameters["properties"]
+    assert "计划修正专用工具调用" in spy.last_system
+
+
+def test_complete_conditional_never_accepts_repeated_clarification(monkeypatch):
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    clarify = {
+        "addressed": True,
+        "steps": [],
+        "clarify": {
+            "question": "你想让我查天气还是直接创建提醒？",
+            "options": [
+                {"label": "查天气", "send_text": "请查明天天气"},
+                {"label": "建提醒", "send_text": "请提醒我带伞"},
+            ],
+        },
+    }
+    reply = ("", [{
+        "id": "c", "name": _SUBMIT_PLAN_NAME, "arguments": clarify,
+    }])
+    spy = _SpyLLM(tool_replies=[reply, reply])
+    agents = [
+        MockAgent("info", ["info.weather"]),
+        MockAgent("reminder", ["reminder.create"]),
+    ]
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "明天要是下雨就提醒我带伞", agents=agents)
+
+    assert plan.plan_mode == "toolcall_degraded"
+    assert plan.steps == [] and plan.clarify is None
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
 
 
 def test_incomplete_conditional_question_can_still_clarify(monkeypatch):

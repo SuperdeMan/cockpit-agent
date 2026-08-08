@@ -638,20 +638,32 @@ _CLARIFICATION_TOOLCALL_SECTION = (
     "每项只含 label 与 send_text，send_text 必须是消歧后可直接重新发送的完整指令。"
 )
 
+_PLAN_ONLY_TOOLCALL_SECTION = (
+    "\n\n== 输出通道（计划修正专用工具调用）==\n"
+    "上一版把完整条件句误判成了歧义。本轮只调用 submit_plan 一次，严格提交计划；"
+    "专用 schema 不接受 clarify 或其他额外顶层字段。\n"
+    "未来条件尚未知时使用 adaptive，首轮只规划观察条件前件的步骤；条件后件留给"
+    " observation 后的 replan。若本轮 catalog 确实缺少承接能力，保持 steps=[]，"
+    "不得拿相近能力顶替。"
+)
+
 
 def _submit_plan_tools(
         catalog: PlannerCapabilityCatalog | None = None, *,
-        clarification: bool = False) -> dict:
+        clarification: bool = False, plan_only: bool = False) -> dict:
     """submit_plan 工具定义（线格式 ``{"tools":[...],"tool_choice":named 强制}``，RFC §3.2）。
 
     schema 顶层=现 JSON 协议顶层——语义零漂移，`_parse_and_validate_data` 直接消费；
     **无 require_confirm**（确认权不在 LLM，M0a 已中央落实）。普通首轮仍不暴露 clarify；
-    仅当首轮已经证明需要澄清时，第二轮 ``clarification=True`` 才使用专用 schema，避免
-    可选字段诱发普通请求误澄清。named tool_choice 强制 + prompt 指令双保险；某家不认
-    → build() 轮内降级承接（RFC §4）。
+    仅当首轮已经证明需要澄清时，第二轮 ``clarification=True`` 才使用澄清专用 schema；
+    首轮把完整条件句误澄清时，第二轮 ``plan_only=True`` 使用封闭计划 schema。两种字段
+    都不在普通首轮暴露，避免结构可见性诱发误判。named tool_choice 强制 + prompt 指令
+    双保险；某家不认 → build() 轮内降级承接（RFC §4）。
 
     build() 传入权限过滤且预算裁剪后的请求级 catalog；工具、prompt、解析和
     validator 因此共用同一可见面。缺 catalog 时只能提交空 steps，不退回开放字符串。"""
+    if clarification and plan_only:
+        raise ValueError("clarification and plan_only schemas are mutually exclusive")
     if clarification:
         option_schema = {
             "type": "object",
@@ -755,21 +767,34 @@ def _submit_plan_tools(
     # 恒拼，见 _planner_system）＝R4.4 验收时的原始形态：软 schema 下模型按 prompt 在
     # arguments 里输出 clarify 属额外字段、完全合法，_parse_and_validate_data 照常消费
     # ——触发条件两路径对称，都只由 prompt 判据承载。
+    if plan_only:
+        props["emotion"] = {
+            "type": "string", "enum": list(EMOTIONS),
+            "description": "可选会话情绪；平静请求省略或使用 neutral",
+        }
+    parameters = {
+        "type": "object", "properties": props,
+        "required": (["complexity", "goal", "addressed", "steps"]
+                     if plan_only else ["addressed", "steps"]),
+    }
+    if plan_only:
+        parameters["additionalProperties"] = False
     return {
         "tools": [{"type": "function", "function": {
             "name": _SUBMIT_PLAN_NAME,
             "description": (
-                "提交本轮规划结果。这是唯一合法的输出通道。arguments 每次必须同时包含 "
+                ("提交修正后的执行计划；禁止澄清和额外顶层字段。" if plan_only else "")
+                + "提交本轮规划结果。这是唯一合法的输出通道。arguments 每次必须同时包含 "
                 "addressed 和 steps；先从 {\"addressed\":true,\"steps\":[]} 创建两个键，"
                 "有合法步骤再填数组；无步骤也必须显式 steps=[]，不得只提交 addressed。"),
-            "parameters": {"type": "object", "properties": props,
-                           "required": ["addressed", "steps"]},
+            "parameters": parameters,
         }}],
         "tool_choice": {"type": "function", "function": {"name": _SUBMIT_PLAN_NAME}},
     }
 
 
-def _planner_system(toolcall: bool = False, clarification: bool = False) -> str:
+def _planner_system(toolcall: bool = False, clarification: bool = False,
+                    plan_only: bool = False) -> str:
     """每次 build() 实时拼 Planner system prompt：base + 受话段（恒附）+ 澄清段（CLARIFY_ENABLED=on）。
     os.getenv 实时读——env 翻转即刻生效，且让 monkeypatch 单测可行（母卡实施计划 §0-10）。
     Full Migration 后 base 唯一（领域知识由 skill 注入块承载，见 skills.py）。
@@ -788,8 +813,11 @@ def _planner_system(toolcall: bool = False, clarification: bool = False) -> str:
     # 被弱模型误当成仍可调用；toolcall 只在其后追加输出通道，不改变能力边界。
     prompt += _CATALOG_ALLOWLIST_SECTION
     if toolcall:
-        prompt += (_CLARIFICATION_TOOLCALL_SECTION
-                   if clarification else _TOOLCALL_SECTION)
+        if clarification and plan_only:
+            raise ValueError("clarification and plan_only prompts are mutually exclusive")
+        prompt += (_CLARIFICATION_TOOLCALL_SECTION if clarification
+                   else _PLAN_ONLY_TOOLCALL_SECTION if plan_only
+                   else _TOOLCALL_SECTION)
     return prompt
 
 
@@ -990,6 +1018,7 @@ class PlanBuilder:
         correction = ""
         retry_with_tool = False
         clarification_tool_retry = False
+        plan_only_tool_retry = False
         for attempt in range(2):
             mode = "json"
             use_tool = toolcall and (attempt == 0 or retry_with_tool)
@@ -998,7 +1027,8 @@ class PlanBuilder:
                                                        skills_block=sk_block,
                                                        exemplars_block=ex_block,
                                                        correction=correction,
-                                                       clarification=clarification_tool_retry)
+                                                       clarification=clarification_tool_retry,
+                                                       plan_only=plan_only_tool_retry)
                 last_raw = raw or last_raw
                 if args is not None:
                     retry_with_tool = True
@@ -1047,18 +1077,36 @@ class PlanBuilder:
                 parsed = None
                 logger.warning(
                     "Specialized clarification retry violated its host contract")
-            elif (attempt == 0 and parsed is not None and parsed.clarify
+            elif (plan_only_tool_retry and not (
+                    isinstance(data, dict)
+                    and set(data).issubset({
+                        "complexity", "goal", "addressed", "steps", "emotion",
+                    })
+                    and data.get("complexity") in {"simple", "adaptive"}
+                    and isinstance(data.get("goal"), str)
+                    and data.get("addressed") is True
+                    and type(data.get("steps")) is list
+                    and ("emotion" not in data or data["emotion"] in EMOTIONS))):
+                semantic_guard_retry = True
+                parsed = None
+                logger.warning("Plan-only retry violated its host contract")
+            elif (parsed is not None and parsed.clarify
                   and _COMPLETE_DEFERRED_CONDITION_RE.search(str(text or ""))):
                 semantic_guard_retry = True
                 parsed = None
-                clarification_tool_retry = False
-                correction = (
-                    "\n\n校验反馈：用户原话是完整条件句，已经同时给出条件前件和条件"
-                    "后件。未来条件尚未知不是歧义，而是 adaptive 计划的触发点；不要向"
-                    "用户反问选哪一个动作。首轮只规划用于观察或查询条件前件的合法能力，"
-                    "设置 complexity=adaptive，并在 goal 保留完整条件目标；条件后件留给"
-                    "观察结果后的 replan，不得提前无条件执行。"
-                )
+                if attempt == 0:
+                    clarification_tool_retry = False
+                    plan_only_tool_retry = bool(toolcall and retry_with_tool)
+                    correction = (
+                        "\n\n校验反馈：用户原话是完整条件句，已经同时给出条件前件和条件"
+                        "后件。未来条件尚未知不是歧义，而是 adaptive 计划的触发点；不要向"
+                        "用户反问选哪一个动作。首轮只规划用于观察或查询条件前件的合法能力，"
+                        "设置 complexity=adaptive，并在 goal 保留完整条件目标；条件后件留给"
+                        "观察结果后的 replan，不得提前无条件执行。"
+                    )
+                else:
+                    logger.warning(
+                        "Complete conditional remained a clarification after retry")
             elif (attempt == 0 and _focus_dependent_plan_conflicts(
                     text, working_set, parsed, catalog)):
                 semantic_guard_retry = True
@@ -1277,7 +1325,8 @@ class PlanBuilder:
     async def _llm_plan_tools(self, text: str, catalog: PlannerCapabilityCatalog,
                               working_set: WorkingSet,
                               skills_block: str = "", exemplars_block: str = "",
-                              correction: str = "", clarification: bool = False
+                              correction: str = "", clarification: bool = False,
+                              plan_only: bool = False
                               ) -> tuple[str, dict | None]:
         """M1a submit_plan 工具通道（RFC §4）。返回 (raw, args)：args=工具 arguments
         dict（协议成功）；None=协议失败（异常/无 tool_calls），raw 保留 content 供同轮
@@ -1289,9 +1338,11 @@ class PlanBuilder:
         try:
             content, calls = await self._llm_tools([
                 {"role": "system", "content": _planner_system(
-                    toolcall=True, clarification=clarification)},
+                    toolcall=True, clarification=clarification,
+                    plan_only=plan_only)},
                 {"role": "user", "content": user_msg},
-            ], _submit_plan_tools(catalog, clarification=clarification))
+            ], _submit_plan_tools(
+                catalog, clarification=clarification, plan_only=plan_only))
         except Exception as e:
             logger.warning("LLM plan toolcall exception: %s", e)
             return "", None
