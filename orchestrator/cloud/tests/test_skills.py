@@ -94,12 +94,29 @@ def test_charging_guide_demonstrates_conditional_replan_observation_contract():
                  if d.name == "charging-strategy")
 
     for marker in (
-        "最近观察", "status=ok", "intent=charging.status", "data.range_km",
+        "最近观察", "status=ok", "intent=charging.status", "data", "range_km",
         "done=false", "done=true", "charging.find/charging.plan",
         "navigation.navigate_to",
     ):
         assert marker in guide.knowledge
     assert "看看电量够不够开到杭州" not in guide.knowledge
+
+
+def test_charging_guide_demonstrates_initial_conditional_shape():
+    """The initial turn must defer the branch instead of executing it eagerly."""
+    guide = next(d for d in sk.SkillStore().guides()
+                 if d.name == "charging-strategy")
+    adaptive = []
+    for shot in guide.few_shots:
+        plan = shot.get("plan") or {}
+        intents = [step.get("intent") for step in (plan.get("steps") or [])]
+        if (plan.get("complexity") == "adaptive"
+                and intents == ["charging.status"]):
+            adaptive.append(shot)
+
+    assert adaptive, "条件补能缺少「首轮只查状态 + adaptive」结构化 few-shot"
+    assert all(shot.get("user") != "看看电量够不够开到杭州，不够就找个充电站"
+               for shot in adaptive), "不得复制对抗原句"
 
 
 def test_charging_guide_demonstrates_implicit_depletion_as_find_not_status():
@@ -200,7 +217,7 @@ def test_conditional_reminder_guide_demonstrates_the_replan_observation_contract
                  if d.name == "conditional-reminder")
 
     for marker in (
-        "最近观察", "status=ok", "data.condition", "done=false", "done=true",
+        "最近观察", "status=ok", "data", "condition", "done=false", "done=true",
         "info.weather", "reminder.create",
     ):
         assert marker in guide.knowledge
@@ -279,6 +296,36 @@ def test_shop_order_flow_few_shot_demonstrates_dependency_wiring():
     assert repair.slot == "item"
     assert repair.source_path == "data.items.0.name"
     assert "招牌" in repair.trigger_any
+
+
+def test_nearby_detail_flow_demonstrates_and_declares_result_wiring():
+    """Selecting a result for details consumes the preceding search output."""
+    guide = next(d for d in sk.SkillStore().guides()
+                 if d.name == "nearby-detail-flow")
+    assert set(guide.capability_dependencies) == {
+        "nearby.search", "nearby.detail",
+    }
+    wired = []
+    for shot in guide.few_shots:
+        steps = (shot.get("plan") or {}).get("steps") or []
+        if [step.get("intent") for step in steps] == [
+                "nearby.search", "nearby.detail"]:
+            wired.append((shot, steps))
+    assert wired, "搜索后看候选详情缺少结构化 two-step few-shot"
+    shot, steps = wired[0]
+    assert shot.get("user") != "搜一下附近的火锅店，再看看第一家的详情"
+    assert steps[1]["depends_on"] == [steps[0]["id"]]
+    assert steps[1]["slot_refs"]["poi_id"].startswith(
+        steps[0]["id"] + ".data.")
+
+    repairs = guide.plan_repairs
+    assert len(repairs) == 1
+    repair = repairs[0]
+    assert repair.producer_intent == "nearby.search"
+    assert repair.consumer_intent == "nearby.detail"
+    assert repair.slot == "poi_id"
+    assert repair.source_path == "data.items.0.id"
+    assert any("详情" in trigger for trigger in repair.trigger_any)
 
 
 def test_negation_policy_demonstrates_keep_the_positive_half():

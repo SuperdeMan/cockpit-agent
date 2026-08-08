@@ -1,0 +1,32 @@
+name: nearby-detail-flow
+type: guide
+description: 周边搜索后查看第一家或评分最高候选详情的两步依赖与结果接线（搜附近餐馆再看详情）
+priority: 55
+capability_dependencies: [nearby.search, nearby.detail]
+keywords: [第一家, 第一个, 详情, 详细信息, 评分最高, 搜一下附近, 几点关门]
+knowledge: |
+  **先搜索、再看候选详情是两步数据依赖。** 用户先要求列候选，再说看第一家、评分最高那家
+  或其中一家详情时：先 `nearby.search`，再 `nearby.detail`。详情步必须 `depends_on` 搜索步，
+  并用 `slot_refs.poi_id` 读取搜索结果首项的 id；不得把两步并行，也不得因当前还没有
+  `poi_id` 而省掉详情步。若用户已经在上下文中选定具体地点，只出 `nearby.detail`。
+few_shots:
+  - user: 查查附近的粤菜馆，再看评分最高那家的详细信息
+    plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"nearby","intent":"nearby.search","slots":{"cuisine":"粤菜","sort":"rating"},"depends_on":[],"slot_refs":{}},{"id":"s2","agent_id":"nearby","intent":"nearby.detail","slots":{},"depends_on":["s1"],"slot_refs":{"poi_id":"s1.data.items.0.id"}}]}
+plan_repairs:
+  - kind: dependency_slot_ref
+    trigger_any: [第一家, 第一个, 评分最高那家, 排在最前面, 看看详情, 详细信息]
+    producer_intent: nearby.search
+    consumer_intent: nearby.detail
+    slot: poi_id
+    source_path: data.items.0.id
+golden:
+  - text: 找几家附近的咖啡馆，再打开第一家的详情
+    expect_intents: [nearby.search, nearby.detail]
+  - text: 列几家周围的书店，把排在最前面的具体资料打开
+    expect_intents: [nearby.search, nearby.detail]
+    holdout: true
+  - text: 看看刚才选中那家店几点关门
+    expect_intents: [nearby.detail]
+    expect_not: [nearby.search]
+owner: nearby
+version: 1

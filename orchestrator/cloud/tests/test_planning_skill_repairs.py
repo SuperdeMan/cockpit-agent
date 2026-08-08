@@ -8,7 +8,7 @@ import pytest
 
 from orchestrator.cloud import planning
 from orchestrator.cloud.context import WorkingSet
-from orchestrator.cloud.models import PlanContext
+from orchestrator.cloud.models import Plan, PlanContext, Step
 from orchestrator.cloud.planning import PlanBuilder
 from tests.test_planning import MockAgent
 
@@ -81,6 +81,25 @@ def test_declared_skill_repair_replaces_malformed_model_ref(monkeypatch):
     assert order.slot_refs == {"item": "s1.data.items.0.name"}
     assert plan.skill_effects == [
         "shop-order-flow:dependency_slot_ref:shop.menu->shop.order.item"
+    ]
+
+
+def test_nearby_detail_repair_connects_the_selected_search_result():
+    """The new guide declaration must reach the generic repair consumer."""
+    plan = Plan(steps=[
+        Step(id="s1", agent_id="nearby", intent="nearby.search"),
+        Step(id="s2", agent_id="nearby", intent="nearby.detail"),
+    ])
+    effects = planning._skills.apply_plan_repairs(
+        plan,
+        "搜一下附近的火锅店，再看看第一家的详情",
+        ["full:nearby-detail-flow@lex:42"],
+    )
+
+    assert plan.steps[1].depends_on == ["s1"]
+    assert plan.steps[1].slot_refs == {"poi_id": "s1.data.items.0.id"}
+    assert effects == [
+        "nearby-detail-flow:dependency_slot_ref:nearby.search->nearby.detail.poi_id"
     ]
 
 

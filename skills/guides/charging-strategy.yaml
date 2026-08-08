@@ -10,20 +10,21 @@ keywords: [充电, 充电桩, 充电站, 快充, 补能, 没电, 耗尽, 耗空,
 # navigation 途经点流对该句也是合理体验，知识只分流清晰形态。
 knowledge: |
   **充电分流**：
-  - 车辆已没电的**耗尽陈述**就是补能求助 → charging.find，**不是 charging.status**；
-  续航焦虑且要求就近补电也归 charging.find（快慢充偏好放 prefer）。只看附近有什么充电设施 → nearby。
-  - 跨城/长途怎么补能 → charging.plan 带 destination，给沿途分段策略，不是找一个桩。
-  **条件补能分两轮**：『先看电够不够到 X，不够再补能』首轮只出 charging.status，且
-  complexity=adaptive。第二轮只读最近观察：例目标『续航不足到南京就补能』，观察
-  `status=ok, intent=charging.status, data.range_km=45` 已明确不足时，必须 `done=false` 且只出
-  charging.find/charging.plan；目的地只是续航判据，绝不扩成 navigation.navigate_to。
-  观察明确够用才 `done=true`；不重查状态，不提前执行分支。
-  - 导航去某地并在那附近充 → navigation.navigate_to 与 charging.find(destination=该地) 并列。
-  只问电量/续航本身（『现在电量多少』『还能跑多远』）→ charging.status，不要出找桩步。
+  - **耗尽陈述**就是补能求助 → charging.find，**不是 charging.status**；要求就近补电也归
+  charging.find。只看附近设施归周边发现；跨城补能 → charging.plan，不是只找一个桩。
+  **条件补能分两轮**：『先看电够不够到 X，不够再补能』首轮只出 charging.status，
+  complexity=adaptive。第二轮只读最近观察：`status=ok, intent=charging.status`，且
+  `data` 中 `range_km=45` 明确不足 → `done=false` 且只出 charging.find/charging.plan；够用才
+  `done=true`。目的地只是判据，绝不扩成 navigation.navigate_to；不重查或预执行分支。
+  - 导航去某地并在当地充 → navigation.navigate_to 与 charging.find(destination=该地) 并列。
+  只问电量/续航 → charging.status，不要找桩。
   **只有车的补能归充电域**：手机/耳机/笔记本/充电宝快没电，绝不出 charging.find/charging.plan。
 few_shots:
   - user: 动力电池已经耗尽
     plan: {"steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.find","slots":{},"depends_on":[],"slot_refs":{}}]}
+  # 初始轮的结构必须与正文一致：先查状态，条件后件留给 observation 后的 replan。
+  - user: 先确认续航能不能到无锡，不足再找快充
+    plan: {"complexity":"adaptive","steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.status","slots":{},"depends_on":[],"slot_refs":{}}]}
   - user: 先找个可用快充，选好后带我过去
     plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"charging-planner","intent":"charging.find","slots":{},"depends_on":[],"slot_refs":{}},{"id":"s2","agent_id":"navigation","intent":"navigation.navigate_to","slots":{},"depends_on":["s1"],"slot_refs":{"destination":"s1.data.items.0.name"}}]}
 # 只连接模型已选出的唯一找桩步和导航步，不新增任何 intent。

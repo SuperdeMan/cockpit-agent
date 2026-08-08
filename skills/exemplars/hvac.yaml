@@ -35,3 +35,15 @@ exemplars:
   - badcase
   - homophone
   note: 同一个同音对象换一种动作句式，不是「打开」那一句的复述
+- text: 打开空调接着查询明天广州天气
+  plan:
+  - intent: hvac.on
+  - agent: info
+    intent: info.forecast
+  source: manual
+  added: '2026-08-08'
+  tags:
+  - badcase
+  - composition
+  - no-punctuation
+  note: 无标点仍按两个明确动词拆分，空调对象不得漂到开窗

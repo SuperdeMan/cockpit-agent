@@ -510,6 +510,16 @@ def test_toolcall_prompt_locks_each_step_to_the_five_exact_nested_fields():
         assert domain_specific not in _TOOLCALL_SECTION
 
 
+def test_toolcall_prompt_starts_every_argument_object_from_an_explicit_skeleton():
+    """A required-key list alone did not stop a live tool call omitting steps."""
+    skeleton = '{"addressed":true,"steps":[]}'
+    assert skeleton in _TOOLCALL_SECTION
+    assert "先创建这两个键" in _TOOLCALL_SECTION
+    tool = _submit_plan_tools()["tools"][0]["function"]
+    assert skeleton in tool["description"]
+    assert tool["parameters"]["required"] == ["addressed", "steps"]
+
+
 def test_catalog_prompt_is_not_a_replacement_for_step_validation():
     """Prompt 只降 raw 幻觉；未知 agent/intent 仍必须被确定性第二防线拒绝。"""
     amap = {"hvac": MockAgent("hvac", ["hvac.set"])}

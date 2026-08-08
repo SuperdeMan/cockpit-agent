@@ -330,6 +330,11 @@ _CLARIFY_SECTION = (
     "——**必须澄清，不要替用户选一个动作**\n"
     "- 上述单名词/对象名歧义不得输出 addressed=true、steps=[]（这表示无需动作），"
     "也不得当作闲聊复述；必须输出带问题和选项的 clarify\n"
+    "- 结构示例：用户只说『云岚国际中心』→ "
+    "{\"addressed\":true,\"steps\":[],\"clarify\":{\"question\":\"你希望我怎么处理云岚国际中心？\","
+    "\"options\":[{\"label\":\"路线引导\",\"send_text\":\"请规划到云岚国际中心的路线\"},"
+    "{\"label\":\"地点资料\",\"send_text\":\"请介绍云岚国际中心的地点信息\"}]}}；"
+    "不得自行搜索或导航\n"
     "- **缺槽位不算歧义**（『导航』缺目的地→照常输出 step，由对应 agent 追问）；"
     "缺的是**槽位**才照常执行，缺的是**动词**要澄清\n"
     # 2026-08-03 泓舟拍板。判据刻意写成**两面**：只写「状态句要澄清」会把「有点闷」
@@ -367,6 +372,8 @@ _TOOLCALL_SECTION = (
     "顶层 JSON 对象即工具参数。不要以文本形式输出 JSON，不要输出任何解释。\n"
     "arguments 每次必须同时包含 addressed 和 steps；无步骤也必须显式 steps=[]，"
     "不得只提交 addressed。\n"
+    "每次先创建这两个键并从 {\"addressed\":true,\"steps\":[]} 骨架开始；"
+    "有合法步骤时再往 steps 数组添加对象，其余顶层字段最后补。\n"
     "steps 的每个元素必须是 JSON 对象，绝不能是字符串；能力缺席时只能提交 steps=[]，"
     "不能把解释、候选能力名或自然语言写进数组。\n"
     "steps 数组中每一项只能包含 id、capability_ref、slots、depends_on、slot_refs 这五个字段。"
@@ -459,7 +466,8 @@ def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
             "name": _SUBMIT_PLAN_NAME,
             "description": (
                 "提交本轮规划结果。这是唯一合法的输出通道。arguments 每次必须同时包含 "
-                "addressed 和 steps；无步骤也必须显式 steps=[]，不得只提交 addressed。"),
+                "addressed 和 steps；先从 {\"addressed\":true,\"steps\":[]} 创建两个键，"
+                "有合法步骤再填数组；无步骤也必须显式 steps=[]，不得只提交 addressed。"),
             "parameters": {"type": "object", "properties": props,
                            "required": ["addressed", "steps"]},
         }}],

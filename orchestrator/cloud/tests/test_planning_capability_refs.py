@@ -319,6 +319,10 @@ def test_bare_object_clarification_cannot_degrade_into_empty_no_action():
         "不得当作闲聊复述",
     ):
         assert clause in prompt
+    assert "云岚国际中心" in prompt, "裸对象澄清需要结构化、非对抗原句的示范"
+    assert '"steps":[],"clarify"' in prompt
+    assert "请规划到云岚国际中心的路线" in prompt
+    assert "请介绍云岚国际中心的地点信息" in prompt
 
 
 def test_cyclic_wire_plan_is_rejected_before_it_reaches_the_executor():
