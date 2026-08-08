@@ -205,6 +205,9 @@ _NO_CLARIFY_GOAL_RE = re.compile(
     r"|\b(?:do\s+not|don't)\s+clarif(?:y|ication)\b",
     re.IGNORECASE,
 )
+_OBJECT_RECAST_GOAL_RE = re.compile(r"(?:解析|识别|理解)(?:为|成)")
+_QUOTE_PAIRS = (("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"),
+                ("「", "」"), ("『", "』"))
 
 
 def _is_directive_to_assistant(text: str) -> bool:
@@ -212,15 +215,31 @@ def _is_directive_to_assistant(text: str) -> bool:
     return bool(_DIRECTIVE_RE.match(_POLITE_PREFIX_RE.sub("", (text or "").strip())))
 
 
-def _goal_requires_clarification(wire) -> bool:
-    """Read the planner's own structured decision, never domain vocabulary."""
+def _goal_requires_clarification(wire, text: str = "") -> bool:
+    """Read planner self-signals without consulting domain vocabulary.
+
+    A goal that quotes the complete utterance and recasts it as an object also
+    contradicts an executable plan: the user supplied the object, while the
+    planner supplied the action.  This is intentionally based on whole-input
+    identity rather than place names or any other domain-specific terms.
+    """
     if not isinstance(wire, dict):
         return False
     goal = str(wire.get("goal") or "")
-    return bool(
+    explicit_clarification = bool(
         _CLARIFY_GOAL_RE.search(goal)
         and not _NO_CLARIFY_GOAL_RE.search(goal)
     )
+    normalized_text = re.sub(r"\s+", "", str(text or "")).strip()
+    normalized_goal = re.sub(r"\s+", "", goal)
+    quotes_whole_input = bool(normalized_text) and any(
+        f"{left}{normalized_text}{right}" in normalized_goal
+        for left, right in _QUOTE_PAIRS
+    )
+    recasts_whole_input = bool(
+        quotes_whole_input and _OBJECT_RECAST_GOAL_RE.search(normalized_goal)
+    )
+    return explicit_clarification or recasts_whole_input
 
 
 # M2 P2（子 RFC §2.3）：会话级情绪信号的封闭词表。**不进记忆层**——短 TTL 且不入画像的
@@ -735,12 +754,13 @@ class PlanBuilder:
             # not a valid action plan.  Spend the existing second attempt on the
             # schema-free JSON path with an explicit shape correction.
             if (parsed is not None and parsed.steps
-                    and _goal_requires_clarification(data)):
+                    and _goal_requires_clarification(data, text)):
                 logger.info(
                     "Planner goal requires clarification but steps execute; retrying")
                 parsed = None
                 correction = (
-                    "\n\n校验反馈：上一版 goal 已判定需要澄清，却仍输出执行 steps，"
+                    "\n\n校验反馈：上一版 goal 已表明需要澄清，或用户只给了待解析对象，"
+                    "却仍输出执行 steps，"
                     "决策与计划矛盾。不要替用户选择或猜测任何动作；请输出 "
                     "{\"addressed\":true,\"steps\":[],\"clarify\":{"
                     "\"question\":\"针对当前对象的口语化问题\",\"options\":["

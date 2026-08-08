@@ -220,6 +220,25 @@ def test_goal_clarification_signal_handles_plain_and_negated_wording():
         assert not _goal_requires_clarification({"goal": goal}), goal
 
 
+def test_goal_clarification_signal_detects_recast_whole_utterance_object():
+    assert _goal_requires_clarification(
+        {"goal": '把"云岚国际中心"解析为可导航的具体地点'},
+        "云岚国际中心",
+    )
+    assert _goal_requires_clarification(
+        {"goal": "将『云岚国际中心』识别为一个地点对象"},
+        "云岚国际中心",
+    )
+    assert not _goal_requires_clarification(
+        {"goal": '执行用户明确要求的"打开空调"动作'},
+        "打开空调",
+    )
+    assert not _goal_requires_clarification(
+        {"goal": '把"云岚国际中心"解析为可导航的具体地点'},
+        "导航到云岚国际中心",
+    )
+
+
 def test_toolcall_degraded_after_both_rounds_fail(monkeypatch):
     """两轮全失败 → 走 _fallback，plan_mode=toolcall_degraded（空计划诚实降级）。"""
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
