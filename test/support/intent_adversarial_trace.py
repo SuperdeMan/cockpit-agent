@@ -74,8 +74,9 @@ class RawCapabilityReference:
 
 
 RAW_CAPABILITY_REF_STATUSES = frozenset({
-    "admitted", "unknown", "legacy_identity", "missing", "invalid_type",
-    "malformed_wire", "missing_steps", "malformed_steps", "malformed_step",
+    "admitted", "unknown", "malformed_reference", "legacy_identity",
+    "missing", "invalid_type", "malformed_wire", "missing_steps",
+    "malformed_steps", "malformed_step",
 })
 RAW_VALIDATION_STAGES = frozenset({"build", "replan"})
 RAW_VALIDATION_WIRE_MODES = frozenset({
@@ -104,6 +105,8 @@ def raw_capability_ref_value_matches_status(value: Any, status: Any) -> bool:
         return False
     if status in {"admitted", "unknown"}:
         return _REQUEST_CAPABILITY_REF.fullmatch(value) is not None
+    if status == "malformed_reference":
+        return _REQUEST_CAPABILITY_REF.fullmatch(value) is None
     exact = _EXACT_RAW_REF_SENTINELS.get(status)
     if exact is not None:
         return value == exact
@@ -398,7 +401,12 @@ def _raw_capability_references(data: Any, ref_to_pair=None,
             out.append(RawCapabilityReference(
                 f"<capability_ref:{type(ref).__name__}>", "invalid_type"))
             continue
-        status = "admitted" if ref_to_pair is not None and ref in ref_to_pair else "unknown"
+        if ref_to_pair is not None and ref in ref_to_pair:
+            status = "admitted"
+        elif _REQUEST_CAPABILITY_REF.fullmatch(ref):
+            status = "unknown"
+        else:
+            status = "malformed_reference"
         out.append(RawCapabilityReference(_bounded_ref(ref), status))
     return tuple(out)
 

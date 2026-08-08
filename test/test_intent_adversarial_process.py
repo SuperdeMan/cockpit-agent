@@ -594,6 +594,27 @@ def test_validate_worker_bundle_rejects_inconsistent_ref_value_and_status(
     assert any("value/status" in error for error in errors), errors
 
 
+def test_validate_worker_bundle_accepts_malformed_string_ref_as_invalid_evidence():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    invalid_ref = _raw_ref("weather.query", "malformed_reference")
+    results = [
+        _result(
+            "case-1",
+            run_id,
+            raw_intents=("__invalid_capability_reference__",),
+            actual_intents=(),
+            raw_capability_refs=(invalid_ref,),
+        )
+        for run_id in ("run-primary", "run-corroboration")
+    ]
+    artifacts = [
+        _artifact(specs[0], "run-primary", results=[results[0]], pid=101),
+        _artifact(specs[1], "run-corroboration", results=[results[1]], pid=102),
+    ]
+
+    assert validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1) == ()
+
+
 @pytest.mark.parametrize(("value", "status"), [
     ("cap_9999", "admitted"),
     ("cap_0001", "unknown"),
