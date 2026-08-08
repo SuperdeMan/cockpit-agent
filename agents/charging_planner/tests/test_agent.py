@@ -275,6 +275,7 @@ def test_status_returns_battery():
         slots={}, raw_text="现在电量多少", ctx=ctx))
     assert res.status == "ok"
     assert "72%" in res.speech
+    assert res.data == {"battery": "72%"}
 
 
 def test_find_provider_outage_degrades_honestly_no_mock():

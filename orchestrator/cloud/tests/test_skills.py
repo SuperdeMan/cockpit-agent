@@ -74,49 +74,51 @@ def test_navigation_guide_preserves_candidate_to_navigation_handoff():
     assert handoff, "先找候选再去选中结果的通用两步契约没有 golden 消费方"
 
 
-def test_charging_guide_separates_conditional_status_from_one_shot_plan():
+def test_charging_guide_uses_route_aware_plan_for_destination_range_question():
     guide = next(d for d in sk.SkillStore().guides()
                  if d.name == "charging-strategy")
 
-    conditional = [
+    range_plans = [
         g for g in guide.golden
-        if g.get("expect_complexity") == "adaptive"
-        and g.get("expect_intents") == ["charging.status"]
-        and {"charging.find", "charging.plan"}
+        if g.get("expect_complexity") == "simple"
+        and g.get("expect_intents") == ["charging.plan"]
+        and {"charging.find", "charging.status"}
         <= set(g.get("expect_not") or [])
     ]
-    assert conditional, "电量条件分支缺少 status-only adaptive 的非原句 golden"
+    assert range_plans, "目的地续航判断缺少 route-aware charging.plan golden"
 
 
-def test_charging_guide_demonstrates_conditional_replan_observation_contract():
-    """目的地只是续航判据；第二轮不能把它误读成直接导航指令。"""
+def test_charging_guide_demonstrates_route_aware_range_contract():
+    """Route-aware Agent owns the range decision; the planner must not invent data."""
     guide = next(d for d in sk.SkillStore().guides()
                  if d.name == "charging-strategy")
 
     for marker in (
-        "最近观察", "status=ok", "intent=charging.status", "data", "range_km",
-        "done=false", "done=true", "charging.find/charging.plan",
-        "navigation.navigate_to",
+        "真实路线距离", "当前车辆状态", "charging.plan", "无需途中补电",
+        "沿途充电", "charging.status", "navigation.navigate_to",
     ):
         assert marker in guide.knowledge
+    assert "条件补能分两轮" not in guide.knowledge
     assert "看看电量够不够开到杭州" not in guide.knowledge
 
 
-def test_charging_guide_demonstrates_initial_conditional_shape():
-    """The initial turn must defer the branch instead of executing it eagerly."""
+def test_charging_guide_demonstrates_one_shot_destination_range_shape():
+    """The route-aware capability evaluates sufficiency and places stops itself."""
     guide = next(d for d in sk.SkillStore().guides()
                  if d.name == "charging-strategy")
-    adaptive = []
+    one_shot = []
     for shot in guide.few_shots:
         plan = shot.get("plan") or {}
         intents = [step.get("intent") for step in (plan.get("steps") or [])]
-        if (plan.get("complexity") == "adaptive"
-                and intents == ["charging.status"]):
-            adaptive.append(shot)
+        slots = [(step.get("slots") or {}) for step in (plan.get("steps") or [])]
+        if (plan.get("complexity") == "simple"
+                and intents == ["charging.plan"]
+                and slots and slots[0].get("destination")):
+            one_shot.append(shot)
 
-    assert adaptive, "条件补能缺少「首轮只查状态 + adaptive」结构化 few-shot"
+    assert one_shot, "目的地续航判断缺少 charging.plan 一次完成的结构化 few-shot"
     assert all(shot.get("user") != "看看电量够不够开到杭州，不够就找个充电站"
-               for shot in adaptive), "不得复制对抗原句"
+               for shot in one_shot), "不得复制对抗原句"
 
 
 def test_charging_guide_demonstrates_implicit_depletion_as_find_not_status():
