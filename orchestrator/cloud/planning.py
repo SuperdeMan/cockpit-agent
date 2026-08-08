@@ -425,8 +425,10 @@ _TOOLCALL_SECTION = (
     "不得只提交 addressed。\n"
     "每次先创建这两个键并从 {\"addressed\":true,\"steps\":[]} 骨架开始；"
     "有合法步骤时再往 steps 数组添加对象，其余顶层字段最后补。\n"
-    "触发上文澄清规则时，即使工具 schema 未列出 clarify，也必须在 arguments 顶层补充"
-    " clarify，保持 steps=[]；不得为了迁就 schema 猜测一个动作。\n"
+    "触发上文澄清规则时，首轮不要在工具 arguments 中提交 clarify（schema 未列出"
+    " clarify）；goal 必须以“需要澄清：”开头并简述原因，同时保持 steps=[]。宿主会在"
+    "下一轮 JSON 通道索取完整 question/options；不得为了迁就 schema 猜测一个动作，也不得"
+    "把 question/options 塞进 steps。\n"
     "单步骤也必须放在数组中，使用 steps=[{...}]；严禁把单个对象直接写成 steps={...}，"
     "也严禁把数组编码成字符串。\n"
     "steps 的每个元素必须是 JSON 对象，绝不能是字符串；能力缺席时只能提交 steps=[]，"
@@ -761,19 +763,35 @@ class PlanBuilder:
                           if data is not None else None)
                 mode = "toolcall_fallback" if toolcall else "json"
             # The model can state the correct decision in ``goal`` yet still emit
-            # executable steps, especially when tool schema intentionally omits
-            # the prompt-only clarify field.  That is an internal contradiction,
-            # not a valid action plan.  Spend the existing second attempt on the
-            # schema-free JSON path with an explicit shape correction.
-            if (parsed is not None and parsed.steps
-                    and _goal_requires_clarification(data, text)):
-                logger.info(
-                    "Planner goal requires clarification but steps execute; retrying")
+            # executable steps.  In tool mode it can instead follow the intentional
+            # two-stage protocol: a valid empty-steps marker first, then full
+            # prompt-only clarify details through schema-free JSON.  Both shapes
+            # spend the existing second attempt; only the former is contradictory.
+            goal_requires_clarification = _goal_requires_clarification(data, text)
+            clarification_marker = bool(
+                goal_requires_clarification and self._looks_like_no_action(data)
+            )
+            if (goal_requires_clarification and (
+                    (parsed is not None and parsed.steps)
+                    or clarification_marker)):
                 parsed = None
+                if clarification_marker:
+                    logger.info(
+                        "Planner tool marker requires clarification details; retrying")
+                    correction_head = (
+                        "\n\n校验反馈：上一版工具提交已正确判断需要澄清，并按协议保持 "
+                        "steps=[]。现在不要继续只输出 goal 标记，请补全澄清卡。"
+                    )
+                else:
+                    logger.info(
+                        "Planner goal requires clarification but steps execute; retrying")
+                    correction_head = (
+                        "\n\n校验反馈：上一版 goal 已表明需要澄清，或用户只给了待解析对象，"
+                        "却仍输出执行 steps，决策与计划矛盾。"
+                    )
                 correction = (
-                    "\n\n校验反馈：上一版 goal 已表明需要澄清，或用户只给了待解析对象，"
-                    "却仍输出执行 steps，"
-                    "决策与计划矛盾。不要替用户选择或猜测任何动作；请输出 "
+                    correction_head
+                    + "不要替用户选择或猜测任何动作；请输出 "
                     "{\"addressed\":true,\"steps\":[],\"clarify\":{"
                     "\"question\":\"针对当前对象的口语化问题\",\"options\":["
                     "{\"label\":\"明确动作一\",\"send_text\":\"包含当前对象的完整指令\"},"
@@ -794,7 +812,8 @@ class PlanBuilder:
                 plan = parsed
                 plan_mode = mode
                 break
-            if parsed is None and self._looks_like_no_action(data):
+            if (parsed is None and self._looks_like_no_action(data)
+                    and not goal_requires_clarification):
                 no_action += 1
                 last_mode = mode
 

@@ -204,6 +204,61 @@ def test_toolcall_retries_a_plan_whose_goal_says_clarify_but_steps_execute(monke
     assert "决策与计划矛盾" in spy.last_text_user
 
 
+def test_toolcall_expands_empty_clarification_marker_via_json_retry(monkeypatch):
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    marker = {
+        "addressed": True,
+        "goal": "需要澄清：用户只给了对象名",
+        "steps": [],
+    }
+    clarified = {
+        "addressed": True,
+        "steps": [],
+        "clarify": {
+            "question": "你希望我怎么处理云岚国际中心？",
+            "options": [
+                {"label": "路线引导", "send_text": "请规划到云岚国际中心的路线"},
+                {"label": "地点资料", "send_text": "请介绍云岚国际中心的地点信息"},
+            ],
+        },
+    }
+    spy = _SpyLLM(
+        text_reply=json.dumps(clarified, ensure_ascii=False),
+        tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                           "arguments": marker}]),
+    )
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "云岚国际中心")
+
+    assert plan.plan_mode == "toolcall_fallback"
+    assert plan.steps == [] and plan.clarify == clarified["clarify"]
+    assert spy.tool_calls_n == 1 and spy.text_calls == 1
+    assert "工具提交已正确判断需要澄清" in spy.last_text_user
+
+
+def test_repeated_clarification_marker_is_not_misreported_as_no_action(monkeypatch):
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    marker = {
+        "addressed": True,
+        "goal": "需要澄清：用户只给了对象名",
+        "steps": [],
+    }
+    spy = _SpyLLM(
+        text_reply=json.dumps(marker, ensure_ascii=False),
+        tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                           "arguments": marker}]),
+    )
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "云岚国际中心")
+
+    assert plan.plan_mode == "toolcall_degraded"
+    assert plan.plan_mode != "toolcall_fallback_no_action"
+
+
 def test_goal_clarification_signal_handles_plain_and_negated_wording():
     for goal in (
         "用户只给了对象名，没有动词，需要澄清意图",
@@ -565,6 +620,8 @@ def test_toolcall_prompt_keeps_prompt_only_clarify_and_single_step_array_shape()
 
     assert "schema 未列出 clarify" in prompt
     assert "steps=[]" in prompt
+    assert "不要在工具 arguments 中提交 clarify" in prompt
+    assert 'goal 必须以“需要澄清：”开头' in prompt
     assert "单步骤也必须放在数组中" in prompt
     assert "steps={" in prompt
 
