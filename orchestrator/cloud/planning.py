@@ -226,6 +226,9 @@ _FOCUS_DEPENDENT_ELLIPSIS_RE = re.compile(
     r"|(?:明天|后天|那天)呢"
     r"|第[一二三四五六七八九十\d]+个(?:的)?详情)$"
 )
+_FOCUSED_LIST_BATCH_RE = re.compile(
+    r"^(?:(?:那个|这个|它)?换一批|(?:再来|另来)一批)$"
+)
 _EXPLICIT_OPEN_ACTION_RE = re.compile(
     r"(?:^|[\s，,。；;！？!?]|先|再|然后|接着|随后|顺便)"
     r"(?:请|帮我|给我)?(?:打开|开启|开一下)"
@@ -387,6 +390,30 @@ def _focus_dependent_plan_conflicts(
         str(step.intent or "").split(".", 1)[0] != namespace
         for step in plan.steps
     )
+
+
+def _focused_list_batch_plan_conflicts(
+        text: str, working_set: WorkingSet, plan: Plan | None,
+        catalog: PlannerCapabilityCatalog) -> bool:
+    """Keep a batch-refresh follow-up on the exact structured list capability.
+
+    ``last_choice_purpose=list`` distinguishes “show another batch of the same
+    list” from sibling operations such as opening an item detail.  The guard is
+    catalog-driven and fails open when the previous capability is unavailable.
+    """
+    normalized = re.sub(r"[\s，,。；;！？!?]+", "", str(text or ""))
+    focus = getattr(working_set, "focus", None)
+    last_intent = str(getattr(focus, "last_intent", "") or "").strip()
+    if (str(getattr(focus, "last_choice_purpose", "") or "") != "list"
+            or not _FOCUSED_LIST_BATCH_RE.fullmatch(normalized)):
+        return False
+    admitted_intents = {intent for _, intent in catalog.pair_to_ref}
+    if not last_intent or last_intent not in admitted_intents:
+        return False
+    if (plan is None or not plan.addressed or plan.clarify is not None
+            or not plan.steps):
+        return True
+    return any(str(step.intent or "") != last_intent for step in plan.steps)
 
 
 def _plan_inverts_explicit_open_close(
@@ -1122,6 +1149,17 @@ class PlanBuilder:
                 else:
                     logger.warning(
                         "Complete conditional remained a clarification after retry")
+            elif (attempt == 0 and _focused_list_batch_plan_conflicts(
+                    text, working_set, parsed, catalog)):
+                semantic_guard_retry = True
+                parsed = None
+                focus_intent = str(getattr(working_set.focus, "last_intent", "") or "")
+                correction = (
+                    "\n\n校验反馈：用户原话要求在当前列表焦点上换一批，结构焦点已明确"
+                    "候选用途为 list、上一轮意图=" + focus_intent
+                    + "。这不是查看某个条目详情，也不是切换到同命名空间的其他操作；请只"
+                    "复用上一轮意图对应的 capability_ref，并保留用户给出的筛选条件。"
+                )
             elif (attempt == 0 and _focus_dependent_plan_conflicts(
                     text, working_set, parsed, catalog)):
                 semantic_guard_retry = True

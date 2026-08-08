@@ -812,6 +812,40 @@ def test_context_dependent_ellipsis_retries_a_cross_focus_namespace(monkeypatch)
     assert "上一轮意图=reminder.list" in spy.last_tool_user
 
 
+def test_list_batch_followup_retries_a_same_namespace_detail_sibling(monkeypatch):
+    """“换一批”应复用结构化列表焦点，不能漂到同域详情能力。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    agents = [MockAgent("catalog", ["catalog.search", "catalog.detail"])]
+    catalog = _assemble_capability_catalog(agents)
+
+    def wire(intent):
+        return {
+            "addressed": True,
+            "steps": [{
+                "id": "s1", "capability_ref": catalog.pair_to_ref[("catalog", intent)],
+                "slots": {}, "depends_on": [], "slot_refs": {},
+            }],
+        }
+
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                "arguments": wire("catalog.detail")}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME,
+                "arguments": wire("catalog.search")}]),
+    ])
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(
+        builder, "换一批", agents=agents,
+        focus=Focus(last_intent="catalog.search", last_choice_purpose="list"),
+    )
+
+    assert [step.intent for step in plan.steps] == ["catalog.search"]
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
+    assert "上一轮意图=catalog.search" in spy.last_tool_user
+
+
 def test_explicit_topic_switch_is_not_forced_back_to_focus(monkeypatch):
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
     agents = [
