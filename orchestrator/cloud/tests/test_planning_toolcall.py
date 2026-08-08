@@ -170,6 +170,40 @@ def test_toolcall_falls_back_to_json_second_round(monkeypatch):
     assert spy.tool_calls_n == 1 and spy.text_calls == 1   # 最坏 2 次=现状重试上限
 
 
+def test_toolcall_retries_a_plan_whose_goal_says_clarify_but_steps_execute(monkeypatch):
+    """The model's structured decision and executable DAG must not contradict."""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    contradictory = {
+        **_ARGS_OK,
+        "goal": "用户只给了对象名，没有动词，需要澄清意图",
+    }
+    clarified = {
+        "addressed": True,
+        "steps": [],
+        "clarify": {
+            "question": "你希望我怎么处理云岚国际中心？",
+            "options": [
+                {"label": "路线引导", "send_text": "请规划到云岚国际中心的路线"},
+                {"label": "地点资料", "send_text": "请介绍云岚国际中心的地点信息"},
+            ],
+        },
+    }
+    spy = _SpyLLM(
+        text_reply=json.dumps(clarified, ensure_ascii=False),
+        tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                           "arguments": contradictory}]),
+    )
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "云岚国际中心")
+
+    assert plan.plan_mode == "toolcall_fallback"
+    assert plan.steps == [] and plan.clarify == clarified["clarify"]
+    assert spy.tool_calls_n == 1 and spy.text_calls == 1
+    assert "决策与计划矛盾" in spy.last_text_user
+
+
 def test_toolcall_degraded_after_both_rounds_fail(monkeypatch):
     """两轮全失败 → 走 _fallback，plan_mode=toolcall_degraded（空计划诚实降级）。"""
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")

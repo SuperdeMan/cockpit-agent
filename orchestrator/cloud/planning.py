@@ -192,11 +192,24 @@ def _verification_dict(cap) -> dict:
 _POLITE_PREFIX_RE = re.compile(r"^[\s，,。.、]*(那|哎|诶|嘿|嗯|请|麻烦|你好|喂)*[\s，,、]*")
 _DIRECTIVE_RE = re.compile(
     r"^(帮我|给我|你|请)?(记住|记一下|记下来|记下|记着|记得|别忘了|别忘记|别忘)")
+_CLARIFY_GOAL_RE = re.compile(
+    r"(?:需要|需|应当|应该|必须)(?:先|进行)?(?:澄清|询问)"
+    r"|(?:没有|缺少)动词|意图(?:不明确|不清楚)"
+    r"|\b(?:needs?\s+clarification|ambiguous)\b",
+    re.IGNORECASE,
+)
 
 
 def _is_directive_to_assistant(text: str) -> bool:
     """句首是显式祈使指令（「记住…」）→ 必然是对助手说的，不接受模型的 not_addressed 判定。"""
     return bool(_DIRECTIVE_RE.match(_POLITE_PREFIX_RE.sub("", (text or "").strip())))
+
+
+def _goal_requires_clarification(wire) -> bool:
+    """Read the planner's own structured decision, never domain vocabulary."""
+    if not isinstance(wire, dict):
+        return False
+    return bool(_CLARIFY_GOAL_RE.search(str(wire.get("goal") or "")))
 
 
 # M2 P2（子 RFC §2.3）：会话级情绪信号的封闭词表。**不进记忆层**——短 TTL 且不入画像的
@@ -671,6 +684,7 @@ class PlanBuilder:
         last_raw = ""
         no_action = 0        # 「受话了、但不该做任何动作」连续出现的次数，见循环后
         last_mode = "json"
+        correction = ""
         for attempt in range(2):
             mode = "json"
             if toolcall and attempt == 0:
@@ -695,7 +709,8 @@ class PlanBuilder:
             else:
                 raw = await self._llm_plan(text, catalog, working_set,
                                            skills_block=sk_block,
-                                           exemplars_block=ex_block)
+                                           exemplars_block=ex_block,
+                                           correction=correction)
                 last_raw = raw or last_raw
                 data = self._extract_data(raw)
                 parsed = (self._parse_with_context(
@@ -703,6 +718,24 @@ class PlanBuilder:
                           wire_mode="toolcall_fallback" if toolcall else "json")
                           if data is not None else None)
                 mode = "toolcall_fallback" if toolcall else "json"
+            # The model can state the correct decision in ``goal`` yet still emit
+            # executable steps, especially when tool schema intentionally omits
+            # the prompt-only clarify field.  That is an internal contradiction,
+            # not a valid action plan.  Spend the existing second attempt on the
+            # schema-free JSON path with an explicit shape correction.
+            if (parsed is not None and parsed.steps
+                    and _goal_requires_clarification(data)):
+                logger.info(
+                    "Planner goal requires clarification but steps execute; retrying")
+                parsed = None
+                correction = (
+                    "\n\n校验反馈：上一版 goal 已判定需要澄清，却仍输出执行 steps，"
+                    "决策与计划矛盾。不要替用户选择或猜测任何动作；请输出 "
+                    "{\"addressed\":true,\"steps\":[],\"clarify\":{"
+                    "\"question\":\"针对当前对象的口语化问题\",\"options\":["
+                    "{\"label\":\"明确动作一\",\"send_text\":\"包含当前对象的完整指令\"},"
+                    "{\"label\":\"明确动作二\",\"send_text\":\"包含当前对象的另一完整指令\"}]}}。"
+                )
             # 祈使指令不接受 not_addressed（2026-07-27 真机）：置为「本次没解析出计划」，
             # 走既有的重试→fallback 机制。**刻意不直接改判成 chitchat**——重试有机会拿到
             # 正确的计划（「记住，明天八点提醒我开会」该进提醒域而不是闲聊），只有两次都判
@@ -793,9 +826,12 @@ class PlanBuilder:
 
     async def _llm_plan(self, text: str, catalog: PlannerCapabilityCatalog,
                         working_set: WorkingSet,
-                        skills_block: str = "", exemplars_block: str = "") -> str:
+                        skills_block: str = "", exemplars_block: str = "",
+                        correction: str = "") -> str:
         user_msg = self._planner_user_msg(text, catalog, working_set, skills_block,
                                           exemplars_block)
+        if correction:
+            user_msg += correction
         try:
             raw = await self._llm([
                 {"role": "system", "content": _planner_system()},
