@@ -1012,6 +1012,33 @@ class PlanBuilder:
                            type(raw_steps).__name__)
             return None
 
+        # Some tool-calling models understand that the user needs a clarification,
+        # yet force the prompt-only ``clarify`` payload into the sole step's
+        # ``slots`` because clarify is intentionally absent from the tool schema.
+        # Salvage only that exact structural transposition: one admitted step,
+        # no dependency/reference, and slots containing nothing except a valid
+        # question/options payload.  This does not infer a domain or change a
+        # genuine action with ordinary slots.
+        if (clarify is None and wire.get("addressed") is True
+                and len(raw_steps) == 1 and isinstance(raw_steps[0], dict)):
+            misplaced = raw_steps[0]
+            misplaced_slots = misplaced.get("slots")
+            misplaced_ref = misplaced.get("capability_ref")
+            if (set(misplaced) == set(_PLANNER_STEP_FIELDS)
+                    and misplaced.get("depends_on") == []
+                    and misplaced.get("slot_refs") == {}
+                    and isinstance(misplaced_slots, dict)
+                    and set(misplaced_slots) == {"question", "options"}
+                    and isinstance(misplaced_ref, str)
+                    and misplaced_ref in catalog.ref_to_pair):
+                misplaced_clarify = self._parse_clarify(misplaced_slots)
+                if misplaced_clarify:
+                    logger.info("Salvaged clarify payload misplaced in step slots")
+                    return Plan(
+                        steps=[], raw_text=fallback_text,
+                        clarify=misplaced_clarify,
+                    )
+
         resolved_steps = []
         for raw_step in raw_steps:
             if not isinstance(raw_step, dict):

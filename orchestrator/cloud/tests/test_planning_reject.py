@@ -145,6 +145,33 @@ def test_clarify_without_steps_parsed():
     assert plan.clarify and plan.clarify["question"].startswith("找附近")
 
 
+def test_clarify_payload_misnested_in_single_step_slots_is_salvaged():
+    """MiniMax may understand the decision but nest clarify under a tool step."""
+    agents = [MockAgent("navigation", ["navigation.search_poi"])]
+    catalog = _assemble_capability_catalog(agents)
+    ref = catalog.pair_to_ref[("navigation", "navigation.search_poi")]
+    payload = {
+        "question": "你希望我怎么处理云岚国际中心？",
+        "options": [
+            {"label": "路线引导", "send_text": "请规划到云岚国际中心的路线"},
+            {"label": "地点资料", "send_text": "请介绍云岚国际中心的地点信息"},
+        ],
+    }
+    wire = {
+        "addressed": True,
+        "steps": [{
+            "id": "s1", "capability_ref": ref, "slots": payload,
+            "depends_on": [], "slot_refs": {},
+        }],
+    }
+
+    plan = PlanBuilder(None, None)._parse_and_validate_data(
+        wire, catalog, "云岚国际中心")
+    assert plan is not None
+    assert plan.steps == []
+    assert plan.clarify == payload
+
+
 def test_clarify_ignored_when_steps_present():
     b, _ = _builder("x")
     agents = [MockAgent("nearby", ["nearby.search"])]
