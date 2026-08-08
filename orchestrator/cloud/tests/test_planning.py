@@ -131,6 +131,31 @@ def test_build_does_not_force_deferred_or_negated_sequence_steps(complexity, goa
     assert [step.intent for step in plan.steps] == ["alpha.one"]
 
 
+def test_build_does_not_split_a_single_heavy_capability_that_owns_the_sequence():
+    agent = MockAgent("alpha", ["alpha.plan"])
+    agent.manifest.capabilities[0].heavy = True
+    calls = 0
+
+    async def mock_llm(_messages):
+        nonlocal calls
+        calls += 1
+        return (
+            '{"complexity":"simple","goal":"先判断条件，不足再生成方案",'
+            '"steps":[{"id":"s1","capability_ref":"cap_0001",'
+            '"slots":{},"depends_on":[],"slot_refs":{}}]}'
+        )
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        "先判断条件，不足再生成方案",
+        WorkingSet(catalog=[agent]), PlanContext()))
+
+    assert calls == 1
+    assert [step.intent for step in plan.steps] == ["alpha.plan"]
+
+
 def test_build_with_invalid_json_falls_back():
     """LLM 返回非法 JSON 应降级到 fallback。"""
     agents = [MockAgent("navigation", ["navigation.search_poi"])]
