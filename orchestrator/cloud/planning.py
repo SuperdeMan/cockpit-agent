@@ -241,6 +241,12 @@ _DEFERRED_CONDITION_RE = re.compile(
     r"\bif\b|\bwhen\b|\bunless\b)",
     re.IGNORECASE,
 )
+_COMPLETE_DEFERRED_CONDITION_RE = re.compile(
+    r"(?:如果|要是|假如|若|只要|除非).{1,80}?(?:就|则|才|便|的话)"
+    r"[^，,。；;！？!?\n]{1,80}"
+    r"|\bif\b.{1,120}?\bthen\b.{1,120}",
+    re.IGNORECASE,
+)
 _QUOTE_PAIRS = (("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"),
                 ("「", "」"), ("『", "』"))
 _UTTERANCE_PASSTHROUGH_SLOT_KEYS = frozenset({
@@ -1041,6 +1047,18 @@ class PlanBuilder:
                 parsed = None
                 logger.warning(
                     "Specialized clarification retry violated its host contract")
+            elif (attempt == 0 and parsed is not None and parsed.clarify
+                  and _COMPLETE_DEFERRED_CONDITION_RE.search(str(text or ""))):
+                semantic_guard_retry = True
+                parsed = None
+                clarification_tool_retry = False
+                correction = (
+                    "\n\n校验反馈：用户原话是完整条件句，已经同时给出条件前件和条件"
+                    "后件。未来条件尚未知不是歧义，而是 adaptive 计划的触发点；不要向"
+                    "用户反问选哪一个动作。首轮只规划用于观察或查询条件前件的合法能力，"
+                    "设置 complexity=adaptive，并在 goal 保留完整条件目标；条件后件留给"
+                    "观察结果后的 replan，不得提前无条件执行。"
+                )
             elif (attempt == 0 and _focus_dependent_plan_conflicts(
                     text, working_set, parsed, catalog)):
                 semantic_guard_retry = True

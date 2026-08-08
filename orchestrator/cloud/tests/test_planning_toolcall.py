@@ -572,6 +572,73 @@ def test_conditional_salvage_preserves_adaptive_replan_contract(monkeypatch):
     assert spy.tool_calls_n == 1 and spy.text_calls == 0
 
 
+def test_complete_conditional_retries_instead_of_clarifying_future_outcome(monkeypatch):
+    """条件结果尚未知是 adaptive 的理由，不是向用户反问动作的歧义。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    clarify = {
+        "addressed": True,
+        "steps": [],
+        "clarify": {
+            "question": "你想让我查天气还是直接创建提醒？",
+            "options": [
+                {"label": "查天气", "send_text": "请查明天天气"},
+                {"label": "建提醒", "send_text": "请提醒我带伞"},
+            ],
+        },
+    }
+    routed = {
+        "complexity": "adaptive",
+        "goal": "查询明天天气，下雨时提醒带伞",
+        "addressed": True,
+        "steps": [{
+            "id": "s1", "capability_ref": "cap_0001",
+            "slots": {"date": "明天"}, "depends_on": [], "slot_refs": {},
+        }],
+    }
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": clarify}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME, "arguments": routed}]),
+    ])
+    agents = [
+        MockAgent("info", ["info.weather"]),
+        MockAgent("reminder", ["reminder.create"]),
+    ]
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "明天要是下雨就提醒我带伞", agents=agents)
+
+    assert [step.intent for step in plan.steps] == ["info.weather"]
+    assert plan.complexity == "adaptive" and plan.clarify is None
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
+    assert "未来条件尚未知不是歧义" in spy.last_tool_user
+
+
+def test_incomplete_conditional_question_can_still_clarify(monkeypatch):
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    clarify = {
+        "addressed": True,
+        "steps": [],
+        "clarify": {
+            "question": "如果下雨，你希望我做什么？",
+            "options": [
+                {"label": "提醒带伞", "send_text": "如果下雨就提醒我带伞"},
+                {"label": "关闭车窗", "send_text": "如果下雨就关闭车窗"},
+            ],
+        },
+    }
+    spy = _SpyLLM(tool_reply=("", [{
+        "id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": clarify,
+    }]))
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "如果下雨呢")
+
+    assert plan.steps == [] and plan.clarify == clarify["clarify"]
+    assert spy.tool_calls_n == 1 and spy.text_calls == 0
+
+
 def test_conditional_heavy_capability_keeps_its_encapsulated_simple_plan(monkeypatch):
     """重能力可在自身契约内完成条件流程，核心不拆解也不改其复杂度。"""
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
