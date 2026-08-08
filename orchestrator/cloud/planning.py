@@ -193,9 +193,16 @@ _POLITE_PREFIX_RE = re.compile(r"^[\s，,。.、]*(那|哎|诶|嘿|嗯|请|麻�
 _DIRECTIVE_RE = re.compile(
     r"^(帮我|给我|你|请)?(记住|记一下|记下来|记下|记着|记得|别忘了|别忘记|别忘)")
 _CLARIFY_GOAL_RE = re.compile(
-    r"(?:需要|需|应当|应该|必须)(?:先|进行)?(?:澄清|询问)"
+    r"澄清|询问(?:用户)?(?:意图|需求|想法)"
     r"|(?:没有|缺少)动词|意图(?:不明确|不清楚)"
-    r"|\b(?:needs?\s+clarification|ambiguous)\b",
+    r"|\b(?:clarif(?:y|ication)|ambiguous)\b",
+    re.IGNORECASE,
+)
+_NO_CLARIFY_GOAL_RE = re.compile(
+    r"(?:无需|不需(?:要)?|不用|不必|不应)(?:再|进行)?(?:澄清|询问)"
+    r"|\b(?:no|without)\s+(?:further\s+)?clarification\b"
+    r"|\bclarification\s+(?:is\s+)?not\s+(?:needed|required)\b"
+    r"|\b(?:do\s+not|don't)\s+clarif(?:y|ication)\b",
     re.IGNORECASE,
 )
 
@@ -209,7 +216,11 @@ def _goal_requires_clarification(wire) -> bool:
     """Read the planner's own structured decision, never domain vocabulary."""
     if not isinstance(wire, dict):
         return False
-    return bool(_CLARIFY_GOAL_RE.search(str(wire.get("goal") or "")))
+    goal = str(wire.get("goal") or "")
+    return bool(
+        _CLARIFY_GOAL_RE.search(goal)
+        and not _NO_CLARIFY_GOAL_RE.search(goal)
+    )
 
 
 # M2 P2（子 RFC §2.3）：会话级情绪信号的封闭词表。**不进记忆层**——短 TTL 且不入画像的

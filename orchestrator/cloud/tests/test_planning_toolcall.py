@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 from orchestrator.cloud.planning import (
     PlanBuilder, _assemble_capability_catalog, _CAPABILITY_MAPPING_HEAD,
     _planner_system, _submit_plan_tools, _CLARIFY_SECTION, _SUBMIT_PLAN_NAME,
-    _TOOLCALL_SECTION,
+    _TOOLCALL_SECTION, _goal_requires_clarification,
 )
 from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.context import WorkingSet
@@ -202,6 +202,22 @@ def test_toolcall_retries_a_plan_whose_goal_says_clarify_but_steps_execute(monke
     assert plan.steps == [] and plan.clarify == clarified["clarify"]
     assert spy.tool_calls_n == 1 and spy.text_calls == 1
     assert "决策与计划矛盾" in spy.last_text_user
+
+
+def test_goal_clarification_signal_handles_plain_and_negated_wording():
+    for goal in (
+        "用户只给了对象名，没有动词，需要澄清意图",
+        "识别用户意图并澄清动作",
+        "clarify what the user wants before acting",
+    ):
+        assert _goal_requires_clarification({"goal": goal}), goal
+    for goal in (
+        "用户指令明确，无需澄清，直接执行",
+        "不用澄清，按用户要求导航",
+        "no clarification needed",
+        "执行用户明确要求的动作",
+    ):
+        assert not _goal_requires_clarification({"goal": goal}), goal
 
 
 def test_toolcall_degraded_after_both_rounds_fail(monkeypatch):
