@@ -291,7 +291,8 @@ def test_semantic_meaning_is_not_normalized_into_a_capability_ref():
     assert trace.accepted.steps == ()
 
 
-def test_two_empty_actions_avoid_fallback_but_invalid_nonempty_does_not(monkeypatch):
+def test_pure_negative_empty_action_avoids_fallback_but_invalid_nonempty_does_not(
+        monkeypatch):
     agent = _agent("chitchat", "chitchat.talk")
 
     async def resolve(_query, top_k=1):
@@ -318,7 +319,7 @@ def test_two_empty_actions_avoid_fallback_but_invalid_nonempty_does_not(monkeypa
     plan = asyncio.run(empty_builder.build(
         "先不用做", WorkingSet(catalog=[agent]), PlanContext(session_id="s")))
     assert plan.plan_mode.endswith("_no_action")
-    assert empty_calls == [True, True]
+    assert empty_calls == [True]
     assert empty_fallbacks == []
 
     async def invalid_llm(_messages):

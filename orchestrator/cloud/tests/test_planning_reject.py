@@ -1,6 +1,6 @@
 """R4.4 planner 受话判定 + 澄清解析单测（T1）。
 
-覆盖：addressed=false 短路且不重试、fail-open（缺省/垃圾值=True）、clarify 解析（合法/坏格式）、
+覆盖：addressed=false 的显式输入重采样与语音首轮短路、fail-open（缺省/垃圾值=True）、clarify 解析（合法/坏格式）、
 clarify 与非空 steps 互斥（steps 优先）、clarify 命中 route_hints 被兜底填 steps（D6-2）、
 _planner_system() 按 CLARIFY_ENABLED 拼澄清段。全部进程内 stub，不依赖 gRPC/真 LLM。
 """
@@ -68,8 +68,9 @@ def _builder(llm_returns, resolve_returns=None):
     return PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve), calls
 
 
-def _build(builder, text, agents):
-    return asyncio.run(builder.build(text, WorkingSet(catalog=agents), PlanContext(session_id="t")))
+def _build(builder, text, agents, *, ctx=None):
+    return asyncio.run(builder.build(
+        text, WorkingSet(catalog=agents), ctx or PlanContext(session_id="t")))
 
 
 # ── _parse_clarify 纯函数 ────────────────────────────────────────────────────
@@ -186,15 +187,28 @@ def test_clarify_ignored_when_steps_present():
     assert plan.clarify is None      # 互斥：steps 非空则 clarify 忽略
 
 
-# ── build() 集成：不重试 / route_hints 优先 ──────────────────────────────────
+# ── build() 集成：输入源边界 / route_hints 优先 ──────────────────────────────
 
-def test_build_addressed_false_no_retry():
+def test_build_explicit_input_retries_addressed_false_once():
     agents = [MockAgent("nearby", ["nearby.search"])]
     b, calls = _builder('{"addressed":false,"steps":[]}')
     plan = _build(b, "他昨天跟我说那个项目黄了", agents)
     assert plan.addressed is False
     assert plan.steps == []
-    assert calls["n"] == 1           # 合法空计划即刻放行，不触发第二次 LLM
+    assert calls["n"] == 2
+
+
+def test_build_voice_input_accepts_addressed_false_without_retry():
+    agents = [MockAgent("nearby", ["nearby.search"])]
+    b, calls = _builder('{"addressed":false,"steps":[]}')
+    ctx = PlanContext(
+        session_id="t", prefs={"input_source": "voice_followup"})
+
+    plan = _build(b, "他昨天跟我说那个项目黄了", agents, ctx=ctx)
+
+    assert plan.addressed is False
+    assert plan.steps == []
+    assert calls["n"] == 1
 
 
 def test_build_clarify_no_retry():

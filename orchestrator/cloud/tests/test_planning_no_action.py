@@ -12,8 +12,8 @@ planner 两次都返回 `{"addressed":true,"steps":[]}`——**它答对了**：
 用户可见行为一个字都没变（仍是一条 `chitchat.talk`）。变的是诚实度：
 `plan_mode` 说实话，`_fallback` 只在真的失败时才被调到。
 
-判据：**只在第二次也这么说时才认**。一次空 steps 可能只是模型抽风（「打开空调」偶尔
-也会空手而归），那时重试仍是那条便宜的保险；两次都说「不需要动作」就是它的判断。
+判据：输入本身是纯否定动作时首轮即可认；含肯定分句或普通肯定指令时，一次空 steps
+仍可能只是模型抽风，继续使用第二轮保险。
 """
 from __future__ import annotations
 
@@ -66,16 +66,29 @@ def _build(replies: list[str], text: str = "空调先别关"):
     return plan, calls
 
 
-def test_two_no_action_answers_are_honoured_as_a_judgement():
-    plan, calls = _build([NO_ACTION, NO_ACTION])
+def test_pure_negation_first_no_action_is_honoured_as_a_judgement():
+    plan, calls = _build([NO_ACTION, REAL_PLAN])
     assert [s.intent for s in plan.steps] == ["chitchat.talk"]
     assert plan.plan_mode.endswith("_no_action"), plan.plan_mode
+    assert calls["llm"] == 1
     assert calls["fallback"] == 0, "这不是降级——`_fallback` 一次都不该被调到"
 
 
 def test_one_no_action_still_gets_its_retry():
     """一次空 steps 可能只是抽风。重试拿到真计划时，绝不能被这条新分支截胡。"""
-    plan, calls = _build([NO_ACTION, REAL_PLAN])
+    plan, calls = _build([NO_ACTION, REAL_PLAN], text="打开空调")
+    assert [s.intent for s in plan.steps] == ["hvac.set"]
+    assert calls["llm"] == 2 and calls["fallback"] == 0
+    assert not plan.plan_mode.endswith("_no_action")
+
+
+@pytest.mark.parametrize("text", [
+    "先别关空调，然后打开空调",
+    "别忘了打开空调",
+    "不要忘记打开空调",
+])
+def test_positive_clause_and_do_not_forget_idiom_still_retry(text):
+    plan, calls = _build([NO_ACTION, REAL_PLAN], text=text)
     assert [s.intent for s in plan.steps] == ["hvac.set"]
     assert calls["llm"] == 2 and calls["fallback"] == 0
     assert not plan.plan_mode.endswith("_no_action")
@@ -94,18 +107,13 @@ def test_a_real_parse_failure_is_still_a_degradation():
 
 
 def test_no_action_never_swallows_a_clarify_or_a_not_addressed_answer():
-    """既有的两种合法空 steps 不受影响——它们在第一轮就该被放行。"""
+    """澄清仍首轮放行；非受话仅在 hands-free 语音源首轮放行。"""
     clarify = ('{"addressed":true,"clarify":{"question":"开大灯还是开雨刷？",'
                '"options":[{"label":"大灯","send_text":"打开大灯"},'
                '{"label":"雨刷","send_text":"打开雨刷"}]},"steps":[]}')
     plan, calls = _build([clarify, NO_ACTION], text="有点看不清路了")
     assert calls["llm"] == 1, "澄清是合法输出，第一轮就该放行，不该重试"
     assert plan.steps == [] and calls["fallback"] == 0
-
-    plan, calls = _build(['{"addressed":false,"steps":[]}', NO_ACTION],
-                         text="妈你到哪了")
-    assert calls["llm"] == 1 and plan.steps == [] and calls["fallback"] == 0
-
 
 def test_no_action_falls_back_when_there_is_no_talk_agent():
     """没有兜底 Agent 时不许凭空造一个 step——退回既有降级路径。"""
@@ -183,11 +191,6 @@ def test_missing_steps_is_degradation_but_legal_shortcuts_may_omit_it():
     assert calls["llm"] == 1 and calls["fallback"] == 0
     assert plan.steps == [] and plan.clarify
 
-    plan, calls = _build(['{"addressed":false}', NO_ACTION], text="妈你到哪了")
-    assert calls["llm"] == 1 and calls["fallback"] == 0
-    assert plan.steps == [] and plan.addressed is False
-
-
 def test_one_no_action_plus_one_garbage_is_a_degradation_not_a_judgement():
     """「说过一次不需要动作，另一次整个没答上来」→ 仍算降级。
 
@@ -196,7 +199,7 @@ def test_one_no_action_plus_one_garbage_is_a_degradation_not_a_judgement():
     不是「有一次这么说过」**——另一次连话都没答上来时，一致性根本不成立。
     """
     for replies in ([NO_ACTION, "这不是 JSON"], ["这不是 JSON", NO_ACTION]):
-        plan, calls = _build(replies)
+        plan, calls = _build(replies, text="打开空调")
         assert [s.intent for s in plan.steps] == ["chitchat.talk"]
         assert calls["fallback"] == 1, f"{replies} 应走降级"
         assert not plan.plan_mode.endswith("_no_action"), replies

@@ -91,8 +91,9 @@ class Plan:
     exemplars: list[str] = field(default_factory=list)
     # M1a submit_plan 结构化输出：本轮走的输出通道，仅供 cloud.planning span 观测
     # （A/B 协议层指标聚合）。json=纯文本路径（PLANNER_TOOLCALL=off 恒此值）；
-    # toolcall=工具 arguments 直入；toolcall_salvage=模型无视工具、同轮文本抢救；
-    # toolcall_fallback=第 2 轮 JSON 路径；toolcall_degraded=两轮全失败走 _fallback。
+    # toolcall=工具 arguments 直入（含已支持协议下的结构化重试）；
+    # toolcall_salvage=模型无视工具、同轮文本抢救；toolcall_fallback=工具协议不可用后的
+    # 第 2 轮 JSON 路径；toolcall_degraded=两轮全失败走 _fallback。
     plan_mode: str = "json"
     # M2 P2：本轮用户情绪（会话级，不入记忆）。planner 同轮附带输出（R4.4 addressed/
     # clarify 同款 fail-open），随 final 透传给 HMI 选 TTS 情感参数。空=neutral。

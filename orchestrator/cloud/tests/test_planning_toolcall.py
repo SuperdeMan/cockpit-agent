@@ -16,7 +16,7 @@ from orchestrator.cloud.planning import (
     _TOOLCALL_SECTION, _goal_requires_clarification,
 )
 from orchestrator.cloud.models import PlanContext
-from orchestrator.cloud.context import WorkingSet
+from orchestrator.cloud.context import Focus, WorkingSet
 
 
 class MockAgent:
@@ -51,9 +51,10 @@ async def _no_resolve(query, top_k=1):
     return []
 
 
-def _build(builder, text="找家川菜馆"):
+def _build(builder, text="找家川菜馆", *, agents=None, ctx=None, focus=None):
     return asyncio.run(builder.build(
-        text, WorkingSet(catalog=_agents()), PlanContext(session_id="t")))
+        text, WorkingSet(catalog=agents or _agents(), focus=focus),
+        ctx or PlanContext(session_id="t")))
 
 
 _ARGS_OK = {"complexity": "simple", "goal": "找川菜",
@@ -69,7 +70,8 @@ _ARGS_NAV_ONLY = {**_ARGS_OK, "steps": [
 class _SpyLLM:
     """llm_fn / llm_tool_fn 双通道 spy：记录调用次数与收到的 prompt/tools。"""
 
-    def __init__(self, text_reply="", tool_reply=None, tool_exc=None):
+    def __init__(self, text_reply="", tool_reply=None, tool_exc=None,
+                 tool_replies=None):
         self.text_calls = 0
         self.tool_calls_n = 0
         self.last_tools = None
@@ -78,6 +80,7 @@ class _SpyLLM:
         self.last_tool_user = ""
         self._text = text_reply
         self._tool = tool_reply          # (content, calls)
+        self._tool_replies = list(tool_replies or [])
         self._tool_exc = tool_exc
 
     async def llm(self, messages):
@@ -92,6 +95,8 @@ class _SpyLLM:
         self.last_tool_user = messages[1]["content"]
         if self._tool_exc:
             raise self._tool_exc
+        if self._tool_replies:
+            return self._tool_replies.pop(0)
         return self._tool
 
 
@@ -368,16 +373,379 @@ def test_toolcall_on_without_tool_fn_uses_json(monkeypatch):
     assert len(plan.steps) == 1
 
 
-def test_toolcall_addressed_false_is_legal_empty_plan(monkeypatch):
-    """受话判定经工具通道：addressed=false + 空 steps 是合法计划（不触发重试）。"""
+def test_explicit_input_retries_a_single_not_addressed_answer(monkeypatch):
+    """显式输入不会消费一次随机的 not-addressed 判定；第二次仍走结构化通道。"""
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
-    spy = _SpyLLM(tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
-                                    "arguments": {"addressed": False, "steps": []}}]))
+    not_addressed = ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                            "arguments": {"addressed": False, "steps": []}}])
+    routed = ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME,
+                     "arguments": _ARGS_OK}])
+    spy = _SpyLLM(text_reply="not json", tool_replies=[not_addressed, routed])
     b = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
     plan = _build(b, "妈你到哪了")
+
+    assert plan.plan_mode == "toolcall"
+    assert [step.intent for step in plan.steps] == ["navigation.search_poi"]
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
+
+
+def test_voice_input_keeps_first_not_addressed_answer(monkeypatch):
+    """仅 hands-free 语音源有拒识消费方，因此它仍可首轮接受 addressed=false。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    spy = _SpyLLM(tool_reply=("", [{
+        "id": "c1", "name": _SUBMIT_PLAN_NAME,
+        "arguments": {"addressed": False, "steps": []},
+    }]))
+    b = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+    ctx = PlanContext(session_id="t", prefs={"input_source": "voice_followup"})
+
+    plan = _build(b, "妈你到哪了", ctx=ctx)
+
     assert plan.plan_mode == "toolcall"
     assert plan.addressed is False and plan.steps == []
     assert spy.tool_calls_n == 1 and spy.text_calls == 0
+
+
+def test_valid_tool_protocol_keeps_semantic_retry_on_submit_plan(monkeypatch):
+    """工具协议可用时，畸形业务参数不得切到自由文本 JSON 重试。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    malformed = {
+        "addressed": True,
+        "goal": "查询明天是否下雨，根据结果决定是否创建带伞提醒",
+        "steps": {"complexity": "adaptive", "addressed": True},
+    }
+    spy = _SpyLLM(
+        text_reply="not json",
+        tool_replies=[
+            ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                    "arguments": malformed}]),
+            ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME,
+                    "arguments": _ARGS_OK}]),
+        ],
+    )
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder)
+
+    assert plan.plan_mode == "toolcall"
+    assert [step.intent for step in plan.steps] == ["navigation.search_poi"]
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
+
+
+def test_pure_negation_accepts_first_explicit_no_action(monkeypatch):
+    """整句只有被否定动作时，首轮空计划就是确定答案，不给重试翻转机会。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    no_action = ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                        "arguments": {"addressed": True, "steps": []}}])
+    spy = _SpyLLM(text_reply="not json", tool_replies=[no_action])
+    agents = [
+        MockAgent("chitchat", ["chitchat.talk"]),
+        MockAgent("navigation", ["navigation.search_poi"]),
+    ]
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "先别导航去机场", agents=agents)
+
+    assert [step.intent for step in plan.steps] == ["chitchat.talk"]
+    assert plan.plan_mode == "toolcall_no_action"
+    assert spy.tool_calls_n == 1 and spy.text_calls == 0
+
+
+def test_mixed_negation_retries_for_the_positive_clause(monkeypatch):
+    """否定动作后仍有肯定诉求时，空计划不代表整句完成。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    no_action = ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                        "arguments": {"addressed": True, "steps": []}}])
+    routed = ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME,
+                     "arguments": _ARGS_OK}])
+    spy = _SpyLLM(text_reply="not json", tool_replies=[no_action, routed])
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "先别调空调，然后找家川菜馆")
+
+    assert [step.intent for step in plan.steps] == ["navigation.search_poi"]
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
+
+
+def test_conditional_salvage_preserves_adaptive_replan_contract(monkeypatch):
+    """文本抢救若只漏控制元数据，不能把条件计划静默降成 simple。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    text = "明天要是下雨就提醒我带伞"
+    args = {
+        "addressed": True,
+        "steps": [{
+            "id": "s1", "capability_ref": "cap_0001",
+            "slots": {"date": "明天"}, "depends_on": [], "slot_refs": {},
+        }],
+    }
+    spy = _SpyLLM(tool_reply=(json.dumps(args, ensure_ascii=False), []))
+    agents = [
+        MockAgent("info", ["info.weather"]),
+        MockAgent("reminder", ["reminder.create"]),
+    ]
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, text, agents=agents)
+
+    assert plan.plan_mode == "toolcall_salvage"
+    assert [step.intent for step in plan.steps] == ["info.weather"]
+    assert plan.complexity == "adaptive"
+    assert plan.goal == text
+    assert spy.tool_calls_n == 1 and spy.text_calls == 0
+
+
+def test_conditional_heavy_capability_keeps_its_encapsulated_simple_plan(monkeypatch):
+    """重能力可在自身契约内完成条件流程，核心不拆解也不改其复杂度。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    heavy = MockAgent("trip", ["trip.plan"])
+    heavy.manifest.capabilities[0].heavy = True
+    args = {
+        "complexity": "simple", "goal": "如果下雨就调整行程", "addressed": True,
+        "steps": [{
+            "id": "s1", "capability_ref": "cap_0001", "slots": {},
+            "depends_on": [], "slot_refs": {},
+        }],
+    }
+    spy = _SpyLLM(tool_reply=("", [{
+        "id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": args,
+    }]))
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "如果下雨就调整行程", agents=[heavy])
+
+    assert plan.complexity == "simple"
+    assert plan.steps[0].heavy is True
+
+
+def test_simple_setpoint_goal_with_threshold_word_does_not_become_adaptive(monkeypatch):
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    args = {
+        "complexity": "simple", "goal": "让温度达到24度", "addressed": True,
+        "steps": [{
+            "id": "s1", "capability_ref": "cap_0001",
+            "slots": {"temperature": "24"}, "depends_on": [], "slot_refs": {},
+        }],
+    }
+    spy = _SpyLLM(tool_reply=("", [{
+        "id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": args,
+    }]))
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "把温度调整到24度", agents=[MockAgent("hvac", ["hvac.set"])])
+
+    assert plan.complexity == "simple"
+    assert spy.tool_calls_n == 1
+
+
+def test_single_capability_and_phrase_does_not_trigger_multi_action_retry(monkeypatch):
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    args = {
+        "complexity": "simple", "goal": "把温度调到并保持在24度", "addressed": True,
+        "steps": [{
+            "id": "s1", "capability_ref": "cap_0001",
+            "slots": {"temperature": "24"}, "depends_on": [], "slot_refs": {},
+        }],
+    }
+    spy = _SpyLLM(tool_reply=("", [{
+        "id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": args,
+    }]))
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(
+        builder, "把温度调到并保持在24度", agents=[MockAgent("hvac", ["hvac.set"])])
+
+    assert [step.intent for step in plan.steps] == ["hvac.set"]
+    assert spy.tool_calls_n == 1
+
+
+def test_context_dependent_ellipsis_retries_a_cross_focus_namespace(monkeypatch):
+    """低信息省略句若跨离结构焦点，不接受首轮随机选择。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    agents = [
+        MockAgent("reminder", ["reminder.cancel", "reminder.list"]),
+        MockAgent("research", ["research.cancel", "research.run"]),
+    ]
+    catalog = _assemble_capability_catalog(agents)
+
+    def wire(agent_id, intent):
+        return {
+            "addressed": True,
+            "steps": [{
+                "id": "s1", "capability_ref": catalog.pair_to_ref[(agent_id, intent)],
+                "slots": {}, "depends_on": [], "slot_refs": {},
+            }],
+        }
+
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                "arguments": wire("research", "research.cancel")}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME,
+                "arguments": wire("reminder", "reminder.cancel")}]),
+    ])
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(
+        builder, "那个取消掉", agents=agents,
+        focus=Focus(last_intent="reminder.list"),
+    )
+
+    assert [step.intent for step in plan.steps] == ["reminder.cancel"]
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
+    assert "上一轮意图=reminder.list" in spy.last_tool_user
+
+
+def test_explicit_topic_switch_is_not_forced_back_to_focus(monkeypatch):
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    agents = [
+        MockAgent("info", ["info.weather"]),
+        MockAgent("reminder", ["reminder.list"]),
+    ]
+    catalog = _assemble_capability_catalog(agents)
+    args = {
+        "addressed": True,
+        "steps": [{
+            "id": "s1", "capability_ref": catalog.pair_to_ref[("info", "info.weather")],
+            "slots": {}, "depends_on": [], "slot_refs": {},
+        }],
+    }
+    spy = _SpyLLM(tool_reply=("", [{
+        "id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": args,
+    }]))
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(
+        builder, "那个提醒先别管，查一下天气", agents=agents,
+        focus=Focus(last_intent="reminder.list"),
+    )
+
+    assert [step.intent for step in plan.steps] == ["info.weather"]
+    assert spy.tool_calls_n == 1
+
+
+def test_parallel_goal_with_one_step_retries_on_structured_channel(monkeypatch):
+    """goal 已声明两个并列动作时，simple 单步计划必须花现有第二轮补齐。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    agents = [
+        MockAgent("info", ["info.weather"]),
+        MockAgent("media", ["media.play"]),
+    ]
+    catalog = _assemble_capability_catalog(agents)
+
+    def step(step_id, pair):
+        return {
+            "id": step_id, "capability_ref": catalog.pair_to_ref[pair],
+            "slots": {}, "depends_on": [], "slot_refs": {},
+        }
+
+    incomplete = {
+        "complexity": "simple", "goal": "查询今天天气并播放一首歌",
+        "addressed": True,
+        "steps": [step("s1", ("info", "info.weather"))],
+    }
+    complete = {
+        **incomplete,
+        "steps": [
+            step("s1", ("info", "info.weather")),
+            step("s2", ("media", "media.play")),
+        ],
+    }
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                "arguments": incomplete}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME,
+                "arguments": complete}]),
+    ])
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "放首歌，再查一下今天天气", agents=agents)
+
+    assert {step.intent for step in plan.steps} == {"info.weather", "media.play"}
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
+
+
+def test_explicit_open_close_polarity_retries_an_inverse_sibling(monkeypatch):
+    """只有单一开/关极性时，动态 catalog 中的反向 sibling 不能穿过首轮。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    agents = [
+        MockAgent("edge", ["window.close", "window.open"]),
+        MockAgent("info", ["info.news"]),
+        MockAgent("media", ["media.play"]),
+    ]
+    catalog = _assemble_capability_catalog(agents)
+
+    def step(step_id, pair):
+        return {
+            "id": step_id, "capability_ref": catalog.pair_to_ref[pair],
+            "slots": {}, "depends_on": [], "slot_refs": {},
+        }
+
+    base = {
+        "complexity": "simple", "goal": "关闭车窗、播放音乐并查看新闻",
+        "addressed": True,
+    }
+    wrong = {**base, "steps": [
+        step("s1", ("edge", "window.open")),
+        step("s2", ("media", "media.play")),
+        step("s3", ("info", "info.news")),
+    ]}
+    fixed = {**base, "steps": [
+        step("s1", ("edge", "window.close")),
+        step("s2", ("media", "media.play")),
+        step("s3", ("info", "info.news")),
+    ]}
+    spy = _SpyLLM(tool_replies=[
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": wrong}]),
+        ("", [{"id": "c2", "name": _SUBMIT_PLAN_NAME, "arguments": fixed}]),
+    ])
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "关车窗放首歌顺便看看新闻", agents=agents)
+
+    assert [step.intent for step in plan.steps] == [
+        "window.close", "media.play", "info.news",
+    ]
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
+
+
+def test_request_with_both_open_and_close_polarities_is_not_globally_rewritten(
+        monkeypatch):
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    agents = [MockAgent(
+        "edge", ["sunroof.open", "sunroof.close", "window.open", "window.close"])]
+    catalog = _assemble_capability_catalog(agents)
+
+    def step(step_id, intent):
+        return {
+            "id": step_id,
+            "capability_ref": catalog.pair_to_ref[("edge", intent)],
+            "slots": {}, "depends_on": [], "slot_refs": {},
+        }
+
+    args = {
+        "complexity": "simple", "goal": "打开天窗再关闭车窗", "addressed": True,
+        "steps": [step("s1", "sunroof.open"), step("s2", "window.close")],
+    }
+    spy = _SpyLLM(tool_reply=("", [{
+        "id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": args,
+    }]))
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "打开天窗再关闭车窗", agents=agents)
+
+    assert [step.intent for step in plan.steps] == ["sunroof.open", "window.close"]
+    assert spy.tool_calls_n == 1
 
 
 def test_toolcall_numeric_slot_normalized_via_validated_steps(monkeypatch):
@@ -468,17 +836,28 @@ def test_submit_plan_requires_addressed_and_explicit_steps_on_every_call():
     fn = spec["tools"][0]["function"]
     parameters = fn["parameters"]
     steps_description = parameters["properties"]["steps"]["description"]
+    item = parameters["properties"]["steps"]["items"]
+    capability_description = item["properties"]["capability_ref"]["description"]
 
     assert set(parameters["required"]) == {"addressed", "steps"}
+    # emotion / clarify 仍是刻意的 prompt-only 旁路，顶层不能封闭；step 对象本身严格封闭。
     assert "additionalProperties" not in parameters
+    assert item["additionalProperties"] is False
     for contract_text in (
         _TOOLCALL_SECTION,
         fn["description"],
-        steps_description,
     ):
         assert "arguments 每次必须同时包含 addressed 和 steps" in contract_text
         assert "无步骤也必须显式 steps=[]" in contract_text
         assert "不得只提交 addressed" in contract_text
+    for nested_description in (
+        steps_description,
+        item["description"],
+        capability_description,
+    ):
+        assert "addressed" not in nested_description
+        assert "arguments" not in nested_description
+        assert "steps=[]" not in nested_description
 
 
 def test_submit_plan_schema_enums_match_only_the_current_catalog():
@@ -496,7 +875,7 @@ def test_submit_plan_schema_enums_match_only_the_current_catalog():
         "cap_0001", "cap_0002", "cap_0003",
     ]
     assert "缺席" in step_props["capability_ref"]["description"]
-    assert "addressed=true" in spec["tools"][0]["function"]["parameters"][
+    assert "addressed" not in spec["tools"][0]["function"]["parameters"][
         "properties"]["steps"]["description"]
     assert "nearby.search" not in json.dumps(spec, ensure_ascii=False)
 
@@ -665,9 +1044,10 @@ def test_toolcall_prompt_locks_each_step_to_the_five_exact_nested_fields():
         assert clause in prompt
     item = _submit_plan_tools()["tools"][0]["function"]["parameters"][
         "properties"]["steps"]["items"]
-    for contract_text in (_TOOLCALL_SECTION, item["description"]):
-        assert "每个元素必须是 JSON 对象，绝不能是字符串" in contract_text
-        assert "能力缺席时只能提交 steps=[]" in contract_text
+    assert "每个元素必须是 JSON 对象，绝不能是字符串" in _TOOLCALL_SECTION
+    assert "能力缺席时只能提交 steps=[]" in _TOOLCALL_SECTION
+    assert "每个元素必须是 JSON 对象，绝不能是字符串" in item["description"]
+    assert "steps=[]" not in item["description"]
     for domain_specific in ("shop", "nearby", "cap_010"):
         assert domain_specific not in _TOOLCALL_SECTION
 

@@ -176,7 +176,7 @@ def test_validation_trace_classifies_misnested_clarify_without_recording_values(
     ]
 
 
-def test_validation_trace_identifies_toolcall_attempt_and_json_fallback(monkeypatch):
+def test_validation_trace_identifies_both_structured_semantic_attempts(monkeypatch):
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
     monkeypatch.setenv("SKILLS_MODE", "off")
     monkeypatch.setenv("EXEMPLARS_MODE", "off")
@@ -200,11 +200,63 @@ def test_validation_trace_identifies_toolcall_attempt_and_json_fallback(monkeypa
     ]}
 
     async def llm(_messages):
+        raise AssertionError("semantic retry must stay on submit_plan")
+
+    tool_attempt = 0
+    async def llm_tools(_messages, _tools):
+        nonlocal tool_attempt
+        tool_attempt += 1
+        arguments = invalid if tool_attempt == 1 else valid
+        return "", [{"id": f"c{tool_attempt}", "name": _SUBMIT_PLAN_NAME,
+                      "arguments": arguments}]
+
+    async def no_resolve(_query, top_k=1):
+        return []
+
+    builder = PlanBuilder(
+        llm_fn=llm, registry_fn=no_resolve, llm_tool_fn=llm_tools)
+    sink = TraceSink()
+    with probe_builder(builder, sink):
+        plan = asyncio.run(builder.build(
+            "查天气", WorkingSet(catalog=[agent]), PlanContext(session_id="t")))
+
+    assert plan.plan_mode == "toolcall"
+    assert [(row.stage, row.attempt, row.wire_mode) for row in sink.validations] == [
+        ("build", 0, "toolcall"),
+        ("build", 1, "toolcall"),
+    ]
+    assert [(ref.value, ref.status)
+            for ref in sink.validations[0].raw_capability_refs] == [
+                ("cap_9999", "unknown"),
+            ]
+
+
+def test_validation_trace_identifies_json_fallback_after_protocol_failure(monkeypatch):
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    monkeypatch.setenv("SKILLS_MODE", "off")
+    monkeypatch.setenv("EXEMPLARS_MODE", "off")
+    capability = SimpleNamespace(
+        intent="info.weather", slots=[], description="天气", examples=[],
+        heavy=False, require_confirm=False)
+    manifest = SimpleNamespace(
+        agent_id="info", capabilities=[capability], latency_budget_ms=5000,
+        kind="agent", deployment="cloud", requires_permissions=[],
+        trust_level="first_party", route_hints=[], context_scopes=[])
+    agent = SimpleNamespace(manifest=manifest, endpoint="info:1")
+    admitted_ref = _assemble_capability_catalog([agent]).pair_to_ref[
+        ("info", "info.weather")]
+    valid = {
+        "addressed": True,
+        "steps": [{"id": "s1", "capability_ref": admitted_ref, "slots": {},
+                   "depends_on": [], "slot_refs": {}}],
+    }
+
+    async def llm(_messages):
         return json.dumps(valid, ensure_ascii=False)
 
     async def llm_tools(_messages, _tools):
-        return "", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
-                      "arguments": invalid}]
+        return "", [{"id": "c1", "name": "unsupported_tool",
+                      "arguments": valid}]
 
     async def no_resolve(_query, top_k=1):
         return []
@@ -218,13 +270,8 @@ def test_validation_trace_identifies_toolcall_attempt_and_json_fallback(monkeypa
 
     assert plan.plan_mode == "toolcall_fallback"
     assert [(row.stage, row.attempt, row.wire_mode) for row in sink.validations] == [
-        ("build", 0, "toolcall"),
         ("build", 1, "toolcall_fallback"),
     ]
-    assert [(ref.value, ref.status)
-            for ref in sink.validations[0].raw_capability_refs] == [
-                ("cap_9999", "unknown"),
-            ]
 
 
 def test_validation_trace_preserves_non_object_wire_identity_on_real_build(monkeypatch):

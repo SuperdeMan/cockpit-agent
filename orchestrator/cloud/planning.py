@@ -207,9 +207,39 @@ _NO_CLARIFY_GOAL_RE = re.compile(
 )
 _OBJECT_RECAST_GOAL_RE = re.compile(r"(?:解析|识别|理解)(?:为|成)")
 _OBJECT_WRAPPER_GOAL_RE = re.compile(r"(?:作为|当作)")
-_FIXED_SEQUENCE_GOAL_RE = re.compile(r"(?:先|首先).{1,120}?(?:再|然后|接着|随后)")
+_MULTI_ACTION_CONNECTOR_RE = re.compile(
+    r".{1,120}?(?:再|然后|接着|随后|顺便)"
+)
 _NEGATED_SEQUENCE_HEAD_RE = re.compile(
     r"(?:先|首先)(?:请)?(?:暂时)?(?:别|不要|不用|不必|不)"
+)
+_NO_ACTION_CLAUSE_SPLIT_RE = re.compile(
+    r"[，,。；;！？!?\n]+|然后|接着|随后|同时|另外|顺便|并且|以及|但是|不过|可是|(?<!不)再"
+)
+_EXPLICIT_ACTION_NEGATION_RE = re.compile(
+    r"(?:先|暂时|先暂时|暂时先)?(?:别(?!忘|的)|不要(?!忘)|不用|不必|无需)"
+)
+_FOCUS_DEPENDENT_ELLIPSIS_RE = re.compile(
+    r"^(?:(?:那个|这个|它)(?:取消(?:掉|了)?|换(?:一批|一个)?)"
+    r"|(?:第[一二三四五六七八九十\d]+天)?换(?:一批|一个)"
+    r"|(?:再来|另来)(?:一批|一个)"
+    r"|(?:明天|后天|那天)呢"
+    r"|第[一二三四五六七八九十\d]+个(?:的)?详情)$"
+)
+_EXPLICIT_OPEN_ACTION_RE = re.compile(
+    r"(?:^|[\s，,。；;！？!?]|先|再|然后|接着|随后|顺便)"
+    r"(?:请|帮我|给我)?(?:打开|开启|开一下)"
+)
+_EXPLICIT_CLOSE_ACTION_RE = re.compile(
+    r"(?:^|[\s，,。；;！？!?]|先|再|然后|接着|随后|顺便)"
+    r"(?:请|帮我|给我)?(?:关闭|关掉|关上|合上|收起|关)"
+)
+_DEFERRED_CONDITION_RE = re.compile(
+    r"(?:如果|要是|假如|若|只要|除非|"
+    r"(?:不够|不足|超过|低于|高于|达到|满足).{0,40}?(?:就|则|时|后|才)|"
+    r"(?:根据|依据).{0,40}(?:结果|情况).{0,20}(?:决定|选择|判断)|"
+    r"\bif\b|\bwhen\b|\bunless\b)",
+    re.IGNORECASE,
 )
 _QUOTE_PAIRS = (("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"),
                 ("「", "」"), ("『", "』"))
@@ -218,6 +248,20 @@ _QUOTE_PAIRS = (("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"),
 def _is_directive_to_assistant(text: str) -> bool:
     """句首是显式祈使指令（「记住…」）→ 必然是对助手说的，不接受模型的 not_addressed 判定。"""
     return bool(_DIRECTIVE_RE.match(_POLITE_PREFIX_RE.sub("", (text or "").strip())))
+
+
+def _is_pure_no_action_utterance(text: str) -> bool:
+    """Return whether every explicit action clause is negated.
+
+    This is deliberately syntax-only: it never names a domain or capability.
+    A positive clause after punctuation/connectors keeps the normal retry, as do
+    the positive Chinese idioms ``别忘了…`` / ``不要忘记…``.
+    """
+    clauses = [part.strip() for part in _NO_ACTION_CLAUSE_SPLIT_RE.split(
+        str(text or "")) if part.strip()]
+    return bool(clauses) and all(
+        _EXPLICIT_ACTION_NEGATION_RE.search(clause) for clause in clauses
+    )
 
 
 def _goal_requires_clarification(wire, text: str = "") -> bool:
@@ -254,16 +298,19 @@ def _goal_requires_clarification(wire, text: str = "") -> bool:
     return explicit_clarification or recasts_whole_input or wraps_whole_input
 
 
-def _simple_goal_omits_fixed_sequence_step(wire, plan: Plan | None) -> bool:
-    """Detect a self-contradictory fixed sequence without domain vocabulary.
+def _simple_goal_omits_multi_action_step(
+        wire, plan: Plan | None, text: str = "") -> bool:
+    """Detect a self-contradictory multi-action plan without domain vocabulary.
 
-    The planner has already classified the plan as simple, so both fixed stages
-    must be present now.  Adaptive/conditional plans intentionally defer a branch;
-    a negated first clause intentionally omits that action as well.
+    The planner has already classified the plan as simple, so both positive
+    clauses must be present now. Adaptive/conditional plans intentionally defer
+    a branch; a negated first clause intentionally omits that action as well.
     """
     if not isinstance(wire, dict) or plan is None:
         return False
     goal = re.sub(r"\s+", "", str(wire.get("goal") or ""))
+    utterance = re.sub(r"\s+", "", str(text or ""))
+    semantic_text = f"{utterance} {goal}"
     return bool(
         plan.complexity == "simple"
         and len(plan.steps) < 2
@@ -271,9 +318,60 @@ def _simple_goal_omits_fixed_sequence_step(wire, plan: Plan | None) -> bool:
         # sequence behind one Agent contract (route planning, research, etc.).
         # Splitting it here would duplicate work the capability already owns.
         and not any(bool(step.heavy) for step in plan.steps)
-        and _FIXED_SEQUENCE_GOAL_RE.search(goal)
-        and not _NEGATED_SEQUENCE_HEAD_RE.search(goal)
+        and _MULTI_ACTION_CONNECTOR_RE.search(semantic_text)
+        and not _DEFERRED_CONDITION_RE.search(semantic_text)
+        and not _NEGATED_SEQUENCE_HEAD_RE.search(utterance)
     )
+
+
+def _focus_dependent_plan_conflicts(
+        text: str, working_set: WorkingSet, plan: Plan | None,
+        catalog: PlannerCapabilityCatalog) -> bool:
+    """Detect a low-information follow-up that abandoned its structured focus."""
+    normalized = re.sub(r"[\s，,。；;！？!?]+", "", str(text or ""))
+    focus = getattr(working_set, "focus", None)
+    last_intent = str(getattr(focus, "last_intent", "") or "").strip()
+    if (not last_intent or "." not in last_intent
+            or not _FOCUS_DEPENDENT_ELLIPSIS_RE.fullmatch(normalized)):
+        return False
+    namespace = last_intent.split(".", 1)[0]
+    admitted_intents = {intent for _, intent in catalog.pair_to_ref}
+    if not any(intent.split(".", 1)[0] == namespace for intent in admitted_intents):
+        return False
+    if (plan is None or not plan.addressed or plan.clarify is not None
+            or not plan.steps):
+        return True
+    return any(
+        str(step.intent or "").split(".", 1)[0] != namespace
+        for step in plan.steps
+    )
+
+
+def _plan_inverts_explicit_open_close(
+        text: str, plan: Plan | None,
+        catalog: PlannerCapabilityCatalog) -> bool:
+    """Reject an admitted open/close sibling that opposes the sole stated polarity."""
+    if plan is None or not plan.steps:
+        return False
+    utterance = str(text or "")
+    asks_open = bool(_EXPLICIT_OPEN_ACTION_RE.search(utterance))
+    asks_close = bool(_EXPLICIT_CLOSE_ACTION_RE.search(utterance))
+    if asks_open == asks_close:
+        return False
+    for step in plan.steps:
+        intent = str(step.intent or "")
+        if "." not in intent:
+            continue
+        stem, operation = intent.rsplit(".", 1)
+        inverse = "close" if operation == "open" else "open" if operation == "close" else ""
+        if not inverse:
+            continue
+        requested_inverse = (asks_close and operation == "open") or (
+            asks_open and operation == "close")
+        if (requested_inverse
+                and (step.agent_id, f"{stem}.{inverse}") in catalog.pair_to_ref):
+            return True
+    return False
 
 
 # M2 P2（子 RFC §2.3）：会话级情绪信号的封闭词表。**不进记忆层**——短 TTL 且不入画像的
@@ -507,7 +605,7 @@ def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
         "description": (
             "只能逐字复制本请求映射中 capabilities 对象的 key；"
             "数组值只读解释，禁止放入 step 或作为 capability_ref；"
-            "请求能力缺席时保持 steps=[]"),
+            "请求能力缺席时不要创建本步骤"),
     }
     if refs:
         capability_ref_schema["enum"] = refs
@@ -526,7 +624,7 @@ def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
         "slot_refs": {"type": "object"},
     }
     step_item_schema = {"type": "object", "description": (
-        "每个元素必须是 JSON 对象，绝不能是字符串；能力缺席时只能提交 steps=[]，"
+        "每个元素必须是 JSON 对象，绝不能是字符串；只允许下列五个字段，"
         "不得把解释或候选能力名写成数组元素"), "properties": {
         field: step_field_schemas[field] for field in _PLANNER_STEP_FIELDS
     }, "required": list(_PLANNER_STEP_FIELDS),
@@ -534,9 +632,8 @@ def _submit_plan_tools(catalog: PlannerCapabilityCatalog | None = None) -> dict:
     steps_schema = {
         "type": "array",
         "description": (
-            "arguments 每次必须同时包含 addressed 和 steps；无步骤也必须显式 steps=[]，"
-            "不得只提交 addressed。步骤只能使用本请求动态 catalog 的 capability_ref；"
-            "请求所需能力缺席时返回 addressed=true 且 steps=[]，不得编造或用相近能力替换"),
+            "零个或多个规划步骤组成的数组。步骤只能使用本请求动态 catalog 的 "
+            "capability_ref；请求所需能力缺席时保持数组为空，不得编造或用相近能力替换"),
         "items": step_item_schema,
     }
     if not refs:
@@ -617,9 +714,28 @@ _REPLAN_SYSTEM = (
 
 _CONDITIONAL_GOAL_RE = re.compile(
     r"(?:如果|要是|假如|若|只要|除非|不够|不足|超过|低于|高于|达到|满足|"
+    r"(?:根据|依据).{0,40}(?:结果|情况).{0,20}(?:决定|选择|判断)|"
     r"\bif\b|\bwhen\b|\bunless\b)",
     re.IGNORECASE,
 )
+
+
+def _preserve_conditional_replan_contract(plan: Plan | None, text: str) -> bool:
+    """Restore control metadata when a conditional plan lost only its envelope.
+
+    This never adds, removes, or reroutes a step.  Heavy capabilities are exempt:
+    their manifest says the Agent itself encapsulates the multi-stage workflow.
+    """
+    if (plan is None or plan.complexity != "simple" or not plan.steps
+            or any(bool(step.heavy) for step in plan.steps)):
+        return False
+    semantic_goal = " ".join(part for part in (str(text or ""), plan.goal) if part)
+    if not _DEFERRED_CONDITION_RE.search(semantic_goal):
+        return False
+    plan.complexity = "adaptive"
+    if not plan.goal:
+        plan.goal = str(text or "")
+    return True
 
 
 def _completed_observation_steps(observations: list[dict]) -> dict[str, list[str]]:
@@ -758,7 +874,8 @@ class PlanBuilder:
         )
 
         # M1a（RFC §4）：PLANNER_TOOLCALL=on 且注入了 llm_tool_fn → 第 1 轮走 submit_plan
-        # 工具通道；协议失败（异常/无 tool_calls）同轮内容抢救、第 2 轮直接 JSON 路径——
+        # 工具通道；协议失败（异常/无 tool_calls）同轮内容抢救、第 2 轮走 JSON 路径；
+        # 已成功调用 submit_plan 但参数未通过语义校验时，第 2 轮继续受同一 schema 约束。
         # 降级轮内闭合，最坏 2 次调用与现状重试上限一致。默认 on（2026-07-24 泓舟拍板，
         # A/B 材料 RFC §11：协议畸形归零+功能持平+journeys 15/15）；off=JSON 纯文本
         # 回退档（badcase 对照/弱 tool-calling 厂商应急用）。
@@ -770,20 +887,25 @@ class PlanBuilder:
         no_action = 0        # 「受话了、但不该做任何动作」连续出现的次数，见循环后
         last_mode = "json"
         correction = ""
+        retry_with_tool = False
         for attempt in range(2):
             mode = "json"
-            if toolcall and attempt == 0:
+            use_tool = toolcall and (attempt == 0 or retry_with_tool)
+            if use_tool:
                 raw, args = await self._llm_plan_tools(text, catalog, working_set,
                                                        skills_block=sk_block,
-                                                       exemplars_block=ex_block)
+                                                       exemplars_block=ex_block,
+                                                       correction=correction)
                 last_raw = raw or last_raw
                 if args is not None:
+                    retry_with_tool = True
                     data = args
                     parsed = self._parse_with_context(
                         args, catalog, text, stage="build", attempt=attempt,
                         wire_mode="toolcall")
                     mode = "toolcall"
                 else:
+                    retry_with_tool = False
                     # 模型无视工具直接文本输出（或 named tool_choice 不被支持）→ 同轮抢救
                     data = self._extract_data(raw)
                     parsed = (self._parse_with_context(
@@ -803,6 +925,32 @@ class PlanBuilder:
                           wire_mode="toolcall_fallback" if toolcall else "json")
                           if data is not None else None)
                 mode = "toolcall_fallback" if toolcall else "json"
+            if _preserve_conditional_replan_contract(parsed, text):
+                logger.info(
+                    "Preserved adaptive control metadata for conditional plan: %s",
+                    text[:40],
+                )
+            semantic_guard_retry = False
+            if (attempt == 0 and _focus_dependent_plan_conflicts(
+                    text, working_set, parsed, catalog)):
+                semantic_guard_retry = True
+                parsed = None
+                focus_intent = str(getattr(working_set.focus, "last_intent", "") or "")
+                correction = (
+                    "\n\n校验反馈：用户原话是依赖结构焦点的省略表达，上一版却澄清、"
+                    "拒绝或跨离了焦点。上一轮意图=" + focus_intent
+                    + "。除非原话显式切换主题，本轮必须在同一能力命名空间内选择与当前"
+                    "动作相符的 capability_ref；不得跨到其他命名空间。"
+                )
+            elif (attempt == 0 and _plan_inverts_explicit_open_close(
+                    text, parsed, catalog)):
+                semantic_guard_retry = True
+                parsed = None
+                correction = (
+                    "\n\n校验反馈：上一版选择了与用户明确开/关极性相反的 sibling 能力。"
+                    "请逐字核对原话中的打开或关闭动作，只从本轮 catalog 选择同对象、"
+                    "同极性的 capability_ref；其余已正确步骤保持不变。"
+                )
             # The model can state the correct decision in ``goal`` yet still emit
             # executable steps.  In tool mode it can instead follow the intentional
             # two-stage protocol: a valid empty-steps marker first, then full
@@ -812,10 +960,11 @@ class PlanBuilder:
             clarification_marker = bool(
                 goal_requires_clarification and self._looks_like_no_action(data)
             )
-            if (goal_requires_clarification and (
+            if (not semantic_guard_retry and goal_requires_clarification and (
                     (parsed is not None and parsed.steps)
                     or clarification_marker)):
                 parsed = None
+                retry_with_tool = False
                 if clarification_marker:
                     logger.info(
                         "Planner tool marker requires clarification details; retrying")
@@ -838,8 +987,8 @@ class PlanBuilder:
                     "{\"label\":\"明确动作一\",\"send_text\":\"包含当前对象的完整指令\"},"
                     "{\"label\":\"明确动作二\",\"send_text\":\"包含当前对象的另一完整指令\"}]}}。"
                 )
-            if (attempt == 0
-                    and _simple_goal_omits_fixed_sequence_step(data, parsed)):
+            if (not semantic_guard_retry and attempt == 0
+                    and _simple_goal_omits_multi_action_step(data, parsed, text)):
                 logger.info(
                     "Planner simple goal declares a fixed sequence but omits a step; retrying")
                 parsed = None
@@ -858,6 +1007,25 @@ class PlanBuilder:
                 logger.info("planner said not_addressed on a directive, overriding: %s",
                             text[:40])
                 parsed = None
+                if attempt == 0:
+                    correction = (
+                        "\n\n校验反馈：用户原话是直接对助手发出的祈使指令，上一版却标为 "
+                        "addressed=false。请重新逐句规划，并保持 submit_plan 参数结构不变。"
+                    )
+            # 只有 hands-free 语音源会消费拒识结果。显式输入的一次 not-addressed 是没有
+            # 产品消费方的高方差信号，首轮先重试；第二轮仍保留原判以守住两次调用上限。
+            elif (attempt == 0 and parsed is not None and not parsed.addressed
+                    and not parsed.steps
+                    and not str((ctx.prefs or {}).get("input_source", "")).startswith(
+                        "voice_")):
+                logger.info("planner said not_addressed on explicit input; retrying: %s",
+                            text[:40])
+                parsed = None
+                correction = (
+                    "\n\n校验反馈：本轮来自显式输入，不是 hands-free 语音旁听。上一版仅返回 "
+                    "addressed=false，无法完成显式请求；请重新逐句规划，并继续通过 "
+                    "submit_plan 提交。"
+                )
             # R4.4：放行「合法的空 steps 计划」——受话判定 addressed=false / 澄清 clarify
             # 的正确输出 steps 恰为空，不能当解析失败去重试+fallback（母卡实施计划 §0-1/§0-2）。
             if parsed and (parsed.steps or not parsed.addressed or parsed.clarify):
@@ -868,6 +1036,22 @@ class PlanBuilder:
                     and not goal_requires_clarification):
                 no_action += 1
                 last_mode = mode
+                if _is_pure_no_action_utterance(text):
+                    # 输入自身已提供确定性证据；不让第二次抽样把正确的空动作翻成执行。
+                    no_action = 2
+                    break
+                if attempt == 0 and not correction:
+                    correction = (
+                        "\n\n校验反馈：上一版返回空 steps，但用户原话并非整句纯否定。"
+                        "请逐个核对仍为肯定的诉求；有合法动作就补齐步骤，没有才继续空数组。"
+                    )
+            if (attempt == 0 and parsed is None and retry_with_tool
+                    and not correction):
+                correction = (
+                    "\n\n校验反馈：上一版 submit_plan 参数没有通过结构或能力白名单校验。"
+                    "请严格保持顶层 addressed/steps 与 steps 数组元素层级，逐字复制本轮 "
+                    "capability_ref，并继续通过 submit_plan 提交。"
+                )
 
         # **第三种合法的空 steps：受话了，而且不该做任何动作。**
         # 上面那条 R4.4 的放行只白名单了两种（不受话 / 澄清）。可是「空调先别关」这类
@@ -878,9 +1062,9 @@ class PlanBuilder:
         # `toolcall_degraded`，落域评测那边也分不出这条绿是判断给的还是兜底给的
         # （2026-08-03 实测，对抗套件 findings §5.5 的「否定簇已修 ✅」因此站不住）。
         #
-        # 只在**第二次也这么说**时才认：一次空 steps 可能只是模型抽风（「打开空调」
-        # 偶尔也会空手而归），那时重试仍是那条便宜的保险。两次都说「不需要动作」
-        # 就是它的判断，不是失败——再重试一次是在second-guess一个明确答案。
+        # 输入自身是整句纯否定时，首轮空 steps 已有确定性语法证据，可直接认；其余输入
+        # 仍只在**第二次也这么说**时才认。一次空 steps 可能只是模型抽风（「打开空调」
+        # 偶尔也会空手而归），那时重试仍是那条便宜的保险。
         # 用户可见行为**一个字都没变**（仍是一条 chitchat.talk），变的只有诚实度。
         if plan is None and no_action >= 2:
             talk = self._talk_only_plan(text, agents)
@@ -960,13 +1144,16 @@ class PlanBuilder:
 
     async def _llm_plan_tools(self, text: str, catalog: PlannerCapabilityCatalog,
                               working_set: WorkingSet,
-                              skills_block: str = "", exemplars_block: str = ""
+                              skills_block: str = "", exemplars_block: str = "",
+                              correction: str = ""
                               ) -> tuple[str, dict | None]:
         """M1a submit_plan 工具通道（RFC §4）。返回 (raw, args)：args=工具 arguments
         dict（协议成功）；None=协议失败（异常/无 tool_calls），raw 保留 content 供同轮
         文本抢救与 obs raw_llm 采集。"""
         user_msg = self._planner_user_msg(text, catalog, working_set, skills_block,
                                           exemplars_block)
+        if correction:
+            user_msg += correction
         try:
             content, calls = await self._llm_tools([
                 {"role": "system", "content": _planner_system(toolcall=True)},
