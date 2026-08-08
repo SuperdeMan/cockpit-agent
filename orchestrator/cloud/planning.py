@@ -206,6 +206,7 @@ _NO_CLARIFY_GOAL_RE = re.compile(
     re.IGNORECASE,
 )
 _OBJECT_RECAST_GOAL_RE = re.compile(r"(?:解析|识别|理解)(?:为|成)")
+_OBJECT_WRAPPER_GOAL_RE = re.compile(r"(?:作为|当作)")
 _QUOTE_PAIRS = (("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"),
                 ("「", "」"), ("『", "』"))
 
@@ -239,7 +240,14 @@ def _goal_requires_clarification(wire, text: str = "") -> bool:
     recasts_whole_input = bool(
         quotes_whole_input and _OBJECT_RECAST_GOAL_RE.search(normalized_goal)
     )
-    return explicit_clarification or recasts_whole_input
+    text_index = normalized_goal.find(normalized_text) if normalized_text else -1
+    wraps_whole_input = bool(
+        text_index > 0
+        and _OBJECT_WRAPPER_GOAL_RE.search(
+            normalized_goal[text_index + len(normalized_text):]
+        )
+    )
+    return explicit_clarification or recasts_whole_input or wraps_whole_input
 
 
 # M2 P2（子 RFC §2.3）：会话级情绪信号的封闭词表。**不进记忆层**——短 TTL 且不入画像的
@@ -417,6 +425,10 @@ _TOOLCALL_SECTION = (
     "不得只提交 addressed。\n"
     "每次先创建这两个键并从 {\"addressed\":true,\"steps\":[]} 骨架开始；"
     "有合法步骤时再往 steps 数组添加对象，其余顶层字段最后补。\n"
+    "触发上文澄清规则时，即使工具 schema 未列出 clarify，也必须在 arguments 顶层补充"
+    " clarify，保持 steps=[]；不得为了迁就 schema 猜测一个动作。\n"
+    "单步骤也必须放在数组中，使用 steps=[{...}]；严禁把单个对象直接写成 steps={...}，"
+    "也严禁把数组编码成字符串。\n"
     "steps 的每个元素必须是 JSON 对象，绝不能是字符串；能力缺席时只能提交 steps=[]，"
     "不能把解释、候选能力名或自然语言写进数组。\n"
     "steps 数组中每一项只能包含 id、capability_ref、slots、depends_on、slot_refs 这五个字段。"

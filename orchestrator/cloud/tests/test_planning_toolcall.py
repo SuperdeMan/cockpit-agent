@@ -229,6 +229,10 @@ def test_goal_clarification_signal_detects_recast_whole_utterance_object():
         {"goal": "将『云岚国际中心』识别为一个地点对象"},
         "云岚国际中心",
     )
+    assert _goal_requires_clarification(
+        {"goal": "搜索云岚国际中心作为具体可处理对象"},
+        "云岚国际中心",
+    )
     assert not _goal_requires_clarification(
         {"goal": '执行用户明确要求的"打开空调"动作'},
         "打开空调",
@@ -236,6 +240,10 @@ def test_goal_clarification_signal_detects_recast_whole_utterance_object():
     assert not _goal_requires_clarification(
         {"goal": '把"云岚国际中心"解析为可导航的具体地点'},
         "导航到云岚国际中心",
+    )
+    assert not _goal_requires_clarification(
+        {"goal": "搜索云岚国际中心作为候选对象"},
+        "搜索云岚国际中心",
     )
 
 
@@ -550,6 +558,15 @@ def test_planner_system_toolcall_section_appended():
     assert _TOOLCALL_SECTION not in _planner_system()
     # 追加段之外逐字一致（双路径共享领域协议=A/B 单变量）
     assert _planner_system(toolcall=True) == _planner_system() + _TOOLCALL_SECTION
+
+
+def test_toolcall_prompt_keeps_prompt_only_clarify_and_single_step_array_shape():
+    prompt = _planner_system(toolcall=True)
+
+    assert "schema 未列出 clarify" in prompt
+    assert "steps=[]" in prompt
+    assert "单步骤也必须放在数组中" in prompt
+    assert "steps={" in prompt
 
 
 def test_toolcall_prompt_keeps_the_live_catalog_allowlist_contract():
