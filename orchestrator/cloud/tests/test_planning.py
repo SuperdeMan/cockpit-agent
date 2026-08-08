@@ -72,6 +72,65 @@ def test_build_with_valid_json():
     assert plan.steps[0].slots["keyword"] == "川菜"
 
 
+def test_build_retries_simple_goal_that_declares_sequence_but_returns_one_step():
+    agents = [
+        MockAgent("alpha", ["alpha.search"]),
+        MockAgent("beta", ["beta.detail"]),
+    ]
+    replies = iter([
+        '{"complexity":"simple","goal":"先搜索候选，再查看详情",'
+        '"steps":[{"id":"s1","capability_ref":"cap_0001",'
+        '"slots":{},"depends_on":[],"slot_refs":{}}]}',
+        '{"complexity":"simple","goal":"先搜索候选，再查看详情","steps":['
+        '{"id":"s1","capability_ref":"cap_0001","slots":{},'
+        '"depends_on":[],"slot_refs":{}},'
+        '{"id":"s2","capability_ref":"cap_0002","slots":{},'
+        '"depends_on":["s1"],"slot_refs":{}}]}',
+    ])
+    users = []
+
+    async def mock_llm(messages):
+        users.append(messages[1]["content"])
+        return next(replies)
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        "先搜索候选，再查看详情", WorkingSet(catalog=agents), PlanContext()))
+
+    assert len(users) == 2
+    assert [step.intent for step in plan.steps] == ["alpha.search", "beta.detail"]
+    assert "上一版 goal 明确声明了固定顺序" in users[1]
+
+
+@pytest.mark.parametrize(("complexity", "goal"), [
+    ("adaptive", "先查询状态，然后根据结果决定下一步"),
+    ("simple", "首先请暂时不要执行前项，再完成后项"),
+])
+def test_build_does_not_force_deferred_or_negated_sequence_steps(complexity, goal):
+    agents = [MockAgent("alpha", ["alpha.one"])]
+    calls = 0
+
+    async def mock_llm(_messages):
+        nonlocal calls
+        calls += 1
+        return (
+            f'{{"complexity":"{complexity}","goal":"{goal}",'
+            '"steps":[{"id":"s1","capability_ref":"cap_0001",'
+            '"slots":{},"depends_on":[],"slot_refs":{}}]}'
+        )
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        goal, WorkingSet(catalog=agents), PlanContext()))
+
+    assert calls == 1
+    assert [step.intent for step in plan.steps] == ["alpha.one"]
+
+
 def test_build_with_invalid_json_falls_back():
     """LLM 返回非法 JSON 应降级到 fallback。"""
     agents = [MockAgent("navigation", ["navigation.search_poi"])]
@@ -464,6 +523,36 @@ def test_replan_rechecks_the_first_done_decision_for_a_conditional_goal():
 
     assert calls == 2
     assert [step.intent for step in decision.steps] == ["reminder.create"]
+
+
+def test_replan_retries_conditional_done_false_with_empty_steps():
+    agents = [MockAgent("charging", ["charging.find"])]
+    replies = iter([
+        '{"done":false,"steps":[]}',
+        '{"done":false,"steps":[{"id":"r1",'
+        '"capability_ref":"cap_0001","slots":{},'
+        '"depends_on":[],"slot_refs":{}}]}',
+    ])
+    users = []
+
+    async def mock_llm(messages):
+        users.append(messages[1]["content"])
+        return next(replies)
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "先看续航，如果不足就找快充",
+        [{"step_id": "s1", "status": "ok", "intent": "charging.status",
+          "data": {"range_km": 30}}],
+        agents, PlanContext(),
+    ))
+
+    assert len(users) == 2
+    assert decision.done is False
+    assert [step.intent for step in decision.steps] == ["charging.find"]
+    assert "done=false 却没有后续 steps" in users[1]
 
 
 def test_replan_accepts_first_done_for_a_nonconditional_goal():

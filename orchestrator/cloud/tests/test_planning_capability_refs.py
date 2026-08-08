@@ -472,6 +472,18 @@ def test_dynamic_skill_and_exemplar_render_refs_and_drop_partial_dags(monkeypatc
         assert "cap_0001" in block and "cap_0002" in block
         assert not _legacy_step_shape(block)
 
+    expected_fields = {
+        "id", "capability_ref", "slots", "depends_on", "slot_refs",
+    }
+    resolved_skill = skills._resolve_few_shot_plan(
+        {"steps": two_steps}, refs)
+    assert resolved_skill is not None
+    assert all(set(step) == expected_fields for step in resolved_skill["steps"])
+    rendered_exemplar = exemplars._render_one(exemplar, refs)
+    assert rendered_exemplar is not None
+    rendered_steps = json.loads(rendered_exemplar.split("→ ", 1)[1])
+    assert all(set(step) == expected_fields for step in rendered_steps)
+
     only_alpha = MappingProxyType({("alpha", "alpha.one"): "cap_0001"})
     partial_skill, _, _ = skills.render_skills_block(
         [], [skill], capability_refs=only_alpha, budget=10_000)

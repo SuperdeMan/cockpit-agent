@@ -174,15 +174,22 @@ def _resolve_few_shot_plan(plan, capability_refs) -> dict | None:
         ref = capability_refs.get((agent_id, intent)) if capability_refs is not None else None
         if not ref:
             return None
+        slots = step.get("slots", {})
+        depends_on = step.get("depends_on", [])
+        slot_refs = step.get("slot_refs", {})
+        if (not isinstance(slots, dict) or not isinstance(depends_on, list)
+                or not isinstance(slot_refs, dict)):
+            return None
+        # Render the exact five-field planner wire.  Governed assets may omit
+        # empty structural fields for readability, but examples shown to the LLM
+        # must not contradict the parser/schema that consumes its answer.
         resolved = {
-            key: value for key, value in step.items()
-            if key not in {"agent_id", "agent", "intent", "capability_ref"}
+            "id": step.get("id", f"s{len(resolved_steps) + 1}"),
+            "capability_ref": ref,
+            "slots": slots,
+            "depends_on": depends_on,
+            "slot_refs": slot_refs,
         }
-        resolved["capability_ref"] = ref
-        # Identity is easiest to audit first in the compact JSON while dict order
-        # has no semantic effect on the model or validator.
-        resolved = {"id": resolved.pop("id", f"s{len(resolved_steps) + 1}"),
-                    "capability_ref": resolved.pop("capability_ref"), **resolved}
         resolved_steps.append(resolved)
     return {**{k: v for k, v in plan.items() if k != "steps"},
             "steps": resolved_steps}

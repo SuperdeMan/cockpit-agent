@@ -455,10 +455,15 @@ def _render_one(e: Exemplar, capability_refs=None) -> str | None:
             ref = matches[0] if len(matches) == 1 else None
         if not ref:
             return None
+        slots = step.get("slots", {})
+        if not isinstance(slots, dict):
+            return None
         resolved.append({
             "id": f"s{index}",
             "capability_ref": ref,
-            **({"slots": step["slots"]} if step.get("slots") else {}),
+            "slots": slots,
+            "depends_on": [],
+            "slot_refs": {},
         })
     plan = json.dumps(resolved, ensure_ascii=False, separators=(",", ":"))
     return f"- 用户：『{e.text}』→ {plan}"

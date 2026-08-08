@@ -207,6 +207,10 @@ _NO_CLARIFY_GOAL_RE = re.compile(
 )
 _OBJECT_RECAST_GOAL_RE = re.compile(r"(?:解析|识别|理解)(?:为|成)")
 _OBJECT_WRAPPER_GOAL_RE = re.compile(r"(?:作为|当作)")
+_FIXED_SEQUENCE_GOAL_RE = re.compile(r"(?:先|首先).{1,120}?(?:再|然后|接着|随后)")
+_NEGATED_SEQUENCE_HEAD_RE = re.compile(
+    r"(?:先|首先)(?:请)?(?:暂时)?(?:别|不要|不用|不必|不)"
+)
 _QUOTE_PAIRS = (("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"),
                 ("「", "」"), ("『", "』"))
 
@@ -248,6 +252,24 @@ def _goal_requires_clarification(wire, text: str = "") -> bool:
         )
     )
     return explicit_clarification or recasts_whole_input or wraps_whole_input
+
+
+def _simple_goal_omits_fixed_sequence_step(wire, plan: Plan | None) -> bool:
+    """Detect a self-contradictory fixed sequence without domain vocabulary.
+
+    The planner has already classified the plan as simple, so both fixed stages
+    must be present now.  Adaptive/conditional plans intentionally defer a branch;
+    a negated first clause intentionally omits that action as well.
+    """
+    if not isinstance(wire, dict) or plan is None:
+        return False
+    goal = re.sub(r"\s+", "", str(wire.get("goal") or ""))
+    return bool(
+        plan.complexity == "simple"
+        and len(plan.steps) < 2
+        and _FIXED_SEQUENCE_GOAL_RE.search(goal)
+        and not _NEGATED_SEQUENCE_HEAD_RE.search(goal)
+    )
 
 
 # M2 P2（子 RFC §2.3）：会话级情绪信号的封闭词表。**不进记忆层**——短 TTL 且不入画像的
@@ -797,6 +819,17 @@ class PlanBuilder:
                     "{\"label\":\"明确动作一\",\"send_text\":\"包含当前对象的完整指令\"},"
                     "{\"label\":\"明确动作二\",\"send_text\":\"包含当前对象的另一完整指令\"}]}}。"
                 )
+            if (attempt == 0
+                    and _simple_goal_omits_fixed_sequence_step(data, parsed)):
+                logger.info(
+                    "Planner simple goal declares a fixed sequence but omits a step; retrying")
+                parsed = None
+                correction = (
+                    "\n\n校验反馈：上一版 goal 明确声明了固定顺序，但 simple 计划只输出了"
+                    "一个 step，目标与计划不完整。请逐项核对 goal 中『先/再/然后/接着/随后』"
+                    "连接的肯定动作，为每个动作补齐 step，并按真实数据依赖设置 depends_on "
+                    "与 slot_refs；不要增加 goal 未声明的动作。"
+                )
             # 祈使指令不接受 not_addressed（2026-07-27 真机）：置为「本次没解析出计划」，
             # 走既有的重试→fallback 机制。**刻意不直接改判成 chitchat**——重试有机会拿到
             # 正确的计划（「记住，明天八点提醒我开会」该进提醒域而不是闲聊），只有两次都判
@@ -998,6 +1031,20 @@ class PlanBuilder:
             candidate = list(parsed.steps) if parsed is not None else []
             candidate, repeated, unresolved = _drop_completed_replan_steps(
                 candidate, completed)
+            empty_conditional_followup = bool(
+                isinstance(data, dict)
+                and data.get("done") is False
+                and type(data.get("steps")) is list
+                and not data["steps"]
+            )
+            if attempt == 0 and conditional_goal and empty_conditional_followup:
+                correction = (
+                    "\n\n校验反馈：上一版返回 done=false 却没有后续 steps，决策与计划"
+                    "自相矛盾。请逐项比较 observation.data/speech 与目标条件；条件满足时"
+                    "输出尚未完成的后件 steps，只有明确不满足或目标已经完成时才返回 "
+                    "done=true、steps=[]。"
+                )
+                continue
             if not repeated:
                 steps = candidate
                 break
