@@ -2281,11 +2281,11 @@ def test_l1_malformed_empty_steps_cannot_report_raw_zero_with_declared_fallback(
         "__invalid_capability_reference__",
     )
     assert outcome.raw_capability_refs == (
-        {"value": "<malformed-steps:list-required>", "status": "malformed_steps",
+        {"value": "<malformed-steps:type=NoneType>", "status": "malformed_steps",
          "stage": "build", "attempt": 0, "wire_mode": "json",
          "resolved_agent_id": "",
          "resolved_intent": "__invalid_capability_reference__"},
-        {"value": "<malformed-steps:list-required>", "status": "malformed_steps",
+        {"value": "<malformed-steps:type=NoneType>", "status": "malformed_steps",
          "stage": "build", "attempt": 1, "wire_mode": "json",
          "resolved_agent_id": "",
          "resolved_intent": "__invalid_capability_reference__"},

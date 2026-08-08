@@ -89,8 +89,10 @@ _EXACT_RAW_REF_SENTINELS = {
     "missing": "<capability_ref:missing>",
     "malformed_wire": "<wire:not-object>",
     "missing_steps": "<steps:missing>",
-    "malformed_steps": "<malformed-steps:list-required>",
 }
+_MALFORMED_STEPS_VALUE_RE = re.compile(
+    r"<malformed-steps:type=[A-Za-z_][A-Za-z0-9_]{0,39}>\Z"
+)
 
 
 def raw_capability_ref_value_matches_status(value: Any, status: Any) -> bool:
@@ -107,6 +109,11 @@ def raw_capability_ref_value_matches_status(value: Any, status: Any) -> bool:
         return _REQUEST_CAPABILITY_REF.fullmatch(value) is not None
     if status == "malformed_reference":
         return _REQUEST_CAPABILITY_REF.fullmatch(value) is None
+    if status == "malformed_steps":
+        return bool(
+            value == "<malformed-steps:list-required>"
+            or _MALFORMED_STEPS_VALUE_RE.fullmatch(value)
+        )
     exact = _EXACT_RAW_REF_SENTINELS.get(status)
     if exact is not None:
         return value == exact
@@ -382,7 +389,9 @@ def _raw_capability_references(data: Any, ref_to_pair=None,
     rows = data.get("steps")
     if not isinstance(rows, list):
         return (RawCapabilityReference(
-            "<malformed-steps:list-required>", "malformed_steps"),)
+            f"<malformed-steps:type={type(rows).__name__}>",
+            "malformed_steps",
+        ),)
     out = []
     for row in rows:
         if not isinstance(row, dict):

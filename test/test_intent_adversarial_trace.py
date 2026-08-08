@@ -138,6 +138,26 @@ def test_validation_trace_preserves_malformed_string_capability_reference():
     ]
 
 
+def test_validation_trace_preserves_malformed_steps_container_type():
+    class Builder:
+        def _parse_and_validate_data(self, _data, _catalog, _text):
+            return None
+
+    builder, sink = Builder(), TraceSink()
+    attach_validation_trace(builder, sink)
+    builder._parse_and_validate_data(
+        {"steps": {"capability_ref": "cap_0001"}},
+        _catalog(),
+        "随便说点什么",
+    )
+
+    trace = sink.validations[-1]
+    assert trace.raw_intents == ("__invalid_capability_reference__",)
+    assert [(row.value, row.status) for row in trace.raw_capability_refs] == [
+        ("<malformed-steps:type=dict>", "malformed_steps"),
+    ]
+
+
 def test_validation_trace_identifies_toolcall_attempt_and_json_fallback(monkeypatch):
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
     monkeypatch.setenv("SKILLS_MODE", "off")
