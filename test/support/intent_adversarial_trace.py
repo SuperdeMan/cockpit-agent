@@ -91,7 +91,8 @@ _EXACT_RAW_REF_SENTINELS = {
     "missing_steps": "<steps:missing>",
 }
 _MALFORMED_STEPS_VALUE_RE = re.compile(
-    r"<malformed-steps:type=[A-Za-z_][A-Za-z0-9_]{0,39}>\Z"
+    r"<malformed-steps:type=[A-Za-z_][A-Za-z0-9_]{0,39}"
+    r"(?:;shape=(?:empty|step|clarify|other))?>\Z"
 )
 
 
@@ -378,6 +379,24 @@ def _bounded_ref(value: str) -> str:
     return clean if len(clean) <= _RAW_REF_LIMIT else clean[:_RAW_REF_LIMIT] + "…"
 
 
+def _malformed_steps_value(rows: Any) -> str:
+    kind = type(rows).__name__
+    if not isinstance(rows, dict):
+        return f"<malformed-steps:type={kind}>"
+    keys = set(rows)
+    if not keys:
+        shape = "empty"
+    elif "clarify" in keys or {"question", "options"}.issubset(keys):
+        shape = "clarify"
+    elif keys.intersection({
+        "id", "capability_ref", "slots", "depends_on", "slot_refs",
+    }):
+        shape = "step"
+    else:
+        shape = "other"
+    return f"<malformed-steps:type={kind};shape={shape}>"
+
+
 def _raw_capability_references(data: Any, ref_to_pair=None,
                                *, allow_missing_steps: bool = False
                                ) -> tuple[RawCapabilityReference, ...]:
@@ -389,7 +408,7 @@ def _raw_capability_references(data: Any, ref_to_pair=None,
     rows = data.get("steps")
     if not isinstance(rows, list):
         return (RawCapabilityReference(
-            f"<malformed-steps:type={type(rows).__name__}>",
+            _malformed_steps_value(rows),
             "malformed_steps",
         ),)
     out = []

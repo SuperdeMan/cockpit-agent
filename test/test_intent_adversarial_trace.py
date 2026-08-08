@@ -154,7 +154,25 @@ def test_validation_trace_preserves_malformed_steps_container_type():
     trace = sink.validations[-1]
     assert trace.raw_intents == ("__invalid_capability_reference__",)
     assert [(row.value, row.status) for row in trace.raw_capability_refs] == [
-        ("<malformed-steps:type=dict>", "malformed_steps"),
+        ("<malformed-steps:type=dict;shape=step>", "malformed_steps"),
+    ]
+
+
+def test_validation_trace_classifies_misnested_clarify_without_recording_values():
+    class Builder:
+        def _parse_and_validate_data(self, _data, _catalog, _text):
+            return None
+
+    builder, sink = Builder(), TraceSink()
+    attach_validation_trace(builder, sink)
+    builder._parse_and_validate_data(
+        {"steps": {"question": "sensitive", "options": ["sensitive"]}},
+        _catalog(),
+        "随便说点什么",
+    )
+
+    assert [row.value for row in sink.validations[-1].raw_capability_refs] == [
+        "<malformed-steps:type=dict;shape=clarify>",
     ]
 
 

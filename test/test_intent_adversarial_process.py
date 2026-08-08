@@ -618,7 +618,7 @@ def test_validate_worker_bundle_accepts_malformed_string_ref_as_invalid_evidence
 def test_validate_worker_bundle_accepts_typed_malformed_steps_as_invalid_evidence():
     specs = worker_specs("l1", "gate", FORMAL_SUITE)
     invalid_ref = _raw_ref(
-        "<malformed-steps:type=dict>",
+        "<malformed-steps:type=dict;shape=step>",
         "malformed_steps",
     )
     results = [
