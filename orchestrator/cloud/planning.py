@@ -1063,6 +1063,21 @@ class PlanBuilder:
                     "Preserved adaptive control metadata for conditional plan: %s",
                     text[:40],
                 )
+            complete_conditional_goal_marker = bool(
+                parsed is not None
+                and parsed.steps
+                and _COMPLETE_DEFERRED_CONDITION_RE.search(str(text or ""))
+                and _goal_requires_clarification(data, text)
+            )
+            if complete_conditional_goal_marker:
+                # The user already supplied both halves of the condition and the
+                # model produced an admitted observation plan.  Some providers
+                # still prefix that valid goal with "需要澄清" merely because the
+                # future outcome is unknown.  Preserve the plan and restore the
+                # exact user goal so the later replan sees the real condition.
+                parsed.goal = str(text or "")
+                logger.info(
+                    "Ignored clarification wording on a complete conditional plan")
             semantic_guard_retry = False
             if (clarification_tool_retry and not (
                     isinstance(data, dict)
@@ -1133,7 +1148,8 @@ class PlanBuilder:
             # clarify details through an on-demand schema. Both shapes spend the
             # existing second attempt; only the former is contradictory.
             goal_requires_clarification = bool(
-                _goal_requires_clarification(data, text)
+                (_goal_requires_clarification(data, text)
+                 and not complete_conditional_goal_marker)
                 or _bare_object_plan_invents_action(parsed, text)
             )
             clarification_marker = bool(

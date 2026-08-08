@@ -572,6 +572,37 @@ def test_conditional_salvage_preserves_adaptive_replan_contract(monkeypatch):
     assert spy.tool_calls_n == 1 and spy.text_calls == 0
 
 
+def test_complete_conditional_goal_marker_keeps_valid_observation_plan(monkeypatch):
+    """完整条件句已有合法观察步时，goal 的误澄清措辞不能反向丢掉该计划。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    text = "明天要是下雨就提醒我带伞"
+    args = {
+        "complexity": "adaptive",
+        "goal": "需要澄清：明天是否下雨，若下雨则提醒带伞",
+        "addressed": True,
+        "steps": [{
+            "id": "s1", "capability_ref": "cap_0001",
+            "slots": {"date": "明天"}, "depends_on": [], "slot_refs": {},
+        }],
+    }
+    spy = _SpyLLM(tool_reply=("", [{
+        "id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": args,
+    }]))
+    agents = [
+        MockAgent("info", ["info.weather"]),
+        MockAgent("reminder", ["reminder.create"]),
+    ]
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, text, agents=agents)
+
+    assert [step.intent for step in plan.steps] == ["info.weather"]
+    assert plan.complexity == "adaptive" and plan.goal == text
+    assert plan.clarify is None
+    assert spy.tool_calls_n == 1 and spy.text_calls == 0
+
+
 def test_complete_conditional_retries_instead_of_clarifying_future_outcome(monkeypatch):
     """条件结果尚未知是 adaptive 的理由，不是向用户反问动作的歧义。"""
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
