@@ -5,7 +5,7 @@
 > （各章节内最新在前），并在 AGENTS.md §4.0 刷新摘要——不要再往 AGENTS.md 里堆流水。
 > 正文中「§4.0 / 上方 / 下方」等相对指代按迁出时原文保留，指的是迁出前 AGENTS.md 的结构。
 >
-> **最新批次在 §5**（2026-08-02→08-03 意图落域对抗测试体系）——章节号按主题排、不按时间排，
+> **最新意图落域收口在 §13**（2026-08-09）——章节号按主题排、不按时间排，
 > 已有 §2/§3 被 AGENTS.md 正文引用，故新批次追加在末尾而不重排编号。
 >
 > 各主题的架构级结论以架构文档附录 C 版本记录（v1.2→v1.19，按主题索引）为准；
@@ -1060,3 +1060,70 @@ raw planner 幻觉率非零而拒绝。完整验收：
 `data` 参数判为领域泄漏。新反向构造先稳定红；修复只跳过 `source_path` 值，
 producer/consumer intent 仍收集。原四条 + 新用例 5/5，架构守卫全文件 89/89。
 修后后端全量重跑 **3996 passed / 11 skipped / 0 failed**（单进程 26m37s）。
+
+## 11. 意图落域对抗测试：跨进程最终收口与首份正式 baseline（2026-08-05 → 08-09）
+
+承接 §10 的两个未达方向，本批没有用 route hint 追一趟幸运全绿，而是先把证据合同改对：
+
+- gate 公开 CLI 改为串行 parent/worker；L1/L2 各要求 2 个独立进程 × 每进程 3 样本，
+  parent 复核 role/run id/layer/exit/report digest、unit set、sample index 与 raw 字段；
+- baseline 只认 parent 聚合报告，worker、缺 shard、重复身份、旧临时报告、dirty SHA、
+  provider/assets/gold/选集漂移均 fail-closed；JSON/Markdown 分别经临时文件原子替换，
+  第二文件失败时回滚，但进程被强杀时不承诺跨文件事务；
+- Planner wire 改为请求级不透明 `capability_ref`，最终 visible catalog 同时约束 prompt、
+  tool schema、retry/replan 与 validator；每个 repetition 留完整 raw ref 状态，invalid 不从分母消失；
+- 产品方差按语法、结构焦点、catalog namespace 与计划结构做通用 semantic retry，未增加领域
+  硬编码路由。最后一条提示注入 fallback 以“纯规则覆盖且无业务动作”的窄 no-action 语法收口，
+  混合真实动作和正常路线语义有反向保护。
+
+用户指定替代模型统一使用 `deepseek-v4-flash`。干净 SHA `e4899c3` 连续完成两次完整
+`gate/all/live` 父 bundle：资格预跑与正式写入批均 147/147、`eligible=True`。正式批为
+L0/L1/L2/L3 = 25/117/4/1，raw hallucination 0/121、escape 0/121、instability 0/121，
+728 次检索零降级，trace/infra/provider drift 0；L1/L2 process policy 2×3 完整，A1-2 L3
+新鲜 1/1。唯一 fallback 为已声明 A8 的 `cc.missing.vision@l1`，未声明 fallback 0。
+
+首份正式文件已生成：`docs/reviews/eval/baseline_intent_adversarial.{json,md}`；正式 JSON
+重新加载后资格仍为 true。最终回归：受影响选集 573 passed / 3 skipped，云编排 620 passed，
+Skill/Exemplar/架构守卫/端侧 smoke/L0 全绿；项目根命令
+**4469 passed / 16 skipped / 0 failed**（4485 项，13m22s）。当前入口与明确局限见
+`docs/reviews/2026-08-04-review-intent-adversarial-finalization.md` §5；逐批判据见 findings §14。
+
+## 12. 意图落域对抗测试：独立复审重开与双模型真实收口（2026-08-09）
+
+§11 的 `e4899c3` “正式基线”在后续独立反向构造中作废：worker 自报 PID/digest 可重复、L3
+嵌套 provider/result 身份可缺失、embedding model 身份未进入跨 worker 资格。`c6a7f85` 以
+parent-observed PID、PID/run id/digest 唯一、L3 深层身份与 embedding identity 逐项 fail-closed。
+`63485da` 又修复 heavy compound 的通用完整性：沿途多动作按 capability contract 重试，
+不新增 route hint、不按领域硬编码；MiniMax A1-2 隔离真栈 1/1。
+
+同一干净 `63485da` 的完整父 bundle 分账：主模型 `minimax:MiniMax-M3` 为 139/147、
+`eligible=False`（raw hallucination 5/121、unexpected fallback 4、critical/stable/unstable = 1/2/5）；
+对比模型 `deepseek:deepseek-v4-flash` 资格预跑与正式写入批均 147/147，正式批 raw/escape/
+instability 0，2 条 fallback 均已声明 A8，文件自身重算 `eligible=True`。DeepSeek 正式批三 worker
+实际 PID/run id/digest 唯一，embedding 均为 `text-embedding-v4`，A1-2 L3 新鲜，结束后恢复
+MiniMax。正式 JSON/Markdown SHA-256 为
+`6403f4b9ddf4dc84e0fc31f4e0b2599d4955ec3944f0ea0b90d72e3b0d4072d1` /
+`deeee1ca93a5e61aafc3a5a92276456ea30b8662800b59e6265908d9d0baa962`。
+
+**判定**：跨进程证据合同与 DeepSeek 对比/参考 baseline 达成；MiniMax 主模型门禁未达成，
+不得把 147/147 外推到主模型或跨模型。当前入口见最终 review §6，逐批细节见 findings §15。
+
+## 13. 意图落域对抗测试：L3 原始证据最终收口（2026-08-09）
+
+§12 的 `63485da` baseline 又被独立反向构造作废：runner 可从多份候选里选一份，正式父报告
+没有携带可重算的 L3 源 JSON 原始字节，旧时间与宽松相对路径也可协同改写。`63c6a58 →
+0e88347 → f0af9c0` 增加唯一候选、`raw_report_base64` + SHA-256、当前时间窗、真实 8 位 runner
+后缀和严格四段相对路径；路径矩阵及最终针对性选集 254 passed / 3 skipped。
+
+同一干净 `f0af9c0` 双模型分账：主模型 `minimax:MiniMax-M3` 141/147、exact 115/121、
+raw hallucination 8/121、6 unstable、unexpected fallback 4，`eligible=False`；对比模型
+`deepseek:deepseek-v4-flash` 预检 147/147、`eligible=True`。第一次正式调用因遗漏宿主/worktree
+进程变量，被 1030/1030 retrieval degraded 与 L3 无报告正当拒绝，未改 baseline；补齐变量后
+正式 writer 147/147、raw/escape/instability 0，2 条 fallback 均为声明 A8，写后立即重算
+`eligible=True`、reasons 空并恢复 MiniMax。
+
+当前正式 JSON/Markdown SHA-256 为
+`af7d3c907663b11ddeb846e4a0c67a1a674b0d9ea221f510fdae6b7ada0a2d0c` /
+`1525c9939afa3ad2b036d03af7ea1bc408e03c920bb16e566b1bf930a6261d11`。当前入口只看最终
+review §7、findings §16 与设计 §25。收尾根命令为 **4490 passed / 16 skipped / 0 failed**
+（收集 4506 项，15m28s）；MiMo key 失效，Qwen 未进入本轮真实 LLM 证据。

@@ -11,7 +11,7 @@ python test/smoke_edge.py
 python -m pytest --import-mode=importlib -q
 ```
 `conftest.py` 已配好 PYTHONPATH，`--import-mode=importlib` 解决 test_agent.py 重名。
-**当前结果：1603 passed, 7 skipped（2026-07-15 实测；skip 含 nightly 真实 LLM 默认跳过）。**
+**当前结果：4490 passed, 16 skipped（2026-08-09 实测；收集 4506 项，15m28s；skip 含 nightly 真实 LLM 默认跳过）。**
 注意 CI 按分组进程隔离跑（见 `.github/workflows/ci.yml` run_group），本地单命令与 CI
 口径一致；前端另有 `hmi` 137 + `dashboard` 16（node/vitest）。
 
@@ -209,17 +209,17 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 **尺子硬化与独立复审记录**
 `docs/reviews/2026-08-03-review-intent-routing-adversarial-testing.md` §7 / §8 / §9。
 
-> ⚠ **先读这条再看任何数字：第三批独立复审仍有 2 P0 / 2 P1。**
-> 2026-08-03 首轮评审为 3 P0 / 7 P1 / 2 P2；修复方对照见 §7，第二轮复审见 §8；
-> `8f06db5` / `cd3646b` 的当前裁定见 §9。
-> **尺子仍不可写正式 baseline，新口径下的完整 live 读数也不存在。** 修过不等于修对，修对也不等于量过——
-> `exact_plan_set_rate`、seen/unseen、`planner_capability_hallucination_rate`、
-> `instability_rate` 都要等一次固定 provider 的 L1/L2/L3 全量才有数。
-> 该报告 §1 与本文件历史版本里的旧数字**依然不可引用**。
-> 现在可用的是：L0 全量（零网络、确定性，70/70，plan/live 指标为 `null`）、当前提交快照的
-> 201 条专项单测、以及逐条按原始断言复现。§9 尚未纳入单测的四条反向构造仍会失败。
-> **stable 规模按唯一输入算只有 104**（< `min_cases=120`），`--strict` 正确退出非零——
-> 原来报的 113 条里有 9 个是重复输入。
+> **当前正式状态（2026-08-09）**：干净 `f0af9c0`、
+> `deepseek:deepseek-v4-flash` 的 gate/all/live 父 bundle 147/147，L1/L2 各
+> 2 个独立进程 × 每进程 3 样本，raw hallucination/escape/instability 均 0；资格函数
+> `eligible=True`，首份**对比/参考模型** `docs/reviews/eval/baseline_intent_adversarial.{json,md}`
+> 已写入。同一 SHA 的主模型 `minimax:MiniMax-M3` 为 141/147、raw hallucination 8/121、
+> 6 条 `unstable`、无 `stable_fail`、`eligible=False`，不得被 DeepSeek 基线替代。
+> discovery 为 561 条 / 522 唯一输入，gate 为 139 stable / 129 唯一输入；L0 分别 76/76、
+> 25/25。旧 113/117、104/122/123 与 raw 6/117 只保留在历史 review/findings，不得当当前值。
+> baseline 只绑定该 provider、embedding、资产与 SHA，不证明主模型、Agent 业务结果、外部内容
+> 或跨模型平均质量。本轮真实 LLM 只接受 MiniMax M3（主）与 DeepSeek V4 Flash（对比）；
+> MiMo key 已失效，Qwen 不在批准模型内。
 
 口径三条要点（改口径就要回头看所有依赖它的数）：
 
@@ -236,6 +236,7 @@ python test/eval_intent_adversarial.py --suite discovery --layer l0 --strict
 
 # ② reference-provider L1/L2（真实 Planner / 完整 Edge→Engine 链）
 export LLM_GATEWAY_ADDR=localhost:50052        # 宿主跑必须显式给，见下方第 4 条
+export EXEMPLAR_EMBED_TIMEOUT=8 SKILL_EMBED_TIMEOUT=8
 python test/eval_intent_adversarial.py --suite discovery --layer l1 --live \
     --provider <p> --model <m> --temperature 0.3 --timeout 45 --ablations on-failure
 python test/eval_intent_adversarial.py --suite discovery --layer l2 --live \
@@ -247,6 +248,12 @@ python test/eval_intent_adversarial.py --case <case-id> --layer l1 --live \
 
 # ④ 选集与缺口速览（不跑模型）
 python test/eval_intent_adversarial.py --suite discovery --layer l0 --list
+
+# ⑤ 正式 gate / baseline（不可带 case/tag/cohort/risk/repeat 过滤器）
+python test/eval_intent_adversarial.py --suite gate --layer all --live \
+    --provider <reference-provider> --model <m> --strict
+python test/eval_intent_adversarial.py --suite gate --layer all --live \
+    --provider <reference-provider> --model <m> --strict --write-baseline
 ```
 
 **六条纪律**：
@@ -258,12 +265,14 @@ python test/eval_intent_adversarial.py --suite discovery --layer l0 --list
    remediation 与 holdout（实测有 13 条这么漏过）。另有两条硬闸：同句不得跨 cohort、
    `unseen_transfer` 的原话不得字面出现在 `skills/` 下被注入的知识里。
    第二条**只证伪不证实**（Route Hint 是正则，对不上字面），所以 seen 一侧不设对称断言。
-3. **普通失败复跑到 3 次，高风险固定 3 次**。2/3 同错才是 `stable_fail`；三次分裂是
-   `unstable`——既不算通过也不算缺陷。**L0 例外**：无模型参与，一次红就是结论。
-4. **`LLM_GATEWAY_ADDR` 必须指向可达网关**。`orchestrator/cloud/embedding.py` 默认连
+3. **gate L1/L2 的独立性由进程身份证明**。公开 parent 串行跑每层 2 个进程 × 每进程
+   3 样本；同进程 repeat 3 不能代替第二进程。跨进程同错才是 `stable_fail`，只在一进程翻面
+   是 `unstable`。**L0 例外**：无模型参与，一次红就是结论；L3 按授权 claim 只跑一次。
+4. **宿主 embedding 三项必须同时给**。`orchestrator/cloud/embedding.py` 默认连
    `llm-gateway:50052`（容器内主机名），从宿主跑会被 `ALL_PROXY` 兜走并超时，范例检索
-   静默降级成纯词法。现在这种情况会以基础设施错误退出码 2 结束，不会出一份「看起来
-   正常」的报告。
+   静默降级成纯词法；同时把 `EXEMPLAR_EMBED_TIMEOUT` / `SKILL_EMBED_TIMEOUT` 设为 8 秒。
+   缺任一项会以基础设施错误退出码 2 结束。从 worktree 跑 L3/all 时还要用
+   `E2E_STACK_ROOT` 指向持有根 `.env` 的主 checkout。
 5. **真实副作用永不执行，但替身必须留得下证据**。L2 的 Agent/VAL 全是 fake/spy；
    **确认闸内的能力一旦真被调到就自己造副作用**（不再依赖测试显式注入
    `confirmed_response`——真实 L2 从不注入，那条断言曾因此在最危险的一类动作上恒为真）。

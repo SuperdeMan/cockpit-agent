@@ -1,10 +1,12 @@
 # 意图对抗最终收尾实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]` / `- [x]`) syntax for tracking.
 
 > 日期：2026-08-05
 >
-> 状态：已批准，执行中
+> 状态：已批准；Task 1–7 与 Task 8 Step 1–5 已完成；三轮独立复审的证据缺口已在
+> `f0af9c0` 关闸，DeepSeek 对比/参考 baseline 已按当前 L3 原始证据契约重新写入，MiniMax
+> 主模型仍 `eligible=False`；待提交与推送
 >
 > 关联设计：`docs/design/2026-08-05-intent-adversarial-cross-process-confidence.md`
 >
@@ -40,7 +42,7 @@
 - Modify: `test/eval_corpus/intent_adversarial/suites.yaml`
 - Modify: `test/eval_corpus/intent_adversarial/cases/composition.yaml`
 
-- [ ] **Step 1：先写会失败的 suite 契约测试**
+- [x] **Step 1：先写会失败的 suite 契约测试**
 
   在 `test/test_intent_adversarial_contract.py` 覆盖：
 
@@ -53,7 +55,7 @@
 
   另构造非法 YAML，证明进程数小于 2、层含 `l0/l3`、discovery 声明多进程都会被静态校验拒绝。
 
-- [ ] **Step 2：先写会失败的晋级 provenance 测试**
+- [x] **Step 2：先写会失败的晋级 provenance 测试**
 
   对 `stabilized_at >= 2026-08-04` 的 stable case，分别证明缺少或伪造以下字段会报错：
 
@@ -65,7 +67,7 @@
 
   覆盖 run id 重复、进程数不足、每进程样本不足、`stabilized_samples` 小于乘积四种反例。
 
-- [ ] **Step 3：运行红灯并记录失败原因**
+- [x] **Step 3：运行红灯并记录失败原因**
 
   ```powershell
   python -m pytest test/test_intent_adversarial_contract.py -q
@@ -73,7 +75,7 @@
 
   预期新增测试因 `SuiteConfig` 无字段、loader 不解析、provenance 只校验总样本而失败。
 
-- [ ] **Step 4：实现最小契约**
+- [x] **Step 4：实现最小契约**
 
   在 `SuiteConfig` 尾部增加向后兼容默认值：
 
@@ -84,11 +86,11 @@
 
   loader 将 YAML 列表规范化成 tuple；契约校验 gate 的采样层只能是 `l1/l2`，discovery 必须单进程。把现有 `_stabilized_samples_errors()` 扩成同一处完整 provenance 校验，不另造旁路。
 
-- [ ] **Step 5：更新正式声明**
+- [x] **Step 5：更新正式声明**
 
   `suites.yaml` 的 gate 增加 `independent_processes: 2` 与 `independent_layers: [l1, l2]`；discovery 显式保持 1/空。给 `cp.dep.charge-then-navigate` 回填已验收的 A/B 独立进程取证名称与 2×3 样本结构，总样本仍为 6。
 
-- [ ] **Step 6：验证并提交**
+- [x] **Step 6：验证并提交**
 
   ```powershell
   python -m pytest test/test_intent_adversarial_contract.py test/test_eval_intent_adversarial_cli.py -q
@@ -110,7 +112,7 @@
 - Modify: `test/test_intent_adversarial_runtime.py`
 - Modify: `test/test_intent_adversarial_report.py`
 
-- [ ] **Step 1：为逐 repetition 完整证据写红灯测试**
+- [x] **Step 1：为逐 repetition 完整证据写红灯测试**
 
   扩展 `RepeatOutcome`，并要求最终 `AdversarialResult.repetitions` 的每项具备：
 
@@ -131,11 +133,11 @@
 
   新字段必须有安全默认值，保证 L0 与现有构造器不被迫伪造 raw 证据。
 
-- [ ] **Step 2：为跨进程分类写参数化红灯测试**
+- [x] **Step 2：为跨进程分类写参数化红灯测试**
 
   在新文件测试以下规则：任一危险样本为 `critical_fail`；两个进程全样本通过才 `pass`；同一错误签名覆盖两个不同进程为 `stable_fail`；错误只在一个进程或签名不一致为 `unstable`；重复 `process_run_id` 不能冒充两个进程。
 
-- [ ] **Step 3：为 worker 计划与身份校验写红灯测试**
+- [x] **Step 3：为 worker 计划与身份校验写红灯测试**
 
   纯函数 `worker_specs(layer, suite)` 必须返回：
 
@@ -145,21 +147,21 @@
 
   `validate_worker_bundle()` 覆盖 bundle/role/layer/run id/SHA/clean/provider/model/assets/suite/retrieval/temperature/selection/corpus/gold digest/admitted catalog 不一致，以及缺报告、解析失败、非法退出码、infra/drift/retrieval 降级。
 
-- [ ] **Step 4：运行红灯**
+- [x] **Step 4：运行红灯**
 
   ```powershell
   python -m pytest test/test_intent_adversarial_process.py test/test_intent_adversarial_runtime.py test/test_intent_adversarial_report.py -q
   ```
 
-- [ ] **Step 5：实现无 I/O 的合并核心**
+- [x] **Step 5：实现无 I/O 的合并核心**
 
   新模块只放 dataclass、身份校验、结果反序列化、跨进程分类与父报告合并纯函数；不得在其中启动子进程或读 `.env`。relation 只聚合同一 worker 已完成的裁判结果，不跨 worker 重新配对 base/support。
 
-- [ ] **Step 6：让执行路径记录所有样本**
+- [x] **Step 6：让执行路径记录所有样本**
 
   `eval_intent_adversarial.py` 在构造 repetition 时传入 worker run id 与样本序号；raw、validator 后 intents、fallback 都逐样本保存。顶层展示证据仍可选择代表样本，但指标不得再只读取代表样本。
 
-- [ ] **Step 7：验证并提交**
+- [x] **Step 7：验证并提交**
 
   ```powershell
   python -m pytest test/test_intent_adversarial_process.py test/test_intent_adversarial_runtime.py test/test_intent_adversarial_report.py test/test_eval_intent_adversarial_cli.py -q
@@ -178,27 +180,27 @@
 - Modify: `test/test_eval_intent_adversarial_cli.py`
 - Modify: `test/test_intent_adversarial_process.py`
 
-- [ ] **Step 1：写隐藏 worker 参数与防递归红灯测试**
+- [x] **Step 1：写隐藏 worker 参数与防递归红灯测试**
 
   参数固定为 `--_worker`、`--_bundle-id`、`--_process-run-id`、`--_worker-role`、`--_worker-report`，help 使用 `argparse.SUPPRESS`。worker 缺任一身份字段退出 2；worker 携带 `--write-baseline` 退出 2；worker 不得再拉起 subprocess。
 
-- [ ] **Step 2：写父控制器子进程形状红灯测试**
+- [x] **Step 2：写父控制器子进程形状红灯测试**
 
   monkeypatch `subprocess.run`，断言 `--layer all` 串行启动三个 worker，且只有 primary 收到 `--layer all`；L1/L2 各启动两个；L0/L3/discovery 维持当前单进程执行。每个 worker 报告路径位于 `tempfile.TemporaryDirectory()`。
 
-- [ ] **Step 3：写退出码红灯测试**
+- [x] **Step 3：写退出码红灯测试**
 
   产品红灯 worker 可返回 1 并被纳入合并；任一 worker 返回 2、报告缺失/不可解析、身份冲突或基础设施红灯，parent 返回 2；合并成功但产品红灯返回 1；全绿返回 0。
 
-- [ ] **Step 4：实现 parent/worker 分流**
+- [x] **Step 4：实现 parent/worker 分流**
 
   公开 argv 在需要跨进程时进入 `_run_parent_bundle()`；隐藏 worker 路径调用现有单进程主体。parent 给所有 worker 复用原公开过滤参数与显式 provider/model，但禁止 worker 写正式 baseline。使用 `sys.executable` 与脚本绝对路径，显式传递必要环境，不能读取或打印 secret。
 
-- [ ] **Step 5：确保 L3 只跑一次**
+- [x] **Step 5：确保 L3 只跑一次**
 
   primary/all 保留现有 `_l3_evidence()`；L1/L2 corroboration worker 不可收到 L3 selection，父合并器验证恰有一份新鲜 L3 证据。
 
-- [ ] **Step 6：验证并提交**
+- [x] **Step 6：验证并提交**
 
   ```powershell
   python -m pytest test/test_eval_intent_adversarial_cli.py test/test_intent_adversarial_process.py -q
@@ -218,7 +220,7 @@
 - Modify: `test/test_eval_intent_adversarial_cli.py`
 - Modify: `docs/reviews/eval/README.md`
 
-- [ ] **Step 1：写 baseline 资格红灯测试**
+- [x] **Step 1：写 baseline 资格红灯测试**
 
   从现有 eligible fixture 出发逐项删除或改坏：
 
@@ -230,23 +232,25 @@
 
   证明缺字段分别产生 `not_parent_process_bundle`、`process_policy_incomplete`、`raw_observation_incomplete`。worker 报告即使其他字段全绿也不可写 baseline。
 
-- [ ] **Step 2：写全样本 raw/fallback 聚合红灯测试**
+- [x] **Step 2：写全样本 raw/fallback 聚合红灯测试**
 
   代表样本通过但另一 repetition 存在 catalog 外 raw intent 时，幻觉分子必须为 1；任一未声明 fallback 都进入 `unexpected_fallback_plans`；缺任一应观测 L1/L2 repetition 时 `raw_observation_complete=False`。
 
-- [ ] **Step 3：写 Markdown 证据形状红灯测试**
+- [x] **Step 3：写 Markdown 证据形状红灯测试**
 
   摘要必须明确 parent/worker 身份、`L1 2×3`、`L2 2×3`、worker run id/role/layer/exit/report digest，并显示 `process_policy_complete` 与 `raw_observation_complete`。
 
-- [ ] **Step 4：实现父报告 meta 与全样本指标**
+- [x] **Step 4：实现父报告 meta 与全样本指标**
 
   parent 写入 `process_sampling.bundle_id/required/observed/workers`，worker 报告写 `process_sample`。报告哈希使用原始 worker JSON bytes 的 SHA-256；父报告内嵌必要逐样本证据，不把临时路径当可重放证据。
 
-- [ ] **Step 5：验证正式写入只能发生在父层**
+- [x] **Step 5：验证正式写入只能发生在父层**
 
-  `write_baseline_if_eligible()` 继续原子写 JSON/Markdown；CLI worker 路径无论参数组合都到不了 writer。正式比较源、完整 case set、L3 新鲜度、raw 幻觉零、fallback 零、clean SHA 等旧硬闸全部保留。
+  `write_baseline_if_eligible()` 对 JSON、Markdown 各自执行原子替换，第二个文件写入失败时回滚；
+  不承诺进程硬终止下的跨文件原子事务。CLI worker 路径无论参数组合都到不了 writer。正式比较源、
+  完整 case set、L3 新鲜度、raw 幻觉零、fallback 零、clean SHA 等旧硬闸全部保留。
 
-- [ ] **Step 6：验证并提交**
+- [x] **Step 6：验证并提交**
 
   ```powershell
   python -m pytest test/test_intent_adversarial_report.py test/test_eval_intent_adversarial_cli.py test/test_intent_adversarial_process.py -q
@@ -321,7 +325,7 @@ Task 5A 只创建两份专用 contract fixture，并在必要处用最小 fake c
 engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只有一个：让每个新增红灯都能
 归因到一个尚未实现的 capability-ref 契约，而不是在生产 seam 改动前制造大面积伴随红。
 
-- [ ] **Step 1：写请求级 ref 与最终 catalog 可见面的红灯测试**
+- [x] **Step 1：写请求级 ref 与最终 catalog 可见面的红灯测试**
 
   在新建 `orchestrator/cloud/tests/test_planning_capability_refs.py` 中用最小 fake agent 固定：
 
@@ -348,7 +352,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   `chars_final > PLANNER_CATALOG_BUDGET_CHARS` 并告警；stats 的 full/final/dropped 必须与实际
   注入文本及 visible set 一致，永远不返回空 catalog。
 
-- [ ] **Step 2：写普通 JSON、tool schema 与末尾 prompt 的红灯测试**
+- [x] **Step 2：写普通 JSON、tool schema 与末尾 prompt 的红灯测试**
 
   普通 JSON 与 toolcall system prompt 都只描述以下 step wire：
 
@@ -368,7 +372,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   规则；若展示 wire，只能写 `capability_ref:"<从本请求映射选择>"`，不得把 `cap_0001` 静态
   绑定 HVAC/media/nearby 等领域。规划/replan system prompt 均不得再含 legacy step 输出形状。
 
-- [ ] **Step 3：写 build、toolcall salvage、retry 与 replan 共图红灯测试**
+- [x] **Step 3：写 build、toolcall salvage、retry 与 replan 共图红灯测试**
 
   在专用 contract 文件中将
   `_parse_and_validate_data(wire, catalog: PlannerCapabilityCatalog, fallback_text)` 固定为唯一解析
@@ -382,7 +386,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   fixture；只直接测试 `_validated_steps()` 的单测将来仍可构造解析后的内部 pair，生产代码不得
   保留 legacy wire 旁路。
 
-- [ ] **Step 4：写动态 skill/exemplar 渲染与旧形状禁入红灯测试**
+- [x] **Step 4：写动态 skill/exemplar 渲染与旧形状禁入红灯测试**
 
   在专用 contract 文件内构造各一条内存 skill/exemplar，不改正式 YAML。锁住
   `exemplars.render_block()` 与 skill `few_shots` 渲染接收本请求 refs：YAML 仍存真实
@@ -392,7 +396,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   `test/eval_skills.py` / `test/eval_exemplars.py` 与 7 个正式 skill YAML 的迁移统一留到 Task 5B
   Step 9，不在红灯提交中展开。
 
-- [ ] **Step 5：写 invalid sentinel、no-action 与合法 DAG 回归红灯测试**
+- [x] **Step 5：写 invalid sentinel、no-action 与合法 DAG 回归红灯测试**
 
   在新建 `test/test_intent_adversarial_capability_refs.py` 用一个最小 trace sink 构造五类 validator
   前 wire：有效 ref、未知 ref、缺失 ref、非字符串 ref、继续输出 legacy `agent_id/intent`。有效
@@ -408,7 +412,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   合法单步与多步 DAG：`depends_on`、`slot_refs`、完整 slots、clarify、skill repairs 以及唯一
   intent re-home 的 validator 内部行为不回归。
 
-- [ ] **Step 6：运行全部新增测试并记录预期红灯**
+- [x] **Step 6：运行全部新增测试并记录预期红灯**
 
   ```powershell
   python -m pytest orchestrator/cloud/tests/test_planning_capability_refs.py test/test_intent_adversarial_capability_refs.py -q
@@ -422,7 +426,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
 
 ### Task 5B：最小实现引用协议并取得真栈证据
 
-- [ ] **Step 7：实现最终 visible catalog 的请求级映射**
+- [x] **Step 7：实现最终 visible catalog 的请求级映射**
 
   在 `planning.py` 增加私有不可变 `PlannerCapabilityCatalog` 与唯一入口
   `_assemble_capability_catalog()`；在 `context.py` 抽出复用现有 protected/drop 规则、以调用方
@@ -434,7 +438,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   不截断能力条目，并如实记录 stats/告警。对象只作为调用栈局部变量传递，不挂到 `Plan`、全局、
   缓存、日志外部契约或 proto；ref catalog 在 user message 最后封口。
 
-- [ ] **Step 8：实现统一 wire 解析并保留 validator 第二防线**
+- [x] **Step 8：实现统一 wire 解析并保留 validator 第二防线**
 
   `_submit_plan_tools()`、普通 JSON prompt、toolcall/salvage、第二轮 JSON retry、`replan()` 都只收
   `capability_ref`。迁移 `_PLANNER_BASE` 三组 legacy pair 示例、`_CATALOG_ALLOWLIST_SECTION` 与
@@ -446,7 +450,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   `_validated_steps()` 继续防御最终 pair、slots、depends_on、slot_refs 与 catalog 漂移，不把 ref
   解析当 validator 替代品。不增加任何领域分支、route hint 或 legacy 生产旁路。
 
-- [ ] **Step 9：动态渲染软资产并迁移测试 fixture**
+- [x] **Step 9：动态渲染软资产并迁移测试 fixture**
 
   `skills.py` / `exemplars.py` 的规划轮与 `render_for_names()` 都显式接收 refs；结构化语义资产
   只有在映射命中时才渲染成当前请求的 `capability_ref`。把 7 个已列 YAML 的自由文本输出 JSON
@@ -461,7 +465,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   `id+capability_ref` 且不含 legacy pair。validator 单测的 pair 输入继续明确标注为“resolver 后
   内部形状”。Task 5A 的专用红灯也在最小实现后转绿。
 
-- [ ] **Step 10：让 trace 在字段迁移后保持同一 raw 口径**
+- [x] **Step 10：让 trace 在字段迁移后保持同一 raw 口径**
 
   `attach_validation_trace()` 包装统一 `_parse_and_validate_data` seam，在 ref 解析前保存 wire 快照，
   并以传入的同一不可变 catalog 构造裁判快照：有效 ref 还原真实 raw intent，无效/legacy step
@@ -469,7 +473,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   build 与 replan 都必须产生可聚合的 validation trace；`RepeatOutcome.raw_intents`、
   `raw_observed`、raw capability hallucination 与 baseline eligibility 不改字段、不改分母、不放宽。
 
-- [ ] **Step 11：跑受影响回归并确认全部转绿**
+- [x] **Step 11：跑受影响回归并确认全部转绿**
 
   ```powershell
   python -m py_compile orchestrator/cloud/planning.py orchestrator/cloud/context.py orchestrator/cloud/skills.py orchestrator/cloud/exemplars.py test/support/intent_adversarial_trace.py
@@ -483,7 +487,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   明确检查现有合法多步、`depends_on`、`slot_refs`、slots、no-action 与 replan 回归；不能只跑
   新增 ref 单测。
 
-- [ ] **Step 12：运行同六条 A8 的 2×3 真栈验收后再进入 Task 6**
+- [x] **Step 12：运行同六条 A8 的 2×3 真栈验收后再进入 Task 6**
 
   先验证真实 provider 的 toolcall wire。前提是根 `compose.yaml` 启动的 llm-gateway 可达，且
   MiniMax 凭证已配置；凭证/服务缺失时脚本只可记录 SKIP，不能把 SKIP 当 Task 5 验收通过：
@@ -518,17 +522,17 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
 - Modify: `test/test_intent_adversarial_contract.py`
 - Modify: `orchestrator/cloud/tests/test_catalog_budget.py`
 
-- [ ] **Step 1：先用父 CLI 做 on-failure 诊断**
+- [x] **Step 1：先用父 CLI 做 on-failure 诊断**
 
   同一命令只选 `nq.dinner-music.drop-music`、`os.battery.car` 以及 relation 所需 base，保留两独立 L1 进程。记录首偏离、检索名单与消融结果；不得把某一趟全绿当成已修复。
 
-- [ ] **Step 2：写知识层回归红灯**
+- [x] **Step 2：写知识层回归红灯**
 
   为否定 policy 增加一个与对抗原句不同的 golden：尚未执行的并列诉求被“别/不用”取消时，既不能生成原动作，也不能生成 pause/stop/close 等反向动作；只有明确描述正在进行的状态并要求停止时才生成停止动作。
 
   为 charging 增加一个非同句 exemplar，表达“车辆电量已经见底/趴窝”是补能求助，应落 `charging.find`；`charging.status` 仅承接明确询问当前百分比、剩余续航或充电状态。manifest 的 description/examples 与该边界同步。
 
-- [ ] **Step 3：运行红灯并确认不是自证**
+- [x] **Step 3：运行红灯并确认不是自证**
 
   ```powershell
   python test/eval_skills.py
@@ -538,15 +542,15 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
 
   golden/exemplar 不得复制 `找家川菜馆，音乐就不用放了` 或 `车没电了`；现有 nearby 反例“找家火锅店，歌就不用放了”若已被检索，则不追加重复条目。
 
-- [ ] **Step 4：做最小知识修复**
+- [x] **Step 4：做最小知识修复**
 
   只修改通用 policy、charging manifest 与非同句 exemplar。若 Step 1 证明 dinner 的失败是 existing exemplar 召回排序问题，先修可泛化的检索描述/关键词；不得把对抗 utterance 写入资产，不得新增 route hint。
 
-- [ ] **Step 5：双进程复验四条历史不稳定 case**
+- [x] **Step 5：双进程复验四条历史不稳定 case**
 
   同时选择 dinner、battery、`cs.cancel-it.reminder`、`nq.hvac.keep-volume`。要求每条在两个独立 L1 进程各三次全过；cancel/hvac 不因修复回归；无 raw 幻觉、fallback、infra/provider/retrieval 红灯。
 
-- [ ] **Step 6：验证并提交**
+- [x] **Step 6：验证并提交**
 
   ```powershell
   python test/eval_skills.py
@@ -566,7 +570,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
 - Conditionally Create: `docs/reviews/eval/baseline_intent_adversarial.md`
 - Modify: `docs/reviews/eval/README.md`
 
-- [ ] **Step 1：提交前置代码后确认快照干净**
+- [x] **Step 1：提交前置代码后确认快照干净**
 
   ```powershell
   git status --short
@@ -575,28 +579,32 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
 
   ignored/generated 文件不影响 git clean 结论；任何 tracked diff 都必须先归入前置任务提交。
 
-- [ ] **Step 2：跑确定性门禁**
+- [x] **Step 2：跑确定性门禁**
 
   ```powershell
   python test/eval_intent_adversarial.py --suite discovery --layer l0 --strict --out-json docs/reviews/eval/_ci-run-intent-finalization-discovery-l0.json
   python test/eval_intent_adversarial.py --suite gate --layer l0 --strict --out-json docs/reviews/eval/_ci-run-intent-finalization-gate-l0.json
   ```
 
-  要求 discovery 70/70、555 条/516 唯一输入；gate strict 19/19、133 stable/123 唯一输入，且契约计数若因有意新增资产变化，先解释再同步文档。
+  实际结果为 discovery 76/76、561 条/522 唯一输入；gate strict 25/25、139 stable/129 唯一输入。契约计数因本批有意新增资产而变化，已同步到入口文档与运行手册。
 
-- [ ] **Step 3：跑完整父 bundle，不先写 baseline**
+- [x] **Step 3：跑完整父 bundle，不先写 baseline**
 
-  显式设置 `LLM_GATEWAY_ADDR=localhost:50052`、`EXEMPLAR_EMBED_TIMEOUT=8`、`SKILL_EMBED_TIMEOUT=8`，运行 gate `--layer all --live --provider minimax --model MiniMax-M3`。要求 parent 按顺序完成 primary/all、corroboration-l1、corroboration-l2，L3 只跑一次。
+  显式设置 `LLM_GATEWAY_ADDR=localhost:50052`、`EXEMPLAR_EMBED_TIMEOUT=8`、
+  `SKILL_EMBED_TIMEOUT=8`；从不含根 `.env` 的验证 worktree 运行时还必须让
+  `E2E_STACK_ROOT` 指向同仓库主 checkout。按用户指定的替代模型运行 gate
+  `--layer all --live --provider deepseek --model deepseek-v4-flash`。要求 parent 按顺序完成
+  primary/all、corroboration-l1、corroboration-l2，L3 只跑一次。
 
-- [ ] **Step 4：审计父报告资格**
+- [x] **Step 4：审计父报告资格**
 
   核对 clean SHA、provider/model/lock、process run id、L1/L2 各 2×3、L3 selection/new run id、raw/escape/fallback、gold/asset digest、infra/trace/retrieval、全部 repeat status 与 `eligibility.reasons`。
 
-- [ ] **Step 5：仅在 eligible=True 时写 baseline**
+- [x] **Step 5：仅在 eligible=True 时写 baseline**
 
   以同一已提交 SHA 再运行相同完整命令并加 `--write-baseline`。writer 自己必须再次确认资格；生成的 JSON/Markdown 一并提交。若仍为 false，不创建 baseline，不放宽阈值，只把未关项写入最终 review/findings。
 
-- [ ] **Step 6：验证并提交证据**
+- [x] **Step 6：验证并提交证据**
 
   baseline 生成时提交：`test: establish cross-process intent baseline`
 
@@ -620,15 +628,15 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
 - Modify: `docs/agents-history.md`
 - Modify: `test/README.md`
 
-- [ ] **Step 1：同步事实，不复制历史流水**
+- [x] **Step 1：同步事实，不复制历史流水**
 
-  把 suite 规模、跨进程命令、报告字段、分类规则、raw 口径、当前最终结果与 baseline 有无同步到入口、架构、运行手册、corpus README、findings 与最终 review。运行手册中旧的 gate 122 唯一输入改为当前 123；`AGENTS.md` 只保留当前快照和活跃残余，逐批命令与长证据只进 findings/agents-history。
+  把 suite 规模、跨进程命令、报告字段、分类规则、raw 口径、当前最终结果与 baseline 有无同步到入口、架构、运行手册、corpus README、findings 与最终 review。运行手册中的旧规模更新为本轮实测 gate 139 stable / 129 唯一输入；`AGENTS.md` 只保留当前快照和活跃残余，逐批命令与长证据只进 findings/agents-history。
 
-- [ ] **Step 2：关闭计划 checklist 并做文档一致性检查**
+- [x] **Step 2：关闭计划 checklist 并做文档一致性检查**
 
   只把实际完成的 checkbox 改为 `[x]`；未满足项保留 `[ ]` 并在最终 review 写明阻塞证据。全仓搜索并清理过期的“同进程 repeat 3 足够”、旧 122、raw 幻觉误写为 0 与虚构 baseline 表述。
 
-- [ ] **Step 3：跑受影响回归**
+- [x] **Step 3：跑受影响回归**
 
   ```powershell
   python -m py_compile test/eval_intent_adversarial.py test/support/intent_adversarial_contract.py test/support/intent_adversarial_runtime.py test/support/intent_adversarial_report.py test/support/intent_adversarial_process.py orchestrator/cloud/planning.py
@@ -639,17 +647,20 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   python test/smoke_edge.py
   ```
 
-- [ ] **Step 4：跑项目正式后端基线**
+- [x] **Step 4：跑项目正式后端基线**
 
   ```powershell
   python -m pytest --import-mode=importlib
   ```
 
   不用 `pytest test/` 替代根命令；该目录选集的裸 `server` import 冲突仍按独立 P1 记账。
+  新鲜结果：**4490 passed / 16 skipped / 0 failed**（收集 4506 项，15m28s）。
 
-- [ ] **Step 5：做最终独立 review**
+- [x] **Step 5：做最终独立 review**
 
   新 reviewer 从批准设计、最终 review 与 merge-base 开始审查整分支，重点构造：伪造两个 run id、缺 shard、worker 写 baseline、L3 重复、代表样本遮掉 raw 幻觉、provider drift、relation 跨 worker 错配、单次幸运全绿。P0/P1 必须修复并复审；P2 记录但不得与 baseline eligibility 混写。
+  最终结论：无 P0/P1；唯一 P2 为“跨文件原子”措辞歧义，已改成逐文件原子替换、第二文件
+  失败回滚且不承诺进程硬终止下的跨文件事务。
 
 - [ ] **Step 6：提交文档与最终修复**
 
@@ -667,3 +678,34 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   ```
 
   推送后复核本地 HEAD 与远端 branch SHA 一致，最终交付报告列出提交、测试、正式 baseline 状态与仍存在的残余，不把历史证据冒充本轮新证据。
+
+## 2026-08-09 执行修订
+
+Task 8 的第一次“完成”判断被独立 reviewer 重开：`e4899c3` 仍允许伪造/重复 worker PID 与
+report digest、L3 嵌套 provider/result 身份缺失，以及 embedding model 身份丢失。`c6a7f85`
+已逐项 fail-closed；`63485da` 又以 capability contract 驱动的通用 retry 修复 heavy compound
+漏动作，未新增 route hint 或领域硬编码。
+
+干净 `63485da` 的两条正式证据必须分账：
+
+- `minimax:MiniMax-M3`（主模型）：139/147、raw hallucination 5/121、unexpected fallback 4、
+  critical/stable/unstable = 1/2/5，资格 reasons 非空，**没有写 baseline**；
+- `deepseek:deepseek-v4-flash`（对比模型）：资格预跑与正式写入批均 147/147；正式批
+  raw/escape/instability 0，2 条 fallback 均已声明 A8，文件自身重算 `eligible=True`，
+  已写成对 baseline。
+
+因此 Task 7 的“首份正式 baseline”只对 DeepSeek 对比/参考轨达成；MiniMax 主模型的 P0 产品红灯
+仍保留，不影响验证写入机制已经关闸，也不得借 DeepSeek 绿灯注销。
+
+## 2026-08-09 第三次独立复审修订
+
+`63485da` 仍可从多份 L3 候选里挑一份，也没有携带可重算的源 JSON 原始字节；旧时间与宽松
+相对路径可协同改写。`63c6a58`、`0e88347`、`f0af9c0` 依次落实唯一候选、Base64 原始字节与
+SHA-256、当前时间窗、真实 8 位 runner 后缀和严格四段路径。路径反向矩阵与最终针对性选集通过。
+
+同一 `f0af9c0` 重新取证：MiniMax 141/147、`eligible=False`；DeepSeek 预检与正式 writer 均
+147/147、`eligible=True`。第一次正式调用因漏带宿主/worktree 进程变量被 exit 2 拒绝且未碰
+正式文件；补齐 `LLM_GATEWAY_ADDR`、两项 embedding timeout 与 `E2E_STACK_ROOT` 后，正式 writer
+写入 JSON/Markdown SHA-256
+`af7d3c907663b11ddeb846e4a0c67a1a674b0d9ea221f510fdae6b7ada0a2d0c` /
+`1525c9939afa3ad2b036d03af7ea1bc408e03c920bb16e566b1bf930a6261d11`，写后资格重算为 true。

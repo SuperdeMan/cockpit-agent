@@ -13,24 +13,29 @@
 
 ## 0. 先读这一节：现在能引用什么
 
-> 当前状态以 2026-08-04 最终修复验收为准：
+> 当前状态以 2026-08-09 最终收口补记为准：
 > [`docs/reviews/2026-08-04-review-intent-adversarial-finalization.md`](../reviews/2026-08-04-review-intent-adversarial-finalization.md)。
-> 批次演进、旧口径与修复细节只查 findings §13、2026-08-03 独立评审和
+> 批次演进、旧口径与修复细节只查 findings §13–§16、2026-08-03 独立评审和
 > `docs/agents-history.md`，不要把中间读数抄成当前结论。
 
 | 证据 | 当前口径 |
 |---|---|
-| L0 discovery | **70/70**；555 条 / 516 唯一输入 |
-| gate 规模 | **133 stable / 123 唯一输入**；L0 strict **19/19，exit 0** |
-| L1 完整三样本批 | **113/117（96.6%）**；4 `unstable`，无 `stable_fail`；provider 锁定，706 次检索零降级，trace/infra 错误 0 |
-| Planner 能力幻觉 | raw **6/117（5.1%）**，校验后逃逸 **0/117**；不能把后者写成“幻觉 0%” |
-| L3 gate | A1-2 **1/1**；只证明该授权 case/claim，不外推 L3 新口径全量 |
-| 回归 | 受影响子集 **267 passed**；动态架构守卫 **89 passed**；后端全量 **3996 passed / 11 skipped / 0 failed** |
+| L0 discovery | **76/76**；561 条 / 522 唯一输入 |
+| gate 规模 | **139 stable / 129 唯一输入**；L0 strict **25/25，exit 0** |
+| DeepSeek 对比/参考 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；L1/L2 各 **2 个独立进程 × 每进程 3 样本**；正式 baseline `eligible=True` |
+| MiniMax 主模型 gate | **141/147**；exact **115/121**，raw 幻觉 **8/121**、校验后逃逸 **0/121**，6 条 `unstable`、无 `stable_fail`；`eligible=False` |
+| 检索与运行身份 | 两批均锁定各自 provider、`text-embedding-v4` 身份完整、检索零降级、trace/infra/provider drift 0；干净 SHA `f0af9c0` |
+| L3 gate | A1-2 在两模型均 **1/1**；正式 baseline invocation 新鲜、exit 0，只证明该授权 case/claim |
+| fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 0；MiniMax **11/122**，其中未声明 4 |
+| 回归 | 最终针对性选集 **254 passed / 3 skipped**；架构守卫 **89 passed**；端侧 smoke **13/13**；项目根全量 **4490 passed / 16 skipped / 0 failed** |
 
-**仍不存在**：L2/L3 新口径全量读数、正式 baseline。`110/116`、
-`relation_pass_rate 90.9%`、跨口径 seen/unseen 涨幅均已作废，不得引用为当前状态。
-正式 baseline 只有在同一干净快照的 `--suite gate --layer all --live` 报告
-`eligible=True` 时才允许写；当前 4 条 `unstable` 与 raw planner 幻觉率非零仍会正当拒绝。
+首份正式**对比/参考模型** baseline 已写入
+[`docs/reviews/eval/baseline_intent_adversarial.{json,md}`](../reviews/eval/baseline_intent_adversarial.md)，
+其自身重算 `eligible=True`。`110/116`、`113/117`、raw `6/117` 与旧 seen/unseen 涨幅
+均是历史批次，不得引用为当前状态。baseline 只绑定该 provider、资产与代码快照，不外推
+MiniMax 主模型、Agent 业务结果、外部 Provider 内容或跨模型平均质量。当前真实 LLM 验证只用
+`minimax:MiniMax-M3`（主模型）与 `deepseek:deepseek-v4-flash`（对比模型）；MiMo 凭证失效，
+Qwen 不在本轮批准的证据模型内。
 
 ---
 
@@ -58,10 +63,15 @@ export LLM_GATEWAY_ADDR=localhost:50052
 # 实测 0.27–1.12s，首次调用（含建 channel）必然超时 → `embedding` 打 30s 失败冷却
 # → 其后整段规划只跑词法档。而预热用的是 max(5.0, timeout)，它会成功。
 export EXEMPLAR_EMBED_TIMEOUT=8 SKILL_EMBED_TIMEOUT=8
+# 从 git worktree 跑 L3/all 时还要指向持有根 .env 的同仓库主 checkout；只设置这个进程变量，
+# 不复制或修改 .env。普通主目录运行无需另设
+export E2E_STACK_ROOT=/absolute/path/to/car-agent
 make up                      # live 层需要全栈
 ```
 
 - `--live` 必须**同时**显式给 `--provider` 与 `--model`，不接受跟随网关默认。
+- worktree 漏设 `E2E_STACK_ROOT` 时，L1/L2 可能仍能访问网关，但 L3 runner 会因找不到根 `.env`
+  fail-closed，因此整批不可引用。
 - L0 零网络，随时可跑，不需要 `make up`。
 
 > **两条只在 live 才现形的假象，现在都已机制化拦下**（2026-08-03 第二批，见 §12）：
@@ -106,10 +116,11 @@ python test/eval_intent_adversarial.py --suite gate --layer l0 --strict
 L0 覆盖：契约 + 覆盖矩阵 + cohort 隔离 + boundary 双向 + Edge ingress + 词法检索 +
 确认前副作用。**L0 无模型参与，一次红就是结论**（不存在 `unstable`）。
 
-当前预期：discovery **70/70 exit 0**；gate `--strict` **exit 0**
-（唯一输入 **122** ≥ `min_cases=120`，2026-08-03 晋级 19 条后达标）。
+当前预期：discovery **76/76 exit 0**；gate `--strict` **25/25 exit 0**
+（gate 唯一输入 **129** ≥ `min_cases=120`）。
 ⚠ **这个绿只说明语料规模够了**——它判的是规模，不是 stable 全绿。
-原来那两条稳定红已修（findings §8），但 live 门禁仍未全绿，见 §10。
+当前 live 必须按模型分账：DeepSeek 对比轨 147/147，MiniMax 主模型 141/147，见文首快照与
+最终 review §7。
 
 ### 3.3 L1 / L2：真实模型
 
@@ -303,14 +314,21 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 
 - 不带 `--case/--tag/--cohort/--risk/--repeat`，选集等于完整 stable 声明集；
 - provider/model 锁定且无漂移，code SHA、资产指纹、工作树身份完整；
+- parent 实测子进程 PID 必须与 worker 自报一致，PID、run id 与报告 digest 全部唯一；
+- 所有 worker 的 embedding provider/model 身份必须可识别且一致；
 - 重复与跨进程采样契约完成，覆盖缺口和被删除证据单元均为空；
 - 无 `stable_fail` / `critical_fail` / `unstable`，raw planner 幻觉率满足门限；
-- L1+L2+L3 都来自本次调用，L3 非空且 run/code/lock/claim 身份一致；
+- L1+L2+L3 都来自本次调用，L3 非空且 invocation/result 的 run/code/provider/model/lock/claim 身份一致；
+- L3 候选恰好一份且当前新鲜；内嵌原始 Base64 报告能重算同一 SHA-256，结构字段与原始字节一致，
+  相对路径严格绑定本次 run（只允许 runner 的 8 位临时后缀），畸形同级报告、额外目录或 `..` 均拒绝；
 - 已有 baseline 时不允许逐例回退，拒绝结果只写 rejected 诊断文件，不碰正式文件。
 
-**当前不允许执行写入。** 已达成的前置是 133 stable / 123 唯一输入与 A1-2 L3 授权链接；
-仍缺跨进程采样契约、4 条 `unstable` 的收敛，以及同一干净快照的 L1+L2+L3 完整健康批。
-最终以报告中的 `eligible=True` 为唯一放行信号，不以某一层单跑全绿或手工判断代替。
+2026-08-09 已按这条命令在干净 `f0af9c0` 上按当前 L3 原始字节/摘要/时间/精确路径契约
+重新取证并写出正式对比/参考 baseline；provider 为
+`deepseek:deepseek-v4-flash`。同一 SHA 的主模型 `minimax:MiniMax-M3` 报告为
+`eligible=False`，不能借 DeepSeek baseline 宣称主模型已达标。这不是以后可以手工更新的授权：
+每次写入仍必须重新跑完整父 bundle，最终以报告中的 `eligible=True` 为唯一放行信号，
+不以既有 baseline、某一层单跑全绿或手工判断代替。
 
 ---
 
@@ -338,15 +356,11 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 
 | 优先级 | 待办 | 完成判据 |
 |---|---|---|
-| **P0** | 将跨进程样本写进 gate 置信契约 | 同一进程 repeat 3 不再被当成三份独立证据；晋级与 baseline 资格闸共同消费 |
-| **P0** | 收敛最终 4 条 `unstable` | `cs.cancel-it.reminder`、`nq.dinner-music.drop-music`、`nq.hvac.keep-volume`、`os.battery.car`；以跨进程证据定性，不追加 route hint 追单趟 117/117 |
-| **P0** | 干净快照跑完 L1+L2+L3 | 无产品/基础设施/provider/trace 红灯，raw 幻觉率过线，报告 `eligible=True` 后才写 baseline |
 | P2 | 三条未晋级候选 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 仍在预选池；按新跨进程契约重新取证 |
 | P2 | 补 weather-outing 的真实 L3 claim | 旧链接语义不对应已删除；要晋级需新增真正验证 weather→nearby 连续性的 journey |
 | P2 | 宽 journeys 两条外部依赖残留 | B3-1 的 gold 去除当天真实天气依赖；B3-2 广州塔地标解析在高德侧另账处理，不混入落域结论 |
 
-下一步顺序固定：先定跨进程采样契约，再修/定性 4 条方差，最后在干净快照跑完整
-L1+L2+L3。已完成项和中间数字只在 findings / review / agents-history 留档，不再回填本节。
+P0 收尾已完成；已完成项和中间数字只在 findings / review / agents-history 留档，不再回填本节。
 
 ## 11. 自查清单（提交前逐条过）
 

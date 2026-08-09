@@ -17,6 +17,7 @@
 | `baseline_exemplars.{json,md}` | `test/eval_exemplars.py --live --ab --write-baseline` | 范例层有效性 Δ（**只在注入子集算**，见下） |
 | `baseline_routing.json` + `routing_bench.md` | `test/routing_bench.py --live --write-baseline` | **分布尺 N1**（不是回归闸） |
 | `hint_retirement.<provider>.{json,md}` | `test/hint_retirement.py --live --provider …` | 规则退役判定（**按 provider 分文件**） |
+| `baseline_intent_adversarial.{json,md}` | `test/eval_intent_adversarial.py --suite gate --layer all --live … --write-baseline` | 意图理解/落域的跨进程 L0–L3 正式基线 |
 | `journeys_report.{json,md}` | `scripts/run_e2e.py --milestone M-A --lane milestone --full --canonical ...` | 真栈 milestone canonical |
 | `shadow_nlu_report.{json,md}` + `shadow_nlu_results.jsonl` | `scripts/evolve.py`（M1b Shadow NLU） | 离线对照：规则臂 75.9% vs LLM 91.2% |
 | `edge_coverage_ceiling.{json,md}` + `_samples.jsonl` | `test/eval_edge_coverage_ceiling.py` | **可行性判据**（M5 P3a「先测天花板再训模型」） |
@@ -48,6 +49,21 @@
 它与上表所有基线的区别是**有一道资格硬闸**：不合格的运行**一个字节都不碰**正式基线，
 诊断改写到带时间戳的 `_ci-run-intent-adversarial-rejected-*`，并以退出码 2 打印全部拒绝原因。
 
+当前正式基线生成于 2026-08-09：干净 `f0af9c0`，锁定
+`deepseek:deepseek-v4-flash`，all-layer 147/147，L1/L2 各 2 个独立进程 × 每进程 3 样本；
+raw hallucination/escape/instability 均为 0，2 条 fallback
+`cc.missing.fallback-still-works@l1` / `cc.missing.reminder@l1` 都是语料声明过的 A8；A1-2 L3
+按原始字节/摘要/时间/精确路径契约新鲜通过，文件写入后立即重算 `eligible=True`。它是
+**对比/参考模型基线**，只证明固定
+provider/embedding/资产/SHA 下的意图理解与落域，不外推 MiniMax 主模型、Agent 业务结果、
+外部数据内容或跨模型平均质量。同一 SHA 的 MiniMax 主模型完整 gate 为 141/147、
+`eligible=False`，不能被这份基线代替。
+
+正式文件 SHA-256：JSON
+`af7d3c907663b11ddeb846e4a0c67a1a674b0d9ea221f510fdae6b7ada0a2d0c`，Markdown
+`1525c9939afa3ad2b036d03af7ea1bc408e03c920bb16e566b1bf930a6261d11`。两者必须成对提交；
+任何手工改单边都会破坏生成证据。
+
 资格要求（`baseline_eligibility()`，全部满足才写）：
 
 | 闸 | 拒绝原因 |
@@ -55,16 +71,20 @@
 | suite=gate、layer=all、retrieval-state=warm | `suite_not_gate` / `layer_not_all` / `cold_start_retrieval` |
 | 选中案例状态全为 stable | `non_stable_cases_selected` |
 | provider 显式 pin 且零漂移 | `provider_not_locked` / `provider_drift` |
+| parent 实测 PID 与 worker 自报一致，且 PID/run id/report digest 全唯一 | `process_policy_incomplete` |
+| worker embedding 身份完整且跨进程一致 | `embedding_identity_incomplete` |
 | code SHA 非空、工作树干净 | `unknown_code_sha` / `dirty_worktree` |
 | 资产指纹完整（无 `missing_assets`）| `asset_fingerprint_incomplete` |
 | 声明层的证据单元齐全 | `case_set_incomplete` |
 | 报告是 parent 聚合产物 | `not_parent_process_bundle` |
 | L1/L2 独立进程数与每进程样本索引齐全 | `process_policy_incomplete` |
 | L1/L2 每个应观测样本都有 raw 与 validator 证据 | `raw_observation_incomplete` |
+| 全样本 raw capability hallucination 与 validator escape 都实际量到且为 0 | `*_not_measured` / `*_above_zero` |
+| 未声明 fallback 为 0（A8 `expects_fallback` 单独分账） | `unexpected_fallback_plans` |
 | 无 `stable_fail` / `critical_fail` / `unstable` | `stable_failures` / `unstable_results` |
-| 无基础设施错误 | `infrastructure_errors` |
-| L3 选集非空且全过 | `l3_empty` / `l3_incomplete` |
-| 相对既有基线无逐例回退 | `baseline_regressions` |
+| 无基础设施错误和 retrieval 中途降级 | `infrastructure_errors` / `retrieval_degraded_mid_run` |
+| L3 选集非空、全过；恰有一份当前新鲜报告，原始字节摘要、时间、精确相对路径及 invocation/result 的 run/code/provider/model/lock 身份一致 | `l3_empty` / `l3_incomplete` / `l3_evidence_not_fresh` / `l3_invocation_invalid` |
+| 相对既有基线无逐例回退、删除证据单元或 gold 变化 | `baseline_regressions` / `removed_cases` / `gold_changed_since_baseline` |
 
 CLI **刻意不提供** `--update-baseline` / `--accept-failures` / `--force`——绕过参数存在本身
 就会被用掉。
@@ -72,7 +92,8 @@ CLI **刻意不提供** `--update-baseline` / `--accept-failures` / `--force`—
 gate 的公开 CLI 会串行启动独立 worker，再由 parent 校验并合并不可变报告。正式资格要求
 L1、L2 各 **2 个独立进程 × 每进程 3 个样本**；同一进程内重复 3 次不能替代第二个进程。
 parent JSON 的 `meta.process_sampling` 记录 bundle、required/observed 进程数以及每个 worker 的
-role、run id、pid、layer、原始报告 SHA-256 和退出码，不记录临时文件路径。worker JSON 只记录
+role、run id、parent 实测 pid、layer、原始报告 SHA-256、embedding 身份和退出码，不记录临时文件路径。parent
+会拒绝 worker 自报 PID 与实际子进程 PID 不一致、重复 PID/run id/digest 或 embedding 身份缺失/漂移。worker JSON 只记录
 `meta.process_sample`，其 Markdown 明确标成 `process_bundle_role=worker`，因此即使其余读数全绿
 也不能写正式 baseline。
 
@@ -83,10 +104,22 @@ role、run id、pid、layer、原始报告 SHA-256 和退出码，不记录临�
 资格闸不会只相信上述两个 complete flag：写入前会从 `process_sampling` 与
 `results[*].repetitions` 独立复算正式 gate 的 L1/L2 `2×3` 身份矩阵、worker digest/exit、
 样本索引及 raw 字段。预先计算的 eligibility 与当前报告不一致时按 rejected 处理。正式 JSON
-与 Markdown 会先各自在目标目录完整写入临时文件，再替换成对；第二次替换失败会把两目标回滚
-到原字节或原“不存在”状态，并清理临时文件，不能留下新 JSON 配旧 Markdown 的混合基线。
+与 Markdown 会先各自在目标目录完整写入临时文件，再分别原子替换；第二次替换失败会尽力把
+两目标回滚到原字节或原“不存在”状态。正常异常路径由测试保证不留下混合基线，但进程被强杀时
+不承诺跨文件事务，提交前仍须重新加载 JSON、核资格并校验两文件摘要。
 复算还直接消费每个 repetition 的 pass/danger/raw/actual/fallback；顶层 result、overall、metrics
 与 fallback 列表只是展示缓存，不能覆盖逐样本失败、能力幻觉、validator 逃逸或未声明兜底。
+
+正式 L3 证据还内嵌 `raw_report_base64`：writer 解码后重算 SHA-256，并与结构化 run、时间、
+provider lock、journey status 交叉核对。候选目录必须只有一份新鲜 JSON；畸形、不可读或非 object
+的同级报告也会拒绝，不能靠“挑一份能读的”绕过。允许的相对路径严格是
+`<run_id>/e2e_journeys/artifacts/journeys_report.json`，或 runner 生成的
+`<run_id>-<8位小写字母数字或下划线>/...`；多余层级、`..`、大小写或长度漂移均拒绝。正式报告
+生成时间只允许在当前时刻前 30 分钟至后 5 分钟内，旧基线文件因此不能在以后继续充当“可写资格”。
+
+这套报告未做密码学签名：拥有仓库写权限、能同时改代码与全部未签名 JSON 的主体仍可协同重写
+证据。它的信任根是 Git 提交、代码审查和远端历史；本地资格闸负责 fail-closed 与防误用，
+不冒充对恶意仓库写入者的签名证明。
 
 **证据单元是 `case_id@layer`**：同一条 case 在 L1 绿、L2 红时是两条独立记录。用裸
 `case_id` 作 key 会让后写的层覆盖先写的层，报告于是替产品把红灯藏起来。因此

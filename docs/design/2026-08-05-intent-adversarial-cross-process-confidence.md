@@ -1,6 +1,6 @@
 # 意图对抗门禁跨进程置信契约（2026-08-05）
 
-> 状态：**已获泓舟批准，进入实施**。本设计承接
+> 状态：**已获泓舟批准并于 2026-08-09 验收完成**。本设计承接
 > `docs/reviews/2026-08-04-review-intent-adversarial-finalization.md` 的两个最终方向：
 > 先把独立进程写进 gate 置信契约，再在同一干净快照完成 L1+L2+L3 并仅由
 > `eligible=True` 写首份正式 baseline。
@@ -360,3 +360,33 @@ validator 仍负责防御映射错误、错形状、slots/depends_on/slot_refs �
 - 不按领域硬编码 ref、能力或 A8 话术，不把 ref 做成带语义的稳定 ID；
 - 不保留生产 legacy LLM wire 旁路，不放宽 raw 定义，不把 invalid ref/sentinel 从分母拿掉；
 - 不自动晋级 corpus case，生命周期变化仍需人工批准。
+
+## 6. 第二次收口记录（后续 L3 证据复审已作废）
+
+设计 D1–D15 已落地，但第一版 `e4899c3` 证据被独立反向构造证明仍有三处 fail-open：worker
+PID/digest 未绑定 parent 实际子进程、L3 嵌套 provider/result 身份未复核、embedding model
+身份未进入跨进程契约。修复后 parent 以实际 `Popen.pid` 为准并要求 PID/run id/report digest
+全唯一；worker embedding 身份完整且一致；L3 invocation/result 的 run/code/provider/model/lock
+全量重算。任何一项缺失分别关闭 `process_policy_complete`、`embedding_identity_complete` 或
+`l3_invocation` 资格。
+
+当时的干净快照为 `63485da`。DeepSeek 对比/参考模型正式父 bundle 147/147，L1/L2 2×3、
+raw hallucination/escape/instability 0，2 条 fallback 均已声明 A8，资格函数返回
+`eligible=True`，首份 `baseline_intent_adversarial.{json,md}` 已由 CLI 写入。MiniMax 主模型同口径
+139/147、`eligible=False`，不能被 DeepSeek baseline 替代。
+
+后续复审继续发现 L3 候选选择、原始字节、时间与精确路径绑定不足；本节 baseline 只保留历史
+追溯。最终验收与明确局限见 review §7；逐批反向构造与环境假象见 findings §16。
+
+## 7. L3 原始产物绑定补充（2026-08-09）
+
+跨进程合同最终还要求 L3 只消费本次 invocation 的**唯一**候选，并把源 JSON 以 Base64 原始字节
+嵌入父报告。资格闸重算 SHA-256、解析原始内容并与 run/time/provider lock/journey status 交叉
+核对；outer report 只在当前时刻前 30 分钟至后 5 分钟内有写入资格。相对路径严格为本次 run
+目录加固定 `e2e_journeys/artifacts/journeys_report.json`，仅允许 runner 的 8 位小写临时后缀。
+
+该补充由 `63c6a58`、`0e88347`、`f0af9c0` 落地；最终路径反向矩阵与针对性回归通过。它关闭
+误选/借用报告，不提供数字签名；恶意仓库写入者仍由 Git 权限、review 与远端历史约束。
+
+同一 `f0af9c0` 的 DeepSeek 正式 writer 随后 147/147、`eligible=True` 并写入当前 baseline；
+MiniMax 主模型 141/147、`eligible=False`，继续独立留账。

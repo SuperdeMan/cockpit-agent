@@ -1,7 +1,7 @@
 # 意图理解与落域对抗测试体系设计
 
 > 日期：2026-08-02
-> 状态：已批准（2026-08-02），待实施
+> 状态：已批准并实施；2026-08-09 的最终 L3 原始证据契约与双模型口径见 §25
 > 交付对象：负责意图理解、落域评测与决策链验证的后续实施者
 > 适用范围：Edge 意图初判、Cloud Planner 落域、Skill/Exemplar 检索、Route Hint、Context/Engine 决策链
 > 关联：`docs/design/2026-07-28-intent-accuracy-data-flywheel.md`
@@ -1293,3 +1293,65 @@ trace/infra 错误 0，repeat coverage 117/117，post-validation 能力幻觉逃
 当前资格闸仍因 `unstable_results`、`gate_failures`、非 `--layer all`、工作树不干净与
 raw planner 幻觉率非零而拒绝。本批未生成 baseline；完整验收见
 `docs/reviews/2026-08-04-review-intent-adversarial-finalization.md`。
+
+## 23. 跨进程最终收口与正式 baseline（2026-08-09）
+
+§22.10 的“同进程 repeat 3 仍相关”已通过独立置信契约关闭。gate 的公开 CLI 现在是单一
+parent 入口：primary 跑请求层（all 时含唯一一次 L3），随后串行启动 L1/L2 corroboration；
+两层都要求 **2 个独立进程 × 每进程 3 样本**。parent 重新验证 worker 报告字节摘要、
+run identity、layer/exit、完整 unit set、样本索引与逐 repetition 证据，不能只相信 worker
+声明的 complete flag。worker 不具备 baseline 写入权。
+
+Planner wire 同步改为请求级不透明 `capability_ref`：最终 visible catalog 是 prompt、tool schema、
+JSON/tool/retry/replan 和 validator 的共同授权面。raw 口径记录 ref 的原值、解析状态、stage、
+attempt 与 wire mode；未知/畸形 ref 仍进入幻觉分母。baseline 资格从所有 repetition 重新聚合
+pass/danger/raw/escape/fallback，代表样本与顶层指标缓存不能遮掉坏样本。
+
+干净 SHA `e4899c3`、`deepseek:deepseek-v4-flash` 的完整 gate/all/live 父 bundle两次
+147/147，资格均为 `eligible=True`。第二次由资格闸写出首份
+`docs/reviews/eval/baseline_intent_adversarial.{json,md}`：L0/L1/L2/L3 = 25/117/4/1，
+exact 121/121、required 103/103、raw hallucination 0/121、escape 0/121、instability 0/121；
+728 次检索零降级，trace/infra/provider drift 0；A1-2 L3 新鲜 1/1。唯一 fallback 是语料
+显式声明的 A8 能力缺席 `cc.missing.vision@l1`，未声明 fallback 0。
+
+因此 §21.8/§22.10 的“正式 baseline 未生成”在当时只保留为历史结论；当时验收、局限与残余以
+`docs/reviews/2026-08-04-review-intent-adversarial-finalization.md` §5 为准。baseline 仍只证明
+固定 provider/资产/SHA 下的意图理解与落域，不外推 Agent 业务结果、外部数据内容或跨模型质量。
+
+## 24. 第二次收口的身份契约与双模型结论（后续 L3 证据复审已作废）
+
+§23 的 `e4899c3` 结论在独立反向构造后作废。正式资格除原契约外，现强制：
+
+- parent 记录真实 child PID，并与 worker 自报 PID 相等；PID、process run id、报告 digest 全唯一；
+- 每个 worker 的 embedding provider/model 身份完整，且跨 worker 一致；
+- L3 invocation 与每条 result 的 run/code/provider/model/provider-lock/claim 结构化身份一致；
+- 上述身份都从正式 report 重新计算，不能只相信 `*_complete` 顶层缓存字段。
+
+当时修复后的快照是干净 `63485da`。对比/参考模型
+`deepseek:deepseek-v4-flash` 两次完整父 bundle 147/147，正式批自身
+`eligible=True`，已写 `baseline_intent_adversarial.{json,md}`；主模型
+`minimax:MiniMax-M3` 同口径为 139/147、`eligible=False`，raw hallucination 5/121、
+unexpected fallback 4、critical/stable/unstable = 1/2/5。DeepSeek baseline 不能替代 MiniMax
+主模型门禁，也不能证明 Agent 业务或跨模型质量。后续 §25 继续收紧 L3 原始证据契约，
+本节 baseline 只保留历史追溯。
+
+## 25. L3 原始证据契约与当前双模型口径（2026-08-09）
+
+§24 的结构化 invocation/result 身份仍不足以证明“这些字段来自本次 runner 唯一产物”。最终契约
+增加四层绑定：候选总数恰好为一、源 JSON 原始 Base64 字节与 SHA-256 可重算、outer/report/
+invocation 时间有序且 outer 当前新鲜、相对路径精确绑定本次 run 及 runner 的 8 位临时后缀。
+不可读或畸形同级报告不再被忽略；额外路径层级与 `..` 一律拒绝。
+
+这项资格是**写入时资格**：outer report 超过当前时刻 30 分钟后，已提交的旧 baseline 不会继续
+返回“现在仍可写”。持久信任来自 Git 提交、代码审查和远端历史，不来自未签名 JSON 自身。
+
+在最终干净 SHA `f0af9c0` 上，主模型 `minimax:MiniMax-M3` 完整父 bundle 141/147、
+`eligible=False`（6 unstable、raw hallucination 8/121、unexpected fallback 4）；对比模型
+`deepseek:deepseek-v4-flash` 的正式写入前父 bundle 147/147、`eligible=True`。两轨都锁定
+`text-embedding-v4`、零降级、L3 A1-2 1/1。正式 baseline 必须由 DeepSeek 另一次完整
+`--write-baseline` 批生成，不能把预检文件复制过去；最终正式文件与验收见 review §7。
+
+最终 writer 已在同一 `f0af9c0` 重新跑完并写入：147/147、exact 121/121、required 103/103、
+raw/escape/instability 0，2 条 fallback 均为声明 A8，正式 JSON 立即重载为 `eligible=True`。
+JSON/Markdown SHA-256 为 `af7d3c907663b11ddeb846e4a0c67a1a674b0d9ea221f510fdae6b7ada0a2d0c` /
+`1525c9939afa3ad2b036d03af7ea1bc408e03c920bb16e566b1bf930a6261d11`。

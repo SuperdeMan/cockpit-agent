@@ -57,48 +57,54 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 
 ## 4. ⚠️ 当前真实状态（别假设没验证的东西能跑）
 
-### 4.0 当前快照（2026-08-04）
+### 4.0 当前快照（2026-08-09）
 
 意图落域对抗测试按这个顺序接手：运行手册
 [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) → 最终验收
 [`docs/reviews/2026-08-04-review-intent-adversarial-finalization.md`](docs/reviews/2026-08-04-review-intent-adversarial-finalization.md)
-→ 逐批证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` §13。
+→ 逐批证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` §16。
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**3996 passed / 11 skipped / 0 failed**（收集 4007 项，单进程 26m37s）。
+**4490 passed / 16 skipped / 0 failed**（收集 4506 项，单进程 15m28s）。
 HMI `node --test` **225/225**、Dashboard vitest **17/17**、端侧 smoke **13/13**、
-Go 网关 vet+test 通过；本轮没有改前端、Go、`.env` 或 CI。
+Go 网关 vet+test 通过；本轮没有改前端、Go、`.env` 或 CI，前端与 Go 数字沿用最近批次。
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
-| L0 discovery | **70/70**，555 条 / 516 唯一输入 |
-| gate 规模 | **133 stable / 123 唯一输入**，L0 strict **19/19，exit 0** |
-| L1 完整三样本批 | **113/117（96.6%）**；4 `unstable`，无 `stable_fail`；`minimax:MiniMax-M3` 锁定，706 次检索零降级，trace/infra 错误 0 |
-| Planner 能力幻觉 | raw **6/117（5.1%）**；校验后逃逸 **0/117**。两者不可混写成“幻觉 0%” |
-| L3 gate | 正式选集非空，A1-2 **1/1**；只证明该 case/claim，不代表 L3 新口径全量 |
-| 代码回归 | 受影响子集 **267 passed**；动态架构守卫 **89 passed**；Skill / Exemplar / L0 门禁均通过 |
+| L0 discovery | **76/76**，561 条 / 522 唯一输入 |
+| gate 规模 | **139 stable / 129 唯一输入**，L0 strict **25/25，exit 0** |
+| 对比模型正式 baseline | [`baseline_intent_adversarial.json`](docs/reviews/eval/baseline_intent_adversarial.json)；干净 `f0af9c0`，锁定 `deepseek:deepseek-v4-flash`，由当前 L3 原始字节/摘要/时间/精确路径契约重新取证并写入 |
+| DeepSeek 完整 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；exact **121/121**，raw 幻觉/校验后逃逸/不稳定均 **0/121**；L1/L2 各 **2 个独立进程 × 每进程 3 样本** |
+| MiniMax 主模型 gate | **141/147**；exact **115/121**，raw 幻觉 **8/121**、逃逸 **0/121**，6 条均为 `unstable`、无 `stable_fail`，资格 `eligible=False` |
+| L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim |
+| fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **4** |
+| 代码回归 | 最终针对性选集 **254 passed / 3 skipped**；动态架构守卫 **89 passed**；端侧 smoke **13/13**；Skill / Exemplar / L0 门禁均通过 |
 
-**正式 baseline 仍不存在，也尚不具备写入资格。** 当前报告仍有
-`unstable_results` / `gate_failures`，只跑了 L1，raw planner 幻觉率非零；
-只有同一干净快照的 `--suite gate --layer all --live` 报告明确 `eligible=True` 才能写。
+首份正式 baseline 已存在，但它是 **DeepSeek 对比/参考模型**在固定 provider、资产与代码快照下的
+意图理解与落域证据；不证明 MiniMax 主模型、Agent 业务结果、外部 Provider 内容或跨模型平均质量。
+MiniMax 本轮即使 process/provider/embedding/L3 身份完整，仍因 `gate_failures`、raw 幻觉、未声明
+fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一次新的完整父报告
+明确 `eligible=True`，不得手工改正式文件。
 
 ### 4.1 活跃待办（只列仍需行动的）
 
 | 优先级 | 待办 | 完成判据 |
 |---|---|---|
-| **P0** | 把“多个独立进程”纳入 gate 采样契约 | 不再把同一进程内 repeat 3 当成三份独立证据；资格闸消费该契约 |
-| **P0** | 收敛 4 条方差型 `unstable` | `cs.cancel-it.reminder`、`nq.dinner-music.drop-music`、`nq.hvac.keep-volume`、`os.battery.car`；先看跨进程证据，不用 route hint 追单趟 117/117 |
-| **P0** | 取得干净快照的 L1+L2+L3 完整证据 | 无 `stable_fail` / `unstable` / infra / provider drift，raw 幻觉率满足门限，报告 `eligible=True` 后才写首份 baseline |
+| **P0** | 收敛 MiniMax 主模型完整 gate 的 6 个 `unstable` 单元 | 不用 route hint 追单批全绿；在新的独立进程证据中同时消除不稳定、raw 幻觉与未声明 fallback，主模型报告才可 `eligible=True` |
 | **P1** | 修正 `pytest test/` 的裸 `server` 导入冲突 | 目录选集不再因 `sys.path` 顺序把 `EdgeOrchestratorServicer` 解析到 llm-gateway；项目正式基线仍以根命令为准 |
 | **P1** | 清理宽口径 journeys 两条外部依赖残留 | B3-1 的 gold 不再依赖跑批当天真实天气；B3-2 的广州塔地标解析在高德侧另账处理 |
+| **P2** | 补 weather-outing 的真实 L3 claim | 不复用语义不对应的旧 journey；新增真正验证 weather→nearby 连续性的授权旅程后再晋级 |
+| **P2** | 三条未晋级候选重新取证 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 按当前跨进程契约取证 |
 | **P2** | M5 P3b：端侧 NLU operate 抽取与放量 | 真实流量错对象率 <0.3% 后再开工；其余量产余项看 `docs/architecture/phase1-implementation-plan.md` |
 
 ### 4.2 读数纪律
 
-- `110/116`、`relation_pass_rate 90.9%`、旧 seen/unseen 对比均跨过口径变化，**不得当当前结果**。
+- `110/116`、`113/117`、raw `6/117`、旧 seen/unseen 对比均是历史口径/批次，**不得当当前结果**。
 - `domain_hit_rate` 只要求命中交集；`exact_plan_set_rate` 要求必要组齐全、禁选为空、无额外项，二者不可直比。
-- `unstable` 是被测对象属性；同进程采样相关，门禁红不自动等于稳定产品缺陷。
+- L1/L2 的正式 gate 必须是两个独立进程、每进程 3 样本；同进程 repeat 3 不能替代第二进程。
+- baseline 的 `repeat_coverage=121/122` 是 L1/L2 121 个 live 单元重复、L3 按设计只跑一次；`process_policy_complete=true`，不是缺 shard。
+- `fallback_plan_rate` 非零不自动失败；只有语料显式声明的 A8 能力缺席族可接受，未声明 fallback 一条即挡 baseline。
 - Live 跑批前按运行手册 §2 同时设置 provider、model 与 embedding 三项；少一项整批证据作废。
 - `pytest test/` 不是项目基线命令；换选集会改变 import 顺序与分母，不能拿来替代根跑。
 

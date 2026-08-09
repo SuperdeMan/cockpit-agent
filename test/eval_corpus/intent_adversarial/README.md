@@ -6,8 +6,9 @@
 
 ## 文件
 
-- `suites.yaml`：状态选择与重复策略，不保存 provider、model、secret。`gate.normal_repeats`
-  不得小于 3；runner 与 baseline 资格闸必须消费同一份策略。
+- `suites.yaml`：状态选择、重复与独立进程策略，不保存 provider、model、secret。
+  `gate.normal_repeats` 不得小于 3，`gate.independent_processes=2` 且
+  `independent_layers=[l1,l2]`；runner 与 baseline 资格闸必须消费同一份策略。
 - `coverage_exemptions.yaml`：逐 intent、逐要求的显式豁免。
 - `journey_links.yaml`：schema v2，链接现有 journey id，不复制旅程 gold。每条映射必须有
   `journey_id` / `assertion` / `rationale`：旅程绿灯只授权显式 claim，不能借给语义相似但不同的 case。
@@ -67,7 +68,9 @@ L2 共用 Engine session 与 history）。证据单元命名：
 
 ## 状态
 
-`candidate → reviewed → stable → retired`。只有 `reviewed_by: human` 的案例可以进入 `reviewed`；只有固定 provider 重复稳定的案例可以进入 `stable`。`retired` 保留原文、原因和替代保护，不删除历史。
+`candidate → reviewed → stable → retired`。只有 `reviewed_by: human` 的案例可以进入 `reviewed`；
+只有固定 provider 下两个独立进程、每进程三样本的证据可以进入 `stable`。`retired` 保留原文、
+原因和替代保护，不删除历史。
 
 `stable` 只是语料生命周期状态，不等于永不失败。gate 必须如实报 `pass / unstable /
 stable_fail`；不得因为一条 stable 当前变红就改 gold、降级状态或移出选集。
@@ -92,6 +95,12 @@ remediation 与 holdout。所以另有两条按**输入事实**判的硬闸（`v
 里出现过 4 次，条数说 113、唯一输入只有 104。`suites.yaml` 的 `min_cases/max_cases` 作用在唯一
 输入上；报告同时打印 `cases=` 与 `distinct_inputs=`，`meta.duplicate_input_groups` 列出重复组。
 同输入不同机制可以各留一条（断言不同就有价值），但只计一个规模单位。
+
+2026-08-09 当前规模：discovery 561 条 / 522 唯一输入；gate 139 stable / 129 唯一输入。
+当前正式**对比/参考模型** baseline（DeepSeek / `f0af9c0`）的证据单元为
+L0/L1/L2/L3 = 25/117/4/1，总计 147/147；同一 SHA 的 MiniMax 主模型为 141/147、
+`eligible=False`。规模条数、唯一输入数、evidence unit 数与不同模型结果是四种不同维度，
+不得互换或平均。
 
 ## 脱敏
 

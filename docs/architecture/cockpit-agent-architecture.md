@@ -923,6 +923,18 @@ turns/spans/llm_calls/logs 落 SQLite 持久化（`OBS_RETENTION_DAYS` 保留期
   - **评测可信度（2026-07-17）**：真 LLM 评测经 `--provider` 锁定 active 厂商 +
     逐旅程漂移守卫（漂移=报告作废退出码 1，且拦 `--write-baseline` 防混脑基线）；
     数据真实性经严格栈冒烟 + mock 泄漏探针把关（§9.5）。
+  - **意图落域基线（2026-08-09 校准）**：L1/L2 采样不是同进程重复，而是公开 parent
+    串行编排每层 2 个独立进程 × 3 样本；Planner 只提交请求级不透明 `capability_ref`，
+    parent 从全部 repetition 重算 raw hallucination/escape/fallback 与 worker 身份。只有干净
+    SHA、固定 provider/assets/gold、完整 L1+L2+L3 且 `eligible=True` 才能写
+    `baseline_intent_adversarial.{json,md}`；两文件分别经临时文件原子替换，第二文件失败时
+    回滚，但不承诺进程强杀下的跨文件事务。L3 还绑定单一新鲜报告、原始 Base64 字节及其
+    SHA-256、当前 run/provider/lock/claim、受限时间窗与精确四段相对路径；畸形同级报告不会被
+    静默忽略。当前正式对比/参考基线为 `f0af9c0` / DeepSeek all-layer 147/147。主模型 MiniMax
+    在同一 SHA 的同口径结果为 141/147、`eligible=False`，
+    两者不得平均或互相替代。该基线只量意图理解与落域，不量 Agent 业务结果和外部内容质量。
+    报告是 fail-closed 审计证据而非数字签名：能改仓库与整套未签名 JSON 的主体仍可协同重写，
+    最终信任根是 Git 提交、代码审查与远端历史。
 
 ---
 
@@ -1108,4 +1120,4 @@ agents/<name>/
 | v1.19 | 2026-08-01 | 内容性合入（数据飞轮 M5 P3 收尾）：§3.2 影子观测面补完——**四条路径全挂**（`path` 分开误接与漏接，误接发生在本地快路径且危险得多；响应后 fire-and-forget 不占秒回）、`nlu_vs_rule` **三态→四态**（补 `unmapped`：无金标不装懂）、`nlu_gate` 只记不用。**一条判定纪律入册**：「A 与 B 一致吗」先问「**A 和 B 是同一个空间里的量吗**」——影子拿语料中文标签与规则自有 object 直接比字符串，`agree` 状态在生产里从未出现过，而 P3b 的错对象率正要拿这一档当分母；三套命名由 `orchestrator/edge/knowledge/nlu_objects.yaml` 等价类台账归并（人裁一次、机器守不许悄悄漏，同 boundaries 台账形态）。另一条负结果：**「多给点信息总不会更差」不是证据**——78 条端侧判别化描述渲进 planner catalog 跨两档 Δ=0 零翻面而每次规划 +1462 字符，收益实际在 **registry 语义兜底**（泛化描述下「打开空调」的 top-1 是 scene-orchestrator，而那是 LLM 失败时的兜底规划路径），证据 `docs/reviews/eval/edge_capability_desc_ab.md` |
 | v1.20 | 2026-08-04 | 内容性合入：§5.2.1 增 Skill 受限 `plan_repairs`——只给已有唯一步骤补数据依赖，不新增 intent/覆盖真值，不改权威链；`plan.skill_effects` 单列留账，防止确定性后处理冒充模型原生正确。来源为意图落域对抗 gate 中 `cp.dep.menu-then-order` 在 guide/few-shot 在场时仍随机漏接的真栈证据 |
 
-> 校准记录（不 bump）：2026-07-02/03/10 同步 R1-R3 落地现状；2026-07-18 实现说明、§3.1 T0-T2 运行模型对应、点餐→周边发现、§13 目录映射校准；2026-08-02 附录 C 版本表整理（两表合一、按版本排序，无内容变化）。
+> 校准记录（不 bump）：2026-07-02/03/10 同步 R1-R3 落地现状；2026-07-18 实现说明、§3.1 T0-T2 运行模型对应、点餐→周边发现、§13 目录映射校准；2026-08-02 附录 C 版本表整理（两表合一、按版本排序，无内容变化）；2026-08-09 §10 评测可信度同步跨进程意图基线落地状态。

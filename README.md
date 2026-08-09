@@ -197,9 +197,9 @@ docker compose -f compose.yaml up --build -d
 
 | 层 | 是什么 | 现状 |
 |---|---|---|
-| 单测 / 契约 | 全服务 pytest（编排 / Agent / 安全 / 记忆 / 网关）单命令一次跑通 | **3996 passed / 11 skipped / 0 failed**（2026-08-04） |
+| 单测 / 契约 | 全服务 pytest（编排 / Agent / 安全 / 记忆 / 网关）单命令一次跑通 | **4490 passed / 16 skipped / 0 failed**（2026-08-09） |
 | 前端 | HMI `node --test` / Dashboard vitest | 225 / 17 |
-| 评测基线 | 端侧意图覆盖（8k+ 真实说法语料）、云侧路由、四模式路由、拒识/澄清 | 报告型，CI 非阻塞门禁 |
+| 评测基线 | 端侧意图覆盖（8k+ 真实说法语料）、云侧路由、四模式路由、拒识/澄清、L0–L3 对抗落域 | 对比/参考基线 **147/147**，L1/L2 各 2×3 独立进程，资格 `eligible=True`（DeepSeek / `f0af9c0`）；MiniMax 主模型同口径 **141/147、eligible=False**，不可混写成跨模型全绿（其余报告型基线见 `docs/reviews/eval/README.md`） |
 | 单链路 e2e | WS 全链路 / 记忆 / 上下文 / 韧性自愈 / TTS 流 / 语音回路 / 降级矩阵 / 任务账本 / 执行对账 / 主动治理 / 声纹 / 视觉 / S2S | 真栈脚本，接入 `run_e2e`（Windows/Linux 清单一致） |
 | L3 旅程级 | 35 条语料：跨 Agent 自主执行（把事办完）× 全场景连续对话 | 回归级常绿（红灯单条重跑定性制） |
 | L4 HMI CDP | 真浏览器渲染 / 点击 → WS 帧断言 | 二次交互用例 |
