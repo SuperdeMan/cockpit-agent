@@ -1127,3 +1127,11 @@ raw hallucination 8/121、6 unstable、unexpected fallback 4，`eligible=False`�
 `1525c9939afa3ad2b036d03af7ea1bc408e03c920bb16e566b1bf930a6261d11`。当前入口只看最终
 review §7、findings §16 与设计 §25。收尾根命令为 **4490 passed / 16 skipped / 0 failed**
 （收集 4506 项，15m28s）；MiMo key 失效，Qwen 未进入本轮真实 LLM 证据。
+
+## 14. 意图落域对抗收尾分支合并（2026-08-09）
+
+`codex/intent-adversarial-finalization` 在合并前重新执行项目根命令：**4490 passed / 16 skipped /
+0 failed**（收集 4506 项，18m14s）。`main` 是该分支直接祖先，最终以 `--ff-only` 从
+`f0b08f8` 快进至 `d380353` 并推送；本地 `main`、`origin/main` 与功能分支 SHA 一致，无额外
+merge commit。合并后的主工作树复验：受影响选集 **591 passed / 3 skipped**、动态架构守卫
+**89 passed**、端侧 smoke **13/13**、HMI **225/225**、Dashboard **17/17**。

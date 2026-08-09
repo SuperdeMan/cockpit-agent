@@ -96,6 +96,6 @@
 | [2026-08-02-intent-routing-adversarial-testing-implementation-plan.md](2026-08-02-intent-routing-adversarial-testing-implementation-plan.md) | 上述体系的逐任务 TDD 实施计划：契约/裁判/trace/runtime/report/CLI/450 条 discovery/140 条 gate/L0-L3/baseline | ✅ Task 1–15 全落地；Task 16–18 见落地记录中的实际范围与明确未达项 |
 | [2026-08-02-intent-routing-adversarial-findings.md](2026-08-02-intent-routing-adversarial-findings.md) | 对抗测试产品缺陷、尺子硬化与修复批次的单一证据入口 | ✅ §5–§15 保留历史演进；**§16 是当前批次入口**：L3 单一新鲜报告、原始字节/摘要/时间/精确路径绑定，以及 `f0af9c0` 双模型重取证。聚合读数跨口径/模型不可直比，最终结论以 review §7 为准 |
 | [2026-08-05-intent-adversarial-cross-process-confidence.md](2026-08-05-intent-adversarial-cross-process-confidence.md) | 对抗 gate 最终收尾设计：L1/L2 独立进程置信契约、逐样本 raw 证据、父报告合并与 baseline 硬闸 | ✅ 已批准并验收完成；未放宽 raw/fallback/L3/clean-SHA 门限，未用 route hint 追单趟全绿 |
-| [2026-08-05-intent-adversarial-finalization-implementation-plan.md](2026-08-05-intent-adversarial-finalization-implementation-plan.md) | 上述收尾设计的逐任务 TDD 实施计划：suite/provenance、纯合并器、parent/worker、raw 幻觉、产品方差、完整真栈与文档收口 | ✅ Task 1–8 已完成并推送授权分支：DeepSeek 对比 baseline 已写出且资格通过，MiniMax 主模型仍保留 `eligible=False` 的独立 P0，不以对比模型绿灯注销 |
+| [2026-08-05-intent-adversarial-finalization-implementation-plan.md](2026-08-05-intent-adversarial-finalization-implementation-plan.md) | 上述收尾设计的逐任务 TDD 实施计划：suite/provenance、纯合并器、parent/worker、raw 幻觉、产品方差、完整真栈与文档收口 | ✅ Task 1–8 已完成并 fast-forward 合入 `main@d380353`：DeepSeek 对比 baseline 已写出且资格通过，MiniMax 主模型仍保留 `eligible=False` 的独立 P0，不以对比模型绿灯注销 |
 
 > 接真实 provider 的标准流程见常青指南 [`docs/guides/provider-integration.md`](../guides/provider-integration.md)。

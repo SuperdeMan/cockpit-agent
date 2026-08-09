@@ -6,7 +6,7 @@
 >
 > 状态：已完成；Task 1–8 全部完成；三轮独立复审的证据缺口已在
 > `f0af9c0` 关闸，DeepSeek 对比/参考 baseline 已按当前 L3 原始证据契约重新写入，MiniMax
-> 主模型仍 `eligible=False`；收尾证据已提交并推送到授权分支
+> 主模型仍 `eligible=False`；收尾分支已 fast-forward 合并并推送到 `main@d380353`
 >
 > 关联设计：`docs/design/2026-08-05-intent-adversarial-cross-process-confidence.md`
 >
@@ -654,7 +654,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   ```
 
   不用 `pytest test/` 替代根命令；该目录选集的裸 `server` import 冲突仍按独立 P1 记账。
-  新鲜结果：**4490 passed / 16 skipped / 0 failed**（收集 4506 项，15m28s）。
+  新鲜结果：**4490 passed / 16 skipped / 0 failed**（收集 4506 项，18m14s）。
 
 - [x] **Step 5：做最终独立 review**
 
@@ -680,7 +680,8 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
 
   推送后复核本地 HEAD 与远端 branch SHA 一致，最终交付报告列出提交、测试、正式 baseline 状态与仍存在的残余，不把历史证据冒充本轮新证据。
   首次推送已成功建立 `origin/codex/intent-adversarial-finalization` 跟踪分支；本 checklist
-  收口提交推送后再做最终 SHA 一致性检查。
+  收口提交推送后再做最终 SHA 一致性检查。2026-08-09 该分支以 `--ff-only` 合并并推送到
+  `main@d380353`；本地 `main`、`origin/main` 与功能分支 SHA 一致。
 
 ## 2026-08-09 执行修订
 

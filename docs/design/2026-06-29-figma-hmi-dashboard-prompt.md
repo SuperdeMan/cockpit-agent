@@ -1,3 +1,5 @@
+# 座舱 HMI 与 Dashboard Figma 提示词
+
 ## 项目 A:座舱 HMI
 
 ### A‑1 主提示词(先立设计系统)

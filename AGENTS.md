@@ -13,7 +13,7 @@
 旅程级验证体系（L3 journeys + L4 HMI CDP）、智能化升级 M0a→M4（S2S 双语音链路 / 声纹多用户 /
 统一主动引擎 / 受控 MCP 桥 / Task Ledger + Outcome Verifier / Skill 层，已过跨阶段组合总体验收）
 与 M5 数据飞轮（P0→P3a + P3 收尾）均已落地；首批真实外部能力在线（高德 / 和风 / Exa / Tushare /
-api-football，无凭证回退 mock）。当前全量测试基线与最近批次见 §4.0 快照；逐批历史流水在
+api-football，无凭证回退 mock）。当前全量测试基线与批次证据见 §4.0 快照；逐批历史流水在
 [`docs/agents-history.md`](docs/agents-history.md)。
 
 ---
@@ -66,9 +66,10 @@ api-football，无凭证回退 mock）。当前全量测试基线与最近批次
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**4490 passed / 16 skipped / 0 failed**（收集 4506 项，单进程 15m28s）。
+**4490 passed / 16 skipped / 0 failed**（收集 4506 项，单进程 18m14s）。
 HMI `node --test` **225/225**、Dashboard vitest **17/17**、端侧 smoke **13/13**、
-Go 网关 vet+test 通过；本轮没有改前端、Go、`.env` 或 CI，前端与 Go 数字沿用最近批次。
+Go 网关 vet+test 通过；HMI / Dashboard 数字为 2026-08-09 实测，Go 数字沿用 2026-08-04
+批次；本轮没有改前端、Go、`.env` 或 CI。
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
