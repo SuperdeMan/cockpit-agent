@@ -215,7 +215,7 @@ journeys:
 >
 > 更一般的一条：**在 mock 栈上断言「模型选对了 Agent」，测的永远是规则不是系统。**
 > 这类断言的归宿是 live 车道（`mode_routing_cases.yaml` / RoutingBench），
-> 或者等「live 车道进 CI」那张卡兑现（`AGENTS.md` §4.0）。
+> 或者等「live 车道进 CI」条件兑现（[`AGENTS.md`](../../AGENTS.md) §4.2 延后 / 条件待办索引）。
 
 前置纪律（写进 runner 启动检查）：全栈起后 settle ≥40s（registry 重注册 10s + 车况快照 30s）；宿主 5173 未被占（CDP 用例）；`reset_env` 每旅程必跑。
 

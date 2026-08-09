@@ -94,12 +94,27 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 |---|---|---|
 | **P0** | 收敛 MiniMax 主模型完整 gate 的 6 个 `unstable` 单元 | 不用 route hint 追单批全绿；在新的独立进程证据中同时消除不稳定、raw 幻觉与未声明 fallback，主模型报告才可 `eligible=True` |
 | **P1** | 修正 `pytest test/` 的裸 `server` 导入冲突 | 目录选集不再因 `sys.path` 顺序把 `EdgeOrchestratorServicer` 解析到 llm-gateway；项目正式基线仍以根命令为准 |
+| **P1** | 清理 hint 退役后的陈旧离线评测资产 | 2026-08-09 新跑 `eval_route_hints.py` 为 76/86、9 个唯一 baseline regression；只迁出已退役的 reminder recall 断言并刷新该层 baseline，等价用例继续留在 `mode_routing_cases.yaml` 走端到端保护，`--strict` 最终 exit 0 |
 | **P1** | 清理宽口径 journeys 两条外部依赖残留 | B3-1 的 gold 不再依赖跑批当天真实天气；B3-2 的广州塔地标解析在高德侧另账处理 |
 | **P2** | 补 weather-outing 的真实 L3 claim | 不复用语义不对应的旧 journey；新增真正验证 weather→nearby 连续性的授权旅程后再晋级 |
 | **P2** | 三条未晋级候选重新取证 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 按当前跨进程契约取证 |
-| **P2** | M5 P3b：端侧 NLU operate 抽取与放量 | 真实流量错对象率 <0.3% 后再开工；其余量产余项看 `docs/architecture/phase1-implementation-plan.md` |
+| **P2** | M5 P3b：端侧 NLU operate 抽取与放量 | 真实流量错对象率 <0.3% 后再开工；其余延后/条件项看 §4.2，量产级总纲看 `docs/architecture/phase1-implementation-plan.md` |
 
-### 4.2 读数纪律
+### 4.2 延后 / 条件待办索引（不进入当前主线）
+
+> §4.1 只放正在行动的事项；本表保留尚未启动、等待外部条件或明确后置的入口。条件满足后先晋级 §4.1 并补完成判据；历史流水仍只查 `docs/agents-history.md`。
+
+| 主题 | 当前状态 / 启动条件 | 权威入口 |
+|---|---|---|
+| 端侧能力面与 P3b 前置 | 除雾 intent 仍缺席；“穿衣指数→股指”仍是规则错配。对象桥接、operate 抽取和真实错对象率 <0.3% 齐备后才放量 | [M5 P3 收尾](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) §P3 收尾 |
+| live 路由回归进 CI | hint 退役后的召回保护目前是 live 人工车道，不是 CI 阻断；有稳定凭证、预算与 provider 方差处置后再接 CI | [旅程体系](docs/design/2026-07-14-journey-e2e-test-system.md) §4.3、[评测说明](docs/reviews/eval/README.md) §规则退役 |
+| `route_hints` 继续退役 | 当前实数 **11**；`mcp-bridge#0` 必须先过专项安全回归。旧三条单档候选不得按历史索引直接执行；当前只用 MiniMax 主模型 / DeepSeek 对比，MiMo key 失效不阻塞主线，切换 provider 时重新全覆盖取交集 | [M5 P2](docs/design/2026-07-28-intent-accuracy-data-flywheel.md)、[评测说明](docs/reviews/eval/README.md) §规则退役 |
+| M5 后续杠杆 | catalog 检索化当前是“有意不做”；16k 预算再次裁剪或保护集显著变瘦时重评。gold→范例现走 CLI；P4 仅在范例 ≥2k 且 N1 平台期 ≥2 周时启动 | [M5 P2/P4](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) |
+| M-B / M-C / M-D 明确后置项 | 13 张验收主卡已清零；跨域删除 saga、完整隐私管理/迁移仪式、持久治理扩面与 MCP 生产化覆盖按 GDPR 完备性、量产迁移或新消费方触发 | [总体验收](docs/reviews/2026-07-26-acceptance-review-m0a-m4.md) §10.2/§11.2/§12.2、[OwnerKey 契约](docs/conventions.md) §9.13 |
+| M2 / M3 产品化边界 | Ledger 自动续跑/任务中心，以及主动治理持久化、偏好学习、dashboard、远距 geocode 与真实商户均为显式未做；出现真实消费方或产品阶段后另立卡 | [M2 RFC](docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md) §9.6、[M3 RFC](docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md) §10.7 |
+| M4 声纹 / 视觉余项 | 真麦校准、语音注册入口、模板漂移治理、视觉多轮与 `vp_*` 指标消费仍未收口；进入真机量产验收或 v2 前启动 | [M4 RFC](docs/design/2026-07-25-m4-p4-voiceprint-vision-rfc.md) §11.5/§11.8、[声纹契约](docs/conventions.md) §9.11 |
+
+### 4.3 读数纪律
 
 - `110/116`、`113/117`、raw `6/117`、旧 seen/unseen 对比均是历史口径/批次，**不得当当前结果**。
 - `domain_hit_rate` 只要求命中交集；`exact_plan_set_rate` 要求必要组齐全、禁选为空、无额外项，二者不可直比。
