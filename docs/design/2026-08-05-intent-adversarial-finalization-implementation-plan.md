@@ -4,9 +4,9 @@
 
 > 日期：2026-08-05
 >
-> 状态：已批准；Task 1–7 与 Task 8 Step 1–5 已完成；三轮独立复审的证据缺口已在
+> 状态：已完成；Task 1–8 全部完成；三轮独立复审的证据缺口已在
 > `f0af9c0` 关闸，DeepSeek 对比/参考 baseline 已按当前 L3 原始证据契约重新写入，MiniMax
-> 主模型仍 `eligible=False`；待提交与推送
+> 主模型仍 `eligible=False`；收尾证据已提交并推送到授权分支
 >
 > 关联设计：`docs/design/2026-08-05-intent-adversarial-cross-process-confidence.md`
 >
@@ -662,7 +662,7 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   最终结论：无 P0/P1；唯一 P2 为“跨文件原子”措辞歧义，已改成逐文件原子替换、第二文件
   失败回滚且不承诺进程硬终止下的跨文件事务。
 
-- [ ] **Step 6：提交文档与最终修复**
+- [x] **Step 6：提交文档与最终修复**
 
   ```powershell
   git diff --check
@@ -670,14 +670,17 @@ engine、planning、skill、评测或 E2E fixture 的 legacy 输出。目的只�
   ```
 
   提交：`docs: finalize cross-process intent gate evidence`
+  已完成：`719844e`；提交前 `git diff --cached --check` 通过。
 
-- [ ] **Step 7：推送已授权分支**
+- [x] **Step 7：推送已授权分支**
 
   ```powershell
   git push -u origin codex/intent-adversarial-finalization
   ```
 
   推送后复核本地 HEAD 与远端 branch SHA 一致，最终交付报告列出提交、测试、正式 baseline 状态与仍存在的残余，不把历史证据冒充本轮新证据。
+  首次推送已成功建立 `origin/codex/intent-adversarial-finalization` 跟踪分支；本 checklist
+  收口提交推送后再做最终 SHA 一致性检查。
 
 ## 2026-08-09 执行修订
 
