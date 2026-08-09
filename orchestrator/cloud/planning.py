@@ -219,6 +219,18 @@ _NO_ACTION_CLAUSE_SPLIT_RE = re.compile(
 _EXPLICIT_ACTION_NEGATION_RE = re.compile(
     r"(?:先|暂时|先暂时|暂时先)?(?:别(?!忘|的)|不要(?!忘)|不用|不必|无需)"
 )
+_PURE_INSTRUCTION_OVERRIDE_RE = re.compile(
+    r"^\s*(?:请\s*)?(?:忽略|无视|忘记|忘掉|绕过|跳过|覆盖)\s*"
+    r"(?:(?:之前|先前|此前|上文|以上|前面|当前|原有|系统|隐藏|安全|"
+    r"全部|所有|一切|的)\s*)*"
+    r"(?:指令|命令|提示(?:词)?|规则|约束|限制|工具定义|输出格式)"
+    r"(?:\s*[，,；;。！？!?]\s*"
+    r"(?:(?:从现在(?:开始|起)?|现在|以后)\s*)?(?:你\s*)?"
+    r"(?:(?:只\s*)?(?:需要|要|必须|应该)\s*)?"
+    r"(?:听(?:从)?我的|听我(?:的)?|按我说的做|服从我|"
+    r"遵循我的(?:指令|规则|要求)|接受我的(?:指令|命令)))?"
+    r"\s*[。！？!?]*\s*$"
+)
 _FOCUS_DEPENDENT_ELLIPSIS_RE = re.compile(
     r"^(?:(?:那个|这个|它)(?:取消(?:掉|了)?|换(?:一批|一个)?)"
     r"|(?:第[一二三四五六七八九十\d]+天)?换(?:一批|一个)"
@@ -264,14 +276,19 @@ def _is_directive_to_assistant(text: str) -> bool:
 
 
 def _is_pure_no_action_utterance(text: str) -> bool:
-    """Return whether every explicit action clause is negated.
+    """Return whether the utterance itself proves that no action is executable.
 
-    This is deliberately syntax-only: it never names a domain or capability.
-    A positive clause after punctuation/connectors keeps the normal retry, as do
-    the positive Chinese idioms ``别忘了…`` / ``不要忘记…``.
+    This is deliberately syntax-only: it never names a domain or capability.  It
+    covers either an all-negated request or a complete attempt to override the
+    instruction hierarchy with no business action attached.  A positive clause
+    after punctuation/connectors keeps the normal retry, as do the positive
+    Chinese idioms ``别忘了…`` / ``不要忘记…``.
     """
-    clauses = [part.strip() for part in _NO_ACTION_CLAUSE_SPLIT_RE.split(
-        str(text or "")) if part.strip()]
+    normalized = str(text or "").strip()
+    if _PURE_INSTRUCTION_OVERRIDE_RE.fullmatch(normalized):
+        return True
+    clauses = [part.strip() for part in _NO_ACTION_CLAUSE_SPLIT_RE.split(normalized)
+               if part.strip()]
     return bool(clauses) and all(
         _EXPLICIT_ACTION_NEGATION_RE.search(clause) for clause in clauses
     )
@@ -1296,9 +1313,10 @@ class PlanBuilder:
         # `toolcall_degraded`，落域评测那边也分不出这条绿是判断给的还是兜底给的
         # （2026-08-03 实测，对抗套件 findings §5.5 的「否定簇已修 ✅」因此站不住）。
         #
-        # 输入自身是整句纯否定时，首轮空 steps 已有确定性语法证据，可直接认；其余输入
-        # 仍只在**第二次也这么说**时才认。一次空 steps 可能只是模型抽风（「打开空调」
-        # 偶尔也会空手而归），那时重试仍是那条便宜的保险。
+        # 输入自身是整句纯否定、或完整规则覆盖话术且没有附带业务动作时，首轮空 steps
+        # 已有确定性语法证据，可直接认；其余输入仍只在**第二次也这么说**时才认。一次
+        # 空 steps 可能只是模型抽风（「打开空调」偶尔也会空手而归），那时重试仍是那条
+        # 便宜的保险。
         # 用户可见行为**一个字都没变**（仍是一条 chitchat.talk），变的只有诚实度。
         if plan is None and no_action >= 2:
             talk = self._talk_only_plan(text, agents)
