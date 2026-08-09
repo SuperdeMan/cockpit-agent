@@ -589,6 +589,12 @@ def test_baseline_rejects_unbound_or_old_l3_invocation():
     ] = "another-run/e2e_journeys/artifacts/journeys_report.json"
     mutations.append(wrong_relative_run)
 
+    extra_middle = _formal_report()
+    extra_middle["meta"]["l3_invocation"]["report_evidence"][
+        "relative_path"
+    ] = "e2e-run-a/replacement/e2e_journeys/artifacts/journeys_report.json"
+    mutations.append(extra_middle)
+
     missing_evidence = _formal_report()
     missing_evidence["meta"]["l3_invocation"].pop("report_evidence")
     mutations.append(missing_evidence)

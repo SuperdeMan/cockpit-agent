@@ -954,6 +954,7 @@ def _formal_l3_invocation_complete(
         or not isinstance(relative_path_value, str)
         or relative_path.is_absolute()
         or ".." in relative_path.parts
+        or len(relative_path.parts) != 4
         or relative_path.name != "journeys_report.json"
         or not run_path_bound
         or relative_path.parts[-3:] != (
