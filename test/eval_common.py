@@ -171,7 +171,17 @@ def diff_against_baseline(current: dict, baseline: dict) -> DiffResult:
 
 def print_ci_annotations(subject: str, diff: DiffResult, baseline_path: Path) -> None:
     """regressions 非空时打印 ::warning:: GitHub Actions annotation；不 raise、不改 exit code——
-    是否阻塞完全由调用方 main() 的 --strict 决定。"""
+    是否阻塞完全由调用方 main() 的 --strict 决定。
+
+    **删除也必须留痕**：`diff_against_baseline` 一直算着 `removed_cases`，但这里从来不打，
+    于是「把红用例删掉」和「把它修绿」在 CI 输出里长得一模一样——警告消失，账也消失。
+    删除同样只是 `::warning::`（不阻塞、不影响 exit code）：合法退役（规则退役后断言随之
+    迁出）与偷偷删红都会被看见，由人判哪一种。
+    """
+    if diff.removed_cases:
+        removed = "; ".join(repr(cid) for cid in diff.removed_cases)
+        print(f"::warning::{subject}: {len(diff.removed_cases)} case(s) removed vs baseline "
+              f"— {removed}")
     if not diff.has_regressions:
         print(f"[{subject}] 无回归（基线：{baseline_path}）")
         return

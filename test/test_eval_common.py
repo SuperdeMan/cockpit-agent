@@ -8,7 +8,10 @@ from pathlib import Path
 # test/ 无 __init__.py，CI 用 --import-mode=importlib 不会自动把本文件所在目录加入
 # sys.path；同目录兄弟模块导入需显式插入（同 e2e_degrade.py 等既有惯例）。
 sys.path.insert(0, str(Path(__file__).parent))
-from eval_common import CaseResult, build_report, diff_against_baseline, load_baseline  # noqa: E402
+from eval_common import (  # noqa: E402
+    CaseResult, build_report, diff_against_baseline, load_baseline,
+    print_ci_annotations,
+)
 
 
 def _case(id_, bucket, passed, actual="x", expected="x"):
@@ -70,6 +73,30 @@ def test_diff_against_baseline_tracks_new_and_removed_cases():
     assert diff.new_cases == ["a::2"]
     assert diff.removed_cases == ["a::1"]
     assert diff.has_regressions is False  # 新增/移除用例不算回归
+
+
+def test_removed_cases_are_announced_so_deleting_a_red_case_leaves_a_trace(capsys):
+    """删掉一条红用例和把它修绿，在 CI 输出里必须长得不一样。
+
+    `removed_cases` 一直算着但从来不打，于是「警告没了」既可能是修好了、也可能是
+    用例被删了 —— 账就这样消失。删除同样只警告不阻塞：合法退役与偷偷删红都要被看见。
+    """
+    baseline = build_report("demo", [], [_case("a::1", "a", False), _case("a::2", "a", True)])
+    current = build_report("demo", [], [_case("a::2", "a", True)])
+    diff = diff_against_baseline(current, baseline)
+    print_ci_annotations("demo", diff, Path("baseline.json"))
+    out = capsys.readouterr().out
+    assert "1 case(s) removed vs baseline" in out and "'a::1'" in out
+    assert "无回归" in out          # 删除不冒充回归
+    assert diff.has_regressions is False   # 也不改 exit code
+
+
+def test_no_removal_no_noise(capsys):
+    """没有删除时一个字都不多打——给无事发生的跑批添噪声会让警告贬值。"""
+    baseline = build_report("demo", [], [_case("a::1", "a", True)])
+    current = build_report("demo", [], [_case("a::1", "a", True)])
+    print_ci_annotations("demo", diff_against_baseline(current, baseline), Path("b.json"))
+    assert "removed vs baseline" not in capsys.readouterr().out
 
 
 def test_load_baseline_missing_file_returns_none(tmp_path: Path):

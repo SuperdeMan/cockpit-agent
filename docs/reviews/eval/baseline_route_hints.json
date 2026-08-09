@@ -1,32 +1,32 @@
 {
   "meta": {
     "subject": "route_hints",
-    "generated_at": "2026-07-28T07:03:11.354762+00:00",
-    "commit": "0e665f2"
+    "generated_at": "2026-08-09T16:24:34.693234+00:00",
+    "commit": "ecac124"
   },
   "corpus_sources": [
     {
       "path": "test/eval_corpus/route_hints_cases.yaml",
-      "count": 122
+      "count": 78
     }
   ],
   "buckets": {
     "route_recall": {
-      "total": 75,
-      "passed": 75,
+      "total": 26,
+      "passed": 26,
       "failures": [],
       "pass_rate": 1.0
     },
     "route_guardrail": {
-      "total": 47,
-      "passed": 47,
+      "total": 52,
+      "passed": 52,
       "failures": [],
       "pass_rate": 1.0
     }
   },
   "overall": {
-    "total": 122,
-    "passed": 122,
+    "total": 78,
+    "passed": 78,
     "pass_rate": 1.0
   },
   "cases": {
@@ -49,6 +49,26 @@
       ],
       "source": "orchestrator/cloud/tests/test_route_hints.py::test_replace_on_empty_plan_sets_single_step"
     },
+    "route::慢慢查一下钠离子电池的产业化进展，查完告诉我": {
+      "id": "route::慢慢查一下钠离子电池的产业化进展，查完告诉我",
+      "bucket": "route_recall",
+      "text": "慢慢查一下钠离子电池的产业化进展，查完告诉我",
+      "expected": [
+        "research.run"
+      ],
+      "actual": [
+        "research.run"
+      ],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "research",
+        "replace",
+        "recall",
+        "async"
+      ],
+      "source": "M-A journey A6-1 real-stack badcase b8db82fa23174adc"
+    },
     "route::深入研究一下这个": {
       "id": "route::深入研究一下这个",
       "bucket": "route_guardrail",
@@ -67,25 +87,6 @@
         "already_routed"
       ],
       "source": "orchestrator/cloud/tests/test_route_hints.py::test_replace_keeps_when_intent_already_present"
-    },
-    "route::导航去第2天换一个": {
-      "id": "route::导航去第2天换一个",
-      "bucket": "route_recall",
-      "text": "导航去第2天换一个",
-      "expected": [
-        "trip.modify"
-      ],
-      "actual": [
-        "trip.modify"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "trip",
-        "guard",
-        "cross_hint"
-      ],
-      "source": "orchestrator/cloud/tests/test_route_hints.py::test_guard_blocks_match（真实 manifest 下改判）"
     },
     "route::搜一下固态电池": {
       "id": "route::搜一下固态电池",
@@ -142,100 +143,6 @@
       ],
       "source": "orchestrator/cloud/tests/test_planning.py::test_does_not_inject_trip_when_planner_unavailable"
     },
-    "route::安排去杭州的行程": {
-      "id": "route::安排去杭州的行程",
-      "bucket": "route_recall",
-      "text": "安排去杭州的行程",
-      "expected": [
-        "info.weather",
-        "trip.plan"
-      ],
-      "actual": [
-        "info.weather",
-        "trip.plan"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "trip",
-        "append"
-      ],
-      "source": "orchestrator/cloud/tests/test_route_hints.py::test_append_adds_parallel_step_keeping_existing"
-    },
-    "route::导航第3天": {
-      "id": "route::导航第3天",
-      "bucket": "route_recall",
-      "text": "导航第3天",
-      "expected": [
-        "trip.navigate"
-      ],
-      "actual": [
-        "trip.navigate"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "trip",
-        "replace"
-      ],
-      "source": "orchestrator/cloud/tests/test_route_hints.py::test_slot_templating_text_and_capture_group"
-    },
-    "route::葡萄牙那一场看看详情": {
-      "id": "route::葡萄牙那一场看看详情",
-      "bucket": "route_recall",
-      "text": "葡萄牙那一场看看详情",
-      "expected": [
-        "info.sports"
-      ],
-      "actual": [
-        "info.sports"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "sports",
-        "nearby",
-        "guardrail"
-      ],
-      "source": "真机：世界杯赛程后追问某队详情，含「那一场」（非「那场」）不被周边劫持"
-    },
-    "route::看看它的详情": {
-      "id": "route::看看它的详情",
-      "bucket": "route_recall",
-      "text": "看看它的详情",
-      "expected": [
-        "nearby.detail"
-      ],
-      "actual": [
-        "nearby.detail"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "nearby",
-        "replace"
-      ],
-      "source": "真·周边详情不被赛事修复误伤"
-    },
-    "route::这场比赛你预测谁会赢": {
-      "id": "route::这场比赛你预测谁会赢",
-      "bucket": "route_recall",
-      "text": "这场比赛你预测谁会赢",
-      "expected": [
-        "info.sports"
-      ],
-      "actual": [
-        "info.sports"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "sports",
-        "predictive",
-        "replace"
-      ],
-      "source": "badcase bfb5d9c7：LLM 误路由 info.search 也被取代（handler 带锚点让路检索）"
-    },
     "route::这场官司你觉得谁会赢": {
       "id": "route::这场官司你觉得谁会赢",
       "bucket": "route_guardrail",
@@ -251,25 +158,6 @@
       ],
       "source": "guard 反例：非赛事的「这场…谁会赢」不进赛事域"
     },
-    "route::明天早上八点提醒我带充电线": {
-      "id": "route::明天早上八点提醒我带充电线",
-      "bucket": "route_recall",
-      "text": "明天早上八点提醒我带充电线",
-      "expected": [
-        "reminder.create"
-      ],
-      "actual": [
-        "reminder.create"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "scene",
-        "reminder",
-        "guard"
-      ],
-      "source": "反向护栏：普通提醒不能被 scene.create 抢走（无「X模式」词形）"
-    },
     "route::我刚才让你提醒我什么来着": {
       "id": "route::我刚才让你提醒我什么来着",
       "bucket": "route_guardrail",
@@ -280,9 +168,10 @@
       "detail": "",
       "tags": [
         "reminder",
-        "guard"
+        "guard",
+        "retired_hint"
       ],
-      "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
+      "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4（hint 退役后转再引入绊线）"
     },
     "route::你提醒过我什么事": {
       "id": "route::你提醒过我什么事",
@@ -294,27 +183,10 @@
       "detail": "",
       "tags": [
         "reminder",
-        "guard"
+        "guard",
+        "retired_hint"
       ],
-      "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
-    },
-    "route::到时候提醒我什么时候该出发": {
-      "id": "route::到时候提醒我什么时候该出发",
-      "bucket": "route_recall",
-      "text": "到时候提醒我什么时候该出发",
-      "expected": [
-        "reminder.create"
-      ],
-      "actual": [
-        "reminder.create"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "reminder",
-        "replace"
-      ],
-      "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
+      "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4（hint 退役后转再引入绊线）"
     },
     "route::查一下明天深圳会不会下雨，要是下雨就提醒我明早带伞": {
       "id": "route::查一下明天深圳会不会下雨，要是下雨就提醒我明早带伞",
@@ -345,42 +217,6 @@
         "conditional"
       ],
       "source": "eval_skills live holdout 2026-07-27（叫我 劫持条件句）"
-    },
-    "route::去惠州怎么充电": {
-      "id": "route::去惠州怎么充电",
-      "bucket": "route_recall",
-      "text": "去惠州怎么充电",
-      "expected": [
-        "charging.plan"
-      ],
-      "actual": [
-        "charging.plan"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "charging",
-        "replace"
-      ],
-      "source": "eval_skills live 2026-07-27（canonical 形态 hint 化，R2.1 惯例）"
-    },
-    "route::快没电了，附近找个快充": {
-      "id": "route::快没电了，附近找个快充",
-      "bucket": "route_recall",
-      "text": "快没电了，附近找个快充",
-      "expected": [
-        "charging.find"
-      ],
-      "actual": [
-        "charging.find"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "charging",
-        "replace"
-      ],
-      "source": "eval_skills live 2026-07-27"
     },
     "route::手机快没电了，附近找个地方充一下": {
       "id": "route::手机快没电了，附近找个地方充一下",
@@ -487,24 +323,6 @@
       ],
       "source": "评审三批 2026-07-27"
     },
-    "route::车快没电了，帮我找个充电桩": {
-      "id": "route::车快没电了，帮我找个充电桩",
-      "bucket": "route_recall",
-      "text": "车快没电了，帮我找个充电桩",
-      "expected": [
-        "charging.find"
-      ],
-      "actual": [
-        "charging.find"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "charging",
-        "replace"
-      ],
-      "source": "评审三批 2026-07-27（「车」主语正锚）"
-    },
     "route::剃须刀坏了，快没电了，找地方充一下": {
       "id": "route::剃须刀坏了，快没电了，找地方充一下",
       "bucket": "route_guardrail",
@@ -535,34 +353,12 @@
       ],
       "source": "评审四批 2026-07-27"
     },
-    "route::糟了快没电了，赶紧找个充电桩": {
-      "id": "route::糟了快没电了，赶紧找个充电桩",
-      "bucket": "route_recall",
-      "text": "糟了快没电了，赶紧找个充电桩",
-      "expected": [
-        "charging.find"
-      ],
-      "actual": [
-        "charging.find"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "charging",
-        "replace"
-      ],
-      "source": "评审四批 2026-07-27（感叹前缀白名单）"
-    },
     "route::附近有没有充电站": {
       "id": "route::附近有没有充电站",
-      "bucket": "route_recall",
+      "bucket": "route_guardrail",
       "text": "附近有没有充电站",
-      "expected": [
-        "nearby.search"
-      ],
-      "actual": [
-        "nearby.search"
-      ],
+      "expected": [],
+      "actual": [],
       "passed": true,
       "detail": "",
       "tags": [
@@ -570,7 +366,7 @@
         "nearby",
         "guard"
       ],
-      "source": "eval_skills live 2026-07-27（纯设施发现仍归 nearby，charging.find guard 不越界）"
+      "source": "2026-07-30 改判：充电桩发现归 charging.find；本例改守「不再有 hint 劫持」"
     },
     "route::那附近有停车场吗": {
       "id": "route::那附近有停车场吗",
@@ -586,78 +382,6 @@
         "focus"
       ],
       "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R3"
-    },
-    "route::附近有没有停车场": {
-      "id": "route::附近有没有停车场",
-      "bucket": "route_recall",
-      "text": "附近有没有停车场",
-      "expected": [
-        "nearby.search"
-      ],
-      "actual": [
-        "nearby.search"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "nearby",
-        "replace"
-      ],
-      "source": "docs/design/2026-07-14-journey-e2e-test-system.md §10 R3"
-    },
-    "route::半小时后提醒我给客户回电话": {
-      "id": "route::半小时后提醒我给客户回电话",
-      "bucket": "route_recall",
-      "text": "半小时后提醒我给客户回电话",
-      "expected": [
-        "reminder.create"
-      ],
-      "actual": [
-        "reminder.create"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "reminder",
-        "replace"
-      ],
-      "source": "docs/design/2026-07-11-reminder-agent-design.md §6"
-    },
-    "route::我今天有什么安排": {
-      "id": "route::我今天有什么安排",
-      "bucket": "route_recall",
-      "text": "我今天有什么安排",
-      "expected": [
-        "reminder.list"
-      ],
-      "actual": [
-        "reminder.list"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "reminder",
-        "list"
-      ],
-      "source": "docs/design/2026-07-11-reminder-agent-design.md §6"
-    },
-    "route::取消第二条提醒": {
-      "id": "route::取消第二条提醒",
-      "bucket": "route_recall",
-      "text": "取消第二条提醒",
-      "expected": [
-        "reminder.cancel"
-      ],
-      "actual": [
-        "reminder.cancel"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "reminder",
-        "cancel"
-      ],
-      "source": "docs/design/2026-07-11-reminder-agent-design.md §6"
     },
     "route::打开限速提醒": {
       "id": "route::打开限速提醒",
@@ -704,61 +428,6 @@
       ],
       "source": "docs/design/2026-07-11-reminder-agent-design.md §6.3"
     },
-    "route::把接孩子的提醒改到五点": {
-      "id": "route::把接孩子的提醒改到五点",
-      "bucket": "route_recall",
-      "text": "把接孩子的提醒改到五点",
-      "expected": [
-        "reminder.update"
-      ],
-      "actual": [
-        "reminder.update"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "reminder",
-        "update"
-      ],
-      "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
-    },
-    "route::买牛奶那条推迟到明天九点": {
-      "id": "route::买牛奶那条推迟到明天九点",
-      "bucket": "route_recall",
-      "text": "买牛奶那条推迟到明天九点",
-      "expected": [
-        "reminder.update"
-      ],
-      "actual": [
-        "reminder.update"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "reminder",
-        "update"
-      ],
-      "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
-    },
-    "route::改第二条到晚上八点": {
-      "id": "route::改第二条到晚上八点",
-      "bucket": "route_recall",
-      "text": "改第二条到晚上八点",
-      "expected": [
-        "reminder.update"
-      ],
-      "actual": [
-        "reminder.update"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "reminder",
-        "update",
-        "ordinal"
-      ],
-      "source": "澄清话术「改第几条」的续接词形"
-    },
     "route::空调改到26度": {
       "id": "route::空调改到26度",
       "bucket": "route_guardrail",
@@ -788,80 +457,6 @@
         "volume"
       ],
       "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
-    },
-    "route::每天早上八点提醒我吃药": {
-      "id": "route::每天早上八点提醒我吃药",
-      "bucket": "route_recall",
-      "text": "每天早上八点提醒我吃药",
-      "expected": [
-        "reminder.create"
-      ],
-      "actual": [
-        "reminder.create"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "reminder",
-        "recur"
-      ],
-      "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a recur"
-    },
-    "route::过10分钟再提醒我": {
-      "id": "route::过10分钟再提醒我",
-      "bucket": "route_recall",
-      "text": "过10分钟再提醒我",
-      "expected": [
-        "reminder.create"
-      ],
-      "actual": [
-        "reminder.create"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "reminder",
-        "snooze"
-      ],
-      "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a snooze"
-    },
-    "route::取消第二条": {
-      "id": "route::取消第二条",
-      "bucket": "route_recall",
-      "text": "取消第二条",
-      "expected": [
-        "reminder.cancel"
-      ],
-      "actual": [
-        "reminder.cancel"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "reminder",
-        "cancel",
-        "ordinal"
-      ],
-      "source": "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
-    },
-    "route::完成第二条": {
-      "id": "route::完成第二条",
-      "bucket": "route_recall",
-      "text": "完成第二条",
-      "expected": [
-        "reminder.complete"
-      ],
-      "actual": [
-        "reminder.complete"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "reminder",
-        "complete",
-        "ordinal"
-      ],
-      "source": "澄清话术「完成第几条」的续接词形"
     },
     "route::第一场提醒我观看": {
       "id": "route::第一场提醒我观看",
@@ -936,7 +531,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\.worktrees\\m5-p0-data-flywheel\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::检索一下宁德时代最新财报要点": {
       "id": "route::检索一下宁德时代最新财报要点",
@@ -955,7 +550,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\.worktrees\\m5-p0-data-flywheel\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::查一下固态电池": {
       "id": "route::查一下固态电池",
@@ -1058,14 +653,10 @@
     },
     "route::搜一下附近的加油站": {
       "id": "route::搜一下附近的加油站",
-      "bucket": "route_recall",
+      "bucket": "route_guardrail",
       "text": "搜一下附近的加油站",
-      "expected": [
-        "nearby.search"
-      ],
-      "actual": [
-        "nearby.search"
-      ],
+      "expected": [],
+      "actual": [],
       "passed": true,
       "detail": "",
       "tags": [
@@ -1074,27 +665,7 @@
         "nearby",
         "cross_hint"
       ],
-      "source": "guard 附近/加油站 让位 → nearby(55) 自己接住"
-    },
-    "route::查一下我的待办": {
-      "id": "route::查一下我的待办",
-      "bucket": "route_recall",
-      "text": "查一下我的待办",
-      "expected": [
-        "reminder.list"
-      ],
-      "actual": [
-        "reminder.list"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "search",
-        "guardrail",
-        "reminder",
-        "cross_hint"
-      ],
-      "source": "guard 待办 让位 → reminder.list(56) 接住（59 不遮蔽 56）"
+      "source": "2026-07-30：加油站从 nearby hint 类目里收窄移除（无专属 owner、两档模型自己落 navigation.search_poi）——本例仍守 info.search 的 guard 让位，只是不再由 nearby 钉死"
     },
     "route::搜一下周杰伦的歌": {
       "id": "route::搜一下周杰伦的歌",
@@ -1148,7 +719,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\.worktrees\\m5-p0-data-flywheel\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::来点科技新闻": {
       "id": "route::来点科技新闻",
@@ -1167,7 +738,7 @@
         "replace",
         "recall"
       ],
-      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\.worktrees\\m5-p0-data-flywheel\\test\\eval_corpus\\route_hints_cases.yaml"
+      "source": "D:\\Personal\\AI\\Claude Code\\产品\\car-agent\\test\\eval_corpus\\route_hints_cases.yaml"
     },
     "route::英伟达最新消息": {
       "id": "route::英伟达最新消息",
@@ -1210,23 +781,20 @@
     },
     "route::提醒我晚上看新闻联播": {
       "id": "route::提醒我晚上看新闻联播",
-      "bucket": "route_recall",
+      "bucket": "route_guardrail",
       "text": "提醒我晚上看新闻联播",
-      "expected": [
-        "reminder.create"
-      ],
-      "actual": [
-        "reminder.create"
-      ],
+      "expected": [],
+      "actual": [],
       "passed": true,
       "detail": "",
       "tags": [
         "news",
         "guardrail",
         "reminder",
-        "cross_hint"
+        "cross_hint",
+        "retired_hint"
       ],
-      "source": "「提醒我」reminder(56) 接住；news hint pattern 不命中 + guard 提醒/联播 双保险"
+      "source": "news hint 不劫持「提醒我…新闻联播」；reminder 那半随 create hint 退役（2026-08-02）"
     },
     "route::搜一下今天的新闻": {
       "id": "route::搜一下今天的新闻",
@@ -1335,63 +903,6 @@
       ],
       "source": "badcase 11db5215 双词共现约束：无天气词的纯出行问法不召回（留给 LLM）"
     },
-    "route::开启午休模式": {
-      "id": "route::开启午休模式",
-      "bucket": "route_recall",
-      "text": "开启午休模式",
-      "expected": [
-        "scene.activate"
-      ],
-      "actual": [
-        "scene.activate"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "scene",
-        "activate",
-        "replace"
-      ],
-      "source": "设计 §6 正例：命名生活场景"
-    },
-    "route::来个钓鱼模式": {
-      "id": "route::来个钓鱼模式",
-      "bucket": "route_recall",
-      "text": "来个钓鱼模式",
-      "expected": [
-        "scene.activate"
-      ],
-      "actual": [
-        "scene.activate"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "scene",
-        "activate",
-        "replace"
-      ],
-      "source": "设计 §6 正例：用户自建场景激活"
-    },
-    "route::露营模式": {
-      "id": "route::露营模式",
-      "bucket": "route_recall",
-      "text": "露营模式",
-      "expected": [
-        "scene.activate"
-      ],
-      "actual": [
-        "scene.activate"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "scene",
-        "activate",
-        "bare"
-      ],
-      "source": "设计 §6 正例：裸「X模式」短语（弱 LLM 常漏成 chitchat）"
-    },
     "route::帮我创建一个钓鱼模式：座椅放平，开外循环": {
       "id": "route::帮我创建一个钓鱼模式：座椅放平，开外循环",
       "bucket": "route_recall",
@@ -1429,63 +940,6 @@
         "replace"
       ],
       "source": "设计 §6 正例"
-    },
-    "route::退出露营模式": {
-      "id": "route::退出露营模式",
-      "bucket": "route_recall",
-      "text": "退出露营模式",
-      "expected": [
-        "scene.deactivate"
-      ],
-      "actual": [
-        "scene.deactivate"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "scene",
-        "deactivate",
-        "replace"
-      ],
-      "source": "设计 §6 正例"
-    },
-    "route::删掉钓鱼模式": {
-      "id": "route::删掉钓鱼模式",
-      "bucket": "route_recall",
-      "text": "删掉钓鱼模式",
-      "expected": [
-        "scene.delete"
-      ],
-      "actual": [
-        "scene.delete"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "scene",
-        "delete",
-        "priority"
-      ],
-      "source": "设计 §6 正例：delete(56) 高于 activate/deactivate，不能被当成激活"
-    },
-    "route::开启午休模式，温度改成26": {
-      "id": "route::开启午休模式，温度改成26",
-      "bucket": "route_recall",
-      "text": "开启午休模式，温度改成26",
-      "expected": [
-        "scene.activate"
-      ],
-      "actual": [
-        "scene.activate"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "scene",
-        "activate",
-        "update-guard"
-      ],
-      "source": "2026-07-14 评审修复：句首激活动词 guard——这是激活+本次参数覆盖，被 update 抢走会把场景默认温度持久改掉"
     },
     "route::退出性能模式": {
       "id": "route::退出性能模式",
@@ -1577,44 +1031,6 @@
       ],
       "source": "D8 反例：系统设置类模式词，不归场景编排"
     },
-    "route::把钓鱼模式的温度改成24": {
-      "id": "route::把钓鱼模式的温度改成24",
-      "bucket": "route_recall",
-      "text": "把钓鱼模式的温度改成24",
-      "expected": [
-        "scene.update"
-      ],
-      "actual": [
-        "scene.update"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "scene",
-        "update",
-        "replace"
-      ],
-      "source": "设计 §5.5：端侧已让路（场景管理句），云端确定性接住改场景定义"
-    },
-    "route::去掉钓鱼模式里的香氛": {
-      "id": "route::去掉钓鱼模式里的香氛",
-      "bucket": "route_recall",
-      "text": "去掉钓鱼模式里的香氛",
-      "expected": [
-        "scene.update"
-      ],
-      "actual": [
-        "scene.update"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "scene",
-        "update",
-        "guard"
-      ],
-      "source": "设计 §5.5：动作级改动。delete 的 guard 含「里的」避免整个场景被删掉"
-    },
     "route::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开": {
       "id": "route::创建省电出行模式：关掉氛围灯、空调调到26度，电量低于20%的时候提醒我开",
       "bucket": "route_recall",
@@ -1634,6 +1050,22 @@
         "priority"
       ],
       "source": "P3：带触发器的造场景句。「提醒我」是触发器描述，不是要建提醒——scene.create(58) 必须压过 reminder.create(56)，否则 reminder 抢走并追问「什么时候提醒你」，把会话挂起（真栈 e2e 实测级联翻车）"
+    },
+    "route::明天早上八点提醒我带充电线": {
+      "id": "route::明天早上八点提醒我带充电线",
+      "bucket": "route_guardrail",
+      "text": "明天早上八点提醒我带充电线",
+      "expected": [],
+      "actual": [],
+      "passed": true,
+      "detail": "",
+      "tags": [
+        "scene",
+        "reminder",
+        "guard",
+        "retired_hint"
+      ],
+      "source": "反向护栏：普通提醒不能被 scene.create 抢走（无「X模式」词形）"
     },
     "route::现在几点了": {
       "id": "route::现在几点了",
@@ -1766,146 +1198,6 @@
       ],
       "source": "反向护栏：时间感慨句非钟点问句（整句锚定不命中），留给 LLM"
     },
-    "route::别查了": {
-      "id": "route::别查了",
-      "bucket": "route_recall",
-      "text": "别查了",
-      "expected": [
-        "research.cancel"
-      ],
-      "actual": [
-        "research.cancel"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "research",
-        "ledger",
-        "cancel",
-        "recall"
-      ],
-      "source": "M2 P0 拉模式取消入口（RFC §2.4）"
-    },
-    "route::不用查了": {
-      "id": "route::不用查了",
-      "bucket": "route_recall",
-      "text": "不用查了",
-      "expected": [
-        "research.cancel"
-      ],
-      "actual": [
-        "research.cancel"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "research",
-        "ledger",
-        "cancel",
-        "replace"
-      ],
-      "source": "M2 P0：LLM 误落闲聊时确定性纠偏到取消"
-    },
-    "route::取消那个调研": {
-      "id": "route::取消那个调研",
-      "bucket": "route_recall",
-      "text": "取消那个调研",
-      "expected": [
-        "research.cancel"
-      ],
-      "actual": [
-        "research.cancel"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "research",
-        "ledger",
-        "cancel",
-        "recall"
-      ],
-      "source": "M2 P0 取消（明确宾语）"
-    },
-    "route::固态电池那个调研不用查了": {
-      "id": "route::固态电池那个调研不用查了",
-      "bucket": "route_recall",
-      "text": "固态电池那个调研不用查了",
-      "expected": [
-        "research.cancel"
-      ],
-      "actual": [
-        "research.cancel"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "research",
-        "ledger",
-        "cancel",
-        "recall"
-      ],
-      "source": "M2 P0 取消（带主题，供 Agent 侧多条消歧）"
-    },
-    "route::那个调研查得怎么样了": {
-      "id": "route::那个调研查得怎么样了",
-      "bucket": "route_recall",
-      "text": "那个调研查得怎么样了",
-      "expected": [
-        "research.status"
-      ],
-      "actual": [
-        "research.status"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "research",
-        "ledger",
-        "status",
-        "recall"
-      ],
-      "source": "M2 P0 状态查询（确定性直答，不进 LLM）"
-    },
-    "route::调研有结果了吗": {
-      "id": "route::调研有结果了吗",
-      "bucket": "route_recall",
-      "text": "调研有结果了吗",
-      "expected": [
-        "research.status"
-      ],
-      "actual": [
-        "research.status"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "research",
-        "ledger",
-        "status",
-        "replace"
-      ],
-      "source": "M2 P0 状态查询：闲聊误路由的确定性纠偏"
-    },
-    "route::还在查吗": {
-      "id": "route::还在查吗",
-      "bucket": "route_recall",
-      "text": "还在查吗",
-      "expected": [
-        "research.status"
-      ],
-      "actual": [
-        "research.status"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "research",
-        "ledger",
-        "status",
-        "recall"
-      ],
-      "source": "M2 P0 状态查询（整句锚定，防泛化劫持）"
-    },
     "route::取消明天的提醒": {
       "id": "route::取消明天的提醒",
       "bucket": "route_guardrail",
@@ -1985,171 +1277,90 @@
       ],
       "source": "反向护栏：发起调研不被 cancel/status 抢（run=100 > 95，且 pattern 不重叠）"
     },
-    "route::到公司提醒我拿文件": {
-      "id": "route::到公司提醒我拿文件",
+    "route::那个调研查得怎么样了": {
+      "id": "route::那个调研查得怎么样了",
       "bucket": "route_recall",
-      "text": "到公司提醒我拿文件",
+      "text": "那个调研查得怎么样了",
       "expected": [
-        "reminder.create"
+        "research.status"
       ],
       "actual": [
-        "reminder.create"
+        "research.status"
       ],
       "passed": true,
       "detail": "",
       "tags": [
-        "reminder",
-        "location"
+        "research",
+        "ledger",
+        "status",
+        "replace",
+        "m-a"
       ],
-      "source": "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
+      "source": "M-A A6-1：MiniMax toolcall_degraded 把状态问句落到 chitchat，窄 hint 恢复账本确定性读"
     },
-    "route::离开公司提醒我买菜": {
-      "id": "route::离开公司提醒我买菜",
+    "route::还在查吗": {
+      "id": "route::还在查吗",
       "bucket": "route_recall",
-      "text": "离开公司提醒我买菜",
+      "text": "还在查吗",
       "expected": [
-        "reminder.create"
+        "research.status"
       ],
       "actual": [
-        "reminder.create"
+        "research.status"
       ],
       "passed": true,
       "detail": "",
       "tags": [
-        "reminder",
-        "location"
+        "research",
+        "ledger",
+        "status",
+        "replace"
       ],
-      "source": "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
+      "source": "Task Ledger 状态短问句"
     },
-    "route::到公司之前提醒我交周报": {
-      "id": "route::到公司之前提醒我交周报",
-      "bucket": "route_recall",
-      "text": "到公司之前提醒我交周报",
+    "route::导航路线查得怎么样了": {
+      "id": "route::导航路线查得怎么样了",
+      "bucket": "route_guardrail",
+      "text": "导航路线查得怎么样了",
       "expected": [
-        "reminder.create"
+        "navigation.navigate_to"
       ],
       "actual": [
-        "reminder.create"
+        "navigation.navigate_to"
       ],
       "passed": true,
       "detail": "",
       "tags": [
-        "reminder",
-        "eta"
-      ],
-      "source": "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
-    },
-    "route::帮我看看附近有什么咖啡店": {
-      "id": "route::帮我看看附近有什么咖啡店",
-      "bucket": "route_recall",
-      "text": "帮我看看附近有什么咖啡店",
-      "expected": [
-        "nearby.search"
-      ],
-      "actual": [
-        "nearby.search"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "vision",
-        "nearby",
+        "research",
+        "ledger",
+        "status",
         "guardrail",
-        "hijack"
+        "navigation"
       ],
-      "source": "badcase 2026-07-27 trace 3ba64a65（连续两天被 vision 劫持族）；agents/vision/manifest.yaml 收窄"
+      "source": "反向护栏：导航进度不被调研状态抢走"
     },
-    "route::帮我看看我附近有什么好吃的": {
-      "id": "route::帮我看看我附近有什么好吃的",
+    "route::明天欧联第一场是谁踢？开赛前提醒我": {
+      "id": "route::明天欧联第一场是谁踢？开赛前提醒我",
       "bucket": "route_recall",
-      "text": "帮我看看我附近有什么好吃的",
+      "text": "明天欧联第一场是谁踢？开赛前提醒我",
       "expected": [
-        "nearby.search"
+        "info.sports",
+        "reminder.create"
       ],
       "actual": [
-        "nearby.search"
+        "info.sports",
+        "reminder.create"
       ],
       "passed": true,
       "detail": "",
       "tags": [
-        "vision",
-        "nearby",
-        "guardrail",
-        "hijack"
+        "sports",
+        "reminder",
+        "append",
+        "continuity",
+        "m-a"
       ],
-      "source": "badcase 2026-07-26 trace 0941ec4f（同族）"
-    },
-    "route::那是什么": {
-      "id": "route::那是什么",
-      "bucket": "route_recall",
-      "text": "那是什么",
-      "expected": [
-        "vision.describe"
-      ],
-      "actual": [
-        "vision.describe"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "vision",
-        "recall"
-      ],
-      "source": "vision hint 的出生 badcase（极短指代句语义路由落 chitchat）——收窄不回归"
-    },
-    "route::帮我看看这个是什么": {
-      "id": "route::帮我看看这个是什么",
-      "bucket": "route_recall",
-      "text": "帮我看看这个是什么",
-      "expected": [
-        "vision.describe"
-      ],
-      "actual": [
-        "vision.describe"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "vision",
-        "recall"
-      ],
-      "source": "数据飞轮 P0 C5 收窄回归：删「帮我看看」后真视觉句仍由指代分支覆盖"
-    },
-    "route::看看前面那个建筑是什么": {
-      "id": "route::看看前面那个建筑是什么",
-      "bucket": "route_recall",
-      "text": "看看前面那个建筑是什么",
-      "expected": [
-        "vision.describe"
-      ],
-      "actual": [
-        "vision.describe"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "vision",
-        "recall"
-      ],
-      "source": "数据飞轮 P0 C5 收窄回归"
-    },
-    "route::帮我看看前面": {
-      "id": "route::帮我看看前面",
-      "bucket": "route_recall",
-      "text": "帮我看看前面",
-      "expected": [
-        "vision.describe"
-      ],
-      "actual": [
-        "vision.describe"
-      ],
-      "passed": true,
-      "detail": "",
-      "tags": [
-        "vision",
-        "recall"
-      ],
-      "source": "hmi/src/visionFrame.test.mjs 同款句：两侧同口径（触发词=路由 hint）"
+      "source": "M-A A2-2b：MiniMax goal 含提醒但漏 reminder 步；append 保留赛事生产者并补消费者"
     }
   }
 }

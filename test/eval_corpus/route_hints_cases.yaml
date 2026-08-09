@@ -66,32 +66,32 @@
   source: "guard 反例：非赛事的「这场…谁会赢」不进赛事域"
   tags: [sports, predictive, guardrail]
 
-# ── reminder（2026-07-11 设计 §6.3）：正例路由 + 车辆功能"提醒"反例不被劫持 ──
-- text: 明天早上八点提醒我带充电线
-  initial_intents: []
-  expect_final_intents: [reminder.create]
-  source: "docs/design/2026-07-11-reminder-agent-design.md §6"
-  tags: [reminder, replace]
+# ── reminder（2026-07-11 设计 §6.3）：车辆功能"提醒"反例不被劫持 ──
+#
+# ⚠ **`reminder.create` 的 replace hint 已于 2026-08-02 退役**（它在踩掉 planner 已经
+#   规划对的计划）。本层「施加 hint 后应得 reminder.create」的**正例**断言随之全部失效
+#   ——规则没了，这个层面不存在可断言的命题（同 vision 退役先例，见
+#   `agents/vision/manifest.yaml` 注释）。回归保护没有消失，只是换了口径：绝对时点 /
+#   地理触发 / 周期三类代表形态已作**端到端**用例落在
+#   `test/eval_corpus/mode_routing_cases.yaml`（tag `retired_hint`），守的是
+#   「没有规则也要落对」。剩余 reminder 反例保留为**再引入绊线**：今天它们恒绿
+#   （一条 create hint 都没有），一旦有人重新引入过宽的 create hint 就会当场变红。
+#   reminder 现存唯一 hint 是赛事 append（priority 57，无 guard），见本文件 M-A 段。
 
-# R4（旅程 B5-1）：回忆/疑问式不是建新提醒——guard 排除「什么来着/让你提醒/提醒过」
+# R4（旅程 B5-1）：回忆/疑问式不是建新提醒。
+# 原判据是「guard 排除什么来着/让你提醒/提醒过」；guard 随 replace hint 一并退役，
+# 现在这两条守的是「不许有任何 create hint 把它们捞走」。
 - text: 我刚才让你提醒我什么来着
   initial_intents: []
   expect_final_intents: []
-  source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
-  tags: [reminder, guard]
+  source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4（hint 退役后转再引入绊线）"
+  tags: [reminder, guard, retired_hint]
 
 - text: 你提醒过我什么事
   initial_intents: []
   expect_final_intents: []
-  source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
-  tags: [reminder, guard]
-
-# 反向护栏：真创建句不被新 guard 误伤（「提醒我什么时候出发」是创建不是回忆）
-- text: 到时候提醒我什么时候该出发
-  initial_intents: []
-  expect_final_intents: [reminder.create]
-  source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4"
-  tags: [reminder, replace]
+  source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R4（hint 退役后转再引入绊线）"
+  tags: [reminder, guard, retired_hint]
 
 # R6（旅程 A1-4）：条件句让给 LLM 规划走 adaptive（整句 replace 会把条件吞成标题反问时间）
 - text: 查一下明天深圳会不会下雨，要是下雨就提醒我明早带伞
@@ -178,11 +178,7 @@
   source: "docs/design/2026-07-14-journey-e2e-test-system.md §10 R3"
   tags: [nearby, guard, focus]
 
-- text: 半小时后提醒我给客户回电话
-  initial_intents: []
-  expect_final_intents: [reminder.create]
-  source: "docs/design/2026-07-11-reminder-agent-design.md §6"
-  tags: [reminder, replace]
+# 「半小时后提醒我给客户回电话」的正例断言随 create hint 退役迁出（见本文件 reminder 段说明）。
 
 - text: 打开限速提醒
   initial_intents: []
@@ -216,18 +212,10 @@
   source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a"
   tags: [reminder, guard, volume]
 
-- text: 每天早上八点提醒我吃药
-  initial_intents: []
-  expect_final_intents: [reminder.create]
-  source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a recur"
-  tags: [reminder, recur]
-
-- text: 过10分钟再提醒我
-  initial_intents: []
-  # snooze 走 create 词形，Agent 内改期原条目（不新建尸体）
-  expect_final_intents: [reminder.create]
-  source: "docs/design/2026-07-11-reminder-agent-design.md §11 P1a snooze"
-  tags: [reminder, snooze]
+# recur「每天早上八点提醒我吃药」与 snooze「过10分钟再提醒我」的正例断言随 create hint
+# 退役迁出。recur 在 mode_routing_cases.yaml 有端到端等价用例；**snooze 没有**——
+# 2026-08-02 迁出时只取了绝对时点/地理触发/周期三类代表形态，snooze 是第四类，
+# 端到端侧至今空白。这条缺口是明账，不是已覆盖（AGENTS.md §4.1 记）。
 
 # ── reminder P1c 跨域（2026-07-11）：trace b3ecd195 复现词形 ──
 - text: 第一场提醒我观看
@@ -341,9 +329,12 @@
 
 - text: 提醒我晚上看新闻联播
   initial_intents: []
-  expect_final_intents: [reminder.create]
-  source: "「提醒我」reminder(56) 接住；news hint pattern 不命中 + guard 提醒/联播 双保险"
-  tags: [news, guardrail, reminder, cross_hint]
+  # reminder.create hint 退役后没有规则再接住它，但这条用例证的从来是**另一半**：
+  # news hint 不许把它劫走（pattern 不命中 + guard 提醒/联播 双保险）。那个命题仍然
+  # 活着且仍可证伪，所以是改期望值，不是删用例。落域本身由端到端口径守。
+  expect_final_intents: []
+  source: "news hint 不劫持「提醒我…新闻联播」；reminder 那半随 create hint 退役（2026-08-02）"
+  tags: [news, guardrail, reminder, cross_hint, retired_hint]
 
 - text: 搜一下今天的新闻
   initial_intents: []
@@ -443,9 +434,11 @@
 
 - text: 明天早上八点提醒我带充电线
   initial_intents: []
-  expect_final_intents: [reminder.create]
+  # 同上：这条证的是 scene.create 不许抢走无「X模式」词形的普通提醒句。reminder 那半
+  # 随 create hint 退役（2026-08-02），端到端等价用例在 mode_routing_cases.yaml。
+  expect_final_intents: []
   source: "反向护栏：普通提醒不能被 scene.create 抢走（无「X模式」词形）"
-  tags: [scene, reminder, guard]
+  tags: [scene, reminder, guard, retired_hint]
 
 - text: 现在几点了
   initial_intents: [info.search]
@@ -549,26 +542,12 @@
   source: "M-A A2-2b：MiniMax goal 含提醒但漏 reminder 步；append 保留赛事生产者并补消费者"
   tags: [sports, reminder, append, continuity, m-a]
 
-# ── M3 P1 位置提醒：路由与 ETA 族不打架（子 RFC §3）──
-# 「到X提醒我Y」走 reminder.create（既有 pattern 已覆盖，此处钉死不被未来 guard 误伤）
-- text: 到公司提醒我拿文件
-  initial_intents: []
-  expect_final_intents: [reminder.create]
-  source: "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
-  tags: [reminder, location]
-
-- text: 离开公司提醒我买菜
-  initial_intents: []
-  expect_final_intents: [reminder.create]
-  source: "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
-  tags: [reminder, location]
-
-# ETA 族仍归 reminder（P1c 交接链），只是走时间路径不走围栏——路由层同一个意图
-- text: 到公司之前提醒我交周报
-  initial_intents: []
-  expect_final_intents: [reminder.create]
-  source: "docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md §3"
-  tags: [reminder, eta]
+# ── M3 P1 位置提醒（子 RFC §3）──
+# 「到X提醒我Y」「离开X提醒我Y」「到X之前提醒我Y」三条正例断言随 create hint 退役
+# （2026-08-02）迁出本层：它们当初钉的是「既有 create pattern 覆盖到了位置/ETA 词形」，
+# 规则没了这个命题就不存在。地理触发形态在 mode_routing_cases.yaml 有端到端等价用例
+# （「到公司提醒我拿文件」，tag `retired_hint`）；「离开X」与「到X之前」两个词形
+# 端到端侧尚无等价用例，是明账。
 
 # ── vision 触发收窄（数据飞轮 P0 C5，badcase 2026-07-26/27）────────────────────
 # 过宽分支「帮我看看」曾把 LBS 句整句劫持进 vision.describe（replace + 端侧抓帧上传）。
