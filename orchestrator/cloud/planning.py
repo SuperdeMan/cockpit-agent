@@ -208,7 +208,8 @@ _NO_CLARIFY_GOAL_RE = re.compile(
 _OBJECT_RECAST_GOAL_RE = re.compile(r"(?:解析|识别|理解)(?:为|成)")
 _OBJECT_WRAPPER_GOAL_RE = re.compile(r"(?:作为|当作)")
 _MULTI_ACTION_CONNECTOR_RE = re.compile(
-    r".{1,120}?(?:再|然后|接着|随后|顺便|沿途)"
+    r".{1,120}?(?:再|然后|接着|随后|顺便)"
+    r"|.{1,120}?[，,。；;！？!?]沿途(?!的)"
 )
 _NEGATED_SEQUENCE_HEAD_RE = re.compile(
     r"(?:先|首先)(?:请)?(?:暂时)?(?:别|不要|不用|不必|不)"

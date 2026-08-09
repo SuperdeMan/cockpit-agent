@@ -11,10 +11,16 @@
 """
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import json
+import re
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .intent_adversarial_trace import (
@@ -813,6 +819,35 @@ def _formal_embedding_identity_complete(
     return observed == {model}
 
 
+def _embedded_l3_report(
+    evidence: Mapping[str, Any] | None,
+) -> tuple[Mapping[str, Any] | None, dict[str, str] | None]:
+    """Recompute the raw report digest and extract its unique journey statuses."""
+    if not isinstance(evidence, Mapping):
+        return None, None
+    encoded = evidence.get("raw_report_base64")
+    if not isinstance(encoded, str) or not encoded:
+        return None, None
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+        if hashlib.sha256(raw).hexdigest() != evidence.get("sha256"):
+            return None, None
+        payload = json.loads(raw.decode("utf-8"))
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return None, None
+    if not isinstance(payload, Mapping):
+        return None, None
+    statuses: dict[str, str] = {}
+    for row in payload.get("journeys") or []:
+        if not isinstance(row, Mapping) or not row.get("id"):
+            continue
+        journey_id = str(row["id"])
+        if journey_id in statuses:
+            return None, None
+        statuses[journey_id] = str(row.get("status") or "")
+    return payload, statuses
+
+
 def _formal_l3_invocation_complete(
     report: Mapping[str, Any], meta: Mapping[str, Any]
 ) -> bool:
@@ -828,6 +863,54 @@ def _formal_l3_invocation_complete(
     provider = invocation.get("provider")
     model = invocation.get("model")
     invocation_id = invocation.get("invocation_id")
+    invocation_match = re.fullmatch(
+        r"(?P<stamp>\d{8}T\d{12}Z)-(?P<pid>[1-9]\d*)-"
+        r"(?P<nonce>[0-9a-f]{6})-(?P<sha>[0-9a-f]{7,40})",
+        invocation_id if isinstance(invocation_id, str) else "",
+    )
+    try:
+        started_at = datetime.fromisoformat(
+            str(invocation.get("started_at") or "").replace("Z", "+00:00"))
+        if started_at.tzinfo is None:
+            raise ValueError("timezone required")
+        invocation_started = datetime.strptime(
+            invocation_match.group("stamp") if invocation_match else "",
+            "%Y%m%dT%H%M%S%fZ",
+        ).replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        started_at = None
+        invocation_started = None
+    sampling = meta.get("process_sampling")
+    workers = sampling.get("workers") if isinstance(sampling, Mapping) else None
+    primary_workers = [
+        worker for worker in (workers or [])
+        if isinstance(worker, Mapping)
+        and worker.get("role") == "primary"
+        and worker.get("layer") == "all"
+    ] if isinstance(workers, Sequence) and not isinstance(workers, (str, bytes)) else []
+    primary_pid = primary_workers[0].get("pid") if len(primary_workers) == 1 else None
+    artifact_root = invocation.get("artifact_root")
+    normalized_root = str(artifact_root or "").replace("\\", "/").rstrip("/")
+    evidence = invocation.get("report_evidence")
+    embedded_report, embedded_statuses = _embedded_l3_report(
+        evidence if isinstance(evidence, Mapping) else None)
+    evidence_lock = evidence.get("provider_lock") if isinstance(evidence, Mapping) else None
+    evidence_statuses = evidence.get("journey_statuses") \
+        if isinstance(evidence, Mapping) else None
+    relative_path_value = evidence.get("relative_path") \
+        if isinstance(evidence, Mapping) else None
+    relative_path = PurePosixPath(str(relative_path_value or "").replace("\\", "/"))
+    try:
+        report_generated_at = datetime.fromisoformat(
+            str(evidence.get("generated_at") or "").replace("Z", "+00:00"))
+        outer_generated_at = datetime.fromisoformat(
+            str(meta.get("generated_at") or "").replace("Z", "+00:00"))
+        if report_generated_at.tzinfo is None or outer_generated_at.tzinfo is None:
+            raise ValueError("timezone required")
+    except (AttributeError, TypeError, ValueError):
+        report_generated_at = None
+        outer_generated_at = None
+    checked_at = datetime.now(timezone.utc)
     if (
         meta.get("l3_complete") is not True
         or meta.get("l3_evidence_fresh") is not True
@@ -844,12 +927,50 @@ def _formal_l3_invocation_complete(
         or isinstance(stale_reports, (str, bytes))
         or not isinstance(stale_reports, Sequence)
         or bool(stale_reports)
-        or not isinstance(invocation_id, str)
-        or not invocation_id.strip()
-        or not isinstance(invocation.get("started_at"), str)
-        or not invocation.get("started_at", "").strip()
-        or not isinstance(invocation.get("artifact_root"), str)
-        or not invocation.get("artifact_root", "").strip()
+        or invocation_match is None
+        or invocation_match.group("sha") != code_sha
+        or int(invocation_match.group("pid")) != primary_pid
+        or started_at is None
+        or invocation_started is None
+        or started_at.astimezone(timezone.utc) != invocation_started
+        or not normalized_root.endswith(f"/car-agent-l3/{invocation_id}")
+        or not isinstance(evidence, Mapping)
+        or evidence.get("count") != 1
+        or evidence.get("run_id") != report_run_ids[0]
+        or evidence.get("provider") != provider_model
+        or not isinstance(evidence.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", evidence.get("sha256", "")) is None
+        or not isinstance(relative_path_value, str)
+        or relative_path.is_absolute()
+        or ".." in relative_path.parts
+        or relative_path.name != "journeys_report.json"
+        or relative_path.parts[:1] != (report_run_ids[0],)
+        or relative_path.parts[-3:] != (
+            "e2e_journeys", "artifacts", "journeys_report.json")
+        or not isinstance(evidence_lock, Mapping)
+        or evidence_lock.get("provider") != provider_model
+        or evidence_lock.get("target") != provider_model
+        or not isinstance(evidence_lock.get("original"), str)
+        or not evidence_lock.get("original", "").strip()
+        or evidence_lock.get("locked") is not True
+        or evidence_lock.get("drift_detected") is not False
+        or evidence_lock.get("drifts") != []
+        or evidence_lock.get("restore") not in {"", "noop", "restored"}
+        or evidence_lock.get("restore_errors") != []
+        or report_generated_at is None
+        or outer_generated_at is None
+        or not (started_at <= report_generated_at <= outer_generated_at)
+        or report_generated_at - started_at > timedelta(hours=6)
+        or outer_generated_at - started_at > timedelta(hours=6)
+        or outer_generated_at < checked_at - timedelta(minutes=30)
+        or outer_generated_at > checked_at + timedelta(minutes=5)
+        or not isinstance(evidence_statuses, Mapping)
+        or not isinstance(embedded_report, Mapping)
+        or embedded_report.get("run_id") != evidence.get("run_id")
+        or embedded_report.get("generated_at") != evidence.get("generated_at")
+        or embedded_report.get("provider") != evidence.get("provider")
+        or embedded_report.get("provider_lock") != evidence_lock
+        or embedded_statuses != dict(evidence_statuses)
     ):
         return False
 
@@ -892,6 +1013,7 @@ def _formal_l3_invocation_complete(
     return (
         set(selected) == set(observed) == expected
         and all(status == "pass" for status in observed.values())
+        and dict(evidence_statuses) == observed
     )
 
 
@@ -1013,8 +1135,20 @@ def _fmt(value) -> str:
 
 
 def render_adversarial_markdown(report: dict[str, Any]) -> str:
-    lines = [eval_common.render_markdown(report), "", "## 对抗指标",
-             "| 指标 | 分子 | 分母 | 值 |", "|---|---:|---:|---:|"]
+    meta = report.get("meta") or {}
+    lines = [
+        eval_common.render_markdown(report),
+        "",
+        "## 运行身份",
+        f"- provider/model: `{meta.get('provider_model') or 'unknown'}`",
+        f"- embedding: `{meta.get('embedding_model') or 'unknown'}`",
+        f"- code SHA: `{meta.get('code_sha') or 'unknown'}`",
+        "- 证据范围：仅绑定上述 provider/model、embedding 与代码快照，不跨模型外推。",
+        "",
+        "## 对抗指标",
+        "| 指标 | 分子 | 分母 | 值 |",
+        "|---|---:|---:|---:|",
+    ]
     for name in METRICS:
         row = report["metrics"].get(name) or {}
         lines.append(f"| `{name}` | {row.get('numerator', 0):g} | "
@@ -1062,7 +1196,6 @@ def render_adversarial_markdown(report: dict[str, Any]) -> str:
            if unexpected else "")
         + f"；另有 {len(report.get('fallback_plans') or []) - len(unexpected)} 条"
           "是 A8 能力缺席族**声明过**的预期兜底（设计如此）")
-    meta = report.get("meta") or {}
     sampling = meta.get("process_sampling") or {}
     process_sample = meta.get("process_sample") or {}
     if process_sample:

@@ -1,4 +1,7 @@
 """CLI 参数、退出码、baseline 硬闸与 L3 子进程的回归测试。"""
+import base64
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 import subprocess
@@ -1879,6 +1882,25 @@ def _formal_writer_report():
             "actual_intents": (), "plan_from_fallback": False,
         },)))
     embedding_model = "text-embedding-v4"
+    outer_generated = datetime.now(timezone.utc)
+    started = outer_generated - timedelta(seconds=2)
+    report_generated = outer_generated - timedelta(seconds=1)
+    invocation_id = (
+        f"{started.strftime('%Y%m%dT%H%M%S%fZ')}-101-abcdef-abc1234"
+    )
+    l3_lock = {
+        "provider": "mimo:m", "target": "mimo:m", "original": "mimo:m",
+        "locked": True, "drift_detected": False, "drifts": [],
+        "restore": "", "restore_errors": [],
+    }
+    l3_payload = {
+        "provider": "mimo:m", "run_id": "e2e-run-a",
+        "generated_at": report_generated.isoformat(),
+        "provider_lock": l3_lock,
+        "journeys": [{"id": "A1-1", "status": "pass"}],
+    }
+    l3_raw = json.dumps(
+        l3_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     meta = {
         "suite": "gate", "layer": "all", "retrieval_state": "warm",
         "retrieval_calls": 3, "retrieval_degraded": 0,
@@ -1887,6 +1909,7 @@ def _formal_writer_report():
         "embedding_unidentified": 0, "embedding_identity_complete": True,
         "provider_locked": True, "provider_drift": False,
         "provider_model": "mimo:m",
+        "generated_at": outer_generated.isoformat(),
         "provider_lock": {
             "provider": "mimo:m", "locked": True,
             "drift_detected": False, "drifts": [],
@@ -1902,13 +1925,28 @@ def _formal_writer_report():
         "l3_selected": ["A1-1"], "l3_complete": True,
         "l3_evidence_fresh": True, "baseline_regressions": [],
         "l3_invocation": {
-            "invocation_id": "20260809T000000000000Z-101-abcdef-abc1234",
-            "started_at": "2026-08-09T00:00:00+00:00",
+            "invocation_id": invocation_id,
+            "started_at": started.isoformat(),
             "code_sha": "abc1234", "provider_model": "mimo:m",
             "provider": "mimo", "model": "m",
             "journey_ids": ["A1-1"], "exit_code": 0,
-            "artifact_root": "C:/tmp/car-agent-l3/invocation-a",
+            "artifact_root": (
+                "C:/tmp/car-agent-l3/" + invocation_id
+            ),
             "stale_reports_ignored": [], "report_run_ids": ["e2e-run-a"],
+            "report_evidence": {
+                "count": 1,
+                "relative_path": (
+                    "e2e-run-a/e2e_journeys/artifacts/journeys_report.json"
+                ),
+                "sha256": hashlib.sha256(l3_raw).hexdigest(),
+                "raw_report_base64": base64.b64encode(l3_raw).decode("ascii"),
+                "run_id": "e2e-run-a",
+                "generated_at": report_generated.isoformat(),
+                "provider": "mimo:m",
+                "provider_lock": l3_lock,
+                "journey_statuses": {"A1-1": "pass"},
+            },
             "fresh": True,
         },
         "process_bundle_role": "parent", "process_policy_complete": True,
@@ -2737,7 +2775,10 @@ def test_stale_l3_report_is_never_counted_as_this_run(tmp_path):
 
     report = tmp_path / "run" / "journeys_report.json"
     report.parent.mkdir(parents=True)
-    report.write_text(json.dumps({"journeys": [{"id": "A1-1", "status": "pass"}]}),
+    report.write_text(json.dumps({
+        "run_id": "e2e-stale",
+        "journeys": [{"id": "A1-1", "status": "pass"}],
+    }),
                       encoding="utf-8")
     old = time.time() - 3600
     import os
@@ -2757,7 +2798,12 @@ def test_l3_runner_nonzero_exit_is_infrastructure_even_with_a_readable_report(
         Path(artifact_root).mkdir(parents=True, exist_ok=True)
         (Path(artifact_root) / "journeys_report.json").write_text(
             json.dumps({"provider": "p:m", "run_id": "e2e-1",
-                        "provider_lock": {"locked": True, "drift_detected": False},
+                        "generated_at": "2026-08-09T00:00:01+00:00",
+                        "provider_lock": {
+                            "provider": "p:m", "target": "p:m",
+                            "original": "p:m", "locked": True,
+                            "drift_detected": False, "drifts": [],
+                            "restore": "", "restore_errors": []},
                         "journeys": [{"id": "A1-1", "status": "pass"}]}),
             encoding="utf-8")
         return 2
@@ -3000,7 +3046,13 @@ def test_l3_report_from_the_wrong_provider_is_not_this_run_s_evidence(tmp_path):
     report.parent.mkdir(parents=True)
     report.write_text(json.dumps({
         "provider": "deepseek:deepseek-v4-flash", "run_id": "e2e-1",
-        "provider_lock": {"locked": True, "drift_detected": False},
+        "generated_at": "2026-08-09T00:00:01+00:00",
+        "provider_lock": {
+            "provider": "deepseek:deepseek-v4-flash",
+            "target": "deepseek:deepseek-v4-flash",
+            "original": "deepseek:deepseek-v4-flash", "locked": True,
+            "drift_detected": False, "drifts": [], "restore": "",
+            "restore_errors": []},
         "journeys": [{"id": "A1-1", "status": "pass"}]}), encoding="utf-8")
 
     statuses, _, identity = read_l3_report(tmp_path, expect_provider="minimax:MiniMax-M3")
@@ -3018,7 +3070,11 @@ def test_l3_report_covering_journeys_we_never_selected_is_flagged(tmp_path):
     report.parent.mkdir(parents=True)
     report.write_text(json.dumps({
         "provider": "p:m", "run_id": "e2e-1",
-        "provider_lock": {"locked": True, "drift_detected": False},
+        "generated_at": "2026-08-09T00:00:01+00:00",
+        "provider_lock": {
+            "provider": "p:m", "target": "p:m", "original": "p:m",
+            "locked": True, "drift_detected": False, "drifts": [],
+            "restore": "", "restore_errors": []},
         "journeys": [{"id": "A1-1", "status": "pass"},
                      {"id": "B3-3", "status": "pass"}]}), encoding="utf-8")
 
@@ -3235,12 +3291,116 @@ def test_two_run_ids_in_one_run_directory_is_not_one_run(tmp_path):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({
             "provider": "p:m", "run_id": f"e2e-{index}",
-            "provider_lock": {"locked": True, "drift_detected": False},
+            "generated_at": "2026-08-09T00:00:01+00:00",
+            "provider_lock": {
+                "provider": "p:m", "target": "p:m", "original": "p:m",
+                "locked": True, "drift_detected": False, "drifts": [],
+                "restore": "", "restore_errors": []},
             "journeys": [{"id": journey, "status": "pass"}]}), encoding="utf-8")
 
     _, _, identity = read_l3_report(tmp_path, expect_provider="p:m",
                                     expect_ids=["A1-1", "A1-2"])
     assert any("l3_run_id_mixed" in row for row in identity)
+
+
+def test_duplicate_l3_reports_with_the_same_run_id_are_not_merged(tmp_path):
+    lock = {
+        "provider": "p:m", "target": "p:m", "original": "p:m",
+        "locked": True, "drift_detected": False, "drifts": [],
+        "restore": "", "restore_errors": [],
+    }
+    for name, status in (("a", "fail"), ("b", "pass")):
+        path = tmp_path / name / "journeys_report.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "provider": "p:m", "run_id": "reused-run",
+            "generated_at": "2026-08-09T00:00:01+00:00",
+            "provider_lock": lock,
+            "journeys": [{"id": "A1-2", "status": status}],
+        }), encoding="utf-8")
+
+    statuses, _, identity = read_l3_report(
+        tmp_path, expect_provider="p:m", expect_ids=["A1-2"])
+
+    assert statuses == {}
+    assert any("l3_report_count_invalid" in row for row in identity)
+
+
+def test_malformed_l3_report_cannot_hide_beside_one_valid_report(tmp_path):
+    broken = tmp_path / "bad" / "journeys_report.json"
+    broken.parent.mkdir(parents=True)
+    broken.write_text("{broken", encoding="utf-8")
+    good = tmp_path / "good" / "journeys_report.json"
+    good.parent.mkdir(parents=True)
+    good.write_text(json.dumps({
+        "provider": "p:m", "run_id": "e2e-1",
+        "generated_at": "2026-08-09T00:00:01+00:00",
+        "provider_lock": {
+            "provider": "p:m", "target": "p:m", "original": "p:m",
+            "locked": True, "drift_detected": False, "drifts": [],
+            "restore": "", "restore_errors": [],
+        },
+        "journeys": [{"id": "A1-2", "status": "pass"}],
+    }), encoding="utf-8")
+
+    statuses, _, identity, evidence = read_l3_report(
+        tmp_path, expect_provider="p:m", expect_ids=["A1-2"],
+        include_evidence=True)
+
+    assert statuses == {} and evidence == {}
+    assert any("l3_report_invalid_json" in row for row in identity)
+    assert any("l3_report_count_invalid" in row for row in identity)
+
+
+def test_l3_nested_provider_lock_must_match_the_report_provider(tmp_path):
+    path = tmp_path / "run" / "journeys_report.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "provider": "p:m", "run_id": "e2e-1",
+        "generated_at": "2026-08-09T00:00:01+00:00",
+        "provider_lock": {
+            "provider": "other:other", "target": "other:other",
+            "original": "p:m", "locked": True,
+            "drift_detected": False, "drifts": [], "restore": "",
+            "restore_errors": [],
+        },
+        "journeys": [{"id": "A1-2", "status": "pass"}],
+    }), encoding="utf-8")
+
+    statuses, _, identity = read_l3_report(
+        tmp_path, expect_provider="p:m", expect_ids=["A1-2"])
+
+    assert statuses == {}
+    assert any("l3_provider_lock_identity_mismatch" in row for row in identity)
+
+
+def test_l3_reader_returns_digest_bound_evidence_for_the_one_report(tmp_path):
+    path = tmp_path / "run" / "journeys_report.json"
+    path.parent.mkdir(parents=True)
+    lock = {
+        "provider": "p:m", "target": "p:m", "original": "p:m",
+        "locked": True, "drift_detected": False, "drifts": [],
+        "restore": "", "restore_errors": [],
+    }
+    path.write_text(json.dumps({
+        "provider": "p:m", "run_id": "e2e-1",
+        "generated_at": "2026-08-09T00:00:01+00:00",
+        "provider_lock": lock,
+        "journeys": [{"id": "A1-2", "status": "pass"}],
+    }), encoding="utf-8")
+
+    statuses, stale, identity, evidence = read_l3_report(
+        tmp_path, expect_provider="p:m", expect_ids=["A1-2"],
+        include_evidence=True)
+
+    assert statuses == {"A1-2": "pass"}
+    assert stale == [] and identity == []
+    assert evidence["count"] == 1
+    assert evidence["run_id"] == "e2e-1"
+    assert evidence["provider_lock"] == lock
+    assert evidence["journey_statuses"] == statuses
+    assert len(evidence["sha256"]) == 64
+    assert evidence["relative_path"].endswith("journeys_report.json")
 
 
 def test_a_finished_run_is_never_lost_to_a_console_encoding_error(tmp_path, monkeypatch):

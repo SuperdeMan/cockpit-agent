@@ -187,6 +187,36 @@ def test_build_rechecks_a_heavy_step_that_omits_an_explicit_parallel_action():
     assert "heavy" in prompts[1]
 
 
+def test_build_does_not_recheck_attributive_yantu_single_action():
+    primary = MockAgent("alpha", ["alpha.search"])
+    primary.manifest.capabilities[0].heavy = True
+    agents = [primary, MockAgent("beta", ["beta.execute"])]
+    replies = iter([
+        '{"complexity":"simple","goal":"查找沿途的加油站","steps":['
+        '{"id":"s1","capability_ref":"cap_0001","slots":{},'
+        '"depends_on":[],"slot_refs":{}}]}',
+        '{"complexity":"simple","goal":"查找沿途的加油站","steps":['
+        '{"id":"s1","capability_ref":"cap_0001","slots":{},'
+        '"depends_on":[],"slot_refs":{}},'
+        '{"id":"s2","capability_ref":"cap_0002","slots":{},'
+        '"depends_on":[],"slot_refs":{}}]}',
+    ])
+    prompts = []
+
+    async def mock_llm(messages):
+        prompts.append(messages[1]["content"])
+        return next(replies)
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        "查找沿途的加油站", WorkingSet(catalog=agents), PlanContext()))
+
+    assert len(prompts) == 1
+    assert [step.intent for step in plan.steps] == ["alpha.search"]
+
+
 def test_build_recheck_can_keep_one_heavy_step_when_its_contract_owns_sequence():
     agent = MockAgent("alpha", ["alpha.plan"])
     agent.manifest.capabilities[0].heavy = True

@@ -1,6 +1,10 @@
 """对抗报告指标、分维度、baseline 资格与渲染的回归测试。"""
+import base64
 from copy import deepcopy
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -36,7 +40,49 @@ def _request_catalog(*entries):
     } for index, (agent_id, intent) in enumerate(pairs, 1))
 
 
+def _l3_report_evidence(provider="mimo:model-a", run_id="e2e-run-a",
+                        generated_at=""):
+    generated_at = generated_at or datetime.now(timezone.utc).isoformat()
+    lock = {
+        "provider": provider,
+        "target": provider,
+        "original": provider,
+        "locked": True,
+        "drift_detected": False,
+        "drifts": [],
+        "restore": "",
+        "restore_errors": [],
+    }
+    payload = {
+        "provider": provider,
+        "run_id": run_id,
+        "generated_at": generated_at,
+        "provider_lock": lock,
+        "journeys": [{"id": "A1-1", "status": "pass"}],
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return {
+        "count": 1,
+        "relative_path": (
+            f"{run_id}/e2e_journeys/artifacts/journeys_report.json"
+        ),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "raw_report_base64": base64.b64encode(raw).decode("ascii"),
+        "run_id": run_id,
+        "generated_at": payload["generated_at"],
+        "provider": provider,
+        "provider_lock": lock,
+        "journey_statuses": {"A1-1": "pass"},
+    }
+
+
 def _meta(**changes):
+    outer_generated = datetime.now(timezone.utc)
+    started = outer_generated - timedelta(seconds=2)
+    report_generated = outer_generated - timedelta(seconds=1)
+    invocation_id = (
+        f"{started.strftime('%Y%m%dT%H%M%S%fZ')}-101-abcdef-abc1234"
+    )
     meta = {
         "suite": "gate",
         "layer": "all",
@@ -50,6 +96,7 @@ def _meta(**changes):
         "provider_locked": True,
         "provider_drift": False,
         "provider_model": "mimo:model-a",
+        "generated_at": outer_generated.isoformat(),
         "provider_lock": {
             "provider": "mimo:model-a",
             "locked": True,
@@ -79,17 +126,21 @@ def _meta(**changes):
         "l3_complete": True,
         "l3_evidence_fresh": True,
         "l3_invocation": {
-            "invocation_id": "20260809T000000000000Z-101-abcdef-abc1234",
-            "started_at": "2026-08-09T00:00:00+00:00",
+            "invocation_id": invocation_id,
+            "started_at": started.isoformat(),
             "code_sha": "abc1234",
             "provider_model": "mimo:model-a",
             "provider": "mimo",
             "model": "model-a",
             "journey_ids": ["A1-1"],
             "exit_code": 0,
-            "artifact_root": "C:/tmp/car-agent-l3/invocation-a",
+            "artifact_root": (
+                "C:/tmp/car-agent-l3/" + invocation_id
+            ),
             "stale_reports_ignored": [],
             "report_run_ids": ["e2e-run-a"],
+            "report_evidence": _l3_report_evidence(
+                generated_at=report_generated.isoformat()),
             "fresh": True,
         },
         "baseline_regressions": [],
@@ -461,6 +512,91 @@ def test_baseline_recomputes_l3_invocation_identity_and_result_evidence():
     missing_result = _formal_report()
     missing_result["results"].pop("formal-l3@l3")
     mutations.append(missing_result)
+
+    for report in mutations:
+        reasons = baseline_eligibility(report).reasons
+        assert reasons.count("l3_invocation_invalid") == 1, reasons
+
+
+def test_baseline_rejects_unbound_or_old_l3_invocation():
+    mutations = []
+
+    old = _formal_report()
+    old["meta"]["l3_invocation"]["started_at"] = "2000-01-01T00:00:00+00:00"
+    mutations.append(old)
+
+    malformed_time = _formal_report()
+    malformed_time["meta"]["l3_invocation"]["started_at"] = "not-a-time"
+    mutations.append(malformed_time)
+
+    coherent_old = _formal_report()
+    old_id = "20000101T000000000000Z-101-abcdef-abc1234"
+    coherent_old["meta"]["l3_invocation"].update({
+        "invocation_id": old_id,
+        "started_at": "2000-01-01T00:00:00+00:00",
+        "artifact_root": f"C:/tmp/car-agent-l3/{old_id}",
+    })
+    mutations.append(coherent_old)
+
+    for moment in (
+        datetime(2000, 1, 1, tzinfo=timezone.utc),
+        datetime(2099, 1, 1, tzinfo=timezone.utc),
+    ):
+        coordinated = _formal_report()
+        invocation_id = (
+            f"{moment.strftime('%Y%m%dT%H%M%S%fZ')}-101-abcdef-abc1234"
+        )
+        invocation = coordinated["meta"]["l3_invocation"]
+        invocation.update({
+            "invocation_id": invocation_id,
+            "started_at": moment.isoformat(),
+            "artifact_root": f"C:/tmp/car-agent-l3/{invocation_id}",
+        })
+        coordinated["meta"]["generated_at"] = (
+            moment + timedelta(seconds=2)).isoformat()
+        evidence = invocation["report_evidence"]
+        evidence["generated_at"] = (moment + timedelta(seconds=1)).isoformat()
+        payload = json.loads(base64.b64decode(
+            evidence["raw_report_base64"]).decode("utf-8"))
+        payload["generated_at"] = evidence["generated_at"]
+        raw = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        evidence["raw_report_base64"] = base64.b64encode(raw).decode("ascii")
+        evidence["sha256"] = hashlib.sha256(raw).hexdigest()
+        mutations.append(coordinated)
+
+    wrong_path = _formal_report()
+    wrong_path["meta"]["l3_invocation"]["artifact_root"] = "C:/deleted/old-run"
+    mutations.append(wrong_path)
+
+    wrong_run = _formal_report()
+    wrong_run["meta"]["l3_invocation"]["report_run_ids"] = ["old-report"]
+    mutations.append(wrong_run)
+
+    wrong_relative_run = _formal_report()
+    wrong_relative_run["meta"]["l3_invocation"]["report_evidence"][
+        "relative_path"
+    ] = "another-run/e2e_journeys/artifacts/journeys_report.json"
+    mutations.append(wrong_relative_run)
+
+    missing_evidence = _formal_report()
+    missing_evidence["meta"]["l3_invocation"].pop("report_evidence")
+    mutations.append(missing_evidence)
+
+    wrong_digest = _formal_report()
+    wrong_digest["meta"]["l3_invocation"]["report_evidence"]["sha256"] = "a" * 64
+    mutations.append(wrong_digest)
+
+    wrong_lock = _formal_report()
+    evidence = wrong_lock["meta"]["l3_invocation"]["report_evidence"]
+    evidence["provider_lock"]["target"] = "other:other"
+    mutations.append(wrong_lock)
+
+    wrong_status = _formal_report()
+    wrong_status["meta"]["l3_invocation"]["report_evidence"][
+        "journey_statuses"
+    ] = {"A1-1": "fail"}
+    mutations.append(wrong_status)
 
     for report in mutations:
         reasons = baseline_eligibility(report).reasons
@@ -863,6 +999,17 @@ def test_markdown_exposes_parent_process_sampling_and_worker_identity():
     for value in ("run-primary", "corroboration-l1", "run-l2", "a" * 64,
                   "exit=1"):
         assert value in markdown
+
+
+def test_markdown_exposes_provider_embedding_and_code_identity():
+    markdown = render_adversarial_markdown(
+        build_adversarial_report([_result("a")], _meta()))
+
+    assert "## 运行身份" in markdown
+    assert "`mimo:model-a`" in markdown
+    assert "`text-embedding-v4`" in markdown
+    assert "`abc1234`" in markdown
+    assert "不跨模型外推" in markdown
 
 
 def test_worker_markdown_uses_process_sample_without_parent_completion_claims():

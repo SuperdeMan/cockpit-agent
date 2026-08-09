@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -843,8 +844,8 @@ def run_l3(journey_ids: list[str], *, provider: str, model: str,
 
 
 def read_l3_report(artifact_root: Path, *, since: float | None = None,
-                   expect_provider: str = "", expect_ids: list[str] | None = None
-                   ) -> tuple[dict[str, str], list[str], list[str]]:
+                   expect_provider: str = "", expect_ids: list[str] | None = None,
+                   include_evidence: bool = False):
     """从 runner 产出的结构化 journeys report 读逐条状态；只看退出码等于没读。
 
     `since` 是本次调用的开始时间：**旧报告不许冒充本次证据**。固定目录 + 递归读全部
@@ -868,13 +869,34 @@ def read_l3_report(artifact_root: Path, *, since: float | None = None,
     identity: list[str] = []
     run_ids: set[str] = set()
     wanted = set(expect_ids or ())
-    for path in sorted(Path(artifact_root).glob("**/journeys_report.json")):
+    root = Path(artifact_root)
+    candidate_count = 0
+    accepted: list[tuple[Path, bytes, dict[str, Any], dict[str, str], dict]] = []
+    for path in sorted(root.glob("**/journeys_report.json")):
         try:
             if since is not None and path.stat().st_mtime < since:
                 stale.append(str(path))
                 continue
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except OSError as exc:
+            candidate_count += 1
+            identity.append(
+                f"l3_report_unreadable: {path.name} 无法读取元数据: {exc}")
+            continue
+        candidate_count += 1
+        try:
+            raw = path.read_bytes()
+            data = json.loads(raw.decode("utf-8"))
+        except OSError as exc:
+            identity.append(
+                f"l3_report_unreadable: {path.name} 无法读取内容: {exc}")
+            continue
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            identity.append(
+                f"l3_report_invalid_json: {path.name} 不是有效 UTF-8 JSON: {exc}")
+            continue
+        if not isinstance(data, dict):
+            identity.append(
+                f"l3_report_not_object: {path.name} 顶层必须是 JSON object")
             continue
         actual_provider = str(data.get("provider") or "")
         if expect_provider and actual_provider != expect_provider:
@@ -887,7 +909,11 @@ def read_l3_report(artifact_root: Path, *, since: float | None = None,
         # provider 串对得上只说明「启动时想跑这个」，`locked=false` 或中途漂移意味着
         # 实际服务它的可能是别的模型。正式 baseline 的 L3 证据必须 fail-closed。
         lock = data.get("provider_lock") or {}
-        if isinstance(lock, dict) and expect_provider:
+        if expect_provider:
+            if not isinstance(lock, dict):
+                identity.append(
+                    f"l3_provider_lock_invalid: {path.name} 缺少结构化 provider_lock")
+                continue
             if not lock.get("locked"):
                 identity.append(
                     f"l3_provider_not_locked: {path.name} 的 provider_lock.locked="
@@ -898,10 +924,56 @@ def read_l3_report(artifact_root: Path, *, since: float | None = None,
                     f"l3_provider_drift: {path.name} 记录了跑批中途的 provider 漂移"
                     f"（{lock.get('drifts')}）——报告自己就说它作废了")
                 continue
-        run_ids.add(str(data.get("run_id") or ""))
-        rows = {str(row["id"]): str(row.get("status") or "")
-                for row in (data.get("journeys") or [])
-                if isinstance(row, dict) and row.get("id")}
+            drifts = lock.get("drifts")
+            restore_errors = lock.get("restore_errors")
+            if (
+                lock.get("provider") != expect_provider
+                or lock.get("target") != expect_provider
+                or not isinstance(lock.get("original"), str)
+                or not lock.get("original", "").strip()
+                or isinstance(drifts, (str, bytes))
+                or not isinstance(drifts, list)
+                or bool(drifts)
+                or lock.get("restore") not in {"", "noop", "restored"}
+                or isinstance(restore_errors, (str, bytes))
+                or not isinstance(restore_errors, list)
+                or bool(restore_errors)
+            ):
+                identity.append(
+                    f"l3_provider_lock_identity_mismatch: {path.name} 的 nested "
+                    f"provider_lock 未绑定 {expect_provider!r}")
+                continue
+        run_id = str(data.get("run_id") or "").strip()
+        if not run_id:
+            identity.append(f"l3_run_id_missing: {path.name} 未声明 run_id")
+            continue
+        generated_at = data.get("generated_at")
+        if expect_provider:
+            try:
+                generated = datetime.fromisoformat(
+                    str(generated_at).replace("Z", "+00:00"))
+                if generated.tzinfo is None:
+                    raise ValueError("timezone required")
+            except (TypeError, ValueError):
+                identity.append(
+                    f"l3_generated_at_invalid: {path.name} 的 generated_at="
+                    f"{generated_at!r}")
+                continue
+        run_ids.add(run_id)
+        rows: dict[str, str] = {}
+        duplicate_rows: set[str] = set()
+        for row in (data.get("journeys") or []):
+            if not isinstance(row, dict) or not row.get("id"):
+                continue
+            journey_id = str(row["id"])
+            if journey_id in rows:
+                duplicate_rows.add(journey_id)
+            rows[journey_id] = str(row.get("status") or "")
+        if duplicate_rows:
+            identity.append(
+                f"l3_journey_duplicate: {path.name} 重复声明 "
+                f"{','.join(sorted(duplicate_rows))}")
+            continue
         if wanted:
             extra = sorted(set(rows) - wanted)
             if extra:
@@ -909,7 +981,7 @@ def read_l3_report(artifact_root: Path, *, since: float | None = None,
                     f"l3_selection_mismatch: {path.name} 含选集之外的 journey "
                     f"{','.join(extra[:10])}——runner 没按本次选集走，"
                     "读到的状态可能来自别的用例")
-        statuses.update(rows)
+        accepted.append((path, raw, data, rows, lock))
     # runner 的 `run_id` 是它自己生成的、每次调用唯一。我们注入不进去，但**可以要求
     # 唯一 run 目录里所有报告同属一次调用**——两个 run_id 出现在同一个目录里，
     # 说明这批状态不是一次运行的产物，拼起来读就是在编一份没发生过的运行。
@@ -917,7 +989,29 @@ def read_l3_report(artifact_root: Path, *, since: float | None = None,
         identity.append(
             f"l3_run_id_mixed: 本次 run 目录里出现了 {len(run_ids)} 个 run_id "
             f"（{sorted(run_ids)[:4]}）——这批状态不来自同一次调用")
-    return statuses, stale, identity
+    if candidate_count != 1:
+        identity.append(
+            f"l3_report_count_invalid: 本次 invocation 发现 {candidate_count} 份"
+            "新鲜 journeys_report；正式 L3 必须恰好一份且可解析")
+
+    evidence: dict[str, Any] = {}
+    if not identity and len(accepted) == 1:
+        path, raw, data, statuses, lock = accepted[0]
+        evidence = {
+            "count": 1,
+            "relative_path": path.relative_to(root).as_posix(),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "raw_report_base64": base64.b64encode(raw).decode("ascii"),
+            "run_id": str(data.get("run_id") or ""),
+            "generated_at": str(data.get("generated_at") or ""),
+            "provider": str(data.get("provider") or ""),
+            "provider_lock": dict(lock) if isinstance(lock, dict) else {},
+            "journey_statuses": dict(statuses),
+        }
+    else:
+        statuses = {}
+    result = (statuses, stale, identity)
+    return (*result, evidence) if include_evidence else result
 
 
 # ── 结果装配 ───────────────────────────────────────────────────────────────
@@ -1754,10 +1848,13 @@ def _l3_evidence(selected, args, provider_model
     artifact_root = l3_artifact_root(invocation)
     code = run_l3(ids, provider=args.provider, model=args.model,
                   artifact_root=artifact_root)
-    statuses, stale, identity = read_l3_report(
+    statuses, stale, identity, report_evidence = read_l3_report(
         artifact_root, since=started.timestamp(),
-        expect_provider=provider_model, expect_ids=list(ids))
-    report_run_ids = _report_run_ids(artifact_root, since=started.timestamp())
+        expect_provider=provider_model, expect_ids=list(ids),
+        include_evidence=True)
+    report_run_ids = {
+        str(report_evidence.get("run_id") or "")
+    } if report_evidence else set()
     infra: list[str] = list(identity)
     meta = {
         "invocation_id": invocation, "started_at": started.isoformat(),
@@ -1768,6 +1865,7 @@ def _l3_evidence(selected, args, provider_model
         "stale_reports_ignored": stale,
         # runner 自己生成的 run_id：注入不进去，但记下来可审计（同目录里出现两个即报错）
         "report_run_ids": sorted(report_run_ids),
+        "report_evidence": report_evidence,
     }
     if code != 0:
         # **非零退出一律基础设施失败。** 之前只在「读不到任何 statuses」时才记，于是
