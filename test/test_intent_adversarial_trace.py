@@ -481,6 +481,36 @@ def test_probe_retrieval_counts_only_the_calls_that_wanted_vectors():
     assert calls == [[], ["ok"], ["boom"]]
 
 
+def test_probe_retrieval_records_embedding_model_identity_and_drift():
+    import asyncio
+
+    from orchestrator.cloud import embedding
+    from support.intent_adversarial_trace import probe_retrieval
+
+    original = embedding.embed_texts
+    models = iter(("text-embedding-v4", "text-embedding-v5", ""))
+
+    async def fake(texts, timeout_s=1.0):
+        return ([(1.0,)] * len(texts), next(models))
+
+    embedding.embed_texts = fake
+    try:
+        with probe_retrieval() as probe:
+            asyncio.run(embedding.embed_texts(["a"]))
+            asyncio.run(embedding.embed_texts(["b"]))
+            asyncio.run(embedding.embed_texts(["c"]))
+    finally:
+        embedding.embed_texts = original
+
+    assert getattr(probe, "model_counts", None) == {
+        "text-embedding-v4": 1,
+        "text-embedding-v5": 1,
+    }
+    assert getattr(probe, "unidentified", None) == 1
+    assert getattr(probe, "embedding_model", None) == ""
+    assert getattr(probe, "identity_complete", None) is False
+
+
 def test_l1_can_reach_a_divergence_label_at_all():
     """反向构造：L1 跑不了 L2 专属的两条 arm，旧实现于是**结构上**只能返回
     `UNCLASSIFIED`——context/retrieval/hint/validation/planner 五个标签一个都出不来。

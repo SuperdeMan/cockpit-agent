@@ -1421,12 +1421,24 @@ def _run_single(args: argparse.Namespace) -> int:
         # `EXEMPLAR_EMBED_TIMEOUT`/`SKILL_EMBED_TIMEOUT`（缺省 1.0s），一次超时就打 30s
         # 失败冷却，其后整段规划全走纯词法——而预热用的是 `max(5.0, timeout)`，它成功了。
         # 于是报告照写 `retrieval_state=warm`，量的却不是生产装配。**降级必须留痕。**
-        if (args.retrieval_state == "warm" and retrieval.degraded
-                and _semantic_retrieval_expected()):
+        semantic_identity_required = (
+            args.retrieval_state == "warm"
+            and _semantic_retrieval_expected()
+            and any(row.layer in {"l1", "l2"} for row in results)
+        )
+        if semantic_identity_required and retrieval.degraded:
             infrastructure_errors.append(
                 f"retrieval_degraded_mid_run: {retrieval.degraded}/{retrieval.calls} "
                 f"次 Embed 调用没拿到向量，这些轮只跑了词法档（宿主跑请调大 "
                 f"EXEMPLAR_EMBED_TIMEOUT / SKILL_EMBED_TIMEOUT，见运行手册 §2）")
+        if semantic_identity_required and not retrieval.identity_complete:
+            infrastructure_errors.append(
+                "embedding_identity_incomplete: successful Embed calls must all "
+                "declare one unchanged model_used "
+                f"(calls={retrieval.calls}, degraded={retrieval.degraded}, "
+                f"unidentified={retrieval.unidentified}, "
+                f"models={sorted(retrieval.model_counts)})"
+            )
         l3_selected, l3_statuses, l3_infra, l3_meta = _l3_evidence(
             selected, args, provider_model)
         infrastructure_errors.extend(l3_infra)
@@ -1445,6 +1457,10 @@ def _run_single(args: argparse.Namespace) -> int:
         "suite": args.suite, "layer": args.layer,
         "retrieval_state": args.retrieval_state, "warmed_exemplars": warmed,
         "retrieval_calls": retrieval.calls, "retrieval_degraded": retrieval.degraded,
+        "embedding_model": retrieval.embedding_model,
+        "embedding_model_counts": dict(sorted(retrieval.model_counts.items())),
+        "embedding_unidentified": retrieval.unidentified,
+        "embedding_identity_complete": retrieval.identity_complete,
         "trace_errors": list(_TRACE_ERRORS[:20]),
         "trace_error_count": len(_TRACE_ERRORS),
         "provider_locked": bool(lock and lock.locked),
@@ -2564,14 +2580,15 @@ def _launch_worker(
     command = _worker_command(
         args, spec, bundle_id, process_run_id, report_path)
     try:
-        completed = subprocess.run(
+        with subprocess.Popen(
             command,
             cwd=ROOT,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            check=False,
             env=os.environ.copy(),
-        )
+        ) as child:
+            launched_pid = child.pid
+            returncode = child.wait()
     except OSError as exc:
         raise WorkerLaunchError(
             f"{spec.role}: worker launch failed",
@@ -2583,7 +2600,7 @@ def _launch_worker(
             f"{spec.role}: worker did not create report",
             spec=spec,
             process_run_id=process_run_id,
-            exit_code=completed.returncode,
+            exit_code=returncode,
         )
     try:
         report_bytes = report_path.read_bytes()
@@ -2592,7 +2609,7 @@ def _launch_worker(
             f"{spec.role}: worker report is unreadable",
             spec=spec,
             process_run_id=process_run_id,
-            exit_code=completed.returncode,
+            exit_code=returncode,
         ) from exc
     report_sha256 = hashlib.sha256(report_bytes).hexdigest()
     try:
@@ -2602,7 +2619,7 @@ def _launch_worker(
             f"{spec.role}: worker report must contain valid JSON",
             spec=spec,
             process_run_id=process_run_id,
-            exit_code=completed.returncode,
+            exit_code=returncode,
             report_sha256=report_sha256,
         ) from exc
     if not isinstance(report, dict):
@@ -2610,23 +2627,24 @@ def _launch_worker(
             f"{spec.role}: worker report JSON must be an object",
             spec=spec,
             process_run_id=process_run_id,
-            exit_code=completed.returncode,
+            exit_code=returncode,
             report_sha256=report_sha256,
         )
     artifact = process.WorkerArtifact(
         spec=spec,
-        exit_code=completed.returncode,
+        exit_code=returncode,
         report=report,
         report_sha256=report_sha256,
         report_bytes=report_bytes,
         assigned_process_run_id=process_run_id,
+        launched_pid=launched_pid,
     )
-    if completed.returncode not in {0, 1}:
+    if returncode not in {0, 1}:
         raise WorkerLaunchError(
-            f"{spec.role}: worker returned exit code {completed.returncode}",
+            f"{spec.role}: worker returned exit code {returncode}",
             spec=spec,
             process_run_id=process_run_id,
-            exit_code=completed.returncode,
+            exit_code=returncode,
             report_sha256=report_sha256,
             failing_artifact=artifact,
         )
@@ -2717,6 +2735,10 @@ def _process_evidence_summary(
 
     workers: list[dict[str, Any]] = []
     valid_runs: dict[str, str] = {}
+    valid_pids: dict[int, str] = {}
+    valid_digests: dict[str, str] = {}
+    embedding_models: set[str] = set()
+    embedding_complete = True
     for spec in specs:
         artifact = by_role.get(spec.role)
         if artifact is None or artifact.spec != spec:
@@ -2724,7 +2746,10 @@ def _process_evidence_summary(
             continue
         sample = (artifact.report.get("meta") or {}).get("process_sample") or {}
         run_id = artifact.assigned_process_run_id
-        pid = sample.get("pid")
+        reported_pid = sample.get("pid")
+        pid = artifact.launched_pid
+        digest = artifact.report_sha256.lower() \
+            if isinstance(artifact.report_sha256, str) else ""
         identity_valid = (
             isinstance(run_id, str) and bool(run_id.strip())
             and sample.get("bundle_id") == bundle_id
@@ -2732,16 +2757,29 @@ def _process_evidence_summary(
             and sample.get("layer") == spec.layer
             and sample.get("process_run_id") == run_id
             and type(pid) is int and pid > 0
+            and reported_pid == pid
             and artifact.exit_code in {0, 1}
             and isinstance(artifact.report_sha256, str)
             and len(artifact.report_sha256) == 64
         )
         if run_id in valid_runs:
             identity_valid = False
+        if pid in valid_pids:
+            identity_valid = False
+        if digest in valid_digests:
+            identity_valid = False
         if identity_valid:
             valid_runs[run_id] = spec.role
+            valid_pids[pid] = spec.role
+            valid_digests[digest] = spec.role
         else:
             identity_complete = False
+        worker_embedding_complete, worker_embedding_model = \
+            process.embedding_identity(artifact.report.get("meta") or {})
+        if not worker_embedding_complete:
+            embedding_complete = False
+        else:
+            embedding_models.add(worker_embedding_model)
         workers.append({
             "role": spec.role,
             "process_run_id": run_id,
@@ -2749,6 +2787,16 @@ def _process_evidence_summary(
             "layer": spec.layer,
             "report_sha256": artifact.report_sha256,
             "exit_code": artifact.exit_code,
+            "retrieval_calls": (artifact.report.get("meta") or {}).get(
+                "retrieval_calls"),
+            "retrieval_degraded": (artifact.report.get("meta") or {}).get(
+                "retrieval_degraded"),
+            "embedding_model": (artifact.report.get("meta") or {}).get(
+                "embedding_model"),
+            "embedding_model_counts": (artifact.report.get("meta") or {}).get(
+                "embedding_model_counts"),
+            "embedding_unidentified": (artifact.report.get("meta") or {}).get(
+                "embedding_unidentified"),
         })
     if set(by_role) != {spec.role for spec in specs}:
         identity_complete = False
@@ -2813,9 +2861,16 @@ def _process_evidence_summary(
 
     if not process_complete:
         raw_complete = False
+    embedding_complete = (
+        embedding_complete and len(embedding_models) == 1 and identity_complete
+    )
     return {
         "process_policy_complete": process_complete,
         "raw_observation_complete": raw_complete,
+        "embedding_model": (
+            next(iter(embedding_models)) if embedding_complete else ""
+        ),
+        "embedding_identity_complete": embedding_complete,
         "process_sampling": {
             "bundle_id": bundle_id,
             "required": required,

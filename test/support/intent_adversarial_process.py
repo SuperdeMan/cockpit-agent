@@ -34,12 +34,40 @@ class WorkerArtifact:
     report_sha256: str = ""
     report_bytes: bytes = b""
     assigned_process_run_id: str = ""
+    launched_pid: int = 0
 
 
 @dataclass(frozen=True)
 class ProcessRepeatClassification:
     status: str
     outcomes: tuple[dict[str, Any], ...]
+
+
+def embedding_identity(meta: Mapping[str, Any]) -> tuple[bool, str]:
+    """Derive one complete embedding identity from a worker's raw counters."""
+    if not isinstance(meta, Mapping):
+        return False, ""
+    calls = meta.get("retrieval_calls")
+    degraded = meta.get("retrieval_degraded")
+    unidentified = meta.get("embedding_unidentified")
+    model = meta.get("embedding_model")
+    counts = meta.get("embedding_model_counts")
+    if (
+        type(calls) is not int
+        or calls <= 0
+        or not (degraded is False or (type(degraded) is int and degraded == 0))
+        or type(unidentified) is not int
+        or unidentified != 0
+        or not isinstance(model, str)
+        or not model.strip()
+        or not isinstance(counts, Mapping)
+        or set(counts) != {model}
+        or type(counts.get(model)) is not int
+        or counts.get(model) != calls
+        or meta.get("embedding_identity_complete") is not True
+    ):
+        return False, ""
+    return True, model
 
 
 def _policy_value(suite: Any, name: str, default: Any) -> Any:
@@ -339,6 +367,8 @@ def validate_worker_bundle(
         ]
     ] = []
     run_ids: dict[str, str] = {}
+    launched_pids: dict[int, str] = {}
+    report_digests: dict[str, str] = {}
     for index, artifact in enumerate(artifacts):
         role = artifact_roles[index] or f"artifact[{index}]"
         spec = getattr(artifact, "spec", None)
@@ -359,6 +389,16 @@ def validate_worker_bundle(
             )
         else:
             run_ids[artifact_run_id] = role
+        launched_pid = getattr(artifact, "launched_pid", None)
+        if type(launched_pid) is not int or launched_pid <= 0:
+            errors.append(f"{role}: launched_pid must be a positive integer")
+        elif launched_pid in launched_pids:
+            errors.append(
+                f"{role}: launched_pid duplicates role "
+                f"{launched_pids[launched_pid]!r}"
+            )
+        else:
+            launched_pids[launched_pid] = role
         report_sha256 = getattr(artifact, "report_sha256", None)
         if (
             not isinstance(report_sha256, str)
@@ -366,6 +406,15 @@ def validate_worker_bundle(
             or any(char not in "0123456789abcdefABCDEF" for char in report_sha256)
         ):
             errors.append(f"{role}: report_sha256 must be 64 hexadecimal characters")
+        else:
+            normalized_digest = report_sha256.lower()
+            if normalized_digest in report_digests:
+                errors.append(
+                    f"{role}: report_sha256 duplicates role "
+                    f"{report_digests[normalized_digest]!r}"
+                )
+            else:
+                report_digests[normalized_digest] = role
         report = getattr(artifact, "report", None)
         report_bytes = getattr(artifact, "report_bytes", None)
         if not isinstance(report_bytes, bytes) or not report_bytes:
@@ -419,6 +468,11 @@ def validate_worker_bundle(
         pid = sample.get("pid")
         if type(pid) is not int or pid <= 0:
             errors.append(f"{role}: process_sample.pid must be a positive integer")
+        elif pid != launched_pid:
+            errors.append(
+                f"{role}: process_sample.pid does not match parent-observed "
+                "launched_pid"
+            )
 
         results, result_errors = _results(report)
         errors.extend(f"{role}: {error}" for error in result_errors)
@@ -630,6 +684,7 @@ def validate_worker_bundle(
         "provider_lock",
         "retrieval_state",
         "retrieval_degraded",
+        "embedding_model",
         "temperature",
         "selection_provenance",
     ):
@@ -683,6 +738,11 @@ def validate_worker_bundle(
         degraded = meta.get("retrieval_degraded")
         if not (degraded is False or (type(degraded) is int and degraded == 0)):
             errors.append(f"{role}: retrieval_degraded must be 0 or false")
+        embedding_complete, _ = embedding_identity(meta)
+        if not embedding_complete:
+            errors.append(
+                f"{role}: embedding_model identity must cover every retrieval call"
+            )
         infrastructure_errors = meta.get("infrastructure_errors")
         if "infrastructure_errors" not in meta or type(infrastructure_errors) is not list:
             errors.append(f"{role}: infrastructure_errors must be a declared list")

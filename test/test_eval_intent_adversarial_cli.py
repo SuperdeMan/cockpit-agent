@@ -26,6 +26,28 @@ from support.intent_adversarial_report import BaselineEligibility  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _patch_worker_popen(monkeypatch, callback):
+    """Install a serial Popen fake while preserving parent-observed child PIDs."""
+    next_pid = iter(range(4101, 5000))
+
+    class FakePopen:
+        def __init__(self, command, **kwargs):
+            completed = callback(command, **kwargs)
+            self.pid = getattr(completed, "pid", next(next_pid))
+            self.returncode = getattr(completed, "returncode", 0)
+
+        def wait(self):
+            return self.returncode
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
+
+
 def _raw_ref():
     return {
         "value": "cap_0001",
@@ -279,8 +301,8 @@ def test_launch_worker_rejects_preexisting_external_destination_before_start(
             "--provider", "mimo", "--model", "m",
         ])
         calls = []
-        monkeypatch.setattr(
-            cli.subprocess, "run",
+        _patch_worker_popen(
+            monkeypatch,
             lambda *_args, **_kwargs: calls.append(True) or SimpleNamespace(
                 returncode=0, stdout="", stderr=""),
         )
@@ -319,8 +341,8 @@ def test_launch_worker_rejects_external_hardlink_to_repo_before_start(
             "--provider", "mimo", "--model", "m",
         ])
         calls = []
-        monkeypatch.setattr(
-            cli.subprocess, "run",
+        _patch_worker_popen(
+            monkeypatch,
             lambda *_args, **_kwargs: calls.append(True) or SimpleNamespace(
                 returncode=0, stdout="", stderr=""),
         )
@@ -415,6 +437,7 @@ def test_worker_path_never_spawns_a_subprocess(tmp_path, monkeypatch):
     called = []
     monkeypatch.setattr(cli, "_run_single", lambda parsed: 0)
     monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: called.append((a, k)))
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: called.append((a, k)))
 
     assert cli.main(args) == 0
     assert called == []
@@ -439,7 +462,7 @@ def test_launch_worker_fails_closed_on_process_or_report_errors(
             report.write_bytes(payload)
         return SimpleNamespace(returncode=exit_code, stdout="", stderr="")
 
-    monkeypatch.setattr(cli.subprocess, "run", _run)
+    _patch_worker_popen(monkeypatch, _run)
     with pytest.raises(cli.WorkerLaunchError, match=expected_error):
         cli._launch_worker(args, spec, "bundle-a", "run-a", report)
 
@@ -457,13 +480,58 @@ def test_launch_worker_keeps_product_red_artifact(tmp_path, monkeypatch):
         report.write_bytes(payload)
         return SimpleNamespace(returncode=1, stdout="", stderr="")
 
-    monkeypatch.setattr(cli.subprocess, "run", _run)
+    _patch_worker_popen(monkeypatch, _run)
     artifact = cli._launch_worker(args, spec, "bundle-a", "run-a", report)
 
     assert artifact.exit_code == 1
     assert artifact.assigned_process_run_id == "run-a"
     assert artifact.report_bytes == payload
     assert artifact.report_sha256 == cli.hashlib.sha256(payload).hexdigest()
+
+
+def test_launch_worker_records_parent_observed_child_pid(tmp_path, monkeypatch):
+    args = validate_args(parse_args([
+        "--suite", "gate", "--layer", "l1", "--live",
+        "--provider", "mimo", "--model", "m",
+    ]))
+    spec = cli.process.WorkerSpec("primary", "l1", 3)
+    report = tmp_path / "worker.json"
+    payload = b'{"meta": {}, "results": {}}'
+    captured = {}
+
+    class FakePopen:
+        pid = 4321
+
+        def __init__(self, command, **kwargs):
+            captured["command"] = command
+            captured.update(kwargs)
+            report.write_bytes(payload)
+
+        def wait(self):
+            return 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("worker launch must expose the real child pid")
+        ),
+    )
+
+    artifact = cli._launch_worker(
+        args, spec, "bundle-a", "run-a", report)
+
+    assert artifact.launched_pid == 4321
+    assert artifact.exit_code == 0
+    assert captured["stdout"] is subprocess.DEVNULL
+    assert captured["stderr"] is subprocess.DEVNULL
 
 
 def test_launch_worker_discards_unconsumed_subprocess_output(tmp_path, monkeypatch):
@@ -480,7 +548,7 @@ def test_launch_worker_discards_unconsumed_subprocess_output(tmp_path, monkeypat
         report.write_bytes(b'{"meta": {}, "results": {}}')
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(cli.subprocess, "run", _run)
+    _patch_worker_popen(monkeypatch, _run)
     artifact = cli._launch_worker(
         args, spec, "bundle-a", "run-a", report)
 
@@ -511,7 +579,7 @@ def test_launch_worker_reads_parseable_exit2_report_before_failing(
         return SimpleNamespace(
             returncode=2, stdout="must-not-be-recorded", stderr="secret-stderr")
 
-    monkeypatch.setattr(cli.subprocess, "run", _run)
+    _patch_worker_popen(monkeypatch, _run)
     with pytest.raises(cli.WorkerLaunchError, match="exit code 2") as raised:
         cli._launch_worker(args, spec, "bundle-a", "run-a", report_path)
 
@@ -532,8 +600,10 @@ def test_launch_worker_converts_startup_error_to_infrastructure_exit(tmp_path, m
         "--provider", "mimo", "--model", "m",
     ]))
     spec = cli.process.WorkerSpec("primary", "l1", 3)
-    monkeypatch.setattr(
-        cli.subprocess, "run", lambda *_a, **_k: (_ for _ in ()).throw(OSError("boom")))
+    _patch_worker_popen(
+        monkeypatch,
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("boom")),
+    )
     with pytest.raises(cli.WorkerLaunchError, match="launch failed"):
         cli._launch_worker(args, spec, "bundle-a", "run-a", tmp_path / "worker.json")
 
@@ -558,7 +628,7 @@ def test_collect_all_workers_is_serial_and_l3_is_primary_only(tmp_path, monkeypa
         report.write_text('{"meta": {}, "results": {}}', encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(cli.subprocess, "run", _run)
+    _patch_worker_popen(monkeypatch, _run)
     specs = cli._planned_worker_specs(args, suite)
     artifacts = cli._collect_worker_artifacts(args, specs, "bundle-a", tmp_path)
 
@@ -586,6 +656,7 @@ def test_collector_rejects_repository_temp_root_before_worker_launch(monkeypatch
     specs = cli.process.worker_specs("l1", "gate", suite)
     calls = []
     monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: calls.append((a, k)))
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: calls.append((a, k)))
 
     with pytest.raises(ValueError, match="temporary root"):
         cli._collect_worker_artifacts(
@@ -621,6 +692,7 @@ def test_parent_rejects_repository_temp_root_before_subprocess(
     monkeypatch.setattr(cli, "_gather_contract_errors", lambda *_a: ([], []))
     monkeypatch.setattr(cli.tempfile, "TemporaryDirectory", lambda **_k: _RepoTemp())
     monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: calls.append((a, k)))
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: calls.append((a, k)))
 
     assert cli._run_parent_bundle(args) == 2
     assert calls == []
@@ -835,7 +907,7 @@ def test_parent_exit2_failure_report_keeps_only_safe_worker_evidence(
     monkeypatch.setattr(cli.contract, "load_cases", lambda _path: [case])
     monkeypatch.setattr(cli.contract, "load_suites", lambda _path: {"gate": suite})
     monkeypatch.setattr(cli, "_gather_contract_errors", lambda *_a: ([], []))
-    monkeypatch.setattr(cli.subprocess, "run", _run)
+    _patch_worker_popen(monkeypatch, _run)
 
     assert cli._run_parent_bundle(args) == 2
     raw = out_json.read_text(encoding="utf-8")
@@ -1101,7 +1173,7 @@ def test_parent_worker_infrastructure_failures_always_write_safe_evidence(
     monkeypatch.setattr(cli.contract, "load_cases", lambda _path: [case])
     monkeypatch.setattr(cli.contract, "load_suites", lambda _path: {"gate": suite})
     monkeypatch.setattr(cli, "_gather_contract_errors", lambda *_a: ([], []))
-    monkeypatch.setattr(cli.subprocess, "run", _run)
+    _patch_worker_popen(monkeypatch, _run)
 
     assert cli._run_parent_bundle(args) == 2
     raw = out_json.read_text(encoding="utf-8")
@@ -1495,7 +1567,16 @@ def _green_result(unit):
 def _trusted_worker_artifact(spec, run_id, result_id="only.one@l1", *,
                              bundle_id="bundle-a", exit_code=0,
                              infrastructure_errors=None, trace_errors=None,
-                             retrieval_degraded=0, provider_drift=False):
+                             retrieval_degraded=0, provider_drift=False,
+                             launched_pid=None):
+    if launched_pid is None:
+        launched_pid = {
+            "primary": 1001,
+            "corroboration-l1": 1002,
+            "corroboration-l2": 1003,
+        }.get(spec.role, 1099)
+    retrieval_calls = max(1, spec.samples_per_unit)
+    embedding_model = "text-embedding-v4"
     layer = result_id.rsplit("@", 1)[-1]
     repetitions = [{
         "process_run_id": run_id,
@@ -1515,7 +1596,7 @@ def _trusted_worker_artifact(spec, run_id, result_id="only.one@l1", *,
         "meta": {
             "process_sample": {
                 "bundle_id": bundle_id, "role": spec.role, "layer": spec.layer,
-                "process_run_id": run_id, "pid": 1001,
+                "process_run_id": run_id, "pid": launched_pid,
             },
             "code_sha": "0123456789abcdef", "worktree_clean": True,
             "suite": "gate", "provider_model": "mimo:m",
@@ -1525,7 +1606,14 @@ def _trusted_worker_artifact(spec, run_id, result_id="only.one@l1", *,
                 "drift_detected": provider_drift, "restore_errors": [],
             },
             "assets": {"complete": True, "digest": "a" * 64, "file_count": 1},
-            "retrieval_state": "warm", "retrieval_degraded": retrieval_degraded,
+            "retrieval_state": "warm", "retrieval_calls": retrieval_calls,
+            "retrieval_degraded": retrieval_degraded,
+            "embedding_model": embedding_model,
+            "embedding_model_counts": {
+                embedding_model: retrieval_calls - int(bool(retrieval_degraded))
+            },
+            "embedding_unidentified": 0,
+            "embedding_identity_complete": retrieval_degraded == 0,
             "temperature": 0.3,
             "selection_provenance": {"suite": "gate", "digest": "selection"},
             "corpus": {"complete": True, "digest": "corpus"},
@@ -1565,7 +1653,8 @@ def _trusted_worker_artifact(spec, run_id, result_id="only.one@l1", *,
     return cli.process.WorkerArtifact(
         spec=spec, exit_code=exit_code, report=report,
         report_sha256=cli.hashlib.sha256(report_bytes).hexdigest(),
-        report_bytes=report_bytes, assigned_process_run_id=run_id)
+        report_bytes=report_bytes, assigned_process_run_id=run_id,
+        launched_pid=launched_pid)
 
 
 def test_parent_process_summary_is_derived_from_specs_artifacts_and_samples():
@@ -1605,6 +1694,8 @@ def test_parent_process_summary_is_derived_from_specs_artifacts_and_samples():
 
     assert summary["process_policy_complete"] is True
     assert summary["raw_observation_complete"] is True
+    assert summary["embedding_identity_complete"] is True
+    assert summary["embedding_model"] == "text-embedding-v4"
     assert summary["process_sampling"]["bundle_id"] == "bundle-a"
     assert summary["process_sampling"]["required"] == {"l1": 2}
     assert summary["process_sampling"]["observed"] == {"l1": 2}
@@ -1614,6 +1705,8 @@ def test_parent_process_summary_is_derived_from_specs_artifacts_and_samples():
         "primary", "corroboration-l1"]
     assert all(set(row) == {
         "role", "process_run_id", "pid", "layer", "report_sha256", "exit_code",
+        "retrieval_calls", "retrieval_degraded", "embedding_model",
+        "embedding_model_counts", "embedding_unidentified",
     } for row in workers)
     assert all("path" not in key for row in workers for key in row)
 
@@ -1772,9 +1865,35 @@ def _formal_writer_report():
                 for raw_ref in repetition["raw_capability_refs"]),
             request_capability_catalog=_request_catalog(),
             validation_observed=True))
+    results.append(cli.replace(
+        _green_result("formal-l3@l3"),
+        expected={"journeys": ["A1-1"]},
+        actual={"journey_statuses": {"A1-1": "pass"}},
+        admitted_intents=(), actual_intents=(),
+        request_capability_catalog=(),
+        repetitions=({
+            "process_run_id": "run-primary", "sample_index": 0,
+            "passed": True, "signature": "pass", "dangerous": False,
+            "raw_intents": (), "raw_capability_refs": (),
+            "raw_observed": False, "validation_observed": False,
+            "actual_intents": (), "plan_from_fallback": False,
+        },)))
+    embedding_model = "text-embedding-v4"
     meta = {
         "suite": "gate", "layer": "all", "retrieval_state": "warm",
-        "provider_locked": True, "provider_drift": False, "code_sha": "abc1234",
+        "retrieval_calls": 3, "retrieval_degraded": 0,
+        "embedding_model": embedding_model,
+        "embedding_model_counts": {embedding_model: 3},
+        "embedding_unidentified": 0, "embedding_identity_complete": True,
+        "provider_locked": True, "provider_drift": False,
+        "provider_model": "mimo:m",
+        "provider_lock": {
+            "provider": "mimo:m", "locked": True,
+            "drift_detected": False, "drifts": [],
+            "original": "minimax:MiniMax-M3", "target": "mimo:m",
+            "restore": "restored", "restore_errors": [],
+        },
+        "code_sha": "abc1234",
         "worktree_clean": True, "assets_complete": True,
         "infrastructure_errors": [], "selected_statuses": ["stable"],
         "case_set_complete": True, "declared_set_complete": True,
@@ -1782,6 +1901,16 @@ def _formal_writer_report():
         "repeat_override": 0, "coverage_gaps": [], "removed_cases": [],
         "l3_selected": ["A1-1"], "l3_complete": True,
         "l3_evidence_fresh": True, "baseline_regressions": [],
+        "l3_invocation": {
+            "invocation_id": "20260809T000000000000Z-101-abcdef-abc1234",
+            "started_at": "2026-08-09T00:00:00+00:00",
+            "code_sha": "abc1234", "provider_model": "mimo:m",
+            "provider": "mimo", "model": "m",
+            "journey_ids": ["A1-1"], "exit_code": 0,
+            "artifact_root": "C:/tmp/car-agent-l3/invocation-a",
+            "stale_reports_ignored": [], "report_run_ids": ["e2e-run-a"],
+            "fresh": True,
+        },
         "process_bundle_role": "parent", "process_policy_complete": True,
         "raw_observation_complete": True,
         "process_sampling": {
@@ -1791,11 +1920,23 @@ def _formal_writer_report():
             "samples_per_process": {"l1": 3, "l2": 3},
             "workers": [
                 {"role": "primary", "process_run_id": "run-primary", "pid": 101,
-                 "layer": "all", "report_sha256": "a" * 64, "exit_code": 0},
+                 "layer": "all", "report_sha256": "a" * 64, "exit_code": 0,
+                 "retrieval_calls": 3, "retrieval_degraded": 0,
+                 "embedding_model": embedding_model,
+                 "embedding_model_counts": {embedding_model: 3},
+                 "embedding_unidentified": 0},
                 {"role": "corroboration-l1", "process_run_id": "run-l1", "pid": 102,
-                 "layer": "l1", "report_sha256": "b" * 64, "exit_code": 0},
+                 "layer": "l1", "report_sha256": "b" * 64, "exit_code": 0,
+                 "retrieval_calls": 3, "retrieval_degraded": 0,
+                 "embedding_model": embedding_model,
+                 "embedding_model_counts": {embedding_model: 3},
+                 "embedding_unidentified": 0},
                 {"role": "corroboration-l2", "process_run_id": "run-l2", "pid": 103,
-                 "layer": "l2", "report_sha256": "c" * 64, "exit_code": 0},
+                 "layer": "l2", "report_sha256": "c" * 64, "exit_code": 0,
+                 "retrieval_calls": 3, "retrieval_degraded": 0,
+                 "embedding_model": embedding_model,
+                 "embedding_model_counts": {embedding_model: 3},
+                 "embedding_unidentified": 0},
             ],
         },
     }

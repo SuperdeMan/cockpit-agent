@@ -198,7 +198,12 @@ def _report(
                 "exemplars_sha256": "exemplars-sha",
             },
             "retrieval_state": "warm",
+            "retrieval_calls": 3,
             "retrieval_degraded": 0,
+            "embedding_model": "text-embedding-v4",
+            "embedding_model_counts": {"text-embedding-v4": 3},
+            "embedding_unidentified": 0,
+            "embedding_identity_complete": True,
             # Required by the approved future worker-report schema. Task 3 wires
             # it into the real CLI; Task 2a must not weaken bundle validation.
             "temperature": 0.0,
@@ -248,7 +253,13 @@ def _artifact(
         report_sha256=sha256(report_bytes).hexdigest(),
         report_bytes=report_bytes,
         assigned_process_run_id=run_id,
+        launched_pid=pid,
     )
+
+
+def _with_launched_pid(artifact: WorkerArtifact, pid: int) -> WorkerArtifact:
+    """Model the PID observed by the parent without trusting the worker report."""
+    return replace(artifact, launched_pid=pid)
 
 
 def _with_reserialized_report(artifact: WorkerArtifact) -> WorkerArtifact:
@@ -996,6 +1007,83 @@ def test_validate_worker_bundle_binds_report_bytes_to_parsed_report(
     errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
 
     assert any(fragment in error for error in errors), errors
+
+
+def test_validate_worker_bundle_rejects_reused_parent_observed_pid():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _with_launched_pid(
+            _artifact(specs[0], "run-primary", pid=101), 101),
+        _with_launched_pid(
+            _artifact(specs[1], "run-corroboration", pid=101), 101),
+    ]
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
+
+    assert any("launched_pid" in error and "duplicate" in error
+               for error in errors), errors
+
+
+def test_validate_worker_bundle_binds_reported_pid_to_parent_observation():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _with_launched_pid(
+            _artifact(specs[0], "run-primary", pid=101), 101),
+        _with_launched_pid(
+            _artifact(specs[1], "run-corroboration", pid=102), 999),
+    ]
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
+
+    assert any("process_sample.pid" in error and "launched_pid" in error
+               for error in errors), errors
+
+
+def test_validate_worker_bundle_rejects_reused_worker_report_digest():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    primary = _artifact(specs[0], "run-primary", pid=101)
+    corroboration = _artifact(specs[1], "run-corroboration", pid=102)
+    artifacts = [
+        _with_launched_pid(primary, 101),
+        _with_launched_pid(
+            replace(
+                corroboration,
+                report_sha256=primary.report_sha256,
+                report_bytes=primary.report_bytes,
+            ),
+            102,
+        ),
+    ]
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
+
+    assert any("report_sha256" in error and "duplicate" in error
+               for error in errors), errors
+
+
+def test_validate_worker_bundle_rejects_embedding_model_drift():
+    specs = worker_specs("l1", "gate", FORMAL_SUITE)
+    artifacts = [
+        _artifact(specs[0], "run-primary", pid=101),
+        _artifact(specs[1], "run-corroboration", pid=102),
+    ]
+    for artifact in artifacts:
+        artifact.report["meta"].update({
+            "retrieval_calls": 3,
+            "embedding_model": "text-embedding-v4",
+            "embedding_model_counts": {"text-embedding-v4": 3},
+            "embedding_unidentified": 0,
+            "embedding_identity_complete": True,
+        })
+    artifacts[1].report["meta"].update({
+        "embedding_model": "text-embedding-v5",
+        "embedding_model_counts": {"text-embedding-v5": 3},
+    })
+    artifacts = [_with_reserialized_report(artifact) for artifact in artifacts]
+
+    errors = validate_worker_bundle(specs, artifacts, BUNDLE_ID, EXPECTED_L1)
+
+    assert any("embedding_model" in error for error in errors), errors
 
 
 def test_validate_worker_bundle_binds_every_repetition_to_its_worker_run_id():

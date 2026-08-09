@@ -73,6 +73,8 @@ FORMAL_WORKER_LAYOUT = {
 }
 _FORMAL_WORKER_FIELDS = frozenset({
     "role", "process_run_id", "pid", "layer", "report_sha256", "exit_code",
+    "retrieval_calls", "retrieval_degraded", "embedding_model",
+    "embedding_model_counts", "embedding_unidentified",
 })
 
 
@@ -147,6 +149,28 @@ def _exact_process_counts(value: Any, expected: Mapping[str, int]) -> bool:
         and all(type(value[layer]) is int and value[layer] == count
                 for layer, count in expected.items())
     )
+
+
+def _formal_worker_embedding_identity(worker: Mapping[str, Any]) -> tuple[bool, str]:
+    calls = worker.get("retrieval_calls")
+    degraded = worker.get("retrieval_degraded")
+    unidentified = worker.get("embedding_unidentified")
+    model = worker.get("embedding_model")
+    counts = worker.get("embedding_model_counts")
+    valid = (
+        type(calls) is int
+        and calls > 0
+        and (degraded is False or (type(degraded) is int and degraded == 0))
+        and type(unidentified) is int
+        and unidentified == 0
+        and isinstance(model, str)
+        and bool(model.strip())
+        and isinstance(counts, Mapping)
+        and set(counts) == {model}
+        and type(counts.get(model)) is int
+        and counts.get(model) == calls
+    )
+    return valid, model if valid else ""
 
 
 @dataclass
@@ -459,6 +483,9 @@ def validate_formal_process_evidence(
         workers = ()
         process_complete = False
     seen_runs: set[str] = set()
+    seen_pids: set[int] = set()
+    seen_digests: set[str] = set()
+    embedding_models: set[str] = set()
     for worker in workers:
         if not isinstance(worker, Mapping) or set(worker) != _FORMAL_WORKER_FIELDS:
             process_complete = False
@@ -482,12 +509,29 @@ def validate_formal_process_evidence(
                 runs_by_role[role] = run_id
         if type(pid) is not int or pid <= 0:
             process_complete = False
+        elif pid in seen_pids:
+            process_complete = False
+        else:
+            seen_pids.add(pid)
         if type(exit_code) is not int or exit_code not in {0, 1}:
             process_complete = False
         if not isinstance(digest, str) or len(digest) != 64 \
                 or any(char not in "0123456789abcdefABCDEF" for char in digest):
             process_complete = False
+        else:
+            normalized_digest = digest.lower()
+            if normalized_digest in seen_digests:
+                process_complete = False
+            else:
+                seen_digests.add(normalized_digest)
+        embedding_valid, embedding_model = _formal_worker_embedding_identity(worker)
+        if not embedding_valid:
+            process_complete = False
+        else:
+            embedding_models.add(embedding_model)
     if set(runs_by_role) != set(FORMAL_WORKER_LAYOUT):
+        process_complete = False
+    if len(embedding_models) != 1:
         process_complete = False
 
     results = report.get("results")
@@ -684,6 +728,173 @@ def validate_formal_process_evidence(
     )
 
 
+def _nonempty_string_sequence(value: Any) -> tuple[str, ...] | None:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        return None
+    normalized = tuple(value)
+    if not normalized or any(
+        not isinstance(item, str) or not item.strip() for item in normalized
+    ) or len(set(normalized)) != len(normalized):
+        return None
+    return normalized
+
+
+def _formal_provider_identity_complete(
+    report: Mapping[str, Any], meta: Mapping[str, Any]
+) -> bool:
+    provider_model = meta.get("provider_model")
+    if not isinstance(provider_model, str) or ":" not in provider_model:
+        return False
+    provider, _, model = provider_model.partition(":")
+    if not provider or not model:
+        return False
+    lock = meta.get("provider_lock")
+    if not isinstance(lock, Mapping):
+        return False
+    drifts = lock.get("drifts")
+    restore_errors = lock.get("restore_errors")
+    if (
+        meta.get("provider_locked") is not True
+        or meta.get("provider_drift") is not False
+        or lock.get("locked") is not True
+        or lock.get("drift_detected") is not False
+        or isinstance(drifts, (str, bytes))
+        or not isinstance(drifts, Sequence)
+        or bool(drifts)
+        or lock.get("provider") != provider_model
+        or lock.get("target") != provider_model
+        or not isinstance(lock.get("original"), str)
+        or not lock.get("original", "").strip()
+        or lock.get("restore") not in {"restored", "noop"}
+        or isinstance(restore_errors, (str, bytes))
+        or not isinstance(restore_errors, Sequence)
+        or bool(restore_errors)
+    ):
+        return False
+    results = report.get("results")
+    if not isinstance(results, Mapping):
+        return False
+    live_rows = [
+        row for row in results.values()
+        if isinstance(row, Mapping) and row.get("layer") in _LIVE_LAYERS
+    ]
+    return bool(live_rows) and all(
+        row.get("provider_model") == provider_model for row in live_rows
+    )
+
+
+def _formal_embedding_identity_complete(
+    report: Mapping[str, Any], meta: Mapping[str, Any]
+) -> bool:
+    del report  # reserved for future per-result retrieval evidence
+    model = meta.get("embedding_model")
+    if (
+        meta.get("embedding_identity_complete") is not True
+        or not isinstance(model, str)
+        or not model.strip()
+    ):
+        return False
+    sampling = meta.get("process_sampling")
+    workers = sampling.get("workers") if isinstance(sampling, Mapping) else None
+    if (
+        isinstance(workers, (str, bytes))
+        or not isinstance(workers, Sequence)
+        or len(workers) != len(FORMAL_WORKER_LAYOUT)
+    ):
+        return False
+    observed: set[str] = set()
+    for worker in workers:
+        if not isinstance(worker, Mapping):
+            return False
+        valid, worker_model = _formal_worker_embedding_identity(worker)
+        if not valid:
+            return False
+        observed.add(worker_model)
+    return observed == {model}
+
+
+def _formal_l3_invocation_complete(
+    report: Mapping[str, Any], meta: Mapping[str, Any]
+) -> bool:
+    selected = _nonempty_string_sequence(meta.get("l3_selected"))
+    invocation = meta.get("l3_invocation")
+    if selected is None or not isinstance(invocation, Mapping):
+        return False
+    code_sha = meta.get("code_sha")
+    provider_model = meta.get("provider_model")
+    journey_ids = _nonempty_string_sequence(invocation.get("journey_ids"))
+    report_run_ids = _nonempty_string_sequence(invocation.get("report_run_ids"))
+    stale_reports = invocation.get("stale_reports_ignored")
+    provider = invocation.get("provider")
+    model = invocation.get("model")
+    invocation_id = invocation.get("invocation_id")
+    if (
+        meta.get("l3_complete") is not True
+        or meta.get("l3_evidence_fresh") is not True
+        or invocation.get("fresh") is not True
+        or invocation.get("exit_code") != 0
+        or invocation.get("code_sha") != code_sha
+        or invocation.get("provider_model") != provider_model
+        or not isinstance(provider, str)
+        or not isinstance(model, str)
+        or f"{provider}:{model}" != provider_model
+        or journey_ids != selected
+        or report_run_ids is None
+        or len(report_run_ids) != 1
+        or isinstance(stale_reports, (str, bytes))
+        or not isinstance(stale_reports, Sequence)
+        or bool(stale_reports)
+        or not isinstance(invocation_id, str)
+        or not invocation_id.strip()
+        or not isinstance(invocation.get("started_at"), str)
+        or not invocation.get("started_at", "").strip()
+        or not isinstance(invocation.get("artifact_root"), str)
+        or not invocation.get("artifact_root", "").strip()
+    ):
+        return False
+
+    results = report.get("results")
+    if not isinstance(results, Mapping):
+        return False
+    l3_rows = [
+        row for row in results.values()
+        if isinstance(row, Mapping) and row.get("layer") == "l3"
+    ]
+    if not l3_rows:
+        return False
+    observed: dict[str, str] = {}
+    expected: set[str] = set()
+    for row in l3_rows:
+        if (
+            row.get("passed") is not True
+            or row.get("repeat_status") != "pass"
+            or row.get("provider_model") != provider_model
+        ):
+            return False
+        actual = row.get("actual")
+        statuses = actual.get("journey_statuses") \
+            if isinstance(actual, Mapping) else None
+        if not isinstance(statuses, Mapping):
+            return False
+        for journey_id, status in statuses.items():
+            if not isinstance(journey_id, str) or not isinstance(status, str):
+                return False
+            if journey_id in observed and observed[journey_id] != status:
+                return False
+            observed[journey_id] = status
+        expected_row = row.get("expected")
+        row_journeys = _nonempty_string_sequence(
+            expected_row.get("journeys") if isinstance(expected_row, Mapping) else None
+        )
+        if row_journeys is None:
+            return False
+        expected.update(row_journeys)
+    return (
+        set(selected) == set(observed) == expected
+        and all(status == "pass" for status in observed.values())
+    )
+
+
 def baseline_eligibility(report: dict[str, Any]) -> BaselineEligibility:
     """正式 baseline 的硬闸。失败原因全部列出，不在第一条就短路。
 
@@ -728,6 +939,8 @@ def baseline_eligibility(report: dict[str, Any]) -> BaselineEligibility:
         reasons.append("provider_not_locked")
     if meta.get("provider_drift"):
         reasons.append("provider_drift")
+    if not _formal_provider_identity_complete(report, meta):
+        reasons.append("provider_identity_incomplete")
     if not meta.get("code_sha"):
         reasons.append("unknown_code_sha")
     if not meta.get("worktree_clean"):
@@ -752,10 +965,14 @@ def baseline_eligibility(report: dict[str, Any]) -> BaselineEligibility:
         reasons.append("l3_incomplete")
     if meta.get("l3_evidence_fresh") is not True:
         reasons.append("l3_evidence_not_fresh")
+    if not _formal_l3_invocation_complete(report, meta):
+        reasons.append("l3_invocation_invalid")
     if meta.get("baseline_regressions"):
         reasons.append("baseline_regressions")
     if meta.get("retrieval_degraded"):
         reasons.append("retrieval_degraded_mid_run")
+    if not _formal_embedding_identity_complete(report, meta):
+        reasons.append("embedding_identity_incomplete")
     # **规格 §13.2：gate 的能力幻觉必须为 0。** 这条阈值原来根本没进闸——合成报告的
     # overall / repeat / L3 / 完整性全绿、幻觉率 1/1，资格结果照样是 eligible=True。
     # 分母为 0（这一跑没有 raw 通道）不放行：那是「没量过」，不是「量到 0」。

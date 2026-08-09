@@ -1,5 +1,6 @@
 """对抗报告指标、分维度、baseline 资格与渲染的回归测试。"""
 from copy import deepcopy
+from dataclasses import replace
 import sys
 from pathlib import Path
 
@@ -40,8 +41,25 @@ def _meta(**changes):
         "suite": "gate",
         "layer": "all",
         "retrieval_state": "warm",
+        "retrieval_calls": 3,
+        "retrieval_degraded": 0,
+        "embedding_model": "text-embedding-v4",
+        "embedding_model_counts": {"text-embedding-v4": 3},
+        "embedding_unidentified": 0,
+        "embedding_identity_complete": True,
         "provider_locked": True,
         "provider_drift": False,
+        "provider_model": "mimo:model-a",
+        "provider_lock": {
+            "provider": "mimo:model-a",
+            "locked": True,
+            "drift_detected": False,
+            "drifts": [],
+            "original": "minimax:MiniMax-M3",
+            "target": "mimo:model-a",
+            "restore": "restored",
+            "restore_errors": [],
+        },
         "code_sha": "abc1234",
         "worktree_clean": True,
         "assets_complete": True,
@@ -60,6 +78,20 @@ def _meta(**changes):
         "l3_selected": ["A1-1"],
         "l3_complete": True,
         "l3_evidence_fresh": True,
+        "l3_invocation": {
+            "invocation_id": "20260809T000000000000Z-101-abcdef-abc1234",
+            "started_at": "2026-08-09T00:00:00+00:00",
+            "code_sha": "abc1234",
+            "provider_model": "mimo:model-a",
+            "provider": "mimo",
+            "model": "model-a",
+            "journey_ids": ["A1-1"],
+            "exit_code": 0,
+            "artifact_root": "C:/tmp/car-agent-l3/invocation-a",
+            "stale_reports_ignored": [],
+            "report_run_ids": ["e2e-run-a"],
+            "fresh": True,
+        },
         "baseline_regressions": [],
     }
     meta.update(changes)
@@ -350,6 +382,121 @@ def test_formal_process_matrix_rejects_unknown_duplicate_runs_and_bad_samples():
         assert reasons.count("raw_observation_incomplete") == 1
 
 
+@pytest.mark.parametrize("field", ["pid", "report_sha256"])
+def test_formal_process_matrix_rejects_reused_worker_identity(field):
+    report = _formal_report()
+    workers = report["meta"]["process_sampling"]["workers"]
+    workers[1][field] = workers[0][field]
+
+    reasons = baseline_eligibility(report).reasons
+
+    assert reasons.count("process_policy_incomplete") == 1
+
+
+def test_baseline_recomputes_nested_provider_lock_identity():
+    mutations = []
+
+    wrong_model = _formal_report()
+    wrong_model["meta"]["provider_model"] = "other:other"
+    mutations.append(wrong_model)
+
+    missing_lock = _formal_report()
+    missing_lock["meta"].pop("provider_lock")
+    mutations.append(missing_lock)
+
+    unlocked = _formal_report()
+    unlocked["meta"]["provider_lock"]["locked"] = False
+    mutations.append(unlocked)
+
+    drifted = _formal_report()
+    drifted["meta"]["provider_lock"]["drift_detected"] = True
+    drifted["meta"]["provider_lock"]["drifts"] = [
+        {"at": "worker", "from": "mimo:model-a", "to": "other:other"}
+    ]
+    mutations.append(drifted)
+
+    bad_restore = _formal_report()
+    bad_restore["meta"]["provider_lock"]["restore"] = "failed"
+    bad_restore["meta"]["provider_lock"]["restore_errors"] = [
+        "restore_post_failed"
+    ]
+    mutations.append(bad_restore)
+
+    for report in mutations:
+        reasons = baseline_eligibility(report).reasons
+        assert reasons.count("provider_identity_incomplete") == 1, reasons
+
+
+def test_baseline_recomputes_l3_invocation_identity_and_result_evidence():
+    mutations = []
+
+    missing = _formal_report()
+    missing["meta"].pop("l3_invocation")
+    mutations.append(missing)
+
+    wrong_sha = _formal_report()
+    wrong_sha["meta"]["l3_invocation"]["code_sha"] = "deadbee"
+    mutations.append(wrong_sha)
+
+    wrong_provider = _formal_report()
+    wrong_provider["meta"]["l3_invocation"]["provider_model"] = "other:other"
+    mutations.append(wrong_provider)
+
+    wrong_selection = _formal_report()
+    wrong_selection["meta"]["l3_invocation"]["journey_ids"] = ["A9-9"]
+    mutations.append(wrong_selection)
+
+    empty_run_ids = _formal_report()
+    empty_run_ids["meta"]["l3_invocation"]["report_run_ids"] = []
+    mutations.append(empty_run_ids)
+
+    bad_exit = _formal_report()
+    bad_exit["meta"]["l3_invocation"]["exit_code"] = 2
+    mutations.append(bad_exit)
+
+    stale = _formal_report()
+    stale["meta"]["l3_invocation"]["fresh"] = False
+    mutations.append(stale)
+
+    missing_result = _formal_report()
+    missing_result["results"].pop("formal-l3@l3")
+    mutations.append(missing_result)
+
+    for report in mutations:
+        reasons = baseline_eligibility(report).reasons
+        assert reasons.count("l3_invocation_invalid") == 1, reasons
+
+
+def test_baseline_rejects_missing_or_drifted_embedding_identity():
+    mutations = []
+
+    missing = _formal_report()
+    missing["meta"].pop("embedding_model")
+    mutations.append(missing)
+
+    drifted_worker = _formal_report()
+    worker = drifted_worker["meta"]["process_sampling"]["workers"][1]
+    worker["embedding_model"] = "text-embedding-v5"
+    worker["embedding_model_counts"] = {"text-embedding-v5": 3}
+    mutations.append(drifted_worker)
+
+    unidentified = _formal_report()
+    worker = unidentified["meta"]["process_sampling"]["workers"][2]
+    worker["embedding_model"] = ""
+    worker["embedding_model_counts"] = {}
+    worker["embedding_unidentified"] = 3
+    mutations.append(unidentified)
+
+    bad_counts = _formal_report()
+    worker = bad_counts["meta"]["process_sampling"]["workers"][0]
+    worker["embedding_model_counts"] = {"text-embedding-v4": 2}
+    mutations.append(bad_counts)
+
+    for report in mutations:
+        reasons = baseline_eligibility(report).reasons
+        assert reasons.count("embedding_identity_incomplete") == 1, reasons
+
+
 def test_formal_raw_matrix_rejects_missing_or_malformed_sample_fields():
     mutations = []
     for field, value, delete in (
@@ -522,7 +669,7 @@ def test_formal_semantics_are_recomputed_from_repetitions_not_green_caches():
         (fallback, "unexpected_fallback_plans"),
     ):
         assert report["overall"]["passed"] == report["overall"]["total"]
-        assert report["repeat_statuses"] == {"pass": 2}
+        assert report["repeat_statuses"] == {"pass": 3}
         assert baseline_eligibility(report).reasons.count(reason) == 1
 
 
@@ -586,20 +733,60 @@ def _formal_meta(**changes):
         "samples_per_process": {"l1": 3, "l2": 3},
         "workers": [
             {"role": "primary", "process_run_id": "run-primary", "pid": 101,
-             "layer": "all", "report_sha256": "a" * 64, "exit_code": 0},
+             "layer": "all", "report_sha256": "a" * 64, "exit_code": 0,
+             "retrieval_calls": 3, "retrieval_degraded": 0,
+             "embedding_model": "text-embedding-v4",
+             "embedding_model_counts": {"text-embedding-v4": 3},
+             "embedding_unidentified": 0},
             {"role": "corroboration-l1", "process_run_id": "run-l1", "pid": 102,
-             "layer": "l1", "report_sha256": "b" * 64, "exit_code": 0},
+             "layer": "l1", "report_sha256": "b" * 64, "exit_code": 0,
+             "retrieval_calls": 3, "retrieval_degraded": 0,
+             "embedding_model": "text-embedding-v4",
+             "embedding_model_counts": {"text-embedding-v4": 3},
+             "embedding_unidentified": 0},
             {"role": "corroboration-l2", "process_run_id": "run-l2", "pid": 103,
-             "layer": "l2", "report_sha256": "c" * 64, "exit_code": 1},
+             "layer": "l2", "report_sha256": "c" * 64, "exit_code": 1,
+             "retrieval_calls": 3, "retrieval_degraded": 0,
+             "embedding_model": "text-embedding-v4",
+             "embedding_model_counts": {"text-embedding-v4": 3},
+             "embedding_unidentified": 0},
         ],
     }
     return _meta(process_sampling=sampling, **changes)
+
+
+def _formal_l3_result():
+    l3 = _result(
+        "formal-l3", layer="l3", admitted_intents=(), actual_intents=(),
+        expected_intents=(), raw_intents=(), raw_observed=False,
+        repetitions=({
+            "process_run_id": "run-primary",
+            "sample_index": 0,
+            "passed": True,
+            "signature": "pass",
+            "dangerous": False,
+            "raw_intents": (),
+            "raw_capability_refs": (),
+            "raw_observed": False,
+            "validation_observed": False,
+            "actual_intents": (),
+            "plan_from_fallback": False,
+        },),
+    )
+    l3 = replace(
+        l3,
+        expected={"journeys": ["A1-1"]},
+        actual={"journey_statuses": {"A1-1": "pass"}},
+        request_capability_catalog=(),
+    )
+    return l3
 
 
 def _formal_report(**meta_changes):
     report = build_adversarial_report([
         _result("formal-l1", layer="l1", repetitions=_formal_repetitions("l1")),
         _result("formal-l2", layer="l2", repetitions=_formal_repetitions("l2")),
+        _formal_l3_result(),
     ], _formal_meta(**meta_changes))
     for result in report["results"].values():
         result["request_capability_catalog"] = _request_catalog()
@@ -919,9 +1106,10 @@ def test_a_declared_fallback_is_not_held_against_the_baseline():
     report = build_adversarial_report([
         declared,
         _result("formal-l2", layer="l2", repetitions=_formal_repetitions("l2")),
+        _formal_l3_result(),
     ], _formal_meta())
     assert report["fallback_plans"] == ["cc.missing.parking@l1"], "指标如实计数"
-    assert report["metrics"]["fallback_plan_rate"]["value"] == 0.5
+    assert report["metrics"]["fallback_plan_rate"]["value"] == pytest.approx(1 / 3)
     assert report["unexpected_fallback_plans"] == []
     assert baseline_eligibility(report).reasons == ()
 

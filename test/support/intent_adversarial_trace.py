@@ -224,6 +224,24 @@ class RetrievalProbe:
     """
     calls: int = 0
     degraded: int = 0
+    model_counts: dict[str, int] = field(default_factory=dict)
+    unidentified: int = 0
+
+    @property
+    def embedding_model(self) -> str:
+        if len(self.model_counts) != 1:
+            return ""
+        return next(iter(self.model_counts))
+
+    @property
+    def identity_complete(self) -> bool:
+        return (
+            self.calls > 0
+            and self.degraded == 0
+            and self.unidentified == 0
+            and len(self.model_counts) == 1
+            and sum(self.model_counts.values()) == self.calls
+        )
 
     def as_dict(self) -> dict[str, int]:
         return {"calls": self.calls, "degraded": self.degraded}
@@ -258,6 +276,16 @@ def probe_retrieval():
             probe.calls += 1
             if out is None:
                 probe.degraded += 1
+            else:
+                model = out[1] if (
+                    isinstance(out, tuple) and len(out) == 2
+                    and isinstance(out[1], str)
+                ) else ""
+                model = model.strip()
+                if model:
+                    probe.model_counts[model] = probe.model_counts.get(model, 0) + 1
+                else:
+                    probe.unidentified += 1
         return out
 
     embedding.embed_texts = counted
