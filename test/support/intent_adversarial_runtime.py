@@ -23,6 +23,47 @@ for _p in (str(_ROOT), str(_ROOT / "gen" / "python"), str(_ROOT / "orchestrator"
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+_EDGE_SERVER_PATH = (_ROOT / "orchestrator" / "edge" / "server.py").resolve()
+_EDGE_SERVER_ALIAS = "_intent_adversarial_edge_server"
+
+
+def edge_server_module():
+    """按**绝对路径**认端侧 servicer 模块，不按裸名 `server` 认。
+
+    `server` 是 7 个服务共用的顶层模块名（llm-gateway / memory / registry /
+    payment-gateway / observability / orchestrator.cloud / orchestrator.edge）。
+    `from server import EdgeOrchestratorServicer` 谁先把自己那层目录插到
+    `sys.path[0]` 谁就赢，而目录级 `pytest test/` 下这个顺序由**收集顺序**决定：
+    本模块在收集 `test_intent_adversarial_runtime.py` 时把 `orchestrator/edge`
+    插到 0，随后收集 `test_llm_cache.py` 又把 `llm-gateway` 插到 0 顶掉它，
+    等到用例真正运行、执行这个**惰性** import 时，`server` 已经解析成
+    llm-gateway 的那份 —— 15 条 L0/L2 用例因此 ImportError。
+
+    判据：**一个被多方声明的名字，不能靠加载顺序来消歧。** 这里认路径。
+    已经加载好的那份若确实是端侧的（根跑常态），直接复用，不重复初始化。
+    """
+    import importlib.util
+
+    for key in ("server", _EDGE_SERVER_ALIAS):
+        cached = sys.modules.get(key)
+        cached_file = getattr(cached, "__file__", None)
+        if cached_file and Path(cached_file).resolve() == _EDGE_SERVER_PATH:
+            return cached
+
+    spec = importlib.util.spec_from_file_location(
+        _EDGE_SERVER_ALIAS, _EDGE_SERVER_PATH)
+    if spec is None or spec.loader is None:      # pragma: no cover - 路径恒存在
+        raise ImportError(f"cannot load edge servicer from {_EDGE_SERVER_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    # 先登记再执行：server.py 内部若有自引用 import 才不会被再执行一遍。
+    sys.modules[_EDGE_SERVER_ALIAS] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(_EDGE_SERVER_ALIAS, None)
+        raise
+    return module
+
 
 # ── 通用小工具 ─────────────────────────────────────────────────────────────
 
@@ -88,7 +129,7 @@ class EdgeSession:
 
     def __init__(self, session_id: str = "intent-adversarial",
                  *, cloud_need_confirm: bool = False):
-        from server import EdgeOrchestratorServicer
+        EdgeOrchestratorServicer = edge_server_module().EdgeOrchestratorServicer
         self.session_id = session_id
         self.cloud_need_confirm = cloud_need_confirm
         self.srv = EdgeOrchestratorServicer()
@@ -870,7 +911,7 @@ class FullEntrySession:
     """
 
     def __init__(self, engine_harness: EngineHarness, *, session_id: str = "adv-1"):
-        from server import EdgeOrchestratorServicer
+        EdgeOrchestratorServicer = edge_server_module().EdgeOrchestratorServicer
         self.harness = engine_harness
         self.session_id = session_id
         self.srv = EdgeOrchestratorServicer()

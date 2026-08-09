@@ -11,9 +11,58 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import eval_live  # noqa: E402
 from support.intent_adversarial_runtime import (  # noqa: E402
-    RepeatOutcome, classify_repeats, run_catalog_l0, run_edge_turn,
-    run_hint_turn, run_retrieval_turn, temporary_env,
+    RepeatOutcome, classify_repeats, edge_server_module, run_catalog_l0,
+    run_edge_turn, run_hint_turn, run_retrieval_turn, temporary_env,
 )
+
+
+# ── L0-0：模块解析（先于任何 L0 断言，它塌了后面全是 ImportError）───────────
+
+
+def test_edge_servicer_resolves_by_path_not_by_sys_path_order():
+    """`server` 被 7 个服务共用；解析必须认路径，不能认加载顺序。
+
+    实测形态：目录级 `pytest test/` 收集本文件时把 `orchestrator/edge` 插到
+    `sys.path[0]`，随后收集 `test_llm_cache.py` 又把 `llm-gateway` 插到 0 顶掉，
+    等用例真正跑到惰性 `from server import EdgeOrchestratorServicer` 时，
+    `server` 已经是 llm-gateway 的那份 —— 15 条 L0/L2 用例 ImportError。
+
+    这里直接把污染态造出来：llm-gateway 排在 `orchestrator/edge` 前面。
+    """
+    import importlib.util
+    import types
+
+    root = Path(__file__).resolve().parent.parent
+    gateway_server = root / "llm-gateway" / "server.py"
+    edge_server = root / "orchestrator" / "edge" / "server.py"
+    assert gateway_server.is_file() and edge_server.is_file(), \
+        "两份 server.py 都必须存在，否则这条断言在空跑"
+
+    saved_path, saved_server = list(sys.path), sys.modules.get("server")
+    try:
+        sys.path[:] = [str(root / "llm-gateway")] + \
+            [p for p in sys.path if p != str(root / "llm-gateway")]
+        sys.modules.pop("server", None)
+        # ① 污染是真的：裸名 `server` 此刻确实指向 llm-gateway。
+        spec = importlib.util.find_spec("server")
+        assert spec is not None and Path(spec.origin).resolve() == \
+            gateway_server.resolve(), "污染没造出来，下面两条就是空跑"
+        # ② 连「已经被错误缓存」都要能绕开——不执行 llm-gateway 代码，只放替身。
+        decoy = types.ModuleType("server")
+        decoy.__file__ = str(gateway_server)
+        sys.modules["server"] = decoy
+
+        module = edge_server_module()
+        assert Path(module.__file__).resolve() == edge_server.resolve()
+        assert hasattr(module, "EdgeOrchestratorServicer")
+        # 端到端也要成立：解析对了但构造不出 servicer 等于没修。
+        assert run_edge_turn("打开空调").state_delta.get("hvac_on") is True
+    finally:
+        sys.path[:] = saved_path
+        if saved_server is not None:
+            sys.modules["server"] = saved_server
+        else:
+            sys.modules.pop("server", None)
 
 
 # ── L0-A：Edge ingress ─────────────────────────────────────────────────────
