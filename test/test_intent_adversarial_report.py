@@ -371,6 +371,16 @@ def test_baseline_accepts_a_fully_clean_gate_run():
     assert eligibility.reasons == ()
 
 
+def test_baseline_accepts_runner_temp_suffix_bound_to_the_same_l3_run():
+    report = _formal_report()
+    evidence = report["meta"]["l3_invocation"]["report_evidence"]
+    evidence["relative_path"] = (
+        "e2e-run-a-abcd1234/e2e_journeys/artifacts/journeys_report.json"
+    )
+
+    assert baseline_eligibility(report).reasons == ()
+
+
 def test_complete_flags_cannot_replace_formal_process_sampling_evidence():
     mutations = []
     missing_sampling = _formal_report()

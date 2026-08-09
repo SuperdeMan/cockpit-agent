@@ -900,6 +900,17 @@ def _formal_l3_invocation_complete(
     relative_path_value = evidence.get("relative_path") \
         if isinstance(evidence, Mapping) else None
     relative_path = PurePosixPath(str(relative_path_value or "").replace("\\", "/"))
+    relative_run_dir = relative_path.parts[0] if relative_path.parts else ""
+    run_path_bound = bool(
+        report_run_ids
+        and (
+            relative_run_dir == report_run_ids[0]
+            or re.fullmatch(
+                rf"{re.escape(report_run_ids[0])}-[a-z0-9_]{{8}}",
+                relative_run_dir,
+            )
+        )
+    )
     try:
         report_generated_at = datetime.fromisoformat(
             str(evidence.get("generated_at") or "").replace("Z", "+00:00"))
@@ -944,7 +955,7 @@ def _formal_l3_invocation_complete(
         or relative_path.is_absolute()
         or ".." in relative_path.parts
         or relative_path.name != "journeys_report.json"
-        or relative_path.parts[:1] != (report_run_ids[0],)
+        or not run_path_bound
         or relative_path.parts[-3:] != (
             "e2e_journeys", "artifacts", "journeys_report.json")
         or not isinstance(evidence_lock, Mapping)
