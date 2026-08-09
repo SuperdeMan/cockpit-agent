@@ -208,7 +208,7 @@ _NO_CLARIFY_GOAL_RE = re.compile(
 _OBJECT_RECAST_GOAL_RE = re.compile(r"(?:解析|识别|理解)(?:为|成)")
 _OBJECT_WRAPPER_GOAL_RE = re.compile(r"(?:作为|当作)")
 _MULTI_ACTION_CONNECTOR_RE = re.compile(
-    r".{1,120}?(?:再|然后|接着|随后|顺便)"
+    r".{1,120}?(?:再|然后|接着|随后|顺便|沿途)"
 )
 _NEGATED_SEQUENCE_HEAD_RE = re.compile(
     r"(?:先|首先)(?:请)?(?:暂时)?(?:别|不要|不用|不必|不)"
@@ -362,11 +362,15 @@ def _bare_object_plan_invents_action(plan: Plan | None, text: str) -> bool:
 
 def _simple_goal_omits_multi_action_step(
         wire, plan: Plan | None, text: str = "") -> bool:
-    """Detect a self-contradictory multi-action plan without domain vocabulary.
+    """Request one contract recheck for a single-step multi-action plan.
 
-    The planner has already classified the plan as simple, so both positive
-    clauses must be present now. Adaptive/conditional plans intentionally defer
-    a branch; a negated first clause intentionally omits that action as well.
+    The planner has classified the plan as simple, so each affirmative clause
+    must either have its own step or be covered by the selected capability's
+    declared contract. ``heavy`` only says that an Agent owns a complex internal
+    workflow; it does not prove that the Agent owns a separate user action. The
+    second attempt may still keep one heavy step after making that contract check.
+    Adaptive/conditional plans intentionally defer a branch, and a negated first
+    clause intentionally omits that action.
     """
     if not isinstance(wire, dict) or plan is None:
         return False
@@ -376,10 +380,6 @@ def _simple_goal_omits_multi_action_step(
     return bool(
         plan.complexity == "simple"
         and len(plan.steps) < 2
-        # A heavy planning capability may intentionally encapsulate the whole
-        # sequence behind one Agent contract (route planning, research, etc.).
-        # Splitting it here would duplicate work the capability already owns.
-        and not any(bool(step.heavy) for step in plan.steps)
         and _MULTI_ACTION_CONNECTOR_RE.search(semantic_text)
         and not _DEFERRED_CONDITION_RE.search(semantic_text)
         and not _NEGATED_SEQUENCE_HEAD_RE.search(utterance)
@@ -1241,13 +1241,15 @@ class PlanBuilder:
             if (not semantic_guard_retry and attempt == 0
                     and _simple_goal_omits_multi_action_step(data, parsed, text)):
                 logger.info(
-                    "Planner simple goal declares a fixed sequence but omits a step; retrying")
+                    "Planner simple request may omit an explicit action; retrying")
                 parsed = None
                 correction = (
-                    "\n\n校验反馈：上一版 goal 明确声明了固定顺序，但 simple 计划只输出了"
-                    "一个 step，目标与计划不完整。请逐项核对 goal 中『先/再/然后/接着/随后』"
-                    "连接的肯定动作，为每个动作补齐 step，并按真实数据依赖设置 depends_on "
-                    "与 slot_refs；不要增加 goal 未声明的动作。"
+                    "\n\n校验反馈：用户原话包含多个肯定动作，但上一版 simple 计划只输出了"
+                    "一个 step。请逐项对照本轮 capability description/contract 复核覆盖面；"
+                    "heavy=true 只表示该能力内部流程复杂，不代表它自动承接原话里的其他"
+                    "显式动作。如果单个能力的声明确实完整承接全部动作，可以保持一个 step；"
+                    "否则为遗漏动作补齐 step，并按真实数据依赖设置 depends_on 与 slot_refs。"
+                    "不要增加原话未声明的动作。"
                 )
             # 祈使指令不接受 not_addressed（2026-07-27 真机）：置为「本次没解析出计划」，
             # 走既有的重试→fallback 机制。**刻意不直接改判成 chitchat**——重试有机会拿到

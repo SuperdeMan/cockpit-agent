@@ -101,7 +101,7 @@ def test_build_retries_simple_goal_that_declares_sequence_but_returns_one_step()
 
     assert len(users) == 2
     assert [step.intent for step in plan.steps] == ["alpha.search", "beta.detail"]
-    assert "上一版 goal 明确声明了固定顺序" in users[1]
+    assert "逐项对照本轮 capability description/contract" in users[1]
 
 
 @pytest.mark.parametrize(("complexity", "goal"), [
@@ -131,7 +131,7 @@ def test_build_does_not_force_deferred_or_negated_sequence_steps(complexity, goa
     assert [step.intent for step in plan.steps] == ["alpha.one"]
 
 
-def test_build_does_not_split_a_single_heavy_capability_that_owns_the_sequence():
+def test_build_rechecks_but_does_not_split_heavy_capability_owned_sequence():
     agent = MockAgent("alpha", ["alpha.plan"])
     agent.manifest.capabilities[0].heavy = True
     calls = 0
@@ -152,7 +152,64 @@ def test_build_does_not_split_a_single_heavy_capability_that_owns_the_sequence()
         "先判断条件，不足再生成方案",
         WorkingSet(catalog=[agent]), PlanContext()))
 
-    assert calls == 1
+    assert calls == 2
+    assert [step.intent for step in plan.steps] == ["alpha.plan"]
+
+
+def test_build_rechecks_a_heavy_step_that_omits_an_explicit_parallel_action():
+    primary = MockAgent("alpha", ["alpha.plan"])
+    primary.manifest.capabilities[0].heavy = True
+    agents = [primary, MockAgent("beta", ["beta.execute"])]
+    replies = iter([
+        '{"complexity":"simple","goal":"执行甲任务","steps":['
+        '{"id":"s1","capability_ref":"cap_0001","slots":{},'
+        '"depends_on":[],"slot_refs":{}}]}',
+        '{"complexity":"simple","goal":"执行甲任务并完成乙动作","steps":['
+        '{"id":"s1","capability_ref":"cap_0001","slots":{},'
+        '"depends_on":[],"slot_refs":{}},'
+        '{"id":"s2","capability_ref":"cap_0002","slots":{},'
+        '"depends_on":[],"slot_refs":{}}]}',
+    ])
+    prompts = []
+
+    async def mock_llm(messages):
+        prompts.append(messages[1]["content"])
+        return next(replies)
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        "前往甲处，沿途完成乙动作", WorkingSet(catalog=agents), PlanContext()))
+
+    assert len(prompts) == 2
+    assert [step.intent for step in plan.steps] == ["alpha.plan", "beta.execute"]
+    assert "heavy" in prompts[1]
+
+
+def test_build_recheck_can_keep_one_heavy_step_when_its_contract_owns_sequence():
+    agent = MockAgent("alpha", ["alpha.plan"])
+    agent.manifest.capabilities[0].heavy = True
+    reply = (
+        '{"complexity":"simple","goal":"先收集材料，再生成同一份报告",'
+        '"steps":[{"id":"s1","capability_ref":"cap_0001",'
+        '"slots":{},"depends_on":[],"slot_refs":{}}]}'
+    )
+    calls = 0
+
+    async def mock_llm(_messages):
+        nonlocal calls
+        calls += 1
+        return reply
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        "先收集材料，再生成同一份报告",
+        WorkingSet(catalog=[agent]), PlanContext()))
+
+    assert calls == 2
     assert [step.intent for step in plan.steps] == ["alpha.plan"]
 
 
