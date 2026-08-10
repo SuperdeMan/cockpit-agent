@@ -62,7 +62,7 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 意图落域对抗测试按这个顺序接手：运行手册
 [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) → 最终验收
 [`docs/reviews/2026-08-04-review-intent-adversarial-finalization.md`](docs/reviews/2026-08-04-review-intent-adversarial-finalization.md)
-→ 逐批证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` §16→**§17**。
+→ 逐批证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§17–§19**。
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
@@ -83,10 +83,14 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 代码回归 | `orchestrator/` **1093 passed**、`pytest test/` **1127 passed / 9 skipped**；端侧 smoke **13/13**；Skill / Exemplar（253 条 / 20 域）/ L0 门禁均通过 |
 
-⚠ **MiniMax 那 141/147 前后两次不是同一批红灯**：`f0af9c0` 点名的 6 条 unstable 在
-`32e8718` 全部转绿，红灯换成了另一批边界单元，其中 5 条单跑 10 样本全绿。按实测单元
-不稳定率 3.3% 算，一趟完整 gate 恰好零 unstable 的概率约 **1.7%**——
-**`eligible=True` 不是「把点名的几条修好」能达成的，是要压整体底噪**（findings §17.6）。
+⚠ **MiniMax 三批 141/141/140 都不是同一批红灯**：`f0af9c0` 点名的 6 条 unstable 在
+`32e8718` 全部转绿，红灯换成另一批边界单元（其中 5 条单跑 10 样本全绿）；`5e8247d`
+换池后又换一批（换池随后已回退）。按实测单元不稳定率 3~5%，一趟完整 gate 恰好零 unstable
+的概率是个位数百分比——**`eligible=True` 不是「把点名的几条修好」能达成的，是要压整体
+底噪**（findings §17.6/§19.2）。
+⚠ 上表 MiniMax 行是 `32e8718` 读数，**与当前代码差一个 `skills/exemplars/sunroof.yaml`**
+（该范例已单独取证 10/10）；`5e8247d` 那批是换池态、案例集已不一致，**不要挪用**。
+严格说当前 SHA 没有对应的全量读数，需要时重跑。
 
 首份正式 baseline 已存在，但它是 **DeepSeek 对比/参考模型**在固定 provider、资产与代码快照下的
 意图理解与落域证据；不证明 MiniMax 主模型、Agent 业务结果、外部 Provider 内容或跨模型平均质量。
@@ -98,8 +102,6 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 | 优先级 | 待办 | 完成判据 |
 |---|---|---|
-| **P0（方向已明，不建议继续跑批）** | 裸对象澄清族的账（留在门禁内，已立卡） | `nq.landmark.bare` 合并 11/20≈55% 的高方差边界句；`nq.landmark.explicit` 自己每条断言都过、是被 relation `clarify_flip` 连累；同族第三条 `nq.city.bare`「上海」reviewed 未进池。**路径 1「写 guide」实测否掉**（findings §18：4/10→1/10→退回 7/10，p≈0.02 有害）；**路径 3「换出预选池」执行并全量验证后由泓舟裁定回退**（findings §19.5：总分没变好，且会冻结 baseline 写入机制）。路径 2（范例 schema 加 clarify 型）未启动。立卡整段写在语料 `nq.landmark.bare` 头上，账跟着用例走 |
-| **P0（方向问题，不是跑批问题）** | MiniMax 主模型 `eligible=True` | 三批读数：`f0af9c0` 141/147（6 unstable）→ `32e8718` 141/147（raw 幻觉 8→3、不稳定 6→4、未声明 fallback 4→2）→ `5e8247d` 140/147（不稳定 6、未声明 fallback 1）。**每一批红灯都是从同一个边界池里重新抽的**，换掉具体红灯不提高整体资格概率（findings §19.2，判据第三次兑现）。实测单元不稳定率 3~5% ⇒ 一趟零 unstable 概率个位数百分比。**继续跑批期望值极低**，需先决定压底噪 / 换判据口径 / 接受主模型不出正式 baseline |
 | **P2** | 补 weather-outing 的真实 L3 claim | 不复用语义不对应的旧 journey；新增真正验证 weather→nearby 连续性的授权旅程后再晋级 |
 | **P2** | 三条未晋级候选重新取证 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 按当前跨进程契约取证 |
 | **P2** | snooze / 「离开X」/「到X之前」三个提醒词形补端到端用例 | route_hints 层的正例断言已随 create hint 退役迁出（2026-08-10），`mode_routing_cases.yaml` 只取了绝对时点/地理触发/周期三类代表形态，这三个词形端到端侧尚无等价用例——明账，不是已覆盖 |
@@ -108,7 +110,13 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 > 2026-08-10 已收口：`pytest test/` 裸 `server` 导入冲突（按路径认模块，15 红 → 0）、
 > hint 退役后的陈旧离线评测资产（`eval_route_hints` 76/86 → **78/78**，`--strict` exit 0，
 > 顺带补上「删除留痕」后发现基线陈旧的其实是 **45 条**不是 9 条）、宽 journeys 两条外部
-> 依赖残留（B3-1 gold 改条件式 + 离线三态守卫；B3-2 归高德侧，见 §4.2）。
+> 依赖残留（B3-1 gold 改条件式 + 离线三态守卫；B3-2 归高德侧，见 §4.2）、
+> MiniMax 原 6 条 unstable 全部转绿（两条真缺陷修在 `apply_plan_repairs` 与
+> `_MULTI_ACTION_CONNECTOR_RE`，raw 幻觉 8→3、未声明 fallback 4→2）。
+>
+> **§4.1 当前没有 P0/P1**：主模型 `eligible=True` 与裸对象澄清族两条已移入 §4.2 ——
+> 它们的结论都是「不要行动」（继续跑批期望值极低 / 三条修法两否一未启动），
+> 留在活跃表里会让接手人误以为有工可开。
 
 ### 4.2 延后 / 条件待办索引（不进入当前主线）
 
@@ -123,6 +131,8 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 | M-B / M-C / M-D 明确后置项 | 13 张验收主卡已清零；跨域删除 saga、完整隐私管理/迁移仪式、持久治理扩面与 MCP 生产化覆盖按 GDPR 完备性、量产迁移或新消费方触发 | [总体验收](docs/reviews/2026-07-26-acceptance-review-m0a-m4.md) §10.2/§11.2/§12.2、[OwnerKey 契约](docs/conventions.md) §9.13 |
 | M2 / M3 产品化边界 | Ledger 自动续跑/任务中心，以及主动治理持久化、偏好学习、dashboard、远距 geocode 与真实商户均为显式未做；出现真实消费方或产品阶段后另立卡 | [M2 RFC](docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md) §9.6、[M3 RFC](docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md) §10.7 |
 | M4 声纹 / 视觉余项 | 真麦校准、语音注册入口、模板漂移治理、视觉多轮与 `vp_*` 指标消费仍未收口；进入真机量产验收或 v2 前启动 | [M4 RFC](docs/design/2026-07-25-m4-p4-voiceprint-vision-rfc.md) §11.5/§11.8、[声纹契约](docs/conventions.md) §9.11 |
+| MiniMax 主模型 `eligible=True` | **不是跑批问题，是方向问题**。三批读数 `f0af9c0` 141/147 → `32e8718` 141/147（raw 幻觉 8→3、不稳定 6→4、未声明 fallback 4→2）→ `5e8247d` 140/147（换池态，已回退）。**每批红灯都是从同一个边界池里重新抽的**，换掉具体红灯不提高整体资格概率；实测单元不稳定率 3~5% ⇒ 一趟零 unstable 概率个位数百分比。启动条件＝泓舟先拍一个方向：压底噪 / 换判据口径 / 接受主模型不出正式 baseline。**在此之前继续跑批期望值极低** | [findings §17.6/§19.2](docs/design/2026-08-02-intent-routing-adversarial-findings.md)、[最终 review §7](docs/reviews/2026-08-04-review-intent-adversarial-finalization.md) |
+| 裸对象澄清族（留在门禁内，已立卡） | `nq.landmark.bare` 合并 11/20≈55% 的高方差边界句；`nq.landmark.explicit` 自己每条断言都过、被 relation `clarify_flip` 连累；同族第三条 `nq.city.bare`「上海」reviewed 未进池。**路径 1「写 guide」实测否掉**（§18：4/10→1/10→退回 7/10，p≈0.02 有害）；**路径 3「换出预选池」执行并全量验证后由泓舟裁定回退**（§19.5：总分没变好且会冻结 baseline 写入）。**路径 2（范例 schema 加 clarify 型）是唯一未启动项**——要改契约 + 门禁 + 检索消费面，面较大，有人愿意投入时才启动 | 立卡整段写在语料 `test/eval_corpus/intent_adversarial/cases/negation_quotation.yaml` 的 `nq.landmark.bare` 头上；[findings §18/§19](docs/design/2026-08-02-intent-routing-adversarial-findings.md) |
 | B3-2「广州塔」地标解析（高德侧） | **不进落域账**。2026-08-10 同坐标直连复测：geocode 对（兴趣点／广州塔真坐标）、`near=None` 重搜 top1 就是广州塔，只有带深圳偏置的关键词搜索会顶出「广州仄仄科技有限公司」2.4km。即 R1 去偏置重搜机制本身是对的，但它**要多打一次高德**，跑批并发下正是最易被限流的那一次；掉一次退回就近弱匹配，掉两次成「暂时无法确定」——两次红的两种形态由此解释。归高德 QPS 一族，出现真实用户投诉或做并发治理时再启动 | [复杂意图·地标/停车](docs/design/2026-07-07-complex-intent-landmark-parking-fixes.md)、判据与复测记在 `test/journeys/target_b.yaml` B3-2 注释 |
 
 ### 4.3 读数纪律
@@ -146,7 +156,7 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
   自己每条断言都过却 0/10，只因 `clarify_flip` 要求 base 稳定。读 `stable_fail` 条数时
   先减掉这种连累项（§18.4）。
 - **不要为了某个模型的问题去改动 gate 案例集**（泓舟 2026-08-10）：案例集是**尺子**，
-  描述「我们要求系统做到什么」；某个 provider 今天做不到是被测对象的读数，不是尺子该
+  描述「我们要求系统做到什么」；某个 provider 当下做不到是被测对象的读数，不是尺子该
   让步的理由。与规格 §22.7「换出带病候选」不矛盾——那条针对**被测对象错了**，
   而「用例难、模型弱」正是 §22.7 要求留在门禁里的一类（§19.5）。
 - **动 gate 案例集之前先问正式 baseline 还认不认得这个案例集**：案例集一变，
