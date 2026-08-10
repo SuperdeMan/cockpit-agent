@@ -98,7 +98,7 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 | 优先级 | 待办 | 完成判据 |
 |---|---|---|
-| **P0（需泓舟裁一次方向）** | 裸地名澄清族：`nq.landmark.bare` 4/10、`nq.landmark.explicit` 0/10 | 这是当前唯一稳定复现的落域缺陷（10 样本取证）。**范例层表达不了它**——范例的 `plan` 必须非空，而正确产物是「先别落域，先问一句」。三条路径与代价见 findings §17.8：写 guide（预算已压线）/ 给 schema 加 clarify 型范例（面比看上去大）/ 判为模型能力边界并等量换出预选池 + 逐条立卡 |
+| **P0（路径 1 已否，需泓舟在剩下两条里再裁一次）** | 裸地名澄清族：`nq.landmark.bare` 合并 **11/20 ≈ 55%**、`nq.landmark.explicit` 0/10 | **路径 1「写 guide 讲判据」2026-08-10 实测否掉**（findings §18）：四次 10 样本读数 4/10 → 3/10 → **1/10** → 退回后 **7/10**，v2 对退回 Fisher p≈0.02 显著，**有害不只是无益**；guide 每次都成功注入，模型就是不照做。剩路径 2（给范例 schema 加 clarify 型，面较大）与路径 3（判为模型能力边界、等量换出预选池 + 逐条立卡）。⚠ 这一对实际只对应 **1 个** base 缺陷——variant 自己每条断言都过，是被 relation `clarify_flip` 要求「base 稳定 clarify」连累成 stable_fail（§18.4） |
 | **P0（方向问题，不是跑批问题）** | MiniMax 主模型 `eligible=True` | `32e8718` 已把 raw 幻觉 8→3、不稳定 6→4、未声明 fallback 4→2，但总分仍 141/147。实测单元不稳定率 3.3% ⇒ 一趟零 unstable 概率约 1.7%。**继续跑批期望值极低**，需要先决定是压底噪、换判据口径，还是接受主模型不出正式 baseline（findings §17.6） |
 | **P2** | 补 weather-outing 的真实 L3 claim | 不复用语义不对应的旧 journey；新增真正验证 weather→nearby 连续性的授权旅程后再晋级 |
 | **P2** | 三条未晋级候选重新取证 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 按当前跨进程契约取证 |
@@ -139,6 +139,12 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
   primary 晚起，跑批中途改文件会让它单独 fail-closed（本轮踩了两次）。评测产物写
   `docs/reviews/eval/_ci-run-*` 是安全的——那个前缀已 gitignore。
 - 两次 141/147 不代表同一批红灯；读 MiniMax 报告先看**是哪几条**，再看总分。
+- **加了知识就要拿对照跑证伪，不能只看它有没有被注入。** 2026-08-10 实测：一条 guide
+  四次全部成功注入（`@lex:11` 未被裁），通过率却 4/10 → 1/10，退回后回到 7/10。
+  「知识在场」和「知识有用」是两回事（findings §18.2）。
+- **relation 断言会把 base 的方差放大成 variant 的稳定红**：`nq.landmark.explicit`
+  自己每条断言都过却 0/10，只因 `clarify_flip` 要求 base 稳定。读 `stable_fail` 条数时
+  先减掉这种连累项（§18.4）。
 
 ---
 

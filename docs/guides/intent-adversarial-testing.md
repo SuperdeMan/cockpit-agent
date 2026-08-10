@@ -239,6 +239,15 @@ L1 有 `no-hints/no-skills/no-exemplars/empty-history`；L2 另加 `cloud-direct
 但**用例必须留在 discovery 继续跑、缺陷必须逐条立卡——账不许消失**。
 禁止的是：删红用例、放宽 gold、下调 `min_cases`、改规模口径。
 
+⚠ **加完知识必须跑对照，不能只确认它被注入了。** 2026-08-10 实测：一条新 guide 四次
+全部成功注入（`@lex:11`，从未 `!clipped`），通过率却 4/10 → 1/10，退回后回到 7/10
+（Fisher p≈0.02）。**「知识在场」和「知识有用」是两件事**；只看注入名单会把有害改动
+读成中性（findings §18）。对照的最小形态就是**退回后再跑一次同样的样本数**。
+
+⚠ **示范输出形状之前先确认当前输出通道。** few-shot 抄错通道（文本形状 vs
+`PLANNER_TOOLCALL=on` 的 submit_plan schema）会让模型输出被判解析失败、退成兜底——
+把「模型判断错」变成「模型说不出话」，还凭空制造未声明兜底（findings §18.3）。
+
 | 症状 | 落点 |
 |---|---|
 | 单句落错域 | `skills/exemplars/<domain>.yaml` 加范例（**说法必须避开评测语料原句** —— 用原句等于把 unseen 洗成 seen） |
@@ -362,7 +371,7 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 
 | 优先级 | 待办 | 完成判据 |
 |---|---|---|
-| P0 | 裸地名澄清族 | `nq.landmark.bare` 4/10、`nq.landmark.explicit` 0/10（后者是被 relation 连累，自己每次都对）。**范例层表达不了它**——范例 `plan` 必须非空，而正确产物是「先别落域，先问一句」。三条路径与代价见 findings §17.8，需泓舟裁 |
+| P0 | 裸地名澄清族 | `nq.landmark.bare` 合并 **11/20≈55%**（高方差边界句，不是稳定红）、`nq.landmark.explicit` 0/10（被 relation 连累，自己每条断言都过）。**路径 1「写 guide」已实测否掉**（findings §18：4/10→1/10→退回 7/10，p≈0.02 显著，有害）；剩路径 2/3，需泓舟再裁 |
 | P0 | 主模型 `eligible=True` 的方向 | 不是跑批问题：单元不稳定率 3.3% ⇒ 一趟零 unstable 概率约 1.7%。先决定压底噪 / 改口径 / 接受主模型不出正式 baseline（findings §17.6） |
 | P2 | 三条未晋级候选 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 仍在预选池；按新跨进程契约重新取证 |
 | P2 | 补 weather-outing 的真实 L3 claim | 旧链接语义不对应已删除；要晋级需新增真正验证 weather→nearby 连续性的 journey |
