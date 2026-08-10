@@ -1,0 +1,36 @@
+# CODEOWNERS —— 安全敏感文件清单的机器可读化（B2）
+#
+# 当前是单人仓库，分支保护为**轻档**（禁 force-push / 禁删除 main），尚未开
+# require PR + codeowner review，因此本文件暂不产生强制力。它现在的价值是**声明边界**：
+# 改到下面这些路径的人（含 AI 协作者）必须在提交说明里显式陈述理由，不能顺手带过。
+# 开重档（require PR）后本文件自动生效，无需再改。
+#
+# 收录判据：动错了会**静默**损失安全性或损失证据面的路径。
+# 「静默」是关键——业务代码改错通常会有测试红，这几类不会。
+
+# ── 执行安全内核（B1 的对象）──────────────────────────────────────────────
+# val.py 是唯一能碰车的组件，confirmed fail-closed 闸在这里；
+# server.py 的降级兜底分支曾是一条完整的执行旁路；
+# edge_call.py 是唯一能合法传 confirmed=True 的生产路径；
+# loop.py/planning.py 决定「已经发生的副作用会不会被重放」。
+/orchestrator/edge/val.py            @SuperdeMan
+/orchestrator/edge/server.py         @SuperdeMan
+/orchestrator/edge/edge_call.py      @SuperdeMan
+/orchestrator/cloud/loop.py          @SuperdeMan
+/orchestrator/cloud/planning.py      @SuperdeMan
+/security/                           @SuperdeMan
+/registry/                           @SuperdeMan
+/proto/                              @SuperdeMan
+
+# ── 评测尺子与正式 baseline ───────────────────────────────────────────────
+# 「案例集是尺子」——某个 provider 当下做不到是被测对象的读数，不是尺子该让步的理由
+# （AGENTS.md §4.3）。动案例集还会让每份报告带 removed_cases，冻结 baseline 写入。
+/test/eval_intent_adversarial.py     @SuperdeMan
+/test/support/intent_adversarial_judge.py   @SuperdeMan
+/test/eval_corpus/intent_adversarial/       @SuperdeMan
+/docs/reviews/eval/baseline_*        @SuperdeMan
+
+# ── 门禁与 CI ────────────────────────────────────────────────────────────
+# 这两个决定「什么情况下 CI 会红」。放松它们不会让任何测试变红，正是要盯的那一类。
+/.github/workflows/                  @SuperdeMan
+/scripts/check_intent_gate.py        @SuperdeMan

@@ -244,6 +244,15 @@ jobs:
       - name: Exemplar contract gate (blocking)
         run: python test/eval_exemplars.py
 
+      # B2：意图对抗 L0 门禁（阻断）。与上面两条同类——确定性、零 LLM、失败必须红；
+      # 上面 continue-on-error 那组是会随语料漂移的意图基线，两者准入不同，不要合并。
+      # 跑的是 --strict 档：普通 --list 只**展示** coverage gap，--strict 才把它升级成
+      # 阻断。2026-08-10 除雾能力补齐漏了对抗覆盖、strict 实际 exit 2 却被人工读成
+      # exit 0（管道吞码），最能防住那次遗漏的门禁当时根本不在 CI 里。
+      # 退出码由封装脚本用 Python 读，证据链上不出现 shell 管道。
+      - name: Intent adversarial L0 gate (blocking)
+        run: python scripts/check_intent_gate.py --json docs/reviews/eval/_ci-run-intent_gate.json
+
       - name: Upload fresh eval report
         if: always()
         uses: actions/upload-artifact@v4
