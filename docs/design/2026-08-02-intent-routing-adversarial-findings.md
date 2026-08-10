@@ -2760,3 +2760,73 @@ provider 锁定无漂移。通道差异两尾 Fisher **p ≈ 0.00046**。
 
 > **不要把「实现了」写成「修好了」。** 这正是 §22.1 那条判据的同构：
 > 「缺 X」与「补上 X 就能修」是两个命题，第二个要单独证。
+
+**（2026-08-10 当晚补：那次 A/B 已经跑完，结果见 §26.5。上面这段保留原样——
+它记录的是当时该说的话，不是事后该改的话。）**
+
+### 26.4 跑 A/B 之前先修了一个自己造的门禁红灯
+
+准备跑批时 `--list` 报出 12 条覆盖 gap：批 1-A 往 `VEHICLE_INTENTS` 加了 4 个 active
+intent（`front_defogger.*` / `rear_defogger.*`）却没补对抗语料。复查发现
+**`gate --layer l0 --strict` 的真实退出码是 2**，而我上一批把它报成了 0——
+读的是 `python ... | tail -5; echo "exit=$?"` 里 `tail` 的退出码。
+
+两条判据，都是老账重犯：
+
+> **同一个门禁在两种模式下严厉程度不同。** 普通 `--list` 只展示 gap，`--strict` 才把它
+> 升级成阻断（`_gather_contract_errors` 的 docstring 写着「硬错误永远阻断，缺口 strict
+> 才升级」）。**报绿之前先确认自己跑的是哪种模式。**
+
+> **管道会吞退出码**——`cmd | tail; echo $?` 拿到的是 `tail` 的。本项目记过这条
+> （`${PIPESTATUS[0]}`），这次又踩了。**凡是要读退出码的命令，别接 `| tail`。**
+
+补 8 条 route_flip 对（前挡 ↔ 后挡是天然的同框架换对象），**不登记豁免**：
+`coverage_exemptions.yaml` 豁免的是「不经云侧 LLM 落域、没有可测对象」的端侧原子车控，
+而把除雾加进能力面的**全部理由**就是让云侧 planner 能选中它——它有可测的对象，
+原始 badcase 就发生在云侧。**豁免的判据是「没得测」，不是「懒得写」。**
+其中 `tu.defog.front-close-strong` 的输入就是 P3a 影子实录的原句，`forbidden_intents`
+里钉着 `accompany_home.close`。
+
+新 case 全标 `reviewed`：覆盖矩阵认它（`_AUTHORITATIVE = {reviewed, stable}`）⇒ gap 清零；
+gate 池只收 stable ⇒ **gate 规模仍是 139/129 一个数没变**，正式 baseline 比对面不受影响。
+
+### 26.5 A/B 结果：协议层 +34.2pp（p=2.3e-08），语义层不作结论
+
+`--suite gate --layer l1 --live --provider minimax --model MiniMax-M3 --repeat 1`，
+双臂只差 `PLANNER_TOOLCALL_SALVAGE_RETRY`，紧邻跑（间隔 <1 分钟）。
+两臂运行身份均完整：`provider_locked=True` / `provider_drift=False` /
+`embedding_model=text-embedding-v4` / `retrieval_degraded=0` / `worktree_clean=True`。
+
+| 指标 | OFF（旧行为） | ON（强制重试） | Δ |
+|---|---|---|---|
+| **走成 `toolcall`** | 60/117 = **51.3%** | 100/117 = **85.5%** | **+34.2pp，Fisher p=2.3e-08** |
+| 掉档明细 | salvage 42 + salvage_na 4 + fallback 8 + fallback_na 1 + degraded 2 = **57** | salvage 11 + **salvage_kept 2** + salvage_na 4 = **17** | −40 |
+| 通过 | 114/117 | 115/117 | +1 |
+| `exact_plan_set_rate` | 115/117 (98.3%) | 116/117 (99.1%) | +1 |
+| `required_group_recall` | 98/99 (99.0%) | 99/99 (**100%**) | +1 |
+| `fallback_plan_rate` | 3/117 (2.6%) | 1/117 (0.9%) | −2 |
+| **未声明兜底** | **1**（`ex.injection.reveal-prompt`） | **0** | −1 |
+| `instability_rate` | 2/117 | 2/117 | 0 |
+| 幻觉 / 校验后逃逸 | 2/117 / 0 | 2/117 / 0 | 0 |
+| 失败集 | 3 条 | 2 条 | 修好 1、**新坏 0** |
+| 墙钟 | 13m11s | 18m15s | **+38.5%** |
+
+**重试成功率 40/57 ≈ 70%**——掉档轮里七成被救回工具通道。这是本次 A/B 的**新信息**：
+协议层会涨是设计必然（重试就是干这个的），显著性只确认幅度，而 70% 这个数事前不知道。
+
+**三条可引用的结论：**
+
+- **核心设计判据在真实数据上被验证了。** `toolcall_fallback` 从 9 条降到 **0**：
+  OFF 臂那 9 条「退 JSON」的轮，第 1 轮其实 raw 非空（模型能说话只是没用工具），
+  所以 ON 臂改走工具通道并成功了。**如果它们真是 provider 协议问题，ON 臂会堆出
+  `degraded` 而不是 `toolcall`。**「掉档有两种」不是纸上推理。
+- **回落机制在工作且很少被用到**：`toolcall_salvage_kept` 只有 2 条。
+- **语义层不作结论。** +1 通过 / +1 exact / −2 fallback 方向一致但全是个位数，
+  且 `--repeat 1` **没有 unstable 检测**。能说的只有一句：**没有变差**（0 条新坏），
+  而这一句本身是必要的安全信号——强制重试最大的风险就是「为了通道把答案换差了」。
+  两臂都红的 `nq.landmark.bare` / `.explicit` 正是 §4.2 已知无解的裸对象澄清族，
+  它**不该**被这个改动治好（形态判据 ≠ 通道问题），没治好反而是自洽的。
+- **代价可量**：墙钟 +38.5%，与理论调用量增幅（60×1+57×2 vs 46×1+11×2+60×1 ≈ +36%）吻合。
+
+⚠ **单次双臂，未重复验证。** 协议层 p=2.3e-08，重复的边际价值低；语义层本来就不作结论。
+真要再取一次证，`repeat 3` 的两臂能给出 unstable 分离，代价是四倍墙钟。

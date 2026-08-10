@@ -86,7 +86,7 @@ skills 门禁 PASS。HMI `node --test` **225/225**、Dashboard vitest **17/17** 
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | 三条候选取证（2026-08-10，`f71fd3c`） | `cp.hvac-news.swapped` **2/6**、`nq.hvac.reported` **2/6**（`critical_fail` ×2，真缺陷）、`nq.match.lastweek` **5/6**；`cp.adaptive.weather-outing` L1 三趟 **9/11**。全部 `minimax:MiniMax-M3`、检索零降级、`worktree_clean=true` |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
-| 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24） |
+| 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
 | 代码回归 | `orchestrator/` **1101 passed**、`pytest test/` **1137 passed / 9 skipped**；端侧 smoke **13/13**；Skill / Exemplar（**254 条 / 20 域**）/ L0 门禁均通过 |
 
 ⚠ **MiniMax 三批 141/141/140 都不是同一批红灯**：`f0af9c0` 点名的 6 条 unstable 在
@@ -107,11 +107,11 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 ### 4.1 活跃待办（只列仍需行动的）
 
-| 待办 | 完成判据 | 入口 |
-|---|---|---|
-| **salvage 重试的 live 双臂 A/B**（2026-08-10 新立） | 实现已合入并有契约测试，但**有效性尚未在 live 上验证**——「实现了」不等于「修好了」。要回答两个数：① 重试后 MiniMax 走成 `toolcall` 的比例从 45~48% 涨到多少；② 多花的那次调用换来的通过率 Δ 是否为正。开关 `PLANNER_TOOLCALL_SALVAGE_RETRY=on\|off` 就是为这次 A/B 留的；单测 `test_salvage_retry_can_be_switched_off` 已证明**两臂真的不同**（§4.3 那条 A/B 前置纪律），但它不是 A/B 本身。跑批按运行手册 §2 同时设 provider/model/embedding 三项，且**跑批期间不许动工作树** | [findings §26.3](docs/design/2026-08-02-intent-routing-adversarial-findings.md)、[运行手册](docs/guides/intent-adversarial-testing.md) |
-
-其余条件型 / 明确后置的入口全在 §4.2；接手时先读 §4.0 快照与 §4.3 读数纪律。
+**当前没有活跃待办。** 2026-08-10 夜新立的「salvage 重试 live 双臂 A/B」当晚跑完并收口
+（协议层 **51.3% → 85.5%，+34.2pp，p=2.3e-08**；语义层不作结论但 **0 条新坏**；
+墙钟代价 +38.5%。读数与三条结论在
+[findings §26.5](docs/design/2026-08-02-intent-routing-adversarial-findings.md)）。
+条件型 / 明确后置的入口全在 §4.2；接手时先读 §4.0 快照与 §4.3 读数纪律。
 
 > 2026-08-10 全天五批（上午 P1/P0 收敛 → 下午三条候选取证 + weather-outing L3 claim + 提醒词形
 > → 下午生产侧范例修复 → 晚间两条新 P2 → 收官通道定性与换档对照）的**完整记录在**
@@ -176,7 +176,18 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 - **读任何落域数之前先看 `plan_modes`**（2026-08-10）：掉出 `toolcall` 的那些轮，模型是在
   自由文本里作答，输出分布与走 schema 的轮**本就不同**（MiniMax 内部实测 91% vs 50%，
   p≈0.036）。摘要行会打 `[!] N/M 轮没走成 toolcall`。⚠ `<通道>_no_action` 的后缀说的是
-  **判断**不是掉档，`toolcall_no_action` 算走成了（§24.4）。
+  **判断**不是掉档，`toolcall_no_action` 算走成了（§24.4）；而 `_kept` 后缀说的是**通道**
+  （重试也没走成，用了抢救那份），**算掉档**。新增 plan_mode 值时先问它描述的是哪个。
+- **门禁在两种模式下严厉程度不同**（2026-08-10）：普通 `--list` 只**展示** coverage gap，
+  `--strict` 才把它升级成**阻断**。报绿之前先确认自己跑的是哪种模式。
+  配套的老账：**管道会吞退出码**——`cmd | tail; echo $?` 拿到的是 `tail` 的，
+  要读退出码就别接管道（本项目记过 `${PIPESTATUS[0]}`，2026-08-10 又踩一次，
+  结果是把一个 exit 2 报成了 exit 0，见 findings §26.4）。
+- **加 active intent 就要补对抗覆盖**（每 intent 正例 2 / 硬负例 2 / 对照 1）。
+  想登记 `coverage_exemptions.yaml` 之前先过判据：那张表豁免的是「**不经云侧 LLM 落域、
+  没有可测对象**」的端侧原子车控——**豁免的判据是「没得测」，不是「懒得写」**。
+  新 case 标 `reviewed` 即可补上覆盖矩阵（`_AUTHORITATIVE={reviewed,stable}`）
+  而**不进 gate 池**，于是不动案例集、不碰 baseline 比对面（§26.4）。
 - **协议层指标要跨 provider 量，语义层指标不要**（2026-08-10）：同一份 `plan_modes`
   换档就从 45% 跳到 100%，这个对比有意义；同一份通过率换档就不可直比。
   **一条指标该不该跨档比，取决于它测的是被测系统还是被测模型**（§24.3）。
