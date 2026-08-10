@@ -1,11 +1,13 @@
 # B1 执行安全停止线：封死危险动作确认旁路 + T2 流式防重跑
 
-> **状态**：已批准待实施（源自外部评审采纳批次 B1，裁决见
+> **状态**：**已实施并合入 main（2026-08-10）**——四步全部落地，验收判据 6 条全满足；
+> §2.4.1 的一半按实测证据退回（见文末「实施记录」）。源自外部评审采纳批次 B1，裁决见
 > [`../reviews/2026-08-10-external-review-adoption.md`](../reviews/2026-08-10-external-review-adoption.md)）
 > **交付对象**：后续实施者（人或 AI agent），可独立接手
 > **关联**：`orchestrator/edge/server.py`、`orchestrator/edge/val.py`、`orchestrator/edge/edge_call.py`、
 > `orchestrator/cloud/loop.py`、`test/support/intent_adversarial_runtime.py`
-> **优先级**：本仓库当前最高。**B1 未完成前冻结新增业务 Agent**（评审不做清单第 4 条，已采纳）。
+> **优先级**：曾是本仓库最高。**「B1 未完成前冻结新增业务 Agent」已随本批完成撤销**
+> （评审不做清单第 4 条，验收判据第 6 条兑现）。
 
 ---
 
@@ -223,3 +225,53 @@ if not streamed:                      # :263
 - 不做完整 ConfirmationGrant 协议（§2.2 已述，登记为真实 VAL 对接前置项）。
 - 不做 D0/T2 流式组件统一（B5 条件启动；本批只修 bug 不重构）。
 - 不做幂等键/command_id（评审 N1 内容，随统一组件一起做才不产生第三套局部实现）。
+
+---
+
+## 7. 实施记录（2026-08-10 深夜，四个提交）
+
+| 步骤 | 提交 | 落法与偏差 |
+|---|---|---|
+| 1 | `5b6980d` | `val.execute/_run/_structured_execute` 加 `confirmed`，fail-closed。**比方案多做一处**：`_legacy_execute` 也装了闸（方案只要求加注释）。理由——「当前 `_apply` 恰好没实现危险对象」是实现巧合不是不变量，一行前缀判据把它变成不变量，对非危险对象零成本。新增 `test_val_confirm_gate.py`（含签名级断言：`confirmed` 默认值必须是 `False`）。`test_corpus_objects` 的 6 条危险对象用例改为显式带确认——它测的是状态机分支不是闸 |
+| 2 | `dd94950` | `server.py` 三道挡板。挡板 ① 落成 `cloud_had_output`（含流式 `speech_delta` 与 `action`，`progress` 不计），即 §1.1 那条「本轮核实发现、评审未提」的同族缺口。新增 `test_cloud_degraded_fallback.py` 9 条 |
+| 3 | `55f3d3b` | `loop.py` `elif did_speak or did_action`，`streamed`→`got_final`，action 丢 final 标 `_outcome_uncertain`。新增 4 条（三场景 + 空 delta 对照） |
+| 4 | `96f4f78` | 探针接强制证据 + 反向突变探针 4 条 + `cloud_degraded` 语料族 5 条 |
+
+**反向验证（每步都做，否则「绿」没有意义）**
+
+- 步骤 1+2：`git checkout 612abc7 --` 回到 B1 前代码，新探针 **15 条红**，其中
+  `test_dangerous_object_not_executed_on_empty_cloud_final`（后备箱被无确认打开）与
+  `test_streamed_delta_then_empty_final`（流式已播仍补执行）直接复现两个 P0 形态。
+- 步骤 3：回退 `loop.py` → speech / action 两条必红，零输出回退与空 delta 对照仍绿
+  （证明没修过头）。
+- 步骤 4：突变探针自身即红灯验证；配三条对照防它靠恒红取胜。
+
+**与方案的两处偏差（都有证据）**
+
+1. **§2.4.1 的后半条按实测退回**：「金标无 action 组而 `val_commands` 非空即判红」——
+   实测 L0 有 **29/81（35.8%）** 轮是合法端侧车控，而 L0 根本没有 plan 金标
+   （`_l0_expectation` 把 plan 断言全剥了），照写会把 29 条正确行为判红。L2 虽有 plan
+   金标，但 intent 名与 VAL object 不是 1:1（`hvac.on`→`aircon`，`nlu_objects.yaml`
+   存在就是因为这个），在 judge 里补映射等于立第二套命名真相源。改为只记
+   `edge_val_command_count` 作观测量。**危险动作那半条（安全关键的那半）全额落地。**
+2. **既有测试 `test_edge_premature_execution_...` 的前提被步骤 1 作废**：只打掉端侧
+   `_confirm_required` 已不足以让危险动作落地——VAL 自己兜住了。改写为「两道闸都破」，
+   并新增 `test_breaking_only_the_edge_gate_no_longer_executes_dangerous_action` 把
+   「单破一层不够」钉成断言。**那条断言本身就是确认权威下沉的价值证明。**
+
+**验收判据逐条核对**
+
+| # | 判据 | 结果 |
+|---|---|---|
+| 1 | 源码级结构性不变量断言 | ✅ `test_val_confirm_gate.py`：拒绝 + 状态零变化 + 反向放行 + legacy 同闸 + 签名默认值 |
+| 2 | 危险对象 × 三种云端收束下 VAL 零变化且话术含「确认」 | ✅ `test_cloud_degraded_fallback.py`（空 final / 零事件 / 云端异常三种） |
+| 3 | T2 三场景绿 + 选集与全量基线绿 | ✅ `orchestrator/cloud` 655、`orchestrator/edge` 558、根全量见 AGENTS §4.0 |
+| 4 | 反向突变探针红灯验证 | ✅ 见上 |
+| 5 | `conventions.md` 补契约与日志标记 | ✅ §9.15 |
+| 6 | 撤销「冻结新增业务 Agent」 | ✅ AGENTS.md §4.1 已撤 |
+
+**留给后续的两笔账**（都不是本批遗漏，是本批边界）
+
+- 完整 `ConfirmationGrant` 协议 → 真实 VAL（C++/SOME-IP）对接的前置项。
+- `_outcome_uncertain` 目前只是标记 + 话术，**没有 readback 对账**；接 Outcome
+  Verifier 归 B5 统一组件时做（现在做会产生第三套局部实现）。

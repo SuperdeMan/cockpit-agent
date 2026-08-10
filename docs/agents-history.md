@@ -1688,3 +1688,85 @@ intent 却没补对抗语料，而 `gate --layer l0 --strict` 的**真实退出�
   核实断言看代码，裁量修法看历史。
 - **评审的时间基线要先钉住**：它基于 `cc87056`，salvage A/B 一项已被 `f02a815` 超越——
   不核对 SHA 就采纳会把已完成的事重做一遍。
+
+## 25. B1 执行安全停止线 + B2 门禁进 CI：外部评审两个 P0 的实施（2026-08-10 深夜）
+
+**输入**：§24 产出的 B1/B2 两份方案文档，泓舟指示「推进 B1 和 B2 落地」，分支保护档位
+当场拍板**轻档**。五个提交：`5b6980d`（VAL 闸）、`dd94950`（兜底封口）、`55f3d3b`（T2
+防重跑）、`96f4f78`（探针+语料）、`361dda1`（B2 门禁+CODEOWNERS）。
+
+### 25.1 B1：确认权威下沉 VAL，四步全部落地
+
+**① `val.execute(confirmed=False)` fail-closed**（`5b6980d`）。危险对象未带凭据一律拒绝、
+状态零变化；唯一能合法传 `True` 的生产路径是 `edge_call.py`（凭据来自
+`call.meta.confirmed`），上游那道 `NEED_CONFIRM` 闸保留形成纵深。契约写进
+`docs/conventions.md` §9.15。
+
+**比方案多做一处**：`_legacy_execute` 也装了闸（方案只要求加注释）。判据是
+**「当前 `_apply` 恰好没实现危险对象」是实现巧合，不是不变量**——一行前缀判据把它变成
+不变量，对 hvac/window/media 这些 `require_confirm=false` 的对象零成本。
+
+**② 兜底旁路三道挡板**（`dd94950`）。挡板 ① 是本轮核实时发现、评审未提的同族缺口：
+兜底判定要看**整条流有没有给过用户任何实质输出**（含流式 `speech_delta` 与 `action`），
+只看 `final.speech` 会漏掉「话术已经播出去、final 恰为空」那一档，本地补执行造成双执行。
+`progress` 刻意不计入——过程区只是 UI 进度，用户没拿到答案，那正是兜底该覆盖的场景。
+
+**③ T2 防重跑**（`55f3d3b`）。`elif did_speak or did_action`；`streamed` 改名 `got_final`。
+action 已发而 final 丢失时标 `data["_outcome_uncertain"]` 并透明告知——**既不能当成功，
+也不能重试**（重试 = 重复副作用）。
+
+**④ 探针接为强制证据 + `cloud_degraded` 语料族**（`96f4f78`）。
+
+### 25.2 三条判据
+
+**「绿」必须先被证明会红——每一步都做了反向验证。** 步骤 1+2：`git checkout 612abc7 --`
+回到 B1 前代码，新探针 **15 条红**，其中「后备箱被无确认打开」与「流式已播仍补执行」
+直接复现两个 P0 形态。步骤 3：回退 `loop.py` → speech / action 两条必红，而零输出回退与
+空 delta 对照仍绿——**后者证明的是「没修过头」，和前者一样重要**。步骤 4 的突变探针
+自身就是红灯验证。
+
+**方案里的一条按实测证据退回。** §2.4.1 后半「金标无 action 组而 `val_commands` 非空
+即判红」：实测 L0 有 **29/81（35.8%）** 轮是合法端侧车控，而 L0 根本没有 plan 金标
+（`_l0_expectation` 把 plan 断言全剥了），照写会把 29 条正确行为判红。L2 虽有 plan 金标，
+但 intent 名与 VAL object 不是 1:1（`hvac.on`→`aircon`，`nlu_objects.yaml` 存在就是因为
+这个），在 judge 里补映射等于立第二套命名真相源。**安全关键的那半（危险动作即红）全额
+落地**，另一半改为只记 `edge_val_command_count` 作观测量。
+
+**一条既有测试的前提被本批作废，而那正是好消息。**
+`test_edge_premature_execution_is_caught_once_the_confirm_gate_is_broken` 原来只打掉端侧
+`_confirm_required` 就能让 Edge 执行后备箱；VAL fail-closed 之后这个突变不再生效，测试
+转红。改写为「两道闸都破」，并**新增一条把「单破一层不够」钉成断言**——它从此是确认
+权威下沉的回归探针。判据：**测试红了先问「是修坏了还是前提变了」，纵深防御会让旧的
+单层突变测试自然失效。**
+
+### 25.3 B2：门禁进 CI + 唯一入口
+
+`scripts/check_intent_gate.py` 是本地与 CI **唯一**的 L0 门禁入口，subprocess 不经 shell、
+Python 直读 returncode——2026-08-10 管道吞码事故（`cmd | tail; echo $?` 把 exit 2 报成
+exit 0）的机制化根治。**多做一处**：两条 suite 各自指定 `--out-json/--out-md`，否则后跑的
+gate 会盖掉 discovery 的报告，CI artifact 里只剩半份证据。
+
+**红灯验证按 §2.4.2 做了**：注入一个 active intent 不补对抗覆盖（复现除雾事故同一形态）
+→ 脚本 `exit 1` 且 coverage gap 逐条打印；还原 → `exit 0`。
+
+`.github/CODEOWNERS` 比方案清单多收四条，收录判据写在文件头：**动错了会「静默」损失
+安全性或证据面**——业务代码改错通常有测试红，判定面与门禁配置改松了不会。
+
+### 25.4 读数与余项
+
+L0 discovery **81/81**（原 76/76），cases 574 / 唯一输入 **535**——⚠ bounds 上界 540，
+**只剩 5 个名额**，下次加语料前先评估要不要抬 bounds。gate L0 strict 25/25 不变
+（新 case 标 `reviewed`，不进 gate 池）。全量 **4643 passed / 14 skipped / 0 failed**
+（15m13s，exit 0）。
+
+**顺手挖出一笔文档账**：本批净增量按文档里的 4601 算是 +42，与逐条点名的 36 对不上。
+用临时 worktree 在 `612abc7` 上干净量了一次——**4621 collected**（4607 passed / 14
+skipped），差额 6 条**不属本批**，是 4601 那次实测之后 `cc87056` 等提交加的测试没刷新
+基线行。判据：**净增量要跟同一个 SHA 比，不能跟文档里那个数比。** 对不上时先怀疑基线
+陈旧，再怀疑自己多出来了东西——反过来会凭空制造「6 条不明用例」的假问题。
+（量的时候还踩了两下：新建 worktree 缺 gitignore 的 `gen/`，83 个 import error；
+`git checkout <sha> -- .` 不会删掉该 sha 里不存在的新增文件，读数被污染。）
+
+**留下的两笔账都是本批边界不是遗漏**：完整 `ConfirmationGrant`（nonce/expiry/consume）
+归真实 VAL（C++/SOME-IP）对接前置项；`_outcome_uncertain` 目前只有标记 + 话术、**没有
+readback 对账**，接 Outcome Verifier 归 B5 统一组件时做（现在做会产生第三套局部实现）。

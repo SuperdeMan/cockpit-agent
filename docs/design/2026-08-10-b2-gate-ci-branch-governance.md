@@ -1,6 +1,7 @@
 # B2 意图对抗门禁进 CI + 主干治理
 
-> **状态**：已批准待实施（源自外部评审采纳批次 B2，裁决见
+> **状态**：**已实施并合入 main（2026-08-10）**——方案 A 全部 + 方案 B 的 CODEOWNERS；
+> 分支保护泓舟拍板**轻档**（见文末「实施记录」）。源自外部评审采纳批次 B2，裁决见
 > [`../reviews/2026-08-10-external-review-adoption.md`](../reviews/2026-08-10-external-review-adoption.md)）
 > **交付对象**：后续实施者；分支保护档位需泓舟拍板（§3.2 给出两档利弊与操作命令）
 > **关联**：`.github/workflows/ci.yml`、`test/eval_intent_adversarial.py`、`Makefile`、`scripts/`
@@ -162,3 +163,54 @@ CI 稳定绿两周后再评估——当前高频批次节奏下 require PR 的�
 - **不做**「文档快照数字与实测同步」的自动校验——有价值但属另一关注点（文档洁癖自动化），
   规模不明，不搭车；若后续做，入口应是独立脚本而非塞进 gate 封装。
 - **不做** live LLM gate 进 CI——维持 §4.2 既有后置条款（凭证/预算/方差三前提）。
+
+---
+
+## 6. 实施记录（2026-08-10 深夜，提交 `361dda1`）
+
+| 步骤 | 状态 |
+|---|---|
+| 1 `scripts/check_intent_gate.py` + Makefile `gate-intent-l0` | ✅ 本地 2/2 exit 0 |
+| 2 `ci.yml` 阻断步骤 | ✅ 落在 `intent-eval-baseline` job、Exemplar 门禁之后 |
+| 3 红灯验证 | ✅ 见下 |
+| 4 `.github/CODEOWNERS` | ✅ 比方案多收三条（见下） |
+| 5 轻档分支保护 | ⏳ **未执行**——泓舟已拍板轻档，但本机 `gh` 未安装、也无 `GITHUB_TOKEN`/`GH_TOKEN`，AI 侧无法调 API。**这一条必须泓舟自己点**，两个等价办法见下 |
+| 6 运行手册 / AGENTS.md 指针 | ✅ 手册 §3.2 改为「唯一入口」，§11 自查清单同步 |
+
+**红灯验证（§2.4.2 要求，不做等于没接）**：注入一个 active intent 而不补对抗覆盖
+——复现 2026-08-10 除雾事故的**同一形态**。结果脚本 `exit 1`，coverage gap 逐条打印
+（`positive has 0, need 2` / `hard_negative has 0, need 2` / `relation has 0, need 1`）；
+还原后 `exit 0`。
+
+**两处比方案多做的**
+
+1. `check_intent_gate.py` 给两条 suite **各自指定** `--out-json/--out-md`。方案没提，
+   但 `eval_intent_adversarial.py` 的默认输出路径是同一个文件——不分开的话后跑的
+   gate 会把 discovery 的报告悄悄盖掉，CI artifact 里只剩半份证据。
+2. CODEOWNERS 比方案清单多收 `test/support/intent_adversarial_judge.py`、
+   `test/eval_corpus/intent_adversarial/`、`.github/workflows/`、
+   `scripts/check_intent_gate.py`。收录判据写在文件头：**动错了会「静默」损失安全性
+   或证据面**——业务代码改错通常有测试红，判定面与门禁配置改松了不会。
+
+**维持不做**（§5 三条全部照旧）：不动 `eval_fast_intent` 组的 `continue-on-error`、
+不做文档快照数字自动校验、不做 live LLM gate 进 CI。
+
+### 6.1 轻档分支保护：泓舟执行（两选一）
+
+**A. 网页（最快，无需装任何东西）**
+`https://github.com/SuperdeMan/cockpit-agent/settings/branches` → Add branch ruleset
+（或 Add classic branch protection rule）→ 分支 `main` →
+**只勾** `Restrict deletions` 与 `Block force pushes`，其余全不勾（不勾 require PR，
+否则就是重档、会改变直推 main 的工作流）。
+
+**B. gh CLI**（需先 `winget install --id GitHub.cli` 再 `gh auth login`）
+
+```bash
+gh api -X PUT repos/SuperdeMan/cockpit-agent/branches/main/protection \
+  -f 'required_status_checks=null' -f 'enforce_admins=false' \
+  -f 'required_pull_request_reviews=null' -f 'restrictions=null' \
+  -F 'allow_force_pushes[enabled]=false' -F 'allow_deletions[enabled]=false'
+```
+
+验收（§3.3.1）：拿一个一次性测试分支按同配置试一次 `git push --force` 被拒即可，
+**不要真对 `main` 演练**。

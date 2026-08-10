@@ -121,15 +121,34 @@ python test/eval_intent_adversarial.py --suite gate --layer l0 --list
 
 ### 3.2 L0：零网络硬门禁（改任何语料/知识资产后必跑）
 
+**唯一入口**（B2，2026-08-10 起）：
+
 ```bash
-python test/eval_intent_adversarial.py --suite discovery --layer l0
+python scripts/check_intent_gate.py        # 等价 make gate-intent-l0
+```
+
+它按顺序跑 discovery 与 gate 两条 `--strict`，**由 Python 直接读退出码**，任一非零
+则总 exit 1。**今后人工报 L0 门禁读数只允许引用这个入口的输出。** 理由是事故：
+2026-08-10 除雾能力补齐漏了对抗覆盖，`--strict` 实际 exit 2，人工
+`cmd | tail; echo $?` 拿到的是 `tail` 的 0，把红报成了绿（findings §26.4）。
+封装的全部意义就是让证据链上**不再出现 shell 管道**。同一条命令已在 CI
+（`ci.yml` 的 `intent-eval-baseline` job）作阻断步骤运行。
+
+需要单独看某一条时才手拆——注意 `--strict` 不能省，普通 `--list` 只**展示**
+coverage gap，`--strict` 才把它升级成**阻断**：
+
+```bash
+python test/eval_intent_adversarial.py --suite discovery --layer l0 --strict
 python test/eval_intent_adversarial.py --suite gate --layer l0 --strict
 ```
 
 L0 覆盖：契约 + 覆盖矩阵 + cohort 隔离 + boundary 双向 + Edge ingress + 词法检索 +
-确认前副作用。**L0 无模型参与，一次红就是结论**（不存在 `unstable`）。
+确认前副作用 + **端侧 VAL 命令探针**（B1：危险动作未经确认落地即红，与 case 声明
+无关——见 §11 与 `docs/conventions.md` §9.15）。
+**L0 无模型参与，一次红就是结论**（不存在 `unstable`）。
 
-当前预期：discovery **76/76 exit 0**；gate `--strict` **25/25 exit 0**
+当前预期：discovery **81/81 exit 0**（cases 574 / 唯一输入 535，bounds 上界 540，
+**仅余 5 个名额**，再加语料前先评估是否要抬 bounds）；gate `--strict` **25/25 exit 0**
 （gate 唯一输入 **129** ≥ `min_cases=120`）。
 ⚠ **这个绿只说明语料规模够了**——它判的是规模，不是 stable 全绿。
 当前 live 必须按模型分账：DeepSeek 对比轨 147/147，MiniMax 主模型 141/147，见文首快照与
@@ -406,7 +425,9 @@ p=1.000，已退回（§22.1）。**该用例残余按模型方差记账，不�
 ## 11. 自查清单（提交前逐条过）
 
 - [ ] 这一批是**只动尺子**还是**只动生产**？提交信息说清楚了吗？
-- [ ] 改了语料/知识资产 → 跑过 `--layer l0`（discovery 与 gate 各一次）了吗？
+- [ ] 改了语料/知识资产 → 跑过 `python scripts/check_intent_gate.py` 了吗？
+      （唯一入口，§3.2。**别再手拼命令 + 自己读退出码**——那正是 2026-08-10
+      把 exit 2 报成 exit 0 的那条路径。）
 - [ ] 改了口径 → 规格 §12 改了吗？引用过旧数的文档标注作废了吗？
 - [ ] 新写的断言，**先注入缺陷验证过它会红**吗？（否定命题守不住肯定性质）
 - [ ] 报出的每个比率，分子分母都看过吗？分母为 0 的地方写的是 `null` 不是 100% 吧？

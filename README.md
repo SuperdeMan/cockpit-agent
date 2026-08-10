@@ -207,6 +207,7 @@ docker compose -f compose.yaml up --build -d
 
 ```bash
 make test                          # = python -m pytest --import-mode=importlib -q
+make gate-intent-l0                # 意图对抗 L0 门禁（strict）——本地与 CI 唯一入口
 cd hmi && npm test && npm run build
 cd dashboard && npm test && npm run build
 

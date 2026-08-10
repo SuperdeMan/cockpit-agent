@@ -840,3 +840,47 @@ OwnerKey = (user_id, occupant_id)
 > **判据：缺值不是「用默认值」的理由**，尤其当值来自记忆召回时——记不得就该问。
 > 此前无值的 `hvac.set` 会静默降级成「开空调」、温度原地不动，而话术模板 `{value}度`
 > 拿到空值渲染成一个**单字「度」**。
+
+### 9.15 `val.execute(confirmed=…)`：危险动作确认闸下沉 VAL（B1，2026-08-10）
+
+**这是执行侧的结构性不变量，不是某条路径的实现细节。** 此前 `val._structured_execute`
+第 4 步是 PoC 注释「直接执行」，「危险动作必须二次确认」（CLAUDE.md §5）只靠每条上游
+路径自觉——于是云端降级兜底分支绕过确认闸直接开后备箱，且不需要恶意输入，云端任何
+空结果故障（LLM 超时 / 解析失败 / chitchat 空回复）都会触发。
+
+| 项 | 契约 |
+|---|---|
+| 签名 | `val.execute(cmd, args=None, answer_length="short", multi=False, confirmed=False)`；穿透 `_run` → `_structured_execute` / `_legacy_execute` |
+| 默认 fail-closed | `confirmed=False` 时，`_need_confirm(obj)` 为真的对象**一律拒绝执行**，返回 `(False, Car_general_restrictions_5)`，状态零变化 |
+| 危险对象来源 | `knowledge/commands.yaml` 的 `objects.<对象>.require_confirm: true`（当前 5 个：`trunk` / `door_lock` / `fuel_tank_cover` / `charging_port` / `frunk`）。**不在任何别处再列一份清单** |
+| 唯一可传 True 的生产路径 | `edge_call.py`——凭据来自 `call.meta.confirmed`，由云端确认闭环写入。该文件上游那道 `NEED_CONFIRM` 闸保留，形成双检查纵深 |
+| 其余调用点一律默认 | `server._execute_val_observed`（快路径 A/A2/B + 降级兜底）、`_dispatch_cloud_actions`。绕过确认闭环直接回流的危险 action 因此从「静默执行」变「拒绝并播报」 |
+| legacy 面同闸 | `_legacy_execute` 按命令前缀取对象名判 `_need_confirm`。当前 `_apply` 恰好没实现危险对象，但「恰好没实现」不是不变量 |
+| 话术 | 复用 `Car_general_restrictions_5`（本就是确认提示），用户听到「这项操作需要确认」——语义正确，不新增 key |
+| 钉死处 | `orchestrator/edge/tests/test_val_confirm_gate.py`（数据驱动 + 签名级断言：`confirmed` 默认值必须是 `False`） |
+
+> **为什么闸放在 VAL 而不是逐路径补**：将来任何人新增一条执行路径、忘了加闸，默认值
+> 也会把他挡住。签名级那条断言防的是另一类改法——某天有人为了「让某条路径跑起来」
+> 把默认翻成 `True`，所有调用点无声解闸，而业务测试照样全绿。
+>
+> **不做完整 ConfirmationGrant**（nonce/expiry/consume/payload-hash）：PoC 单进程内存 VAL、
+> 服务间信任边界内，重放/过期/换命令的威胁模型不成立。登记为**真实 VAL（C++/SOME-IP）
+> 对接的前置项**，届时另立卡。
+
+**配套日志标记（供 badcase 排查检索）**
+
+| 标记 | 含义 | 出处 |
+|---|---|---|
+| `CLOUD-DEGRADED-DANGER-BLOCKED <obj>` | 云端零输出 + 端侧识别出危险对象 ⇒ **不兜底执行**，播降级话术 | `orchestrator/edge/server.py` 兜底分支 |
+| `CLOUD-DEGRADED-LOCAL <obj>` | 云端零输出 + 非危险车控 ⇒ 兜底执行成功（既有行为，未变） | 同上 |
+
+> 兜底判定看的是**整条流有没有给过用户任何实质输出**（含流式 `speech_delta` 与
+> `action`），不是只看 `final.speech`——后者会漏掉「话术已经播出去、final 恰为空」
+> 那一档，本地补执行造成双执行。`progress` 不计入：过程区只是 UI 进度，用户没拿到答案。
+
+**T2 流式的配套不变量**（`orchestrator/cloud/loop.py`）：只有 **NO_OUTPUT** 才允许
+unary 回退。已流出 speech 或 action 之后 final 丢失，一律不重跑；action 已发而 final
+丢失时结果标 `data["_outcome_uncertain"]=true` 并透明告知，不假装成功、也不重试
+（重试 = 重复副作用）。变量 `got_final` 的语义是「拿到了 final」，与「流出过输出」
+（`did_speak` / `did_action`）**不许再合并成一个变量**——它们合并过一次，代价是那条
+分支永不可达。
