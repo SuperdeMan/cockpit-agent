@@ -49,7 +49,11 @@ def test_val_execution_state(val, case):
         if key in case:
             data[key] = case[key]
     cmd = {"domain": "setting", "intent": "control", "data": data}
-    ok, msg = val.execute(cmd)
+    # 本用例测的是**状态机分支**，不是确认闸——危险对象（trunk/door_lock/…）在 B1 之后
+    # 未带凭据一律被 VAL 拒绝，这里显式带上确认，等价于「用户已确认后的执行」。
+    # 闸本身的覆盖在 `test_val_confirm_gate.py`（拒绝 + 状态零变化 + 反向放行）。
+    confirmed = val._need_confirm(case["object"])
+    ok, msg = val.execute(cmd, confirmed=confirmed)
     assert ok, f"{_exec_id(case)} 执行失败：{msg}"
     for key, expected in case["expect"].items():
         actual = val.state.get(key)

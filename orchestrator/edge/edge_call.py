@@ -274,8 +274,11 @@ class EdgeCallExecutor:
             )
 
         answer_length = call.meta.get("answer_length", "short")
+        # 确认凭据下沉给 VAL（B1）：上面 :269 那道闸保留，形成双检查纵深——
+        # 这里是**唯一**能合法把 confirmed=True 交给 VAL 的生产路径（凭据来自
+        # `call.meta.confirmed`，由云端确认闭环写入）。
         ok, speech = self.val.execute(
-            structured, answer_length=answer_length)
+            structured, answer_length=answer_length, confirmed=confirmed)
         if not ok:
             return agent_pb2.ExecuteResponse(
                 status=agent_pb2.ExecuteResponse.REJECTED,

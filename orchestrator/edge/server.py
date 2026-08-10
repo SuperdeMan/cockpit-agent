@@ -357,7 +357,14 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         answer_length: str = "short",
         intent: str = "",
         multi: bool = False,
+        confirmed: bool = False,
     ):
+        """本地经 VAL 执行并出 span。
+
+        confirmed 默认 False：本函数的全部调用点（快路径 A/A2/B、云端降级兜底）都是
+        **没走过确认闭环**的本地路径，本就不该执行危险动作——VAL 侧 fail-closed 之后
+        它们即使被绕进来也执行不了（B1）。真正带凭据的路径是 `edge_call.py`。
+        """
         started = time.perf_counter()
         before = dict(self.val.state)
         ok, speech = self.val.execute(
@@ -365,6 +372,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             args,
             answer_length=answer_length,
             multi=multi,
+            confirmed=confirmed,
         )
         changes = _state_changes(before, self.val.state)
         await self._emit_span(
@@ -881,6 +889,11 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 known_objects=set(objects) if objects else None,
                 object_defs=objects or None,
             )
+            # 不传 confirmed（B1）：能走到这里的危险 action 一定**没经过确认闭环**——
+            # 合法确认后的执行走 edge_call，回流时带 `_origin=edge_val` 已在上面被跳过；
+            # 场景编排的危险动作在编译/激活层就按 require_confirm 处理过
+            # （scene_orchestrator `catalog._DANGER_OBJECTS`）。于是这里的危险 action
+            # 只可能来自异常路径，VAL fail-closed 会把它从「静默执行」变成「拒绝并播报」。
             if structured is not None:
                 ok, msg = self.val.execute(structured, answer_length=answer_length)
             else:

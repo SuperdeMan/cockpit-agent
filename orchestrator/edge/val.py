@@ -80,9 +80,18 @@ class VAL:
         args: dict | None = None,
         answer_length: str = "short",
         multi: bool = False,
+        confirmed: bool = False,
     ) -> tuple[bool, str]:
+        """唯一车控出口。
+
+        confirmed: 本条指令**已经过用户二次确认**。默认 False 即 fail-closed——
+        危险对象（knowledge/commands.yaml 里 `require_confirm: true`）未带该凭据
+        一律拒绝执行（B1，见 `_structured_execute` 第 4 步）。这条闸放在 VAL 而不是
+        只放在各调用路径上，是因为「危险动作必须二次确认」是**结构性不变量**：
+        将来任何人新增一条执行路径、忘了加闸，也不会把车开起来。
+        """
         before = dict(self.state)
-        result = self._run(cmd, args, answer_length, multi)
+        result = self._run(cmd, args, answer_length, multi, confirmed)
         self._notify(before)
         return result
 
@@ -92,18 +101,20 @@ class VAL:
         args: dict | None,
         answer_length: str,
         multi: bool = False,
+        confirmed: bool = False,
     ) -> tuple[bool, str]:
         """兼容旧接口 (str, dict) 和新接口 (dict)。
 
         answer_length: "short"/"standard"（默认，行车简短）或 "detailed"（详细）。
         multi: 本条是多意图批次的一员——话术选名词式全句（见 _pick_response）。
+        confirmed: 见 `execute()`。
         """
         self._answer_length = answer_length
         self._multi = multi
         if isinstance(cmd, str):
-            return self._legacy_execute(cmd, args or {})
+            return self._legacy_execute(cmd, args or {}, confirmed=confirmed)
         if isinstance(cmd, dict):
-            return self._structured_execute(cmd)
+            return self._structured_execute(cmd, confirmed=confirmed)
         return False, "暂不支持该控制指令"
 
     # ── 旧接口（向后兼容）──────────────────────────────────────
@@ -145,7 +156,15 @@ class VAL:
                 self.state["gear"] = "D"
         self._notify(before)
 
-    def _legacy_execute(self, command: str, args: dict) -> tuple[bool, str]:
+    def _legacy_execute(self, command: str, args: dict,
+                        confirmed: bool = False) -> tuple[bool, str]:
+        # 二次确认闸也要覆盖 legacy 面（B1）。当前 `_apply` 只实现 hvac/window/media，
+        # 危险对象走到这里本就落 "暂不支持"——但那是**实现恰好没覆盖**，不是不变量。
+        # 这道闸把它变成不变量：将来谁往 `_apply` 加一条 trunk 分支，也绕不过确认。
+        # 命名前缀即对象名（trunk./door_lock./fuel_tank_cover./charging_port./frunk.），
+        # 对 hvac./window./media. 这些 require_confirm=false 的对象是零成本 no-op。
+        if not confirmed and self._need_confirm(command.split(".")[0]):
+            return False, self._pick_response("Car_general_restrictions_5")
         # 安全态门控示例：高速行驶中不完全打开车窗
         if command == "window.open" and self.state["speed_kmh"] > 120:
             return False, "高速行驶中为安全起见暂不打开车窗"
@@ -182,11 +201,12 @@ class VAL:
 
     # ── 新接口（结构化命令）──────────────────────────────────
 
-    def _structured_execute(self, cmd: dict) -> tuple[bool, str]:
+    def _structured_execute(self, cmd: dict,
+                            confirmed: bool = False) -> tuple[bool, str]:
         """结构化命令执行流水线。
 
         cmd = {domain, intent, data: {operate, object, attr, positions, value, unit, ...}}
-        流水线：归一化 → 校验 → 安全门控 → 模拟 → 选话术
+        流水线：归一化 → 校验 → 安全门控 → **二次确认闸** → 模拟 → 选话术
         """
         data = cmd.get("data", {})
         obj = data.get("object")
@@ -208,11 +228,13 @@ class VAL:
         if not ok:
             return False, err
 
-        # 4. 需要二次确认（返回提示，由调用方决定是否继续）
-        if self._need_confirm(obj):
-            confirm_msg = self._pick_response("Car_general_restrictions_5")
-            # PoC：直接执行；真实场景返回 (False, confirm_msg) 让上层处理
-            # 这里简化为标记后继续
+        # 4. 二次确认闸（B1 fail-closed）：危险对象未带 confirmed 凭据一律**拒绝执行**。
+        #    此前这里是 PoC 注释「直接执行」——于是 CLAUDE.md §5「危险动作必须二次确认」
+        #    只靠每条上游路径自觉，任何绕过闭环的路径（如云端降级兜底）都能开后备箱。
+        #    话术复用 Car_general_restrictions_5（本就是确认提示），用户听到的是
+        #    「这项操作需要确认」——语义正确，无需新 key。
+        if self._need_confirm(obj) and not confirmed:
+            return False, self._pick_response("Car_general_restrictions_5")
 
         # 5. 模拟状态变更
         state_key, new_value = self._simulate(obj, operate, normalized)
