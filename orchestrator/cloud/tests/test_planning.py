@@ -1090,3 +1090,52 @@ def test_retired_hints_are_gone_by_design():
         assert i not in hints, (
             f"{i} 的 route_hint 又回来了（{hints.get(i)}）——恢复规则需要新证据："
             f"双臂裸跑显示模型自己做不到，且要写进 manifest 注释")
+
+
+def test_missing_complexity_on_a_schemaless_channel_is_recorded_not_silently_simple():
+    """`wire.get("complexity", "simple")` 把两件事压成了一个值。
+
+    `toolcall` 通道的 schema 把 complexity 列为 required，模型必须给；
+    `toolcall_salvage`（模型无视工具直接吐文本）与 `toolcall_fallback` 两条通道
+    **没有任何强制**。于是「通道没给」与「模型判了 simple」在 plan 上逐字相同——
+    findings §23：`cp.adaptive.weather-outing` 的失败正好全落在 salvage 通道上，
+    而没有这个标记就分不清该修模型判断还是该修通道契约。
+    """
+    builder = PlanBuilder(lambda _m: "", lambda q, top_k=1: [])
+    agents = [MockAgent("info", ["info.weather"])]
+    catalog = _assemble_capability_catalog(agents)
+    ref = next(iter(catalog.ref_to_pair))
+    step = {"id": "s1", "capability_ref": ref, "slots": {},
+            "depends_on": [], "slot_refs": {}}
+
+    absent = builder._parse_with_context(
+        {"goal": "查天气", "addressed": True, "steps": [step]},
+        catalog, "今天的天气适合去哪玩", stage="build", attempt=0,
+        wire_mode="toolcall_salvage")
+    stated = builder._parse_with_context(
+        {"complexity": "simple", "goal": "查天气", "addressed": True,
+         "steps": [step]},
+        catalog, "今天天气怎么样", stage="build", attempt=0,
+        wire_mode="toolcall")
+
+    # 行为不变：两者的 complexity 仍然都是 simple（这条改动只加留痕，不改分诊）。
+    assert absent.complexity == "simple" and stated.complexity == "simple"
+    # 但它们**不再是同一个观测**。
+    assert absent.complexity_declared is False
+    assert stated.complexity_declared is True
+
+
+def test_invalid_complexity_value_counts_as_undeclared():
+    builder = PlanBuilder(lambda _m: "", lambda q, top_k=1: [])
+    agents = [MockAgent("info", ["info.weather"])]
+    catalog = _assemble_capability_catalog(agents)
+    ref = next(iter(catalog.ref_to_pair))
+
+    plan = builder._parse_with_context(
+        {"complexity": "复杂", "goal": "g", "addressed": True,
+         "steps": [{"id": "s1", "capability_ref": ref, "slots": {},
+                    "depends_on": [], "slot_refs": {}}]},
+        catalog, "t", stage="build", attempt=0, wire_mode="toolcall_salvage")
+
+    assert plan.complexity == "simple"
+    assert plan.complexity_declared is False

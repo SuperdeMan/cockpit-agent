@@ -1738,9 +1738,11 @@ class PlanBuilder:
             if step.agent_id == _FALLBACK_AGENT:
                 step.slots["text"] = fallback_text
 
-        complexity = wire.get("complexity", "simple")
-        if complexity not in ("simple", "adaptive"):
-            complexity = "simple"
+        # **默认值必须留痕**（运行手册 §9：每加一个默认值，先问「没有证据」和
+        # 「证据为否」会不会被它压成同一个数）。这里正是那一例。
+        declared = wire.get("complexity")
+        complexity_declared = declared in ("simple", "adaptive")
+        complexity = declared if complexity_declared else "simple"
         goal = str(wire.get("goal", "") or "")
         emotion = _parse_emotion(wire.get("emotion"))
 
@@ -1761,6 +1763,7 @@ class PlanBuilder:
             steps=steps,
             raw_text=fallback_text,
             complexity=complexity,
+            complexity_declared=complexity_declared,
             goal=goal,
             emotion=emotion,
         )

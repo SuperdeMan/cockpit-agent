@@ -95,6 +95,12 @@ class Plan:
     # toolcall_salvage=模型无视工具、同轮文本抢救；toolcall_fallback=工具协议不可用后的
     # 第 2 轮 JSON 路径；toolcall_degraded=两轮全失败走 _fallback。
     plan_mode: str = "json"
+    # 落域可观测（仅供 span/评测，不参与编排）：本轮 wire **有没有真的给出**合法
+    # complexity。`_wire_to_plan` 里 `wire.get("complexity", "simple")` 是个静默默认，
+    # 于是「通道没给这个字段」与「模型判了 simple」被压成同一个值——而 toolcall 通道
+    # 有 schema 强制、salvage/fallback 通道没有。分不开这两件事就查不动
+    # 「首轮该 adaptive 却判了 simple」那一族（findings §23）。
+    complexity_declared: bool = True
     # M2 P2：本轮用户情绪（会话级，不入记忆）。planner 同轮附带输出（R4.4 addressed/
     # clarify 同款 fail-open），随 final 透传给 HMI 选 TTS 情感参数。空=neutral。
     emotion: str = ""
