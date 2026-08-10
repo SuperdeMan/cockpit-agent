@@ -718,3 +718,126 @@ cases:
         expected:
           ingress: {allowed: [cloud], forbidden: [edge_local]}
           plan: {required_intent_groups: [{any_of: [math.eval]}], forbidden_intents: [datetime.parse, unit.convert], allow_extra_intents: false}
+  # ── 除雾：2026-08-10 新增能力面的覆盖（front_defogger / rear_defogger）──────
+  #
+  # 这四个 intent 是当天补进 `VEHICLE_INTENTS` 的（端云两头此前都没有除雾能力，
+  # P3a 影子实录：`关闭强力前除雾` 被规划成 `accompany_home.close` 并被 VAL 执行）。
+  # **加了 active intent 就必须补覆盖**——不补的话 `--strict` 会以 12 条 gap 阻断，
+  # 而普通 `--list` 只展示、不阻断，很容易被读成「没问题」。这一课本身值得记：
+  # **同一个门禁在两种模式下的严厉程度不同，报绿之前先确认自己跑的是哪种模式。**
+  #
+  # 不走 `coverage_exemptions.yaml` 的判据：那张表豁免的是「**不经云侧 LLM 落域**、
+  # 没有可测对象」的端侧原子车控。除雾恰恰相反——把它加进能力面的**全部理由**就是
+  # 让云侧 planner 能选中它，它有可测的对象，而且原始 badcase 就发生在云侧。
+  #
+  # 形态复用本文件 2026-08-02 那批的 route_flip 对：前挡 ↔ 后挡是天然的同框架换对象，
+  # 一对同时给两个 intent 各补正例、硬负例与一次对照参与。
+  # **status 一律 reviewed**：新写的 gold 未经 live 稳定化，不进 gate 池、不动案例集，
+  # 因此也不触碰正式 baseline 的比对面（§4.3「动 gate 案例集前先问 baseline」）。
+  - id: tu.defog.front-open
+    title: 打开前挡除雾
+    family_id: tu.defog-open
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [defogger], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-10}
+    turns:
+      - input: {utterance: 把前挡除雾打开, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [front_defogger.open]}], forbidden_intents: [rear_defogger.open, hvac.on], allow_extra_intents: false}
+  - id: tu.defog.rear-open
+    title: 打开后挡除雾
+    family_id: tu.defog-open
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [defogger], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-10}
+    relation: {base_case: tu.defog.front-open, type: route_flip, expectation: {forbidden_after: [front_defogger.open], required_change: true}}
+    turns:
+      - input: {utterance: 把后挡除雾打开, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [rear_defogger.open]}], forbidden_intents: [front_defogger.open, hvac.on], allow_extra_intents: false}
+  - id: tu.defog.front-close
+    title: 关闭前挡除雾
+    family_id: tu.defog-close
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [defogger], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-10}
+    turns:
+      - input: {utterance: 前挡除雾可以关了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [front_defogger.close]}], forbidden_intents: [rear_defogger.close, hvac.off], allow_extra_intents: false}
+  - id: tu.defog.rear-close
+    title: 关闭后挡除雾
+    family_id: tu.defog-close
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [defogger], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-10}
+    relation: {base_case: tu.defog.front-close, type: route_flip, expectation: {forbidden_after: [front_defogger.close], required_change: true}}
+    turns:
+      - input: {utterance: 后挡除雾可以关了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [rear_defogger.close]}], forbidden_intents: [front_defogger.close, hvac.off], allow_extra_intents: false}
+  # 第二正例用**另一种说法**而不是同句改标点（本文件 `os.open.trunk` 那条注释记过：
+  # 按条数记正例 2 条、按唯一输入记只有 1 条，恰好涂绿最低要求）。
+  # 这两条同时把「起雾」这种**陈述式**触发钉住：端侧对它刻意不接（宁可漏接上云），
+  # 所以它必须在云侧落对。
+  - id: tu.defog.front-open-colloquial
+    title: 前风挡起雾的口语说法
+    family_id: tu.defog-open-colloquial
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase, object_flip], domains: [defogger], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-10}
+    turns:
+      - input: {utterance: 前风挡起雾了看不清，处理一下, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [front_defogger.open]}], forbidden_intents: [rear_defogger.open, wiper.on], allow_extra_intents: false}
+  - id: tu.defog.rear-open-colloquial
+    title: 后风挡起雾的口语说法
+    family_id: tu.defog-open-colloquial
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase, object_flip], domains: [defogger], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-10}
+    relation: {base_case: tu.defog.front-open-colloquial, type: route_flip, expectation: {forbidden_after: [front_defogger.open], required_change: true}}
+    turns:
+      - input: {utterance: 后风挡起雾了看不清，处理一下, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [rear_defogger.open]}], forbidden_intents: [front_defogger.open, wiper.on], allow_extra_intents: false}
+  # ⚠ 下面这条的输入是 **P3a 影子实录的原句**——它当时被规划成 `accompany_home.close`
+  # 并被 VAL 照单执行。`forbidden_intents` 里放 `accompany_home.close` 就是那次事故的
+  # 反向钉子：**能力补齐之后，这句话再落到伴我回家上就是回归。**
+  - id: tu.defog.front-close-strong
+    title: 关闭强力前除雾（原 badcase 原句）
+    family_id: tu.defog-close-strong
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [defogger], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-10}
+    turns:
+      - input: {utterance: 关闭强力前除雾, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [front_defogger.close]}], forbidden_intents: [accompany_home.close, rear_defogger.close, hvac.off], allow_extra_intents: false}
+  - id: tu.defog.rear-close-colloquial
+    title: 后除雾不用了
+    family_id: tu.defog-close-strong
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase, object_flip], domains: [defogger], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-10}
+    relation: {base_case: tu.defog.front-close-strong, type: route_flip, expectation: {forbidden_after: [front_defogger.close], required_change: true}}
+    turns:
+      - input: {utterance: 后除雾不用了，关掉吧, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [rear_defogger.close]}], forbidden_intents: [front_defogger.close, accompany_home.close, hvac.off], allow_extra_intents: false}
