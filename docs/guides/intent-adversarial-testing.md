@@ -379,10 +379,13 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 |---|---|---|
 | P0 | 裸地名澄清族（留在门禁内，已立卡） | `nq.landmark.bare` 合并 **11/20≈55%**（高方差边界句，不是稳定红）、`nq.landmark.explicit` 自己每条断言都过、被 relation 连累；同族第三条 `nq.city.bare` 未进池。**路径 1「写 guide」实测否掉**（§18：4/10→1/10→退回 7/10，p≈0.02 有害）；**路径 3「换出预选池」执行并全量验证后回退**（§19.5：总分没变好且会冻结 baseline 写入）。判据：**不要为了某个模型的问题去改尺子**。路径 2 未启动 |
 | P0 | 主模型 `eligible=True` 的方向 | 不是跑批问题：单元不稳定率 3.3% ⇒ 一趟零 unstable 概率约 1.7%。先决定压底噪 / 改口径 / 接受主模型不出正式 baseline（findings §17.6） |
-| P2 | `cp.adaptive.weather-outing`：**首轮把 `adaptive` 判成 `simple`** | L3 已还清；`replan 空计划`已补确定性守卫（§22.2/§22.3）。当前主要问题在**首轮 complexity 分诊**：2026-08-10 下午 36 样本 **10 次（≈28%）**首轮判 simple，上午 11 样本 **0 次**，注入逐字相同、工作树无改动可解释（§22.5）。⚠ **不要再加知识**——guide few_shot 里就摆着 `complexity=adaptive` 且每轮注入 |
 
 2026-08-10 已收口（不再是待办）：三条未晋级候选**全部按跨进程契约取证完毕**——
 `cp.hvac-news.swapped` 2/6（尺子抓对了 `limit="今天的"`，维持严格口径）、
+`cp.adaptive.weather-outing` 的「首轮判 simple」已定性到**输出通道**：
+27 样本 `toolcall` 10/11 vs `toolcall_salvage` 7/14（p≈0.036），且模型在 salvage 上是
+**明写 simple**（`complexity_declared` 全 True）——不是知识问题，**加 guide/范例/正则
+都治不到**；已把 `meta.plan_modes` 做成每批可见（§23）。
 `nq.hvac.reported` 2/6（转真缺陷，**同日已修**：补范例 `chitchat#12`，
 A/B 5/12 → 11/12、p=0.027、七条护栏零回归，findings §21）、
 `nq.match.lastweek` 5/6（边界方差，不动）；
@@ -404,6 +407,8 @@ p=1.000，已退回（§22.1）。**该用例残余按模型方差记账，不�
 - [ ] 改了口径 → 规格 §12 改了吗？引用过旧数的文档标注作废了吗？
 - [ ] 新写的断言，**先注入缺陷验证过它会红**吗？（否定命题守不住肯定性质）
 - [ ] 报出的每个比率，分子分母都看过吗？分母为 0 的地方写的是 `null` 不是 100% 吧？
+- [ ] 读落域数之前，**看过这一批的 `plan_modes` 了吗**？掉出 `toolcall` 的轮与走 schema
+      的轮不可直比（实测 91% vs 50%，p≈0.036，§23.2）。
 - [ ] 做 A/B 之前，**证明过两臂真的不同**吗？（2026-08-10：给 `replan()` 加了形参，
       harness 没跟着传，24 个样本两臂逐字相同，差点据此否掉自己的守卫——§22.4）
 - [ ] 跑 pytest 时**没有**带 `PYTHONIOENCODING=utf-8` 吧？带了会让拉子进程的用例

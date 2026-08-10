@@ -1130,6 +1130,11 @@ def _snapshot_dict(snapshot: DecisionSnapshot) -> dict[str, Any]:
         "ingress": snapshot.ingress, "addressed": snapshot.addressed,
         "decision": snapshot.decision, "clarify": snapshot.clarify,
         "goal": snapshot.plan.goal, "complexity": snapshot.plan.complexity,
+        # complexity 与 plan_mode 必须一起读：`_parse_with_context` 里
+        # `complexity = wire.get("complexity", "simple")` 是**静默默认**，
+        # 通道没给这个字段与模型判了 simple 在这里长得一模一样。
+        "plan_mode": snapshot.plan.plan_mode,
+        "complexity_declared": snapshot.plan.complexity_declared,
         "steps": [{"id": s.id, "intent": s.intent, "slots": s.slots,
                    "depends_on": list(s.depends_on), "slot_refs": s.slot_refs}
                   for s in snapshot.plan.steps],
@@ -1610,6 +1615,12 @@ def _run_single(args: argparse.Namespace) -> int:
     meta["declared_set_complete"] = bool(declared_units) and declared_units <= produced
     meta["missing_declared_units"] = sorted(declared_units - produced)[:50]
     meta["repeat_policy_complete"] = _repeat_policy_complete(results, suite)
+    # 每一批都要能一眼看到「这批里有多少轮压根没走成工具通道」。
+    # 2026-08-10 实测（findings §23.2）：`cp.adaptive.weather-outing` 27 个样本按通道分账
+    # `toolcall` 10/11 (91%) vs `toolcall_salvage` 7/14 (50%)，Fisher p≈0.036——
+    # **同一段 prompt，模型走 schema 作答时判 adaptive，掉到自由文本时判 simple**。
+    # 不把通道分布印出来，这种批次间波动只会被读成「模型今天状态不好」。
+    meta["plan_modes"] = _plan_mode_counts(results)
     baseline = eval_common.load_baseline(Path(args.baseline))
     report = build_adversarial_report(results, meta)
     if baseline:
@@ -1710,6 +1721,20 @@ def _expected_units(cases, args) -> set[str]:
     return units
 
 
+def _plan_mode_counts(results) -> dict[str, int]:
+    """逐 repetition 统计 plan_mode 分布。
+
+    `plan_mode` 从 M1a 起就在 Plan 上，但直到 2026-08-10 都没有任何聚合消费方——
+    与它捆在一起的落域读数因此无法回答「这批到底有多少轮走成了工具通道」。
+    """
+    counts: dict[str, int] = {}
+    for row in results or []:
+        for repetition in getattr(row, "repetitions", ()) or ():
+            mode = str((repetition or {}).get("plan_mode") or "") or "unknown"
+            counts[mode] = counts.get(mode, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def _repeat_policy_complete(results, suite) -> bool:
     """重复次数不达标一律不合资格。
 
@@ -1797,6 +1822,18 @@ def _print_summary(report: dict) -> None:
         print(f"  [!] 语义检索中途降级 {meta['retrieval_degraded']}/"
               f"{meta.get('retrieval_calls', 0)} 次调用没拿到向量——"
               f"这些轮只跑了词法档，本次知识层结论不成立")
+    modes = meta.get("plan_modes") or {}
+    off_tool = sum(count for mode, count in modes.items()
+                   if mode and mode != "toolcall" and not mode.startswith("json"))
+    if modes:
+        total_modes = sum(modes.values())
+        line = f"  plan_modes: {modes}"
+        if off_tool and total_modes:
+            # 不是失败，是**读数前提**：掉出工具通道的那些轮，模型是在自由文本里作答，
+            # 输出分布本来就与走 schema 的那些轮不同（findings §23.2）。
+            line += (f"  [!] {off_tool}/{total_modes} 轮没走成 toolcall——"
+                     f"这些轮与走 schema 的轮不可直比")
+        print(line)
     for row in (report.get("weakest") or [])[:5]:
         print(f"  weakest {row['dimension']}={row['cell']} "
               f"{row['pass_rate'] * 100:.1f}% (n={row['total']})")
@@ -2098,7 +2135,8 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
                 raw_observed=outcome.raw_observed,
                 validation_observed=outcome.raw_observed,
                 actual_intents=tuple(outcome.snapshot.plan.intents),
-                plan_from_fallback=outcome.plan_from_fallback))
+                plan_from_fallback=outcome.plan_from_fallback,
+                plan_mode=str(outcome.snapshot.plan.plan_mode or "")))
         classification = runtime.classify_repeats(repeats, case.risk,
                                                   deterministic=layer == "l0")
         # 判定为失败时，留**失败那一轮**的证据。首轮通过、第二三轮翻车的案例（高风险
@@ -2189,7 +2227,8 @@ def _assemble_unit(unit: UnitRuns, args, agents, builder, confirm_intents,
                                "raw_observed": o.raw_observed,
                                "validation_observed": o.validation_observed,
                                "actual_intents": o.actual_intents,
-                               "plan_from_fallback": o.plan_from_fallback}
+                               "plan_from_fallback": o.plan_from_fallback,
+                               "plan_mode": o.plan_mode}
                               for o in classification.outcomes),
             divergence=divergence, divergence_candidates=candidates,
             divergence_evidence=evidence_dict,
@@ -2270,7 +2309,7 @@ def _l3_results(selected, args, l3_statuses, provider_model, *,
                 "raw_observed": False,
                 "validation_observed": False,
                 "actual_intents": (),
-                "plan_from_fallback": False,
+                "plan_from_fallback": False, "plan_mode": "",
             },),
             # journey 红灯没有分层对照物，声称首偏离点是 Planner 只是在编。
             divergence="" if passed else "UNCLASSIFIED"))

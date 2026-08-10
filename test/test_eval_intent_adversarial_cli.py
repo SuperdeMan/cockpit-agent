@@ -1880,6 +1880,7 @@ def _formal_writer_report():
             "raw_intents": (), "raw_capability_refs": (),
             "raw_observed": False, "validation_observed": False,
             "actual_intents": (), "plan_from_fallback": False,
+            "plan_mode": "",
         },)))
     embedding_model = "text-embedding-v4"
     outer_generated = datetime.now(timezone.utc)
@@ -2199,6 +2200,7 @@ def test_l3_result_exposes_the_claim_each_journey_is_allowed_to_prove(monkeypatc
         "validation_observed": False,
         "actual_intents": (),
         "plan_from_fallback": False,
+        "plan_mode": "",
     },)
 
 
@@ -2606,7 +2608,11 @@ def test_assemble_unit_records_each_repeat_from_its_own_turn_outcome():
             "raw_intents", "raw_capability_refs", "request_capability_catalog",
             "raw_observed",
         "validation_observed", "actual_intents", "plan_from_fallback",
+        # `plan_mode` 与 complexity 必须一起可见：通道没给 complexity 与模型判了
+        # simple 在报告里长得一模一样（findings §23.1）。
+        "plan_mode",
     } for rep in row.repetitions)
+    assert all(isinstance(rep["plan_mode"], str) for rep in row.repetitions)
     json_rows = json.loads(json.dumps(row.repetitions))
     assert json_rows[1]["raw_intents"] == ["does.not.exist", "info.weather"]
     assert json_rows[1]["actual_intents"] == ["chitchat.talk"]

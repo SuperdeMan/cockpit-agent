@@ -2493,3 +2493,75 @@ harness 对齐后重跑 4 趟（守卫真正可达）：**8/12，4 次失败全�
 ⚠ 读数纪律：**上午的 9/11 与下午的 25/36 不要合并平均。** 失败形态分布都换了，
 合起来那个数谁也代表不了（同 §9「改了口径旧数字当场作废」的精神，这次换的不是口径，
 是被测对象当天的行为分布）。
+
+---
+
+## 23. 2026-08-10：最后一条 P2 —— 「首轮判 simple」的真因在**输出通道**，不在知识
+
+§22.5 把这条记成「同一 SHA、逐字相同的注入，跨时段分布不同，工作树无改动可解释」。
+那是个诚实的诊断，但它**不是结论**——它只是说明我当时看不见足够的东西。
+
+### 23.1 先补观测面：`plan_mode` 早就采集了，却从来没进过报告
+
+`Plan.plan_mode`（json / toolcall / toolcall_salvage / toolcall_fallback / *_degraded）
+从 M1a 起就被 trace 记下来，但在对抗报告里**只在兜底那一行被读过一次**，
+`actual` 与 `repetitions` 都没有它。后果很具体：
+
+> 「模型判了 simple」与「计划走了没有 schema 约束的通道」在报告里**逐字相同**，
+> 而这两件事要的修法完全不同。
+
+同一形态的第二处：`_wire_to_plan` 里 `complexity = wire.get("complexity", "simple")`
+是个**静默默认**——`toolcall` 通道的 schema 把 `complexity` 列为 `required`，
+`toolcall_salvage`（模型无视工具、直接吐文本）与 `toolcall_fallback` **没有任何强制**。
+这正是运行手册 §9 那条判据的实例：**每加一个默认值，先问「没有证据」和「证据为否」
+会不会被它压成同一个数。**
+
+两处都补了留痕（`plan_mode` 进 `actual` 与逐 repetition；`Plan.complexity_declared`
+只记不判、行为一字未改），并各配了单测。**先排除的两个结构性猜想也留个账**：
+catalog 在上午/下午四份报告里逐字相同（`chars_full=10725`、`dropped=[]`），
+toolcall schema **确实**含 `complexity` 且 required——都不是原因。
+
+### 23.2 读数：真因是**掉出工具通道**，而且它把我的第一个假设证伪了
+
+27 个样本（`minimax:MiniMax-M3`，检索零降级，逐轮记 `plan_mode`）：
+
+| plan_mode | 通过 | 首轮 complexity |
+|---|---|---|
+| `toolcall` | **10/11（91%）** | 10/11 adaptive |
+| `toolcall_salvage` | **7/14（50%）** | 失败样本首轮**全部** simple |
+| `toolcall_degraded` | **0/2** | simple |
+
+`toolcall` vs `toolcall_salvage` 两尾 Fisher **p ≈ 0.036**。
+
+而 `complexity_declared` **五个证据样本全是 `True`**——**模型在 salvage 通道上是明写
+`"complexity":"simple"` 的，不是通道把字段丢了。** 我加这个标记正是为了验证「静默默认」
+那个猜想，结果它把自己证伪了。
+
+> **判据：同一段 prompt，模型走 schema 作答与掉进自由文本作答，输出分布不是一回事。**
+> 工具 schema 的 `required` + `enum` 不只是校验，它是**作答时的脚手架**：
+> 被迫先填 `complexity` 的那一轮判了 adaptive，自由发挥的那一轮判了 simple。
+> 这也给「tool schema 三向改输出分布」那条既有结论补了一个可量化的样本。
+
+⇒ **这条用例的账第三次改写**：不是「replan 空」（§22.2 已补守卫），也不是
+「complexity 分诊本身坏了」，而是**约一半的轮次压根没走成工具通道**，
+而那一半的规划质量只有走成的一半。往这条上加知识、改 guide、写正则**全都治不到**。
+
+### 23.3 落地的是观测面，不是「修复」
+
+**没有**去改 provider 的 tool-calling 行为，也没有在 salvage 路径上编造一个
+「补判 adaptive」的规则——那会变成拿正则去猜模型本来就明确表达过的判断。
+落地的是：每一批报告的 `meta.plan_modes` 与摘要行
+
+```
+plan_modes: {'toolcall': 3}
+plan_modes: {'toolcall': 5, 'toolcall_salvage': 7}  [!] 7/12 轮没走成 toolcall——这些轮与走 schema 的轮不可直比
+```
+
+> **判据：一个会左右全部落域读数的前提，必须每批都印出来，而不是等人怀疑时去查。**
+> 在此之前，「这批有多少轮走成了工具通道」这个数**没有任何消费方**——
+> 于是批次间的波动只会被读成「模型今天状态不好」。§22.5 里那句
+> 「工作树无改动可解释」正是这么来的。
+
+**留给泓舟的产品决策**（不自行启动）：`toolcall_salvage` 占比这么高是 provider 侧
+tool-calling 可靠性问题。可选项＝换档/换 provider、salvage 轮强制重试工具通道、
+或接受并在读数里始终分账。三者的代价与影响面都不在这一批的授权范围内。

@@ -103,8 +103,24 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 | 优先级 | 待办 | 完成判据 |
 |---|---|---|
-| **P2** | `cp.adaptive.weather-outing`：首轮把 `adaptive` 判成 `simple` | **账已换了一次**：L3 早已还清，`replan 出空计划`那一路也补了确定性守卫（§22.2/§22.3）。现在的主要问题在**首轮 complexity 分诊**——2026-08-10 下午 36 样本里 **10 次（≈28%）**首轮判 `simple`、`replan_count=0`，而当天上午 11 样本**一次都没有**；注入逐字相同、同 SHA 族、同 provider，工作树无改动可解释。⚠ **不要再往这条加知识**：guide 的 few_shot 里就摆着 `complexity=adaptive` 且每轮都注入（§18 同形）。要动就动分诊那一层，且先量清当天底噪 |
+| — | **§4.1 当前没有活跃待办** | 见下方收口说明；条件型 / 后置项在 §4.2 |
 
+> 2026-08-10（收官批）已收口：**`cp.adaptive.weather-outing` 的账第三次改写，
+> 真因在输出通道，不在知识。** 先补两处观测面（`plan_mode` 从 M1a 起就采集却从没进过
+> 报告；`wire.get("complexity","simple")` 是静默默认，`toolcall` 有 schema 强制而
+> `salvage`/`fallback` 没有），然后 27 样本按通道分账：
+> **`toolcall` 10/11（91%） vs `toolcall_salvage` 7/14（50%），Fisher p≈0.036**；
+> 而 `complexity_declared` 全 `True`——**模型在 salvage 通道上是明写 `simple` 的**，
+> 我加的标记把自己的「静默默认」假设证伪了。
+> ⇒ 判据＝**同一段 prompt，走 schema 作答与掉进自由文本作答，输出分布不是一回事**
+> （schema 的 required+enum 是作答脚手架，不只是校验）；
+> 以及**一个会左右全部落域读数的前提，必须每批都印出来**——`meta.plan_modes` 与摘要行
+> 已落地，此前这个数**没有任何消费方**，于是波动只会被读成「模型今天状态不好」
+> （§22.5 那句「工作树无改动可解释」正是这么来的）。
+> **没有**去改 provider 的 tool-calling，也没有在 salvage 上编规则补判 adaptive；
+> salvage 占比高是 provider 侧可靠性问题，选项与代价见 findings §23.3，**待泓舟拍板**
+> （已入 §4.2）。逐条 findings §23。
+>
 > 2026-08-10（晚批）已收口：**两条新 P2 各有结论，但都不是「修好了」**——
 > ① `nq.hvac-keep.dont` 的「短句检索够不着」**是真的**（0.305 vs 阈值 0.34，对称 Dice
 > 惩罚短句），但**补上够得着的范例之后通过率没动**（15/18 → 16/18，p=1.000，
@@ -163,6 +179,7 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 | M4 声纹 / 视觉余项 | 真麦校准、语音注册入口、模板漂移治理、视觉多轮与 `vp_*` 指标消费仍未收口；进入真机量产验收或 v2 前启动 | [M4 RFC](docs/design/2026-07-25-m4-p4-voiceprint-vision-rfc.md) §11.5/§11.8、[声纹契约](docs/conventions.md) §9.11 |
 | MiniMax 主模型 `eligible=True` | **不是跑批问题，是方向问题**。三批读数 `f0af9c0` 141/147 → `32e8718` 141/147（raw 幻觉 8→3、不稳定 6→4、未声明 fallback 4→2）→ `5e8247d` 140/147（换池态，已回退）。**每批红灯都是从同一个边界池里重新抽的**，换掉具体红灯不提高整体资格概率；实测单元不稳定率 3~5% ⇒ 一趟零 unstable 概率个位数百分比。启动条件＝泓舟先拍一个方向：压底噪 / 换判据口径 / 接受主模型不出正式 baseline。**在此之前继续跑批期望值极低** | [findings §17.6/§19.2](docs/design/2026-08-02-intent-routing-adversarial-findings.md)、[最终 review §7](docs/reviews/2026-08-04-review-intent-adversarial-finalization.md) |
 | 裸对象澄清族（留在门禁内，已立卡） | `nq.landmark.bare` 合并 11/20≈55% 的高方差边界句；`nq.landmark.explicit` 自己每条断言都过、被 relation `clarify_flip` 连累；同族第三条 `nq.city.bare`「上海」reviewed 未进池。**路径 1「写 guide」实测否掉**（§18：4/10→1/10→退回 7/10，p≈0.02 有害）；**路径 3「换出预选池」执行并全量验证后由泓舟裁定回退**（§19.5：总分没变好且会冻结 baseline 写入）。**路径 2（范例 schema 加 clarify 型）是唯一未启动项**——要改契约 + 门禁 + 检索消费面，面较大，有人愿意投入时才启动 | 立卡整段写在语料 `test/eval_corpus/intent_adversarial/cases/negation_quotation.yaml` 的 `nq.landmark.bare` 头上；[findings §18/§19](docs/design/2026-08-02-intent-routing-adversarial-findings.md) |
+| Planner 工具通道可靠性（`toolcall_salvage` 占比） | 2026-08-10 实测 `minimax:MiniMax-M3` 上 27 样本里约一半掉出工具通道，而掉出去那一半的规划质量只有走成的一半（91% → 50%，p≈0.036）。**这是 provider 侧 tool-calling 可靠性，不是知识/落域问题**。选项＝换档或换 provider / salvage 轮强制重试工具通道 / 接受并在读数里始终分账（`meta.plan_modes` 已每批可见）。三者代价与影响面都超出尺子批次的授权，待泓舟拍板 | [findings §23](docs/design/2026-08-02-intent-routing-adversarial-findings.md) |
 | B3-2「广州塔」地标解析（高德侧） | **不进落域账**。2026-08-10 同坐标直连复测：geocode 对（兴趣点／广州塔真坐标）、`near=None` 重搜 top1 就是广州塔，只有带深圳偏置的关键词搜索会顶出「广州仄仄科技有限公司」2.4km。即 R1 去偏置重搜机制本身是对的，但它**要多打一次高德**，跑批并发下正是最易被限流的那一次；掉一次退回就近弱匹配，掉两次成「暂时无法确定」——两次红的两种形态由此解释。归高德 QPS 一族，出现真实用户投诉或做并发治理时再启动 | [复杂意图·地标/停车](docs/design/2026-07-07-complex-intent-landmark-parking-fixes.md)、判据与复测记在 `test/journeys/target_b.yaml` B3-2 注释 |
 
 ### 4.3 读数纪律
@@ -202,6 +219,9 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 - **跑 pytest 不要带 `PYTHONIOENCODING=utf-8`**：子进程按 UTF-8 写、父进程按 GBK 解，
   Windows 上会把拉子进程的用例弄成假红（3 红 vs 不设时 154 全过，§20.6）。
   要看中文输出就把 JSON 落盘再读文件。
+- **读任何落域数之前先看 `plan_modes`**（2026-08-10）：掉出 `toolcall` 的那些轮，模型是在
+  自由文本里作答，输出分布与走 schema 的轮**本就不同**（实测 91% vs 50%，p≈0.036）。
+  摘要行会打 `[!] N/M 轮没走成 toolcall——这些轮与走 schema 的轮不可直比`（§23.2）。
 - **A/B 之前先证明两臂真的不同**（2026-08-10）：给 `replan()` 加了 `adaptive` 守卫后跑
   「守卫 vs 对照」共 24 样本，正要定性「守卫有害」时才查到 **L1 harness 调 `replan()`
   根本没传这个形参**——两臂逐字相同，那组读数对守卫什么都没测。方向还正好是「看起来

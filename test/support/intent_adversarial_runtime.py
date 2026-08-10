@@ -385,6 +385,12 @@ class RepeatOutcome:
     validation_observed: bool = False
     actual_intents: tuple[str, ...] = ()
     plan_from_fallback: bool = False
+    # 这一轮的计划走的是哪条产出通道（json / toolcall / toolcall_salvage /
+    # toolcall_fallback / *_degraded / *_no_action）。**采集了不等于看得见**：
+    # `plan_mode` 从 M1a 起就被 trace 记下来，却只在兜底那一行被读过一次，
+    # 于是「模型判了 simple」和「计划走了 salvage 通道、complexity 被默认成 simple」
+    # 在报告里逐字相同——而这两件事要的修法完全不同（findings §23）。
+    plan_mode: str = ""
 
 
 @dataclass(frozen=True)

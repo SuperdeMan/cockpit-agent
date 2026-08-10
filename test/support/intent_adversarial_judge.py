@@ -41,6 +41,7 @@ class PlanSnapshot:
     catalog_stats: dict[str, Any]
     raw_llm: str = ""
     plan_mode: str = ""
+    complexity_declared: bool = True
     skill_effects: tuple[str, ...] = ()
 
     @classmethod

@@ -38,6 +38,7 @@ def snapshot_plan(plan) -> PlanSnapshot:
         catalog_stats=dict(getattr(plan, "catalog_stats", None) or {}),
         raw_llm=str(getattr(plan, "raw_llm", "") or ""),
         plan_mode=str(getattr(plan, "plan_mode", "") or ""),
+        complexity_declared=bool(getattr(plan, "complexity_declared", True)),
         skill_effects=tuple(getattr(plan, "skill_effects", None) or []),
     )
 

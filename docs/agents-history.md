@@ -1388,3 +1388,54 @@ empty-replan 1 次、clarify 0 次；而当天**上午 11 样本里首轮 simple
 回归：`orchestrator/` **1099 passed**（+6 新单测）、端侧 smoke **13/13**、
 L0 discovery **76/76**、gate `--strict` **25/25 exit 0**、
 `eval_exemplars` **254 条 / 20 域 PASS**。逐条证据 findings **§22**。
+
+## 21. 最后一条 P2：「首轮判 simple」的真因在输出通道（2026-08-10 收官）
+
+§20 把它记成「同一 SHA、逐字相同的注入、跨时段分布不同，工作树无改动可解释」——
+那是诚实的诊断，但**不是结论**：它只说明当时看不见足够的东西。
+
+**先补两处观测面（都是「采集了但没消费方」）**：
+- `Plan.plan_mode`（json/toolcall/toolcall_salvage/toolcall_fallback/*_degraded）从 M1a
+  起就被 trace 采集，**却从没进过对抗报告**——于是「模型判了 simple」与「计划走了没有
+  schema 约束的通道」在报告里逐字相同。已进 `actual` 与逐 repetition。
+- `_wire_to_plan` 的 `complexity = wire.get("complexity","simple")` 是**静默默认**：
+  `toolcall` 通道 schema 把它列为 required，`salvage`/`fallback` 没有任何强制。
+  新增 `Plan.complexity_declared`**只记不判**（行为一字未改）＋两条单测。
+  这正是运行手册 §9「每加一个默认值，先问『没有证据』和『证据为否』会不会被压成同一个数」。
+
+先排除掉的两个结构性猜想也留了账：catalog 在上午/下午四份报告里逐字相同
+（`chars_full=10725`、`dropped=[]`）；toolcall schema **确实**含 `complexity` 且 required。
+
+**读数（27 样本，检索零降级）**：
+
+| plan_mode | 通过 | 首轮 complexity |
+|---|---|---|
+| `toolcall` | **10/11（91%）** | 10/11 adaptive |
+| `toolcall_salvage` | **7/14（50%）** | 失败样本首轮全部 simple |
+| `toolcall_degraded` | 0/2 | simple |
+
+`toolcall` vs `salvage` 两尾 Fisher **p ≈ 0.036**；而 `complexity_declared` 五个证据样本
+**全 True**——**模型在 salvage 上是明写 `"simple"` 的，不是通道丢了字段。
+我加这个标记正是为了验证「静默默认」，结果它把自己证伪了。**
+
+> **判据一：同一段 prompt，走 schema 作答与掉进自由文本作答，输出分布不是一回事。**
+> 工具 schema 的 `required` + `enum` 不只是校验，是**作答时的脚手架**——被迫先填
+> `complexity` 的那一轮判了 adaptive，自由发挥的那一轮判了 simple。
+> 给既有结论「tool schema 三向改输出分布」补了一个可量化样本。
+>
+> **判据二：一个会左右全部落域读数的前提，必须每批都印出来。** 在此之前
+> 「这批有多少轮走成了工具通道」**没有任何消费方**，于是批次波动只会被读成
+> 「模型今天状态不好」——§20 里那句「工作树无改动可解释」就是这么来的。
+
+**落地的是观测面，不是「修复」**：`meta.plan_modes` + 摘要行
+`[!] N/M 轮没走成 toolcall——这些轮与走 schema 的轮不可直比`。
+**没有**去改 provider 的 tool-calling，也**没有**在 salvage 路径上编一条「补判 adaptive」
+的规则——那等于拿正则去猜模型本来就明确表达过的判断。
+`toolcall_salvage` 占比高是 provider 侧可靠性问题，选项（换档换 provider / salvage 轮强制
+重试工具通道 / 接受并始终分账）代价都超出尺子批次授权，已立卡进 §4.2 待泓舟拍板。
+
+**§4.1 至此没有活跃待办。**
+
+回归：`pytest test/` **1127 passed / 9 skipped**、`orchestrator/` **1101 passed**、
+端侧 smoke **13/13**、L0 discovery **76/76**、gate `--strict` **25/25 exit 0**。
+逐条证据 findings **§23**。
