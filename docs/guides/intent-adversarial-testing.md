@@ -31,9 +31,15 @@
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 0；MiniMax **11/122**，其中未声明 **2** |
 | 回归 | `orchestrator/` **1093 passed**、`pytest test/` **1127 passed / 9 skipped**；端侧 smoke **13/13**；项目根全量 **4490 passed / 16 skipped / 0 failed**（2026-08-09 实测） |
 
-⚠ **MiniMax 两次 141/147 不是同一批红灯。** `f0af9c0` 点名的 6 条 unstable 在 `32e8718`
-全部转绿，红灯换成另一批边界单元，其中 5 条单跑 10 样本全绿。按实测单元不稳定率 3.3%，
-一趟完整 gate 恰好零 unstable 的概率约 **1.7%**——读主模型报告先看**是哪几条**再看总分。
+⚠ **MiniMax 三批 141/141/140 都不是同一批红灯。** `f0af9c0` 点名的 6 条 unstable 在
+`32e8718` 全部转绿，红灯换成另一批边界单元（其中 5 条单跑 10 样本全绿）；`5e8247d`
+换池后又换一批。按实测单元不稳定率 3~5%，一趟完整 gate 恰好零 unstable 的概率是个位数
+百分比——**读主模型报告先看是哪几条，再看总分**（findings §17.6/§19.2）。
+
+⚠ **上表 MiniMax 那一行是 `32e8718` 的读数，与当前代码差一个 `skills/exemplars/sunroof.yaml`**
+（该范例已单独取证 10/10）。`5e8247d` 那批 140/147 是**换池态**下跑的，换池随后已回退
+（findings §19.5），其案例集与当前不一致，**不要拿来当当前读数**。
+严格说当前 SHA 没有对应的全量读数——需要时重跑一次，别挪用相邻批次。
 
 首份正式**对比/参考模型** baseline 已写入
 [`docs/reviews/eval/baseline_intent_adversarial.{json,md}`](../reviews/eval/baseline_intent_adversarial.md)，
@@ -371,7 +377,7 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 
 | 优先级 | 待办 | 完成判据 |
 |---|---|---|
-| P0 | 裸地名澄清族 | `nq.landmark.bare` 合并 **11/20≈55%**（高方差边界句，不是稳定红）、`nq.landmark.explicit` 0/10（被 relation 连累，自己每条断言都过）。**路径 1「写 guide」已实测否掉**（findings §18：4/10→1/10→退回 7/10，p≈0.02 显著，有害）；剩路径 2/3，需泓舟再裁 |
+| P0 | 裸地名澄清族（留在门禁内，已立卡） | `nq.landmark.bare` 合并 **11/20≈55%**（高方差边界句，不是稳定红）、`nq.landmark.explicit` 自己每条断言都过、被 relation 连累；同族第三条 `nq.city.bare` 未进池。**路径 1「写 guide」实测否掉**（§18：4/10→1/10→退回 7/10，p≈0.02 有害）；**路径 3「换出预选池」执行并全量验证后回退**（§19.5：总分没变好且会冻结 baseline 写入）。判据：**不要为了某个模型的问题去改尺子**。路径 2 未启动 |
 | P0 | 主模型 `eligible=True` 的方向 | 不是跑批问题：单元不稳定率 3.3% ⇒ 一趟零 unstable 概率约 1.7%。先决定压底噪 / 改口径 / 接受主模型不出正式 baseline（findings §17.6） |
 | P2 | 三条未晋级候选 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 仍在预选池；按新跨进程契约重新取证 |
 | P2 | 补 weather-outing 的真实 L3 claim | 旧链接语义不对应已删除；要晋级需新增真正验证 weather→nearby 连续性的 journey |

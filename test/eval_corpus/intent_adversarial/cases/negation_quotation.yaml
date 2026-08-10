@@ -179,15 +179,13 @@ cases:
       - input: {utterance: 今晚那场比赛结果是多少, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [info.sports]}], forbidden_intents: [info.news], allow_extra_intents: false}
-  # ══ 立卡：裸对象澄清族换出 gate 预选池（2026-08-10，泓舟裁定走 findings §17.8 路径 3）══
-  # **换出的是门禁资格，不是这个缺陷。** 两条用例一字未删、gold 一字未放宽，
-  # status 由 stable 降为 reviewed —— discovery suite 的 statuses 含 reviewed，
-  # 所以它们**继续每批跑**，只是不再决定 gate 能不能绿。等量换入 `nq.tesla.news`
-  # 与 `nq.sichuan.search`（同为 A3，攻击面守恒；见本文件下方两条的晋级注释）。
+  # ══ 立卡：裸对象澄清族（2026-08-10；路径 3 换池**执行过又回退**，账留在这里）══
   #
-  # 判据（规格 §22.7）：**问「这条红是因为用例难，还是因为被测对象错」。**
-  # 这一族是前者——`nq.landmark.bare` 两次无干预读数合并 **11/20≈55%**，
-  # 是一条高方差边界句，不是稳定答错；把它留在门禁里等于让 `eligible` 长期挂在抛硬币上。
+  # 缺陷本身：`nq.landmark.bare` 两次无干预读数合并 **11/20≈55%**，是一条高方差边界句，
+  # 不是稳定答错。`nq.landmark.explicit` **自己每条断言都过**，是被 relation
+  # `clarify_flip` 要求「base 稳定 clarify」连累成红——同一个缺陷被计两次。
+  # ⚠ 同族第三条 `nq.city.bare`「上海」（本文件下方，reviewed 从未进池）是**同一个缺陷的
+  #   另一个马甲**。三条一起跟，别只盯 landmark 这一对。
   #
   # 已试过并否掉的修法（findings §18，别再重来一遍）：
   #   写一条 guide 讲判据 → 四次 10 样本 4/10 → 3/10 → 1/10 → 退回后 7/10，
@@ -195,16 +193,31 @@ cases:
   # 未启动的修法：给范例 schema 加「clarify 型范例」（范例 `plan` 必须非空，
   #   而正确产物恰恰是「先别落域」——要改契约 + 门禁 + 检索消费面）。
   #
-  # ⚠ 同族还有 `nq.city.bare`「上海」（本文件下方，reviewed 从未进池）——**同一个缺陷的
-  #   另一个马甲**。2026-08-10 挑换入候选时正是因为这一点排除了它：换入它等于把同族
-  #   不稳定塞回门禁。三条一起跟，别只盯 landmark 这一对。
+  # 路径 3（等量换出预选池）**做完并全量验证过，随后回退**（findings §19，泓舟裁定）：
+  #   换出后 gate 规模一个数没变，那对也确实不再红，但**总分没变好**——红灯从同一个
+  #   边界池里又抽了一批（判据第三次兑现：换掉具体红灯不提高整体资格概率）。
+  #   而代价是硬的：正式 baseline 是 DeepSeek 在 `f0af9c0` 的 147 案例集，
+  #   改 gate 案例集当场触发 `removed_cases`，**整个 baseline 写入机制被冻结**
+  #   （不重跑 DeepSeek 就再也写不出新 baseline）。
+  #   离线比对确认过因果：换池前相对 baseline 缺失 0，换池后缺失 2。
+  #
+  # > **判据一（泓舟 2026-08-10）：不要为了某个模型的问题去改动 gate 案例集。**
+  # > 案例集是**尺子**，它描述「我们要求系统做到什么」；某个 provider 今天做不到，
+  # > 是被测对象的读数，不是尺子该让步的理由。换池实测也印证了这一点——总分没变好。
+  #
+  # > **判据二：动 gate 案例集之前，先问正式 baseline 还认不认得这个案例集。**
+  # > 收益是「让一条已知无解的用例不占门禁」，代价是「冻结 baseline 写入机制」；
+  # > 当收益被实测证明不改变总分时，这笔交易不划算。
+  #
+  # 换回 stable 是**明知代价的选择**，不是遗忘：这一对会继续以约 55% 的通过率
+  # 在 gate 里制造红灯，读 MiniMax 报告时按本条注释扣掉即可。
   - id: nq.landmark.bare
     title: 裸地名应当澄清
     family_id: nq.landmark
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
-    tags: {attacks: [A3], mechanisms: [clarify], domains: [navigation], layers: [l1]}
+    status: stable
+    tags: {attacks: [A3], mechanisms: [clarify], domains: [navigation], layers: [l1], gate_candidate: true}
     provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-02, gold_revision_reason: "2026-08-02 复核：CLARIFY_ENABLED **生产一直是 on**（.env.example / compose 自 2026-07-08 真栈 CDP 验收后即 on），findings 里「生产默认 off」读的是代码兜底值；本批已把 planning/engine 的兜底缺省对齐到 on，评测进程不再测到另一套装配", gold_revised_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     turns:
       - input: {utterance: 华润大厦, context: {}}
@@ -216,8 +229,8 @@ cases:
     family_id: nq.landmark
     cohort: unseen_transfer
     risk: medium
-    status: reviewed
-    tags: {attacks: [A3], mechanisms: [clarify], domains: [navigation], layers: [l1]}
+    status: stable
+    tags: {attacks: [A3], mechanisms: [clarify], domains: [navigation], layers: [l1], gate_candidate: true}
     # 2026-08-02 泓舟裁定：带「导航去/带我去」的句子归 navigation 域；**先搜后导与直接导航
     # 两条 intent 都算落对**（用户拿到的都是「去这个地方」）。本条真正要守的是另一件事：
     # 补上动词之后**绝不许再反问**——澄清只作用于动词缺失的裸地名。
@@ -226,8 +239,7 @@ cases:
     # 它自己每一条断言都过（decision=execute、clarify=False、navigate_to 在场、无额外项），
     # 却因 `clarify_flip` 要求 base **稳定** clarify 而全部记红。
     # 判据：**relation 断言会把 base 的方差放大成 variant 的稳定红**——同一个缺陷被计两次，
-    # 还把一个 unstable 记成 stable_fail。它随 base 一起降级，等 base 有解再一起回池；
-    # 契约本来也不允许 base 非 stable 而 variant 是 stable。
+    # 还把一个 unstable 记成 stable_fail。读报告时按这条扣掉，别当成两个缺陷。
     provenance: {kind: authored, reviewed_by: human, reviewed_at: 2026-08-02, gold_revision_reason: "2026-08-02 裁定：navigate_to 与 search_poi 都算落对；断言收敛到「补上动词后不得澄清」", gold_revised_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-03, stabilized_via: evidence_only, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-{a,b}.json"}
     relation: {base_case: nq.landmark.bare, type: clarify_flip, expectation: {}}
     turns:
@@ -287,14 +299,16 @@ cases:
       - input: {utterance: 八点开会那条提醒不用了, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [reminder.cancel]}], forbidden_intents: [reminder.create], allow_extra_intents: false}
-  # 2026-08-10 晋级并换入 gate 预选池（等量换：与 nq.landmark 一对同为 A3，攻击面守恒）。
+  # 2026-08-10 晋级取证已完成（两趟独立进程 × repeat 3，两趟均 3/3），但**换入已回退**：
+  # 泓舟裁定不为模型问题改动 gate 案例集（换池实测不提升总分，却会冻结 baseline 机制）。
+  # provenance 里的跨进程证据**刻意保留**——它是真的，将来若重开换池可直接复用，不必重跑。
   - id: nq.tesla.news
     title: 特斯拉的新闻
     family_id: nq.tesla
     cohort: unseen_transfer
     risk: low
-    status: stable
-    tags: {attacks: [A3], mechanisms: [recency_word], domains: [info], layers: [l1], gate_candidate: true}
+    status: reviewed
+    tags: {attacks: [A3], mechanisms: [recency_word], domains: [info], layers: [l1]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-10, stabilized_processes: 2, stabilized_samples_per_process: 3, stabilized_process_runs: [promotion-2026-08-10-a, promotion-2026-08-10-b], stabilized_samples: 6, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-2026-08-10-{a,b}.json"}
     turns:
       - input: {utterance: 特斯拉最近有什么新闻, context: {}}
@@ -313,14 +327,14 @@ cases:
       - input: {utterance: 特斯拉最新的股价是多少, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [info.stock]}], forbidden_intents: [info.news], allow_extra_intents: false}
-  # 2026-08-10 晋级并换入 gate 预选池（等量换的第二条；保住 navigation 域在池内的覆盖）。
+  # 同上：晋级取证保留，换入已回退（2026-08-10）。
   - id: nq.sichuan.search
     title: 附近的川菜馆
     family_id: nq.sichuan
     cohort: unseen_transfer
     risk: low
-    status: stable
-    tags: {attacks: [A3], mechanisms: [anaphora_tense], domains: [nearby, navigation], layers: [l1], gate_candidate: true}
+    status: reviewed
+    tags: {attacks: [A3], mechanisms: [anaphora_tense], domains: [nearby, navigation], layers: [l1]}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02, stabilized_provider: "minimax:MiniMax-M3", stabilized_at: 2026-08-10, stabilized_processes: 2, stabilized_samples_per_process: 3, stabilized_process_runs: [promotion-2026-08-10-a, promotion-2026-08-10-b], stabilized_samples: 6, evidence_report: "docs/reviews/eval/_ci-run-intent-gate-promotion-2026-08-10-{a,b}.json"}
     turns:
       - input: {utterance: 附近有什么川菜馆, context: {}}

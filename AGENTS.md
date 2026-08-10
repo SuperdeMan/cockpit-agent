@@ -98,8 +98,7 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 | 优先级 | 待办 | 完成判据 |
 |---|---|---|
-| **P0（换池已落地，只差 baseline 重取证）** | 正式 baseline 因换池过期，资格恒红 | 2026-08-10 按路径 3 换出 `nq.landmark.{bare,explicit}`、等量换入 `nq.tesla.news`/`nq.sichuan.search`（findings §19）。副作用：正式 baseline 是 DeepSeek 在 `f0af9c0` 的 147 案例集，当前 gate 已不含那两条 ⇒ 每份报告都带一条 **`removed_cases`** 拒绝原因，**与模型表现无关**。收口＝在当前语料上重跑一次完整 DeepSeek 父 bundle + `--write-baseline`（约 40 分钟，未执行）。**判据：动了 gate 案例集，正式 baseline 当场过期**，放着不管就是养一条永远红的闸 |
-| **P0（方向已明，不建议继续跑批）** | 裸对象澄清族的账（已移出门禁，仍在 discovery 跑） | `nq.landmark.bare` 合并 11/20≈55% 的高方差边界句；`nq.landmark.explicit` 自己每条断言都过、是被 relation 连累；同族第三条 `nq.city.bare`「上海」从未进池。**路径 1「写 guide」已实测否掉**（findings §18：4/10→1/10→退回 7/10，p≈0.02 有害）；路径 2（范例 schema 加 clarify 型）未启动。立卡写在语料内，账跟着用例走 |
+| **P0（方向已明，不建议继续跑批）** | 裸对象澄清族的账（留在门禁内，已立卡） | `nq.landmark.bare` 合并 11/20≈55% 的高方差边界句；`nq.landmark.explicit` 自己每条断言都过、是被 relation `clarify_flip` 连累；同族第三条 `nq.city.bare`「上海」reviewed 未进池。**路径 1「写 guide」实测否掉**（findings §18：4/10→1/10→退回 7/10，p≈0.02 有害）；**路径 3「换出预选池」执行并全量验证后由泓舟裁定回退**（findings §19.5：总分没变好，且会冻结 baseline 写入机制）。路径 2（范例 schema 加 clarify 型）未启动。立卡整段写在语料 `nq.landmark.bare` 头上，账跟着用例走 |
 | **P0（方向问题，不是跑批问题）** | MiniMax 主模型 `eligible=True` | 三批读数：`f0af9c0` 141/147（6 unstable）→ `32e8718` 141/147（raw 幻觉 8→3、不稳定 6→4、未声明 fallback 4→2）→ `5e8247d` 140/147（不稳定 6、未声明 fallback 1）。**每一批红灯都是从同一个边界池里重新抽的**，换掉具体红灯不提高整体资格概率（findings §19.2，判据第三次兑现）。实测单元不稳定率 3~5% ⇒ 一趟零 unstable 概率个位数百分比。**继续跑批期望值极低**，需先决定压底噪 / 换判据口径 / 接受主模型不出正式 baseline |
 | **P2** | 补 weather-outing 的真实 L3 claim | 不复用语义不对应的旧 journey；新增真正验证 weather→nearby 连续性的授权旅程后再晋级 |
 | **P2** | 三条未晋级候选重新取证 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 按当前跨进程契约取证 |
@@ -146,8 +145,13 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 - **relation 断言会把 base 的方差放大成 variant 的稳定红**：`nq.landmark.explicit`
   自己每条断言都过却 0/10，只因 `clarify_flip` 要求 base 稳定。读 `stable_fail` 条数时
   先减掉这种连累项（§18.4）。
-- **动了 gate 案例集，正式 baseline 当场过期**：换池后每份报告都会带
-  `removed_cases` 拒绝原因，与模型无关；不重取证就是养一条永远红的闸（§19.3）。
+- **不要为了某个模型的问题去改动 gate 案例集**（泓舟 2026-08-10）：案例集是**尺子**，
+  描述「我们要求系统做到什么」；某个 provider 今天做不到是被测对象的读数，不是尺子该
+  让步的理由。与规格 §22.7「换出带病候选」不矛盾——那条针对**被测对象错了**，
+  而「用例难、模型弱」正是 §22.7 要求留在门禁里的一类（§19.5）。
+- **动 gate 案例集之前先问正式 baseline 还认不认得这个案例集**：案例集一变，
+  每份报告都会带 `removed_cases` 拒绝原因（与模型无关），baseline 写入机制被冻结。
+  离线比对 baseline 与语料的 id 集合即可零成本预判（§19.3/§19.5）。
 - **诊断动作本身会污染下一次跑批**：`scripts/run_e2e.py` 会重建服务并把运行时标记成
   `runtime_freshness: unverified`，在两次全量批之间穿插它，下一批的 L3 阶段会重建
   llm-gateway、掐断 primary 的网关连接（大批 `planner_unreached`）。单独定性 L3 之后
