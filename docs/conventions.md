@@ -91,10 +91,10 @@
 | `info.weather` | info | cloud | city, date | 实时天气（和风真实 provider，无 key/失败回退 mock）；端侧"天气"online_only 上云 |
 | `info.forecast` | info | cloud | city, days | 天气预报（和风 3/7 天预报）；端侧"预报/未来几天"online_only 上云 |
 | `info.alerts` | info | cloud | city | 天气预警（和风实时预警，排除海洋/热带气旋/辐射） |
-| `info.indices` | info | cloud | city | 生活指数（运动/洗车/紫外线） |
+| `info.indices` | info | cloud | city | 生活指数（运动/洗车/紫外线）；2026-08-10 起端侧规则也产出它（`life_index` 对象，带 `tag` 指数种类，不进 LOCAL_INTENTS 仍上云）——此前「查深圳的穿衣指数」被下方 `info.stock` 的裸「指数」抢成股指 |
 | `info.search` | info | cloud | query, limit | 联网搜索（AnySearch 优先/Bing 降级真实 provider）；端侧"搜一下"online_only 上云 |
 | `info.news` | info | cloud | topic, limit | 新闻摘要（话题走 Exa 正文；综合要闻走 Google News 头条+Exa 合并；繁→简、沉农场、来源多样性、时效过滤）；端侧"看新闻/摘要"→info.news，"播新闻"→media.* |
-| `info.stock` | info | cloud | symbol | 股票行情（Tushare A股 + 新浪行情港美股降级，免费）；端侧"股票/大盘"收敛到 info.stock |
+| `info.stock` | info | cloud | symbol | 股票行情（Tushare A股 + 新浪行情港美股降级，免费）；端侧"股票/大盘"收敛到 info.stock。⚠ 端侧的「指数」二字**不再**归它（语料 179/183 是天气生活指数），股票词分两档：自身无歧义的（股票/股价/大盘/股指/股市/成指/上证/深证/恒生/纳斯达克/道琼斯/道指/标普）与须与「指数」共现的（创业板/科创/沪深/日经/富时/中证/北证） |
 | `info.air_quality` | info | cloud | city | 实时空气质量（和风 AQI/PM2.5 真实 provider）；端侧"空气质量/PM2.5"online_only 上云 |
 | `info.sports` | info | cloud | query, league | 赛事比分/赛程（api-football，league=世界杯/欧冠/五大联赛，按日期查+客户端过滤）。追问"第N场/某队 + 谁进的球/详细赛况"→定位该场并拉**进球事件**（射手+分钟，剔除罚丢点球等非进球）；"**射手榜/金靴/得分王**"→`/players/topscorers`（免费档仅 2022-2024 赛季，试本届→拿不到回退最近可用并标注「{season}赛季」）；"**总/历史射手榜**"（累计历史榜，赛季 API 给不了）→改写 query 走通用搜索接地合成；联赛上下文可从多轮 `ctx.history()` 回填 |
 | `reminder.create` | reminder | cloud | title, time_text, kind | 一句话创建提醒；确定性中文时间解析（LLM@fast 兜底），缺时刻 NEED_SLOT 追问（title 存 REMINDER_PENDING 下轮合并）；"记一下…"无时刻→待办(kind=todo)；创建回读确认。**P1a**：重复（每天/每个工作日/每周X→`recur` 触发后滚动，工作日首触发落周末顺延周一）；「过10分钟再提醒我/稍后按钮」= snooze **改期原条目**（同名 fired 尸体收编，不新建） |

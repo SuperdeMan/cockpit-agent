@@ -245,6 +245,29 @@ def cloud_domain_of(text: str) -> str | None:
 # 隐式车控（planner 规则），不在此扩大端侧接管面。
 _FEELING_FORMS = ("热一点", "冷一点", "再热", "再冷")
 
+# 生活指数种类（云侧 `info.indices`）。**逐条来自语料实证**，不按语感拍：
+# `test/eval_corpus/feishu_intents_full.jsonl` 里 `object=指数` 的 179 条全是 weather 域，
+# 上面这些词覆盖它的全部形态。`着衫`＝粤语的穿衣、`带遮`＝遮阳，语料里都真实出现。
+# 「空气污染扩散条件」放在 `扩散条件` 上而不是整串，是因为语料里有「空气污染扩散条件
+# 指数」也有「扩散条件指数」；它与 `air_quality`（AQI/PM2.5）是两件事，那条规则匹配的是
+# 「空气质量/空气指数」，不含「空气污染」，两边不打架。
+_LIFE_INDEX_KINDS = (
+    "洗车", "紫外线", "紫外光", "穿衣", "着衫", "化妆", "扮靓", "感冒", "过敏",
+    "旅游", "旅行", "路况", "交通", "钓鱼", "运动", "戴口罩", "带遮", "遮阳",
+    "扩散条件", "舒适度", "晾晒", "防晒", "空调开机",
+)
+
+# 股票词分两档，判据是**这个词单独出现时还有没有歧义**：
+# - `_STOCK_TERMS` 自身足够（「深圳成指」「标普500的信息」都不含「指数」二字，
+#   语料里这两条此前一直漏接，2026-08-10 一并补上）；
+# - `_STOCK_INDEX_QUALIFIED` 必须与「指数」共现——`科创`（科创中心）、`日经`
+#   （日经新闻）、`富时`/`中证` 单独出现时不一定在说证券。
+_STOCK_TERMS = (
+    "股票", "股价", "大盘", "股指", "股市", "成指",
+    "上证", "深证", "恒生", "纳斯达克", "道琼斯", "道指", "标普",
+)
+_STOCK_INDEX_QUALIFIED = ("创业板", "科创", "沪深", "日经", "富时", "中证", "北证")
+
 
 def classify(text: str) -> dict | None:
     """旧接口：返回 {name, slots, confidence}。向后兼容。"""
@@ -311,6 +334,8 @@ def classify(text: str) -> dict | None:
         name = "info.forecast"
     elif obj == "stock":
         name = "info.stock"
+    elif obj == "life_index":
+        name = "info.indices"        # 与 agents/info/manifest.yaml 的 capability 同名
     elif obj == "search":
         name = "info.search"
     elif obj == "page":
@@ -1210,6 +1235,21 @@ def _classify_structured(text: str) -> dict | None:
         return _s("query", "query", "query", "wind_force", conf=0.9)
     if "空气质量" in t or "PM2.5" in t or "空气指数" in t:
         return _s("query", "query", "query", "air_quality", conf=0.9)
+    # 生活指数（2026-08-10 补，**必须早于下方股票分支**）：股票那条用的是裸
+    # `"指数" in t`，于是把「查深圳的穿衣指数」判成了股指——语料里 `指数` 标签
+    # **179 条 100% 是 weather 域**（洗车/感冒/紫外线/穿衣/化妆/旅游/路况/钓鱼/
+    # 运动/戴口罩/扩散条件），另有 4 条标普500 才是真股指。这条错配此前只被
+    # 记在 `nlu_objects.yaml` 里当作「不许洗成 agree」的反例，缺陷本身一直没修。
+    # 词表从语料实证提取，不按语感拍：`着衫`＝粤语穿衣、`带遮`＝遮阳，都在册。
+    # ⚠ **必须与「指数」共现**，裸词匹配一律不收。这不是保守，是本文件反复付过学费的
+    # 那一课（体感入口收窄 badcase c9bcf8c2）：`洗车`/`运动`/`旅游`/`路况` 全是高频
+    # 日常词，裸匹配会把「附近哪里可以洗车」抢成生活指数、把「放点运动音乐」抢成天气。
+    # 语料里 179 条 `指数` 全部含「指数」二字，共现条件零召回损失。
+    if "指数" in t:
+        for _idx_kind in _LIFE_INDEX_KINDS:
+            if _idx_kind in t:
+                return _s("info", "query", "query", "life_index",
+                          tag=_idx_kind, conf=0.88)
 
     # ── 天气预报（online_only→info.forecast）──────────────────
     if ("预报" in t or "未来几天" in t or "明天天气" in t
@@ -1245,7 +1285,13 @@ def _classify_structured(text: str) -> dict | None:
         return _s("information", "query", "query", "train", conf=0.88)
 
     # ── 股票（收敛到 info.stock，消除 information/stock 孤儿意图）──
-    if "股票" in t or "股价" in t or "大盘" in t or "指数" in t:
+    # ⚠ 裸 `"指数" in t` 已于 2026-08-10 收窄成显式股指词形。原因见上方生活指数分支：
+    # 裸「指数」在真实语料里 **97.8%（179/183）指的是天气生活指数**，只有 4 条标普500
+    # 是股指——把这个词整体判给股票是把多数派判错去接住少数派。
+    # 不认识的「X指数」现在**不再猜**，落到后面整句上云：落错域会给 planner 一个错
+    # 提示，漏接只是慢一点。同「宁可漏接上云，不要端侧替用户按按钮」那条纪律。
+    if any(w in t for w in _STOCK_TERMS) or \
+            ("指数" in t and any(w in t for w in _STOCK_INDEX_QUALIFIED)):
         return _s("info", "query", "query", "stock", conf=0.88)
 
     # ── 车内灯（阅读灯/化妆灯/脚窝灯/动态氛围灯等）──────

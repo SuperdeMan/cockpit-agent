@@ -129,10 +129,38 @@ def test_corpus_adjudicated_labels_not_guessed_by_name():
 
 
 def test_known_rule_defect_is_not_laundered_into_agreement():
-    """`指数` 不许收 `stock`。
+    """`指数` 不许收 `stock`——**缺陷已修，这条断言反而更该留着**。
 
-    规则把「查深圳的穿衣指数」判成股指（179 条 100% 命中 `stock`）——那是**规则的错**，
-    不是命名差异。收进等价类就等于把一个真 badcase 洗成 `agree`：影子从此看不见它。
-    桥接表的职责是消除命名差异，**不是消除分歧**。
+    曾经：规则把「查深圳的穿衣指数」判成股指（179 条 100% 命中 `stock`）。那是
+    **规则的错**不是命名差异，收进等价类等于把真 badcase 洗成 `agree`，影子从此
+    看不见它。桥接表的职责是消除命名差异，**不是消除分歧**。
+
+    现在（2026-08-10）：那张卡已修——`fast_intent` 补了生活指数分支、股票词收窄成
+    「自身足够」与「须与指数共现」两档，179 条全部落 `life_index`（见下方回归断言）。
+    于是本条从「记录一个已知缺陷」变成**回归探针**：规则若哪天退化回判股指，
+    影子会立刻显红而不是静悄悄地 agree。
+    **修好一个缺陷不等于可以撤掉守它的那道断言。**
     """
     assert "stock" not in (edge_nlu.equivalent_objects("指数") or [])
+    assert "life_index" in (edge_nlu.equivalent_objects("指数") or [])
+
+
+def test_life_index_corpus_no_longer_lands_on_stock():
+    """整族回归：语料里 `指数` 标签的每一条都不许再落 `stock`。
+
+    只钉单句守不住这条——它当初就不是某一句写错，是一个词（裸「指数」）被整体
+    判给了少数派（真股指在语料里只有 4 条标普500）。
+    """
+    from fast_intent import classify_structured
+
+    rows = [json.loads(line) for line in _CORPUS.read_text(encoding="utf-8").splitlines()
+            if line.strip()]
+    landed = []
+    for row in (r for r in rows if r.get("object") == "指数"):
+        structured = classify_structured(row["text"])
+        landed.append(structured["data"]["object"] if structured else None)
+
+    assert landed, "语料里应当有 `指数` 标签的样本"
+    assert "stock" not in landed, "生活指数又被判回股指了"
+    assert all(obj == "life_index" for obj in landed), \
+        f"未全部落 life_index：{sorted(set(landed))}"
