@@ -1,0 +1,53 @@
+# 范例库 · sunroof 域（M5 P1 数据飞轮）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号，插队会让历史日报的 eid 指错条目）。
+#
+# ⚠ 本文件 2026-08-10 才建，起因是一个「对面有强吸引子、自己整域空白」的组合：
+# 全库唯一提到天窗的范例是 **否定式**的 `chitchat#7`「天窗暂时别开」→ `chitchat.talk`
+# （它本身是对的，治的是「先别X 被读成做X的反面」）。可它的**表层形态**就是
+# 「车上某个部件 + 开关动词」——与肯定式车控指令一模一样，于是它成了整个肯定族的
+# 高相似度吸引子，而肯定这一侧一条范例都没有（`skills/exemplars/` 下既无 sunroof
+# 也无 window 域文件；车控是端侧能力，从来没有 manifest examples，同 hvac / shop 两例）。
+#
+# 实测（`32e8718` 完整 gate，minimax:MiniMax-M3）：`os.open.sunroof`「打开天窗」六样本
+# 里失败那次检索到的唯一范例就是 `full:chitchat#8@vec:0.72`，计划落成
+# `chitchat.talk{text: 打开天窗}`——**范例库在教它答错**。
+#
+# 判据：**给否定族写范例时，要同时问肯定族有没有对照物。**
+# 否定范例长得就像肯定指令，只写一侧等于给对面装了个吸引子。
+#
+# 纪律：说法**刻意避开对抗语料原句**（`os.open.sunroof` 是 unseen_transfer，原话字面
+# 进了被注入的知识就把它从 unseen 洗成 seen）。教的是「天窗是个可开合的车控对象」，
+# 与 chitchat#7 的差别是**判据**（有没有被否定），不是只差一个词。
+domain: sunroof
+exemplars:
+- text: 把天窗开一下透透气
+  plan:
+  - agent: edge-vehicle
+    intent: sunroof.open
+  source: manual
+  added: '2026-08-10'
+  tags:
+  - badcase
+  - affirmative-counterweight
+  note: 肯定式天窗指令走车控，不是闲聊；对照 chitchat#7「天窗暂时别开」
+- text: 天窗关上吧，风太大了
+  plan:
+  - agent: edge-vehicle
+    intent: sunroof.close
+  source: manual
+  added: '2026-08-10'
+  tags:
+  - badcase
+  - affirmative-counterweight
+  note: 带理由的肯定式关闭仍是车控；理由句不把它变成闲聊
+- text: 天窗开一半就行
+  plan:
+  - agent: edge-vehicle
+    intent: sunroof.set
+    slots:
+      position: '50'
+  source: manual
+  added: '2026-08-10'
+  tags:
+  - affirmative-counterweight
+  note: 开合度是 set 不是 open——同一个对象上的三个动作各有归属
