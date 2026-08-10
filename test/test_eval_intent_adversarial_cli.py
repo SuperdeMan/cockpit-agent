@@ -3522,3 +3522,24 @@ def test_a_tag_hitting_several_tag_keys_is_flagged():
     assert prov["tag_hits"]["safety"]["matched_tag_keys"] == {"domains": 1,
                                                              "mechanisms": 1}
     assert "同时命中了多个 tag 键" in "\n".join(format_selection_provenance(prov))
+
+
+@pytest.mark.parametrize(("mode", "off_tool"), [
+    ("toolcall", False),
+    ("toolcall_no_action", False),        # 工具通道走成了，模型答「不需要动作」
+    ("json", False),                      # PLANNER_TOOLCALL=off，压根没打算用工具
+    ("json_no_action", False),
+    ("toolcall_salvage", True),
+    ("toolcall_salvage_no_action", True),
+    ("toolcall_fallback", True),
+    ("toolcall_fallback_no_action", True),
+    ("toolcall_degraded", True),
+    ("", False),
+])
+def test_off_tool_classifier_counts_only_real_channel_drops(mode, off_tool):
+    """`<通道>_no_action` 的后缀说的是**判断**，不是掉档。
+
+    首版分类器把 `toolcall_no_action` 算进「没走成 toolcall」，在 DeepSeek 对照上
+    虚报 4/20（实际 0/20）——只验 MiniMax 那一边看不出这个误报。
+    """
+    assert cli._is_off_tool_mode(mode) is off_tool

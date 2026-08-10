@@ -382,7 +382,9 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 
 2026-08-10 已收口（不再是待办）：三条未晋级候选**全部按跨进程契约取证完毕**——
 `cp.hvac-news.swapped` 2/6（尺子抓对了 `limit="今天的"`，维持严格口径）、
-`cp.adaptive.weather-outing` 的「首轮判 simple」已定性到**输出通道**：
+`cp.adaptive.weather-outing` 的「首轮判 simple」已定性到**输出通道**，并已换档取证
+（DeepSeek 同一用例 15/15 走成 toolcall、15/15 通过；跨域 20 条 20/20 —— **是 provider
+属性不是系统属性**，但代价只在需要结构化字段的多阶段计划上兑现，§24）：
 27 样本 `toolcall` 10/11 vs `toolcall_salvage` 7/14（p≈0.036），且模型在 salvage 上是
 **明写 simple**（`complexity_declared` 全 True）——不是知识问题，**加 guide/范例/正则
 都治不到**；已把 `meta.plan_modes` 做成每批可见（§23）。
@@ -408,7 +410,8 @@ p=1.000，已退回（§22.1）。**该用例残余按模型方差记账，不�
 - [ ] 新写的断言，**先注入缺陷验证过它会红**吗？（否定命题守不住肯定性质）
 - [ ] 报出的每个比率，分子分母都看过吗？分母为 0 的地方写的是 `null` 不是 100% 吧？
 - [ ] 读落域数之前，**看过这一批的 `plan_modes` 了吗**？掉出 `toolcall` 的轮与走 schema
-      的轮不可直比（实测 91% vs 50%，p≈0.036，§23.2）。
+      的轮不可直比（MiniMax 内部实测 91% vs 50%，p≈0.036，§23.2）。
+      走成 toolcall 的比例本身是 **provider 属性**：MiniMax 45–48%、DeepSeek 100%（§24）。
 - [ ] 做 A/B 之前，**证明过两臂真的不同**吗？（2026-08-10：给 `replan()` 加了形参，
       harness 没跟着传，24 个样本两臂逐字相同，差点据此否掉自己的守卫——§22.4）
 - [ ] 跑 pytest 时**没有**带 `PYTHONIOENCODING=utf-8` 吧？带了会让拉子进程的用例

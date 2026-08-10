@@ -2565,3 +2565,59 @@ plan_modes: {'toolcall': 5, 'toolcall_salvage': 7}  [!] 7/12 轮没走成 toolca
 **留给泓舟的产品决策**（不自行启动）：`toolcall_salvage` 占比这么高是 provider 侧
 tool-calling 可靠性问题。可选项＝换档/换 provider、salvage 轮强制重试工具通道、
 或接受并在读数里始终分账。三者的代价与影响面都不在这一批的授权范围内。
+
+---
+
+## 24. 2026-08-10：换档 DeepSeek 对照——工具通道可靠性是 **provider 属性**，不是系统属性
+
+§23 只量了 `minimax:MiniMax-M3` 一档，那只能说明「这一档掉档」，说不了「这套协议不可靠」。
+泓舟要求换档 `deepseek:deepseek-v4-flash` 对照。
+
+> **口径先说清**：跨 provider 的**通过率不可直比**（既有纪律）。但 `plan_mode` 是
+> **协议层**测量——「这一档到底走没走成工具通道」——它恰恰就该跨 provider 比。
+
+### 24.1 同一条用例（`cp.adaptive.weather-outing`）
+
+| provider | 样本 | 走成 toolcall | 通过 |
+|---|---|---|---|
+| `minimax:MiniMax-M3` | 27 | **13/27（48%）** | 17/27 |
+| `deepseek:deepseek-v4-flash` | 15 | **15/15（100%）** | **15/15** |
+
+DeepSeek 五趟独立进程 ×3 全部 `plan_mode=toolcall`、首轮全部 `complexity=adaptive`、
+provider 锁定无漂移。通道差异两尾 Fisher **p ≈ 0.00046**。
+
+### 24.2 跨域抽样（20 条 stable，覆盖 12 个域，各 provider 各 20 样本）
+
+| provider | 走成 toolcall | plan_modes | 通过 |
+|---|---|---|---|
+| `minimax:MiniMax-M3` | **9/20（45%）** | `toolcall 9 / salvage 6 / fallback 2 / fallback_no_action 2 / degraded 1` | 20/20 |
+| `deepseek:deepseek-v4-flash` | **20/20（100%）** | `toolcall 16 / toolcall_no_action 4` | 20/20 |
+
+两尾 Fisher **p ≈ 0.00015**。两档在这 20 条上**通过率都是 20/20**。
+
+### 24.3 结论：差异是真的、是 provider 的，但**代价只在需要结构化字段的计划上兑现**
+
+- **通道差异极其显著且稳定**：MiniMax 约一半的轮次拿不到工具 arguments（`salvage` 是
+  模型无视工具直接吐文本，`fallback` 是协议不可用后退纯 JSON）；DeepSeek 两组共 35 个
+  样本**零掉档**。**这是 provider 的 tool-calling 可靠性，不是本项目协议实现的问题。**
+- **但它不是「掉档就一定答错」**：20 条 stable 跨域样本上两档都 20/20。掉档的代价
+  集中在**需要模型自己填结构化字段**的那类计划——`cp.adaptive.weather-outing` 要的正是
+  `complexity=adaptive`，而 §23.2 已量到 MiniMax 内部 `toolcall` 91% vs `salvage` 50%。
+  机理是自洽的：一步到位的简单计划不需要 schema 当脚手架，**多阶段计划需要**。
+
+> **判据：协议层指标要跨 provider 量，语义层指标不要。** 同一份 `plan_modes`，
+> 换一档就从 45% 跳到 100%，这个对比有意义；而同一份通过率换档就不可直比。
+> 一条指标该不该跨档比，取决于它测的是**被测系统**还是**被测模型**。
+
+> **判据：一个差异「显著」不等于它「贵」。** 通道差异 p≈0.0002，代价却在 20 条
+> stable 上完全看不见。**先问它在什么条件下兑现成损失**，再谈值不值得换档。
+
+### 24.4 顺手修掉自己刚落地的观测面里的一个误报
+
+§23.3 的摘要行分类器把 `toolcall_no_action` 也算成「没走成 toolcall」——而
+`plan_mode = f"{last_mode}_no_action"` 里的后缀说的是**判断**（模型用 schema 答了
+「不需要做任何动作」），不是掉档。DeepSeek 那组因此被虚报成 4/20 掉档，实际 **0/20**。
+
+> **判据：分类器写完要拿两个方向的真实读数各验一次。** 只有 MiniMax 那一边时，
+> 这个误报看不出来——它那边本来就有真掉档，多算 0 条也不显眼；换上一个「应该全 0」
+> 的对照档，误报当场现形。十条参数化单测把两个方向都钉住了。

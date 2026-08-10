@@ -1439,3 +1439,42 @@ L0 discovery **76/76**、gate `--strict` **25/25 exit 0**、
 回归：`pytest test/` **1127 passed / 9 skipped**、`orchestrator/` **1101 passed**、
 端侧 smoke **13/13**、L0 discovery **76/76**、gate `--strict` **25/25 exit 0**。
 逐条证据 findings **§23**。
+
+## 22. 换档 DeepSeek 对照：工具通道可靠性是 provider 属性（2026-08-10）
+
+§21 只量了 MiniMax 一档，那只能说明「这一档掉档」，说不了「这套协议不可靠」。
+泓舟要求换档 `deepseek:deepseek-v4-flash` 对照。
+**口径**：跨 provider 通过率不可直比（既有纪律），但 `plan_mode` 是**协议层**测量，
+恰恰就该跨档比。
+
+| 对照 | MiniMax-M3 走成 toolcall | DeepSeek-v4-flash 走成 toolcall | p |
+|---|---|---|---|
+| 同一条用例 `cp.adaptive.weather-outing` | **13/27（48%）**，通过 17/27 | **15/15（100%）**，通过 **15/15** | 0.00046 |
+| 跨域 20 条 stable（12 个域） | **9/20（45%）**，通过 20/20 | **20/20（100%）**，通过 20/20 | 0.00015 |
+
+DeepSeek 两组共 35 个样本**零掉档**；MiniMax 的掉档形态是
+`salvage 6 / fallback 2 / fallback_no_action 2 / degraded 1`。
+
+**结论三条**：
+1. 差异极显著且稳定，**是 provider 的 tool-calling 可靠性，不是本项目协议实现的问题**。
+2. **但差异显著不等于它贵**：那 20 条 stable 上两档通过率都是 20/20。代价集中在
+   **需要模型自己填结构化字段**的多阶段计划——`cp.adaptive.weather-outing` 要的正是
+   `complexity=adaptive`，MiniMax 内部 `toolcall` 91% vs `salvage` 50%。机理自洽：
+   一步到位的简单计划不需要 schema 当脚手架，多阶段计划需要。
+3. 换主模型会牵动全部既有 baseline 与读数，**不在本批授权内**，已立卡 §4.2 待拍板。
+
+> **判据一：协议层指标要跨 provider 量，语义层指标不要。** 同一份 `plan_modes` 换档从
+> 45% 跳到 100%，这个对比有意义；同一份通过率换档就不可直比。**一条指标该不该跨档比，
+> 取决于它测的是被测系统还是被测模型。**
+>
+> **判据二：一个差异「显著」不等于它「贵」。** p≈0.0002 的通道差异，在 20 条 stable
+> 跨域样本上完全看不见。**先问它在什么条件下兑现成损失**，再谈值不值得换档。
+
+**顺手修掉自己刚落地的观测面里的一个误报**：§21 的摘要行分类器把 `toolcall_no_action`
+也算成「没走成 toolcall」，而 `f"{last_mode}_no_action"` 的后缀说的是**判断**（模型用
+schema 答了「不需要动作」）不是掉档；DeepSeek 那组被虚报成 4/20，实际 0/20。
+> **判据三：分类器写完要拿两个方向的真实读数各验一次。** 只有 MiniMax 那一边时误报
+> 看不出来（它本来就有真掉档）；换上一个「应该全 0」的对照档，误报当场现形。
+十条参数化单测把两个方向都钉住。
+
+回归：`pytest test/` **1137 passed / 9 skipped**（+10）。findings **§24**。

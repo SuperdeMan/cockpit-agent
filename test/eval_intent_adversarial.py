@@ -1721,6 +1721,29 @@ def _expected_units(cases, args) -> set[str]:
     return units
 
 
+# `plan_mode` 的命名是 `<通道>` 或 `<通道>_no_action`（planning.py 里
+# `plan_mode = f"{last_mode}_no_action"`）。**`toolcall_no_action` 是工具通道走成了**
+# ——模型用 schema 答了「不需要做任何动作」，那是判断不是掉档。
+# 2026-08-10 首版把它算进「没走成」，在 DeepSeek 对照上直接虚报 4/20（实际 0/20）；
+# 判据：**分类器写完要拿两个方向的真实读数各验一次**，只验一边看不出误报。
+_OFF_TOOL_BASES = frozenset({
+    "toolcall_salvage",     # 模型无视工具、直接吐文本，同轮抢救
+    "toolcall_fallback",    # 工具协议不可用后的第 2 轮纯 JSON
+    "toolcall_degraded",    # 两轮全失败，计划由 _fallback 合成
+})
+
+
+def _is_off_tool_mode(mode: str) -> bool:
+    """这一轮是不是**没能**走成工具通道。
+
+    `json*`（`PLANNER_TOOLCALL=off`）不算掉档——那一档压根没打算用工具。
+    """
+    base = str(mode or "")
+    if base.endswith("_no_action"):
+        base = base[: -len("_no_action")]
+    return base in _OFF_TOOL_BASES
+
+
 def _plan_mode_counts(results) -> dict[str, int]:
     """逐 repetition 统计 plan_mode 分布。
 
@@ -1824,7 +1847,7 @@ def _print_summary(report: dict) -> None:
               f"这些轮只跑了词法档，本次知识层结论不成立")
     modes = meta.get("plan_modes") or {}
     off_tool = sum(count for mode, count in modes.items()
-                   if mode and mode != "toolcall" and not mode.startswith("json"))
+                   if _is_off_tool_mode(mode))
     if modes:
         total_modes = sum(modes.values())
         line = f"  plan_modes: {modes}"
