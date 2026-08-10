@@ -567,6 +567,51 @@ objects:
     - project-a
     - project-b
     - project-c
+  # ⚠ 除雾是**独立对象**不是 aircon 的一个 mode（2026-08-10 补）。
+  # aircon 的 `modes` 里一直有「除雾/除霜/前除雾/后除雾」，但那条路走不通：
+  # ① `hvac.set` 的能力描述是「设置空调温度」（aircon 声明了 attrs，`_mode_options`
+  #    刻意不把 19 个 mode 灌进描述），云侧 planner 无从得知它能除雾；
+  # ② mode 表达不了「关」——`hvac.set mode=除雾` 没有对应的关闭形态；
+  # ③ 端侧 `classify()` 的 aircon 分支把无 value 的 set 一律映射成 `hvac.on`，
+  #    mode 在映射里被丢掉，「空调开除雾」实际执行成"只开空调"（2026-08-10 实测）。
+  # 真车上前挡除雾（吹热风到风挡）与后挡除雾（电加热丝）本就是两个物理开关，
+  # 建成两个对象后 `front_defogger.open` 这个名字本身就是判别性文本——正是
+  # `capabilities.py` 那次 A/B 证明的「intent 名本身就够 planner 区分」。
+  # 除霜与除雾映射到同一组能力：真车同一个按钮，差异只在词表层（见 fast_intent）。
+  front_defogger:
+    display_name: 前挡除雾
+    operates:
+    - open
+    - close
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects:
+    - project-a
+    - project-b
+    - project-c
+  rear_defogger:
+    display_name: 后挡除雾
+    operates:
+    - open
+    - close
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    voice_forbidden: false
+    projects:
+    - project-a
+    - project-b
+    - project-c
   accompany_home:
     display_name: 伴我回家灯光
     operates:

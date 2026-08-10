@@ -445,6 +445,38 @@ accompany_home_off_success:
   - 伴我回家功能已关闭
   speech_brief:
   - 关了
+front_defogger_on_success:
+  scene: 前挡除雾已开启
+  status: 成功
+  speech_full:
+  - 已为您打开前挡除雾
+  - 前挡除雾已开启
+  speech_brief:
+  - 开了
+front_defogger_off_success:
+  scene: 前挡除雾已关闭
+  status: 成功
+  speech_full:
+  - 已为您关闭前挡除雾
+  - 前挡除雾已关闭
+  speech_brief:
+  - 关了
+rear_defogger_on_success:
+  scene: 后挡除雾已开启
+  status: 成功
+  speech_full:
+  - 已为您打开后挡除雾
+  - 后挡除雾已开启
+  speech_brief:
+  - 开了
+rear_defogger_off_success:
+  scene: 后挡除雾已关闭
+  status: 成功
+  speech_full:
+  - 已为您关闭后挡除雾
+  - 后挡除雾已关闭
+  speech_brief:
+  - 关了
 energy_recovery_set_success:
   scene: 能量回收已调整
   status: 成功

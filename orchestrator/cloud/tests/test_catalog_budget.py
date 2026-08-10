@@ -104,15 +104,18 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     catalog = _assemble_capability_catalog(agents)
 
     assert len(agents) == 17
-    assert len(catalog.ref_to_pair) == 131
+    assert len(catalog.ref_to_pair) == 135
     assert catalog.catalog_stats["dropped"] == []
-    # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10725。
+    # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10865。
     # info.sports 新增过去赛果/泛指赛事边界后增加 49 字符，仍完整落在 16k 预算内。
-    assert catalog.catalog_stats["chars_full"] == 10725
-    assert catalog.catalog_stats["chars_final"] == 10725
+    # 2026-08-10：端侧补前/后挡除雾 4 条能力（131→135），+140 字符，余量 5275→5135。
+    # 这个数**该跟着能力面走**——它守的是「完整 inventory 仍不超预算」，不是冻结条数；
+    # 但每次动它都要先确认涨的是有意新增的能力，而不是别处漏进来的重复项。
+    assert catalog.catalog_stats["chars_full"] == 10865
+    assert catalog.catalog_stats["chars_final"] == 10865
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 5275
+    assert 16000 - catalog.catalog_stats["chars_final"] == 5135
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

@@ -34,6 +34,9 @@ LOCAL_INTENTS = {
     # 油箱盖 / 充电口盖
     "fuel_tank_cover.open", "fuel_tank_cover.close",
     "charging_port.open", "charging_port.close",
+    # 除雾（前/后挡各一个物理开关；除霜同一组能力，差异只在词表层）
+    "front_defogger.open", "front_defogger.close",
+    "rear_defogger.open", "rear_defogger.close",
     # 电量查询 / 胎压 / 行车记录仪
     "battery.query",
     "tire_pressure.query",
@@ -471,6 +474,28 @@ def _classify_structured(text: str) -> dict | None:
         return _s("setting", "control", "open", "navi_broadcast", conf=0.9)
     if "按键音" in t:
         return _s("setting", "control", "close" if "关" in t else "open", "key_tone", conf=0.9)
+
+    # ── 除雾 / 除霜（2026-08-10 补；**必须早于空调分支**）───────────────
+    # 补之前这一族有两种错法，根因是同一个——除雾在系统里不是可寻址的能力：
+    #   ① 裸「打开前除雾 / 关闭强力前除雾 / 开除雾 / 除霜」→ 规则返回 None 整句上云，
+    #      而云侧能力面也没有除雾意图，planner 只能在别的工具里挑（P3a 影子实录：
+    #      `关闭强力前除雾` → `accompany_home.close`，VAL 照单执行）；
+    #   ② 「空调开除雾 / 把空调调到除雾」→ 走进空调分支，`classify()` 把无 value 的
+    #      aircon.set 一律映射成 `hvac.on`，**mode 在映射里被丢掉**——用户看到空调开了、
+    #      风挡还是雾。②比①更糟：①至少还上云，②是端侧静默执行了错的动作。
+    # 早于空调分支有两个必须：`关闭…除雾` 会被空调分支第一句 `if "关" in t` 抢成关空调；
+    # `空调开除雾` 会被 `"空调" in t` 抢走。场景管理句（「新建一个下雨模式，关窗加除雾」）
+    # 的让路在更上面的 `_is_scene_management` 已经生效，不必在这里重复。
+    if "除雾" in t or "除霜" in t:
+        # 查询式让路：「帮我查一下车的说明书里怎么除雾」问的是方法不是要现在除雾。
+        # 与体感入口收窄同一纪律——宁可漏接上云，也不要端侧替用户按下按钮。
+        if not ("说明书" in t or "怎么" in t or "如何" in t or "为什么" in t
+                or "什么是" in t or "怎样" in t):
+            obj = ("rear_defogger"
+                   if re.search(r"后\s*(挡|窗|玻璃|风挡|档风玻璃)?\s*(除雾|除霜)", t)
+                   else "front_defogger")
+            return _s("setting", "control",
+                      "close" if "关" in t else "open", obj, conf=0.92)
 
     # ── 空调 ──────────────────────────────────────────────
     # R5 让路（旅程 B3-3）：①「记住，我最喜欢的空调温度是26度」是**偏好陈述**要进云端

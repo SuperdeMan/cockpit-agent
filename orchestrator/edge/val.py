@@ -31,6 +31,8 @@ class VAL:
         self.state = {
             # 空调
             "hvac_on": False, "hvac_temp": 24,
+            # 除雾（前后挡各一个物理开关，见 commands.yaml 的 front_defogger 注释）
+            "front_defogger": False, "rear_defogger": False,
             # 门窗 / 车身开闭
             "window": "closed", "sunroof": "closed",
             "door_lock": "locked", "trunk": "closed",
@@ -679,7 +681,8 @@ class VAL:
             # 查询类：不改状态，回传当前电量供话术回显
             return None, self.state.get("battery", 0)
 
-        elif obj in ("tire_pressure_monitoring", "dashcam"):
+        elif obj in ("tire_pressure_monitoring", "dashcam",
+                     "front_defogger", "rear_defogger"):
             # 查询类 / 开关类
             if operate == "open":
                 self.state[obj] = True
@@ -812,6 +815,9 @@ class VAL:
 
         if obj == "dashcam":
             return "dashcam_on_success" if operate == "open" else "dashcam_off_success"
+
+        if obj in ("front_defogger", "rear_defogger"):
+            return f"{obj}_on_success" if operate == "open" else f"{obj}_off_success"
 
         # ── R4.1b P0：端侧对象化话术 ──
         if obj == "air_purifier":

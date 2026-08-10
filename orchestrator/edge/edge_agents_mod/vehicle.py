@@ -38,6 +38,13 @@ VEHICLE_INTENTS = {
     # 于是云侧 planner 面对两个无法区分的同义工具只能掷硬币。
     # **一个动作只能有一个名字。** 温度增减统一走 `hvac.inc` / `hvac.dec`；
     # 风速仍是独立能力（`aircon.wind_speed.*`），那不是同义词。
+    # ⚠ 2026-08-10 补：这里此前**没有除雾意图**，而端侧规则对「打开前除雾」也返回 None
+    # ——两头都缺，于是整句上云、planner 在 76 个文本可区分但语义不含除雾的工具里挑，
+    # P3a 影子抓到的 `关闭强力前除雾` → `accompany_home.close` 并被 VAL 照单执行就是这么来的。
+    # 当时归因写的是「描述不判别」，A/B 把它推翻了（Δ=0）：**描述治不了缺能力，
+    # 归因之前先确认正确答案在候选集里**（`capabilities.py` 模块注释记着这一课）。
+    "front_defogger.open", "front_defogger.close",
+    "rear_defogger.open", "rear_defogger.close",
     "tire_pressure.query", "dashcam.open", "dashcam.close",
     "accompany_home.open", "accompany_home.close",
     "volume.set", "volume.inc", "volume.dec",
