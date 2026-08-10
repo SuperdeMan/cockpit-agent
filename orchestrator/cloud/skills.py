@@ -704,6 +704,16 @@ def apply_plan_repairs(plan, text: str, skill_names: list[str] | None,
                 continue
             producer, consumer = producers[0], consumers[0]
             real_value = str((getattr(consumer, "slots", None) or {}).get(repair.slot) or "").strip()
+            # 触发词被**原样抄进槽位**不算真值：`trigger_any` 列的正是「指向一件还不知道
+            # 名字的东西」的说法（招牌 / 最便宜 / 第一个），它们只有等 producer 回来才有
+            # 具体值——所以 `{"item":"招牌"}` 是占位符，不是用户给的商品名。
+            # 真栈实测（MiniMax 主模型 `cp.dep.menu-then-order` 10 样本里 1 条）：模型把
+            # depends_on 接对了，却把「招牌」当成 item 填进去、slot_refs 留空，于是归一
+            # 被这一行的 `real_value` 挡住，字面量一路发到商户侧。
+            # 判据：**声明已经说了这个 token 意味着「值在别处」，就不能反过来拿它当值。**
+            # 只认全等：`招牌牛肉面` 是用户点名的具体商品，不许被改写成 items.0.name。
+            if real_value and any(real_value == trigger for trigger in repair.trigger_any):
+                real_value = ""
             existing_ref = str((getattr(consumer, "slot_refs", None) or {}).get(repair.slot) or "").strip()
             # 真栈出现过 `{"item":"item"}`：非空 token 不等于引用。声明已经
             # 给出唯一 producer，只有指向它 `.data.*` 的值才能阻止归一；
@@ -711,6 +721,7 @@ def apply_plan_repairs(plan, text: str, skill_names: list[str] | None,
             valid_existing_ref = existing_ref.startswith(f"{producer.id}.data.")
             if real_value or valid_existing_ref or producer.id == consumer.id:
                 continue
+            (getattr(consumer, "slots", None) or {}).pop(repair.slot, None)
             consumer.slot_refs[repair.slot] = f"{producer.id}.{repair.source_path}"
             if producer.id not in consumer.depends_on:
                 consumer.depends_on.append(producer.id)

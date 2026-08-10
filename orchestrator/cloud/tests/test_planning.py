@@ -217,6 +217,72 @@ def test_build_does_not_recheck_attributive_yantu_single_action():
     assert [step.intent for step in plan.steps] == ["alpha.search"]
 
 
+def test_build_rechecks_an_unpunctuated_enroute_stop_that_dropped_the_trip():
+    """「导航去X路上找个Y」既没连接词也没逗号，同样是两个动作。
+
+    实测（MiniMax 主模型 `ki.navigation-with-stop.hit`，10 样本 6/10）：失败的 4 次
+    全是同一形状——只出 `charging.find`，**用户明说的「导航去公司」整个丢了**。
+    `沿途` 那一支要求前面有标点，这句一个标点都没有，于是单步计划从不被复核。
+    """
+    primary = MockAgent("alpha", ["alpha.find"])
+    primary.manifest.capabilities[0].heavy = True
+    agents = [primary, MockAgent("beta", ["beta.navigate"])]
+    replies = iter([
+        '{"complexity":"simple","goal":"沿路找一个充电站","steps":['
+        '{"id":"s1","capability_ref":"cap_0001","slots":{},'
+        '"depends_on":[],"slot_refs":{}}]}',
+        '{"complexity":"simple","goal":"导航到目的地并沿路找充电站","steps":['
+        '{"id":"s1","capability_ref":"cap_0002","slots":{},'
+        '"depends_on":[],"slot_refs":{}},'
+        '{"id":"s2","capability_ref":"cap_0001","slots":{},'
+        '"depends_on":[],"slot_refs":{}}]}',
+    ])
+    prompts = []
+
+    async def mock_llm(messages):
+        prompts.append(messages[1]["content"])
+        return next(replies)
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    plan = asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        "导航去公司路上找个充电站", WorkingSet(catalog=agents), PlanContext()))
+
+    assert len(prompts) == 2
+    assert [step.intent for step in plan.steps] == ["beta.navigate", "alpha.find"]
+
+
+@pytest.mark.parametrize("text", [
+    "路上堵不堵",              # 「路上」只是话题，没有第二个动作
+    "查一下路上的天气",         # 定语用法，找/搜 在连接词**之前**
+    "顺路的加油站贵不贵",       # 同上，属性提问
+])
+def test_build_does_not_recheck_enroute_words_without_a_second_action(text):
+    """收窄面的另一半：**要求后面跟检索动词**，否则「路上」这个词到处都是。
+
+    多复核一次的代价只是一次 LLM 调用，但它会把单动作句也拖进复核——
+    「每加一个默认值，先问『没有证据』和『证据为否』会不会被压成同一个数」。
+    """
+    agent = MockAgent("alpha", ["alpha.search"])
+    agent.manifest.capabilities[0].heavy = True
+    prompts = []
+
+    async def mock_llm(messages):
+        prompts.append(messages[1]["content"])
+        return ('{"complexity":"simple","goal":"回答问题","steps":['
+                '{"id":"s1","capability_ref":"cap_0001","slots":{},'
+                '"depends_on":[],"slot_refs":{}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    asyncio.run(PlanBuilder(mock_llm, mock_resolve).build(
+        text, WorkingSet(catalog=[agent]), PlanContext()))
+
+    assert len(prompts) == 1, f"{text!r} 不该触发第二次复核"
+
+
 def test_build_recheck_can_keep_one_heavy_step_when_its_contract_owns_sequence():
     agent = MockAgent("alpha", ["alpha.plan"])
     agent.manifest.capabilities[0].heavy = True
