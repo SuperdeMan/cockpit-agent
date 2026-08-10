@@ -510,3 +510,97 @@ def _wrap_planner(planner):
                 working_set=working_set, skill_names=skill_names,
                 exemplar_names=exemplar_names)
     return _Rec(planner)
+
+
+# ── B1：T2 流式部分输出后不许 unary 重跑 ────────────────────────────────────
+#
+# 修的是一个变量名级 bug：`elif streamed:` 里的 `streamed` 唯一置 True 的位置在
+# `final_sr is not None` 分支内部，于是那条 elif **永不可达**——只要流出了输出而
+# final 丢失（流断/超时/Agent 崩），`if not streamed:` 必然成立，executor 完整重跑：
+# 话术播两遍、Agent 调两遍、外部 API 调两遍；action 已发出时形成重复副作用。
+# 对照 engine.py 的 T1 D0 路径（speech/action 一到就置 True）实现是对的。
+
+
+def _one_step_plan(intent="test.do"):
+    return Plan(
+        steps=[Step(id="s1", agent_id="a", kind="agent", deployment="cloud",
+                    intent=intent, latency_budget_ms=5000)],
+        complexity="adaptive",
+    )
+
+
+def _run_stream_case(stream_fn):
+    planner = _Planner([ReplanDecision(done=True)])
+    executor = _Executor({
+        "s1": StepResult("s1", StepStatus.OK, speech="executor result"),
+    })
+    controller = LoopController(
+        planner, executor, _Aggregator(), None,
+        max_iters=2, budget_ms=5000, stream_fn=stream_fn,
+    )
+    events = _collect(
+        controller, goal="test", initial_plan=_one_step_plan(), agents=[],
+        ctx=PlanContext(), user_text="test",
+    )
+    return executor, events
+
+
+def test_stream_speech_then_lost_final_does_not_rerun():
+    """场景 1：话术已流出、final 丢失 → 不许 unary 重跑（否则话术播两遍）。"""
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        yield ("speech", "正在为您查询")
+        # 没有 final：流在这里断了
+
+    executor, events = _run_stream_case(stream_fn)
+
+    assert executor.runs == [], "部分输出后仍走了 executor——话术会播两遍"
+    assert any(e.get("kind") == "speech" and "查询" in e.get("delta", "")
+               for e in events)
+
+
+def test_stream_action_then_lost_final_marks_outcome_uncertain():
+    """场景 2：action 已发出、final 丢失 → 不重跑（重跑=重复副作用），
+    且结果标为不确定，不假装成功。"""
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        yield ("action", {"type": "vehicle.control",
+                          "payload": {"command": "hvac.on"}})
+
+    aggregator = _Aggregator()
+    planner = _Planner([ReplanDecision(done=True)])
+    executor = _Executor({
+        "s1": StepResult("s1", StepStatus.OK, speech="executor result"),
+    })
+    controller = LoopController(
+        planner, executor, aggregator, None,
+        max_iters=2, budget_ms=5000, stream_fn=stream_fn,
+    )
+    _collect(controller, goal="test", initial_plan=_one_step_plan(), agents=[],
+             ctx=PlanContext(), user_text="test")
+
+    assert executor.runs == [], "action 已发出还重跑——重复副作用"
+    composed = [r for _text, results in aggregator.calls for r in results]
+    assert composed, "聚合器没拿到任何结果"
+    assert composed[-1].data.get("_outcome_uncertain") is True
+    assert "无法确认" in composed[-1].speech
+
+
+def test_stream_no_output_still_falls_back_to_unary():
+    """场景 3：零输出（Agent 不支持流式 / 立刻断） → 仍必须回退 unary。
+    这条是防修过头的对照：`_outcome_uncertain` 那档不能把正常回退也吃掉。"""
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        return
+        yield  # pragma: no cover - 使其成为 async generator
+
+    executor, _events = _run_stream_case(stream_fn)
+
+    assert executor.runs == [["s1"]], "零输出时没有回退到 unary 执行"
+
+
+def test_stream_empty_speech_delta_is_not_output():
+    """空 delta 不算流出过输出——否则一个空串就能把 unary 回退整条关掉。"""
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        yield ("speech", "")
+
+    executor, _events = _run_stream_case(stream_fn)
+
+    assert executor.runs == [["s1"]]

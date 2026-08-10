@@ -181,7 +181,14 @@ class LoopController:
             # T2 流式直通：单步 cloud agent 尝试流式，yield speech delta。
             # 与 engine.py T1 快路径同模式：流式成功则 yield delta 并收集结果，
             # 失败回退到 executor unary 路径。
-            streamed = False
+            #
+            # ⚠ 变量语义（B1 修的就是这里）：`got_final` 只表示「拿到了 final」。
+            # 它此前叫 `streamed`，而 `streamed` 读起来像「流出过东西」——于是
+            # `elif streamed:` 那条分支永远不可达（唯一置 True 的地方在
+            # `final_sr is not None` 内部），部分输出后必然 unary 重跑：话术播两遍、
+            # Agent 调两遍、外部 API 调两遍，action 已发出时形成重复副作用。
+            # 「是否流出过输出」由 did_speak / did_action 表达，别再合并回一个变量。
+            got_final = False
             if (self._stream and len(current.steps) == 1
                     and current.steps[0].kind == "agent"
                     and current.steps[0].deployment == "cloud"
@@ -195,6 +202,7 @@ class LoopController:
                 timeout = step.latency_budget_ms / 1000.0
                 final_sr = None
                 did_speak = False
+                did_action = False
                 stream_start = self.clock()
                 try:
                     async for kind, payload in self._stream(
@@ -204,6 +212,7 @@ class LoopController:
                             did_speak = did_speak or bool(payload)
                             yield {"kind": "speech", "delta": payload}
                         elif kind == "action":
+                            did_action = True
                             yield {"kind": "action", "action": payload}
                         elif kind == "final":
                             final_sr = DagExecutor._to_result(step.id, payload)
@@ -214,7 +223,7 @@ class LoopController:
                     final_sr = None
 
                 if final_sr is not None:
-                    streamed = True
+                    got_final = True
                     # M2 Verifier：T2 流式直通同样不经 executor._exec_step，显式对账
                     # （与 engine D0 同款；allow_retry=False——话术已流出，不重跑）。
                     if hasattr(self.executor, "_verify_outcome"):
@@ -252,15 +261,33 @@ class LoopController:
                             final_sr, results, current, ctx,
                             prior=_prior(final_sr))
                         return
-                elif streamed:
-                    # Streamed speech but no final — best-effort, avoid re-run.
-                    streamed = True
-                    empty_sr = StepResult(
-                        step_id=step.id, status=StepStatus.OK, speech="")
-                    results.append(empty_sr)
-                    observations.append(summarize(empty_sr, intent=step.intent))
+                elif did_speak or did_action:
+                    # 已经流出过输出但 final 丢了（流断 / 超时 / Agent 崩）。
+                    # **不许 unary 重跑**——只有 NO_OUTPUT 才允许回退。
+                    got_final = True
+                    if did_action:
+                        # action 已经发给用户了，而 final 没回来：这一步的**结果不确定**，
+                        # 既不能当成功也不能重试（重试 = 重复副作用）。透明告知，
+                        # 不假装成功。readback 对账留给 B5 统一组件时接 Outcome Verifier。
+                        uncertain_sr = StepResult(
+                            step_id=step.id, status=StepStatus.OK,
+                            speech="操作指令已发出，结果暂时无法确认，请留意车辆状态。",
+                            data={"_outcome_uncertain": True})
+                        logger.warning(
+                            "T2 stream lost final after action for %s — "
+                            "marking outcome uncertain, not re-running", step.id)
+                        results.append(uncertain_sr)
+                        observations.append(
+                            summarize(uncertain_sr, intent=step.intent))
+                    else:
+                        # 仅话术已流出：合成空结果避免重跑与复读（既有语义）。
+                        empty_sr = StepResult(
+                            step_id=step.id, status=StepStatus.OK, speech="")
+                        results.append(empty_sr)
+                        observations.append(summarize(empty_sr, intent=step.intent))
+                    observations = observations[-self.observation_limit:]
 
-            if not streamed:
+            if not got_final:
                 async for step_result in self.executor.run(
                         current, ctx, done=done_seed):
                     results.append(step_result)
