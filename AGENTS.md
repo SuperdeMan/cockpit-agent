@@ -62,15 +62,19 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 意图落域对抗测试按这个顺序接手：运行手册
 [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) → 最终验收
 [`docs/reviews/2026-08-04-review-intent-adversarial-finalization.md`](docs/reviews/2026-08-04-review-intent-adversarial-finalization.md)
-→ 逐批证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§17–§19**。
+→ 逐批证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§17–§24**。
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**4490 passed / 16 skipped / 0 failed**（收集 4506 项，单进程 18m14s，2026-08-09 实测）。
-2026-08-10 分组实测：`pytest test/` **1127 passed / 9 skipped**（裸 `server` 导入冲突已修，
-该目录选集**不再有红**，但它仍不是项目基线命令——分母不同）、`orchestrator/` **1093 passed**、
+**4522 passed / 14 skipped / 0 failed**（单进程 22m54s，2026-08-10 实测，退出码 0）。
+较 2026-08-09 的 4490/16 净 **+32**：本日多批新增用例（其中收官会话 +18＝orchestrator 8
+[adaptive replan 自查 6 + `complexity_declared` 2] + `test/` 10 [off-tool 分类器参数化]），
+其余来自当日上午批——**4490 是 08-09 测的，上午批落在它之后**。
+skipped 16→14 是**少跳两条**（覆盖变多不是变少），无 failed。
+2026-08-10 分组实测：`pytest test/` **1137 passed / 9 skipped**（裸 `server` 导入冲突已修，
+该目录选集**不再有红**，但它仍不是项目基线命令——分母不同）、`orchestrator/` **1101 passed**、
 端侧 smoke **13/13**。HMI `node --test` **225/225**、Dashboard vitest **17/17** 为 2026-08-09
-实测，Go 网关数字沿用 2026-08-04 批次；本轮没有改前端、Go、`.env` 或 CI。
+实测，Go 网关数字沿用 2026-08-04 批次；2026-08-10 全天没有改前端、Go、`.env` 或 CI。
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
@@ -82,16 +86,18 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | 三条候选取证（2026-08-10，`f71fd3c`） | `cp.hvac-news.swapped` **2/6**、`nq.hvac.reported` **2/6**（`critical_fail` ×2，真缺陷）、`nq.match.lastweek` **5/6**；`cp.adaptive.weather-outing` L1 三趟 **9/11**。全部 `minimax:MiniMax-M3`、检索零降级、`worktree_clean=true` |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
-| 代码回归 | `orchestrator/` **1093 passed**、`pytest test/` **1127 passed / 9 skipped**；端侧 smoke **13/13**；Skill / Exemplar（253 条 / 20 域）/ L0 门禁均通过 |
+| 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24） |
+| 代码回归 | `orchestrator/` **1101 passed**、`pytest test/` **1137 passed / 9 skipped**；端侧 smoke **13/13**；Skill / Exemplar（**254 条 / 20 域**）/ L0 门禁均通过 |
 
 ⚠ **MiniMax 三批 141/141/140 都不是同一批红灯**：`f0af9c0` 点名的 6 条 unstable 在
 `32e8718` 全部转绿，红灯换成另一批边界单元（其中 5 条单跑 10 样本全绿）；`5e8247d`
 换池后又换一批（换池随后已回退）。按实测单元不稳定率 3~5%，一趟完整 gate 恰好零 unstable
 的概率是个位数百分比——**`eligible=True` 不是「把点名的几条修好」能达成的，是要压整体
 底噪**（findings §17.6/§19.2）。
-⚠ 上表 MiniMax 行是 `32e8718` 读数，**与当前代码差一个 `skills/exemplars/sunroof.yaml`**
-（该范例已单独取证 10/10）；`5e8247d` 那批是换池态、案例集已不一致，**不要挪用**。
-严格说当前 SHA 没有对应的全量读数，需要时重跑。
+⚠ 上表 MiniMax 行是 `32e8718` 读数，**与当前代码已差好几批**：`skills/exemplars/`
+多了 `sunroof.yaml` 与 `chitchat#12`，planner 多了 adaptive replan 自查与
+`complexity_declared` 留痕。`5e8247d` 那批是换池态、案例集已不一致，**不要挪用**。
+**当前 SHA 没有对应的全量 gate 读数**——要引用主模型总分就得重跑一次完整父 bundle。
 
 首份正式 baseline 已存在，但它是 **DeepSeek 对比/参考模型**在固定 provider、资产与代码快照下的
 意图理解与落域证据；不证明 MiniMax 主模型、Agent 业务结果、外部 Provider 内容或跨模型平均质量。
@@ -101,71 +107,13 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 ### 4.1 活跃待办（只列仍需行动的）
 
-| 优先级 | 待办 | 完成判据 |
-|---|---|---|
-| — | **§4.1 当前没有活跃待办** | 见下方收口说明；条件型 / 后置项在 §4.2 |
+**当前没有活跃待办。** 条件型 / 明确后置的入口全在 §4.2；接手时先读 §4.0 快照与 §4.3 读数纪律。
 
-> 2026-08-10（收官批）已收口：**`cp.adaptive.weather-outing` 的账第三次改写，
-> 真因在输出通道，不在知识。** 先补两处观测面（`plan_mode` 从 M1a 起就采集却从没进过
-> 报告；`wire.get("complexity","simple")` 是静默默认，`toolcall` 有 schema 强制而
-> `salvage`/`fallback` 没有），然后 27 样本按通道分账：
-> **`toolcall` 10/11（91%） vs `toolcall_salvage` 7/14（50%），Fisher p≈0.036**；
-> 而 `complexity_declared` 全 `True`——**模型在 salvage 通道上是明写 `simple` 的**，
-> 我加的标记把自己的「静默默认」假设证伪了。
-> ⇒ 判据＝**同一段 prompt，走 schema 作答与掉进自由文本作答，输出分布不是一回事**
-> （schema 的 required+enum 是作答脚手架，不只是校验）；
-> 以及**一个会左右全部落域读数的前提，必须每批都印出来**——`meta.plan_modes` 与摘要行
-> 已落地，此前这个数**没有任何消费方**，于是波动只会被读成「模型今天状态不好」
-> （§22.5 那句「工作树无改动可解释」正是这么来的）。
-> **没有**去改 provider 的 tool-calling，也没有在 salvage 上编规则补判 adaptive；
-> salvage 占比高是 provider 侧可靠性问题。**已按泓舟要求换档 DeepSeek 对照取证**：
-> 同一用例 15/15 走成 toolcall、15/15 通过；跨域 20 条 stable 抽样 20/20 走成 toolcall
-> ——**是 provider 属性不是系统属性**（p≈0.0002）。但**差异显著不等于它贵**：那 20 条上
-> 两档通过率都是 20/20，代价只在需要结构化字段的多阶段计划上兑现。换主模型的决策
-> 已入 §4.2 待拍板。逐条 findings §23/§24。
->
-> 2026-08-10（晚批）已收口：**两条新 P2 各有结论，但都不是「修好了」**——
-> ① `nq.hvac-keep.dont` 的「短句检索够不着」**是真的**（0.305 vs 阈值 0.34，对称 Dice
-> 惩罚短句），但**补上够得着的范例之后通过率没动**（15/18 → 16/18，p=1.000，
-> 范例 6/6 趟都检回），按纪律退回，判据＝**诊断出一个洞不等于这个洞就是病因**；
-> ② weather-outing 的 `replan 出空计划`补了确定性守卫（`complexity=adaptive` 是计划
-> 自己的声明，replan 收场即自相矛盾，与既有条件目标守卫对称；**只在第一次 replan 上
-> 生效**，否则每个 adaptive 请求白加一次 LLM 往返），六条单测 + 两次反向构造。
-> 过程中抓到**尺子漂移**：L1 harness 调 `replan()` 没传 `adaptive`，导致我第一组
-> 「守卫 vs 对照」24 个样本**两臂逐字相同、什么都没测**——判据＝**A/B 之前先证明
-> 两臂真的不同**（§13.1 判据一的第四次兑现）。逐条 findings §22。
->
-> 2026-08-10（下午批 · 生产侧）已收口：**`nq.hvac.reported` 的真缺陷已修**——
-> 根因不是「模型不懂否定」（常驻 policy 每轮都在），是**「引述」这个结构库里一条范例都没有**，
-> 检回来的是 `volume#1`「空调别动，把声音调低一点」→ `volume.dec`——**它到场了，但它教的
-> 是「混合否定保留并列肯定诉求」这条判据**，而引述句要的是「整句一个动作步都不出」。
-> 补 `chitchat#12`「后座喊着要关空调，你别听他的」后 A/B **5/12 → 11/12
-> （双尾 Fisher p=0.027）**，七条 hvac 护栏 12/12 零回归。
-> **没走常驻 policy 是因为预算余量只剩 1 个字符**（policies + 最大 guide = 2599/2600）。
-> 判据＝**看检索名单要问「到场的这条范例教的是不是这一条判据」，不是「有没有范例到场」**。
-> findings §21（该节初稿把 `volume#1` 原文读成乱码写错过一次，已更正并留痕）。
->
-> 2026-08-10（下午批）已收口：**三条未晋级候选全部按跨进程契约取证完毕**
-> （`cp.hvac-news.swapped` 2/6＝尺子抓对了 `limit="今天的"` 的槽位污染，维持严格口径；
-> `nq.hvac.reported` 2/6＝转真缺陷，升 P1 见上；`nq.match.lastweek` 5/6＝边界方差，不动）；
-> **weather-outing 的真实 L3 claim 已建**（journey `A1-5` 进 `regression_a.yaml`，
-> `journey_links.yaml` 新增 claim 枚举值 `adaptive_replan_continuity`——**没有复用
-> `dependency_continuity`**，那条证不了「第二步是看到结果后才补出来的」）；
-> **snooze /「离开X」/「到X之前」三个提醒词形已补端到端用例**（tag `reminder_wordform`，
-> 两趟独立 live 各 3/3）。逐条证据 findings §20。
->
-> 2026-08-10（上午批）已收口：`pytest test/` 裸 `server` 导入冲突（按路径认模块，15 红 → 0）、
-> hint 退役后的陈旧离线评测资产（`eval_route_hints` 76/86 → **78/78**，`--strict` exit 0，
-> 顺带补上「删除留痕」后发现基线陈旧的其实是 **45 条**不是 9 条）、宽 journeys 两条外部
-> 依赖残留（B3-1 gold 改条件式 + 离线三态守卫；B3-2 归高德侧，见 §4.2）、
-> MiniMax 原 6 条 unstable 全部转绿（两条真缺陷修在 `apply_plan_repairs` 与
-> `_MULTI_ACTION_CONNECTOR_RE`，raw 幻觉 8→3、未声明 fallback 4→2）。
->
-> **主模型 `eligible=True` 与裸对象澄清族**两条 P0 已移入 §4.2 —— 它们的结论都是
-> 「不要行动」（继续跑批期望值极低 / 三条修法两否一未启动），留在活跃表里会让接手人
-> 误以为有工可开。**M5 P3b 同理移入 §4.2**：它的完成判据「真实流量错对象率 <0.3%」
-> 本身就是「先别开工」，且与 §4.2 既有的「端侧能力面与 P3b 前置」是同一件事，
-> 两处并列只会让人以为有两笔账。
+> 2026-08-10 全天五批（上午 P1/P0 收敛 → 下午三条候选取证 + weather-outing L3 claim + 提醒词形
+> → 下午生产侧范例修复 → 晚间两条新 P2 → 收官通道定性与换档对照）的**完整记录在**
+> [`docs/agents-history.md`](docs/agents-history.md) **§15–§22**，逐条证据在
+> `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§17–§24**。
+> 本节按约定**只留状态、不留流水**——沉淀下来的判据在 §4.3，沉淀下来的数字在 §4.0。
 
 ### 4.2 延后 / 条件待办索引（不进入当前主线）
 
@@ -219,9 +167,8 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 - **claim 不能就近转借**：`dependency_continuity`（两个已规划的步骤之间结果被消费）
   证不了 `adaptive_replan_continuity`（第二步首轮压根不存在、看到结果才补出来）——
   首轮排满两步的计划照样满足前者，却正是 weather-outing badcase 要禁的形态（§20.4）。
-- **跑 pytest 不要带 `PYTHONIOENCODING=utf-8`**：子进程按 UTF-8 写、父进程按 GBK 解，
-  Windows 上会把拉子进程的用例弄成假红（3 红 vs 不设时 154 全过，§20.6）。
-  要看中文输出就把 JSON 落盘再读文件。
+- **跑 pytest 不要带 `PYTHONIOENCODING=utf-8`**（Windows 上会把拉子进程的用例弄成假红）
+  ——动作型条目，展开与自查位置在运行手册 §11（findings §20.6）。
 - **读任何落域数之前先看 `plan_modes`**（2026-08-10）：掉出 `toolcall` 的那些轮，模型是在
   自由文本里作答，输出分布与走 schema 的轮**本就不同**（MiniMax 内部实测 91% vs 50%，
   p≈0.036）。摘要行会打 `[!] N/M 轮没走成 toolcall`。⚠ `<通道>_no_action` 的后缀说的是
@@ -231,14 +178,14 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
   **一条指标该不该跨档比，取决于它测的是被测系统还是被测模型**（§24.3）。
 - **一个差异「显著」不等于它「贵」**：工具通道差异 p≈0.0002，代价却在 20 条 stable
   跨域样本上完全看不见（两档都 20/20）——**先问它在什么条件下兑现成损失**（§24.3）。
-- **A/B 之前先证明两臂真的不同**（2026-08-10）：给 `replan()` 加了 `adaptive` 守卫后跑
-  「守卫 vs 对照」共 24 样本，正要定性「守卫有害」时才查到 **L1 harness 调 `replan()`
-  根本没传这个形参**——两臂逐字相同，那组读数对守卫什么都没测。方向还正好是「看起来
-  变差了」，最容易被当成结论。同 §13.1「执行器有这个形参≠尺子也在传它」（§22.4）。
-- **同一 SHA、逐字相同的注入，跨时段的失败形态分布可以完全不同**（2026-08-10）：
-  `cp.adaptive.weather-outing` 上午 11 样本 0 次「首轮判 simple」，下午 36 样本 10 次
-  （≈28%）。**上午的 9/11 与下午的 25/36 不要合并平均**——形态都换了，合起来那个数
-  谁也代表不了（§22.5）。
+- **A/B 之前先证明两臂真的不同**（2026-08-10）：给 `replan()` 加形参后 harness 没跟着传，
+  24 个样本两臂逐字相同，差点据此否掉自己的守卫；方向还正好是「看起来变差了」。
+  同 §13.1「执行器有这个形参≠尺子也在传它」——动作型条目在运行手册 §11（findings §22.4）。
+- **跨时段的读数不要合并平均**（2026-08-10）：`cp.adaptive.weather-outing` 上午 11 样本
+  0 次「首轮判 simple」，下午 36 样本 10 次（≈28%）——**上午的 9/11 与下午的 25/36
+  合起来那个数谁也代表不了**。⚠ 当时记成「工作树无改动可解释」，**那不是结论、是当时
+  看不见足够的东西**：真因随后定位到**掉出工具通道的比例**（§23/§24），
+  批次间波动的第一嫌疑人就是它——所以先看 `plan_modes` 再谈「模型状态」。
 - **诊断出一个洞，不等于这个洞就是病因**（2026-08-10）：「空调先别关」检不回范例
   （0.305 vs 阈值 0.34）是可测量的事实；补上够得着的范例后每趟都检回，通过率
   15/18 → 16/18、p=1.000。**「检索够不着」与「补上就能修」是两个命题**（§22.1）。

@@ -922,19 +922,19 @@
   tags: [mode_guardrail, retired_hint, reminder_wordform]
   expect_mode: other:reminder.create
   expect_intents: [reminder.create]
-  source: "create hint 退役后 snooze 词形的端到端等价用例（AGENTS.md §4.1 明账，2026-08-10 补）"
+  source: "create hint 退役后 snooze 词形的端到端等价用例（缺口与补齐记在 findings §20.5，2026-08-10）"
 
 - text: 离开公司提醒我买菜
   tags: [mode_guardrail, retired_hint, reminder_wordform]
   expect_mode: other:reminder.create
   expect_intents: [reminder.create]
-  source: "create hint 退役后「离开X」词形的端到端等价用例（AGENTS.md §4.1 明账，2026-08-10 补）"
+  source: "create hint 退役后「离开X」词形的端到端等价用例（缺口与补齐记在 findings §20.5，2026-08-10）"
 
 - text: 到公司之前提醒我交周报
   tags: [mode_guardrail, retired_hint, reminder_wordform]
   expect_mode: other:reminder.create
   expect_intents: [reminder.create]
-  source: "create hint 退役后「到X之前」词形的端到端等价用例（AGENTS.md §4.1 明账，2026-08-10 补）"
+  source: "create hint 退役后「到X之前」词形的端到端等价用例（缺口与补齐记在 findings §20.5，2026-08-10）"
 
 - text: 开启午休模式
   tags: [mode_guardrail, retired_hint]

@@ -414,6 +414,16 @@ collector 在 `insert_span` 收到 `cloud.planning` 时按 `trace_id` **合并�
 `catalog_chars`/`catalog_dropped`。badcase 先看这三行——**没检回 / 检回了没用对 / 检回了却被裁**
 是三种不同的失败。
 
+⚠ **`plan_mode` 要和 `complexity` 一起读**（2026-08-10）：走成 `toolcall` 的轮由 schema
+强制 `complexity`，掉进 `toolcall_salvage`/`toolcall_fallback` 的轮没有任何强制，
+两档的输出分布实测不同（同一用例 91% vs 50%）。走成的比例还是 **provider 属性**
+（实测 MiniMax 45~48% / DeepSeek 100%），所以 `toolcall_degraded` 率之外，
+**`toolcall_salvage` 率同样是协议层健康指标**。
+判据与读数见 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` §23/§24。
+边界说明：`Plan.complexity_declared`（wire 有没有真的给出合法 complexity）**目前只在
+对抗评测报告里可见，没有进 `cloud.planning` span** —— 按「先枚举消费方再谈收益」，
+dashboard/evolve 尚无消费方时不进 span；要用它做生产 badcase 分诊时再补。
+
 **`goal_value_dropped`（2026-08-04）**：只在 goal 文本里有数字、而**全部 step 的槽位里
 一个数字都没有**时发 `"true"`，其余情况不发这个键（不发 ≠ false，同 §9.x 的稀疏语义）。
 它抓的形态是「模型把值算出来了却没写进 slots」——journeys `B3-3` 的
