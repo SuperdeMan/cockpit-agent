@@ -150,8 +150,21 @@ class LoopController:
                         skill_names=list(getattr(initial_plan, "skills", []) or []),
                         # 同款范例继承（M5 P1）
                         exemplar_names=list(getattr(initial_plan, "exemplars", []) or []),
+                        # 初规划自报的 adaptive 是「第二阶段等看结果再补」的**声明**；
+                        # **只在第一次 replan 上**认这个声明——那时第二阶段还一步都没出，
+                        # 收场才叫自相矛盾。后续 replan 返回 done 是 adaptive 的**正常收尾**，
+                        # 在那儿也纠偏等于给每个 adaptive 请求白加一次 LLM 往返。
+                        adaptive=(getattr(initial_plan, "complexity", "") == "adaptive"
+                                  and replans == 0),
                     )
                 except Exception:
+                    # 静默 break 是有意的（再规划失败就收场，不把异常抛给用户），但
+                    # **它把接口层面的错误也咽了**：2026-08-10 给 replan 加 `adaptive`
+                    # 形参时，三个测试替身的签名没跟上 → TypeError → 这里 break，
+                    # 表现成「循环少走了一轮」而不是「调用签名不对」，三条断言红在
+                    # 八竿子打不着的 `KeyError: 'prior'` 上。留个 exception 日志：
+                    # 收场可以静默，**原因不该静默**。
+                    logger.exception("Replan call failed; ending the loop")
                     break
                 replans += 1
                 if decision.done or not decision.steps:

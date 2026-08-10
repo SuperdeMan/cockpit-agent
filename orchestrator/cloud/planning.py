@@ -906,6 +906,41 @@ _CONDITIONAL_GOAL_RE = re.compile(
 )
 
 
+# 一次性纠偏话术。**按来源分开写**：两边都是「首轮声明了会有第二阶段、replan 却收场了」，
+# 但要模型去做的核对动作不同——条件目标是「拿观察比前件」，adaptive 是「拿观察补后续步」。
+# 用同一段话覆盖两者会让 adaptive 那一路收到「请比较条件前件」这种它根本没有的东西。
+# 两条都保留「明确不满足 / 已完成时仍可 done」，纠偏只买一次重问，不制造必须产出步骤的压力。
+_FOLLOWUP_CORRECTIONS = {
+    "conditional": {
+        "done": (
+            "\n\n校验反馈：目标含条件前件与条件后件，第一版直接判定 done。"
+            "请逐项比较 observation.data/speech 与条件前件；满足时只规划后件，"
+            "只有明确不满足时才返回 done=true、steps=[]。"
+        ),
+        "empty": (
+            "\n\n校验反馈：上一版返回 done=false 却没有后续 steps，决策与计划"
+            "自相矛盾。请逐项比较 observation.data/speech 与目标条件；条件满足时"
+            "输出尚未完成的后件 steps，只有明确不满足或目标已经完成时才返回 "
+            "done=true、steps=[]。"
+        ),
+    },
+    "adaptive": {
+        "done": (
+            "\n\n校验反馈：首轮计划自报 complexity=adaptive，即「先查前置事实，"
+            "拿到结果再补后续步」，第一版却直接判定 done。请依据 observation.data/speech "
+            "里已经拿到的事实，规划它本来要支撑的后续步；确实没有可承接的能力、"
+            "或目标已经被首轮结果完整回答时，才返回 done=true、steps=[]。"
+        ),
+        "empty": (
+            "\n\n校验反馈：首轮计划自报 complexity=adaptive，本轮却 done=false 且没有 "
+            "steps，决策与计划自相矛盾。请依据 observation.data/speech 里已经拿到的事实"
+            "补出后续步；确实没有可承接的能力、或目标已经被首轮结果完整回答时，"
+            "才返回 done=true、steps=[]。"
+        ),
+    },
+}
+
+
 def _preserve_conditional_replan_contract(plan: Plan | None, text: str) -> bool:
     """Restore control metadata when a conditional plan lost only its envelope.
 
@@ -1447,7 +1482,8 @@ class PlanBuilder:
                      ctx: PlanContext, granted_permissions: list[str] = None,
                      working_set: WorkingSet = None,
                      skill_names: list[str] | None = None,
-                     exemplar_names: list[str] | None = None) -> ReplanDecision:
+                     exemplar_names: list[str] | None = None,
+                     adaptive: bool = False) -> ReplanDecision:
         """Decide completion and optionally produce the next validated batch.
 
         working_set: 复用初规划的同一装配——再规划也注入历史(+焦点)，消除初规划与
@@ -1457,6 +1493,11 @@ class PlanBuilder:
         若只在初规划在场，再规划轮恰好是决策发生的地方却失忆）。
         exemplar_names: 同理的范例名单（plan.exemplars，M5 P1）——范例示范的是**落域
         形态**，再规划正是要再挑一次能力的地方，只注初规划等于范例白给。
+        adaptive: 初规划自报的 `complexity == "adaptive"`。它是**计划自己的声明**——
+        「这一轮只查前置事实，第二阶段等看到结果再补」。于是 replan 返回 done / 空 steps
+        就与它自己的声明矛盾，**与条件目标是同一形态，只是判据来源不同**：一个来自目标
+        文本（`_CONDITIONAL_GOAL_RE`），一个来自计划的 complexity。既有的一次性纠偏
+        此前只认前者，adaptive 族（先查天气再推去处一类）恰好在这里失忆。
         """
         if granted_permissions is not None:
             agents = self._filter_by_permission(agents, granted_permissions)
@@ -1481,6 +1522,10 @@ class PlanBuilder:
         )
         completed = _completed_observation_steps(observations)
         conditional_goal = bool(_CONDITIONAL_GOAL_RE.search(goal or ""))
+        # 「首轮声明了会有第二阶段」的两种来源，共用同一次纠偏机会。**不合并成一个布尔**
+        # 就写不出对得上的反馈话术：条件目标要模型去比对前件，adaptive 要它去消费观察结果。
+        expects_followup = conditional_goal or adaptive
+        followup_source = "conditional" if conditional_goal else "adaptive"
         correction = ""
         steps: list[Step] = []
         for attempt in range(2):
@@ -1498,12 +1543,8 @@ class PlanBuilder:
                 data, catalog, goal, stage="replan", attempt=attempt,
                 wire_mode="json")
             if bool(data.get("done")):
-                if attempt == 0 and conditional_goal:
-                    correction = (
-                        "\n\n校验反馈：目标含条件前件与条件后件，第一版直接判定 done。"
-                        "请逐项比较 observation.data/speech 与条件前件；满足时只规划后件，"
-                        "只有明确不满足时才返回 done=true、steps=[]。"
-                    )
+                if attempt == 0 and expects_followup:
+                    correction = _FOLLOWUP_CORRECTIONS[followup_source]["done"]
                     continue
                 return ReplanDecision(done=True)
             candidate = list(parsed.steps) if parsed is not None else []
@@ -1515,13 +1556,8 @@ class PlanBuilder:
                 and type(data.get("steps")) is list
                 and not data["steps"]
             )
-            if attempt == 0 and conditional_goal and empty_conditional_followup:
-                correction = (
-                    "\n\n校验反馈：上一版返回 done=false 却没有后续 steps，决策与计划"
-                    "自相矛盾。请逐项比较 observation.data/speech 与目标条件；条件满足时"
-                    "输出尚未完成的后件 steps，只有明确不满足或目标已经完成时才返回 "
-                    "done=true、steps=[]。"
-                )
+            if attempt == 0 and expects_followup and empty_conditional_followup:
+                correction = _FOLLOWUP_CORRECTIONS[followup_source]["empty"]
                 continue
             if not repeated:
                 steps = candidate

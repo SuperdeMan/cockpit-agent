@@ -733,6 +733,123 @@ def test_replan_retries_conditional_done_false_with_empty_steps():
     assert "done=false 却没有后续 steps" in users[1]
 
 
+def test_replan_rechecks_an_empty_followup_when_the_first_plan_declared_adaptive():
+    """`complexity=adaptive` 是计划自己的声明，replan 收场就与它自相矛盾。
+
+    2026-08-10 实测（findings §22）：`cp.adaptive.weather-outing` 首轮正确排出
+    `info.weather` 并自报 adaptive，拿到「中雨」之后 replan 返回 `done=false, steps=[]`
+    ——一步都不补。既有的一次性纠偏只认目标文本里的条件词，而「今天的天气适合去哪玩」
+    的 goal 里一个条件词都没有，于是这一路从来没被纠偏过。
+    """
+    agents = [MockAgent("nearby", ["nearby.search"])]
+    replies = iter([
+        '{"done":false,"steps":[]}',
+        '{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0001",'
+        '"slots":{"category":"室内"},"depends_on":[],"slot_refs":{}}]}',
+    ])
+    users = []
+
+    async def mock_llm(messages):
+        users.append(messages[1]["content"])
+        return next(replies)
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "根据今天的天气推荐游玩地点",          # 无条件词——旧判据在这里一定不触发
+        [{"step_id": "s1", "status": "ok", "intent": "info.weather",
+          "data": {"condition": "中雨"}}],
+        agents, PlanContext(), adaptive=True,
+    ))
+
+    assert len(users) == 2, "adaptive 首轮声明过第二阶段，空 followup 必须重问一次"
+    assert [step.intent for step in decision.steps] == ["nearby.search"]
+    # 反馈话术必须对得上来源：adaptive 那一路不该收到「请比较条件前件」。
+    assert "complexity=adaptive" in users[1]
+    assert "条件前件" not in users[1]
+
+
+def test_replan_rechecks_a_done_verdict_when_the_first_plan_declared_adaptive():
+    agents = [MockAgent("nearby", ["nearby.search"])]
+    replies = iter([
+        '{"done":true,"steps":[]}',
+        '{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0001",'
+        '"slots":{},"depends_on":[],"slot_refs":{}}]}',
+    ])
+    users = []
+
+    async def mock_llm(messages):
+        users.append(messages[1]["content"])
+        return next(replies)
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "根据今天的天气推荐游玩地点",
+        [{"step_id": "s1", "status": "ok", "intent": "info.weather"}],
+        agents, PlanContext(), adaptive=True,
+    ))
+
+    assert len(users) == 2
+    assert [step.intent for step in decision.steps] == ["nearby.search"]
+
+
+def test_replan_still_accepts_done_after_one_adaptive_recheck():
+    """纠偏只买一次重问，**不制造「必须产出步骤」的压力**。
+
+    首轮 adaptive 但结果确实答完了目标（或没有可承接能力）时，第二次仍说 done 就照收。
+    否则这条守卫会把「该收场」变成「硬凑一步」，那比原缺陷更贵。
+    """
+    agents = [MockAgent("nearby", ["nearby.search"])]
+    calls = 0
+
+    async def mock_llm(_messages):
+        nonlocal calls
+        calls += 1
+        return '{"done":true,"steps":[]}'
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "根据今天的天气推荐游玩地点",
+        [{"step_id": "s1", "status": "ok", "intent": "info.weather"}],
+        agents, PlanContext(), adaptive=True,
+    ))
+
+    assert calls == 2
+    assert decision.done is True
+    assert decision.steps == []
+
+
+def test_replan_without_adaptive_flag_keeps_the_old_single_shot_behaviour():
+    """守卫必须由**初规划的声明**打开，不是对所有 replan 都多问一次。
+
+    这条是上面三条的反向构造：同样的目标与观察，不传 `adaptive` 就只调一次模型。
+    """
+    agents = [MockAgent("nearby", ["nearby.search"])]
+    calls = 0
+
+    async def mock_llm(_messages):
+        nonlocal calls
+        calls += 1
+        return '{"done":false,"steps":[]}'
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "根据今天的天气推荐游玩地点",
+        [{"step_id": "s1", "status": "ok", "intent": "info.weather"}],
+        agents, PlanContext(),
+    ))
+
+    assert calls == 1
+    assert decision.done is True
+
+
 def test_replan_accepts_first_done_for_a_nonconditional_goal():
     agents = [MockAgent("info", ["info.weather"])]
     calls = 0

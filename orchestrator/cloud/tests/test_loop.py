@@ -13,10 +13,13 @@ class _Planner:
     def __init__(self, decisions):
         self.decisions = list(decisions)
         self.observations = []
+        self.adaptive_flags = []
 
     async def replan(self, goal, observations, agents, ctx, granted_permissions=None,
-                     working_set=None, skill_names=None, exemplar_names=None):
+                     working_set=None, skill_names=None, exemplar_names=None,
+                     adaptive=False):
         self.observations.append(list(observations))
+        self.adaptive_flags.append(adaptive)
         return self.decisions.pop(0)
 
 
@@ -110,6 +113,66 @@ def test_adaptive_loop_executes_initial_batch_then_replans_until_done():
     assert planner.observations[0][-1]["data"] == {"available": False}
     assert events[-1]["speech"] == "best effort"
     assert suspended == []
+
+
+def test_adaptive_selfcheck_flag_is_raised_only_on_the_first_replan():
+    """`adaptive` 声明只在**第一次** replan 上兑现成一次自查。
+
+    后续 replan 返回 done 是 adaptive 的**正常收尾**——在那里也纠偏等于给每个
+    adaptive 请求白加一次 LLM 往返。这条把「守卫的作用域」钉住，防的是
+    「为了修一个 ~10% 的形态，给 100% 的 adaptive 请求加成本」（findings §22.3）。
+    """
+    planner = _Planner([
+        ReplanDecision(done=False, steps=[
+            Step(id="r1", agent_id="nearby", intent="nearby.search"),
+        ]),
+        ReplanDecision(done=True),
+    ])
+    executor = _Executor({
+        "s1": StepResult("s1", StepStatus.OK, speech="今天中雨",
+                         data={"condition": "中雨"}),
+        "r1": StepResult("r1", StepStatus.OK, speech="推荐几个室内去处"),
+    })
+
+    async def suspend(*args, **kwargs):
+        return {"kind": "final", "speech": "suspended"}
+
+    controller = LoopController(
+        planner, executor, _Aggregator(), suspend, max_iters=2, budget_ms=5000,
+    )
+    _collect(
+        controller,
+        goal="根据今天的天气推荐游玩地点",
+        initial_plan=Plan(steps=[Step(id="s1", agent_id="info")],
+                          complexity="adaptive"),
+        agents=[],
+        ctx=PlanContext(),
+        user_text="今天的天气适合去哪玩",
+    )
+
+    assert planner.adaptive_flags == [True, False]
+
+
+def test_simple_plan_never_raises_the_adaptive_selfcheck_flag():
+    planner = _Planner([ReplanDecision(done=True)])
+    executor = _Executor({"s1": StepResult("s1", StepStatus.OK, speech="今天多云")})
+
+    async def suspend(*args, **kwargs):
+        return {"kind": "final", "speech": "suspended"}
+
+    controller = LoopController(
+        planner, executor, _Aggregator(), suspend, max_iters=2, budget_ms=5000,
+    )
+    _collect(
+        controller,
+        goal="查询今天天气",
+        initial_plan=Plan(steps=[Step(id="s1", agent_id="info")], complexity="simple"),
+        agents=[],
+        ctx=PlanContext(),
+        user_text="今天天气怎么样",
+    )
+
+    assert planner.adaptive_flags == [False]
 
 
 def test_need_confirm_suspends_immediately_inside_loop():
@@ -438,7 +501,7 @@ def _wrap_planner(planner):
 
         async def replan(self, goal, observations, agents, ctx,
                          granted_permissions=None, working_set=None,
-                         skill_names=None, exemplar_names=None):
+                         skill_names=None, exemplar_names=None, adaptive=False):
             self._inner.skill_names_seen.append(list(skill_names or []))
             self._inner.exemplar_names_seen.append(list(exemplar_names or []))
             return await self._inner.replan(
