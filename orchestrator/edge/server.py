@@ -785,8 +785,11 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         # 就意味着**数据分散在四个 node 里**，查一次分歧要 union 四张表。
         # 顺带把这 3-8ms 从上云路径的关键段也摘了出去。
         self._nlu_shadow_bg(trace_id, request.text, "cloud")
-        cloud_speech = ""
-        cloud_has_actions = False
+        # 云端**整条流**是否已经给过用户任何实质输出（B1）：只看 final.speech 会漏掉
+        # 「流式 speech_delta 已经播出去、final.speech 恰为空」这一档——那时兜底会认为
+        # 「云端没输出」而本地补执行，造成双执行。progress 不算：过程区只是 UI 进度，
+        # 用户没拿到答案，那正是兜底该覆盖的场景。
+        cloud_had_output = False
         try:
             got = False
             async for event in self.cloud.handle(request):
@@ -797,8 +800,12 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 event = self._stamp_progress(event)  # 过程区事件标注行车态
                 which = event.WhichOneof("event")
                 if which == "final":
-                    cloud_speech = event.final.speech
-                    cloud_has_actions = len(event.final.actions) > 0
+                    if event.final.speech or len(event.final.actions) > 0:
+                        cloud_had_output = True
+                elif which == "speech_delta":
+                    cloud_had_output = cloud_had_output or bool(event.speech_delta)
+                elif which == "action":
+                    cloud_had_output = True
                 yield event
             if not got:
                 yield orchestrator_pb2.HandleEvent(
@@ -811,10 +818,28 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 speech="网络不太好，复杂请求暂时无法处理，不过车内控制依然可以正常使用。"))
             return
 
-        # 兜底：云端返回空 speech 且无 actions → 尝试端侧 VAL 本地执行
+        # 兜底：云端整条流零输出 → 尝试端侧 VAL 本地执行
         # 场景：LLM 规划失败 → chitchat 兜底但无实质回复 → 但原意可能是车控
-        if not cloud_speech and not cloud_has_actions:
+        #
+        # ⚠ 这条分支曾是一条完整的执行旁路（B1 修复的 P0）：它重新分类原话就直接下发 VAL，
+        # **不过 _confirm_required**。于是「打开后备箱」只要云端出任何空结果故障
+        # （LLM 超时 / 解析失败 / chitchat 空回复），后备箱就会无确认打开——不需要恶意输入。
+        # 三道挡板：① 云端已给过任何输出就不兜底（下面的 cloud_had_output）；
+        # ② 危险对象不兜底，播降级话术；③ 非危险车控兜底行为不变（这条分支存在的意义）。
+        if not cloud_had_output:
             local_structured = classify_structured(request.text)
+            if local_structured and self._confirm_required(local_structured):
+                # 挡板 ②：不执行、也不静默。不发 NEED_CONFIRM——端侧确认闭环依赖云端
+                # 挂起/恢复（见 `_confirm_required` 注释与 edge_call 的 NEED_CONFIRM），
+                # 而本分支触发的前提恰恰是云端没有结果，本地发确认没有恢复通道承接，
+                # 会造成「用户确认了却没人执行」的悬空确认。
+                obj = local_structured.get("data", {}).get("object", "")
+                logger.warning(
+                    "CLOUD-DEGRADED-DANGER-BLOCKED %s (text=%r)", obj, request.text[:40])
+                yield orchestrator_pb2.HandleEvent(
+                    final=orchestrator_pb2.FinalResult(
+                        speech="网络不太好，这个操作需要确认后执行，请稍后再试。"))
+                return
             if local_structured:
                 ok, speech = await self._execute_val_observed(
                     trace_id,
