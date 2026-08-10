@@ -98,8 +98,9 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 | 优先级 | 待办 | 完成判据 |
 |---|---|---|
-| **P0（路径 1 已否，需泓舟在剩下两条里再裁一次）** | 裸地名澄清族：`nq.landmark.bare` 合并 **11/20 ≈ 55%**、`nq.landmark.explicit` 0/10 | **路径 1「写 guide 讲判据」2026-08-10 实测否掉**（findings §18）：四次 10 样本读数 4/10 → 3/10 → **1/10** → 退回后 **7/10**，v2 对退回 Fisher p≈0.02 显著，**有害不只是无益**；guide 每次都成功注入，模型就是不照做。剩路径 2（给范例 schema 加 clarify 型，面较大）与路径 3（判为模型能力边界、等量换出预选池 + 逐条立卡）。⚠ 这一对实际只对应 **1 个** base 缺陷——variant 自己每条断言都过，是被 relation `clarify_flip` 要求「base 稳定 clarify」连累成 stable_fail（§18.4） |
-| **P0（方向问题，不是跑批问题）** | MiniMax 主模型 `eligible=True` | `32e8718` 已把 raw 幻觉 8→3、不稳定 6→4、未声明 fallback 4→2，但总分仍 141/147。实测单元不稳定率 3.3% ⇒ 一趟零 unstable 概率约 1.7%。**继续跑批期望值极低**，需要先决定是压底噪、换判据口径，还是接受主模型不出正式 baseline（findings §17.6） |
+| **P0（换池已落地，只差 baseline 重取证）** | 正式 baseline 因换池过期，资格恒红 | 2026-08-10 按路径 3 换出 `nq.landmark.{bare,explicit}`、等量换入 `nq.tesla.news`/`nq.sichuan.search`（findings §19）。副作用：正式 baseline 是 DeepSeek 在 `f0af9c0` 的 147 案例集，当前 gate 已不含那两条 ⇒ 每份报告都带一条 **`removed_cases`** 拒绝原因，**与模型表现无关**。收口＝在当前语料上重跑一次完整 DeepSeek 父 bundle + `--write-baseline`（约 40 分钟，未执行）。**判据：动了 gate 案例集，正式 baseline 当场过期**，放着不管就是养一条永远红的闸 |
+| **P0（方向已明，不建议继续跑批）** | 裸对象澄清族的账（已移出门禁，仍在 discovery 跑） | `nq.landmark.bare` 合并 11/20≈55% 的高方差边界句；`nq.landmark.explicit` 自己每条断言都过、是被 relation 连累；同族第三条 `nq.city.bare`「上海」从未进池。**路径 1「写 guide」已实测否掉**（findings §18：4/10→1/10→退回 7/10，p≈0.02 有害）；路径 2（范例 schema 加 clarify 型）未启动。立卡写在语料内，账跟着用例走 |
+| **P0（方向问题，不是跑批问题）** | MiniMax 主模型 `eligible=True` | 三批读数：`f0af9c0` 141/147（6 unstable）→ `32e8718` 141/147（raw 幻觉 8→3、不稳定 6→4、未声明 fallback 4→2）→ `5e8247d` 140/147（不稳定 6、未声明 fallback 1）。**每一批红灯都是从同一个边界池里重新抽的**，换掉具体红灯不提高整体资格概率（findings §19.2，判据第三次兑现）。实测单元不稳定率 3~5% ⇒ 一趟零 unstable 概率个位数百分比。**继续跑批期望值极低**，需先决定压底噪 / 换判据口径 / 接受主模型不出正式 baseline |
 | **P2** | 补 weather-outing 的真实 L3 claim | 不复用语义不对应的旧 journey；新增真正验证 weather→nearby 连续性的授权旅程后再晋级 |
 | **P2** | 三条未晋级候选重新取证 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 按当前跨进程契约取证 |
 | **P2** | snooze / 「离开X」/「到X之前」三个提醒词形补端到端用例 | route_hints 层的正例断言已随 create hint 退役迁出（2026-08-10），`mode_routing_cases.yaml` 只取了绝对时点/地理触发/周期三类代表形态，这三个词形端到端侧尚无等价用例——明账，不是已覆盖 |
@@ -145,6 +146,12 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 - **relation 断言会把 base 的方差放大成 variant 的稳定红**：`nq.landmark.explicit`
   自己每条断言都过却 0/10，只因 `clarify_flip` 要求 base 稳定。读 `stable_fail` 条数时
   先减掉这种连累项（§18.4）。
+- **动了 gate 案例集，正式 baseline 当场过期**：换池后每份报告都会带
+  `removed_cases` 拒绝原因，与模型无关；不重取证就是养一条永远红的闸（§19.3）。
+- **诊断动作本身会污染下一次跑批**：`scripts/run_e2e.py` 会重建服务并把运行时标记成
+  `runtime_freshness: unverified`，在两次全量批之间穿插它，下一批的 L3 阶段会重建
+  llm-gateway、掐断 primary 的网关连接（大批 `planner_unreached`）。单独定性 L3 之后
+  **整批重来**，别接着跑还没开始的那一批（§19.4，本轮亲自踩的）。
 
 ---
 

@@ -1198,3 +1198,29 @@ guide 四次全部成功注入（`@lex:11`，从未 `!clipped`）——**知识�
 `nq.landmark.explicit` 自己每条断言都过却四次 0/10，是被 relation `clarify_flip`
 要求「base 稳定 clarify」连累——**全量批「2 个 stable_fail」实际只对应 1 个 base 缺陷**。
 按此路径 3（等量换出预选池 + 逐条立卡）性价比已高于路径 2。
+
+## 17. 路径 3 落地：等量换出预选池（2026-08-10）
+
+泓舟裁路径 3。换出 `nq.landmark.{bare,explicit}`（status stable→reviewed、去 gate_candidate，
+**用例一字未删、gold 一字未放宽**，continue 在 discovery 每批跑），等量换入
+`nq.tesla.news` + `nq.sichuan.search`（同为 A3，攻击面守恒；两趟独立进程 × repeat 3
+均 4/4 全过，provenance 按 2026-08-04 起的跨进程契约补齐四项）。
+**规模一个数没变**：池 140、stable 139、gate 选集 139/129 唯一输入、min_cases 120。
+立卡写进语料本身——账跟着用例走，不靠外部文档记得。挑候选时排除 `nq.city.bare`「上海」：
+同样要求 clarify，是**同一个缺陷的另一个马甲**。
+
+全量复测（`5e8247d`，身份健康）：140/147，未声明 fallback 2→1，
+**换出的那对确实不在红灯名单里了**——路径 3 的直接目的达成。但红灯换了一批
+（`cs.pending.order-hold`、`ki.navigation-with-stop.hit`、`nq.airport.hold` 等 7 条）。
+**判据第三次兑现：换掉具体红灯不提高整体资格概率**，池子里换谁出去，下一批就从剩下的
+边界句里再抽一批。路径 3 治的是「别让一条已知无解的用例长期占着门禁」，治不了底噪。
+
+两条新账：
+- **动了 gate 案例集，正式 baseline 当场过期**——资格新增 `removed_cases` 拒绝原因，
+  与模型表现无关。收口需在当前语料上重跑一次完整 DeepSeek 父 bundle + `--write-baseline`
+  （未执行，已立卡）。放着不管就是养一条永远红的闸。
+- **诊断动作本身会污染下一次跑批**：本节读数是第三趟才拿到的。第一趟 L3 因高德 QPS 抖动
+  失败（单跑 A1-2 PASS 定性）；第二趟大批 `planner_unreached`——查容器
+  `RestartCount=0/OOM=false/ExitCode=0`，是**我为定性 A1-2 单跑的那次 `run_e2e`**
+  把运行时标记成 `runtime_freshness: unverified`，导致下一批的 L3 阶段重建 llm-gateway、
+  掐断 primary 的连接。**单独定性 L3 之后整批重来。**

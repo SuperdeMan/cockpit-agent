@@ -2098,3 +2098,86 @@ v1 的 few-shot 抄的是**文本通道**形状 `{"addressed":true,"steps":[],"c
 
 按 §18.4，路径 3 现在的性价比更高：这一对量的是**一条 55% 边界句 + 一条被 relation
 连累的健康用例**，把它留在 gate 里等于让 `eligible` 长期挂在一次抛硬币上。
+
+## 19. 2026-08-10：路径 3 落地——等量换出预选池
+
+泓舟在 §18.5 剩下的两条里裁了路径 3。
+
+### 19.1 换池本身：规模一个数没变
+
+| | 换前 | 换后 |
+|---|---:|---:|
+| `gate_candidate` 预选池 | 140 | **140** |
+| `status: stable` | 139 | **139** |
+| gate 选集 / 唯一输入 | 139 / 129 | **139 / 129** |
+| `min_cases` | 120 | 120（未动） |
+
+换出 `nq.landmark.{bare,explicit}`：**用例一字未删、gold 一字未放宽**，status 由 stable
+降为 reviewed。discovery suite 的 `statuses` 含 `reviewed`，所以它们继续每批跑，
+只是不再决定 gate 能不能绿。立卡直接写进语料本身（换出理由 / 已否掉的修法 / 未启动的
+修法 / 同族第三条），**账跟着用例走，不靠外部文档记得**。
+
+换入 `nq.tesla.news` + `nq.sichuan.search`：同为 A3（攻击面守恒），后者保住 navigation
+域在池内的覆盖。晋级走完整跨进程取证——两趟独立进程 × 每趟 repeat 3，两趟均 4/4 全过、
+零幻觉零兜底零降级，provenance 补齐 `stabilized_processes/samples_per_process/
+process_runs/samples`（契约 2026-08-04 起硬校验，比旧的「6 样本」多要三项）。
+
+⚠ 挑候选时**排除了 `nq.city.bare`「上海」**：它同样要求 clarify，是同一个缺陷的另一个
+马甲，换入它等于把同族不稳定塞回门禁。它保持 reviewed 未进池，一并记在立卡里。
+
+### 19.2 全量复测：换出的那对确实不再红，但总分没有变好
+
+同一 `5e8247d`，身份健康（retrieval degraded 0、trace 0、provider drift false、
+worktree clean）：
+
+| 指标 | `32e8718`（换池前） | `5e8247d`（换池后） |
+|---|---:|---:|
+| 总证据单元 | 141/147 | **140/147** |
+| exact plan set | 116/121 | 114/121 |
+| raw hallucination | 3/121 | 3/121 |
+| instability | 4/121 | **6/121** |
+| fallback / 未声明 | 11/122 / 2 | 9/122 / **1** |
+| repeat status | unstable 4、stable_fail 2 | unstable 6、stable_fail 1 |
+
+`nq.landmark` 一对**确实不在红灯名单里了**——路径 3 的直接目的达成。
+但红灯又换了一批：`cs.pending.order-hold@l2`、`cs.tomorrow.weather@l1`、
+`ex.nopunct.two-intent@l1`、`ki.navigation-with-stop.hit@l1`、`nq.airport.hold@l1`、
+`nq.forecast.plain@l1`、`os.turn-off.hvac@l1`。
+
+> **这是 §17.6 那条判据的第三次兑现**：单元不稳定率 ~5%，一趟完整 gate 恰好零 unstable
+> 的概率是个位数百分比。**换掉具体的红灯不会提高整体资格概率**——池子里换谁出去，
+> 下一批就从剩下的边界句里再抽一批出来。路径 3 治的是「让一条已知无解的用例不再
+> 长期占着门禁」，它从来治不了底噪。
+
+### 19.3 换池的必然副作用：正式 baseline 过期了
+
+资格拒绝原因里新增了一条 **`removed_cases: ['nq.landmark.bare@l1', 'nq.landmark.explicit@l1']`**。
+
+正式 baseline 是 DeepSeek 在 `f0af9c0` 上的 147 案例集，而当前语料的 gate 选集已经
+不含这两条。资格闸的「不允许逐例回退/删除案例」检查因此**恒红**——
+与模型表现无关，是案例集本身漂移了。
+
+> **判据：动了 gate 案例集，正式 baseline 当场过期。**
+> 这不是可以放着不管的告警：它会让此后每一份报告都带着一条永久拒绝原因，
+> 而「一条永远红的闸很快就没人再看它说什么」正是本体系吃过两次的教训（规格 §22.7）。
+
+收口动作（**需要一次新的完整 DeepSeek 父 bundle + `--write-baseline`**，未执行，留给泓舟）：
+在当前语料上重新取证并写入正式对比/参考 baseline。不得手工编辑正式文件，
+也不得拿 MiniMax 报告顶替——放行信号只有报告自身重算的 `eligible=True`。
+
+### 19.4 两次被基础设施打断，第二次是我自己造成的
+
+本节的读数是**第三趟**才拿到的，前两趟都以 exit 2 作废，值得记：
+
+1. 第一趟：`l3_runner_failed: scripts/run_e2e.py exit=1`（journey A1-2）。
+   单跑 A1-2 **PASS**（18.7s，8 个充电站）⇒ 高德免费档 QPS 抖动，
+   与该 journey 自己注释里写的「偶发限流」+ `retry: 1` 一致，不是回归。
+2. 第二趟：大批 `planner_unreached`（`plan_mode='toolcall_degraded'`）。
+   查容器：`RestartCount=0 / OOM=false / ExitCode=0`，llm-gateway 是**被重新创建**的。
+   时间线对得上——**我为定性 A1-2 单独跑的那次 `scripts/run_e2e.py`
+   把运行时标记成 `runtime_freshness: unverified`，随后全量批的 L3 阶段重建了
+   llm-gateway，掐断了 primary 正在用的网关连接。**
+
+> **判据：诊断动作本身会污染下一次跑批。**
+> `run_e2e` 会重建服务；在两次全量批之间穿插它，等于给下一批埋了一个中途换 IP 的雷。
+> 要单独定性 L3，跑完之后**整批重来**，不要接着跑还没开始的那一批。
