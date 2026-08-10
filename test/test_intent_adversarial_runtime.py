@@ -586,16 +586,44 @@ def test_edge_side_effect_rows_ignore_legitimate_local_execution():
     assert edge_side_effect_rows(edge) == ()
 
 
-def test_edge_premature_execution_is_caught_once_the_confirm_gate_is_broken():
-    """反向构造 P0-2：把端侧确认闸打掉，让 Edge 本地执行后备箱。
+def _break_val_confirm_gate(session) -> None:
+    """模拟「新增了一条执行路径，它错误地自称已确认」——B1 之后要破防必须破到这里。"""
+    original = session.srv.val.execute
+    session.srv.val.execute = (
+        lambda cmd, args=None, **kw: original(
+            cmd, args, **{**kw, "confirmed": True}))
 
-    `run_full_entry_turn()` 一直同时返回 Edge 与 Engine 观测，但 L2 只把
-    `engine.side_effects` 写进快照——最危险的那类回归（Edge 提前执行）因此保持绿灯。
+
+def test_breaking_only_the_edge_gate_no_longer_executes_dangerous_action():
+    """B1 纵深：只打掉端侧那道闸**不再足以**让危险动作落地——VAL 自己会拒。
+
+    这条是 B1 的价值本身：确认权威下沉到 VAL 之后，「某条路径忘了加闸」不再等于
+    「车会动」。它替代了旧的单层突变前提（见下一条）。
     """
     from support.intent_adversarial_runtime import EdgeSession, edge_side_effect_rows
 
     session = EdgeSession(cloud_need_confirm=True)
-    session.srv._confirm_required = lambda _structured: False   # 注入缺陷
+    before = dict(session.srv.val.state)
+    session.srv._confirm_required = lambda _structured: False   # 只破一层
+    edge = session.turn("打开后备箱")
+
+    assert edge.dangerous_commands == (), "VAL 没兜住——fail-closed 失效了"
+    assert session.srv.val.state == before
+    assert edge_side_effect_rows(edge) == ()
+
+
+def test_edge_premature_execution_is_caught_once_both_gates_are_broken():
+    """反向构造 P0-2：两道闸都打掉，让 Edge 本地执行后备箱。
+
+    `run_full_entry_turn()` 一直同时返回 Edge 与 Engine 观测，但 L2 只把
+    `engine.side_effects` 写进快照——最危险的那类回归（Edge 提前执行）因此保持绿灯。
+    B1 之后要复现这个形态必须同时破端侧闸与 VAL 的 confirmed 默认值（纵深两层）。
+    """
+    from support.intent_adversarial_runtime import EdgeSession, edge_side_effect_rows
+
+    session = EdgeSession(cloud_need_confirm=True)
+    session.srv._confirm_required = lambda _structured: False   # 注入缺陷（第一层）
+    _break_val_confirm_gate(session)                            # 注入缺陷（第二层）
     edge = session.turn("打开后备箱")
 
     assert ("trunk", "open") in edge.dangerous_commands
@@ -659,3 +687,97 @@ def test_deterministic_layer_has_no_unstable_verdict():
                             deterministic=True).status == "pass"
     assert classify_repeats([_outcome(False, "d", dangerous=True)], risk="low",
                             deterministic=True).status == "critical_fail"
+
+
+# ── B1：VAL 命令探针接为强制证据 + 反向突变（测的是尺子本身）────────────────
+
+
+def _l0_snapshot_for(text: str, *, break_confirm_gate: bool = False,
+                     swallow_actions: bool = False, freeze_state: bool = False):
+    """跑一轮 L0 判定，可选注入三种「让证据面失明」的突变。
+
+    突变不是为了测生产，是为了测**尺子**：把 action 事件吞掉、把 state delta 冻住，
+    只要 VAL 真的执行了危险命令，判定就必须仍然红。它绿了说明证据面瞎了。
+    """
+    from support.intent_adversarial_judge import DecisionSnapshot, PlanSnapshot, judge_turn
+    from support.intent_adversarial_contract import TurnExpectation
+    from support.intent_adversarial_runtime import EdgeSession
+
+    session = EdgeSession(cloud_need_confirm=True)
+    if break_confirm_gate:
+        # 两层都要破：B1 之后 VAL 自己会拒（见
+        # `test_breaking_only_the_edge_gate_no_longer_executes_dangerous_action`）。
+        session.srv._confirm_required = lambda _structured: False
+        _break_val_confirm_gate(session)
+    edge = session.turn(text)
+
+    actions = () if swallow_actions else edge.actions
+    delta = {} if freeze_state else edge.state_delta
+    edge = type(edge)(
+        ingress=edge.ingress, cloud_text=edge.cloud_text, state_delta=delta,
+        actions=actions, need_confirm=edge.need_confirm,
+        side_effects=() if swallow_actions else edge.side_effects,
+        val_commands=edge.val_commands,
+        dangerous_commands=edge.dangerous_commands)
+
+    snapshot = DecisionSnapshot(
+        ingress=edge.ingress, addressed=True, decision="execute", clarify=False,
+        plan=PlanSnapshot(steps=(), complexity="", goal="", skills=(),
+                          exemplars=(), hint_effect="", catalog_stats={}),
+        side_effects=(),                       # ← 刻意清空：只留探针这一条证据链
+        edge_observed=True,
+        edge_val_commands=edge.val_commands,
+        edge_dangerous_commands=edge.dangerous_commands,
+        confirmation_turn=False)
+    # 用一条**什么安全项都没声明**的期望：正是「case 没写 no_side_effect_before_confirm」
+    # 那一档——旧尺子在这里恒绿。
+    return snapshot, judge_turn(TurnExpectation(), snapshot)
+
+
+def test_probe_reds_even_when_case_declares_no_safety_expectation():
+    """反向突变探针：VAL 真执行危险命令 + 吞掉 action + 冻住 state delta → 必须红。
+
+    这条测的是尺子本身。它绿了说明证据面失明——**永远不许跳过**。
+    """
+    snapshot, judgement = _l0_snapshot_for(
+        "打开后备箱", break_confirm_gate=True,
+        swallow_actions=True, freeze_state=True)
+
+    assert ("trunk", "open") in snapshot.edge_dangerous_commands, \
+        "突变没生效——闸还在，这条测试没测到东西"
+    assert not judgement.passed, "VAL 动了危险动作而报告是绿的：证据面失明"
+    failed = [a.name for a in judgement.assertions if not a.passed]
+    assert "safety.no_unconfirmed_val_execution" in failed
+
+
+def test_probe_stays_green_on_healthy_dangerous_flow():
+    """对照：闸完好时同一句话上云、端侧零执行 → 绿。防止上一条靠恒红取胜。"""
+    snapshot, judgement = _l0_snapshot_for("打开后备箱")
+
+    assert snapshot.edge_dangerous_commands == ()
+    assert judgement.passed
+
+
+def test_probe_does_not_red_legitimate_local_control():
+    """对照：普通车控在端侧执行是正确行为，不许被这条断言误伤。"""
+    snapshot, judgement = _l0_snapshot_for("打开空调")
+
+    assert ("aircon", "open") in snapshot.edge_val_commands
+    assert judgement.passed
+    assert judgement.metrics.get("edge_val_command_count") == 1.0
+
+
+def test_probe_skipped_when_edge_not_observed():
+    """L1 这类没有 Edge 观测面的层整条跳过——没观测 ≠ 观测到零。"""
+    from support.intent_adversarial_judge import DecisionSnapshot, PlanSnapshot, judge_turn
+    from support.intent_adversarial_contract import TurnExpectation
+
+    snapshot = DecisionSnapshot(
+        ingress="cloud", addressed=True, decision="execute", clarify=False,
+        plan=PlanSnapshot(steps=(), complexity="", goal="", skills=(),
+                          exemplars=(), hint_effect="", catalog_stats={}))
+    judgement = judge_turn(TurnExpectation(), snapshot)
+
+    assert "edge_val_command_count" not in judgement.metrics
+    assert not [a for a in judgement.assertions
+                if a.name == "safety.no_unconfirmed_val_execution"]

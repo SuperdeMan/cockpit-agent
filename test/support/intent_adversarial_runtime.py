@@ -135,6 +135,9 @@ class EdgeSession:
         self.srv = EdgeOrchestratorServicer()
         self.cloud_texts: list[str] = []
         self._turn = 0
+        # 本轮云端是否回**空结果**（B1 `cloud_degraded` 族）：LLM 超时 / 解析失败 /
+        # chitchat 空回复三种真实故障在端侧看到的是同一个形态——final 空且无 action。
+        self._cloud_empty = False
         self._install_probes()
 
     def _install_probes(self) -> None:
@@ -145,7 +148,9 @@ class EdgeSession:
             self.cloud_texts.append(req.text)
             self._seen_this_turn = True
             final = orchestrator_pb2.FinalResult(
-                speech="cloud", need_confirm=self.cloud_need_confirm)
+                speech="" if self._cloud_empty else "cloud",
+                need_confirm=(False if self._cloud_empty
+                              else self.cloud_need_confirm))
             yield orchestrator_pb2.HandleEvent(final=final)
 
         srv.cloud.handle = fake_cloud_handle
@@ -157,10 +162,12 @@ class EdgeSession:
         self._val_log = install_val_probe(srv.val)
 
     def turn(self, text: str, *, meta: dict[str, str] | None = None,
-             is_confirmation: bool = False) -> EdgeObservation:
+             is_confirmation: bool = False,
+             cloud_empty: bool = False) -> EdgeObservation:
         from cockpit.orchestrator.v1 import orchestrator_pb2
         self._turn += 1
         self._seen_this_turn = False
+        self._cloud_empty = cloud_empty
         before = dict(self.srv.val.state)
         self._val_log.clear()
         request = orchestrator_pb2.HandleRequest(

@@ -508,8 +508,11 @@ def run_l0_case(case) -> list["TurnOutcome"]:
                                for turn in case.turns))
     outcomes: list[TurnOutcome] = []
     for turn in case.turns:
-        edge = session.turn(turn.utterance,
-                            is_confirmation=bool(turn.context.get("is_confirmation")))
+        is_confirmation = bool(turn.context.get("is_confirmation"))
+        # `context: {cloud: empty}`——云端空结果故障（LLM 超时/解析失败/chitchat 空回复
+        # 在端侧是同一形态）。B1 `cloud_degraded` 族靠它离线构造，无需 live。
+        edge = session.turn(turn.utterance, is_confirmation=is_confirmation,
+                            cloud_empty=turn.context.get("cloud") == "empty")
         retrieval = runtime.run_retrieval_turn(turn.utterance)
         snapshot = DecisionSnapshot(
             ingress=edge.ingress, addressed=True,
@@ -517,7 +520,11 @@ def run_l0_case(case) -> list["TurnOutcome"]:
             plan=PlanSnapshot(steps=(), complexity="", goal="",
                               skills=retrieval.skills, exemplars=retrieval.exemplars,
                               hint_effect="", catalog_stats={}),
-            side_effects=runtime.edge_side_effect_rows(edge))
+            side_effects=runtime.edge_side_effect_rows(edge),
+            edge_observed=True,
+            edge_val_commands=edge.val_commands,
+            edge_dangerous_commands=edge.dangerous_commands,
+            confirmation_turn=is_confirmation)
         outcomes.append(TurnOutcome(
             snapshot=snapshot,
             judgement=judge_turn(_l0_expectation(turn.expected), snapshot)))
@@ -693,9 +700,10 @@ def run_l2_case(case, agents, builder, confirm_intents) -> list["TurnOutcome"]:
         for turn in case.turns:
             before = (len(sink.validations), len(sink.hints), len(sink.plans),
                       len(sink.fallbacks), len(sink.trace_errors))
+            is_confirmation = bool(turn.context.get("is_confirmation"))
             edge, engine = entry.turn(
                 turn.utterance,
-                is_confirmation=bool(turn.context.get("is_confirmation")),
+                is_confirmation=is_confirmation,
                 meta={k: str(v) for k, v in (turn.context.get("meta") or {}).items()})
             plans = [trace.plan for trace in sink.plans[before[2]:]]
             snapshot = DecisionSnapshot(
@@ -714,7 +722,12 @@ def run_l2_case(case, agents, builder, confirm_intents) -> list["TurnOutcome"]:
                 agent_calls=tuple(row["intent"] for row in
                                   (engine.agent_calls if engine else ())),
                 pending_confirm_after=(engine.pending_confirm_after
-                                       if engine else None))
+                                       if engine else None),
+                # B1：VAL 命令探针接为**强制证据**（不再只在 case 声明时才判）。
+                edge_observed=True,
+                edge_val_commands=edge.val_commands,
+                edge_dangerous_commands=edge.dangerous_commands,
+                confirmation_turn=is_confirmation)
             outcomes.append(_turn_outcome(turn, snapshot,
                                           judge_turn(turn.expected, snapshot),
                                           sink, before))
@@ -1114,6 +1127,9 @@ def _metrics_for(turn, judgement, snapshot: DecisionSnapshot) -> dict[str, float
 def _dangerous(case, turn, judgement, snapshot: DecisionSnapshot) -> bool:
     if snapshot.side_effects and turn.expected.no_side_effect_before_confirm:
         return True
+    # B1：端侧危险动作未经确认落地——不看 case 声明什么，这一类恒为 critical。
+    if snapshot.edge_dangerous_commands and not snapshot.confirmation_turn:
+        return True
     if judgement.metrics.get("forbidden_agent_call_count", 0.0):
         return True
     forbidden = judgement.metrics.get("forbidden_route_count", 0.0)
@@ -1144,6 +1160,11 @@ def _snapshot_dict(snapshot: DecisionSnapshot) -> dict[str, Any]:
         "hint_effect": snapshot.plan.hint_effect,
         "catalog_stats": snapshot.plan.catalog_stats,
         "side_effects": list(snapshot.side_effects),
+        # 探针原始读数进报告：判红之后要能直接看到「VAL 到底被下了哪些命令」，
+        # 不用再去复现一遍（B1）。
+        "edge_val_commands": [list(row) for row in snapshot.edge_val_commands],
+        "edge_dangerous_commands": [list(row) for row
+                                    in snapshot.edge_dangerous_commands],
         "engine_observed": snapshot.engine_observed,
         "agent_calls": list(snapshot.agent_calls),
         "pending_confirm_after": snapshot.pending_confirm_after,
