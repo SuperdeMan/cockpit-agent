@@ -379,8 +379,14 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 |---|---|---|
 | P0 | 裸地名澄清族（留在门禁内，已立卡） | `nq.landmark.bare` 合并 **11/20≈55%**（高方差边界句，不是稳定红）、`nq.landmark.explicit` 自己每条断言都过、被 relation 连累；同族第三条 `nq.city.bare` 未进池。**路径 1「写 guide」实测否掉**（§18：4/10→1/10→退回 7/10，p≈0.02 有害）；**路径 3「换出预选池」执行并全量验证后回退**（§19.5：总分没变好且会冻结 baseline 写入）。判据：**不要为了某个模型的问题去改尺子**。路径 2 未启动 |
 | P0 | 主模型 `eligible=True` 的方向 | 不是跑批问题：单元不稳定率 3.3% ⇒ 一趟零 unstable 概率约 1.7%。先决定压底噪 / 改口径 / 接受主模型不出正式 baseline（findings §17.6） |
-| P2 | 三条未晋级候选 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 仍在预选池；按新跨进程契约重新取证 |
-| P2 | 补 weather-outing 的真实 L3 claim | 旧链接语义不对应已删除；要晋级需新增真正验证 weather→nearby 连续性的 journey |
+| P1 | `nq.hvac.reported` 的**生产侧**修法 | 2026-08-10 取证定性为真缺陷（6 次里 3 次真下 `hvac.off`，`critical_fail` ×2）。缺的是「引述他人指令 ≠ 指令」这一层，常驻 policy `negation-and-deferral` 只讲直接否定。产物应为范例/知识并**拿对照跑证伪**，与尺子分批（findings §20.2） |
+| P2 | `cp.adaptive.weather-outing` 的 L1 稳定性 | **L3 已还清**（journey `A1-5` + claim `adaptive_replan_continuity`，两趟各 1/1）。L1 三趟 3/3、2/3、4/5 ＝ 9/11 未达两趟 ×3 全过；两次红是 clarify 与空 replan，都不是落错域（findings §20.4） |
+
+2026-08-10 已收口（不再是待办）：三条未晋级候选**全部按跨进程契约取证完毕**——
+`cp.hvac-news.swapped` 2/6（尺子抓对了 `limit="今天的"`，维持严格口径）、
+`nq.hvac.reported` 2/6（转真缺陷，见上）、`nq.match.lastweek` 5/6（边界方差，不动）；
+weather-outing 的 L3 claim 已建（见上）；snooze /「离开X」/「到X之前」三个提醒词形
+已补端到端用例，两趟各 3/3（findings §20.1/§20.4/§20.5）。
 
 2026-08-10 收口：`f0af9c0` 点名的 6 条 unstable 全部转绿（两条真缺陷 §17.2/§17.3、
 三条单跑即全绿、一条随修复转绿）；`os.open.sunroof` 的范例吸引子已补对照（§17.7）；
@@ -394,6 +400,8 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 - [ ] 改了口径 → 规格 §12 改了吗？引用过旧数的文档标注作废了吗？
 - [ ] 新写的断言，**先注入缺陷验证过它会红**吗？（否定命题守不住肯定性质）
 - [ ] 报出的每个比率，分子分母都看过吗？分母为 0 的地方写的是 `null` 不是 100% 吧？
+- [ ] 跑 pytest 时**没有**带 `PYTHONIOENCODING=utf-8` 吧？带了会让拉子进程的用例
+      在 Windows 上假红（子进程按 UTF-8 写、父进程按 GBK 解，findings §20.6）。
 - [ ] 全量 `pytest` 有红 → **与 clean HEAD 逐条对照过**吗？
       对照法是 `git stash` 后**同目录**重跑（先 `git diff > 备份.patch`，pop 后 diff 对拍）；
       **不能用新建 worktree** —— 它缺 `gen/python` 等 gitignore 产物，分母不同。

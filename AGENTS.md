@@ -79,7 +79,8 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 | 对比模型正式 baseline | [`baseline_intent_adversarial.json`](docs/reviews/eval/baseline_intent_adversarial.json)；干净 `f0af9c0`，锁定 `deepseek:deepseek-v4-flash`，由当前 L3 原始字节/摘要/时间/精确路径契约重新取证并写入。**未随 `32e8718` 重取**——它仍是 DeepSeek 在 `f0af9c0` 的证据 |
 | DeepSeek 完整 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；exact **121/121**，raw 幻觉/校验后逃逸/不稳定均 **0/121**；L1/L2 各 **2 个独立进程 × 每进程 3 样本**（`f0af9c0`） |
 | MiniMax 主模型 gate（`32e8718`，2026-08-10） | **141/147**；exact **116/121**、required **99/103**；raw 幻觉 **3/121**（原 8）、逃逸 **0/121**；不稳定 **4/121**（原 6）；`pass 141 / unstable 4 / stable_fail 2`，资格仍 `eligible=False` |
-| L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim |
+| L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
+| 三条候选取证（2026-08-10，`f71fd3c`） | `cp.hvac-news.swapped` **2/6**、`nq.hvac.reported` **2/6**（`critical_fail` ×2，真缺陷）、`nq.match.lastweek` **5/6**；`cp.adaptive.weather-outing` L1 三趟 **9/11**。全部 `minimax:MiniMax-M3`、检索零降级、`worktree_clean=true` |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 代码回归 | `orchestrator/` **1093 passed**、`pytest test/` **1127 passed / 9 skipped**；端侧 smoke **13/13**；Skill / Exemplar（253 条 / 20 域）/ L0 门禁均通过 |
 
@@ -102,21 +103,30 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 | 优先级 | 待办 | 完成判据 |
 |---|---|---|
-| **P2** | 补 weather-outing 的真实 L3 claim | 不复用语义不对应的旧 journey；新增真正验证 weather→nearby 连续性的授权旅程后再晋级 |
-| **P2** | 三条未晋级候选重新取证 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 按当前跨进程契约取证 |
-| **P2** | snooze / 「离开X」/「到X之前」三个提醒词形补端到端用例 | route_hints 层的正例断言已随 create hint 退役迁出（2026-08-10），`mode_routing_cases.yaml` 只取了绝对时点/地理触发/周期三类代表形态，这三个词形端到端侧尚无等价用例——明账，不是已覆盖 |
-| **P2** | M5 P3b：端侧 NLU operate 抽取与放量 | 真实流量错对象率 <0.3% 后再开工；其余延后/条件项看 §4.2，量产级总纲看 `docs/architecture/phase1-implementation-plan.md` |
+| **P1** | `nq.hvac.reported`：转述句里的车控被当成指令执行 | 2026-08-10 跨进程取证定性为**真缺陷**——「后排刚才说关掉空调，你先别真关」6 次里 **3 次真规划 `hvac.off`**，两趟重复分类均 `critical_fail`；base「关掉空调」6/6 正确，故不是对象认不出，是**引述层**没被识别。常驻 policy `negation-and-deferral` 只讲直接否定。产物按纪律是范例/知识（不是正则），且**必须拿对照跑证伪**；与尺子分批。判据＝两趟独立进程 × repeat 3 全过且 base 不回归 |
+| **P2** | `cp.adaptive.weather-outing` 的 L1 稳定性 | **L3 那笔账已还清**（新 journey `A1-5` + claim `adaptive_replan_continuity`，两趟独立各 1/1）。剩下的是 L1：三趟独立 3/3、2/3、4/5 ＝ **9/11**，未达 §7 的两趟 ×3 全过。两次红都不是落错域——一次首轮直接 clarify，一次首轮对但 **replan 出空计划** |
 
-> 2026-08-10 已收口：`pytest test/` 裸 `server` 导入冲突（按路径认模块，15 红 → 0）、
+> 2026-08-10（下午批）已收口：**三条未晋级候选全部按跨进程契约取证完毕**
+> （`cp.hvac-news.swapped` 2/6＝尺子抓对了 `limit="今天的"` 的槽位污染，维持严格口径；
+> `nq.hvac.reported` 2/6＝转真缺陷，升 P1 见上；`nq.match.lastweek` 5/6＝边界方差，不动）；
+> **weather-outing 的真实 L3 claim 已建**（journey `A1-5` 进 `regression_a.yaml`，
+> `journey_links.yaml` 新增 claim 枚举值 `adaptive_replan_continuity`——**没有复用
+> `dependency_continuity`**，那条证不了「第二步是看到结果后才补出来的」）；
+> **snooze /「离开X」/「到X之前」三个提醒词形已补端到端用例**（tag `reminder_wordform`，
+> 两趟独立 live 各 3/3）。逐条证据 findings §20。
+>
+> 2026-08-10（上午批）已收口：`pytest test/` 裸 `server` 导入冲突（按路径认模块，15 红 → 0）、
 > hint 退役后的陈旧离线评测资产（`eval_route_hints` 76/86 → **78/78**，`--strict` exit 0，
 > 顺带补上「删除留痕」后发现基线陈旧的其实是 **45 条**不是 9 条）、宽 journeys 两条外部
 > 依赖残留（B3-1 gold 改条件式 + 离线三态守卫；B3-2 归高德侧，见 §4.2）、
 > MiniMax 原 6 条 unstable 全部转绿（两条真缺陷修在 `apply_plan_repairs` 与
 > `_MULTI_ACTION_CONNECTOR_RE`，raw 幻觉 8→3、未声明 fallback 4→2）。
 >
-> **§4.1 当前没有 P0/P1**：主模型 `eligible=True` 与裸对象澄清族两条已移入 §4.2 ——
-> 它们的结论都是「不要行动」（继续跑批期望值极低 / 三条修法两否一未启动），
-> 留在活跃表里会让接手人误以为有工可开。
+> **主模型 `eligible=True` 与裸对象澄清族**两条 P0 已移入 §4.2 —— 它们的结论都是
+> 「不要行动」（继续跑批期望值极低 / 三条修法两否一未启动），留在活跃表里会让接手人
+> 误以为有工可开。**M5 P3b 同理移入 §4.2**：它的完成判据「真实流量错对象率 <0.3%」
+> 本身就是「先别开工」，且与 §4.2 既有的「端侧能力面与 P3b 前置」是同一件事，
+> 两处并列只会让人以为有两笔账。
 
 ### 4.2 延后 / 条件待办索引（不进入当前主线）
 
@@ -124,7 +134,7 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 | 主题 | 当前状态 / 启动条件 | 权威入口 |
 |---|---|---|
-| 端侧能力面与 P3b 前置 | 除雾 intent 仍缺席；“穿衣指数→股指”仍是规则错配。对象桥接、operate 抽取和真实错对象率 <0.3% 齐备后才放量 | [M5 P3 收尾](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) §P3 收尾 |
+| 端侧能力面与 P3b 前置（含 **P3b operate 抽取与放量**） | 除雾 intent 仍缺席；“穿衣指数→股指”仍是规则错配。对象桥接、operate 抽取和真实错对象率 <0.3% 齐备后才放量。⚠ 压这个数的手段是 **R4.1b P1 执行侧对象化**（让 object 数从 65 长上去），**不是调阈值**；且当前 PoC 没有真实流量，这个数只有观测面、还没有分母 | [M5 P3 收尾](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) §P3 收尾 |
 | live 路由回归进 CI | hint 退役后的召回保护目前是 live 人工车道，不是 CI 阻断；有稳定凭证、预算与 provider 方差处置后再接 CI | [旅程体系](docs/design/2026-07-14-journey-e2e-test-system.md) §4.3、[评测说明](docs/reviews/eval/README.md) §规则退役 |
 | `route_hints` 继续退役 | 当前实数 **11**；`mcp-bridge#0` 必须先过专项安全回归。旧三条单档候选不得按历史索引直接执行；当前只用 MiniMax 主模型 / DeepSeek 对比，MiMo key 失效不阻塞主线，切换 provider 时重新全覆盖取交集 | [M5 P2](docs/design/2026-07-28-intent-accuracy-data-flywheel.md)、[评测说明](docs/reviews/eval/README.md) §规则退役 |
 | M5 后续杠杆 | catalog 检索化当前是“有意不做”；16k 预算再次裁剪或保护集显著变瘦时重评。gold→范例现走 CLI；P4 仅在范例 ≥2k 且 N1 平台期 ≥2 周时启动 | [M5 P2/P4](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) |
@@ -162,6 +172,16 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 - **动 gate 案例集之前先问正式 baseline 还认不认得这个案例集**：案例集一变，
   每份报告都会带 `removed_cases` 拒绝原因（与模型无关），baseline 写入机制被冻结。
   离线比对 baseline 与语料的 id 集合即可零成本预判（§19.3/§19.5）。
+- **「没到 6/6」是统计事实，不是定性**（2026-08-10）：三条候选在晋级闸前长得一模一样，
+  逐条拉证据后是三种东西——一条要修生产（`nq.hvac.reported`）、一条要维持尺子的严格
+  （`cp.hvac-news.swapped`，`clause_commute` 抓到 `limit="今天的"`）、一条什么都不用做
+  （`nq.match.lastweek` 边界方差）。分歧可以出现在**同一个失败标签内部**（findings §20.1）。
+- **claim 不能就近转借**：`dependency_continuity`（两个已规划的步骤之间结果被消费）
+  证不了 `adaptive_replan_continuity`（第二步首轮压根不存在、看到结果才补出来）——
+  首轮排满两步的计划照样满足前者，却正是 weather-outing badcase 要禁的形态（§20.4）。
+- **跑 pytest 不要带 `PYTHONIOENCODING=utf-8`**：子进程按 UTF-8 写、父进程按 GBK 解，
+  Windows 上会把拉子进程的用例弄成假红（3 红 vs 不设时 154 全过，§20.6）。
+  要看中文输出就把 JSON 落盘再读文件。
 - **诊断动作本身会污染下一次跑批**：`scripts/run_e2e.py` 会重建服务并把运行时标记成
   `runtime_freshness: unverified`，在两次全量批之间穿插它，下一批的 L3 阶段会重建
   llm-gateway、掐断 primary 的网关连接（大批 `planner_unreached`）。单独定性 L3 之后

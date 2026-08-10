@@ -2211,3 +2211,114 @@ worktree clean）：
 
 这一族因此回到「已知、已立卡、继续在门禁里以约 55% 通过率制造红灯」的状态。
 读 MiniMax 报告时按语料里的立卡扣掉这一对，别当成两个独立缺陷。
+
+---
+
+## 20. 2026-08-10：§4.1 剩余三项 P2 收口（候选取证 / weather-outing L3 claim / 提醒词形）
+
+> **本批只动尺子**：`test/` 与文档，生产资产（skills / manifests / orchestrator）一行未改。
+> 唯一的代码改动是运行器的 claim 枚举加了一个值（§20.4），仍属尺子侧。
+
+### 20.1 三条未晋级候选：全部按跨进程契约取证，全部不晋级——但三个「不晋级」不是同一件事
+
+`minimax:MiniMax-M3`，两趟独立进程 × `--repeat 3` ＝ 每条 6 个样本，
+证据 `docs/reviews/eval/_ci-run-intent-gate-promotion-residual-{a,b}.json`
+（干净 `f71fd3c`，`worktree_clean=true`，检索零降级，`infrastructure_errors=[]`）：
+
+| case | A 趟 | B 趟 | 6 样本 | 重复分类 | 定性 |
+|---|---|---|---|---|---|
+| `cp.hvac-news.swapped` | 1/3 | 1/3 | **2/6** | unstable ×2 | 尺子抓对了真槽位污染（§20.3） |
+| `nq.hvac.reported` | 1/3 | 1/3 | **2/6** | **critical_fail ×2** | **真缺陷**（§20.2） |
+| `nq.match.lastweek` | 2/3 | 3/3 | **5/6** | unstable + pass | 边界方差，判断本身没错 |
+
+> **判据：「没到 6/6」是一个统计事实，不是一个定性。** 三条在晋级闸前长得一模一样，
+> 逐条拉证据之后是三种完全不同的东西：一条要修生产、一条要维持尺子的严格、一条
+> 什么都不用做。这与 §12.1「量分布是为了排优先级，不能代替逐条拉证据」是同一条，
+> 只是这次分歧出现在**同一个失败标签内部**。
+
+### 20.2 `nq.hvac.reported`：缺的是「转述」这一层，不是「否定」那一层
+
+「后排刚才说关掉空调，你先别真关」六次里 **3 次直接规划 `hvac.off`**、1 次 clarify、
+2 次正确落 `chitchat.talk`。base「关掉空调」六次全对——所以不是空调这个对象认不出。
+
+常驻 policy `negation-and-deferral` 讲的是「别 / 先别 / 不要 X」的**直接否定**，
+而这句的结构是「**A 说了 X**，你别真做 X」：被否定的动词在**引述**里。模型读到
+「关掉空调」就下车控，把引语当成了指令。policy 覆盖不到这个形态，范例库 hvac 域
+三条也全是同音字与无标点组合，没有一条教「别人说的话不是对我说的」。
+
+风险级别不低：`risk: high`，六次里三次是**真实车控误下发**且对抗的正是显式否定。
+修法归生产侧（范例 / 知识），按「修尺子和修被测对象不同批」另批处理，
+已在语料 `nq.hvac.reported` 头上立卡。
+
+### 20.3 `cp.hvac-news.swapped`：这次 `clause_commute` 的严格槽位口径抓的是真东西
+
+绝对 gold（`required_groups` / `forbidden` / `extra`）**六次全过**，红全在
+`relation.clause_commute.slots`。看具体签名就知道它不是噪声：
+
+- variant 抖出过 `info.news.limit="今天的"`——**数字槽被灌进触发短语**，
+  与 §17.2「触发词被抄进槽位，就不再是占位符」同一族；
+- base 自己也在 `(limit=10, topic=新闻)` 与空槽之间摇，于是 `sig(variant) ∈ supp(base)`
+  六次只成立两次。
+
+所以不是「尺子该放宽到 `route_only`」：换的是子句顺序不是说法，非空槽位本就该相同
+（judge docstring 的 `clause_commute` 行），而 `route_only` 那个例外是留给
+「下游按 raw_text 确定性恢复可选槽位的**已审计**能力」的，这里两个条件都不成立。
+
+### 20.4 weather-outing：L3 那笔账还清了，卡点从「没有 claim」变成「L1 不稳」
+
+`cp.adaptive.weather-outing` 自 §7.5 起就是「两趟都过、因声明 `l3` 而被挡」，
+2026-08-04 又因**旧链接语义不对应被删**（§13.1 判据三）而彻底没有 L3 载体。本批补齐：
+
+- 新 journey **`A1-5`**（`test/journeys/regression_a.yaml`，regression / live）：
+  一句「今天的天气适合去哪玩」，断言**同一轮里两件事同时成立**——话术里真有天气证据
+  ∧ 真给出了去处。少任何一件都是断链（只报天气＝原 badcase `f53d2e58`，
+  只推荐不看天气＝`4799fb1f`）。**断言刻意不写天气条件**：深圳今天是晴是雨由真实
+  Provider 决定，把 gold 绑在「必须推室内」上等于让天气决定红绿（B3-1 踩过一次）。
+- 新 claim 枚举值 **`adaptive_replan_continuity`**。**没有复用 `dependency_continuity`**：
+  后者说的是「两个都已规划的步骤之间，前一步的结果真的被后一步消费」，而 adaptive
+  说的是「第二步在首轮压根不存在，看到第一步结果之后才被补出来」。首轮就把两步排满的
+  计划照样满足依赖消费，却恰恰是这条 badcase 要禁的形态——**前者的绿灯证不了后者**。
+  枚举存在的意义就是不让 claim 就近转借（§13.1 判据三）。
+- L3 读数：两趟独立调用各 **1/1 PASS**，真栈话术
+  「深圳南山区今天多云但有 36℃，体感 37℃…户外不太舒服。推荐几个室内去处：…」
+  ——高温分支，正好证明条件无关的断言写法立得住。
+
+**仍不晋级，卡在 L1。** 三趟独立进程 3/3、2/3、4/5 ＝ **9/11**，达不到 §7 的两趟 ×3 全过。
+两次红是两种形态，**都不是落错域**：
+
+- 一次首轮直接 `clarify`（不查天气就反问）——A1-5 的 `speech_not` 反问词正对着它；
+- 一次首轮对、**replan 出空计划**（拿到「中雨」结果后一步都不补）——由
+  `replan[0].required_groups` 钉住。
+
+证据 `_ci-run-intent-weather-outing-l1-{a,b,c}.json` 与 `_ci-run-intent-weather-outing-l3{,-b}.json`。
+
+### 20.5 三个提醒词形：规则退役不会把覆盖一起搬走
+
+`reminder.create` 的 replace hint 2026-08-02 退役时，18 条命中句只取了三类代表形态
+（绝对时点 / 地理触发 / 周期）迁进 `mode_routing_cases.yaml`。snooze「过10分钟再提醒我」、
+「离开公司提醒我买菜」、「到公司之前提醒我交周报」三个词形端到端侧一直是空的。
+本批按原句补齐（tag `reminder_wordform`），两趟独立 live 各 **3/3**，
+`eval_route_hints --strict` **78/78 exit 0**。
+
+三者在路由层都是 `reminder.create`——manifest capability 描述与 examples 明写 snooze /
+到X / 离开X 归 create，「改期原条目」是 Agent 内部行为（`_AGAIN_RE` → create 路径收编
+fired 条目），不是另一个 intent。
+
+> **判据：迁移时「取代表形态」是一个决定，不是一次完整搬家。** 没被取走的那些形态
+> 当场就变成了缺口；这一次它没有丢，唯一的原因是**当时把账记在了三个地方**
+> （两处语料注释 + AGENTS §4.1），八天后才有人能照着兑现。
+> 反过来说：**退役规则时如果只记「已迁移」不记「迁了哪几条、剩哪几条」，
+> 缺口就会以「已覆盖」的形态存活下去。**
+
+### 20.6 一个只在 Windows 上出现的自坑：`PYTHONIOENCODING=utf-8` 会制造三条假红
+
+`pytest test/test_eval_intent_adversarial_cli.py` 在设了 `PYTHONIOENCODING=utf-8` 时
+3 条失败、不设时 154 全过。原因是那几条用 `subprocess.run(..., text=True)` 拉子进程：
+**子进程继承 `PYTHONIOENCODING` 按 UTF-8 写，父进程解码用的却是
+`locale.getpreferredencoding()`＝GBK**，于是读线程抛 `UnicodeDecodeError`、
+`proc.stdout` 变成 `None`，断言报成 `TypeError`。
+
+我为了看中文输出才设的这个变量，它反过来把测试弄红了。
+> **判据：为了让输出好看而设的环境变量，也是环境变量。**
+> 跑 pytest（尤其是会拉子进程的选集）不要带 `PYTHONIOENCODING`；
+> 要看中文就把 JSON 落盘再读文件。

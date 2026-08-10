@@ -48,6 +48,13 @@ cases:
       - input: {utterance: 打开空调，顺便看看今天的新闻, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [hvac.on]}, {any_of: [info.news]}], allow_extra_intents: false}
+  # 2026-08-10 按当前跨进程契约重新取证（两趟独立进程 × repeat 3）：**2/6，不晋级**。
+  # 绝对 gold 六次全过，红全在 `relation.clause_commute.slots`——而这次它抓的是真东西：
+  # variant 抖出过 `limit="今天的"`（数字槽被灌进触发短语，同 §17.2「触发词被抄进槽位」
+  # 那一族），另有 `topic` 时有时无。base 自己也在 `(limit=10,topic=新闻)` 与空槽之间摇，
+  # 于是 `sig(variant) ∈ supp(base)` 六次里只成立两次。**这不是尺子太严**：换的是子句
+  # 顺序不是说法，非空槽位本就该相同（judge docstring 的 clause_commute 行）。
+  # 证据 `docs/reviews/eval/_ci-run-intent-gate-promotion-residual-{a,b}.json`。
   - id: cp.hvac-news.swapped
     title: 看新闻并开空调（换序）
     family_id: cp.hvac-news
@@ -390,6 +397,15 @@ cases:
           plan: {required_intent_groups: [{any_of: [window.close]}, {any_of: [hvac.on]}, {any_of: [info.weather, info.forecast]}, {any_of: [reminder.create]}], allow_extra_intents: false}
 
   # ── adaptive：先查前置事实，再消费结果补步 ───────────────────────────────
+  # 2026-08-10 取证：**L3 那笔账已还清**——新建 journey `A1-5`（regression_a.yaml）+
+  # journey_links `adaptive_replan_continuity`，两趟独立 L3 各 1/1 PASS（真栈实话术：
+  # 「深圳今天多云…36℃…这种高温天不太适合在户外久待。可以…」＝同一轮里既有天气证据
+  # 又有去处推荐）。**仍不晋级，卡在 L1 稳定性**：`minimax:MiniMax-M3` 三趟独立进程
+  # 3/3、2/3、4/5 ＝ **9/11**，达不到 §7 的两趟 ×3 全过。两次红是两种形态，都不是
+  # 「落错域」：一次首轮直接 clarify（不查天气就反问），一次首轮对、**replan 出空计划**
+  # （拿到中雨结果后一步都不补）。前者由 A1-5 的 speech_not 反问词钉住，后者由
+  # `replan[0].required_groups` 钉住。证据 `_ci-run-intent-weather-outing-l1-{a,b,c}.json`
+  # 与 `_ci-run-intent-weather-outing-l3{,-b}.json`。
   - id: cp.adaptive.weather-outing
     title: 天气适合去哪玩（落域准确≠智能的标本）
     family_id: cp.weather-outing

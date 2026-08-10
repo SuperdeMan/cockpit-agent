@@ -748,6 +748,12 @@ _JOURNEY_LINK_ASSERTIONS = {
     "dependency_continuity",
     "dangerous_confirmation_continuity",
     "mixed_ingress_continuity",
+    # 2026-08-10 新增。**没有并进 `dependency_continuity`**：那条说的是「两个都规划了
+    # 的步骤之间，前一步的结果真的被后一步消费」；adaptive 说的是「第二步在首轮压根
+    # 不存在，看到第一步的结果之后才被补出来」。前者的绿灯证不了后者——首轮就把两步
+    # 排满的计划照样满足依赖消费，却恰恰是 weather-outing 那条 badcase 要禁的形态。
+    # 枚举本身就是为了不让 claim 互相转借（findings §13.1 判据三）。
+    "adaptive_replan_continuity",
 }
 
 

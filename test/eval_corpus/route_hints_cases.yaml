@@ -213,9 +213,10 @@
   tags: [reminder, guard, volume]
 
 # recur「每天早上八点提醒我吃药」与 snooze「过10分钟再提醒我」的正例断言随 create hint
-# 退役迁出。recur 在 mode_routing_cases.yaml 有端到端等价用例；**snooze 没有**——
-# 2026-08-02 迁出时只取了绝对时点/地理触发/周期三类代表形态，snooze 是第四类，
-# 端到端侧至今空白。这条缺口是明账，不是已覆盖（AGENTS.md §4.1 记）。
+# 退役迁出。2026-08-02 迁出时只取了绝对时点/地理触发/周期三类代表形态，snooze 是
+# 第四类、端到端侧一直空白。**2026-08-10 已补**：原句「过10分钟再提醒我」以
+# tag `reminder_wordform` 进 mode_routing_cases.yaml，两趟独立 live（minimax:MiniMax-M3）
+# 各 3/3。缺口关闭，本行保留是为了记住「规则退役 ≠ 覆盖自动搬家」。
 
 # ── reminder P1c 跨域（2026-07-11）：trace b3ecd195 复现词形 ──
 - text: 第一场提醒我观看
@@ -547,7 +548,8 @@
 # （2026-08-02）迁出本层：它们当初钉的是「既有 create pattern 覆盖到了位置/ETA 词形」，
 # 规则没了这个命题就不存在。地理触发形态在 mode_routing_cases.yaml 有端到端等价用例
 # （「到公司提醒我拿文件」，tag `retired_hint`）；「离开X」与「到X之前」两个词形
-# 端到端侧尚无等价用例，是明账。
+# **2026-08-10 已补**（原句「离开公司提醒我买菜」「到公司之前提醒我交周报」，
+# tag `reminder_wordform`），两趟独立 live（minimax:MiniMax-M3）各 3/3。
 
 # ── vision 触发收窄（数据飞轮 P0 C5，badcase 2026-07-26/27）────────────────────
 # 过宽分支「帮我看看」曾把 LBS 句整句劫持进 vision.describe（replace + 端侧抓帧上传）。

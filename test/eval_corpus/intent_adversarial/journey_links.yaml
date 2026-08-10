@@ -18,3 +18,7 @@ links:
     - journey_id: A1-1
       assertion: mixed_ingress_continuity
       rationale: 两边都验证本地车控与在线天气同句时没有被端侧整句吞掉，且两域动作均完成
+  cp.adaptive.weather-outing:
+    - journey_id: A1-5
+      assertion: adaptive_replan_continuity
+      rationale: 两边都验证同一句「天气适合去哪玩」里首轮只查天气、拿到天气结果后才补出去处推荐步；case 用 replans 钉 nearby.search + weather_context，journey 用「同一轮既有天气证据又有去处」钉端到端不断链

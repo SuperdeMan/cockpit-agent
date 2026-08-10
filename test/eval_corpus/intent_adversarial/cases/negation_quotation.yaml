@@ -91,6 +91,15 @@ cases:
       - input: {utterance: 关掉空调, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [hvac.off]}], allow_extra_intents: false}
+  # 2026-08-10 按当前跨进程契约重新取证（两趟独立进程 × repeat 3）：**2/6，不晋级；
+  # 而且它不是「证据不足」，是真缺陷**。六次里 **3 次直接规划 `hvac.off`**（A 趟 2 次、
+  # B 趟 1 次）、1 次 clarify、2 次正确落 chitchat.talk；两趟的重复分类都是
+  # `critical_fail`（高风险域的危险误路由）。base `nq.hvac.command`「关掉空调」六次全对，
+  # 所以不是空调这个对象认不出——是**转述**这一层没被识别：句子里的「关掉空调」是
+  # 别人说的话，「你先别真关」才是对系统说的。常驻 policy `negation-and-deferral` 只讲
+  # 「别/先别 X」的直接否定，没有「引述他人指令 ≠ 指令」这一条，命中不了这个形态。
+  # 证据 `docs/reviews/eval/_ci-run-intent-gate-promotion-residual-{a,b}.json`；
+  # 修法归生产侧（范例/知识），另批处理——尺子这批不改被测对象。
   - id: nq.hvac.reported
     title: 转述别人的话，不该真关
     family_id: nq.hvac-reported
@@ -669,6 +678,11 @@ cases:
   # 换出 `nq.match.future`（消融显示 no-skills 稳定翻正 = guide 检索噪声，评审 §10.4）
   # 与 `nq.umbrella.negated`（红的真因在它的 base：「查天气然后提醒我带伞」3/3 漏掉
   # 提醒步，是评审 §10.8「组合漏第二步」的又一例，不是这条自己的问题）。
+  # 2026-08-10 按当前跨进程契约重新取证（两趟独立进程 × repeat 3）：**5/6，不晋级**。
+  # 六次里五次稳稳落 `info.sports`（query 就是原话），一次首轮直接 clarify。属边界方差
+  # 不属缺陷——「上周五那场球赛」确实没说是哪一场，模型偶尔反问在语义上站得住；
+  # 但 gold 要求的是**过去时赛果不得漂到 info.news**，那一条六次全过。
+  # 差的只是稳定度，不是判断。证据同上 `_ci-run-intent-gate-promotion-residual-{a,b}.json`。
   - id: nq.match.lastweek
     title: 明确过去时的赛果查询
     family_id: nq.match-lastweek

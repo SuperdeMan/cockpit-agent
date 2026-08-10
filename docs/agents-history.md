@@ -1233,3 +1233,70 @@ guide 四次全部成功注入（`@lex:11`，从未 `!clipped`）——**知识�
 `removed_cases` 消失，**DeepSeek 无需重跑**；池 140 / stable 139 / 选集 139-129 全部复位。
 保留：立卡整段留在语料、两条换入候选的跨进程晋级取证一字未删（将来正当换池可直接复用）、
 两条新判据入 §4.3。
+
+## 18. §4.1 剩余三项 P2 收口（2026-08-10 下午，`f71fd3c` 起）
+
+**只动尺子的一批**：`test/` 语料与运行器 claim 枚举 + 文档，生产资产一行未改。
+
+**① 三条未晋级候选按跨进程契约取证完毕（两趟独立进程 × repeat 3 ＝ 6 样本/条）。**
+`minimax:MiniMax-M3`，检索零降级、`worktree_clean=true`、`infrastructure_errors=[]`：
+`cp.hvac-news.swapped` **2/6**、`nq.hvac.reported` **2/6**、`nq.match.lastweek` **5/6**。
+三条全部不晋级，但**三个「不晋级」不是同一件事**——
+
+- `nq.hvac.reported` 是**真缺陷并升 P1**：「后排刚才说关掉空调，你先别真关」六次里
+  **3 次真规划 `hvac.off`**，两趟重复分类均 `critical_fail`；base「关掉空调」6/6 正确，
+  所以不是对象认不出，是**引述层**没被识别。常驻 policy `negation-and-deferral` 只讲
+  「别/先别 X」的直接否定，范例库 hvac 域三条全是同音字与无标点组合，没有一条教
+  「别人说的话不是对我说的」。修法归生产侧、按纪律是范例/知识且必须拿对照跑证伪。
+- `cp.hvac-news.swapped` 是**尺子抓对了**：绝对 gold 六次全过，红全在
+  `relation.clause_commute.slots`，而 variant 抖出过 `info.news.limit="今天的"`
+  ——数字槽被灌进触发短语，同 §17.2「触发词被抄进槽位」一族。不放宽到 `route_only`：
+  那个例外只留给「下游按 raw_text 确定性恢复可选槽位的**已审计**能力」。
+- `nq.match.lastweek` 是**边界方差**：五次稳落 `info.sports`、一次 clarify；
+  gold 要求的「过去时赛果不得漂到 `info.news`」六次全过。不动。
+
+> **判据：「没到 6/6」是一个统计事实，不是一个定性。** 三条在晋级闸前长得一模一样，
+> 逐条拉证据之后一条要修生产、一条要维持严格、一条什么都不用做。
+> 与「量分布不能代替逐条拉证据」同源，只是这次分歧出现在**同一个失败标签内部**。
+
+**② weather-outing 的真实 L3 claim 已建，卡点从「没有 claim」变成「L1 不稳」。**
+新 journey **`A1-5`**（`regression_a.yaml`，regression/live）：一句「今天的天气适合去哪玩」，
+断言**同一轮里两件事同时成立**——话术里真有天气证据 ∧ 真给出了去处；断言刻意不写天气
+条件（深圳今天晴雨由真实 Provider 决定，把 gold 绑在「必须推室内」上等于让天气决定红绿，
+B3-1 踩过一次）。两趟独立 L3 各 **1/1 PASS**，实话术命中的是高温分支
+（「多云但有 36℃…户外不太舒服。推荐几个室内去处」），正好证明条件无关的写法立得住。
+
+新增 claim 枚举值 **`adaptive_replan_continuity`**，**没有复用 `dependency_continuity`**：
+后者说「两个已规划步骤之间前一步结果被消费」，adaptive 说「第二步首轮压根不存在、
+看到结果才补出来」；首轮排满两步的计划照样满足前者，却正是这条 badcase 要禁的形态。
+枚举存在的意义就是不让 claim 就近转借。
+
+**仍不晋级**：L1 三趟独立 3/3、2/3、4/5 ＝ **9/11**。两次红都不是落错域——一次首轮直接
+clarify（不查天气就反问，正对 A1-5 的 `speech_not`），一次首轮对但 **replan 出空计划**
+（拿到「中雨」结果后一步都不补，由 `replan[0].required_groups` 钉住）。
+
+**③ snooze /「离开X」/「到X之前」三个提醒词形补齐端到端用例。**
+按 hint 退役前的原句进 `mode_routing_cases.yaml`（tag `reminder_wordform`），
+两趟独立 live 各 **3/3**；`eval_route_hints --strict` **78/78 exit 0**。
+三者在路由层都是 `reminder.create`（manifest 描述与 examples 明写；「改期原条目」是
+Agent 内部行为不是另一个 intent）。
+
+> **判据：迁移时「取代表形态」是一个决定，不是一次完整搬家。** 2026-08-02 迁出 18 条
+> 命中句时只取了三类形态，剩下的当场就成了缺口；这次没丢的唯一原因是**当时把账记在
+> 三个地方**（两处语料注释 + AGENTS §4.1）。退役规则时只记「已迁移」不记「迁了哪几条、
+> 剩哪几条」，缺口就会以「已覆盖」的形态存活下去。
+
+**④ M5 P3b 从 §4.1 移入 §4.2。** 它的完成判据「真实流量错对象率 <0.3%」本身就是
+「先别开工」，且压这个数的手段是 R4.1b P1 执行侧对象化不是调阈值；当前 PoC 也没有
+真实流量分母。与 §4.2 既有的「端侧能力面与 P3b 前置」是同一件事，两处并列会让人
+以为有两笔账。
+
+**自己踩的一个坑**：为了看中文输出设了 `PYTHONIOENCODING=utf-8`，
+`pytest test/test_eval_intent_adversarial_cli.py` 当场 3 红——子进程继承该变量按 UTF-8 写、
+父进程按 `locale.getpreferredencoding()`＝GBK 解，`proc.stdout` 变 `None`。不设时 154 全过。
+**为了让输出好看而设的环境变量，也是环境变量。**
+
+回归：`pytest test/` **1127 passed / 9 skipped**（与基线同）、L0 discovery **76/76**、
+gate `--strict` **25/25 exit 0**（139 stable / 129 唯一输入，规模未变）、
+`eval_route_hints --strict` **78/78**、`eval_mode_routing` 离线 schema 173 条 OK。
+逐条证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§20**。

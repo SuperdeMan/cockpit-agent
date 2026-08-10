@@ -911,6 +911,31 @@
   expect_intents: [reminder.create]
   source: "reminder.create 的 route_hint 已退役（2026-08-02）——回归保护改端到端口径"
 
+# 2026-08-10 补齐上面那句「三类代表形态」留下的缺口。当初迁出时只取了绝对时点 /
+# 地理触发 / 周期，snooze、「离开X」、「到X之前」三个词形在端到端侧一直是空的
+# （route_hints_cases.yaml 两处注释把这笔记成明账）。三条都用 hint 退役前的原句，
+# 与上面三条同口径：**没有规则也要落对**。
+# 三者在路由层全部是 reminder.create（manifest capability 描述与 examples 都明写
+# snooze / 到X / 离开X 归 create）；「改期原条目」是 Agent 内部行为，不是另一个 intent
+# （agents/reminder/src/agent.py `_AGAIN_RE` → create 路径里收编 fired 条目）。
+- text: 过10分钟再提醒我
+  tags: [mode_guardrail, retired_hint, reminder_wordform]
+  expect_mode: other:reminder.create
+  expect_intents: [reminder.create]
+  source: "create hint 退役后 snooze 词形的端到端等价用例（AGENTS.md §4.1 明账，2026-08-10 补）"
+
+- text: 离开公司提醒我买菜
+  tags: [mode_guardrail, retired_hint, reminder_wordform]
+  expect_mode: other:reminder.create
+  expect_intents: [reminder.create]
+  source: "create hint 退役后「离开X」词形的端到端等价用例（AGENTS.md §4.1 明账，2026-08-10 补）"
+
+- text: 到公司之前提醒我交周报
+  tags: [mode_guardrail, retired_hint, reminder_wordform]
+  expect_mode: other:reminder.create
+  expect_intents: [reminder.create]
+  source: "create hint 退役后「到X之前」词形的端到端等价用例（AGENTS.md §4.1 明账，2026-08-10 补）"
+
 - text: 开启午休模式
   tags: [mode_guardrail, retired_hint]
   expect_mode: other:scene.activate

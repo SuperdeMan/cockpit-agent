@@ -76,6 +76,35 @@ journeys:
       - 取消带伞的提醒
       - 确定
 
+  - id: A1-5
+    title: 天气→去处推荐（adaptive 连续性：先查天气，再按天气结果推荐去处）
+    level: regression
+    lane: live
+    tags: [autonomy, continuity]
+    requires: [AMAP_KEY]
+    retry: 1                     # 和风 + 高德两跳；高德免费档 QPS 偶发限流
+    setup:
+      location: {lat: 22.5333, lng: 113.9505}   # 深圳南山
+    turns:
+      # 这条旅程存在的唯一理由：给对抗用例 `cp.adaptive.weather-outing` 提供 L3 claim
+      # （journey_links.yaml `adaptive_replan_continuity`）。低层能等价复现的单轮落域句
+      # 一条都不该建 journey——这句不能，它要证的是**首轮只规划天气、看到天气结果之后
+      # 才补出推荐步**，跨的是 Planner→Executor→replan→Agent→聚合整条链。
+      #
+      # 断言刻意**不写天气条件**：深圳今天是晴是雨由真实 Provider 决定，把 gold 绑在
+      # 「必须推室内」上等于让天气决定红绿（B3-1 踩过一次，gold 已改条件式）。
+      # 连续性由两件事同时成立来钉：① 话术里真有天气证据 ② 同一轮里真给出了去处。
+      # 少任何一件都是断链——只报天气正是原 badcase（f53d2e58/c0d1a8d2），
+      # 只推荐不看天气就是把雨天的公园推给用户（4799fb1f）。
+      - say: 今天的天气适合去哪玩
+        expect:
+          latency_s: 90
+          speech_any: [天气, 气温, 晴, 雨, 多云, 阴, 云, ℃, 度]
+          speech_not: [您想去哪, 想去哪儿, 请选择, 哪一类, 什么类型]   # 反问=断链
+          any_of:
+            - cards_any: [place_list]
+            - speech_any: [商场, 电影院, 博物馆, 公园, 景点, 景区, 推荐]
+
   - id: A2-2a
     title: 赛程→提醒跨域交接（REMINDABLE_ACTIVE 一轮成单）
     level: regression

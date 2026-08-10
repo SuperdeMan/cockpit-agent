@@ -2156,11 +2156,13 @@ def test_real_journey_links_are_audited_and_only_cover_matching_claims():
         "cp.dep.charge-then-navigate",
         "ei.dangerous.combined",
         "ei.mixed.hvac-weather",
+        "cp.adaptive.weather-outing",
     }
     assert {link.assertion for rows in specs.values() for link in rows} == {
         "dependency_continuity",
         "dangerous_confirmation_continuity",
         "mixed_ingress_continuity",
+        "adaptive_replan_continuity",
     }
     assert all(link.rationale.strip() for rows in specs.values() for link in rows)
 
