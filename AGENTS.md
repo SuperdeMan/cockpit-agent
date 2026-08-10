@@ -74,11 +74,12 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 L0 discovery **76/76 exit 0**、gate L0 `--strict` **exit 0**、范例门禁域错配 **4/160=2.5%**、
 skills 门禁 PASS。HMI `node --test` **225/225**、Dashboard vitest **17/17** 为 2026-08-09
 实测，Go 网关数字沿用 2026-08-04 批次；2026-08-10 全天没有改前端、Go 或 CI
-（`.env.example`/compose 只加了 `PLANNER_TOOLCALL_SALVAGE_RETRY` 一项，见 §4.1）。
+（`.env.example`/compose 只加了 `PLANNER_TOOLCALL_SALVAGE_RETRY` 一项，
+契约见 [`docs/conventions.md`](docs/conventions.md) env 表与 §8.1）。
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
-| L0 discovery | **76/76**，561 条 / 522 唯一输入 |
+| L0 discovery | **76/76**，569 条 / 530 唯一输入（2026-08-10 夜补除雾覆盖 +8 条；bounds [450,540]） |
 | gate 规模 | **139 stable / 129 唯一输入**，L0 strict **25/25，exit 0** |
 | 对比模型正式 baseline | [`baseline_intent_adversarial.json`](docs/reviews/eval/baseline_intent_adversarial.json)；干净 `f0af9c0`，锁定 `deepseek:deepseek-v4-flash`，由当前 L3 原始字节/摘要/时间/精确路径契约重新取证并写入。**未随 `32e8718` 重取**——它仍是 DeepSeek 在 `f0af9c0` 的证据 |
 | DeepSeek 完整 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；exact **121/121**，raw 幻觉/校验后逃逸/不稳定均 **0/121**；L1/L2 各 **2 个独立进程 × 每进程 3 样本**（`f0af9c0`） |
@@ -87,7 +88,7 @@ skills 门禁 PASS。HMI `node --test` **225/225**、Dashboard vitest **17/17** 
 | 三条候选取证（2026-08-10，`f71fd3c`） | `cp.hvac-news.swapped` **2/6**、`nq.hvac.reported` **2/6**（`critical_fail` ×2，真缺陷）、`nq.match.lastweek` **5/6**；`cp.adaptive.weather-outing` L1 三趟 **9/11**。全部 `minimax:MiniMax-M3`、检索零降级、`worktree_clean=true` |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | `orchestrator/` **1101 passed**、`pytest test/` **1137 passed / 9 skipped**；端侧 smoke **13/13**；Skill / Exemplar（**254 条 / 20 域**）/ L0 门禁均通过 |
+| 代码回归 | `orchestrator/` **1184 passed**、`pytest test/` **1139 passed / 9 skipped**；端侧 smoke **13/13**；Skill / Exemplar（**254 条 / 20 域**——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67** |
 
 ⚠ **MiniMax 三批 141/141/140 都不是同一批红灯**：`f0af9c0` 点名的 6 条 unstable 在
 `32e8718` 全部转绿，红灯换成另一批边界单元（其中 5 条单跑 10 样本全绿）；`5e8247d`
@@ -107,17 +108,11 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 ### 4.1 活跃待办（只列仍需行动的）
 
-**当前没有活跃待办。** 2026-08-10 夜新立的「salvage 重试 live 双臂 A/B」当晚跑完并收口
-（协议层 **51.3% → 85.5%，+34.2pp，p=2.3e-08**；语义层不作结论但 **0 条新坏**；
-墙钟代价 +38.5%。读数与三条结论在
-[findings §26.5](docs/design/2026-08-02-intent-routing-adversarial-findings.md)）。
-条件型 / 明确后置的入口全在 §4.2；接手时先读 §4.0 快照与 §4.3 读数纪律。
+**当前没有活跃待办。** 条件型 / 明确后置的入口全在 §4.2；接手时先读 §4.0 快照与 §4.3 读数纪律。
 
-> 2026-08-10 全天五批（上午 P1/P0 收敛 → 下午三条候选取证 + weather-outing L3 claim + 提醒词形
-> → 下午生产侧范例修复 → 晚间两条新 P2 → 收官通道定性与换档对照）的**完整记录在**
-> [`docs/agents-history.md`](docs/agents-history.md) **§15–§22**，逐条证据在
-> `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§17–§24**。
-> 本节按约定**只留状态、不留流水**——沉淀下来的判据在 §4.3，沉淀下来的数字在 §4.0。
+> 2026-08-10 全天七批的**完整记录在** [`docs/agents-history.md`](docs/agents-history.md)
+> **§15–§23**，逐条证据在 `docs/design/2026-08-02-intent-routing-adversarial-findings.md`
+> **§17–§26**。本节按约定**只留状态、不留流水**——沉淀下来的判据在 §4.3，数字在 §4.0。
 
 ### 4.2 延后 / 条件待办索引（不进入当前主线）
 
@@ -125,16 +120,14 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 | 主题 | 当前状态 / 启动条件 | 权威入口 |
 |---|---|---|
-| 端侧能力面与 P3b 前置（含 **P3b operate 抽取与放量**） | ✅ 两个具体缺口已于 2026-08-10 修完（除雾/除霜建成独立能力 `front_defogger`/`rear_defogger`，端云两头都补；「穿衣指数」不再判股指，端侧新增 `life_index`→`info.indices`）；对象桥接台账同步收进两族，82 条除雾语料的影子四态从 `rule_miss` 转 `agree`。**剩下的仍是放量条件**：operate 抽取和真实错对象率 <0.3% 齐备后才放量。⚠ 压这个数的手段是 **R4.1b P1 执行侧对象化**（让 object 数从 65 长上去），**不是调阈值**；且当前 PoC 没有真实流量，这个数只有观测面、还没有分母 | [M5 P3 收尾](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) §P3 收尾 |
+| **P3b operate 抽取与放量** | 原表里并列的两个具体缺口（除雾能力缺席、「穿衣指数→股指」）已于 2026-08-10 修完，详见 history §23.1/§23.2，本行只留放量条件。**放量门槛不变**：operate 抽取 + 真实错对象率 <0.3%。⚠ 压这个数的手段是 **R4.1b P1 执行侧对象化**（让 VAL object 数从当前 67 继续长），**不是调阈值**；且当前 PoC 没有真实流量，这个数只有观测面、还没有分母 | [M5 P3 收尾](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) §P3 收尾 |
 | live 路由回归进 CI | hint 退役后的召回保护目前是 live 人工车道，不是 CI 阻断；有稳定凭证、预算与 provider 方差处置后再接 CI | [旅程体系](docs/design/2026-07-14-journey-e2e-test-system.md) §4.3、[评测说明](docs/reviews/eval/README.md) §规则退役 |
 | `route_hints` 继续退役 | 当前实数 **11**；`mcp-bridge#0` 必须先过专项安全回归。旧三条单档候选不得按历史索引直接执行；当前只用 MiniMax 主模型 / DeepSeek 对比，MiMo key 失效不阻塞主线，切换 provider 时重新全覆盖取交集 | [M5 P2](docs/design/2026-07-28-intent-accuracy-data-flywheel.md)、[评测说明](docs/reviews/eval/README.md) §规则退役 |
 | M5 后续杠杆 | catalog 检索化当前是“有意不做”；16k 预算再次裁剪或保护集显著变瘦时重评。gold→范例现走 CLI；P4 仅在范例 ≥2k 且 N1 平台期 ≥2 周时启动 | [M5 P2/P4](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) |
 | M-B / M-C / M-D 明确后置项 | 13 张验收主卡已清零；跨域删除 saga、完整隐私管理/迁移仪式、持久治理扩面与 MCP 生产化覆盖按 GDPR 完备性、量产迁移或新消费方触发 | [总体验收](docs/reviews/2026-07-26-acceptance-review-m0a-m4.md) §10.2/§11.2/§12.2、[OwnerKey 契约](docs/conventions.md) §9.13 |
 | M2 / M3 产品化边界 | Ledger 自动续跑/任务中心，以及主动治理持久化、偏好学习、dashboard、远距 geocode 与真实商户均为显式未做；出现真实消费方或产品阶段后另立卡 | [M2 RFC](docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md) §9.6、[M3 RFC](docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md) §10.7 |
 | M4 声纹 / 视觉余项 | 真麦校准、语音注册入口、模板漂移治理、视觉多轮与 `vp_*` 指标消费仍未收口；进入真机量产验收或 v2 前启动 | [M4 RFC](docs/design/2026-07-25-m4-p4-voiceprint-vision-rfc.md) §11.5/§11.8、[声纹契约](docs/conventions.md) §9.11 |
-| ~~MiniMax 主模型 `eligible=True`~~ **已决：不追求**（泓舟 2026-08-10） | **裁定＝接受主模型不出正式 baseline**，本条不再是待办。判据：DeepSeek 已在 `f0af9c0` 提供固定快照下的证据，baseline 的用途已满足；而**资格闸拒绝带病读数正是它的设计目的——它在正确工作，不该为了拿绿灯去松它**。三批读数 141/141/140 的红灯每次从同一个边界池重抽，实测单元不稳定率 3~5% ⇒ 一趟零 unstable 概率个位数百分比，继续跑批期望值极低。⚠ 因此**不要**再为「让 MiniMax 出 baseline」发起跑批，也不要以此为由动 gate 案例集或资格判据（§4.3 两条纪律） | [findings §17.6/§19.2](docs/design/2026-08-02-intent-routing-adversarial-findings.md)、[最终 review §7](docs/reviews/2026-08-04-review-intent-adversarial-finalization.md) |
-| 裸对象澄清族（留在门禁内，已立卡） | **三条路径已全部走完，该族目前无可用修法。** `nq.landmark.bare` 合并 11/20≈55% 的高方差边界句；`nq.landmark.explicit` 自己每条断言都过、被 relation `clarify_flip` 连累；同族第三条 `nq.city.bare`「上海」reviewed 未进池。路径 1「写 guide」实测**有害**（§18：4/10→1/10→退回 7/10，p≈0.02）；路径 3「换出预选池」执行并全量验证后由泓舟裁定回退（§19.5）；**路径 2「范例 schema 加 clarify 型」2026-08-10 已实现并合入**（schema+渲染+门禁+契约+11 条测试），但同批实测出它**治不了本族**：裸专名之间 IDF-Dice 全 0.000（检索是内容通道，而裸对象澄清是**形态判据**——这也解释了路径 1 为何有害），且澄清型范例天然与其「补全版」近重复（两条候选一条抢到明确请求 top-1、一条只靠 0.03 差距，全部撤回，**故仓库刻意没有 clarify.yaml**）。**下一次要动它得换判定形态（形态/句法特征），不是再加一层检索式知识** | 立卡整段写在语料 `test/eval_corpus/intent_adversarial/cases/negation_quotation.yaml` 的 `nq.landmark.bare` 头上；[findings §18/§19/**§25**](docs/design/2026-08-02-intent-routing-adversarial-findings.md)；机制契约 [`skills/exemplars/README.md`](skills/exemplars/README.md) §clarify 型 |
-| Planner 工具通道可靠性（`toolcall_salvage` 占比） | **已换档取证，是 provider 属性不是系统属性**：同一条用例 MiniMax 走成 toolcall **13/27（48%）** vs DeepSeek **15/15（100%）**（p≈0.00046）；跨域 20 条 stable 抽样 MiniMax **9/20（45%）** vs DeepSeek **20/20（100%）**（p≈0.00015），DeepSeek 两组 35 样本**零掉档**。⚠ **但差异显著不等于它贵**——那 20 条上两档通过率都是 20/20，代价只在**需要模型自己填结构化字段**的多阶段计划上兑现（MiniMax 内部 `toolcall` 91% vs `salvage` 50%）。**已决（泓舟 2026-08-10）：维持 MiniMax-M3 主模型 + salvage 轮强制重试工具通道 + 保留分账观测**。不换主模型的判据＝换档会牵动全部既有 baseline 与读数，且「通过率跨 provider 不可直比」意味着 DeepSeek 的 147/147 不构成「它更准」的证据（§24.3）；重试是局部改动、不动任何 baseline、可 A/B 验证。实现见 §4.1 | [findings §23/§24](docs/design/2026-08-02-intent-routing-adversarial-findings.md) |
+| 裸对象澄清族（**已知无解状态，不是待办**） | **三条路径已全部走完，该族目前无可用修法。** `nq.landmark.bare` 合并 11/20≈55% 的高方差边界句；`nq.landmark.explicit` 自己每条断言都过、被 relation `clarify_flip` 连累；同族第三条 `nq.city.bare`「上海」reviewed 未进池。路径 1「写 guide」实测**有害**（§18：4/10→1/10→退回 7/10，p≈0.02）；路径 3「换出预选池」执行并全量验证后由泓舟裁定回退（§19.5）；**路径 2「范例 schema 加 clarify 型」2026-08-10 已实现并合入**（schema+渲染+门禁+契约+11 条测试），但同批实测出它**治不了本族**：裸专名之间 IDF-Dice 全 0.000（检索是内容通道，而裸对象澄清是**形态判据**——这也解释了路径 1 为何有害），且澄清型范例天然与其「补全版」近重复（两条候选一条抢到明确请求 top-1、一条只靠 0.03 差距，全部撤回，**故仓库刻意没有 clarify.yaml**）。**下一次要动它得换判定形态（形态/句法特征），不是再加一层检索式知识** | 立卡整段写在语料 `test/eval_corpus/intent_adversarial/cases/negation_quotation.yaml` 的 `nq.landmark.bare` 头上；[findings §18/§19/**§25**](docs/design/2026-08-02-intent-routing-adversarial-findings.md)；机制契约 [`skills/exemplars/README.md`](skills/exemplars/README.md) §clarify 型 |
 | B3-2「广州塔」地标解析（高德侧） | **不进落域账**。2026-08-10 同坐标直连复测：geocode 对（兴趣点／广州塔真坐标）、`near=None` 重搜 top1 就是广州塔，只有带深圳偏置的关键词搜索会顶出「广州仄仄科技有限公司」2.4km。即 R1 去偏置重搜机制本身是对的，但它**要多打一次高德**，跑批并发下正是最易被限流的那一次；掉一次退回就近弱匹配，掉两次成「暂时无法确定」——两次红的两种形态由此解释。归高德 QPS 一族，出现真实用户投诉或做并发治理时再启动 | [复杂意图·地标/停车](docs/design/2026-07-07-complex-intent-landmark-parking-fixes.md)、判据与复测记在 `test/journeys/target_b.yaml` B3-2 注释 |
 
 ### 4.3 读数纪律
@@ -151,6 +144,13 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
   primary 晚起，跑批中途改文件会让它单独 fail-closed（本轮踩了两次）。评测产物写
   `docs/reviews/eval/_ci-run-*` 是安全的——那个前缀已 gitignore。
 - 两次 141/147 不代表同一批红灯；读 MiniMax 报告先看**是哪几条**，再看总分。
+- **不要再为「让 MiniMax 主模型出正式 baseline」发起跑批**（泓舟 2026-08-10 已裁定不追求）。
+  DeepSeek 在 `f0af9c0` 的证据已满足 baseline 的用途；**资格闸拒绝带病读数正是它的设计
+  目的——它在正确工作，不该为了拿绿灯去松它**。实测单元不稳定率 3~5% ⇒ 一趟零 unstable
+  概率个位数百分比，继续跑批期望值极低；更不要以此为由动 gate 案例集或资格判据。
+- **主模型是 `minimax:MiniMax-M3`，这是拍过板的**（泓舟 2026-08-10）：换档会牵动全部
+  既有 baseline 与读数，且「通过率跨 provider 不可直比」意味着 DeepSeek 的 147/147
+  **不构成「它更准」的证据**。DeepSeek 只作对比/参考轨。
 - **加了知识就要拿对照跑证伪，不能只看它有没有被注入。** 2026-08-10 实测：一条 guide
   四次全部成功注入（`@lex:11` 未被裁），通过率却 4/10 → 1/10，退回后回到 7/10。
   「知识在场」和「知识有用」是两回事（findings §18.2）。
