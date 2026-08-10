@@ -1135,3 +1135,44 @@ review §7、findings §16 与设计 §25。收尾根命令为 **4490 passed / 1
 `f0b08f8` 快进至 `d380353` 并推送；本地 `main`、`origin/main` 与功能分支 SHA 一致，无额外
 merge commit。合并后的主工作树复验：受影响选集 **591 passed / 3 skipped**、动态架构守卫
 **89 passed**、端侧 smoke **13/13**、HMI **225/225**、Dashboard **17/17**。
+
+## 15. P1 三项收口 + P0 逐条取证与收敛（2026-08-10）
+
+**P1 全部收口，三项各是不同性质的缺陷：**
+
+- **`pytest test/` 裸 `server` 导入冲突**（`ecac124`，只动尺子）：`server` 是 7 个服务共用的
+  顶层名。目录级收集时 `test_intent_adversarial_runtime.py` 把 `orchestrator/edge` 插到
+  `sys.path[0]`，随后 `test_llm_cache.py` 又把 `llm-gateway` 插到 0 顶掉它；等用例真正运行、
+  执行那句**惰性** import 时 `server` 已解析成 llm-gateway 的那份 —— 15 条 L0/L2 ImportError。
+  判据：**一个被多方声明的名字不能靠加载顺序消歧**，改按绝对路径认模块。**15 红 → 0**，
+  `pytest test/` **1127 passed / 9 skipped**。
+- **hint 退役后的陈旧离线评测资产**（`89583c8`，只动尺子）：`reminder.create` 的 replace hint
+  2026-08-02 已退役，本层「施加 hint 后应得 reminder.create」的正例断言随之失效。8 条迁出；
+  两条**跨 hint 护栏**（news 不劫持、scene.create 不抢）**改期望值不删用例**——它们证的那一半
+  仍活着。76/86 → **78/78**，`--strict` exit 0。顺带补上 `print_ci_annotations` 的删除留痕
+  （`removed_cases` 一直算着却从来不打，于是「删掉红用例」和「修绿它」在 CI 输出里长得一样），
+  补上后当场发现基线陈旧的其实是 **45 条**不是 9 条——M5 P2 那批退役后就没刷过。
+- **宽 journeys 两条外部依赖残留**（`f3ea82e`，只动尺子）：B3-1 的 `cards_any` 挂在 `any_of`
+  外面，无条件要行程卡，可「哪天要下雨的话」是条件句，**不下雨时不改行程才对、而正确答案没有卡**。
+  判据：**断言的可判性不能依赖跑批当天的外部世界**。卡挪进下雨分支，新增
+  `test/test_journey_golds.py` 离线钉死三种真实世界状态。B3-2 归高德侧另账：同坐标直连复测
+  证明 R1 去偏置重搜机制本身是对的，只是**要多打一次高德**，并发下最易被限流。
+
+**P0：先取证，6 条里只有 2 条是缺陷**（findings §17）。单跑 10 样本后：3 条单跑即全绿
+（边界句）、`cp.dep.menu-then-order` 9/10、`ki.navigation-with-stop.hit` 6/10。两条真缺陷
+（`32e8718`，只动生产）：触发词被原样抄进槽位仍被当真值、无标点顺路句接不住复核面。
+声明式修法先试过并**回退**——给 guide 补 254 字符把它自己挤出 `SKILL_BUDGET`，
+L0 discovery 当场 76/76→75/76（`!clipped`），改走零预算的复核面。
+
+修后完整 gate：**141/147**，exact 115→116、required 97→99、raw 幻觉 **8→3**、
+不稳定 **6→4**、未声明 fallback **4→2**；点名的 6 条全部转绿。但总分没动——红灯换了一批人，
+其中 5 条单跑 10 样本全绿。`os.open.sunroof` 是真的（范例库唯一提到天窗的是否定式
+`chitchat#7`，成了肯定族的吸引子；补 `sunroof.yaml` 三条对照后 10/10，`62cacee`）。
+
+**唯一剩下的硬缺陷是 `nq.landmark` 一对**（4/10 与 0/10，后者被 relation 连累），
+而它**在范例层没有载体**——范例 `plan` 必须非空，正确产物却是「先别落域，先问一句」。
+按实测单元不稳定率 3.3%，一趟完整 gate 零 unstable 概率约 **1.7%**：
+**`eligible=True` 不是「把点名的几条修好」能达成的**，需泓舟裁方向（findings §17.6/§17.8）。
+
+两个自己踩的坑：live 跑批期间改工作树，让晚起的 corroboration 进程单独
+`worktree_clean` fail-closed（连踩两次）；给 guide 加知识挤预算（2026-08-04 记过，第二次踩）。

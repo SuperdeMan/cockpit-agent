@@ -57,30 +57,36 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 
 ## 4. ⚠️ 当前真实状态（别假设没验证的东西能跑）
 
-### 4.0 当前快照（2026-08-09）
+### 4.0 当前快照（2026-08-10）
 
 意图落域对抗测试按这个顺序接手：运行手册
 [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) → 最终验收
 [`docs/reviews/2026-08-04-review-intent-adversarial-finalization.md`](docs/reviews/2026-08-04-review-intent-adversarial-finalization.md)
-→ 逐批证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` §16。
+→ 逐批证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` §16→**§17**。
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**4490 passed / 16 skipped / 0 failed**（收集 4506 项，单进程 18m14s）。
-HMI `node --test` **225/225**、Dashboard vitest **17/17**、端侧 smoke **13/13**、
-Go 网关 vet+test 通过；HMI / Dashboard 数字为 2026-08-09 实测，Go 数字沿用 2026-08-04
-批次；本轮没有改前端、Go、`.env` 或 CI。
+**4490 passed / 16 skipped / 0 failed**（收集 4506 项，单进程 18m14s，2026-08-09 实测）。
+2026-08-10 分组实测：`pytest test/` **1127 passed / 9 skipped**（裸 `server` 导入冲突已修，
+该目录选集**不再有红**，但它仍不是项目基线命令——分母不同）、`orchestrator/` **1093 passed**、
+端侧 smoke **13/13**。HMI `node --test` **225/225**、Dashboard vitest **17/17** 为 2026-08-09
+实测，Go 网关数字沿用 2026-08-04 批次；本轮没有改前端、Go、`.env` 或 CI。
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
 | L0 discovery | **76/76**，561 条 / 522 唯一输入 |
 | gate 规模 | **139 stable / 129 唯一输入**，L0 strict **25/25，exit 0** |
-| 对比模型正式 baseline | [`baseline_intent_adversarial.json`](docs/reviews/eval/baseline_intent_adversarial.json)；干净 `f0af9c0`，锁定 `deepseek:deepseek-v4-flash`，由当前 L3 原始字节/摘要/时间/精确路径契约重新取证并写入 |
-| DeepSeek 完整 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；exact **121/121**，raw 幻觉/校验后逃逸/不稳定均 **0/121**；L1/L2 各 **2 个独立进程 × 每进程 3 样本** |
-| MiniMax 主模型 gate | **141/147**；exact **115/121**，raw 幻觉 **8/121**、逃逸 **0/121**，6 条均为 `unstable`、无 `stable_fail`，资格 `eligible=False` |
+| 对比模型正式 baseline | [`baseline_intent_adversarial.json`](docs/reviews/eval/baseline_intent_adversarial.json)；干净 `f0af9c0`，锁定 `deepseek:deepseek-v4-flash`，由当前 L3 原始字节/摘要/时间/精确路径契约重新取证并写入。**未随 `32e8718` 重取**——它仍是 DeepSeek 在 `f0af9c0` 的证据 |
+| DeepSeek 完整 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；exact **121/121**，raw 幻觉/校验后逃逸/不稳定均 **0/121**；L1/L2 各 **2 个独立进程 × 每进程 3 样本**（`f0af9c0`） |
+| MiniMax 主模型 gate（`32e8718`，2026-08-10） | **141/147**；exact **116/121**、required **99/103**；raw 幻觉 **3/121**（原 8）、逃逸 **0/121**；不稳定 **4/121**（原 6）；`pass 141 / unstable 4 / stable_fail 2`，资格仍 `eligible=False` |
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim |
-| fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **4** |
-| 代码回归 | 最终针对性选集 **254 passed / 3 skipped**；动态架构守卫 **89 passed**；端侧 smoke **13/13**；Skill / Exemplar / L0 门禁均通过 |
+| fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
+| 代码回归 | `orchestrator/` **1093 passed**、`pytest test/` **1127 passed / 9 skipped**；端侧 smoke **13/13**；Skill / Exemplar（253 条 / 20 域）/ L0 门禁均通过 |
+
+⚠ **MiniMax 那 141/147 前后两次不是同一批红灯**：`f0af9c0` 点名的 6 条 unstable 在
+`32e8718` 全部转绿，红灯换成了另一批边界单元，其中 5 条单跑 10 样本全绿。按实测单元
+不稳定率 3.3% 算，一趟完整 gate 恰好零 unstable 的概率约 **1.7%**——
+**`eligible=True` 不是「把点名的几条修好」能达成的，是要压整体底噪**（findings §17.6）。
 
 首份正式 baseline 已存在，但它是 **DeepSeek 对比/参考模型**在固定 provider、资产与代码快照下的
 意图理解与落域证据；不证明 MiniMax 主模型、Agent 业务结果、外部 Provider 内容或跨模型平均质量。
@@ -92,13 +98,17 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 | 优先级 | 待办 | 完成判据 |
 |---|---|---|
-| **P0** | 收敛 MiniMax 主模型完整 gate 的 6 个 `unstable` 单元 | 不用 route hint 追单批全绿；在新的独立进程证据中同时消除不稳定、raw 幻觉与未声明 fallback，主模型报告才可 `eligible=True` |
-| **P1** | 修正 `pytest test/` 的裸 `server` 导入冲突 | 目录选集不再因 `sys.path` 顺序把 `EdgeOrchestratorServicer` 解析到 llm-gateway；项目正式基线仍以根命令为准 |
-| **P1** | 清理 hint 退役后的陈旧离线评测资产 | 2026-08-09 新跑 `eval_route_hints.py` 为 76/86、9 个唯一 baseline regression；只迁出已退役的 reminder recall 断言并刷新该层 baseline，等价用例继续留在 `mode_routing_cases.yaml` 走端到端保护，`--strict` 最终 exit 0 |
-| **P1** | 清理宽口径 journeys 两条外部依赖残留 | B3-1 的 gold 不再依赖跑批当天真实天气；B3-2 的广州塔地标解析在高德侧另账处理 |
+| **P0（需泓舟裁一次方向）** | 裸地名澄清族：`nq.landmark.bare` 4/10、`nq.landmark.explicit` 0/10 | 这是当前唯一稳定复现的落域缺陷（10 样本取证）。**范例层表达不了它**——范例的 `plan` 必须非空，而正确产物是「先别落域，先问一句」。三条路径与代价见 findings §17.8：写 guide（预算已压线）/ 给 schema 加 clarify 型范例（面比看上去大）/ 判为模型能力边界并等量换出预选池 + 逐条立卡 |
+| **P0（方向问题，不是跑批问题）** | MiniMax 主模型 `eligible=True` | `32e8718` 已把 raw 幻觉 8→3、不稳定 6→4、未声明 fallback 4→2，但总分仍 141/147。实测单元不稳定率 3.3% ⇒ 一趟零 unstable 概率约 1.7%。**继续跑批期望值极低**，需要先决定是压底噪、换判据口径，还是接受主模型不出正式 baseline（findings §17.6） |
 | **P2** | 补 weather-outing 的真实 L3 claim | 不复用语义不对应的旧 journey；新增真正验证 weather→nearby 连续性的授权旅程后再晋级 |
 | **P2** | 三条未晋级候选重新取证 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 按当前跨进程契约取证 |
+| **P2** | snooze / 「离开X」/「到X之前」三个提醒词形补端到端用例 | route_hints 层的正例断言已随 create hint 退役迁出（2026-08-10），`mode_routing_cases.yaml` 只取了绝对时点/地理触发/周期三类代表形态，这三个词形端到端侧尚无等价用例——明账，不是已覆盖 |
 | **P2** | M5 P3b：端侧 NLU operate 抽取与放量 | 真实流量错对象率 <0.3% 后再开工；其余延后/条件项看 §4.2，量产级总纲看 `docs/architecture/phase1-implementation-plan.md` |
+
+> 2026-08-10 已收口：`pytest test/` 裸 `server` 导入冲突（按路径认模块，15 红 → 0）、
+> hint 退役后的陈旧离线评测资产（`eval_route_hints` 76/86 → **78/78**，`--strict` exit 0，
+> 顺带补上「删除留痕」后发现基线陈旧的其实是 **45 条**不是 9 条）、宽 journeys 两条外部
+> 依赖残留（B3-1 gold 改条件式 + 离线三态守卫；B3-2 归高德侧，见 §4.2）。
 
 ### 4.2 延后 / 条件待办索引（不进入当前主线）
 
@@ -113,6 +123,7 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 | M-B / M-C / M-D 明确后置项 | 13 张验收主卡已清零；跨域删除 saga、完整隐私管理/迁移仪式、持久治理扩面与 MCP 生产化覆盖按 GDPR 完备性、量产迁移或新消费方触发 | [总体验收](docs/reviews/2026-07-26-acceptance-review-m0a-m4.md) §10.2/§11.2/§12.2、[OwnerKey 契约](docs/conventions.md) §9.13 |
 | M2 / M3 产品化边界 | Ledger 自动续跑/任务中心，以及主动治理持久化、偏好学习、dashboard、远距 geocode 与真实商户均为显式未做；出现真实消费方或产品阶段后另立卡 | [M2 RFC](docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md) §9.6、[M3 RFC](docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md) §10.7 |
 | M4 声纹 / 视觉余项 | 真麦校准、语音注册入口、模板漂移治理、视觉多轮与 `vp_*` 指标消费仍未收口；进入真机量产验收或 v2 前启动 | [M4 RFC](docs/design/2026-07-25-m4-p4-voiceprint-vision-rfc.md) §11.5/§11.8、[声纹契约](docs/conventions.md) §9.11 |
+| B3-2「广州塔」地标解析（高德侧） | **不进落域账**。2026-08-10 同坐标直连复测：geocode 对（兴趣点／广州塔真坐标）、`near=None` 重搜 top1 就是广州塔，只有带深圳偏置的关键词搜索会顶出「广州仄仄科技有限公司」2.4km。即 R1 去偏置重搜机制本身是对的，但它**要多打一次高德**，跑批并发下正是最易被限流的那一次；掉一次退回就近弱匹配，掉两次成「暂时无法确定」——两次红的两种形态由此解释。归高德 QPS 一族，出现真实用户投诉或做并发治理时再启动 | [复杂意图·地标/停车](docs/design/2026-07-07-complex-intent-landmark-parking-fixes.md)、判据与复测记在 `test/journeys/target_b.yaml` B3-2 注释 |
 
 ### 4.3 读数纪律
 
@@ -123,6 +134,11 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 - `fallback_plan_rate` 非零不自动失败；只有语料显式声明的 A8 能力缺席族可接受，未声明 fallback 一条即挡 baseline。
 - Live 跑批前按运行手册 §2 同时设置 provider、model 与 embedding 三项；少一项整批证据作废。
 - `pytest test/` 不是项目基线命令；换选集会改变 import 顺序与分母，不能拿来替代根跑。
+  （2026-08-10 起它**不再有红**，但「不是基线」的理由是分母不同，与红不红无关。）
+- **live 跑批期间不许动工作树**：资格闸逐进程校 `worktree_clean`，corroboration 进程比
+  primary 晚起，跑批中途改文件会让它单独 fail-closed（本轮踩了两次）。评测产物写
+  `docs/reviews/eval/_ci-run-*` 是安全的——那个前缀已 gitignore。
+- 两次 141/147 不代表同一批红灯；读 MiniMax 报告先看**是哪几条**，再看总分。
 
 ---
 

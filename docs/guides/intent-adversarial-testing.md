@@ -13,7 +13,9 @@
 
 ## 0. 先读这一节：现在能引用什么
 
-> 当前状态以 2026-08-09 最终收口补记为准：
+> 当前状态以 2026-08-10 批为准：findings
+> [`§17`](../design/2026-08-02-intent-routing-adversarial-findings.md)；正式 baseline 与
+> 身份契约仍看 2026-08-09 收口补记
 > [`docs/reviews/2026-08-04-review-intent-adversarial-finalization.md`](../reviews/2026-08-04-review-intent-adversarial-finalization.md)。
 > 批次演进、旧口径与修复细节只查 findings §13–§16、2026-08-03 独立评审和
 > `docs/agents-history.md`，不要把中间读数抄成当前结论。
@@ -22,12 +24,16 @@
 |---|---|
 | L0 discovery | **76/76**；561 条 / 522 唯一输入 |
 | gate 规模 | **139 stable / 129 唯一输入**；L0 strict **25/25，exit 0** |
-| DeepSeek 对比/参考 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；L1/L2 各 **2 个独立进程 × 每进程 3 样本**；正式 baseline `eligible=True` |
-| MiniMax 主模型 gate | **141/147**；exact **115/121**，raw 幻觉 **8/121**、校验后逃逸 **0/121**，6 条 `unstable`、无 `stable_fail`；`eligible=False` |
-| 检索与运行身份 | 两批均锁定各自 provider、`text-embedding-v4` 身份完整、检索零降级、trace/infra/provider drift 0；干净 SHA `f0af9c0` |
+| DeepSeek 对比/参考 gate | **147/147**（`f0af9c0`）：L0 25、L1 117、L2 4、L3 1；L1/L2 各 **2 个独立进程 × 每进程 3 样本**；正式 baseline `eligible=True` |
+| MiniMax 主模型 gate | **141/147**（`32e8718`）；exact **116/121**、required **99/103**；raw 幻觉 **3/121**、校验后逃逸 **0/121**；不稳定 **4/121**；`pass 141 / unstable 4 / stable_fail 2`；`eligible=False` |
+| 检索与运行身份 | 两批均锁定各自 provider、`text-embedding-v4` 身份完整、检索零降级、trace/infra/provider drift 0 |
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline invocation 新鲜、exit 0，只证明该授权 case/claim |
-| fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 0；MiniMax **11/122**，其中未声明 4 |
-| 回归 | 最终针对性选集 **254 passed / 3 skipped**；架构守卫 **89 passed**；端侧 smoke **13/13**；项目根全量 **4490 passed / 16 skipped / 0 failed** |
+| fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 0；MiniMax **11/122**，其中未声明 **2** |
+| 回归 | `orchestrator/` **1093 passed**、`pytest test/` **1127 passed / 9 skipped**；端侧 smoke **13/13**；项目根全量 **4490 passed / 16 skipped / 0 failed**（2026-08-09 实测） |
+
+⚠ **MiniMax 两次 141/147 不是同一批红灯。** `f0af9c0` 点名的 6 条 unstable 在 `32e8718`
+全部转绿，红灯换成另一批边界单元，其中 5 条单跑 10 样本全绿。按实测单元不稳定率 3.3%，
+一趟完整 gate 恰好零 unstable 的概率约 **1.7%**——读主模型报告先看**是哪几条**再看总分。
 
 首份正式**对比/参考模型** baseline 已写入
 [`docs/reviews/eval/baseline_intent_adversarial.{json,md}`](../reviews/eval/baseline_intent_adversarial.md)，
@@ -356,11 +362,15 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 
 | 优先级 | 待办 | 完成判据 |
 |---|---|---|
+| P0 | 裸地名澄清族 | `nq.landmark.bare` 4/10、`nq.landmark.explicit` 0/10（后者是被 relation 连累，自己每次都对）。**范例层表达不了它**——范例 `plan` 必须非空，而正确产物是「先别落域，先问一句」。三条路径与代价见 findings §17.8，需泓舟裁 |
+| P0 | 主模型 `eligible=True` 的方向 | 不是跑批问题：单元不稳定率 3.3% ⇒ 一趟零 unstable 概率约 1.7%。先决定压底噪 / 改口径 / 接受主模型不出正式 baseline（findings §17.6） |
 | P2 | 三条未晋级候选 | `cp.hvac-news.swapped`、`nq.hvac.reported`、`nq.match.lastweek` 仍在预选池；按新跨进程契约重新取证 |
 | P2 | 补 weather-outing 的真实 L3 claim | 旧链接语义不对应已删除；要晋级需新增真正验证 weather→nearby 连续性的 journey |
-| P2 | 宽 journeys 两条外部依赖残留 | B3-1 的 gold 去除当天真实天气依赖；B3-2 广州塔地标解析在高德侧另账处理，不混入落域结论 |
 
-P0 收尾已完成；已完成项和中间数字只在 findings / review / agents-history 留档，不再回填本节。
+2026-08-10 收口：`f0af9c0` 点名的 6 条 unstable 全部转绿（两条真缺陷 §17.2/§17.3、
+三条单跑即全绿、一条随修复转绿）；`os.open.sunroof` 的范例吸引子已补对照（§17.7）；
+宽 journeys 两条外部依赖残留已收（B3-1 gold 改条件式，B3-2 归高德侧）。
+已完成项和中间数字只在 findings / review / agents-history 留档，不再回填本节。
 
 ## 11. 自查清单（提交前逐条过）
 

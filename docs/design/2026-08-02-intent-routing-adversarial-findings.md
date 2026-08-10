@@ -1884,3 +1884,147 @@ retrieval 1030/1030 降级、L3 无报告、primary exit 2 正当拒绝；没有
 `af7d3c907663b11ddeb846e4a0c67a1a674b0d9ea221f510fdae6b7ada0a2d0c` /
 `1525c9939afa3ad2b036d03af7ea1bc408e03c920bb16e566b1bf930a6261d11`；写入后立即重载资格仍为
 true、reasons 空，provider 恢复 MiniMax。当前裁定与局限只看最终 review §7。
+
+## 17. 2026-08-10：主模型 6 个 unstable 逐条取证与收敛
+
+### 17.1 先取证：6 条里只有 2 条是缺陷，另 3 条是采样
+
+按运行手册「第 1 步：看重复分类，不看单次结果」，先把 `f0af9c0` 报的 6 个 unstable
+拿出来单跑（`--repeat 5`，两进程共 10 样本）。结论与量分布**不一样**：
+
+| 单元 | 10 样本 | 定性 |
+|---|---|---|
+| `cs.that-one.waypoint@l1` | 5/5 | 边界句，本轮全过 |
+| `ex.colloquial.cold@l1` | 5/5 | 同上 |
+| `os.toilet.manual@l1` | 5/5 | 同上 |
+| `cp.dep.menu-then-order@l1` | 9/10 | **真缺陷**（接线，见 §17.2） |
+| `ki.navigation-with-stop.hit@l1` | 6/10 | **真缺陷**（漏步，见 §17.3） |
+| `cs.pending.order-hold@l2` | —— | 全量批中已随 §17.2 转绿 |
+
+> 判据复用 2026-08-04 那条：**`unstable` 是混装标签，量分布只配排优先级。**
+> 6 条里 3 条单跑即全绿，2 条是稳定形状的缺陷，剩 1 条随缺陷一起好。
+
+### 17.2 `cp.dep.menu-then-order`：触发词被抄进槽位，就不再是占位符
+
+失败那一次 intent 全对、`depends_on` 也接对了，却把 `item="招牌"` 填进 `slots`、
+`slot_refs` 留空。`apply_plan_repairs` 的 `real_value` 把它当成「用户已经给了真值」
+于是跳过归一，字面量「招牌」一路发到商户侧。
+
+可 `trigger_any` 列的正是「指向一件还不知道名字的东西」的说法——`招牌` 只有等
+`shop.menu` 回来才有具体值。
+
+> **判据：声明已经说了这个 token 意味着「值在别处」，就不能反过来拿它当值。**
+
+只认全等：`招牌牛肉面` 是用户点名的具体商品，仍不许被改写成 `items.0.name`——
+放宽成子串匹配就是替用户改单。归一时一并清掉占位符，免得执行期两个来源争同一个槽。
+
+### 17.3 `ki.navigation-with-stop.hit`：无标点的顺路句，复核面接不住
+
+失败的 4 次全是同一形状：只出 `charging.find`，**用户明说的「导航去公司」整个丢了**。
+`retrieval.required:navigation-with-stop` 这条断言是**过的**——guide 检回来了，
+知识也写着「导航去深圳湾，在附近找个充电桩 → 两个能力」，模型就是没照做。
+
+根因在复核面而不在知识面：`_MULTI_ACTION_CONNECTOR_RE` 的 `沿途` 那一支要求**前面有标点**，
+而「导航去公司路上找个充电站」一个标点都没有，于是这个单步计划从不被复核。补上
+`engine.py` 已在跑的同族判据（`路上|途中|沿途|顺路` + `找|搜`），只换来一次按 capability
+contract 的复核，不指定域、不强加步骤。
+
+⚠ 间隔里不许有空白句读。该函数量的是 `utterance + " " + goal`，用 `.{0,8}` 会让窗口
+**跨过那个空格**——「查找沿途的加油站」里 goal 副本开头的「查找」正好补上缺的动词，
+定语用法被误判成两个动作。**既有反例用例当场把它抓住了**（`test_build_does_not_recheck_
+attributive_yantu_single_action`）。
+
+### 17.4 先试过的声明式修法：它把自己挤出了预算
+
+按「默认产物是范例与知识」，先给 `navigation-with-stop` 补了一段「分几步只看停靠点
+归谁管，不看用户说『路上』还是『在附近』」。**+254 字符，L0 discovery 当场 76/76 → 75/76**，
+诊断行 `full:navigation-with-stop@lex:25!clipped`：policies 常驻 + 这份 guide 已经压线，
+补进去就超 `SKILL_BUDGET=2600`，而**被裁掉的正是分数更高的那一份**（charging-strategy
+只有 23 分却注进去了，因为它渲染后更短）。
+
+> **判据：加知识和加 policy 一样挤预算**（2026-08-04 已记过一次，这是第二次踩）。
+> 改知识资产后必跑 L0——它是唯一会当场说「你说注入了，其实被裁了」的地方。
+
+已回退该段，改走零预算的复核面（§17.3）。
+
+### 17.5 全量复测：修复有效，但资格仍未达成
+
+同一 `32e8718` 跑完整不可筛选 gate（`minimax:MiniMax-M3`，retrieval degraded 0、
+trace/infra 0）：
+
+| 指标 | `f0af9c0`（修前） | `32e8718`（修后） |
+|---|---:|---:|
+| 总证据单元 | 141/147 | **141/147** |
+| exact plan set | 115/121 | **116/121** |
+| required group recall | 97/103 | **99/103** |
+| raw capability hallucination | 8/121 | **3/121** |
+| post-validation escape | 0/121 | 0/121 |
+| instability | 6/121 | **4/121** |
+| fallback / 其中未声明 | 11/122 / **4** | 11/122 / **2** |
+| repeat status | unstable 6、无 stable_fail | pass 141、unstable 4、stable_fail 2 |
+
+**§17.1 那 6 个单元在修后全量里全部转绿**，raw 幻觉、未声明 fallback 各降一半。
+但总分没动，因为红灯换了一批人：`cs.pending.parking-hold@l2`、`ki.hint.no-hijack-weather@l1`、
+`ki.weather-outing.hit@l1`、`os.open.sunroof@l1`、`nq.landmark.{bare,explicit}@l1`。
+资格仍 `eligible=False`。
+
+### 17.6 换一批人这件事本身就是结论
+
+第二轮把新红的 6 条再单跑 10 样本（`62cacee`）：
+
+| 单元 | 10 样本 |
+|---|---|
+| `ki.hint.no-hijack-weather@l1` | **10/10** |
+| `ki.weather-outing.hit@l1` | **10/10** |
+| `os.open.sunroof@l1` | **10/10**（见 §17.7） |
+| `os.open.window@l1` | 10/10 |
+| `nq.landmark.bare@l1` | **4/10** |
+| `nq.landmark.explicit@l1` | **0/10** |
+
+除 `nq.landmark` 一对外，其余单跑全绿——**它们是从同一个边界池里换了一批抽出来的**。
+佐证：`nq.landmark.bare`（unstable）与 `nq.landmark.explicit`（stable_fail）**这一对在
+`63485da` 就是同样的形状**（见 §16.2 记的 8 个非 pass 单元），`f0af9c0` 那一跑是抽绿的。
+
+把观测到的单元不稳定率 3.3%（4/121）代进去：一趟完整 gate 恰好零 unstable 的概率约
+**(1−0.033)^121 ≈ 1.7%**。
+
+> **判据：`eligible=True` 在当前主模型上不是「把点名的几条修好」能达成的目标，
+> 而是要把整体不稳定底噪压下去；否则它是一张 ~2% 的彩票。**
+> 这不是继续跑批能解决的问题，需要泓舟裁一次方向（见 §17.8）。
+
+### 17.7 `os.open.sunroof`：范例库在教它答错
+
+修前失败那次检索到的**唯一**范例是 `full:chitchat#8@vec:0.72`，计划落成
+`chitchat.talk{text: 打开天窗}`。
+
+成因是「对面有强吸引子、自己整域空白」：全库唯一提到天窗的范例是否定式的
+`chitchat#7`「天窗暂时别开」（它本身没错，治的是「先别 X 被读成做 X 的反面」），
+但它的**表层形态**就是「车上某个部件 + 开关动词」，与肯定式车控指令一模一样；
+而肯定这一侧一条范例都没有——`skills/exemplars/` 下既无 sunroof 也无 window 域文件，
+车控是端侧能力、从来没有 manifest examples（hvac 2026-08-03、shop 2026-08-04 之后第三例）。
+
+> **判据：给否定族写范例时，要同时问肯定族有没有对照物。**
+> 否定范例长得就像肯定指令，只写一侧等于给对面装了个吸引子。
+
+补 `skills/exemplars/sunroof.yaml` 三条（open/close/set，说法避开对抗原句）后
+**10/10**，域错配率 2.5%，L0 全绿。
+
+### 17.8 唯一剩下的硬缺陷：裸地名澄清，且它没有声明式载体
+
+`nq.landmark.bare`「华润大厦」4/10：该澄清时落成 `chitchat.talk{text: 华润大厦}`。
+`nq.landmark.explicit`「导航到华润大厦」0/10 是**被连累的**——它的 relation 断言
+`clarify_flip` 要求 base 稳定 clarify，base 抖它就必红，自己那一步其实每次都对。
+
+诊断行：`skills=[三条常驻 policy]`、**`exemplars=[]`**。又是「这个族没有知识」，
+但这次补不进去——**范例的 `plan` 必须是非空 intent 列表**（`eval_exemplars.py` 硬校验），
+而「该澄清」的正确产物恰恰是**没有计划**。
+
+> **判据：澄清族在范例层没有载体。** 范例库表达的是「话术→落域」，
+> 表达不了「话术→先别落域，先问一句」。
+
+可选路径各有代价，**留给泓舟裁**：
+1. 写一条 guide 讲判据（只有地名没有动词 ⇒ 先问）——但 §17.4 刚证明这份预算已经压线，
+   同一跑里 `shop-order-flow@vec:0.41!clipped`、`charging-strategy@vec:0.41!clipped` 都在被裁；
+2. 给范例 schema 加「clarify 型范例」（改契约 + 门禁 + 检索消费面，面比看上去大）；
+3. 判定为主模型能力边界，把这一对移出 gate 预选池并**逐条立卡**
+   （规格 §22.7：换出预选池要等量换，用例必须留在 discovery 继续跑，账不许消失）。
