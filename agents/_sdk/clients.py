@@ -8,6 +8,7 @@ import os
 import grpc
 
 from runtime.grpcio import aio_channel
+from runtime import admission
 
 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
@@ -308,7 +309,10 @@ class RegistryClient:
         try:
             resp = await self._stub().Register(
                 registry_pb2.RegisterRequest(manifest=manifest, endpoint=endpoint),
-                timeout=DEFAULT_TIMEOUT)
+                timeout=DEFAULT_TIMEOUT,
+                # B3 §2.4：admission 关（默认）时 AGENT_REGISTRY_TOKEN 未配 → 空 metadata，
+                # 与今天逐字一致。
+                metadata=admission.client_metadata())
             return resp.lease_id
         except grpc.aio.AioRpcError as e:
             raise RuntimeError(f"Registry register error: {e.code().name}: {e.details()}") from e

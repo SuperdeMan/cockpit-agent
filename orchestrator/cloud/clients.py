@@ -10,6 +10,7 @@ from contextvars import ContextVar
 import grpc
 
 from runtime.grpcio import aio_channel
+from runtime import admission
 
 logger = logging.getLogger("planner.clients")
 
@@ -124,6 +125,7 @@ class Clients:
                 endpoint=endpoint,
             ),
             timeout=_DEFAULT_TIMEOUT,
+            metadata=admission.client_metadata(),   # B3 §2.4；未配 token 时为空
         )
 
     async def resolve(self, query: str = "", intent: str = "", top_k: int = 1):

@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/cockpit/car-agent/gateway/deployprofile"
 	"github.com/cockpit/car-agent/gateway/tlscfg"
 	commonpb "github.com/cockpit/car-agent/gen/go/cockpit/common/v1"
 	orchpb "github.com/cockpit/car-agent/gen/go/cockpit/orchestrator/v1"
@@ -445,6 +446,9 @@ func dnsTarget(addr string) string {
 // ─── 入口 ───
 
 func main() {
+	// B3 部署形态闸：dev（默认）零校验；prod 下任一 fail-open 配置即拒绝启动。
+	// 放在 main 第一行——校验必须先于任何监听/拨号，别让一个 fail-open 的进程先把端口占上。
+	deployprofile.Enforce(deployprofile.RoleEdgeGateway)
 	orchAddr := getenv("EDGE_ORCHESTRATOR_ADDR", "edge-orchestrator:50070")
 	port := getenv("EDGE_GATEWAY_PORT", "8090")
 	auth := loadAuthConfig() // 层 1 会话鉴权（R3.1）；默认关，逐字保持现状

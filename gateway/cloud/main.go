@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
+	"github.com/cockpit/car-agent/gateway/deployprofile"
 	"github.com/cockpit/car-agent/gateway/tlscfg"
 	channelpb "github.com/cockpit/car-agent/gen/go/cockpit/channel/v1"
 	commonpb "github.com/cockpit/car-agent/gen/go/cockpit/common/v1"
@@ -360,6 +361,9 @@ func getenv(k, def string) string {
 // ─── 入口 ───
 
 func main() {
+	// B3 部署形态闸：dev（默认）零校验；prod 下任一 fail-open 配置即拒绝启动。
+	// 放在 main 第一行——校验必须先于任何监听/拨号，别让一个 fail-open 的进程先把端口占上。
+	deployprofile.Enforce(deployprofile.RoleCloudGateway)
 	plannerAddr := getenv("CLOUD_PLANNER_ADDR", "cloud-planner:50054")
 	port := getenv("CLOUD_GATEWAY_PORT", "8080")
 

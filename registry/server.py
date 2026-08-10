@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import inspect
 
+import grpc
+
 from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
 
 from registry.store import Store, SEMANTIC_MIN_SIM, SEMANTIC_PROMOTE_SIM
+from runtime import admission
 
 
 class RegistryServicer(registry_pb2_grpc.RegistryServicer):
@@ -13,6 +16,18 @@ class RegistryServicer(registry_pb2_grpc.RegistryServicer):
         self.store = store or Store()
 
     async def Register(self, request, context):
+        # B3 §2.4 静态 admission：默认关（REGISTRY_ADMISSION_TOKENS 为空）时恒放行、
+        # 行为逐字如前。开启后 token 决定这个调用方能申报哪些 agent_id——关掉的是
+        # 「任何能连上 registry 的进程都能把 navigation 换成自己」这个洞。
+        ok, reason = admission.check(
+            context.invocation_metadata() if context is not None else None,
+            request.manifest.agent_id)
+        if not ok:
+            print(f"[registry] ✗ admission denied: {reason}", flush=True)
+            if context is not None:
+                await context.abort(grpc.StatusCode.PERMISSION_DENIED,
+                                    f"registry admission denied: {reason}")
+            return registry_pb2.RegisterResponse(ok=False)
         result = self.store.register(request.manifest, request.endpoint)
         lease = await result if inspect.isawaitable(result) else result
         print(f"[registry] + {request.manifest.agent_id} @ {request.endpoint} "

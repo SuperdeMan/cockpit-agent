@@ -36,6 +36,7 @@ from cockpit.agent.v1 import agent_pb2
 from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
 
 from runtime.grpcio import aio_channel
+from runtime import admission
 from edge_agents_mod.media import MEDIA_INTENTS
 from edge_agents_mod.vehicle import VEHICLE_INTENTS
 from edge_call import decode_intent
@@ -232,6 +233,7 @@ async def register_edge_capabilities():
                     endpoint="edge://vehicle",
                 ),
                 timeout=5,
+                metadata=admission.client_metadata(),   # B3 §2.4；未配 token 时为空
             )
             logger.info("Registered edge capability %s", manifest.agent_id)
     finally:

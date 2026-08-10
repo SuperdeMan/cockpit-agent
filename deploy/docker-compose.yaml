@@ -42,6 +42,9 @@ x-python-env: &python-env
   GRPC_TLS_CERT: /certs/server.crt
   GRPC_TLS_KEY: /certs/server.key
   GRPC_TLS_SERVER_NAME: ${GRPC_TLS_SERVER_NAME:-cockpit-mesh}
+  # B3 §2.4 Registry 静态 admission：Agent 注册时携带的自身 token。
+  # 留空=不带（admission 默认关时无影响）。
+  AGENT_REGISTRY_TOKEN: ${AGENT_REGISTRY_TOKEN:-}
   # badcase 排查（obs.turn/obs.llm/obs.log）：内容级采集门控（量产必须 off）与日志上报门槛
   OBS_CONTENT_CAPTURE: ${OBS_CONTENT_CAPTURE:-on}
   LOG_SHIP_LEVEL: ${LOG_SHIP_LEVEL:-WARNING}
@@ -136,6 +139,8 @@ services:
       # 长期不健康自动剔除：连续探测失败达此值（5s/轮 ≈ 10 分钟）整体注销，改名/下线
       # 残留（如 food-ordering→nearby）不再永生刷告警；活 Agent 10s 重注册自动豁免。0=禁用
       REGISTRY_EVICT_FAIL_COUNT: ${REGISTRY_EVICT_FAIL_COUNT:-120}
+      # B3 §2.4 静态 admission（token→agent_id 绑定）。缺省空=关闭，Register 行为逐字如前。
+      REGISTRY_ADMISSION_TOKENS: ${REGISTRY_ADMISSION_TOKENS:-}
       # R3.2 服务间 mTLS（默认关）
       GRPC_TLS: ${GRPC_TLS:-off}
       GRPC_TLS_CA: /certs/ca.crt
