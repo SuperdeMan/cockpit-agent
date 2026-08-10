@@ -174,7 +174,7 @@ CI 稳定绿两周后再评估——当前高频批次节奏下 require PR 的�
 | 2 `ci.yml` 阻断步骤 | ✅ 落在 `intent-eval-baseline` job、Exemplar 门禁之后 |
 | 3 红灯验证 | ✅ 见下 |
 | 4 `.github/CODEOWNERS` | ✅ 比方案多收三条（见下） |
-| 5 轻档分支保护 | ⏳ **未执行**——泓舟已拍板轻档，但本机 `gh` 未安装、也无 `GITHUB_TOKEN`/`GH_TOKEN`，AI 侧无法调 API。**这一条必须泓舟自己点**，两个等价办法见下 |
+| 5 轻档分支保护 | ✅ **2026-08-11 泓舟在网页建 ruleset `light-branches-protection` 并经 API 核验**（详见 §6.2）。⚠ 用的是 **ruleset** 不是 §3.2 写的 legacy `branches/main/protection` API——两者独立、效果等价，ruleset 是 GitHub 现推荐形态，不必改回 |
 | 6 运行手册 / AGENTS.md 指针 | ✅ 手册 §3.2 改为「唯一入口」，§11 自查清单同步 |
 
 **红灯验证（§2.4.2 要求，不做等于没接）**：注入一个 active intent 而不补对抗覆盖
@@ -214,3 +214,33 @@ gh api -X PUT repos/SuperdeMan/cockpit-agent/branches/main/protection \
 
 验收（§3.3.1）：拿一个一次性测试分支按同配置试一次 `git push --force` 被拒即可，
 **不要真对 `main` 演练**。
+
+### 6.2 核验结果（2026-08-11，匿名 REST API，仓库公开故无需凭据）
+
+```
+GET /repos/SuperdeMan/cockpit-agent/rules/branches/main
+  → [non_fast_forward, deletion]，均来自 ruleset 20653545
+GET /repos/SuperdeMan/cockpit-agent/rulesets/20653545
+  → name=light-branches-protection / target=branch / enforcement=active
+    bypass_actors=[] / conditions.ref_name.include=[~DEFAULT_BRANCH]
+    rules=[non_fast_forward, deletion]
+GET /repos/SuperdeMan/cockpit-agent/rulesets   → 共 1 个（无重复/遗留）
+GET /repos/SuperdeMan/cockpit-agent            → default_branch=main
+```
+
+**三个会让保护静默失效的点已逐条排除**——这才是核验的重点，不是「表单填了没」：
+
+| 静默失效形态 | 读数 | 结论 |
+|---|---|---|
+| `enforcement` 停在 `evaluate`（试运行只记录不拦） | `active` | 排除 |
+| `bypass_actors` 含 Repository admin（对本人畅通，等于没开） | 空 | 排除 |
+| `conditions` 目标写错分支 | `~DEFAULT_BRANCH`，且 `default_branch=main` | 排除 |
+
+无多余 `pull_request` 规则 ⇒ 直推 `main` 的既有工作流逐字不变（轻档定义）。
+
+⚠ `~DEFAULT_BRANCH` 是**跟随默认分支**而非钉死字面量 `main`：默认分支改名保护自动跟随；
+反过来若 `main` 哪天不再是默认分支，它就不受保护。当前一致。
+
+> **这是配置状态核验，不是「真发一次 force-push 被拒」的实证。** 后者要构造一个真正的
+> 非快进推送打到 `main`，规则万一没生效就直接改写主干历史——代价不对等。配置面的三种
+> 静默失效已逐条排除，剩下的只是「GitHub 会不会执行自己的 ruleset」，那不在存疑之列。

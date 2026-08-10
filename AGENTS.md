@@ -124,9 +124,9 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 `scripts/check_intent_gate.py`。实施记录见两份方案文档文末与 history §25。
 ✅ **冻结令已撤销**——可以新增业务 Agent 了（B1 验收判据第 6 条兑现）。
 
-| 待办 | 状态 | 权威入口 |
-|---|---|---|
-| B2 剩余：**main 轻档分支保护**（禁 force-push / 禁删除） | **待泓舟本人操作**——本机无 `gh`、无 `GITHUB_TOKEN`，AI 侧调不了 API；网页两个勾即可 | [B2 方案 §6.1](docs/design/2026-08-10-b2-gate-ci-branch-governance.md) |
+**§4.1 当前为空**——B1/B2 已全部收口（含 2026-08-11 泓舟在网页建的 ruleset
+`light-branches-protection`，经 API 核验 `enforcement=active`、`bypass_actors` 空）。
+下一步的候选入口在 §4.2（B3 前置已满足，可随时启动）。
 
 ⚠ **对抗语料唯一输入 535 / 上界 540**——只剩 5 个名额。下次加 L0 语料前先评估要不要抬
 `suites.yaml` 的 `max_cases`，别撞上再回头改（判据：bounds 是规模守卫，抬它要说明为什么

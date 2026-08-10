@@ -88,7 +88,7 @@ CI 缺口、能力同步痛点、治理缺口也属实。采纳为 **6 个批次
 | 批次 | 方案文档 | 性质 | 启动时机 |
 |---|---|---|---|
 | **B1 执行安全停止线** | [`../design/2026-08-10-b1-execution-safety-stopline.md`](../design/2026-08-10-b1-execution-safety-stopline.md) | P0+P1-high 修复 + 安全证据 | ✅ **2026-08-10 已实施合入**（4 提交，验收 6/6，冻结令已撤销；实施记录见方案文档 §7） |
-| **B2 意图门禁进 CI 与主干治理** | [`../design/2026-08-10-b2-gate-ci-branch-governance.md`](../design/2026-08-10-b2-gate-ci-branch-governance.md) | CI 阻断 + 治理 | ✅ **2026-08-10 已实施合入**（方案 A 全部 + CODEOWNERS，红灯验证已做）；⏳ 余轻档分支保护待泓舟本人点（§6.1） |
+| **B2 意图门禁进 CI 与主干治理** | [`../design/2026-08-10-b2-gate-ci-branch-governance.md`](../design/2026-08-10-b2-gate-ci-branch-governance.md) | CI 阻断 + 治理 | ✅ **2026-08-10 已实施合入**（方案 A 全部 + CODEOWNERS，红灯验证已做）；轻档分支保护 2026-08-11 完成并核验（方案 §6.2）。**B2 全部收口** |
 | **B3 DEPLOY_PROFILE 生产配置档** | [`../design/2026-08-10-b3-deploy-profile-fail-closed.md`](../design/2026-08-10-b3-deploy-profile-fail-closed.md) | 配置纪律 | 近期（B1 后） |
 | **B4 Capability Pack v1** | [`../design/2026-08-10-b4-capability-pack.md`](../design/2026-08-10-b4-capability-pack.md) | 能力交付原子化 | 近期（CI 完整性检查可先行） |
 | **B5 Planner 重试策略表 + 流式统一** | [`../design/2026-08-10-b5-planner-retry-stream-refactor.md`](../design/2026-08-10-b5-planner-retry-stream-refactor.md) | 可维护性重构 | **条件启动**（加新重试规则/新流式路径前必做） |

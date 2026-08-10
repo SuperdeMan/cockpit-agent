@@ -1752,6 +1752,18 @@ gate 会盖掉 discovery 的报告，CI artifact 里只剩半份证据。
 `.github/CODEOWNERS` 比方案清单多收四条，收录判据写在文件头：**动错了会「静默」损失
 安全性或证据面**——业务代码改错通常有测试红，判定面与门禁配置改松了不会。
 
+**轻档分支保护 2026-08-11 由泓舟在网页建 ruleset `light-branches-protection` 完成**
+（用 ruleset 而非方案写的 legacy `branches/main/protection` API，两者独立、效果等价）。
+核验走匿名 REST API（仓库公开）：`enforcement=active`、`bypass_actors` 空、
+`conditions.ref_name.include=[~DEFAULT_BRANCH]` 且 `default_branch=main`、
+规则恰为 `non_fast_forward`+`deletion`、仓库内 ruleset 共 1 个。
+
+判据：**核验一项「开关类」配置，要查的是它的三种静默失效形态，不是「表单填了没」**
+——① `enforcement` 停在 `evaluate`（试运行只记录不拦）；② `bypass_actors` 含
+Repository admin（对本人畅通，等于没开）；③ `conditions` 目标写错分支。三条全排除才
+算生效。配套边界：这是**配置状态核验不是实证**——真发一次非快进推送打到 `main` 来
+证明会被拒，规则万一没生效就直接改写了主干历史，代价不对等。
+
 ### 25.4 读数与余项
 
 L0 discovery **81/81**（原 76/76），cases 574 / 唯一输入 **535**——⚠ bounds 上界 540，
