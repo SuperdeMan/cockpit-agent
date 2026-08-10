@@ -98,8 +98,15 @@ cases:
   # 所以不是空调这个对象认不出——是**转述**这一层没被识别：句子里的「关掉空调」是
   # 别人说的话，「你先别真关」才是对系统说的。常驻 policy `negation-and-deferral` 只讲
   # 「别/先别 X」的直接否定，没有「引述他人指令 ≠ 指令」这一条，命中不了这个形态。
-  # 证据 `docs/reviews/eval/_ci-run-intent-gate-promotion-residual-{a,b}.json`；
-  # 修法归生产侧（范例/知识），另批处理——尺子这批不改被测对象。
+  # 证据 `docs/reviews/eval/_ci-run-intent-gate-promotion-residual-{a,b}.json`。
+  #
+  # **同日已修（生产侧，独立一批）**：诊断发现否定这一侧对「空调」没有对照物——
+  # 检回来的是 `volume#1`「空调震动，把声音调小一点」这条**含空调的肯定式**范例
+  # （`@vec:0.68`）。补 `chitchat#12`「后座喊着要关空调，你别听他的」后
+  # （`@vec:0.79` 稳定居首），A/B **5/12 → 11/12，双尾 Fisher p=0.027**，
+  # 七条 hvac 护栏用例 12/12 零回归。证据 `_ci-run-hvac-reported-{before,after}-*.json`。
+  # **仍留 `reviewed` 不晋级**：11/12 里有一趟 2/3，从四趟里挑两趟全绿去满足 §7 是
+  # 选择性取证；且晋级会给 gate 案例集 `added_cases`，冻结正式 baseline 写入（§19.5 判据二）。
   - id: nq.hvac.reported
     title: 转述别人的话，不该真关
     family_id: nq.hvac-reported

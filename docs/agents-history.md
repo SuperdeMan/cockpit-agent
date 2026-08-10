@@ -1300,3 +1300,42 @@ Agent 内部行为不是另一个 intent）。
 gate `--strict` **25/25 exit 0**（139 stable / 129 唯一输入，规模未变）、
 `eval_route_hints --strict` **78/78**、`eval_mode_routing` 离线 schema 173 条 OK。
 逐条证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§20**。
+
+## 19. §20.2 那条真缺陷的生产侧修复：范例 `chitchat#12`（2026-08-10 晚）
+
+**只动生产的一批**：`skills/exemplars/chitchat.yaml` 加一条；语料侧只补注释，
+无 gold / status / 断言变化。与 §18 那批分开提交。
+
+**根因不是「模型不懂否定」。** 常驻 policy `negation-and-deferral` 每一轮都在
+（八条用例的 `skills` 名单里一条不缺），照样挡不住——**知识在场 ≠ 知识有用**。
+解释读数的是 `exemplars` 那一列：`nq.hvac.reported` 检回的是
+`volume#1`「空调震动，把声音调小一点」（`@vec:0.68`）——一条**含「空调」的肯定式
+车控范例**；`nq.hvac-keep.dont`「空调先别关」干脆 `exemplars=[]`。
+库里三条否定范例（天窗 / 音响 / 付款）没有一条够得着空调。
+
+> **判据：给一个对象写范例时，两侧都要有对照物；只有一侧就是吸引子。**
+> 这是 `sunroof.yaml` 那条判据的**镜像**——那次是否定范例给肯定族当了吸引子，
+> 这次是肯定范例给否定族当了吸引子。同一个机制两个方向都咬过人，
+> 说明它不是个案，是范例库的结构性风险。
+
+**为什么不改常驻 policy**：`policies + 最大 guide = 2599 / SKILL_BUDGET 2600`，
+**余量 1 个字符**。补一行就会把当轮最相关的 guide 静默裁成 `!clipped`（§17.4 同款陷阱）；
+抬预算是另一个决定（每次规划都涨 prompt），不顺手做。于是选**最软层**：
+exemplar 只在被检索到时占预算，写错也只是噪声。
+
+**A/B（同一选集、同一 provider、检索零降级）**：
+`nq.hvac.reported` **5/12（41.7%）→ 11/12（91.7%）**，双尾 Fisher **p=0.027**；
+六条 hvac 护栏 + base 从 6/6 到 **12/12 零回归**。
+before 四趟注入的范例**逐字相同**（全是 `volume#1@vec:0.68`），故 12 样本可合并；
+after 稳定检回 `chitchat#12@vec:0.79` 居首。证据强度与 §18 否掉那条 guide 同档、方向相反。
+
+**没顺手解决的**：`nq.hvac-keep.dont`「空调先别关」仍 `exemplars=[]`——五字短句在
+词法（<0.34）与语义（<0.65）两条通道上都够不着任何范例，读数 10/12 且失败形态是
+真下 `hvac.off`。这是**短句检索**那笔账，已单独立卡进 §4.1，不硬凑进本批。
+
+**不晋级**：11/12 里有一趟 2/3；从四趟里挑两趟全绿去满足「两趟 ×3 全过」是选择性取证，
+且晋级会给 gate 案例集 `added_cases`、冻结正式 baseline 写入（§19.5 判据二对新增同样成立）。
+
+回归：L0 discovery **76/76**、gate `--strict` **25/25 exit 0**、
+`eval_exemplars` **254 条 / 20 域 PASS**（域错配率 2.5%，上限 20%）、`eval_skills` PASS、
+`orchestrator/` **1093 passed**、端侧 smoke **13/13**。逐条证据 findings **§21**。

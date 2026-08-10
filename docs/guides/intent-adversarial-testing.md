@@ -379,12 +379,14 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 |---|---|---|
 | P0 | 裸地名澄清族（留在门禁内，已立卡） | `nq.landmark.bare` 合并 **11/20≈55%**（高方差边界句，不是稳定红）、`nq.landmark.explicit` 自己每条断言都过、被 relation 连累；同族第三条 `nq.city.bare` 未进池。**路径 1「写 guide」实测否掉**（§18：4/10→1/10→退回 7/10，p≈0.02 有害）；**路径 3「换出预选池」执行并全量验证后回退**（§19.5：总分没变好且会冻结 baseline 写入）。判据：**不要为了某个模型的问题去改尺子**。路径 2 未启动 |
 | P0 | 主模型 `eligible=True` 的方向 | 不是跑批问题：单元不稳定率 3.3% ⇒ 一趟零 unstable 概率约 1.7%。先决定压底噪 / 改口径 / 接受主模型不出正式 baseline（findings §17.6） |
-| P1 | `nq.hvac.reported` 的**生产侧**修法 | 2026-08-10 取证定性为真缺陷（6 次里 3 次真下 `hvac.off`，`critical_fail` ×2）。缺的是「引述他人指令 ≠ 指令」这一层，常驻 policy `negation-and-deferral` 只讲直接否定。产物应为范例/知识并**拿对照跑证伪**，与尺子分批（findings §20.2） |
+| P2 | `nq.hvac-keep.dont`「空调先别关」检不回任何范例 | 五字短句词法 <0.34、语义 <0.65 两条通道全不达，`exemplars=[]`，读数 10/12 且失败形态是真下 `hvac.off`。**不是知识缺**（常驻否定 policy 每轮都在），是**短句检索够不着**（findings §21.3 末） |
 | P2 | `cp.adaptive.weather-outing` 的 L1 稳定性 | **L3 已还清**（journey `A1-5` + claim `adaptive_replan_continuity`，两趟各 1/1）。L1 三趟 3/3、2/3、4/5 ＝ 9/11 未达两趟 ×3 全过；两次红是 clarify 与空 replan，都不是落错域（findings §20.4） |
 
 2026-08-10 已收口（不再是待办）：三条未晋级候选**全部按跨进程契约取证完毕**——
 `cp.hvac-news.swapped` 2/6（尺子抓对了 `limit="今天的"`，维持严格口径）、
-`nq.hvac.reported` 2/6（转真缺陷，见上）、`nq.match.lastweek` 5/6（边界方差，不动）；
+`nq.hvac.reported` 2/6（转真缺陷，**同日已修**：补范例 `chitchat#12`，
+A/B 5/12 → 11/12、p=0.027、七条护栏零回归，findings §21）、
+`nq.match.lastweek` 5/6（边界方差，不动）；
 weather-outing 的 L3 claim 已建（见上）；snooze /「离开X」/「到X之前」三个提醒词形
 已补端到端用例，两趟各 3/3（findings §20.1/§20.4/§20.5）。
 

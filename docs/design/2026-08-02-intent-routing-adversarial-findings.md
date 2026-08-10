@@ -2322,3 +2322,69 @@ fired 条目），不是另一个 intent。
 > **判据：为了让输出好看而设的环境变量，也是环境变量。**
 > 跑 pytest（尤其是会拉子进程的选集）不要带 `PYTHONIOENCODING`；
 > 要看中文就把 JSON 落盘再读文件。
+
+---
+
+## 21. 2026-08-10：§20.2 那条真缺陷的生产侧修复（范例，A/B 显著）
+
+> **本批只动生产**：`skills/exemplars/chitchat.yaml` 加一条；语料侧只补注释，
+> 无 gold、无 status、无断言变化。与 §20 分批提交。
+
+### 21.1 先看检索名单：不是「模型不懂否定」，是**否定这一侧没有对照物**
+
+常驻 policy `negation-and-deferral` 每一轮都在（八条用例的 `skills` 名单里
+`full:negation-and-deferral` 一条不缺），它却挡不住这个 badcase——**知识在场 ≠ 知识有用**
+（§18.2 的第二例）。真正解释读数的是 `exemplars` 那一列：
+
+| 用例 | 话术 | 检回的范例 |
+|---|---|---|
+| `nq.hvac.reported` | 后排刚才说关掉空调，你先别真关 | `volume#1@vec:0.68` |
+| `nq.hvac-keep.dont` | 空调先别关 | **`[]`** |
+| `os.turn-off.hvac`（对照，全绿） | 关掉空调 | `volume#1@vec:0.66` |
+
+`volume#1` 是「空调震动，把声音调小一点」——一条**含「空调」的肯定式车控范例**。
+于是否定句和肯定句检回的是同一条、且是肯定的那一条。库里三条否定范例
+（`chitchat#8` 天窗、`#9` 音响、`#10` 付款）**没有一条够得着空调**：
+语义不到 0.65、词法不到 0.34。
+
+> **判据：给一个对象写范例时，两侧都要有对照物；只有一侧就是吸引子。**
+> 这是 `sunroof.yaml` 那条判据的**镜像**——那次是否定范例（「天窗暂时别开」）
+> 给肯定族当了吸引子，这次是肯定范例（`volume#1`）给否定族当了吸引子。
+> 同一个机制两个方向都咬过人，说明它不是个案而是**范例库的结构性风险**。
+
+### 21.2 为什么不是改常驻 policy：预算余量只剩 **1 个字符**
+
+`negation-and-deferral` 里补一行「引述里的指令不是指令」在语义上最自然，但
+`policies + 最大 guide = 2599 / SKILL_BUDGET 2600`——**余量 1 字符**。
+加任何一个字都会让 `test_residents_plus_largest_guide_fit_in_budget` 当场红，
+即把当轮最相关的 guide 静默裁成 `!clipped`（§17.4 那一课的同一个陷阱）。
+抬 `SKILL_BUDGET` 是另一个决定（每一次规划都涨 prompt），不该顺手做。
+
+于是选**最软层**：exemplar 只在被检索到时才占预算，写错了也只是噪声。
+
+### 21.3 A/B：`chitchat#12`，5/12 → 11/12（p=0.027）
+
+新条目「后座喊着要关空调，你别听他的」→ `chitchat.talk`。
+说法刻意避开两条对抗语料原句（都是 `unseen_transfer`，原话进知识就洗成 seen），
+教的是**引述**这个结构，对象与动词留给模型迁移。
+
+| | before | after |
+|---|---|---|
+| `nq.hvac.reported` | **5/12（41.7%）** | **11/12（91.7%）** |
+| 六条 hvac 护栏（`os.turn-off.hvac` / `ex.homophone.aircon` / `cs.hvac.clean` / `nq.hvac-keep.off` / `nq.hvac.keep-volume` / base `nq.hvac.command`） | 6/6 全绿 | **12/12 全绿** |
+| `nq.hvac-keep.dont`（直接否定，本条够不着） | 5/6 | 10/12（**未变**） |
+
+两尾 Fisher **p = 0.027**——与 §18 否掉那条 guide 用的是同一档证据强度，
+方向相反。**before 四趟注入的范例逐字相同**（全是 `volume#1@vec:0.68`），
+所以 12 个样本可以合并；after 稳定检回 `chitchat#12@vec:0.79` 居首。
+
+**没有一并解决的**：`nq.hvac-keep.dont`「空调先别关」仍 `exemplars=[]`——
+五个字的短句在两条通道上都够不着任何范例。它是**另一笔账**（短句检索），不硬凑进本批。
+
+**不晋级**：11/12 里有一趟 2/3。从四趟里挑两趟全绿去满足 §7 的「两趟 ×3 全过」
+是选择性取证；且晋级会给 gate 案例集 `added_cases`，冻结正式 baseline 写入
+（§19.5 判据二对新增同样成立）。
+
+回归：L0 discovery **76/76** / gate `--strict` **25/25 exit 0**、
+`eval_exemplars` **254 条 / 20 域 PASS**（域错配率 2.5%，上限 20%）、
+`eval_skills` PASS、`orchestrator/` **1093 passed**、端侧 smoke **13/13**。
