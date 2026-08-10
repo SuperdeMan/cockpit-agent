@@ -332,6 +332,40 @@
 | `GRPC_TLS_SERVER_NAME` | 客户端校验的证书目标名（`ssl_target_name_override`/`ServerName`），须与证书 CN/SAN 一致 | 否（默认 `cockpit-mesh`） |
 | `GRPC_TLS_CA` / `GRPC_TLS_CERT` / `GRPC_TLS_KEY` | 容器内 CA / 证书 / 私钥路径（compose 已挂 `../certs:/certs:ro` 并设默认）| 否（默认 `/certs/{ca,server}.{crt,crt,key}`） |
 
+### 部署形态闸 DEPLOY_PROFILE（B3，2026-08-11）
+
+> 上面这些安全开关都是「默认关、演示翻开」的 PoC 形态。B3 加的不是新开关，是**第四种运行
+> 形态**：一个 `prod` 档，在其中任何 fail-open 配置都让服务**拒绝启动**，而不是打一行
+> warning 继续跑。dev 档零校验、零输出——本方案的硬约束是「只加档，不改默认」。
+> 强制表的唯一真相源是代码 `runtime/profile.py::CHECKS`（Go 网关侧子集在
+> `gateway/deployprofile`）；方案见 `docs/design/2026-08-10-b3-deploy-profile-fail-closed.md`。
+
+| 变量 | 含义 | 必填 |
+|---|---|---|
+| `DEPLOY_PROFILE` | 部署形态：`dev`/默认=零校验逐字现状；`demo`=软校验，启动打一段聚合 warning 不阻断；`prod`=硬校验，任一项不满足即 **exit 78**（`EX_CONFIG`）。**未知值不回落 dev，直接拒启** | 否（默认 `dev`） |
+| `POSTGRES_PASSWORD` | Postgres 口令（compose 缺省 `cockpit`=PoC 现状）。prod 必须覆盖，且要与 `POSTGRES_DSN` 内嵌的口令一致 | 否（默认 `cockpit`） |
+| `GRAFANA_ADMIN_PASSWORD` | Grafana 管理口令（`--profile observability` 用）。prod 必须非 `admin` | 否（默认 `admin`） |
+| `REGISTRY_ADMISSION_TOKENS` | Registry 静态 admission（§2.4）：`<token>:<agent_id>[\|<agent_id>...]`，多条 `,` 分隔。**缺省空=关闭**，`Register` 逐字如前 | 否（默认空） |
+| `AGENT_REGISTRY_TOKEN` | 调用方注册时携带的自身 token（进 gRPC metadata `x-agent-token`）；未配=不带 | 否（默认空） |
+
+**prod 强制表（十二项，逐项对应 `CHECKS`）**：① `AUTH_REQUIRED=true` ② `PERMISSIONS_FAIL_OPEN=false`
+③ `GRPC_TLS=on` ④ `AUTH_TOKENS` 非空且非示例值 ⑤ `CLOUD_CHANNEL_TOKEN ∈ CLOUD_CHANNEL_TOKENS`
+且非示例值 ⑥ `OBS_CONTENT_CAPTURE=off` ⑦ `REQUIRE_REAL_PROVIDERS=on` ⑧ `POSTGRES_PASSWORD`
+非默认且 `POSTGRES_DSN` 不内嵌默认口令 ⑪ `DEBUG_VEHICLE_CONTROL=false` ⑫ `GRAFANA_ADMIN_PASSWORD`
+非默认。（⑨ LLM 凭证由 ⑦ 的既有严格闸联动、不重复造；⑩ S2S/声纹/视觉的隐私默认挡位写在
+HMI `DEFAULT_SETTINGS` 里、运行期 env 无承载，由源码级断言测试守——序号保留以便与方案 §2.2 对齐。）
+
+**三条落地判据**（接手改这张表前先读）：
+
+1. **每项校验复刻消费方的解析，不发明通用真值语义。** `AUTH_REQUIRED` 在 Go 侧是
+   `EqualFold(v,"true")`——`AUTH_REQUIRED=1` 对它是**关**；`GRPC_TLS` 在 Go 侧是 switch
+   精确匹配——大写 `ON` 对它也是**关**。一个「看起来是真」的检查会在这两处报绿而开关没开。
+2. **闸放在唯一出口。** Python 侧在 `runtime.grpcio.aio_server()`（全服务建 gRPC server 的
+   必经点）；不建 gRPC server 的两个服务（collector / proactive）在各自进程入口显式调。
+   Go 网关在 `main` 第一行——校验必须先于任何监听/拨号。
+3. **报错不回显凭据**，只回显形状（未设/空/长度/是否抄了示例值/是否 PoC 默认口令）；
+   示例 token 是 `.env.example` 里的公开值，反而要指名道姓，配错的人需要看到自己抄了它。
+
 ### 输入拒识 / 路由澄清（R4.4，置信度三段式）
 
 > 全链路 fail-open：LLM 不输出新字段 / 解析失败 / env 关时，行为与今天逐字一致。拒识只作用于

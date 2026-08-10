@@ -83,6 +83,26 @@ Copy-Item .env.example .env
 docker compose -f compose.yaml up --build
 ```
 
+### 3.1 部署形态 `DEPLOY_PROFILE`（B3）
+
+**日常开发什么都不用做**——不设即 `dev` 档，零校验、零输出，行为逐字如前。
+
+```bash
+# 对外演示前自查：软校验，打一段聚合 warning 但照常起
+DEPLOY_PROFILE=demo docker compose -f compose.yaml up
+
+# 量产形态演练：任一 fail-open 配置即 exit 78（EX_CONFIG）拒绝启动
+DEPLOY_PROFILE=prod docker compose -f compose.yaml run --rm --no-deps registry
+```
+
+报错逐项写清「哪个键、当前值、要求值、为什么」，按提示补齐 `.env` 即可（清单见
+`.env.example` 尾部的 profile 段与 `docs/conventions.md` §6）。凭据只回显形状不回显原值。
+
+> ⚠ **加了新服务，记得它也要拿到 `DEPLOY_PROFILE`。** compose 的 `x-python-env` anchor
+> 里有这一项，但**不是所有服务都用那个 anchor**（registry / edge-orchestrator / proactive
+> 就各自列 env，B3 实施时正是在容器演练里当场发现它们漏配）。漏配会让
+> `runtime/tests/test_profile_coverage.py` 变红，那条断言就是为这件事存在的。
+
 ---
 
 ## 4. 单服务本地调试（不起整栈）

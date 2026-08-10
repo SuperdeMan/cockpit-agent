@@ -128,6 +128,9 @@ services:
     build: { context: .., dockerfile: registry/Dockerfile }
     volumes: *certs-vol
     environment:
+      # B3 部署形态闸。**本服务没有 <<: *python-env**（它自己列 env），所以要单列——
+      # 「写在 anchor 里」不等于「每个服务都有」，这一条是容器演练当场抓出来的。
+      DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
       NATS_URL: nats://nats:4222
       LOG_LEVEL: ${LOG_LEVEL:-info}
       POSTGRES_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpit}@postgres:5432/cockpit
@@ -731,6 +734,8 @@ services:
     <<: *restart
     build: { context: .., dockerfile: proactive/Dockerfile }
     environment:
+      # B3 部署形态闸（本服务未用 <<: *python-env，单列）。
+      DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
       NATS_URL: nats://nats:4222
       LOG_LEVEL: ${LOG_LEVEL:-info}
       E2E_NAMESPACE_ADMIN_ENABLED: ${E2E_NAMESPACE_ADMIN_ENABLED:-false}
@@ -815,6 +820,8 @@ services:
       # 挂载缺席（或没训过）时 EdgeNLU 决议 disabled、整链回落规则，与声纹 CAM++ 同款姿态。
       - ../models:/app/models:ro
     environment:
+      # B3 部署形态闸（本服务未用 <<: *python-env，单列）。
+      DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
       CLOUD_GATEWAY_ADDR: cloud-gateway:8080
       NATS_URL: nats://nats:4222
       FAST_INTENT_THRESHOLD_HIGH: ${FAST_INTENT_THRESHOLD_HIGH:-0.85}
