@@ -1,0 +1,50 @@
+name: bare-object-clarify
+type: guide
+# description 兼语义索引：写「判据 + 典型表面形态」而不是分类名（README 检索双通道段）。
+description: 整句只有一个对象名、动词完全缺失时先问一句的判据（建筑名/地名/歌名单独成句；补上动词后绝不再反问）
+priority: 56
+# 裸对象句几乎没有词法信号，只能靠**对象类后缀**触发（一个关键词=10 分，正好压线）。
+# ⚠ `中心` 与 `公园` 实测过并**否掉了**：它们不是「多召回一点噪声」，是**整格顶替**——
+# 48 条既有语料里，`带我去会展中心，半道上想喝杯热的` 与 `你确定下雨天还推荐我去公园吗`
+# 本该召回 navigation-with-stop / weather-outing（那两条是 paraphrase，词法按设计是 0 分），
+# 加上这两个词后本 guide 以 11 分独占了唯一名额，把正主挤没了。
+# 判据：**为了让自己检得回而放宽 keywords，是拿劫持面换覆盖面**（同 shop-order-flow
+# 拒收裸「咖啡」那条）。去掉后误召回 0/48，自己的 golden 照常召回。
+# 代价是明账：裸的「XX中心」这类名字词法检不回，只能靠语义通道（description 向量）接。
+keywords: [大厦, 大楼, 广场, 体育馆, 博物馆, 图书馆]
+# 不声明 capability_dependencies：本知识**不教调用任何能力**，正确产物恰恰是「先别落域」。
+# 好处是它永远不会被 `!capability-blocked` 挡掉——而裸对象句正是 catalog 最可能被裁的场景。
+knowledge: |
+  **只有对象、没有动词 ⇒ 先问一句，别替用户挑动作。** 整句就是一个建筑名/地名/歌名，
+  用户给了对象却没说要拿它做什么：带他过去、查资料、查限行、播放都讲得通且结果差异很大。
+  输出 clarify（一句口语提问 + 2~3 个选项），**不要**把原话当闲聊复述回去。
+
+  「塞进闲聊复述一遍」是这一族最常见的错法：它看起来无害，实际是用户问了一句、
+  什么也没得到，而且系统还显得听懂了。**答非所问比明说不确定更糟。**
+
+  **另一半：动词一旦补上就绝不许再反问。** 「导航去X」「带我去X」「放一首X」都是明确
+  请求，照常出步骤。分界是**缺动词**还是**缺槽位**——「导航」没说去哪属于缺槽位，
+  照常出步骤由对应 agent 追问，不在本条范围内。
+few_shots:
+  # 判据必须以**结构化输出**示范，不能只埋在正文——模型优先模仿它看到的形状
+  # （同 shop-order-flow 的「依赖骨架必须放在 few-shot」）。
+  # steps 为空 ⇒ 不需要任何 capability_ref ⇒ 本示例永远渲染得出来。
+  - user: 云顶大厦
+    plan: {"addressed":true,"steps":[],"clarify":{"question":"云顶大厦想让我做点什么？","options":[{"label":"路线引导","send_text":"帮我规划去云顶大厦的路线"},{"label":"地点资料","send_text":"介绍一下云顶大厦"}]}}
+golden:
+  # 核心主张：裸对象**不产出任何执行步骤**（clarify 的可观测后果就是计划为空）。
+  # `expect_not` 里的 chitchat.talk 是实测错法本身，不是凑数——见下方立卡来源。
+  - text: 云海广场
+    expect_intents: []
+    expect_not: [chitchat.talk, navigation.navigate_to, info.search]
+  # 另一半：补上动词后不许反问，也不许被本 guide 拽成空计划（写宽了就会这样）。
+  - text: 带我去云海广场
+    expect_intents: ["navigation.navigate_to|navigation.search_poi"]
+    expect_not: [chitchat.talk]
+  # holdout：避开全部 keywords 字面（湿地/景区都不在 keywords 里），测语义通道 + 泛化。
+  - text: 西溪湿地
+    expect_intents: []
+    expect_not: [chitchat.talk, navigation.navigate_to]
+    holdout: true
+owner: orchestrator
+version: 1
