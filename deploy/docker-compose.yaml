@@ -321,6 +321,9 @@ services:
       # A/B 材料 RFC §11；off=JSON 纯文本回退档。规划轮经原生 function calling 强制
       # 输出合法 Plan，协议失败轮内回退 JSON 路径）
       PLANNER_TOOLCALL: ${PLANNER_TOOLCALL:-on}
+      # 掉出工具通道后是否再要一次工具通道：on|off（默认 on——泓舟 2026-08-10 拍板，
+      # findings §23/§24；只管「模型能说话但没用工具」，协议异常仍退 JSON 档）
+      PLANNER_TOOLCALL_SALVAGE_RETRY: ${PLANNER_TOOLCALL_SALVAGE_RETRY:-on}
     ports: ["50054:50054"]
     depends_on:
       registry:

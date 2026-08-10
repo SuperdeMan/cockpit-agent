@@ -695,6 +695,36 @@ _CLARIFICATION_TOOLCALL_SECTION = (
     "每项只含 label 与 send_text，send_text 必须是消歧后可直接重新发送的完整指令。"
 )
 
+# 掉出工具通道后的重试提示（泓舟 2026-08-10 拍板：维持 MiniMax 主模型 + salvage 轮
+# 强制重试工具通道）。刻意**不重复输出协议全文**——`_TOOLCALL_SECTION` 本来就恒拼在
+# system 里，这里只点明「上一版没用工具」这件事实。
+_TOOLCALL_SALVAGE_RETRY_CORRECTION = (
+    "\n\n校验反馈：上一版没有调用 submit_plan 工具，而是直接输出了文本。"
+    "本轮必须通过调用 submit_plan 提交同样的判断，不要以文本形式输出 JSON，"
+    "也不要输出任何解释。"
+)
+
+
+def _toolcall_salvage_retry() -> bool:
+    """掉出工具通道且**模型仍吐了文本**时，是否再要一次工具通道（默认 on）。
+
+    起因是 2026-08-10 的跨 provider 取证（findings §23/§24）：走成 `toolcall` 的比例
+    是 **provider 属性**——`minimax:MiniMax-M3` 45~48% vs `deepseek:deepseek-v4-flash`
+    100%（p≈0.0002，35 样本零掉档）。而掉档轮的代价是实的：同一批用例里 MiniMax
+    内部 `toolcall` 91% vs `salvage` 50%（p≈0.036），差异集中在**需要模型自己填结构化
+    字段**的多阶段计划上——一步到位的简单计划不需要 schema 当脚手架，多阶段计划需要。
+
+    处置三选一（换主模型 / 强制重试 / 接受并分账）由泓舟 2026-08-10 拍板为**维持
+    MiniMax 主模型 + 强制重试 + 保留分账观测**：换档会牵动全部既有 baseline 与读数，
+    且「通过率跨 provider 不可直比」意味着 DeepSeek 的 147/147 不构成「它更准」的证据。
+
+    `off` = 退回旧行为（掉档轮第 2 轮走纯 JSON），留作 A/B 对照与应急回退。
+    ⚠ 它只管「模型能说话但没用工具」这一种掉档；协议异常/provider 不认 tools 那一种
+    **永远**退 JSON 档，与本开关无关（判据见 `build` 里的 `protocol_broken`）。
+    """
+    return os.getenv("PLANNER_TOOLCALL_SALVAGE_RETRY", "on").strip().lower() == "on"
+
+
 _PLAN_ONLY_TOOLCALL_SECTION = (
     "\n\n== 输出通道（计划修正专用工具调用）==\n"
     "上一版把完整条件句误判成了歧义。本轮只调用 submit_plan 一次，严格提交计划；"
@@ -1102,6 +1132,7 @@ class PlanBuilder:
         # 回退档（badcase 对照/弱 tool-calling 厂商应急用）。
         toolcall = (os.getenv("PLANNER_TOOLCALL", "on").strip().lower() == "on"
                     and self._llm_tools is not None)
+        salvage_retry = _toolcall_salvage_retry()
         plan = None
         plan_mode = "json"
         last_raw = ""
@@ -1109,6 +1140,7 @@ class PlanBuilder:
         last_mode = "json"
         correction = ""
         retry_with_tool = False
+        salvage_kept = None  # 掉档轮抢救出来的可用计划：重试工具通道失败时的回落
         clarification_tool_retry = False
         plan_only_tool_retry = False
         for attempt in range(2):
@@ -1130,8 +1162,17 @@ class PlanBuilder:
                         wire_mode="toolcall")
                     mode = "toolcall"
                 else:
-                    retry_with_tool = False
                     # 模型无视工具直接文本输出（或 named tool_choice 不被支持）→ 同轮抢救
+                    #
+                    # 掉档有**两种**，重试价值相反，靠 raw 是否为空分辨
+                    # （`_llm_plan_tools` 异常路径 `return "", None`，无 tool_calls 路径
+                    #  `return content, None`）：
+                    #   - raw 非空＝模型**能说话但没用工具** → 值得再要一次工具通道；
+                    #   - raw 为空＝协议异常 / provider 不认 tools → 重试只会再异常一次，
+                    #     必须让第 2 轮退 JSON 档。**这一档是弱 tool-calling 厂商的
+                    #     可用性保障，不能被本次优化吃掉。**
+                    protocol_broken = not str(raw or "").strip()
+                    retry_with_tool = salvage_retry and not protocol_broken
                     data = self._extract_data(raw)
                     parsed = (self._parse_with_context(
                               data, catalog, text, stage="build", attempt=attempt,
@@ -1330,6 +1371,18 @@ class PlanBuilder:
             # R4.4：放行「合法的空 steps 计划」——受话判定 addressed=false / 澄清 clarify
             # 的正确输出 steps 恰为空，不能当解析失败去重试+fallback（母卡实施计划 §0-1/§0-2）。
             if parsed and (parsed.steps or not parsed.addressed or parsed.clarify):
+                if (attempt == 0 and mode == "toolcall_salvage" and retry_with_tool
+                        and salvage_kept is None):
+                    # 抢救成功≠答得好。掉档轮模型是在**自由文本**里作答，输出分布与走
+                    # schema 的轮本就不同（MiniMax 内部实测 `toolcall` 91% vs
+                    # `salvage` 50%，p≈0.036，findings §23.2）。所以留它作回落，
+                    # 再给工具通道一次机会——**这是泓舟 2026-08-10 拍板的处置**
+                    # （维持 MiniMax 主模型 + salvage 轮强制重试）。
+                    # 代价是掉档轮多一次 LLM 调用，仍在原有 2 次上限内。
+                    salvage_kept = parsed
+                    if not correction:
+                        correction = _TOOLCALL_SALVAGE_RETRY_CORRECTION
+                    continue
                 plan = parsed
                 plan_mode = mode
                 break
@@ -1375,6 +1428,15 @@ class PlanBuilder:
                             text[:40])
                 plan = talk
                 plan_mode = f"{last_mode}_no_action"
+
+        # 重试工具通道失败：用第 1 轮抢救出来的那份计划，而不是掉进 `_fallback`。
+        # **强制重试不许比不重试更差**——它换来的是「多一次走成 schema 的机会」，
+        # 不该把一份本来可用的计划换成兜底话术。`plan_mode` 单列 `_kept`，
+        # 好让「重试后走成」「重试后仍掉档」在读数上分得开（观测面不许说谎）。
+        if plan is None and salvage_kept is not None:
+            logger.info("toolcall retry after salvage failed; keeping salvaged plan")
+            plan = salvage_kept
+            plan_mode = "toolcall_salvage_kept"
 
         if plan is None:
             logger.warning("Plan parse failed twice, falling back to chitchat/routing")

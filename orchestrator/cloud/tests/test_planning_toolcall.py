@@ -152,14 +152,20 @@ def test_planner_prompt_splits_unpunctuated_actions_without_inventing_inverse(mo
 
 
 def test_toolcall_salvage_when_model_ignores_tool(monkeypatch):
-    """模型无视工具直接文本 JSON → 同轮抢救成功，plan_mode=toolcall_salvage。"""
+    """模型无视工具直接文本 JSON → 同轮抢救成功，plan_mode=toolcall_salvage。
+
+    ⚠ 2026-08-10 起调用次数是 **2 不是 1**：抢救成功后会再要一次工具通道
+    （`PLANNER_TOOLCALL_SALVAGE_RETRY`，泓舟拍板）。这里的 spy 两轮返回同一份文本，
+    于是第 2 轮又掉档、又抢救成功——**结果与不重试逐字相同**，只多花一次调用。
+    这条测试因此同时守住了一个性质：**重试失败时不许比不重试更差**。
+    """
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")
     spy = _SpyLLM(tool_reply=(json.dumps(_ARGS_OK, ensure_ascii=False), []))
     b = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
     plan = _build(b)
     assert plan.plan_mode == "toolcall_salvage"
     assert len(plan.steps) == 1
-    assert spy.tool_calls_n == 1 and spy.text_calls == 0
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0   # 仍在原有 2 次上限内
 
 
 def test_toolcall_falls_back_to_json_second_round(monkeypatch):
@@ -588,7 +594,9 @@ def test_conditional_salvage_preserves_adaptive_replan_contract(monkeypatch):
     assert [step.intent for step in plan.steps] == ["info.weather"]
     assert plan.complexity == "adaptive"
     assert plan.goal == text
-    assert spy.tool_calls_n == 1 and spy.text_calls == 0
+    # 2 次＝抢救成功后又要了一次工具通道（2026-08-10 起，见上方 salvage 那条注释）；
+    # 本轮 spy 两次同答，adaptive 契约在第 2 轮的抢救里照样保住。
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
 
 
 def test_complete_conditional_goal_marker_keeps_valid_observation_plan(monkeypatch):
@@ -1562,3 +1570,92 @@ def test_literal_slot_values_are_not_mistaken_for_refs():
             "slots": {"keyword": "s1.data 咖啡馆", "note": "3.5 分以上"}}]
     steps = PlanBuilder._validated_steps(raw, _two_step_amap())
     assert steps[1].depends_on == []
+
+
+# ── salvage 轮强制重试工具通道（2026-08-10，泓舟拍板）──────────────────────────
+#
+# 背景（findings §23/§24）：走成 `toolcall` 的比例是 **provider 属性**——MiniMax-M3
+# 45~48% vs DeepSeek-v4-flash 100%（p≈0.0002，35 样本零掉档）。掉档的代价是实的：
+# 同一批用例里 MiniMax 内部 `toolcall` 91% vs `salvage` 50%（p≈0.036），集中在需要
+# 模型自己填结构化字段的多阶段计划上。处置三选一由泓舟拍板为「维持 MiniMax 主模型
+# + 强制重试 + 保留分账观测」。
+#
+# 这一组守四条性质，少一条这个优化就会变成回归：
+#   ① 重试真的发生，且成功时 plan_mode 记 `toolcall`（不是继续记 salvage）；
+#   ② 重试失败**不许比不重试更差**——回落第 1 轮抢救出的计划，不掉进 `_fallback`；
+#   ③ 回落有独立 plan_mode `toolcall_salvage_kept`，「重试后走成」与「重试后仍掉档」
+#      在读数上分得开（观测面不许说谎，同 §24.4 那个误报的教训）；
+#   ④ **协议异常/provider 不认 tools 那一档不受影响**——它必须继续退 JSON，
+#      那是弱 tool-calling 厂商的可用性保障，不能被本次优化吃掉。
+
+
+def test_salvage_retries_the_tool_channel_and_records_toolcall(monkeypatch):
+    """① 第 1 轮掉档但抢救成功 → 再要一次工具通道；成功后 plan_mode=toolcall。"""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    monkeypatch.setenv("PLANNER_TOOLCALL_SALVAGE_RETRY", "on")
+    spy = _SpyLLM(tool_replies=[
+        (json.dumps(_ARGS_OK, ensure_ascii=False), []),                    # 掉档，可抢救
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": _ARGS_OK}]),
+    ])
+    b = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+    plan = _build(b)
+    assert plan.plan_mode == "toolcall"
+    assert len(plan.steps) == 1
+    assert spy.tool_calls_n == 2 and spy.text_calls == 0
+    # 重试轮必须点明「上一版没用工具」，否则模型没有理由改变行为
+    assert "没有调用 submit_plan 工具" in spy.last_tool_user
+
+
+def test_salvage_retry_falls_back_to_the_salvaged_plan(monkeypatch):
+    """②③ 重试轮解析失败 → 用第 1 轮抢救出的计划，plan_mode=toolcall_salvage_kept。
+
+    **不许掉进 `_fallback`**：强制重试换来的是「多一次走成 schema 的机会」，
+    不该把一份本来可用的计划换成兜底话术。
+    """
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    monkeypatch.setenv("PLANNER_TOOLCALL_SALVAGE_RETRY", "on")
+    bad_args = {**_ARGS_OK, "steps": [{**_ARGS_OK["steps"][0],
+                                       "capability_ref": "cap_9999"}]}
+    spy = _SpyLLM(tool_replies=[
+        (json.dumps(_ARGS_OK, ensure_ascii=False), []),                    # 掉档，可抢救
+        ("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME, "arguments": bad_args}]),
+    ])
+    b = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+    plan = _build(b)
+    assert plan.plan_mode == "toolcall_salvage_kept"
+    assert len(plan.steps) == 1                       # 第 1 轮那份，不是兜底话术
+    assert spy.tool_calls_n == 2
+
+
+def test_salvage_retry_can_be_switched_off(monkeypatch):
+    """开关 off → 旧行为：掉档轮第 2 轮走纯 JSON。留作 A/B 对照与应急回退。
+
+    ⚠ 这条同时是 A/B 的前置——**先证明两臂真的不同**（§4.3，`replan()` 那次
+    加了形参测试替身没跟着传，24 个样本两臂逐字相同，差点据此否掉自己写对的守卫）。
+    """
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    monkeypatch.setenv("PLANNER_TOOLCALL_SALVAGE_RETRY", "off")
+    spy = _SpyLLM(tool_replies=[(json.dumps(_ARGS_OK, ensure_ascii=False), [])])
+    b = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+    plan = _build(b)
+    assert plan.plan_mode == "toolcall_salvage"
+    assert spy.tool_calls_n == 1 and spy.text_calls == 0
+
+
+def test_protocol_failure_still_falls_back_to_json_not_retry(monkeypatch):
+    """④ provider 不认 tools（抛异常，raw 为空）→ 仍退 JSON 档，**不重试工具通道**。
+
+    判据在 `_llm_plan_tools` 的两条返回路径上：异常 `return "", None`，
+    无 tool_calls `return content, None`。**raw 是否为空就是「模型能不能说话」**——
+    能说话才值得再要一次工具，说不了话重试只会再异常一次。
+    """
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    monkeypatch.setenv("PLANNER_TOOLCALL_SALVAGE_RETRY", "on")
+    spy = _SpyLLM(
+        text_reply=json.dumps(_ARGS_OK, ensure_ascii=False),
+        tool_exc=RuntimeError("provider 不认 tools"))
+    b = PlanBuilder(llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+    plan = _build(b)
+    assert plan.plan_mode == "toolcall_fallback"
+    assert len(plan.steps) == 1
+    assert spy.tool_calls_n == 1 and spy.text_calls == 1   # 工具只试了一次

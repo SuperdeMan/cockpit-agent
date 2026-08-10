@@ -66,15 +66,15 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**4522 passed / 14 skipped / 0 failed**（单进程 22m54s，2026-08-10 实测，退出码 0）。
-较 2026-08-09 的 4490/16 净 **+32**：本日多批新增用例（其中收官会话 +18＝orchestrator 8
-[adaptive replan 自查 6 + `complexity_declared` 2] + `test/` 10 [off-tool 分类器参数化]），
-其余来自当日上午批——**4490 是 08-09 测的，上午批落在它之后**。
-skipped 16→14 是**少跳两条**（覆盖变多不是变少），无 failed。
-2026-08-10 分组实测：`pytest test/` **1137 passed / 9 skipped**（裸 `server` 导入冲突已修，
-该目录选集**不再有红**，但它仍不是项目基线命令——分母不同）、`orchestrator/` **1101 passed**、
-端侧 smoke **13/13**。HMI `node --test` **225/225**、Dashboard vitest **17/17** 为 2026-08-09
-实测，Go 网关数字沿用 2026-08-04 批次；2026-08-10 全天没有改前端、Go、`.env` 或 CI。
+**4601 passed / 14 skipped / 0 failed**（单进程 18m49s，2026-08-10 晚间实测，退出码 0）。
+较同日 4522 净 **+79**：端侧能力面两批（除雾 32 条 + 生活指数 38 条）+ 范例 clarify 型 11 条
+（余数来自选集间 import 顺序差异，§4.3 已有该纪律）。skipped 仍 14，无 failed。
+2026-08-10 晚间分组实测：`orchestrator/` **1184 passed**、`pytest test/` **1139 passed /
+9 skipped**（该目录选集不再有红，但它仍不是项目基线命令——分母不同）、端侧 smoke **13/13**、
+L0 discovery **76/76 exit 0**、gate L0 `--strict` **exit 0**、范例门禁域错配 **4/160=2.5%**、
+skills 门禁 PASS。HMI `node --test` **225/225**、Dashboard vitest **17/17** 为 2026-08-09
+实测，Go 网关数字沿用 2026-08-04 批次；2026-08-10 全天没有改前端、Go 或 CI
+（`.env.example`/compose 只加了 `PLANNER_TOOLCALL_SALVAGE_RETRY` 一项，见 §4.1）。
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
@@ -107,7 +107,11 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 ### 4.1 活跃待办（只列仍需行动的）
 
-**当前没有活跃待办。** 条件型 / 明确后置的入口全在 §4.2；接手时先读 §4.0 快照与 §4.3 读数纪律。
+| 待办 | 完成判据 | 入口 |
+|---|---|---|
+| **salvage 重试的 live 双臂 A/B**（2026-08-10 新立） | 实现已合入并有契约测试，但**有效性尚未在 live 上验证**——「实现了」不等于「修好了」。要回答两个数：① 重试后 MiniMax 走成 `toolcall` 的比例从 45~48% 涨到多少；② 多花的那次调用换来的通过率 Δ 是否为正。开关 `PLANNER_TOOLCALL_SALVAGE_RETRY=on\|off` 就是为这次 A/B 留的；单测 `test_salvage_retry_can_be_switched_off` 已证明**两臂真的不同**（§4.3 那条 A/B 前置纪律），但它不是 A/B 本身。跑批按运行手册 §2 同时设 provider/model/embedding 三项，且**跑批期间不许动工作树** | [findings §26.3](docs/design/2026-08-02-intent-routing-adversarial-findings.md)、[运行手册](docs/guides/intent-adversarial-testing.md) |
+
+其余条件型 / 明确后置的入口全在 §4.2；接手时先读 §4.0 快照与 §4.3 读数纪律。
 
 > 2026-08-10 全天五批（上午 P1/P0 收敛 → 下午三条候选取证 + weather-outing L3 claim + 提醒词形
 > → 下午生产侧范例修复 → 晚间两条新 P2 → 收官通道定性与换档对照）的**完整记录在**
@@ -128,9 +132,9 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 | M-B / M-C / M-D 明确后置项 | 13 张验收主卡已清零；跨域删除 saga、完整隐私管理/迁移仪式、持久治理扩面与 MCP 生产化覆盖按 GDPR 完备性、量产迁移或新消费方触发 | [总体验收](docs/reviews/2026-07-26-acceptance-review-m0a-m4.md) §10.2/§11.2/§12.2、[OwnerKey 契约](docs/conventions.md) §9.13 |
 | M2 / M3 产品化边界 | Ledger 自动续跑/任务中心，以及主动治理持久化、偏好学习、dashboard、远距 geocode 与真实商户均为显式未做；出现真实消费方或产品阶段后另立卡 | [M2 RFC](docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md) §9.6、[M3 RFC](docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md) §10.7 |
 | M4 声纹 / 视觉余项 | 真麦校准、语音注册入口、模板漂移治理、视觉多轮与 `vp_*` 指标消费仍未收口；进入真机量产验收或 v2 前启动 | [M4 RFC](docs/design/2026-07-25-m4-p4-voiceprint-vision-rfc.md) §11.5/§11.8、[声纹契约](docs/conventions.md) §9.11 |
-| MiniMax 主模型 `eligible=True` | **不是跑批问题，是方向问题**。三批读数 `f0af9c0` 141/147 → `32e8718` 141/147（raw 幻觉 8→3、不稳定 6→4、未声明 fallback 4→2）→ `5e8247d` 140/147（换池态，已回退）。**每批红灯都是从同一个边界池里重新抽的**，换掉具体红灯不提高整体资格概率；实测单元不稳定率 3~5% ⇒ 一趟零 unstable 概率个位数百分比。启动条件＝泓舟先拍一个方向：压底噪 / 换判据口径 / 接受主模型不出正式 baseline。**在此之前继续跑批期望值极低** | [findings §17.6/§19.2](docs/design/2026-08-02-intent-routing-adversarial-findings.md)、[最终 review §7](docs/reviews/2026-08-04-review-intent-adversarial-finalization.md) |
+| ~~MiniMax 主模型 `eligible=True`~~ **已决：不追求**（泓舟 2026-08-10） | **裁定＝接受主模型不出正式 baseline**，本条不再是待办。判据：DeepSeek 已在 `f0af9c0` 提供固定快照下的证据，baseline 的用途已满足；而**资格闸拒绝带病读数正是它的设计目的——它在正确工作，不该为了拿绿灯去松它**。三批读数 141/141/140 的红灯每次从同一个边界池重抽，实测单元不稳定率 3~5% ⇒ 一趟零 unstable 概率个位数百分比，继续跑批期望值极低。⚠ 因此**不要**再为「让 MiniMax 出 baseline」发起跑批，也不要以此为由动 gate 案例集或资格判据（§4.3 两条纪律） | [findings §17.6/§19.2](docs/design/2026-08-02-intent-routing-adversarial-findings.md)、[最终 review §7](docs/reviews/2026-08-04-review-intent-adversarial-finalization.md) |
 | 裸对象澄清族（留在门禁内，已立卡） | **三条路径已全部走完，该族目前无可用修法。** `nq.landmark.bare` 合并 11/20≈55% 的高方差边界句；`nq.landmark.explicit` 自己每条断言都过、被 relation `clarify_flip` 连累；同族第三条 `nq.city.bare`「上海」reviewed 未进池。路径 1「写 guide」实测**有害**（§18：4/10→1/10→退回 7/10，p≈0.02）；路径 3「换出预选池」执行并全量验证后由泓舟裁定回退（§19.5）；**路径 2「范例 schema 加 clarify 型」2026-08-10 已实现并合入**（schema+渲染+门禁+契约+11 条测试），但同批实测出它**治不了本族**：裸专名之间 IDF-Dice 全 0.000（检索是内容通道，而裸对象澄清是**形态判据**——这也解释了路径 1 为何有害），且澄清型范例天然与其「补全版」近重复（两条候选一条抢到明确请求 top-1、一条只靠 0.03 差距，全部撤回，**故仓库刻意没有 clarify.yaml**）。**下一次要动它得换判定形态（形态/句法特征），不是再加一层检索式知识** | 立卡整段写在语料 `test/eval_corpus/intent_adversarial/cases/negation_quotation.yaml` 的 `nq.landmark.bare` 头上；[findings §18/§19/**§25**](docs/design/2026-08-02-intent-routing-adversarial-findings.md)；机制契约 [`skills/exemplars/README.md`](skills/exemplars/README.md) §clarify 型 |
-| Planner 工具通道可靠性（`toolcall_salvage` 占比） | **已换档取证，是 provider 属性不是系统属性**：同一条用例 MiniMax 走成 toolcall **13/27（48%）** vs DeepSeek **15/15（100%）**（p≈0.00046）；跨域 20 条 stable 抽样 MiniMax **9/20（45%）** vs DeepSeek **20/20（100%）**（p≈0.00015），DeepSeek 两组 35 样本**零掉档**。⚠ **但差异显著不等于它贵**——那 20 条上两档通过率都是 20/20，代价只在**需要模型自己填结构化字段**的多阶段计划上兑现（MiniMax 内部 `toolcall` 91% vs `salvage` 50%）。选项＝换主模型 / salvage 轮强制重试工具通道 / 接受并始终分账（`meta.plan_modes` 已每批可见）。换主模型会牵动全部既有 baseline 与读数，**待泓舟拍板** | [findings §23/§24](docs/design/2026-08-02-intent-routing-adversarial-findings.md) |
+| Planner 工具通道可靠性（`toolcall_salvage` 占比） | **已换档取证，是 provider 属性不是系统属性**：同一条用例 MiniMax 走成 toolcall **13/27（48%）** vs DeepSeek **15/15（100%）**（p≈0.00046）；跨域 20 条 stable 抽样 MiniMax **9/20（45%）** vs DeepSeek **20/20（100%）**（p≈0.00015），DeepSeek 两组 35 样本**零掉档**。⚠ **但差异显著不等于它贵**——那 20 条上两档通过率都是 20/20，代价只在**需要模型自己填结构化字段**的多阶段计划上兑现（MiniMax 内部 `toolcall` 91% vs `salvage` 50%）。**已决（泓舟 2026-08-10）：维持 MiniMax-M3 主模型 + salvage 轮强制重试工具通道 + 保留分账观测**。不换主模型的判据＝换档会牵动全部既有 baseline 与读数，且「通过率跨 provider 不可直比」意味着 DeepSeek 的 147/147 不构成「它更准」的证据（§24.3）；重试是局部改动、不动任何 baseline、可 A/B 验证。实现见 §4.1 | [findings §23/§24](docs/design/2026-08-02-intent-routing-adversarial-findings.md) |
 | B3-2「广州塔」地标解析（高德侧） | **不进落域账**。2026-08-10 同坐标直连复测：geocode 对（兴趣点／广州塔真坐标）、`near=None` 重搜 top1 就是广州塔，只有带深圳偏置的关键词搜索会顶出「广州仄仄科技有限公司」2.4km。即 R1 去偏置重搜机制本身是对的，但它**要多打一次高德**，跑批并发下正是最易被限流的那一次；掉一次退回就近弱匹配，掉两次成「暂时无法确定」——两次红的两种形态由此解释。归高德 QPS 一族，出现真实用户投诉或做并发治理时再启动 | [复杂意图·地标/停车](docs/design/2026-07-07-complex-intent-landmark-parking-fixes.md)、判据与复测记在 `test/journeys/target_b.yaml` B3-2 注释 |
 
 ### 4.3 读数纪律

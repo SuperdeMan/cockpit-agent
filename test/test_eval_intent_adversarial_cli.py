@@ -3531,6 +3531,10 @@ def test_a_tag_hitting_several_tag_keys_is_flagged():
     ("json_no_action", False),
     ("toolcall_salvage", True),
     ("toolcall_salvage_no_action", True),
+    # 强制重试工具通道也没走成，用了第 1 轮抢救那份（2026-08-10 新增模式值）。
+    # 它**是**掉档：这一轮模型仍然是在自由文本里作答的。
+    ("toolcall_salvage_kept", True),
+    ("toolcall_salvage_kept_no_action", True),
     ("toolcall_fallback", True),
     ("toolcall_fallback_no_action", True),
     ("toolcall_degraded", True),

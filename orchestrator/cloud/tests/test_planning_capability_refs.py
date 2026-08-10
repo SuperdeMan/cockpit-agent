@@ -390,11 +390,23 @@ def test_build_retry_and_replan_use_one_catalog_and_one_parse_seam(monkeypatch):
     async def llm(_messages):
         return json.dumps(valid_wire)
 
+    tool_rounds: list[int] = []
+
     async def llm_tools(_messages, _tools):
         # First round refuses the tool. Its text is salvaged through the seam,
-        # then the second JSON round uses the same catalog object.
-        return json.dumps({"addressed": True,
-                           "steps": [{"id": "bad", "capability_ref": "missing"}]}), []
+        # then the second round uses the same catalog object.
+        #
+        # ⚠ 2026-08-10：掉档且模型仍吐了文本时，第 2 轮会被**强制重试工具通道**
+        # （`PLANNER_TOOLCALL_SALVAGE_RETRY`），不再退 JSON。本测试守的是
+        # 「两轮共用同一个 catalog、走同一条 parse 缝」，与第 2 轮走哪条通道无关——
+        # 所以这里跟着改的是**制造两轮的手段**，不是它断言的性质。
+        tool_rounds.append(1)
+        if len(tool_rounds) == 1:
+            return json.dumps({"addressed": True,
+                               "steps": [{"id": "bad",
+                                          "capability_ref": "missing"}]}), []
+        return "", [{"id": "c1", "name": planning._SUBMIT_PLAN_NAME,
+                     "arguments": valid_wire}]
 
     async def resolve(_query, top_k=1):
         return []

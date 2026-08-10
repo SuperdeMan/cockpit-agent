@@ -1728,6 +1728,7 @@ def _expected_units(cases, args) -> set[str]:
 # 判据：**分类器写完要拿两个方向的真实读数各验一次**，只验一边看不出误报。
 _OFF_TOOL_BASES = frozenset({
     "toolcall_salvage",     # 模型无视工具、直接吐文本，同轮抢救
+    "toolcall_salvage_kept",  # 同上，且**强制重试工具通道也没走成**，用了抢救那份
     "toolcall_fallback",    # 工具协议不可用后的第 2 轮纯 JSON
     "toolcall_degraded",    # 两轮全失败，计划由 _fallback 合成
 })
