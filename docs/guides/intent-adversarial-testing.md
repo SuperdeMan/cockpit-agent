@@ -379,8 +379,7 @@ python test/eval_intent_adversarial.py --suite gate --layer all --live \
 |---|---|---|
 | P0 | 裸地名澄清族（留在门禁内，已立卡） | `nq.landmark.bare` 合并 **11/20≈55%**（高方差边界句，不是稳定红）、`nq.landmark.explicit` 自己每条断言都过、被 relation 连累；同族第三条 `nq.city.bare` 未进池。**路径 1「写 guide」实测否掉**（§18：4/10→1/10→退回 7/10，p≈0.02 有害）；**路径 3「换出预选池」执行并全量验证后回退**（§19.5：总分没变好且会冻结 baseline 写入）。判据：**不要为了某个模型的问题去改尺子**。路径 2 未启动 |
 | P0 | 主模型 `eligible=True` 的方向 | 不是跑批问题：单元不稳定率 3.3% ⇒ 一趟零 unstable 概率约 1.7%。先决定压底噪 / 改口径 / 接受主模型不出正式 baseline（findings §17.6） |
-| P2 | `nq.hvac-keep.dont`「空调先别关」检不回任何范例 | 五字短句词法 <0.34、语义 <0.65 两条通道全不达，`exemplars=[]`，读数 10/12 且失败形态是真下 `hvac.off`。**不是知识缺**（常驻否定 policy 每轮都在），是**短句检索够不着**（findings §21.3 末） |
-| P2 | `cp.adaptive.weather-outing` 的 L1 稳定性 | **L3 已还清**（journey `A1-5` + claim `adaptive_replan_continuity`，两趟各 1/1）。L1 三趟 3/3、2/3、4/5 ＝ 9/11 未达两趟 ×3 全过；两次红是 clarify 与空 replan，都不是落错域（findings §20.4） |
+| P2 | `cp.adaptive.weather-outing`：**首轮把 `adaptive` 判成 `simple`** | L3 已还清；`replan 空计划`已补确定性守卫（§22.2/§22.3）。当前主要问题在**首轮 complexity 分诊**：2026-08-10 下午 36 样本 **10 次（≈28%）**首轮判 simple，上午 11 样本 **0 次**，注入逐字相同、工作树无改动可解释（§22.5）。⚠ **不要再加知识**——guide few_shot 里就摆着 `complexity=adaptive` 且每轮注入 |
 
 2026-08-10 已收口（不再是待办）：三条未晋级候选**全部按跨进程契约取证完毕**——
 `cp.hvac-news.swapped` 2/6（尺子抓对了 `limit="今天的"`，维持严格口径）、
@@ -389,6 +388,9 @@ A/B 5/12 → 11/12、p=0.027、七条护栏零回归，findings §21）、
 `nq.match.lastweek` 5/6（边界方差，不动）；
 weather-outing 的 L3 claim 已建（见上）；snooze /「离开X」/「到X之前」三个提醒词形
 已补端到端用例，两趟各 3/3（findings §20.1/§20.4/§20.5）。
+`nq.hvac-keep.dont` 的「短句检索够不着」已定性并**证伪了修法**：洞是真的
+（0.305 vs 0.34，对称 Dice 惩罚短句），但补上够得着的范例后 15/18 → 16/18、
+p=1.000，已退回（§22.1）。**该用例残余按模型方差记账，不要再当检索问题查。**
 
 2026-08-10 收口：`f0af9c0` 点名的 6 条 unstable 全部转绿（两条真缺陷 §17.2/§17.3、
 三条单跑即全绿、一条随修复转绿）；`os.open.sunroof` 的范例吸引子已补对照（§17.7）；
@@ -402,6 +404,8 @@ weather-outing 的 L3 claim 已建（见上）；snooze /「离开X」/「到X�
 - [ ] 改了口径 → 规格 §12 改了吗？引用过旧数的文档标注作废了吗？
 - [ ] 新写的断言，**先注入缺陷验证过它会红**吗？（否定命题守不住肯定性质）
 - [ ] 报出的每个比率，分子分母都看过吗？分母为 0 的地方写的是 `null` 不是 100% 吧？
+- [ ] 做 A/B 之前，**证明过两臂真的不同**吗？（2026-08-10：给 `replan()` 加了形参，
+      harness 没跟着传，24 个样本两臂逐字相同，差点据此否掉自己的守卫——§22.4）
 - [ ] 跑 pytest 时**没有**带 `PYTHONIOENCODING=utf-8` 吧？带了会让拉子进程的用例
       在 Windows 上假红（子进程按 UTF-8 写、父进程按 GBK 解，findings §20.6）。
 - [ ] 全量 `pytest` 有红 → **与 clean HEAD 逐条对照过**吗？

@@ -506,7 +506,7 @@ async def run_planner_turn(turn, agents, builder, *, granted_permissions=None):
     # but it must not grant the harness permission to manufacture that production
     # behavior when the initial planner classification is wrong.
     if plan.complexity == "adaptive":
-        for expected_replan in turn.expected.replans:
+        for replan_index, expected_replan in enumerate(turn.expected.replans):
             observation = dict(expected_replan.after["result"])
             completed = next(
                 (step for step in plan.steps
@@ -525,6 +525,12 @@ async def run_planner_turn(turn, agents, builder, *, granted_permissions=None):
                 working_set=working_set,
                 skill_names=list(plan.skills or []),
                 exemplar_names=list(plan.exemplars or []),
+                # 与 LoopController 逐字对齐：adaptive 声明只在**第一次** replan 上
+                # 兑现成一次自查。2026-08-10 抓到的漂移——生产已经在传这个形参，
+                # harness 没跟上，于是 L1 量的是一条生产里已经不存在的 replan 行为，
+                # 而对抗语料的 `replans` gold 正压在这条路径上（findings §22.4）。
+                # 判据同 §13.1：**执行器有这个形参，不等于尺子也在传它。**
+                adaptive=(replan_index == 0),
             )
             replans.append(snapshot_plan(decision.to_plan(replan_goal)))
     return DecisionSnapshot(

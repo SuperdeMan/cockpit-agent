@@ -1343,3 +1343,48 @@ after 稳定检回 `chitchat#12@vec:0.79` 居首。证据强度与 §18 否掉�
 回归：L0 discovery **76/76**、gate `--strict` **25/25 exit 0**、
 `eval_exemplars` **254 条 / 20 域 PASS**（域错配率 2.5%，上限 20%）、`eval_skills` PASS、
 `orchestrator/` **1093 passed**、端侧 smoke **13/13**。逐条证据 findings **§21**。
+
+## 20. 两条新 P2 的收口：一条被证伪、一条改对了作用域（2026-08-10 晚）
+
+**① `nq.hvac-keep.dont`「空调先别关」——洞是真的，不是病因。**
+词法 top-1 是 `chitchat#9`「音响先别关，我还听着呢」的 **0.305**，阈值 0.34，
+差在它的尾巴把**对称 Dice 的分母**撑大了；语义也不到 0.65 ⇒ `exemplars=[]`。
+修法「天窗先别关」离线选得很干净（目标句 0.502 居首、全部 hvac/sunroof 肯定护栏
+0.000，不给任何肯定族当吸引子，且保持跨对象迁移）。
+live A/B：**15/18 → 16/18，双尾 Fisher p=1.000**；范例 6/6 趟都检回，护栏 18/18
+零回归也零收益。按「加了知识要拿对照跑证伪」退回，只留结论注释。
+> **判据：诊断出一个洞，不等于这个洞就是病因。** 该用例残余从此按模型方差记账。
+> 顺带把「动 `EXEMPLAR_LEX_THRESHOLD` 治短句分母」的预期收益打了折——**不能再拿这条论证**。
+
+**② weather-outing 的 `replan 出空计划`——补对称守卫，且收窄作用域。**
+`replan()` 早有一次性纠偏，但只认目标文本里的条件词；`complexity=adaptive` 是
+**计划自己的声明**，replan 收场即自相矛盾，而「今天的天气适合去哪玩」的 goal 一个
+条件词都没有 ⇒ 这一路从来没被纠偏过。改法：新增 `adaptive` 形参共用那次机会，
+**两条反馈话术按来源分开写**（条件目标比前件 / adaptive 补后续步）。
+第一版对每次 replan 都生效是错的——adaptive **正常收尾**时最后一次 replan 本就返回
+done，等于给每个 adaptive 请求白加一次 LLM 往返；收窄到 `replans == 0`。
+> **判据：守卫的作用域按「什么时候才算矛盾」定，不是按「什么时候能触发」定。**
+六条单测 + 两次反向构造（摘 `or adaptive` → 3 红；摘 `and replans == 0` → 作用域那条红）。
+
+**③ 过程中抓到尺子漂移，且它让我的第一组对照作废。**
+带守卫 4 趟（7/12）+ stash 掉守卫 4 趟（10/12），正要定性「守卫有害」时才查到
+**L1 harness 调 `builder.replan(...)` 压根没传 `adaptive`**——两臂逐字相同，
+24 个样本对守卫什么都没测。已让 harness 逐字对齐 `LoopController`（含 `replan_index==0`）。
+> **判据：A/B 之前先证明两臂真的不同。**（§13.1「执行器有这个形参≠尺子也在传它」第四次兑现）
+> 这不只为测守卫——对抗语料的 `replans` gold 一直压在一条生产里已经变了的路径上。
+
+**④ 真正的发现：首轮把 `adaptive` 判成 `simple`。**
+harness 对齐后重跑 4 趟：8/12，**4 次失败全是首轮 `complexity='simple'`、
+`replan_count=0`**。当天下午 36 样本合计：首轮 simple **10 次（≈28%）**、
+empty-replan 1 次、clarify 0 次；而当天**上午 11 样本里首轮 simple 一次都没有**。
+注入逐字相同（`weather-outing@lex:24` + 三条常驻、`info#7@vec:0.74` + `nearby#23@vec:0.69`
+在四份报告里名单与分数完全一致）、同 SHA 族、同 provider、检索零降级，
+**工作树没有任何改动能解释它**。
+⇒ 这条用例的账从「replan 空」换成「**complexity 分诊**」；而 guide 的 few_shot 里就摆着
+`complexity=adaptive` 且每轮注入——**知识在场、不被照做**，与 §18 同形，
+**不要再往这条加知识**。
+⚠ 上午 9/11 与下午 25/36 **不要合并平均**：失败形态分布都换了。
+
+回归：`orchestrator/` **1099 passed**（+6 新单测）、端侧 smoke **13/13**、
+L0 discovery **76/76**、gate `--strict` **25/25 exit 0**、
+`eval_exemplars` **254 条 / 20 域 PASS**。逐条证据 findings **§22**。
