@@ -420,3 +420,138 @@ def test_boundaries_gate_needs_versioned_threshold(tmp_path):
     root = _two_domains(tmp_path)
     _ledger(root, "rulings: []\n", lex_min="")
     assert any("lex_min" in e for e in _run(root))
+
+
+# ── ⑤ clarify 型范例（2026-08-10，裸对象澄清族路径 2）────────────────────────
+#
+# 机制要守的性质有三条，逐条都对应一个「错了会很贵」：
+#   ① plan 与 clarify **互斥且必居其一**——两个都写等于「既落域又澄清」，注进 prompt
+#      是纯噪声；一个都没有是半条范例。
+#   ② 渲染**只示范两个通道共有的那一半**（steps 为空）。「怎么标记这是澄清」在
+#      toolcall 通道（goal 前缀）与文本通道（clarify 对象）里形状不同，抄死一种会让
+#      模型输出在另一个通道被判解析失败——把「模型判断错」变成「模型说不出话」。
+#   ③ clarify 型不含 capability_ref，所以**不受「能力不在本请求 catalog 就整条省略」
+#      影响**——它本来就不指向任何能力。
+#
+# ⚠ 本仓当前**没有生产 clarify 范例**，是实测后的决定，不是漏做：见 README 的
+# 「clarify 型」一节与 findings §25。所以这一组全部用临时目录造数据。
+
+
+def _clarify_root(tmp_path):
+    root = tmp_path / "exemplars"
+    _write(root, "clarify",
+           "domain: clarify\nexemplars:\n"
+           "  - text: 帮我订一下\n    clarify: 只说了订，没说订什么\n"
+           "    source: manual\n")
+    _write(root, "nearby",
+           "domain: nearby\nexemplars:\n"
+           "  - text: 附近有什么咖啡店\n    plan:\n      - agent: nearby\n"
+           "        intent: nearby.search\n    source: trace\n")
+    return root
+
+
+def test_clarify_exemplar_loads_and_is_flagged(tmp_path):
+    items = ex.ExemplarStore(root=_clarify_root(tmp_path)).load(force=True)
+    clarifies = [e for e in items if e.is_clarify]
+    assert len(clarifies) == 1
+    assert clarifies[0].plan == ()
+    assert clarifies[0].clarify == "只说了订，没说订什么"
+
+
+def test_plan_and_clarify_are_mutually_exclusive(tmp_path):
+    """两个都写 = 既要落域又要澄清。运行时丢掉这一条（fail-open 不猜意思）。"""
+    root = tmp_path / "exemplars"
+    _write(root, "clarify",
+           "domain: clarify\nexemplars:\n"
+           "  - text: 两个都写\n    clarify: 理由\n    plan:\n      - agent: nearby\n"
+           "        intent: nearby.search\n    source: manual\n"
+           "  - text: 只有澄清\n    clarify: 理由\n    source: manual\n")
+    items = ex.ExemplarStore(root=root).load(force=True)
+    assert [e.text for e in items] == ["只有澄清"]
+
+
+def test_neither_plan_nor_clarify_is_dropped(tmp_path):
+    root = tmp_path / "exemplars"
+    _write(root, "clarify",
+           "domain: clarify\nexemplars:\n"
+           "  - text: 什么都没有\n    source: manual\n")
+    assert ex.ExemplarStore(root=root).load(force=True) == []
+
+
+def test_clarify_renders_channel_agnostic_empty_steps(tmp_path):
+    """渲染必须是空 steps + 自然语言理由，**不得**出现任何一个通道的专属结构。"""
+    items = ex.ExemplarStore(root=_clarify_root(tmp_path)).load(force=True)
+    line = ex._render_one([e for e in items if e.is_clarify][0])
+    assert "帮我订一下" in line
+    assert "[]" in line
+    assert "只说了订，没说订什么" in line
+    # toolcall 通道的 goal 前缀、文本通道的 clarify 对象键——一个都不许抄进来
+    assert "需要澄清：" not in line
+    assert '"clarify"' not in line and "question" not in line and "options" not in line
+
+
+def test_clarify_survives_when_capability_refs_are_empty(tmp_path):
+    """普通范例的能力不在本请求 catalog 会整条省略；clarify 型不指向能力，不该被牵连。"""
+    items = ex.ExemplarStore(root=_clarify_root(tmp_path)).load(force=True)
+    block, injected, _ = ex.render_block(items, budget=10_000, capability_refs={})
+    assert [e.domain for e in injected] == ["clarify"]      # nearby 那条因无 ref 被省略
+    assert "[]" in block
+
+
+def test_clarify_reason_is_length_capped(tmp_path):
+    """理由进 prompt，长了挤 EXEMPLAR_BUDGET——加知识也要花预算（M5 P2 教训）。"""
+    root = tmp_path / "exemplars"
+    _write(root, "clarify",
+           "domain: clarify\nexemplars:\n"
+           f"  - text: 超长理由\n    clarify: {'很' * 80}\n    source: manual\n")
+    item = ex.ExemplarStore(root=root).load(force=True)[0]
+    assert len(item.clarify) == ex._CLARIFY_REASON_MAX
+
+
+def _contract(root):
+    import sys
+    from pathlib import Path
+    _t = str(Path(__file__).resolve().parents[3] / "test")
+    if _t not in sys.path:
+        sys.path.insert(0, _t)
+    import eval_exemplars as ee
+    return ee.lane_contract(root)
+
+
+def test_gate_rejects_plan_and_clarify_together(tmp_path):
+    root = tmp_path / "exemplars"
+    _write(root, "clarify",
+           "domain: clarify\nexemplars:\n"
+           "  - text: 两个都写\n    clarify: 理由\n    plan:\n      - agent: nearby\n"
+           "        intent: nearby.search\n    source: manual\n")
+    assert any("互斥" in e for e in _contract(root))
+
+
+def test_gate_rejects_clarify_written_as_a_question(tmp_path):
+    """写成问句是常见误用：范例只给**理由**，怎么问由输出通道决定。"""
+    root = tmp_path / "exemplars"
+    _write(root, "clarify",
+           "domain: clarify\nexemplars:\n"
+           "  - text: 帮我订一下\n    clarify: 您想订什么？\n    source: manual\n")
+    assert any("问句" in e for e in _contract(root))
+
+
+def test_gate_accepts_a_well_formed_clarify_exemplar(tmp_path):
+    root = tmp_path / "exemplars"
+    _write(root, "clarify",
+           "domain: clarify\nexemplars:\n"
+           "  - text: 帮我订一下\n    clarify: 只说了订，没说订什么\n    source: manual\n")
+    assert _contract(root) == []
+
+
+def test_gate_flags_same_text_as_both_clarify_and_routed(tmp_path):
+    """同一句话在一处标澄清、另一处标落域——语料自相矛盾，注进 prompt 是纯噪声。"""
+    root = tmp_path / "exemplars"
+    _write(root, "clarify",
+           "domain: clarify\nexemplars:\n"
+           "  - text: 附近有什么咖啡店\n    clarify: 理由\n    source: manual\n")
+    _write(root, "nearby",
+           "domain: nearby\nexemplars:\n"
+           "  - text: 附近有什么咖啡店\n    plan:\n      - agent: nearby\n"
+           "        intent: nearby.search\n    source: trace\n")
+    assert any("同句被标成不同落域" in e for e in _contract(root))

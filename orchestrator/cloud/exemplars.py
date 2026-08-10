@@ -57,7 +57,19 @@ _KNOWN_FILE_KEYS = {"domain", "exemplars", "version"}
 # 目录下的非范例文件（评测/治理产物，不是 <domain>.yaml）。不排除的话每轮重扫都会为它
 # 打两条 warning（未知顶层字段 + 缺 exemplars），30s 一次刷满日志。
 _RESERVED_FILES = {"boundaries.yaml"}
-_KNOWN_ITEM_KEYS = {"id", "text", "plan", "source", "added", "tags", "note"}
+_KNOWN_ITEM_KEYS = {"id", "text", "plan", "clarify", "source", "added", "tags", "note"}
+# clarify 型范例（2026-08-10，裸对象澄清族路径 2）：正确产物是「先别落域」而不是落到
+# 某个域，`plan` 表达不了它。两者**互斥且必居其一**（校验在 `_parse_item` 与门禁车道 1）。
+#
+# ⚠ `clarify` 的值是**澄清的理由**（一句话），刻意**不是**澄清话术——因为
+# 「怎么表达这是澄清」在两个输出通道里形状不同：
+#   - toolcall 通道：`steps=[]` + `goal` 以「需要澄清：」开头（clarify 不在 schema 里，
+#     真栈 B4-1 两轮教训，见 `planning.py::_toolcall_spec` 注释）；
+#   - 文本通道：`{"addressed":true,"steps":[],"clarify":{"question":…,"options":[…]}}`。
+# 范例只示范**两个通道共有的那一半**（steps 为空），把具体形状交回给 prompt 里恒拼的
+# 澄清段。判据来自 AGENTS.md §4.3：**示范输出形状之前先确认当前输出通道**——抄错通道
+# 会让模型输出被判解析失败，把「模型判断错」变成「模型说不出话」。
+_CLARIFY_REASON_MAX = 40
 # source 封闭集：范例的**来路**是治理信息（哪些是死资产盘活、哪些是真实 badcase 转化），
 # 自由文本会让 P2 的「范例来源结构」统计立刻失效。
 SOURCES = ("manifest", "trace", "manual")
@@ -73,9 +85,14 @@ class Exemplar:
     added: str = ""
     tags: tuple = ()
     path: str = ""
+    clarify: str = ""       # 非空 = clarify 型（plan 必为空）；值是澄清**理由**不是话术
 
     def intents(self) -> list[str]:
         return [str(s.get("intent") or "") for s in self.plan if s.get("intent")]
+
+    @property
+    def is_clarify(self) -> bool:
+        return bool(self.clarify)
 
 
 def _chars(text: str) -> str:
@@ -194,10 +211,24 @@ class ExemplarStore:
             logger.warning("exemplar %s#%d 含未知字段 %s——已忽略", path.name, idx, sorted(bad))
         text = str(r.get("text") or "").strip()
         steps = ExemplarStore._parse_plan(r.get("plan"))
-        if not text or not steps:
-            logger.warning("exemplar %s#%d 缺 text 或 plan（须至少一步且带 intent），跳过",
+        clarify = str(r.get("clarify") or "").strip()
+        if not text:
+            logger.warning("exemplar %s#%d 缺 text，跳过", path.name, idx)
+            return None
+        if clarify and steps:
+            # 两个都写＝这条范例在说「既要落域又要澄清」，注进 prompt 是纯噪声。
+            # 运行时 fail-open 的姿态是**丢掉这一条**而不是猜一个意思（门禁车道 1 硬失败）。
+            logger.warning("exemplar %s#%d 同时有 plan 与 clarify（互斥），跳过",
                            path.name, idx)
             return None
+        if not clarify and not steps:
+            logger.warning("exemplar %s#%d 缺 plan 与 clarify（须其一；plan 至少一步且带"
+                           " intent），跳过", path.name, idx)
+            return None
+        if len(clarify) > _CLARIFY_REASON_MAX:
+            logger.warning("exemplar %s#%d clarify 理由超 %d 字，截断",
+                           path.name, idx, _CLARIFY_REASON_MAX)
+            clarify = clarify[:_CLARIFY_REASON_MAX]
         source = str(r.get("source") or "manual").strip().lower()
         if source not in SOURCES:
             logger.warning("exemplar %s#%d source=%r 非法（%s）——按 manual 处理",
@@ -210,7 +241,7 @@ class ExemplarStore:
         return Exemplar(
             eid=str(r.get("id") or f"{domain}#{idx}"), domain=domain, text=text,
             plan=tuple(steps), source=source, added=str(r.get("added") or ""),
-            tags=tuple(str(t) for t in tags_raw), path=str(path))
+            tags=tuple(str(t) for t in tags_raw), path=str(path), clarify=clarify)
 
     @staticmethod
     def _parse_plan(raw) -> list[dict]:
@@ -440,6 +471,12 @@ _BLOCK_HEAD = (
 
 
 def _render_one(e: Exemplar, capability_refs=None) -> str | None:
+    if e.is_clarify:
+        # **只示范两个通道共有的那一半**：steps 为空。具体怎么标记「这是澄清」
+        # （toolcall 的 goal 前缀 vs 文本通道的 clarify 对象）交回给 prompt 里恒拼的
+        # 澄清段——范例抄死一种形状就会在另一个通道里制造解析失败（AGENTS.md §4.3）。
+        # 也正因为不含 capability_ref，它不受「能力不在本请求 catalog 就整条省略」影响。
+        return f"- 用户：『{e.text}』→ []（信息不足，按上文澄清规则先反问：{e.clarify}）"
     resolved = []
     for index, step in enumerate(e.plan, 1):
         agent_id = str(step.get("agent") or "").strip()

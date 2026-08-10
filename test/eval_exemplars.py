@@ -2,7 +2,8 @@
 
 车道：
   1) **契约静态校验**（CI 阻断 + evolve nightly 门禁）：文件级严格校验（顶层映射 /
-     domain=文件名 / exemplars 是列表 / 每条 text·plan 齐 / source 封闭集 / tags 列表）
+     domain=文件名 / exemplars 是列表 / 每条 text 齐、且 plan 与 clarify **互斥必居其一**
+     / source 封闭集 / tags 列表）
      + **intent 存在性**（必须真实存在于 agents/*/manifest.yaml ∪ 端侧意图集——typo 守卫，
      照抄 eval_skills 的 expect_* 校验）+ **全局同句冲突**（同一句话在两处被标成不同落域
      ＝语料自相矛盾，注进 prompt 是纯噪声）。运行时 loader 对这些是 fail-open 跳过，
@@ -349,8 +350,27 @@ def lane_contract(root: Path) -> list[str]:
                             f"与 T2 继承都按 eid 定位，重复即指错条目")
             eids[eid] = tag
             plan = r.get("plan")
-            if not isinstance(plan, list) or not plan:
-                errs.append(f"{tag}: plan 必须是非空列表")
+            clarify = str(r.get("clarify") or "").strip()
+            has_plan = isinstance(plan, list) and bool(plan)
+            # clarify 型范例（裸对象澄清族路径 2）：正确产物是「先别落域」，plan 表达不了。
+            # 两者互斥且必居其一——同时写等于说「既落域又澄清」，注进 prompt 是纯噪声。
+            if clarify and has_plan:
+                errs.append(f"{tag}: plan 与 clarify 互斥（同时写等于既要落域又要澄清）")
+                continue
+            if clarify:
+                if len(clarify) > ex._CLARIFY_REASON_MAX:
+                    errs.append(f"{tag}: clarify 理由 {len(clarify)} 字，上限"
+                                f" {ex._CLARIFY_REASON_MAX}——它进 prompt，长了挤预算")
+                # clarify 写成话术是常见误用：范例只该给**理由**，具体怎么问由 prompt 里
+                # 恒拼的澄清段按当前输出通道决定（toolcall 与文本通道形状不同）。
+                if clarify.endswith(("？", "?")):
+                    errs.append(f"{tag}: clarify 应写澄清**理由**而不是问句"
+                                f"——话术形状随输出通道变，抄死会在另一个通道解析失败")
+                if text:
+                    by_text.setdefault(text, set()).add("<clarify>")
+                continue
+            if not has_plan:
+                errs.append(f"{tag}: plan 必须是非空列表（或改用 clarify 型）")
                 continue
             for pos, s in enumerate(plan):
                 if not isinstance(s, dict) or not str(s.get("intent") or "").strip():
