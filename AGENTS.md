@@ -108,10 +108,20 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 
 ### 4.1 活跃待办（只列仍需行动的）
 
-**当前没有活跃待办。** 条件型 / 明确后置的入口全在 §4.2；接手时先读 §4.0 快照与 §4.3 读数纪律。
+2026-08-10 深夜完成外部评审（GPT 仓库 review）逐条核实与采纳裁决，产出 6 个批次方案文档，
+裁决总览 [`docs/reviews/2026-08-10-external-review-adoption.md`](docs/reviews/2026-08-10-external-review-adoption.md)。
+两个安全断言（P0 执行旁路 / P1-high T2 重跑）**已逐行核实为真**：
 
-> 2026-08-10 全天七批的**完整记录在** [`docs/agents-history.md`](docs/agents-history.md)
-> **§15–§23**，逐条证据在 `docs/design/2026-08-02-intent-routing-adversarial-findings.md`
+| 待办 | 状态 | 权威入口 |
+|---|---|---|
+| **B1 执行安全停止线**（P0：`server.py:806` CLOUD-DEGRADED-LOCAL 绕过危险动作确认 + `val.py:212` VAL 不拒绝；P1-high：`loop.py:255` `elif streamed` 不可达致部分输出后重跑） | **待实施，当前最高优先级** | [B1 方案](docs/design/2026-08-10-b1-execution-safety-stopline.md) |
+| **B2 意图门禁进 CI + 主干治理**（L0 strict 目前不在 CI；管道吞码机制化根治） | 待实施，可与 B1 并行；ci.yml/分支保护动手前需泓舟确认 | [B2 方案](docs/design/2026-08-10-b2-gate-ci-branch-governance.md) |
+
+⚠ **阶段性冻结令**：B1 完成前**不新增业务 Agent**（外部评审不做清单第 4 条，已采纳；
+B1 方案 §4 验收判据第 6 条兑现时撤销本条）。
+
+> 2026-08-10 全天批次的**完整记录在** [`docs/agents-history.md`](docs/agents-history.md)
+> **§15–§24**，逐条证据在 `docs/design/2026-08-02-intent-routing-adversarial-findings.md`
 > **§17–§26**。本节按约定**只留状态、不留流水**——沉淀下来的判据在 §4.3，数字在 §4.0。
 
 ### 4.2 延后 / 条件待办索引（不进入当前主线）
@@ -129,6 +139,8 @@ fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一
 | M4 声纹 / 视觉余项 | 真麦校准、语音注册入口、模板漂移治理、视觉多轮与 `vp_*` 指标消费仍未收口；进入真机量产验收或 v2 前启动 | [M4 RFC](docs/design/2026-07-25-m4-p4-voiceprint-vision-rfc.md) §11.5/§11.8、[声纹契约](docs/conventions.md) §9.11 |
 | 裸对象澄清族（**已知无解状态，不是待办**） | **三条路径已全部走完，该族目前无可用修法。** `nq.landmark.bare` 合并 11/20≈55% 的高方差边界句；`nq.landmark.explicit` 自己每条断言都过、被 relation `clarify_flip` 连累；同族第三条 `nq.city.bare`「上海」reviewed 未进池。路径 1「写 guide」实测**有害**（§18：4/10→1/10→退回 7/10，p≈0.02）；路径 3「换出预选池」执行并全量验证后由泓舟裁定回退（§19.5）；**路径 2「范例 schema 加 clarify 型」2026-08-10 已实现并合入**（schema+渲染+门禁+契约+11 条测试），但同批实测出它**治不了本族**：裸专名之间 IDF-Dice 全 0.000（检索是内容通道，而裸对象澄清是**形态判据**——这也解释了路径 1 为何有害），且澄清型范例天然与其「补全版」近重复（两条候选一条抢到明确请求 top-1、一条只靠 0.03 差距，全部撤回，**故仓库刻意没有 clarify.yaml**）。**下一次要动它得换判定形态（形态/句法特征），不是再加一层检索式知识** | 立卡整段写在语料 `test/eval_corpus/intent_adversarial/cases/negation_quotation.yaml` 的 `nq.landmark.bare` 头上；[findings §18/§19/**§25**](docs/design/2026-08-02-intent-routing-adversarial-findings.md)；机制契约 [`skills/exemplars/README.md`](skills/exemplars/README.md) §clarify 型 |
 | B3-2「广州塔」地标解析（高德侧） | **不进落域账**。2026-08-10 同坐标直连复测：geocode 对（兴趣点／广州塔真坐标）、`near=None` 重搜 top1 就是广州塔，只有带深圳偏置的关键词搜索会顶出「广州仄仄科技有限公司」2.4km。即 R1 去偏置重搜机制本身是对的，但它**要多打一次高德**，跑批并发下正是最易被限流的那一次；掉一次退回就近弱匹配，掉两次成「暂时无法确定」——两次红的两种形态由此解释。归高德 QPS 一族，出现真实用户投诉或做并发治理时再启动 | [复杂意图·地标/停车](docs/design/2026-07-07-complex-intent-landmark-parking-fixes.md)、判据与复测记在 `test/journeys/target_b.yaml` B3-2 注释 |
+| **外部评审采纳批次 B3/B4**（DEPLOY_PROFILE 生产配置档 / Capability Pack v1） | B3 排 B1 之后近期；B4 的 CI 完整性检查可先行、单一声明源随后。均已出完整方案，接手直接读方案文档 | [B3 方案](docs/design/2026-08-10-b3-deploy-profile-fail-closed.md)、[B4 方案](docs/design/2026-08-10-b4-capability-pack.md)、[裁决总览](docs/reviews/2026-08-10-external-review-adoption.md) |
+| **外部评审采纳批次 B5/B6**（Planner 重试表驱动+流式统一 / ActionabilityClassifier shadow） | **条件启动**，条件写死在各自方案 §1：B5=下次加重试规则或新流式路径前必做（此前 planning.py 冻结新增 `elif` 守卫）；B6=真实流量分母就位或裸对象澄清族再成主要矛盾。B6 与本表「裸对象澄清族已知无解」条目呼应——它就是那条「换判定形态」的预留出口 | [B5 方案](docs/design/2026-08-10-b5-planner-retry-stream-refactor.md)、[B6 方案](docs/design/2026-08-10-b6-actionability-forward.md) |
 
 ### 4.3 读数纪律
 
