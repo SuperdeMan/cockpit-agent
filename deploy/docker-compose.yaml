@@ -6,6 +6,9 @@ name: car-agent
 # Compose file: that would make deploy/ the project directory and bypass root .env.
 
 x-python-env: &python-env
+  # B3 部署形态闸：dev（默认，零校验，逐字现状）| demo（软校验，聚合 warning）|
+  # prod（硬校验，任一 fail-open 配置即拒绝启动）。校验表见 runtime/profile.py::CHECKS。
+  DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
   REGISTRY_ADDR: registry:50051
   LLM_GATEWAY_ADDR: llm-gateway:50052
   MEMORY_ADDR: memory:50053
@@ -88,7 +91,11 @@ services:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: cockpit
-      POSTGRES_PASSWORD: cockpit
+      # B3：口令抽成 env（dev 缺省 cockpit=逐字现状，prod 必须覆盖，见 profile 强制表第 8 项）。
+      # 改这个值时**下面所有 POSTGRES_DSN 会跟着变**（同一个 ${POSTGRES_PASSWORD}），
+      # 但根 .env 里若另有一行写死口令的 POSTGRES_DSN，宿主侧脚本仍会用旧值——
+      # 强制表第 8 项同时校验 DSN 不内嵌默认口令，就是为了挡这个不一致。
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cockpit}
       POSTGRES_DB: cockpit
     ports: ["5432:5432"]
     healthcheck:
@@ -120,7 +127,7 @@ services:
     environment:
       NATS_URL: nats://nats:4222
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+      POSTGRES_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpit}@postgres:5432/cockpit
       # R4.1 P0 语义路由：capability 向量 embedding 经 llm-gateway（→百炼 text-embedding-v4，
       # 与 memory 同源），维度须与 LLM_EMBED_DIMENSIONS 一致。不加 depends_on llm-gateway：
       # 启动时序由 store 的按需重探兜底（无 embed 源时诚实降级关键词路径）。
@@ -252,7 +259,7 @@ services:
     volumes: *certs-vol
     environment:
       <<: *python-env
-      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+      POSTGRES_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpit}@postgres:5432/cockpit
       EMBED_DIM: ${EMBED_DIM:-1024}   # 须与 LLM_EMBED_DIMENSIONS 一致（百炼 v4 默认 1024）
       # 合成会话（含旧 memtest- 客户端标记）按 session_id 前缀跳过 LLM 抽取巩固；
       # 只有 runner 签发、经专用字段传递且绑定 run/user/session 的短时 memory capability
@@ -519,7 +526,7 @@ services:
       BING_SEARCH_KEY: ${BING_SEARCH_KEY:-}
       # M2 P0 Task Ledger：后台异步深调研的持久任务账本（可查询/可取消/可诚实报告中断）。
       # 无 PG → 账本静默禁用，异步调研仍照跑，只是受理话术不承诺可停可问。
-      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+      POSTGRES_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpit}@postgres:5432/cockpit
       LEDGER_ORPHAN_TTL_S: ${LEDGER_ORPHAN_TTL_S:-90}
       RESEARCH_TASK_DEADLINE_S: ${RESEARCH_TASK_DEADLINE_S:-900}
       RESEARCH_TASK_LLM_MAX: ${RESEARCH_TASK_LLM_MAX:-6}
@@ -540,7 +547,7 @@ services:
       <<: *python-env
       AGENT_PORT: "50074"
       # PG 持久 + 到点调度（无 PG 内存降级重启丢失；无 NATS 仅日志不推送）
-      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+      POSTGRES_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpit}@postgres:5432/cockpit
       REMINDER_POLL_S: ${REMINDER_POLL_S:-5}
       REMINDER_TZ: ${REMINDER_TZ:-Asia/Shanghai}
     depends_on:
@@ -586,7 +593,7 @@ services:
       AGENT_PORT: "50069"
       # 用户自建场景 PG 持久（无 PG 内存降级、重启丢失）；车况镜像/主动建议走 NATS
       # （无 NATS：退出场景改走反向默认表恢复，不影响激活主链路）
-      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+      POSTGRES_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpit}@postgres:5432/cockpit
     depends_on:
       registry:
         condition: service_healthy
@@ -635,6 +642,8 @@ services:
     <<: *restart
     build: { context: .., dockerfile: observability/collector/Dockerfile }
     environment:
+      # collector 不建 gRPC server，profile 闸在 main.py 进程入口显式调（B3）。
+      DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
       NATS_URL: nats://nats:4222
       OBS_COLLECTOR_PORT: "8092"
       DEBUG_VEHICLE_CONTROL: ${DEBUG_VEHICLE_CONTROL:-true}
@@ -698,7 +707,7 @@ services:
       E2E_NAMESPACE_ADMIN_ENABLED: ${E2E_NAMESPACE_ADMIN_ENABLED:-false}
       E2E_NAMESPACE_ADMIN_SECRET: ${E2E_NAMESPACE_ADMIN_SECRET-}
       # 写操作订单状态机复用 M2 task_ledger（不新建表）；无 PG → 诚实降级不承诺可查
-      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+      POSTGRES_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpit}@postgres:5432/cockpit
     depends_on:
       registry:
         condition: service_healthy
@@ -733,7 +742,7 @@ services:
       # M-C 可靠投递账本（proactive_delivery）。**留空即诚实降级**：治理器启动时打
       # WARNING 并把 durable 报成 off，用户合同消息退回「重启即丢」的旧行为——
       # 不假装持久接管。同一 PG 实例、独立表，不触碰别的服务的表。
-      POSTGRES_DSN: postgresql://cockpit:cockpit@postgres:5432/cockpit
+      POSTGRES_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpit}@postgres:5432/cockpit
     depends_on: [nats, postgres]
 
   # ── 接入层 ──
@@ -742,10 +751,17 @@ services:
     build: { context: .., dockerfile: gateway/cloud/Dockerfile }
     volumes: *certs-vol
     environment:
+      # B3 部署形态闸（Go 侧实现见 gateway/deployprofile）。
+      DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
       CLOUD_PLANNER_ADDR: cloud-planner:50054
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # R3.1 层 2（通道鉴权）；默认关，逐字保持现状。
       AUTH_REQUIRED: ${AUTH_REQUIRED:-false}
+      # 层 2 单条通道 token：cloud-gateway 运行期只用允许集（TOKENS），这一项是给 B3
+      # 校验第 5 项用的（token 必须 ∈ 允许集）。**不往网关灌 Postgres/Grafana 口令**——
+      # Go 侧只校验它自己消费的那几个键，其余由持有它们的 Python 服务校验（见
+      # gateway/deployprofile/profile.go 的表头注释）。
+      CLOUD_CHANNEL_TOKEN: ${CLOUD_CHANNEL_TOKEN:-}
       CLOUD_CHANNEL_TOKENS: ${CLOUD_CHANNEL_TOKENS:-}
       # R3.2 服务间 mTLS（默认关；Go 侧经 gateway/tlscfg 读取）
       GRPC_TLS: ${GRPC_TLS:-off}
@@ -761,6 +777,8 @@ services:
     build: { context: .., dockerfile: gateway/edge/Dockerfile }
     volumes: *certs-vol
     environment:
+      # B3 部署形态闸（Go 侧实现见 gateway/deployprofile）。
+      DEPLOY_PROFILE: ${DEPLOY_PROFILE:-dev}
       EDGE_GATEWAY_PORT: "8090"
       EDGE_ORCHESTRATOR_ADDR: edge-orchestrator:50070
       NATS_URL: nats://nats:4222   # 主动建议（agent.proactive）→ HMI WS 投递

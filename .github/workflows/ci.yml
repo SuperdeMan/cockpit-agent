@@ -166,7 +166,9 @@ jobs:
               done
             fi
           }
-          run_group test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ agents/
+          # runtime/tests/ 是 B3 部署形态闸（DEPLOY_PROFILE）的单测 + HMI 隐私默认挡位的
+          # 源码级断言。runtime 是常规包（有 __init__.py、无裸 sys.path 插入），并进绿组即可。
+          run_group test/ orchestrator/cloud/tests/ security/tests/ observability/tests/ agents/ runtime/tests/
           run_group orchestrator/edge/tests/
           run_group memory/tests/
           run_group registry/tests/

@@ -209,6 +209,10 @@ def _serve_health(port: int) -> None:
 
 
 async def main() -> None:
+    # B3 生产配置闸。治理器不建 gRPC server（只订 NATS + 健康检查 HTTP），
+    # 落不到 `runtime.grpcio.aio_server()` 那个统一调用点，故在此显式调一次。
+    from runtime.profile import enforce_deploy_profile
+    enforce_deploy_profile()
     port = _int_env("PROACTIVE_HTTP_PORT", 50075)
     _serve_health(port)
 

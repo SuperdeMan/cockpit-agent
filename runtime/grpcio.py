@@ -127,7 +127,14 @@ def aio_channel(addr: str, *, extra_options: list[tuple] | None = None) -> grpc.
 
 def aio_server(*, max_concurrent_rpcs: int | None = None,
                extra_options: list[tuple] | None = None) -> grpc.aio.Server:
-    """统一 keepalive（+ 可选并发上限）的 async server。替换裸 ``grpc.aio.server()``。"""
+    """统一 keepalive（+ 可选并发上限）的 async server。替换裸 ``grpc.aio.server()``。
+
+    **也是 DEPLOY_PROFILE 生产配置闸的唯一调用点**（B3）：全 Python 服务建 server 都
+    经这里，闸放在这一处就等于每个服务都有，将来新增服务不会漏加。dev 档（默认）
+    零校验、零输出，逐字保持现状。
+    """
+    from runtime.profile import enforce_deploy_profile
+    enforce_deploy_profile()
     cap = max_concurrent_rpcs if max_concurrent_rpcs is not None else MAX_CONCURRENT_RPCS
     return grpc.aio.server(
         options=server_options() + (extra_options or []),

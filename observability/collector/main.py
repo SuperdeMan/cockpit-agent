@@ -29,6 +29,11 @@ async def _startup() -> None:
 
 
 if __name__ == "__main__":
+    # B3 生产配置闸。collector 不建 gRPC server，落不到 `runtime.grpcio.aio_server()`
+    # 那个统一调用点，所以在进程入口显式调一次——**它恰恰是第 11 项那个开关的宿主**
+    # （DEBUG_VEHICLE_CONTROL 开着=无鉴权改车速/档位的 HTTP 面）。
+    from runtime.profile import enforce_deploy_profile
+    enforce_deploy_profile()
     uvicorn.run(
         app,
         host="0.0.0.0",
