@@ -41,13 +41,3 @@
   text: 外面在下雨，附近还有什么地方能逛
 - skill: weather-outing
   text: 今天这么热，去哪儿凉快凉快
-
-# bare-object-clarify：这一族的「改写」不是换说法，是**换对象**——裸对象句本来就没有
-# 句式可变。三条都避开 keywords 字面（湿地/屿/里/村都不在里面），量的正是词法盲区：
-# 对象类后缀写不全是这条 guide 的固有短板，语义通道能接住多少要有数。
-- skill: bare-object-clarify
-  text: 西溪湿地
-- skill: bare-object-clarify
-  text: 鼓浪屿
-- skill: bare-object-clarify
-  text: 太古里
