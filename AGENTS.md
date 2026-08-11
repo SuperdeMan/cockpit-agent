@@ -286,6 +286,20 @@ make up                     # 起全栈（首次需调试，见 docs/dev-guide.m
 
 详见 `agents/_sdk/README.md` 与 `CLAUDE.md` §3。
 
+### 7.1 另一件常见任务：新增一个**端侧车控能力**（不是 Agent）
+
+先跑骨架生成器，它会把要填的地方逐段打出来，并列出四处生成不了、必须人写的东西：
+
+```bash
+python scripts/gen_capability_skeleton.py rear_wiper --display-name 后雨刷 --operates open,close
+```
+
+判据：**这件事不该靠「记得改十来个地方」**。除雾能力落地那次漏了对抗覆盖，就是因为
+「要改哪些地方」只活在某个人的记忆里。现在漏一处就有具名红灯——2026-08-11 用虚构能力
+`rear_wiper` 全流程演练过：只加 `commands.yaml` 对象、其余不做时，话术 ×2 / 等价类 ×1 /
+迁移探针 ×1 / 台账陈旧项 ×1 / L0 对抗覆盖 ×6 逐条报出来，逐项照做后全绿。
+门禁是 `test/eval_capability_integrity.py`（六维逐对象断言，CI blocking）。
+
 ---
 
 ## 8. 给 AI 协作者的工作方式

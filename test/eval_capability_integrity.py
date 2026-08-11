@@ -26,7 +26,7 @@ nlu_objects.yaml、fast_intent.py、val.py、edge_call.py、vehicle.py、catalog
 |---|---|
 | `lane_sources` | 三个声明源都非空（防「门禁只读一个文件」复发） |
 | `lane_execution` | 端侧 intent ↔ commands.yaml 双向一致：intent 无孤儿、对象无不可达（不可达须进台账） |
-| `lane_risk` | 每个对象有**显式** `require_confirm` 与 `effect`（read\|write），且 `effect` 与 operates 自洽 |
+| `lane_risk` | 每个对象有**显式** `require_confirm` 与 `effect`（read / write），且 `effect` 与 operates 自洽 |
 | `lane_speech` | 每条可达 intent 的 response key 存在于 responses.yaml 且不是 `generic_success` |
 | `lane_equivalence` | 每个可达对象在 `nlu_objects.yaml` 有归并（或台账登记待裁定） |
 | `lane_verification` | 每条可达 intent 执行不崩，且有专属状态键（走通用兜底 ⇒ Outcome Verifier 无从对账）；`effect: read` 的查询类对象由此机械豁免 |

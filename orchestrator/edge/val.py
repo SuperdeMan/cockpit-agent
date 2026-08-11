@@ -928,6 +928,15 @@ class VAL:
                       "stop": "media_stop_success", "switch": "media_switch_success"}
             return op_map.get(operate, "media_start_success")
 
+        # 约定式兜底：上面没有专属分支的对象，按 `<object>_<on|off|操作>_success` 找一次；
+        # **找得到才用**，找不到仍落 generic。
+        # 这一条是 B4「新增一个能力」演练当场加的：演练走到第一步就发现，光把对象加进
+        # commands.yaml + 写好 responses，话术仍然落 `generic_success`——因为本函数还要
+        # 手写一个分支。那就是又一处「同时记得改」的同步点，而它没写在任何清单里。
+        # 有了这条约定，常规开关型新对象只要话术 key 按约定命名就自动接上，一处同步点消失。
+        conventional = f"{obj}_{ {'open': 'on', 'close': 'off'}.get(operate, operate) }_success"
+        if conventional in (self.responses or {}):
+            return conventional
         return "generic_success"
 
     # 多意图批次要避开的礼貌式开头：堆叠起来重复冗长（「已为您打开空调，已为您打开车窗」）
