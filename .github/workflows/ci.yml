@@ -255,6 +255,15 @@ jobs:
       - name: Intent adversarial L0 gate (blocking)
         run: python scripts/check_intent_gate.py --json docs/reviews/eval/_ci-run-intent_gate.json
 
+      # B4：能力完整性门禁（阻断）。同上三条一样是确定性检查、零 LLM、零网络。
+      # 它挡的是「新增一个车控能力＝同时记得改十来个位置」里漏掉的那一处：
+      # 执行定义 / 话术 / 等价类 / 风险 / 验证 五个维度逐对象断言，联合能力清单从
+      # manifest ∪ servers.yaml ∪ 端侧意图集三源取（只读一个文件正是 shop 域零范例
+      # 事故的根因）。对抗覆盖那一维**不重复实现**，只确认上一条的 --strict 入口还在。
+      # ⚠ 跑的是默认档（阻断）；`--list` 只展示不判红，报绿前先确认自己跑的是哪档。
+      - name: Capability integrity gate (blocking)
+        run: python test/eval_capability_integrity.py
+
       - name: Upload fresh eval report
         if: always()
         uses: actions/upload-artifact@v4

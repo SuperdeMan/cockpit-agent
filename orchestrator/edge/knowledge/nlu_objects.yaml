@@ -71,7 +71,10 @@ objects:
 
   # ── 灯光 ──
   车内灯: [ambient_light]                    # 语料是氛围灯
-  车外灯: [low_beam, headlight, high_beam, warning_light, fog_light]
+  # accompany_home（伴我回家灯光）2026-08-11 补：语料里 11 条「伴我回家」全标 `车外灯`，
+  # 而它是 VAL 真能执行的对象——漏收的后果是影子比对把这一族恒判 differ。
+  # B4 能力完整性门禁的等价类车道抓到的唯一一条。
+  车外灯: [low_beam, headlight, high_beam, warning_light, fog_light, accompany_home]
 
   # ── 驾驶辅助与能量 ──
   辅助驾驶: [lane_departure_assistance, lane_assistance, blind_spot_warning,

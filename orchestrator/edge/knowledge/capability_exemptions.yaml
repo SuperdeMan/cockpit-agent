@@ -1,0 +1,166 @@
+# capability_exemptions.yaml — 能力完整性门禁的豁免台账（B4 §2.1，2026-08-11）
+#
+# ## 契约
+#
+# 逐对象、逐车道，**禁通配符**，每条必须写 `reason`。豁免某一车道不顺带豁免另一车道。
+# 空列表 = 零豁免（不是全量豁免）。台账里出现已不在 `commands.yaml` 的对象即判红——
+# 只进不出会腐烂（同 `boundaries.yaml` / `coverage_exemptions.yaml` 的既有纪律）。
+#
+# ## 豁免判据
+#
+# **「这条不该有」，不是「懒得补」。** 判据同 `coverage_exemptions.yaml`：那张表豁免的是
+# 「没得测」的端侧原子车控；这张表豁免的是「这个对象本来就不该有端侧 intent / 不该有可对账
+# 状态键」。凡是「应该有但还没做」的，正确处置是补上或立卡，不是写进这里。
+#
+# ## 为什么 `commands.yaml` 里会有 39 个端侧够不着的对象
+#
+# 它是从《公版语音指令表》整表导出的，覆盖的是**整个语音指令空间**（含云侧域、座舱 UI、
+# 媒体别名），而不只是 VAL 能执行的车控对象。这不是欠账，是数据源的范围本来就更大。
+# 门禁把这件事从「隐含常识」变成「逐条写下来的裁定」——于是新增对象漏配 intent 时会红，
+# 而不是混在这 39 个里看不出来。
+#
+# ⚠ 本表首批（2026-08-11）由实施者按对象语义分类给出，未逐条人裁。**分类本身是可争议的**，
+# 其中三条已在下面标出待确认点（frunk / driving_mode / battery）。
+
+schema_version: 1
+
+exemptions:
+  # ── 媒体别名（8）────────────────────────────────────────────────────────
+  # VAL `_simulate` 的 media 分支已统一覆盖这些对象；端侧只暴露一组 `media.*` intent，
+  # 刻意不给每个媒体源各起一个意图名——「一个动作只能有一个名字」（2026-08-04 删
+  # `aircon.inc/dec` 同款判据：文本无法区分的同义工具会让 planner 掷硬币）。
+  - object: TV
+    lanes: [execution]
+    reason: 媒体别名，由 VAL media 分支统一执行；端侧只暴露 media.* 一组意图。
+  - object: audiobook
+    lanes: [execution]
+    reason: 媒体别名，同 TV。
+  - object: music
+    lanes: [execution]
+    reason: 媒体别名，同 TV。
+  - object: news
+    lanes: [execution]
+    reason: 媒体别名（媒体源意义上的「新闻电台」；信息域的「新闻查询」是 info Agent 的能力，两者同名不同物）。
+  - object: online_radio
+    lanes: [execution]
+    reason: 媒体别名，同 TV。
+  - object: opera
+    lanes: [execution]
+    reason: 媒体别名，同 TV。
+  - object: radio
+    lanes: [execution]
+    reason: 媒体别名，同 TV。
+  - object: video
+    lanes: [execution]
+    reason: 媒体别名，同 TV。
+
+  # ── 云侧域对象（11）────────────────────────────────────────────────────
+  # 指令表覆盖整个语音空间，这些是云侧 Agent 的领域对象，**VAL 永不执行**
+  # （车控只经 VAL 是铁律，反过来「不是车控的东西不该出现在 VAL 可执行面」同样成立）。
+  - object: flight
+    lanes: [execution]
+    reason: 云侧域对象（航班查询），非车控；VAL 不执行。
+  - object: food
+    lanes: [execution]
+    reason: 云侧域对象（美食/周边），归 nearby Agent。
+  - object: hotel
+    lanes: [execution]
+    reason: 云侧域对象（酒店），非车控。
+  - object: train
+    lanes: [execution]
+    reason: 云侧域对象（火车票），非车控。
+  - object: weather
+    lanes: [execution]
+    reason: 云侧域对象（天气），归 info Agent。
+  - object: stock
+    lanes: [execution]
+    reason: 云侧域对象（股票），归 info Agent。
+  - object: navigation
+    lanes: [execution]
+    reason: 云侧域对象（导航），归 navigation Agent；车控面只有 navi_broadcast 那类开关。
+  - object: map
+    lanes: [execution]
+    reason: 云侧域对象（地图应用），非车控。
+  - object: phone
+    lanes: [execution]
+    reason: 通讯域对象，PoC 未接通讯 Agent；不是 VAL 车控面。
+  - object: contacts
+    lanes: [execution]
+    reason: 通讯域对象，同 phone。
+  - object: call_log
+    lanes: [execution]
+    reason: 通讯域对象，同 phone。
+
+  # ── 座舱 UI / 系统面（6）──────────────────────────────────────────────
+  # 「打开设置界面」这类是 HMI 导航，不是车控动作；经 VAL 下发没有意义。
+  - object: app
+    lanes: [execution]
+    reason: 座舱 UI 面（应用启动），不是车控动作。
+  - object: page
+    lanes: [execution]
+    reason: 座舱 UI 面（界面跳转），同 app。
+  - object: system
+    lanes: [execution]
+    reason: 座舱系统面（系统设置），同 app。
+  - object: interaction
+    lanes: [execution]
+    reason: 座舱交互面（交互偏好），同 app。
+  - object: dashboard
+    lanes: [execution]
+    reason: 仪表显示面，同 app。
+  - object: voice_assistant
+    lanes: [execution]
+    reason: 语音助手自身的设置面，同 app。
+
+  # ── 车身/座舱对象，端侧尚未给快意图（14）────────────────────────────
+  # 这些**是**真车控对象，VAL 侧多数已有分支或话术，只是端侧还没有 fast_intent 规则与
+  # 意图名；云端计划仍可经 `edge_call.action_to_structured` 走到它们。
+  # ⚠ 这一组与上面三组性质不同：它们**是欠账**，只是本批不做（B4 §2.3 只收敛已有面）。
+  #    新增端侧意图时应从这一组里挑，并把对应条目从台账删掉。
+  - object: air_purifier
+    lanes: [execution]
+    reason: 车控对象，VAL 有话术分支，端侧暂无 fast_intent 规则；云端计划可达。R4.1b P1 执行侧对象化的候选。
+  - object: auto_hold
+    lanes: [execution]
+    reason: 同 air_purifier（自动驻车）。
+  - object: bluetooth
+    lanes: [execution]
+    reason: 同 air_purifier（蓝牙开关）。
+  - object: epb
+    lanes: [execution]
+    reason: 同 air_purifier（电子手刹）。⚠ 安全敏感对象，接端侧意图前先过 require_confirm 与安全门控评估。
+  - object: equalizer
+    lanes: [execution]
+    reason: 同 air_purifier（均衡器）。
+  - object: frunk
+    lanes: [execution]
+    reason: 同 air_purifier（前备箱）。⚠ **待确认**：它是 require_confirm=true 的危险对象，却没有任何端侧 intent——是刻意不给语音开，还是漏了？与 trunk（后备箱，有 intent）不对称。
+  - object: hotspot
+    lanes: [execution]
+    reason: 同 air_purifier（个人热点）。
+  - object: key_tone
+    lanes: [execution]
+    reason: 同 air_purifier（按键音），VAL 有话术分支。
+  - object: low_beam
+    lanes: [execution]
+    reason: 同 air_purifier（近光灯）；端侧目前只有 headlight 一个总意图。
+  - object: navi_broadcast
+    lanes: [execution]
+    reason: 同 air_purifier（导航播报），VAL 有话术分支。
+  - object: surround_view
+    lanes: [execution]
+    reason: 同 air_purifier（360 环视）。
+  - object: wifi
+    lanes: [execution]
+    reason: 同 air_purifier（WiFi 开关）。
+  - object: driving_mode
+    lanes: [execution]
+    reason: 同 air_purifier（驾驶模式），VAL 有专属分支与话术。⚠ **待确认**：与 power_mode（动力模式，有端侧 intent）语义高度重叠，可能是同一件事的两个对象名——若确认重复应合并，别让 planner 面对两个分不开的工具。
+  - object: battery
+    lanes: [execution]
+    reason: 查询类对象（电量），VAL 有专属分支返回读数、不改状态。⚠ **待确认**：电量查询目前走云侧 vehicle_state 上下文而非端侧 intent，是否要补一个端侧查询意图未定。
+
+  # ── 验证定义豁免（1）──────────────────────────────────────────────────
+  - object: tire_pressure_monitoring
+    lanes: [verification]
+    reason: 纯查询类意图（tire_pressure.query），执行本身不改变车辆状态——没有可对账的状态键是它的正确形态，不是缺口。同类的 battery 走的是 `_simulate` 返回 (None, 读数) 那条路。

@@ -693,3 +693,84 @@ navi_cancel_success:
   - 已取消导航
   speech_brief:
   - 取消了
+
+# ── B4 能力完整性门禁「话术定义」车道补齐（2026-08-11）──
+# 这 8 条此前全部落 `generic_success`（「好的」）——用户听不出刚才到底做了什么，
+# 而 `window.set` 这种带程度的动作恰恰最需要回显（「开到 50%」和「全开」是两回事）。
+window_set_success:
+  scene: 车窗已调整
+  status: 成功
+  speech_full:
+  - 车窗已开到{value}%
+  - 已为您把车窗调到{value}%
+  speech_brief:
+  - 好的
+  - 已调整
+sunroof_set_success:
+  scene: 天窗已调整
+  status: 成功
+  speech_full:
+  - 天窗已开到{value}%
+  - 已为您把天窗调到{value}%
+  speech_brief:
+  - 好的
+  - 已调整
+sunshade_set_success:
+  scene: 遮阳帘已调整
+  status: 成功
+  speech_full:
+  - 遮阳帘已开到{value}%
+  - 已为您把遮阳帘调到{value}%
+  speech_brief:
+  - 好的
+  - 已调整
+power_mode_set_success:
+  scene: 动力模式已切换
+  status: 成功
+  speech_full:
+  - 已切换到{mode}模式
+  speech_brief:
+  - 好的
+  - 已切换
+lane_assistance_on_success:
+  scene: 车道保持辅助已开启
+  status: 成功
+  speech_full:
+  - 车道保持辅助已开启
+  - 已为您打开车道保持辅助
+  speech_brief:
+  - 好的
+  - 已开启
+lane_assistance_off_success:
+  scene: 车道保持辅助已关闭
+  status: 成功
+  speech_full:
+  - 车道保持辅助已关闭
+  speech_brief:
+  - 好的
+  - 已关闭
+lane_departure_assistance_on_success:
+  scene: 车道偏离预警已开启
+  status: 成功
+  speech_full:
+  - 车道偏离预警已开启
+  - 已为您打开车道偏离预警
+  speech_brief:
+  - 好的
+  - 已开启
+lane_departure_assistance_off_success:
+  scene: 车道偏离预警已关闭
+  status: 成功
+  speech_full:
+  - 车道偏离预警已关闭
+  speech_brief:
+  - 好的
+  - 已关闭
+fragrance_level_success:
+  scene: 香氛浓度已调整
+  status: 成功
+  speech_full:
+  - 香氛已调到{value}档
+  speech_brief:
+  - 好的
+  - 已调整

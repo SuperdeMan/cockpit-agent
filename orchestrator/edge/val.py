@@ -525,6 +525,19 @@ class VAL:
             if operate == "close":
                 self.state["sunshade"] = "closed"
                 return "sunshade", "closed"
+            # 遮阳帘与天窗同为百分比开度对象（commands.yaml 两者 units 都是 percent），
+            # 天窗有 set/inc/dec 而遮阳帘只有 open/close——`sunshade.set` 于是落兜底标记。
+            if operate == "set":
+                pos = data.get("value")
+                self.state["sunshade"] = f"{int(pos)}%" if pos is not None else "open"
+                return "sunshade", self.state["sunshade"]
+            if operate in ("inc", "dec"):
+                cur = self._window_pct(self.state.get("sunshade"))
+                step = int(data.get("value") or 20)
+                new = min(cur + step, 100) if operate == "inc" else max(cur - step, 0)
+                self.state["sunshade"] = (
+                    "closed" if new == 0 else "open" if new >= 100 else f"{new}%")
+                return "sunshade", self.state["sunshade"]
 
         elif obj == "ambient_light":
             if operate == "open":
@@ -619,9 +632,18 @@ class VAL:
             if operate == "close":
                 self.state["wiper"] = False
                 return "wiper", False
-            if operate == "set" and value:
-                self.state["wiper_speed"] = int(value)
-                return "wiper_speed", int(value)
+            # 雨刷速度：set 早就有，inc/dec 一直落兜底标记（`wiper_inc`/`wiper_dec` 恒 True，
+            # 两个方向各写一个键，档位读不出来）。夹在 0~5 档。
+            if operate in ("set", "inc", "dec"):
+                current = int(self.state.get("wiper_speed", 1))
+                if operate == "set" and value is not None:
+                    current = int(value)
+                elif operate == "inc":
+                    current = min(current + 1, 5)
+                elif operate == "dec":
+                    current = max(current - 1, 0)
+                self.state["wiper_speed"] = current
+                return "wiper_speed", current
 
         elif obj == "fragrance":
             if operate == "open":
@@ -630,6 +652,12 @@ class VAL:
             if operate == "close":
                 self.state["fragrance"] = False
                 return "fragrance", False
+            # 香氛浓度档（commands.yaml units=[level]）：设档隐含开香氛，同氛围灯设色隐含开灯。
+            if operate == "set":
+                self.state["fragrance"] = True
+                self.state["fragrance_level"] = int(value) if value is not None else \
+                    int(self.state.get("fragrance_level", 1))
+                return "fragrance_level", self.state["fragrance_level"]
 
         elif obj == "steering_wheel":
             attr = data.get("attr")
@@ -647,9 +675,15 @@ class VAL:
                     self.state["steering_wheel_height"] = current + 1
                 elif operate == "dec":
                     self.state["steering_wheel_height"] = current - 1
+                # set 无具体值时回退到当前高度，避免未初始化 KeyError。
+                # ⚠ 这与上面 aircon 风速那处是**同一个坑**：那一处修过（`setdefault`），
+                # 这一处漏了——`steering_wheel.height.set` 不带值时 KeyError 直接把整条
+                # 执行抛出去，而 `_missing_required_value` 因为 `attr` 在场提前返回、
+                # 压根不会拦。B4 能力完整性检查逐对每个「声明的 (对象,操作)」跑一遍
+                # `_simulate` 时抓到的第一条。
                 return (
                     "steering_wheel_height",
-                    self.state["steering_wheel_height"],
+                    self.state.setdefault("steering_wheel_height", current),
                 )
 
         elif obj == "driving_mode":
@@ -661,6 +695,13 @@ class VAL:
             if operate in ("set", "switch") and mode:
                 self.state["scene_mode"] = mode
                 return "scene_mode", mode
+
+        elif obj == "power_mode":
+            # 动力模式（normal/sport/eco）。此前没有分支，`power_mode.set` 落兜底标记
+            # `power_mode_set=True`——「切到运动模式」执行完，状态里读不出切到了哪个模式。
+            if operate in ("set", "switch") and mode:
+                self.state["power_mode"] = mode
+                return "power_mode", mode
 
         elif obj == "volume":
             if operate == "set" and value:
@@ -687,9 +728,18 @@ class VAL:
                 return "screen_brightness", self.state["screen_brightness"]
 
         elif obj == "energy_recovery":
-            if operate == "set" and value:
-                self.state["energy_recovery"] = int(value)
-                return "energy_recovery", int(value)
+            # inc/dec 此前无分支，落 `energy_recovery_inc`/`_dec` 两个恒 True 的键：
+            # 「能量回收调高一档」执行完，对账读不到档位。夹在 0~3 档（弱/中/强 + 关）。
+            if operate in ("set", "inc", "dec"):
+                current = int(self.state.get("energy_recovery", 1))
+                if operate == "set" and value is not None:
+                    current = int(value)
+                elif operate == "inc":
+                    current = min(current + 1, 3)
+                elif operate == "dec":
+                    current = max(current - 1, 0)
+                self.state["energy_recovery"] = current
+                return "energy_recovery", current
 
         elif obj == "accompany_home":
             if operate == "open":
@@ -713,7 +763,19 @@ class VAL:
                 self.state[obj] = False
                 return obj, False
 
-        # 兜底：标记状态
+        # 兜底：开关型操作落**同一个键的两种取值**。
+        # 旧写法一律 `state[f"{obj}_{operate}"] = True`——于是 open 与 close 各写一个键、
+        # 永不互相清除，实测 `lane_assistance_open` 与 `lane_assistance_close` 能**同时为
+        # True**。执行后对账（Outcome Verifier）读这种键只能读到自相矛盾的状态，而这类键
+        # 恒为 True、永远无法被证否，等于对账面上一个恒真的空洞。
+        # B4 能力完整性门禁「验证定义」车道抓到的一族（lane_assistance ×2 +
+        # lane_departure_assistance ×2）。
+        if operate in ("open", "start", "on", "play"):
+            self.state[obj] = True
+            return obj, True
+        if operate in ("close", "stop", "off", "pause"):
+            self.state[obj] = False
+            return obj, False
         key = f"{obj}_{operate}"
         self.state[key] = True
         return key, True
@@ -743,17 +805,17 @@ class VAL:
             if operate == "dec":
                 return "hvac_dec_success"
 
-        if obj == "window":
-            op_map = {"open": "window_open_success", "close": "window_close_success"}
-            return op_map.get(operate, "generic_success")
-
-        if obj == "sunroof":
-            op_map = {"open": "sunroof_open_success", "close": "sunroof_close_success"}
-            return op_map.get(operate, "generic_success")
-
-        if obj == "sunshade":
-            op_map = {"open": "sunshade_open_success", "close": "sunshade_close_success"}
-            return op_map.get(operate, "generic_success")
+        # 开度型对象（window/sunroof/sunshade，commands.yaml 三者 units 都是 percent）：
+        # `set`/`inc`/`dec` 此前落 `generic_success`（「好的」）——「开到 50%」与「全开」
+        # 对用户是两件事，回执却一模一样。B4「话术定义」车道补齐。
+        for opening in ("window", "sunroof", "sunshade"):
+            if obj == opening:
+                op_map = {"open": f"{opening}_open_success",
+                          "close": f"{opening}_close_success",
+                          "set": f"{opening}_set_success",
+                          "inc": f"{opening}_set_success",
+                          "dec": f"{opening}_set_success"}
+                return op_map.get(operate, "generic_success")
 
         if obj == "seat":
             if mode == "heating":
@@ -801,7 +863,15 @@ class VAL:
             return "wiper_set_success"
 
         if obj == "fragrance":
+            if operate == "set":
+                return "fragrance_level_success"
             return "fragrance_on_success" if operate == "open" else "fragrance_off_success"
+
+        if obj in ("lane_assistance", "lane_departure_assistance"):
+            return f"{obj}_on_success" if operate == "open" else f"{obj}_off_success"
+
+        if obj == "power_mode":
+            return "power_mode_set_success"
 
         if obj == "steering_wheel":
             return "steering_wheel_heating_on_success" if operate in ("open", "set") else "steering_wheel_heating_off_success"
