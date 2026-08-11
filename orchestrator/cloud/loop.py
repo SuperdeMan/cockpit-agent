@@ -9,6 +9,9 @@ from typing import AsyncIterator
 from .executor import DagExecutor
 from .models import Plan, PlanContext, StepResult, StepStatus
 from .progress import make_progress, phase_label, step_summary
+from .stream_state import (
+    StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
+)
 from observability import events as obs_events
 from observability.metrics import metrics
 
@@ -182,13 +185,12 @@ class LoopController:
             # 与 engine.py T1 快路径同模式：流式成功则 yield delta 并收集结果，
             # 失败回退到 executor unary 路径。
             #
-            # ⚠ 变量语义（B1 修的就是这里）：`got_final` 只表示「拿到了 final」。
-            # 它此前叫 `streamed`，而 `streamed` 读起来像「流出过东西」——于是
-            # `elif streamed:` 那条分支永远不可达（唯一置 True 的地方在
-            # `final_sr is not None` 内部），部分输出后必然 unary 重跑：话术播两遍、
-            # Agent 调两遍、外部 API 调两遍，action 已发出时形成重复副作用。
-            # 「是否流出过输出」由 did_speak / did_action 表达，别再合并回一个变量。
-            got_final = False
+            # ⚠ 判定不在这里（B5 §4）：流出面状态与三条决策（能不能回退 / 结果确不
+            # 确定 / 流出过没有）统一由 `stream_state` 提供，D0 与本处共用同一份。
+            # B1 修的那个 bug（`elif streamed:` 永不可达 → 部分输出后 unary 重跑：
+            # 话术播两遍、Agent 调两遍、action 已发出时重复副作用）活在**状态推进**
+            # 里而不是判定函数里，所以推进也必须共享——见 `StreamTracker` 的注释。
+            stream = StreamTracker()
             if (self._stream and len(current.steps) == 1
                     and current.steps[0].kind == "agent"
                     and current.steps[0].deployment == "cloud"
@@ -201,18 +203,16 @@ class LoopController:
                     self.executor._resolve_slot_refs(step, done_seed)
                 timeout = step.latency_budget_ms / 1000.0
                 final_sr = None
-                did_speak = False
-                did_action = False
                 stream_start = self.clock()
                 try:
                     async for kind, payload in self._stream(
                             step.endpoint, step.intent, step.slots,
                             ctx, step.meta, timeout=timeout):
                         if kind == "speech":
-                            did_speak = did_speak or bool(payload)
+                            stream.on_speech(payload)
                             yield {"kind": "speech", "delta": payload}
                         elif kind == "action":
-                            did_action = True
+                            stream.on_action()
                             yield {"kind": "action", "action": payload}
                         elif kind == "final":
                             final_sr = DagExecutor._to_result(step.id, payload)
@@ -223,7 +223,7 @@ class LoopController:
                     final_sr = None
 
                 if final_sr is not None:
-                    got_final = True
+                    stream.on_final()
                     # M2 Verifier：T2 流式直通同样不经 executor._exec_step，显式对账
                     # （与 engine D0 同款；allow_retry=False——话术已流出，不重跑）。
                     if hasattr(self.executor, "_verify_outcome"):
@@ -246,7 +246,7 @@ class LoopController:
                     except Exception:
                         pass
                     results.append(final_sr)
-                    if did_speak:
+                    if stream.spoke:
                         spoken.add(id(final_sr))   # 话术已流出，前缀不复读
                     observations.append(summarize(final_sr, intent=step.intent))
                     observations = observations[-self.observation_limit:]
@@ -261,21 +261,15 @@ class LoopController:
                             final_sr, results, current, ctx,
                             prior=_prior(final_sr))
                         return
-                elif did_speak or did_action:
+                elif emitted_anything(stream.state):
                     # 已经流出过输出但 final 丢了（流断 / 超时 / Agent 崩）。
                     # **不许 unary 重跑**——只有 NO_OUTPUT 才允许回退。
-                    got_final = True
-                    if did_action:
+                    if outcome_uncertain(stream.state, stream.got_final):
                         # action 已经发给用户了，而 final 没回来：这一步的**结果不确定**，
-                        # 既不能当成功也不能重试（重试 = 重复副作用）。透明告知，
-                        # 不假装成功。readback 对账留给 B5 统一组件时接 Outcome Verifier。
-                        uncertain_sr = StepResult(
-                            step_id=step.id, status=StepStatus.OK,
-                            speech="操作指令已发出，结果暂时无法确认，请留意车辆状态。",
-                            data={"_outcome_uncertain": True})
-                        logger.warning(
-                            "T2 stream lost final after action for %s — "
-                            "marking outcome uncertain, not re-running", step.id)
+                        # 既不能当成功也不能重试（重试 = 重复副作用）。B5 §4.2 把 B1 留的
+                        # 那笔账还上——查一次世界状态再定话术，并打指纹防 replan 重发。
+                        uncertain_sr = await self.executor.stream_uncertain_result(
+                            step, ctx)
                         results.append(uncertain_sr)
                         observations.append(
                             summarize(uncertain_sr, intent=step.intent))
@@ -287,7 +281,10 @@ class LoopController:
                         observations.append(summarize(empty_sr, intent=step.intent))
                     observations = observations[-self.observation_limit:]
 
-            if not got_final:
+            # 回退到 unary：**零输出且没拿到 final** 才允许（B5 §4 共享判定）。
+            # 两个条件缺一不可——Agent 一句话没说直接给 final 时状态仍是 NO_OUTPUT，
+            # 那种情况已经有结果了，不该再跑一遍。
+            if not stream.got_final and allow_unary_fallback(stream.state):
                 async for step_result in self.executor.run(
                         current, ctx, done=done_seed):
                     results.append(step_result)

@@ -26,6 +26,19 @@ logger = logging.getLogger("planner.executor")
 _UNCERTAIN_ERRORS = ("step_timeout", "timeout")
 # `data["_verify"].exec` 的取值：世界状态证实了「它发生了」，但证明不了「这一步成功了」。
 _EXEC_UNCERTAIN = "uncertain_confirmed"
+# 同族第二种触发面（B5 §4.2）：流式已发出 action，final 却丢了。与 `_EXEC_UNCERTAIN`
+# 分开取值是为了让「Agent 回了传输不确定的失败」和「流断在 final 之前」在观测上分得开
+# ——两者的补救动作相同，成因不同。
+_EXEC_STREAM_LOST_FINAL = "stream_lost_final"
+
+# 流式丢 final 后按 readback 结果分档的话术（B5 §4.2）。三句**零领域字面量**：
+# 不提任何具体对象或动作，只说「发出了 / 生效了 / 不确定」。
+# UNSAT 档刻意只说前半句——后半句由聚合器的 `_VERIFY_NOTE["state_match"]` 统一补，
+# 同一句话不写第二遍（B4 教训）。
+_STREAM_LOST_FINAL_SAT_SPEECH = (
+    "刚才没收到执行回执，不过我查了车辆状态，这个操作已经生效了。")
+_STREAM_LOST_FINAL_UNSAT_SPEECH = "操作指令已发出。"
+_STREAM_LOST_FINAL_SPEECH = "操作指令已发出，结果暂时无法确认，请留意车辆状态。"
 
 
 def _dedup_enabled() -> bool:
@@ -292,6 +305,50 @@ class DagExecutor:
             ui_card=result.ui_card, actions=result.actions,
             follow_up=result.follow_up, data=data,
             missing_slots=result.missing_slots, error=result.error)
+
+    async def stream_uncertain_result(self, step: Step,
+                                      ctx: PlanContext) -> StepResult:
+        """流式已发出 action 而 final 丢了 → 查一次世界状态再定话术（B5 §4.2）。
+
+        B1 只留下了标记 + 一句固定话术（它当时的边界写明「readback 归 B5 统一组件
+        时做」）。本方法把那笔账还上，两条流式路径（engine D0 / loop T2）共用。
+
+        与 `_verify_uncertain` 是同族，三条边界逐条照抄——**只认声明式
+        `state_match`**（schema 验的是本次响应的内容，而响应根本没回来）、
+        **只认传输不确定**（这里的触发面本身就是「流断在 final 之前」）、
+        **不伪造成功话术**（SAT 那句只说「操作已经生效」，不合成任何领域词）。
+
+        两处与 `_verify_uncertain` 不同，都有理由：
+        - status 用 **OK 不用 FAILED**（R9 契约：FAILED 上的话术会被聚合器吞成裸
+          「抱歉，处理失败」，而这一步恰恰要把话说清楚）；
+        - **打指纹**。这是本方法存在的第二个理由，也是「幂等键随统一组件一起做」
+          （B1 §6）的落点：`_exec_step` 早就给 `step_timeout` 打指纹了，理由原文是
+          「超时 ≠ 失败——副作用可能已发生，不打指纹 T2 replan 重出同一动作会被原样
+          重发」。**流断丢 final 与超时是同一种处境**，而 B1 合成的那份结果没有指纹
+          ——replan 重出同一动作就会真的发第二遍。不新造 `command_id`：现成的
+          `_fingerprint(intent, slots)` 就是那把键，第三套局部实现正是要避免的东西。
+        """
+        verdict = _verify.UNKNOWN
+        if (_verify.enabled()
+                and (step.verification or {}).get("mode") == _verify.MODE_STATE_MATCH):
+            verdict = await self._evaluate(
+                step, StepResult(step_id=step.id, status=StepStatus.OK), ctx, 0)
+        if verdict == _verify.SAT:
+            speech = _STREAM_LOST_FINAL_SAT_SPEECH
+        elif verdict == _verify.UNSAT:
+            speech = _STREAM_LOST_FINAL_UNSAT_SPEECH
+        else:
+            speech = _STREAM_LOST_FINAL_SPEECH
+        data = {"_outcome_uncertain": True}
+        if verdict in (_verify.SAT, _verify.UNSAT):
+            data["_verify"] = {"verdict": verdict,
+                               "mode": _verify.MODE_STATE_MATCH,
+                               "exec": _EXEC_STREAM_LOST_FINAL, "attempts": 0}
+        logger.warning(
+            "Step %s(%s): stream lost final after action — readback=%s, "
+            "not re-running", step.id, step.intent, verdict)
+        return StepResult(step_id=step.id, status=StepStatus.OK, speech=speech,
+                          data=data, fingerprint=self._fingerprint(step))
 
     @staticmethod
     def _should_report(result: StepResult) -> bool:

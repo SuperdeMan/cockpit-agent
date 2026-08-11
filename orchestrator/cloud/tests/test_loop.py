@@ -3,10 +3,15 @@ from __future__ import annotations
 
 import asyncio
 
+from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.loop import LoopController, summarize
 from orchestrator.cloud.models import (
     Plan, PlanContext, ReplanDecision, Step, StepResult, StepStatus,
 )
+
+
+async def _unused_call(*_args, **_kwargs):      # pragma: no cover - 只为满足构造契约
+    raise AssertionError("替身不该真的调 Agent")
 
 
 class _Planner:
@@ -23,8 +28,16 @@ class _Planner:
         return self.decisions.pop(0)
 
 
-class _Executor:
+class _Executor(DagExecutor):
+    """只替换 `run` 的部分替身，其余方法走真实 `DagExecutor`。
+
+    B5 §4.2 起这一点是必需的：`stream_uncertain_result` 的产物正是断言对象，
+    替身自己编一句话等于把断言掏空。继承还顺带堵掉「executor 加了方法、替身没
+    跟上」那类静默失配（§4.3「A/B 之前先证明两臂真的不同」记的就是这一族）。
+    """
+
     def __init__(self, results_by_step):
+        super().__init__(call_agent_fn=_unused_call)
         self.results_by_step = results_by_step
         self.runs = []
         self.done_seeds = []
@@ -582,6 +595,47 @@ def test_stream_action_then_lost_final_marks_outcome_uncertain():
     assert composed, "聚合器没拿到任何结果"
     assert composed[-1].data.get("_outcome_uncertain") is True
     assert "无法确认" in composed[-1].speech
+
+
+class _Mirror:
+    def __init__(self, snapshot):
+        self._snapshot = snapshot
+
+    def snapshot(self):
+        return self._snapshot
+
+
+def test_stream_action_then_lost_final_goes_through_readback():
+    """B5 §4.2：那句话必须是**查过世界状态之后**才定的，不是固定文案。
+
+    这条与上面那条的区别就是 B1 留的那笔账：上面只验「不假装成功」，
+    这里验「查了再说」。step 声明了 state_match 且镜像证实动作生效 →
+    话术从「无法确认」升级为「已经生效」。
+    """
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        yield ("action", {"type": "vehicle.control",
+                          "payload": {"command": "hvac.on"}})
+
+    plan = Plan(steps=[Step(
+        id="s1", agent_id="a", kind="agent", deployment="cloud",
+        intent="hvac.on", latency_budget_ms=5000,
+        verification={"mode": "state_match", "timeout_ms": 10,
+                      "expect": {"keys": {"hvac_on": True}}})],
+        complexity="adaptive")
+    aggregator = _Aggregator()
+    executor = _Executor({"s1": StepResult("s1", StepStatus.OK)})
+    executor._mirror = _Mirror({"hvac_on": True})
+    controller = LoopController(
+        _Planner([ReplanDecision(done=True)]), executor, aggregator, None,
+        max_iters=2, budget_ms=5000, stream_fn=stream_fn)
+    _collect(controller, goal="test", initial_plan=plan, agents=[],
+             ctx=PlanContext(), user_text="开空调")
+
+    composed = [r for _text, results in aggregator.calls for r in results]
+    assert "已经生效" in composed[-1].speech, composed[-1].speech
+    assert composed[-1].data["_verify"]["exec"] == "stream_lost_final"
+    # 指纹是第二半：没有它，replan 重出同一动作会被原样重发第二遍
+    assert composed[-1].fingerprint
 
 
 def test_stream_no_output_still_falls_back_to_unary():

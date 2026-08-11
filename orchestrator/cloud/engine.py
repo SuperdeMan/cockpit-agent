@@ -19,6 +19,9 @@ from .executor import DagExecutor
 from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
 from .session import SessionStore
 from .loop import LoopController
+from .stream_state import (
+    StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
+)
 from .clients import set_llm_pin
 from .context import ContextManager, build_context, _POC_DEFAULT_SCOPES
 from .progress import (is_complex, phase_label, result_summary, step_summary,
@@ -405,19 +408,26 @@ class PlannerEngine:
                 and not plan.steps[0].require_confirm):
             step = plan.steps[0]
             _d0_start = time.monotonic()
-            streamed = False
+            # B5 §4：流出面状态与「能不能回退 / 结果确不确定」的判定与 T2 共用一份
+            # （`stream_state`）。此前 D0 一个 `streamed` 布尔、T2 三个布尔各写各的，
+            # 判定表抄了两份，B1 修的就是其中一份抄错。
+            stream = StreamTracker()
             softener = MdDeltaSoftener()   # 流式增量剥 **/`（final 由 compose 出口彻底清理）
             final_sr: StepResult | None = None
             try:
                 async for kind, payload in self.clients.call_agent_stream(
                         step.endpoint, step.intent, step.slots, ctx, step.meta):
                     if kind == "speech":
-                        streamed = True
                         payload = softener.feed(payload)
+                        # 记的是**软化之后**的增量：softener 会把悬空的 `*` 扣下一拍，
+                        # 那一拍用户什么都没看到。「流出过输出」必须指用户真的收到了东西，
+                        # 否则一个空串就能把 unary 回退整条关掉（T2 一直是这个口径，
+                        # 有专门的空 delta 对照测试；D0 此前不是——统一到严的这边）。
+                        stream.on_speech(payload)
                         if payload:
                             yield {"kind": "speech", "delta": payload}
                     elif kind == "action":
-                        streamed = True
+                        stream.on_action()
                         yield {"kind": "action", "action": payload}
                     elif kind == "final":
                         final_sr = DagExecutor._to_result(step.id, payload)
@@ -425,6 +435,7 @@ class PlannerEngine:
                 logger.warning("Single-step stream failed (%s); falling back to unary", e)
 
             if final_sr is not None:
+                stream.on_final()
                 # M2 Verifier：流式直通不经 executor._exec_step，必须在此显式对账，
                 # 否则 capability 声明了 verification 却静默不生效（真栈首验实测：
                 # weather 走 D0 流式，一条 step.verify span 都没有）。
@@ -449,7 +460,7 @@ class PlannerEngine:
                 esc = self._parse_escalate(final_sr)
                 if esc is not None and isinstance(final_sr.data, dict):
                     final_sr.data.pop("_escalate", None)
-                if streamed:
+                if emitted_anything(stream.state):
                     esc = None
                 if esc is not None:
                     sink: dict = {}
@@ -484,8 +495,20 @@ class PlannerEngine:
                 )
                 yield {"kind": "final", **final}
                 return
-            if streamed:
-                # 流了话术却没收到 final：不回退重跑，避免重复播报
+            if not allow_unary_fallback(stream.state):
+                # 流出过输出却没收到 final：不回退重跑，避免重复播报 / 重复副作用。
+                if outcome_uncertain(stream.state, stream.got_final):
+                    # **D0 补上 T2 已有的那一档（B5 §4 统一后的第一笔收益）**：
+                    # action 已经发给用户了，再说「请再试一次」等于邀请用户把一个
+                    # 有副作用的动作发第二遍——正是 B1 在 T2 修掉的那个形态，
+                    # 而 D0 一直原样留着。查一次世界状态再定话术，并打指纹。
+                    uncertain_sr = await self.executor.stream_uncertain_result(
+                        step, ctx)
+                    final = await self.aggregator.compose(
+                        text or plan.raw_text, [uncertain_sr])
+                    yield {"kind": "final", **final}
+                    return
+                # 只流了话术：话已经说了一半，重跑会播两遍。
                 yield {"kind": "final", "speech": "抱歉，刚才没说完，请再试一次。"}
                 return
             # 无任何流式事件（不支持/连接失败）→ 安全回退到下面的 executor 路径
