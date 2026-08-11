@@ -413,6 +413,11 @@ commit 分段描述——硬拆会造出单独 checkout 不可运行的半截历
   required 精确经纬度 × third_party 桥禁 `location.precise`（ws8 硬上限）——
   **结构性不可激活**；门店发现本就归 nearby（高德）。
 
+> **2026-08-12 二期实施入口：** 后续审计裁定不改全局 slots/proto，而在桥内新增确定性
+> 商户 workflow + Redis checkout snapshot，Planner 只传标量和 opaque token；公开 POI
+> 坐标由 Executor 的可信 slot-ref 来源证明。完整方案、写安全、交互与验收见
+> [`2026-08-12-merchant-mcp-full-flow.md`](2026-08-12-merchant-mcp-full-flow.md)。
+
 **v1 激活面收敛为独立价值明确的三件**（全只读零资金风险）：`mcd.menu`
 （list-nutrition-foods，营养/餐品知识——nearby 答不了「巨无霸多少大卡」）、
 `mcd.order_status`（query-order）、`luckin.order_status`（queryOrderDetailInfo，
