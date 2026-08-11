@@ -1031,3 +1031,35 @@
   expect_mode: other:nearby.search
   expect_intents: [nearby.search]
   source: "nearby.search 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
+
+# ── 真实商户 MCP（2026-08-11 麦当劳/瑞幸 v1 只读激活）──
+
+- text: 麦当劳有什么吃的
+  tags: [mode_typical, merchant_mcp]
+  expect_mode: other:mcd.menu
+  expect_intents: [mcd.menu]
+  source: "mcd v1 激活（真机 tools/list 核实）；餐品/营养知识独立于 nearby 发现"
+
+- text: 巨无霸多少大卡
+  tags: [mode_typical, merchant_mcp]
+  expect_mode: other:mcd.menu
+  expect_intents: [mcd.menu]
+  source: "营养问法——list-nutrition-foods 的核心价值场景"
+
+- text: 我的麦当劳订单到哪了
+  tags: [mode_typical, merchant_mcp]
+  expect_mode: other:mcd.order_status
+  expect_intents: [mcd.order_status]
+  source: "mcd 订单查询（query-order）"
+
+- text: 我瑞幸的单子怎么样了
+  tags: [mode_typical, merchant_mcp]
+  expect_mode: other:luckin.order_status
+  expect_intents: [luckin.order_status]
+  source: "luckin 订单查询（queryOrderDetailInfo）；查瑞幸 App 下的单"
+
+- text: 附近有麦当劳吗
+  tags: [mode_boundary, merchant_mcp]
+  expect_mode: other:nearby.search
+  expect_intents: [nearby.search]
+  source: "边界：门店发现归 nearby（高德），mcd 域刻意不接 stores——防新域吸走发现类话术"

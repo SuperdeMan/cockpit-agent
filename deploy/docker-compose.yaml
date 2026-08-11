@@ -120,7 +120,7 @@ services:
       - ./egress-proxy.py:/app/egress-proxy.py:ro
     environment:
       # 出站白名单：仅已接入的可信厂商域名（新增真实 provider 时在此追加）
-      EGRESS_ALLOW: "restapi.amap.com,devapi.qweather.com,api.tushare.pro,serpapi.com,api.anysearch.com,openapi.alipay.com,openapi-sandbox.dl.alipaydev.com,api.mch.weixin.qq.com,mcp.mcd.cn,open.lkcoffee.com"
+      EGRESS_ALLOW: "restapi.amap.com,devapi.qweather.com,api.tushare.pro,serpapi.com,api.anysearch.com,openapi.alipay.com,openapi-sandbox.dl.alipaydev.com,api.mch.weixin.qq.com,mcp.mcd.cn,gwmcp.lkcoffee.com"
     command: ["python", "/app/egress-proxy.py"]
     ports: ["8082:8080"]
 

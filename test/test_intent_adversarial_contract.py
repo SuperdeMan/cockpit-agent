@@ -748,7 +748,13 @@ def test_boundary_ledger_maps_stable_ids_to_declared_domain_order():
     # 对照（`bd.cn-charger-gas.{left.charger,left.fastcharge,right.gas,right.store}`），
     # 两侧同句式只换对象——句式相同才证明分开它们的是对象的能力耦合，不是措辞。
     assert ledger["charging-nearby.charger-vs-gas-station"] == ("charging", "nearby")
-    assert len(ledger) == 21
+    # 2026-08-11 21→23：真实商户激活的两条裁定（品牌词是判据）。兑现物已证：
+    # `validate_boundary_coverage` 零错误——左右各 2 条 reviewed 对照
+    # （luckin-shop 由 cc.available.luckin-status{,-ready} × cc.boundary.shop-order-*、
+    # mcd-nearby 由 cc.available.mcd-menu{,-calorie} × cc.boundary.nearby-*）。
+    assert ledger["luckin-shop.order-ready-brand-vs-demo"] == ("luckin", "shop")
+    assert ledger["mcd-nearby.menu-vs-discovery"] == ("mcd", "nearby")
+    assert len(ledger) == 23
 
 
 def test_boundary_ledger_rejects_missing_duplicate_id_and_empty_why(tmp_path):

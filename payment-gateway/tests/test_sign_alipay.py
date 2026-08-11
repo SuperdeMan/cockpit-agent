@@ -204,3 +204,24 @@ def test_unsigned_response_rejected(keypair):
     p = _provider(keypair, handler)
     with pytest.raises(PaymentChannelError):
         asyncio.run(p.query("pay_x"))
+
+
+def test_gbk_response_with_chinese_verifies(keypair):
+    """2026-08-11 沙箱真实联调抓到的 bug 的回归钉：支付宝网关响应是 **GBK**，
+    签名覆盖的是 GBK 原始字节——中文（如 sub_msg「交易不存在」）一出现，按
+    UTF-8 encode 验签必炸（全 ASCII 响应两种编码字节相同，单测此前全部侥幸绿）。"""
+    key, _, _ = keypair
+    node = ('{"code":"40004","sub_code":"ACQ.TRADE_NOT_EXIST",'
+            '"sub_msg":"交易不存在"}')
+    sig = base64.b64encode(
+        key.sign(node.encode("gbk"), padding.PKCS1v15(), hashes.SHA256())).decode()
+    body = ('{"alipay_trade_query_response":%s,"sign":"%s"}' % (node, sig)).encode("gbk")
+
+    def handler(request):
+        return httpx.Response(
+            200, content=body,
+            headers={"Content-Type": "text/html;charset=GBK"})
+
+    p = _provider(keypair, handler)
+    st = asyncio.run(p.query("pay_x"))
+    assert st.state == WAITING          # 验签过 + TRADE_NOT_EXIST 归 WAITING

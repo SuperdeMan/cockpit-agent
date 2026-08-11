@@ -48,6 +48,11 @@ class ToolSpec:
     # 商户下单响应里支付链接的点路径（如 "payH5Url" / "order.payUrl"），从
     # structuredContent 提取——声明式，桥核心零领域词（§9.9 支付链接闭环）。
     pay_url_locator: str = ""
+    # 常量参数（麦当劳激活时新增，2026-08-11）：真实商户工具常有 required 枚举
+    # （beType=1/searchType=1 这类场景选择器），LLM 的自然语言槽位填不了也不该填
+    # ——在准入清单里**声明死**。组装序：const_args 打底 → 槽位映射值覆盖 →
+    # 幂等键/owner 系统键最后（系统键永不被声明覆盖）。
+    const_args: dict = field(default_factory=dict)
     # 二次确认时给用户看的那句话（`{args}` 占位）。**用户正要点头同意的就是这句**，
     # 说错动作比说得笨拙严重得多——真栈实测抓到取消订单被问成「准备下单：DC…」。
     # 放在声明里而不是桥核心：动词是领域语义，桥不该认识「下单」和「取消」。
@@ -118,6 +123,7 @@ def load_servers(path: str) -> list:
             compensate_tool=str(t.get("compensate_tool", "") or ""),
             compensate_policy=str(t.get("compensate_policy", "tool") or "tool"),
             pay_url_locator=str(t.get("pay_url_locator", "") or ""),
+            const_args=dict(t.get("const_args") or {}),
             arg_map={str(k): str(v) for k, v in (t.get("arg_map") or {}).items()},
         ) for t in (s.get("tools") or [])]
         headers: dict[str, str] = {}

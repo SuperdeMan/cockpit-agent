@@ -85,86 +85,78 @@ servers:
         timeout_ms: 12000
 
   # ══════════════════════════════════════════════════════════════════
-  # 真实商户模板（批 3，2026-08-11）——**刻意注释入库，不是弃案**。
+  # 麦当劳官方 MCP（2026-08-11 真机核实激活：serverInfo=mcd-mcp 1.0.0，29 工具，
+  # tools/list 快照与全量 inputSchema 见当日会话产物；schema_sha 按真机指纹锁死）。
   #
-  # 为什么不直接激活：工具真实名与 inputSchema 要拿到平台 token 后 tools/list
-  # 现场核实（远程平台的工具名不猜）；而未验证的条目一旦解开会被 5 处离线门禁
-  # （capability_integrity / eval_live / eval_exemplars / eval_skills /
-  # 对抗 asset_digest）当作真实能力面消费——「清单里有而真机没验过」=虚假声明。
-  #
-  # 激活 checklist（谁拿到 token 谁做，全程零代码）：
-  #   1. .env 填 MCD_MCP_TOKEN / LUCKIN_MCP_TOKEN（申请入口见 .env.example）；
-  #   2. 用桥的 HttpMcpClient 打一次 tools/list，核实工具名与支付链接字段名；
-  #   3. 按下方模板取消注释、改准工具名，schema_sha 留空首跑（准入日志会打
-  #      实际指纹）→ 回填锁死；
-  #   4. 补尺子（CLAUDE.md §7 日常规则）：skills/exemplars/mcd.yaml + luckin.yaml
-  #      范例、对抗语料每 intent 正2/硬负2/对照1（含跨商户混淆「在麦当劳点杯
-  #      咖啡」与读写边界「汉堡多少钱≠下单」）、mode_routing_cases；
-  #   5. 跑 5 处门禁 + e2e_mcp + 小额真实下单亮码验证。
-  #
-  # - id: mcdonalds
-  #   demo: false
-  #   trust: third_party
-  #   transport: streamable_http
-  #   url: https://mcp.mcd.cn
-  #   headers:
-  #     Authorization: "Bearer ${MCD_MCP_TOKEN}"
-  #   version: ""                    # 远程托管平台：版本不锁，工具级 schema_sha 锁
-  #   startup_timeout_ms: 20000
-  #   pay_url_hosts: [m.mcd.cn]      # payH5Url 域名白名单（第一层；网关 env 是第二层）
-  #   tools:
-  #     - name: <tools/list 核实：菜单/餐品查询>
-  #       intent: mcd.menu
-  #       write: false
-  #       schema_sha: ""
-  #       description: 查看麦当劳菜单与价格
-  #       slots: []
-  #       examples: ["麦当劳有什么吃的", "看看麦当劳菜单", "巨无霸多少钱"]
-  #       timeout_ms: 10000
-  #     - name: <tools/list 核实：附近门店>
-  #       intent: mcd.stores
-  #       write: false
-  #       schema_sha: ""
-  #       description: 查询附近的麦当劳门店（含得来速车道）
-  #       slots: []
-  #       examples: ["附近有麦当劳吗", "最近的麦当劳在哪"]
-  #       timeout_ms: 10000
-  #     - name: <tools/list 核实：创建订单>
-  #       intent: mcd.order
-  #       write: true
-  #       require_confirm: true
-  #       idempotency_key_arg: ""     # 平台是否收幂等参数接入日核实；无则留空
-  #       # 麦当劳流=创建未支付订单→payH5Url 扫码付：若 tools/list 有取消工具，
-  #       # 改 compensate_policy: tool + compensate_tool: <取消工具名>
-  #       compensate_policy: abandon_unpaid
-  #       pay_url_locator: "payH5Url"   # 字段名接入日按真实响应核实
-  #       schema_sha: ""
-  #       description: 在麦当劳下单（麦乐送/到店取餐/得来速）
-  #       confirm_prompt: "准备在麦当劳下单：{args}。下单后需扫码支付，不支付将自动取消，确认吗？"
-  #       slots: [item]
-  #       examples: ["帮我点个巨无霸套餐", "在麦当劳点份麦乐鸡"]
-  #       timeout_ms: 20000
-  #     - name: <tools/list 核实：订单详情>
-  #       intent: mcd.order_status
-  #       write: false
-  #       schema_sha: ""
-  #       description: 查询麦当劳订单状态（商家是订单状态的真相源）
-  #       slots: [order_id]
-  #       examples: ["我的麦当劳订单到哪了", "麦当劳那单好了吗"]
-  #       timeout_ms: 10000
-  #
-  # - id: luckin
-  #   demo: false
-  #   trust: third_party
-  #   transport: streamable_http
-  #   url: <open.lkcoffee.com 控制台核实 MCP endpoint>
-  #   headers:
-  #     Authorization: "Bearer ${LUCKIN_MCP_TOKEN}"
-  #   version: ""
-  #   startup_timeout_ms: 20000
-  #   pay_url_hosts: []              # 支付链接域名接入日按真实响应核实后填
-  #   tools:
-  #     # 瑞幸工具清单（搜门店/浏览商品/匹配优惠券/创建订单）全部接入日
-  #     # tools/list 核实后按 mcdonalds 模板同构填写；intent 用 luckin.* 域
-  #     # （不混 shop.*——demo 商户不卷进真钱路径）。
-  #     []
+  # **v1 只激活只读两件**（参数自洽、零资金风险）。`create-order` 刻意不进 v1：
+  # 真机 schema 显示它是强多步流程 API——items 是结构化数组，且全链硬依赖
+  # query-nearby-stores 返回的 storeCode/beCode（连 query-meals 查菜单都 required
+  # storeCode）。桥的「扁平 slots→LLM 填→arg_map」单步机制接不住这条链——这是
+  # **编排能力面**（planner 结构化参数 + 步间结果引用）的工程问题，不是配置问题；
+  # 硬接=下单参数靠猜。二期条件：planner 支持步间结构化引用后，按
+  # compensate_policy: abandon_unpaid + pay_url_locator: "payH5Url"（官方接入指南
+  # 确认的字段名）接入，支付闭环机制已由 demo-coffee 全链路验证。
+  # 真机还确认：**29 工具中无取消类工具**——abandon_unpaid 判断坐实。
+  - id: mcdonalds
+    demo: false
+    trust: third_party
+    transport: streamable_http
+    url: https://mcp.mcd.cn
+    headers:
+      Authorization: "Bearer ${MCD_MCP_TOKEN}"
+    version: ""                    # 远程托管平台：版本不锁（自报 1.0.0），工具级 schema_sha 锁
+    startup_timeout_ms: 20000
+    pay_url_hosts: [m.mcd.cn]      # 二期下单用；只读工具不产链接
+    # `query-nearby-stores` 刻意不激活：「附近有麦当劳」是 nearby.search（高德真
+    # 数据+导航）的既有地盘，门店 intent 的真实价值在二期下单链（拿 storeCode）
+    # ——不为激活数量保留一个与既有能力打架的 intent。
+    tools:
+      - name: list-nutrition-foods
+        intent: mcd.menu
+        write: false
+        schema_sha: "9e2fcd061b03"
+        # 诚实描述：这是常见餐品与营养成分（能量/蛋白质等），不是当店实时价目——
+        # 带价格的当店菜单（query-meals）required storeCode，归二期多步链
+        description: 麦当劳常见餐品与营养成分（热量/蛋白质等；当店价格需选定门店后查询）
+        slots: []
+        examples: ["麦当劳有什么吃的", "巨无霸多少大卡", "麦当劳哪个热量低"]
+        timeout_ms: 12000
+      - name: query-order
+        intent: mcd.order_status
+        write: false
+        schema_sha: "6c5c0def4de0"
+        description: 查询麦当劳订单状态与配送进度（商家是订单状态的真相源）
+        slots: [order_id]
+        arg_map: {order_id: orderId}
+        examples: ["我的麦当劳订单到哪了", "麦当劳那单好了吗"]
+        timeout_ms: 12000
+
+  # ── 瑞幸官方 MCP（2026-08-11 真机核实激活：serverInfo=luckyordermcpmaster 1.0.0，
+  # 8 工具）。**v1 只激活订单查询一件**：
+  # - queryShopList required 精确经纬度——third_party 桥被硬上限表禁 location.precise
+  #   （ws8 红线），结构性不可激活；「附近的瑞幸」本就归 nearby.search（高德）。
+  # - searchProductForMcp/queryProductDetailInfo/previewOrder/createOrder 全链硬依赖
+  #   deptId（先选店）与 productList 结构化数组——同麦当劳，归二期编排能力面。
+  # - **cancelOrder 真机存在**（补偿两态里的 tool 形态，与麦当劳 abandon_unpaid 各占
+  #   其一）：二期 createOrder 接入时 compensate_policy: tool + compensate_tool:
+  #   cancelOrder；v1 不单独激活取消（写操作且上游下单未接，空转能力）。
+  - id: luckin
+    demo: false
+    trust: third_party
+    transport: streamable_http
+    url: https://gwmcp.lkcoffee.com/order/user/mcp
+    headers:
+      Authorization: "Bearer ${LUCKIN_MCP_TOKEN}"
+    version: ""                    # 远程托管平台：版本不锁（自报 1.0.0），工具级 schema_sha 锁
+    startup_timeout_ms: 20000
+    pay_url_hosts: []              # 二期下单时按真实响应的支付链接域名回填
+    tools:
+      - name: queryOrderDetailInfo
+        intent: luckin.order_status
+        write: false
+        schema_sha: "095c2b916b52"
+        description: 查询瑞幸咖啡订单详情与状态（商家是订单状态的真相源）
+        slots: [order_id]
+        arg_map: {order_id: orderId}
+        examples: ["我瑞幸的单子怎么样了", "瑞幸咖啡做好了吗", "查一下瑞幸订单"]
+        timeout_ms: 12000

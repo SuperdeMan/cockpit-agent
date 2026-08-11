@@ -249,8 +249,10 @@ class McpBridgeAgent(BaseAgent):
     # ── 只读 ──
     async def _call_read(self, b, intent, ctx, meta) -> AgentResult:
         try:
-            args = {b.tool.arg_map.get(k, k): v
-                    for k, v in (intent.slots or {}).items() if v}
+            # const_args 打底（声明死的场景选择器）→ 槽位映射值覆盖 → 系统键最后
+            args = {**b.tool.const_args,
+                    **{b.tool.arg_map.get(k, k): v
+                       for k, v in (intent.slots or {}).items() if v}}
             user_id = str(getattr(ctx, "user_id", "") or "").strip()
             if user_id:
                 # owner 由已验证 Context 派生，**不是 planner 槽位**（同写路径）：
@@ -292,7 +294,12 @@ class McpBridgeAgent(BaseAgent):
         自己生成的、商户按它索引。给幂等键，「到底下没下成」才第一次可以核对
         ——此前只能让用户「先去商家处核实，别急着再下一单」。
         """
-        if not self.ledger or args.get("order_id") or args.get("idempotency_key"):
+        # 键名走 arg_map 翻译（麦当劳激活时修，2026-08-11）：本函数在 args 层
+        # （已翻译）工作，回填却一直用规划期名 "order_id"——demo-coffee 的商户
+        # 参数恰好同名没暴露；真实商户叫 orderId 就会塞进一个它不认识的键。
+        oid_key = b.tool.arg_map.get("order_id", "order_id")
+        idem_key_name = b.tool.arg_map.get("idempotency_key", "idempotency_key")
+        if not self.ledger or args.get(oid_key) or args.get(idem_key_name):
             return args
         try:
             recent = await self.ledger.recent(user_id, kind=LEDGER_KIND, limit=1)
@@ -304,9 +311,9 @@ class McpBridgeAgent(BaseAgent):
         task = recent[0]
         ref = task.result_ref or {}
         if ref.get("order_id"):
-            args["order_id"] = ref["order_id"]
+            args[oid_key] = ref["order_id"]
         elif getattr(task, "idempotency_key", ""):
-            args["idempotency_key"] = task.idempotency_key
+            args[idem_key_name] = task.idempotency_key
         return args
 
     # ── 可确认写入（生命周期五项）──
@@ -358,7 +365,8 @@ class McpBridgeAgent(BaseAgent):
         # 用请求指纹，商户侧才能认出「这是同一单」并复用原订单（demo server 已实现）。
         # 账本 `idempotency_key` 列存的正是同一个值（M2 §9.6），两侧同源。
         idem = idem_key(user_id, LEDGER_KIND, goal)
-        args = {b.tool.arg_map.get(k, k): v for k, v in slots.items()}
+        args = {**b.tool.const_args,
+                **{b.tool.arg_map.get(k, k): v for k, v in slots.items()}}
         # Internal owner is derived only from authenticated Context; it is not
         # declared as a planner slot and cannot be supplied/overridden by LLM.
         args["_owner_user_id"] = user_id

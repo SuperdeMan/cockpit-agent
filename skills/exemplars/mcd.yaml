@@ -1,0 +1,50 @@
+# 范例库 · mcd 域（麦当劳官方 MCP，2026-08-11 真机核实激活）
+# 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号）。
+# v1 只有只读两件（mcd.menu=营养/餐品知识、mcd.order_status=订单查询）；
+# 下单归二期（编排能力面），「附近有麦当劳」归 nearby.search（高德）——
+# 边界范例刻意各给一条，防新域把发现类话术吸走。
+domain: mcd
+exemplars:
+- text: 麦当劳有什么吃的
+  plan:
+  - agent: mcp-bridge
+    intent: mcd.menu
+  source: manifest
+  added: '2026-08-11'
+  tags:
+  - canonical
+- text: 巨无霸多少大卡
+  plan:
+  - agent: mcp-bridge
+    intent: mcd.menu
+  source: manifest
+  added: '2026-08-11'
+  tags:
+  - canonical
+- text: 麦当劳哪个套餐热量低一点
+  plan:
+  - agent: mcp-bridge
+    intent: mcd.menu
+  source: manifest
+  added: '2026-08-11'
+  tags:
+  - canonical
+- text: 我的麦当劳订单到哪了
+  plan:
+  - agent: mcp-bridge
+    intent: mcd.order_status
+  source: manifest
+  added: '2026-08-11'
+  tags:
+  - canonical
+- text: 麦当劳那单好了没有
+  plan:
+  - agent: mcp-bridge
+    intent: mcd.order_status
+  source: manifest
+  added: '2026-08-11'
+  tags:
+  - canonical
+# 边界「附近有麦当劳吗」→ nearby.search **不进本文件**：范例契约要求首步 intent
+# 域==文件域（放这里=域错配红灯）。该边界由对抗语料（cc.negative.luckin-nearby-*
+# 同族）与 mode_routing_cases 锁定；nearby 域自身的范例已覆盖发现类话术。

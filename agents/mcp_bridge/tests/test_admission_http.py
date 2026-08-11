@@ -120,3 +120,23 @@ def test_read_tools_unaffected_by_compensate_rules():
     t = ToolSpec(name="menu", intent="m.menu", write=False)
     admitted, rejected = admit(_spec([t]), _offered("menu"))
     assert len(admitted) == 1 and rejected == []
+
+
+def test_const_args_parsed_with_native_types(tmp_path):
+    """const_args 保留 yaml 原生类型（beType: 1 是 int）——真实商户的 required
+    枚举选择器靠它声明死，LLM 槽位不填场景参数（麦当劳激活时新增）。"""
+    path = _write_yaml(tmp_path, """
+        servers:
+          - id: m
+            transport: streamable_http
+            url: https://x
+            version: ""
+            tools:
+              - name: t1
+                intent: m.stores
+                write: false
+                const_args: {beType: 1, searchType: 2, tag: "a"}
+    """)
+    spec = load_servers(path)[0]
+    assert spec.tools[0].const_args == {"beType": 1, "searchType": 2, "tag": "a"}
+    assert isinstance(spec.tools[0].const_args["beType"], int)

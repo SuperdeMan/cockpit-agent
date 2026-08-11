@@ -396,3 +396,67 @@ smoke 13/13 全绿。
 网关/parking 测试 + e2e_payment 真栈 3/3）收口、最终全量以批 2+3 定稿工作区一次
 实测。同理两批共享文件多（proto/store/server/compose/HMI/design），合并为一个
 commit 分段描述——硬拆会造出单独 checkout 不可运行的半截历史。
+
+### 6.4 批 3b：凭证到位，商户真机激活 + 沙箱真实联调（2026-08-11）
+
+泓舟填入四凭证后当日激活。**「现场核实改变方案」的完整记录**：
+
+**真机 tools/list 核实**（`HttpMcpClient` 直连，快照与全量 inputSchema 存会话产物）：
+- 麦当劳（mcp.mcd.cn，serverInfo=mcd-mcp 1.0.0）：**29 个工具**（比报道多 1），
+  **无取消类工具**——`create-order` 补偿形态=abandon_unpaid 的预判坐实。但 schema
+  显示它是**强多步流程 API**：`create-order` 的 `items` 是结构化数组，全链硬依赖
+  `query-nearby-stores` 返回的 storeCode/beCode，连 `query-meals` 查菜单都 required
+  storeCode。桥的「扁平 slots→LLM→arg_map」单步机制接不住——**下单归二期**，
+  阻塞点=planner 结构化参数与步间引用（编排能力面，不是配置问题）。
+- 瑞幸（gwmcp.lkcoffee.com/order/user/mcp，luckyordermcpmaster 1.0.0）：8 工具，
+  **有 `cancelOrder`**——补偿两态被两家真实商户各占其一地验证。`queryShopList`
+  required 精确经纬度 × third_party 桥禁 `location.precise`（ws8 硬上限）——
+  **结构性不可激活**；门店发现本就归 nearby（高德）。
+
+**v1 激活面收敛为独立价值明确的三件**（全只读零资金风险）：`mcd.menu`
+（list-nutrition-foods，营养/餐品知识——nearby 答不了「巨无霸多少大卡」）、
+`mcd.order_status`（query-order）、`luckin.order_status`（queryOrderDetailInfo，
+查瑞幸 App 下的单）。门店类 intent 刻意不激活——不为激活数量保留与既有能力打架
+的 intent。schema_sha 全部按真机指纹锁死；version 留空（远程平台版本不锁）。
+
+**新机制两个 + 既有缺陷一处**（激活压力测试出来的）：
+- `const_args`（ToolSpec）：真实商户工具的 required 枚举选择器（beType 等）在
+  清单里声明死，LLM 槽位不填场景参数；组装序 const→槽位→系统键。
+- `_resolve_order_ref` 的 args 层键名此前用规划期名 `order_id` 回填——demo 商户
+  参数恰好同名没暴露，麦当劳的 `orderId` 会踩；改走 arg_map 翻译。
+- 能力完整性门禁自身缺 `stdout.reconfigure`——GBK 控制台下 `✓` 编不出**门禁自己
+  崩溃**（PowerShell 带 PYTHONIOENCODING 绿 / Bash 崩，批 1 环境敏感一族）。
+
+**尺子侧全套**（门禁逐级抓出的具名缺口，全部照单补齐）：exemplars mcd/luckin
+两域（域错配契约挡掉边界条→移对抗语料锁）；对抗语料 18 条净增（正/硬负/对照 +
+**cohort leakage 四句改写**——unseen_transfer 的句子与范例逐字相同被契约抓出 +
+**boundary 台账兑现**：2 条新裁定双向各 2 例 + relation invariant 3 条）；
+boundaries.yaml 两条裁定（品牌词是判据）；suites.yaml 上界 540→560（第三次适用
+「上限跟着裁定数走」先例）；mode_routing 5 条。
+
+**真栈验证**：根 compose 重建后三 server 准入全成（麦当劳 2 工具 + 27 具名忽略 /
+瑞幸 1 + 7 忽略 / demo 4；schema_sha 真机校验过）；容器内直连问答——mcd.menu
+返回麦当劳真实营养数据（status 0）、luckin.order_status 触达瑞幸真实后端（无单
+号被如实拒参，链路通）。⚠ 中途踩「compose 根入口」老坑一脚（`-f deploy/...` 读
+不到根 .env 插值，token 没进容器——拒载路径反而先被真栈验证了一遍）。
+
+**支付宝沙箱真实联调**（`scripts/alipay_sandbox_probe.py`）：
+- **抓到真 bug**：支付宝网关响应是 **GBK**，中文（sub_msg「交易不存在」）出现时
+  UTF-8 字节验签必炸——全 ASCII 响应两种编码字节相同，precreate 成功响应与全部
+  MockTransport 单测都侥幸绿。修=按 `resp.encoding` 还原签名字节 + GBK 中文回归
+  钉（`test_gbk_response_with_chinese_verifies`）。**单测结构性盖不住、非真实
+  渠道不可见**——这就是「真实接入」验收的价值本体。
+- 已在真实沙箱验证：precreate 出真码（`https://qr.alipay.com/...` + 终端 ASCII
+  码图）、query 语义（TRADE_NOT_EXIST→WAITING）、超时 close→True。
+- **待补最后一段**：扫码→PAID→refund——沙箱当日持续 `20000 系统异常`（其抖动
+  是出了名的），300s 窗口未完成扫码。探针随时可重跑（退避容错已加）。
+
+**遗留记账**：商户返回的英文 API 说明文本直接进桥话术（mcd.menu 实测会朗读一段
+API 文档）——需要「超长外文 text 截断+卡片承载/LLM 重述」层，记 AGENTS.md 余项。
+
+**批 3b 验证读数**：定稿全量 **4996 passed / 14 skipped / 0 failed**（+2=GBK
+回归钉 + const_args 测试；三处清单哨兵有意更新：catalog 135→138 / chars_full
+11081 / 边界台账 21→23）；L0 strict **81/81 + 25/25**（553 唯一输入，上界
+540→560 第三次先例适用）；范例/技能/能力门禁全绿（能力门禁自身的 GBK 崩溃已修）；
+e2e_mcp 最终形态（能力面 7 intent）**PASS 12/12**；三 server 真栈准入 + 双商户
+真实问答冒烟通过。

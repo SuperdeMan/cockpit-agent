@@ -66,11 +66,12 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**4994 passed / 14 skipped / 0 failed**（单进程 28m48s，2026-08-11 支付批 2+3 定稿
-工作区实测，退出码 0）。较批 1 后（`d964e1d`，4960）净 **+34**：store 幂等新语义 2、
-server qr_svg/快照金额 2、parking 重写净增 8、桥三件（admission_http 8 +
-http_client 8 + payurl_register 9）25，另有 e2e_manifest 守卫随 case 数参数化微调
-（0 failed，分面读数逐一实测：网关 100 / parking 18 / 桥 60 / 守卫 168）。
+**4996 passed / 14 skipped / 0 failed**（单进程 16m58s，2026-08-11 商户激活批 3b 后
+实测，退出码 0）。较批 2+3（`94f7afc`，4994）净 **+2**：支付宝 GBK 验签回归钉 +
+admission const_args 解析测试；另同批更新三处清单哨兵（catalog 能力 135→138、
+chars_full 10865→11081/余量 4919、边界台账 21→23——全部对应有意新增，注释留痕）。
+批 2+3 较批 1（`d964e1d`，4960）净 +34：store 幂等新语义 2、server qr_svg/快照
+金额 2、parking 重写净增 8、桥三件 25（分面读数：网关 102 / parking 18 / 桥 62）。
 批 1 净 +96=payment-gateway tests 五件（store 30/server 24/sign_alipay 22/
 sign_wechat 12/worker 8，全离线零外呼）。⚠ 批 1 附带修
 `test_eval_intent_adversarial_cli.py` 三条子进程测试的**环境敏感**（宿主带
@@ -143,13 +144,23 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
   admission 扩展（${VAR} 缺 env 拒载/compensate 两态/存在性校验）、pay_url_locator
   声明式支付登记（白名单双层防钓鱼）、`e2e_mcp` 真栈 **12/12 PASS**（顺修恒红了
   10 天的过期断言）。
-- **瑞幸/麦当劳 = 注释模板入库待激活**（`agents/mcp_bridge/servers.yaml` 尾部，
-  含五步激活 checklist，零代码）：工具真实名/schema 必须 token 到位后 tools/list
-  现场核实——未验证条目会被 5 处门禁当真实能力面消费。**激活时同批补尺子**
-  （mcd/luckin 范例 + 对抗语料正2/硬负2/对照1 + mode_routing）。
-- **等泓舟的四个凭证**（拍板会提供；填 `.env` 不进 git）：支付宝沙箱密钥（联调
-  探针 `scripts/alipay_sandbox_probe.py` 已就绪）、微信商户号（可后置）、麦当劳
-  token（mcp.mcd.cn 控制台激活）、瑞幸 token（open.lkcoffee.com，约 1 个月有效期）。
+- **批 3b 商户真机激活**（2026-08-11 泓舟填凭证当日）：麦当劳/瑞幸 tools/list
+  真机核实后 **v1 激活只读三件**（`mcd.menu` 营养餐品 / `mcd.order_status` /
+  `luckin.order_status`，schema_sha 真机指纹锁死），真栈准入全成 + 真实问答冒烟
+  通过（麦当劳真实营养数据 / 瑞幸真实后端触达）。**下单归二期**：真机 schema
+  显示两家都是强多步流程 API（结构化 items/productList + storeCode/deptId 前置
+  链），桥的扁平 slots 机制接不住——阻塞点=planner 结构化参数与步间引用（编排
+  能力面）；瑞幸 `queryShopList` required 精确经纬度 × third_party 禁
+  location.precise（红线）结构性不可激活，门店发现归 nearby。补偿两态被两家各
+  占其一地验证（麦当劳无取消工具=abandon_unpaid / 瑞幸有 cancelOrder=tool）。
+  **沙箱真实联调抓到真 bug**：支付宝网关 GBK 响应 × UTF-8 验签字节（中文出现必
+  炸，ASCII 侥幸绿）——已修+回归钉；precreate 真码/query/close 已真栈验证。
+- **支付余项**：① 沙箱「扫码→PAID→refund」最后一段待沙箱稳定时补跑
+  （`python scripts/alipay_sandbox_probe.py`，随时，泓舟扫码）；② 微信商户号到
+  位后真实联调；③ 商户返回的英文 API 文本直接进桥话术（mcd.menu 实测会朗读 API
+  文档）——需超长外文 text 截断+卡片承载/LLM 重述层；④ 二期下单（编排结构化
+  参数能力面）+「点杯瑞幸拿铁」会被 `mcp-bridge#0` hint 抓给 demo 商户的冲突
+  （hint 动不得——退役需专项安全回归，届时 guard 加品牌让路词一并评审）。
 
 外部评审六批 **B1/B2**（2026-08-10）、**B3/B4**、**B5/B6**
 （2026-08-11）全部实施合入并收口。✅ 冻结令已撤销，可以新增业务 Agent。

@@ -171,3 +171,17 @@ rulings:
     why: 2026-08-02 裁定——**用户已经把对象描述清楚了就不用再看一眼**：带颜色/类型
       描述的仪表灯归 manual.query（说明书直接给含义与处置），只有描述不足以定位对象时
       才走 vision.describe 抓帧。判据是隐私侧的：抓帧是敏感动作，能不抓就不抓
+
+  # ── 真实商户 MCP（2026-08-11 麦当劳/瑞幸 v1 激活）──
+  - id: luckin-shop.order-ready-brand-vs-demo
+    texts: [瑞幸咖啡做好了吗, 我那杯咖啡好了吗]
+    domains: [luckin, shop]
+    why: 品牌词是判据——带「瑞幸」查真商户（luckin MCP），裸「咖啡」指最近一单
+      （demo 商户）；共享的只是「做好了吗」问句框架。无品牌歧义句的宽口径由对抗
+      语料 cc.contrast.brandless-order-query 锁定（三家查单都算对）
+
+  - id: mcd-nearby.menu-vs-discovery
+    texts: [麦当劳有什么吃的, 附近有什么好吃的]
+    domains: [mcd, nearby]
+    why: 前者问品牌餐品目录（mcd.menu 营养/餐品知识），后者是周边发现（高德 POI）
+      ——「有什么吃的」是框架；带具体品牌名问商品归商户域，带「附近」问场所归 nearby

@@ -37,9 +37,30 @@ def test_e2e_cleanup_uses_atomic_owner_lifecycle_without_captured_ids():
 
 # ── 准入清单 ────────────────────────────────────────────────────────────
 
-def test_allowlist_loads_and_locks_version_and_schema():
+def test_allowlist_loads_and_locks_version_and_schema(monkeypatch):
+    # 2026-08-11 起清单含三台 server：demo-coffee（stdio）+ 麦当劳/瑞幸（
+    # streamable_http，真机 tools/list 核实激活）。token 刻意清空——断言缺 env
+    # 时商户 server 带着**具名** env_error 被加载（bootstrap 据此整台拒载）。
+    monkeypatch.delenv("MCD_MCP_TOKEN", raising=False)
+    monkeypatch.delenv("LUCKIN_MCP_TOKEN", raising=False)
     specs = load_servers(SERVERS_YAML)
-    assert [s.id for s in specs] == ["demo-coffee"]
+    assert [s.id for s in specs] == ["demo-coffee", "mcdonalds", "luckin"]
+
+    mcd = next(s for s in specs if s.id == "mcdonalds")
+    assert mcd.transport == "streamable_http" and mcd.url == "https://mcp.mcd.cn"
+    assert not mcd.version, "远程托管平台版本不锁（工具级 schema_sha 锁）"
+    assert "MCD_MCP_TOKEN" in mcd.env_error
+    assert {t.intent for t in mcd.tools} == {"mcd.menu", "mcd.order_status"}
+    assert all(not t.write for t in mcd.tools), "v1 只激活只读（下单归二期）"
+    mcd_status = next(t for t in mcd.tools if t.intent == "mcd.order_status")
+    assert mcd_status.arg_map.get("order_id") == "orderId"
+
+    luckin = next(s for s in specs if s.id == "luckin")
+    assert luckin.transport == "streamable_http"
+    assert "LUCKIN_MCP_TOKEN" in luckin.env_error
+    assert {t.intent for t in luckin.tools} == {"luckin.order_status"}
+    assert all(not t.write for t in luckin.tools)
+
     s = specs[0]
     assert s.version and s.demo is True and s.trust == "third_party"
     # M-D：查单与取消补进准入清单。`order.cancel` 从一开始就在商户侧存在、也被
@@ -347,8 +368,14 @@ async def _agent(reply=None, boom=False):
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_synthesizes_capabilities_from_allowlist():
-    """新增工具 = 改 servers.yaml + 人工审，**不改 Agent 代码**。"""
+async def test_bootstrap_synthesizes_capabilities_from_allowlist(monkeypatch):
+    """新增工具 = 改 servers.yaml + 人工审，**不改 Agent 代码**。
+
+    token 刻意清空：断言真实商户 server 在无凭证环境**具名诚实缺席**（rejections
+    记 env_var_missing、能力面只剩 demo 四件）——不静默拿空 token 出站吃 401。
+    """
+    monkeypatch.delenv("MCD_MCP_TOKEN", raising=False)
+    monkeypatch.delenv("LUCKIN_MCP_TOKEN", raising=False)
     a = McpBridgeAgent()
     assert list(a.manifest.capabilities) == []      # manifest 里故意是空的
     await a.bootstrap()
@@ -359,7 +386,9 @@ async def test_bootstrap_synthesizes_capabilities_from_allowlist():
         order = next(c for c in a.manifest.capabilities if c.intent == "shop.order")
         assert order.require_confirm is True, "写操作必须声明二次确认"
         assert "演示商户" in order.description, "演示身份要出现在能力描述里"
-        assert a.rejections == []
+        rejected_ids = {r.split(":")[0] for r in a.rejections}
+        assert rejected_ids == {"mcdonalds", "luckin"}
+        assert all("env_var_missing" in r for r in a.rejections)
     finally:
         await a.shutdown()
 

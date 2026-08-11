@@ -104,18 +104,22 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     catalog = _assemble_capability_catalog(agents)
 
     assert len(agents) == 17
-    assert len(catalog.ref_to_pair) == 135
+    # 2026-08-11 135→138：真实商户 MCP v1 激活 +3（mcd.menu / mcd.order_status /
+    # luckin.order_status，servers.yaml 真机 tools/list 核实后收录）
+    assert len(catalog.ref_to_pair) == 138
     assert catalog.catalog_stats["dropped"] == []
     # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10865。
     # info.sports 新增过去赛果/泛指赛事边界后增加 49 字符，仍完整落在 16k 预算内。
     # 2026-08-10：端侧补前/后挡除雾 4 条能力（131→135），+140 字符，余量 5275→5135。
+    # 2026-08-11：真实商户 MCP v1 激活 3 条（135→138），+216 字符，余量 5135→4919
+    # ——有意新增（mcd.menu/mcd.order_status/luckin.order_status，见 servers.yaml）。
     # 这个数**该跟着能力面走**——它守的是「完整 inventory 仍不超预算」，不是冻结条数；
     # 但每次动它都要先确认涨的是有意新增的能力，而不是别处漏进来的重复项。
-    assert catalog.catalog_stats["chars_full"] == 10865
-    assert catalog.catalog_stats["chars_final"] == 10865
+    assert catalog.catalog_stats["chars_full"] == 11081
+    assert catalog.catalog_stats["chars_final"] == 11081
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 5135
+    assert 16000 - catalog.catalog_stats["chars_final"] == 4919
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

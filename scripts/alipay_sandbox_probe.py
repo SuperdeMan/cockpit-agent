@@ -80,13 +80,28 @@ async def main() -> int:
     print(f"[1/4] precreate {args.amount_fen} 分（out_trade_no={payment_id}）…")
     qr = await provider.create_qr(payment_id, args.amount_fen, "car-agent 沙箱联调")
     print(f"      二维码内容：{qr.qr_content}")
-    print("      → 打开手机「沙箱钱包」App 扫码支付（可把内容贴到二维码生成器出图）")
+    try:
+        import qrcode
+        q = qrcode.QRCode(border=1)
+        q.add_data(qr.qr_content)
+        q.print_ascii(invert=True)
+    except Exception:
+        pass
+    print("      → 打开手机「沙箱钱包」App 扫上方二维码支付")
+
+    from payment_gateway.providers.base import PaymentChannelError
 
     print(f"[2/4] 轮询查单（最多 {args.wait_s}s）…")
     deadline = time.time() + args.wait_s
     state = None
     while time.time() < deadline:
-        st = await provider.query(payment_id)
+        try:
+            st = await provider.query(payment_id)
+        except PaymentChannelError as e:
+            # 沙箱以抖动闻名（SYSTEM_ERROR 随手可见）——退避继续，不让抖动打断联调
+            print(f"      查单抖动（退避重试）：{str(e)[:80]}")
+            await asyncio.sleep(4)
+            continue
         if st.state != state:
             state = st.state
             print(f"      {time.strftime('%H:%M:%S')} state={state} "

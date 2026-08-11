@@ -6,12 +6,17 @@ schema_version: 1
 # （nearby-navigation.find-vs-go / manual-vision.described-light-vs-unknown-light），
 # 台账契约要求每条**双向各 2 例**，机械地就是 +8。**边界裁定的对照用例是台账的兑现物，
 # 不是可裁的冗余**；上限该跟着裁定数走，不是反过来。
+# 2026-08-11 放到 560：同一条理由的第三次适用——真实商户 MCP 双域接入（麦当劳/瑞幸
+# v1 只读激活，真机 tools/list 核实）带来 3 个新 active intent（正2/硬负2/对照1 +
+# 各 1 条 relation invariant）与 2 条新边界裁定（luckin-shop 品牌 vs demo、
+# mcd-nearby 品牌菜单 vs 周边发现；双向各 2 例=+8）。合计 +18 唯一输入（553），
+# 全部是能力面实质扩张的兑现物。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 540
+    max_cases: 560
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

@@ -141,7 +141,17 @@ class AlipayProvider(PaymentProvider):
         sig = self._key.sign(unsigned.encode(), padding.PKCS1v15(), hashes.SHA256())
         return base64.b64encode(sig).decode()
 
-    def _verify_response(self, text: str, node_key: str) -> bool:
+    def _verify_response(self, text: str, node_key: str,
+                         encoding: str = "utf-8") -> bool:
+        """验签对象=响应**原始字节**里的节点。
+
+        2026-08-11 沙箱真实联调抓到的 bug：支付宝网关响应是 **GBK**（请求公共参数
+        charset=utf-8 管的是业务参数编码，不管响应）。此前用 `node.encode()`
+        （UTF-8）验签——响应全 ASCII 时两种编码字节相同侥幸通过（precreate 成功
+        响应、全部 MockTransport 单测），中文一出现（如 query 的 sub_msg
+        「交易不存在」）就必炸。修法：str 层定位节点（多字节安全），再按响应
+        **实际编码**还原成签名覆盖的字节。
+        """
         node = _extract_node(text, node_key)
         try:
             sign = json.loads(text).get("sign", "")
@@ -150,7 +160,8 @@ class AlipayProvider(PaymentProvider):
         if not (node and sign):
             return False
         try:
-            self._pub.verify(base64.b64decode(sign), node.encode(),
+            self._pub.verify(base64.b64decode(sign),
+                             node.encode(encoding, errors="strict"),
                              padding.PKCS1v15(), hashes.SHA256())
             return True
         except Exception:
@@ -178,8 +189,10 @@ class AlipayProvider(PaymentProvider):
         except httpx.HTTPError as e:
             raise PaymentChannelError(f"alipay {method} 请求失败：{e}") from e
         text = resp.text
+        # 响应实际编码（沙箱实测 GBK）——验签字节必须按它还原，见 _verify_response
+        encoding = resp.encoding or "utf-8"
         node_key = method.replace(".", "_") + "_response"
-        if not self._verify_response(text, node_key):
+        if not self._verify_response(text, node_key, encoding=encoding):
             # 网关级错误（error_response）没有业务节点签名可验，如实抛出
             raise PaymentChannelError(
                 f"alipay {method} 应答验签失败（或返回 error_response）："

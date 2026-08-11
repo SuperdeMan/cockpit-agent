@@ -51,6 +51,14 @@ from pathlib import Path
 
 import yaml
 
+# Windows GBK 控制台下 ✓/✗ 编不出会让**门禁自己崩溃**（一绿一崩取决于宿主有没有
+# PYTHONIOENCODING——同 test_eval_intent_adversarial_cli 批 1 修的环境敏感一族）。
+# 项目 e2e 脚本的既有惯例，B4 落地时漏了这行。
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 _gen_py = _ROOT / "gen" / "python"
