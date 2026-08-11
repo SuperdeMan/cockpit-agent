@@ -1782,3 +1782,108 @@ skipped），差额 6 条**不属本批**，是 4601 那次实测之后 `cc87056
 **留下的两笔账都是本批边界不是遗漏**：完整 `ConfirmationGrant`（nonce/expiry/consume）
 归真实 VAL（C++/SOME-IP）对接前置项；`_outcome_uncertain` 目前只有标记 + 话术、**没有
 readback 对账**，接 Outcome Verifier 归 B5 统一组件时做（现在做会产生第三套局部实现）。
+
+---
+
+## 26. B3 部署形态闸 + B4 能力包：外部评审后两批的实施（2026-08-11）
+
+七个提交：`0055629` `fdbee6e` `dadd64f`（B3）／`b9eb09e` `7b68047` `8ee3ea4` `c6b14b2`（B4）。
+方案与**逐条差异**在两份方案文档 §6，本节只留判据与两次「差点报绿」。
+
+### 26.1 B3：第四种运行形态
+
+当前全部安全开关是「默认关、演示翻开」的 PoC 形态（R3.1/R3.2 拍板设计）。这不是缺陷，
+缺的是第四种形态：`prod` 档下任何 fail-open 配置都**拒绝启动**，而不是打一行 warning 继续跑。
+dev 档零校验零输出是本方案的硬约束（CI/离线开发零影响）。
+
+三条落地判据：
+
+1. **每项校验复刻消费方的解析，不发明通用真值语义。** `AUTH_REQUIRED` 在 Go 侧是
+   `EqualFold(v,"true")`——`AUTH_REQUIRED=1` 对它是**关**；`GRPC_TLS` 在 Go 侧是 switch
+   精确匹配——大写 `ON` 也是**关**。一个「看起来是真」的检查会在这两处报绿而开关没开。
+   同 CLAUDE.md §6 那条：**防御要防到真正会被拿去判定的那个值。**
+2. **未知档位不静默回落 dev。** `DEPLOY_PROFILE=production`（拼错）若回落 dev，
+   运维会以为在跑硬校验而实际零校验——**静默回落正是本批要消灭的形态**。
+3. **报错不回显凭据**，只回显形状（未设/空/长度/是否抄了示例值/是否 PoC 默认口令）；
+   示例 token 是公开值，反而要指名道姓——配错的人需要看到自己抄了它。
+
+### 26.2 B3 差点报绿的那次：anchor 不等于每个服务都有
+
+把 `DEPLOY_PROFILE` 加进 compose 的 `x-python-env` anchor 后，我按「所有 Python 服务都用
+这个 anchor」继续做。**容器演练当场证否**：`DEPLOY_PROFILE=prod docker compose run registry`
+照常 serving。查下来 `registry` / `edge-orchestrator` / `proactive` 三个服务根本没有
+`<<: *python-env`，各自列 env。
+
+- 判据：**「写进 anchor」不等于「每个服务都有」**——与 shop 域零范例事故（门禁只读
+  `manifest.yaml`，而 `mcp-bridge` 能力由 `servers.yaml` 启动期合成）同族，这是第三次。
+- 修法不是「下次记得」：`runtime/tests/test_profile_coverage.py` 把覆盖面变成断言
+  （每个自建镜像服务都要有该 env；每个入口都要够得着闸；纯前端显式豁免且必须写理由）。
+- **写这条断言时又踩同类一次**：第一版 import 扫描只认绝对 import，
+  `agents/_sdk/__init__.py` 的 `from .server import serve` 断链，14 个 Agent 全被误判成
+  「够不着闸」。**一个扫不全的结构断言比没有更糟——它会让人去改本来是对的代码。**
+
+### 26.3 B4：门禁首跑抓到 22 条真缺陷
+
+首跑 61 条里 39 条是「`commands.yaml` 从《公版语音指令表》整表导出，范围本来就比 VAL
+可执行面大」，进台账；**剩下 22 条全是真缺陷**，两族值得记：
+
+- **崩溃 1 条**：`steering_wheel.height.set` 不带值 → `KeyError` 把整条执行抛出去。
+  **同款坑 aircon 风速那处早就修过**（`setdefault`），这个孪生分支漏了；而
+  `edge_call._missing_required_value` 因为 `attr` 在场提前返回、压根不会拦它。
+- **恒真的空洞 4 条**：`_simulate` 兜底一律写 `state[f"{obj}_{operate}"] = True`，实测
+  `lane_assistance_open` 与 `lane_assistance_close` **同时为 True**。这种键恒真、永远
+  无法被证否——Outcome Verifier 对账面上是个**恒真的空洞**，比「没接对账」更难发现。
+
+判据：**这两族都不是「还没做」，是「做了一半且看不出来」**——崩溃那条只在不带值时触发，
+恒真键那条从来不报错。这类缺陷只有逐对象跑一遍才会掉出来。
+
+### 26.4 B4 与方案的三处差异（都先证伪再改）
+
+1. **意图名单派生**：方案说「对象×操作机械派生」。先量差集——234 vs 76（手工独有 38 /
+   派生独有 196）。原因是意图名承载了知识库里没有的四类判断（对象别名 / 哪个 mode 值得
+   占名 / 动词用哪套 / **这个对象该不该出现在端侧能力面**），而且机械派生会**复活
+   2026-08-04 刻意删掉的 `aircon.inc/dec`**。改成声明式派生（对象里声明 `edge_intents`），
+   方案要的结果（手工集合退役）照样拿到，判断权还在人手上，迁移 diff 为空。
+2. **`risk` 不落声明字段**，改派生函数：B1 刚把「危险与否」收敛成 `require_confirm`
+   一个权威，第二份声明会漂移；且 risk 声明的唯一消费方 B6 尚未开工，先落即死字段。
+3. **`aliases` 本批不加**，附证伪：拿 `display_name` 给 28 个可达对象各造触发探针，
+   只有 20/28 被端侧规则认回来，未命中多数是探针造句本身不成立——硬断言会造假红、
+   软的不 gate 任何东西。有用的版本是「每个对象一条规范触发例句」，那是另一件事。
+
+### 26.5 B4 演练当场消掉一处同步点
+
+虚构能力 `rear_wiper` 全流程演练（§4 判据 1）时发现：光加 `commands.yaml` + 写好
+responses，话术仍落 `generic_success`——因为 `_build_response_key` 还要手写一个分支，
+而这处同步点不在任何清单里。**修法不是把它写进清单，是消掉它**：加约定式兜底，
+按 `<object>_<on|off|操作>_success` 找一次、**找得到才用**。
+判据：**清单上少一项，比清单上多写一行提醒更可靠。**
+
+演练结论：只加对象、其余不做时红灯全部**具名**——话术 ×2、等价类 ×1、迁移探针 ×1、
+台账陈旧项 ×1、L0 对抗覆盖 ×6（逐 requirement 报 `has 0, need 2`，正是除雾那次漏掉的那道）。
+
+### 26.6 反向验证与顺带记档
+
+反向验证两头做：B3 Python 侧 29 条单项突变 + Go 侧 12 条（含 role 隔离两向）、
+B4 8 条突变，逐条证明**在对应车道**变红；对照组在每次突变前后都全绿。
+一处纠正：动作段拼错（`trunk.opne`）**不由** `edge_intents` 那条断言抓（它照样解得出对象），
+由「验证定义」车道抓——**一条断言抓什么要以实测为准，不以命名为准。**
+
+顺带记档：**`LOCAL_INTENTS`（路由：这句归端侧还是上云）与 `edge_intents`（能力目录：
+planner 看得见哪些工具）是两个问题，不要合并。** 实测 `LOCAL_INTENTS` 164 条里有 87 条
+不在能力目录里——端侧接得住、planner 规划不到；这与台账里那 14 条「是欠账」高度重合。
+
+### 26.7 本批读数
+
+根全量 `python -m pytest --import-mode=importlib`：**4775 passed / 14 skipped / 0 failed**
+（单进程 22m09s，退出码 0）。较 B3/B4 前（`cadd084`，4643）净 **+132**，**逐条点得上号**：
+`test_profile` 55 + `test_profile_coverage` 27 + `test_privacy_defaults` 5 +
+`test_admission` 24 + `test_capability_gaps` 18 + `test_vehicle_intents_migration` 3 = 132。
+零不明用例——这次是跟**同一个 SHA** 比的（上一批那笔「6 条不明用例」的账就是跟文档里的
+陈旧数字比出来的）。
+
+分组：edge **579**（B1 后 558）、registry **65**、cloud **655**、agents **993**、
+`runtime/tests` **87**；端侧 smoke **13/13**；能力门禁 exit 0；L0 门禁 **2/2 exit 0**；
+`eval_fast_intent` 57/57、`eval_route_hints` 78/78、skills / 范例门禁 PASS；
+`run_e2e.py --check` 与 `--lane ci --full` 均 exit 0；Go 侧 build/vet/test 全绿
+（容器内 `golang:1.24`，本机无 Go 工具链）。
+CI blocking 门禁从三条增至**四条**（新增能力完整性）。

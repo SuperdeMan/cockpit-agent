@@ -1,7 +1,7 @@
 # B4 Capability Pack v1：把「新增一个能力」变成原子动作
 
-> **状态**：已批准待实施（源自外部评审采纳批次 B4，裁决见
-> [`../reviews/2026-08-10-external-review-adoption.md`](../reviews/2026-08-10-external-review-adoption.md)）
+> **状态**：**已实施并合入 main**（2026-08-11，提交 `b9eb09e` / `7b68047` / `8ee3ea4` / `c6b14b2`，实施记录见 §6）。源自外部评审采纳批次 B4，裁决见
+> [`../reviews/2026-08-10-external-review-adoption.md`](../reviews/2026-08-10-external-review-adoption.md)。
 > **交付对象**：后续实施者
 > **关联**：`orchestrator/edge/knowledge/*.yaml`、`orchestrator/edge/fast_intent.py`、
 > `orchestrator/edge/val.py`、`test/eval_corpus/intent_adversarial/`、CI
@@ -133,3 +133,94 @@ front_defogger:
 | `VEHICLE_INTENTS` 派生改变 fast_intent 行为 | 派生结果与现手工集合做一次性 diff 断言（迁移测试），差集必须人工逐条裁定后才切换 |
 | 存量欠账清零工作量超预期 | 完整性检查支持 `# integrity-exempt: <reason>` 行内豁免，首批可带豁免合入，豁免清单进 §4.2 式台账逐步清 |
 | 与对抗覆盖矩阵重复实现漂移 | §2.1 明确复用不重写；唯一入口仍是 B2 的 gate 脚本 |
+
+---
+
+## 6. 实施记录（2026-08-11，已合入 main）
+
+**状态：已实施并验收。** 四个提交：`b9eb09e`（§2.1 门禁 + 存量清零 + 进 CI）、
+`7b68047`（§2.2 schema 增量）、`8ee3ea4`（§2.2 意图名单派生）、`c6b14b2`（§2.2 骨架生成器
++ §4 判据 1 演练）。本节记录与方案的差异和验证证据。
+
+### 6.1 门禁首跑抓到 22 条真缺陷（不是形式检查）
+
+首跑 61 条，其中 39 条是「`commands.yaml` 从《公版语音指令表》整表导出，范围本来就比 VAL
+可执行面大」（云侧域 / 座舱 UI / 媒体别名），逐条进台账。**剩下 22 条全是真缺陷**：
+
+| # | 族 | 条数 | 内容 |
+|---|---|---|---|
+| 1 | 崩溃 | 1 | `steering_wheel.height.set` 不带值 → `KeyError` 把整条执行抛出去。**同款坑 aircon 风速那处早就修过**（`setdefault`），这个孪生分支漏了；而 `edge_call._missing_required_value` 因为 `attr` 在场提前返回、压根不会拦它 |
+| 2 | 自相矛盾的状态 | 4 | `_simulate` 兜底一律写 `state[f"{obj}_{operate}"] = True`，实测 `lane_assistance_open` 与 `lane_assistance_close` **同时为 True**。这种键恒真、永远无法被证否——执行后对账面上是个**恒真的空洞** |
+| 3 | 通用话术 | 8 | window/sunroof/sunshade 的 `set`、`power_mode.set`、两个车道辅助开关落 `generic_success`（「好的」）。「开到 50%」和「全开」回执一模一样 |
+| 4 | 只实现一半的档位对象 | 9 | `energy_recovery` / `wiper.speed` 有 `set` 没 `inc/dec`；`fragrance` 有开关没档位；`sunshade` 有开关没开度 |
+| — | 等价类 | 1 | `accompany_home` 不在 `nlu_objects.yaml`（语料 11 条「伴我回家」全标 `车外灯`），漏收会让影子比对把这一族恒判 differ |
+
+第 1、2 两族值得单独记一笔：它们都不是「还没做」，是**做了一半且看不出来**——
+崩溃那条只在不带值时触发，恒真键那条从来不报错。这类缺陷正是逐对象跑一遍才会掉出来的。
+
+### 6.2 与方案的差异（逐条给理由）
+
+| # | 方案原文 | 实际落地 | 理由 |
+|---|---|---|---|
+| 1 | §2.2「`VEHICLE_INTENTS` 运行时派生自 commands.yaml（**对象×操作**）」 | 改成**声明式派生**：各对象声明 `edge_intents`，`VEHICLE_INTENTS` 取其并 | 先量了差集：机械派生 234 条 vs 手工 76 条（手工独有 38 / 派生独有 196）。意图名承载了 commands.yaml 里没有的四类判断——用哪个对象别名（`hvac`→`aircon`）、哪个 mode/attr 值得单独占名（有 `seat.heating.on` 没有 `seat.recline.on`）、动词用 `on/off` 还是 `open/close`、**这个对象该不该出现在端侧能力面**（整表导出含 weather/flight/hotel）。更硬的一条：机械派生会**复活 2026-08-04 刻意删掉的 `aircon.inc/dec`**——「一个动作只能有一个名字」推不出来。声明式派生保住了方案要的那个结果（手工集合退役、漏写事故面消失），只是名字仍由人写、写在对象定义里 |
+| 2 | §2.2「`risk: low\|medium\|high` 新增必填」 | **不落声明字段**，改 `capability_meta.risk_of()` 派生 | ① B1 刚把「危险与否」收敛成 `require_confirm` 这一个权威（契约 §9.15），再手写一份 risk 就是第二份危险声明，两份会漂移；② risk 声明的唯一消费方是 B6，而 B6 条件启动、尚未开工——先落没有消费方的字段就是死字段（§2.3 自己写着这条纪律）。B6 开工时直接调 `risk_of` |
+| 3 | §2.2「`aliases` 新增，供 fast_intent 规则与 nlu_objects 骨架生成」 | **本批不加**，附证伪证据 | 拿 `display_name` 给 28 个可达对象各造一句触发探针，只有 20/28 能被端侧规则认回来；8 条未命中里多数是探针造句本身不成立（「打开方向盘」「设置动力模式」）。也就是说硬断言会造假红、软的又不 gate 任何东西——有用的版本其实是「每个对象一条**规范触发例句**」，那是另一件事。骨架生成用 `display_name` 就够 |
+| 4 | §2.2「catalog 清点基线改为关系断言」 | **已经是**，无需改 | `test_catalog_budget.py` 用的是 `len(caps) >= 70` 并写着「不钉死数字：新增车控意图是正常演进」 |
+| 5 | §4 判据 2「存量 67 对象全部带显式 `require_confirm`/`effect`/`risk`」 | `require_confirm` 本就全有、`effect` 已补全 67 个；`risk` 见差异 2 | — |
+| 6 | — | 演练当场加了 `_build_response_key` 的**约定式兜底** | 见 §6.3 |
+
+### 6.3 §4 判据 1 的演练（虚构能力 `rear_wiper`）
+
+只写 `commands.yaml` 一个对象、其余全不做时，红灯全部**具名**：
+
+| 门禁 | 红灯 |
+|---|---|
+| 能力完整性 · 话术定义 | 2（`rear_wiper.open/close` 落 `generic_success`）|
+| 能力完整性 · 等价类 | 1（不在 `nlu_objects.yaml`）|
+| 迁移探针 | 1（能力面变了——**这是显式签收点，不是错误**）|
+| 等价类台账守卫 | 1（`test_nlu_bridge::test_no_stale_entries`）|
+| L0 对抗覆盖 `--strict` | 6（逐 requirement 报 `has 0, need 2`）——**正是除雾那次漏掉的那道** |
+
+逐项照做后全绿，随后完整还原。
+
+**演练当场发现清单还缺一处，就地消掉了它**：新对象光加 `commands.yaml` + 写好 responses，
+话术仍落 `generic_success`——因为 `_build_response_key` 还要手写一个分支，而这处同步点
+不在任何清单里。修法不是把它写进清单，是**消掉它**：加约定式兜底，按
+`<object>_<on|off|操作>_success` 找一次，**找得到才用**（已有专属分支优先，找不到仍落
+generic）。判据：**清单上少一项，比清单上多写一行提醒更可靠。**
+
+### 6.4 验证证据
+
+反向验证两头做：**8 条突变**逐条证明在**对应车道**变红且 exit 1——抹 response key /
+抹等价类 / 抹 `require_confirm` / 台账写错车道名 / 回退 `steering_wheel` 崩溃修复 /
+删 `effect` / `effect` 与 operates 矛盾 / `effect` 取值非法；对照组在每次突变前后都全绿。
+另有一条纠正：动作段拼错（`trunk.opne`）**不由** `edge_intents` 那条断言抓（它照样解得出
+对象），由「验证定义」车道抓——**一条断言抓什么要以实测为准，不以命名为准**，已写进注释。
+
+回归：edge `558 → 579 passed`（+21，可逐条点名：`test_capability_gaps` 18 +
+`test_vehicle_intents_migration` 3）、能力门禁 exit 0、L0 门禁 2/2 exit 0（无管道读码）、
+端侧 smoke 13/13、`eval_fast_intent` 57/57 无回归、范例门禁域错配 2.5%。
+
+### 6.5 台账里三条**标为待确认**的（不装作已裁定）
+
+1. **`frunk`（前备箱）**：`require_confirm=true` 的危险对象，却没有任何端侧 intent——
+   是刻意不给语音开，还是漏了？与 `trunk`（后备箱，有 intent）不对称。
+2. **`driving_mode` 与 `power_mode`**：语义高度重叠，可能是同一件事的两个对象名。
+   若确认重复应合并——别让 planner 面对两个分不开的工具（同 `aircon.inc/dec` 那一课）。
+3. **`battery`**：电量查询目前走云侧 `vehicle_state` 上下文而非端侧 intent，要不要补一个
+   端侧查询意图未定。
+
+另有 14 个对象在台账里**明确标注「是欠账，只是本批不做」**（`air_purifier` / `auto_hold` /
+`bluetooth` / `epb` / `equalizer` / `hotspot` / `key_tone` / `low_beam` / `navi_broadcast` /
+`surround_view` / `wifi` / `driving_mode` / `battery` / `frunk`）：它们**是**真车控对象、
+VAL 侧多数已有分支或话术，只是端侧没有 fast_intent 规则与意图名，云端计划仍可经
+`action_to_structured` 走到。新增端侧意图时应从这一组里挑，并把对应条目从台账删掉。
+
+### 6.6 顺带记档的两个发现
+
+- **`LOCAL_INTENTS` 与 `VEHICLE_INTENTS` 是两个不同的问题**，不要合并：前者是**路由**
+  （这句归端侧还是上云），后者是**能力目录**（云侧 planner 看得见哪些车控工具）。
+  实测 `LOCAL_INTENTS` 164 条里有 **87 条不在能力目录里**——它们端侧接得住，但 planner
+  规划不到。这与门禁台账里那 14 条「是欠账」高度重合，是同一件事的两个视角。
+- **规则侧对「胎压」吐的对象名是 `tire_pressure`，VAL 对象叫 `tire_pressure_monitoring`**
+  ——`nlu_objects.yaml` 记的「三套命名」在这里又出现一次。

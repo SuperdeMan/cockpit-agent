@@ -89,13 +89,19 @@ CI 缺口、能力同步痛点、治理缺口也属实。采纳为 **6 个批次
 |---|---|---|---|
 | **B1 执行安全停止线** | [`../design/2026-08-10-b1-execution-safety-stopline.md`](../design/2026-08-10-b1-execution-safety-stopline.md) | P0+P1-high 修复 + 安全证据 | ✅ **2026-08-10 已实施合入**（4 提交，验收 6/6，冻结令已撤销；实施记录见方案文档 §7） |
 | **B2 意图门禁进 CI 与主干治理** | [`../design/2026-08-10-b2-gate-ci-branch-governance.md`](../design/2026-08-10-b2-gate-ci-branch-governance.md) | CI 阻断 + 治理 | ✅ **2026-08-10 已实施合入**（方案 A 全部 + CODEOWNERS，红灯验证已做）；轻档分支保护 2026-08-11 完成并核验（方案 §6.2）。**B2 全部收口** |
-| **B3 DEPLOY_PROFILE 生产配置档** | [`../design/2026-08-10-b3-deploy-profile-fail-closed.md`](../design/2026-08-10-b3-deploy-profile-fail-closed.md) | 配置纪律 | 近期（B1 后） |
-| **B4 Capability Pack v1** | [`../design/2026-08-10-b4-capability-pack.md`](../design/2026-08-10-b4-capability-pack.md) | 能力交付原子化 | 近期（CI 完整性检查可先行） |
+| **B3 DEPLOY_PROFILE 生产配置档** | [`../design/2026-08-10-b3-deploy-profile-fail-closed.md`](../design/2026-08-10-b3-deploy-profile-fail-closed.md) | 配置纪律 | ✅ **2026-08-11 已实施合入**（3 提交；六处与方案的差异逐条给了理由，实施记录见方案文档 §6）|
+| **B4 Capability Pack v1** | [`../design/2026-08-10-b4-capability-pack.md`](../design/2026-08-10-b4-capability-pack.md) | 能力交付原子化 | ✅ **2026-08-11 已实施合入**（4 提交；门禁首跑抓到 22 条真缺陷全部修掉，实施记录见方案文档 §6）|
 | **B5 Planner 重试策略表 + 流式统一** | [`../design/2026-08-10-b5-planner-retry-stream-refactor.md`](../design/2026-08-10-b5-planner-retry-stream-refactor.md) | 可维护性重构 | **条件启动**（加新重试规则/新流式路径前必做） |
 | **B6 可执行性判定与前瞻契约** | [`../design/2026-08-10-b6-actionability-forward.md`](../design/2026-08-10-b6-actionability-forward.md) | 智能层预留出口 | **条件启动**（真实流量 / 该族再成主要矛盾） |
 
 依赖关系：B1 独立；B2 独立；B3 轻依赖 B1（prod 档校验项引用 B1 的新开关）；B4 独立但其
 `effect/risk` 字段被 B5/B6 消费；B5 依赖 B1 落地（在修正后的代码上重构）；B6 独立。
+
+⚠ **B4 落地时把 `risk` 从声明字段改成了派生函数**（`capability_meta.risk_of`），
+理由是 B1 刚把「危险与否」收敛成 `require_confirm` 这一个权威、第二份声明会漂移，
+而 risk 声明的唯一消费方 B6 尚未开工（先落=死字段）。**对 B5/B6 的影响：调函数而不是读字段**，
+真到那时若发现派生规则不够用再加声明，那时它有真消费方。裁决表第 10 条「三字段并入 pack 格式」
+据此修正为「`effect` 落声明、`risk` 落派生、`confirmation` 沿用既有 `require_confirm`」。
 
 ## 5. 对评分表的态度
 

@@ -918,3 +918,36 @@ unary 回退。已流出 speech 或 action 之后 final 丢失，一律不重跑
 （重试 = 重复副作用）。变量 `got_final` 的语义是「拿到了 final」，与「流出过输出」
 （`did_speak` / `did_action`）**不许再合并成一个变量**——它们合并过一次，代价是那条
 分支永不可达。
+
+### 9.16 端侧车控能力的声明契约（B4，2026-08-11）
+
+**一个端侧车控能力的全部声明面都在 `orchestrator/edge/knowledge/commands.yaml` 的对象定义里。**
+`VEHICLE_INTENTS` 已从 `vehicle.py` 的手工集合退役、改由 `edge_intents` 派生
+（`capability_meta.derive_edge_intents`，读不出任何意图时 **fail-closed 抛异常**——
+空能力面会让 planner 看不到任何车控工具，而那是个不报错的静默失败）。
+
+| 字段 | 语义 | 谁消费 |
+|---|---|---|
+| `require_confirm` | 危险动作（CLAUDE.md §5）。**危险与否的唯一权威** | VAL `execute(confirmed=…)` fail-closed（§9.15）、端侧降级兜底挡板、门禁风险车道 |
+| `effect` | `read` / `write`——**对象级**「这东西是查的还是控的」（与 `fast_intent._is_write_action` 的**轮级**判断不是一回事） | 门禁验证车道：`read` 对象机械豁免「没有可对账状态键」 |
+| `edge_intents` | 该对象的端侧意图名。**端侧意图名单的唯一声明处** | `VEHICLE_INTENTS` 派生、registry 能力目录、门禁执行车道 |
+| `risk` | **刻意不落声明**，由 `capability_meta.risk_of()` 派生 | B6 开工时直接调 |
+
+**三条判据**：
+
+1. **意图名是产品决定，推不出来。** 方案原设想「对象×操作机械派生」，实测差集 38+196
+   （派生 234 vs 手工 76）：名字承载了知识库里没有的四类判断——用哪个对象别名
+   （`hvac`→`aircon`）、哪个 mode/attr 值得单独占名、动词用 `on/off` 还是 `open/close`、
+   以及**这个对象该不该出现在端侧能力面**（`commands.yaml` 是《公版语音指令表》整表导出，
+   含 weather/flight/hotel）。机械派生还会复活 2026-08-04 刻意删掉的 `aircon.inc/dec`。
+   **改成「名字仍由人写，但写在对象定义里」**——事故面照样消失，判断权还在人手上。
+2. **不加第二份危险声明。** `risk` 若落成声明字段就是 `require_confirm` 之外的第二个
+   危险判据，两份会漂移；而 B1 刚把它收敛成一个权威。**同理适用于以后任何「再加一个
+   字段表达同一件事」的提议。**
+3. **`LOCAL_INTENTS` 与 `edge_intents` 是两个问题，不要合并**：前者是**路由**（这句归端侧
+   还是上云），后者是**能力目录**（planner 看得见哪些车控工具）。实测 `LOCAL_INTENTS`
+   164 条里有 87 条不在能力目录里——端侧接得住、planner 规划不到。
+
+门禁 `test/eval_capability_integrity.py`（CI blocking，六维逐对象断言）；豁免走
+`knowledge/capability_exemptions.yaml`（逐对象逐车道、禁通配符、必须写 reason、
+陈旧条目判红）。新增能力走 `scripts/gen_capability_skeleton.py`，SOP 见 CLAUDE.md §3。

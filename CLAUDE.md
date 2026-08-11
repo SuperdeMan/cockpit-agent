@@ -28,8 +28,15 @@ proto/          gRPC 契约——所有接口的唯一真相源，改接口先�
 gateway/        Go 接入网关（edge/ 端侧，cloud/ 云侧）
 orchestrator/   edge/ 端侧编排+FastIntent（+ knowledge/ VAL 车控知识库：commands/entities/
                 responses.yaml，对象含 display_name——端侧 capability 描述由它机械生成；
+                commands.yaml 里每个对象还声明 `require_confirm`（危险动作，B1 已下沉成
+                VAL 的执行判据）、`effect`（read/write）与 `edge_intents`（**端侧意图名单
+                的唯一声明处**，`VEHICLE_INTENTS` 由它派生，B4）；`risk` 刻意**不落声明**、
+                由 `capability_meta.risk_of` 派生——B1 把危险与否收敛成了 require_confirm
+                这一个权威，第二份声明只会漂移
                 + nlu_objects.yaml **对象等价类台账**：语料中文标签／VAL object／规则
-                object 三套命名归并，人裁一次机器守「不许悄悄漏」，同 boundaries 形态）；
+                object 三套命名归并，人裁一次机器守「不许悄悄漏」，同 boundaries 形态
+                + capability_exemptions.yaml 能力完整性门禁的豁免台账，逐对象逐车道、
+                禁通配符、必须写 reason）；
                 cloud/ 云端 Planner
 llm-gateway/    LLM 多模型网关（所有 LLM 调用的唯一出口）；音频面同门：批/流式 ASR·TTS
                 + s2s/ 端到端语音会话（M4；协议/provider/会话/回灌四层，换厂商只加 provider 子类）
@@ -76,6 +83,20 @@ models/         本地推理模型（gitignore，scripts/fetch-*.* 拉取或本�
 4. 写 `tests/` 契约测试 + 黄金用例。
 5. 在 `deploy/docker-compose.yaml` 注册服务。
 6. **不要修改编排核心代码**——Agent 通过注册中心被发现，编排对 Agent 无感；确定性路由 / 重域标记 / 卡片优先级全由步骤 2 的 manifest 声明式字段表达，**不在 `planning`/`context`/`aggregator`/`progress` 加硬编码**（R2.1 已把历史硬编码全部机制化，铁律已由 `test_planning.py` 契约测试固化）。执行后想把请求**改派**给别的能力（如「这题需要联网才能答」），用 `AgentResult.data["_escalate"]` 保留键声明——engine 通用消费、每轮最多一跳（协议登记 `docs/conventions.md` §9.1，契约测试 `test_engine_escalate.py`），同样不改编排核心。
+
+### 新增一个**端侧车控能力**的标准流程（B4，与新增 Agent 是两件事）
+1. `python scripts/gen_capability_skeleton.py <object> --display-name <中文名> --operates open,close`
+   ——它复用门禁的车道函数算出缺口，产**待办清单不是成品**（刻意不落盘：这些内容全是人裁的，
+   会被生成器覆盖的文件留不住人改过的东西）。
+2. 按骨架填 `commands.yaml`（含 `require_confirm`/`effect`/`edge_intents`）、`responses.yaml`、
+   `nlu_objects.yaml`；话术 key 按 `<object>_<on|off|操作>_success` 命名即可自动接上。
+3. 人写四处生成不了的：`fast_intent.py` 触发规则（+ `LOCAL_INTENTS`，那是**路由**判定，
+   与 `edge_intents` 这个**能力目录**是两个问题）、VAL `_simulate` 分支（档位/开度型必须写，
+   开关型可落通用兜底）、对抗覆盖（每 intent 正 2/硬负 2/对照 1）、迁移探针基线。
+4. 跑 `test/eval_capability_integrity.py` + `scripts/check_intent_gate.py` +
+   `test/smoke_edge.py` + `pytest orchestrator/edge/tests`。
+   **漏一处就有具名红灯**——这是 B4 存在的理由：除雾能力那次漏了对抗覆盖，
+   因为「要改哪些地方」只活在某个人的记忆里。
 
 ## 4. 命名约定
 - Intent：`<domain>.<action>`，如 `hvac.set`、`navigation.search_poi`。

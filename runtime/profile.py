@@ -124,8 +124,14 @@ def _show(key: str, env: Mapping[str, str]) -> str:
         return "<空>"
     if key not in _SECRET_KEYS:
         return repr(raw)
-    if key == "POSTGRES_PASSWORD" and raw == DEFAULT_POSTGRES_PASSWORD:
-        return "<compose PoC 默认口令>"
+    if key == "POSTGRES_PASSWORD":
+        # 第 8 项同时校验口令与 DSN。只回显口令的形状会让「口令换了但 DSN 没换」那种
+        # 失败看起来毫无道理（口令明明是对的），所以把 DSN 那一半的状态一起带出来。
+        dsn_note = ("；POSTGRES_DSN 仍内嵌 PoC 默认口令"
+                    if f":{DEFAULT_POSTGRES_PASSWORD}@" in _get(env, "POSTGRES_DSN") else "")
+        if raw == DEFAULT_POSTGRES_PASSWORD:
+            return f"<compose PoC 默认口令{dsn_note}>"
+        return f"<已设，{len(raw)} 字符{dsn_note}>"
     if key == "GRAFANA_ADMIN_PASSWORD" and raw == DEFAULT_GRAFANA_PASSWORD:
         return "<PoC 默认口令>"
     if key == "POSTGRES_DSN":
