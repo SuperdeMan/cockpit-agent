@@ -7,10 +7,10 @@ from observability.collector.db import ObsDB, _plan_summary_of
 from observability.collector.server import create_app
 
 
-# ── _plan_summary_of：attrs → (intents, plan_mode, edge_nlu) ────────────────
+# ── _plan_summary_of：attrs → (intents, plan_mode, edge_nlu, actionability) ──
 
 def test_plan_summary_prefers_explicit_intents():
-    intents, mode, _ = _plan_summary_of(
+    intents, mode, _, _ = _plan_summary_of(
         {"intents": "nearby.search,info.weather", "plan_mode": "toolcall",
          "plan": '[{"intent": "junk.other"}]'})
     assert intents == "nearby.search,info.weather"
@@ -18,7 +18,7 @@ def test_plan_summary_prefers_explicit_intents():
 
 
 def test_plan_summary_falls_back_to_plan_json():
-    intents, mode, _ = _plan_summary_of(
+    intents, mode, _, _ = _plan_summary_of(
         {"plan": '[{"intent": "hvac.set"}, {"intent": "media.play"}]',
          "plan_mode": "json"})
     assert intents == "hvac.set,media.play"
@@ -29,7 +29,7 @@ def test_plan_summary_truncated_or_gated_plan_gives_empty():
     # gate_content 截断的半截 JSON / off 档占位符 → 不产半截意图列表
     assert _plan_summary_of({"plan": '[{"intent": "a.b"}, {"inte'})[0] == ""
     assert _plan_summary_of({"plan": "<len=900 sha=abcd1234>"})[0] == ""
-    assert _plan_summary_of("junk") == ("", "", "")
+    assert _plan_summary_of("junk") == ("", "", "", "")
 
 
 # ── M5 P2-D2 端云分歧：`!=` 后缀让「分歧」在扫描时可见（不必逐轮拉 span 详情）─────
@@ -42,13 +42,27 @@ def test_plan_summary_marks_edge_divergence():
     assert _plan_summary_of({"intents": "a.b"})[2] == ""        # 端侧没判 → 空，不占位
 
 
+# ── B6 §2 可执行性 shadow：同款 `!=` 分歧后缀（分歧轮才是有信息量的样本）──────
+
+def test_plan_summary_marks_actionability_divergence():
+    agree = {"intents": "nearby.search", "actionability": "execute|0.90",
+             "actionability_agree": "1"}
+    diverge = {"intents": "navigation.navigate_to", "actionability": "clarify|0.85",
+               "actionability_agree": "0"}
+    assert _plan_summary_of(agree)[3] == "execute|0.90"
+    assert _plan_summary_of(diverge)[3] == "clarify|0.85!="     # 分歧才带后缀
+    assert _plan_summary_of({"intents": "a.b"})[3] == ""        # 没判 → 空，不占位
+
+
 # ── span↔turn 合并（顺序无关） ───────────────────────────────────────────────
 
 def _planning_span(trace_id: str, intents: str = "nearby.search",
                    mode: str = "toolcall") -> dict:
     return {"trace_id": trace_id, "span_id": "sp", "ts": 1001,
             "node": "cloud.planning",
-            "attrs": {"intents": intents, "plan_mode": mode}}
+            "attrs": {"intents": intents, "plan_mode": mode,
+                      "actionability": "execute|0.90",
+                      "actionability_agree": "1"}}
 
 
 def test_merge_span_then_turn():
@@ -59,6 +73,7 @@ def test_merge_span_then_turn():
     row = db.search_turns(q="咖啡")[0]
     assert row["intents"] == "nearby.search"
     assert row["plan_mode"] == "toolcall"
+    assert row["actionability"] == "execute|0.90"      # B6 shadow 也随 span 合并进 turns
     assert row["user_text"] == "附近有什么咖啡店"
 
 

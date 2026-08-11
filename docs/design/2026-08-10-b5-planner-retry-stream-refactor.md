@@ -1,6 +1,6 @@
 # B5 Planner 重试策略表驱动 + D0/T2 流式判定统一（条件启动）
 
-> **状态**：已批准、**条件启动**（触发条件见 §1；未触发前本文件是设计蓝图不是待办）
+> **状态**：✅ **2026-08-11 已实施合入**（两个提交，实施记录见 §6）。触发条件（§1）当时未命中，由泓舟直接指示推进——这一点留痕，别读成「条件曾经满足过」。
 > **交付对象**：满足触发条件时的实施者
 > **关联**：`orchestrator/cloud/planning.py`、`orchestrator/cloud/engine.py`（D0）、
 > `orchestrator/cloud/loop.py`（T2）
@@ -120,6 +120,71 @@ B1 新增的 `did_action`）替换为对该枚举的状态推进；fallback 与�
   全量 pytest 与 L0 门禁绿；`plan_modes` 口径零变化（现有 findings 读数继续可引用）。
 - 流式统一：D0/T2 现有全部流断测试（含 B1 三场景）在共享判定下逐字复绿；判定纯函数 100%
   分支覆盖（它小，做得到）。
+
+---
+
+## 6. 实施记录（2026-08-11，两个提交）
+
+> **启动前提说明**：§1 的两个触发条件（加新重试规则 / 加新流式路径）当时都**没有**
+> 命中；本批由泓舟 2026-08-11 直接指示推进 B5/B6。触发条件写在这里是为了防「为做而做」，
+> 人明确要做时它不构成阻拦——但这一点要留痕，免得以后把它读成「条件曾经满足过」。
+
+| 步骤 | 提交 | 落法与偏差 |
+|---|---|---|
+| §4 流式统一 + §4.2 readback | `191d3b4` | 新建 `orchestrator/cloud/stream_state.py`；D0 的 `streamed` 与 T2 的 `did_speak/did_action/got_final` 全部退役。**比方案多做两处**，见下 |
+| §3 重试表驱动 | `d1fd704` | 新建 `orchestrator/cloud/retry_policy.py`（13 条策略）+ `_RETRY_PREDICATES` 留在 `planning.py`；主循环收敛为「按段问表」 |
+
+### 6.1 §4 与方案的四处偏差（逐条给理由）
+
+1. **`FINAL_RECEIVED` 不进枚举**。§4.1 草图既把它列成第四个状态、又给
+   `outcome_uncertain(state, got_final)` 传一个 `got_final` 形参——**同一件事的两份
+   声明**（B4 教训）。实际上「流出过什么」与「拿没拿到 final」正交：final 可以在任何
+   流出状态下到达，而「已经播过话术了吗」在拿到 final **之后**仍要用（D0 的 escalate
+   抑制、T2 的挂起前缀不复读）。枚举只表达流出面。
+2. **多一个 `StreamTracker`**（草图只有纯函数）。B1 那个 bug 活在**状态推进**里而不是
+   判定函数里——只共享判定函数、让两处各自推进，等于把出过事的那一半留在原地。
+3. **D0 因此获得两处行为变化**（不是纯重构，各自单独取证）：
+   - `action` 已发出而 final 丢失时，D0 此前说「抱歉，刚才没说完，请再试一次」
+     ——**邀请用户把一个有副作用的动作发第二遍**，正是 B1 在 T2 修掉的形态，
+     而 D0 一直原样留着。现在走同一档不确定处置。
+   - D0 此前对**软化前**的 speech 事件置 `streamed=True`：softener 扣下悬空 `*`
+     的那一拍用户什么都没看到，却足以把 unary 回退整条关掉。改记软化后的增量
+     （T2 一直是严的那个口径，有专门的空 delta 对照测试）。
+4. **幂等键就地收口**（§4.2 只写「随本子项一起评估」）：**不新造 `command_id`**。
+   `_exec_step` 早就给 `step_timeout` 打指纹了，理由原文是「超时 ≠ 失败——副作用
+   可能已发生，不打指纹 replan 重出同一动作会被原样重发」；**流断丢 final 与超时
+   是同一种处境**，而 B1 合成的那份不确定结果**没有指纹**。补上即闭合，第三套局部
+   实现（B1 §6 要避免的东西）根本不必出现。
+
+### 6.2 §3 与方案的四处字段差异
+
+逐条理由见附录 A.1（`metric_tag` / `risk_class` / `preserve_previous` /
+`validation_errors` 一律不落）。归因改走新增的 `plan.retry_policies`，
+**`plan_modes` 口径逐字不变**——既有 findings 读数按它聚合，换口径就不可比了。
+
+### 6.3 验收判据逐条核对
+
+| # | 判据 | 结果 |
+|---|---|---|
+| 1 | 规则清单文档 ≡ 代码表（检查脚本比对 name 集合） | ✅ 落成 `test_retry_policy.py::test_inventory_matches_the_code_table`，**逐列比 5 个字段而不只比 name**（只比 name 会漏掉「清单说 1、代码写 2」）；配 `test_inventory_parser_actually_found_the_table` 先断行数 = 13，防空扫 |
+| 2 | 单条消融可跑通且读数有响应 | ✅ `PLANNER_RETRY_DISABLE`。**先证明通道是活的**：关掉 `salvage_wire_accepted` 必须与 `PLANNER_TOOLCALL_SALVAGE_RETRY=off` 表现一致（两条断言）；关掉极性守卫必须让反向计划直接落地 |
+| 3 | 全量 pytest 与 L0 门禁绿 | ✅ orchestrator+runtime 1344 → 1375 exit 0；L0 门禁 2/2 exit 0；能力完整性门禁 exit 0 |
+| 4 | `plan_modes` 口径零变化 | ✅ 21 条差分场景逐字一致（下条） |
+| 5 | 流式统一：D0/T2 现有流断测试逐字复绿 | ✅ B1 三场景 + 空 delta 对照全绿；新增 21 条 |
+| 6 | 判定纯函数 100% 分支覆盖 | ✅ `test_stream_state.py` 前 8 条 |
+
+**行为等价差分取证（§3.2 第 2 条要的就是这个）**：21 条场景在「表驱动前 vs 后」
+两份代码上各跑一遍，逐字比对**重问次数 / 每一轮回灌给模型的 user prompt 全文 /
+plan_mode / 计划步骤 / clarify** —— **21/21 逐字一致**。且这 21 条把 13 条策略
+**全部**触发到：首版语料只触发了 11 条（`multi_action_omitted` 用了「并且」——不在
+`_MULTI_ACTION_CONNECTOR_RE` 里；`open_close_polarity_inverted` 用了不存在的
+`cap_0007`，被 schema 校验先接走了），补足后才 13/13。
+**先验证覆盖再读结论**——不然 21/21 对那两条一个字都没说。
+
+**反向验证两头做**：把表里 `focus_dependent_conflict` 的 `attempt_limit` 从 1 改成 2
+→ 清单比对当场红；`engine.py` 退回 B5 前 → 4 条红（两条源码级「判定只有一份」+
+两条行为变化），而对照（只流话术那一档逐字不变、零输出仍回退、空 delta）全绿；
+`loop.py` 退回 → readback 那条红，其余 17 条绿。
 
 ---
 

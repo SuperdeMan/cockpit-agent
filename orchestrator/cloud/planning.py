@@ -26,6 +26,7 @@ from .retry_policy import (
     STAGE_TAIL, PlanAttemptState, RetryController, TriggerKind,
     disabled_policies,
 )
+from . import actionability as _actionability
 from . import exemplars as _exemplars
 from . import skills as _skills
 
@@ -1465,6 +1466,12 @@ class PlanBuilder:
         plan.skills = sk_names
         plan.exemplars = ex_names
         plan.plan_mode = plan_mode
+        # B6 §2 shadow：可执行性形态判定。**只写观测、不参与上面任何一步决策**
+        # ——这一行放在计划已经定稿之后，就是为了让「它不可能影响计划」是结构性的
+        # 而不是靠人记得（同 P3a 影子「它的全部价值就是不生效」的口径）。
+        plan.actionability = _actionability.classify(
+            text, focus=getattr(working_set, "focus", None),
+            input_source=str((ctx.prefs or {}).get("input_source", ""))).as_attr()
         # B5 §3 归因：本轮命中的重试策略名（声明序）。**新增一列而不是改 plan_mode
         # 口径**——既有 findings 读数按 plan_mode 聚合，换口径它们就不可比了。
         plan.retry_policies = list(retries.fired)

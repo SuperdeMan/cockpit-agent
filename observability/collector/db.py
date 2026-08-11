@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS turns(
   intents TEXT DEFAULT '',       -- 实际落域（cloud.planning span 合并写入，逗号串）
   plan_mode TEXT DEFAULT '',     -- 规划输出通道（toolcall|…|toolcall_degraded）
   gold_intents TEXT DEFAULT '',  -- 人工标注的正确落域（数据飞轮资产；UPSERT 不碰、保留期豁免）
-  edge_nlu TEXT DEFAULT ''       -- 端云分歧（M5 P2-D2）：'<端侧初判>|<conf>' + '!=' 后缀表示与云侧落域不一致
+  edge_nlu TEXT DEFAULT '',      -- 端云分歧（M5 P2-D2）：'<端侧初判>|<conf>' + '!=' 后缀表示与云侧落域不一致
+  actionability TEXT DEFAULT ''  -- 可执行性 shadow（B6 §2）：'<execute|clarify|reject>|<conf>' + '!=' 后缀表示与 planner 分歧
 );
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, ts);
 CREATE INDEX IF NOT EXISTS idx_turns_ts ON turns(ts);
@@ -110,8 +111,8 @@ def _rows_to_dicts(cursor) -> list[dict]:
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
-def _plan_summary_of(attrs: dict) -> tuple[str, str, str]:
-    """cloud.planning span attrs → (intents 逗号串, plan_mode, edge_nlu)。
+def _plan_summary_of(attrs: dict) -> tuple[str, str, str, str]:
+    """cloud.planning span attrs → (intents 逗号串, plan_mode, edge_nlu, actionability)。
 
     edge_nlu 带 `!=` 后缀表示端云**分歧**（M5 P2-D2）——存成一列而不是靠事后逐轮拉 span
     详情：分歧要能成为「把这一轮拉进日报」的信号，就必须在**扫描时**可见，逐轮补拉详情
@@ -121,11 +122,16 @@ def _plan_summary_of(attrs: dict) -> tuple[str, str, str]:
     旧版 engine 无该键时从 attrs['plan'] JSON 兜底解析——它经 gate_content 截 1200，
     截断即解析失败则放弃（不产半截意图列表）。"""
     if not isinstance(attrs, dict):
-        return "", "", ""
+        return "", "", "", ""
     plan_mode = str(attrs.get("plan_mode") or "")
     edge_nlu = str(attrs.get("edge_nlu") or "")
     if edge_nlu and str(attrs.get("edge_agree", "")) == "0":
         edge_nlu += "!="
+    # B6 §2 可执行性 shadow：与 edge_nlu 同款——`!=` 后缀表示形态判定与 planner 分歧。
+    # 分歧轮是这套 shadow 唯一有信息量的产物，必须在**扫描时**可见。
+    actionability = str(attrs.get("actionability") or "")
+    if actionability and str(attrs.get("actionability_agree", "")) == "0":
+        actionability += "!="
     intents = str(attrs.get("intents") or "")
     if not intents:
         raw = attrs.get("plan")
@@ -136,7 +142,7 @@ def _plan_summary_of(attrs: dict) -> tuple[str, str, str]:
                     str(s.get("intent") or "") for s in steps if isinstance(s, dict))
             except (ValueError, AttributeError, TypeError):
                 intents = ""
-    return intents[:400], plan_mode[:40], edge_nlu[:60]
+    return intents[:400], plan_mode[:40], edge_nlu[:60], actionability[:40]
 
 
 class ObsDB:
@@ -161,6 +167,8 @@ class ObsDB:
             self._ensure_column("turns", "plan_mode", "TEXT DEFAULT ''")
             self._ensure_column("turns", "gold_intents", "TEXT DEFAULT ''")
             self._ensure_column("turns", "edge_nlu", "TEXT DEFAULT ''")
+            # B6 §2（2026-08-11）：可执行性 shadow 判定，`!=` 后缀=与 planner 分歧
+            self._ensure_column("turns", "actionability", "TEXT DEFAULT ''")
             self._conn.commit()
 
     def _ensure_column(self, table: str, column: str, decl: str) -> None:
@@ -215,14 +223,17 @@ class ObsDB:
             # 等 turn UPSERT 补齐）；turn 先到→UPDATE 补两列。intents/plan_mode 不在
             # _TURN_FIELDS，turn 重复到达不会抹掉。
             if trace_id and (event.get("node") or "") == "cloud.planning":
-                intents, plan_mode, edge_nlu = _plan_summary_of(event.get("attrs") or {})
-                if intents or plan_mode or edge_nlu:
+                intents, plan_mode, edge_nlu, actionability = _plan_summary_of(
+                    event.get("attrs") or {})
+                if intents or plan_mode or edge_nlu or actionability:
                     self._conn.execute(
-                        "INSERT INTO turns(trace_id, intents, plan_mode, edge_nlu) "
-                        "VALUES(?,?,?,?) ON CONFLICT(trace_id) DO UPDATE SET "
+                        "INSERT INTO turns(trace_id, intents, plan_mode, edge_nlu, "
+                        "actionability) VALUES(?,?,?,?,?) "
+                        "ON CONFLICT(trace_id) DO UPDATE SET "
                         "intents=excluded.intents, plan_mode=excluded.plan_mode, "
-                        "edge_nlu=excluded.edge_nlu",
-                        (trace_id, intents, plan_mode, edge_nlu))
+                        "edge_nlu=excluded.edge_nlu, "
+                        "actionability=excluded.actionability",
+                        (trace_id, intents, plan_mode, edge_nlu, actionability))
             self._conn.commit()
 
     def insert_llm(self, event: dict) -> None:

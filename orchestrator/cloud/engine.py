@@ -110,6 +110,33 @@ def _edge_nlu_attrs(ctx, plan) -> dict:
             "edge_agree": "1" if (edge_dom and edge_dom in cloud_doms) else "0"}
 
 
+def _actionability_attrs(plan) -> dict:
+    """可执行性 shadow 的四元组（B6 §2，shadow 记录）。
+
+    `actionability` = 形态判定 `<decision>|<conf>`；`actionability_planner` = planner
+    这一轮实际的决策；`actionability_agree` = 两者一不一致——**分歧轮才是有信息量的
+    标注样本**（同 `edge_agree` 的口径，让分歧在扫描时可见而不必逐轮补拉 span）。
+
+    四元组的第四位 `human_gold` **不在这里发**：它今天由离线回放
+    （`test/eval_actionability.py` 读对抗语料金标）供给；运行期那一路要等标注 API
+    长出决策字段，而那个字段的写入方与 B6 自己的启动条件是同一件事（真实流量分母）。
+    先落一个没有写入方的列只会是死字段（同 `complexity_declared` 不进 span 的判据）。
+    """
+    raw = str(getattr(plan, "actionability", "") or "")
+    if not raw:
+        return {}
+    if plan.clarify is not None:
+        planner_decision = "clarify"
+    elif not plan.addressed:
+        planner_decision = "reject"
+    else:
+        planner_decision = "execute"
+    return {"actionability": raw,
+            "actionability_planner": planner_decision,
+            "actionability_agree": (
+                "1" if raw.split("|", 1)[0] == planner_decision else "0")}
+
+
 class PlannerEngine:
     """编排主循环。engine 是唯一持有全局状态的地方。"""
 
@@ -324,6 +351,8 @@ class PlannerEngine:
                     # 在观测上完全看不见，只能靠日志。
                     **({"retry_policies": ",".join(plan.retry_policies)}
                        if getattr(plan, "retry_policies", None) else {}),
+                    # B6 §2 可执行性 shadow（主链零行为变化）
+                    **_actionability_attrs(plan),
                     # 数据飞轮 P0 落域可观测：意图名是系统枚举值（非用户内容），紧凑发射
                     # 不过内容门控——collector 据此把落域合并进 turns 行（SQL 可聚合）。
                     "intents": ",".join(s.intent for s in plan.steps),

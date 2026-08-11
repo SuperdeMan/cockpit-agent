@@ -95,6 +95,10 @@ class Plan:
     # toolcall_salvage=模型无视工具、同轮文本抢救；toolcall_fallback=工具协议不可用后的
     # 第 2 轮 JSON 路径；toolcall_degraded=两轮全失败走 _fallback。
     plan_mode: str = "json"
+    # B6 §2 shadow：可执行性形态判定 `<execute|clarify|reject>|<confidence>`。
+    # **只写观测、不进任何决策**——它的全部价值就是不生效，直到分歧样本的对照实验
+    # 证明它该接管（canary 要泓舟单独拍板，B6 §5 第 4 条）。
+    actionability: str = ""
     # B5 §3：本轮命中的重试策略名（声明序，可重复——同一条可能两轮都命中）。
     # **不换 `plan_mode` 口径**（那会让既有 findings 读数不可比）：归因新增一列，
     # 回答的是「哪条守卫判掉了这一版」，而 plan_mode 回答的是「最后走的哪条通道」。
