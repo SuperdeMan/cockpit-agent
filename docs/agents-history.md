@@ -2024,3 +2024,18 @@ B5/B6 合入后按 `make up` 全量重建 30 个容器演练。**动机不是「
 `local_actions:1`——**端侧把车控那半自己执行了**，云侧只剩 `nearby.search`。
 对账链本身是好的（按文本直查该 trace，`step.verify{mode:schema,verdict:sat}` 在）。
 B5/B6 结构上不可能造成它：那个拆分决定发生在云端被调用之前。
+
+## 28. 支付基础设施真实化四批：双渠道收单 + 商户 MCP 真机激活 + 端到端体验修复（2026-08-11）
+
+> 方案/10 条裁决/逐批实施记录的唯一权威：`docs/design/2026-08-11-payment-infrastructure-and-merchant-mcp.md` §2/§6.1–6.5；契约 conventions §9.17（网关）+ §9.9（桥 transport/补偿两态/支付链接闭环）。本章只留流水与判据线索。
+
+**背景**：泓舟拍板三批全做并当日填齐凭证（支付宝沙箱/瑞幸 token/麦当劳 token；微信商户号后置）。起点：payment-gateway 是「已建成从未接线」的孤儿服务（proto 在、server 漏回传 confirm_token 致 Capture 结构性不可达、store 纯内存、全仓零调用零测试零渠道字样）；真实跑的停车缴费是 Agent 内 mock 回执；桥只支持 stdio。
+
+**四个提交**（全部当日推 main）：
+- **批 1 `d964e1d`**（网关核心）：支付宝当面付/微信 v3 Native 双渠道自实现（httpx+cryptography，微信公钥模式优先+平台证书懒加载 TOFU）、store Redis 化 9 态状态机、Capture=确认后亮码、轮询 worker（zset 续轮停机不丢钱）+proactive user_contract 回执、PAYMENT_REAL_SCENES fail-closed、隐私四处+redact 同步、容器加固四件套、凭证只注入本服务。测试五件 96 条全离线（自造密钥对锁签名/AES-GCM/状态机/幂等/worker）。附带修 test_eval_intent_adversarial_cli 三条 PYTHONIOENCODING 环境敏感（编码两端钉死断言未动）。基线 4864→4960。
+- **批 2+3 `94f7afc`**（parking 闭环+HMI+桥 http）：parking 切网关（confirm_token 幂等重取时序——engine 刻意不持久化 step.meta，token 只活在 handle 栈内；provider 删 pay() 还 TODO 债+回归钉）；幂等新语义（查找先于校验+可重付终态 remap——幂等防双付不防重试）；HMI payment_qr/payment_receipt/parking_fee 三卡（**二维码 SVG 网关生成**，前端零 QR 依赖）+ mcp_order/mcp_result 存量欠账清偿；桥 HttpMcpClient（SSE 分帧/会话存续/404 重握手/token 永不进日志）+admission ${VAR} 缺 env 拒载+compensate 两态+存在性校验+pay_url_locator 支付登记（域名白名单双层防钓鱼、登记失败不阻断出卡）。e2e_payment 真栈 3/3（「再缴费→已支付过」一句话合证 worker 推进与防双付）。两批共享文件多合并 commit（硬拆=单独 checkout 不可运行的半截历史）；批 2 独立全量因批 3 开工被判**混合快照作废**（pytest 跑着改文件）。基线 4960→4994。
+- **批 3b `4a5cab0`**（凭证到位真机激活）：tools/list 现场核实（麦当劳 29 工具**无取消**→abandon_unpaid 坐实/瑞幸 8 工具**有 cancelOrder**——补偿两态被两家各占其一验证）；两家都是强多步 API（结构化 items/productList+storeCode/deptId 前置链）→ **v1 只激活只读三件**（mcd.menu 营养/mcd.order_status/luckin.order_status），下单归二期（编排结构化参数能力面）；瑞幸 queryShopList required 精确经纬度撞 third_party 禁 location.precise 红线结构性不可激活；门店发现归 nearby 不为激活数量留打架 intent。新机制 const_args；修 _resolve_order_ref args 层键名未走 arg_map；修能力门禁自身 GBK 崩溃。尺子全套：范例两域、语料 18 条（**cohort leakage 四句改写**——unseen 句与范例逐字相同被契约抓出；boundary 台账兑现双向各 2 例；relation invariant 3 条）、boundaries 两裁定（品牌词是判据）、suites 上界 540→560（第三次先例）、三清单哨兵有意更新（catalog 138/chars 11081/台账 23）。**沙箱真实联调抓修 GBK 验签 bug**（支付宝网关 GBK 响应×UTF-8 验签字节——中文出现必炸、全 ASCII 侥幸绿、MockTransport 结构性盖不住）。真栈三 server 准入+双商户真实问答冒烟。中途踩「compose 根入口」老坑一脚（-f deploy/... 读不到根 .env 插值——拒载路径反而先被真栈验证）。基线 4994→4996。
+- **批 3c `6f06b41`**（端到端体验修复，泓舟指示「验证并让它合理」）：真栈 WS 五句取证抓四处不合理修后复验——`speech_mode: summarize`（「巨无霸多少大卡」从念 **6638 字英文 API 文档**变「巨无霸一份是513大卡。」12 字；LLM 不可用回落截断+见屏幕）、读路径缺引用改 NEED_SLOT 追问（账本回填的 order_id/幂等键算有引用——改坏一次被 61 条桥测试当场抓回）、mcp_result 卡瘦身 13KB→1.2KB、落域双修（demo shop.order 描述判别化——端到端实锤 planner 抢单真因是描述太像通用点餐；mcp-bridge#0 guard 增品牌让路词，专项回归 eval_route_hints 78/78+eval_fast_intent 57/57 兑现「动它须专项回归」）。顺带修**账本跨商户污染**（mcp_order 不分商户、demo 单号被灌给麦当劳查单把错配伪装成「用户没单」——result_ref 记 server 归属+回填只认同商户）。语料期望实测校准（「在麦当劳点个巨无霸套餐」forbidden 移出 mcd.menu——落营养并诚实说明是合理出路；当天 authored 未实测的期望按实测修正非让步）。chars_full 哨兵 11118（demo 描述加长 37 字符）。
+- **沙箱定档**：泓舟扫码成功（真码可识别）但沙箱钱包内支付失败=支付宝沙箱当日服务级故障（查单同时段 48+ 连续 20000）；precreate 真码/query 语义/close/GBK 验签修均真栈验证，PAID+退款段待恢复重跑探针（已带浏览器自动弹大码——qr.alipay.com 链接会重定向不展示码、终端 ASCII 会截断，实测教训）。
+
+**本批新判据**（详见记忆与 design §6）：pytest 跑着改文件=混合快照读数作废；幂等防双付不防重试；「机制通了」和「体验合理」隔着一次真栈端到端（落域全对数据全真，用户听到的仍可以是 API 文档朗读）；配置激活也要 tools/list 真机核实（报道 28 工具真机 29）；Windows GBK 宿主是本仓常驻放大器（当日同族三连：CLI 测试 env 敏感/能力门禁 ✓ 自崩/支付宝 GBK 验签）。

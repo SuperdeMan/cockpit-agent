@@ -61,7 +61,10 @@ skills/         Planner 规划知识声明式载体（M0b）：guides/ 领域组
                 **修落域 badcase 的默认产物是范例不是正则**（写错只是噪声，hint 写错是
                 事故）；契约见 skills/exemplars/README.md，门禁 test/eval_exemplars.py
 security/       权限引擎、scope 定义、内容审核、注入防护
-payment-gateway/  统一支付网关（Agent 不持支付凭证）
+payment-gateway/  统一支付网关（Agent 不持支付凭证；2026-08-11 真实化：providers/
+                支付宝当面付+微信 v3 Native 双渠道自实现、worker.py 轮询推进终态、
+                **Capture=确认后亮码**、PAYMENT_REAL_SCENES 场景白名单 fail-closed
+                ——契约 conventions §9.17，改支付面先读它）
 proactive/      统一主动引擎：主动消息的全局治理器（频控/免打扰/驾驶负荷/同类合并）
 observability/  可观测模块：NATS 事件出口、collector、trace/日志/指标
 hmi/            React 座舱前端
@@ -151,7 +154,10 @@ Agentic 循环。已落地并验收的主题：工程化主干与云端中枢（
 语音回路/拒识澄清）、可观测台（badcase 排查贯通）与旅程级验证体系（L3 journeys + L4 HMI CDP）、
 智能化升级 M0a→M4（数据真实性、Skill 层、submit_plan、自进化 nightly、Task Ledger + Outcome
 Verifier、记忆图谱、统一主动引擎、受控 MCP 桥、S2S 双语音链路、声纹多用户 + 视觉入口）、
-M5 数据飞轮（落域范例库、hint 退役出口、RoutingBench、跨域边界裁定台账、端侧语义 NLU shadow）。
+M5 数据飞轮（落域范例库、hint 退役出口、RoutingBench、跨域边界裁定台账、端侧语义 NLU shadow）、
+支付基础设施真实化四批（2026-08-11：支付宝/微信双渠道扫码收单 + 商户收银登记 +
+麦当劳/瑞幸官方 MCP 真机激活只读三件 + 端到端体验层 speech_mode，契约 §9.17/§9.9，
+流水 history §28）。
 
 三次全量验收留档，均通过：M0a→M4 总体验收
 `docs/reviews/2026-07-26-acceptance-review-m0a-m4.md`（其 §7 的 13 张主卡已于 2026-08-01 全部

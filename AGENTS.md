@@ -66,17 +66,13 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**4996 passed / 14 skipped / 0 failed**（单进程 16m58s，2026-08-11 商户激活批 3b 后
-实测，退出码 0）。较批 2+3（`94f7afc`，4994）净 **+2**：支付宝 GBK 验签回归钉 +
-admission const_args 解析测试；另同批更新三处清单哨兵（catalog 能力 135→138、
-chars_full 10865→11081/余量 4919、边界台账 21→23——全部对应有意新增，注释留痕）。
-批 2+3 较批 1（`d964e1d`，4960）净 +34：store 幂等新语义 2、server qr_svg/快照
-金额 2、parking 重写净增 8、桥三件 25（分面读数：网关 102 / parking 18 / 桥 62）。
-批 1 净 +96=payment-gateway tests 五件（store 30/server 24/sign_alipay 22/
-sign_wechat 12/worker 8，全离线零外呼）。⚠ 批 1 附带修
-`test_eval_intent_adversarial_cli.py` 三条子进程测试的**环境敏感**（宿主带
-`PYTHONIOENCODING=utf-8` 时 reader 按 GBK 解码炸成 stdout=None——编码两端钉死，
-断言语义未动；定责对照与先例见支付设计文档 §6.1）。
+**4996 passed / 14 skipped / 0 failed**（2026-08-11 支付四批后实测，退出码 0；
+批 3c 后 4995 实测绿 + chars_full 哨兵修钉 11118 单测复验绿——demo 描述判别化
+加长 37 字符的有意变更）。较 B5/B6 后（`a226727`，4864）净 **+132**，四跳全实测
+（4864→4960→4994→4996），逐批对账与新增测试点名见 history **§28** 与支付设计
+文档 §6.1–6.5。⚠ 同日附带修三处**环境敏感**同族（CLI 子进程测试 PYTHONIOENCODING /
+能力门禁 GBK 自崩 / 支付宝 GBK 验签）——Windows GBK 宿主是本仓常驻放大器，
+新写子进程/出站验签代码先想编码两端。
 
 **2026-08-11 分组实测**（B5/B6 后）：edge **579**、cloud **721**、registry **65**、
 agents **993**、`runtime/tests` **109**、observability **73**；端侧 smoke **13/13**；
@@ -131,44 +127,25 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 
 ### 4.1 活跃待办（只列仍需行动的）
 
-**支付基础设施真实化（三批，2026-08-11 泓舟拍板，全部实施）**：方案/裁决/逐批
-实施记录 [`docs/design/2026-08-11-payment-infrastructure-and-merchant-mcp.md`](docs/design/2026-08-11-payment-infrastructure-and-merchant-mcp.md)
-§6.1–§6.3，契约 [`docs/conventions.md`](docs/conventions.md) §9.17（网关）+ §9.9
-（桥 transport/补偿两态/支付链接闭环）。
-- **批 1 网关核心**（`d964e1d` 已推）：双渠道真实 provider（支付宝当面付沙箱可
-  联调/微信 v3 无沙箱只到签名单测）、9 态状态机、场景白名单 fail-closed、轮询
-  worker+proactive 回执、修 confirm_token 回传 bug。**批 2 parking 闭环**：幂等
-  重取时序（token 不出栈）、provider 删 pay()、HMI payment_qr/receipt/parking_fee
-  三卡（网关生成 SVG，前端零 QR 依赖）、`e2e_payment` 真栈 **3/3 PASS**。
-  **批 3 桥 streamable_http**：HttpMcpClient（404 重握手/token 不进日志）、
-  admission 扩展（${VAR} 缺 env 拒载/compensate 两态/存在性校验）、pay_url_locator
-  声明式支付登记（白名单双层防钓鱼）、`e2e_mcp` 真栈 **12/12 PASS**（顺修恒红了
-  10 天的过期断言）。
-- **批 3b 商户真机激活**（2026-08-11 泓舟填凭证当日）：麦当劳/瑞幸 tools/list
-  真机核实后 **v1 激活只读三件**（`mcd.menu` 营养餐品 / `mcd.order_status` /
-  `luckin.order_status`，schema_sha 真机指纹锁死），真栈准入全成 + 真实问答冒烟
-  通过（麦当劳真实营养数据 / 瑞幸真实后端触达）。**下单归二期**：真机 schema
-  显示两家都是强多步流程 API（结构化 items/productList + storeCode/deptId 前置
-  链），桥的扁平 slots 机制接不住——阻塞点=planner 结构化参数与步间引用（编排
-  能力面）；瑞幸 `queryShopList` required 精确经纬度 × third_party 禁
-  location.precise（红线）结构性不可激活，门店发现归 nearby。补偿两态被两家各
-  占其一地验证（麦当劳无取消工具=abandon_unpaid / 瑞幸有 cancelOrder=tool）。
-  **沙箱真实联调抓到真 bug**：支付宝网关 GBK 响应 × UTF-8 验签字节（中文出现必
-  炸，ASCII 侥幸绿）——已修+回归钉；precreate 真码/query/close 已真栈验证。
-- **批 3c 商户端到端体验修复**（2026-08-11 晚，泓舟指示端到端验证；实施记录方案
-  §6.5）：真栈五句取证抓出四处不合理并修复复验——`speech_mode: summarize`
-  （「巨无霸多少大卡」从念 6638 字文档变「巨无霸一份是513大卡。」）、读路径缺
-  引用改追问、`mcp_result` 卡瘦身 13KB→1.2KB、demo 描述判别化+hint guard 加品牌
-  让路词（路由回归 78/78+57/57 兑现「动 mcp-bridge#0 须专项回归」）；顺带修
-  **账本跨商户污染**（拿 demo 单号查麦当劳——result_ref 记 server 归属+回填只认
-  同商户）。
-- **支付余项**：① 沙箱「支付→PAID→refund」段：泓舟已扫码但**沙箱钱包内支付
-  动作失败**（支付宝沙箱当日服务级故障，查单同时段 48+ 连续 20000）——待沙箱
-  恢复重跑 `python -u scripts/alipay_sandbox_probe.py`（自动弹浏览器大码）；
-  precreate 真码/query 语义/close/GBK 验签修均已真栈验证；② 微信商户号到位后
-  真实联调；③ 二期下单：编排结构化参数与步间引用能力面（麦当劳 items 数组+
-  storeCode 链 / 瑞幸 productList+deptId 链），瑞幸 compensate=cancelOrder、
-  麦当劳=abandon_unpaid+pay_url_locator=payH5Url 已在 servers.yaml 注释就位。
+**支付基础设施真实化（四批，2026-08-11，全部实施推 main）**：`d964e1d`（网关
+双渠道核心）/ `94f7afc`（parking 闭环+HMI 支付卡+桥 streamable_http）/ `4a5cab0`
+（麦当劳/瑞幸真机激活）/ `6f06b41`（端到端体验修复）。方案/10 条裁决/逐批实施
+记录的唯一权威：
+[`docs/design/2026-08-11-payment-infrastructure-and-merchant-mcp.md`](docs/design/2026-08-11-payment-infrastructure-and-merchant-mcp.md)
+§2/§6；契约 [`docs/conventions.md`](docs/conventions.md) **§9.17**（支付网关：
+状态机/幂等三层链/token 幂等重取/场景白名单 fail-closed）+ **§9.9**（桥：
+transport/补偿两态/pay_url 闭环/speech_mode）；逐批流水 history **§28**。
+当前能力状态一句话：停车缴费真栈闭环（e2e_payment 3/3）；麦当劳/瑞幸只读三件
+真机在线（营养/两家查单，e2e_mcp 12/12）；支付宝沙箱四接口中 precreate 真码/
+query/close/GBK 验签修已真栈验证。
+
+**支付余项**：① 沙箱「支付→PAID→refund」段——泓舟已扫码但沙箱钱包内支付失败
+（支付宝沙箱当日服务级故障），恢复后重跑 `python -u scripts/alipay_sandbox_probe.py`
+（自动弹浏览器大码）；② 微信商户号到位后真实联调（代码按 v3 真实实现+签名单测
+锁死，未经真环境验收）；③ **二期下单**：阻塞点=planner 结构化参数与步间引用
+（麦当劳 items+storeCode 链/瑞幸 productList+deptId 链），补偿与支付闭环参数已
+在 `agents/mcp_bridge/servers.yaml` 注释就位（瑞幸 cancelOrder=tool 形态/麦当劳
+abandon_unpaid+payH5Url）。
 
 外部评审六批 **B1/B2**（2026-08-10）、**B3/B4**、**B5/B6**
 （2026-08-11）全部实施合入并收口。✅ 冻结令已撤销，可以新增业务 Agent。

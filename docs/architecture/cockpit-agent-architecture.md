@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.21（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-08-11（v1.21 定稿归档——外部评审 B5/B6 合入：Planner 重试规则表驱动、D0/T2 流式判定统一、可执行性形态判定 shadow）
+> 版本：v1.22（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-08-11（v1.22 定稿归档——支付基础设施真实化四批：双渠道扫码收单 + 商户收银登记 + 麦当劳/瑞幸官方 MCP 真机激活）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -889,7 +889,9 @@ turns/spans/llm_calls/logs 落 SQLite 持久化（`OBS_RETENTION_DAYS` 保留期
   顺带给 provider 盖来源章），全栈 `docker compose logs | grep "provider\["` 一屏审计。
 - **严格栈**：`REQUIRE_REAL_PROVIDERS=on`（默认 off）时任何 mock 决议拒绝启动，含
   llm-gateway 侧 llm/embed/asr/tts 四闸；豁免域 `REQUIRE_REAL_EXEMPT`
-  （默认 `parking,knowledge`——支付设计即模拟、车书暂无真实实现）。
+  （默认 `parking,knowledge`——停车数据源 ETCP 未接真、车书暂无真实实现）。
+  `payment` 自 2026-08-11 真实化起是**独立决议域且不进豁免**（网关内自实现同口径
+  决议行 `provider[payment]=…`，conventions §9.17）。
 - **卡片 provenance**：外源数据 ui_card 统一携带保留键
   `_prov={mode: real|cached|degraded|mock, vendor, fetched_at, note?}`（Struct 免 proto），
   HMI 徽章渲染（mock 醒目/degraded 灰/real 小字来源·取数时间）；13 卡族已覆盖，
@@ -1120,6 +1122,7 @@ agents/<name>/
 | v1.19 | 2026-08-01 | 内容性合入（数据飞轮 M5 P3 收尾）：§3.2 影子观测面补完——**四条路径全挂**（`path` 分开误接与漏接，误接发生在本地快路径且危险得多；响应后 fire-and-forget 不占秒回）、`nlu_vs_rule` **三态→四态**（补 `unmapped`：无金标不装懂）、`nlu_gate` 只记不用。**一条判定纪律入册**：「A 与 B 一致吗」先问「**A 和 B 是同一个空间里的量吗**」——影子拿语料中文标签与规则自有 object 直接比字符串，`agree` 状态在生产里从未出现过，而 P3b 的错对象率正要拿这一档当分母；三套命名由 `orchestrator/edge/knowledge/nlu_objects.yaml` 等价类台账归并（人裁一次、机器守不许悄悄漏，同 boundaries 台账形态）。另一条负结果：**「多给点信息总不会更差」不是证据**——78 条端侧判别化描述渲进 planner catalog 跨两档 Δ=0 零翻面而每次规划 +1462 字符，收益实际在 **registry 语义兜底**（泛化描述下「打开空调」的 top-1 是 scene-orchestrator，而那是 LLM 失败时的兜底规划路径），证据 `docs/reviews/eval/edge_capability_desc_ab.md` |
 | v1.20 | 2026-08-04 | 内容性合入：§5.2.1 增 Skill 受限 `plan_repairs`——只给已有唯一步骤补数据依赖，不新增 intent/覆盖真值，不改权威链；`plan.skill_effects` 单列留账，防止确定性后处理冒充模型原生正确。来源为意图落域对抗 gate 中 `cp.dep.menu-then-order` 在 guide/few-shot 在场时仍随机漏接的真栈证据 |
 
+| v1.22 | 2026-08-11 | 内容性合入（支付基础设施真实化四批，`d964e1d`/`94f7afc`/`4a5cab0`/`6f06b41`）：§7.3/ws6 §2 的 payment-gateway 从孤儿 mock 接成真——支付宝当面付（沙箱可联调）/微信 v3 Native 双渠道自实现签名验签、9 态状态机（**Capture=确认后亮码**非同步扣款，captured 由轮询 worker 推进）、`confirm_token` 幂等重取时序（编排刻意不持久化 step.meta，token 不出 Agent 栈）、`PAYMENT_REAL_SCENES` 场景白名单 fail-closed（防 mock 金额走真渠道收真钱）、merchant_hosted 商户收银登记（商户是真相源只做过期收口）。§7.3 受控 MCP 桥解封 streamable_http（仅官方商户远程端点）：麦当劳（29 工具真机核实）/瑞幸（8 工具）v1 只读激活，补偿两态（`abandon_unpaid`/`tool`）被两家各占其一验证；两家下单归二期（编排结构化参数能力面）。§9.5 豁免拆分：payment 独立决议域不进豁免。真实联调抓修支付宝网关 **GBK 响应验签 bug**（全 ASCII 侥幸绿、MockTransport 结构性盖不住——「真实接入」验收价值的标本）。端到端体验层：`speech_mode: summarize`（商户返回「给 LLM 读的文档」不逐字进话术）。设计全文 `docs/design/2026-08-11-payment-infrastructure-and-merchant-mcp.md` |
 | v1.21 | 2026-08-11 | 内容性合入（外部评审末两批 B5/B6）：§5.2.1 的降级链路补上**声明层**——13 条重试/守卫规则从主循环的 if/elif 收敛为 `orchestrator/cloud/retry_policy.py` 的表（**加重试规则=改表不改主循环**，同 skill 层那条哲学；`plan_modes` 口径逐字不变以保既有读数可比，归因新增 `retry_policies` 一列）；D0/T2 流式判定统一到 `stream_state.py`（**判定抄两份正是 B1 那个 bug 的成因**——推进逻辑也必须共享，不只是判定函数），顺带把 D0「动作已发出却丢 final 时邀请用户重发」的同族缺陷补掉、`_outcome_uncertain` 接Outcome Verifier readback 并复用既有指纹（**不新造 command_id**）。§3.2 增第二个 shadow：**可执行性形态判定**（`actionability.py`）——裸对象澄清族三条检索式修法全败之后的第四条路，判据原文「**检索是内容通道，而裸对象是形态判据**」；主链零行为变化由源码断言钉死，REJECT 声明但 v1 不产出。三条判据入册：**分母挑得越干净假阳性越好看**（首版 0/472 是把端侧 ingress 挡在分母外，诚实分母是 4/574）／**确定性判据的 p 值分母是人为的**／**「代码里 import 得到」和「镜像里拷进去了」是两件事**（真栈全量重建抓到 collector 与proactive 两个服务 import 了 `runtime.profile` 却没 `COPY runtime`，加闸后 40 小时无症状，覆盖面断言已补到 Docker 层）|
 
 > 校准记录（不 bump）：2026-07-02/03/10 同步 R1-R3 落地现状；2026-07-18 实现说明、§3.1 T0-T2 运行模型对应、点餐→周边发现、§13 目录映射校准；2026-08-02 附录 C 版本表整理（两表合一、按版本排序，无内容变化）；2026-08-09 §10 评测可信度同步跨进程意图基线落地状态。

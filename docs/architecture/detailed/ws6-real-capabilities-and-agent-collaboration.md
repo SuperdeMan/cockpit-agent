@@ -9,7 +9,9 @@
 > 新闻=NewsAPI / 股票=Alpha Vantage 真实 Provider 已落地**（见 `docs/guides/provider-integration.md`、
 > `test/e2e_real_providers.py`）；trip-planner 经受控 AgentClient 协作跑通；
 > **§4 协作护栏已修复**（depth/stack 经 meta→contextvar 跨进程传递，护栏拒绝发审计 span）。
-> 车型向量库、PaymentGateway Authorize/Capture 仍待接入。
+> 车型向量库仍待接入。PaymentGateway 已于 2026-08-11 真实化接线（parking-payment
+> 走 Authorize/Capture 幂等重取时序，双渠道扫码收单 + 商户收银登记，§2 与
+> conventions §9.17）。
 
 ---
 

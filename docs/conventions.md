@@ -38,7 +38,7 @@
 | road-safety | road_safety | core | first_party | cloud | 50072 | safety.driving_advice, safety.weather_alert, safety.road_condition |
 | deep-research | deep_research | ecosystem | first_party | cloud | 50073 | research.run, research.status, research.cancel |
 | reminder | reminder | core | first_party | cloud | 50074 | reminder.create, reminder.list, reminder.complete, reminder.cancel, reminder.update |
-| mcp-bridge | mcp_bridge | ecosystem | third_party | cloud | 50076 | 由 `servers.yaml` 准入清单**启动期合成**（首批 shop.menu / shop.order）——manifest 里 capabilities 故意留空，见 §9.9 |
+| mcp-bridge | mcp_bridge | ecosystem | third_party | cloud | 50076 | 由 `servers.yaml` 准入清单**启动期合成**（demo-coffee `shop.*` 四件 + 麦当劳 `mcd.*` 两件 + 瑞幸 `luckin.*` 一件，2026-08-11 真机激活）——manifest 里 capabilities 故意留空，见 §9.9 |
 | vision | vision | core | first_party | cloud | 50077 | vision.describe（单帧图片问答，M4 P4；契约见 §9.12）|
 
 > 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent。
@@ -66,7 +66,14 @@
 | `nearby.detail` | nearby | cloud | poi_id, name | 详情增强：评分/人均/电话/营业时间/特色/图片 |
 | `nearby.order` | nearby | cloud | poi_id, name, datetime, party_size | require_confirm；诚实预留桩（未接真实点单/订位，给电话+导航兜底） |
 | `parking.query_fee` | parking-payment | cloud | order_id, plate | 只读，不产生支付动作 |
-| `parking.pay` | parking-payment | cloud | order_id, plate, amount | require_confirm |
+| `parking.pay` | parking-payment | cloud | order_id, plate, amount | require_confirm；经 payment-gateway 幂等重取时序（§9.17，2026-08-11 真实化） |
+| `shop.menu` | mcp-bridge | cloud | — | 演示商户菜单（servers.yaml 合成；本表 2026-08-11 补登记——能力从 M3 起就在，登记漏了） |
+| `shop.order` | mcp-bridge | cloud | item, size | require_confirm；演示商户下单（描述已判别化：真实品牌不适用） |
+| `shop.order_status` | mcp-bridge | cloud | order_id | 演示商户查单（按订单号或幂等键，§9.9） |
+| `shop.order_cancel` | mcp-bridge | cloud | order_id | require_confirm；演示商户取消退款 |
+| `mcd.menu` | mcp-bridge | cloud | — | 麦当劳餐品/营养（真机 tools/list 核实激活，speech_mode=summarize，§9.9） |
+| `mcd.order_status` | mcp-bridge | cloud | order_id | 麦当劳订单查询（商家是订单状态真相源） |
+| `luckin.order_status` | mcp-bridge | cloud | order_id | 瑞幸订单查询（同上；两家下单归二期——编排结构化参数能力面） |
 | `manual.query` | manual-rag | cloud | question | RAG |
 | `trip.plan` | trip-planner | cloud | destination, days, preferences | 跨 Agent 协作(Phase1)；NEED_CONFIRM 确认方案 |
 | `trip.modify` | trip-planner | cloud | modification | 修改已有行程（结构化 edit-op 加/删停靠点、只改受影响天、跨天去重）；NEED_CONFIRM |
