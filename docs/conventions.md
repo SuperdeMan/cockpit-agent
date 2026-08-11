@@ -302,6 +302,7 @@
 | `SKILLS_MODE` | 规划知识 Skill 层（M0b）：`full`=检索注入（默认）\|`canary`\|`shadow`=只检索记录\|`off`；Full Migration 后中央 base 无领域知识，shadow/off 仅研究/debug 档 | 否（默认 `full`） |
 | `EXEMPLARS_MODE` | **落域范例库**（M5 P1，Planner 第三通道、权威链最软层）：`full`=检索注入（默认）\|`shadow`=只检索记录不注入（A/B 对照）\|`off`=关。语料 `skills/exemplars/<domain>.yaml`，契约见该目录 README；调优项 `EXEMPLARS_RETRIEVAL`/`EXEMPLAR_LEX_THRESHOLD`/`EXEMPLAR_SEM_THRESHOLD`/`EXEMPLAR_TOP_K`/`EXEMPLAR_BUDGET`/`EXEMPLAR_EMBED_TIMEOUT` 见 `.env.example`（**默认值只活在 `exemplars.py` 一处**，compose 以 `${VAR:-}` 空默认透传） | 否（默认 `full`） |
 | `PLANNER_TOOLCALL` | 结构化规划输出（M1a submit_plan）：`on`=原生 function calling 强制合法 Plan（默认）\|`off`=JSON 纯文本回退档（对照/应急） | 否（默认 `on`） |
+| `PLANNER_RETRY_DISABLE` | **重试策略消融**（B5 §3，跑批诊断用）：逗号分隔的策略名，命中即整条关掉。名单与语义见 `orchestrator/cloud/retry_policy.py::RETRY_POLICIES` 与方案附录 A。⚠ **未知名字直接抛**，不静默当「什么都没关」——那会把读数读成「关了也没变化」。默认空=全开，生产不要设 | 否（默认空） |
 | `PLANNER_TOOLCALL_SALVAGE_RETRY` | 掉出工具通道后是否再要一次工具通道（泓舟 2026-08-10 拍板）。`on`=模型吐了文本但没用工具时，抢救那份留作回落、再要一次 submit_plan（多一次 LLM 调用，仍在原有 2 次上限内）\|`off`=旧行为，第 2 轮走纯 JSON。⚠ **只管「能说话但没用工具」**；协议异常/provider 不认 tools 永远退 JSON 档。重试仍没走成时 `plan_mode=toolcall_salvage_kept`（该值算**掉档**，见 §8.1 读数纪律） | 否（默认 `on`） |
 | `PERMISSIONS_FAIL_OPEN` | 请求无 `granted_scopes` 时的权限兜底（R2.2）：`true`/默认=PoC 全开保持现状；`false`=fail-closed 仅无权限 Agent 可达 + 记结构化审计 | 否（默认 `true`） |
 
@@ -441,6 +442,13 @@ collector 在 `insert_span` 收到 `cloud.planning` 时按 `trace_id` **合并�
 | `plan_mode` | span `plan_mode` | `toolcall_degraded` 率等协议层指标；evolve `plan_degraded` 信号 |
 | `gold_intents` | `POST /api/turns/{id}/label` | 人工标注的正确落域。**UPSERT 不碰、保留期豁免** |
 | `edge_nlu` | span `edge_nlu` + `edge_agree`（`!=` 后缀=端云分歧） | **端云分歧轮是信息量最大的标注样本**；evolve 据此产 `edge_divergence` 信号把该轮拉进日报。存成一列而不是逐轮拉 span 详情——分歧要能当扫描期信号，逐轮补拉是 N+1 |
+
+**`retry_policies`（B5 §3，2026-08-11）**：本轮命中的重试策略名（声明序，逗号串；
+同一条两轮都命中就出现两次）。**它与 `plan_mode` 是两个问题**——`plan_mode` 说最后
+走的哪条通道，`retry_policies` 说**哪条守卫判掉了哪一版**。刻意新增一列而不是给
+`plan_mode` 加后缀：既有 findings 读数按 `plan_mode` 聚合，换口径它们就不可比了
+（同 §8.1 读数纪律）。重构前守卫命中在观测面完全看不见，只能翻日志。
+名单与语义见 `orchestrator/cloud/retry_policy.py`，消融开关 `PLANNER_RETRY_DISABLE`。
 
 `cloud.planning` span 另有四组归因属性：`skills`（知识层注入名单）、`skill_effects`
 （已注入 skill 的受限 `plan_repairs` 实际修改记录；空=未修，不得与模型原生正确混读）、

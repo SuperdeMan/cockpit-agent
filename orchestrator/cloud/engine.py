@@ -319,6 +319,11 @@ class PlannerEngine:
                        if getattr(plan, "exemplars", None) else {}),
                     # M1a：本轮规划输出通道（toolcall|toolcall_salvage|…|json），A/B 聚合用
                     "plan_mode": getattr(plan, "plan_mode", "json"),
+                    # B5 §3：本轮命中的重试策略名（声明序）。与 plan_mode 是两个问题
+                    # ——「哪条守卫判掉了这一版」vs「最后走的哪条通道」。重构前守卫命中
+                    # 在观测上完全看不见，只能靠日志。
+                    **({"retry_policies": ",".join(plan.retry_policies)}
+                       if getattr(plan, "retry_policies", None) else {}),
                     # 数据飞轮 P0 落域可观测：意图名是系统枚举值（非用户内容），紧凑发射
                     # 不过内容门控——collector 据此把落域合并进 turns 行（SQL 可聚合）。
                     "intents": ",".join(s.intent for s in plan.steps),

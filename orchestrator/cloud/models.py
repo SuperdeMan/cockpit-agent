@@ -95,6 +95,10 @@ class Plan:
     # toolcall_salvage=模型无视工具、同轮文本抢救；toolcall_fallback=工具协议不可用后的
     # 第 2 轮 JSON 路径；toolcall_degraded=两轮全失败走 _fallback。
     plan_mode: str = "json"
+    # B5 §3：本轮命中的重试策略名（声明序，可重复——同一条可能两轮都命中）。
+    # **不换 `plan_mode` 口径**（那会让既有 findings 读数不可比）：归因新增一列，
+    # 回答的是「哪条守卫判掉了这一版」，而 plan_mode 回答的是「最后走的哪条通道」。
+    retry_policies: list[str] = field(default_factory=list)
     # 落域可观测（仅供 span/评测，不参与编排）：本轮 wire **有没有真的给出**合法
     # complexity。`_wire_to_plan` 里 `wire.get("complexity", "simple")` 是个静默默认，
     # 于是「通道没给这个字段」与「模型判了 simple」被压成同一个值——而 toolcall 通道

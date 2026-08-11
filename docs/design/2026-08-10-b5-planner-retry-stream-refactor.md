@@ -120,3 +120,62 @@ B1 新增的 `did_action`）替换为对该枚举的状态推进；fallback 与�
   全量 pytest 与 L0 门禁绿；`plan_modes` 口径零变化（现有 findings 读数继续可引用）。
 - 流式统一：D0/T2 现有全部流断测试（含 B1 三场景）在共享判定下逐字复绿；判定纯函数 100%
   分支覆盖（它小，做得到）。
+
+---
+
+## 附录 A. 重试规则清单（**重构前**的 planning.py 行为快照）
+
+> §3.2 第 1 步的产物。这份清单是**从重构前的 `planning.py`（`abc3f49`）读出来的**，
+> 不是从新代码倒推的——它的用途正是当行为基准。`orchestrator/cloud/retry_policy.py`
+> 的 `RETRY_POLICIES` 必须与本表的 name 集合逐条对齐，
+> 由 `orchestrator/cloud/tests/test_retry_policy.py::test_inventory_matches_the_code_table`
+> 解析本表比对（表变了而代码没变，或反过来，都会红）。
+>
+> `attempt_limit` 的读法是**「只在前 N 次尝试上生效」**（`attempt < N`），
+> 不是「最多触发 N 次」——原代码里那些条件写的是 `attempt == 0`，
+> 「首轮才判」与「至多判一次」在「首轮不成立、次轮成立」时不是一回事。
+
+| # | name | 段 | 触发条件（重构前源码位置） | attempt_limit | 适用通道 | 校正模板 | 下一轮通道 |
+|---|---|---|---|---|---|---|---|
+| 1 | `clarification_contract_violated` | guard | 上一轮要过澄清专用 schema，本轮没按 `addressed=true/steps=[]/clarify` 交（`planning.py:1215`） | 2 | tool | — | — |
+| 2 | `plan_only_contract_violated` | guard | 上一轮要过计划修正专用 schema，本轮顶层字段越界（`:1228`） | 2 | tool | — | — |
+| 3 | `complete_conditional_clarified` | guard | 完整条件句仍被判成澄清（`:1241`） | 2 | 全部 | `complete_conditional` | `plan_only` |
+| 4 | `focused_list_batch_conflict` | guard | 「换一批」离开了结构焦点的 list 能力（`:1258`） | 1 | 全部 | `focused_list_batch` | — |
+| 5 | `focus_dependent_conflict` | guard | 省略续问跨离了结构焦点命名空间（`:1269`） | 1 | 全部 | `focus_dependent` | — |
+| 6 | `open_close_polarity_inverted` | guard | 选了与原话开/关极性相反的 sibling 能力（`:1280`） | 1 | 全部 | `open_close_polarity` | — |
+| 7 | `clarify_goal_with_steps` | guard | goal 说要澄清却仍出执行 steps；或裸对象被安上动作；或工具标记只给 goal 不给澄清卡（`:1302`） | 2 | 全部 | `clarify_goal_with_steps` | `clarification` |
+| 8 | `multi_action_omitted` | guard | 原话多个肯定动作，simple 计划只出一步（`:1330`） | 1 | 全部 | `multi_action_omitted` | — |
+| 9 | `directive_not_addressed` | guard | 祈使指令被判 `addressed=false`（`:1347`） | 2 | 全部 | `directive_not_addressed` | — |
+| 10 | `explicit_input_not_addressed` | guard | 显式输入（非 hands-free 语音）被判 `addressed=false`（`:1359`） | 1 | 全部 | `explicit_input_not_addressed` | — |
+| 11 | `salvage_wire_accepted` | accept | 计划可用，但它是掉档轮从自由文本里抢救出来的（`:1374`） | 1 | salvage | `toolcall_salvage_retry`（default） | — |
+| 12 | `no_action_unconfirmed` | tail | 模型说「受话了、不该做任何动作」，而输入本身没给出确定性语法证据（`:1389`） | 2 | 全部 | `no_action_unconfirmed`（default） | — |
+| 13 | `schema_validation_failed` | tail | 工具通道的参数没过结构/能力白名单校验，且没有更具体的诊断（`:1402`） | 1 | tool | `schema_validation_failed`（default） | — |
+
+**三段的语义差别**（不是排版，是求值方式）：
+
+- `guard`：**首个命中即停**。重构前它是一条 `if/elif` 链加两条 `not semantic_guard_retry`
+  与两条 `parsed is not None` 守卫——逐条核过，十条**本来就互斥**，first-match 是它的
+  忠实表达而不是新约束（核法：每条命中都置 `parsed = None`，而后续每条的条件都要求
+  `parsed` 非空，或显式检查 `not semantic_guard_retry`）。
+- `accept`：计划已判为可用之后才问的那一件事，同样首个命中即停。
+- `tail`：计划不可用之后的收尾，**逐条求值不互斥**——#12 是计数器（它的命中会与 guard
+  段并存：guard 判掉计划之后 `_looks_like_no_action(data)` 仍可能为真），#13 只有在
+  「还没有更具体的校正」时才补一条通用反馈。
+
+**校正槽的写入语义**：`override`=命中即写（guard 段互斥，故至多一条写）；
+`default`=只在槽还空着时写。校正与 `next_wire` **只在 attempt 0 落**——重构前
+`for attempt in range(2)`，attempt 1 写进去的校正没有任何一处读得到（逐字核过），
+统一成一条规则比让每条策略自己带 `if attempt == 0` 更不容易写错。
+
+### A.1 与 §3.1 草图的字段差异（逐条给理由）
+
+| 草图字段 | 落地 | 理由 |
+|---|---|---|
+| `trigger: TriggerKind` | ✅ 保留 | 枚举可审计；谓词按枚举注册在 `planning.py`（放 `retry_policy.py` 会与 planning 循环 import） |
+| `wire_modes` | ✅ 保留 | 有真实内容：#1/#2/#13 只可能在工具通道成立、#11 只在 salvage 通道成立，控制器据此过滤 |
+| `attempt_limit` | ✅ 保留，语义校准 | 见上：读作「只在前 N 次尝试上生效」 |
+| `correction_template` | ✅ 保留 | 模板搬进 `retry_policy.py` 的注册表，按 key 取；`$focus_intent`/`$clarify_head` 两个占位符从 state 统一渲染（不建第二张参数表） |
+| `metric_tag` | ❌ 不落 | 13 条里 11 条的 tag 会与 `name` 逐字相同（B4 教训：不加第二份表达同一件事的声明）；剩下 2 条（#11 的 `toolcall_salvage_kept`、#12 的 `{last_mode}_no_action`）本来就是**按 mode 算出来的**，常量字段装不下。归因改走新增的 `plan.retry_policies`（命中策略名列表），`plan_modes` 口径逐字不变 |
+| `risk_class` | ❌ 不落 | 草图设它是为「safety 类不允许静默放弃」。B1 已经把每一处安全判定搬出 planning.py（确认权威在 VAL），13 条重试**没有一条**能静默放弃一个安全决策——判掉计划的唯一去向是 `_fallback`，不是执行原计划。字段落下来会是死字段；真出现安全类重试再加，那时它有消费方 |
+| `preserve_previous` | ❌ 不落 | 与 `stage="accept"` 说的是同一件事（accept 段的全部语义就是「这份能用，先存起来再要一次」）。将来若出现不 preserve 的 accept 策略再拆 |
+| `PlanAttemptState.validation_errors` | ❌ 不落 | `_parse_and_validate_data` 校验失败只返回 `None`，没有结构化错误可填；空列表字段属于先落即死 |

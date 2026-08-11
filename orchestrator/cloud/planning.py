@@ -21,6 +21,11 @@ from .context import (
     assemble_budgeted_catalog,
 )
 from .route_hints import RouteHintEngine
+from .retry_policy import (
+    NEXT_WIRE_CLARIFICATION, NEXT_WIRE_PLAN_ONLY, STAGE_ACCEPT, STAGE_GUARD,
+    STAGE_TAIL, PlanAttemptState, RetryController, TriggerKind,
+    disabled_policies,
+)
 from . import exemplars as _exemplars
 from . import skills as _skills
 
@@ -695,14 +700,8 @@ _CLARIFICATION_TOOLCALL_SECTION = (
     "每项只含 label 与 send_text，send_text 必须是消歧后可直接重新发送的完整指令。"
 )
 
-# 掉出工具通道后的重试提示（泓舟 2026-08-10 拍板：维持 MiniMax 主模型 + salvage 轮
-# 强制重试工具通道）。刻意**不重复输出协议全文**——`_TOOLCALL_SECTION` 本来就恒拼在
-# system 里，这里只点明「上一版没用工具」这件事实。
-_TOOLCALL_SALVAGE_RETRY_CORRECTION = (
-    "\n\n校验反馈：上一版没有调用 submit_plan 工具，而是直接输出了文本。"
-    "本轮必须通过调用 submit_plan 提交同样的判断，不要以文本形式输出 JSON，"
-    "也不要输出任何解释。"
-)
+# 掉出工具通道后的重试提示原文已随 B5 §3 搬进 `retry_policy.CORRECTION_TEMPLATES`
+# 的 `toolcall_salvage_retry` 一档——校正文案是**数据**，与策略表住在一起。
 
 
 def _toolcall_salvage_retry() -> bool:
@@ -1060,6 +1059,160 @@ def _drop_completed_replan_steps(
     return remaining, sorted({step.intent for step in repeated}), unresolved
 
 
+# ── B5 §3：重试策略谓词（表在 retry_policy.py，声明顺序即求值顺序）─────────
+#
+# 每条谓词只回答一件事：「这一轮该不该重问」。副作用——判掉本版计划、落校正、
+# 切下一轮通道——一律由 `RetryController` 按表施加。重构前那些副作用散在十几个
+# if 分支里各写各的，正是「每加一条都要人脑推演它与既有状态的交互」的来源。
+#
+# 谓词放在本模块而不是 retry_policy.py：判据要读 catalog / working_set / 领域正则，
+# 搬过去会与 planning 循环 import。表是数据、谓词是判据，分开住是对的。
+
+
+def _trigger_clarification_contract_violated(state: PlanAttemptState) -> bool:
+    """上一轮要过澄清专用 schema，本轮没按 addressed=true / steps=[] / clarify 交。"""
+    if not state.clarification_expected:
+        return False
+    data, parsed = state.data, state.parsed
+    return not (
+        isinstance(data, dict)
+        and data.get("addressed") is True
+        and type(data.get("steps")) is list
+        and data["steps"] == []
+        and parsed is not None
+        and parsed.addressed
+        and not parsed.steps
+        and parsed.clarify)
+
+
+def _trigger_plan_only_contract_violated(state: PlanAttemptState) -> bool:
+    """上一轮要过计划修正专用 schema，本轮顶层字段越界。"""
+    if not state.plan_only_expected:
+        return False
+    data = state.data
+    return not (
+        isinstance(data, dict)
+        and set(data).issubset({
+            "complexity", "goal", "addressed", "steps", "emotion",
+        })
+        and data.get("complexity") in {"simple", "adaptive"}
+        and isinstance(data.get("goal"), str)
+        and data.get("addressed") is True
+        and type(data.get("steps")) is list
+        and ("emotion" not in data or data["emotion"] in EMOTIONS))
+
+
+def _trigger_complete_conditional_clarified(state: PlanAttemptState) -> bool:
+    """完整条件句仍被判成澄清——未来条件未知不是歧义，是 adaptive 的触发点。"""
+    return bool(state.parsed is not None and state.parsed.clarify
+                and _COMPLETE_DEFERRED_CONDITION_RE.search(str(state.text or "")))
+
+
+def _trigger_focused_list_batch_conflict(state: PlanAttemptState) -> bool:
+    return _focused_list_batch_plan_conflicts(
+        state.text, state.working_set, state.parsed, state.catalog)
+
+
+def _trigger_focus_dependent_conflict(state: PlanAttemptState) -> bool:
+    return _focus_dependent_plan_conflicts(
+        state.text, state.working_set, state.parsed, state.catalog)
+
+
+def _trigger_open_close_polarity_inverted(state: PlanAttemptState) -> bool:
+    return _plan_inverts_explicit_open_close(
+        state.text, state.parsed, state.catalog)
+
+
+def _trigger_clarify_goal_with_steps(state: PlanAttemptState) -> bool:
+    """模型能在 goal 里说对判断却仍出执行步；或在工具通道走两段式协议只给了标记。
+
+    两种形态都花掉既有的第二次尝试，只有前者是自相矛盾。
+    """
+    return bool(state.goal_requires_clarification and (
+        (state.parsed is not None and state.parsed.steps)
+        or state.clarification_marker))
+
+
+def _trigger_multi_action_omitted(state: PlanAttemptState) -> bool:
+    return _simple_goal_omits_multi_action_step(
+        state.data, state.parsed, state.text)
+
+
+def _trigger_directive_not_addressed(state: PlanAttemptState) -> bool:
+    """祈使指令不接受 not_addressed（2026-07-27 真机）。
+
+    **刻意不直接改判成 chitchat**——重试有机会拿到正确的计划（「记住，明天八点
+    提醒我开会」该进提醒域而不是闲聊），只有两次都判不受话才落 chitchat 兜底。
+    """
+    parsed = state.parsed
+    return bool(parsed is not None and not parsed.addressed and not parsed.steps
+                and _is_directive_to_assistant(state.text))
+
+
+def _trigger_explicit_input_not_addressed(state: PlanAttemptState) -> bool:
+    """只有 hands-free 语音源会消费拒识结果；显式输入的一次 not-addressed 先重试。"""
+    parsed = state.parsed
+    if not (parsed is not None and not parsed.addressed and not parsed.steps):
+        return False
+    prefs = getattr(state.ctx, "prefs", None) or {}
+    return not str(prefs.get("input_source", "")).startswith("voice_")
+
+
+def _trigger_salvage_wire_accepted(state: PlanAttemptState) -> bool:
+    """计划可用，但它是掉档轮从**自由文本**里抢救出来的。
+
+    抢救成功≠答得好：掉档轮的输出分布与走 schema 的轮本就不同（MiniMax 内部实测
+    `toolcall` 91% vs `salvage` 50%，p≈0.036，findings §23.2）。所以留它作回落，
+    再给工具通道一次机会——泓舟 2026-08-10 拍板的处置，代价是多一次 LLM 调用，
+    仍在原有 2 次上限内。
+    """
+    return bool(state.retry_with_tool and state.fallback_candidate is None)
+
+
+def _trigger_no_action_unconfirmed(state: PlanAttemptState) -> bool:
+    """模型说「受话了、但不该做任何动作」，而输入本身没给出确定性语法证据。
+
+    一次空 steps 可能只是模型抽风（「打开空调」偶尔也会空手而归），那时重试仍是
+    那条便宜的保险；第二次也这么说才认（见 `build` 循环后的 `no_action >= 2`）。
+    """
+    return bool(state.parsed is None
+                and PlanBuilder._looks_like_no_action(state.data)
+                and not state.goal_requires_clarification)
+
+
+def _trigger_schema_validation_failed(state: PlanAttemptState) -> bool:
+    """工具通道的参数没过结构/能力白名单校验，**且没有更具体的诊断**。
+
+    后半句是它触发条件的一部分，不是写入策略：这条是通用兜底反馈，
+    有具体诊断时补一条泛泛的反而会盖掉信息。
+    """
+    return bool(state.parsed is None and state.retry_with_tool
+                and not state.correction)
+
+
+_RETRY_PREDICATES = {
+    TriggerKind.CLARIFICATION_CONTRACT_VIOLATED:
+        _trigger_clarification_contract_violated,
+    TriggerKind.PLAN_ONLY_CONTRACT_VIOLATED:
+        _trigger_plan_only_contract_violated,
+    TriggerKind.COMPLETE_CONDITIONAL_CLARIFIED:
+        _trigger_complete_conditional_clarified,
+    TriggerKind.FOCUSED_LIST_BATCH_CONFLICT:
+        _trigger_focused_list_batch_conflict,
+    TriggerKind.FOCUS_DEPENDENT_CONFLICT: _trigger_focus_dependent_conflict,
+    TriggerKind.OPEN_CLOSE_POLARITY_INVERTED:
+        _trigger_open_close_polarity_inverted,
+    TriggerKind.CLARIFY_GOAL_WITH_STEPS: _trigger_clarify_goal_with_steps,
+    TriggerKind.MULTI_ACTION_OMITTED: _trigger_multi_action_omitted,
+    TriggerKind.DIRECTIVE_NOT_ADDRESSED: _trigger_directive_not_addressed,
+    TriggerKind.EXPLICIT_INPUT_NOT_ADDRESSED:
+        _trigger_explicit_input_not_addressed,
+    TriggerKind.SALVAGE_WIRE_ACCEPTED: _trigger_salvage_wire_accepted,
+    TriggerKind.NO_ACTION_UNCONFIRMED: _trigger_no_action_unconfirmed,
+    TriggerKind.SCHEMA_VALIDATION_FAILED: _trigger_schema_validation_failed,
+}
+
+
 def _hint_effect(hit: bool, before: list, after: list, had_clarify: bool) -> str:
     """RouteHintEngine 对计划的实际作用分类（纯观测，数据飞轮 P0）。
 
@@ -1133,16 +1286,18 @@ class PlanBuilder:
         toolcall = (os.getenv("PLANNER_TOOLCALL", "on").strip().lower() == "on"
                     and self._llm_tools is not None)
         salvage_retry = _toolcall_salvage_retry()
+        # B5 §3：重试规则是**表**（retry_policy.py），本循环只负责取线、解析、
+        # 按段问表、施加控制流。每条规则可单测、可按名消融、可清点。
+        retries = RetryController(_RETRY_PREDICATES, disabled=disabled_policies())
         plan = None
         plan_mode = "json"
         last_raw = ""
         no_action = 0        # 「受话了、但不该做任何动作」连续出现的次数，见循环后
         last_mode = "json"
-        correction = ""
         retry_with_tool = False
         salvage_kept = None  # 掉档轮抢救出来的可用计划：重试工具通道失败时的回落
-        clarification_tool_retry = False
-        plan_only_tool_retry = False
+        clarification_expected = False   # 上一轮要过澄清专用 schema
+        plan_only_expected = False       # 上一轮要过计划修正专用 schema
         for attempt in range(2):
             mode = "json"
             use_tool = toolcall and (attempt == 0 or retry_with_tool)
@@ -1150,9 +1305,9 @@ class PlanBuilder:
                 raw, args = await self._llm_plan_tools(text, catalog, working_set,
                                                        skills_block=sk_block,
                                                        exemplars_block=ex_block,
-                                                       correction=correction,
-                                                       clarification=clarification_tool_retry,
-                                                       plan_only=plan_only_tool_retry)
+                                                       correction=retries.correction,
+                                                       clarification=clarification_expected,
+                                                       plan_only=plan_only_expected)
                 last_raw = raw or last_raw
                 if args is not None:
                     retry_with_tool = True
@@ -1183,7 +1338,7 @@ class PlanBuilder:
                 raw = await self._llm_plan(text, catalog, working_set,
                                            skills_block=sk_block,
                                            exemplars_block=ex_block,
-                                           correction=correction)
+                                           correction=retries.correction)
                 last_raw = raw or last_raw
                 data = self._extract_data(raw)
                 parsed = (self._parse_with_context(
@@ -1211,81 +1366,6 @@ class PlanBuilder:
                 parsed.goal = str(text or "")
                 logger.info(
                     "Ignored clarification wording on a complete conditional plan")
-            semantic_guard_retry = False
-            if (clarification_tool_retry and not (
-                    isinstance(data, dict)
-                    and data.get("addressed") is True
-                    and type(data.get("steps")) is list
-                    and data["steps"] == []
-                    and parsed is not None
-                    and parsed.addressed
-                    and not parsed.steps
-                    and parsed.clarify)):
-                semantic_guard_retry = True
-                parsed = None
-                logger.warning(
-                    "Specialized clarification retry violated its host contract")
-            elif (plan_only_tool_retry and not (
-                    isinstance(data, dict)
-                    and set(data).issubset({
-                        "complexity", "goal", "addressed", "steps", "emotion",
-                    })
-                    and data.get("complexity") in {"simple", "adaptive"}
-                    and isinstance(data.get("goal"), str)
-                    and data.get("addressed") is True
-                    and type(data.get("steps")) is list
-                    and ("emotion" not in data or data["emotion"] in EMOTIONS))):
-                semantic_guard_retry = True
-                parsed = None
-                logger.warning("Plan-only retry violated its host contract")
-            elif (parsed is not None and parsed.clarify
-                  and _COMPLETE_DEFERRED_CONDITION_RE.search(str(text or ""))):
-                semantic_guard_retry = True
-                parsed = None
-                if attempt == 0:
-                    clarification_tool_retry = False
-                    plan_only_tool_retry = bool(toolcall and retry_with_tool)
-                    correction = (
-                        "\n\n校验反馈：用户原话是完整条件句，已经同时给出条件前件和条件"
-                        "后件。未来条件尚未知不是歧义，而是 adaptive 计划的触发点；不要向"
-                        "用户反问选哪一个动作。首轮只规划用于观察或查询条件前件的合法能力，"
-                        "设置 complexity=adaptive，并在 goal 保留完整条件目标；条件后件留给"
-                        "观察结果后的 replan，不得提前无条件执行。"
-                    )
-                else:
-                    logger.warning(
-                        "Complete conditional remained a clarification after retry")
-            elif (attempt == 0 and _focused_list_batch_plan_conflicts(
-                    text, working_set, parsed, catalog)):
-                semantic_guard_retry = True
-                parsed = None
-                focus_intent = str(getattr(working_set.focus, "last_intent", "") or "")
-                correction = (
-                    "\n\n校验反馈：用户原话要求在当前列表焦点上换一批，结构焦点已明确"
-                    "候选用途为 list、上一轮意图=" + focus_intent
-                    + "。这不是查看某个条目详情，也不是切换到同命名空间的其他操作；请只"
-                    "复用上一轮意图对应的 capability_ref，并保留用户给出的筛选条件。"
-                )
-            elif (attempt == 0 and _focus_dependent_plan_conflicts(
-                    text, working_set, parsed, catalog)):
-                semantic_guard_retry = True
-                parsed = None
-                focus_intent = str(getattr(working_set.focus, "last_intent", "") or "")
-                correction = (
-                    "\n\n校验反馈：用户原话是依赖结构焦点的省略表达，上一版却澄清、"
-                    "拒绝或跨离了焦点。上一轮意图=" + focus_intent
-                    + "。除非原话显式切换主题，本轮必须在同一能力命名空间内选择与当前"
-                    "动作相符的 capability_ref；不得跨到其他命名空间。"
-                )
-            elif (attempt == 0 and _plan_inverts_explicit_open_close(
-                    text, parsed, catalog)):
-                semantic_guard_retry = True
-                parsed = None
-                correction = (
-                    "\n\n校验反馈：上一版选择了与用户明确开/关极性相反的 sibling 能力。"
-                    "请逐字核对原话中的打开或关闭动作，只从本轮 catalog 选择同对象、"
-                    "同极性的 capability_ref；其余已正确步骤保持不变。"
-                )
             # The model can state the correct decision in ``goal`` yet still emit
             # executable steps.  In tool mode it can instead follow the intentional
             # two-stage protocol: a valid empty-steps marker first, then full
@@ -1294,118 +1374,55 @@ class PlanBuilder:
             goal_requires_clarification = bool(
                 (_goal_requires_clarification(data, text)
                  and not complete_conditional_goal_marker)
-                or _bare_object_plan_invents_action(parsed, text)
-            )
-            clarification_marker = bool(
-                goal_requires_clarification and self._looks_like_no_action(data)
-            )
-            if (not semantic_guard_retry and goal_requires_clarification and (
-                    (parsed is not None and parsed.steps)
-                    or clarification_marker)):
-                parsed = None
-                retry_with_tool = bool(toolcall and attempt == 0)
-                clarification_tool_retry = retry_with_tool
-                if clarification_marker:
-                    logger.info(
-                        "Planner tool marker requires clarification details; retrying")
-                    correction_head = (
-                        "\n\n校验反馈：上一版工具提交已正确判断需要澄清，并按协议保持 "
-                        "steps=[]。现在不要继续只输出 goal 标记，请补全澄清卡。"
-                    )
-                else:
-                    logger.info(
-                        "Planner goal requires clarification but steps execute; retrying")
-                    correction_head = (
-                        "\n\n校验反馈：上一版 goal 已表明需要澄清，或用户只给了待解析对象，"
-                        "却仍输出执行 steps，决策与计划矛盾。"
-                    )
-                correction = (
-                    correction_head
-                    + "不要替用户选择或猜测任何动作；请通过 submit_plan 输出 "
-                    "{\"addressed\":true,\"steps\":[],\"clarify\":{"
-                    "\"question\":\"针对当前对象的口语化问题\",\"options\":["
-                    "{\"label\":\"明确动作一\",\"send_text\":\"包含当前对象的完整指令\"},"
-                    "{\"label\":\"明确动作二\",\"send_text\":\"包含当前对象的另一完整指令\"}]}}。"
-                )
-            if (not semantic_guard_retry and attempt == 0
-                    and _simple_goal_omits_multi_action_step(data, parsed, text)):
-                logger.info(
-                    "Planner simple request may omit an explicit action; retrying")
-                parsed = None
-                correction = (
-                    "\n\n校验反馈：用户原话包含多个肯定动作，但上一版 simple 计划只输出了"
-                    "一个 step。请逐项对照本轮 capability description/contract 复核覆盖面；"
-                    "heavy=true 只表示该能力内部流程复杂，不代表它自动承接原话里的其他"
-                    "显式动作。如果单个能力的声明确实完整承接全部动作，可以保持一个 step；"
-                    "否则为遗漏动作补齐 step，并按真实数据依赖设置 depends_on 与 slot_refs。"
-                    "不要增加原话未声明的动作。"
-                )
-            # 祈使指令不接受 not_addressed（2026-07-27 真机）：置为「本次没解析出计划」，
-            # 走既有的重试→fallback 机制。**刻意不直接改判成 chitchat**——重试有机会拿到
-            # 正确的计划（「记住，明天八点提醒我开会」该进提醒域而不是闲聊），只有两次都判
-            # 不受话才落 chitchat 兜底。代价仅在误判时多一次规划调用。
-            if (parsed is not None and not parsed.addressed and not parsed.steps
-                    and _is_directive_to_assistant(text)):
-                logger.info("planner said not_addressed on a directive, overriding: %s",
-                            text[:40])
-                parsed = None
-                if attempt == 0:
-                    correction = (
-                        "\n\n校验反馈：用户原话是直接对助手发出的祈使指令，上一版却标为 "
-                        "addressed=false。请重新逐句规划，并保持 submit_plan 参数结构不变。"
-                    )
-            # 只有 hands-free 语音源会消费拒识结果。显式输入的一次 not-addressed 是没有
-            # 产品消费方的高方差信号，首轮先重试；第二轮仍保留原判以守住两次调用上限。
-            elif (attempt == 0 and parsed is not None and not parsed.addressed
-                    and not parsed.steps
-                    and not str((ctx.prefs or {}).get("input_source", "")).startswith(
-                        "voice_")):
-                logger.info("planner said not_addressed on explicit input; retrying: %s",
-                            text[:40])
-                parsed = None
-                correction = (
-                    "\n\n校验反馈：本轮来自显式输入，不是 hands-free 语音旁听。上一版仅返回 "
-                    "addressed=false，无法完成显式请求；请重新逐句规划，并继续通过 "
-                    "submit_plan 提交。"
-                )
+                or _bare_object_plan_invents_action(parsed, text))
+            state = PlanAttemptState(
+                attempt=attempt, wire_mode=mode, data=data, parsed=parsed,
+                text=text, working_set=working_set, catalog=catalog, ctx=ctx,
+                toolcall=toolcall, retry_with_tool=retry_with_tool,
+                fallback_candidate=salvage_kept,
+                clarification_expected=clarification_expected,
+                plan_only_expected=plan_only_expected,
+                goal_requires_clarification=goal_requires_clarification,
+                clarification_marker=bool(
+                    goal_requires_clarification
+                    and self._looks_like_no_action(data)),
+                complete_conditional_goal_marker=complete_conditional_goal_marker)
+            retries.begin_attempt(state)
+
+            # 守卫段：首个命中即停，命中即判掉本版计划（控制器统一施加）。
+            retries.run(STAGE_GUARD, state)
+            parsed = state.parsed
+            # 下一轮通道由命中策略的 next_wire 声明。语义与表驱动之前逐字一致：
+            # 澄清档把第 2 轮强拉回工具通道；计划修正档只在本来就要重试工具通道时生效。
+            # next_wire 只在 attempt 0 落（`range(2)`，第 2 轮之后没有下一轮可用）。
+            if retries.next_wire == NEXT_WIRE_CLARIFICATION:
+                retry_with_tool = bool(toolcall)
+                clarification_expected = retry_with_tool
+            elif retries.next_wire == NEXT_WIRE_PLAN_ONLY:
+                clarification_expected = False
+                plan_only_expected = bool(toolcall and retry_with_tool)
+            state.retry_with_tool = retry_with_tool
+
             # R4.4：放行「合法的空 steps 计划」——受话判定 addressed=false / 澄清 clarify
             # 的正确输出 steps 恰为空，不能当解析失败去重试+fallback（母卡实施计划 §0-1/§0-2）。
             if parsed and (parsed.steps or not parsed.addressed or parsed.clarify):
-                if (attempt == 0 and mode == "toolcall_salvage" and retry_with_tool
-                        and salvage_kept is None):
-                    # 抢救成功≠答得好。掉档轮模型是在**自由文本**里作答，输出分布与走
-                    # schema 的轮本就不同（MiniMax 内部实测 `toolcall` 91% vs
-                    # `salvage` 50%，p≈0.036，findings §23.2）。所以留它作回落，
-                    # 再给工具通道一次机会——**这是泓舟 2026-08-10 拍板的处置**
-                    # （维持 MiniMax 主模型 + salvage 轮强制重试）。
-                    # 代价是掉档轮多一次 LLM 调用，仍在原有 2 次上限内。
-                    salvage_kept = parsed
-                    if not correction:
-                        correction = _TOOLCALL_SALVAGE_RETRY_CORRECTION
+                if retries.run(STAGE_ACCEPT, state):
+                    salvage_kept = parsed      # 留作回落，再给工具通道一次机会
                     continue
                 plan = parsed
                 plan_mode = mode
                 break
-            if (parsed is None and self._looks_like_no_action(data)
-                    and not goal_requires_clarification):
+
+            # 收尾段：逐条求值、不互斥——计数器与通用兜底反馈是两件事。
+            tail_hits = retries.run(STAGE_TAIL, state)
+            if any(policy.trigger is TriggerKind.NO_ACTION_UNCONFIRMED
+                   for policy in tail_hits):
                 no_action += 1
                 last_mode = mode
                 if _is_pure_no_action_utterance(text):
                     # 输入自身已提供确定性证据；不让第二次抽样把正确的空动作翻成执行。
                     no_action = 2
                     break
-                if attempt == 0 and not correction:
-                    correction = (
-                        "\n\n校验反馈：上一版返回空 steps，但用户原话并非整句纯否定。"
-                        "请逐个核对仍为肯定的诉求；有合法动作就补齐步骤，没有才继续空数组。"
-                    )
-            if (attempt == 0 and parsed is None and retry_with_tool
-                    and not correction):
-                correction = (
-                    "\n\n校验反馈：上一版 submit_plan 参数没有通过结构或能力白名单校验。"
-                    "请严格保持顶层 addressed/steps 与 steps 数组元素层级，逐字复制本轮 "
-                    "capability_ref，并继续通过 submit_plan 提交。"
-                )
 
         # **第三种合法的空 steps：受话了，而且不该做任何动作。**
         # 上面那条 R4.4 的放行只白名单了两种（不受话 / 澄清）。可是「空调先别关」这类
@@ -1448,6 +1465,9 @@ class PlanBuilder:
         plan.skills = sk_names
         plan.exemplars = ex_names
         plan.plan_mode = plan_mode
+        # B5 §3 归因：本轮命中的重试策略名（声明序）。**新增一列而不是改 plan_mode
+        # 口径**——既有 findings 读数按 plan_mode 聚合，换口径它们就不可比了。
+        plan.retry_policies = list(retries.fired)
         # guide 的软提示偶尔会被模型忽略。plan_repairs 是同一资产里的声明式窄归一：
         # 只能给已存在且唯一的两步补数据接线，不新增路由、不覆盖用户真值；实际作用
         # 单列 skill_effects，不能让「模型原生答对」与「知识层修过」在观测上混成一个。
