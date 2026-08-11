@@ -76,18 +76,57 @@ async def main() -> int:
         print(f"SKIP：沙箱凭证未配置——{e}")
         return 0
 
+    from payment_gateway.providers.base import PaymentChannelError as _PCE
+
     payment_id = f"probe_{uuid.uuid4().hex[:12]}"
     print(f"[1/4] precreate {args.amount_fen} 分（out_trade_no={payment_id}）…")
-    qr = await provider.create_qr(payment_id, args.amount_fen, "car-agent 沙箱联调")
+    qr = None
+    for attempt in range(1, 11):
+        try:
+            qr = await provider.create_qr(payment_id, args.amount_fen,
+                                          "car-agent 沙箱联调")
+            break
+        except _PCE as e:
+            # 沙箱 20000 系统异常是常态抖动——出码前自动重试，别让人一趟趟等
+            print(f"      precreate 抖动 {attempt}/10（6s 后重试）：{str(e)[:60]}")
+            await asyncio.sleep(6)
+    if qr is None:
+        print("沙箱持续不可用（10 次均抖），稍后再跑本脚本")
+        return 1
     print(f"      二维码内容：{qr.qr_content}")
+    # 终端 ASCII 码在窄窗口会截断；qr.alipay.com 链接在浏览器又会重定向不展示码
+    # ——本地生成大尺寸二维码 HTML 并自动用默认浏览器弹出，手机扫屏幕最稳。
     try:
+        import base64
+        import io
+        import tempfile
+        import webbrowser
+
         import qrcode
-        q = qrcode.QRCode(border=1)
-        q.add_data(qr.qr_content)
-        q.print_ascii(invert=True)
-    except Exception:
-        pass
-    print("      → 打开手机「沙箱钱包」App 扫上方二维码支付")
+        import qrcode.image.svg
+        img = qrcode.make(qr.qr_content,
+                          image_factory=qrcode.image.svg.SvgPathImage,
+                          box_size=14, border=2)
+        buf = io.BytesIO()
+        img.save(buf)
+        svg_b64 = base64.b64encode(buf.getvalue()).decode()
+        html = (
+            "<!doctype html><meta charset='utf-8'>"
+            "<title>支付宝沙箱扫码</title>"
+            "<body style='display:flex;flex-direction:column;align-items:center;"
+            "font-family:sans-serif;background:#fff'>"
+            f"<h2>支付宝沙箱付款码（{args.amount_fen} 分）</h2>"
+            f"<img src='data:image/svg+xml;base64,{svg_b64}' "
+            "style='width:440px;height:440px'>"
+            "<p>用手机「支付宝沙箱版」App 扫码支付</p>"
+            f"<p style='color:#888'>{payment_id}</p></body>")
+        html_path = os.path.join(tempfile.gettempdir(), "alipay_sandbox_qr.html")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html)
+        webbrowser.open(f"file:///{html_path}")
+        print(f"      → 已在浏览器弹出大码（{html_path}），手机扫屏幕即可")
+    except Exception as e:
+        print(f"      （本地码图生成失败：{e}——可把二维码内容贴到生成器出图）")
 
     from payment_gateway.providers.base import PaymentChannelError
 

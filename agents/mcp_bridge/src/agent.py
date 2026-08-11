@@ -259,6 +259,22 @@ class McpBridgeAgent(BaseAgent):
                 # 让 LLM 能指定查谁的订单就是把越权做成了一个可填的字段。
                 args["_owner_user_id"] = user_id
                 args = await self._resolve_order_ref(b, args, user_id)
+            # 端到端取证修（2026-08-11）：declared 槽位一个都没有、账本也回填不到
+            # （用户在商户 App 下的单不在我们账本）→ **追问而不是打一发必败请求**
+            # ——此前无单号查真实商户，收到「订单号不存在」后把 2836 字 API 文档
+            # 念给用户。写路径早有同款追问，读路径漏了。
+            # 账本回填的引用（order_id **或幂等键**——超时单只有幂等键）也算「有
+            # 引用」：那是 M-D「按幂等键跟商户核对」的既有路径，追问不许打断它。
+            declared = list(b.tool.slots or [])
+            declared_args = {b.tool.arg_map.get(k, k) for k in declared}
+            declared_args.add(b.tool.arg_map.get("idempotency_key",
+                                                 "idempotency_key"))
+            if declared and not any(args.get(a) for a in declared_args):
+                missing = declared[0]
+                return AgentResult(
+                    status=NEED_SLOT,
+                    speech=_SLOT_PROMPTS.get(missing, "还差点信息，说说具体是哪一个？"),
+                    missing_slots=[missing])
             res = await b.client.call_tool(b.tool.name, args,
                                            timeout_s=b.tool.timeout_ms / 1000.0)
         except Exception as e:
@@ -266,25 +282,81 @@ class McpBridgeAgent(BaseAgent):
             # 铁律③：外部源失败诚实说拿不到，绝不改供假数据（R9 契约用 OK 承载话术）
             return AgentResult(speech="这个外部服务暂时拿不到数据，稍后再试。")
         if not res["ok"]:
-            return AgentResult(speech=res["text"] or "外部服务返回了错误。")
-        card = self._card(b, "mcp_result", {"text": res["text"], **res["data"]})
-        return AgentResult(speech=self._demo_prefix(b) + (res["text"] or "查到了。"),
+            speech = await self._readable_speech(b, intent, res, ok=False)
+            return AgentResult(speech=speech or "外部服务返回了错误。")
+        card = self._card(b, "mcp_result", self._slim_payload(res))
+        speech = await self._readable_speech(b, intent, res, ok=True)
+        return AgentResult(speech=self._demo_prefix(b) + (speech or "查到了。"),
                            ui_card=card, data=res["data"])
 
-    async def _backfill_write_slots(self, declared: list, ctx) -> dict:
-        """补偿类写操作的槽位回填（只回填订单号，只从账本，只取确定完成的那单）。"""
+    @staticmethod
+    def _slim_payload(res: dict) -> dict:
+        """卡片瘦身（端到端取证修）：text 不进卡（speech 已承载，此前 13KB 原始
+        数据+全文 text 双份塞卡）；data 字段串值逐个截 800 字、总预算 4KB。"""
+        out: dict = {}
+        budget = 4096
+        for k, v in (res.get("data") or {}).items():
+            s = v if isinstance(v, (int, float, bool)) or v is None else str(v)
+            if isinstance(s, str) and len(s) > 800:
+                s = s[:800] + "…"
+            cost = len(str(s))
+            if budget - cost < 0:
+                out["_truncated"] = True
+                break
+            budget -= cost
+            out[k] = s
+        return out
+
+    async def _readable_speech(self, b, intent, res: dict, *, ok: bool) -> str:
+        """话术形态（§9.9 speech_mode）。
+
+        真实商户返回的是「给 LLM 读的 API 文档 + 原始数据」——`summarize` 把它
+        交给 LLM 用中文一两句**直接回答用户的问题**；LLM 不可用时诚实回落
+        （不念文档：截断 + 引导看屏幕）。`raw`（demo 商户中文短回执）逐字保持。
+        """
+        text = res.get("text") or ""
+        if b.tool.speech_mode != "summarize":
+            return text
+        raw_q = str(getattr(intent, "raw_text", "") or "")
+        material = (text + "\n" + json.dumps(res.get("data") or {},
+                                             ensure_ascii=False))[:3000]
+        try:
+            summary = (await self.llm.complete([
+                {"role": "system", "content":
+                 "你是车载助手。根据外部服务的返回内容，用一两句中文口语直接回答"
+                 "用户的问题；只答与问题相关的部分，不要念字段名或文档结构；"
+                 "内容答不了问题就说明没查到并给一句下一步建议。不要编造数据。"},
+                {"role": "user", "content":
+                 f"用户问：{raw_q}\n外部服务返回：\n{material}"},
+            ], max_tokens=200, temperature=0.3) or "").strip()
+            if summary:
+                return summary
+        except Exception as e:
+            logger.warning("[mcp:%s] 话术重述失败（回落截断）：%s", b.server.id, e)
+        if not ok:
+            return "商户返回了错误，这次没有查到。"
+        return (text[:100] + "…详情已放在屏幕上。") if len(text) > 120 else text
+
+    async def _backfill_write_slots(self, b, declared: list, ctx) -> dict:
+        """补偿类写操作的槽位回填（只回填订单号，只从账本，只取确定完成的那单，
+        且只认**同一商户**——跨商户污染修，2026-08-11）。"""
         if "order_id" not in declared or not self.ledger:
             return {}
         user_id = str(getattr(ctx, "user_id", "") or "").strip()
         if not user_id:
             return {}
         try:
-            recent = await self.ledger.recent(user_id, kind=LEDGER_KIND, limit=1)
+            recent = await self.ledger.recent(user_id, kind=LEDGER_KIND, limit=5)
         except Exception as e:
             logger.debug("[mcp] 取最近订单失败（照常追问）：%s", e)
             return {}
-        oid = ((recent[0].result_ref or {}).get("order_id") if recent else "") or ""
-        return {"order_id": oid} if oid else {}
+        for task in recent or []:
+            ref = task.result_ref or {}
+            if (ref.get("server") or "demo-coffee") != b.server.id:
+                continue
+            if ref.get("order_id"):
+                return {"order_id": ref["order_id"]}
+        return {}
 
     async def _resolve_order_ref(self, b, args: dict, user_id: str) -> dict:
         """用户说「查一下我的订单」时没有订单号——从账本取他最近这一单的引用。
@@ -302,18 +374,23 @@ class McpBridgeAgent(BaseAgent):
         if not self.ledger or args.get(oid_key) or args.get(idem_key_name):
             return args
         try:
-            recent = await self.ledger.recent(user_id, kind=LEDGER_KIND, limit=1)
+            recent = await self.ledger.recent(user_id, kind=LEDGER_KIND, limit=5)
         except Exception as e:
             logger.debug("[mcp] 取最近订单失败（按无引用查）：%s", e)
             return args
-        if not recent:
-            return args
-        task = recent[0]
-        ref = task.result_ref or {}
-        if ref.get("order_id"):
-            args[oid_key] = ref["order_id"]
-        elif getattr(task, "idempotency_key", ""):
-            args[idem_key_name] = task.idempotency_key
+        # 只认**同一商户**的单（跨商户污染修，2026-08-11）：旧账（result_ref 无
+        # server 字段的存量单）按 demo-coffee 归属——server 字段是本日新增，此前
+        # 只有 demo 商户在写账。
+        for task in recent or []:
+            ref = task.result_ref or {}
+            owner = ref.get("server") or "demo-coffee"
+            if owner != b.server.id:
+                continue
+            if ref.get("order_id"):
+                args[oid_key] = ref["order_id"]
+            elif getattr(task, "idempotency_key", ""):
+                args[idem_key_name] = task.idempotency_key
+            break
         return args
 
     # ── 可确认写入（生命周期五项）──
@@ -325,7 +402,7 @@ class McpBridgeAgent(BaseAgent):
             # 补偿类写操作（取消）用户往往不报订单号——从账本取他最近这一单。
             # 只补**已完成**那一单的 order_id：outcome=uncertain 的单连订单号都没有，
             # 拿它去取消等于对着一个不知道存不存在的单执行写操作。
-            slots = await self._backfill_write_slots(declared, ctx)
+            slots = await self._backfill_write_slots(b, declared, ctx)
         if declared and not slots:
             # 追问词按缺的那个槽位来。此前恒说「要点什么？」——那是**下单**的词，
             # 取消复用同一条写路径后就会对着「取消订单」问「要点什么？」。
@@ -408,7 +485,11 @@ class McpBridgeAgent(BaseAgent):
 
         order = res["data"] or {}
         if task:
-            await self.ledger.close(task.task_id, DONE, result_ref=order,
+            # result_ref 记 server 归属（2026-08-11 端到端抓的跨商户污染）：查单
+            # 回填只认**同一商户**的单——拿 demo 咖啡的单号去查麦当劳，商户端
+            # 「订单号不存在」的报错曾把这层错配伪装成「用户没有订单」。
+            await self.ledger.close(task.task_id, DONE,
+                                    result_ref={**order, "server": b.server.id},
                                     progress="已下单")
         # 审计：server/tool/订单号/金额/账本 id 进结构化日志（参数摘要按 obs 既有脱敏口径）
         logger.info("[mcp:%s] 写操作成功 order=%s amount=%s task=%s duplicate=%s",

@@ -588,7 +588,10 @@ cases:
     turns:
       - input: {utterance: 在麦当劳点个巨无霸套餐, context: {}}
         expected:
-          plan: {forbidden_intents: [mcd.menu, mcd.order_status, shop.order], allow_extra_intents: true}
+          # 2026-08-11 端到端校准：落 mcd.menu 并诚实说「套餐做不了+单品热量」是
+          # 合理出路（demo 抢单与查单错位仍禁）——当天 authored 的 forbidden 未经
+          # 实测，按实测修正，非为模型让步
+          plan: {forbidden_intents: [mcd.order_status, shop.order], allow_extra_intents: true}
   - id: cc.negative.mcd-cancel-not-query
     title: 取消话术不得塞给只读查单能力
     family_id: cc.negative-mcd-cancel

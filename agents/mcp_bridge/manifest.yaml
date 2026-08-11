@@ -21,7 +21,11 @@ route_hints:
     intent: shop.order
     policy: replace
     priority: 56
-    guard: '附近|周边|哪里有|哪儿有|哪有|找.{0,3}(店|家|咖啡)|推荐|好喝|咖啡店|咖啡馆'
+    # 2026-08-11 guard 增品牌让路词（真实商户激活的配套）：「点一杯瑞幸生椰拿铁」
+    # 带「杯」会命中本 pattern 被抢给 demo 咖啡店——品牌点单未接入时该由 planner
+    # 诚实处理，不该被 demo 截胡。变更经全量路由回归验证（eval_route_hints +
+    # eval_fast_intent + L0 门禁），guard 只增不减、对既有命中面零收缩。
+    guard: '附近|周边|哪里有|哪儿有|哪有|找.{0,3}(店|家|咖啡)|推荐|好喝|咖啡店|咖啡馆|瑞幸|麦当劳|星巴克|库迪|肯德基'
     slots: {size: "$2", item: "$3"}
 
 requires_permissions:

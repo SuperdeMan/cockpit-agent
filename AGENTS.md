@@ -155,12 +155,20 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
   占其一地验证（麦当劳无取消工具=abandon_unpaid / 瑞幸有 cancelOrder=tool）。
   **沙箱真实联调抓到真 bug**：支付宝网关 GBK 响应 × UTF-8 验签字节（中文出现必
   炸，ASCII 侥幸绿）——已修+回归钉；precreate 真码/query/close 已真栈验证。
-- **支付余项**：① 沙箱「扫码→PAID→refund」最后一段待沙箱稳定时补跑
-  （`python scripts/alipay_sandbox_probe.py`，随时，泓舟扫码）；② 微信商户号到
-  位后真实联调；③ 商户返回的英文 API 文本直接进桥话术（mcd.menu 实测会朗读 API
-  文档）——需超长外文 text 截断+卡片承载/LLM 重述层；④ 二期下单（编排结构化
-  参数能力面）+「点杯瑞幸拿铁」会被 `mcp-bridge#0` hint 抓给 demo 商户的冲突
-  （hint 动不得——退役需专项安全回归，届时 guard 加品牌让路词一并评审）。
+- **批 3c 商户端到端体验修复**（2026-08-11 晚，泓舟指示端到端验证；实施记录方案
+  §6.5）：真栈五句取证抓出四处不合理并修复复验——`speech_mode: summarize`
+  （「巨无霸多少大卡」从念 6638 字文档变「巨无霸一份是513大卡。」）、读路径缺
+  引用改追问、`mcp_result` 卡瘦身 13KB→1.2KB、demo 描述判别化+hint guard 加品牌
+  让路词（路由回归 78/78+57/57 兑现「动 mcp-bridge#0 须专项回归」）；顺带修
+  **账本跨商户污染**（拿 demo 单号查麦当劳——result_ref 记 server 归属+回填只认
+  同商户）。
+- **支付余项**：① 沙箱「支付→PAID→refund」段：泓舟已扫码但**沙箱钱包内支付
+  动作失败**（支付宝沙箱当日服务级故障，查单同时段 48+ 连续 20000）——待沙箱
+  恢复重跑 `python -u scripts/alipay_sandbox_probe.py`（自动弹浏览器大码）；
+  precreate 真码/query 语义/close/GBK 验签修均已真栈验证；② 微信商户号到位后
+  真实联调；③ 二期下单：编排结构化参数与步间引用能力面（麦当劳 items 数组+
+  storeCode 链 / 瑞幸 productList+deptId 链），瑞幸 compensate=cancelOrder、
+  麦当劳=abandon_unpaid+pay_url_locator=payH5Url 已在 servers.yaml 注释就位。
 
 外部评审六批 **B1/B2**（2026-08-10）、**B3/B4**、**B5/B6**
 （2026-08-11）全部实施合入并收口。✅ 冻结令已撤销，可以新增业务 Agent。

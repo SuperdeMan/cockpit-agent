@@ -113,13 +113,15 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 2026-08-10：端侧补前/后挡除雾 4 条能力（131→135），+140 字符，余量 5275→5135。
     # 2026-08-11：真实商户 MCP v1 激活 3 条（135→138），+216 字符，余量 5135→4919
     # ——有意新增（mcd.menu/mcd.order_status/luckin.order_status，见 servers.yaml）。
+    # 同日批 3c 再 +37：demo shop.order 描述判别化加长（端到端实锤 planner 把品牌
+    # 下单话术塞给 demo 的真因是描述太像通用点餐——描述加限定是修法本体）。
     # 这个数**该跟着能力面走**——它守的是「完整 inventory 仍不超预算」，不是冻结条数；
     # 但每次动它都要先确认涨的是有意新增的能力，而不是别处漏进来的重复项。
-    assert catalog.catalog_stats["chars_full"] == 11081
-    assert catalog.catalog_stats["chars_final"] == 11081
+    assert catalog.catalog_stats["chars_full"] == 11118
+    assert catalog.catalog_stats["chars_final"] == 11118
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 4919
+    assert 16000 - catalog.catalog_stats["chars_final"] == 4882
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

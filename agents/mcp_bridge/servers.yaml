@@ -46,7 +46,7 @@ servers:
         idempotency_key_arg: idempotency_key
         compensate_tool: order.cancel  # 缺它 → admission 拒载
         schema_sha: "041a13dc1703"
-        description: 下单一杯咖啡（演示商户，不产生真实交易）
+        description: 在演示咖啡店下单一杯咖啡（仅限拿铁/美式/摩卡等演示饮品；麦当劳/瑞幸等真实品牌的餐饮下单暂未接入，不适用本工具）
         confirm_prompt: "准备下单：{args}，确认吗？"
         # 规划期槽位用自然词（LLM 会填 item/size），经 arg_map 翻成商户的参数名
         slots: [item, size]
@@ -113,6 +113,7 @@ servers:
     tools:
       - name: list-nutrition-foods
         intent: mcd.menu
+        speech_mode: summarize
         write: false
         schema_sha: "9e2fcd061b03"
         # 诚实描述：这是常见餐品与营养成分（能量/蛋白质等），不是当店实时价目——
@@ -123,6 +124,7 @@ servers:
         timeout_ms: 12000
       - name: query-order
         intent: mcd.order_status
+        speech_mode: summarize
         write: false
         schema_sha: "6c5c0def4de0"
         description: 查询麦当劳订单状态与配送进度（商家是订单状态的真相源）
@@ -153,6 +155,7 @@ servers:
     tools:
       - name: queryOrderDetailInfo
         intent: luckin.order_status
+        speech_mode: summarize
         write: false
         schema_sha: "095c2b916b52"
         description: 查询瑞幸咖啡订单详情与状态（商家是订单状态的真相源）

@@ -53,6 +53,11 @@ class ToolSpec:
     # ——在准入清单里**声明死**。组装序：const_args 打底 → 槽位映射值覆盖 →
     # 幂等键/owner 系统键最后（系统键永不被声明覆盖）。
     const_args: dict = field(default_factory=dict)
+    # 话术形态（商户端到端取证后新增，2026-08-11）：`raw`（默认，text 原样进话术
+    # ——demo 商户的中文短回执适用）| `summarize`（text/data 交 LLM 用中文一两句
+    # 直接回答用户——真实商户返回的是「给 LLM 读的 API 文档+原始数据」，逐字念
+    # 6638 字英文文档是实测抓到的体验事故）。LLM 不可用时回落截断+「详情见屏幕」。
+    speech_mode: str = "raw"
     # 二次确认时给用户看的那句话（`{args}` 占位）。**用户正要点头同意的就是这句**，
     # 说错动作比说得笨拙严重得多——真栈实测抓到取消订单被问成「准备下单：DC…」。
     # 放在声明里而不是桥核心：动词是领域语义，桥不该认识「下单」和「取消」。
@@ -124,6 +129,7 @@ def load_servers(path: str) -> list:
             compensate_policy=str(t.get("compensate_policy", "tool") or "tool"),
             pay_url_locator=str(t.get("pay_url_locator", "") or ""),
             const_args=dict(t.get("const_args") or {}),
+            speech_mode=str(t.get("speech_mode", "raw") or "raw"),
             arg_map={str(k): str(v) for k, v in (t.get("arg_map") or {}).items()},
         ) for t in (s.get("tools") or [])]
         headers: dict[str, str] = {}
