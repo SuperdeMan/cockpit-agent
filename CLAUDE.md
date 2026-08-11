@@ -37,7 +37,15 @@ orchestrator/   edge/ 端侧编排+FastIntent（+ knowledge/ VAL 车控知识库
                 object 三套命名归并，人裁一次机器守「不许悄悄漏」，同 boundaries 形态
                 + capability_exemptions.yaml 能力完整性门禁的豁免台账，逐对象逐车道、
                 禁通配符、必须写 reason）；
-                cloud/ 云端 Planner
+                cloud/ 云端 Planner（+ retry_policy.py **重试规则的唯一声明处**：13 条
+                RetryPolicy 按声明序求值，**加重试规则=改表不改主循环**——同 skills 那条
+                「加规划知识=投 skill 文件不改编排核心」；清单与代码表由测试逐列比对，
+                改一处不改另一处即红；消融开关 `PLANNER_RETRY_DISABLE`（B5）
+                + stream_state.py D0/T2 **流式判定的唯一实现**，两条路径共用状态推进
+                与三条决策函数——判定抄两份正是 B1 那个 bug 的成因（B5）
+                + actionability.py 可执行性**形态**判定，**shadow 只写观测不进决策**：
+                特征全是封闭虚词类、不许出现任何领域词（源码断言从 commands.yaml
+                派生词表比对）；REJECT 声明但 v1 不产出（B6）
 llm-gateway/    LLM 多模型网关（所有 LLM 调用的唯一出口）；音频面同门：批/流式 ASR·TTS
                 + s2s/ 端到端语音会话（M4；协议/provider/会话/回灌四层，换厂商只加 provider 子类）
                 + speaker_embed.py 声纹提取（音频→向量，**不持模板**）

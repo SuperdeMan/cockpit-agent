@@ -1979,13 +1979,48 @@ shadow 铁律用源码断言保证：`planning.py` 里 `actionability` 只许出
 
 ### 27.5 本批读数
 
-根全量 `python -m pytest --import-mode=importlib`：**4842 passed / 14 skipped / 0 failed**
-（退出码 0）。较 B5/B6 前（`abc3f49`，4775）净 **+67**，逐条点得上号：
+根全量 `python -m pytest --import-mode=importlib`：**4864 passed / 14 skipped / 0 failed**
+（28m08s，退出码 0）。较 B5/B6 前（`abc3f49`，4775）净 **+89**，逐条点得上号：
 `test_stream_state` 20 + `test_loop`（readback）1 + `test_retry_policy` 31 +
-`test_actionability` 14 + `test_labels`（shadow 分歧后缀）1 = 67。零不明用例。
+`test_actionability` 14 + `test_labels`（shadow 分歧后缀）1 +
+`test_profile_coverage`（镜像构建闭包，见 §27.6）22 = 89。零不明用例。
 
 分组：edge+registry **644**（579+65，未变）、cloud **721**（B3/B4 后 655，+66）、
-`runtime/tests` **87**（未变）、observability **73**（+1）；端侧 smoke **13/13**；
+`runtime/tests` **109**（87 +22）、observability **73**（+1）；端侧 smoke **13/13**；
 L0 门禁 **2/2 exit 0**；能力完整性门禁 exit 0；`eval_fast_intent` 57/57、
 `eval_route_hints` 78/78、skills / 范例门禁 PASS；新增离线回放 `eval_actionability`
 （零 LLM、零网络，不进 CI blocking——它是取证脚本不是准入闸）。
+
+### 27.6 真栈演练（同日补做）：抓到一个 B3 埋的真缺陷
+
+B5/B6 合入后按 `make up` 全量重建 30 个容器演练。**动机不是「跑一遍安心」，而是有一处
+单测结构上覆盖不到**：`turns.actionability` 的加法式迁移只在**已存在**的 obs.db 上才有
+意义，而单测用 `:memory:` 永远是新建表。演练确认：既有 302 turns + 2377 spans 完整保留、
+新列就位。
+
+**抓到的真缺陷（不是本批引入，是 B3 埋的）**：`observability/collector` 与 `proactive`
+两个服务的入口 import 了 `runtime.profile`（B3 加的部署形态闸），但它们的 Dockerfile
+**没有 `COPY runtime`**。既有容器跑的是加闸之前的镜像，于是这处断裂在 **40 小时里毫无
+症状**；一重建就 `ModuleNotFoundError` 起不来，三条 e2e 随之红。
+
+> **判据：「代码里 import 得到」和「镜像里拷进去了」是两件事。**
+> `test_profile_coverage` 那条「够得着闸」的断言照过——**它读的是仓库里的源码**。
+> 这是 B3 自己那条「写进公共位置≠每个消费方都有」在 **Docker 层**的复发（同族第四次）。
+> 修法是把构建闭包也变成断言（`test_service_image_contains_the_runtime_package`，
+> 突变验证过：去掉 `COPY runtime` 当场红），不是「下次记得」。
+
+**B5/B6 在真栈上的正向证据**：`turns` 表实测 `plan_mode` 三档齐全
+（`toolcall`/`toolcall_salvage`/`toolcall_degraded`——表驱动后三条通道都还在走）、
+`actionability` 列真实写入（`execute|0.95` 等），B6 §5 第 1 条由真栈而非单测坐实。
+`e2e_ws`/`e2e_obs`/`e2e_context`/`e2e_process_region`/`e2e_proactive`/`e2e_ledger`/
+`e2e_scene` 全 PASS。
+
+**顺带纠正一处读数口径**：`run_e2e.py --lane ci --full` **只选 1 个用例**
+（`e2e_protocol_smoke`）。B3/B4 那批记的「`--lane ci --full` exit 0」字面没错，
+但比听起来薄得多——引用它时不要当成 e2e 全绿。
+
+**`e2e_verify` 5 条红逐条定性为前提失效**，不是回归，立卡在 §4.2：该用例的前提是
+「必须用混合多意图句才能规划出云侧 hvac 步」，而今天 `route.mixed` span 记着
+`local_actions:1`——**端侧把车控那半自己执行了**，云侧只剩 `nearby.search`。
+对账链本身是好的（按文本直查该 trace，`step.verify{mode:schema,verdict:sat}` 在）。
+B5/B6 结构上不可能造成它：那个拆分决定发生在云端被调用之前。

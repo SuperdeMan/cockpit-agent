@@ -192,6 +192,11 @@ python test/eval_registry_resolve.py   # registry top-1
 python test/eval_skills.py             # 知识层契约 + 检索 golden
 python test/eval_exemplars.py          # 范例层契约 + 域路由探针（M5 P1）
 
+# 取证脚本（零 LLM、零网络，**不是**准入闸——不进 CI blocking）
+python test/eval_actionability.py      # B6 可执行性形态判定：CLARIFY 召回 vs 假阳性两侧
+                                       # ⚠ 假阳性的分母是「除澄清金标外的全部轮」——
+                                       # 分母挑得越干净它越好看，改口径前先读脚本里那段理由
+
 # 分布尺 N1（真栈，回答「这个月变聪明了吗」，**不是**回归闸）
 python test/routing_bench.py                        # 零成本：语料覆盖 + 隐藏分母 + 域偏斜
 python test/routing_bench.py --live --write-baseline # 出 domain_hit_rate 与分域混淆矩阵
@@ -232,7 +237,7 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 > 当前值只查 `AGENTS.md` §4.0 的证据表。旧 113/117、104/122/123 与 raw 6/117 只保留在
 > 历史 review/findings，不得当当前值。
 > baseline 只绑定该 provider、embedding、资产与 SHA，不证明主模型、Agent 业务结果、外部内容
-> 或跨模型平均质量。本轮真实 LLM 只接受 MiniMax M3（主）与 DeepSeek V4 Flash（对比）；
+> 或跨模型平均质量。当前（2026-08-11）真实 LLM 只接受 MiniMax M3（主）与 DeepSeek V4 Flash（对比）；
 > MiMo key 已失效，Qwen 不在批准模型内。
 
 口径三条要点（改口径就要回头看所有依赖它的数）：

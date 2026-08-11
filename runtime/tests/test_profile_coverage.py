@@ -167,6 +167,36 @@ def test_python_entrypoint_reaches_the_gate(dockerfile, entry):
         "也不经 runtime.grpcio.aio_server()。不建 gRPC server 的服务要在进程入口显式调一次。")
 
 
+def _copies_runtime(dockerfile: str) -> bool:
+    with open(dockerfile, "r", encoding="utf-8") as f:
+        return bool(re.search(r"^\s*COPY\s+[^\s]*runtime[^\s]*\s", f.read(), re.M))
+
+
+@pytest.mark.parametrize("dockerfile,entry", _PY_ENTRIES,
+                         ids=[os.path.relpath(d, ROOT).replace("\\", "/")
+                              for d, _ in _PY_ENTRIES])
+def test_service_image_contains_the_runtime_package(dockerfile, entry):
+    """够得着闸 ≠ 镜像里有那个包。
+
+    **同一条判据在 Docker 层的复发**（2026-08-11 真栈演练抓到）：B3 给 collector 与
+    proactive 的入口加了 `from runtime.profile import enforce_deploy_profile`，
+    上面那条 `_reaches_gate` 断言照过——因为它读的是仓库里的源码。可这两个服务的
+    Dockerfile **没有 `COPY runtime`**，镜像里根本没这个包，一重建就
+    `ModuleNotFoundError` 起不来。既有容器跑的是加闸之前的镜像，于是这处断裂在
+    **40 小时里毫无症状**。
+
+    判据：**「代码里 import 得到」和「镜像里拷进去了」是两件事。**
+    同族第一次是 shop 域零范例（门禁只读 manifest，而 mcp-bridge 能力由 servers.yaml
+    启动期合成），第二次是 `DEPLOY_PROFILE` 写进 anchor 而三个服务不用那个 anchor。
+    """
+    if not _reaches_gate(entry):
+        return                                  # 上一条断言会先红，这里不重复报
+    assert _copies_runtime(dockerfile), (
+        f"{os.path.relpath(dockerfile, ROOT)} 没有 `COPY runtime`，"
+        f"但 {os.path.relpath(entry, ROOT)} 够得着部署形态闸——镜像里没有 runtime 包，"
+        "容器一重建就 ModuleNotFoundError。")
+
+
 def test_go_gateway_mains_call_the_gate():
     for main_go in ("gateway/edge/main.go", "gateway/cloud/main.go"):
         with open(os.path.join(ROOT, main_go), "r", encoding="utf-8") as f:

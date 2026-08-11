@@ -66,13 +66,14 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**4842 passed / 14 skipped / 0 failed**（单进程 25m53s，2026-08-11 B5/B6 后实测，退出码 0）。
-较 B5/B6 前（`abc3f49`，4775）净 **+67**，且这 67 条**逐条点上号**：
+**4864 passed / 14 skipped / 0 failed**（单进程 28m08s，2026-08-11 B5/B6 + 真栈演练后
+实测，退出码 0）。较 B5/B6 前（`abc3f49`，4775）净 **+89**，且这 89 条**逐条点上号**：
 `test_stream_state` 20 + `test_loop`（readback）1 + `test_retry_policy` 31 +
-`test_actionability` 14 + `test_labels`（shadow 分歧后缀）1。
+`test_actionability` 14 + `test_labels`（shadow 分歧后缀）1 +
+`test_profile_coverage`（镜像构建闭包，逐 Dockerfile 参数化）22。
 
 **2026-08-11 分组实测**（B5/B6 后）：edge **579**、cloud **721**、registry **65**、
-agents **993**、`runtime/tests` **87**、observability **73**；端侧 smoke **13/13**；
+agents **993**、`runtime/tests` **109**、observability **73**；端侧 smoke **13/13**；
 L0 门禁 **2/2 exit 0**（discovery 81/81、gate strict 25/25）；能力门禁 exit 0；
 `eval_fast_intent` 57/57、`eval_route_hints` 78/78、skills / 范例门禁 PASS
 （范例域错配 4/160=2.5%）；新增离线回放 `test/eval_actionability.py`
@@ -81,6 +82,16 @@ L0 门禁 **2/2 exit 0**（discovery 81/81、gate strict 25/25）；能力门禁
 `go test ./gateway/deployprofile` 全绿、HMI `node --test` **225/225**、
 Dashboard vitest **17/17** 分别是 B3/B4（2026-08-11）与 2026-08-09 实测——
 B5/B6 只动 Python 侧（`orchestrator/cloud/` 与 `observability/collector/db.py`）。
+
+**真栈演练（2026-08-11，`make up` 全量重建 30 容器）**：`e2e_ws` / `e2e_obs` /
+`e2e_context` / `e2e_process_region` / `e2e_proactive` / `e2e_ledger` / `e2e_scene`
+**全 PASS**；`turns` 表实测 `plan_mode` 三档齐全（`toolcall` / `toolcall_salvage` /
+`toolcall_degraded`）、`actionability` 列真实写入（`execute|0.95` 等）——B6 §5 第 1 条
+「shadow 进 obs 且可检索」由真栈而非单测坐实；既有 302 turns + 2377 spans 在
+加法式迁移后完整保留。⚠ **`--lane ci --full` 只选 1 个用例**（`e2e_protocol_smoke`），
+引用它的 exit 0 时别当成 e2e 全绿。`e2e_verify` 5 条红已逐条定性为**前提失效**（见 §4.2）。
+**本次演练抓到一个 B3 埋的真缺陷**：collector 与 proactive 的 Dockerfile 没
+`COPY runtime`，加闸后**一重建就起不来**（见 §4.3 同名条目）。
 
 **CI 已有四条 blocking 门禁**：skills 契约、范例契约、L0 对抗 strict
 （`scripts/check_intent_gate.py`，B2）、**能力完整性**（`test/eval_capability_integrity.py`，
@@ -158,6 +169,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 | **可执行性判定 canary**（B6 shadow 的下一步） | **shadow 已落地并取证**（2026-08-11）：裸对象族召回 2/2、假阳性 4/574（0.70%），planner 对照 `nq.landmark.bare` 11/20。**canary 需泓舟单独拍板**（B6 §5 第 4 条，本文件只授权到 shadow）。在那之前该做的是 §2.3 明写的**对照实验**：拿 shadow 记下的分歧样本人工裁定，胜率显著才谈接管——「诊断出一个洞不等于这个洞就是病因」。⚠ 唯一漏判 `ex.colloquial.dark`「有点看不清路了」**不属于裸对象族**（与金标执行的「有点热」形态逐字同构，没有形态差异可用），它要的是「唯一默认动作是否存在」那个 catalog 特征，是 canary 前的独立一步 | [B6 方案](docs/design/2026-08-10-b6-actionability-forward.md) §6.3/§6.7、回放 `test/eval_actionability.py` |
 | 裸对象澄清族（**已知无解状态，不是待办**；⚠ **B6 shadow 已给出第四条路，见上一行**） | **三条路径已全部走完，该族目前无可用修法。** `nq.landmark.bare` 合并 11/20≈55% 的高方差边界句；`nq.landmark.explicit` 自己每条断言都过、被 relation `clarify_flip` 连累；同族第三条 `nq.city.bare`「上海」reviewed 未进池。路径 1「写 guide」实测**有害**（§18：4/10→1/10→退回 7/10，p≈0.02）；路径 3「换出预选池」执行并全量验证后由泓舟裁定回退（§19.5）；**路径 2「范例 schema 加 clarify 型」2026-08-10 已实现并合入**（schema+渲染+门禁+契约+11 条测试），但同批实测出它**治不了本族**：裸专名之间 IDF-Dice 全 0.000（检索是内容通道，而裸对象澄清是**形态判据**——这也解释了路径 1 为何有害），且澄清型范例天然与其「补全版」近重复（两条候选一条抢到明确请求 top-1、一条只靠 0.03 差距，全部撤回，**故仓库刻意没有 clarify.yaml**）。**下一次要动它得换判定形态（形态/句法特征），不是再加一层检索式知识** | 立卡整段写在语料 `test/eval_corpus/intent_adversarial/cases/negation_quotation.yaml` 的 `nq.landmark.bare` 头上；[findings §18/§19/**§25**](docs/design/2026-08-02-intent-routing-adversarial-findings.md)；机制契约 [`skills/exemplars/README.md`](skills/exemplars/README.md) §clarify 型 |
 | B3-2「广州塔」地标解析（高德侧） | **不进落域账**。2026-08-10 同坐标直连复测：geocode 对（兴趣点／广州塔真坐标）、`near=None` 重搜 top1 就是广州塔，只有带深圳偏置的关键词搜索会顶出「广州仄仄科技有限公司」2.4km。即 R1 去偏置重搜机制本身是对的，但它**要多打一次高德**，跑批并发下正是最易被限流的那一次；掉一次退回就近弱匹配，掉两次成「暂时无法确定」——两次红的两种形态由此解释。归高德 QPS 一族，出现真实用户投诉或做并发治理时再启动 | [复杂意图·地标/停车](docs/design/2026-07-07-complex-intent-landmark-parking-fixes.md)、判据与复测记在 `test/journeys/target_b.yaml` B3-2 注释 |
+| `e2e_verify` 案例①：**前提变了不是修坏了** | 2026-08-11 全新重建的干净栈上 5 条红，**逐条定性为测试前提失效**，不是回归。该用例的前提写在它自己的注释里——「单句『打开空调』被端侧快路径直接执行，**必须用混合多意图句**才能规划出云侧 hvac 步」。2026-08-11 实测：混合句「帮我把空调打开，再查一下附近有什么好吃的」的 `route.mixed` span 记着 `local_actions:1`，**端侧把 hvac 那半自己执行了**（`val.execute`），云侧只剩 `nearby.search`——于是 `state_match` 那两条断言恒不可能满足。另两条 `schema` 断言失败是**测试查的 trace 与实际落的 trace 不是同一个**（按文本直查该 trace，`step.verify{mode:schema,verdict:sat}` 明明在），第 5 条是前四条的连带。**对账链本身是好的**（案例②/③ 全绿）。修它要先决定断言该指向什么（换一句仍能规划出云侧车控步的话术 / 或改测端侧 VAL 面），属独立一卡；B5/B6 结构上不可能造成它——那个决定发生在云端被调用之前 | 证据：本条 + `test/e2e_verify.py` 案例①注释、history §27.6 |
 | B6 §4 Capability Contract 远期字段 | **逐字段独立触发，无当前行动**：`input_schema`/`output_schema`（槽位类型错误成稳定 badcase 族或 typed Executor 立项）、`compensation`（撤销/补偿类产品需求）、`version`/`deprecation`（第三方 Agent 生态启动）。`replayable`/`idempotency` **已由 B5 §4.2 就地收口**——不新造 `command_id`，复用 `_fingerprint` | [B6 方案](docs/design/2026-08-10-b6-actionability-forward.md) §4 |
 
 ### 4.3 读数纪律
@@ -291,6 +303,15 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
   `metric_tag` 有 11 条会与 `name` 逐字相同、`preserve_previous` 与 `stage="accept"`
   说同一件事。**方案里长这样不算错，落地时照抄才是**——落地前逐字段问一遍「它有没有
   第二个真消费方」。
+- **「代码里 import 得到」和「镜像里拷进去了」是两件事**（2026-08-11 真栈演练，B3 判据
+  在 Docker 层的复发）：B3 给 `observability/collector` 与 `proactive` 的入口加了
+  `from runtime.profile import enforce_deploy_profile`，`test_profile_coverage` 那条
+  「够得着闸」的断言照过——**它读的是仓库里的源码**。可这两个 Dockerfile 没有
+  `COPY runtime`，镜像里根本没这个包，**一重建就 ModuleNotFoundError 起不来**。
+  既有容器跑的是加闸之前的镜像，于是这处断裂在 **40 小时里毫无症状**。
+  修法是把构建闭包也变成断言（`test_service_image_contains_the_runtime_package`），
+  不是「下次记得」。**推论：只改 Python 不代表不用重建——共享包新增消费方时，
+  先查该服务 Dockerfile 的依赖闭包。**
 - **反例最好从被测系统自己的知识库派生**（2026-08-11，B6）：「特征里不许有领域词汇」
   这句话手抄一份词表就等于没写（迟早与知识库漂移）。改成从 `commands.yaml` 派生
   对象 id / display_name / edge_intents 段来比对，**首跑就抓到「导航」**——它同时是
@@ -322,7 +343,8 @@ make up                     # 起全栈（首次需调试，见 docs/dev-guide.m
 | 端到端链路 | `make up` 后 `python test/e2e_ws.py` |
 | 新增 Agent | 契约测试（参考 `agents/navigation/tests`）+ 在 compose 注册 |
 | 端侧车控能力（知识库 / 意图 / 话术）| `python test/eval_capability_integrity.py`（六维逐对象，CI blocking）+ `python scripts/check_intent_gate.py`（对抗覆盖 strict）+ `python -m pytest orchestrator/edge/tests -q`（含意图面迁移探针）。SOP 见 §7.1 |
-| 新增服务（compose 里加一个自建镜像）| `python -m pytest runtime/tests -q`——它断言每个自建服务都拿到 `DEPLOY_PROFILE` 且入口够得着部署形态闸；**加进 `x-python-env` anchor 不等于配上了**（有服务不用那个 anchor）|
+| 新增服务（compose 里加一个自建镜像）| `python -m pytest runtime/tests -q`——它断言每个自建服务都拿到 `DEPLOY_PROFILE`、入口够得着部署形态闸、**且该服务 Dockerfile 真的 `COPY runtime`**；**加进 `x-python-env` anchor 不等于配上了**（有服务不用那个 anchor），**源码 import 得到不等于镜像里有**（collector/proactive 就这么断过 40 小时）|
+| 给某个服务的入口加共享包 import（`runtime.*` / `observability.*`）| 先查**那个服务 Dockerfile 的依赖闭包**——少一行 `COPY` 就是「一重建就起不来」，而既有容器跑着旧镜像时**完全没有症状**。`python -m pytest runtime/tests -q` 会抓 `runtime` 那一类 |
 | Planner 重试/守卫规则（B5）| **先改 `orchestrator/cloud/retry_policy.py` 的表，不要在主循环里加 `elif`**；同步方案附录 A 的清单表（`test_retry_policy.py` 逐列比对，改一处不改另一处即红）；`python -m pytest orchestrator/cloud/tests -q` |
 | 可执行性判定特征（B6 shadow）| `python -m pytest orchestrator/cloud/tests/test_actionability.py -q`（含「特征里不许有领域词汇」的知识库派生断言）+ `python test/eval_actionability.py` 看召回/假阳性两侧。⚠ 后者是**取证脚本不是准入闸**，不在 CI blocking 里 |
 
