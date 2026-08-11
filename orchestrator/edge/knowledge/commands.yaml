@@ -32,6 +32,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -54,6 +55,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -76,6 +78,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -98,6 +101,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -148,6 +152,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -172,6 +177,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -189,6 +195,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: true
     projects:
     - project-a
@@ -207,6 +214,7 @@ objects:
     drive_restricted: false
     drive_restricted_off: true
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -224,6 +232,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: true
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -241,6 +250,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: true
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -258,6 +268,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: true
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -275,6 +286,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: true
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -300,6 +312,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -321,6 +334,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -343,6 +357,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -362,6 +377,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -377,6 +393,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: read
     voice_forbidden: false
     projects:
     - project-a
@@ -395,6 +412,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -411,6 +429,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   navi_broadcast:
@@ -423,6 +442,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   key_tone:
@@ -435,6 +455,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   scene_mode:
@@ -455,6 +476,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -485,6 +507,7 @@ objects:
     online: offline_ok
     drive_restricted: true
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -508,6 +531,7 @@ objects:
     online: offline_ok
     drive_restricted: true
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -528,6 +552,7 @@ objects:
     online: offline_ok
     drive_restricted: true
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -545,6 +570,7 @@ objects:
     online: offline_ok
     drive_restricted: true
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -562,6 +588,7 @@ objects:
     online: offline_ok
     drive_restricted: true
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -590,6 +617,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -607,6 +635,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -627,6 +656,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -647,6 +677,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -664,6 +695,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -685,6 +717,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -703,6 +736,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects:
     - project-a
@@ -719,6 +753,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: read
     voice_forbidden: false
     projects:
     - project-a
@@ -739,6 +774,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   wifi:
@@ -755,6 +791,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   hotspot:
@@ -769,6 +806,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   phone:
@@ -784,6 +822,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   contacts:
@@ -799,6 +838,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   call_log:
@@ -813,6 +853,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   radio:
@@ -831,6 +872,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   online_radio:
@@ -846,6 +888,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   music:
@@ -865,6 +908,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   audiobook:
@@ -881,6 +925,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   opera:
@@ -896,6 +941,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   news:
@@ -911,6 +957,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   video:
@@ -930,6 +977,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   TV:
@@ -944,6 +992,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   equalizer:
@@ -968,6 +1017,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   voice_assistant:
@@ -983,6 +1033,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   system:
@@ -999,6 +1050,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   surround_view:
@@ -1013,6 +1065,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   dashboard:
@@ -1029,6 +1082,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   auto_hold:
@@ -1043,6 +1097,7 @@ objects:
     online: offline_ok
     drive_restricted: true
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   epb:
@@ -1057,6 +1112,7 @@ objects:
     online: offline_ok
     drive_restricted: true
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   frunk:
@@ -1071,6 +1127,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: true
+    effect: write
     voice_forbidden: false
     projects: []
   interaction:
@@ -1088,6 +1145,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   navigation:
@@ -1109,6 +1167,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   map:
@@ -1127,6 +1186,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   food:
@@ -1140,6 +1200,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: read
     voice_forbidden: false
     projects: []
   hotel:
@@ -1153,6 +1214,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: read
     voice_forbidden: false
     projects: []
   flight:
@@ -1166,6 +1228,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: read
     voice_forbidden: false
     projects: []
   train:
@@ -1179,6 +1242,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: read
     voice_forbidden: false
     projects: []
   stock:
@@ -1192,6 +1256,7 @@ objects:
     online: online_only
     drive_restricted: false
     require_confirm: false
+    effect: read
     voice_forbidden: false
     projects: []
   media:
@@ -1211,6 +1276,7 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: write
     voice_forbidden: false
     projects: []
   battery:
@@ -1224,5 +1290,6 @@ objects:
     online: offline_ok
     drive_restricted: false
     require_confirm: false
+    effect: read
     voice_forbidden: false
     projects: []

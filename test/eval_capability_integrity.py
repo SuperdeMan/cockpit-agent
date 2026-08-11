@@ -26,10 +26,10 @@ nlu_objects.yaml、fast_intent.py、val.py、edge_call.py、vehicle.py、catalog
 |---|---|
 | `lane_sources` | 三个声明源都非空（防「门禁只读一个文件」复发） |
 | `lane_execution` | 端侧 intent ↔ commands.yaml 双向一致：intent 无孤儿、对象无不可达（不可达须进台账） |
-| `lane_risk` | 每个对象有**显式** `require_confirm`（缺省 False 的隐式约定升级为显式声明） |
+| `lane_risk` | 每个对象有**显式** `require_confirm` 与 `effect`（read\|write），且 `effect` 与 operates 自洽 |
 | `lane_speech` | 每条可达 intent 的 response key 存在于 responses.yaml 且不是 `generic_success` |
 | `lane_equivalence` | 每个可达对象在 `nlu_objects.yaml` 有归并（或台账登记待裁定） |
-| `lane_verification` | 每条可达 intent 的 `_simulate` 有专属状态键（走通用兜底 ⇒ Outcome Verifier 无从对账） |
+| `lane_verification` | 每条可达 intent 执行不崩，且有专属状态键（走通用兜底 ⇒ Outcome Verifier 无从对账）；`effect: read` 的查询类对象由此机械豁免 |
 | `lane_adversarial` | **只确认 `--strict` 矩阵入口还在被执行**，不重复实现（唯一入口仍是 B2 的门禁脚本） |
 
 ## 台账
@@ -171,9 +171,29 @@ def lane_execution(reach, orphans, objects, table) -> list[str]:
 
 
 def lane_risk(objects) -> list[str]:
-    return [f"对象 `{obj}` 没有显式 `require_confirm`——危险与否不能靠「缺省 False」的"
-            "隐式约定，B1 已经把这个值下沉成 VAL 的执行判据"
-            for obj, d in sorted(objects.items()) if "require_confirm" not in (d or {})]
+    """风险面：`require_confirm` 显式声明 + `effect` 显式声明且与 operates 自洽。
+
+    `risk` **刻意不是声明字段**（派生，见 `capability_meta.risk_of` 的模块注释）：
+    B1 刚把「危险与否」收敛成 `require_confirm` 这一个权威，再手写一份会漂移。
+    """
+    from capability_meta import EFFECTS, derive_effect
+
+    errs = []
+    for obj, d in sorted(objects.items()):
+        d = d or {}
+        if "require_confirm" not in d:
+            errs.append(f"对象 `{obj}` 没有显式 `require_confirm`——危险与否不能靠"
+                        "「缺省 False」的隐式约定，B1 已经把这个值下沉成 VAL 的执行判据")
+        declared = str(d.get("effect") or "").strip().lower()
+        if not declared:
+            errs.append(f"对象 `{obj}` 没有显式 `effect`（read|write）")
+        elif declared not in EFFECTS:
+            errs.append(f"对象 `{obj}` 的 `effect` 取值非法：{declared!r}，合法值 {list(EFFECTS)}")
+        elif declared != derive_effect(d):
+            errs.append(f"对象 `{obj}` 声明 `effect: {declared}`，但它的 operates "
+                        f"{d.get('operates')} 推出的是 `{derive_effect(d)}`"
+                        "——声明与操作面不一致，改了 operates 忘了改 effect")
+    return errs
 
 
 def lane_speech(reach, table) -> list[str]:
@@ -204,7 +224,7 @@ def lane_equivalence(reach, table) -> list[str]:
             if obj not in mapped and not _exempt(table, obj, "equivalence")]
 
 
-def lane_verification(reach, table) -> list[str]:
+def lane_verification(reach, table, objects_of) -> list[str]:
     """每条可达 intent 都要能落到**专属**状态键。
 
     VAL 的兜底分支写 `state[f"{obj}_{operate}"] = True`：`open` 与 `close` 于是各写一个键、
@@ -213,8 +233,14 @@ def lane_verification(reach, table) -> list[str]:
     """
     from val import VAL
 
+    from capability_meta import effect_of
+
     errs = []
     for obj, items in sorted(reach.items()):
+        # 查询类对象（`effect: read`）本来就不改状态，没有可对账的状态键是它的**正确形态**。
+        # 这条豁免从「手写在台账里的一行」升级成「由 effect 机械推导」——B4 §2.2 给
+        # `effect` 声明的那个消费点，落在这里。
+        read_only = effect_of(objects_of(obj)) == "read"
         for intent, data in items:
             # **崩溃这一条不接受豁免**：台账能豁免的是「这个能力不该有状态键」，
             # 不是「这个能力执行会抛异常」。
@@ -222,7 +248,8 @@ def lane_verification(reach, table) -> list[str]:
             if crash:
                 errs.append(f"`{intent}` 执行时 VAL `_simulate` 抛异常 —— {crash}")
                 continue
-            if _exempt(table, obj, "verification") or _has_dedicated_state_key(obj, data):
+            if read_only or _exempt(table, obj, "verification") \
+                    or _has_dedicated_state_key(obj, data):
                 continue
             errs.append(f"`{intent}` 落到通用兜底键 `{obj}_{data['operate']}`"
                         "——这种键恒为 True、永远无法被证否，执行后对账面上是个恒真的空洞")
@@ -311,7 +338,7 @@ def main() -> int:
         "风险定义": lane_risk(objects),
         "话术定义": lane_speech(reach, table),
         "等价类": lane_equivalence(reach, table),
-        "验证定义": lane_verification(reach, table),
+        "验证定义": lane_verification(reach, table, objects.get),
         "对抗覆盖入口": lane_adversarial(),
     }
 

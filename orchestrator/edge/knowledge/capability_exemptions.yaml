@@ -160,7 +160,8 @@ exemptions:
     lanes: [execution]
     reason: 查询类对象（电量），VAL 有专属分支返回读数、不改状态。⚠ **待确认**：电量查询目前走云侧 vehicle_state 上下文而非端侧 intent，是否要补一个端侧查询意图未定。
 
-  # ── 验证定义豁免（1）──────────────────────────────────────────────────
-  - object: tire_pressure_monitoring
-    lanes: [verification]
-    reason: 纯查询类意图（tire_pressure.query），执行本身不改变车辆状态——没有可对账的状态键是它的正确形态，不是缺口。同类的 battery 走的是 `_simulate` 返回 (None, 读数) 那条路。
+  # ── 验证定义豁免（0）──────────────────────────────────────────────────
+  # 原本这里有一条手写的 `tire_pressure_monitoring: [verification]`（理由：查询类意图执行
+  # 本身不改状态，没有可对账的状态键是它的正确形态）。B4 §2.2 的 `effect` 字段落地后，
+  # 这条豁免由 `effect: read` **机械推导**——手写台账少一条，判据从「有人记得写」变成
+  # 「知识库里声明了它是查询类」。这就是 `effect` 的消费点，不是死字段。
