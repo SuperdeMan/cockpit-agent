@@ -28,9 +28,10 @@ logger = logging.getLogger("sdk.provenance")
 
 def _strict_forbidden(domain: str) -> bool:
     """严格栈（REQUIRE_REAL_PROVIDERS=on，治理 P2）：该域 mock 决议是否被禁止。
-    豁免 REQUIRE_REAL_EXEMPT（逗号分隔域名；默认 parking=支付设计即模拟、
+    豁免 REQUIRE_REAL_EXEMPT（逗号分隔域名；默认 parking=停车数据源未接真、
     knowledge=车书暂无真实实现——接入 pgvector 后应移出豁免）。默认 off：
-    CI 与离线开发全 mock 照跑。"""
+    CI 与离线开发全 mock 照跑。payment 域的同口径决议在 payment-gateway 内
+    自实现（不 import 本包），且刻意不在默认豁免（§9.17）。"""
     if os.getenv("REQUIRE_REAL_PROVIDERS", "off").strip().lower() not in ("on", "true", "1", "yes"):
         return False
     exempt = {d.strip() for d in

@@ -66,11 +66,13 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**4864 passed / 14 skipped / 0 failed**（单进程 28m08s，2026-08-11 B5/B6 + 真栈演练后
-实测，退出码 0）。较 B5/B6 前（`abc3f49`，4775）净 **+89**，且这 89 条**逐条点上号**：
-`test_stream_state` 20 + `test_loop`（readback）1 + `test_retry_policy` 31 +
-`test_actionability` 14 + `test_labels`（shadow 分歧后缀）1 +
-`test_profile_coverage`（镜像构建闭包，逐 Dockerfile 参数化）22。
+**4960 passed / 14 skipped / 0 failed**（单进程 23m49s，2026-08-11 支付批 1 后实测，
+退出码 0）。较 B5/B6 后（`a226727`，4864）净 **+96**，逐条点上号：payment-gateway
+tests 五件 `test_store` 30 + `test_server` 24 + `test_sign_alipay` 22 +
+`test_sign_wechat` 12 + `test_worker` 8（全离线零外呼）。⚠ 同批附带修
+`test_eval_intent_adversarial_cli.py` 三条子进程测试的**环境敏感**（宿主带
+`PYTHONIOENCODING=utf-8` 时 reader 按 GBK 解码炸成 stdout=None——编码两端钉死，
+断言语义未动；定责对照与先例见支付设计文档 §6.1）。
 
 **2026-08-11 分组实测**（B5/B6 后）：edge **579**、cloud **721**、registry **65**、
 agents **993**、`runtime/tests` **109**、observability **73**；端侧 smoke **13/13**；
@@ -125,7 +127,22 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 
 ### 4.1 活跃待办（只列仍需行动的）
 
-**§4.1 当前为空。** 外部评审六批 **B1/B2**（2026-08-10）、**B3/B4**、**B5/B6**
+**支付基础设施真实化（三批，2026-08-11 泓舟拍板）**：方案与裁决全文
+[`docs/design/2026-08-11-payment-infrastructure-and-merchant-mcp.md`](docs/design/2026-08-11-payment-infrastructure-and-merchant-mcp.md)，
+契约 [`docs/conventions.md`](docs/conventions.md) §9.17。
+- **批 1（网关核心+双渠道）已实施**（实施记录见方案 §6.1）：proto 扩展（Channel/
+  PENDING_PAY 等 4 态/Refund）、支付宝当面付+微信 v3 Native 真实 provider（自实现
+  签名验签）、store Redis 化+9 态状态机、confirm_token 回传 bug 修复、场景白名单
+  fail-closed、轮询 worker+proactive 回执、隐私四处同步、容器加固。
+- **批 2 待做**：parking-payment 切网关（还 mock 收据的债）、`_sdk/payment_client`、
+  HMI payment_qr/payment_receipt/parking_fee 三卡、e2e_payment、支付宝沙箱 opt-in
+  真扫码联调。**批 3 待做**：mcp-bridge streamable_http + 瑞幸/麦当劳官方 MCP 接入
+  （范例/对抗语料/门禁全套）。
+- **等泓舟的四个凭证**（拍板会提供；填 `.env` 不进 git）：支付宝沙箱密钥（批 2
+  联调）、微信商户号（可后置）、麦当劳 MCP token（mcp.mcd.cn 控制台激活）、瑞幸
+  MCP token（open.lkcoffee.com，约 1 个月有效期）。申请步骤见方案「需要泓舟做的」节。
+
+外部评审六批 **B1/B2**（2026-08-10）、**B3/B4**、**B5/B6**
 （2026-08-11）全部实施合入并收口。✅ 冻结令已撤销，可以新增业务 Agent。
 
 各批交付了什么、与方案有哪些差异、验证证据如何——**只读方案文档 §6/§7 的实施记录**

@@ -61,35 +61,39 @@ def build_poi_provider() -> POIProvider:
 
 **红线**：任何 Agent（尤其 third_party）都不接触支付密钥/账户凭证。支付经独立 `payment-gateway` 服务，Agent 只发起"支付请求"。
 
+> 2026-08-11 真实化改造：双渠道扫码收单（支付宝当面付 / 微信 Native）+ 商户收银登记
+> （`MERCHANT_HOSTED`）。完整裁决见
+> `docs/design/2026-08-11-payment-infrastructure-and-merchant-mcp.md`，契约细则见
+> `docs/conventions.md` §9.17。本节只保留时序真相。
+
 ### proto（`proto/cockpit/payment/v1/payment.proto`）
-```proto
-service PaymentGateway {
-  rpc Authorize (AuthorizeRequest) returns (AuthorizeResponse);  // 预授权(创建待确认单)
-  rpc Capture   (CaptureRequest)   returns (CaptureResponse);    // 用户确认后扣款
-  rpc Cancel    (CancelRequest)    returns (CancelResponse);
-}
-message AuthorizeRequest {
-  string agent_id = 1; string user_id = 2; string vehicle_id = 3;
-  string scene = 4;            // "food.reserve" | "parking.pay"
-  int64 amount_cents = 5; string currency = 6; string description = 7;
-  string idempotency_key = 8;  // 幂等：同 key 不重复创建
-}
-message AuthorizeResponse { string payment_id = 1; bool require_confirm = 2; string confirm_prompt = 3; }
-message CaptureRequest { string payment_id = 1; string confirm_token = 2; }
-```
+
+RPC 面：`Authorize`（本地建单，**不碰渠道**）/ `Capture`（确认后调渠道亮码）/ `Cancel` /
+`GetStatus` / `Refund`。**Capture 的语义是「确认后启动收款」而非「同步扣款」**——扫码
+支付里真正的扣款动作发生在用户手机上；Capture 返回 `qr_content`，订单落 `pending_pay`，
+`captured`（钱已到账）由网关轮询 worker 在渠道确认后推进。字段与状态机全集见 proto 本体
+与 conventions §9.17。
 
 ### 支付时序（与 WS3 二次确认、WS8 权限联动）
 ```
-Agent.reserve/pay
-   └─► PaymentGateway.Authorize(idempotency_key)   # 创建待确认单，不扣款
-        └─► 返回 payment_id + require_confirm
-   Agent 返回 NEED_CONFIRM + action(require_confirm=true, payload{payment_id})
-   ── 用户确认（HMI/语音）──► Planner 续接确认态
-   └─► PaymentGateway.Capture(payment_id, confirm_token)  # 真正扣款
+Agent（第一趟，未确认）
+   └─► PaymentGateway.Authorize(idempotency_key)   # 本地创建待确认单，渠道零动作
+        └─► 返回 payment_id + confirm_prompt + confirm_token
+   Agent 返回 NEED_CONFIRM（用网关回传的 confirm_prompt 组话术；token 不出栈、不进 payload）
+   ── 用户确认（HMI/语音）──► 编排对挂起步注入 confirmed ──► Agent 第二趟
+   └─► Authorize(同 idempotency_key)               # 幂等重取：同单、同 confirm_token
+   └─► Capture(payment_id, confirm_token)          # 调渠道 precreate，返回二维码
+        └─► HMI 出 payment_qr 卡；worker 轮询查单 ──► captured ──► proactive 推「支付成功」
+merchant_hosted（商户 MCP 下单已含确认）：单次 Authorize(channel=MERCHANT_HOSTED,
+external_pay_url) 登记会话落 pending_pay；本地只做过期收口，订单状态以商户为准
 ```
-- 幂等：`idempotency_key`（含 user+scene+订单要素），重连/重试不重复创建或扣款（与 WS4 幂等呼应）。
-- 权限：`payment.invoke` 经 WS8 校验；third_party 必须经网关且强制确认。
-- 凭证：支付渠道密钥只在 `payment-gateway` 服务（Secret 注入），Agent 侧无。
+- 幂等：`idempotency_key`（含 user+scene+订单要素，**刻意不含金额**——渠道参数取订单
+  快照，用户确认的金额=扣的金额）；`out_trade_no ≡ payment_id`，重连/重试不重复创建或扣款。
+- **confirm_token 经幂等重取传递，不经挂起 payload**（编排刻意不持久化 step.meta；
+  token 只活在 Agent 单次 handle() 栈内）。
+- 权限：`payment.invoke` 经 WS8 校验；网关执行层再校验一次；third_party 必须经网关且强制确认。
+- 凭证：支付渠道密钥只在 `payment-gateway` 服务（env/Secret 注入）；商户 MCP 会话 token
+  只在 mcp-bridge——两类凭证互不越界。
 
 ---
 

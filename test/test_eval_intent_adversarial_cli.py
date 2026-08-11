@@ -2750,6 +2750,15 @@ def test_repro_command_is_argparse_valid_and_carries_provider_and_base():
     assert parsed.cases == ["rel.variant", "rel.base"] and parsed.diagnose is True
 
 
+# 子进程编码两端钉死（2026-08-11）：reader 按 UTF-8 解、子进程强制 UTF-8 输出。
+# 原来 `text=True` 不带 encoding 靠「子进程输出编码 == 父进程 locale」的巧合成立——
+# 宿主带 PYTHONIOENCODING=utf-8 时（子进程 UTF-8、reader GBK）reader 线程直接炸，
+# proc.stdout 变 None，三条测试红成环境噪声。断言语义一字未动。
+_SUBPROC_UTF8 = dict(capture_output=True, text=True, encoding="utf-8",
+                     errors="replace",
+                     env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+
 def test_repro_command_for_an_l0_case_actually_runs(tmp_path):
     """复现命令要真能跑：子进程执行一条真实 L0 用例并检查退出码与选集。"""
     case = _case("ki.weather-outing.miss", layers=("l0",))
@@ -2757,7 +2766,7 @@ def test_repro_command_for_an_l0_case_actually_runs(tmp_path):
     argv = command.split()[1:] + [
         "--out-json", str(tmp_path / "r.json"), "--out-md", str(tmp_path / "r.md")]
     proc = subprocess.run([sys.executable, *argv], cwd=str(ROOT),
-                          capture_output=True, text=True, timeout=600)
+                          timeout=600, **_SUBPROC_UTF8)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     report = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
     assert set(report["results"]) == {"ki.weather-outing.miss@l0"}
@@ -2770,7 +2779,7 @@ def test_empty_selection_is_an_error_not_a_green_run(tmp_path):
         [sys.executable, "test/eval_intent_adversarial.py", "--layer", "l0",
          "--case", "no.such.case",
          "--out-json", str(tmp_path / "e.json"), "--out-md", str(tmp_path / "e.md")],
-        cwd=str(ROOT), capture_output=True, text=True, timeout=300)
+        cwd=str(ROOT), timeout=300, **_SUBPROC_UTF8)
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert "选集为空" in proc.stdout + proc.stderr
 
@@ -2861,7 +2870,7 @@ def test_invalid_arguments_exit_with_code_two_not_one():
     """
     proc = subprocess.run(
         [sys.executable, "test/eval_intent_adversarial.py", "--layer", "l1"],
-        cwd=str(ROOT), capture_output=True, text=True, timeout=120)
+        cwd=str(ROOT), timeout=120, **_SUBPROC_UTF8)
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert "需要 --live" in proc.stdout + proc.stderr
 

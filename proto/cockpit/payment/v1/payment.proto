@@ -2,22 +2,39 @@ syntax = "proto3";
 package cockpit.payment.v1;
 
 // 统一支付网关。Agent 不持支付凭证，所有支付经此服务。
+// 2026-08-11 真实化：双渠道扫码收单（支付宝当面付/微信 Native）+ 商户收银登记。
+// Capture 语义 = 「确认后亮码」（渠道 precreate 出二维码），不是同步扣款——
+// captured（钱已到账）由网关轮询 worker 在渠道确认后推进。
+// 契约细则 docs/conventions.md §9.17；时序 ws6 §2。
 service PaymentGateway {
-  rpc Authorize (AuthorizeRequest) returns (AuthorizeResponse);  // 预授权(创建待确认单)
-  rpc Capture   (CaptureRequest)   returns (CaptureResponse);    // 用户确认后扣款
+  rpc Authorize (AuthorizeRequest) returns (AuthorizeResponse);  // 本地建单，不碰渠道
+  rpc Capture   (CaptureRequest)   returns (CaptureResponse);    // 用户确认后调渠道亮码
   rpc Cancel    (CancelRequest)    returns (CancelResponse);
   rpc GetStatus (GetStatusRequest) returns (GetStatusResponse);
+  rpc Refund    (RefundRequest)    returns (RefundResponse);     // captured 后整单退（v1）
+}
+
+// 支付渠道。MERCHANT_HOSTED = 商户收银登记（支付发生在商户收银台，
+// 网关只登记会话：审计+展示+过期收口；商户是订单状态的真相源）。
+enum Channel {
+  CHANNEL_UNSPECIFIED = 0;   // 网关按 PAYMENT_DEFAULT_CHANNEL 选
+  ALIPAY_QR = 1;             // 支付宝当面付（precreate 二维码）
+  WECHAT_QR = 2;             // 微信支付 Native（code_url 二维码）
+  MERCHANT_HOSTED = 3;       // 商户支付链接（external_pay_url 必填）
 }
 
 message AuthorizeRequest {
   string agent_id = 1;
   string user_id = 2;
   string vehicle_id = 3;
-  string scene = 4;            // "food.reserve" | "parking.pay"
+  string scene = 4;            // "parking.pay" | "mcd.order" | ...
   int64 amount_cents = 5;
   string currency = 6;         // "CNY"
   string description = 7;
-  string idempotency_key = 8;  // 幂等：同 key 不重复创建
+  string idempotency_key = 8;  // 幂等：同 key 不重复创建（刻意不含金额，§9.17）
+  Channel channel = 9;
+  string external_pay_url = 10;    // 仅 MERCHANT_HOSTED：商户回传的支付链接
+  string external_order_ref = 11;  // 仅 MERCHANT_HOSTED：商户订单号
 }
 
 message AuthorizeResponse {
@@ -25,6 +42,8 @@ message AuthorizeResponse {
   bool require_confirm = 2;
   string confirm_prompt = 3;
   string confirm_token = 4;    // F23：客户端确认后带此 token 调 Capture
+  GetStatusResponse.Status status = 5;  // MERCHANT_HOSTED 直接落 PENDING_PAY；幂等命中回真实态
+  string provider_mode = 6;    // "real" | "mock"（ui_card._prov 依据，§9.3）
 }
 
 message CaptureRequest {
@@ -36,6 +55,11 @@ message CaptureResponse {
   bool ok = 1;
   string receipt_id = 2;
   string error = 3;
+  string qr_content = 4;       // 二维码内容（支付宝 qr_code / 微信 code_url / mockpay://）
+  string pay_url = 5;          // H5 支付链接（有则 HMI 可同时展示）
+  int64 expires_at_ms = 6;     // 二维码/会话过期时刻（epoch ms，HMI 本地倒计时）
+  string trade_no = 7;         // 渠道订单号（precreate 阶段多为空，查单后回填）
+  string provider_mode = 8;    // "real" | "mock"
 }
 
 message CancelRequest {
@@ -47,9 +71,34 @@ message CancelResponse { bool ok = 1; }
 
 message GetStatusRequest { string payment_id = 1; }
 message GetStatusResponse {
-  enum Status { PENDING = 0; AUTHORIZED = 1; CAPTURED = 2; CANCELLED = 3; FAILED = 4; }
+  enum Status {
+    PENDING = 0;
+    AUTHORIZED = 1;   // 已建单待确认（渠道零动作）
+    CAPTURED = 2;     // 钱已到账（唯一「已支付」终态）
+    CANCELLED = 3;
+    FAILED = 4;
+    PENDING_PAY = 5;  // 已亮码等待用户扫码（自有收单）/ 商户会话登记中（merchant_hosted）
+    EXPIRED = 6;      // 二维码过期 / merchant_hosted 会话过期收口
+    REFUNDING = 7;
+    REFUNDED = 8;
+  }
   Status status = 1;
   string payment_id = 2;
   int64 amount_cents = 3;
   string scene = 4;
+  string trade_no = 5;
+  Channel channel = 6;
+  int64 expires_at_ms = 7;
+}
+
+message RefundRequest {
+  string payment_id = 1;
+  int64 amount_cents = 2;      // 0 = 全额（v1 仅支持全额）
+  string reason = 3;
+}
+
+message RefundResponse {
+  bool ok = 1;
+  string refund_id = 2;        // out_refund_no（= payment_id + "_r1"）
+  string error = 3;
 }

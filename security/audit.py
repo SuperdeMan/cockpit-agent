@@ -60,6 +60,37 @@ class AuditLogger:
             trace_id=trace_id,
         ))
 
+    def payment_captured(self, agent_id: str, payment_id: str, amount: int,
+                         trade_no: str = "", trace_id: str = ""):
+        """渠道确认收款（worker 查单推进 captured 时）。§9.17 三事件之二。"""
+        self.log(AuditEvent(
+            event="payment_captured", agent_id=agent_id,
+            decision="allowed",
+            extra={"payment_id": payment_id, "amount_cents": amount,
+                   "trade_no": trade_no},
+            trace_id=trace_id,
+        ))
+
+    def payment_refunded(self, agent_id: str, payment_id: str, amount: int,
+                         refund_id: str = "", trace_id: str = ""):
+        self.log(AuditEvent(
+            event="payment_refunded", agent_id=agent_id,
+            decision="allowed",
+            extra={"payment_id": payment_id, "amount_cents": amount,
+                   "refund_id": refund_id},
+            trace_id=trace_id,
+        ))
+
+    def pay_url_denied(self, agent_id: str, pay_url: str, trace_id: str = ""):
+        """merchant_hosted 支付链接域名不在白名单被拒（防钓鱼，§9.17）。"""
+        self.log(AuditEvent(
+            event="pay_url_denied", agent_id=agent_id,
+            decision="blocked",
+            reason="external_pay_url host not in PAYMENT_EXTERNAL_PAY_HOSTS",
+            extra={"pay_url": pay_url[:200]},
+            trace_id=trace_id,
+        ))
+
     def fail_open_scopes(self, vehicle_id: str = "", user_id: str = "",
                          trace_id: str = "", scopes: list[str] = None):
         """fail-open 兜底：请求无 granted_scopes，PoC 默认全授。量产应关（PERMISSIONS_FAIL_OPEN=false）。"""

@@ -1,5 +1,8 @@
 grpcio==1.66.2
 protobuf==7.35.0
 redis==5.0.8
-# obs.log 观测日志出口（best-effort）
+# obs.log 观测日志出口（best-effort）+ payment_result 回执推送（§9.8）
 nats-py>=2.6.0
+# 支付渠道直连（支付宝当面付 / 微信 v3 Native，§9.17）：出站 HTTP + RSA 签名验签
+httpx>=0.27.0
+cryptography>=42.0.0

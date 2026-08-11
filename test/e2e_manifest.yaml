@@ -257,10 +257,10 @@ privacy:
       policy_flags: []
 
     - id: payment_order
-      backend: process_memory
+      backend: redis_or_memory
       adapter_key: payment
       adapter: payment-gateway/store.py:PaymentStore
-      storage_variants: [PaymentStore._mem, PaymentStore._idem]
+      storage_variants: ["payment:order:*", "payment:idem:*", PaymentStore._mem, PaymentStore._idem]
       lifecycle: retained_audit
       enforced_from: M-D
       owner_fields: [user_id, occupant_id]

@@ -34,7 +34,7 @@
 | charging-planner | charging_planner | core | first_party | cloud | 50068 | charging.find, charging.plan, charging.status |
 | scene-orchestrator | scene_orchestrator | core | first_party | cloud | 50069 | scene.create, scene.activate, scene.deactivate, scene.update, scene.delete, scene.list |
 | (车控/媒体) | orchestrator/edge | core | system | **edge** | 50070 | hvac.*, window.*, media.*（端侧 Fast Intent 直执行）|
-| payment-gateway | payment-gateway | core | system | cloud | 50071 | 支付网关（非 Agent，统一支付出口） |
+| payment-gateway | payment-gateway | core | system | cloud | 50071 | 支付网关（非 Agent，统一支付出口）：支付宝当面付/微信 Native 扫码收单 + 商户收银登记，契约 §9.17（2026-08-11 真实化） |
 | road-safety | road_safety | core | first_party | cloud | 50072 | safety.driving_advice, safety.weather_alert, safety.road_condition |
 | deep-research | deep_research | ecosystem | first_party | cloud | 50073 | research.run, research.status, research.cancel |
 | reminder | reminder | core | first_party | cloud | 50074 | reminder.create, reminder.list, reminder.complete, reminder.cancel, reminder.update |
@@ -201,7 +201,7 @@
 | `LLM_MOCK_DELAY_MS` | 测试专用：`MockProvider` 人为延迟（毫秒），供 `test/e2e_degrade.py`「LLM 超时」用例注入慢响应（R3.5）| 否（默认 0，零行为变化）|
 | `LLM_429_WAIT_CAP_S` | 上游 429 带 Retry-After 时最多等待重试同模型的秒数上限；更长直接 `RESOURCE_EXHAUSTED` 让上层诚实降级（运行时硬化 D3，2026-07-17）| 否（默认 2）|
 | `REQUIRE_REAL_PROVIDERS` | **数据真实性严格栈**（治理 P2，§9.4）：`on`=任何 provider 决议落 mock 即启动失败（含 llm-gateway 的 llm/embed/asr/tts 四闸），演示/验收前翻开自证全真 | 否（默认 off，CI/离线全 mock 照跑）|
-| `REQUIRE_REAL_EXEMPT` | 严格栈豁免域（逗号分隔）：`parking`=支付设计即模拟、`knowledge`=车书暂无真实实现 | 否（默认 `parking,knowledge`）|
+| `REQUIRE_REAL_EXEMPT` | 严格栈豁免域（逗号分隔）：`parking`=停车数据源（ETCP）未接真、`knowledge`=车书暂无真实实现。`payment` 是独立决议域且**不在豁免**（2026-08-11 真实化，§9.17） | 否（默认 `parking,knowledge`）|
 | `ASR_PROVIDER` | **批处理 ASR 引擎**（/api/asr + gRPC Transcribe）：`auto`(默认：LLM_PROVIDER 为 MiMo 系→MiMo，否则有百炼 key→桥接 dashscope 流式引擎，都没有→mock)/`mimo`(钉住 MiMo)/`dashscope`/`mock`——chat 换家后批处理不再哑成 mock（2026-07-13）| 否 |
 | `ASR_MODEL` / `ASR_LANGUAGE` | 批处理 ASR 模型 / 默认语言（zh）| 否 |
 | `MIMO_AUDIO_BASE_URL` | MiMo 音频端点（批/流式 ASR/TTS 共用，与 chat 的 `LLM_BASE_URL` 独立），空=官方集群 | 否 |
@@ -274,6 +274,20 @@
 | `LLM_HTTP_CONNECT_S` / `LLM_HTTP_READ_CAP_S` / `LLM_STREAM_STALL_S` | LLM 网关上游 HTTP 连接超时 / complete 读上限 / 流式 per-chunk stall 超时（秒）| 否（默认 5 / 75 / 30）|
 
 > 密钥只进 `.env`（已 gitignore），不进代码/commit/日志。
+
+### 支付渠道（payment-gateway，契约见 §9.17）
+
+| 变量 | 含义 | 必填 |
+|---|---|---|
+| `PAYMENT_VENDOR` | 渠道决议：`mock`（默认）/ `alipay` / `wechat` / `alipay,wechat`（多渠道并存，`PAYMENT_DEFAULT_CHANNEL` 选缺省）。决议行 `provider[payment]=…`；payment 是**独立严格栈决议域，不进 `REQUIRE_REAL_EXEMPT` 豁免** | 否（默认 mock） |
+| `PAYMENT_DEFAULT_CHANNEL` | 请求未指定渠道时的缺省：`alipay` / `wechat` | 否（默认 alipay） |
+| `PAYMENT_REAL_SCENES` | **真渠道场景白名单**（逗号分隔 scene，如 `parking.pay`）：不在名单的 Authorize 一律路由 mock provider（fail-closed）——防「mock 数据算出的金额走真渠道收真钱」。**默认空=全部 mock** | 否（默认空） |
+| `PAYMENT_MAX_AMOUNT_FEN` | 单笔金额上限（分），超限 Authorize 直接拒绝（fail-closed） | 否（默认 20000=200 元） |
+| `PAYMENT_QR_EXPIRE_S` / `PAYMENT_MERCHANT_EXPIRE_S` | 自有收单二维码有效期 / merchant_hosted 登记会话过期收口 | 否（默认 300 / 1800） |
+| `PAYMENT_MOCK_AUTOPAY_S` | mock 渠道模拟「用户扫码支付完成」的延迟秒：`0`=Capture 后立即、`-1`=永不（测过期路径） | 否（默认 8） |
+| `PAYMENT_EXTERNAL_PAY_HOSTS` | merchant_hosted 支付链接**域名白名单**（逗号分隔，如 `m.mcd.cn`）；`external_pay_url` 域名不在名单 → 拒登记（网关侧第二层，桥侧 `pay_url_hosts` 是第一层） | 否（默认空=拒绝一切外部链接） |
+| `ALIPAY_APP_ID` / `ALIPAY_APP_PRIVATE_KEY(_PATH)` / `ALIPAY_PUBLIC_KEY(_PATH)` / `ALIPAY_GATEWAY` | 支付宝当面付凭证与网关（沙箱=`https://openapi-sandbox.dl.alipaydev.com/gateway.do`）；`_PATH` 变体指向挂载文件 | 否（走真渠道才需） |
+| `WECHATPAY_MCHID` / `WECHATPAY_MCH_SERIAL` / `WECHATPAY_MCH_PRIVATE_KEY(_PATH)` / `WECHATPAY_APIV3_KEY` / `WECHATPAY_APP_ID` / `WECHATPAY_PUBLIC_KEY(_PATH)` + `WECHATPAY_PUBLIC_KEY_ID` | 微信支付 v3 凭证；公钥模式（后两项）优先，未配则平台证书懒加载兼容 | 否（走真渠道才需） |
 
 ### 场景编排（scene-orchestrator）
 
@@ -586,7 +600,8 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
   （默认 `parking,knowledge`）。泄漏探针 `test/e2e_strict_stack.py`（run_e2e 已挂，
   mock 栈自动 SKIP）。
 - 域名清单：weather / search / news / sports / stock / poi(navigation) / place(nearby) /
-  charging / knowledge(manual-rag) / parking(设计即模拟，严格栈豁免) +
+  charging / knowledge(manual-rag) / parking(停车数据源未接真，严格栈豁免) /
+  payment(payment-gateway 侧自实现同口径决议，**不进豁免**，§9.17) +
   llm-gateway 侧 llm / embed / asr / tts。
 
 ### 9.5 诚实降级话术契约（R9：话术型拒绝用 OK，不用 FAILED）
@@ -960,3 +975,25 @@ unary 回退。已流出 speech 或 action 之后 final 丢失，一律不重跑
 门禁 `test/eval_capability_integrity.py`（CI blocking，六维逐对象断言）；豁免走
 `knowledge/capability_exemptions.yaml`（逐对象逐车道、禁通配符、必须写 reason、
 陈旧条目判红）。新增能力走 `scripts/gen_capability_skeleton.py`，SOP 见 CLAUDE.md §3。
+
+### 9.17 支付网关契约（payment-gateway 真实化，2026-08-11）
+
+设计全文 `docs/design/2026-08-11-payment-infrastructure-and-merchant-mcp.md`；时序见
+`docs/architecture/detailed/ws6-real-capabilities-and-agent-collaboration.md` §2。
+
+| 项 | 约定 |
+|---|---|
+| 两种形态 | **自有收单**（`ALIPAY_QR`/`WECHAT_QR`：网关调渠道 precreate 出二维码，worker 轮询查单）与**商家收银登记**（`MERCHANT_HOSTED`：商户 MCP 下单回支付链接，网关只登记会话——审计+展示+过期收口，**不轮询终态**，商户是订单真相源，M-D 裁决的延伸） |
+| 状态机 | `authorized →(Capture)→ pending_pay →(worker 查单)→ captured[终]`；`authorized→cancelled`、`pending_pay→expired/cancelled`、`captured→refunding→refunded`、渠道失败→`failed`。**Capture=确认后亮码**（不是同步扣款），`captured`=钱已到账（唯一「已支付」终态，不另设 PAID）。merchant_hosted 由 Authorize 直接落 `pending_pay`，永不自动进 `captured` |
+| confirm_token | **幂等重取传递**：Agent 第二趟 confirmed 分支同幂等键重调 Authorize（命中返回同单同 token）→ 立即 Capture。token 只活在 Agent 单次 `handle()` 栈内，**不进 payload/ui_card/data/日志**（挂起 payload 有 obs/HMI/session 三重泄露面且编排刻意不持久化 step.meta）。token 单次有效（Capture 成功即作废）；它防的是「绕过 Authorize 直接 Capture / 拿 A 单 token 打 B 单」，「用户确认过」由编排 confirmed 注入 + 中央兜底闸保证——两层各司其职 |
+| 幂等三层链 | `idempotency_key`（Agent 请求指纹 `sha256(user_id\|scene\|订单要素)[:16]`，**刻意不含金额**）→ `payment_id`（`pay_`+12hex）→ **`out_trade_no ≡ payment_id`**。渠道参数取**订单快照**不从请求重算（金额漂移时幂等命中返回用户确认过的那张单——确认的金额=扣的金额）。Capture 对 `pending_pay` 重入直接回缓存二维码不重打渠道；退款 `out_refund_no = payment_id + "_r1"`（v1 仅整单退一次） |
+| fail-closed 三闸 | 金额 ≤0 或 >`PAYMENT_MAX_AMOUNT_FEN` 拒；currency ≠CNY 拒；scene ∉ `PAYMENT_REAL_SCENES` → 强制 mock provider（防 mock 数据算出的金额走真渠道收真钱，白名单默认空） |
+| 凭证边界 | 渠道密钥（ALIPAY_*/WECHATPAY_*）**只注入 payment-gateway**；商户 MCP 会话 token（如 MCD_MCP_TOKEN）**只注入 mcp-bridge**——两类凭证互不越界。Agent 侧零支付凭证（`agents/_sdk/payment_client.py` 只发意图） |
+| worker | 网关进程内 asyncio task；轮询集持久在 Redis zset `payment:poll`（重启续轮，停机不丢钱，最坏回执迟到≤码有效期）。**不建独立 poller**（=渠道凭证第二注入点）。单实例假设（多副本需 per-payment 租约，v1 不做） |
+| 终态通知 | worker 经 `runtime/proactive.py` 发 `user_contract` 档（§9.8），`dedup_key=payment\|{payment_id}`，带 `payment_receipt` 卡。HMI 不轮询网关（两者无通道，不新开） |
+| 真实性标记 | Authorize/Capture 回 `provider_mode`（`real`/`mock`）；mock 渠道出的 `payment_qr` 卡必须按 §9.3 打 `_prov{mode:"mock"}` 角标——真二维码样式不标注=盖真章违规 |
+| 外部链接白名单 | `MERCHANT_HOSTED` 的 `external_pay_url` 域名必须 ∈ `PAYMENT_EXTERNAL_PAY_HOSTS`（网关层）；桥侧 servers.yaml `pay_url_hosts` 是第一层——两层各自持有，防单点绕过（钓鱼链接） |
+| 审计与观测 | `payment_invoked`（Authorize）/ `payment_captured`（worker 确认收款）/ `payment_refunded` 三事件（`security/audit.py`）；obs span：`payment.authorize` / `payment.capture` / `payment.poll`（仅状态迁移时发）/ `payment.refund`。结构化日志只打 payment_id，**永不打 confirm_token/渠道凭证** |
+| 存储与隐私 | Redis hash `payment:order:{payment_id}` + `payment:idem:{key}` + zset `payment:poll`，内存兜底（Redis 不可达诚实降级+启动 warning）。隐私登记 `payment_order`（`runtime/privacy_registry.py`，backend=redis，lifecycle=retained_audit）：**改存储形态必须同步** store 头部 `PERSONAL_DATA_TARGETS` / privacy_registry `storage_variants` / `test/e2e_manifest.yaml` / `payment_redact_owner` 实现四处 |
+| GetStatus | 单不存在 `abort(NOT_FOUND)`（不再回 FAILED=4 冒充状态）；消费方按 gRPC 错误处理 |
+| 微信验签 | 公钥模式优先（`WECHATPAY_PUBLIC_KEY(_PATH)`+`_ID`）；平台证书懒加载兼容（12h 缓存+未知序列号即时重拉）。**v1 无支付回调、纯主动查单**——车机无公网入站，入站验签面为零 |

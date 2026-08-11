@@ -379,11 +379,16 @@ PRIVACY_TARGETS = (
         verify_case="gdpr_mc_proactive_delivery_verify",
     ),
     PrivacyTargetSpec(
+        # 2026-08-11 支付真实化：Redis 为主形态（hash payment:order:* + 幂等
+        # payment:idem:*），进程内存是 Redis 不可达时的兜底——兜底存在就必须登记。
+        # 脱敏动作 payment_redact_owner = PaymentStore.redact_owner（清 owner 字段
+        # 保留金额/状态审计，对齐 retained_audit 语义）。
         id="payment_order",
-        backend="process_memory",
+        backend="redis_or_memory",
         adapter_key="payment",
         adapter=PRIVACY_ADAPTERS["payment"],
-        storage_variants=("PaymentStore._mem", "PaymentStore._idem"),
+        storage_variants=("payment:order:*", "payment:idem:*",
+                          "PaymentStore._mem", "PaymentStore._idem"),
         lifecycle="retained_audit",
         enforced_from="M-D",
         owner_fields=OWNER_FIELDS,

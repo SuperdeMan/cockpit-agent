@@ -118,7 +118,7 @@ services:
       - ./egress-proxy.py:/app/egress-proxy.py:ro
     environment:
       # 出站白名单：仅已接入的可信厂商域名（新增真实 provider 时在此追加）
-      EGRESS_ALLOW: "restapi.amap.com,devapi.qweather.com,api.tushare.pro,serpapi.com,api.anysearch.com"
+      EGRESS_ALLOW: "restapi.amap.com,devapi.qweather.com,api.tushare.pro,serpapi.com,api.anysearch.com,openapi.alipay.com,openapi-sandbox.dl.alipaydev.com,api.mch.weixin.qq.com"
     command: ["python", "/app/egress-proxy.py"]
     ports: ["8082:8080"]
 
@@ -355,8 +355,49 @@ services:
     environment:
       <<: *python-env
       PAYMENT_PORT: "50071"
+      # ── 支付渠道（契约 §9.17）。渠道凭证**只注入本服务**（Agent 不持凭证红线）；
+      # 出站经 http-proxy 白名单代理（支付宝/微信域名已放行）。
+      PAYMENT_VENDOR: ${PAYMENT_VENDOR:-mock}
+      PAYMENT_DEFAULT_CHANNEL: ${PAYMENT_DEFAULT_CHANNEL:-alipay}
+      # 真渠道场景白名单，默认空=全 mock（fail-closed：防 mock 数据金额走真渠道收真钱）
+      PAYMENT_REAL_SCENES: ${PAYMENT_REAL_SCENES:-}
+      PAYMENT_MAX_AMOUNT_FEN: ${PAYMENT_MAX_AMOUNT_FEN:-20000}
+      PAYMENT_QR_EXPIRE_S: ${PAYMENT_QR_EXPIRE_S:-300}
+      PAYMENT_MERCHANT_EXPIRE_S: ${PAYMENT_MERCHANT_EXPIRE_S:-1800}
+      PAYMENT_MOCK_AUTOPAY_S: ${PAYMENT_MOCK_AUTOPAY_S:-8}
+      PAYMENT_EXTERNAL_PAY_HOSTS: ${PAYMENT_EXTERNAL_PAY_HOSTS:-}
+      ALIPAY_APP_ID: ${ALIPAY_APP_ID:-}
+      ALIPAY_APP_PRIVATE_KEY: ${ALIPAY_APP_PRIVATE_KEY:-}
+      ALIPAY_PUBLIC_KEY: ${ALIPAY_PUBLIC_KEY:-}
+      ALIPAY_GATEWAY: ${ALIPAY_GATEWAY:-}
+      WECHATPAY_MCHID: ${WECHATPAY_MCHID:-}
+      WECHATPAY_MCH_SERIAL: ${WECHATPAY_MCH_SERIAL:-}
+      WECHATPAY_MCH_PRIVATE_KEY: ${WECHATPAY_MCH_PRIVATE_KEY:-}
+      WECHATPAY_APIV3_KEY: ${WECHATPAY_APIV3_KEY:-}
+      WECHATPAY_APP_ID: ${WECHATPAY_APP_ID:-}
+      WECHATPAY_PUBLIC_KEY: ${WECHATPAY_PUBLIC_KEY:-}
+      WECHATPAY_PUBLIC_KEY_ID: ${WECHATPAY_PUBLIC_KEY_ID:-}
+      HTTP_PROXY: http://http-proxy:8080
+      HTTPS_PROXY: http://http-proxy:8080
+      # gRPC 内网互联不走代理（nearby 先例：proxy 与 gRPC 并存的解法）
+      NO_PROXY: "redis,nats,registry,localhost,127.0.0.1"
+      no_proxy: "redis,nats,registry,localhost,127.0.0.1"
     ports: ["50071:50071"]
-    depends_on: [redis]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',50071),2); s.close()"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    depends_on:
+      redis:
+        condition: service_healthy
+      http-proxy:
+        condition: service_started
+    # 唯一持支付凭证的服务，加固不低于 third_party Agent 沙箱（ws8 P1 同款四件套）
+    read_only: true
+    security_opt: [no-new-privileges]
+    mem_limit: 256m
+    cpus: 0.5
 
   # ── Agents ──
   navigation-agent:
