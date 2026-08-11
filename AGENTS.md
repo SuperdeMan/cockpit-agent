@@ -62,7 +62,7 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 意图落域对抗测试按这个顺序接手：运行手册
 [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) → 最终验收
 [`docs/reviews/2026-08-04-review-intent-adversarial-finalization.md`](docs/reviews/2026-08-04-review-intent-adversarial-finalization.md)
-→ 逐批证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§17–§24**。
+→ 逐批证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§17–§26**。
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
@@ -70,30 +70,21 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 较 B3/B4 前（`cadd084`，4643）净 **+132**，且这 132 条**逐条点上号**：
 `test_profile` 55 + `test_profile_coverage` 27 + `test_privacy_defaults` 5 +
 `test_admission` 24 + `test_capability_gaps` 18 + `test_vehicle_intents_migration` 3。
-（上一份基线 4643 的口径与逐条点名见下方历史注。）
 
-> ⚠ **上一份基线记的 4601 本身就旧了 6 条**：临时 worktree 在 `612abc7` 上干净量得
-> **4621 collected**（= 4607 passed / 14 skipped），而 4601 是同日更早一次实测，之后
-> `cc87056`（补除雾对抗覆盖）等提交又加了测试却没刷新这一行。**净增量要跟同一个 SHA
-> 比，不能跟文档里那个数比**——差额不查清楚就会被当成「我这批多出来 6 条不明用例」。
-2026-08-10 深夜分组实测（B1/B2 后）：`orchestrator/` **1215 passed**（其中 edge 558 /
-cloud 655）、`pytest test/` **1144 passed / 9 skipped**（该目录选集不再有红，但它仍不是
-项目基线命令——分母不同）、端侧 smoke **13/13**、L0 门禁 `python scripts/check_intent_gate.py`
-**2/2 exit 0**（discovery 81/81、gate strict 25/25）、范例门禁域错配 **4/160=2.5%**、
-skills 门禁 PASS。HMI `node --test` **225/225**、Dashboard vitest **17/17** 为 2026-08-09
-实测，Go 网关数字沿用 2026-08-04 批次；2026-08-10 全天没有改前端或 Go
-（`.env.example`/compose 只加了 `PLANNER_TOOLCALL_SALVAGE_RETRY` 一项，
-契约见 [`docs/conventions.md`](docs/conventions.md) env 表与 §8.1）。
+**2026-08-11 分组实测**（B3/B4 后）：edge **579**、cloud **655**、registry **65**、
+agents **993**、`runtime/tests` **87**；端侧 smoke **13/13**；L0 门禁 **2/2 exit 0**
+（discovery 81/81、gate strict 25/25）；能力门禁 exit 0；`eval_fast_intent` 57/57、
+`eval_route_hints` 78/78、skills / 范例门禁 PASS（范例域错配 4/160=2.5%）；
+`run_e2e.py --check` 与 `--lane ci --full` 均 exit 0；Go 侧 `go build ./...` +
+`go vet ./gateway/...` + `go test ./gateway/deployprofile` 全绿（容器内 `golang:1.24`
+——本机无 Go 工具链）。**前端数字未随本批重测**：HMI `node --test` **225/225**、
+Dashboard vitest **17/17** 仍是 2026-08-09 实测——B3/B4 没动前端（只加了
+`runtime/tests/test_privacy_defaults.py` 一条**读** `hmi/src/types.ts` 的源码级断言）。
+
 **CI 已有四条 blocking 门禁**：skills 契约、范例契约、L0 对抗 strict
 （`scripts/check_intent_gate.py`，B2）、**能力完整性**（`test/eval_capability_integrity.py`，
-B4 新增）。四条都是确定性检查、零 LLM、零网络——「跌破基线告警不阻塞」的哲学只适用于
-会随语料漂移的意图基线，与这四条准入不同，不要合并。
-2026-08-11 分组实测（B3/B4 后）：edge **579 passed**（B1 后 558，+21）、registry **65**、
-cloud **655**、agents **993**、`runtime/tests` **87**；端侧 smoke **13/13**；
-能力门禁 exit 0；L0 门禁 **2/2 exit 0**；`eval_fast_intent` 57/57、`eval_route_hints` 78/78、
-skills / 范例门禁 PASS；`run_e2e.py --check` 与 `--lane ci --full` 均 exit 0；
-Go 侧 `go build ./...` + `go vet ./gateway/...` + `go test ./gateway/deployprofile` 全绿
-（容器内 `golang:1.24`——本机无 Go 工具链）。
+B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线告警不阻塞」的哲学只适用于会随语料
+漂移的意图基线，与这四条准入不同，不要合并。
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
@@ -103,62 +94,44 @@ Go 侧 `go build ./...` + `go vet ./gateway/...` + `go test ./gateway/deployprof
 | DeepSeek 完整 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；exact **121/121**，raw 幻觉/校验后逃逸/不稳定均 **0/121**；L1/L2 各 **2 个独立进程 × 每进程 3 样本**（`f0af9c0`） |
 | MiniMax 主模型 gate（`32e8718`，2026-08-10） | **141/147**；exact **116/121**、required **99/103**；raw 幻觉 **3/121**（原 8）、逃逸 **0/121**；不稳定 **4/121**（原 6）；`pass 141 / unstable 4 / stable_fail 2`，资格仍 `eligible=False` |
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
-| 三条候选取证（2026-08-10，`f71fd3c`） | `cp.hvac-news.swapped` **2/6**、`nq.hvac.reported` **2/6**（`critical_fail` ×2，真缺陷）、`nq.match.lastweek` **5/6**；`cp.adaptive.weather-outing` L1 三趟 **9/11**。全部 `minimax:MiniMax-M3`、检索零降级、`worktree_clean=true` |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | `orchestrator/` **1215 passed**、`pytest test/` **1144 passed / 9 skipped**；端侧 smoke **13/13**；Skill / Exemplar（**254 条 / 20 域**——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
+| 代码回归 | 分组数字见上方 2026-08-11 实测段（`orchestrator/` 合计 **1234** = edge 579 + cloud 655）；Skill / Exemplar（**254 条 / 20 域**——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
 
-⚠ **MiniMax 三批 141/141/140 都不是同一批红灯**：`f0af9c0` 点名的 6 条 unstable 在
-`32e8718` 全部转绿，红灯换成另一批边界单元（其中 5 条单跑 10 样本全绿）；`5e8247d`
-换池后又换一批（换池随后已回退）。按实测单元不稳定率 3~5%，一趟完整 gate 恰好零 unstable
-的概率是个位数百分比——**`eligible=True` 不是「把点名的几条修好」能达成的，是要压整体
-底噪**（findings §17.6/§19.2）。
-⚠ 上表 MiniMax 行是 `32e8718` 读数，**与当前代码已差好几批**：`skills/exemplars/`
-多了 `sunroof.yaml` 与 `chitchat#12`，planner 多了 adaptive replan 自查与
-`complexity_declared` 留痕。`5e8247d` 那批是换池态、案例集已不一致，**不要挪用**。
-**当前 SHA 没有对应的全量 gate 读数**——要引用主模型总分就得重跑一次完整父 bundle。
+⚠ **上表 MiniMax 行是 `32e8718` 读数，与当前代码已差好几批**（此后合入了 clarify 型范例
+机制、salvage 重试默认开、B1–B4 四批）。**当前 SHA 没有对应的全量 gate 读数**——要引用
+主模型总分就得重跑一次完整父 bundle。`5e8247d` 那批是换池态、案例集已不一致，**不要挪用**。
+三批 141/141/140 **不是同一批红灯**（每批点名的 unstable 都换了一组），逐批过程记在
+history §17–§19；沉淀下来的判据是 §4.3 的两条：读报告先看是哪几条、`eligible=True` 要压
+整体底噪而不是修点名的那几条。
 
 首份正式 baseline 已存在，但它是 **DeepSeek 对比/参考模型**在固定 provider、资产与代码快照下的
 意图理解与落域证据；不证明 MiniMax 主模型、Agent 业务结果、外部 Provider 内容或跨模型平均质量。
-MiniMax 本轮即使 process/provider/embedding/L3 身份完整，仍因 `gate_failures`、raw 幻觉、未声明
-fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一次新的完整父报告
+MiniMax 在 `32e8718` 那批即使 process/provider/embedding/L3 身份完整，仍因 `gate_failures`、
+raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后续写入仍必须由一次新的完整父报告
 明确 `eligible=True`，不得手工改正式文件。
 
 ### 4.1 活跃待办（只列仍需行动的）
 
-**外部评审 B1/B2 已全部实施合入**（2026-08-10 深夜，五个提交，裁决总览
-[`docs/reviews/2026-08-10-external-review-adoption.md`](docs/reviews/2026-08-10-external-review-adoption.md)）。
-两个 P0 已封死：确认权威下沉 VAL（`confirmed` fail-closed，契约
-[`docs/conventions.md`](docs/conventions.md) §9.15）+ 云端降级兜底三道挡板；T2
-`elif streamed` 不可达致的重跑已修。L0 门禁进 CI 作阻断，唯一入口
-`scripts/check_intent_gate.py`。实施记录见两份方案文档文末与 history §25。
-✅ **冻结令已撤销**——可以新增业务 Agent 了（B1 验收判据第 6 条兑现）。
+**§4.1 当前为空。** 外部评审四批 **B1/B2**（2026-08-10）与 **B3/B4**（2026-08-11）全部
+实施合入并收口；**B5/B6 仍条件启动**（见 §4.2）。✅ 冻结令已撤销，可以新增业务 Agent。
 
-**外部评审 B3/B4 也已全部实施合入**（2026-08-11，七个提交）。B3 落地了第四种运行形态
-`DEPLOY_PROFILE=dev|demo|prod`——prod 档下任一 fail-open 配置即 exit 78 拒绝启动，
-dev 档零校验零输出（硬约束）；顺带 Registry 静态 admission（默认关）。B4 落地能力完整性
-门禁（CI blocking，六维逐对象断言）+ `commands.yaml` 成为端侧能力的单一声明源
-（`effect` / `edge_intents`，`VEHICLE_INTENTS` 手工集合退役）+ 骨架生成器。
-契约见 [`docs/conventions.md`](docs/conventions.md) §6 profile 段与 §9.16；
-实施记录与**与方案的逐条差异**见两份方案文档 §6。
-
-**§4.1 当前为空**——B1/B2/B3/B4 全部收口。下一步的候选入口在 §4.2（B5/B6 仍条件启动）。
-
-两笔本批产生、**已记档但未做**的账（都在 B4 台账里逐条标着，不是遗漏）：
-- `frunk` 是 `require_confirm=true` 的危险对象却没有任何端侧 intent，与 `trunk` 不对称——
-  是刻意不给语音开还是漏了，**待确认**；
-- `driving_mode` 与 `power_mode` 语义高度重叠，可能是同一件事的两个对象名——
-  若确认重复应合并（别让 planner 面对两个分不开的工具）。
-另有 14 个「是欠账、只是本批不做」的车控对象（`air_purifier`/`low_beam`/`epb`… ），
-新增端侧意图时应从这一组里挑并同步删台账条目。
+四批各自交付了什么、与方案有哪些差异、验证证据如何——**只读方案文档 §6/§7 的实施记录**
+（[B1](docs/design/2026-08-10-b1-execution-safety-stopline.md)、
+[B2](docs/design/2026-08-10-b2-gate-ci-branch-governance.md)、
+[B3](docs/design/2026-08-10-b3-deploy-profile-fail-closed.md)、
+[B4](docs/design/2026-08-10-b4-capability-pack.md)），裁决总览见
+[`docs/reviews/2026-08-10-external-review-adoption.md`](docs/reviews/2026-08-10-external-review-adoption.md)。
+落到契约面的四条：确认闸下沉 VAL（[`docs/conventions.md`](docs/conventions.md) §9.15）、
+部署形态闸（§6 profile 段）、端侧能力声明契约（§9.16）、CI 四条 blocking 门禁（§4.0）。
 
 ⚠ **对抗语料唯一输入 535 / 上界 540**——只剩 5 个名额。下次加 L0 语料前先评估要不要抬
 `suites.yaml` 的 `max_cases`，别撞上再回头改（判据：bounds 是规模守卫，抬它要说明为什么
 这批语料值得占额度）。
 
-> 2026-08-10 全天批次的**完整记录在** [`docs/agents-history.md`](docs/agents-history.md)
-> **§15–§25**，逐条证据在 `docs/design/2026-08-02-intent-routing-adversarial-findings.md`
-> **§17–§26**。本节按约定**只留状态、不留流水**——沉淀下来的判据在 §4.3，数字在 §4.0。
+> 逐批流水在 [`docs/agents-history.md`](docs/agents-history.md) **§15–§26**，逐条证据在
+> `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§17–§26**。
+> 本节按约定**只留状态、不留流水**——沉淀下来的判据在 §4.3，数字在 §4.0。
 
 ### 4.2 延后 / 条件待办索引（不进入当前主线）
 
@@ -166,6 +139,7 @@ dev 档零校验零输出（硬约束）；顺带 Registry 静态 admission（�
 
 | 主题 | 当前状态 / 启动条件 | 权威入口 |
 |---|---|---|
+| **端侧车控能力台账余项**（B4 产出） | 门禁台账 `orchestrator/edge/knowledge/capability_exemptions.yaml` 共 **39 条**，四类：媒体别名 8 / 云侧域对象 11 / 座舱 UI 面 6 —— 这 25 条是「本来就不该有端侧 intent」，**不是欠账**；剩下 **14 条是欠账、只是本批不做**（`air_purifier`/`auto_hold`/`bluetooth`/`epb`/`equalizer`/`frunk`/`hotspot`/`key_tone`/`low_beam`/`navi_broadcast`/`surround_view`/`wifi`/`driving_mode`/`battery`——VAL 侧多有分支或话术，只是端侧没给 fast_intent 规则与意图名；云端计划仍可经 `action_to_structured` 走到）。这 14 条里有 **3 条待人裁**：① `frunk` 是 `require_confirm=true` 的危险对象却没有任何端侧 intent、与 `trunk` 不对称，**是刻意不给语音开还是漏了**；② `driving_mode` 与 `power_mode` 语义高度重叠，可能是同一件事的两个对象名（若重复应合并——别让 planner 面对两个分不开的工具）；③ `battery` 查询要不要补端侧意图。新增端侧意图时**从这 14 条里挑**并同步删台账条目 | [B4 方案](docs/design/2026-08-10-b4-capability-pack.md) §6.5、台账文件本身 |
 | **P3b operate 抽取与放量** | 原表里并列的两个具体缺口（除雾能力缺席、「穿衣指数→股指」）已于 2026-08-10 修完，详见 history §23.1/§23.2，本行只留放量条件。**放量门槛不变**：operate 抽取 + 真实错对象率 <0.3%。⚠ 压这个数的手段是 **R4.1b P1 执行侧对象化**（让 VAL object 数从当前 67 继续长），**不是调阈值**；且当前 PoC 没有真实流量，这个数只有观测面、还没有分母 | [M5 P3 收尾](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) §P3 收尾 |
 | live 路由回归进 CI | hint 退役后的召回保护目前是 live 人工车道，不是 CI 阻断；有稳定凭证、预算与 provider 方差处置后再接 CI | [旅程体系](docs/design/2026-07-14-journey-e2e-test-system.md) §4.3、[评测说明](docs/reviews/eval/README.md) §规则退役 |
 | `route_hints` 继续退役 | 当前实数 **11**；`mcp-bridge#0` 必须先过专项安全回归。旧三条单档候选不得按历史索引直接执行；当前只用 MiniMax 主模型 / DeepSeek 对比，MiMo key 失效不阻塞主线，切换 provider 时重新全覆盖取交集 | [M5 P2](docs/design/2026-07-28-intent-accuracy-data-flywheel.md)、[评测说明](docs/reviews/eval/README.md) §规则退役 |
@@ -188,7 +162,7 @@ dev 档零校验零输出（硬约束）；顺带 Registry 静态 admission（�
 - `pytest test/` 不是项目基线命令；换选集会改变 import 顺序与分母，不能拿来替代根跑。
   （2026-08-10 起它**不再有红**，但「不是基线」的理由是分母不同，与红不红无关。）
 - **live 跑批期间不许动工作树**：资格闸逐进程校 `worktree_clean`，corroboration 进程比
-  primary 晚起，跑批中途改文件会让它单独 fail-closed（本轮踩了两次）。评测产物写
+  primary 晚起，跑批中途改文件会让它单独 fail-closed（2026-08-04 那批踩了两次）。评测产物写
   `docs/reviews/eval/_ci-run-*` 是安全的——那个前缀已 gitignore。
 - 两次 141/147 不代表同一批红灯；读 MiniMax 报告先看**是哪几条**，再看总分。
 - **不要再为「让 MiniMax 主模型出正式 baseline」发起跑批**（泓舟 2026-08-10 已裁定不追求）。
@@ -266,7 +240,32 @@ dev 档零校验零输出（硬约束）；顺带 Registry 静态 admission（�
 - **诊断动作本身会污染下一次跑批**：`scripts/run_e2e.py` 会重建服务并把运行时标记成
   `runtime_freshness: unverified`，在两次全量批之间穿插它，下一批的 L3 阶段会重建
   llm-gateway、掐断 primary 的网关连接（大批 `planner_unreached`）。单独定性 L3 之后
-  **整批重来**，别接着跑还没开始的那一批（§19.4，本轮亲自踩的）。
+  **整批重来**，别接着跑还没开始的那一批（§19.4，2026-08-10 亲自踩的）。
+- **净增量要跟同一个 SHA 比，不能跟文档里那个数比**（2026-08-10 起两批都验过）。基线行
+  会因为「实测之后又有提交加了测试却没刷新」而落后；对不上时**先怀疑基线陈旧**，再怀疑
+  自己多出来了东西——反过来会凭空制造「N 条不明用例」的假问题。**每次刷新基线都要能把
+  净增量逐条点上号**（B3/B4 那批 +132 = 六个新文件 55+27+5+24+18+3）。
+- **校验要复刻消费方的解析，不发明通用真值语义**（2026-08-11，B3）：`AUTH_REQUIRED=1`
+  在 Go 侧（`EqualFold(v,"true")`）是**关**，`GRPC_TLS=ON` 大写在 switch 精确匹配下也是
+  **关**。一个「看起来是真」的检查会在这两处报绿而开关根本没开。同 CLAUDE.md §6
+  「防御要防到真正会被拿去判定的那个值」。
+- **静默回落就是要消灭的形态**（2026-08-11，B3）：未知 `DEPLOY_PROFILE` 值直接拒启、
+  不回落 dev——拼错档位却按零校验跑，比没有这道闸更危险（运维以为自己在跑硬校验）。
+  推广：**任何「认不出就用默认值」的分支，先问默认值错了会不会没人发现。**
+- **「写进 anchor / 写进公共位置」不等于「每个消费方都有」**（2026-08-11，B3，同族第三次）。
+  `DEPLOY_PROFILE` 加进 compose 的 `x-python-env` anchor 后，registry / edge-orchestrator /
+  proactive 三个服务**根本没用那个 anchor**，闸形同虚设——纸面推理与 `docker compose config`
+  都没抓到，**容器演练当场抓到**。前两次是 shop 域零范例（门禁只读 manifest，而 mcp-bridge
+  能力由 servers.yaml 启动期合成）。修法是把覆盖面变成断言，不是「下次记得」。
+- **扫不全的结构断言比没有更糟——它会让人去改本来是对的代码**（2026-08-11，B3）：
+  上一条那个覆盖断言第一版只认绝对 import，`from .server import serve` 断链，
+  14 个 Agent 全被误判成「够不着闸」。**写完扫描类断言先验证它扫到的集合非空且合理。**
+- **不加第二份表达同一件事的声明**（2026-08-11，B4）：方案要 `risk` 落字段，落地改成派生
+  ——B1 刚把「危险与否」收敛成 `require_confirm` 一个权威，第二份声明必然漂移；且它唯一的
+  消费方（B6）尚未开工，先落即死字段。**对以后任何「再加个字段表达同一件事」都适用。**
+- **一条断言抓什么，以实测为准不以命名为准**（2026-08-11，B4）：`edge_intents` 那条「挂错
+  对象块」的断言**抓不到**动作段拼错（`trunk.opne` 照样解得出对象 `trunk`），那一族是
+  「验证定义」车道抓的。红灯验证时要看**是哪条车道红**，不是只看 exit 码非零。
 
 ---
 
@@ -293,6 +292,8 @@ make up                     # 起全栈（首次需调试，见 docs/dev-guide.m
 | proto | `make proto` 重新生成，确认 codegen 无错 |
 | 端到端链路 | `make up` 后 `python test/e2e_ws.py` |
 | 新增 Agent | 契约测试（参考 `agents/navigation/tests`）+ 在 compose 注册 |
+| 端侧车控能力（知识库 / 意图 / 话术）| `python test/eval_capability_integrity.py`（六维逐对象，CI blocking）+ `python scripts/check_intent_gate.py`（对抗覆盖 strict）+ `python -m pytest orchestrator/edge/tests -q`（含意图面迁移探针）。SOP 见 §7.1 |
+| 新增服务（compose 里加一个自建镜像）| `python -m pytest runtime/tests -q`——它断言每个自建服务都拿到 `DEPLOY_PROFILE` 且入口够得着部署形态闸；**加进 `x-python-env` anchor 不等于配上了**（有服务不用那个 anchor）|
 
 不要为了"让它跑起来"注释报错或加绕过标记——找根因（CLAUDE.md §6）。
 

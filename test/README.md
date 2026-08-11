@@ -159,6 +159,15 @@ python scripts/run_e2e.py --lane nightly --full --stale-policy warn
 python scripts/run_e2e.py --milestone M-A --lane milestone --full --stale-policy warn
 ```
 
+CI 另有**四条确定性 blocking 门禁**（零 LLM、零网络，与上面的 e2e 车道不同准入）：
+
+```bash
+python test/eval_skills.py                   # skill 契约
+python test/eval_exemplars.py                # 范例契约 + 域路由探针
+python scripts/check_intent_gate.py          # 意图对抗 L0（strict）——唯一入口，别接管道读退出码
+python test/eval_capability_integrity.py     # 端侧车控能力完整性（六维逐对象，B4）
+```
+
 每个 child 必须原子写入结构化结果；退出码只接受 `0`（已执行）或 `77`（整项跳过），runner 不解析
 stdout 里的“PASS/SKIP”。milestone 与 canonical 禁止 `SKIP`/`PASS_WITH_SKIPS`，因此缺凭证、
 缺硬件或 provider 不可用不会被包装成绿灯。`--id` 是局部诊断，不具备 full/canonical 资格。
@@ -215,8 +224,10 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 > `eligible=True`，首份**对比/参考模型** `docs/reviews/eval/baseline_intent_adversarial.{json,md}`
 > 已写入。同一 SHA 的主模型 `minimax:MiniMax-M3` 为 141/147、raw hallucination 8/121、
 > 6 条 `unstable`、无 `stable_fail`、`eligible=False`，不得被 DeepSeek 基线替代。
-> discovery 为 561 条 / 522 唯一输入，gate 为 139 stable / 129 唯一输入；L0 分别 76/76、
-> 25/25。旧 113/117、104/122/123 与 raw 6/117 只保留在历史 review/findings，不得当当前值。
+> **语料规模与 L0 读数不在本文件维护**——它每批都变，抄在这里必然滞后（这一行本身就曾
+> 落后两批：写着 discovery 561 条 / 522 唯一输入 / L0 76/76，实际已是 574 / 535 / 81）。
+> 当前值只查 `AGENTS.md` §4.0 的证据表。旧 113/117、104/122/123 与 raw 6/117 只保留在
+> 历史 review/findings，不得当当前值。
 > baseline 只绑定该 provider、embedding、资产与 SHA，不证明主模型、Agent 业务结果、外部内容
 > 或跨模型平均质量。本轮真实 LLM 只接受 MiniMax M3（主）与 DeepSeek V4 Flash（对比）；
 > MiMo key 已失效，Qwen 不在批准模型内。
