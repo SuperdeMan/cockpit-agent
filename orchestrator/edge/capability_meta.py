@@ -26,6 +26,10 @@
 """
 from __future__ import annotations
 
+import os
+
+import yaml
+
 #: 只查不改的操作。对象的 operates 全落在这里 ⇒ 它是 read。
 _READ_ONLY_OPERATES = frozenset({"query", "locate"})
 
@@ -62,3 +66,55 @@ def risk_of(obj_def: dict) -> str:
     if d.get("drive_restricted") or d.get("drive_restricted_off"):
         return "medium"
     return "low"
+
+
+# ── `edge_intents` —— 端侧意图名单的单一声明源（B4 §2.2）────────────────────
+
+_KNOWLEDGE_DIR = os.path.join(os.path.dirname(__file__), "knowledge")
+
+
+class CapabilityKnowledgeError(RuntimeError):
+    """知识库读不出任何端侧意图。**fail-closed**：宁可起不来，也不要一个空能力面。"""
+
+
+def _load_objects(knowledge_dir: str | None = None) -> dict:
+    path = os.path.join(knowledge_dir or _KNOWLEDGE_DIR, "commands.yaml")
+    with open(path, "r", encoding="utf-8") as f:
+        return (yaml.safe_load(f) or {}).get("objects") or {}
+
+
+def derive_edge_intents(objects: dict | None = None,
+                        knowledge_dir: str | None = None) -> set[str]:
+    """端侧车控意图全集 = 各对象声明的 ``edge_intents`` 之并。
+
+    ## 为什么是「声明」而不是「从 对象×操作 推」
+
+    方案 §2.2 原文写的是「运行时派生自 commands.yaml（对象×操作）」。实测这条路走不通，
+    差集 38 + 196（派生 234 条 vs 手工 76 条），原因是**意图名承载了 commands.yaml 里
+    根本没有的四类判断**：
+
+    1. **用哪个对象别名**——`hvac.*` 对 `aircon`、`tire_pressure.query` 对
+       `tire_pressure_monitoring`；
+    2. **哪个 mode/attr 值得单独占一个意图名**——有 `seat.heating.on` 却没有
+       `seat.recline.on`；
+    3. **操作动词用哪套**——`on/off` 还是 `open/close`；
+    4. **这个对象该不该出现在端侧能力面**——`commands.yaml` 是《公版语音指令表》整表
+       导出，含 weather/flight/hotel 等云侧域对象，机械派生会把它们变成端侧意图。
+
+    而且机械派生会**复活 2026-08-04 刻意删掉的同义名**（`aircon.inc/dec` 与 `hvac.inc/dec`
+    解出逐字相同的执行数据，两个名字让 planner 只能掷硬币）——「一个动作只能有一个名字」
+    这条判据是推不出来的。
+
+    所以改成：名字仍然人写，但**写在 commands.yaml 对象定义里**而不是 `vehicle.py` 的
+    Python 集合里。「新增能力要同时记得改 vehicle.py」这个事故面照样消失，代价只是把
+    76 行 Python 挪成 27 处 YAML 声明——而它们就挨着对象的 operates/require_confirm，
+    改的时候看得见。
+    """
+    objs = _load_objects(knowledge_dir) if objects is None else objects
+    intents = {str(i) for d in objs.values()
+               for i in ((d or {}).get("edge_intents") or []) if str(i).strip()}
+    if not intents:
+        raise CapabilityKnowledgeError(
+            "commands.yaml 里一条 edge_intents 都没读到——端侧能力面为空会让云侧 planner "
+            "看不到任何车控工具。这里 fail-closed，不静默回落空集。")
+    return intents

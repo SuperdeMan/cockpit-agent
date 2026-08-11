@@ -160,8 +160,27 @@ def lane_sources() -> list[str]:
 
 
 def lane_execution(reach, orphans, objects, table) -> list[str]:
+    from edge_call import decode_intent
+
     errs = [f"孤儿 intent `{i}`：解不出 commands.yaml 里的对象"
             "（intent 名与知识库对象漂移了，能力不可执行）" for i in orphans]
+
+    # `edge_intents` 声明必须落在**它自己那个对象**底下（B4-3）。
+    # 这条专挡「意图名写对了、但写错了对象块」——数量看着没变、能力却挂在别人名下，
+    # 后果与漏写一样是能力不可达。
+    # ⚠ 动作段拼错（`trunk.opne`）**不由这条抓**：它照样解得出对象 `trunk`，只是 operate
+    #   变成了未知值——那一族由「验证定义」车道抓（落通用兜底键 `trunk_opne`）。实测确认过，
+    #   这里写清楚是为了别把两条的覆盖面记混：**一条断言抓什么，要以实测为准不以命名为准**。
+    known = set(objects)
+    for obj, d in sorted(objects.items()):
+        for intent in ((d or {}).get("edge_intents") or []):
+            decoded = decode_intent(str(intent), known_objects=known)
+            if decoded is None:
+                errs.append(f"`{obj}.edge_intents` 里的 `{intent}` 解不出任何对象（写错名字？）")
+            elif decoded["data"]["object"] != obj:
+                errs.append(f"`{obj}.edge_intents` 里的 `{intent}` 实际解到对象 "
+                            f"`{decoded['data']['object']}`——声明挂错了对象块")
+
     unreachable = sorted(set(objects) - set(reach))
     for obj in unreachable:
         if not _exempt(table, obj, "execution"):

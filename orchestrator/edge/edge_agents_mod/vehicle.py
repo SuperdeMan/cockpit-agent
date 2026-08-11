@@ -6,49 +6,24 @@ from __future__ import annotations
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from val import VAL
+from capability_meta import derive_edge_intents
 
-# 车控意图白名单（覆盖全部车控对象）
-VEHICLE_INTENTS = {
-    "hvac.set", "hvac.on", "hvac.off", "hvac.inc", "hvac.dec",
-    "window.open", "window.close", "window.set",
-    "seat.heating.on", "seat.heating.off", "seat.ventilation.on", "seat.ventilation.off",
-    "seat.massage.on", "seat.massage.off", "seat.lumbar_support.on", "seat.lumbar_support.off",
-    "sunroof.open", "sunroof.close", "sunroof.set",
-    "sunshade.open", "sunshade.close", "sunshade.set",
-    "trunk.open", "trunk.close",
-    "door_lock.open", "door_lock.close",
-    "fuel_tank_cover.open", "fuel_tank_cover.close",
-    "charging_port.open", "charging_port.close",
-    "ambient_light.on", "ambient_light.off",
-    "headlight.on", "headlight.off",
-    "wiper.on", "wiper.off", "wiper.speed.set", "wiper.speed.inc", "wiper.speed.dec",
-    "rear_view_mirror.fold", "rear_view_mirror.unfold",
-    "fragrance.on", "fragrance.off", "fragrance.set",
-    "steering_wheel.heating.open", "steering_wheel.heating.close",
-    "steering_wheel.height.set", "steering_wheel.height.inc", "steering_wheel.height.dec",
-    "energy_recovery.set", "energy_recovery.inc", "energy_recovery.dec",
-    "lane_departure_assistance.open", "lane_departure_assistance.close",
-    "lane_assistance.open", "lane_assistance.close",
-    "scene_mode.set", "power_mode.set",
-    "screen.brightness.set", "screen.brightness.inc", "screen.brightness.dec",
-    "aircon.wind_speed.set", "aircon.wind_speed.inc", "aircon.wind_speed.dec",
-    # ⚠ 这里曾有 `aircon.inc` / `aircon.dec`，2026-08-04 删除：它们与 `hvac.inc` /
-    # `hvac.dec` 解出**逐字相同**的执行数据（`edge_call._to_structured` 把 `hvac` 对象
-    # 改名成 `aircon`），却各自占一个能力名。而端侧 catalog **只渲染意图名不渲染描述**，
-    # 于是云侧 planner 面对两个无法区分的同义工具只能掷硬币。
-    # **一个动作只能有一个名字。** 温度增减统一走 `hvac.inc` / `hvac.dec`；
-    # 风速仍是独立能力（`aircon.wind_speed.*`），那不是同义词。
-    # ⚠ 2026-08-10 补：这里此前**没有除雾意图**，而端侧规则对「打开前除雾」也返回 None
-    # ——两头都缺，于是整句上云、planner 在 76 个文本可区分但语义不含除雾的工具里挑，
-    # P3a 影子抓到的 `关闭强力前除雾` → `accompany_home.close` 并被 VAL 照单执行就是这么来的。
-    # 当时归因写的是「描述不判别」，A/B 把它推翻了（Δ=0）：**描述治不了缺能力，
-    # 归因之前先确认正确答案在候选集里**（`capabilities.py` 模块注释记着这一课）。
-    "front_defogger.open", "front_defogger.close",
-    "rear_defogger.open", "rear_defogger.close",
-    "tire_pressure.query", "dashcam.open", "dashcam.close",
-    "accompany_home.open", "accompany_home.close",
-    "volume.set", "volume.inc", "volume.dec",
-}
+# 车控意图白名单——**不再手写，从 VAL 知识库派生**（B4 §2.2）。
+#
+# 判据：新增一个车控能力时，「记得同时改这个集合」曾经是十来个同步点里的一个，
+# 而漏写的后果是**能力不可达且没有任何报错**（除雾能力那次就是两头都缺：这里没有意图名、
+# 端侧规则也不认，于是整句上云、planner 在 76 个语义不含除雾的工具里挑，
+# `关闭强力前除雾` → `accompany_home.close` 被 VAL 照单执行）。
+#
+# 现在名字仍然人写，但写在 `knowledge/commands.yaml` 各对象的 `edge_intents` 里——
+# 就挨着它的 operates / require_confirm / effect，改对象时看得见。
+# ⚠ 方案原文说的是「从 对象×操作 机械派生」，那条路实测走不通（差集 38+196，还会复活
+#   2026-08-04 刻意删掉的 `aircon.inc/dec` 同义名）；理由写在
+#   `capability_meta.derive_edge_intents` 的 docstring 里。
+#
+# 迁移当次的一次性 diff 断言见 `tests/test_vehicle_intents_migration.py`：
+# 派生结果与迁移前那 76 条**逐字相同**，本次切换零行为变化。
+VEHICLE_INTENTS = derive_edge_intents()
 
 
 class VehicleAgent:

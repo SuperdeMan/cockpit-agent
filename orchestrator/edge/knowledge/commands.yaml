@@ -33,6 +33,15 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - seat.heating.off
+    - seat.heating.on
+    - seat.lumbar_support.off
+    - seat.lumbar_support.on
+    - seat.massage.off
+    - seat.massage.on
+    - seat.ventilation.off
+    - seat.ventilation.on
     voice_forbidden: false
     projects:
     - project-a
@@ -56,6 +65,10 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - window.close
+    - window.open
+    - window.set
     voice_forbidden: false
     projects:
     - project-a
@@ -79,6 +92,10 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - sunroof.close
+    - sunroof.open
+    - sunroof.set
     voice_forbidden: false
     projects:
     - project-a
@@ -102,6 +119,10 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - sunshade.close
+    - sunshade.open
+    - sunshade.set
     voice_forbidden: false
     projects:
     - project-a
@@ -153,6 +174,15 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - aircon.wind_speed.dec
+    - aircon.wind_speed.inc
+    - aircon.wind_speed.set
+    - hvac.dec
+    - hvac.inc
+    - hvac.off
+    - hvac.on
+    - hvac.set
     voice_forbidden: false
     projects:
     - project-a
@@ -178,6 +208,9 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - ambient_light.off
+    - ambient_light.on
     voice_forbidden: false
     projects:
     - project-a
@@ -215,6 +248,9 @@ objects:
     drive_restricted_off: true
     require_confirm: false
     effect: write
+    edge_intents:
+    - headlight.off
+    - headlight.on
     voice_forbidden: false
     projects:
     - project-a
@@ -233,6 +269,9 @@ objects:
     drive_restricted: false
     require_confirm: true
     effect: write
+    edge_intents:
+    - trunk.close
+    - trunk.open
     voice_forbidden: false
     projects:
     - project-a
@@ -251,6 +290,9 @@ objects:
     drive_restricted: false
     require_confirm: true
     effect: write
+    edge_intents:
+    - door_lock.close
+    - door_lock.open
     voice_forbidden: false
     projects:
     - project-a
@@ -269,6 +311,9 @@ objects:
     drive_restricted: false
     require_confirm: true
     effect: write
+    edge_intents:
+    - fuel_tank_cover.close
+    - fuel_tank_cover.open
     voice_forbidden: false
     projects:
     - project-a
@@ -287,6 +332,9 @@ objects:
     drive_restricted: false
     require_confirm: true
     effect: write
+    edge_intents:
+    - charging_port.close
+    - charging_port.open
     voice_forbidden: false
     projects:
     - project-a
@@ -313,6 +361,9 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - rear_view_mirror.fold
+    - rear_view_mirror.unfold
     voice_forbidden: false
     projects:
     - project-a
@@ -335,6 +386,12 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - steering_wheel.heating.close
+    - steering_wheel.heating.open
+    - steering_wheel.height.dec
+    - steering_wheel.height.inc
+    - steering_wheel.height.set
     voice_forbidden: false
     projects:
     - project-a
@@ -358,6 +415,12 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - wiper.off
+    - wiper.on
+    - wiper.speed.dec
+    - wiper.speed.inc
+    - wiper.speed.set
     voice_forbidden: false
     projects:
     - project-a
@@ -378,6 +441,10 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - fragrance.off
+    - fragrance.on
+    - fragrance.set
     voice_forbidden: false
     projects:
     - project-a
@@ -394,6 +461,8 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: read
+    edge_intents:
+    - tire_pressure.query
     voice_forbidden: false
     projects:
     - project-a
@@ -413,6 +482,9 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - dashcam.close
+    - dashcam.open
     voice_forbidden: false
     projects:
     - project-a
@@ -477,6 +549,8 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - scene_mode.set
     voice_forbidden: false
     projects:
     - project-a
@@ -532,6 +606,8 @@ objects:
     drive_restricted: true
     require_confirm: false
     effect: write
+    edge_intents:
+    - power_mode.set
     voice_forbidden: false
     projects:
     - project-a
@@ -553,6 +629,10 @@ objects:
     drive_restricted: true
     require_confirm: false
     effect: write
+    edge_intents:
+    - energy_recovery.dec
+    - energy_recovery.inc
+    - energy_recovery.set
     voice_forbidden: false
     projects:
     - project-a
@@ -571,6 +651,9 @@ objects:
     drive_restricted: true
     require_confirm: false
     effect: write
+    edge_intents:
+    - lane_departure_assistance.close
+    - lane_departure_assistance.open
     voice_forbidden: false
     projects:
     - project-a
@@ -589,6 +672,9 @@ objects:
     drive_restricted: true
     require_confirm: false
     effect: write
+    edge_intents:
+    - lane_assistance.close
+    - lane_assistance.open
     voice_forbidden: false
     projects:
     - project-a
@@ -618,6 +704,9 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - front_defogger.close
+    - front_defogger.open
     voice_forbidden: false
     projects:
     - project-a
@@ -636,6 +725,9 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - rear_defogger.close
+    - rear_defogger.open
     voice_forbidden: false
     projects:
     - project-a
@@ -657,6 +749,9 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - accompany_home.close
+    - accompany_home.open
     voice_forbidden: false
     projects:
     - project-a
@@ -678,6 +773,10 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - volume.dec
+    - volume.inc
+    - volume.set
     voice_forbidden: false
     projects:
     - project-a
@@ -718,6 +817,10 @@ objects:
     drive_restricted: false
     require_confirm: false
     effect: write
+    edge_intents:
+    - screen.brightness.dec
+    - screen.brightness.inc
+    - screen.brightness.set
     voice_forbidden: false
     projects:
     - project-a
