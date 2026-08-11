@@ -91,8 +91,12 @@ CI 缺口、能力同步痛点、治理缺口也属实。采纳为 **6 个批次
 | **B2 意图门禁进 CI 与主干治理** | [`../design/2026-08-10-b2-gate-ci-branch-governance.md`](../design/2026-08-10-b2-gate-ci-branch-governance.md) | CI 阻断 + 治理 | ✅ **2026-08-10 已实施合入**（方案 A 全部 + CODEOWNERS，红灯验证已做）；轻档分支保护 2026-08-11 完成并核验（方案 §6.2）。**B2 全部收口** |
 | **B3 DEPLOY_PROFILE 生产配置档** | [`../design/2026-08-10-b3-deploy-profile-fail-closed.md`](../design/2026-08-10-b3-deploy-profile-fail-closed.md) | 配置纪律 | ✅ **2026-08-11 已实施合入**（3 提交；六处与方案的差异逐条给了理由，实施记录见方案文档 §6）|
 | **B4 Capability Pack v1** | [`../design/2026-08-10-b4-capability-pack.md`](../design/2026-08-10-b4-capability-pack.md) | 能力交付原子化 | ✅ **2026-08-11 已实施合入**（4 提交；门禁首跑抓到 22 条真缺陷全部修掉，实施记录见方案文档 §6）|
-| **B5 Planner 重试策略表 + 流式统一** | [`../design/2026-08-10-b5-planner-retry-stream-refactor.md`](../design/2026-08-10-b5-planner-retry-stream-refactor.md) | 可维护性重构 | **条件启动**（加新重试规则/新流式路径前必做） |
-| **B6 可执行性判定与前瞻契约** | [`../design/2026-08-10-b6-actionability-forward.md`](../design/2026-08-10-b6-actionability-forward.md) | 智能层预留出口 | **条件启动**（真实流量 / 该族再成主要矛盾） |
+| **B5 Planner 重试策略表 + 流式统一** | [`../design/2026-08-10-b5-planner-retry-stream-refactor.md`](../design/2026-08-10-b5-planner-retry-stream-refactor.md) | 可维护性重构 | ✅ **2026-08-11 已实施合入**（2 提交；13 条策略表 + 21 条差分场景**逐字一致**，实施记录见方案 §6）|
+| **B6 可执行性判定与前瞻契约** | [`../design/2026-08-10-b6-actionability-forward.md`](../design/2026-08-10-b6-actionability-forward.md) | 智能层预留出口 | ✅ **2026-08-11 §2/§3 已实施合入**（shadow 档；裸对象族召回 2/2、假阳性 0.70%，实施记录见方案 §6）。§4 远期字段仍逐字段触发 |
+
+⚠ **B5/B6 的触发条件当时并未命中**——两批由泓舟 2026-08-11 直接指示推进。条件写在方案里
+是为了防「为做而做」，人明确要做时它不构成阻拦；但**这一点必须留痕**，否则下一次读到
+「条件启动」的人会以为条件曾经满足过，这条治理机制的分量就被稀释了。两份方案头部同款留痕。
 
 依赖关系：B1 独立；B2 独立；B3 轻依赖 B1（prod 档校验项引用 B1 的新开关）；B4 独立但其
 `effect/risk` 字段被 B5/B6 消费；B5 依赖 B1 落地（在修正后的代码上重构）；B6 独立。

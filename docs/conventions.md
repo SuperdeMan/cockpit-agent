@@ -442,6 +442,7 @@ collector 在 `insert_span` 收到 `cloud.planning` 时按 `trace_id` **合并�
 | `plan_mode` | span `plan_mode` | `toolcall_degraded` 率等协议层指标；evolve `plan_degraded` 信号 |
 | `gold_intents` | `POST /api/turns/{id}/label` | 人工标注的正确落域。**UPSERT 不碰、保留期豁免** |
 | `edge_nlu` | span `edge_nlu` + `edge_agree`（`!=` 后缀=端云分歧） | **端云分歧轮是信息量最大的标注样本**；evolve 据此产 `edge_divergence` 信号把该轮拉进日报。存成一列而不是逐轮拉 span 详情——分歧要能当扫描期信号，逐轮补拉是 N+1 |
+| `actionability` | span `actionability` + `actionability_agree`（`!=` 后缀=与 planner 分歧，B6 §2） | 可执行性**形态**判定的 shadow 读数 `<execute\|clarify\|reject>\|<conf>`。同 `edge_nlu` 的理由存成一列：分歧轮是这套 shadow 唯一有信息量的产物。⚠ **主链零行为变化**——`planning.py` 只许写一次且必须在计划定稿之后，源码级断言钉死；`REJECT` 枚举里有但 v1 不产出（拒识判的是受话，与「说没说清」正交）。四元组第四位 `human_gold` 今天只由离线回放 `test/eval_actionability.py` 供给，运行期没有写入方故不落列 |
 
 **`retry_policies`（B5 §3，2026-08-11）**：本轮命中的重试策略名（声明序，逗号串；
 同一条两轮都命中就出现两次）。**它与 `plan_mode` 是两个问题**——`plan_mode` 说最后

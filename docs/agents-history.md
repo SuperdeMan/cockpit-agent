@@ -1887,3 +1887,105 @@ planner 看得见哪些工具）是两个问题，不要合并。** 实测 `LOCA
 `run_e2e.py --check` 与 `--lane ci --full` 均 exit 0；Go 侧 build/vet/test 全绿
 （容器内 `golang:1.24`，本机无 Go 工具链）。
 CI blocking 门禁从三条增至**四条**（新增能力完整性）。
+
+---
+
+## 27. B5 重试表驱动 + 流式统一 / B6 可执行性 shadow：外部评审末两批的实施（2026-08-11）
+
+裁决与批次索引见 [`reviews/2026-08-10-external-review-adoption.md`](reviews/2026-08-10-external-review-adoption.md)；
+逐条落法与偏差见方案文档 §6（[B5](design/2026-08-10-b5-planner-retry-stream-refactor.md)、
+[B6](design/2026-08-10-b6-actionability-forward.md)）。本节只记过程与判据。
+
+三个提交：`191d3b4` B5 §4 流式统一 + §4.2 readback；`d1fd704` B5 §3 重试表驱动；
+`21794d0` B6 §2/§3 可执行性 shadow。
+
+### 27.1 触发条件当时并未命中
+
+B5（加新重试规则/新流式路径前必做）与 B6（真实流量分母或该族再成主要矛盾）的启动条件
+**都没有满足**，两批由泓舟直接指示推进。三份文档（两份方案头部 + 裁决总览 §4）同款留痕。
+**判据：条件写在方案里是为了防「为做而做」，人明确要做时它不构成阻拦；但留痕必须做**
+——否则下一次读到「条件启动」的人会以为条件曾经满足过，这条治理机制就被稀释了。
+
+### 27.2 B5 §4：bug 活在推进面，所以推进也得共享
+
+B1 修的那个 `elif streamed:` 永不可达，**不是手滑，是同一张判定表被抄了两份的必然**。
+方案 §4.1 只给了纯函数，落地多加一个 `StreamTracker`——只共享判定函数、让 D0/T2 各自
+推进状态，等于把出过事的那一半留在原地。
+
+统一后 D0 获得两处**行为变化**（不是纯重构，各自单独取证）：
+
+1. action 已发出而 final 丢失时，D0 此前说「请再试一次」——**邀请用户把一个有副作用的
+   动作发第二遍**，正是 B1 在 T2 修掉的形态，而 D0 一直原样留着。
+2. D0 此前对**软化前**的 speech 事件置 `streamed=True`：softener 扣下悬空 `*` 的那一拍
+   用户什么都没看到，却足以把 unary 回退整条关掉。
+
+`FINAL_RECEIVED` 没进枚举：草图既把它列成第四态、又传 `got_final` 形参，是同一件事的
+两份声明（B4 判据第二例）。「流出过什么」与「拿没拿到 final」正交，且拿到 final 之后
+仍要用「播过话术没」。
+
+**§4.2 幂等键就地收口**：不新造 `command_id`。`_exec_step` 早就给 `step_timeout` 打指纹，
+理由原文是「副作用可能已发生，不打指纹 replan 重出同一动作会被原样重发」——**流断丢 final
+与超时是同一种处境**，而 B1 合成的那份不确定结果没有指纹。补上即闭合，B1 §6 担心的
+「第三套局部实现」根本不必出现。
+
+### 27.3 B5 §3：行为等价怎么证
+
+13 条守卫变成 `retry_policy.py` 的表。**先从重构前的代码提清单入库**（方案附录 A），
+再让代码表与它逐列比对——`test_inventory_matches_the_code_table` 比 5 个字段而不只比
+name（只比 name 会漏掉「清单说 attempt_limit=1、代码写了 2」），并配一条先断行数=13
+防空扫。
+
+**差分取证**：21 条场景在表驱动前后两份代码上各跑一遍，逐字比对重问次数 / 每一轮回灌
+给模型的 user prompt 全文 / plan_mode / 计划步骤 / clarify——**21/21 逐字一致**。
+
+⚠ 但首版语料只触发了 11 条策略（`multi_action_omitted` 用了「并且」，不在
+`_MULTI_ACTION_CONNECTOR_RE` 里；`open_close_polarity_inverted` 用了不存在的
+`cap_0007`，被 schema 校验先接走）。**先验证覆盖再读结论**——补足后才 13/13，
+不然那 21/21 对那两条一个字都没说。
+
+四处字段不落（`metric_tag`/`risk_class`/`preserve_previous`/`validation_errors`），
+逐条理由在附录 A.1。核心是 B4 那条判据的延伸：**落地前逐字段问「它有没有第二个真消费方」**
+——`metric_tag` 有 11 条会与 `name` 逐字相同，`risk_class` 在 B1 把安全判定全搬出
+planning.py 之后没有一条重试用得上。
+
+消融开关 `PLANNER_RETRY_DISABLE` **先证明是活的再交付**（§3.2 第 4 条）：关掉已知有效的
+`salvage_wire_accepted` 必须与 `PLANNER_TOOLCALL_SALVAGE_RETRY=off` 表现一致；
+关掉极性守卫必须让反向计划直接落地。未知策略名直接抛，不静默当「什么都没关」。
+
+### 27.4 B6：形态判据，以及一条断言当场抓到的退化
+
+前三条修法的尸检给出了正解：**检索是内容通道，而「裸对象」是形态判据**。分类器只量
+封闭虚词类，零检索零网络。
+
+**「不是字面模式表」被落成机器判据**：从 `commands.yaml` 派生领域词表（对象 id /
+display_name / edge_intents 段）比对语法标记。**首跑就抓到「导航」**——它同时是谓词和
+VAL 对象名。按纪律删掉，零代价（真实导航句必带趋向介词或别的谓词）。
+不写这条断言，这套东西会一点一点退化回对象特判，而且没人会注意到那一刻。
+
+**三条读数纪律比读数本身重要**：
+
+- **分母挑得越干净，假阳性越好看。** 首版按「有 plan 金标的轮」取分母读出漂亮的
+  **0/472**——那个口径把 `ei.*` 端侧 ingress（「暂停」「锁车门」，恰恰是零谓述标记的
+  裸动词短语）整批挡在分母外。改成「除澄清金标外的全部轮」才是 **4/574（0.70%）**。
+- **确定性判据的 p 值分母是人为的。** 与 planner 的 11/20 摆一起算出 p=1.23e-3 只是
+  为了同表可读；真正的内容是「零方差命中 vs 45% 漏判」。
+- **唯一漏判不属于本族，不合并成一个好看的总分。**「有点看不清路了」与金标执行的
+  「有点热」形态逐字同构，没有形态差异可用；它要的是「唯一默认动作是否存在」那个
+  catalog 特征，归 canary 前的独立一步。
+
+shadow 铁律用源码断言保证：`planning.py` 里 `actionability` 只许出现两次，且写入必须在
+`plan.plan_mode` 之后——**把「不可能影响计划」变成结构事实，不靠人记得**。
+`REJECT` 声明但 v1 不产出，一条断言钉住，防有人看见枚举就顺手补个恒不命中的分支。
+
+### 27.5 本批读数
+
+根全量 `python -m pytest --import-mode=importlib`：**4842 passed / 14 skipped / 0 failed**
+（退出码 0）。较 B5/B6 前（`abc3f49`，4775）净 **+67**，逐条点得上号：
+`test_stream_state` 20 + `test_loop`（readback）1 + `test_retry_policy` 31 +
+`test_actionability` 14 + `test_labels`（shadow 分歧后缀）1 = 67。零不明用例。
+
+分组：edge+registry **644**（579+65，未变）、cloud **721**（B3/B4 后 655，+66）、
+`runtime/tests` **87**（未变）、observability **73**（+1）；端侧 smoke **13/13**；
+L0 门禁 **2/2 exit 0**；能力完整性门禁 exit 0；`eval_fast_intent` 57/57、
+`eval_route_hints` 78/78、skills / 范例门禁 PASS；新增离线回放 `eval_actionability`
+（零 LLM、零网络，不进 CI blocking——它是取证脚本不是准入闸）。
