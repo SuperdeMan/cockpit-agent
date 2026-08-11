@@ -13,6 +13,8 @@ x-python-env: &python-env
   LLM_GATEWAY_ADDR: llm-gateway:50052
   MEMORY_ADDR: memory:50053
   CLOUD_PLANNER_ADDR: cloud-planner:50054
+  PAYMENT_GATEWAY_ADDR: payment-gateway:50071
+
   NATS_URL: nats://nats:4222
   REDIS_URL: redis://redis:6379/0
   LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -118,7 +120,7 @@ services:
       - ./egress-proxy.py:/app/egress-proxy.py:ro
     environment:
       # 出站白名单：仅已接入的可信厂商域名（新增真实 provider 时在此追加）
-      EGRESS_ALLOW: "restapi.amap.com,devapi.qweather.com,api.tushare.pro,serpapi.com,api.anysearch.com,openapi.alipay.com,openapi-sandbox.dl.alipaydev.com,api.mch.weixin.qq.com"
+      EGRESS_ALLOW: "restapi.amap.com,devapi.qweather.com,api.tushare.pro,serpapi.com,api.anysearch.com,openapi.alipay.com,openapi-sandbox.dl.alipaydev.com,api.mch.weixin.qq.com,mcp.mcd.cn,open.lkcoffee.com"
     command: ["python", "/app/egress-proxy.py"]
     ports: ["8082:8080"]
 
@@ -467,6 +469,9 @@ services:
       AGENT_PORT: "50064"
       HTTP_PROXY: http://http-proxy:8080
       HTTPS_PROXY: http://http-proxy:8080
+      # 缴费经 payment-gateway（§9.17）：gRPC 内网走 NO_PROXY 直连
+      NO_PROXY: "redis,nats,registry,llm-gateway,memory,cloud-planner,payment-gateway,localhost,127.0.0.1"
+      no_proxy: "redis,nats,registry,llm-gateway,memory,cloud-planner,payment-gateway,localhost,127.0.0.1"
     depends_on:
       registry:
         condition: service_healthy
@@ -476,6 +481,8 @@ services:
         condition: service_started
       http-proxy:
         condition: service_started
+      payment-gateway:
+        condition: service_healthy
     # ws8 P1: third-party Agent 沙箱
     read_only: true
     security_opt: [no-new-privileges]
@@ -757,6 +764,14 @@ services:
       E2E_NAMESPACE_ADMIN_SECRET: ${E2E_NAMESPACE_ADMIN_SECRET-}
       # 写操作订单状态机复用 M2 task_ledger（不新建表）；无 PG → 诚实降级不承诺可查
       POSTGRES_DSN: postgresql://cockpit:${POSTGRES_PASSWORD:-cockpit}@postgres:5432/cockpit
+      # 商户 MCP（§9.9 批 3）：远程端点出站经 http-proxy 白名单；会话 token 只注入
+      # 本服务（≠ 支付渠道凭证——那些只在 payment-gateway）。缺 token 该商户诚实缺席。
+      MCD_MCP_TOKEN: ${MCD_MCP_TOKEN:-}
+      LUCKIN_MCP_TOKEN: ${LUCKIN_MCP_TOKEN:-}
+      HTTP_PROXY: http://http-proxy:8080
+      HTTPS_PROXY: http://http-proxy:8080
+      NO_PROXY: "redis,nats,registry,llm-gateway,memory,cloud-planner,payment-gateway,postgres,localhost,127.0.0.1"
+      no_proxy: "redis,nats,registry,llm-gateway,memory,cloud-planner,payment-gateway,postgres,localhost,127.0.0.1"
     depends_on:
       registry:
         condition: service_healthy
@@ -766,6 +781,8 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
+      http-proxy:
+        condition: service_started
 
   # ── 统一主动引擎（M3 P0）──
   # 「该不该现在打扰驾驶员」的唯一裁决点：订 agent.proactive.request → 六道闸 + 合并窗口

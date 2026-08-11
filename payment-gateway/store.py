@@ -161,11 +161,28 @@ class PaymentStore:
         """创建预授权订单。幂等：同 key 返回同一订单（含同一 confirm_token，不轮换）。
 
         金额/币种 fail-closed：非法直接抛 ValueError，绝不建一张「回头再改」的单。
+
+        **幂等查找先于参数校验**（批 2 接线定稿）：confirm_token 的官方传递通道是
+        「第二趟同键重取」（§9.17），重取方手上没有金额（刻意不重查费，防漂移），
+        传占位值也必须命中快照单。命中后按状态分流：
+        - captured/refunding/refunded/authorized/pending_pay → 返回原单（防双付）；
+        - cancelled/expired/failed → **落到新建、幂等键 remap**——幂等防的是双付，
+          不是防用户重新尝试一次已经关掉的支付。
         """
         if not idempotency_key:
             raise ValueError("idempotency_key 必填（幂等三层链的第一层，§9.17）")
-        if amount_cents <= 0:
-            raise ValueError(f"amount_cents 必须为正（got {amount_cents}）")
+
+        existing = await self._idem_lookup(idempotency_key)
+        if existing and existing.status not in ("cancelled", "expired", "failed"):
+            return existing
+
+        if amount_cents < 0:
+            raise ValueError(f"amount_cents 不得为负（got {amount_cents}）")
+        if amount_cents == 0 and channel != "merchant_hosted":
+            # merchant_hosted 例外：支付发生在商户收银台，商户响应可能不回金额
+            # ——登记 0 是「金额未知」的诚实表达，不造数（§9.17）。自有收单的
+            # 0 元单没有意义，照旧拒绝。
+            raise ValueError("amount_cents 必须为正（仅 merchant_hosted 允许 0=未知）")
         if (currency or "CNY") != "CNY":
             raise ValueError(f"currency 仅支持 CNY（got {currency!r}）")
         cap = max_amount_fen()
@@ -173,10 +190,6 @@ class PaymentStore:
             raise ValueError(
                 f"金额 {amount_cents} 分超单笔上限 PAYMENT_MAX_AMOUNT_FEN={cap}——"
                 f"fail-closed 拒绝")
-
-        existing = await self._idem_lookup(idempotency_key)
-        if existing:
-            return existing
 
         order = PaymentOrder(
             payment_id=f"pay_{uuid.uuid4().hex[:12]}",
@@ -190,18 +203,23 @@ class PaymentStore:
             external_order_ref=external_order_ref,
         )
 
+        remap = existing is not None      # 可重付终态：幂等键改指新单（覆盖写）
         r = await self._redis()
         if r is not None:
-            # SET NX：async 交错下只有一个赢家；输家读赢家的单
-            won = await r.set(_IDEM_PREFIX + idempotency_key, order.payment_id,
-                              nx=True, ex=_IDEM_TTL_S)
-            if not won:
-                existing = await self._idem_lookup(idempotency_key)
-                if existing:
-                    return existing
+            if remap:
+                await r.set(_IDEM_PREFIX + idempotency_key, order.payment_id,
+                            ex=_IDEM_TTL_S)
+            else:
+                # SET NX：async 交错下只有一个赢家；输家读赢家的单
+                won = await r.set(_IDEM_PREFIX + idempotency_key, order.payment_id,
+                                  nx=True, ex=_IDEM_TTL_S)
+                if not won:
+                    dup = await self._idem_lookup(idempotency_key)
+                    if dup:
+                        return dup
             await r.hset(_ORDER_PREFIX + order.payment_id, mapping=_to_hash(order))
         else:
-            if idempotency_key in self._idem:
+            if not remap and idempotency_key in self._idem:
                 dup = self._mem.get(self._idem[idempotency_key])
                 if dup:
                     return dup

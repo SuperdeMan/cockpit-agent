@@ -334,9 +334,15 @@ async def run(recorder: CaseRecorder) -> None:
     caps = wait_bridge_capabilities()
     record("mcp-bridge 已注册", caps is not None, "" if caps else "注册中心里没有")
     caps = caps or []
-    record("准入的两个工具都在", {"shop.menu", "shop.order"} <= set(caps), str(caps))
-    record("cancel/admin 均未注册到业务能力",
-           not any("cancel" in item or "admin" in item for item in caps), str(caps))
+    # 2026-08-11 修尺：shop.order_cancel 于 2026-08-01（7cc33a7）进入准入清单，
+    # 原断言「cancel 不在能力面」从那天起就过期（"cancel" in "shop.order_cancel"
+    # 恒真）——这条 case 红了 10 天没人发现，因为 e2e_mcp 只在 milestone 车道跑。
+    # 现口径：四个准入工具**恰好都在**；隐藏管理面（admin）仍然绝不进业务能力。
+    record("准入的四个工具都在",
+           {"shop.menu", "shop.order", "shop.order_status",
+            "shop.order_cancel"} <= set(caps), str(caps))
+    record("隐藏管理面未注册到业务能力",
+           not any("admin" in item for item in caps), str(caps))
 
     print("\n── 2. 只读工具经 MCP 取真数据 ──")
     response = await ask(recorder, "看看咖啡菜单有什么", recorder.session_id(1))

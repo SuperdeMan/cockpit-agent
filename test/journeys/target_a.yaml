@@ -168,3 +168,24 @@ journeys:
           speech_any: [已经在查, 深入查, 完整报告, 查完]
     cleanup:
       - 别查了
+
+  # 支付闭环（§9.17 批 2）：确认闸 → 网关亮码。断言状态化（need_confirm 态 +
+  # 卡类型），话术只用容忍集。worker 推进 captured 与幂等防双付的时序断言在
+  # e2e_payment（那里能控等待窗）；「确认前渠道零动作」由第一轮 need_confirm 态
+  # 与网关侧契约测试（Authorize 不碰渠道）合钉，语料算子集无 cards_not、不硬造。
+  - id: A7-1
+    title: 停车缴费：二次确认后出付款码（Agent 不持凭证）
+    level: target
+    lane: live
+    tags: [autonomy, payment]
+    turns:
+      - say: 帮我交一下停车费
+        expect:
+          latency_s: 40
+          need_confirm: true
+          speech_any: [确认支付, 元]
+      - say: 确认
+        expect:
+          latency_s: 40
+          cards_any: [payment_qr]
+          speech_any: [扫码, 付款码, 支付]

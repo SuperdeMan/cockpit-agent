@@ -50,6 +50,34 @@ def test_idempotent_key_required(store):
         _auth(store, idempotency_key="")
 
 
+def test_idempotent_lookup_precedes_validation(store):
+    """第二趟重取传占位金额也必须命中快照单（不重查费防漂移，§9.17）。"""
+    first = _auth(store, amount_cents=1500)
+    with pytest.raises(ValueError):
+        _auth(store, idempotency_key="other-key", amount_cents=0)  # 新建仍 fail-closed
+    again = asyncio.run(store.authorize(
+        agent_id="parking-payment", user_id="u1", vehicle_id="v1",
+        scene="parking.pay", amount_cents=0, currency="CNY",
+        description="", idempotency_key="idem-1"))
+    assert again.payment_id == first.payment_id
+    assert again.amount_cents == 1500          # 快照金额，不被占位值污染
+
+
+def test_idempotent_remap_after_repayable_terminal(store):
+    """cancelled/expired/failed 后同键重新 authorize=建新单（幂等防双付不防重试）；
+    captured 命中仍返回原单（这才是双付面）。"""
+    first = _auth(store)
+    asyncio.run(store.mark_cancelled(first.payment_id))
+    second = _auth(store)                       # 同 idem-1
+    assert second.payment_id != first.payment_id
+    assert second.status == "authorized"
+
+    asyncio.run(store.mark_pending_pay(second.payment_id))
+    asyncio.run(store.mark_captured(second.payment_id))
+    third = _auth(store)
+    assert third.payment_id == second.payment_id   # captured：返回原单防双付
+
+
 @pytest.mark.parametrize("amount", [0, -100])
 def test_amount_must_be_positive(store, amount):
     with pytest.raises(ValueError):

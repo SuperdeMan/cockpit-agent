@@ -118,6 +118,9 @@ EXPECTED: dict[
     "e2e_observability": (
         "manual_inspection", (), 900, "root", R, True, True, 0, None,
     ),
+    "e2e_payment": (
+        "default", ("milestone",), 300, "root", F, True, True, 0, None,
+    ),
     "e2e_planner_toolcall": (
         "provider_probe", ("milestone",), 600, "real", P,
         False, False, 0, None,
@@ -850,7 +853,7 @@ def test_only_protocol_smoke_may_be_a_planned_missing_path(tmp_path: Path):
 def test_manifest_has_exact_inventory_and_schema():
     contract = _contract()
     manifest = contract.load_manifest(MANIFEST_PATH, repo_root=REPO_ROOT)
-    assert len(manifest.cases) == 36
+    assert len(manifest.cases) == 37
     assert {case.id for case in manifest.cases} == set(EXPECTED)
 
     for case in manifest.cases:

@@ -289,6 +289,110 @@ UnicodeDecodeError 后 `proc.stdout=None`。修法两端钉死（`_SUBPROC_UTF8`
 尺子在所有环境量同一个东西，与「为模型改案例集」不同族。修复后带/不带该 env
 两臂各自实测全绿。同族先例：e2e_verify 的 GBK 账（history §27.6）。
 
-### 6.2 批 2 / 批 3
+### 6.2 批 2：parking 闭环 + HMI 支付卡（2026-08-11）
 
-（随批次推进补写）
+**交付面**：
+- `agents/_sdk/payment_client.py`：PaymentClient（authorize/capture/status/cancel，
+  mTLS 随 runtime 工厂，trace 经 metadata `x-trace-id`）；调用失败返回 None——
+  Agent 按 R9 诚实降级。granted_scopes 不随 Agent meta 下发（编排层校验后不透传），
+  网关侧走 PoC fail-open 留痕契约。
+- parking `_pay` 重写为幂等重取时序（2.3/2.8）；**provider 接口删 `pay()`**（还
+  TODO 债——残留 mock pay 接口=诱惑下一个实现者绕过网关，接口删除有回归钉
+  `test_provider_has_no_pay_surface`）；`_query_fee` 保持原样。
+- **批 1 契约的两处接线修订**（业务接线揭示）：① store 幂等查找**先于**参数校验
+  （第二趟传占位金额必须命中快照单），且 cancelled/expired/failed 命中时建新单
+  remap 幂等键——幂等防双付、不防用户对已关订单重新尝试（captured 命中仍返回原单）；
+  ② AuthorizeResponse +`amount_cents`（幂等重取方没有金额可显示）。
+- **二维码渲染裁决**：网关侧生成 SVG data URI（纯 python `qrcode` 无 pillow，
+  CaptureResponse +`qr_svg`），HMI **零新依赖** `<img>` 直渲——不给前端构建链加
+  npm 依赖，且付款码属支付凭证展示面、与渠道逻辑同域。生成失败诚实回空，HMI
+  回落显示 pay_url 文本。
+- HMI 三卡：`payment_qr`（本地倒计时到 expires_at 置灰+过期蒙层；**不轮询网关**
+  ——HMI 与网关无通道，回执由主动引擎推）+ 存量欠账清偿 `payment_receipt` /
+  `parking_fee`（agent 早在发、HMI 一直渲染 null）。图标库是 Figma 封闭清单无
+  对勾图标，回执卡用文本符号。
+- compose：x-python-env +`PAYMENT_GATEWAY_ADDR`；parking depends_on
+  payment-gateway(healthy) + NO_PROXY 加 payment-gateway（proxy 与 gRPC 并存的
+  nearby 先例）。parking 镜像闭包核验：gen/python 全量 COPY 含 payment proto ✓。
+- `test/e2e_payment.py` + manifest 注册（milestone 车道——「交停车费」落域依赖真
+  LLM）：纯 WS 黑盒三场景，场景③「再缴费→已支付过」一句话同时证明 worker 推进
+  captured 与幂等防双付（也绕开 winnat 挡 50071 宿主直连的老坑）。
+- L3 journey `A7-1`（target_a）：need_confirm 态 + payment_qr 卡状态化断言
+  （`cards_not` 不在 runner 算子集，不硬造——「确认前零动作」由 need_confirm 态
+  与网关契约测试合钉）。
+- `scripts/alipay_sandbox_probe.py`：沙箱人工联调探针（precreate 1 分钱→人扫码→
+  查单 PAID→退款；**拒绝对非沙箱网关跑**；无凭证 SKIP exit 0）。人工环节不进
+  e2e_manifest 任何车道。
+- 豁免文案拆分五处已在批 1 提前完成（§6.1 偏离 2）。
+
+**与方案的偏离（1 处）**：e2e_strict_stack 不加支付探针——它的 PROBES 是「外源
+数据卡 `_prov` 一致性」语义，支付卡是凭证展示面不是外源数据；严格栈下支付域的
+自证由启动闸（mock 决议拒启）承担，比探针更硬。
+
+**验证读数**：网关+parking 单测与 e2e_manifest 守卫 **164 passed**；HMI
+`node --test` **225/225** + `vite build` 通过；**真栈演练**（重建 payment-gateway
+与 parking-payment-agent 两镜像后）：网关容器 healthy、决议行
+`provider[payment]=mock`、NATS 连接、PollWorker 启动全对；
+`run_e2e --lane milestone --id e2e_payment` **PASS 3/3**——①确认话术=网关快照
+金额 ②payment_qr 卡（mockpay 码+SVG+mock 角标）③等待后再缴费答「已经支付过」
+（worker 推进 captured 与幂等防双付的黑盒合证）。沙箱探针 SKIP 路径冒烟 exit 0。
+全量 pytest 见提交信息。
+
+### 6.3 批 3：桥 streamable_http + 商户接入机制（2026-08-11）
+
+**交付面**：
+- conventions §9.9 先行改写：transport 解封（仅官方商户远程端点）、远程版本锁定
+  =version 留空+schema_sha 工具级、compensate_policy 两态、支付链接闭环行、
+  「HTTP/SSE 不做」从不做清单移出并留痕。
+- `mcp_client.py`：+`HttpMcpClient`（与 Stdio 鸭子同形；POST JSON-RPC + SSE 分帧
+  + Mcp-Session-Id 存续 + **404 重新握手重试一次**；`parse_tool_result` 抽公共）。
+  **与 stdio 的关键语义差**：HTTP 无子进程持久状态——alive 恒 True、healthy 握手
+  成功后保持，单次网络失败按次抛错下次自愈，不像 stdio「崩了整批死到重启」。
+  安全：异常文本只带类型、日志永不打 headers（token 泄露面）。
+- `admission.py`：ServerSpec +transport/url/headers/pay_url_hosts/env_error；
+  ToolSpec +compensate_policy/pay_url_locator；`${VAR}` 展开**缺 env=具名拒载**
+  （不静默空 token 出站吃 401）；admit +compensate_tool **存在性校验**（批 3 补死
+  demo-coffee「声明存在≠能用」在准入器里的残留）+ abandon_unpaid 强制 confirm_prompt。
+- `agent.py`：bootstrap 客户端工厂分派 + env_error 整台拒载；`_call_write` 成功
+  分支按 `pay_url_locator` 声明式提取（`_dig` 点路径，桥核心零领域词）→
+  `_register_merchant_payment`（白名单第一层拦截不出链接防钓鱼 / MERCHANT_HOSTED
+  登记 / **登记失败不阻断出卡** / demo 三重标注保持）。
+- 网关配套两处：store 允许 merchant_hosted 单 amount=0（商户可能不回金额——
+  登记 0 是「金额未知」的诚实表达不造数）；AuthorizeResponse +`qr_svg`
+  （merchant 登记即亮不走 Capture，SVG 就地回传）。
+- `servers.yaml`：mcdonalds/luckin 以**完整注释模板**入库（含五步激活 checklist）。
+  刻意不激活：工具真实名与 schema 要 token 到位后 tools/list 现场核实，而未验证
+  条目会被 5 处离线门禁当真实能力面消费——「清单里有而真机没验过」=虚假声明。
+  **demo-coffee 一字未动**（`mcp-bridge#0` 退役需专项安全回归）。
+- 配置面：.env.example +两 token 段（申请入口/有效期/缺席语义）；compose
+  mcp-bridge +token env+HTTP(S)_PROXY/NO_PROXY+depends http-proxy；egress
+  +mcp.mcd.cn+open.lkcoffee.com。
+- HMI +`mcp_order`/`mcp_result` 卡（存量欠账清偿——「演示商户」三重冗余的第二重
+  第一次有了前端渲染出口）。
+- **修过期尺子** `test/e2e_mcp.py`：「cancel 不在能力面」断言在 shop.order_cancel
+  进白名单（2026-08-01）后恒红了 10 天没人发现（e2e_mcp 只在 milestone 车道跑）
+  ——改为四工具齐全断言 + admin 仍禁。
+- 测试三件 25 条：test_admission_http 8（解析/展开/缺 env/两态/存在性）、
+  test_http_client 8（json+SSE/会话头/404 重握手/**token 不泄露**/单次失败自愈）、
+  test_payurl_register 9（_dig/登记参数/白名单拦截/失败不阻断/demo 标注/金额未知）。
+
+**与方案的偏离（2 处）**：
+1. 瑞幸/麦当劳条目**注释模板而非激活条目**（理由见上；「配置即接入」的全部机制
+   已交付并被 25 条测试锁死，激活是 token 到位后的纯配置动作——checklist 在
+   yaml 注释里，零代码）。尺子侧（mcd/luckin 范例+对抗语料）随激活同批做，不为
+   未激活的能力面造语料。
+2. e2e_mcp 不扩 http 假商户：生产 servers.yaml 不该有测试 server；http 协议面由
+   MockTransport 单测全覆盖，真机验证留给 token。
+
+**验证读数**：桥测试 **60 passed**（新 25 + 存量 35 零破坏）；HMI **225/225** +
+build 通过；servers.yaml yaml 合法性验证（激活面仍仅 demo-coffee）；真栈重建
+mcp-bridge 后桥日志「准入 4 个工具」照旧、`run_e2e --lane milestone --id e2e_mcp`
+**PASS 12/12**（含修正后的四工具断言）。批 2+3 定稿工作区最终全量
+**4994 passed / 14 skipped / 0 failed**；L0 strict 2/2、能力完整性 PASS、
+smoke 13/13 全绿。
+
+**验证时序说明（诚实记录）**：批 2 的独立全量在批 3 开工后被判**混合快照作废**
+（pytest 启动后被改动的未加载文件会读到新代码），故批 2 凭分面证据（守卫 168 +
+网关/parking 测试 + e2e_payment 真栈 3/3）收口、最终全量以批 2+3 定稿工作区一次
+实测。同理两批共享文件多（proto/store/server/compose/HMI/design），合并为一个
+commit 分段描述——硬拆会造出单独 checkout 不可运行的半截历史。

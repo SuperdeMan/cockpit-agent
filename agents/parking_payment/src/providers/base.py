@@ -23,11 +23,7 @@ class ParkingProvider(ABC):
         """查询停车费用。返回 (金额分, 错误信息)。"""
         ...
 
-    @abstractmethod
-    async def pay(self, order_id: str, plate: str, amount_cents: int) -> tuple[bool, str]:
-        """支付停车费。返回 (ok, 凭证号或错误信息)。
-
-        TODO(F3 proto 批次): 切换到 payment-gateway（Authorize/Capture），Agent 不持支付凭证。
-        当前 AuthorizeResponse 未返回 confirm_token、Capture 不可达，待 proto 修复后接入。
-        """
-        ...
+    # 2026-08-11 批 2：`pay()` 已从本接口删除——支付不是停车数据源的职责。
+    # 缴费经 agents/_sdk/payment_client.py → payment-gateway（Authorize/Capture，
+    # §9.17），Agent 与 provider 均不持支付凭证、不产收据。残留一个 mock pay 接口
+    # 只会诱惑下一个实现者绕过网关。

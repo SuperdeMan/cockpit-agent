@@ -82,6 +82,11 @@ export type UiCard =
   | SceneListCard
   | IntentChoiceCard
   | VisionAnswerCard
+  | PaymentQrCard
+  | PaymentReceiptCard
+  | ParkingFeeCard
+  | McpOrderCard
+  | McpResultCard
 
 // M4 P4 看一看卡：单帧图片问答的结果。**simulated 恒为真**——PoC 没有车外摄像头，
 // 画面来自设备摄像头，卡片角标必须如实说（同 sim.adas / MCP 演示商户的诚实标注惯例）。
@@ -90,6 +95,67 @@ export type VisionAnswerCard = {
   answer: string
   question?: string
   simulated?: boolean
+}
+
+// 支付付款码卡（§9.17，2026-08-11 批 2）：qr_svg 是网关生成的 data URI（<img> 直渲，
+// 前端零 QR 依赖）；expires_at_ms 驱动本地倒计时，到期置灰。mock 渠道必带 _prov。
+export type PaymentQrCard = {
+  type: 'payment_qr'
+  payment_id: string
+  amount: string          // 展示金额（如 "15元"）——来源=网关订单快照
+  scene?: string
+  qr_content: string
+  qr_svg?: string         // data:image/svg+xml;base64,…；空则回落显示 pay_url 文本
+  pay_url?: string
+  expires_at_ms?: number
+  merchant_note?: string  // merchant_hosted：「订单状态以商家为准」类说明
+  _prov?: Provenance
+}
+
+// 支付回执卡：worker 确认收款后经统一主动引擎推送（§9.8 user_contract 档）；
+// parking 历史上也直接发过——此前 HMI 一直渲染 null（存量欠账，批 2 清偿）。
+export type PaymentReceiptCard = {
+  type: 'payment_receipt'
+  receipt_id: string
+  order_id?: string
+  amount?: string
+  scene?: string
+  _prov?: Provenance
+}
+
+// 停车费查询卡（parking.query_fee 一直在发，HMI 渲染 null 的存量欠账，批 2 清偿）
+export type ParkingFeeCard = {
+  type: 'parking_fee'
+  order_id?: string
+  plate?: string
+  amount: string
+}
+
+// MCP 桥订单/结果卡（§9.9；桥从 M3 起就在发、HMI 一直渲染 null 的存量欠账，批 3 清偿）。
+// demo/demo_label 是「演示商户」三重冗余的第二重——此前它在前端根本没有渲染出口。
+export type McpOrderCard = {
+  type: 'mcp_order'
+  server?: string
+  tool?: string
+  order_id?: string
+  sku?: string
+  size?: string
+  amount_cents?: number
+  status?: string
+  duplicate?: boolean
+  demo?: boolean
+  demo_label?: string
+  _prov?: Provenance
+}
+
+export type McpResultCard = {
+  type: 'mcp_result'
+  server?: string
+  tool?: string
+  demo?: boolean
+  demo_label?: string
+  _prov?: Provenance
+  [key: string]: unknown
 }
 
 // R4.4 路由歧义澄清卡：一句提问 + 2~3 个消歧选项（点/说「第N个」→ 回发 send_text 作新指令）

@@ -488,6 +488,20 @@ cases:
     persistent_data: true
     memory_sessions: 0
 
+  # 支付真栈闭环（§9.17 批 2）：确认亮码 → mock 渠道自动支付 → 幂等防双付。
+  # milestone 车道（「交停车费」落域依赖真 LLM planner；mock 栈会落 chitchat）。
+  - id: e2e_payment
+    path: test/e2e_payment.py
+    command: [python, test/e2e_payment.py]
+    group: default
+    lanes: [milestone]
+    timeout_s: 300
+    profile: root
+    skip_reasons: [forbid]
+    signed_identity: true
+    persistent_data: true
+    memory_sessions: 0
+
   - id: e2e_planner_toolcall
     path: test/e2e_planner_toolcall.py
     command: [python, test/e2e_planner_toolcall.py]

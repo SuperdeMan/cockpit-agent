@@ -198,9 +198,15 @@ def test_capture_lights_qr(servicer):
         FakeContext()))
     assert resp.ok and resp.qr_content == f"mockpay://{auth.payment_id}"
     assert resp.expires_at_ms > time.time() * 1000
+    assert resp.qr_svg.startswith("data:image/svg+xml;base64,")   # HMI 零依赖直渲
     order = _do(servicer.store.get(auth.payment_id))
     assert order.status == "pending_pay"
     assert order.confirm_token == ""          # 单次有效
+
+
+def test_authorize_returns_snapshot_amount(servicer):
+    resp = _do(servicer.Authorize(_authorize_req(), FakeContext()))
+    assert resp.amount_cents == 1500          # 幂等重取方（第二趟）的金额来源
 
 
 def test_capture_wrong_token_rejected(servicer):

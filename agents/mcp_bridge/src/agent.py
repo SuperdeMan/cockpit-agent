@@ -20,6 +20,7 @@ import os
 
 from agents._sdk import AgentResult, BaseAgent, NEED_CONFIRM, NEED_SLOT
 from agents._sdk.ledger import DONE, FAILED as LEDGER_FAILED, Duplicate, idem_key
+from agents._sdk.payment_client import PaymentClient
 from agents._sdk.provenance import attach
 from cockpit.agent.v1 import agent_pb2
 
@@ -63,12 +64,15 @@ class _Binding:
 
 
 class McpBridgeAgent(BaseAgent):
-    def __init__(self, servers_path: str = _SERVERS):
+    def __init__(self, servers_path: str = _SERVERS,
+                 payment: PaymentClient | None = None):
         super().__init__(_MANIFEST)
         self._servers_path = servers_path
         self._bindings: dict[str, _Binding] = {}
-        self._clients: list[StdioMcpClient] = []
+        self._clients: list = []
         self.rejections: list[str] = []
+        # 涉钱走 payment-gateway（§9.9/§9.17）：桥只发登记意图，不持支付凭证
+        self._payment = payment or PaymentClient()
 
     # ── 启动期准入 ────────────────────────────────────────────────────
     async def bootstrap(self) -> None:
@@ -78,8 +82,13 @@ class McpBridgeAgent(BaseAgent):
         版本对不上，只让它自己的工具缺席，桥照常服务其余——但**绝不静默降级成假数据**。
         """
         for spec in load_servers(self._servers_path):
-            client = StdioMcpClient(spec.id, spec.command,
-                                    timeout_s=spec.startup_timeout_ms / 1000.0)
+            if spec.env_error:
+                # 缺 env（如商户 token 未配）→ 该 server 整台诚实缺席，
+                # 不静默拿空 token 出站吃 401（§9.9 transport 行）
+                self.rejections.append(f"{spec.id}: {spec.env_error}")
+                logger.warning("[mcp:%s] **拒载**：%s", spec.id, spec.env_error)
+                continue
+            client = self._make_client(spec)
             try:
                 await client.start()
                 await client.initialize()
@@ -111,6 +120,16 @@ class McpBridgeAgent(BaseAgent):
             logger.info("[mcp:%s] 准入 %d 个工具：%s", spec.id, len(admitted),
                         [t.intent for t, _ in admitted])
         self._sync_capabilities()
+
+    @staticmethod
+    def _make_client(spec):
+        """按 transport 分派客户端（§9.9 批 3）。两种客户端鸭子同形，其余零改。"""
+        if spec.transport == "streamable_http":
+            from .mcp_client import HttpMcpClient
+            return HttpMcpClient(spec.id, spec.url, spec.headers,
+                                 timeout_s=spec.startup_timeout_ms / 1000.0)
+        return StdioMcpClient(spec.id, spec.command,
+                              timeout_s=spec.startup_timeout_ms / 1000.0)
 
     def _sync_capabilities(self) -> None:
         """把准入的工具写进 manifest.capabilities——注册中心看到的就是这份。"""
@@ -394,8 +413,93 @@ class McpBridgeAgent(BaseAgent):
                       + str(order.get("order_id", "")) + "。")
         else:
             speech = self._demo_prefix(b) + (res["text"] or "下单成功。")
+        # 支付链接闭环（§9.9 批 3）：工具声明了 pay_url_locator 且响应里真有链接
+        # → 经 payment-gateway 登记 merchant_hosted 会话并出付款码卡
+        if b.tool.pay_url_locator:
+            pay_card = await self._register_merchant_payment(
+                b, ctx, intent, order)
+            if pay_card is not None:
+                speech += "请扫码完成支付，订单状态以商家为准。"
+                return AgentResult(speech=speech, ui_card=pay_card, data=order)
         return AgentResult(speech=speech,
                            ui_card=self._card(b, "mcp_order", order), data=order)
+
+    @staticmethod
+    def _dig(data: dict, dotted_path: str) -> str:
+        """按点路径取值（"payH5Url" / "order.payUrl"）——声明式提取，桥零领域词。"""
+        cur = data
+        for part in (dotted_path or "").split("."):
+            if not isinstance(cur, dict):
+                return ""
+            cur = cur.get(part)
+        return cur if isinstance(cur, str) else ""
+
+    async def _register_merchant_payment(self, b, ctx, intent,
+                                         order: dict) -> dict | None:
+        """商户支付链接 → 网关登记（审计+展示+过期收口）→ payment_qr 卡。
+
+        - 域名白名单第一层在此（`pay_url_hosts`）：不合白名单**不出链接**（防被
+          篡改的响应诱导扫码钓鱼），只提示到商家应用支付；网关 `PAYMENT_EXTERNAL_
+          PAY_HOSTS` 是第二层。
+        - **登记失败不阻断出卡**：下单是既成事实，缺的是登记不是能力——打 warning
+          照出卡带 pay_url（qr_svg 空由 HMI 回落成链接文本）。
+        """
+        pay_url = self._dig(order, b.tool.pay_url_locator)
+        if not pay_url:
+            return None
+        host = ""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(pay_url)
+            host = (parsed.hostname or "").lower()
+            scheme_ok = parsed.scheme == "https"
+        except ValueError:
+            scheme_ok = False
+        if not scheme_ok or (b.server.pay_url_hosts and
+                             host not in b.server.pay_url_hosts):
+            logger.warning("[mcp:%s] 支付链接域名不在白名单，拒出码：host=%s",
+                           b.server.id, host)
+            return None
+        card = {
+            "type": "payment_qr",
+            "amount": (f"{order['amount_cents'] // 100}."
+                       f"{order['amount_cents'] % 100:02d}元"
+                       if order.get("amount_cents") else ""),
+            "scene": intent.name,
+            "qr_content": pay_url,
+            "pay_url": pay_url,
+            "merchant_note": "订单状态以商家为准",
+        }
+        try:
+            resp = await self._payment.authorize(
+                agent_id=self.manifest.agent_id,
+                user_id=str(getattr(ctx, "user_id", "") or ""),
+                vehicle_id=str(getattr(ctx, "vehicle_id", "") or ""),
+                scene=intent.name,
+                amount_cents=int(order.get("amount_cents") or 0),
+                description=f"{b.server.id} 订单",
+                idempotency_key=idem_key(
+                    str(getattr(ctx, "user_id", "") or ""), "mcp_pay",
+                    str(order.get("order_id") or pay_url)),
+                channel=3,   # MERCHANT_HOSTED
+                external_pay_url=pay_url,
+                external_order_ref=str(order.get("order_id") or ""))
+        except Exception as e:      # 登记通道的任何意外都不阻断出卡
+            resp = None
+            logger.warning("[mcp:%s] 支付登记异常（照出卡）：%s", b.server.id, e)
+        if resp is not None:
+            card["payment_id"] = resp.payment_id
+            if getattr(resp, "qr_svg", ""):
+                card["qr_svg"] = resp.qr_svg
+        else:
+            logger.warning("[mcp:%s] 支付登记未完成（网关不可用？）——卡片带原始链接",
+                           b.server.id)
+        if b.server.demo:
+            card["demo"] = True
+            card["demo_label"] = "演示商户"
+            return attach(card, source=b.server.id, mode="mock",
+                          note="演示商户，不产生真实交易")
+        return attach(card, source=b.server.id)
 
     # ── 话术与卡片 ────────────────────────────────────────────────────
     @staticmethod

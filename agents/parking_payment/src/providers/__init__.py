@@ -1,8 +1,9 @@
 """停车场 Provider 工厂。
 
 治理 P0：PARKING_VENDOR 显式指到未接入的实现时 fail-fast 说清楚，不再静默落回
-mock。支付域 PoC 阶段「设计即模拟」（payment-gateway 同契约）——默认 mock 是产品
-事实而非数据造假，严格栈豁免见设计文档 §4 D2。
+mock。本域豁免的理由是**停车数据源（ETCP）未接真**——支付自 2026-08-11 起是
+独立决议域（payment-gateway，§9.17），不再与本域捆绑；provider 接口也不再含
+pay()（支付经 agents/_sdk/payment_client.py 走网关）。
 """
 import os
 

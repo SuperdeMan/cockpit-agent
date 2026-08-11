@@ -6,3 +6,5 @@ nats-py>=2.6.0
 # 支付渠道直连（支付宝当面付 / 微信 v3 Native，§9.17）：出站 HTTP + RSA 签名验签
 httpx>=0.27.0
 cryptography>=42.0.0
+# 付款码 SVG 生成（纯 python 无 pillow；HMI 零依赖 <img> 直渲 data URI）
+qrcode>=7.4

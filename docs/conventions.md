@@ -725,7 +725,10 @@ cutover、真栈故障注入矩阵、位置提醒的「是否还在围栏内」�
 |---|---|
 | 唯一准入依据 | `servers.yaml`。改这个文件 + 人工审才能接新工具；**不改 Agent 代码、不改编排核心** |
 | 三重锁定 | ① `version` 与 server 自报 `serverInfo.version` **逐字相等**，否则拒载；② tool 白名单（server 多提供的直接忽略，清单里有而 server 没有 → 记拒绝理由）；③ `schema_sha` 指纹（`inputSchema` 排序后 sha256 前 12 位，变了就拒载重审；留空=首次接入只记录） |
-| 写操作强制项 | `write: true` 必须同时有 `require_confirm: true`、`idempotency_key_arg`、`compensate_tool`——**没有补偿路径的写操作 admission 直接拒载**（§4.F 生命周期五项） |
+| **transport**（2026-08-11 批 3 解封） | `stdio`（默认，本地子进程）\| `streamable_http`（**仅官方商户远程端点**——瑞幸/麦当劳这类平台方托管 MCP；接入仍全量人工准入，解封的只是传输形态不是准入姿态）。http 形态字段：`url` + `headers`（值支持 `${ENV_VAR}` 展开，**token 不进 yaml**——yaml 入库；**缺 env 变量 → 该 server 整台拒载**，不静默拿空 token 出站吃 401）。原「HTTP/SSE 不做」裁决的前提是「首批演示商户用不上」，官方商户 MCP（Streamable HTTP）出现后前提失效——先改本表再改实践 |
+| **远程 server 版本锁定** | `version` **留空**（不校验）+ `schema_sha` 逐工具锁死：远程托管平台的版本随平台升级，逐字锁版本＝常态拒载；接口变更的重审闸由工具级 schema 指纹承担（变了→该工具拒载告警、能力诚实缺席，不误执行）。这是清单填法决策，`check_version` 对空 version 本就跳过 |
+| 写操作强制项 | `write: true` 必须同时有 `require_confirm: true`、`idempotency_key_arg`、**补偿声明**——`compensate_policy: tool`（默认）时必须给 `compensate_tool` **且校验其 ∈ 本 server 白名单工具**（只查非空不查存在性是 demo-coffee「声明存在≠能用」教训在准入器里的残留，批 3 补死）；`compensate_policy: abandon_unpaid`（批 3 新增）用于「创建**未支付**订单、扫码才付钱」的商户流——写操作本身不产生钱的义务，天然补偿=不支付+商户侧自动过期，此时强制 `confirm_prompt` 说明「下单后需扫码支付，不支付将自动取消」。**这是补偿形态的诚实化不是放宽**：硬套 compensate_tool 只会逼出造假声明 |
+| **支付链接闭环**（批 3） | 商户下单响应带支付链接（如 payH5Url）时，工具声明 `pay_url_locator`（点路径如 `payH5Url`，从 `structuredContent` 提取——**声明式，桥核心零领域词**）+ per-server `pay_url_hosts` 域名白名单（第一层；网关 `PAYMENT_EXTERNAL_PAY_HOSTS` 是第二层，两层各自持有防单点绕过）。提取成功 → 经 `agents/_sdk/payment_client.py` 调 `Authorize(MERCHANT_HOSTED)` 登记会话（审计+展示+过期收口，§9.17）→ 出 `payment_qr` 卡；**登记失败不阻断出卡**（下单是既成事实，缺的是登记不是能力），打 warning 照出卡带 pay_url。**商户会话 token（进桥容器 env）≠ 支付渠道凭证（只进 payment-gateway）**——两类凭证互不越界 |
 | 幂等键 | = **请求指纹** `idem_key(user_id, kind, 归一化 goal)`，与账本 `idempotency_key` 列同源。**不得用 task_id**（每次调用都新 = 等于没有幂等，重说一遍就双扣） |
 | 订单状态机 | 复用 `task_ledger`（kind=`mcp_order`），**不新建表**——它是 M2 Ledger 的第二个载体 |
 | 超时口径 | 调用超时 **≠ 没下单**：诚实说「不确定」并提醒别急着重复下单，账目落 `failed` 且 `result_ref.outcome=uncertain`（状态机无 uncertain 终态，查询入口按 result_ref 回答，不得照 failed 说「上次失败了」）。非超时异常=确定没发出去，按失败说，不装不确定。**话术与能力的顺序**：2026-07-26 验收发现它承诺「说『查一下我的订单』我帮你核对」而查询能力根本没接入，于是先改成不承诺；M-D 接入 `order.get` 后才把承诺加回来——**先有能力再有话术**，反过来就是把不确定包装成「有办法查清楚」 |
@@ -735,7 +738,7 @@ cutover、真栈故障注入矩阵、位置提醒的「是否还在围栏内」�
 | 故障隔离 | 一台 server 起不来/版本不符 → **只让它自己的工具缺席**，桥照常服务其余；绝不静默降级成假数据 |
 | **查单**（M-D） | `order.get` 按**订单号或幂等键**查。幂等键那条是关键的一半：**下单超时那一单根本没有订单号**（响应没回来），但幂等键是我们自己生成的、商户按它索引——「到底下没下成」由此第一次可以核对。用户不带订单号时从 Task Ledger 取最近一单的引用；owner 由已验证 Context 派生，**不是 planner 槽位**（让 LLM 能指定查谁的订单＝把越权做成可填字段） |
 | **取消与补偿**（M-D） | `order.cancel` 从一开始就在商户侧存在、也被 `order.create` 声明为 `compensate_tool`，但**从没进过准入清单**——补偿因此只在准入期被校验存在性，运行期零调用、用户零入口。放进清单它才是能力：**声明存在 ≠ 能用**。取消仍是写操作走确认闸；**不做未经用户确认的自动补偿**。回填订单号时**只认确定完成那一单**——`outcome=uncertain` 那单连订单号都没有，拿它去取消等于对着一个不知道存不存在的单执行写操作 |
-| 不做 | resources/prompts/sampling、HTTP/SSE transport、动态放行注册（子 RFC §7）；**未经确认的自动补偿**；`mcp_operation` 独立业务状态表（M-D 裁决：商户是状态的真相源，本地镜像是第二真相源） |
+| 不做 | resources/prompts/sampling、动态放行注册（子 RFC §7）；**未经确认的自动补偿**；`mcp_operation` 独立业务状态表（M-D 裁决：商户是状态的真相源，本地镜像是第二真相源）；商户 token 自动刷新（过期=运维事件，能力诚实缺席，.env 续期）。～~HTTP/SSE transport~～ 已于 2026-08-11 批 3 按上方 transport 行解封（限官方商户远程端点） |
 
 **Task Ledger 原子幂等（M-D）**：`open()` 此前是「先 SELECT 再 INSERT」，两个实例可以
 同时查不到、同时插入——**同一个幂等请求两个实例都拿到执行权**，对写操作就是双下单。

@@ -44,6 +44,10 @@ message AuthorizeResponse {
   string confirm_token = 4;    // F23：客户端确认后带此 token 调 Capture
   GetStatusResponse.Status status = 5;  // MERCHANT_HOSTED 直接落 PENDING_PAY；幂等命中回真实态
   string provider_mode = 6;    // "real" | "mock"（ui_card._prov 依据，§9.3）
+  int64 amount_cents = 7;      // 订单快照金额——幂等重取方（第二趟）没有金额可显示
+  // MERCHANT_HOSTED 专用：登记即亮（不走 Capture），支付链接的二维码 SVG 在此回传。
+  // 普通单恒空（二维码在 Capture 响应里）。
+  string qr_svg = 8;
 }
 
 message CaptureRequest {
@@ -60,6 +64,10 @@ message CaptureResponse {
   int64 expires_at_ms = 6;     // 二维码/会话过期时刻（epoch ms，HMI 本地倒计时）
   string trade_no = 7;         // 渠道订单号（precreate 阶段多为空，查单后回填）
   string provider_mode = 8;    // "real" | "mock"
+  // 二维码 SVG data URI（网关侧生成，HMI 零依赖 <img> 直渲；生成失败为空，
+  // HMI 回落显示 pay_url 文本）。QR 渲染放网关而非前端：不给 HMI 构建链加
+  // npm 依赖，且付款码属支付凭证展示面、与渠道逻辑同域。
+  string qr_svg = 9;
 }
 
 message CancelRequest {

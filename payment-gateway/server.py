@@ -83,6 +83,27 @@ def _host_allowed(url: str) -> bool:
     return bool(host) and host in _external_pay_hosts()
 
 
+def _qr_svg_data_uri(content: str) -> str:
+    """付款码 SVG data URI（HMI 零依赖直渲）。生成失败诚实回空，HMI 落 pay_url 文本。"""
+    if not content:
+        return ""
+    try:
+        import base64
+        import io
+
+        import qrcode
+        import qrcode.image.svg
+        img = qrcode.make(content, image_factory=qrcode.image.svg.SvgPathImage,
+                          box_size=10, border=2)
+        buf = io.BytesIO()
+        img.save(buf)
+        return "data:image/svg+xml;base64," + \
+            base64.b64encode(buf.getvalue()).decode()
+    except Exception as e:
+        logger.warning("付款码 SVG 生成失败（回落纯文本）：%s", e)
+        return ""
+
+
 class PaymentGatewayServicer(
         payment_pb2_grpc.PaymentGatewayServicer if payment_pb2_grpc else object):
 
@@ -216,6 +237,9 @@ class PaymentGatewayServicer(
             confirm_token=order.confirm_token,
             status=_STATUS_MAP.get(order.status, 0),
             provider_mode=order.provider_mode,
+            amount_cents=order.amount_cents,
+            # merchant_hosted 登记即亮（不走 Capture），二维码 SVG 就地回传
+            qr_svg=_qr_svg_data_uri(order.qr_content) if is_merchant else "",
         )
 
     async def Capture(self, request, context):
@@ -230,7 +254,8 @@ class PaymentGatewayServicer(
                 ok=True, receipt_id=order.payment_id,
                 qr_content=order.qr_content, pay_url=order.pay_url,
                 expires_at_ms=int(order.expires_at * 1000),
-                trade_no=order.trade_no, provider_mode=order.provider_mode)
+                trade_no=order.trade_no, provider_mode=order.provider_mode,
+                qr_svg=_qr_svg_data_uri(order.qr_content))
 
         provider = self.providers.get(order.provider_key)
         if provider is None:
@@ -260,7 +285,8 @@ class PaymentGatewayServicer(
             ok=True, receipt_id=order.payment_id,
             qr_content=order.qr_content, pay_url=order.pay_url,
             expires_at_ms=int(expires * 1000),
-            provider_mode=order.provider_mode)
+            provider_mode=order.provider_mode,
+            qr_svg=_qr_svg_data_uri(order.qr_content))
 
     async def Cancel(self, request, context):
         order = await self.store.get(request.payment_id)

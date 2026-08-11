@@ -1,6 +1,6 @@
 // 信息类 UI 卡片组件：天气 / 股票 / 新闻 / 搜索 / POI。
 // 视觉照 Figma Make A-3~A-5（inline 样式 + --au-* token，证据范式：卡只给来源/要点，不复读气泡结论）。
-import { useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import type {
   UiCard, WeatherCard, ForecastCard, StockCard,
   NewsCard, SearchCard, SearchAnswerCard, NewsDigestCard,
@@ -129,6 +129,11 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
     case 'scene_list': return <SceneListCardView card={card} onAction={onAction} />
     case 'intent_choice': return <IntentChoiceCardView card={card} onAction={onAction} />
     case 'vision_answer': return <VisionAnswerCardView card={card} />
+    case 'payment_qr': return <PaymentQrCardView card={card} />
+    case 'payment_receipt': return <PaymentReceiptCardView card={card} />
+    case 'parking_fee': return <ParkingFeeCardView card={card} />
+    case 'mcp_order': return <McpOrderCardView card={card} />
+    case 'mcp_result': return <McpOrderCardView card={card} />
     default: return null
   }
 }
@@ -1493,6 +1498,132 @@ function VisionAnswerCardView({ card }: { card: any }) {
         )}
       </div>
       <div style={{ fontSize: 14, lineHeight: 1.6, color: 'var(--au-text)' }}>{card.answer}</div>
+    </div>
+  )
+}
+
+// ─── 支付卡族（§9.17，2026-08-11 批 2）───
+
+// 付款码卡：qr_svg 是网关生成的 data URI（前端零 QR 依赖）；本地倒计时到
+// expires_at_ms 置灰——**不轮询网关**（HMI 与网关无通道），支付成功的回执由
+// 统一主动引擎推 payment_receipt 卡。mock 渠道的 _prov 角标由 ProvBadge 渲染。
+function PaymentQrCardView({ card }: { card: any }) {
+  const [now, setNow] = useState(() => Date.now())
+  const expiresAt = Number(card.expires_at_ms || 0)
+  const expired = expiresAt > 0 && now >= expiresAt
+  useEffect(() => {
+    if (!expiresAt || expired) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [expiresAt, expired])
+  const remain = expiresAt > 0 ? Math.max(0, Math.floor((expiresAt - now) / 1000)) : 0
+  const mm = String(Math.floor(remain / 60)).padStart(2, '0')
+  const ss = String(remain % 60).padStart(2, '0')
+  return (
+    <div className="au-card" style={{ padding: '14px 16px', maxWidth: 320 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--au-text)' }}>扫码支付</span>
+        <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--au-text)' }}>{card.amount}</span>
+        <span style={{ flex: 1 }} />
+        <ProvBadge prov={card._prov} />
+      </div>
+      <div style={{
+        display: 'flex', justifyContent: 'center', padding: 10, borderRadius: 12,
+        background: '#fff', opacity: expired ? 0.35 : 1, position: 'relative',
+      }}>
+        {card.qr_svg ? (
+          <img src={card.qr_svg} alt="付款码" style={{ width: 180, height: 180, display: 'block' }} />
+        ) : (
+          <div style={{ fontSize: 12, color: '#333', wordBreak: 'break-all', padding: 8 }}>
+            {card.pay_url || card.qr_content}
+          </div>
+        )}
+        {expired && (
+          <span style={{
+            position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+            fontSize: 13, fontWeight: 700, color: '#7a3b06',
+            background: 'rgba(245,158,11,0.92)', padding: '4px 12px', borderRadius: 8,
+          }}>已过期</span>
+        )}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 12, color: 'var(--au-text-3)', textAlign: 'center' }}>
+        {expired ? '付款码已过期，请重新发起' :
+          expiresAt > 0 ? `请用手机扫码 · ${mm}:${ss} 后过期` : '请用手机扫码完成支付'}
+      </div>
+      {card.merchant_note && (
+        <div style={{ marginTop: 4, fontSize: 11, color: 'var(--au-text-3)', textAlign: 'center' }}>
+          {card.merchant_note}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// 支付回执卡：worker 确认收款后经主动引擎推送；parking 直发的历史通道同渲。
+function PaymentReceiptCardView({ card }: { card: any }) {
+  return (
+    <div className="au-card" style={{ padding: '12px 14px', maxWidth: 320 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span aria-hidden style={{
+          width: 18, height: 18, borderRadius: 999, background: 'rgba(52,211,153,0.18)',
+          color: '#34d399', fontSize: 12, fontWeight: 800, display: 'inline-flex',
+          alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+        }}>✓</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--au-text)' }}>支付成功</span>
+        {card.amount && <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--au-text)' }}>{card.amount}</span>}
+        <span style={{ flex: 1 }} />
+        <ProvBadge prov={card._prov} />
+      </div>
+      <div style={{ marginTop: 6, fontSize: 11, color: 'var(--au-text-3)' }}>
+        凭证号 {card.receipt_id}{card.order_id ? ` · 订单 ${card.order_id}` : ''}
+      </div>
+    </div>
+  )
+}
+
+// MCP 桥订单/结果卡（§9.9 批 3 清偿的存量欠账）：demo_label 角标在此第一次有了
+// 渲染出口——「演示商户」三重冗余的第二重此前只在后端数据里成立。
+function McpOrderCardView({ card }: { card: any }) {
+  const amount = typeof card.amount_cents === 'number' && card.amount_cents > 0
+    ? `${Math.floor(card.amount_cents / 100)}.${String(card.amount_cents % 100).padStart(2, '0')}元`
+    : ''
+  return (
+    <div className="au-card" style={{ padding: '12px 14px', maxWidth: 320 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--au-text)' }}>
+          {card.type === 'mcp_order' ? '商户订单' : '商户服务'}
+        </span>
+        {amount && <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--au-text)' }}>{amount}</span>}
+        {card.demo && (
+          <span style={{
+            fontSize: 10, padding: '1px 6px', borderRadius: 6,
+            background: 'rgba(245,158,11,0.16)', color: 'var(--au-warn)', fontWeight: 700,
+          }}>{card.demo_label || '演示商户'}</span>
+        )}
+        <span style={{ flex: 1 }} />
+        <ProvBadge prov={card._prov} />
+      </div>
+      <div style={{ marginTop: 6, fontSize: 11, color: 'var(--au-text-3)' }}>
+        {card.order_id ? `订单 ${card.order_id}` : (card.server || '')}
+        {card.sku ? ` · ${card.sku}${card.size ? `(${card.size})` : ''}` : ''}
+        {card.status ? ` · ${card.status}` : ''}
+        {card.duplicate ? ' · 已存在的订单（幂等命中）' : ''}
+      </div>
+    </div>
+  )
+}
+
+// 停车费查询卡（只读，一分钱不动）
+function ParkingFeeCardView({ card }: { card: any }) {
+  return (
+    <div className="au-card" style={{ padding: '12px 14px', maxWidth: 320 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ fontSize: 13, color: 'var(--au-text-2)' }}>当前停车费</span>
+        <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--au-text)' }}>{card.amount}</span>
+      </div>
+      {card.plate && (
+        <div style={{ marginTop: 4, fontSize: 11, color: 'var(--au-text-3)' }}>车牌 {card.plate}</div>
+      )}
     </div>
   )
 }

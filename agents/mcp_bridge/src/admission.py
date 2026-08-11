@@ -11,6 +11,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import re
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("agent.mcp_bridge.admission")
@@ -19,6 +21,11 @@ REJECT_VERSION = "version_mismatch"
 REJECT_SCHEMA = "schema_mismatch"
 REJECT_NOT_ALLOWED = "not_in_allowlist"
 REJECT_MISSING = "tool_missing_on_server"
+REJECT_ENV = "env_var_missing"
+REJECT_COMPENSATE = "compensate_invalid"
+
+_ENV_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
+COMPENSATE_POLICIES = ("tool", "abandon_unpaid")
 
 
 @dataclass
@@ -33,7 +40,14 @@ class ToolSpec:
     schema_sha: str = ""         # 声明的 inputSchema 指纹（空=首次接入，不校验只记录）
     timeout_ms: int = 15000
     idempotency_key_arg: str = ""
-    compensate_tool: str = ""   # 补偿工具（退款/取消）；写操作没有它就不许标 write
+    compensate_tool: str = ""   # 补偿工具（退款/取消）；policy=tool 时必填且须在白名单
+    # 补偿形态（§9.9 批 3）：`tool`（默认，下单即扣款型——补偿=退款/取消工具）|
+    # `abandon_unpaid`（创建**未支付**订单、扫码才付钱型——天然补偿=不支付+商户
+    # 自动过期，此时 confirm_prompt 必须说明「不支付将自动取消」）。诚实化不是放宽。
+    compensate_policy: str = "tool"
+    # 商户下单响应里支付链接的点路径（如 "payH5Url" / "order.payUrl"），从
+    # structuredContent 提取——声明式，桥核心零领域词（§9.9 支付链接闭环）。
+    pay_url_locator: str = ""
     # 二次确认时给用户看的那句话（`{args}` 占位）。**用户正要点头同意的就是这句**，
     # 说错动作比说得笨拙严重得多——真栈实测抓到取消订单被问成「准备下单：DC…」。
     # 放在声明里而不是桥核心：动词是领域语义，桥不该认识「下单」和「取消」。
@@ -53,6 +67,12 @@ class ServerSpec:
     demo: bool = False
     trust: str = "third_party"
     startup_timeout_ms: int = 20000
+    # 批 3（§9.9 transport 行）：stdio（默认）| streamable_http（仅官方商户远程端点）
+    transport: str = "stdio"
+    url: str = ""
+    headers: dict = field(default_factory=dict)   # 值支持 ${ENV_VAR}，token 不进 yaml
+    pay_url_hosts: list = field(default_factory=list)  # 支付链接域名白名单（第一层）
+    env_error: str = ""          # ${VAR} 展开失败的具名原因——bootstrap 据此整台拒载
 
 
 def schema_fingerprint(schema) -> str:
@@ -63,6 +83,21 @@ def schema_fingerprint(schema) -> str:
         ).hexdigest()[:12]
     except (TypeError, ValueError):
         return ""
+
+
+def _expand_env(value: str) -> tuple[str, str]:
+    """`${VAR}` 展开。返回 (展开值, 缺失变量名)——缺 env 是**具名拒载理由**，
+    不静默留空 token 出站吃 401（§9.9 transport 行）。"""
+    missing = ""
+
+    def _sub(m: re.Match) -> str:
+        nonlocal missing
+        v = os.getenv(m.group(1), "")
+        if not v:
+            missing = m.group(1)
+        return v
+
+    return _ENV_REF.sub(_sub, value or ""), missing
 
 
 def load_servers(path: str) -> list:
@@ -81,13 +116,27 @@ def load_servers(path: str) -> list:
             timeout_ms=int(t.get("timeout_ms", 15000) or 15000),
             idempotency_key_arg=str(t.get("idempotency_key_arg", "") or ""),
             compensate_tool=str(t.get("compensate_tool", "") or ""),
+            compensate_policy=str(t.get("compensate_policy", "tool") or "tool"),
+            pay_url_locator=str(t.get("pay_url_locator", "") or ""),
             arg_map={str(k): str(v) for k, v in (t.get("arg_map") or {}).items()},
         ) for t in (s.get("tools") or [])]
+        headers: dict[str, str] = {}
+        env_error = ""
+        for k, v in (s.get("headers") or {}).items():
+            expanded, missing = _expand_env(str(v))
+            if missing:
+                env_error = f"{REJECT_ENV}: headers.{k} 引用的 ${{{missing}}} 未配置"
+            headers[str(k)] = expanded
         out.append(ServerSpec(
             id=s["id"], command=list(s.get("command") or []),
             version=str(s.get("version", "")), tools=tools,
             demo=bool(s.get("demo", False)), trust=s.get("trust", "third_party"),
-            startup_timeout_ms=int(s.get("startup_timeout_ms", 20000) or 20000)))
+            startup_timeout_ms=int(s.get("startup_timeout_ms", 20000) or 20000),
+            transport=str(s.get("transport", "stdio") or "stdio"),
+            url=str(s.get("url", "") or ""),
+            headers=headers,
+            pay_url_hosts=[str(h).lower() for h in (s.get("pay_url_hosts") or [])],
+            env_error=env_error))
     return out
 
 
@@ -109,6 +158,7 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
       没有补偿路径的写操作不许接）。
     """
     offered = {t.get("name"): t for t in offered_tools if isinstance(t, dict)}
+    declared_names = {t.name for t in spec.tools}
     admitted, rejected = [], []
     for t in spec.tools:
         found = offered.get(t.name)
@@ -120,9 +170,29 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
             rejected.append(f"{t.name}: {REJECT_SCHEMA}（声明 {t.schema_sha} ≠ "
                             f"实际 {actual_sha}）")
             continue
-        if t.write and not t.compensate_tool:
-            rejected.append(f"{t.name}: 写操作未声明 compensate_tool（缺补偿路径不许接）")
-            continue
+        if t.write:
+            if t.compensate_policy not in COMPENSATE_POLICIES:
+                rejected.append(f"{t.name}: {REJECT_COMPENSATE}"
+                                f"（未知 compensate_policy={t.compensate_policy!r}）")
+                continue
+            if t.compensate_policy == "tool":
+                if not t.compensate_tool:
+                    rejected.append(f"{t.name}: 写操作未声明 compensate_tool"
+                                    f"（缺补偿路径不许接）")
+                    continue
+                # 存在性校验（批 3 补死）：声明了却不在本 server 白名单 =
+                # 「声明存在 ≠ 能用」的 demo-coffee 教训在准入器里的残留
+                if t.compensate_tool not in declared_names:
+                    rejected.append(
+                        f"{t.name}: {REJECT_COMPENSATE}（compensate_tool="
+                        f"{t.compensate_tool!r} 不在本 server 准入白名单）")
+                    continue
+            else:      # abandon_unpaid：未支付订单，补偿=不支付+商户过期
+                if not t.confirm_prompt:
+                    rejected.append(
+                        f"{t.name}: {REJECT_COMPENSATE}（abandon_unpaid 必须给 "
+                        f"confirm_prompt 且说明「不支付将自动取消」）")
+                    continue
         admitted.append((t, found))
     extra = sorted(set(offered) - {t.name for t in spec.tools})
     if extra:
