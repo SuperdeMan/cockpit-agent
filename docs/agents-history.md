@@ -2039,3 +2039,49 @@ B5/B6 结构上不可能造成它：那个拆分决定发生在云端被调用�
 - **沙箱定档**：泓舟扫码成功（真码可识别）但沙箱钱包内支付失败=支付宝沙箱当日服务级故障（查单同时段 48+ 连续 20000）；precreate 真码/query 语义/close/GBK 验签修均真栈验证，PAID+退款段待恢复重跑探针（已带浏览器自动弹大码——qr.alipay.com 链接会重定向不展示码、终端 ASCII 会截断，实测教训）。
 
 **本批新判据**（详见记忆与 design §6）：pytest 跑着改文件=混合快照读数作废；幂等防双付不防重试；「机制通了」和「体验合理」隔着一次真栈端到端（落域全对数据全真，用户听到的仍可以是 API 文档朗读）；配置激活也要 tools/list 真机核实（报道 28 工具真机 29）；Windows GBK 宿主是本仓常驻放大器（当日同族三连：CLI 测试 env 敏感/能力门禁 ✓ 自崩/支付宝 GBK 验签）。
+
+## 29. 麦当劳 / 瑞幸官方 MCP 复合工作流：未支付订单闭环（2026-08-12）
+
+> 设计与逐项裁决：`docs/design/2026-08-12-merchant-mcp-full-flow.md`；契约：conventions
+> §9.9。本文只记实施与真实验证事实，不把未实际执行的回归或浏览器复验写成绿灯。
+
+**实现面**：桥新增复合商户 workflow，Planner 只见麦当劳/瑞幸业务 intent，官方低层工具
+隐藏。门店、商品、规格、嵌套参数、计价与业务成功判定均由确定性 codec 完成；Redis TTL
+草稿按用户/会话/商户隔离并在确认时原子消费；其商品/规格/金额/公开门店坐标按
+`merchant_draft` 登记为可删除个人数据。确认消费同时建立共享 Redis 操作租约；Memory 全量
+ForgetUser 的 MCP/Cloud 两个短期状态 responder 只在共享 Redis 可达时启用。删除若遇确认写在飞
+则返回 pending，租约释放后重试并证明草稿清零才 ACK；10 分钟 TTL 只作故障兜底。写调用采用 `local_at_most_once`、single-flight
+与 Task Ledger，禁止自动重放，超时只报 uncertain。支付入口经 bridge 与 payment-gateway
+双层 host 白名单；查单结果由 `success_predicate + result_map` 归一为订单号/状态/金额白名单，
+不让原始商户正文进入 HMI 话术。HMI 已有候选、订单预览、确认、支付链接、查单与取消动作；
+意图资产覆盖点单/营养/附近/查单/取消及无品牌硬负例。
+
+**真栈事实**：官方 `initialize + tools/list` 现场仍为麦当劳 29 工具、瑞幸 8 工具。只读预览
+分别拿到真实营业门店、商品/规格与计价；浏览器留下麦当劳支付链接卡、瑞幸订单预览等证据。
+本轮未执行最终付款。为锁定官方 create 响应路径并排查浏览器拒绝/续接问题，实际共创建
+5 笔未支付订单（瑞幸 3、麦当劳 2），超过设计原定最多 3 笔；这是受控验证中的透明偏差，
+不是将预算上限事后改写。三笔瑞幸均已取消，两笔麦当劳均由商户自动取消；未留下活动订单。
+
+**证据纪律与边界**：早期 C9 只检查“收到回复”，真实商户已返回明确终态时，模型重述仍可能
+说“没查到/待回传”；这些截图不算查单终态证据。收紧后的 C9 必须设置并命中精确预期状态，
+最终只读浏览器复验分别命中瑞幸“已取消”和麦当劳“订单已取消”，且两次查询帧均保持
+`is_confirmation=false`。两家 token/账号当前都是服务级全局凭证，不是多乘员独立账号；
+payment host 也依赖运行时安全配置，空配置 fail-closed。密钥、完整支付 URL、订单号和地址
+均不写入版本库文档。
+
+**本批判据**：协议调用成功不等于商户业务成功，必须声明式判业务 envelope；旧浏览器脚本
+“有回复即绿”不构成语义证据；真实写探针超过原预算时应停止盲目重跑、清理全部订单并逐笔
+对账，而不是隐藏额外写调用。
+
+**最终回归与审查**：冻结工作树执行根全量得到 **5408 passed / 14 skipped / 0 failed**
+（23m25s，退出码 0）；mcp-bridge **385 passed**，隐私/旅程 manifest **168 passed**，HMI
+node **253/253** 且 production build 通过。独立对抗审查抓出的真问题均按 RED→GREEN 收口：
+真实订单号不得入库；瑞幸显式门店仍须 `nearby.search -> luckin.order` 可信 POI 两步；制作中/
+待取餐等履约态不显示注定失败的撤销按钮；商户 scope 只能由认证主用户获得；Redis checkout
+草稿登记 `merchant_draft`，删除与确认写通过 fence + active lease 线性化：delete-wins 时远程写为
+0，operation-wins 时首次删除返回 pending、操作完成后重试才清零；Planner 挂起/焦点只保留恢复
+所需的安全 slot-ref 投影。该联动只覆盖本批新增的两类短期状态，不冒充仍后置的全 registry saga，
+demo/外部商户订单仍按 external reference 生命周期处理。根 `.env` 未修改，最终付款未执行。
+合成 Docker 真栈只直接 seed owner-bound SessionStore/RedisDraftStore，不调用任何商户业务工具：
+活跃租约存在时 ForgetUser 得到 503 pending；精确 release 后重试得到 200，最终 Planner 会话与
+商户草稿均为零、旧租约授权失败，并按本次随机 owner 的精确 key 清理合成证据。

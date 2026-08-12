@@ -34,3 +34,22 @@ def test_registry_consumers_wait_for_registry_health_before_starting():
     for name, service in consumers.items():
         dependency = (service.get("depends_on") or {}).get("registry") or {}
         assert dependency.get("condition") == "service_healthy", name
+
+
+def test_privacy_delete_responders_wait_for_shared_redis_health():
+    compose = yaml.safe_load(
+        (ROOT / "deploy" / "docker-compose.yaml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+    for name in ("cloud-planner", "mcp-bridge"):
+        service = services[name]
+        assert service["environment"]["REDIS_URL"] == "redis://redis:6379/0"
+        assert service["depends_on"]["redis"]["condition"] == "service_healthy"
+
+
+def test_cloud_planner_image_installs_shared_redis_client():
+    requirements = (
+        ROOT / "orchestrator" / "cloud" / "requirements.txt"
+    ).read_text(encoding="utf-8").splitlines()
+
+    assert "redis==5.0.8" in requirements

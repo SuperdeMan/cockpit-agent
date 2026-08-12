@@ -8,9 +8,15 @@ import type {
   RoutePlanCard, ChargingRouteCard, TripItineraryCard, PoiListCard, PoiDetailCard,
   PlaceListCard, PlaceDetailCard, IntentChoiceCard,
   ReminderListCard, ReminderCard, SceneCard, SceneListCard, Provenance,
+  CardButton, MerchantCheckoutCard, PaymentQrCard, McpOrderCard, McpResultCard,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
+import {
+  merchantActionButtons,
+  normalizeMerchantOrder,
+  paymentPresentation,
+} from '../merchantUi.mjs'
 import { AQISection } from './aurora'
 import { Icon, type IconName } from './Icon'
 
@@ -39,6 +45,42 @@ function SocBar({ soc, dest }: { soc: string; dest: string }) {
 
 // 卡内分节横线（照 A-3 HR）
 const CardHR = () => <div style={{ height: 1, background: 'var(--au-line)' }} />
+
+// 商户卡动作的唯一渲染出口。onAction 复用 App.send，因此这些按钮始终是
+// `is_confirmation=false` 的普通自然语言输入；创建/取消的写确认只在全局
+// ConfirmBubble 中产生。按钮高度 44px，兼顾泊车触控。
+function MerchantActionRow({ buttons, onAction }: {
+  buttons: CardButton[]
+  onAction?: (text: string) => void
+}) {
+  if (!buttons.length) return null
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+      {buttons.map((button) => {
+        const destructive = /取消/.test(button.label)
+        return (
+          <button
+            key={`${button.label}:${button.send_text}`}
+            type="button"
+            onClick={() => onAction?.(button.send_text)}
+            disabled={!onAction}
+            style={{
+              minHeight: 44, padding: '9px 14px', borderRadius: 12,
+              cursor: onAction ? 'pointer' : 'default', fontFamily: 'inherit',
+              fontSize: 12.5, fontWeight: 650,
+              color: destructive ? 'var(--au-warn)' : 'var(--au-text)',
+              background: destructive ? 'rgba(245,158,11,0.09)' : 'var(--au-fill)',
+              border: destructive ? '1px solid rgba(245,158,11,0.28)' : '1px solid var(--au-line-2)',
+              opacity: onAction ? 1 : 0.58,
+            }}
+          >
+            {button.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 // ─── A-4 信息卡共享原语（照 A-4 源）───
 // 内联线性图标（lucide 风，避免第三方依赖）
@@ -129,11 +171,14 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
     case 'scene_list': return <SceneListCardView card={card} onAction={onAction} />
     case 'intent_choice': return <IntentChoiceCardView card={card} onAction={onAction} />
     case 'vision_answer': return <VisionAnswerCardView card={card} />
-    case 'payment_qr': return <PaymentQrCardView card={card} />
+    case 'payment_qr': return <PaymentQrCardView card={card} onAction={onAction} />
     case 'payment_receipt': return <PaymentReceiptCardView card={card} />
     case 'parking_fee': return <ParkingFeeCardView card={card} />
-    case 'mcp_order': return <McpOrderCardView card={card} />
-    case 'mcp_result': return <McpOrderCardView card={card} />
+    case 'mcp_order': return <McpOrderCardView card={card} onAction={onAction} />
+    case 'mcp_result': return <McpOrderCardView card={card} onAction={onAction} />
+    case 'merchant_checkout': return <MerchantCheckoutCardView card={card} onAction={onAction} />
+    case 'merchant_choices': return <MerchantCheckoutCardView card={card} onAction={onAction} />
+    case 'merchant_order_preview': return <MerchantCheckoutCardView card={card} onAction={onAction} />
     default: return null
   }
 }
@@ -1507,10 +1552,13 @@ function VisionAnswerCardView({ card }: { card: any }) {
 // 付款码卡：qr_svg 是网关生成的 data URI（前端零 QR 依赖）；本地倒计时到
 // expires_at_ms 置灰——**不轮询网关**（HMI 与网关无通道），支付成功的回执由
 // 统一主动引擎推 payment_receipt 卡。mock 渠道的 _prov 角标由 ProvBadge 渲染。
-function PaymentQrCardView({ card }: { card: any }) {
+function PaymentQrCardView({ card, onAction }: { card: PaymentQrCard; onAction?: (text: string) => void }) {
   const [now, setNow] = useState(() => Date.now())
+  const [copied, setCopied] = useState(false)
   const expiresAt = Number(card.expires_at_ms || 0)
   const expired = expiresAt > 0 && now >= expiresAt
+  const presentation = paymentPresentation(card)
+  const actionButtons = merchantActionButtons(card)
   useEffect(() => {
     if (!expiresAt || expired) return
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -1519,42 +1567,76 @@ function PaymentQrCardView({ card }: { card: any }) {
   const remain = expiresAt > 0 ? Math.max(0, Math.floor((expiresAt - now) / 1000)) : 0
   const mm = String(Math.floor(remain / 60)).padStart(2, '0')
   const ss = String(remain % 60).padStart(2, '0')
+  const copyLink = async () => {
+    if (!presentation.safeUrl || expired) return
+    try {
+      await navigator.clipboard.writeText(presentation.safeUrl)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1800)
+    } catch {
+      setCopied(false)
+    }
+  }
   return (
     <div className="au-card" style={{ padding: '14px 16px', maxWidth: 320 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--au-text)' }}>扫码支付</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--au-text)' }}>{presentation.title}</span>
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--au-text)' }}>{card.amount}</span>
         <span style={{ flex: 1 }} />
         <ProvBadge prov={card._prov} />
       </div>
-      <div style={{
-        display: 'flex', justifyContent: 'center', padding: 10, borderRadius: 12,
-        background: '#fff', opacity: expired ? 0.35 : 1, position: 'relative',
-      }}>
-        {card.qr_svg ? (
+      {presentation.hasQr ? (
+        <div style={{
+          display: 'flex', justifyContent: 'center', padding: 10, borderRadius: 12,
+          background: '#fff', opacity: expired ? 0.35 : 1, position: 'relative',
+        }}>
           <img src={card.qr_svg} alt="付款码" style={{ width: 180, height: 180, display: 'block' }} />
-        ) : (
-          <div style={{ fontSize: 12, color: '#333', wordBreak: 'break-all', padding: 8 }}>
-            {card.pay_url || card.qr_content}
-          </div>
-        )}
-        {expired && (
-          <span style={{
-            position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
-            fontSize: 13, fontWeight: 700, color: '#7a3b06',
-            background: 'rgba(245,158,11,0.92)', padding: '4px 12px', borderRadius: 8,
-          }}>已过期</span>
-        )}
-      </div>
+          {expired && (
+            <span style={{
+              position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+              fontSize: 13, fontWeight: 700, color: '#7a3b06',
+              background: 'rgba(245,158,11,0.92)', padding: '4px 12px', borderRadius: 8,
+            }}>已过期</span>
+          )}
+        </div>
+      ) : presentation.safeUrl && !expired ? (
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, padding: 10,
+          borderRadius: 12, background: 'var(--au-fill)', border: '1px solid var(--au-line-2)',
+        }}>
+          <a
+            href={presentation.safeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              minHeight: 44, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              borderRadius: 10, textDecoration: 'none', background: 'rgba(70,214,224,0.12)',
+              border: '1px solid rgba(70,214,224,0.28)', color: 'var(--au-primary)',
+              fontSize: 12.5, fontWeight: 700,
+            }}
+          >打开安全支付链接</a>
+          <button
+            type="button"
+            onClick={copyLink}
+            style={{
+              minHeight: 44, padding: '0 13px', borderRadius: 10, cursor: 'pointer',
+              background: 'transparent', border: '1px solid var(--au-line-2)',
+              color: copied ? 'var(--au-online)' : 'var(--au-text-2)',
+              fontFamily: 'inherit', fontSize: 12,
+            }}
+          >{copied ? '已复制' : '复制链接'}</button>
+        </div>
+      ) : null}
       <div style={{ marginTop: 8, fontSize: 12, color: 'var(--au-text-3)', textAlign: 'center' }}>
-        {expired ? '付款码已过期，请重新发起' :
-          expiresAt > 0 ? `请用手机扫码 · ${mm}:${ss} 后过期` : '请用手机扫码完成支付'}
+        {expired ? '支付入口已过期，请重新发起' :
+          expiresAt > 0 ? `${presentation.hint} · ${mm}:${ss} 后过期` : presentation.hint}
       </div>
       {card.merchant_note && (
         <div style={{ marginTop: 4, fontSize: 11, color: 'var(--au-text-3)', textAlign: 'center' }}>
           {card.merchant_note}
         </div>
       )}
+      <MerchantActionRow buttons={actionButtons} onAction={onAction} />
     </div>
   )
 }
@@ -1583,17 +1665,34 @@ function PaymentReceiptCardView({ card }: { card: any }) {
 
 // MCP 桥订单/结果卡（§9.9 批 3 清偿的存量欠账）：demo_label 角标在此第一次有了
 // 渲染出口——「演示商户」三重冗余的第二重此前只在后端数据里成立。
-function McpOrderCardView({ card }: { card: any }) {
-  const amount = typeof card.amount_cents === 'number' && card.amount_cents > 0
-    ? `${Math.floor(card.amount_cents / 100)}.${String(card.amount_cents % 100).padStart(2, '0')}元`
-    : ''
+function McpOrderCardView({ card, onAction }: {
+  card: McpOrderCard | McpResultCard
+  onAction?: (text: string) => void
+}) {
+  const order = normalizeMerchantOrder(card)
+  const actionButtons = merchantActionButtons(card)
+  const sku = card.type === 'mcp_order'
+    ? card.sku
+    : typeof card.sku === 'string' ? card.sku : ''
+  const size = card.type === 'mcp_order'
+    ? card.size
+    : typeof card.size === 'string' ? card.size : ''
+  const duplicate = card.type === 'mcp_order'
+    ? card.duplicate
+    : card.duplicate === true
   return (
-    <div className="au-card" style={{ padding: '12px 14px', maxWidth: 320 }}>
+    <div className="au-card" style={{ padding: '14px 16px', maxWidth: 340 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{
+          fontSize: 10.5, fontWeight: 800, letterSpacing: '0.06em', padding: '3px 8px',
+          borderRadius: 999, color: 'var(--au-primary)', background: 'rgba(70,214,224,0.10)',
+          border: '1px solid rgba(70,214,224,0.22)',
+        }}>
+          {order.brand}
+        </span>
         <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--au-text)' }}>
           {card.type === 'mcp_order' ? '商户订单' : '商户服务'}
         </span>
-        {amount && <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--au-text)' }}>{amount}</span>}
         {card.demo && (
           <span style={{
             fontSize: 10, padding: '1px 6px', borderRadius: 6,
@@ -1603,12 +1702,134 @@ function McpOrderCardView({ card }: { card: any }) {
         <span style={{ flex: 1 }} />
         <ProvBadge prov={card._prov} />
       </div>
-      <div style={{ marginTop: 6, fontSize: 11, color: 'var(--au-text-3)' }}>
-        {card.order_id ? `订单 ${card.order_id}` : (card.server || '')}
-        {card.sku ? ` · ${card.sku}${card.size ? `(${card.size})` : ''}` : ''}
-        {card.status ? ` · ${card.status}` : ''}
-        {card.duplicate ? ' · 已存在的订单（幂等命中）' : ''}
+      <div style={{ marginTop: 12, padding: '10px 0', borderTop: '1px dashed var(--au-line-2)', borderBottom: '1px dashed var(--au-line-2)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>订单号</span>
+          <span style={{ flex: 1 }} />
+          {order.status && <span style={{ fontSize: 11, color: 'var(--au-warn)', flexShrink: 0 }}>{order.status}</span>}
+        </div>
+        <div
+          className="au-num"
+          data-order-id={order.orderId || undefined}
+          title={order.orderId || undefined}
+          style={{
+            marginTop: 4, fontSize: 12, lineHeight: 1.35, fontWeight: 700,
+            color: 'var(--au-text)', overflowWrap: 'anywhere', wordBreak: 'break-all',
+          }}
+        >
+          {order.orderId || '待商户回传'}
+        </div>
+        {order.storeName && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--au-text-2)' }}>门店 · {order.storeName}</div>}
+        {order.fulfillment && <div style={{ marginTop: 4, fontSize: 11.5, color: 'var(--au-text-3)' }}>取餐 · {order.fulfillment}</div>}
+        {order.items.map((item, i) => (
+          <div key={`${item.name}:${i}`} style={{ display: 'flex', gap: 8, marginTop: 7, color: 'var(--au-text-2)' }}>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>{item.name}{item.specs ? <span style={{ color: 'var(--au-text-3)' }}> · {item.specs}</span> : null}</span>
+            <span className="au-num" style={{ fontSize: 11.5, color: 'var(--au-text-3)' }}>×{item.quantity}</span>
+          </div>
+        ))}
+        {(sku || size) && !order.items.length && (
+          <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--au-text-3)' }}>
+            {sku}{size ? ` · ${size}` : ''}
+          </div>
+        )}
       </div>
+      {(order.amount || duplicate) && (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 10 }}>
+          {order.amount && <><span style={{ fontSize: 11.5, color: 'var(--au-text-3)' }}>应付</span><span style={{ fontSize: 18, fontWeight: 850, color: 'var(--au-text)' }}>{order.amount}</span></>}
+          <span style={{ flex: 1 }} />
+          {duplicate && <span style={{ fontSize: 10.5, color: 'var(--au-text-3)' }}>已有订单 · 幂等命中</span>}
+        </div>
+      )}
+      <MerchantActionRow buttons={actionButtons} onAction={onAction} />
+    </div>
+  )
+}
+
+function centsLabel(value: unknown): string {
+  const cents = Number(value)
+  if (!Number.isInteger(cents) || cents < 0) return ''
+  return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}元`
+}
+
+function MerchantCheckoutCardView({ card, onAction }: {
+  card: MerchantCheckoutCard
+  onAction?: (text: string) => void
+}) {
+  const order = normalizeMerchantOrder(card)
+  const isChoices = card.type === 'merchant_choices' || card.stage === 'choices'
+  const title = card.title || (isChoices
+    ? `选择${order.brand}${card.choice_kind === 'store' ? '门店' : '商品'}`
+    : card.stage === 'cancel' ? `${order.brand}取消订单` : `${order.brand}订单预览`)
+  const options = Array.isArray(card.options) && card.options.length
+    ? card.options
+    : isChoices && Array.isArray(card.items) ? card.items : []
+  const optionButtons = Array.isArray(card.buttons) && card.buttons.length
+    ? merchantActionButtons({ buttons: card.buttons })
+    : merchantActionButtons({ options: card.options || [] })
+  const regularButtons = merchantActionButtons({ ...card, options: [] })
+  const discount = typeof card.discount === 'string' && card.discount.trim()
+    ? card.discount.trim()
+    : centsLabel(card.discount_cents)
+
+  return (
+    <div className="au-card" style={{ padding: '15px 16px', maxWidth: 360 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{
+          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+          background: 'var(--au-primary)', boxShadow: '0 0 10px rgba(70,214,224,0.55)',
+        }} />
+        <span style={{ fontSize: 14.5, fontWeight: 750, color: 'var(--au-text)' }}>{title}</span>
+        <span style={{ flex: 1 }} />
+        <ProvBadge prov={card._prov} />
+      </div>
+
+      {isChoices ? (
+        <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
+          {optionButtons.map((button, index) => {
+            const option = options[index]
+            return (
+              <button
+                key={`${button.label}:${button.send_text}`}
+                type="button"
+                onClick={() => onAction?.(button.send_text)}
+                disabled={!onAction}
+                style={{
+                  minHeight: 52, width: '100%', padding: '9px 12px', borderRadius: 12,
+                  display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'flex-start',
+                  textAlign: 'left', cursor: onAction ? 'pointer' : 'default', fontFamily: 'inherit',
+                  color: 'var(--au-text)', background: 'var(--au-fill)', border: '1px solid var(--au-line-2)',
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 700 }}>{button.label}</span>
+                {option?.subtitle && <span style={{ marginTop: 3, fontSize: 11, color: 'var(--au-text-3)' }}>{option.subtitle}</span>}
+              </button>
+            )
+          })}
+        </div>
+      ) : (
+        <>
+          <div style={{ marginTop: 12, padding: '10px 0', borderTop: '1px dashed var(--au-line-2)', borderBottom: '1px dashed var(--au-line-2)' }}>
+            {order.storeName && <div style={{ fontSize: 12.5, color: 'var(--au-text-2)' }}>门店 · {order.storeName}</div>}
+            {order.items.map((item, i) => (
+              <div key={`${item.name}:${i}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: order.storeName || i > 0 ? 8 : 0 }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--au-text)' }}>
+                  {item.name}
+                  {item.specs && <span style={{ display: 'block', marginTop: 2, fontSize: 11.5, color: 'var(--au-text-3)' }}>{item.specs}</span>}
+                </span>
+                <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-2)' }}>×{item.quantity}</span>
+              </div>
+            ))}
+            {order.fulfillment && <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--au-text-3)' }}>取餐方式 · {order.fulfillment}</div>}
+          </div>
+          {(discount || order.amount) && (
+            <div style={{ marginTop: 10 }}>
+              {discount && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--au-text-3)' }}><span>优惠</span><span>-{discount}</span></div>}
+              {order.amount && <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginTop: discount ? 4 : 0 }}><span style={{ fontSize: 12, color: 'var(--au-text-2)' }}>实付</span><span style={{ fontSize: 20, fontWeight: 850, color: 'var(--au-text)' }}>{order.amount}</span></div>}
+            </div>
+          )}
+          <MerchantActionRow buttons={regularButtons} onAction={onAction} />
+        </>
+      )}
     </div>
   )
 }

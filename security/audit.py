@@ -1,9 +1,11 @@
 """审计事件结构化。所有安全相关事件留痕。"""
 from __future__ import annotations
+import hashlib
 import json
 import time
 import logging
 from dataclasses import dataclass, field, asdict
+from urllib.parse import urlsplit
 
 logger = logging.getLogger("security.audit")
 
@@ -83,11 +85,22 @@ class AuditLogger:
 
     def pay_url_denied(self, agent_id: str, pay_url: str, trace_id: str = ""):
         """merchant_hosted 支付链接域名不在白名单被拒（防钓鱼，§9.17）。"""
+        raw_url = pay_url or ""
+        try:
+            parsed_host = urlsplit(raw_url).hostname or ""
+            normalized_host = parsed_host.encode("idna").decode("ascii") \
+                .rstrip(".").lower()
+        except (UnicodeError, ValueError):
+            normalized_host = ""
         self.log(AuditEvent(
             event="pay_url_denied", agent_id=agent_id,
             decision="blocked",
             reason="external_pay_url host not in PAYMENT_EXTERNAL_PAY_HOSTS",
-            extra={"pay_url": pay_url[:200]},
+            extra={
+                "url_host": normalized_host or "invalid",
+                "url_sha256": hashlib.sha256(raw_url.encode("utf-8")).hexdigest(),
+                "url_length": len(raw_url),
+            },
             trace_id=trace_id,
         ))
 

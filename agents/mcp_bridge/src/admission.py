@@ -12,6 +12,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -28,6 +29,22 @@ REJECT_COMPENSATE = "compensate_invalid"
 _ENV_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 COMPENSATE_POLICIES = ("tool", "abandon_unpaid", "terminal")
 IDEMPOTENCY_MODES = ("upstream", "local_at_most_once")
+TRANSPORTS = ("stdio", "streamable_http")
+SAFE_MERCHANT_STATUSES = frozenset({
+    "待支付", "制作中", "配餐中", "配送中", "待取餐",
+    "已完成", "已取消", "订单已取消",
+})
+
+
+def _valid_predicate_scalar(value) -> bool:
+    if isinstance(value, bool) or (isinstance(value, int) and not isinstance(value, bool)):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, str):
+        return (bool(value.strip()) and len(value) <= 128 and
+                not any(ord(ch) < 32 or ord(ch) == 127 for ch in value))
+    return False
 
 
 @dataclass
@@ -57,6 +74,10 @@ class ToolSpec:
     # 商户下单响应里支付链接的点路径（如 "payH5Url" / "order.payUrl"），从
     # structuredContent 提取——声明式，桥核心零领域词（§9.9 支付链接闭环）。
     pay_url_locator: str = ""
+    # A hosted-payment URL is payable only when the same merchant response
+    # supplies an audited amount locator and unit.
+    amount_locator: str = ""
+    amount_unit: str = ""
     # 常量参数（麦当劳激活时新增，2026-08-11）：真实商户工具常有 required 枚举
     # （beType=1/searchType=1 这类场景选择器），LLM 的自然语言槽位填不了也不该填
     # ——在准入清单里**声明死**。组装序：const_args 打底 → 槽位映射值覆盖 →
@@ -67,6 +88,14 @@ class ToolSpec:
     # 直接回答用户——真实商户返回的是「给 LLM 读的 API 文档+原始数据」，逐字念
     # 6638 字英文文档是实测抓到的体验事故）。LLM 不可用时回落截断+「详情见屏幕」。
     speech_mode: str = "raw"
+    # 只读商户结果的确定性业务封包与白名单归一。key 是上游点路径，value 是允许
+    # 的精确值列表；result_map 将通过校验的响应映射为 mcp_order 标准字段。
+    # 配置存在即不再让 LLM 判断订单成功/状态，避免“已取消”被重述成“没查到”。
+    success_predicate: dict = field(default_factory=dict)
+    result_map: dict = field(default_factory=dict)
+    # 上游状态逐字值 -> 受控短状态。未知值 fail-closed，避免第三方把 PII、
+    # credential 或任意正文塞进 status 后进入话术、卡片和 data。
+    status_map: dict = field(default_factory=dict)
     # 二次确认时给用户看的那句话（`{args}` 占位）。**用户正要点头同意的就是这句**，
     # 说错动作比说得笨拙严重得多——真栈实测抓到取消订单被问成「准备下单：DC…」。
     # 放在声明里而不是桥核心：动词是领域语义，桥不该认识「下单」和「取消」。
@@ -75,6 +104,20 @@ class ToolSpec:
     # `item`（"点一杯拿铁"），而商户的参数叫 `sku`——硬要求 LLM 用商户词表是自找的
     # 槽位缺失。映射写在准入清单里，桥不含任何领域词。
     arg_map: dict = field(default_factory=dict)
+
+
+@dataclass
+class WorkflowSpec:
+    """面向用户的复合 capability；required_tools 全部准入后才可注册。"""
+    intent: str
+    handler: str
+    required_tools: list[str]
+    required_scopes: list[str] = field(default_factory=list)
+    description: str = ""
+    examples: list[str] = field(default_factory=list)
+    slots: list[str] = field(default_factory=list)
+    require_confirm: bool = True
+    expose: bool = True
 
 
 @dataclass
@@ -92,6 +135,66 @@ class ServerSpec:
     headers: dict = field(default_factory=dict)   # 值支持 ${ENV_VAR}，token 不进 yaml
     pay_url_hosts: list = field(default_factory=list)  # 支付链接域名白名单（第一层）
     env_error: str = ""          # ${VAR} 展开失败的具名原因——bootstrap 据此整台拒载
+    workflows: list[WorkflowSpec] = field(default_factory=list)
+
+
+def admit_workflow(spec: WorkflowSpec, admitted_by_name: dict) -> str:
+    """Validate a composite workflow against the *finally admitted* tools.
+
+    The workflow is a privilege boundary: an empty dependency set must not
+    vacuously pass, it may only receive the tools it declared, and its scope /
+    confirmation contract must dominate every internal dependency.
+    """
+    if not spec.intent.strip() or not spec.handler.strip():
+        return "workflow intent/handler 不能为空"
+    names = [str(name).strip() for name in (spec.required_tools or [])]
+    if not names or any(not name for name in names):
+        return "workflow required_tools 必须非空"
+    if len(set(names)) != len(names):
+        return "workflow required_tools 不得重复"
+    missing = sorted(set(names) - set(admitted_by_name))
+    if missing:
+        return f"workflow_required_tools_missing={','.join(missing)}"
+
+    tools = []
+    for name in names:
+        value = admitted_by_name[name]
+        tools.append(getattr(value, "tool", value))
+    unpinned = sorted(
+        str(getattr(tool, "name", "") or "")
+        for tool in tools
+        if not str(getattr(tool, "schema_sha", "") or "").strip())
+    if unpinned:
+        return ("workflow dependency schema_sha 必须非空="
+                + ",".join(unpinned))
+    exposed_writes = sorted(
+        str(getattr(tool, "name", "") or "")
+        for tool in tools
+        if (bool(getattr(tool, "write", False)) and
+            bool(getattr(tool, "expose", True))))
+    if exposed_writes:
+        return ("workflow write dependency 必须 expose=false="
+                + ",".join(exposed_writes))
+    required_scopes = {
+        str(scope).strip()
+        for tool in tools
+        for scope in (getattr(tool, "required_scopes", None) or [])
+        if str(scope).strip()
+    }
+    declared_scopes = {
+        str(scope).strip() for scope in (spec.required_scopes or [])
+        if str(scope).strip()
+    }
+    missing_scopes = sorted(required_scopes - declared_scopes)
+    if missing_scopes:
+        return ("workflow required_scopes 未覆盖内部工具="
+                + ",".join(missing_scopes))
+    if any(bool(getattr(tool, "write", False)) for tool in tools):
+        if not spec.require_confirm:
+            return "workflow 含写工具时 require_confirm 必须为 true"
+        if "merchant.write" not in declared_scopes:
+            return "workflow 含写工具时 required_scopes 必须含 merchant.write"
+    return ""
 
 
 def schema_fingerprint(schema) -> str:
@@ -174,10 +277,29 @@ def load_servers(path: str) -> list:
             compensate_policy=str(t.get("compensate_policy", "tool") or "tool"),
             unpaid_expiry=t.get("unpaid_expiry") is True,
             pay_url_locator=str(t.get("pay_url_locator", "") or ""),
+            amount_locator=str(t.get("amount_locator", "") or ""),
+            amount_unit=str(t.get("amount_unit", "") or ""),
             const_args=dict(t.get("const_args") or {}),
             speech_mode=str(t.get("speech_mode", "raw") or "raw"),
+            success_predicate=dict(t.get("success_predicate") or {}),
+            result_map={str(k): str(v) for k, v in
+                        (t.get("result_map") or {}).items()},
+            status_map={str(k): str(v) for k, v in
+                        (t.get("status_map") or {}).items()},
             arg_map={str(k): str(v) for k, v in (t.get("arg_map") or {}).items()},
         ) for t in (s.get("tools") or [])]
+        workflows = [WorkflowSpec(
+            intent=str(w["intent"]),
+            handler=str(w.get("handler") or ""),
+            required_tools=[str(name) for name in (w.get("required_tools") or [])],
+            required_scopes=[str(scope) for scope in
+                             (w.get("required_scopes") or [])],
+            description=str(w.get("description") or ""),
+            examples=[str(example) for example in (w.get("examples") or [])],
+            slots=[str(slot) for slot in (w.get("slots") or [])],
+            require_confirm=bool(w.get("require_confirm", True)),
+            expose=bool(w.get("expose", True)),
+        ) for w in (s.get("workflows") or [])]
         headers: dict[str, str] = {}
         env_error = ""
         for k, v in (s.get("headers") or {}).items():
@@ -195,7 +317,7 @@ def load_servers(path: str) -> list:
             headers=headers,
             pay_url_hosts=[normalize_hostname(h)
                            for h in (s.get("pay_url_hosts") or [])],
-            env_error=env_error))
+            env_error=env_error, workflows=workflows))
     return out
 
 
@@ -215,6 +337,12 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
     - schema 指纹对不上 → 拒绝（接口变了要重审，不自动接受）。
     - 写工具必须显式确认、幂等模式与补偿政策；tool 型补偿目标自身也必须准入。
     """
+    if spec.transport not in TRANSPORTS:
+        return [], [
+            f"{tool.name}: unsupported transport={spec.transport!r}"
+            for tool in spec.tools
+        ]
+
     offered = {t.get("name"): t for t in offered_tools if isinstance(t, dict)}
     admitted, rejected = [], []
     for t in spec.tools:
@@ -238,7 +366,66 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
         if t.forward_owner and (not spec.demo or spec.transport != "stdio"):
             rejected.append(f"{t.name}: forward_owner 仅允许受控 stdio demo")
             continue
+        if t.result_map and not t.success_predicate:
+            rejected.append(
+                f"{t.name}: success_predicate 与 result_map 必须同时声明")
+            continue
+        if t.success_predicate and not t.result_map and not t.write:
+            rejected.append(
+                f"{t.name}: 只读 success_predicate 必须配套 result_map")
+            continue
+        if t.success_predicate:
+            if any(not isinstance(values, list) or not values
+                   for values in t.success_predicate.values()):
+                rejected.append(
+                    f"{t.name}: success_predicate 每个路径都要有允许值列表")
+                continue
+            if any(not _valid_predicate_scalar(candidate)
+                   for values in t.success_predicate.values()
+                   for candidate in values):
+                rejected.append(
+                    f"{t.name}: success_predicate 只允许非空 JSON 标量")
+                continue
+            if any(not isinstance(path, str) or not path.strip()
+                   for path in t.success_predicate):
+                rejected.append(f"{t.name}: success_predicate 路径不能为空")
+                continue
+        if t.result_map:
+            allowed_result_keys = {"order_id", "status", "amount_cents"}
+            if (set(t.result_map) - allowed_result_keys or
+                    not {"order_id", "status"}.issubset(t.result_map)):
+                rejected.append(
+                    f"{t.name}: result_map 仅允许订单白名单字段且必须含 "
+                    "order_id/status")
+                continue
+            if any(not isinstance(path, str) or not path.strip()
+                   for path in t.result_map.values()):
+                rejected.append(f"{t.name}: result_map 路径不能为空")
+                continue
+            if ("amount_cents" in t.result_map and
+                    t.amount_unit not in {"yuan", "cents"}):
+                rejected.append(
+                    f"{t.name}: amount_unit must be yuan or cents")
+                continue
+            if not t.status_map:
+                rejected.append(
+                    f"{t.name}: result_map.status 必须配套非空 status_map")
+                continue
+            if any(not isinstance(source, str) or not source.strip() or
+                   len(source) > 128 or
+                   any(ord(ch) < 32 or ord(ch) == 127 for ch in source)
+                   for source in t.status_map):
+                rejected.append(f"{t.name}: status_map 上游状态值无效")
+                continue
+            if any(target not in SAFE_MERCHANT_STATUSES
+                   for target in t.status_map.values()):
+                rejected.append(f"{t.name}: status_map 目标状态不在受控集合")
+                continue
+        elif t.status_map:
+            rejected.append(f"{t.name}: status_map 只能配套 result_map 使用")
+            continue
         if t.write:
+            demo_stdio = spec.demo and spec.transport == "stdio"
             if not t.require_confirm:
                 rejected.append(
                     f"{t.name}: 写操作 require_confirm 必须为 true")
@@ -288,6 +475,16 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
                 rejected.append(
                     f"{t.name}: local_at_most_once 要求 retry_policy=never")
                 continue
+            if t.expose and not demo_stdio:
+                rejected.append(
+                    f"{t.name}: 非 demo stdio 写工具必须 expose=false "
+                    "并由确定性 workflow 暴露")
+                continue
+            if not demo_stdio and not t.success_predicate:
+                rejected.append(
+                    f"{t.name}: 非 demo stdio 写工具必须声明 "
+                    "success_predicate")
+                continue
         if t.pay_url_locator:
             if (not spec.pay_url_hosts or
                     any(not normalize_hostname(host) or
@@ -295,6 +492,14 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
                         for host in spec.pay_url_hosts)):
                 rejected.append(
                     f"{t.name}: pay_url_hosts 必须至少包含一个有效纯 hostname")
+                continue
+            if not t.amount_locator:
+                rejected.append(
+                    f"{t.name}: pay_url_locator requires amount_locator")
+                continue
+            if t.amount_unit not in {"yuan", "cents"}:
+                rejected.append(
+                    f"{t.name}: amount_unit must be yuan or cents")
                 continue
         admitted.append((t, found.get("inputSchema") or {}))
 

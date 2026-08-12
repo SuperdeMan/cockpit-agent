@@ -58,6 +58,9 @@ class StepResult:
     data: dict = field(default_factory=dict)   # F3：结构化结果，供后续 step 的 slot_refs 取值
     missing_slots: list[str] = field(default_factory=list)  # F12：NEED_SLOT 时声明缺失的槽位名
     error: str = ""
+    # 结果来源只由 Executor 用当前 Step.intent 盖章。Agent、Planner 与客户端都无权
+    # 自报该字段；商户工作流据此校验跨步门店引用来自 nearby.search。
+    source_intent: str = ""
     # M2 P2 重复副作用防抖：本结果对应的 (intent, slots) 指纹。**只对产生了 actions 的
     # OK 结果写**——T2 放宽后 replan 可能对已完成的副作用步失忆而重复产出（弱模型的
     # 典型失败），指纹随结果走，executor 下一轮撞上即回填不重放。空串=不参与防抖。
@@ -167,6 +170,9 @@ class PlanContext:
 class SessionState:
     """多轮挂起态（待确认/待补槽），Redis 持久。"""
     phase: str                    # "wait_confirm" | "wait_slot"
+    # owner 只用于 SessionStore 的隐私索引/删除边界；恢复执行仍以本轮
+    # PlanContext 的已认证 user_id 为准，绝不把持久化字段当成授权。
+    owner_user_id: str = ""
     pending_plan: dict = field(default_factory=dict)  # 序列化的 Plan
     pending_step_id: str = ""
     missing_slots: list[str] = field(default_factory=list)

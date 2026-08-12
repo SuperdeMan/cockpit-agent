@@ -165,6 +165,13 @@ rulings:
       真实 SOC、按空闲/功率排序、可直接作导航途经点，而 nearby.search 出的是评分/
       人均富卡——加油站没有这层车端状态耦合，所以它留在通则里。
       **两条裁定各自都对，缺的是它们相交处的那一条**，这就是它。
+  - id: charging-navigation.find-charger-vs-self-locate
+    texts: [快充在哪, 我在哪]
+    domains: [charging, navigation]
+    why: 「快充」点名的是补能设施，产出充电站候选，归 charging.find；「我」问的是
+      当前车辆位置，产出自车定位，归 navigation.locate。共享的「在哪」只是疑问框架，
+      不能抹掉被查询对象。2026-08-12 商户范例扩容后 IDF 重算使该既有对从 0.35 下方
+      越过门禁阈值，按实际门禁补裁，不以调阈值掩盖边界
   - id: manual-vision.described-light-vs-unknown-light
     texts: [仪表盘上的红色感叹号是什么意思, 看看这个是什么]
     domains: [manual, vision]

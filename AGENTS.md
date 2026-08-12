@@ -57,7 +57,7 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 
 ## 4. ⚠️ 当前真实状态（别假设没验证的东西能跑）
 
-### 4.0 当前快照（2026-08-11）
+### 4.0 当前快照（2026-08-12）
 
 意图落域对抗测试按这个顺序接手：运行手册
 [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) → 最终验收
@@ -66,13 +66,21 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**4996 passed / 14 skipped / 0 failed**（2026-08-11 支付四批后实测，退出码 0；
-批 3c 后 4995 实测绿 + chars_full 哨兵修钉 11118 单测复验绿——demo 描述判别化
-加长 37 字符的有意变更）。较 B5/B6 后（`a226727`，4864）净 **+132**，四跳全实测
-（4864→4960→4994→4996），逐批对账与新增测试点名见 history **§28** 与支付设计
-文档 §6.1–6.5。⚠ 同日附带修三处**环境敏感**同族（CLI 子进程测试 PYTHONIOENCODING /
-能力门禁 GBK 自崩 / 支付宝 GBK 验签）——Windows GBK 宿主是本仓常驻放大器，
-新写子进程/出站验签代码先想编码两端。
+**5408 passed / 14 skipped / 0 failed**（2026-08-12 麦当劳/瑞幸官方 MCP 复合工作流
+收口后冻结态实测，退出码 0，用时 23m25s）。较 2026-08-11 支付四批后的 4996 净 **+412**，
+覆盖确定性商户 workflow、写入/响应/支付安全边界、Redis 草稿与隐私清除、可信 POI 跨步引用、
+确认恢复、HMI/意图资产及真栈测试契约；逐项证据见 history **§29** 与
+`docs/design/2026-08-12-merchant-mcp-full-flow.md` §11。上一批 4864→4960→4994→4996
+的四跳对账仍见 history **§28**。⚠ Windows GBK 宿主是本仓常驻放大器，新写子进程/
+出站验签代码先想编码两端。
+
+**2026-08-12 商户批聚焦实测**：mcp-bridge **385 passed**、隐私/旅程 manifest
+**168 passed**、HMI node **253/253** 且 Vite production build 通过；Redis 7 隔离 DB15
+覆盖 TTL、动作原子消费、owner 删除与对照用户隔离（确认操作在飞时返回 pending）。合成 Docker
+真栈进一步证明 ForgetUser 在活跃租约下先返回 `503 pending`，精确释放后重试返回 200，且
+Planner 会话与商户草稿均不可再读取；该验证未调用任何商户业务工具。L0 discovery **81/81**
+（599 条 / 560 唯一输入）、gate strict **25/25**；范例 **268 条 / 22 域**，域错配
+4/167=2.4%；skills 22/22、能力完整性与 route-hints/fast-intent 门禁均通过。
 
 **2026-08-11 分组实测**（B5/B6 后）：edge **579**、cloud **721**、registry **65**、
 agents **993**、`runtime/tests` **109**、observability **73**；端侧 smoke **13/13**；
@@ -102,7 +110,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
-| L0 discovery | **81/81**，574 条 / **535 唯一输入**（2026-08-10 深夜补 `cloud_degraded` 族 +5 条；bounds [450,540]——⚠ **距上界只剩 5**） |
+| L0 discovery | **81/81**，599 条 / **560 唯一输入**（2026-08-12 复合商户能力兑现正例、硬负例、对照与 relation 后，bounds [450,560] **恰好用满**；没有删除旧尺子压数字） |
 | gate 规模 | **139 stable / 129 唯一输入**，L0 strict **25/25，exit 0** |
 | 对比模型正式 baseline | [`baseline_intent_adversarial.json`](docs/reviews/eval/baseline_intent_adversarial.json)；干净 `f0af9c0`，锁定 `deepseek:deepseek-v4-flash`，由当前 L3 原始字节/摘要/时间/精确路径契约重新取证并写入。**未随 `32e8718` 重取**——它仍是 DeepSeek 在 `f0af9c0` 的证据 |
 | DeepSeek 完整 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；exact **121/121**，raw 幻觉/校验后逃逸/不稳定均 **0/121**；L1/L2 各 **2 个独立进程 × 每进程 3 样本**（`f0af9c0`） |
@@ -135,17 +143,21 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 §2/§6；契约 [`docs/conventions.md`](docs/conventions.md) **§9.17**（支付网关：
 状态机/幂等三层链/token 幂等重取/场景白名单 fail-closed）+ **§9.9**（桥：
 transport/补偿两态/pay_url 闭环/speech_mode）；逐批流水 history **§28**。
-当前能力状态一句话：停车缴费真栈闭环（e2e_payment 3/3）；麦当劳/瑞幸只读三件
-真机在线（营养/两家查单，e2e_mcp 12/12）；支付宝沙箱四接口中 precreate 真码/
-query/close/GBK 验签修已真栈验证。
+当前能力状态一句话：停车缴费真栈闭环（e2e_payment 3/3）；麦当劳/瑞幸已在
+[`2026-08-12-merchant-mcp-full-flow.md`](docs/design/2026-08-12-merchant-mcp-full-flow.md)
+从只读三件推进为受控复合工作流——选店/选品/规格、预览计价、确认后创建未支付订单、
+安全支付入口与查单均已实现，瑞幸另有再次确认取消，麦当劳官方无远程取消；系统不执行
+最终付款。支付宝沙箱四接口中 precreate 真码/query/close/GBK 验签修已真栈验证。
 
 **支付余项**：① 沙箱「支付→PAID→refund」段——泓舟已扫码但沙箱钱包内支付失败
 （支付宝沙箱当日服务级故障），恢复后重跑 `python -u scripts/alipay_sandbox_probe.py`
 （自动弹浏览器大码）；② 微信商户号到位后真实联调（代码按 v3 真实实现+签名单测
-锁死，未经真环境验收）；③ **二期下单**：阻塞点=planner 结构化参数与步间引用
-（麦当劳 items+storeCode 链/瑞幸 productList+deptId 链），补偿与支付闭环参数已
-在 `agents/mcp_bridge/servers.yaml` 注释就位（瑞幸 cancelOrder=tool 形态/麦当劳
-abandon_unpaid+payH5Url）。
+锁死，未经真环境验收）。商户工作流的量产边界仍是：两家 token/账号均为服务级全局凭证，
+不是多乘员独立账号；商户 token 与 `PAYMENT_EXTERNAL_PAY_HOSTS` 必须由运行时安全配置提供，
+空配置 fail-closed；未授权最终付款。2026-08-12 真实验证共创建 5 笔未支付订单（瑞幸 3、
+麦当劳 2；契约发现与浏览器拒绝路径使数量超过原计划 3），三笔瑞幸均已取消、两笔麦当劳
+均由商户自动取消；没有一笔付款。最终浏览器 C9 已分别精确命中瑞幸“已取消”和麦当劳
+“订单已取消”；旧版只断言“收到回复”的宽松 C9 截图不算查单终态证据。
 
 外部评审六批 **B1/B2**（2026-08-10）、**B3/B4**、**B5/B6**
 （2026-08-11）全部实施合入并收口。✅ 冻结令已撤销，可以新增业务 Agent。
@@ -166,9 +178,9 @@ abandon_unpaid+payH5Url）。
 或该族再成主要矛盾），是泓舟 2026-08-11 直接指示推进的。两份方案的头部都留了痕——
 **别把它读成「条件曾经满足过」**，那会让下一次「条件启动」的分量被稀释。
 
-⚠ **对抗语料唯一输入 535 / 上界 540**——只剩 5 个名额。下次加 L0 语料前先评估要不要抬
-`suites.yaml` 的 `max_cases`，别撞上再回头改（判据：bounds 是规模守卫，抬它要说明为什么
-这批语料值得占额度）。
+⚠ **对抗语料唯一输入 560 / 上界 560**——当前余量为 0。下次加 L0 语料必须先说明新增
+能力或边界为何值得占额度，再有原则地调整 `suites.yaml` 的 `max_cases`；不得删旧尺子压数字，
+也不得先加语料撞闸后再补理由。本次 540→560 的依据与逐项占用写在 `suites.yaml` 头部。
 
 > 逐批流水在 [`docs/agents-history.md`](docs/agents-history.md) **§15–§27**，逐条证据在
 > `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§17–§26**。

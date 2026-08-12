@@ -751,6 +751,8 @@ retained。字段要求按分类固定：
 | `task_ledger` | ledger | deletable / M-C | `gdpr_mc_task_ledger_seed` | `gdpr_mc_task_ledger_count` | `gdpr_mc_task_ledger_read` | `privacy_user_all` | `gdpr_mc_task_ledger_verify` |
 | `proactive_process_queue` | proactive | deletable / M-C | `gdpr_mc_proactive_queue_seed` | `gdpr_mc_proactive_queue_count` | `gdpr_mc_proactive_queue_read` | `privacy_user_all` | `gdpr_mc_proactive_queue_verify` |
 | `payment_order` | payment | retained_audit / M-D | `gdpr_md_payment_order_seed` | `gdpr_md_payment_order_count` | `gdpr_md_payment_order_read` | `payment_redact_owner` | `gdpr_md_payment_order_verify` |
+| `planner_pending_session` | cloud_session | deletable / M-D | `gdpr_md_planner_pending_seed` | `gdpr_md_planner_pending_count` | `gdpr_md_planner_pending_read` | `privacy_user_all` | `gdpr_md_planner_pending_verify` |
+| `merchant_draft` | mcp | deletable / M-D | `gdpr_md_merchant_draft_seed` | `gdpr_md_merchant_draft_count` | `gdpr_md_merchant_draft_read` | `privacy_user_all` | `gdpr_md_merchant_draft_verify` |
 | `mcp_demo_order` | mcp | external_reference / M-D | `gdpr_md_mcp_external_seed` | `gdpr_md_mcp_external_count` | `gdpr_md_mcp_external_read` | `mcp_external_unlink` | `gdpr_md_mcp_external_verify` |
 
 `observability_raw_content` 覆盖 SQLite 的 `turns/spans/llm_calls/logs` 四个 storage
@@ -767,6 +769,20 @@ variant，`retention_reason` 固定为 `diagnostic_metrics_without_raw_owner_con
   “四表中至少一个原文字段或 owner 引用非空的行数”计，不按字段数重复计数；每个脱敏行同时
   计入 redacted 与 retained 并携固定 reason，明示“行保留、owner 映射与原文移除”；
   seed/count/read/verify 必须覆盖四表并证明目标 owner 已不可反查、对照 owner 原文不变。
+
+`merchant_draft` 是 2026-08-12 新增的真实商户确认快照：Redis value 不存 user/session 明文，
+但仍含商品、规格、金额、公开门店坐标与上游参数，故不能因 TTL 10 分钟而排除在个人数据清单外。
+它以带完整性 marker 的 owner 摘要索引、写 fence、操作租约与 privacy-only cursor SCAN 支持
+`privacy_user_all` 删除：租约在飞时返回 pending，释放后重试；索引不构成删除授权，必须逐值复核
+owner 并二次扫描证明清零后才 ACK。
+
+`planner_pending_session` 覆盖 `planner:sess:*`、owner/fence 索引与 `planner:focus:*`。
+挂起步的 token、卡片与 data 不重复入库，但 pending plan、已完成依赖和焦点仍属于短期个人数据；
+Memory 全量 ForgetUser 成功后，本批分别经 MCP（共享 Redis 商户草稿）与 Cloud（共享 Redis
+Planner 挂起/焦点）两个 responder 额外协调这两类短期状态，两个 adapter
+只有在共享 Redis 可达时才响应；任一 adapter 未完成或商户操作在飞时对外只报
+`pending/retryable`。它不包含 reminder/scene/observability/ledger/proactive/payment/demo 等其余
+registry 目标，也不替代仍后置的全 privacy registry 跨域删除 saga。
 
 `payment_order` 与 `mcp_demo_order` 的 seed 字段用于建立非零保留/外部引用前置，不把它们纳入
 物理删除集合。前者的 `retention_reason` 固定为

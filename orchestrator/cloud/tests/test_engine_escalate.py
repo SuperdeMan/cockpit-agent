@@ -199,7 +199,7 @@ def test_escalated_need_confirm_suspends_like_f1():
 
     final = events[-1]
     assert final["need_confirm"] is True
-    state = asyncio.run(session.load("sess-esc"))
+    state = asyncio.run(session.load("sess-esc", owner_user_id="u1"))
     assert state is not None and state.phase == "wait_confirm"
     assert state.pending_step_id == "esc1"
 

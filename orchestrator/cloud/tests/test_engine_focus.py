@@ -96,7 +96,8 @@ def _run(engine, req):
 def test_control_turn_persists_focus():
     engine, spy, session = _engine()
     _run(engine, _req("把副驾空调调到26度"))
-    focus = asyncio.run(session.load_focus("focus-s"))
+    focus = asyncio.run(session.load_focus(
+        "focus-s", owner_user_id="u1"))
     assert focus is not None
     assert focus["obj"] == "空调"
     assert "副驾" in focus["positions"]
@@ -123,7 +124,8 @@ def test_focus_disabled_when_memory_off():
 
     _run(engine, _req_mem_off("把副驾空调调到26度"))
     # memory_enabled=false → 不读写焦点/历史
-    assert asyncio.run(session.load_focus("focus-s")) is None
+    assert asyncio.run(session.load_focus(
+        "focus-s", owner_user_id="u1")) is None
 
 
 def test_destination_focus_meta_only_reaches_location_scoped_steps():

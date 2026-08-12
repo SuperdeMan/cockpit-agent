@@ -526,9 +526,10 @@ cases:
       - input: {utterance: 现在空气质量指数多少, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [info.air_quality]}], forbidden_intents: [info.weather], allow_extra_intents: false}
-  # ── 真实商户 MCP（2026-08-11 麦当劳/瑞幸 v1 只读激活；authored 入池不进 gate 选集）──
-  # 边界设计：发现类（附近有没有）归 nearby；下单类 v1 未接（二期编排能力面）——
-  # 硬负例锁「不误落到查单/菜单」，不锁具体落点（chitchat/澄清都算合法出路）。
+  # ── 真实商户 MCP（2026-08-12 复合下单/瑞幸取消激活；reviewed 不进 gate 选集）──
+  # 边界设计：发现类（附近有没有）归 nearby；品牌下单归真实 workflow；营养、查单、
+  # 取消与 demo 咖啡各守自己的动作边界。2026-08-11 的两个「未接入」case id 原样保留，
+  # 只翻转为已接入金标——历史尺子不删除。
   - id: cc.available.mcd-menu
     title: 麦当劳餐品/营养能力在册时应当可用
     family_id: cc.available-mcd-menu
@@ -536,11 +537,11 @@ cases:
     risk: medium
     status: reviewed
     tags: {attacks: [A8], mechanisms: [capability_present, mcp], domains: [mcd], layers: [l1], boundary_ledger: mcd-nearby.menu-vs-discovery, boundary_side: left}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-11}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-12}
     turns:
       - input: {utterance: 麦当劳都卖些什么吃的, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [nearby.search, mcd.order], allow_extra_intents: false}
   - id: cc.available.mcd-menu-calorie
     title: 麦当劳营养问题应落餐品能力而非搜索
     family_id: cc.available-mcd-menu
@@ -548,11 +549,11 @@ cases:
     risk: medium
     status: reviewed
     tags: {attacks: [A8], mechanisms: [capability_present, mcp], domains: [mcd], layers: [l1], boundary_ledger: mcd-nearby.menu-vs-discovery, boundary_side: left}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-11}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-12}
     turns:
       - input: {utterance: 巨无霸热量多少大卡, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [nearby.search, mcd.order], allow_extra_intents: false}
   - id: cc.available.mcd-status
     title: 麦当劳订单查询能力在册时应当可用
     family_id: cc.available-mcd-status
@@ -564,7 +565,7 @@ cases:
     turns:
       - input: {utterance: 帮我看看麦当劳的外卖送到哪了, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [mcd.order_status]}], forbidden_intents: [shop.order_status], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [mcd.order_status]}], forbidden_intents: [shop.order_status, mcd.order], allow_extra_intents: false}
   - id: cc.available.mcd-status-progress
     title: 麦当劳配送进度问法同样落订单查询
     family_id: cc.available-mcd-status
@@ -576,22 +577,19 @@ cases:
     turns:
       - input: {utterance: 麦当劳那单送到哪里了, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [mcd.order_status]}], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [mcd.order_status]}], forbidden_intents: [mcd.order], allow_extra_intents: false}
   - id: cc.negative.mcd-order-not-onboarded
-    title: 麦当劳下单未接入时不得误落查单或菜单
+    title: 麦当劳下单能力接入后应落真实 workflow
     family_id: cc.negative-mcd-order
     cohort: unseen_transfer
     risk: high
     status: reviewed
-    tags: {attacks: [A8], mechanisms: [capability_absent, mcp, write_action], domains: [mcd], layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-11}
+    tags: {attacks: [A8], mechanisms: [capability_present, mcp, write_action], domains: [mcd], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-12}
     turns:
       - input: {utterance: 在麦当劳点个巨无霸套餐, context: {}}
         expected:
-          # 2026-08-11 端到端校准：落 mcd.menu 并诚实说「套餐做不了+单品热量」是
-          # 合理出路（demo 抢单与查单错位仍禁）——当天 authored 的 forbidden 未经
-          # 实测，按实测修正，非为模型让步
-          plan: {forbidden_intents: [mcd.order_status, shop.order], allow_extra_intents: true}
+          plan: {required_intent_groups: [{any_of: [mcd.order]}], forbidden_intents: [mcd.order_status, mcd.menu, shop.order], allow_extra_intents: false}
   - id: cc.negative.mcd-cancel-not-query
     title: 取消话术不得塞给只读查单能力
     family_id: cc.negative-mcd-cancel
@@ -603,7 +601,7 @@ cases:
     turns:
       - input: {utterance: 把我的麦当劳订单取消掉, context: {}}
         expected:
-          plan: {forbidden_intents: [mcd.order_status, mcd.menu], allow_extra_intents: true}
+          plan: {forbidden_intents: [mcd.order_status, mcd.menu, mcd.order, shop.order_cancel], allow_extra_intents: true}
   - id: cc.available.luckin-status
     title: 瑞幸订单查询能力在册时应当可用
     family_id: cc.available-luckin
@@ -615,7 +613,7 @@ cases:
     turns:
       - input: {utterance: 瑞幸那杯咖啡现在什么进度了, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [luckin.order_status]}], forbidden_intents: [shop.order_status], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [luckin.order_status]}], forbidden_intents: [shop.order_status, luckin.order, luckin.order_cancel], allow_extra_intents: false}
   - id: cc.available.luckin-status-ready
     title: 瑞幸出杯进度问法同样落订单查询
     family_id: cc.available-luckin
@@ -627,19 +625,23 @@ cases:
     turns:
       - input: {utterance: 瑞幸点的那杯好了没, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [luckin.order_status]}], forbidden_intents: [shop.order_status], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [luckin.order_status]}], forbidden_intents: [shop.order_status, luckin.order, luckin.order_cancel], allow_extra_intents: false}
   - id: cc.negative.luckin-order-not-onboarded
-    title: 瑞幸下单未接入时不得误落其查单能力
+    title: 瑞幸下单能力接入后先找公开门店再进真实 workflow
     family_id: cc.negative-luckin-order
     cohort: unseen_transfer
     risk: high
     status: reviewed
-    tags: {attacks: [A8], mechanisms: [capability_absent, mcp, write_action], domains: [luckin], layers: [l1]}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-11}
+    tags: {attacks: [A8], mechanisms: [capability_present, mcp, write_action, dependency], domains: [nearby, luckin], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-12}
     turns:
       - input: {utterance: 给我点一杯瑞幸的生椰拿铁, context: {}}
         expected:
-          plan: {forbidden_intents: [luckin.order_status, mcd.menu], allow_extra_intents: true}
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}, {any_of: [luckin.order]}]
+            dependencies: [{producer: [nearby.search], consumer: luckin.order, carries: [store_name, store_longitude, store_latitude]}]
+            forbidden_intents: [shop.order, luckin.order_status, luckin.order_cancel, mcd.menu]
+            allow_extra_intents: false
   - id: cc.negative.luckin-nearby-not-status
     title: 瑞幸门店发现归 nearby 不落订单查询
     family_id: cc.negative-luckin-nearby
@@ -651,7 +653,7 @@ cases:
     turns:
       - input: {utterance: 附近有没有瑞幸咖啡店, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [luckin.order_status], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [luckin.order_status, luckin.order, luckin.order_cancel], allow_extra_intents: false}
   - id: cc.contrast.brandless-order-query
     title: 对照：无品牌查单不强制归属某家商户
     family_id: cc.contrast-brandless
@@ -675,7 +677,7 @@ cases:
     turns:
       - input: {utterance: 刚点的咖啡做好了没, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [shop.order_status]}], forbidden_intents: [luckin.order_status], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [shop.order_status]}], forbidden_intents: [luckin.order_status, luckin.order, luckin.order_cancel], allow_extra_intents: false}
   - id: cc.boundary.shop-order-status-bare
     title: 无品牌咖啡订单状态归 demo 商户
     family_id: cc.boundary-shop-luckin
@@ -687,7 +689,7 @@ cases:
     turns:
       - input: {utterance: 帮我看看咖啡订单现在什么状态, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [shop.order_status]}], forbidden_intents: [luckin.order_status], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [shop.order_status]}], forbidden_intents: [luckin.order_status, luckin.order, luckin.order_cancel], allow_extra_intents: false}
   - id: cc.boundary.nearby-burger-place
     title: 「附近哪有吃汉堡的」是周边发现不是品牌菜单
     family_id: cc.boundary-mcd-nearby
@@ -699,7 +701,7 @@ cases:
     turns:
       - input: {utterance: 附近哪有吃汉堡的地方, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [mcd.menu], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [mcd.menu, mcd.order], allow_extra_intents: false}
   - id: cc.boundary.nearby-fastfood
     title: 「这附近有什么快餐店」归周边发现
     family_id: cc.boundary-mcd-nearby
@@ -711,7 +713,7 @@ cases:
     turns:
       - input: {utterance: 这附近有什么快餐店, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [mcd.menu], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [mcd.menu, mcd.order], allow_extra_intents: false}
   - id: cc.available.mcd-menu-variant
     title: 麦当劳餐品问法变体（invariant 对照）
     family_id: cc.available-mcd-menu
@@ -724,7 +726,7 @@ cases:
     turns:
       - input: {utterance: 麦当劳都有些啥能吃的, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [nearby.search, mcd.order], allow_extra_intents: false}
   - id: cc.available.mcd-status-variant
     title: 麦当劳查单问法变体（invariant 对照）
     family_id: cc.available-mcd-status
@@ -751,3 +753,98 @@ cases:
       - input: {utterance: 瑞幸我点的那单现在啥情况, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [luckin.order_status]}], allow_extra_intents: false}
+  - id: cc.available.mcd-order-store
+    title: 麦当劳指定门店与商品应直接进入品牌下单
+    family_id: cc.available-mcd-order
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A8], mechanisms: [capability_present, mcp, write_action], domains: [mcd], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-12}
+    turns:
+      - input: {utterance: 麦当劳静安寺店来两份麦辣鸡腿堡，到店拿, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [mcd.order]}], forbidden_intents: [shop.order, mcd.menu, mcd.order_status], allow_extra_intents: false}
+  - id: cc.available.mcd-order-variant
+    title: 麦当劳下单问法变体（invariant 对照）
+    family_id: cc.negative-mcd-order
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A8], mechanisms: [capability_present, mcp, write_action], domains: [mcd], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-12}
+    relation: {base_case: cc.negative.mcd-order-not-onboarded, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 想在麦当劳买一份麦乐鸡套餐, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [mcd.order]}], forbidden_intents: [shop.order, mcd.menu, mcd.order_status], allow_extra_intents: false}
+  - id: cc.available.luckin-order-store
+    title: 瑞幸指定门店和规格仍须先取得可信公开门店再下单
+    family_id: cc.available-luckin-order
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A8], mechanisms: [capability_present, mcp, write_action, dependency], domains: [nearby, luckin], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-12}
+    turns:
+      - input: {utterance: 瑞幸南京西路店给我做杯热拿铁，少甜, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}, {any_of: [luckin.order]}]
+            dependencies: [{producer: [nearby.search], consumer: luckin.order, carries: [store_name, store_longitude, store_latitude]}]
+            forbidden_intents: [shop.order, luckin.order_status, luckin.order_cancel]
+            allow_extra_intents: false
+  - id: cc.available.luckin-order-variant
+    title: 瑞幸无门店下单问法变体（invariant 对照）
+    family_id: cc.negative-luckin-order
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A8], mechanisms: [capability_present, mcp, write_action, dependency], domains: [nearby, luckin], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-12}
+    relation: {base_case: cc.negative.luckin-order-not-onboarded, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 找家近点的瑞幸，给我来杯冰拿铁, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}, {any_of: [luckin.order]}]
+            dependencies: [{producer: [nearby.search], consumer: luckin.order, carries: [store_name, store_longitude, store_latitude]}]
+            forbidden_intents: [shop.order, luckin.order_status, luckin.order_cancel]
+            allow_extra_intents: false
+  - id: cc.available.luckin-cancel
+    title: 瑞幸最近订单取消能力在册时应当可用
+    family_id: cc.available-luckin-cancel
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A8], mechanisms: [capability_present, mcp, write_action, cancel], domains: [luckin], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-12}
+    turns:
+      - input: {utterance: 刚下的瑞幸那单不要了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [luckin.order_cancel]}], forbidden_intents: [luckin.order, luckin.order_status, shop.order_cancel], allow_extra_intents: false}
+  - id: cc.available.luckin-cancel-explicit
+    title: 带订单号取消瑞幸订单仍落独立取消能力
+    family_id: cc.available-luckin-cancel-explicit
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A8], mechanisms: [capability_present, mcp, write_action, cancel], domains: [luckin], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-12}
+    turns:
+      - input: {utterance: 撤掉瑞幸订单 LK9088, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [luckin.order_cancel]}], forbidden_intents: [luckin.order, luckin.order_status, shop.order_cancel], allow_extra_intents: false}
+  - id: cc.available.luckin-cancel-variant
+    title: 瑞幸取消问法变体（invariant 对照）
+    family_id: cc.available-luckin-cancel
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A8], mechanisms: [capability_present, mcp, write_action, cancel], domains: [luckin], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-12}
+    relation: {base_case: cc.available.luckin-cancel, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 帮我取消上一笔瑞幸咖啡, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [luckin.order_cancel]}], forbidden_intents: [luckin.order, luckin.order_status, shop.order_cancel], allow_extra_intents: false}

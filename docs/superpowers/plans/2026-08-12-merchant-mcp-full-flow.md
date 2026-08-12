@@ -229,7 +229,7 @@ python -m pytest --import-mode=importlib agents/mcp_bridge/tests/test_merchant_m
   - `item_query`、`quantity`、`store_hint`、`city`、`pickup_mode`、`checkout_token`。
   - 数量限制 1..20；缺 item 只追问 `item_query`；门店歧义只追问 `store_hint`。
   - `orderType/beType/searchType` 由受审常量构造，不由 LLM 填。
-  - 结果 locator 固定为菜单 `data.categories[*].meals[*].code`、详情 `data.meals[code]`、试算金额 `data.price`（分）、取餐 `data.takeWayList[*].code`、订单 `data.orderId`、支付 `data.payH5Url`；`data.orderDetail.realTotalAmount` 仅在真实 create 与 `data.price` 对账后作为金额回退。
+  - 结果 locator 固定为菜单 code `query-meals.data.categories[*].meals[*].code`，名称/展示价按 code 关联同响应的 `query-meals.data.meals[code]`；详情是 `query-meal-detail.data` 直对象；试算金额 `calculate-price.data.price`（分）、取餐 `calculate-price.data.takeWayList[*].code`、订单 `create-order.data.orderId`、支付 `create-order.data.payH5Url`；`create-order.data.orderDetail.realTotalAmount` 仅在真实 create 与试算金额对账后作为金额回退。所有麦当劳响应还须满足 `success=true && code=200`。
 
 - [ ] GREEN：
 
@@ -539,3 +539,32 @@ git push origin main
 - 类型一致：Planner 仅传字符串；嵌套参数始终保存在 `MerchantDraft.upstream_args: dict`；金额统一 `amount_cents:int`；候选卡可携带 `checkout_token:str`，标准确认恢复不依赖客户端 token，只原子消费可信 current draft。
 - 外部未知被限定为证据闸：瑞幸创建响应 locator/host 必须由获准真实未支付单取得；在此之前不猜字段、不放宽 host。
 - 红线：不改 `.env`、不改数据库 schema、不删除文件、不重写 git 历史。
+
+---
+
+## 实施记录（2026-08-12）
+
+> 按本计划头部约定，执行期没有回填 checkbox。本节只登记完成面、真实偏差和最终收口前仍需
+> 补的证据；最终测试数字以实际命令退出码为准。
+
+- Task 1–6 的实现面已完成：MCP 严格解析/准入/写安全、Redis 草稿与复合 workflow、麦当劳/
+  瑞幸确定性 codec、HMI 卡与动作、能力/意图资产均已落地。两家业务都到创建未支付订单、
+  展示受控支付入口与查单；瑞幸支持再次确认取消，麦当劳官方无远程取消；不执行最终付款。
+- 官方 `initialize + tools/list` 与只读预览已在真栈复核；浏览器已有麦当劳支付链接卡和瑞幸
+  订单预览证据。
+- 真实创建不是原定最多 3 笔，而是 5 笔（瑞幸 3、麦当劳 2）。增加发生在官方 create
+  locator/host 契约发现与浏览器确定性拒绝/续接排障；三笔瑞幸均已取消，两笔麦当劳均由商户
+  自动取消，无最终付款。这个偏差不回写头部授权预算，保留原计划与实际之间的差异。
+- 旧版 C9 的“收到回复即绿”无法证明状态语义，且曾把官方明确终态重述为“没查到/待回传”；
+  这些旧截图不计入最终验收。收紧后的 C9 已分别精确命中瑞幸“已取消”和麦当劳
+  “订单已取消”，且查询帧均为 `is_confirmation=false`。
+- Task 8 已完成冻结工作树验证：根全量 **5408 passed / 14 skipped / 0 failed**（退出码 0，
+  23m25s）；mcp-bridge **385 passed**、隐私/旅程 manifest **168 passed**、HMI node
+  **253/253** 且 production build 通过。最终审查补齐真实订单号移除、显式门店两步可信 POI、
+  履约态按钮、认证 scope 运行手册和 `merchant_draft` 隐私库存/owner 删除路径。商户确认操作
+  在飞时删除返回 pending，租约释放后重试并证明短期状态清零才 ACK；这不是全 registry saga。提交与 push
+  只以 Git 历史为证，本段不预写运行状态。
+- 合成 Docker 真栈在不调用商户业务工具的前提下复验该删除契约：活跃租约阶段 HTTP 为
+  `503 + pending/retryable`，精确释放后同 owner 重试为 200，最终会话/草稿为零且旧租约不可授权。
+- PoC 边界保持：商户 token/账号是服务级全局凭证，payment host 依赖运行时安全配置；不做
+  多乘员独立商户账号、token 自动刷新或最终付款。

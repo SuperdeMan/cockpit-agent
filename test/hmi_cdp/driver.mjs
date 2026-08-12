@@ -18,6 +18,17 @@ export const SHOTS_DIR = join(HERE, 'shots')
 export const HMI_URL = process.env.CDP_HMI_URL || 'http://localhost:5173'
 export const COLLECTOR = process.env.CDP_COLLECTOR || 'http://localhost:8092'
 const PORT = Number(process.env.CDP_PORT || 9223)
+const coordinate = (name, fallback, min, max) => {
+  const raw = String(process.env[name] || '').trim()
+  if (!raw) return fallback
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`${name} 不是有效坐标`)
+  }
+  return value
+}
+const LATITUDE = coordinate('CDP_LATITUDE', 22.5333, -90, 90)
+const LONGITUDE = coordinate('CDP_LONGITUDE', 113.9505, -180, 180)
 
 const BROWSERS = [
   process.env.CDP_BROWSER,
@@ -77,7 +88,7 @@ export class Cdp {
         { permissions: ['geolocation'], origin: HMI_URL })
     } catch { /* 旧内核无此方法则靠 override 兜底 */ }
     await this.send('Emulation.setGeolocationOverride',
-      { latitude: 22.5333, longitude: 113.9505, accuracy: 10 })
+      { latitude: LATITUDE, longitude: LONGITUDE, accuracy: 10 })
     await this.eval(`(() => {
       const k = 'cockpit.settings.v1'
       const cur = JSON.parse(localStorage.getItem(k) || '{}')
@@ -164,6 +175,17 @@ export class Cdp {
       await sleep(200)
     }
     throw new Error(`等${label}超时：近帧=${JSON.stringify(this.sentFrames.slice(-3).map(f => f.data.text || f.data.type)).slice(0, 200)}`)
+  }
+
+  // 等一条满足谓词的入帧，确保按钮不止“发出去了”，后端业务也真实收口。
+  async waitReceivedFrame(pred, timeoutMs = 30000, sinceTs = 0, label = '入帧') {
+    const t0 = Date.now()
+    while (Date.now() - t0 < timeoutMs) {
+      const hit = this.recvFrames.find((f) => f.ts >= sinceTs && pred(f.data))
+      if (hit) return hit.data
+      await sleep(200)
+    }
+    throw new Error(`等${label}超时：近帧=${JSON.stringify(this.recvFrames.slice(-3).map(f => f.data.type)).slice(0, 200)}`)
   }
 
   async bodyText() {

@@ -447,12 +447,12 @@ cases:
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [navigation], layers: [l1]}
+    tags: {attacks: [A7], mechanisms: [route_hint, hijack], domains: [navigation], layers: [l1], boundary_ledger: charging-navigation.find-charger-vs-self-locate, boundary_side: right}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     turns:
       - input: {utterance: 我现在在哪条路上, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [navigation.locate]}], forbidden_intents: [vision.describe, trip.plan], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [navigation.locate]}], forbidden_intents: [vision.describe, trip.plan, charging.find], allow_extra_intents: false}
   - id: ki.hint.no-hijack-order-status
     title: Hint 不得劫持订单进度句
     family_id: ki.hint-order

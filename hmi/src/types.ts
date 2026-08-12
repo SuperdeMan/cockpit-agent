@@ -45,6 +45,14 @@ export type ProcessStep = {
 
 export type CardGroup = { type: 'card_group'; items: UiCard[] }
 
+// 卡内动作只合成一句明确的自然语言，经 App.send 走普通
+// `is_confirmation=false` 上行链。它不是业务写接口；真正的创建/取消仍由
+// 全局 ConfirmBubble 的 `is_confirmation=true` 二次确认触发。
+export type CardButton = {
+  label: string
+  send_text: string
+}
+
 // 数据真实性标记（后端保留键 `_prov`，契约 docs/conventions.md §9.3）：
 // mock=模拟数据醒目提示 / degraded=真实但降级路径 / cached=缓存 / real=不打扰角标（来源·取数时间）。
 // 治理 P1 试点：weather / place_list·place_detail / search_result 三族，其余分批推广。
@@ -87,6 +95,7 @@ export type UiCard =
   | ParkingFeeCard
   | McpOrderCard
   | McpResultCard
+  | MerchantCheckoutCard
 
 // M4 P4 看一看卡：单帧图片问答的结果。**simulated 恒为真**——PoC 没有车外摄像头，
 // 画面来自设备摄像头，卡片角标必须如实说（同 sim.adas / MCP 演示商户的诚实标注惯例）。
@@ -103,12 +112,17 @@ export type PaymentQrCard = {
   type: 'payment_qr'
   payment_id: string
   amount: string          // 展示金额（如 "15元"）——来源=网关订单快照
+  merchant?: string
+  order_id?: string
+  status?: string
+  store_name?: string
   scene?: string
-  qr_content: string
-  qr_svg?: string         // data:image/svg+xml;base64,…；空则回落显示 pay_url 文本
+  qr_content?: string
+  qr_svg?: string         // data:image/svg+xml;base64,…；空则回落为安全链接打开/复制动作
   pay_url?: string
   expires_at_ms?: number
   merchant_note?: string  // merchant_hosted：「订单状态以商家为准」类说明
+  buttons?: CardButton[]
   _prov?: Provenance
 }
 
@@ -135,13 +149,28 @@ export type ParkingFeeCard = {
 // demo/demo_label 是「演示商户」三重冗余的第二重——此前它在前端根本没有渲染出口。
 export type McpOrderCard = {
   type: 'mcp_order'
+  confirmation_context?: string
   server?: string
   tool?: string
+  merchant?: string
+  brand?: string
   order_id?: string
+  orderId?: string
   sku?: string
   size?: string
   amount_cents?: number
+  payable_cents?: number
+  payable_amount_cents?: number
+  amount?: string
   status?: string
+  store_name?: string
+  store?: string | { name?: string; storeName?: string }
+  item_name?: string
+  product_name?: string
+  quantity?: number
+  items?: MerchantLineItem[]
+  products?: MerchantLineItem[]
+  buttons?: CardButton[]
   duplicate?: boolean
   demo?: boolean
   demo_label?: string
@@ -152,8 +181,77 @@ export type McpResultCard = {
   type: 'mcp_result'
   server?: string
   tool?: string
+  merchant?: string
+  brand?: string
+  order_id?: string
+  orderId?: string
+  amount_cents?: number
+  payable_cents?: number
+  payable_amount_cents?: number
+  amount?: string
+  status?: string
+  buttons?: CardButton[]
   demo?: boolean
   demo_label?: string
+  _prov?: Provenance
+  [key: string]: unknown
+}
+
+export type MerchantLineItem = {
+  id?: string
+  name?: string
+  label?: string
+  subtitle?: string
+  send_text?: string
+  item_name?: string
+  product_name?: string
+  quantity?: number
+  qty?: number
+  specs?: string | string[]
+  specifications?: string | string[]
+  specification?: string | string[]
+  additionDesc?: string
+  size?: string
+  amount_cents?: number
+}
+
+// 真实商户复合 workflow 卡：同一渲染器兼容新契约
+// `merchant_checkout` 与设计阶段的 choices/preview 卡名。checkout_token 可在
+// 卡数据中存在但绝不渲染；它也不是确认授权。
+export type MerchantCheckoutCard = {
+  type: 'merchant_checkout' | 'merchant_choices' | 'merchant_order_preview'
+  stage?: 'choices' | 'preview' | 'order' | 'cancel'
+  confirmation_context?: string
+  merchant?: string
+  merchant_name?: string
+  brand?: string
+  title?: string
+  choice_kind?: 'store' | 'product'
+  store_name?: string
+  storeName?: string
+  store?: string | { name?: string; storeName?: string }
+  order_id?: string
+  orderId?: string
+  amount?: string
+  amount_cents?: number
+  payable?: string
+  payable_amount?: string
+  payable_cents?: number
+  payable_amount_cents?: number
+  discount?: string
+  discount_cents?: number
+  fulfillment?: string
+  pickup_mode?: string
+  take_way?: string
+  item_name?: string
+  product_name?: string
+  quantity?: number
+  items?: MerchantLineItem[]
+  products?: MerchantLineItem[]
+  options?: Array<{ label?: string; name?: string; subtitle?: string; send_text?: string }>
+  buttons?: CardButton[]
+  status?: string
+  checkout_token?: string
   _prov?: Provenance
   [key: string]: unknown
 }

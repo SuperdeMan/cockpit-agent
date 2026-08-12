@@ -104,9 +104,8 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     catalog = _assemble_capability_catalog(agents)
 
     assert len(agents) == 17
-    # 2026-08-11 135→138：真实商户 MCP v1 激活 +3（mcd.menu / mcd.order_status /
-    # luckin.order_status，servers.yaml 真机 tools/list 核实后收录）
-    assert len(catalog.ref_to_pair) == 138
+    # 2026-08-12 138→141：三条受审复合商户能力激活；官方低层工具仍不入 catalog。
+    assert len(catalog.ref_to_pair) == 141
     assert catalog.catalog_stats["dropped"] == []
     # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10865。
     # info.sports 新增过去赛果/泛指赛事边界后增加 49 字符，仍完整落在 16k 预算内。
@@ -117,11 +116,13 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 下单话术塞给 demo 的真因是描述太像通用点餐——描述加限定是修法本体）。
     # 这个数**该跟着能力面走**——它守的是「完整 inventory 仍不超预算」，不是冻结条数；
     # 但每次动它都要先确认涨的是有意新增的能力，而不是别处漏进来的重复项。
-    assert catalog.catalog_stats["chars_full"] == 11118
-    assert catalog.catalog_stats["chars_final"] == 11118
+    # 2026-08-12：新增 mcd.order/luckin.order/luckin.order_cancel，且瑞幸下单描述明确锁定
+    # nearby.search 可信公开 POI 依赖；完整 inventory 精确增加到 11529，仍未发生预算裁剪。
+    assert catalog.catalog_stats["chars_full"] == 11529
+    assert catalog.catalog_stats["chars_final"] == 11529
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 4882
+    assert 16000 - catalog.catalog_stats["chars_final"] == 4471
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest
@@ -148,6 +149,18 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
             isinstance(value, list) and len(value) == expected_value_length
             for value in group["capabilities"].values()
         )
+
+
+def test_merchant_workflow_capabilities_are_in_catalog_without_internal_tools():
+    """复合商户 intent 是用户能力；官方低层工具只作内部依赖，不得进入 catalog。"""
+    import eval_live
+
+    intents = eval_live.known_intents()
+    assert {"mcd.order", "luckin.order", "luckin.order_cancel"} <= intents
+    assert not ({
+        "query-nearby-stores", "query-meals", "create-order",
+        "queryShopList", "searchProductForMcp", "createOrder", "cancelOrder",
+    } & intents)
 
 
 def test_charging_catalog_exposes_depleted_help_and_status_boundary():

@@ -264,7 +264,7 @@ def test_serial_cross_domain_with_depends_on():
     assert final.get("need_confirm") is True
 
     # 会话挂起态
-    state = asyncio.run(session.load("sess-mi"))
+    state = asyncio.run(session.load("sess-mi", owner_user_id="u1"))
     assert state is not None
     assert state.phase == "wait_confirm"
 

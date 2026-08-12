@@ -289,6 +289,32 @@ def test_stream_yields_speech_deltas_for_single_cloud_step():
     assert executor.runs == []
 
 
+def test_t2_stream_result_is_stamped_with_executed_intent():
+    planner = _Planner([ReplanDecision(done=True)])
+    executor = _Executor({})
+    aggregator = _Aggregator()
+
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        from cockpit.agent.v1 import agent_pb2
+        from google.protobuf.struct_pb2 import Struct
+        data = Struct()
+        data.update({"items": [{"name": "瑞幸"}]})
+        yield ("final", agent_pb2.ExecuteResponse(
+            status=0, speech="找到门店", data=data))
+
+    controller = LoopController(
+        planner, executor, aggregator, None,
+        max_iters=2, budget_ms=5000, stream_fn=stream_fn)
+    _collect(
+        controller, goal="找瑞幸",
+        initial_plan=Plan(steps=[Step(
+            id="s1", agent_id="nearby", kind="agent", deployment="cloud",
+            intent="nearby.search", latency_budget_ms=5000)],
+            complexity="adaptive"),
+        agents=[], ctx=PlanContext(), user_text="找瑞幸")
+    assert aggregator.calls[0][1][0].source_intent == "nearby.search"
+
+
 def test_stream_failure_falls_back_to_executor():
     """When streaming fails, the loop should fall back to the unary executor."""
     planner = _Planner([ReplanDecision(done=True)])
@@ -595,6 +621,28 @@ def test_stream_action_then_lost_final_marks_outcome_uncertain():
     assert composed, "聚合器没拿到任何结果"
     assert composed[-1].data.get("_outcome_uncertain") is True
     assert "无法确认" in composed[-1].speech
+    assert composed[-1].source_intent == "test.do"
+
+
+def test_stream_speech_then_lost_final_stamps_empty_result_source():
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        yield ("speech", "正在查询")
+
+    aggregator = _Aggregator()
+    controller = LoopController(
+        _Planner([ReplanDecision(done=True)]),
+        _Executor({"s1": StepResult("s1", StepStatus.OK)}),
+        aggregator, None, max_iters=2, budget_ms=5000,
+        stream_fn=stream_fn)
+    _collect(
+        controller, goal="test", initial_plan=_one_step_plan("merchant.menu"),
+        agents=[], ctx=PlanContext(), user_text="test")
+
+    composed = [result for _text, results in aggregator.calls
+                for result in results]
+    assert composed[-1].status == StepStatus.OK
+    assert composed[-1].speech == ""
+    assert composed[-1].source_intent == "merchant.menu"
 
 
 class _Mirror:

@@ -229,6 +229,8 @@ class LoopController:
                     if hasattr(self.executor, "_verify_outcome"):
                         final_sr = await self.executor._verify_outcome(
                             step, final_sr, ctx, allow_retry=False)
+                    if hasattr(self.executor, "_stamp_source"):
+                        final_sr = self.executor._stamp_source(step, final_sr)
                     # T2 流式直通也补 step.agent span（与 engine.py D0 一致，否则
                     # 单步 cloud agent 在 T2 循环里缺这一跳——trace 丢失该 Agent 身份，
                     # NEED_CONFIRM/NEED_SLOT 挂起时尤其明显）。
@@ -270,6 +272,8 @@ class LoopController:
                         # 那笔账还上——查一次世界状态再定话术，并打指纹防 replan 重发。
                         uncertain_sr = await self.executor.stream_uncertain_result(
                             step, ctx)
+                        if hasattr(self.executor, "_stamp_source"):
+                            uncertain_sr = self.executor._stamp_source(step, uncertain_sr)
                         results.append(uncertain_sr)
                         observations.append(
                             summarize(uncertain_sr, intent=step.intent))
@@ -277,6 +281,8 @@ class LoopController:
                         # 仅话术已流出：合成空结果避免重跑与复读（既有语义）。
                         empty_sr = StepResult(
                             step_id=step.id, status=StepStatus.OK, speech="")
+                        if hasattr(self.executor, "_stamp_source"):
+                            empty_sr = self.executor._stamp_source(step, empty_sr)
                         results.append(empty_sr)
                         observations.append(summarize(empty_sr, intent=step.intent))
                     observations = observations[-self.observation_limit:]

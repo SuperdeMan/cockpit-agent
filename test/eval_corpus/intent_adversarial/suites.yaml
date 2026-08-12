@@ -11,6 +11,10 @@ schema_version: 1
 # 各 1 条 relation invariant）与 2 条新边界裁定（luckin-shop 品牌 vs demo、
 # mcd-nearby 品牌菜单 vs 周边发现；双向各 2 例=+8）。合计 +18 唯一输入（553），
 # 全部是能力面实质扩张的兑现物。
+# 2026-08-12 复合下单激活后再 +7：保留并翻转两条「未接入」原 case id，另补
+# mcd.order / luckin.order 各一条独立正例和一条 relation 对照，luckin.order_cancel
+# 补两条正例和一条 relation 对照。翻转不增输入，新增恰好 7，distinct_inputs=560；
+# 没有删旧尺子压数字，现上界恰好用满。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]

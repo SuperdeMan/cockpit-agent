@@ -8,7 +8,8 @@ import pytest
 
 from agents.mcp_bridge.src.admission import (COMPENSATE_POLICIES, REJECT_COMPENSATE,
                                              REJECT_ENV, ToolSpec, ServerSpec,
-                                             admit, load_servers,
+                                             WorkflowSpec, admit, admit_workflow,
+                                             load_servers,
                                              normalize_hostname)
 
 
@@ -16,6 +17,59 @@ def _write_yaml(tmp_path, body: str) -> str:
     p = tmp_path / "servers.yaml"
     p.write_text(textwrap.dedent(body), encoding="utf-8")
     return str(p)
+
+
+def test_workflow_admission_is_nonempty_scope_complete_and_minimal():
+    # Read dependencies may remain public.  Write dependencies are an internal
+    # implementation detail of the high-level workflow and must be hidden.
+    read = ToolSpec(name="read", intent="internal.read", expose=True,
+                    schema_sha="read-pin", required_scopes=["merchant.write"])
+    write = ToolSpec(name="create", intent="internal.create", expose=False,
+                     schema_sha="write-pin", write=True, require_confirm=True,
+                     required_scopes=["merchant.write"])
+    admitted = {"read": read, "create": write, "unrelated": read}
+
+    empty = WorkflowSpec(intent="m.order", handler="m", required_tools=[])
+    assert "required_tools" in admit_workflow(empty, admitted)
+
+    weak_scope = WorkflowSpec(
+        intent="m.order", handler="m", required_tools=["read", "create"],
+        required_scopes=[], require_confirm=True)
+    assert "required_scopes" in admit_workflow(weak_scope, admitted)
+
+    no_confirm = WorkflowSpec(
+        intent="m.order", handler="m", required_tools=["read", "create"],
+        required_scopes=["merchant.write"], require_confirm=False)
+    assert "require_confirm" in admit_workflow(no_confirm, admitted)
+
+    valid = WorkflowSpec(
+        intent="m.order", handler="m", required_tools=["read", "create"],
+        required_scopes=["merchant.write"], require_confirm=True)
+    assert admit_workflow(valid, admitted) == ""
+    assert set(valid.required_tools) == {"read", "create"}
+
+
+def test_workflow_rejects_unpinned_dependency_and_exposed_write_dependency():
+    workflow = WorkflowSpec(
+        intent="m.order", handler="m", required_tools=["read", "create"],
+        required_scopes=["merchant.read", "merchant.write"])
+    read = ToolSpec(
+        name="read", intent="m.read", expose=True, schema_sha="read-pin",
+        required_scopes=["merchant.read"])
+    unpinned_write = ToolSpec(
+        name="create", intent="m.create", expose=False, schema_sha="",
+        write=True, require_confirm=True, required_scopes=["merchant.write"])
+
+    reason = admit_workflow(
+        workflow, {"read": read, "create": unpinned_write})
+    assert "schema_sha" in reason and "create" in reason
+
+    exposed_write = ToolSpec(
+        name="create", intent="m.create", expose=True, schema_sha="write-pin",
+        write=True, require_confirm=True, required_scopes=["merchant.write"])
+    reason = admit_workflow(
+        workflow, {"read": read, "create": exposed_write})
+    assert "expose=false" in reason and "create" in reason
 
 
 def test_transport_http_fields_parsed(tmp_path, monkeypatch):
@@ -53,6 +107,237 @@ def test_transport_http_fields_parsed(tmp_path, monkeypatch):
     assert tool.timeout_outcome == "uncertain"
 
 
+def test_payment_amount_contract_fields_are_loaded(tmp_path):
+    path = _write_yaml(tmp_path, """
+        servers:
+          - id: merchant
+            command: [python, -m, merchant]
+            version: ""
+            pay_url_hosts: [pay.example.cn]
+            tools:
+              - name: create
+                intent: merchant.create
+                pay_url_locator: data.payUrl
+                amount_locator: data.discountPrice
+                amount_unit: yuan
+    """)
+
+    tool = load_servers(path)[0].tools[0]
+
+    assert tool.pay_url_locator == "data.payUrl"
+    assert tool.amount_locator == "data.discountPrice"
+    assert tool.amount_unit == "yuan"
+
+
+def test_declared_read_result_rejects_invalid_predicate_and_amount_unit():
+    base = dict(
+        name="lookup", intent="merchant.status", schema_sha="",
+        success_predicate={"success": [True]},
+        result_map={
+            "order_id": "data.orderId",
+            "status": "data.status",
+            "amount_cents": "data.amount",
+        },
+        status_map={"已取消": "已取消"})
+    bad_unit = ToolSpec(**base, amount_unit="dollars")
+    admitted, rejected = admit(_spec([bad_unit]), _offered("lookup"))
+    assert admitted == []
+    assert any("amount_unit" in reason for reason in rejected)
+
+    bad_predicate = ToolSpec(**{
+        **base,
+        "success_predicate": {"": [True]},
+        "amount_unit": "yuan",
+    })
+    admitted, rejected = admit(_spec([bad_predicate]), _offered("lookup"))
+    assert admitted == []
+    assert any("success_predicate" in reason for reason in rejected)
+
+    missing_can_match_null = ToolSpec(**{
+        **base,
+        "success_predicate": {"success": [None]},
+        "amount_unit": "yuan",
+    })
+    admitted, rejected = admit(
+        _spec([missing_can_match_null]), _offered("lookup"))
+    assert admitted == []
+    assert any("success_predicate" in reason for reason in rejected)
+
+
+def test_declared_amount_unit_must_be_explicit_in_yaml(tmp_path):
+    path = _write_yaml(tmp_path, """
+        servers:
+          - id: merchant
+            command: [python, -m, merchant]
+            version: ""
+            tools:
+              - name: lookup
+                intent: merchant.status
+                success_predicate: {success: [true]}
+                result_map:
+                  order_id: data.orderId
+                  status: data.status
+                  amount_cents: data.amount
+    """)
+    spec = load_servers(path)[0]
+    assert spec.tools[0].amount_unit == ""
+    admitted, rejected = admit(spec, _offered("lookup"))
+    assert admitted == []
+    assert any("amount_unit" in reason for reason in rejected)
+
+
+def test_remote_write_requires_declared_business_success_predicate():
+    write = ToolSpec(
+        name="create", intent="merchant.internal.create", write=True,
+        expose=False, require_confirm=True,
+        idempotency_mode="local_at_most_once", retry_policy="never",
+        timeout_outcome="uncertain", compensate_policy="terminal")
+    remote = ServerSpec(
+        id="merchant", command=[], version="", tools=[write],
+        transport="streamable_http")
+    admitted, rejected = admit(remote, _offered("create"))
+    assert admitted == []
+    assert any("success_predicate" in reason for reason in rejected)
+
+    write.success_predicate = {"success": [True], "code": [0]}
+    admitted, rejected = admit(remote, _offered("create"))
+    assert [tool.name for tool, _ in admitted] == ["create"]
+    assert rejected == []
+
+    write.expose = True
+    admitted, rejected = admit(remote, _offered("create"))
+    assert admitted == []
+    assert any("expose=false" in reason for reason in rejected)
+
+
+@pytest.mark.parametrize("transport", ["http", "STREAMABLE_HTTP"])
+def test_admission_rejects_unknown_or_noncanonical_transport(transport):
+    tool = ToolSpec(name="lookup", intent="merchant.lookup")
+    spec = ServerSpec(
+        id="merchant", command=[], version="", tools=[tool],
+        transport=transport)
+
+    admitted, rejected = admit(spec, _offered("lookup"))
+
+    assert admitted == []
+    assert any("transport" in reason and transport in reason
+               for reason in rejected)
+
+
+def test_third_party_stdio_cannot_expose_write_tool():
+    write = ToolSpec(
+        name="create", intent="merchant.internal.create", write=True,
+        expose=True, require_confirm=True,
+        idempotency_mode="local_at_most_once", retry_policy="never",
+        timeout_outcome="uncertain", compensate_policy="terminal",
+        success_predicate={"success": [True]})
+    third_party = ServerSpec(
+        id="merchant", command=[], version="", tools=[write],
+        demo=False, trust="third_party", transport="stdio")
+
+    admitted, rejected = admit(third_party, _offered("create"))
+
+    assert admitted == []
+    assert any("expose" in reason for reason in rejected)
+
+
+def test_third_party_stdio_hidden_write_requires_success_predicate():
+    write = ToolSpec(
+        name="create", intent="merchant.internal.create", write=True,
+        expose=False, require_confirm=True,
+        idempotency_mode="local_at_most_once", retry_policy="never",
+        timeout_outcome="uncertain", compensate_policy="terminal")
+    third_party = ServerSpec(
+        id="merchant", command=[], version="", tools=[write],
+        demo=False, trust="third_party", transport="stdio")
+
+    admitted, rejected = admit(third_party, _offered("create"))
+    assert admitted == []
+    assert any("success_predicate" in reason for reason in rejected)
+
+    write.success_predicate = {"success": [True]}
+    admitted, rejected = admit(third_party, _offered("create"))
+    assert [tool.name for tool, _ in admitted] == ["create"]
+    assert rejected == []
+
+
+def test_demo_stdio_is_the_only_exposed_write_exception():
+    write = ToolSpec(
+        name="create", intent="demo.create", write=True,
+        expose=True, require_confirm=True,
+        idempotency_mode="local_at_most_once", retry_policy="never",
+        timeout_outcome="uncertain", compensate_policy="terminal")
+    demo = ServerSpec(
+        id="demo", command=[], version="", tools=[write],
+        demo=True, trust="local", transport="stdio")
+
+    admitted, rejected = admit(demo, _offered("create"))
+
+    assert [tool.name for tool, _ in admitted] == ["create"]
+    assert rejected == []
+
+
+@pytest.mark.parametrize("candidate", ["", "   ", float("nan"),
+                                         float("inf"), float("-inf")])
+def test_success_predicate_rejects_empty_or_nonfinite_scalars(candidate):
+    tool = ToolSpec(
+        name="lookup", intent="merchant.status",
+        success_predicate={"code": [candidate]},
+        result_map={"order_id": "data.id", "status": "data.status"},
+        status_map={"已取消": "已取消"})
+    admitted, rejected = admit(_spec([tool]), _offered("lookup"))
+    assert admitted == []
+    assert any("success_predicate" in reason for reason in rejected)
+
+
+@pytest.mark.parametrize("status_map", [
+    {},
+    {"已取消 手机13800138000": "已取消 手机13800138000"},
+    {"已取消": "RAW-SECRET-TOKEN"},
+])
+def test_declared_status_result_requires_controlled_status_map(status_map):
+    tool = ToolSpec(
+        name="lookup", intent="merchant.status",
+        success_predicate={"code": [0]},
+        result_map={"order_id": "data.id", "status": "data.status"},
+        status_map=status_map)
+
+    admitted, rejected = admit(_spec([tool]), _offered("lookup"))
+
+    assert admitted == []
+    assert any("status_map" in reason for reason in rejected)
+
+
+def test_workflow_fields_are_parsed_without_exposing_internal_tools(tmp_path):
+    path = _write_yaml(tmp_path, """
+        servers:
+          - id: merchant
+            command: [python, -m, x]
+            version: ""
+            workflows:
+              - intent: luckin.order
+                handler: luckin
+                required_tools: [shop.list, product.search, order.create]
+                required_scopes: [merchant.write]
+                description: 瑞幸下单
+                examples: [点一杯瑞幸]
+                slots: [item_query, quantity]
+                require_confirm: true
+            tools:
+              - name: shop.list
+                intent: _internal.luckin.shop
+                expose: false
+    """)
+    spec = load_servers(path)[0]
+    workflow = spec.workflows[0]
+    assert workflow.intent == "luckin.order"
+    assert workflow.handler == "luckin"
+    assert workflow.required_tools == ["shop.list", "product.search", "order.create"]
+    assert workflow.required_scopes == ["merchant.write"]
+    assert workflow.require_confirm is True
+    assert spec.tools[0].expose is False
+
+
 def test_missing_env_marks_server_rejected(tmp_path, monkeypatch):
     """缺 token → 具名拒载理由，不静默拿空 token 出站吃 401（§9.9）。"""
     monkeypatch.delenv("NOPE_TOKEN", raising=False)
@@ -87,7 +372,11 @@ def test_stdio_defaults_unchanged(tmp_path):
 
 
 def _spec(tools) -> ServerSpec:
-    return ServerSpec(id="s", command=[], version="", tools=tools)
+    # Legacy write-invariant tests exercise the trusted local demo exception;
+    # third-party and remote boundary cases construct ServerSpec explicitly.
+    return ServerSpec(
+        id="s", command=[], version="", tools=tools,
+        demo=True, trust="local", transport="stdio")
 
 
 def _offered(*names):
@@ -286,10 +575,32 @@ def test_pay_url_locator_accepts_only_normalized_hostname_allowlist():
     spec = ServerSpec(id="merchant", command=[], version="", tools=[],
                       pay_url_hosts=["pay.example.cn", "backup.example.cn"])
     tool = ToolSpec(name="lookup", intent="m.lookup",
-                    pay_url_locator="payment.url")
+                    pay_url_locator="payment.url",
+                    amount_locator="payment.amount", amount_unit="yuan")
     spec.tools = [tool]
     admitted, rejected = admit(spec, _offered("lookup"))
     assert [t.name for t, _ in admitted] == ["lookup"] and rejected == []
+
+
+@pytest.mark.parametrize("amount_locator,amount_unit", [
+    ("", "yuan"), ("payment.amount", ""),
+    ("payment.amount", "dollars"),
+])
+def test_pay_url_locator_requires_audited_amount_contract(
+        amount_locator, amount_unit):
+    spec = ServerSpec(
+        id="merchant", command=[], version="", tools=[],
+        pay_url_hosts=["pay.example.cn"])
+    tool = ToolSpec(
+        name="lookup", intent="m.lookup", pay_url_locator="payment.url",
+        amount_locator=amount_locator, amount_unit=amount_unit)
+    spec.tools = [tool]
+
+    admitted, rejected = admit(spec, _offered("lookup"))
+
+    assert admitted == []
+    assert any("amount_locator" in reason or "amount_unit" in reason
+               for reason in rejected)
 
 
 @pytest.mark.parametrize("host", ["faß.de", "支付.example"])
@@ -300,7 +611,10 @@ def test_unicode_payment_hostname_is_rejected_instead_of_idna_aliasing(host):
 
 def test_non_demo_server_cannot_admit_forward_owner():
     tool = ToolSpec(name="lookup", intent="m.lookup", forward_owner=True)
-    admitted, rejected = admit(_spec([tool]), _offered("lookup"))
+    non_demo = ServerSpec(
+        id="third-party", command=[], version="", tools=[tool],
+        demo=False, trust="third_party", transport="stdio")
+    admitted, rejected = admit(non_demo, _offered("lookup"))
     assert admitted == []
     assert any("forward_owner" in r for r in rejected)
 

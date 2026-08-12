@@ -254,7 +254,8 @@ def test_need_slot_resume_reuses_pending_plan_and_fills_missing_slot():
     first_final = _final_event(first_events)
     assert first_final["speech"] == "What time should I use?"
     assert first_final["follow_up"] == "Tell me a date and time."
-    state = asyncio.run(session.load("slot-session"))
+    state = asyncio.run(session.load(
+        "slot-session", owner_user_id="user-1"))
     assert state is not None
     assert state.phase == "wait_slot"
     assert state.pending_step_id == "s1"
@@ -267,5 +268,6 @@ def test_need_slot_resume_reuses_pending_plan_and_fills_missing_slot():
     assert [call[0] for call in spy.agent_calls] == ["demo.do", "demo.do"]
     assert spy.agent_calls[0][1] == {}
     assert spy.agent_calls[1][1]["datetime"] == "Tonight at 7"
-    assert asyncio.run(session.load("slot-session")) is None
+    assert asyncio.run(session.load(
+        "slot-session", owner_user_id="user-1")) is None
     assert _final_event(second_events)["speech"] == _FINAL_SPEECH

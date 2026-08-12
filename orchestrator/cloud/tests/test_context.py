@@ -300,7 +300,8 @@ def test_focus_update_and_load_roundtrip():
     cm = ContextManager(_Clients([_agent("hvac", ["hvac.set"])]), session)
     plan = Plan(steps=[Step(id="s1", agent_id="hvac", intent="hvac.set",
                             slots={"position": "副驾", "temperature": "26"})])
-    asyncio.run(cm.update_focus("sess-f", plan, [_ok("s1")]))
+    asyncio.run(cm.update_focus(
+        "sess-f", plan, [_ok("s1")], user_id="u1"))
     ctx = SimpleNamespace(session_id="sess-f", user_id="u1")
     ws = asyncio.run(cm.assemble("再调高一点", ctx))
     assert ws.focus is not None and ws.focus.obj == "空调"
@@ -312,7 +313,8 @@ def test_focus_not_loaded_when_mem_off():
     cm = ContextManager(_Clients([_agent("hvac", ["hvac.set"])]), session)
     plan = Plan(steps=[Step(id="s1", agent_id="hvac", intent="hvac.set",
                             slots={"position": "副驾"})])
-    asyncio.run(cm.update_focus("sess-f", plan, [_ok("s1")]))
+    asyncio.run(cm.update_focus(
+        "sess-f", plan, [_ok("s1")], user_id="u1"))
     ctx = SimpleNamespace(session_id="sess-f", user_id="u1")
     ws = asyncio.run(cm.assemble("再调高一点", ctx, mem_on=False))
     assert ws.focus is None

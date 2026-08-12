@@ -12,6 +12,7 @@ import { useSettings } from '../settings'
 import { CardRenderer } from './Cards'
 import { AuroraOrb, type OrbState } from './aurora'
 import type { Action, Msg, ProcessStep } from '../types'
+import { confirmationPresentation } from '../merchantUi.mjs'
 
 // ─── 语义色/灰阶（统一走 --au-* token，§3）───
 const FG1 = 'var(--au-text)'
@@ -478,15 +479,29 @@ function ProcessArea({ steps, active, driving }: { steps: ProcessStep[]; active?
   )
 }
 
-// ─── A-6.4 · 确认条（危险车控；琥珀警告 + ≥50px 车规触控）───
+// ─── A-6.4 · 全局确认条（车控 / 商户写共用；琥珀警告 + ≥50px 车规触控）───
 function ConfirmBubble({ msg, onConfirm, onAction }: { msg: Msg; onConfirm: (r: '确认' | '取消') => void; onAction: (t: string) => void }) {
+  const uiCard = msg.uiCard
+  const confirmationContext = uiCard
+    && 'confirmation_context' in uiCard
+    && typeof uiCard.confirmation_context === 'string'
+    ? uiCard.confirmation_context
+    : ''
+  const copy = confirmationPresentation(confirmationContext, uiCard?.type || '')
+  const merchantContext = copy.kind !== 'vehicle'
   return (
     <AIBubbleBase orbState="speaking" tone="confirm">
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 14 }}>
         <IcAlert size={16} color={AMBER} style={{ marginTop: 1 }} />
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 14, color: FG1, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.text}</div>
-          <div style={{ fontSize: 12, color: FG2, marginTop: 6 }}>当前 <span className="au-num" style={{ color: TEAL }}>已泊车</span> · 危险操作需二次确认</div>
+          <div style={{ fontSize: 12, color: FG2, marginTop: 6 }}>
+            {merchantContext ? (
+              <><span style={{ color: TEAL, fontWeight: 700 }}>{copy.label}</span> · {copy.detail}</>
+            ) : (
+              <>当前 <span className="au-num" style={{ color: TEAL }}>{copy.label}</span> · {copy.detail}</>
+            )}
+          </div>
         </div>
       </div>
       {msg.uiCard && <div style={{ marginBottom: 12 }}><CardRenderer card={msg.uiCard} onAction={onAction} /></div>}
@@ -501,7 +516,7 @@ function ConfirmBubble({ msg, onConfirm, onAction }: { msg: Msg; onConfirm: (r: 
           onClick={() => onConfirm('确认')}
           style={{ flex: 2, height: 50, borderRadius: 14, cursor: 'pointer', background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.38)', color: AMBER, fontSize: 14, fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, boxShadow: '0 0 16px rgba(245,158,11,0.12)' }}
         >
-          <IcCheck size={15} color={AMBER} />确认
+          <IcCheck size={15} color={AMBER} />{copy.confirmLabel}
         </button>
       </div>
     </AIBubbleBase>

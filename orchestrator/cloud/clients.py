@@ -239,7 +239,19 @@ class Clients:
             prefs = {k: v for k, v in prefs.items()
                      if cls._SENSITIVE_SCOPE.get(k) is None
                      or cls._SENSITIVE_SCOPE.get(k) in allowed}
-        merged = {**prefs, **(meta or {})}
+        # granted_scopes 是网关鉴权后进入 PlanContext 的权威权限。prefs 与 step.meta
+        # 都可能含客户端/Planner 伪造值，合并前后都必须剥离，再仅从 ctx 重建。
+        prefs.pop("granted_scopes", None)
+        safe_meta = dict(meta or {})
+        safe_meta.pop("granted_scopes", None)
+        merged = {**prefs, **safe_meta}
+        granted = sorted({
+            str(scope).strip()
+            for scope in (getattr(ctx, "granted_permissions", None) or [])
+            if str(scope).strip()
+        })
+        if granted:
+            merged["granted_scopes"] = ",".join(granted)
         # 观测贯通：trace_id 随 meta 下发——SDK server 据此 set_trace_id，Agent 进程内
         # span/日志/LLM 调用自动归属本轮 trace；子调用经父 meta 透传天然继承。
         tid = getattr(ctx, "trace_id", "") or ""

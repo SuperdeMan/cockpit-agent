@@ -38,7 +38,7 @@
 | road-safety | road_safety | core | first_party | cloud | 50072 | safety.driving_advice, safety.weather_alert, safety.road_condition |
 | deep-research | deep_research | ecosystem | first_party | cloud | 50073 | research.run, research.status, research.cancel |
 | reminder | reminder | core | first_party | cloud | 50074 | reminder.create, reminder.list, reminder.complete, reminder.cancel, reminder.update |
-| mcp-bridge | mcp_bridge | ecosystem | third_party | cloud | 50076 | 由 `servers.yaml` 准入清单**启动期合成**（demo-coffee `shop.*` 四件 + 麦当劳 `mcd.*` 两件 + 瑞幸 `luckin.*` 一件，2026-08-11 真机激活）——manifest 里 capabilities 故意留空，见 §9.9 |
+| mcp-bridge | mcp_bridge | ecosystem | third_party | cloud | 50076 | 由 `servers.yaml` 准入清单**启动期合成**（低层工具与复合 workflow 分别准入；demo-coffee `shop.*` 四件 + 麦当劳 `mcd.menu/order_status/order` + 瑞幸 `luckin.order_status/order/order_cancel`）——manifest 里 capabilities 故意留空，见 §9.9 |
 | vision | vision | core | first_party | cloud | 50077 | vision.describe（单帧图片问答，M4 P4；契约见 §9.12）|
 
 > 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent。
@@ -73,7 +73,10 @@
 | `shop.order_cancel` | mcp-bridge | cloud | order_id | require_confirm；演示商户取消退款 |
 | `mcd.menu` | mcp-bridge | cloud | — | 麦当劳餐品/营养（真机 tools/list 核实激活，speech_mode=summarize，§9.9） |
 | `mcd.order_status` | mcp-bridge | cloud | order_id | 麦当劳订单查询（商家是订单状态真相源） |
-| `luckin.order_status` | mcp-bridge | cloud | order_id | 瑞幸订单查询（同上；两家下单归二期——编排结构化参数能力面） |
+| `mcd.order` | mcp-bridge | cloud | item_query/quantity/store_hint/city/pickup_mode | 桥内确定性选店、菜单、详情、核价，确认后创建未支付订单；低层 typed items 不交给 Planner |
+| `luckin.order_status` | mcp-bridge | cloud | order_id | 瑞幸订单查询（商家是订单状态真相源） |
+| `luckin.order` | mcp-bridge | cloud | item_query/quantity + 可信 nearby 门店引用 + 规格偏好 | 桥内确定性映射门店、商品、SKU、预览，确认后创建未支付订单 |
+| `luckin.order_cancel` | mcp-bridge | cloud | order_id | 仅允许取消当前认证用户同商户账本中可取消的订单，再次确认后调用商家取消 |
 | `manual.query` | manual-rag | cloud | question | RAG |
 | `trip.plan` | trip-planner | cloud | destination, days, preferences | 跨 Agent 协作(Phase1)；NEED_CONFIRM 确认方案 |
 | `trip.modify` | trip-planner | cloud | modification | 修改已有行程（结构化 edit-op 加/删停靠点、只改受影响天、跨天去重）；NEED_CONFIRM |
@@ -734,18 +737,21 @@ cutover、真栈故障注入矩阵、位置提醒的「是否还在围栏内」�
 | 三重锁定 | ① `version` 与 server 自报 `serverInfo.version` **逐字相等**，否则拒载；② tool 白名单（server 多提供的直接忽略，清单里有而 server 没有 → 记拒绝理由）；③ `schema_sha` 指纹（`inputSchema` 排序后 sha256 前 12 位，变了就拒载重审；留空=首次接入只记录） |
 | **transport**（2026-08-11 批 3 解封） | `stdio`（默认，本地子进程）\| `streamable_http`（**仅官方商户远程端点**——瑞幸/麦当劳这类平台方托管 MCP；接入仍全量人工准入，解封的只是传输形态不是准入姿态）。http 形态字段：`url` + `headers`（值支持 `${ENV_VAR}` 展开，**token 不进 yaml**——yaml 入库；**缺 env 变量 → 该 server 整台拒载**，不静默拿空 token 出站吃 401）。原「HTTP/SSE 不做」裁决的前提是「首批演示商户用不上」，官方商户 MCP（Streamable HTTP）出现后前提失效——先改本表再改实践 |
 | **远程 server 版本锁定** | `version` **留空**（不校验）+ `schema_sha` 逐工具锁死：远程托管平台的版本随平台升级，逐字锁版本＝常态拒载；接口变更的重审闸由工具级 schema 指纹承担（变了→该工具拒载告警、能力诚实缺席，不误执行）。这是清单填法决策，`check_version` 对空 version 本就跳过 |
-| 写操作强制项 | `write: true` 必须同时有 `require_confirm: true`、`idempotency_key_arg`、**补偿声明**——`compensate_policy: tool`（默认）时必须给 `compensate_tool` **且校验其 ∈ 本 server 白名单工具**（只查非空不查存在性是 demo-coffee「声明存在≠能用」教训在准入器里的残留，批 3 补死）；`compensate_policy: abandon_unpaid`（批 3 新增）用于「创建**未支付**订单、扫码才付钱」的商户流——写操作本身不产生钱的义务，天然补偿=不支付+商户侧自动过期，此时强制 `confirm_prompt` 说明「下单后需扫码支付，不支付将自动取消」。**这是补偿形态的诚实化不是放宽**：硬套 compensate_tool 只会逼出造假声明 |
-| **支付链接闭环**（批 3） | 商户下单响应带支付链接（如 payH5Url）时，工具声明 `pay_url_locator`（点路径如 `payH5Url`，从 `structuredContent` 提取——**声明式，桥核心零领域词**）+ per-server `pay_url_hosts` 域名白名单（第一层；网关 `PAYMENT_EXTERNAL_PAY_HOSTS` 是第二层，两层各自持有防单点绕过）。提取成功 → 经 `agents/_sdk/payment_client.py` 调 `Authorize(MERCHANT_HOSTED)` 登记会话（审计+展示+过期收口，§9.17）→ 出 `payment_qr` 卡；**登记失败不阻断出卡**（下单是既成事实，缺的是登记不是能力），打 warning 照出卡带 pay_url。**商户会话 token（进桥容器 env）≠ 支付渠道凭证（只进 payment-gateway）**——两类凭证互不越界 |
+| **复合商户 workflow**（2026-08-12） | Planner 只看 `mcd.order` / `luckin.order` 等复合 intent，不直接看到官方低层写工具。`WorkflowSpec` 必须精确声明依赖工具、公开 intent、所需 scope 与写工具 pin；低层工具 `expose=false`。嵌套 `items[]` / `productList[]`、商品 code、规格与金额由桥内确定性 builder 从同一份官方只读结果构造，不能让 LLM 生成。跨步引用只接受 Executor 注入的 `_trusted_slot_refs`；候选/预览存 Redis TTL 草稿，确认按 `(user, session, merchant)` current pointer 原子消费，客户端自报 token 不构成授权。草稿登记为 `merchant_draft`，维护带完整性 marker 的 owner 摘要索引；create/cancel 消费草稿时在同一 Redis 原子步骤建立 owner 操作租约，远程写前再次校验并续租。删除先设置写 fence：若操作租约在飞则只返回 `503 + pending/retryable`，待租约释放后重试；无在飞操作时再逐值复核归属、用 privacy-only cursor SCAN 修复孤儿，foreign member 不构成删除授权，二次扫描证明清零后才 ACK。成功删除保留覆盖草稿 TTL 的 `privacy_deleted` 墓碑，拒绝删除前已在飞但 ACK 后才落盘的迟到写。Planner `planner:sess/focus` 另登记为 `planner_pending_session`：key 绑定 owner+session 摘要，load/clear/focus 均校验认证 owner；挂起步不重复保存 token/卡片/data，已完成依赖只保留下游 `slot_refs` 实际引用且安全的标量与 provenance/fingerprint，自由话术、卡片、动作、URI/QR/token/payment id/联系人信息均不持久。HMI 的 Memory 全量 ForgetUser 必须用 `AUTH_TOKENS` 中 Bearer 绑定同一 owner；Memory 删除成功后，只额外协调本批新增的 `merchant_draft` 与 `planner_pending_session` 两类短期状态。内部 request/reply 使用由 mesh 私钥派生的域隔离 HMAC、nonce/时间窗/重放闸及请求摘要绑定响应；两个 adapter 只有在共享 Redis 实际可达时才安装 responder，缺 key、任一 adapter NACK/超时或在飞操作都返回 `503 + pending/retryable`。这不是全 privacy registry 的跨域删除 saga：Task Ledger、支付/可观测等沿用 §9.13 的后置裁决；`mcp_demo_order` 仍是外部引用，只能走显式 `mcp_external_unlink`/测试命名空间生命周期清理，不能冒充 `privacy_user_all` 物理删除。TTL 只作故障兜底，不能替代可证明的删除。 |
+| 写操作强制项 | `write: true` 必须同时有 `require_confirm: true`、`retry_policy: never`、`timeout_outcome: uncertain`、幂等模式与**补偿声明**。商户支持幂等字段时用 `idempotency_mode: upstream` 并给 `idempotency_key_arg`；官方 schema 没有幂等字段时只能显式用 `local_at_most_once`，依靠本地草稿原子消费、single-flight 与账本防重复，绝不伪造上游参数或在超时后自动重放。`compensate_policy: tool` 时必须给 `compensate_tool` 且补偿工具也通过最终准入；`abandon_unpaid` 用于「创建未支付订单、付款前可放弃」并强制声明商户自动失效；`terminal` 用于取消等生命周期终态。复合 workflow 的低层工具必须 `expose=false`、锁定非空 schema 指纹，并由 workflow 声明覆盖全部 scope。 |
+| **官方响应归一** | MCP `isError=false` 只代表协议调用完成，不能代替业务成功。真实第三方写工具必须 `expose=false` 并声明 `success_predicate`（允许的业务 `success/code`），由确定性 workflow codec 解释动作专属结果；用户可见状态查询则必须同时声明 `success_predicate`、`result_map`（只允许 `order_id/status/amount_cents`，路径逐字锁定）与 `status_map`（上游状态逐字映射到受控短状态，未知值 fail-closed）。写响应缺少谓词字段、类型漂移或无法证明终态时只能记 `uncertain`，只有完整字段明确返回业务拒绝才记失败；状态查询映射缺字段则 fail-closed。JSON-in-text 只接受唯一文本块中的严格 JSON 对象，重复键/尾随正文/非对象拒绝；金额用 `Decimal` 后确定性转分。HMI 话术和卡片只消费归一白名单，原始响应、支付 URL、优惠券、地址和手机号不得进 Ledger 或模型重述。 |
+| **支付链接闭环** | 商户下单响应带支付链接时，写工具声明精确 `pay_url_locator`（例如 `data.payH5Url`）+ per-server 非空 `pay_url_hosts`（第一层）；网关 `PAYMENT_EXTERNAL_PAY_HOSTS` 是第二层。只有链接为安全 HTTPS、命中两层白名单且 `Authorize(MERCHANT_HOSTED)` 登记成功，桥才返回 `payment_qr`/安全链接卡。locator 缺失、非法 scheme/host、空白名单或网关登记失败都必须清洗响应中所有 URI，并只提示去官方 App 支付；订单已创建的事实仍如实展示，绝不把原始链接作为降级路径。**商户会话 token（进桥容器 env）≠ 支付渠道凭证（只进 payment-gateway）**——两类凭证互不越界。 |
 | 幂等键 | = **请求指纹** `idem_key(user_id, kind, 归一化 goal)`，与账本 `idempotency_key` 列同源。**不得用 task_id**（每次调用都新 = 等于没有幂等，重说一遍就双扣） |
 | 订单状态机 | 复用 `task_ledger`（kind=`mcp_order`），**不新建表**——它是 M2 Ledger 的第二个载体 |
 | 超时口径 | 调用超时 **≠ 没下单**：诚实说「不确定」并提醒别急着重复下单，账目落 `failed` 且 `result_ref.outcome=uncertain`（状态机无 uncertain 终态，查询入口按 result_ref 回答，不得照 failed 说「上次失败了」）。非超时异常=确定没发出去，按失败说，不装不确定。**话术与能力的顺序**：2026-07-26 验收发现它承诺「说『查一下我的订单』我帮你核对」而查询能力根本没接入，于是先改成不承诺；M-D 接入 `order.get` 后才把承诺加回来——**先有能力再有话术**，反过来就是把不确定包装成「有办法查清楚」 |
 | 演示商户 | `demo: true` → 卡片 `demo`/`demo_label` 角标 + `_prov.mode=mock`+note + 话术前缀「（演示商户）」**三重冗余**。演示不是问题，把演示装成真实才是 |
 | 能力合成 | capability 由 `bootstrap()` 在 `serve()` **之前**从准入清单合成（注册在 serve 里发生，晚一步注册中心就看到空能力表）；manifest.yaml 的 `capabilities` 故意留空 |
 | 权限 | 一律 `trust_level: third_party`（硬上限表自动禁高危车控/精确位置/摄像头麦克风）+ `network.external`；涉钱走 payment-gateway，Agent 不持凭证 |
+| **账号与 owner 边界** | 官方麦当劳/瑞幸 token 当前是服务级全局账号，不是乘员凭证。只有网关权威身份与 scope 可开启写 workflow；`user_id`、声纹 `occupant_id` 或 Planner meta 均不能自行授予商户写权。owner 只用于本地草稿/账本隔离，不作为未知参数发给远程 MCP。多乘员独立商户账号与 token 自动刷新均未产品化，缺 token 时能力诚实缺席。 |
 | 故障隔离 | 一台 server 起不来/版本不符 → **只让它自己的工具缺席**，桥照常服务其余；绝不静默降级成假数据 |
 | **查单**（M-D） | `order.get` 按**订单号或幂等键**查。幂等键那条是关键的一半：**下单超时那一单根本没有订单号**（响应没回来），但幂等键是我们自己生成的、商户按它索引——「到底下没下成」由此第一次可以核对。用户不带订单号时从 Task Ledger 取最近一单的引用；owner 由已验证 Context 派生，**不是 planner 槽位**（让 LLM 能指定查谁的订单＝把越权做成可填字段） |
 | **取消与补偿**（M-D） | `order.cancel` 从一开始就在商户侧存在、也被 `order.create` 声明为 `compensate_tool`，但**从没进过准入清单**——补偿因此只在准入期被校验存在性，运行期零调用、用户零入口。放进清单它才是能力：**声明存在 ≠ 能用**。取消仍是写操作走确认闸；**不做未经用户确认的自动补偿**。回填订单号时**只认确定完成那一单**——`outcome=uncertain` 那单连订单号都没有，拿它去取消等于对着一个不知道存不存在的单执行写操作 |
-| 不做 | resources/prompts/sampling、动态放行注册（子 RFC §7）；**未经确认的自动补偿**；`mcp_operation` 独立业务状态表（M-D 裁决：商户是状态的真相源，本地镜像是第二真相源）；商户 token 自动刷新（过期=运维事件，能力诚实缺席，.env 续期）。～~HTTP/SSE transport~～ 已于 2026-08-11 批 3 按上方 transport 行解封（限官方商户远程端点） |
+| 不做 | resources/prompts/sampling、动态放行注册（子 RFC §7）；**未经确认的自动补偿或最终付款**；`mcp_operation` 独立业务状态表（M-D 裁决：商户是状态的真相源，本地镜像是第二真相源）；商户 token 自动刷新（过期=运维事件，能力诚实缺席，.env 续期）；多乘员独立商户账号。～~HTTP/SSE transport~～ 已于 2026-08-11 批 3 按上方 transport 行解封（限官方商户远程端点） |
 
 **Task Ledger 原子幂等（M-D）**：`open()` 此前是「先 SELECT 再 INSERT」，两个实例可以
 同时查不到、同时插入——**同一个幂等请求两个实例都拿到执行权**，对写操作就是双下单。

@@ -198,6 +198,57 @@ golden:
     assert guard_architecture(root) == ()
 
 
+def test_skill_slot_ref_paths_are_not_intent_namespaces(tmp_path: Path):
+    """Trusted StepResult paths must not become executable business terms."""
+    root = _repo(tmp_path)
+    _write(
+        root,
+        "skills/guides/sample.yaml",
+        """
+name: sample
+type: guide
+knowledge: |
+  Read the trusted data.items.0 result path before running the consumer.
+few_shots:
+  - user: choose the first result
+    plan: {"steps":[{"id":"s1","intent":"jsonconsumer.run","slot_refs":{"item":"s1.data.items.0.name"}}]}
+golden:
+  - text: sample
+    expect_intents: [sample.query]
+""",
+    )
+    _write(
+        root,
+        "skills/exemplars/sample.yaml",
+        """
+domain: sample
+exemplars:
+  - text: order from the chosen store
+    plan:
+      - id: store
+        agent: nearby
+        intent: nearby.search
+      - id: order
+        agent: merchant
+        intent: structuredconsumer.run
+        depends_on: [store]
+        slot_refs:
+          store_name: store.data.items.0.name
+""",
+    )
+    _write(
+        root,
+        "orchestrator/cloud/verify.py",
+        "def passthrough(store, data, s1):\n    return store, data, s1\n",
+    )
+
+    vocabulary = load_architecture_vocabulary(root)
+
+    assert {"jsonconsumer", "structuredconsumer"} <= vocabulary.identifier_terms
+    assert {"store", "data", "s1"}.isdisjoint(vocabulary.identifier_terms)
+    assert guard_architecture(root) == ()
+
+
 def test_manifest_null_route_hints_is_an_empty_retired_hint_list(
     tmp_path: Path,
 ):

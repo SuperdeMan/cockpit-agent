@@ -14,7 +14,7 @@ import pytest
 
 from orchestrator.cloud import embedding as _embedding
 from orchestrator.cloud import skills as sk
-from orchestrator.cloud.models import PlanContext
+from orchestrator.cloud.models import Plan, PlanContext, Step
 from orchestrator.cloud.context import WorkingSet
 from orchestrator.cloud.planning import PlanBuilder, _assemble_capability_catalog
 
@@ -298,6 +298,60 @@ def test_shop_order_flow_few_shot_demonstrates_dependency_wiring():
     assert repair.slot == "item"
     assert repair.source_path == "data.items.0.name"
     assert "招牌" in repair.trigger_any
+
+
+def test_merchant_ordering_guide_wires_one_nearby_result_into_luckin_order():
+    """瑞幸选店必须消费同一 POI 项的 name/lng/lat，不能由模型拼三组来源。"""
+    guide = next(d for d in sk.SkillStore().guides()
+                 if d.name == "merchant-ordering")
+    assert set(guide.capability_dependencies) == {
+        "nearby.search", "mcd.order", "mcd.menu", "mcd.order_status",
+        "luckin.order", "luckin.order_status", "luckin.order_cancel",
+        "shop.order",
+    }
+    wired = []
+    for shot in guide.few_shots:
+        steps = (shot.get("plan") or {}).get("steps") or []
+        if [step.get("intent") for step in steps] == [
+                "nearby.search", "luckin.order"]:
+            wired.append(steps)
+    assert wired, "商户下单 guide 缺少 nearby.search -> luckin.order 两步示范"
+    producer, consumer = wired[0]
+    assert consumer["depends_on"] == [producer["id"]]
+    refs = consumer["slot_refs"]
+    assert refs == {
+        "store_name": f"{producer['id']}.data.items.0.name",
+        "store_longitude": f"{producer['id']}.data.items.0.lng",
+        "store_latitude": f"{producer['id']}.data.items.0.lat",
+    }
+    assert len(guide.plan_repairs) == 3
+    assert {(row.slot, row.source_path) for row in guide.plan_repairs} == {
+        ("store_name", "data.items.0.name"),
+        ("store_longitude", "data.items.0.lng"),
+        ("store_latitude", "data.items.0.lat"),
+    }
+    for utterance in (
+            "给我点一杯瑞幸的美式",
+            "麦当劳薯条多少热量",
+            "附近有没有瑞幸"):
+        assert guide in sk.top_guides(utterance, sk.SkillStore().guides())
+
+    plan = Plan(steps=[
+        Step(id="s1", agent_id="nearby", intent="nearby.search"),
+        Step(id="s2", agent_id="mcp-bridge", intent="luckin.order",
+             slots={"item_query": "厚乳拿铁"}),
+    ])
+    effects = sk.apply_plan_repairs(
+        plan, "给我点一杯瑞幸的生椰拿铁",
+        ["full:merchant-ordering@lex:40"],
+    )
+    assert plan.steps[1].depends_on == ["s1"]
+    assert plan.steps[1].slot_refs == refs
+    assert effects == [
+        "merchant-ordering:dependency_slot_ref:nearby.search->luckin.order.store_name",
+        "merchant-ordering:dependency_slot_ref:nearby.search->luckin.order.store_longitude",
+        "merchant-ordering:dependency_slot_ref:nearby.search->luckin.order.store_latitude",
+    ]
 
 
 def test_nearby_detail_flow_demonstrates_and_declares_result_wiring():

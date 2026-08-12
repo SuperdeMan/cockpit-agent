@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import yaml
+
 _ROOT = Path(__file__).resolve().parent.parent
 for _p in (str(_ROOT), str(_ROOT / "gen" / "python"), str(_ROOT / "orchestrator" / "edge")):
     if _p not in sys.path:
@@ -79,16 +81,60 @@ def _synth_admitted_caps(manifest, agent_dir: Path) -> None:
         sys.path.insert(0, str(agent_dir / "src"))
         from admission import load_servers  # type: ignore
         from cockpit.agent.v1 import agent_pb2
+        loaded = {spec.id: spec for spec in load_servers(str(servers))}
+    except Exception:
+        loaded = {}
+    try:
+        from cockpit.agent.v1 import agent_pb2
+
+        raw = yaml.safe_load(servers.read_text(encoding="utf-8")) or {}
         caps = []
-        for spec in load_servers(str(servers)):
-            for t in spec.tools:
-                desc = t.description or f"{spec.id} 的 {t.name}"
-                if spec.demo:
+        seen: set[str] = set()
+        for server in raw.get("servers") or []:
+            if not isinstance(server, dict):
+                continue
+            spec = loaded.get(str(server.get("id") or ""))
+            declared_tools = {
+                str(row.get("name") or "")
+                for row in (server.get("tools") or [])
+                if isinstance(row, dict) and row.get("name")
+            }
+            # ToolSpec 已存在很久，优先消费 loader 的规范化对象；loader 不可用时才读 YAML。
+            tool_rows = getattr(spec, "tools", None) if spec is not None else None
+            if tool_rows is None:
+                tool_rows = server.get("tools") or []
+            # WorkflowSpec 正在增量接入。旧 ServerSpec 没有 workflows 属性，此时安全回退
+            # 到同一准入 YAML；新 loader 一旦拥有该字段，就以 loader 的最终结果为准。
+            workflow_rows = (getattr(spec, "workflows", None)
+                             if spec is not None else None)
+            if workflow_rows is None:
+                workflow_rows = server.get("workflows") or []
+            for row, is_workflow in (
+                    *((item, False) for item in (tool_rows or [])),
+                    *((item, True) for item in (workflow_rows or []))):
+                value = (lambda key, default=None:
+                         row.get(key, default) if isinstance(row, dict)
+                         else getattr(row, key, default))
+                intent = str(value("intent", "") or "")
+                if not intent or intent in seen or not bool(value("expose", True)):
+                    continue
+                required = {str(name) for name in (value("required_tools", []) or [])}
+                handler = str(value("handler", "") or "")
+                if is_workflow and (
+                        not handler or not required or
+                        not required <= declared_tools):
+                    continue
+                name = str(value("name", "") or intent)
+                desc = str(value("description", "") or f"{server.get('id')} 的 {name}")
+                if bool(server.get("demo", False)):
                     desc += "（演示商户，不产生真实交易）"
                 caps.append(agent_pb2.Capability(
-                    intent=t.intent, description=desc, slots=t.slots,
-                    examples=t.examples,
-                    require_confirm=bool(t.require_confirm or t.write)))
+                    intent=intent, description=desc,
+                    slots=list(value("slots", []) or []),
+                    examples=list(value("examples", []) or []),
+                    require_confirm=bool(value("require_confirm", False)
+                                         or value("write", False))))
+                seen.add(intent)
         manifest.capabilities.extend(caps)
     except Exception:
         pass          # 合成失败不该带崩评测：退化成「该 Agent 无能力」，与今天行为一致

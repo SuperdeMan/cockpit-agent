@@ -2,6 +2,10 @@
 import { OrderedPlaybackQueue, TtsTextBuffer, speechCovered } from './ttsQueue.mjs'
 import { float32ToInt16, int16ToWav } from './pcmRing.mjs'
 import { PcmPlayer } from './pcmPlayer.mjs'
+
+// Destructive memory APIs reuse the HMI session credential.  The backend
+// resolves the owner from this Bearer value and refuses body-only identity.
+const MEMORY_AUTH_TOKEN = (import.meta.env.VITE_WS_TOKEN as string) || ''
 //
 // 旧实现的收音失败根因（task 3 前端侧）：
 //  1. startRecording 是 async，快按快松时 MediaRecorder 还没 start()，
@@ -1209,7 +1213,12 @@ export async function forgetMemory(apiBase: string, userId: string, scope = ''):
   try {
     const r = await fetch(`${apiBase}/api/memory/forget`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(MEMORY_AUTH_TOKEN
+          ? { Authorization: `Bearer ${MEMORY_AUTH_TOKEN}` }
+          : {}),
+      },
       body: JSON.stringify({ user_id: userId, scope }),
     }).then((x) => x.json())
     return !!r.ok

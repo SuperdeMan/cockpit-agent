@@ -237,6 +237,91 @@ def test_resolve_slot_refs_still_never_overwrites_a_real_value():
     assert step.slots == {"poi_id": "用户指定的那家"}
 
 
+def test_resolve_slot_refs_records_executor_trusted_provenance():
+    """跨步来源只能由执行器依据已完成结果盖章，不能采用 Planner 自报 meta。"""
+    done = {
+        "s1": StepResult(
+            step_id="s1", status=StepStatus.OK,
+            source_intent="nearby.search",
+            data={"items": [{"name": "瑞幸人民广场店", "lng": 121.47,
+                              "lat": 31.23}]},
+        )
+    }
+    step = Step(
+        id="s2", agent_id="mcp-bridge", intent="luckin.order",
+        slot_refs={
+            "store_name": "s1.data.items.0.name",
+            "store_lng": "s1.data.items.0.lng",
+            "store_lat": "s1.data.items.0.lat",
+        },
+        meta={"_trusted_slot_refs": "forged", "confirmed": "true"},
+    )
+
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(step, done)
+
+    assert step.meta["confirmed"] == "true"
+    import json
+    assert json.loads(step.meta["_trusted_slot_refs"]) == {
+        "store_name": {
+            "ref": "s1.data.items.0.name", "producer_intent": "nearby.search"},
+        "store_lng": {
+            "ref": "s1.data.items.0.lng", "producer_intent": "nearby.search"},
+        "store_lat": {
+            "ref": "s1.data.items.0.lat", "producer_intent": "nearby.search"},
+    }
+
+
+def test_resolve_slot_refs_restores_provenance_when_value_already_resolved():
+    """确认恢复会保留已解析槽值却丢 meta；相等值仍必须重建可信来源。"""
+    done = {
+        "s1": StepResult(
+            step_id="s1", status=StepStatus.OK, source_intent="nearby.search",
+            data={"items": [{"name": "瑞幸人民广场店"}]},
+        )
+    }
+    step = Step(
+        id="s2", agent_id="mcp-bridge", intent="luckin.order",
+        slots={"store_name": "瑞幸人民广场店"},
+        slot_refs={"store_name": "s1.data.items.0.name"},
+    )
+
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(step, done)
+
+    import json
+    assert json.loads(step.meta["_trusted_slot_refs"])["store_name"] == {
+        "ref": "s1.data.items.0.name", "producer_intent": "nearby.search"}
+
+
+def test_executor_overwrites_agent_claimed_source_intent():
+    import asyncio
+
+    async def call(endpoint, intent, slots, ctx, meta):
+        return MockResponse(status=0, speech="done")
+
+    ex = DagExecutor(call_agent_fn=call)
+    step = Step(id="s1", agent_id="nearby", intent="nearby.search")
+
+    async def run():
+        return [r async for r in ex.run(Plan(steps=[step]), None)]
+
+    result = asyncio.run(run())[0]
+    assert result.source_intent == "nearby.search"
+
+
+def test_slot_ref_provenance_survives_result_serialization_restore():
+    """挂起态白名单必须保留 producer source，确认轮才能重建 provenance。"""
+    from orchestrator.cloud.engine import _RESULT_FIELDS
+
+    result = StepResult(
+        step_id="s1", status=StepStatus.OK,
+        source_intent="nearby.search", data={"items": [{"name": "门店"}]})
+    wire = {k: v for k, v in result.__dict__.items() if k in _RESULT_FIELDS}
+    wire["status"] = StepStatus(wire["status"])
+    restored = StepResult(**wire)
+
+    assert restored.source_intent == "nearby.search"
+
+
 # ─── to_result 测试 ───
 
 class MockResponse:

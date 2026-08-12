@@ -147,13 +147,13 @@ def test_confirm_continuation_bypasses_reject():
     """确认续接轮走 pending 分支、不进新规划——拒识代码不可达（回归护栏）。"""
     engine, spy, session = _make_engine(_REJECT_PLAN)
     asyncio.run(session.save("s1", SessionState(
-        phase="wait_confirm", pending_step_id="s1",
+        phase="wait_confirm", owner_user_id="u1", pending_step_id="s1",
         pending_plan={"steps": [{"id": "s1", "agent_id": "info", "intent": "info.weather",
                                  "slots": {}, "depends_on": []}]})))
     final = _run(engine, _req("取消", is_confirmation=True, meta=_VOICE))[-1]
     assert "取消" in final["speech"]         # 走确认分支
     assert not (final.get("ui_card") or {}).get("type") == "rejected"
-    assert asyncio.run(session.load("s1")) is None
+    assert asyncio.run(session.load("s1", owner_user_id="u1")) is None
 
 
 # ── P1 澄清短路（D6-3）───────────────────────────────────────────────────────
@@ -165,7 +165,8 @@ def test_clarify_shows_card_when_enabled(monkeypatch):
     assert final["speech"] == "您是想看详情还是导航过去？"
     assert (final.get("ui_card") or {}).get("type") == "intent_choice"
     assert len((final["ui_card"] or {}).get("options") or []) == 2
-    assert asyncio.run(session.load("s1")) is None    # 零会话状态：不挂 session
+    assert asyncio.run(session.load(
+        "s1", owner_user_id="u1")) is None    # 零会话状态：不挂 session
     assert spy.agent_calls == 0                        # 未执行任何 Agent
 
 

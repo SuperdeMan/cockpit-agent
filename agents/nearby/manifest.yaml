@@ -4,7 +4,9 @@ display_name: 周边发现
 category: ecosystem
 trust_level: third_party
 deployment: cloud
-latency_budget_ms: 4000
+# 高德走统一 AsyncHttpClient：3s ×（代理+直连回退）× 2 次尝试 + 150ms 退避，
+# 最坏约 12.15s。DAG 外层必须给完 provider 自己的有界重试，不能被历史 4s 先杀死。
+latency_budget_ms: 15000
 fallback: chitchat
 
 capabilities:

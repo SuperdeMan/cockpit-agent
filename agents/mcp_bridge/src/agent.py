@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import unquote
 
 from agents._sdk import AgentResult, BaseAgent, NEED_CONFIRM, NEED_SLOT
@@ -27,10 +28,15 @@ from agents._sdk.payment_client import PaymentClient
 from agents._sdk.provenance import attach
 from cockpit.agent.v1 import agent_pb2
 
-from .admission import admit, check_version, load_servers, normalize_hostname
+from .admission import (SAFE_MERCHANT_STATUSES, admit, admit_workflow,
+                        check_version, load_servers, normalize_hostname)
 from .mcp_client import McpError, StdioMcpClient
 
 logger = logging.getLogger("agent.mcp_bridge")
+
+# HMI / Ledger 的商户订单展示上限。当前接入是餐饮订单；100 万元已远高于
+# 合理业务值，同时能阻断指数/超长数字把 UI、日志或 JSON 变成资源放大器。
+_MAX_MERCHANT_ORDER_AMOUNT_CENTS = 100_000_000
 
 # 缺槽追问词：按**槽位名**索引。此前 NEED_SLOT 恒说「要点什么？」——那是下单的词，
 # 取消复用同一条写路径后就会对着「取消订单」问「要点什么？」。
@@ -50,6 +56,19 @@ _HIDDEN_ADMIN_TOOL = "__e2e.namespace.admin"
 
 PERSONAL_DATA_TARGETS = (
     {
+        # Checkout snapshots contain store/product/specification/amount data.
+        # The owner index lets privacy_user_all coordinate an explicit,
+        # provable delete instead of relying on the ten-minute safety TTL.
+        # An active create/cancel lease deliberately returns pending; the
+        # caller retries after the operation releases its lease.
+        "id": "merchant_draft",
+        "storage_variants": (
+            "mcp:merchant:draft:*",
+            "mcp:merchant:current:*",
+            "mcp:merchant:owner:*",
+        ),
+    },
+    {
         # The demo MCP server is an external subprocess and owns these maps.
         "id": "mcp_demo_order",
         "storage_variants": ("demo_coffee._ORDERS", "demo_coffee._BY_IDEM"),
@@ -67,16 +86,44 @@ class _Binding:
         self.input_schema = input_schema if isinstance(input_schema, dict) else {}
 
 
+class _WorkflowBinding:
+    """复合 intent → 已准入 server 内部工具 + 确定性 workflow 实例。"""
+
+    def __init__(self, server, spec, workflow):
+        self.server = server
+        self.spec = spec
+        self.workflow = workflow
+
+
 class McpBridgeAgent(BaseAgent):
     def __init__(self, servers_path: str = _SERVERS,
-                 payment: PaymentClient | None = None):
+                 payment: PaymentClient | None = None, draft_store=None):
         super().__init__(_MANIFEST)
         self._servers_path = servers_path
         self._bindings: dict[str, _Binding] = {}
+        self._workflow_bindings: dict[str, _WorkflowBinding] = {}
         self._clients: list = []
         self.rejections: list[str] = []
         # 涉钱走 payment-gateway（§9.9/§9.17）：桥只发登记意图，不持支付凭证
         self._payment = payment or PaymentClient()
+        if draft_store is None:
+            from .merchant.drafts import RedisDraftStore
+            draft_store = RedisDraftStore()
+        self._draft_store = draft_store
+
+    async def delete_personal_data(self, user_id: str, action: str) -> bool:
+        """Delete the owner-indexed shared merchant-draft namespace only."""
+        if action != "privacy_user_all" or not user_id:
+            return False
+        delete_owner = getattr(self._draft_store, "delete_owner", None)
+        draft_deleted = False
+        try:
+            if callable(delete_owner):
+                draft_deleted = await delete_owner(user_id) is True
+        except Exception as exc:
+            logger.warning("MCP merchant draft privacy delete failed: %s",
+                           type(exc).__name__)
+        return draft_deleted
 
     # ── 启动期准入 ────────────────────────────────────────────────────
     async def bootstrap(self) -> None:
@@ -120,6 +167,29 @@ class McpBridgeAgent(BaseAgent):
                 logger.warning("[mcp:%s] 拒绝工具 %s", spec.id, r)
             for tool, schema in admitted:
                 self._bindings[tool.intent] = _Binding(spec, client, tool, schema)
+            by_name = {tool.name: _Binding(spec, client, tool, schema)
+                       for tool, schema in admitted}
+            for workflow_spec in spec.workflows:
+                workflow_error = admit_workflow(workflow_spec, by_name)
+                if workflow_error:
+                    reason = f"{workflow_spec.intent}: {workflow_error}"
+                    self.rejections.append(f"{spec.id}: {reason}")
+                    logger.warning("[mcp:%s] 拒绝 workflow %s", spec.id, reason)
+                    continue
+                workflow_tools = {
+                    name: by_name[name] for name in workflow_spec.required_tools}
+                try:
+                    workflow = self._make_workflow(
+                        workflow_spec.handler, spec, workflow_spec, workflow_tools)
+                except Exception as exc:
+                    self.rejections.append(
+                        f"{spec.id}: {workflow_spec.intent}: workflow_init_failed")
+                    logger.warning("[mcp:%s] workflow %s 初始化失败：%s",
+                                   spec.id, workflow_spec.intent,
+                                   type(exc).__name__)
+                    continue
+                self._workflow_bindings[workflow_spec.intent] = _WorkflowBinding(
+                    spec, workflow_spec, workflow)
             self._clients.append(client)
             logger.info("[mcp:%s] 准入 %d 个工具：%s", spec.id, len(admitted),
                         [t.intent for t, _ in admitted])
@@ -135,6 +205,18 @@ class McpBridgeAgent(BaseAgent):
         return StdioMcpClient(spec.id, spec.command,
                               timeout_s=spec.startup_timeout_ms / 1000.0)
 
+    def _make_workflow(self, handler: str, server, spec, tools):
+        """受审 handler 名只映射本地确定性 codec；不做动态 import。"""
+        if handler == "mcdonalds":
+            from .merchant.mcdonalds import McDonaldsWorkflow
+            return McDonaldsWorkflow(server, spec, tools, self._draft_store,
+                                     self.ledger, self._payment)
+        if handler == "luckin":
+            from .merchant.luckin import LuckinWorkflow
+            return LuckinWorkflow(server, spec, tools, self._draft_store,
+                                  self.ledger, self._payment)
+        raise ValueError("unknown workflow handler")
+
     def _sync_capabilities(self) -> None:
         """把准入的工具写进 manifest.capabilities——注册中心看到的就是这份。"""
         caps = []
@@ -149,6 +231,17 @@ class McpBridgeAgent(BaseAgent):
                 examples=b.tool.examples,
                 require_confirm=bool(b.tool.require_confirm or b.tool.write),
             ))
+        for intent, b in self._workflow_bindings.items():
+            spec = b.spec
+            if not spec.expose:
+                continue
+            caps.append(agent_pb2.Capability(
+                intent=intent,
+                description=spec.description or f"{b.server.id} 商户订单工作流",
+                slots=spec.slots,
+                examples=spec.examples,
+                require_confirm=bool(spec.require_confirm),
+            ))
         del self.manifest.capabilities[:]
         self.manifest.capabilities.extend(caps)
         logger.info("MCP 桥合成 capability %d 个：%s",
@@ -160,6 +253,21 @@ class McpBridgeAgent(BaseAgent):
 
     # ── 请求处理 ─────────────────────────────────────────────────────
     async def handle(self, intent, ctx, meta) -> AgentResult:
+        workflow_binding = self._workflow_bindings.get(intent.name)
+        if workflow_binding is not None:
+            spec = workflow_binding.spec
+            required = set(spec.required_scopes or [])
+            if required - self._granted_scopes(meta):
+                return AgentResult(
+                    speech="当前账号缺少商户授权，不能执行这个操作。")
+            confirmed = str((meta or {}).get("confirmed", "")).lower() == "true"
+            token = str((intent.slots or {}).get("checkout_token") or "")
+            if intent.name.endswith("_cancel"):
+                return await workflow_binding.workflow.cancel(intent, ctx, meta)
+            if confirmed:
+                return await workflow_binding.workflow.confirm(
+                    intent, ctx, meta, token=token)
+            return await workflow_binding.workflow.prepare(intent, ctx, meta)
         b = self._bindings.get(intent.name)
         if not b or not b.tool.expose:
             # 准入清单里没有 = 这个能力今天不存在。诚实说，不猜、不静默成功。
@@ -287,6 +395,15 @@ class McpBridgeAgent(BaseAgent):
                        for k, v in (intent.slots or {}).items()
                        if v and k in declared}}
             args.pop("_owner_user_id", None)
+            # 超长纯数字订单号不能让 LLM 充当转录器：模型只负责选 intent，用户
+            # 原句里唯一的 10~40 位数字串才是查询参数真值。真实浏览器链曾把一位
+            # 数字抄错，商户因而确定拒绝；这里不放宽到手机号长度以下，也不在有
+            # 多个候选时猜测。
+            oid_key = b.tool.arg_map.get("order_id", "order_id")
+            explicit_order_id = self._explicit_numeric_order_id(
+                str(getattr(intent, "raw_text", "") or ""))
+            if "order_id" in declared and explicit_order_id:
+                args[oid_key] = explicit_order_id
             user_id = str(getattr(ctx, "user_id", "") or "").strip()
             if user_id:
                 args = await self._resolve_order_ref(b, args, user_id)
@@ -319,12 +436,107 @@ class McpBridgeAgent(BaseAgent):
             # 铁律③：外部源失败诚实说拿不到，绝不改供假数据（R9 契约用 OK 承载话术）
             return AgentResult(speech="这个外部服务暂时拿不到数据，稍后再试。")
         if not res["ok"]:
+            if b.tool.result_map:
+                # 声明式订单归一是信任边界：协议级错误也只给固定话术，原始
+                # content/text/data 既不进 LLM，也不进卡片或 AgentResult.data。
+                return AgentResult(
+                    speech="商户暂时无法返回这笔订单的有效状态，请稍后再试。")
             speech = await self._readable_speech(b, intent, res, ok=False)
             return AgentResult(speech=speech or "外部服务返回了错误。")
+        if b.tool.result_map:
+            normalized, error = self._normalize_declared_result(b, res)
+            if error:
+                return AgentResult(speech=error)
+            requested_order_id = str(args.get(
+                b.tool.arg_map.get("order_id", "order_id")) or "").strip()
+            if (requested_order_id and
+                    normalized.get("order_id") != requested_order_id):
+                return AgentResult(
+                    speech="商户返回的订单号不一致，请到官方应用核对。")
+            card = self._card(b, "mcp_order", normalized)
+            return AgentResult(
+                speech=(f"订单 {normalized['order_id']} 当前状态："
+                        f"{normalized['status']}。"),
+                ui_card=card, data=normalized)
         card = self._card(b, "mcp_result", self._slim_payload(res))
         speech = await self._readable_speech(b, intent, res, ok=True)
         return AgentResult(speech=self._demo_prefix(b) + (speech or "查到了。"),
                            ui_card=card, data=res["data"])
+
+    @staticmethod
+    def _dig_result(value, path: str):
+        current = value
+        for part in str(path or "").split("."):
+            if not part or not isinstance(current, dict) or part not in current:
+                return None
+            current = current[part]
+        return current
+
+    @staticmethod
+    def _explicit_numeric_order_id(raw_text: str) -> str:
+        matches = re.findall(r"(?<![0-9])([0-9]{10,40})(?![0-9])",
+                             str(raw_text or ""))
+        return matches[0] if len(matches) == 1 else ""
+
+    @staticmethod
+    def _strict_allowed(value, allowed: list) -> bool:
+        return any(type(value) is type(candidate) and value == candidate
+                   for candidate in allowed)
+
+    @classmethod
+    def _normalize_declared_result(cls, b, res: dict) -> tuple[dict, str]:
+        """Apply a pinned business envelope and return only declared fields.
+
+        This path is intentionally deterministic: order truth must not depend
+        on an LLM paraphrasing provider documentation.  Missing or rejected
+        business fields fail closed and raw merchant data is not exposed.
+        """
+        payload = res.get("data")
+        if not isinstance(payload, dict):
+            return {}, "商户没有返回完整的订单结果，请稍后再试。"
+        for path, allowed in b.tool.success_predicate.items():
+            if not cls._strict_allowed(cls._dig_result(payload, path), allowed):
+                return {}, "商户没有返回这笔订单的有效状态，请核对订单号后再试。"
+        normalized: dict = {}
+        for key, path in b.tool.result_map.items():
+            value = cls._dig_result(payload, path)
+            if value in (None, "") or isinstance(value, (dict, list, bool)):
+                return {}, "商户返回的订单信息不完整，请稍后再试。"
+            if key == "amount_cents":
+                raw_amount = str(value).strip()
+                if not raw_amount or len(raw_amount) > 32:
+                    return {}, "商户返回的订单金额无效，请到官方应用核对。"
+                try:
+                    amount = Decimal(raw_amount)
+                    if not amount.is_finite() or amount < 0:
+                        raise InvalidOperation
+                    if b.tool.amount_unit == "yuan":
+                        amount *= 100
+                    cents = int(amount.quantize(Decimal("1"),
+                                                rounding=ROUND_HALF_UP))
+                except (InvalidOperation, ValueError, TypeError):
+                    return {}, "商户返回的订单金额无效，请到官方应用核对。"
+                if not 0 <= cents <= _MAX_MERCHANT_ORDER_AMOUNT_CENTS:
+                    return {}, "商户返回的订单金额无效，请到官方应用核对。"
+                normalized[key] = cents
+            elif key == "status":
+                if not isinstance(value, str):
+                    return {}, "商户返回的订单信息不完整，请稍后再试。"
+                source = value.strip()
+                target = b.tool.status_map.get(source)
+                if (not source or target not in SAFE_MERCHANT_STATUSES):
+                    return {}, "商户返回的订单信息不完整，请稍后再试。"
+                normalized[key] = target
+            else:
+                if not isinstance(value, str):
+                    return {}, "商户返回的订单信息不完整，请稍后再试。"
+                text = value.strip()
+                if (not text or len(text) > 128 or
+                        any(ord(ch) < 32 or ord(ch) == 127 for ch in text) or
+                        cls._contains_url_like(text)):
+                    return {}, "商户返回的订单信息不完整，请稍后再试。"
+                normalized[key] = text
+        return normalized, ""
 
     @staticmethod
     def _missing_required_slot(b, args: dict) -> str:
@@ -402,18 +614,73 @@ class McpBridgeAgent(BaseAgent):
         user_id = str(getattr(ctx, "user_id", "") or "").strip()
         if not user_id:
             return {}
+        session_id = str(getattr(ctx, "session_id", "") or "").strip()
         try:
-            recent = await self.ledger.recent(user_id, kind=LEDGER_KIND, limit=5)
+            recent = await self.ledger.recent(
+                user_id, kind=LEDGER_KIND, limit=20)
         except Exception as e:
             logger.debug("[mcp] 取最近订单失败（照常追问）：%s", e)
             return {}
+        seen: set[str] = set()
+        fallback: dict = {}
         for task in recent or []:
-            ref = task.result_ref or {}
+            if str(getattr(task, "user_id", "") or "") != user_id:
+                continue
+            if str(getattr(task, "kind", "") or "") != LEDGER_KIND:
+                continue
+            ref = getattr(task, "result_ref", {}) or {}
+            if not isinstance(ref, dict):
+                continue
             if (ref.get("server") or "demo-coffee") != b.server.id:
                 continue
-            if ref.get("order_id"):
-                return {"order_id": ref["order_id"]}
-        return {}
+
+            candidate_id = str(ref.get("order_id") or "").strip()
+            candidate_from_ref = bool(candidate_id)
+            if not candidate_id:
+                # A failed/uncertain compensation attempt may omit the id from
+                # result_ref, while the original locally-built goal still has
+                # it.  Parse that value only to tombstone older records; never
+                # use a goal-only id as a new cancellation target.
+                try:
+                    goal = json.loads(str(getattr(task, "goal", "") or ""))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    goal = {}
+                if isinstance(goal, dict):
+                    candidate_id = str(goal.get("order_id") or "").strip()
+
+            outcome = re.sub(
+                r"[^0-9A-Za-z\u4e00-\u9fff]+", "",
+                str(ref.get("outcome") or "")).lower()
+            task_status = str(getattr(task, "status", "") or "").lower()
+            if not candidate_id:
+                if task_status != DONE or outcome in {"failed", "uncertain"}:
+                    # Without a recoverable identity, a newer ambiguous write
+                    # makes "the recent order" unsafe to infer.
+                    return {}
+                continue
+            if candidate_id in seen:
+                continue
+            seen.add(candidate_id)
+            if not candidate_from_ref or task_status != DONE:
+                continue
+            if outcome in {"failed", "uncertain"}:
+                continue
+            order_status = re.sub(
+                r"[^0-9A-Za-z\u4e00-\u9fff]+", "",
+                str(ref.get("status") or "")).lower()
+            if order_status in {
+                    "cancelled", "canceled", "failed", "uncertain",
+                    "refunded", "completed", "已取消", "取消成功", "已退款",
+            }:
+                continue
+
+            slots = {"order_id": candidate_id}
+            if session_id and str(
+                    getattr(task, "session_id", "") or "") == session_id:
+                return slots
+            if not fallback:
+                fallback = slots
+        return fallback
 
     async def _resolve_order_ref(self, b, args: dict, user_id: str) -> dict:
         """用户说「查一下我的订单」时没有订单号——从账本取他最近这一单的引用。

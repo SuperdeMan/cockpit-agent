@@ -48,7 +48,7 @@ domain: nearby                      # 必须等于文件名（CI 硬校验）
 exemplars:
   - text: 附近有什么咖啡店            # 用户原话（脱敏后）
     plan:                           # 正确落域。intent 必填且必须真实存在（CI 硬校验）
-      - agent: nearby               #   agent 可省；首步 intent 的域必须等于文件 domain
+      - agent: nearby               #   agent 可省；首步通常属于文件 domain（受控例外见下）
         intent: nearby.search
         slots: {keyword: 咖啡店}     #   槽位骨架，可省（manifest 导入的一律无槽）
     source: trace                   # manifest | trace | manual（封闭集）
@@ -59,6 +59,37 @@ exemplars:
 
 **只追加不插入**：`eid = <domain>#<1-based 序号>` 是 obs 归因（`plan.exemplars`）里的
 标识，插队会让昨天日报里的 eid 指向别的条目。所有工具的写入路径都是「读 → 去重 → 追加」。
+
+### 可信采集首步（受控跨域例外）
+
+文件仍按最终业务域归档；通常首步 intent 的域必须等于文件 `domain`。唯一通用例外是：
+首步只负责采集后续业务动作所需的可信对象，且来源链已经写进计划，而不是靠文字说明。
+
+```yaml
+domain: luckin
+exemplars:
+  - text: 瑞幸迪美店点一杯拿铁
+    plan:
+      - id: store
+        agent: nearby
+        intent: nearby.search
+        slots: {keyword: 瑞幸咖啡 迪美店}
+      - id: order
+        agent: mcp-bridge
+        intent: luckin.order
+        slots: {item_query: 拿铁}
+        depends_on: [store]
+        slot_refs:
+          store_name: store.data.items.0.name
+          store_longitude: store.data.items.0.lng
+          store_latitude: store.data.items.0.lat
+    source: manual
+```
+
+例外必须同时满足：生产者和本域消费者都有显式 `id`；消费者的 `depends_on` 包含生产者；
+`slot_refs` 非空且每个引用都以同一生产者 id 开头。renderer 会保留这三个字段进入 prompt。
+少任一项仍按「首步跨域、疑似放错文件」硬失败；纯门店发现继续放 `nearby.yaml`，不能借此
+把任意跨域组合塞进业务域文件。
 
 ### clarify 型（2026-08-10，裸对象澄清族路径 2）
 
@@ -234,7 +265,8 @@ python scripts/evolve.py all           # 草案落 .work/<date>/proposals/exempl
 1. **契约静态校验（硬失败）**：顶层映射 / domain=文件名 / exemplars 非空列表 /
    每条 text·plan 齐 / **intent 真实存在**于 manifests ∪ **MCP 准入清单**
    （`agents/*/servers.yaml`）∪ 端侧意图集（typo 守卫）/
-   首步 intent 的域=文件域 / source 封闭集 / tags 是列表 /
+   首步 intent 的域=文件域（或满足上文 `id + depends_on + slot_refs` 的可信采集例外）/
+   source 封闭集 / tags 是列表 /
    **全局同句冲突**（同一句话在两处被标成不同落域＝语料自相矛盾，注进 prompt 是纯噪声）
    + **跨域近重复未裁定**（≥`boundaries.yaml` 的 `lex_min` 的跨域对必须在台账里被人裁过一次，
    且台账里两端文本已消失的陈旧条目也阻断——台账只进不出会腐烂）。

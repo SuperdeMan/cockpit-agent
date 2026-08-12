@@ -272,6 +272,36 @@ privacy:
       verify_case: gdpr_md_payment_order_verify
       policy_flags: []
 
+    - id: planner_pending_session
+      backend: redis_or_memory
+      adapter_key: cloud_session
+      adapter: orchestrator.cloud.session:SessionStore
+      storage_variants: ["planner:sess:*", "planner:sess-owner:*", "planner:sess-owner-fence:*", "planner:focus:*"]
+      lifecycle: deletable
+      enforced_from: M-D
+      owner_fields: [user_id, occupant_id]
+      seed_case: gdpr_md_planner_pending_seed
+      count_probe: gdpr_md_planner_pending_count
+      read_probe: gdpr_md_planner_pending_read
+      delete_action: privacy_user_all
+      verify_case: gdpr_md_planner_pending_verify
+      policy_flags: []
+
+    - id: merchant_draft
+      backend: redis
+      adapter_key: mcp
+      adapter: agents.mcp_bridge.src.agent:McpBridgeAgent
+      storage_variants: ["mcp:merchant:draft:*", "mcp:merchant:current:*", "mcp:merchant:owner:*"]
+      lifecycle: deletable
+      enforced_from: M-D
+      owner_fields: [user_id, occupant_id]
+      seed_case: gdpr_md_merchant_draft_seed
+      count_probe: gdpr_md_merchant_draft_count
+      read_probe: gdpr_md_merchant_draft_read
+      delete_action: privacy_user_all
+      verify_case: gdpr_md_merchant_draft_verify
+      policy_flags: []
+
     - id: mcp_demo_order
       backend: external_process_memory
       adapter_key: mcp
@@ -422,6 +452,20 @@ cases:
     profile: root
     skip_reasons: [forbid]
     signed_identity: true
+    persistent_data: true
+    memory_sessions: 0
+
+  # 真实麦当劳/瑞幸人工车道。默认零动作；写模式还需脚本内三重显式开关与
+  # ≤3 笔预算，永不被 CI/nightly/milestone 自动选中。
+  - id: e2e_merchant_mcp
+    path: test/e2e_merchant_mcp.py
+    command: [python, test/e2e_merchant_mcp.py]
+    group: manual_inspection
+    lanes: []
+    timeout_s: 1800
+    profile: root
+    skip_reasons: [manual_review_required]
+    signed_identity: false
     persistent_data: true
     memory_sessions: 0
 

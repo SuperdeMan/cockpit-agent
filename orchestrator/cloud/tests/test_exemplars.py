@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -329,6 +330,73 @@ def test_generic_past_match_result_has_more_than_one_non_corpus_exemplar():
     assert all(item.text != "昨天那场比赛结果是多少" for item in rows)
 
 
+def test_real_merchant_write_intents_have_discriminating_exemplars():
+    """品牌写能力要有软层正例，同时不得把营养/查单/无品牌 demo 混成下单。"""
+    items = ex.ExemplarStore().load()
+    by_domain = {
+        domain: [item for item in items if item.domain == domain]
+        for domain in ("mcd", "luckin")
+    }
+
+    assert sum(item.intents() == ["mcd.order"]
+               for item in by_domain["mcd"]) >= 2
+    luckin_order_rows = [
+        item for item in by_domain["luckin"]
+        if "luckin.order" in item.intents()]
+    assert len(luckin_order_rows) >= 2
+    assert all(item.intents() == ["nearby.search", "luckin.order"]
+               for item in luckin_order_rows)
+    for item in luckin_order_rows:
+        producer, consumer = item.plan
+        assert consumer.get("depends_on") == [producer.get("id")]
+        refs = consumer.get("slot_refs") or {}
+        assert {refs.get("store_name"), refs.get("store_longitude"),
+                refs.get("store_latitude")} == {
+            f"{producer.get('id')}.data.items.0.name",
+            f"{producer.get('id')}.data.items.0.lng",
+            f"{producer.get('id')}.data.items.0.lat",
+        }
+    assert sum(item.intents() == ["luckin.order_cancel"]
+               for item in by_domain["luckin"]) >= 2
+    assert any(item.intents() == ["mcd.menu"] and "热量" in item.text
+               for item in by_domain["mcd"])
+    assert any(item.intents() == ["luckin.order_status"]
+               for item in by_domain["luckin"])
+    assert sum(item.intents() == ["mcd.order"] and "麦当劳" in item.text
+               for item in by_domain["mcd"]) >= 2
+    assert sum("luckin.order" in item.intents() and "瑞幸" in item.text
+               for item in by_domain["luckin"]) >= 2
+    assert sum(item.intents() == ["luckin.order_cancel"] and "瑞幸" in item.text
+               for item in by_domain["luckin"]) >= 2
+
+
+def test_cross_domain_exemplar_render_preserves_dependency_and_slot_refs():
+    """门店发现→瑞幸下单的可信接线必须真的进 prompt，不能被 renderer 丢掉。"""
+    item = ex.Exemplar(
+        eid="luckin#x", domain="luckin", text="在瑞幸点杯拿铁",
+        plan=(
+            {"id": "store", "agent": "nearby", "intent": "nearby.search",
+             "slots": {"keyword": "瑞幸"}},
+            {"id": "order", "agent": "mcp-bridge", "intent": "luckin.order",
+             "slots": {"item_query": "拿铁"}, "depends_on": ["store"],
+             "slot_refs": {
+                 "store_name": "store.data.items.0.name",
+                 "store_longitude": "store.data.items.0.lng",
+                 "store_latitude": "store.data.items.0.lat",
+             }},
+        ), source="manual")
+    rendered = ex._render_one(item, capability_refs={
+        ("nearby", "nearby.search"): "cap_nearby",
+        ("mcp-bridge", "luckin.order"): "cap_luckin",
+    })
+    payload = json.loads(rendered.split("→ ", 1)[1])
+    assert payload[0]["id"] == "store"
+    assert payload[1]["id"] == "order"
+    assert payload[1]["depends_on"] == ["store"]
+    assert payload[1]["slot_refs"]["store_latitude"] == \
+        "store.data.items.0.lat"
+
+
 def test_unsupported_cabin_feature_how_to_routes_to_manual():
     """车内功能问“怎么开”但无对应车控能力时，应查说明书，不得空计划或闲聊。"""
     items = ex.ExemplarStore().load()
@@ -516,6 +584,34 @@ def _contract(root):
         sys.path.insert(0, _t)
     import eval_exemplars as ee
     return ee.lane_contract(root)
+
+
+def test_gate_accepts_connected_acquisition_first_exemplar(tmp_path):
+    root = tmp_path / "exemplars"
+    _write(root, "luckin",
+           "domain: luckin\nexemplars:\n"
+           "  - text: order coffee\n    plan:\n"
+           "      - id: store\n        agent: nearby\n"
+           "        intent: nearby.search\n        slots: {keyword: luckin}\n"
+           "      - id: order\n        agent: mcp-bridge\n"
+           "        intent: luckin.order\n        slots: {item_query: latte}\n"
+           "        depends_on: [store]\n        slot_refs:\n"
+           "          store_name: store.data.items.0.name\n"
+           "          store_longitude: store.data.items.0.lng\n"
+           "          store_latitude: store.data.items.0.lat\n"
+           "    source: manual\n")
+    assert _contract(root) == []
+
+
+def test_gate_rejects_unconnected_cross_domain_first_step(tmp_path):
+    root = tmp_path / "exemplars"
+    _write(root, "luckin",
+           "domain: luckin\nexemplars:\n"
+           "  - text: order coffee\n    plan:\n"
+           "      - agent: nearby\n        intent: nearby.search\n"
+           "      - agent: mcp-bridge\n        intent: luckin.order\n"
+           "    source: manual\n")
+    assert any("首步 intent" in error for error in _contract(root))
 
 
 def test_gate_rejects_plan_and_clarify_together(tmp_path):

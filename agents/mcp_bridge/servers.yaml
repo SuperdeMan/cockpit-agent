@@ -110,15 +110,9 @@ servers:
   # 麦当劳官方 MCP（2026-08-11 真机核实激活：serverInfo=mcd-mcp 1.0.0，29 工具，
   # tools/list 快照与全量 inputSchema 见当日会话产物；schema_sha 按真机指纹锁死）。
   #
-  # **v1 只激活只读两件**（参数自洽、零资金风险）。`create-order` 刻意不进 v1：
-  # 真机 schema 显示它是强多步流程 API——items 是结构化数组，且全链硬依赖
-  # query-nearby-stores 返回的 storeCode/beCode（连 query-meals 查菜单都 required
-  # storeCode）。桥的「扁平 slots→LLM 填→arg_map」单步机制接不住这条链——这是
-  # **编排能力面**（planner 结构化参数 + 步间结果引用）的工程问题，不是配置问题；
-  # 硬接=下单参数靠猜。二期条件：planner 支持步间结构化引用后，按
-  # compensate_policy: abandon_unpaid + pay_url_locator: "payH5Url"（官方接入指南
-  # 确认的字段名）接入，支付闭环机制已由 demo-coffee 全链路验证。
-  # 真机还确认：**29 工具中无取消类工具**——abandon_unpaid 判断坐实。
+  # 下单链由桥内确定性 workflow 组装 typed items；Planner 只接触自然语言标量，
+  # 低层工具全部 expose=false。29 工具中无取消类工具，因此创建的是未支付订单，
+  # 用户不支付时由商户自动失效（abandon_unpaid），不会伪称远程取消成功。
   - id: mcdonalds
     demo: false
     trust: third_party
@@ -129,9 +123,6 @@ servers:
     version: ""                    # 远程托管平台：版本不锁（自报 1.0.0），工具级 schema_sha 锁
     startup_timeout_ms: 20000
     pay_url_hosts: [m.mcd.cn]      # 二期下单用；只读工具不产链接
-    # `query-nearby-stores` 刻意不激活：「附近有麦当劳」是 nearby.search（高德真
-    # 数据+导航）的既有地盘，门店 intent 的真实价值在二期下单链（拿 storeCode）
-    # ——不为激活数量保留一个与既有能力打架的 intent。
     tools:
       - name: list-nutrition-foods
         intent: mcd.menu
@@ -162,18 +153,108 @@ servers:
         description: 查询麦当劳订单状态与配送进度（商家是订单状态的真相源）
         slots: [order_id]
         arg_map: {order_id: orderId}
+        success_predicate: {success: [true], code: [200]}
+        result_map:
+          order_id: data.orderId
+          status: data.orderStatus
+          amount_cents: data.realTotalAmount
+        status_map:
+          待支付: 待支付
+          配餐中-已支付: 配餐中
+          配餐中-餐厅确认配餐中: 配餐中
+          配送中: 配送中
+          已完成: 已完成
+          已取消: 订单已取消
+          订单已取消: 订单已取消
+          已评价: 已完成
+        amount_unit: yuan
         examples: ["我的麦当劳订单到哪了", "麦当劳那单好了吗"]
         timeout_ms: 12000
+      - name: query-nearby-stores
+        intent: mcd.internal.query_nearby_stores
+        write: false
+        expose: false
+        forward_owner: false
+        required_scopes: [merchant.write]
+        idempotency_mode: none
+        retry_policy: safe
+        schema_sha: "235a50ac3f94"
+        const_args: {beType: 1, searchType: 1}
+        timeout_ms: 15000
+      - name: query-meals
+        intent: mcd.internal.query_meals
+        write: false
+        expose: false
+        forward_owner: false
+        required_scopes: [merchant.write]
+        idempotency_mode: none
+        retry_policy: safe
+        schema_sha: "ccfacc629a1f"
+        const_args: {orderType: 1, beType: 1}
+        timeout_ms: 15000
+      - name: query-meal-detail
+        intent: mcd.internal.query_meal_detail
+        write: false
+        expose: false
+        forward_owner: false
+        required_scopes: [merchant.write]
+        idempotency_mode: none
+        retry_policy: safe
+        schema_sha: "2dc343f13d94"
+        const_args: {orderType: 1, beType: 1}
+        timeout_ms: 15000
+      - name: calculate-price
+        intent: mcd.internal.calculate_price
+        write: false
+        expose: false
+        forward_owner: false
+        required_scopes: [merchant.write]
+        idempotency_mode: none
+        retry_policy: safe
+        schema_sha: "b25bd7d955a0"
+        const_args: {orderType: 1, beType: 1}
+        timeout_ms: 15000
+      - name: create-order
+        intent: mcd.internal.create_order
+        write: true
+        expose: false
+        require_confirm: true
+        forward_owner: false
+        required_scopes: [merchant.write]
+        idempotency_mode: local_at_most_once
+        retry_policy: never
+        timeout_outcome: uncertain
+        idempotency_key_arg: ""
+        compensate_policy: abandon_unpaid
+        unpaid_expiry: true
+        pay_url_locator: data.payH5Url
+        amount_locator: data.orderDetail.realTotalAmount
+        amount_unit: yuan
+        success_predicate: {success: [true], code: [200]}
+        schema_sha: "0bee66827dd1"
+        const_args: {orderType: 1, beType: 1}
+        confirm_prompt: "确认后将创建麦当劳未支付订单；不支付会由商户自动失效。"
+        timeout_ms: 20000
+    workflows:
+      - intent: mcd.order
+        handler: mcdonalds
+        required_tools:
+          - query-nearby-stores
+          - query-meals
+          - query-meal-detail
+          - calculate-price
+          - create-order
+        required_scopes: [merchant.write]
+        require_confirm: true
+        expose: true
+        description: 选择麦当劳门店和餐品、核价确认后创建未支付订单
+        slots: [item_query, quantity, store_hint, city, pickup_mode, checkout_token]
+        examples: ["在麦当劳点一份巨无霸套餐", "麦当劳来两份麦辣鸡腿堡到店自取"]
 
   # ── 瑞幸官方 MCP（2026-08-11 真机核实激活：serverInfo=luckyordermcpmaster 1.0.0，
-  # 8 工具）。**v1 只激活订单查询一件**：
-  # - queryShopList required 精确经纬度——third_party 桥被硬上限表禁 location.precise
-  #   （ws8 红线），结构性不可激活；「附近的瑞幸」本就归 nearby.search（高德）。
-  # - searchProductForMcp/queryProductDetailInfo/previewOrder/createOrder 全链硬依赖
-  #   deptId（先选店）与 productList 结构化数组——同麦当劳，归二期编排能力面。
-  # - **cancelOrder 真机存在**（外部补偿里的 tool 形态，与麦当劳 abandon_unpaid 各占
-  #   其一）：二期 createOrder 接入时 compensate_policy: tool + compensate_tool:
-  #   cancelOrder；v1 不单独激活取消（写操作且上游下单未接，空转能力）。
+  # 8 工具）。门店发现仍归 nearby.search；workflow 只接受同一公开 POI 的可信
+  # name/lng/lat 引用，再用官方 queryShopList 映射 deptId，绝不把座舱 GPS 静默下发。
+  # 商品规格与 productList 均由桥内 codec 从官方 detail/switch/preview 结果构造。
   - id: luckin
     demo: false
     trust: third_party
@@ -183,7 +264,7 @@ servers:
       Authorization: "Bearer ${LUCKIN_MCP_TOKEN}"
     version: ""                    # 远程托管平台：版本不锁（自报 1.0.0），工具级 schema_sha 锁
     startup_timeout_ms: 20000
-    pay_url_hosts: []              # 二期下单时按真实响应的支付链接域名回填
+    pay_url_hosts: [open.lkcoffee.com]  # 2026-08-12 createOrder 真栈取证
     tools:
       - name: queryOrderDetailInfo
         intent: luckin.order_status
@@ -198,5 +279,136 @@ servers:
         description: 查询瑞幸咖啡订单详情与状态（商家是订单状态的真相源）
         slots: [order_id]
         arg_map: {order_id: orderId}
+        success_predicate: {success: [true], code: [0]}
+        result_map:
+          order_id: data.orderId
+          status: data.orderStatusName
+          amount_cents: data.orderPayAmount
+        status_map:
+          待支付: 待支付
+          待付款: 待支付
+          未支付: 待支付
+          已创建: 待支付
+          制作中: 制作中
+          备餐中: 制作中
+          制作完成: 待取餐
+          待取餐: 待取餐
+          已完成: 已完成
+          已取餐: 已完成
+          已取消: 已取消
+          取消成功: 已取消
+        amount_unit: yuan
         examples: ["我瑞幸的单子怎么样了", "瑞幸咖啡做好了吗", "查一下瑞幸订单"]
         timeout_ms: 12000
+      - name: queryShopList
+        intent: luckin.internal.query_shop_list
+        write: false
+        expose: false
+        forward_owner: false
+        required_scopes: [merchant.write]
+        idempotency_mode: none
+        retry_policy: safe
+        schema_sha: "cee4310bfb4d"
+        timeout_ms: 15000
+      - name: searchProductForMcp
+        intent: luckin.internal.search_product
+        write: false
+        expose: false
+        forward_owner: false
+        required_scopes: [merchant.write]
+        idempotency_mode: none
+        retry_policy: safe
+        schema_sha: "c4426494a931"
+        timeout_ms: 15000
+      - name: queryProductDetailInfo
+        intent: luckin.internal.product_detail
+        write: false
+        expose: false
+        forward_owner: false
+        required_scopes: [merchant.write]
+        idempotency_mode: none
+        retry_policy: safe
+        schema_sha: "dfb46188253d"
+        timeout_ms: 15000
+      - name: switchProduct
+        intent: luckin.internal.switch_product
+        write: false
+        expose: false
+        forward_owner: false
+        required_scopes: [merchant.write]
+        idempotency_mode: none
+        retry_policy: safe
+        schema_sha: "f2bb3c6177ff"
+        timeout_ms: 15000
+      - name: previewOrder
+        intent: luckin.internal.preview_order
+        write: false
+        expose: false
+        forward_owner: false
+        required_scopes: [merchant.write]
+        idempotency_mode: none
+        retry_policy: safe
+        schema_sha: "6ef3aceeab1f"
+        timeout_ms: 15000
+      - name: createOrder
+        intent: luckin.internal.create_order
+        write: true
+        expose: false
+        require_confirm: true
+        forward_owner: false
+        required_scopes: [merchant.write]
+        idempotency_mode: local_at_most_once
+        retry_policy: never
+        timeout_outcome: uncertain
+        idempotency_key_arg: ""
+        compensate_policy: tool
+        compensate_tool: cancelOrder
+        pay_url_locator: data.payOrderQrCodeUrl
+        amount_locator: data.discountPrice
+        amount_unit: yuan
+        success_predicate: {success: [true], code: [0]}
+        schema_sha: "6e7211974147"
+        confirm_prompt: "确认后将创建瑞幸咖啡未支付订单。"
+        timeout_ms: 20000
+      - name: cancelOrder
+        intent: luckin.internal.cancel_order
+        write: true
+        expose: false
+        require_confirm: true
+        forward_owner: false
+        required_scopes: [merchant.write]
+        idempotency_mode: local_at_most_once
+        retry_policy: never
+        timeout_outcome: uncertain
+        idempotency_key_arg: ""
+        compensate_policy: terminal
+        success_predicate: {success: [true], code: [0]}
+        schema_sha: "095c2b916b52"
+        confirm_prompt: "确认取消这笔瑞幸咖啡订单吗？"
+        timeout_ms: 20000
+    workflows:
+      - intent: luckin.order
+        handler: luckin
+        required_tools:
+          - queryShopList
+          - searchProductForMcp
+          - queryProductDetailInfo
+          - switchProduct
+          - previewOrder
+          - createOrder
+          - cancelOrder
+        required_scopes: [merchant.write]
+        require_confirm: true
+        expose: true
+        description: 必须先消费 nearby.search 同一公开 POI 的可信门店名和坐标，再选商品规格、预览确认并创建未支付订单
+        slots: [item_query, quantity, store_name, store_longitude, store_latitude, temperature, ice, sweetness, milk, checkout_token]
+        examples: ["先查附近的瑞幸，再点一杯生椰拿铁少冰半糖", "先找到瑞幸迪美店，再来两杯热美式"]
+      - intent: luckin.order_cancel
+        handler: luckin
+        required_tools: [queryOrderDetailInfo, cancelOrder]
+        required_scopes: [merchant.read, merchant.write]
+        require_confirm: true
+        expose: true
+        description: 二次确认后取消瑞幸咖啡订单
+        slots: [order_id]
+        examples: ["取消刚才的瑞幸订单", "瑞幸那杯不要了"]

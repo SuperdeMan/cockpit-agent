@@ -531,15 +531,17 @@ class ContextManager:
         """装配一次规划轮的工作上下文。失败的子项各自降级为空/全量，绝不阻塞规划。"""
         history = await self._history(ctx) if mem_on else []
         memories = await self._recall(text, ctx) if mem_on else []
-        focus = await self._load_focus(ctx.session_id) if (mem_on and self.session) else None
+        focus = await self._load_focus(
+            ctx.session_id, ctx.user_id) if (mem_on and self.session) else None
         catalog = await self._catalog(text)
         return WorkingSet(catalog=catalog, history=history, memories=memories,
                           focus=focus)
 
-    async def _load_focus(self, session_id: str):
+    async def _load_focus(self, session_id: str, user_id: str):
         """载入会话焦点。失败/无则 None，不阻塞规划。"""
         try:
-            d = await self.session.load_focus(session_id)
+            d = await self.session.load_focus(
+                session_id, owner_user_id=user_id)
             if not d:
                 return None
             valid = {f.name for f in fields(Focus)}
@@ -548,14 +550,16 @@ class ContextManager:
             logger.debug("load_focus failed: %s", e)
             return None
 
-    async def update_focus(self, session_id: str, plan, results):
+    async def update_focus(self, session_id: str, plan, results, *,
+                           user_id: str):
         """每轮成功完成后更新焦点态（供下一轮指代消解）。绝不抛错、不阻塞主链路。"""
         if not self.session:
             return
         try:
             focus = extract_focus(plan, results)
             if focus is not None:
-                await self.session.save_focus(session_id, asdict(focus))
+                await self.session.save_focus(
+                    session_id, asdict(focus), owner_user_id=user_id)
         except Exception as e:
             logger.debug("update_focus failed: %s", e)
 

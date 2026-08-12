@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.22（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-08-11（v1.22 定稿归档——支付基础设施真实化四批：双渠道扫码收单 + 商户收银登记 + 麦当劳/瑞幸官方 MCP 真机激活）
+> 版本：v1.23（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-08-12（v1.23 定稿归档——麦当劳/瑞幸官方 MCP 复合工作流与受控未支付订单闭环）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -627,7 +627,7 @@ M-C 收口后校准 2026-08-02：验收当时的止血是 S2S 进行中一律只
 
 契约细则（主题、信封、优先级四档、六道闸判据）登记在 `docs/conventions.md` §9.8。
 
-### 7.3 生态接入：受控 MCP 桥（2026-07-25 定稿归档）
+### 7.3 生态接入：受控 MCP 桥（2026-08-12 商户工作流增补）
 
 外部生态（点咖啡/订票类交易闭环）的接入成本不在协议，而在**治理**。为每个外部服务写一个
 gRPC Agent 成本过高；动态放行注册又把准入权交给了外部。折中是**一个 `mcp-bridge` Agent
@@ -636,16 +636,29 @@ gRPC Agent 成本过高；动态放行注册又把准入权交给了外部。折
 - **三重锁定**：server 版本逐字相等 + tool 白名单（server 多提供的直接忽略）+ tool schema 指纹。
   外部服务改了接口 → **拒载并告警**，重新人工审，不自动接受。
 - **写操作生命周期五项缺一不接**：幂等键（= **请求指纹**，不得用每次都新的 task id）、
-  订单状态机（复用 `task_ledger`，不建新表）、timeout/cancel（**超时报「不确定」且绝不承诺
-  不存在的核对入口**——2026-07-26 验收修正：把不确定包装成「有办法查清楚」比不说更伤信任；
-  账目 `result_ref.outcome=uncertain` 供未来查询入口按事实回答，不照 failed 状态说「上次
-  失败了」）、补偿路径（`compensate_tool` 缺失即拒载；**当前为准入面校验，运行期调用与用户
-  查单/取消入口未接**——已立卡，接真实商户前必须兑现）、审计。
+  订单状态机（复用 `task_ledger`，不建新表）、timeout/cancel（超时报“不确定”，写调用
+  `retry_policy=never`，禁止凭猜测重放）、可达补偿（瑞幸再次确认取消；麦当劳官方无取消，
+  只能放弃未支付并等待商户关闭）、审计。确认前远程写调用必须为零。
+- **复合工作流隔离 LLM 与官方低层参数**：Planner 只产 `mcd.order` / `luckin.order` 等复合
+  intent；桥内 `MerchantWorkflow` 用官方只读结果确定性构造嵌套商品/规格参数、金额与成功判定，
+  Redis TTL 草稿保存预览并在确认时原子消费。官方低层写工具 `expose=false`，跨步引用只接受
+  Executor 注入的可信 provenance，不能靠用户文本或 Planner 自填 code。草稿按
+  `merchant_draft` 登记为可删除个人数据：value 不留 user/session 明文；确认消费同时建立共享
+  Redis 操作租约。Memory 全量 ForgetUser 只额外协调商户草稿与 Planner 挂起/焦点两类短期状态：
+  租约在飞时返回 pending，释放后重试并证明 owner 数据清零才 ACK。10 分钟 TTL 只是故障兜底；
+  这不是 Task Ledger、支付、可观测或外部商户订单的全跨域删除 saga。
+- **响应与支付入口均 fail-closed**：官方业务 envelope 用声明式 `success_predicate` 判成功，
+  `result_map` 只归一订单号/状态/金额；原始长响应不进入话术。支付 URL 必须同时命中桥侧 server
+  host 白名单和 payment-gateway 运行时白名单并成功登记，否则清除全部链接，只引导官方 App。
+  展示支付入口不代表已支付，本系统不代用户执行最终付款。
 - **权限**：一律 `trust_level: third_party`（硬上限表自动禁高危车控/精确位置/摄像头麦克风）；
   涉钱走 payment-gateway，Agent 不持凭证；写操作 `require_confirm`（M0a 中央闸强制落实）。
 - **MCP 只做生态桥**：内部核心能力保持 gRPC 强类型低延迟，不迁 MCP。
 - **演示数据永远标出来**：`demo` server 的产出打 `_prov.mode=mock` + 卡片角标 + 话术前缀。
   演示不是问题，把演示装成真实才是（与 §9.5 数据真实性铁律同源）。
+- **当前账号边界**：麦当劳/瑞幸凭证是服务级全局 token/账号，只允许网关权威 scope 下的
+  已认证主用户进入写流程；声纹或客户端 meta 不构成授权。多乘员独立商户账号、token 自动刷新
+  与支付 host 的量产配置治理均后置；缺失时能力诚实缺席或链接 fail-closed。
 
 契约细则（准入清单字段、锁定语义、生命周期强制项）登记在 `docs/conventions.md` §9.9。
 
@@ -1124,5 +1137,6 @@ agents/<name>/
 
 | v1.22 | 2026-08-11 | 内容性合入（支付基础设施真实化四批，`d964e1d`/`94f7afc`/`4a5cab0`/`6f06b41`）：§7.3/ws6 §2 的 payment-gateway 从孤儿 mock 接成真——支付宝当面付（沙箱可联调）/微信 v3 Native 双渠道自实现签名验签、9 态状态机（**Capture=确认后亮码**非同步扣款，captured 由轮询 worker 推进）、`confirm_token` 幂等重取时序（编排刻意不持久化 step.meta，token 不出 Agent 栈）、`PAYMENT_REAL_SCENES` 场景白名单 fail-closed（防 mock 金额走真渠道收真钱）、merchant_hosted 商户收银登记（商户是真相源只做过期收口）。§7.3 受控 MCP 桥解封 streamable_http（仅官方商户远程端点）：麦当劳（29 工具真机核实）/瑞幸（8 工具）v1 只读激活，补偿两态（`abandon_unpaid`/`tool`）被两家各占其一验证；两家下单归二期（编排结构化参数能力面）。§9.5 豁免拆分：payment 独立决议域不进豁免。真实联调抓修支付宝网关 **GBK 响应验签 bug**（全 ASCII 侥幸绿、MockTransport 结构性盖不住——「真实接入」验收价值的标本）。端到端体验层：`speech_mode: summarize`（商户返回「给 LLM 读的文档」不逐字进话术）。设计全文 `docs/design/2026-08-11-payment-infrastructure-and-merchant-mcp.md` |
 | v1.21 | 2026-08-11 | 内容性合入（外部评审末两批 B5/B6）：§5.2.1 的降级链路补上**声明层**——13 条重试/守卫规则从主循环的 if/elif 收敛为 `orchestrator/cloud/retry_policy.py` 的表（**加重试规则=改表不改主循环**，同 skill 层那条哲学；`plan_modes` 口径逐字不变以保既有读数可比，归因新增 `retry_policies` 一列）；D0/T2 流式判定统一到 `stream_state.py`（**判定抄两份正是 B1 那个 bug 的成因**——推进逻辑也必须共享，不只是判定函数），顺带把 D0「动作已发出却丢 final 时邀请用户重发」的同族缺陷补掉、`_outcome_uncertain` 接Outcome Verifier readback 并复用既有指纹（**不新造 command_id**）。§3.2 增第二个 shadow：**可执行性形态判定**（`actionability.py`）——裸对象澄清族三条检索式修法全败之后的第四条路，判据原文「**检索是内容通道，而裸对象是形态判据**」；主链零行为变化由源码断言钉死，REJECT 声明但 v1 不产出。三条判据入册：**分母挑得越干净假阳性越好看**（首版 0/472 是把端侧 ingress 挡在分母外，诚实分母是 4/574）／**确定性判据的 p 值分母是人为的**／**「代码里 import 得到」和「镜像里拷进去了」是两件事**（真栈全量重建抓到 collector 与proactive 两个服务 import 了 `runtime.profile` 却没 `COPY runtime`，加闸后 40 小时无症状，覆盖面断言已补到 Docker 层）|
+| v1.23 | 2026-08-12 | 内容性合入：§7.3 将麦当劳/瑞幸从只读工具推进为受控复合工作流——Planner 只见复合 intent，官方低层工具隐藏并由确定性 codec 构造嵌套参数；Redis TTL 草稿 + 原子确认消费、Task Ledger/single-flight `local_at_most_once`、写 no-retry/timeout uncertain、声明式业务成功谓词与结果白名单、支付链接双层 host 白名单共同闭合。两家均到创建未支付订单/支付入口/查单，瑞幸支持再次确认取消，麦当劳无远程取消；明确不执行最终付款。服务级全局商户账号与运行时 host 配置保留为 PoC 边界。设计全文 `docs/design/2026-08-12-merchant-mcp-full-flow.md` |
 
 > 校准记录（不 bump）：2026-07-02/03/10 同步 R1-R3 落地现状；2026-07-18 实现说明、§3.1 T0-T2 运行模型对应、点餐→周边发现、§13 目录映射校准；2026-08-02 附录 C 版本表整理（两表合一、按版本排序，无内容变化）；2026-08-09 §10 评测可信度同步跨进程意图基线落地状态。

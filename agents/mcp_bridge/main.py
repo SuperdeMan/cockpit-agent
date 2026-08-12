@@ -8,10 +8,17 @@
 """
 import asyncio
 import json
+import logging
 import os
 
 from agents._sdk import serve
 from agents.mcp_bridge.src.agent import McpBridgeAgent
+from runtime.privacy_delete_bus import (
+    MCP_SUBJECT,
+    MCP_TARGET,
+    install_delete_responder,
+    require_ready_shared_redis_backend,
+)
 
 ADMIN_SUBJECT = "e2e.mcp.namespace.admin"
 ADMIN_MAX_REQUEST_BYTES = 16 * 1024
@@ -121,6 +128,26 @@ async def install_namespace_admin(
     return True
 
 
+async def install_privacy_delete_responder(
+    nc,
+    agent: McpBridgeAgent,
+    *,
+    key: bytes | None = None,
+    now=None,
+) -> bool:
+    """Expose only the MCP-owned privacy_user_all adapter on the internal bus."""
+    await require_ready_shared_redis_backend(agent._draft_store)
+    return await install_delete_responder(
+        nc,
+        subject=MCP_SUBJECT,
+        target=MCP_TARGET,
+        delete=agent.delete_personal_data,
+        globally_shared_backend=True,
+        key=key,
+        now=now,
+    )
+
+
 async def main():
     try:
         from observability import setup_structured_logging
@@ -130,7 +157,26 @@ async def main():
     agent = McpBridgeAgent()
     await agent.bootstrap()
     admin_nc = None
+    privacy_nc = None
     try:
+        try:
+            import nats
+            privacy_nc = await nats.connect(
+                os.getenv("NATS_URL", "nats://nats:4222"),
+                max_reconnect_attempts=-1,
+            )
+            await install_privacy_delete_responder(privacy_nc, agent)
+            logging.getLogger("agent.mcp_bridge").info(
+                "MCP privacy delete responder enabled",
+            )
+        except Exception as exc:
+            logging.getLogger("agent.mcp_bridge").warning(
+                "MCP privacy delete responder unavailable: %s",
+                type(exc).__name__,
+            )
+            if privacy_nc is not None:
+                await privacy_nc.close()
+                privacy_nc = None
         enabled = (
             os.getenv("E2E_NAMESPACE_ADMIN_ENABLED", "").lower() == "true"
             and bool(os.getenv("E2E_NAMESPACE_ADMIN_SECRET", ""))
@@ -143,7 +189,6 @@ async def main():
                     max_reconnect_attempts=-1,
                 )
                 if await install_namespace_admin(admin_nc, agent):
-                    import logging
                     logging.getLogger("agent.mcp_bridge").info(
                         "E2E MCP namespace admin enabled",
                     )
@@ -156,6 +201,8 @@ async def main():
     finally:
         if admin_nc is not None:
             await admin_nc.close()
+        if privacy_nc is not None:
+            await privacy_nc.close()
         await agent.shutdown()
 
 

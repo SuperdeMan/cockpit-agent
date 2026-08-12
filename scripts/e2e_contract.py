@@ -3796,6 +3796,13 @@ def _add_intent_terms(terms: set[str], intent: str) -> None:
     terms.add(intent.split(".", 1)[0])
 
 
+def _is_step_result_path(value: str) -> bool:
+    """Return whether an intent-shaped skill token is a StepResult reference."""
+
+    parts = value.split(".")
+    return len(parts) >= 3 and (parts[0] == "data" or parts[1] == "data")
+
+
 def _walk_scalar_strings(
     value: Any,
     *,
@@ -3881,17 +3888,20 @@ def _skills_domain_terms(root: Path) -> set[str]:
     terms: set[str] = set()
     for path in paths:
         raw = _arch_load_yaml(root, path)
-        # `plan_repairs[].source_path` 是 StepResult 内的数据路径（例如
-        # `data.items.0.name`），形状恰好像点号 intent。把它收进业务
-        # 词表会反向污染通用机制：`data` 参数名被误判为领域字面量。
-        # 只跳过这个结构字段的值；producer/consumer intent 和其他
-        # skill 文本仍全部参与动态词表。
+        # StepResult references (for example `data.items.0.name` and
+        # `store.data.items.0.name`) look like dotted intents. Structured
+        # source_path/slot_refs values can be skipped by key; serialized plans
+        # and explanatory skill text need the same shape check below. Actual
+        # producer/consumer intents and all other skill text still participate.
         for text in _walk_scalar_strings(
             raw,
-            excluded_value_keys=frozenset({"source_path"}),
+            excluded_value_keys=frozenset({"source_path", "slot_refs"}),
         ):
             for match in _INTENT_IN_TEXT_RE.finditer(text):
-                _add_intent_terms(terms, match.group(1))
+                value = match.group(1)
+                if _is_step_result_path(value):
+                    continue
+                _add_intent_terms(terms, value)
     return terms
 
 

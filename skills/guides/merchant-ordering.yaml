@@ -1,0 +1,65 @@
+name: merchant-ordering
+type: guide
+description: 麦当劳与瑞幸真实商户下单分流和门店接线判据（品牌下单、营养、查单、取消、附近门店与 demo 商户）
+priority: 60
+capability_dependencies:
+  - nearby.search
+  - mcd.menu
+  - mcd.order
+  - mcd.order_status
+  - luckin.order
+  - luckin.order_status
+  - luckin.order_cancel
+  - shop.order
+keywords: [麦当劳, 瑞幸, 麦当劳点, 麦当劳下单, 瑞幸点, 瑞幸下单, 瑞幸取消, 生椰拿铁, 巨无霸套餐]
+knowledge: |
+  - 麦当劳：下单→`mcd.order`；营养→`mcd.menu`；查单→`mcd.order_status`。
+    品牌单禁走 `shop.order`；营养不代下单。
+  - 瑞幸：下单→`luckin.order`；查单→`luckin.order_status`；取消→`luckin.order_cancel`。
+    创建/取消不互代；无品牌 demo→`shop.order`。
+  - 仅问附近两品牌→`nearby.search`，禁下单。
+  - 瑞幸无门店：`nearby.search`→`luckin.order`；后者 `depends_on` 前者，
+    从同一 `data.items.0` 取 `name/lng/lat`。禁填 `location_source`/车机位置。
+
+few_shots:
+  - user: 生椰拿铁，找最近瑞幸，少冰半糖
+    plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"nearby","intent":"nearby.search","slots":{"keyword":"瑞幸"},"depends_on":[],"slot_refs":{}},{"id":"s2","agent_id":"mcp-bridge","intent":"luckin.order","slots":{"item_query":"生椰拿铁","quantity":"1","ice":"少冰","sweetness":"半糖"},"depends_on":["s1"],"slot_refs":{"store_name":"s1.data.items.0.name","store_longitude":"s1.data.items.0.lng","store_latitude":"s1.data.items.0.lat"}}]}
+  - user: 麦当劳国贸店两份麦香鱼套餐，打包
+    plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"mcp-bridge","intent":"mcd.order","slots":{"item_query":"麦香鱼套餐","quantity":"2","store_hint":"国贸店","pickup_mode":"打包"},"depends_on":[],"slot_refs":{}}]}
+
+plan_repairs:
+  - kind: dependency_slot_ref
+    trigger_any: [最近一家, 找最近的瑞幸, 找家近点的瑞幸, 就近, 附近的瑞幸, 离我近的瑞幸, 顺路选家门店, 点一杯瑞幸]
+    producer_intent: nearby.search
+    consumer_intent: luckin.order
+    slot: store_name
+    source_path: data.items.0.name
+  - kind: dependency_slot_ref
+    trigger_any: [最近一家, 找最近的瑞幸, 找家近点的瑞幸, 就近, 附近的瑞幸, 离我近的瑞幸, 顺路选家门店, 点一杯瑞幸]
+    producer_intent: nearby.search
+    consumer_intent: luckin.order
+    slot: store_longitude
+    source_path: data.items.0.lng
+  - kind: dependency_slot_ref
+    trigger_any: [最近一家, 找最近的瑞幸, 找家近点的瑞幸, 就近, 附近的瑞幸, 离我近的瑞幸, 顺路选家门店, 点一杯瑞幸]
+    producer_intent: nearby.search
+    consumer_intent: luckin.order
+    slot: store_latitude
+    source_path: data.items.0.lat
+
+golden:
+  - text: 麦当劳门店选国贸那家，给我来份双层吉士套餐
+    expect_intents: [mcd.order]
+    expect_not: [shop.order, mcd.menu, mcd.order_status]
+  - text: 想喝瑞幸的厚乳拿铁，顺路选家门店帮我点一杯
+    expect_intents: [nearby.search, luckin.order]
+    expect_not: [shop.order, luckin.order_status]
+    holdout: true
+  - text: 麦当劳薯条的热量是多少
+    expect_intents: [mcd.menu]
+    expect_not: [mcd.order]
+  - text: 把刚才那笔瑞幸订单取消
+    expect_intents: [luckin.order_cancel]
+    expect_not: [luckin.order, luckin.order_status]
+owner: mcp-bridge
+version: 1

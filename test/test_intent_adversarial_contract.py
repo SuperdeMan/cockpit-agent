@@ -710,6 +710,98 @@ def test_active_inventory_includes_admitted_mcp_capabilities():
     assert "shop.order" in eval_live.known_intents()
 
 
+def test_active_inventory_includes_exposed_merchant_workflows_only():
+    intents = eval_live.known_intents()
+    assert {"mcd.order", "luckin.order", "luckin.order_cancel"} <= intents
+    assert not ({
+        "query-nearby-stores", "query-meals", "create-order",
+        "queryShopList", "searchProductForMcp", "createOrder", "cancelOrder",
+    } & intents)
+
+
+def test_dynamic_inventory_exposes_only_complete_public_workflows(tmp_path):
+    from cockpit.agent.v1 import agent_pb2
+
+    agent_dir = tmp_path / "dynamic-agent"
+    agent_dir.mkdir()
+    (agent_dir / "servers.yaml").write_text(
+        "servers:\n"
+        "- id: merchant\n"
+        "  command: []\n"
+        "  version: ''\n"
+        "  tools:\n"
+        "  - {name: internal-read, intent: internal.read, expose: false}\n"
+        "  - {name: public-read, intent: merchant.read, expose: true}\n"
+        "  workflows:\n"
+        "  - name: order-flow\n"
+        "    intent: merchant.order\n"
+        "    handler: luckin\n"
+        "    expose: true\n"
+        "    required_tools: [internal-read]\n"
+        "  - name: hidden-flow\n"
+        "    intent: merchant.hidden\n"
+        "    handler: luckin\n"
+        "    expose: false\n"
+        "    required_tools: [internal-read]\n"
+        "  - name: incomplete-flow\n"
+        "    intent: merchant.incomplete\n"
+        "    handler: luckin\n"
+        "    expose: true\n"
+        "    required_tools: [missing-tool]\n"
+        "  - name: handlerless-flow\n"
+        "    intent: merchant.handlerless\n"
+        "    expose: true\n"
+        "    required_tools: [internal-read]\n",
+        encoding="utf-8",
+    )
+    manifest = agent_pb2.AgentManifest(agent_id="dynamic-agent")
+
+    eval_live._synth_admitted_caps(manifest, agent_dir)
+
+    intents = {cap.intent for cap in manifest.capabilities}
+    assert intents == {"merchant.read", "merchant.order"}
+
+
+def test_dynamic_inventory_reads_yaml_workflows_with_legacy_server_spec(
+        tmp_path, monkeypatch):
+    """旧 loader 没有 workflows 字段时仍读同一 YAML，不让新能力从尺子中消失。"""
+    from types import ModuleType, SimpleNamespace
+    from cockpit.agent.v1 import agent_pb2
+
+    legacy = ModuleType("admission")
+    legacy.load_servers = lambda _path: [SimpleNamespace(
+        id="merchant",
+        tools=[SimpleNamespace(
+            name="public-read", intent="merchant.read", expose=True,
+            description="", slots=[], examples=[], require_confirm=False,
+            write=False,
+        )],
+    )]
+    monkeypatch.setitem(sys.modules, "admission", legacy)
+
+    agent_dir = tmp_path / "legacy-agent"
+    agent_dir.mkdir()
+    (agent_dir / "servers.yaml").write_text(
+        "servers:\n"
+        "- id: merchant\n"
+        "  tools:\n"
+        "  - {name: public-read, intent: merchant.read, expose: true}\n"
+        "  workflows:\n"
+        "  - intent: merchant.order\n"
+        "    handler: luckin\n"
+        "    expose: true\n"
+        "    required_tools: [public-read]\n",
+        encoding="utf-8",
+    )
+    manifest = agent_pb2.AgentManifest(agent_id="legacy-agent")
+
+    eval_live._synth_admitted_caps(manifest, agent_dir)
+
+    assert {cap.intent for cap in manifest.capabilities} == {
+        "merchant.read", "merchant.order",
+    }
+
+
 def test_boundary_requires_two_cases_per_side(contract_case):
     errors = validate_boundary_coverage(
         [contract_case],
@@ -754,7 +846,12 @@ def test_boundary_ledger_maps_stable_ids_to_declared_domain_order():
     # mcd-nearby 由 cc.available.mcd-menu{,-calorie} × cc.boundary.nearby-*）。
     assert ledger["luckin-shop.order-ready-brand-vs-demo"] == ("luckin", "shop")
     assert ledger["mcd-nearby.menu-vs-discovery"] == ("mcd", "nearby")
-    assert len(ledger) == 23
+    # 2026-08-12 23→24：新增六条商户范例后 IDF 重算，让既有「快充在哪 / 我在哪」
+    # 跨过词法近重复阈值。按真实对象边界补 charging-navigation 裁定，不调阈值规避；
+    # 左右各 2 条 reviewed 对照已由 validate_boundary_coverage 验证为零错误。
+    assert ledger["charging-navigation.find-charger-vs-self-locate"] == (
+        "charging", "navigation")
+    assert len(ledger) == 24
 
 
 def test_boundary_ledger_rejects_missing_duplicate_id_and_empty_why(tmp_path):

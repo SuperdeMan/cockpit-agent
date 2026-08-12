@@ -103,6 +103,8 @@ class DagExecutor:
                     res = StepResult(step_id=step.id, status=StepStatus.FAILED,
                                      error=f"unexpected result: {res}")
 
+                res = self._stamp_source(step, res)
+
                 done[res.step_id] = res
                 yield res
 
@@ -134,6 +136,12 @@ class DagExecutor:
         # 提醒）。真失败（Agent 明确报错）仍不打——那要允许重跑，见 _find_duplicate。
         elif result.status == StepStatus.FAILED and result.error == "step_timeout":
             result.fingerprint = fingerprint
+        return result
+
+    @staticmethod
+    def _stamp_source(step: Step, result: StepResult) -> StepResult:
+        """用执行中的权威 Step 覆盖结果来源，绝不信任 Agent/Planner 自报。"""
+        result.source_intent = str(step.intent or "")
         return result
 
     @staticmethod
@@ -420,6 +428,21 @@ class DagExecutor:
 
     def _resolve_slot_refs(self, step: Step, done: dict):
         """用前序 step 的结果填充 slot_refs。"""
+        # 该键是执行器本轮重建的 provenance；任何陈旧/伪造值先丢弃。meta 不在
+        # Planner schema 内，但纵深防御仍不把既有值当真。下发 proto 是 map<string,string>，
+        # 因此最终写入确定性 JSON 字符串而不是嵌套对象。
+        step.meta.pop("_trusted_slot_refs", None)
+        trusted: dict[str, dict[str, str]] = {}
+
+        def _record(slot_name: str, ref_path: str) -> None:
+            producer = done.get(str(ref_path).split(".", 1)[0])
+            producer_intent = str(getattr(producer, "source_intent", "") or "")
+            if producer_intent:
+                trusted[slot_name] = {
+                    "ref": str(ref_path),
+                    "producer_intent": producer_intent,
+                }
+
         # Planner/tool-call occasionally emits an exact data reference as the
         # value of an already-declared slot (for example
         # destination="${s1.data.items.0.name}"). Resolve that wire format
@@ -434,6 +457,7 @@ class DagExecutor:
             value = self._resolve_ref(match.group(1), done)
             if value is not None:
                 step.slots[slot_name] = str(value)
+                _record(slot_name, match.group(1))
             else:
                 logger.warning(
                     "slot placeholder %s -> %s resolved to None",
@@ -448,11 +472,17 @@ class DagExecutor:
             # 和同值的 `slot_refs`；旧逻辑认定槽里已有值就跳过，于是那串路径**当成
             # 真 POI id 发给了下游**。判据同 `${...}` 那一段：值和引用长得不一样，
             # 长得一样就说明它是引用。
-            if slot_name in step.slots and str(existing).strip() != str(ref_path).strip():
-                continue
             value = self._resolve_ref(ref_path, done)
             if value is not None:
-                step.slots[slot_name] = str(value)
+                resolved = str(value)
+                if (slot_name not in step.slots or
+                        str(existing).strip() == str(ref_path).strip()):
+                    step.slots[slot_name] = resolved
+                    _record(slot_name, ref_path)
+                elif str(existing) == resolved:
+                    # 确认恢复保留了已解析 slots、刻意不持久化 meta。值与当前权威
+                    # 结果一致时只重建 provenance，不覆盖用户值。
+                    _record(slot_name, ref_path)
             else:
                 logger.warning("slot_ref %s -> %s resolved to None", slot_name, ref_path)
 
@@ -470,8 +500,14 @@ class DagExecutor:
             value = step.slots.get(alias)
             if value is not None and value != raw_value:
                 step.slots[slot_name] = str(value)
+                if alias in trusted:
+                    trusted[slot_name] = dict(trusted[alias])
             else:
                 logger.warning("slot alias %s -> %s resolved to None", slot_name, alias)
+
+        if trusted:
+            step.meta["_trusted_slot_refs"] = json.dumps(
+                trusted, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     @staticmethod
     def _resolve_ref(ref_path: str, done: dict) -> object:

@@ -42,11 +42,20 @@ _YES_WORDS = ("确认", "确定", "好的", "好啊", "可以", "订吧", "订�
               "嗯", "行", "ok", "付吧", "支付", "下单", "就这家", "就它")
 _NO_WORDS = ("取消", "不用", "不要", "算了", "不订", "不付", "不了", "别订", "先不")
 
-# fingerprint 必须在列：它是 M2 重复副作用防抖的比对键——挂起时随 __dict__ 存进了
-# Redis，恢复侧若把它滤掉，任何跨过一次确认/补槽挂起的副作用步防抖都会静默失效
-# （executor._find_duplicate 对空串永不命中）。
-_RESULT_FIELDS = {"step_id", "status", "speech", "ui_card", "actions",
-                  "follow_up", "data", "missing_slots", "error", "fingerprint"}
+# M2 重复副作用防抖的 fingerprint 和可信来源 source_intent 会由
+# ``_resume_result`` 显式保留；其它字段默认不进入挂起种子。
+_RESULT_FIELDS = {"step_id", "status", "data", "fingerprint", "source_intent"}
+_RESUME_OMIT = object()
+_RESUME_URI_RE = re.compile(
+    r"(?i)[a-z][a-z0-9+.-]*:(?://)?[^\s，。；,;]+")
+_RESUME_URI_PREFIX_RE = re.compile(
+    r"(?i)^[a-z][a-z0-9+.-]*:(?://)?")
+_RESUME_SECRET_FRAGMENTS = (
+    "token", "secret", "credential", "authorization", "cookie",
+    "paymentid", "paymentreference", "payurl", "paymenturl",
+    "qrcontent", "qrcode", "qrpayload", "phone", "email", "address",
+    "recipient",
+)
 
 # _POC_DEFAULT_SCOPES 已迁入 context.py（此处 re-export 兼容既有 `from ...engine import _POC_DEFAULT_SCOPES`）。
 __all__ = ["PlannerEngine", "_POC_DEFAULT_SCOPES"]
@@ -212,17 +221,20 @@ class PlannerEngine:
         # （确认条 UI 也只有一个，语义一致）。held_pending 贯穿本轮：完成路径经
         # _settle_session 跳过 clear，并在 final 上补一句软提醒。
         held_pending = None
-        pending = await self.session.load(ctx.session_id)
+        pending = await self.session.load(
+            ctx.session_id, owner_user_id=ctx.user_id)
         if pending and pending.phase == "wait_confirm":
             reply = self._confirm_reply(text, ctx.is_confirmation)
             if reply == "no":
-                await self.session.clear(ctx.session_id)
+                await self.session.clear(
+                    ctx.session_id, owner_user_id=ctx.user_id)
                 yield {"kind": "final", "speech": "好的，已为您取消。"}
                 return
             if reply == "yes":
                 plan, seed_results = self._restore(pending, inject_confirmed=True)
                 if plan is None:
-                    await self.session.clear(ctx.session_id)
+                    await self.session.clear(
+                        ctx.session_id, owner_user_id=ctx.user_id)
                     yield {"kind": "final",
                            "speech": "刚才的操作已过期，麻烦您再说一遍需求。"}
                     return
@@ -239,7 +251,8 @@ class PlannerEngine:
             # 用语境内包含词表而非 _confirm_reply（其"占据整句"规则会拦住长取消句——
             # 补槽追问是当前活跃语境，句中出现取消语义即指它，误伤面可忽略）。
             if _SLOT_CANCEL_RE.search(text or ""):
-                await self.session.clear(ctx.session_id)
+                await self.session.clear(
+                    ctx.session_id, owner_user_id=ctx.user_id)
                 yield {"kind": "final", "speech": "好的，已为您取消。"}
                 return
             if self._is_topic_change(text, pending):
@@ -250,7 +263,8 @@ class PlannerEngine:
                 # 补槽恢复绝不注入 confirmed——补槽答案不是确认（见 _restore docstring）
                 plan, seed_results = self._restore(pending, inject_confirmed=False)
                 if plan is None:
-                    await self.session.clear(ctx.session_id)
+                    await self.session.clear(
+                        ctx.session_id, owner_user_id=ctx.user_id)
                     yield {"kind": "final",
                            "speech": "刚才的操作已过期，麻烦您再说一遍需求。"}
                     return
@@ -476,6 +490,7 @@ class PlannerEngine:
                 # allow_retry=False：话术已经流给用户了，重跑会重复播报。
                 final_sr = await self.executor._verify_outcome(
                     step, final_sr, ctx, allow_retry=False)
+                final_sr = self.executor._stamp_source(step, final_sr)
                 # 流式直通也补 step.agent span（否则单步云端 agent 链路缺这一跳）
                 _pending = final_sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT)
                 await obs_events.get_emitter("cloud").emit_span(
@@ -516,7 +531,9 @@ class PlannerEngine:
                     return
                 await self._settle_session(ctx, held_pending)
                 if mem_on:
-                    await self.context.update_focus(ctx.session_id, focus_plan, results)
+                    await self.context.update_focus(
+                        ctx.session_id, focus_plan, results,
+                        user_id=ctx.user_id)
                 final = await self.aggregator.compose(text or plan.raw_text, results)
                 self._append_pending_hint(final, held_pending)
                 # M2 P2：会话级情绪信号随 final 透传给 HMI 选 TTS 情感参数（不入记忆）
@@ -637,7 +654,9 @@ class PlannerEngine:
         # E. 聚合 + 输出
         await self._settle_session(ctx, held_pending)
         if mem_on:
-            await self.context.update_focus(ctx.session_id, plan, results)  # 焦点态供下轮指代
+            await self.context.update_focus(
+                ctx.session_id, plan, results,
+                user_id=ctx.user_id)  # 焦点态供下轮指代
         if show_process:
             yield self._progress("synthesize", "整理结果",
                                  summary="合并各步结果生成回复", status="start")
@@ -731,6 +750,147 @@ class PlannerEngine:
         return {"kind": "progress", "phase": phase, "label": label,
                 "summary": summary, "status": status, "step_id": step_id}
 
+    @classmethod
+    def _sanitize_resume_value(cls, value):
+        if isinstance(value, dict):
+            clean = {}
+            for key, item in value.items():
+                compact = re.sub(r"[^a-z0-9]", "", str(key).lower())
+                if (compact.endswith(("url", "uri"))
+                        or any(part in compact
+                               for part in _RESUME_SECRET_FRAGMENTS)):
+                    continue
+                sanitized = cls._sanitize_resume_value(item)
+                if sanitized is not _RESUME_OMIT:
+                    clean[str(key)] = sanitized
+            return clean
+        if isinstance(value, (list, tuple)):
+            clean = []
+            for item in value:
+                sanitized = cls._sanitize_resume_value(item)
+                if sanitized is not _RESUME_OMIT:
+                    clean.append(sanitized)
+            return clean
+        if isinstance(value, str):
+            if _RESUME_URI_PREFIX_RE.match(value.strip()):
+                return _RESUME_OMIT
+            scrubbed = _RESUME_URI_RE.sub("", value).strip()
+            return scrubbed if scrubbed else _RESUME_OMIT
+        return value
+
+    @staticmethod
+    def _resume_data_paths(plan: Plan) -> dict[str, list[tuple[str, ...]]]:
+        """Return the exact producer data paths needed after resume.
+
+        ``completed_results`` exists only to resolve a later step's declared
+        ``slot_refs``.  Persisting any other provider payload turns a short
+        confirmation window into an accidental response archive.  Paths are
+        therefore derived from the plan rather than from provider field names.
+        """
+        paths: dict[str, list[tuple[str, ...]]] = {}
+        for step in plan.steps:
+            refs = [
+                (str(slot_name), value)
+                for slot_name, value in (step.slot_refs or {}).items()
+                if isinstance(value, str)
+            ]
+            for slot_name, raw in (step.slots or {}).items():
+                if not isinstance(raw, str):
+                    continue
+                match = re.fullmatch(r"\$\{([^{}]+)\}", raw.strip())
+                if match:
+                    refs.append((str(slot_name), match.group(1)))
+            for slot_name, ref in refs:
+                parts = tuple(ref.split("."))
+                if (len(parts) < 3 or parts[1] != "data"
+                        or any(not part for part in parts)):
+                    continue
+                # The plan is LLM-authored, so declaring a slot_ref is not an
+                # authority to retain PII/payment material.  Known sensitive
+                # leaves fail closed even when explicitly referenced; the
+                # resumed step must re-query or ask again instead.
+                compact_parts = [
+                    re.sub(r"[^a-z0-9]", "", part.lower())
+                    for part in (slot_name, *parts[2:])
+                ]
+                if any(
+                    fragment in compact
+                    for compact in compact_parts
+                    for fragment in _RESUME_SECRET_FRAGMENTS
+                ):
+                    continue
+                paths.setdefault(parts[0], []).append(parts[2:])
+        return paths
+
+    @classmethod
+    def _project_resume_data(cls, data: dict,
+                             paths: list[tuple[str, ...]]) -> dict:
+        """Project provider data to scalar leaves named by ``slot_refs``."""
+        trie: dict = {}
+        leaf = "__resume_leaf__"
+        for path in paths:
+            node = trie
+            for part in path:
+                node = node.setdefault(part, {})
+            node[leaf] = True
+
+        def project(value, node):
+            if node.get(leaf):
+                # Slots cross the transport as strings.  A dict/list terminal
+                # is therefore not a valid scalar dependency and could retain
+                # an arbitrary provider response; fail closed.
+                if isinstance(value, (dict, list, tuple)):
+                    return _RESUME_OMIT
+                return cls._sanitize_resume_value(value)
+            if isinstance(value, dict):
+                clean = {}
+                for key, child in node.items():
+                    if key == leaf or key not in value:
+                        continue
+                    selected = project(value[key], child)
+                    if selected is not _RESUME_OMIT:
+                        clean[key] = selected
+                return clean if clean else _RESUME_OMIT
+            if isinstance(value, (list, tuple)):
+                selected_by_index = {}
+                for raw_index, child in node.items():
+                    if raw_index == leaf:
+                        continue
+                    try:
+                        index = int(raw_index)
+                    except (TypeError, ValueError):
+                        continue
+                    if index < 0 or index >= len(value):
+                        continue
+                    selected = project(value[index], child)
+                    if selected is not _RESUME_OMIT:
+                        selected_by_index[index] = selected
+                if not selected_by_index:
+                    return _RESUME_OMIT
+                clean = [None] * (max(selected_by_index) + 1)
+                for index, selected in selected_by_index.items():
+                    clean[index] = selected
+                return clean
+            return _RESUME_OMIT
+
+        projected = project(data if isinstance(data, dict) else {}, trie)
+        return projected if isinstance(projected, dict) else {}
+
+    @classmethod
+    def _resume_result(cls, result: StepResult,
+                       data_paths: list[tuple[str, ...]]) -> dict:
+        data = cls._project_resume_data(result.data, data_paths)
+        return {
+            "step_id": result.step_id,
+            "status": result.status.value,
+            # Free-form provider speech/follow-up is already surfaced by the
+            # suspension final.  It is not required for slot resolution and
+            # can contain phone/email/address data, so it is never persisted.
+            "data": data,
+            "fingerprint": result.fingerprint,
+            "source_intent": result.source_intent,
+        }
+
     async def _suspend(self, step_result: StepResult, results: list[StepResult],
                        plan: Plan, ctx: PlanContext,
                        prior: list[StepResult] | None = None) -> dict:
@@ -742,13 +902,55 @@ class PlannerEngine:
         挂起 final 又会整体替换 HMI 气泡——不前缀简报，用户就会被凭空追问
         （「查到雨才建提醒」却没听到有雨）。调用方负责剔除确认续接种子与已流式
         播报的结果，防双重播报；挂起步自身不进前缀（trip 确认话术本就是完整叙述）。"""
-        await self.session.save(ctx.session_id, SessionState(
+        # The pending step is always re-run from ``pending_plan``.  Keeping its
+        # full result would create a second persisted copy of merchant checkout
+        # tokens, store/specification data and amounts in ``planner:sess:*``
+        # without contributing to restore.  Persist only completed dependency
+        # results.  A choice step keeps a value-free card marker solely so a
+        # spoken ordinal ("第一个") is still recognised as a slot answer.
+        resume_paths = self._resume_data_paths(plan)
+        completed = {
+            r.step_id: self._resume_result(
+                r, resume_paths.get(r.step_id, []))
+            for r in results
+            if r.step_id != step_result.step_id
+        }
+        pending_card = step_result.ui_card if isinstance(step_result.ui_card, dict) else {}
+        purpose = str(pending_card.get("purpose") or "")
+        card_type = str(pending_card.get("type") or "")
+        if (
+            step_result.status == StepStatus.NEED_SLOT
+            and (purpose.endswith("_choice") or card_type == "merchant_choices")
+        ):
+            completed[step_result.step_id] = {
+                "step_id": step_result.step_id,
+                "status": step_result.status.value,
+                "ui_card": {
+                    "type": card_type,
+                    "purpose": purpose,
+                    "choice_kind": str(pending_card.get("choice_kind") or ""),
+                },
+            }
+
+        saved = await self.session.save(ctx.session_id, SessionState(
             phase="wait_confirm" if step_result.status == StepStatus.NEED_CONFIRM else "wait_slot",
+            owner_user_id=ctx.user_id,
             pending_step_id=step_result.step_id,
             missing_slots=list(step_result.missing_slots),  # F12：保存缺失槽位名
-            completed_results={r.step_id: r.__dict__ for r in results},
+            completed_results=completed,
             pending_plan=self._serialize_plan(plan),
         ))
+        if saved is False:
+            # A concurrent privacy deletion owns the write fence.  Do not show
+            # a confirmation UI for state that cannot be resumed safely.
+            return {
+                "kind": "final",
+                "speech": "正在清除你的数据，这次操作没有保存，请稍后重新发起。",
+                "follow_up": "数据清除完成后可以重新尝试。",
+                "actions": [],
+                "ui_card": None,
+                "need_confirm": False,
+            }
         await obs_events.get_emitter("cloud").emit_span(
             ctx.trace_id,
             "suspended",
@@ -785,7 +987,8 @@ class PlannerEngine:
         用户 TTL 内回头「确认」/裸答案仍可续接；非插话轮照旧 clear（消费/过期清理）。
         不刷新 TTL：挂起窗口以首次挂起时刻起算，插话不无限续命。"""
         if held_pending is None:
-            await self.session.clear(ctx.session_id)
+            await self.session.clear(
+                ctx.session_id, owner_user_id=ctx.user_id)
 
     @staticmethod
     def _append_pending_hint(final: dict, held_pending) -> None:
@@ -868,7 +1071,10 @@ class PlannerEngine:
             )
             card = current.get("ui_card") if isinstance(current, dict) else None
             purpose = card.get("purpose", "") if isinstance(card, dict) else ""
-            if isinstance(purpose, str) and purpose.endswith("_choice"):
+            card_type = card.get("type", "") if isinstance(card, dict) else ""
+            if (
+                isinstance(purpose, str) and purpose.endswith("_choice")
+            ) or card_type == "merchant_choices":
                 return False
             return True
         # 条件式提醒常把触发条件放在句首，动作词位于中后部；仍是完整新意图。
@@ -962,14 +1168,38 @@ class PlannerEngine:
                     if s.id == state.pending_step_id:
                         s.meta = {**s.meta, "confirmed": "true"}
 
+            # Keep the long-standing unbound-call compatibility used by small
+            # contract tests and migration helpers (``_restore(None, ...)``).
+            resume_paths = PlannerEngine._resume_data_paths(Plan(steps=steps))
             seeds: list[StepResult] = []
             for sid, d in (state.completed_results or {}).items():
                 if sid == state.pending_step_id:
                     continue
-                d = {k: v for k, v in dict(d).items() if k in _RESULT_FIELDS}
+                legacy = dict(d)
+                # Read-time minimization is required as well: a rolling deploy
+                # can encounter pending records written by the previous code.
+                # Do not let legacy speech/cards/actions or full provider data
+                # re-enter the execution/aggregation path.
+                d = {
+                    "step_id": str(legacy.get("step_id") or sid),
+                    "status": legacy.get("status", "ok"),
+                    "data": PlannerEngine._project_resume_data(
+                        legacy.get("data") or {},
+                        resume_paths.get(str(sid), []),
+                    ),
+                    "fingerprint": str(legacy.get("fingerprint") or ""),
+                    "source_intent": str(legacy.get("source_intent") or ""),
+                }
                 d["status"] = StepStatus(d.get("status", "ok"))
                 if d["status"] in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
                     continue
+                # 恢复种子只用于依赖解析、防重与最终话术/动作合成；它的
+                # 卡片属于上一轮。挂起 final 当时已由 pending step 的确认/补槽卡
+                # 整体替换，依赖生产者的发现列表既不是本轮新结果，也从未作为
+                # 挂起卡展示。若让它继续进 Aggregator，display_priority=1 会压住
+                # 确认后新产出的 payment_qr/mcp_order，造成「业务成功但 HMI 倒退」。
+                # 因此只保留精确 slot_refs 投影、来源与防抖指纹；自由文本、动作和
+                # 旧卡片一律不恢复。
                 seeds.append(StepResult(**d))
 
             restored = Plan(

@@ -364,6 +364,11 @@ UnicodeDecodeError 后 `proc.stdout=None`。修法两端钉死（`_SUBPROC_UTF8`
   刻意不激活：工具真实名与 schema 要 token 到位后 tools/list 现场核实，而未验证
   条目会被 5 处离线门禁当真实能力面消费——「清单里有而真机没验过」=虚假声明。
   **demo-coffee 一字未动**（`mcp-bridge#0` 退役需专项安全回归）。
+
+> **2026-08-12 安全裁决更新**：上文“登记失败不阻断出卡”只记录 8 月 11 日批次当时的
+> 实施口径，现已被后续对抗审查否决。商户订单创建成功与支付入口是否可安全展示是两件事：
+> 前者仍如实返回；后者必须同时通过桥/网关两层域名白名单并完成网关登记，否则清洗全部
+> URI，只提示去官方 App 支付。不得把未经网关登记的原始 `pay_url` 当降级卡片返回。
 - 配置面：.env.example +两 token 段（申请入口/有效期/缺席语义）；compose
   mcp-bridge +token env+HTTP(S)_PROXY/NO_PROXY+depends http-proxy；egress
   +mcp.mcd.cn+open.lkcoffee.com。

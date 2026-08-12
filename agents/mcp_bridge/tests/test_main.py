@@ -1,16 +1,28 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from agents.mcp_bridge import main
+from runtime import privacy_delete_bus as privacy_bus
 from scripts.e2e_identity import encode_secret, sign_identity
 
 
+class FakeDraftStore:
+    def __init__(self, redis_url, backend_ready):
+        self._url = redis_url
+        self.backend_ready = backend_ready
+
+    async def shared_backend_ready(self):
+        return self.backend_ready and bool(self._url)
+
+
 class FakeAgent:
-    def __init__(self):
+    def __init__(self, redis_url="redis://redis:6379/0", backend_ready=True):
         self.requests = []
+        self._draft_store = FakeDraftStore(redis_url, backend_ready)
 
     async def namespace_admin(self, request):
         self.requests.append(dict(request))
@@ -24,13 +36,19 @@ class FakeAgent:
             "error": "",
         }
 
+    async def delete_personal_data(self, user_id, action):
+        self.requests.append({"user_id": user_id, "action": action})
+        return True
+
 
 class FakeNats:
     def __init__(self):
         self.callbacks = {}
         self.published = []
 
-    async def subscribe(self, subject, cb):
+    async def subscribe(self, subject, cb, queue=None):
+        if subject == privacy_bus.MCP_SUBJECT:
+            assert queue == "privacy-delete-mcp"
         self.callbacks[subject] = cb
 
     async def publish(self, subject, data):
@@ -73,6 +91,31 @@ async def _installed(env):
         nc, agent, environ=env, now=1000,
     )
     return enabled, nc, agent
+
+
+@pytest.mark.asyncio
+async def test_two_memory_only_mcp_replicas_refuse_privacy_responder_startup():
+    key = privacy_bus.derive_control_key(b"mesh-key" * 8)
+    replicas = [FakeNats(), FakeNats()]
+    for nc in replicas:
+        with pytest.raises(privacy_bus.PrivacyDeleteProtocolError,
+                           match="shared Redis"):
+            await main.install_privacy_delete_responder(
+                nc, FakeAgent(redis_url=""), key=key,
+            )
+        assert privacy_bus.MCP_SUBJECT not in nc.callbacks
+
+
+@pytest.mark.asyncio
+async def test_configured_but_unreachable_mcp_redis_never_subscribes():
+    key = privacy_bus.derive_control_key(b"mesh-key" * 8)
+    nc = FakeNats()
+    with pytest.raises(privacy_bus.PrivacyDeleteProtocolError,
+                       match="shared Redis"):
+        await main.install_privacy_delete_responder(
+            nc, FakeAgent(backend_ready=False), key=key,
+        )
+    assert privacy_bus.MCP_SUBJECT not in nc.callbacks
 
 
 @pytest.mark.asyncio
@@ -136,3 +179,92 @@ async def test_mcp_namespace_admin_real_callback_forwards_only_verified_fields()
     }]
     assert nc.published[-1][1]["ok"] is True
     assert "identity_token" not in agent.requests[0]
+
+
+@pytest.mark.asyncio
+async def test_mcp_production_privacy_responder_delegates_to_agent():
+    key = privacy_bus.derive_control_key(b"mesh-key" * 8)
+    nc = FakeNats()
+    agent = FakeAgent()
+    assert await main.install_privacy_delete_responder(
+        nc, agent, key=key, now=lambda: 1_800_000_000,
+    ) is True
+
+    request_data = privacy_bus.encode_delete_request(
+        "owner-1",
+        target=privacy_bus.MCP_TARGET,
+        key=key,
+        now=1_800_000_000,
+        nonce="ab" * 16,
+    )
+    await nc.callbacks[privacy_bus.MCP_SUBJECT](Message(
+        request_data,
+    ))
+
+    assert agent.requests == [{
+        "user_id": "owner-1",
+        "action": privacy_bus.DELETE_ACTION,
+    }]
+    response_data = json.dumps(
+        nc.published[-1][1], separators=(",", ":"), sort_keys=True,
+    ).encode()
+    assert privacy_bus.decode_delete_response(
+        response_data,
+        expected_target=privacy_bus.MCP_TARGET,
+        request_data=request_data,
+        key=key,
+        now=1_800_000_000,
+    ) is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_privacy_responder_without_control_key_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setenv("PRIVACY_DELETE_KEY_FILE", str(tmp_path / "missing"))
+    nc = FakeNats()
+    with pytest.raises(privacy_bus.PrivacyDeleteProtocolError):
+        await main.install_privacy_delete_responder(nc, FakeAgent())
+    assert privacy_bus.MCP_SUBJECT not in nc.callbacks
+
+
+@pytest.mark.asyncio
+async def test_main_installs_privacy_responder_before_serving(monkeypatch):
+    """Runtime startup must not shadow the module-level logging dependency."""
+    calls = []
+
+    class RuntimeAgent:
+        async def bootstrap(self):
+            calls.append("bootstrap")
+
+        async def shutdown(self):
+            calls.append("shutdown")
+
+    class RuntimeNats:
+        async def close(self):
+            calls.append("nats.close")
+
+    async def connect(*_args, **_kwargs):
+        calls.append("nats.connect")
+        return RuntimeNats()
+
+    async def install(_nc, _agent):
+        calls.append("privacy.install")
+        return True
+
+    async def serve(_agent):
+        calls.append("serve")
+
+    monkeypatch.setattr(main, "McpBridgeAgent", RuntimeAgent)
+    monkeypatch.setattr(main, "install_privacy_delete_responder", install)
+    monkeypatch.setattr(main, "serve", serve)
+    monkeypatch.setitem(__import__("sys").modules, "nats", SimpleNamespace(
+        connect=connect,
+    ))
+    monkeypatch.delenv("E2E_NAMESPACE_ADMIN_ENABLED", raising=False)
+    monkeypatch.delenv("E2E_NAMESPACE_ADMIN_SECRET", raising=False)
+
+    await main.main()
+
+    assert calls == [
+        "bootstrap", "nats.connect", "privacy.install", "serve",
+        "nats.close", "shutdown",
+    ]

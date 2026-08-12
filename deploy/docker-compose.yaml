@@ -177,6 +177,10 @@ services:
     volumes: *certs-vol
     environment:
       <<: *python-env
+      # Destructive memory HTTP ingress resolves Bearer -> owner with the same
+      # static identity table as edge-gateway. Empty/missing always rejects.
+      AUTH_TOKENS: ${AUTH_TOKENS:-}
+      AUTH_DEFAULT_USER_ID: ${AUTH_DEFAULT_USER_ID:-u1}
       E2E_IDENTITY_ENABLED: ${E2E_IDENTITY_ENABLED:-false}
       E2E_IDENTITY_SECRET: ${E2E_IDENTITY_SECRET-}
       LLM_PROVIDER: ${LLM_PROVIDER:-xiaomimimo}
@@ -349,6 +353,8 @@ services:
         condition: service_started
       memory:
         condition: service_started
+      redis:
+        condition: service_healthy
 
   payment-gateway:
     <<: *restart
@@ -780,6 +786,8 @@ services:
       memory:
         condition: service_started
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       http-proxy:
         condition: service_started

@@ -8,6 +8,8 @@ merchant_hosted 单段 + pay_url 域名白名单、Capture 亮码与重入、NOT
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import logging
 import time
 
 import grpc
@@ -16,6 +18,7 @@ import pytest
 from payment_gateway.providers.mock import MockPaymentProvider
 from payment_gateway.server import PaymentGatewayServicer
 from payment_gateway.store import PaymentStore
+from security.audit import AuditLogger
 
 from cockpit.payment.v1 import payment_pb2
 
@@ -47,6 +50,15 @@ class SpyAudit:
 
     def named(self, name):
         return [c for c in self.calls if c[0] == name]
+
+
+class CapturingAudit(AuditLogger):
+    def __init__(self):
+        self.events = []
+
+    def log(self, event):
+        self.events.append(event)
+        super().log(event)
 
 
 @pytest.fixture()
@@ -183,6 +195,76 @@ def test_merchant_hosted_empty_whitelist_rejects_all(servicer):
             idempotency_key="idem-m3"), FakeContext()))
     assert e.value.code == grpc.StatusCode.PERMISSION_DENIED
     assert servicer._audit.named("pay_url_denied")
+
+
+def test_pay_url_denied_audit_redacts_url_credentials_and_location(env, caplog):
+    env.setenv("PAYMENT_EXTERNAL_PAY_HOSTS", "m.mcd.cn")
+    audit = CapturingAudit()
+    service = PaymentGatewayServicer(
+        store=PaymentStore(),
+        providers={"mock": MockPaymentProvider()},
+        audit=audit,
+    )
+    denied_url = (
+        "https://audit-user:audit-password@EVIL.EXAMPLE.COM.:443/"
+        "private/checkout?access_token=query-secret#fragment-secret"
+    )
+
+    with caplog.at_level(logging.WARNING, logger="security.audit"):
+        with pytest.raises(_Abort):
+            _do(service.Authorize(_authorize_req(
+                scene="mcd.order", channel=payment_pb2.MERCHANT_HOSTED,
+                external_pay_url=denied_url,
+                idempotency_key="idem-audit-redaction"), FakeContext()))
+
+    assert len(audit.events) == 2  # scope fail-open + pay_url_denied
+    event = audit.events[-1]
+    assert event.event == "pay_url_denied"
+    assert event.extra == {
+        "url_host": "evil.example.com",
+        "url_sha256": hashlib.sha256(denied_url.encode("utf-8")).hexdigest(),
+        "url_length": len(denied_url),
+    }
+    serialized = event.to_json()
+    for secret in (
+        denied_url,
+        "audit-user",
+        "audit-password",
+        "/private/checkout",
+        "query-secret",
+        "fragment-secret",
+    ):
+        assert secret not in serialized
+        assert secret not in caplog.text
+
+
+def test_pay_url_denied_audit_marks_unparseable_url_invalid(env, caplog):
+    env.setenv("PAYMENT_EXTERNAL_PAY_HOSTS", "m.mcd.cn")
+    audit = CapturingAudit()
+    service = PaymentGatewayServicer(
+        store=PaymentStore(),
+        providers={"mock": MockPaymentProvider()},
+        audit=audit,
+    )
+    denied_url = "https://[broken/private?access_token=parse-secret"
+
+    with caplog.at_level(logging.WARNING, logger="security.audit"):
+        with pytest.raises(_Abort):
+            _do(service.Authorize(_authorize_req(
+                scene="mcd.order", channel=payment_pb2.MERCHANT_HOSTED,
+                external_pay_url=denied_url,
+                idempotency_key="idem-audit-invalid"), FakeContext()))
+
+    event = audit.events[-1]
+    assert event.event == "pay_url_denied"
+    assert event.extra == {
+        "url_host": "invalid",
+        "url_sha256": hashlib.sha256(denied_url.encode("utf-8")).hexdigest(),
+        "url_length": len(denied_url),
+    }
+    assert denied_url not in event.to_json()
+    assert denied_url not in caplog.text
+    assert "parse-secret" not in caplog.text
 
 
 # ── Capture ─────────────────────────────────────────────────────

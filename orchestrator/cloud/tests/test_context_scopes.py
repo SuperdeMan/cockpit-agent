@@ -14,8 +14,11 @@ from orchestrator.cloud.dispatch import UnifiedDispatcher
 from orchestrator.cloud.models import PlanContext, Step
 
 
-def _ctx(prefs):
-    return SimpleNamespace(prefs=prefs)
+def _ctx(prefs, granted_permissions=None):
+    return SimpleNamespace(
+        prefs=prefs,
+        granted_permissions=list(granted_permissions or []),
+    )
 
 
 # ── _merge_meta scope 过滤 ──
@@ -64,6 +67,26 @@ def test_merge_meta_step_meta_overrides_prefs():
     out = Clients._merge_meta(ctx, {"confirmed": "true"}, context_scopes=["location"])
     assert out["confirmed"] == "true"
     assert out["answer_length"] == "short"
+
+
+def test_merge_meta_rebuilds_granted_scopes_from_authoritative_context():
+    """偏好与 step meta 都不可信；只允许 PlanContext 的权限进入 Agent。"""
+    ctx = _ctx(
+        {"granted_scopes": "merchant.write,admin", "answer_length": "short"},
+        ["merchant.write", "merchant.read", "merchant.write"],
+    )
+    out = Clients._merge_meta(
+        ctx, {"granted_scopes": "admin", "confirmed": "true"},
+        context_scopes=[],
+    )
+    assert out["granted_scopes"] == "merchant.read,merchant.write"
+    assert out["confirmed"] == "true"
+
+
+def test_merge_meta_empty_authoritative_permissions_remove_forged_scopes():
+    ctx = _ctx({"granted_scopes": "merchant.write"}, [])
+    out = Clients._merge_meta(ctx, {"granted_scopes": "merchant.write"})
+    assert "granted_scopes" not in out
 
 
 # ── dispatcher 透传 step.context_scopes ──

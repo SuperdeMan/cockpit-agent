@@ -208,6 +208,28 @@ def test_research_status_recovers_toolcall_degraded_chitchat_plan():
     assert [s.intent for s in plan.steps] == ["research.status"]
 
 
+def test_info_search_hint_does_not_hijack_merchant_order_status():
+    """卡片发出的显式商户查单必须保留已规划的账号型查询能力。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    info = load_manifest(str(root / "agents" / "info" / "manifest.yaml"))
+    amap = {"info": SimpleNamespace(manifest=info, endpoint="x:0")}
+
+    cases = (
+        ("查询麦当劳订单 1111222233334444555566667777", "mcd.order_status"),
+        ("查询瑞幸订单 8888777766665555444", "luckin.order_status"),
+    )
+    for text, intent in cases:
+        plan = Plan(steps=[Step(id="s1", agent_id="mcp-bridge", intent=intent)])
+
+        _engine().apply(plan, text, amap)
+
+        assert [step.intent for step in plan.steps] == [intent]
+
+
 def test_charging_hints_never_hijack_device_charging():
     """设备充电句绝不被 charging 接管——**这一半在 hint 退役后反而更重要**。
 

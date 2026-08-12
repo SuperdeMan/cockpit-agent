@@ -106,21 +106,8 @@ def _known_intents() -> set[str]:
     > 判据：**「能力从哪里声明」和「能力写在哪个文件」是两件事。**
     > 清单只认一种声明形态时，另一种形态的域会安静地失去整层机制。
     """
-    intents: set[str] = set()
-    for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "manifest.yaml"))):
-        m = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-        for c in m.get("capabilities") or []:
-            if c.get("intent"):
-                intents.add(str(c["intent"]))
-    for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "servers.yaml"))):
-        s = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-        for server in s.get("servers") or []:
-            for tool in (server or {}).get("tools") or []:
-                if (tool or {}).get("intent"):
-                    intents.add(str(tool["intent"]))
-    from edge_agents_mod.media import MEDIA_INTENTS
-    from edge_agents_mod.vehicle import VEHICLE_INTENTS
-    return intents | VEHICLE_INTENTS | MEDIA_INTENTS
+    import eval_live
+    return eval_live.known_intents()
 
 
 def _domains_of(intents) -> set[str]:
@@ -379,7 +366,8 @@ def lane_contract(root: Path) -> list[str]:
                 intent = str(s["intent"]).strip()
                 if intent not in known:
                     errs.append(f"{tag}: intent {intent!r} 不存在于任何 manifest/端侧意图集")
-                elif pos == 0 and intent.split(".")[0] != dom:
+                elif (pos == 0 and intent.split(".")[0] != dom
+                      and not _connected_acquisition_first_step(plan, dom)):
                     # 跨域范例本身合法（组合计划），但首步跨域多半是放错文件
                     errs.append(f"{tag}: 首步 intent {intent!r} 与文件域 {dom!r} 不符"
                                 f"——请放到 {intent.split('.')[0]}.yaml")
@@ -390,6 +378,38 @@ def lane_contract(root: Path) -> list[str]:
         if len(plans) > 1:
             errs.append(f"同句被标成不同落域（语料自相矛盾）：{text!r} → {sorted(plans)}")
     return errs
+
+
+def _connected_acquisition_first_step(plan: list, domain: str) -> bool:
+    """首步跨域的唯一例外：后续本域步骤显式消费该采集步骤的结果。
+
+    这是结构/来源证明，不是 intent allowlist：生产者和消费者都必须有稳定 id，消费者
+    `depends_on` 生产者且至少一个 `slot_refs` 值从同一生产者 id 开始。所有引用都必须
+    来自该生产者，避免 name/lng/lat 被模型从不同来源拼接。未接线的跨域计划仍按放错文件
+    处理。
+    """
+    if not isinstance(plan, list) or len(plan) < 2 or not isinstance(plan[0], dict):
+        return False
+    producer_id = str(plan[0].get("id") or "").strip()
+    if not producer_id:
+        return False
+    for consumer in plan[1:]:
+        if not isinstance(consumer, dict):
+            continue
+        intent = str(consumer.get("intent") or "").strip()
+        consumer_id = str(consumer.get("id") or "").strip()
+        dependencies = consumer.get("depends_on")
+        refs = consumer.get("slot_refs")
+        if (not consumer_id or intent.split(".", 1)[0] != domain
+                or not isinstance(dependencies, list)
+                or producer_id not in {str(dep).strip() for dep in dependencies}
+                or not isinstance(refs, dict) or not refs):
+            continue
+        prefix = producer_id + "."
+        if all(isinstance(value, str) and value.startswith(prefix)
+               for value in refs.values()):
+            return True
+    return False
 
 
 def lane_injected_wire(items: list[ex.Exemplar]) -> list[str]:

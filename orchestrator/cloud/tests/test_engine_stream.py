@@ -120,6 +120,20 @@ def test_single_step_streams_deltas_then_final():
     assert spy.stream_calls and not spy.unary_calls       # 走了流式、没走 unary
 
 
+def test_d0_stream_result_is_stamped_with_executed_intent():
+    spy = _StreamSpy(script=[("final", _Resp(speech="ok"))])
+    engine, _ = _make_engine(spy)
+    captured = {}
+
+    async def compose(text, results, **kwargs):
+        captured["source_intent"] = results[0].source_intent
+        return {"speech": "ok", "actions": [], "cards": []}
+
+    engine.aggregator.compose = compose
+    _run(engine, _req("讲个笑话"))
+    assert captured["source_intent"] == "chitchat.talk"
+
+
 def test_stream_need_confirm_still_suspends():
     """流式单步返回 NEED_CONFIRM 时，仍按 F1 保存挂起态。"""
     spy = _StreamSpy(script=[
@@ -131,7 +145,7 @@ def test_stream_need_confirm_still_suspends():
 
     final = events[-1]
     assert final["need_confirm"] is True
-    state = asyncio.run(session.load("sess-s"))
+    state = asyncio.run(session.load("sess-s", owner_user_id="u1"))
     assert state is not None and state.phase == "wait_confirm" and state.pending_step_id == "s1"
 
 

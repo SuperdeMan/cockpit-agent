@@ -48,13 +48,14 @@ def _food_agent():
 
 
 class _Resp:
-    def __init__(self, status=0, speech="", follow_up=""):
+    def __init__(self, status=0, speech="", follow_up="", ui_card=None,
+                 data=None):
         self.status = status
         self.speech = speech
         self.follow_up = follow_up
         self.actions = []
-        self.ui_card = None
-        self.data = None           # F3
+        self.ui_card = ui_card
+        self.data = data           # F3
         self.missing_slots = []    # F12
 
 
@@ -74,12 +75,24 @@ class _Spy:
     async def call_agent(self, endpoint, intent, slots, ctx, meta):
         self.calls.append((intent, dict(meta or {})))
         if intent == "nearby.search":
-            return _Resp(speech="为您找到 3 家川菜。")
+            return _Resp(
+                speech="为您找到 3 家川菜。",
+                ui_card={"type": "place_list", "display_priority": 1,
+                         "items": [{"name": "川菜·名店1"}]},
+                data={"items": [{"name": "川菜·名店1"}]},
+            )
         if intent == "nearby.order":
             if (meta or {}).get("confirmed") == "true":
-                return _Resp(speech="已为您订好：川菜·名店1 今晚7点 2位。")
-            return _Resp(status=1, speech="确认为您预订川菜·名店1 今晚7点 2位吗？",
-                         follow_up="说『确认』即可下单")
+                return _Resp(
+                    speech="已为您订好：川菜·名店1 今晚7点 2位。",
+                    ui_card={"type": "payment_qr", "payment_id": "pay-1"},
+                )
+            return _Resp(
+                status=1,
+                speech="确认为您预订川菜·名店1 今晚7点 2位吗？",
+                follow_up="说『确认』即可下单",
+                ui_card={"type": "mcp_order", "status": "confirm_pending"},
+            )
         return _Resp(status=3, speech="未知意图")
 
     async def llm(self, messages, **kwargs):
@@ -109,11 +122,12 @@ def _make_engine() -> tuple[PlannerEngine, _Spy, SessionStore]:
     return engine, spy, session
 
 
-def _req(text: str, session_id: str = "sess-1", is_confirmation: bool = False):
+def _req(text: str, session_id: str = "sess-1", is_confirmation: bool = False,
+         user_id: str = "u1"):
     return SimpleNamespace(
         text=text, session_id=session_id, request_id="r1",
         is_confirmation=is_confirmation,
-        context=SimpleNamespace(user_id="u1", vehicle_id="v1"),
+        context=SimpleNamespace(user_id=user_id, vehicle_id="v1"),
     )
 
 
@@ -134,9 +148,18 @@ def test_confirm_completes_reservation_without_rerunning_done_steps():
     assert final["need_confirm"] is True
     assert spy.count("nearby.search") == 1
     assert spy.count("nearby.order") == 1
-    state = asyncio.run(session.load("sess-1"))
+    state = asyncio.run(session.load("sess-1", owner_user_id="u1"))
     assert state is not None and state.phase == "wait_confirm"
     assert state.pending_step_id == "s2"
+    assert state.owner_user_id == "u1"
+    # The pending merchant step is re-run from pending_plan after confirmation.
+    # Persisting its card/data as well would duplicate checkout tokens, store,
+    # specification and amount data in planner:sess:* for no restore purpose.
+    assert "s2" not in state.completed_results
+    # The completed dependency marker remains so it is not re-run.  This plan
+    # uses a literal restaurant_name (no slot_refs), therefore none of the
+    # provider response payload is required in the pending session.
+    assert state.completed_results["s1"]["data"] == {}
 
     # 第 2 轮：HMI 确认按钮（is_confirmation=true）
     events = _run(engine, _req("确认", is_confirmation=True))
@@ -149,7 +172,36 @@ def test_confirm_completes_reservation_without_rerunning_done_steps():
     assert not final.get("need_confirm")
     assert final["speech"] == _AGG_SPEECH
     # 会话清理，确认不可重放
-    assert asyncio.run(session.load("sess-1")) is None
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
+
+
+def test_other_owner_cannot_resume_or_cancel_pending_session_id():
+    engine, spy, session = _make_engine()
+    _run(engine, _req("找家川菜馆订今晚7点两位"))
+
+    foreign = _run(engine, _req(
+        "确认", is_confirmation=True, user_id="u2"))[-1]
+
+    assert "没有待确认" in foreign["speech"]
+    assert spy.count("nearby.order") == 1
+    assert asyncio.run(session.load(
+        "sess-1", owner_user_id="u1")) is not None
+
+
+def test_confirm_result_card_replaces_restored_dependency_card():
+    """确认恢复时，上轮 nearby 发现列表只是依赖数据，不是本轮新结果。
+
+    后续业务步已成功产出支付/订单卡时，旧 ``place_list`` 不得再参与
+    本轮卡片择优；否则其 ``display_priority=1`` 会永久压住默认优先级的
+    ``payment_qr``，真实订单虽已创建，HMI 却仍只看到门店列表。
+    """
+    engine, _, _ = _make_engine()
+
+    first = _run(engine, _req("找家川菜馆订今晚7点两位"))[-1]
+    assert first["ui_card"]["type"] == "mcp_order"
+
+    confirmed = _run(engine, _req("确认", is_confirmation=True))[-1]
+    assert confirmed["ui_card"]["type"] == "payment_qr"
 
 
 def test_cancel_clears_pending_and_does_not_execute():
@@ -160,7 +212,7 @@ def test_cancel_clears_pending_and_does_not_execute():
     final = events[-1]
     assert "取消" in final["speech"]
     assert spy.count("nearby.order") == 1          # 没有再执行
-    assert asyncio.run(session.load("sess-1")) is None
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
 
 
 def test_confirm_flag_without_pending_session():
@@ -194,7 +246,7 @@ def test_voice_short_yes_resumes_without_flag():
     final = events[-1]
     assert spy.metas("nearby.order")[-1].get("confirmed") == "true"
     assert not final.get("need_confirm")
-    assert asyncio.run(session.load("sess-1")) is None
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
 
 
 def test_unrelated_reply_treated_as_new_request():
@@ -234,7 +286,7 @@ def test_modify_phrase_with_xing_not_mistaken_for_confirm():
     回归：用户报告改第二天没被识别、直接进了最终导航——根因是"行程"里的"行"误命中肯定词。"""
     engine, spy, session = _make_engine()
     _run(engine, _req("找家川菜馆订今晚7点两位"))      # 制造一个待确认任务
-    assert asyncio.run(session.load("sess-1")) is not None
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is not None
 
     _run(engine, _req("第二天行程换一个"))            # 不是确认 → 应换新规划
     assert spy.llm_plan_calls == 2                   # 走了新规划（而非恢复挂起收尾）
@@ -284,13 +336,13 @@ def test_interjection_keeps_pending_and_confirm_resumes():
     只得到「当前没有待确认的操作」。"""
     engine, spy, session = _make_engine_interject()
     _run(engine, _req("找家川菜馆订今晚7点两位"))
-    state0 = asyncio.run(session.load("sess-1"))
+    state0 = asyncio.run(session.load("sess-1", owner_user_id="u1"))
     assert state0 is not None and state0.phase == "wait_confirm"
 
     events = _run(engine, _req("帮我看看附近有什么景点"))
     final = events[-1]
     assert not final.get("need_confirm")                         # 插话轮正常完成
-    state1 = asyncio.run(session.load("sess-1"))
+    state1 = asyncio.run(session.load("sess-1", owner_user_id="u1"))
     assert state1 is not None and state1.phase == "wait_confirm"  # 旧挂起原样保留
     assert state1.pending_step_id == state0.pending_step_id
     assert "等你确认" in (final.get("follow_up") or "")            # 软提醒
@@ -299,7 +351,8 @@ def test_interjection_keeps_pending_and_confirm_resumes():
     final = events[-1]
     assert spy.metas("nearby.order")[-1].get("confirmed") == "true"
     assert not final.get("need_confirm")
-    assert asyncio.run(session.load("sess-1")) is None           # 消费后才清
+    assert asyncio.run(session.load(
+        "sess-1", owner_user_id="u1")) is None           # 消费后才清
 
 
 def test_interjection_cancel_still_cancels():
@@ -309,7 +362,7 @@ def test_interjection_cancel_still_cancels():
     _run(engine, _req("帮我看看附近有什么景点"))
     events = _run(engine, _req("取消", is_confirmation=True))
     assert "取消" in events[-1]["speech"]
-    assert asyncio.run(session.load("sess-1")) is None
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
     assert all(m.get("confirmed") != "true" for m in spy.metas("nearby.order"))
 
 
@@ -318,7 +371,7 @@ def test_new_suspension_overwrites_old_pending():
     engine, spy, session = _make_engine()
     _run(engine, _req("找家川菜馆订今晚7点两位"))
     _run(engine, _req("再找一家川菜馆订明晚8点三位"))    # 新规划 → 新 NEED_CONFIRM 覆盖
-    state = asyncio.run(session.load("sess-1"))
+    state = asyncio.run(session.load("sess-1", owner_user_id="u1"))
     assert state is not None and state.phase == "wait_confirm"
     events = _run(engine, _req("确认", is_confirmation=True))
     assert spy.metas("nearby.order")[-1].get("confirmed") == "true"
@@ -331,12 +384,13 @@ def test_slot_interjection_keeps_pending():
     from orchestrator.cloud.models import SessionState
     engine, spy, session = _make_engine_interject()
     asyncio.run(session.save("sess-1", SessionState(
-        phase="wait_slot", pending_step_id="s1", missing_slots=["time_text"],
+        phase="wait_slot", owner_user_id="u1",
+        pending_step_id="s1", missing_slots=["time_text"],
         completed_results={}, pending_plan={"goal": "创建吃药提醒"})))
 
     events = _run(engine, _req("帮我看看附近有什么景点"))
     final = events[-1]
-    state = asyncio.run(session.load("sess-1"))
+    state = asyncio.run(session.load("sess-1", owner_user_id="u1"))
     assert state is not None and state.phase == "wait_slot"      # 挂起还在
     assert "继续补充" in (final.get("follow_up") or "")
     assert "创建吃药提醒" in (final.get("follow_up") or "")       # 软提醒点名 goal
@@ -348,11 +402,12 @@ def test_slot_pending_cancel_phrase_clears():
     from orchestrator.cloud.models import SessionState
     engine, spy, session = _make_engine_interject()
     asyncio.run(session.save("sess-1", SessionState(
-        phase="wait_slot", pending_step_id="s1", missing_slots=["time_text"],
+        phase="wait_slot", owner_user_id="u1",
+        pending_step_id="s1", missing_slots=["time_text"],
         completed_results={}, pending_plan={"goal": "创建交周报提醒"})))
     events = _run(engine, _req("那个提醒不用了，取消吧"))
     assert "取消" in events[-1]["speech"]
-    assert asyncio.run(session.load("sess-1")) is None
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
 
 
 def test_slot_pending_question_not_eaten_as_answer():

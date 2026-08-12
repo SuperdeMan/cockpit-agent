@@ -5,6 +5,7 @@
 """
 import asyncio
 import contextlib
+import logging
 import os
 
 import grpc
@@ -21,12 +22,19 @@ from .session import SessionStore
 from .engine import PlannerEngine
 from .server import CloudPlannerServicer
 from .state_mirror import VehicleStateMirror
+from runtime.privacy_delete_bus import (
+    CLOUD_SUBJECT,
+    CLOUD_TARGET,
+    install_delete_responder,
+    require_ready_shared_redis_backend,
+)
 
 # 结构化日志（原 basicConfig 升级）：stdout JSON 自动带 trace/session，
 # WARNING+ 与带 trace 的 INFO 经 obs.log 进 collector——badcase 按 trace 检索日志。
 from observability import setup_structured_logging  # noqa: E402
 
 setup_structured_logging(os.getenv("LOG_LEVEL", "info"), service="cloud-planner")
+logger = logging.getLogger("planner.main")
 
 
 async def _reregister_tools(tools, clients, interval: float = 10):
@@ -38,6 +46,30 @@ async def _reregister_tools(tools, clients, interval: float = 10):
             await tools.register(clients)
         except Exception:
             pass
+
+
+async def install_privacy_delete_responder(
+    nc,
+    engine: PlannerEngine,
+    *,
+    key: bytes | None = None,
+    now=None,
+) -> bool:
+    """Expose owner-scoped pending-session deletion on the internal bus."""
+    await require_ready_shared_redis_backend(engine.session)
+
+    async def delete(user_id: str, _action: str) -> bool:
+        return await engine.session.delete_owner(user_id)
+
+    return await install_delete_responder(
+        nc,
+        subject=CLOUD_SUBJECT,
+        target=CLOUD_TARGET,
+        delete=delete,
+        globally_shared_backend=True,
+        key=key,
+        now=now,
+    )
 
 
 async def serve():
@@ -70,6 +102,24 @@ async def serve():
         aggregator=aggregator, session=session,
     )
 
+    privacy_nc = None
+    try:
+        import nats
+        privacy_nc = await nats.connect(
+            os.getenv("NATS_URL", "nats://nats:4222"),
+            max_reconnect_attempts=-1,
+        )
+        await install_privacy_delete_responder(privacy_nc, engine)
+        logger.info("cloud pending-session privacy delete responder enabled")
+    except Exception as exc:
+        logger.warning(
+            "cloud pending-session privacy delete responder unavailable: %s",
+            type(exc).__name__,
+        )
+        if privacy_nc is not None:
+            await privacy_nc.close()
+            privacy_nc = None
+
     server = aio_server()
     orchestrator_pb2_grpc.add_CloudPlannerServicer_to_server(
         CloudPlannerServicer(engine), server)
@@ -88,6 +138,8 @@ async def serve():
         tools_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await tools_task
+        if privacy_nc is not None:
+            await privacy_nc.close()
         await mirror.close()
 
 

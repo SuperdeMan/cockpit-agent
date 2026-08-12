@@ -275,6 +275,18 @@
   source: "个人事实走 chitchat 记忆召回，不上网搜（guard 我老婆/我的）"
   tags: [search, guardrail, personal]
 
+- text: 查询麦当劳订单 1111222233334444555566667777
+  initial_intents: [mcd.order_status]
+  expect_final_intents: [mcd.order_status]
+  source: "2026-08-12 HMI 真栈：订单卡按钮已规划正确，却被 info.search replace 劫持"
+  tags: [search, guardrail, merchant, mcdonalds]
+
+- text: 查询瑞幸订单 8888777766665555444
+  initial_intents: [luckin.order_status]
+  expect_final_intents: [luckin.order_status]
+  source: "商户订单卡查单动作必须保留账号型 MCP 查询能力"
+  tags: [search, guardrail, merchant, luckin]
+
 - text: 查一下明天杭州的天气
   initial_intents: [info.forecast]
   expect_final_intents: [info.forecast]

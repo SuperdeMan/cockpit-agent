@@ -1,7 +1,7 @@
 # 范例库 · luckin 域（瑞幸官方 MCP，2026-08-11 真机核实激活）
 # 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号）。
-# v1 只有 luckin.order_status 一件（查瑞幸 App 里下的单也有用）；下单/搜品归二期。
-# 边界两条：「点杯咖啡」类下单话术归 demo 商户 shop.order（真瑞幸下单未接），
+# luckin.order / order_status / order_cancel 已接通；无品牌咖啡仍归 demo 商户。
+# 边界两条：带瑞幸品牌的下单话术归真实 workflow，
 # 「附近的瑞幸」归 nearby.search——防单 intent 新域变成话术黑洞。
 domain: luckin
 exemplars:
@@ -29,6 +29,72 @@ exemplars:
   added: '2026-08-11'
   tags:
   - canonical
-# 边界「附近有没有瑞幸」→ nearby.search 不进本文件（范例契约：首步 intent 域==
-# 文件域）；该边界由对抗语料 cc.negative.luckin-nearby-not-status 与
-# mode_routing_cases 锁定。
+- text: 瑞幸迪美店点一杯热生椰拿铁，半糖
+  plan:
+  - id: store
+    agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 瑞幸咖啡 迪美店
+  - id: order
+    agent: mcp-bridge
+    intent: luckin.order
+    slots:
+      item_query: 生椰拿铁
+      quantity: '1'
+      temperature: 热
+      sweetness: 半糖
+    depends_on: [store]
+    slot_refs:
+      store_name: store.data.items.0.name
+      store_longitude: store.data.items.0.lng
+      store_latitude: store.data.items.0.lat
+  source: manual
+  added: '2026-08-12'
+  tags:
+  - merchant-order
+- text: 在瑞幸世纪大道店来两杯冰厚乳拿铁，少甜
+  plan:
+  - id: store
+    agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 瑞幸咖啡 世纪大道店
+  - id: order
+    agent: mcp-bridge
+    intent: luckin.order
+    slots:
+      item_query: 厚乳拿铁
+      quantity: '2'
+      temperature: 冰
+      sweetness: 少甜
+    depends_on: [store]
+    slot_refs:
+      store_name: store.data.items.0.name
+      store_longitude: store.data.items.0.lng
+      store_latitude: store.data.items.0.lat
+  source: manual
+  added: '2026-08-12'
+  tags:
+  - merchant-order
+- text: 取消刚才那笔瑞幸咖啡订单
+  plan:
+  - agent: mcp-bridge
+    intent: luckin.order_cancel
+  source: manual
+  added: '2026-08-12'
+  tags:
+  - merchant-cancel
+- text: 撤销编号 LK123 的瑞幸咖啡订单
+  plan:
+  - agent: mcp-bridge
+    intent: luckin.order_cancel
+    slots:
+      order_id: LK123
+  source: manual
+  added: '2026-08-12'
+  tags:
+  - merchant-cancel
+# 纯发现边界「附近有没有瑞幸」→ nearby.search 不进本文件；上面两条是受控例外：
+# nearby 只负责可信采集门店，后续 luckin.order 通过 depends_on + slot_refs 消费结果。
+# 纯发现边界仍由对抗语料 cc.negative.luckin-nearby-not-status 与 mode_routing_cases 锁定。

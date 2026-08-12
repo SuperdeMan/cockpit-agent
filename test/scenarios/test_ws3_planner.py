@@ -70,18 +70,22 @@ def test_scenario_need_slot_then_resume():
         ],
         "raw_text": "找个地方",
     }
-    state = SessionState(phase="wait_slot", pending_step_id="s1",
+    state = SessionState(phase="wait_slot", owner_user_id="scenario-user",
+                         pending_step_id="s1",
                          pending_plan=plan_data)
-    asyncio.run(store.save("sess-slot", state))
+    assert asyncio.run(store.save("sess-slot", state)) is True
 
-    loaded = asyncio.run(store.load("sess-slot"))
+    loaded = asyncio.run(store.load(
+        "sess-slot", owner_user_id="scenario-user"))
     assert loaded is not None
     assert loaded.phase == "wait_slot"
     assert loaded.pending_step_id == "s1"
 
     # 续接后清除
-    asyncio.run(store.clear("sess-slot"))
-    assert asyncio.run(store.load("sess-slot")) is None
+    asyncio.run(store.clear(
+        "sess-slot", owner_user_id="scenario-user"))
+    assert asyncio.run(store.load(
+        "sess-slot", owner_user_id="scenario-user")) is None
 
 
 # ─── 场景 3：二次确认→确认续接 ───
@@ -91,6 +95,7 @@ def test_scenario_need_confirm_then_resume():
     store = SessionStore()
     state = SessionState(
         phase="wait_confirm",
+        owner_user_id="scenario-user",
         pending_step_id="s2",
         pending_plan={"steps": [
             {"id": "s1", "agent_id": "navigation", "endpoint": "",
@@ -104,8 +109,9 @@ def test_scenario_need_confirm_then_resume():
         ], "raw_text": ""},
         completed_results={"s1": {"step_id": "s1", "status": "ok"}},
     )
-    asyncio.run(store.save("sess-confirm", state))
-    loaded = asyncio.run(store.load("sess-confirm"))
+    assert asyncio.run(store.save("sess-confirm", state)) is True
+    loaded = asyncio.run(store.load(
+        "sess-confirm", owner_user_id="scenario-user"))
     assert loaded.phase == "wait_confirm"
     assert "s1" in loaded.completed_results
 

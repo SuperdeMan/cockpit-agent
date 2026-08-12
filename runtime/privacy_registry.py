@@ -19,6 +19,7 @@ LEDGER_ADAPTER = "agents._sdk.ledger:TaskLedger"
 PROACTIVE_ADAPTER = "proactive.governor:Governor"
 PAYMENT_ADAPTER = "payment-gateway/store.py:PaymentStore"
 MCP_ADAPTER = "agents.mcp_bridge.src.agent:McpBridgeAgent"
+CLOUD_SESSION_ADAPTER = "orchestrator.cloud.session:SessionStore"
 
 
 class PrivacyRegistryError(ValueError):
@@ -63,6 +64,7 @@ PRIVACY_ADAPTERS = _build_privacy_adapters((
     ("proactive", PROACTIVE_ADAPTER),
     ("payment", PAYMENT_ADAPTER),
     ("mcp", MCP_ADAPTER),
+    ("cloud_session", CLOUD_SESSION_ADAPTER),
 ))
 
 MILESTONE_ORDER = MappingProxyType({
@@ -398,6 +400,49 @@ PRIVACY_TARGETS = (
         retention_reason="financial_audit_and_chargeback_window",
         retain_or_redact_action="payment_redact_owner",
         verify_case="gdpr_md_payment_order_verify",
+    ),
+    PrivacyTargetSpec(
+        # Planner wait-confirm/wait-slot state and focus are short lived, but
+        # can contain the user's goal, trusted POI dependency results and
+        # interaction context.  The pending merchant step itself is minimised
+        # before persistence; privacy_user_all still deletes both key families
+        # immediately through the cloud SessionStore adapter.
+        id="planner_pending_session",
+        backend="redis_or_memory",
+        adapter_key="cloud_session",
+        adapter=PRIVACY_ADAPTERS["cloud_session"],
+        storage_variants=("planner:sess:*", "planner:sess-owner:*",
+                          "planner:sess-owner-fence:*", "planner:focus:*"),
+        lifecycle="deletable",
+        enforced_from="M-D",
+        owner_fields=OWNER_FIELDS,
+        seed_case="gdpr_md_planner_pending_seed",
+        count_probe="gdpr_md_planner_pending_count",
+        read_probe="gdpr_md_planner_pending_read",
+        delete_action="privacy_user_all",
+        verify_case="gdpr_md_planner_pending_verify",
+    ),
+    PrivacyTargetSpec(
+        # Merchant checkout snapshots contain selected public store coordinates,
+        # product/specification choices, amount and upstream request arguments.
+        # They expire after ten minutes, but privacy_user_all coordinates an
+        # explicit, provable delete through the hashed owner index rather than
+        # waiting for TTL.  An active merchant operation returns pending and
+        # is retried after its lease is released.
+        id="merchant_draft",
+        backend="redis",
+        adapter_key="mcp",
+        adapter=PRIVACY_ADAPTERS["mcp"],
+        storage_variants=("mcp:merchant:draft:*", "mcp:merchant:current:*",
+                          "mcp:merchant:owner:*"),
+        lifecycle="deletable",
+        enforced_from="M-D",
+        owner_fields=OWNER_FIELDS,
+        seed_case="gdpr_md_merchant_draft_seed",
+        count_probe="gdpr_md_merchant_draft_count",
+        read_probe="gdpr_md_merchant_draft_read",
+        delete_action="privacy_user_all",
+        verify_case="gdpr_md_merchant_draft_verify",
     ),
     PrivacyTargetSpec(
         id="mcp_demo_order",

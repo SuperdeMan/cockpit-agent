@@ -80,6 +80,8 @@ python test/e2e_memory_graph.py            # 断言型：M2 记忆图谱五场�
 python test/e2e_proactive.py               # 断言型：M3 统一主动引擎（单条直通字节级兼容/**同窗两条合并成一条**/卡片 card_group/跨生产方去重/情境断言投递期复核/user_contract 豁免 vs advisory 延后/全局频控）——开跑前重启 proactive 拿净初态（治理器刻意无持久化）
 python test/e2e_geofence.py                # 断言型：M3 位置提醒（地点经 nearby 真解析出坐标→围栏外只播种→进围栏触达一次→不重复）；地点解析走**邻近搜索**，故先压一次市区位置作前提
 python test/e2e_mcp.py                     # 断言型：M3 受控 MCP 桥（准入边界=清单外工具不进注册中心/只读真数据+演示商户三重标注/下单先确认/幂等不双扣）——开跑前重启桥拿演示商户净初态
+python test/e2e_merchant_mcp.py --live-readonly  # 人工 opt-in：复核麦当劳/瑞幸 initialize + tools/list 与只读预览，绝不进自动车道
+python test/e2e_merchant_mcp.py --live-create-unpaid --merchant mcdonalds --acknowledge-real-orders --max-real-orders 1  # 人工写车道：必须显式选择 mcdonalds|luckin；只创建未支付订单，单次硬上限 1~3，需预先给出清理方案且不得最终付款
 python test/e2e_payment.py                 # 断言型：支付真栈闭环（§9.17 批 2）：「交停车费」→确认话术=网关快照金额→payment_qr 卡（mockpay 码+SVG+mock 角标）→mock 渠道自动支付后再缴费答「已经支付过」（worker 推进 captured 与幂等防双付的黑盒合证）——milestone 车道（落域依赖真 LLM）
 python test/e2e_obs.py                     # 断言型：badcase 排查观测链路 16 断言（obs.turn 落库/plan 门控采集/obs.llm/日志按 trace 关联/badcase 标记检索导出/重启 collector 持久化）
 python test/e2e_voice_loop.py              # 断言型：语音回路后端契约（/api/asr/stream PCM 直传 partial→final→done + vad_silence_ms 透传 + TTS round-trip）——浏览器声学层 CI 测不了，留真麦

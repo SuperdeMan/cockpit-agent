@@ -466,11 +466,17 @@ def test_dynamic_skill_and_exemplar_render_refs_and_drop_partial_dags(monkeypatc
         body="knowledge", few_shots=({"user": "skill-example", "plan": {"steps": two_steps}},),
     )
     exemplar_steps = tuple(exemplars.ExemplarStore._parse_plan([
-        {"agent": "alpha", "intent": "alpha.one", "slots": {}},
-        {"agent": "beta", "intent": "beta.two", "slots": {}},
+        {"id": "s1", "agent": "alpha", "intent": "alpha.one", "slots": {},
+         "depends_on": [], "slot_refs": {}},
+        {"id": "s2", "agent": "beta", "intent": "beta.two", "slots": {},
+         "depends_on": ["s1"], "slot_refs": {"value": "s1.data.value"}},
     ]))
-    assert all(set(step) == {"agent", "intent", "slots"}
+    assert all(set(step) == {
+        "id", "agent", "intent", "slots", "depends_on", "slot_refs",
+    }
                for step in exemplar_steps)
+    assert exemplar_steps[1]["depends_on"] == ["s1"]
+    assert exemplar_steps[1]["slot_refs"] == {"value": "s1.data.value"}
     exemplar = exemplars.Exemplar(
         eid="test#1", domain="test", text="exemplar-example",
         plan=exemplar_steps, source="manual",
@@ -495,6 +501,10 @@ def test_dynamic_skill_and_exemplar_render_refs_and_drop_partial_dags(monkeypatc
     assert rendered_exemplar is not None
     rendered_steps = json.loads(rendered_exemplar.split("→ ", 1)[1])
     assert all(set(step) == expected_fields for step in rendered_steps)
+    for rendered in (resolved_skill["steps"], rendered_steps):
+        assert [step["id"] for step in rendered] == ["s1", "s2"]
+        assert rendered[1]["depends_on"] == ["s1"]
+        assert rendered[1]["slot_refs"] == {"value": "s1.data.value"}
 
     only_alpha = MappingProxyType({("alpha", "alpha.one"): "cap_0001"})
     partial_skill, _, _ = skills.render_skills_block(
@@ -502,7 +512,9 @@ def test_dynamic_skill_and_exemplar_render_refs_and_drop_partial_dags(monkeypatc
     partial_exemplar, injected, _ = exemplars.render_block(
         [exemplar], capability_refs=only_alpha, budget=10_000)
     assert "skill-example" not in partial_skill
-    assert "exemplar-example" not in partial_exemplar
+    assert "cap_0001" not in partial_skill
+    assert partial_exemplar == ""
+    assert exemplars._render_one(exemplar, only_alpha) is None
     assert injected == []
 
     monkeypatch.setattr(skills, "default_store", lambda: SimpleNamespace(load=lambda: [skill]))

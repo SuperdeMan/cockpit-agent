@@ -812,6 +812,8 @@ class EngineHarness:
         self.planner = planner
         self.sink = sink
 
+    _OWNER_USER_ID = "eval-user"
+
     def seed_pending_confirm(self, session_id: str, *, intent: str,
                              step_id: str = "s1") -> None:
         from orchestrator.cloud.models import SessionState
@@ -820,11 +822,15 @@ class EngineHarness:
                               "depends_on": [], "slot_refs": {},
                               "require_confirm": True, "status": "need_confirm"}],
                    "complexity": "simple", "goal": ""}
-        asyncio.run(self.session.save(session_id, SessionState(
-            phase="wait_confirm", pending_plan=pending, pending_step_id=step_id)))
+        saved = asyncio.run(self.session.save(session_id, SessionState(
+            phase="wait_confirm", owner_user_id=self._OWNER_USER_ID,
+            pending_plan=pending, pending_step_id=step_id)))
+        assert saved is True, "对抗 harness 的 owner-bound 挂起态保存失败"
 
     def seed_focus(self, session_id: str, focus: dict[str, Any]) -> None:
-        asyncio.run(self.session.save_focus(session_id, dict(focus)))
+        saved = asyncio.run(self.session.save_focus(
+            session_id, dict(focus), owner_user_id=self._OWNER_USER_ID))
+        assert saved is True, "对抗 harness 的 owner-bound focus 保存失败"
 
     def run(self, text: str, **kwargs) -> EngineObservation:
         return asyncio.run(self.run_async(text, **kwargs))
@@ -844,7 +850,8 @@ class EngineHarness:
         request = SimpleNamespace(
             text=text, session_id=session_id, request_id="adv-r1",
             is_confirmation=is_confirmation, meta=request_meta,
-            context=SimpleNamespace(user_id="eval-user", vehicle_id="eval-vehicle"))
+            context=SimpleNamespace(user_id=self._OWNER_USER_ID,
+                                    vehicle_id="eval-vehicle"))
         events = [event async for event in self.engine.run(request)]
         finals = [e for e in events if e.get("kind") == "final"]
         final = finals[-1] if finals else {}
@@ -869,7 +876,8 @@ class EngineHarness:
         plans = tuple(trace.plan for trace in (self.sink.plans if self.sink else ()))
         # 本轮结束时挂起确认还在不在，是「确认闸没被绕过」的另一半证据：
         # 决策是 confirm 但挂起没落库，下一轮的「确认」就会落到空处。
-        state = await self.session.load(session_id)
+        state = await self.session.load(
+            session_id, owner_user_id=self._OWNER_USER_ID)
         pending_after = bool(state and state.phase == "wait_confirm"
                              and state.pending_plan)
         self.clients.record_turn("user", text)

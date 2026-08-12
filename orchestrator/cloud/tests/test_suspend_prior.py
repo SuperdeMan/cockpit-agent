@@ -136,10 +136,256 @@ def test_multi_step_suspend_prefixes_prior_conclusion():
     assert final["kind"] == "final"
     assert final["speech"].startswith("明天深圳有小雨")
     assert "什么时候提醒你" in final["speech"]
-    state = asyncio.run(session.load("sess-prior"))
+    state = asyncio.run(session.load(
+        "sess-prior", owner_user_id="u1"))
     assert state is not None and state.phase == "wait_slot"
-    # 持久化的挂起结果保持原话术——前缀只出现在本轮 final，不进续接种子
-    assert state.completed_results["s2"]["speech"] == _ASK_TIME
+    # 挂起步会按 pending_plan 重跑，不重复持久化其话术/卡片/data；只有
+    # 已完成依赖进入续接种子。
+    assert "s2" not in state.completed_results
+    # 天气结论已经随挂起 final 展示；恢复只需结构化依赖，不再归档 free-form speech。
+    assert "speech" not in state.completed_results["s1"]
+
+
+def test_suspend_minimizes_completed_dependency_but_keeps_trusted_slot_data():
+    plan_with_refs = json.dumps({"steps": [
+        {"id": "s1", "capability_ref": "cap_0001",
+         "slots": {}, "depends_on": [], "slot_refs": {}},
+        {"id": "s2", "capability_ref": "cap_0001",
+         "slots": {}, "depends_on": ["s1"],
+         "slot_refs": {
+             "store_name": "s1.data.items.0.name",
+             "store_lng": "s1.data.items.0.lng",
+             "store_lat": "s1.data.items.0.lat",
+             "nested_safe": "s1.data.nested.safe",
+         }},
+    ]})
+    spy = _Spy(plan_json=plan_with_refs, unary_seq=[
+        _Resp(
+            speech="找到门店 https://secret.example/pay",
+            data={
+                "items": [{"name": "门店A", "lng": 114.1, "lat": 22.5}],
+                "pay_url": "https://secret.example/pay",
+                "checkout_token": "checkout-secret",
+                "nested": {
+                    "payment_id": "pay-secret",
+                    "qr_content": "weixin://pay/secret",
+                    "callback": "merchantpay://order/private",
+                    "receipt": "data:text/plain,private",
+                    "safe": "keep",
+                },
+            },
+        ),
+        _Resp(status=2, speech=_ASK_TIME, missing_slots=["time_text"]),
+    ])
+    engine, session = _make_engine(spy)
+    events = _run(engine, _req("查明天天气，下雨就提醒我带伞"))
+    assert events[-1]["kind"] == "final"
+
+    state = asyncio.run(session.load(
+        "sess-prior", owner_user_id="u1"))
+    persisted = state.completed_results["s1"]
+    assert "ui_card" not in persisted
+    assert "actions" not in persisted
+    assert persisted["data"]["items"][0] == {
+        "name": "门店A", "lng": 114.1, "lat": 22.5}
+    assert persisted["data"]["nested"] == {"safe": "keep"}
+    serialized = json.dumps(persisted, ensure_ascii=False)
+    for secret in (
+            "secret.example", "checkout-secret", "pay-secret", "weixin://",
+            "merchantpay://", "data:text"):
+        assert secret not in serialized
+
+
+def _suspend_privacy_fixture():
+    """Persist one completed producer plus a pending slot-ref consumer."""
+    spy = _Spy()
+    engine, session = _make_engine(spy)
+    producer = StepResult(
+        step_id="store",
+        status=StepStatus.OK,
+        speech=(
+            "已找到门店，收件人张三，电话 13800138000，"
+            "邮箱 user@example.com，地址深圳市南山区测试路 1 号"
+        ),
+        follow_up="如有问题请联系 13900139000 或 help@example.com",
+        data={
+            "items": [{
+                "name": "门店A",
+                "lng": 114.1,
+                "lat": 22.5,
+                "phone": "13800138000",
+                "address": "深圳市南山区测试路 1 号",
+                "recipient": "张三",
+                "payment_reference": "payment-ref-secret",
+                "qr_payload": "payapp:opaque-secret",
+            }],
+            "payment_reference": "top-level-payment-secret",
+            "qr_payload": "payapp:top-level-secret",
+            "masked": {"value": "13900139000"},
+            "unreferenced": "must-not-survive",
+        },
+        missing_slots=["address"],
+        fingerprint="fp-safe",
+        source_intent="nearby.search",
+    )
+    pending = StepResult(
+        step_id="order",
+        status=StepStatus.NEED_CONFIRM,
+        speech="确认下单吗？",
+    )
+    plan = Plan(
+        steps=[
+            Step(id="store", agent_id="nearby", intent="nearby.search"),
+            Step(
+                id="order",
+                agent_id="mcp-bridge",
+                intent="luckin.order",
+                depends_on=["store"],
+                slot_refs={
+                    "store_name": "store.data.items.0.name",
+                    "store_longitude": "store.data.items.0.lng",
+                    "store_latitude": "store.data.items.0.lat",
+                    # Even a planner-declared reference cannot opt sensitive
+                    # fields or opaque payment schemes into persistence.
+                    "phone": "store.data.items.0.phone",
+                    "address": "store.data.items.0.address",
+                    "recipient": "store.data.items.0.recipient",
+                    "payment_reference": "store.data.payment_reference",
+                    "qr_payload": "store.data.qr_payload",
+                    "contact_phone": "store.data.masked.value",
+                },
+            ),
+        ],
+        raw_text="在瑞幸点一杯咖啡",
+    )
+    ctx = PlanContext(
+        request_id="privacy-r1",
+        session_id="sess-resume-privacy",
+        user_id="u1",
+        trace_id="trace-resume-privacy",
+    )
+    asyncio.run(engine._suspend(
+        pending, [producer, pending], plan, ctx))
+    state = asyncio.run(session.load(
+        "sess-resume-privacy", owner_user_id="u1"))
+    assert state is not None
+    return engine, state
+
+
+def test_suspend_persists_only_data_paths_declared_by_slot_refs():
+    _, state = _suspend_privacy_fixture()
+
+    persisted = state.completed_results["store"]
+    assert "missing_slots" not in persisted
+    assert persisted["data"] == {
+        "items": [{"name": "门店A", "lng": 114.1, "lat": 22.5}],
+    }
+    serialized = json.dumps(persisted, ensure_ascii=False)
+    for private in (
+        "opaque-secret",
+        "payment-ref-secret",
+        "top-level-payment-secret",
+        "13800138000",
+        "13900139000",
+        "测试路 1 号",
+        "张三",
+        "must-not-survive",
+    ):
+        assert private not in serialized
+
+
+def test_suspend_does_not_persist_completed_freeform_speech_or_follow_up():
+    _, state = _suspend_privacy_fixture()
+
+    persisted = state.completed_results["store"]
+    assert "speech" not in persisted
+    assert "follow_up" not in persisted
+    serialized = json.dumps(persisted, ensure_ascii=False)
+    for private in (
+        "13800138000",
+        "13900139000",
+        "user@example.com",
+        "help@example.com",
+        "测试路 1 号",
+    ):
+        assert private not in serialized
+
+
+def test_minimized_resume_data_still_rebuilds_trusted_slot_ref_provenance():
+    engine, state = _suspend_privacy_fixture()
+
+    restored, seeds = engine._restore(state, inject_confirmed=True)
+    assert restored is not None
+    assert len(seeds) == 1
+    order = next(step for step in restored.steps if step.id == "order")
+    engine.executor._resolve_slot_refs(order, {seeds[0].step_id: seeds[0]})
+
+    assert order.slots == {
+        "store_name": "门店A",
+        "store_longitude": "114.1",
+        "store_latitude": "22.5",
+    }
+    assert json.loads(order.meta["_trusted_slot_refs"])["store_name"] == {
+        "producer_intent": "nearby.search",
+        "ref": "store.data.items.0.name",
+    }
+
+
+def test_restore_fail_closed_for_legacy_unsanitized_completed_result():
+    """A pending record written by an older process is minimized on read too."""
+    engine, _ = _make_engine(_Spy())
+    plan = Plan(steps=[
+        Step(id="store", agent_id="nearby", intent="nearby.search"),
+        Step(
+            id="order",
+            agent_id="mcp-bridge",
+            intent="luckin.order",
+            depends_on=["store"],
+            slot_refs={
+                "store_name": "store.data.items.0.name",
+                "phone": "store.data.items.0.phone",
+                "qr_payload": "store.data.qr_payload",
+            },
+        ),
+    ])
+    from orchestrator.cloud.models import SessionState
+    legacy = SessionState(
+        phase="wait_confirm",
+        pending_step_id="order",
+        pending_plan=PlannerEngine._serialize_plan(plan),
+        completed_results={
+            "store": {
+                "step_id": "store",
+                "status": "ok",
+                "speech": "联系 13800138000 或 user@example.com",
+                "follow_up": "地址深圳市南山区测试路 1 号",
+                "ui_card": {"type": "place_list", "phone": "13800138000"},
+                "actions": [{"type": "open_url", "url": "payapp:opaque"}],
+                "data": {
+                    "items": [{"name": "门店A", "phone": "13800138000"}],
+                    "qr_payload": "payapp:opaque-secret",
+                },
+                "fingerprint": "fp-safe",
+                "source_intent": "nearby.search",
+            },
+        },
+    )
+
+    restored, seeds = engine._restore(legacy, inject_confirmed=True)
+
+    assert restored is not None and len(seeds) == 1
+    assert seeds[0].data == {"items": [{"name": "门店A"}]}
+    assert seeds[0].speech == ""
+    assert seeds[0].follow_up == ""
+    assert seeds[0].actions == []
+    assert seeds[0].ui_card is None
+    assert seeds[0].fingerprint == "fp-safe"
+    serialized = json.dumps(seeds[0].__dict__, ensure_ascii=False)
+    for private in (
+        "13800138000", "user@example.com", "测试路 1 号",
+        "payapp:opaque", "opaque-secret",
+    ):
+        assert private not in serialized
 
 
 def test_single_step_confirm_speech_unchanged():

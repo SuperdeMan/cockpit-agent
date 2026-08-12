@@ -161,19 +161,19 @@ cases:
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A5], mechanisms: [stale_history], domains: [charging], layers: [l1]}
+    tags: {attacks: [A5], mechanisms: [stale_history], domains: [charging], layers: [l1], boundary_ledger: charging-navigation.find-charger-vs-self-locate, boundary_side: left}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     turns:
       - input: {utterance: 附近哪里能充电, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search, navigation.locate], allow_extra_intents: false}
   - id: cs.charging.stale-hotel
     title: 找充电站（前面在找酒店）
     family_id: cs.charging-stale
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A5], mechanisms: [stale_history], domains: [charging], layers: [l1]}
+    tags: {attacks: [A5], mechanisms: [stale_history], domains: [charging], layers: [l1], boundary_ledger: charging-navigation.find-charger-vs-self-locate, boundary_side: left}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-02}
     relation: {base_case: cs.charging.clean, type: invariant, expectation: {}}
     turns:
@@ -182,7 +182,7 @@ cases:
           context:
             history: [{role: user, text: 附近有什么酒店}, {role: assistant, text: 为您找到 5 家酒店}]
         expected:
-          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [charging.find]}], forbidden_intents: [nearby.search, navigation.locate], allow_extra_intents: false}
   - id: cs.reminder.clean
     title: 建提醒（无历史）
     family_id: cs.reminder-stale

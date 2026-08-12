@@ -38,6 +38,12 @@ def test_e2e_cleanup_uses_atomic_owner_lifecycle_without_captured_ids():
 
 # ── 准入清单 ────────────────────────────────────────────────────────────
 
+_MCD_TEST_STATUS_MAP = {
+    "待支付": "待支付",
+    "订单已取消": "订单已取消",
+    "已取消": "订单已取消",
+}
+
 def test_allowlist_loads_and_locks_version_and_schema(monkeypatch):
     # 2026-08-11 起清单含三台 server：demo-coffee（stdio）+ 麦当劳/瑞幸（
     # streamable_http，真机 tools/list 核实激活）。token 刻意清空——断言缺 env
@@ -51,20 +57,62 @@ def test_allowlist_loads_and_locks_version_and_schema(monkeypatch):
     assert mcd.transport == "streamable_http" and mcd.url == "https://mcp.mcd.cn"
     assert not mcd.version, "远程托管平台版本不锁（工具级 schema_sha 锁）"
     assert "MCD_MCP_TOKEN" in mcd.env_error
-    assert {t.intent for t in mcd.tools} == {"mcd.menu", "mcd.order_status"}
-    assert all(not t.write for t in mcd.tools), "v1 只激活只读（下单归二期）"
+    assert {t.intent for t in mcd.tools if t.expose} == {
+        "mcd.menu", "mcd.order_status"}
+    assert [w.intent for w in mcd.workflows] == ["mcd.order"]
+    assert {t.name for t in mcd.tools if not t.expose} == {
+        "query-nearby-stores", "query-meals", "query-meal-detail",
+        "calculate-price", "create-order"}
+    assert all(not t.write for t in mcd.tools
+               if t.name != "create-order")
+    mcd_create = next(t for t in mcd.tools if t.name == "create-order")
+    assert (mcd_create.write and mcd_create.require_confirm and
+            mcd_create.compensate_policy == "abandon_unpaid" and
+            mcd_create.unpaid_expiry and mcd_create.retry_policy == "never")
+    assert mcd_create.pay_url_locator == "data.payH5Url"
+    assert mcd_create.success_predicate == {
+        "success": [True], "code": [200]}
     mcd_status = next(t for t in mcd.tools if t.intent == "mcd.order_status")
     assert mcd_status.arg_map.get("order_id") == "orderId"
     assert mcd_status.required_scopes == ["merchant.read"]
     assert mcd_status.forward_owner is False, "官方 remote 不得接收内部 owner 字段"
+    assert mcd_status.success_predicate == {"success": [True], "code": [200]}
+    assert mcd_status.result_map["order_id"] == "data.orderId"
+    assert mcd_status.result_map["status"] == "data.orderStatus"
+    assert mcd_status.result_map["amount_cents"] == "data.realTotalAmount"
+    assert mcd_status.status_map["订单已取消"] == "订单已取消"
+    assert mcd_status.amount_unit == "yuan"
 
     luckin = next(s for s in specs if s.id == "luckin")
     assert luckin.transport == "streamable_http"
     assert "LUCKIN_MCP_TOKEN" in luckin.env_error
-    assert {t.intent for t in luckin.tools} == {"luckin.order_status"}
-    assert all(not t.write for t in luckin.tools)
-    assert luckin.tools[0].required_scopes == ["merchant.read"]
-    assert luckin.tools[0].forward_owner is False
+    assert {t.intent for t in luckin.tools if t.expose} == {
+        "luckin.order_status"}
+    assert {w.intent for w in luckin.workflows} == {
+        "luckin.order", "luckin.order_cancel"}
+    assert {t.name for t in luckin.tools if not t.expose} == {
+        "queryShopList", "searchProductForMcp", "queryProductDetailInfo",
+        "switchProduct", "previewOrder", "createOrder", "cancelOrder"}
+    assert all(not t.write for t in luckin.tools
+               if t.name not in {"createOrder", "cancelOrder"})
+    status_tool = next(t for t in luckin.tools if t.expose)
+    assert status_tool.required_scopes == ["merchant.read"]
+    assert status_tool.forward_owner is False
+    assert status_tool.success_predicate == {"success": [True], "code": [0]}
+    assert status_tool.result_map["order_id"] == "data.orderId"
+    assert status_tool.result_map["status"] == "data.orderStatusName"
+    assert status_tool.result_map["amount_cents"] == "data.orderPayAmount"
+    assert status_tool.status_map["已取消"] == "已取消"
+    assert status_tool.amount_unit == "yuan"
+    create_tool = next(t for t in luckin.tools if t.name == "createOrder")
+    cancel_tool = next(t for t in luckin.tools if t.name == "cancelOrder")
+    assert create_tool.write is True and cancel_tool.write is True
+    assert create_tool.success_predicate == {
+        "success": [True], "code": [0]}
+    assert cancel_tool.success_predicate == {
+        "success": [True], "code": [0]}
+    assert create_tool.compensate_tool == "cancelOrder"
+    assert cancel_tool.compensate_policy == "terminal"
 
     s = specs[0]
     assert s.version and s.demo is True and s.trust == "third_party"
@@ -122,7 +170,7 @@ def test_admit_reports_tool_missing_on_server():
 
 def test_write_tool_without_compensation_is_rejected():
     """§4.F 强制项：没有补偿路径（退款/取消）的写操作不许接。"""
-    spec = ServerSpec(id="x", command=[], version="1", tools=[
+    spec = ServerSpec(id="x", command=[], version="1", demo=True, tools=[
         ToolSpec(name="pay", intent="shop.pay", write=True, require_confirm=True,
                  compensate_tool="", idempotency_mode="local_at_most_once",
                  retry_policy="never", timeout_outcome="uncertain")])
@@ -351,6 +399,51 @@ class FakeClient:
         return self._reply
 
 
+class InProcessDemoAdminClient:
+    """Exercise the real hidden demo lifecycle handler without subprocess I/O."""
+
+    healthy = True
+    alive = True
+
+    def __init__(self, *, reject=False):
+        self.calls = []
+        self.reject = reject
+
+    async def call_tool(self, name, args, timeout_s=None,
+                        retry_on_session_loss=True):
+        del timeout_s, retry_on_session_loss
+        self.calls.append((name, dict(args)))
+        if self.reject:
+            return {"ok": False, "text": "rejected", "data": {}}
+        raw = demo_coffee._e2e_namespace_admin(dict(args))
+        return {
+            "ok": not bool(raw.get("isError")),
+            "text": "",
+            "data": raw.get("structuredContent") or {},
+        }
+
+
+class PrivacyDraftStore:
+    def __init__(self, result=True):
+        self.result = result
+        self.users = []
+
+    async def delete_owner(self, user_id):
+        self.users.append(user_id)
+        return self.result
+
+
+def _demo_admin_binding(client):
+    server = ServerSpec(
+        id="demo-coffee", command=[], version="1", tools=[], demo=True,
+        transport="stdio")
+    tool = ToolSpec(
+        name="order.create", intent="shop.order", write=True,
+        require_confirm=True, compensate_tool="order.cancel",
+        compensate_policy="terminal", forward_owner=True)
+    return _Binding(server, client, tool, {})
+
+
 class FakeLedger:
     def __init__(self, history=None):
         self.opened, self.closed = [], []
@@ -519,6 +612,135 @@ async def test_write_timeout_is_reported_as_uncertain_not_as_failure():
         assert status == "failed" and ref.get("outcome") == "uncertain"
     finally:
         await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_privacy_delete_keeps_demo_orders_as_external_references():
+    owner = "privacy-target-inprocess"
+    control = "privacy-control-inprocess"
+    client = InProcessDemoAdminClient()
+    drafts = PrivacyDraftStore()
+    agent = McpBridgeAgent(draft_store=drafts)
+    agent._bindings["shop.order"] = _demo_admin_binding(client)
+    cleanup = lambda user: demo_coffee._e2e_namespace_admin({
+        "op": "lifecycle_cleanup", "_owner_user_id": user,
+        "write_tool": "order.create", "compensate_tool": "order.cancel",
+    })
+    cleanup(owner)
+    cleanup(control)
+    demo_coffee._order_create({
+        "sku": "latte", "idempotency_key": "privacy-target",
+        "_owner_user_id": owner,
+    })
+    demo_coffee._order_create({
+        "sku": "latte", "idempotency_key": "privacy-control",
+        "_owner_user_id": control,
+    })
+    try:
+        assert await agent.delete_personal_data(
+            owner, "privacy_user_all") is True
+        assert drafts.users == [owner]
+        target = demo_coffee._e2e_namespace_admin({
+            "op": "count", "_owner_user_id": owner,
+            "write_tool": "order.create", "compensate_tool": "order.cancel",
+        })["structuredContent"]
+        control_state = demo_coffee._e2e_namespace_admin({
+            "op": "count", "_owner_user_id": control,
+            "write_tool": "order.create", "compensate_tool": "order.cancel",
+        })["structuredContent"]
+        assert target["count"] == 1
+        assert control_state["count"] == 1
+        assert client.calls == []
+    finally:
+        cleanup(owner)
+        cleanup(control)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("draft_ok", [False, True])
+async def test_privacy_delete_ack_depends_only_on_merchant_draft_store(draft_ok):
+    drafts = PrivacyDraftStore(result=draft_ok)
+    client = InProcessDemoAdminClient(reject=True)
+    agent = McpBridgeAgent(draft_store=drafts)
+    agent._bindings["shop.order"] = _demo_admin_binding(client)
+
+    assert await agent.delete_personal_data(
+        "privacy-failure-owner", "privacy_user_all") is draft_ok
+    assert drafts.users == ["privacy-failure-owner"]
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_privacy_delete_without_demo_binding_does_not_touch_official_remote():
+    drafts = PrivacyDraftStore(result=True)
+    client = FakeClient()
+    agent = McpBridgeAgent(draft_store=drafts)
+    server = ServerSpec(
+        id="official", command=[], version="", tools=[], demo=False,
+        transport="streamable_http")
+    tool = ToolSpec(
+        name="create-order", intent="official.order", write=True,
+        require_confirm=True, compensate_tool="cancel-order",
+        compensate_policy="terminal", forward_owner=True)
+    agent._bindings[tool.intent] = _Binding(server, client, tool, {})
+
+    assert await agent.delete_personal_data(
+        "privacy-official-owner", "privacy_user_all") is True
+    assert drafts.users == ["privacy-official-owner"]
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_privacy_delete_keeps_stdio_demo_until_explicit_lifecycle_cleanup():
+    owner = "privacy-target-stdio"
+    control = "privacy-control-stdio"
+    client = StdioMcpClient(
+        "demo-coffee-privacy",
+        [sys.executable, "-m", "agents.mcp_bridge.demo_servers.demo_coffee"],
+        timeout_s=20,
+    )
+    drafts = PrivacyDraftStore(result=True)
+    agent = McpBridgeAgent(draft_store=drafts)
+    agent._bindings["shop.order"] = _demo_admin_binding(client)
+    await client.start()
+    try:
+        await client.initialize()
+        for user, idem in ((owner, "privacy-target"),
+                           (control, "privacy-control")):
+            created = await client.call_tool("order.create", {
+                "sku": "latte", "idempotency_key": idem,
+                "_owner_user_id": user,
+            })
+            assert created["ok"] is True
+
+        assert await agent.delete_personal_data(
+            owner, "privacy_user_all") is True
+        target = await agent.namespace_admin({
+            "op": "count", "user_id": owner, "order_id": "",
+            "intent": "shop.order",
+        })
+        control_state = await agent.namespace_admin({
+            "op": "count", "user_id": control, "order_id": "",
+            "intent": "shop.order",
+        })
+        assert target["ok"] is True and target["count"] == 1
+        assert control_state["ok"] is True and control_state["count"] == 1
+
+        cleaned = await agent.namespace_admin({
+            "op": "lifecycle_cleanup", "user_id": owner,
+            "order_id": "", "intent": "shop.order",
+        })
+        assert cleaned["ok"] is True and cleaned["count"] == 0
+    finally:
+        await agent.namespace_admin({
+            "op": "lifecycle_cleanup", "user_id": owner,
+            "order_id": "", "intent": "shop.order",
+        })
+        await agent.namespace_admin({
+            "op": "lifecycle_cleanup", "user_id": control,
+            "order_id": "", "intent": "shop.order",
+        })
+        await client.close()
 
 
 @pytest.mark.asyncio
@@ -1029,13 +1251,73 @@ def test_bridge_is_third_party_and_has_no_vehicle_control_permission():
 
 
 # ── 查单 / 取消 / 补偿（M-D）───────────────────────────────
-def _ledger_task(order_id="", idem="idem-1"):
+def _ledger_task(order_id="", idem="idem-1", *, user_id="u1",
+                 session_id="s1", server="", task_status="done",
+                 order_status="", outcome="", goal="{}"):
     from agents._sdk.ledger import LedgerTask
-    return LedgerTask(task_id="t0", user_id="u1", session_id="s1",
-                      agent_id="mcp-bridge", kind="mcp.write",
-                      goal="{}", idempotency_key=idem, status="done",
-                      result_ref=({"order_id": order_id} if order_id else
-                                  {"error": "timeout", "outcome": "uncertain"}))
+    result_ref = ({"order_id": order_id} if order_id else
+                  {"error": "timeout", "outcome": "uncertain"})
+    if server:
+        result_ref["server"] = server
+    if order_status:
+        result_ref["status"] = order_status
+    if outcome:
+        result_ref["outcome"] = outcome
+    return LedgerTask(task_id=f"t-{order_id or idem}", user_id=user_id,
+                      session_id=session_id,
+                      agent_id="mcp-bridge", kind=LEDGER_KIND,
+                      goal=goal, idempotency_key=idem, status=task_status,
+                      result_ref=result_ref)
+
+
+@pytest.mark.asyncio
+async def test_write_backfill_filters_owner_merchant_and_state_then_prefers_session():
+    a, _ = await _agent()
+    a.ledger = FakeLedger(history=[
+        _ledger_task("FOREIGN", user_id="u2"),
+        _ledger_task("LUCKIN", server="luckin"),
+        _ledger_task("FAILED", task_status="failed", order_status="failed"),
+        _ledger_task("UNCERTAIN", order_status="uncertain",
+                     outcome="uncertain"),
+        _ledger_task("CANCELLED", order_status="cancelled"),
+        _ledger_task("OTHER-SESSION", session_id="s-old"),
+        _ledger_task("CURRENT-SESSION", session_id="s1",
+                     order_status="created"),
+    ])
+    binding = a._bindings["shop.order_cancel"]
+    ctx = SimpleNamespace(user_id="u1", session_id="s1")
+    try:
+        slots = await a._backfill_write_slots(binding, ["order_id"], ctx)
+        assert slots == {"order_id": "CURRENT-SESSION"}
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history", [
+    [_ledger_task("FOREIGN", user_id="u2")],
+    [_ledger_task("LUCKIN", server="luckin")],
+    [_ledger_task("FAILED", task_status="failed", order_status="failed")],
+    [_ledger_task("UNCERTAIN", order_status="uncertain", outcome="uncertain")],
+    [_ledger_task("CANCELLED-TASK", task_status="cancelled",
+                  order_status="created")],
+    [_ledger_task("CANCELLED", order_status="cancelled")],
+    [_ledger_task("CANCELLED", order_status="cancelled"),
+     _ledger_task("CANCELLED", order_status="created")],
+    [_ledger_task("", task_status="failed", outcome="uncertain",
+                  goal='{"order_id":"UNCERTAIN"}'),
+     _ledger_task("UNCERTAIN", order_status="created")],
+])
+async def test_write_backfill_never_targets_foreign_or_non_cancellable_order(
+        history):
+    a, _ = await _agent()
+    a.ledger = FakeLedger(history=history)
+    binding = a._bindings["shop.order_cancel"]
+    ctx = SimpleNamespace(user_id="u1", session_id="s1")
+    try:
+        assert await a._backfill_write_slots(binding, ["order_id"], ctx) == {}
+    finally:
+        await a.shutdown()
 
 
 @pytest.mark.asyncio
@@ -1077,6 +1359,275 @@ async def test_order_status_is_read_only_and_needs_no_confirmation():
     try:
         res = await run_handle(a, "shop.order_status", raw_text="我那杯咖啡好了吗")
         assert res.status == "ok", "只读不该触发确认闸"
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("server_id", "intent_name", "tool_name", "payload", "expected_status"), [
+    (
+        "mcdonalds", "mcd.order_status", "query-order",
+        {"success": True, "code": 200, "data": {
+            "orderId": "MCD-1", "orderStatus": "订单已取消", "status": "60",
+            "realTotalAmount": "26.50", "storeName": "测试餐厅",
+        }},
+        "订单已取消",
+    ),
+    (
+        "luckin", "luckin.order_status", "queryOrderDetailInfo",
+        {"success": True, "code": 0, "data": {
+            "orderId": "LUCKIN-1", "orderStatus": 100,
+            "orderStatusName": "已取消", "orderPayAmount": 16.6,
+            "shopInfo": {"deptName": "测试门店"},
+        }},
+        "已取消",
+    ),
+])
+async def test_official_order_status_is_deterministically_normalized_without_llm(
+        server_id, intent_name, tool_name, payload, expected_status):
+    """商户明确终态不能交给 LLM 猜；真栈曾把两家“已取消”说成没查到。"""
+    from agents.mcp_bridge.src.agent import _Binding
+
+    a, fake = await _agent(reply={"ok": True, "text": "provider documentation",
+                                  "data": payload})
+    fake.server_info = {"name": server_id, "version": "1"}
+    server = next(spec for spec in load_servers(SERVERS_YAML)
+                  if spec.id == server_id)
+    tool = next(candidate for candidate in server.tools
+                if candidate.name == tool_name and
+                candidate.intent == intent_name)
+    a._bindings = {
+        intent_name: _Binding(server=server, tool=tool, client=fake,
+                              input_schema={"required": ["orderId"]})}
+    try:
+        res = await run_handle(
+            a, intent_name, raw_text=f"查询订单 {server_id}",
+            slots={"order_id": payload["data"]["orderId"]},
+            meta={"granted_scopes": "merchant.read"})
+        assert expected_status in res.speech
+        assert "没查到" not in res.speech
+        assert res.ui_card["type"] == "mcp_order"
+        assert res.ui_card["order_id"] == payload["data"]["orderId"]
+        assert res.ui_card["status"] == expected_status
+        assert res.data["order_id"] == payload["data"]["orderId"]
+        assert res.data["status"] == expected_status
+        assert fake.calls == [(tool_name, {"orderId": payload["data"]["orderId"]})]
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("payload", "expected_error"), [
+    (
+        {"success": False, "code": 500, "data": {
+            "orderId": "MCD-1", "orderStatus": "订单已取消",
+            "realTotalAmount": "26.50",
+        }},
+        "有效状态",
+    ),
+    (
+        {"success": True, "code": 200, "data": {
+            "orderId": "MCD-1", "orderStatus": "   ",
+            "realTotalAmount": "26.50",
+        }},
+        "订单信息不完整",
+    ),
+    (
+        {"success": True, "code": 200, "data": {
+            "orderId": "MCD-1", "orderStatus": "订单已取消",
+            "realTotalAmount": "NaN",
+        }},
+        "订单金额无效",
+    ),
+    (
+        {"success": True, "code": 200, "data": {
+            "orderId": "MCD-1", "orderStatus": "订单已取消",
+            "realTotalAmount": "-0.001",
+        }},
+        "订单金额无效",
+    ),
+    (
+        {"success": True, "code": 200, "data": {
+            "orderId": "MCD-1", "orderStatus": "订单已取消",
+            "realTotalAmount": "1e25",
+        }},
+        "订单金额无效",
+    ),
+    (
+        {"success": True, "code": 200, "data": {
+            "orderId": 123, "orderStatus": "订单已取消",
+            "realTotalAmount": "26.50",
+        }},
+        "订单信息不完整",
+    ),
+    (
+        {"success": True, "code": 200, "data": {
+            "orderId": "MCD-1", "orderStatus": 100,
+            "realTotalAmount": "26.50",
+        }},
+        "订单信息不完整",
+    ),
+    (
+        {"success": True, "code": 200, "data": {
+            "orderId": "MCD-1",
+            "orderStatus": "https://evil.invalid/pay?token=RAW-SECRET",
+            "realTotalAmount": "26.50",
+        }},
+        "订单信息不完整",
+    ),
+    (
+        {"success": True, "code": 200, "data": {
+            "orderId": "MCD-1", "orderStatus": "已" * 129,
+            "realTotalAmount": "26.50",
+        }},
+        "订单信息不完整",
+    ),
+    (
+        {"success": True, "code": 200, "data": {
+            "orderId": "MCD-1",
+            "orderStatus": "已取消 手机13800138000",
+            "realTotalAmount": "26.50",
+        }},
+        "订单信息不完整",
+    ),
+    (
+        {"success": True, "code": 200, "data": {
+            "orderId": "MCD-1",
+            "orderStatus": "已取消 RAW-SECRET-TOKEN",
+            "realTotalAmount": "26.50",
+        }},
+        "订单信息不完整",
+    ),
+])
+async def test_declared_order_result_fails_closed_without_raw_card(
+        payload, expected_error):
+    """业务拒绝、空白关键字段和非有限金额都不能伪装成有效订单卡。"""
+    a, fake = await _agent(reply={
+        "ok": True, "text": "provider raw response", "data": payload})
+    tool = ToolSpec(
+        name="query-order", intent="mcd.order_status", slots=["order_id"],
+        arg_map={"order_id": "orderId"}, speech_mode="summarize",
+        success_predicate={"success": [True], "code": [200]},
+        result_map={
+            "order_id": "data.orderId",
+            "status": "data.orderStatus",
+            "amount_cents": "data.realTotalAmount",
+        },
+        status_map=_MCD_TEST_STATUS_MAP,
+        amount_unit="yuan")
+    server = ServerSpec(
+        id="mcdonalds", command=[], version="", tools=[tool], demo=False,
+        transport="streamable_http")
+    a._bindings = {
+        "mcd.order_status": _Binding(
+            server=server, tool=tool, client=fake,
+            input_schema={"required": ["orderId"]})}
+    try:
+        result = await run_handle(
+            a, "mcd.order_status", raw_text="查询订单 MCD-1",
+            slots={"order_id": "MCD-1"})
+        assert expected_error in result.speech
+        assert result.ui_card is None
+        assert not result.data
+        assert "provider raw response" not in result.speech
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_explicit_numeric_order_id_in_raw_text_overrides_planner_copy():
+    """超长纯数字订单号以用户原句为准，不能让 LLM 重抄时改一位。"""
+    requested = "1111222233334444555566667777"
+    payload = {"success": True, "code": 200, "data": {
+        "orderId": requested, "orderStatus": "订单已取消",
+        "realTotalAmount": "26.50",
+    }}
+    a, fake = await _agent(reply={"ok": True, "text": "", "data": payload})
+    tool = ToolSpec(
+        name="query-order", intent="mcd.order_status", slots=["order_id"],
+        arg_map={"order_id": "orderId"},
+        success_predicate={"success": [True], "code": [200]},
+        result_map={
+            "order_id": "data.orderId", "status": "data.orderStatus",
+            "amount_cents": "data.realTotalAmount",
+        }, status_map=_MCD_TEST_STATUS_MAP)
+    server = ServerSpec(
+        id="mcdonalds", command=[], version="", tools=[tool], demo=False,
+        transport="streamable_http")
+    a._bindings = {"mcd.order_status": _Binding(
+        server=server, tool=tool, client=fake,
+        input_schema={"required": ["orderId"]})}
+    try:
+        result = await run_handle(
+            a, "mcd.order_status", raw_text=f"查询麦当劳订单 {requested}",
+            slots={"order_id": "9999000011112222333344445555"})
+        assert result.data["order_id"] == requested
+        assert fake.calls == [("query-order", {"orderId": requested})]
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_declared_order_result_rejects_provider_order_id_mismatch():
+    """商户返回另一笔订单时不得显示或写入卡片。"""
+    payload = {"success": True, "code": 200, "data": {
+        "orderId": "2222222222222222222", "orderStatus": "已取消",
+        "realTotalAmount": "26.50",
+    }}
+    a, fake = await _agent(reply={"ok": True, "text": "", "data": payload})
+    tool = ToolSpec(
+        name="query-order", intent="mcd.order_status", slots=["order_id"],
+        arg_map={"order_id": "orderId"},
+        success_predicate={"success": [True], "code": [200]},
+        result_map={
+            "order_id": "data.orderId", "status": "data.orderStatus",
+            "amount_cents": "data.realTotalAmount",
+        }, status_map=_MCD_TEST_STATUS_MAP)
+    server = ServerSpec(
+        id="mcdonalds", command=[], version="", tools=[tool], demo=False,
+        transport="streamable_http")
+    a._bindings = {"mcd.order_status": _Binding(
+        server=server, tool=tool, client=fake,
+        input_schema={"required": ["orderId"]})}
+    try:
+        result = await run_handle(
+            a, "mcd.order_status", raw_text="查询麦当劳订单 1111111111111111111",
+            slots={"order_id": "1111111111111111111"})
+        assert "订单号不一致" in result.speech
+        assert result.ui_card is None and not result.data
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_declared_order_protocol_error_never_reaches_llm_or_card():
+    """已声明订单归一的官方响应，即使 isError 也不能把 raw PII 交给 LLM。"""
+    raw = "RAW-SECRET-TEXT 手机 13800138000"
+    a, fake = await _agent(reply={
+        "ok": False, "text": raw,
+        "data": {"debug": raw, "orderId": "OTHER"},
+    })
+    tool = ToolSpec(
+        name="query-order", intent="mcd.order_status", slots=["order_id"],
+        arg_map={"order_id": "orderId"}, speech_mode="summarize",
+        success_predicate={"success": [True], "code": [200]},
+        result_map={
+            "order_id": "data.orderId", "status": "data.orderStatus",
+            "amount_cents": "data.realTotalAmount",
+        }, status_map=_MCD_TEST_STATUS_MAP)
+    server = ServerSpec(
+        id="mcdonalds", command=[], version="", tools=[tool], demo=False,
+        transport="streamable_http")
+    a._bindings = {"mcd.order_status": _Binding(
+        server=server, tool=tool, client=fake,
+        input_schema={"required": ["orderId"]})}
+    try:
+        result = await run_handle(
+            a, "mcd.order_status", raw_text="查询麦当劳订单 1111111111111111111",
+            slots={"order_id": "1111111111111111111"})
+        assert result.speech == "商户暂时无法返回这笔订单的有效状态，请稍后再试。"
+        assert raw not in result.speech
+        assert result.ui_card is None and not result.data
     finally:
         await a.shutdown()
 

@@ -245,8 +245,12 @@ class ExemplarStore:
 
     @staticmethod
     def _parse_plan(raw) -> list[dict]:
-        """plan 规范化：只收 {agent,intent,slots}，intent 必填。多余键丢弃——注入块是
-        给 LLM 看的形态示范，混进 endpoint/trace_id 之类只会稀释信号。"""
+        """plan 规范化：只收规划协议字段，intent 必填。
+
+        `id/depends_on/slot_refs` 只在跨步消费生产者结果时有意义，但一旦作者声明就必须
+        原样进入 few-shot；丢掉它们会把「可信采集 → 业务动作」退化成两个未接线步骤。
+        endpoint/trace_id 等运行时字段仍不进入注入块。
+        """
         if not isinstance(raw, list):
             return []
         steps = []
@@ -257,8 +261,20 @@ class ExemplarStore:
             if not intent:
                 return []                 # 半条计划比没有更糟：整条范例作废
             slots = s.get("slots") if isinstance(s.get("slots"), dict) else {}
-            steps.append({"agent": str(s.get("agent") or "").strip(),
-                          "intent": intent, "slots": slots})
+            depends_on = (s.get("depends_on")
+                          if isinstance(s.get("depends_on"), list) else [])
+            slot_refs = (s.get("slot_refs")
+                         if isinstance(s.get("slot_refs"), dict) else {})
+            steps.append({
+                "id": str(s.get("id") or "").strip(),
+                "agent": str(s.get("agent") or "").strip(),
+                "intent": intent,
+                "slots": slots,
+                "depends_on": [str(dep).strip() for dep in depends_on
+                               if str(dep).strip()],
+                "slot_refs": {str(key): str(value) for key, value
+                              in slot_refs.items()},
+            })
         return steps
 
     # -- 语义向量（查询顺带捎带 + 后台预热） --
@@ -495,12 +511,17 @@ def _render_one(e: Exemplar, capability_refs=None) -> str | None:
         slots = step.get("slots", {})
         if not isinstance(slots, dict):
             return None
+        step_id = str(step.get("id") or "").strip() or f"s{index}"
+        depends_on = step.get("depends_on", [])
+        slot_refs = step.get("slot_refs", {})
+        if not isinstance(depends_on, list) or not isinstance(slot_refs, dict):
+            return None
         resolved.append({
-            "id": f"s{index}",
+            "id": step_id,
             "capability_ref": ref,
             "slots": slots,
-            "depends_on": [],
-            "slot_refs": {},
+            "depends_on": list(depends_on),
+            "slot_refs": dict(slot_refs),
         })
     plan = json.dumps(resolved, ensure_ascii=False, separators=(",", ":"))
     return f"- 用户：『{e.text}』→ {plan}"

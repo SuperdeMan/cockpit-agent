@@ -2,3 +2,4 @@ grpcio==1.66.2
 protobuf==7.35.0
 nats-py>=2.6.0
 pyyaml>=6.0
+redis==5.0.8

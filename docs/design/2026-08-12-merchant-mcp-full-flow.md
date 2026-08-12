@@ -96,7 +96,7 @@ flowchart LR
 
 2026-08-12 只读真机已锁定关键结果路径：
 
-- 麦当劳菜单 code：`data.categories[*].meals[*].code`；详情 map：`data.meals[productCode]`；试算金额：`data.price`（整数分）；取餐方式：`data.takeWayList[*].code`。
+- 麦当劳菜单 code：`query-meals.data.categories[*].meals[*].code`，展示信息按 code 关联同响应的 `query-meals.data.meals[productCode]`；`query-meal-detail.data` 本身就是商品详情对象；试算金额：`calculate-price.data.price`（整数分）；取餐方式：`calculate-price.data.takeWayList[*].code`。麦当劳业务成功 envelope 为 `success=true && code=200`，不能沿用瑞幸的 `code=0`。
 - 麦当劳官方 `create-order` outputSchema：订单号 `data.orderId`，支付入口 `data.payH5Url`，订单详情金额候选 `data.orderDetail.realTotalAmount`（元字符串）。支付 locator 必须是 `data.payH5Url`，旧注释的 `payH5Url` 少一层。
 - 瑞幸预览：门店 `data.shopInfo`，商品 `data.productInfoList[]`，规格摘要 `additionDesc`，原价 `totalInitialPrice`，优惠 `privilegeMoney`，当前应付候选 `discountPrice`。
 - 瑞幸 `switchProduct` 会返回新 SKU；后续 preview/create 必须使用最后一次 switch 响应的 `skuCode`，不能沿用 search 的初始值。
@@ -106,12 +106,13 @@ flowchart LR
 新增 `MerchantDraftStore`：
 
 - 生产使用现有 Redis，默认 TTL 10 分钟；Redis 无状态持久化符合“短确认窗口”语义。
-- key 包含已认证 `user_id + session_id + merchant`，value 是服务端生成的随机 `checkout_token` 对应快照。
+- key 使用已认证 `user_id + session_id + merchant` 的摘要建立归属，value 是服务端生成的随机 `checkout_token` 对应快照；value 不保存 user/session 明文。
 - store 同时维护该用户/会话/商户的唯一 current pointer。现有确认恢复不会把 Agent `data` 写回 step slots，因此标准确认轮用 `(user_id, session_id, merchant)` 原子消费 current draft；显式带 token 的卡片动作仍须校验同一归属。新预览覆盖旧 pointer，旧草稿只能等待 TTL，不能被确认。
 - 快照至少含 `merchant/store/items/fulfillment/price/discount/payable/currency/upstream_args/schema_digest/created_at`。
 - 返回给 Planner 的只有字符串 `checkout_token` 和人类可读摘要；HMI 卡可以持有 token，但不显示它。token 不是确认授权，`confirmed=true` 与会话归属校验仍不可缺。
 - 确认时必须按当前用户、会话、商户取回同一快照；过期、缺失、schema 变化或重新计价变化时，重新预览并再次确认。
 - 确认摘要和金额由确定性 formatter 生成，不交给 LLM 改写。
+- 草稿登记为 `merchant_draft` 个人数据目标。除 draft/current 外维护带完整性 marker 的用户摘要索引；create/cancel 原子消费草稿时同时建立 owner 操作租约，Ledger/远程写前再次校验并续租。删除先立写 fence：租约在飞时只 NACK 为 `503 + pending/retryable`，租约释放后重试；无在飞操作时再逐值复核 owner、用 cursor SCAN 修复缺索引孤儿，并经二次扫描证明为零，索引中误混的 foreign key 不构成跨用户删除授权。成功删除保留覆盖草稿 TTL 的 `privacy_deleted` 墓碑，删除开始前已在飞、ACK 后才到达的旧 `put` 仍会被拒绝。Planner 待确认/焦点态另登记为 `planner_pending_session`：owner 与 session 都参与摘要 key，读取/清理必须匹配认证 owner；挂起步本身不重复保存 token、卡片和 data，已完成依赖只投影下游 `slot_refs` 实际引用且安全的标量，话术、动作、卡片、URI/QR/token/payment id/联系人字段不持久，旧记录恢复时再次最小化。HMI 的 Memory 全量 ForgetUser 必须携带 `AUTH_TOKENS` 中 Bearer 且 body owner 与其一致；Memory 删除成功后，本批只额外协调 `merchant_draft` 与 `planner_pending_session` 两类短期状态。内部 request/reply 用 mesh 私钥派生的域隔离 HMAC，帧带 target、nonce、时间窗并将响应绑定请求摘要；cloud/MCP responder 仅在共享 Redis 实际可达时安装，缺 key、伪 ACK、重放、在飞租约或任一 adapter 未收口都 fail-closed。该协调不是全 privacy registry 跨域删除 saga；Task Ledger、支付/可观测等仍按既有后置项处理，`mcp_demo_order` 仍是外部引用，只能显式 unlink/生命周期清理，不能随 `privacy_user_all` 冒充物理删除。TTL 只负责故障兜底，不替代可证明的删除。
 
 首次 `mcd.order` / `luckin.order` 调用只执行只读工具链并返回：
 
@@ -253,3 +254,51 @@ flowchart LR
 7. 离线全链、真栈、浏览器与全量回归；更新实施证据。
 
 每批遵循红灯测试 -> 最小实现 -> 分组回归 -> 规格审查 -> 代码质量审查 -> commit。最终只在全部新证据完成后推送 `main`。
+
+## 11. 实施记录与真实验证偏差（2026-08-12）
+
+### 11.1 已落地能力
+
+- MCP 传输/准入硬化完成：严格 JSON-in-text、schema 指纹、隐藏低层工具、写 no-retry、
+  timeout uncertain、两阶段补偿准入、owner 不出域、空支付 host fail-closed。
+- `MerchantWorkflow` 已承载两家官方工具链；嵌套商品/规格参数、金额、业务成功判据和结果
+  白名单均为确定性实现。Redis 草稿按用户/会话/商户隔离，确认原子消费，并已登记
+  `merchant_draft` / `planner_pending_session` 隐私目标及 owner-scoped、在飞操作感知的清除路径；Task Ledger 与
+  single-flight 共同落实 `local_at_most_once`。
+- 麦当劳已支持选店、选品、详情/计价、预览、确认创建未支付订单、支付入口与查单；官方
+  工具面无远程取消，用户只能放弃支付并等待自动失效。
+- 瑞幸已支持公开门店坐标接地、选品与规格、预览、确认创建未支付订单、支付入口、查单，
+  以及再次确认取消。
+- HMI 已有商户候选、收据式预览、上下文确认、支付链接/订单卡和查单/取消动作。整个流程
+  只创建未支付订单，不代用户付款。
+
+### 11.2 真栈证据与订单清理
+
+官方只读清单仍为麦当劳 29 工具、瑞幸 8 工具；两家只读预览均取得真实营业门店、商品/规格
+和商户计价。浏览器已留存麦当劳支付链接卡与瑞幸预览卡。真实创建总数为 **5 笔**：瑞幸
+3 笔、麦当劳 2 笔；三笔瑞幸均已取消，两笔麦当劳均由商户自动取消，且没有执行最终付款。
+
+这比 §9.2 原定最多 3 笔多 2 笔。原因是首次真实响应需要锁定 create locator/host，随后浏览器
+链路又暴露确定性拒绝与跨轮卡片覆盖问题，验证过程中各产生额外未支付单。此处记录的是已发生
+事实，不修改原预算来制造“符合计划”的假象；后续不再用新订单重复同类验证，只做只读终态核验。
+
+### 11.3 证据限制与收口结果
+
+- 旧版 C9 只要求收到非通用搜索回复；当官方响应已经明确“已取消”时，LLM 重述仍可能说
+  “没查到/待回传”。这两张旧图是缺陷证据，不是终态验收证据。
+- C9 已改为必须显式提供并命中 `CDP_MERCHANT_EXPECTED_STATUS`。最终只读浏览器复验中，
+  瑞幸精确命中“已取消”，麦当劳精确命中“订单已取消”，查询帧均为
+  `is_confirmation=false`；两家严格 C9 均通过。
+- 两家 token/账号仍是服务级全局凭证；多乘员独立商户账号与 token 自动刷新未做。
+  支付链接第二层白名单依赖 payment-gateway 运行时安全配置；空配置必须 fail-closed。
+- 浏览器复验必须由网关认证的主用户 token 显式授予 `merchant.read,merchant.write`，且 HMI
+  `VITE_WS_TOKEN` 与其匹配；不得把商户权限加入匿名 PoC 默认 scope。
+- 本节不记录 token、订单号、完整支付 URL、优惠券、地址等敏感字段。
+- 最终冻结工作树执行 `python -m pytest --import-mode=importlib -q`：
+  **5408 passed / 14 skipped / 0 failed**，退出码 0，用时 23m25s。聚焦回归：
+  mcp-bridge **385 passed**；隐私/旅程 manifest **168 passed**；HMI node **253/253**，
+  Vite production build 通过。Redis 7 隔离 DB15 实测 TTL、动作错配不删除、并发唯一消费、
+  owner 删除幂等、在飞操作返回 pending，且不影响对照用户。合成 Docker 真栈另证明：活跃租约
+  存在时 ForgetUser 返回 `503 + pending/retryable`；精确释放后同 owner 重试返回 200，Planner
+  会话与商户草稿均为零、旧租约不可再授权。该取证没有调用 create/cancel/query/payment 等
+  商户业务工具，也没有增加真实订单。

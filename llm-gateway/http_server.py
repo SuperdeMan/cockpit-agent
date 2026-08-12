@@ -8,6 +8,7 @@ HMI 是浏览器环境，不能直接调 gRPC。此模块在 llm-gateway 同进�
 from __future__ import annotations
 import asyncio
 import base64
+import hmac
 import json
 import logging
 import os
@@ -19,6 +20,16 @@ from aiohttp import web
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
 from runtime.grpcio import aio_channel
+from runtime.privacy_delete_bus import (
+    CLOUD_SUBJECT,
+    CLOUD_TARGET,
+    MCP_SUBJECT,
+    MCP_TARGET,
+    PrivacyDeleteProtocolError,
+    load_control_key,
+    request_delete,
+    validate_user_id,
+)
 
 from providers import (
     build_asr_provider, build_streaming_asr_provider, build_tts_provider,
@@ -79,6 +90,41 @@ async def _transcode_to_wav(audio_bytes: bytes, src_format: str) -> bytes:
 
 MEMORY_ADDR = os.getenv("MEMORY_ADDR", "memory:50053")
 _mem_channel = None
+PRIVACY_DELETE_TIMEOUT_S = 3.0
+PRIVACY_CONNECT_TIMEOUT_S = 2.0
+
+
+def _auth_token_owners(raw: str, *, default_user_id: str) -> dict[str, str]:
+    """Mirror edge-gateway AUTH_TOKENS parsing for destructive HTTP calls."""
+    table: dict[str, str] = {}
+    for entry in (raw or "").split(";"):
+        parts = entry.strip().split(":", 3)
+        if len(parts) != 4:
+            continue
+        token = parts[0].strip()
+        owner = parts[1].strip() or default_user_id
+        if token and owner:
+            table[token] = owner
+    return table
+
+
+def _authenticated_owner(request: web.Request) -> str:
+    """Resolve a Bearer token to its configured owner; never trust the body."""
+    raw_header = request.headers.get("Authorization", "")
+    scheme, separator, candidate = raw_header.partition(" ")
+    if separator != " " or scheme.lower() != "bearer" or not candidate:
+        return ""
+    if candidate != candidate.strip() or " " in candidate:
+        return ""
+    table = _auth_token_owners(
+        os.getenv("AUTH_TOKENS", ""),
+        default_user_id=os.getenv("AUTH_DEFAULT_USER_ID", "u1").strip() or "u1",
+    )
+    candidate_bytes = candidate.encode("utf-8")
+    for configured, owner in table.items():
+        if hmac.compare_digest(candidate_bytes, configured.encode("utf-8")):
+            return owner
+    return ""
 
 
 def _memory_stub():
@@ -88,6 +134,46 @@ def _memory_stub():
     if _mem_channel is None:
         _mem_channel = aio_channel(MEMORY_ADDR)
     return memory_pb2_grpc.MemoryStub(_mem_channel)
+
+
+async def _delete_privacy_state(user_id: str) -> bool:
+    """Delete MCP drafts and cloud pending sessions; any NACK is pending."""
+    nc = None
+    try:
+        control_key = load_control_key()
+        import nats
+        nc = await nats.connect(
+            os.getenv("NATS_URL", "nats://nats:4222"),
+            connect_timeout=PRIVACY_CONNECT_TIMEOUT_S,
+            max_reconnect_attempts=0,
+        )
+
+        async def one(subject: str, target: str) -> bool:
+            try:
+                return await request_delete(
+                    nc,
+                    subject=subject,
+                    target=target,
+                    user_id=user_id,
+                    timeout=PRIVACY_DELETE_TIMEOUT_S,
+                    key=control_key,
+                )
+            except Exception:
+                return False
+
+        results = await asyncio.gather(
+            one(MCP_SUBJECT, MCP_TARGET),
+            one(CLOUD_SUBJECT, CLOUD_TARGET),
+        )
+        return all(result is True for result in results)
+    except Exception:
+        return False
+    finally:
+        if nc is not None:
+            try:
+                await nc.close()
+            except Exception:
+                pass
 
 # 从环境变量读音色配置
 DEFAULT_VOICE = os.getenv("TTS_VOICE_ID", "冰糖")
@@ -613,21 +699,85 @@ def create_http_app() -> web.Application:
     @routes.post("/api/memory/forget")
     async def handle_mem_forget(request: web.Request):
         """删除用户记忆（HMI 管理）。body: {user_id, scope?}。scope 空=清空全部（GDPR 硬删）。"""
+        authenticated_owner = _authenticated_owner(request)
+        if not authenticated_owner:
+            return web.json_response({
+                "ok": False,
+                "error": "unauthorized",
+            }, status=401)
         try:
             body = await request.json()
         except Exception:
-            body = {}
-        uid = (body.get("user_id") or "").strip()
-        scope = (body.get("scope") or "").strip()
+            return web.json_response({
+                "ok": False,
+                "error": "invalid_request",
+            }, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({
+                "ok": False,
+                "error": "invalid_request",
+            }, status=400)
+        raw_uid = body.get("user_id")
+        if "scope" in body and not isinstance(body["scope"], str):
+            return web.json_response({
+                "ok": False,
+                "error": "invalid_scope",
+            }, status=400)
+        raw_scope = body.get("scope", "")
+        uid = raw_uid.strip() if isinstance(raw_uid, str) else ""
+        scope = raw_scope.strip()
         if not uid:
             return web.json_response({"ok": False}, status=400)
+        if not hmac.compare_digest(
+            uid.encode("utf-8"), authenticated_owner.encode("utf-8"),
+        ):
+            return web.json_response({
+                "ok": False,
+                "error": "owner_mismatch",
+            }, status=403)
+        try:
+            # Validate before Memory ForgetUser so malformed authenticated
+            # owners cannot produce partial or owner-ambiguous deletion.
+            validate_user_id(uid)
+        except PrivacyDeleteProtocolError:
+            return web.json_response({
+                "ok": False,
+                "error": "invalid_user_id",
+            }, status=400)
         try:
             resp = await _memory_stub().ForgetUser(memory_pb2.ForgetUserRequest(
                 user_id=uid, scopes=[scope] if scope else []), timeout=5)
-            return web.json_response({"ok": resp.ok, "deleted": resp.deleted})
+            if scope:
+                return web.json_response({"ok": resp.ok, "deleted": resp.deleted})
+            if not resp.ok:
+                return web.json_response({
+                    "ok": False,
+                    "deleted": resp.deleted,
+                    "pending": True,
+                    "retryable": True,
+                    "error": "privacy_delete_pending",
+                }, status=503)
+            if not await _delete_privacy_state(uid):
+                return web.json_response({
+                    "ok": False,
+                    "deleted": resp.deleted,
+                    "pending": True,
+                    "retryable": True,
+                    "error": "privacy_delete_pending",
+                }, status=503)
+            return web.json_response({
+                "ok": True,
+                "deleted": resp.deleted,
+                "pending": False,
+            })
         except Exception as e:
-            logger.warning("memory forget error: %s", e)
-            return web.json_response({"ok": False, "error": str(e)}, status=500)
+            logger.warning("memory forget error: %s", type(e).__name__)
+            return web.json_response({
+                "ok": False,
+                "pending": True,
+                "retryable": True,
+                "error": "privacy_delete_pending",
+            }, status=503)
 
     # ── 声纹（M4 P4）──────────────────────────────────────────────────────
     # 刻意**不旁路** /api/asr/stream 与 /api/s2s 的上行 PCM，而是独立端点：那两条是刚验完的
@@ -1069,7 +1219,7 @@ def create_http_app() -> web.Application:
             resp = await handler(request)
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = CORS_METHODS
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp
 
     app.middlewares.append(cors_middleware)

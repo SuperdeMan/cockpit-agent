@@ -1032,7 +1032,7 @@
   expect_intents: [nearby.search]
   source: "nearby.search 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
 
-# ── 真实商户 MCP（2026-08-11 麦当劳/瑞幸 v1 只读激活）──
+# ── 真实商户 MCP（2026-08-12 复合下单/取消 workflow 激活）──
 
 - text: 麦当劳有什么吃的
   tags: [mode_typical, merchant_mcp]
@@ -1063,3 +1063,39 @@
   expect_mode: other:nearby.search
   expect_intents: [nearby.search]
   source: "边界：门店发现归 nearby（高德），mcd 域刻意不接 stores——防新域吸走发现类话术"
+
+- text: 麦当劳国贸店帮我点一份巨无霸套餐
+  tags: [mode_typical, merchant_mcp, write]
+  expect_mode: other:mcd.order
+  expect_intents: [mcd.order]
+  source: "品牌下单归真实麦当劳 workflow，不落 demo shop.order 或营养查询"
+
+- text: 瑞幸迪美店来杯热的生椰拿铁半糖
+  tags: [mode_typical, merchant_mcp, write]
+  expect_mode: other:luckin.order
+  expect_intents: [nearby.search, luckin.order]
+  source: "已给门店名也先由 nearby.search 取得同一公开 POI 的可信 name/lng/lat，再进入 luckin.order"
+
+- text: 找最近的瑞幸点一杯少冰厚乳拿铁
+  tags: [mode_typical, merchant_mcp, composition, write]
+  expect_mode: other:luckin.order
+  expect_intents: [nearby.search, luckin.order]
+  source: "未给门店时先 nearby.search，再把同一 POI 的 name/lng/lat 接入 luckin.order"
+
+- text: 把刚下的瑞幸订单取消掉
+  tags: [mode_typical, merchant_mcp, write]
+  expect_mode: other:luckin.order_cancel
+  expect_intents: [luckin.order_cancel]
+  source: "瑞幸取消是独立二次确认写能力，不得回落成下单或查单"
+
+- text: 附近有没有瑞幸门店
+  tags: [mode_boundary, merchant_mcp]
+  expect_mode: other:nearby.search
+  expect_intents: [nearby.search]
+  source: "只发现门店不创建订单"
+
+- text: 来一杯演示咖啡店的大杯美式
+  tags: [mode_boundary, merchant_mcp, demo]
+  expect_mode: other:shop.order
+  expect_intents: [shop.order]
+  source: "无真实品牌且点名演示咖啡店，保持 demo shop.order；不碰真实商户账号"

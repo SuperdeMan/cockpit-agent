@@ -102,6 +102,10 @@ EXPECTED: dict[
     "e2e_mcp": (
         "default", ("milestone",), 900, "root", F, True, True, 0, None,
     ),
+    "e2e_merchant_mcp": (
+        "manual_inspection", (), 1800, "root", R,
+        False, True, 0, None,
+    ),
     "e2e_memory": (
         "default", ("nightly", "milestone"), 900, "root", F, True, True, 1,
         ("--case", "privacy_targeting", "--case", "compliance"),
@@ -853,7 +857,7 @@ def test_only_protocol_smoke_may_be_a_planned_missing_path(tmp_path: Path):
 def test_manifest_has_exact_inventory_and_schema():
     contract = _contract()
     manifest = contract.load_manifest(MANIFEST_PATH, repo_root=REPO_ROOT)
-    assert len(manifest.cases) == 37
+    assert len(manifest.cases) == 38
     assert {case.id for case in manifest.cases} == set(EXPECTED)
 
     for case in manifest.cases:
@@ -2233,6 +2237,8 @@ def test_privacy_manifest_has_exact_staged_inventory_and_runtime_mirror():
         "proactive_process_queue",
         "proactive_delivery",
         "payment_order",
+        "planner_pending_session",
+        "merchant_draft",
         "mcp_demo_order",
     ]
 
@@ -2249,7 +2255,7 @@ def test_privacy_manifest_has_exact_staged_inventory_and_runtime_mirror():
         "session_history",
     ]
     # M-C 追加 proactive_delivery（可靠投递账本，payload 存话术与卡片摘要=个人数据）
-    assert len(runtime_registry.targets_for_milestone("M-D")) == 15
+    assert len(runtime_registry.targets_for_milestone("M-D")) == 17
 
 
 def test_voiceprint_case_declares_the_only_fixture_pre_step():
