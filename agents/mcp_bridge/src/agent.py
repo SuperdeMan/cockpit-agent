@@ -14,9 +14,12 @@ capability 是**启动期从准入清单合成**的（`bootstrap()` 在 `serve()
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
+import re
+from urllib.parse import unquote
 
 from agents._sdk import AgentResult, BaseAgent, NEED_CONFIRM, NEED_SLOT
 from agents._sdk.ledger import DONE, FAILED as LEDGER_FAILED, Duplicate, idem_key
@@ -57,10 +60,11 @@ PERSONAL_DATA_TARGETS = (
 class _Binding:
     """一个准入通过的工具：intent → (server client, tool spec)。"""
 
-    def __init__(self, server, client, tool):
+    def __init__(self, server, client, tool, input_schema):
         self.server = server
         self.client = client
         self.tool = tool
+        self.input_schema = input_schema if isinstance(input_schema, dict) else {}
 
 
 class McpBridgeAgent(BaseAgent):
@@ -114,8 +118,8 @@ class McpBridgeAgent(BaseAgent):
             self.rejections.extend(f"{spec.id}: {r}" for r in rejected)
             for r in rejected:
                 logger.warning("[mcp:%s] 拒绝工具 %s", spec.id, r)
-            for tool, _schema in admitted:
-                self._bindings[tool.intent] = _Binding(spec, client, tool)
+            for tool, schema in admitted:
+                self._bindings[tool.intent] = _Binding(spec, client, tool, schema)
             self._clients.append(client)
             logger.info("[mcp:%s] 准入 %d 个工具：%s", spec.id, len(admitted),
                         [t.intent for t, _ in admitted])
@@ -135,6 +139,8 @@ class McpBridgeAgent(BaseAgent):
         """把准入的工具写进 manifest.capabilities——注册中心看到的就是这份。"""
         caps = []
         for intent, b in self._bindings.items():
+            if not b.tool.expose:
+                continue
             desc = b.tool.description or f"{b.server.id} 的 {b.tool.name}"
             if b.server.demo:
                 desc += "（演示商户，不产生真实交易）"
@@ -155,13 +161,28 @@ class McpBridgeAgent(BaseAgent):
     # ── 请求处理 ─────────────────────────────────────────────────────
     async def handle(self, intent, ctx, meta) -> AgentResult:
         b = self._bindings.get(intent.name)
-        if not b:
+        if not b or not b.tool.expose:
             # 准入清单里没有 = 这个能力今天不存在。诚实说，不猜、不静默成功。
             return AgentResult(speech="这个外部服务还没接入。")
+        required = set(b.tool.required_scopes or [])
+        granted = self._granted_scopes(meta)
+        missing_scopes = sorted(required - granted)
+        if missing_scopes:
+            return AgentResult(
+                speech="当前账号缺少商户授权，不能执行这个操作。")
         if not b.client.healthy or not b.client.alive:
             return AgentResult(speech=f"{b.server.id} 暂时不可用，稍后再试。")
         return await (self._call_write(b, intent, ctx, meta) if b.tool.write
                       else self._call_read(b, intent, ctx, meta))
+
+    @staticmethod
+    def _granted_scopes(meta) -> set[str]:
+        raw = (meta or {}).get("granted_scopes", "")
+        if isinstance(raw, str):
+            return {scope.strip() for scope in raw.split(",") if scope.strip()}
+        if isinstance(raw, (list, tuple, set)):
+            return {str(scope).strip() for scope in raw if str(scope).strip()}
+        return set()
 
     async def namespace_admin(self, request: dict) -> dict:
         """Run an E2E-only exact-owner lifecycle operation through a write binding.
@@ -206,16 +227,19 @@ class McpBridgeAgent(BaseAgent):
             return self._admin_result(op=op, order_id=order_id,
                                       error="binding_unavailable")
         try:
+            arguments = {
+                "op": op,
+                "order_id": order_id,
+                "write_tool": binding.tool.name,
+                "compensate_tool": binding.tool.compensate_tool,
+            }
+            if binding.server.demo and binding.tool.forward_owner:
+                arguments["_owner_user_id"] = owner
             response = await binding.client.call_tool(
                 _HIDDEN_ADMIN_TOOL,
-                {
-                    "op": op,
-                    "_owner_user_id": owner,
-                    "order_id": order_id,
-                    "write_tool": binding.tool.name,
-                    "compensate_tool": binding.tool.compensate_tool,
-                },
+                arguments,
                 timeout_s=binding.tool.timeout_ms / 1000.0,
+                retry_on_session_loss=False,
             )
         except Exception:
             return self._admin_result(op=op, order_id=order_id,
@@ -249,34 +273,38 @@ class McpBridgeAgent(BaseAgent):
     # ── 只读 ──
     async def _call_read(self, b, intent, ctx, meta) -> AgentResult:
         try:
+            declared = list(b.tool.slots or [])
             # const_args 打底（声明死的场景选择器）→ 槽位映射值覆盖 → 系统键最后
             args = {**b.tool.const_args,
                     **{b.tool.arg_map.get(k, k): v
-                       for k, v in (intent.slots or {}).items() if v}}
+                       for k, v in (intent.slots or {}).items()
+                       if v and k in declared}}
+            args.pop("_owner_user_id", None)
             user_id = str(getattr(ctx, "user_id", "") or "").strip()
             if user_id:
-                # owner 由已验证 Context 派生，**不是 planner 槽位**（同写路径）：
-                # 让 LLM 能指定查谁的订单就是把越权做成了一个可填的字段。
-                args["_owner_user_id"] = user_id
                 args = await self._resolve_order_ref(b, args, user_id)
+                # 只给明确声明 forward_owner 的受控 demo 下发内部 owner。官方 remote
+                # 使用权威 granted_scopes，不认识也不应看到内部身份字段。
+                if b.server.demo and b.tool.forward_owner:
+                    args["_owner_user_id"] = user_id
             # 端到端取证修（2026-08-11）：declared 槽位一个都没有、账本也回填不到
             # （用户在商户 App 下的单不在我们账本）→ **追问而不是打一发必败请求**
             # ——此前无单号查真实商户，收到「订单号不存在」后把 2836 字 API 文档
             # 念给用户。写路径早有同款追问，读路径漏了。
             # 账本回填的引用（order_id **或幂等键**——超时单只有幂等键）也算「有
             # 引用」：那是 M-D「按幂等键跟商户核对」的既有路径，追问不许打断它。
-            declared = list(b.tool.slots or [])
             declared_args = {b.tool.arg_map.get(k, k) for k in declared}
             declared_args.add(b.tool.arg_map.get("idempotency_key",
                                                  "idempotency_key"))
+            missing = self._missing_required_slot(b, args)
+            if missing:
+                return self._need_slot(missing)
             if declared and not any(args.get(a) for a in declared_args):
-                missing = declared[0]
-                return AgentResult(
-                    status=NEED_SLOT,
-                    speech=_SLOT_PROMPTS.get(missing, "还差点信息，说说具体是哪一个？"),
-                    missing_slots=[missing])
+                return self._need_slot(declared[0])
             res = await b.client.call_tool(b.tool.name, args,
-                                           timeout_s=b.tool.timeout_ms / 1000.0)
+                                           timeout_s=b.tool.timeout_ms / 1000.0,
+                                           retry_on_session_loss=(
+                                               b.tool.retry_policy != "never"))
         except Exception as e:
             logger.warning("[mcp:%s] %s 调用失败：%s", b.server.id, b.tool.name, e)
             # 铁律③：外部源失败诚实说拿不到，绝不改供假数据（R9 契约用 OK 承载话术）
@@ -288,6 +316,26 @@ class McpBridgeAgent(BaseAgent):
         speech = await self._readable_speech(b, intent, res, ok=True)
         return AgentResult(speech=self._demo_prefix(b) + (speech or "查到了。"),
                            ui_card=card, data=res["data"])
+
+    @staticmethod
+    def _missing_required_slot(b, args: dict) -> str:
+        required = b.input_schema.get("required") or []
+        if not isinstance(required, list):
+            return ""
+        reverse_map = {mapped: slot for slot, mapped in b.tool.arg_map.items()}
+        for arg_name in required:
+            if not isinstance(arg_name, str):
+                continue
+            if arg_name not in args or args.get(arg_name) in (None, ""):
+                return reverse_map.get(arg_name, arg_name)
+        return ""
+
+    @staticmethod
+    def _need_slot(missing: str) -> AgentResult:
+        return AgentResult(
+            status=NEED_SLOT,
+            speech=_SLOT_PROMPTS.get(missing, "还差点信息，说说具体是哪一个？"),
+            missing_slots=[missing])
 
     @staticmethod
     def _slim_payload(res: dict) -> dict:
@@ -403,14 +451,20 @@ class McpBridgeAgent(BaseAgent):
             # 只补**已完成**那一单的 order_id：outcome=uncertain 的单连订单号都没有，
             # 拿它去取消等于对着一个不知道存不存在的单执行写操作。
             slots = await self._backfill_write_slots(b, declared, ctx)
+        preview_args = {**b.tool.const_args,
+                        **{b.tool.arg_map.get(k, k): v for k, v in slots.items()}}
+        preview_args.pop("_owner_user_id", None)
+        if (b.tool.idempotency_mode == "upstream" and
+                b.tool.idempotency_key_arg):
+            preview_args[b.tool.idempotency_key_arg] = "<bridge-generated>"
+        missing = self._missing_required_slot(b, preview_args)
+        if missing:
+            return self._need_slot(missing)
         if declared and not slots:
             # 追问词按缺的那个槽位来。此前恒说「要点什么？」——那是**下单**的词，
             # 取消复用同一条写路径后就会对着「取消订单」问「要点什么？」。
             # 判据不引入领域字面量：拿 capability 声明的槽位名做 key，缺声明就用通用词。
-            missing = declared[0]
-            return AgentResult(status=NEED_SLOT,
-                               speech=_SLOT_PROMPTS.get(missing, "还差点信息，说说具体是哪一个？"),
-                               missing_slots=[missing])
+            return self._need_slot(declared[0])
         goal = json.dumps({"tool": b.tool.name, **slots}, ensure_ascii=False,
                           sort_keys=True)
         if not confirmed:
@@ -444,39 +498,29 @@ class McpBridgeAgent(BaseAgent):
         idem = idem_key(user_id, LEDGER_KIND, goal)
         args = {**b.tool.const_args,
                 **{b.tool.arg_map.get(k, k): v for k, v in slots.items()}}
+        args.pop("_owner_user_id", None)
         # Internal owner is derived only from authenticated Context; it is not
         # declared as a planner slot and cannot be supplied/overridden by LLM.
-        args["_owner_user_id"] = user_id
-        if b.tool.idempotency_key_arg:
+        if b.server.demo and b.tool.forward_owner:
+            args["_owner_user_id"] = user_id
+        if (b.tool.idempotency_mode == "upstream" and
+                b.tool.idempotency_key_arg):
             args[b.tool.idempotency_key_arg] = idem
         try:
             res = await b.client.call_tool(b.tool.name, args,
-                                           timeout_s=b.tool.timeout_ms / 1000.0)
-        except asyncio.TimeoutError:
-            logger.warning("[mcp:%s] 写操作超时（结局不确定）", b.server.id)
-            if task:
-                # 账本状态机没有 uncertain 态（加终态动全仓消费方，本轮不动）；
-                # 先在 result_ref 落 outcome=uncertain——将来接订单查询入口时按它
-                # 回答，绝不能照 failed 状态说「上次下单失败了」（可能商户已受理）。
-                await self.ledger.close(task.task_id, LEDGER_FAILED,
-                                        result_ref={"error": "timeout",
-                                                    "outcome": "uncertain"})
-            # 超时不等于没下单：诚实说「不确定」，并给出**真的存在**的核对入口。
-            # 这句话的历史值得留着：验收发现它当时承诺「说『查一下我的订单』我帮你
-            # 核对」而入口并不存在（准入清单只有 menu/order），于是先改成不承诺；
-            # M-D 把 order.get 接进清单后才把承诺加回来。**先有能力再有话术**，
-            # 反过来就是把不确定包装成「有办法查清楚」。
-            # 核对靠的是幂等键而不是订单号——超时这一单我们根本没拿到订单号。
-            return AgentResult(
-                speech="下单没有拿到确认结果，可能没成功也可能已经受理。"
-                       "先别再下一单——说「查一下我的订单」，我按幂等键跟商户核对。")
-        except Exception as e:
-            # 非超时异常（子进程没起/协议错）= 确定没发出去，按失败说，不装不确定
+                                           timeout_s=b.tool.timeout_ms / 1000.0,
+                                           retry_on_session_loss=False)
+        except (asyncio.TimeoutError, McpError) as e:
+            return await self._uncertain_write(b, task, e)
+        except RuntimeError as e:
+            # 明确的本地调用前故障才可断言没发出；McpError 已在上方保守收口。
             logger.warning("[mcp:%s] 写操作失败：%s", b.server.id, e)
             if task:
                 await self.ledger.close(task.task_id, LEDGER_FAILED,
                                         result_ref={"error": str(e)[:200]})
             return AgentResult(speech="下单没成功，这一单没有发出去，请稍后再试。")
+        except Exception as e:
+            return await self._uncertain_write(b, task, e)
         if not res["ok"]:
             if task:
                 await self.ledger.close(task.task_id, LEDGER_FAILED,
@@ -505,13 +549,34 @@ class McpBridgeAgent(BaseAgent):
         # 支付链接闭环（§9.9 批 3）：工具声明了 pay_url_locator 且响应里真有链接
         # → 经 payment-gateway 登记 merchant_hosted 会话并出付款码卡
         if b.tool.pay_url_locator:
+            raw_pay_url = self._dig(order, b.tool.pay_url_locator)
             pay_card = await self._register_merchant_payment(
                 b, ctx, intent, order)
             if pay_card is not None:
                 speech += "请扫码完成支付，订单状态以商家为准。"
                 return AgentResult(speech=speech, ui_card=pay_card, data=order)
+            if raw_pay_url:
+                safe_order = self._redact_urls(order)
+                safe_speech = self._redact_urls(speech).strip()
+                safe_speech += " 支付入口暂不可用，请到商家应用内完成支付。"
+                return AgentResult(
+                    speech=safe_speech,
+                    ui_card=self._card(b, "mcp_order", safe_order),
+                    data=safe_order)
         return AgentResult(speech=speech,
                            ui_card=self._card(b, "mcp_order", order), data=order)
+
+    async def _uncertain_write(self, b, task, error: Exception) -> AgentResult:
+        logger.warning("[mcp:%s] 写操作未得到可靠响应（结局不确定）：%s",
+                       b.server.id, type(error).__name__)
+        if task:
+            # 账本状态机没有 uncertain 态；先在 result_ref 保留真实 outcome。
+            await self.ledger.close(task.task_id, LEDGER_FAILED,
+                                    result_ref={"error": "mcp_uncertain",
+                                                "outcome": "uncertain"})
+        return AgentResult(
+            speech="下单没有拿到确认结果，可能没成功也可能已经受理。"
+                   "先别再下一单——说「查一下我的订单」，我按幂等键跟商户核对。")
 
     @staticmethod
     def _dig(data: dict, dotted_path: str) -> str:
@@ -523,6 +588,27 @@ class McpBridgeAgent(BaseAgent):
             cur = cur.get(part)
         return cur if isinstance(cur, str) else ""
 
+    @staticmethod
+    def _contains_url_like(value: str) -> bool:
+        normalized = value
+        for _ in range(3):
+            decoded = html.unescape(unquote(normalized)).replace("\\/", "/")
+            if decoded == normalized:
+                break
+            normalized = decoded
+        return re.search(r"https?://", normalized, flags=re.IGNORECASE) is not None
+
+    @classmethod
+    def _redact_urls(cls, value):
+        if isinstance(value, dict):
+            return {k: cls._redact_urls(v) for k, v in value.items()
+                    if not (isinstance(k, str) and cls._contains_url_like(k))}
+        if isinstance(value, list):
+            return [cls._redact_urls(item) for item in value]
+        if isinstance(value, str):
+            return "" if cls._contains_url_like(value) else value
+        return value
+
     async def _register_merchant_payment(self, b, ctx, intent,
                                          order: dict) -> dict | None:
         """商户支付链接 → 网关登记（审计+展示+过期收口）→ payment_qr 卡。
@@ -530,8 +616,7 @@ class McpBridgeAgent(BaseAgent):
         - 域名白名单第一层在此（`pay_url_hosts`）：不合白名单**不出链接**（防被
           篡改的响应诱导扫码钓鱼），只提示到商家应用支付；网关 `PAYMENT_EXTERNAL_
           PAY_HOSTS` 是第二层。
-        - **登记失败不阻断出卡**：下单是既成事实，缺的是登记不是能力——打 warning
-          照出卡带 pay_url（qr_svg 空由 HMI 回落成链接文本）。
+        - 登记失败 fail closed：下单事实仍返回，但原始链接不进话术/卡片，用户改去商家应用。
         """
         pay_url = self._dig(order, b.tool.pay_url_locator)
         if not pay_url:
@@ -544,21 +629,11 @@ class McpBridgeAgent(BaseAgent):
             scheme_ok = parsed.scheme == "https"
         except ValueError:
             scheme_ok = False
-        if not scheme_ok or (b.server.pay_url_hosts and
-                             host not in b.server.pay_url_hosts):
+        if (not scheme_ok or not b.server.pay_url_hosts or
+                host not in b.server.pay_url_hosts):
             logger.warning("[mcp:%s] 支付链接域名不在白名单，拒出码：host=%s",
                            b.server.id, host)
             return None
-        card = {
-            "type": "payment_qr",
-            "amount": (f"{order['amount_cents'] // 100}."
-                       f"{order['amount_cents'] % 100:02d}元"
-                       if order.get("amount_cents") else ""),
-            "scene": intent.name,
-            "qr_content": pay_url,
-            "pay_url": pay_url,
-            "merchant_note": "订单状态以商家为准",
-        }
         try:
             resp = await self._payment.authorize(
                 agent_id=self.manifest.agent_id,
@@ -573,16 +648,26 @@ class McpBridgeAgent(BaseAgent):
                 channel=3,   # MERCHANT_HOSTED
                 external_pay_url=pay_url,
                 external_order_ref=str(order.get("order_id") or ""))
-        except Exception as e:      # 登记通道的任何意外都不阻断出卡
-            resp = None
-            logger.warning("[mcp:%s] 支付登记异常（照出卡）：%s", b.server.id, e)
-        if resp is not None:
-            card["payment_id"] = resp.payment_id
-            if getattr(resp, "qr_svg", ""):
-                card["qr_svg"] = resp.qr_svg
-        else:
-            logger.warning("[mcp:%s] 支付登记未完成（网关不可用？）——卡片带原始链接",
-                           b.server.id)
+        except Exception as e:
+            logger.warning("[mcp:%s] 支付登记异常，拒出原始链接：%s",
+                           b.server.id, type(e).__name__)
+            return None
+        if resp is None:
+            logger.warning("[mcp:%s] 支付登记未完成，拒出原始链接", b.server.id)
+            return None
+        card = {
+            "type": "payment_qr",
+            "amount": (f"{order['amount_cents'] // 100}."
+                       f"{order['amount_cents'] % 100:02d}元"
+                       if order.get("amount_cents") else ""),
+            "scene": intent.name,
+            "qr_content": pay_url,
+            "pay_url": pay_url,
+            "merchant_note": "订单状态以商家为准",
+            "payment_id": getattr(resp, "payment_id", ""),
+        }
+        if getattr(resp, "qr_svg", ""):
+            card["qr_svg"] = resp.qr_svg
         if b.server.demo:
             card["demo"] = True
             card["demo_label"] = "演示商户"
@@ -601,8 +686,12 @@ class McpBridgeAgent(BaseAgent):
         return "（演示商户）" if b.server.demo else ""
 
     def _card(self, b, card_type: str, payload: dict) -> dict:
-        card = {"type": card_type, "server": b.server.id, "tool": b.tool.name,
-                **{k: v for k, v in (payload or {}).items() if k != "demo"}}
+        reserved = {"_prov", "type", "server", "tool", "merchant",
+                    "buttons", "actions"}
+        card = {k: v for k, v in (payload or {}).items()
+                if k != "demo" and k not in reserved}
+        card.update({"type": card_type, "server": b.server.id,
+                     "tool": b.tool.name, "merchant": b.server.id})
         if b.server.demo:
             card["demo"] = True
             card["demo_label"] = "演示商户"

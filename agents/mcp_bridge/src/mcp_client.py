@@ -27,15 +27,48 @@ def parse_tool_result(result: dict) -> dict:
     MCP 的 `content` 是给人看的文本块；结构化结果放 `structuredContent`（协议可选）。
     两者都取：文本进话术，结构化进业务判断（**拿不到结构化就不假装成功**）。
     """
-    texts = [c.get("text", "") for c in (result.get("content") or [])
+    content = result.get("content") or []
+    texts = [c.get("text", "") for c in content
              if isinstance(c, dict) and c.get("type") == "text"]
+    structured = result.get("structuredContent")
+    data = structured if isinstance(structured, dict) else {}
+    allow_text_fallback = structured is None or structured == {}
+    if (allow_text_fallback and not data and len(content) == 1 and
+            len(texts) == 1 and isinstance(texts[0], str)):
+        def _reject_duplicate_keys(pairs):
+            obj = {}
+            for key, value in pairs:
+                if key in obj:
+                    raise ValueError("duplicate JSON object key")
+                obj[key] = value
+            return obj
+
+        def _reject_nonstandard_constant(value):
+            raise ValueError(f"non-standard JSON constant: {value}")
+
+        try:
+            candidate = json.loads(
+                texts[0], object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_nonstandard_constant)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            candidate = None
+        if isinstance(candidate, dict):
+            data = candidate
     return {"ok": not result.get("isError", False),
             "text": "\n".join(t for t in texts if t),
-            "data": result.get("structuredContent") or {}}
+            "data": data}
 
 
 class McpError(RuntimeError):
     pass
+
+
+class McpTimeout(McpError):
+    """MCP transport timeout with a conservative request-delivery marker."""
+
+    def __init__(self, message: str, *, sent: bool):
+        super().__init__(message)
+        self.sent = bool(sent)
 
 
 class StdioMcpClient:
@@ -140,7 +173,8 @@ class StdioMcpClient:
         return (await self._request("tools/list")).get("tools") or []
 
     async def call_tool(self, name: str, arguments: dict,
-                        timeout_s: float | None = None) -> dict:
+                        timeout_s: float | None = None, *,
+                        retry_on_session_loss: bool = True) -> dict:
         """返回 `{"ok": bool, "text": str, "data": dict}`（口径见 parse_tool_result）。"""
         result = await self._request("tools/call",
                                      {"name": name, "arguments": arguments},
@@ -228,12 +262,19 @@ class HttpMcpClient:
                 self._url, content=json.dumps(payload, ensure_ascii=False).encode(),
                 headers=self._post_headers(),
                 timeout=timeout_s if timeout_s is not None else self._timeout)
+        except httpx.TimeoutException as e:
+            sent = not isinstance(e, httpx.ConnectTimeout)
+            raise McpTimeout(
+                f"{self.server_id}: HTTP 请求超时 {type(e).__name__}",
+                sent=sent) from None
         except httpx.HTTPError as e:
             # 异常文本只带类型不带请求细节（headers 里有 token）
-            raise McpError(f"{self.server_id}: HTTP 请求失败 {type(e).__name__}") from e
+            raise McpError(
+                f"{self.server_id}: HTTP 请求失败 {type(e).__name__}") from None
 
     async def _request(self, method: str, params: dict | None = None,
                        timeout_s: float | None = None, *,
+                       retry_on_session_loss: bool = True,
                        _retried: bool = False) -> dict:
         async with self._lock:
             self._next_id += 1
@@ -243,12 +284,15 @@ class HttpMcpClient:
         sid = resp.headers.get("Mcp-Session-Id", "")
         if sid:
             self._session_id = sid
-        if resp.status_code == 404 and self._session_id and not _retried:
+        if (resp.status_code == 404 and self._session_id and
+                retry_on_session_loss and not _retried):
             # 商户平台重启丢会话：按 MCP 规范重新握手，本请求重试一次
             logger.info("[mcp:%s] 会话失效，重新握手", self.server_id)
             self._session_id = ""
             await self.initialize()
-            return await self._request(method, params, timeout_s, _retried=True)
+            return await self._request(
+                method, params, timeout_s,
+                retry_on_session_loss=retry_on_session_loss, _retried=True)
         if resp.status_code >= 400:
             raise McpError(f"{self.server_id}: HTTP {resp.status_code}")
         ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip()
@@ -291,8 +335,10 @@ class HttpMcpClient:
         return (await self._request("tools/list")).get("tools") or []
 
     async def call_tool(self, name: str, arguments: dict,
-                        timeout_s: float | None = None) -> dict:
+                        timeout_s: float | None = None, *,
+                        retry_on_session_loss: bool = True) -> dict:
         result = await self._request("tools/call",
                                      {"name": name, "arguments": arguments},
-                                     timeout_s=timeout_s)
+                                     timeout_s=timeout_s,
+                                     retry_on_session_loss=retry_on_session_loss)
         return parse_tool_result(result)

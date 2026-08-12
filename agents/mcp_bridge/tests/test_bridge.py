@@ -5,6 +5,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,8 +15,8 @@ from agents.mcp_bridge.src.admission import (REJECT_MISSING, REJECT_SCHEMA,
                                              REJECT_VERSION, ServerSpec, ToolSpec,
                                              admit, check_version, load_servers,
                                              schema_fingerprint)
-from agents.mcp_bridge.src.agent import LEDGER_KIND, McpBridgeAgent
-from agents.mcp_bridge.src.mcp_client import StdioMcpClient
+from agents.mcp_bridge.src.agent import LEDGER_KIND, McpBridgeAgent, _Binding
+from agents.mcp_bridge.src.mcp_client import McpError, StdioMcpClient
 
 SERVERS_YAML = "agents/mcp_bridge/servers.yaml"
 
@@ -54,12 +55,16 @@ def test_allowlist_loads_and_locks_version_and_schema(monkeypatch):
     assert all(not t.write for t in mcd.tools), "v1 只激活只读（下单归二期）"
     mcd_status = next(t for t in mcd.tools if t.intent == "mcd.order_status")
     assert mcd_status.arg_map.get("order_id") == "orderId"
+    assert mcd_status.required_scopes == ["merchant.read"]
+    assert mcd_status.forward_owner is False, "官方 remote 不得接收内部 owner 字段"
 
     luckin = next(s for s in specs if s.id == "luckin")
     assert luckin.transport == "streamable_http"
     assert "LUCKIN_MCP_TOKEN" in luckin.env_error
     assert {t.intent for t in luckin.tools} == {"luckin.order_status"}
     assert all(not t.write for t in luckin.tools)
+    assert luckin.tools[0].required_scopes == ["merchant.read"]
+    assert luckin.tools[0].forward_owner is False
 
     s = specs[0]
     assert s.version and s.demo is True and s.trust == "third_party"
@@ -70,10 +75,13 @@ def test_allowlist_loads_and_locks_version_and_schema(monkeypatch):
         "shop.menu", "shop.order", "shop.order_status", "shop.order_cancel"}
     create = next(t for t in s.tools if t.intent == "shop.order")
     assert create.require_confirm and create.compensate_tool and create.idempotency_key_arg
+    assert create.idempotency_mode == "upstream" and create.forward_owner is True
     assert create.arg_map.get("item") == "sku", "槽位词表与商户参数名解耦要有映射"
     cancel = next(t for t in s.tools if t.intent == "shop.order_cancel")
     assert cancel.write and cancel.require_confirm, "取消是写操作，必须走确认闸"
-    assert cancel.compensate_tool, "写操作缺补偿路径不许准入（对取消自身同样成立）"
+    assert cancel.compensate_policy == "terminal" and not cancel.compensate_tool
+    assert cancel.idempotency_mode == "local_at_most_once"
+    assert cancel.retry_policy == "never"
     status = next(t for t in s.tools if t.intent == "shop.order_status")
     assert not status.write, "查单是只读的"
 
@@ -114,7 +122,9 @@ def test_admit_reports_tool_missing_on_server():
 def test_write_tool_without_compensation_is_rejected():
     """§4.F 强制项：没有补偿路径（退款/取消）的写操作不许接。"""
     spec = ServerSpec(id="x", command=[], version="1", tools=[
-        ToolSpec(name="pay", intent="shop.pay", write=True, compensate_tool="")])
+        ToolSpec(name="pay", intent="shop.pay", write=True, require_confirm=True,
+                 compensate_tool="", idempotency_mode="local_at_most_once",
+                 retry_policy="never")])
     admitted, rejected = admit(spec, [{"name": "pay", "inputSchema": {}}])
     assert admitted == [] and "compensate_tool" in rejected[0]
 
@@ -329,9 +339,12 @@ class FakeClient:
         self._reply = reply or {"ok": True, "text": "已下单：拿铁大杯 25 元，订单号 DC1",
                                 "data": {"order_id": "DC1", "amount_cents": 2500}}
         self._boom = boom
+        self.retry_flags = []
 
-    async def call_tool(self, name, args, timeout_s=None):
+    async def call_tool(self, name, args, timeout_s=None,
+                        retry_on_session_loss=True):
         self.calls.append((name, dict(args)))
+        self.retry_flags.append(retry_on_session_loss)
         if self._boom:
             raise asyncio.TimeoutError("timeout")
         return self._reply
@@ -386,6 +399,8 @@ async def test_bootstrap_synthesizes_capabilities_from_allowlist(monkeypatch):
         order = next(c for c in a.manifest.capabilities if c.intent == "shop.order")
         assert order.require_confirm is True, "写操作必须声明二次确认"
         assert "演示商户" in order.description, "演示身份要出现在能力描述里"
+        assert a._bindings["shop.order"].input_schema["required"] == [
+            "sku", "idempotency_key"], "_Binding 必须保留实时 inputSchema 本体"
         rejected_ids = {r.split(":")[0] for r in a.rejections}
         assert rejected_ids == {"mcdonalds", "luckin"}
         assert all("env_var_missing" in r for r in a.rejections)
@@ -434,6 +449,7 @@ async def test_write_after_confirm_passes_request_fingerprint_as_idempotency_key
         # arg_map：规划期的 item → 商户的 sku（桥不含任何领域词，映射在准入清单里）
         assert args["sku"] == "拿铁" and "item" not in args
         assert args["_owner_user_id"] == ctx.user_id
+        assert fake.retry_flags == [False], "写路径不得在 404 重握手后自动重放"
         key = args["idempotency_key"]
         assert key and key != "t1", "幂等键必须是请求指纹，不能是每次都新的 task_id"
         assert a.ledger.closed[0][1] == "done"
@@ -443,6 +459,7 @@ async def test_write_after_confirm_passes_request_fingerprint_as_idempotency_key
         await run_handle(a, "shop.order", slots={"item": "拿铁", "size": "大杯"},
                          raw_text="点一杯拿铁", ctx=ctx, meta={"confirmed": "true"})
         assert fake.calls[0][1]["idempotency_key"] == key
+        assert fake.retry_flags[-1] is False
     finally:
         await a.shutdown()
 
@@ -504,11 +521,208 @@ async def test_write_timeout_is_reported_as_uncertain_not_as_failure():
 
 
 @pytest.mark.asyncio
+async def test_live_schema_requires_every_required_argument_before_outbound_call():
+    """实时 schema.required 有两个参数时，只填其中一个必须追问，不能打一发必败请求。"""
+    a = McpBridgeAgent()
+    fake = FakeClient(reply={"ok": True, "text": "x", "data": {}})
+    server = ServerSpec(id="merchant", command=[], version="", tools=[])
+    tool = ToolSpec(name="lookup", intent="merchant.lookup", slots=["account", "region"],
+                    arg_map={"account": "accountId", "region": "regionCode"})
+    a._bindings[tool.intent] = _Binding(
+        server, fake, tool,
+        {"type": "object",
+         "properties": {"accountId": {"type": "string"},
+                        "regionCode": {"type": "string"}},
+         "required": ["accountId", "regionCode"]})
+    try:
+        res = await run_handle(a, tool.intent, slots={"account": "A-1"},
+                               raw_text="查账号")
+        assert res.status == "need_slot"
+        assert res.missing_slots == ["region"]
+        assert fake.calls == []
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_required_scopes_are_authoritative_and_remote_owner_is_not_forwarded():
+    a = McpBridgeAgent()
+    fake = FakeClient(reply={"ok": True, "text": "查到了", "data": {}})
+    server = ServerSpec(id="official-merchant", command=[], version="", tools=[],
+                        transport="streamable_http", demo=False)
+    tool = ToolSpec(name="query-order", intent="merchant.order_status",
+                    slots=["order_id"], required_scopes=["merchant.read"],
+                    forward_owner=True)  # 故意误配：remote 仍不得下发内部 owner
+    a._bindings[tool.intent] = _Binding(
+        server, fake, tool,
+        {"type": "object", "properties": {"order_id": {"type": "string"}},
+         "required": ["order_id"]})
+    try:
+        ctx = make_context()
+        denied = await run_handle(
+            a, tool.intent, slots={"order_id": "O-1"}, raw_text="查单", ctx=ctx,
+            meta={"speaker_id": "voiceprint-user", "granted_scopes": "profile.read"})
+        assert "授权" in denied.speech
+        assert fake.calls == [], "user_id/声纹都不能代替 merchant.read 授权"
+
+        allowed = await run_handle(
+            a, tool.intent, slots={"order_id": "O-1"}, raw_text="查单", ctx=ctx,
+            meta={"granted_scopes": "profile.read,merchant.read"})
+        assert allowed.status == "ok"
+        assert "_owner_user_id" not in fake.calls[0][1]
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_remote_write_needs_merchant_write_and_never_forwards_owner_or_replays():
+    a = McpBridgeAgent()
+    a.ledger = FakeLedger()
+    fake = FakeClient()
+    server = ServerSpec(id="official-merchant", command=[], version="", tools=[],
+                        transport="streamable_http", demo=False)
+    tool = ToolSpec(name="create-order", intent="merchant.order", write=True,
+                    require_confirm=True, compensate_policy="terminal",
+                    idempotency_mode="local_at_most_once", retry_policy="never",
+                    required_scopes=["merchant.write"], forward_owner=True)
+    a._bindings[tool.intent] = _Binding(
+        server, fake, tool,
+        {"type": "object", "properties": {}, "required": []})
+    try:
+        denied = await run_handle(
+            a, tool.intent, raw_text="下单", meta={"confirmed": "true",
+                                                  "granted_scopes": "merchant.read"})
+        assert "授权" in denied.speech and fake.calls == []
+
+        allowed = await run_handle(
+            a, tool.intent, raw_text="下单", meta={"confirmed": "true",
+                                                  "granted_scopes": "merchant.write"})
+        assert allowed.status == "ok"
+        assert "_owner_user_id" not in fake.calls[0][1]
+        assert fake.retry_flags == [False]
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_non_exposed_tool_is_neither_registered_nor_dispatchable():
+    a = McpBridgeAgent()
+    fake = FakeClient()
+    server = ServerSpec(id="merchant", command=[], version="", tools=[])
+    tool = ToolSpec(name="cancel.internal", intent="merchant.cancel.internal",
+                    expose=False)
+    a._bindings[tool.intent] = _Binding(server, fake, tool, {})
+    a._sync_capabilities()
+    try:
+        assert not list(a.manifest.capabilities)
+        res = await run_handle(a, tool.intent, raw_text="取消")
+        assert "还没接入" in res.speech
+        assert fake.calls == []
+    finally:
+        await a.shutdown()
+
+
+def test_card_filters_external_actions_and_overwrites_trusted_identity_fields():
+    a = McpBridgeAgent()
+    server = ServerSpec(id="official-merchant", command=[], version="", tools=[])
+    tool = ToolSpec(name="query-order", intent="merchant.order_status")
+    binding = SimpleNamespace(server=server, tool=tool)
+    card = a._card(binding, "mcp_result", {
+        "type": "external", "server": "evil", "tool": "evil",
+        "merchant": "evil", "_prov": {"source": "evil"},
+        "buttons": [{"title": "点我"}], "actions": [{"url": "https://evil"}],
+        "order_id": "O-1",
+    })
+    assert card["type"] == "mcp_result"
+    assert card["server"] == card["merchant"] == "official-merchant"
+    assert card["tool"] == "query-order"
+    assert card["_prov"]["vendor"] == "official-merchant"
+    assert card["order_id"] == "O-1"
+    assert "buttons" not in card and "actions" not in card
+
+
+def test_card_drops_all_reserved_payload_keys_before_trusted_stamp(monkeypatch):
+    """即使盖章 helper 被替换，外部 `_prov` 也不能在中间 card 中存活。"""
+    monkeypatch.setattr("agents.mcp_bridge.src.agent.attach",
+                        lambda card, *args, **kwargs: card)
+    a = McpBridgeAgent()
+    binding = SimpleNamespace(
+        server=ServerSpec(id="merchant", command=[], version="", tools=[]),
+        tool=ToolSpec(name="query", intent="merchant.query"))
+    card = a._card(binding, "trusted", {
+        "_prov": {"vendor": "evil"}, "type": "evil", "server": "evil",
+        "tool": "evil", "merchant": "evil", "buttons": [1], "actions": [2],
+        "value": 7,
+    })
+    assert "_prov" not in card
+    assert card == {"value": 7, "type": "trusted", "server": "merchant",
+                    "tool": "query", "merchant": "merchant"}
+
+
+@pytest.mark.asyncio
+async def test_mcp_connect_timeout_on_write_is_still_uncertain():
+    """即便客户端判断请求可能没发出，写路径也不把它说成确定没发出。"""
+    from agents.mcp_bridge.src import mcp_client
+
+    timeout_type = getattr(mcp_client, "McpTimeout")
+
+    class _Timeout(FakeClient):
+        async def call_tool(self, name, args, timeout_s=None,
+                            retry_on_session_loss=True):
+            self.calls.append((name, dict(args)))
+            self.retry_flags.append(retry_on_session_loss)
+            raise timeout_type("merchant: HTTP timeout", sent=False)
+
+    a, _ = await _agent()
+    timeout_client = _Timeout()
+    for binding in a._bindings.values():
+        binding.client = timeout_client
+    try:
+        res = await run_handle(a, "shop.order", slots={"item": "拿铁"},
+                               raw_text="点一杯拿铁", meta={"confirmed": "true"})
+        assert "没有拿到确认结果" in res.speech
+        assert "没有发出去" not in res.speech
+        assert timeout_client.retry_flags == [False]
+        assert a.ledger.closed[0][2]["outcome"] == "uncertain"
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [
+    McpError("merchant: response parse failed"),
+    OSError("transport broke after send"),
+])
+async def test_nonlocal_write_errors_are_uncertain(failure):
+    """MCP/传输错误不能断言上游确定未受理；仅明确本地 RuntimeError 可 definite。"""
+    class _McpFailure(FakeClient):
+        async def call_tool(self, name, args, timeout_s=None,
+                            retry_on_session_loss=True):
+            self.calls.append((name, dict(args)))
+            self.retry_flags.append(retry_on_session_loss)
+            raise failure
+
+    a, _ = await _agent()
+    failed = _McpFailure()
+    for binding in a._bindings.values():
+        binding.client = failed
+    try:
+        res = await run_handle(a, "shop.order", slots={"item": "拿铁"},
+                               raw_text="点一杯拿铁", meta={"confirmed": "true"})
+        assert "没有拿到确认结果" in res.speech
+        assert "没有发出去" not in res.speech
+        assert a.ledger.closed[0][2]["outcome"] == "uncertain"
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_write_non_timeout_error_is_reported_as_definite_failure():
     """非超时异常（子进程没起/协议错）= 确定没发出去——按失败说，不装不确定
     （过度不确定会让用户白跑一趟核实）。"""
     class _Boom(FakeClient):
-        async def call_tool(self, name, args, timeout_s=None):
+        async def call_tool(self, name, args, timeout_s=None,
+                            retry_on_session_loss=True):
             raise RuntimeError("proc not started")
 
     a, _ = await _agent()
@@ -628,6 +842,8 @@ async def test_cancel_after_confirm_backfills_the_order_id_from_the_ledger():
                                   "data": {"order_id": "DC1", "status": "refunded"}})
     a.ledger = FakeLedger(history=[_ledger_task(order_id="DC1")])
     try:
+        assert a._bindings["shop.order_cancel"].input_schema["required"] == [
+            "order_id"], "回填必须在实时 required 校验前发生"
         res = await run_handle(a, "shop.order_cancel", raw_text="那杯咖啡不要了",
                                meta={"confirmed": "true"})
         assert res.status == "ok"

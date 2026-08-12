@@ -7,9 +7,9 @@
 #   2. tool 白名单（server 多提供的工具直接忽略；清单里有而 server 没有 → 记拒绝理由）
 #   3. tool schema 指纹（`schema_sha`，接口变了就拒载重审；留空=首次接入，只记录不校验）
 #
-# 写操作额外强制：补偿声明（§9.9 批 3）——`compensate_policy: tool`（默认）须给
-# `compensate_tool` 且在本 server 白名单内；`abandon_unpaid`（创建未支付订单、扫码
-# 才付钱型）须在 confirm_prompt 说明「不支付将自动取消」。
+# 写操作额外强制：显式幂等模式 + `require_confirm: true` + 补偿声明。`tool` 须给
+# 通过准入的 `compensate_tool`；`abandon_unpaid` 须在 confirm_prompt 确定性说明
+# 「不支付会自动取消/失效/过期」；`terminal` 只用于取消等生命周期终态动作。
 #
 # 批 3 起支持 `transport: streamable_http`（仅官方商户远程端点）：`url` + `headers`
 # （值可 `${ENV_VAR}` 引用——token 不进本文件；**缺 env 该 server 整台拒载**）。
@@ -33,6 +33,11 @@ servers:
       - name: menu.list
         intent: shop.menu
         write: false
+        expose: true
+        forward_owner: true
+        required_scopes: []
+        idempotency_mode: none
+        retry_policy: safe
         schema_sha: "f46214ddb414"
         description: 查看咖啡店菜单与价格（演示商户）
         slots: []
@@ -43,6 +48,11 @@ servers:
         intent: shop.order
         write: true
         require_confirm: true          # 中央确认闸（M0a）会强制落实，Agent 漏标也拦得住
+        expose: true
+        forward_owner: true
+        required_scopes: []
+        idempotency_mode: upstream
+        retry_policy: never
         idempotency_key_arg: idempotency_key
         compensate_tool: order.cancel  # 缺它 → admission 拒载
         schema_sha: "041a13dc1703"
@@ -61,6 +71,11 @@ servers:
       - name: order.get
         intent: shop.order_status
         write: false
+        expose: true
+        forward_owner: true
+        required_scopes: []
+        idempotency_mode: none
+        retry_policy: safe
         schema_sha: "df8761c5f320"
         description: 查询咖啡订单的状态（演示商户）
         slots: [order_id]
@@ -75,8 +90,13 @@ servers:
         intent: shop.order_cancel
         write: true
         require_confirm: true
+        expose: true
+        forward_owner: true
+        required_scopes: []
+        idempotency_mode: local_at_most_once
+        retry_policy: never
         idempotency_key_arg: ""
-        compensate_tool: order.cancel   # 取消自身幂等（再取消返回 duplicate）
+        compensate_policy: terminal
         schema_sha: "943700876d93"
         description: 取消咖啡订单并退款（演示商户，不产生真实交易）
         confirm_prompt: "准备取消订单 {args} 并退款，确认吗？"
@@ -115,6 +135,11 @@ servers:
         intent: mcd.menu
         speech_mode: summarize
         write: false
+        expose: true
+        forward_owner: false
+        required_scopes: []
+        idempotency_mode: none
+        retry_policy: safe
         schema_sha: "9e2fcd061b03"
         # 诚实描述：这是常见餐品与营养成分（能量/蛋白质等），不是当店实时价目——
         # 带价格的当店菜单（query-meals）required storeCode，归二期多步链
@@ -126,6 +151,11 @@ servers:
         intent: mcd.order_status
         speech_mode: summarize
         write: false
+        expose: true
+        forward_owner: false
+        required_scopes: [merchant.read]
+        idempotency_mode: none
+        retry_policy: safe
         schema_sha: "6c5c0def4de0"
         description: 查询麦当劳订单状态与配送进度（商家是订单状态的真相源）
         slots: [order_id]
@@ -139,7 +169,7 @@ servers:
   #   （ws8 红线），结构性不可激活；「附近的瑞幸」本就归 nearby.search（高德）。
   # - searchProductForMcp/queryProductDetailInfo/previewOrder/createOrder 全链硬依赖
   #   deptId（先选店）与 productList 结构化数组——同麦当劳，归二期编排能力面。
-  # - **cancelOrder 真机存在**（补偿两态里的 tool 形态，与麦当劳 abandon_unpaid 各占
+  # - **cancelOrder 真机存在**（外部补偿里的 tool 形态，与麦当劳 abandon_unpaid 各占
   #   其一）：二期 createOrder 接入时 compensate_policy: tool + compensate_tool:
   #   cancelOrder；v1 不单独激活取消（写操作且上游下单未接，空转能力）。
   - id: luckin
@@ -157,6 +187,11 @@ servers:
         intent: luckin.order_status
         speech_mode: summarize
         write: false
+        expose: true
+        forward_owner: false
+        required_scopes: [merchant.read]
+        idempotency_mode: none
+        retry_policy: safe
         schema_sha: "095c2b916b52"
         description: 查询瑞幸咖啡订单详情与状态（商家是订单状态的真相源）
         slots: [order_id]

@@ -11,7 +11,8 @@ import json
 import httpx
 import pytest
 
-from agents.mcp_bridge.src.mcp_client import HttpMcpClient, McpError
+from agents.mcp_bridge.src.mcp_client import (HttpMcpClient, McpError,
+                                              parse_tool_result)
 
 TOKEN = "Bearer sekret-abc123"
 
@@ -123,13 +124,30 @@ def test_rpc_error_raises_without_leaking_token(caplog):
 
 def test_http_error_wrapped_without_request_details():
     def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused")
+        raise httpx.ConnectError("connection refused url-secret header-secret",
+                                 request=request)
 
     c = _client(handler)
     with pytest.raises(McpError) as e:
         asyncio.run(c.initialize())
     msg = str(e.value)
     assert "sekret" not in msg and "ConnectError" in msg
+    assert e.value.__cause__ is None, "异常链也不能保留可能含 URL/header 的 httpx 原异常"
+
+
+@pytest.mark.parametrize("exc_type", [
+    httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError,
+])
+def test_after_send_http_transport_errors_are_marked_sent_without_secrets(exc_type):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise exc_type("broken url-secret header-secret", request=request)
+
+    c = _client(handler)
+    with pytest.raises(McpError) as exc:
+        asyncio.run(c.initialize())
+    assert isinstance(exc.value, McpError)
+    assert "secret" not in str(exc.value)
+    assert exc.value.__cause__ is None
 
 
 def test_call_tool_result_normalized():
@@ -153,6 +171,106 @@ def test_call_tool_result_normalized():
     res = asyncio.run(c.call_tool("order.create", {"item": "burger"}))
     assert res["ok"] and res["text"] == "下单成功"
     assert res["data"]["payH5Url"] == "https://pay.x/1"
+
+
+def test_text_only_json_object_is_parsed_without_losing_raw_text():
+    raw = '{"order_id":"m1","nested":{"ok":true}}'
+    res = parse_tool_result({"content": [{"type": "text", "text": raw}]})
+    assert res["text"] == raw
+    assert res["data"] == {"order_id": "m1", "nested": {"ok": True}}
+
+
+def test_text_json_fallback_requires_exactly_one_content_block():
+    res = parse_tool_result({"content": [
+        {"type": "text", "text": '{"order_id":"m1"}'},
+        {"type": "image", "data": "opaque"},
+    ]})
+    assert res["data"] == {}
+
+
+@pytest.mark.parametrize("raw", [
+    '{"amount":NaN}', '{"amount":Infinity}', '{"amount":-Infinity}',
+])
+def test_text_json_fallback_rejects_nonstandard_json_constants(raw):
+    assert parse_tool_result(
+        {"content": [{"type": "text", "text": raw}]})["data"] == {}
+
+
+def test_non_object_structured_content_is_not_forwarded_as_data():
+    res = parse_tool_result({
+        "structuredContent": ["not", "an", "object"],
+        "content": [{"type": "text", "text": "not json"}],
+    })
+    assert res["data"] == {}
+
+
+@pytest.mark.parametrize("content", [
+    [{"type": "text", "text": '[{"order_id":"m1"}]'}],
+    [{"type": "text", "text": "42"}],
+    [{"type": "text", "text": 'result={"order_id":"m1"}'}],
+    [{"type": "text", "text": '{"order_id":"m1"}'},
+     {"type": "text", "text": '{"status":"ok"}'}],
+    [{"type": "text", "text": '{"order_id":"m1","order_id":"m2"}'}],
+])
+def test_text_fallback_rejects_non_object_mixed_multiblock_and_duplicate_keys(content):
+    res = parse_tool_result({"content": content})
+    assert res["data"] == {}
+    assert res["text"], "原始文本仍要保留给话术与审计"
+
+
+@pytest.mark.parametrize(("exc_type", "sent"), [
+    (httpx.ConnectTimeout, False),
+    (httpx.ReadTimeout, True),
+    (httpx.WriteTimeout, True),
+    (httpx.PoolTimeout, True),
+    (httpx.TimeoutException, True),
+])
+def test_http_timeouts_keep_conservative_sent_classification_without_secrets(
+        exc_type, sent):
+    secret_url = "https://mcp.example.cn/rpc?token=url-secret"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise exc_type("timeout token-secret", request=request)
+
+    c = HttpMcpClient("merchant", secret_url,
+                      {"Authorization": "Bearer header-secret"})
+    asyncio.run(c.start())
+    c._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with pytest.raises(McpError) as exc:
+        asyncio.run(c.initialize())
+    assert type(exc.value).__name__ == "McpTimeout"
+    assert exc.value.sent is sent
+    message = str(exc.value)
+    assert "url-secret" not in message
+    assert "header-secret" not in message
+    assert "token-secret" not in message
+    assert exc.value.__cause__ is None
+
+
+def test_write_call_disables_session_loss_replay():
+    calls = {"init": 0, "tool": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        rid = body.get("id")
+        if rid is None:
+            return httpx.Response(202)
+        if body["method"] == "initialize":
+            calls["init"] += 1
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "application/json",
+                         "Mcp-Session-Id": f"s{calls['init']}"},
+                text=_rpc_result(rid, {"serverInfo": {}}))
+        calls["tool"] += 1
+        return httpx.Response(404)
+
+    c = _client(handler)
+    asyncio.run(c.initialize())
+    with pytest.raises(McpError):
+        asyncio.run(c.call_tool("order.create", {},
+                                retry_on_session_loss=False))
+    assert calls == {"init": 1, "tool": 1}, "写调用不能重握手后自动重放"
 
 
 def test_alive_semantics_http():

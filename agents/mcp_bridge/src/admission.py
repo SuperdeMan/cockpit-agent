@@ -25,7 +25,8 @@ REJECT_ENV = "env_var_missing"
 REJECT_COMPENSATE = "compensate_invalid"
 
 _ENV_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
-COMPENSATE_POLICIES = ("tool", "abandon_unpaid")
+COMPENSATE_POLICIES = ("tool", "abandon_unpaid", "terminal")
+IDEMPOTENCY_MODES = ("upstream", "local_at_most_once")
 
 
 @dataclass
@@ -34,16 +35,21 @@ class ToolSpec:
     intent: str                  # 映射成的 capability intent
     write: bool = False
     require_confirm: bool = False
+    expose: bool = True
+    forward_owner: bool = False
+    required_scopes: list = field(default_factory=list)
     description: str = ""
     examples: list = field(default_factory=list)
     slots: list = field(default_factory=list)
     schema_sha: str = ""         # 声明的 inputSchema 指纹（空=首次接入，不校验只记录）
     timeout_ms: int = 15000
     idempotency_key_arg: str = ""
+    idempotency_mode: str = "none"
+    retry_policy: str = "safe"
     compensate_tool: str = ""   # 补偿工具（退款/取消）；policy=tool 时必填且须在白名单
-    # 补偿形态（§9.9 批 3）：`tool`（默认，下单即扣款型——补偿=退款/取消工具）|
+    # 补偿形态：`tool`（下单即扣款型——补偿=退款/取消工具）|
     # `abandon_unpaid`（创建**未支付**订单、扫码才付钱型——天然补偿=不支付+商户
-    # 自动过期，此时 confirm_prompt 必须说明「不支付将自动取消」）。诚实化不是放宽。
+    # 自动过期）| `terminal`（取消等生命周期终态，不再向下补偿）。
     compensate_policy: str = "tool"
     # 商户下单响应里支付链接的点路径（如 "payH5Url" / "order.payUrl"），从
     # structuredContent 提取——声明式，桥核心零领域词（§9.9 支付链接闭环）。
@@ -119,12 +125,18 @@ def load_servers(path: str) -> list:
         tools = [ToolSpec(
             name=t["name"], intent=t["intent"], write=bool(t.get("write", False)),
             require_confirm=bool(t.get("require_confirm", False)),
+            expose=bool(t.get("expose", True)),
+            forward_owner=bool(t.get("forward_owner", False)),
+            required_scopes=[str(scope) for scope in
+                             (t.get("required_scopes") or [])],
             description=t.get("description", ""), examples=t.get("examples", []) or [],
             slots=t.get("slots", []) or [],
             schema_sha=str(t.get("schema_sha", "") or ""),
             confirm_prompt=str(t.get("confirm_prompt", "") or ""),
             timeout_ms=int(t.get("timeout_ms", 15000) or 15000),
             idempotency_key_arg=str(t.get("idempotency_key_arg", "") or ""),
+            idempotency_mode=str(t.get("idempotency_mode", "none") or "none"),
+            retry_policy=str(t.get("retry_policy", "safe") or "safe"),
             compensate_tool=str(t.get("compensate_tool", "") or ""),
             compensate_policy=str(t.get("compensate_policy", "tool") or "tool"),
             pay_url_locator=str(t.get("pay_url_locator", "") or ""),
@@ -166,11 +178,9 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
     - server 多提供的工具**直接忽略**（记日志）——动态放行正是要防的事。
     - allowlist 里有、server 没有 → 拒绝并记录（配置与现实脱节要看得见）。
     - schema 指纹对不上 → 拒绝（接口变了要重审，不自动接受）。
-    - `write: true` 却没声明 `compensate_tool` → 拒绝（母提案 §4.F 强制项：
-      没有补偿路径的写操作不许接）。
+    - 写工具必须显式确认、幂等模式与补偿政策；tool 型补偿目标自身也必须准入。
     """
     offered = {t.get("name"): t for t in offered_tools if isinstance(t, dict)}
-    declared_names = {t.name for t in spec.tools}
     admitted, rejected = [], []
     for t in spec.tools:
         found = offered.get(t.name)
@@ -183,6 +193,15 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
                             f"实际 {actual_sha}）")
             continue
         if t.write:
+            if not t.require_confirm:
+                rejected.append(
+                    f"{t.name}: 写操作 require_confirm 必须为 true")
+                continue
+            if t.idempotency_mode not in IDEMPOTENCY_MODES:
+                rejected.append(
+                    f"{t.name}: 写操作 idempotency_mode 必须显式为 "
+                    "upstream 或 local_at_most_once")
+                continue
             if t.compensate_policy not in COMPENSATE_POLICIES:
                 rejected.append(f"{t.name}: {REJECT_COMPENSATE}"
                                 f"（未知 compensate_policy={t.compensate_policy!r}）")
@@ -192,20 +211,51 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
                     rejected.append(f"{t.name}: 写操作未声明 compensate_tool"
                                     f"（缺补偿路径不许接）")
                     continue
-                # 存在性校验（批 3 补死）：声明了却不在本 server 白名单 =
-                # 「声明存在 ≠ 能用」的 demo-coffee 教训在准入器里的残留
-                if t.compensate_tool not in declared_names:
-                    rejected.append(
-                        f"{t.name}: {REJECT_COMPENSATE}（compensate_tool="
-                        f"{t.compensate_tool!r} 不在本 server 准入白名单）")
-                    continue
-            else:      # abandon_unpaid：未支付订单，补偿=不支付+商户过期
-                if not t.confirm_prompt:
+            elif t.compensate_policy == "abandon_unpaid":
+                prompt = t.confirm_prompt
+                if ("不支付" not in prompt or "自动" not in prompt or
+                        not any(term in prompt for term in ("取消", "失效", "过期"))):
                     rejected.append(
                         f"{t.name}: {REJECT_COMPENSATE}（abandon_unpaid 必须给 "
-                        f"confirm_prompt 且说明「不支付将自动取消」）")
+                        f"confirm_prompt 且说明「不支付」会「自动取消/失效/过期」）")
                     continue
-        admitted.append((t, found))
+            # terminal：该动作本身就是生命周期终态，不再要求下一跳补偿工具。
+
+            if t.idempotency_mode == "upstream":
+                properties = ((found.get("inputSchema") or {}).get("properties")
+                              if isinstance(found.get("inputSchema"), dict) else {})
+                if (not t.idempotency_key_arg or
+                        t.idempotency_key_arg not in (properties or {})):
+                    rejected.append(
+                        f"{t.name}: upstream idempotency_key_arg="
+                        f"{t.idempotency_key_arg!r} 不在实时 inputSchema.properties")
+                    continue
+            if (t.idempotency_mode == "local_at_most_once" and
+                    t.retry_policy != "never"):
+                rejected.append(
+                    f"{t.name}: local_at_most_once 要求 retry_policy=never")
+                continue
+        if t.pay_url_locator and not spec.pay_url_hosts:
+            rejected.append(
+                f"{t.name}: pay_url_locator 已声明但 pay_url_hosts 为空")
+            continue
+        admitted.append((t, found.get("inputSchema") or {}))
+
+    # 二阶段校验：补偿目标必须自己通过全部准入，并且是另一件 terminal 写工具。
+    # 这样 schema 漂移、只读伪补偿、自引用与 A↔B 环都不能替 create 背书。
+    admitted_by_name = {tool.name: tool for tool, _ in admitted}
+    kept = []
+    for tool, schema in admitted:
+        if tool.write and tool.compensate_policy == "tool":
+            target = admitted_by_name.get(tool.compensate_tool)
+            if (target is None or target.name == tool.name or not target.write or
+                    target.compensate_policy != "terminal"):
+                rejected.append(
+                    f"{tool.name}: {REJECT_COMPENSATE}（compensate_tool="
+                    f"{tool.compensate_tool!r} 必须是已准入的独立 terminal 写工具）")
+                continue
+        kept.append((tool, schema))
+    admitted = kept
     extra = sorted(set(offered) - {t.name for t in spec.tools})
     if extra:
         logger.info("[mcp:%s] 忽略未准入的工具 %s（接入永远是人工准入）", spec.id, extra)
