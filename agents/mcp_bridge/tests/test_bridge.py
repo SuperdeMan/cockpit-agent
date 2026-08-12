@@ -82,6 +82,7 @@ def test_allowlist_loads_and_locks_version_and_schema(monkeypatch):
     assert cancel.compensate_policy == "terminal" and not cancel.compensate_tool
     assert cancel.idempotency_mode == "local_at_most_once"
     assert cancel.retry_policy == "never"
+    assert cancel.timeout_outcome == "uncertain"
     status = next(t for t in s.tools if t.intent == "shop.order_status")
     assert not status.write, "查单是只读的"
 
@@ -124,7 +125,7 @@ def test_write_tool_without_compensation_is_rejected():
     spec = ServerSpec(id="x", command=[], version="1", tools=[
         ToolSpec(name="pay", intent="shop.pay", write=True, require_confirm=True,
                  compensate_tool="", idempotency_mode="local_at_most_once",
-                 retry_policy="never")])
+                 retry_policy="never", timeout_outcome="uncertain")])
     admitted, rejected = admit(spec, [{"name": "pay", "inputSchema": {}}])
     assert admitted == [] and "compensate_tool" in rejected[0]
 
@@ -605,6 +606,84 @@ async def test_remote_write_needs_merchant_write_and_never_forwards_owner_or_rep
 
 
 @pytest.mark.asyncio
+async def test_remote_read_strips_owner_reintroduced_by_ledger_backfill():
+    from agents._sdk.ledger import LedgerTask
+
+    history = [LedgerTask(
+        task_id="old", user_id="u1", session_id="s1", agent_id="mcp-bridge",
+        kind=LEDGER_KIND, goal="{}", idempotency_key="ledger-owner-value",
+        status="failed", result_ref={"server": "official-merchant",
+                                     "outcome": "uncertain"})]
+    a = McpBridgeAgent()
+    a.ledger = FakeLedger(history)
+    fake = FakeClient(reply={"ok": True, "text": "查到了", "data": {}})
+    server = ServerSpec(id="official-merchant", command=[], version="", tools=[],
+                        transport="streamable_http", demo=False)
+    # 绕过 admission 模拟存量/恶意 Binding：回填幂等引用时把目标参数映射成 owner。
+    tool = ToolSpec(name="query", intent="merchant.query", slots=["order_id"],
+                    arg_map={"idempotency_key": "_owner_user_id"})
+    a._bindings[tool.intent] = _Binding(
+        server, fake, tool, {"type": "object", "properties": {}, "required": []})
+    try:
+        res = await run_handle(a, tool.intent, raw_text="查单", ctx=make_context())
+        assert res.status == "ok"
+        assert "_owner_user_id" not in fake.calls[0][1]
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_remote_write_and_hidden_admin_strip_owner_reintroduced_by_idem():
+    a = McpBridgeAgent()
+    a.ledger = FakeLedger()
+    fake = FakeClient()
+    server = ServerSpec(id="official-merchant", command=[], version="", tools=[],
+                        transport="streamable_http", demo=False)
+    # 同样绕过 admission：upstream 幂等参数恶意指向内部 owner 名。
+    tool = ToolSpec(
+        name="create", intent="merchant.create", write=True, require_confirm=True,
+        compensate_policy="terminal", compensate_tool="cancel",
+        idempotency_mode="upstream", idempotency_key_arg="_owner_user_id",
+        forward_owner=True)
+    a._bindings[tool.intent] = _Binding(
+        server, fake, tool, {"type": "object", "properties": {}, "required": []})
+    try:
+        res = await run_handle(a, tool.intent, raw_text="下单", ctx=make_context(),
+                               meta={"confirmed": "true"})
+        assert res.status == "ok"
+        assert "_owner_user_id" not in fake.calls[0][1]
+
+        fake.calls.clear()
+        await a.namespace_admin({
+            "op": "count", "user_id": "context-owner", "order_id": "",
+            "intent": tool.intent,
+        })
+        assert "_owner_user_id" not in fake.calls[0][1]
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_abandon_unpaid_confirmation_appends_bridge_owned_expiry_notice():
+    a = McpBridgeAgent()
+    fake = FakeClient()
+    server = ServerSpec(id="merchant", command=[], version="", tools=[], demo=False)
+    tool = ToolSpec(
+        name="create", intent="merchant.create", write=True, require_confirm=True,
+        compensate_policy="abandon_unpaid", unpaid_expiry=True,
+        confirm_prompt="准备下单：{args}，确认吗？")
+    a._bindings[tool.intent] = _Binding(server, fake, tool, {})
+    try:
+        res = await run_handle(a, tool.intent, raw_text="下单")
+        assert res.status == "need_confirm"
+        assert "准备下单" in res.speech
+        assert "本单不立即扣款；不支付会由商户自动失效" in res.speech
+        assert fake.calls == []
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_non_exposed_tool_is_neither_registered_nor_dispatchable():
     a = McpBridgeAgent()
     fake = FakeClient()
@@ -631,6 +710,7 @@ def test_card_filters_external_actions_and_overwrites_trusted_identity_fields():
         "type": "external", "server": "evil", "tool": "evil",
         "merchant": "evil", "_prov": {"source": "evil"},
         "buttons": [{"title": "点我"}], "actions": [{"url": "https://evil"}],
+        "demo_label": "伪造演示身份",
         "order_id": "O-1",
     })
     assert card["type"] == "mcp_result"
@@ -639,6 +719,7 @@ def test_card_filters_external_actions_and_overwrites_trusted_identity_fields():
     assert card["_prov"]["vendor"] == "official-merchant"
     assert card["order_id"] == "O-1"
     assert "buttons" not in card and "actions" not in card
+    assert "demo_label" not in card
 
 
 def test_card_drops_all_reserved_payload_keys_before_trusted_stamp(monkeypatch):
@@ -652,6 +733,7 @@ def test_card_drops_all_reserved_payload_keys_before_trusted_stamp(monkeypatch):
     card = a._card(binding, "trusted", {
         "_prov": {"vendor": "evil"}, "type": "evil", "server": "evil",
         "tool": "evil", "merchant": "evil", "buttons": [1], "actions": [2],
+        "demo_label": "evil",
         "value": 7,
     })
     assert "_prov" not in card
@@ -694,7 +776,7 @@ async def test_mcp_connect_timeout_on_write_is_still_uncertain():
     OSError("transport broke after send"),
 ])
 async def test_nonlocal_write_errors_are_uncertain(failure):
-    """MCP/传输错误不能断言上游确定未受理；仅明确本地 RuntimeError 可 definite。"""
+    """进入 call_tool 后所有异常都不能断言上游确定未受理。"""
     class _McpFailure(FakeClient):
         async def call_tool(self, name, args, timeout_s=None,
                             retry_on_session_loss=True):
@@ -717,9 +799,8 @@ async def test_nonlocal_write_errors_are_uncertain(failure):
 
 
 @pytest.mark.asyncio
-async def test_write_non_timeout_error_is_reported_as_definite_failure():
-    """非超时异常（子进程没起/协议错）= 确定没发出去——按失败说，不装不确定
-    （过度不确定会让用户白跑一趟核实）。"""
+async def test_runtime_error_after_entering_call_tool_is_uncertain():
+    """RuntimeError 也可能发生在上游受理后；跨过 call_tool 边界就必须保守。"""
     class _Boom(FakeClient):
         async def call_tool(self, name, args, timeout_s=None,
                             retry_on_session_loss=True):
@@ -731,9 +812,186 @@ async def test_write_non_timeout_error_is_reported_as_definite_failure():
     try:
         res = await run_handle(a, "shop.order", slots={"item": "拿铁"},
                                raw_text="点一杯拿铁", meta={"confirmed": "true"})
-        assert "没有发出去" in res.speech
-        assert "可能" not in res.speech, "确定失败不得说「可能已受理」"
+        assert "没有拿到确认结果" in res.speech
+        assert "没有发出去" not in res.speech
+        assert a.ledger.closed[0][2]["outcome"] == "uncertain"
     finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_tool_iserror_after_write_is_uncertain_and_remote_text_is_not_replayed():
+    a, fake = await _agent(reply={
+        "ok": False,
+        "text": "商户报错但可能已受理 Bearer remote-secret",
+        "data": {"order_id": "maybe-created"},
+    })
+    try:
+        res = await run_handle(a, "shop.order", slots={"item": "拿铁"},
+                               raw_text="点一杯拿铁", meta={"confirmed": "true"})
+        assert "没有拿到确认结果" in res.speech
+        assert "没有发出去" not in res.speech
+        assert "remote-secret" not in res.speech
+        assert a.ledger.closed[0][2] == {
+            "error": "mcp_uncertain", "outcome": "uncertain"}
+        assert fake.retry_flags == [False]
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_write_records_uncertain_then_preserves_cancellation():
+    class _Cancelled(FakeClient):
+        async def call_tool(self, name, args, timeout_s=None,
+                            retry_on_session_loss=True):
+            self.calls.append((name, dict(args)))
+            self.retry_flags.append(retry_on_session_loss)
+            raise asyncio.CancelledError()
+
+    a, _ = await _agent()
+    cancelled = _Cancelled()
+    for binding in a._bindings.values():
+        binding.client = cancelled
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await run_handle(a, "shop.order", slots={"item": "拿铁"},
+                             raw_text="点一杯拿铁", meta={"confirmed": "true"})
+        assert a.ledger.closed[0][2]["outcome"] == "uncertain"
+        assert cancelled.retry_flags == [False]
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", [
+    {},
+    {"ok": True, "text": "x", "data": []},
+    {"ok": True, "text": {"not": "text"}, "data": {}},
+])
+async def test_malformed_write_result_after_call_is_uncertain(reply):
+    class _Malformed(FakeClient):
+        async def call_tool(self, name, args, timeout_s=None,
+                            retry_on_session_loss=True):
+            self.calls.append((name, dict(args)))
+            self.retry_flags.append(retry_on_session_loss)
+            return reply
+
+    a, _ = await _agent()
+    client = _Malformed()
+    for binding in a._bindings.values():
+        binding.client = client
+    try:
+        res = await run_handle(a, "shop.order", slots={"item": "拿铁"},
+                               raw_text="点一杯拿铁", meta={"confirmed": "true"})
+        assert "没有拿到确认结果" in res.speech
+        assert a.ledger.closed[0][2]["outcome"] == "uncertain"
+        assert client.retry_flags == [False]
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["ledger", "payment", "card"])
+async def test_verified_write_success_is_not_downgraded_by_post_call_failure(
+        stage, monkeypatch):
+    a, fake = await _agent(reply={
+        "ok": True, "text": "订单创建成功",
+        "data": ({"order_id": "O-1", "payH5Url": "https://m.mcd.cn/pay/O-1"}
+                 if stage == "payment" else {"order_id": "O-1"}),
+    })
+    binding = a._bindings["shop.order"]
+    if stage == "ledger":
+        class _FailingLedger(FakeLedger):
+            async def close(self, task_id, status, **kw):
+                self.closed.append((task_id, status, kw.get("result_ref")))
+                raise RuntimeError("ledger unavailable")
+
+        a.ledger = _FailingLedger()
+    elif stage == "payment":
+        binding.tool.pay_url_locator = "payH5Url"
+        binding.server.pay_url_hosts = ["m.mcd.cn"]
+
+        async def _payment_boom(*args, **kwargs):
+            raise RuntimeError("post-call payment failure")
+
+        monkeypatch.setattr(a, "_register_merchant_payment", _payment_boom)
+    else:
+        monkeypatch.setattr(a, "_card",
+                            lambda *args, **kwargs: (_ for _ in ()).throw(
+                                RuntimeError("post-call card failure")))
+    try:
+        res = await run_handle(a, "shop.order", slots={"item": "拿铁"},
+                               raw_text="点一杯拿铁", meta={"confirmed": "true"})
+        assert "没有拿到确认结果" not in res.speech
+        assert "没有发出去" not in res.speech
+        assert fake.retry_flags == [False]
+        assert res.data == {"order_id": "O-1"}
+        assert not any(status == "failed" for _, status, _ in a.ledger.closed)
+        assert len(a.ledger.closed) == 1
+        assert a.ledger.closed[0][1] == "done"
+        if stage == "ledger":
+            assert "本地记录同步异常，请勿重复下单" in res.speech
+        elif stage == "payment":
+            assert res.ui_card["type"] == "mcp_order"
+            assert "支付入口暂不可用" in res.speech
+        else:
+            assert res.ui_card is None
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_verified_success_records_done_not_uncertain(monkeypatch):
+    a, _ = await _agent(reply={
+        "ok": True, "text": "订单创建成功", "data": {"order_id": "O-2"},
+    })
+
+    async def _cancel_after_success(*args, **kwargs):
+        raise asyncio.CancelledError()
+
+    binding = a._bindings["shop.order"]
+    binding.tool.pay_url_locator = "payH5Url"
+    binding.server.pay_url_hosts = ["m.mcd.cn"]
+    monkeypatch.setattr(a, "_register_merchant_payment", _cancel_after_success)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await run_handle(a, "shop.order", slots={"item": "拿铁"},
+                             raw_text="点一杯拿铁", meta={"confirmed": "true"})
+        assert len(a.ledger.closed) == 1
+        assert a.ledger.closed[0][1] == "done"
+        assert not any((ref or {}).get("outcome") == "uncertain"
+                       for _, _, ref in a.ledger.closed)
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_second_cancellation_during_uncertain_ledger_close_is_not_swallowed():
+    class _BlockingLedger(FakeLedger):
+        def __init__(self):
+            super().__init__()
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def close(self, task_id, status, **kw):
+            self.started.set()
+            await self.release.wait()
+            return await super().close(task_id, status, **kw)
+
+    a, _ = await _agent()
+    ledger = _BlockingLedger()
+    a.ledger = ledger
+    binding = a._bindings["shop.order"]
+    task = SimpleNamespace(task_id="t-cancel")
+    pending = asyncio.create_task(a._record_uncertain_write(binding, task))
+    try:
+        await ledger.started.wait()
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+    finally:
+        ledger.release.set()
+        await asyncio.sleep(0)
         await a.shutdown()
 
 

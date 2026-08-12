@@ -27,7 +27,7 @@ from agents._sdk.payment_client import PaymentClient
 from agents._sdk.provenance import attach
 from cockpit.agent.v1 import agent_pb2
 
-from .admission import admit, check_version, load_servers
+from .admission import admit, check_version, load_servers, normalize_hostname
 from .mcp_client import McpError, StdioMcpClient
 
 logger = logging.getLogger("agent.mcp_bridge")
@@ -233,8 +233,10 @@ class McpBridgeAgent(BaseAgent):
                 "write_tool": binding.tool.name,
                 "compensate_tool": binding.tool.compensate_tool,
             }
-            if binding.server.demo and binding.tool.forward_owner:
+            if self._can_forward_owner(binding):
                 arguments["_owner_user_id"] = owner
+            else:
+                arguments.pop("_owner_user_id", None)
             response = await binding.client.call_tool(
                 _HIDDEN_ADMIN_TOOL,
                 arguments,
@@ -270,6 +272,11 @@ class McpBridgeAgent(BaseAgent):
             "error": str(error),
         }
 
+    @staticmethod
+    def _can_forward_owner(binding) -> bool:
+        return bool(binding.server.demo and binding.server.transport == "stdio" and
+                    binding.tool.forward_owner)
+
     # ── 只读 ──
     async def _call_read(self, b, intent, ctx, meta) -> AgentResult:
         try:
@@ -285,7 +292,7 @@ class McpBridgeAgent(BaseAgent):
                 args = await self._resolve_order_ref(b, args, user_id)
                 # 只给明确声明 forward_owner 的受控 demo 下发内部 owner。官方 remote
                 # 使用权威 granted_scopes，不认识也不应看到内部身份字段。
-                if b.server.demo and b.tool.forward_owner:
+                if self._can_forward_owner(b):
                     args["_owner_user_id"] = user_id
             # 端到端取证修（2026-08-11）：declared 槽位一个都没有、账本也回填不到
             # （用户在商户 App 下的单不在我们账本）→ **追问而不是打一发必败请求**
@@ -301,6 +308,8 @@ class McpBridgeAgent(BaseAgent):
                 return self._need_slot(missing)
             if declared and not any(args.get(a) for a in declared_args):
                 return self._need_slot(declared[0])
+            if not self._can_forward_owner(b):
+                args.pop("_owner_user_id", None)
             res = await b.client.call_tool(b.tool.name, args,
                                            timeout_s=b.tool.timeout_ms / 1000.0,
                                            retry_on_session_loss=(
@@ -473,9 +482,10 @@ class McpBridgeAgent(BaseAgent):
             # （取消订单被问成「准备下单」）比说得笨拙严重得多。缺声明时用中性词，
             # 桥核心不认识「下单」「取消」这些动词。
             tmpl = b.tool.confirm_prompt or "准备执行：{args}，确认吗？"
-            return AgentResult(
-                status=NEED_CONFIRM,
-                speech=self._demo_prefix(b) + tmpl.format(args=self._readable(slots)))
+            speech = self._demo_prefix(b) + tmpl.format(args=self._readable(slots))
+            if b.tool.compensate_policy == "abandon_unpaid":
+                speech += " 本单不立即扣款；不支付会由商户自动失效。"
+            return AgentResult(status=NEED_CONFIRM, speech=speech)
 
         user_id = str(getattr(ctx, "user_id", "") or "").strip()
         if not user_id:
@@ -486,10 +496,13 @@ class McpBridgeAgent(BaseAgent):
         if isinstance(task, Duplicate):
             # 幂等受理：连说两遍不双下单（M2 Ledger 的第二个载体）
             ref = task.existing.result_ref or {}
+            if b.tool.pay_url_locator:
+                ref = self._sanitize_payment_payload(ref, b.tool.pay_url_locator)
             return AgentResult(
                 speech=self._demo_prefix(b) + "这一单已经下过了" +
                 (f"，订单号 {ref.get('order_id')}。" if ref.get("order_id") else "。"),
-                ui_card=self._card(b, "mcp_order", ref) if ref else None)
+                ui_card=self._card(b, "mcp_order", ref) if ref else None,
+                data=ref)
 
         # 幂等键 = **请求指纹**（user + kind + 归一化 goal），不是 task_id：
         # task_id 每次调用都新，用它当幂等键等于没有幂等——重说一遍就会双扣。
@@ -501,82 +514,150 @@ class McpBridgeAgent(BaseAgent):
         args.pop("_owner_user_id", None)
         # Internal owner is derived only from authenticated Context; it is not
         # declared as a planner slot and cannot be supplied/overridden by LLM.
-        if b.server.demo and b.tool.forward_owner:
+        if self._can_forward_owner(b):
             args["_owner_user_id"] = user_id
         if (b.tool.idempotency_mode == "upstream" and
                 b.tool.idempotency_key_arg):
             args[b.tool.idempotency_key_arg] = idem
+        if not self._can_forward_owner(b):
+            args.pop("_owner_user_id", None)
         try:
+            # Until a valid success response is received, a side effect may have
+            # reached the merchant without a reliable outcome.  This phase is
+            # therefore uncertain and must never trigger an automatic replay.
             res = await b.client.call_tool(b.tool.name, args,
                                            timeout_s=b.tool.timeout_ms / 1000.0,
                                            retry_on_session_loss=False)
-        except (asyncio.TimeoutError, McpError) as e:
-            return await self._uncertain_write(b, task, e)
-        except RuntimeError as e:
-            # 明确的本地调用前故障才可断言没发出；McpError 已在上方保守收口。
-            logger.warning("[mcp:%s] 写操作失败：%s", b.server.id, e)
-            if task:
-                await self.ledger.close(task.task_id, LEDGER_FAILED,
-                                        result_ref={"error": str(e)[:200]})
-            return AgentResult(speech="下单没成功，这一单没有发出去，请稍后再试。")
+            if not isinstance(res, dict) or res.get("ok") is not True:
+                raise McpError(f"{b.server.id}: 写响应未确认")
+            if not isinstance(res.get("text", ""), str):
+                raise McpError(f"{b.server.id}: 写响应 text 非字符串")
+            if not isinstance(res.get("data", {}), dict):
+                raise McpError(f"{b.server.id}: 写响应 data 非对象")
+        except asyncio.CancelledError:
+            await self._record_uncertain_write(b, task)
+            raise
         except Exception as e:
             return await self._uncertain_write(b, task, e)
-        if not res["ok"]:
-            if task:
-                await self.ledger.close(task.task_id, LEDGER_FAILED,
-                                        result_ref={"error": res["text"][:200]})
-            return AgentResult(speech=res["text"] or "下单失败了。")
 
-        order = res["data"] or {}
-        if task:
-            # result_ref 记 server 归属（2026-08-11 端到端抓的跨商户污染）：查单
-            # 回填只认**同一商户**的单——拿 demo 咖啡的单号去查麦当劳，商户端
-            # 「订单号不存在」的报错曾把这层错配伪装成「用户没有订单」。
-            await self.ledger.close(task.task_id, DONE,
-                                    result_ref={**order, "server": b.server.id},
-                                    progress="已下单")
-        # 审计：server/tool/订单号/金额/账本 id 进结构化日志（参数摘要按 obs 既有脱敏口径）
-        logger.info("[mcp:%s] 写操作成功 order=%s amount=%s task=%s duplicate=%s",
-                    b.server.id, order.get("order_id"), order.get("amount_cents"),
-                    task.task_id if task else "-", order.get("duplicate", False))
+        # From here on the merchant outcome is known-success.  UI/payment/local
+        # ledger failures may degrade the local experience, but must never turn
+        # the merchant order back into an uncertain/FAILED write.
+        try:
+            raw_order = res.get("data") or {}
+            raw_pay_url = (self._dig(raw_order, b.tool.pay_url_locator)
+                           if b.tool.pay_url_locator else "")
+            if b.tool.pay_url_locator:
+                order = self._sanitize_payment_payload(
+                    raw_order, b.tool.pay_url_locator)
+                merchant_text = self._redact_urls(res.get("text", ""))
+            else:
+                order = raw_order
+                merchant_text = res.get("text", "")
+        except Exception as e:
+            logger.warning("[mcp:%s] 已成功订单的响应清洗异常：%s",
+                           b.server.id, type(e).__name__)
+            raw_order, raw_pay_url, order, merchant_text = {}, "", {}, ""
+
         if order.get("duplicate"):
-            # 商户认出同一幂等键 → 复用原单。这就是「连说两遍不双下单」的最终裁决点：
-            # 我们的账本管受理，**商户管钱**，两侧都不该重复。
             speech = (self._demo_prefix(b) + "这一单已经下过了，订单号 "
                       + str(order.get("order_id", "")) + "。")
         else:
-            speech = self._demo_prefix(b) + (res["text"] or "下单成功。")
-        # 支付链接闭环（§9.9 批 3）：工具声明了 pay_url_locator 且响应里真有链接
-        # → 经 payment-gateway 登记 merchant_hosted 会话并出付款码卡
-        if b.tool.pay_url_locator:
-            raw_pay_url = self._dig(order, b.tool.pay_url_locator)
-            pay_card = await self._register_merchant_payment(
-                b, ctx, intent, order)
-            if pay_card is not None:
-                speech += "请扫码完成支付，订单状态以商家为准。"
-                return AgentResult(speech=speech, ui_card=pay_card, data=order)
-            if raw_pay_url:
-                safe_order = self._redact_urls(order)
-                safe_speech = self._redact_urls(speech).strip()
-                safe_speech += " 支付入口暂不可用，请到商家应用内完成支付。"
-                return AgentResult(
-                    speech=safe_speech,
-                    ui_card=self._card(b, "mcp_order", safe_order),
-                    data=safe_order)
-        return AgentResult(speech=speech,
-                           ui_card=self._card(b, "mcp_order", order), data=order)
+            speech = self._demo_prefix(b) + (merchant_text or "下单成功。")
+
+        card = None
+        done_started = False
+        try:
+            if b.tool.pay_url_locator:
+                try:
+                    pay_card = await self._register_merchant_payment(
+                        b, ctx, intent, raw_order, pay_url=raw_pay_url)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning(
+                        "[mcp:%s] 已成功订单的支付登记异常：%s",
+                        b.server.id, type(e).__name__)
+                    pay_card = None
+                if pay_card is not None:
+                    speech += "请扫码完成支付，订单状态以商家为准。"
+                    card = pay_card
+                else:
+                    speech = self._redact_urls(speech).strip()
+                    speech += " 支付入口暂不可用，请到商家应用内完成支付。"
+                    try:
+                        card = self._card(b, "mcp_order", order)
+                    except Exception as e:
+                        logger.warning("[mcp:%s] 已成功订单的降级卡片构造异常：%s",
+                                       b.server.id, type(e).__name__)
+            else:
+                try:
+                    card = self._card(b, "mcp_order", order)
+                except Exception as e:
+                    logger.warning("[mcp:%s] 已成功订单的卡片构造异常：%s",
+                                   b.server.id, type(e).__name__)
+
+            if task:
+                # Only sanitized merchant data enters the ledger. Payment URLs
+                # are represented by the gateway payment_id/card, never raw refs.
+                done_started = True
+                synced = await self._record_verified_write(b, task, order)
+                if not synced:
+                    speech += " 本地记录同步异常，请勿重复下单。"
+            logger.info(
+                "[mcp:%s] 写操作成功 order=%s amount=%s task=%s duplicate=%s",
+                b.server.id, order.get("order_id"), order.get("amount_cents"),
+                task.task_id if task else "-", order.get("duplicate", False))
+            return AgentResult(speech=speech, ui_card=card, data=order)
+        except asyncio.CancelledError:
+            if task and not done_started:
+                await self._record_verified_write(b, task, order)
+            raise
 
     async def _uncertain_write(self, b, task, error: Exception) -> AgentResult:
         logger.warning("[mcp:%s] 写操作未得到可靠响应（结局不确定）：%s",
                        b.server.id, type(error).__name__)
-        if task:
-            # 账本状态机没有 uncertain 态；先在 result_ref 保留真实 outcome。
-            await self.ledger.close(task.task_id, LEDGER_FAILED,
-                                    result_ref={"error": "mcp_uncertain",
-                                                "outcome": "uncertain"})
+        await self._record_uncertain_write(b, task)
         return AgentResult(
             speech="下单没有拿到确认结果，可能没成功也可能已经受理。"
                    "先别再下一单——说「查一下我的订单」，我按幂等键跟商户核对。")
+
+    async def _record_uncertain_write(self, b, task) -> None:
+        if not task:
+            return
+        try:
+            close = self.ledger.close(
+                task.task_id, LEDGER_FAILED,
+                result_ref={"error": "mcp_uncertain", "outcome": "uncertain"})
+            await asyncio.wait_for(asyncio.shield(close), timeout=2.0)
+        except Exception as ledger_error:
+            logger.warning("[mcp:%s] 不确定写入落账失败：%s",
+                           b.server.id, type(ledger_error).__name__)
+
+    async def _record_verified_write(self, b, task, order: dict) -> bool:
+        """Close a known-success write exactly once, preserving cancellation."""
+        close_task = asyncio.create_task(self.ledger.close(
+            task.task_id, DONE,
+            result_ref={**order, "server": b.server.id},
+            progress="已下单"))
+        try:
+            await asyncio.shield(close_task)
+            return True
+        except asyncio.CancelledError:
+            # The merchant result is already known.  Give this *same* DONE close
+            # a short chance to finish, then preserve cancellation semantics.
+            try:
+                await asyncio.wait_for(asyncio.shield(close_task), timeout=2.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as ledger_error:
+                logger.warning("[mcp:%s] 已成功写入落账失败：%s",
+                               b.server.id, type(ledger_error).__name__)
+            raise
+        except Exception as ledger_error:
+            logger.warning("[mcp:%s] 已成功写入落账失败：%s",
+                           b.server.id, type(ledger_error).__name__)
+            return False
 
     @staticmethod
     def _dig(data: dict, dotted_path: str) -> str:
@@ -591,12 +672,14 @@ class McpBridgeAgent(BaseAgent):
     @staticmethod
     def _contains_url_like(value: str) -> bool:
         normalized = value
-        for _ in range(3):
+        for _ in range(8):
             decoded = html.unescape(unquote(normalized)).replace("\\/", "/")
             if decoded == normalized:
                 break
             normalized = decoded
-        return re.search(r"https?://", normalized, flags=re.IGNORECASE) is not None
+        return re.search(
+            r"(?i)[a-z][a-z0-9+.-]*\s*:|//",
+            normalized) is not None
 
     @classmethod
     def _redact_urls(cls, value):
@@ -609,8 +692,31 @@ class McpBridgeAgent(BaseAgent):
             return "" if cls._contains_url_like(value) else value
         return value
 
+    @classmethod
+    def _sanitize_payment_payload(cls, value, locator: str):
+        parts = [part for part in (locator or "").split(".") if part]
+
+        def _walk(current, depth=0):
+            if isinstance(current, dict):
+                out = {}
+                for key, item in current.items():
+                    if (depth < len(parts) and key == parts[depth] and
+                            depth == len(parts) - 1):
+                        continue
+                    if isinstance(key, str) and cls._contains_url_like(key):
+                        continue
+                    out[key] = _walk(item, depth + 1)
+                return out
+            if isinstance(current, list):
+                return [_walk(item, depth) for item in current]
+            if isinstance(current, str) and cls._contains_url_like(current):
+                return ""
+            return current
+
+        return _walk(value)
+
     async def _register_merchant_payment(self, b, ctx, intent,
-                                         order: dict) -> dict | None:
+                                         order: dict, *, pay_url: str = "") -> dict | None:
         """商户支付链接 → 网关登记（审计+展示+过期收口）→ payment_qr 卡。
 
         - 域名白名单第一层在此（`pay_url_hosts`）：不合白名单**不出链接**（防被
@@ -618,15 +724,15 @@ class McpBridgeAgent(BaseAgent):
           PAY_HOSTS` 是第二层。
         - 登记失败 fail closed：下单事实仍返回，但原始链接不进话术/卡片，用户改去商家应用。
         """
-        pay_url = self._dig(order, b.tool.pay_url_locator)
+        pay_url = pay_url or self._dig(order, b.tool.pay_url_locator)
         if not pay_url:
             return None
         host = ""
         try:
             from urllib.parse import urlparse
             parsed = urlparse(pay_url)
-            host = (parsed.hostname or "").lower()
-            scheme_ok = parsed.scheme == "https"
+            host = normalize_hostname(parsed.hostname or "")
+            scheme_ok = parsed.scheme.lower() == "https"
         except ValueError:
             scheme_ok = False
         if (not scheme_ok or not b.server.pay_url_hosts or
@@ -651,7 +757,7 @@ class McpBridgeAgent(BaseAgent):
         except Exception as e:
             logger.warning("[mcp:%s] 支付登记异常，拒出原始链接：%s",
                            b.server.id, type(e).__name__)
-            return None
+            raise
         if resp is None:
             logger.warning("[mcp:%s] 支付登记未完成，拒出原始链接", b.server.id)
             return None
@@ -687,7 +793,7 @@ class McpBridgeAgent(BaseAgent):
 
     def _card(self, b, card_type: str, payload: dict) -> dict:
         reserved = {"_prov", "type", "server", "tool", "merchant",
-                    "buttons", "actions"}
+                    "buttons", "actions", "demo_label"}
         card = {k: v for k, v in (payload or {}).items()
                 if k != "demo" and k not in reserved}
         card.update({"type": card_type, "server": b.server.id,

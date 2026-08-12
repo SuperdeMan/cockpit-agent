@@ -53,6 +53,7 @@ servers:
         required_scopes: []
         idempotency_mode: upstream
         retry_policy: never
+        timeout_outcome: uncertain
         idempotency_key_arg: idempotency_key
         compensate_tool: order.cancel  # 缺它 → admission 拒载
         schema_sha: "041a13dc1703"
@@ -95,6 +96,7 @@ servers:
         required_scopes: []
         idempotency_mode: local_at_most_once
         retry_policy: never
+        timeout_outcome: uncertain
         idempotency_key_arg: ""
         compensate_policy: terminal
         schema_sha: "943700876d93"

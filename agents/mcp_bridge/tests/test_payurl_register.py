@@ -37,7 +37,9 @@ def _binding(agent, *, pay_url_hosts=None, demo=False, locator="payH5Url"):
     tool = ToolSpec(name="order.create", intent="mcd.order", write=True,
                     require_confirm=True, compensate_policy="abandon_unpaid",
                     confirm_prompt="x", pay_url_locator=locator)
-    return SimpleNamespace(server=server, tool=tool, client=None)
+    return SimpleNamespace(server=server, tool=tool, client=None,
+                           input_schema={"type": "object", "properties": {},
+                                         "required": []})
 
 
 def _agent(resp="default") -> tuple[McpBridgeAgent, SpyPayment]:
@@ -106,10 +108,9 @@ def test_no_locator_hit_returns_none():
     assert card is None and payment.calls == []
 
 
-@pytest.mark.parametrize("mode", ["none", "boom"])
-def test_gateway_failure_blocks_raw_payment_card(mode):
-    """登记失败必须 fail closed：不能绕过网关把原始商户链接交给 HMI。"""
-    agent, _ = _agent(mode)
+def test_gateway_explicit_rejection_blocks_raw_payment_card():
+    """网关明确拒绝登记仍 fail closed，不把原始商户链接交给 HMI。"""
+    agent, _ = _agent("none")
     order = {"order_id": "mcd-002",
              "payH5Url": "https://m.mcd.cn/mcp/scanToPay?orderId=mcd-002"}
     card = asyncio.run(agent._register_merchant_payment(
@@ -117,11 +118,24 @@ def test_gateway_failure_blocks_raw_payment_card(mode):
     assert card is None
 
 
+def test_gateway_exception_propagates_to_write_post_success_fallback_boundary():
+    agent, _ = _agent("boom")
+    order = {"order_id": "mcd-002",
+             "payH5Url": "https://m.mcd.cn/mcp/scanToPay?orderId=mcd-002"}
+    with pytest.raises(RuntimeError, match="gateway down"):
+        asyncio.run(agent._register_merchant_payment(
+            _binding(agent), _CTX, _INTENT, order))
+
+
 class _Ledger:
-    def __init__(self):
+    def __init__(self, duplicate=None):
         self.closed = []
+        self.duplicate = duplicate
 
     async def open(self, user_id, session_id, agent_id, kind, goal, **kw):
+        if self.duplicate is not None:
+            from agents._sdk.ledger import Duplicate
+            return Duplicate(self.duplicate)
         from agents._sdk.ledger import LedgerTask
         return LedgerTask(task_id="t1", user_id=user_id, session_id=session_id,
                           agent_id=agent_id, kind=kind, goal=goal,
@@ -156,6 +170,12 @@ class _PayUrlClient:
                          "backup_urls": list(self.extra_urls)}}
 
 
+def _flatten_result(result) -> str:
+    return json.dumps({"speech": result.speech,
+                       "ui_card": result.ui_card,
+                       "data": result.data}, ensure_ascii=False)
+
+
 def test_gateway_failure_redacts_raw_url_from_user_facing_result():
     pay_url = "https://m.mcd.cn/private/pay?token=raw-secret"
     agent, _ = _agent("none")
@@ -166,15 +186,175 @@ def test_gateway_failure_redacts_raw_url_from_user_facing_result():
     intent = SimpleNamespace(name="mcd.order", slots={}, raw_text="下单")
     result = asyncio.run(agent._call_write(binding, intent, _CTX,
                                            {"confirmed": "true"}))
-    user_facing = json.dumps({"speech": result.speech,
-                              "ui_card": result.ui_card,
-                              "data": result.data}, ensure_ascii=False)
+    user_facing = _flatten_result(result)
     assert pay_url not in user_facing and "raw-secret" not in user_facing
     assert all(url not in user_facing for url in binding.client.extra_urls)
     assert not any(marker in user_facing for marker in (
         "other-secret", "json-secret", "html-secret", "percent-secret"))
     assert "商家应用" in result.speech
     assert binding.client.retry_flags == [False]
+
+
+@pytest.mark.parametrize(("locator", "payload"), [
+    ("missing.path", {
+        "renamedPayLink": "//m.mcd.cn/pay?token=scheme-relative-secret",
+        "javascript": "javascript:alert('js-secret')",
+    }),
+    ("payH5Url", {
+        "payH5Url": "ftp://m.mcd.cn/pay?token=ftp-secret",
+        "contact": "mailto:pay-secret@example.cn",
+        "phone": "tel:+8613800138000",
+    }),
+    ("payH5Url", {
+        "payH5Url": "data:text/html;base64,PHNjcmlwdD5zZWNyZXQ8L3NjcmlwdD4=",
+        "local": "file:///etc/secret",
+    }),
+    ("missing.path", {
+        "wallet": "alipays://platformapi/startapp?secret=ali-secret",
+        "wechat": "weixin://dl/business/?secret=wx-secret",
+        "intent": "intent://pay/#Intent;S.secret=intent-secret;end",
+        "custom": "custom:opaque-custom-secret",
+    }),
+    ("missing.path", {
+        "assignment": "pay_url=https://x.invalid/?secret=embedded-http",
+        "htmlish": "href=javascript:alert('embedded-js')",
+        "cn": "链接：alipays://x?secret=embedded-ali",
+        "paren": "请打开（weixin://x?secret=embedded-wx）",
+    }),
+])
+def test_payment_locator_miss_or_illegal_scheme_never_returns_any_raw_uri(
+        locator, payload):
+    agent, _ = _agent()
+    agent.ledger = _Ledger()
+    binding = _binding(agent, locator=locator)
+    main = payload.get("payH5Url", "https://m.mcd.cn/unused")
+    binding.client = _PayUrlClient(main)
+    binding.client.extra_urls = list(payload.values())
+    binding.client.call_tool = lambda *args, **kwargs: None
+
+    async def _reply(*args, **kwargs):
+        binding.client.retry_flags.append(kwargs.get("retry_on_session_loss"))
+        return {"ok": True,
+                "text": "订单完成 " + " ".join(payload.values()),
+                "data": {"order_id": "mcd-uri", **payload}}
+
+    binding.client.call_tool = _reply
+    intent = SimpleNamespace(name="mcd.order", slots={}, raw_text="下单")
+    result = asyncio.run(agent._call_write(binding, intent, _CTX,
+                                           {"confirmed": "true"}))
+    surface = _flatten_result(result)
+    ledger_surface = json.dumps(agent.ledger.closed[-1][2], ensure_ascii=False)
+    for marker in ("scheme-relative-secret", "js-secret", "ftp-secret",
+                   "pay-secret@example.cn", "+8613800138000", "PHNjcmlwdD5",
+                   "/etc/secret", "ali-secret", "wx-secret", "intent-secret",
+                   "opaque-custom-secret", "embedded-http", "embedded-js",
+                   "embedded-ali", "embedded-wx"):
+        assert marker not in surface
+        assert marker not in ledger_surface
+
+
+def test_payment_processing_exception_preserves_verified_order_success():
+    primary = "https://m.mcd.cn/pay?token=approved-main"
+    agent, _ = _agent("boom")
+    agent.ledger = _Ledger()
+    binding = _binding(agent)
+    binding.client = _PayUrlClient(primary)
+    intent = SimpleNamespace(name="mcd.order", slots={}, raw_text="下单")
+    result = asyncio.run(agent._call_write(binding, intent, _CTX,
+                                           {"confirmed": "true"}))
+    assert "没有拿到确认结果" not in result.speech
+    assert "支付入口暂不可用" in result.speech
+    assert primary not in _flatten_result(result)
+    task_id, status, kw = agent.ledger.closed[-1]
+    assert task_id == "t1" and status == "done"
+    assert kw["result_ref"]["order_id"] == "mcd-003"
+    assert kw["result_ref"]["server"] == "mcd-test"
+    assert "approved-main" not in json.dumps(kw["result_ref"], ensure_ascii=False)
+    assert len(agent.ledger.closed) == 1
+
+
+def test_successful_gateway_allows_only_approved_primary_url_in_payment_card():
+    primary = "https://m.mcd.cn/pay?token=approved-main"
+    secondaries = [
+        "https://other.example/pay?token=second-http",
+        "//other.example/pay?token=second-relative",
+        "javascript:alert('second-js')",
+        "ftp://other.example/pay?token=second-ftp",
+        "https%253A%252F%252Fencoded.example%252Fpay%253Ftoken%253Dsecond-encoded",
+    ]
+    agent, payment = _agent()
+    agent.ledger = _Ledger()
+    binding = _binding(agent)
+    binding.client = _PayUrlClient(primary)
+    binding.client.extra_urls = secondaries
+    binding.input_schema = {"type": "object", "properties": {}, "required": []}
+    intent = SimpleNamespace(name="mcd.order", slots={}, raw_text="下单")
+    result = asyncio.run(agent._call_write(binding, intent, _CTX,
+                                           {"confirmed": "true"}))
+    assert result.ui_card["type"] == "payment_qr"
+    assert result.ui_card["pay_url"] == primary
+    assert result.ui_card["qr_content"] == primary
+    assert primary not in result.speech
+    assert primary not in json.dumps(result.data, ensure_ascii=False)
+    all_surfaces = _flatten_result(result)
+    ledger_surface = json.dumps(agent.ledger.closed[-1][2], ensure_ascii=False)
+    for marker in ("second-http", "second-relative", "second-js",
+                   "second-ftp", "second-encoded"):
+        assert marker not in all_surfaces
+        assert marker not in ledger_surface
+    assert payment.calls[0]["external_pay_url"] == primary
+
+
+def test_embedded_uri_is_removed_from_text_nested_data_and_ledger():
+    primary = "https://m.mcd.cn/pay?token=approved-main"
+    embedded = {
+        "assignment": "pay_url=https://x.invalid/?secret=nested-http",
+        "htmlish": "href=javascript:alert('nested-js')",
+        "cn": "链接：alipays://x?secret=nested-ali",
+        "paren": "请打开（weixin://x?secret=nested-wx）",
+    }
+    agent, _ = _agent("none")
+    agent.ledger = _Ledger()
+    binding = _binding(agent)
+    binding.client = _PayUrlClient(primary)
+
+    async def _reply(*args, **kwargs):
+        return {"ok": True,
+                "text": " ".join(embedded.values()),
+                "data": {"order_id": "nested-1", "payH5Url": primary,
+                         "nested": embedded}}
+
+    binding.client.call_tool = _reply
+    intent = SimpleNamespace(name="mcd.order", slots={}, raw_text="下单")
+    result = asyncio.run(agent._call_write(binding, intent, _CTX,
+                                           {"confirmed": "true"}))
+    surface = _flatten_result(result)
+    ledger_surface = json.dumps(agent.ledger.closed[-1][2], ensure_ascii=False)
+    for marker in ("nested-http", "nested-js", "nested-ali", "nested-wx"):
+        assert marker not in surface
+        assert marker not in ledger_surface
+
+
+def test_duplicate_payment_ledger_reference_is_sanitized_before_card_or_data():
+    from agents._sdk.ledger import LedgerTask
+
+    primary = "pay_url=https://m.mcd.cn/pay?token=stale-primary"
+    secondary = "链接：alipays://x?secret=stale-secondary"
+    existing = LedgerTask(
+        task_id="old", user_id="u1", session_id="s1", agent_id="mcp-bridge",
+        kind="mcp_order", goal="{}", idempotency_key="k", status="done",
+        result_ref={"order_id": "old-1", "payH5Url": primary,
+                    "backup": secondary, "server": "mcd-test"})
+    agent, _ = _agent()
+    agent.ledger = _Ledger(duplicate=existing)
+    binding = _binding(agent)
+    binding.client = _PayUrlClient(primary)
+    intent = SimpleNamespace(name="mcd.order", slots={}, raw_text="下单")
+    result = asyncio.run(agent._call_write(binding, intent, _CTX,
+                                           {"confirmed": "true"}))
+    surface = _flatten_result(result)
+    assert "stale-primary" not in surface
+    assert "stale-secondary" not in surface
 
 
 def test_demo_server_card_keeps_triple_honesty():

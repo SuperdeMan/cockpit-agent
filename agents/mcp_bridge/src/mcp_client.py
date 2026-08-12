@@ -71,6 +71,13 @@ class McpTimeout(McpError):
         self.sent = bool(sent)
 
 
+def _rpc_error(server_id: str, error) -> McpError:
+    """Keep only the protocol code; remote messages are untrusted free text."""
+    code = error.get("code") if isinstance(error, dict) else None
+    safe_code = code if isinstance(code, int) and not isinstance(code, bool) else "unknown"
+    return McpError(f"{server_id}: JSON-RPC error code={safe_code}")
+
+
 class StdioMcpClient:
     def __init__(self, server_id: str, command: list[str], *,
                  timeout_s: float = 20.0, env: dict | None = None):
@@ -148,9 +155,7 @@ class StdioMcpClient:
                 if msg.get("id") != rid:
                     continue                       # 通知/乱序响应
                 if "error" in msg:
-                    err = msg["error"] or {}
-                    raise McpError(f"{self.server_id}: [{err.get('code')}] "
-                                   f"{err.get('message')}")
+                    raise _rpc_error(self.server_id, msg["error"])
                 return msg.get("result") or {}
 
     async def _notify(self, method: str, params: dict | None = None) -> None:
@@ -257,6 +262,7 @@ class HttpMcpClient:
         import httpx
         if self._http is None:
             raise McpError(f"{self.server_id}: HTTP 客户端未启动")
+        sanitized_error = None
         try:
             return await self._http.post(
                 self._url, content=json.dumps(payload, ensure_ascii=False).encode(),
@@ -264,13 +270,16 @@ class HttpMcpClient:
                 timeout=timeout_s if timeout_s is not None else self._timeout)
         except httpx.TimeoutException as e:
             sent = not isinstance(e, httpx.ConnectTimeout)
-            raise McpTimeout(
+            sanitized_error = McpTimeout(
                 f"{self.server_id}: HTTP 请求超时 {type(e).__name__}",
-                sent=sent) from None
+                sent=sent)
         except httpx.HTTPError as e:
             # 异常文本只带类型不带请求细节（headers 里有 token）
-            raise McpError(
-                f"{self.server_id}: HTTP 请求失败 {type(e).__name__}") from None
+            sanitized_error = McpError(
+                f"{self.server_id}: HTTP 请求失败 {type(e).__name__}")
+        # Raise outside the handler so the secret-bearing httpx exception is not
+        # reachable through __context__ (``from None`` only hides its display).
+        raise sanitized_error
 
     async def _request(self, method: str, params: dict | None = None,
                        timeout_s: float | None = None, *,
@@ -301,16 +310,19 @@ class HttpMcpClient:
             if msg is None:
                 raise McpError(f"{self.server_id}: SSE 流中无 id={rid} 的响应")
         elif resp.text:
+            invalid_json = False
             try:
                 msg = json.loads(resp.text)
-            except json.JSONDecodeError as e:
-                raise McpError(f"{self.server_id}: 非法 JSON 响应") from e
+            except json.JSONDecodeError:
+                invalid_json = True
+            if invalid_json:
+                # Raise after leaving the handler: JSONDecodeError.doc contains
+                # the full remote response and must not remain as cause/context.
+                raise McpError(f"{self.server_id}: 非法 JSON 响应")
         else:
             return {}                 # 202 Accepted（notification）
         if isinstance(msg, dict) and "error" in msg:
-            err = msg["error"] or {}
-            raise McpError(f"{self.server_id}: [{err.get('code')}] "
-                           f"{err.get('message')}")
+            raise _rpc_error(self.server_id, msg["error"])
         return (msg or {}).get("result") or {}
 
     async def _notify(self, method: str) -> None:

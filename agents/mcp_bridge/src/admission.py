@@ -9,6 +9,7 @@ schema 指纹都要**逐字对得上**，否则拒载并告警。母提案 §4.F
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -46,11 +47,13 @@ class ToolSpec:
     idempotency_key_arg: str = ""
     idempotency_mode: str = "none"
     retry_policy: str = "safe"
+    timeout_outcome: str = ""
     compensate_tool: str = ""   # 补偿工具（退款/取消）；policy=tool 时必填且须在白名单
     # 补偿形态：`tool`（下单即扣款型——补偿=退款/取消工具）|
     # `abandon_unpaid`（创建**未支付**订单、扫码才付钱型——天然补偿=不支付+商户
     # 自动过期）| `terminal`（取消等生命周期终态，不再向下补偿）。
     compensate_policy: str = "tool"
+    unpaid_expiry: bool = False
     # 商户下单响应里支付链接的点路径（如 "payH5Url" / "order.payUrl"），从
     # structuredContent 提取——声明式，桥核心零领域词（§9.9 支付链接闭环）。
     pay_url_locator: str = ""
@@ -116,6 +119,35 @@ def _expand_env(value: str) -> tuple[str, str]:
     return _ENV_REF.sub(_sub, value or ""), missing
 
 
+def normalize_hostname(value: str) -> str:
+    """Return a canonical pure hostname, or empty for unsafe host syntax."""
+    raw = str(value or "").strip().rstrip(".")
+    # The allowlist is an audited configuration boundary, not a user-facing URL
+    # parser.  Keep it ASCII-only so Python's legacy IDNA 2003 codec cannot turn
+    # a Unicode lookalike such as ``faß.de`` into the distinct host ``fass.de``.
+    if (not raw or not raw.isascii() or any(ch.isspace() for ch in raw) or
+            any(ch in raw for ch in "/:@?#*[]")):
+        return ""
+    try:
+        ipaddress.ip_address(raw)
+    except ValueError:
+        pass
+    else:
+        return ""
+    try:
+        host = raw.encode("idna").decode("ascii").lower()
+    except (UnicodeError, ValueError):
+        return ""
+    labels = host.split(".")
+    if len(host) > 253 or len(labels) < 2:
+        return ""
+    if any(not label or len(label) > 63 or label.startswith("-") or
+           label.endswith("-") or not re.fullmatch(r"[a-z0-9-]+", label)
+           for label in labels):
+        return ""
+    return host
+
+
 def load_servers(path: str) -> list:
     import yaml
     with open(path, encoding="utf-8") as f:
@@ -137,8 +169,10 @@ def load_servers(path: str) -> list:
             idempotency_key_arg=str(t.get("idempotency_key_arg", "") or ""),
             idempotency_mode=str(t.get("idempotency_mode", "none") or "none"),
             retry_policy=str(t.get("retry_policy", "safe") or "safe"),
+            timeout_outcome=str(t.get("timeout_outcome", "") or ""),
             compensate_tool=str(t.get("compensate_tool", "") or ""),
             compensate_policy=str(t.get("compensate_policy", "tool") or "tool"),
+            unpaid_expiry=t.get("unpaid_expiry") is True,
             pay_url_locator=str(t.get("pay_url_locator", "") or ""),
             const_args=dict(t.get("const_args") or {}),
             speech_mode=str(t.get("speech_mode", "raw") or "raw"),
@@ -159,7 +193,8 @@ def load_servers(path: str) -> list:
             transport=str(s.get("transport", "stdio") or "stdio"),
             url=str(s.get("url", "") or ""),
             headers=headers,
-            pay_url_hosts=[str(h).lower() for h in (s.get("pay_url_hosts") or [])],
+            pay_url_hosts=[normalize_hostname(h)
+                           for h in (s.get("pay_url_hosts") or [])],
             env_error=env_error))
     return out
 
@@ -192,6 +227,17 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
             rejected.append(f"{t.name}: {REJECT_SCHEMA}（声明 {t.schema_sha} ≠ "
                             f"实际 {actual_sha}）")
             continue
+        owner_sources = (
+            "_owner_user_id" in t.const_args or
+            "_owner_user_id" in set(t.arg_map.values()) or
+            t.idempotency_key_arg == "_owner_user_id")
+        if owner_sources:
+            rejected.append(
+                f"{t.name}: 内部参数 _owner_user_id 不得由工具配置声明")
+            continue
+        if t.forward_owner and (not spec.demo or spec.transport != "stdio"):
+            rejected.append(f"{t.name}: forward_owner 仅允许受控 stdio demo")
+            continue
         if t.write:
             if not t.require_confirm:
                 rejected.append(
@@ -201,6 +247,10 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
                 rejected.append(
                     f"{t.name}: 写操作 idempotency_mode 必须显式为 "
                     "upstream 或 local_at_most_once")
+                continue
+            if t.timeout_outcome != "uncertain":
+                rejected.append(
+                    f"{t.name}: 写操作要求 timeout_outcome=uncertain")
                 continue
             if t.compensate_policy not in COMPENSATE_POLICIES:
                 rejected.append(f"{t.name}: {REJECT_COMPENSATE}"
@@ -212,12 +262,15 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
                                     f"（缺补偿路径不许接）")
                     continue
             elif t.compensate_policy == "abandon_unpaid":
-                prompt = t.confirm_prompt
-                if ("不支付" not in prompt or "自动" not in prompt or
-                        not any(term in prompt for term in ("取消", "失效", "过期"))):
+                if t.unpaid_expiry is not True:
                     rejected.append(
-                        f"{t.name}: {REJECT_COMPENSATE}（abandon_unpaid 必须给 "
-                        f"confirm_prompt 且说明「不支付」会「自动取消/失效/过期」）")
+                        f"{t.name}: {REJECT_COMPENSATE}（abandon_unpaid 要求 "
+                        "结构化 unpaid_expiry=true）")
+                    continue
+                if not t.confirm_prompt.strip():
+                    rejected.append(
+                        f"{t.name}: {REJECT_COMPENSATE}（abandon_unpaid 要求 "
+                        "confirm_prompt 提供动作摘要）")
                     continue
             # terminal：该动作本身就是生命周期终态，不再要求下一跳补偿工具。
 
@@ -235,10 +288,14 @@ def admit(spec: ServerSpec, offered_tools: list) -> tuple[list, list]:
                 rejected.append(
                     f"{t.name}: local_at_most_once 要求 retry_policy=never")
                 continue
-        if t.pay_url_locator and not spec.pay_url_hosts:
-            rejected.append(
-                f"{t.name}: pay_url_locator 已声明但 pay_url_hosts 为空")
-            continue
+        if t.pay_url_locator:
+            if (not spec.pay_url_hosts or
+                    any(not normalize_hostname(host) or
+                        normalize_hostname(host) != host
+                        for host in spec.pay_url_hosts)):
+                rejected.append(
+                    f"{t.name}: pay_url_hosts 必须至少包含一个有效纯 hostname")
+                continue
         admitted.append((t, found.get("inputSchema") or {}))
 
     # 二阶段校验：补偿目标必须自己通过全部准入，并且是另一件 terminal 写工具。

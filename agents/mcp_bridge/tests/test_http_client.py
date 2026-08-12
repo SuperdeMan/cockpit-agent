@@ -113,13 +113,40 @@ def test_rpc_error_raises_without_leaking_token(caplog):
         return httpx.Response(200, headers={"Content-Type": "application/json"},
                               text=json.dumps({"jsonrpc": "2.0", "id": rid,
                                                "error": {"code": -32000,
-                                                         "message": "boom"}}))
+                                                         "message": (
+                                                             "Bearer rpc-secret "
+                                                             "https://evil.invalid/"
+                                                             "?token=rpc-token")}}))
 
     c = _client(handler)
     with pytest.raises(McpError) as e:
         asyncio.run(c.initialize())
     assert "sekret" not in str(e.value)
+    assert "rpc-secret" not in str(e.value)
+    assert "rpc-token" not in str(e.value)
+    assert "evil.invalid" not in str(e.value)
+    assert "-32000" in str(e.value), "只允许保留固定的 JSON-RPC code"
+    assert e.value.__cause__ is None and e.value.__context__ is None
     assert "sekret" not in caplog.text      # 日志永不打 headers（§9.9）
+
+
+def test_invalid_http_json_does_not_retain_response_doc_or_exception_chain():
+    secret_body = ('{"jsonrpc":"2.0","id":1,"result":'
+                   '"Bearer body-secret https://evil.invalid/?token=doc-secret"')
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"Content-Type": "application/json"},
+                              text=secret_body)
+
+    c = _client(handler)
+    with pytest.raises(McpError) as exc:
+        asyncio.run(c.initialize())
+    error = exc.value
+    surface = repr((str(error), vars(error), getattr(error, "doc", None)))
+    assert error.__cause__ is None and error.__context__ is None
+    assert "body-secret" not in surface
+    assert "doc-secret" not in surface
+    assert "evil.invalid" not in surface
 
 
 def test_http_error_wrapped_without_request_details():
@@ -133,6 +160,7 @@ def test_http_error_wrapped_without_request_details():
     msg = str(e.value)
     assert "sekret" not in msg and "ConnectError" in msg
     assert e.value.__cause__ is None, "异常链也不能保留可能含 URL/header 的 httpx 原异常"
+    assert e.value.__context__ is None
 
 
 @pytest.mark.parametrize("exc_type", [
@@ -148,6 +176,7 @@ def test_after_send_http_transport_errors_are_marked_sent_without_secrets(exc_ty
     assert isinstance(exc.value, McpError)
     assert "secret" not in str(exc.value)
     assert exc.value.__cause__ is None
+    assert exc.value.__context__ is None
 
 
 def test_call_tool_result_normalized():
@@ -245,6 +274,7 @@ def test_http_timeouts_keep_conservative_sent_classification_without_secrets(
     assert "header-secret" not in message
     assert "token-secret" not in message
     assert exc.value.__cause__ is None
+    assert exc.value.__context__ is None
 
 
 def test_write_call_disables_session_loss_replay():
