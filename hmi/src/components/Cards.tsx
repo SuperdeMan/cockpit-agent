@@ -17,6 +17,7 @@ import {
   merchantImageUrl,
   normalizeMerchantOrder,
   paymentPresentation,
+  placeMenuAction,
 } from '../merchantUi.mjs'
 import { AQISection } from './aurora'
 import { Icon, type IconName } from './Icon'
@@ -1443,7 +1444,24 @@ function PlaceListCardView({ card, onAction }: { card: PlaceListCard; onAction?:
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</span>
-                {(item.distance_km ?? 0) > 0 && <span className="au-num" style={{ fontSize: 12, color: 'var(--au-primary)', fontWeight: 600, flexShrink: 0 }}>{item.distance_km}km</span>}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  {(() => {
+                    // 品牌门店（瑞幸/麦当劳）补「看菜单」直达：发现→看单→点单全程可点按
+                    const menu = placeMenuAction(item.name)
+                    return menu && onAction ? (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onAction(menu.send_text) }}
+                        style={{
+                          padding: '3px 9px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                          fontFamily: 'inherit', cursor: 'pointer', color: 'var(--au-primary)',
+                          background: 'transparent', border: '1px solid var(--au-primary)',
+                        }}
+                      >{menu.label}</button>
+                    ) : null
+                  })()}
+                  {(item.distance_km ?? 0) > 0 && <span className="au-num" style={{ fontSize: 12, color: 'var(--au-primary)', fontWeight: 600 }}>{item.distance_km}km</span>}
+                </span>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: item.address ? 4 : 0 }}>
                 {(item.rating ?? 0) > 0 && <span style={{ fontSize: 11, color: 'var(--au-warn)', fontWeight: 600 }}>★ {item.rating}</span>}

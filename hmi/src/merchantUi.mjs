@@ -115,13 +115,52 @@ const unpaidStatus = (status) => {
   return /^(?:unpaid|pending_payment|awaiting_payment|created|待支付|待付款|未支付|已创建)$/.test(normalized)
 }
 
+export function swapStoreAction(card = {}) {
+  // 订单预览期的「换一家门店」确定性补全（demo-mkemhn 2fd09d52）：用户裸说
+  // 「我想要换一个」时 planner 判不动、chitchat 又会编造新确认——把这个高频诉求
+  // 做成按钮，发出的句子带品牌与商品（与范例库「换一家X门店，还是点Y」句式闭环），
+  // 换店重规划时商品不丢。仅创建确认（merchant_create）出现；取消确认换店无意义。
+  const presentation = confirmationPresentation(
+    card.confirmation_context, text(card.type))
+  if (presentation.kind !== 'merchant_create') return null
+  const order = normalizeMerchantOrder(card)
+  if (order.brand !== '瑞幸' && order.brand !== '麦当劳') return null
+  const item = text(order.items[0]?.name)
+  if (!item) return null
+  return { label: '换一家门店', send_text: `换一家${order.brand}门店，还是点${item}` }
+}
+
+export function placeMenuAction(name) {
+  // 周边发现列表里的品牌门店补「看菜单」直达（发现→看单→点单三步全可点按）。
+  // 句式与范例库对齐：瑞幸走「X这家瑞幸咖啡，我要看看菜单」（planner 按范例
+  // nearby.search(keyword=瑞幸咖啡 X) 重建可信链）；麦当劳走「看看X的菜单」
+  // （store_hint 文本直达）。非两品牌不出按钮——没有对应的菜单能力，按钮就是谎言。
+  const n = text(name)
+  if (!n) return null
+  if (/瑞幸|luck/i.test(n)) {
+    return { label: '看菜单', send_text: `${n}这家瑞幸咖啡，我要看看菜单` }
+  }
+  if (/麦当劳|mcd/i.test(n)) {
+    return { label: '看菜单', send_text: `看看${n}的菜单` }
+  }
+  return null
+}
+
 export function merchantActionButtons(card = {}) {
   const result = declaredButtons(card)
   const order = normalizeMerchantOrder(card)
   const confirmationPending = Boolean(text(card.confirmation_context))
   const normalizedStatus = text(order.status).toLowerCase().replace(/[.\s-]+/g, '_')
   if (confirmationPending || normalizedStatus === 'cancel_pending'
-      || !order.orderId || terminalStatus(order.status)) return result
+      || !order.orderId || terminalStatus(order.status)) {
+    // 换店 chip 只在**确认挂起中**出现（订单还没创建才谈得上换）；已创建/终态的
+    // 预览卡不出——那时换店=取消+重下，是另一条流程。
+    const swap = confirmationPending ? swapStoreAction(card) : null
+    if (swap && !result.some((existing) => existing.label === swap.label)) {
+      result.push(swap)
+    }
+    return result
+  }
 
   const additions = [actionFor({ kind: 'query_order', merchant: order.brand, orderId: order.orderId })]
   if (unpaidStatus(order.status) && order.brand === '瑞幸') {

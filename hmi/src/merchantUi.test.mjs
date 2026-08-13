@@ -8,6 +8,8 @@ import {
   merchantImageUrl,
   normalizeMerchantOrder,
   paymentPresentation,
+  placeMenuAction,
+  swapStoreAction,
 } from './merchantUi.mjs'
 
 test('builds explicit natural-language actions for merchant choices and Luckin cancellation', () => {
@@ -94,6 +96,62 @@ test('does not synthesize order actions while a merchant confirmation is pending
   ]) {
     assert.deepEqual(merchantActionButtons(card), [])
   }
+})
+
+test('offers a deterministic swap-store chip while a create confirmation is pending', () => {
+  // demo-mkemhn 2fd09d52：用户裸说「我想要换一个」时 planner 判不动、chitchat 编造
+  // 新确认。换店做成按钮后，发出的句子带品牌与商品（与范例「换一家X门店，还是点Y」
+  // 句式闭环），换店重规划时商品不丢。
+  const preview = {
+    type: 'merchant_order_preview', merchant: '瑞幸',
+    confirmation_context: 'merchant_create', store_name: '什刹海新地佰店',
+    items: [{ name: '埃塞瑰夏冷萃', quantity: 1, specifications: ['大杯', '冰'] }],
+    amount_cents: 1090, buttons: [],
+  }
+  assert.deepEqual(swapStoreAction(preview), {
+    label: '换一家门店', send_text: '换一家瑞幸门店，还是点埃塞瑰夏冷萃',
+  })
+  assert.deepEqual(merchantActionButtons(preview), [
+    { label: '换一家门店', send_text: '换一家瑞幸门店，还是点埃塞瑰夏冷萃' },
+  ])
+
+  const mcd = swapStoreAction({
+    type: 'merchant_order_preview', merchant: 'mcd',
+    confirmation_context: 'merchant_create',
+    items: [{ name: '蘸酱麦辣大四角', quantity: 1 }], buttons: [],
+  })
+  assert.deepEqual(mcd, {
+    label: '换一家门店', send_text: '换一家麦当劳门店，还是点蘸酱麦辣大四角',
+  })
+})
+
+test('never offers swap-store on cancel confirmations or unknown merchants', () => {
+  assert.equal(swapStoreAction({
+    type: 'merchant_order_preview', merchant: '瑞幸',
+    confirmation_context: 'merchant_cancel',
+    items: [{ name: '埃塞瑰夏冷萃', quantity: 1 }],
+  }), null)
+  assert.equal(swapStoreAction({
+    type: 'merchant_order_preview', merchant: 'demo-coffee',
+    confirmation_context: 'merchant_create',
+    items: [{ name: '拿铁', quantity: 1 }],
+  }), null)
+  assert.equal(swapStoreAction({
+    type: 'merchant_order_preview', merchant: '瑞幸',
+    confirmation_context: 'merchant_create', items: [],
+  }), null)
+})
+
+test('place rows expose brand menu shortcuts aligned with the exemplar sentence shapes', () => {
+  assert.deepEqual(placeMenuAction('瑞幸咖啡(深铁金融科技大厦店)'), {
+    label: '看菜单',
+    send_text: '瑞幸咖啡(深铁金融科技大厦店)这家瑞幸咖啡，我要看看菜单',
+  })
+  assert.deepEqual(placeMenuAction('麦当劳(科苑南路餐厅)'), {
+    label: '看菜单', send_text: '看看麦当劳(科苑南路餐厅)的菜单',
+  })
+  assert.equal(placeMenuAction('老王川菜馆'), null)
+  assert.equal(placeMenuAction(''), null)
 })
 
 test('normalizes snake/camel merchant order fields without exposing checkout tokens', () => {
