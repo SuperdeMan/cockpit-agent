@@ -1,4 +1,4 @@
-# AGENTS.md 历史流水档案（只进不出）
+﻿# AGENTS.md 历史流水档案（只进不出）
 
 > 本文承接 [`AGENTS.md`](../AGENTS.md) §4 的逐批次历史记录，2026-08-02 从该文件整体迁出：
 > AGENTS.md 只保留当前快照与活跃余项，**新批次收口时把完整记录追加到本文对应章节**
@@ -2269,7 +2269,7 @@ MCP + HMI 交互」。逐轮拉 trace（span/llm_calls/logs 级）取证后归�
   不冒充「附近」）；指名门店（括号或 ≥4 字+门店后缀）仍按名检索但话术说「按名称
   找到」；`data.center` 标 vehicle/slot/none；`_build_keyword` 不再把整店名改写成
   类目词。
-- **C mcp-bridge**（`ec9dc98`）：双过期+店名线索 → `_escalate` 改派 nearby.search
+- **C mcp-bridge**（`01e42ba`）：双过期+店名线索 → `_escalate` 改派 nearby.search
   按名取回（engine 既有一跳；坐标可信链零放松）；拒绝话术去「POI 坐标」术语；
   luckin.menu 整句 item_query 退种子词+反向包含（只放宽只读菜单）；
   `_readable_speech` 相关性打包取代盲截 3000 字（营养表条目在截断点外=「没查到」）。

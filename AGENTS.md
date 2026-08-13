@@ -1,4 +1,4 @@
-# AGENTS.md — 接手者（人 / AI agent）入口导航
+﻿# AGENTS.md — 接手者（人 / AI agent）入口导航
 
 > 你（开发者或 AI 协作者）接手本项目时**先读这一份**。它告诉你：项目是什么、铁律、现在真实进展到哪、第一步做什么、改完怎么自检。
 > 工程约定的最高权威是 [`CLAUDE.md`](CLAUDE.md)；架构唯一真相源是 [`docs/architecture/cockpit-agent-architecture.md`](docs/architecture/cockpit-agent-architecture.md)。本文件与它们冲突时以它们为准。
@@ -66,13 +66,22 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**5440 passed / 14 skipped / 0 failed**（2026-08-13 商户 badcase 收口七批后实测，
-退出码 0，用时 26m40s）。较 2026-08-12 的 5408 净 **+32**：商户 scope 发放、
-`luckin.menu` / `mcd.menu` 两条只读当店菜单、商品图域名白名单、跨轮门店锚定、
-`_refused` 保留键与两次自伤修复的回归探针；逐项证据见 history **§30** 与
-`docs/design/2026-08-13-cross-turn-store-anchor.md`。上一批 4996→5408 见 history §29，
-更早 4864→4960→4994→4996 的四跳对账见 **§28**。⚠ Windows GBK 宿主是本仓常驻放大器，
-新写子进程/出站验签代码先想编码两端。
+**5457 passed / 14 skipped / 0 failed**（2026-08-13 demo-mkemhn 复盘六批后实测，
+退出码 0，用时 20m08s）。较同日早间的 5440 净 **+17**，逐条点上号：planning
+线契约归一 3 + executor 锚定门控/限龄 3 + nearby 诚实降级 4 + summarize 相关性
+取材 4 + luckin 选店自愈 3；逐项证据见 history **§31** 与
+`docs/design/2026-08-13-demo-mkemhn-merchant-hmi-hardening.md`。
+上一批 5408→5440 见 §30，4996→5408 见 §29，更早四跳对账见 **§28**。
+⚠ Windows GBK 宿主是本仓常驻放大器，新写子进程/出站验签代码先想编码两端；
+本机会话若带 `PYTHONIOENCODING`，scripts/tests 的拉子进程用例会 188 条假红
+（§4.3 既有纪律，2026-08-13 又实测一次——全量必须在干净 env 跑）。
+
+**2026-08-13 demo-mkemhn 六批聚焦实测**：mcp-bridge **404 passed**（+8）、
+`orchestrator/cloud` **786**（含锚定门控/限龄/线契约归一/位移防御新守卫）、
+nearby **56**（+4）、HMI node **257/257**（+3）且 Vite build 通过；四条 blocking
+门禁全绿（L0 strict discovery 618 条/579 唯一输入恰好用满、gate 25/25；范例域错配
+2.4% 持平）；真栈抽验 4/4——无位置不再报异地门店、纯发现句诚实降级、
+「选择瑞幸门店：X」一轮直达菜单、营养查询给最接近条目。
 
 **2026-08-13 商户 badcase 批聚焦实测**：mcp-bridge **396 passed**、
 `orchestrator/cloud` 焦点/执行器新增回归 6 条、HMI node **254/254** 且 Vite build 通过；
@@ -184,7 +193,7 @@ e2e 自己塞 `granted_scopes` 所以一直是绿的）；两家各有只读当�
 
 **demo-mkemhn 十九轮复盘六批收口（2026-08-13，泓舟指示「系统性优化商户 MCP+HMI」）**：
 `d7829c3`（编排层：线契约容器键归一/锚定门控+限龄/聚合诚实约束/挂起前缀止截断）/
-`6362491`（nearby 位置缺席诚实降级+指名门店按名查找）/ `ec9dc98`（桥：选店死路
+`6362491`（nearby 位置缺席诚实降级+指名门店按名查找）/ `01e42ba`（桥：选店死路
 escalate 自愈/拒绝去术语/菜单整句放宽/营养相关性打包）/ `a1fd506`（范例选店闭环
 三式×两商户+guide 口径修正+chitchat 防编造）/ `c2910e6`（HMI 换店 chip+看菜单直达）
 + 语料两条新边界双向各 2 例（上界 571→**579** 第五次递进）。方案与逐轮登记
